@@ -186,6 +186,11 @@ initialize_forward_context() {
 	if [[ -n $expected_compose_sha && ! $expected_compose_sha =~ ^[0-9a-f]{64}$ ]]; then
 		fail "ROUTER_HA_EXPECTED_COMPOSE_SHA256 must be a lowercase SHA-256"
 	fi
+	expected_fleet_spec_sha=$(printenv ROUTER_HA_EXPECTED_FLEET_SPEC_SHA256 || true)
+	if [[ -n $expected_fleet_spec_sha && \
+		! $expected_fleet_spec_sha =~ ^[0-9a-f]{64}$ ]]; then
+		fail "ROUTER_HA_EXPECTED_FLEET_SPEC_SHA256 must be a lowercase SHA-256"
+	fi
 	pull_policy=${ROUTER_HA_PULL_POLICY:-always}
 	case $pull_policy in
 		always | missing | never) ;;
@@ -538,6 +543,7 @@ begin_ingress_transaction() {
 	desired_sha=$(printf '%s' "$current_model" | sha256sum | awk '{print $1}')
 	write_ingress_record "$(jq -cn \
 		--arg id "$transaction_id" --arg desired_sha "$desired_sha" \
+		--arg fleet_spec_sha "$fleet_spec_sha" \
 		--arg compose_project "$GONKA_COMPOSE_PROJECT" \
 		--arg compose_project_directory "$GONKA_COMPOSE_PROJECT_DIRECTORY" \
 		--arg versiond_mode "$versiond_mode" --arg edge_mode "$edge_mode" \
@@ -547,6 +553,7 @@ begin_ingress_transaction() {
 		--argjson policy_model "$policy_model" \
 		--argjson proxy_model "$proxy_model" \
 		'{schema: 1, id: $id, state: "active", desired_compose_sha256: $desired_sha,
+		  fleet_spec_sha256: $fleet_spec_sha,
 		  touched: [], policies: $policies, proxy: $proxy,
 		  recovery: {compose_project: $compose_project,
 		    compose_project_directory: $compose_project_directory,
@@ -705,7 +712,21 @@ rollback_ingress_transaction() {
 
 recover_interrupted_ingress() {
 	[[ -f $transaction_journal ]] || return 0
-	case $(jq -r '.transaction.ingress.state // ""' "$transaction_journal" 2>/dev/null) in
+	local state
+	state=$(jq -er '
+		if type != "object" then error("journal is not an object")
+		elif (.transaction.ingress? // null) == null then "none"
+		elif (.transaction.ingress | type) != "object" then
+			error("ingress journal is not an object")
+		elif (.transaction.ingress.state == "active" or
+		      .transaction.ingress.state == "committed" or
+		      .transaction.ingress.state == "rolled_back") then
+			.transaction.ingress.state
+		else error("unknown ingress journal state")
+		end
+	' "$transaction_journal") || fail \
+		"invalid ingress transaction journal $transaction_journal; journal retained"
+	case $state in
 		active)
 			warn "recovering interrupted ingress transaction from $transaction_journal"
 			rollback_ingress_transaction || fail \
@@ -718,6 +739,7 @@ recover_interrupted_ingress() {
 				redact_ingress_rollback_models
 			fi
 			;;
+		none) ;;
 	esac
 }
 
@@ -853,6 +875,19 @@ run_fleet() {
         "$fleet_bin" "$@"
 }
 
+current_fleet_spec_sha() {
+	run_fleet spec-hash
+}
+
+verify_fleet_spec_unchanged() {
+	local current
+	[[ $versiond_mode == ha ]] || return 0
+	current=$(current_fleet_spec_sha) || fail \
+		"cannot compute the canonical router fleet specification"
+	[[ $current == "$fleet_spec_sha" ]] || fail \
+		"router fleet specification changed during the deployment transaction ($fleet_spec_sha -> $current)"
+}
+
 urlencode() {
     local input=$1 output='' char hex i
     local LC_ALL=C
@@ -956,6 +991,17 @@ recover_interrupted_ingress
 
 echo "Preparing router HA topology: versiond=$versiond_mode edge-api=$edge_mode"
 verify_outer_compose_generation
+fleet_spec_sha=none
+if [[ $versiond_mode == ha ]]; then
+	fleet_spec_sha=$(current_fleet_spec_sha) || fail \
+		"cannot compute the canonical router fleet specification"
+	if [[ -n $expected_fleet_spec_sha && \
+		$fleet_spec_sha != "$expected_fleet_spec_sha" ]]; then
+		fail "router fleet specification differs from the outer upgrade transaction ($expected_fleet_spec_sha != $fleet_spec_sha)"
+	fi
+	gonka_compose_validate_live_postgres_identity "$docker_bin" "" >/dev/null
+	gonka_compose_validate_ha_version_catalog "$docker_bin" versiond
+fi
 ensure_compose_network proxy-policy-front "$policy_network" "$compose_project"
 if [[ $versiond_mode == ha ]]; then
     # `apply` is the lifecycle bridge between the main Compose project and the
@@ -963,6 +1009,7 @@ if [[ $versiond_mode == ha ]]; then
     # existing deployment it pulls and rolls only slots whose image or rendered
     # Compose contract changed.
     run_fleet apply
+	verify_fleet_spec_unchanged
 	verify_outer_compose_generation
 fi
 
@@ -1022,6 +1069,7 @@ if [[ $current_proxy_component == proxy-router ]]; then
     [[ $edge_mode != multi ]] || wait_component edge-api
 	verify_ingress_model_unchanged
 	verify_outer_compose_generation
+	verify_fleet_spec_unchanged
 	commit_ingress_transaction
     remove_migration_routers
     echo "Router HA topology is already active"
@@ -1043,6 +1091,7 @@ fi
 
 verify_ingress_model_unchanged
 verify_outer_compose_generation
+verify_fleet_spec_unchanged
 commit_ingress_transaction
 
 # These singleton migration bridges are outside the steady-state model. Remove

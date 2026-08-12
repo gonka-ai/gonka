@@ -387,13 +387,15 @@ updater automatically applies the no-local-PostgreSQL overlay.
 
 Therefore:
 
-Protocol version names are validated at the governance boundary and use the
-same ASCII grammar in `versiond` and both router tiers:
+Core governance currently requires a non-empty version name but does not enforce
+the router's narrower grammar. Before an HA deployment or protocol activation,
+the deployment gate therefore requires every currently approved name to match
 `[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}`. This is the common subset that can be
 used unchanged as a URL path segment, an HAProxy map key, and a local binary
-name. Names such as `v4+hotfix` remain valid; Unicode, commas, semicolons, path
-delimiters, quotes, whitespace, and control characters are rejected before
-governance can publish them.
+name. Names such as `v4+hotfix` remain valid. A name containing Unicode,
+commas, semicolons, path delimiters, quotes, whitespace, or control characters
+may be accepted by core Gonka but is not HA-router-compatible and blocks the
+cutover before the fleet or ingress is changed.
 
 Each router stores data routing (`v5`) and admission (`version=v5`) as keys in
 one HAProxy map. A Runtime API transaction publishes both keys together, so a
@@ -405,6 +407,15 @@ existing checksum verification and blue/green child lifecycle. A failed poll
 keeps the currently running children in place. The HA routers independently
 cache only their bounded name-to-backend projection; they do not redefine the
 governance or artifact-update contract.
+
+Runtime projection in this release is additions-only. Removing a previously
+projected name requires a separate maintenance procedure. A same-name SHA
+change retains versiond's existing protocol-compatible blue/green semantics.
+
+HA proxying prevents automatic retries of non-idempotent ML POST requests.
+Client retries after an ambiguous connection loss retain the existing Gonka
+semantics and can execute on another replica; cross-replica execution fencing or
+an idempotency contract is outside this HA routing change.
 
 > **Running multiple versiond/devshardd instances (HA) requires the shared
 > `devshard-postgres` backend — not a DB-per-instance.** Set `PGHOST` so every

@@ -151,6 +151,7 @@ transaction_id=$operation_id
 base_fingerprint=none
 saved_desired_fingerprint=
 saved_compose_config_sha=
+saved_fleet_spec_sha=
 saved_base_fingerprint=
 
 if [[ $strict_capacity == false ]]; then
@@ -322,6 +323,23 @@ current_compose_config_sha() {
 	jq -Sc . <<<"$rendered" | sha256sum | awk '{print $1}'
 }
 
+router_fleet_spec_sha() {
+	GONKA_CONFIG_ENV=$config_env \
+	VERSIOND_ROUTER_FRONT_NETWORK=$GONKA_COMPOSE_ROUTER_FRONT_NETWORK \
+	VERSIOND_ROUTER_BACK_NETWORK=$GONKA_COMPOSE_ROUTER_BACK_NETWORK \
+	VERSIOND_ROUTER_METRICS_NETWORK=$GONKA_COMPOSE_DEFAULT_NETWORK \
+		"$fleet_bin" spec-hash
+}
+
+verify_router_fleet_spec() {
+	local current
+	[[ $versiond_mode == ha ]] || return 0
+	current=$(router_fleet_spec_sha) || fail \
+		"cannot compute the canonical router fleet specification"
+	[[ $current == "$fleet_spec_sha" ]] || fail \
+		"router fleet specification changed during the upgrade transaction ($fleet_spec_sha -> $current)"
+}
+
 verify_compose_model_unchanged() {
 	local current
 	current=$(current_compose_config_sha) || fail \
@@ -345,6 +363,7 @@ write_upgrade_journal() {
 		--arg base "$base_fingerprint" \
 		--arg desired "$desired_fingerprint" \
 		--arg compose_sha "$compose_config_sha" \
+		--arg fleet_spec_sha "$fleet_spec_sha" \
 		--arg postgres_identity "$verified_postgres_identity" \
 		--argjson existing "$existing_transaction" '
 		. + {transaction: ($existing + {
@@ -353,6 +372,7 @@ write_upgrade_journal() {
 			base_fingerprint: $base,
 			desired_fingerprint: $desired,
 			compose_config_sha256: $compose_sha,
+			fleet_spec_sha256: $fleet_spec_sha,
 			updated_at_unix: (now | floor)
 		})}
 		| if $postgres_identity == "" then .
@@ -423,6 +443,11 @@ restore_saved_topology() {
 			(.transaction.base_fingerprint | type == "string" and length > 0) and
 			(.transaction.desired_fingerprint | type == "string" and length == 64) and
 			(.transaction.compose_config_sha256 | type == "string" and length == 64) and
+			(.transaction.fleet_spec_sha256 | type == "string") and
+			((.topology.versiond == "ha" and
+			  (.transaction.fleet_spec_sha256 | length) == 64) or
+			 (.topology.versiond == "single" and
+			  .transaction.fleet_spec_sha256 == "none")) and
             (.topology.versiond == "single" or .topology.versiond == "ha") and
             (.topology.edge_api == "single" or .topology.edge_api == "multi") and
             (.compose.files | type == "array" and length > 0) and
@@ -441,6 +466,7 @@ restore_saved_topology() {
 		saved_base_fingerprint=$(jq -er '.transaction.base_fingerprint' "$state_file")
 		saved_desired_fingerprint=$(jq -er '.transaction.desired_fingerprint' "$state_file")
 		saved_compose_config_sha=$(jq -er '.transaction.compose_config_sha256' "$state_file")
+		saved_fleet_spec_sha=$(jq -er '.transaction.fleet_spec_sha256' "$state_file")
     elif [[ -f $upgrade_marker ]] && jq -e '
 		type == "object" and (.schema == 1 or .schema == 2) and
 		(.topology.versiond == "single" or .topology.versiond == "ha") and
@@ -577,6 +603,15 @@ compose_files_json=$(
     printf '%s\n' "${GONKA_COMPOSE_FILES[@]}" | jq -Rsc \
         'split("\n") | map(select(length > 0))'
 )
+fleet_spec_sha=none
+fleet_spec_expectation=
+if [[ $versiond_mode == ha ]]; then
+	fleet_spec_sha=$(router_fleet_spec_sha) || fail \
+		"cannot compute the canonical router fleet specification"
+	[[ $fleet_spec_sha =~ ^[0-9a-f]{64}$ ]] || fail \
+		"router fleet returned an invalid specification fingerprint"
+	fleet_spec_expectation=$fleet_spec_sha
+fi
 desired_upgrade_state=$(jq -cn \
     --arg release_id "$release_id" \
     --arg release_commit "$DEVSHARD_V5_RELEASE_COMMIT" \
@@ -585,6 +620,7 @@ desired_upgrade_state=$(jq -cn \
     --arg project "$GONKA_COMPOSE_PROJECT" \
     --arg project_directory "$GONKA_COMPOSE_PROJECT_DIRECTORY" \
     --arg config_sha256 "$compose_config_sha" \
+    --arg fleet_spec_sha256 "$fleet_spec_sha" \
     --argjson files "$compose_files_json" \
     --arg edge_api "$DEVSHARD_V5_EDGE_API_IMAGE" \
     --arg versiond "$DEVSHARD_V5_VERSIOND_IMAGE" \
@@ -604,6 +640,7 @@ desired_upgrade_state=$(jq -cn \
             files: $files,
             config_sha256: $config_sha256
         },
+        router_fleet: {spec_sha256: $fleet_spec_sha256},
         images: {
             edge_api: $edge_api,
             versiond: $versiond,
@@ -637,10 +674,12 @@ fi
 if [[ $interrupted_upgrade_loaded == true ]]; then
 	[[ $saved_base_fingerprint == "$current_base_fingerprint" ]] || fail \
 		"active transaction $transaction_id was based on $saved_base_fingerprint, but committed base is now $current_base_fingerprint; explicit recovery is required"
-	[[ $saved_desired_fingerprint == "$desired_fingerprint" ]] || fail \
-		"active transaction $transaction_id targets a different immutable release state; restore the saved Compose inputs or explicitly abort it"
 	[[ $saved_compose_config_sha == "$compose_config_sha" ]] || fail \
 		"effective Compose model changed during active transaction $transaction_id; restore the saved override files before resuming"
+	[[ $saved_fleet_spec_sha == "$fleet_spec_sha" ]] || fail \
+		"router fleet specification changed during active transaction $transaction_id; restore the saved fleet configuration before resuming"
+	[[ $saved_desired_fingerprint == "$desired_fingerprint" ]] || fail \
+		"active transaction $transaction_id targets a different immutable release state; restore the saved Compose inputs or explicitly abort it"
 	base_fingerprint=$saved_base_fingerprint
 else
 	base_fingerprint=$current_base_fingerprint
@@ -678,6 +717,10 @@ if [[ $versiond_mode == ha && $GONKA_COMPOSE_POSTGRES_MODE == local ]]; then
         "$script_dir/devshard-postgres-migration-preflight.sh" \
         --source-container "$postgres_container" \
         --target-dir "$postgres_target_dir"
+fi
+if [[ $versiond_mode == ha ]]; then
+	gonka_compose_validate_ha_version_catalog "$docker_bin" versiond
+	verify_router_fleet_spec
 fi
 
 echo "Devshard v5 release preflight passed"
@@ -734,11 +777,13 @@ if [[ $existing_proxy_component == proxy-router ]]; then
 		ROUTER_HA_TRANSACTION_JOURNAL="$upgrade_journal" \
 		ROUTER_HA_TRANSACTION_ID="$transaction_id" \
 		ROUTER_HA_EXPECTED_COMPOSE_SHA256="$compose_config_sha" \
+		ROUTER_HA_EXPECTED_FLEET_SPEC_SHA256="$fleet_spec_expectation" \
 		"$enable_router_bin" \
         --versiond-mode "$versiond_mode" --edge-mode "$edge_mode" \
         "${GONKA_COMPOSE_FORWARD_ARGS[@]}"
     verify_release_ingress_state || fail \
         "ingress state did not converge to $release_id"
+	verify_router_fleet_spec
     write_upgrade_journal ingress_verified
 	verify_compose_model_unchanged
     write_upgrade_marker
@@ -1500,6 +1545,7 @@ case ${UPGRADE_ENABLE_ROUTER_HA:-true} in
 			ROUTER_HA_TRANSACTION_JOURNAL="$upgrade_journal" \
 			ROUTER_HA_TRANSACTION_ID="$transaction_id" \
 			ROUTER_HA_EXPECTED_COMPOSE_SHA256="$compose_config_sha" \
+			ROUTER_HA_EXPECTED_FLEET_SPEC_SHA256="$fleet_spec_expectation" \
 			"$enable_router_bin" \
             --versiond-mode "$versiond_mode" --edge-mode "$edge_mode" \
             "${GONKA_COMPOSE_FORWARD_ARGS[@]}"
@@ -1515,6 +1561,7 @@ if [[ $versiond_mode == ha ]]; then
 fi
 verify_release_ingress_state || fail \
     "ingress state did not converge to $release_id"
+verify_router_fleet_spec
 write_upgrade_journal ingress_verified
 verify_compose_model_unchanged
 write_upgrade_marker

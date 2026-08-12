@@ -15,10 +15,14 @@ of its container. Run host commands from `deploy/join` with the complete HA
 Compose model. Router slots are deliberately outside that project and are
 managed by the fleet script:
 
+Before any command below, restore the complete ordered `COMPOSE_FILE` used by
+the installation, including external-PostgreSQL, observability, and operator
+overrides. Do not replace it with only the stock base and HA files.
+
 | Intent | Command | What makes it safe |
 | --- | --- | --- |
-| Evacuate / stop temporarily | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml stop versiond2` | versiond fails `/readyz` first, then stops accepting; the router removes it before it stops taking work |
-| Replace / restart | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d --no-deps --wait --wait-timeout 2100 versiond2` | Compose waits for the same `/readyz` contract as the router; a failed reconcile returns an error instead of silently continuing |
+| Evacuate / stop temporarily | `source ./config.env && docker compose stop versiond2` | versiond fails `/readyz` first, then stops accepting; the router removes it before it stops taking work |
+| Replace / restart | `source ./config.env && docker compose up -d --no-deps --wait --wait-timeout 2100 versiond2` | Compose waits for the same `/readyz` contract as the router; a failed reconcile returns an error instead of silently continuing |
 | Inspect router fleet | `source ./config.env && ./versiond-router-fleet.sh status` | rejects missing, duplicate, or orphan slot ownership |
 | Apply router image or route declarations | persist `config.env`, then run `./enable-router-ha.sh --versiond-mode ha --edge-mode auto` | its idempotent fleet `apply` bootstraps an absent fleet or replaces only changed slots one at a time, rolls back a failed slot, then refreshes the top route map |
 | Change legacy pins, placement pool, or coarse/per-version mode | prefix `VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true` to `./versiond-router-fleet.sh maintenance-rollout`, then refresh the top map | drains the complete old fleet before any new-placement router is visible; exact image+env rollback preserves the old live routes on failure |
@@ -36,7 +40,7 @@ include the fleet lifecycle explicitly:
 ```bash
 source ./config.env
 ./versiond-router-fleet.sh stop-all --maintenance
-docker compose -f docker-compose.yml -f docker-compose.versiond.yml down
+docker compose down
 ./versiond-router-fleet.sh down --maintenance
 ```
 
@@ -89,11 +93,9 @@ Then drain and remove the old container:
 
 ```bash
 source ./config.env && \
-docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
-  stop versiond2
+docker compose stop versiond2
 source ./config.env && \
-docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
-  rm -f versiond2
+docker compose rm -f versiond2
 ```
 
 The overlay applies `VERSIOND_REPLICAS` and `VERSIOND2_REPLICAS` as desired

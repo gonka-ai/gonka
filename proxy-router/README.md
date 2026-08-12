@@ -65,8 +65,8 @@ PostgreSQL because affinity is placement, not exclusive ownership.
 HAProxy retries connection failures, empty responses, and `502` responses. L7
 retry is disabled for methods other than GET, HEAD, and OPTIONS. Once a POST may
 have reached an application, replaying it could execute the operation twice;
-infrastructure cannot safely infer otherwise. Operations that need exactly-once
-semantics must carry an application idempotency key.
+infrastructure cannot safely infer otherwise. Cross-replica idempotency for an
+explicit client retry is outside this routing layer and remains unchanged.
 
 An established SSE stream stays on the policy worker, router, versiond host,
 and child generation that accepted it. Rolling a replicated inner router or
@@ -236,4 +236,5 @@ make -C versiond-router test-fleet
 
 The routing test uses real Docker networks, HAProxy, policy workers, route-aware
 router health, an unavailable router data port, and multiple edge-api replicas.
-It verifies failover and proves that a non-idempotent POST is never duplicated.
+It verifies failover and proves that the proxy does not replay a
+non-idempotent POST in the tested connection-failure path.

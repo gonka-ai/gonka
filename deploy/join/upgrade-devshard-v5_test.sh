@@ -119,7 +119,7 @@ if [[ ${1:-} == inspect ]]; then
         '{{range .Config.Env}}{{println .}}{{end}}')
             case ${4:-} in
                 versiond | versiond2)
-                    printf 'PGHOST=%s\nPGDATABASE=devshardd\nPGUSER=devshardd\n' \
+                    printf 'PGHOST=%s\nPGDATABASE=devshardd\nPGUSER=devshardd\nVERSIOND_ORACLE_URL=http://api:9100/versions\n' \
                         "${RUNTIME_PGHOST:-devshard-postgres}"
 					[[ -z ${RUNTIME_PGSERVICE:-} ]] || \
 						printf 'PGSERVICE=%s\n' "$RUNTIME_PGSERVICE"
@@ -208,6 +208,12 @@ if [[ ${1:-} == exec ]]; then
             exit 1
         fi
         case $container:$probe_url in
+            versiond*:http://api:9100/versions | cid-versiond*:http://api:9100/versions)
+                if ! printenv VERSION_CATALOG_JSON; then
+                    printf '%s\n' '{"versions":[{"name":"v3"},{"name":"v4"}]}'
+                fi
+                exit 0
+                ;;
             cid-versiond*:http://127.0.0.1:8080/internal/storage-identity)
                 if [[ $service == versiond2 && -n ${VERSIOND2_STORAGE_IDENTITY-} ]]; then
                     jq -cn --arg identity "$VERSIOND2_STORAGE_IDENTITY" '{identity:$identity}'
@@ -616,6 +622,12 @@ printf 'fleet %s\n' "$*" >>"$DOCKER_LOG"
 printf 'fleet-networks %s %s\n' \
     "${VERSIOND_ROUTER_FRONT_NETWORK-}" \
     "${VERSIOND_ROUTER_BACK_NETWORK-}" >>"$DOCKER_LOG"
+if [[ ${1:-} == spec-hash ]]; then
+    if ! printenv FLEET_SPEC_HASH; then
+        printf '%064d\n' 1
+    fi
+    exit 0
+fi
 EOF
 cat >"$tmpdir/enable-router" <<'EOF'
 #!/usr/bin/env bash
@@ -623,6 +635,8 @@ set -eu
 printf 'enable-router %s\n' "$*" >>"$DOCKER_LOG"
 printf 'enable-router-compose %s\n' \
     "${ROUTER_HA_EXPECTED_COMPOSE_SHA256-}" >>"$DOCKER_LOG"
+printf 'enable-router-fleet %s\n' \
+    "${ROUTER_HA_EXPECTED_FLEET_SPEC_SHA256-}" >>"$DOCKER_LOG"
 if [[ " $* " == *" --recover-only "* ]]; then
     tmp=$(mktemp "$(dirname -- "$ROUTER_HA_TRANSACTION_JOURNAL")/.recover.XXXXXX")
     jq '.transaction.ingress.state = "rolled_back" |
@@ -658,7 +672,8 @@ GONKA_CONFIG_ENV="$tmpdir/config.env" \
         fail "read-only release preflight failed"
     }
 assert_no_compose_mutation "$preflight_log"
-assert_not_contains "$preflight_log" "fleet "
+assert_contains "$preflight_log" "fleet spec-hash"
+assert_not_contains "$preflight_log" "fleet apply"
 assert_not_contains "$preflight_log" "enable-router "
 assert_not_contains "$preflight_log" "VERSIOND_IMAGE=untrusted-config-image"
 assert_contains "$preflight_log" \
@@ -666,6 +681,26 @@ assert_contains "$preflight_log" \
 grep -q 'Devshard v5 release preflight passed' "$tmpdir/preflight.stdout" || {
     cat "$tmpdir/preflight.stdout" >&2
     fail "release preflight did not report success"
+}
+
+if VERSION_CATALOG_JSON='{"versions":[{"name":"v4:hotfix"}]}' \
+    DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$tmpdir/incompatible-version-name.log" \
+    FAIL_SERVICE=none \
+    EXISTING_CONTAINERS="proxy versiond versiond2 versiond-router devshard-postgres edge-api" \
+    FAKE_STATE_DIR="$tmpdir/incompatible-version-name.state" \
+    JOIN_DIR="$script_dir" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/upgrade-devshard-v5.sh" \
+        --versiond-mode ha --edge-mode single --preflight-only \
+        >"$tmpdir/incompatible-version-name.stdout" \
+        2>"$tmpdir/incompatible-version-name.stderr"; then
+    fail "release preflight accepted a version name unsupported by HA routing"
+fi
+assert_no_compose_mutation "$tmpdir/incompatible-version-name.log"
+grep -q 'HA-incompatible name' "$tmpdir/incompatible-version-name.stderr" || {
+    cat "$tmpdir/incompatible-version-name.stderr" >&2
+    fail "incompatible version name did not produce an actionable error"
 }
 
 upgrade_lock=$tmpdir/.gonka-deployment.lock
@@ -844,6 +879,8 @@ grep -q 'cannot detect versiond topology' "$tmpdir/unknown.stderr" || {
 run_auto_upgrade "versiond edge-api" "$tmpdir/base.log" "$tmpdir/base.stdout"
 grep -q 'versiond=single, edge-api=single' "$tmpdir/base.stdout" || fail \
     "base-only topology was not detected"
+grep -q '^enable-router-fleet $' "$tmpdir/base.log" || fail \
+    "single-versiond upgrade passed the non-hash journal sentinel to the ingress SHA gate"
 assert_not_contains "$tmpdir/base.log" "docker-compose.versiond.yml"
 assert_not_contains "$tmpdir/base.log" "docker-compose.edge-api-multi.yml"
 assert_not_contains "$tmpdir/base.log" " pull devshard-postgres"
@@ -1194,7 +1231,9 @@ jq -e '
     (.fingerprint | type == "string" and length == 64) and
     (.compose.files | length > 0) and
     .images.postgres == "postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777" and
-    .storage.postgres_identity == "shared-database"
+    .storage.postgres_identity == "shared-database" and
+    .router_fleet.spec_sha256 ==
+        "0000000000000000000000000000000000000000000000000000000000000001"
 ' "$tmpdir/upgrade-complete" >/dev/null || fail \
     "verified cutover did not reconstruct the desired-state marker"
 assert_contains "$tmpdir/recovered-marker.log" \
@@ -1202,6 +1241,9 @@ assert_contains "$tmpdir/recovered-marker.log" \
 grep -Eq '^enable-router-compose [0-9a-f]{64}$' \
     "$tmpdir/recovered-marker.log" || fail \
     "outer upgrade did not bind ingress to its Compose generation"
+grep -q '^enable-router-fleet 0000000000000000000000000000000000000000000000000000000000000001$' \
+    "$tmpdir/recovered-marker.log" || fail \
+    "outer upgrade did not bind ingress to its router fleet specification"
 grep -q 'release state is converged' "$tmpdir/recovered-marker.stdout" || fail \
     "marker recovery was not reported"
 
@@ -1215,6 +1257,7 @@ jq '. as $committed | . + {transaction: {
         base_fingerprint: $committed.fingerprint,
         desired_fingerprint: $committed.fingerprint,
         compose_config_sha256: $committed.compose.config_sha256,
+        fleet_spec_sha256: $committed.router_fleet.spec_sha256,
         postgres_identity: $committed.storage.postgres_identity,
         ingress: {
             state: "active",
@@ -1256,6 +1299,7 @@ jq '. as $state | . + {transaction:{
 			base_fingerprint:("a" * 64),
 			desired_fingerprint:$state.fingerprint,
 			compose_config_sha256:$state.compose.config_sha256,
+			fleet_spec_sha256:$state.router_fleet.spec_sha256,
 			postgres_identity:$state.storage.postgres_identity,
 			updated_at_unix:1
 		}}' \
@@ -1299,6 +1343,7 @@ jq '. as $state | . + {transaction:{
 			base_fingerprint:$state.fingerprint,
 			desired_fingerprint:$state.fingerprint,
 			compose_config_sha256:("0" * 64),
+			fleet_spec_sha256:$state.router_fleet.spec_sha256,
 			postgres_identity:$state.storage.postgres_identity,
 			updated_at_unix:1
 		}}' "$hash_drift_marker" >"$hash_drift_journal"
@@ -1319,6 +1364,38 @@ grep -q 'effective Compose model changed during active transaction' \
     "$tmpdir/hash-drift.stderr" || fail \
     "Compose transaction drift did not produce a useful error"
 assert_no_compose_mutation "$tmpdir/hash-drift.log"
+
+fleet_drift_marker=$tmpdir/fleet-drift-marker
+fleet_drift_journal=$fleet_drift_marker.in-progress
+cp "$tmpdir/upgrade-complete" "$fleet_drift_marker"
+jq '. as $state | . + {transaction:{
+			id:"test-fleet-drift",
+			phase:"prepared",
+			base_fingerprint:$state.fingerprint,
+			desired_fingerprint:$state.fingerprint,
+			compose_config_sha256:$state.compose.config_sha256,
+			fleet_spec_sha256:$state.router_fleet.spec_sha256,
+			postgres_identity:$state.storage.postgres_identity,
+			updated_at_unix:1
+		}}' "$fleet_drift_marker" >"$fleet_drift_journal"
+if ASSUME_RELEASE_STATE=true \
+    FLEET_SPEC_HASH=0000000000000000000000000000000000000000000000000000000000000002 \
+    DEVSHARD_V5_UPGRADE_MARKER="$fleet_drift_marker" \
+    DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$tmpdir/fleet-drift.log" \
+    EXISTING_PROXY_COMPONENT=proxy-router \
+    EXISTING_CONTAINERS="versiond versiond2 devshard-postgres edge-api proxy proxy-policy" \
+    FAKE_STATE_DIR="$tmpdir/journal-missing-replicas.state" \
+    JOIN_DIR="$script_dir" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/upgrade-devshard-v5.sh" \
+        >"$tmpdir/fleet-drift.stdout" 2>"$tmpdir/fleet-drift.stderr"; then
+    fail "active transaction accepted a changed router fleet specification"
+fi
+grep -q 'router fleet specification changed during active transaction' \
+    "$tmpdir/fleet-drift.stderr" || fail \
+    "fleet transaction drift did not produce a useful error"
+assert_no_compose_mutation "$tmpdir/fleet-drift.log"
 
 printf '0.2.15-devshard-v5\n' >"$tmpdir/upgrade-complete"
 mkdir -p "$tmpdir/active-with-marker.state"

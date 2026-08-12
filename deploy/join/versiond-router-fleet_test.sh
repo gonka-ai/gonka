@@ -111,6 +111,18 @@ VERSIOND_VERSIONS=v4
 EOF
 fleet=(env GONKA_CONFIG_ENV="$tmpdir/config.env" "$script_dir/versiond-router-fleet.sh")
 
+fleet_spec=$("${fleet[@]}" spec-hash)
+[[ $fleet_spec =~ ^[0-9a-f]{64}$ ]] || fail \
+    "fleet specification is not represented by a SHA-256"
+[[ $("${fleet[@]}" spec-hash) == "$fleet_spec" ]] || fail \
+    "unchanged fleet specification produced an unstable hash"
+[[ $(VERSIOND_ROUTER_MIN_READY=1 "${fleet[@]}" spec-hash) != "$fleet_spec" ]] || fail \
+    "fleet specification hash ignores the ready reserve"
+[[ $(VERSIOND_ROUTER_FLEET_SLOTS='2 1 0' "${fleet[@]}" spec-hash) != "$fleet_spec" ]] || fail \
+    "fleet specification hash ignores ordered slot membership"
+[[ $(VERSIOND_ROUTER_FLEET_ID="$fleet_id-other" "${fleet[@]}" spec-hash) != "$fleet_spec" ]] || fail \
+    "fleet specification hash ignores fleet identity"
+
 docker network create --internal \
     --label com.docker.compose.network=default \
     --label com.docker.compose.project="gonka-router-fleet-main-$suffix" \

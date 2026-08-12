@@ -54,6 +54,7 @@ usage() {
 Usage: versiond-router-fleet.sh COMMAND [ARGS]
 
 Commands:
+  spec-hash          Print the canonical desired fleet specification SHA-256.
   prepare-networks   Create or validate the fleet-owned front/back networks.
   up                 Create missing slots or start existing containers unchanged.
   apply              Bootstrap an absent fleet or roll changed slots one at a time.
@@ -111,6 +112,8 @@ operation_id="$(date +%s%N)-$$"
 
 command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
 command -v flock >/dev/null 2>&1 || fail "flock is required"
+command -v jq >/dev/null 2>&1 || fail "jq is required"
+command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required"
 # shellcheck source=deploy/join/deployment-lock.sh
 source "$script_dir/deployment-lock.sh"
 
@@ -185,6 +188,26 @@ slot_compose() {
         --project-directory "$script_dir" \
         --project-name "$project_prefix-$slot" \
         -f "$slot_file" "$@"
+}
+
+fleet_spec_hash() {
+    local slot rendered config_hash manifest_hash index=0
+    manifest_hash=$(sha256sum "$slot_file" | awk '{print $1}')
+    {
+        printf 'schema=1\n'
+        printf 'fleet_id=%s\n' "$fleet_id"
+        printf 'project_prefix=%s\n' "$project_prefix"
+        printf 'min_ready=%s\n' "$min_ready"
+        printf 'slot_manifest_sha256=%s\n' "$manifest_hash"
+        for slot in "${slots[@]}"; do
+            rendered=$(slot_compose "$slot" config --format json) || fail \
+                "cannot render fleet slot '$slot' for specification hashing"
+            config_hash=$(jq -Sc . <<<"$rendered" | sha256sum | awk '{print $1}')
+            printf 'slot.%06d.name=%s\n' "$index" "$slot"
+            printf 'slot.%06d.config_sha256=%s\n' "$index" "$config_hash"
+            ((index += 1))
+        done
+    } | sha256sum | awk '{print $1}'
 }
 
 slot_ids() {
@@ -1371,11 +1394,19 @@ fleet_maintenance_rollout() {
 
 gonka_acquire_deployment_lock "$config_dir" || exit 1
 
+# The deployment transaction fingerprint does not inspect live route health or
+# catalog state. It is computable before any slot exists once the main topology
+# has supplied the metrics-network identity.
+command=${1:-}
+if [[ $command == spec-hash ]]; then
+    fleet_spec_hash
+    exit 0
+fi
+
 # Runtime-discovered versions are part of the safety reserve even though they
 # are intentionally absent from the host-managed bootstrap environment.
 discover_expected_routes
 
-command=${1:-}
 case $command in
     prepare-networks) prepare_networks ;;
     up) fleet_up ;;
@@ -1407,13 +1438,14 @@ case $command in
         ;;
     start)
         [[ $# == 2 ]] || fail "start requires exactly one SLOT"
+        target_slot=$2
         prepare_slot_networks
         pull_router_image
         candidate_image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
         require_placement_compatible "$candidate_image"
-        start_existing_or_create_slot "$2"
-        wait_slot_routes "$2"
-        wait_parent_admission "$2"
+        start_existing_or_create_slot "$target_slot"
+        wait_slot_routes "$target_slot"
+        wait_parent_admission "$target_slot"
         ;;
     -h | --help | help) usage ;;
     *) usage; fail "unknown command '${command:-}'" ;;

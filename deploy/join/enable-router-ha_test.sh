@@ -119,7 +119,7 @@ if [[ ${1:-} == inspect ]]; then
                             'EDGE_API_PORT=18080'
                         ;;
                     versiond | versiond2)
-                        printf 'PGHOST=devshard-postgres\nPGDATABASE=devshardd\nPGUSER=devshardd\n'
+                        printf 'PGHOST=devshard-postgres\nPGDATABASE=devshardd\nPGUSER=devshardd\nVERSIOND_ORACLE_URL=http://api:9100/versions\n'
                         ;;
                 esac
                 ;;
@@ -301,6 +301,28 @@ if [[ ${1:-} == exec && ${2:-} == versiond-router && \
     exit 1
 fi
 
+if [[ $1 == exec && ($2 == versiond || $2 == versiond2) ]]; then
+    last=
+    for last; do :; done
+    case $last in
+        http://127.0.0.1:8080/internal/storage-identity)
+            identity=$(printenv POSTGRES_IDENTITY || \
+                printf '11111111-1111-1111-1111-111111111111\n')
+            if [[ $2 == versiond2 ]] && identity2=$(printenv POSTGRES_IDENTITY2); then
+                identity=$identity2
+            fi
+            printf '{"identity":"%s"}\n' "$identity"
+            exit 0
+            ;;
+        http://api:9100/versions)
+            if ! printenv VERSION_CATALOG_JSON; then
+                printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v4"}]}'
+            fi
+            exit 0
+            ;;
+    esac
+fi
+
 if [[ ${1:-} == exec && ${2:-} == proxy && \
     ${3:-} == /bin/sh && ${4:-} == -ec && \
     ${5:-} == *'show servers state'* ]]; then
@@ -326,12 +348,23 @@ cat >"$tmpdir/fleet" <<'EOF'
 #!/usr/bin/env bash
 set -eu
 printf 'fleet %s\n' "$*" >>"$DOCKER_LOG"
+if [[ ${1:-} == spec-hash ]]; then
+    if [[ -f $STATE_DIR/fleet-spec-drift ]]; then
+        printf '%064d\n' 2
+    else
+        printf '%064d\n' 1
+    fi
+    exit 0
+fi
 if [[ ${1:-} == verify-admission && \
     ${FLEET_ADMISSION_FAIL:-false} == true ]]; then
     exit 1
 fi
 if [[ ${1:-} == apply && ${FLEET_COMPOSE_DRIFT:-false} == true ]]; then
 	: >"$STATE_DIR/model-drift"
+fi
+if [[ ${1:-} == apply && ${FLEET_SPEC_DRIFT:-false} == true ]]; then
+	: >"$STATE_DIR/fleet-spec-drift"
 fi
 EOF
 chmod +x "$tmpdir/fleet"
@@ -349,6 +382,7 @@ run_cutover() {
     : >"$log"
     rm -f "$tmpdir/current"
     rm -f "$tmpdir/model-drift"
+    rm -f "$tmpdir/fleet-spec-drift"
     rm -f "$tmpdir"/present-proxy-policy*
 	rm -f "$tmpdir"/generation-proxy*
     if [[ -n ${INITIAL_PROXY_COMPONENT:-} ]]; then
@@ -394,6 +428,8 @@ remove_line=$(grep -n 'docker rm -f versiond-router' "$tmpdir/success.log" | hea
     "migration singleton was removed before fleet admission was committed"
 jq -e '
     .transaction.ingress.state == "committed" and
+    .transaction.ingress.fleet_spec_sha256 ==
+        "0000000000000000000000000000000000000000000000000000000000000001" and
     .transaction.ingress.touched ==
         ["policy:proxy-policy2", "policy:proxy-policy", "proxy"] and
     .transaction.ingress.policies["proxy-policy"].container_ids == [] and
@@ -613,6 +649,13 @@ if run_cutover "$tmpdir/outer-compose-drift.log" env \
 	ROUTER_HA_EXPECTED_COMPOSE_SHA256=0000000000000000000000000000000000000000000000000000000000000000; then
 	fail "router cutover accepted a different Compose generation than the outer upgrade"
 fi
+if run_cutover "$tmpdir/outer-fleet-drift.log" env \
+    ROUTER_HA_EXPECTED_FLEET_SPEC_SHA256=0000000000000000000000000000000000000000000000000000000000000000; then
+    fail "router cutover accepted a different fleet specification than the outer upgrade"
+fi
+if grep -q '^fleet apply$' "$tmpdir/outer-fleet-drift.log"; then
+    fail "outer fleet specification drift was detected after fleet mutation"
+fi
 
 outer_compose_sha=$(DOCKER_LOG=/dev/null STATE_DIR="$tmpdir" JOIN_DIR="$script_dir" \
 	"$tmpdir/docker" compose config --format json | jq -Sc . | \
@@ -621,6 +664,33 @@ if run_cutover "$tmpdir/outer-compose-mid-fleet-drift.log" env \
 	ROUTER_HA_EXPECTED_COMPOSE_SHA256="$outer_compose_sha" \
 	FLEET_COMPOSE_DRIFT=true; then
 	fail "router cutover committed Compose drift introduced during fleet rollout"
+fi
+
+if run_cutover "$tmpdir/fleet-spec-drift.log" env \
+    FLEET_SPEC_DRIFT=true; then
+    fail "router cutover committed a fleet specification changed by apply"
+fi
+grep -q '^fleet apply$' "$tmpdir/fleet-spec-drift.log" || fail \
+    "fleet specification drift scenario did not reach fleet apply"
+if grep -q ' up .*\(proxy-policy\|proxy\)$' \
+    "$tmpdir/fleet-spec-drift.log"; then
+    fail "fleet specification drift was detected after ingress mutation"
+fi
+
+if run_cutover "$tmpdir/postgres-identity-mismatch.log" env \
+    POSTGRES_IDENTITY2=22222222-2222-2222-2222-222222222222; then
+    fail "router HA accepted versiond replicas backed by different PostgreSQL databases"
+fi
+if grep -q '^fleet apply$' "$tmpdir/postgres-identity-mismatch.log"; then
+    fail "PostgreSQL identity mismatch was detected after fleet mutation"
+fi
+
+if run_cutover "$tmpdir/incompatible-version-name.log" env \
+    VERSION_CATALOG_JSON='{"versions":[{"name":"v4:hotfix"}]}'; then
+    fail "router HA accepted a catalog name outside the routing grammar"
+fi
+if grep -q '^fleet apply$' "$tmpdir/incompatible-version-name.log"; then
+    fail "incompatible catalog name was detected after fleet mutation"
 fi
 if grep -q ' up .*\(proxy-policy\|proxy\)$' \
 	"$tmpdir/outer-compose-mid-fleet-drift.log"; then
@@ -670,5 +740,31 @@ fi
 if grep -q '^fleet apply$' "$tmpdir/wrong-network.log"; then
     fail "router fleet started before network ownership was validated"
 fi
+
+journal=$tmpdir/.gonka-router-ha-transaction.json
+printf '%s\n' '{broken-json' >"$journal"
+cp "$journal" "$journal.expected"
+if env DOCKER_BIN="$tmpdir/docker" DOCKER_LOG="$tmpdir/corrupt-recovery.log" \
+    STATE_DIR="$tmpdir" JOIN_DIR="$script_dir" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/enable-router-ha.sh" --recover-only \
+    >"$tmpdir/corrupt-recovery.stdout" 2>"$tmpdir/corrupt-recovery.stderr"; then
+    fail "corrupt ingress journal was reported as successfully recovered"
+fi
+cmp -s "$journal" "$journal.expected" || fail \
+    "failed recovery modified the corrupt ingress journal"
+
+printf '%s\n' '{"transaction":{"ingress":{"state":"future-state"}}}' \
+    >"$journal"
+cp "$journal" "$journal.expected"
+if env DOCKER_BIN="$tmpdir/docker" DOCKER_LOG="$tmpdir/unknown-recovery.log" \
+    STATE_DIR="$tmpdir" JOIN_DIR="$script_dir" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/enable-router-ha.sh" --recover-only \
+    >"$tmpdir/unknown-recovery.stdout" 2>"$tmpdir/unknown-recovery.stderr"; then
+    fail "unknown ingress journal state was reported as successfully recovered"
+fi
+cmp -s "$journal" "$journal.expected" || fail \
+    "failed recovery modified the unknown ingress journal"
 
 echo "enable-router-ha_test: ok"

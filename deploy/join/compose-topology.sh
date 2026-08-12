@@ -209,6 +209,50 @@ gonka_compose_container_env() {
     return 1
 }
 
+gonka_compose_storage_identity() {
+    local docker_bin=$1 container=$2
+
+    "$docker_bin" exec "$container" wget -qO- -T 5 \
+        http://127.0.0.1:8080/internal/storage-identity |
+        jq -er '.identity | strings | select(length > 0)'
+}
+
+gonka_compose_validate_live_postgres_identity() {
+    local docker_bin=$1 expected=$2 first second
+
+    first=$(gonka_compose_storage_identity "$docker_bin" versiond) || fail \
+        "cannot read the live PostgreSQL identity through versiond"
+    second=$(gonka_compose_storage_identity "$docker_bin" versiond2) || fail \
+        "cannot read the live PostgreSQL identity through versiond2"
+    [[ $first == "$second" ]] || fail \
+        "versiond replicas use different PostgreSQL databases ($first != $second)"
+    [[ -z $expected || $first == "$expected" ]] || fail \
+        "live PostgreSQL identity changed from committed $expected to $first"
+    printf '%s\n' "$first"
+}
+
+gonka_compose_validate_ha_version_catalog() {
+    local docker_bin=$1 container=$2 oracle_url payload
+
+    oracle_url=$(gonka_compose_container_env \
+        "$docker_bin" "$container" VERSIOND_ORACLE_URL) || fail \
+        "running $container does not expose VERSIOND_ORACLE_URL"
+    case $oracle_url in
+        http://* | https://*) ;;
+        *) fail "running $container has an invalid VERSIOND_ORACLE_URL" ;;
+    esac
+    payload=$("$docker_bin" exec "$container" wget -qO- -T 5 "$oracle_url") ||
+        fail "cannot read the current version catalog through $container"
+    jq -e '
+        (.versions | type) == "array" and
+        ([.versions[].name] | all(.[]; type == "string")) and
+        ([.versions[].name] | length == (unique | length)) and
+        ([.versions[].name] | all(.[];
+            test("^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}$")))
+    ' >/dev/null <<<"$payload" || fail \
+        "the current version catalog contains a duplicate or an HA-incompatible name; allowed grammar is [A-Za-z0-9][A-Za-z0-9._+~-]{0,63}"
+}
+
 gonka_compose_require_service() {
     local config=$1 service=$2 expected_container=${3-} actual
 

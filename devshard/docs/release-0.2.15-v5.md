@@ -260,7 +260,11 @@ effective Compose model before every later mutation and before marker commit;
 editing an override or relevant environment value during a run therefore
 causes rollback/failure instead of mixing two deployment generations.
 The outer updater also passes this exact fingerprint into the router cutover,
-which checks it before fleet work and again before ingress commit.
+which checks it before fleet work and again before ingress commit. The
+independently owned router fleet has a second canonical fingerprint covering
+fleet ID, ordered slots, ready reserve, slot manifest, and every rendered slot
+model. It is journaled and checked before and after fleet apply, so a resumed
+transaction cannot silently adopt changed fleet settings.
 For direct incident recovery, `enable-router-ha.sh --recover-only` reads the
 project identity, topology modes, timeout, and immutable rollback Compose model
 from the active transaction journal before reading `config.env`; a damaged
@@ -811,6 +815,10 @@ docker compose \
 The external overlay disables the bundled `devshard-postgres` service; it does
 not invent provider credentials. Both supervisors must resolve the same
 `PGHOST`, `PGPORT`, `PGDATABASE`, and `PGUSER` tuple.
+`enable-router-ha.sh` also reads the durable storage UUID through both running
+supervisors before it creates the fleet or changes ingress. Equal connection
+strings alone are not accepted as proof that both endpoints reach the same
+database.
 
 On a cold start, the first `up -d` may expose an unready public proxy while the
 application pool is still starting; no existing traffic exists yet. The second
@@ -818,12 +826,17 @@ command converges the independently owned router slots and verifies the final
 public path. On an existing installation, use `upgrade-devshard-v5.sh`, which
 performs the cutover and rollback automatically.
 
-Day-to-day operations:
+Day-to-day operations must reuse the complete ordered Compose topology,
+including the external-PostgreSQL, observability, and operator override files.
+Set `COMPOSE_FILE` once in the shell (with the platform's
+`COMPOSE_PATH_SEPARATOR` when needed), or repeat the same `--compose-file`
+arguments used for deployment. Both Compose and `enable-router-ha.sh` then
+preserve those overlays:
 
 | Task | Command |
 | --- | --- |
-| Take `versiond2` out of service temporarily | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml stop versiond2` |
-| Put it back / replace it | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d --no-deps --wait --wait-timeout 2100 versiond2` |
+| Take `versiond2` out of service temporarily | `source ./config.env && docker compose stop versiond2` |
+| Put it back / replace it | `source ./config.env && docker compose up -d --no-deps --wait --wait-timeout 2100 versiond2` |
 | Decommission `versiond2` permanently | persist `VERSIOND2_REPLICAS=0` in `config.env`, then run the `stop` and `rm` commands in the [host evacuation runbook](./versiond-host-evacuation.md#permanent-membership-changes) |
 | Inspect the router fleet and parent admission | `source ./config.env && ./versiond-router-fleet.sh status` |
 | Roll router image or configuration | persist `config.env`, then run `./enable-router-ha.sh --versiond-mode ha --edge-mode auto`; its fleet `apply` rolls changed slots and refreshes the top map |
@@ -839,7 +852,7 @@ For an HA deployment, use this ordered maintenance sequence from `deploy/join`
 ```bash
 source ./config.env
 ./versiond-router-fleet.sh stop-all --maintenance
-docker compose -f docker-compose.yml -f docker-compose.versiond.yml down
+docker compose down
 ./versiond-router-fleet.sh down --maintenance
 ```
 
@@ -856,7 +869,7 @@ Compose model, then reconcile the routers after versiond has started:
 ```bash
 source ./config.env
 ./versiond-router-fleet.sh prepare-networks
-docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d
+docker compose up -d
 ./enable-router-ha.sh --versiond-mode ha --edge-mode auto
 ```
 
