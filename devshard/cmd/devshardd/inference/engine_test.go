@@ -84,8 +84,7 @@ func TestExecuteMLRequestMarksDispatchedBeforeSending(t *testing.T) {
 		},
 	})
 	eng := newTestEngine(ml, nil, nil)
-	resp, err := eng.executeMLRequest(context.Background(), "model-a", "escrow-a", []byte(`{}`), func(target string) error {
-		require.Equal(t, mlSrv.URL, target)
+	resp, err := eng.executeMLRequest(context.Background(), "model-a", "escrow-a", []byte(`{}`), func() error {
 		dispatched.Store(true)
 		return nil
 	})
@@ -177,7 +176,7 @@ func TestExecuteMLRequestDoesNotReplayDispatchedPOST(t *testing.T) {
 	eng.httpClient = client
 	resp, err := eng.executeMLRequest(
 		context.Background(), "model-a", "escrow-a",
-		[]byte(`{"request":true}`), func(string) error { return nil },
+		[]byte(`{"request":true}`), func() error { return nil },
 	)
 	if resp != nil {
 		_ = resp.Body.Close()

@@ -83,7 +83,7 @@ func (e *Engine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*dev
 	}, e.chainParams)
 }
 
-func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, body []byte, beforeDispatch func(string) error) (*http.Response, error) {
+func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, body []byte, beforeDispatch func() error) (*http.Response, error) {
 	resp, err := e.doWithLockedNode(ctx, observability.PathExecute, model, escrowID, false, func(endpoint string) (*http.Response, error) {
 		url := endpoint + "/v1/chat/completions"
 		httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -97,7 +97,7 @@ func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, b
 			return nil, err
 		}
 		if beforeDispatch != nil {
-			if err := beforeDispatch(endpoint); err != nil {
+			if err := beforeDispatch(); err != nil {
 				return nil, fmt.Errorf("mark inference dispatched: %w", err)
 			}
 		}

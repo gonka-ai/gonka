@@ -20,7 +20,7 @@ type ExecuteRequest struct {
 	// BeforeDispatch is called synchronously after the target is selected and
 	// the HTTP request is built, but before any request byte can be sent. HA
 	// execution uses it to durably cross the at-most-once dispatch boundary.
-	BeforeDispatch func(target string) error
+	BeforeDispatch func() error
 }
 
 // ExecuteResult contains the outcome of an inference execution.

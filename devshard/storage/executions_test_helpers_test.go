@@ -14,7 +14,7 @@ func (executionStoreStub) GetExecution(context.Context, uint64, string, uint64) 
 	return ExecutionClaim{}, ErrExecutionNotFound
 }
 
-func (executionStoreStub) MarkExecutionDispatched(context.Context, uint64, string, uint64, string, uint64, string) error {
+func (executionStoreStub) MarkExecutionDispatched(context.Context, uint64, string, uint64, string, uint64) error {
 	return nil
 }
 

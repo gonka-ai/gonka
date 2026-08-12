@@ -833,12 +833,12 @@ func (h *HybridStorage) GetExecution(ctx context.Context, epochID uint64, escrow
 	return b.GetExecution(ctx, epochID, escrowID, inferenceID)
 }
 
-func (h *HybridStorage) MarkExecutionDispatched(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64, target string) error {
+func (h *HybridStorage) MarkExecutionDispatched(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64) error {
 	b, err := h.routed(escrowID)
 	if err != nil {
 		return err
 	}
-	return b.MarkExecutionDispatched(ctx, epochID, escrowID, inferenceID, ownerID, fence, target)
+	return b.MarkExecutionDispatched(ctx, epochID, escrowID, inferenceID, ownerID, fence)
 }
 
 func (h *HybridStorage) AbandonExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64) error {

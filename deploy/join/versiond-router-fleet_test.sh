@@ -568,33 +568,22 @@ for slot in "${slots[@]}"; do
         "fleet apply did not replace changed slot $slot"
 done
 
-# Start a response that remains attached to one inner router. Its response
-# header identifies the selected slot before the body completes.
+selected_slot=${slots[0]}
+# Address a known inner router directly so the test does not require a public
+# response header that exposes the selected container address.
 docker exec "gonka-router-fleet-probe-$suffix" sh -c \
-    'curl -sS --max-time 15 -D /tmp/stream.headers \
-        http://proxy-router:18081/v4/sessions/fleet-test/slow \
-        >/tmp/stream.body' &
+    "curl -sS --max-time 15 \
+        http://versiond-router-${selected_slot}-front:8080/v4/sessions/fleet-test/slow \
+        >/tmp/stream.body" &
 stream_pid=$!
-selected_ip=
 for _ in $(seq 40); do
-    selected_ip=$(docker exec "gonka-router-fleet-probe-$suffix" sh -c \
-        "tr '[:upper:]' '[:lower:]' 2>/dev/null </tmp/stream.headers | sed -n 's/^x-versiond-router-addr: \\([^:]*\\).*/\\1/p'" || true)
-    [[ -n $selected_ip ]] && break
+    docker exec "gonka-router-fleet-probe-$suffix" \
+        grep -q '^start$' /tmp/stream.body 2>/dev/null && break
     sleep 0.1
 done
-[[ -n $selected_ip ]] || fail "stream did not expose its selected router"
-selected_slot=
-for slot in "${slots[@]}"; do
-    id=$(docker ps -q \
-        --filter label=ai.gonka.component=versiond-router \
-        --filter "label=ai.gonka.fleet=$fleet_id" \
-        --filter "label=ai.gonka.slot=$slot")
-    ip=$(docker inspect --format \
-        "{{with index .NetworkSettings.Networks \"$front\"}}{{.IPAddress}}{{end}}" \
-        "$id")
-    [[ $ip != "$selected_ip" ]] || selected_slot=$slot
-done
-[[ -n $selected_slot ]] || fail "selected router address $selected_ip owns no slot"
+docker exec "gonka-router-fleet-probe-$suffix" \
+    grep -q '^start$' /tmp/stream.body 2>/dev/null || fail \
+    "slow stream did not start on router slot $selected_slot"
 
 "${fleet[@]}" stop "$selected_slot" >/dev/null &
 stop_pid=$!

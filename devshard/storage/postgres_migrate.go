@@ -192,11 +192,10 @@ CREATE TABLE IF NOT EXISTS devshard_escrow_cache (
     inference_id BIGINT      NOT NULL,
     owner_id     TEXT        NOT NULL,
     fence        BIGINT      NOT NULL DEFAULT nextval('devshard_execution_fence_seq'),
-    status       TEXT        NOT NULL DEFAULT 'pending'
-                     CHECK (status IN ('pending', 'completed')),
+    phase        TEXT        NOT NULL DEFAULT 'claimed'
+                     CHECK (phase IN ('claimed', 'dispatched', 'completed', 'abandoned')),
     result       BYTEA,
     claimed_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    completed_at TIMESTAMPTZ,
     PRIMARY KEY (epoch_id, escrow_id, inference_id)
 )`,
 		},
@@ -222,15 +221,22 @@ ON CONFLICT (singleton) DO NOTHING`},
 		Statements: []string{
 			`ALTER TABLE devshard_execution_claims
 	ADD COLUMN IF NOT EXISTS phase TEXT NOT NULL DEFAULT 'claimed'
-	    CHECK (phase IN ('claimed', 'dispatched', 'completed', 'abandoned')),
-	    ADD COLUMN IF NOT EXISTS target TEXT,
-	    ADD COLUMN IF NOT EXISTS dispatched_at TIMESTAMPTZ,
-	    ADD COLUMN IF NOT EXISTS abandoned_at TIMESTAMPTZ`,
-			`UPDATE devshard_execution_claims
-SET phase = CASE status
-    WHEN 'completed' THEN 'completed'
-    ELSE 'dispatched'
-END`,
+	    CHECK (phase IN ('claimed', 'dispatched', 'completed', 'abandoned'))`,
+			`DO $$
+BEGIN
+    IF EXISTS (
+        SELECT 1 FROM information_schema.columns
+        WHERE table_schema = 'public'
+          AND table_name = 'devshard_execution_claims'
+          AND column_name = 'status'
+    ) THEN
+        EXECUTE 'UPDATE devshard_execution_claims
+                 SET phase = CASE status
+                     WHEN ''completed'' THEN ''completed''
+                     ELSE ''dispatched''
+                 END';
+    END IF;
+END $$`,
 		},
 	},
 }

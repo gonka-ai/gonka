@@ -73,7 +73,7 @@ func markDispatched(req devshard.ExecuteRequest) error {
 	if req.BeforeDispatch == nil {
 		return nil
 	}
-	return req.BeforeDispatch("stub")
+	return req.BeforeDispatch()
 }
 
 // FailingEngine always returns an error from Execute.

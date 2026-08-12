@@ -92,6 +92,9 @@ test-render:
 	if grep -q 'set-header X-Real-IP' "$$tmpdir/proxy.cfg"; then \
 		fail "parent distributor overwrites policy-derived client IP"; \
 	fi; \
+	if grep -Eq 'X-Edge-API-Upstream|X-Versiond-Router-Addr' "$$tmpdir/proxy.cfg"; then \
+		fail "public responses expose an internal upstream address"; \
+	fi; \
 	docker run --rm --user "$$(id -u):$$(id -g)" \
 		-v "$$tmpdir:$$tmpdir:ro" $(HAPROXY_IMAGE) \
 		haproxy -c -f "$$tmpdir/proxy.cfg" >/dev/null \

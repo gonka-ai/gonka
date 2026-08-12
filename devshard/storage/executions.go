@@ -36,7 +36,6 @@ type ExecutionClaim struct {
 	Acquired bool
 	Fence    uint64
 	Status   ExecutionStatus
-	Target   string
 	Result   []byte
 }
 
@@ -47,7 +46,7 @@ type ExecutionClaim struct {
 type ExecutionStore interface {
 	ClaimExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string) (ExecutionClaim, error)
 	GetExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64) (ExecutionClaim, error)
-	MarkExecutionDispatched(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64, target string) error
+	MarkExecutionDispatched(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64) error
 	AbandonExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64) error
 	CompleteExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64, result []byte) error
 }
@@ -62,7 +61,6 @@ type memoryExecution struct {
 	ownerID string
 	fence   uint64
 	status  ExecutionStatus
-	target  string
 	result  []byte
 	claimed time.Time
 }
@@ -115,7 +113,7 @@ func (m *Memory) CompleteExecution(_ context.Context, epochID uint64, escrowID s
 	return nil
 }
 
-func (m *Memory) MarkExecutionDispatched(_ context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64, target string) error {
+func (m *Memory) MarkExecutionDispatched(_ context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	key := executionKey{epochID: epochID, escrowID: escrowID, inferenceID: inferenceID}
@@ -124,7 +122,6 @@ func (m *Memory) MarkExecutionDispatched(_ context.Context, epochID uint64, escr
 		return ErrExecutionClaimNotOwned
 	}
 	claim.status = ExecutionDispatched
-	claim.target = target
 	m.executionClaims[key] = claim
 	return nil
 }
@@ -147,7 +144,6 @@ func memoryExecutionClaim(claim memoryExecution, acquired bool) ExecutionClaim {
 		Acquired: acquired,
 		Fence:    claim.fence,
 		Status:   claim.status,
-		Target:   claim.target,
 		Result:   append([]byte(nil), claim.result...),
 	}
 }
@@ -174,7 +170,7 @@ func (s *SQLite) CompleteExecution(_ context.Context, _ uint64, _ string, _ uint
 	return nil
 }
 
-func (s *SQLite) MarkExecutionDispatched(_ context.Context, _ uint64, _ string, _ uint64, _ string, _ uint64, _ string) error {
+func (s *SQLite) MarkExecutionDispatched(_ context.Context, _ uint64, _ string, _ uint64, _ string, _ uint64) error {
 	return nil
 }
 
@@ -195,14 +191,9 @@ VALUES ($1, $2, $3, $4)
 ON CONFLICT (epoch_id, escrow_id, inference_id) DO UPDATE
 SET owner_id = EXCLUDED.owner_id,
     fence = nextval('devshard_execution_fence_seq'),
-    status = 'pending',
     phase = 'claimed',
-    target = NULL,
     result = NULL,
-    claimed_at = now(),
-    dispatched_at = NULL,
-    completed_at = NULL,
-    abandoned_at = NULL
+    claimed_at = now()
 WHERE devshard_execution_claims.phase = 'abandoned'
    OR (devshard_execution_claims.phase = 'claimed'
        AND devshard_execution_claims.claimed_at < now() - $5::interval)
@@ -225,10 +216,10 @@ func (s *Postgres) GetExecution(ctx context.Context, epochID uint64, escrowID st
 func (s *Postgres) getExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64) (ExecutionClaim, error) {
 	var claim ExecutionClaim
 	err := s.pool.QueryRow(ctx, `
-SELECT fence, phase, COALESCE(target, ''), result
+SELECT fence, phase, result
 FROM devshard_execution_claims
 WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = $3`, epochID, escrowID, inferenceID).
-		Scan(&claim.Fence, &claim.Status, &claim.Target, &claim.Result)
+		Scan(&claim.Fence, &claim.Status, &claim.Result)
 	if errors.Is(err, pgx.ErrNoRows) {
 		return ExecutionClaim{}, ErrExecutionNotFound
 	}
@@ -238,15 +229,15 @@ WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = $3`, epochID, escrowID
 	return claim, nil
 }
 
-func (s *Postgres) MarkExecutionDispatched(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64, target string) error {
+func (s *Postgres) MarkExecutionDispatched(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64) error {
 	queryCtx, cancel := context.WithTimeout(ctx, postgresOpTimeout)
 	defer cancel()
 	tag, err := s.pool.Exec(queryCtx, `
 UPDATE devshard_execution_claims
-SET phase = 'dispatched', target = $6, dispatched_at = now()
+SET phase = 'dispatched'
 WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = $3
   AND owner_id = $4 AND fence = $5 AND phase = 'claimed'`,
-		epochID, escrowID, inferenceID, ownerID, fence, target)
+		epochID, escrowID, inferenceID, ownerID, fence)
 	if err != nil {
 		return fmt.Errorf("dispatch execution claim %s/%d: %w", escrowID, inferenceID, err)
 	}
@@ -261,7 +252,7 @@ func (s *Postgres) AbandonExecution(ctx context.Context, epochID uint64, escrowI
 	defer cancel()
 	tag, err := s.pool.Exec(queryCtx, `
 UPDATE devshard_execution_claims
-SET phase = 'abandoned', abandoned_at = now()
+SET phase = 'abandoned'
 WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = $3
   AND owner_id = $4 AND fence = $5 AND phase = 'claimed'`,
 		epochID, escrowID, inferenceID, ownerID, fence)
@@ -279,7 +270,7 @@ func (s *Postgres) CompleteExecution(ctx context.Context, epochID uint64, escrow
 	defer cancel()
 	tag, err := s.pool.Exec(queryCtx, `
 UPDATE devshard_execution_claims
-SET status = 'completed', phase = 'completed', result = $6, completed_at = now()
+SET phase = 'completed', result = $6
 WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = $3
 	  AND owner_id = $4 AND fence = $5 AND phase = 'dispatched'`,
 		epochID, escrowID, inferenceID, ownerID, fence, result)

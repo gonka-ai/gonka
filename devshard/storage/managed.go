@@ -324,8 +324,8 @@ func (m *ManagedStorage) GetExecution(ctx context.Context, epochID uint64, escro
 	return m.inner.GetExecution(ctx, epochID, escrowID, inferenceID)
 }
 
-func (m *ManagedStorage) MarkExecutionDispatched(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64, target string) error {
-	return m.inner.MarkExecutionDispatched(ctx, epochID, escrowID, inferenceID, ownerID, fence, target)
+func (m *ManagedStorage) MarkExecutionDispatched(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64) error {
+	return m.inner.MarkExecutionDispatched(ctx, epochID, escrowID, inferenceID, ownerID, fence)
 }
 
 func (m *ManagedStorage) AbandonExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64) error {

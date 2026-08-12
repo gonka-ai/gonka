@@ -1070,7 +1070,7 @@ func (e *boundaryExecutionEngine) Execute(_ context.Context, req devshard.Execut
 	e.calls.Add(1)
 	if e.dispatch {
 		if req.BeforeDispatch != nil {
-			if err := req.BeforeDispatch("boundary-node"); err != nil {
+			if err := req.BeforeDispatch(); err != nil {
 				return nil, err
 			}
 		}
@@ -1085,7 +1085,7 @@ func (e *boundaryExecutionEngine) Execute(_ context.Context, req devshard.Execut
 
 func (e *blockingSharedExecutionEngine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
 	if req.BeforeDispatch != nil {
-		if err := req.BeforeDispatch("shared-node"); err != nil {
+		if err := req.BeforeDispatch(); err != nil {
 			return nil, err
 		}
 	}

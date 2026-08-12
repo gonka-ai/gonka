@@ -898,7 +898,7 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 	executionJob := *job
 	var dispatched atomic.Bool
 	if executionStore != nil {
-		executionJob.BeforeDispatch = func(target string) error {
+		executionJob.BeforeDispatch = func() error {
 			markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), executionResultCommitTimeout)
 			defer cancel()
 			if err := executionStore.MarkExecutionDispatched(
@@ -908,7 +908,6 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 				inferenceID,
 				h.executionOwner,
 				fence,
-				target,
 			); err != nil {
 				return err
 			}

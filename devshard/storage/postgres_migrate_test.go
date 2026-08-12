@@ -113,6 +113,28 @@ func TestMigratePostgres_Idempotent(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, exists, "missing table devshard_storage_identity")
 
+	var phaseExists bool
+	err = pool.QueryRow(ctx, `
+SELECT EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+      AND table_name = 'devshard_execution_claims'
+      AND column_name = 'phase'
+)`).Scan(&phaseExists)
+	require.NoError(t, err)
+	require.True(t, phaseExists, "execution claims have no authoritative phase")
+
+	var obsoleteExecutionColumns int
+	err = pool.QueryRow(ctx, `
+SELECT COUNT(*) FROM information_schema.columns
+WHERE table_schema = 'public'
+  AND table_name = 'devshard_execution_claims'
+  AND column_name IN (
+      'status', 'target', 'dispatched_at', 'completed_at', 'abandoned_at'
+  )`).Scan(&obsoleteExecutionColumns)
+	require.NoError(t, err)
+	require.Zero(t, obsoleteExecutionColumns, "execution claims retain write-only columns")
+
 	var storageIdentity string
 	err = pool.QueryRow(ctx, `
 SELECT identity::text FROM devshard_storage_identity WHERE singleton`).Scan(&storageIdentity)

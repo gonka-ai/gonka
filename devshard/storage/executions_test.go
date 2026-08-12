@@ -30,16 +30,15 @@ func testExecutionClaimLifecycle(t *testing.T, store ExecutionStore) {
 	)
 
 	require.ErrorIs(t,
-		store.MarkExecutionDispatched(ctx, 7, "escrow-1", 11, "owner-b", first.Fence, "node-b"),
+		store.MarkExecutionDispatched(ctx, 7, "escrow-1", 11, "owner-b", first.Fence),
 		ErrExecutionClaimNotOwned,
 	)
 	require.NoError(t,
-		store.MarkExecutionDispatched(ctx, 7, "escrow-1", 11, "owner-a", first.Fence, "node-a"),
+		store.MarkExecutionDispatched(ctx, 7, "escrow-1", 11, "owner-a", first.Fence),
 	)
 	dispatched, err := store.GetExecution(ctx, 7, "escrow-1", 11)
 	require.NoError(t, err)
 	require.Equal(t, ExecutionDispatched, dispatched.Status)
-	require.Equal(t, "node-a", dispatched.Target)
 	require.ErrorIs(t,
 		store.AbandonExecution(ctx, 7, "escrow-1", 11, "owner-a", first.Fence),
 		ErrExecutionClaimNotOwned,
@@ -107,11 +106,11 @@ func TestMemoryExpiredClaimIsFencedBeforeDispatch(t *testing.T) {
 	require.True(t, second.Acquired)
 	require.Greater(t, second.Fence, first.Fence)
 	require.ErrorIs(t,
-		store.MarkExecutionDispatched(ctx, 7, "escrow-1", 11, "owner-a", first.Fence, "stale-node"),
+		store.MarkExecutionDispatched(ctx, 7, "escrow-1", 11, "owner-a", first.Fence),
 		ErrExecutionClaimNotOwned,
 	)
 	require.NoError(t,
-		store.MarkExecutionDispatched(ctx, 7, "escrow-1", 11, "owner-b", second.Fence, "current-node"),
+		store.MarkExecutionDispatched(ctx, 7, "escrow-1", 11, "owner-b", second.Fence),
 	)
 }
 
@@ -132,7 +131,7 @@ WHERE epoch_id = 7 AND escrow_id = 'escrow-1' AND inference_id = 13`)
 	require.True(t, second.Acquired)
 	require.Greater(t, second.Fence, first.Fence)
 	require.ErrorIs(t,
-		store.MarkExecutionDispatched(ctx, 7, "escrow-1", 13, "owner-a", first.Fence, "stale-node"),
+		store.MarkExecutionDispatched(ctx, 7, "escrow-1", 13, "owner-a", first.Fence),
 		ErrExecutionClaimNotOwned,
 	)
 }
