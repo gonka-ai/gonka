@@ -102,6 +102,19 @@ jobs:
           deploy/join/enable-router-ha_test.sh
           deploy/join/versiond-compose-config_test.sh
 
+  router-fleet-acceptance:
+    name: Router fleet Docker acceptance
+    needs: compose-contract
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Exercise rolling router fleet lifecycle
+        run: deploy/join/versiond-router-fleet_test.sh
+
   registry-smoke:
     name: Published image endpoints
     needs: compose-contract

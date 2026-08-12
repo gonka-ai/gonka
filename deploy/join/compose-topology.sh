@@ -248,7 +248,7 @@ gonka_compose_validate_ha_version_catalog() {
         ([.versions[].name] | all(.[]; type == "string")) and
         ([.versions[].name] | length == (unique | length)) and
         ([.versions[].name] | all(.[];
-            test("^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}$")))
+            test("^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}\\z")))
     ' >/dev/null <<<"$payload" || fail \
         "the current version catalog contains a duplicate or an HA-incompatible name; allowed grammar is [A-Za-z0-9][A-Za-z0-9._+~-]{0,63}"
 }
@@ -278,11 +278,11 @@ gonka_compose_validate_postgres_identity() {
 			'.services[$service].environment.DATABASE_URL // ""' <<<"$config")
 		[[ -z $database_url ]] || fail \
 			"HA $container must not set DATABASE_URL; use the shared PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD contract"
-		for key in PGSERVICE PGSERVICEFILE; do
+		for key in PGSERVICE PGSERVICEFILE PGOPTIONS; do
 			service_value=$(jq -r --arg service "$container" --arg key "$key" \
 				'.services[$service].environment[$key] // ""' <<<"$config")
 			[[ -z $service_value ]] || fail \
-				"HA $container must not set $key; libpq service files can override the verified PostgreSQL identity"
+				"HA $container must not set $key; libpq connection options can override the verified PostgreSQL identity"
 		done
 	done
 
@@ -300,7 +300,7 @@ gonka_compose_validate_postgres_identity() {
     for container in versiond versiond2; do
         [[ " ${runtime_containers[*]} " == *" $container "* ]] || continue
         "$docker_bin" inspect "$container" >/dev/null 2>&1 || continue
-		for key in DATABASE_URL PGSERVICE PGSERVICEFILE; do
+		for key in DATABASE_URL PGSERVICE PGSERVICEFILE PGOPTIONS; do
 			actual=$(gonka_compose_container_env \
 				"$docker_bin" "$container" "$key") || actual=
 			[[ -z $actual ]] || fail \

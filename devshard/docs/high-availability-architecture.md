@@ -378,8 +378,9 @@ supervisor and commits the update only when both UUIDs match. The tuple is the
 early deployment preflight; the UUID is proof against aliases that resolve to
 different databases. `DATABASE_URL` is rejected in HA because devshardd reads
 the libpq `PG*` environment; allowing both contracts could make supervisor
-lookups and child writes use different databases. `PGSERVICE` and
-`PGSERVICEFILE` are rejected for the same reason: a service file can override
+lookups and child writes use different databases. `PGSERVICE`,
+`PGSERVICEFILE`, and `PGOPTIONS` are rejected for the same reason: a service
+file or session parameter such as `search_path` can override
 the tuple after it was verified. The updater checks these bypass variables in
 both the desired Compose model and already-running supervisors before replacing
 the first host. When the resolved host is external, the

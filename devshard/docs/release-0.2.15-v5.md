@@ -410,9 +410,10 @@ the override and does not pull, recreate, or preflight the local
 dependency and keeps the bundled database out of later Compose operations; the
 hoster does not select another upgrade mode. HA rejects `DATABASE_URL` so the
 supervisor's session lookup and its children cannot resolve different
-databases; it also rejects `PGSERVICE` and `PGSERVICEFILE`, which can override
-the checked tuple through a libpq service file. Before any mutation it compares `PGHOST`, `PGPORT`,
-`PGDATABASE`, and `PGUSER` with the existing containers. An implicit database
+databases; it also rejects `PGSERVICE`, `PGSERVICEFILE`, and `PGOPTIONS`, which
+can override the checked identity through a libpq service file or session
+parameters such as `search_path`. Before any mutation it compares `PGHOST`,
+`PGPORT`, `PGDATABASE`, and `PGUSER` with the existing containers. An implicit database
 identity change, disagreement between replicas, or non-Postgres HA storage is a
 hard failure rather than an attempted migration. Before committing the update,
 the script also reads the schema UUID through both replacement supervisors and

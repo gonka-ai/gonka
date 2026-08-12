@@ -685,12 +685,30 @@ if grep -q '^fleet apply$' "$tmpdir/postgres-identity-mismatch.log"; then
     fail "PostgreSQL identity mismatch was detected after fleet mutation"
 fi
 
+printf '%s\n' '{"storage":{"postgres_identity":"33333333-3333-3333-3333-333333333333"}}' \
+    >"$tmpdir/.gonka-devshard-v5-upgrade-complete"
+if run_cutover "$tmpdir/postgres-marker-identity-mismatch.log" env; then
+    fail "standalone router HA accepted a database different from the committed upgrade marker"
+fi
+rm -f "$tmpdir/.gonka-devshard-v5-upgrade-complete"
+if grep -q '^fleet apply$' "$tmpdir/postgres-marker-identity-mismatch.log"; then
+    fail "committed PostgreSQL identity mismatch was detected after fleet mutation"
+fi
+
 if run_cutover "$tmpdir/incompatible-version-name.log" env \
     VERSION_CATALOG_JSON='{"versions":[{"name":"v4:hotfix"}]}'; then
     fail "router HA accepted a catalog name outside the routing grammar"
 fi
 if grep -q '^fleet apply$' "$tmpdir/incompatible-version-name.log"; then
     fail "incompatible catalog name was detected after fleet mutation"
+fi
+
+if run_cutover "$tmpdir/version-name-terminal-lf.log" env \
+    VERSION_CATALOG_JSON='{"versions":[{"name":"v4\n"}]}'; then
+    fail "router HA accepted a catalog name with a terminal LF"
+fi
+if grep -q '^fleet apply$' "$tmpdir/version-name-terminal-lf.log"; then
+    fail "terminal-LF catalog name was detected after fleet mutation"
 fi
 if grep -q ' up .*\(proxy-policy\|proxy\)$' \
 	"$tmpdir/outer-compose-mid-fleet-drift.log"; then

@@ -118,11 +118,18 @@ if [[ ${1:-} == inspect ]]; then
             ;;
         '{{range .Config.Env}}{{println .}}{{end}}')
             case ${4:-} in
-                versiond | versiond2)
-                    printf 'PGHOST=%s\nPGDATABASE=devshardd\nPGUSER=devshardd\nVERSIOND_ORACLE_URL=http://api:9100/versions\n' \
+				versiond | versiond2)
+					printf 'PGHOST=%s\nPGDATABASE=devshardd\nPGUSER=devshardd\nVERSIOND_ORACLE_URL=http://api:9100/versions\n' \
                         "${RUNTIME_PGHOST:-devshard-postgres}"
 					[[ -z ${RUNTIME_PGSERVICE:-} ]] || \
 						printf 'PGSERVICE=%s\n' "$RUNTIME_PGSERVICE"
+					if [[ ${4:-} == versiond2 ]]; then
+						[[ -z ${RUNTIME_PGOPTIONS2:-} ]] || \
+							printf 'PGOPTIONS=%s\n' "$RUNTIME_PGOPTIONS2"
+					else
+						[[ -z ${RUNTIME_PGOPTIONS:-} ]] || \
+							printf 'PGOPTIONS=%s\n' "$RUNTIME_PGOPTIONS"
+					fi
 					[[ -z ${RUNTIME_DATABASE_URL:-} ]] || \
 						printf 'DATABASE_URL=%s\n' "$RUNTIME_DATABASE_URL"
                     ;;
@@ -283,6 +290,8 @@ for arg in "$@"; do
 			--arg database_url "${RENDERED_DATABASE_URL:-}" \
 			--arg pgservice "${RENDERED_PGSERVICE:-}" \
 			--arg pgservicefile "${RENDERED_PGSERVICEFILE:-}" \
+			--arg pgoptions "${RENDERED_PGOPTIONS:-}" \
+			--arg pgoptions2 "${RENDERED_PGOPTIONS2:-${RENDERED_PGOPTIONS:-}}" \
             --arg postgres_image "${DEVSHARD_POSTGRES_IMAGE-}" \
             --arg pg2db "${RENDERED_PGDATABASE2:-devshardd}" \
             --arg join "$JOIN_DIR" \
@@ -303,8 +312,8 @@ for arg in "$@"; do
                 ]},
                 "proxy-policy":{},
                 "proxy-policy2":{},
-				versiond:{container_name:"versiond",environment:{DATABASE_URL:$database_url,PGSERVICE:$pgservice,PGSERVICEFILE:$pgservicefile,PGHOST:$pg,PGDATABASE:"devshardd",PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
-				versiond2:{container_name:"versiond2",environment:{DATABASE_URL:$database_url,PGSERVICE:$pgservice,PGSERVICEFILE:$pgservicefile,PGHOST:$pg,PGDATABASE:$pg2db,PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
+				versiond:{container_name:"versiond",environment:{DATABASE_URL:$database_url,PGSERVICE:$pgservice,PGSERVICEFILE:$pgservicefile,PGOPTIONS:$pgoptions,PGHOST:$pg,PGDATABASE:"devshardd",PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
+				versiond2:{container_name:"versiond2",environment:{DATABASE_URL:$database_url,PGSERVICE:$pgservice,PGSERVICEFILE:$pgservicefile,PGOPTIONS:$pgoptions2,PGHOST:$pg,PGDATABASE:$pg2db,PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
                 "devshard-postgres":{container_name:"devshard-postgres",image:$postgres_image,volumes:[{type:"bind",source:($join + "/devshards/postgres"),target:"/var/lib/postgresql/gonka"}]},
                 "edge-api":{container_name:"edge-api"},
                 "edge-api2":{container_name:"edge-api2"},
@@ -702,6 +711,22 @@ grep -q 'HA-incompatible name' "$tmpdir/incompatible-version-name.stderr" || {
     cat "$tmpdir/incompatible-version-name.stderr" >&2
     fail "incompatible version name did not produce an actionable error"
 }
+
+if VERSION_CATALOG_JSON='{"versions":[{"name":"v4\n"}]}' \
+    DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$tmpdir/version-name-terminal-lf.log" \
+    FAIL_SERVICE=none \
+    EXISTING_CONTAINERS="proxy versiond versiond2 versiond-router devshard-postgres edge-api" \
+    FAKE_STATE_DIR="$tmpdir/version-name-terminal-lf.state" \
+    JOIN_DIR="$script_dir" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/upgrade-devshard-v5.sh" \
+        --versiond-mode ha --edge-mode single --preflight-only \
+        >"$tmpdir/version-name-terminal-lf.stdout" \
+        2>"$tmpdir/version-name-terminal-lf.stderr"; then
+    fail "release preflight accepted a version name with a terminal LF"
+fi
+assert_no_compose_mutation "$tmpdir/version-name-terminal-lf.log"
 
 upgrade_lock=$tmpdir/.gonka-deployment.lock
 : >"$upgrade_lock"
@@ -1106,7 +1131,7 @@ grep -q 'HA versiond must not set DATABASE_URL' \
 }
 assert_no_compose_mutation "$tmpdir/postgres-dsn.log"
 
-for service_variable in RENDERED_PGSERVICE RENDERED_PGSERVICEFILE; do
+for service_variable in RENDERED_PGSERVICE RENDERED_PGSERVICEFILE RENDERED_PGOPTIONS; do
 	service_log="$tmpdir/postgres-${service_variable,,}.log"
 	if env "$service_variable=unverified-service" \
 		DOCKER_BIN="$tmpdir/docker" \
@@ -1128,6 +1153,26 @@ for service_variable in RENDERED_PGSERVICE RENDERED_PGSERVICEFILE; do
 	assert_no_compose_mutation "$service_log"
 done
 
+if RENDERED_PGOPTIONS='-c search_path=ledger_a' \
+    RENDERED_PGOPTIONS2='-c search_path=ledger_b' \
+    DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$tmpdir/postgres-rendered-pgoptions-split.log" \
+    FAIL_SERVICE=none BLOCK_SERVICE=none BLOCK_SIGNAL=none \
+    EXISTING_CONTAINERS="proxy versiond versiond2 edge-api" \
+    FAKE_STATE_DIR="$tmpdir/postgres-rendered-pgoptions-split.state" \
+    JOIN_DIR="$script_dir" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/upgrade-devshard-v5.sh" \
+        --versiond-mode ha --edge-mode single \
+        >"$tmpdir/postgres-rendered-pgoptions-split.stdout" \
+        2>"$tmpdir/postgres-rendered-pgoptions-split.stderr"; then
+    fail "upgrade accepted different rendered PGOPTIONS values"
+fi
+grep -q 'must not set PGOPTIONS' \
+    "$tmpdir/postgres-rendered-pgoptions-split.stderr" || fail \
+    "different rendered PGOPTIONS did not produce a useful error"
+assert_no_compose_mutation "$tmpdir/postgres-rendered-pgoptions-split.log"
+
 if RUNTIME_PGSERVICE=unverified-service \
 	DOCKER_BIN="$tmpdir/docker" \
 	DOCKER_LOG="$tmpdir/postgres-runtime-pgservice.log" \
@@ -1146,6 +1191,34 @@ grep -q 'running HA versiond sets PGSERVICE' \
 	"$tmpdir/postgres-runtime-pgservice.stderr" || fail \
 	"runtime PGSERVICE did not produce a useful error"
 assert_no_compose_mutation "$tmpdir/postgres-runtime-pgservice.log"
+
+for runtime_case in same split; do
+	runtime_log="$tmpdir/postgres-runtime-pgoptions-$runtime_case.log"
+	if [[ $runtime_case == same ]]; then
+		runtime_pgoptions2='-c search_path=ledger_a'
+	else
+		runtime_pgoptions2='-c search_path=ledger_b'
+	fi
+	if RUNTIME_PGOPTIONS='-c search_path=ledger_a' \
+		RUNTIME_PGOPTIONS2="$runtime_pgoptions2" \
+		DOCKER_BIN="$tmpdir/docker" \
+		DOCKER_LOG="$runtime_log" \
+		FAIL_SERVICE=none BLOCK_SERVICE=none BLOCK_SIGNAL=none \
+		EXISTING_CONTAINERS="proxy versiond versiond2 edge-api" \
+		FAKE_STATE_DIR="$tmpdir/postgres-runtime-pgoptions-$runtime_case.state" \
+		JOIN_DIR="$script_dir" \
+		GONKA_CONFIG_ENV="$tmpdir/config.env" \
+		"$script_dir/upgrade-devshard-v5.sh" \
+			--versiond-mode ha --edge-mode single \
+			>"$tmpdir/postgres-runtime-pgoptions-$runtime_case.stdout" \
+			2>"$tmpdir/postgres-runtime-pgoptions-$runtime_case.stderr"; then
+		fail "upgrade accepted $runtime_case non-empty runtime PGOPTIONS"
+	fi
+	grep -q 'running HA versiond sets PGOPTIONS' \
+		"$tmpdir/postgres-runtime-pgoptions-$runtime_case.stderr" || fail \
+		"$runtime_case runtime PGOPTIONS did not produce a useful error"
+	assert_no_compose_mutation "$runtime_log"
+done
 
 if RUNTIME_DATABASE_URL=postgres://other/database \
 	DOCKER_BIN="$tmpdir/docker" \
