@@ -343,6 +343,27 @@ func TestInferenceUpNodeCommand_HealthyNodeSurvivesModelResolutionFailure(t *tes
 	require.Equal(t, 0, client.GetInferenceUpCalled())
 }
 
+func TestInferenceUpNodeCommand_KeepsHealthyWhenAssignedModelUnsupported(t *testing.T) {
+	b := NewTestBroker2(5)
+	node := createTestNodeWithStatus("test-node-1", types.HardwareNodeStatus_INFERENCE)
+	node.Node.Models = map[string]ModelArgs{"model-b": {}}
+	node.State.EpochModels["model-a"] = types.Model{Id: "model-a"}
+	node.State.EpochMLNodes["model-a"] = types.MLNodeInfo{NodeId: node.Node.Id}
+	client := mlnodeclient.NewMockClient()
+	client.CurrentState = mlnodeclient.MlNodeState_INFERENCE
+	client.InferenceIsHealthy = true
+	worker := NewNodeWorkerWithClient(node.Node.Id, node, client, b)
+	defer worker.Shutdown()
+
+	result := (InferenceUpNodeCommand{}).Execute(context.Background(), worker)
+
+	require.True(t, result.Succeeded)
+	require.False(t, result.DeploymentApplied)
+	require.Equal(t, types.HardwareNodeStatus_INFERENCE, result.FinalStatus)
+	require.Equal(t, 0, client.GetStopCalled())
+	require.Equal(t, 0, client.GetInferenceUpCalled())
+}
+
 func TestInferenceUpNodeCommand_DirtyNodeFailsModelResolutionFailure(t *testing.T) {
 	b := NewTestBroker2(5)
 	node := createTestNodeWithStatus("test-node-1", types.HardwareNodeStatus_INFERENCE)

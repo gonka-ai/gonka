@@ -173,7 +173,12 @@ func ValidateInferenceNodeBasic(node InferenceNodeConfig) []string {
 		if strings.TrimSpace(model.ModelOverride.HfRepo) == "" {
 			errors = append(errors, fmt.Sprintf("model %s override hf_repo is required", modelID))
 		}
-		if commit := model.ModelOverride.HfCommit; commit != "" && !hfCommitPattern.MatchString(commit) {
+		commit := model.ModelOverride.HfCommit
+		trimmedCommit := strings.TrimSpace(commit)
+		switch {
+		case trimmedCommit == "":
+			errors = append(errors, fmt.Sprintf("model %s override hf_commit is required", modelID))
+		case commit != trimmedCommit || !hfCommitPattern.MatchString(commit):
 			errors = append(errors, fmt.Sprintf("model %s override hf_commit must be a 40-character lowercase hexadecimal commit hash", modelID))
 		}
 		for _, arg := range model.Args {

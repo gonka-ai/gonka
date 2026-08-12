@@ -1215,12 +1215,19 @@ func (b *Broker) supportedNodeModels(nodeModels map[string]ModelArgs) map[string
 }
 
 func (b *Broker) resolveSupportedNodeModelID(epochMLNodes map[string]types.MLNodeInfo, nodeModels map[string]ModelArgs) (string, bool) {
+	if len(epochMLNodes) == 1 {
+		// Chain assignment is authoritative; do not PoC-filter it away.
+		return ResolveNodeModelID(epochMLNodes, nodeModels)
+	}
 	return ResolveNodeModelID(epochMLNodes, b.supportedNodeModels(nodeModels))
 }
 
 func ResolveNodeModelID(epochMLNodes map[string]types.MLNodeInfo, nodeModels map[string]ModelArgs) (string, bool) {
 	if len(epochMLNodes) == 1 {
 		for modelID := range epochMLNodes {
+			if _, supported := nodeModels[modelID]; !supported {
+				return "", false
+			}
 			return modelID, true
 		}
 	}

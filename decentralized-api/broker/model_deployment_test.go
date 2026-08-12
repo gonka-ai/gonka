@@ -53,16 +53,39 @@ func TestResolveModelDeployment_OverrideOwnsDeploymentFlags(t *testing.T) {
 	require.Len(t, deployment.Fingerprint(), 64)
 }
 
-func TestResolveModelDeployment_UnpinnedOverrideOmitsRevision(t *testing.T) {
-	b := &Broker{}
-	deployment := b.ResolveModelDeployment(types.Model{Id: "model-a"}, ModelArgs{
-		ModelOverride: &apiconfig.ModelOverride{HfRepo: "host/model-a"},
-	})
-
-	require.Equal(t, []string{"--served-model-name", "model-a"}, deployment.Args)
-}
-
 func TestLoadedModelsContain(t *testing.T) {
 	require.True(t, loadedModelsContain([]string{"alias-a", "alias-b"}, "alias-b"))
 	require.False(t, loadedModelsContain([]string{"alias-a"}, "missing"))
+}
+
+func TestActiveDeploymentChanged(t *testing.T) {
+	epoch := map[string]types.MLNodeInfo{"model-a": {NodeId: "node-1"}}
+	old := map[string]ModelArgs{
+		"model-a": {Args: []string{"--a"}},
+		"model-b": {Args: []string{"--old"}},
+	}
+
+	changed, removed := activeDeploymentChanged(epoch, old, map[string]ModelArgs{
+		"model-a": {Args: []string{"--a"}},
+		"model-b": {Args: []string{"--new"}},
+	})
+	require.False(t, changed)
+	require.False(t, removed)
+
+	changed, removed = activeDeploymentChanged(epoch, old, map[string]ModelArgs{
+		"model-a": {Args: []string{"--changed"}},
+		"model-b": {Args: []string{"--old"}},
+	})
+	require.True(t, changed)
+	require.False(t, removed)
+
+	changed, removed = activeDeploymentChanged(epoch, old, map[string]ModelArgs{
+		"model-b": {Args: []string{"--old"}},
+	})
+	require.False(t, changed)
+	require.True(t, removed)
+
+	changed, removed = activeDeploymentChanged(nil, map[string]ModelArgs{"model-a": {}}, map[string]ModelArgs{"model-b": {}})
+	require.True(t, changed)
+	require.False(t, removed)
 }

@@ -247,7 +247,7 @@ func (c UpdateNode) Execute(b *Broker) {
 	for model, config := range c.Node.Models {
 		models[model] = modelArgsFromConfig(config)
 	}
-	deploymentChanged := !modelArgsMapsEqual(existing.Node.Models, models)
+	deploymentChanged, assignedModelRemoved := activeDeploymentChanged(existing.State.EpochMLNodes, existing.Node.Models, models)
 
 	updated := Node{
 		Host:             c.Node.Host,
@@ -278,6 +278,10 @@ func (c UpdateNode) Execute(b *Broker) {
 	b.TriggerStatusQuery(true)
 	if deploymentChanged {
 		b.TriggerReconciliation()
+	}
+	if assignedModelRemoved {
+		logging.Info("UpdateNode. Assigned model is no longer supported; waiting for chain assignment", types.Nodes,
+			"node_id", c.Node.Id)
 	}
 
 	logging.Info("UpdateNode. Updated node configuration", types.Nodes, "node_id", c.Node.Id)

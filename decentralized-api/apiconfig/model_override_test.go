@@ -31,7 +31,28 @@ func TestValidateInferenceNodeBasic_ModelOverride(t *testing.T) {
 
 	node := validOverrideNode()
 	config := node.Models["MiniMaxAI/MiniMax-M2.7"]
+	config.ModelOverride.HfCommit = ""
+	node.Models["MiniMaxAI/MiniMax-M2.7"] = config
+	require.Contains(t, apiconfig.ValidateInferenceNodeBasic(node),
+		"model MiniMaxAI/MiniMax-M2.7 override hf_commit is required")
+
+	node = validOverrideNode()
+	config = node.Models["MiniMaxAI/MiniMax-M2.7"]
+	config.ModelOverride.HfCommit = "   "
+	node.Models["MiniMaxAI/MiniMax-M2.7"] = config
+	require.Contains(t, apiconfig.ValidateInferenceNodeBasic(node),
+		"model MiniMaxAI/MiniMax-M2.7 override hf_commit is required")
+
+	node = validOverrideNode()
+	config = node.Models["MiniMaxAI/MiniMax-M2.7"]
 	config.ModelOverride.HfCommit = "main"
+	node.Models["MiniMaxAI/MiniMax-M2.7"] = config
+	require.Contains(t, apiconfig.ValidateInferenceNodeBasic(node),
+		"model MiniMaxAI/MiniMax-M2.7 override hf_commit must be a 40-character lowercase hexadecimal commit hash")
+
+	node = validOverrideNode()
+	config = node.Models["MiniMaxAI/MiniMax-M2.7"]
+	config.ModelOverride.HfCommit = " 0123456789abcdef0123456789abcdef01234567 "
 	node.Models["MiniMaxAI/MiniMax-M2.7"] = config
 	require.Contains(t, apiconfig.ValidateInferenceNodeBasic(node),
 		"model MiniMaxAI/MiniMax-M2.7 override hf_commit must be a 40-character lowercase hexadecimal commit hash")

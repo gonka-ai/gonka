@@ -511,3 +511,41 @@ func TestShouldCancelForDeploymentChangeOnlyCancelsInference(t *testing.T) {
 		cancelInFlightTask: cancel,
 	}))
 }
+
+func TestUpdateNode_ActiveModelChangeMarksPending(t *testing.T) {
+	b := NewTestBroker()
+	node := createTestNodeWithStatus("node1", types.HardwareNodeStatus_INFERENCE)
+	node.Node.Id = "node1"
+	node.Node.Models = map[string]ModelArgs{"model1": {Args: []string{"--old"}}}
+	node.State.EpochMLNodes = map[string]types.MLNodeInfo{"model1": {NodeId: "node1"}}
+	node.State.EpochModels = map[string]types.Model{"model1": {Id: "model1"}}
+	b.nodes[node.Node.Id] = node
+
+	cmd := NewUpdateNodeCommand(apiconfig.InferenceNodeConfig{
+		Id:            "node1",
+		Host:          node.Node.Host,
+		InferencePort: node.Node.InferencePort,
+		PoCPort:       node.Node.PoCPort,
+		MaxConcurrent: node.Node.MaxConcurrent,
+		Models:        map[string]apiconfig.ModelConfig{"model1": {Args: []string{"--new"}}},
+	})
+	cmd.Execute(b)
+	resp := <-cmd.Response
+	require.NoError(t, resp.Error)
+	require.True(t, node.State.DeploymentUpdatePending)
+}
+
+func TestRefreshDoesNotMarkPendingWhenAssignedModelUnsupported(t *testing.T) {
+	manager := testDeploymentConfigManager(t)
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	node.Node.Models = map[string]ModelArgs{"model-b": {}}
+	node.State.EpochModels["model-a"] = types.Model{Id: "model-a"}
+	node.State.EpochMLNodes["model-a"] = types.MLNodeInfo{NodeId: node.Node.Id}
+	b := &Broker{
+		nodes:         map[string]*NodeWithState{node.Node.Id: node},
+		configManager: manager,
+	}
+
+	b.refreshDeploymentUpdatePendingFromApplied(node.Node.Id)
+	require.False(t, node.State.DeploymentUpdatePending)
+}

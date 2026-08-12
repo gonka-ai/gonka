@@ -106,8 +106,31 @@ func copyModelOverride(override *apiconfig.ModelOverride) *apiconfig.ModelOverri
 	return &copy
 }
 
-func modelArgsMapsEqual(a, b map[string]ModelArgs) bool {
+func modelArgsEqual(a, b ModelArgs) bool {
 	return reflect.DeepEqual(a, b)
+}
+
+// activeDeploymentChanged reports whether the currently assigned deployment
+// changed. Inactive-model edits do not count. If the assigned model was removed
+// from local support, assignedModelRemoved is true and changed is false so DAPI
+// waits for a new chain assignment instead of deploying a fallback.
+func activeDeploymentChanged(
+	epochMLNodes map[string]types.MLNodeInfo,
+	oldModels map[string]ModelArgs,
+	newModels map[string]ModelArgs,
+) (changed bool, assignedModelRemoved bool) {
+	oldID, oldOK := ResolveNodeModelID(epochMLNodes, oldModels)
+	newID, newOK := ResolveNodeModelID(epochMLNodes, newModels)
+	if oldOK && !newOK {
+		return false, true
+	}
+	if !newOK {
+		return false, false
+	}
+	if !oldOK || oldID != newID {
+		return true, false
+	}
+	return !modelArgsEqual(oldModels[oldID], newModels[newID]), false
 }
 
 func (b *Broker) refreshDeploymentUpdatePendingFromApplied(nodeID string) {
