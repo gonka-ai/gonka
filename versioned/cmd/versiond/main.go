@@ -72,9 +72,9 @@ func run(ctx context.Context) error {
 		return fmt.Errorf("open version catalog: %w", err)
 	}
 
-	lookup, err := sessionversion.OpenFromEnv(ctx)
+	lookup, err := sessionversion.OpenFromEnv(ctx, cfg.HA)
 	if err != nil {
-		if os.Getenv("GONKA_HA") == "true" {
+		if cfg.HA {
 			return fmt.Errorf("open HA session version lookup: %w", err)
 		}
 		slog.Warn("session version lookup unavailable; versionless obs will fan-out", "error", err)
@@ -155,10 +155,14 @@ func runPollLoop(
 	catalogStore *oracle.CatalogStore,
 	mgr *process.Manager,
 ) {
-	if catalog, ok := catalogStore.Current(); ok {
-		reconcileCatalog(ctx, catalog, mgr)
+	// Prefer a fresh, consensus-verified catalog before starting persisted LKG
+	// children. This avoids spending a full download/readiness budget on an old
+	// snapshot before versiond even asks what governance currently requires.
+	if !reconcileOnce(ctx, oracleClient, catalogStore, mgr) {
+		if catalog, ok := catalogStore.Current(); ok {
+			reconcileCatalog(ctx, catalog, mgr)
+		}
 	}
-	reconcileOnce(ctx, oracleClient, catalogStore, mgr)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -176,20 +180,25 @@ func reconcileOnce(
 	oracleClient *oracle.Client,
 	catalogStore *oracle.CatalogStore,
 	mgr *process.Manager,
-) {
+) bool {
 	candidate, err := oracleClient.Fetch(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
 			mgr.ReportReconcileError(fmt.Errorf("oracle fetch: %w", err))
 			slog.Error("oracle fetch failed, keeping current versions", "error", err)
 		}
-		return
+		return false
 	}
 	catalog, _, err := catalogStore.Accept(candidate)
 	if err != nil {
 		mgr.ReportReconcileError(fmt.Errorf("oracle catalog: %w", err))
 		slog.Error("oracle catalog rejected, keeping current versions", "error", err)
-		return
+		return false
+	}
+	if err := mgr.ObserveVerifiedCatalog(catalog.Versions); err != nil {
+		mgr.ReportReconcileError(fmt.Errorf("verified catalog identity: %w", err))
+		slog.Error("verified catalog identity rejected", "error", err)
+		return false
 	}
 	if err := reconcileCatalog(ctx, catalog, mgr); err == nil {
 		if !mgr.AdmitCatalog(catalog.Versions) {
@@ -197,6 +206,7 @@ func reconcileOnce(
 			slog.Error("verified catalog has not reached active artifact routes")
 		}
 	}
+	return true
 }
 
 func reconcileCatalog(ctx context.Context, catalog oracle.VersionConfig, mgr *process.Manager) error {

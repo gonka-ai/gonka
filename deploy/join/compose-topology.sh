@@ -256,7 +256,7 @@ gonka_compose_validate_postgres_identity() {
     for container in versiond versiond2; do
         [[ " ${runtime_containers[*]} " == *" $container "* ]] || continue
         "$docker_bin" inspect "$container" >/dev/null 2>&1 || continue
-		for key in PGSERVICE PGSERVICEFILE; do
+		for key in DATABASE_URL PGSERVICE PGSERVICEFILE; do
 			actual=$(gonka_compose_container_env \
 				"$docker_bin" "$container" "$key") || actual=
 			[[ -z $actual ]] || fail \

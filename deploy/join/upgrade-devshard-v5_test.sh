@@ -123,6 +123,8 @@ if [[ ${1:-} == inspect ]]; then
                         "${RUNTIME_PGHOST:-devshard-postgres}"
 					[[ -z ${RUNTIME_PGSERVICE:-} ]] || \
 						printf 'PGSERVICE=%s\n' "$RUNTIME_PGSERVICE"
+					[[ -z ${RUNTIME_DATABASE_URL:-} ]] || \
+						printf 'DATABASE_URL=%s\n' "$RUNTIME_DATABASE_URL"
                     ;;
                 versiond-router)
                     printf 'VERSIOND_HOSTS=versiond versiond2\n'
@@ -1107,6 +1109,25 @@ grep -q 'running HA versiond sets PGSERVICE' \
 	"$tmpdir/postgres-runtime-pgservice.stderr" || fail \
 	"runtime PGSERVICE did not produce a useful error"
 assert_no_compose_mutation "$tmpdir/postgres-runtime-pgservice.log"
+
+if RUNTIME_DATABASE_URL=postgres://other/database \
+	DOCKER_BIN="$tmpdir/docker" \
+	DOCKER_LOG="$tmpdir/postgres-runtime-database-url.log" \
+	FAIL_SERVICE=none BLOCK_SERVICE=none BLOCK_SIGNAL=none \
+	EXISTING_CONTAINERS="proxy versiond versiond2 edge-api" \
+	FAKE_STATE_DIR="$tmpdir/postgres-runtime-database-url.state" \
+	JOIN_DIR="$script_dir" \
+	GONKA_CONFIG_ENV="$tmpdir/config.env" \
+	"$script_dir/upgrade-devshard-v5.sh" \
+		--versiond-mode ha --edge-mode single \
+		>"$tmpdir/postgres-runtime-database-url.stdout" \
+		2>"$tmpdir/postgres-runtime-database-url.stderr"; then
+	fail "upgrade accepted DATABASE_URL from a running HA supervisor"
+fi
+grep -q 'running HA versiond sets DATABASE_URL' \
+	"$tmpdir/postgres-runtime-database-url.stderr" || fail \
+	"runtime DATABASE_URL did not produce a useful error"
+assert_no_compose_mutation "$tmpdir/postgres-runtime-database-url.log"
 
 versiond_barrier_line=$(line_number "$tmpdir/ha.log" \
     "--env VERSIOND_HOSTS=versiond versiond-router")

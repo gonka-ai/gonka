@@ -327,6 +327,7 @@ The implementation exposes these settings from
 |---|---|---|
 | `VERSIOND_READY_PATH` | `/ready` | devshardd admin readiness path; public `/healthz` must also pass before routing |
 | `VERSIOND_READY_TIMEOUT` | `60s` | max wait for new child to become ready before aborting swap |
+| `VERSIOND_ARTIFACT_ROLLOUT_GRACE` | `15m` | bounded lease during which the previously admitted SHA may keep serving while a same-name replacement is prepared; repeated catalog polls do not extend it |
 | `VERSIOND_DRAIN_PATH` | `/drain` | path versiond POSTs to put the old child into drain mode |
 | `VERSIOND_DRAIN_STATUS_PATH` | `/drain/status` | path versiond polls for the old child's in-flight count |
 | `VERSIOND_DRAIN_TIMEOUT` | `15m` | shared deadline for old proxy leases and child in-flight work before `SIGTERM` |
@@ -525,23 +526,26 @@ starting` for supervised retry.
 #### Readiness answers "can I serve", not "did the last poll succeed"
 
 `/readyz` requires a fresh catalog fetch and, at process startup, an exact match
-between that verified catalog and the active artifact routes. It also requires
-that the manager has reconciled every desired version at least once. These
-startup conditions latch. A host that has served, then starts downloading a new
-archive for a routine same-name SHA bump, stays ready throughout. Retracting
-readiness there would evict every host in the pool at the same moment —
-governance publishes to all of them at once — which is precisely the outage
-readiness exists to prevent. Failure to *ever* reconcile an approved version does
-keep the host out of the pool.
+between that verified catalog and the active artifact routes. The archive SHA,
+not its download URL, is the artifact identity: changing mirrors for identical
+bytes does not force a replacement. The startup proof latches, but per-version
+artifact eligibility does not. During a routine same-name SHA bump the old
+generation receives one bounded `VERSIOND_ARTIFACT_ROLLOUT_GRACE` lease so
+blue/green downloads do not evict the whole fleet at once. Publishing the new
+SHA restores exact readiness. A failed replacement stops answering ready for
+that version when the lease expires; polling the same catalog cannot extend it.
+The temporary mixed-generation window is therefore bounded rather than
+permanent.
 
 A host that fails to install one particular version drops out of *that version's*
-pool through the per-version check, and keeps serving the others.
+pool when its rollout lease expires, and keeps serving the others.
 
-For the same reason a **failed reconcile does not** clear readiness. Every
-versiond reads the same oracle, so an unreachable oracle or a bad archive fails
-on all of them simultaneously; gating on it would turn a control-plane hiccup
-into an empty pool while every child is still serving. That failure is reported
-as the `Degraded` condition and in the logs, not through the balancer.
+An oracle fetch failure does not invent a new desired identity and therefore
+does not clear readiness for the last verified catalog. A valid newer catalog
+whose archive cannot be installed is different: the old SHA remains available
+only for the bounded rollout lease described above. Reconcile failures are also
+reported through the `Degraded` condition and logs; readiness changes only when
+the artifact lease or the actual child serving state changes.
 
 #### Operator procedure
 

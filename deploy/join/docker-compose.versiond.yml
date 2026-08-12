@@ -25,6 +25,7 @@ x-versiond: &versiond
     - VERSIOND_CONSENSUS_STATUS_URL=http://node:26657/status
     - VERSIOND_BINARY_NAME=devshardd
     - VERSIOND_HOST_SHUTDOWN_BUDGET=${VERSIOND_HOST_SHUTDOWN_BUDGET:-25m}
+    - VERSIOND_ARTIFACT_ROLLOUT_GRACE=${VERSIOND_ARTIFACT_ROLLOUT_GRACE:-15m}
     # Keep serving after /readyz starts failing, so the router observes the
     # failure before this host stops accepting work.
     - VERSIOND_DRAIN_ANNOUNCE=${VERSIOND_DRAIN_ANNOUNCE:-5s}

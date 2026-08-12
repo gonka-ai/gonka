@@ -226,8 +226,10 @@ singletons. Before mutation, the updater proves that its rendered rollback
 generation has the same Compose config hash as the running service. If cutover
 fails or is interrupted, resources recorded as touched are compared with their
 journaled container generation. Unchanged resources are left running; only an
-actually replaced resource is restored in reverse order from the exact saved
-generation. The script exits non-zero.
+actually replaced, stopped, or unhealthy resource is restored in reverse order
+from the exact saved generation. Legacy journals without generation identity
+are recovered conservatively instead of treating two absent IDs as equality.
+The script exits non-zero.
 
 The updater, router cutover, and standalone fleet commands all take the same
 deployment-wide `.gonka-deployment.lock` next to `config.env`; a concurrent
@@ -575,6 +577,7 @@ The join Compose defaults are:
 | Setting | Default | Role |
 | --- | --- | --- |
 | `VERSIOND_DRAIN_ANNOUNCE` | `5s` | Keep serving after `/readyz` starts failing, so the balancer notices first. Counts against the shutdown budget; `0` = no balancer; below `5s` refuses to boot |
+| `VERSIOND_ARTIFACT_ROLLOUT_GRACE` | `15m` | Maximum compatibility window for an old SHA during a same-name governance rollout; a failed replacement leaves that version's pool after this deadline |
 | `VERSIOND_HEALTH_START_PERIOD` | `30m` | Compose startup allowance for downloads and first reconcile. A successful `/readyz` check marks the host healthy immediately; ordered upgrades wait at most 35 minutes |
 | `VERSIOND_HOST_SHUTDOWN_BUDGET` | `25m` | Internal absolute deadline; expiry forces remaining work and reaps children |
 | `VERSIOND_STOP_GRACE_PERIOD` | `30m` | Compose `stop_grace_period`, the outer Docker `SIGKILL` backstop |
@@ -582,7 +585,8 @@ The join Compose defaults are:
 Before upgrading, audit custom versiond duration values. Duration settings now
 use Go duration syntax and fail startup on malformed or non-positive values
 instead of silently falling back to defaults. Use values with units such as
-`15m` or `1s`; bare numbers and `VERSIOND_DRAIN_TIMEOUT=0` are invalid. Only
+`15m` or `1s`; bare numbers, `VERSIOND_DRAIN_TIMEOUT=0`, and
+`VERSIOND_ARTIFACT_ROLLOUT_GRACE=0` are invalid. Only
 `VERSIOND_DRAIN_ANNOUNCE=0` is accepted, where it explicitly declares that no
 balancer announcement window is needed.
 

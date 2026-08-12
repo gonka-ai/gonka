@@ -58,6 +58,13 @@ func TestLoad_Defaults(t *testing.T) {
 			DefaultDrainAnnounce,
 		)
 	}
+	if cfg.ArtifactRolloutGrace != DefaultArtifactRolloutGrace {
+		t.Errorf(
+			"ArtifactRolloutGrace = %v, want %v",
+			cfg.ArtifactRolloutGrace,
+			DefaultArtifactRolloutGrace,
+		)
+	}
 }
 
 func TestLoad_RequiresCompleteConsensusVerifierConfiguration(t *testing.T) {
@@ -87,6 +94,43 @@ func TestLoad_HARequiresConsensusVerifierConfiguration(t *testing.T) {
 	}
 }
 
+func TestLoad_HADeploymentGrammar(t *testing.T) {
+	for _, enabled := range []string{"1", "true", "yes", "TRUE", " yes "} {
+		t.Run("enabled_"+strings.TrimSpace(enabled), func(t *testing.T) {
+			t.Setenv("VERSIOND_ORACLE_URL", "http://oracle.test/versions")
+			t.Setenv("GONKA_HA", enabled)
+			t.Setenv("VERSIOND_CONSENSUS_PARAMS_URL", "http://node.test/params")
+			t.Setenv("VERSIOND_CONSENSUS_STATUS_URL", "http://node.test/status")
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load rejected GONKA_HA=%q: %v", enabled, err)
+			}
+			if !cfg.HA {
+				t.Fatalf("GONKA_HA=%q parsed as disabled", enabled)
+			}
+		})
+	}
+	for _, disabled := range []string{"", "0", "false", "no", "FALSE", " no "} {
+		t.Run("disabled_"+strings.TrimSpace(disabled), func(t *testing.T) {
+			t.Setenv("VERSIOND_ORACLE_URL", "http://oracle.test/versions")
+			t.Setenv("GONKA_HA", disabled)
+			cfg, err := Load()
+			if err != nil {
+				t.Fatalf("Load rejected GONKA_HA=%q: %v", disabled, err)
+			}
+			if cfg.HA {
+				t.Fatalf("GONKA_HA=%q parsed as enabled", disabled)
+			}
+		})
+	}
+
+	t.Setenv("VERSIOND_ORACLE_URL", "http://oracle.test/versions")
+	t.Setenv("GONKA_HA", "truthy")
+	if _, err := Load(); err == nil {
+		t.Fatal("Load accepted malformed GONKA_HA")
+	}
+}
+
 func TestLoad_HARejectsLocalArtifactOverrides(t *testing.T) {
 	t.Setenv("VERSIOND_ORACLE_URL", "http://oracle.test/versions")
 	t.Setenv("GONKA_HA", "true")
@@ -107,6 +151,7 @@ func TestLoad_CustomValues(t *testing.T) {
 	t.Setenv("VERSIOND_BINARY_NAME", "myapp")
 	t.Setenv("VERSIOND_HOST_SHUTDOWN_BUDGET", "12m")
 	t.Setenv("VERSIOND_DRAIN_ANNOUNCE", "9s")
+	t.Setenv("VERSIOND_ARTIFACT_ROLLOUT_GRACE", "20m")
 
 	cfg, err := Load()
 	if err != nil {
@@ -127,6 +172,9 @@ func TestLoad_CustomValues(t *testing.T) {
 	if cfg.DrainAnnounce != 9*time.Second {
 		t.Errorf("DrainAnnounce = %v, want %v", cfg.DrainAnnounce, 9*time.Second)
 	}
+	if cfg.ArtifactRolloutGrace != 20*time.Minute {
+		t.Errorf("ArtifactRolloutGrace = %v, want %v", cfg.ArtifactRolloutGrace, 20*time.Minute)
+	}
 }
 
 // A malformed duration refuses to boot rather than silently borrowing the
@@ -137,6 +185,7 @@ func TestLoad_MalformedDurationsRefuseToBoot(t *testing.T) {
 		"VERSIOND_POLL_INTERVAL",
 		"VERSIOND_HOST_SHUTDOWN_BUDGET",
 		"VERSIOND_DRAIN_ANNOUNCE",
+		"VERSIOND_ARTIFACT_ROLLOUT_GRACE",
 	} {
 		t.Run(key, func(t *testing.T) {
 			t.Setenv("VERSIOND_ORACLE_URL", "http://oracle:8080/versions")

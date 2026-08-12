@@ -393,7 +393,9 @@ different databases. `DATABASE_URL` is rejected in HA because devshardd reads
 the libpq `PG*` environment; allowing both contracts could make supervisor
 lookups and child writes use different databases. `PGSERVICE` and
 `PGSERVICEFILE` are rejected for the same reason: a service file can override
-the tuple after it was verified. When the resolved host is external, the
+the tuple after it was verified. The updater checks these bypass variables in
+both the desired Compose model and already-running supervisors before replacing
+the first host. When the resolved host is external, the
 updater automatically applies the no-local-PostgreSQL overlay.
 
 Therefore:
@@ -419,8 +421,11 @@ fresh store additionally compares DAPI's complete artifact set and revision
 bound with the local, caught-up consensus node before accepting its first
 revision. On every process start, persisted LKG children remain outside the
 load-balancer pool until a freshly verified catalog is represented by the exact
-active artifact routes. This startup proof then latches so a later same-name SHA
-rollout does not evict the whole fleet. HA mode refuses to start without both
+active artifact routes. This startup proof latches, while each later same-name
+SHA replacement has a bounded compatibility lease: the old generation remains
+eligible during blue/green preparation but is removed from that version's pool
+if the approved SHA is not published before the lease expires. Binary URLs are
+mirrors; SHA is the artifact identity. HA mode refuses to start without both
 local consensus endpoints. The Compose contract configures them; no revision
 floor is maintained by the operator.
 

@@ -131,6 +131,17 @@ container_exists() {
     "$docker_bin" inspect "$1" >/dev/null 2>&1
 }
 
+container_generation_available() {
+	local container=$1 state
+	state=$("$docker_bin" inspect --format \
+		'{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+		"$container") || return 1
+	case $state in
+		'true healthy' | 'true none') return 0 ;;
+		*) return 1 ;;
+	esac
+}
+
 if [[ $versiond_mode == auto ]]; then
     if container_exists devshard-postgres || container_exists versiond2 || \
         container_exists versiond-router; then
@@ -529,15 +540,25 @@ rollback_compose() {
 }
 
 restore_policy_slot() {
-	local service=$1 replicas expected_ids current_ids
-	expected_ids=$(jq -cer --arg service "$service" \
-		'.transaction.ingress.policies[$service].container_ids' \
-		"$transaction_journal" 2>/dev/null || true)
-	if [[ -n $expected_ids ]]; then
+	local service=$1 replicas expected_ids current_ids id generation_available
+	if jq -e --arg service "$service" \
+		'.transaction.ingress.policies[$service] | has("container_ids")' \
+		"$transaction_journal" >/dev/null 2>&1; then
+		expected_ids=$(jq -cer --arg service "$service" \
+			'.transaction.ingress.policies[$service].container_ids' \
+			"$transaction_journal") || return 1
 		current_ids=$("${compose[@]}" ps --all --quiet "$service" | \
 			jq -Rsc 'split("\n") | map(select(length > 0)) | sort')
 		if [[ $current_ids == "$expected_ids" ]]; then
-			return 0
+			generation_available=true
+			while IFS= read -r id; do
+				[[ -n $id ]] || continue
+				if ! container_generation_available "$id"; then
+					generation_available=false
+					break
+				fi
+			done < <(jq -r '.[]' <<<"$expected_ids")
+			$generation_available && return 0
 		fi
 	fi
 	replicas=$(jq -er --arg service "$service" \
@@ -558,14 +579,19 @@ restore_policy_slot() {
 }
 
 restore_public_proxy() {
-	local kind expected_id current_id=
+	local kind expected_id= current_id= identity_known=false
 	kind=$(jq -er '.transaction.ingress.proxy.kind' "$transaction_journal") || return 1
-	expected_id=$(jq -r '.transaction.ingress.proxy.container_id // empty' \
-		"$transaction_journal") || return 1
+	if jq -e '.transaction.ingress.proxy | has("container_id")' \
+		"$transaction_journal" >/dev/null 2>&1; then
+		identity_known=true
+		expected_id=$(jq -r '.transaction.ingress.proxy.container_id' \
+			"$transaction_journal") || return 1
+	fi
 	if container_exists proxy; then
 		current_id=$("$docker_bin" inspect --format '{{.Id}}' proxy) || return 1
 	fi
-	if [[ $current_id == "$expected_id" ]]; then
+	if $identity_known && [[ $current_id == "$expected_id" ]] && \
+		{ [[ -z $current_id ]] || container_generation_available "$current_id"; }; then
 		return 0
 	fi
 	if [[ $kind == absent ]]; then

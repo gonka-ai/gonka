@@ -20,7 +20,7 @@ type Lookup struct {
 
 // OpenFromEnv connects using libpq env (PGHOST/PGUSER/… or DATABASE_URL).
 // Returns (nil, nil) when Postgres is not configured or explicitly disabled.
-func OpenFromEnv(ctx context.Context) (*Lookup, error) {
+func OpenFromEnv(ctx context.Context, ha bool) (*Lookup, error) {
 	if os.Getenv("VERSIOND_DISABLE_SESSION_LOOKUP") == "true" {
 		slog.Info("session version lookup disabled by VERSIOND_DISABLE_SESSION_LOOKUP")
 		return nil, nil
@@ -34,7 +34,7 @@ func OpenFromEnv(ctx context.Context) (*Lookup, error) {
 	if connString != "" && pgEnvironmentConfigured() {
 		return nil, errors.New("DATABASE_URL cannot be combined with PG* connection variables; use one PostgreSQL configuration")
 	}
-	if connString != "" && os.Getenv("GONKA_HA") == "true" {
+	if connString != "" && ha {
 		return nil, errors.New("DATABASE_URL is unsupported in HA; use PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD so versiond and its children share one database")
 	}
 	cfg, err := pgxpool.ParseConfig(connString)

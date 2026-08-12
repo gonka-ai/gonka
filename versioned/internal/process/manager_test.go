@@ -2844,6 +2844,85 @@ func TestAdmitCatalogRejectsStalePersistedArtifactBeforeOpeningReadiness(t *test
 	}
 }
 
+func TestVerifiedArtifactRolloutLeaseExpiresWithoutReplacement(t *testing.T) {
+	const (
+		oldSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		newSHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	)
+	now := time.Unix(100, 0)
+	m := NewManager(config.Config{
+		BasePort:             5000,
+		ReadyPath:            "/ready",
+		ArtifactRolloutGrace: 10 * time.Minute,
+	})
+	m.now = func() time.Time { return now }
+	current := &child{
+		status:        statusRunning,
+		version:       oracle.Version{Name: "v5", Binary: "https://example.invalid/a", SHA256: oldSHA},
+		archiveSHA256: oldSHA,
+	}
+	current.serving.Store(true)
+	current.servingAt.Store(time.Now().UnixNano())
+	m.mu.Lock()
+	m.processes["v5"] = current
+	m.rebuildRoutes()
+	m.mu.Unlock()
+
+	oldCatalog := []oracle.Version{{Name: "v5", Binary: "https://example.invalid/a", SHA256: oldSHA}}
+	if !m.AdmitCatalog(oldCatalog) {
+		t.Fatal("initial exact artifact was not admitted")
+	}
+	newCatalog := []oracle.Version{{Name: "v5", Binary: "https://example.invalid/b", SHA256: newSHA}}
+	if err := m.ObserveVerifiedCatalog(newCatalog); err != nil {
+		t.Fatalf("ObserveVerifiedCatalog: %v", err)
+	}
+	if !m.ServesVersion("v5") {
+		t.Fatal("old generation was removed before its bounded rollout lease")
+	}
+
+	now = now.Add(10*time.Minute + time.Nanosecond)
+	if m.ServesVersion("v5") {
+		t.Fatal("old generation still served after its rollout lease expired")
+	}
+
+	m.mu.Lock()
+	replacement := &child{
+		status:        statusRunning,
+		version:       newCatalog[0],
+		archiveSHA256: newSHA,
+	}
+	replacement.serving.Store(true)
+	replacement.servingAt.Store(time.Now().UnixNano())
+	m.processes["v5"] = replacement
+	m.rebuildRoutes()
+	m.mu.Unlock()
+	if !m.ServesVersion("v5") {
+		t.Fatal("approved replacement did not restore per-version readiness")
+	}
+}
+
+func TestCatalogArtifactIdentityIgnoresMirrorURL(t *testing.T) {
+	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	m := NewManager(config.Config{BasePort: 5000, ReadyPath: "/ready"})
+	current := &child{
+		status:        statusRunning,
+		version:       oracle.Version{Name: "v5", Binary: "https://mirror-a.invalid/v5", SHA256: sha},
+		archiveSHA256: sha,
+	}
+	current.serving.Store(true)
+	current.servingAt.Store(time.Now().UnixNano())
+	m.mu.Lock()
+	m.processes["v5"] = current
+	m.rebuildRoutes()
+	m.mu.Unlock()
+
+	if !m.AdmitCatalog([]oracle.Version{{
+		Name: "v5", Binary: "https://mirror-b.invalid/v5", SHA256: sha,
+	}}) {
+		t.Fatal("a mirror URL change with the same archive SHA was treated as a new artifact")
+	}
+}
+
 func waitFor(timeout time.Duration, cond func() bool) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {

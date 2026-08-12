@@ -69,6 +69,12 @@ type child struct {
 	restart      bool
 }
 
+type verifiedArtifact struct {
+	sha256       string
+	overridden   bool
+	rolloutUntil time.Time
+}
+
 // servingFresh reports whether this generation's readiness monitor currently
 // vouches for it. An answer older than childReadyStale is not an answer: a
 // monitor that has stopped must not freeze the child at "ready".
@@ -106,42 +112,46 @@ func (c *child) Done() <-chan struct{} {
 }
 
 type Manager struct {
-	cfg              config.Config
-	processes        map[string]*child
-	draining         map[string][]*child
-	children         map[*child]struct{}
-	downloading      map[string]struct{}
-	allocatedPorts   map[int]struct{}
-	reservedPorts    map[int]struct{}
-	operations       map[uint64]controlOperation
-	nextOperationID  uint64
-	conditions       Conditions
-	everConverged    bool
-	catalogAdmitted  bool
-	admissionCatalog []oracle.Version
-	available        chan struct{}
-	childCtx         context.Context
-	cancelChildren   context.CancelFunc
-	hostDraining     bool
-	mu               sync.Mutex
-	routes           atomic.Value // proxy.RouteTable
+	cfg               config.Config
+	processes         map[string]*child
+	draining          map[string][]*child
+	children          map[*child]struct{}
+	downloading       map[string]struct{}
+	allocatedPorts    map[int]struct{}
+	reservedPorts     map[int]struct{}
+	operations        map[uint64]controlOperation
+	nextOperationID   uint64
+	conditions        Conditions
+	everConverged     bool
+	catalogAdmitted   bool
+	admissionCatalog  []oracle.Version
+	verifiedArtifacts map[string]verifiedArtifact
+	now               func() time.Time
+	available         chan struct{}
+	childCtx          context.Context
+	cancelChildren    context.CancelFunc
+	hostDraining      bool
+	mu                sync.Mutex
+	routes            atomic.Value // proxy.RouteTable
 }
 
 func NewManager(cfg config.Config) *Manager {
 	cfg = normalizeConfig(cfg)
 	childCtx, cancelChildren := context.WithCancel(context.Background())
 	m := &Manager{
-		cfg:            cfg,
-		processes:      make(map[string]*child),
-		draining:       make(map[string][]*child),
-		children:       make(map[*child]struct{}),
-		downloading:    make(map[string]struct{}),
-		allocatedPorts: make(map[int]struct{}),
-		reservedPorts:  reservedChildPorts(),
-		operations:     make(map[uint64]controlOperation),
-		childCtx:       childCtx,
-		cancelChildren: cancelChildren,
-		available:      make(chan struct{}, 1),
+		cfg:               cfg,
+		processes:         make(map[string]*child),
+		draining:          make(map[string][]*child),
+		children:          make(map[*child]struct{}),
+		downloading:       make(map[string]struct{}),
+		allocatedPorts:    make(map[int]struct{}),
+		reservedPorts:     reservedChildPorts(),
+		operations:        make(map[uint64]controlOperation),
+		verifiedArtifacts: make(map[string]verifiedArtifact),
+		now:               time.Now,
+		childCtx:          childCtx,
+		cancelChildren:    cancelChildren,
+		available:         make(chan struct{}, 1),
 	}
 	m.routes.Store(proxy.RouteTable{})
 	return m
@@ -171,6 +181,9 @@ func normalizeConfig(cfg config.Config) config.Config {
 	}
 	if cfg.DrainKillGrace <= 0 {
 		cfg.DrainKillGrace = config.DefaultDrainKillGrace
+	}
+	if cfg.ArtifactRolloutGrace <= 0 {
+		cfg.ArtifactRolloutGrace = config.DefaultArtifactRolloutGrace
 	}
 	return cfg
 }
@@ -271,9 +284,78 @@ func (m *Manager) ServesVersion(name string) bool {
 
 	m.mu.Lock()
 	c := m.processes[name]
-	running := c != nil && c.status == statusRunning
+	running := c != nil && c.status == statusRunning &&
+		m.artifactMayServeLocked(name, c)
 	m.mu.Unlock()
 	return running && c.servingFresh()
+}
+
+// ObserveVerifiedCatalog records the exact artifact identity independently
+// verified by the caller before reconciliation starts. A healthy old
+// generation may continue serving for one bounded rollout lease while its
+// blue/green replacement is prepared. The lease is not refreshed by repeated
+// polls of the same catalog, so a permanently failed update eventually leaves
+// only hosts that actually run the approved SHA in that version's pool.
+func (m *Manager) ObserveVerifiedCatalog(desired []oracle.Version) error {
+	artifacts := make(map[string]verifiedArtifact, len(desired))
+	for _, version := range desired {
+		sha, err := version.ResolvedSHA256()
+		if err != nil {
+			return fmt.Errorf("resolve verified artifact %s: %w", version.Name, err)
+		}
+		_, overridden := m.cfg.Overrides[version.Name]
+		artifacts[version.Name] = verifiedArtifact{
+			sha256:     strings.ToLower(sha),
+			overridden: overridden,
+		}
+	}
+
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	now := m.now()
+	for name, next := range artifacts {
+		previous, observed := m.verifiedArtifacts[name]
+		if observed && previous.sha256 == next.sha256 &&
+			previous.overridden == next.overridden {
+			next.rolloutUntil = previous.rolloutUntil
+		} else if m.catalogAdmitted {
+			if child := m.processes[name]; child != nil &&
+				!artifactMatches(child, next) {
+				next.rolloutUntil = now.Add(m.cfg.ArtifactRolloutGrace)
+			}
+		}
+		artifacts[name] = next
+	}
+	m.verifiedArtifacts = artifacts
+	m.admissionCatalog = append(m.admissionCatalog[:0], desired...)
+	routes, _ := m.routes.Load().(proxy.RouteTable)
+	m.admitCatalogLocked(routes)
+	return nil
+}
+
+func (m *Manager) artifactMayServeLocked(name string, child *child) bool {
+	expected, ok := m.verifiedArtifacts[name]
+	if !ok {
+		// Before the first verified catalog this predicate is not the admission
+		// boundary; CatalogAdmitted is. Keeping the local route observable makes
+		// startup reconciliation and non-HA process tests independent of the
+		// external catalog gate. Once admitted, an undeclared artifact is closed.
+		return !m.catalogAdmitted
+	}
+	if artifactMatches(child, expected) {
+		return true
+	}
+	return !expected.rolloutUntil.IsZero() && m.now().Before(expected.rolloutUntil)
+}
+
+func artifactMatches(child *child, expected verifiedArtifact) bool {
+	if child == nil {
+		return false
+	}
+	if expected.overridden {
+		return strings.HasPrefix(child.archiveSHA256, "override:")
+	}
+	return strings.EqualFold(child.archiveSHA256, expected.sha256)
 }
 
 // AdmitCatalog opens the startup readiness gate after an independently
@@ -282,9 +364,11 @@ func (m *Manager) ServesVersion(name string) bool {
 // same-name artifact update must not evict every host while the fleet downloads
 // the replacement concurrently.
 func (m *Manager) AdmitCatalog(desired []oracle.Version) bool {
+	if err := m.ObserveVerifiedCatalog(desired); err != nil {
+		return false
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.admissionCatalog = append(m.admissionCatalog[:0], desired...)
 	routes, ok := m.routes.Load().(proxy.RouteTable)
 	return ok && m.admitCatalogLocked(routes)
 }
@@ -302,15 +386,12 @@ func (m *Manager) admitCatalogLocked(routes proxy.RouteTable) bool {
 		}
 		child := m.processes[version.Name]
 		if child == nil || child.status != statusRunning ||
-			child.version.Binary != version.Binary ||
 			routes[version.Name] != child.proxyTarget {
 			return false
 		}
-		if _, overridden := m.cfg.Overrides[version.Name]; overridden {
-			if !strings.HasPrefix(child.archiveSHA256, "override:") {
-				return false
-			}
-		} else if !strings.EqualFold(child.archiveSHA256, desiredSHA) {
+		expected := verifiedArtifact{sha256: strings.ToLower(desiredSHA)}
+		_, expected.overridden = m.cfg.Overrides[version.Name]
+		if !artifactMatches(child, expected) {
 			return false
 		}
 	}

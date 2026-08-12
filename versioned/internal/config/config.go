@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	DefaultDrainKillGrace     = 10 * time.Minute
-	DefaultHostShutdownBudget = 25 * time.Minute
+	DefaultDrainKillGrace       = 10 * time.Minute
+	DefaultHostShutdownBudget   = 25 * time.Minute
+	DefaultArtifactRolloutGrace = 15 * time.Minute
 	// DefaultDrainAnnounce must exceed the load balancer's health-check
 	// detection time (interval x fall) so no request is refused before the
 	// balancer has withdrawn this upstream.
@@ -19,25 +20,27 @@ const (
 )
 
 type Config struct {
-	OracleURL          string
-	ConsensusParamsURL string
-	ConsensusStatusURL string
-	PollInterval       time.Duration
-	BinDir             string
-	DataDir            string
-	BinaryName         string
-	BasePort           int
-	ReadyPath          string
-	ReadyTimeout       time.Duration
-	DrainPath          string
-	DrainStatusPath    string
-	DrainTimeout       time.Duration
-	DrainPollInterval  time.Duration
-	DrainKillGrace     time.Duration
-	HostShutdownBudget time.Duration
-	DrainAnnounce      time.Duration
-	Overrides          map[string]string // version name -> local binary path
-	ForceVersions      []string          // version names that must run regardless of oracle
+	HA                   bool
+	OracleURL            string
+	ConsensusParamsURL   string
+	ConsensusStatusURL   string
+	PollInterval         time.Duration
+	BinDir               string
+	DataDir              string
+	BinaryName           string
+	BasePort             int
+	ReadyPath            string
+	ReadyTimeout         time.Duration
+	DrainPath            string
+	DrainStatusPath      string
+	DrainTimeout         time.Duration
+	DrainPollInterval    time.Duration
+	DrainKillGrace       time.Duration
+	HostShutdownBudget   time.Duration
+	DrainAnnounce        time.Duration
+	ArtifactRolloutGrace time.Duration
+	Overrides            map[string]string // version name -> local binary path
+	ForceVersions        []string          // version names that must run regardless of oracle
 }
 
 func Load() (Config, error) {
@@ -46,7 +49,13 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("VERSIOND_ORACLE_URL is required")
 	}
 
+	ha, err := HADeployment()
+	if err != nil {
+		return Config{}, err
+	}
+
 	cfg := Config{
+		HA:                 ha,
 		OracleURL:          oracleURL,
 		ConsensusParamsURL: os.Getenv("VERSIOND_CONSENSUS_PARAMS_URL"),
 		ConsensusStatusURL: os.Getenv("VERSIOND_CONSENSUS_STATUS_URL"),
@@ -65,12 +74,12 @@ func Load() (Config, error) {
 			"VERSIOND_CONSENSUS_PARAMS_URL and VERSIOND_CONSENSUS_STATUS_URL must be configured together",
 		)
 	}
-	if os.Getenv("GONKA_HA") == "true" && cfg.ConsensusParamsURL == "" {
+	if cfg.HA && cfg.ConsensusParamsURL == "" {
 		return Config{}, fmt.Errorf(
 			"VERSIOND_CONSENSUS_PARAMS_URL and VERSIOND_CONSENSUS_STATUS_URL are required when GONKA_HA=true",
 		)
 	}
-	if os.Getenv("GONKA_HA") == "true" && len(cfg.Overrides) > 0 {
+	if cfg.HA && len(cfg.Overrides) > 0 {
 		return Config{}, fmt.Errorf(
 			"VERSIOND_OVERRIDE_* is not allowed when GONKA_HA=true: HA artifact identity must come from the verified consensus catalog",
 		)
@@ -86,6 +95,7 @@ func Load() (Config, error) {
 	}{
 		{&cfg.PollInterval, "VERSIOND_POLL_INTERVAL", 30 * time.Second, false},
 		{&cfg.ReadyTimeout, "VERSIOND_READY_TIMEOUT", 60 * time.Second, false},
+		{&cfg.ArtifactRolloutGrace, "VERSIOND_ARTIFACT_ROLLOUT_GRACE", DefaultArtifactRolloutGrace, false},
 		{&cfg.DrainTimeout, "VERSIOND_DRAIN_TIMEOUT", 15 * time.Minute, false},
 		{&cfg.DrainPollInterval, "VERSIOND_DRAIN_POLL_INTERVAL", time.Second, false},
 		{&cfg.DrainKillGrace, "VERSIOND_DRAIN_KILL_GRACE", DefaultDrainKillGrace, false},
@@ -123,6 +133,24 @@ func Load() (Config, error) {
 	}
 
 	return cfg, nil
+}
+
+// HADeployment parses the deployment-wide HA switch with the same closed
+// grammar used by devshardd. Since this flag enables fail-closed storage and
+// catalog checks, an unknown value is an error rather than an implicit "off".
+func HADeployment() (bool, error) {
+	raw := os.Getenv("GONKA_HA")
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes":
+		return true, nil
+	case "", "0", "false", "no":
+		return false, nil
+	default:
+		return false, fmt.Errorf(
+			"GONKA_HA=%q is not a boolean; use 1/true/yes or 0/false/no",
+			raw,
+		)
+	}
 }
 
 // ListenAddr returns the hardcoded listen address.

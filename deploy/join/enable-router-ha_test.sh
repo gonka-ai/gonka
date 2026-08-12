@@ -40,7 +40,14 @@ fi
 
 if [[ ${1:-} == inspect ]]; then
     if [[ ${2:-} == --format ]]; then
-        case ${3:-} in
+		case ${3:-} in
+			'{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')
+				if [[ -f $STATE_DIR/stopped-${4:-unknown} ]]; then
+					printf 'false none\n'
+				else
+					printf 'true healthy\n'
+				fi
+				;;
             '{{json .Config.Labels}}')
                 jq -cn --arg workdir "$JOIN_DIR" \
                     --arg files "$JOIN_DIR/docker-compose.yml,$JOIN_DIR/docker-compose.versiond.yml,$JOIN_DIR/docker-compose.edge-api-multi.yml" \
@@ -254,6 +261,10 @@ if [[ ${1:-} == compose ]]; then
 			fi
 			rm -f "$STATE_DIR/generation-proxy"
 			exit 0
+		fi
+		if [[ ${KILL_PROXY_BEFORE_MUTATION:-false} == true ]]; then
+			kill -KILL "$PPID"
+			exit 137
 		fi
         if [[ $compat == true ]]; then
             printf 'rollback-versiond %s\n' \
@@ -524,6 +535,43 @@ if grep -q 'gonka-rollback-model\..* up .*proxy-policy2$' \
     "$tmpdir/crash-recovery.log"; then
 	fail "journal intent without a Docker mutation recreated an unchanged policy slot"
 fi
+
+set +e
+INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
+INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/stopped-crash.log" env KILL_POLICY_SERVICE=proxy-policy2
+stopped_crash_status=$?
+set -e
+[[ $stopped_crash_status -ne 0 ]] || fail \
+    "SIGKILL before stopped-generation recovery returned success"
+: >"$tmpdir/stopped-cid-proxy-policy2"
+INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
+INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/stopped-recovery.log" env
+rm -f "$tmpdir/stopped-cid-proxy-policy2"
+grep -q 'gonka-rollback-model\..* up .*proxy-policy2$' \
+    "$tmpdir/stopped-recovery.log" || fail \
+    "matching container ID hid a stopped rollback generation"
+
+set +e
+INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
+INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/legacy-proxy-crash.log" env \
+        KILL_PROXY_BEFORE_MUTATION=true
+legacy_proxy_status=$?
+set -e
+[[ $legacy_proxy_status -ne 0 ]] || fail \
+    "SIGKILL before proxy mutation returned success"
+jq 'del(.transaction.ingress.proxy.container_id)' \
+    "$tmpdir/.gonka-router-ha-transaction.json" \
+    >"$tmpdir/legacy-ingress.json"
+mv "$tmpdir/legacy-ingress.json" "$tmpdir/.gonka-router-ha-transaction.json"
+INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
+INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/legacy-proxy-recovery.log" env PROXY_EXISTS=false
+grep -q 'gonka-rollback-model\..* up .*proxy$' \
+    "$tmpdir/legacy-proxy-recovery.log" || fail \
+    "legacy journal without generation identity treated an absent proxy as restored"
 
 if INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
     INITIAL_PROXY_COMPONENT=proxy-router \
