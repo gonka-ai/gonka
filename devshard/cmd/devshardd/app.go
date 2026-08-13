@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"common/chain"
+	"common/httpguard"
 	mlnodeclient "common/nodemanager"
 	commrc "common/runtimeconfig"
 	"common/storage/payloads"
@@ -75,6 +76,15 @@ func (p phaseEpochProvider) CurrentEpochID() uint64 {
 func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error) {
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create data dir %s: %w", cfg.DataDir, err)
+	}
+
+	// Wire the dial-time SSRF guard before anything can dial out. Guarded
+	// clients read the flag per dial, so this also covers the package-level
+	// validation.PayloadRetrievalClient constructed at init.
+	httpguard.SetAllowPrivate(cfg.AllowPrivateAddresses)
+	if cfg.AllowPrivateAddresses {
+		slog.Warn("SSRF guard disabled: dials to private/internal addresses are allowed",
+			"env", "DEVSHARD_ALLOW_PRIVATE_ADDRESSES")
 	}
 
 	var closers closeStack

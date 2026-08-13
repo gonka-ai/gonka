@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"common/chain"
+	"common/httpguard"
 	"devshard/bridge"
 	"devshard/state"
 	"devshard/types"
@@ -128,6 +129,11 @@ var gatewayRuntimeBuilder = buildRuntime
 func main() {
 	ConfigurePoCRequestMode(os.Getenv("DEVSHARD_POC_REQUEST_MODE"))
 	ConfigureCapacityAwareLimits(os.Getenv("DEVSHARD_CAPACITY_AWARE_LIMITS"))
+	// Wire the dial-time SSRF guard before any outbound dial. Host URLs come
+	// from chain state and are participant-controlled; the gateway's own chain
+	// RPC/public-API clients are unguarded, so private self-hosted endpoints
+	// keep working. Default secure; dev/e2e opt out via env.
+	httpguard.SetAllowPrivate(readBoolEnv("DEVSHARD_ALLOW_PRIVATE_ADDRESSES", false))
 	flags := parseCLIFlags()
 	runtimeOpts := mustLoadRuntimeOptions(flags)
 	gatewayStore := mustOpenGatewayStore(runtimeOpts.baseStorageDir)
