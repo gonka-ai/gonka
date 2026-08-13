@@ -129,9 +129,11 @@ throughput fell by 42%.
 
 ## Image and driver requirements
 
-- Use the production org mirror
-  `ghcr.io/gonka-ai/mlnode:3.0.14-post2-vllm0.25.1-cu129-b300fix@sha256:9bfe02e11822c3c1b2b9391ba505a1b7cf6ec87e8e4f2dc69be989baec2d2125`.
-  It reports the canonical MLNode release `3.0.14-post2` through
+- Use the CUDA 13 production image
+  `ghcr.io/gonka-ai/mlnode:3.0.16@sha256:1b9b7ce55feecab837f1d7ce974fc5f377ae0a04a4fb403eeeb50130e7728ee1`.
+  The CUDA 12.9 fallback is
+  `ghcr.io/gonka-ai/mlnode:3.0.16-cu129@sha256:f3db246b45dbe7f71cb9d8ad8ab15877d31bf28f742da04eed22b177d78e62c3`.
+  Both report the canonical MLNode release `3.0.16` through
   `/api/v1/state`, `/api/v1/versions`, and `mlnode_version_info`.
 - Use the Gonka vLLM 0.25.1 build with plugin `v0.1.3`. It pre-sizes the
   OpenAI API token batch to 32768 before CUDA graph capture and keeps the MoE
