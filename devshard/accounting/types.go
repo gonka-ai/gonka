@@ -92,6 +92,7 @@ const (
 	TimeoutContextCanceled          TimeoutReason = "context_canceled"
 	TimeoutDiffDeliveryFailed       TimeoutReason = "timeout_diff_delivery_failed"
 	TimeoutNotApplied               TimeoutReason = "timeout_not_applied"
+	TimeoutEscrowGone               TimeoutReason = "escrow_gone_from_hosts"
 	TimeoutReasonUnknown            TimeoutReason = "unknown"
 )
 
@@ -144,20 +145,25 @@ type VerdictRecord struct {
 }
 
 const (
-	SlowReceiptAfter  = 5 * time.Second
-	SlowChunkGapAfter = 1500 * time.Millisecond
+	SlowReceiptAfter  = 2500 * time.Millisecond
+	SlowChunkGapAfter = 5 * time.Second
 	ClockDriftBeyond  = 5 * time.Second
+	SlowDecodeAfter   = 40 * time.Millisecond
 )
 
 type AttemptTiming struct {
-	Acknowledgement time.Duration
-	MaxChunkGap     time.Duration
-	ClockOffset     time.Duration
-	ClockMeasured   bool
+	Acknowledgement    time.Duration
+	MaxChunkGap        time.Duration
+	ClockOffset        time.Duration
+	ClockMeasured      bool
+	TimePerOutputToken time.Duration
 }
 
 func (t AttemptTiming) receiptWasSlow() bool { return t.Acknowledgement > SlowReceiptAfter }
 func (t AttemptTiming) chunkWasSlow() bool   { return t.MaxChunkGap > SlowChunkGapAfter }
+func (t AttemptTiming) decodeWasSlow() bool {
+	return t.TimePerOutputToken > SlowDecodeAfter
+}
 func (t AttemptTiming) clockHasDrifted() bool {
 	return t.ClockMeasured && (t.ClockOffset > ClockDriftBeyond || t.ClockOffset < -ClockDriftBeyond)
 }
@@ -174,6 +180,7 @@ type CounterKey struct {
 	SlowReceipt            bool           `json:"slow_receipt,omitempty"`
 	SlowChunk              bool           `json:"slow_chunk,omitempty"`
 	ClockDrifted           bool           `json:"clock_drifted,omitempty"`
+	SlowDecode             bool           `json:"slow_decode,omitempty"`
 	DetailReason           string         `json:"detail_reason,omitempty"`
 	DeliveryReason         string         `json:"delivery_reason,omitempty"`
 	TimeoutKind            TimeoutKind    `json:"timeout_kind,omitempty"`
@@ -318,7 +325,7 @@ func TimeoutOutcomeFromAction(action, reason string) TimeoutOutcome {
 func TimeoutReasonFromString(outcome TimeoutOutcome, reason string) TimeoutReason {
 	switch value := TimeoutReason(reason); value {
 	case TimeoutPhaseTransitionAborted, TimeoutLongResponseAfterContent, TimeoutStateRootDiverged,
-		TimeoutContextCanceled, TimeoutDiffDeliveryFailed, TimeoutNotApplied:
+		TimeoutContextCanceled, TimeoutDiffDeliveryFailed, TimeoutNotApplied, TimeoutEscrowGone:
 		return value
 	}
 	if outcome == TimeoutSkipped {

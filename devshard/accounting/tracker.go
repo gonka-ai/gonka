@@ -56,6 +56,7 @@ type nonceState struct {
 	SlowReceipt       bool
 	SlowChunk         bool
 	ClockDrifted      bool
+	SlowDecode        bool
 	DetailReason      string
 	DeliveryReason    string
 	TimeoutKind       TimeoutKind
@@ -370,6 +371,7 @@ func (t *Tracker) RecordAttemptTiming(escrowID string, nonce uint64, timing Atte
 		s.SlowReceipt = timing.receiptWasSlow()
 		s.SlowChunk = timing.chunkWasSlow()
 		s.ClockDrifted = timing.clockHasDrifted()
+		s.SlowDecode = timing.decodeWasSlow()
 		e.reclassify(nonce, s, t.nowUTC())
 		return nil
 	})
@@ -697,6 +699,7 @@ func (s *nonceState) counterKey(meta EscrowMetadata, now time.Time) (CounterKey,
 		SlowReceipt:            s.SlowReceipt,
 		SlowChunk:              s.SlowChunk,
 		ClockDrifted:           s.ClockDrifted,
+		SlowDecode:             s.SlowDecode,
 		DetailReason:           s.DetailReason,
 		DeliveryReason:         s.DeliveryReason,
 		TimeoutKind:            s.TimeoutKind,
@@ -914,24 +917,6 @@ func normalizeFailureOrigin(origin FailureOrigin, detail string) FailureOrigin {
 		return FailureHostResponse
 	default:
 		return FailureTransportUnknown
-	}
-}
-
-func normalizeDetailReason(reason string) string {
-	reason = strings.TrimSpace(reason)
-	switch reason {
-	case "", "none":
-		return ""
-	case "phase_transition_aborted", "error_stream", "empty_stream", "sse_truncated",
-		"eof_transport", "client_cancelled", "transport_error", "no_receipt",
-		"not_finished", "http_429", "http_503", "http_forbidden", "http_not_found",
-		"http_timestamp_drift", "http_error", "long_response_after_content",
-		"escrow_state_root_diverged", "context_canceled", "timeout_diff_delivery_failed",
-		"timeout_not_applied", "poc_unavailable_host", "participant_throttled_no_send",
-		"participant_capability_no_send", "no_compatible_request_after_stale":
-		return reason
-	default:
-		return "unknown"
 	}
 }
 

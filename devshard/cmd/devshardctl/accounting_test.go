@@ -41,7 +41,7 @@ func TestGatewayAccountingAdapterRecordsEvents(t *testing.T) {
 }
 
 func TestGatewayTimeoutFailureActionKeepsUnknownVisible(t *testing.T) {
-	action, reason := gatewayTimeoutFailureAction(user.TimeoutResult{})
+	action, reason := gatewayTimeoutFailureAction(user.TimeoutResult{}, false)
 	require.Equal(t, "failed", action)
 	require.Equal(t, "unknown", reason)
 }
@@ -334,8 +334,8 @@ func TestAccountingProductionUsedAndUnusedAttempts(t *testing.T) {
 	_, err = env.session.PrepareInference(params)
 	require.NoError(t, err)
 
-	env.proxy.redundancy.recordGatewayAttemptTerminal(attempt1, params, prepared1.Nonce(), true)
-	env.proxy.redundancy.recordGatewayAttemptTerminal(attempt2, params, prepared1.Nonce(), true)
+	env.proxy.redundancy.recordGatewayAttemptTerminal(attempt1, params, prepared1.Nonce(), true, nil)
+	env.proxy.redundancy.recordGatewayAttemptTerminal(attempt2, params, prepared1.Nonce(), true, nil)
 
 	var used, unused uint64
 	for _, record := range tracker.Query(accounting.QueryFilter{EpochIndex: 25}) {

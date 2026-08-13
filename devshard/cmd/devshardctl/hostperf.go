@@ -257,24 +257,26 @@ func (r *requestRing) all() []RequestRecord {
 }
 
 type PerfTracker struct {
-	mu                sync.RWMutex
-	hosts             map[string]*hostRing
-	requests          requestRing
-	firstTokenBuckets map[string]*firstTokenBucketRing
-	contextLimits     map[string]uint64 // participant_key -> observed max context length
-	toolUnsupported   map[string]bool   // participant_key -> host reported vLLM tool-choice support is disabled
-	pairwise          *PairwiseTracker
-	store             *PerfStore
+	mu                 sync.RWMutex
+	hosts              map[string]*hostRing
+	requests           requestRing
+	firstTokenBuckets  map[string]*firstTokenBucketRing
+	contextLimits      map[string]uint64 // participant_key -> observed max context length
+	toolUnsupported    map[string]bool   // participant_key -> host reported vLLM tool-choice support is disabled
+	versionUnsupported map[string]bool   // participant_key -> host build cannot serve the escrow's protocol version
+	pairwise           *PairwiseTracker
+	store              *PerfStore
 }
 
 func NewPerfTracker(store *PerfStore) *PerfTracker {
 	pt := &PerfTracker{
-		hosts:             make(map[string]*hostRing),
-		firstTokenBuckets: make(map[string]*firstTokenBucketRing),
-		contextLimits:     make(map[string]uint64),
-		toolUnsupported:   make(map[string]bool),
-		pairwise:          NewPairwiseTracker(),
-		store:             store,
+		hosts:              make(map[string]*hostRing),
+		firstTokenBuckets:  make(map[string]*firstTokenBucketRing),
+		contextLimits:      make(map[string]uint64),
+		toolUnsupported:    make(map[string]bool),
+		versionUnsupported: make(map[string]bool),
+		pairwise:           NewPairwiseTracker(),
+		store:              store,
 	}
 	if store != nil {
 		pt.loadFromStore()
@@ -507,6 +509,18 @@ func (t *PerfTracker) RecordContextLimit(participantKey string, maxTokens uint64
 	t.mu.Unlock()
 }
 
+func (t *PerfTracker) RecordVersionUnsupported(participantKey string) {
+	if t == nil || participantKey == "" {
+		return
+	}
+	t.mu.Lock()
+	if !t.versionUnsupported[participantKey] {
+		t.versionUnsupported[participantKey] = true
+		log.Printf("perf: recorded version_unsupported participant_key=%s", participantKey)
+	}
+	t.mu.Unlock()
+}
+
 func (t *PerfTracker) RecordToolUnsupported(participantKey string) {
 	if t == nil || participantKey == "" {
 		return
@@ -553,6 +567,9 @@ func (t *PerfTracker) HostCannotServeRequest(participantKey string, params user.
 	requiresTools := requestRequiresTools(params)
 	t.mu.RLock()
 	defer t.mu.RUnlock()
+	if t.versionUnsupported[participantKey] {
+		return "protocol_version_unsupported", true
+	}
 	if requiresTools && t.toolUnsupported[participantKey] {
 		return "tool_choice_unsupported", true
 	}

@@ -16,11 +16,13 @@ const (
 	protocolInvalidWarning   = 0.01
 	protocolInvalidCritical  = 0.05
 	gatewayThrottleWarning   = 0.10
+	capabilityBlockedWarning = 0.01
 	quarantineWarning        = 0.10
 	unknownReasonWarning     = 0.05
 	slowReceiptWarning       = 0.05
 	slowChunkWarning         = 0.05
 	clockDriftWarning        = 0.01
+	slowDecodeWarning        = 0.10
 	decodedLogprobsWarning   = 0.001
 	decodedLogprobsCritical  = 0.01
 	neverCritical            = 2.0
@@ -43,6 +45,8 @@ const (
 	FindingSlowReceipts        = "slow_receipts"
 	FindingSlowChunks          = "slow_chunks"
 	FindingClockDrift          = "clock_drift"
+	FindingSlowDecode          = "slow_decode"
+	FindingCapabilityBlocked   = "blocked_by_capability"
 )
 
 type Severity string
@@ -102,6 +106,8 @@ func findingsFor(record ParticipantRecord) []Finding {
 		FindingGatewayThrottled))
 	add(ratio(countersWhere(record, wasQuarantined), record.AssignedNonces, quarantineWarning, neverCritical,
 		FindingQuarantined))
+	add(ratio(ghostsBecause(record, NoSendParticipantCapability), record.AssignedNonces, capabilityBlockedWarning, neverCritical,
+		FindingCapabilityBlocked))
 	add(ratio(record.UnknownReasonTotal, record.AssignedNonces, unknownReasonWarning, neverCritical,
 		FindingUnknownReasons))
 
@@ -111,6 +117,8 @@ func findingsFor(record ParticipantRecord) []Finding {
 		FindingSlowChunks))
 	add(ratio(countersWhere(record, clockHasDrifted), delivered+unfinished, clockDriftWarning, neverCritical,
 		FindingClockDrift))
+	add(ratio(countersWhere(record, decodeWasSlow), delivered, slowDecodeWarning, neverCritical,
+		FindingSlowDecode))
 	add(ratio(countersWhere(record, logprobsWereDecoded), delivered, decodedLogprobsWarning, decodedLogprobsCritical,
 		FindingDecodedLogprobs))
 
@@ -165,6 +173,7 @@ func logprobsWereDecoded(key CounterKey) bool { return key.LogprobsDecoded }
 func receiptWasSlow(key CounterKey) bool      { return key.SlowReceipt }
 func chunkWasSlow(key CounterKey) bool        { return key.SlowChunk }
 func clockHasDrifted(key CounterKey) bool     { return key.ClockDrifted }
+func decodeWasSlow(key CounterKey) bool       { return key.SlowDecode }
 
 func countersWhere(record ParticipantRecord, match func(CounterKey) bool) uint64 {
 	var total uint64

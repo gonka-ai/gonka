@@ -1978,6 +1978,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 				}, hostFailureLogFields(inf, e.session)...)...,
 			)
 			e.maybeRecordEscrowStateDivergence(ctx, inf, inf.err)
+			e.maybeRecordVersionRefusal(inf)
 			return
 		}
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "send_completed",
@@ -2321,7 +2322,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 						"decision", decision.Reason,
 					)
 					e.goTrackedRaceCleanup(func() {
-						e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, winner, raceFinishOptions{recordFailureSamples: true})
+						e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, winner, raceFinishOptions{recordFailureSamples: true, clientGone: clientFlag})
 					})
 					return nil
 				}
@@ -2389,7 +2390,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 					winner = fallback.nonce
 				}
 			}
-			return e.finishRaceOutcome(settleCtx, attempts, params, decision, winner, raceFinishOptions{recordFailureSamples: true})
+			return e.finishRaceOutcome(settleCtx, attempts, params, decision, winner, raceFinishOptions{recordFailureSamples: true, clientGone: clientFlag})
 		}
 
 		select {
@@ -2412,6 +2413,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 						e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, w, raceFinishOptions{
 							forceTreatAsFailure:  true,
 							recordFailureSamples: true,
+							clientGone:           clientFlag,
 						})
 					})
 					logRequestStage(settleCtx, "winner_failed_after_content", "escrow", e.devshardID, "winner_nonce", w, "error", err)
@@ -2518,7 +2520,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			pending := pendingInflights(attempts)
 			logRequestStage(settleCtx, "request_stream_canceled", "escrow", e.devshardID, "winner_nonce", winner, "pending", len(pending), "decision", decision.Reason, "error", streamCtx.Err())
 			e.goTrackedRaceCleanup(func() {
-				e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, winner, raceFinishOptions{})
+				e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, winner, raceFinishOptions{clientGone: clientFlag})
 			})
 			return streamCtx.Err()
 		}
@@ -2673,6 +2675,7 @@ func (e *Redundancy) monitorInflight(ctx context.Context, inf *inflight, race *r
 type raceFinishOptions struct {
 	forceTreatAsFailure  bool
 	recordFailureSamples bool
+	clientGone           *cancelFlag
 }
 
 // goTrackedRaceCleanup runs a background race cleanup detached while keeping the drain barrier aware of it; onRaceCleanupStart fires synchronously so the winning handler can never see the runtime as quiet mid-cleanup.
@@ -2781,12 +2784,15 @@ func timeoutResultKind(result user.TimeoutResult, inf *inflight) string {
 
 // gatewayTimeoutFailureAction maps a failed HandleTimeout to a metric/accounting
 // action and reason. Applied-but-delivery-failed still counts as completed.
-func gatewayTimeoutFailureAction(result user.TimeoutResult) (string, string) {
+func gatewayTimeoutFailureAction(result user.TimeoutResult, escrowGone bool) (string, string) {
 	if result.Applied {
 		return "completed", firstNonEmpty(result.DetailReason, "delivery_failed")
 	}
 	if result.Outcome == "skipped" {
 		return "skipped", firstNonEmpty(result.DetailReason, "unknown")
+	}
+	if escrowGone {
+		return "failed", string(accounting.TimeoutEscrowGone)
 	}
 	return "failed", firstNonEmpty(result.Outcome, "unknown")
 }
@@ -2834,14 +2840,11 @@ func (e *Redundancy) recordGatewayAttemptStarted(inf *inflight, params user.Infe
 	}
 }
 
-func (e *Redundancy) recordGatewayAttemptTerminal(inf *inflight, params user.InferenceParams, winnerNonce uint64, ok bool) {
+func (e *Redundancy) recordGatewayAttemptTerminal(inf *inflight, params user.InferenceParams, winnerNonce uint64, ok bool, clientGone *cancelFlag) {
 	if e == nil || inf == nil || inf.probe {
 		return
 	}
-	deliveryReason := ""
-	if !ok {
-		deliveryReason = gatewayAttemptFailureReason(inf, e.session)
-	}
+	deliveryReason := deliveryReasonFor(inf, e.session, winnerNonce, ok, clientGone)
 	if inf.logprobsDecoded {
 		e.accounting.LogprobsDecoded(inf.escrowID, inf.nonce)
 	}
@@ -3340,6 +3343,19 @@ func (e *Redundancy) maybeRecordCapabilityError(inf *inflight) {
 	e.perf.RecordContextLimit(participantKey, maxTokens)
 }
 
+func (e *Redundancy) maybeRecordVersionRefusal(inf *inflight) {
+	if e == nil || e.perf == nil || inf == nil || inf.probe {
+		return
+	}
+	var upstream *transport.UpstreamStatusError
+	if !errors.As(inf.err, &upstream) || !isVersionRefusal(upstream.Body) {
+		return
+	}
+	if participantKey := e.participantKeyForHost(inf.hostIdx); participantKey != "" {
+		e.perf.RecordVersionUnsupported(participantKey)
+	}
+}
+
 func (e *Redundancy) capabilityBlocked(participantKey string, params user.InferenceParams) (string, bool) {
 	if reason, blocked := e.escrowStateBlockReason(participantKey); blocked {
 		return reason, true
@@ -3643,7 +3659,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 		}
 		fields = append(fields, inf.stallLogFields(finishedAt)...)
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "race_completed", fields...)
-		e.recordGatewayAttemptTerminal(inf, params, winnerNonce, ok)
+		e.recordGatewayAttemptTerminal(inf, params, winnerNonce, ok, opts.clientGone)
 		if !ok {
 			e.recordWinnerTerminalFailureOnce(inf, params, winnerNonce)
 			failed = append(failed, inf)
@@ -3703,7 +3719,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 				e.metrics.RecordInferenceTimeout(result.Reason)
 			}
 			if err != nil {
-				action, reason := gatewayTimeoutFailureAction(result)
+				action, reason := gatewayTimeoutFailureAction(result, transport.IsUpstreamEscrowNotFound(inf.err))
 				e.recordGatewayTimeoutAction(inf, params, timeoutResultKind(result, inf), action, reason, result.DetailReason)
 				logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_failed", "host", inf.hostID, "error", err)
 			} else {
@@ -3804,7 +3820,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 						e.metrics.RecordInferenceTimeout(result.Reason)
 					}
 					if err != nil {
-						action, reason := gatewayTimeoutFailureAction(result)
+						action, reason := gatewayTimeoutFailureAction(result, transport.IsUpstreamEscrowNotFound(inf.err))
 						e.recordGatewayTimeoutAction(inf, params, timeoutResultKind(result, inf), action, reason, result.DetailReason)
 						logInferenceStage(bgCtx, inf.escrowID, inf.nonce, "background_timeout_failed", "host", inf.hostID, "error", err)
 					} else {

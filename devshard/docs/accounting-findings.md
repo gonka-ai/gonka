@@ -11,9 +11,10 @@ A finding is never raised below **20** nonces in its denominator: a rate off fou
 | `execution_timeouts` | nonces acknowledged and never finished, over nonces that reached the host | 1% | 5% |
 | `refusals` | nonces never acknowledged, over nonces that reached the host | 5% | 20% |
 | `answers_unused` | finished answers nobody used, over answers delivered | 20% | — |
-| `slow_receipts` | acknowledgements slower than 5s, over answers delivered plus unfinished | 5% | — |
-| `slow_chunks` | answers that stalled mid-stream longer than 1.5s, over answers delivered | 5% | — |
+| `slow_receipts` | acknowledgements slower than 2.5s, over answers delivered plus unfinished | 5% | — |
+| `slow_chunks` | answers that stalled mid-stream longer than 5s, over answers delivered | 5% | — |
 | `clock_drift` | receipts stamped more than 5s from this gateway's clock | 1% | — |
+| `slow_decode` | answers written at more than 40 ms per output token, over answers delivered | 10% | — |
 | `logprobs_not_token_ids` | answers naming logprob tokens by text instead of by id, over answers delivered | 0.1% | 1% |
 
 **`execution_timeouts`** — the host accepted the work and delivered nothing, so the nonce is held to the execution deadline instead of freed at the refusal one. Check the requested output length against the host's decode rate.
@@ -22,13 +23,15 @@ A finding is never raised below **20** nonces in its denominator: a rate off fou
 
 **`answers_unused`** — the host finished after another had already answered. A throughput problem, not an availability one.
 
-**`slow_receipts`** — the receipt is the host's first sign of life, before a single token is generated, so a slow one points at admission rather than at generation: the request waited to be picked up.
+**`slow_receipts`** — the receipt is the host's first sign of life, before a single token is generated, so a slow one points at admission rather than at generation: the request waited to be picked up. The threshold sits just past the observed p99, so it stays silent unless a host is genuinely out of family.
 
 **`slow_chunks`** — the host began answering and then went quiet between chunks. A client reads this as a hang rather than as slowness, and a long enough gap ends the attempt outright.
 
 **`clock_drift`** — the chain measures the execution deadline from the timestamp the host signs into its own receipt, so a drifted clock moves that deadline. Running ahead makes the network wait past a deadline that has already passed; running behind gets a nonce voted timed out while the answer is still being written. Check NTP on the host.
 
 The offset is measured against the midpoint of the send-to-receipt round trip, not against dispatch, so the host is not charged for the outbound leg. Half a second is added back because the executor stamps whole seconds downward.
+
+**`slow_decode`** — the host answered, and answered correctly, but wrote at a fraction of its peers' rate. Measured over the window after the first content chunk, so the prompt it had to read is not charged to how fast it writes. The threshold sits in a gap the measurements leave rather than at a round number: hosts cluster at 10-25 ms per token or at 64 ms and worse, with nothing observed between, so a host past 40 ms is an outlier and not merely a large model. A participant flagged here is serving traffic at a fraction of the throughput its share of the group implies.
 
 **`logprobs_not_token_ids`** — a validator replays the answer from the token ids in its logprobs and cannot replay text, so it votes the inference invalid and the host loses the reward. It is a serving-stack defect rather than a model one, and it costs the host on every inference it is sampled on. Expect `chain_recorded_invalid` to follow. The thresholds are the lowest here for that reason.
 
@@ -52,15 +55,26 @@ The offset is measured against the midpoint of the send-to-receipt round trip, n
 |---|---|---|---|
 | `throttled_by_gateway` | assigned nonces burned without being sent | 10% | — |
 | `quarantined_by_gateway` | assigned nonces handled under quarantine | 10% | — |
+| `blocked_by_capability` | assigned nonces burned because the host cannot serve at all | 1% | — |
 | `failure_origins` | nonces that reached the host and produced no usable answer | any | — |
 
 **`throttled_by_gateway`** — our decision, not the host's failure. The per-host window narrows after failures and widens as they stop, so this trails the other findings rather than leading them.
 
 **`quarantined_by_gateway`** — also ours: the host was being probed, shadowed, or held on probation, so these nonces were not served the way a healthy host's are.
 
+**`blocked_by_capability`** — the gateway declined to send at all because the host cannot serve this shape of work: it does not support tools, its context is too small, or its build does not speak the escrow's protocol version. Unlike a throttle or an ejection this does not expire, because none of those conditions passes with time. The nonce is still spent — arithmetic decides which host a nonce lands on, and a nonce landing on a host that can serve nothing is burned. A participant sitting at a high rate here is one to take out of the group rather than to wait on.
+
 **`failure_origins`** — how many failures reached the host at all, counting the excused ones. Which failure each was is in the `counters` array beside the finding: read `failure_origin` there, where only `host_response` is the host's, and `dispatch_phase` or `timeout_evaluation_phase` of `poc` marks a failure that is expected.
 
 Its denominator counts excused failures and the rates above do not, which is deliberate: sharing one denominator once produced a numerator larger than its whole.
+
+## Facts carried beside the findings
+
+Two reasons in the counters name situations no rate captures, because each is a statement about one nonce rather than a rate over many.
+
+**`client_gone_before_delivery`** on a delivery reason marks a winner crowned after the client stopped waiting. The race outlives the client on purpose — its committed nonce still has to be settled, and settling needs the attempt to finish — so the host's work is real and is paid for. Only the delivery is a fiction, and without this reason the ledger would count the answer as one a client received.
+
+**`escrow_gone_from_hosts`** on a timeout reason marks a vote no retry can win: the hosts no longer hold the escrow, so the nonce it would have settled is unsettleable and pays its full reserve at settlement. It is separated from a collection failure because that one is transient and this one is final. The verifier's own error never reaches the ledger — vote collection reports a count, not an error — so the fact is read from the attempt that was told the same thing.
 
 ## What needs reporting
 

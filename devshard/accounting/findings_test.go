@@ -237,6 +237,7 @@ func TestAttemptTimingClassifiesAgainstTheLedgersOwnThresholds(t *testing.T) {
 		wantSlowReceipt  bool
 		wantSlowChunk    bool
 		wantClockDrifted bool
+		wantSlowDecode   bool
 	}{
 		{name: "nothing measured"},
 		{
@@ -272,6 +273,19 @@ func TestAttemptTimingClassifiesAgainstTheLedgersOwnThresholds(t *testing.T) {
 			name:   "an offset inside the tolerance",
 			timing: AttemptTiming{ClockOffset: ClockDriftBeyond - time.Second, ClockMeasured: true},
 		},
+		{
+			name:           "a decoder past the threshold",
+			timing:         AttemptTiming{TimePerOutputToken: SlowDecodeAfter + time.Millisecond},
+			wantSlowDecode: true,
+		},
+		{
+			name:   "a decoder exactly at the threshold is not yet slow",
+			timing: AttemptTiming{TimePerOutputToken: SlowDecodeAfter},
+		},
+		{
+			name:   "a decode nobody measured",
+			timing: AttemptTiming{},
+		},
 	}
 
 	for _, testCase := range cases {
@@ -285,6 +299,9 @@ func TestAttemptTimingClassifiesAgainstTheLedgersOwnThresholds(t *testing.T) {
 			}
 			if got := testCase.timing.clockHasDrifted(); got != testCase.wantClockDrifted {
 				t.Errorf("clockHasDrifted() = %v, want %v", got, testCase.wantClockDrifted)
+			}
+			if got := testCase.timing.decodeWasSlow(); got != testCase.wantSlowDecode {
+				t.Errorf("decodeWasSlow() = %v, want %v", got, testCase.wantSlowDecode)
 			}
 		})
 	}
@@ -360,4 +377,76 @@ func TestValidationCountsReachTheRecordFromHostStats(t *testing.T) {
 	require.Equal(t, uint64(7), record.CompletedValidations)
 	require.Equal(t, uint64(3), record.ProtocolMisses, "the pair travels with the counters beside it")
 	require.Equal(t, uint64(2), record.ProtocolInvalid)
+}
+
+// A host the gateway will not send to because it cannot serve at all still consumes every nonce that
+// lands on it. Nothing else in the ledger says "stop giving this participant nonces".
+func TestAPermanentlyIncapableHostIsFlagged(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 7, "m")
+	for nonce := uint64(2); nonce <= 60; nonce += 2 {
+		require.NoError(t, tr.RecordDiff("e1", nonce, true))
+		require.NoError(t, tr.RecordGhost("e1", nonce, PhaseNormal, QuarantineNone, NoSendParticipantCapability, ""))
+	}
+
+	finding, found := findingByCode(recordFor(t, tr, "p0"), FindingCapabilityBlocked)
+
+	require.True(t, found, "a host that can serve nothing must be named")
+	require.Equal(t, uint64(30), finding.Part)
+	require.Equal(t, uint64(30), finding.Whole)
+}
+
+// The other burn reasons are the gateway reacting to load, not a host that cannot serve.
+func TestABurnForAnotherReasonIsNotACapabilityBlock(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 7, "m")
+	for nonce := uint64(2); nonce <= 60; nonce += 2 {
+		require.NoError(t, tr.RecordDiff("e1", nonce, true))
+		require.NoError(t, tr.RecordGhost("e1", nonce, PhaseNormal, QuarantineNone, NoSendParticipantThrottled, ""))
+	}
+
+	record := recordFor(t, tr, "p0")
+	_, flagged := findingByCode(record, FindingCapabilityBlocked)
+
+	require.False(t, flagged, "a throttle is not an incapability")
+	_, throttled := findingByCode(record, FindingGatewayThrottled)
+	require.True(t, throttled, "the throttle finding must still fire")
+}
+
+// Two hosts held 39.5% of a model's traffic at a sixth of their peers' decode rate, and nothing in the
+// ledger named it: the answers arrived, they just took six times as long to write.
+func TestASlowDecoderIsFlagged(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 7, "m")
+	for nonce := uint64(2); nonce <= 60; nonce += 2 {
+		require.NoError(t, tr.RecordDiff("e1", nonce, true))
+		require.NoError(t, tr.RecordRealSend("e1", nonce, accountingTestNow.Add(-2*time.Minute), PhaseNormal, QuarantineNone))
+		require.NoError(t, tr.RecordAttemptTiming("e1", nonce, AttemptTiming{TimePerOutputToken: 70 * time.Millisecond}))
+		require.NoError(t, tr.RecordUsage("e1", nonce, UsageWinner, ""))
+		require.NoError(t, tr.RecordProtocol("e1", nonce, 0, ProtocolFinishApplied, types.HostStats{}))
+	}
+
+	finding, found := findingByCode(recordFor(t, tr, "p0"), FindingSlowDecode)
+
+	require.True(t, found, "a host decoding at a sixth of its peers must be named")
+	require.Equal(t, uint64(30), finding.Part)
+	require.Equal(t, uint64(30), finding.Whole)
+}
+
+// The threshold sits in the gap the measurements leave: a host at 25 ms per token is ordinary for a
+// large model, one at 64 ms and worse is the outlier, and nothing was observed between them.
+func TestAnOrdinaryDecoderIsNotFlagged(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 7, "m")
+	for nonce := uint64(2); nonce <= 60; nonce += 2 {
+		require.NoError(t, tr.RecordDiff("e1", nonce, true))
+		require.NoError(t, tr.RecordRealSend("e1", nonce, accountingTestNow.Add(-2*time.Minute), PhaseNormal, QuarantineNone))
+		require.NoError(t, tr.RecordAttemptTiming("e1", nonce, AttemptTiming{TimePerOutputToken: 25 * time.Millisecond}))
+		require.NoError(t, tr.RecordUsage("e1", nonce, UsageWinner, ""))
+		require.NoError(t, tr.RecordProtocol("e1", nonce, 0, ProtocolFinishApplied, types.HostStats{}))
+	}
+
+	_, flagged := findingByCode(recordFor(t, tr, "p0"), FindingSlowDecode)
+
+	require.False(t, flagged, "a host inside the observed normal band must stay clean")
 }
