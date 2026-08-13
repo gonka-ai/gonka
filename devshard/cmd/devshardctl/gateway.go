@@ -2537,6 +2537,7 @@ func (g *Gateway) handleAdminState(w http.ResponseWriter, r *http.Request) {
 	}
 	views := make([]adminDevshardView, 0, len(state.Devshards))
 	for _, devshard := range state.Devshards {
+		devshard.PrivateKeyHex = ""
 		view := adminDevshardView{GatewayDevshardState: devshard}
 		if snapshot, ok := runtimeByID[devshard.ID]; ok {
 			s := snapshot
