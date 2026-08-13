@@ -31,7 +31,7 @@ from api.metrics.routes import router as metrics_router, metrics_enabled
 from api.metrics.allowlist import SCHEMA_VERSION, VLLM_ALLOWLIST
 from api.metrics import xid_source
 from api.watcher import watch_managers
-from api.proxy import ProxyMiddleware, start_vllm_proxy, stop_vllm_proxy, setup_vllm_proxy, start_backward_compatibility, stop_backward_compatibility
+from api.proxy import ContentTypeInjector, ProxyMiddleware, start_vllm_proxy, stop_vllm_proxy, setup_vllm_proxy, start_backward_compatibility, stop_backward_compatibility
 
 from common.logger import create_logger
 
@@ -103,6 +103,9 @@ app = FastAPI(lifespan=lifespan)
 app.include_router(health_router)
 
 app.add_middleware(ProxyMiddleware)
+# Wrap ProxyMiddleware so Content-Type is injected before downstream parsing.
+# Last add_middleware = outermost = runs first on each request.
+app.add_middleware(ContentTypeInjector)
 
 app.include_router(
     pow_router,
