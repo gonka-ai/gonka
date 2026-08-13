@@ -12,6 +12,9 @@ const (
 	DefaultAutoSealEveryNNonces uint32 = 150
 	// DefaultValidationRate matches inference-chain DefaultDevshardValidationRate.
 	DefaultValidationRate uint32 = 5000
+	LogprobsModeProcessed = "processed_logprobs"
+	LogprobsModeRaw       = "raw_logprobs"
+	DefaultLogprobsMode   = LogprobsModeProcessed
 )
 
 // DefaultInferenceSealGraceNonces returns the canonical seal grace for a session group.
@@ -39,7 +42,17 @@ func NormalizeSessionConfig(cfg SessionConfig, groupSize int) SessionConfig {
 	if cfg.AutoSealEveryNNonces == 0 {
 		cfg.AutoSealEveryNNonces = DefaultAutoSealEveryNNonces
 	}
+	cfg.LogprobsMode = NormalizeLogprobsMode(cfg.LogprobsMode)
 	return cfg
+}
+
+func NormalizeLogprobsMode(mode string) string {
+	switch mode {
+	case LogprobsModeProcessed, LogprobsModeRaw:
+		return mode
+	default:
+		return DefaultLogprobsMode
+	}
 }
 
 // DefaultSessionConfig returns the canonical session config that both user and
@@ -54,6 +67,7 @@ func DefaultSessionConfig(groupSize int) SessionConfig {
 		FeePerNonce:       1_000,
 		VoteThreshold:     uint32(groupSize) / 2,
 		ValidationRate:    DefaultValidationRate,
+		LogprobsMode:      DefaultLogprobsMode,
 	}, groupSize)
 }
 
@@ -69,6 +83,7 @@ type EscrowSessionFields struct {
 	AutoSealEveryNNonces        uint32
 	ValidationRate              uint32
 	VoteThresholdFactor         uint32 // percent; 0 == legacy groupSize/2
+	LogprobsMode                string
 }
 
 // ComputeVoteThreshold derives the slot-majority vote threshold from group
@@ -108,6 +123,9 @@ func SessionConfigFromEscrow(groupSize int, fields EscrowSessionFields) SessionC
 	}
 	if fields.ValidationRate > 0 {
 		cfg.ValidationRate = fields.ValidationRate
+	}
+	if fields.LogprobsMode != "" {
+		cfg.LogprobsMode = fields.LogprobsMode
 	}
 	cfg.VoteThreshold = ComputeVoteThreshold(groupSize, fields.VoteThresholdFactor)
 	return NormalizeSessionConfig(cfg, groupSize)
