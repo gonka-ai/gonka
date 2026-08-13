@@ -623,17 +623,27 @@ restore_policy_slot() {
 		'.transaction.ingress.policies[$service].replicas' \
 		"$transaction_journal") || return 1
 	if ((replicas == 0)); then
-		rollback_compose '.transaction.ingress.rollback_models.policy' \
-			rm -s -f "$service" >/dev/null
-		return
+		if ! rollback_compose '.transaction.ingress.rollback_models.policy' \
+			rm -s -f "$service" >/dev/null; then
+			warn "rollback Compose model could not remove $service"
+			return 1
+		fi
+		return 0
 	fi
-	rollback_compose '.transaction.ingress.rollback_models.policy' \
+	if ! rollback_compose '.transaction.ingress.rollback_models.policy' \
 		up -d --no-deps --force-recreate --wait \
 		--wait-timeout "$cutover_timeout" --scale "$service=$replicas" \
-		"$service" || return 1
-	if [[ $(proxy_component) == proxy-router ]]; then
-		wait_policy_admission "$service"
+		"$service"; then
+		warn "rollback Compose model could not recreate $service"
+		return 1
 	fi
+	if [[ $(proxy_component) == proxy-router ]]; then
+		if ! wait_policy_admission "$service"; then
+			warn "restored $service was not admitted by the public proxy"
+			return 1
+		fi
+	fi
+	return 0
 }
 
 restore_public_proxy() {
@@ -698,8 +708,18 @@ rollback_ingress_transaction() {
 		"$transaction_journal")
 	for resource in "${touched[@]}"; do
 		case $resource in
-			proxy) restore_public_proxy || restored=false ;;
-			policy:*) restore_policy_slot "${resource#policy:}" || restored=false ;;
+			proxy)
+				if ! restore_public_proxy; then
+					warn "could not restore the recorded public proxy generation"
+					restored=false
+				fi
+				;;
+			policy:*)
+				if ! restore_policy_slot "${resource#policy:}"; then
+					warn "could not restore the recorded ${resource#policy:} generation"
+					restored=false
+				fi
+				;;
 			*) warn "unknown touched ingress resource '$resource'"; restored=false ;;
 		esac
 	done

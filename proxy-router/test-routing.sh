@@ -47,6 +47,7 @@ data_port = int(os.environ.get("DATA_PORT", "8080"))
 missing_versionless = os.environ.get("MISSING_VERSIONLESS", "false") == "true"
 post_count = 0
 lock = threading.Lock()
+data_server = None
 
 
 class Data(http.server.BaseHTTPRequestHandler):
@@ -99,6 +100,11 @@ class Admin(http.server.BaseHTTPRequestHandler):
         if self.path == "/count":
             with lock:
                 return self.reply(200, str(post_count))
+        if self.path == "/disable-data":
+            if data_server is not None:
+                data_server.shutdown()
+                data_server.server_close()
+            return self.reply(200, "disabled")
         url = urllib.parse.urlparse(self.path)
         if url.path != "/readyz":
             return self.reply(404, "not found")
@@ -115,8 +121,9 @@ threading.Thread(
     daemon=True,
 ).start()
 if data_enabled:
+    data_server = http.server.ThreadingHTTPServer(("", data_port), Data)
     threading.Thread(
-        target=lambda: http.server.ThreadingHTTPServer(("", data_port), Data).serve_forever(),
+        target=data_server.serve_forever,
         daemon=True,
     ).start()
 threading.Event().wait()
@@ -197,7 +204,7 @@ docker run -d --name gonka-pr-catalog --network "$network" \
     -v "$tmpdir/catalog:/data:ro" -v "$tmpdir/catalog.py:/app.py:ro" \
     python:3.12-alpine python /app.py >/dev/null
 
-for spec in 'a:v4:true:true' 'b:v4 v5 v9:true:true' 'bad:v4:true:false'; do
+for spec in 'a:v4:true:true' 'b:v4 v5 v9:true:true' 'bad:v4:true:true'; do
     name=${spec%%:*}
     rest=${spec#*:}
     serves=${rest%%:*}
@@ -317,7 +324,11 @@ rollout_before=$(probe http://gonka-pr-router-b:8404/count)
 ) &
 rollout_probe_pid=$!
 for name in b a; do
-    docker rm -f "gonka-pr-policy-$name" >/dev/null
+    # Compose honors the nginx image's SIGQUIT stop signal during replacement.
+    # A forced removal can reset an already accepted POST, which no proxy may
+    # safely replay because the application might have executed it.
+    docker stop --time 10 "gonka-pr-policy-$name" >/dev/null
+    docker rm "gonka-pr-policy-$name" >/dev/null
     start_policy "$name"
     policy_ip=$(docker inspect -f \
         "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
@@ -435,7 +446,7 @@ if docker exec gonka-pr-proxy /usr/local/lib/router-runtime/catalog-status \
 fi
 [[ $(docker inspect -f '{{.Id}}' gonka-pr-proxy) == "$proxy_id" ]] \
     || fail "learning v9 replaced the top distributor"
-[[ $(probe http://proxy-router:18081/v4/sessions/still-live/healthz) =~ ^(a|b)$ ]] \
+[[ $(probe http://proxy-router:18081/v4/sessions/still-live/healthz) =~ ^(a|b|bad)$ ]] \
     || fail "learning v9 disrupted the existing v4 route"
 docker exec gonka-pr-proxy test -s /var/lib/gonka-router/catalog-v2.json \
     || fail "top distributor did not persist its learned catalog"
@@ -607,12 +618,35 @@ for _ in $(seq 8); do
         || fail "v5 reached a router whose v5 pool is not ready"
 done
 
+# Select a key that is demonstrably pinned to the fixture whose admin readiness
+# remains healthy, then remove only its data listener. This makes the following
+# connect-failure test deterministic without changing the consistent-hash ring.
+unavailable_escrow=
+for candidate in $(seq 1 100); do
+    unavailable_escrow="unavailable-$candidate"
+    [[ $(probe "http://proxy-router:18081/v4/sessions/$unavailable_escrow/healthz") == bad ]] \
+        && break
+    unavailable_escrow=
+done
+[[ -n $unavailable_escrow ]] || fail \
+    "could not select the route whose data listener will be disabled"
+probe http://gonka-pr-router-bad:8404/disable-data >/dev/null
+for _ in $(seq 20); do
+    if ! probe http://gonka-pr-router-bad:8080/healthz >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.1
+done
+if probe http://gonka-pr-router-bad:8080/healthz >/dev/null 2>&1; then
+    fail "route fixture kept accepting data after its listener was disabled"
+fi
+
 before_a=$(probe http://gonka-pr-router-a:8404/count)
 before_b=$(probe http://gonka-pr-router-b:8404/count)
 requests=12
 for i in $(seq "$requests"); do
     probe -X POST -H 'Content-Type: application/json' -d "{\"request\":$i}" \
-        http://proxy-router:18081/v4/sessions/test/chat >/dev/null \
+        "http://proxy-router:18081/v4/sessions/$unavailable_escrow/chat" >/dev/null \
         || fail "POST $i did not fail over from an unavailable router data port"
 done
 after_a=$(probe http://gonka-pr-router-a:8404/count)
