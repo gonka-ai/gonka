@@ -12,7 +12,7 @@
           "--tensor-parallel-size", "2",
           "--gpu-memory-utilization", "0.92",
           "--max-num-seqs", "128",
-          "--max-model-len", "131072",
+          "--max-model-len", "180000",
           "--kv-cache-dtype", "fp8",
           "--moe-backend", "triton",
           "--attention-backend", "FLASHINFER",

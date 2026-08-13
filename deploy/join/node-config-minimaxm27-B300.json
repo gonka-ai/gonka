@@ -9,7 +9,7 @@
       "MiniMaxAI/MiniMax-M2.7": {
         "args": [
           "--revision", "d494266a4affc0d2995ba1fa35c8481cbd84294b",
-          "--tensor-parallel-size", "2",
+          "--tensor-parallel-size", "1",
           "--gpu-memory-utilization", "0.92",
           "--max-num-seqs", "128",
           "--max-model-len", "180000",
