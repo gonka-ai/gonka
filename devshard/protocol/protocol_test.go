@@ -468,8 +468,7 @@ func TestProtocol_Timeout_UserSide(t *testing.T) {
 	// Compose timeout: collect votes from non-executor hosts (slots 0, 2, 3).
 	var votes []*types.TimeoutVote
 	for _, slot := range []uint32{0, 2, 3} {
-		v := testutil.SignTimeoutVote(t, hostSigners[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
-		v.VoterSlot = slot
+		v := testutil.SignTimeoutVote(t, hostSigners[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true, slot)
 		votes = append(votes, v)
 	}
 

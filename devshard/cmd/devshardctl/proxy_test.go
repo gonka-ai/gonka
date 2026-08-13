@@ -592,6 +592,7 @@ func (c *verifierClient) VerifyTimeout(_ context.Context, inferenceID uint64, re
 		InferenceId: inferenceID,
 		Reason:      reason,
 		Accept:      true,
+		VoterSlot:   voterSlot,
 	}
 	data, err := proto.Marshal(content)
 	if err != nil {

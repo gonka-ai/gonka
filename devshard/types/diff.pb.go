@@ -372,12 +372,16 @@ func (x *ExecutorReceiptContent) GetConfirmedAt() int64 {
 }
 
 // TimeoutVoteContent is what a host signs for a TimeoutVote.
+// voter_slot is included so the signature binds the vote to a specific
+// group slot; verifiers must not be able to reuse a signature under a
+// different claimed VoterSlot.
 type TimeoutVoteContent struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	EscrowId      string                 `protobuf:"bytes,1,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
 	InferenceId   uint64                 `protobuf:"varint,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
 	Reason        TimeoutReason          `protobuf:"varint,3,opt,name=reason,proto3,enum=devshard.v1.TimeoutReason" json:"reason,omitempty"`
 	Accept        bool                   `protobuf:"varint,4,opt,name=accept,proto3" json:"accept,omitempty"`
+	VoterSlot     uint32                 `protobuf:"varint,5,opt,name=voter_slot,json=voterSlot,proto3" json:"voter_slot,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -438,6 +442,13 @@ func (x *TimeoutVoteContent) GetAccept() bool {
 		return x.Accept
 	}
 	return false
+}
+
+func (x *TimeoutVoteContent) GetVoterSlot() uint32 {
+	if x != nil {
+		return x.VoterSlot
+	}
+	return 0
 }
 
 // StateSignatureContent is what a host signs for state attestation.
@@ -536,12 +547,14 @@ const file_devshard_v1_diff_proto_rawDesc = "" +
 	"\n" +
 	"started_at\x18\x06 \x01(\x03R\tstartedAt\x12\x1b\n" +
 	"\tescrow_id\x18\a \x01(\tR\bescrowId\x12!\n" +
-	"\fconfirmed_at\x18\b \x01(\x03R\vconfirmedAt\"\xa0\x01\n" +
+	"\fconfirmed_at\x18\b \x01(\x03R\vconfirmedAt\"\xbf\x01\n" +
 	"\x12TimeoutVoteContent\x12\x1b\n" +
 	"\tescrow_id\x18\x01 \x01(\tR\bescrowId\x12!\n" +
 	"\finference_id\x18\x02 \x01(\x04R\vinferenceId\x122\n" +
 	"\x06reason\x18\x03 \x01(\x0e2\x1a.devshard.v1.TimeoutReasonR\x06reason\x12\x16\n" +
-	"\x06accept\x18\x04 \x01(\bR\x06accept\"i\n" +
+	"\x06accept\x18\x04 \x01(\bR\x06accept\x12\x1d\n" +
+	"\n" +
+	"voter_slot\x18\x05 \x01(\rR\tvoterSlot\"i\n" +
 	"\x15StateSignatureContent\x12\x1d\n" +
 	"\n" +
 	"state_root\x18\x01 \x01(\fR\tstateRoot\x12\x1b\n" +

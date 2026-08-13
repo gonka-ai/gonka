@@ -1374,6 +1374,36 @@ func (s *Session) verifyStateSignature(nonce uint64, postRoot, signature []byte,
 	return nil
 }
 
+// verifyTimeoutVoteSignature recovers the signer of vote.Signature over
+// TimeoutVoteContent (including voter_slot) and requires it to match
+// expectedAddr (warm-key fallback allowed). Caller must already have bound
+// vote.VoterSlot to expectedAddr.
+func (s *Session) verifyTimeoutVoteSignature(
+	inferenceID uint64,
+	reason types.TimeoutReason,
+	vote *types.TimeoutVote,
+	expectedAddr string,
+) error {
+	voteData, err := proto.Marshal(&types.TimeoutVoteContent{
+		EscrowId:    s.escrowID,
+		InferenceId: inferenceID,
+		Reason:      reason,
+		Accept:      vote.Accept,
+		VoterSlot:   vote.VoterSlot,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal timeout vote: %w", err)
+	}
+	recovered, err := s.verifier.RecoverAddress(voteData, vote.Signature)
+	if err != nil {
+		return fmt.Errorf("%w: %v", types.ErrInvalidVoteSig, err)
+	}
+	if recovered != expectedAddr && !s.sm.CheckWarmKey(recovered, expectedAddr) {
+		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidVoteSig, expectedAddr, recovered)
+	}
+	return nil
+}
+
 func (s *Session) fetchSignature(ctx context.Context, hostIdx int, nonce uint64, client HostClient) bool {
 	fetcher, ok := client.(SignatureFetcher)
 	if !ok {
@@ -2152,16 +2182,59 @@ func (s *Session) CollectTimeoutVotes(
 			continue // skip failed hosts
 		}
 		if res.vote != nil {
+			// Bind claimed voter_slot to the host we contacted, then verify the
+			// signature over TimeoutVoteContent (which includes voter_slot) so a
+			// byzantine verifier cannot reuse a signature under a different slot
+			// or count foreign weight. Same host-binding idea as fetchSignature /
+			// processResponse.
+			claimedAddr := s.sm.SlotAddress(res.vote.VoterSlot)
+			if claimedAddr == "" || claimedAddr != res.verifierAddr {
+				errors++
+				logging.Stage(ctx, "timeout_vote_result",
+					logFields(
+						res.verifierAddr,
+						"outcome", "error",
+						"voter_slot", res.vote.VoterSlot,
+						"claimed_voter", shortAddress(claimedAddr),
+						"running_weight", accWeight,
+						"threshold", voteThreshold,
+						"error", "voter_slot not owned by responder",
+					)...,
+				)
+				logging.Debug("timeout vote rejected: voter_slot not owned by responder",
+					"subsystem", "session", "inference_id", inferenceID,
+					"verifier", res.verifierAddr, "voter_slot", res.vote.VoterSlot,
+					"claimed", claimedAddr)
+				continue
+			}
+			if err := s.verifyTimeoutVoteSignature(inferenceID, reason, res.vote, res.verifierAddr); err != nil {
+				errors++
+				logging.Stage(ctx, "timeout_vote_result",
+					logFields(
+						res.verifierAddr,
+						"outcome", "error",
+						"voter_slot", res.vote.VoterSlot,
+						"running_weight", accWeight,
+						"threshold", voteThreshold,
+						"error", err,
+					)...,
+				)
+				logging.Debug("timeout vote rejected: invalid signature",
+					"subsystem", "session", "inference_id", inferenceID,
+					"verifier", res.verifierAddr, "voter_slot", res.vote.VoterSlot,
+					"error", err)
+				continue
+			}
 			votes = append(votes, res.vote)
-			voterAddr := s.sm.SlotAddress(res.vote.VoterSlot)
-			weight := s.sm.AddressSlotCount(voterAddr)
+			// Weight from the known responder address, not from the response field.
+			weight := s.sm.AddressSlotCount(res.verifierAddr)
 			accWeight += weight
 			logging.Stage(ctx, "timeout_vote_result",
 				logFields(
 					res.verifierAddr,
 					"outcome", "accept",
 					"voter_slot", res.vote.VoterSlot,
-					"voter", shortAddress(voterAddr),
+					"voter", shortAddress(res.verifierAddr),
 					"weight", weight,
 					"running_weight", accWeight,
 					"threshold", voteThreshold,
@@ -2204,6 +2277,8 @@ func (s *Session) CollectTimeoutVotes(
 }
 
 // HasSufficientTimeoutVotes returns true if the accept votes exceed the vote threshold.
+// Votes must already be responder-bound (CollectTimeoutVotes rejects spoofed
+// voter_slot); weight is derived from each vote's VoterSlot owner.
 func (s *Session) HasSufficientTimeoutVotes(votes []*types.TimeoutVote) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

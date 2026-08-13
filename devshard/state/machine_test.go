@@ -425,8 +425,7 @@ func TestApplyDiff_Timeout_Refused(t *testing.T) {
 
 	var votes []*types.TimeoutVote
 	for _, slot := range []uint32{0, 2, 3} {
-		v := testutil.SignTimeoutVote(t, hosts[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
-		v.VoterSlot = slot
+		v := testutil.SignTimeoutVote(t, hosts[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true, slot)
 		votes = append(votes, v)
 	}
 
@@ -465,8 +464,7 @@ func TestApplyDiff_Timeout_Execution(t *testing.T) {
 
 	var votes []*types.TimeoutVote
 	for _, slot := range []uint32{0, 2, 3} {
-		v := testutil.SignTimeoutVote(t, hosts[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, true)
-		v.VoterSlot = slot
+		v := testutil.SignTimeoutVote(t, hosts[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, true, slot)
 		votes = append(votes, v)
 	}
 
@@ -499,8 +497,7 @@ func TestApplyDiff_Timeout_WrongReason(t *testing.T) {
 	// reason=execution on pending -> fail.
 	var votes []*types.TimeoutVote
 	for _, slot := range []uint32{0, 2, 3} {
-		v := testutil.SignTimeoutVote(t, hosts[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, true)
-		v.VoterSlot = slot
+		v := testutil.SignTimeoutVote(t, hosts[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, true, slot)
 		votes = append(votes, v)
 	}
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
@@ -519,8 +516,7 @@ func TestApplyDiff_Timeout_WrongReason(t *testing.T) {
 
 	var votes2 []*types.TimeoutVote
 	for _, slot := range []uint32{0, 2, 3} {
-		v := testutil.SignTimeoutVote(t, hosts[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
-		v.VoterSlot = slot
+		v := testutil.SignTimeoutVote(t, hosts[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true, slot)
 		votes2 = append(votes2, v)
 	}
 	diff = testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
@@ -547,8 +543,7 @@ func TestApplyDiff_Timeout_InsufficientVotes(t *testing.T) {
 	// Only 2 accept votes (need >2 for 5 total slots).
 	var votes []*types.TimeoutVote
 	for _, slot := range []uint32{0, 2} {
-		v := testutil.SignTimeoutVote(t, hosts[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
-		v.VoterSlot = slot
+		v := testutil.SignTimeoutVote(t, hosts[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true, slot)
 		votes = append(votes, v)
 	}
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
@@ -569,8 +564,7 @@ func TestApplyDiff_Timeout_AfterFinish(t *testing.T) {
 
 	var votes []*types.TimeoutVote
 	for _, slot := range []uint32{0, 2, 3} {
-		v := testutil.SignTimeoutVote(t, hosts[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, true)
-		v.VoterSlot = slot
+		v := testutil.SignTimeoutVote(t, hosts[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, true, slot)
 		votes = append(votes, v)
 	}
 
@@ -607,8 +601,7 @@ func TestApplyDiff_Timeout_MultiSlotWeight(t *testing.T) {
 	// One accept vote from signer2 (slot 4, weight=1) -- not enough alone.
 	// But signer1 (slot 3, weight=1) also votes accept -> total weight=2, still not >2.
 	// Need signer0 to vote (weight=3) for >2.
-	vote := testutil.SignTimeoutVote(t, signers[2], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
-	vote.VoterSlot = 4 // signer2's slot
+	vote := testutil.SignTimeoutVote(t, signers[2], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true, 4) // signer2's slot
 
 	// Single vote with weight=1 should fail (need >2).
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
@@ -619,8 +612,7 @@ func TestApplyDiff_Timeout_MultiSlotWeight(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrInsufficientVotes)
 
 	// Now add signer0's vote (slot 0, weight=3). Total = 1+3 = 4 > 2.
-	vote0 := testutil.SignTimeoutVote(t, signers[0], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
-	vote0.VoterSlot = 0
+	vote0 := testutil.SignTimeoutVote(t, signers[0], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true, 0)
 
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
 		InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED,
@@ -728,8 +720,7 @@ func TestApplyDiff_DuplicateTimeout(t *testing.T) {
 
 	var votes []*types.TimeoutVote
 	for _, slot := range []uint32{0, 2, 3} {
-		v := testutil.SignTimeoutVote(t, hosts[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
-		v.VoterSlot = slot
+		v := testutil.SignTimeoutVote(t, hosts[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true, slot)
 		votes = append(votes, v)
 	}
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
@@ -740,8 +731,7 @@ func TestApplyDiff_DuplicateTimeout(t *testing.T) {
 
 	var votes2 []*types.TimeoutVote
 	for _, slot := range []uint32{0, 2, 3} {
-		v := testutil.SignTimeoutVote(t, hosts[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
-		v.VoterSlot = slot
+		v := testutil.SignTimeoutVote(t, hosts[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true, slot)
 		votes2 = append(votes2, v)
 	}
 	diff = testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
@@ -798,8 +788,7 @@ func TestApplyDiff_FullLifecycle(t *testing.T) {
 				if len(votes) >= 3 {
 					break
 				}
-				v := testutil.SignTimeoutVote(t, hosts[slot], "escrow-1", infID, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
-				v.VoterSlot = slot
+				v := testutil.SignTimeoutVote(t, hosts[slot], "escrow-1", infID, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true, slot)
 				votes = append(votes, v)
 			}
 			nonce++
@@ -973,12 +962,9 @@ func TestApplyDiff_Timeout_DuplicateVoterSlot(t *testing.T) {
 	require.NoError(t, err)
 
 	// Slot 0 votes twice.
-	v0a := testutil.SignTimeoutVote(t, hosts[0], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
-	v0a.VoterSlot = 0
-	v0b := testutil.SignTimeoutVote(t, hosts[0], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
-	v0b.VoterSlot = 0
-	v2 := testutil.SignTimeoutVote(t, hosts[2], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
-	v2.VoterSlot = 2
+	v0a := testutil.SignTimeoutVote(t, hosts[0], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true, 0)
+	v0b := testutil.SignTimeoutVote(t, hosts[0], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true, 0)
+	v2 := testutil.SignTimeoutVote(t, hosts[2], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true, 2)
 
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
 		InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Votes: []*types.TimeoutVote{v0a, v0b, v2},
@@ -2822,8 +2808,7 @@ func TestWarmKey_TimeoutVoteWithWarmKey(t *testing.T) {
 	// Build timeout votes signed by warm keys for slots 0, 2, 3.
 	var votes []*types.TimeoutVote
 	for _, slot := range []uint32{0, 2, 3} {
-		v := testutil.SignTimeoutVote(t, warmSigners[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
-		v.VoterSlot = slot
+		v := testutil.SignTimeoutVote(t, warmSigners[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true, slot)
 		votes = append(votes, v)
 	}
 
