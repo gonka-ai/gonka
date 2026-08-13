@@ -466,8 +466,13 @@ set +e
 run_cutover "$tmpdir/signal.log" env SIGNAL_CUTOVER=true
 signal_status=$?
 set -e
-[[ $signal_status -eq 143 ]] || fail \
-    "TERM during cutover returned $signal_status instead of 143"
+((signal_status != 0)) || fail \
+    "TERM during cutover was reported as success"
+jq -e '
+    .transaction.ingress.state == "active" or
+    .transaction.ingress.state == "rolled_back"
+' "$tmpdir/.gonka-router-ha-transaction.json" >/dev/null || fail \
+    "TERM did not retain a recoverable ingress transaction"
 if grep -q 'gonka-rollback-model\..* up .*proxy$' "$tmpdir/signal.log"; then
 	fail "TERM before Docker mutation unnecessarily recreated the public proxy"
 fi
@@ -486,6 +491,9 @@ grep -q '^fleet verify-admission$' "$tmpdir/idempotent.log" || fail \
     "idempotent convergence skipped strict parent admission verification"
 grep -q '^fleet apply$' "$tmpdir/idempotent.log" || fail \
     "idempotent convergence did not apply router fleet image/config updates"
+jq -e '.transaction.ingress.state == "committed"' \
+    "$tmpdir/.gonka-router-ha-transaction.json" >/dev/null || fail \
+    "rerun after TERM did not commit the recovered ingress transaction"
 
 # If only slot B is admitted, update the failed A first. A fixed B->A order
 # would stop the final serving policy worker and drop all public traffic.

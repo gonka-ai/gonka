@@ -409,8 +409,12 @@ test-version-routing:
 	done; \
 	curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%2Bhotfix' >/dev/null \
 		|| fail "encoded admin readiness did not follow the dynamic governance map"; \
-	[[ "$$(curl -fsS -m 3 'http://127.0.0.1:18132/v9+hotfix/sessions/escaped/chat')" =~ ^(a|b)$$ ]] \
-		|| fail "a routable governance name requiring Runtime API escaping was corrupted"; \
+	dynamic_host=$$(curl -fsS -m 3 \
+		'http://127.0.0.1:18132/v9+hotfix/sessions/escaped/chat'); \
+	case "$$dynamic_host" in \
+		a|b) ;; \
+		*) fail "a routable governance name requiring Runtime API escaping reached '$$dynamic_host'" ;; \
+	esac; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
 		/etc/haproxy/versions.map | grep -Fqx 'v9+hotfix' \
 		|| fail "runtime catalog lost the governance version name"; \
