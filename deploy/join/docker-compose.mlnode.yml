@@ -1,7 +1,7 @@
 services:
   mlnode-308:
-    # CUDA 12.9 image: ghcr.io/gonka-ai/mlnode:3.0.14-post2-vllm0.25.1-cu129-b300fix
-    image: ${MLNODE_IMAGE:-ghcr.io/gonka-ai/mlnode:3.0.14-post2-vllm0.25.1-cu129-b300fix@sha256:9bfe02e11822c3c1b2b9391ba505a1b7cf6ec87e8e4f2dc69be989baec2d2125}
+    # CUDA 12.9 fallback: ghcr.io/gonka-ai/mlnode:3.0.14-post2-vllm0.25.1-cu129-b300fix
+    image: ${MLNODE_IMAGE:-ghcr.io/gonka-ai/mlnode:3.0.14-post2-vllm0.25.1-cu13-hopper-blackwell@sha256:c721af08446e705eda589b86c08d90fa6980f97c629cf866c7dd41a0044f925e}
     hostname: mlnode-308
     volumes:
       - ${HF_HOME:-${HOME}/.cache}:/root/.cache
