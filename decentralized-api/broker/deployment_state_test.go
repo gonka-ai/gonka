@@ -200,7 +200,7 @@ func TestRefreshDeploymentUpdatePendingFromApplied(t *testing.T) {
 	require.False(t, node.State.DeploymentUpdatePending)
 }
 
-func TestRefreshMarksDefaultDeploymentDirtyWhenUnrecorded(t *testing.T) {
+func TestRefreshLeavesDefaultDeploymentAloneWhenUnrecorded(t *testing.T) {
 	manager := testDeploymentConfigManager(t)
 
 	const modelID = "MiniMaxAI/MiniMax-M2.7"
@@ -213,8 +213,10 @@ func TestRefreshMarksDefaultDeploymentDirtyWhenUnrecorded(t *testing.T) {
 		configManager: manager,
 	}
 
+	// No applied record and no override: the node must not be marked pending,
+	// otherwise every pre-record node gets redeployed on the first restart.
 	b.refreshDeploymentUpdatePendingFromApplied(node.Node.Id)
-	require.True(t, node.State.DeploymentUpdatePending)
+	require.False(t, node.State.DeploymentUpdatePending)
 }
 
 func TestRefreshMarksDirtyWhenPreviousModelReturns(t *testing.T) {

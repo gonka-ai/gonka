@@ -174,8 +174,14 @@ func (b *Broker) refreshDeploymentUpdatePendingFromApplied(nodeID string) {
 		return
 	}
 
-	if !found ||
-		applied.ModelID != expected.GovernanceID ||
+	if !found {
+		// Missing record: redeploy only for overrides; baseline nodes stay serving.
+		if local.ModelOverride != nil {
+			b.markDeploymentUpdatePending(nodeID)
+		}
+		return
+	}
+	if applied.ModelID != expected.GovernanceID ||
 		applied.Fingerprint != expected.Fingerprint() {
 		b.markDeploymentUpdatePending(nodeID)
 	}
