@@ -130,10 +130,12 @@ throughput fell by 42%.
 ## Image and driver requirements
 
 - Use the production org mirror
-  `ghcr.io/gonka-ai/mlnode:3.0.14-post2-vllm0.25.1-rc3@sha256:450983bbef31c8e19b8d24edb00c17520af7cc4fb0d186943f3ac3dec4dad387`.
+  `ghcr.io/gonka-ai/mlnode:3.0.14-post2-vllm0.25.1-cu129-b300fix@sha256:9bfe02e11822c3c1b2b9391ba505a1b7cf6ec87e8e4f2dc69be989baec2d2125`.
   It reports the canonical MLNode release `3.0.14-post2` through
   `/api/v1/state`, `/api/v1/versions`, and `mlnode_version_info`.
-- Use the Gonka vLLM 0.25.1 build containing the current PoC replay support.
+- Use the Gonka vLLM 0.25.1 build with plugin `v0.1.3`. It pre-sizes the
+  OpenAI API token batch to 32768 before CUDA graph capture and keeps the MoE
+  workspace locked across PoC forwards.
   Do not set the removed `VLLM_USE_V1` switch or pin
   `VLLM_USE_V2_MODEL_RUNNER=0`.
 - The image must provide `/usr/local/cuda/lib64/libnvrtc.so`; Hopper fails on
