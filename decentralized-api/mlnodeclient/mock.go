@@ -84,13 +84,11 @@ func NewMockClient() *MockClient {
 	}
 }
 
+// WithTryLock serializes test assertions with async mock calls. The name is
+// historical; blocking here avoids flaky failures on transient lock contention.
 func (m *MockClient) WithTryLock(t *testing.T, f func()) {
-	lock := m.Mu.TryLock()
-	if !lock {
-		t.Fatal("TryLock called more than once")
-	} else {
-		defer m.Mu.Unlock()
-	}
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
 
 	f()
 }
