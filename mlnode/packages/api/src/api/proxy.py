@@ -44,6 +44,40 @@ compatibility_server: Optional[object] = None  # uvicorn.Server instance
 health_check_task: Optional[asyncio.Task] = None
 
 
+class ContentTypeInjector:
+    """Plain ASGI middleware: inject ``Content-Type: application/json`` for
+    ``POST /api/*`` requests when the header is missing.
+
+    Network DAPI (Go-http-client/1.1) does not set ``Content-Type`` on JSON
+    POSTs such as ``/api/v1/inference/up`` and
+    ``/api/v1/inference/pow/init/generate``. Whether FastAPI still parses
+    such a body as JSON depends on its version: since ``strict_content_type``
+    (default True in current releases) a header-less body reaches
+    ``model_validate`` unparsed and the request dies with a 422
+    (``Input should be a valid dictionary or object``) before any handler
+    runs — observed in production on the July images. The lock currently
+    pins a forgiving 0.115, but the constraint is ``>=0.115.8``; injecting
+    the header makes acceptance independent of the pin. Requests that carry
+    any Content-Type are passed through untouched.
+    """
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if (
+            scope["type"] == "http"
+            and scope.get("method") == "POST"
+            and scope.get("path", "").startswith("/api/")
+            and not any(h[0] == b"content-type" for h in scope["headers"])
+        ):
+            scope = dict(scope)
+            scope["headers"] = list(scope["headers"]) + [
+                (b"content-type", b"application/json")
+            ]
+        await self.app(scope, receive, send)
+
+
 class ProxyMiddleware(BaseHTTPMiddleware):
     """Middleware to handle routing between /api and /v1 endpoints."""
     
