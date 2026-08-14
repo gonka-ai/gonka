@@ -145,6 +145,48 @@ func populateStore(t *testing.T, store storage.Storage, numDiffs int) ([]types.S
 	return group, user, hosts[0]
 }
 
+// A host that served sub-floor reservations before the floor landed has them in its own diff log, and
+// replaying that log is the only way back up.
+func TestRecoverSessions_ReplaysADiffWrittenBeforeTheMaxTokensFloor(t *testing.T) {
+	store := newManagerTestStore(t)
+	group, user, hostSigner := populateStore(t, store, 0)
+	config := defaultConfig(3)
+	verifier := signing.NewSecp256k1Verifier()
+
+	sm, err := state.NewStateMachine("1", config, group, 100000, user.Address(), verifier, store,
+		state.WithVersion(testutil.RuntimeTestVersion))
+	require.NoError(t, err)
+
+	txs := []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+		InferenceId: 1, Model: "llama", InputLength: 100,
+		MaxTokens: testutil.TestMaxTokens - 1, StartedAt: 1000,
+	}}}}
+	_, err = sm.ApplyLocal(1, txs)
+	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor, "the fixture must be a diff this build refuses to author")
+	root, err := sm.ApplyPersisted(1, txs)
+	require.NoError(t, err)
+	require.NoError(t, store.AppendDiff("1", types.DiffRecord{
+		Diff: signDiffWithRoot(t, user, "1", 1, txs, root), StateHash: root,
+	}))
+
+	addresses := make([]string, len(group))
+	for i, slot := range group {
+		addresses[i] = slot.ValidatorAddress
+	}
+	bridgeStub := &mockBridge{escrow: &bridge.EscrowInfo{
+		EscrowID: "1", Amount: 100000, CreatorAddress: user.Address(), Slots: addresses,
+	}}
+
+	manager := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(),
+		nil, testutil.RuntimeTestVersion, bridgeStub, nil, nil)
+	require.NoError(t, manager.RecoverSessions())
+
+	manager.sessionsMutex.RLock()
+	_, recovered := manager.sessions["1"]
+	manager.sessionsMutex.RUnlock()
+	require.True(t, recovered, "a session whose diffs predate the floor must still come back up")
+}
+
 func TestRecoverSessions_HappyPath(t *testing.T) {
 	store := newManagerTestStore(t)
 	group, user, hostSigner := populateStore(t, store, 10)
