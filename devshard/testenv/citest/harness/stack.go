@@ -19,6 +19,12 @@ import (
 
 const defaultStackTimeout = 12 * time.Minute
 
+const (
+	hostAddrEnv       = "TESTENV_HOST_ADDR"
+	keepStackEnv      = "TESTENV_CITEST_KEEP_STACK"
+	dumpLogsOnExitEnv = "TESTENV_CITEST_DUMP_LOGS"
+)
+
 // Stack is a generated compose workdir for Docker citest.
 type Stack struct {
 	WorkDir       string
@@ -53,7 +59,13 @@ func NewStack(t *testing.T, prefix string) *Stack {
 
 	workDir, err := os.MkdirTemp(testenvDir, prefix)
 	require.NoError(t, err)
-	t.Cleanup(func() { _ = os.RemoveAll(workDir) })
+	t.Cleanup(func() {
+		if keepStackEnabled() {
+			t.Logf("citest: keeping stack workdir %s because %s=1", workDir, keepStackEnv)
+			return
+		}
+		_ = os.RemoveAll(workDir)
+	})
 
 	return &Stack{
 		WorkDir:     workDir,
@@ -105,7 +117,7 @@ func (s *Stack) LoadConfig(t *testing.T) *config.File {
 	return cfg
 }
 
-// Endpoints reads Docker-assigned localhost ports from a running compose stack.
+// Endpoints reads Docker-assigned host-published ports from a running compose stack.
 func (s *Stack) Endpoints(t *testing.T, cfg *config.File) Endpoints {
 	t.Helper()
 	eps := s.MockChainEndpoints(t, cfg)
@@ -117,7 +129,7 @@ func (s *Stack) Endpoints(t *testing.T, cfg *config.File) Endpoints {
 	return eps
 }
 
-// MockChainEndpoints reads Docker-assigned host ports for a mock-chain-only stack.
+// MockChainEndpoints reads Docker-assigned host-published ports for a mock-chain-only stack.
 func (s *Stack) MockChainEndpoints(t *testing.T, cfg *config.File) Endpoints {
 	t.Helper()
 	return Endpoints{
@@ -141,10 +153,21 @@ func (s *Stack) composePublishedAddr(t *testing.T, service string, targetPort in
 	raw := strings.TrimSpace(string(out))
 	host, port, err := net.SplitHostPort(raw)
 	require.NoError(t, err, "parse docker compose port output %q", raw)
-	if host == "" || host == "0.0.0.0" || host == "::" {
-		host = "127.0.0.1"
-	}
+	host = hostPublishedAddr(host)
 	return net.JoinHostPort(host, port)
+}
+
+func hostPublishedAddr(composeHost string) string {
+	override := strings.TrimSpace(os.Getenv(hostAddrEnv))
+	if override != "" {
+		return override
+	}
+	switch composeHost {
+	case "", "0.0.0.0", "::":
+		return "127.0.0.1"
+	default:
+		return composeHost
+	}
 }
 
 // Up starts the stack with docker compose up (expects citest-images built; pulls missing hub images).
@@ -181,6 +204,14 @@ func ComposeBuildEnabled() bool {
 	return os.Getenv("TESTENV_CITEST_BUILD") == "1"
 }
 
+func keepStackEnabled() bool {
+	return os.Getenv(keepStackEnv) == "1"
+}
+
+func dumpLogsOnExitEnabled() bool {
+	return os.Getenv(dumpLogsOnExitEnv) == "1"
+}
+
 func (s *Stack) composeFileArgs() []string {
 	args := []string{"-f", s.ComposePath}
 	if s.Observability {
@@ -205,7 +236,16 @@ func (s *Stack) composeUp(t *testing.T, build bool, services []string) {
 	ctx, cancel := context.WithTimeout(context.Background(), s.Timeout)
 	defer cancel()
 
-	t.Cleanup(func() { s.Down(t) })
+	t.Cleanup(func() {
+		if dumpLogsOnExitEnabled() {
+			DumpComposeLogs(t, s)
+		}
+		if keepStackEnabled() {
+			t.Logf("citest: keeping compose stack %s because %s=1", filepath.Base(s.WorkDir), keepStackEnv)
+			return
+		}
+		s.Down(t)
+	})
 
 	args := append([]string{"compose"}, s.composeFileArgs()...)
 	args = append(args, "up", "-d", "--wait", "--pull", "missing")

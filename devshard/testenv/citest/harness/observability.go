@@ -3,6 +3,7 @@ package harness
 import (
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -42,14 +43,15 @@ func DefaultObservabilityEndpoints() ObservabilityEndpoints {
 
 // ObservabilityEndpointsFor returns host URLs for a profile (unused backends stay set for convenience).
 func ObservabilityEndpointsFor(profile ObsProfile) ObservabilityEndpoints {
+	host := hostPublishedAddr("")
 	return ObservabilityEndpoints{
 		Profile:    profile,
-		Jaeger:     "http://127.0.0.1:11686",
-		Tempo:      "http://127.0.0.1:13200",
-		Alloy:      "http://127.0.0.1:12345",
-		Loki:       "http://127.0.0.1:13101",
-		Prometheus: "http://127.0.0.1:19099",
-		Grafana:    "http://127.0.0.1:13000",
+		Jaeger:     "http://" + net.JoinHostPort(host, "11686"),
+		Tempo:      "http://" + net.JoinHostPort(host, "13200"),
+		Alloy:      "http://" + net.JoinHostPort(host, "12345"),
+		Loki:       "http://" + net.JoinHostPort(host, "13101"),
+		Prometheus: "http://" + net.JoinHostPort(host, "19099"),
+		Grafana:    "http://" + net.JoinHostPort(host, "13000"),
 	}
 }
 
@@ -201,9 +203,9 @@ func WaitObservabilityReady(t *testing.T, obs ObservabilityEndpoints, timeout ti
 		}
 		switch obs.Profile.TraceBackend() {
 		case "tempo":
-			// Tempo /ready returns 503 for ~15s after start ("Ingester not ready");
-			// buildinfo is up earlier and is enough to accept traffic shortly after.
-			if !httpReady(client, obs.Tempo+"/ready") && !httpReady(client, obs.Tempo+"/status/buildinfo") {
+			// Tempo 2.7.1 can panic in statusHandler for /status/buildinfo in this
+			// local-blocks test config, while /ready correctly gates trace reads.
+			if !httpReady(client, obs.Tempo+"/ready") {
 				return false
 			}
 		default:
