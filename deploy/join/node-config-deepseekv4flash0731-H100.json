@@ -12,7 +12,7 @@
           "--tensor-parallel-size", "4",
           "--gpu-memory-utilization", "0.85",
           "--max-model-len", "400000",
-          "--max-num-batched-tokens", "16384",
+          "--max-num-batched-tokens", "32768",
           "--kv-cache-dtype", "fp8",
           "--tokenizer-mode", "deepseek_v4",
           "--enable-auto-tool-choice",
