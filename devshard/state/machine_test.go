@@ -3407,3 +3407,51 @@ func TestSettleLiveRecordLocked_TerminalUnchanged(t *testing.T) {
 	require.Equal(t, uint64(120), after.HostStats[1].Cost)
 	require.Equal(t, before.Balance, after.Balance)
 }
+
+// Builds before the floor created inferences below it, and those diffs are already in the recorded
+// state root. Refusing them on replay cannot reproduce that root, only fail to start: production hit
+// exactly this, with "replay nonce 1003: max_tokens below min_tokens floor: max_tokens 1, floor 64".
+func TestApplyPersisted_ReplaysAnInferenceWrittenBeforeTheFloor(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	sm, _ := newTestSM(t, hosts, 10000)
+	belowFloor := []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
+		InputLength: 100, MaxTokens: 1, StartedAt: 1000,
+	})}
+
+	root, err := sm.ApplyPersisted(1, belowFloor)
+
+	require.NoError(t, err, "a diff this node already accepted must replay")
+	require.NotEmpty(t, root)
+	require.Equal(t, types.StatusPending, sm.SnapshotState().Inferences[1].Status)
+}
+
+// The relaxation is for history alone. Creating new work below the floor stays refused, and the
+// exemption must not survive the call that used it.
+func TestApplyPersisted_DoesNotRelaxTheFloorForNewWork(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	sm, user := newTestSM(t, hosts, 10000)
+
+	replayed, err := sm.ApplyPersisted(1, []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
+		InputLength: 100, MaxTokens: 1, StartedAt: 1000,
+	})})
+	require.NoError(t, err)
+	require.NotEmpty(t, replayed)
+
+	// A peer's diff, arriving after the replay that relaxed the check.
+	fromPeer := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: 2, PromptHash: []byte("prompt"), Model: "llama",
+		InputLength: 100, MaxTokens: 1, StartedAt: 1000,
+	})})
+	_, err = sm.ApplyDiff(fromPeer)
+	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor, "the exemption leaked past the replay that set it")
+
+	// And composing our own new inference is refused the same way: the start is mandatory, so the
+	// compose fails outright rather than dropping it and signing a diff without the work in it.
+	_, _, err = sm.ApplyLocalBestEffort(2, []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: 2, PromptHash: []byte("prompt"), Model: "llama",
+		InputLength: 100, MaxTokens: 1, StartedAt: 1000,
+	})})
+	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor, "a sub-floor reservation must not be composed")
+}

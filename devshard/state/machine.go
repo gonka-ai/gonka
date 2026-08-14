@@ -100,7 +100,12 @@ type StateMachine struct {
 	addressToSlots     map[string][]uint32 // address -> sorted slot IDs
 	totalSlots         uint32
 
-	warmResolver    WarmKeyResolver       // optional, nil = no warm key support
+	warmResolver WarmKeyResolver // optional, nil = no warm key support
+
+	// replayingPersisted is set only while sm.mu is held, by ApplyPersisted. Policy that tightened
+	// since a diff was written must not reject it on replay: the diff is already in the recorded state
+	// root, so refusing it cannot reproduce that root, only fail to start.
+	replayingPersisted bool
 
 	// obsDeferred, when non-nil, redirects observability writes made during a
 	// trial apply (ValidateDiff / PreviewLocalBestEffort) into a buffer instead
@@ -316,9 +321,8 @@ func (sm *StateMachine) ApplyLocal(nonce uint64, txs []*types.DevshardTx) ([]byt
 	return sm.applyCore(nonce, txs, nil, "user")
 }
 
-// ApplyLocalPersisted applies txs without signature verification, replaying a diff this node already
-// accepted. Used by recovery: a diff is part of a recorded state root, so a rule that tightened since
-// it was written cannot undo it by refusing it, only fail to start.
+// ApplyLocalPersisted replays a diff this node already accepted and persisted. It is the only path that
+// relaxes policy, and it relaxes it only for checks that guard the creation of new work.
 func (sm *StateMachine) ApplyLocalPersisted(nonce uint64, txs []*types.DevshardTx) ([]byte, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()

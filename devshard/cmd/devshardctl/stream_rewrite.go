@@ -29,9 +29,17 @@ func withClientResponseIntent(ctx context.Context, intent clientResponseIntent) 
 	return context.WithValue(ctx, clientResponseIntentContextKey{}, intent)
 }
 
-func clientResponseIntentFromContext(ctx context.Context) clientResponseIntent {
-	intent, _ := ctx.Value(clientResponseIntentContextKey{}).(clientResponseIntent)
-	return intent
+func clientResponseIntentFromContext(ctx context.Context) (clientResponseIntent, bool) {
+	intent, recorded := ctx.Value(clientResponseIntentContextKey{}).(clientResponseIntent)
+	return intent, recorded
+}
+
+// A forwarded request carries a normalized body, whose forced logprobs say nothing about the client.
+func resolveClientResponseIntent(ctx context.Context, req chatRequest) clientResponseIntent {
+	if intent, recorded := clientResponseIntentFromContext(ctx); recorded {
+		return intent
+	}
+	return clientResponseIntentFromRequest(req)
 }
 
 type streamingRewritePayload struct {

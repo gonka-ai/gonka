@@ -238,8 +238,7 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	logRequestStage(ctx, "proxy_request_started", "escrow", p.escrowID, "model", model, "stream", req.Stream, "input_tokens", params.InputLength)
 
-	// Carry the client's original logprobs and usage intent to the response strip boundary.
-	r = r.WithContext(withClientResponseIntent(r.Context(), clientResponseIntentFromRequest(req)))
+	r = r.WithContext(withClientResponseIntent(r.Context(), resolveClientResponseIntent(r.Context(), req)))
 
 	if req.Stream {
 		p.handleStreaming(w, r, params)
@@ -286,7 +285,8 @@ type deferredWriter struct {
 
 func newDeferredWriter(ctx context.Context, w http.ResponseWriter, escrow string, flag *cancelFlag) *deferredWriter {
 	rid, _ := requestLogFromContext(ctx)
-	return &deferredWriter{ctx: ctx, w: w, escrow: escrow, requestID: rid, clientFlag: flag, clientIntent: clientResponseIntentFromContext(ctx)}
+	intent, _ := clientResponseIntentFromContext(ctx)
+	return &deferredWriter{ctx: ctx, w: w, escrow: escrow, requestID: rid, clientFlag: flag, clientIntent: intent}
 }
 
 func (d *deferredWriter) Write(p []byte) (int, error) {
@@ -569,8 +569,8 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 		return
 	}
 
-	assembled := assembleSSEBody(buf.Bytes())
-	assembled = filterClientInternalFields(assembled, clientResponseIntentFromContext(r.Context()))
+	intent, _ := clientResponseIntentFromContext(r.Context())
+	assembled := filterClientInternalFields(assembleSSEBody(buf.Bytes()), intent)
 	if rid, ok := requestLogFromContext(r.Context()); ok {
 		w.Header().Set("X-Request-Id", rid)
 	}

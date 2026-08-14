@@ -2669,18 +2669,18 @@ func TestGatewayParseChatReservationUsesPerModelTokenLimits(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
 		strings.NewReader(`{"model":"Kimi/Test","max_tokens":4096,"messages":[{"role":"user","content":"hello"}]}`))
-	body, model, _, err := g.parseChatReservation(req, g.settings.DefaultModel)
+	body, parsed, _, err := g.parseChatReservation(req, g.settings.DefaultModel)
 
 	require.NoError(t, err)
-	require.Equal(t, "Kimi/Test", model)
+	require.Equal(t, "Kimi/Test", parsed.Model)
 	require.Contains(t, string(body), `"max_tokens":3584`)
 
 	req = httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
 		strings.NewReader(`{"model":"Kimi/Test","messages":[{"role":"user","content":"hello"}]}`))
-	body, model, _, err = g.parseChatReservation(req, g.settings.DefaultModel)
+	body, parsed, _, err = g.parseChatReservation(req, g.settings.DefaultModel)
 
 	require.NoError(t, err)
-	require.Equal(t, "Kimi/Test", model)
+	require.Equal(t, "Kimi/Test", parsed.Model)
 	require.Contains(t, string(body), `"max_tokens":2048`)
 }
 
