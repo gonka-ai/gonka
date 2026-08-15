@@ -26,7 +26,7 @@ var current Logger = &slogLogger{}
 
 type requestIDKey struct{}
 
-var requestSeq uint64
+var requestSeq atomic.Uint64
 
 var structuredStages atomic.Bool
 
@@ -85,7 +85,7 @@ func WithRequestID(ctx context.Context, ids ...string) (context.Context, string)
 		id = ids[0]
 	}
 	if id == "" {
-		seq := atomic.AddUint64(&requestSeq, 1)
+		seq := requestSeq.Add(1)
 		id = fmt.Sprintf("req-%d-%d", time.Now().UnixNano(), seq)
 	}
 	return context.WithValue(ctx, requestIDKey{}, id), id

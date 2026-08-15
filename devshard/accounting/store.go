@@ -30,6 +30,7 @@ type escrowBlob struct {
 	ChallengeBySlot map[uint32]uint64          `json:"challenge_by_slot"`
 	InvalidBySlot   map[uint32]uint64          `json:"invalid_by_slot"`
 	InvalidNonces   []uint64                   `json:"invalid_nonces,omitempty"`
+	Events          []ProtocolEvent            `json:"events,omitempty"`
 }
 
 type counterBlob struct {
@@ -134,6 +135,7 @@ func (s *Store) Load(ctx context.Context, t *Tracker) error {
 			InvalidBySlot:   blob.InvalidBySlot,
 			InvalidNonce:    make(map[uint64]struct{}, len(blob.InvalidNonces)),
 			Live:            make(map[uint64]*nonceState),
+			Events:          blob.Events,
 		}
 		for _, nonce := range blob.InvalidNonces {
 			escrow.InvalidNonce[nonce] = struct{}{}
@@ -220,6 +222,7 @@ func (t *Tracker) snapshot(retention uint64) storeSnapshot {
 			ChallengeBySlot: copyUint32Map(escrow.ChallengeBySlot),
 			InvalidBySlot:   copyUint32Map(escrow.InvalidBySlot),
 			InvalidNonces:   sortedNonces(escrow.InvalidNonce),
+			Events:          append([]ProtocolEvent(nil), escrow.Events...),
 		}
 		for slot, stats := range escrow.HostStats {
 			blob.HostStats[slot] = stats

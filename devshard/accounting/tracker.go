@@ -38,6 +38,7 @@ type escrowState struct {
 	InvalidBySlot   map[uint32]uint64          `json:"invalid_by_slot"`
 	InvalidNonce    map[uint64]struct{}        `json:"-"`
 	Live            map[uint64]*nonceState     `json:"-"`
+	Events          []ProtocolEvent            `json:"-"`
 }
 
 type nonceState struct {
@@ -67,6 +68,7 @@ type nonceState struct {
 	ReceiptAt         int64
 	ProtocolTimedOut  bool
 	TimeoutResultSeen bool
+	RequestID         string
 	Counted           *CounterKey
 }
 
@@ -238,6 +240,9 @@ func (t *Tracker) RecordProtocol(escrowID string, nonce uint64, slot uint32, kin
 			return fmt.Errorf("slot %d out of range", slot)
 		}
 		e.HostStats[slot] = maxHostStats(e.HostStats[slot], stats)
+		if recordsProtocolEvent(kind) {
+			e.appendProtocolEvent(nonce, slot, kind, t.nowUTC())
+		}
 		switch kind {
 		case ProtocolReceiptApplied:
 			if s := e.Live[nonce]; s != nil {
@@ -317,6 +322,22 @@ func (t *Tracker) RecordGhost(escrowID string, nonce uint64, phase Phase, quaran
 	})
 }
 
+// RecordRequestID ties a nonce to the client request that produced it. One request fans out across
+// several nonces during a redundancy race, so this is the only route back from a miss to its cause.
+func (t *Tracker) RecordRequestID(escrowID string, nonce uint64, requestID string) error {
+	if requestID == "" {
+		return nil
+	}
+	return t.withEscrow(escrowID, func(e *escrowState) error {
+		s, err := e.liveNonce(nonce)
+		if err != nil {
+			return err
+		}
+		s.RequestID = requestID
+		return nil
+	})
+}
+
 func (t *Tracker) RecordRealSend(escrowID string, nonce uint64, sentAt time.Time, phase Phase, quarantine QuarantineMode) error {
 	return t.withEscrow(escrowID, func(e *escrowState) error {
 		s, err := e.liveNonce(nonce)
@@ -342,7 +363,7 @@ func (t *Tracker) RecordUsage(escrowID string, nonce uint64, usage Usage, delive
 			return err
 		}
 		s.Usage = normalizeUsage(usage)
-		s.DeliveryReason = normalizeDetailReason(deliveryReason)
+		s.DeliveryReason = normalizeDeliveryReason(deliveryReason)
 		e.reclassify(nonce, s, t.nowUTC())
 		return nil
 	})
@@ -527,6 +548,9 @@ func (e *escrowState) recordCommittedDiff(diff types.Diff, verdicts []VerdictRec
 		}
 	}
 	for _, verdict := range verdicts {
+		if recordsProtocolEvent(verdict.Kind) {
+			e.appendProtocolEvent(verdict.Nonce, verdict.Slot, verdict.Kind, now)
+		}
 		switch verdict.Kind {
 		case ProtocolChallenged:
 			if _, ok := e.OpenChallenge[verdict.Nonce]; !ok {

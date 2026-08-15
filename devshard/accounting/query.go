@@ -26,6 +26,7 @@ type escrowView struct {
 	challengeBySlot map[uint32]uint64
 	invalidBySlot   map[uint32]uint64
 	live            []nonceState
+	events          []ProtocolEvent
 }
 
 // viewsFor copies the escrows a filter selects. This is the only part of a query
@@ -65,6 +66,7 @@ func (e *escrowState) view(id string) escrowView {
 		challengeBySlot: copyUint32Map(e.ChallengeBySlot),
 		invalidBySlot:   copyUint32Map(e.InvalidBySlot),
 		live:            make([]nonceState, 0, len(e.Live)),
+		events:          append([]ProtocolEvent(nil), e.Events...),
 	}
 	for key, count := range e.Counters {
 		out.counters[key] = count

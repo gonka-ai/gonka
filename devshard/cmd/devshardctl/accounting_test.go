@@ -173,12 +173,14 @@ func TestAccountingObserverSyncsActiveProtocolMisses(t *testing.T) {
 	sentAt := time.Now().Add(-2 * time.Second)
 	recorder.RealSend("escrow-proxy", prepared.Nonce(), sentAt, "")
 
+	// StartedAt is stamped when the request arrives, so it never postdates the send; backdating one
+	// without the other would ask verifiers to judge a deadline that has not run yet.
 	result, err := env.session.HandleTimeout(context.Background(), prepared.Nonce(), sentAt, &host.InferencePayload{
 		Prompt:      params.Prompt,
 		Model:       params.Model,
 		InputLength: params.InputLength,
 		MaxTokens:   params.MaxTokens,
-		StartedAt:   params.StartedAt,
+		StartedAt:   sentAt.Unix(),
 	})
 	require.Error(t, err)
 	require.True(t, result.Applied)
@@ -291,6 +293,43 @@ func TestAccountingStateDivergenceRemainsUnknownPolicy(t *testing.T) {
 	require.Equal(t, uint64(1), record.UnknownReasonTotal)
 }
 
+// The request identifier only exists in the gateway's log context. Unless the dispatch path hands it
+// to accounting, a later miss can name its nonce but never the request that produced it.
+func TestAccountingCarriesTheRequestIDFromTheDispatchContext(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
+	recorder := accounting.NewRecorder(tracker, nil)
+	recorder.Attach(accounting.RuntimeMetadata{
+		EscrowID:      "escrow-proxy",
+		CreationEpoch: 25,
+		Model:         "llama",
+		TimeoutBuffer: user.TimeoutBuffer,
+	}, env.session, env.sm)
+	env.proxy.redundancy.accounting = recorder
+
+	params := defaultParams()
+	prepared, err := env.session.PrepareInference(params)
+	require.NoError(t, err)
+	attempt := &inflight{
+		escrowID: "escrow-proxy",
+		nonce:    prepared.Nonce(),
+		hostIdx:  prepared.HostIdx(),
+		sendTime: time.Now(),
+	}
+	ctx, requestID := ensureRequestLogContext(context.Background())
+
+	env.proxy.redundancy.recordGatewayAttemptStarted(ctx, attempt, params)
+	require.NoError(t, tracker.RecordProtocol("escrow-proxy", attempt.nonce,
+		uint32(attempt.hostIdx), accounting.ProtocolTimeoutApplied, types.HostStats{}))
+
+	events := tracker.Events(accounting.QueryFilter{EpochIndex: 25})
+	require.Len(t, events, 1)
+	require.Equal(t, attempt.nonce, events[0].Nonce)
+	require.Equal(t, requestID, events[0].RequestID)
+}
+
 func TestAccountingProductionUsedAndUnusedAttempts(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
 	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
@@ -314,7 +353,7 @@ func TestAccountingProductionUsedAndUnusedAttempts(t *testing.T) {
 		hostIdx:  prepared1.HostIdx(),
 		sendTime: time.Now(),
 	}
-	env.proxy.redundancy.recordGatewayAttemptStarted(attempt1, params)
+	env.proxy.redundancy.recordGatewayAttemptStarted(context.Background(), attempt1, params)
 	response1, err := env.session.SendOnly(context.Background(), prepared1, nil, nil)
 	require.NoError(t, err)
 	require.NoError(t, env.session.ProcessResponse(prepared1.HostIdx(), response1, prepared1.Nonce()))
@@ -327,7 +366,7 @@ func TestAccountingProductionUsedAndUnusedAttempts(t *testing.T) {
 		hostIdx:  prepared2.HostIdx(),
 		sendTime: time.Now(),
 	}
-	env.proxy.redundancy.recordGatewayAttemptStarted(attempt2, params)
+	env.proxy.redundancy.recordGatewayAttemptStarted(context.Background(), attempt2, params)
 	response2, err := env.session.SendOnly(context.Background(), prepared2, nil, nil)
 	require.NoError(t, err)
 	require.NoError(t, env.session.ProcessResponse(prepared2.HostIdx(), response2, prepared2.Nonce()))

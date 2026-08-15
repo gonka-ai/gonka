@@ -131,6 +131,7 @@ func main() {
 	logging.ConfigureFormat(os.Getenv("DEVSHARD_LOG_FORMAT"))
 	ConfigurePoCRequestMode(os.Getenv("DEVSHARD_POC_REQUEST_MODE"))
 	ConfigureCapacityAwareLimits(os.Getenv("DEVSHARD_CAPACITY_AWARE_LIMITS"))
+	ConfigureGhostAccountability(os.Getenv("DEVSHARD_GHOST_ACCOUNTABILITY"))
 	flags := parseCLIFlags()
 	runtimeOpts := mustLoadRuntimeOptions(flags)
 	gatewayStore := mustOpenGatewayStore(runtimeOpts.baseStorageDir)

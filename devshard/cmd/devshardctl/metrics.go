@@ -1010,7 +1010,7 @@ type nonceFinishedChecker interface {
 	IsNonceFinished(uint64) bool
 }
 
-func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker) string {
+func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker, model string) string {
 	if inf == nil {
 		return "unknown"
 	}
@@ -1019,6 +1019,8 @@ func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker) st
 		return "phase_transition_aborted"
 	case isErrorStreamAttempt(inf):
 		return "error_stream"
+	case isModelBurnEmpty(inf, model):
+		return "model_burn_empty"
 	case isEmptyStreamAttempt(inf):
 		return "empty_stream"
 	}

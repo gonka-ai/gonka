@@ -545,7 +545,7 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 
 	// Track protocol outcome for this nonce (only for prepared inferences).
 	if outcome, ok := s.nonceStates[inferenceNonce]; ok {
-		if resp.ConfirmedAt > 0 {
+		if resp.Receipt != nil && resp.ConfirmedAt > 0 {
 			outcome.confirmedAt = resp.ConfirmedAt
 		}
 		if HasMsgFinish(resp.Mempool, inferenceNonce) {
@@ -862,20 +862,26 @@ func (p *PreparedInference) HostIdx() int { return p.hostIdx }
 // this dispatch as a probe (e.g. PoC bypass for non-preserved hosts).
 func (p *PreparedInference) IsProbe() bool { return p.isProbe }
 
+// Payload is verified against the nonce's committed PromptHash, so a timeout raised on a nonce we
+// never dispatched has to build it exactly as a real dispatch would.
+func (p *PreparedInference) Payload() *host.InferencePayload {
+	return &host.InferencePayload{
+		Prompt:      p.params.Prompt,
+		Model:       p.params.Model,
+		InputLength: p.params.InputLength,
+		MaxTokens:   p.params.MaxTokens,
+		StartedAt:   p.params.StartedAt,
+	}
+}
+
 // SendOnly sends a prepared inference to the host and returns the raw response
 // without processing it. Use ProcessResponse separately to apply the response
 // to session state. This split allows parallel network I/O with ordered processing.
 func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
 	resp, err := s.clients[p.hostIdx].Send(ctx, host.HostRequest{
-		Diffs: p.catchUp,
-		Nonce: p.diff.Nonce,
-		Payload: &host.InferencePayload{
-			Prompt:      p.params.Prompt,
-			Model:       p.params.Model,
-			InputLength: p.params.InputLength,
-			MaxTokens:   p.params.MaxTokens,
-			StartedAt:   p.params.StartedAt,
-		},
+		Diffs:   p.catchUp,
+		Nonce:   p.diff.Nonce,
+		Payload: p.Payload(),
 	}, stream, receiptHandler)
 	if err != nil && state.IsPostStateRootMismatchError(err) {
 		s.logStateRootMismatchUserDiagnostic(p)
@@ -1930,12 +1936,20 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 
 	result := TimeoutResult{Reason: timeoutReasonLogLabel(reason)}
 
+	if elapsed, refusalTimeout, unreachable := s.refusalDeadlineUnreachable(reason, payload); unreachable {
+		logging.Stage(ctx, "timeout_skipped", logFields("reason", "refusal_deadline_unreachable",
+			"elapsed_seconds", elapsed, "refusal_timeout_seconds", refusalTimeout)...)
+		result.Outcome = "skipped"
+		result.DetailReason = "refusal_deadline_unreachable"
+		return result, fmt.Errorf("inference %d: refusal deadline unreachable", nonce)
+	}
+
 	logging.Stage(ctx, "timeout_started", logFields("reason", result.Reason)...)
 
 	verifiers := s.TimeoutVerifiers()
 	storedDiffs := s.Diffs()
 
-	votes, hadVerifierErrors, err := s.collectTimeoutVotes(ctx, nonce, reason, payload, verifiers, storedDiffs)
+	votes, verifierError, err := s.collectTimeoutVotes(ctx, nonce, reason, payload, verifiers, storedDiffs)
 	if err != nil {
 		result.Outcome = "vote_collection_failed"
 		if ctx.Err() != nil {
@@ -1976,16 +1990,30 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 		return result, fmt.Errorf("inference %d timed out: %s", nonce, reason)
 	}
 
-	if hadVerifierErrors {
+	if verifierError != "" {
 		result.Outcome = "vote_collection_failed"
+		result.DetailReason = verifierError
 		if ctx.Err() != nil {
 			result.DetailReason = "context_canceled"
 		}
 	} else {
 		result.Outcome = "insufficient_votes"
+		result.DetailReason = "vote_weight_short"
 	}
 	logging.Stage(ctx, "timeout_insufficient_votes", logFields("reason", result.Reason)...)
 	return result, fmt.Errorf("inference %d timed out but insufficient votes", nonce)
+}
+
+// refusalDeadlineUnreachable reports whether a refusal vote is already lost. A verifier measures the
+// deadline as its own clock in seconds minus the record's StartedAt, so a stamp in the future — or in
+// the wrong unit — makes every vote a guaranteed reject, and the round is pure waste.
+func (s *Session) refusalDeadlineUnreachable(reason types.TimeoutReason, payload *host.InferencePayload) (elapsed, refusalTimeout int64, unreachable bool) {
+	if reason != types.TimeoutReason_TIMEOUT_REASON_REFUSED || payload == nil {
+		return 0, 0, false
+	}
+	refusalTimeout = s.sm.Config().RefusalTimeout
+	elapsed = time.Now().Unix() - payload.StartedAt
+	return elapsed, refusalTimeout, elapsed < refusalTimeout
 }
 
 func (s *Session) TimeoutDeadline(nonce uint64, sendTime time.Time) (string, time.Time) {
@@ -2085,7 +2113,7 @@ func (s *Session) collectTimeoutVotes(
 	payload *host.InferencePayload,
 	verifiers map[int]TimeoutVerifier,
 	diffs []types.Diff,
-) ([]*types.TimeoutVote, bool, error) {
+) ([]*types.TimeoutVote, string, error) {
 	// Cancel all in-flight verifier RPCs (and unblock any goroutines still
 	// waiting in the per-verifier queue) once we return — typically because
 	// the vote-weight threshold was met early. Without this, leftover
@@ -2209,10 +2237,12 @@ func (s *Session) collectTimeoutVotes(
 	voteThreshold := s.sm.VoteThreshold()
 	var accWeight uint32
 	var errors, rejects, invalid int
+	errorClasses := make(map[string]int)
 	for i := 0; i < expected; i++ {
 		res := <-results
 		if res.err != nil {
 			errors++
+			errorClasses[classifyVoteError(res.err)]++
 			logging.Stage(ctx, "timeout_vote_result",
 				logFields(
 					res.verifierAddr,
@@ -2299,7 +2329,7 @@ func (s *Session) collectTimeoutVotes(
 		"reject", rejects, "invalid", invalid, "errors", errors,
 		"threshold", voteThreshold, "verifiers", expected)
 
-	return votes, errors > 0, nil
+	return votes, dominantVoteError(errorClasses), nil
 }
 
 // HasSufficientTimeoutVotes returns true if the accept votes exceed the vote

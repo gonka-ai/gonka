@@ -413,6 +413,18 @@ func (sm *StateMachine) flushDeferredObsLocked(writes []deferredObsWrite) {
 	}
 }
 
+// logDroppedTx reports what best-effort composition discarded. A dropped ConfirmStart is queued once
+// per inference and leaves it pending forever, so it warns; mempool txs are gossiped repeatedly and
+// stale ones are ordinary, so they stay at debug.
+func logDroppedTx(nonce uint64, tx *types.DevshardTx, err error) {
+	if confirm := tx.GetConfirmStart(); confirm != nil {
+		logging.Warn("dropped confirm start", "subsystem", "state",
+			"nonce", nonce, "inference_id", confirm.InferenceId, "error", err)
+		return
+	}
+	logging.Debug("dropped tx", "subsystem", "state", "nonce", nonce, "error", err)
+}
+
 // localBestEffortLocked implements ApplyLocalBestEffort and the trial-apply core
 // of PreviewLocalBestEffort. It applies txs one by one (skipping non-mandatory
 // failures) and, on success, leaves the mutable state advanced to nonce. On any
@@ -453,6 +465,7 @@ func (sm *StateMachine) localBestEffortLocked(nonce uint64, txs []*types.Devshar
 				sm.restoreMutable(snap)
 				return nil, nil, fmt.Errorf("mandatory start inference: %w", err)
 			}
+			logDroppedTx(nonce, tx, err)
 			continue
 		}
 		applied = append(applied, tx)

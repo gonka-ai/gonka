@@ -259,10 +259,10 @@ func TestGatewayAttemptMetricClassifiers(t *testing.T) {
 	errorStreamAttempt := &inflight{errorSource: "error.BadRequestError"}
 	errorStreamAttempt.setReceiptAt(now)
 
-	require.Equal(t, "empty_stream", gatewayAttemptFailureReason(emptyStreamAttempt, nil))
-	require.Equal(t, "error_stream", gatewayAttemptFailureReason(errorStreamAttempt, nil))
-	require.Equal(t, "eof_transport", gatewayAttemptFailureReason(&inflight{err: io.EOF}, nil))
-	require.Equal(t, "phase_transition_aborted", gatewayAttemptFailureReason(&inflight{phaseTransitionAborted: true}, nil))
+	require.Equal(t, "empty_stream", gatewayAttemptFailureReason(emptyStreamAttempt, nil, ""))
+	require.Equal(t, "error_stream", gatewayAttemptFailureReason(errorStreamAttempt, nil, ""))
+	require.Equal(t, "eof_transport", gatewayAttemptFailureReason(&inflight{err: io.EOF}, nil, ""))
+	require.Equal(t, "phase_transition_aborted", gatewayAttemptFailureReason(&inflight{phaseTransitionAborted: true}, nil, ""))
 
 	require.Equal(t, "user_visible_winner", gatewayAttemptVisibility(&inflight{nonce: 7}, 7, true))
 	require.Equal(t, "no_winner", gatewayAttemptVisibility(&inflight{nonce: 7, suspicious: true}, 7, true))

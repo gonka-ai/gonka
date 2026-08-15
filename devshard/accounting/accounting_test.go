@@ -545,7 +545,7 @@ func TestHTTPFiltersAndMetrics(t *testing.T) {
 	require.NoError(t, tr.RecordDiff("e1", 1, false))
 	require.NoError(t, tr.RecordDiff("e2", 1, false))
 	require.Error(t, tr.RecordGhost("missing", 1, PhaseNormal, QuarantineNone, NoSendUnknown, ""))
-	handler := NewHandler(tr, func(context.Context) (uint64, error) { return 9, nil })
+	handler := NewHandler(tr, func(context.Context) (uint64, error) { return 9, nil }, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/epochs/current/participants?model=m1&escrow_id=e1,e2", nil)
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, req)

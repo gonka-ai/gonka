@@ -1186,7 +1186,7 @@ func TestErrorStreamSkipsParticipantFailureAccounting(t *testing.T) {
 func TestRunInference_AllHostsKnownToolUnsupportedReturnsToolError(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
 	for _, key := range env.session.ParticipantKeys() {
-		env.proxy.redundancy.perf.RecordToolUnsupported(key)
+		env.proxy.redundancy.perf.RecordToolUnsupported(key, "llama")
 	}
 	params := defaultParams()
 	params.Prompt = []byte(`{"messages":[{"role":"user","content":"x"}],"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}],"tool_choice":"auto"}`)

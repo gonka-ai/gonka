@@ -337,7 +337,7 @@ func bodySampleForLog(p []byte, limit int) (string, bool) {
 // hostFailureLogFields says why a host was unreachable in fields that can be grouped on, and keeps
 // the body a host returned out of the error string, where nothing bounds its length.
 func hostFailureLogFields(inf *inflight, session nonceFinishedChecker) []any {
-	fields := []any{"failure_reason", gatewayAttemptFailureReason(inf, session)}
+	fields := []any{"failure_reason", gatewayAttemptFailureReason(inf, session, "")}
 	var upstreamErr *transport.UpstreamStatusError
 	if errors.As(inf.err, &upstreamErr) {
 		sample, truncated := bodySampleForLog([]byte(upstreamErr.Body), emptyStreamBodySampleLimit)
@@ -1951,7 +1951,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 	// before awaitRace can observe the attempt.
 	inf.sendTime = time.Now()
 	inf.startedBeforePoCGeneration = !currentPoCGenerationActive()
-	e.recordGatewayAttemptStarted(inf, params)
+	e.recordGatewayAttemptStarted(ctx, inf, params)
 	go e.monitorInflight(ctx, inf, race)
 
 	go func() {
@@ -2757,7 +2757,7 @@ func gatewayAttemptStartReason(inf *inflight) string {
 func gatewayRequestFailureReason(failed []*inflight) string {
 	for _, inf := range failed {
 		if inf != nil && !inf.probe {
-			return gatewayAttemptFailureReason(inf, nil)
+			return gatewayAttemptFailureReason(inf, nil, "")
 		}
 	}
 	return "unknown"
@@ -2807,7 +2807,7 @@ func (e *Redundancy) recordGatewayRequestOutcome(model, outcome, reason string) 
 	}
 }
 
-func (e *Redundancy) recordGatewayAttemptStarted(inf *inflight, params user.InferenceParams) {
+func (e *Redundancy) recordGatewayAttemptStarted(ctx context.Context, inf *inflight, params user.InferenceParams) {
 	if e == nil || inf == nil || inf.probe {
 		return
 	}
@@ -2817,6 +2817,9 @@ func (e *Redundancy) recordGatewayAttemptStarted(inf *inflight, params user.Infe
 	reason := gatewayAttemptStartReason(inf)
 	quarantineMode := e.quarantineModeForParticipant(participantKey)
 	e.accounting.RealSend(inf.escrowID, inf.nonce, inf.sendTime, quarantineMode)
+	if requestID, ok := requestLogFromContext(ctx); ok {
+		e.accounting.RequestID(inf.escrowID, inf.nonce, requestID)
+	}
 	if e.metrics == nil {
 		return
 	}
@@ -2873,7 +2876,7 @@ func (e *Redundancy) recordGatewayAttemptTerminal(inf *inflight, params user.Inf
 			ParticipantKey: participantKey,
 			Model:          model,
 			Role:           role,
-			Reason:         gatewayAttemptFailureReason(inf, e.session),
+			Reason:         gatewayAttemptFailureReason(inf, e.session, e.model),
 			Visibility:     visibility,
 		})
 	}
@@ -2896,7 +2899,7 @@ func (e *Redundancy) recordGatewayHiddenFailure(model string, failed []*inflight
 		if inf == nil || inf.probe {
 			continue
 		}
-		e.metrics.RecordGatewayHiddenFailure(model, "protected", gatewayAttemptFailureReason(inf, e.session))
+		e.metrics.RecordGatewayHiddenFailure(model, "protected", gatewayAttemptFailureReason(inf, e.session, e.model))
 		return
 	}
 }
@@ -2905,7 +2908,7 @@ func (e *Redundancy) recordGatewayTimeoutAction(inf *inflight, params user.Infer
 	if e == nil || inf == nil || inf.probe {
 		return
 	}
-	detailReason := gatewayAttemptFailureReason(inf, e.session)
+	detailReason := gatewayAttemptFailureReason(inf, e.session, e.model)
 	timeoutReason := reason
 	if len(detailReasons) > 0 && detailReasons[0] != "" {
 		timeoutReason = detailReasons[0]
@@ -3333,14 +3336,14 @@ func (e *Redundancy) maybeRecordCapabilityError(inf *inflight) {
 	}
 	participantKey := e.participantKeyForHost(inf.hostIdx)
 	if isToolChoiceCapabilityError(inf.errorMessage) {
-		e.perf.RecordToolUnsupported(participantKey)
+		e.perf.RecordToolUnsupported(participantKey, e.model)
 		return
 	}
 	maxTokens := parseContextLengthLimit(inf.errorMessage)
 	if maxTokens == 0 {
 		return
 	}
-	e.perf.RecordContextLimit(participantKey, maxTokens)
+	e.perf.RecordContextLimit(participantKey, e.model, maxTokens)
 }
 
 func (e *Redundancy) maybeRecordVersionRefusal(inf *inflight) {
@@ -3423,7 +3426,7 @@ func (e *Redundancy) knownCapabilityExhaustionError(params user.InferenceParams,
 	if e == nil || e.perf == nil || !errors.Is(err, ErrNoAvailableHost) || !requestRequiresTools(params) {
 		return nil
 	}
-	if !e.perf.AllKnownToolUnsupported(e.session.ParticipantKeys()) {
+	if !e.perf.AllKnownToolUnsupported(e.session.ParticipantKeys(), params.Model) {
 		return nil
 	}
 	return &hostApplicationError{
@@ -3655,7 +3658,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 			"suspicious", inf.suspicious,
 		}
 		if !ok {
-			fields = append(fields, "failure_reason", gatewayAttemptFailureReason(inf, e.session))
+			fields = append(fields, "failure_reason", gatewayAttemptFailureReason(inf, e.session, e.model))
 		}
 		fields = append(fields, inf.stallLogFields(finishedAt)...)
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "race_completed", fields...)
@@ -4014,8 +4017,11 @@ func probeParams(params user.InferenceParams) user.InferenceParams {
 // well-formed inference for the configured model.
 func ghostProbeParams(model string) user.InferenceParams {
 	return probeParams(user.InferenceParams{
-		Model:     model,
-		StartedAt: time.Now().UnixMilli(),
+		Model: model,
+		// Seconds, like every other StartedAt: a verifier measures the refusal deadline as
+		// now-in-seconds minus this, and a millisecond stamp makes that difference permanently
+		// negative, so the deadline never passes and the timeout is rejected every time.
+		StartedAt: time.Now().Unix(),
 	})
 }
 
@@ -4052,9 +4058,6 @@ func ghostProbeParams(model string) user.InferenceParams {
 //     view eventually converges). For PoC-required hosts that means a
 //     backlog of orphan MsgStarts arriving once PoC ends.
 //
-//   - We do not post a timeout vote from this node: there is no
-//     inflight, so HandleTimeout never runs. Other validators may.
-//
 //   - PerfTracker is not updated (no attempt happened from our POV).
 //
 // Liveness: every nonce the session advances through is accounted for
@@ -4062,8 +4065,8 @@ func ghostProbeParams(model string) user.InferenceParams {
 // log-only no-op. Without this method the picker would have to dequeue
 // a real request and turn IT into a probe, costing that request a turn.
 //
-// kind is retained on the signature for log-label differentiation only;
-// the dispatch path is identical for every kind.
+// The dispatch path is identical for every kind. kind additionally
+// selects who answers for the burn: see raiseGhostAccountability.
 func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostKind, reason string) {
 	if prepared == nil || e.session == nil {
 		return
@@ -4088,6 +4091,33 @@ func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostK
 		"reason", reason,
 		"poc_reason", currentPoCPhaseReason(),
 	)
+	e.raiseGhostAccountability(prepared, kind, participantKey)
+}
+
+// raiseGhostAccountability makes the host answer for a nonce we declined to send it. The burned
+// nonce left a pending MsgStart, which is all a refusal timeout needs: verifiers challenge the
+// executor themselves, so a host that is alive and willing still clears itself by returning a
+// receipt, and we contact it no more than the silent path already did.
+//
+// Every burn is raised, not a sample of them: a host that serves nothing has to end up as visibly
+// missed as one that accepts work and drops it, and a nonce spends the same either way.
+func (e *Redundancy) raiseGhostAccountability(prepared *user.PreparedInference, kind ghostKind, participantKey string) {
+	if !ghostAccountabilityEnabled() || !kind.accountable() {
+		return
+	}
+	nonce := prepared.Nonce()
+	burnedAt := time.Now()
+	hostLabel := e.session.HostLabel(prepared.HostIdx())
+	payload := prepared.Payload()
+	e.goTrackedRaceCleanup(func() {
+		ctx, _ := ensureRequestLogContext(context.Background())
+		logInferenceStage(ctx, e.devshardID, nonce, "ghost_timeout_started", "host", hostLabel, "kind", int(kind))
+		result, err := e.session.HandleTimeout(ctx, nonce, burnedAt, payload)
+		if err != nil {
+			logInferenceStage(ctx, e.devshardID, nonce, "ghost_timeout_failed",
+				"host", hostLabel, "outcome", result.Outcome, "error", err)
+		}
+	})
 }
 
 // fireBalanceExhausted fires onBalanceExhausted at most once per Redundancy

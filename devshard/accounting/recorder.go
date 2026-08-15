@@ -128,6 +128,11 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 		}
 		hostStats = r.appendHostStats(record.ExecutorSlot, state, hostStats)
 		if !verdict {
+			verdicts = append(verdicts, VerdictRecord{
+				Nonce: inferenceID,
+				Slot:  record.ExecutorSlot,
+				Kind:  ProtocolTimeoutApplied,
+			})
 			continue
 		}
 		kind := protocolKindForStatus(record.Status)
@@ -184,6 +189,16 @@ func (r *Recorder) Ghost(escrowID string, nonce uint64, reason, quarantine strin
 		detail,
 	); err != nil {
 		log.Printf("gateway accounting ghost escrow=%s nonce=%d: %v", escrowID, nonce, err)
+	}
+}
+
+// RequestID names the client request a nonce came from, so a later miss or invalid can point at it.
+func (r *Recorder) RequestID(escrowID string, nonce uint64, requestID string) {
+	if r == nil || r.tracker == nil || requestID == "" {
+		return
+	}
+	if err := r.tracker.RecordRequestID(escrowID, nonce, requestID); err != nil {
+		log.Printf("gateway accounting request id escrow=%s nonce=%d: %v", escrowID, nonce, err)
 	}
 }
 

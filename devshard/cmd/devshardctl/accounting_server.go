@@ -45,6 +45,22 @@ func accountingCurrentEpoch(g *Gateway) accounting.CurrentEpochFunc {
 	}
 }
 
+// accountingCapability exposes what PerfTracker learned about a host's build. The participant key is
+// the slot's gonka validator address in both subsystems, which is what makes the lookup line up.
+func accountingCapability(g *Gateway) accounting.CapabilityFunc {
+	if g == nil || g.perf == nil {
+		return nil
+	}
+	return func(participant, model string) accounting.HostCapability {
+		protocolVersion, toolChoice, contextLimit := g.perf.CapabilityBlocks(participant, model)
+		return accounting.HostCapability{
+			ProtocolVersionUnsupported: protocolVersion,
+			ToolChoiceUnsupported:      toolChoice,
+			ContextLimit:               contextLimit,
+		}
+	}
+}
+
 const defaultStatsPort = "9091"
 
 // accountingStatsAddr binds every interface: the reader is a dashboard sidecar in
@@ -61,7 +77,7 @@ func startAccountingServer(g *Gateway) (*http.Server, error) {
 	addr := accountingStatsAddr()
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           accounting.NewHandler(g.accounting.Tracker(), accountingCurrentEpoch(g)),
+		Handler:           accounting.NewHandler(g.accounting.Tracker(), accountingCurrentEpoch(g), accountingCapability(g)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
