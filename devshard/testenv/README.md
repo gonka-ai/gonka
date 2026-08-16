@@ -300,6 +300,12 @@ make citest-observability
 
 Compose images are reused by default (Makefile runs `citest-images` first). For local gateway-image iteration without a separate `make citest-images`, set `TESTENV_CITEST_BUILD=1` so `docker compose up` passes `--build`.
 
+Debugging tips:
+
+- Set `TESTENV_CITEST_KEEP_STACK=1` to keep the generated compose stack/workdir after the test, and `TESTENV_CITEST_DUMP_LOGS=1` to dump compose logs during test cleanup.
+- When running Go tests from a Docker-based runner, set `TESTENV_HOST_ADDR=host.docker.internal` so probes from inside the runner can reach host-published compose ports.
+- On Docker Desktop for macOS, mount this repository into the runner at the same absolute host path. Synthetic paths such as `/work` can make generated bind mounts fail because the host daemon does not have that path shared.
+
 Stop overlay: `make obs-down`.
 
 Requires rebuilding **devshardd** after pulling observability init changes (`make build-devshardd`). Gateway changes need a runtime image rebuild (`make citest-images` or `TESTENV_CITEST_BUILD=1`).
