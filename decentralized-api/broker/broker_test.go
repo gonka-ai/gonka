@@ -2248,6 +2248,20 @@ func TestAreHardwareNodesEqual_Version(t *testing.T) {
 	assert.False(t, areHardwareNodesEqual(a, b), "nodes with different versions should not be equal")
 }
 
+func TestAreHardwareNodesEqual_HostPort(t *testing.T) {
+	a := &types.HardwareNode{LocalId: "node-1", Host: "10.0.0.1", Port: "9090", Models: []string{"m1"}}
+	b := &types.HardwareNode{LocalId: "node-1", Host: "10.0.0.1", Port: "9090", Models: []string{"m1"}}
+
+	assert.True(t, areHardwareNodesEqual(a, b), "identical nodes should be equal")
+
+	b.Host = "10.0.0.2"
+	assert.False(t, areHardwareNodesEqual(a, b), "nodes with different hosts should not be equal")
+
+	b.Host = a.Host
+	b.Port = "9091"
+	assert.False(t, areHardwareNodesEqual(a, b), "nodes with different ports should not be equal")
+}
+
 func TestConvertInferenceNodeToHardwareNode_Version(t *testing.T) {
 	node := createTestNode("node-1")
 	node.State.MlNodeVersion = "v2.3.4"

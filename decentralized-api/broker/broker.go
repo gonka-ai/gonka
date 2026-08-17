@@ -749,6 +749,12 @@ func areHardwareNodesEqual(a, b *types.HardwareNode) bool {
 	if a.Status != b.Status {
 		return false
 	}
+	if a.Host != b.Host {
+		return false
+	}
+	if a.Port != b.Port {
+		return false
+	}
 	if len(a.Hardware) != len(b.Hardware) {
 		return false
 	}
