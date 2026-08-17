@@ -5,6 +5,7 @@ MAKEFLAGS += --no-print-directory
 export PROJECT_ROOT := $(shell git rev-parse --show-toplevel)/mlnode
 
 VERSION ?= $(shell git describe --always)
+MLNODE_RELEASE_VERSION ?= $(VERSION)
 IMAGE_NAME := ghcr.io/gonka-ai/mlnode:$(VERSION)
 IMAGE_NAME_GITHUB := ghcr.io/product-science/mlnode:$(VERSION)
 LATEST_IMAGE_NAME := ghcr.io/gonka-ai/mlnode:latest
@@ -95,6 +96,7 @@ build-release:
 		-t $(IMAGE_NAME) \
 		-f packages/api/Dockerfile \
 		--target app \
+		--build-arg MLNODE_RELEASE_VERSION=$(MLNODE_RELEASE_VERSION) \
 		$(PROJECT_ROOT)
 
 	docker tag $(IMAGE_NAME) $(IMAGE_NAME_GITHUB)
