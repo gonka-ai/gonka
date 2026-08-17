@@ -36,6 +36,11 @@ class GovernanceTests : TestermintTest() {
     @Test
     fun `fail a setParams proposal`() {
         val (cluster, genesis) = initCluster()
+        // Joins start with CapWeight 0 (absent last epoch), so their NO votes
+        // do not count until the proven weight has settled. Wait two epochs
+        // or genesis alone can pass a proposal the joins vote down.
+        genesis.waitForNextEpoch()
+        genesis.waitForNextEpoch()
         val params = genesis.getParams()
         val modifiedParams = params.copy(
             validationParams = params.validationParams.copy(
