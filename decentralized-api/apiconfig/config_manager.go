@@ -31,6 +31,7 @@ type ConfigManager struct {
 	WriterProvider            WriteCloserProvider
 	sqlDb                     SqlDatabase
 	modelValidationThresholds []ModelValidationThreshold
+	devshardVersionsHeight    int64
 	mutex                     sync.RWMutex
 	runtimePublishMu          sync.RWMutex
 	runtimePublished          runtimePublishedMarker
@@ -421,9 +422,29 @@ func (cm *ConfigManager) GetTransferAgentAccessCache() TransferAgentAccessCache 
 	return cm.currentConfig.TransferAgentAccessCache
 }
 
+func (cm *ConfigManager) ApplyDevshardVersionsIfNewer(cache DevshardVersionsCache, sourceHeight int64) bool {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	if sourceHeight < cm.devshardVersionsHeight {
+		logging.Debug("runtime_config: stale devshard escrow cache dropped", types.Config,
+			"sourceHeight", sourceHeight,
+			"acceptedHeight", cm.devshardVersionsHeight,
+			"approvedVersions", len(cache.Versions),
+		)
+		return false
+	}
+	cm.devshardVersionsHeight = sourceHeight
+	cm.setDevshardVersionsLocked(cache)
+	return true
+}
+
 func (cm *ConfigManager) SetDevshardVersions(cache DevshardVersionsCache) {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
+	cm.setDevshardVersionsLocked(cache)
+}
+
+func (cm *ConfigManager) setDevshardVersionsLocked(cache DevshardVersionsCache) {
 	prev := cm.currentConfig.DevshardVersionsCache.DevshardRequestsEnabled
 	cm.currentConfig.DevshardVersionsCache = cache
 	if prev != cache.DevshardRequestsEnabled {

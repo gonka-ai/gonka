@@ -259,8 +259,9 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 
 			// Update devshard versions cache from chain params
 			if params.Params.DevshardEscrowParams != nil {
-				d.configManager.SetDevshardVersions(
+				d.configManager.ApplyDevshardVersionsIfNewer(
 					apiconfig.DevshardVersionsCacheFromParams(params.Params.DevshardEscrowParams),
+					blockInfo.Height,
 				)
 			}
 		}
