@@ -6,6 +6,7 @@ import com.productscience.MockServerInferenceMock
 import com.productscience.EpochStage
 import com.productscience.defaultInferenceResponseObject
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import java.util.concurrent.TimeUnit
@@ -13,6 +14,8 @@ import com.github.dockerjava.api.model.Container
 import java.time.Duration
 import com.productscience.runParallelInferencesWithResults
 
+// Classic inference flow was removed (PR #1386); this test exercises the deprecated endpoints.
+@Tag("exclude")
 @Timeout(value = 15, unit = TimeUnit.MINUTES)
 class InferenceRetryTests : TestermintTest() {
     @Test

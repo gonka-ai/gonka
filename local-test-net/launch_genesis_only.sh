@@ -1,5 +1,8 @@
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+"${SCRIPT_DIR}/ensure-chain-public.sh"
+
 export REST_API_ACTIVE=true
 export DASHBOARD_PORT=5173
 export PUBLIC_SERVER_PORT=9000

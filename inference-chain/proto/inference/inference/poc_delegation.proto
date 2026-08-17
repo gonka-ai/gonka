@@ -4,6 +4,7 @@ package inference.inference;
 
 import "cosmos/msg/v1/msg.proto";
 import "cosmos_proto/cosmos.proto";
+import "inference/inference/params.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -59,6 +60,24 @@ message BootstrapDelegationSnapshot {
   repeated PoCDirectIntent intents                    = 3;
   int64 total_network_weight                          = 4;
   repeated BootstrapModelPreEligibility preeligibility = 5;
+}
+
+message DelegationRewardTransfer {
+  string model_id = 1;
+  string from = 2;
+  string to = 3;
+  Decimal share = 4;
+}
+
+message DelegationRewardPenalty {
+  string participant = 1;
+  Decimal penalty_fraction = 2;
+}
+
+message DelegationRewardTransferSnapshot {
+  uint64 epoch_index = 1;
+  repeated DelegationRewardTransfer transfers = 2;
+  repeated DelegationRewardPenalty penalties = 3;
 }
 
 // --- Transaction messages ---

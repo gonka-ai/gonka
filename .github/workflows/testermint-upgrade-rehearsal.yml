@@ -1,0 +1,279 @@
+name: Testermint Upgrade Rehearsal
+
+on:
+  workflow_dispatch:
+    inputs:
+      candidate_ref:
+        description: 'Candidate ref to test. Defaults to the dispatch ref.'
+        required: false
+        type: string
+        default: ''
+      target_upgrade:
+        description: 'Target upgrade name, e.g. v0.2.14. Defaults to newest semantic UpgradeName.'
+        required: false
+        type: string
+        default: ''
+      previous_release:
+        description: 'Previous canonical release, e.g. release/v0.2.13. Defaults to highest release below target.'
+        required: false
+        type: string
+        default: ''
+
+  push:
+    branches:
+      - upgrade-v*
+
+concurrency:
+  group: testermint-upgrade-rehearsal-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  packages: read
+  checks: write
+  actions: read
+
+jobs:
+  upgrade-rehearsal:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+
+    env:
+      NEW_DIR: ${{ github.workspace }}/new
+      OLD_DIR: ${{ github.workspace }}/old
+      PREP_MANIFEST: ${{ github.workspace }}/upgrade-rehearsal-manifest.json
+      COMPLETE_MANIFEST: ${{ github.workspace }}/upgrade-rehearsal-completion-manifest.json
+
+    steps:
+      - name: Check initial disk space
+        run: df -h
+
+      - name: Free up runner disk space
+        timeout-minutes: 8
+        run: |
+          set -euo pipefail
+          for path in /usr/share/dotnet /usr/local/lib/android /opt/ghc /opt/hostedtoolcache/CodeQL; do
+            if [[ -e "$path" ]]; then
+              echo "Removing $path"
+              timeout 150s sudo rm -rf "$path" || echo "Timed out removing $path; continuing"
+              df -h
+            fi
+          done
+          timeout 120s sudo docker system prune -af --volumes || echo "Docker prune timed out; continuing"
+          sudo apt-get clean
+          df -h
+
+      - name: Checkout candidate
+        uses: actions/checkout@v4
+        with:
+          path: new
+          fetch-depth: 0
+          ref: ${{ inputs.candidate_ref || github.ref }}
+
+      - name: Fetch candidate tags
+        working-directory: new
+        run: git fetch --tags --force
+
+      - name: Resolve rehearsal versions
+        id: versions
+        working-directory: new
+        run: |
+          python3 scripts/upgrade-rehearsal/resolve_versions.py \
+            --repo . \
+            --target-upgrade '${{ inputs.target_upgrade }}' \
+            --previous-release '${{ inputs.previous_release }}'
+
+      - name: Checkout previous release
+        uses: actions/checkout@v4
+        with:
+          path: old
+          fetch-depth: 0
+          ref: ${{ steps.versions.outputs.previous_release }}
+
+      - name: Set up Docker
+        uses: docker/setup-docker-action@v4
+        with:
+          version: '28.5.2'
+
+      - name: Verify Docker
+        run: |
+          docker --version
+          docker compose version
+
+      - name: Login to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install system packages
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y make zip unzip jq
+
+      - name: Set up Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Set up Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+
+      - name: Resolve previous production images
+        id: images
+        working-directory: old
+        run: python3 ../new/scripts/upgrade-rehearsal/resolve_previous_images.py --compose deploy/join/docker-compose.yml
+
+      - name: Pull and retag previous images for local Testermint
+        working-directory: ${{ github.workspace }}
+        env:
+          PREVIOUS_NODE_IMAGE: ${{ steps.images.outputs.node_image }}
+          PREVIOUS_API_IMAGE: ${{ steps.images.outputs.api_image }}
+          PREVIOUS_PROXY_IMAGE: ${{ steps.images.outputs.proxy_image }}
+          PREVIOUS_VERSIOND_IMAGE: ${{ steps.images.outputs.versiond_image }}
+          TARGET_NODE_IMAGE: ${{ steps.images.outputs.node_target_image }}
+          TARGET_API_IMAGE: ${{ steps.images.outputs.api_target_image }}
+          TARGET_PROXY_IMAGE: ${{ steps.images.outputs.proxy_target_image }}
+          TARGET_VERSIOND_IMAGE: ${{ steps.images.outputs.versiond_target_image }}
+        run: ./new/scripts/upgrade-rehearsal/prepare_previous_images.sh
+
+      - name: Build previous mock-server image
+        working-directory: old
+        run: make mock-server-build-docker
+
+      - name: Apply old-checkout prep test patch
+        working-directory: old
+        run: git apply ../new/testermint/upgrade-rehearsal/previous-release-prep.patch
+
+      - name: Run old-checkout prep test
+        timeout-minutes: 75
+        working-directory: old/testermint
+        env:
+          GONKA_REPO_ROOT: ${{ env.OLD_DIR }}
+          PREVIOUS_RELEASE: ${{ steps.versions.outputs.previous_release }}
+          UPGRADE_REHEARSAL_MANIFEST: ${{ env.PREP_MANIFEST }}
+        run: |
+          sudo -E ./gradlew test \
+            --tests "UpgradeRehearsalPrepTests.prepare upgrade rehearsal state" \
+            -x mock_server:test \
+            --stacktrace
+
+      - name: Build candidate upgrade archives
+        timeout-minutes: 90
+        working-directory: new
+        env:
+          # The default GitHub runner Docker driver cannot export registry
+          # caches. Keep this deterministic over fast; the rehearsal is already
+          # expensive and cache writes are not part of what it proves.
+          USE_REGISTRY_CACHE: '0'
+          VERSION: ${{ steps.versions.outputs.target_upgrade }}
+        run: |
+          make build-for-upgrade
+          sudo chown -R "$USER:$USER" public-html || true
+          find public-html -maxdepth 4 -type f -print
+
+      - name: Serve candidate upgrade archives on chain-public
+        working-directory: ${{ github.workspace }}
+        run: |
+          docker rm -f upgrade-binary-server || true
+          docker run -d \
+            --name upgrade-binary-server \
+            --network chain-public \
+            -v "${NEW_DIR}/public-html:/usr/local/apache2/htdocs:ro" \
+            httpd:2.4
+          docker run --rm --network chain-public curlimages/curl:8.11.1 \
+            -fsS http://upgrade-binary-server/v2/inferenced/inferenced-amd64.zip >/dev/null
+          docker run --rm --network chain-public curlimages/curl:8.11.1 \
+            -fsS http://upgrade-binary-server/v2/dapi/decentralized-api-amd64.zip >/dev/null
+
+      - name: Run current-checkout upgrade completion test
+        working-directory: new/testermint
+        env:
+          GONKA_REPO_ROOT: ${{ env.NEW_DIR }}
+          UPGRADE_REHEARSAL_TARGET: ${{ steps.versions.outputs.target_upgrade }}
+          UPGRADE_REHEARSAL_MANIFEST: ${{ env.PREP_MANIFEST }}
+          UPGRADE_REHEARSAL_COMPLETE_MANIFEST: ${{ env.COMPLETE_MANIFEST }}
+          UPGRADE_BINARY_BASE_URL: http://upgrade-binary-server
+        run: |
+          sudo -E ./gradlew test \
+            --tests "UpgradeRehearsalTests.complete upgrade rehearsal" \
+            -x mock_server:test \
+            --stacktrace
+
+      - name: Capture Docker state
+        if: always()
+        working-directory: ${{ github.workspace }}
+        run: |
+          mkdir -p upgrade-rehearsal-diagnostics
+          docker ps -a > upgrade-rehearsal-diagnostics/docker-ps.txt
+          docker images > upgrade-rehearsal-diagnostics/docker-images.txt
+          for container in genesis-node genesis-api join1-node join1-api join2-node join2-api upgrade-binary-server; do
+            docker logs "$container" --tail 300 > "upgrade-rehearsal-diagnostics/${container}.log" 2>&1 || true
+          done
+
+      - name: Upload rehearsal artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: testermint-upgrade-rehearsal-artifacts
+          if-no-files-found: ignore
+          retention-days: 14
+          path: |
+            upgrade-rehearsal-manifest.json
+            upgrade-rehearsal-completion-manifest.json
+            upgrade-rehearsal-diagnostics/
+            old/testermint/logs/
+            old/testermint/build/test-results/**/*.xml
+            new/testermint/logs/
+            new/testermint/build/test-results/**/*.xml
+
+      - name: Publish old prep test results
+        if: always()
+        uses: dorny/test-reporter@v1
+        continue-on-error: true
+        with:
+          name: Upgrade Rehearsal Prep
+          path: old/testermint/build/test-results/**/*.xml
+          reporter: java-junit
+          fail-on-error: false
+
+      - name: Publish completion test results
+        if: always()
+        uses: dorny/test-reporter@v1
+        continue-on-error: true
+        with:
+          name: Upgrade Rehearsal Completion
+          path: new/testermint/build/test-results/**/*.xml
+          reporter: java-junit
+          fail-on-error: false
+
+      - name: Write workflow summary
+        if: always()
+        run: |
+          {
+            echo "# Testermint Upgrade Rehearsal"
+            echo
+            echo "- Target upgrade: ${{ steps.versions.outputs.target_upgrade }}"
+            echo "- Previous release: ${{ steps.versions.outputs.previous_release }}"
+            echo "- Previous node image: ${{ steps.images.outputs.node_image }}"
+            echo "- Previous API image: ${{ steps.images.outputs.api_image }}"
+            echo
+            if [[ -f "${PREP_MANIFEST}" ]]; then
+              echo "## Prep Manifest"
+              echo '```json'
+              cat "${PREP_MANIFEST}"
+              echo
+              echo '```'
+            fi
+            if [[ -f "${COMPLETE_MANIFEST}" ]]; then
+              echo "## Completion Manifest"
+              echo '```json'
+              cat "${COMPLETE_MANIFEST}"
+              echo
+              echo '```'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"

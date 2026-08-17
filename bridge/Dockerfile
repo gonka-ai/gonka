@@ -1,5 +1,5 @@
 # Extract Geth binary from prebuilt container
-FROM ghcr.io/product-science/bridge-geth:0.2.12@sha256:57f8e07499b4798337e1a224741657aa7b06dd2669e5411854731139bb2a072c AS geth-source
+FROM ghcr.io/product-science/bridge-geth:0.2.14-post3@sha256:4dba954668f9252e490f99d588ef1f3cb928222320234d97f058c77d9a9b337d AS geth-source
 
 # Extract Prysm binaries from prebuilt container  
 FROM ghcr.io/product-science/bridge-prysm:0.2.12@sha256:bdace2b516a5c502aa2e5575433f3c35986002ea3bc18e5cb54a307bf4aafa7a AS prysm-source

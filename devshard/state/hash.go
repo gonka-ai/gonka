@@ -25,7 +25,7 @@ var deterministicMarshal = proto.MarshalOptions{Deterministic: true}
 //	host_stats_hash = sha256(proto(sorted host stats))    -- 32 bytes
 //	rest_hash       = sha256(balance_be || inferences_hash || warm_keys_hash) -- 32 bytes
 //	fees_be         = uint64 fees in big-endian            -- 8 bytes
-//	version_hash    = sha256(bound session version)        -- 32 bytes
+//	version_hash    = sha256(protocol version tag)       -- 32 bytes
 //	warm_keys_hash  = sha256(sorted slot_id_be || addr_bytes)
 //	inferences_hash = sha256(proto(sorted inference records))
 //	phase_byte      = uint8(phase): 0x00=Active, 0x01=Finalizing, 0x02=Settlement

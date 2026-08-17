@@ -554,14 +554,15 @@ func TestProtocol_VaryingInferenceCosts(t *testing.T) {
 	env := setupEnv(t, 3, 1000000, 100, engines...)
 	ctx := context.Background()
 
-	// Send 6 inferences with different params.
+	// Send 6 inferences. Accounting must cover the shared TestPrompt workload;
+	// MaxTokens may over-reserve, InputLength must equal len(prompt).
 	paramsList := []user.InferenceParams{
 		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: 50, StartedAt: 1000},
-		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 200, MaxTokens: 100, StartedAt: 2000},
-		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 50, MaxTokens: 25, StartedAt: 3000},
-		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 150, MaxTokens: 75, StartedAt: 4000},
-		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 80, MaxTokens: 40, StartedAt: 5000},
-		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 60, MaxTokens: 30, StartedAt: 6000},
+		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: 100, StartedAt: 2000},
+		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: 50, StartedAt: 3000},
+		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: 75, StartedAt: 4000},
+		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: 50, StartedAt: 5000},
+		{Model: "llama", Prompt: testutil.TestPrompt, InputLength: 100, MaxTokens: 50, StartedAt: 6000},
 	}
 
 	for _, p := range paramsList {

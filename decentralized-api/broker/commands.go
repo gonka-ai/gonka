@@ -1,8 +1,10 @@
 package broker
 
 import (
+	"common/logging"
+	"context"
 	"decentralized-api/apiconfig"
-	"decentralized-api/logging"
+	"time"
 
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -61,7 +63,10 @@ func (c GetNodesCommand) Execute(b *Broker) {
 			for model, modelArgs := range nodeWithState.Node.Models {
 				newArgs := make([]string, len(modelArgs.Args))
 				copy(newArgs, modelArgs.Args)
-				nodeCopy.Models[model] = ModelArgs{Args: newArgs}
+				nodeCopy.Models[model] = ModelArgs{
+					Args:          newArgs,
+					ModelOverride: copyModelOverride(modelArgs.ModelOverride),
+				}
 			}
 		}
 
@@ -143,12 +148,19 @@ const (
 )
 
 type NodeResult struct {
-	Succeeded         bool
-	FinalStatus       types.HardwareNodeStatus // The status the node ended up in
-	OriginalTarget    types.HardwareNodeStatus // The status it was trying to achieve
-	FinalPocStatus    PocStatus
-	OriginalPocTarget PocStatus
-	Error             string
+	Succeeded              bool
+	FinalStatus            types.HardwareNodeStatus // The status the node ended up in
+	OriginalTarget         types.HardwareNodeStatus // The status it was trying to achieve
+	FinalPocStatus         PocStatus
+	OriginalPocTarget      PocStatus
+	Error                  string
+	DeploymentApplied      bool
+	DeploymentDeferred     bool
+	DeploymentRetryAfter   time.Time
+	DeploymentFingerprint  string
+	DeploymentModelID      string
+	DeploymentUsesOverride bool
+	DeploymentGeneration   uint64
 }
 
 type UpdateNodeResultCommand struct {
@@ -213,6 +225,17 @@ func (c UpdateNodeResultCommand) Execute(b *Broker) {
 		return
 	}
 
+	if node.State.ReconcileInfo.Generation != c.Result.DeploymentGeneration {
+		logging.Info("Ignoring stale result for node. deployment generation mismatch", types.Nodes,
+			"node_id", c.NodeId,
+			"original_target", c.Result.OriginalTarget,
+			"result_generation", c.Result.DeploymentGeneration,
+			"current_generation", node.State.ReconcileInfo.Generation,
+			"blockHeight", blockHeight)
+		c.Response <- false
+		return
+	}
+
 	// Update state
 	logging.Info("Finalizing state transition for node", types.Nodes,
 		"node_id", c.NodeId,
@@ -226,6 +249,38 @@ func (c UpdateNodeResultCommand) Execute(b *Broker) {
 	node.State.UpdateStatusWithPocStatusNow(c.Result.FinalStatus, c.Result.FinalPocStatus)
 	node.State.ReconcileInfo = nil
 	node.State.cancelInFlightTask = nil
+	if c.Result.DeploymentDeferred {
+		node.State.DeploymentUpdatePending = true
+		node.State.DeploymentRetryAfter = c.Result.DeploymentRetryAfter
+	} else if c.Result.DeploymentApplied {
+		node.State.DeploymentRetryAfter = time.Time{}
+		if c.Result.DeploymentModelID != "" && c.Result.DeploymentFingerprint != "" && b.configManager != nil {
+			err := b.configManager.SetAppliedDeployment(
+				context.Background(),
+				c.NodeId,
+				apiconfig.AppliedDeploymentState{
+					ModelID:     c.Result.DeploymentModelID,
+					Fingerprint: c.Result.DeploymentFingerprint,
+				},
+			)
+			if err != nil {
+				node.State.DeploymentUpdatePending = true
+				logging.Warn("Failed to persist applied model deployment state", types.Config,
+					"node_id", c.NodeId, "model_id", c.Result.DeploymentModelID, "error", err)
+			} else {
+				node.State.DeploymentUpdatePending = false
+				logging.Info("Persisted applied model deployment state", types.Config,
+					"node_id", c.NodeId, "model_id", c.Result.DeploymentModelID)
+			}
+		} else {
+			node.State.DeploymentUpdatePending = false
+			logging.Warn("Skipping applied model deployment persist", types.Config,
+				"node_id", c.NodeId,
+				"model_id", c.Result.DeploymentModelID,
+				"has_fingerprint", c.Result.DeploymentFingerprint != "",
+				"has_config_manager", b.configManager != nil)
+		}
+	}
 	if !c.Result.Succeeded {
 		node.State.FailureReason = c.Result.Error
 	} else {

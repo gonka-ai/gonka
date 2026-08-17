@@ -1,9 +1,10 @@
 package admin
 
 import (
+	"common/logging"
+	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
-	"decentralized-api/logging"
 	"fmt"
 	"net/http"
 
@@ -34,20 +35,28 @@ func (s *Server) deleteNode(ctx echo.Context) error {
 		return err
 	}
 	node := <-response
-	syncNodesWithConfig(s.nodeBroker, s.configManager)
+	if err := syncNodesWithConfig(ctx.Request().Context(), s.nodeBroker, s.configManager); err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to persist node configuration: %v", err))
+	}
 
 	return ctx.JSON(http.StatusOK, node)
 }
 
-func syncNodesWithConfig(nodeBroker *broker.Broker, config *apiconfig.ConfigManager) {
+func syncNodesWithConfig(ctx context.Context, nodeBroker *broker.Broker, config *apiconfig.ConfigManager) error {
 	nodes, err := nodeBroker.GetNodes()
+	if err != nil {
+		return err
+	}
 	iNodes := make([]apiconfig.InferenceNodeConfig, len(nodes))
 	for i, n := range nodes {
 		node := n.Node
 
 		models := make(map[string]apiconfig.ModelConfig)
 		for model, cfg := range node.Models {
-			models[model] = apiconfig.ModelConfig{Args: cfg.Args}
+			models[model] = apiconfig.ModelConfig{
+				Args:          append([]string(nil), cfg.Args...),
+				ModelOverride: copyModelOverride(cfg.ModelOverride),
+			}
 		}
 
 		iNodes[i] = apiconfig.InferenceNodeConfig{
@@ -62,10 +71,25 @@ func syncNodesWithConfig(nodeBroker *broker.Broker, config *apiconfig.ConfigMana
 			Hardware:         node.Hardware,
 		}
 	}
-	err = config.SetNodes(iNodes)
-	if err != nil {
-		logging.Error("Error writing config", types.Nodes, "error", err)
+	if err := config.SetNodes(iNodes); err != nil {
+		return err
 	}
+	return flushConfig(ctx, config)
+}
+
+func copyModelOverride(override *apiconfig.ModelOverride) *apiconfig.ModelOverride {
+	if override == nil {
+		return nil
+	}
+	copy := *override
+	return &copy
+}
+
+func flushConfig(ctx context.Context, config *apiconfig.ConfigManager) error {
+	if config.SqlDb() == nil || config.SqlDb().GetDb() == nil {
+		return nil
+	}
+	return config.FlushNow(ctx)
 }
 
 func (s *Server) createNewNodes(ctx echo.Context) error {
@@ -78,7 +102,7 @@ func (s *Server) createNewNodes(ctx echo.Context) error {
 	var outputNodes []apiconfig.InferenceNodeConfig
 	var errors []string
 	for i, node := range newNodes {
-		newNode, err := s.addNode(node)
+		newNode, err := s.addNode(ctx.Request().Context(), node)
 		if err != nil {
 			errorMsg := fmt.Sprintf("node[%d] (id: %s): %v", i, node.Id, err)
 			errors = append(errors, errorMsg)
@@ -145,10 +169,12 @@ func (s *Server) createNewNode(ctx echo.Context) error {
 			return echo.NewHTTPError(http.StatusBadRequest, "failed to update node: one or more models are not valid governance models. Check logs for details.")
 		}
 		// sync config file with updated node list
-		syncNodesWithConfig(s.nodeBroker, s.configManager)
+		if err := syncNodesWithConfig(ctx.Request().Context(), s.nodeBroker, s.configManager); err != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to persist node configuration: %v", err))
+		}
 		return ctx.JSON(http.StatusOK, node)
 	} else {
-		node, err := s.addNode(newNode)
+		node, err := s.addNode(ctx.Request().Context(), newNode)
 		if err != nil {
 			return err
 		}
@@ -156,7 +182,7 @@ func (s *Server) createNewNode(ctx echo.Context) error {
 	}
 }
 
-func (s *Server) addNode(newNode apiconfig.InferenceNodeConfig) (apiconfig.InferenceNodeConfig, error) {
+func (s *Server) addNode(ctx context.Context, newNode apiconfig.InferenceNodeConfig) (apiconfig.InferenceNodeConfig, error) {
 	// Validate before queuing to provide clear error messages to API users
 	cmd := broker.NewRegisterNodeCommand(newNode)
 	err := s.nodeBroker.QueueMessage(cmd)
@@ -182,6 +208,9 @@ func (s *Server) addNode(newNode apiconfig.InferenceNodeConfig) (apiconfig.Infer
 	if err != nil {
 		logging.Error("Error writing config", types.Config, "error", err, "node", newNode.Id)
 		return apiconfig.InferenceNodeConfig{}, echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to save node configuration: %v", err))
+	}
+	if err := flushConfig(ctx, s.configManager); err != nil {
+		return apiconfig.InferenceNodeConfig{}, echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to persist node configuration: %v", err))
 	}
 
 	return *node, nil

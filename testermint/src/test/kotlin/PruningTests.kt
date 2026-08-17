@@ -3,6 +3,7 @@ import com.productscience.inferenceRequest
 import com.productscience.initCluster
 import com.productscience.logSection
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
 import java.time.Duration
@@ -10,6 +11,7 @@ import kotlin.test.assertNotNull
 
 class PruningTests : TestermintTest() {
     @Test
+    @Tag("exclude") // Classic inference flow removed (PR #1386)
     fun `prune inferences`() {
         val (_, genesis) = initCluster(reboot = true)
         genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS, offset = 2)

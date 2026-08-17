@@ -7,7 +7,6 @@ import (
 
 	"decentralized-api/apiconfig"
 	"decentralized-api/chainphase"
-	"decentralized-api/internal/validation"
 
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -34,6 +33,14 @@ func (m *mockParamsQueryClient) Params(ctx context.Context, req *types.QueryPara
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*types.QueryParamsResponse), args.Error(1)
+}
+
+func (m *mockParamsQueryClient) ListRandomSeeds(ctx context.Context, req *types.QueryRandomSeedsRequest, opts ...grpc.CallOption) (*types.QueryRandomSeedsResponse, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryRandomSeedsResponse), args.Error(1)
 }
 
 func newRuntimeCacheTestDispatcher(t *testing.T, qc *mockParamsQueryClient) (*OnNewBlockDispatcher, *apiconfig.ConfigManager) {
@@ -73,7 +80,6 @@ func newRuntimeCacheTestDispatcher(t *testing.T, qc *mockParamsQueryClient) (*On
 		mockSeedManager,
 		defaultReconciliationConfig,
 		cm,
-		&validation.InferenceValidator{},
 	)
 	return dispatcher, cm
 }
@@ -102,10 +108,10 @@ func devshardParamsResponseFull(
 			DevshardEscrowParams: &types.DevshardEscrowParams{
 				DevshardRequestsEnabled: enabled,
 				MaxNonce:                maxNonce,
-				RefusalTimeout:                    refusalTimeout,
-				ExecutionTimeout:                  executionTimeout,
-				ValidationRate:                    validationRate,
-				VoteThresholdFactor:               voteThresholdFactor,
+				RefusalTimeout:          refusalTimeout,
+				ExecutionTimeout:        executionTimeout,
+				ValidationRate:          validationRate,
+				VoteThresholdFactor:     voteThresholdFactor,
 				ApprovedVersions: []*types.DevshardApprovedVersion{
 					{Name: "v1", Binary: "https://example/v1", Sha256: "sha1"},
 				},

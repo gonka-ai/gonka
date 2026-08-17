@@ -26,11 +26,9 @@ func TestNewStateMachine_BindVoteThreshold_GovernanceFactor67(t *testing.T) {
 	user := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup(hosts)
 
-	cfg := types.ApplyLiveSessionParams(
-		types.SessionConfigFromEscrow(groupSize, types.EscrowSessionFields{}),
-		groupSize,
-		types.LiveSessionBindParams{VoteThresholdFactor: 67},
-	)
+	cfg := types.SessionConfigFromEscrow(groupSize, types.EscrowSessionFields{
+		VoteThresholdFactor: 67,
+	})
 	require.Equal(t, uint32(4), cfg.VoteThreshold)
 
 	verifier := signing.NewSecp256k1Verifier()
@@ -51,11 +49,9 @@ func TestVoteThreshold_StableAcrossValidationAndTimeout(t *testing.T) {
 	}
 	user := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup(hosts)
-	cfg := types.ApplyLiveSessionParams(
-		types.SessionConfigFromEscrow(groupSize, types.EscrowSessionFields{}),
-		groupSize,
-		types.LiveSessionBindParams{VoteThresholdFactor: 67},
-	)
+	cfg := types.SessionConfigFromEscrow(groupSize, types.EscrowSessionFields{
+		VoteThresholdFactor: 67,
+	})
 	verifier := signing.NewSecp256k1Verifier()
 	sm, err := NewStateMachine("escrow-1", cfg, group, 100_000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), cfg, group, 100_000))
 	require.NoError(t, err)
@@ -120,14 +116,20 @@ func TestVoteThreshold_ConfigFieldNotUsedOutsideStatePackage(t *testing.T) {
 	allowSubstrings := []string{
 		string(filepath.Join("devshard", "state")),
 		string(filepath.Join("devshard", "types", "config.go")),
+		string(filepath.Join("devshard", "bridge", "config.go")),
 		string(filepath.Join("devshard", "cmd", "devshardctl", "proxy.go")),
 	}
 	var violations []string
 	scanRoots := []string{
 		filepath.Join(root, "devshard"),
-		filepath.Join(root, "decentralized-api", "internal", "devshard"),
 	}
 	for _, scanRoot := range scanRoots {
+		if _, err := os.Stat(scanRoot); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			require.NoError(t, err)
+		}
 		err := filepath.Walk(scanRoot, func(path string, info os.FileInfo, err error) error {
 			if err != nil {
 				return err

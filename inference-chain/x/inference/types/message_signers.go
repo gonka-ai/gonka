@@ -30,10 +30,6 @@ func (msg *MsgRemoveParticipantsFromAllowList) GetSignersStrings() []string {
 }
 
 // Creator signed messages
-func (msg *MsgFinishInference) GetSignersStrings() []string      { return []string{msg.Creator} }
-func (msg *MsgInvalidateInference) GetSignersStrings() []string  { return []string{msg.Creator} }
-func (msg *MsgRevalidateInference) GetSignersStrings() []string  { return []string{msg.Creator} }
-func (msg *MsgStartInference) GetSignersStrings() []string       { return []string{msg.Creator} }
 func (msg *MsgSubmitHardwareDiff) GetSignersStrings() []string   { return []string{msg.Creator} }
 func (msg *MsgSubmitNewParticipant) GetSignersStrings() []string { return []string{msg.Creator} }
 func (msg *MsgSubmitNewUnfundedParticipant) GetSignersStrings() []string {
@@ -47,8 +43,8 @@ func (msg *MsgSubmitSeed) GetSignersStrings() []string               { return []
 func (msg *MsgSubmitUnitOfComputePriceProposal) GetSignersStrings() []string {
 	return []string{msg.Creator}
 }
-func (msg *MsgValidation) GetSignersStrings() []string              { return []string{msg.Creator} }
 func (msg *MsgClaimRewards) GetSignersStrings() []string            { return []string{msg.Creator} }
+func (msg *MsgSetClaimRecipients) GetSignersStrings() []string      { return []string{msg.Creator} }
 func (msg *MsgRequestBridgeMint) GetSignersStrings() []string       { return []string{msg.Creator} }
 func (msg *MsgRequestBridgeWithdrawal) GetSignersStrings() []string { return []string{msg.Creator} }
 func (msg *MsgCancelBridgeOperation) GetSignersStrings() []string   { return []string{msg.Creator} }
@@ -67,6 +63,10 @@ func (msg *MsgSetDevshardRequestsEnabled) GetSignersStrings() []string {
 func (msg *MsgSetPoCDelegation) GetSignersStrings() []string    { return []string{msg.Sender} }
 func (msg *MsgRefusePoCDelegation) GetSignersStrings() []string { return []string{msg.Sender} }
 func (msg *MsgDeclarePoCIntent) GetSignersStrings() []string    { return []string{msg.Sender} }
+
+// Maintenance messages
+func (msg *MsgScheduleMaintenance) GetSignersStrings() []string { return []string{msg.Creator} }
+func (msg *MsgCancelMaintenance) GetSignersStrings() []string   { return []string{msg.Creator} }
 
 // And one validator signed message?
 func (msg *MsgBridgeExchange) GetSignersStrings() []string { return []string{msg.Validator} }

@@ -1166,3 +1166,145 @@ func pocAvailabilityTest(t *testing.T, validatorIsAvailableDuringPoC bool) {
 		require.Equal(t, "Rewards claimed successfully", resp.Result)
 	}
 }
+
+func TestPayoutClaim_WithSchedule(t *testing.T) {
+	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+
+	mockAccount := NewMockAccount(testutil.Creator)
+	seed := uint64(1)
+	seedBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(seedBytes, seed)
+	signature, err := mockAccount.key.Sign(seedBytes)
+	require.NoError(t, err)
+	signatureHex := hex.EncodeToString(signature)
+
+	epochIndex := uint64(100)
+	k.SetEpoch(sdkCtx, &types.Epoch{Index: epochIndex, PocStartBlockHeight: 1000})
+	currentEpochIndex := uint64(101)
+	k.SetEpoch(sdkCtx, &types.Epoch{Index: currentEpochIndex, PocStartBlockHeight: 2000})
+	require.NoError(t, k.SetEffectiveEpochIndex(sdkCtx, currentEpochIndex))
+
+	k.SetEpochGroupData(sdkCtx, types.EpochGroupData{
+		EpochIndex: currentEpochIndex, EpochGroupId: 101, PocStartBlockHeight: currentEpochIndex,
+		ValidationWeights: []*types.ValidationWeight{{MemberAddress: testutil.Creator, Weight: 10}},
+	})
+	k.SetEpochGroupData(sdkCtx, types.EpochGroupData{
+		EpochIndex: epochIndex, EpochGroupId: 100, PocStartBlockHeight: epochIndex,
+		ValidationWeights: []*types.ValidationWeight{{MemberAddress: testutil.Creator, Weight: 10}},
+	})
+
+	require.NoError(t, k.SetSettleAmount(sdkCtx, types.SettleAmount{
+		Participant: testutil.Creator, EpochIndex: epochIndex, WorkCoins: 1000, RewardCoins: 500, SeedSignature: signatureHex,
+	}))
+	k.SetEpochPerformanceSummary(sdkCtx, types.EpochPerformanceSummary{
+		EpochIndex: epochIndex, ParticipantId: testutil.Creator,
+	})
+	require.NoError(t, k.SeedEpochGroupValidationEntries(sdkCtx, types.EpochGroupValidations{
+		Participant: testutil.Creator, EpochIndex: epochIndex, ValidatedInferences: []string{"inference1"},
+	}))
+
+	creatorAddr, err := sdk.AccAddressFromBech32(testutil.Creator)
+	require.NoError(t, err)
+	k.Participants.Set(sdkCtx, creatorAddr, types.Participant{Index: testutil.Creator, Address: testutil.Creator, Status: types.ParticipantStatus_ACTIVE})
+	k.SetActiveParticipants(sdkCtx, types.ActiveParticipants{EpochId: epochIndex, Participants: []*types.ActiveParticipant{{Index: testutil.Creator}}})
+	k.SetActiveParticipants(sdkCtx, types.ActiveParticipants{EpochId: currentEpochIndex, Participants: []*types.ActiveParticipant{{Index: testutil.Creator}}})
+
+	// Scheduled recipient: a different, valid address owned by nobody in the test.
+	recipientStr := testutil.Bech32Addr(7)
+	recipientAddr, err := sdk.AccAddressFromBech32(recipientStr)
+	require.NoError(t, err)
+	require.NoError(t, k.SetClaimRecipientForEpoch(sdkCtx, creatorAddr, epochIndex, recipientStr))
+
+	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), creatorAddr).Return(true).AnyTimes()
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), creatorAddr).Return(mockAccount).AnyTimes()
+	mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(&authztypes.QueryGranterGrantsResponse{Grants: []*authztypes.GrantAuthorization{}}, nil).AnyTimes()
+
+	workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
+	rewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 500))
+	// Rewards must go to recipientAddr, NOT creatorAddr.
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, recipientAddr, workCoins, gomock.Any()).Return(nil)
+	mocks.BankKeeper.EXPECT().SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, recipientAddr, rewardCoins, gomock.Any()).Return(nil)
+
+	resp, err := ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
+		Creator: testutil.Creator, EpochIndex: epochIndex, Seed: int64(seed),
+	})
+	require.NoError(t, err)
+	require.Equal(t, uint64(1500), resp.Amount)
+	require.Equal(t, "Rewards claimed successfully", resp.Result)
+
+	// Entry is retained after successful claim so late/direct payouts for the
+	// same epoch can still resolve the configured recipient.
+	_, found, err := k.GetClaimRecipientForEpoch(sdkCtx, creatorAddr, epochIndex)
+	require.NoError(t, err)
+	require.True(t, found, "claim recipient entry must remain until pruning")
+}
+
+func TestPayoutClaim_WithScheduleAndVesting(t *testing.T) {
+	k, ms, ctx, mocks := setupKeeperWithMocks(t)
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+
+	mockAccount := NewMockAccount(testutil.Creator)
+	seed := uint64(1)
+	seedBytes := make([]byte, 8)
+	binary.BigEndian.PutUint64(seedBytes, seed)
+	signature, err := mockAccount.key.Sign(seedBytes)
+	require.NoError(t, err)
+	signatureHex := hex.EncodeToString(signature)
+
+	params := types.DefaultParams()
+	params.TokenomicsParams.WorkVestingPeriod = 180
+	params.TokenomicsParams.RewardVestingPeriod = 180
+	require.NoError(t, k.SetParams(sdkCtx, params))
+
+	epochIndex := uint64(100)
+	k.SetEpoch(sdkCtx, &types.Epoch{Index: epochIndex, PocStartBlockHeight: 1000})
+	currentEpochIndex := uint64(101)
+	k.SetEpoch(sdkCtx, &types.Epoch{Index: currentEpochIndex, PocStartBlockHeight: 2000})
+	require.NoError(t, k.SetEffectiveEpochIndex(sdkCtx, currentEpochIndex))
+
+	k.SetEpochGroupData(sdkCtx, types.EpochGroupData{
+		EpochIndex: currentEpochIndex, EpochGroupId: 101, PocStartBlockHeight: currentEpochIndex,
+		ValidationWeights: []*types.ValidationWeight{{MemberAddress: testutil.Creator, Weight: 10}},
+	})
+	k.SetEpochGroupData(sdkCtx, types.EpochGroupData{
+		EpochIndex: epochIndex, EpochGroupId: 100, PocStartBlockHeight: epochIndex,
+		ValidationWeights: []*types.ValidationWeight{{MemberAddress: testutil.Creator, Weight: 10}},
+	})
+
+	require.NoError(t, k.SetSettleAmount(sdkCtx, types.SettleAmount{
+		Participant: testutil.Creator, EpochIndex: epochIndex, WorkCoins: 1000, RewardCoins: 500, SeedSignature: signatureHex,
+	}))
+	k.SetEpochPerformanceSummary(sdkCtx, types.EpochPerformanceSummary{
+		EpochIndex: epochIndex, ParticipantId: testutil.Creator,
+	})
+	require.NoError(t, k.SeedEpochGroupValidationEntries(sdkCtx, types.EpochGroupValidations{
+		Participant: testutil.Creator, EpochIndex: epochIndex, ValidatedInferences: []string{"inference1"},
+	}))
+
+	creatorAddr, err := sdk.AccAddressFromBech32(testutil.Creator)
+	require.NoError(t, err)
+	k.Participants.Set(sdkCtx, creatorAddr, types.Participant{Index: testutil.Creator, Address: testutil.Creator, Status: types.ParticipantStatus_ACTIVE})
+	k.SetActiveParticipants(sdkCtx, types.ActiveParticipants{EpochId: epochIndex, Participants: []*types.ActiveParticipant{{Index: testutil.Creator}}})
+	k.SetActiveParticipants(sdkCtx, types.ActiveParticipants{EpochId: currentEpochIndex, Participants: []*types.ActiveParticipant{{Index: testutil.Creator}}})
+
+	recipientStr := testutil.Bech32Addr(8)
+	require.NoError(t, k.SetClaimRecipientForEpoch(sdkCtx, creatorAddr, epochIndex, recipientStr))
+
+	mocks.AccountKeeper.EXPECT().HasAccount(gomock.Any(), creatorAddr).Return(true).AnyTimes()
+	mocks.AccountKeeper.EXPECT().GetAccount(gomock.Any(), creatorAddr).Return(mockAccount).AnyTimes()
+	mocks.AuthzKeeper.EXPECT().GranterGrants(gomock.Any(), gomock.Any()).Return(&authztypes.QueryGranterGrantsResponse{Grants: []*authztypes.GrantAuthorization{}}, nil).AnyTimes()
+
+	workCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 1000))
+	rewardCoins := sdk.NewCoins(sdk.NewInt64Coin(types.BaseCoin, 500))
+	// Vesting path: AddVestedRewards must be called with recipientStr (not creator).
+	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(gomock.Any(), recipientStr, gomock.Any(), workCoins, gomock.Any(), gomock.Any()).Return(nil)
+	mocks.StreamVestingKeeper.EXPECT().AddVestedRewards(gomock.Any(), recipientStr, gomock.Any(), rewardCoins, gomock.Any(), gomock.Any()).Return(nil)
+
+	resp, err := ms.ClaimRewards(ctx.WithBlockHeight(claimDebounceBlocks+1), &types.MsgClaimRewards{
+		Creator: testutil.Creator, EpochIndex: epochIndex, Seed: int64(seed),
+	})
+	require.NoError(t, err)
+	require.Equal(t, uint64(1500), resp.Amount)
+	require.Equal(t, "Rewards claimed successfully", resp.Result)
+}

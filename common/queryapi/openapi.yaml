@@ -1,0 +1,700 @@
+openapi: "3.0.3"
+info:
+  title: query-api
+  version: "0.1.0"
+
+servers:
+  - url: http://localhost:18080
+    description: Local dev server
+  - url: http://node1.gonka.ai:8000/api
+    description: Node 1 dapi
+
+paths:
+  # ── Status ────────────────────────────────────────────────────────────────
+  /v1/status:
+    get:
+      operationId: GetStatus
+      summary: Service and chain status
+      responses:
+        "200":
+          description: Status
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/StatusResponse'
+
+  # ── Models ────────────────────────────────────────────────────────────────
+  /v1/models:
+    get:
+      operationId: GetModels
+      summary: List active models for the current epoch
+      responses:
+        "200":
+          description: Models list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelsListResponse'
+
+  /v1/governance/models:
+    get:
+      operationId: GetGovernanceModels
+      summary: List all governance models from chain
+      responses:
+        "200":
+          description: Models list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GovernanceModelsResponse'
+
+  /v1/governance/models-legacy:
+    get:
+      operationId: GetGovernanceModelsLegacy
+      summary: List governance models (legacy field name "model" for old dashboard compatibility)
+      responses:
+        "200":
+          description: Models list with field name "model"
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelsLegacyResponse'
+
+  # ── Participants ───────────────────────────────────────────────────────────
+  /v1/participants:
+    get:
+      operationId: GetParticipants
+      summary: List all participants with balances
+      responses:
+        "200":
+          description: Participants list
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ParticipantsResponse'
+
+  /v1/participants/{address}:
+    get:
+      operationId: GetParticipant
+      summary: Get a participant by address
+      parameters:
+        - name: address
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Participant record
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccountDto'
+        "400": { description: Address required }
+        "404": { description: Not found }
+
+  # ── Epochs ────────────────────────────────────────────────────────────────
+  /v1/epochs/{epoch}:
+    get:
+      operationId: GetEpoch
+      summary: Get epoch info. Use "latest" as the epoch parameter (only value currently supported).
+      parameters:
+        - name: epoch
+          in: path
+          required: true
+          schema: { type: string }
+          description: Epoch identifier. Use "latest" for current epoch info.
+      responses:
+        "200":
+          description: Epoch info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/EpochResponse'
+        "400": { description: Only "latest" is supported at the moment }
+
+  /v1/epochs/{epoch}/participants:
+    get:
+      operationId: GetEpochParticipants
+      summary: Get active participants and merkle proof for a given epoch
+      parameters:
+        - name: epoch
+          in: path
+          required: true
+          schema: { type: string }
+          description: Epoch number or "current"
+      responses:
+        "200":
+          description: Active participants with merkle proof
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ActiveParticipantWithProof'
+        "400": { description: Invalid epoch }
+        "404": { description: No active participants found for epoch }
+
+  # ── Pricing ───────────────────────────────────────────────────────────────
+  /v1/pricing:
+    get:
+      operationId: GetPricing
+      summary: Current epoch pricing for active models
+      responses:
+        "200":
+          description: Pricing info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PricingDto'
+
+  # ── Restrictions ──────────────────────────────────────────────────────────
+  /v1/restrictions/status:
+    get:
+      operationId: GetRestrictionsStatus
+      summary: Transfer restriction status
+      responses:
+        "200":
+          description: Restriction status (raw proto JSON)
+          content:
+            application/json:
+              # TODO: QueryTransferRestrictionStatusResponse
+              schema: 
+                $ref: '#/components/schemas/RawProtoJson'
+
+  /v1/restrictions/exemptions:
+    get:
+      operationId: GetRestrictionsExemptions
+      summary: List transfer restriction exemptions
+      responses:
+        "200":
+          description: Exemptions list (raw proto JSON)
+          content:
+            application/json:
+              # TODO: QueryTransferExemptionsResponse
+              schema: 
+                $ref: '#/components/schemas/RawProtoJson'
+
+  /v1/restrictions/exemptions/{id}/usage/{account}:
+    get:
+      operationId: GetRestrictionsExemptionUsage
+      summary: Get exemption usage for a specific account
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: account
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Exemption usage (raw proto JSON)
+          content:
+            application/json:
+              # TODO: QueryExemptionUsageResponse
+              schema: 
+                $ref: '#/components/schemas/RawProtoJson'
+
+  # ── Versions ──────────────────────────────────────────────────────────────
+  /v1/versions:
+    get:
+      operationId: GetVersions
+      summary: API and chain node version information
+      responses:
+        "200":
+          description: Version info
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/VersionsResponse'
+
+  # ── BLS ───────────────────────────────────────────────────────────────────
+  /v1/bls/epoch/{id}:
+    get:
+      operationId: GetBLSEpoch
+      summary: Get BLS epoch data by epoch ID
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Uint64'
+      responses:
+        "200":
+          description: BLS epoch data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BLSEpochResponse'
+        "400": { description: Invalid epoch ID }
+
+  /v1/bls/epochs/{id}:
+    get:
+      operationId: GetBLSEpochs
+      summary: Get BLS epoch data by epoch ID (alias for /bls/epoch/{id})
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Uint64'
+      responses:
+        "200":
+          description: BLS epoch data
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BLSEpochResponse'
+        "400": { description: Invalid epoch ID }
+
+  /v1/bls/signatures/{request_id}:
+    get:
+      operationId: GetBLSSignature
+      summary: Get BLS signing request status by request ID
+      parameters:
+        - name: request_id
+          in: path
+          required: true
+          schema: { type: string }
+          description: Hex-encoded request ID bytes
+      responses:
+        "200":
+          description: BLS signing request status (signing_request is null if not found)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BLSSignatureResponse'
+        "400": { description: Invalid request ID format (must be hex-encoded) }
+
+  # ── Bridge ────────────────────────────────────────────────────────────────
+  /v1/bridge/addresses:
+    get:
+      operationId: GetBridgeAddresses
+      summary: Get bridge contract addresses for a chain
+      parameters:
+        - name: chain
+          in: query
+          required: true
+          schema: { type: string }
+          description: Chain name, e.g. "ethereum" or "polygon"
+      responses:
+        "200":
+          description: Bridge addresses
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BridgeAddressesResponse'
+        "400": { description: Chain parameter required }
+
+  # ── PoC ───────────────────────────────────────────────────────────────────
+  /v1/poc-batches/{epoch}:
+    get:
+      operationId: GetPoCBatches
+      summary: Get PoC batches for a given epoch (block height)
+      parameters:
+        - name: epoch
+          in: path
+          required: true
+          schema:
+            $ref: '#/components/schemas/Int64'
+      responses:
+        "200":
+          description: PoC batches (raw proto JSON)
+          content:
+            application/json:
+              # TODO: QueryPocBatchesForStageResponse
+              schema: 
+                $ref: '#/components/schemas/RawProtoJson'
+        "400": { description: Invalid epoch }
+        "404": { description: PoC batches not found }
+
+  # ── Stateless computation ─────────────────────────────────────────────────
+  /v1/verify-proof:
+    post:
+      operationId: PostVerifyProof
+      summary: Stateless merkle proof verification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/ProofVerificationRequest'
+      responses:
+        "200":
+          description: Proof is valid
+        "400": { description: Invalid proof }
+
+  /v1/verify-block:
+    post:
+      operationId: PostVerifyBlock
+      summary: Stateless block signature verification
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/VerifyBlockRequest'
+      responses:
+        "200":
+          description: Block signatures are valid
+          content:
+            text/plain:
+              schema: { type: string }
+        "400": { description: Invalid block or signatures }
+
+  # ── Debug ─────────────────────────────────────────────────────────────────
+  /v1/debug/pubkey-to-addr/{pubkey}:
+    get:
+      operationId: DebugPubKeyToAddr
+      summary: Convert a hex public key to a Cosmos address
+      parameters:
+        - name: pubkey
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Cosmos address string
+          content:
+            text/plain:
+              schema: { type: string }
+        "400": { description: Invalid pubkey }
+
+  /v1/debug/verify/{height}:
+    get:
+      operationId: DebugVerifyBlockSignatures
+      summary: Verify block signatures at a given height
+      parameters:
+        - name: height
+          in: path
+          required: true
+          schema: 
+            $ref: '#/components/schemas/Int64'
+      responses:
+        "200":
+          description: Block signatures verified
+          content:
+            text/plain:
+              schema: { type: string }
+        "400": { description: Invalid height }
+
+components:
+  schemas:
+  # -- Common ──────────────────────────────────────────────────────────────
+    Uint64:
+      type: integer
+      format: uint64
+      example: 123
+      nullable: false
+    Int64:
+      type: integer
+      format: int64
+      example: 123
+      nullable: false
+    RawProtoJson:
+      type: object
+      x-go-type: any
+
+    # ── Status ──────────────────────────────────────────────────────────────
+    StatusResponse:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string }
+
+    # ── Models ──────────────────────────────────────────────────────────────
+    ModelsListResponse:
+      type: object
+      required: [object, data]
+      properties:
+        object:
+          type: string
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModelDescriptor'
+
+    ModelDescriptor:
+      type: object
+      required: [id, name, created, input_modalities, output_modalities, context_length, max_output_length]
+      properties:
+        object:
+          type: string
+        id:
+          type: string
+        hugging_face_id:
+          type: string
+        name:
+          type: string
+        created:
+          type: integer
+          format: int64
+        description:
+          type: string
+        input_modalities:
+          type: array
+          items:
+            type: string
+        output_modalities:
+          type: array
+          items:
+            type: string
+        quantization:
+          type: string
+        context_length:
+          $ref: '#/components/schemas/Uint64'
+        max_output_length:
+          $ref: '#/components/schemas/Uint64'
+
+    GovernanceModelsResponse:
+      type: object
+      description: Legacy response shape used by old dashboard — field is "model" not "models"
+      required: [models]
+      properties:
+        # TODO: cosmosdk type PageResponse
+        pagination:
+          $ref: '#/components/schemas/RawProtoJson'
+        models:
+          type: array
+          # TODO: inference-chain/x/inference/types/model.pb.go:25
+          items: 
+            $ref: '#/components/schemas/RawProtoJson'
+
+    ModelsLegacyResponse:
+      type: object
+      description: Legacy response shape used by old dashboard — field is "model" not "models"
+      required: [model]
+      properties:
+        # TODO: cosmosdk type PageResponse
+        pagination:
+          $ref: '#/components/schemas/RawProtoJson'
+        model:
+          type: array
+          # TODO: inference-chain/x/inference/types/model.pb.go:25
+          items: 
+            $ref: '#/components/schemas/RawProtoJson'
+  
+    # ── Participants ─────────────────────────────────────────────────────────
+    ParticipantsResponse:
+      type: object
+      required: [participants, block_height]
+      properties:
+        participants:
+          type: array
+          items:
+            $ref: '#/components/schemas/ParticipantDto'
+        block_height: 
+            $ref: '#/components/schemas/Int64'
+
+    ParticipantDto:
+      type: object
+      required: [id, url, coins_owed, refunds_owed, balance, voting_power, reputation]
+      properties:
+        id:           { type: string }
+        url:          { type: string }
+        coins_owed:
+            $ref: '#/components/schemas/Int64'
+        refunds_owed:
+            $ref: '#/components/schemas/Int64'
+        balance:
+            $ref: '#/components/schemas/Int64'
+        voting_power:
+            $ref: '#/components/schemas/Int64'
+        reputation: { type: number }
+
+    AccountDto:
+      type: object
+      required: [pubkey, balance, denom]
+      properties:
+        pubkey:  { type: string }
+        balance:
+          $ref: '#/components/schemas/Int64'
+        denom:   { type: string }
+
+    # ── Epochs ───────────────────────────────────────────────────────────────
+    LatestEpoch:
+      type: object
+      required: [index, poc_start_block_height]
+      properties:
+        index:
+          $ref: "#/components/schemas/Uint64"
+        poc_start_block_height:
+          $ref: "#/components/schemas/Int64"
+
+    EpochResponse:
+      type: object
+      required: [block_height, latest_epoch, is_confirmation_poc_active, epoch_params, active_confirmation_poc_event, epoch_stages, next_epoch_stages, phase]
+      properties:
+        block_height:
+          $ref: "#/components/schemas/Int64"
+        latest_epoch:
+          $ref: '#/components/schemas/LatestEpoch'
+        phase:                      { type: string }
+        # TODO: (EpochStages)inference-chain/x/inference/types/epoch_stages.go:17
+        epoch_stages:
+          $ref: '#/components/schemas/RawProtoJson'
+        # TODO: (EpochStages)inference-chain/x/inference/types/epoch_stages.go:17
+        next_epoch_stages:
+          $ref: '#/components/schemas/RawProtoJson'
+        # TODO: (EpochParams)inference-chain/x/inference/types/params.pb.go:369
+        epoch_params:
+          $ref: '#/components/schemas/RawProtoJson'
+        is_confirmation_poc_active: { type: boolean }
+        # TODO: (ConfirmationPoCEvent)inference-chain/x/inference/types/confirmation_poc_event.pb.go:63
+        active_confirmation_poc_event:
+          $ref: '#/components/schemas/RawProtoJson'
+
+    ActiveParticipantWithProof:
+      type: object
+      required: [active_participants, addresses, active_participants_bytes, validators, excluded_participants]
+      properties:
+        # inferencetypes.ActiveParticipants
+        active_participants:
+          $ref: '#/components/schemas/RawProtoJson'
+        addresses:
+          type: array
+          items: { type: string }
+        active_participants_bytes: { type: string }
+        # cmtservice.ProofOps — absent when not requested
+        proof_ops:
+          $ref: '#/components/schemas/RawProtoJson'
+        # cmtservice.Validator
+        validators:
+          type: array
+          items:
+            $ref: '#/components/schemas/RawProtoJson'
+        # cmtservice.Block — absent when block+1 is unavailable
+        block:
+          $ref: '#/components/schemas/RawProtoJson'
+        excluded_participants:
+          type: array
+          items:
+            $ref: '#/components/schemas/ExcludedParticipant'
+
+    ExcludedParticipant:
+      type: object
+      required: [address, reason, exclusion_block_height]
+      properties:
+        address:                { type: string }
+        reason:                 { type: string }
+        exclusion_block_height: { type: integer }
+
+    # ── Pricing ──────────────────────────────────────────────────────────────
+    PricingDto:
+      type: object
+      required: [unit_of_compute_price, models, dynamic_pricing_enabled]
+      properties:
+        unit_of_compute_price:
+          $ref: '#/components/schemas/Uint64'
+        models:
+          type: array
+          items:
+            $ref: '#/components/schemas/ModelPriceDto'
+        dynamic_pricing_enabled: { type: boolean }
+
+    ModelPriceDto:
+      type: object
+      required: [id, units_of_compute_per_token, price_per_token]
+      properties:
+        id:                         { type: string }
+        units_of_compute_per_token:
+          $ref: '#/components/schemas/Uint64'
+        price_per_token:
+          $ref: '#/components/schemas/Uint64'
+        utilization:                { type: number,  nullable: true }
+        capacity:                   { type: integer, nullable: true }
+
+    # ── Versions ─────────────────────────────────────────────────────────────
+    VersionsResponse:
+      type: object
+      required: [timestamp, api_version, node_version]
+      properties:
+        timestamp:
+          type: string
+          description: RFC3339 timestamp
+        api_version:
+          $ref: '#/components/schemas/ApiVersion'
+        node_version:
+          $ref: '#/components/schemas/NodeVersion'
+
+    ApiVersion:
+      type: object
+      required: [application_name, version, commit]
+      properties:
+        application_name: { type: string }
+        version:          { type: string }
+        commit:           { type: string }
+    NodeVersion:
+
+      type: object
+      required: [application_name, version, commit]
+      properties:
+        application_name: { type: string }
+        version:          { type: string }
+        commit:           { type: string }
+
+    # ── BLS ──────────────────────────────────────────────────────────────────
+    BLSEpochResponse:
+      type: object
+      required: [epoch_data, group_public_key_uncompressed_256, validation_signature_uncompressed_128]
+      properties:
+        # TODO: EpochBLSData
+        epoch_data:
+          $ref: '#/components/schemas/RawProtoJson'
+        group_public_key_uncompressed_256:
+          type: string
+          format: byte
+        validation_signature_uncompressed_128:
+          type: string
+          format: byte
+
+    BLSSignatureResponse:
+      type: object
+      properties:
+        # TODO: ThresholdSigningRequest
+        signing_request:
+          $ref: '#/components/schemas/RawProtoJson'
+        uncompressed_signature_128:
+          type: string
+          format: byte
+          nullable: true
+
+    # ── Bridge ───────────────────────────────────────────────────────────────
+    BridgeAddressesResponse:
+      type: object
+      required: [chain_name, chain_id, addresses]
+      properties:
+        chain_name: { type: string }
+        chain_id:   { type: string }
+        addresses:
+          type: array
+          items: { type: string }
+
+    # ── Stateless computation ─────────────────────────────────────────────────
+    ProofVerificationRequest:
+      type: object
+      required: [value, app_hash, proof_ops, epoch]
+      properties:
+        value:     { type: string }
+        app_hash:  { type: string }
+        # TODO: cryptotypes.ProofOps
+        proof_ops: 
+          $ref: '#/components/schemas/RawProtoJson'
+        epoch:     { type: integer }
+
+    VerifyBlockRequest:
+      type: object
+      required: [block, validators]
+      properties:
+        # TODO: comettypes.Block
+        block: 
+          $ref: '#/components/schemas/RawProtoJson'
+        validators:
+          type: array
+          items:
+            type: object
+            required: [pub_key, voting_power]
+            properties:
+              pub_key:      { type: string }
+              voting_power: 
+                $ref: '#/components/schemas/Int64'
+              

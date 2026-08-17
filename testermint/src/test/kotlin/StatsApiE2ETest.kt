@@ -4,11 +4,14 @@ import com.productscience.data.DeveloperInferencesResponse
 import com.productscience.data.StatsModelsResponse
 import com.productscience.data.StatsSummaryResponse
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import java.time.Duration
 import java.util.concurrent.TimeUnit
 
+// Classic inference flow was removed (PR #1386); stats ingestion here depends on the deprecated endpoints.
+@Tag("exclude")
 @Timeout(value = 15, unit = TimeUnit.MINUTES)
 class StatsApiE2ETest : TestermintTest() {
 

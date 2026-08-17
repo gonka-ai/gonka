@@ -605,6 +605,27 @@ func TestVerifyDevshardSettlement_UnsortedHostStats(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestVerifyDevshardSettlement_AutoFinishedHostCosts exercises chain verification
+// with host_stats shaped like settlement-drain auto-finish (reserved-cost credit
+// on a censored Started inference, zero on refunded Pending slots).
+func TestVerifyDevshardSettlement_AutoFinishedHostCosts(t *testing.T) {
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
+	const escrowAmount = uint64(10_000)
+	escrow := types.DevshardEscrow{
+		Id: 1, Creator: "gonka1creator", Amount: escrowAmount, Slots: slots,
+	}
+
+	hostStats := makeHostStats(keeper.DevshardGroupSize, 0)
+	hostStats[1].Cost = 150 // auto-finished Started inference at reserved cost
+	hostStats[2].Cost = 120 // normally finished inference
+
+	msg := buildSettlementTestData(t, escrow, keys, hostStats, 0)
+	err := keeper.VerifyDevshardSettlement(escrow, msg, testDevshardEscrowParams(), nil)
+	require.NoError(t, err)
+}
+
 func TestVerifyDevshardSettlement_ZeroCost(t *testing.T) {
 	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
 

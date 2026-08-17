@@ -93,21 +93,6 @@ func (m *MockCosmosMessageClient) EncryptBytes(plaintext []byte) ([]byte, error)
 	return args.Get(0).([]byte), args.Error(1)
 }
 
-func (m *MockCosmosMessageClient) StartInference(transaction *inferenceapi.MsgStartInference) error {
-	args := m.Called(transaction)
-	return args.Error(0)
-}
-
-func (m *MockCosmosMessageClient) FinishInference(transaction *inferenceapi.MsgFinishInference) error {
-	args := m.Called(transaction)
-	return args.Error(0)
-}
-
-func (m *MockCosmosMessageClient) ReportValidation(transaction *inferenceapi.MsgValidation) error {
-	args := m.Called(transaction)
-	return args.Error(0)
-}
-
 func (m *MockCosmosMessageClient) SubmitNewUnfundedParticipant(transaction *inferenceapi.MsgSubmitNewUnfundedParticipant) error {
 	args := m.Called(transaction)
 	return args.Error(0)
@@ -156,6 +141,15 @@ func (m *MockCosmosMessageClient) BridgeExchange(transaction *inferencetypes.Msg
 func (m *MockCosmosMessageClient) GetBridgeAddresses(ctx context.Context, chainId string) ([]inferencetypes.BridgeContractAddress, error) {
 	args := m.Called(ctx, chainId)
 	return args.Get(0).([]inferencetypes.BridgeContractAddress), args.Error(1)
+}
+
+func (m *MockCosmosMessageClient) BridgeTransactionsByReceipt(ctx context.Context, originChain, blockNumber, receiptIndex string) ([]inferencetypes.BridgeTransaction, error) {
+	args := m.Called(ctx, originChain, blockNumber, receiptIndex)
+	var txs []inferencetypes.BridgeTransaction
+	if r := args.Get(0); r != nil {
+		txs = r.([]inferencetypes.BridgeTransaction)
+	}
+	return txs, args.Error(1)
 }
 
 func (m *MockCosmosMessageClient) SendTransactionAsyncWithRetry(msg sdk.Msg, deadlineBlock ...int64) (*sdk.TxResponse, error) {

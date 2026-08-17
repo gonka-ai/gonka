@@ -67,6 +67,10 @@ var retryablePatterns = []string{
 
 	"unordered transaction has a timeout_timestamp that has already passed",
 	"unordered tx ttl exceeds",
+	// Out-of-gas: the per-msg-type estimate underestimated this batch's
+	// real consumption. Retry with a bumped gasWanted (estimateBatchGas
+	// applies a multiplier per attempt, see gas_estimate.go).
+	"out of gas",
 }
 
 // isRetryableRawLog checks if the raw log contains any retryable error patterns

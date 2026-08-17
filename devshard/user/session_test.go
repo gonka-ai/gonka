@@ -1092,6 +1092,59 @@ func TestFinalize_DoubleCall_InsufficientQuorum(t *testing.T) {
 	require.Equal(t, diffs1, len(session.Diffs()), "no new diffs on second call")
 }
 
+// After snapshot-only recovery, diffs and in-memory signatures are empty while
+// phase is already Settlement. Re-running Finalize must collect from hosts
+// using the live state-root fallback in fetchSignature.
+func TestFinalize_SettlementRerun_EmptyDiffsCollectsFromHosts(t *testing.T) {
+	session, hosts, _ := setupSession(t, 3, 100000, 100)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	}
+	for i := 0; i < 3; i++ {
+		_, err := session.SendInference(ctx, params)
+		require.NoError(t, err)
+	}
+	require.NoError(t, session.Finalize(ctx))
+	require.Equal(t, types.PhaseSettlement, session.StateMachine().SnapshotState().Phase)
+	require.True(t, session.HasQuorumAt(session.Nonce()))
+
+	finalNonce := session.Nonce()
+	// Sign over the ORIGINAL final-diff post-state-root (what a real host signed
+	// at finalize time), captured before wiping diffs. Verifying these against
+	// the post-recovery live ComputeStateRoot proves the two roots are equal.
+	diffs := session.Diffs()
+	originalRoot := append([]byte(nil), diffs[len(diffs)-1].PostStateRoot...)
+	require.NotEmpty(t, originalRoot)
+
+	// Default in-process test hosts have no signature store (GET fails). Inject
+	// SignatureFetcher clients that serve valid cold-key signatures over the
+	// original root — the production HTTP path after hosts already signed.
+	fetchers := make([]HostClient, len(hosts))
+	for i, hostSigner := range hosts {
+		sigData, err := proto.Marshal(&types.StateSignatureContent{
+			StateRoot: originalRoot, EscrowId: session.escrowID, Nonce: finalNonce,
+		})
+		require.NoError(t, err)
+		stateSig, err := hostSigner.Sign(sigData)
+		require.NoError(t, err)
+		fetchers[i] = &fakeFetcher{sigs: map[uint32][]byte{uint32(i): stateSig}}
+	}
+
+	session.mu.Lock()
+	session.diffs = nil
+	session.signatures = make(map[uint64]map[uint32][]byte)
+	session.clients = fetchers
+	session.finalizeClients = nil
+	session.mu.Unlock()
+	require.False(t, session.HasQuorumAt(finalNonce))
+
+	require.NoError(t, session.Finalize(ctx), "Finalize must re-collect quorum with empty diffs")
+	require.True(t, session.HasQuorumAt(finalNonce))
+	require.Equal(t, finalNonce, session.Nonce())
+}
+
 func TestFinalize_SignatureStatus(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 100)
 	ctx := context.Background()

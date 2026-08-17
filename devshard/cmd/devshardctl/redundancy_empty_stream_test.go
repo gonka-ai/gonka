@@ -16,6 +16,13 @@ import (
 	"devshard/user"
 )
 
+func TestDefaultRedundancySettings_AllowsThirtyMinuteInference(t *testing.T) {
+	settings := DefaultRedundancySettings()
+	require.EqualValues(t, 30*time.Minute/time.Millisecond, settings.StreamingAttemptHardTimeoutMS)
+	require.EqualValues(t, 30*time.Minute/time.Millisecond, settings.NonStreamNoContentTimeoutMS)
+	require.EqualValues(t, 30*time.Minute/time.Millisecond, settings.NonStreamMaxAttemptWaitMS)
+}
+
 func TestSseChunkHasContent(t *testing.T) {
 	cases := []struct {
 		name string
@@ -157,12 +164,12 @@ func TestPhaseTransitionAbortReincludesParticipantAndSkipsSamples(t *testing.T) 
 		nonce:                      1,
 		escrowID:                   "escrow-test",
 		sendTime:                   time.Now().Add(-time.Second),
-		receiptTime:                time.Now().Add(-900 * time.Millisecond),
 		startedBeforePoCGeneration: true,
 		done:                       make(chan struct{}),
 		receiptCh:                  make(chan struct{}),
 		firstTokenCh:               make(chan struct{}),
 	}
+	inf.setReceiptAt(time.Now().Add(-900 * time.Millisecond))
 
 	setPoCPhaseStateFromSnapshot(ChainPhaseSnapshot{
 		EpochPhase:           epochPhaseInference,
@@ -195,13 +202,13 @@ func TestPhaseTransitionAbortAfterContentSkipsPenaltyButDoesNotRetry(t *testing.
 		nonce:                      1,
 		escrowID:                   "escrow-test",
 		sendTime:                   time.Now().Add(-time.Second),
-		receiptTime:                time.Now().Add(-900 * time.Millisecond),
 		startedBeforePoCGeneration: true,
 		err:                        errSimulatedWinnerTransport,
 		done:                       make(chan struct{}),
 		receiptCh:                  make(chan struct{}),
 		firstTokenCh:               make(chan struct{}),
 	}
+	inf.setReceiptAt(time.Now().Add(-900 * time.Millisecond))
 	inf.contentChunks.Store(1)
 
 	setPoCPhaseStateFromSnapshot(ChainPhaseSnapshot{
@@ -545,7 +552,8 @@ func TestIsEmptyStreamAttempt(t *testing.T) {
 		require.False(t, isEmptyStreamAttempt(nil))
 	})
 	t.Run("probe_never_empty", func(t *testing.T) {
-		inf := &inflight{probe: true, receiptTime: time.Now()}
+		inf := &inflight{probe: true}
+		inf.setReceiptAt(time.Now())
 		inf.outputChunks.Store(2)
 		require.False(t, isEmptyStreamAttempt(inf))
 	})
@@ -564,12 +572,14 @@ func TestIsEmptyStreamAttempt(t *testing.T) {
 	})
 	t.Run("receipt_bytes_no_content", func(t *testing.T) {
 		// Original empty-SSE pattern: role marker + [DONE] only.
-		inf := &inflight{receiptTime: time.Now()}
+		inf := &inflight{}
+		inf.setReceiptAt(time.Now())
 		inf.outputChunks.Store(2)
 		require.True(t, isEmptyStreamAttempt(inf))
 	})
 	t.Run("receipt_error_stream_not_empty", func(t *testing.T) {
-		inf := &inflight{receiptTime: time.Now(), errorSource: "error.BadRequestError"}
+		inf := &inflight{errorSource: "error.BadRequestError"}
+		inf.setReceiptAt(time.Now())
 		inf.outputChunks.Store(2)
 		require.False(t, isEmptyStreamAttempt(inf))
 		require.True(t, isErrorStreamAttempt(inf))
@@ -578,11 +588,13 @@ func TestIsEmptyStreamAttempt(t *testing.T) {
 	t.Run("receipt_no_bytes_at_all_stall", func(t *testing.T) {
 		// Stall pattern (369pqtgx-class): host got the receipt, then
 		// went silent for the full deadline. No bytes streamed at all.
-		inf := &inflight{receiptTime: time.Now()}
+		inf := &inflight{}
+		inf.setReceiptAt(time.Now())
 		require.True(t, isEmptyStreamAttempt(inf))
 	})
 	t.Run("receipt_bytes_with_content", func(t *testing.T) {
-		inf := &inflight{receiptTime: time.Now()}
+		inf := &inflight{}
+		inf.setReceiptAt(time.Now())
 		inf.outputChunks.Store(3)
 		inf.contentChunks.Store(1)
 		require.False(t, isEmptyStreamAttempt(inf))
@@ -648,11 +660,11 @@ func TestRaceWriter_EmptyAttemptDoesNotWin(t *testing.T) {
 		hostID:       "empty-host",
 		escrowID:     "escrow-x",
 		nonce:        1,
-		receiptTime:  time.Now(),
 		done:         make(chan struct{}),
 		receiptCh:    make(chan struct{}),
 		firstTokenCh: make(chan struct{}),
 	}
+	inf.setReceiptAt(time.Now())
 	rw := &raceWriter{group: rg, nonce: 1, inf: inf}
 
 	role := []byte(`data: {"choices":[{"delta":{"role":"assistant"}}]}` + "\n\n")
@@ -678,11 +690,11 @@ func TestRaceWriter_ErrorStreamDoesNotWinAndDoesNotCountAsEmpty(t *testing.T) {
 		hostID:       "error-host",
 		escrowID:     "escrow-x",
 		nonce:        1,
-		receiptTime:  time.Now(),
 		done:         make(chan struct{}),
 		receiptCh:    make(chan struct{}),
 		firstTokenCh: make(chan struct{}),
 	}
+	inf.setReceiptAt(time.Now())
 	rw := &raceWriter{group: rg, nonce: 1, inf: inf}
 
 	payload := []byte(`data: {"error":{"code":400,"message":"bad request","type":"BadRequestError"}}` + "\n\n" +
@@ -762,21 +774,21 @@ func TestInflightFinished_StallHostNotFinished(t *testing.T) {
 	}
 
 	stall := &inflight{
-		hostID:      "stall-host",
-		nonce:       7,
-		receiptTime: time.Now(),
-		resp:        resp,
+		hostID: "stall-host",
+		nonce:  7,
+		resp:   resp,
 	}
+	stall.setReceiptAt(time.Now())
 	require.True(t, isEmptyStreamAttempt(stall), "stall pattern must be flagged")
 	require.False(t, inflightFinished(stall),
 		"stalled attempt with finish marker must NOT count as finished")
 
 	good := &inflight{
-		hostID:      "good-host",
-		nonce:       7,
-		receiptTime: time.Now(),
-		resp:        resp,
+		hostID: "good-host",
+		nonce:  7,
+		resp:   resp,
 	}
+	good.setReceiptAt(time.Now())
 	good.outputChunks.Store(2)
 	good.contentChunks.Store(1)
 	require.False(t, isEmptyStreamAttempt(good))
@@ -785,10 +797,10 @@ func TestInflightFinished_StallHostNotFinished(t *testing.T) {
 	errorStream := &inflight{
 		hostID:      "error-host",
 		nonce:       7,
-		receiptTime: time.Now(),
 		resp:        resp,
 		errorSource: "error.BadRequestError",
 	}
+	errorStream.setReceiptAt(time.Now())
 	errorStream.outputChunks.Store(2)
 	require.False(t, isEmptyStreamAttempt(errorStream))
 	require.False(t, inflightFinished(errorStream),
@@ -820,4 +832,145 @@ var _ = func() bool {
 	_ = atomic.Int64{}
 	_ = inf.contentChunks.Load()
 	return true
+}
+
+func TestIsModelBurnEmpty(t *testing.T) {
+	t.Run("not_empty_attempt", func(t *testing.T) {
+		inf := &inflight{}
+		inf.setReceiptAt(time.Now())
+		inf.outputChunks.Store(3)
+		inf.contentChunks.Store(1)
+		require.False(t, isModelBurnEmpty(inf, kimiK26ModelID), "non-empty attempt is never burn-empty")
+	})
+	t.Run("empty_with_zero_completion_tokens_is_host_fault", func(t *testing.T) {
+		inf := &inflight{}
+		inf.setReceiptAt(time.Now())
+		inf.outputChunks.Store(2)
+		require.True(t, isEmptyStreamAttempt(inf))
+		require.False(t, isModelBurnEmpty(inf, kimiK26ModelID))
+	})
+	t.Run("empty_with_positive_completion_tokens_is_model_burn", func(t *testing.T) {
+		inf := &inflight{}
+		inf.setReceiptAt(time.Now())
+		inf.outputChunks.Store(5)
+		inf.usageComplTokens.Store(100)
+		require.True(t, isEmptyStreamAttempt(inf))
+		require.True(t, isModelBurnEmpty(inf, kimiK26ModelID))
+	})
+	t.Run("probe_is_never_burn", func(t *testing.T) {
+		inf := &inflight{probe: true}
+		inf.setReceiptAt(time.Now())
+		inf.usageComplTokens.Store(100)
+		require.False(t, isModelBurnEmpty(inf, kimiK26ModelID))
+	})
+	t.Run("no_receipt_is_never_burn", func(t *testing.T) {
+		inf := &inflight{}
+		inf.usageComplTokens.Store(100)
+		require.False(t, isModelBurnEmpty(inf, kimiK26ModelID))
+	})
+	t.Run("error_stream_not_burn", func(t *testing.T) {
+		inf := &inflight{errorSource: "error.BadRequestError"}
+		inf.setReceiptAt(time.Now())
+		inf.outputChunks.Store(2)
+		inf.usageComplTokens.Store(100)
+		require.False(t, isModelBurnEmpty(inf, kimiK26ModelID))
+	})
+	t.Run("non_reasoning_model_is_never_burn", func(t *testing.T) {
+		// The completion_tokens signal is host-reported; only the reasoning route
+		// honors it, so a burn-shaped empty on any other model stays a host fault.
+		inf := &inflight{}
+		inf.setReceiptAt(time.Now())
+		inf.outputChunks.Store(5)
+		inf.usageComplTokens.Store(100)
+		require.True(t, isEmptyStreamAttempt(inf))
+		require.False(t, isModelBurnEmpty(inf, "Qwen/Qwen3-235B-A22B-Instruct-2507"))
+	})
+}
+
+// TestRaceWriter_BuffersRoleUntilContent verifies that a single attempt
+// streaming role-chunk -> content-chunk -> [DONE] produces correctly ordered
+// output to the race group writer with no winner declared until content
+// arrives.
+
+func TestSseChunkUsageCompletionTokens(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		wantTok int64
+		wantOK  bool
+	}{
+		{
+			name:    "usage_with_completion_tokens",
+			body:    `data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":100,"total_tokens":112}}` + "\n\n",
+			wantTok: 100,
+			wantOK:  true,
+		},
+		{
+			name:    "usage_zero_completion_tokens",
+			body:    `data: {"usage":{"prompt_tokens":12,"completion_tokens":0,"total_tokens":12}}` + "\n\n",
+			wantTok: 0,
+			wantOK:  false,
+		},
+		{
+			name:    "usage_absent",
+			body:    `data: {"choices":[{"delta":{"content":"hi"}}]}` + "\n\n",
+			wantTok: 0,
+			wantOK:  false,
+		},
+		{
+			name:    "done_marker_only",
+			body:    "data: [DONE]\n\n",
+			wantTok: 0,
+			wantOK:  false,
+		},
+		{
+			name:    "empty_input",
+			body:    "",
+			wantTok: 0,
+			wantOK:  false,
+		},
+		{
+			name:    "malformed_json_skipped",
+			body:    "data: {not json}\n\ndata: {\"usage\":{\"completion_tokens\":42}}\n\n",
+			wantTok: 42,
+			wantOK:  true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tok, ok := sseChunkUsageCompletionTokens([]byte(tc.body))
+			require.Equal(t, tc.wantOK, ok)
+			require.Equal(t, tc.wantTok, tok)
+		})
+	}
+}
+
+// usage chunk without content must still bump usageComplTokens.
+
+func TestRaceWriter_CapturesUsageCompletionTokens(t *testing.T) {
+	ctx := context.Background()
+	var sink bytes.Buffer
+	rg := newRaceGroup(ctx, ctx, "escrow-x", &sink)
+
+	inf := &inflight{
+		hostID:       "host-A",
+		escrowID:     "escrow-x",
+		nonce:        1,
+		done:         make(chan struct{}),
+		receiptCh:    make(chan struct{}),
+		firstTokenCh: make(chan struct{}),
+	}
+	inf.setReceiptAt(time.Now())
+	rw := &raceWriter{group: rg, nonce: 1, inf: inf}
+
+	usageChunk := []byte(`data: {"choices":[{"delta":{},"finish_reason":"length"}],"usage":{"prompt_tokens":12,"completion_tokens":100,"total_tokens":112}}` + "\n\n")
+	_, err := rw.Write(usageChunk)
+	require.NoError(t, err)
+
+	require.Equal(t, int64(100), inf.usageComplTokens.Load())
+	require.Equal(t, int64(0), inf.contentChunks.Load())
+
+	// And the classifier should now route this attempt to model-burn.
+	require.True(t, isEmptyStreamAttempt(inf))
+	require.True(t, isModelBurnEmpty(inf, kimiK26ModelID))
 }

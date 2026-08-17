@@ -17,6 +17,16 @@ type chatRequest struct {
 	MaxTokens           uint64 `json:"max_tokens"`
 	MaxCompletionTokens uint64 `json:"max_completion_tokens"`
 	N                   uint64 `json:"n"`
+	// Logprobs and TopLogprobs capture the client's ORIGINAL logprobs intent,
+	// read by DecodeRequest before the PostLimits stage force-enables logprobs
+	// upstream for validation (see the logprobs/top_logprobs ForceLiteral rules
+	// in request_filters_parameters.go, which force logprobs=true and clamp
+	// top_logprobs to TopLogprobsForcedValue on the wire). These hold what the
+	// client asked for, not the forced values, and drive conditional response
+	// stripping so clients who explicitly asked for logprobs get them back. Cf.
+	// logprobClientIntent.
+	Logprobs    bool   `json:"logprobs"`
+	TopLogprobs uint64 `json:"top_logprobs"`
 }
 
 type outputTokenLimits struct {
@@ -90,10 +100,10 @@ func (p ChatRequestPipeline) Normalize(body []byte, adminAuthenticated bool, lim
 	if err := p.parameters.Apply(RequestFilterStagePreValidation, ctx); err != nil {
 		return nil, chatRequest{}, err
 	}
-	if err := p.messages.NormalizeDocument(&ctx.Document); err != nil {
+	if err := p.messages.NormalizeDocument(&ctx.Document, ctx.RoutedModel); err != nil {
 		return nil, chatRequest{}, err
 	}
-	if err := p.messages.ValidateDocument(&ctx.Document); err != nil {
+	if err := p.messages.ValidateDocument(&ctx.Document, ctx.RoutedModel); err != nil {
 		return nil, chatRequest{}, err
 	}
 	if err := ctx.DecodeRequest(); err != nil {
@@ -139,6 +149,7 @@ func (p ChatRequestPipeline) applyOutputTokenLimits(ctx *RequestFilterContext) {
 	case hasMaxCompletionTokens:
 		maxCompletionTokens := capOutputTokens(ctx.Request.MaxCompletionTokens, true, ctx.AdminAuthenticated, limits)
 		ctx.Document.Set("max_completion_tokens", maxCompletionTokens)
+		ctx.Document.Set("max_tokens", maxCompletionTokens)
 		ctx.Request.MaxCompletionTokens = maxCompletionTokens
 		ctx.Request.MaxTokens = maxCompletionTokens
 	default:

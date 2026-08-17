@@ -28,6 +28,19 @@ CREATE TABLE IF NOT EXISTS escrow_epoch (
 		Name:       "noop",
 		Statements: []string{`SELECT 1`},
 	},
+	{
+		ID:   4,
+		Name: "escrow_cache",
+		Statements: []string{`
+CREATE TABLE IF NOT EXISTS escrow_cache (
+    escrow_id   TEXT PRIMARY KEY,
+    epoch_id    INTEGER NOT NULL,
+    escrow_json TEXT NOT NULL,
+    cached_at   INTEGER NOT NULL DEFAULT 0
+)`,
+			`CREATE INDEX IF NOT EXISTS escrow_cache_by_epoch ON escrow_cache(epoch_id)`,
+		},
+	},
 }
 
 // MigrateMeta applies schema migrations for _meta.db.

@@ -9,25 +9,10 @@ import (
 
 func RegisterInterfaces(registry cdctypes.InterfaceRegistry) {
 	registry.RegisterImplementations((*sdk.Msg)(nil),
-		&MsgStartInference{},
-	)
-	registry.RegisterImplementations((*sdk.Msg)(nil),
-		&MsgFinishInference{},
-	)
-	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgSubmitNewParticipant{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
-		&MsgValidation{},
-	)
-	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgSubmitNewUnfundedParticipant{},
-	)
-	registry.RegisterImplementations((*sdk.Msg)(nil),
-		&MsgInvalidateInference{},
-	)
-	registry.RegisterImplementations((*sdk.Msg)(nil),
-		&MsgRevalidateInference{},
 	)
 	registry.RegisterImplementations((*sdk.Msg)(nil),
 		&MsgClaimRewards{},

@@ -19,6 +19,8 @@ import kotlin.test.assertNotNull
 
 const val DELAY_SEED = 8675309
 
+// Classic inference flow was removed (PR #1386); these tests exercise the deprecated endpoints.
+@Tag("exclude")
 @Timeout(value = 15, unit = TimeUnit.MINUTES)
 class InferenceAccountingTests : TestermintTest() {
 

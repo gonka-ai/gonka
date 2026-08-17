@@ -132,6 +132,7 @@ func newMLNodeTestBroker(t *testing.T, phase types.EpochPhase, modelIDs ...strin
 func TestV2GeneratedCallbackRequiresModelScopedRoute(t *testing.T) {
 	artifactStore := artifacts.NewManagedArtifactStore(t.TempDir(), 3)
 	defer artifactStore.Close()
+	artifactStore.ActivateStage(100)
 
 	server := NewServer(nil, newMLNodeTestBroker(t, types.PoCGeneratePhase, testModelA, testModelB), WithArtifactStore(artifactStore))
 

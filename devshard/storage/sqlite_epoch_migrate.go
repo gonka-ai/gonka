@@ -126,6 +126,9 @@ CREATE TABLE IF NOT EXISTS inference_validation_obs (
     PRIMARY KEY (escrow_id, inference_id, slot_id)
 )`},
 	},
+	// The SQLite lease store
+	// is now a no-op (single-instance; see storage/leases.go),
+	// so we skip creating the validation_leases table
 }
 
 // MigrateEpochPool applies schema migrations for a per-epoch SQLite file.

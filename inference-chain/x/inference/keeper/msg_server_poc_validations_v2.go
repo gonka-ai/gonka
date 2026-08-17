@@ -119,15 +119,23 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 			continue
 		}
 
+		// Pre-validate participant address to avoid conflating input errors with storage errors
+		if _, err := sdk.AccAddressFromBech32(validation.ParticipantAddress); err != nil {
+			k.LogWarn("[SubmitPocValidationsV2] Invalid participant address, skipping", types.PoC,
+				"validator", msg.Creator,
+				"participant", validation.ParticipantAddress,
+				"error", err)
+			continue
+		}
+
 		// Check for duplicate submission (prevents vote flipping)
 		exists, err := k.HasPocValidationV2(ctx, startBlockHeight, validation.ParticipantAddress, modelID, msg.Creator)
 		if err != nil {
-			k.LogWarn("[SubmitPocValidationsV2] Failed to check existing validation, skipping", types.PoC,
+			k.LogError("[SubmitPocValidationsV2] Unexpected storage read error, aborting batch", types.PoC,
 				"validator", msg.Creator,
 				"participant", validation.ParticipantAddress,
-				"model_id", modelID,
 				"error", err)
-			continue
+			return nil, sdkerrors.Wrapf(err, "[SubmitPocValidationsV2] failed to check existing validation for participant %s", validation.ParticipantAddress)
 		}
 		if exists {
 			k.LogWarn("[SubmitPocValidationsV2] Validation already exists, skipping duplicate", types.PoC,
@@ -148,12 +156,12 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 		}
 
 		if err := k.SetPocValidationV2(ctx, storedValidation); err != nil {
-			k.LogWarn("[SubmitPocValidationsV2] Failed to store validation, skipping", types.PoC,
+			k.LogError("[SubmitPocValidationsV2] Unexpected storage write error, aborting batch", types.PoC,
 				"validator", msg.Creator,
 				"participant", validation.ParticipantAddress,
 				"model_id", modelID,
 				"error", err)
-			continue
+			return nil, sdkerrors.Wrapf(err, "[SubmitPocValidationsV2] failed to store validation for participant %s", validation.ParticipantAddress)
 		}
 
 		storedCount++

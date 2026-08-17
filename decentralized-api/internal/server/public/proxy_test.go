@@ -1,8 +1,8 @@
 package public
 
 import (
+	"common/completionapi"
 	"crypto/sha256"
-	"decentralized-api/completionapi"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -31,8 +31,7 @@ func TestProxyResponse_HashConsistency(t *testing.T) {
 		Body:       io.NopCloser(strings.NewReader(sseBody)),
 	}
 	recorder := httptest.NewRecorder()
-	err := ProxyResponse(proxyResp, recorder, true, proxyProcessor, inferenceId)
-	require.NoError(t, err)
+	ProxyResponse(proxyResp, recorder, true, proxyProcessor, inferenceId)
 
 	proxyCompletion, err := proxyProcessor.GetResponse()
 	require.NoError(t, err)

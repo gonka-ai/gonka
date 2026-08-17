@@ -5,10 +5,13 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
+	"common/chain"
+	devshardpkg "devshard"
 	"devshard/types"
 )
 
@@ -17,15 +20,30 @@ const (
 	rotationRoleTemp    = "temp"
 
 	defaultEscrowRotationInterval = 15 * time.Second
+
+	rotationBreakerMaxCooldownTicks = 4
+
+	escrowWriteRetries      = 10
+	escrowWriteRetryBackoff = 200 * time.Millisecond
+
+	commitmentReconcileGrace = 9*time.Minute + 2*time.Minute
 )
 
 var (
 	errDevshardBusy                   = errors.New("devshard has active requests")
+	errDevshardAlreadyExists          = errors.New("devshard already exists")
 	errEscrowRotationCreateSuppressed = errors.New("escrow rotation create already failed for this epoch")
 	gatewayCreateRotationEscrow       = (*Gateway).createRotationEscrow
+	gatewayCreateEscrowOnChain        = (*Gateway).createEscrowOnChain
 	gatewayCreateDepletionEscrow      func(*Gateway, context.Context, GatewaySettings, EscrowRotationModelSettings, string, uint64) (*CreateDevshardEscrowResult, error)
 	gatewaySettleDevshardOnChain      = (*Gateway).settleDevshardOnChain
+	gatewayQueryTxEscrowID            = defaultQueryTxEscrowID
 )
+
+type rotationBreaker struct {
+	consecutiveFailures int
+	cooldownTicks       int
+}
 
 func (g *Gateway) startEscrowRotatorIfEnabled() {
 	g.mu.Lock()
@@ -66,27 +84,32 @@ func (g *Gateway) stopEscrowRotatorLocked() {
 
 func (g *Gateway) runEscrowRotator(stopCh <-chan struct{}, doneCh chan<- struct{}) {
 	defer close(doneCh)
-	g.rotateEscrowsOnce()
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	g.rotateEscrowsOnce(ctx)
 
 	ticker := time.NewTicker(defaultEscrowRotationInterval)
 	defer ticker.Stop()
 	for {
 		select {
 		case <-ticker.C:
-			g.rotateEscrowsOnce()
+			g.rotateEscrowsOnce(ctx)
 		case <-stopCh:
+			cancel()
 			return
 		}
 	}
 }
 
-func (g *Gateway) rotateEscrowsOnce() {
+func (g *Gateway) rotateEscrowsOnce(ctx context.Context) {
 	if g == nil || g.phaseGate == nil || g.store == nil {
 		return
 	}
 	g.mu.Lock()
 	settings := g.settings
 	g.mu.Unlock()
+	g.reconcileCommitments(ctx, settings)
 	rotation := settings.EscrowRotation
 	if !rotation.Enabled {
 		return
@@ -104,18 +127,18 @@ func (g *Gateway) rotateEscrowsOnce() {
 	blocksToEpochSwitch := snapshot.epochSwitchBlockHeight - snapshot.BlockHeight
 
 	if blocksToEpochSwitch >= 0 && blocksToEpochSwitch <= rotation.PrePoCBlocks {
-		g.prepareBridgeEscrows(snapshot, settings)
+		g.prepareBridgeEscrows(ctx, snapshot, settings)
 		return
 	}
 	if !pocActive {
-		g.finishBridgeEscrows(snapshot, settings)
+		g.finishBridgeEscrows(ctx, snapshot, settings)
 	}
 }
 
-func (g *Gateway) prepareBridgeEscrows(snapshot ChainPhaseSnapshot, settings GatewaySettings) {
+func (g *Gateway) prepareBridgeEscrows(ctx context.Context, snapshot ChainPhaseSnapshot, settings GatewaySettings) {
 	epoch := snapshot.EpochIndex
 	for _, model := range normalizedEscrowRotationModels(settings) {
-		ensure, err := g.ensureRotationEscrows(context.Background(), settings, model, rotationRoleTemp, epoch, model.TempCount)
+		ensure, err := g.ensureRotationEscrows(ctx, settings, model, rotationRoleTemp, epoch, model.TempCount)
 		if err != nil {
 			log.Printf("escrow_rotation_temp_create_failed epoch=%d model=%q error=%v", epoch, model.ModelID, err)
 			promoted, promoteErr := g.promoteActiveRegularEscrowsToTemp(model.ModelID, epoch)
@@ -147,7 +170,7 @@ func (g *Gateway) prepareBridgeEscrows(snapshot ChainPhaseSnapshot, settings Gat
 			if devshard.RotationRole == rotationRoleTemp || !devshard.Active || strings.TrimSpace(devshard.Model) != model.ModelID {
 				continue
 			}
-			settledOnChain, err := g.retireRotatedDevshard(context.Background(), devshard.ID, "escrow rotation regular retired", settings)
+			settledOnChain, err := g.retireRotatedDevshard(ctx, devshard.ID, "escrow rotation regular retired", settings)
 			if err != nil {
 				log.Printf("escrow_rotation_regular_retire_failed epoch=%d model=%q escrow=%s error=%v", epoch, model.ModelID, devshard.ID, err)
 				settleFailed++
@@ -170,7 +193,7 @@ func (g *Gateway) prepareBridgeEscrows(snapshot ChainPhaseSnapshot, settings Gat
 	}
 }
 
-func (g *Gateway) finishBridgeEscrows(snapshot ChainPhaseSnapshot, settings GatewaySettings) {
+func (g *Gateway) finishBridgeEscrows(ctx context.Context, snapshot ChainPhaseSnapshot, settings GatewaySettings) {
 	epoch := snapshot.EpochIndex
 	for _, model := range normalizedEscrowRotationModels(settings) {
 		state, ok, err := g.store.LoadState()
@@ -188,7 +211,7 @@ func (g *Gateway) finishBridgeEscrows(snapshot ChainPhaseSnapshot, settings Gate
 		if !hasBridgeEscrows {
 			continue
 		}
-		ensure, err := g.ensureRotationEscrows(context.Background(), settings, model, rotationRoleRegular, epoch, model.TargetCount)
+		ensure, err := g.ensureRotationEscrows(ctx, settings, model, rotationRoleRegular, epoch, model.TargetCount)
 		if err != nil {
 			log.Printf("escrow_rotation_regular_create_failed epoch=%d model=%q error=%v", epoch, model.ModelID, err)
 			g.saveRotationStatus(GatewayRotationStatus{
@@ -215,7 +238,7 @@ func (g *Gateway) finishBridgeEscrows(snapshot ChainPhaseSnapshot, settings Gate
 			if devshard.RotationRole != rotationRoleTemp || devshard.RotationEpoch > epoch || !devshard.Active || strings.TrimSpace(devshard.Model) != model.ModelID {
 				continue
 			}
-			settledOnChain, err := g.retireRotatedDevshard(context.Background(), devshard.ID, "escrow rotation temp retired", settings)
+			settledOnChain, err := g.retireRotatedDevshard(ctx, devshard.ID, "escrow rotation temp retired", settings)
 			if err != nil {
 				log.Printf("escrow_rotation_temp_retire_failed epoch=%d model=%q escrow=%s error=%v", epoch, model.ModelID, devshard.ID, err)
 				settleFailed++
@@ -263,48 +286,131 @@ func (g *Gateway) ensureRotationEscrows(ctx context.Context, settings GatewaySet
 		}
 	}
 	result.ExistingCount = count
-	if count < target && g.rotationCreateFailed(model.ModelID, role, epoch) {
+	if count < target {
+		if served, known := g.rotationModelServedByNetwork(model.ModelID); known && !served {
+			log.Printf("escrow_rotation_skip_model_absent role=%s epoch=%d model=%q reason=model_not_in_network", role, epoch, model.ModelID)
+			return result, nil
+		}
+	}
+	if count < target && g.rotationCreateGated(model.ModelID, role) {
 		return result, errEscrowRotationCreateSuppressed
 	}
 	for count < target {
 		if _, err := gatewayCreateRotationEscrow(g, ctx, settings, model, role, epoch); err != nil {
-			g.recordRotationCreateFailure(model.ModelID, role, epoch)
+			g.recordRotationCreateFailure(model.ModelID, role)
 			return result, err
 		}
 		count++
 		result.CreatedCount++
 	}
+	g.resetRotationBreaker(model.ModelID, role)
 	return result, nil
 }
 
-func (g *Gateway) createRotationEscrow(ctx context.Context, settings GatewaySettings, model EscrowRotationModelSettings, role string, epoch uint64) (*CreateDevshardEscrowResult, error) {
+// rotationModelServedByNetwork reports whether the model is served; known is false on cold start (empty model set) so callers don't skip a genuinely-served model.
+func (g *Gateway) rotationModelServedByNetwork(modelID string) (served bool, known bool) {
+	if g == nil || g.capacity == nil {
+		return false, false
+	}
+	networkModels := g.capacity.Models()
+	if len(networkModels) == 0 {
+		return false, false
+	}
+	modelID = strings.TrimSpace(modelID)
+	if slices.Contains(networkModels, modelID) {
+		return true, true
+	}
+	return false, true
+}
+
+func (g *Gateway) createEscrowOnChain(ctx context.Context, settings GatewaySettings, model EscrowRotationModelSettings, onPrepared func(txHash string) error) (*CreateDevshardEscrowResult, error) {
 	signer, _, err := signerFromRequestKey("", model.PrivateKeyEnv)
 	if err != nil {
 		return nil, err
 	}
-	txClient, err := newGatewayRESTChainTxClient(settings, "", "", 0, 0)
+	txMgr, err := g.newChainTxManager(settings, "", "", 0, 0)
 	if err != nil {
 		return nil, err
 	}
-	result, err := txClient.CreateDevshardEscrow(ctx, signer, model.Amount, model.ModelID)
+	result, err := txMgr.CreateDevshardEscrowWithIntent(ctx, signer, model.Amount, model.ModelID, onPrepared)
 	if err != nil {
 		return nil, err
 	}
-	record := GatewayDevshardState{
+	return createEscrowResultFromTx(result), nil
+}
+
+func (g *Gateway) createRotationEscrow(ctx context.Context, settings GatewaySettings, model EscrowRotationModelSettings, role string, epoch uint64) (*CreateDevshardEscrowResult, error) {
+	protocolVersion := rotationEscrowProtocolVersion()
+	commitment := GatewayEscrowCommitment{
+		Model:           model.ModelID,
+		Role:            role,
+		Epoch:           epoch,
+		PrivateKeyEnv:   model.PrivateKeyEnv,
+		ProtocolVersion: protocolVersion,
+		BlockHeight:     g.currentBlockHeight(),
+	}
+	onPrepared := func(txHash string) error {
+		c := commitment
+		c.TxHash = txHash
+		return withDBRetry(ctx, func() error { return g.store.SaveCommitment(c) })
+	}
+	result, err := gatewayCreateEscrowOnChain(g, ctx, settings, model, onPrepared)
+	if err != nil {
+		return nil, err
+	}
+	if err := g.persistRotationEscrow(ctx, result.EscrowID, model.ModelID, role, epoch, model.PrivateKeyEnv, protocolVersion); err != nil {
+		// Escrow is on chain; commitment survives -> reconcile recovers it by tx hash.
+		log.Printf("escrow_rotation_persist_failed escrow=%d tx=%s model=%q error=%v recover_via_commitment=true", result.EscrowID, result.TxHash, model.ModelID, err)
+		return nil, err
+	}
+	g.clearCommitment(ctx, result.TxHash)
+	log.Printf("escrow_rotation_created role=%s epoch=%d model=%q escrow=%d tx_hash=%s", role, epoch, model.ModelID, result.EscrowID, result.TxHash)
+	return result, nil
+}
+
+func newRotationDevshardState(result *CreateDevshardEscrowResult, model EscrowRotationModelSettings, role string, epoch uint64) GatewayDevshardState {
+	return GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{
-			ID:            strconv.FormatUint(result.EscrowID, 10),
-			PrivateKeyEnv: strings.TrimSpace(model.PrivateKeyEnv),
-			Model:         model.ModelID,
+			ID:              strconv.FormatUint(result.EscrowID, 10),
+			PrivateKeyEnv:   strings.TrimSpace(model.PrivateKeyEnv),
+			Model:           strings.TrimSpace(model.ModelID),
+			ProtocolVersion: rotationEscrowProtocolVersion(),
 		},
 		Active:        true,
 		RotationRole:  role,
 		RotationEpoch: epoch,
 	}
-	if _, err := g.addCreatedEscrowRuntime(record); err != nil {
-		return nil, err
+}
+
+// rotationEscrowProtocolVersion is the protocol version stamped on escrows
+// created by rotation/depletion. It is derived from the gateway-wide route
+// prefix (DEVSHARD_ROUTE_PREFIX / build version), so a gateway serving
+// /devshard/v3 mints protocol-v3 escrows. Semver-like route versions map by
+// major (v2.1.0 -> v2), relying on the same naming convention that ties a
+// route version to its protocol. An unparseable version segment (e.g. a
+// named versiond runtime) falls back to the v1 default, matching the
+// pre-existing behavior for explicit registrations without a protocol.
+func rotationEscrowProtocolVersion() string {
+	routePrefix, err := resolveGatewayRoutePrefix()
+	if err != nil {
+		log.Printf("escrow_rotation_protocol_version_fallback reason=route_prefix_unresolved error=%v", err)
+		return ""
 	}
-	log.Printf("escrow_rotation_created role=%s epoch=%d model=%q escrow=%d tx_hash=%s", role, epoch, model.ModelID, result.EscrowID, result.TxHash)
-	return result, nil
+	_, version, err := devshardpkg.ResolveRoutePrefix(routePrefix)
+	if err != nil {
+		log.Printf("escrow_rotation_protocol_version_fallback route_prefix=%q reason=version_segment_unresolved error=%v", routePrefix, err)
+		return ""
+	}
+	normalized := strings.TrimSpace(version)
+	if i := strings.IndexByte(normalized, '.'); i > 0 {
+		normalized = normalized[:i] // e.g. v2.1.0 -> v2
+	}
+	pv, err := types.ParseProtocolVersion(normalized)
+	if err != nil {
+		log.Printf("escrow_rotation_protocol_version_fallback route_prefix=%q version=%q reason=unparseable_protocol error=%v", routePrefix, version, err)
+		return ""
+	}
+	return string(pv)
 }
 
 func normalizedEscrowRotationModels(settings GatewaySettings) []EscrowRotationModelSettings {
@@ -353,42 +459,232 @@ func (g *Gateway) saveRotationStatus(status GatewayRotationStatus) {
 	}
 }
 
-func (g *Gateway) rotationFailureKey(modelID, role string, epoch uint64) string {
-	return fmt.Sprintf("%s|%s|%d", strings.TrimSpace(modelID), role, epoch)
+func rotationBreakerKey(modelID, role string) string {
+	return strings.TrimSpace(modelID) + "|" + role
 }
 
-func (g *Gateway) recordRotationCreateFailure(modelID, role string, epoch uint64) {
+// rotationCreateGated reports whether create is in backoff; decrements one tick.
+func (g *Gateway) rotationCreateGated(modelID, role string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.rotationFailures == nil {
-		g.rotationFailures = make(map[string]struct{})
+	breaker := g.rotationBreakers[rotationBreakerKey(modelID, role)]
+	if breaker == nil || breaker.cooldownTicks <= 0 {
+		return false
 	}
-	g.rotationFailures[g.rotationFailureKey(modelID, role, epoch)] = struct{}{}
+	breaker.cooldownTicks--
+	return true
 }
 
-func (g *Gateway) rotationCreateFailed(modelID, role string, epoch uint64) bool {
+// recordRotationCreateFailure grows the per-(model,role) backoff after a failure.
+func (g *Gateway) recordRotationCreateFailure(modelID, role string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	_, ok := g.rotationFailures[g.rotationFailureKey(modelID, role, epoch)]
-	return ok
+	if g.rotationBreakers == nil {
+		g.rotationBreakers = make(map[string]*rotationBreaker)
+	}
+	key := rotationBreakerKey(modelID, role)
+	breaker := g.rotationBreakers[key]
+	if breaker == nil {
+		breaker = &rotationBreaker{}
+		g.rotationBreakers[key] = breaker
+	}
+	breaker.consecutiveFailures++
+	cooldown := 1 << (breaker.consecutiveFailures - 1)
+	if cooldown > rotationBreakerMaxCooldownTicks {
+		cooldown = rotationBreakerMaxCooldownTicks
+	}
+	breaker.cooldownTicks = cooldown
+}
+
+// resetRotationBreaker clears the backoff for a (model, role) after success.
+func (g *Gateway) resetRotationBreaker(modelID, role string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	delete(g.rotationBreakers, rotationBreakerKey(modelID, role))
+}
+
+func (g *Gateway) currentBlockHeight() uint64 {
+	if g == nil || g.phaseGate == nil {
+		return 0
+	}
+	height := g.phaseGate.Snapshot().BlockHeight
+	if height < 0 {
+		return 0
+	}
+	return uint64(height)
+}
+
+// withDBRetry retries a DB write with backoff to ride out a transient lock.
+func withDBRetry(ctx context.Context, fn func() error) error {
+	var err error
+	for attempt := 0; attempt < escrowWriteRetries; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err = fn(); err == nil {
+			return nil
+		}
+		if attempt < escrowWriteRetries-1 {
+			timer := time.NewTimer(escrowWriteRetryBackoff)
+			select {
+			case <-ctx.Done():
+				timer.Stop()
+				return ctx.Err()
+			case <-timer.C:
+			}
+		}
+	}
+	return err
+}
+
+// persistRotationEscrow persists + registers a created escrow ("already exists" = ok).
+func (g *Gateway) persistRotationEscrow(ctx context.Context, escrowID uint64, modelID, role string, epoch uint64, keyEnv, protocolVersion string) error {
+	record := GatewayDevshardState{
+		RuntimeConfig: RuntimeConfig{
+			ID:              strconv.FormatUint(escrowID, 10),
+			PrivateKeyEnv:   keyEnv,
+			Model:           modelID,
+			ProtocolVersion: strings.TrimSpace(protocolVersion),
+		},
+		Active:        true,
+		RotationRole:  role,
+		RotationEpoch: epoch,
+	}
+	return withDBRetry(ctx, func() error {
+		if _, err := g.addCreatedEscrowRuntime(record); err != nil {
+			if errors.Is(err, errDevshardAlreadyExists) {
+				return nil
+			}
+			return err
+		}
+		return nil
+	})
+}
+
+func (g *Gateway) clearCommitment(ctx context.Context, txHash string) {
+	if g == nil || g.store == nil || strings.TrimSpace(txHash) == "" {
+		return
+	}
+	if err := withDBRetry(ctx, func() error { return g.store.DeleteCommitment(txHash) }); err != nil {
+		log.Printf("escrow_rotation_commitment_clear_failed tx=%s error=%v", txHash, err)
+	}
+}
+
+// reconcileCommitments recovers escrows from pending commitments via tx hash:
+// found → persist + clear; committed-failed → clear; not-found → clear only once
+// the tx can no longer land; chain error → keep for next pass.
+func (g *Gateway) reconcileCommitments(ctx context.Context, settings GatewaySettings) {
+	if g == nil || g.store == nil {
+		return
+	}
+	commitments, err := g.store.LoadCommitments()
+	if err != nil {
+		log.Printf("escrow_commitments_load_failed error=%v", err)
+		return
+	}
+	for _, c := range commitments {
+		escrowID, found, err := gatewayQueryTxEscrowID(ctx, g.chainClient, settings, c.TxHash)
+		if errors.Is(err, errTxNotFound) {
+			// Tx not on chain. An unordered tx can still land until its TTL
+			// elapses, so a fresh 404 is likely mempool/index lag — keep it.
+			if commitmentTxMayStillLand(c) {
+				log.Printf("escrow_commitment_tx_pending tx=%s model=%q", c.TxHash, c.Model)
+				continue
+			}
+			log.Printf("escrow_commitment_no_escrow tx=%s model=%q clearing=true", c.TxHash, c.Model)
+			g.clearCommitment(ctx, c.TxHash)
+			continue
+		}
+		if err != nil {
+			log.Printf("escrow_commitment_tx_query_failed tx=%s model=%q error=%v", c.TxHash, c.Model, err)
+			continue // chain unreachable — retry next pass
+		}
+		if !found {
+			log.Printf("escrow_commitment_tx_failed tx=%s model=%q clearing=true", c.TxHash, c.Model)
+			g.clearCommitment(ctx, c.TxHash)
+			continue
+		}
+		if err := g.persistRotationEscrow(ctx, escrowID, c.Model, c.Role, c.Epoch, c.PrivateKeyEnv, c.ProtocolVersion); err != nil {
+			log.Printf("escrow_commitment_persist_failed tx=%s escrow=%d model=%q error=%v", c.TxHash, escrowID, c.Model, err)
+			continue // keep commitment — retry next pass
+		}
+		g.clearCommitment(ctx, c.TxHash)
+		log.Printf("escrow_commitment_recovered tx=%s escrow=%d model=%q role=%s", c.TxHash, escrowID, c.Model, c.Role)
+	}
+}
+
+// commitmentTxMayStillLand reports whether a not-found tx could yet be committed
+// (within the unordered-tx window) — if so, the commitment must be kept. A zero
+// timestamp is treated as still-pending so we never clear too early.
+func commitmentTxMayStillLand(c GatewayEscrowCommitment) bool {
+	if c.CreatedAt.IsZero() {
+		return true
+	}
+	return time.Since(c.CreatedAt) <= commitmentReconcileGrace
+}
+
+func defaultQueryTxEscrowID(ctx context.Context, client *chain.Client, settings GatewaySettings, txHash string) (uint64, bool, error) {
+	if client == nil {
+		return 0, false, fmt.Errorf("chain gRPC client is not configured")
+	}
+	txMgr, err := newGatewayChainTxClient(client.Conn(), settings, "", "", 0, 0)
+	if err != nil {
+		return 0, false, err
+	}
+	return txMgr.GetTxEscrowID(ctx, txHash)
 }
 
 func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req adminSettleEscrowRequest) (*SettleDevshardEscrowResult, error) {
 	log.Printf("devshard_settle_start escrow=%s", id)
 	g.mu.Lock()
 	rt, ok := g.runtimes[id]
-	if ok && rt.activeRequests.Load() > 0 {
+	if ok && rt.escrowHasBackgroundWork() {
 		g.mu.Unlock()
-		log.Printf("devshard_settle_blocked escrow=%s reason=active_requests count=%d", id, rt.activeRequests.Load())
+		log.Printf("devshard_settle_blocked escrow=%s reason=background_work active_requests=%d pending_race_cleanup=%d",
+			id, rt.activeUserRequests.Load(), rt.pendingRaceCleanup.Load())
 		return nil, errDevshardBusy
 	}
 	if ok {
 		rt.active.Store(false)
 	}
 	g.mu.Unlock()
+	wasResident := ok
 	if !ok {
-		log.Printf("devshard_settle_failed escrow=%s stage=runtime_lookup error=%q", id, "devshard is not active")
-		return nil, fmt.Errorf("devshard %s is not active", id)
+		// Non-resident devshard (inactive/settled): rehydrate a full runtime
+		// (with chain access) solely to build and broadcast this settlement,
+		// then release it. Concurrent settlement of the same id is guarded by
+		// the caller: auto/reconcile paths hold settlementInFlight[id] via
+		// scheduleAutoSettlement, and the chain rejects any duplicate settle
+		// broadcast, so no additional in-flight guard is taken here (taking
+		// one would deadlock the auto path, which already holds it).
+		cfg, known, cfgErr := g.lazyRuntimeConfig(id)
+		if cfgErr != nil {
+			log.Printf("devshard_settle_failed escrow=%s stage=lazy_config error=%q", id, cfgErr.Error())
+			return nil, cfgErr
+		}
+		if !known {
+			log.Printf("devshard_settle_failed escrow=%s stage=runtime_lookup error=%q", id, "devshard is not active")
+			return nil, fmt.Errorf("devshard %s is not active", id)
+		}
+		g.mu.Lock()
+		settings := g.settings
+		g.mu.Unlock()
+		built, buildErr := gatewayRuntimeBuilder(cfg, g.runtimeBuildDepsFromSettings(g.perf, settings))
+		if buildErr != nil {
+			log.Printf("devshard_settle_failed escrow=%s stage=rehydrate error=%q", id, buildErr.Error())
+			return nil, fmt.Errorf("rehydrate devshard %s for settlement: %w", id, buildErr)
+		}
+		built.active.Store(false)
+		rt = built
+		log.Printf("devshard_settle_rehydrated escrow=%s (transient, non-resident)", id)
+		defer func() {
+			// Flush a final snapshot: Finalize advances the nonce, so a later
+			// read-only rebuild of this settled escrow would otherwise replay
+			// the diff tail. retireClose captures the finalized state once.
+			if closeErr := rt.retireClose("settled-transient"); closeErr != nil {
+				log.Printf("devshard_settle_transient_close_error escrow=%s error=%v", id, closeErr)
+			}
+		}()
 	}
 	if err := g.store.SetDevshardActive(id, false); err != nil {
 		log.Printf("devshard_settle_failed escrow=%s stage=persist_deactivate error=%q", id, err.Error())
@@ -406,9 +702,15 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		return nil, err
 	}
 	log.Printf("devshard_settle_key_loaded escrow=%s settler=%s key_env=%q", id, signer.Address(), privateKeyEnv)
-	if rt.proxy.sm.Phase() != types.PhaseSettlement {
+	// Re-run Finalize when not yet in settlement, or when already settled but
+	// missing quorum (e.g. snapshot-only recovery left PhaseSettlement with
+	// empty in-memory signatures). Finalize's PhaseSettlement guard collects
+	// missing signatures and is a no-op when quorum is already present.
+	phase := rt.proxy.sm.Phase()
+	needFinalize := phase != types.PhaseSettlement || !rt.session.HasQuorumAt(rt.session.Nonce())
+	if needFinalize {
 		g.finalizeMu.Lock()
-		log.Printf("gateway_finalize_lock_acquired escrow=%s path=rotation_settle", id)
+		log.Printf("gateway_finalize_lock_acquired escrow=%s path=rotation_settle phase=%s", id, sessionPhaseLabel(phase))
 		if err := rt.session.Finalize(ctx); err != nil {
 			g.finalizeMu.Unlock()
 			log.Printf("devshard_settle_failed escrow=%s stage=finalize error=%q", id, err.Error())
@@ -417,7 +719,7 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		g.finalizeMu.Unlock()
 		log.Printf("devshard_settle_finalize_completed escrow=%s phase=%s", id, sessionPhaseLabel(rt.proxy.sm.Phase()))
 	} else {
-		log.Printf("devshard_settle_finalize_skipped escrow=%s phase=%s", id, sessionPhaseLabel(rt.proxy.sm.Phase()))
+		log.Printf("devshard_settle_finalize_skipped escrow=%s phase=%s reason=quorum_present", id, sessionPhaseLabel(phase))
 	}
 	settlement, err := rt.proxy.settlementJSON()
 	if err != nil {
@@ -427,18 +729,30 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 	g.mu.Lock()
 	settings := g.settings
 	g.mu.Unlock()
-	txClient, err := newGatewayRESTChainTxClient(settings, req.ChainID, req.FeeDenom, req.FeeAmount, req.GasLimit)
+	txMgr, err := g.newChainTxManager(settings, req.ChainID, req.FeeDenom, req.FeeAmount, req.GasLimit)
 	if err != nil {
-		log.Printf("devshard_settle_failed escrow=%s stage=tx_client chain_rest=%q error=%q", id, settings.ChainREST, err.Error())
+		log.Printf("devshard_settle_failed escrow=%s stage=tx_client error=%q", id, err.Error())
 		return nil, err
 	}
-	log.Printf("devshard_settle_broadcast_start escrow=%s chain_rest=%q chain_id_override=%q gas_limit=%d fee_denom=%q fee_amount=%d",
-		id, settings.ChainREST, req.ChainID, req.GasLimit, req.FeeDenom, req.FeeAmount)
-	result, err := txClient.SettleDevshardEscrow(ctx, signer, settlement)
+	params, err := settleParamsFromJSON(settlement)
 	if err != nil {
-		log.Printf("devshard_settle_failed escrow=%s stage=broadcast chain_rest=%q error=%q", id, settings.ChainREST, err.Error())
+		log.Printf("devshard_settle_failed escrow=%s stage=settlement_encode error=%q", id, err.Error())
 		return nil, err
 	}
-	log.Printf("devshard_settle_submitted escrow=%s tx_hash=%s settler=%s", id, result.TxHash, result.Settler)
-	return result, nil
+	log.Printf("devshard_settle_broadcast_start escrow=%s chain_id_override=%q gas_limit=%d fee_denom=%q fee_amount=%d",
+		id, req.ChainID, req.GasLimit, req.FeeDenom, req.FeeAmount)
+	result, err := txMgr.SettleDevshardEscrow(ctx, signer, params)
+	if err != nil {
+		log.Printf("devshard_settle_failed escrow=%s stage=broadcast_or_confirm error=%q", id, err.Error())
+		return nil, err
+	}
+	log.Printf("devshard_settle_confirmed escrow=%s tx_hash=%s settler=%s", id, result.TxHash, result.Settler)
+	// A settled escrow is terminal: drop the resident runtime so its memory
+	// (state machine, inference map, store handles) is released now rather
+	// than lingering until the next restart. Transient runtimes are closed by
+	// their own deferred cleanup above.
+	if wasResident {
+		g.retireRuntime(id, "settled")
+	}
+	return settleEscrowResultFromTx(result), nil
 }

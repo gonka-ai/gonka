@@ -1,11 +1,11 @@
 package broker
 
 import (
+	"common/logging"
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
-	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
 	"encoding/json"
@@ -154,7 +154,8 @@ func GetPoCCallbackBaseURLV2(callbackUrl string) string {
 }
 
 type ModelArgs struct {
-	Args []string `json:"args"`
+	Args          []string                 `json:"args"`
+	ModelOverride *apiconfig.ModelOverride `json:"model_override,omitempty"`
 }
 
 type Node struct {
@@ -218,6 +219,13 @@ type NodeState struct {
 	AdminState      AdminState `json:"admin_state"`
 	// Self-reported by the node. Informational only — do not use for authorization or capability gating.
 	MlNodeVersion string `json:"ml_node_version"`
+	// Self-reported by the node. Informational only - can serve inference while PoC validation runs inside vLLM.
+	PoCValidationInference  bool      `json:"poc_validation_inference"`
+	DeploymentUpdatePending bool      `json:"deployment_update_pending"`
+	DeploymentRetryAfter    time.Time `json:"deployment_retry_after,omitempty"`
+	// DeploymentGeneration increments for each dispatched reconciliation so
+	// late results from a cancelled attempt cannot be applied to a newer one.
+	DeploymentGeneration uint64 `json:"deployment_generation,omitempty"`
 
 	// Epoch data for this node, keyed by model_id.
 	// We currently expect one item in each map.
@@ -241,8 +249,9 @@ func (s NodeState) MarshalJSON() ([]byte, error) {
 }
 
 type ReconcileInfo struct {
-	Status    types.HardwareNodeStatus `json:"status"`
-	PocStatus PocStatus                `json:"poc_status"`
+	Status     types.HardwareNodeStatus `json:"status"`
+	PocStatus  PocStatus                `json:"poc_status"`
+	Generation uint64                   `json:"generation,omitempty"`
 }
 
 func (s *NodeState) UpdateStatusAt(time time.Time, status types.HardwareNodeStatus) {
@@ -283,6 +292,14 @@ func (s *NodeState) ShouldBeOperational(latestEpoch uint64, currentPhase types.E
 // snapshot for any of its models and should keep serving inference.
 func (s *NodeState) ShouldContinueInference() bool {
 	return len(s.PreservedModels) > 0
+}
+
+// ServesInferenceDuringValidation reports whether a node can take inference while
+// running PoC validation: capable nodes run PoC v2 inside vLLM, so it stays up.
+func (s *NodeState) ServesInferenceDuringValidation() bool {
+	return s.PoCValidationInference &&
+		s.IntendedStatus == types.HardwareNodeStatus_POC &&
+		s.PocIntendedStatus == PocStatusValidating
 }
 
 func ShouldBeOperational(adminState AdminState, latestEpoch uint64, currentPhase types.EpochPhase) bool {
@@ -508,12 +525,17 @@ func (b *Broker) getLeastBusyNode(command LockAvailableNode) *NodeWithState {
 type NodeNotAvailableReason = string
 
 func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, currentEpoch uint64, currentPhase types.EpochPhase) (bool, NodeNotAvailableReason) {
-	if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
+	servesInferenceDuringValidation := node.State.ServesInferenceDuringValidation()
+	if servesInferenceDuringValidation {
+		logging.Info("nodeAvailable. Node can serve INFERENCE during PoC validation", types.Nodes, "nodeId", node.Node.Id, "intendedStatus", node.State.IntendedStatus, "PoCValidationInference", node.State.PoCValidationInference)
+	}
+
+	if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE && !servesInferenceDuringValidation {
 		return false, fmt.Sprintf("Node is not intended for INFERENCE at the moment: %s", node.State.IntendedStatus)
 	}
 	logging.Info("nodeAvailable. Node is intended for INFERENCE", types.Nodes, "nodeId", node.Node.Id, "intendedStatus", node.State.IntendedStatus)
 
-	if node.State.CurrentStatus != types.HardwareNodeStatus_INFERENCE {
+	if node.State.CurrentStatus != types.HardwareNodeStatus_INFERENCE && !servesInferenceDuringValidation {
 		return false, fmt.Sprintf("Node is not in INFERENCE state: %s", node.State.CurrentStatus)
 	}
 	logging.Info("nodeAvailable. Node is in INFERENCE state", types.Nodes, "nodeId", node.Node.Id)
@@ -973,6 +995,7 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 	}
 
 	nodesToDispatch := make(map[string]*NodeWithState)
+	now := time.Now()
 	b.mu.RLock()
 	for id, node := range b.nodes {
 		isStable := node.State.ReconcileInfo == nil
@@ -981,7 +1004,9 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 		}
 
 		// Condition: The primary or PoC intended state does not match the current state.
-		if node.State.IntendedStatus != node.State.CurrentStatus || node.State.PocIntendedStatus != node.State.PocCurrentStatus {
+		if node.State.IntendedStatus != node.State.CurrentStatus ||
+			node.State.PocIntendedStatus != node.State.PocCurrentStatus ||
+			deploymentUpdateReady(node, now) {
 			nodeCopy := *node
 			nodesToDispatch[id] = &nodeCopy
 		}
@@ -995,7 +1020,9 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 		b.mu.Lock()
 		currentNode, ok := b.nodes[id]
 		if !ok ||
-			(currentNode.State.IntendedStatus == currentNode.State.CurrentStatus && (currentNode.State.CurrentStatus != types.HardwareNodeStatus_POC || currentNode.State.PocIntendedStatus == currentNode.State.PocCurrentStatus)) ||
+			(currentNode.State.IntendedStatus == currentNode.State.CurrentStatus &&
+				(currentNode.State.CurrentStatus != types.HardwareNodeStatus_POC || currentNode.State.PocIntendedStatus == currentNode.State.PocCurrentStatus) &&
+				!deploymentUpdateReady(currentNode, time.Now())) ||
 			currentNode.State.ReconcileInfo != nil {
 			b.mu.Unlock()
 			continue
@@ -1004,9 +1031,12 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 		ctx, cancel := context.WithCancel(context.Background())
 		intendedStatusCopy := currentNode.State.IntendedStatus
 		pocIntendedStatusCopy := currentNode.State.PocIntendedStatus
+		currentNode.State.DeploymentGeneration++
+		generation := currentNode.State.DeploymentGeneration
 		currentNode.State.ReconcileInfo = &ReconcileInfo{
-			Status:    intendedStatusCopy,
-			PocStatus: pocIntendedStatusCopy,
+			Status:     intendedStatusCopy,
+			PocStatus:  pocIntendedStatusCopy,
+			Generation: generation,
 		}
 		currentNode.State.cancelInFlightTask = cancel
 
@@ -1040,7 +1070,7 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 		if cmd != nil {
 			logging.Info("Dispatching reconciliation command", types.Nodes,
 				"node_id", id, "target_status", node.State.IntendedStatus, "target_poc_status", node.State.PocIntendedStatus, "blockHeight", blockHeight)
-			if !worker.Submit(ctx, cmd) {
+			if !worker.submit(ctx, cmd, generation) {
 				logging.Error("Failed to submit reconciliation command", types.Nodes, "node_id", id, "blockHeight", blockHeight)
 				cancel()
 				b.mu.Lock()
@@ -1061,6 +1091,12 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 			b.mu.Unlock()
 		}
 	}
+}
+
+func deploymentUpdateReady(node *NodeWithState, now time.Time) bool {
+	return node.State.DeploymentUpdatePending &&
+		node.State.IntendedStatus == types.HardwareNodeStatus_INFERENCE &&
+		(node.State.DeploymentRetryAfter.IsZero() || !node.State.DeploymentRetryAfter.After(now))
 }
 
 func (b *Broker) prefetchPocParams(epochState chainphase.EpochState, nodesToDispatch map[string]*NodeWithState, blockHeight int64) (*pocParams, error) {
@@ -1179,12 +1215,19 @@ func (b *Broker) supportedNodeModels(nodeModels map[string]ModelArgs) map[string
 }
 
 func (b *Broker) resolveSupportedNodeModelID(epochMLNodes map[string]types.MLNodeInfo, nodeModels map[string]ModelArgs) (string, bool) {
+	if len(epochMLNodes) == 1 {
+		// Chain assignment is authoritative; do not PoC-filter it away.
+		return ResolveNodeModelID(epochMLNodes, nodeModels)
+	}
 	return ResolveNodeModelID(epochMLNodes, b.supportedNodeModels(nodeModels))
 }
 
 func ResolveNodeModelID(epochMLNodes map[string]types.MLNodeInfo, nodeModels map[string]ModelArgs) (string, bool) {
 	if len(epochMLNodes) == 1 {
 		for modelID := range epochMLNodes {
+			if _, supported := nodeModels[modelID]; !supported {
+				return "", false
+			}
 			return modelID, true
 		}
 	}
@@ -1331,13 +1374,15 @@ func nodeStatusQueryWorker(broker *Broker) {
 			}
 
 			if queryStatusResult.PrevStatus != queryStatusResult.CurrentStatus ||
-				nodeResp.State.MlNodeVersion != queryStatusResult.MlNodeVersion {
+				nodeResp.State.MlNodeVersion != queryStatusResult.MlNodeVersion ||
+				nodeResp.State.PoCValidationInference != queryStatusResult.PoCValidationInference {
 				statusUpdates = append(statusUpdates, StatusUpdate{
-					NodeId:        nodeResp.Node.Id,
-					PrevStatus:    queryStatusResult.PrevStatus,
-					NewStatus:     queryStatusResult.CurrentStatus,
-					Timestamp:     timestamp,
-					MlNodeVersion: queryStatusResult.MlNodeVersion,
+					NodeId:                 nodeResp.Node.Id,
+					PrevStatus:             queryStatusResult.PrevStatus,
+					NewStatus:              queryStatusResult.CurrentStatus,
+					Timestamp:              timestamp,
+					MlNodeVersion:          queryStatusResult.MlNodeVersion,
+					PoCValidationInference: queryStatusResult.PoCValidationInference,
 				})
 			}
 		}
@@ -1355,9 +1400,10 @@ func nodeStatusQueryWorker(broker *Broker) {
 }
 
 type statusQueryResult struct {
-	PrevStatus    types.HardwareNodeStatus
-	CurrentStatus types.HardwareNodeStatus
-	MlNodeVersion string
+	PrevStatus             types.HardwareNodeStatus
+	CurrentStatus          types.HardwareNodeStatus
+	MlNodeVersion          string
+	PoCValidationInference bool
 }
 
 // Pass by value, because this is supposed to be a readonly function
@@ -1372,6 +1418,7 @@ func (b *Broker) queryNodeStatus(node Node, state NodeState) (*statusQueryResult
 	prevStatus := state.CurrentStatus
 	var currentStatus types.HardwareNodeStatus
 	mlNodeVersion := state.MlNodeVersion
+	pocValidationInference := false
 	if err != nil {
 		logging.Error("queryNodeStatus. Failed to query node status. Assuming currentStatus = FAILED", types.Nodes,
 			"nodeId", nodeId, "error", err)
@@ -1379,6 +1426,7 @@ func (b *Broker) queryNodeStatus(node Node, state NodeState) (*statusQueryResult
 	} else {
 		currentStatus = toStatus(*status)
 		mlNodeVersion = status.Version
+		pocValidationInference = status.PoCValidationInference
 	}
 
 	logging.Info("queryNodeStatus. Queried node status", types.Nodes, "nodeId", nodeId, "currentStatus", currentStatus.String(), "prevStatus", prevStatus.String())
@@ -1408,23 +1456,38 @@ func (b *Broker) queryNodeStatus(node Node, state NodeState) (*statusQueryResult
 		if currentStatus == types.HardwareNodeStatus_INFERENCE {
 			expectedModel, ok := b.resolveSupportedNodeModelID(state.EpochMLNodes, node.Models)
 			if ok && expectedModel != "" {
+				deployment := b.ResolveModelDeployment(
+					types.Model{Id: expectedModel},
+					node.Models[expectedModel],
+				)
+				if model, exists := state.EpochModels[expectedModel]; exists {
+					deployment = b.ResolveModelDeployment(model, node.Models[expectedModel])
+				}
+				if !state.DeploymentUpdatePending &&
+					status.LoadedModel != "" &&
+					status.LoadedModel != deployment.LoadModel {
+					currentStatus = types.HardwareNodeStatus_FAILED
+					logging.Info("queryNodeStatus. Loaded model source mismatch detected", types.Nodes,
+						"nodeId", nodeId, "loaded", status.LoadedModel, "expected", deployment.LoadModel)
+				}
 				mctx, mcancel := context.WithTimeout(context.Background(), nodeStatusRequestTimeout)
 				defer mcancel()
 				if loadedModels, err := client.GetLoadedModels(mctx); err != nil {
 					logging.Debug("queryNodeStatus. GetLoadedModels failed", types.Nodes, "nodeId", nodeId, "error", err)
-				} else if len(loadedModels) > 0 && loadedModels[0] != expectedModel {
+				} else if len(loadedModels) > 0 && !loadedModelsContain(loadedModels, deployment.GovernanceID) {
 					currentStatus = types.HardwareNodeStatus_FAILED
-					logging.Info("queryNodeStatus. Model mismatch detected", types.Nodes,
-						"nodeId", nodeId, "loaded", loadedModels[0], "expected", expectedModel)
+					logging.Info("queryNodeStatus. Served model mismatch detected", types.Nodes,
+						"nodeId", nodeId, "loaded", loadedModels, "expected", deployment.GovernanceID)
 				}
 			}
 		}
 	}
 
 	return &statusQueryResult{
-		PrevStatus:    prevStatus,
-		CurrentStatus: currentStatus,
-		MlNodeVersion: mlNodeVersion,
+		PrevStatus:             prevStatus,
+		CurrentStatus:          currentStatus,
+		MlNodeVersion:          mlNodeVersion,
+		PoCValidationInference: pocValidationInference,
 	}, nil
 }
 
@@ -1525,6 +1588,15 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 
 	b.lastEpochIndex = epochState.LatestEpoch.EpochIndex
 	b.lastEpochPhase = epochState.CurrentPhase
+	b.mu.RLock()
+	allNodeIDs := make([]string, 0, len(b.nodes))
+	for nodeID := range b.nodes {
+		allNodeIDs = append(allNodeIDs, nodeID)
+	}
+	b.mu.RUnlock()
+	for _, nodeID := range allNodeIDs {
+		b.refreshDeploymentUpdatePendingFromApplied(nodeID)
+	}
 
 	return nil
 }

@@ -180,7 +180,7 @@ docker logs genesis-api --since 10m 2>&1 | grep -iE 'runtime_config|devshard_req
 docker logs genesis-proxy --since 10m 2>&1 | grep -iE 'devshard|503'
 ```
 
-If versiond shows a version mismatch, ensure `make devshardd-build` and Testermint agree: check `cat build/devshard-version` vs `docker logs genesis-versiond` (`VERSIOND_FORCE` / `build_version`). Override with `export DEVSHARD_VERSION=<name>` before both make and gradle.
+If versiond shows a version mismatch, ensure `make devshardd-build` and Testermint agree: check `cat build/devshard-version` vs `docker logs genesis-versiond` (`VERSIOND_FORCE` / `protocol_version`). Override with `export DEVSHARD_VERSION=<name>` before both make and gradle.
 
 Gradle report: `testermint/build/reports/tests/test/index.html`.
 

@@ -13,7 +13,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
-	"devshard/observability/otelutil"
+	"common/observability/otelutil"
 )
 
 // Environment variables consumed by Init. We keep our own DAPI_-prefixed

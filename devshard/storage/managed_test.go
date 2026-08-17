@@ -116,6 +116,9 @@ func (s *legacyOnlyStorage) GetSealedInference(escrowID string, inferenceID uint
 func (s *legacyOnlyStorage) DeleteSealedInferences(escrowID string) error {
 	return s.inner.DeleteSealedInferences(escrowID)
 }
+func (s *legacyOnlyStorage) ClearValidationObs(escrowID string) error {
+	return s.inner.ClearValidationObs(escrowID)
+}
 func (s *legacyOnlyStorage) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
 	return s.inner.RecordValidationsAppliedOnce(escrowID, entries)
 }
@@ -124,6 +127,15 @@ func (s *legacyOnlyStorage) DrainInferenceValidationObs(escrowID string, inferen
 }
 func (s *legacyOnlyStorage) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {
 	return s.inner.GetValidationObservability(escrowID)
+}
+func (s *legacyOnlyStorage) PutEscrowCache(info EscrowCacheInfo) error {
+	return s.inner.PutEscrowCache(info)
+}
+func (s *legacyOnlyStorage) GetEscrowCache(escrowID string) (*EscrowCacheInfo, error) {
+	return s.inner.GetEscrowCache(escrowID)
+}
+func (s *legacyOnlyStorage) DeleteEscrowCache(escrowID string) error {
+	return s.inner.DeleteEscrowCache(escrowID)
 }
 func (s *legacyOnlyStorage) PruneEpoch(epochID uint64) error {
 	s.pruneEpochCalls++

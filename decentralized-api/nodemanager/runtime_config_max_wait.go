@@ -4,11 +4,14 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"common/runtimeconfig"
 )
 
-const defaultRuntimeConfigMaxWaitCap = 60 * time.Second
+const defaultRuntimeConfigMaxWaitCap = runtimeconfig.DefaultMaxWaitCap
 
-// runtimeConfigMaxWaitCap is the server-side upper bound for positive max_wait_seconds.
+// runtimeConfigMaxWaitCap is the server-side upper bound for GetRuntimeConfig
+// positive max_wait_seconds (overridable via DAPI_RUNTIME_CONFIG_MAX_WAIT_SECONDS).
 func runtimeConfigMaxWaitCap() time.Duration {
 	if v := os.Getenv("DAPI_RUNTIME_CONFIG_MAX_WAIT_SECONDS"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -19,18 +22,15 @@ func runtimeConfigMaxWaitCap() time.Duration {
 }
 
 // clampMaxWait maps client max_wait_seconds to an effective hold duration.
-//
-// Wire contract:
-//   - <= 0: immediate reply (3a contract; field absent decodes as 0)
-//   - > 0: long-poll up to min(requested, server cap)
+// Kept for GetRuntimeConfig's MaxWaitCap wiring (see runtime_config_adapter.go)
+// and tested directly; GetRuntimeConfig itself delegates the long-poll loop to
+// common/runtimeconfig.Server, which applies the same clamp internally.
 func clampMaxWait(maxWaitSeconds int32) time.Duration {
-	if maxWaitSeconds <= 0 {
-		return 0
-	}
-	maxWaitCap := runtimeConfigMaxWaitCap()
-	requested := time.Duration(maxWaitSeconds) * time.Second
-	if requested > maxWaitCap {
-		return maxWaitCap
-	}
-	return requested
+	return runtimeconfig.ClampMaxWait(maxWaitSeconds, runtimeConfigMaxWaitCap())
+}
+
+// hostEventsMaxWaitCap shares the runtime-config env override when set.
+// clampHostEventsMaxWait (host_events_rpc.go) applies it via longpoll.ClampMaxWait.
+func hostEventsMaxWaitCap() time.Duration {
+	return runtimeConfigMaxWaitCap()
 }

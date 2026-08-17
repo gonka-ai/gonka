@@ -1,0 +1,12 @@
+services:
+  swagger-ui:
+    image: swaggerapi/swagger-ui
+    ports:
+      - "8099:8080"
+    environment:
+      - SWAGGER_JSON=/spec/openapi.yaml
+      - VALIDATOR_URL=none
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./openapi.yaml:/spec/openapi.yaml:ro

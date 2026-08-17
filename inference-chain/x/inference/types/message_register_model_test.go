@@ -24,6 +24,15 @@ func TestMsgRegisterModel_ValidateBasic(t *testing.T) {
 			},
 			err: sdkerrors.ErrInvalidAddress,
 		}, {
+			name: "invalid validation threshold exponent",
+			msg: MsgRegisterModel{
+				Authority:           sample.AccAddress(),
+				ProposedBy:          sample.AccAddress(),
+				Id:                  "model-1",
+				ValidationThreshold: &Decimal{Value: 85, Exponent: 19},
+			},
+			err: ErrInvalidDecimalExponent,
+		}, {
 			name: "valid address",
 			msg: MsgRegisterModel{
 				Authority:           sample.AccAddress(),

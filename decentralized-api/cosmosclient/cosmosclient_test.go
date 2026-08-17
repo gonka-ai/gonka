@@ -2,9 +2,10 @@ package cosmosclient
 
 import (
 	"context"
-	"decentralized-api/utils"
 	"fmt"
 	"testing"
+
+	"decentralized-api/utils"
 
 	"github.com/cosmos/cosmos-sdk/types/query"
 	"github.com/productscience/inference/x/inference/types"

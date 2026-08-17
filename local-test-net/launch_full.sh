@@ -2,6 +2,9 @@
 # Proxy ports: genesis=80, join1=81, join2=82
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+"${SCRIPT_DIR}/ensure-chain-public.sh"
+
 export REST_API_ACTIVE=true
 export PUBLIC_SERVER_PORT=9000
 export ML_SERVER_PORT=9001
@@ -46,7 +49,7 @@ sleep 40
 # seed node parameters for both joining nodes
 export SEED_API_URL="http://genesis-api:9000"
 export SEED_NODE_RPC_URL="http://genesis-node:26657"
-export SEED_NODE_P2P_URL="http://genesis-node:26656"
+export SEED_NODE_P2P_URL="tcp://genesis-node:26656"
 export IS_GENESIS=false
 
 # join node 'join1' with proxy
@@ -64,7 +67,7 @@ export PROXY_PORT=81
 export API_SSL_PORT=444
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
-export P2P_EXTERNAL_ADDRESS="http://${KEY_NAME}-node:26656"
+export P2P_EXTERNAL_ADDRESS="${KEY_NAME}-node:26656"
 export PROXY_ACTIVE=true
 export BRIDGE_ACTIVE=true
 # Unique internal bridge ports for join1
@@ -92,7 +95,7 @@ export PROXY_PORT=82
 export API_SSL_PORT=445
 export PUBLIC_URL="http://${KEY_NAME}-api:8080"
 export POC_CALLBACK_URL="http://${KEY_NAME}-api:9100"
-export P2P_EXTERNAL_ADDRESS="http://${KEY_NAME}-node:26656"
+export P2P_EXTERNAL_ADDRESS="${KEY_NAME}-node:26656"
 export PROXY_ACTIVE=true
 export BRIDGE_ACTIVE=true
 # Unique internal bridge ports for join2
@@ -104,4 +107,4 @@ export PRYSM_P2P_TCP_PORT=13020
 export PRYSM_P2P_UDP_PORT=12020
 # Don't set DASHBOARD_PORT for join nodes - they don't have explorer
 unset DASHBOARD_PORT
-./launch_add_network_node.sh 
+./launch_add_network_node.sh

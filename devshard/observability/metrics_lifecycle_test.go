@@ -68,3 +68,52 @@ func TestIncValidationOrphanIncrementsCounter(t *testing.T) {
 		t.Fatalf("counter delta = %v, want 1", after-before)
 	}
 }
+
+func TestHADiffPersistMetricsIncrement(t *testing.T) {
+	ensureMetrics()
+
+	beforeFork := testutil.ToFloat64(diffForkDetectedTotal.WithLabelValues("esc-metrics"))
+	IncDiffForkDetected("esc-metrics")
+	if testutil.ToFloat64(diffForkDetectedTotal.WithLabelValues("esc-metrics"))-beforeFork != 1 {
+		t.Fatalf("diff_fork_detected delta want 1")
+	}
+
+	beforeRetry := testutil.ToFloat64(diffPersistRetryTotal.WithLabelValues("success"))
+	IncDiffPersistRetry("success")
+	if testutil.ToFloat64(diffPersistRetryTotal.WithLabelValues("success"))-beforeRetry != 1 {
+		t.Fatalf("diff_persist_retry delta want 1")
+	}
+
+	beforeFF := testutil.ToFloat64(reconcileFastForwardTotal)
+	IncReconcileFastForward()
+	if testutil.ToFloat64(reconcileFastForwardTotal)-beforeFF != 1 {
+		t.Fatalf("reconcile_fast_forward delta want 1")
+	}
+}
+
+func TestDeleteEscrowMetricsRemovesPerEscrowGauges(t *testing.T) {
+	ensureMetrics()
+	const escrowID = "escrow-metrics-prune"
+
+	SetValidationQueueDepth(escrowID, 3)
+	SetMempoolSize(escrowID, 7)
+
+	DeleteEscrowMetrics(escrowID)
+
+	mf, err := Registry().Gather()
+	if err != nil {
+		t.Fatalf("Gather: %v", err)
+	}
+	for _, family := range mf {
+		switch family.GetName() {
+		case "devshard_validation_queue_depth", "devshard_mempool_size":
+			for _, m := range family.Metric {
+				for _, lp := range m.Label {
+					if lp.GetName() == "escrow_id" && lp.GetValue() == escrowID {
+						t.Fatalf("%s still has escrow_id=%q after DeleteEscrowMetrics", family.GetName(), escrowID)
+					}
+				}
+			}
+		}
+	}
+}

@@ -29,7 +29,7 @@ func newTestStateMachine(
 	opts ...state.SMOption,
 ) *state.StateMachine {
 	t.Helper()
-	opts = append([]state.SMOption{state.WithStateRootAndProtocolVersion(types.EffectiveStateRootAndProtocolVersion)}, opts...)
+	opts = append([]state.SMOption{state.WithStateRootAndProtocolVersion(testutil.RuntimeTestVersion)}, opts...)
 	sm, err := state.NewStateMachine(escrowID, config, group, balance, userAddr, verifier, testutil.MustMemoryStore(t, escrowID, userAddr, config, group, balance), opts...)
 	require.NoError(t, err)
 	return sm
@@ -350,6 +350,58 @@ func TestRecoverSession_SignaturesRestored(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestRecoverSession_SnapshotOnly_RestoresSignatures covers reboot after a
+// final-nonce snapshot flush: recovery skips diff replay, so signatures must
+// be reloaded from the store (otherwise settlement sees empty s.signatures).
+func TestRecoverSession_SnapshotOnly_RestoresSignatures(t *testing.T) {
+	store := newTestStore(t)
+	numHosts := 3
+	numInferences := 4
+
+	group, hosts, user := setupRecoverableSession(t, numHosts, numInferences, store)
+	finalNonce := uint64(numInferences)
+
+	// Ensure final-nonce signatures are in the store (Phase B / processResponse path).
+	stored, err := store.GetSignatures("escrow-1", finalNonce)
+	require.NoError(t, err)
+	if len(stored) == 0 {
+		for slot := uint32(0); slot < uint32(numHosts); slot++ {
+			require.NoError(t, store.AddSignature("escrow-1", finalNonce, slot, []byte{byte(slot + 1), 9, 9, 9}))
+		}
+		stored, err = store.GetSignatures("escrow-1", finalNonce)
+		require.NoError(t, err)
+	}
+	require.NotEmpty(t, stored, "precondition: store must have signatures at final nonce")
+
+	// Rebuild once to get a session at LatestNonce, mark every host caught up,
+	// then flush so the next recover takes the snapshot-only early-return path.
+	verifier := signing.NewSecp256k1Verifier()
+	live, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group,
+		buildRecoveryClients(t, hosts, group, user))
+	require.NoError(t, err)
+	require.Equal(t, finalNonce, live.Nonce())
+	live.mu.Lock()
+	for i := 0; i < numHosts; i++ {
+		live.hostSyncNonce[i] = finalNonce
+	}
+	live.mu.Unlock()
+	require.NoError(t, live.FlushSnapshot())
+
+	spy := &replaySpyStore{Storage: store}
+	rec, _, err := RecoverSession(spy, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group,
+		buildRecoveryClients(t, hosts, group, user))
+	require.NoError(t, err)
+	require.Equal(t, finalNonce, rec.Nonce())
+	require.Zero(t, spy.replayedRecords(finalNonce), "must use snapshot-only early return")
+	require.Empty(t, rec.Diffs(), "snapshot-only recovery keeps diffs empty when all hosts are caught up")
+
+	got := rec.Signatures()[finalNonce]
+	require.NotEmpty(t, got, "final-nonce signatures must be restored from store")
+	for slotID, want := range stored {
+		require.Equal(t, want, got[slotID], "slot %d", slotID)
+	}
+}
+
 // buildRecoveryClients creates a fresh set of in-process host clients for
 // recovery, mirroring setupRecoverableSession's client factory.
 func buildRecoveryClients(t *testing.T, hosts []*signing.Secp256k1Signer, group []types.SlotAssignment, user *signing.Secp256k1Signer) []HostClient {
@@ -531,19 +583,6 @@ func TestRecoverSession_LegacySnapshot_BackwardCompat(t *testing.T) {
 	require.NotNil(t, blob.State, "snapshot must be upgraded to wrapper format on legacy recovery")
 }
 
-func TestRecoveredProtocolVersion_ExplicitOnly(t *testing.T) {
-	pv, ok := recoveredProtocolVersion(string(types.ProtocolV1))
-	require.True(t, ok)
-	require.Equal(t, types.ProtocolV1, pv)
-
-	pv, ok = recoveredProtocolVersion(types.LegacyRouteSessionVersion)
-	require.True(t, ok)
-	require.Equal(t, types.ProtocolV1, pv)
-
-	_, ok = recoveredProtocolVersion("")
-	require.False(t, ok)
-}
-
 // legacyMetaWrapper wraps a Storage and forces meta.Version to "" for a
 // specific escrow, simulating a corrupt or pre-versioning row. GetSessionMeta
 // on real backends rejects empty stored versions; this wrapper is only used
@@ -596,8 +635,8 @@ func TestRecoverSession_LegacyEmptyMetaVersion(t *testing.T) {
 
 	exported := recSM.ExportState()
 	require.NotNil(t, exported)
-	require.Equal(t, types.EffectiveStateRootAndProtocolVersion, exported.StateRootAndProtocolVersion,
-		"recovered state machine uses the binary's state-root protocol version")
+	require.Equal(t, testutil.RuntimeTestVersion, exported.StateRootAndProtocolVersion,
+		"recovered state machine uses the session protocol version")
 }
 
 // TestRecoverSession_EmptyVersionRejected requires a version from storage or caller.
@@ -622,4 +661,122 @@ func TestRecoverSession_EmptyVersionRejected(t *testing.T) {
 	_, _, err := RecoverSession(legacy, user, verifier, "escrow-1", "", group, clients)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "session version required")
+}
+
+// validateDiffRange proves persisted-history integrity before replay. Both a
+// gap in the middle and a missing tail (diffs end before latest_nonce, which
+// would otherwise recover silently behind the hosts) must carry the
+// deactivate-and-skip sentinel; a contiguous range must pass.
+func TestValidateDiffRange(t *testing.T) {
+	recs := func(nonces ...uint64) []types.DiffRecord {
+		out := make([]types.DiffRecord, len(nonces))
+		for i, n := range nonces {
+			out[i] = types.DiffRecord{Diff: types.Diff{Nonce: n}}
+		}
+		return out
+	}
+
+	require.NoError(t, validateDiffRange(recs(1, 2, 3), 1, 3))
+	require.NoError(t, validateDiffRange(recs(7, 8), 7, 8))
+	require.NoError(t, validateDiffRange(nil, 5, 4), "empty range after snapshot")
+
+	// Mid-range gap: the escrow 32269 shape (1..6 stored, then 151).
+	err := validateDiffRange(recs(1, 2, 3, 4, 5, 6, 151, 152), 1, 152)
+	require.ErrorIs(t, err, ErrLocalStateUnrecoverable)
+	require.ErrorContains(t, err, "missing nonce 7, next stored nonce is 151")
+
+	// Missing tail: latest_nonce points past the stored diffs.
+	err = validateDiffRange(recs(1, 2, 3, 4, 5, 6), 1, 152)
+	require.ErrorIs(t, err, ErrLocalStateUnrecoverable)
+	require.ErrorContains(t, err, "missing trailing nonces 7..152")
+
+	// Missing head right after a snapshot.
+	err = validateDiffRange(recs(12), 11, 12)
+	require.ErrorIs(t, err, ErrLocalStateUnrecoverable)
+	require.ErrorContains(t, err, "missing nonce 11")
+}
+
+// TestRecoverSession_BackfillGapUnrecoverable verifies a missing diff inside
+// the required pre-snapshot backfill range [min host cursor+1, snapNonce] is
+// a proven integrity failure. The snapshot here is current (nothing to
+// replay), so without backfill validation recovery returns success with a
+// non-contiguous sess.diffs and the stranded host rejects catch-up forever
+// with "invalid nonce: must be sequential".
+func TestRecoverSession_BackfillGapUnrecoverable(t *testing.T) {
+	store := newTestStore(t)
+	numHosts := 3
+
+	hosts := make([]*signing.Secp256k1Signer, numHosts)
+	for i := range hosts {
+		hosts[i] = testutil.MustGenerateKey(t)
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(numHosts)
+	verifier := signing.NewSecp256k1Verifier()
+
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       "escrow-1",
+		Version:        testutil.RuntimeTestVersion,
+		CreatorAddr:    user.Address(),
+		Config:         config,
+		Group:          group,
+		InitialBalance: 100000,
+	}))
+	// Diff 3 is lost; latest_nonce lands on 4.
+	for _, n := range []uint64{1, 2, 4} {
+		require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{Diff: types.Diff{Nonce: n}}))
+	}
+	// Snapshot is current at 4, so nothing is replayed. Host 0 is stranded at
+	// nonce 2 and needs the backfill range 3..4, which has a hole.
+	sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+	saveSnapshot(store, sm, "escrow-1", 4, map[int]uint64{0: 2, 1: 4, 2: 4})
+
+	_, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group,
+		buildRecoveryClients(t, hosts, group, user))
+
+	require.ErrorIs(t, err, ErrLocalStateUnrecoverable)
+	require.ErrorContains(t, err, "backfill diffs 3..4")
+	require.ErrorContains(t, err, "missing nonce 3, next stored nonce is 4")
+}
+
+// A snapshot ahead of latest_nonce is ignored and recovery replays from 1.
+// The backfill validation must not run against the ignored snapshot's nonce:
+// contiguous history through latest_nonce is fully recoverable and must not
+// be classified as missing a tail.
+func TestRecoverSession_IgnoredFutureSnapshotRecovers(t *testing.T) {
+	store := newTestStore(t)
+	numHosts := 3
+
+	hosts := make([]*signing.Secp256k1Signer, numHosts)
+	for i := range hosts {
+		hosts[i] = testutil.MustGenerateKey(t)
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(numHosts)
+	verifier := signing.NewSecp256k1Verifier()
+
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       "escrow-1",
+		Version:        testutil.RuntimeTestVersion,
+		CreatorAddr:    user.Address(),
+		Config:         config,
+		Group:          group,
+		InitialBalance: 100000,
+	}))
+	for _, n := range []uint64{1, 2, 3} {
+		require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{Diff: types.Diff{Nonce: n}}))
+	}
+	// Snapshot claims nonce 5 while latest_nonce is 3 (e.g. session row lost
+	// a write the async snapshot kept).
+	sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+	saveSnapshot(store, sm, "escrow-1", 5, map[int]uint64{0: 5, 1: 5, 2: 5})
+
+	session, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group,
+		buildRecoveryClients(t, hosts, group, user))
+
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), session.Nonce())
+	require.Len(t, session.Diffs(), 3)
 }

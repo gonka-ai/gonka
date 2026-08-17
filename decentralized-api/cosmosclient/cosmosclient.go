@@ -1,12 +1,12 @@
 package cosmosclient
 
 import (
+	"common/logging"
 	"context"
 	"crypto/rand"
 	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient/tx_manager"
 	"decentralized-api/internal/nats/client"
-	"decentralized-api/logging"
 	"decentralized-api/utils"
 	"errors"
 	"fmt"
@@ -229,8 +229,6 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 	batchingCfg := config.GetTxBatchingConfig()
 	if !batchingCfg.Disabled {
 		batchConfig := tx_manager.BatchConfig{
-			FlushSize:                batchingCfg.FlushSize,
-			FlushTimeout:             time.Duration(batchingCfg.FlushTimeoutSeconds) * time.Second,
 			ValidationV2FlushSize:    batchingCfg.ValidationV2FlushSize,
 			ValidationV2FlushTimeout: time.Duration(batchingCfg.ValidationV2FlushTimeoutSeconds) * time.Second,
 		}
@@ -246,8 +244,7 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 		client.batchConsumer = batchConsumer
 		client.batchingEnabled = true
 		logging.Info("Transaction batching enabled", inferencetypes.Messages,
-			"flushSize", batchingCfg.FlushSize,
-			"flushTimeoutSeconds", batchingCfg.FlushTimeoutSeconds,
+			"validationV2FlushSize", batchingCfg.ValidationV2FlushSize,
 			"validationV2FlushTimeoutSeconds", batchingCfg.ValidationV2FlushTimeoutSeconds)
 	}
 
@@ -259,9 +256,6 @@ type CosmosMessageClient interface {
 	SignBytes(seed []byte) ([]byte, error)
 	DecryptBytes(ciphertext []byte) ([]byte, error)
 	EncryptBytes(plaintext []byte) ([]byte, error)
-	StartInference(transaction *inferenceapi.MsgStartInference) error
-	FinishInference(transaction *inferenceapi.MsgFinishInference) error
-	ReportValidation(transaction *inferenceapi.MsgValidation) error
 	SubmitNewUnfundedParticipant(transaction *inferenceapi.MsgSubmitNewUnfundedParticipant) error
 	SubmitPocValidationsV2(transaction *inferencetypes.MsgSubmitPocValidationsV2) error
 	SubmitPoCV2StoreCommit(transaction *inferencetypes.MsgPoCV2StoreCommit) error
@@ -271,6 +265,7 @@ type CosmosMessageClient interface {
 	SubmitUnitOfComputePriceProposal(transaction *inferenceapi.MsgSubmitUnitOfComputePriceProposal) error
 	BridgeExchange(transaction *inferencetypes.MsgBridgeExchange) error
 	GetBridgeAddresses(ctx context.Context, chainId string) ([]inferencetypes.BridgeContractAddress, error)
+	BridgeTransactionsByReceipt(ctx context.Context, originChain, blockNumber, receiptIndex string) ([]inferencetypes.BridgeTransaction, error)
 	NewInferenceQueryClient() inferencetypes.QueryClient
 	NewCometQueryClient() cmtservice.ServiceClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
@@ -388,32 +383,6 @@ func (icc *InferenceCosmosClient) EncryptBytes(plaintext []byte) ([]byte, error)
 	return bytes, nil
 }
 
-func (icc *InferenceCosmosClient) StartInference(transaction *inferenceapi.MsgStartInference) error {
-	transaction.Creator = icc.Address
-	if icc.batchingEnabled {
-		return icc.batchConsumer.PublishStartInference(transaction)
-	}
-	_, err := icc.manager.SendTransactionAsyncWithRetry(transaction)
-	return err
-}
-
-func (icc *InferenceCosmosClient) FinishInference(transaction *inferenceapi.MsgFinishInference) error {
-	transaction.Creator = icc.Address
-	transaction.ExecutedBy = icc.Address
-	if icc.batchingEnabled {
-		return icc.batchConsumer.PublishFinishInference(transaction)
-	}
-	_, err := icc.manager.SendTransactionAsyncWithRetry(transaction)
-	return err
-}
-
-func (icc *InferenceCosmosClient) ReportValidation(transaction *inferenceapi.MsgValidation) error {
-	transaction.Creator = icc.Address
-	logging.Info("Reporting validation", inferencetypes.Validation, "value", transaction.Value, "type", fmt.Sprintf("%T", transaction), "creator", transaction.Creator)
-	_, err := icc.manager.SendTransactionAsyncWithRetry(transaction)
-	return err
-}
-
 func (icc *InferenceCosmosClient) SubmitNewUnfundedParticipant(transaction *inferenceapi.MsgSubmitNewUnfundedParticipant) error {
 	transaction.Creator = icc.Address
 	_, err := icc.manager.SendTransactionAsyncNoRetry(transaction)
@@ -466,8 +435,17 @@ func (icc *InferenceCosmosClient) SubmitUnitOfComputePriceProposal(transaction *
 
 func (icc *InferenceCosmosClient) BridgeExchange(transaction *inferencetypes.MsgBridgeExchange) error {
 	transaction.Validator = icc.Address
-	_, err := icc.manager.SendTransactionAsyncNoRetry(transaction)
-	return err
+	resp, err := icc.manager.SendTransactionAsyncNoRetry(transaction)
+	if err != nil {
+		return err
+	}
+	// BroadcastTxSync returns nil error even when CheckTx/DeliverTx fails
+	// (Code != 0). Surface RawLog so bridge drain can skip permanent rejects
+	// (out-of-epoch-group) instead of waiting on confirm timeout.
+	if resp != nil && resp.Code != 0 {
+		return fmt.Errorf("bridge exchange failed: code=%d rawLog=%s", resp.Code, resp.RawLog)
+	}
+	return nil
 }
 
 // GetBridgeAddresses retrieves all bridge addresses for a specific chain
@@ -482,6 +460,18 @@ func (icc *InferenceCosmosClient) GetBridgeAddresses(ctx context.Context, chainI
 	}
 
 	return resp.Addresses, nil
+}
+
+func (icc *InferenceCosmosClient) BridgeTransactionsByReceipt(ctx context.Context, originChain, blockNumber, receiptIndex string) ([]inferencetypes.BridgeTransaction, error) {
+	resp, err := icc.NewInferenceQueryClient().BridgeTransaction(ctx, &inferencetypes.QueryGetBridgeTransactionRequest{
+		OriginChain:  originChain,
+		BlockNumber:  blockNumber,
+		ReceiptIndex: receiptIndex,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.BridgeTransactions, nil
 }
 
 func (icc *InferenceCosmosClient) SendTransactionAsyncWithRetry(msg sdk.Msg, deadlineBlock ...int64) (*sdk.TxResponse, error) {

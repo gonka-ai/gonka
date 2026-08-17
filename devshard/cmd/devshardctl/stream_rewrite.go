@@ -2,9 +2,38 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 )
+
+// logprobClientIntent records whether the client's ORIGINAL request asked for
+// logprobs / top_logprobs. The gateway force-enables logprobs upstream for
+// validation, so without this the client-facing strip cannot tell a client who
+// asked for logprobs from one who did not. The zero value (keep nothing) is the
+// historical behavior: strip everything.
+type logprobClientIntent struct {
+	keepLogprobs    bool
+	keepTopLogprobs bool
+}
+
+func logprobClientIntentFromRequest(req chatRequest) logprobClientIntent {
+	return logprobClientIntent{
+		keepLogprobs:    req.Logprobs,
+		keepTopLogprobs: req.Logprobs && req.TopLogprobs > 0,
+	}
+}
+
+type logprobIntentContextKey struct{}
+
+func withLogprobClientIntent(ctx context.Context, intent logprobClientIntent) context.Context {
+	return context.WithValue(ctx, logprobIntentContextKey{}, intent)
+}
+
+func logprobClientIntentFromContext(ctx context.Context) logprobClientIntent {
+	intent, _ := ctx.Value(logprobIntentContextKey{}).(logprobClientIntent)
+	return intent
+}
 
 type streamingRewritePayload struct {
 	ID                string          `json:"id"`
@@ -48,7 +77,7 @@ type rewriteLogprob struct {
 // Only if a host sent SSE-wrapped chat.completion JSON do we synthesize
 // chat.completion.chunk events for the client. The synthetic role chunk exists
 // only in that streaming rewrite.
-func rewriteStreamingPayload(p []byte) []byte {
+func rewriteStreamingPayload(p []byte, intent logprobClientIntent) []byte {
 	needsCompletionRewrite := bytes.Contains(p, []byte(`data: {`)) && bytes.Contains(p, []byte(`"message"`))
 	needsInternalFieldsFilter := containsAnyInternalField(p)
 	if !needsCompletionRewrite && !needsInternalFieldsFilter {
@@ -71,9 +100,9 @@ func rewriteStreamingPayload(p []byte) []byte {
 			continue
 		}
 		payload := bytes.TrimSpace(event[len("data: "):])
-		rewritten, ok := rewriteStreamingDataEvent(payload)
+		rewritten, ok := rewriteStreamingDataEvent(payload, intent)
 		if !ok {
-			filtered := filterClientInternalFields(payload)
+			filtered := filterClientInternalFields(payload, intent)
 			if !bytes.Equal(filtered, payload) {
 				fmt.Fprintf(&out, "data: %s\n\n", filtered)
 				changed = true
@@ -91,7 +120,7 @@ func rewriteStreamingPayload(p []byte) []byte {
 	return out.Bytes()
 }
 
-func rewriteStreamingDataEvent(payload []byte) ([]byte, bool) {
+func rewriteStreamingDataEvent(payload []byte, intent logprobClientIntent) ([]byte, bool) {
 	var resp streamingRewritePayload
 	if err := json.Unmarshal(payload, &resp); err != nil {
 		return nil, false
@@ -116,7 +145,7 @@ func rewriteStreamingDataEvent(payload []byte) ([]byte, bool) {
 			continue
 		}
 		if role := choice.Message.Role; role != "" {
-			writeStreamingChunkEvent(&out, resp, choice.Index, map[string]any{"role": role}, nil, nil)
+			writeStreamingChunkEvent(&out, resp, choice.Index, map[string]any{"role": role}, nil, nil, nil)
 		}
 
 		tokens := []rewriteLogprob(nil)
@@ -130,16 +159,16 @@ func rewriteStreamingDataEvent(payload []byte) ([]byte, bool) {
 				if i == len(tokens)-1 {
 					finish = choice.FinishReason
 				}
-				writeStreamingChunkEvent(&out, resp, choice.Index, delta, finish, choice.StopReason)
+				writeStreamingChunkEvent(&out, resp, choice.Index, delta, finish, choice.StopReason, reconstructChunkLogprobs(token, intent))
 			}
 			continue
 		}
 
 		if choice.Message.Content != "" {
-			writeStreamingChunkEvent(&out, resp, choice.Index, map[string]any{"content": choice.Message.Content}, nil, nil)
+			writeStreamingChunkEvent(&out, resp, choice.Index, map[string]any{"content": choice.Message.Content}, nil, nil, nil)
 		}
 		if choice.FinishReason != nil || len(bytes.TrimSpace(choice.StopReason)) > 0 {
-			writeStreamingChunkEvent(&out, resp, choice.Index, map[string]any{}, choice.FinishReason, choice.StopReason)
+			writeStreamingChunkEvent(&out, resp, choice.Index, map[string]any{}, choice.FinishReason, choice.StopReason, nil)
 		}
 	}
 
@@ -164,11 +193,14 @@ func rewriteStreamingDataEvent(payload []byte) ([]byte, bool) {
 	return out.Bytes(), true
 }
 
-func writeStreamingChunkEvent(out *bytes.Buffer, resp streamingRewritePayload, index int, delta map[string]any, finishReason *string, stopReason json.RawMessage) {
+func writeStreamingChunkEvent(out *bytes.Buffer, resp streamingRewritePayload, index int, delta map[string]any, finishReason *string, stopReason json.RawMessage, logprobs any) {
 	choice := map[string]any{
 		"index":         index,
 		"delta":         delta,
 		"finish_reason": finishReason,
+	}
+	if logprobs != nil {
+		choice["logprobs"] = logprobs
 	}
 	if len(bytes.TrimSpace(stopReason)) > 0 && !bytes.Equal(bytes.TrimSpace(stopReason), []byte("null")) {
 		choice["stop_reason"] = json.RawMessage(bytes.TrimSpace(stopReason))
@@ -190,13 +222,85 @@ func writeStreamingChunkEvent(out *bytes.Buffer, resp streamingRewritePayload, i
 	fmt.Fprintf(out, "data: %s\n\n", b)
 }
 
-var clientStrippedFields = []string{
-	"logprob",
-	"logprobs",
-	"top_logprobs",
+// reconstructChunkLogprobs rebuilds the OpenAI streaming logprobs object for a
+// single synthesized content chunk, but only when the client asked for logprobs.
+// When the client wanted logprobs but not top_logprobs, the top alternatives are
+// emitted as an empty array (OpenAI's shape for logprobs-without-top_logprobs).
+// Returns nil when the client did not request logprobs, so the chunk omits the
+// field entirely.
+func reconstructChunkLogprobs(token rewriteLogprob, intent logprobClientIntent) any {
+	if !intent.keepLogprobs {
+		return nil
+	}
+	entry := map[string]any{
+		"token":   token.Token,
+		"logprob": token.Logprob,
+		"bytes":   token.Bytes,
+	}
+	if intent.keepTopLogprobs {
+		entry["top_logprobs"] = token.TopLogprobs
+	} else {
+		entry["top_logprobs"] = []any{}
+	}
+	return map[string]any{"content": []any{entry}}
+}
+
+// internalStrippedFields are always removed from client-facing responses: they
+// are devshard/vLLM internals the client never asked for and must never see.
+var internalStrippedFields = []string{
 	"token_ids",
 	"prompt_token_ids",
 	"prompt_logprobs",
+}
+
+// strippedFields returns the response fields to remove for this client. The
+// internal fields above are always stripped; the logprob/logprobs payloads are
+// stripped only when the client did not request logprobs -- the gateway force-
+// enables logprobs upstream for validation regardless of what the client asked.
+// top_logprobs is handled separately (emptied, not removed) by emptyTopLogprobs
+// so the response keeps OpenAI's logprobs-without-top_logprobs shape.
+func (intent logprobClientIntent) strippedFields() []string {
+	fields := append([]string(nil), internalStrippedFields...)
+	if !intent.keepLogprobs {
+		fields = append(fields, "logprob", "logprobs")
+	}
+	return fields
+}
+
+// emptyTopLogprobs replaces every top_logprobs array in the response with an
+// empty array. The gateway forces top_logprobs upstream for validation, so a
+// client who asked for logprobs but not top_logprobs would otherwise receive the
+// forced alternatives. OpenAI returns top_logprobs as a present-but-empty array
+// in this case, which this mirrors (matching the streaming-rewrite path's
+// reconstructChunkLogprobs). top_logprobs only appears under logprobs.content[]
+// in a chat completion, so emptying every occurrence is safe.
+func emptyTopLogprobs(v any) bool {
+	switch typed := v.(type) {
+	case map[string]any:
+		changed := false
+		if existing, ok := typed["top_logprobs"]; ok {
+			if arr, isArr := existing.([]any); !isArr || len(arr) > 0 {
+				typed["top_logprobs"] = []any{}
+				changed = true
+			}
+		}
+		for _, child := range typed {
+			if emptyTopLogprobs(child) {
+				changed = true
+			}
+		}
+		return changed
+	case []any:
+		changed := false
+		for _, child := range typed {
+			if emptyTopLogprobs(child) {
+				changed = true
+			}
+		}
+		return changed
+	default:
+		return false
+	}
 }
 
 func containsAnyInternalField(p []byte) bool {
@@ -206,12 +310,18 @@ func containsAnyInternalField(p []byte) bool {
 		bytes.Contains(p, []byte(`"prompt_token_ids"`))
 }
 
-func filterClientInternalFields(payload []byte) []byte {
+func filterClientInternalFields(payload []byte, intent logprobClientIntent) []byte {
 	var v any
 	if err := json.Unmarshal(payload, &v); err != nil {
 		return payload
 	}
-	if !stripClientInternalFields(v) {
+	changed := stripClientInternalFields(v, intent.strippedFields())
+	if intent.keepLogprobs && !intent.keepTopLogprobs {
+		if emptyTopLogprobs(v) {
+			changed = true
+		}
+	}
+	if !changed {
 		return payload
 	}
 	out, err := json.Marshal(v)
@@ -221,18 +331,18 @@ func filterClientInternalFields(payload []byte) []byte {
 	return out
 }
 
-func stripClientInternalFields(v any) bool {
+func stripClientInternalFields(v any, fields []string) bool {
 	switch typed := v.(type) {
 	case map[string]any:
 		changed := false
-		for _, key := range clientStrippedFields {
+		for _, key := range fields {
 			if _, ok := typed[key]; ok {
 				delete(typed, key)
 				changed = true
 			}
 		}
 		for _, child := range typed {
-			if stripClientInternalFields(child) {
+			if stripClientInternalFields(child, fields) {
 				changed = true
 			}
 		}
@@ -240,7 +350,7 @@ func stripClientInternalFields(v any) bool {
 	case []any:
 		changed := false
 		for _, child := range typed {
-			if stripClientInternalFields(child) {
+			if stripClientInternalFields(child, fields) {
 				changed = true
 			}
 		}

@@ -36,6 +36,28 @@ type httpTestEnv struct {
 	gossips     []*gossip.Gossip
 }
 
+const httpTestRoutePrefix = "/devshard/v2"
+
+func httpTestClient(baseURL string, escrowID string, signer signing.Signer) *transport.HTTPClient {
+	cfg := transport.DefaultClientConfig()
+	cfg.RoutePrefix = httpTestRoutePrefix
+	return transport.NewHTTPClient(baseURL, escrowID, signer, cfg)
+}
+
+// registerServer wires srv's handlers onto g, mirroring the old Server.Register
+// method. Production wiring uses server/routes.go RegisterLazySessionRoutes.
+func registerServer(g *echo.Group, srv *transport.Server) {
+	g.Use(srv.AuthMiddleware)
+	g.POST("/sessions/:id/chat/completions", srv.HandleInference)
+	g.POST("/sessions/:id/verify-timeout", srv.HandleVerifyTimeout)
+	g.POST("/sessions/:id/challenge-receipt", srv.HandleChallengeReceipt)
+	g.POST("/sessions/:id/gossip/nonce", srv.HandleGossipNonce)
+	g.POST("/sessions/:id/gossip/txs", srv.HandleGossipTxs)
+	g.GET("/sessions/:id/diffs", srv.HandleGetDiffs)
+	g.GET("/sessions/:id/mempool", srv.HandleGetMempool)
+	g.GET("/sessions/:id/signatures", srv.HandleGetSignatures)
+}
+
 // setupHTTPEnv creates a full HTTP test environment with storage, gossip,
 // sig accumulation, and mempool sink wired together.
 // Optional cfgs override the default SessionConfig.
@@ -82,8 +104,8 @@ func setupHTTPEnv(t *testing.T, numHosts int, balance, grace uint64, cfgs ...typ
 		servers[i] = srv
 
 		e := echo.New()
-		g := e.Group("/v1/devshard")
-		srv.Register(g)
+		g := e.Group("/devshard/v2")
+		registerServer(g, srv)
 		ts := httptest.NewServer(e)
 		t.Cleanup(ts.Close)
 		httpServers[i] = ts
@@ -94,10 +116,10 @@ func setupHTTPEnv(t *testing.T, numHosts int, balance, grace uint64, cfgs ...typ
 	hostClients := make([]*transport.HTTPClient, numHosts)
 	userClients := make([]user.HostClient, numHosts)
 	for i := range httpServers {
-		c := transport.NewHTTPClient(httpServers[i].URL, "escrow-1", userSigner)
+		c := httpTestClient(httpServers[i].URL, "escrow-1", userSigner)
 		clients[i] = c
 		userClients[i] = c
-		hostClients[i] = transport.NewHTTPClient(httpServers[i].URL, "escrow-1", hostSigners[i])
+		hostClients[i] = httpTestClient(httpServers[i].URL, "escrow-1", hostSigners[i])
 	}
 
 	// Wire peer clients for timeout verification.
@@ -196,7 +218,7 @@ func TestHTTP_Auth_Rejected(t *testing.T) {
 
 	// Create a client with a different signer (not the user).
 	badSigner := testutil.MustGenerateKey(t)
-	badClient := transport.NewHTTPClient(env.httpServers[0].URL, "escrow-1", badSigner)
+	badClient := httpTestClient(env.httpServers[0].URL, "escrow-1", badSigner)
 
 	diff := testutil.SignDiff(t, env.userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
 	_, err := badClient.Send(context.Background(), host.HostRequest{
@@ -786,7 +808,7 @@ func TestHTTP_LazyTxGossipHTTP(t *testing.T) {
 
 	// Gossip those txs to host 0 via HTTP.
 	// Use a host signer (gossip is host-to-host, user is forbidden).
-	hostClient := transport.NewHTTPClient(env.httpServers[0].URL, "escrow-1", env.signers[1])
+	hostClient := httpTestClient(env.httpServers[0].URL, "escrow-1", env.signers[1])
 	err = hostClient.GossipTxs(ctx, resp.Mempool)
 	require.NoError(t, err)
 
@@ -872,7 +894,7 @@ func TestAttack_UserCannotGossip(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a client authenticated as the user (not a group member).
-	userClient := transport.NewHTTPClient(env.httpServers[0].URL, "escrow-1", env.userSigner)
+	userClient := httpTestClient(env.httpServers[0].URL, "escrow-1", env.userSigner)
 
 	// User attempts to gossip nonce -> must be rejected.
 	err := userClient.GossipNonce(ctx, 1, []byte("fake-hash"), []byte("fake-sig"), 0)
@@ -907,12 +929,12 @@ func TestAttack_GossipUnverifiedNonce(t *testing.T) {
 
 	// Attacker (group member host 2) sends a gossip nonce with a fake stateHash
 	// and garbage stateSig. Should be rejected because sig doesn't verify.
-	hostClient := transport.NewHTTPClient(env.httpServers[1].URL, "escrow-1", env.signers[2])
+	hostClient := httpTestClient(env.httpServers[1].URL, "escrow-1", env.signers[2])
 	err = hostClient.GossipNonce(ctx, 1, []byte("fake-hash"), []byte("garbage-sig"), 2)
 	require.Error(t, err, "gossip with invalid sig should be rejected")
 
 	// Now send the real gossip from a legitimate host. Must NOT be rejected as equivocation.
-	hostClient1 := transport.NewHTTPClient(env.httpServers[1].URL, "escrow-1", env.signers[0])
+	hostClient1 := httpTestClient(env.httpServers[1].URL, "escrow-1", env.signers[0])
 	err = hostClient1.GossipNonce(ctx, 1, resp.StateHash, resp.StateSig, 0)
 	require.NoError(t, err, "real gossip must not be rejected after fake was blocked")
 }
@@ -939,7 +961,7 @@ func TestAttack_GossipEmptySigBypass(t *testing.T) {
 
 	// Attacker (group member host 2) sends gossip with empty StateSig to bypass
 	// signature verification. Must be rejected.
-	hostClient := transport.NewHTTPClient(env.httpServers[1].URL, "escrow-1", env.signers[2])
+	hostClient := httpTestClient(env.httpServers[1].URL, "escrow-1", env.signers[2])
 	err = hostClient.GossipNonce(ctx, 1, []byte("fake-hash"), nil, 2)
 	require.Error(t, err, "gossip with empty sig must be rejected")
 
@@ -948,7 +970,7 @@ func TestAttack_GossipEmptySigBypass(t *testing.T) {
 	require.Error(t, err, "gossip with invalid slot id must be rejected")
 
 	// Real gossip must still work after the rejected attempts.
-	hostClient1 := transport.NewHTTPClient(env.httpServers[1].URL, "escrow-1", env.signers[0])
+	hostClient1 := httpTestClient(env.httpServers[1].URL, "escrow-1", env.signers[0])
 	err = hostClient1.GossipNonce(ctx, 1, resp.StateHash, resp.StateSig, 0)
 	require.NoError(t, err, "real gossip must succeed after rejected bypass attempts")
 }

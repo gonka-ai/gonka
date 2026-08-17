@@ -306,8 +306,13 @@ func TestGatewaySelectsPoCWeightConcurrencyRate(t *testing.T) {
 	regular := g.limiterCapacityForModel("Model/A")
 	require.InDelta(t, 5.0, regular.MaxConcurrentPer10000Weight, 1e-9)
 
+	// PoC concurrency rate applies only during generation (not validation).
 	g.phaseGate = &ChainPhaseGate{}
-	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{BlockReason: "confirmation_poc"})
+	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{
+		EpochPhase:           epochPhasePoCGenerate,
+		ConfirmationPoCPhase: confirmationPoCInactive,
+		BlockReason:          "poc",
+	})
 	poc := g.limiterCapacityForModel("Model/A")
 	require.InDelta(t, 10.0, poc.MaxConcurrentPer10000Weight, 1e-9)
 }
@@ -344,7 +349,7 @@ func TestGatewayLimiterUnlimitedBaselinePreservedUnderScale(t *testing.T) {
 
 func TestDevshardRuntimeLoadIsActivePerWeight(t *testing.T) {
 	rt := &devshardRuntime{}
-	rt.activeRequests.Store(2)
+	rt.activeUserRequests.Store(2)
 	rt.reservedTokens.Store(3) // reserved tokens no longer factor in.
 
 	require.InDelta(t, 0.5, rt.load(4.0), 1e-9)

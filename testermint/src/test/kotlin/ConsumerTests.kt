@@ -1,9 +1,12 @@
 import com.productscience.*
 import com.productscience.data.*
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import kotlin.test.assertNotNull
 
+// Classic inference flow was removed (PR #1386); these tests exercise the deprecated endpoints.
+@Tag("exclude")
 class ConsumerTests : TestermintTest() {
     @Test
     fun `verify failed inference is refunded to consumer`() {
