@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -72,7 +73,7 @@ func run(ctx context.Context) error {
 	listenAddr := config.ListenAddr()
 	srv := &http.Server{
 		Addr:    listenAddr,
-		Handler: publicHandler(mgr, hostLifecycle, proxyOpts...),
+		Handler: publicHandler(mgr, hostLifecycle, lookup, proxyOpts...),
 	}
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
@@ -432,16 +433,51 @@ func readinessHandler(mgr *process.Manager, hostLifecycle *host.Controller) http
 func publicHandler(
 	mgr *process.Manager,
 	hostLifecycle *host.Controller,
+	storageIdentity storageIdentityReader,
 	proxyOpts ...proxy.HandlerOption,
 ) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", health.Handler(mgr.Status))
 	mux.HandleFunc("/readyz", readinessHandler(mgr, hostLifecycle))
+	mux.HandleFunc("/internal/storage-identity", storageIdentityHandler(storageIdentity))
 	mux.Handle(
 		"/",
 		hostLifecycle.Admission(proxy.Handler(mgr.RouteTable(), proxyOpts...)),
 	)
 	return mux
+}
+
+type storageIdentityReader interface {
+	StorageIdentity(context.Context) (string, error)
+}
+
+func storageIdentityHandler(reader storageIdentityReader) http.HandlerFunc {
+	type response struct {
+		Identity string `json:"identity"`
+	}
+	return func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil || !net.ParseIP(host).IsLoopback() {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if reader == nil {
+			http.Error(w, "postgres storage identity unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		identity, err := reader.StorageIdentity(r.Context())
+		if err != nil {
+			http.Error(w, "postgres storage identity unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(response{Identity: identity})
+	}
 }
 
 // versiondReady answers the load balancer's question — may this host take new

@@ -98,3 +98,26 @@ func (l *Lookup) LookupSessionVersion(ctx context.Context, escrowID string) (str
 	}
 	return *version, true, nil
 }
+
+// StorageIdentity returns the durable identity created by the devshard schema.
+// It lets deployment tooling prove that independently configured supervisors
+// resolve to the same database, rather than merely comparing libpq settings.
+func (l *Lookup) StorageIdentity(ctx context.Context) (string, error) {
+	if l == nil || l.pool == nil {
+		return "", errors.New("postgres session lookup is unavailable")
+	}
+	qctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+	defer cancel()
+
+	var identity string
+	if err := l.pool.QueryRow(qctx, `
+		SELECT identity::text
+		FROM devshard_storage_identity
+		WHERE singleton`).Scan(&identity); err != nil {
+		return "", fmt.Errorf("read devshard storage identity: %w", err)
+	}
+	if identity == "" {
+		return "", errors.New("devshard storage identity is empty")
+	}
+	return identity, nil
+}

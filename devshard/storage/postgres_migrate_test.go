@@ -25,7 +25,8 @@ func (t *postgresPartitionDDLTracer) TraceQueryStart(ctx context.Context, _ *pgx
 	return ctx
 }
 
-func (t *postgresPartitionDDLTracer) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+func (t *postgresPartitionDDLTracer) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {
+}
 
 func (t *postgresPartitionDDLTracer) record(sql string) {
 	upper := strings.ToUpper(sql)
@@ -105,6 +106,18 @@ func TestMigratePostgres_Idempotent(t *testing.T) {
 	exists, err := migrate.TableExistsPG(ctx, pool, "devshard_escrow_cache")
 	require.NoError(t, err)
 	require.True(t, exists, "missing table devshard_escrow_cache")
+	exists, err = migrate.TableExistsPG(ctx, pool, "devshard_storage_identity")
+	require.NoError(t, err)
+	require.True(t, exists, "missing table devshard_storage_identity")
+
+	var storageIdentity string
+	err = pool.QueryRow(ctx, `
+SELECT identity::text FROM devshard_storage_identity WHERE singleton`).Scan(&storageIdentity)
+	require.NoError(t, err)
+	require.Regexp(t,
+		`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`,
+		storageIdentity,
+	)
 
 	var indexCount int
 	err = pool.QueryRow(ctx, `
@@ -117,6 +130,11 @@ WHERE schemaname = 'public' AND indexname = 'devshard_session_index_by_epoch'`).
 	n2, err := migrate.AppliedPG(ctx, pool)
 	require.NoError(t, err)
 	require.Equal(t, n1, n2)
+	var identityAfterRerun string
+	err = pool.QueryRow(ctx, `
+SELECT identity::text FROM devshard_storage_identity WHERE singleton`).Scan(&identityAfterRerun)
+	require.NoError(t, err)
+	require.Equal(t, storageIdentity, identityAfterRerun)
 }
 
 func TestSaveSnapshot_SameEpoch_PartitionCreateOnce(t *testing.T) {
