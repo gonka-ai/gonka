@@ -64,14 +64,18 @@ func (d NetworkDutySignerDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simul
 	return next(ctx, tx, simulate)
 }
 
-// maxMsgExecNestingDepth bounds how far checkMessage will unwrap nested authz
-// MsgExec wrappers. Production uses exactly one level (the DAPI's warm key), so
-// the limit exists only to keep unbounded unwrapping from becoming a DoS
-// surface: ante work during CheckTx is not gas-metered, so without a bound an
-// attacker could make every node walk an arbitrarily deep message tree for
-// free. Beyond the limit the transaction is rejected rather than passed
-// through — at that depth the tree cannot be inspected, so it cannot be shown
-// not to carry a duty.
+// maxMsgExecNestingDepth bounds how far the CheckTx-only ante decorators will
+// unwrap nested authz MsgExec wrappers. Shared by NetworkDutySignerDecorator
+// and PocPeriodValidationDecorator, which both walk the same structure at the
+// same position in the chain.
+//
+// Production uses exactly one level (the DAPI's warm key), so the limit exists
+// only to keep unbounded unwrapping from becoming a DoS surface: ante work
+// during CheckTx is not gas-metered, so without a bound an attacker could make
+// every node walk an arbitrarily deep message tree for free. Beyond the limit
+// the transaction is rejected rather than passed through — at that depth the
+// tree cannot be inspected, so it cannot be shown not to carry the message the
+// decorator is looking for.
 const maxMsgExecNestingDepth = 5
 
 // checkMessage authorizes one message, descending through authz MsgExec
