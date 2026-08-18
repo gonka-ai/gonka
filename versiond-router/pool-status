@@ -1,0 +1,52 @@
+#!/bin/sh
+# pool-status — what the router currently believes about its pools.
+#
+# Read-only, and deliberately so: the router owns no state, so there is nothing
+# to command. Membership arrives over DNS, health over the per-version checks,
+# and this script only formats what the Runtime API reports. To take a host out
+# of rotation, stop its versiond — that is graceful by construction and tied to
+# the process, so nothing can inherit it.
+#
+# An internal diagnostic, not a CLI: it lives outside PATH, the citest harness
+# is its primary consumer, and its output format is part of the harness
+# contract (see devshard/testenv/citest/harness/router_pool.go).
+set -eu
+
+SOCK="${HAPROXY_SOCKET:-/var/run/haproxy/haproxy.sock}"
+
+if [ "$#" -gt 0 ]; then
+    echo "usage: pool-status (no arguments; read-only)" >&2
+    echo "  to take a host out of rotation, stop its versiond:" >&2
+    echo "    docker compose stop <service>" >&2
+    exit 2
+fi
+
+runtime() {
+    printf '%s\n' "$1" | socat stdio "$SOCK"
+}
+
+backends() {
+    runtime "show backend" | grep -v '^#' | grep -v '^$'
+}
+
+# `show servers state` columns: 4 = srv_name, 5 = srv_addr, 6 = srv_op_state
+# (2 means UP), 7 = srv_admin_state. Slots a DNS answer has never filled carry no
+# address and are skipped.
+servers() {
+    runtime "show servers state $1" | awk 'NR > 2 && NF > 7 && $5 != "-"'
+}
+
+serving_count() {
+    servers "$1" | awk '$6 == 2 && $7 == 0 { n++ } END { print n + 0 }'
+}
+
+for backend in $(backends); do
+    printf '%s\n' "$backend"
+    servers "$backend" | awk '{
+        if ($7 != 0)      state = "DRAIN"
+        else if ($6 == 2) state = "UP"
+        else              state = "DOWN"
+        print "  " $4 "\t" $5 "\t" state
+    }'
+    printf '  %s server(s) taking traffic\n' "$(serving_count "$backend")"
+done
