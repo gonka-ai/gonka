@@ -1,6 +1,24 @@
-.PHONY: all build-docker release test-render test-readiness-compat
+.PHONY: all build-docker release test-render test-readiness-compat test-local-compose
 
 HAPROXY_IMAGE ?= haproxy:3.2-alpine
+
+test-local-compose:
+	@set -eu; \
+	tmp=$$(mktemp); \
+	trap 'rm -f "$$tmp"' EXIT; \
+	KEY_NAME=testnet VERSIOND_SIGNER_KEY_NAME=test \
+		docker compose --project-directory .. \
+		-f ../local-test-net/docker-compose-base.yml \
+		-f ../local-test-net/docker-compose.edge-api.yml config > "$$tmp"; \
+	grep -q 'EDGE_API_POOL_HOST: testnet-edge-api-pool' "$$tmp" \
+		|| { echo 'test-local-compose: pool host is not rendered' >&2; exit 1; }; \
+	! grep -q 'EDGE_API_HOSTS' "$$tmp" \
+		|| { echo 'test-local-compose: stale static host list remains' >&2; exit 1; }; \
+	[ "$$(grep -c -- '- testnet-edge-api-pool' "$$tmp")" -ge 3 ] \
+		|| { echo 'test-local-compose: not every edge-api joins the pool alias' >&2; exit 1; }; \
+	grep -Eq 'context: .*/edge-api-router$$' "$$tmp" \
+		|| { echo 'test-local-compose: router build context is wrong' >&2; exit 1; }; \
+	echo 'test-local-compose: ok'
 
 test-readiness-compat:
 	@set -eu; \
@@ -65,7 +83,7 @@ test-readiness-compat:
 	if grep -qx draining "$$tmpdir/results"; then fail "503 /readyz backend received traffic"; fi; \
 	echo "test-readiness-compat: ok"
 
-test-render: test-readiness-compat
+test-render: test-readiness-compat test-local-compose
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
