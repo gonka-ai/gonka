@@ -14,6 +14,22 @@ The entrypoint refuses to initialize an empty database when downloaded versiond
 artifacts prove this is an existing installation. Set
 `DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT=true` only for a deliberate new HA database.
 
+Before changing an existing HA topology, validate the rendered and running
+PostgreSQL contract without mutating it:
+
+```bash
+cd deploy/join
+source ./config.env
+./postgres-deployment-preflight.sh -- \
+  -f docker-compose.yml -f docker-compose.versiond.yml
+```
+
+The command requires both versiond replicas to use PostgreSQL, rejects libpq
+overrides that can bypass the rendered DSN, compares their live storage UUIDs,
+and prints the verified UUID. The HA cutover runs this gate automatically with
+live replicas required; `--expected-identity UUID` additionally prevents
+switching away from a database recorded by an earlier successful upgrade.
+
 For a detached legacy volume, attach
 `docker-compose.versiond-postgres-recovery.yml` temporarily and set
 `DEVSHARD_POSTGRES_LEGACY_VOLUME` to that volume's exact Docker name. Run

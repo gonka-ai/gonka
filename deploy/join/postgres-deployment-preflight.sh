@@ -4,6 +4,7 @@ set -Eeuo pipefail
 
 docker_bin=${DOCKER_BIN:-docker}
 expected_identity=
+require_live=false
 compose_args=()
 
 fail() {
@@ -13,7 +14,7 @@ fail() {
 
 usage() {
     cat >&2 <<'EOF'
-Usage: postgres-deployment-preflight.sh [--expected-identity UUID] -- COMPOSE_ARGS...
+Usage: postgres-deployment-preflight.sh [--expected-identity UUID] [--require-live] -- COMPOSE_ARGS...
 
 Example:
   postgres-deployment-preflight.sh -- \
@@ -30,6 +31,10 @@ while (($#)); do
             (($# >= 2)) || fail "--expected-identity requires a value"
             expected_identity=$2
             shift 2
+            ;;
+        --require-live)
+            require_live=true
+            shift
             ;;
         --)
             shift
@@ -97,6 +102,8 @@ for service in versiond versiond2; do
     containers+=("$container")
 done
 if [[ -z ${containers[0]} && -z ${containers[1]} ]]; then
+    [[ $require_live == false ]] || fail \
+        "no live versiond replicas; cannot prove shared PostgreSQL identity"
     echo "postgres-deployment-preflight: rendered contract is valid; no live replicas to compare"
     exit 0
 fi

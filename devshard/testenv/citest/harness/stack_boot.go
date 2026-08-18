@@ -91,7 +91,7 @@ func requireThreeVersiondHosts(t *testing.T, cfg *config.File) {
 	}
 }
 
-// RouterSessionURL builds the sticky-routed path nginx hashes on the session id segment.
+// RouterSessionURL builds the sticky-routed path HAProxy hashes on the session ID.
 func RouterSessionURL(routerHTTP, version, sessionID, suffix string) string {
 	return routerHTTP + "/" + version + "/sessions/" + sessionID + suffix
 }

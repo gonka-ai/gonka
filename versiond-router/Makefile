@@ -22,6 +22,8 @@ test-local-compose:
 		|| { echo 'test-local-compose: not every versiond joins the pool alias' >&2; exit 1; }; \
 	grep -q 'stop_signal: SIGUSR1' "$$tmp" \
 		|| { echo 'test-local-compose: router soft-stop signal is missing' >&2; exit 1; }; \
+	grep -q 'stop_grace_period: 30m0s' "$$tmp" \
+		|| { echo 'test-local-compose: versiond drain backstop is missing' >&2; exit 1; }; \
 	echo 'test-local-compose: ok'
 
 test-catalog-cache:

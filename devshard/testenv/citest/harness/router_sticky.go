@@ -60,7 +60,7 @@ func OtherStickyUpstream(primary, a, b string) string {
 	}
 }
 
-// HostIDForUpstream maps nginx upstream addr (host:port) to compose service id.
+// HostIDForUpstream maps an HAProxy upstream address to a Compose service ID.
 func HostIDForUpstream(cfg *config.File, upstreamAddr string) string {
 	if cfg == nil {
 		return ""
