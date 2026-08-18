@@ -203,6 +203,8 @@ services:
       VERSIOND_LEGACY_HOST: "{{ legacyVersiondHost . }}"
       VERSIOND_NON_HA_VERSIONS: "v1"
       VERSIOND_VERSIONS: "{{ $.Versiond.VersionName }}"
+      VERSIOND_ROUTING_CATALOG_URL: "http://{{ $.MockDapi.Host }}:{{ $.MockDapi.HTTPPort }}/versions"
+      VERSIOND_ROUTING_CATALOG_POLL_SECONDS: "1"
       GONKA_HA: "{{ haDeployment . }}"
     ports:
       - "{{ .VersiondRouter.Port }}:8080"
