@@ -25,6 +25,8 @@ const (
 	slowDecodeWarning        = 0.10
 	decodedLogprobsWarning   = 0.001
 	decodedLogprobsCritical  = 0.01
+	undecidedTimeoutWarning  = 0.10
+	undecidedTimeoutCritical = 0.50
 	neverCritical            = 2.0
 )
 
@@ -35,6 +37,7 @@ const (
 	FindingProtocolMisses      = "chain_recorded_misses"
 	FindingProtocolInvalid     = "chain_recorded_invalid"
 	FindingUnresolvedChallenge = "challenges_unresolved"
+	FindingUndecidedTimeouts   = "timeouts_undecided"
 	FindingGatewayThrottled    = "throttled_by_gateway"
 	FindingQuarantined         = "quarantined_by_gateway"
 	FindingFailureOrigins      = "failure_origins"
@@ -97,11 +100,10 @@ func findingsFor(record ParticipantRecord) []Finding {
 		FindingProtocolMisses))
 	add(ratio(record.ProtocolInvalid, record.AssignedNonces, protocolInvalidWarning, protocolInvalidCritical,
 		FindingProtocolInvalid))
-	if record.UnresolvedChallenges > 0 {
-		findings = append(findings, Finding{
-			Code: FindingUnresolvedChallenge, Severity: SeverityWarning, Part: record.UnresolvedChallenges,
-		})
-	}
+	add(ratio(record.UnresolvedChallenges, record.AssignedNonces, protocolInvalidWarning, protocolInvalidCritical,
+		FindingUnresolvedChallenge))
+	add(ratio(undecidedTimeouts(record), timeoutRoundsVoted(record), undecidedTimeoutWarning, undecidedTimeoutCritical,
+		FindingUndecidedTimeouts))
 	add(ratio(ghostsBecause(record, NoSendParticipantThrottled), record.AssignedNonces, gatewayThrottleWarning, neverCritical,
 		FindingGatewayThrottled))
 	add(ratio(countersWhere(record, wasQuarantined), record.AssignedNonces, quarantineWarning, neverCritical,
@@ -163,6 +165,20 @@ func rate(part, whole uint64, warning, critical float64) (Severity, bool) {
 		return SeverityWarning, true
 	}
 	return "", false
+}
+
+func undecidedTimeouts(record ParticipantRecord) uint64 {
+	return record.TimeoutOutcomes[TimeoutVoteCollectionFailed] + record.TimeoutOutcomes[TimeoutInsufficientVotes]
+}
+
+func timeoutRoundsVoted(record ParticipantRecord) uint64 {
+	var total uint64
+	for outcome, count := range record.TimeoutOutcomes {
+		if outcome != TimeoutSkipped {
+			total += count
+		}
+	}
+	return total
 }
 
 func failedWithoutAnswer(key CounterKey) bool {

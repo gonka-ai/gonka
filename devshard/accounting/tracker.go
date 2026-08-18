@@ -35,6 +35,8 @@ type escrowState struct {
 	Counters        map[CounterKey]uint64      `json:"counters"`
 	OpenChallenge   map[uint64]uint32          `json:"-"`
 	ChallengeBySlot map[uint32]uint64          `json:"challenge_by_slot"`
+	ValidatedBySlot map[uint32]uint64          `json:"validated_by_slot"`
+	TimedOutBySlot  map[uint32]uint64          `json:"timed_out_by_slot"`
 	InvalidBySlot   map[uint32]uint64          `json:"invalid_by_slot"`
 	InvalidNonce    map[uint64]struct{}        `json:"-"`
 	Live            map[uint64]*nonceState     `json:"-"`
@@ -178,6 +180,8 @@ func (t *Tracker) RegisterEscrow(meta EscrowMetadata) error {
 			Counters:        make(map[CounterKey]uint64),
 			OpenChallenge:   make(map[uint64]uint32),
 			ChallengeBySlot: make(map[uint32]uint64),
+			ValidatedBySlot: make(map[uint32]uint64),
+			TimedOutBySlot:  make(map[uint32]uint64),
 			InvalidBySlot:   make(map[uint32]uint64),
 			InvalidNonce:    make(map[uint64]struct{}),
 			Live:            make(map[uint64]*nonceState),
@@ -208,6 +212,24 @@ func (t *Tracker) RecordCommittedDiff(escrowID string, diff types.Diff, verdicts
 			return err
 		}
 		e.recordCommittedDiff(diff, verdicts, t.nowUTC())
+		return nil
+	})
+}
+
+// RecordValidatorWork counts a validation against the slot that performed it. HostStats carries a
+// field for this, but nothing writes it: the count rides the state root, so filling it there would
+// need every host to agree on the same build.
+func (t *Tracker) RecordValidatorWork(escrowID string, validatorSlots []uint32) error {
+	if len(validatorSlots) == 0 {
+		return nil
+	}
+	return t.withEscrow(escrowID, func(e *escrowState) error {
+		for _, slot := range validatorSlots {
+			if int(slot) >= len(e.Meta.Slots) {
+				return fmt.Errorf("slot %d out of range", slot)
+			}
+			e.ValidatedBySlot[slot]++
+		}
 		return nil
 	})
 }
@@ -541,6 +563,10 @@ func (e *escrowState) recordCommittedDiff(diff types.Diff, verdicts []VerdictRec
 			continue
 		}
 		if msg := tx.GetTimeoutInference(); msg != nil {
+			// The chain counts a miss on the executor slot for every one of these, so the ledger side
+			// of that cross-check is read from the same diff rather than from what the gateway
+			// reported: a timeout raised on a nonce nobody dispatched is reported nowhere.
+			e.TimedOutBySlot[AssignedNonceSlot(msg.InferenceId, uint64(len(e.Meta.Slots)))]++
 			if state := e.Live[msg.InferenceId]; state != nil {
 				state.markProtocolTimeout()
 				e.reclassify(msg.InferenceId, state, now)

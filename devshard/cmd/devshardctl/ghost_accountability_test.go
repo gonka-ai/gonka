@@ -1,6 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"log"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -174,4 +178,51 @@ func TestGhostAccountability_AccountableKinds(t *testing.T) {
 	require.False(t, ghostPoC.accountable())
 	require.False(t, ghostExclude.accountable())
 	require.False(t, ghostNone.accountable())
+}
+
+// stageRecorder captures what logInferenceStage wrote. Stage lines go through the standard logger in
+// this mode, and the timeout runs on its own goroutine, so the buffer needs its own lock.
+type stageRecorder struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (r *stageRecorder) Write(p []byte) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.buf.Write(p)
+}
+
+func (r *stageRecorder) saw(stage string) bool {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return strings.Contains(r.buf.String(), "stage="+stage)
+}
+
+func captureStages(t *testing.T) *stageRecorder {
+	t.Helper()
+	recorder := &stageRecorder{}
+	previous := log.Writer()
+	log.SetOutput(recorder)
+	t.Cleanup(func() { log.SetOutput(previous) })
+	return recorder
+}
+
+// HandleTimeout signals an applied timeout by returning an error, so branching on err reported every
+// success as a failure: one production day logged 45,909 ghost_timeout_failed of which 44,896 had
+// applied. A log that says the mechanism is broken while it works is worse than no log.
+func TestGhostAccountability_ASuccessfulTimeoutIsNotLoggedAsAFailure(t *testing.T) {
+	shortRefusalWindow(t)
+	enableGhostAccountability(t)
+	env := setupTestProxy(t, 3, nil, true)
+	env.proxy.redundancy.picker.stop()
+	captured := captureStages(t)
+
+	prepared := prepareForGhost(t, env.session, "llama")
+	env.proxy.redundancy.runGhostProbe(prepared, ghostThrottled, ghostThrottled.reason())
+	waitForMiss(t, env, prepared.HostIdx())
+
+	require.Eventually(t, func() bool { return captured.saw("ghost_timeout_applied") },
+		2*time.Second, 25*time.Millisecond, "an applied timeout must say so")
+	require.False(t, captured.saw("ghost_timeout_failed"), "and must not also say it failed")
 }

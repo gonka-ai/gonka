@@ -4112,11 +4112,15 @@ func (e *Redundancy) raiseGhostAccountability(prepared *user.PreparedInference, 
 	e.goTrackedRaceCleanup(func() {
 		ctx, _ := ensureRequestLogContext(context.Background())
 		logInferenceStage(ctx, e.devshardID, nonce, "ghost_timeout_started", "host", hostLabel, "kind", int(kind))
+		// HandleTimeout reports an applied timeout by returning an error, so the outcome decides what
+		// this was; branching on err logged every success as a failure.
 		result, err := e.session.HandleTimeout(ctx, nonce, burnedAt, payload)
-		if err != nil {
-			logInferenceStage(ctx, e.devshardID, nonce, "ghost_timeout_failed",
-				"host", hostLabel, "outcome", result.Outcome, "error", err)
+		if result.Applied {
+			logInferenceStage(ctx, e.devshardID, nonce, "ghost_timeout_applied", "host", hostLabel)
+			return
 		}
+		logInferenceStage(ctx, e.devshardID, nonce, "ghost_timeout_failed",
+			"host", hostLabel, "outcome", result.Outcome, "error", err)
 	})
 }
 

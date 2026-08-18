@@ -41,13 +41,16 @@ The offset is measured against the midpoint of the send-to-receipt round trip, n
 |---|---|---|---|
 | `chain_recorded_misses` | assigned nonces recorded as missed on chain | 1% | 5% |
 | `chain_recorded_invalid` | assigned nonces invalidated on chain | 1% | 5% |
-| `challenges_unresolved` | count of challenges with no verdict | any | — |
+| `challenges_unresolved` | assigned nonces whose challenge has no verdict | 1% | 5% |
+| `timeouts_undecided` | timeout rounds that reached no verdict | 10% | 50% |
 
 **`chain_recorded_misses`** — the chain's own verdict, taken from settled host statistics. This is the number that costs the host its reward. It tracks `execution_timeouts` above, and also `throttled_by_gateway` and `blocked_by_capability` below: a nonce the gateway declined to send now raises a refusal timeout of its own, so a host that refuses everything is charged for it instead of disappearing from the count. Which nonce and which client request each miss came from is at `GET /api/v1/epochs/{epoch}/events`.
 
 **`chain_recorded_invalid`** — a validator replayed the work and got a different answer. Not about speed: check the model and the runtime version the host serves, and check `logprobs_not_token_ids` first.
 
-**`challenges_unresolved`** — a dispute with no verdict yet. Until it resolves the nonce counts as neither valid nor invalid.
+**`challenges_unresolved`** — a dispute with no verdict yet. Until it resolves the nonce counts as neither valid nor invalid, which is why it is flagged on the same scale as `chain_recorded_invalid`: it is an invalid that has not landed. A challenge closes only when validators vote, and a validator collects its jobs while serving a request, so a host that receives no traffic never judges anything and the disputes routed to it stay open.
+
+**`timeouts_undecided`** — the gateway raised a timeout and the group never decided it, by failing to collect votes at all (`vote_collection_failed`) or by collecting too few to pass the threshold (`insufficient_votes`). The nonce is already spent and the round cannot be raised again, so the host keeps the miss it earned. Rounds the gateway skipped are excluded: they never went to a vote. Read this together with `chain_recorded_misses` — a host with few recorded misses and a high share here is not clean, it is unjudged. The per-verifier reason is in `timeout_outcomes` and the `verifier_*` classes beside it. Note the arithmetic that makes a high share possible at all: accept votes are weighted by slots per address and the threshold is half the group, so a participant holding half a group's slots or more cannot be outvoted by the rest of it.
 
 ## What this gateway did
 

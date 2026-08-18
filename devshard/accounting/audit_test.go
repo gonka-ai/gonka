@@ -196,6 +196,10 @@ func tallyDispositions(records []ParticipantRecord) map[Disposition]uint64 {
 // stripDeliveryReasonFromStore rewrites the stored blobs the way a gateway running the previous
 // schema would have written them: no delivery_reason anywhere, and the older version in the meta row.
 func stripDeliveryReasonFromStore(path string) error {
+	return stripKeyFromStore(path, "delivery_reason")
+}
+
+func stripKeyFromStore(path, key string) error {
 	store, err := OpenStore(path, 0)
 	if err != nil {
 		return err
@@ -218,7 +222,7 @@ func stripDeliveryReasonFromStore(path string) error {
 			rows.Close()
 			return err
 		}
-		stripped, err := json.Marshal(dropKey(generic, "delivery_reason"))
+		stripped, err := json.Marshal(dropKey(generic, key))
 		if err != nil {
 			rows.Close()
 			return err
@@ -318,4 +322,58 @@ func TestOverclassifiedIsReportedRatherThanHiddenInUnclassified(t *testing.T) {
 	require.Equal(t, uint64(2), record.Overclassified, "three counters against one assigned nonce is a surplus of two")
 	require.Zero(t, record.Unclassified, "a surplus is not a shortfall")
 	require.Equal(t, uint64(2), record.CrossCheckError, "the surplus is what the cross-check reports")
+}
+
+// A snapshot written before a per-slot map existed loads it as nil, and Go panics on a write to a nil
+// map. The guards beside this one exist for the same reason; a new map without one crashes the
+// gateway on the first event after an upgrade, not on the upgrade itself.
+func TestSnapshotWithoutTheNewerSlotMapsStaysWritable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "accounting.db")
+	before, err := OpenTracker(path, 0, 0)
+	require.NoError(t, err)
+	before.now = func() time.Time { return accountingTestNow }
+	registerEscrow(t, before, "e1", 7, "m")
+	require.NoError(t, before.RecordDiff("e1", 2, true))
+	require.NoError(t, before.Flush(context.Background()))
+	require.NoError(t, before.Close())
+
+	require.NoError(t, stripKeyFromStore(path, "validated_by_slot"))
+	require.NoError(t, stripKeyFromStore(path, "timed_out_by_slot"))
+
+	after, err := OpenTracker(path, 0, 0)
+	require.NoError(t, err)
+	after.now = func() time.Time { return accountingTestNow }
+	t.Cleanup(func() { require.NoError(t, after.Close()) })
+
+	require.NoError(t, after.RecordValidatorWork("e1", []uint32{1}))
+	require.Equal(t, uint64(1), recordFor(t, after, "p1").ValidationsPerformed)
+
+	require.NoError(t, after.RecordCommittedState("e1", types.Diff{Nonce: 3, Txs: []*types.DevshardTx{{
+		Tx: &types.DevshardTx_TimeoutInference{TimeoutInference: &types.MsgTimeoutInference{InferenceId: 2}},
+	}}}, nil, EscrowActive, nil))
+	require.Equal(t, uint64(1), recordFor(t, after, "p0").TimeoutsApplied)
+}
+
+// The per-slot count has to survive a restart like every other tally beside it.
+func TestValidationsPerformedSurviveARestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "accounting.db")
+	before, err := OpenTracker(path, 0, 0)
+	require.NoError(t, err)
+	before.now = func() time.Time { return accountingTestNow }
+	registerEscrow(t, before, "e1", 7, "m")
+	require.NoError(t, before.RecordDiff("e1", 2, true))
+	require.NoError(t, before.RecordValidatorWork("e1", []uint32{1, 1}))
+	require.NoError(t, before.RecordCommittedState("e1", types.Diff{Nonce: 4, Txs: []*types.DevshardTx{{
+		Tx: &types.DevshardTx_TimeoutInference{TimeoutInference: &types.MsgTimeoutInference{InferenceId: 3}},
+	}}}, nil, EscrowActive, nil))
+	require.NoError(t, before.Flush(context.Background()))
+	require.NoError(t, before.Close())
+
+	after, err := OpenTracker(path, 0, 0)
+	require.NoError(t, err)
+	after.now = func() time.Time { return accountingTestNow }
+	t.Cleanup(func() { require.NoError(t, after.Close()) })
+
+	require.Equal(t, uint64(2), recordFor(t, after, "p1").ValidationsPerformed)
+	require.Equal(t, uint64(1), recordFor(t, after, "p1").TimeoutsApplied)
 }

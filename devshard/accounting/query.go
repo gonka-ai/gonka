@@ -24,6 +24,8 @@ type escrowView struct {
 	counters        map[CounterKey]uint64
 	hostStats       map[uint32]types.HostStats
 	challengeBySlot map[uint32]uint64
+	validatedBySlot map[uint32]uint64
+	timedOutBySlot  map[uint32]uint64
 	invalidBySlot   map[uint32]uint64
 	live            []nonceState
 	events          []ProtocolEvent
@@ -64,6 +66,8 @@ func (e *escrowState) view(id string) escrowView {
 		counters:        make(map[CounterKey]uint64, len(e.Counters)),
 		hostStats:       make(map[uint32]types.HostStats, len(e.HostStats)),
 		challengeBySlot: copyUint32Map(e.ChallengeBySlot),
+		validatedBySlot: copyUint32Map(e.ValidatedBySlot),
+		timedOutBySlot:  copyUint32Map(e.TimedOutBySlot),
 		invalidBySlot:   copyUint32Map(e.InvalidBySlot),
 		live:            make([]nonceState, 0, len(e.Live)),
 		events:          append([]ProtocolEvent(nil), e.Events...),
@@ -126,6 +130,8 @@ func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
 			record.ProtocolInvalid += slotRecord.ProtocolInvalid
 			record.RequiredValidations += slotRecord.RequiredValidations
 			record.CompletedValidations += slotRecord.CompletedValidations
+			record.ValidationsPerformed += slotRecord.ValidationsPerformed
+			record.TimeoutsApplied += slotRecord.TimeoutsApplied
 			record.UnresolvedChallenges += slotRecord.UnresolvedChallenges
 			record.InFlight += slotRecord.InFlight
 			record.TimeoutPending += slotRecord.TimeoutPending
@@ -270,6 +276,8 @@ func buildSlotRecord(escrow *escrowView, slot uint32, now time.Time) SlotRecord 
 		record.RequiredValidations = uint64(stats.RequiredValidations)
 		record.CompletedValidations = uint64(stats.CompletedValidations)
 	}
+	record.ValidationsPerformed = escrow.validatedBySlot[slot]
+	record.TimeoutsApplied = escrow.timedOutBySlot[slot]
 	if accounted < assigned {
 		record.Unclassified = assigned - accounted
 	} else if accounted > assigned {

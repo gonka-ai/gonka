@@ -96,6 +96,7 @@ func (r *Recorder) DiffObserver(escrowID string, state ProtocolView) func(types.
 // the diff cannot tell it and allocates nothing for a plain start inference.
 func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state ProtocolView) {
 	var verdicts []VerdictRecord
+	var validatorSlots []uint32
 	var seen map[uint64]struct{}
 	var hostStats map[uint32]*types.HostStats
 
@@ -110,6 +111,7 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 			inferenceID = timeout.InferenceId
 		case validation != nil:
 			inferenceID, verdict = validation.InferenceId, true
+			validatorSlots = append(validatorSlots, validation.ValidatorSlot)
 		case vote != nil:
 			inferenceID, verdict = vote.InferenceId, true
 		default:
@@ -147,6 +149,9 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 	}
 
 	phase := escrowPhase(state.Phase())
+	if err := r.tracker.RecordValidatorWork(escrowID, validatorSlots); err != nil {
+		log.Printf("gateway accounting validator work escrow=%s nonce=%d: %v", escrowID, diff.Nonce, err)
+	}
 	if err := r.tracker.RecordCommittedState(escrowID, diff, verdicts, phase, hostStats); err != nil {
 		log.Printf("gateway accounting diff escrow=%s nonce=%d: %v", escrowID, diff.Nonce, err)
 	}

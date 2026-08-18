@@ -450,3 +450,153 @@ func TestAnOrdinaryDecoderIsNotFlagged(t *testing.T) {
 
 	require.False(t, flagged, "a host inside the observed normal band must stay clean")
 }
+
+// Nothing writes HostStats.CompletedValidations, so what settlement will carry stays zero. The work a
+// slot actually did is visible in the diffs it committed, and that is a separate number.
+func TestValidationsPerformed_CountsTheSlotThatDidTheChecking(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 7, "m")
+	require.NoError(t, tr.RecordDiff("e1", 2, true))
+
+	require.NoError(t, tr.RecordValidatorWork("e1", []uint32{1, 1, 0}))
+
+	validator := recordFor(t, tr, "p1")
+	require.Equal(t, uint64(2), validator.ValidationsPerformed)
+	require.Zero(t, validator.CompletedValidations, "settlement still carries nothing")
+
+	other := recordFor(t, tr, "p0")
+	require.Equal(t, uint64(1), other.ValidationsPerformed)
+}
+
+// A validation is filed against the executor, so counting it there would credit the wrong slot.
+func TestValidationsPerformed_CreditsTheValidatorNotTheExecutor(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 7, "m")
+	require.NoError(t, tr.RecordDiff("e1", 2, true))
+
+	require.NoError(t, tr.RecordValidatorWork("e1", []uint32{1}))
+
+	require.Equal(t, uint64(1), recordFor(t, tr, "p1").ValidationsPerformed)
+	require.Zero(t, recordFor(t, tr, "p0").ValidationsPerformed)
+}
+
+// A slot outside the group is a broken diff, not a validation to credit.
+func TestValidationsPerformed_RejectsASlotOutsideTheGroup(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 7, "m")
+
+	require.Error(t, tr.RecordValidatorWork("e1", []uint32{99}))
+}
+
+// The credit has to come off the validation message itself: the verdict beside it names the executor,
+// so reading the slot from there would credit the host being checked.
+func TestValidationsPerformed_ReachTheRecordThroughACommittedDiff(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 7, "m")
+	require.NoError(t, tr.RecordDiff("e1", 2, true))
+	state := &fakeProtocolView{
+		phase:      types.PhaseActive,
+		inferences: map[uint64]types.InferenceRecord{2: {ExecutorSlot: 0, Status: types.StatusValidated}},
+	}
+	recorder := NewRecorder(tr, nil)
+
+	recorder.committedDiff("e1", types.Diff{Nonce: 3, Txs: []*types.DevshardTx{{
+		Tx: &types.DevshardTx_Validation{Validation: &types.MsgValidation{InferenceId: 2, ValidatorSlot: 1}},
+	}}}, state)
+
+	require.Equal(t, uint64(1), recordFor(t, tr, "p1").ValidationsPerformed, "slot 1 did the checking")
+	require.Zero(t, recordFor(t, tr, "p0").ValidationsPerformed, "slot 0 was the one checked")
+}
+
+// The cross-check compares what the gateway reported against what the chain recorded, which is what
+// makes it able to catch a disagreement at all. A timeout raised on a nonce nobody dispatched is
+// reported nowhere, so it lands on the chain side alone and reads as a disagreement. This number is
+// the size of that gap, counted from the diffs both sides ultimately come from.
+func TestTimeoutsApplied_ExplainsAMissTheGatewayNeverReported(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 7, "m")
+	// Nonce 3 of a two-slot group belongs to slot 1, so crediting slot 0 instead is visible.
+	require.NoError(t, tr.RecordDiff("e1", 3, true))
+	diff := types.Diff{Nonce: 4, Txs: []*types.DevshardTx{{
+		Tx: &types.DevshardTx_TimeoutInference{TimeoutInference: &types.MsgTimeoutInference{InferenceId: 3}},
+	}}}
+
+	require.NoError(t, tr.RecordCommittedState("e1", diff, nil, EscrowActive,
+		map[uint32]*types.HostStats{1: {Missed: 1}}))
+
+	require.Zero(t, recordFor(t, tr, "p0").TimeoutsApplied, "slot 0 did not execute this nonce")
+	record := recordFor(t, tr, "p1")
+	require.Equal(t, uint64(1), record.TimeoutsApplied, "the diff carried one applied timeout")
+	require.Equal(t, uint64(1), record.ProtocolMisses, "and the chain charged one miss for it")
+	require.Zero(t, record.CrossChecks.TimeoutApplied, "the gateway reported none of it")
+	require.Equal(t, uint64(1), record.CrossChecks.ErrorCount,
+		"so the cross-check flags it, and TimeoutsApplied is what says why")
+}
+
+func flagged(record ParticipantRecord, code string) (Finding, bool) {
+	record.Findings = findingsFor(record)
+	return findingByCode(record, code)
+}
+
+// As a bare count this fired for any host holding one hanging dispute, so two stuck challenges among
+// thirty thousand nonces read exactly like four hundred among nineteen thousand.
+func TestUnresolvedChallenges_AreJudgedAgainstTheWorkTheHostWasGiven(t *testing.T) {
+	_, found := flagged(ParticipantRecord{AssignedNonces: 30_000, UnresolvedChallenges: 2}, FindingUnresolvedChallenge)
+	require.False(t, found, "two stuck disputes in thirty thousand nonces is not a condition")
+
+	widespread, found := flagged(ParticipantRecord{AssignedNonces: 19_000, UnresolvedChallenges: 481}, FindingUnresolvedChallenge)
+	require.True(t, found)
+	require.Equal(t, SeverityWarning, widespread.Severity)
+	require.Equal(t, uint64(481), widespread.Part)
+	require.Equal(t, uint64(19_000), widespread.Whole)
+}
+
+func TestUnresolvedChallenges_ADisputeNobodyJudgesIsFlaggedLikeAnInvalid(t *testing.T) {
+	finding, found := flagged(ParticipantRecord{AssignedNonces: 1_000, UnresolvedChallenges: 60}, FindingUnresolvedChallenge)
+
+	require.True(t, found)
+	require.Equal(t, SeverityCritical, finding.Severity)
+}
+
+// The nonce is already spent and the gateway cannot raise it again, so a round that reaches no verdict
+// leaves the host unpunished for good. Only the aggregate was reported, so a host escaping every miss
+// looked like one escaping none.
+func TestUndecidedTimeouts_CountTheRoundsThatReachedNoVerdict(t *testing.T) {
+	record := ParticipantRecord{TimeoutOutcomes: map[TimeoutOutcome]uint64{
+		TimeoutApplied:              100,
+		TimeoutVoteCollectionFailed: 187,
+		TimeoutInsufficientVotes:    102,
+	}}
+
+	finding, found := flagged(record, FindingUndecidedTimeouts)
+
+	require.True(t, found)
+	require.Equal(t, SeverityCritical, finding.Severity)
+	require.Equal(t, uint64(289), finding.Part, "both ways of reaching no verdict cost the same")
+	require.Equal(t, uint64(389), finding.Whole)
+}
+
+// Skipped rounds never went to a vote, so they cannot dilute the share that did.
+func TestUndecidedTimeouts_IgnoreRoundsTheGatewayNeverRaised(t *testing.T) {
+	record := ParticipantRecord{TimeoutOutcomes: map[TimeoutOutcome]uint64{
+		TimeoutApplied:           20,
+		TimeoutInsufficientVotes: 20,
+		TimeoutSkipped:           960,
+	}}
+
+	finding, found := flagged(record, FindingUndecidedTimeouts)
+
+	require.True(t, found)
+	require.Equal(t, uint64(40), finding.Whole, "a skipped round is not a round that failed to decide")
+}
+
+func TestUndecidedTimeouts_AGroupThatDecidesIsNotFlagged(t *testing.T) {
+	record := ParticipantRecord{TimeoutOutcomes: map[TimeoutOutcome]uint64{
+		TimeoutApplied:              609,
+		TimeoutVoteCollectionFailed: 5,
+	}}
+
+	_, found := flagged(record, FindingUndecidedTimeouts)
+
+	require.False(t, found, "five lost rounds in six hundred is ordinary")
+}

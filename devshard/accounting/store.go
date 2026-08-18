@@ -28,6 +28,8 @@ type escrowBlob struct {
 	HostStats       map[uint32]types.HostStats `json:"host_stats"`
 	Counters        []counterBlob              `json:"counters"`
 	ChallengeBySlot map[uint32]uint64          `json:"challenge_by_slot"`
+	ValidatedBySlot map[uint32]uint64          `json:"validated_by_slot,omitempty"`
+	TimedOutBySlot  map[uint32]uint64          `json:"timed_out_by_slot,omitempty"`
 	InvalidBySlot   map[uint32]uint64          `json:"invalid_by_slot"`
 	InvalidNonces   []uint64                   `json:"invalid_nonces,omitempty"`
 	Events          []ProtocolEvent            `json:"events,omitempty"`
@@ -132,6 +134,8 @@ func (s *Store) Load(ctx context.Context, t *Tracker) error {
 			Counters:        make(map[CounterKey]uint64, len(blob.Counters)),
 			OpenChallenge:   make(map[uint64]uint32),
 			ChallengeBySlot: blob.ChallengeBySlot,
+			ValidatedBySlot: blob.ValidatedBySlot,
+			TimedOutBySlot:  blob.TimedOutBySlot,
 			InvalidBySlot:   blob.InvalidBySlot,
 			InvalidNonce:    make(map[uint64]struct{}, len(blob.InvalidNonces)),
 			Live:            make(map[uint64]*nonceState),
@@ -145,6 +149,12 @@ func (s *Store) Load(ctx context.Context, t *Tracker) error {
 		}
 		if escrow.InvalidBySlot == nil {
 			escrow.InvalidBySlot = make(map[uint32]uint64)
+		}
+		if escrow.ValidatedBySlot == nil {
+			escrow.ValidatedBySlot = make(map[uint32]uint64)
+		}
+		if escrow.TimedOutBySlot == nil {
+			escrow.TimedOutBySlot = make(map[uint32]uint64)
 		}
 		for slot, stats := range blob.HostStats {
 			escrow.HostStats[slot] = stats
@@ -220,6 +230,8 @@ func (t *Tracker) snapshot(retention uint64) storeSnapshot {
 			Latest:          escrow.Latest,
 			HostStats:       make(map[uint32]types.HostStats, len(escrow.HostStats)),
 			ChallengeBySlot: copyUint32Map(escrow.ChallengeBySlot),
+			ValidatedBySlot: copyUint32Map(escrow.ValidatedBySlot),
+			TimedOutBySlot:  copyUint32Map(escrow.TimedOutBySlot),
 			InvalidBySlot:   copyUint32Map(escrow.InvalidBySlot),
 			InvalidNonces:   sortedNonces(escrow.InvalidNonce),
 			Events:          append([]ProtocolEvent(nil), escrow.Events...),

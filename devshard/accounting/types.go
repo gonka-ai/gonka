@@ -218,6 +218,8 @@ type SlotRecord struct {
 	ProtocolInvalid       uint64                    `json:"protocol_invalid"`
 	RequiredValidations   uint64                    `json:"required_validations"`
 	CompletedValidations  uint64                    `json:"completed_validations"`
+	ValidationsPerformed  uint64                    `json:"validations_performed"`
+	TimeoutsApplied       uint64                    `json:"timeouts_applied"`
 	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
 	RecordedInvalid       uint64                    `json:"recorded_invalid_transitions"`
 	InFlight              uint64                    `json:"in_flight"`
@@ -251,6 +253,8 @@ type ParticipantRecord struct {
 	ProtocolInvalid       uint64                    `json:"protocol_invalid"`
 	RequiredValidations   uint64                    `json:"required_validations"`
 	CompletedValidations  uint64                    `json:"completed_validations"`
+	ValidationsPerformed  uint64                    `json:"validations_performed"`
+	TimeoutsApplied       uint64                    `json:"timeouts_applied"`
 	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
 	InFlight              uint64                    `json:"in_flight"`
 	TimeoutPending        uint64                    `json:"timeout_pending"`
