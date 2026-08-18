@@ -212,13 +212,13 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 ### #strip-reasoning_effort
 
-**What**: `reasoning_effort: "none"|"minimal"|"low"|"medium"|"high"|"xhigh"` enum-validated, then field stripped from the request body before forwarding to vLLM.
+**What**: `reasoning_effort: "none"|"minimal"|"low"|"medium"|"high"|"xhigh"|"max"` enum-validated on every route, then stripped on every route **except** `deepseek-ai/DeepSeek-V4-Flash-0731`, where an explicit value is forwarded unchanged and an omitted one is filled in as `"max"`.
 
-**Why**: vLLM declares the enum [[vLLM-1]](references.md#vllm) (sourced from [[OpenAI-4]](references.md#openai) reasoning guide; we exclude `"max"` because no routed model is DeepSeek). Both currently-routed models are non-reasoning — [[Qwen-1]](references.md#qwen) for Qwen3-235B-Instruct-2507, [[Moonshot-1]](references.md#moonshot) for Kimi (schema lacks the field). The validate-then-strip pattern surfaces malformed enum values as a 400 instead of silently forwarding garbage; the strip itself is the documented no-op on both backends.
+**Why**: vLLM declares the enum [[vLLM-1]](references.md#vllm) (sourced from [[OpenAI-4]](references.md#openai) reasoning guide, plus `"max"`, which vLLM documents as DeepSeek-V4-specific and outside the OpenAI spec). The other routed models are non-reasoning — [[Qwen-1]](references.md#qwen) for Qwen3-235B-Instruct-2507, [[Moonshot-1]](references.md#moonshot) for Kimi — but the strip there is not merely a tidy no-op: vLLM *also* derives `enable_thinking` from this field and injects it into `chat_template_kwargs` [[vLLM-1]](references.md#vllm), so forwarding it to a template that declares that variable would silently flip thinking while the effort level itself went nowhere. Validating everywhere and stripping selectively surfaces a malformed enum as a 400 regardless of route.
 
-**When to restore**: when a reasoning-capable model is added to the gateway routes — strip wiring must be revisited then.
+**When to revisit**: when another reasoning-capable model is routed — add it to `Models` on the `reasoning_effort` entry in `defaultVLLMParameterCatalog`, and check its own value mapping first, since the levels are not portable ([DeepSeek-V4 collapses seven wire values onto three](deepseek-v4-flash-0731.md#the-reasoning_effort-contract)).
 
-**Fix (client-side)**: if you're sending `reasoning_effort` and need the behavior, you're on a route that doesn't support it. Either drop the field or wait for a reasoning-capable route to be added.
+**Fix (client-side)**: on any route other than DeepSeek-V4-Flash-0731 the field does nothing — drop it. On DeepSeek-V4-Flash-0731 only `low`, `high` and `max` are distinct: `minimal`/`medium` render as `low` and `xhigh` renders as `high`. Omitting the field there is not neutral — it arrives as `max`, so `minimal`/`low`/`medium` ask for *less* reasoning than sending nothing. To get the engine's own fallback, send `high` explicitly; to turn reasoning off, send `none` (or `reasoning: {"enabled": false}`, which is recorded as `none`).
 
 ## Translations / coercions
 

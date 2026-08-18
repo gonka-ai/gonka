@@ -457,15 +457,13 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.ReasoningValidator{},
 				}),
-			// reasoning_effort: enum-validate then strip. Models: nil keeps the strip
-			// universal until a reasoning-capable model is routed. List models in Models
-			// to start forwarding.
 			newParameter("reasoning_effort").
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.ReasoningEffortValidator{},
 				}).
 				withRule(RequestFilterStagePreValidation, ModelScopedParameterHandler{
-					Models:           nil,
+					Models:           []string{deepSeekV4Flash0731ModelID},
+					Handler:          ParameterHandlerAdapter{Handler: paramvalidators.DefaultLiteralParameter{Value: deepSeekDefaultReasoningEffort}},
 					UnmatchedHandler: ParameterHandlerAdapter{Handler: paramvalidators.StripParameter{}},
 				}),
 			// MiniMax-M2.7 has no chat_template knob for enable_thinking (vLLM #36778);
