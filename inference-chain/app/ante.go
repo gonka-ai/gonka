@@ -237,6 +237,13 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 		// Bridge early-reject after sig verification: group membership / bridge-state
 		// reads must not run on unauthenticated txs.
 		NewBridgeExchangeEarlyRejectDecorator(options.InferenceKeeper),
+		// Network-duty signer authorization, also after sig verification: the
+		// participant / allowlist / authz-grant reads must not run on
+		// unauthenticated txs, and for the direct path this ordering is what
+		// makes the check meaningful — creator/settler is the declared
+		// cosmos.msg.v1.signer, so by here it is an authenticated address
+		// rather than an attacker-chosen string (#1539).
+		NewNetworkDutySignerDecorator(options.InferenceKeeper),
 		ante.NewIncrementSequenceDecorator(options.AccountKeeper),
 		ibcante.NewRedundantRelayDecorator(options.IBCKeeper),
 	}
