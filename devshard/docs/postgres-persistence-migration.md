@@ -51,9 +51,9 @@ source ./config.env
 
 The command requires both versiond replicas to use PostgreSQL, rejects libpq
 overrides that can bypass the rendered DSN, compares their live storage UUIDs,
-and prints the verified UUID. The HA cutover runs this gate automatically with
-live replicas required; `--expected-identity UUID` additionally prevents
-switching away from a database recorded by an earlier successful upgrade.
+and prints the verified UUID. Release tooling calls the same gate automatically;
+`--expected-identity UUID` additionally prevents switching away from a database
+recorded by an earlier successful upgrade.
 
 For a detached legacy volume, attach
 `docker-compose.versiond-postgres-recovery.yml` temporarily and set
