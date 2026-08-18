@@ -502,10 +502,18 @@ func (am AppModule) evaluateConfirmation(
 func foldEventReadings(
 	epochGroupData *types.EpochGroupData,
 	measured, preserved, totalExpected map[string]int64,
+	maintenanceExempt ...map[string]struct{},
 ) (updated bool, ratios map[string]*types.Decimal) {
 	ratios = make(map[string]*types.Decimal, len(epochGroupData.ValidationWeights))
+	var exempt map[string]struct{}
+	if len(maintenanceExempt) > 0 {
+		exempt = maintenanceExempt[0]
+	}
 	for i, vw := range epochGroupData.ValidationWeights {
 		addr := vw.MemberAddress
+		if _, skip := exempt[addr]; skip {
+			continue
+		}
 		reading := preserved[addr] + measured[addr]
 		if totalExpected[addr] == 0 {
 			continue

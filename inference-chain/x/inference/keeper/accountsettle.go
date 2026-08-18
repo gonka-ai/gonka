@@ -318,6 +318,9 @@ func (rc *DistributedCoinInfo) calculateDistribution(participantWorkDone int64) 
 }
 
 type SettleResult struct {
-	Settle *types.SettleAmount
-	Error  error
+	Settle                  *types.SettleAmount
+	Error                   error
+	ParticipantRewardWeight uint64
+	ParticipantFullWeight   uint64
+	TotalRewardWeight       uint64
 }
