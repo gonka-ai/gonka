@@ -1,4 +1,4 @@
-.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release versiond-router-release edge-api edge-api-release edge-api-router-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build devshardd-release devshard-gateway-release print-devshard-version print-devshard-protocol-version versiond-build-docker versiond-router-build-docker edge-api-build-docker edge-api-router-build-docker testapp-server-build-docker
+.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-router-release proxy-ssl-release bridge-release versiond-release versiond-router-release edge-api edge-api-release edge-api-router-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-router-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build devshardd-release devshard-gateway-release print-devshard-version print-devshard-protocol-version versiond-build-docker versiond-router-build-docker edge-api-build-docker edge-api-router-build-docker testapp-server-build-docker
 
 # For binary release: default linux/amd64 before local Docker defaults.
 DEVSHARDD_RELEASE_DOCKER_PLATFORM := $(if $(DOCKER_PLATFORM),$(DOCKER_PLATFORM),linux/amd64)
@@ -42,7 +42,7 @@ endif
 
 all: build-docker
 
-build-docker: api-build-docker node-build-docker mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker versiond-build-docker versiond-router-build-docker edge-api-build-docker edge-api-router-build-docker testapp-server-build-docker
+build-docker: api-build-docker node-build-docker mock-server-build-docker proxy-build-docker proxy-router-build-docker proxy-ssl-build-docker bridge-build-docker versiond-build-docker versiond-router-build-docker edge-api-build-docker edge-api-router-build-docker testapp-server-build-docker
 
 api-build-docker:
 	@make -C decentralized-api build-docker SET_LATEST=1 \
@@ -63,6 +63,9 @@ mock-server-build-docker:
 
 proxy-build-docker:
 	@make -C proxy build-docker SET_LATEST=1
+
+proxy-router-build-docker:
+	@make -C proxy-router build-docker SET_LATEST=1
 
 proxy-ssl-build-docker:
 	@make -C proxy-ssl build-docker SET_LATEST=1
@@ -89,7 +92,7 @@ testapp-server-build-docker:
 	@echo "Building testapp-server docker image ($(DOCKER_PLATFORM))..."
 	@docker build --platform $(DOCKER_PLATFORM) -t testapp-server:latest -f local-test-net/Dockerfile.testapp-server .
 
-release: decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release versiond-router-release edge-api-release edge-api-router-release
+release: decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-router-release proxy-ssl-release bridge-release versiond-release versiond-router-release edge-api-release edge-api-router-release
 	@git tag $(TAG_NAME)
 	@git push origin $(TAG_NAME)
 
@@ -111,6 +114,10 @@ tmkms-release:
 proxy-release:
 	@echo "Releasing proxy..."
 	@make -C proxy release
+
+proxy-router-release:
+	@echo "Releasing proxy-router..."
+	@make -C proxy-router release
 
 proxy-ssl-release:
 	@echo "Releasing proxy-ssl..."
