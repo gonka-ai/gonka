@@ -441,14 +441,7 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 		perfStore.Close()
 		log.Fatalf("create runtimes: %v", err)
 	}
-	accountingTracker, err := accounting.OpenTracker(
-		filepath.Join(baseStorageDir, "accounting.db"),
-		accountingRetentionEpochs(),
-		accountingSnapshotInterval(),
-	)
-	if err != nil {
-		log.Printf("open accounting store: %v (accounting disabled)", err)
-	}
+	accountingTracker := openAccountingTracker(baseStorageDir)
 	limiter := NewGatewayLimiter(
 		gatewayState.Settings.MaxConcurrentRequests,
 		gatewayState.Settings.MaxInputTokensInFlight,
