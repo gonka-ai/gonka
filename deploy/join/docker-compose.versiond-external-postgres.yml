@@ -1,0 +1,18 @@
+# Applied automatically by upgrade-devshard-v5.sh when the resolved versiond
+# topology points at external PostgreSQL. It keeps the bundled database out of
+# ordinary `up` operations while preserving any operator-defined dependencies.
+services:
+  versiond:
+    depends_on:
+      devshard-postgres:
+        condition: service_healthy
+        required: false
+
+  versiond2:
+    depends_on:
+      devshard-postgres:
+        condition: service_healthy
+        required: false
+
+  devshard-postgres:
+    profiles: [gonka-local-postgres-disabled]

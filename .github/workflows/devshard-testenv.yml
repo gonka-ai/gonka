@@ -10,6 +10,13 @@ on:
       - 'common/runtimeconfig/**'
       - 'common/chain/**'
       - 'decentralized-api/nodemanager/**'
+      - 'versioned/**'
+      - 'versiond-router/**'
+      - 'proxy-router/**'
+      - 'proxy/**'
+      - 'deploy/join/docker-compose.yml'
+      - 'deploy/join/docker-compose.versiond.yml'
+      - 'deploy/join/docker-compose.edge-api-multi.yml'
       - '.github/workflows/devshard-testenv.yml'
   workflow_dispatch:
     inputs:
@@ -103,6 +110,9 @@ jobs:
         with:
           go-version: '1.25.9'
           cache-dependency-path: devshard/go.sum
+
+      - name: Generate test environment
+        run: make gen-compose
 
       # Each matrix job runs on its own runner with its own Docker daemon, so the
       # fixed citest subnet (172.31.0.0/24) never collides across suites. Suites
