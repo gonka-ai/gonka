@@ -1,0 +1,439 @@
+#!/bin/sh
+
+# Monotonically projects version names into pre-rendered HAProxy backend slots.
+# The source keeps its existing {"versions":[...]} contract; generation numbers
+# are local cache metadata, not a governance or DAPI revision. The data plane
+# remains fail-closed: a version is published in
+# the request map only after its slot has been assigned and its servers have
+# been enabled for active health checks.
+set -eu
+
+component=${ROUTING_CATALOG_COMPONENT:-router}
+catalog_url=${ROUTING_CATALOG_URL:-}
+poll_seconds=${ROUTING_CATALOG_POLL_SECONDS:-5}
+fetch_timeout=${ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS:-3}
+runtime_socket=${ROUTING_CATALOG_RUNTIME_SOCKET:-/var/run/haproxy/reconciler.sock}
+projection_map=${ROUTING_CATALOG_PROJECTION_MAP:?ROUTING_CATALOG_PROJECTION_MAP is required}
+slot_map=${ROUTING_CATALOG_SLOT_MAP:?ROUTING_CATALOG_SLOT_MAP is required}
+backend_prefix=${ROUTING_CATALOG_BACKEND_PREFIX:?ROUTING_CATALOG_BACKEND_PREFIX is required}
+backend_capacity=${ROUTING_CATALOG_BACKEND_CAPACITY:?ROUTING_CATALOG_BACKEND_CAPACITY is required}
+server_prefix=${ROUTING_CATALOG_SERVER_PREFIX:?ROUTING_CATALOG_SERVER_PREFIX is required}
+server_capacity=${ROUTING_CATALOG_SERVER_CAPACITY:?ROUTING_CATALOG_SERVER_CAPACITY is required}
+activation_min_ready=${ROUTING_CATALOG_ACTIVATION_MIN_READY:-2}
+excluded_versions=${ROUTING_CATALOG_EXCLUDE:-}
+cache_file=${ROUTING_CATALOG_CACHE_FILE:-}
+cache_bin=${ROUTING_CATALOG_CACHE_BIN:-/usr/local/lib/router-runtime/catalog-cache}
+status_file=${ROUTING_CATALOG_STATUS_FILE:-}
+
+log() {
+    printf '%s\n' "$component: $*" >&2
+}
+
+for value in "$poll_seconds" "$fetch_timeout" "$backend_capacity" \
+    "$server_capacity" "$activation_min_ready"; do
+    case "$value" in
+        '' | *[!0-9]* | 0)
+            log "catalog timing and capacity values must be positive integers"
+            exit 1
+            ;;
+    esac
+done
+[ "$activation_min_ready" -le "$server_capacity" ] || {
+    log "catalog activation reserve exceeds backend server capacity"
+    exit 1
+}
+
+case "$catalog_url" in
+    '') exit 0 ;;
+    http://* | https://*) ;;
+    *)
+        log "ROUTING_CATALOG_URL must use http or https"
+        exit 1
+        ;;
+esac
+
+command -v jq >/dev/null 2>&1 || {
+    log "jq is required for the routing catalog"
+    exit 1
+}
+command -v socat >/dev/null 2>&1 || {
+    log "socat is required for the HAProxy Runtime API"
+    exit 1
+}
+
+tmpdir=$(mktemp -d)
+cleanup() {
+    rm -rf "$tmpdir"
+}
+trap cleanup EXIT
+trap 'exit 0' HUP INT TERM
+last_state=starting
+last_names=$tmpdir/last.names
+: > "$last_names"
+last_generation=-1
+
+if [ -n "$cache_file" ] && [ -f "$cache_file" ]; then
+    [ -x "$cache_bin" ] || {
+        log "catalog cache exists but $cache_bin is unavailable"
+        exit 1
+    }
+    if ! "$cache_bin" read "$cache_file" 2147483647 > "$last_names"; then
+        log "cannot validate the last accepted catalog snapshot"
+        exit 1
+    fi
+    last_generation=$(jq -er 'if .schema == 2 then .revision else 0 end' "$cache_file") || {
+        log "cannot read the last accepted catalog generation"
+        exit 1
+    }
+fi
+
+set_state() {
+    state=$1 detail=$2 used=${3:-0}
+    if [ "$state" != "$last_state" ]; then
+        case "$state" in
+            ready)
+                [ "$last_state" = starting ] || log "catalog reconciliation recovered"
+                ;;
+            *) log "catalog reconciliation degraded: $detail" ;;
+        esac
+        last_state=$state
+    fi
+    [ -n "$status_file" ] || return 0
+    directory=$(dirname -- "$status_file")
+    [ -d "$directory" ] || return 0
+    status_tmp=$(mktemp "$directory/.catalog-status.XXXXXX") || return 0
+    if jq -n \
+        --arg state "$state" \
+        --arg detail "$detail" \
+        --argjson observed_at_unix "$(date +%s)" \
+        --argjson used "$used" \
+        --argjson capacity "$backend_capacity" \
+        '{schema: 1, state: $state, detail: $detail,
+          observed_at_unix: $observed_at_unix,
+          dynamic_slots_used: $used, dynamic_slots_capacity: $capacity}' \
+        > "$status_tmp"; then
+        chmod 600 "$status_tmp"
+        mv -f "$status_tmp" "$status_file"
+    else
+        rm -f "$status_tmp"
+    fi
+}
+
+runtime() {
+    printf '%s\n' "$1" | socat - "UNIX-CONNECT:$runtime_socket"
+}
+
+# HAProxy's Runtime API treats a semicolon followed by whitespace as a command
+# separator. Version names cannot contain whitespace or backslashes, and an
+# escaped semicolon preserves the remaining basename characters literally.
+runtime_key() {
+    printf '%s' "$1" | sed 's/;/\\;/g'
+}
+
+urlencode() {
+    printf '%s' "$1" | awk '
+        BEGIN { for (i = 0; i < 256; i++) ord[sprintf("%c", i)] = i }
+        {
+            n = split($0, c, "")
+            for (i = 1; i <= n; i++) {
+                if (c[i] ~ /[A-Za-z0-9._~-]/) printf "%s", c[i]
+                else printf "%%%02X", ord[c[i]]
+            }
+        }'
+}
+
+validate_version() {
+	printf '%s\n' "$1" | LC_ALL=C grep -Eq '^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}$'
+}
+
+version_excluded() {
+    version=$1
+    printf '%s\n' "$excluded_versions" | tr ',;' '  ' | tr -s ' ' '\n' | \
+        awk -v version="$version" '$0 "" == version "" { found = 1 } END { exit !found }'
+}
+
+fetch_catalog() {
+    body=$tmpdir/catalog.json
+    names=$tmpdir/catalog.names
+    if ! wget -q -T "$fetch_timeout" -O "$body" "$catalog_url"; then
+        return 1
+    fi
+    if ! jq -r '
+        if type != "object" then error("catalog is not an object") else . end
+        |
+        .versions as $versions
+        | if ($versions | type) != "array" then error("versions is not an array") else $versions end
+        | .[]
+        | if (.name | type) != "string" then error("version name is not a string") else .name end
+    ' "$body" > "$names"; then
+        return 1
+    fi
+    if duplicate=$(LC_ALL=C sort "$names" | uniq -d | sed -n '1p') && [ -n "$duplicate" ]; then
+        return 1
+    fi
+    while IFS= read -r version; do
+        validate_version "$version" || return 1
+    done < "$names"
+    LC_ALL=C sort -u "$names" -o "$names"
+}
+
+validate_catalog_progression() {
+    removed=$(awk '
+        NR == FNR { current[$0] = 1; next }
+        !($0 in current) { print; exit }
+    ' "$tmpdir/catalog.names" "$last_names")
+    [ -z "$removed" ] || return 1
+
+    if [ "$last_generation" -ge 0 ] && cmp -s "$last_names" "$tmpdir/catalog.names"; then
+        catalog_generation=$last_generation
+    else
+        catalog_generation=$((last_generation + 1))
+    fi
+}
+
+persist_catalog() {
+    [ -n "$cache_file" ] || return 0
+    [ -x "$cache_bin" ] || return 1
+    "$cache_bin" write "$tmpdir/catalog.names" "$cache_file" "$catalog_generation"
+}
+
+accept_catalog() {
+    cp "$tmpdir/catalog.names" "$last_names"
+    last_generation=$catalog_generation
+}
+
+map_snapshot() {
+    runtime "show map $1" 2>/dev/null
+}
+
+mapped_backend() {
+    version=$1
+    awk -v version="$version" '$2 "" == version "" { print $3; exit }'
+}
+
+slot_for_encoded_version() {
+    encoded=$1
+    awk -v encoded="$encoded" -v prefix="$backend_prefix" '
+        index($2, prefix) == 1 && $3 "" == encoded "" { print $2; exit }
+    '
+}
+
+free_slot() {
+    awk -v prefix="$backend_prefix" '
+        index($2, prefix) == 1 && $3 == "__unassigned__" { print $2; exit }
+    '
+}
+
+map_value_is() {
+    map=$1 key=$2 expected=$3
+    map_snapshot "$map" | awk -v key="$key" -v expected="$expected" '
+        $2 "" == key "" && $3 "" == expected "" { found = 1 }
+        END { exit !found }
+    '
+}
+
+assign_slot() {
+    backend=$1 encoded=$2
+    escaped_backend=$(runtime_key "$backend")
+    escaped_encoded=$(runtime_key "$encoded")
+    response=$(runtime "set map $slot_map $escaped_backend $escaped_encoded" 2>&1) || return 1
+    [ -z "$response" ] || return 1
+    map_value_is "$slot_map" "$backend" "$encoded"
+}
+
+enable_slot() {
+    backend=$1
+    index=1
+    while [ "$index" -le "$server_capacity" ]; do
+        response=$(runtime "enable server $backend/$server_prefix$index" 2>&1) || return 1
+        [ -z "$response" ] || return 1
+        index=$((index + 1))
+    done
+}
+
+ready_server_count() {
+    backend=$1
+    runtime "show stat" 2>/dev/null | awk -F, -v backend="$backend" '
+        $1 == backend && $2 != "BACKEND" && $18 ~ /^UP/ { ready++ }
+        END { print ready + 0 }
+    '
+}
+
+prepare_map_transaction() {
+	map=$1
+	response=$(runtime "prepare map $map" 2>&1) || return 1
+	transaction=$(printf '%s\n' "$response" | awk '
+		$1 == "New" && $2 == "version" && $3 == "created:" && $4 ~ /^[0-9]+$/ {
+			print $4
+		}
+	')
+	case "$transaction" in
+		'' | *[!0-9]*) return 1 ;;
+	esac
+	printf '%s\n' "$transaction"
+}
+
+publish_projection() {
+	map=$projection_map
+	if ! awk '$4 == 1 || $5 == 1 { found = 1 } END { exit !found }' \
+		"$tmpdir/projection.plan"; then
+		return 0
+	fi
+
+	transaction=$(prepare_map_transaction "$map") || return 1
+	# `prepare map` creates an empty replacement, not a copy. Seed the
+	# transaction with the complete live view before adding this projection.
+	while read -r _ key value; do
+		[ -n "$key" ] || continue
+		escaped_key=$(runtime_key "$key")
+		escaped_value=$(runtime_key "$value")
+		response=$(runtime "add map @$transaction $map $escaped_key $escaped_value" 2>&1) || return 1
+		[ -z "$response" ] || return 1
+	done < "$tmpdir/projection.current"
+	while read -r version encoded backend publish_version_entry publish_ready_entry; do
+		escaped_backend=$(runtime_key "$backend")
+		if [ "$publish_version_entry" -eq 1 ]; then
+			escaped_key=$(runtime_key "$version")
+			response=$(runtime "add map @$transaction $map $escaped_key $escaped_backend" 2>&1) || return 1
+			[ -z "$response" ] || return 1
+		fi
+		if [ "$publish_ready_entry" -eq 1 ]; then
+			escaped_key=$(runtime_key "version=$encoded")
+			response=$(runtime "add map @$transaction $map $escaped_key $escaped_backend" 2>&1) || return 1
+			[ -z "$response" ] || return 1
+		fi
+	done < "$tmpdir/projection.plan"
+	response=$(runtime "commit map @$transaction $map" 2>&1) || return 1
+	[ -z "$response" ] || return 1
+
+	while read -r version encoded backend publish_version_entry publish_ready_entry; do
+		[ "$publish_version_entry" -ne 1 ] || \
+			map_value_is "$map" "$version" "$backend" || return 1
+		[ "$publish_ready_entry" -ne 1 ] || \
+			map_value_is "$map" "version=$encoded" "$backend" || return 1
+	done < "$tmpdir/projection.plan"
+}
+
+publish_catalog() {
+	# Data routing and parent admission are keys in one HAProxy map. One map
+	# transaction is their shared visibility point, so neither can lead the other.
+	publish_projection || return 1
+	while read -r version _ _ publish_version_entry _; do
+		[ "$publish_version_entry" -eq 1 ] || continue
+		log "declared governance version '$version'"
+	done < "$tmpdir/projection.plan"
+}
+
+prepare_catalog() {
+	projection_state=$(map_snapshot "$projection_map") || return 1
+	version_state=$projection_state
+	ready_state=$projection_state
+	slot_state=$(map_snapshot "$slot_map") || return 1
+	printf '%s\n' "$projection_state" > "$tmpdir/projection.current"
+	: > "$tmpdir/projection.plan"
+
+    # Capacity is checked before the first Runtime API mutation. Without this
+    # preflight a snapshot with N+1 new names and N free slots would publish a
+    # prefix, report exhaustion, and then lose that uncommitted prefix after a
+    # restart because the cache correctly retained the previous full snapshot.
+    free_capacity=$(printf '%s\n' "$slot_state" | awk -v prefix="$backend_prefix" '
+        index($2, prefix) == 1 && $3 == "__unassigned__" {n++}
+        END {print n + 0}
+    ')
+    required_capacity=0
+    capacity_missing=
+    while IFS= read -r version; do
+        [ -n "$version" ] || continue
+        version_excluded "$version" && continue
+        encoded=$(urlencode "$version")
+        backend=$(printf '%s\n' "$version_state" | mapped_backend "$version")
+        [ -n "$backend" ] || \
+            backend=$(printf '%s\n' "$slot_state" | slot_for_encoded_version "$encoded")
+        [ -n "$backend" ] && continue
+        required_capacity=$((required_capacity + 1))
+        if [ "$required_capacity" -gt "$free_capacity" ] && [ -z "$capacity_missing" ]; then
+            capacity_missing=$version
+        fi
+    done < "$tmpdir/catalog.names"
+    [ -z "$capacity_missing" ] || return 2
+
+	while IFS= read -r version; do
+		[ -n "$version" ] || continue
+		version_excluded "$version" && continue
+		encoded=$(urlencode "$version")
+		backend=$(printf '%s\n' "$version_state" | mapped_backend "$version")
+		publish_version_entry=0
+		if [ -z "$backend" ]; then
+			backend=$(printf '%s\n' "$slot_state" | slot_for_encoded_version "$encoded")
+			if [ -z "$backend" ]; then
+				backend=$(printf '%s\n' "$slot_state" | free_slot)
+				if [ -z "$backend" ]; then
+					capacity_missing=$version
+					return 2
+				fi
+				assign_slot "$backend" "$encoded" || return 1
+				slot_state=$(map_snapshot "$slot_map") || return 1
+			fi
+			enable_slot "$backend" || return 1
+			publish_version_entry=1
+		fi
+		publish_ready_entry=0
+		if ! printf '%s\n' "$ready_state" | mapped_backend "version=$encoded" \
+			| grep -Fqx "$backend"; then
+			publish_ready_entry=1
+		fi
+		printf '%s %s %s %s %s\n' "$version" "$encoded" "$backend" \
+			"$publish_version_entry" "$publish_ready_entry" \
+			>> "$tmpdir/projection.plan"
+	done < "$tmpdir/catalog.names"
+
+	# No route in this projection becomes visible until every new backend has the
+	# configured reserve. Slot assignment and checks are staging mutations only.
+	while read -r version _ backend publish_version_entry _; do
+		[ "$publish_version_entry" -eq 1 ] || continue
+		ready=$(ready_server_count "$backend") || return 1
+		if [ "$ready" -lt "$activation_min_ready" ]; then
+			activation_version=$version
+			activation_ready=$ready
+			return 3
+		fi
+	done < "$tmpdir/projection.plan"
+}
+
+while :; do
+    if [ ! -S "$runtime_socket" ]; then
+        set_state runtime-unavailable "HAProxy Runtime API is not ready"
+    elif ! fetch_catalog; then
+        set_state fetch-error "cannot fetch or validate $catalog_url"
+    elif ! validate_catalog_progression; then
+        set_state projection-error \
+            "catalog removed a previously projected version"
+    else
+		reconcile_status=0
+		prepare_catalog || reconcile_status=$?
+        used=$(map_snapshot "$slot_map" 2>/dev/null | \
+            awk -v prefix="$backend_prefix" \
+                'index($2, prefix) == 1 && $3 != "__unassigned__" {n++} END {print n + 0}')
+        if [ "$reconcile_status" -eq 2 ]; then
+            set_state capacity-exhausted \
+                "no free backend slot for governance version '$capacity_missing'" "$used"
+        elif [ "$reconcile_status" -eq 3 ]; then
+            set_state activation-pending \
+                "governance version '$activation_version' has $activation_ready/$activation_min_ready ready backends" "$used"
+		elif [ "$reconcile_status" -ne 0 ]; then
+			set_state runtime-error "HAProxy rejected a catalog projection" "$used"
+		elif ! persist_catalog; then
+			set_state cache-error "cannot persist the last valid catalog snapshot" "$used"
+		else
+			# The cache is the durable commit point. A process crash after this point
+			# restores the whole projection before the catalog endpoint is available.
+			accept_catalog
+			if publish_catalog; then
+				set_state ready "catalog and runtime maps are current" "$used"
+			else
+				set_state runtime-error "HAProxy rejected an accepted catalog projection" "$used"
+			fi
+		fi
+    fi
+    sleep "$poll_seconds"
+done
