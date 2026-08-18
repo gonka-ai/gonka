@@ -117,7 +117,7 @@ func SetTrustedBlock() *cobra.Command {
 			}
 
 			if err = updateTrustedBlock(configFilePath, trustedBlockHeight, trustedBlockHash); err != nil {
-				return fmt.Errorf("failed to set trusted block wih block_height %v and block_hash %v: %w", trustedBlockHeight, trustedBlockHash, err)
+				return fmt.Errorf("failed to set trusted block with block_height %v and block_hash %v: %w", trustedBlockHeight, trustedBlockHash, err)
 			}
 			fmt.Printf("Successfully set the statesync.trust_height with value %v and statesync.trust_hash with value %v", trustedBlockHeight, trustedBlockHash)
 			return nil

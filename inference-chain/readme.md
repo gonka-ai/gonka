@@ -16,7 +16,7 @@ make build
 
 set up envs and basic config:
 ```shell
-./srcipts/init-local.sh
+./scripts/init-local.sh
 ```
 
 TODO: run at least genesis node

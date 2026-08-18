@@ -38,7 +38,7 @@ func (k Keeper) ReleaseFromEscrow(ctx sdk.Context, toAddr sdk.AccAddress, amount
 
 // IsBridgeContractAddress checks if the given contract address matches any registered bridge addresses for the specific chain
 func (k Keeper) IsBridgeContractAddress(ctx context.Context, chainId, contractAddress string) bool {
-	// Set already forces toLower, so we can directy index
+	// Set already forces toLower, so we can directly index
 	normalizedInput := strings.ToLower(contractAddress)
 
 	has, err := k.BridgeContractAddresses.Has(ctx, collections.Join(chainId, normalizedInput))

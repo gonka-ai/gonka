@@ -16,7 +16,7 @@ a problem with config or bad state. But if it's in the test itself, the errors c
 unexpected problem such as an exception or an assertion failure, as well as many other issues.
 
 **HOWEVER**: There are usually a few errors expected here and there, especially when any part of the system
-is rebooted or reinitialized. Additionally, Upgrade tests will have several errors in them regarging
+is rebooted or reinitialized. Additionally, Upgrade tests will have several errors in them regarding
 missing upgrade code, which is what TRIGGERS the upgrade.
 ### Known Errors: (ignore)
 #### Related to restarting the chain:

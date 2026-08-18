@@ -20,7 +20,7 @@ func (k Keeper) CheckPoCMessageTooLate(ctx sdk.Context, startBlockHeight int64, 
 
 	if startBlockHeight > currentBlockHeight {
 		// It may filter legit transaction if the node is behind (node lag / state sync),
-		// But hope that it will be propogated by other nodes
+		// But hope that it will be propagated by other nodes
 		// TODO: In the next release, skip the filter on CheckTx, and enforce only on DeliverTx.
 		k.Logger().Debug(
 			"[ValidatePocPeriod] POC submission is too early",
