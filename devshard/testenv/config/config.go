@@ -129,7 +129,7 @@ type VersiondCfg struct {
 	KeyringPassword  string `yaml:"keyring_password"`
 }
 
-// VersiondRouterCfg is the sticky nginx router in front of versiond instances.
+// VersiondRouterCfg is the sticky HAProxy router in front of versiond instances.
 type VersiondRouterCfg struct {
 	Host string `yaml:"host"`
 	Port int    `yaml:"port"`
