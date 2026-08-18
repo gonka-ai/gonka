@@ -68,7 +68,9 @@ service Msg {
   rpc CreateTrainshardProposal         (MsgCreateTrainshardProposal) returns (MsgCreateTrainshardProposalResponse);
   rpc AssembleTrainshard               (MsgAssembleTrainshard) returns (MsgAssembleTrainshardResponse);
   rpc SettleTrainshard                 (MsgSettleTrainshard) returns (MsgSettleTrainshardResponse);
+  rpc AutokickTrainshardNode           (MsgAutokickTrainshardNode) returns (MsgAutokickTrainshardNodeResponse);
   rpc SetTrainingNodeOptIn             (MsgSetTrainingNodeOptIn) returns (MsgSetTrainingNodeOptInResponse);
+  rpc RefreshTrainingNodeOptIn         (MsgRefreshTrainingNodeOptIn) returns (MsgRefreshTrainingNodeOptInResponse);
 }
 // MsgUpdateParams is the Msg/UpdateParams request type.
 message MsgUpdateParams {
@@ -474,7 +476,6 @@ message MsgCancelMaintenance {
 
 message MsgCancelMaintenanceResponse {}
 
-// MsgCreateTrainshardProposal stores an approved training proposal
 message MsgCreateTrainshardProposal {
   option (cosmos.msg.v1.signer) = "authority";
   string authority = 1;
@@ -482,13 +483,14 @@ message MsgCreateTrainshardProposal {
   string gpu_profile_id = 3;
   uint32 max_nodes = 4;
   int64 max_duration_blocks = 5;
+  string base_image = 6;
+  string run_key = 7;
 }
 
 message MsgCreateTrainshardProposalResponse {
   uint64 proposal_id = 1;
 }
 
-// MsgAssembleTrainshard opens an ACTIVE shard from an OPEN proposal
 message MsgAssembleTrainshard {
   option (cosmos.msg.v1.signer) = "creator";
   string creator = 1;
@@ -499,7 +501,6 @@ message MsgAssembleTrainshardResponse {
   uint64 trainshard_id = 1;
 }
 
-// MsgSettleTrainshard releases reserved nodes of an active shard
 message MsgSettleTrainshard {
   option (cosmos.msg.v1.signer) = "creator";
   string creator = 1;
@@ -508,7 +509,18 @@ message MsgSettleTrainshard {
 
 message MsgSettleTrainshardResponse {}
 
-// MsgSetTrainingNodeOptIn opts a node in or out of training eligibility
+message MsgAutokickTrainshardNode {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  uint64 trainshard_id = 2;
+  string participant = 3;
+  string node_id = 4;
+  string reason = 5;
+  string request_id = 6;
+}
+
+message MsgAutokickTrainshardNodeResponse {}
+
 message MsgSetTrainingNodeOptIn {
   option (cosmos.msg.v1.signer) = "creator";
   string creator = 1;
@@ -517,3 +529,13 @@ message MsgSetTrainingNodeOptIn {
 }
 
 message MsgSetTrainingNodeOptInResponse {}
+
+message MsgRefreshTrainingNodeOptIn {
+  option (cosmos.msg.v1.signer) = "creator";
+  string creator = 1;
+  repeated string node_ids = 2;
+}
+
+message MsgRefreshTrainingNodeOptInResponse {
+  int64 expires_at_height = 1;
+}

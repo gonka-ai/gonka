@@ -22,6 +22,14 @@ func (k msgServer) CreateTrainshardProposal(goCtx context.Context, msg *types.Ms
 	if _, err := sdk.AccAddressFromBech32(msg.Creator); err != nil {
 		return nil, types.ErrInvalidAddress.Wrapf("creator: %s", msg.Creator)
 	}
+	if err := types.ValidatePinnedImage(msg.BaseImage); err != nil {
+		return nil, err
+	}
+	if msg.RunKey != "" {
+		if _, err := sdk.AccAddressFromBech32(msg.RunKey); err != nil {
+			return nil, types.ErrInvalidAddress.Wrapf("run_key: %s", msg.RunKey)
+		}
+	}
 
 	id, err := k.nextTrainshardProposalId(goCtx)
 	if err != nil {
@@ -34,6 +42,8 @@ func (k msgServer) CreateTrainshardProposal(goCtx context.Context, msg *types.Ms
 		MaxNodes:          msg.MaxNodes,
 		MaxDurationBlocks: msg.MaxDurationBlocks,
 		Status:            types.TrainshardProposalStatus_TRAINSHARD_PROPOSAL_STATUS_OPEN,
+		BaseImage:         msg.BaseImage,
+		RunKey:            msg.RunKey,
 	}
 	if err := k.TrainshardProposals.Set(goCtx, id, proposal); err != nil {
 		return nil, err

@@ -1047,7 +1047,7 @@ func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effecti
 	}
 
 	// subtract reserved frozen weight from network total and per-model voting power
-	reservedByModelHost, reservedByHost := am.keeper.CollectEpochReservedWeightTotals(ctx, epochIndex)
+	reservedByModelHost, reservedByHost := am.keeper.CollectEpochReservedWeightTotals(ctx, epochIndex, keeper.ReservationScopeShield)
 
 	rootGroupData := currentGroup.GroupData
 	consensusWeights := make(map[string]int64, len(rootGroupData.ValidationWeights))

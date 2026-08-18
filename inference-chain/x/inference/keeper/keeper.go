@@ -128,25 +128,26 @@ type (
 		// instead of every participant's MaintenanceState (DoS protection).
 		MaintenanceScheduledIndex collections.KeySet[uint64]
 		// PoC delegation collections
-		PoCDelegations              collections.Map[collections.Pair[string, string], types.PoCDelegation]
-		PoCRefusals                 collections.KeySet[collections.Pair[string, string]]
-		PoCDirectIntents            collections.KeySet[collections.Pair[string, string]]
-		DelegationSnapshot          collections.Item[types.DelegationSnapshot]
-		BootstrapDelegationSnapshot collections.Item[types.BootstrapDelegationSnapshot]
+		PoCDelegations                   collections.Map[collections.Pair[string, string], types.PoCDelegation]
+		PoCRefusals                      collections.KeySet[collections.Pair[string, string]]
+		PoCDirectIntents                 collections.KeySet[collections.Pair[string, string]]
+		DelegationSnapshot               collections.Item[types.DelegationSnapshot]
+		BootstrapDelegationSnapshot      collections.Item[types.BootstrapDelegationSnapshot]
 		DelegationRewardTransferSnapshot collections.Item[types.DelegationRewardTransferSnapshot]
-		ClaimRecipients                 collections.Map[collections.Pair[sdk.AccAddress, uint64], string]
-		ClaimRecipientsByEpoch          collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
-		// Trainshard collections
-		Trainshards               collections.Map[uint64, types.Trainshard]
-		TrainshardCounter         collections.Item[uint64]
-		TrainshardActiveIndex     collections.KeySet[uint64]
-		TrainshardExpiryIndex     collections.KeySet[collections.Pair[int64, uint64]]
-		TrainshardClosedIndex     collections.KeySet[collections.Pair[int64, uint64]]
-		TrainshardReservations    collections.Map[collections.Pair[string, string], uint64]
-		TrainingNodeOptIns        collections.KeySet[collections.Pair[string, string]]
-		TrainshardProposals       collections.Map[uint64, types.TrainshardProposal]
-		TrainshardProposalCounter collections.Item[uint64]
-		TrainshardCreatorCooldown collections.Map[string, int64]
+		ClaimRecipients                  collections.Map[collections.Pair[sdk.AccAddress, uint64], string]
+		ClaimRecipientsByEpoch           collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
+		Trainshards                      collections.Map[uint64, types.Trainshard]
+		TrainshardCounter                collections.Item[uint64]
+		TrainshardActiveIndex            collections.KeySet[uint64]
+		TrainshardExpiryIndex            collections.KeySet[collections.Pair[int64, uint64]]
+		TrainshardClosedIndex            collections.KeySet[collections.Pair[int64, uint64]]
+		TrainshardReservations           collections.Map[collections.Pair[string, string], uint64]
+		TrainshardReleaseIndex           collections.KeySet[collections.Triple[int64, string, string]]
+		TrainshardAutokickRequest        collections.KeySet[collections.Pair[uint64, string]]
+		TrainingNodeOptIns               collections.Map[collections.Pair[string, string], int64]
+		TrainshardProposals              collections.Map[uint64, types.TrainshardProposal]
+		TrainshardProposalCounter        collections.Item[uint64]
+		TrainshardCreatorCooldown        collections.Map[string, int64]
 	}
 )
 
@@ -681,7 +682,6 @@ func NewKeeper(
 			"claim_recipients_by_epoch",
 			collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
 		),
-		// Trainshard collections
 		Trainshards: collections.NewMap(
 			sb,
 			types.TrainshardsPrefix,
@@ -720,11 +720,24 @@ func NewKeeper(
 			collections.PairKeyCodec(collections.StringKey, collections.StringKey),
 			collections.Uint64Value,
 		),
-		TrainingNodeOptIns: collections.NewKeySet(
+		TrainshardReleaseIndex: collections.NewKeySet(
+			sb,
+			types.TrainshardReleaseIndexPrefix,
+			"trainshard_release_index",
+			collections.TripleKeyCodec(collections.Int64Key, collections.StringKey, collections.StringKey),
+		),
+		TrainshardAutokickRequest: collections.NewKeySet(
+			sb,
+			types.TrainshardAutokickRequestPrefix,
+			"trainshard_autokick_request",
+			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
+		),
+		TrainingNodeOptIns: collections.NewMap(
 			sb,
 			types.TrainingNodeOptInsPrefix,
 			"training_node_opt_ins",
 			collections.PairKeyCodec(collections.StringKey, collections.StringKey),
+			collections.Int64Value,
 		),
 		TrainshardProposals: collections.NewMap(
 			sb,

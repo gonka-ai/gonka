@@ -11,6 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+const trainshardTestBaseImage = "registry.example.com/trainer@sha256:" +
+	"1111111111111111111111111111111111111111111111111111111111111111"
+
 func makeCreateTrainshardProposalMsg(authority string) *types.MsgCreateTrainshardProposal {
 	return &types.MsgCreateTrainshardProposal{
 		Authority:         authority,
@@ -18,7 +21,18 @@ func makeCreateTrainshardProposalMsg(authority string) *types.MsgCreateTrainshar
 		GpuProfileId:      "NVIDIA H100 x8",
 		MaxNodes:          1,
 		MaxDurationBlocks: types.DefaultTrainingMinDurationBlocks,
+		BaseImage:         trainshardTestBaseImage,
 	}
+}
+
+func TestMsgServer_CreateTrainshardProposal_RejectsUnpinnedBaseImage(t *testing.T) {
+	k, ms, ctx := setupMsgServer(t)
+
+	msg := makeCreateTrainshardProposalMsg(k.GetAuthority())
+	msg.BaseImage = "registry.example.com/trainer:latest"
+
+	_, err := ms.CreateTrainshardProposal(ctx, msg)
+	require.ErrorIs(t, err, types.ErrTrainshardBaseImageInvalid)
 }
 
 func TestMsgServer_CreateTrainshardProposal_Permissions(t *testing.T) {
@@ -49,6 +63,7 @@ func TestMsgServer_CreateTrainshardProposal_CreatesOpenProposalAndIncrementsCoun
 	require.Equal(t, msg1.GpuProfileId, p1.GpuProfileId)
 	require.Equal(t, msg1.MaxNodes, p1.MaxNodes)
 	require.Equal(t, msg1.MaxDurationBlocks, p1.MaxDurationBlocks)
+	require.Equal(t, msg1.BaseImage, p1.BaseImage)
 	require.Equal(t, types.TrainshardProposalStatus_TRAINSHARD_PROPOSAL_STATUS_OPEN, p1.Status)
 
 	counter, err := k.TrainshardProposalCounter.Get(ctx)

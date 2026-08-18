@@ -60,7 +60,9 @@ const (
 	Msg_CreateTrainshardProposal_FullMethodName         = "/inference.inference.Msg/CreateTrainshardProposal"
 	Msg_AssembleTrainshard_FullMethodName               = "/inference.inference.Msg/AssembleTrainshard"
 	Msg_SettleTrainshard_FullMethodName                 = "/inference.inference.Msg/SettleTrainshard"
+	Msg_AutokickTrainshardNode_FullMethodName           = "/inference.inference.Msg/AutokickTrainshardNode"
 	Msg_SetTrainingNodeOptIn_FullMethodName             = "/inference.inference.Msg/SetTrainingNodeOptIn"
+	Msg_RefreshTrainingNodeOptIn_FullMethodName         = "/inference.inference.Msg/RefreshTrainingNodeOptIn"
 )
 
 // MsgClient is the client API for Msg service.
@@ -112,7 +114,9 @@ type MsgClient interface {
 	CreateTrainshardProposal(ctx context.Context, in *MsgCreateTrainshardProposal, opts ...grpc.CallOption) (*MsgCreateTrainshardProposalResponse, error)
 	AssembleTrainshard(ctx context.Context, in *MsgAssembleTrainshard, opts ...grpc.CallOption) (*MsgAssembleTrainshardResponse, error)
 	SettleTrainshard(ctx context.Context, in *MsgSettleTrainshard, opts ...grpc.CallOption) (*MsgSettleTrainshardResponse, error)
+	AutokickTrainshardNode(ctx context.Context, in *MsgAutokickTrainshardNode, opts ...grpc.CallOption) (*MsgAutokickTrainshardNodeResponse, error)
 	SetTrainingNodeOptIn(ctx context.Context, in *MsgSetTrainingNodeOptIn, opts ...grpc.CallOption) (*MsgSetTrainingNodeOptInResponse, error)
+	RefreshTrainingNodeOptIn(ctx context.Context, in *MsgRefreshTrainingNodeOptIn, opts ...grpc.CallOption) (*MsgRefreshTrainingNodeOptInResponse, error)
 }
 
 type msgClient struct {
@@ -492,9 +496,27 @@ func (c *msgClient) SettleTrainshard(ctx context.Context, in *MsgSettleTrainshar
 	return out, nil
 }
 
+func (c *msgClient) AutokickTrainshardNode(ctx context.Context, in *MsgAutokickTrainshardNode, opts ...grpc.CallOption) (*MsgAutokickTrainshardNodeResponse, error) {
+	out := new(MsgAutokickTrainshardNodeResponse)
+	err := c.cc.Invoke(ctx, Msg_AutokickTrainshardNode_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *msgClient) SetTrainingNodeOptIn(ctx context.Context, in *MsgSetTrainingNodeOptIn, opts ...grpc.CallOption) (*MsgSetTrainingNodeOptInResponse, error) {
 	out := new(MsgSetTrainingNodeOptInResponse)
 	err := c.cc.Invoke(ctx, Msg_SetTrainingNodeOptIn_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) RefreshTrainingNodeOptIn(ctx context.Context, in *MsgRefreshTrainingNodeOptIn, opts ...grpc.CallOption) (*MsgRefreshTrainingNodeOptInResponse, error) {
+	out := new(MsgRefreshTrainingNodeOptInResponse)
+	err := c.cc.Invoke(ctx, Msg_RefreshTrainingNodeOptIn_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -550,7 +572,9 @@ type MsgServer interface {
 	CreateTrainshardProposal(context.Context, *MsgCreateTrainshardProposal) (*MsgCreateTrainshardProposalResponse, error)
 	AssembleTrainshard(context.Context, *MsgAssembleTrainshard) (*MsgAssembleTrainshardResponse, error)
 	SettleTrainshard(context.Context, *MsgSettleTrainshard) (*MsgSettleTrainshardResponse, error)
+	AutokickTrainshardNode(context.Context, *MsgAutokickTrainshardNode) (*MsgAutokickTrainshardNodeResponse, error)
 	SetTrainingNodeOptIn(context.Context, *MsgSetTrainingNodeOptIn) (*MsgSetTrainingNodeOptInResponse, error)
+	RefreshTrainingNodeOptIn(context.Context, *MsgRefreshTrainingNodeOptIn) (*MsgRefreshTrainingNodeOptInResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -681,8 +705,14 @@ func (UnimplementedMsgServer) AssembleTrainshard(context.Context, *MsgAssembleTr
 func (UnimplementedMsgServer) SettleTrainshard(context.Context, *MsgSettleTrainshard) (*MsgSettleTrainshardResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SettleTrainshard not implemented")
 }
+func (UnimplementedMsgServer) AutokickTrainshardNode(context.Context, *MsgAutokickTrainshardNode) (*MsgAutokickTrainshardNodeResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method AutokickTrainshardNode not implemented")
+}
 func (UnimplementedMsgServer) SetTrainingNodeOptIn(context.Context, *MsgSetTrainingNodeOptIn) (*MsgSetTrainingNodeOptInResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetTrainingNodeOptIn not implemented")
+}
+func (UnimplementedMsgServer) RefreshTrainingNodeOptIn(context.Context, *MsgRefreshTrainingNodeOptIn) (*MsgRefreshTrainingNodeOptInResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RefreshTrainingNodeOptIn not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -1435,6 +1465,24 @@ func _Msg_SettleTrainshard_Handler(srv interface{}, ctx context.Context, dec fun
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_AutokickTrainshardNode_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgAutokickTrainshardNode)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).AutokickTrainshardNode(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_AutokickTrainshardNode_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).AutokickTrainshardNode(ctx, req.(*MsgAutokickTrainshardNode))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Msg_SetTrainingNodeOptIn_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MsgSetTrainingNodeOptIn)
 	if err := dec(in); err != nil {
@@ -1449,6 +1497,24 @@ func _Msg_SetTrainingNodeOptIn_Handler(srv interface{}, ctx context.Context, dec
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MsgServer).SetTrainingNodeOptIn(ctx, req.(*MsgSetTrainingNodeOptIn))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_RefreshTrainingNodeOptIn_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgRefreshTrainingNodeOptIn)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).RefreshTrainingNodeOptIn(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_RefreshTrainingNodeOptIn_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).RefreshTrainingNodeOptIn(ctx, req.(*MsgRefreshTrainingNodeOptIn))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1625,8 +1691,16 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Msg_SettleTrainshard_Handler,
 		},
 		{
+			MethodName: "AutokickTrainshardNode",
+			Handler:    _Msg_AutokickTrainshardNode_Handler,
+		},
+		{
 			MethodName: "SetTrainingNodeOptIn",
 			Handler:    _Msg_SetTrainingNodeOptIn_Handler,
+		},
+		{
+			MethodName: "RefreshTrainingNodeOptIn",
+			Handler:    _Msg_RefreshTrainingNodeOptIn_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

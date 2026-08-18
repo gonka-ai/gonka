@@ -47,7 +47,8 @@ func CanonicalGpuProfileId(node *types.HardwareNode) string {
 	return strings.Join(parts, " | ")
 }
 
-// IsNodeReserved checks whether a node is reserved by an active shard
+// IsNodeReserved checks whether a node is held by training: either reserved by
+// an active shard or still inside its return buffer after release
 func (k Keeper) IsNodeReserved(ctx context.Context, participant, nodeId string) bool {
 	has, err := k.TrainshardReservations.Has(ctx, collections.Join(participant, nodeId))
 	if err != nil {
@@ -58,19 +59,64 @@ func (k Keeper) IsNodeReserved(ctx context.Context, participant, nodeId string) 
 	return has
 }
 
-// HasActiveTrainReservation checks whether a host has any reserved node
+// IsNodeActivelyReserved checks whether a shard still runs on the node. A node
+// inside its return buffer is not actively reserved, so the host may change it.
+func (k Keeper) IsNodeActivelyReserved(ctx context.Context, participant, nodeId string) bool {
+	shardId, err := k.TrainshardReservations.Get(ctx, collections.Join(participant, nodeId))
+	if errors.Is(err, collections.ErrNotFound) {
+		return false
+	}
+	if err == nil {
+		var shard types.Trainshard
+		if shard, err = k.Trainshards.Get(ctx, shardId); errors.Is(err, collections.ErrNotFound) {
+			return false
+		}
+		if err == nil {
+			return trainshardHasActiveNode(&shard, participant, nodeId)
+		}
+	}
+	k.LogError("IsNodeActivelyReserved lookup failed, failing closed", types.Training,
+		"participant", participant, "node_id", nodeId, "error", err)
+	return true
+}
+
+// HasActiveTrainReservation checks whether a host has a node a shard still runs
+// on. Nodes inside the return buffer do not block identity or stake changes.
 func (k Keeper) HasActiveTrainReservation(ctx context.Context, participant string) bool {
 	rng := collections.NewPrefixedPairRange[string, string](participant)
 	var reserved bool
-	if err := k.TrainshardReservations.Walk(ctx, rng, func(_ collections.Pair[string, string], _ uint64) (bool, error) {
-		reserved = true
-		return true, nil
+	if err := k.TrainshardReservations.Walk(ctx, rng, func(key collections.Pair[string, string], shardId uint64) (bool, error) {
+		shard, err := k.Trainshards.Get(ctx, shardId)
+		if errors.Is(err, collections.ErrNotFound) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		if trainshardHasActiveNode(&shard, participant, key.K2()) {
+			reserved = true
+			return true, nil
+		}
+		return false, nil
 	}); err != nil {
 		k.LogError("HasActiveTrainReservation walk failed, failing closed", types.Training,
 			"participant", participant, "error", err)
 		return true
 	}
 	return reserved
+}
+
+func trainshardHasActiveNode(shard *types.Trainshard, participant, nodeId string) bool {
+	for _, n := range shard.Nodes {
+		if n.Participant == participant && n.NodeId == nodeId && isActiveReservedNode(n) {
+			return true
+		}
+	}
+	return false
+}
+
+func isActiveReservedNode(n *types.TrainshardReservedNode) bool {
+	return n.Status == types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE
 }
 
 // IsModelUsedByActiveTrainshard checks whether the model has any active shard
@@ -82,7 +128,7 @@ func (k Keeper) IsModelUsedByActiveTrainshard(ctx context.Context, modelId strin
 			return false, err
 		}
 		for _, n := range shard.Nodes {
-			if n.ModelId == modelId {
+			if n.ModelId == modelId && isActiveReservedNode(n) {
 				used = true
 				return true, nil
 			}
@@ -211,6 +257,9 @@ func (k Keeper) buildTrainingReservedCounts(ctx context.Context) (*trainingReser
 		counts.perCreatorAct[shard.Creator]++
 		seen := make(map[string]bool)
 		for _, n := range shard.Nodes {
+			if !isActiveReservedNode(n) {
+				continue
+			}
 			counts.perModel[n.ModelId]++
 			key := nodeKey(n.Participant, n.NodeId)
 			if !seen[key] {
@@ -253,6 +302,7 @@ func (k Keeper) selectTrainshardNodes(
 		return nil, err
 	}
 	guardians := k.trainingGuardianSet(ctx)
+	height := sdk.UnwrapSDKContext(ctx).BlockHeight()
 
 	candidates := make([]*trainingEpochNode, 0, len(view.nodes))
 	for _, node := range view.nodes {
@@ -262,7 +312,7 @@ func (k Keeper) selectTrainshardNodes(
 		if guardians[node.participant] {
 			continue
 		}
-		opted, err := k.TrainingNodeOptIns.Has(ctx, collections.Join(node.participant, node.nodeId))
+		opted, err := k.hasLiveTrainingOptIn(ctx, node.participant, node.nodeId, height)
 		if err != nil {
 			return nil, err
 		}
@@ -326,6 +376,7 @@ func (k Keeper) selectTrainshardNodes(
 		}
 		for _, e := range node.entries {
 			takenModel[e.ModelId]++
+			e.Status = types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE
 			picked = append(picked, e)
 		}
 		takenProfile++
@@ -340,6 +391,24 @@ func (k Keeper) selectTrainshardNodes(
 
 func reserveShareCap(capacity int, shareBps uint32) int {
 	return capacity * int(shareBps) / 10000
+}
+
+// hasLiveTrainingOptIn reports whether the host's opt-in is present and unexpired
+func (k Keeper) hasLiveTrainingOptIn(ctx context.Context, participant, nodeId string, height int64) (bool, error) {
+	expiresAt, err := k.TrainingNodeOptIns.Get(ctx, collections.Join(participant, nodeId))
+	if errors.Is(err, collections.ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return expiresAt > height, nil
+}
+
+// setTrainingOptIn moves a node's opt-in expiry to height + opt_in_ttl_blocks
+func (k Keeper) setTrainingOptIn(ctx context.Context, participant, nodeId string, height int64) (int64, error) {
+	expiresAt := height + k.GetTrainingParams(ctx).OptInTtlBlocks
+	return expiresAt, k.TrainingNodeOptIns.Set(ctx, collections.Join(participant, nodeId), expiresAt)
 }
 
 func (k Keeper) reserveTrainshardNodes(ctx context.Context, shard *types.Trainshard) error {
@@ -357,17 +426,57 @@ func (k Keeper) reserveTrainshardNodes(ctx context.Context, shard *types.Trainsh
 	return k.TrainshardExpiryIndex.Set(ctx, collections.Join(shard.ExpiresAtHeight, shard.TrainshardId))
 }
 
-func (k Keeper) closeTrainshard(ctx context.Context, shard *types.Trainshard, status types.TrainshardStatus, closeHeight int64) error {
-	seen := make(map[string]bool)
+// releaseTrainshardNodes marks selected active nodes released and keeps their
+// reservation alive until the return buffer ends, when the EndBlocker drops it
+func (k Keeper) releaseTrainshardNodes(
+	ctx context.Context,
+	shard *types.Trainshard,
+	height int64,
+	status types.TrainshardNodeStatus,
+	reason string,
+	selected func(n *types.TrainshardReservedNode) bool,
+) (int, error) {
+	until := height + k.GetTrainingParams(ctx).ReleaseBufferBlocks
+	released := make(map[string]bool)
 	for _, n := range shard.Nodes {
-		key := nodeKey(n.Participant, n.NodeId)
-		if seen[key] {
+		if !isActiveReservedNode(n) || (selected != nil && !selected(n)) {
 			continue
 		}
-		seen[key] = true
-		if err := k.TrainshardReservations.Remove(ctx, collections.Join(n.Participant, n.NodeId)); err != nil {
-			return err
+		n.Status = status
+		n.ReleasedAtHeight = height
+		n.ReleaseReason = reason
+		n.ReservedUntilHeight = until
+		key := nodeKey(n.Participant, n.NodeId)
+		if released[key] {
+			continue
 		}
+		released[key] = true
+		if err := k.TrainshardReleaseIndex.Set(ctx, collections.Join3(until, n.Participant, n.NodeId)); err != nil {
+			return 0, err
+		}
+	}
+	return len(released), nil
+}
+
+func (k Keeper) hasActiveTrainshardNodes(shard *types.Trainshard) bool {
+	for _, n := range shard.Nodes {
+		if isActiveReservedNode(n) {
+			return true
+		}
+	}
+	return false
+}
+
+func (k Keeper) closeTrainshard(
+	ctx context.Context,
+	shard *types.Trainshard,
+	status types.TrainshardStatus,
+	reason types.TrainshardCloseReason,
+	closeHeight int64,
+) error {
+	if _, err := k.releaseTrainshardNodes(ctx, shard, closeHeight,
+		types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_RELEASED_ON_CLOSE, reason.String(), nil); err != nil {
+		return err
 	}
 	if err := k.TrainshardExpiryIndex.Remove(ctx, collections.Join(shard.ExpiresAtHeight, shard.TrainshardId)); err != nil {
 		return err
@@ -377,6 +486,7 @@ func (k Keeper) closeTrainshard(ctx context.Context, shard *types.Trainshard, st
 	}
 
 	shard.Status = status
+	shard.CloseReason = reason
 	shard.ClosedAtHeight = closeHeight
 	if err := k.Trainshards.Set(ctx, shard.TrainshardId, *shard); err != nil {
 		return err
@@ -519,78 +629,89 @@ func (k Keeper) epochBlockRange(ctx context.Context, epochIndex uint64) (int64, 
 	return epoch.PocStartBlockHeight, end
 }
 
-func trainshardOverlapsRange(shard *types.Trainshard, start, end int64) bool {
-	shardEnd := shard.ClosedAtHeight
-	if shard.Status == types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE || shardEnd == 0 {
-		shardEnd = int64(math.MaxInt64)
+// ReservationScope selects how much of a node's hold counts: the reservation
+// alone, or the reservation plus the return buffer
+type ReservationScope int
+
+const (
+	// ReservationScopeReward ends the window at the release height, so the
+	// return buffer never costs the node the next epoch's rewards
+	ReservationScopeReward ReservationScope = iota
+	// ReservationScopeShield extends the window over the return buffer, which
+	// routing, penalties and cPoC read
+	ReservationScopeShield
+)
+
+// trainshardNodeWindow returns the height range in which the node counted as
+// reserved: an active node has no end yet, a released one keeps its frozen
+// heights so the window never depends on current params
+func trainshardNodeWindow(shard *types.Trainshard, n *types.TrainshardReservedNode, scope ReservationScope) (int64, int64) {
+	if isActiveReservedNode(n) {
+		return shard.CreatedAtHeight, int64(math.MaxInt64)
 	}
-	return shard.CreatedAtHeight <= end && shardEnd >= start
+	end := n.ReleasedAtHeight
+	if scope == ReservationScopeShield && n.ReservedUntilHeight > end {
+		end = n.ReservedUntilHeight
+	}
+	if end == 0 {
+		end = shard.ClosedAtHeight
+	}
+	if end == 0 {
+		end = int64(math.MaxInt64)
+	}
+	return shard.CreatedAtHeight, end
 }
 
-// forEachEpochReservedShard walks shards that overlap the epoch
-func (k Keeper) forEachEpochReservedShard(ctx context.Context, epochIndex uint64, fn func(shard *types.Trainshard, start, end int64)) {
-	start, end := k.epochBlockRange(ctx, epochIndex)
+// forEachEpochReservedNode walks reserved nodes whose window overlaps the epoch
+func (k Keeper) forEachEpochReservedNode(ctx context.Context, epochIndex uint64, scope ReservationScope, fn func(n *types.TrainshardReservedNode, start, end int64)) {
+	epochStart, epochEnd := k.epochBlockRange(ctx, epochIndex)
 	if err := k.Trainshards.Walk(ctx, nil, func(_ uint64, shard types.Trainshard) (bool, error) {
-		if !trainshardOverlapsRange(&shard, start, end) {
-			return false, nil
+		for _, n := range shard.Nodes {
+			start, end := trainshardNodeWindow(&shard, n, scope)
+			if start > epochEnd || end < epochStart {
+				continue
+			}
+			if start < epochStart {
+				start = epochStart
+			}
+			if end > epochEnd {
+				end = epochEnd
+			}
+			fn(n, start, end)
 		}
-		s := shard.CreatedAtHeight
-		if s < start {
-			s = start
-		}
-		e := shard.ClosedAtHeight
-		if shard.Status == types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE || e == 0 || e > end {
-			e = end
-		}
-		fn(&shard, s, e)
 		return false, nil
 	}); err != nil {
-		k.LogError("epoch reserved shard walk failed", types.Training, "error", err)
+		k.LogError("epoch reserved node walk failed", types.Training, "error", err)
 	}
 }
 
 // CollectEpochReservedNodeIds returns nodes reserved during the epoch
-func (k Keeper) CollectEpochReservedNodeIds(ctx context.Context, epochIndex uint64) map[string]map[string]struct{} {
+func (k Keeper) CollectEpochReservedNodeIds(ctx context.Context, epochIndex uint64, scope ReservationScope) map[string]map[string]struct{} {
 	result := make(map[string]map[string]struct{})
-	k.forEachEpochReservedShard(ctx, epochIndex, func(shard *types.Trainshard, _, _ int64) {
-		for _, n := range shard.Nodes {
-			set, ok := result[n.Participant]
-			if !ok {
-				set = make(map[string]struct{})
-				result[n.Participant] = set
-			}
-			set[n.NodeId] = struct{}{}
+	k.forEachEpochReservedNode(ctx, epochIndex, scope, func(n *types.TrainshardReservedNode, _, _ int64) {
+		set, ok := result[n.Participant]
+		if !ok {
+			set = make(map[string]struct{})
+			result[n.Participant] = set
 		}
+		set[n.NodeId] = struct{}{}
 	})
 	return result
 }
 
 // CollectEpochReservedNodeWeights returns frozen reserved model-node weights
-func (k Keeper) CollectEpochReservedNodeWeights(ctx context.Context, epochIndex uint64) map[string][]*types.TrainshardReservedNode {
-	return k.collectEpochReservedNodeWeights(ctx, epochIndex, nil)
-}
-
-func (k Keeper) CollectEpochReservedNodeWeightsAtHeight(ctx context.Context, epochIndex uint64, height int64) map[string][]*types.TrainshardReservedNode {
-	return k.collectEpochReservedNodeWeights(ctx, epochIndex, &height)
-}
-
-func (k Keeper) collectEpochReservedNodeWeights(ctx context.Context, epochIndex uint64, height *int64) map[string][]*types.TrainshardReservedNode {
+func (k Keeper) CollectEpochReservedNodeWeights(ctx context.Context, epochIndex uint64, scope ReservationScope) map[string][]*types.TrainshardReservedNode {
 	type modelNode struct{ model, nodeId string }
 	seen := make(map[string]map[modelNode]int64)
-	k.forEachEpochReservedShard(ctx, epochIndex, func(shard *types.Trainshard, start, end int64) {
-		if height != nil && (*height < start || *height > end) {
-			return
+	k.forEachEpochReservedNode(ctx, epochIndex, scope, func(n *types.TrainshardReservedNode, _, _ int64) {
+		set, ok := seen[n.Participant]
+		if !ok {
+			set = make(map[modelNode]int64)
+			seen[n.Participant] = set
 		}
-		for _, n := range shard.Nodes {
-			set, ok := seen[n.Participant]
-			if !ok {
-				set = make(map[modelNode]int64)
-				seen[n.Participant] = set
-			}
-			mk := modelNode{model: n.ModelId, nodeId: n.NodeId}
-			if w, exists := set[mk]; !exists || n.PocWeight > w {
-				set[mk] = n.PocWeight
-			}
+		mk := modelNode{model: n.ModelId, nodeId: n.NodeId}
+		if w, exists := set[mk]; !exists || n.PocWeight > w {
+			set[mk] = n.PocWeight
 		}
 	})
 	result := make(map[string][]*types.TrainshardReservedNode, len(seen))
@@ -607,10 +728,11 @@ func (k Keeper) collectEpochReservedNodeWeights(ctx context.Context, epochIndex 
 	return result
 }
 
-func aggregateReservedWeightTotals(reserved map[string][]*types.TrainshardReservedNode) (byModelHost map[string]map[string]int64, byHost map[string]int64) {
+// CollectEpochReservedWeightTotals aggregates frozen reserved weight
+func (k Keeper) CollectEpochReservedWeightTotals(ctx context.Context, epochIndex uint64, scope ReservationScope) (byModelHost map[string]map[string]int64, byHost map[string]int64) {
 	byModelHost = make(map[string]map[string]int64)
 	byHost = make(map[string]int64)
-	for host, nodes := range reserved {
+	for host, nodes := range k.CollectEpochReservedNodeWeights(ctx, epochIndex, scope) {
 		// byModelHost counts per model; byHost dedups node ids
 		nodeWeight := make(map[string]int64, len(nodes))
 		for _, n := range nodes {
@@ -629,37 +751,26 @@ func aggregateReservedWeightTotals(reserved map[string][]*types.TrainshardReserv
 	return byModelHost, byHost
 }
 
-// CollectEpochReservedWeightTotals aggregates frozen reserved weight
-func (k Keeper) CollectEpochReservedWeightTotals(ctx context.Context, epochIndex uint64) (byModelHost map[string]map[string]int64, byHost map[string]int64) {
-	return aggregateReservedWeightTotals(k.CollectEpochReservedNodeWeights(ctx, epochIndex))
-}
-
-func (k Keeper) CollectEpochReservedWeightTotalsAtHeight(ctx context.Context, epochIndex uint64, height int64) (byModelHost map[string]map[string]int64, byHost map[string]int64) {
-	return aggregateReservedWeightTotals(k.CollectEpochReservedNodeWeightsAtHeight(ctx, epochIndex, height))
-}
-
 type hostReservedInterval struct {
-	start int64
-	end   int64
-	nodes map[string]struct{}
+	start  int64
+	end    int64
+	nodeId string
 }
 
-// collectEpochReservedIntervals returns reservation intervals per host
+// collectEpochReservedIntervals returns per-node shielded intervals per host
 func (k Keeper) collectEpochReservedIntervals(ctx context.Context, epochIndex uint64) map[string][]hostReservedInterval {
 	result := make(map[string][]hostReservedInterval)
-	k.forEachEpochReservedShard(ctx, epochIndex, func(shard *types.Trainshard, s, e int64) {
-		byParticipant := make(map[string]map[string]struct{})
-		for _, n := range shard.Nodes {
-			set, ok := byParticipant[n.Participant]
-			if !ok {
-				set = make(map[string]struct{})
-				byParticipant[n.Participant] = set
-			}
-			set[n.NodeId] = struct{}{}
+	seen := make(map[string]map[hostReservedInterval]bool)
+	k.forEachEpochReservedNode(ctx, epochIndex, ReservationScopeShield, func(n *types.TrainshardReservedNode, start, end int64) {
+		interval := hostReservedInterval{start: start, end: end, nodeId: n.NodeId}
+		if seen[n.Participant] == nil {
+			seen[n.Participant] = make(map[hostReservedInterval]bool)
 		}
-		for p, nodes := range byParticipant {
-			result[p] = append(result[p], hostReservedInterval{start: s, end: e, nodes: nodes})
+		if seen[n.Participant][interval] {
+			return
 		}
+		seen[n.Participant][interval] = true
+		result[n.Participant] = append(result[n.Participant], interval)
 	})
 	return result
 }
@@ -674,10 +785,8 @@ func hostFullyReservedAtHeight(epochNodes map[string]struct{}, intervals []hostR
 		if iv.start > height || iv.end < height {
 			continue
 		}
-		for id := range iv.nodes {
-			if _, want := epochNodes[id]; want {
-				covered[id] = struct{}{}
-			}
+		if _, want := epochNodes[iv.nodeId]; want {
+			covered[iv.nodeId] = struct{}{}
 		}
 	}
 	return len(covered) == len(epochNodes)
@@ -727,7 +836,6 @@ func (v EpochReservationView) FullyReservedAt(host string, height int64) bool {
 // CollectEpochFullyReservedHostsForModel returns epoch-fully-reserved hosts
 func (k Keeper) CollectEpochFullyReservedHostsForModel(ctx context.Context, epochIndex uint64, modelId string) map[string]struct{} {
 	fullyReserved := make(map[string]struct{})
-	start, end := k.epochBlockRange(ctx, epochIndex)
 	intervals := k.collectEpochReservedIntervals(ctx, epochIndex)
 	if len(intervals) == 0 {
 		return fullyReserved
@@ -741,7 +849,7 @@ func (k Keeper) CollectEpochFullyReservedHostsForModel(ctx context.Context, epoc
 			continue
 		}
 		modelNodes := modelNodeSet(p, modelId)
-		if len(modelNodes) > 0 && hostFullyReservedForModelAcrossRange(modelNodes, intervals[p.Index], start, end) {
+		if len(modelNodes) > 0 && hostEverFullyReservedForModel(modelNodes, intervals[p.Index]) {
 			fullyReserved[p.Index] = struct{}{}
 		}
 	}
@@ -767,35 +875,12 @@ func modelNodeSet(p *types.ActiveParticipant, modelId string) map[string]struct{
 	return nil
 }
 
-func hostFullyReservedForModelAcrossRange(modelNodes map[string]struct{}, intervals []hostReservedInterval, start, end int64) bool {
-	if len(modelNodes) == 0 || len(intervals) == 0 || start > end {
-		return false
-	}
-	checkpoints := make([]int64, 0, len(intervals)*2+1)
-	checkpoints = append(checkpoints, start)
-	for _, iv := range intervals {
-		if iv.end < start || iv.start > end {
-			continue
-		}
-		ivStart := iv.start
-		if ivStart < start {
-			ivStart = start
-		}
-		checkpoints = append(checkpoints, ivStart)
-		if iv.end < end {
-			checkpoints = append(checkpoints, iv.end+1)
+// hostEverFullyReservedForModel checks if all model nodes were reserved at once
+func hostEverFullyReservedForModel(modelNodes map[string]struct{}, intervals []hostReservedInterval) bool {
+	for _, probe := range intervals {
+		if hostFullyReservedAtHeight(modelNodes, intervals, probe.start) {
+			return true
 		}
 	}
-	sort.Slice(checkpoints, func(i, j int) bool {
-		return checkpoints[i] < checkpoints[j]
-	})
-	for i, checkpoint := range checkpoints {
-		if i > 0 && checkpoint == checkpoints[i-1] {
-			continue
-		}
-		if !hostFullyReservedAtHeight(modelNodes, intervals, checkpoint) {
-			return false
-		}
-	}
-	return true
+	return false
 }

@@ -122,9 +122,9 @@ var (
 	// Index of currently-scheduled maintenance reservations (key = reservationID).
 	// Lets concurrency / schedulability queries iterate only the bounded set
 	// of scheduled reservations instead of every participant's MaintenanceState.
-	MaintenanceScheduledIndexPrefix = collections.NewPrefix(105)
-	ClaimRecipientsPrefix           = collections.NewPrefix(106)
-	ClaimRecipientsByEpochPrefix    = collections.NewPrefix(107)
+	MaintenanceScheduledIndexPrefix        = collections.NewPrefix(105)
+	ClaimRecipientsPrefix                  = collections.NewPrefix(106)
+	ClaimRecipientsByEpochPrefix           = collections.NewPrefix(107)
 	DelegationRewardTransferSnapshotPrefix = collections.NewPrefix(108)
 	// Trainshard prefixes start at 130, above ASCII, so they never collide with legacy string keys like ParamsKey
 	TrainshardsPrefix               = collections.NewPrefix(130)
@@ -137,6 +137,8 @@ var (
 	TrainshardProposalsPrefix       = collections.NewPrefix(137)
 	TrainshardProposalCounterPrefix = collections.NewPrefix(138)
 	TrainshardCreatorCooldownPrefix = collections.NewPrefix(139)
+	TrainshardReleaseIndexPrefix    = collections.NewPrefix(140)
+	TrainshardAutokickRequestPrefix = collections.NewPrefix(141)
 	ParamsKey                       = []byte("p_inference")
 )
 

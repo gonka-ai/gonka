@@ -19,15 +19,33 @@ enum TrainshardProposalStatus {
   TRAINSHARD_PROPOSAL_STATUS_CONSUMED = 2;
 }
 
-// TrainshardReservedNode is a reserved GPU node with frozen PoC weight
+enum TrainshardCloseReason {
+  TRAINSHARD_CLOSE_REASON_UNSPECIFIED = 0;
+  TRAINSHARD_CLOSE_REASON_SETTLED = 1;
+  TRAINSHARD_CLOSE_REASON_TIMEOUT = 2;
+  TRAINSHARD_CLOSE_REASON_NO_ACTIVE_NODES = 3;
+}
+
+enum TrainshardNodeStatus {
+  TRAINSHARD_NODE_STATUS_UNSPECIFIED = 0;
+  TRAINSHARD_NODE_STATUS_ACTIVE = 1;
+  TRAINSHARD_NODE_STATUS_AUTOKICKED = 2;
+  TRAINSHARD_NODE_STATUS_RELEASED_ON_CLOSE = 3;
+}
+
 message TrainshardReservedNode {
   string participant = 1;
   string node_id = 2;
   string model_id = 3;
   int64 poc_weight = 4;
+  TrainshardNodeStatus status = 5;
+  int64 released_at_height = 6;
+  string release_reason = 7;
+  // reserved_until_height freezes the release buffer end at release time so
+  // epoch-level reads never depend on the current release_buffer_blocks value
+  int64 reserved_until_height = 8;
 }
 
-// Trainshard is an on-chain training run with reserved nodes
 message Trainshard {
   uint64 trainshard_id = 1;
   string creator = 2;
@@ -37,9 +55,12 @@ message Trainshard {
   int64 expires_at_height = 6;
   int64 closed_at_height = 7;
   repeated TrainshardReservedNode nodes = 8;
+  TrainshardCloseReason close_reason = 9;
+  uint64 proposal_id = 10;
+  string base_image = 11;
+  string run_key = 12;
 }
 
-// TrainshardProposal is an approved budget consumed on assemble_trainshard
 message TrainshardProposal {
   string creator = 1;
   string gpu_profile_id = 2;
@@ -47,9 +68,10 @@ message TrainshardProposal {
   int64 max_duration_blocks = 4;
   uint64 id = 5;
   TrainshardProposalStatus status = 6;
+  string base_image = 7;
+  string run_key = 8;
 }
 
-// TrainingParams are governance limits for training
 message TrainingParams {
   option (gogoproto.equal) = true;
   bool training_enabled = 1;
@@ -65,4 +87,6 @@ message TrainingParams {
   uint32 max_reserved_share_per_profile_bps = 11;
   uint32 max_expirations_per_block = 12;
   int64 settled_shard_retention_blocks = 13;
+  int64 opt_in_ttl_blocks = 14;
+  int64 release_buffer_blocks = 15;
 }

@@ -436,7 +436,7 @@ func (am AppModule) evaluateConfirmation(
 
 	// remove reserved nodes' expected confirmation weight so they do not drag down the host ratio
 	coefficients := types.ConfirmationWeightCoefficients(presentScales)
-	for host, nodes := range am.keeper.CollectEpochReservedNodeWeightsAtHeight(ctx, event.EpochIndex, event.TriggerHeight) {
+	for host, nodes := range am.keeper.CollectEpochReservedNodeWeights(ctx, event.EpochIndex, keeper.ReservationScopeShield) {
 		modelNodes := make(map[string][]*types.MLNodeInfo)
 		for _, n := range nodes {
 			modelNodes[n.ModelId] = append(modelNodes[n.ModelId], &types.MLNodeInfo{NodeId: n.NodeId, PocWeight: n.PocWeight})
@@ -447,8 +447,7 @@ func (am AppModule) evaluateConfirmation(
 		}
 	}
 
-	maintenanceAddrs := am.keeper.CollectActiveMaintenanceAddresses(ctx)
-	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, totalExpected, maintenanceAddrs)
+	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, totalExpected)
 	if updated {
 		am.LogInfo("evaluateConfirmation: confirmation weights lowered", types.PoC,
 			"epochIndex", event.EpochIndex,
@@ -458,6 +457,7 @@ func (am AppModule) evaluateConfirmation(
 	// Skip CPoC ratio assignment for maintenance-covered participants — they
 	// are expected to be offline and must not be marked INACTIVE due to
 	// maintenance-covered absence from CPoC duties.
+	maintenanceAddrs := am.keeper.CollectActiveMaintenanceAddresses(ctx)
 	reservedView := am.keeper.BuildEpochReservationView(ctx, event.EpochIndex)
 
 	for _, vw := range epochGroupData.ValidationWeights {
@@ -498,20 +498,14 @@ func (am AppModule) evaluateConfirmation(
 
 // foldEventReadings applies this event's reading (preserved + measured) to every
 // ValidationWeight via min-take and returns the per-participant slashing ratio.
-// Participants in skipAddrs (e.g. active maintenance) are left untouched: no
-// ConfirmationWeight change and no ratio entry.
 // Pure: no keeper reads, no logging. Caller persists the result.
 func foldEventReadings(
 	epochGroupData *types.EpochGroupData,
 	measured, preserved, totalExpected map[string]int64,
-	skipAddrs map[string]struct{},
 ) (updated bool, ratios map[string]*types.Decimal) {
 	ratios = make(map[string]*types.Decimal, len(epochGroupData.ValidationWeights))
 	for i, vw := range epochGroupData.ValidationWeights {
 		addr := vw.MemberAddress
-		if _, skip := skipAddrs[addr]; skip {
-			continue
-		}
 		reading := preserved[addr] + measured[addr]
 		if totalExpected[addr] == 0 {
 			continue

@@ -66,19 +66,8 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 
 	// Use CacheContext so all payout mutations are atomic.
 	// If any payment fails, nothing is committed and the settle record
-	// + scheduled recipient persist for retry.
+	// persists for retry.
 	cacheCtx, writeFn := ctx.CacheContext()
-
-	// Resolve the destination once, using cacheCtx so the lookup view is
-	// consistent with the writes below. Recipient is already bech32-validated
-	// at the SetClaimRecipients write path; if not scheduled, returns msg.Creator.
-	payoutAddress, err := ms.resolvePayoutAddress(cacheCtx, msg.Creator, msg.EpochIndex)
-	if err != nil {
-		return &types.MsgClaimRewardsResponse{
-			Amount: 0,
-			Result: "Claim recipient lookup failed, claim can be retried",
-		}, err
-	}
 
 	// Pay for work from escrow
 	escrowPayment := settleAmount.GetWorkCoins()
@@ -87,7 +76,7 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 		return nil, fmt.Errorf("failed to get params: %w", err)
 	}
 	workVestingPeriod := &params.TokenomicsParams.WorkVestingPeriod
-	if err := ms.PayParticipantFromEscrow(cacheCtx, payoutAddress, int64(escrowPayment), "work_coins:"+settleAmount.Participant, workVestingPeriod); err != nil {
+	if err := ms.PayParticipantFromEscrow(cacheCtx, msg.Creator, int64(escrowPayment), "work_coins:"+settleAmount.Participant, workVestingPeriod); err != nil {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
 			ms.LogError("Insufficient funds for paying participant for work, claim can be retried", types.Claims, "error", err, "settleAmount", settleAmount)
 			return &types.MsgClaimRewardsResponse{
@@ -107,7 +96,7 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 
 	// Pay rewards from module
 	rewardVestingPeriod := &params.TokenomicsParams.RewardVestingPeriod
-	if err := ms.PayParticipantFromModule(cacheCtx, payoutAddress, int64(settleAmount.GetRewardCoins()), types.ModuleName, "reward_coins:"+settleAmount.Participant, rewardVestingPeriod); err != nil {
+	if err := ms.PayParticipantFromModule(cacheCtx, msg.Creator, int64(settleAmount.GetRewardCoins()), types.ModuleName, "reward_coins:"+settleAmount.Participant, rewardVestingPeriod); err != nil {
 		if sdkerrors.ErrInsufficientFunds.Is(err) {
 			ms.LogError("Insufficient funds for paying rewards, claim can be retried", types.Claims, "error", err, "settleAmount", settleAmount)
 		} else {
@@ -132,18 +121,6 @@ func (ms msgServer) payoutClaim(ctx sdk.Context, msg *types.MsgClaimRewards, set
 		Amount: uint64(settleAmount.GetTotalCoins()),
 		Result: "Rewards claimed successfully",
 	}, nil
-}
-
-// resolvePayoutAddress returns the destination address for a claim payout.
-func (ms msgServer) resolvePayoutAddress(ctx context.Context, participant string, epoch uint64) (string, error) {
-	addr, err := ms.ResolveClaimRecipientAddress(ctx, participant, epoch)
-	if err != nil {
-		return "", fmt.Errorf("failed to resolve claim recipient for participant %s epoch %d: %w", participant, epoch, err)
-	}
-	if addr.String() != participant {
-		ms.LogInfo("Using scheduled claim recipient", types.Claims, "participant", participant, "epoch", epoch, "recipient", addr.String())
-	}
-	return addr.String(), nil
 }
 
 func (ms msgServer) finishSettle(ctx sdk.Context, settleAmount *types.SettleAmount) {
@@ -457,24 +434,36 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		modelTotalWeights[subModelId] = subTotalWeight
 	}
 
-	reservedView := k.BuildEpochReservationView(ctx, msg.EpochIndex)
-	type modelWeightsAtHeight struct {
-		weights map[string]map[string]types.ValidationWeight
-		totals  map[string]int64
-	}
-	weightsByHeight := make(map[int64]modelWeightsAtHeight)
-	getWeightsAtHeight := func(height int64) modelWeightsAtHeight {
-		if cached, ok := weightsByHeight[height]; ok {
-			return cached
+	reservedByModelHost, reservedByHost := k.CollectEpochReservedWeightTotals(ctx, msg.EpochIndex, ReservationScopeReward)
+	for modelId, weightMap := range modelWeightMaps {
+		reserved := reservedByModelHost[modelId]
+		if modelId == "" {
+			reserved = reservedByHost
 		}
-		weights := cloneValidationWeightMaps(modelWeightMaps)
-		totals := cloneModelTotalWeights(modelTotalWeights)
-		reservedByModelHost, reservedByHost := k.CollectEpochReservedWeightTotalsAtHeight(ctx, msg.EpochIndex, height)
-		applyReservedWeightAdjustment(weights, totals, reservedByModelHost, reservedByHost)
-		cached := modelWeightsAtHeight{weights: weights, totals: totals}
-		weightsByHeight[height] = cached
-		return cached
+		if len(reserved) == 0 {
+			continue
+		}
+		removed := int64(0)
+		for host, vw := range weightMap {
+			r := reserved[host]
+			if r <= 0 {
+				continue
+			}
+			if r > vw.Weight {
+				r = vw.Weight
+			}
+			vw.Weight -= r
+			weightMap[host] = vw
+			removed += r
+		}
+		if t := modelTotalWeights[modelId] - removed; t > 0 {
+			modelTotalWeights[modelId] = t
+		} else {
+			modelTotalWeights[modelId] = 0
+		}
 	}
+
+	reservedView := k.BuildEpochReservationView(ctx, msg.EpochIndex)
 
 	blockHash := ctx.HeaderInfo().Hash
 	blockHashSeed := int64(binary.BigEndian.Uint64(blockHash[:8]))
@@ -528,20 +517,15 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 	mustBeValidated := make([]string, 0)
 	for _, inference := range sample {
 		modelId := inference.Model
-		weightsAtHeight := getWeightsAtHeight(inference.CreatedAtBlockHeight)
-		weightMap := weightsAtHeight.weights[modelId]
-		validatorPowerForModel, found := weightMap[msg.Creator]
-		if !found {
-			skipped++
-			continue
-		}
+		weightMap := modelWeightMaps[modelId]
+		validatorPowerForModel := weightMap[msg.Creator]
 		executorPower, found := weightMap[inference.ExecutorId]
 		if !found {
 			k.LogWarn("Executor not found in weight map", types.Claims, "executor", inference.ExecutorId, "model", modelId)
 			continue
 		}
 
-		totalWeight := weightsAtHeight.totals[modelId]
+		totalWeight := modelTotalWeights[modelId]
 		if totalWeight <= 0 {
 			skipped++
 			continue
@@ -594,61 +578,6 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 	)
 
 	return mustBeValidated, nil
-}
-
-func cloneValidationWeightMaps(src map[string]map[string]types.ValidationWeight) map[string]map[string]types.ValidationWeight {
-	cloned := make(map[string]map[string]types.ValidationWeight, len(src))
-	for modelID, weights := range src {
-		modelWeights := make(map[string]types.ValidationWeight, len(weights))
-		for addr, vw := range weights {
-			modelWeights[addr] = vw
-		}
-		cloned[modelID] = modelWeights
-	}
-	return cloned
-}
-
-func cloneModelTotalWeights(src map[string]int64) map[string]int64 {
-	cloned := make(map[string]int64, len(src))
-	for modelID, total := range src {
-		cloned[modelID] = total
-	}
-	return cloned
-}
-
-func applyReservedWeightAdjustment(
-	modelWeightMaps map[string]map[string]types.ValidationWeight,
-	modelTotalWeights map[string]int64,
-	reservedByModelHost map[string]map[string]int64,
-	reservedByHost map[string]int64,
-) {
-	for modelID, weightMap := range modelWeightMaps {
-		reserved := reservedByModelHost[modelID]
-		if modelID == "" {
-			reserved = reservedByHost
-		}
-		if len(reserved) == 0 {
-			continue
-		}
-		removed := int64(0)
-		for host, vw := range weightMap {
-			r := reserved[host]
-			if r <= 0 {
-				continue
-			}
-			if r > vw.Weight {
-				r = vw.Weight
-			}
-			vw.Weight -= r
-			weightMap[host] = vw
-			removed += r
-		}
-		if t := modelTotalWeights[modelID] - removed; t > 0 {
-			modelTotalWeights[modelID] = t
-		} else {
-			modelTotalWeights[modelID] = 0
-		}
-	}
 }
 
 // OverlapsWithPoC reports whether an inference was created late enough in the epoch that

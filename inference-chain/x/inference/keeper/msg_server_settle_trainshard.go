@@ -25,7 +25,8 @@ func (k msgServer) SettleTrainshard(goCtx context.Context, msg *types.MsgSettleT
 		return &types.MsgSettleTrainshardResponse{}, nil
 	}
 
-	if err := k.closeTrainshard(goCtx, &shard, types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED, ctx.BlockHeight()); err != nil {
+	if err := k.closeTrainshard(goCtx, &shard, types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
+		types.TrainshardCloseReason_TRAINSHARD_CLOSE_REASON_SETTLED, ctx.BlockHeight()); err != nil {
 		return nil, err
 	}
 

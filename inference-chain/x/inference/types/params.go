@@ -414,7 +414,9 @@ const (
 	DefaultTrainingMaxModelShareBps     uint32 = 5000
 	DefaultTrainingMaxProfileShareBps   uint32 = 5000
 	DefaultTrainingMaxExpirationsPerBlk uint32 = 32
-	DefaultTrainingRetentionBlocks      int64  = 80
+	DefaultTrainingRetentionBlocks      int64  = 100
+	DefaultTrainingOptInTtlBlocks       int64  = 200
+	DefaultTrainingReleaseBufferBlocks  int64  = 20
 )
 
 func DefaultTrainingParams() *TrainingParams {
@@ -432,6 +434,8 @@ func DefaultTrainingParams() *TrainingParams {
 		MaxReservedSharePerProfileBps: DefaultTrainingMaxProfileShareBps,
 		MaxExpirationsPerBlock:        DefaultTrainingMaxExpirationsPerBlk,
 		SettledShardRetentionBlocks:   DefaultTrainingRetentionBlocks,
+		OptInTtlBlocks:                DefaultTrainingOptInTtlBlocks,
+		ReleaseBufferBlocks:           DefaultTrainingReleaseBufferBlocks,
 	}
 }
 
@@ -475,10 +479,26 @@ func (p *TrainingParams) Validate(epochParams *EpochParams) error {
 	if p.SettledShardRetentionBlocks > maxTrainingBlocksParam {
 		return fmt.Errorf("training settled_shard_retention_blocks (%d) exceeds safe upper bound %d", p.SettledShardRetentionBlocks, maxTrainingBlocksParam)
 	}
+	if p.OptInTtlBlocks <= 0 {
+		return fmt.Errorf("training opt_in_ttl_blocks must be positive")
+	}
+	if p.OptInTtlBlocks > maxTrainingBlocksParam {
+		return fmt.Errorf("training opt_in_ttl_blocks (%d) exceeds safe upper bound %d", p.OptInTtlBlocks, maxTrainingBlocksParam)
+	}
+	if p.ReleaseBufferBlocks < 0 {
+		return fmt.Errorf("training release_buffer_blocks must not be negative")
+	}
+	if p.ReleaseBufferBlocks > maxTrainingBlocksParam {
+		return fmt.Errorf("training release_buffer_blocks (%d) exceeds safe upper bound %d", p.ReleaseBufferBlocks, maxTrainingBlocksParam)
+	}
 	if epochParams != nil && epochParams.EpochLength > 0 {
-		minRetention := 2 * epochParams.EpochLength
+		// retention must outlive the buffer so next-epoch reads still see released nodes
+		minRetention := 2*epochParams.EpochLength + p.ReleaseBufferBlocks
 		if p.SettledShardRetentionBlocks < minRetention {
-			return fmt.Errorf("training settled_shard_retention_blocks (%d) must be at least two epoch lengths (%d)", p.SettledShardRetentionBlocks, minRetention)
+			return fmt.Errorf("training settled_shard_retention_blocks (%d) must be at least two epoch lengths plus release_buffer_blocks (%d)", p.SettledShardRetentionBlocks, minRetention)
+		}
+		if p.OptInTtlBlocks < epochParams.EpochLength {
+			return fmt.Errorf("training opt_in_ttl_blocks (%d) must be at least one epoch length (%d)", p.OptInTtlBlocks, epochParams.EpochLength)
 		}
 	}
 	return nil

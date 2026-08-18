@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"cosmossdk.io/collections"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -15,23 +16,21 @@ func (k msgServer) SetTrainingNodeOptIn(goCtx context.Context, msg *types.MsgSet
 		return nil, types.ErrPocNodeIdEmpty
 	}
 
-	key := collections.Join(msg.Creator, msg.NodeId)
-
 	if msg.OptIn {
 		hardware, found := k.GetHardwareNodes(goCtx, msg.Creator)
 		if !found || !hasHardwareNode(hardware, msg.NodeId) {
 			return nil, types.ErrTrainshardNodeNotOwned.Wrapf("node %s not owned by %s", msg.NodeId, msg.Creator)
 		}
-		if err := k.TrainingNodeOptIns.Set(goCtx, key); err != nil {
+		if _, err := k.setTrainingOptIn(goCtx, msg.Creator, msg.NodeId, sdk.UnwrapSDKContext(goCtx).BlockHeight()); err != nil {
 			return nil, err
 		}
 		return &types.MsgSetTrainingNodeOptInResponse{}, nil
 	}
 
-	if k.IsNodeReserved(goCtx, msg.Creator, msg.NodeId) {
+	if k.IsNodeActivelyReserved(goCtx, msg.Creator, msg.NodeId) {
 		return nil, types.ErrTrainshardNodeReserved
 	}
-	if err := k.TrainingNodeOptIns.Remove(goCtx, key); err != nil {
+	if err := k.TrainingNodeOptIns.Remove(goCtx, collections.Join(msg.Creator, msg.NodeId)); err != nil {
 		return nil, err
 	}
 	return &types.MsgSetTrainingNodeOptInResponse{}, nil

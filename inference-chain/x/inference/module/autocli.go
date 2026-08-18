@@ -473,10 +473,22 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "trainshard_id"}},
 				},
 				{
+					RpcMethod:      "AutokickTrainshardNode",
+					Use:            "autokick-trainshard-node [trainshard-id] [participant] [node-id] [reason] [request-id]",
+					Short:          "Release one failed node of an active trainshard",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "trainshard_id"}, {ProtoField: "participant"}, {ProtoField: "node_id"}, {ProtoField: "reason"}, {ProtoField: "request_id"}},
+				},
+				{
 					RpcMethod:      "SetTrainingNodeOptIn",
 					Use:            "set-training-node-opt-in [node-id] [opt-in]",
 					Short:          "Opt one of your nodes in or out of training eligibility",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "node_id"}, {ProtoField: "opt_in"}},
+				},
+				{
+					RpcMethod:      "RefreshTrainingNodeOptIn",
+					Use:            "refresh-training-node-opt-in [node-ids]",
+					Short:          "Move the training opt-in expiry of your ready nodes forward",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "node_ids", Varargs: true}},
 				},
 				{
 					RpcMethod: "SettleDevshardEscrow",

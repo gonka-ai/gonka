@@ -55,13 +55,13 @@ func (k msgServer) SubmitHardwareDiff(goCtx context.Context, msg *types.MsgSubmi
 
 	// a node held by an active trainshard may not be removed or operationally changed
 	for _, node := range msg.NewOrModified {
-		if k.IsNodeReserved(goCtx, msg.Creator, node.LocalId) &&
+		if k.IsNodeActivelyReserved(goCtx, msg.Creator, node.LocalId) &&
 			!hardwareNodeOperationalEqual(node, nodeMap[node.LocalId]) {
 			return nil, types.ErrTrainshardNodeReserved
 		}
 	}
 	for _, node := range msg.Removed {
-		if k.IsNodeReserved(goCtx, msg.Creator, node.LocalId) {
+		if k.IsNodeActivelyReserved(goCtx, msg.Creator, node.LocalId) {
 			return nil, types.ErrTrainshardNodeReserved
 		}
 	}

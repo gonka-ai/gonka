@@ -10,6 +10,7 @@ import (
 
 	mathsdk "cosmossdk.io/math"
 	"github.com/productscience/inference/x/inference/calculations"
+	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/inference/utils"
 	"github.com/shopspring/decimal"
@@ -872,8 +873,7 @@ func (am AppModule) getInferenceServingNodeIds(ctx context.Context, upcomingEpoc
 		}
 	}
 
-	// exclude nodes reserved in the ending epoch from PoC weight
-	for participant, nodes := range am.keeper.CollectEpochReservedNodeIds(ctx, upcomingEpoch.Index-1) {
+	for participant, nodes := range am.keeper.CollectEpochReservedNodeIds(ctx, upcomingEpoch.Index-1, keeper.ReservationScopeShield) {
 		nodeSet, ok := inferenceServingNodeIds[participant]
 		if !ok {
 			nodeSet = make(map[string]struct{})
@@ -892,9 +892,8 @@ func (am AppModule) getInferenceServingNodeIds(ctx context.Context, upcomingEpoc
 	return inferenceServingNodeIds
 }
 
-// mergeReservedNodesIntoPreserved carries reserved nodes into the preserved set
 func (am AppModule) mergeReservedNodesIntoPreserved(ctx context.Context, endingEpochIndex uint64, preserved []*types.ActiveParticipant) []*types.ActiveParticipant {
-	reserved := am.keeper.CollectEpochReservedNodeWeights(ctx, endingEpochIndex)
+	reserved := am.keeper.CollectEpochReservedNodeWeights(ctx, endingEpochIndex, keeper.ReservationScopeShield)
 	if len(reserved) == 0 {
 		return preserved
 	}
@@ -944,7 +943,6 @@ func (am AppModule) mergeReservedNodesIntoPreserved(ctx context.Context, endingE
 	return preserved
 }
 
-// addReservedNodeToParticipant inserts a reserved node under its model
 func addReservedNodeToParticipant(p *types.ActiveParticipant, n *types.TrainshardReservedNode) {
 	modelIdx := -1
 	for i, m := range p.Models {
@@ -986,7 +984,6 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 	am.LogInfo("ComputeNewWeights: Retrieved preserved participants", types.PoC,
 		"numPreservedParticipants", len(preservedParticipants))
 
-	// carry reserved training nodes across the epoch boundary
 	if upcomingEpoch.Index > 1 {
 		preservedParticipants = am.mergeReservedNodesIntoPreserved(ctx, upcomingEpoch.Index-1, preservedParticipants)
 	}
@@ -1230,7 +1227,6 @@ func (am AppModule) ComputeNewWeights(ctx context.Context, upcomingEpoch types.E
 				"combinedWeight", mergedParticipant.Weight,
 				"models", mergedModels)
 		} else {
-			// preserved-only participants without seed are dropped
 			if preservedParticipant.Seed == nil {
 				am.LogWarn("ComputeNewWeights: Dropping preserved-only participant without seed", types.PoC,
 					"participantAddress", participantAddress)

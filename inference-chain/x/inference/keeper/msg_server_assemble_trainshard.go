@@ -29,6 +29,10 @@ func (k msgServer) AssembleTrainshard(goCtx context.Context, msg *types.MsgAssem
 	if proposal.Creator != msg.Creator {
 		return nil, types.ErrTrainshardNotCreator
 	}
+	// governance may have tightened the limits after the vote passed
+	if err := validateTrainshardStaticLimits(params, proposal.GpuProfileId, proposal.MaxNodes, proposal.MaxDurationBlocks); err != nil {
+		return nil, err
+	}
 
 	height := ctx.BlockHeight()
 	if until := k.creatorCooldownUntil(goCtx, msg.Creator); height < until {
@@ -64,6 +68,9 @@ func (k msgServer) AssembleTrainshard(goCtx context.Context, msg *types.MsgAssem
 		CreatedAtHeight: height,
 		ExpiresAtHeight: height + proposal.MaxDurationBlocks,
 		Nodes:           nodes,
+		ProposalId:      proposal.Id,
+		BaseImage:       proposal.BaseImage,
+		RunKey:          proposal.RunKey,
 	}
 	if err := k.reserveTrainshardNodes(goCtx, &shard); err != nil {
 		return nil, err
@@ -82,6 +89,7 @@ func (k msgServer) AssembleTrainshard(goCtx context.Context, msg *types.MsgAssem
 		sdk.NewAttribute("creator", msg.Creator),
 		sdk.NewAttribute("gpu_profile_id", proposal.GpuProfileId),
 		sdk.NewAttribute("expires_at_height", fmt.Sprintf("%d", shard.ExpiresAtHeight)),
+		sdk.NewAttribute("base_image", proposal.BaseImage),
 	)
 	reservedNodes := make(map[string]bool)
 	for _, n := range nodes {
