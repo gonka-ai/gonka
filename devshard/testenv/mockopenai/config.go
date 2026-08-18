@@ -26,10 +26,11 @@ func DefaultConfig() Config {
 // FaultConfig holds runtime fault-injection knobs (env or POST /testenv/fault).
 type FaultConfig struct {
 	Latency          time.Duration
-	HTTPStatus       int  // 0 = OK
+	HTTPStatus       int // 0 = OK
 	DropFirstChunk   bool
 	PartialStream    bool // omit final chunk + [DONE]
 	StreamChunkDelay time.Duration
+	PauseStream      bool // pause after first content chunk until testenv release
 }
 
 // FaultPatch is the JSON body for POST /testenv/fault.
@@ -39,6 +40,7 @@ type FaultPatch struct {
 	DropFirstChunk   *bool `json:"drop_first_chunk,omitempty"`
 	PartialStream    *bool `json:"partial_stream,omitempty"`
 	StreamChunkDelay *int  `json:"stream_chunk_delay_ms,omitempty"`
+	PauseStream      *bool `json:"pause_stream,omitempty"`
 }
 
 func (p FaultPatch) apply(dst *FaultConfig) {
@@ -56,6 +58,9 @@ func (p FaultPatch) apply(dst *FaultConfig) {
 	}
 	if p.StreamChunkDelay != nil {
 		dst.StreamChunkDelay = time.Duration(*p.StreamChunkDelay) * time.Millisecond
+	}
+	if p.PauseStream != nil {
+		dst.PauseStream = *p.PauseStream
 	}
 }
 

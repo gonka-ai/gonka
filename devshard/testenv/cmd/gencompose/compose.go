@@ -121,6 +121,7 @@ services:
     environment:
       VERSIOND_ORACLE_URL: http://{{ $.MockDapi.Host }}:{{ $.MockDapi.HTTPPort }}/versions
       VERSIOND_POLL_INTERVAL: "{{ $.Versiond.PollInterval }}"
+      VERSIOND_HOST_SHUTDOWN_BUDGET: "25m"
       VERSIOND_BIN_DIR: /opt/versiond/bin
       VERSIOND_DATA_DIR: /opt/versiond/data
       VERSIOND_BINARY_NAME: devshardd
@@ -187,6 +188,7 @@ services:
       - mock-dapi
       - mock-openai
 {{ end }}
+    stop_grace_period: 30m
     restart: unless-stopped
 {{ end }}
 
@@ -202,9 +204,14 @@ services:
       # future versions sticky-hash across the pool (Devshard-Ha header).
       VERSIOND_LEGACY_HOST: "{{ legacyVersiondHost . }}"
       VERSIOND_NON_HA_VERSIONS: "v1"
+      # Health-check this version on each host individually, so a host that
+      # cannot run it leaves that version's pool and keeps serving the rest.
       VERSIOND_VERSIONS: "{{ $.Versiond.VersionName }}"
       VERSIOND_ROUTING_CATALOG_URL: "http://{{ $.MockDapi.Host }}:{{ $.MockDapi.HTTPPort }}/versions"
       VERSIOND_ROUTING_CATALOG_POLL_SECONDS: "1"
+      # Only the router is told this deployment is HA. The versiond containers
+      # are not, so scenarios that deliberately run the pool on sqlite still
+      # boot and fail at request time on the storage guard instead.
       GONKA_HA: "{{ haDeployment . }}"
     ports:
       - "{{ .VersiondRouter.Port }}:8080"
@@ -215,6 +222,8 @@ services:
 {{ range .Hosts }}
       - {{ .ID }}
 {{ end }}
+    # Compose starts the replacement only after this container exits. Bound the
+    # soft stop so one long stream cannot leave the test stack without a router.
     stop_signal: SIGUSR1
     stop_grace_period: 10s
     restart: unless-stopped

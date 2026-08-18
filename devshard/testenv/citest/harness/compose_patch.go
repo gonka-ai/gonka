@@ -20,9 +20,10 @@ func PatchComposeEnvKey(t *testing.T, composePath, key, value string) {
 	require.NoError(t, os.WriteFile(composePath, updated, 0o644))
 }
 
-// PatchRouterHADeployment changes the authoritative HA declaration. Tests that
-// disable it must also keep only one pool member usable, because the router has
-// a runtime multi-host fallback.
+// PatchRouterHADeployment changes the authoritative HA declaration. The router
+// also has a runtime multi-host fallback, so tests that disable this declaration
+// must keep only one pool host usable. Recreate the router afterwards for the
+// declaration to take effect.
 func PatchRouterHADeployment(t *testing.T, composePath string, ha bool) {
 	t.Helper()
 	value := `""`
@@ -84,4 +85,43 @@ func PatchComposeInsertEnvAfter(t *testing.T, composePath, afterKey string, line
 	updated = append(updated, []byte(insert.String())...)
 	updated = append(updated, body[lineEnd:]...)
 	require.NoError(t, os.WriteFile(composePath, updated, 0o644))
+}
+
+// PatchComposeServiceEnv replaces one `KEY: ...` line inside a single service
+// block and returns the value it replaced. Unlike PatchComposeEnvKey this does
+// not touch the other services, which is what makes it usable for putting one
+// host into a state its siblings are not in.
+func PatchComposeServiceEnv(t *testing.T, composePath, service, key, value string) string {
+	t.Helper()
+	body, err := os.ReadFile(composePath)
+	require.NoError(t, err)
+
+	lines := strings.Split(string(body), "\n")
+	start := -1
+	for i, line := range lines {
+		if line == "  "+service+":" {
+			start = i
+			break
+		}
+	}
+	require.GreaterOrEqual(t, start, 0, "compose %s: service %q not found", composePath, service)
+
+	entry := regexp.MustCompile(`^(\s+` + regexp.QuoteMeta(key) + `:\s*)(.*)$`)
+	for i := start + 1; i < len(lines); i++ {
+		// A line indented by two or less starts the next service or a top-level
+		// key, so the service block has ended.
+		if trimmed := strings.TrimLeft(lines[i], " "); trimmed != "" &&
+			len(lines[i])-len(trimmed) <= 2 {
+			break
+		}
+		m := entry.FindStringSubmatch(lines[i])
+		if m == nil {
+			continue
+		}
+		lines[i] = m[1] + value
+		require.NoError(t, os.WriteFile(composePath, []byte(strings.Join(lines, "\n")), 0o644))
+		return strings.TrimSpace(m[2])
+	}
+	t.Fatalf("compose %s: service %q has no %q entry", composePath, service, key)
+	return ""
 }

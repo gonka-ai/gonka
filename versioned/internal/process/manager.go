@@ -27,11 +27,6 @@ import (
 )
 
 const (
-	statusStarting = "starting"
-	statusRunning  = "running"
-	statusDraining = "draining"
-	statusStopped  = "stopped"
-
 	childLoopbackHost            = "127.0.0.1"
 	maxChildPort                 = 65535
 	storageModePostgres          = "postgres"
@@ -42,6 +37,7 @@ const (
 var (
 	errChildPortPoolExhausted = errors.New("child port pool exhausted")
 	errLegacyDrainStatus      = errors.New("drain status endpoint unavailable")
+	ErrHostDraining           = errors.New("versiond host is draining")
 )
 
 type child struct {
@@ -51,16 +47,45 @@ type child struct {
 	storageMode   string
 	binPath       string
 	port          int
-	adminPort     int
+	adminPort     atomic.Int64
 	stop          context.CancelFunc
 	forceStopCh   chan struct{}
 	forceStopOnce sync.Once
 	done          chan struct{} // closed when runChild exits
 	ready         chan struct{} // closed after readiness succeeds
 	readyOnce     sync.Once
-	proxyTarget   *proxy.Target
-	status        string
-	restart       bool
+	// serving is this generation's own live readiness, refreshed by a monitor
+	// started when it begins running. It is per generation on purpose: a probe
+	// answered by a child that has since been swapped out must not decide
+	// anything about its replacement.
+	serving   atomic.Bool
+	servingAt atomic.Int64
+	// legacyWarned rate-limits the legacy-fallback warning to once per
+	// generation: the monitor re-probes every second, and a legacy child
+	// without /ready would otherwise write the same line forever.
+	legacyWarned atomic.Bool
+	proxyTarget  *proxy.Target
+	status       generationState
+	restart      bool
+}
+
+// servingFresh reports whether this generation's readiness monitor currently
+// vouches for it. An answer older than childReadyStale is not an answer: a
+// monitor that has stopped must not freeze the child at "ready".
+func (c *child) servingFresh() bool {
+	if !c.serving.Load() {
+		return false
+	}
+	return time.Since(time.Unix(0, c.servingAt.Load())) < childReadyStale
+}
+
+// noteLegacyFallback records, once per generation, that readiness came through
+// the legacy /healthz fallback rather than /ready.
+func (c *child) noteLegacyFallback(path string) {
+	if c.legacyWarned.CompareAndSwap(false, true) {
+		slog.Warn("ready path unavailable; using legacy readiness fallback",
+			"version", c.version.Name, "port", c.port, "ready_path", path)
+	}
 }
 
 func (c *child) Stop() {
@@ -81,25 +106,40 @@ func (c *child) Done() <-chan struct{} {
 }
 
 type Manager struct {
-	cfg            config.Config
-	processes      map[string]*child
-	draining       map[string][]*child
-	downloading    map[string]struct{}
-	allocatedPorts map[int]struct{}
-	reservedPorts  map[int]struct{}
-	mu             sync.Mutex
-	routes         atomic.Value // proxy.RouteTable
+	cfg             config.Config
+	processes       map[string]*child
+	draining        map[string][]*child
+	children        map[*child]struct{}
+	downloading     map[string]struct{}
+	allocatedPorts  map[int]struct{}
+	reservedPorts   map[int]struct{}
+	operations      map[uint64]controlOperation
+	nextOperationID uint64
+	conditions      Conditions
+	everConverged   bool
+	available       chan struct{}
+	childCtx        context.Context
+	cancelChildren  context.CancelFunc
+	hostDraining    bool
+	mu              sync.Mutex
+	routes          atomic.Value // proxy.RouteTable
 }
 
 func NewManager(cfg config.Config) *Manager {
 	cfg = normalizeConfig(cfg)
+	childCtx, cancelChildren := context.WithCancel(context.Background())
 	m := &Manager{
 		cfg:            cfg,
 		processes:      make(map[string]*child),
 		draining:       make(map[string][]*child),
+		children:       make(map[*child]struct{}),
 		downloading:    make(map[string]struct{}),
 		allocatedPorts: make(map[int]struct{}),
 		reservedPorts:  reservedChildPorts(),
+		operations:     make(map[uint64]controlOperation),
+		childCtx:       childCtx,
+		cancelChildren: cancelChildren,
+		available:      make(chan struct{}, 1),
 	}
 	m.routes.Store(proxy.RouteTable{})
 	return m
@@ -196,38 +236,147 @@ func (m *Manager) RouteTable() *atomic.Value {
 	return &m.routes
 }
 
+// childReadyInterval matches the balancer's own cadence: readiness that is
+// refreshed less often than it is asked about would report a stale answer, and
+// refreshing it more often only adds load. childReadyStale is the point past
+// which a missing refresh is treated as unready — a monitor that has stopped
+// must not freeze the answer at "ready" forever.
+const (
+	childReadyInterval = time.Second
+	childReadyTimeout  = 2 * time.Second
+	childReadyStale    = 5 * time.Second
+)
+
+// ServesVersion reports whether this host can serve the named version right now.
+// It is a pure read of state a monitor keeps current, so a balancer checking
+// every second cannot turn into a probe of the child every second, and no number
+// of concurrent callers can fan out into concurrent probes.
+//
+// Two things have to hold, and neither implies the other. The route table — the
+// same one the proxy uses, so the answer cannot disagree with what a request
+// would get — must have a target for the version. And the generation behind it
+// must still be reporting itself ready: readiness is checked once when a child
+// starts, but a child can lose it afterwards, and a route held open to a child
+// that has gone unready is a route to a host that cannot serve.
+func (m *Manager) ServesVersion(name string) bool {
+	routes, ok := m.routes.Load().(proxy.RouteTable)
+	if !ok {
+		return false
+	}
+	if _, served := routes[name]; !served {
+		return false
+	}
+
+	m.mu.Lock()
+	c := m.processes[name]
+	running := c != nil && c.status == statusRunning
+	m.mu.Unlock()
+	return running && c.servingFresh()
+}
+
+// watchChildReadiness keeps one generation's serving flag current. It is bound to
+// the generation, so a swap simply ends this monitor and starts the next one; a
+// late answer can only ever be written to the child that was asked.
+func (m *Manager) watchChildReadiness(ctx context.Context, c *child) {
+	ticker := time.NewTicker(childReadyInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		m.mu.Lock()
+		stillRunning := c.status == statusRunning
+		port := c.lifecyclePort()
+		publicPort := c.port
+		allowLegacy := int(c.adminPort.Load()) == 0
+		path := m.cfg.ReadyPath
+		m.mu.Unlock()
+		if !stillRunning {
+			return
+		}
+
+		probeCtx, cancel := context.WithTimeout(ctx, childReadyTimeout)
+		client := &http.Client{Timeout: childReadyTimeout}
+		ready, viaLegacy := readyEndpointReady(probeCtx, client, port, path, allowLegacy)
+		if viaLegacy {
+			c.noteLegacyFallback(path)
+		}
+		if ready && !allowLegacy {
+			ready = publicEndpointReady(probeCtx, client, publicPort)
+		}
+		cancel()
+
+		c.serving.Store(ready)
+		c.servingAt.Store(time.Now().UnixNano())
+	}
+}
+
+func (m *Manager) Available() <-chan struct{} {
+	return m.available
+}
+
 func (m *Manager) Status() []health.StatusEntry {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	return m.statusLocked()
+}
+
+func (m *Manager) statusLocked() []health.StatusEntry {
 	out := make([]health.StatusEntry, 0, len(m.processes)+len(m.draining))
 	for _, c := range m.processes {
-		out = append(out, health.StatusEntry{
-			Name:          c.version.Name,
-			Port:          c.port,
-			Status:        c.status,
-			SHA256:        c.archiveSHA256,
-			BinaryVersion: c.binaryVersion,
-		})
+		out = append(out, statusEntry(c))
 	}
 	for _, children := range m.draining {
 		for _, c := range children {
-			out = append(out, health.StatusEntry{
-				Name:          c.version.Name,
-				Port:          c.port,
-				Status:        c.status,
-				SHA256:        c.archiveSHA256,
-				BinaryVersion: c.binaryVersion,
-			})
+			out = append(out, statusEntry(c))
 		}
 	}
+	sortStatusEntries(out)
 	return out
+}
+
+func statusEntry(c *child) health.StatusEntry {
+	return health.StatusEntry{
+		Name:          c.version.Name,
+		Port:          c.port,
+		Status:        healthGenerationStatus(c.status),
+		SHA256:        c.archiveSHA256,
+		BinaryVersion: c.binaryVersion,
+	}
+}
+
+func sortStatusEntries(entries []health.StatusEntry) {
+	sort.Slice(entries, func(i, j int) bool {
+		if entries[i].Name != entries[j].Name {
+			return entries[i].Name < entries[j].Name
+		}
+		if entries[i].Status != entries[j].Status {
+			return entries[i].Status < entries[j].Status
+		}
+		return entries[i].Port < entries[j].Port
+	})
 }
 
 // Reconcile compares desired state against local state and converges.
 // The desired sha256 is the archive identity from the oracle. Downloaded
 // versions also record local install metadata so we can distinguish archive
 // identity from the extracted executable bytes on disk.
-func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error {
+func (m *Manager) Reconcile(parent context.Context, desired []oracle.Version) error {
+	ctx, operationID, err := m.beginOperation(parent, operationReconcile)
+	if err != nil {
+		return err
+	}
+	defer m.endOperation(operationID)
+	desiredCount, err := m.reconcile(ctx, desired)
+	m.recordReconcileResult(desiredCount, err)
+	return err
+}
+
+func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int, error) {
+
 	// Step 0: build desired set, injecting forced versions.
 	desiredSet := make(map[string]oracle.Version, len(desired))
 	for _, v := range desired {
@@ -295,12 +444,16 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 	m.mu.Unlock()
 
 	// Phase B (no lock): resolve hashes, do disk I/O for overrides and hash checks.
+	var actionErrs []error
 	for _, o := range overrides {
 		if o.blockedByDrain {
 			slog.Info("version start deferred while previous child is draining", "version", o.version.Name)
 			continue
 		}
-		m.reconcileOverride(ctx, o.version, o.overrideSrc, o.binPath)
+		if err := m.reconcileOverride(ctx, o.version, o.overrideSrc, o.binPath); err != nil {
+			slog.Error("override reconcile failed", "version", o.version.Name, "error", err)
+			actionErrs = append(actionErrs, fmt.Errorf("override %s: %w", o.version.Name, err))
+		}
 	}
 
 	var toDownload []versionAction
@@ -316,6 +469,10 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 		desiredHash, err := snap.version.ResolvedSHA256()
 		if err != nil {
 			slog.Error("cannot resolve sha256, skipping", "version", snap.version.Name, "error", err)
+			actionErrs = append(
+				actionErrs,
+				fmt.Errorf("resolve sha256 for %s: %w", snap.version.Name, err),
+			)
 			continue
 		}
 		desiredHashes[snap.version.Name] = desiredHash
@@ -355,6 +512,10 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 
 	// Phase C (lock): apply decisions -- start ready children, mark downloads, stop removed.
 	m.mu.Lock()
+	if m.hostDraining {
+		m.mu.Unlock()
+		return len(desiredSet), ErrHostDraining
+	}
 	var startErrs []error
 	started := 0
 	for _, a := range toStart {
@@ -392,7 +553,7 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 	for name, c := range m.processes {
 		if _, wanted := desiredSet[name]; !wanted {
 			toStop = append(toStop, c)
-			c.status = statusDraining
+			transitionGenerationLocked(c, statusRetiring)
 			c.restart = false
 			delete(m.processes, name)
 			m.draining[name] = append(m.draining[name], c)
@@ -420,18 +581,21 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 	for _, a := range scheduledDownloads {
 		if err := m.downloadAndStart(ctx, a.version, a.sha256); err != nil {
 			slog.Error("download or start failed, skipping", "version", a.version.Name, "error", err)
+			actionErrs = append(actionErrs, fmt.Errorf("download or start %s: %w", a.version.Name, err))
 		}
 	}
 
-	// Zero-downtime swaps -- download THEN stop old process.
+	// Download first, then overlap generations where their storage permits it;
+	// otherwise the stop/start path withdraws the old route before stopping it.
 	for _, a := range toSwap {
 		if err := m.downloadAndSwap(ctx, a.version, a.sha256, a.child); err != nil {
 			slog.Error("swap failed, keeping old version", "version", a.version.Name, "error", err)
+			actionErrs = append(actionErrs, fmt.Errorf("swap %s: %w", a.version.Name, err))
 		}
 	}
 
 	m.gcInstalledVersions(desiredHashes)
-	return errors.Join(startErrs...)
+	return len(desiredSet), errors.Join(append(startErrs, actionErrs...)...)
 }
 
 type versionAction struct {
@@ -449,7 +613,14 @@ func (m *Manager) versionStartBlockedLocked(name string) bool {
 
 // reconcileOverride handles a version with a local override binary.
 // Does disk I/O outside the lock, then takes the lock to update state.
-func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overrideSrc, binPath string) {
+func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overrideSrc, binPath string) error {
+	m.mu.Lock()
+	if m.hostDraining {
+		m.mu.Unlock()
+		return ErrHostDraining
+	}
+	m.mu.Unlock()
+
 	if stat, statErr := os.Stat(overrideSrc); statErr != nil {
 		slog.Error(
 			"override path missing or unreadable",
@@ -458,7 +629,7 @@ func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overr
 			"env_key", fmt.Sprintf("VERSIOND_OVERRIDE_%s", strings.ReplaceAll(v.Name, ".", "_")),
 			"error", statErr,
 		)
-		return
+		return statErr
 	} else if stat.IsDir() {
 		slog.Error(
 			"override path points to directory, expected file",
@@ -466,13 +637,13 @@ func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overr
 			"path", overrideSrc,
 			"env_key", fmt.Sprintf("VERSIOND_OVERRIDE_%s", strings.ReplaceAll(v.Name, ".", "_")),
 		)
-		return
+		return fmt.Errorf("override path %s is a directory", overrideSrc)
 	}
 
 	srcHash, err := download.HashFile(overrideSrc)
 	if err != nil {
 		slog.Error("override source unreadable", "version", v.Name, "path", overrideSrc, "error", err)
-		return
+		return err
 	}
 	overrideID := "override:" + srcHash
 
@@ -484,55 +655,60 @@ func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overr
 	if isRunning && existing.binPath == binPath && existing.archiveSHA256 == overrideID {
 		diskHash, hashErr := download.HashFile(binPath)
 		if hashErr == nil && diskHash == srcHash {
-			return // already running the same override binary
+			return nil // already running the same override binary
 		}
 	}
 	if isRunning {
-		// Override source changed: stop old, copy new, start.
+		m.mu.Lock()
+		if m.hostDraining {
+			m.mu.Unlock()
+			return ErrHostDraining
+		}
+		proxyDrained, retired := m.retireChildForStopStartLocked(existing)
+		m.mu.Unlock()
+		if !retired {
+			return nil
+		}
+
+		// Override source changed: withdraw the route, let requests that already
+		// own its target lease finish, then stop, copy and start.
 		slog.Info("override binary changed, restarting", "version", v.Name)
-		existing.Stop()
-		waitForChild(existing)
+		if err := m.stopRetiredChild(ctx, existing, proxyDrained); err != nil {
+			return err
+		}
 	}
 
 	// Disk I/O outside the lock.
 	binDir := filepath.Join(m.cfg.BinDir, v.Name)
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		slog.Error("override mkdir failed", "version", v.Name, "error", err)
-		return
+		return err
 	}
 
 	if err := atomicCopy(overrideSrc, binPath); err != nil {
 		slog.Error("override copy failed", "version", v.Name, "error", err)
-		return
+		return err
 	}
 
 	slog.Info("using override binary", "version", v.Name, "path", overrideSrc)
 
 	m.mu.Lock()
-	// Verify the process is still the one we captured before deleting.
-	// A concurrent reconcile could have replaced it.
-	if isRunning {
-		if current, ok := m.processes[v.Name]; ok {
-			if current != existing {
-				m.mu.Unlock()
-				return
-			}
-			delete(m.processes, v.Name)
-		} else if m.versionStartBlockedLocked(v.Name) {
-			m.mu.Unlock()
-			return
-		}
-	} else if _, running := m.processes[v.Name]; running || m.versionStartBlockedLocked(v.Name) {
+	if m.hostDraining {
 		m.mu.Unlock()
-		return
+		return ErrHostDraining
+	}
+	if _, running := m.processes[v.Name]; running || m.versionStartBlockedLocked(v.Name) {
+		m.mu.Unlock()
+		return nil
 	}
 	if err := m.startChild(ctx, v, overrideID, binPath, true); err != nil {
 		m.mu.Unlock()
 		slog.Error("override start failed", "version", v.Name, "error", err)
-		return
+		return err
 	}
 	m.rebuildRoutes()
 	m.mu.Unlock()
+	return nil
 }
 
 func versionNames(vs []oracle.Version) []string {
@@ -708,7 +884,7 @@ func (m *Manager) downloadAndStart(ctx context.Context, v oracle.Version, sha st
 	delete(m.downloading, v.Name)
 	_, running := m.processes[v.Name]
 	var startErr error
-	if dlErr == nil && ctx.Err() == nil && !running && !m.versionStartBlockedLocked(v.Name) {
+	if dlErr == nil && ctx.Err() == nil && !m.hostDraining && !running && !m.versionStartBlockedLocked(v.Name) {
 		startErr = m.startChild(ctx, v, sha, m.installBinPath(v.Name, sha), true)
 	}
 	m.mu.Unlock()
@@ -721,8 +897,9 @@ func (m *Manager) downloadAndStart(ctx context.Context, v oracle.Version, sha st
 	return nil
 }
 
-// downloadAndSwap downloads the new binary, starts it on a fresh port, swaps the
-// route after readiness, and drains the old child out of band.
+// downloadAndSwap downloads the new binary. Shared-storage generations overlap:
+// the replacement starts on a fresh port before the route swap. Other storage
+// modes withdraw and drain the old route before a stop/start replacement.
 func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha string, old *child) error {
 	dlErr := m.downloadBinary(ctx, v, sha)
 	if dlErr != nil || ctx.Err() != nil {
@@ -736,14 +913,49 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 	}
 
 	newBinPath := m.installBinPath(v.Name, sha)
-	if !m.rollingOverlapAllowed(v.Name, old, newBinPath) {
+	m.mu.Lock()
+	if m.hostDraining {
+		delete(m.downloading, v.Name)
+		m.mu.Unlock()
+		return ErrHostDraining
+	}
+	m.mu.Unlock()
+	if !m.rollingOverlapAllowedContext(ctx, v.Name, old, newBinPath) {
 		slog.Warn("rolling overlap disabled without shared storage; falling back to stop/start swap", "version", v.Name)
-		old.Stop()
-		waitForChild(old)
+		m.mu.Lock()
+		if m.hostDraining {
+			delete(m.downloading, v.Name)
+			m.mu.Unlock()
+			return ErrHostDraining
+		}
+		proxyDrained, retired := m.retireChildForStopStartLocked(old)
+		m.mu.Unlock()
+		if !retired {
+			m.mu.Lock()
+			delete(m.downloading, v.Name)
+			m.mu.Unlock()
+			return fmt.Errorf("current child changed before stop/start swap")
+		}
+		if err := m.stopRetiredChild(ctx, old, proxyDrained); err != nil {
+			m.mu.Lock()
+			delete(m.downloading, v.Name)
+			m.mu.Unlock()
+			return err
+		}
+
 		m.mu.Lock()
 		delete(m.downloading, v.Name)
-		if current, ok := m.processes[v.Name]; ok && current == old {
-			delete(m.processes, v.Name)
+		if m.hostDraining {
+			m.mu.Unlock()
+			return ErrHostDraining
+		}
+		if err := ctx.Err(); err != nil {
+			m.mu.Unlock()
+			return err
+		}
+		if _, running := m.processes[v.Name]; running || m.versionStartBlockedLocked(v.Name) {
+			m.mu.Unlock()
+			return fmt.Errorf("version %s became active while stop/start swap was draining", v.Name)
 		}
 		startErr := m.startChild(ctx, v, sha, newBinPath, true)
 		m.mu.Unlock()
@@ -754,6 +966,11 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 	}
 
 	m.mu.Lock()
+	if m.hostDraining {
+		delete(m.downloading, v.Name)
+		m.mu.Unlock()
+		return ErrHostDraining
+	}
 	newChild, startErr := m.newChild(ctx, v, sha, newBinPath, false)
 	if startErr != nil {
 		delete(m.downloading, v.Name)
@@ -764,7 +981,7 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 	go m.runChild(newChild.ctx, newChild.child)
 	if err := waitForChildReady(ctx, newChild.child); err != nil {
 		newChild.child.Stop()
-		waitForChild(newChild.child)
+		_ = waitForChildContext(ctx, newChild.child)
 		m.mu.Lock()
 		delete(m.downloading, v.Name)
 		m.mu.Unlock()
@@ -773,19 +990,25 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 
 	m.mu.Lock()
 	delete(m.downloading, v.Name)
+	if m.hostDraining {
+		m.mu.Unlock()
+		newChild.child.Stop()
+		_ = waitForChildContext(ctx, newChild.child)
+		return ErrHostDraining
+	}
 	if current, ok := m.processes[v.Name]; !ok || current != old {
 		m.mu.Unlock()
 		newChild.child.Stop()
-		waitForChild(newChild.child)
+		_ = waitForChildContext(ctx, newChild.child)
 		return fmt.Errorf("current child changed during swap")
 	}
 	if newChild.child.status != statusRunning || childDone(newChild.child) {
 		m.mu.Unlock()
 		newChild.child.Stop()
-		waitForChild(newChild.child)
+		_ = waitForChildContext(ctx, newChild.child)
 		return fmt.Errorf("new child stopped before swap")
 	}
-	old.status = statusDraining
+	transitionGenerationLocked(old, statusRetiring)
 	old.restart = false
 	delete(m.processes, v.Name)
 	m.draining[v.Name] = append(m.draining[v.Name], old)
@@ -975,12 +1198,15 @@ type childStart struct {
 	ctx   context.Context
 }
 
-func (m *Manager) newChild(ctx context.Context, v oracle.Version, sha, binPath string, restart bool) (childStart, error) {
+func (m *Manager) newChild(_ context.Context, v oracle.Version, sha, binPath string, restart bool) (childStart, error) {
+	if m.hostDraining {
+		return childStart{}, ErrHostDraining
+	}
 	port, err := m.assignPort()
 	if err != nil {
 		return childStart{}, fmt.Errorf("allocate public port for version %s: %w", v.Name, err)
 	}
-	childCtx, childCancel := context.WithCancel(ctx)
+	childCtx, childCancel := context.WithCancel(m.childCtx)
 	c := &child{
 		version:       v,
 		archiveSHA256: sha,
@@ -990,14 +1216,18 @@ func (m *Manager) newChild(ctx context.Context, v oracle.Version, sha, binPath s
 		forceStopCh:   make(chan struct{}),
 		done:          make(chan struct{}),
 		ready:         make(chan struct{}),
-		status:        statusStarting,
+		status:        statusPreparing,
 		restart:       restart,
 	}
+	m.children[c] = struct{}{}
 	return childStart{child: c, ctx: childCtx}, nil
 }
 
 // startChild must be called with m.mu held.
 func (m *Manager) startChild(ctx context.Context, v oracle.Version, sha, binPath string, restart bool) error {
+	if m.hostDraining {
+		return ErrHostDraining
+	}
 	start, err := m.newChild(ctx, v, sha, binPath, restart)
 	if err != nil {
 		return err
@@ -1008,24 +1238,192 @@ func (m *Manager) startChild(ctx context.Context, v oracle.Version, sha, binPath
 	return nil
 }
 
-func (m *Manager) Shutdown(ctx context.Context) error {
+// BeginHostDrain freezes desired-state changes and crash restarts while the
+// host admission layer waits for already accepted proxy requests to finish.
+func (m *Manager) BeginHostDrain() {
 	m.mu.Lock()
-	children := make([]*child, 0, len(m.processes)+len(m.draining))
-	for _, c := range m.processes {
+	m.hostDraining = true
+	for c := range m.children {
+		c.restart = false
+	}
+	m.downloading = make(map[string]struct{})
+	m.mu.Unlock()
+	m.cancelOperations()
+}
+
+// RequestChildrenDrain removes every child route before issuing lifecycle
+// drain requests. Calls run concurrently and never hold m.mu during network I/O.
+func (m *Manager) RequestChildrenDrain(ctx context.Context) error {
+	children := m.prepareChildrenForDrain()
+	errCh := make(chan error, len(children))
+	var wg sync.WaitGroup
+	for _, c := range children {
+		wg.Add(1)
+		go func(c *child) {
+			defer wg.Done()
+			if err := m.requestDrain(ctx, c); err != nil {
+				errCh <- fmt.Errorf("request drain for %s: %w", c.version.Name, err)
+			}
+		}(c)
+	}
+	wg.Wait()
+	close(errCh)
+	var errs []error
+	for err := range errCh {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+// WaitChildrenIdle waits for every child-side lifecycle counter to reach zero.
+// Legacy children without a status endpoint receive the configured compatibility
+// grace before they are considered drained.
+func (m *Manager) WaitChildrenIdle(ctx context.Context) error {
+	children := m.snapshotChildren()
+	errCh := make(chan error, len(children))
+	var wg sync.WaitGroup
+	for _, c := range children {
+		wg.Add(1)
+		go func(c *child) {
+			defer wg.Done()
+			if err := m.waitChildIdle(ctx, c); err != nil {
+				errCh <- fmt.Errorf("wait for %s to drain: %w", c.version.Name, err)
+			}
+		}(c)
+	}
+	wg.Wait()
+	close(errCh)
+	var errs []error
+	for err := range errCh {
+		errs = append(errs, err)
+	}
+	return errors.Join(errs...)
+}
+
+func (m *Manager) waitChildIdle(ctx context.Context, c *child) error {
+	for {
+		select {
+		case <-c.done:
+			return nil
+		default:
+		}
+
+		inflight, err := m.fetchInflight(ctx, c)
+		if err == nil && inflight == 0 {
+			return nil
+		}
+		if errors.Is(err, errLegacyDrainStatus) {
+			slog.Warn(
+				"drain status endpoint unavailable; waiting legacy drain grace",
+				"version", c.version.Name,
+				"port", c.port,
+				"grace", m.cfg.DrainKillGrace,
+			)
+			timer := time.NewTimer(m.cfg.DrainKillGrace)
+			defer timer.Stop()
+			select {
+			case <-c.done:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			case <-timer.C:
+				return nil
+			}
+		}
+		if err != nil {
+			slog.Warn("child drain status failed; retrying", "version", c.version.Name, "error", err)
+		}
+		timer := time.NewTimer(m.cfg.DrainPollInterval)
+		select {
+		case <-c.done:
+			timer.Stop()
+			return nil
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+}
+
+func (m *Manager) prepareChildrenForDrain() []*child {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.hostDraining = true
+	children := m.allChildrenLocked()
+	for _, c := range children {
+		c.restart = false
+		if !childDone(c) {
+			transitionGenerationLocked(c, statusRetiring)
+		}
+		delete(m.processes, c.version.Name)
+		m.appendDrainingLocked(c)
+	}
+	m.downloading = make(map[string]struct{})
+	m.rebuildRoutes()
+	return children
+}
+
+func (m *Manager) appendDrainingLocked(target *child) {
+	for _, c := range m.draining[target.version.Name] {
+		if c == target {
+			return
+		}
+	}
+	m.draining[target.version.Name] = append(m.draining[target.version.Name], target)
+}
+
+func (m *Manager) allChildrenLocked() []*child {
+	seen := make(map[*child]struct{}, len(m.children)+len(m.processes)+len(m.draining))
+	children := make([]*child, 0, len(m.children)+len(m.processes)+len(m.draining))
+	appendChild := func(c *child) {
+		if c == nil {
+			return
+		}
+		if _, ok := seen[c]; ok {
+			return
+		}
+		seen[c] = struct{}{}
 		children = append(children, c)
-		c.Stop()
+	}
+	for c := range m.children {
+		appendChild(c)
+	}
+	for _, c := range m.processes {
+		appendChild(c)
 	}
 	for _, draining := range m.draining {
 		for _, c := range draining {
-			children = append(children, c)
-			c.Stop()
+			appendChild(c)
 		}
 	}
-	m.processes = make(map[string]*child)
-	m.draining = make(map[string][]*child)
-	m.downloading = make(map[string]struct{})
-	m.rebuildRoutes()
-	m.mu.Unlock()
+	return children
+}
+
+func (m *Manager) snapshotChildren() []*child {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.allChildrenLocked()
+}
+
+func (m *Manager) ForceStopChildren() {
+	m.cancelOperations()
+	m.cancelChildren()
+	for _, c := range m.snapshotChildren() {
+		c.ForceStop()
+	}
+}
+
+func (m *Manager) Shutdown(ctx context.Context) error {
+	children := m.prepareChildrenForDrain()
+	defer m.clearStoppedChildren()
+	for _, c := range children {
+		m.mu.Lock()
+		transitionGenerationLocked(c, statusStopping)
+		m.mu.Unlock()
+		c.Stop()
+	}
+	m.cancelChildren()
 
 	if len(children) == 0 {
 		return nil
@@ -1060,25 +1458,42 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	return ctx.Err()
 }
 
-func (m *Manager) ShutdownTimeout() time.Duration {
-	return m.childStopTimeout()
+func (m *Manager) clearStoppedChildren() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.processes = make(map[string]*child)
+	m.draining = make(map[string][]*child)
+	m.children = make(map[*child]struct{})
+	m.downloading = make(map[string]struct{})
+	m.rebuildRoutes()
 }
 
 func waitForChild(c *child) {
 	<-c.Done()
 }
 
+func waitForChildContext(ctx context.Context, c *child) error {
+	select {
+	case <-c.Done():
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (m *Manager) runChild(ctx context.Context, c *child) {
 	defer close(c.done)
 	defer func() {
 		m.mu.Lock()
+		transitionGenerationLocked(c, statusStopped)
+		delete(m.children, c)
 		if current, ok := m.processes[c.version.Name]; ok && current == c {
 			delete(m.processes, c.version.Name)
 			m.rebuildRoutes()
 		}
 		m.removeDrainingLocked(c)
 		m.releasePort(c.port)
-		m.releasePort(c.adminPort)
+		m.releasePort(int(c.adminPort.Load()))
 		m.mu.Unlock()
 	}()
 
@@ -1088,24 +1503,33 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		return
 	}
 
-	preflight, err := preflightChildWithAdminProbe(c.binPath, c.version.Name, m.devshardAdminEligible())
+	preflight, err := preflightChildWithAdminProbeContext(
+		ctx,
+		c.binPath,
+		c.version.Name,
+		m.devshardAdminEligible(),
+	)
 	if err != nil {
 		slog.Error("child preflight failed", "version", c.version.Name, "bin", c.binPath, "error", err)
+		m.mu.Lock()
+		transitionGenerationFailureLocked(c)
+		m.mu.Unlock()
 		return
 	}
 	m.mu.Lock()
 	c.binaryVersion = preflight.binaryLogVersion
 	c.storageMode = preflight.storageMode
-	if preflight.adminAPISupported && c.adminPort == 0 {
+	if preflight.adminAPISupported && c.adminPort.Load() == 0 {
 		adminPort, portErr := m.assignPort()
 		if portErr != nil {
-			c.status = statusStopped
+			transitionGenerationFailureLocked(c)
 			m.mu.Unlock()
 			slog.Error("allocate child admin port failed", "version", c.version.Name, "error", portErr)
 			return
 		}
-		c.adminPort = adminPort
+		c.adminPort.Store(int64(adminPort))
 	}
+	transitionGenerationLocked(c, statusStarting)
 	adminAddr := c.adminAddr()
 	m.mu.Unlock()
 
@@ -1128,13 +1552,42 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		cmd.Stderr = os.Stderr
 
 		lastStart = time.Now()
-		slog.Info("starting child", "version", c.version.Name, "port", c.port, "admin_addr", adminAddr, "sha256", c.archiveSHA256)
 
+		// The fork is linearised with the drain barrier: the guard and
+		// cmd.Start happen under the same m.mu that BeginHostDrain and
+		// prepareChildrenForDrain take, so only two orders exist — the process
+		// starts before the barrier and the drain sees and stops it, or the
+		// barrier is up first and the process never starts. A guard that
+		// released the lock before forking would only narrow the window:
+		// retirement could land between the check and cmd.Start.
+		//
+		// Both halves of the barrier matter. BeginHostDrain sets hostDraining
+		// long before RequestChildrenDrain retires the generations, and a child
+		// finishing its preflight during the announce window sits in `starting`
+		// — still legal by phase, already frozen by contract. The orphan would
+		// get no route, yet WaitChildrenIdle would out-wait its startup on a
+		// port nobody listens on: an evacuation stretched by a whole preflight
+		// and ready timeout for a child that exists only to be killed.
+		// startSupervisedProcess is fork/exec plus watcher goroutines; it does
+		// no child I/O, so holding m.mu across it does not violate the
+		// no-network-under-mutex rule.
+		m.mu.Lock()
+		if m.hostDraining || generationPhase(c.status) >= generationPhase(statusRetiring) {
+			slog.Info("child start suppressed; the host is draining or the generation retired",
+				"version", c.version.Name, "status", c.status, "host_draining", m.hostDraining)
+			m.mu.Unlock()
+			return
+		}
+		if c.status == statusFailed {
+			transitionGenerationLocked(c, statusStarting)
+		}
+		slog.Info("starting child", "version", c.version.Name, "port", c.port, "admin_addr", adminAddr, "sha256", c.archiveSHA256)
 		proc, err := startSupervisedProcess(cmd, ctx.Done(), c.forceStopCh, m.childStopTimeout())
+		m.mu.Unlock()
 		if err != nil {
 			slog.Error("child start failed", "version", c.version.Name, "error", err)
 			m.mu.Lock()
-			c.status = statusStopped
+			transitionGenerationFailureLocked(c)
 			m.mu.Unlock()
 			return
 		}
@@ -1144,8 +1597,8 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			proc.ForceStop()
 			_ = proc.Wait()
 			m.mu.Lock()
-			c.status = statusStopped
 			restart := c.restart
+			transitionGenerationFailureLocked(c)
 			if current, ok := m.processes[c.version.Name]; ok && current == c {
 				m.rebuildRoutes()
 			}
@@ -1162,8 +1615,16 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			}
 			continue
 		}
+		// Seed the readiness flag before anything can see the route. close(c.ready)
+		// wakes the swap path, which publishes this generation itself, and a
+		// published route whose flag is still false answers 503 to the balancer's
+		// next per-version check — with fall 1, one such answer evicts the host,
+		// and a fleet-wide rolling update would blink the whole pool.
+		c.serving.Store(true)
+		c.servingAt.Store(time.Now().UnixNano())
+
 		m.mu.Lock()
-		c.status = statusRunning
+		transitionGenerationLocked(c, statusRunning)
 		c.proxyTarget = proxy.NewTarget(fmt.Sprintf("localhost:%d", c.port))
 		c.readyOnce.Do(func() { close(c.ready) })
 		if current, ok := m.processes[c.version.Name]; ok && current == c {
@@ -1171,7 +1632,20 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		}
 		m.mu.Unlock()
 
+		// The monitor owns the flag from here. Its context is scoped to this
+		// process attempt and it is awaited after the process exits: a monitor
+		// left running through a quick crash-restart could otherwise finish a
+		// probe of the dead process and write the answer over the next attempt's.
+		monitorCtx, cancelMonitor := context.WithCancel(ctx)
+		monitorDone := make(chan struct{})
+		go func() {
+			defer close(monitorDone)
+			m.watchChildReadiness(monitorCtx, c)
+		}()
+
 		err = proc.Wait()
+		cancelMonitor()
+		<-monitorDone
 
 		select {
 		case <-ctx.Done():
@@ -1182,8 +1656,8 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		slog.Error("child exited", "version", c.version.Name, "error", err)
 
 		m.mu.Lock()
-		c.status = statusStopped
 		restart := c.restart
+		transitionGenerationFailureLocked(c)
 		if current, ok := m.processes[c.version.Name]; ok && current == c {
 			m.rebuildRoutes()
 		}
@@ -1271,7 +1745,12 @@ func parseDevshardShutdownGrace(raw string) time.Duration {
 	return d
 }
 
-func (m *Manager) rollingOverlapAllowed(versionName string, old *child, newBinPath string) bool {
+func (m *Manager) rollingOverlapAllowedContext(
+	ctx context.Context,
+	versionName string,
+	old *child,
+	newBinPath string,
+) bool {
 	name := strings.ToLower(m.cfg.BinaryName)
 	if name != "devshard" && name != "devshardd" {
 		return true
@@ -1293,7 +1772,7 @@ func (m *Manager) rollingOverlapAllowed(versionName string, old *child, newBinPa
 		return false
 	}
 
-	newMode, err := readStorageMode(newBinPath)
+	newMode, err := readStorageModeContext(ctx, newBinPath)
 	if err != nil {
 		slog.Warn(
 			"rolling overlap disabled: cannot probe new devshard storage mode",
@@ -1336,35 +1815,41 @@ func childDone(c *child) bool {
 }
 
 func (c *child) lifecyclePort() int {
-	if c.adminPort != 0 {
-		return c.adminPort
+	if adminPort := int(c.adminPort.Load()); adminPort != 0 {
+		return adminPort
 	}
 	return c.port
 }
 
 func (c *child) adminAddr() string {
-	if c.adminPort == 0 {
+	adminPort := int(c.adminPort.Load())
+	if adminPort == 0 {
 		return ""
 	}
-	return fmt.Sprintf("%s:%d", childLoopbackHost, c.adminPort)
-}
-
-func waitForReady(ctx context.Context, port int, path string, timeout time.Duration) bool {
-	return waitForReadiness(ctx, timeout, func(probeCtx context.Context, client *http.Client) bool {
-		return readyEndpointReady(probeCtx, client, port, path, true)
-	})
+	return fmt.Sprintf("%s:%d", childLoopbackHost, adminPort)
 }
 
 // waitForChildServingReady gates the Starting -> Running transition. Modern
 // devshardd children must be logically ready on their admin listener and also
 // serve health checks on the public listener that receives proxied traffic.
 func waitForChildServingReady(ctx context.Context, c *child, path string, timeout time.Duration) bool {
-	if c.adminPort == 0 {
-		return waitForReady(ctx, c.port, path, timeout)
+	adminPort := int(c.adminPort.Load())
+	if adminPort == 0 {
+		return waitForReadiness(
+			ctx,
+			timeout,
+			func(probeCtx context.Context, client *http.Client) bool {
+				ready, viaLegacy := readyEndpointReady(probeCtx, client, c.port, path, true)
+				if viaLegacy {
+					c.noteLegacyFallback(path)
+				}
+				return ready
+			},
+		)
 	}
 	return waitForReadiness(ctx, timeout, func(probeCtx context.Context, client *http.Client) bool {
-		return readyEndpointReady(probeCtx, client, c.adminPort, path, false) &&
-			publicEndpointReady(probeCtx, client, c.port)
+		ready, _ := readyEndpointReady(probeCtx, client, adminPort, path, false)
+		return ready && publicEndpointReady(probeCtx, client, c.port)
 	})
 }
 
@@ -1390,20 +1875,23 @@ func waitForReadiness(
 	}
 }
 
-func readyEndpointReady(ctx context.Context, client *http.Client, port int, path string, allowLegacy bool) bool {
+// readyEndpointReady reports readiness and whether the answer came through the
+// legacy /healthz fallback. Logging that fallback is the caller's job: this runs
+// once a second per child from the monitor, and only the caller knows the
+// generation it belongs to.
+func readyEndpointReady(ctx context.Context, client *http.Client, port int, path string, allowLegacy bool) (ready, viaLegacy bool) {
 	readyPath := normalizeHTTPPath(path)
 	status, err := getHTTPStatus(ctx, client, port, readyPath)
 	if err != nil {
-		return false
+		return false, false
 	}
 	if status == http.StatusOK {
-		return true
+		return true, false
 	}
 	if allowLegacy && legacyReadyFallbackAllowed(readyPath, status) && legacyReady(ctx, client, port) {
-		slog.Warn("ready path unavailable; using legacy readiness fallback", "port", port, "ready_path", readyPath, "status", status)
-		return true
+		return true, true
 	}
-	return false
+	return false, false
 }
 
 func publicEndpointReady(ctx context.Context, client *http.Client, port int) bool {
@@ -1477,24 +1965,24 @@ func normalizeHTTPPath(path string) string {
 	return "/" + path
 }
 
-func (m *Manager) requestDrain(c *child) {
+func (m *Manager) requestDrain(ctx context.Context, c *child) error {
 	lifecyclePort := c.lifecyclePort()
 	url := fmt.Sprintf("http://%s:%d%s", childLoopbackHost, lifecyclePort, normalizeHTTPPath(m.cfg.DrainPath))
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	requestCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodPost, url, nil)
 	if err != nil {
-		return
+		return err
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		slog.Warn("drain request failed", "version", c.version.Name, "port", c.port, "lifecycle_port", lifecyclePort, "error", err)
-		return
+		return err
 	}
 	_ = resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		slog.Warn("drain request returned non-success", "version", c.version.Name, "port", c.port, "lifecycle_port", lifecyclePort, "status", resp.StatusCode)
+		return fmt.Errorf("drain request returned %d", resp.StatusCode)
 	}
+	return nil
 }
 
 func (m *Manager) drainAfterProxy(c *child, proxyDrained <-chan struct{}) {
@@ -1510,12 +1998,13 @@ func (m *Manager) drainAfterProxy(c *child, proxyDrained <-chan struct{}) {
 	case <-timer.C:
 		slog.Warn("proxy drain timeout reached", "version", c.version.Name, "port", c.port)
 	}
-	m.requestDrain(c)
+	m.mu.Lock()
+	transitionGenerationLocked(c, statusDraining)
+	m.mu.Unlock()
+	if err := m.requestDrain(context.Background(), c); err != nil {
+		slog.Warn("drain request failed", "version", c.version.Name, "port", c.port, "error", err)
+	}
 	m.drainAndStopBefore(c, deadline)
-}
-
-func (m *Manager) drainAndStop(c *child) {
-	m.drainAndStopBefore(c, time.Now().Add(m.cfg.DrainTimeout))
 }
 
 func (m *Manager) drainAndStopBefore(c *child, deadline time.Time) {
@@ -1525,7 +2014,7 @@ func (m *Manager) drainAndStopBefore(c *child, deadline time.Time) {
 			return
 		default:
 		}
-		inflight, err := m.fetchInflight(c)
+		inflight, err := m.fetchInflight(context.Background(), c)
 		if errors.Is(err, errLegacyDrainStatus) {
 			slog.Warn(
 				"drain status endpoint unavailable; using legacy drain grace",
@@ -1562,6 +2051,9 @@ func (m *Manager) drainAndStopBefore(c *child, deadline time.Time) {
 		case <-time.After(m.cfg.DrainPollInterval):
 		}
 	}
+	m.mu.Lock()
+	transitionGenerationLocked(c, statusStopping)
+	m.mu.Unlock()
 	c.Stop()
 	waitForChild(c)
 }
@@ -1575,11 +2067,72 @@ func retireProxyTarget(c *child) <-chan struct{} {
 	return drained
 }
 
-func (m *Manager) fetchInflight(c *child) (int64, error) {
-	url := fmt.Sprintf("http://%s:%d%s", childLoopbackHost, c.lifecyclePort(), normalizeHTTPPath(m.cfg.DrainStatusPath))
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+// retireChildForStopStartLocked atomically withdraws one expected generation
+// before a replacement that cannot overlap it. New proxy requests immediately
+// reload a route table without this target; requests that already acquired it
+// remain counted by the returned lease channel. Manager.mu must be held.
+func (m *Manager) retireChildForStopStartLocked(c *child) (<-chan struct{}, bool) {
+	current, ok := m.processes[c.version.Name]
+	if !ok || current != c {
+		return nil, false
+	}
+	transitionGenerationLocked(c, statusRetiring)
+	c.restart = false
+	delete(m.processes, c.version.Name)
+	m.appendDrainingLocked(c)
+	m.rebuildRoutes()
+	return retireProxyTarget(c), true
+}
+
+// stopRetiredChild waits only for requests already admitted by versiond. The
+// configured timeout remains the safety boundary; after it, the child's own
+// graceful shutdown is the final chance for an unusually long request.
+func (m *Manager) stopRetiredChild(
+	ctx context.Context,
+	c *child,
+	proxyDrained <-chan struct{},
+) error {
+	timer := time.NewTimer(m.cfg.DrainTimeout)
+	defer timer.Stop()
+	select {
+	case <-c.done:
+		m.mu.Lock()
+		m.removeDrainingLocked(c)
+		m.mu.Unlock()
+		return nil
+	case <-proxyDrained:
+		slog.Info("proxy requests drained before stop/start", "version", c.version.Name, "port", c.port)
+	case <-ctx.Done():
+		go m.drainAfterProxy(c, proxyDrained)
+		return ctx.Err()
+	case <-timer.C:
+		slog.Warn("proxy drain timeout reached before stop/start", "version", c.version.Name, "port", c.port)
+	}
+
+	m.mu.Lock()
+	transitionGenerationLocked(c, statusStopping)
+	m.mu.Unlock()
+	c.Stop()
+	if err := waitForChildContext(ctx, c); err != nil {
+		return err
+	}
+	// Production runChild removes this entry before closing done. Keeping this
+	// idempotent cleanup here also makes the helper's lifecycle contract explicit.
+	m.mu.Lock()
+	m.removeDrainingLocked(c)
+	m.mu.Unlock()
+	return nil
+}
+
+func (m *Manager) fetchInflight(ctx context.Context, c *child) (int64, error) {
+	return m.fetchInflightAt(ctx, c.version.Name, c.port, c.lifecyclePort())
+}
+
+func (m *Manager) fetchInflightAt(ctx context.Context, versionName string, port, lifecyclePort int) (int64, error) {
+	url := fmt.Sprintf("http://%s:%d%s", childLoopbackHost, lifecyclePort, normalizeHTTPPath(m.cfg.DrainStatusPath))
+	requestCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
 	defer cancel()
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(requestCtx, http.MethodGet, url, nil)
 	if err != nil {
 		return 0, err
 	}
@@ -1616,7 +2169,7 @@ func (m *Manager) fetchInflight(c *child) (int64, error) {
 	case status.Count != nil:
 		return *status.Count, nil
 	default:
-		return 0, fmt.Errorf("drain status missing inflight count")
+		return 0, fmt.Errorf("drain status missing inflight count for %s on port %d", versionName, port)
 	}
 }
 
@@ -1651,6 +2204,12 @@ func (m *Manager) rebuildRoutes() {
 		}
 	}
 	m.routes.Store(routes)
+	if len(routes) > 0 {
+		select {
+		case m.available <- struct{}{}:
+		default:
+		}
+	}
 	for version, target := range previous {
 		if routes[version] != target {
 			target.Retire()

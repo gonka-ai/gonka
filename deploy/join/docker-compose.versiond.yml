@@ -15,6 +15,10 @@ x-versiond: &versiond
   environment:
     - VERSIOND_ORACLE_URL=http://api:9100/versions
     - VERSIOND_BINARY_NAME=devshardd
+    - VERSIOND_HOST_SHUTDOWN_BUDGET=${VERSIOND_HOST_SHUTDOWN_BUDGET:-25m}
+    # Keep serving after /readyz starts failing so the active router check can
+    # withdraw this host before admission closes.
+    - VERSIOND_DRAIN_ANNOUNCE=${VERSIOND_DRAIN_ANNOUNCE:-5s}
     - NODE_MANAGER_ADDR=api:${NODE_MANAGER_GRPC_PORT:-9400}
     - NODE_HOST=node
     - KEY_NAME=${KEY_NAME}
@@ -44,6 +48,22 @@ x-versiond: &versiond
       condition: service_started
     devshard-postgres:
       condition: service_healthy
+  healthcheck:
+    test:
+      [
+        "CMD",
+        "/bin/busybox",
+        "wget",
+        "-q",
+        "-O",
+        "/dev/null",
+        "http://127.0.0.1:8080/readyz",
+      ]
+    interval: 2s
+    timeout: 3s
+    retries: 3
+    start_period: ${VERSIOND_HEALTH_START_PERIOD:-30m}
+  stop_grace_period: ${VERSIOND_STOP_GRACE_PERIOD:-30m}
   restart: always
 
 services:

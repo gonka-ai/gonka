@@ -62,7 +62,19 @@ func ResetMockOpenAIFault(t *testing.T, client *http.Client, mockOpenAIURL strin
 		DropFirstChunk:   &f,
 		PartialStream:    &f,
 		StreamChunkDelay: &zero,
+		PauseStream:      &f,
 	})
+}
+
+func ReleaseMockOpenAIStreams(t *testing.T, client *http.Client, mockOpenAIURL string) {
+	t.Helper()
+	if client == nil {
+		client = HTTPClient()
+	}
+	resp, err := client.Post(mockOpenAIURL+"/testenv/stream/release", "application/json", nil)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode, "POST mock-openai stream release")
 }
 
 // PatchTestenvGrantees replaces warm-key grantees for a validator via mock-dapi.
