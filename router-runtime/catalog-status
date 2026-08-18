@@ -1,0 +1,20 @@
+#!/bin/sh
+
+# Print the version names currently published in an HAProxy Runtime API map.
+set -eu
+
+if [ "${1:-}" = --state ]; then
+    state=${2:-${ROUTING_CATALOG_STATUS_FILE:-/var/lib/gonka-router/catalog-status.json}}
+    [ "$#" -le 2 ] || {
+        echo "usage: catalog-status MAP_FILE | --state [STATUS_FILE]" >&2
+        exit 1
+    }
+    cat "$state"
+    exit
+fi
+
+socket=${ROUTING_CATALOG_STATUS_SOCKET:-/var/run/haproxy/haproxy.sock}
+map=${1:?usage: catalog-status MAP_FILE | --state [STATUS_FILE]}
+
+printf 'show map %s\n' "$map" | socat - "UNIX-CONNECT:$socket" | \
+    awk 'NF >= 3 && $2 !~ /^version=/ { print $2 }' | LC_ALL=C sort -u

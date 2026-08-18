@@ -8,9 +8,10 @@ HAProxy in front of N `versiond` instances. It has two jobs:
    must not receive new work, and must start receiving it again on its own once
    it is healthy.
 
-There is no router-side state and no control plane. Membership comes from DNS
-and health from active health checks, so **adding, removing, or replacing a
-`versiond` requires no router config change and no reload.**
+Membership comes from DNS, health from active checks, and protocol names from
+the existing governance `/versions` feed. The only persistent router state is a
+last-known-good catalog projection. Adding a host or approving a protocol name
+does not require a router reload.
 
 ---
 
@@ -22,13 +23,13 @@ request → normalise path → pick backend by version → pick server by escrow
 
 | Backend | Servers | Used for |
 | --- | --- | --- |
-| `versiond_pool_<v>` | every host that passes the per-version readiness sequence below | each version listed in `VERSIOND_VERSIONS` |
+| `versiond_pool_<v>` / `versiond_dynamic_<n>` | every host that passes the per-version readiness sequence below | bootstrap versions and names learned from governance |
 | `versiond_legacy_<v>` | the single `VERSIOND_LEGACY_HOST` when it passes the same sequence | one per version in `VERSIOND_NON_HA_VERSIONS`, which owns pre-HA SQLite data on that host |
 | `versiond_ha_pool` | every host that passes the coarse readiness sequence | non-version paths such as `/healthz`, and every version when no version is declared at all |
 
-A version that is declared nowhere is **refused** with `503` naming the setting
-that fixes it, rather than being routed to a host that may not run it. See
-[Declaring versions](#declaring-versions).
+A version absent from both the bootstrap set and the accepted governance
+catalog is refused with `503`, rather than being routed to a host that may not
+run it. See [Version catalog](#version-catalog).
 
 Every backend is rendered from `pool-backend.cfg.template`, so the routing
 policy cannot drift between them. HA backends use the DNS pool; each legacy
@@ -111,55 +112,34 @@ be missing it at once, and gating on that would empty the whole pool.
 
 Every second HAProxy runs the complete sequence against each host.
 
-## Declaring versions
+## Version catalog
 
-`VERSIOND_VERSIONS` is the list of versions this router can route. It is a real
-operational duty, and the router will not paper over a gap in it: while any
-version is declared, a request for an *undeclared* version is answered `503` here
-rather than sent to a host that may not run it.
+`VERSIOND_VERSIONS` is a bootstrap floor used while the governance endpoint is
+unavailable. In normal operation the router polls `VERSIOND_ROUTING_CATALOG_URL`,
+the same read-only `/versions` snapshot consumed by versiond.
 
-Refusing looks harsher than falling back, and it is deliberate. The fallback is
-the coarse host-level check — the thing per-version pools exist to replace — so a
-request would reach whichever host the hash picked and fail there with `404` if
-that host does not have the version. That failure is partial, hash-dependent and
-easy to mistake for flakiness. The refusal names its own cause:
+HAProxy cannot create backends at runtime, so the image pre-renders a bounded
+set of disabled `versiond_dynamic_<n>` backends. For every new valid name the
+reconciler assigns a slot, enables its per-version checks, waits until the
+configured ready reserve is present, then atomically publishes the request-map
+entry. A batch of names is published as one projection; partial activation is
+not exposed.
 
-```console
-$ curl -i https://…/v6/sessions/abc/chat
-HTTP/1.1 503 Service Unavailable
-version v6 is not declared in VERSIOND_VERSIONS on this router
-```
+Accepted projections are written atomically under `/var/lib/gonka-router`.
+After restart, a fresh last-known-good cache keeps already learned routes alive
+while governance is temporarily unavailable. Corrupt, stale, duplicate,
+backwards-revision, removal, and capacity-exhaustion inputs leave the last
+accepted map untouched and expose a degraded state through `catalog-status`.
 
-**Approving a new version is therefore two-phase**, in this order:
+Version names use the routing grammar
+`[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}`. Names outside it are rejected before they
+can create a path/map mismatch. Removal is deliberately not automatic: deleting
+a serving route is a maintenance operation, while additions are safe to
+reconcile continuously.
 
-1. add the version to `VERSIOND_VERSIONS` and **replace** the router container —
-   it gains a pool for `v6` with no healthy members, which changes nothing for
-   `v4`;
-2. approve `v6` in governance. Each host joins `v6`'s pool as it installs it.
-
-There is no in-place way to declare a version: the backends are rendered from the
-environment when the container starts, so the environment has to change and the
-container has to be replaced. A deployment that requires seamless upgrades of
-the router itself must run redundant router instances behind a stable frontend
-and replace them one at a time.
-
-**So declare the versions you expect before you need them.** A pool for a version
-nobody runs yet has no healthy members and costs nothing but its health checks;
-requests for it are refused either way, because no host can serve it. Declaring
-`v4 v5 v6 v7` up front turns a governance approval into step 2 alone.
-
-Doing it the other way round means `v6` requests are refused until step 1 lands.
-
-Leaving `VERSIOND_VERSIONS` empty disables the whole mechanism: every version
-uses the host-level pool, exactly as before per-version pools existed. In an HA
-deployment (`GONKA_HA` set) that is refused at startup — the host-level check
-answers "can this host serve *anything*", so a host whose `v5` child went unready
-would keep receiving `v5` traffic as long as `v4` is healthy, failing
-hash-dependently. A stack that genuinely cannot declare its versions up front
-(test environments minting names dynamically) opts in to exactly that with
-`VERSIOND_ROUTER_ALLOW_COARSE_READINESS=1`. Versionless endpoints — `/healthz`,
-`/readyz`, `/metrics`, `/stats`, and the session observability routes — always
-use the host-level pool and are never refused.
+Leaving both the bootstrap set and catalog URL empty selects coarse host-level
+routing. An HA deployment refuses that mode unless
+`VERSIOND_ROUTER_ALLOW_COARSE_READINESS=1` is explicit.
 
 Declared names are taken as governance wrote them. The one limit is that a name
 must be able to appear literally in a path segment: `/`, `?`, `#`, `%` and
@@ -297,7 +277,13 @@ host lifecycle is intentionally delivered as a separate change.
 | `VERSIOND_PORT` | `8080` | upstream port |
 | `VERSIOND_LEGACY_HOST` | *(none)* | single host owning pre-HA SQLite data dirs. **Required** whenever `VERSIOND_NON_HA_VERSIONS` is non-empty — the router refuses to start otherwise, because the owner of one host's data cannot default to a name that resolves to the whole pool. Unused (and may be omitted) when no version is pinned |
 | `VERSIOND_NON_HA_VERSIONS` | *(empty)* | version path segments pinned to the legacy host, whitespace and/or comma separated |
-| `VERSIOND_VERSIONS` | *(empty)* | versions to health-check individually, whitespace and/or comma separated. Empty = every version uses the host-level check (refused when `GONKA_HA` is set); non-empty = undeclared versions are refused |
+| `VERSIOND_VERSIONS` | *(empty)* | static bootstrap floor; governance additions are learned without changing it |
+| `VERSIOND_ROUTING_CATALOG_URL` | *(empty)* | read-only governance `GET /versions` endpoint |
+| `VERSIOND_ROUTING_CATALOG_POLL_SECONDS` | `5` | catalog polling interval |
+| `VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS` | `3` | timeout for one catalog request |
+| `VERSIOND_ROUTING_ACTIVATION_MIN_READY` | `2` | ready upstreams required before publishing a new projection |
+| `VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS` | `86400` | maximum startup age of last-known-good catalog state |
+| `VERSIOND_ROUTER_VERSION_CAPACITY` | `32` | pre-rendered slots for names added after startup |
 | `VERSIOND_ROUTER_ALLOW_COARSE_READINESS` | *(unset)* | allow an HA deployment to run with no declared versions, accepting that a host with one unready version keeps receiving its traffic. Same boolean grammar |
 | `GONKA_HA` | *(unset)* | authoritative HA deployment latch; stamps `Devshard-Ha` even while only one pool member is usable. With it off, the router still stamps the header whenever more than one host is usable in the selected backend. Booleans share one grammar with devshardd: `1/t/true/yes/on` on, empty/`0/f/false/no/off` off, anything else refuses to start |
 | `VERSIOND_ROUTER_POOL_SLOTS` | `64` | maximum simultaneous pool members; the resolver accepts DNS payloads up to 8192 bytes so the default pool fits in one answer |

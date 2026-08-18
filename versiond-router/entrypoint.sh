@@ -10,29 +10,34 @@
 #   VERSIOND_NON_HA_VERSIONS  version path segments pinned to the legacy host
 #                             (whitespace and/or comma separated). Empty = every
 #                             version uses the HA pool.
-#   VERSIOND_VERSIONS         versions to health-check individually, so a host
-#                             missing one of them leaves that version's pool and
-#                             keeps serving the rest. Empty = every version uses
-#                             the coarse host-level check.
+#   VERSIOND_VERSIONS         static bootstrap versions to health-check
+#                             individually. Governance additions are learned
+#                             from VERSIOND_ROUTING_CATALOG_URL at runtime.
+#   VERSIOND_ROUTING_CATALOG_URL
+#                             dapi's read-only approved-version endpoint.
 #   GONKA_HA                  set by the HA compose overlay; keeps the
 #                             Devshard-Ha request header on the HA backend even
 #                             while all but one pool member are unavailable
 #   VERSIOND_ROUTER_*         proxy policy, see README
 #
-# Pool membership is discovered from DNS and health from active /readyz checks,
-# so neither adding a host nor draining one needs a config change or a reload.
+# Pool membership is discovered from DNS, protocol names from governance, and
+# health from active /readyz checks. Host and version additions need no reload.
 set -eu
 
 TEMPLATE="${VERSIOND_ROUTER_TEMPLATE:-/etc/haproxy/haproxy.cfg.template}"
 OUT="${VERSIOND_ROUTER_OUT:-/etc/haproxy/haproxy.cfg}"
 MAP="${VERSIOND_ROUTER_NON_HA_MAP:-/etc/haproxy/non_ha.map}"
 VERSIONS_MAP="${VERSIOND_ROUTER_VERSIONS_MAP:-/etc/haproxy/versions.map}"
+READY_VERSIONS_MAP="$VERSIONS_MAP"
+SLOT_MAP="${OUT}.version-slots.map"
+READY_RULES="${VERSIOND_ROUTER_READY_RULES:-${OUT}.ready.rules}"
 POOL_TEMPLATE="${VERSIOND_ROUTER_POOL_TEMPLATE:-/etc/haproxy/pool-backend.cfg.template}"
 # Overridable so `make test-render` can render without a local HAProxy.
 HAPROXY_BIN="${HAPROXY_BIN:-haproxy}"
 
 POOL_HOST="${VERSIOND_POOL_HOST:-versiond-pool}"
 PORT="${VERSIOND_PORT:-8080}"
+ADMIN_PORT="${VERSIOND_ROUTER_ADMIN_PORT:-8404}"
 LEGACY_HOST="${VERSIOND_LEGACY_HOST:-$POOL_HOST}"
 SLOTS="${VERSIOND_ROUTER_POOL_SLOTS:-64}"
 MAXCONN="${VERSIOND_ROUTER_MAX_CONNECTIONS:-4096}"
@@ -43,6 +48,51 @@ STREAM_IDLE="${VERSIOND_ROUTER_STREAM_IDLE_SECONDS:-1200}"
 # Used only after HTTP Upgrade/CONNECT. SSE uses STREAM_IDLE because it remains
 # an ordinary HTX response.
 TUNNEL_TIMEOUT="${VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS:-86400}"
+VERSION_CAPACITY="${VERSIOND_ROUTER_VERSION_CAPACITY:-32}"
+CATALOG_URL="${VERSIOND_ROUTING_CATALOG_URL:-}"
+CATALOG_POLL="${VERSIOND_ROUTING_CATALOG_POLL_SECONDS:-5}"
+CATALOG_FETCH_TIMEOUT="${VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS:-3}"
+CATALOG_ACTIVATION_MIN_READY="${VERSIOND_ROUTING_ACTIVATION_MIN_READY:-2}"
+CATALOG_CACHE_FILE=/var/lib/gonka-router/catalog-v2.json
+CATALOG_LEGACY_CACHE_FILE="$(dirname -- "$CATALOG_CACHE_FILE")/catalog.json"
+CATALOG_CACHE_MAX_AGE="${VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS:-86400}"
+CATALOG_STATUS_FILE=/var/lib/gonka-router/catalog-status.json
+CATALOG_CACHE_BIN="${ROUTING_CATALOG_CACHE_BIN:-/usr/local/lib/router-runtime/catalog-cache}"
+FRONT_BIND_HOST="${VERSIOND_ROUTER_FRONT_BIND_HOST:-}"
+METRICS_BIND_HOST="${VERSIOND_ROUTER_METRICS_BIND_HOST:-}"
+DNS_RESOLVER="${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}"
+
+resolve_ipv4() {
+    getent ahostsv4 "$1" | awk 'NR == 1 { print $1 }'
+}
+
+if [ -n "$FRONT_BIND_HOST" ]; then
+    FRONT_BIND_ADDRESS=$(resolve_ipv4 "$FRONT_BIND_HOST")
+    case "$FRONT_BIND_ADDRESS" in
+        '' | *[!0-9.]*)
+            echo "versiond-router: cannot resolve front bind host '$FRONT_BIND_HOST' to IPv4" >&2
+            exit 1
+            ;;
+    esac
+    ADMIN_LOOPBACK_BIND="    bind 127.0.0.1:$ADMIN_PORT"
+else
+    FRONT_BIND_ADDRESS=
+    ADMIN_LOOPBACK_BIND="    # The wildcard admin bind also covers loopback."
+fi
+
+if [ -n "$METRICS_BIND_HOST" ]; then
+    METRICS_BIND_ADDRESS=$(resolve_ipv4 "$METRICS_BIND_HOST")
+    case "$METRICS_BIND_ADDRESS" in
+        '' | *[!0-9.]*)
+            echo "versiond-router: cannot resolve metrics bind host '$METRICS_BIND_HOST' to IPv4" >&2
+            exit 1
+            ;;
+    esac
+    METRICS_NETWORK_BIND="    bind $METRICS_BIND_ADDRESS:8405"
+else
+    METRICS_BIND_ADDRESS=127.0.0.1
+    METRICS_NETWORK_BIND="    # No network metrics bind configured."
+fi
 
 # Booleans use one grammar, shared with devshardd's reading of GONKA_HA:
 # 1/t/true/yes/on are on; empty/0/f/false/no/off are off. Anything else
@@ -81,7 +131,7 @@ for name in "$POOL_HOST" "$LEGACY_HOST"; do
     esac
 done
 
-for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$PORT"; do
+for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$PORT" "$ADMIN_PORT" "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" "$CATALOG_ACTIVATION_MIN_READY" "$CATALOG_CACHE_MAX_AGE"; do
     case "$value" in
         ''|*[!0-9]*)
             echo "versiond-router: invalid numeric setting '$value'" >&2
@@ -89,6 +139,25 @@ for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_I
             ;;
     esac
 done
+if [ "$VERSION_CAPACITY" -eq 0 ] || [ "$CATALOG_POLL" -eq 0 ] || \
+    [ "$CATALOG_FETCH_TIMEOUT" -eq 0 ] || \
+    [ "$CATALOG_ACTIVATION_MIN_READY" -eq 0 ] || \
+    [ "$CATALOG_ACTIVATION_MIN_READY" -gt "$SLOTS" ] || \
+    [ "$CATALOG_CACHE_MAX_AGE" -eq 0 ]; then
+    echo "versiond-router: catalog capacity and timing values must be positive" >&2
+    exit 1
+fi
+case "$CATALOG_URL" in
+    '' | http://* | https://*) ;;
+    *)
+        echo "versiond-router: VERSIOND_ROUTING_CATALOG_URL must use http or https" >&2
+        exit 1
+        ;;
+esac
+if ! printf '%s\n' "$DNS_RESOLVER" | grep -Eq '^(\[[0-9A-Fa-f:]+\]|[0-9A-Fa-f:.]+)(:[0-9]+)?$'; then
+    echo "versiond-router: HAPROXY_DNS_RESOLVER must be a numeric IP with an optional port" >&2
+    exit 1
+fi
 
 ha_header_for() {
     if [ -n "$HA_DEPLOYMENT" ]; then
@@ -130,14 +199,11 @@ safe_id() {
 # Refuse names that cannot be represented as the literal path segment used for
 # routing. This applies equally to HA and legacy declarations.
 validate_version() {
-    case "$1" in
-        *[/?#%]* | *[[:space:]]* | *\\* | *\"* | *\'* | . | ..)
-            echo "versiond-router: version '$1' cannot be routed: a path segment" >&2
-            echo "  cannot carry / ? # % or whitespace literally, so the request path" >&2
-            echo "  would not match the name governance approved" >&2
-            exit 1
-            ;;
-    esac
+	if ! printf '%s\n' "$1" | LC_ALL=C grep -Eq \
+		'^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}$'; then
+		echo "versiond-router: invalid version name '$1'; expected ASCII [A-Za-z0-9][A-Za-z0-9._+~-]{0,63}" >&2
+		exit 1
+	fi
 }
 
 # Return an HAProxy-safe backend name without losing the version's identity.
@@ -158,26 +224,78 @@ backend_name() {
 # One shared fragment renders both HA pools and single-owner legacy backends, so
 # their hashing, retry, and path-rewrite policies cannot drift apart.
 render_backend() {
+    retry_on='retry-on conn-failure empty-response 502'
+    if [ "$1" = versiond_ha_pool ]; then
+        retry_on="$retry_on 404"
+    fi
     sed \
         -e "s|\${BACKEND_NAME}|$1|g" \
-        -e "s|\${READYZ_URI}|$2|g" \
-        -e "s|\${ROUTE_HEALTH_URI}|$3|g" \
+        -e "s|\${READY_CHECK_SEND}|$2|g" \
+        -e "s|\${ROUTE_CHECK_SEND}|$3|g" \
         -e "s|\${BACKEND_HOST}|$4|g" \
         -e "s|\${VERSIOND_PORT}|$PORT|g" \
         -e "s|\${BACKEND_SLOTS}|$5|g" \
         -e "s|\${REQUEST_HA_HEADER}|$6|g" \
         -e "s|\${RESPONSE_BACKEND}|$7|g" \
+        -e "s|\${RETRY_ON}|$retry_on|g" \
+        -e "s|\${SERVER_STATE}|$8|g" \
         "$POOL_TEMPLATE"
 }
 
 : > "$MAP"
 : > "$VERSIONS_MAP"
+: > "$SLOT_MAP"
 POOL_BACKENDS_FILE="$(mktemp)"
-trap 'rm -f "$POOL_BACKENDS_FILE"' EXIT
-render_backend versiond_ha_pool /readyz /healthz "$POOL_HOST" "$SLOTS" \
-    "$(ha_header_for versiond_ha_pool)" versiond_ha_pool > "$POOL_BACKENDS_FILE"
-printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;[:space:]' '\n' | while IFS= read -r version; do
-    [ -n "$version" ] || continue
+STATIC_VERSIONS_FILE="$(mktemp)"
+LEGACY_VERSIONS_FILE="$(mktemp)"
+CACHED_VERSIONS_FILE="$(mktemp)"
+CACHED_DYNAMIC_VERSIONS_FILE="$(mktemp)"
+trap 'rm -f "$POOL_BACKENDS_FILE" "$STATIC_VERSIONS_FILE" "$LEGACY_VERSIONS_FILE" "$CACHED_VERSIONS_FILE" "$CACHED_DYNAMIC_VERSIONS_FILE"' EXIT
+
+printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;[:space:]' '\n' > "$STATIC_VERSIONS_FILE"
+printf '%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" | tr ',;[:space:]' '\n' > "$LEGACY_VERSIONS_FILE"
+: > "$CACHED_VERSIONS_FILE"
+if [ -n "$CATALOG_URL" ] && [ ! -e "$CATALOG_CACHE_FILE" ] && \
+    [ "$CATALOG_LEGACY_CACHE_FILE" != "$CATALOG_CACHE_FILE" ] && \
+    [ -f "$CATALOG_LEGACY_CACHE_FILE" ]; then
+    migration_status=0
+    "$CATALOG_CACHE_BIN" migrate "$CATALOG_LEGACY_CACHE_FILE" \
+        "$CATALOG_CACHE_FILE" "$CATALOG_CACHE_MAX_AGE" || migration_status=$?
+    case "$migration_status" in
+        0) echo "versiond-router: migrated the legacy routing catalog cache" >&2 ;;
+        2) echo "versiond-router: legacy routing catalog cache is stale; fetching a fresh catalog" >&2 ;;
+        *) echo "versiond-router: legacy routing catalog cache is invalid; fetching a fresh catalog" >&2 ;;
+    esac
+fi
+if [ -n "$CATALOG_URL" ] && [ -f "$CATALOG_CACHE_FILE" ]; then
+    cache_status=0
+    "$CATALOG_CACHE_BIN" read "$CATALOG_CACHE_FILE" "$CATALOG_CACHE_MAX_AGE" \
+        > "$CACHED_VERSIONS_FILE" || cache_status=$?
+    case "$cache_status" in
+        0) echo "versiond-router: loaded the fresh routing catalog cache" >&2 ;;
+        2)
+            echo "versiond-router: ignoring stale routing catalog cache" >&2
+            : > "$CACHED_VERSIONS_FILE"
+            ;;
+        *)
+            echo "versiond-router: ignoring invalid routing catalog cache" >&2
+            : > "$CACHED_VERSIONS_FILE"
+            ;;
+    esac
+fi
+
+name_in_file() {
+    awk -v v="$1" '$0 "" == v "" { found = 1 } END { exit !found }' "$2"
+}
+
+render_backend versiond_ha_pool \
+    'http-check send meth GET uri /readyz' \
+    'http-check send meth GET uri /healthz' \
+    "$POOL_HOST" "$SLOTS" "$(ha_header_for versiond_ha_pool)" \
+    versiond_ha_pool '' > "$POOL_BACKENDS_FILE"
+declare_ha_version() {
+    version=$1
+    [ -n "$version" ] || return 0
     # A version name is whatever governance approved. Three things are derived
     # from it and each has its own rules:
     #
@@ -202,31 +320,91 @@ printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;[:space:]' '\n' | while IFS= read
     backend=$(backend_name versiond_pool "$version")
     echo "$version $backend" >> "$VERSIONS_MAP"
     encoded_version=$(urlencode "$version")
-    render_backend "$backend" "/readyz?version=$encoded_version" \
-        "/$encoded_version/healthz" "$POOL_HOST" "$SLOTS" \
-        "$(ha_header_for "$backend")" "$backend" \
+    printf 'version=%s %s\n' "$encoded_version" "$backend" >> "$READY_VERSIONS_MAP"
+    render_backend "$backend" \
+        "http-check send meth GET uri /readyz?version=$encoded_version" \
+        "http-check send meth GET uri /$encoded_version/healthz" \
+        "$POOL_HOST" "$SLOTS" "$(ha_header_for "$backend")" "$backend" '' \
         >> "$POOL_BACKENDS_FILE"
+}
+
+while IFS= read -r version; do
+    [ -n "$version" ] || continue
+    declare_ha_version "$version"
+done < "$STATIC_VERSIONS_FILE"
+
+# Restore only names that still require dynamic capacity. Rendering cached names
+# as new static backends would free their old slots on every restart and make the
+# configured capacity grow without bound. Static and legacy declarations remain
+# authoritative when an operator intentionally changes a version's ownership.
+: > "$CACHED_DYNAMIC_VERSIONS_FILE"
+while IFS= read -r version; do
+    [ -n "$version" ] || continue
+    name_in_file "$version" "$LEGACY_VERSIONS_FILE" && continue
+    if awk -v v="$version" '$1 "" == v "" { found = 1 } END { exit !found }' "$VERSIONS_MAP"; then
+        continue
+    fi
+    printf '%s\n' "$version" >> "$CACHED_DYNAMIC_VERSIONS_FILE"
+done < "$CACHED_VERSIONS_FILE"
+cached_dynamic_count=$(wc -l < "$CACHED_DYNAMIC_VERSIONS_FILE")
+if [ "$cached_dynamic_count" -gt "$VERSION_CAPACITY" ]; then
+    echo "versiond-router: fresh catalog cache needs $cached_dynamic_count dynamic slots," >&2
+    echo "  but VERSIOND_ROUTER_VERSION_CAPACITY is $VERSION_CAPACITY" >&2
+    exit 1
+fi
+
+# Reserve inert backends for governance names that appear after this container
+# starts. The reconciler assigns a check URI, enables the slot, and only then
+# publishes the version -> backend map entry. Unused capacity performs no DNS
+# resolution, health checks, or traffic.
+index=1
+while [ "$index" -le "$VERSION_CAPACITY" ]; do
+    backend="versiond_dynamic_$index"
+    cached_version=$(sed -n "${index}p" "$CACHED_DYNAMIC_VERSIONS_FILE")
+    server_state=disabled
+    if [ -n "$cached_version" ]; then
+        encoded_version=$(urlencode "$cached_version")
+        printf '%s %s\n' "$backend" "$encoded_version" >> "$SLOT_MAP"
+        printf '%s %s\n' "$cached_version" "$backend" >> "$VERSIONS_MAP"
+        printf 'version=%s %s\n' "$encoded_version" "$backend" >> "$READY_VERSIONS_MAP"
+        server_state=
+    else
+        printf '%s %s\n' "$backend" __unassigned__ >> "$SLOT_MAP"
+    fi
+    render_backend "$backend" \
+        "http-check send meth GET uri-lf /readyz?version=%[be_name,map($SLOT_MAP)]" \
+        "http-check send meth GET uri-lf /%[be_name,map($SLOT_MAP)]/healthz" \
+        "$POOL_HOST" "$SLOTS" "$(ha_header_for "$backend")" "$backend" "$server_state" \
+        >> "$POOL_BACKENDS_FILE"
+    index=$((index + 1))
 done
 
 # Legacy versions share one SQLite owner, but not one health result. Rendering a
 # backend per version lets a missing archive take only that version out of
 # rotation; a generic /readyz failure must not hide the owner's healthy children.
 # Trailing newline is load-bearing: without it `read` swallows the last field.
-printf '%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" | tr ',;[:space:]' '\n' | while IFS= read -r version; do
+while IFS= read -r version; do
     [ -n "$version" ] || continue
     validate_version "$version"
     if awk -v v="$version" '$1 "" == v "" { found = 1 } END { exit !found }' "$MAP"; then
         echo "versiond-router: legacy version '$version' is declared twice" >&2
         exit 1
     fi
+    if awk -v v="$version" '$1 "" == v "" { found = 1 } END { exit !found }' "$VERSIONS_MAP"; then
+        echo "versiond-router: version '$version' is declared as both HA and legacy" >&2
+        exit 1
+    fi
     backend=$(backend_name versiond_legacy "$version")
     echo "$version $backend" >> "$MAP"
     encoded_version=$(urlencode "$version")
-    render_backend "$backend" "/readyz?version=$encoded_version" \
-        "/$encoded_version/healthz" "$LEGACY_HOST" 1 \
-        'http-request del-header Devshard-Ha' versiond_legacy \
+    printf 'version=%s %s\n' "$encoded_version" "$backend" >> "$READY_VERSIONS_MAP"
+    render_backend "$backend" \
+        "http-check send meth GET uri /readyz?version=$encoded_version" \
+        "http-check send meth GET uri /$encoded_version/healthz" \
+        "$LEGACY_HOST" 1 'http-request del-header Devshard-Ha' \
+        versiond_legacy '' \
         >> "$POOL_BACKENDS_FILE"
-done
+done < "$LEGACY_VERSIONS_FILE"
 
 # Versions pinned to the legacy host exist because exactly one host owns their
 # SQLite data dirs. Defaulting that owner to the pool alias would resolve "the
@@ -239,30 +417,59 @@ if [ -s "$MAP" ] && [ -z "${VERSIOND_LEGACY_HOST:-}" ]; then
     exit 1
 fi
 
+# Render one static readiness rule per route. HAProxy's nbsrv() argument is a
+# configuration-time backend name, so trying to feed it a map result would turn
+# this safety decision into unsupported dynamic configuration. The generated
+# table is explicit, auditable, and uses the same maps as data-plane routing.
+: > "$READY_RULES"
+cat >> "$READY_RULES" <<'EOF'
+    http-request return status 200 content-type text/plain string "ready\n" if { path /readyz } !{ query -m found } { nbsrv(versiond_ha_pool) gt 0 }
+    http-request return status 503 content-type text/plain string "not ready\n" if { path /readyz } !{ query -m found }
+EOF
+render_ready_rules() {
+    source_map=$1
+    while read -r version backend; do
+        [ -n "$version" ] || continue
+        encoded_version=$(urlencode "$version")
+        printf '%s\n' \
+            "    http-request return status 200 content-type text/plain string \"ready\\n\" if { path /readyz } { query -m str version=$encoded_version } { nbsrv($backend) gt 0 }" \
+            "    http-request return status 503 content-type text/plain string \"not ready\\n\" if { path /readyz } { query -m str version=$encoded_version }" \
+            >> "$READY_RULES"
+    done < "$source_map"
+}
+render_ready_rules "$MAP"
+render_ready_rules "$VERSIONS_MAP"
+
 # An HA deployment must declare its versions. The host-level check the coarse
 # mode falls back to answers "can this host serve anything", so a host whose v5
 # child went unready keeps receiving v5 traffic as long as v4 is healthy —
 # hash-dependent failures the per-version pools exist to prevent. The override
 # names exactly what it accepts; test stacks with dynamic version names use it.
 if [ -n "$HA_DEPLOYMENT" ] && [ ! -s "$VERSIONS_MAP" ] \
+    && [ -z "$CATALOG_URL" ] \
     && [ -z "$ALLOW_COARSE_READINESS" ]; then
-    echo "versiond-router: GONKA_HA is set but VERSIOND_VERSIONS is empty." >&2
-    echo "  Without declared versions every version shares the host-level readiness" >&2
+    echo "versiond-router: GONKA_HA is set without bootstrap versions or a catalog." >&2
+    echo "  Without a version source every version shares the host-level readiness" >&2
     echo "  check, and a host with one unready version keeps receiving that version's" >&2
     echo "  traffic. Declare the versions this deployment serves, or set" >&2
     echo "  VERSIOND_ROUTER_ALLOW_COARSE_READINESS=1 to accept that behaviour." >&2
     exit 1
 fi
 
-# Once any version is declared, a version that is not declared must not quietly
+# Once either version source is active, an unknown version must not quietly
 # fall back to the host-level pool: that is the coarse check again, and it would
 # route to a host that may not run this version at all. Fail it here, where the
 # answer can name the fix, rather than as a 404 from whichever host the hash
 # happened to pick.
-if [ -s "$VERSIONS_MAP" ]; then
+if [ -n "$CATALOG_URL" ]; then
+    UNDECLARED_GUARD="http-request return status 503 content-type \"text/plain\" lf-string \"version %[var(txn.ver)] is not present in the governance routing catalog\" if { var(txn.ver) -m reg . } !versionless_request !{ var(txn.ver),map_str($MAP) -m found } !{ var(txn.ver),map_str($VERSIONS_MAP) -m found }"
+    DYNAMIC_READY_GUARD="http-request return status 503 content-type \"text/plain\" string \"version-is-not-declared-or-ready\" if { path /readyz } { url_param(version) -m found } !{ query,map_str($READY_VERSIONS_MAP) -m found }"
+elif [ -s "$VERSIONS_MAP" ]; then
     UNDECLARED_GUARD="http-request return status 503 content-type \"text/plain\" lf-string \"version %[var(txn.ver)] is not declared in VERSIOND_VERSIONS on this router\" if { var(txn.ver) -m reg . } !versionless_request !{ var(txn.ver),map_str($MAP) -m found } !{ var(txn.ver),map_str($VERSIONS_MAP) -m found }"
+    DYNAMIC_READY_GUARD="http-request return status 503 content-type \"text/plain\" string \"version-is-not-declared-or-ready\" if { path /readyz } { url_param(version) -m found } !{ query,map_str($READY_VERSIONS_MAP) -m found }"
 else
     UNDECLARED_GUARD="# No versions declared: every version uses the host-level pool."
+    DYNAMIC_READY_GUARD="# Dynamic version readiness is disabled."
 fi
 
 sed \
@@ -272,18 +479,58 @@ sed \
     }" \
     -e "s|\${NON_HA_MAP}|$MAP|g" \
     -e "s|\${VERSIONS_MAP}|$VERSIONS_MAP|g" \
+    -e "s|\${READY_VERSIONS_MAP}|$READY_VERSIONS_MAP|g" \
     -e "s|\${UNDECLARED_VERSION_GUARD}|$UNDECLARED_GUARD|g" \
+    -e "s|\${DYNAMIC_READY_GUARD}|$DYNAMIC_READY_GUARD|g" \
     -e "s|\${MAX_CONNECTIONS}|$MAXCONN|g" \
+    -e "s|\${ADMIN_PORT}|$ADMIN_PORT|g" \
+    -e "s|\${FRONT_BIND_ADDRESS}|$FRONT_BIND_ADDRESS|g" \
+    -e "s|\${ADMIN_LOOPBACK_BIND}|$ADMIN_LOOPBACK_BIND|g" \
+    -e "s|\${METRICS_NETWORK_BIND}|$METRICS_NETWORK_BIND|g" \
     -e "s|\${MAX_BODY_BYTES}|$MAX_BODY_BYTES|g" \
     -e "s|\${CONNECT_TIMEOUT_SECONDS}|$CONNECT_TIMEOUT|g" \
     -e "s|\${STREAM_IDLE_SECONDS}|$STREAM_IDLE|g" \
     -e "s|\${TUNNEL_TIMEOUT_SECONDS}|$TUNNEL_TIMEOUT|g" \
+    -e "s|\${DNS_RESOLVER}|$DNS_RESOLVER|g" \
+    -e "/\${ROUTER_READY_RULES}/{
+        r $READY_RULES
+        d
+    }" \
     "$TEMPLATE" > "$OUT"
 
 "$HAPROXY_BIN" -c -f "$OUT" >/dev/null
 
 if [ -n "$RENDER_ONLY" ]; then
     exit 0
+fi
+
+run_catalog_reconciler() {
+    while :; do
+        status=0
+        ROUTING_CATALOG_COMPONENT=versiond-router \
+        ROUTING_CATALOG_URL="$CATALOG_URL" \
+        ROUTING_CATALOG_RUNTIME_SOCKET=/var/run/haproxy/reconciler.sock \
+        ROUTING_CATALOG_PROJECTION_MAP="$VERSIONS_MAP" \
+        ROUTING_CATALOG_SLOT_MAP="$SLOT_MAP" \
+        ROUTING_CATALOG_BACKEND_PREFIX=versiond_dynamic_ \
+        ROUTING_CATALOG_BACKEND_CAPACITY="$VERSION_CAPACITY" \
+        ROUTING_CATALOG_SERVER_PREFIX=versiond \
+        ROUTING_CATALOG_SERVER_CAPACITY="$SLOTS" \
+        ROUTING_CATALOG_ACTIVATION_MIN_READY="$CATALOG_ACTIVATION_MIN_READY" \
+        ROUTING_CATALOG_EXCLUDE="${VERSIOND_NON_HA_VERSIONS:-}" \
+        ROUTING_CATALOG_POLL_SECONDS="$CATALOG_POLL" \
+        ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS="$CATALOG_FETCH_TIMEOUT" \
+        ROUTING_CATALOG_CACHE_FILE="$CATALOG_CACHE_FILE" \
+        ROUTING_CATALOG_CACHE_BIN="$CATALOG_CACHE_BIN" \
+        ROUTING_CATALOG_STATUS_FILE="$CATALOG_STATUS_FILE" \
+            /usr/local/lib/router-runtime/catalog-reconciler || status=$?
+        echo "versiond-router: catalog reconciler exited with status $status; restarting" >&2
+        sleep 1
+    done
+}
+
+if [ -n "$CATALOG_URL" ]; then
+    run_catalog_reconciler &
 fi
 
 exec "$HAPROXY_BIN" -W -db -f "$OUT"
