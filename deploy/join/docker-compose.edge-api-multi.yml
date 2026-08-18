@@ -6,21 +6,57 @@
 #
 #   docker compose -f docker-compose.yml -f docker-compose.edge-api-multi.yml up -d
 #
+# edge-api is stateless and read-only, so the router round-robins. Membership
+# comes from the edge-api-pool DNS alias and health from active /readyz checks:
+# an instance that cannot reach the chain reports unready and leaves the
+# rotation without being restarted, then rejoins on its own.
+#
 # x-edge-api anchor holds everything shared between instances.
 
 x-edge-api: &edge-api
-  image: ghcr.io/product-science/edge-api:0.2.14-devshard-v4
+  image: ${EDGE_API_IMAGE:-ghcr.io/product-science/edge-api:0.2.15-devshard-v5}
   environment:
     - EDGE_API_PORT=18080
     - CHAIN_GRPC_URL=node:9090
     - EDGE_API_OTEL_ENABLED=${EDGE_API_OTEL_ENABLED:-false}
     - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
     - OTEL_HEADERS=${OTEL_HEADERS:-}
+    # Keep serving after /readyz starts failing, so the router drops this
+    # instance before it stops accepting; then finish what it already accepted.
+    - EDGE_API_DRAIN_ANNOUNCE=${EDGE_API_DRAIN_ANNOUNCE:-5s}
+    - EDGE_API_SHUTDOWN_BUDGET=${EDGE_API_SHUTDOWN_BUDGET:-2m}
+  networks:
+    default:
+      aliases:
+        - edge-api-pool
   depends_on:
     - node
+  healthcheck:
+    test:
+      [
+        "CMD",
+        "/bin/busybox",
+        "wget",
+        "-q",
+        "-O",
+        "/dev/null",
+        "http://127.0.0.1:18080/readyz",
+      ]
+    interval: 1s
+    timeout: 3s
+    retries: 3
+    start_period: ${EDGE_API_HEALTH_START_PERIOD:-2m}
+  # Outer Docker backstop; must exceed announce + shutdown budget.
+  stop_grace_period: ${EDGE_API_STOP_GRACE_PERIOD:-3m}
   restart: always
 
 services:
+  # The instance from the base file joins the pool alias, and takes the same
+  # image as its siblings: the router health-checks /readyz on every member, so
+  # they must all be a build that serves it.
+  edge-api:
+    <<: *edge-api
+
   edge-api2:
     <<: *edge-api
     container_name: edge-api2
@@ -31,9 +67,9 @@ services:
 
   edge-api-router:
     container_name: edge-api-router
-    image: ghcr.io/product-science/edge-api-router:0.2.14-devshard-v4
+    image: ${EDGE_API_ROUTER_IMAGE:-ghcr.io/product-science/edge-api-router:0.2.15-devshard-v5}
     environment:
-      - EDGE_API_HOSTS=${EDGE_API_HOSTS:-edge-api edge-api2 edge-api3}
+      - EDGE_API_POOL_HOST=${EDGE_API_POOL_HOST:-edge-api-pool}
       - EDGE_API_PORT=18080
     depends_on:
       - edge-api

@@ -87,6 +87,25 @@ services:
       - "127.0.0.1:9200:9200"
     restart: always
 
+  edge-api:
+    container_name: edge-api
+    image: ghcr.io/product-science/edge-api:0.2.15
+    environment:
+      - EDGE_API_PORT=18080
+      - CHAIN_GRPC_URL=node:9090
+      - CHAIN_RPC_URL=http://node:26657
+      - EDGE_API_OTEL_ENABLED=${EDGE_API_OTEL_ENABLED:-false}
+      - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
+      - OTEL_HEADERS=${OTEL_HEADERS:-}
+      # The base topology has no readiness-aware edge-api balancer, so there
+      # is nothing to announce to before draining.
+      - EDGE_API_DRAIN_ANNOUNCE=0s
+      - EDGE_API_SHUTDOWN_BUDGET=${EDGE_API_SHUTDOWN_BUDGET:-2m}
+    depends_on:
+      - node
+    stop_grace_period: ${EDGE_API_STOP_GRACE_PERIOD:-3m}
+    restart: always
+
   versiond:
     container_name: versiond
     image: ghcr.io/product-science/versiond:0.2.14
