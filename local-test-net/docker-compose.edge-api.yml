@@ -1,5 +1,8 @@
-# edge-api overlay: canonical edge-api + 2 extras (3 total) and nginx
+# edge-api overlay: canonical edge-api + 2 extras (3 total) and the HAProxy
 # edge-api-router for round-robin Tier A query traffic.
+#
+# The router resolves ${KEY_NAME}-edge-api-pool and actively checks every
+# address. Pool membership follows running containers; no host list is rendered.
 #
 # Paths are relative to --project-directory (repo root). Typical stack:
 #   base + genesis|join + edge-api [+ edge-api-router-proxy on genesis]
@@ -24,10 +27,19 @@ x-edge-api: &edge-api
   depends_on:
     - chain-node
   networks:
-    - chain-public
+    chain-public:
+      aliases:
+        - ${KEY_NAME}-edge-api-pool
   restart: unless-stopped
 
 services:
+  # The canonical instance from docker-compose-base.yml joins the same pool.
+  edge-api:
+    networks:
+      chain-public:
+        aliases:
+          - ${KEY_NAME}-edge-api-pool
+
   edge-api-2:
     <<: *edge-api
     container_name: ${KEY_NAME}-edge-api-2
@@ -39,11 +51,11 @@ services:
   edge-api-router:
     image: edge-api-router:latest
     build:
-      context: ${EDGE_API_BUILD_CONTEXT:-..}
-      dockerfile: edge-api-router/Dockerfile
+      context: ./edge-api-router
+      dockerfile: Dockerfile
     container_name: ${KEY_NAME}-edge-api-router
     environment:
-      EDGE_API_HOSTS: ${EDGE_API_HOSTS:-${KEY_NAME}-edge-api ${KEY_NAME}-edge-api-2 ${KEY_NAME}-edge-api-3}
+      EDGE_API_POOL_HOST: ${EDGE_API_POOL_HOST:-${KEY_NAME}-edge-api-pool}
       EDGE_API_PORT: ${EDGE_API_PORT:-18080}
     depends_on:
       - edge-api
