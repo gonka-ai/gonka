@@ -16,7 +16,6 @@ import (
 	"github.com/testcontainers/testcontainers-go"
 	"github.com/testcontainers/testcontainers-go/modules/postgres"
 	"github.com/testcontainers/testcontainers-go/wait"
-
 )
 
 func postgresContainerWaitStrategy() wait.Strategy {
@@ -32,6 +31,12 @@ func postgresContainerWaitStrategy() wait.Strategy {
 // decentralized-api/payloadstorage/postgres_storage_test.go so dapi-side
 // regressions and devshard-side regressions are caught the same way.
 func setupPostgresContainer(t *testing.T) func() {
+	t.Helper()
+	container := startPostgresContainer(t)
+	return func() { _ = container.Terminate(context.Background()) }
+}
+
+func startPostgresContainer(t *testing.T) testcontainers.Container {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping postgres testcontainers tests in -short mode (requires Docker)")
@@ -58,7 +63,7 @@ func setupPostgresContainer(t *testing.T) func() {
 	t.Setenv("PGUSER", "testuser")
 	t.Setenv("PGPASSWORD", "testpass")
 
-	return func() { _ = container.Terminate(ctx) }
+	return container
 }
 
 func newTestPostgres(t *testing.T) *Postgres {
@@ -431,6 +436,39 @@ func TestPostgres_WaitReady_BlocksUntilIndex(t *testing.T) {
 	require.NoError(t, <-waitErr)
 	require.True(t, pg.Ready())
 	require.NoError(t, pg.CreateSession(paramsForEpoch("after-ready", 1)))
+}
+
+func TestPostgresReadyUsesHealthHysteresis(t *testing.T) {
+	pg := &Postgres{healthReady: true}
+
+	changed, ready := pg.recordHealthProbe(false)
+	require.False(t, changed)
+	require.True(t, ready)
+	changed, ready = pg.recordHealthProbe(false)
+	require.True(t, changed)
+	require.False(t, ready)
+
+	changed, ready = pg.recordHealthProbe(true)
+	require.False(t, changed)
+	require.False(t, ready)
+	changed, ready = pg.recordHealthProbe(true)
+	require.True(t, changed)
+	require.True(t, ready)
+}
+
+func TestPostgresReadyTracksLiveDatabaseLoss(t *testing.T) {
+	container := startPostgresContainer(t)
+	t.Cleanup(func() { _ = container.Terminate(context.Background()) })
+
+	pg, err := NewPostgres(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = pg.Close() })
+	require.NoError(t, pg.WaitReady(context.Background()))
+	require.True(t, pg.Ready())
+
+	require.NoError(t, container.Stop(context.Background(), nil))
+	require.Eventually(t, func() bool { return !pg.Ready() },
+		5*time.Second, 100*time.Millisecond)
 }
 
 func TestPostgres_NewPostgres_ConnectBudgetDoesNotIncludeIndex(t *testing.T) {
