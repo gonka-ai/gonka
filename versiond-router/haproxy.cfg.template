@@ -1,19 +1,20 @@
 # Sticky router for N versiond instances.
 #
 # Backends:
-#   versiond_pool_<v> — one per version in VERSIOND_VERSIONS. Membership is the
-#                      whole pool; health is "can you serve <v>", asked of each
-#                      host. A host missing one version leaves that version's
-#                      ring and keeps serving the rest.
+#   versiond_pool_<v> / versiond_dynamic_<n> — bootstrap and governance
+#                      versions. Membership is the whole pool; health is "can
+#                      you serve <v>", asked of each host. A host missing one
+#                      version leaves that ring and keeps serving the rest.
 #   versiond_ha_pool — the same pool asked the coarse "can you serve at all",
 #                      used for versions the router has not been told about
 #   versiond_legacy_<v> — one per version listed in non_ha.map; each asks the
 #                         per-version question of the single host that owns its
 #                         pre-HA SQLite session data
 #
-# Pool membership comes from DNS, health comes from active checks. Neither
-# requires a reload: adding a replica publishes another A record, and a draining
-# host fails /readyz. There is no router-side state to keep in sync.
+# Pool membership comes from DNS, version names from governance, and health from
+# active checks. None requires a reload: adding a replica publishes another A
+# record, a new version is projected into an inert backend, and a draining host
+# fails /readyz. No state is shared between router replicas.
 #
 # Failover: retry on connect failure, empty response, or upstream 502. Never on
 # 503 — that is the drain and HA-storage-guard answer, and retrying it would hit
@@ -23,7 +24,10 @@
 global
     log stdout format raw local0 info
     # Admin socket only; no TCP bind, so it cannot be published by accident.
-    stats socket /var/run/haproxy/haproxy.sock mode 660 level admin
+    stats socket /var/run/haproxy/haproxy.sock mode 660 level operator
+    # The catalog reconciler is the only writer. Keeping a distinct mode-600
+    # socket preserves the read-only contract of the diagnostic Runtime API.
+    stats socket /var/run/haproxy/reconciler.sock mode 600 level admin
     stats timeout 30s
 
 defaults
@@ -50,12 +54,14 @@ defaults
     # memory read in 3s is genuinely wedged.
     #
     # This value plus `inter` bounds how long the router can keep routing to a
-    # host after its readiness endpoint starts failing. A later lifecycle
-    # implementation must keep serving for longer than this detection bound.
+    # host that has begun announcing its drain. versiond's MinDrainAnnounce is
+    # derived from these two numbers, and its contract test reads this file:
+    # raising either without revisiting the floor fails
+    # versioned/internal/config TestMinDrainAnnounceCoversTheRouterDetectionWorstCase.
     timeout check 3s
 
 resolvers docker
-    nameserver dns 127.0.0.11:53
+    nameserver dns ${DNS_RESOLVER}
     # The default 512-byte EDNS payload cannot carry all addresses represented
     # by the 64 server-template slots. Keep DNS capacity aligned with pool size.
     accepted_payload_size 8192
@@ -69,7 +75,7 @@ resolvers docker
     hold timeout 5s
 
 frontend versiond_in
-    bind :8080
+    bind ${FRONT_BIND_ADDRESS}:8080
     maxconn ${MAX_CONNECTIONS}
 
     # This is a trusted router-to-devshardd signal, never client input. Backends
@@ -95,12 +101,16 @@ frontend versiond_in
     # pin themselves to a chosen host.
     http-request set-var(txn.hashkey) var(txn.canonpath)
     http-request set-var(txn.hashkey) var(txn.canonpath),field(4,/) if { var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+ }
+    http-request set-var(txn.hashkey) var(txn.canonpath),field(3,/) if { var(txn.canonpath) -m reg ^/sessions/[^/]+/(diffs|mempool|signatures)$ }
+    http-request set-var(txn.hashkey) var(txn.canonpath),field(4,/) if { var(txn.canonpath) -m reg ^/stats/shards/[^/]+$ }
 
     http-request set-var(txn.ver) var(txn.canonpath),field(2,/)
 
-    http-request set-header X-Forwarded-Proto %[ssl_fc,iif(https,http)]
-    # Overwritten, never trusted from the client: it names the immediate peer.
-    http-request set-header X-Real-IP %[src]
+    # The private parent distributor accepts only traffic returned by the nginx
+    # policy tier. Preserve its client-derived headers and provide conservative
+    # defaults only for direct private-network probes.
+    http-request set-header X-Forwarded-Proto http if !{ req.hdr(X-Forwarded-Proto) -m found }
+    http-request set-header X-Real-IP %[src] if !{ req.hdr(X-Real-IP) -m found }
 
     # Reject an advertised oversize body before opening an upstream connection.
     # HAProxy streams rather than buffers bodies, so devshardd independently
@@ -128,7 +138,24 @@ frontend versiond_in
 
 ${POOL_BACKENDS}
 
+# Internal control surface for the parent load balancer. It is deliberately on
+# a separate port: public requests must never be able to turn readiness into a
+# routing oracle or bypass the data-plane policy on :8080.
+frontend router_admin
+${ADMIN_LOOPBACK_BIND}
+    bind ${FRONT_BIND_ADDRESS}:${ADMIN_PORT}
+    mode http
+    http-request return status 200 content-type text/plain string "live\n" if { path /livez }
+${ROUTER_READY_RULES}
+    ${DYNAMIC_READY_GUARD}
+    use_backend %[query,map_str(${READY_VERSIONS_MAP})] if { path /readyz } { query,map_str(${READY_VERSIONS_MAP}) -m found }
+    default_backend router_admin_not_found
+
+backend router_admin_not_found
+    http-request return status 404 content-type text/plain string "not found\n"
+
 frontend metrics
     bind 127.0.0.1:8405
+${METRICS_NETWORK_BIND}
     http-request use-service prometheus-exporter if { path /metrics }
     http-request deny
