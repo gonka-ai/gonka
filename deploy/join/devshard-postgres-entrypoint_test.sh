@@ -1,0 +1,146 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+entrypoint="$script_dir/devshard-postgres-entrypoint.sh"
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+
+fail() {
+    echo "devshard-postgres-entrypoint_test: $*" >&2
+    exit 1
+}
+
+new_case() {
+    case_dir="$tmpdir/$1"
+    legacy="$case_dir/legacy"
+    persistent="$case_dir/persistent"
+    existing="$case_dir/existing"
+    mkdir -p "$legacy" "$persistent" "$existing"
+}
+
+run_entrypoint() {
+    env \
+        PATH="${entrypoint_path:-$PATH}" \
+        GONKA_POSTGRES_LEGACY_DATA="$legacy" \
+        GONKA_POSTGRES_PERSISTENT_ROOT="$persistent" \
+        GONKA_POSTGRES_EXISTING_VERSIOND="$existing" \
+        GONKA_POSTGRES_OFFICIAL_ENTRYPOINT=/bin/true \
+        PGDATA="$persistent/data" \
+        DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT="${allow_empty:-false}" \
+        "$entrypoint" postgres
+}
+
+new_case migrate
+printf '16\n' > "$legacy/PG_VERSION"
+printf 'preserved\n' > "$legacy/session-row"
+mkdir -p "$existing/v4"
+run_entrypoint
+[[ $(<"$persistent/data/session-row") == preserved ]] || fail \
+    "legacy data was not copied"
+[[ $(<"$legacy/session-row") == preserved ]] || fail \
+    "legacy source was modified"
+[[ -f "$persistent/.migrated-from-v4" ]] || fail \
+    "migration marker was not written"
+[[ ! -e "$persistent/.migrating" ]] || fail \
+    "staging directory remained after migration"
+
+new_case reject-insufficient-space
+printf '16\n' > "$legacy/PG_VERSION"
+printf 'cannot-fit\n' > "$legacy/session-row"
+mkdir -p "$case_dir/bin"
+cat >"$case_dir/bin/df" <<'EOF'
+#!/bin/sh
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
+printf '/dev/fake 100 99 1 99%% /persistent\n'
+EOF
+chmod +x "$case_dir/bin/df"
+entrypoint_path="$case_dir/bin:$PATH"
+if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+    fail "migration started without enough free space"
+fi
+unset entrypoint_path
+grep -q 'not enough free space' "$case_dir/stderr" || fail \
+    "insufficient-space failure was not diagnosed"
+[[ ! -e "$persistent/.migrating" ]] || fail \
+    "staging directory was created after the space check failed"
+
+new_case migrate-crash-state
+printf '16\n' > "$legacy/PG_VERSION"
+printf '1\n' > "$legacy/postmaster.pid"
+printf 'wal-recoverable\n' > "$legacy/session-row"
+run_entrypoint
+[[ $(<"$persistent/data/session-row") == wal-recoverable ]] || fail \
+    "crash-state cluster was not copied"
+[[ ! -e "$persistent/data/postmaster.pid" ]] || fail \
+    "stale postmaster.pid was published"
+[[ -e "$legacy/postmaster.pid" ]] || fail \
+    "rollback source was modified while removing postmaster.pid"
+
+new_case target-wins
+printf '16\n' > "$legacy/PG_VERSION"
+printf 'legacy\n' > "$legacy/source"
+mkdir -p "$persistent/data"
+printf '16\n' > "$persistent/data/PG_VERSION"
+printf 'current\n' > "$persistent/data/source"
+run_entrypoint
+[[ $(<"$persistent/data/source") == current ]] || fail \
+    "an existing persistent cluster was overwritten"
+
+new_case resume-publish
+mkdir -p "$persistent/.migrating"
+printf '16\n' > "$persistent/.migrating/PG_VERSION"
+printf 'resumed\n' > "$persistent/.migrating/session-row"
+touch "$persistent/.migrating/.gonka-copy-complete"
+run_entrypoint
+[[ $(<"$persistent/data/session-row") == resumed ]] || fail \
+    "complete staging data was not published"
+
+new_case recopy-partial-staging
+printf '16\n' > "$legacy/PG_VERSION"
+printf 'complete\n' > "$legacy/session-row"
+mkdir -p "$persistent/.migrating"
+printf 'partial\n' > "$persistent/.migrating/session-row"
+run_entrypoint
+[[ $(<"$persistent/data/session-row") == complete ]] || fail \
+    "partial staging data was not replaced from the intact source"
+
+new_case reject-uncommitted-staging
+mkdir -p "$persistent/.migrating"
+printf '16\n' > "$persistent/.migrating/PG_VERSION"
+if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+    fail "uncommitted staging data was published without its source"
+fi
+grep -q 'incomplete migration exists' "$case_dir/stderr" || fail \
+    "uncommitted-staging failure was not diagnosed"
+
+new_case reject-detached
+mkdir -p "$existing/v4"
+printf 'install metadata\n' > "$existing/v4/install.json"
+if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+    fail "existing installation was allowed to initialize an empty database"
+fi
+grep -q 'refusing to initialize an empty database' "$case_dir/stderr" || fail \
+    "detached-volume failure did not explain the safety guard"
+
+new_case explicit-empty
+mkdir -p "$existing/v4"
+printf 'install metadata\n' > "$existing/v4/install.json"
+allow_empty=true
+run_entrypoint
+unset allow_empty
+
+new_case fresh
+run_entrypoint
+
+new_case reject-partial-target
+mkdir -p "$persistent/data"
+printf 'partial\n' > "$persistent/data/base"
+if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+    fail "partial persistent PGDATA was accepted"
+fi
+grep -q 'non-empty but has no PG_VERSION' "$case_dir/stderr" || fail \
+    "partial-target failure was not diagnosed"
+
+echo "devshard-postgres-entrypoint_test: ok"
