@@ -1,10 +1,28 @@
 .PHONY: all build-docker release test-render
-.PHONY: test-hash-ring test-version-routing
+.PHONY: test-hash-ring test-version-routing test-local-compose
 
 # Renders both the mixed (legacy pinning) and the all-HA shapes, asserts on the
 # result, then runs the real HAProxy from the production image over each one.
 # Rendering needs no HAProxy locally; the syntax check needs Docker.
 HAPROXY_IMAGE ?= haproxy:3.2-alpine
+
+test-local-compose:
+	@set -eu; \
+	tmp=$$(mktemp); \
+	trap 'rm -f "$$tmp"' EXIT; \
+	KEY_NAME=testnet VERSIOND_SIGNER_KEY_NAME=test \
+		docker compose --project-directory .. \
+		-f ../local-test-net/docker-compose-base.yml \
+		-f ../local-test-net/docker-compose.versiond.yml config > "$$tmp"; \
+	grep -q 'VERSIOND_POOL_HOST: testnet-versiond-pool' "$$tmp" \
+		|| { echo 'test-local-compose: pool host is not rendered' >&2; exit 1; }; \
+	! grep -q 'VERSIOND_HOSTS' "$$tmp" \
+		|| { echo 'test-local-compose: stale static host list remains' >&2; exit 1; }; \
+	[ "$$(grep -c -- '- testnet-versiond-pool' "$$tmp")" -ge 3 ] \
+		|| { echo 'test-local-compose: not every versiond joins the pool alias' >&2; exit 1; }; \
+	grep -q 'stop_signal: SIGUSR1' "$$tmp" \
+		|| { echo 'test-local-compose: router soft-stop signal is missing' >&2; exit 1; }; \
+	echo 'test-local-compose: ok'
 
 # Which versiond serves an escrow must depend on who is in the pool, not on the
 # order DNS happened to hand the addresses to server-template. That is invisible
@@ -222,7 +240,7 @@ test-version-routing:
 		|| fail "the guard broke the router's own /healthz (got $$health)"; \
 	echo "test-version-routing: ok"
 
-test-render: test-hash-ring test-version-routing
+test-render: test-local-compose test-hash-ring test-version-routing
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
