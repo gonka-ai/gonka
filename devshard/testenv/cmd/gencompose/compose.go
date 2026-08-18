@@ -124,6 +124,7 @@ services:
     environment:
       VERSIOND_ORACLE_URL: http://{{ $.MockDapi.Host }}:{{ $.MockDapi.HTTPPort }}/versions
       VERSIOND_POLL_INTERVAL: "{{ $.Versiond.PollInterval }}"
+      VERSIOND_HOST_SHUTDOWN_BUDGET: "25m"
       VERSIOND_BIN_DIR: /opt/versiond/bin
       VERSIOND_DATA_DIR: /opt/versiond/data
       VERSIOND_BINARY_NAME: devshardd
@@ -199,6 +200,7 @@ services:
       - mock-dapi
       - mock-openai
 {{ end }}
+    stop_grace_period: 30m
     restart: unless-stopped
 {{ end }}
 
@@ -235,6 +237,8 @@ services:
 {{ range .Hosts }}
       - {{ .ID }}
 {{ end }}
+    # Compose starts the replacement only after this container exits. Bound the
+    # soft stop so one long stream cannot leave the test stack without a router.
     stop_signal: SIGUSR1
     stop_grace_period: 10s
     restart: unless-stopped
