@@ -369,6 +369,26 @@ fi
 EOF
 chmod +x "$tmpdir/fleet"
 
+cat >"$tmpdir/postgres-preflight" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+printf 'postgres-preflight %s\n' "$*" >>"$DOCKER_LOG"
+[[ ${POSTGRES_PREFLIGHT_FAIL:-false} != true ]] || exit 1
+expected=
+while (($#)); do
+	case $1 in
+		--expected-identity) expected=$2; shift 2 ;;
+		--) break ;;
+		*) shift ;;
+	esac
+done
+first=${POSTGRES_IDENTITY:-11111111-1111-1111-1111-111111111111}
+second=${POSTGRES_IDENTITY2:-$first}
+[[ $first == "$second" ]] || exit 1
+[[ -z $expected || $first == "$expected" ]] || exit 1
+EOF
+chmod +x "$tmpdir/postgres-preflight"
+
 cat >"$tmpdir/config.env" <<EOF
 ROUTER_HA_PULL_POLICY=missing
 GONKA_DEPLOYMENT_LOCK=$tmpdir/deployment.lock
@@ -396,12 +416,19 @@ run_cutover() {
         STATE_DIR="$tmpdir" \
         JOIN_DIR="$script_dir" \
         VERSIOND_ROUTER_FLEET_BIN="$tmpdir/fleet" \
+        ROUTER_HA_POSTGRES_PREFLIGHT_BIN="$tmpdir/postgres-preflight" \
         GONKA_CONFIG_ENV="$tmpdir/config.env" \
         "$@" "$script_dir/enable-router-ha.sh" \
         --versiond-mode ha --edge-mode multi
 }
 
 run_cutover "$tmpdir/success.log" env MISSING_NETWORKS=true
+preflight_line=$(grep -n '^postgres-preflight ' "$tmpdir/success.log" | head -n1 | cut -d: -f1)
+apply_line=$(grep -n '^fleet apply$' "$tmpdir/success.log" | head -n1 | cut -d: -f1)
+[[ -n $preflight_line && -n $apply_line && $preflight_line -lt $apply_line ]] || fail \
+    "shared PostgreSQL was not verified before the first fleet mutation"
+grep -q '^postgres-preflight --require-live -- ' "$tmpdir/success.log" || fail \
+    "router cutover did not require live PostgreSQL identity proof"
 grep -q '^fleet apply$' "$tmpdir/success.log" || fail \
     "router fleet was not reconciled through its update lifecycle"
 grep -q '^fleet verify-admission v1 v4$' "$tmpdir/success.log" || fail \
@@ -688,6 +715,14 @@ fi
 if run_cutover "$tmpdir/postgres-identity-mismatch.log" env \
     POSTGRES_IDENTITY2=22222222-2222-2222-2222-222222222222; then
     fail "router HA accepted versiond replicas backed by different PostgreSQL databases"
+fi
+
+if run_cutover "$tmpdir/postgres-preflight-failure.log" env \
+    POSTGRES_PREFLIGHT_FAIL=true; then
+    fail "failed PostgreSQL deployment preflight was accepted"
+fi
+if grep -q '^fleet apply$' "$tmpdir/postgres-preflight-failure.log"; then
+    fail "PostgreSQL deployment preflight failed after fleet mutation"
 fi
 if grep -q '^fleet apply$' "$tmpdir/postgres-identity-mismatch.log"; then
     fail "PostgreSQL identity mismatch was detected after fleet mutation"

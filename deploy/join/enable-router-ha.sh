@@ -152,6 +152,7 @@ initialize_forward_context() {
 
 	initialize_base_tools
 	fleet_bin=${VERSIOND_ROUTER_FLEET_BIN:-$script_dir/versiond-router-fleet.sh}
+	postgres_preflight_bin=${ROUTER_HA_POSTGRES_PREFLIGHT_BIN:-$script_dir/postgres-deployment-preflight.sh}
 	# shellcheck source=deploy/join/compose-topology.sh disable=SC1091
 	source "$script_dir/compose-topology.sh"
 
@@ -1020,14 +1021,22 @@ if [[ $versiond_mode == ha ]]; then
 		committed_postgres_identity=$(jq -r \
 			'.storage.postgres_identity // ""' "$upgrade_marker")
 	fi
+	[[ -x $postgres_preflight_bin ]] || fail \
+		"PostgreSQL deployment preflight is not executable: $postgres_preflight_bin"
+	postgres_preflight_args=(--require-live)
+	if [[ -n $committed_postgres_identity ]]; then
+		postgres_preflight_args+=(--expected-identity "$committed_postgres_identity")
+	fi
+	DOCKER_BIN="$docker_bin" "$postgres_preflight_bin" \
+		"${postgres_preflight_args[@]}" -- \
+		"${GONKA_COMPOSE_COMMAND[@]:2}" >/dev/null || fail \
+		"shared PostgreSQL deployment preflight failed"
 	fleet_spec_sha=$(current_fleet_spec_sha) || fail \
 		"cannot compute the canonical router fleet specification"
 	if [[ -n $expected_fleet_spec_sha && \
 		$fleet_spec_sha != "$expected_fleet_spec_sha" ]]; then
 		fail "router fleet specification differs from the outer upgrade transaction ($expected_fleet_spec_sha != $fleet_spec_sha)"
 	fi
-	gonka_compose_validate_live_postgres_identity \
-		"$docker_bin" "$committed_postgres_identity" >/dev/null
 	gonka_compose_validate_ha_version_catalog "$docker_bin" versiond
 fi
 ensure_compose_network proxy-policy-front "$policy_network" "$compose_project"

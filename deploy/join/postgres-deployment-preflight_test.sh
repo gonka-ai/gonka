@@ -27,7 +27,9 @@ printf '\n' >>"$DOCKER_LOG"
 if [[ $1 == compose && ${*: -3} == "config --format json" ]]; then
     cat "$CONFIG_JSON"
 elif [[ $1 == compose && ${*: -3:1} == ps && ${*: -2:1} == -q ]]; then
-    [[ ${*: -1} == versiond ]] && printf 'container-1\n' || printf 'container-2\n'
+    if [[ ${NO_LIVE:-false} != true ]]; then
+        [[ ${*: -1} == versiond ]] && printf 'container-1\n' || printf 'container-2\n'
+    fi
 elif [[ $1 == inspect ]]; then
     printf '%s\n' \
         DEVSHARD_STORAGE_MODE=postgres PGHOST=pg PGPORT=5432 \
@@ -79,5 +81,17 @@ fi
 unset IDENTITY_TWO
 grep -q 'different PostgreSQL databases' "$tmpdir/err" ||
     fail "identity mismatch was not diagnosed"
+
+NO_LIVE=true
+export NO_LIVE
+run_preflight >"$tmpdir/no-live"
+grep -q 'no live replicas to compare' "$tmpdir/no-live" ||
+    fail "read-only rendered-contract check rejected an absent deployment"
+if run_preflight --require-live >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "live deployment gate accepted an absent deployment"
+fi
+unset NO_LIVE
+grep -q 'no live versiond replicas' "$tmpdir/err" ||
+    fail "missing live replicas were not diagnosed"
 
 echo "postgres-deployment-preflight_test: ok"

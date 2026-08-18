@@ -211,7 +211,9 @@ go test ./testenv/... -count=1
 ### Stack citest (Docker)
 
 The stack suite covers smoke, routing, runtime updates, gateway behavior,
-versiond lifecycle, storage migration, validation leases, and rolling updates.
+versiond lifecycle, storage migration, validation leases, rolling updates, and
+router-observed host evacuation. The evacuation scenario verifies SSE
+continuity, graceful exit, survivor recovery and readiness-gated rejoin.
 Tests use behavior-oriented names and isolated stacks on dedicated subnets with
 Docker-assigned localhost ports, so they can run while a dev `make up` stack is
 active.
@@ -222,6 +224,7 @@ make build-devshardd
 make citest-stack                  # all core stack behavior tests
 make citest-validation-lease-race # validation lease race only
 make citest-versiond-rolling-update
+make citest-versiond-host-evacuation
 # or: ./scripts/run-stack-citest.sh
 ```
 
@@ -242,6 +245,11 @@ sessions to fail over on the first upstream connection failure.
 `TestValidationLeaseRace*` exercises lease exclusivity across a same-key HA pair
 and a solo executor. `TestVersiondRollingUpdate*` separately checks same-version
 sha replacement with Postgres overlap and the hybrid stop-then-start fallback.
+
+`TestVersiondHostEvacuation` stops one versiond while an SSE response is active,
+requires HAProxy to withdraw it before listener shutdown, verifies survivor
+recovery through shared Postgres, and admits the host again only after it
+converges.
 
 **Phase 9 adversarial** (`make citest-adversarial`): A1 lost first SSE chunk, A2 ML 503, A3 stale escrow on chain gRPC, A4 bad warm-key grantees. Fault hooks: `mock-openai` `/testenv/fault`, mock-chain `/testenv/escrow` + `/testenv/grantees` (via mock-dapi).
 
