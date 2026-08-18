@@ -1,4 +1,4 @@
-.PHONY: all build-docker release test-render
+.PHONY: all build-docker release test-render test-compose-contract test-fleet
 .PHONY: test-catalog-cache test-hash-ring test-version-routing test-local-compose
 
 # Renders both the mixed (legacy pinning) and the all-HA shapes, asserts on the
@@ -26,6 +26,12 @@ test-local-compose:
 
 test-catalog-cache:
 	@../router-runtime/catalog-cache_test.sh
+
+test-compose-contract:
+	@../deploy/join/versiond-compose-config_test.sh
+
+test-fleet:
+	@../deploy/join/versiond-router-fleet_test.sh
 
 # Which versiond serves an escrow must depend on who is in the pool, not on the
 # order DNS happened to hand the addresses to server-template. That is invisible
@@ -463,7 +469,7 @@ test-version-routing:
 		|| fail "a later catalog snapshot removed an already admitted route"; \
 	echo "test-version-routing: ok"
 
-test-render: test-local-compose test-catalog-cache test-hash-ring test-version-routing
+test-render: test-local-compose test-compose-contract test-catalog-cache test-hash-ring test-version-routing
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \

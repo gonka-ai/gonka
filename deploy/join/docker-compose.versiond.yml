@@ -36,6 +36,9 @@ x-versiond: &versiond
     default:
       aliases:
         - versiond-pool
+    versiond-router-back:
+      aliases:
+        - versiond-pool
   depends_on:
     api:
       condition: service_started
@@ -78,30 +81,6 @@ services:
       - ./devshards/bin:/opt/versiond/bin
       - ./devshards2/data:/opt/versiond/data
 
-  versiond-router:
-    container_name: versiond-router
-    image: ${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
-    environment:
-      - VERSIOND_POOL_HOST=${VERSIOND_POOL_HOST:-versiond-pool}
-      - VERSIOND_PORT=8080
-      - GONKA_HA=true
-      - VERSIOND_LEGACY_HOST=${VERSIOND_LEGACY_HOST:-versiond}
-      - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}
-      - VERSIOND_VERSIONS=${VERSIOND_VERSIONS-v4 v5 v6 v7 v8}
-      - VERSIOND_ROUTING_CATALOG_URL=${VERSIOND_ROUTING_CATALOG_URL-http://api:9100/versions}
-      - VERSIOND_ROUTING_CATALOG_POLL_SECONDS=${VERSIOND_ROUTING_CATALOG_POLL_SECONDS:-5}
-      - VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=${VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS:-3}
-      - VERSIOND_ROUTING_ACTIVATION_MIN_READY=${VERSIOND_ROUTING_ACTIVATION_MIN_READY:-2}
-      - VERSIOND_ROUTER_VERSION_CAPACITY=${VERSIOND_ROUTER_VERSION_CAPACITY:-32}
-    depends_on:
-      - versiond
-      - versiond2
-    volumes:
-      - versiond-router-state:/var/lib/gonka-router
-    stop_signal: SIGUSR1
-    stop_grace_period: ${VERSIOND_ROUTER_STOP_GRACE_PERIOD:-10s}
-    restart: always
-
   proxy-policy:
     environment:
       - VERSIOND_SERVICE_NAME=proxy-policy-ingress
@@ -116,13 +95,30 @@ services:
 
   proxy:
     environment:
-      - VERSIOND_ROUTER_POOL_HOST=versiond-router
+      - VERSIOND_ROUTER_POOL_HOST=${VERSIOND_ROUTER_POOL_HOST:-versiond-router-fleet}
       - VERSIOND_ROUTER_PORT=8080
       - VERSIOND_ROUTER_ADMIN_PORT=8404
+      - VERSIOND_ROUTER_FLEET_CAPACITY=${VERSIOND_ROUTER_FLEET_CAPACITY:-16}
       - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}
       - VERSIOND_VERSIONS=${VERSIOND_VERSIONS-v4 v5 v6 v7 v8}
       - VERSIOND_ROUTING_CATALOG_URL=${VERSIOND_ROUTING_CATALOG_URL-http://api:9100/versions}
       - PROXY_ROUTER_VERSION_CAPACITY=${PROXY_ROUTER_VERSION_CAPACITY:-32}
+      - PROXY_ROUTER_CATALOG_BIND_HOST=versiond-routing-oracle
+      - PROXY_ROUTER_CATALOG_PORT=9100
+      - PROXY_ROUTER_CATALOG_UPSTREAM_HOST=api
+      - PROXY_ROUTER_CATALOG_UPSTREAM_PORT=9100
+    networks:
+      default: {}
+      proxy-policy-front: {}
+      versiond-router-front: {}
+      versiond-router-back:
+        aliases:
+          - versiond-routing-oracle
 
-volumes:
-  versiond-router-state:
+networks:
+  versiond-router-front:
+    name: ${VERSIOND_ROUTER_FRONT_NETWORK:-gonka-versiond-router-front}
+    external: true
+  versiond-router-back:
+    name: ${VERSIOND_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}
+    external: true
