@@ -55,3 +55,20 @@ func TestHAStorageGuard_AllowsHAWithPostgres(t *testing.T) {
 	e.ServeHTTP(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 }
+
+func TestHAStorageGuard_RejectsMalformedHeader(t *testing.T) {
+	t.Setenv(mode.EnvStorageMode, "postgres")
+	t.Setenv("PGHOST", "db.example")
+
+	e := echo.New()
+	e.Use(haStorageGuard())
+	e.GET("/x", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
+
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Header.Set(mode.HeaderDevshardHA, "tru")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Contains(t, rec.Body.String(), mode.HeaderDevshardHA)
+}

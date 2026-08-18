@@ -15,6 +15,9 @@ x-versiond: &versiond
   environment:
     - VERSIOND_ORACLE_URL=http://api:9100/versions
     - VERSIOND_BINARY_NAME=devshardd
+    # This overlay can run multiple devshardd instances for one escrow. Make
+    # every child fail closed unless it uses shared PostgreSQL storage.
+    - GONKA_HA=true
     - NODE_MANAGER_ADDR=api:${NODE_MANAGER_GRPC_PORT:-9400}
     - NODE_HOST=node
     - KEY_NAME=${KEY_NAME}

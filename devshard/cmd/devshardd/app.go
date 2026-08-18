@@ -15,6 +15,7 @@ import (
 	"common/chainoracle/blocks"
 	mlnodeclient "common/nodemanager"
 	commrc "common/runtimeconfig"
+	"common/storage/mode"
 	"common/storage/payloads"
 	devshardpkg "devshard"
 	devshardbridge "devshard/cmd/devshardd/bridge"
@@ -246,6 +247,10 @@ func buildHostManager(
 		chainParams,
 		thresholds,
 	)
+
+	if err := mode.RequireHADeploymentStorage(); err != nil {
+		return nil, err
+	}
 
 	innerStore, err := devshardstorage.NewStorage(ctx, cfg.DataDir)
 	if err != nil {
