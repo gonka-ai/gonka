@@ -2309,6 +2309,34 @@ func TestNormalizeChatRequestKimiThinkingTokenBudgetForceZeroOverridesClientValu
 	require.Contains(t, string(body), `"thinking_token_budget":0`)
 }
 
+// The chain is what makes this worth its own test: ThinkingValidator mirrors the caller's answer into
+// chat_template_kwargs during PreValidation, so by the time the budget validator force-zeroes at
+// PostLimits the key is already there. A fill-only write would leave the template thinking with no budget
+// to think in, which is the empty-content burn the force-zero exists to prevent.
+func TestNormalizeChatRequestKimiForceZeroSilencesThinkingThroughEveryEntryPoint(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		body string
+	}{
+		{"top-level thinking", `{"messages":[{"role":"user","content":"x"}],"max_tokens":100,"thinking":{"type":"enabled"}}`},
+		{"template kwargs directly", `{"messages":[{"role":"user","content":"x"}],"max_tokens":100,"chat_template_kwargs":{"thinking":true}}`},
+		{"adaptive from the CLI", `{"messages":[{"role":"user","content":"x"}],"max_tokens":100,"thinking":{"type":"adaptive"}}`},
+		{"nothing asked at all", `{"messages":[{"role":"user","content":"x"}],"max_tokens":100}`},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			out, _, err := normalizeChatRequestForModel([]byte(testCase.body), kimiK26ModelID)
+			require.NoError(t, err)
+
+			var document map[string]any
+			require.NoError(t, json.Unmarshal(out, &document))
+			kwargs, ok := document["chat_template_kwargs"].(map[string]any)
+			require.True(t, ok, "force-zero must leave a template answer behind")
+			require.Equal(t, false, kwargs["thinking"], "a zero budget and a thinking template is the burn we are fixing")
+			require.EqualValues(t, 0, document["thinking_token_budget"])
+		})
+	}
+}
+
 // Content-headroom clamp narrows client-set ttb down toward
 // (max_tokens - kimiContentHeadroomMin) when above max_tokens, but leaves
 // already-conservative values untouched. Threshold case: max_tokens=512 sits
