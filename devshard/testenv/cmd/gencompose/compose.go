@@ -160,6 +160,12 @@ services:
     networks:
       testenv:
         ipv4_address: {{ .IP }}
+{{- if inVersiondPool $ . }}
+        # One DNS name, one A record per running instance: this is the pool the
+        # router resolves. Solo hosts stay out and are reached directly.
+        aliases:
+          - versiond-pool
+{{- end }}
     depends_on:
 {{ if $.Postgres.Enabled }}
       mock-chain:
@@ -186,16 +192,18 @@ services:
 
   versiond-router:
     build:
-      context: ../../versiond-router
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: versiond-router/Dockerfile
     image: devshard-versiond-router:latest
     environment:
-      VERSIOND_HOSTS: "{{ versiondHosts . }}"
+      VERSIOND_POOL_HOST: "versiond-pool"
       VERSIOND_PORT: "8080"
       # Pin only explicitly non-HA paths to the SQLite host; VersionName and all
-      # future versions sticky-hash across VERSIOND_HOSTS (Devshard-Ha header).
+      # future versions sticky-hash across the pool (Devshard-Ha header).
       VERSIOND_LEGACY_HOST: "{{ legacyVersiondHost . }}"
       VERSIOND_NON_HA_VERSIONS: "v1"
+      VERSIOND_VERSIONS: "{{ $.Versiond.VersionName }}"
+      GONKA_HA: "{{ haDeployment . }}"
     ports:
       - "{{ .VersiondRouter.Port }}:8080"
     networks:
@@ -205,6 +213,8 @@ services:
 {{ range .Hosts }}
       - {{ .ID }}
 {{ end }}
+    stop_signal: SIGUSR1
+    stop_grace_period: 10s
     restart: unless-stopped
 
   devshardctl:
@@ -255,6 +265,8 @@ func writeCompose(cfg *config.File, outPath string) error {
 	funcs := template.FuncMap{
 		"versionEnvSuffix":   versionEnvSuffix,
 		"versiondHosts":      versiondHosts,
+		"inVersiondPool":     inVersiondPool,
+		"haDeployment":       haDeployment,
 		"versiondKeyName":    versiondKeyName,
 		"isHAReplica":        isHAReplica,
 		"legacyVersiondHost": legacyVersiondHost,
@@ -295,12 +307,36 @@ func versionEnvSuffix(versionName string) string {
 	return strings.ReplaceAll(versionName, ".", "_")
 }
 
+// haDeployment is "true" when the sticky pool has more than one member, which
+// is exactly when a devshardd child can have a sibling serving the same escrow.
+func haDeployment(cfg *config.File) string {
+	if len(strings.Fields(versiondHosts(cfg))) > 1 {
+		return "true"
+	}
+	return ""
+}
+
+// inVersiondPool reports whether the router should route sticky traffic to this
+// host. It is the membership rule behind the versiond-pool DNS alias, and must
+// stay in step with versiondHosts.
+func inVersiondPool(cfg *config.File, h config.HostCfg) bool {
+	if cfg == nil {
+		return false
+	}
+	for _, name := range strings.Fields(versiondHosts(cfg)) {
+		if name == h.ID {
+			return true
+		}
+	}
+	return false
+}
+
 func versiondHosts(cfg *config.File) string {
 	if cfg == nil {
 		return ""
 	}
 	// Sticky HA pool is only the first two hosts. Solo participants (hosts[2+])
-	// are reached via direct InferenceURL, not VERSIOND_HOSTS.
+	// are reached via direct InferenceURL, not through the router pool.
 	if cfg.Versiond.Mode == config.VersiondModeMulti && len(cfg.Hosts) >= 2 {
 		return cfg.Hosts[0].ID + " " + cfg.Hosts[1].ID
 	}

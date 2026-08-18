@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// StickyUpstreamHeader is nginx $upstream_addr exposed by versiond-router.
+// StickyUpstreamHeader identifies the versiond selected by the router.
 const StickyUpstreamHeader = "X-Upstream-Addr"
 
 // FindDistinctStickySessions returns two session ids routed to different versiond upstreams.

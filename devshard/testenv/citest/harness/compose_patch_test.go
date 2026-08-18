@@ -17,19 +17,19 @@ services:
   versiond-0:
     environment:
       DEVSHARD_STORAGE_MODE: postgres
-      VERSIOND_HOSTS: "versiond-0 versiond-1"
+      GONKA_HA: "true"
 `), 0o644))
 
 	PatchVersiondStorageMode(t, path, "sqlite")
-	PatchRouterVersiondHosts(t, path, "versiond-0")
+	PatchRouterHADeployment(t, path, false)
 
 	body, err := os.ReadFile(path)
 	require.NoError(t, err)
 	text := string(body)
 	require.Contains(t, text, "DEVSHARD_STORAGE_MODE: sqlite")
 	require.NotContains(t, text, "DEVSHARD_STORAGE_MODE: postgres")
-	require.Contains(t, text, `VERSIOND_HOSTS: "versiond-0"`)
-	require.NotContains(t, text, `VERSIOND_HOSTS: "versiond-0 versiond-1"`)
+	require.Contains(t, text, `GONKA_HA: ""`)
+	require.NotContains(t, text, `GONKA_HA: "true"`)
 }
 
 func TestPatchComposeInsertEnvAfterAll(t *testing.T) {

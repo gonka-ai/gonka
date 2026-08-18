@@ -29,7 +29,14 @@ import (
 	"devshard/types"
 )
 
-const contextKeySender = "devshard_sender"
+const (
+	contextKeySender = "devshard_sender"
+
+	// DefaultMaxBodySize matches the public proxy and versiond-router limit.
+	// The transport enforces actual bytes read, so it also covers chunked bodies
+	// and deployments that expose devshardd without the public proxy.
+	DefaultMaxBodySize int64 = 10 * 1024 * 1024
+)
 
 // Server wraps a host.Host and exposes it over HTTP via Echo.
 type Server struct {
@@ -107,10 +114,11 @@ func NewServer(
 	opts ...ServerOption,
 ) (*Server, error) {
 	s := &Server{
-		host:     h,
-		store:    store,
-		verifier: verifier,
-		userAddr: userAddr,
+		host:        h,
+		store:       store,
+		verifier:    verifier,
+		userAddr:    userAddr,
+		maxBodySize: DefaultMaxBodySize,
 	}
 	for _, o := range opts {
 		o(s)
@@ -235,6 +243,13 @@ func VerifyPOSTAuth(c echo.Context, verifier signing.Verifier, escrowID string, 
 
 	body, err := io.ReadAll(c.Request().Body)
 	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return "", nil, echo.NewHTTPError(
+				http.StatusRequestEntityTooLarge,
+				fmt.Sprintf("request body exceeds %d bytes", maxBytesErr.Limit),
+			)
+		}
 		return "", nil, echo.NewHTTPError(http.StatusBadRequest, "read body")
 	}
 

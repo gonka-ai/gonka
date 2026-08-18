@@ -175,6 +175,7 @@ func (m *HostManager) transportServerOpts() []transport.ServerOption {
 	opts := []transport.ServerOption{
 		transport.WithBridge(m.bridge),
 		transport.WithRateLimit(transport.DefaultRateLimitConfig()),
+		transport.WithMaxBodySize(m.maxBodySize),
 	}
 	if m.heightSync != nil {
 		opts = append(opts, transport.WithHeightSync(m.heightSync, m.chainOracle))
