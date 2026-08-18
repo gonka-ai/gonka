@@ -15,6 +15,7 @@ x-versiond: &versiond
   environment:
     - VERSIOND_ORACLE_URL=http://api:9100/versions
     - VERSIOND_BINARY_NAME=devshardd
+    - GONKA_HA=true
     - VERSIOND_HOST_SHUTDOWN_BUDGET=${VERSIOND_HOST_SHUTDOWN_BUDGET:-25m}
     # Keep serving after /readyz starts failing so the active router check can
     # withdraw this host before admission closes.
