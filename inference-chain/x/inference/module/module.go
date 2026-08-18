@@ -1046,8 +1046,9 @@ func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effecti
 		liveMemberSet[m.Member.Address] = true
 	}
 
-	// subtract reserved frozen weight from network total and per-model voting power
+	// remove the reserved share from network total and per-model voting power
 	reservedByModelHost, reservedByHost := am.keeper.CollectEpochReservedWeightTotals(ctx, epochIndex, keeper.ReservationScopeShield)
+	rawPocByHost := am.collectEpochRawPocWeights(ctx, epochIndex)
 
 	rootGroupData := currentGroup.GroupData
 	consensusWeights := make(map[string]int64, len(rootGroupData.ValidationWeights))
@@ -1057,10 +1058,7 @@ func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effecti
 		if vw == nil || !liveMemberSet[vw.MemberAddress] {
 			continue
 		}
-		weight := vw.Weight - reservedByHost[vw.MemberAddress]
-		if weight < 0 {
-			weight = 0
-		}
+		weight := freeShareOfWeight(vw.Weight, reservedByHost[vw.MemberAddress], rawPocByHost[vw.MemberAddress])
 		consensusWeights[vw.MemberAddress] = weight
 		totalWeight += weight
 		participants = append(participants, &types.ActiveParticipant{
@@ -1087,7 +1085,8 @@ func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effecti
 			if vw == nil || !liveSubSet[vw.MemberAddress] {
 				continue
 			}
-			votingPower := vw.VotingPower - reservedByModelHost[modelID][vw.MemberAddress]
+			// a subgroup weight is the host's raw PoC sum for the model
+			votingPower := freeShareOfWeight(vw.VotingPower, reservedByModelHost[modelID][vw.MemberAddress], vw.Weight)
 			if votingPower > 0 {
 				if modelVPMap[modelID] == nil {
 					modelVPMap[modelID] = make(map[string]int64)
@@ -1103,6 +1102,40 @@ func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effecti
 		totalWeight:               totalWeight,
 		existingModelVotingPowers: modelVPMapToSlice(modelVPMap),
 	}
+}
+
+// collectEpochRawPocWeights returns each host's raw PoC weight for the epoch,
+// deduped by node id like the reserved totals it is compared against
+func (am AppModule) collectEpochRawPocWeights(ctx context.Context, epochIndex uint64) map[string]int64 {
+	active, found := am.keeper.GetActiveParticipants(ctx, epochIndex)
+	if !found {
+		return nil
+	}
+	weights := make(map[string]int64, len(active.Participants))
+	for _, p := range active.Participants {
+		if p != nil {
+			weights[p.Index] = RecalculateWeight(p)
+		}
+	}
+	return weights
+}
+
+// freeShareOfWeight drops the reserved part of a stored weight. Reserved totals
+// are raw PoC weight while stored weights are already coefficient-, cap- and
+// collateral-adjusted, so the reserved part is removed as a share of the host's
+// raw weight instead of being subtracted directly. Without a raw weight to
+// compare against we cannot size the share, so the whole weight is dropped.
+func freeShareOfWeight(weight, reservedRaw, totalRaw int64) int64 {
+	if weight <= 0 {
+		return 0
+	}
+	if reservedRaw <= 0 {
+		return weight
+	}
+	if totalRaw <= 0 || reservedRaw >= totalRaw {
+		return 0
+	}
+	return math.LegacyNewDec(weight).MulInt64(totalRaw - reservedRaw).QuoInt64(totalRaw).TruncateInt64()
 }
 
 func modelVPMapToSlice(modelVPMap map[string]map[string]int64) []*types.ModelVotingPowers {

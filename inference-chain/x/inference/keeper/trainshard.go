@@ -701,9 +701,22 @@ func (k Keeper) CollectEpochReservedNodeIds(ctx context.Context, epochIndex uint
 
 // CollectEpochReservedNodeWeights returns frozen reserved model-node weights
 func (k Keeper) CollectEpochReservedNodeWeights(ctx context.Context, epochIndex uint64, scope ReservationScope) map[string][]*types.TrainshardReservedNode {
+	return k.collectEpochReservedNodeWeights(ctx, epochIndex, scope, nil)
+}
+
+// CollectEpochReservedNodeWeightsAtHeight keeps only nodes whose window covers
+// the height, so callers tied to one block see the reservation state of that block
+func (k Keeper) CollectEpochReservedNodeWeightsAtHeight(ctx context.Context, epochIndex uint64, height int64, scope ReservationScope) map[string][]*types.TrainshardReservedNode {
+	return k.collectEpochReservedNodeWeights(ctx, epochIndex, scope, &height)
+}
+
+func (k Keeper) collectEpochReservedNodeWeights(ctx context.Context, epochIndex uint64, scope ReservationScope, height *int64) map[string][]*types.TrainshardReservedNode {
 	type modelNode struct{ model, nodeId string }
 	seen := make(map[string]map[modelNode]int64)
-	k.forEachEpochReservedNode(ctx, epochIndex, scope, func(n *types.TrainshardReservedNode, _, _ int64) {
+	k.forEachEpochReservedNode(ctx, epochIndex, scope, func(n *types.TrainshardReservedNode, start, end int64) {
+		if height != nil && (*height < start || *height > end) {
+			return
+		}
 		set, ok := seen[n.Participant]
 		if !ok {
 			set = make(map[modelNode]int64)
@@ -730,9 +743,19 @@ func (k Keeper) CollectEpochReservedNodeWeights(ctx context.Context, epochIndex 
 
 // CollectEpochReservedWeightTotals aggregates frozen reserved weight
 func (k Keeper) CollectEpochReservedWeightTotals(ctx context.Context, epochIndex uint64, scope ReservationScope) (byModelHost map[string]map[string]int64, byHost map[string]int64) {
+	return aggregateReservedWeightTotals(k.CollectEpochReservedNodeWeights(ctx, epochIndex, scope))
+}
+
+// CollectEpochReservedWeightTotalsAtHeight aggregates reserved weight at one
+// block height using reward-window semantics, so the return buffer is excluded
+func (k Keeper) CollectEpochReservedWeightTotalsAtHeight(ctx context.Context, epochIndex uint64, height int64) (byModelHost map[string]map[string]int64, byHost map[string]int64) {
+	return aggregateReservedWeightTotals(k.CollectEpochReservedNodeWeightsAtHeight(ctx, epochIndex, height, ReservationScopeReward))
+}
+
+func aggregateReservedWeightTotals(reserved map[string][]*types.TrainshardReservedNode) (byModelHost map[string]map[string]int64, byHost map[string]int64) {
 	byModelHost = make(map[string]map[string]int64)
 	byHost = make(map[string]int64)
-	for host, nodes := range k.CollectEpochReservedNodeWeights(ctx, epochIndex, scope) {
+	for host, nodes := range reserved {
 		// byModelHost counts per model; byHost dedups node ids
 		nodeWeight := make(map[string]int64, len(nodes))
 		for _, n := range nodes {
@@ -742,47 +765,6 @@ func (k Keeper) CollectEpochReservedWeightTotals(ctx context.Context, epochIndex
 			byModelHost[n.ModelId][host] += n.PocWeight
 			if n.PocWeight > nodeWeight[n.NodeId] {
 				nodeWeight[n.NodeId] = n.PocWeight
-			}
-		}
-		for _, w := range nodeWeight {
-			byHost[host] += w
-		}
-	}
-	return byModelHost, byHost
-}
-
-// CollectEpochReservedWeightTotalsAtHeight aggregates reserved weight at one
-// block height within the epoch using reward-window semantics (no buffer).
-func (k Keeper) CollectEpochReservedWeightTotalsAtHeight(ctx context.Context, epochIndex uint64, height int64) (byModelHost map[string]map[string]int64, byHost map[string]int64) {
-	type modelNode struct{ model, nodeId string }
-	seen := make(map[string]map[modelNode]int64)
-
-	k.forEachEpochReservedNode(ctx, epochIndex, ReservationScopeReward, func(n *types.TrainshardReservedNode, start, end int64) {
-		if height < start || height > end {
-			return
-		}
-		set, ok := seen[n.Participant]
-		if !ok {
-			set = make(map[modelNode]int64)
-			seen[n.Participant] = set
-		}
-		mk := modelNode{model: n.ModelId, nodeId: n.NodeId}
-		if w, exists := set[mk]; !exists || n.PocWeight > w {
-			set[mk] = n.PocWeight
-		}
-	})
-
-	byModelHost = make(map[string]map[string]int64)
-	byHost = make(map[string]int64)
-	for host, nodes := range seen {
-		nodeWeight := make(map[string]int64, len(nodes))
-		for mn, weight := range nodes {
-			if byModelHost[mn.model] == nil {
-				byModelHost[mn.model] = make(map[string]int64)
-			}
-			byModelHost[mn.model][host] += weight
-			if weight > nodeWeight[mn.nodeId] {
-				nodeWeight[mn.nodeId] = weight
 			}
 		}
 		for _, w := range nodeWeight {
@@ -917,14 +899,32 @@ func modelNodeSet(p *types.ActiveParticipant, modelId string) map[string]struct{
 	return nil
 }
 
-// hostFullyReservedForModelWindow checks if all model nodes stayed reserved for
-// every height in the epoch window.
+// hostFullyReservedForModelWindow checks that all model nodes stayed reserved
+// across the whole epoch window. Coverage only changes where an interval starts
+// or ends, so probing those checkpoints is enough.
 func hostFullyReservedForModelWindow(modelNodes map[string]struct{}, intervals []hostReservedInterval, epochStart, epochEnd int64) bool {
-	if epochEnd < epochStart {
+	if len(modelNodes) == 0 || len(intervals) == 0 || epochStart > epochEnd {
 		return false
 	}
-	for h := epochStart; h <= epochEnd; h++ {
-		if !hostFullyReservedAtHeight(modelNodes, intervals, h) {
+	checkpoints := make([]int64, 0, len(intervals)*2+1)
+	checkpoints = append(checkpoints, epochStart)
+	for _, iv := range intervals {
+		if iv.end < epochStart || iv.start > epochEnd {
+			continue
+		}
+		if iv.start > epochStart {
+			checkpoints = append(checkpoints, iv.start)
+		}
+		if iv.end < epochEnd {
+			checkpoints = append(checkpoints, iv.end+1)
+		}
+	}
+	sort.Slice(checkpoints, func(i, j int) bool { return checkpoints[i] < checkpoints[j] })
+	for i, checkpoint := range checkpoints {
+		if i > 0 && checkpoint == checkpoints[i-1] {
+			continue
+		}
+		if !hostFullyReservedAtHeight(modelNodes, intervals, checkpoint) {
 			return false
 		}
 	}

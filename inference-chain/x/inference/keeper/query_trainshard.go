@@ -2,7 +2,9 @@ package keeper
 
 import (
 	"context"
+	"errors"
 
+	"cosmossdk.io/collections"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -13,8 +15,11 @@ func (k Keeper) Trainshard(ctx context.Context, req *types.QueryGetTrainshardReq
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
 	shard, err := k.Trainshards.Get(ctx, req.TrainshardId)
-	if err != nil {
+	if errors.Is(err, collections.ErrNotFound) {
 		return &types.QueryGetTrainshardResponse{Found: false}, nil
+	}
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return &types.QueryGetTrainshardResponse{Trainshard: &shard, Found: true}, nil
 }
@@ -43,8 +48,11 @@ func (k Keeper) TrainshardProposal(ctx context.Context, req *types.QueryGetTrain
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
 	proposal, err := k.TrainshardProposals.Get(ctx, req.ProposalId)
-	if err != nil {
+	if errors.Is(err, collections.ErrNotFound) {
 		return &types.QueryGetTrainshardProposalResponse{Found: false}, nil
+	}
+	if err != nil {
+		return nil, status.Error(codes.Internal, err.Error())
 	}
 	return &types.QueryGetTrainshardProposalResponse{Proposal: &proposal, Found: true}, nil
 }
