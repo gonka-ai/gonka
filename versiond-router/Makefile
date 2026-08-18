@@ -32,6 +32,8 @@ test-local-compose:
 	jq -e '(.services["versiond-router"] | has("stop_signal") | not) and .services["versiond-router"].stop_grace_period == "10s"' \
 		"$$tmp_json" >/dev/null \
 		|| { echo 'test-local-compose: Compose overrides the image stop signal or loses the bounded grace' >&2; exit 1; }; \
+	grep -q 'stop_grace_period: 30m0s' "$$tmp" \
+		|| { echo 'test-local-compose: versiond drain backstop is missing' >&2; exit 1; }; \
 	echo 'test-local-compose: ok'
 
 test-join-compose:
