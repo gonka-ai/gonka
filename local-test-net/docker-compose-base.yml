@@ -84,6 +84,8 @@ services:
       - chain-node
     networks:
       - chain-public
+    # Outer Docker backstop for readiness announcement plus request drain.
+    stop_grace_period: 3m
     restart: unless-stopped
 
   proxy:

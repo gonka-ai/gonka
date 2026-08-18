@@ -29,6 +29,8 @@ x-edge-api: &edge-api
     chain-public:
       aliases:
         - ${KEY_NAME}-edge-api-pool
+  # Outer Docker backstop for readiness announcement plus request drain.
+  stop_grace_period: 3m
   restart: unless-stopped
 
 services:
