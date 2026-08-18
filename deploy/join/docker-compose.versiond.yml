@@ -70,11 +70,17 @@ x-versiond: &versiond
 services:
   devshard-postgres:
     container_name: devshard-postgres
-    image: postgres:16-alpine
+    image: ${DEVSHARD_POSTGRES_IMAGE:-postgres:16-alpine}
     environment:
       POSTGRES_DB: ${DEVSHARD_POSTGRES_DB:-devshardd}
       POSTGRES_USER: ${DEVSHARD_POSTGRES_USER:-devshardd}
       POSTGRES_PASSWORD: ${DEVSHARD_POSTGRES_PASSWORD:?DEVSHARD_POSTGRES_PASSWORD is required}
+      # Keep the image-owned /var/lib/postgresql/data volume mounted as the v4
+      # migration source. The durable cluster lives in the bind below.
+      PGDATA: /var/lib/postgresql/gonka/data
+      DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT: ${DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT:-false}
+    entrypoint: ["/usr/local/bin/gonka-postgres-entrypoint"]
+    command: ["postgres"]
     healthcheck:
       test:
         [
@@ -84,6 +90,14 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+      start_period: ${DEVSHARD_POSTGRES_START_PERIOD:-30m}
+    volumes:
+      - ${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}:/var/lib/postgresql/gonka:Z
+      - ./devshard-postgres-entrypoint.sh:/usr/local/bin/gonka-postgres-entrypoint:ro,Z
+      # Existing artifacts prove that an empty target beside a v4 installation
+      # is data loss, not a legitimate first initialization.
+      - ./devshards/bin:/var/lib/postgresql/gonka-existing-versiond:ro,z
+    stop_grace_period: ${DEVSHARD_POSTGRES_STOP_GRACE_PERIOD:-5m}
     restart: always
 
   versiond:
