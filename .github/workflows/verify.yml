@@ -269,6 +269,19 @@ jobs:
       - name: Render and exercise edge-api-router
         run: make -C edge-api-router test-render
 
+  test-public-proxy-router:
+    runs-on: ubuntu-latest
+    name: Test public HAProxy and private nginx policy
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Render public proxy configuration
+        run: make -C proxy-router test-render
+      - name: Exercise route-aware failover
+        run: make -C proxy-router test-routing
+      - name: Render private policy configuration
+        run: make -C proxy test-render
+
   build-and-test-edge-api:
     runs-on: ubuntu-latest
     name: Build and Test edge-api (validation)

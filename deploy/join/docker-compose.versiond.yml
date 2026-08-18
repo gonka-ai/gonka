@@ -32,6 +32,10 @@ x-versiond: &versiond
     # Postgres-only payloads/sessions. Fail boot if PG is down; migrate local
     # SQLite sessions into Postgres once at startup (no file/sqlite fallback).
     - DEVSHARD_STORAGE_MODE=postgres
+  networks:
+    default:
+      aliases:
+        - versiond-pool
   depends_on:
     api:
       condition: service_started
@@ -76,22 +80,49 @@ services:
 
   versiond-router:
     container_name: versiond-router
-    image: ghcr.io/product-science/versiond-router:0.2.14-devshard-v4
+    image: ${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
     environment:
-      - VERSIOND_HOSTS=${VERSIOND_HOSTS:-versiond versiond2}
+      - VERSIOND_POOL_HOST=${VERSIOND_POOL_HOST:-versiond-pool}
       - VERSIOND_PORT=8080
-      # SQLite-bound pre-HA versions must stay on the host that owns their data dirs.
+      - GONKA_HA=true
       - VERSIOND_LEGACY_HOST=${VERSIOND_LEGACY_HOST:-versiond}
-      # Version path segments that pin to VERSIOND_LEGACY_HOST (whitespace and/or comma).
-      # All other versions sticky-hash across VERSIOND_HOSTS and get Devshard-Ha: true.
-      # Default lists known pre-HA paths; clear (empty) once every live version is Postgres HA.
-      - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS:-v1 v2 v3}
+      - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}
+      - VERSIOND_VERSIONS=${VERSIOND_VERSIONS-v4 v5 v6 v7 v8}
+      - VERSIOND_ROUTING_CATALOG_URL=${VERSIOND_ROUTING_CATALOG_URL-http://api:9100/versions}
+      - VERSIOND_ROUTING_CATALOG_POLL_SECONDS=${VERSIOND_ROUTING_CATALOG_POLL_SECONDS:-5}
+      - VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=${VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS:-3}
+      - VERSIOND_ROUTING_ACTIVATION_MIN_READY=${VERSIOND_ROUTING_ACTIVATION_MIN_READY:-2}
+      - VERSIOND_ROUTER_VERSION_CAPACITY=${VERSIOND_ROUTER_VERSION_CAPACITY:-32}
     depends_on:
       - versiond
       - versiond2
+    volumes:
+      - versiond-router-state:/var/lib/gonka-router
+    stop_signal: SIGUSR1
+    stop_grace_period: ${VERSIOND_ROUTER_STOP_GRACE_PERIOD:-10s}
     restart: always
+
+  proxy-policy:
+    environment:
+      - VERSIOND_SERVICE_NAME=proxy-policy-ingress
+      - VERSIOND_SERVICE_IS_ABSOLUTE=true
+      - VERSIOND_PORT=18081
+
+  proxy-policy2:
+    environment:
+      - VERSIOND_SERVICE_NAME=proxy-policy-ingress
+      - VERSIOND_SERVICE_IS_ABSOLUTE=true
+      - VERSIOND_PORT=18081
 
   proxy:
     environment:
-      - VERSIOND_SERVICE_NAME=versiond-router
-      - VERSIOND_PORT=8080
+      - VERSIOND_ROUTER_POOL_HOST=versiond-router
+      - VERSIOND_ROUTER_PORT=8080
+      - VERSIOND_ROUTER_ADMIN_PORT=8404
+      - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}
+      - VERSIOND_VERSIONS=${VERSIOND_VERSIONS-v4 v5 v6 v7 v8}
+      - VERSIOND_ROUTING_CATALOG_URL=${VERSIOND_ROUTING_CATALOG_URL-http://api:9100/versions}
+      - PROXY_ROUTER_VERSION_CAPACITY=${PROXY_ROUTER_VERSION_CAPACITY:-32}
+
+volumes:
+  versiond-router-state:

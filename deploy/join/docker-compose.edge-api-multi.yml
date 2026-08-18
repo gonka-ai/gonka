@@ -65,18 +65,19 @@ services:
     <<: *edge-api
     container_name: edge-api3
 
-  edge-api-router:
-    container_name: edge-api-router
-    image: ${EDGE_API_ROUTER_IMAGE:-ghcr.io/product-science/edge-api-router:0.2.15-devshard-v5}
+  proxy-policy:
     environment:
-      - EDGE_API_POOL_HOST=${EDGE_API_POOL_HOST:-edge-api-pool}
-      - EDGE_API_PORT=18080
-    depends_on:
-      - edge-api
-      - edge-api2
-      - edge-api3
-    restart: always
+      - EDGE_API_SERVICE_NAME=proxy-policy-ingress
+      - EDGE_API_SERVICE_IS_ABSOLUTE=true
+      - EDGE_API_PORT=18082
+
+  proxy-policy2:
+    environment:
+      - EDGE_API_SERVICE_NAME=proxy-policy-ingress
+      - EDGE_API_SERVICE_IS_ABSOLUTE=true
+      - EDGE_API_PORT=18082
 
   proxy:
     environment:
-      - EDGE_API_SERVICE_NAME=edge-api-router
+      - EDGE_API_POOL_HOST=${EDGE_API_POOL_HOST:-edge-api-pool}
+      - EDGE_API_PORT=18080
