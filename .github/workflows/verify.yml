@@ -251,6 +251,15 @@ jobs:
           path: versioned/junit-report.xml
           reporter: java-junit
 
+  test-edge-api-router-config:
+    runs-on: ubuntu-latest
+    name: Test edge-api-router HAProxy configuration
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Render and exercise edge-api-router
+        run: make -C edge-api-router test-render
+
   build-and-test-edge-api:
     runs-on: ubuntu-latest
     name: Build and Test edge-api (validation)
