@@ -259,6 +259,8 @@ jobs:
         uses: actions/checkout@v4
       - name: Render and exercise versiond-router
         run: make -C versiond-router test-render
+      - name: Exercise isolated versiond-router fleet rollouts
+        run: make -C versiond-router test-fleet
 
   test-public-proxy-router:
     runs-on: ubuntu-latest

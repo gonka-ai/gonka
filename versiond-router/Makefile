@@ -1,4 +1,4 @@
-.PHONY: all build-docker release test-render
+.PHONY: all build-docker release test-render test-compose-contract test-fleet
 .PHONY: test-catalog-cache test-hash-ring test-version-routing test-local-compose test-join-compose
 .PHONY: test-join-versiond-healthcheck test-pool-status
 
@@ -167,6 +167,12 @@ test-join-compose:
 
 test-catalog-cache:
 	@../router-runtime/catalog-cache_test.sh
+
+test-compose-contract:
+	@../deploy/join/versiond-compose-config_test.sh
+
+test-fleet:
+	@../deploy/join/versiond-router-fleet_test.sh
 
 test-pool-status:
 	@./pool-status_test.sh
@@ -1572,7 +1578,7 @@ test-version-routing:
 		|| fail "catalog reconciliation did not recover after clock rollback"; \
 	echo "test-version-routing: ok"
 
-test-render: test-local-compose test-join-compose test-join-versiond-healthcheck test-catalog-cache test-pool-status test-hash-ring test-version-routing
+test-render: test-local-compose test-join-compose test-compose-contract test-join-versiond-healthcheck test-catalog-cache test-pool-status test-hash-ring test-version-routing
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
