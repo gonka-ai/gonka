@@ -453,7 +453,9 @@ jobs:
       - name: Check migration scripts
         run: |
           shellcheck deploy/join/devshard-postgres-*.sh
+          shellcheck deploy/join/postgres-deployment-preflight*.sh
           deploy/join/devshard-postgres-entrypoint_test.sh
           deploy/join/devshard-postgres-migration-preflight_test.sh
+          deploy/join/postgres-deployment-preflight_test.sh
       - name: Preserve a real PostgreSQL cluster across replacement
         run: deploy/join/devshard-postgres-upgrade_test.sh
