@@ -166,7 +166,7 @@ func TestRecoverSession_ReplaysADiffWrittenBeforeTheMaxTokensFloor(t *testing.T)
 	writerSM := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
 	_, err := writerSM.ApplyLocal(1, subFloor)
 	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor, "the fixture must be a diff this build refuses to author")
-	root, err := writerSM.ApplyPersisted(1, subFloor)
+	root, err := writerSM.ApplyLocalPersisted(1, subFloor)
 	require.NoError(t, err)
 	require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{
 		Diff:      testutil.SignDiffWithRoot(t, user, "escrow-1", 1, subFloor, root),

@@ -764,7 +764,7 @@ func TestApplyDiff_EscrowBalanceCheck(t *testing.T) {
 
 // A diff written before the floor existed is already part of a recorded state root. Refusing it on
 // replay cannot undo it, only keep the node from starting.
-func TestApplyPersisted_ReplaysAStartWrittenBeforeTheFloor(t *testing.T) {
+func TestApplyLocalPersisted_ReplaysAStartWrittenBeforeTheFloor(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	sm, _ := newTestSM(t, hosts, 10000)
 	subFloor := func(inferenceID uint64) []*types.DevshardTx {
@@ -777,7 +777,7 @@ func TestApplyPersisted_ReplaysAStartWrittenBeforeTheFloor(t *testing.T) {
 	_, err := sm.ApplyLocal(1, subFloor(1))
 	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor, "new work still has to meet the floor")
 
-	root, err := sm.ApplyPersisted(1, subFloor(1))
+	root, err := sm.ApplyLocalPersisted(1, subFloor(1))
 	require.NoError(t, err)
 	require.NotEmpty(t, root)
 	require.Len(t, sm.SnapshotState().Inferences, 1)

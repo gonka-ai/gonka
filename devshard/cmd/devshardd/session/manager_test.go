@@ -163,7 +163,7 @@ func TestRecoverSessions_ReplaysADiffWrittenBeforeTheMaxTokensFloor(t *testing.T
 	}}}}
 	_, err = sm.ApplyLocal(1, txs)
 	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor, "the fixture must be a diff this build refuses to author")
-	root, err := sm.ApplyPersisted(1, txs)
+	root, err := sm.ApplyLocalPersisted(1, txs)
 	require.NoError(t, err)
 	require.NoError(t, store.AppendDiff("1", types.DiffRecord{
 		Diff: signDiffWithRoot(t, user, "1", 1, txs, root), StateHash: root,
