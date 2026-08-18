@@ -20,10 +20,16 @@ func PatchComposeEnvKey(t *testing.T, composePath, key, value string) {
 	require.NoError(t, os.WriteFile(composePath, updated, 0o644))
 }
 
-// PatchRouterVersiondHosts sets VERSIOND_HOSTS on versiond-router (quoted).
-func PatchRouterVersiondHosts(t *testing.T, composePath, hosts string) {
+// PatchRouterHADeployment changes the authoritative HA declaration. Tests that
+// disable it must also keep only one pool member usable, because the router has
+// a runtime multi-host fallback.
+func PatchRouterHADeployment(t *testing.T, composePath string, ha bool) {
 	t.Helper()
-	PatchComposeEnvKey(t, composePath, "VERSIOND_HOSTS", `"`+hosts+`"`)
+	value := `""`
+	if ha {
+		value = `"true"`
+	}
+	PatchComposeEnvKey(t, composePath, "GONKA_HA", value)
 }
 
 // PatchVersiondStorageMode sets DEVSHARD_STORAGE_MODE on all versiond services.
