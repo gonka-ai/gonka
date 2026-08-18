@@ -1,6 +1,7 @@
 # versiond-router
 
-HAProxy in front of N `versiond` instances. It has two jobs:
+HAProxy in front of N `versiond` instances. Production Compose runs several
+independent copies as a fleet behind `proxy-router`; every copy has two jobs:
 
 1. **Stickiness** — every request for one session lands on the same `versiond`,
    so the instance holding that session's hot state keeps serving it.
@@ -12,6 +13,10 @@ Membership comes from DNS, health from active checks, and protocol names from
 the existing governance `/versions` feed. The only persistent router state is a
 last-known-good catalog projection. Adding a host or approving a protocol name
 does not require a router reload.
+
+Fleet replicas do not coordinate or share mutable routing state. Given the same
+catalog, placement settings, DNS membership and health view, each independently
+builds the same address-keyed hash ring.
 
 ---
 
@@ -228,8 +233,9 @@ deployment declaration.
 
 ## Looking at the pool
 
-The canonical runbook contains the full command for inspecting the pool. Its
-output looks like this:
+`deploy/join/versiond-router-fleet.sh status` validates every expected slot and
+its admission through the active parent proxy. To inspect one slot's measured
+versiond pool, run its internal `pool-status` diagnostic; output looks like:
 
 ```text
 versiond_pool_v4
@@ -262,6 +268,14 @@ process serving long enough for the active check to observe that state. Legacy
 can only react after route health fails or the process leaves DNS. The graceful
 host lifecycle is intentionally delivered as a separate change.
 
+The router fleet itself is managed with `versiond-router-fleet.sh`. `apply`
+bootstraps missing slots and rolls changed ones while preserving
+`VERSIOND_ROUTER_MIN_READY`; `rollout` forces that rolling reconciliation;
+`maintenance-rollout` is required for placement-contract changes that cannot
+mix old and new rings. Whole-node maintenance uses `stop-all --maintenance`,
+then `down --maintenance` after the main Compose project is down. Fleet
+resources are ownership-labelled, so cleanup does not cross into another fleet.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -285,6 +299,13 @@ host lifecycle is intentionally delivered as a separate change.
 | `VERSIOND_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | connect and header timeouts |
 | `VERSIOND_ROUTER_STREAM_IDLE_SECONDS` | `1200` | client/server idle timeout |
 | `VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS` | `86400` | upgraded/CONNECT idle timeout; independent of SSE |
+| `VERSIOND_ROUTER_ADMIN_PORT` | `8404` | private live/readiness listener consumed by the parent proxy and fleet checks |
+| `VERSIOND_ROUTER_FRONT_BIND_HOST` | *(all interfaces)* | per-slot front-network address used for data and admin listeners |
+| `VERSIOND_ROUTER_METRICS_BIND_HOST` | *(loopback)* | per-slot metrics-network address |
+| `VERSIOND_ROUTER_METRICS_NETWORK` | *(auto-detected)* | main Compose network used for Prometheus discovery |
+| `HAPROXY_DNS_RESOLVER` | `127.0.0.11:53` | numeric resolver; part of the fleet placement contract |
+| `VERSIOND_ROUTER_STOP_GRACE_PERIOD` | `10s` | routine Compose cleanup ceiling; fleet rollout supplies its own drain deadline |
+| `VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE` | `false` | explicit one-command acknowledgement for `maintenance-rollout` |
 
 The entrypoint validates every numeric setting, renders `haproxy.cfg` and
 `non_ha.map`, runs `haproxy -c` on the result, and only then execs HAProxy. A bad
@@ -312,7 +333,10 @@ would then not match the name at all.
 
 | Endpoint | Where | Notes |
 | --- | --- | --- |
-| `/metrics` | `127.0.0.1:8405` inside the container | Prometheus exporter; loopback only, never published |
+| `/metrics` | loopback and the slot's internal metrics-network address | Prometheus exporter; no host port |
+| `/livez` | private admin port `8404` | router process and admin listener are alive |
+| `/readyz` | private admin port `8404` | coarse backend has capacity |
+| `/readyz?version=<v>` | private admin port `8404` | matching version backend has capacity |
 | Runtime API | `/var/run/haproxy/haproxy.sock` | admin socket, no TCP bind |
 | `X-Upstream-Addr` | response header | which instance served the request |
 | `X-Versiond-Backend` | response header | HA backend name, or the stable `versiond_legacy` label for any pinned version |
@@ -329,6 +353,8 @@ the config and socket directories. Scrape metrics with a sidecar or
 $ make test-render
 test-hash-ring: ok
 test-render: ok
+$ make test-fleet
+versiond-router-fleet_test: ok
 ```
 
 `test-render` renders the mixed (legacy pinning) and all-HA shapes, asserts on
@@ -348,6 +374,11 @@ escrow to reach the same address each time. Remove `hash-key addr` from the
 template and it fails, naming the sessions that moved.
 
 Both require Docker.
+
+`test-fleet` starts three slots as separate Compose projects and covers
+idempotent apply, ready-reserve enforcement, rolling replacement, placement
+maintenance with exact rollback, admission through the parent proxy, and
+ownership-bounded teardown of expected and orphan resources.
 
 ## Related docs
 
