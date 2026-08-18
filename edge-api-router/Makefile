@@ -18,6 +18,8 @@ test-local-compose:
 		|| { echo 'test-local-compose: not every edge-api joins the pool alias' >&2; exit 1; }; \
 	grep -Eq 'context: .*/edge-api-router$$' "$$tmp" \
 		|| { echo 'test-local-compose: router build context is wrong' >&2; exit 1; }; \
+	grep -q 'stop_grace_period: 3m0s' "$$tmp" \
+		|| { echo 'test-local-compose: edge-api drain backstop is missing' >&2; exit 1; }; \
 	echo 'test-local-compose: ok'
 
 test-readiness-compat:
