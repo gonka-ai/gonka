@@ -441,3 +441,17 @@ jobs:
           name: Devshard E2E Tests
           path: devshard/build/test-results/e2e/junit.xml
           reporter: java-junit
+
+  test-devshard-postgres-migration:
+    runs-on: ubuntu-latest
+    name: Test devshard PostgreSQL persistence migration
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Check migration scripts
+        run: |
+          shellcheck deploy/join/devshard-postgres-*.sh
+          deploy/join/devshard-postgres-entrypoint_test.sh
+          deploy/join/devshard-postgres-migration-preflight_test.sh
+      - name: Preserve a real PostgreSQL cluster across replacement
+        run: deploy/join/devshard-postgres-upgrade_test.sh
