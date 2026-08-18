@@ -1,12 +1,12 @@
-# Multi edge-api + round-robin router overlay for deploy/join.
+# Multi edge-api overlay for deploy/join.
 #
-# Requires base docker-compose.yml (single edge-api). Adds edge-api2,
-# edge-api3, and edge-api-router in front of all three. Sets proxy
-# EDGE_API_SERVICE_NAME=edge-api-router.
+# Requires base docker-compose.yml (single edge-api). Adds edge-api2 and
+# edge-api3. Private policy workers send Tier A requests to proxy-router, whose
+# internal HAProxy pool balances the three replicas directly.
 #
 #   docker compose -f docker-compose.yml -f docker-compose.edge-api-multi.yml up -d
 #
-# edge-api is stateless and read-only, so the router round-robins. Membership
+# edge-api is stateless and read-only, so proxy-router uses leastconn. Membership
 # comes from the edge-api-pool DNS alias and health from active /readyz checks:
 # an instance that cannot reach the chain reports unready and leaves the
 # rotation without being restarted, then rejoins on its own.
@@ -14,7 +14,8 @@
 # x-edge-api anchor holds everything shared between instances.
 
 x-edge-api: &edge-api
-  image: ${EDGE_API_IMAGE:-ghcr.io/product-science/edge-api:0.2.15-devshard-v5}
+  image: >-
+    ${EDGE_API_IMAGE:-ghcr.io/product-science/edge-api:0.2.15-devshard-v5}
   environment:
     - EDGE_API_PORT=18080
     - CHAIN_GRPC_URL=node:9090
@@ -32,6 +33,8 @@ x-edge-api: &edge-api
         - edge-api-pool
   depends_on:
     - node
+  # `up --wait` uses the same readiness contract as HAProxy. A replica is not
+  # considered replaced until it can reach the chain and accept new work.
   healthcheck:
     test:
       [

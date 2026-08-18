@@ -1,5 +1,6 @@
 x-proxy-policy: &proxy-policy
-  image: ${PROXY_POLICY_IMAGE:-ghcr.io/product-science/proxy:0.2.15-devshard-v5}
+  image: >-
+    ${PROXY_POLICY_IMAGE:-ghcr.io/product-science/proxy:0.2.15-devshard-v5}
   environment:
     - NGINX_MODE=${NGINX_MODE:-http}
     - PROXY_PROTOCOL=true
@@ -146,7 +147,8 @@ services:
 
   edge-api:
     container_name: edge-api
-    image: ghcr.io/product-science/edge-api:0.2.15
+    image: >-
+      ${EDGE_API_IMAGE:-ghcr.io/product-science/edge-api:0.2.15-devshard-v5}
     environment:
       - EDGE_API_PORT=18080
       - CHAIN_GRPC_URL=node:9090
@@ -154,25 +156,40 @@ services:
       - EDGE_API_OTEL_ENABLED=${EDGE_API_OTEL_ENABLED:-false}
       - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
       - OTEL_HEADERS=${OTEL_HEADERS:-}
-      # The base topology has no readiness-aware edge-api balancer, so there
-      # is nothing to announce to before draining.
-      - EDGE_API_DRAIN_ANNOUNCE=0s
+      # Compose passes only what is listed here, so these must be declared for
+      # the values in config.env to reach the process at all.
+      - EDGE_API_DRAIN_ANNOUNCE=${EDGE_API_DRAIN_ANNOUNCE:-5s}
       - EDGE_API_SHUTDOWN_BUDGET=${EDGE_API_SHUTDOWN_BUDGET:-2m}
     depends_on:
       - node
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/bin/busybox",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:18080/readyz",
+        ]
+      interval: 1s
+      timeout: 3s
+      retries: 3
+      start_period: ${EDGE_API_HEALTH_START_PERIOD:-2m}
+    # Outer Docker backstop; keep it above the internal shutdown budget so a
+    # query in flight is not cut by SIGKILL.
     stop_grace_period: ${EDGE_API_STOP_GRACE_PERIOD:-3m}
     restart: always
 
   versiond:
     container_name: versiond
-    image: ghcr.io/product-science/versiond:0.2.15
+    image: >-
+      ${VERSIOND_IMAGE:-ghcr.io/product-science/versiond:0.2.15-devshard-v5}
     environment:
       - VERSIOND_ORACLE_URL=http://api:9100/versions
       - VERSIOND_BINARY_NAME=devshardd
       - VERSIOND_HOST_SHUTDOWN_BUDGET=${VERSIOND_HOST_SHUTDOWN_BUDGET:-25m}
-      # The base deployment has no versiond load balancer, so there is nothing
-      # to announce to before closing admission.
-      - VERSIOND_DRAIN_ANNOUNCE=0s
       - NODE_MANAGER_ADDR=api:${NODE_MANAGER_GRPC_PORT:-9400}
       - NODE_HOST=node
       - KEY_NAME=${KEY_NAME}
@@ -190,7 +207,25 @@ services:
       - ./devshards/data:/opt/versiond/data
     depends_on:
       - api
-    # External SIGKILL backstop after versiond's complete internal budget.
+    # The topology-aware release driver uses this contract in base-only
+    # installations too. Running is not enough: versiond must reconcile its
+    # desired children before the old image can be discarded.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/bin/busybox",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:8080/readyz",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 3
+      start_period: ${VERSIOND_HEALTH_START_PERIOD:-30m}
+    # Outer Docker backstop; keep it greater than the internal host budget.
     stop_grace_period: ${VERSIOND_STOP_GRACE_PERIOD:-30m}
     restart: always
 
@@ -221,6 +256,10 @@ services:
     depends_on:
       - api
 
+  # Two fixed slots make ordinary Compose updates dependency-ordered and let the
+  # release driver roll back one worker without replacing the healthy reserve.
+  # Both retain the established TLS, CORS, rate-limit, rewrite and on-chain
+  # routing contract. The public HAProxy sends PROXY v2 so they see the client IP.
   proxy-policy2:
     <<: *proxy-policy
 
@@ -230,9 +269,13 @@ services:
       proxy-policy2:
         condition: service_healthy
 
+  # The only public listener. It balances the policy workers in TCP mode and
+  # owns the active, route-aware versiond-router and edge-api pools on private
+  # ports consumed by those workers.
   proxy:
     container_name: proxy
-    image: ${PROXY_ROUTER_IMAGE:-ghcr.io/product-science/proxy-router:0.2.15-devshard-v5}
+    image: >-
+      ${PROXY_ROUTER_IMAGE:-ghcr.io/product-science/proxy-router:0.2.15-devshard-v5}
     ports:
       - "${API_PORT:-8000}:80"
       - "${API_SSL_PORT:-8443}:443"
@@ -247,7 +290,7 @@ services:
       - VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=${VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS:-86400}
       - PROXY_VERSIOND_PORT=18081
       - PROXY_EDGE_API_PORT=18082
-      - EDGE_API_POOL_HOST=${EDGE_API_POOL_HOST:-edge-api}
+      - EDGE_API_POOL_HOST=${EDGE_API_POOL_HOST:-edge-api-pool}
       - EDGE_API_PORT=${EDGE_API_PORT:-18080}
     networks:
       default:
@@ -258,21 +301,33 @@ services:
           - proxy-policy-ingress
     volumes:
       - proxy-router-state:/var/lib/gonka-router
+    restart: unless-stopped
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/bin/busybox",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:8404/readyz",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
     depends_on:
       proxy-policy:
         condition: service_healthy
       proxy-policy2:
         condition: service_healthy
-    restart: unless-stopped
-    cap_drop: [ALL]
-    cap_add: [NET_BIND_SERVICE]
-    security_opt: [no-new-privileges:true]
-    healthcheck:
-      test: ["CMD", "/bin/busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8404/readyz"]
-      interval: 2s
-      timeout: 3s
-      retries: 10
-      start_period: 15s
 
   proxy-ssl:
     container_name: proxy-ssl

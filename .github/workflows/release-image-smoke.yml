@@ -1,0 +1,140 @@
+name: Release image smoke
+
+on:
+  pull_request:
+    paths:
+      - deploy/join/docker-compose.yml
+      - deploy/join/docker-compose.versiond.yml
+      - deploy/join/docker-compose.versiond-external-postgres.yml
+      - deploy/join/docker-compose.edge-api-multi.yml
+      - deploy/join/docker-compose.observability.yml
+      - deploy/join/docker-compose.versiond-v5-compat.yml
+      - deploy/join/docker-compose.edge-api-v5-compat.yml
+      - deploy/join/docker-compose.proxy-v4-compat.yml
+      - deploy/join/versiond-router-slot/docker-compose.yml
+      - deploy/join/release-image-smoke_test.sh
+      - deploy/join/devshard-postgres-migration-preflight.sh
+      - deploy/join/devshard-postgres-migration-preflight_test.sh
+      - deploy/join/legacy-router-upgrade-barrier.sh
+      - deploy/join/legacy-router-upgrade-barrier_test.sh
+      - deploy/join/upgrade-devshard-v5.sh
+      - deploy/join/upgrade-devshard-v5_test.sh
+      - deploy/join/devshard-v5-release.env
+      - deploy/join/devshard-v5-release-contract.sh
+      - deploy/join/devshard-v5-release-contract_test.sh
+      - deploy/join/devshard-v5-release-gate.sh
+      - deploy/join/devshard-v5-release-gate_test.sh
+      - devshard/docs/network-update-0.2.15-v5.md
+      - devshard/docs/release-0.2.15-v5.md
+      - deploy/join/compose-topology.sh
+      - deploy/join/deployment-lock.sh
+      - deploy/join/enable-router-ha.sh
+      - deploy/join/enable-router-ha_test.sh
+      - deploy/join/versiond-compose-config_test.sh
+      - deploy/join/versiond-router-fleet.sh
+      - deploy/join/versiond-router-fleet_test.sh
+      - proxy/Dockerfile
+      - proxy/entrypoint.sh
+      - proxy/nginx.unified.conf.template
+      - proxy-router/**
+      - router-runtime/**
+      - versiond-router/Dockerfile
+      - versiond-router/entrypoint.sh
+      - versiond-router/haproxy.cfg.template
+      - .github/workflows/release-image-smoke.yml
+  workflow_dispatch:
+    inputs:
+      network_update_url:
+        description: 'Published gonka.ai Network Updates entry for this release'
+        required: true
+        type: string
+      upgrade_deadline_utc:
+        description: 'Published upgrade deadline (UTC RFC3339)'
+        required: true
+        type: string
+  schedule:
+    # Published immutable tags are checked continuously after release, not only
+    # when an operator remembers to dispatch the workflow.
+    - cron: '17 3 * * *'
+
+permissions:
+  contents: read
+
+jobs:
+  compose-contract:
+    name: Compose release image contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check base and HA image pins
+        run: deploy/join/release-image-smoke_test.sh --contract
+
+      - name: Check fail-safe upgrade workflow
+        run: |
+          shellcheck \
+            deploy/join/devshard-postgres-migration-preflight.sh \
+            deploy/join/legacy-router-upgrade-barrier.sh \
+            deploy/join/legacy-router-upgrade-barrier_test.sh \
+            deploy/join/compose-topology.sh \
+            deploy/join/deployment-lock.sh \
+            deploy/join/devshard-v5-release-contract.sh \
+            deploy/join/devshard-v5-release-contract_test.sh \
+            deploy/join/devshard-v5-release-gate.sh \
+            deploy/join/devshard-v5-release-gate_test.sh \
+            deploy/join/upgrade-devshard-v5.sh \
+            deploy/join/upgrade-devshard-v5_test.sh \
+            deploy/join/enable-router-ha.sh \
+            deploy/join/enable-router-ha_test.sh \
+            deploy/join/versiond-router-fleet.sh \
+            deploy/join/versiond-router-fleet_test.sh \
+            deploy/join/versiond-compose-config_test.sh \
+            router-runtime/catalog-cache \
+            router-runtime/catalog-cache_test.sh \
+            router-runtime/catalog-reconciler \
+            router-runtime/catalog-status
+          router-runtime/catalog-cache_test.sh
+          deploy/join/legacy-router-upgrade-barrier_test.sh
+          deploy/join/devshard-v5-release-contract_test.sh
+          deploy/join/devshard-v5-release-gate_test.sh
+          deploy/join/upgrade-devshard-v5_test.sh
+          deploy/join/enable-router-ha_test.sh
+          deploy/join/versiond-compose-config_test.sh
+
+  router-fleet-acceptance:
+    name: Router fleet Docker acceptance
+    needs: compose-contract
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Exercise rolling router fleet lifecycle
+        run: deploy/join/versiond-router-fleet_test.sh
+
+  registry-smoke:
+    name: Published image endpoints
+    needs: compose-contract
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Pull and smoke-test release images
+        run: deploy/join/release-image-smoke_test.sh
+
+      - name: Verify published host update contract
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          NETWORK_UPDATE_URL: ${{ inputs.network_update_url }}
+          UPGRADE_DEADLINE_UTC: ${{ inputs.upgrade_deadline_utc }}
+        run: |
+          deploy/join/devshard-v5-release-gate.sh \
+            --network-update-url "$NETWORK_UPDATE_URL" \
+            --deadline-utc "$UPGRADE_DEADLINE_UTC"
