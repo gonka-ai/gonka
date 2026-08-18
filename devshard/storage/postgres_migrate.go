@@ -181,6 +181,23 @@ CREATE TABLE IF NOT EXISTS devshard_escrow_cache (
 			`CREATE INDEX IF NOT EXISTS devshard_escrow_cache_by_epoch ON devshard_escrow_cache(epoch_id)`,
 		},
 	},
+	{
+		// Migration 12 was used by an unreleased HA prototype. Keep the next ID
+		// stable so databases created by that prototype can converge safely.
+		ID:   13,
+		Name: "devshard_storage_identity",
+		Statements: []string{`
+CREATE TABLE IF NOT EXISTS devshard_storage_identity (
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    identity  UUID    NOT NULL
+)`, `
+INSERT INTO devshard_storage_identity (singleton, identity)
+VALUES (
+    TRUE,
+    md5(current_database() || clock_timestamp()::text || random()::text)::uuid
+)
+ON CONFLICT (singleton) DO NOTHING`},
+	},
 }
 
 // MigratePostgres applies all pending devshard Postgres parent-table migrations.
