@@ -164,6 +164,7 @@ func NewServer(
 }
 
 func (s *Server) Start(addr string) {
+	s.mountChainOracle()
 	go s.e.Start(addr)
 }
 
