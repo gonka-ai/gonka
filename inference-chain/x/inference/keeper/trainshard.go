@@ -190,6 +190,9 @@ func (k Keeper) buildTrainingEpochView(ctx context.Context) (*trainingEpochView,
 	countedProfile := make(map[string]map[string]bool)
 
 	for _, p := range active.Participants {
+		if p == nil || p.Index == "" {
+			continue
+		}
 		hardware, _ := k.GetHardwareNodes(ctx, p.Index)
 		profileByLocalId := make(map[string]string)
 		if hardware != nil {
@@ -202,6 +205,11 @@ func (k Keeper) buildTrainingEpochView(ctx context.Context) (*trainingEpochView,
 				continue
 			}
 			for _, ml := range p.MlNodes[i].MlNodes {
+				// an id-less node cannot be opted in or reserved, and the other
+				// epoch views skip it, so it must not add training capacity here
+				if ml == nil || ml.NodeId == "" {
+					continue
+				}
 				key := nodeKey(p.Index, ml.NodeId)
 				node := view.nodes[key]
 				if node == nil {
@@ -711,11 +719,41 @@ func (k Keeper) CollectEpochReservedNodeWeightsAtHeight(ctx context.Context, epo
 }
 
 func (k Keeper) collectEpochReservedNodeWeights(ctx context.Context, epochIndex uint64, scope ReservationScope, height *int64) map[string][]*types.TrainshardReservedNode {
+	return k.BuildEpochReservedWeightView(ctx, epochIndex, scope).nodeWeights(height)
+}
+
+// EpochReservedWeightView holds the epoch's reserved node windows, so a caller
+// that needs many block heights walks the trainshard store only once
+type EpochReservedWeightView struct {
+	windows []reservedNodeWindow
+}
+
+type reservedNodeWindow struct {
+	node  *types.TrainshardReservedNode
+	start int64
+	end   int64
+}
+
+func (k Keeper) BuildEpochReservedWeightView(ctx context.Context, epochIndex uint64, scope ReservationScope) EpochReservedWeightView {
+	var view EpochReservedWeightView
+	k.forEachEpochReservedNode(ctx, epochIndex, scope, func(n *types.TrainshardReservedNode, start, end int64) {
+		view.windows = append(view.windows, reservedNodeWindow{node: n, start: start, end: end})
+	})
+	return view
+}
+
+// TotalsAt aggregates the weight reserved at one block height
+func (v EpochReservedWeightView) TotalsAt(height int64) (byModelHost map[string]map[string]int64, byHost map[string]int64) {
+	return aggregateReservedWeightTotals(v.nodeWeights(&height))
+}
+
+func (v EpochReservedWeightView) nodeWeights(height *int64) map[string][]*types.TrainshardReservedNode {
 	type modelNode struct{ model, nodeId string }
 	seen := make(map[string]map[modelNode]int64)
-	k.forEachEpochReservedNode(ctx, epochIndex, scope, func(n *types.TrainshardReservedNode, start, end int64) {
-		if height != nil && (*height < start || *height > end) {
-			return
+	for _, w := range v.windows {
+		n := w.node
+		if height != nil && (*height < w.start || *height > w.end) {
+			continue
 		}
 		set, ok := seen[n.Participant]
 		if !ok {
@@ -723,10 +761,10 @@ func (k Keeper) collectEpochReservedNodeWeights(ctx context.Context, epochIndex 
 			seen[n.Participant] = set
 		}
 		mk := modelNode{model: n.ModelId, nodeId: n.NodeId}
-		if w, exists := set[mk]; !exists || n.PocWeight > w {
+		if prev, exists := set[mk]; !exists || n.PocWeight > prev {
 			set[mk] = n.PocWeight
 		}
-	})
+	}
 	result := make(map[string][]*types.TrainshardReservedNode, len(seen))
 	for participant, nodes := range seen {
 		for mn, weight := range nodes {

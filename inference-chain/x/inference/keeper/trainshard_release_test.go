@@ -184,6 +184,27 @@ func TestReservationScopes_RewardWindowExcludesReturnBuffer(t *testing.T) {
 	require.Zero(t, shieldAfterBuffer[host])
 }
 
+// TestAssembleTrainshard_IgnoresNodesWithoutId keeps id-less epoch nodes out of
+// the candidate set: they can never be opted in, so they must not add capacity
+func TestAssembleTrainshard_IgnoresNodesWithoutId(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId: 7,
+		Participants: []*types.ActiveParticipant{{
+			Index:  creator,
+			Models: []string{"model1"},
+			MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{
+				{NodeId: "", PocWeight: 100},
+			}}},
+		}},
+	}))
+
+	_, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.ErrorIs(t, err, types.ErrTrainshardCapacity)
+	require.Empty(t, k.CollectReservedNodeIds(ctx))
+}
+
 func TestRefreshTrainingNodeOptIn_MovesExpiryForward(t *testing.T) {
 	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
 	ttl := types.DefaultParams().TrainingParams.OptInTtlBlocks
