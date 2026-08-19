@@ -13,8 +13,10 @@ import (
 
 const courierBootstrapHeight = int64(11)
 
-// TestHeightSyncAnchor_E2E_CourierBootstrap covers plan §5/E1: cold courier cache,
-// first sync-turn response seeds host A's tip, later nonces carry with host A originator.
+// TestHeightSyncAnchor_E2E_CourierBootstrap covers plan §5/E1 after E9: the
+// session-open seed warms the courier cache from the roster, so nonce 1
+// already carries an Anchor. Host A (higher tip) remains MaxFresh originator
+// and later nonces carry that originator.
 func TestHeightSyncAnchor_E2E_CourierBootstrap(t *testing.T) {
 	ctx := context.Background()
 	logs := installCaptureLogger(t)
@@ -40,8 +42,8 @@ func TestHeightSyncAnchor_E2E_CourierBootstrap(t *testing.T) {
 	syncHostsFromSession(t, st)
 
 	entries := logs.snapshot()
-	require.Equal(t, "omit", requestEmitModeAtNonce(entries, 1),
-		"nonce 1 outbound must Omit while peer-tip cache is cold")
+	require.Equal(t, "anchor", requestEmitModeAtNonce(entries, 1),
+		"nonce 1 outbound Anchors from the E9 seed, not from the nonce-1 response")
 
 	tip := peerTips.MaxFresh(time.Now(), peerTips.Freshness)
 	require.NotNil(t, tip)
@@ -78,8 +80,9 @@ func TestHeightSyncAnchor_E2E_CourierBootstrap(t *testing.T) {
 	}
 }
 
-// TestHeightSyncAnchor_E2E_PipelinedCourier covers plan §5/E7: all four sync-turn
-// nonces in flight before responses; cold wave omits; next sync turn carries Anchors.
+// TestHeightSyncAnchor_E2E_PipelinedCourier covers plan §5/E7 after E9: all four
+// sync-turn nonces in flight before responses. The session-open seed warms the
+// cache, so the wave Anchors; the next sync turn still carries host originators.
 func TestHeightSyncAnchor_E2E_PipelinedCourier(t *testing.T) {
 	ctx := context.Background()
 	logs := installCaptureLogger(t)
@@ -100,8 +103,8 @@ func TestHeightSyncAnchor_E2E_PipelinedCourier(t *testing.T) {
 
 	entries := logs.snapshot()
 	for n := 1; n <= 4; n++ {
-		require.Equal(t, "omit", requestEmitModeAtNonce(entries, n),
-			"pipelined sync-turn nonce=%d must Omit with cold cache", n)
+		require.Equal(t, "anchor", requestEmitModeAtNonce(entries, n),
+			"pipelined sync-turn nonce=%d Anchors from the E9 seed", n)
 	}
 	require.NotNil(t, peerTips.MaxFresh(time.Now(), peerTips.Freshness),
 		"responses must warm peer-tip cache after the pipelined wave")

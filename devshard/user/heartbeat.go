@@ -20,6 +20,7 @@ type composedDiff struct {
 // diffs for an already-open turn. It is the E2 quiet-session / outbound-round
 // hook: call it on a block tick or before other outbound work.
 func (s *Session) MaybeHeartbeat(ctx context.Context) error {
+	s.ensureHeightSeed(ctx)
 	span, err := s.composeHeartbeatSpan()
 	if err != nil {
 		return err
@@ -184,6 +185,15 @@ func (s *Session) observedHeightLocked() (uint64, []byte, bool) {
 		return s.observedHeight()
 	}
 	for _, c := range s.clients {
+		if src, ok := c.(interface {
+			ObservedStampNow() (uint64, []byte, bool)
+		}); ok {
+			h, hash, ok := src.ObservedStampNow()
+			if ok && h > 0 {
+				return h, hash, true
+			}
+			continue
+		}
 		src, ok := c.(interface{ ObservedHeightNow() (uint64, bool) })
 		if !ok {
 			continue

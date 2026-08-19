@@ -105,14 +105,25 @@ func (c *HTTPClient) HeightSyncPeerTips() *HeightSyncPeerTips {
 // ObservedHeightNow returns the highest fresh mainnet height in the courier peer-tip
 // cache (plan §3.7). The bool is false when height sync is off or no fresh tip exists.
 func (c *HTTPClient) ObservedHeightNow() (uint64, bool) {
+	h, _, ok := c.ObservedStampNow()
+	return h, ok
+}
+
+// ObservedStampNow returns the highest fresh (height, hash) in the courier
+// peer-tip cache. Hash is nil when the tip has no decodable block hash.
+func (c *HTTPClient) ObservedStampNow() (uint64, []byte, bool) {
 	if c == nil || c.heightSyncPeerTips == nil {
-		return 0, false
+		return 0, nil, false
 	}
 	tip := c.heightSyncPeerTips.MaxFresh(time.Now(), c.heightSyncPeerTips.freshness())
 	if tip == nil || tip.MainnetHeight <= 0 {
-		return 0, false
+		return 0, nil, false
 	}
-	return uint64(tip.MainnetHeight), true
+	hash, err := decodeMainnetBlockHashHex(tip.MainnetBlockHashHex)
+	if err != nil {
+		hash = nil
+	}
+	return uint64(tip.MainnetHeight), hash, true
 }
 
 // SeedHeightSync calls the optional host cold-start RPC and records the returned

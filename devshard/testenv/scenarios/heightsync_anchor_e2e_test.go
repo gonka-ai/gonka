@@ -472,6 +472,20 @@ func syncHostsFromSession(t *testing.T, st *fourHostStack) {
 	}
 }
 
+func hostInferenceResponseAnchors(atts []heightsync.AnchorAttestation) []heightsync.AnchorAttestation {
+	out := make([]heightsync.AnchorAttestation, 0, len(atts))
+	for _, a := range atts {
+		if a.Direction != "response" || len(a.MainnetBlockHash) == 0 {
+			continue
+		}
+		if strings.Contains(strings.ToLower(a.SourceMessage), "height-sync") {
+			continue
+		}
+		out = append(out, a)
+	}
+	return out
+}
+
 func countOutboundRequestAnchors(t *testing.T, sess *user.Session, userAddr string) int {
 	t.Helper()
 	n := 0
@@ -705,8 +719,8 @@ func courierSyncTurnWithHeldResponses(t *testing.T, ctx context.Context, st *fou
 
 // courierPipelinedSyncTurn prepares every nonce in [from, through] first, then runs
 // SendOnly for all of them while each host holds its HTTP response until a single
-// release processes the whole wave. With a cold peer-tip cache every outbound Decide
-// in the wave sees Stale() and omits; responses then warm the cache together.
+// release processes the whole wave. E9 seeds on the first PrepareInference, so
+// Decide in the wave sees a warm cache and Anchors.
 func courierPipelinedSyncTurn(t *testing.T, ctx context.Context, st *fourHostStack, params user.InferenceParams, from, through uint64) {
 	t.Helper()
 	if !inferenceHoldsEnabled() {
@@ -854,8 +868,8 @@ func TestHeightSyncAnchor_E2E_CadenceLogsAndAuditTrail(t *testing.T) {
 				ar := s.HeightSyncAuditRing()
 				require.NotNil(t, ar)
 				hostAddr := st.HostAddrs[hostIdx]
-				anch := ar.List(hostAddr)
-				require.Len(t, anch, 1, "after nonce 4 each host should have exactly one anchored response")
+				anch := hostInferenceResponseAnchors(ar.List(hostAddr))
+				require.Len(t, anch, 1, "after nonce 4 each host should have exactly one inference-response Anchor (seed RPC excluded)")
 				require.Equal(t, "response", anch[0].Direction)
 				require.Equal(t, wantHex, hex.EncodeToString(anch[0].MainnetBlockHash))
 			}
@@ -956,15 +970,13 @@ func TestHeightSyncAnchor_E2E_CadenceLogsAndAuditTrail(t *testing.T) {
 		ar := s.HeightSyncAuditRing()
 		require.NotNil(t, ar)
 		hostAddr := st.HostAddrs[i]
-		for _, a := range ar.List(hostAddr) {
-			if a.Direction == "response" && len(a.MainnetBlockHash) > 0 {
-				respAnchors++
-				require.Equal(t, wantHex, hex.EncodeToString(a.MainnetBlockHash))
-			}
+		for _, a := range hostInferenceResponseAnchors(ar.List(hostAddr)) {
+			respAnchors++
+			require.Equal(t, wantHex, hex.EncodeToString(a.MainnetBlockHash))
 		}
 	}
 	// Receipt cadence follows inference nonce (same as user request): 9 Anchors for
-	// nonces {1..4} ∪ {8..11} ∪ {16} — not per-host response ordinal.
+	// nonces {1..4} ∪ {8..11} ∪ {16} — seed RPC outbound entries are excluded.
 	require.Equal(t, 9, respAnchors, "response Anchors match global cadence over nonces 1..16")
 	for _, s := range st.Servers {
 		nIn := countInboundUserAnchorsOnHost(t, s, st.UserAddr)
@@ -1341,28 +1353,17 @@ func TestHeightSyncAnchor_E2E_CarriesHigherPeerTipAcrossHosts(t *testing.T) {
 		syncHostsFromSession(t, st)
 	}
 
-	xPrefix := strings.ToLower(hex.EncodeToString(xHash))
 	x1Prefix := strings.ToLower(hex.EncodeToString(x1Hash))
 	entries := logs.snapshot()
 	userReq := extractHeightSyncRequestEmitEvents(entries)
 	require.GreaterOrEqual(t, len(userReq), 4)
 	userReq = userReq[:4]
-	require.Equal(t, xPrefix, strings.ToLower(strings.TrimSpace(userReq[0].kv["block_hash_prefix"])))
-	switchNonce := -1
-	for nonce := 2; nonce <= 4; nonce++ {
+	for nonce := 1; nonce <= 4; nonce++ {
 		prefix := strings.ToLower(strings.TrimSpace(userReq[nonce-1].kv["block_hash_prefix"]))
-		if switchNonce == -1 {
-			if prefix == x1Prefix {
-				switchNonce = nonce
-				continue
-			}
-			require.Equal(t, xPrefix, prefix, "before carry-forward, user should still emit local tip X")
-			continue
-		}
 		require.Equal(t, x1Prefix, prefix,
-			"after carry-forward starts, all later in-turn requests should use X+1 (nonce=%d)", nonce)
+			"E9 seed makes X+1 MaxFresh before nonce 1 (nonce=%d)", nonce)
 	}
-	require.NotEqual(t, -1, switchNonce, "client should carry a higher peer tip X+1 within the same sync turn")
+	switchNonce := 1
 
 	hostInbound := extractHostInboundPeerEvents(entries, st.UserAddr)
 	require.GreaterOrEqual(t, len(hostInbound), 4)
@@ -1416,7 +1417,8 @@ func TestHeightSyncAnchor_E2E_LostFirstResponseSelfHealing(t *testing.T) {
 	require.NoError(t, err)
 	syncHostsFromSession(t, st)
 
-	// Find the host that served nonce=2: it should have exactly one anchored response.
+	// Find the host that served nonce=2: it should Anchor on the inference
+	// response (seed-RPC outbound entries are ignored).
 	foundFirstAnchorResp := false
 	for hostIdx, s := range st.Servers {
 		if hostIdx == hostForNonce1 {
@@ -1426,8 +1428,12 @@ func TestHeightSyncAnchor_E2E_LostFirstResponseSelfHealing(t *testing.T) {
 		require.NotNil(t, ar)
 		hostAddr := st.HostAddrs[hostIdx]
 		resp := ar.List(hostAddr)
-		if len(resp) == 1 && resp[0].Direction == "response" && len(resp[0].MainnetBlockHash) > 0 {
-			foundFirstAnchorResp = true
+		for _, a := range resp {
+			if a.Direction == "response" && len(a.MainnetBlockHash) > 0 &&
+				!strings.Contains(strings.ToLower(a.SourceMessage), "height-sync") {
+				foundFirstAnchorResp = true
+				break
+			}
 		}
 	}
 	require.True(t, foundFirstAnchorResp, "nonce=2 receiving host should emit Anchor on its first response")

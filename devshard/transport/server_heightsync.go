@@ -31,12 +31,15 @@ func WithHeightSync(sched *heightsync.AnchorScheduler, logOracle blocks.BlockOra
 		if sched != nil {
 			s.heightSyncAudit = heightsync.NewAuditRing(0)
 			s.pendingUntrustedBySession = make(map[string]*pendingUntrustedTip)
+			// E9: seed RPC is on whenever height sync is. WithHeightSyncSeedRPC(false)
+			// after this option still disables it (host stays correct, just unseedable).
+			s.heightSyncSeedRPC = true
 		}
 	}
 }
 
-// WithHeightSyncSeedRPC enables POST /sessions/:id/height-sync for courier cold-start
-// cache seeding (proposal §"Cold start"). Off by default.
+// WithHeightSyncSeedRPC toggles POST /sessions/:id/height-sync for courier cold-start
+// cache seeding (plan §8.5.1). Defaults to on when WithHeightSync is set.
 func WithHeightSyncSeedRPC(enabled bool) ServerOption {
 	return func(s *Server) {
 		s.heightSyncSeedRPC = enabled
@@ -394,7 +397,7 @@ type heightSyncSeedResponse struct {
 }
 
 // HandleHeightSync emits one host Anchor (ForceAnchor) for courier cache seeding.
-// Requires WithHeightSync and WithHeightSyncSeedRPC(true); escrow owner only.
+// Requires WithHeightSync (seed RPC defaults on); escrow owner only.
 func (s *Server) HandleHeightSync(c echo.Context) error {
 	if s.heightSync == nil || !s.heightSyncSeedRPC {
 		return echo.NewHTTPError(http.StatusNotFound, "height-sync seed RPC disabled")
@@ -412,7 +415,7 @@ func (s *Server) HandleHeightSync(c echo.Context) error {
 	}
 
 	h := heightsync.DecideHints{
-		Nonce:              1,
+		Nonce:              0, // seed consumes no session nonce
 		ForceAnchor:        true,
 		OriginatorSenderID: s.host.Signer().Address(),
 	}

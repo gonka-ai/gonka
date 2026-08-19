@@ -287,11 +287,11 @@ produces **marks**, adjudication lands with Strong.
 | H24 | ✅ `TestHeightAck_OracleUnavailableStillRequired` + `TestHost_HeartbeatAck_OracleUnavailableStillRequired` + `TestHeartbeat_UnavailableAcksDoNotCountAndDegrade` | `heightsync` + `host` + `user` | `ORACLE_UNAVAILABLE` ack is present and required, does not count toward `Q`, leaves `(C-turn)` unaffected. |
 | H25 | ✅ `TestHeartbeatConfig_ValidateRejectsBadOverride` | `heightsync` | `MinRoundsPerBlock ≥ 2`, `T_idle > K_hb + D_ack`, and `K_hb · block_time ≤ F/2` fail fast at startup. |
 | H33 | ⏳ `TestHeartbeat_StampedBusySessionEmitsNoAcks` | `host` | A busy stamped escrow emits zero heartbeats **and** zero `MsgHeightAck`; acks exist only inside heartbeat turns. |
-| H34 | ⏳ `TestSeed_SessionOpenStampsNonceOne` | `user` | E9 + E7: the seed round runs before the first outbound diff, so `MsgStartInference` at nonce 1 carries `(observed_height, observed_block_hash)` and `started_at_height` lands on the record. |
-| H35 | ⏳ `TestSeed_FanOutSurvivesDeadSlot` | `user` | One slot 404s or oracle-misses; the seed still succeeds from another slot and every valid Anchor lands in `HeightSyncPeerTips`. |
-| H36 | ⏳ `TestSeed_TotalMissDegradesNeverFails` | `user` | All slots unseedable ⇒ session opens normally, nonce 1 unstamped, `heightsync: seed_missed` logged, `heartbeat_skipped_no_height` on the first due check; no error surfaces to the caller. |
-| H37 | ⏳ `TestSeed_DoesNotAdvanceHLastOrConsumeNonce` | `user` + `heightsync` | The seed appends nothing, consumes no nonce, and leaves the heartbeat obligation armed — a seeded session that never works still owes a turn within `K_hb`. |
-| H38 | ⏳ `TestLogPlane_AbsentStampIsNotHeightZero` | `heightsync` | Presence keyed on non-empty `observed_block_hash`: a present-then-absent `start`/`confirm` pair is **not** `INVALID(height_regression)`, and L0/L0b skip legs with no claim. |
+| H34 | ✅ `TestSeed_SessionOpenStampsNonceOne` | `user` | E9: seed runs before the first outbound diff; nonce 1 `MsgHeartbeat` carries the seeded `(height, hash)`. (`MsgStartInference` stamp is E7.) |
+| H35 | ✅ `TestSeed_FanOutSurvivesDeadSlot` | `user` | One slot 404s; the seed still succeeds from another slot and every valid Anchor lands in `HeightSyncPeerTips`. |
+| H36 | ✅ `TestSeed_TotalMissDegradesNeverFails` | `user` | All slots unseedable ⇒ session opens normally, `heightsync: seed_missed`, `heartbeat_skipped_no_height` on the first due check; `SendInference` still succeeds. |
+| H37 | ✅ `TestSeed_DoesNotAdvanceHLastOrConsumeNonce` | `user` | The seed appends nothing, consumes no nonce, and leaves the heartbeat obligation armed — a seeded session that never works still owes a turn within `K_hb`. |
+| H38 | ✅ `TestStampPresent_EmptyHashIsAbsent` / `_PresentThenAbsentIsNotRegression` | `heightsync` | Presence keyed on non-empty `observed_block_hash`: a present-then-absent pair is not treated as height 0. L0/L0b skip legs with no claim (wired in E4). |
 
 ### 7.2 Verifier checks — L0–L7 and evaluation tiers
 
@@ -443,13 +443,13 @@ Files (planned): `heightsync_strong_e2e_test.go`. Suite prefix: `TestHeightSyncS
 | Asymmetric response signatures | E9, E10, `TestClient_ResponseAnchor_*`, `TestServer_ResponseAnchor_SignedByHost`, `TestSignOrigin_*` | — |
 | DEFERRED_FAIL attribution | E10 (exculpation API) | S11 (Strong-grade evidence) |
 | `ObservedHeightNow` (cPoC C14) | `TestObservedHeightNow_*` | — |
-| Optional seed RPC | `TestHTTPClient_SeedHeightSync_RecordsOrigin`, `TestHandleHeightSync_*` | H34–H37 (E9 session-open seed, plan §8.5.1) |
+| Optional seed RPC | `TestHTTPClient_SeedHeightSync_RecordsOrigin`, `TestHandleHeightSync_*` | H34–H37 (E9 session-open seed, plan §8.5.1) ✅ |
 | Audit ring | `TestAuditRing_*`, all e2e tests | — |
 | Stale / quiet oracle | Feed **unavailable**: `TestHeightSyncAnchor_E2E_HeightSyncFeedStopped_*`, E6. Feed **quiet** (cached tip): `TestAnchorScheduler_StaleFeedEmitsDegradedAnchorInSyncTurn`, `TestDecide_LogStaleSyncTurn`, container cadence | S10 |
 | §7 wire format — envelope is one plane only | `TestEnvelope_*`, `TestUnwrapInferenceRequestBody_*` | — |
 | §10.1–§10.3 heartbeat cadence + obligation | H1, H3, H4, H25 (unit + in-process) | H2 |
 | §10.4 `MsgHeartbeat` / `MsgHeightAck` wire + binding | field-number + ack signing unit + `TestHost_HeartbeatAck_*` | H10, H11, H12, H13, H33 |
-| §10.5 `observed_height` in the log | H6 (turn complete) | H9, H13d, H34 (stamped nonce 1), H38 (absent ≠ 0) |
+| §10.5 `observed_height` in the log | H6 (turn complete), H34 (seeded nonce 1 heartbeat), H38 (absent ≠ 0) | H9, H13d |
 | §10.5.1 stamp inside its producer's signature | — | H28 (`executor_sig` mirror), H29 (`proposer_sig` automatic) |
 | §10.5.2 derived record heights / logical time | — | H31; switching the consumers is a later milestone |
 | §10.6 async fan-out | H4, H5 (in-process span + unit) | — |

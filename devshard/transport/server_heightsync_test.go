@@ -677,10 +677,21 @@ func TestHandleHeightSync_DisabledReturnsNotFound(t *testing.T) {
 		Height: 10, ChainID: "c", BlockHash: []byte{0x01},
 	}}
 	sched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, or)
-	env := setupServerEnv(t, WithHeightSync(sched, or))
+	env := setupServerEnv(t, WithHeightSync(sched, or), WithHeightSyncSeedRPC(false))
 
 	rec := env.doPost(t, "/devshard/v2/sessions/escrow-1/height-sync", []byte("{}"))
 	require.Equal(t, http.StatusNotFound, rec.Code, rec.Body.String())
+}
+
+func TestHandleHeightSync_DefaultOnWhenHeightSyncEnabled(t *testing.T) {
+	or := &heightSyncTestOracle{hdr: &blocks.Header{
+		Height: 10, ChainID: "c", BlockHash: []byte{0x01},
+	}}
+	sched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, or)
+	env := setupServerEnv(t, WithHeightSync(sched, or))
+
+	rec := env.doPost(t, "/devshard/v2/sessions/escrow-1/height-sync", []byte("{}"))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
 }
 
 func TestHandleHeightSync_ForcesAnchor(t *testing.T) {

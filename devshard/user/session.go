@@ -277,6 +277,10 @@ type Session struct {
 	observedHeight     func() (height uint64, hash []byte, ok bool)
 	heartbeatTurnSeq   uint64
 	heartbeatFlushLeft int
+
+	// heightSeedOnce runs the E9 roster fan-out at most once per Session.
+	heightSeedOnce   sync.Once
+	heightSeedMissed atomic.Bool
 }
 
 // SessionOption configures optional Session behavior.
@@ -830,6 +834,7 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 	if chooser == nil {
 		return nil, fmt.Errorf("PrepareInferenceFn: chooser is nil")
 	}
+	s.ensureHeightSeed(context.Background())
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -971,6 +976,7 @@ func (s *Session) logStateRootMismatchUserDiagnostic(p *PreparedInference) {
 
 // SendInference composes diff, sends to correct host, processes response.
 func (s *Session) SendInference(ctx context.Context, params InferenceParams) (*host.HostResponse, error) {
+	s.ensureHeightSeed(ctx)
 	p, err := s.PrepareInference(params)
 	if err != nil {
 		return nil, err
@@ -990,6 +996,7 @@ func (s *Session) SendInference(ctx context.Context, params InferenceParams) (*h
 // sendDiffRound composes a diff, sends it to the next host, processes the response.
 // Returns non-nil only on compose or processResponse errors; dead hosts are silently skipped.
 func (s *Session) sendDiffRound(ctx context.Context, extraTxs []*types.DevshardTx) error {
+	s.ensureHeightSeed(ctx)
 	s.mu.Lock()
 	diff, hostIdx, err := s.composeDiffLocked(extraTxs)
 	if err != nil {
@@ -1044,6 +1051,7 @@ func (s *Session) sendCatchUp(ctx context.Context, hostIdx int) error {
 // there's no point sending later chunks if the host couldn't apply earlier ones.
 // Returns non-nil only on processResponse errors; dead hosts are silently skipped.
 func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostClient) error {
+	s.ensureHeightSeed(ctx)
 	s.mu.Lock()
 	nonce := s.nonce
 	catchUp := s.diffsForHost(hostIdx)

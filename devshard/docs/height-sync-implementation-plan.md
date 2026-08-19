@@ -13,7 +13,7 @@
 | **B** | ✅ | In-process e2e in `testenv/scenarios/heightsync_anchor_e2e_*.go` (static `blocks.BlockOracle`s, `/devshard/v2`, numeric escrow ids). Catalog §4 including `-tags=dev` E2/E3/E8. |
 | **C** | ✅ | Container citest `citest-height-sync` against mock-dapi `/block/*` (optional `DEVSHARD_CHAINORACLE_URL`; default compose unchanged) |
 | **D** | ✅ | Hash-only Tendermint observer; direct-chain adapter; host failover (old dapi / dapi-down). Dapi `/block/*` mount is in `decentralized-api` (separate commit). |
-| **E** | ⏳ | Log plane (heartbeat, sync vector/state, repair, close-ready). **E0–E3 landed** (§8.15); E4–E9 remain. |
+| **E** | ⏳ | Log plane (heartbeat, sync vector/state, repair, close-ready). **E0–E3 and E9 landed** (§8.15); E4–E8 remain. |
 | **F** | ⏳ | Strong / `light_block` / dispute adjudication |
 
 This plan delivers **the whole spec except the Strong path**, in six phases:
@@ -421,7 +421,7 @@ Catalogued in [`height-sync-tests.md`](./height-sync-tests.md) **§6** with the 
 
 ## 8. Phase E — the log plane (§10, §11, §12, §14 L1–L7, §17 `(C-turn)`)
 
-Design is §8.1–§8.14. The ship order is **§8.15 (E0–E9)**. **E0–E3 are implemented** on this branch; **E4–E9 are not**.
+Design is §8.1–§8.14. The ship order is **§8.15 (E0–E9)**. **E0–E3 and E9 are implemented** on this branch; **E4–E8 are not**.
 
 ### 8.1 What must be true when E is done
 
@@ -639,7 +639,7 @@ The user has no chain oracle, so at session open `ObservedHeightNow()` is `(0,fa
 3. **Consumes no nonce and appends nothing.** The seed is a transport-plane read. It **MUST NOT** advance `h_last` and **MUST NOT** count as a completed turn — otherwise a user could seed at session open and never write a height into the log at all. The heartbeat obligation starts armed exactly as it does today.
 4. **Never fails a session.** The RPC is host-opt-in (404 when `WithHeightSyncSeedRPC` is off) and can oracle-miss. On total miss, log `heightsync: seed_missed` with the per-slot outcomes and fall through to today's behaviour: nonce 1 unstamped, `heartbeat_skipped_no_height`, hosts arm if the silence persists. This follows the §10 rule "a missing or down dapi degrades to direct chain; it never fails a session".
 5. **Bounded.** One seed round per session, before the first round only — not a retry loop. If it misses, the response leg of nonce 1 supplies the height anyway, so a retry would buy at most one nonce and adds a cold-start stall on every session. Timeout it at the existing per-request budget and move on.
-6. **Host default flips to on.** `WithHeightSyncSeedRPC` is opt-in today; the seed is only useful if hosts answer it, so it defaults to enabled with height sync. That is a config change, not a protocol change — a host with it off is still correct, just unseedable.
+6. **Host default is on.** `WithHeightSync` enables the seed RPC; `WithHeightSyncSeedRPC(false)` still disables it. A host with it off is still correct, just unseedable.
 
 **Residual: absence must not read as height 0.** Even seeded, the degraded path in step 4 leaves unstamped txs in circulation, so E7 owes an explicit presence rule. `uint64` gives `0` for both "no claim" and a literal zero, and L0b (`start ≤ confirm ≤ finish`) would then read a present-then-absent pair as a height regression and hand every verifier a spurious `INVALID(height_regression)`. **Key presence on `observed_block_hash` being non-empty, never on the height being non-zero**, and skip L0/L0b for any leg with no claim. Same rule for the record consumers in §8.2.1: `started_at_height == 0` means "no stamp", and the later timeout migration needs a documented wall-clock fallback for those records rather than treating them as height 0.
 
@@ -917,14 +917,14 @@ Reuse A–D as-is: `ObservedHeightNow()`, `MsgForceHeightSyncTurn`, the hash-onl
 | **E6** | ⏳ | Close-ready arming. |
 | **E7** | ⏳ | Optional inference-tx stamps (same bump; can slip). |
 | **E8** | ⏳ | Observability + container H26/H27. |
-| **E9** | ⏳ | Session-open height seed, so nonce 1 is stamped (§8.5.1). Independent of E4–E6; needed for E7 to cover the first inference. |
+| **E9** | ✅ | Session-open height seed, so nonce 1 is stamped (§8.5.1). Independent of E4–E6; needed for E7 to cover the first inference. |
 
 ```
 E0 proto/params          ✅
  → E1 pure tracker       ✅
  → E2 user               ✅
  → E3 host               ✅
- → E9 session-open seed (transport only; may land any time from here)
+ → E9 session-open seed ✅
  → E4 ValidateDiff (needs txs on the wire)
  → E5 repair, E6 arming (after tracker + acks)
  → E7 stamps (optional, same bump; E9 first or nonce 1 stays unstamped)
@@ -1020,13 +1020,13 @@ Metrics/logs from §8.12 (`heightsync: logplane`). Citest:
 - H27: one host stopped → degraded turns, bounded probes, arm only after `T_idle` of **user** silence.
 - E8 also counts the stamp/section overlap that gates §10.1: per exchange, whether a section was present, whether a stamped tx was present, and whether the two agreed. That ratio is the measured saving of the single-source redesign; without it §10.1 is speculation.
 
-#### E9 — Session-open height seed ⏳
+#### E9 — Session-open height seed ✅
 
-`user/session.go` (§8.5.1). Fan `SeedHeightSync` out across the roster once at session open, before the first outbound round; take the first valid Anchor, keep the rest as peer tips. Does not consume a nonce, does not advance `h_last`, never fails the session on a miss. Default `WithHeightSyncSeedRPC` to on.
+`user/session.go` + `user/heightsync_seed.go` (§8.5.1). Fan `SeedHeightSync` out across the roster once at first outbound (`PrepareInference` / `MaybeHeartbeat` / catch-up); take the first valid Anchor, keep the rest as peer tips. Does not consume a nonce, does not advance `h_last`, never fails the session on a miss. `WithHeightSync` now defaults the seed RPC on; `WithHeightSyncSeedRPC(false)` still disables it.
 
-Pure transport work — no proto change, no version bump, no verifier rule — so it can land any time after E2 and does not wait on E4. Land it **before or with E7**, or the first inference of every session stays unstamped and its `started_at_height` stays unset.
+Pure transport work — no proto change, no version bump, no verifier rule. Landed before E7 so the first heartbeat (and, once stamps exist, the first `MsgStartInference`) can carry a height.
 
-**Tests:** H34–H38.
+**Tests:** H34–H38. **Landed.** H34 asserts the seeded height on nonce 1's `MsgHeartbeat`; the `MsgStartInference` stamp wait is E7.
 
 Stay out of E: Strong / `light_block` / `Prove()`, evidence packets, on-chain dispute, cross-session equivocation, cPoC skip carriers, flipping timeouts onto heights, changing default compose.
 
@@ -1141,7 +1141,7 @@ Blockers 1, 3 and 4 all resolve the same way: the section survives, and the achi
 9. ✅ **E1:** Pure turn tracker / obligation / ack signing (no wiring); H1 unit, H3–H8, H24, D9.
 10. ✅ **E2:** User heartbeat dispatch (`MaybeHeartbeat`); H1/H3/H4 in-process (§8.5).
 10b. ✅ **E3:** Host ack into mempool (§8.6).
-10c. ⏳ **E9:** Session-open height seed so nonce 1 stamps (§8.5.1); H34–H38. Transport-only; no version bump. Must precede E7.
+10c. ✅ **E9:** Session-open height seed so nonce 1 stamps (§8.5.1); H34–H38. Transport-only; no version bump. Must precede E7.
 11. ⏳ **E4:** L0–L7 in `ValidateDiff` (L4 / L5a at the transport edge) + marks + `(C-turn)`; H9–H16, H13a–e, H32.
 12. ⏳ **E5:** Repair probe + budgets; H17–H20.
 13. ⏳ **E6:** Close-ready arming + `CloseReadyView`; H21–H23.

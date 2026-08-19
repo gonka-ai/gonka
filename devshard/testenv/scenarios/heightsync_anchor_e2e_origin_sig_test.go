@@ -156,7 +156,7 @@ func TestHeightSyncAnchor_E2E_ResponseOriginSignatureInvalidDropped(t *testing.T
 
 	require.Equal(t, beforeInvalid+1, heightsync.OriginSigInvalidTotal())
 	_, _, _, ok := peerTips.VerifiedAnchorFor(origin, h)
-	require.False(t, ok, "invalid response signature must not populate verified cache")
-	require.Nil(t, peerTips.MaxFresh(time.Now(), peerTips.Freshness),
-		"cache must stay cold after verify failure")
+	require.True(t, ok, "E9 seed still stores the host's verified tip; only the inference response is dropped")
+	require.NotNil(t, peerTips.MaxFresh(time.Now(), peerTips.Freshness),
+		"seed warms the cache even when the nonce-1 response signature is invalid")
 }
