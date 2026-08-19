@@ -120,11 +120,19 @@ func EnableHeightSyncCompose(t *testing.T, composePath string) {
 		"default compose must not enable height-sync; patch only in citest-height-sync")
 	PatchComposeInsertEnvAfterAll(t, composePath, "VERSIOND_ORACLE_URL",
 		"DEVSHARD_CHAINORACLE_URL: http://mock-dapi:9100",
+		"DEVSHARD_LOG_LEVEL: debug",
 	)
 	PatchComposeInsertEnvAfterAll(t, composePath, "DEVSHARD_PUBLIC_API",
 		"DEVSHARD_CHAINORACLE_URL: http://mock-dapi:9100",
-	)
-	PatchComposeInsertEnvAfterAll(t, composePath, "LOG_FORMAT",
 		"DEVSHARD_LOG_LEVEL: debug",
+	)
+}
+
+// EnableLegacyDapiCompose makes mock-dapi omit /block/* (0.2.15 / pre-mount
+// dapi). Height-sync still points at mock-dapi; hosts failover to direct chain.
+func EnableLegacyDapiCompose(t *testing.T, composePath string) {
+	t.Helper()
+	PatchComposeInsertEnvAfterAll(t, composePath, "MOCK_DAPI_HTTP_ADDR",
+		`MOCK_DAPI_OMIT_BLOCK_ROUTES: "1"`,
 	)
 }

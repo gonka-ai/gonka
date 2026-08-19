@@ -53,6 +53,23 @@ func BootHeightSyncStack(t *testing.T, prefix string) (*Stack, *config.File, End
 	return stack, cfg, stack.Endpoints(t, cfg)
 }
 
+// BootHeightSyncLegacyDapiStack is BootHeightSyncStack with mock-dapi omitting
+// /block/* (stand-in for ghcr.io/product-science/api:0.2.15 built from this
+// branch). Real dapi cannot replace mock-dapi here: mock-chain is not CometBFT.
+func BootHeightSyncLegacyDapiStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteStackConfig(t, stack.WorkDir)
+	stack.RunGencompose(t)
+	EnableHeightSyncCompose(t, stack.ComposePath)
+	EnableLegacyDapiCompose(t, stack.ComposePath)
+	cfg := stack.LoadConfig(t)
+	requireTwoVersiondHosts(t, cfg)
+	stack.Up(t)
+	return stack, cfg, stack.Endpoints(t, cfg)
+}
+
 func BootObservabilityStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints, ObservabilityEndpoints) {
 	t.Helper()
 	stack := NewStack(t, prefix)

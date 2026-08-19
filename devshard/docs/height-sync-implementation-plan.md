@@ -408,7 +408,7 @@ Height-sync never sees steps 2–4. It only calls `oracle.Latest()`. CometBFT ty
 | D4 | Host client: `/block/latest` 404 (old dapi) then chain ok | capability fallback; scheduler still emits Anchor |
 | D5 | Host client: dapi **and** chain missing | Omit + `ConfirmStale` |
 | D6 | citest: current mock-dapi (has `/block/*`) | `TestHeightSync_MockDapiBlockLatest` (Phase C) |
-| D7 | citest or unit: simulated old dapi (no `/block/*`, chain RPC only) | cadence Anchors still flow; Strong never claimed |
+| D7 | citest or unit: simulated old dapi (no `/block/*`, chain RPC only) | cadence Anchors still flow; Strong never claimed. Container: `TestHeightSync_LegacyDapiChatCompletes` (`MOCK_DAPI_OMIT_BLOCK_ROUTES=1`). |
 | D8 | `/block/:height/prove` absent or 501 | Anchor path unaffected |
 | D9 | Unit: heartbeat turn (Phase E) on a hash-only direct-chain oracle | turn reaches `complete`; no Strong requested |
 | D10 | **Runtime:** dapi `/block/latest` was 200, then connection refused | next `Latest()` uses direct chain; Anchor still emits; no host restart |

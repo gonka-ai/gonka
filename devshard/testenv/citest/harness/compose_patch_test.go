@@ -40,15 +40,12 @@ services:
   versiond-0:
     environment:
       VERSIOND_ORACLE_URL: http://mock-dapi:9100/versions
-      LOG_FORMAT: json
   versiond-1:
     environment:
       VERSIOND_ORACLE_URL: http://mock-dapi:9100/versions
-      LOG_FORMAT: json
   devshardctl:
     environment:
       DEVSHARD_PUBLIC_API: http://mock-dapi:9100
-      LOG_FORMAT: json
 `), 0o644))
 
 	EnableHeightSyncCompose(t, path)
@@ -57,4 +54,21 @@ services:
 	text := string(body)
 	require.Equal(t, 3, strings.Count(text, "DEVSHARD_CHAINORACLE_URL: http://mock-dapi:9100"))
 	require.Equal(t, 3, strings.Count(text, "DEVSHARD_LOG_LEVEL: debug"))
+}
+
+func TestEnableLegacyDapiCompose(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+services:
+  mock-dapi:
+    environment:
+      MOCK_DAPI_HTTP_ADDR: ":9100"
+      MOCK_DAPI_GRPC_ADDR: ":9400"
+`), 0o644))
+
+	EnableLegacyDapiCompose(t, path)
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `MOCK_DAPI_OMIT_BLOCK_ROUTES: "1"`)
 }

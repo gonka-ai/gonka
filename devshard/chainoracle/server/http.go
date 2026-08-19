@@ -41,6 +41,8 @@ func (f VersionProviderFunc) Versions(ctx context.Context) ([]Version, error) {
 // Config wires the HTTP mux.
 type Config struct {
 	Blocks blocks.BlockOracle
+	// OmitBlocks skips /block/* (old dapi stand-in). /healthz and /versions stay.
+	OmitBlocks bool
 	// Versions is served at GET /versions for VERSIOND_ORACLE_URL polling.
 	Versions []Version
 	// VersionProvider, when set, overrides Versions for dynamic tests and dapi
@@ -53,10 +55,16 @@ func Mount(g *echo.Group, cfg Config) {
 	if g == nil {
 		panic("chainoracle/server: nil echo group")
 	}
-	if cfg.Blocks == nil {
-		panic("chainoracle/server: Blocks oracle is required")
+	if cfg.OmitBlocks {
+		g.GET("/healthz", func(c echo.Context) error {
+			return c.String(http.StatusOK, "ok")
+		})
+	} else {
+		if cfg.Blocks == nil {
+			panic("chainoracle/server: Blocks oracle is required")
+		}
+		blockserver.Mount(g, cfg.Blocks)
 	}
-	blockserver.Mount(g, cfg.Blocks)
 	if cfg.VersionProvider != nil {
 		g.GET("/versions", handleVersionProvider(cfg.VersionProvider))
 	} else {

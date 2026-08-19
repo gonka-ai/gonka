@@ -150,6 +150,76 @@ func TestMockDAPI_GatewayPhaseEpochLatest(t *testing.T) {
 	require.Equal(t, "Inference", body["phase"])
 }
 
+func TestMockDAPI_OmitBlockRoutes_LooksLikeOldDapi(t *testing.T) {
+	bed := startBedOmitBlocks(t)
+	t.Cleanup(bed.cleanup)
+
+	health, err := http.Get(bed.httpURL + "/healthz")
+	require.NoError(t, err)
+	_ = health.Body.Close()
+	require.Equal(t, http.StatusOK, health.StatusCode)
+
+	vers, err := http.Get(bed.httpURL + "/versions")
+	require.NoError(t, err)
+	_ = vers.Body.Close()
+	require.Equal(t, http.StatusOK, vers.StatusCode)
+
+	latest, err := http.Get(bed.httpURL + "/block/latest")
+	require.NoError(t, err)
+	_ = latest.Body.Close()
+	require.Equal(t, http.StatusNotFound, latest.StatusCode)
+}
+
+func startBedOmitBlocks(t *testing.T) testBed {
+	t.Helper()
+	ctx, cancel := context.WithCancel(context.Background())
+	st := seed.Defaults()
+
+	grpcSrv, grpcLis, err := grpcface.NewInProcessServer(grpcface.Deps{Store: st})
+	require.NoError(t, err)
+
+	admin := adminface.NewServer(st, nil, nil)
+	adminHTTP := httptest.NewServer(admin.Handler())
+
+	cfg := mockdapi.DefaultConfig()
+	cfg.ChainGRPCAddr = grpcLis.Addr().String()
+	cfg.ChainTestenvURL = adminHTTP.URL
+	cfg.ChainPollInterval = time.Hour
+	cfg.BlockInterval = 50 * time.Millisecond
+	cfg.OmitBlockRoutes = true
+
+	svc, err := mockdapi.New(ctx, cfg)
+	require.NoError(t, err)
+
+	grpcL, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	httpL, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+
+	go func() { _ = svc.RunOn(ctx, grpcL, httpL) }()
+
+	require.Eventually(t, func() bool {
+		resp, err := http.Get("http://" + httpL.Addr().String() + "/healthz")
+		if err != nil {
+			return false
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	}, 3*time.Second, 20*time.Millisecond)
+
+	return testBed{
+		adminURL: adminHTTP.URL,
+		grpcAddr: grpcL.Addr().String(),
+		httpURL:  "http://" + httpL.Addr().String(),
+		cleanup: func() {
+			cancel()
+			adminHTTP.Close()
+			grpcSrv.Stop()
+			_ = grpcLis.Close()
+		},
+	}
+}
+
 func TestMockDAPI_VersionsJSON(t *testing.T) {
 	bed := startBed(t)
 	t.Cleanup(bed.cleanup)

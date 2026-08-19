@@ -15,6 +15,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// TestHeightSync_MockDapiBlockLatest is the 0.2.15-v5 stand-in: mock-dapi
+// mounts the same /block/* surface as ghcr.io/product-science/api:0.2.15-v5
+// (ak/height-sync-protocol-dapi). Real dapi cannot replace mock-dapi in this
+// stack because mock-chain is not CometBFT.
 func TestHeightSync_MockDapiBlockLatest(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
@@ -42,6 +46,8 @@ func TestHeightSync_MockDapiBlockLatest(t *testing.T) {
 	require.Greater(t, h2, h1, "mock-dapi /block/latest should advance")
 }
 
+// TestHeightSync_CadenceEmitsAnchor is height-sync against new dapi (0.2.15-v5
+// /block/*). First inference is a session-start Anchor.
 func TestHeightSync_CadenceEmitsAnchor(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
@@ -144,6 +150,35 @@ func TestHeightSync_FeedStoppedOmitsThenRecovers(t *testing.T) {
 	recovered := stack.WaitComposeLogsContain(t, 2*time.Minute, "mode=anchor",
 		"devshardctl", "versiond-0", "versiond-1")
 	require.Contains(t, recovered, "heightsync: emit")
+}
+
+// TestHeightSync_LegacyDapiChatCompletes is the 0.2.15 stand-in: mock-dapi
+// omits /block/* the way a dapi built from ak/height-sync-protocol (no mount)
+// does. Chat still completes; Strong is never claimed. Direct-chain failover
+// cannot Anchor on mock-chain (no Comet /block), so emit is Omit — same as D7.
+func TestHeightSync_LegacyDapiChatCompletes(t *testing.T) {
+	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
+	harness.RequireDocker(t)
+
+	stack, cfg, eps := harness.BootHeightSyncLegacyDapiStack(t, "citest-hs-legacy-dapi-*")
+	client := harness.GatewayChatClient()
+	t.Cleanup(func() {
+		if t.Failed() {
+			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", "mock-dapi")
+		}
+	})
+	harness.WaitStackHealthy(t, stack, eps)
+
+	resp, err := harness.HTTPClient().Get(eps.MockDapiHTTP + "/block/latest")
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusNotFound, resp.StatusCode, "0.2.15 dapi has no /block/*")
+
+	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
+	postHeightSyncChat(t, cfg, eps, "citest height-sync legacy dapi 0.2.15")
+	logs := stack.WaitComposeLogsContain(t, 2*time.Minute, "heightsync: emit",
+		"devshardctl", "versiond-0", "versiond-1")
+	require.NotContains(t, logs, "light_block", "hash-only / old dapi must not claim Strong")
 }
 
 func postHeightSyncChat(t *testing.T, cfg *config.File, eps harness.Endpoints, prompt string) {

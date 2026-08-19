@@ -210,6 +210,7 @@ func (s *Service) serveHTTPOn(ctx context.Context, lis net.Listener) error {
 	e.HideBanner = true
 	cosrv.Mount(e.Group(""), cosrv.Config{
 		Blocks:          s.blockMock,
+		OmitBlocks:      s.cfg.OmitBlockRoutes,
 		VersionProvider: s.versions,
 	})
 	if s.cfg.BinaryDir != "" {
