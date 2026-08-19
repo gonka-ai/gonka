@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"cosmossdk.io/collections"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/stretchr/testify/require"
 
 	keepertest "github.com/productscience/inference/testutil/keeper"
@@ -39,7 +40,6 @@ func TestAutokickTrainshardNode_ClosesShardWithoutActiveNodes(t *testing.T) {
 	require.Equal(t, types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_AUTOKICKED, closed.Nodes[0].Status)
 	require.Equal(t, "nccl timeout", closed.Nodes[0].ReleaseReason)
 
-	// the kicked node keeps its shielding until the return buffer ends
 	require.True(t, k.IsNodeReserved(ctx, creator, node))
 	require.False(t, k.HasActiveTrainReservation(ctx, creator))
 	k.ProcessTrainshardEndBlock(ctx.WithBlockHeight(closed.Nodes[0].ReservedUntilHeight))
@@ -99,7 +99,6 @@ func TestAutokickTrainshardNode_AllowsHostForOwnNode(t *testing.T) {
 	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
 	host := sample.AccAddress()
 
-	// a researcher shard running on a node of another host
 	require.NoError(t, k.Trainshards.Set(ctx, 9, types.Trainshard{
 		TrainshardId:    9,
 		Creator:         creator,
@@ -140,9 +139,6 @@ func TestAssembleTrainshard_RejectsProfileDisallowedAfterVote(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrTrainshardProfileNotAllowed)
 }
 
-// TestReservationScopes_RewardWindowExcludesReturnBuffer pins the rule that a
-// return buffer spilling into the next epoch shields the node but never costs it
-// that epoch's rewards.
 func TestReservationScopes_RewardWindowExcludesReturnBuffer(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 	const epoch = uint64(7)
@@ -176,7 +172,6 @@ func TestReservationScopes_RewardWindowExcludesReturnBuffer(t *testing.T) {
 	_, rewardClosing := k.CollectEpochReservedWeightTotals(ctx, epoch, keeper.ReservationScopeReward)
 	require.Equal(t, int64(100), rewardClosing[host])
 
-	// validation duty is read per height and must shield inside the buffer too
 	_, shieldInBuffer := k.CollectEpochReservedWeightTotalsAtHeight(ctx, epoch+1, 210, keeper.ReservationScopeShield)
 	require.Equal(t, int64(100), shieldInBuffer[host])
 
@@ -184,25 +179,43 @@ func TestReservationScopes_RewardWindowExcludesReturnBuffer(t *testing.T) {
 	require.Zero(t, shieldAfterBuffer[host])
 }
 
-// TestAssembleTrainshard_IgnoresNodesWithoutId keeps id-less epoch nodes out of
-// the candidate set: they can never be opted in, so they must not add capacity
 func TestAssembleTrainshard_IgnoresNodesWithoutId(t *testing.T) {
 	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
-
-	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
-		EpochId: 7,
-		Participants: []*types.ActiveParticipant{{
-			Index:  creator,
-			Models: []string{"model1"},
-			MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{
-				{NodeId: "", PocWeight: 100},
-			}}},
-		}},
-	}))
+	setTrainshardEpochNodes(t, k, ctx, creator, []*types.MLNodeInfo{
+		{NodeId: "node-a", PocWeight: 100},
+		{NodeId: "", PocWeight: 100},
+	})
 
 	_, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
 	require.ErrorIs(t, err, types.ErrTrainshardCapacity)
 	require.Empty(t, k.CollectReservedNodeIds(ctx))
+}
+
+func TestAssembleTrainshard_DedupsRepeatedNodeIdCapacity(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	setTrainshardEpochNodes(t, k, ctx, creator, []*types.MLNodeInfo{
+		{NodeId: "node-a", PocWeight: 100},
+		{NodeId: "node-a", PocWeight: 100},
+	})
+
+	_, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
+	require.ErrorIs(t, err, types.ErrTrainshardCapacity)
+	require.Empty(t, k.CollectReservedNodeIds(ctx))
+}
+
+func setTrainshardEpochNodes(t *testing.T, k keeper.Keeper, ctx sdk.Context, creator string, model1Nodes []*types.MLNodeInfo) {
+	t.Helper()
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId: 7,
+		Participants: []*types.ActiveParticipant{{
+			Index:  creator,
+			Models: []string{"model1", "model2"},
+			MlNodes: []*types.ModelMLNodes{
+				{MlNodes: model1Nodes},
+				{MlNodes: []*types.MLNodeInfo{{NodeId: "node-b", PocWeight: 100}}},
+			},
+		}},
+	}))
 }
 
 func TestRefreshTrainingNodeOptIn_MovesExpiryForward(t *testing.T) {
@@ -220,7 +233,6 @@ func TestRefreshTrainingNodeOptIn_MovesExpiryForward(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, resp.ExpiresAtHeight, expiresAt)
 
-	// a node left out of the list keeps its old expiry and simply runs out
 	untouched, err := k.TrainingNodeOptIns.Get(ctx, collections.Join(creator, "node-b"))
 	require.NoError(t, err)
 	require.Equal(t, trainshardOptInExpiry, untouched)

@@ -188,6 +188,7 @@ func (k Keeper) buildTrainingEpochView(ctx context.Context) (*trainingEpochView,
 		profileCapacity: make(map[string]int),
 	}
 	countedProfile := make(map[string]map[string]bool)
+	countedModel := make(map[string]map[string]bool)
 
 	for _, p := range active.Participants {
 		if p == nil || p.Index == "" {
@@ -211,6 +212,15 @@ func (k Keeper) buildTrainingEpochView(ctx context.Context) (*trainingEpochView,
 					continue
 				}
 				key := nodeKey(p.Index, ml.NodeId)
+				// capacity must count physical nodes, so a node id repeated in
+				// the model group adds neither an entry nor headroom
+				if countedModel[model] == nil {
+					countedModel[model] = make(map[string]bool)
+				}
+				if countedModel[model][key] {
+					continue
+				}
+				countedModel[model][key] = true
 				node := view.nodes[key]
 				if node == nil {
 					node = &trainingEpochNode{
