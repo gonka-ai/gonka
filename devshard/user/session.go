@@ -270,6 +270,13 @@ type Session struct {
 
 	heightSyncK     uint64
 	heightSyncSlots uint64
+
+	heartbeatCfg       heightsync.HeartbeatConfig
+	heartbeat          *heightsync.Heartbeat
+	turnTracker        *heightsync.TurnTracker
+	observedHeight     func() (height uint64, hash []byte, ok bool)
+	heartbeatTurnSeq   uint64
+	heartbeatFlushLeft int
 }
 
 // SessionOption configures optional Session behavior.
@@ -296,6 +303,24 @@ func (s *Session) SetHeightSyncCadence(k, slots uint64) {
 	defer s.mu.Unlock()
 	s.heightSyncK = k
 	s.heightSyncSlots = slots
+}
+
+// WithHeartbeatConfig overrides compiled heartbeat defaults (tests / runtimeparams).
+func WithHeartbeatConfig(cfg heightsync.HeartbeatConfig) SessionOption {
+	return func(sess *Session) { sess.heartbeatCfg = cfg }
+}
+
+// WithObservedHeight injects the height+hash source used by MaybeHeartbeat.
+// Production uses ObservedHeightNow on the HTTP clients when this is unset.
+func WithObservedHeight(fn func() (height uint64, hash []byte, ok bool)) SessionOption {
+	return func(sess *Session) { sess.observedHeight = fn }
+}
+
+// SetObservedHeight replaces the height source (e.g. after RecoverSession).
+func (s *Session) SetObservedHeight(fn func() (height uint64, hash []byte, ok bool)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.observedHeight = fn
 }
 
 // WithCollectRetry overrides signature collection retry parameters.
@@ -364,6 +389,9 @@ func NewSession(
 	for _, opt := range opts {
 		opt(sess)
 	}
+	sess.heartbeat = heightsync.NewHeartbeat(sess.heartbeatCfg)
+	slots := uint64(len(group))
+	sess.turnTracker = heightsync.NewTurnTracker(slots, 0, sess.heartbeat.Config())
 	return sess, nil
 }
 
@@ -1288,6 +1316,8 @@ func devshardTxKey(tx *types.DevshardTx) string {
 		return fmt.Sprintf("vote:%d:%d", inner.ValidationVote.InferenceId, inner.ValidationVote.VoterSlot)
 	case *types.DevshardTx_RevealSeed:
 		return fmt.Sprintf("reveal_seed:%d", inner.RevealSeed.SlotId)
+	case *types.DevshardTx_HeightAck:
+		return fmt.Sprintf("height_ack:%d:%d", inner.HeightAck.TurnSeq, inner.HeightAck.SlotId)
 	default:
 		return ""
 	}

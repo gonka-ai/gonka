@@ -22,8 +22,10 @@ var errFakeOracleNotImpl = errors.New("fakeOracle: not implemented")
 type fakeOracle struct {
 	height atomic.Int64
 	errVal atomic.Pointer[error]
+	stale  atomic.Bool
 
 	latestCalls atomic.Int64
+	hash        atomic.Value // []byte
 }
 
 func (f *fakeOracle) setHeight(h int64) { f.height.Store(h) }
@@ -36,13 +38,21 @@ func (f *fakeOracle) setErr(err error) {
 	f.errVal.Store(&e)
 }
 
+func (f *fakeOracle) setHash(h []byte) { f.hash.Store(append([]byte(nil), h...)) }
+func (f *fakeOracle) setStale(v bool) { f.stale.Store(v) }
+func (f *fakeOracle) Stale() bool     { return f.stale.Load() }
+
 func (f *fakeOracle) Latest(ctx context.Context) (*blocks.Header, error) {
 	f.latestCalls.Add(1)
 	if p := f.errVal.Load(); p != nil {
 		return nil, *p
 	}
 	h := f.height.Load()
-	return &blocks.Header{Height: h, ChainID: "fake-chain"}, nil
+	var hash []byte
+	if v := f.hash.Load(); v != nil {
+		hash = append([]byte(nil), v.([]byte)...)
+	}
+	return &blocks.Header{Height: h, ChainID: "fake-chain", BlockHash: hash}, nil
 }
 
 func (f *fakeOracle) At(ctx context.Context, height int64) (*blocks.Header, error) {

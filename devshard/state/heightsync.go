@@ -89,3 +89,25 @@ func (sm *StateMachine) applyForceHeightSyncTurn(msg *types.MsgForceHeightSyncTu
 	}
 	return nil
 }
+
+// applyHeartbeat accepts MsgHeartbeat into Diff. Turn records and L0–L7 land in E4.
+func (sm *StateMachine) applyHeartbeat(msg *types.MsgHeartbeat) error {
+	if msg == nil {
+		return types.ErrEmptyTx
+	}
+	if sm.state.Phase != types.PhaseActive {
+		return types.ErrSessionFinalizing
+	}
+	return nil
+}
+
+// applyHeightAck accepts MsgHeightAck into Diff. Signature/causality checks land in E4.
+func (sm *StateMachine) applyHeightAck(msg *types.MsgHeightAck) error {
+	if msg == nil {
+		return types.ErrEmptyTx
+	}
+	if sm.state.Phase != types.PhaseActive {
+		return types.ErrSessionFinalizing
+	}
+	return nil
+}

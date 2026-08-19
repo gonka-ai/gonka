@@ -21,6 +21,116 @@ const (
 	_ = protoimpl.EnforceVersion(protoimpl.MaxVersion - 20)
 )
 
+type AckStatus int32
+
+const (
+	AckStatus_ACK_STATUS_UNSPECIFIED AckStatus = 0
+	AckStatus_ACKED                  AckStatus = 1
+	AckStatus_MISSING                AckStatus = 2
+	AckStatus_UNREACHABLE            AckStatus = 3
+	AckStatus_REJECTED               AckStatus = 4
+)
+
+// Enum value maps for AckStatus.
+var (
+	AckStatus_name = map[int32]string{
+		0: "ACK_STATUS_UNSPECIFIED",
+		1: "ACKED",
+		2: "MISSING",
+		3: "UNREACHABLE",
+		4: "REJECTED",
+	}
+	AckStatus_value = map[string]int32{
+		"ACK_STATUS_UNSPECIFIED": 0,
+		"ACKED":                  1,
+		"MISSING":                2,
+		"UNREACHABLE":            3,
+		"REJECTED":               4,
+	}
+)
+
+func (x AckStatus) Enum() *AckStatus {
+	p := new(AckStatus)
+	*p = x
+	return p
+}
+
+func (x AckStatus) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (AckStatus) Descriptor() protoreflect.EnumDescriptor {
+	return file_devshard_v1_diff_proto_enumTypes[0].Descriptor()
+}
+
+func (AckStatus) Type() protoreflect.EnumType {
+	return &file_devshard_v1_diff_proto_enumTypes[0]
+}
+
+func (x AckStatus) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use AckStatus.Descriptor instead.
+func (AckStatus) EnumDescriptor() ([]byte, []int) {
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{0}
+}
+
+type SyncState int32
+
+const (
+	SyncState_SYNC_STATE_UNSPECIFIED SyncState = 0
+	SyncState_SYNCED                 SyncState = 1
+	SyncState_CATCHING_UP            SyncState = 2
+	SyncState_ORACLE_STALE           SyncState = 3
+	SyncState_ORACLE_UNAVAILABLE     SyncState = 4
+)
+
+// Enum value maps for SyncState.
+var (
+	SyncState_name = map[int32]string{
+		0: "SYNC_STATE_UNSPECIFIED",
+		1: "SYNCED",
+		2: "CATCHING_UP",
+		3: "ORACLE_STALE",
+		4: "ORACLE_UNAVAILABLE",
+	}
+	SyncState_value = map[string]int32{
+		"SYNC_STATE_UNSPECIFIED": 0,
+		"SYNCED":                 1,
+		"CATCHING_UP":            2,
+		"ORACLE_STALE":           3,
+		"ORACLE_UNAVAILABLE":     4,
+	}
+)
+
+func (x SyncState) Enum() *SyncState {
+	p := new(SyncState)
+	*p = x
+	return p
+}
+
+func (x SyncState) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (SyncState) Descriptor() protoreflect.EnumDescriptor {
+	return file_devshard_v1_diff_proto_enumTypes[1].Descriptor()
+}
+
+func (SyncState) Type() protoreflect.EnumType {
+	return &file_devshard_v1_diff_proto_enumTypes[1]
+}
+
+func (x SyncState) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use SyncState.Descriptor instead.
+func (SyncState) EnumDescriptor() ([]byte, []int) {
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{1}
+}
+
 // DiffContent is what the user signs: hash(serialize(DiffContent)).
 type DiffContent struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -182,6 +292,8 @@ type DevshardTx struct {
 	//	*DevshardTx_RevealSeed
 	//	*DevshardTx_FinalizeRound
 	//	*DevshardTx_ForceHeightSyncTurn
+	//	*DevshardTx_Heartbeat
+	//	*DevshardTx_HeightAck
 	Tx            isDevshardTx_Tx `protobuf_oneof:"tx"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -305,6 +417,24 @@ func (x *DevshardTx) GetForceHeightSyncTurn() *MsgForceHeightSyncTurn {
 	return nil
 }
 
+func (x *DevshardTx) GetHeartbeat() *MsgHeartbeat {
+	if x != nil {
+		if x, ok := x.Tx.(*DevshardTx_Heartbeat); ok {
+			return x.Heartbeat
+		}
+	}
+	return nil
+}
+
+func (x *DevshardTx) GetHeightAck() *MsgHeightAck {
+	if x != nil {
+		if x, ok := x.Tx.(*DevshardTx_HeightAck); ok {
+			return x.HeightAck
+		}
+	}
+	return nil
+}
+
 type isDevshardTx_Tx interface {
 	isDevshardTx_Tx()
 }
@@ -346,6 +476,14 @@ type DevshardTx_ForceHeightSyncTurn struct {
 	ForceHeightSyncTurn *MsgForceHeightSyncTurn `protobuf:"bytes,9,opt,name=force_height_sync_turn,json=forceHeightSyncTurn,proto3,oneof"`
 }
 
+type DevshardTx_Heartbeat struct {
+	Heartbeat *MsgHeartbeat `protobuf:"bytes,10,opt,name=heartbeat,proto3,oneof"`
+}
+
+type DevshardTx_HeightAck struct {
+	HeightAck *MsgHeightAck `protobuf:"bytes,11,opt,name=height_ack,json=heightAck,proto3,oneof"`
+}
+
 func (*DevshardTx_StartInference) isDevshardTx_Tx() {}
 
 func (*DevshardTx_ConfirmStart) isDevshardTx_Tx() {}
@@ -364,6 +502,264 @@ func (*DevshardTx_FinalizeRound) isDevshardTx_Tx() {}
 
 func (*DevshardTx_ForceHeightSyncTurn) isDevshardTx_Tx() {}
 
+func (*DevshardTx_Heartbeat) isDevshardTx_Tx() {}
+
+func (*DevshardTx_HeightAck) isDevshardTx_Tx() {}
+
+// MsgHeartbeat stamps a user-signed height into Diff and publishes roster sync status.
+type MsgHeartbeat struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	TurnSeq           uint64                 `protobuf:"varint,1,opt,name=turn_seq,json=turnSeq,proto3" json:"turn_seq,omitempty"`
+	ObservedHeight    uint64                 `protobuf:"varint,2,opt,name=observed_height,json=observedHeight,proto3" json:"observed_height,omitempty"`
+	ObservedBlockHash []byte                 `protobuf:"bytes,3,opt,name=observed_block_hash,json=observedBlockHash,proto3" json:"observed_block_hash,omitempty"`
+	SlotsNum          uint64                 `protobuf:"varint,4,opt,name=slots_num,json=slotsNum,proto3" json:"slots_num,omitempty"`
+	Reason            string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`                           // height_cadence|quiet_session|forced|cpoc_band
+	SyncVector        []*SyncVectorEntry     `protobuf:"bytes,6,rep,name=sync_vector,json=syncVector,proto3" json:"sync_vector,omitempty"` // status of turn_seq - 1
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *MsgHeartbeat) Reset() {
+	*x = MsgHeartbeat{}
+	mi := &file_devshard_v1_diff_proto_msgTypes[3]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MsgHeartbeat) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MsgHeartbeat) ProtoMessage() {}
+
+func (x *MsgHeartbeat) ProtoReflect() protoreflect.Message {
+	mi := &file_devshard_v1_diff_proto_msgTypes[3]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MsgHeartbeat.ProtoReflect.Descriptor instead.
+func (*MsgHeartbeat) Descriptor() ([]byte, []int) {
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{3}
+}
+
+func (x *MsgHeartbeat) GetTurnSeq() uint64 {
+	if x != nil {
+		return x.TurnSeq
+	}
+	return 0
+}
+
+func (x *MsgHeartbeat) GetObservedHeight() uint64 {
+	if x != nil {
+		return x.ObservedHeight
+	}
+	return 0
+}
+
+func (x *MsgHeartbeat) GetObservedBlockHash() []byte {
+	if x != nil {
+		return x.ObservedBlockHash
+	}
+	return nil
+}
+
+func (x *MsgHeartbeat) GetSlotsNum() uint64 {
+	if x != nil {
+		return x.SlotsNum
+	}
+	return 0
+}
+
+func (x *MsgHeartbeat) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+func (x *MsgHeartbeat) GetSyncVector() []*SyncVectorEntry {
+	if x != nil {
+		return x.SyncVector
+	}
+	return nil
+}
+
+// MsgHeightAck is the host-signed answer to a heartbeat (mempool → Diff).
+type MsgHeightAck struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	TurnSeq           uint64                 `protobuf:"varint,1,opt,name=turn_seq,json=turnSeq,proto3" json:"turn_seq,omitempty"`
+	RefNonce          uint64                 `protobuf:"varint,2,opt,name=ref_nonce,json=refNonce,proto3" json:"ref_nonce,omitempty"`
+	SlotId            uint32                 `protobuf:"varint,3,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
+	ObservedHeight    uint64                 `protobuf:"varint,4,opt,name=observed_height,json=observedHeight,proto3" json:"observed_height,omitempty"`
+	ObservedBlockHash []byte                 `protobuf:"bytes,5,opt,name=observed_block_hash,json=observedBlockHash,proto3" json:"observed_block_hash,omitempty"`
+	SyncState         SyncState              `protobuf:"varint,6,opt,name=sync_state,json=syncState,proto3,enum=devshard.v1.SyncState" json:"sync_state,omitempty"`
+	PeerSeen          []byte                 `protobuf:"bytes,7,opt,name=peer_seen,json=peerSeen,proto3" json:"peer_seen,omitempty"` // bitmap, bit j = "slot j fresh within F"
+	HostSig           []byte                 `protobuf:"bytes,8,opt,name=host_sig,json=hostSig,proto3" json:"host_sig,omitempty"`    // over fields 1–7, domain heightsync.ack.v1
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *MsgHeightAck) Reset() {
+	*x = MsgHeightAck{}
+	mi := &file_devshard_v1_diff_proto_msgTypes[4]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MsgHeightAck) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MsgHeightAck) ProtoMessage() {}
+
+func (x *MsgHeightAck) ProtoReflect() protoreflect.Message {
+	mi := &file_devshard_v1_diff_proto_msgTypes[4]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MsgHeightAck.ProtoReflect.Descriptor instead.
+func (*MsgHeightAck) Descriptor() ([]byte, []int) {
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{4}
+}
+
+func (x *MsgHeightAck) GetTurnSeq() uint64 {
+	if x != nil {
+		return x.TurnSeq
+	}
+	return 0
+}
+
+func (x *MsgHeightAck) GetRefNonce() uint64 {
+	if x != nil {
+		return x.RefNonce
+	}
+	return 0
+}
+
+func (x *MsgHeightAck) GetSlotId() uint32 {
+	if x != nil {
+		return x.SlotId
+	}
+	return 0
+}
+
+func (x *MsgHeightAck) GetObservedHeight() uint64 {
+	if x != nil {
+		return x.ObservedHeight
+	}
+	return 0
+}
+
+func (x *MsgHeightAck) GetObservedBlockHash() []byte {
+	if x != nil {
+		return x.ObservedBlockHash
+	}
+	return nil
+}
+
+func (x *MsgHeightAck) GetSyncState() SyncState {
+	if x != nil {
+		return x.SyncState
+	}
+	return SyncState_SYNC_STATE_UNSPECIFIED
+}
+
+func (x *MsgHeightAck) GetPeerSeen() []byte {
+	if x != nil {
+		return x.PeerSeen
+	}
+	return nil
+}
+
+func (x *MsgHeightAck) GetHostSig() []byte {
+	if x != nil {
+		return x.HostSig
+	}
+	return nil
+}
+
+type SyncVectorEntry struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	SlotId         uint32                 `protobuf:"varint,1,opt,name=slot_id,json=slotId,proto3" json:"slot_id,omitempty"`
+	Status         AckStatus              `protobuf:"varint,2,opt,name=status,proto3,enum=devshard.v1.AckStatus" json:"status,omitempty"`
+	ObservedHeight uint64                 `protobuf:"varint,3,opt,name=observed_height,json=observedHeight,proto3" json:"observed_height,omitempty"`
+	AckNonce       uint64                 `protobuf:"varint,4,opt,name=ack_nonce,json=ackNonce,proto3" json:"ack_nonce,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *SyncVectorEntry) Reset() {
+	*x = SyncVectorEntry{}
+	mi := &file_devshard_v1_diff_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *SyncVectorEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*SyncVectorEntry) ProtoMessage() {}
+
+func (x *SyncVectorEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_devshard_v1_diff_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use SyncVectorEntry.ProtoReflect.Descriptor instead.
+func (*SyncVectorEntry) Descriptor() ([]byte, []int) {
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *SyncVectorEntry) GetSlotId() uint32 {
+	if x != nil {
+		return x.SlotId
+	}
+	return 0
+}
+
+func (x *SyncVectorEntry) GetStatus() AckStatus {
+	if x != nil {
+		return x.Status
+	}
+	return AckStatus_ACK_STATUS_UNSPECIFIED
+}
+
+func (x *SyncVectorEntry) GetObservedHeight() uint64 {
+	if x != nil {
+		return x.ObservedHeight
+	}
+	return 0
+}
+
+func (x *SyncVectorEntry) GetAckNonce() uint64 {
+	if x != nil {
+		return x.AckNonce
+	}
+	return 0
+}
+
 // ExecutorReceiptContent is what the executor signs for MsgConfirmStart.
 type ExecutorReceiptContent struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
@@ -381,7 +777,7 @@ type ExecutorReceiptContent struct {
 
 func (x *ExecutorReceiptContent) Reset() {
 	*x = ExecutorReceiptContent{}
-	mi := &file_devshard_v1_diff_proto_msgTypes[3]
+	mi := &file_devshard_v1_diff_proto_msgTypes[6]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -393,7 +789,7 @@ func (x *ExecutorReceiptContent) String() string {
 func (*ExecutorReceiptContent) ProtoMessage() {}
 
 func (x *ExecutorReceiptContent) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_diff_proto_msgTypes[3]
+	mi := &file_devshard_v1_diff_proto_msgTypes[6]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -406,7 +802,7 @@ func (x *ExecutorReceiptContent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecutorReceiptContent.ProtoReflect.Descriptor instead.
 func (*ExecutorReceiptContent) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{3}
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{6}
 }
 
 func (x *ExecutorReceiptContent) GetInferenceId() uint64 {
@@ -478,7 +874,7 @@ type TimeoutVoteContent struct {
 
 func (x *TimeoutVoteContent) Reset() {
 	*x = TimeoutVoteContent{}
-	mi := &file_devshard_v1_diff_proto_msgTypes[4]
+	mi := &file_devshard_v1_diff_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -490,7 +886,7 @@ func (x *TimeoutVoteContent) String() string {
 func (*TimeoutVoteContent) ProtoMessage() {}
 
 func (x *TimeoutVoteContent) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_diff_proto_msgTypes[4]
+	mi := &file_devshard_v1_diff_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -503,7 +899,7 @@ func (x *TimeoutVoteContent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TimeoutVoteContent.ProtoReflect.Descriptor instead.
 func (*TimeoutVoteContent) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{4}
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *TimeoutVoteContent) GetEscrowId() string {
@@ -546,7 +942,7 @@ type StateSignatureContent struct {
 
 func (x *StateSignatureContent) Reset() {
 	*x = StateSignatureContent{}
-	mi := &file_devshard_v1_diff_proto_msgTypes[5]
+	mi := &file_devshard_v1_diff_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -558,7 +954,7 @@ func (x *StateSignatureContent) String() string {
 func (*StateSignatureContent) ProtoMessage() {}
 
 func (x *StateSignatureContent) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_diff_proto_msgTypes[5]
+	mi := &file_devshard_v1_diff_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -571,7 +967,7 @@ func (x *StateSignatureContent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StateSignatureContent.ProtoReflect.Descriptor instead.
 func (*StateSignatureContent) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{5}
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *StateSignatureContent) GetStateRoot() []byte {
@@ -610,7 +1006,7 @@ const file_devshard_v1_diff_proto_rawDesc = "" +
 	"\tend_nonce\x18\x02 \x01(\x04R\bendNonce\x12\x19\n" +
 	"\banchor_k\x18\x03 \x01(\x04R\aanchorK\x12\x1b\n" +
 	"\tslots_num\x18\x04 \x01(\x04R\bslotsNum\x12\x16\n" +
-	"\x06reason\x18\x05 \x01(\tR\x06reason\"\xad\x05\n" +
+	"\x06reason\x18\x05 \x01(\tR\x06reason\"\xb0\x06\n" +
 	"\n" +
 	"DevshardTx\x12I\n" +
 	"\x0fstart_inference\x18\x01 \x01(\v2\x1e.devshard.v1.MsgStartInferenceH\x00R\x0estartInference\x12C\n" +
@@ -624,8 +1020,35 @@ const file_devshard_v1_diff_proto_rawDesc = "" +
 	"\vreveal_seed\x18\a \x01(\v2\x1a.devshard.v1.MsgRevealSeedH\x00R\n" +
 	"revealSeed\x12F\n" +
 	"\x0efinalize_round\x18\b \x01(\v2\x1d.devshard.v1.MsgFinalizeRoundH\x00R\rfinalizeRound\x12Z\n" +
-	"\x16force_height_sync_turn\x18\t \x01(\v2#.devshard.v1.MsgForceHeightSyncTurnH\x00R\x13forceHeightSyncTurnB\x04\n" +
-	"\x02tx\"\x93\x02\n" +
+	"\x16force_height_sync_turn\x18\t \x01(\v2#.devshard.v1.MsgForceHeightSyncTurnH\x00R\x13forceHeightSyncTurn\x129\n" +
+	"\theartbeat\x18\n" +
+	" \x01(\v2\x19.devshard.v1.MsgHeartbeatH\x00R\theartbeat\x12:\n" +
+	"\n" +
+	"height_ack\x18\v \x01(\v2\x19.devshard.v1.MsgHeightAckH\x00R\theightAckB\x04\n" +
+	"\x02txJ\x04\b\f\x10\rJ\x04\b\r\x10\x0e\"\xf6\x01\n" +
+	"\fMsgHeartbeat\x12\x19\n" +
+	"\bturn_seq\x18\x01 \x01(\x04R\aturnSeq\x12'\n" +
+	"\x0fobserved_height\x18\x02 \x01(\x04R\x0eobservedHeight\x12.\n" +
+	"\x13observed_block_hash\x18\x03 \x01(\fR\x11observedBlockHash\x12\x1b\n" +
+	"\tslots_num\x18\x04 \x01(\x04R\bslotsNum\x12\x16\n" +
+	"\x06reason\x18\x05 \x01(\tR\x06reason\x12=\n" +
+	"\vsync_vector\x18\x06 \x03(\v2\x1c.devshard.v1.SyncVectorEntryR\n" +
+	"syncVector\"\xa7\x02\n" +
+	"\fMsgHeightAck\x12\x19\n" +
+	"\bturn_seq\x18\x01 \x01(\x04R\aturnSeq\x12\x1b\n" +
+	"\tref_nonce\x18\x02 \x01(\x04R\brefNonce\x12\x17\n" +
+	"\aslot_id\x18\x03 \x01(\rR\x06slotId\x12'\n" +
+	"\x0fobserved_height\x18\x04 \x01(\x04R\x0eobservedHeight\x12.\n" +
+	"\x13observed_block_hash\x18\x05 \x01(\fR\x11observedBlockHash\x125\n" +
+	"\n" +
+	"sync_state\x18\x06 \x01(\x0e2\x16.devshard.v1.SyncStateR\tsyncState\x12\x1b\n" +
+	"\tpeer_seen\x18\a \x01(\fR\bpeerSeen\x12\x19\n" +
+	"\bhost_sig\x18\b \x01(\fR\ahostSig\"\xa0\x01\n" +
+	"\x0fSyncVectorEntry\x12\x17\n" +
+	"\aslot_id\x18\x01 \x01(\rR\x06slotId\x12.\n" +
+	"\x06status\x18\x02 \x01(\x0e2\x16.devshard.v1.AckStatusR\x06status\x12'\n" +
+	"\x0fobserved_height\x18\x03 \x01(\x04R\x0eobservedHeight\x12\x1b\n" +
+	"\tack_nonce\x18\x04 \x01(\x04R\backNonce\"\x93\x02\n" +
 	"\x16ExecutorReceiptContent\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x12\x1f\n" +
 	"\vprompt_hash\x18\x02 \x01(\fR\n" +
@@ -647,7 +1070,20 @@ const file_devshard_v1_diff_proto_rawDesc = "" +
 	"\n" +
 	"state_root\x18\x01 \x01(\fR\tstateRoot\x12\x1b\n" +
 	"\tescrow_id\x18\x02 \x01(\tR\bescrowId\x12\x14\n" +
-	"\x05nonce\x18\x03 \x01(\x04R\x05nonceB\x10Z\x0edevshard/typesb\x06proto3"
+	"\x05nonce\x18\x03 \x01(\x04R\x05nonce*^\n" +
+	"\tAckStatus\x12\x1a\n" +
+	"\x16ACK_STATUS_UNSPECIFIED\x10\x00\x12\t\n" +
+	"\x05ACKED\x10\x01\x12\v\n" +
+	"\aMISSING\x10\x02\x12\x0f\n" +
+	"\vUNREACHABLE\x10\x03\x12\f\n" +
+	"\bREJECTED\x10\x04*n\n" +
+	"\tSyncState\x12\x1a\n" +
+	"\x16SYNC_STATE_UNSPECIFIED\x10\x00\x12\n" +
+	"\n" +
+	"\x06SYNCED\x10\x01\x12\x0f\n" +
+	"\vCATCHING_UP\x10\x02\x12\x10\n" +
+	"\fORACLE_STALE\x10\x03\x12\x16\n" +
+	"\x12ORACLE_UNAVAILABLE\x10\x04B\x10Z\x0edevshard/typesb\x06proto3"
 
 var (
 	file_devshard_v1_diff_proto_rawDescOnce sync.Once
@@ -661,41 +1097,52 @@ func file_devshard_v1_diff_proto_rawDescGZIP() []byte {
 	return file_devshard_v1_diff_proto_rawDescData
 }
 
-var file_devshard_v1_diff_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
+var file_devshard_v1_diff_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_devshard_v1_diff_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
 var file_devshard_v1_diff_proto_goTypes = []any{
-	(*DiffContent)(nil),            // 0: devshard.v1.DiffContent
-	(*MsgForceHeightSyncTurn)(nil), // 1: devshard.v1.MsgForceHeightSyncTurn
-	(*DevshardTx)(nil),             // 2: devshard.v1.DevshardTx
-	(*ExecutorReceiptContent)(nil), // 3: devshard.v1.ExecutorReceiptContent
-	(*TimeoutVoteContent)(nil),     // 4: devshard.v1.TimeoutVoteContent
-	(*StateSignatureContent)(nil),  // 5: devshard.v1.StateSignatureContent
-	(*MsgStartInference)(nil),      // 6: devshard.v1.MsgStartInference
-	(*MsgConfirmStart)(nil),        // 7: devshard.v1.MsgConfirmStart
-	(*MsgFinishInference)(nil),     // 8: devshard.v1.MsgFinishInference
-	(*MsgTimeoutInference)(nil),    // 9: devshard.v1.MsgTimeoutInference
-	(*MsgValidation)(nil),          // 10: devshard.v1.MsgValidation
-	(*MsgValidationVote)(nil),      // 11: devshard.v1.MsgValidationVote
-	(*MsgRevealSeed)(nil),          // 12: devshard.v1.MsgRevealSeed
-	(*MsgFinalizeRound)(nil),       // 13: devshard.v1.MsgFinalizeRound
-	(TimeoutReason)(0),             // 14: devshard.v1.TimeoutReason
+	(AckStatus)(0),                 // 0: devshard.v1.AckStatus
+	(SyncState)(0),                 // 1: devshard.v1.SyncState
+	(*DiffContent)(nil),            // 2: devshard.v1.DiffContent
+	(*MsgForceHeightSyncTurn)(nil), // 3: devshard.v1.MsgForceHeightSyncTurn
+	(*DevshardTx)(nil),             // 4: devshard.v1.DevshardTx
+	(*MsgHeartbeat)(nil),           // 5: devshard.v1.MsgHeartbeat
+	(*MsgHeightAck)(nil),           // 6: devshard.v1.MsgHeightAck
+	(*SyncVectorEntry)(nil),        // 7: devshard.v1.SyncVectorEntry
+	(*ExecutorReceiptContent)(nil), // 8: devshard.v1.ExecutorReceiptContent
+	(*TimeoutVoteContent)(nil),     // 9: devshard.v1.TimeoutVoteContent
+	(*StateSignatureContent)(nil),  // 10: devshard.v1.StateSignatureContent
+	(*MsgStartInference)(nil),      // 11: devshard.v1.MsgStartInference
+	(*MsgConfirmStart)(nil),        // 12: devshard.v1.MsgConfirmStart
+	(*MsgFinishInference)(nil),     // 13: devshard.v1.MsgFinishInference
+	(*MsgTimeoutInference)(nil),    // 14: devshard.v1.MsgTimeoutInference
+	(*MsgValidation)(nil),          // 15: devshard.v1.MsgValidation
+	(*MsgValidationVote)(nil),      // 16: devshard.v1.MsgValidationVote
+	(*MsgRevealSeed)(nil),          // 17: devshard.v1.MsgRevealSeed
+	(*MsgFinalizeRound)(nil),       // 18: devshard.v1.MsgFinalizeRound
+	(TimeoutReason)(0),             // 19: devshard.v1.TimeoutReason
 }
 var file_devshard_v1_diff_proto_depIdxs = []int32{
-	2,  // 0: devshard.v1.DiffContent.txs:type_name -> devshard.v1.DevshardTx
-	6,  // 1: devshard.v1.DevshardTx.start_inference:type_name -> devshard.v1.MsgStartInference
-	7,  // 2: devshard.v1.DevshardTx.confirm_start:type_name -> devshard.v1.MsgConfirmStart
-	8,  // 3: devshard.v1.DevshardTx.finish_inference:type_name -> devshard.v1.MsgFinishInference
-	9,  // 4: devshard.v1.DevshardTx.timeout_inference:type_name -> devshard.v1.MsgTimeoutInference
-	10, // 5: devshard.v1.DevshardTx.validation:type_name -> devshard.v1.MsgValidation
-	11, // 6: devshard.v1.DevshardTx.validation_vote:type_name -> devshard.v1.MsgValidationVote
-	12, // 7: devshard.v1.DevshardTx.reveal_seed:type_name -> devshard.v1.MsgRevealSeed
-	13, // 8: devshard.v1.DevshardTx.finalize_round:type_name -> devshard.v1.MsgFinalizeRound
-	1,  // 9: devshard.v1.DevshardTx.force_height_sync_turn:type_name -> devshard.v1.MsgForceHeightSyncTurn
-	14, // 10: devshard.v1.TimeoutVoteContent.reason:type_name -> devshard.v1.TimeoutReason
-	11, // [11:11] is the sub-list for method output_type
-	11, // [11:11] is the sub-list for method input_type
-	11, // [11:11] is the sub-list for extension type_name
-	11, // [11:11] is the sub-list for extension extendee
-	0,  // [0:11] is the sub-list for field type_name
+	4,  // 0: devshard.v1.DiffContent.txs:type_name -> devshard.v1.DevshardTx
+	11, // 1: devshard.v1.DevshardTx.start_inference:type_name -> devshard.v1.MsgStartInference
+	12, // 2: devshard.v1.DevshardTx.confirm_start:type_name -> devshard.v1.MsgConfirmStart
+	13, // 3: devshard.v1.DevshardTx.finish_inference:type_name -> devshard.v1.MsgFinishInference
+	14, // 4: devshard.v1.DevshardTx.timeout_inference:type_name -> devshard.v1.MsgTimeoutInference
+	15, // 5: devshard.v1.DevshardTx.validation:type_name -> devshard.v1.MsgValidation
+	16, // 6: devshard.v1.DevshardTx.validation_vote:type_name -> devshard.v1.MsgValidationVote
+	17, // 7: devshard.v1.DevshardTx.reveal_seed:type_name -> devshard.v1.MsgRevealSeed
+	18, // 8: devshard.v1.DevshardTx.finalize_round:type_name -> devshard.v1.MsgFinalizeRound
+	3,  // 9: devshard.v1.DevshardTx.force_height_sync_turn:type_name -> devshard.v1.MsgForceHeightSyncTurn
+	5,  // 10: devshard.v1.DevshardTx.heartbeat:type_name -> devshard.v1.MsgHeartbeat
+	6,  // 11: devshard.v1.DevshardTx.height_ack:type_name -> devshard.v1.MsgHeightAck
+	7,  // 12: devshard.v1.MsgHeartbeat.sync_vector:type_name -> devshard.v1.SyncVectorEntry
+	1,  // 13: devshard.v1.MsgHeightAck.sync_state:type_name -> devshard.v1.SyncState
+	0,  // 14: devshard.v1.SyncVectorEntry.status:type_name -> devshard.v1.AckStatus
+	19, // 15: devshard.v1.TimeoutVoteContent.reason:type_name -> devshard.v1.TimeoutReason
+	16, // [16:16] is the sub-list for method output_type
+	16, // [16:16] is the sub-list for method input_type
+	16, // [16:16] is the sub-list for extension type_name
+	16, // [16:16] is the sub-list for extension extendee
+	0,  // [0:16] is the sub-list for field type_name
 }
 
 func init() { file_devshard_v1_diff_proto_init() }
@@ -714,19 +1161,22 @@ func file_devshard_v1_diff_proto_init() {
 		(*DevshardTx_RevealSeed)(nil),
 		(*DevshardTx_FinalizeRound)(nil),
 		(*DevshardTx_ForceHeightSyncTurn)(nil),
+		(*DevshardTx_Heartbeat)(nil),
+		(*DevshardTx_HeightAck)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_devshard_v1_diff_proto_rawDesc), len(file_devshard_v1_diff_proto_rawDesc)),
-			NumEnums:      0,
-			NumMessages:   6,
+			NumEnums:      2,
+			NumMessages:   9,
 			NumExtensions: 0,
 			NumServices:   0,
 		},
 		GoTypes:           file_devshard_v1_diff_proto_goTypes,
 		DependencyIndexes: file_devshard_v1_diff_proto_depIdxs,
+		EnumInfos:         file_devshard_v1_diff_proto_enumTypes,
 		MessageInfos:      file_devshard_v1_diff_proto_msgTypes,
 	}.Build()
 	File_devshard_v1_diff_proto = out.File

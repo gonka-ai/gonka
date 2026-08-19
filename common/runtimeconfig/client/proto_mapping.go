@@ -53,6 +53,13 @@ func SnapshotFromProto(c *gen.RuntimeConfig) Snapshot {
 		ValidationRate:            c.GetValidationRate(),
 		VoteThresholdFactor:       c.GetVoteThresholdFactor(),
 		ModelValidationThresholds: thresholds,
+		HeightSync: HeightSyncParams{
+			IntervalBlocks:     c.GetHeightSyncIntervalBlocks(),
+			AckDeadlineBlocks:  c.GetHeightSyncAckDeadlineBlocks(),
+			IdleBlocks:         c.GetHeightSyncIdleBlocks(),
+			ProbeStaggerMs:     c.GetHeightSyncProbeStaggerMs(),
+			MaxProbesPerWindow: c.GetHeightSyncMaxProbesPerWindow(),
+		},
 	}
 }
 
@@ -79,17 +86,22 @@ func ProtoFromSnapshot(s Snapshot) *gen.RuntimeConfig {
 		})
 	}
 	return &gen.RuntimeConfig{
-		ParamsBlockHeight:       s.ParamsBlockHeight,
-		CurrentEpochId:          s.CurrentEpochID,
-		LogprobsMode:            s.LogprobsMode,
-		DevshardRequestsEnabled: s.DevshardRequestsEnabled,
-		MaxNonce:                s.MaxNonce,
-		ApprovedVersions:        versions,
-		ServedAtUnix:            servedAt,
-		RefusalTimeout:          s.RefusalTimeout,
-		ExecutionTimeout:        s.ExecutionTimeout,
-		ValidationRate:          s.ValidationRate,
-		VoteThresholdFactor:     s.VoteThresholdFactor,
-		ValidationThresholds:    thresholds,
+		ParamsBlockHeight:            s.ParamsBlockHeight,
+		CurrentEpochId:               s.CurrentEpochID,
+		LogprobsMode:                 s.LogprobsMode,
+		DevshardRequestsEnabled:      s.DevshardRequestsEnabled,
+		MaxNonce:                     s.MaxNonce,
+		ApprovedVersions:             versions,
+		ServedAtUnix:                 servedAt,
+		RefusalTimeout:               s.RefusalTimeout,
+		ExecutionTimeout:             s.ExecutionTimeout,
+		ValidationRate:               s.ValidationRate,
+		VoteThresholdFactor:          s.VoteThresholdFactor,
+		ValidationThresholds:         thresholds,
+		HeightSyncIntervalBlocks:     s.HeightSync.IntervalBlocks,
+		HeightSyncAckDeadlineBlocks:  s.HeightSync.AckDeadlineBlocks,
+		HeightSyncIdleBlocks:         s.HeightSync.IdleBlocks,
+		HeightSyncProbeStaggerMs:     s.HeightSync.ProbeStaggerMs,
+		HeightSyncMaxProbesPerWindow: s.HeightSync.MaxProbesPerWindow,
 	}
 }

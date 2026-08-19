@@ -140,6 +140,11 @@ type Host struct {
 
 	// oracle is optional mainnet height source. LatestHeight returns ErrNoChainOracle when nil.
 	oracle blocks.BlockOracle
+
+	// peerSeen and heartbeatCfg serve E3 height acks. peerSeen is the §11.2
+	// bitmap (Diff tips now; repair probes in E5). heartbeatCfg supplies D.
+	peerSeen     *heightsync.PeerSeen
+	heartbeatCfg heightsync.HeartbeatConfig
 }
 
 // SnapshotInterval controls how often hosts persist full state snapshots.
@@ -220,6 +225,8 @@ func NewHost(
 		validating:         make(map[uint64]struct{}),
 		completedResponses: make(map[uint64][]byte),
 		ownSeed:            ownSeed,
+		peerSeen:           heightsync.NewPeerSeen(uint32(len(group)), 0),
+		heartbeatCfg:       heightsync.DefaultHeartbeatConfig(),
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -341,6 +348,13 @@ func WithChainOracle(o blocks.BlockOracle) HostOption {
 	}
 }
 
+// WithHeartbeatConfig overlays compiled heartbeat defaults used for sync_state (D).
+func WithHeartbeatConfig(cfg heightsync.HeartbeatConfig) HostOption {
+	return func(h *Host) {
+		h.heartbeatCfg = cfg
+	}
+}
+
 func (h *Host) StateRoot() ([]byte, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -440,19 +454,28 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 
 	// (a) Apply all new diffs.
 	var lastAppliedTxs []*types.DevshardTx
+	var newlyApplied []types.Diff
 	diffsApplied := false
 	for _, diff := range req.Diffs {
 		if err := h.checkDiffNonceLimitLocked(diff); err != nil {
 			h.mu.Unlock()
 			return nil, err
 		}
+		before := h.sm.LatestNonce()
 		if err := h.applyAndPersistReconciling(ctx, diff); err != nil {
 			h.mu.Unlock()
 			return nil, observability.Classify(observability.ReasonApplyErr, observability.WhereHostApplyDiff, err)
 		}
+		if h.sm.LatestNonce() > before {
+			newlyApplied = append(newlyApplied, diff)
+		}
 		lastAppliedTxs = diff.Txs
 		diffsApplied = true
 	}
+
+	// (a2) Answer heartbeats addressed to this host's slot (E3). Acks go into
+	// the mempool of this response; they are never a general stamp.
+	h.maybeAckHeartbeatsLocked(ctx, newlyApplied)
 
 	// (b) Sign executor receipt (sync, under mutex).
 	receipt, confirmedAt, job, cachedBody, receiptOutcome, err := h.signReceipt(req)

@@ -46,6 +46,18 @@ type Snapshot struct {
 	ValidationRate            uint32
 	VoteThresholdFactor       uint32
 	ModelValidationThresholds []ModelValidationThreshold
+	// HeightSync is overlayed onto compiled defaults when non-zero. Zero fields
+	// mean "use HeartbeatConfig / RepairConfig compiled defaults" (D_ack default 1).
+	HeightSync HeightSyncParams
+}
+
+// HeightSyncParams are chain-carried log-plane knobs (spec §20). Zero = default.
+type HeightSyncParams struct {
+	IntervalBlocks     uint64
+	AckDeadlineBlocks  uint64
+	IdleBlocks         uint64
+	ProbeStaggerMs     uint64
+	MaxProbesPerWindow uint32
 }
 
 // ToProto converts the snapshot to the wire type. Equivalent to the dapi
@@ -72,17 +84,22 @@ func (s Snapshot) ToProto() *gen.RuntimeConfig {
 		servedAtUnix = s.ServedAt.Unix()
 	}
 	return &gen.RuntimeConfig{
-		ParamsBlockHeight:       s.ParamsBlockHeight,
-		CurrentEpochId:          s.CurrentEpochID,
-		LogprobsMode:            s.LogprobsMode,
-		DevshardRequestsEnabled: s.DevshardRequestsEnabled,
-		MaxNonce:                s.MaxNonce,
-		ApprovedVersions:        versions,
-		ServedAtUnix:            servedAtUnix,
-		RefusalTimeout:          s.RefusalTimeout,
-		ExecutionTimeout:        s.ExecutionTimeout,
-		ValidationRate:          s.ValidationRate,
-		VoteThresholdFactor:     s.VoteThresholdFactor,
-		ValidationThresholds:    thresholds,
+		ParamsBlockHeight:            s.ParamsBlockHeight,
+		CurrentEpochId:               s.CurrentEpochID,
+		LogprobsMode:                 s.LogprobsMode,
+		DevshardRequestsEnabled:      s.DevshardRequestsEnabled,
+		MaxNonce:                     s.MaxNonce,
+		ApprovedVersions:             versions,
+		ServedAtUnix:                 servedAtUnix,
+		RefusalTimeout:               s.RefusalTimeout,
+		ExecutionTimeout:             s.ExecutionTimeout,
+		ValidationRate:               s.ValidationRate,
+		VoteThresholdFactor:          s.VoteThresholdFactor,
+		ValidationThresholds:         thresholds,
+		HeightSyncIntervalBlocks:     s.HeightSync.IntervalBlocks,
+		HeightSyncAckDeadlineBlocks:  s.HeightSync.AckDeadlineBlocks,
+		HeightSyncIdleBlocks:         s.HeightSync.IdleBlocks,
+		HeightSyncProbeStaggerMs:     s.HeightSync.ProbeStaggerMs,
+		HeightSyncMaxProbesPerWindow: s.HeightSync.MaxProbesPerWindow,
 	}
 }

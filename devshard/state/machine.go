@@ -909,6 +909,10 @@ func (sm *StateMachine) applyTx(tx *types.DevshardTx, diffNonce uint64) error {
 		return sm.applyFinalizeRound()
 	case *types.DevshardTx_ForceHeightSyncTurn:
 		return sm.applyForceHeightSyncTurn(inner.ForceHeightSyncTurn, diffNonce)
+	case *types.DevshardTx_Heartbeat:
+		return sm.applyHeartbeat(inner.Heartbeat)
+	case *types.DevshardTx_HeightAck:
+		return sm.applyHeightAck(inner.HeightAck)
 	default:
 		return types.ErrEmptyTx
 	}
