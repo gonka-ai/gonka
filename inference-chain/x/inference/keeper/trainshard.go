@@ -120,7 +120,6 @@ func isActiveReservedNode(n *types.TrainshardReservedNode) bool {
 	return n.Status == types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE
 }
 
-// IsModelUsedByActiveTrainshard checks whether the model has any active shard
 func (k Keeper) IsModelUsedByActiveTrainshard(ctx context.Context, modelId string) bool {
 	var used bool
 	if err := k.TrainshardActiveIndex.Walk(ctx, nil, func(id uint64) (bool, error) {
@@ -304,7 +303,6 @@ func candidateSortKey(trainshardId uint64, participant, nodeId string) [32]byte 
 	return sha256.Sum256(buf)
 }
 
-// selectTrainshardNodes deterministically picks nodes that honor caps
 func (k Keeper) selectTrainshardNodes(
 	ctx context.Context,
 	trainshardId uint64,
@@ -412,7 +410,6 @@ func reserveShareCap(capacity int, shareBps uint32) int {
 	return capacity * int(shareBps) / 10000
 }
 
-// hasLiveTrainingOptIn reports whether the host's opt-in is present and unexpired
 func (k Keeper) hasLiveTrainingOptIn(ctx context.Context, participant, nodeId string, height int64) (bool, error) {
 	expiresAt, err := k.TrainingNodeOptIns.Get(ctx, collections.Join(participant, nodeId))
 	if errors.Is(err, collections.ErrNotFound) {
@@ -424,7 +421,6 @@ func (k Keeper) hasLiveTrainingOptIn(ctx context.Context, participant, nodeId st
 	return expiresAt > height, nil
 }
 
-// setTrainingOptIn moves a node's opt-in expiry to height + opt_in_ttl_blocks
 func (k Keeper) setTrainingOptIn(ctx context.Context, participant, nodeId string, height int64) (int64, error) {
 	expiresAt := height + k.GetTrainingParams(ctx).OptInTtlBlocks
 	return expiresAt, k.TrainingNodeOptIns.Set(ctx, collections.Join(participant, nodeId), expiresAt)
@@ -560,7 +556,6 @@ func emitTrainshardEvent(ctx context.Context, eventType string, attrs ...sdk.Att
 	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(eventType, attrs...))
 }
 
-// CollectReservedNodeIds returns active reserved node ids per host
 func (k Keeper) CollectReservedNodeIds(ctx context.Context) map[string]map[string]struct{} {
 	reserved := make(map[string]map[string]struct{})
 	if err := k.TrainshardReservations.Walk(ctx, nil, func(key collections.Pair[string, string], _ uint64) (bool, error) {
@@ -635,8 +630,6 @@ func (k Keeper) collectModelFreeWeights(ctx context.Context, epochId uint64, mod
 	return weights
 }
 
-// CollectEpochRawPocWeights returns each host's raw PoC weight for the epoch,
-// deduped by node id like the reserved totals it is compared against
 func (k Keeper) CollectEpochRawPocWeights(ctx context.Context, epochIndex uint64) map[string]int64 {
 	active, found := k.GetActiveParticipants(ctx, epochIndex)
 	if !found {
@@ -647,24 +640,31 @@ func (k Keeper) CollectEpochRawPocWeights(ctx context.Context, epochIndex uint64
 		if p == nil || p.Index == "" {
 			continue
 		}
-		counted := make(map[string]struct{})
-		for _, group := range p.MlNodes {
-			if group == nil {
+		weights[p.Index] = rawPocWeight(p)
+	}
+	return weights
+}
+
+func rawPocWeight(p *types.ActiveParticipant) int64 {
+	counted := make(map[string]int64)
+	for _, group := range p.MlNodes {
+		if group == nil {
+			continue
+		}
+		for _, node := range group.MlNodes {
+			if node == nil || node.NodeId == "" {
 				continue
 			}
-			for _, node := range group.MlNodes {
-				if node == nil || node.NodeId == "" {
-					continue
-				}
-				if _, seen := counted[node.NodeId]; seen {
-					continue
-				}
-				counted[node.NodeId] = struct{}{}
-				weights[p.Index] += node.PocWeight
+			if node.PocWeight > counted[node.NodeId] {
+				counted[node.NodeId] = node.PocWeight
 			}
 		}
 	}
-	return weights
+	weight := int64(0)
+	for _, w := range counted {
+		weight += w
+	}
+	return weight
 }
 
 // FreeShareOfWeight drops the reserved part of a stored weight. Reserved totals
@@ -685,7 +685,6 @@ func FreeShareOfWeight(weight, reservedRaw, totalRaw int64) int64 {
 	return sdkmath.LegacyNewDec(weight).MulInt64(totalRaw - reservedRaw).QuoInt64(totalRaw).TruncateInt64()
 }
 
-// epochBlockRange returns the epoch block range
 func (k Keeper) epochBlockRange(ctx context.Context, epochIndex uint64) (int64, int64) {
 	epoch, found := k.GetEpoch(ctx, epochIndex)
 	if !found {
@@ -698,8 +697,6 @@ func (k Keeper) epochBlockRange(ctx context.Context, epochIndex uint64) (int64, 
 	return epoch.PocStartBlockHeight, end
 }
 
-// ReservationScope selects how much of a node's hold counts: the reservation
-// alone, or the reservation plus the return buffer
 type ReservationScope int
 
 const (
@@ -731,7 +728,6 @@ func trainshardNodeWindow(shard *types.Trainshard, n *types.TrainshardReservedNo
 	return shard.CreatedAtHeight, end
 }
 
-// forEachEpochReservedNode walks reserved nodes whose window overlaps the epoch
 func (k Keeper) forEachEpochReservedNode(ctx context.Context, epochIndex uint64, scope ReservationScope, fn func(n *types.TrainshardReservedNode, start, end int64)) {
 	epochStart, epochEnd := k.epochBlockRange(ctx, epochIndex)
 	if err := k.Trainshards.Walk(ctx, nil, func(_ uint64, shard types.Trainshard) (bool, error) {
@@ -754,7 +750,6 @@ func (k Keeper) forEachEpochReservedNode(ctx context.Context, epochIndex uint64,
 	}
 }
 
-// CollectEpochReservedNodeIds returns nodes reserved during the epoch
 func (k Keeper) CollectEpochReservedNodeIds(ctx context.Context, epochIndex uint64, scope ReservationScope) map[string]map[string]struct{} {
 	result := make(map[string]map[string]struct{})
 	k.forEachEpochReservedNode(ctx, epochIndex, scope, func(n *types.TrainshardReservedNode, _, _ int64) {
@@ -768,13 +763,10 @@ func (k Keeper) CollectEpochReservedNodeIds(ctx context.Context, epochIndex uint
 	return result
 }
 
-// CollectEpochReservedNodeWeights returns frozen reserved model-node weights
 func (k Keeper) CollectEpochReservedNodeWeights(ctx context.Context, epochIndex uint64, scope ReservationScope) map[string][]*types.TrainshardReservedNode {
 	return k.collectEpochReservedNodeWeights(ctx, epochIndex, scope, nil)
 }
 
-// CollectEpochReservedNodeWeightsAtHeight keeps only nodes whose window covers
-// the height, so callers tied to one block see the reservation state of that block
 func (k Keeper) CollectEpochReservedNodeWeightsAtHeight(ctx context.Context, epochIndex uint64, height int64, scope ReservationScope) map[string][]*types.TrainshardReservedNode {
 	return k.collectEpochReservedNodeWeights(ctx, epochIndex, scope, &height)
 }
@@ -783,8 +775,6 @@ func (k Keeper) collectEpochReservedNodeWeights(ctx context.Context, epochIndex 
 	return k.BuildEpochReservedWeightView(ctx, epochIndex, scope).nodeWeights(height)
 }
 
-// EpochReservedWeightView holds the epoch's reserved node windows, so a caller
-// that needs many block heights walks the trainshard store only once
 type EpochReservedWeightView struct {
 	windows []reservedNodeWindow
 }
@@ -803,7 +793,6 @@ func (k Keeper) BuildEpochReservedWeightView(ctx context.Context, epochIndex uin
 	return view
 }
 
-// TotalsAt aggregates the weight reserved at one block height
 func (v EpochReservedWeightView) TotalsAt(height int64) (byModelHost map[string]map[string]int64, byHost map[string]int64) {
 	return aggregateReservedWeightTotals(v.nodeWeights(&height))
 }
@@ -840,12 +829,10 @@ func (v EpochReservedWeightView) nodeWeights(height *int64) map[string][]*types.
 	return result
 }
 
-// CollectEpochReservedWeightTotals aggregates frozen reserved weight
 func (k Keeper) CollectEpochReservedWeightTotals(ctx context.Context, epochIndex uint64, scope ReservationScope) (byModelHost map[string]map[string]int64, byHost map[string]int64) {
 	return aggregateReservedWeightTotals(k.CollectEpochReservedNodeWeights(ctx, epochIndex, scope))
 }
 
-// CollectEpochReservedWeightTotalsAtHeight aggregates reserved weight at one block height
 func (k Keeper) CollectEpochReservedWeightTotalsAtHeight(ctx context.Context, epochIndex uint64, height int64, scope ReservationScope) (byModelHost map[string]map[string]int64, byHost map[string]int64) {
 	return aggregateReservedWeightTotals(k.CollectEpochReservedNodeWeightsAtHeight(ctx, epochIndex, height, scope))
 }
@@ -878,7 +865,6 @@ type hostReservedInterval struct {
 	nodeId string
 }
 
-// collectEpochReservedIntervals returns per-node shielded intervals per host
 func (k Keeper) collectEpochReservedIntervals(ctx context.Context, epochIndex uint64) map[string][]hostReservedInterval {
 	result := make(map[string][]hostReservedInterval)
 	seen := make(map[string]map[hostReservedInterval]bool)
@@ -896,7 +882,6 @@ func (k Keeper) collectEpochReservedIntervals(ctx context.Context, epochIndex ui
 	return result
 }
 
-// hostFullyReservedAtHeight reports whether a host had zero free nodes
 func hostFullyReservedAtHeight(epochNodes map[string]struct{}, intervals []hostReservedInterval, height int64) bool {
 	if len(epochNodes) == 0 || len(intervals) == 0 {
 		return false
@@ -928,7 +913,6 @@ func hostEpochNodeSet(p *types.ActiveParticipant) map[string]struct{} {
 	return nodes
 }
 
-// EpochReservationView checks whether a host was fully reserved at a height
 type EpochReservationView struct {
 	intervals map[string][]hostReservedInterval
 	nodes     map[string]map[string]struct{}
@@ -949,12 +933,20 @@ func (k Keeper) BuildEpochReservationView(ctx context.Context, epochIndex uint64
 	return v
 }
 
-// FullyReservedAt reports whether the host had zero free nodes at height
 func (v EpochReservationView) FullyReservedAt(host string, height int64) bool {
 	return hostFullyReservedAtHeight(v.nodes[host], v.intervals[host], height)
 }
 
-// CollectEpochFullyReservedHostsForModel returns epoch-fully-reserved hosts
+func (k Keeper) CollectEpochReservedHostsForModel(ctx context.Context, epochIndex uint64, modelId string, scope ReservationScope) map[string]struct{} {
+	hosts := make(map[string]struct{})
+	k.forEachEpochReservedNode(ctx, epochIndex, scope, func(n *types.TrainshardReservedNode, _, _ int64) {
+		if n != nil && n.ModelId == modelId && n.Participant != "" {
+			hosts[n.Participant] = struct{}{}
+		}
+	})
+	return hosts
+}
+
 func (k Keeper) CollectEpochFullyReservedHostsForModel(ctx context.Context, epochIndex uint64, modelId string) map[string]struct{} {
 	fullyReserved := make(map[string]struct{})
 	intervals := k.collectEpochReservedIntervals(ctx, epochIndex)
