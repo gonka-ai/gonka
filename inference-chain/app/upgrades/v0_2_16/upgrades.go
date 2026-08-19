@@ -128,12 +128,12 @@ func clearStaleTrainingOptIns(ctx context.Context, k keeper.Keeper) error {
 
 	var stale []collections.Pair[string, string]
 	for ; iter.Valid(); iter.Next() {
-		key, err := iter.Key()
+		kv, err := iter.KeyValue()
 		if err != nil {
-			return fmt.Errorf("read training opt-in key: %w", err)
+			return fmt.Errorf("read training opt-in: %w", err)
 		}
-		if expiresAt, err := k.TrainingNodeOptIns.Get(ctx, key); err != nil || expiresAt == 0 {
-			stale = append(stale, key)
+		if kv.Value == 0 {
+			stale = append(stale, kv.Key)
 		}
 	}
 
