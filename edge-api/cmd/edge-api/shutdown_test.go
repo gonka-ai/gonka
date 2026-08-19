@@ -56,10 +56,15 @@ func TestDrainAndShutdown_ServesInFlightRequestWhileReportingUnready(t *testing.
 		"instance should not report draining before shutdown starts")
 
 	shutdownDone := make(chan error, 1)
+	shutdownStarted := make(chan struct{})
+	observed := &shutdownObservedServer{
+		drainableServer: srv,
+		started:         shutdownStarted,
+	}
 	force := make(chan os.Signal, 1)
 	go func() {
-		shutdownDone <- drainAndShutdown(srv, config{
-			DrainAnnounce:  time.Hour,
+		shutdownDone <- drainAndShutdown(observed, config{
+			DrainAnnounce:  time.Second,
 			ShutdownBudget: 30 * time.Second,
 		}, force)
 	}()
@@ -75,19 +80,70 @@ func TestDrainAndShutdown_ServesInFlightRequestWhileReportingUnready(t *testing.
 	_ = resp.Body.Close()
 	require.Equal(t, http.StatusNoContent, resp.StatusCode,
 		"announce window must keep accepting while the router observes readiness")
-	force <- syscall.SIGTERM
-
+	select {
+	case <-shutdownStarted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("shutdown did not start after the announcement window")
+	}
 	select {
 	case <-shutdownDone:
 		t.Fatal("shutdown finished while a request was still running")
 	case code := <-requestDone:
 		t.Fatalf("request ended on its own with %d before it was released", code)
-	case <-time.After(300 * time.Millisecond):
+	default:
 	}
 
 	close(release)
 	assert.Equal(t, http.StatusOK, <-requestDone, "in-flight request must complete")
 	require.NoError(t, <-shutdownDone)
+}
+
+type shutdownObservedServer struct {
+	drainableServer
+	started chan struct{}
+}
+
+func (s *shutdownObservedServer) Shutdown(ctx context.Context) error {
+	close(s.started)
+	return s.drainableServer.Shutdown(ctx)
+}
+
+func TestDrainAndShutdown_SecondSignalDuringAnnouncementForcesClose(t *testing.T) {
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	requestStarted := make(chan struct{})
+	srv, baseURL := startTestServer(t, func(c echo.Context) error {
+		close(requestStarted)
+		<-release
+		return c.String(http.StatusOK, "finished")
+	})
+
+	go func() { _, _ = http.Get(baseURL + "/slow") }()
+	waitForRequestStarted(t, requestStarted)
+
+	force := make(chan os.Signal, 1)
+	done := make(chan error, 1)
+	go func() {
+		done <- drainAndShutdown(srv, config{
+			DrainAnnounce:  10 * time.Minute,
+			ShutdownBudget: 10 * time.Minute,
+		}, force)
+	}()
+
+	require.Eventually(t, func() bool {
+		status, body := readyz(t, baseURL)
+		return status == http.StatusServiceUnavailable && strings.Contains(body, "draining")
+	}, 2*time.Second, 10*time.Millisecond, "/readyz should report draining during the announce window")
+	force <- syscall.SIGTERM
+
+	select {
+	case err := <-done:
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "operator sent")
+		assert.Contains(t, err.Error(), "drain announcement")
+	case <-time.After(10 * time.Second):
+		t.Fatal("a second signal consumed during announcement did not force the shutdown")
+	}
 }
 
 // A shutdown that waits for a request nobody is going to finish must still end,
