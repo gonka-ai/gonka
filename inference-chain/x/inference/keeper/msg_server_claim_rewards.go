@@ -469,7 +469,8 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		}
 		weights := cloneValidationWeightMaps(modelWeightMaps)
 		totals := cloneModelTotalWeights(modelTotalWeights)
-		reservedByModelHost, reservedByHost := k.CollectEpochReservedWeightTotalsAtHeight(ctx, msg.EpochIndex, height)
+		// validation duty is a penalty path, so the return buffer shields too
+		reservedByModelHost, reservedByHost := k.CollectEpochReservedWeightTotalsAtHeight(ctx, msg.EpochIndex, height, ReservationScopeShield)
 		applyReservedWeightAdjustment(weights, totals, reservedByModelHost, reservedByHost)
 		cached := modelWeightsAtHeight{weights: weights, totals: totals}
 		weightsByHeight[height] = cached

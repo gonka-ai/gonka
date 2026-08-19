@@ -19,7 +19,6 @@ const (
 	trainshardOptInExpiry = int64(1000)
 )
 
-// setupTrainshardFlow seeds two opted-in nodes and an OPEN proposal
 func setupTrainshardFlow(t *testing.T, maxNodes uint32) (keeper.Keeper, types.MsgServer, sdk.Context, string) {
 	t.Helper()
 	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
@@ -73,7 +72,6 @@ func TestAssembleAndSettleTrainshard(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), resp.TrainshardId)
 
-	// capacity buffer keeps one of the two nodes free
 	reservedA := k.IsNodeReserved(ctx, creator, "node-a")
 	reservedB := k.IsNodeReserved(ctx, creator, "node-b")
 	require.NotEqual(t, reservedA, reservedB)
@@ -91,7 +89,6 @@ func TestAssembleAndSettleTrainshard(t *testing.T) {
 	require.Equal(t, types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED, shard.Status)
 	require.Equal(t, types.TrainshardCloseReason_TRAINSHARD_CLOSE_REASON_SETTLED, shard.CloseReason)
 
-	// a released node stays reserved until its return buffer ends
 	released := shard.Nodes[0]
 	require.True(t, k.IsNodeReserved(ctx, creator, released.NodeId))
 	k.ProcessTrainshardEndBlock(ctx.WithBlockHeight(released.ReservedUntilHeight))
@@ -99,7 +96,6 @@ func TestAssembleAndSettleTrainshard(t *testing.T) {
 	require.False(t, k.IsNodeReserved(ctx, creator, "node-b"))
 }
 
-// TestDeferredExpiryThenManualSettle checks deferred-expiry settle cleanup
 func TestDeferredExpiryThenManualSettle(t *testing.T) {
 	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
 
@@ -111,7 +107,6 @@ func TestDeferredExpiryThenManualSettle(t *testing.T) {
 	planned := shard.ExpiresAtHeight
 	retry := planned + 1
 
-	// simulate deferred expiry: index moves, planned height stays
 	require.NoError(t, k.TrainshardExpiryIndex.Set(ctx, collections.Join(retry, uint64(1))))
 	require.NoError(t, k.TrainshardExpiryIndex.Remove(ctx, collections.Join(planned, uint64(1))))
 
@@ -123,7 +118,6 @@ func TestDeferredExpiryThenManualSettle(t *testing.T) {
 	require.Equal(t, types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED, shard.Status)
 	require.Equal(t, planned, shard.ExpiresAtHeight)
 
-	// deferred key is orphaned by settle and cleaned next end-block
 	hasRetry, err := k.TrainshardExpiryIndex.Has(ctx, collections.Join(retry, uint64(1)))
 	require.NoError(t, err)
 	require.True(t, hasRetry)
@@ -138,7 +132,6 @@ func TestDeferredExpiryThenManualSettle(t *testing.T) {
 }
 
 func TestAssembleTrainshard_RespectsCapacityBuffer(t *testing.T) {
-	// requesting both nodes fails because one must stay free
 	_, ms, ctx, creator := setupTrainshardFlow(t, 2)
 
 	_, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
@@ -172,22 +165,19 @@ func TestEpochReservationView_TimeLocalFullReservation(t *testing.T) {
 		}
 	}
 
-	// staggered: A [100,140], B [150,190]
 	require.NoError(t, k.Trainshards.Set(ctx, 1, settled(1, "A", 100, 140)))
 	require.NoError(t, k.Trainshards.Set(ctx, 2, settled(2, "B", 150, 190)))
 	view := k.BuildEpochReservationView(ctx, epoch)
 	require.False(t, view.FullyReservedAt(host, 130))
 	require.False(t, view.FullyReservedAt(host, 170))
 
-	// overlap B with A [120,160]: both reserved only in [120,140]
 	require.NoError(t, k.Trainshards.Set(ctx, 2, settled(2, "B", 120, 160)))
 	view = k.BuildEpochReservationView(ctx, epoch)
-	require.False(t, view.FullyReservedAt(host, 110)) // only A reserved
-	require.True(t, view.FullyReservedAt(host, 130))  // both reserved -> shielded here
-	require.False(t, view.FullyReservedAt(host, 150)) // only B reserved
+	require.False(t, view.FullyReservedAt(host, 110))
+	require.True(t, view.FullyReservedAt(host, 130))
+	require.False(t, view.FullyReservedAt(host, 150))
 }
 
-// TestCollectEpochFullyReservedHostsForModel keeps only hosts fully reserved for the entire epoch
 func TestCollectEpochFullyReservedHostsForModel(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 	const epoch = uint64(7)
@@ -204,7 +194,6 @@ func TestCollectEpochFullyReservedHostsForModel(t *testing.T) {
 		}},
 	}))
 
-	// staggered: n1 then n2, never both
 	require.NoError(t, k.Trainshards.Set(ctx, 1, types.Trainshard{
 		TrainshardId: 1, Status: types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
 		CreatedAtHeight: 110, ClosedAtHeight: 120,
@@ -217,7 +206,6 @@ func TestCollectEpochFullyReservedHostsForModel(t *testing.T) {
 	}))
 	require.Empty(t, k.CollectEpochFullyReservedHostsForModel(ctx, epoch, "model1"))
 
-	// concurrent but partial: both nodes reserved [110,140], still not full-epoch
 	require.NoError(t, k.Trainshards.Set(ctx, 2, types.Trainshard{
 		TrainshardId: 2, Status: types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
 		CreatedAtHeight: 110, ClosedAtHeight: 140,
@@ -225,7 +213,6 @@ func TestCollectEpochFullyReservedHostsForModel(t *testing.T) {
 	}))
 	require.Empty(t, k.CollectEpochFullyReservedHostsForModel(ctx, epoch, "model1"))
 
-	// full-epoch reservation across [100,199]
 	require.NoError(t, k.Trainshards.Set(ctx, 1, types.Trainshard{
 		TrainshardId: 1, Status: types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
 		CreatedAtHeight: 100, ClosedAtHeight: 199,
@@ -256,12 +243,10 @@ func TestCollectEpochReservedWeightTotals(t *testing.T) {
 		Nodes: []*types.TrainshardReservedNode{
 			{Participant: hostA, NodeId: "A1", ModelId: "model1", PocWeight: 30},
 			{Participant: hostA, NodeId: "A2", ModelId: "model2", PocWeight: 20},
-			// A2 serves model2 and model3: host total still dedups by node
 			{Participant: hostA, NodeId: "A2", ModelId: "model3", PocWeight: 20},
 			{Participant: hostB, NodeId: "B1", ModelId: "model1", PocWeight: 40},
 		},
 	}))
-	// same (model,node) in overlap: max wins
 	require.NoError(t, k.Trainshards.Set(ctx, 2, types.Trainshard{
 		TrainshardId:    2,
 		Status:          types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
@@ -278,7 +263,6 @@ func TestCollectEpochReservedWeightTotals(t *testing.T) {
 	require.Equal(t, int64(20), byModelHost["model2"][hostA])
 	require.Equal(t, int64(20), byModelHost["model3"][hostA])
 	require.Equal(t, int64(40), byModelHost["model1"][hostB])
-	// A1 (max 50) + A2 (20, counted once), not 50+20+20
 	require.Equal(t, int64(70), byHost[hostA])
 	require.Equal(t, int64(40), byHost[hostB])
 }
@@ -309,23 +293,20 @@ func TestCollectEpochReservedWeightTotalsAtHeight(t *testing.T) {
 		},
 	}))
 
-	_, byHost := k.CollectEpochReservedWeightTotalsAtHeight(ctx, epoch, 130)
+	_, byHost := k.CollectEpochReservedWeightTotalsAtHeight(ctx, epoch, 130, keeper.ReservationScopeShield)
 	require.Zero(t, byHost[host])
 
-	_, byHost = k.CollectEpochReservedWeightTotalsAtHeight(ctx, epoch, 110)
+	_, byHost = k.CollectEpochReservedWeightTotalsAtHeight(ctx, epoch, 110, keeper.ReservationScopeShield)
 	require.Equal(t, int64(30), byHost[host])
 
-	_, byHost = k.CollectEpochReservedWeightTotalsAtHeight(ctx, epoch, 160)
+	_, byHost = k.CollectEpochReservedWeightTotalsAtHeight(ctx, epoch, 160, keeper.ReservationScopeShield)
 	require.Equal(t, int64(50), byHost[host])
 }
 
-// TestTrainshardLifecycle_E2E walks the full lifecycle a creator drives:
-// reserve -> reward-weight accounting -> PoC/inference shielding -> unfreeze -> expire.
 func TestTrainshardLifecycle_E2E(t *testing.T) {
 	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
 	const epoch = uint64(7)
 
-	// reserve: assemble opens an ACTIVE shard and reserves one node (buffer keeps one free)
 	resp, err := ms.AssembleTrainshard(ctx, &types.MsgAssembleTrainshard{Creator: creator, ProposalId: 1})
 	require.NoError(t, err)
 	shard, err := k.Trainshards.Get(ctx, resp.TrainshardId)
@@ -340,15 +321,12 @@ func TestTrainshardLifecycle_E2E(t *testing.T) {
 	require.True(t, k.IsNodeReserved(ctx, creator, reserved))
 	require.False(t, k.IsNodeReserved(ctx, creator, free))
 
-	// reward accounting: the reserved weight is what settlement and claim_rewards subtract
 	byModelHost, byHost := k.CollectEpochReservedWeightTotals(ctx, epoch, keeper.ReservationScopeReward)
 	require.Equal(t, int64(100), byHost[creator])
 	require.Equal(t, int64(100), byModelHost["model1"][creator])
 
-	// shielding: a partially reserved host is not fully reserved, so PoC/inference are untouched
 	require.NotContains(t, k.CollectEpochFullyReservedHostsForModel(ctx, epoch, "model1"), creator)
 
-	// unfreeze: settle releases the reservation
 	_, err = ms.SettleTrainshard(ctx, &types.MsgSettleTrainshard{Creator: creator, TrainshardId: resp.TrainshardId})
 	require.NoError(t, err)
 	settled, err := k.Trainshards.Get(ctx, resp.TrainshardId)
@@ -358,7 +336,6 @@ func TestTrainshardLifecycle_E2E(t *testing.T) {
 	k.ProcessTrainshardEndBlock(ctx.WithBlockHeight(settled.Nodes[0].ReservedUntilHeight))
 	require.False(t, k.IsNodeReserved(ctx, creator, reserved))
 
-	// expire: a fresh ACTIVE shard is expired by the end-blocker at its expiry height
 	require.NoError(t, k.TrainshardProposals.Set(ctx, 2, types.TrainshardProposal{
 		Creator:           creator,
 		GpuProfileId:      trainshardTestProfile,
@@ -385,9 +362,6 @@ func TestTrainshardLifecycle_E2E(t *testing.T) {
 	require.False(t, k.IsNodeReserved(ctx, creator, expired.Nodes[0].NodeId))
 }
 
-// TestTrainshardFullReservation_ShieldsPocAndUnfreezes verifies a host whose only
-// node for a model is reserved is fully shielded (no inference routing, PoC duties
-// skipped, reward weight frozen) and is released cleanly on settle.
 func TestTrainshardFullReservation_ShieldsPocAndUnfreezes(t *testing.T) {
 	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
 	ms := keeper.NewMsgServerImpl(k)
@@ -403,8 +377,8 @@ func TestTrainshardFullReservation_ShieldsPocAndUnfreezes(t *testing.T) {
 	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: epoch, PocStartBlockHeight: 1}))
 	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: epoch + 1, PocStartBlockHeight: 1000}))
 
-	hostA := sample.AccAddress() // reserved host: single node for model1
-	hostB := sample.AccAddress() // free host: keeps the model capacity buffer satisfied
+	hostA := sample.AccAddress()
+	hostB := sample.AccAddress()
 	single := func(node string) []*types.ModelMLNodes {
 		return []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{{NodeId: node, PocWeight: 100}}}}
 	}
@@ -436,11 +410,9 @@ func TestTrainshardFullReservation_ShieldsPocAndUnfreezes(t *testing.T) {
 	require.Len(t, shard.Nodes, 1)
 	require.Equal(t, "node-a", shard.Nodes[0].NodeId)
 
-	// inference: hostA has no free node left -> excluded from routing; hostB untouched
 	require.True(t, k.IsNodeReserved(ctx, hostA, "node-a"))
 	require.False(t, k.IsNodeReserved(ctx, hostB, "node-b"))
 
-	// devshard shield uses full-epoch reservation; this shard starts mid-epoch
 	fully := k.CollectEpochFullyReservedHostsForModel(ctx, epoch, "model1")
 	require.NotContains(t, fully, hostA)
 	require.NotContains(t, fully, hostB)
@@ -448,12 +420,10 @@ func TestTrainshardFullReservation_ShieldsPocAndUnfreezes(t *testing.T) {
 	require.True(t, view.FullyReservedAt(hostA, 60))
 	require.False(t, view.FullyReservedAt(hostB, 60))
 
-	// reward weight frozen for hostA only
 	_, byHost := k.CollectEpochReservedWeightTotals(ctx, epoch, keeper.ReservationScopeReward)
 	require.Equal(t, int64(100), byHost[hostA])
 	require.Zero(t, byHost[hostB])
 
-	// unfreeze: settle plus the return buffer restore routing/PoC
 	_, err = ms.SettleTrainshard(ctx, &types.MsgSettleTrainshard{Creator: hostA, TrainshardId: resp.TrainshardId})
 	require.NoError(t, err)
 	settled, err := k.Trainshards.Get(ctx, resp.TrainshardId)

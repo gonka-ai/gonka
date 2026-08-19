@@ -175,6 +175,13 @@ func TestReservationScopes_RewardWindowExcludesReturnBuffer(t *testing.T) {
 
 	_, rewardClosing := k.CollectEpochReservedWeightTotals(ctx, epoch, keeper.ReservationScopeReward)
 	require.Equal(t, int64(100), rewardClosing[host])
+
+	// validation duty is read per height and must shield inside the buffer too
+	_, shieldInBuffer := k.CollectEpochReservedWeightTotalsAtHeight(ctx, epoch+1, 210, keeper.ReservationScopeShield)
+	require.Equal(t, int64(100), shieldInBuffer[host])
+
+	_, shieldAfterBuffer := k.CollectEpochReservedWeightTotalsAtHeight(ctx, epoch+1, 220, keeper.ReservationScopeShield)
+	require.Zero(t, shieldAfterBuffer[host])
 }
 
 func TestRefreshTrainingNodeOptIn_MovesExpiryForward(t *testing.T) {

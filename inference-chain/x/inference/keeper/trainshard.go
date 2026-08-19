@@ -746,10 +746,9 @@ func (k Keeper) CollectEpochReservedWeightTotals(ctx context.Context, epochIndex
 	return aggregateReservedWeightTotals(k.CollectEpochReservedNodeWeights(ctx, epochIndex, scope))
 }
 
-// CollectEpochReservedWeightTotalsAtHeight aggregates reserved weight at one
-// block height using reward-window semantics, so the return buffer is excluded
-func (k Keeper) CollectEpochReservedWeightTotalsAtHeight(ctx context.Context, epochIndex uint64, height int64) (byModelHost map[string]map[string]int64, byHost map[string]int64) {
-	return aggregateReservedWeightTotals(k.CollectEpochReservedNodeWeightsAtHeight(ctx, epochIndex, height, ReservationScopeReward))
+// CollectEpochReservedWeightTotalsAtHeight aggregates reserved weight at one block height
+func (k Keeper) CollectEpochReservedWeightTotalsAtHeight(ctx context.Context, epochIndex uint64, height int64, scope ReservationScope) (byModelHost map[string]map[string]int64, byHost map[string]int64) {
+	return aggregateReservedWeightTotals(k.CollectEpochReservedNodeWeightsAtHeight(ctx, epochIndex, height, scope))
 }
 
 func aggregateReservedWeightTotals(reserved map[string][]*types.TrainshardReservedNode) (byModelHost map[string]map[string]int64, byHost map[string]int64) {
