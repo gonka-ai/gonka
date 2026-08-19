@@ -491,7 +491,9 @@ func (p *TrainingParams) Validate(epochParams *EpochParams) error {
 	if p.ReleaseBufferBlocks > maxTrainingBlocksParam {
 		return fmt.Errorf("training release_buffer_blocks (%d) exceeds safe upper bound %d", p.ReleaseBufferBlocks, maxTrainingBlocksParam)
 	}
-	if epochParams != nil && epochParams.EpochLength > 0 {
+	// epoch-relative limits bind only while training runs, so the defaults stay
+	// valid on chains of any epoch length until governance enables training
+	if p.TrainingEnabled && epochParams != nil && epochParams.EpochLength > 0 {
 		// retention must outlive the buffer so next-epoch reads still see released nodes
 		minRetention := 2*epochParams.EpochLength + p.ReleaseBufferBlocks
 		if p.SettledShardRetentionBlocks < minRetention {

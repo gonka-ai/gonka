@@ -10,7 +10,6 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// TestExpireTrainshards_StaleKeyDoesNotStarveBacklog cleans orphaned keys
 func TestExpireTrainshards_StaleKeyDoesNotStarveBacklog(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
@@ -18,7 +17,6 @@ func TestExpireTrainshards_StaleKeyDoesNotStarveBacklog(t *testing.T) {
 	params.TrainingParams.MaxExpirationsPerBlock = 1
 	require.NoError(t, k.SetParams(ctx, params))
 
-	// stale key sorts first but has no backing shard
 	require.NoError(t, k.TrainshardExpiryIndex.Set(ctx, collections.Join(int64(3), uint64(99))))
 
 	shard := types.Trainshard{
@@ -33,13 +31,11 @@ func TestExpireTrainshards_StaleKeyDoesNotStarveBacklog(t *testing.T) {
 
 	ctx = ctx.WithBlockHeight(20)
 
-	// block 1: the quota slot lands on the stale key
 	k.ProcessTrainshardEndBlock(ctx)
 	hasStale, err := k.TrainshardExpiryIndex.Has(ctx, collections.Join(int64(3), uint64(99)))
 	require.NoError(t, err)
 	require.False(t, hasStale)
 
-	// block 2: the real shard reaches the front and expires
 	k.ProcessTrainshardEndBlock(ctx)
 	got, err := k.Trainshards.Get(ctx, shard.TrainshardId)
 	require.NoError(t, err)
@@ -50,7 +46,35 @@ func TestExpireTrainshards_StaleKeyDoesNotStarveBacklog(t *testing.T) {
 	require.False(t, hasActive)
 }
 
-// TestExpireTrainshards_DrainsBacklogAcrossBlocks drains backlog across blocks
+func TestExpireTrainshards_DeferredKeyStillCloses(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	require.NoError(t, k.SetParams(ctx, types.DefaultParams()))
+
+	shard := types.Trainshard{
+		TrainshardId:    1,
+		Creator:         "creator",
+		ExpiresAtHeight: 5,
+		Status:          types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE,
+	}
+	require.NoError(t, k.Trainshards.Set(ctx, shard.TrainshardId, shard))
+	require.NoError(t, k.TrainshardActiveIndex.Set(ctx, shard.TrainshardId))
+	require.NoError(t, k.TrainshardExpiryIndex.Set(ctx, collections.Join(int64(7), shard.TrainshardId)))
+
+	k.ProcessTrainshardEndBlock(ctx.WithBlockHeight(20))
+
+	got, err := k.Trainshards.Get(ctx, shard.TrainshardId)
+	require.NoError(t, err)
+	require.Equal(t, types.TrainshardStatus_TRAINSHARD_STATUS_EXPIRED, got.Status)
+
+	hasDeferred, err := k.TrainshardExpiryIndex.Has(ctx, collections.Join(int64(7), shard.TrainshardId))
+	require.NoError(t, err)
+	require.False(t, hasDeferred)
+
+	hasPlanned, err := k.TrainshardExpiryIndex.Has(ctx, collections.Join(shard.ExpiresAtHeight, shard.TrainshardId))
+	require.NoError(t, err)
+	require.False(t, hasPlanned)
+}
+
 func TestExpireTrainshards_DrainsBacklogAcrossBlocks(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 

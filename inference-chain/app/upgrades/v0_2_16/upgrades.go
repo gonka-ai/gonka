@@ -61,6 +61,18 @@ func backfillTrainingParamDefaults(ctx context.Context, k keeper.Keeper) error {
 		params.TrainingParams.ReleaseBufferBlocks = types.DefaultTrainingReleaseBufferBlocks
 	}
 
+	// the block defaults are tuned for short epochs, so raise them to the
+	// minimums this chain's epoch length requires before training can be enabled
+	if epoch := params.EpochParams; epoch != nil && epoch.EpochLength > 0 {
+		if params.TrainingParams.OptInTtlBlocks < epoch.EpochLength {
+			params.TrainingParams.OptInTtlBlocks = epoch.EpochLength
+		}
+		minRetention := 2*epoch.EpochLength + params.TrainingParams.ReleaseBufferBlocks
+		if params.TrainingParams.SettledShardRetentionBlocks < minRetention {
+			params.TrainingParams.SettledShardRetentionBlocks = minRetention
+		}
+	}
+
 	if err := k.SetParams(ctx, params); err != nil {
 		return err
 	}
@@ -68,6 +80,7 @@ func backfillTrainingParamDefaults(ctx context.Context, k keeper.Keeper) error {
 		"filled_new_fields", changed,
 		"opt_in_ttl_blocks", params.TrainingParams.OptInTtlBlocks,
 		"release_buffer_blocks", params.TrainingParams.ReleaseBufferBlocks,
+		"settled_shard_retention_blocks", params.TrainingParams.SettledShardRetentionBlocks,
 	)
 	return nil
 }

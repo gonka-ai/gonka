@@ -30,6 +30,26 @@ func TestBackfillTrainingParamDefaults(t *testing.T) {
 	require.Equal(t, inferencetypes.DefaultTrainingReleaseBufferBlocks, got.TrainingParams.ReleaseBufferBlocks)
 }
 
+func TestBackfillTrainingParamDefaults_RaisesLimitsToEpochLength(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.EpochParams.EpochLength = 2000
+	params.TrainingParams = nil
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, backfillTrainingParamDefaults(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, int64(2000), got.TrainingParams.OptInTtlBlocks)
+	require.Equal(t, 2*int64(2000)+got.TrainingParams.ReleaseBufferBlocks, got.TrainingParams.SettledShardRetentionBlocks)
+
+	got.TrainingParams.TrainingEnabled = true
+	require.NoError(t, got.Validate())
+}
+
 func TestBackfillTrainingParamDefaults_PreservesOverrides(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
