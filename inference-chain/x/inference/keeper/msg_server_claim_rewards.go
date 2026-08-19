@@ -458,10 +458,6 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 	}
 
 	reservedView := k.BuildEpochReservationView(ctx, msg.EpochIndex)
-	type modelWeightsAtHeight struct {
-		weights map[string]map[string]types.ValidationWeight
-		totals  map[string]int64
-	}
 	weightsByHeight := make(map[int64]modelWeightsAtHeight)
 	// validation duty is a penalty path, so the return buffer shields too
 	reservedWeightView := k.BuildEpochReservedWeightView(ctx, msg.EpochIndex, ReservationScopeShield)
@@ -470,11 +466,19 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		if cached, ok := weightsByHeight[height]; ok {
 			return cached
 		}
-		weights := cloneValidationWeightMaps(modelWeightMaps)
-		totals := cloneModelTotalWeights(modelTotalWeights)
 		reservedByModelHost, reservedByHost := reservedWeightView.TotalsAt(height)
-		applyReservedWeightAdjustment(weights, totals, reservedByModelHost, reservedByHost, rawPocByHost)
-		cached := modelWeightsAtHeight{weights: weights, totals: totals}
+		if len(reservedByModelHost) == 0 && len(reservedByHost) == 0 {
+			cached := modelWeightsAtHeight{totals: modelTotalWeights}
+			weightsByHeight[height] = cached
+			return cached
+		}
+		cached := buildModelWeightsAtHeight(
+			modelWeightMaps,
+			modelTotalWeights,
+			reservedByModelHost,
+			reservedByHost,
+			rawPocByHost,
+		)
 		weightsByHeight[height] = cached
 		return cached
 	}
@@ -531,14 +535,18 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 	mustBeValidated := make([]string, 0)
 	for _, inference := range sample {
 		modelId := inference.Model
+		if reservedView.FullyReservedAt(msg.Creator, inference.CreatedAtBlockHeight) {
+			skipped++
+			continue
+		}
 		weightsAtHeight := getWeightsAtHeight(inference.CreatedAtBlockHeight)
-		weightMap := weightsAtHeight.weights[modelId]
-		validatorPowerForModel, found := weightMap[msg.Creator]
+		weightMap := modelWeightMaps[modelId]
+		validatorPowerForModel, found := effectiveValidationWeight(weightMap, weightsAtHeight.adjusted[modelId], msg.Creator)
 		if !found {
 			skipped++
 			continue
 		}
-		executorPower, found := weightMap[inference.ExecutorId]
+		executorPower, found := effectiveValidationWeight(weightMap, weightsAtHeight.adjusted[modelId], inference.ExecutorId)
 		if !found {
 			k.LogWarn("Executor not found in weight map", types.Claims, "executor", inference.ExecutorId, "model", modelId)
 			continue
@@ -546,11 +554,6 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 
 		totalWeight := weightsAtHeight.totals[modelId]
 		if totalWeight <= 0 {
-			skipped++
-			continue
-		}
-
-		if reservedView.FullyReservedAt(msg.Creator, inference.CreatedAtBlockHeight) {
 			skipped++
 			continue
 		}
@@ -599,16 +602,9 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 	return mustBeValidated, nil
 }
 
-func cloneValidationWeightMaps(src map[string]map[string]types.ValidationWeight) map[string]map[string]types.ValidationWeight {
-	cloned := make(map[string]map[string]types.ValidationWeight, len(src))
-	for modelID, weights := range src {
-		modelWeights := make(map[string]types.ValidationWeight, len(weights))
-		for addr, vw := range weights {
-			modelWeights[addr] = vw
-		}
-		cloned[modelID] = modelWeights
-	}
-	return cloned
+type modelWeightsAtHeight struct {
+	adjusted map[string]map[string]int64
+	totals   map[string]int64
 }
 
 func cloneModelTotalWeights(src map[string]int64) map[string]int64 {
@@ -619,13 +615,17 @@ func cloneModelTotalWeights(src map[string]int64) map[string]int64 {
 	return cloned
 }
 
-func applyReservedWeightAdjustment(
+func buildModelWeightsAtHeight(
 	modelWeightMaps map[string]map[string]types.ValidationWeight,
 	modelTotalWeights map[string]int64,
 	reservedByModelHost map[string]map[string]int64,
 	reservedByHost map[string]int64,
 	rawPocByHost map[string]int64,
-) {
+) modelWeightsAtHeight {
+	result := modelWeightsAtHeight{
+		adjusted: make(map[string]map[string]int64),
+		totals:   cloneModelTotalWeights(modelTotalWeights),
+	}
 	for modelID, weightMap := range modelWeightMaps {
 		reserved := reservedByModelHost[modelID]
 		if modelID == "" {
@@ -635,31 +635,54 @@ func applyReservedWeightAdjustment(
 			continue
 		}
 		removed := int64(0)
-		for host, vw := range weightMap {
-			r := reserved[host]
+		adjusted := make(map[string]int64)
+		for host, r := range reserved {
 			if r <= 0 {
+				continue
+			}
+			vw, found := weightMap[host]
+			if !found {
 				continue
 			}
 			// a submodel weight is the host's raw PoC sum for that model, so the
 			// reserved total subtracts directly; the root weight is cap- and
 			// collateral-adjusted and only its reserved share can be removed
-			free := vw.Weight - r
-			if modelID == "" {
-				free = FreeShareOfWeight(vw.Weight, r, rawPocByHost[host])
-			}
-			if free < 0 {
-				free = 0
-			}
+			free := adjustedWeightForModel(modelID, vw.Weight, r, rawPocByHost[host])
 			removed += vw.Weight - free
-			vw.Weight = free
-			weightMap[host] = vw
+			adjusted[host] = free
 		}
-		if t := modelTotalWeights[modelID] - removed; t > 0 {
-			modelTotalWeights[modelID] = t
+		if len(adjusted) > 0 {
+			result.adjusted[modelID] = adjusted
+		}
+		if t := result.totals[modelID] - removed; t > 0 {
+			result.totals[modelID] = t
 		} else {
-			modelTotalWeights[modelID] = 0
+			result.totals[modelID] = 0
 		}
 	}
+	return result
+}
+
+func effectiveValidationWeight(weightMap map[string]types.ValidationWeight, adjusted map[string]int64, host string) (types.ValidationWeight, bool) {
+	vw, found := weightMap[host]
+	if !found {
+		return types.ValidationWeight{}, false
+	}
+	if adjustedWeight, ok := adjusted[host]; ok {
+		vw.Weight = adjustedWeight
+	}
+	return vw, true
+}
+
+func adjustedWeightForModel(modelID string, weight, reservedRaw, totalRaw int64) int64 {
+	free := weight - reservedRaw
+	if modelID == "" {
+		free = FreeShareOfWeight(weight, reservedRaw, totalRaw)
+	}
+	if free < 0 {
+		return 0
+	}
+	return free
 }
 
 // OverlapsWithPoC reports whether an inference was created late enough in the epoch that
