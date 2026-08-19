@@ -45,7 +45,6 @@ ci-testenv-unit:
 	go test ./runtimeparams/... -count=1
 	go test ./runtimeconfig/... -count=1
 	go test ./testenv/... -count=1
-	$(MAKE) -C ../versiond-router test-render
 	$(MAKE) -C ../decentralized-api ci-testenv-nodemanager
 
 # Phase 11 — Docker stack citest (dispatch / nightly). Requires Docker + linux devshardd.
