@@ -17,8 +17,9 @@ import (
 
 func TestSetHeightSyncFromEnv_EmptyIsNoop(t *testing.T) {
 	t.Setenv("DEVSHARD_CHAINORACLE_URL", "")
+	t.Setenv("DEVSHARD_HEIGHTSYNC", "")
 	mgr := NewHostManager(newManagerTestStore(t), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
-	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background()))
+	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background(), nil))
 	require.Nil(t, mgr.heightSync)
 	require.Nil(t, mgr.chainOracle)
 	require.Len(t, mgr.transportServerOpts(), 2)
@@ -28,7 +29,7 @@ func TestSetHeightSyncFromEnv_InvalidK(t *testing.T) {
 	t.Setenv("DEVSHARD_CHAINORACLE_URL", "http://127.0.0.1:9")
 	t.Setenv("DEVSHARD_HEIGHTSYNC_K", "nope")
 	mgr := NewHostManager(newManagerTestStore(t), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
-	err := mgr.SetHeightSyncFromEnv(context.Background())
+	err := mgr.SetHeightSyncFromEnv(context.Background(), nil)
 	require.Error(t, err)
 	require.Nil(t, mgr.heightSync)
 }
@@ -62,12 +63,21 @@ func TestSetHeightSyncFromEnv_WiresScheduler(t *testing.T) {
 	t.Setenv("DEVSHARD_HEIGHTSYNC_SLOTS", "1")
 
 	mgr := NewHostManager(newManagerTestStore(t), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
-	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background()))
+	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background(), nil))
 	require.NotNil(t, mgr.heightSync)
 	require.NotNil(t, mgr.chainOracle)
 	require.Equal(t, uint64(10), mgr.heightSync.K())
 	require.Equal(t, uint64(1), mgr.heightSync.SlotsNum())
 	require.Len(t, mgr.transportServerOpts(), 3)
 	mgr.CloseHeightSync()
+	require.Nil(t, mgr.heightSync)
+}
+
+func TestSetHeightSyncFromEnv_FlagWithoutOracleErrors(t *testing.T) {
+	t.Setenv("DEVSHARD_CHAINORACLE_URL", "")
+	t.Setenv("DEVSHARD_HEIGHTSYNC", "1")
+	mgr := NewHostManager(newManagerTestStore(t), mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
+	err := mgr.SetHeightSyncFromEnv(context.Background(), nil)
+	require.Error(t, err)
 	require.Nil(t, mgr.heightSync)
 }

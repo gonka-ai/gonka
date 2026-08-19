@@ -27,6 +27,34 @@ import (
 	"devshard/logging"
 )
 
+// StatusError is a non-200 HTTP response from the chainoracle wire protocol.
+type StatusError struct {
+	URL        string
+	StatusCode int
+}
+
+func (e *StatusError) Error() string {
+	if e == nil {
+		return "blockoracle/client: status error"
+	}
+	return fmt.Sprintf("blockoracle/client: GET %s: status %d", e.URL, e.StatusCode)
+}
+
+// IsCapabilityMiss reports a missing /block/* route (old dapi) rather than a
+// transport failure. 501 on Prove is not a capability miss for Latest/At.
+func IsCapabilityMiss(err error) bool {
+	var se *StatusError
+	if !errors.As(err, &se) || se == nil {
+		return false
+	}
+	switch se.StatusCode {
+	case http.StatusNotFound, http.StatusNotImplemented, http.StatusGone:
+		return true
+	default:
+		return false
+	}
+}
+
 // HTTPConfig pins the HTTP consumer to a specific producer and validator set.
 //
 // Verifier is optional: when nil the client trusts the producer and
@@ -48,8 +76,9 @@ type HTTPConfig struct {
 // Client implements blocks.BlockOracle by consuming the HTTP+SSE
 // wire protocol exposed by blockoracle/server.
 type Client struct {
-	cfg HTTPConfig
-	hc  *http.Client
+	cfg   HTTPConfig
+	hc    *http.Client
+	unary *http.Client
 
 	mu           sync.RWMutex
 	latest       *blocks.Header
@@ -101,6 +130,7 @@ func NewHTTP(ctx context.Context, cfg HTTPConfig) (*Client, error) {
 	c := &Client{
 		cfg:   cfg,
 		hc:    cfg.HTTPClient,
+		unary: &http.Client{Timeout: 10 * time.Second, Transport: cfg.HTTPClient.Transport},
 		cache: make(map[int64]*blocks.Header),
 		subs:  make(map[int]*subscription),
 	}
@@ -199,6 +229,10 @@ func (c *Client) Prove(ctx context.Context, path string, height int64) (*blocks.
 
 	payload, err := c.get(ctx, u.String())
 	if err != nil {
+		var se *StatusError
+		if errors.As(err, &se) && se != nil && se.StatusCode == http.StatusNotImplemented {
+			return nil, blocks.ErrProveNotImplemented
+		}
 		return nil, err
 	}
 	var proof blocks.Proof
@@ -510,6 +544,17 @@ func (c *Client) fanout(h *blocks.Header) {
 	}
 }
 
+// FetchLatest always GETs /block/latest (no cache). Used by the host failover
+// wrapper so a mid-session dapi outage is visible on the next Latest().
+func (c *Client) FetchLatest(ctx context.Context) (*blocks.Header, error) {
+	return c.fetchAndVerifyLatest(ctx)
+}
+
+// FetchAt always GETs /block/:height (no cache).
+func (c *Client) FetchAt(ctx context.Context, height int64) (*blocks.Header, error) {
+	return c.fetchAndVerifyAt(ctx, height)
+}
+
 func (c *Client) fetchAndVerifyLatest(ctx context.Context) (*blocks.Header, error) {
 	u, err := c.joinURL("/block/latest")
 	if err != nil {
@@ -559,13 +604,13 @@ func (c *Client) get(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := c.hc.Do(req)
+	resp, err := c.unary.Do(req)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("blockoracle/client: GET %s: status %d", url, resp.StatusCode)
+		return nil, &StatusError{URL: url, StatusCode: resp.StatusCode}
 	}
 	return io.ReadAll(resp.Body)
 }

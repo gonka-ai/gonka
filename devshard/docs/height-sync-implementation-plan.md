@@ -4,14 +4,14 @@
 **Test catalog (from `devshard-testenv`):** [`height-sync-tests.md`](./height-sync-tests.md)  
 **Related:** [`proposals/CPOC_PROTOCOL.md`](./proposals/CPOC_PROTOCOL.md), [`proposals/FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`](./proposals/FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md), [`proposals/VALIDATION_PROTOCOL_PROPOSAL.md`](./proposals/VALIDATION_PROTOCOL_PROPOSAL.md)
 
-**Status:** Phases **A**, **B**, and **C** landed on this branch. Catalog §2–§4 pass (`go test ./heightsync/... ./transport/... ./testenv/scenarios/ -run HeightSync`; held-response tests need `-tags=dev`). Phase C is `citest-height-sync` against this mock-dapi chainoracle (no `heightsyncd`). Phases D–F not started. The oracle substrate (`devshard/chainoracle/blocks`) and the mock-dapi mount already exist.
+**Status:** Phases **A**–**D** landed on this branch (dapi HTTP mount lives in `decentralized-api` and is committed separately). Catalog §2–§4 pass (`go test ./heightsync/... ./transport/... ./testenv/scenarios/ -run HeightSync`; held-response tests need `-tags=dev`). Phase C is `citest-height-sync` against this mock-dapi chainoracle (no `heightsyncd`). Phase D unit tests are D1–D8, D10, D11 (D9 is Phase E). The oracle substrate (`devshard/chainoracle/blocks`) and the mock-dapi mount already exist.
 
 | Phase | Status | What’s on this branch |
 | ----- | ------ | --------------------- |
 | **A** | ✅ | `devshard/heightsync`, envelope, `MsgForceHeightSyncTurn` oneof 9, host/user/transport/state seams on `chainoracle/blocks`. Catalog §2–§3. |
 | **B** | ✅ | In-process e2e in `testenv/scenarios/heightsync_anchor_e2e_*.go` (static `blocks.BlockOracle`s, `/devshard/v2`, numeric escrow ids). Catalog §4 including `-tags=dev` E2/E3/E8. |
 | **C** | ✅ | Container citest `citest-height-sync` against mock-dapi `/block/*` (optional `DEVSHARD_CHAINORACLE_URL`; default compose unchanged) |
-| **D** | ⏳ | Production dapi height+hash + old-dapi fallback |
+| **D** | ✅ | Hash-only Tendermint observer; direct-chain adapter; host failover (old dapi / dapi-down). Dapi `/block/*` mount is in `decentralized-api` (separate commit). |
 | **E** | ⏳ | Log plane (heartbeat, sync vector/state, repair, close-ready) |
 | **F** | ⏳ | Strong / `light_block` / dispute adjudication |
 
@@ -120,7 +120,7 @@ Each phase is independently shippable. Strong is last, matching `devshard-testen
 | **A** | `heightsync/` + envelope + force turn + host/user/transport/state seams, imports on `chainoracle/blocks` | §7–§9, §13–§17 Anchor + `(C-quorum)` | Yes | ✅ |
 | **B** | In-process e2e on current `testenv/scenarios` | catalog §4 | Yes, path remap | ✅ |
 | **C** | Container citest `citest-height-sync` against mock-dapi chainoracle (no `heightsyncd`) | catalog §5 A–C | Adapt | ✅ |
-| **D** | Dapi mounts **height+hash** (`/block/latest`, `/block/:height`); hash-only Tendermint observer; **v5 ↔ old dapi** fallback. **No** `Prove()`, **no** commit-quorum requirement. | plan §7 | New | ⏳ |
+| **D** | Dapi mounts **height+hash** (`/block/latest`, `/block/:height`); hash-only Tendermint observer; **v5 ↔ old dapi** fallback. **No** `Prove()`, **no** commit-quorum requirement. | plan §7 | New | ✅ |
 | **E** | **Log plane:** `MsgHeartbeat` / `MsgHeightAck`, `observed_height`, turn record, `sync_vector`, `sync_state`, `peer_seen`, repair probe, close-ready arming, L1–L7, `(C-turn)`, marking of attributable events | §10–§12, §14 log-plane, §17 `(C-turn)`, §18.2.1, §20 params | New | ⏳ |
 | **F** | **Strong only:** `light_block` + `D`-band escalation + `(C-strong)`/`(C-hybrid)`; dapi `Header.Commit` + IAVL `Prove()`; dispute adjudication and evidence packets | §8, §15 Strong proof, §18.4, catalog §8 | New | ⏳ |
 
@@ -292,8 +292,10 @@ Height-sync is **opt-in** on production binaries. Unset env keeps today's host a
 | Env | Default | Effect |
 | --- | ------- | ------ |
 | `DEVSHARD_CHAINORACLE_URL` | unset | no oracle, no envelope sections |
+| `DEVSHARD_HEIGHTSYNC` | unset | `1`/`true` enables chain-only height-sync without a dapi URL |
 | `DEVSHARD_HEIGHTSYNC_K` | `10` | cadence spacing |
 | `DEVSHARD_HEIGHTSYNC_SLOTS` | `1` | sync-turn width |
+| `DEVSHARD_HEIGHTSYNC_PROBE_INTERVAL` | `30m` | re-probe dapi after a transport miss (`chain.DefaultRPCProbeInterval`) |
 | `DEVSHARD_LOG_LEVEL` | unset (`info`) | set `debug` in citest so `heightsync: emit` is visible |
 
 Default `testenv/docker-compose.yml` / gencompose output does **not** set `DEVSHARD_CHAINORACLE_URL`. Only `citest-height-sync` patches the generated compose (`EnableHeightSyncCompose` → `http://mock-dapi:9100`).
@@ -304,7 +306,7 @@ Makefile target `citest-height-sync` (auto-discovered by `list-citest-targets`):
 | -- | -------------------------- | -------------- |
 | A | Cadence logs on real compose | `TestHeightSync_CadenceEmitsAnchor`: mock-dapi `/block/latest` live; first chat is a sync-turn Anchor (`heightsync: emit` `mode=anchor` in compose logs) |
 | B | Lost first response / force turn / cheating trail | Lost-first: `TestHeightSync_LostFirstChunk` (same mock-openai fault as A1, height-sync on). Force/session-start: covered by A (nonce 1). Cheating-trail mutate hooks stay in-process e2e (`testenv/scenarios`, catalog §4) — production binaries have no response-mutate hook |
-| C | Feed stop → Omit / degraded; recover → Anchor | `TestHeightSync_FeedStoppedOmitsThenRecovers`: `docker compose pause mock-dapi` after a live Anchor; next chat is `mode=omit` or `tip_stale_after_ms`; unpause recovers |
+| C | Feed stop → Omit / degraded; recover → Anchor | `TestHeightSync_FeedStoppedOmitsThenRecovers`: `docker compose pause mock-dapi` after a live Anchor; next chat is `mode=omit` or `tip_stale_after_ms`; unpause recovers. mock-chain does not serve Comet `/block`, so failover cannot Anchor while mock-dapi is paused (D10 is the unit test for a live chain). |
 
 Also `TestHeightSync_MockDapiBlockLatest` (D6): `/block/latest` advances on the stock mock-dapi, no height-sync env required.
 
@@ -331,7 +333,7 @@ CometBFT stays **inside** a `BlockOracle` adapter, the same way `common/chain.Ne
 
 ### 7.2 Mount in production dapi
 
-`decentralized-api` currently has **no** `devshard` require. Add:
+This mount lives in `decentralized-api` and is committed on a **separate branch** from the `devshard` Phase D work. `decentralized-api` currently has **no** `devshard` require. Add:
 
 ```
 require devshard v0.0.0

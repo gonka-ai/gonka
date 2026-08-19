@@ -1,0 +1,59 @@
+package observer
+
+import (
+	"bytes"
+	"context"
+	"testing"
+	"time"
+
+	"github.com/cometbft/cometbft/crypto/tmhash"
+	cmtversion "github.com/cometbft/cometbft/proto/tendermint/version"
+	ctypes "github.com/cometbft/cometbft/rpc/core/types"
+	cmttypes "github.com/cometbft/cometbft/types"
+	"github.com/stretchr/testify/require"
+)
+
+func TestNewTendermint_EmptyRPCURL(t *testing.T) {
+	_, err := NewTendermint(context.Background(), TendermintConfig{})
+	require.Error(t, err)
+}
+
+func TestObserver_ResultBlockToHeader_HashOnly(t *testing.T) {
+	hdr := cmttypes.Header{
+		Version: cmtversion.Consensus{Block: 11},
+		ChainID: "gonka-test",
+		Height:  42,
+		Time:    time.Unix(1_700_000_000, 0).UTC(),
+		LastBlockID: cmttypes.BlockID{
+			Hash: bytes.Repeat([]byte{1}, tmhash.Size),
+			PartSetHeader: cmttypes.PartSetHeader{
+				Total: 1,
+				Hash:  bytes.Repeat([]byte{2}, tmhash.Size),
+			},
+		},
+		LastCommitHash:     bytes.Repeat([]byte{3}, tmhash.Size),
+		DataHash:           bytes.Repeat([]byte{4}, tmhash.Size),
+		ValidatorsHash:     bytes.Repeat([]byte{5}, tmhash.Size),
+		NextValidatorsHash: bytes.Repeat([]byte{6}, tmhash.Size),
+		ConsensusHash:      bytes.Repeat([]byte{7}, tmhash.Size),
+		AppHash:            []byte{9, 9, 9},
+		LastResultsHash:    bytes.Repeat([]byte{8}, tmhash.Size),
+		EvidenceHash:       bytes.Repeat([]byte{10}, tmhash.Size),
+		ProposerAddress:    bytes.Repeat([]byte{11}, 20),
+	}
+	block := &cmttypes.Block{Header: hdr}
+	res := &ctypes.ResultBlock{
+		Block:   block,
+		BlockID: cmttypes.BlockID{Hash: block.Hash()},
+	}
+
+	got, err := HeaderFromResultBlock(res)
+	require.NoError(t, err)
+	require.Equal(t, int64(42), got.Height)
+	require.Equal(t, "gonka-test", got.ChainID)
+	require.Equal(t, block.Hash().Bytes(), got.BlockHash)
+	require.Empty(t, got.Commit.Signatures, "Phase D is hash-only; Commit stays empty until F")
+	require.Empty(t, got.ValidatorsHash)
+	require.Empty(t, got.NextValidatorsHash)
+	require.Empty(t, got.AppHash)
+}

@@ -214,9 +214,9 @@ generated compose file.
 | Phase A | ✅ | `TestHeightSync_CadenceEmitsAnchor` | First chat is a sync-turn / session-start Anchor (`heightsync: emit` `mode=anchor` in compose logs). `/block/latest` is live (see D6). |
 | Phase B | ✅ | `TestHeightSync_LostFirstChunk`; force/session-start covered by A | Lost first SSE chunk still completes with height-sync wired. Cheating-trail mutate hooks remain in-process e2e (catalog §4) — production binaries have no response-mutate hook. |
 | Phase C | ✅ | `TestHeightSync_FeedStoppedOmitsThenRecovers` | `docker compose pause mock-dapi` → Omit or degraded Anchor (`tip_stale_after_ms`); unpause recovers a live Anchor. |
-| Phase D | ⏳ | Container ports of E1..E11 | Courier-mode + confirmation under container stack. |
+| Phase D | ✅ | D1–D8, D10, D11 (unit). D7 is the old-dapi unit stand-in. Dapi HTTP mount is a separate `decentralized-api` commit. | Hash-only observer + direct chain + host failover against old dapi (404) and dapi-down (transport). |
 | Phase E | ⏳ | Container ports of Strong-mode scenarios (S1..S12, §8) | Real `LightBlock` proofs + `D` band against multi-process oracles. |
-| — | ⏳ | D7 (§6) | Simulated **old** dapi with no `/block/*`. D6 is ✅ `TestHeightSync_MockDapiBlockLatest`. |
+| — | ✅ | D7 (§6) | Simulated **old** dapi with no `/block/*`. D6 is ✅ `TestHeightSync_MockDapiBlockLatest`. |
 | — | ⏳ | H26, H27 (§7.6) | Heartbeat cadence on a quiet compose escrow, and degraded turns with bounded probe traffic when one host is stopped. |
 
 ---
@@ -232,17 +232,17 @@ down**, by failing over to the direct-chain adapter in the shape of
 
 | ID | Test (planned name) | Package | What it will prove |
 | -- | ------------------- | ------- | ------------------ |
-| D1 | ⏳ `TestObserver_ResultBlockToHeader_HashOnly` | `chainoracle/blocks/observer` | Fixture `ResultBlock` maps to `Header` with `BlockHash == Block.Hash()` and an **empty** `Commit.Signatures`. |
-| D2 | ⏳ `TestDirectChainOracle_PrefersGRPC_FallsBackToRPC` | `chainoracle/blocks` | Adapter over stub gRPC + Comet RPC sets `Latest().BlockHash`, leaves `Commit` empty, prefers gRPC, uses RPC when gRPC is down. |
-| D3 | ⏳ `TestHostOracle_BlockLatest200_UsesChainOracle` | `devshard/heightsync` | With `/block/latest` returning 200 the host uses the chainoracle client and never touches Comet RPC; Anchor still emits. |
-| D4 | ⏳ `TestHostOracle_BlockLatest404_FallsBackToChain` | `devshard/heightsync` | Capability miss (old dapi) falls back to direct chain; the scheduler still emits Anchor. |
-| D5 | ⏳ `TestHostOracle_DapiAndChainMissing_OmitsAndStale` | `devshard/heightsync` | Both sources gone ⇒ Omit + `ConfirmStale`, no errors reach inference. |
+| D1 | ✅ `TestObserver_ResultBlockToHeader_HashOnly` | `chainoracle/blocks/observer` | Fixture `ResultBlock` maps to `Header` with `BlockHash == Block.Hash()` and an **empty** `Commit.Signatures`. |
+| D2 | ✅ `TestDirectChainOracle_PrefersGRPC_FallsBackToRPC` | `chainoracle/blocks/direct` | Adapter over stub gRPC + Comet RPC sets `Latest().BlockHash`, leaves `Commit` empty, prefers gRPC, uses RPC when gRPC is down. |
+| D3 | ✅ `TestHostOracle_BlockLatest200_UsesChainOracle` | `chainoracle/blocks/failover`, `heightsync` | With `/block/latest` returning 200 the host uses the chainoracle client and never touches Comet RPC; Anchor still emits. |
+| D4 | ✅ `TestHostOracle_BlockLatest404_FallsBackToChain` | `chainoracle/blocks/failover`, `heightsync` | Capability miss (old dapi) falls back to direct chain; the scheduler still emits Anchor. |
+| D5 | ✅ `TestHostOracle_DapiAndChainMissing_OmitsAndStale` | `chainoracle/blocks/failover`, `heightsync` | Both sources gone ⇒ Omit + `ConfirmStale`, no errors reach inference. |
 | D6 | ✅ `TestHeightSync_MockDapiBlockLatest` | `testenv/citest` | Current mock-dapi (has `/block/*`) serves advancing heights; v5 stack green without heightsyncd. |
-| D7 | ⏳ `TestContainerE2E_HeightSync_OldDapiChainOnly` | container / unit | Simulated old dapi (no `/block/*`, chain RPC only): cadence Anchors still flow and Strong is never claimed. |
-| D8 | ⏳ `TestHostOracle_ProveEndpointAbsent_AnchorUnaffected` | `devshard/heightsync` | `/block/:height/prove` absent or 501 leaves the Anchor path untouched. |
+| D7 | ✅ `TestContainerE2E_HeightSync_OldDapiChainOnly` | `chainoracle/blocks/failover` | Simulated old dapi (no `/block/*`, chain RPC only): cadence Anchors still flow and Strong is never claimed. |
+| D8 | ✅ `TestHostOracle_ProveEndpointAbsent_AnchorUnaffected` | `chainoracle/blocks/failover` | `/block/:height/prove` absent or 501 leaves the Anchor path untouched. |
 | D9 | ⏳ `TestHeartbeat_HashOnlyOracle_TurnCompletes` | `devshard/heightsync` | A heartbeat turn (§7) over a hash-only direct-chain oracle reaches `complete` without requesting Strong. |
-| D10 | ⏳ `TestHostOracle_RuntimeFailover_DapiGoesDown` | `devshard/heightsync` | dapi answered 200, then refuses connections: the next `Latest()` uses direct chain, Anchor still emits, no host restart. |
-| D11 | ⏳ `TestHostOracle_RuntimeFailback_DapiRecovers` | `devshard/heightsync` | After the probe interval the next `Latest()` is back on the chainoracle client, again with no restart. |
+| D10 | ✅ `TestHostOracle_RuntimeFailover_DapiGoesDown` | `chainoracle/blocks/failover` | dapi answered 200, then refuses connections: the next `Latest()` uses direct chain, Anchor still emits, no host restart. |
+| D11 | ✅ `TestHostOracle_RuntimeFailback_DapiRecovers` | `chainoracle/blocks/failover` | After the probe interval the next `Latest()` is back on the chainoracle client, again with no restart. |
 
 ---
 

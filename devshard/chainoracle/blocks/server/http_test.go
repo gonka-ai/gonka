@@ -197,3 +197,32 @@ func TestServer_BadHeight(t *testing.T) {
 	defer resp.Body.Close()
 	require.Equal(t, http.StatusBadRequest, resp.StatusCode)
 }
+
+type hashOnlyOracle struct{}
+
+func (hashOnlyOracle) Latest(context.Context) (*blocks.Header, error) {
+	return blocks.HashOnlyHeader(1, time.Unix(1, 0).UTC(), "gonka-test", []byte{1}), nil
+}
+func (hashOnlyOracle) At(ctx context.Context, _ int64) (*blocks.Header, error) {
+	return hashOnlyOracle{}.Latest(ctx)
+}
+func (hashOnlyOracle) Prove(context.Context, string, int64) (*blocks.Proof, error) {
+	return nil, blocks.ErrProveNotImplemented
+}
+func (hashOnlyOracle) Subscribe(context.Context, int64) (<-chan *blocks.Header, error) {
+	ch := make(chan *blocks.Header)
+	close(ch)
+	return ch, nil
+}
+
+func TestServer_Prove_NotImplemented(t *testing.T) {
+	e := echo.New()
+	server.Mount(e.Group(""), hashOnlyOracle{})
+	ts := httptest.NewServer(e)
+	t.Cleanup(ts.Close)
+
+	resp, err := http.Get(ts.URL + "/block/1/prove?path=/escrow/1")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusNotImplemented, resp.StatusCode)
+}

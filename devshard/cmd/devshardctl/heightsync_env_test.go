@@ -16,6 +16,7 @@ func resetHeightSyncForTest() {
 func TestExtraClientConfigFromEnv_EmptyIsNil(t *testing.T) {
 	resetHeightSyncForTest()
 	t.Setenv("DEVSHARD_CHAINORACLE_URL", "")
+	t.Setenv("DEVSHARD_HEIGHTSYNC", "")
 	cfg, err := extraClientConfigFromEnv()
 	require.NoError(t, err)
 	require.Nil(t, cfg)
