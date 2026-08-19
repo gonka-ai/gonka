@@ -126,7 +126,10 @@ type drainableServer interface {
 // already accepted. It returns nil when every one of them finished.
 func drainAndShutdown(srv drainableServer, cfg config, force <-chan os.Signal) error {
 	srv.BeginDrain()
-	awaitDrainAnnouncement(cfg.DrainAnnounce, force)
+	if sig := awaitDrainAnnouncement(cfg.DrainAnnounce, force); sig != nil {
+		return closeRemainingConnections(srv,
+			fmt.Errorf("operator sent %s during drain announcement", sig))
+	}
 	return gracefulShutdown(srv, cfg.ShutdownBudget, force)
 }
 
@@ -175,6 +178,10 @@ func gracefulShutdown(srv drainableServer, budget time.Duration, force <-chan os
 			cancel()
 		}
 	}
+	return closeRemainingConnections(srv, reason)
+}
+
+func closeRemainingConnections(srv drainableServer, reason error) error {
 	slog.Warn("closing remaining connections", "reason", reason)
 	if err := srv.ForceClose(); err != nil {
 		return errors.Join(reason, err)
@@ -205,10 +212,12 @@ func shutdownFailure(budget time.Duration, err error) error {
 }
 
 // awaitDrainAnnouncement keeps serving for the announce window so the balancer
-// can observe the failing readiness check. A second signal cuts it short.
-func awaitDrainAnnouncement(window time.Duration, force <-chan os.Signal) {
+// can observe the failing readiness check. A second signal is returned to the
+// caller as an escalation; consuming it here must not make it disappear before
+// the force-close phase.
+func awaitDrainAnnouncement(window time.Duration, force <-chan os.Signal) os.Signal {
 	if window <= 0 {
-		return
+		return nil
 	}
 	timer := time.NewTimer(window)
 	defer timer.Stop()
@@ -216,7 +225,9 @@ func awaitDrainAnnouncement(window time.Duration, force <-chan os.Signal) {
 	select {
 	case sig := <-force:
 		slog.Info("drain announcement cut short", "signal", sig.String())
+		return sig
 	case <-timer.C:
+		return nil
 	}
 }
 

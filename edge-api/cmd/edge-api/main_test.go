@@ -139,23 +139,26 @@ func TestLoadConfig_AcceptsDrainAnnounceBoundary(t *testing.T) {
 
 func TestAwaitDrainAnnouncement_WaitsOutTheWindow(t *testing.T) {
 	start := time.Now()
-	awaitDrainAnnouncement(75*time.Millisecond, make(chan os.Signal))
+	sig := awaitDrainAnnouncement(75*time.Millisecond, make(chan os.Signal))
+	assert.Nil(t, sig)
 	assert.GreaterOrEqual(t, time.Since(start), 75*time.Millisecond)
 }
 
-func TestAwaitDrainAnnouncement_SecondSignalCutsItShort(t *testing.T) {
+func TestAwaitDrainAnnouncement_ReturnsSecondSignal(t *testing.T) {
 	force := make(chan os.Signal, 1)
 	force <- syscall.SIGTERM
 
 	start := time.Now()
-	awaitDrainAnnouncement(30*time.Second, force)
+	sig := awaitDrainAnnouncement(30*time.Second, force)
+	assert.Equal(t, syscall.SIGTERM, sig)
 	assert.Less(t, time.Since(start), 5*time.Second,
 		"a second signal must not wait out the announce window")
 }
 
 func TestAwaitDrainAnnouncement_ZeroWindowReturnsImmediately(t *testing.T) {
 	start := time.Now()
-	awaitDrainAnnouncement(0, make(chan os.Signal))
+	sig := awaitDrainAnnouncement(0, make(chan os.Signal))
+	assert.Nil(t, sig)
 	assert.Less(t, time.Since(start), time.Second)
 }
 
