@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/hex"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,7 +13,9 @@ import (
 
 	"devshard/chainoracle/blocks"
 	"devshard/heightsync"
+	"devshard/host"
 	"devshard/logging"
+	"devshard/types"
 )
 
 type pendingUntrustedTip struct {
@@ -30,6 +33,7 @@ func WithHeightSync(sched *heightsync.AnchorScheduler, logOracle blocks.BlockOra
 		s.heightSyncLogOracle = logOracle
 		if sched != nil {
 			s.heightSyncAudit = heightsync.NewAuditRing(0)
+			s.heightSyncMarks = heightsync.NewMarkLog()
 			s.pendingUntrustedBySession = make(map[string]*pendingUntrustedTip)
 			// E9: seed RPC is on whenever height sync is. WithHeightSyncSeedRPC(false)
 			// after this option still disables it (host stays correct, just unseedable).
@@ -49,6 +53,14 @@ func WithHeightSyncSeedRPC(enabled bool) ServerOption {
 // HeightSyncAuditRing returns the inbound audit ring when height sync is enabled, or nil.
 func (s *Server) HeightSyncAuditRing() *heightsync.AuditRing {
 	return s.heightSyncAudit
+}
+
+// HeightSyncMarks returns L4/L5a marks recorded at the transport edge.
+func (s *Server) HeightSyncMarks() *heightsync.MarkLog {
+	if s == nil {
+		return nil
+	}
+	return s.heightSyncMarks
 }
 
 // SetHeightSyncResponseAfterSignHook registers a hook invoked after the host signs an
@@ -451,5 +463,56 @@ func (s *Server) attachResponseOriginSignature(sec *heightsync.HeightSyncSection
 	sec.SenderSignature = sig
 	if s.heightSyncResponseAfterSignHook != nil {
 		s.heightSyncResponseAfterSignHook(sec, nonce)
+	}
+}
+
+func (s *Server) recordEnvelopeBindingRequest(c echo.Context, req host.HostRequest, sec *heightsync.HeightSyncSection, oracleHdr *blocks.Header) {
+	if s == nil || s.heightSyncMarks == nil || sec == nil {
+		return
+	}
+	var txs []*types.DevshardTx
+	for _, d := range req.Diffs {
+		txs = append(txs, d.Txs...)
+	}
+	var local uint64
+	if oracleHdr != nil && oracleHdr.Height > 0 {
+		local = uint64(oracleHdr.Height)
+	}
+	marks := heightsync.CheckEnvelopeBinding(heightsync.LogPlaneInput{
+		Nonce:        req.Nonce,
+		Txs:          txs,
+		Sec:          sec,
+		LocalAligned: local,
+		RequestLeg:   requestLegEvidenceFromContext(c, s.host.EscrowID()),
+	}, heightsync.DefaultHeartbeatConfig())
+	s.heightSyncMarks.AppendAll(marks)
+}
+
+func (s *Server) recordEnvelopeBindingResponse(nonce uint64, sec *heightsync.HeightSyncSection) {
+	if s == nil || s.heightSyncMarks == nil || sec == nil {
+		return
+	}
+	marks := heightsync.CheckEnvelopeBinding(heightsync.LogPlaneInput{
+		Nonce: nonce,
+		Txs:   s.host.MempoolTxs(),
+		Sec:   sec,
+	}, heightsync.DefaultHeartbeatConfig())
+	s.heightSyncMarks.AppendAll(marks)
+}
+
+func requestLegEvidenceFromContext(c echo.Context, escrowID string) *heightsync.RequestLegEvidence {
+	if c == nil || c.Request() == nil {
+		return nil
+	}
+	body, _ := getBody(c)
+	sigHex := c.Request().Header.Get(HeaderSignature)
+	tsStr := c.Request().Header.Get(HeaderTimestamp)
+	sig, _ := hex.DecodeString(sigHex)
+	ts, _ := strconv.ParseInt(tsStr, 10, 64)
+	return &heightsync.RequestLegEvidence{
+		Body:      body,
+		Sig:       sig,
+		Timestamp: ts,
+		EscrowID:  escrowID,
 	}
 }

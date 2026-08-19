@@ -59,6 +59,10 @@ func registerServer(g *echo.Group, srv *Server) {
 }
 
 func setupServerEnv(t *testing.T, opts ...ServerOption) *serverTestEnv {
+	return setupServerEnvHost(t, nil, opts...)
+}
+
+func setupServerEnvHost(t *testing.T, hostOpts []host.HostOption, opts ...ServerOption) *serverTestEnv {
 	t.Helper()
 	hostSigner := testutil.MustGenerateKey(t)
 	userSigner := testutil.MustGenerateKey(t)
@@ -78,7 +82,9 @@ func setupServerEnv(t *testing.T, opts ...ServerOption) *serverTestEnv {
 		InitialBalance: 100000,
 	}))
 
-	h, err := host.NewHost(sm, hostSigner, engine, "escrow-1", group, nil, host.WithGrace(100), host.WithStorage(store))
+	allHost := []host.HostOption{host.WithGrace(100), host.WithStorage(store)}
+	allHost = append(allHost, hostOpts...)
+	h, err := host.NewHost(sm, hostSigner, engine, "escrow-1", group, nil, allHost...)
 	require.NoError(t, err)
 
 	srv, err := NewServer(h, store, verifier, userSigner.Address(), opts...)

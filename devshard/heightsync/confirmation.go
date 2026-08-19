@@ -23,6 +23,18 @@ type ConfirmationView interface {
 	IsStrictlyConfirmed(h uint64) ConfirmState
 }
 
+// ConfirmationRule selects which confirmation predicate IsStrictlyConfirmed uses.
+type ConfirmationRule int
+
+const (
+	// RuleQuorum is (C-quorum): audit-ring originators, the testenv default.
+	RuleQuorum ConfirmationRule = iota
+	// RuleTurn is (C-turn): a complete SyncTurnRecord with ≥ Q counting acks.
+	RuleTurn
+	// RuleHybrid is ConfirmConfirmed if either Quorum or Turn clears.
+	RuleHybrid
+)
+
 // ConfirmationConfig tunes quorum counting for a single verifier V.
 type ConfirmationConfig struct {
 	// Roster is the deployment host roster (validator addresses). Only these
@@ -36,6 +48,10 @@ type ConfirmationConfig struct {
 	WindowHeights int64
 	Oracle        blocks.BlockOracle
 	Now           func() time.Time
+	// Rule selects (C-quorum) / (C-turn) / hybrid. Zero is RuleQuorum.
+	Rule ConfirmationRule
+	// Turns is required for RuleTurn and RuleHybrid.
+	Turns *TurnTracker
 }
 
 type originatorEntry struct {
@@ -53,6 +69,8 @@ type ConfirmationIndex struct {
 	windowHeights int64
 	oracle        blocks.BlockOracle
 	now           func() time.Time
+	rule          ConfirmationRule
+	turns         *TurnTracker
 
 	byOriginator     map[string]originatorEntry
 	confirmedHeights map[uint64]struct{}
@@ -99,6 +117,8 @@ func NewConfirmationIndex(cfg ConfirmationConfig) *ConfirmationIndex {
 		windowHeights:    w,
 		oracle:           cfg.Oracle,
 		now:              now,
+		rule:             cfg.Rule,
+		turns:            cfg.Turns,
 		byOriginator:     make(map[string]originatorEntry),
 		confirmedHeights: make(map[uint64]struct{}),
 	}
@@ -146,6 +166,13 @@ func (idx *ConfirmationIndex) RecordAttestation(a AnchorAttestation) {
 	idx.byOriginator[key] = ent
 }
 
+func turnConfirmState(turns *TurnTracker, h uint64) ConfirmState {
+	if turns != nil && turns.Confirms(h) {
+		return ConfirmConfirmed
+	}
+	return ConfirmPending
+}
+
 // IsStrictlyConfirmed implements ConfirmationView.
 func (idx *ConfirmationIndex) IsStrictlyConfirmed(h uint64) ConfirmState {
 	if idx == nil || h == 0 {
@@ -155,6 +182,23 @@ func (idx *ConfirmationIndex) IsStrictlyConfirmed(h uint64) ConfirmState {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
+	if idx.rule == RuleTurn {
+		return turnConfirmState(idx.turns, h)
+	}
+
+	q := idx.quorumConfirmedLocked(h)
+	if q == ConfirmConfirmed {
+		return ConfirmConfirmed
+	}
+	if idx.rule == RuleHybrid {
+		if t := turnConfirmState(idx.turns, h); t == ConfirmConfirmed {
+			return ConfirmConfirmed
+		}
+	}
+	return q
+}
+
+func (idx *ConfirmationIndex) quorumConfirmedLocked(h uint64) ConfirmState {
 	if _, ok := idx.confirmedHeights[h]; ok {
 		return ConfirmConfirmed
 	}

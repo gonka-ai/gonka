@@ -18,6 +18,7 @@ import (
 
 	"devshard/chainoracle/blocks"
 	"devshard/heightsync"
+	"devshard/host"
 	"devshard/internal/testutil"
 	"devshard/logging"
 	"devshard/signing"
@@ -757,4 +758,88 @@ func TestServer_RequestLeg_DoesNotVerifyOriginSig(t *testing.T) {
 	require.Empty(t, hs.SenderSignature)
 	rec := postProtobufInference(t, env, 1, hs)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+}
+
+func postHeartbeatProtobuf(t *testing.T, env *serverTestEnv, nonce uint64, height uint64, hash []byte, hs *heightsync.HeightSyncSection) *httptest.ResponseRecorder {
+	t.Helper()
+	hb := &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+		TurnSeq:           1,
+		ObservedHeight:    height,
+		ObservedBlockHash: hash,
+		SlotsNum:          1,
+		Reason:            string(heightsync.ReasonQuietSession),
+	}}}
+	diff := testutil.SignDiff(t, env.userSigner, "escrow-1", nonce, []*types.DevshardTx{hb})
+	dj, err := DiffToJSON(diff)
+	require.NoError(t, err)
+	ir := InferenceRequest{
+		Diffs:   []DiffJSON{dj},
+		Nonce:   nonce,
+		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000},
+	}
+	body, err := MarshalWrappedInferenceRequest(CurrentInferenceEnvelopeSchemaVersion, hs, ir)
+	require.NoError(t, err)
+	return env.doPostContentType(t, "/devshard/v2/sessions/escrow-1/chat/completions", "application/x-protobuf", body)
+}
+
+func TestHeightAck_EnvelopeBindingMismatch(t *testing.T) {
+	or := &heightSyncTestOracle{hdr: &blocks.Header{
+		Height:    77,
+		ChainID:   "chain-x",
+		BlockHash: []byte{0xab, 0xcd},
+	}}
+	sched := heightsync.MustNewAnchorSchedulerFromOracle(10, 1, or)
+	env := setupServerEnvHost(t, []host.HostOption{host.WithChainOracle(or)}, WithHeightSync(sched, or))
+	env.server.SetHeightSyncResponseAfterSignHook(func(sec *heightsync.HeightSyncSection, nonce uint64) {
+		sec.MainnetHeight = 99
+	})
+
+	rec := postHeartbeatProtobuf(t, env, 1, 77, []byte{0xab, 0xcd}, nil)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+	require.True(t, env.server.HeightSyncMarks().HasKind(heightsync.MarkDisputeOriginator))
+}
+
+func TestHeartbeat_RequestLegBindingMismatch(t *testing.T) {
+	or := &heightSyncTestOracle{hdr: &blocks.Header{
+		Height:    77,
+		ChainID:   "chain-x",
+		BlockHash: []byte{0xab, 0xcd},
+	}}
+	sched := heightsync.MustNewAnchorSchedulerFromOracle(10, 1, or)
+	env := setupServerEnvHost(t, []host.HostOption{host.WithChainOracle(or)}, WithHeightSync(sched, or))
+
+	hs := &heightsync.HeightSyncSection{
+		ProofType:           heightsync.AnchorProofType,
+		MainnetHeight:       40,
+		MainnetBlockHashHex: "abcd",
+		Direction:           "request",
+	}
+	rec := postHeartbeatProtobuf(t, env, 1, 77, []byte{0xab, 0xcd}, hs)
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String(), "L4 must not reject the HTTP exchange")
+	require.True(t, env.server.HeightSyncMarks().HasKind(heightsync.MarkDisputeCarrier))
+}
+
+func TestLogPlane_SectionPresentForOneRecipientOnly(t *testing.T) {
+	or := &heightSyncTestOracle{hdr: &blocks.Header{
+		Height:    77,
+		ChainID:   "chain-x",
+		BlockHash: []byte{0xab, 0xcd},
+	}}
+	schedA := heightsync.MustNewAnchorSchedulerFromOracle(10, 1, or)
+	schedB := heightsync.MustNewAnchorSchedulerFromOracle(10, 1, or)
+	envA := setupServerEnvHost(t, []host.HostOption{host.WithChainOracle(or)}, WithHeightSync(schedA, or))
+	envB := setupServerEnvHost(t, []host.HostOption{host.WithChainOracle(or)}, WithHeightSync(schedB, or))
+
+	hs := &heightsync.HeightSyncSection{
+		ProofType:           heightsync.AnchorProofType,
+		MainnetHeight:       40,
+		MainnetBlockHashHex: "abcd",
+		Direction:           "request",
+	}
+	recA := postHeartbeatProtobuf(t, envA, 1, 77, []byte{0xab, 0xcd}, hs)
+	recB := postHeartbeatProtobuf(t, envB, 1, 77, []byte{0xab, 0xcd}, nil)
+	require.Equal(t, http.StatusOK, recA.Code, recA.Body.String())
+	require.Equal(t, http.StatusOK, recB.Code, recB.Body.String())
+	require.True(t, envA.server.HeightSyncMarks().HasKind(heightsync.MarkDisputeCarrier))
+	require.False(t, envB.server.HeightSyncMarks().HasKind(heightsync.MarkDisputeCarrier))
 }

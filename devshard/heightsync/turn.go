@@ -50,6 +50,7 @@ type TurnTracker struct {
 	quorum      int
 	ackDeadline uint64
 	turns       map[uint64]*SyncTurnRecord
+	heartbeatAt map[uint64]uint64 // nonce → turn_seq (L3)
 }
 
 // NewTurnTracker constructs an empty tracker. quorum ≤ 0 uses QuorumForRoster(slotsNum).
@@ -66,6 +67,7 @@ func NewTurnTracker(slotsNum uint64, quorum int, cfg HeartbeatConfig) *TurnTrack
 		quorum:      quorum,
 		ackDeadline: cfg.AckDeadlineBlocks,
 		turns:       make(map[uint64]*SyncTurnRecord),
+		heartbeatAt: make(map[uint64]uint64),
 	}
 }
 
@@ -108,6 +110,10 @@ func (t *TurnTracker) Observe(diffNonce uint64, txs []*types.DevshardTx, hNow ui
 }
 
 func (t *TurnTracker) observeHeartbeat(nonce uint64, hb *types.MsgHeartbeat) {
+	if t.heartbeatAt == nil {
+		t.heartbeatAt = make(map[uint64]uint64)
+	}
+	t.heartbeatAt[nonce] = hb.TurnSeq
 	rec := t.turns[hb.TurnSeq]
 	if rec == nil {
 		slots := hb.SlotsNum
@@ -241,6 +247,50 @@ func (t *TurnTracker) Latest() *SyncTurnRecord {
 		}
 	}
 	return cloneTurn(rec)
+}
+
+// HeartbeatTurn reports the turn_seq of the MsgHeartbeat at nonce, if any.
+func (t *TurnTracker) HeartbeatTurn(nonce uint64) (uint64, bool) {
+	if t == nil {
+		return 0, false
+	}
+	seq, ok := t.heartbeatAt[nonce]
+	return seq, ok
+}
+
+// MaxTurnSeq is the highest turn_seq observed (heartbeats or acks).
+func (t *TurnTracker) MaxTurnSeq() uint64 {
+	if t == nil || len(t.turns) == 0 {
+		return 0
+	}
+	var best uint64
+	for seq := range t.turns {
+		if seq > best {
+			best = seq
+		}
+	}
+	return best
+}
+
+// Clone returns a deep copy so trial-apply / independent verifiers do not share maps.
+func (t *TurnTracker) Clone() *TurnTracker {
+	if t == nil {
+		return nil
+	}
+	cp := &TurnTracker{
+		slotsNum:    t.slotsNum,
+		quorum:      t.quorum,
+		ackDeadline: t.ackDeadline,
+		turns:       make(map[uint64]*SyncTurnRecord, len(t.turns)),
+		heartbeatAt: make(map[uint64]uint64, len(t.heartbeatAt)),
+	}
+	for k, v := range t.turns {
+		cp.turns[k] = cloneTurn(v)
+	}
+	for k, v := range t.heartbeatAt {
+		cp.heartbeatAt[k] = v
+	}
+	return cp
 }
 
 // LastCompletedHeight is h_last: mainnet height at which the last complete turn finished.

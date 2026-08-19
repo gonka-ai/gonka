@@ -10,6 +10,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/signing"
 	"devshard/storage"
@@ -98,6 +99,11 @@ type StateMachine struct {
 
 	warmResolver WarmKeyResolver // optional, nil = no warm key support
 
+	heartbeatCfg     heightsync.HeartbeatConfig
+	turnTracker      *heightsync.TurnTracker
+	maxStampHeight   uint64
+	heightSyncMarks  *heightsync.MarkLog
+
 	// obsDeferred, when non-nil, redirects observability writes made during a
 	// trial apply (ValidateDiff / PreviewLocalBestEffort) into a buffer instead
 	// of the inference store. The buffer is flushed by CommitValidated once the
@@ -153,6 +159,12 @@ func WithStateRootAndProtocolVersion(version string) SMOption {
 // WithVersion is an alias for WithStateRootAndProtocolVersion.
 func WithVersion(version string) SMOption {
 	return WithStateRootAndProtocolVersion(version)
+}
+
+// WithHeartbeatConfig sets log-plane heartbeat knobs (K_hb, D_ack, D). Zero
+// fields fall back to compiled defaults.
+func WithHeartbeatConfig(cfg heightsync.HeartbeatConfig) SMOption {
+	return func(sm *StateMachine) { sm.heartbeatCfg = cfg }
 }
 
 // EffectiveV2Composition reports whether this session uses Phase 1 v2
@@ -226,10 +238,13 @@ func NewStateMachine(
 		committedEntries:   make(map[uint64][]byte),
 		sealedNonces:       make(map[uint64]uint64),
 		inferenceStore:     store,
+		heartbeatCfg:       heightsync.DefaultHeartbeatConfig(),
+		heightSyncMarks:    heightsync.NewMarkLog(),
 	}
 	for _, o := range opts {
 		o(sm)
 	}
+	sm.turnTracker = heightsync.NewTurnTracker(uint64(len(groupCopy)), 0, sm.heartbeatCfg)
 
 	logging.Info("NewStateMachine", "subsystem", "state",
 		"escrow_id", escrowID,
@@ -441,6 +456,7 @@ func (sm *StateMachine) localBestEffortLocked(nonce uint64, txs []*types.Devshar
 		}
 		applied = append(applied, tx)
 	}
+	sm.observeHeightSyncLocked(nonce, applied)
 
 	// Charge per applied nonce only during the active phase.
 	// NOTE: During the finalization round, the `txs` slice will contain a [types.MsgFinalizeRound] message,
@@ -535,6 +551,10 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 		return nil, types.ErrMultipleForceHeightSyncTurnMsgs
 	}
 
+	if err := sm.checkLogPlaneLocked(nonce, txs); err != nil {
+		return nil, err
+	}
+
 	// 3. Snapshot mutable state for rollback on error.
 	snap := sm.snapshotMutable()
 
@@ -545,6 +565,7 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 			return nil, err
 		}
 	}
+	sm.observeHeightSyncLocked(nonce, txs)
 
 	// 5. Charge per applied nonce only during the active phase.
 	if sm.state.Phase == types.PhaseActive {
@@ -774,6 +795,10 @@ type mutableSnapshot struct {
 	HeightSyncTurnK               uint64
 	HeightSyncTurnSlots           uint64
 	HeightSyncTurnReason          string
+	HeightSyncLastCompletedHeight uint64
+	HeightSyncLatestTurnSeq       uint64
+	turnTracker                   *heightsync.TurnTracker
+	maxStampHeight                uint64
 }
 
 func (sm *StateMachine) snapshotMutable() mutableSnapshot {
@@ -810,6 +835,10 @@ func (sm *StateMachine) snapshotMutable() mutableSnapshot {
 		HeightSyncTurnK:               sm.state.HeightSyncTurnK,
 		HeightSyncTurnSlots:           sm.state.HeightSyncTurnSlots,
 		HeightSyncTurnReason:          sm.state.HeightSyncTurnReason,
+		HeightSyncLastCompletedHeight: sm.state.HeightSyncLastCompletedHeight,
+		HeightSyncLatestTurnSeq:       sm.state.HeightSyncLatestTurnSeq,
+		turnTracker:                   sm.turnTracker.Clone(),
+		maxStampHeight:                sm.maxStampHeight,
 	}
 }
 
@@ -832,6 +861,10 @@ func (sm *StateMachine) restoreMutable(snap mutableSnapshot) {
 	sm.state.HeightSyncTurnK = snap.HeightSyncTurnK
 	sm.state.HeightSyncTurnSlots = snap.HeightSyncTurnSlots
 	sm.state.HeightSyncTurnReason = snap.HeightSyncTurnReason
+	sm.state.HeightSyncLastCompletedHeight = snap.HeightSyncLastCompletedHeight
+	sm.state.HeightSyncLatestTurnSeq = snap.HeightSyncLatestTurnSeq
+	sm.turnTracker = snap.turnTracker
+	sm.maxStampHeight = snap.maxStampHeight
 }
 
 func (sm *StateMachine) isDuplicateInferenceID(id uint64) bool {

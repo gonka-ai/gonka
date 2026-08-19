@@ -13,7 +13,7 @@
 | **B** | ✅ | In-process e2e in `testenv/scenarios/heightsync_anchor_e2e_*.go` (static `blocks.BlockOracle`s, `/devshard/v2`, numeric escrow ids). Catalog §4 including `-tags=dev` E2/E3/E8. |
 | **C** | ✅ | Container citest `citest-height-sync` against mock-dapi `/block/*` (optional `DEVSHARD_CHAINORACLE_URL`; default compose unchanged) |
 | **D** | ✅ | Hash-only Tendermint observer; direct-chain adapter; host failover (old dapi / dapi-down). Dapi `/block/*` mount is in `decentralized-api` (separate commit). |
-| **E** | ⏳ | Log plane (heartbeat, sync vector/state, repair, close-ready). **E0–E3 and E9 landed** (§8.15); E4–E8 remain. |
+| **E** | ⏳ | Log plane (heartbeat, sync vector/state, repair, close-ready). **E0–E4 and E9 landed** (§8.15); E5–E8 remain. |
 | **F** | ⏳ | Strong / `light_block` / dispute adjudication |
 
 This plan delivers **the whole spec except the Strong path**, in six phases:
@@ -421,7 +421,7 @@ Catalogued in [`height-sync-tests.md`](./height-sync-tests.md) **§6** with the 
 
 ## 8. Phase E — the log plane (§10, §11, §12, §14 L1–L7, §17 `(C-turn)`)
 
-Design is §8.1–§8.14. The ship order is **§8.15 (E0–E9)**. **E0–E3 and E9 are implemented** on this branch; **E4–E8 are not**.
+Design is §8.1–§8.14. The ship order is **§8.15 (E0–E9)**. **E0–E4 and E9 are implemented** on this branch; **E5–E8 are not**.
 
 ### 8.1 What must be true when E is done
 
@@ -908,11 +908,11 @@ Reuse A–D as-is: `ObservedHeightNow()`, `MsgForceHeightSyncTurn`, the hash-onl
 
 | Step | Status | What |
 | ---- | ------ | ---- |
-| **E0** | ✅ | Proto oneof 10/11, reserved 12/13, `HeartbeatConfig` / `RepairConfig`, snapshot overlay, H25. Protocol-version bump waits for E4 `applyTx`. |
+| **E0** | ✅ | Proto oneof 10/11, reserved 12/13, `HeartbeatConfig` / `RepairConfig`, snapshot overlay, H25. Protocol-version bump waits for hashed record fields (E7 stamps). |
 | **E1** | ✅ | Pure `heightsync` tracker / obligation / ack signing. No user/host wiring. H1 unit, H3–H8, H24, D9. |
 | **E2** | ✅ | User opens heartbeat turns (`session.go` `MaybeHeartbeat`). |
 | **E3** | ✅ | Host acks into mempool. |
-| **E4** | ⏳ | `ValidateDiff` L0–L7, marks, `applyTx`, `(C-turn)`, protocol-version bump. |
+| **E4** | ✅ | `ValidateDiff` L0–L7, marks, `applyTx` fold into `TurnTracker`, `(C-turn)`. |
 | **E5** | ⏳ | Repair probe. |
 | **E6** | ⏳ | Close-ready arming. |
 | **E7** | ⏳ | Optional inference-tx stamps (same bump; can slip). |
@@ -925,7 +925,7 @@ E0 proto/params          ✅
  → E2 user               ✅
  → E3 host               ✅
  → E9 session-open seed ✅
- → E4 ValidateDiff (needs txs on the wire)
+ → E4 ValidateDiff (needs txs on the wire) ✅
  → E5 repair, E6 arming (after tracker + acks)
  → E7 stamps (optional, same bump; E9 first or nonce 1 stays unstamped)
  → E8 citest
@@ -938,7 +938,7 @@ E0 proto/params          ✅
 3. `heightsync/params.go`: `HeartbeatConfig` / `RepairConfig` with defaults `K_hb=1`, `MinRoundsPerBlock=2` (compiled only), `D_ack=1`, `T_idle=3`, and `Validate` (`MinRoundsPerBlock ≥ 2`, `T_idle > K_hb + D_ack`, two cycles inside `F`) (§8.4).
 4. Plumb via the existing runtime-config snapshot so host and user see the same numbers.
 
-**Tests:** H25. **Landed.** Bump the protocol version in the same change that first writes new `applyTx` / record fields (**E4**, not here). `applyTx` still hits `default → ErrEmptyTx` for heartbeat/ack.
+**Tests:** H25. **Landed.** Bump the protocol version in the same change that first writes new hashed `applyTx` / record fields (**E7** stamps). Heartbeat/ack `applyTx` folds a derived `TurnTracker` and does not change `post_state_root`.
 
 #### E1 — Turn math (pure `heightsync`, no wiring) ✅
 
@@ -961,7 +961,7 @@ New files only: `heartbeat.go`, `turn.go`, `syncvector.go`, `syncstate.go`, `pee
 - Skip if `ObservedHeightNow()` is empty (`heartbeat_skipped_no_height`).
 - Include acks in `composeDiffLocked` in arrival order; `sync_vector` reports **turn `s−1` only**.
 
-Call `Session.MaybeHeartbeat`. The span is composed before any host send so acks are not awaited. `applyTx` accepts heartbeat/ack as no-ops so they stay in the signed Diff; turn records / protocol bump remain E4.
+Call `Session.MaybeHeartbeat`. The span is composed before any host send so acks are not awaited. `applyTx` accepts heartbeat/ack; E4 folds them into `TurnTracker` (`h_last` / `turn_seq` are derived, not hashed).
 
 **Tests:** H1 / H3 / H4 in-process (`user/heightsync_test.go`). **Landed.**
 
@@ -978,9 +978,9 @@ The user `MaybeHeartbeat` flush round picks acks up from the host mempool. Open 
 
 **Tests:** H6/H7 against a live host (`user/heightsync_test.go`); H24 host + in-process; host producer tests in `host/heightsync_test.go`. H33 once stamps exist (until then a busy unstamped session still heartbeats). **Landed.**
 
-#### E4 — Verifier L0–L7 + marks ⏳
+#### E4 — Verifier L0–L7 + marks ✅
 
-`logplane.go` + `marks.go`; call from `state.StateMachine.ValidateDiff` (§8.7, §8.11).
+`logplane.go` + `marks.go`; called from `state.StateMachine.applyCore` (ValidateDiff / ApplyDiff) (§8.7, §8.11).
 
 | Tier | Checks | Verdict |
 | ---- | ------ | ------- |
@@ -988,9 +988,9 @@ The user `MaybeHeartbeat` flush round picks acks up from the host mempool. Open 
 | Edge only (`sec != nil`) | L4, L5a | **mark**, never `INVALID` |
 | Deferred | L6 | `DEFERRED_FAIL` when the follower reaches `H` |
 
-Replay / catch-up / gossip pass `sec=nil` so L4/L5a do not run. Persist L4 blobs verbatim (request-leg: signed HTTP; response-leg: origin + field 8). `applyTx` for heartbeat/ack; keep `h_last` / `turn_seq` in escrow state. Add `(C-turn)` as `Rule = Turn`; keep testenv default `(C-quorum)`.
+Replay / catch-up / gossip pass `sec=nil` so L4/L5a do not run. Persist L4 blobs verbatim (request-leg: signed HTTP; response-leg: origin + field 8). `applyTx` for heartbeat/ack folds `TurnTracker` and stores `h_last` / `turn_seq` on escrow state (not hashed — reconstructible from Diff, so no protocol-version bump). `(C-turn)` is `ConfirmationConfig.Rule = Turn`; testenv default stays `(C-quorum)`. L0b is wired but has nothing to check until E7 stamps.
 
-**Tests:** H9, H10, H11, H12, H13, H13a–e, H14, H15, H16, H32. Two independent verifiers, same `Diff` → byte-identical records.
+**Tests:** H9, H10, H11, H12, H13, H13a–e, H14, H15, H16, H32. **Landed.** H30 waits on E7. Two independent verifiers, same `Diff` → byte-identical records.
 
 #### E5 — Repair probe (no blame) ⏳
 
@@ -1142,7 +1142,7 @@ Blockers 1, 3 and 4 all resolve the same way: the section survives, and the achi
 10. ✅ **E2:** User heartbeat dispatch (`MaybeHeartbeat`); H1/H3/H4 in-process (§8.5).
 10b. ✅ **E3:** Host ack into mempool (§8.6).
 10c. ✅ **E9:** Session-open height seed so nonce 1 stamps (§8.5.1); H34–H38. Transport-only; no version bump. Must precede E7.
-11. ⏳ **E4:** L0–L7 in `ValidateDiff` (L4 / L5a at the transport edge) + marks + `(C-turn)`; H9–H16, H13a–e, H32.
+11. ✅ **E4:** L0–L7 in `ValidateDiff` (L4 / L5a at the transport edge) + marks + `(C-turn)`; H9–H16, H13a–e, H32.
 12. ⏳ **E5:** Repair probe + budgets; H17–H20.
 13. ⏳ **E6:** Close-ready arming + `CloseReadyView`; H21–H23.
 14. ⏳ **E7 (optional, same bump):** inference-tx stamps; H2, H28–H31, H33.

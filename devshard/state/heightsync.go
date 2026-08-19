@@ -90,7 +90,7 @@ func (sm *StateMachine) applyForceHeightSyncTurn(msg *types.MsgForceHeightSyncTu
 	return nil
 }
 
-// applyHeartbeat accepts MsgHeartbeat into Diff. Turn records and L0–L7 land in E4.
+// applyHeartbeat accepts MsgHeartbeat into Diff. L0–L7 run in applyCore via CheckDiffLogPlane.
 func (sm *StateMachine) applyHeartbeat(msg *types.MsgHeartbeat) error {
 	if msg == nil {
 		return types.ErrEmptyTx
@@ -101,7 +101,7 @@ func (sm *StateMachine) applyHeartbeat(msg *types.MsgHeartbeat) error {
 	return nil
 }
 
-// applyHeightAck accepts MsgHeightAck into Diff. Signature/causality checks land in E4.
+// applyHeightAck accepts MsgHeightAck into Diff. Signature/causality checks run in applyCore.
 func (sm *StateMachine) applyHeightAck(msg *types.MsgHeightAck) error {
 	if msg == nil {
 		return types.ErrEmptyTx
@@ -110,4 +110,77 @@ func (sm *StateMachine) applyHeightAck(msg *types.MsgHeightAck) error {
 		return types.ErrSessionFinalizing
 	}
 	return nil
+}
+
+func (sm *StateMachine) checkLogPlaneLocked(nonce uint64, txs []*types.DevshardTx) error {
+	res := heightsync.CheckDiffLogPlane(nil, heightsync.LogPlaneInput{
+		Nonce: nonce,
+		Txs:   txs,
+	}, sm.logPlaneStateLocked())
+	if res.Err != nil {
+		return res.Err
+	}
+	if sm.heightSyncMarks != nil {
+		sm.heightSyncMarks.AppendAll(res.Marks)
+	}
+	return nil
+}
+
+func (sm *StateMachine) logPlaneStateLocked() heightsync.LogPlaneState {
+	return heightsync.LogPlaneState{
+		SlotsNum:       uint64(len(sm.state.Group)),
+		SlotKeys:       sm.slotToAddress,
+		Verifier:       sm.verifier,
+		Tracker:        sm.turnTracker,
+		MaxStampHeight: sm.maxStampHeight,
+		Cfg:            sm.heartbeatCfg,
+		EscrowID:       sm.state.EscrowID,
+	}
+}
+
+func (sm *StateMachine) observeHeightSyncLocked(nonce uint64, txs []*types.DevshardTx) {
+	if sm.turnTracker == nil {
+		return
+	}
+	var hNow uint64
+	for _, tx := range txs {
+		if tx == nil {
+			continue
+		}
+		if hb := tx.GetHeartbeat(); hb != nil && heightsync.StampPresent(hb.ObservedBlockHash) && hb.ObservedHeight > hNow {
+			hNow = hb.ObservedHeight
+		}
+		if ack := tx.GetHeightAck(); ack != nil && heightsync.StampPresent(ack.ObservedBlockHash) && ack.ObservedHeight > hNow {
+			hNow = ack.ObservedHeight
+		}
+	}
+	if hNow == 0 {
+		hNow = sm.turnTracker.LastCompletedHeight()
+	}
+	sm.turnTracker.Observe(nonce, txs, hNow)
+	if hNow > sm.maxStampHeight {
+		sm.maxStampHeight = hNow
+	}
+	sm.state.HeightSyncLastCompletedHeight = sm.turnTracker.LastCompletedHeight()
+	sm.state.HeightSyncLatestTurnSeq = sm.turnTracker.MaxTurnSeq()
+}
+
+// HeightSyncTurnRecord is a copy of the verifier-computed turn, or nil.
+func (sm *StateMachine) HeightSyncTurnRecord(turnSeq uint64) *heightsync.SyncTurnRecord {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.turnTracker == nil {
+		return nil
+	}
+	return sm.turnTracker.Record(turnSeq)
+}
+
+// HeightSyncMarks returns a copy of marks recorded on successful applyCore.
+func (sm *StateMachine) HeightSyncMarks() []heightsync.AttributableMark {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.heightSyncMarks == nil {
+		return nil
+	}
+	return sm.heightSyncMarks.All()
 }

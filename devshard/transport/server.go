@@ -46,6 +46,7 @@ type Server struct {
 	heightSync          *heightsync.AnchorScheduler
 	heightSyncLogOracle blocks.BlockOracle
 	heightSyncAudit     *heightsync.AuditRing
+	heightSyncMarks     *heightsync.MarkLog
 	heightSyncSeedRPC   bool
 
 	pendingUntrustedMu        sync.Mutex
@@ -363,6 +364,7 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 	if inboundVal.Result == heightsync.ResultValidAnchor || inboundVal.Result == heightsync.ResultValidLazyAnchor {
 		s.notePendingUntrustedInbound(sessionID, sender, unwrapped.HeightSync, oracleHdr)
 	}
+	s.recordEnvelopeBindingRequest(c, req, unwrapped.HeightSync, oracleHdr)
 
 	resp, err := s.host.HandleRequest(ctx, req)
 	if err != nil {
@@ -428,6 +430,7 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 		} else if sec != nil {
 			sec.Direction = "response"
 			s.attachResponseOriginSignature(sec, req.Nonce)
+			s.recordEnvelopeBindingResponse(req.Nonce, sec)
 			receiptWrapper["height_sync"] = sec
 			s.logOutboundHeightSync(sec, req.Nonce)
 			s.recordOutboundAnchorIfAnchor(sec, c.Request().Method+" "+c.Path())

@@ -22,6 +22,8 @@ const (
 	LogFieldSource              = "source"
 	LogFieldTag                 = "tag"
 	LogFieldReason              = "reason"
+	LogFieldCheck               = "check"
+	LogFieldVerdict             = "verdict"
 	LogFieldClassification      = "classification"
 	LogFieldCacheReady          = "cache_ready"
 	LogFieldVerifiedOrigins     = "verified_origins"
