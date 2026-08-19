@@ -1046,7 +1046,8 @@ func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effecti
 		liveMemberSet[m.Member.Address] = true
 	}
 
-	reservedByModelHost, reservedByHost := am.keeper.CollectEpochReservedWeightTotals(ctx, epochIndex, keeper.ReservationScopeShield)
+	height := sdk.UnwrapSDKContext(ctx).BlockHeight()
+	reservedByModelHost, reservedByHost := am.keeper.CollectEpochReservedWeightTotalsAtHeight(ctx, epochIndex, height, keeper.ReservationScopeShield)
 	rawPocByHost := am.keeper.CollectEpochRawPocWeights(ctx, epochIndex)
 
 	rootGroupData := currentGroup.GroupData
