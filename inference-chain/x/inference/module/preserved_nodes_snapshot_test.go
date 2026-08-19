@@ -242,7 +242,6 @@ func TestComputeNewWeightsDropsPreservedOnlyParticipantWithoutSeed(t *testing.T)
 		},
 	}))
 
-	// preserved-only participant with a nil seed must be dropped
 	result := am.ComputeNewWeights(ctx, types.Epoch{Index: 2, PocStartBlockHeight: 100})
 	require.Empty(t, result)
 }
@@ -270,7 +269,6 @@ func TestMergeReservedNodesIntoPreservedCarriesFrozenSnapshot(t *testing.T) {
 		},
 	}))
 
-	// fully reserved host is carried forward with its frozen per-node weights
 	result := am.mergeReservedNodesIntoPreserved(ctx, 5, nil)
 	require.Len(t, result, 1)
 	require.Equal(t, testutil.Executor, result[0].Index)
@@ -310,9 +308,50 @@ func TestMergeReservedNodesIntoPreservedDedupsExistingNode(t *testing.T) {
 	result := am.mergeReservedNodesIntoPreserved(ctx, 5, preserved)
 	require.Len(t, result, 1)
 	require.Len(t, result[0].MlNodes[0].MlNodes, 1)
-	// reconciled to the frozen snapshot weight, not the drifted preserved value
 	require.Equal(t, int64(7), result[0].MlNodes[0].MlNodes[0].PocWeight)
 	require.Equal(t, int64(7), result[0].Weight)
+}
+
+func TestEpochBoundaryReservationViewsStaySymmetric(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+
+	endingEpoch := types.Epoch{Index: 1, PocStartBlockHeight: 50}
+	upcomingEpoch := types.Epoch{Index: 2, PocStartBlockHeight: 100}
+	require.NoError(t, k.SetEpoch(ctx, &endingEpoch))
+	require.NoError(t, k.SetEpoch(ctx, &upcomingEpoch))
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, endingEpoch.Index))
+	require.NoError(t, k.SetParticipant(ctx, types.Participant{
+		Index:        testutil.Executor,
+		Address:      testutil.Executor,
+		ValidatorKey: "validator-key",
+		InferenceUrl: "http://executor",
+		Status:       types.ParticipantStatus_ACTIVE,
+	}))
+
+	require.NoError(t, k.Trainshards.Set(ctx, 1, types.Trainshard{
+		TrainshardId:    1,
+		Status:          types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
+		CreatedAtHeight: 55,
+		ExpiresAtHeight: 1000,
+		ClosedAtHeight:  60,
+		Nodes: []*types.TrainshardReservedNode{{
+			Participant:         testutil.Executor,
+			NodeId:              "node-1",
+			ModelId:             "model-a",
+			PocWeight:           7,
+			Status:              types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_RELEASED_ON_CLOSE,
+			ReleasedAtHeight:    60,
+			ReservedUntilHeight: 70,
+		}},
+	}))
+
+	servingNodeIds := am.getInferenceServingNodeIds(ctx, upcomingEpoch)
+	require.Contains(t, servingNodeIds[testutil.Executor], "node-1")
+
+	merged := am.mergeReservedNodesIntoPreserved(ctx, endingEpoch.Index, nil)
+	require.Len(t, merged, 1)
+	require.Equal(t, int64(7), merged[0].Weight)
 }
 
 func TestComputeNewWeightsCarriesReservedOnlyHostWithSeed(t *testing.T) {
@@ -345,7 +384,6 @@ func TestComputeNewWeightsCarriesReservedOnlyHostWithSeed(t *testing.T) {
 		Signature:   "seed-signature",
 	}))
 
-	// reserved-only host with a submitted seed survives via the frozen-snapshot merge
 	result := am.ComputeNewWeights(ctx, types.Epoch{Index: 2, PocStartBlockHeight: 100})
 	require.Len(t, result, 1)
 	require.Equal(t, testutil.Executor, result[0].Index)
@@ -377,7 +415,6 @@ func TestComputeNewWeightsDropsReservedOnlyHostWithoutSeed(t *testing.T) {
 		},
 	}))
 
-	// reserved-only host with no seed drops, like a preserved-only participant
 	result := am.ComputeNewWeights(ctx, types.Epoch{Index: 2, PocStartBlockHeight: 100})
 	require.Empty(t, result)
 }
