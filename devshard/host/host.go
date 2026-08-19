@@ -16,7 +16,9 @@ import (
 	"common/completionapi"
 
 	"devshard"
+	"devshard/chainoracle/blocks"
 	"devshard/gossip"
+	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/observability"
 	"devshard/signing"
@@ -52,6 +54,11 @@ type HostRequest struct {
 	Diffs   []types.Diff
 	Nonce   uint64            // nonce of the current request
 	Payload *InferencePayload // nil if no new inference (e.g., Finalize, empty diffs)
+	// ForceHeightSyncAnchor asks transport to emit Anchor even when cadence would Omit
+	// (legacy single-message override when escrow state does not carry a forced turn).
+	ForceHeightSyncAnchor bool
+	// HeightSyncEscrow carries MsgForceHeightSyncTurn-derived state (not serialized on HTTP JSON).
+	HeightSyncEscrow *heightsync.EscrowHeightSyncHints
 }
 
 // HostResponse carries the host's reply back to the user.
@@ -63,8 +70,8 @@ type HostResponse struct {
 	ConfirmedAt        int64  // executor wall-clock timestamp, 0 if not executor
 	Mempool            []*types.DevshardTx
 	ExecutionJob       *devshard.ExecuteRequest // non-nil if this host is the executor and execution is deferred
-	CachedResponseBody []byte // non-nil when reconnecting to a completed inference
-	StreamBytesRead    int64  // total bytes read from the host HTTP response body (SSE streams only)
+	CachedResponseBody []byte                   // non-nil when reconnecting to a completed inference
+	StreamBytesRead    int64                    // total bytes read from the host HTTP response body (SSE streams only)
 	InferenceID        uint64
 	ReceiptExpected    bool
 	ReceiptReason      observability.Reason
@@ -93,22 +100,22 @@ const (
 
 // Host processes user requests: applies diffs, executes inference, signs state.
 type Host struct {
-	mu           sync.Mutex
-	sm           *state.StateMachine
-	signer       signing.Signer
-	verifier     signing.Verifier
-	engine       devshard.InferenceEngine
+	mu                 sync.Mutex
+	sm                 *state.StateMachine
+	signer             signing.Signer
+	verifier           signing.Verifier
+	engine             devshard.InferenceEngine
 	validator          devshard.ValidationEngine // optional, nil = no validation
 	validationRecorder devshard.ValidationCompletionRecorder
 	escrowID           string
 	epochID            uint64
 	slotIDs            map[uint32]bool
 	group              []types.SlotAssignment
-	mempool      *Mempool
-	checker      AcceptanceChecker
-	store        storage.Storage // optional, nil = no persistence
-	gsp          *gossip.Gossip  // optional, nil = no gossip pruning
-	availability devshard.AvailabilityProvider
+	mempool            *Mempool
+	checker            AcceptanceChecker
+	store              storage.Storage // optional, nil = no persistence
+	gsp                *gossip.Gossip  // optional, nil = no gossip pruning
+	availability       devshard.AvailabilityProvider
 
 	snapshotInFlight      atomic.Bool  // prevents overlapping async snapshot writes
 	validationObsInFlight atomic.Int32 // caps concurrent async validation-obs writes
@@ -130,6 +137,9 @@ type Host struct {
 	validationClosed      bool
 
 	maxNonce devshard.MaxNonceProvider // nil = do not enforce
+
+	// oracle is optional mainnet height source. LatestHeight returns ErrNoChainOracle when nil.
+	oracle blocks.BlockOracle
 }
 
 // SnapshotInterval controls how often hosts persist full state snapshots.
@@ -195,21 +205,21 @@ func NewHost(
 	}
 
 	h := &Host{
-		sm:                    sm,
-		signer:                signer,
-		engine:                engine,
-		escrowID:              escrowID,
-		slotIDs:               slotIDs,
-		group:                 group,
-		mempool:               NewMempool(),
-		checker:               checker,
-		slotToAddr:            slotToAddr,
-		addrToSlots:           addrToSlots,
-		sortedSlots:           sortedSlots,
-		executing:             make(map[uint64]struct{}),
-		validating:            make(map[uint64]struct{}),
-		completedResponses:    make(map[uint64][]byte),
-		ownSeed:               ownSeed,
+		sm:                 sm,
+		signer:             signer,
+		engine:             engine,
+		escrowID:           escrowID,
+		slotIDs:            slotIDs,
+		group:              group,
+		mempool:            NewMempool(),
+		checker:            checker,
+		slotToAddr:         slotToAddr,
+		addrToSlots:        addrToSlots,
+		sortedSlots:        sortedSlots,
+		executing:          make(map[uint64]struct{}),
+		validating:         make(map[uint64]struct{}),
+		completedResponses: make(map[uint64][]byte),
+		ownSeed:            ownSeed,
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -319,6 +329,18 @@ func WithGrace(grace uint64) HostOption {
 	}
 }
 
+// ErrNoChainOracle is returned by Host.LatestHeight when no BlockOracle was configured.
+var ErrNoChainOracle = errors.New("host: no chain oracle configured")
+
+// WithChainOracle injects a mainnet BlockOracle. LatestHeight returns ErrNoChainOracle when omitted.
+func WithChainOracle(o blocks.BlockOracle) HostOption {
+	return func(h *Host) {
+		if o != nil {
+			h.oracle = o
+		}
+	}
+}
+
 func (h *Host) StateRoot() ([]byte, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -375,6 +397,31 @@ func (h *Host) IsWarmKeyForSlot(addr string, slotID uint32) bool {
 }
 
 func (h *Host) Signer() signing.Signer { return h.signer }
+
+// HeightSyncEscrowHints returns escrow-derived height-sync cadence hints after applied diffs.
+func (h *Host) HeightSyncEscrowHints(defaultK, defaultSlots uint64) *heightsync.EscrowHeightSyncHints {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.sm.HeightSyncEscrowHints(defaultK, defaultSlots)
+}
+
+// LatestHeight returns the highest mainnet block height known to the injected oracle.
+func (h *Host) LatestHeight(ctx context.Context) (int64, error) {
+	if h.oracle == nil {
+		return 0, ErrNoChainOracle
+	}
+	hdr, err := h.oracle.Latest(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if hdr == nil {
+		return 0, fmt.Errorf("host: chain oracle returned nil header")
+	}
+	return hdr.Height, nil
+}
+
+// ChainOracle returns the injected BlockOracle or nil if unwired.
+func (h *Host) ChainOracle() blocks.BlockOracle { return h.oracle }
 
 func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostResponse, error) {
 	h.mu.Lock()

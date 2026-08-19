@@ -4,11 +4,29 @@ import (
 	"context"
 	"io"
 	"log/slog"
+	"os"
+	"strings"
 )
 
 type prefixedTextHandler struct {
 	prefix string
 	inner  slog.Handler
+}
+
+// slogLevelFromEnv reads optional DEVSHARD_LOG_LEVEL.
+// Unset or unknown values keep the historical default (Info), so existing
+// deployments do not start emitting Debug lines.
+func slogLevelFromEnv() slog.Level {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("DEVSHARD_LOG_LEVEL"))) {
+	case "debug":
+		return slog.LevelDebug
+	case "warn", "warning":
+		return slog.LevelWarn
+	case "error":
+		return slog.LevelError
+	default:
+		return slog.LevelInfo
+	}
 }
 
 func newPrefixedTextHandler(prefix string, w io.Writer, level slog.Level) slog.Handler {

@@ -126,7 +126,7 @@ func (sm *StateMachine) computeStateRootLocked() ([]byte, error) {
 	}
 
 	acc := sealedAccBytes32(sm.state.SealedAcc)
-	restHash, err := ComputeRestHashV2(sm.state.Balance, acc, sm.state.Inferences, sm.state.WarmKeys)
+	restHash, err := ComputeRestHashV2(sm.state.Balance, acc, sm.state.Inferences, sm.state.WarmKeys, types.HeightSyncEscrowCommitFromState(sm.state))
 	if err != nil {
 		return nil, err
 	}

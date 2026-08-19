@@ -27,6 +27,8 @@ import (
 
 	devshardpkg "devshard"
 	"devshard/bridge"
+	"devshard/chainoracle/blocks"
+	"devshard/heightsync"
 	"devshard/host"
 	"devshard/observability"
 	devshardserver "devshard/server"
@@ -64,6 +66,11 @@ type HostManager struct {
 	statsNegativeCache map[string]statsNegativeCacheEntry
 
 	binaryVersion string
+
+	// Optional height-sync (DEVSHARD_CHAINORACLE_URL). Nil when unset.
+	chainOracle      blocks.BlockOracle
+	heightSync       *heightsync.AnchorScheduler
+	heightSyncCloser func()
 }
 
 const (
@@ -145,6 +152,7 @@ func (m *HostManager) Close() error {
 		srv.Host().Close()
 		observability.DeleteEscrowMetrics(escrowID)
 	}
+	m.CloseHeightSync()
 	return m.store.Close()
 }
 
@@ -412,10 +420,7 @@ func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*trans
 		return nil, fmt.Errorf("init storage session: %w", err)
 	}
 
-	srv, err := transport.NewServer(h, m.store, m.verifier, creatorAddr,
-		transport.WithBridge(m.bridge),
-		transport.WithRateLimit(transport.DefaultRateLimitConfig()),
-	)
+	srv, err := transport.NewServer(h, m.store, m.verifier, creatorAddr, m.transportServerOpts()...)
 	if err != nil {
 		h.Close()
 		return nil, fmt.Errorf("create server: %w", err)
@@ -541,10 +546,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 		return nil, fmt.Errorf("create host: %w", err)
 	}
 
-	srv, err := transport.NewServer(h, m.store, m.verifier, meta.CreatorAddr,
-		transport.WithBridge(m.bridge),
-		transport.WithRateLimit(transport.DefaultRateLimitConfig()),
-	)
+	srv, err := transport.NewServer(h, m.store, m.verifier, meta.CreatorAddr, m.transportServerOpts()...)
 	if err != nil {
 		h.Close()
 		return nil, fmt.Errorf("create server: %w", err)
@@ -864,5 +866,5 @@ func (m *HostManager) hostOpts(epochID uint64) []host.HostOption {
 	if m.maxNonce != nil {
 		opts = append(opts, host.WithMaxNonceProvider(m.maxNonce))
 	}
-	return opts
+	return m.appendChainOracleOpt(opts)
 }

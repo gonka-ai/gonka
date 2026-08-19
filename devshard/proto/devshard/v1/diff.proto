@@ -12,7 +12,17 @@ message DiffContent {
   bytes post_state_root = 4;  // state root AFTER applying this diff's txs
 }
 
-// DevshardTx wraps all 8 tx types in a oneof for deterministic serialization.
+// MsgForceHeightSyncTurn opens a forced height-sync turn of slots_num consecutive
+// nonces (same width as a cadence sync turn).
+message MsgForceHeightSyncTurn {
+  uint64 trigger_nonce = 1; // must equal diff nonce
+  uint64 end_nonce = 2;     // trigger_nonce + slots_num - 1
+  uint64 anchor_k = 3;      // scheduler K (must match host/user height-sync config)
+  uint64 slots_num = 4;     // must equal escrow group size
+  string reason = 5;
+}
+
+// DevshardTx wraps all tx types in a oneof for deterministic serialization.
 message DevshardTx {
   oneof tx {
     MsgStartInference start_inference = 1;
@@ -24,6 +34,7 @@ message DevshardTx {
     // Deprecated: retained for wire compatibility; reveal-seed txs are ignored at runtime.
     MsgRevealSeed reveal_seed = 7;
     MsgFinalizeRound finalize_round = 8;
+    MsgForceHeightSyncTurn force_height_sync_turn = 9;
   }
 }
 

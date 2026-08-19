@@ -13,8 +13,13 @@ in-tree implementation matches this document; the test catalog
 ([`height-sync-tests.md`](../height-sync-tests.md)) lists what is
 already proven and what is planned.
 
+Every normative rule below is bound to at least one row of the catalog:
+§2–§5 for what is proven today, §6 for block-oracle sourcing, §7 for the
+log plane of §10–§12 and the §14 checks, §8 for Strong.
+
 Related docs:
 [`height-sync-tests.md`](../height-sync-tests.md) (test catalog — implemented and planned),
+[`height-sync-implementation-plan.md`](../height-sync-implementation-plan.md) (phasing, and the `D*` / `H*` identifiers the catalog carries),
 [`CPOC_PROTOCOL.md`](./CPOC_PROTOCOL.md),
 [`FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`](./FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md),
 [`VALIDATION_PROTOCOL_PROPOSAL.md`](./VALIDATION_PROTOCOL_PROPOSAL.md).
@@ -78,8 +83,13 @@ Height sync therefore has **two planes** that must not be confused:
 
 | Plane | Carrier | Signed by | Durable? | Consumers |
 | ----- | ------- | --------- | -------- | --------- |
-| **Transport** | `HeightSyncSection` on the inference envelope (§7) | host on the response leg only; request leg unsigned | no — per-message | receiver pipeline, audit ring, `(C-quorum)` |
-| **Log** | `observed_height` on diff-resident `MsgHeartbeat` / `MsgHeightAck` (§10) | **both** parties (user via the diff signature, host via the ack signature) | yes — append-only `Diff` | cPoC height intervals, `(C-turn)`, finalization `USER_TIMEOUT`, close-ready arming |
+| **Transport** | `HeightSyncSection` on the inference envelope (§7) | host on the response leg only; request leg carries no *section* signature (§15) | no — per-message | receiver pipeline, audit ring, `(C-quorum)` |
+| **Log** | `observed_height` on diff-resident `MsgHeartbeat` / `MsgHeightAck`, and on stamped inference txs (§10.5) | **both** parties — user via the diff signature, host via `host_sig` / `proposer_sig` / `executor_sig` (§10.5.1) | yes — append-only `Diff` | cPoC height intervals, `(C-turn)`, finalization `USER_TIMEOUT`, close-ready arming, in-session deadlines (§10.5.2) |
+
+No signature spans both planes: `sender_signature` covers section fields
+1–7 and never `message_body`, so a section and the diff in one exchange are
+bound only **positionally**. That is why cross-plane checks (§14 L4) are
+same-exchange checks that record a mark rather than replayable verdicts.
 
 Everything before §10 specifies the transport plane. §10–§12 specify the
 log plane, peer sync visibility, and what a host does when the sequencer
@@ -531,6 +541,25 @@ Binding rules (all `MUST`):
 Field `8` is excluded, exactly as §7 excludes field 8 from
 `CanonicalOriginBytes`.
 
+**When an ack is emitted.** `MsgHeightAck` answers a **heartbeat turn**;
+it is not a stamp attached to every host response. It exists because a
+quiet turn has no other host-signed tx to carry a height: the user is the
+only party that can append to `Diff`, the response-leg
+`HeightSyncSection` is stripped at the transport edge and never enters the
+log, and `MsgHeartbeat` alone proves only what the *user* claimed. The ack
+is the minimal host-signed, turn-bound tx that closes that gap, and it is
+also the only carrier of `sync_state` + `peer_seen` (§11).
+
+| Situation | Height carrier in the log | `MsgHeightAck` |
+| --------- | ------------------------- | -------------- |
+| Host answers `MsgHeartbeat` | `MsgHeightAck` | REQUIRED |
+| Host produces `MsgConfirmStart` / `MsgFinishInference` carrying a stamp (§10.5) | that tx | not emitted — the stamp discharges the obligation for its signer's slot |
+| cPoC deployed | `CarrySkip`-wrapped `CPoCProbeResponse` carrying `observed_height` | MAY substitute (§10.2) |
+| Repair probe answers `HEIGHT` (§11.3) | probe response | MAY be offered into the prober's mempool as courtesy repair; never evidence |
+
+A busy escrow that stamps its inference txs therefore emits neither
+heartbeats nor acks.
+
 ### 10.5 `observed_height`: why the log plane exists
 
 `HeightSyncSection` cannot serve the log plane, for two independent
@@ -564,6 +593,80 @@ signs it** by signing the diff, and the **host signs it** with
   but pay more heartbeats. This is the migration seam: the new messages
   are required from day one, the stamps on existing messages can land
   later.
+
+#### 10.5.1 One stamp per message, inside that message's own signature
+
+**A stamp MUST be covered by the signature of its own producer.** This is
+not automatic, because devshard signs different txs over different
+inputs. Two patterns exist, and only one is safe by default:
+
+| Pattern | Messages | Signing input | Effect of appending `observed_height` |
+| ------- | -------- | ------------- | ------------------------------------- |
+| **Whole-message** | `MsgFinishInference`, `MsgValidation`, `MsgValidationVote` (`proposer_sig`) | `deterministicMarshal(msg)` with the signature field zeroed | covered **automatically**; no signing change |
+| **Separate content** | `MsgConfirmStart` (`executor_sig` over `ExecutorReceiptContent`) | a *different* message, rebuilt field-by-field at ingest | **not covered** unless the content message is extended too |
+
+`ExecutorReceiptContent` is a signing input only — it never enters
+`Diff`. The verifier reconstructs it from committed state
+(`prompt_hash`, `model`, `input_length`, `max_tokens`, `started_at`,
+`escrow_id`) plus the fields the tx carries (`inference_id`,
+`confirmed_at`). A field present on `MsgConfirmStart` but absent from
+`ExecutorReceiptContent` is therefore **outside the executor's
+signature**: the sequencer could rewrite the executor's height and
+`executor_sig` would still verify. Normative:
+
+> A deployment that stamps `MsgConfirmStart` MUST also add
+> `observed_height` / `observed_block_hash` to `ExecutorReceiptContent`,
+> MUST include them when signing the receipt, and MUST copy them from
+> the tx into the reconstructed content before signature recovery.
+> Otherwise the host-attributed height is user-forgeable and MUST NOT be
+> treated as a host attestation.
+
+The same rule generalises: **any** future stamp on a message whose
+signature is over a separate content message must be mirrored into that
+content message. `confirmed_at` already follows this pattern and is the
+reference implementation.
+
+**No `*_at_height` fields.** `observed_height` on a message already means
+“the height its signer observed when producing this message”, which is
+exactly what `started_at_height` or `confirmed_at_height` would mean on
+the wire. Two fields for one value require a third rule to keep them
+consistent, so exactly one stamp per message is carried. Event-specific
+names belong in **derived state**, not on the wire: the inference record
+SHOULD keep `started_at_height` and `confirmed_at_height` copied from the
+stamps of `MsgStartInference` and `MsgConfirmStart`, because a single
+inference has two distinct events and the consumers of a duration read
+the record rather than the txs.
+
+**Signer semantics.** A stamp is only as strong as the key on it:
+
+| Stamp | Signer | Strength |
+| ----- | ------ | -------- |
+| `MsgHeartbeat`, `MsgStartInference` | user (diff signature) | a **claim** — attributable to the user, verified against the chain by L6 |
+| `MsgHeightAck` (`host_sig`), `MsgFinishInference` (`proposer_sig`), `MsgConfirmStart` (`executor_sig`, if mirrored) | host | an **attestation** — rewriting it is forgery of that host |
+
+Both are strictly stronger than the wall-clock timestamps they sit next
+to: an `int64` timestamp is unfalsifiable, whereas `(H, hash)` must match
+a real block, so even a user-originated stamp is checkable while
+`started_at` never was.
+
+#### 10.5.2 Consequence — timeouts and seals can leave wall time
+
+`observed_height` in the log plus the derived record heights make it
+possible to express in-session deadlines in blocks rather than in each
+verifier's local clock:
+
+| Decision | Wall-clock form | Height form |
+| -------- | --------------- | ----------- |
+| Execution timeout | `now − confirmed_at ≥ ExecutionTimeout`, evaluated against the verifier's own clock | `h_local − confirmed_at_height ≥ ExecutionTimeoutBlocks` |
+| Refusal timeout | `now − started_at`, where `started_at` is user-controlled and unverifiable | `h − started_at_height`, now checkable via L6 |
+| Deterministic seal clock | max `confirmed_at` over the recent confirmed window | max `confirmed_at_height` — a chain-verifiable logical clock |
+
+This is the §1 motivation applied inward: a deadline that depends on each
+host's clock cannot be agreed on, a height can. Migration is deliberately
+two-step — a deployment first **carries** the heights, and only later
+**switches** decisions onto them, because any decision that folds into a
+state root must change under a version gate rather than a runtime flag,
+or two participants compute different roots.
 
 ### 10.6 Asynchronous fan-out — the turn is pipelined, never serialized
 
@@ -677,7 +780,7 @@ the log it is signing, not the host's claim about mainnet.
 | `ACKED` | a valid ack is in `Diff` at `ack_nonce` |
 | `MISSING` | no ack for this slot is in `Diff` yet |
 | `UNREACHABLE` | the request itself could not be delivered (transport failure) |
-| `REJECTED` | an ack arrived on the p2p hop but failed L1–L4 (§14), so it was not appended |
+| `REJECTED` | an ack arrived on the p2p hop but failed a validity check (§14 L0–L3, L5b), so it was not appended |
 
 The vector carries **one entry per slot** for turn `turn_seq − 1`
 (§10.6). It is not a compression of the log — the log is authoritative,
@@ -1043,16 +1146,72 @@ diff-ingest time:
 
 | # | Check | Failure |
 | - | ----- | ------- |
+| L0 | Height monotonicity: `observed_height` never decreases across nonces within the escrow — a stamp at nonce `n` is `≥` the newest stamp at any `n' < n`, whoever signed it | `INVALID(height_regression)`, attributed to the diff signer |
+| L0b | Per-inference causal order: `start ≤ confirm ≤ finish` on `observed_height` for one `inference_id` | `INVALID(height_regression)`, attributed to the stamp's signer |
 | L1 | Framing: `slots_num` equals group size; `8 · len(peer_seen) ≥ slots_num`; `turn_seq` monotonic per escrow | `INVALID(bad_framing)` |
-| L2 | `MsgHeightAck.host_sig` verifies over `HeightAckContent` for `slot_id`'s registered key | `INVALID(ack_sig_invalid)` — the user may have fabricated an ack |
+| L2 | `MsgHeightAck.host_sig` verifies over `HeightAckContent` for `slot_id`'s registered key; a stamp on `MsgConfirmStart` verifies under `executor_sig` only if mirrored into `ExecutorReceiptContent` (§10.5.1) | `INVALID(ack_sig_invalid)` / `INVALID(executor_sig)` — the user may have fabricated the height |
 | L3 | Causality: `ref_nonce` names a `MsgHeartbeat` already in `Diff` with the same `turn_seq` | `INVALID(ack_causality)`, attributed to the appending user (cPoC C3′ shape) |
-| L4 | Envelope binding: ack height/hash equal the response-leg section's; heartbeat height equals the request-leg section's when present (§10.4) | `DISPUTE_ORIGINATOR` (ack) / `DISPUTE_CARRIER` (heartbeat) **on sight** — a self-contradiction needs no oracle |
-| L5 | `D` band: `\|observed_height − local_aligned\| > D` on a heartbeat ⇒ the next heartbeat to this host must be Strong; the ack's `sync_state` SHOULD already say `CATCHING_UP` (§11.2) | `INVALID(strong_required)` if the sender claimed `SYNCED` |
+| L4 | Envelope binding: ack height/hash equal the response-leg section's; heartbeat height equals the request-leg section's when present (§10.4). **Same-exchange check only** — see the tier table below | `DISPUTE_ORIGINATOR` (ack) / `DISPUTE_CARRIER` (heartbeat) **on sight** — a self-contradiction needs no oracle — recorded as a retained mark, never as diff invalidity |
+| L5a | Live `D` band at admission: `\|observed_height − local_aligned\| > D` | receiver MAY refuse the exchange and records a mark; **never** a permanent diff verdict |
+| L5b | In-log `D` band: a signer claimed `SYNCED` while outside `D` of the ack heights of its own turn ⇒ the next heartbeat to this host must be Strong; the ack's `sync_state` SHOULD already say `CATCHING_UP` (§11.2) | `INVALID(strong_required)` if the sender claimed `SYNCED` |
 | L6 | Oracle reconciliation of `(observed_height, observed_block_hash)` — identical to step 7 above, including the deferred-check queue | `DEFERRED_FAIL` / `DISPUTE_ORIGINATOR` |
 | L7 | Turn bookkeeping: update `SyncTurnRecord` (§10.7); if `sync_vector` says `ACKED(j, h, n)` and `Diff[n]` has no matching ack, that is user-attributable (§11.1). `MISSING` / `UNREACHABLE` / `REJECTED` with no ack is **inconclusive**. | `ACKED` vs log: user-attributable, no `INVALID` — the diff is already signed. Other gaps: no blame. |
 
-L1–L4 are pure functions of `Diff`, so every honest verifier reaches the
-same result; L6 alone depends on local oracle progress and may defer.
+#### Evaluation tiers — what may affect diff validity
+
+A diff is presented more than once: at ingest, at catch-up, at recovery,
+at audit. Each presentation reaches a verifier with a different wall
+clock and a different follower tip. A check may therefore produce an
+`INVALID` or dispute verdict **only** if its inputs are frozen in the
+log.
+
+| Tier | Checks | Inputs | May affect diff validity? |
+| ---- | ------ | ------ | ------------------------- |
+| **Pure `Diff`** | L0, L0b, L1, L2, L3, L5b, L7 | log bytes, registered slot keys, group size | **yes** — the same answer for every verifier, forever |
+| **Same-exchange edge** | L4, L5a | the diff **and** the `HeightSyncSection` of one HTTP exchange | **no** — records a retained mark |
+| **Local oracle, deferrable** | L6 | the verifier's own follower, once it reaches `H` | only via `DEFERRED_FAIL`, monotone once `H` is final |
+
+Two consequences that earlier revisions of this document stated
+incorrectly:
+
+1. **L4 is not a pure function of `Diff`.** The envelope never enters the
+   log. The response-leg section is known only to the host that produced
+   it and the user that received it; the request-leg section is known only
+   to that one recipient, and under lazy carry-forward (§16) it is
+   legitimately absent for recipients that already hold the tip. L4
+   therefore has exactly one evaluation point — the party at the other end
+   of that exchange, while both planes are in hand — and its result MUST
+   be persisted verbatim (offending blob + signature), because no later
+   verifier can recompute it. Verifiers that ingest a diff without an
+   envelope (replay, catch-up, gossip) MUST skip L4 and L5a and MUST
+   reach the same verdict on everything else.
+2. **The `D` band MUST NOT be evaluated against the verifier's current
+   tip as a validity rule.** A verifier replaying a session days later
+   sits thousands of blocks above every historical stamp, so a
+   `local_aligned` comparison would invalidate the whole session. Hence
+   the L5a / L5b split: the live receiver may refuse and mark, while the
+   replay-stable check compares a claim against the ack heights of its own
+   turn, which sit in the log beside it.
+
+#### Freshness is two-sided, and only one side is replayable
+
+`observed_height` is carried with `observed_block_hash` precisely so that
+freshness has a cryptographic floor rather than a clock:
+
+| Bound | Mechanism | Replay-safe |
+| ----- | --------- | ----------- |
+| Cannot be **future-dated** | `observed_block_hash` cannot be known before block `H` exists, so the pair is an unforgeable lower bound on signing time; L6 confirms it | yes |
+| Cannot **regress** | L0 and L0b | yes |
+| Cannot **stall** while nonces advance | heartbeat obligation `h − h_last > K_hb` (§10.3), computed from log state | yes |
+| Cannot be **stale** relative to a live peer | L5a at admission | no — local, so it marks rather than invalidates |
+| Silence after the last stamp | close-ready arming on `T_idle` (§12) | yes |
+
+So the replayable answer to “was the height on this nonce fresh” is not a
+per-diff freshness test — freshness is relative to a clock the log does
+not contain. It is: the pair proves a lower bound on when it was signed,
+monotonicity forbids regression, and the cadence bounds how far nonces can
+advance without a new stamp, giving the log a logical clock of resolution
+`K_hb`. “Recent relative to *now*” stays a live, local judgement.
 
 ---
 
@@ -1098,6 +1257,56 @@ sequenceDiagram
 > `MsgHeartbeat.observed_height` is covered by the user's diff signature
 > (§10.5). Consumers that need an attributable user height (finalization
 > `USER_TIMEOUT`) MUST read the log plane, not the request-leg section.
+
+#### “Unsigned” means unsigned *at the section level*
+
+The request itself is authenticated. devshard's transport auth signs
+`sha256(escrow_id ‖ whole body ‖ timestamp)` with the sender's key, inside
+a bounded drift window, and the body is the whole envelope. So three
+signatures with three different lifetimes coexist on one request:
+
+| Layer | Covers | Lifetime | Replayable evidence |
+| ----- | ------ | -------- | ------------------- |
+| Diff signature | `DiffContent` — nonce, txs, `post_state_root` | durable; stored, gossiped, replayed | **yes** — the log plane |
+| Transport auth signature | `escrow_id ‖ body ‖ ts`, i.e. section **and** `message_body` | ephemeral; checked at admission | only if deliberately retained (below) |
+| `sender_signature` (field 8) | section fields 1–7 | durable in the origin blob | yes, for the **originating host** |
+
+Field 8 is response-leg only for two independent reasons, and both are
+structural rather than conventional:
+
+1. **The response leg has no other authentication.** Transport auth runs
+   on requests. A response section must be self-signed or it is anonymous.
+   On the request leg transport auth already binds the sender, so an
+   inline signature adds nothing for admission.
+2. **A carrier cannot forward the originator's signature.** `Carry()`
+   rewrites field 4 (`timestamp_unix_ms`) and field 5 (`direction`), both
+   inside the signing input, so the originator's signature stops
+   verifying. Re-signing with the carrier's key would attest “I relayed
+   this”, not “`(H, hash)` is real” — the truth claim belongs to the host
+   that read its own oracle. Hence exculpation on demand instead.
+
+**No signature binds the section to `message_body`.** `CanonicalOriginBytes`
+covers fields 1–7 only, so the envelope never binds a tx cryptographically;
+a section and the diff inside the same body are related **positionally**,
+by having travelled in one exchange. That is the whole reason L4 is an
+edge check that records a mark.
+
+**Retention makes a request-leg L4 mark portable.** A receiver that keeps
+the raw request body byte-for-byte together with the transport signature,
+its timestamp, and the escrow id can later recover the sender's address
+and show that the *same signed bytes* contain a section height and a
+`MsgHeartbeat` height that disagree. That is a genuine, third-party
+checkable `DISPUTE_CARRIER` packet; the drift window is an admission rule
+and does not limit later verification. Two limits apply: it attributes to
+the **sender of the POST**, never to a host, because the request-leg
+section carries no originator signature; and the retained body includes
+the payload, so implementations SHOULD retain it only for exchanges where
+L4 actually fired.
+
+For host contradictions no retention is needed — the two host signatures
+(section field 8, and `host_sig` / `executor_sig` / `proposer_sig` on the
+tx) are each durable on their own, which is why `DISPUTE_ORIGINATOR` is
+available on sight from `Diff` plus the stored origin blob.
 
 ### Exculpation
 
@@ -1405,6 +1614,10 @@ the test scenario that proves it (full catalog in
 | 20 | **Repair-probe amplification** — a host floods peers with probes, or all `N−1` hosts probe one dead slot at once | Budgets in §11.4: one probe per `(turn, slot)`, `R_max` per `K_hb`, deterministic stagger so late probers find the ack in `Diff` and skip, backoff, zero probes in the healthy path, and armed hosts stop probing | Planned: `TestRepairProbe_BudgetAndStagger` |
 | 21 | **Partitioned minority** arms close-ready and tries to close a healthy escrow | Arming emits nothing (§12.2). Closing needs finalization's `2f + 1`, which the minority cannot reach, and unarmed hosts MUST vote `REJECT` on `USER_TIMEOUT`. | Planned: `TestCloseReady_MinorityCannotClose` |
 | 22 | User drip-feeds late acks to make a degraded turn look complete and reset the arming clock | Late acks are admitted for *height* purposes only and tagged `late`; they never clear a turn's `degraded` mark (§10.6), and arming keys on `last_signal_height` toward **this** host, not on turn state | Planned: `TestLateAck_DoesNotClearDegraded` |
+| 23 | **Sequencer rewrites a host's stamp on `MsgConfirmStart`**, attributing a height the executor never signed | `observed_height` / `observed_block_hash` are inside `ExecutorReceiptContent` and copied into the reconstructed content before recovery (§10.5.1), so any edit fails `executor_sig`. A deployment that stamps the tx without mirroring the content MUST NOT treat the height as a host attestation | Planned: `TestConfirmStart_TamperedObservedHeightFailsExecutorSig` |
+| 24 | Stamp regression — a signer writes a height below one already in the log, to widen a band or backdate a duration | L0 across nonces and L0b within one inference; both pure functions of `Diff`, so every verifier rejects identically | Planned: `TestLogPlane_HeightRegression` |
+| 25 | Pre-signing a **future** height to look fresher than it is | `observed_block_hash` for an unmined height cannot be produced; L6 never confirms the pair and eventually returns `DEFERRED_FAIL` | Planned: `TestLogPlane_FutureDatedStampDeferredFail` |
+| 26 | **Replay-time invalidation** — a party re-presents an old but honest session hoping a `D`-band or freshness rule rejects it, or an implementation that wrongly evaluates freshness at replay time | Only pure-`Diff` checks may invalidate (§14 tier table): L5a is admission-only, L4 is skipped without an envelope, so a historical session replays with identical verdicts regardless of when it is replayed | Planned: `TestLogPlane_HistoricalReplayNoInvalidation` |
 
 **Out-of-scope adversaries:**
 
@@ -1454,13 +1667,14 @@ the test scenario that proves it (full catalog in
 | Cadence + Anchor + audit + forced turn | ✅ | v1 PoC; container parity Phase A–C green. |
 | Courier mode + `(C-quorum)` + lazy carry + freshness gate | ✅ | v2; in-process e2e green (E1–E11). |
 | Asymmetric response signatures + exculpation API | ✅ | Step 8 (v2.1); in-process e2e green (E9, E10). |
-| Strong mode (`LightBlock` + `VerifyCommit` + `D` band + `(C-strong)` / `(C-hybrid)`) | ⏳ | Tests catalogued in [`height-sync-tests.md`](../height-sync-tests.md) §6 (S1–S12). |
+| Strong mode (`LightBlock` + `VerifyCommit` + `D` band + `(C-strong)` / `(C-hybrid)`) | ⏳ | Tests catalogued in [`height-sync-tests.md`](../height-sync-tests.md) §8 (S1–S12). |
 | Container parity for v2 (Phase D) | ⏳ | tracked in `CONTAINER_E2E_PLAN.md`. |
 | Container parity for Strong (Phase E) | ⏳ | follow-on. |
 | **Heartbeat turns** (§10): `MsgHeartbeat` / `MsgHeightAck` protos, height cadence `K_hb`, `observed_height` stamps, turn record, `(C-turn)` | 📋 | proposed here. No wire or Go surface exists yet; `ObservedHeightNow()` is the only piece in tree. Blocks cPoC C14 closure and finalization `USER_TIMEOUT` evidence. |
 | **Peer sync status + repair probe** (§11): `sync_vector`, `sync_state`, `peer_seen`, `POST /sessions/:id/heightsync/repair` | 📋 | proposed here. Rides the existing `devshard/gossip` peer client and host mempool; no new transport. |
 | **Close-ready arming** (§12): `CloseReadyView`, `UserTimeoutEvidence` | 📋 | proposed here. Consumer is `FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`; nothing in this layer votes. Missing acks are not cheating evidence (§11.3). |
-| `observed_height` stamps on `MsgStartInference` / `MsgConfirmStart` / `MsgFinishInference` | 📋 | RECOMMENDED (§10.5). Optional migration step: without it the protocol is correct but emits more heartbeats. |
+| `observed_height` stamps on `MsgStartInference` / `MsgConfirmStart` / `MsgFinishInference` | 📋 | RECOMMENDED (§10.5). Optional migration step: without it the protocol is correct but emits more heartbeats. `MsgConfirmStart` additionally requires the `ExecutorReceiptContent` mirror (§10.5.1) or its height is not a host attestation. |
+| Derived record heights + moving timeouts / seal clock off wall time | 📋 | §10.5.2. Two-step by construction: carry the heights first, switch the decisions later under a version gate, since the seal clock folds into the state root. |
 | On-chain `MsgHeightSyncEvidence` + slashing tx | ⏸ | dispute / cPoC owns. |
 
 **Implementation ordering note.** §10 is a prerequisite for §11 and §12
@@ -1484,10 +1698,15 @@ Development notes and unresolved design choices:
    heartbeat is mandatory. Read this before §14 if you are here for the
    quiet-session, cPoC-band, or `USER_TIMEOUT` problems.
 4. §14 — the receiver pipeline flowchart plus the log-plane checks
-   L1–L7; this is the load-bearing normative section.
-5. §15 — asymmetric signing model, and the one exception in §11.3.
-6. §11 + §12 — what a host does when a peer or the sequencer misbehaves;
+   L0–L7 and the **evaluation tiers**; this is the load-bearing normative
+   section. The tier table is the rule that decides whether a new check
+   may invalidate a diff or may only record a mark.
+5. §10.5.1 — where a stamp must sit to be signed by its own producer, and
+   the `ExecutorReceiptContent` mirror that is easy to get wrong.
+6. §15 — asymmetric signing model, what “unsigned request leg” does and
+   does not mean, and the one exception in §11.3.
+7. §11 + §12 — what a host does when a peer or the sequencer misbehaves;
    note that neither section emits a vote.
-7. §17 + §18 — what cPoC and finalization actually consume.
-6. [`height-sync-tests.md`](../height-sync-tests.md) — every behaviour
+8. §17 + §18 — what cPoC and finalization actually consume.
+9. [`height-sync-tests.md`](../height-sync-tests.md) — every behaviour
    above is bound to at least one named test.

@@ -96,7 +96,7 @@ type StateMachine struct {
 	addressToSlots     map[string][]uint32 // address -> sorted slot IDs
 	totalSlots         uint32
 
-	warmResolver    WarmKeyResolver       // optional, nil = no warm key support
+	warmResolver WarmKeyResolver // optional, nil = no warm key support
 
 	// obsDeferred, when non-nil, redirects observability writes made during a
 	// trial apply (ValidateDiff / PreviewLocalBestEffort) into a buffer instead
@@ -423,13 +423,16 @@ func (sm *StateMachine) localBestEffortLocked(nonce uint64, txs []*types.Devshar
 	if startCount > 1 {
 		return nil, nil, types.ErrMultipleStartMsgs
 	}
+	if countForceHeightSyncTurn(txs) > 1 {
+		return nil, nil, types.ErrMultipleForceHeightSyncTurnMsgs
+	}
 
 	// All applyTx implementations are check-first-mutate-last:
 	// preconditions are validated before any state mutation, so a
 	// failed tx leaves state unchanged. No per-tx snapshots needed.
 	var applied []*types.DevshardTx
 	for _, tx := range txs {
-		if err := sm.applyTx(tx); err != nil {
+		if err := sm.applyTx(tx, nonce); err != nil {
 			if tx.GetStartInference() != nil {
 				sm.restoreMutable(snap)
 				return nil, nil, fmt.Errorf("mandatory start inference: %w", err)
@@ -453,6 +456,7 @@ func (sm *StateMachine) localBestEffortLocked(nonce uint64, txs []*types.Devshar
 	}
 
 	sm.state.LatestNonce = nonce
+	sm.clearExpiredHeightSyncFlags()
 
 	if sm.state.Phase == types.PhaseFinalizing && sm.state.FinalizeNonce == 0 {
 		sm.state.FinalizeNonce = nonce
@@ -527,13 +531,16 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 	if startCount > 1 {
 		return nil, types.ErrMultipleStartMsgs
 	}
+	if countForceHeightSyncTurn(txs) > 1 {
+		return nil, types.ErrMultipleForceHeightSyncTurnMsgs
+	}
 
 	// 3. Snapshot mutable state for rollback on error.
 	snap := sm.snapshotMutable()
 
 	// 4. Apply each tx.
 	for _, tx := range txs {
-		if err := sm.applyTx(tx); err != nil {
+		if err := sm.applyTx(tx, nonce); err != nil {
 			sm.restoreMutable(snap)
 			return nil, err
 		}
@@ -551,6 +558,7 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 
 	// 6. Update nonce.
 	sm.state.LatestNonce = nonce
+	sm.clearExpiredHeightSyncFlags()
 
 	// Track FinalizeNonce: the nonce at which finalization started.
 	if sm.state.Phase == types.PhaseFinalizing && sm.state.FinalizeNonce == 0 {
@@ -758,6 +766,14 @@ type mutableSnapshot struct {
 	WarmKeys      map[uint32]string
 	SealedAcc     []byte
 	SealedNonces  map[uint64]uint64
+
+	HeightSyncForcedStart         uint64
+	HeightSyncForcedEnd           uint64
+	HeightSyncCadenceSwallowUntil uint64
+	HeightSyncSwallowFe           uint64
+	HeightSyncTurnK               uint64
+	HeightSyncTurnSlots           uint64
+	HeightSyncTurnReason          string
 }
 
 func (sm *StateMachine) snapshotMutable() mutableSnapshot {
@@ -776,17 +792,24 @@ func (sm *StateMachine) snapshotMutable() mutableSnapshot {
 	maps.Copy(sealedNoncesCopy, sm.sealedNonces)
 
 	return mutableSnapshot{
-		Balance:       sm.state.Balance,
-		Fees:          sm.state.Fees,
-		Phase:         sm.state.Phase,
-		FinalizeNonce: sm.state.FinalizeNonce,
-		LatestNonce:   sm.state.LatestNonce,
-		Inferences:    infCopy,
-		Committed:     cloneCommittedInferenceEntries(sm.committedEntries),
-		HostStats:     hsCopy,
-		WarmKeys:      warmCopy,
-		SealedAcc:     append([]byte(nil), sm.state.SealedAcc...),
-		SealedNonces:  sealedNoncesCopy,
+		Balance:                       sm.state.Balance,
+		Fees:                          sm.state.Fees,
+		Phase:                         sm.state.Phase,
+		FinalizeNonce:                 sm.state.FinalizeNonce,
+		LatestNonce:                   sm.state.LatestNonce,
+		Inferences:                    infCopy,
+		Committed:                     cloneCommittedInferenceEntries(sm.committedEntries),
+		HostStats:                     hsCopy,
+		WarmKeys:                      warmCopy,
+		SealedAcc:                     append([]byte(nil), sm.state.SealedAcc...),
+		SealedNonces:                  sealedNoncesCopy,
+		HeightSyncForcedStart:         sm.state.HeightSyncForcedStart,
+		HeightSyncForcedEnd:           sm.state.HeightSyncForcedEnd,
+		HeightSyncCadenceSwallowUntil: sm.state.HeightSyncCadenceSwallowUntil,
+		HeightSyncSwallowFe:           sm.state.HeightSyncSwallowFe,
+		HeightSyncTurnK:               sm.state.HeightSyncTurnK,
+		HeightSyncTurnSlots:           sm.state.HeightSyncTurnSlots,
+		HeightSyncTurnReason:          sm.state.HeightSyncTurnReason,
 	}
 }
 
@@ -802,6 +825,13 @@ func (sm *StateMachine) restoreMutable(snap mutableSnapshot) {
 	sm.state.WarmKeys = snap.WarmKeys
 	sm.state.SealedAcc = append([]byte(nil), snap.SealedAcc...)
 	sm.sealedNonces = snap.SealedNonces
+	sm.state.HeightSyncForcedStart = snap.HeightSyncForcedStart
+	sm.state.HeightSyncForcedEnd = snap.HeightSyncForcedEnd
+	sm.state.HeightSyncCadenceSwallowUntil = snap.HeightSyncCadenceSwallowUntil
+	sm.state.HeightSyncSwallowFe = snap.HeightSyncSwallowFe
+	sm.state.HeightSyncTurnK = snap.HeightSyncTurnK
+	sm.state.HeightSyncTurnSlots = snap.HeightSyncTurnSlots
+	sm.state.HeightSyncTurnReason = snap.HeightSyncTurnReason
 }
 
 func (sm *StateMachine) isDuplicateInferenceID(id uint64) bool {
@@ -859,7 +889,7 @@ func (sm *StateMachine) IsWarmKeyAddress(addr string) bool {
 	return false
 }
 
-func (sm *StateMachine) applyTx(tx *types.DevshardTx) error {
+func (sm *StateMachine) applyTx(tx *types.DevshardTx, diffNonce uint64) error {
 	switch inner := tx.GetTx().(type) {
 	case *types.DevshardTx_StartInference:
 		return sm.applyStartInference(inner.StartInference)
@@ -877,6 +907,8 @@ func (sm *StateMachine) applyTx(tx *types.DevshardTx) error {
 		return sm.applyRevealSeed(inner.RevealSeed)
 	case *types.DevshardTx_FinalizeRound:
 		return sm.applyFinalizeRound()
+	case *types.DevshardTx_ForceHeightSyncTurn:
+		return sm.applyForceHeightSyncTurn(inner.ForceHeightSyncTurn, diffNonce)
 	default:
 		return types.ErrEmptyTx
 	}

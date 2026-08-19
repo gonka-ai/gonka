@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"devshard"
+	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"
 	"devshard/signing"
@@ -209,13 +210,14 @@ func (c *InProcessClient) GetSignatures(_ context.Context, nonce uint64) (map[ui
 
 // InferenceParams describes a new inference to send.
 type InferenceParams struct {
-	Model            string
-	Prompt           []byte
-	InputLength      uint64
-	MaxTokens        uint64
-	ContextTotalHint uint64
-	StartedAt        int64
-	Stream           bool
+	Model                 string
+	Prompt                []byte
+	InputLength           uint64
+	MaxTokens             uint64
+	ContextTotalHint      uint64
+	StartedAt             int64
+	Stream                bool
+	ForceHeightSyncAnchor bool
 }
 
 // Session manages the user side of the devshard protocol.
@@ -265,6 +267,9 @@ type Session struct {
 	// Built lazily on first CollectSignatures call so finalize catch-up
 	// can reach quarantined hosts.
 	finalizeClients []HostClient
+
+	heightSyncK     uint64
+	heightSyncSlots uint64
 }
 
 // SessionOption configures optional Session behavior.
@@ -274,6 +279,23 @@ type SessionOption func(*Session)
 // When set, diffs and signatures are persisted on each state transition.
 func WithStorage(s storage.Storage) SessionOption {
 	return func(sess *Session) { sess.store = s }
+}
+
+// WithHeightSyncCadence records K and slots for composing MsgForceHeightSyncTurn when
+// InferenceParams.ForceHeightSyncAnchor is set. Must match host/client AnchorScheduler config.
+func WithHeightSyncCadence(k, slots uint64) SessionOption {
+	return func(sess *Session) {
+		sess.heightSyncK = k
+		sess.heightSyncSlots = slots
+	}
+}
+
+// SetHeightSyncCadence sets K/slots for MsgForceHeightSyncTurn composition (e.g. after RecoverSession).
+func (s *Session) SetHeightSyncCadence(k, slots uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.heightSyncK = k
+	s.heightSyncSlots = slots
 }
 
 // WithCollectRetry overrides signature collection retry parameters.
@@ -814,7 +836,27 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 		},
 	}}
 
-	diff, composedIdx, err := s.composeDiffLocked([]*types.DevshardTx{startTx})
+	txsForDiff := []*types.DevshardTx{startTx}
+	if params.ForceHeightSyncAnchor && s.heightSyncK != 0 {
+		slots := uint64(len(s.group))
+		if s.heightSyncSlots != 0 {
+			slots = s.heightSyncSlots
+		}
+		if !s.sm.HeightSyncForcedTurnActive(nonce) {
+			forceTx := &types.DevshardTx{Tx: &types.DevshardTx_ForceHeightSyncTurn{
+				ForceHeightSyncTurn: &types.MsgForceHeightSyncTurn{
+					TriggerNonce: nonce,
+					EndNonce:     nonce + slots - 1,
+					AnchorK:      s.heightSyncK,
+					SlotsNum:     slots,
+					Reason:       "manual",
+				},
+			}}
+			txsForDiff = []*types.DevshardTx{forceTx, startTx}
+		}
+	}
+
+	diff, composedIdx, err := s.composeDiffLocked(txsForDiff)
 	if err != nil {
 		return nil, err
 	}
@@ -854,9 +896,12 @@ func (p *PreparedInference) IsProbe() bool { return p.isProbe }
 // without processing it. Use ProcessResponse separately to apply the response
 // to session state. This split allows parallel network I/O with ordered processing.
 func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+	legacyForce := p.params.ForceHeightSyncAnchor && s.heightSyncK == 0
 	resp, err := s.clients[p.hostIdx].Send(ctx, host.HostRequest{
-		Diffs: p.catchUp,
-		Nonce: p.diff.Nonce,
+		Diffs:                 p.catchUp,
+		Nonce:                 p.diff.Nonce,
+		ForceHeightSyncAnchor: legacyForce,
+		HeightSyncEscrow:      s.heightSyncEscrowHints(),
 		Payload: &host.InferencePayload{
 			Prompt:      p.params.Prompt,
 			Model:       p.params.Model,
@@ -869,6 +914,17 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.
 		s.logStateRootMismatchUserDiagnostic(p)
 	}
 	return resp, err
+}
+
+func (s *Session) heightSyncEscrowHints() *heightsync.EscrowHeightSyncHints {
+	k, slots := s.heightSyncK, s.heightSyncSlots
+	if k == 0 {
+		k = 10
+	}
+	if slots == 0 {
+		slots = uint64(len(s.group))
+	}
+	return s.sm.HeightSyncEscrowHints(k, slots)
 }
 
 func (s *Session) logStateRootMismatchUserDiagnostic(p *PreparedInference) {
@@ -918,7 +974,7 @@ func (s *Session) sendDiffRound(ctx context.Context, extraTxs []*types.DevshardT
 	logging.Info("sendDiffRound sending", "subsystem", "finalize", "escrow", s.escrowID,
 		"nonce", diff.Nonce, "host", hostIdx, "catchup_count", len(catchUp))
 
-	resp, err := s.clients[hostIdx].Send(ctx, host.HostRequest{Diffs: catchUp, Nonce: diff.Nonce}, nil, nil)
+	resp, err := s.clients[hostIdx].Send(ctx, host.HostRequest{Diffs: catchUp, Nonce: diff.Nonce, HeightSyncEscrow: s.heightSyncEscrowHints()}, nil, nil)
 	if err != nil {
 		logging.Warn("sendDiffRound host dead", "subsystem", "finalize", "escrow", s.escrowID,
 			"nonce", diff.Nonce, "host", hostIdx, "error", err)

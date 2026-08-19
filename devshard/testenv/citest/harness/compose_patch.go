@@ -79,3 +79,52 @@ func PatchComposeInsertEnvAfter(t *testing.T, composePath, afterKey string, line
 	updated = append(updated, body[lineEnd:]...)
 	require.NoError(t, os.WriteFile(composePath, updated, 0o644))
 }
+
+// PatchComposeInsertEnvAfterAll adds environment lines after every matching env key.
+func PatchComposeInsertEnvAfterAll(t *testing.T, composePath, afterKey string, lines ...string) {
+	t.Helper()
+	body, err := os.ReadFile(composePath)
+	require.NoError(t, err)
+	re := regexp.MustCompile(`(?m)^(\s*)` + regexp.QuoteMeta(afterKey) + `:\s*.*$`)
+	locs := re.FindAllIndex(body, -1)
+	require.NotEmpty(t, locs, "compose %s: env key %q not found", composePath, afterKey)
+	for i := len(locs) - 1; i >= 0; i-- {
+		loc := locs[i]
+		lineEnd := loc[1]
+		if lineEnd < len(body) && body[lineEnd] == '\n' {
+			lineEnd++
+		}
+		indent := string(re.FindSubmatch(body[loc[0]:loc[1]])[1])
+		var insert strings.Builder
+		for _, line := range lines {
+			insert.WriteString(indent)
+			insert.WriteString(line)
+			insert.WriteByte('\n')
+		}
+		updated := append([]byte{}, body[:lineEnd]...)
+		updated = append(updated, []byte(insert.String())...)
+		updated = append(updated, body[lineEnd:]...)
+		body = updated
+	}
+	require.NoError(t, os.WriteFile(composePath, body, 0o644))
+}
+
+// EnableHeightSyncCompose injects optional height-sync env into a generated
+// compose file. Default gencompose output is left unchanged; only this
+// citest suite patches the stack.
+func EnableHeightSyncCompose(t *testing.T, composePath string) {
+	t.Helper()
+	body, err := os.ReadFile(composePath)
+	require.NoError(t, err)
+	require.NotContains(t, string(body), "DEVSHARD_CHAINORACLE_URL:",
+		"default compose must not enable height-sync; patch only in citest-height-sync")
+	PatchComposeInsertEnvAfterAll(t, composePath, "VERSIOND_ORACLE_URL",
+		"DEVSHARD_CHAINORACLE_URL: http://mock-dapi:9100",
+	)
+	PatchComposeInsertEnvAfterAll(t, composePath, "DEVSHARD_PUBLIC_API",
+		"DEVSHARD_CHAINORACLE_URL: http://mock-dapi:9100",
+	)
+	PatchComposeInsertEnvAfterAll(t, composePath, "LOG_FORMAT",
+		"DEVSHARD_LOG_LEVEL: debug",
+	)
+}

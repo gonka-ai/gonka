@@ -132,9 +132,43 @@ type EscrowState struct {
 	HostStats     map[uint32]*HostStats
 	WarmKeys      map[uint32]string // slot ID -> warm key address, lazily populated
 	LatestNonce   uint64
+
+	// Height-sync forced turn + cadence swallow (hashed into state root).
+	HeightSyncForcedStart         uint64
+	HeightSyncForcedEnd           uint64 // inclusive; cleared once LatestNonce > ForcedEnd
+	HeightSyncCadenceSwallowUntil uint64 // suppress periodic Anchor on (SwallowFe, SwallowUntil]
+	HeightSyncSwallowFe           uint64
+	HeightSyncTurnK               uint64 // snapshot K from opening MsgForceHeightSyncTurn
+	HeightSyncTurnSlots           uint64
+	HeightSyncTurnReason          string
+
 	// SealedAcc is the Phase 1 incremental accumulator over sealed inference
 	// commitments (32 bytes). Updated on each SealInference and settlement drain.
 	SealedAcc []byte `json:"sealed_acc,omitempty"`
+}
+
+// HeightSyncEscrowCommit is the subset of EscrowState hashed into the state root.
+type HeightSyncEscrowCommit struct {
+	ForcedStart, ForcedEnd         uint64
+	CadenceSwallowUntil, SwallowFe uint64
+	TurnK, TurnSlots               uint64
+	Reason                         string
+}
+
+// HeightSyncEscrowCommitFromState extracts height-sync fields for state hashing.
+func HeightSyncEscrowCommitFromState(s *EscrowState) HeightSyncEscrowCommit {
+	if s == nil {
+		return HeightSyncEscrowCommit{}
+	}
+	return HeightSyncEscrowCommit{
+		ForcedStart:         s.HeightSyncForcedStart,
+		ForcedEnd:           s.HeightSyncForcedEnd,
+		CadenceSwallowUntil: s.HeightSyncCadenceSwallowUntil,
+		SwallowFe:           s.HeightSyncSwallowFe,
+		TurnK:               s.HeightSyncTurnK,
+		TurnSlots:           s.HeightSyncTurnSlots,
+		Reason:              s.HeightSyncTurnReason,
+	}
 }
 
 // Diff is the protocol primitive: what the user creates and signs.

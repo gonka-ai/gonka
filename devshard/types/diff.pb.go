@@ -90,7 +90,85 @@ func (x *DiffContent) GetPostStateRoot() []byte {
 	return nil
 }
 
-// DevshardTx wraps all 8 tx types in a oneof for deterministic serialization.
+// MsgForceHeightSyncTurn opens a forced height-sync turn of slots_num consecutive
+// nonces (same width as a cadence sync turn).
+type MsgForceHeightSyncTurn struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	TriggerNonce  uint64                 `protobuf:"varint,1,opt,name=trigger_nonce,json=triggerNonce,proto3" json:"trigger_nonce,omitempty"` // must equal diff nonce
+	EndNonce      uint64                 `protobuf:"varint,2,opt,name=end_nonce,json=endNonce,proto3" json:"end_nonce,omitempty"`             // trigger_nonce + slots_num - 1
+	AnchorK       uint64                 `protobuf:"varint,3,opt,name=anchor_k,json=anchorK,proto3" json:"anchor_k,omitempty"`                // scheduler K (must match host/user height-sync config)
+	SlotsNum      uint64                 `protobuf:"varint,4,opt,name=slots_num,json=slotsNum,proto3" json:"slots_num,omitempty"`             // must equal escrow group size
+	Reason        string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MsgForceHeightSyncTurn) Reset() {
+	*x = MsgForceHeightSyncTurn{}
+	mi := &file_devshard_v1_diff_proto_msgTypes[1]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MsgForceHeightSyncTurn) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MsgForceHeightSyncTurn) ProtoMessage() {}
+
+func (x *MsgForceHeightSyncTurn) ProtoReflect() protoreflect.Message {
+	mi := &file_devshard_v1_diff_proto_msgTypes[1]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MsgForceHeightSyncTurn.ProtoReflect.Descriptor instead.
+func (*MsgForceHeightSyncTurn) Descriptor() ([]byte, []int) {
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{1}
+}
+
+func (x *MsgForceHeightSyncTurn) GetTriggerNonce() uint64 {
+	if x != nil {
+		return x.TriggerNonce
+	}
+	return 0
+}
+
+func (x *MsgForceHeightSyncTurn) GetEndNonce() uint64 {
+	if x != nil {
+		return x.EndNonce
+	}
+	return 0
+}
+
+func (x *MsgForceHeightSyncTurn) GetAnchorK() uint64 {
+	if x != nil {
+		return x.AnchorK
+	}
+	return 0
+}
+
+func (x *MsgForceHeightSyncTurn) GetSlotsNum() uint64 {
+	if x != nil {
+		return x.SlotsNum
+	}
+	return 0
+}
+
+func (x *MsgForceHeightSyncTurn) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+// DevshardTx wraps all tx types in a oneof for deterministic serialization.
 type DevshardTx struct {
 	state protoimpl.MessageState `protogen:"open.v1"`
 	// Types that are valid to be assigned to Tx:
@@ -103,6 +181,7 @@ type DevshardTx struct {
 	//	*DevshardTx_ValidationVote
 	//	*DevshardTx_RevealSeed
 	//	*DevshardTx_FinalizeRound
+	//	*DevshardTx_ForceHeightSyncTurn
 	Tx            isDevshardTx_Tx `protobuf_oneof:"tx"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
@@ -110,7 +189,7 @@ type DevshardTx struct {
 
 func (x *DevshardTx) Reset() {
 	*x = DevshardTx{}
-	mi := &file_devshard_v1_diff_proto_msgTypes[1]
+	mi := &file_devshard_v1_diff_proto_msgTypes[2]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -122,7 +201,7 @@ func (x *DevshardTx) String() string {
 func (*DevshardTx) ProtoMessage() {}
 
 func (x *DevshardTx) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_diff_proto_msgTypes[1]
+	mi := &file_devshard_v1_diff_proto_msgTypes[2]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -135,7 +214,7 @@ func (x *DevshardTx) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use DevshardTx.ProtoReflect.Descriptor instead.
 func (*DevshardTx) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{1}
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *DevshardTx) GetTx() isDevshardTx_Tx {
@@ -217,6 +296,15 @@ func (x *DevshardTx) GetFinalizeRound() *MsgFinalizeRound {
 	return nil
 }
 
+func (x *DevshardTx) GetForceHeightSyncTurn() *MsgForceHeightSyncTurn {
+	if x != nil {
+		if x, ok := x.Tx.(*DevshardTx_ForceHeightSyncTurn); ok {
+			return x.ForceHeightSyncTurn
+		}
+	}
+	return nil
+}
+
 type isDevshardTx_Tx interface {
 	isDevshardTx_Tx()
 }
@@ -254,6 +342,10 @@ type DevshardTx_FinalizeRound struct {
 	FinalizeRound *MsgFinalizeRound `protobuf:"bytes,8,opt,name=finalize_round,json=finalizeRound,proto3,oneof"`
 }
 
+type DevshardTx_ForceHeightSyncTurn struct {
+	ForceHeightSyncTurn *MsgForceHeightSyncTurn `protobuf:"bytes,9,opt,name=force_height_sync_turn,json=forceHeightSyncTurn,proto3,oneof"`
+}
+
 func (*DevshardTx_StartInference) isDevshardTx_Tx() {}
 
 func (*DevshardTx_ConfirmStart) isDevshardTx_Tx() {}
@@ -269,6 +361,8 @@ func (*DevshardTx_ValidationVote) isDevshardTx_Tx() {}
 func (*DevshardTx_RevealSeed) isDevshardTx_Tx() {}
 
 func (*DevshardTx_FinalizeRound) isDevshardTx_Tx() {}
+
+func (*DevshardTx_ForceHeightSyncTurn) isDevshardTx_Tx() {}
 
 // ExecutorReceiptContent is what the executor signs for MsgConfirmStart.
 type ExecutorReceiptContent struct {
@@ -287,7 +381,7 @@ type ExecutorReceiptContent struct {
 
 func (x *ExecutorReceiptContent) Reset() {
 	*x = ExecutorReceiptContent{}
-	mi := &file_devshard_v1_diff_proto_msgTypes[2]
+	mi := &file_devshard_v1_diff_proto_msgTypes[3]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -299,7 +393,7 @@ func (x *ExecutorReceiptContent) String() string {
 func (*ExecutorReceiptContent) ProtoMessage() {}
 
 func (x *ExecutorReceiptContent) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_diff_proto_msgTypes[2]
+	mi := &file_devshard_v1_diff_proto_msgTypes[3]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -312,7 +406,7 @@ func (x *ExecutorReceiptContent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ExecutorReceiptContent.ProtoReflect.Descriptor instead.
 func (*ExecutorReceiptContent) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{2}
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *ExecutorReceiptContent) GetInferenceId() uint64 {
@@ -384,7 +478,7 @@ type TimeoutVoteContent struct {
 
 func (x *TimeoutVoteContent) Reset() {
 	*x = TimeoutVoteContent{}
-	mi := &file_devshard_v1_diff_proto_msgTypes[3]
+	mi := &file_devshard_v1_diff_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -396,7 +490,7 @@ func (x *TimeoutVoteContent) String() string {
 func (*TimeoutVoteContent) ProtoMessage() {}
 
 func (x *TimeoutVoteContent) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_diff_proto_msgTypes[3]
+	mi := &file_devshard_v1_diff_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -409,7 +503,7 @@ func (x *TimeoutVoteContent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use TimeoutVoteContent.ProtoReflect.Descriptor instead.
 func (*TimeoutVoteContent) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{3}
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *TimeoutVoteContent) GetEscrowId() string {
@@ -452,7 +546,7 @@ type StateSignatureContent struct {
 
 func (x *StateSignatureContent) Reset() {
 	*x = StateSignatureContent{}
-	mi := &file_devshard_v1_diff_proto_msgTypes[4]
+	mi := &file_devshard_v1_diff_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -464,7 +558,7 @@ func (x *StateSignatureContent) String() string {
 func (*StateSignatureContent) ProtoMessage() {}
 
 func (x *StateSignatureContent) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_diff_proto_msgTypes[4]
+	mi := &file_devshard_v1_diff_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -477,7 +571,7 @@ func (x *StateSignatureContent) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StateSignatureContent.ProtoReflect.Descriptor instead.
 func (*StateSignatureContent) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{4}
+	return file_devshard_v1_diff_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *StateSignatureContent) GetStateRoot() []byte {
@@ -510,7 +604,13 @@ const file_devshard_v1_diff_proto_rawDesc = "" +
 	"\x05nonce\x18\x01 \x01(\x04R\x05nonce\x12)\n" +
 	"\x03txs\x18\x02 \x03(\v2\x17.devshard.v1.DevshardTxR\x03txs\x12\x1b\n" +
 	"\tescrow_id\x18\x03 \x01(\tR\bescrowId\x12&\n" +
-	"\x0fpost_state_root\x18\x04 \x01(\fR\rpostStateRoot\"\xd1\x04\n" +
+	"\x0fpost_state_root\x18\x04 \x01(\fR\rpostStateRoot\"\xaa\x01\n" +
+	"\x16MsgForceHeightSyncTurn\x12#\n" +
+	"\rtrigger_nonce\x18\x01 \x01(\x04R\ftriggerNonce\x12\x1b\n" +
+	"\tend_nonce\x18\x02 \x01(\x04R\bendNonce\x12\x19\n" +
+	"\banchor_k\x18\x03 \x01(\x04R\aanchorK\x12\x1b\n" +
+	"\tslots_num\x18\x04 \x01(\x04R\bslotsNum\x12\x16\n" +
+	"\x06reason\x18\x05 \x01(\tR\x06reason\"\xad\x05\n" +
 	"\n" +
 	"DevshardTx\x12I\n" +
 	"\x0fstart_inference\x18\x01 \x01(\v2\x1e.devshard.v1.MsgStartInferenceH\x00R\x0estartInference\x12C\n" +
@@ -523,7 +623,8 @@ const file_devshard_v1_diff_proto_rawDesc = "" +
 	"\x0fvalidation_vote\x18\x06 \x01(\v2\x1e.devshard.v1.MsgValidationVoteH\x00R\x0evalidationVote\x12=\n" +
 	"\vreveal_seed\x18\a \x01(\v2\x1a.devshard.v1.MsgRevealSeedH\x00R\n" +
 	"revealSeed\x12F\n" +
-	"\x0efinalize_round\x18\b \x01(\v2\x1d.devshard.v1.MsgFinalizeRoundH\x00R\rfinalizeRoundB\x04\n" +
+	"\x0efinalize_round\x18\b \x01(\v2\x1d.devshard.v1.MsgFinalizeRoundH\x00R\rfinalizeRound\x12Z\n" +
+	"\x16force_height_sync_turn\x18\t \x01(\v2#.devshard.v1.MsgForceHeightSyncTurnH\x00R\x13forceHeightSyncTurnB\x04\n" +
 	"\x02tx\"\x93\x02\n" +
 	"\x16ExecutorReceiptContent\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x12\x1f\n" +
@@ -560,39 +661,41 @@ func file_devshard_v1_diff_proto_rawDescGZIP() []byte {
 	return file_devshard_v1_diff_proto_rawDescData
 }
 
-var file_devshard_v1_diff_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
+var file_devshard_v1_diff_proto_msgTypes = make([]protoimpl.MessageInfo, 6)
 var file_devshard_v1_diff_proto_goTypes = []any{
 	(*DiffContent)(nil),            // 0: devshard.v1.DiffContent
-	(*DevshardTx)(nil),             // 1: devshard.v1.DevshardTx
-	(*ExecutorReceiptContent)(nil), // 2: devshard.v1.ExecutorReceiptContent
-	(*TimeoutVoteContent)(nil),     // 3: devshard.v1.TimeoutVoteContent
-	(*StateSignatureContent)(nil),  // 4: devshard.v1.StateSignatureContent
-	(*MsgStartInference)(nil),      // 5: devshard.v1.MsgStartInference
-	(*MsgConfirmStart)(nil),        // 6: devshard.v1.MsgConfirmStart
-	(*MsgFinishInference)(nil),     // 7: devshard.v1.MsgFinishInference
-	(*MsgTimeoutInference)(nil),    // 8: devshard.v1.MsgTimeoutInference
-	(*MsgValidation)(nil),          // 9: devshard.v1.MsgValidation
-	(*MsgValidationVote)(nil),      // 10: devshard.v1.MsgValidationVote
-	(*MsgRevealSeed)(nil),          // 11: devshard.v1.MsgRevealSeed
-	(*MsgFinalizeRound)(nil),       // 12: devshard.v1.MsgFinalizeRound
-	(TimeoutReason)(0),             // 13: devshard.v1.TimeoutReason
+	(*MsgForceHeightSyncTurn)(nil), // 1: devshard.v1.MsgForceHeightSyncTurn
+	(*DevshardTx)(nil),             // 2: devshard.v1.DevshardTx
+	(*ExecutorReceiptContent)(nil), // 3: devshard.v1.ExecutorReceiptContent
+	(*TimeoutVoteContent)(nil),     // 4: devshard.v1.TimeoutVoteContent
+	(*StateSignatureContent)(nil),  // 5: devshard.v1.StateSignatureContent
+	(*MsgStartInference)(nil),      // 6: devshard.v1.MsgStartInference
+	(*MsgConfirmStart)(nil),        // 7: devshard.v1.MsgConfirmStart
+	(*MsgFinishInference)(nil),     // 8: devshard.v1.MsgFinishInference
+	(*MsgTimeoutInference)(nil),    // 9: devshard.v1.MsgTimeoutInference
+	(*MsgValidation)(nil),          // 10: devshard.v1.MsgValidation
+	(*MsgValidationVote)(nil),      // 11: devshard.v1.MsgValidationVote
+	(*MsgRevealSeed)(nil),          // 12: devshard.v1.MsgRevealSeed
+	(*MsgFinalizeRound)(nil),       // 13: devshard.v1.MsgFinalizeRound
+	(TimeoutReason)(0),             // 14: devshard.v1.TimeoutReason
 }
 var file_devshard_v1_diff_proto_depIdxs = []int32{
-	1,  // 0: devshard.v1.DiffContent.txs:type_name -> devshard.v1.DevshardTx
-	5,  // 1: devshard.v1.DevshardTx.start_inference:type_name -> devshard.v1.MsgStartInference
-	6,  // 2: devshard.v1.DevshardTx.confirm_start:type_name -> devshard.v1.MsgConfirmStart
-	7,  // 3: devshard.v1.DevshardTx.finish_inference:type_name -> devshard.v1.MsgFinishInference
-	8,  // 4: devshard.v1.DevshardTx.timeout_inference:type_name -> devshard.v1.MsgTimeoutInference
-	9,  // 5: devshard.v1.DevshardTx.validation:type_name -> devshard.v1.MsgValidation
-	10, // 6: devshard.v1.DevshardTx.validation_vote:type_name -> devshard.v1.MsgValidationVote
-	11, // 7: devshard.v1.DevshardTx.reveal_seed:type_name -> devshard.v1.MsgRevealSeed
-	12, // 8: devshard.v1.DevshardTx.finalize_round:type_name -> devshard.v1.MsgFinalizeRound
-	13, // 9: devshard.v1.TimeoutVoteContent.reason:type_name -> devshard.v1.TimeoutReason
-	10, // [10:10] is the sub-list for method output_type
-	10, // [10:10] is the sub-list for method input_type
-	10, // [10:10] is the sub-list for extension type_name
-	10, // [10:10] is the sub-list for extension extendee
-	0,  // [0:10] is the sub-list for field type_name
+	2,  // 0: devshard.v1.DiffContent.txs:type_name -> devshard.v1.DevshardTx
+	6,  // 1: devshard.v1.DevshardTx.start_inference:type_name -> devshard.v1.MsgStartInference
+	7,  // 2: devshard.v1.DevshardTx.confirm_start:type_name -> devshard.v1.MsgConfirmStart
+	8,  // 3: devshard.v1.DevshardTx.finish_inference:type_name -> devshard.v1.MsgFinishInference
+	9,  // 4: devshard.v1.DevshardTx.timeout_inference:type_name -> devshard.v1.MsgTimeoutInference
+	10, // 5: devshard.v1.DevshardTx.validation:type_name -> devshard.v1.MsgValidation
+	11, // 6: devshard.v1.DevshardTx.validation_vote:type_name -> devshard.v1.MsgValidationVote
+	12, // 7: devshard.v1.DevshardTx.reveal_seed:type_name -> devshard.v1.MsgRevealSeed
+	13, // 8: devshard.v1.DevshardTx.finalize_round:type_name -> devshard.v1.MsgFinalizeRound
+	1,  // 9: devshard.v1.DevshardTx.force_height_sync_turn:type_name -> devshard.v1.MsgForceHeightSyncTurn
+	14, // 10: devshard.v1.TimeoutVoteContent.reason:type_name -> devshard.v1.TimeoutReason
+	11, // [11:11] is the sub-list for method output_type
+	11, // [11:11] is the sub-list for method input_type
+	11, // [11:11] is the sub-list for extension type_name
+	11, // [11:11] is the sub-list for extension extendee
+	0,  // [0:11] is the sub-list for field type_name
 }
 
 func init() { file_devshard_v1_diff_proto_init() }
@@ -601,7 +704,7 @@ func file_devshard_v1_diff_proto_init() {
 		return
 	}
 	file_devshard_v1_tx_proto_init()
-	file_devshard_v1_diff_proto_msgTypes[1].OneofWrappers = []any{
+	file_devshard_v1_diff_proto_msgTypes[2].OneofWrappers = []any{
 		(*DevshardTx_StartInference)(nil),
 		(*DevshardTx_ConfirmStart)(nil),
 		(*DevshardTx_FinishInference)(nil),
@@ -610,6 +713,7 @@ func file_devshard_v1_diff_proto_init() {
 		(*DevshardTx_ValidationVote)(nil),
 		(*DevshardTx_RevealSeed)(nil),
 		(*DevshardTx_FinalizeRound)(nil),
+		(*DevshardTx_ForceHeightSyncTurn)(nil),
 	}
 	type x struct{}
 	out := protoimpl.TypeBuilder{
@@ -617,7 +721,7 @@ func file_devshard_v1_diff_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_devshard_v1_diff_proto_rawDesc), len(file_devshard_v1_diff_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   5,
+			NumMessages:   6,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

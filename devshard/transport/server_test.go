@@ -48,6 +48,7 @@ func registerServer(g *echo.Group, srv *Server) {
 		}
 	}
 	g.POST("/sessions/:id/chat/completions", withAuth(true, srv.HandleInference))
+	g.POST("/sessions/:id/height-sync", withAuth(false, srv.HandleHeightSync))
 	g.POST("/sessions/:id/verify-timeout", withAuth(false, srv.HandleVerifyTimeout))
 	g.POST("/sessions/:id/challenge-receipt", withAuth(false, srv.HandleChallengeReceipt))
 	g.POST("/sessions/:id/gossip/nonce", withAuth(false, srv.HandleGossipNonce))
@@ -57,7 +58,7 @@ func registerServer(g *echo.Group, srv *Server) {
 	g.GET("/sessions/:id/signatures", srv.HandleGetSignatures)
 }
 
-func setupServerEnv(t *testing.T) *serverTestEnv {
+func setupServerEnv(t *testing.T, opts ...ServerOption) *serverTestEnv {
 	t.Helper()
 	hostSigner := testutil.MustGenerateKey(t)
 	userSigner := testutil.MustGenerateKey(t)
@@ -80,7 +81,7 @@ func setupServerEnv(t *testing.T) *serverTestEnv {
 	h, err := host.NewHost(sm, hostSigner, engine, "escrow-1", group, nil, host.WithGrace(100), host.WithStorage(store))
 	require.NoError(t, err)
 
-	srv, err := NewServer(h, store, verifier, userSigner.Address())
+	srv, err := NewServer(h, store, verifier, userSigner.Address(), opts...)
 	require.NoError(t, err)
 
 	e := echo.New()
@@ -107,6 +108,20 @@ func (env *serverTestEnv) doPost(t *testing.T, path string, body []byte) *httpte
 
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(HeaderSignature, hex.EncodeToString(sig))
+	req.Header.Set(HeaderTimestamp, fmt.Sprintf("%d", ts))
+	rec := httptest.NewRecorder()
+	env.echo.ServeHTTP(rec, req)
+	return rec
+}
+
+func (env *serverTestEnv) doPostContentType(t *testing.T, path, contentType string, body []byte) *httptest.ResponseRecorder {
+	t.Helper()
+	ts := time.Now().Unix()
+	sig, err := SignRequest(env.userSigner, "escrow-1", body, ts)
+	require.NoError(t, err)
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", contentType)
 	req.Header.Set(HeaderSignature, hex.EncodeToString(sig))
 	req.Header.Set(HeaderTimestamp, fmt.Sprintf("%d", ts))
 	rec := httptest.NewRecorder()

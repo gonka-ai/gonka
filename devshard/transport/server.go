@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
 	json "github.com/goccy/go-json"
@@ -17,7 +18,9 @@ import (
 
 	"devshard"
 	"devshard/bridge"
+	"devshard/chainoracle/blocks"
 	"devshard/gossip"
+	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"
 	"devshard/observability"
@@ -39,6 +42,20 @@ type Server struct {
 	rateLimit   *rateLimiter         // nil = no limiting
 	maxBodySize int64                // max request body bytes, 0 = no limit
 	bridge      bridge.MainnetBridge // optional, for warm key verification
+
+	heightSync          *heightsync.AnchorScheduler
+	heightSyncLogOracle blocks.BlockOracle
+	heightSyncAudit     *heightsync.AuditRing
+	heightSyncSeedRPC   bool
+
+	pendingUntrustedMu        sync.Mutex
+	pendingUntrustedBySession map[string]*pendingUntrustedTip
+
+	heightSyncResponseAfterSignHook func(sec *heightsync.HeightSyncSection, nonce uint64)
+
+	holdInferenceMu    sync.Mutex
+	holdInferenceGate  chan struct{} // closed to release; non-nil while armed
+	holdInferenceArmed bool
 }
 
 // ServerOption configures the Server.
@@ -91,6 +108,7 @@ func NewServer(
 	for _, o := range opts {
 		o(s)
 	}
+	s.attachHeightSyncConfirmation()
 	return s, nil
 }
 
@@ -99,7 +117,6 @@ func (s *Server) Host() *host.Host { return s.host }
 
 // SetGossip attaches a gossip instance for nonce/tx propagation.
 func (s *Server) SetGossip(g *gossip.Gossip) { s.gossip = g }
-
 
 // writeJSON serializes v with goccy/go-json, bypassing Echo's default serializer.
 // TODO: set a custom echo.JSONSerializer using goccy/go-json on all Echo instances
@@ -307,14 +324,14 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 	}
 	observability.Request.SetInferenceBodyBytes(op, len(body))
 
-	var ir InferenceRequest
-	if err := json.Unmarshal(body, &ir); err != nil {
+	unwrapped, err := UnwrapInferenceRequestBody(body)
+	if err != nil {
 		return observability.FailNoReceipt(ctx, s.host.EscrowID(),
 			observability.ReasonParseErr, observability.WhereTransportHandleInference,
-			"HandleInference: invalid json", echo.NewHTTPError(http.StatusBadRequest, "invalid json: "+err.Error()))
+			"HandleInference: decode body", echo.NewHTTPError(http.StatusBadRequest, "decode body: "+err.Error()))
 	}
 
-	req, err := HostRequestFromJSON(ir)
+	req, err := HostRequestFromJSON(unwrapped.Request)
 	if err != nil {
 		return observability.FailNoReceipt(ctx, s.host.EscrowID(),
 			observability.ReasonDecodeErr, observability.WhereTransportHandleInference,
@@ -324,6 +341,28 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 		observability.Request.SetModel(op, req.Payload.Model)
 	}
 	observability.Request.SetNonce(op, req.Nonce)
+
+	oracleHdr := s.latestOracleHeader(c.Request().Context())
+	if s.pendingUntrustedBySession != nil {
+		s.reconcilePendingUntrusted(sessionID, oracleHdr)
+	}
+	inboundVal := s.classifyInboundHeightSync(req.Nonce, unwrapped.HeightSync, oracleHdr)
+	if inboundVal.Result == heightsync.ResultInvalidStaleOrigin {
+		heightsync.IncStaleOriginRejected()
+		logging.Warn("heightsync: invalid inbound anchor",
+			heightsync.LogFieldSubsystem, "heightsync",
+			heightsync.LogFieldDirection, "request",
+			heightsync.LogFieldNonce, req.Nonce,
+			heightsync.LogFieldPeerID, sender,
+			heightsync.LogFieldReason, inboundVal.Reason,
+			heightsync.LogFieldClassification, string(inboundVal.Result),
+		)
+	}
+	s.logInboundHeightSync(sender, sessionID, req.Nonce, unwrapped.HeightSync, oracleHdr, inboundVal)
+	s.recordInboundAnchorIfAnchor(sender, unwrapped.HeightSync, c.Request().Method+" "+c.Path(), inboundVal)
+	if inboundVal.Result == heightsync.ResultValidAnchor || inboundVal.Result == heightsync.ResultValidLazyAnchor {
+		s.notePendingUntrustedInbound(sessionID, sender, unwrapped.HeightSync, oracleHdr)
+	}
 
 	resp, err := s.host.HandleRequest(ctx, req)
 	if err != nil {
@@ -337,8 +376,15 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 		return observability.FailNoReceipt(ctx, s.host.EscrowID(), reason, where,
 			"HandleInference: handle request", echo.NewHTTPError(http.StatusInternalServerError, err.Error()))
 	}
+	s.recordForceRequestAnchorMissingIfApplicable(sender, req.Nonce, unwrapped.HeightSync, c.Request().Method+" "+c.Path())
 	observability.Request.SetInferenceID(op, resp.InferenceID)
 	observability.Request.SetInferenceResponse(op, resp.Nonce, resp.ExecutionExpected, resp.CachedResponseBody != nil)
+
+	if err := s.waitInferenceResponseHold(ctx, req.Nonce); err != nil {
+		logging.Debug("HandleInference: response hold ended without SSE",
+			"subsystem", "transport", "nonce", req.Nonce, "error", err.Error())
+		return err
+	}
 
 	// Always SSE response.
 	w := c.Response()
@@ -357,6 +403,38 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 		ConfirmedAt: resp.ConfirmedAt,
 	}
 	receiptWrapper := map[string]interface{}{"devshard_receipt": receiptEvent}
+	if s.heightSync != nil {
+		schedK := s.heightSync.K()
+		schedSlots := s.heightSync.SlotsNum()
+		escrowH := s.host.HeightSyncEscrowHints(schedK, schedSlots)
+		h := heightsync.DecideHints{
+			Nonce:              req.Nonce,
+			SessionStart:       req.Nonce == 1,
+			ForceAnchor:        req.ForceHeightSyncAnchor && escrowH == nil,
+			Escrow:             escrowH,
+			OriginatorSenderID: s.host.Signer().Address(),
+			Direction:          "response",
+		}
+		sec, dErr, oracleMiss := s.heightSync.Decide(c.Request().Context(), h)
+		if oracleMiss {
+			heightsync.IncOracleFailure(s.host.Signer().Address())
+		}
+		if dErr != nil {
+			logging.Debug("heightsync: outbound anchor error",
+				heightsync.LogFieldSubsystem, "heightsync",
+				heightsync.LogFieldNonce, req.Nonce,
+				"error", dErr.Error())
+			s.logOutboundHeightSync(nil, req.Nonce)
+		} else if sec != nil {
+			sec.Direction = "response"
+			s.attachResponseOriginSignature(sec, req.Nonce)
+			receiptWrapper["height_sync"] = sec
+			s.logOutboundHeightSync(sec, req.Nonce)
+			s.recordOutboundAnchorIfAnchor(sec, c.Request().Method+" "+c.Path())
+		} else {
+			s.logOutboundHeightSync(nil, req.Nonce)
+		}
+	}
 	if werr := writeSSEEvent(w, receiptWrapper); werr != nil {
 		observability.RecordReceiptWriteFailure(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, observability.ReasonReceiptWriteErr, observability.WhereTransportWriteReceiptSSE)
 		if resp.ExecutionJob != nil {

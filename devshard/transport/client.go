@@ -18,10 +18,13 @@ import (
 
 	json "github.com/goccy/go-json"
 
+	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"
 	"devshard/signing"
 	"devshard/types"
+
+	"devshard/chainoracle/blocks"
 
 	devshardpkg "devshard"
 )
@@ -80,6 +83,21 @@ type ClientConfig struct {
 	// keys those other subsystems use.
 	ParticipantKey string
 	Admission      RequestAdmissionController
+
+	// HeightSync enables outbound Anchor sections on inference POST bodies (protobuf envelope).
+	HeightSync *heightsync.AnchorScheduler
+	// HeightSyncLogOracle optional Latest() for debug logs (local height vs peer).
+	HeightSyncLogOracle blocks.BlockOracle
+	// HeightSyncPeerTips shares observed peer tips across multiple HTTP clients
+	// in the same session (courier mode). When nil and HeightSync is set, the
+	// client allocates its own cache.
+	HeightSyncPeerTips *HeightSyncPeerTips
+	// HeightSyncRequestMutateHook runs after Decide and peer-tip carry-forward,
+	// before the request is marshaled. Tests / debug only.
+	HeightSyncRequestMutateHook func(sec *heightsync.HeightSyncSection, nonce uint64)
+	// HeightSyncConfirmation is a shared confirmation index across session HTTP
+	// clients when height sync is enabled.
+	HeightSyncConfirmation *heightsync.ConfirmationIndex
 }
 
 // RequestAdmissionController can reject participant-bound transport
@@ -153,6 +171,15 @@ type HTTPClient struct {
 	signer      signing.Signer
 	http        *http.Client
 	config      ClientConfig
+
+	heightSync          *heightsync.AnchorScheduler
+	heightSyncAudit     *heightsync.AuditRing
+	heightSyncLogOracle blocks.BlockOracle
+	heightSyncPeerTips  *HeightSyncPeerTips
+	heightSyncVerifier  signing.Verifier
+
+	oneShotMu               sync.Mutex
+	oneShotHeightSyncMutate func(*heightsync.HeightSyncSection, uint64)
 }
 
 // NewHTTPClient creates an HTTP client for the devshard transport layer.
@@ -162,7 +189,10 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 	if len(cfgs) > 0 {
 		cfg = cfgs[0]
 	}
-	return &HTTPClient{
+	if cfg.RoutePrefix == "" {
+		cfg.RoutePrefix = DefaultRoutePrefix()
+	}
+	hc := &HTTPClient{
 		baseURL:     baseURL,
 		routePrefix: cfg.RoutePrefix,
 		escrowID:    escrowID,
@@ -170,8 +200,23 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 		http: &http.Client{
 			Transport: DefaultHostConnectionTracker().WrapRoundTripper(getTransport(baseURL)),
 		},
-		config: cfg,
+		config:              cfg,
+		heightSync:          cfg.HeightSync,
+		heightSyncLogOracle: cfg.HeightSyncLogOracle,
+		heightSyncVerifier:  signing.NewSecp256k1Verifier(),
 	}
+	if cfg.HeightSync != nil {
+		hc.heightSyncAudit = heightsync.NewAuditRing(0)
+		if cfg.HeightSyncConfirmation != nil {
+			hc.heightSyncAudit.AttachConfirmation(cfg.HeightSyncConfirmation)
+		}
+	}
+	if cfg.HeightSyncPeerTips != nil {
+		hc.heightSyncPeerTips = cfg.HeightSyncPeerTips
+	} else if cfg.HeightSync != nil {
+		hc.heightSyncPeerTips = NewHeightSyncPeerTips()
+	}
+	return hc
 }
 
 // WithoutAdmission returns a shallow copy of the client with admission control
@@ -244,19 +289,22 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 		return nil, fmt.Errorf("encode request: %w", err)
 	}
 
-	body, err := json.Marshal(ir)
+	body, contentType, outboundHS, err := c.wrapInferenceRequest(ctx, req, ir)
 	if err != nil {
-		return nil, fmt.Errorf("marshal json: %w", err)
+		return nil, err
 	}
 
-	resp, err := c.doPostRaw(ctx, "/sessions/"+c.escrowID+"/chat/completions", body)
+	resp, err := c.doPostRaw(ctx, "/sessions/"+c.escrowID+"/chat/completions", body, contentType)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if outboundHS != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		c.markHeightSyncPropagated(outboundHS)
+	}
 
-	contentType := resp.Header.Get("Content-Type")
-	if strings.HasPrefix(contentType, "text/event-stream") {
+	respContentType := resp.Header.Get("Content-Type")
+	if strings.HasPrefix(respContentType, "text/event-stream") {
 		cr := &countingReader{r: resp.Body}
 		result, err := c.parseSSEResponse(ctx, cr, stream, receiptHandler)
 		if result != nil {
@@ -401,6 +449,13 @@ func (c *HTTPClient) handleSSELine(
 			result.Nonce = receipt.Nonce
 			result.Receipt = receipt.Receipt
 			result.ConfirmedAt = receipt.ConfirmedAt
+		}
+		if rawHS, ok := envelope["height_sync"]; ok && string(rawHS) != "null" {
+			var hs heightsync.HeightSyncSection
+			if err := json.Unmarshal(rawHS, &hs); err == nil {
+				hs.Direction = "response"
+				c.ingestResponseHeightSync(&hs, result.Nonce, "SSE devshard_receipt line")
+			}
 		}
 		if receiptHandler != nil {
 			receiptHandler()
@@ -607,7 +662,7 @@ func (c *HTTPClient) GetMempool(ctx context.Context) ([]*types.DevshardTx, error
 
 // doPostRaw sends a signed POST request and returns the raw http.Response.
 // Caller is responsible for closing resp.Body.
-func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*http.Response, error) {
+func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte, contentType ...string) (*http.Response, error) {
 	url := c.baseURL + c.routePrefix + path
 	if err := c.allowRequest(path); err != nil {
 		return nil, err
@@ -623,7 +678,11 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	ct := "application/json"
+	if len(contentType) > 0 && contentType[0] != "" {
+		ct = contentType[0]
+	}
+	req.Header.Set("Content-Type", ct)
 	req.Header.Set(c.signatureHeader(), hex.EncodeToString(sig))
 	req.Header.Set(c.timestampHeader(), strconv.FormatInt(ts, 10))
 

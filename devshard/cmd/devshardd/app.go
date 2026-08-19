@@ -278,6 +278,10 @@ func buildHostManager(
 	manager.SetAvailabilityProvider(availabilityTracker)
 	manager.SetMaxNonceProvider(runtimeparams.MaxNonceFromSnapshot(chainParams))
 	manager.SetBinaryVersion(cfg.BinaryLogVersion)
+	if err := manager.SetHeightSyncFromEnv(ctx); err != nil {
+		return nil, fmt.Errorf("height sync oracle: %w", err)
+	}
+	closers.Add(manager.CloseHeightSync)
 	chainBridge.OnSettlementFinalizedHandler(manager.HandleSettlementFinalized)
 
 	startHostEventsWarm(ctx, cfg, chainBridge, mlClient, store, closers)

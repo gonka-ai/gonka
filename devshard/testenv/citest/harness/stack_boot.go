@@ -38,6 +38,21 @@ func BootStackBuild(t *testing.T, prefix string) (*Stack, *config.File, Endpoint
 	return stack, cfg, stack.Endpoints(t, cfg)
 }
 
+// BootHeightSyncStack is BootStack with DEVSHARD_CHAINORACLE_URL pointed at
+// mock-dapi. Default compose is not modified; only this generated file is patched.
+func BootHeightSyncStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteStackConfig(t, stack.WorkDir)
+	stack.RunGencompose(t)
+	EnableHeightSyncCompose(t, stack.ComposePath)
+	cfg := stack.LoadConfig(t)
+	requireTwoVersiondHosts(t, cfg)
+	stack.Up(t)
+	return stack, cfg, stack.Endpoints(t, cfg)
+}
+
 func BootObservabilityStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints, ObservabilityEndpoints) {
 	t.Helper()
 	stack := NewStack(t, prefix)
