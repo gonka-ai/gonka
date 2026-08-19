@@ -142,9 +142,15 @@ type Host struct {
 	oracle blocks.BlockOracle
 
 	// peerSeen and heartbeatCfg serve E3 height acks. peerSeen is the §11.2
-	// bitmap (Diff tips now; repair probes in E5). heartbeatCfg supplies D.
+	// bitmap (Diff tips and repair probes). heartbeatCfg supplies D.
 	peerSeen     *heightsync.PeerSeen
 	heartbeatCfg heightsync.HeartbeatConfig
+
+	repairCfg      heightsync.RepairConfig
+	repairBudget   *heightsync.RepairBudget
+	repairProbe    heightsync.RepairProbeFn
+	repairArmed    atomic.Bool
+	repairInFlight atomic.Bool
 }
 
 // SnapshotInterval controls how often hosts persist full state snapshots.
@@ -227,10 +233,12 @@ func NewHost(
 		ownSeed:            ownSeed,
 		peerSeen:           heightsync.NewPeerSeen(uint32(len(group)), 0),
 		heartbeatCfg:       heightsync.DefaultHeartbeatConfig(),
+		repairCfg:          heightsync.DefaultRepairConfig(),
 	}
 	for _, opt := range opts {
 		opt(h)
 	}
+	h.repairBudget = heightsync.NewRepairBudget(h.repairCfg, uint32(len(group)), h.PrimarySlot(), h.heartbeatCfg.IntervalBlocks)
 	return h, nil
 }
 
@@ -352,6 +360,14 @@ func WithChainOracle(o blocks.BlockOracle) HostOption {
 func WithHeartbeatConfig(cfg heightsync.HeartbeatConfig) HostOption {
 	return func(h *Host) {
 		h.heartbeatCfg = cfg
+	}
+}
+
+// WithRepairConfig overlays repair-probe stagger / R_max. Stagger 0 means no
+// wait (tests); production uses DefaultRepairConfig (1s).
+func WithRepairConfig(cfg heightsync.RepairConfig) HostOption {
+	return func(h *Host) {
+		h.repairCfg = cfg
 	}
 }
 
@@ -522,6 +538,10 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 	// repeated triggers across diffs are harmless.
 	if len(staleFinishes) > 0 && h.gsp != nil {
 		go h.broadcastTxsBestEffort(staleFinishes)
+	}
+
+	if h.repairProbe != nil {
+		go h.MaybeRepair(context.WithoutCancel(ctx))
 	}
 
 	return &HostResponse{

@@ -36,6 +36,7 @@ func registerSeedRoutes(g *echo.Group, srv *transport.Server) {
 	}
 	g.POST("/sessions/:id/chat/completions", withAuth(true, srv.HandleInference))
 	g.POST("/sessions/:id/height-sync", withAuth(false, srv.HandleHeightSync))
+	g.POST("/sessions/:id/heightsync/repair", withAuth(false, srv.HandleHeightSyncRepair))
 	g.GET("/sessions/:id/mempool", srv.HandleGetMempool)
 }
 

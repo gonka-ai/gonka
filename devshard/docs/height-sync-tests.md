@@ -333,10 +333,10 @@ automatic for `executor_sig`.
 | -- | ------------------- | ------- | ------------------ |
 | H15 | ✅ `TestSyncVector_AckedContradictsLog` | `heightsync` | `ACKED(j,h,n)` with no ack at `Diff[n]` ⇒ user-attributable mark, still no `INVALID`. |
 | H16 | ✅ `TestRepairProbe_HeightNoBlame` | `heightsync` | `MISSING` + no ack + a later probe returning `HEIGHT` ⇒ **no** mark and **no** `USER_CHEATING`; the omission stays unattributed. (E4 lands the negative; probe itself is E5.) |
-| H17 | ⏳ `TestRepairProbe_UnreachableOrHeight` | `transport` | Missing ack past `D_ack` with a live peer: probe returns `HEIGHT`, height is ingested, `peer_seen` bit set, turn stays `degraded`. |
-| H18 | ⏳ `TestRepairProbe_DeadPeerBacksOff` | `transport` | Dead peer ⇒ `UNREACHABLE`, local record and backoff only, nothing on the wire toward the user. |
-| H19 | ⏳ `TestRepairProbe_BudgetAndStagger` | `heightsync` | One probe per `(turn, slot)` per prober, `R_max` cap per `K_hb`, deterministic stagger so late probers skip once the ack lands. |
-| H20 | ⏳ `TestRepairProbe_ArmedHostStopsProbing` | `heightsync` | An armed host stops probing entirely. |
+| H17 | ✅ `TestRepairProbe_UnreachableOrHeight` | `transport` | Missing ack past `D_ack` with a live peer: probe returns `HEIGHT`, height is ingested, `peer_seen` bit set, turn stays `degraded`. |
+| H18 | ✅ `TestRepairProbe_DeadPeerBacksOff` | `transport` | Dead peer ⇒ `UNREACHABLE`, local record and backoff only, nothing on the wire toward the user. |
+| H19 | ✅ `TestRepairProbe_BudgetAndStagger` | `heightsync` | One probe per `(turn, slot)` per prober, `R_max` cap per `K_hb`, deterministic stagger so late probers skip once the ack lands. |
+| H20 | ✅ `TestRepairProbe_ArmedHostStopsProbing` | `heightsync` | An armed host stops probing entirely. |
 
 ### 7.5 Close-ready arming (§12)
 
@@ -455,8 +455,8 @@ Files (planned): `heightsync_strong_e2e_test.go`. Suite prefix: `TestHeightSyncS
 | §10.6 async fan-out | H4, H5 (in-process span + unit) | — |
 | §10.7 turn record + completion | H5, H6, H7, H8 (unit + live host) | — |
 | §11.1 `sync_vector` honesty | H4 ack-inclusion / prev-turn vector, H15, H16 | — |
-| §11.2 `sync_state` + `peer_seen` | H24 (unit + live host), `TestHost_HeartbeatAck_OwnSlotIntoMempool`, H14 | H17 |
-| §11.3–§11.4 repair probe + budgets | H16 (no-blame negative) | H17, H18, H19, H20 |
+| §11.2 `sync_state` + `peer_seen` | H24 (unit + live host), `TestHost_HeartbeatAck_OwnSlotIntoMempool`, H14, H17 | — |
+| §11.3–§11.4 repair probe + budgets | H16 (no-blame negative), H17, H18, H19, H20 | — |
 | §12 close-ready arming | — | H21, H22, H23 |
 | §14 log-plane checks L0–L7 | H9–H16, H13a–e | H30 |
 | §14 evaluation tiers (what may invalidate) | H13a, H13b, H13c | — |
@@ -481,12 +481,12 @@ Files (planned): `heightsync_strong_e2e_test.go`. Suite prefix: `TestHeightSyncS
 | Validator-set rotation (Strong) | Pinned + epoch-bound check (Step 3b); monotonic `confirmed` does not regress | ⏳ S7, S9 |
 | Tampered `LightBlock` on the wire | Step 2/3/5/6 of CometBFT verification | ⏳ S4, `TestVerifyLightBlock_*` |
 | User never heartbeats on a quiet session (spec attack 14) | Heartbeat is mandatory in *height* cadence; after `T_idle` served-nothing hosts arm close-ready and finalization closes via `USER_TIMEOUT` | ⏳ H1, H21 |
-| User omits a host's ack, or the host never sent one (15) | `Diff` cannot distinguish the two; the probe fetches a height so alignment continues but attributes nothing; arming keys on user **silence** | ⏳ H16, H17, H18 |
+| User omits a host's ack, or the host never sent one (15) | `Diff` cannot distinguish the two; the probe fetches a height so alignment continues but attributes nothing; arming keys on user **silence** | ✅ H16, H17, H18 |
 | `sync_vector` contradicts the log (16) | The vector is covered by the user's diff signature, so `ACKED` against a log without that ack is self-contradiction; other statuses stay inconclusive | ✅ H15 |
-| Host never acks (down / broken oracle / refusing) (17) | Turn goes `degraded` identically for every verifier; probe returns `HEIGHT` or `UNREACHABLE`; omission unattributed either way | ✅ H7 (live unavailable), ⏳ H17, H18 |
+| Host never acks (down / broken oracle / refusing) (17) | Turn goes `degraded` identically for every verifier; probe returns `HEIGHT` or `UNREACHABLE`; omission unattributed either way | ✅ H7 (live unavailable), ✅ H17, H18 |
 | Host's ack contradicts its own response Anchor (18) | L4 self-contradiction under one identity ⇒ `DISPUTE_ORIGINATOR` on sight, no oracle lookup, mark persisted verbatim | ✅ H12 |
 | Host reports `SYNCED` with a stale oracle (19) | L6 reconciliation ⇒ `DEFERRED_FAIL`; the honest alternatives carry no penalty, so lying is strictly worse | ✅ H14 |
-| Repair-probe amplification (20) | One probe per `(turn, slot)`, `R_max` per `K_hb`, deterministic stagger, backoff, zero probes on the healthy path, armed hosts stop | ⏳ H19, H20 |
+| Repair-probe amplification (20) | One probe per `(turn, slot)`, `R_max` per `K_hb`, deterministic stagger, backoff, zero probes on the healthy path, armed hosts stop | ✅ H19, H20 |
 | Partitioned minority tries to close a healthy escrow (21) | Arming emits nothing; closing needs finalization's `2f + 1`; unarmed hosts reject `USER_TIMEOUT` | ⏳ H23 |
 | Drip-fed late acks to fake a complete turn (22) | Late acks count for height only, never clear `degraded`; arming keys on `last_signal_height` toward this host | ⏳ H8 |
 | Sequencer rewrites a host's stamp on `MsgConfirmStart` (23) | The pair lives in `ExecutorReceiptContent` and is copied into the rebuilt content before recovery, so any edit fails `executor_sig` | ⏳ H28 |

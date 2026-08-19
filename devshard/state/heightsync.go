@@ -165,6 +165,32 @@ func (sm *StateMachine) observeHeightSyncLocked(nonce uint64, txs []*types.Devsh
 	sm.state.HeightSyncLatestTurnSeq = sm.turnTracker.MaxTurnSeq()
 }
 
+// HeightSyncRepairDue advances open turns to hNow and returns missing slots
+// on the latest turn whose ack window has closed.
+func (sm *StateMachine) HeightSyncRepairDue(hNow uint64) (turnSeq, spanStart uint64, missing []uint32) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if sm.turnTracker == nil || hNow == 0 {
+		return 0, 0, nil
+	}
+	sm.turnTracker.AdvanceHeight(hNow)
+	rec := sm.turnTracker.Latest()
+	if rec == nil {
+		return 0, 0, nil
+	}
+	return rec.TurnSeq, rec.RequestSpan[0], sm.turnTracker.MissingAcksDue(rec.TurnSeq, hNow)
+}
+
+// HeightSyncMissingAcks is MissingAcksDue under the SM lock (stagger re-check).
+func (sm *StateMachine) HeightSyncMissingAcks(turnSeq, hNow uint64) []uint32 {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.turnTracker == nil {
+		return nil
+	}
+	return sm.turnTracker.MissingAcksDue(turnSeq, hNow)
+}
+
 // HeightSyncTurnRecord is a copy of the verifier-computed turn, or nil.
 func (sm *StateMachine) HeightSyncTurnRecord(turnSeq uint64) *heightsync.SyncTurnRecord {
 	sm.mu.RLock()

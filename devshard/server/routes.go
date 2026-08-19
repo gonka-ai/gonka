@@ -45,6 +45,8 @@ func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder O
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleInference }))
 	g.POST("/sessions/:id/height-sync", withSessionAuth(resolver, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleHeightSync }))
+	g.POST("/sessions/:id/heightsync/repair", withSessionAuth(resolver, false,
+		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleHeightSyncRepair }))
 	g.POST("/sessions/:id/verify-timeout", withSessionAuth(resolver, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleVerifyTimeout }))
 	g.POST("/sessions/:id/challenge-receipt", withSessionAuth(resolver, false,

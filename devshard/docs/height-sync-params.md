@@ -115,8 +115,8 @@ blocks, which is why `T_idle` must be strictly larger.
 
 ## Repair budget (`RepairConfig`)
 
-Unused until E5 (repair probe). Caps host→host traffic when an ack is absent
-past `D_ack`. Probes fetch a height; they never assign blame.
+Caps host→host traffic when an ack is absent
+past `D_ack`. Probes fetch a height; they never assign blame. Wired in E5.
 
 | Spec | Go field | Default | What it regulates |
 | ---- | -------- | ------- | ----------------- |

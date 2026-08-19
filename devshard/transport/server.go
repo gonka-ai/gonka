@@ -83,7 +83,12 @@ func WithServerGossip(g *gossip.Gossip) ServerOption {
 
 // WithServerPeerClients sets executor clients for timeout verification.
 func WithServerPeerClients(peers map[int]*HTTPClient) ServerOption {
-	return func(s *Server) { s.peerClients = peers }
+	return func(s *Server) {
+		s.peerClients = peers
+		if s.host != nil {
+			s.host.SetRepairProbe(s.RepairProbe)
+		}
+	}
 }
 
 // WithBridge sets the bridge for warm key verification in transport auth.
@@ -548,10 +553,13 @@ func (s *Server) RateLimitMiddleware(recordChatTerminal bool) echo.MiddlewareFun
 	return rateLimitMiddleware(s.rateLimit, recordChatTerminal)
 }
 
-// SetPeerClients sets the executor clients for timeout verification.
-// Key is slot index (position in group), value is an ExecutorClient.
+// SetPeerClients sets the executor clients for timeout verification and
+// the slot→URL map reused by repair probes (signed with this host's key).
 func (s *Server) SetPeerClients(peers map[int]*HTTPClient) {
 	s.peerClients = peers
+	if s.host != nil {
+		s.host.SetRepairProbe(s.RepairProbe)
+	}
 }
 
 func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {

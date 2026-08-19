@@ -307,7 +307,8 @@ func (t *TurnTracker) LastCompletedHeight() uint64 {
 	return h
 }
 
-// MissingAcks returns slots with no ack once height has passed h_req + D_ack.
+// MissingAcks returns slots with no ack for turnSeq. The repair trigger is
+// MissingAcksDue, which also requires height > h_req + D_ack.
 func (t *TurnTracker) MissingAcks(turnSeq uint64) []uint32 {
 	if t == nil {
 		return nil
@@ -323,6 +324,38 @@ func (t *TurnTracker) MissingAcks(turnSeq uint64) []uint32 {
 		}
 	}
 	return missing
+}
+
+// MissingAcksDue is MissingAcks gated on the ack window having closed
+// (hNow > h_req + D_ack). Repair probes use this, not MissingAcks.
+func (t *TurnTracker) MissingAcksDue(turnSeq, hNow uint64) []uint32 {
+	if t == nil {
+		return nil
+	}
+	rec := t.turns[turnSeq]
+	if rec == nil || rec.HReq == 0 {
+		return nil
+	}
+	if !t.windowClosed(rec, hNow) {
+		return nil
+	}
+	return t.MissingAcks(turnSeq)
+}
+
+// HeartbeatNonceForSlot is the nonce in [spanStart, spanStart+slotsNum) that
+// addresses slot (executor(n) = n mod slots_num).
+func HeartbeatNonceForSlot(spanStart uint64, slot, slotsNum uint32) uint64 {
+	if slotsNum == 0 {
+		return spanStart
+	}
+	n := uint64(slotsNum)
+	for i := uint64(0); i < n; i++ {
+		nonce := spanStart + i
+		if SlotForNonce(nonce, n) == slot {
+			return nonce
+		}
+	}
+	return spanStart
 }
 
 // Confirms is (C-turn): a complete record exists with ≥ Q counting acks at height ≥ h.

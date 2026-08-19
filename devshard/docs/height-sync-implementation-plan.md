@@ -13,7 +13,7 @@
 | **B** | ✅ | In-process e2e in `testenv/scenarios/heightsync_anchor_e2e_*.go` (static `blocks.BlockOracle`s, `/devshard/v2`, numeric escrow ids). Catalog §4 including `-tags=dev` E2/E3/E8. |
 | **C** | ✅ | Container citest `citest-height-sync` against mock-dapi `/block/*` (optional `DEVSHARD_CHAINORACLE_URL`; default compose unchanged) |
 | **D** | ✅ | Hash-only Tendermint observer; direct-chain adapter; host failover (old dapi / dapi-down). Dapi `/block/*` mount is in `decentralized-api` (separate commit). |
-| **E** | ⏳ | Log plane (heartbeat, sync vector/state, repair, close-ready). **E0–E4 and E9 landed** (§8.15); E5–E8 remain. |
+| **E** | ⏳ | Log plane (heartbeat, sync vector/state, repair, close-ready). **E0–E5 and E9 landed** (§8.15); E6–E8 remain. |
 | **F** | ⏳ | Strong / `light_block` / dispute adjudication |
 
 This plan delivers **the whole spec except the Strong path**, in six phases:
@@ -122,7 +122,7 @@ Each phase is independently shippable. Strong is last, matching `devshard-testen
 | **B** | In-process e2e on current `testenv/scenarios` | catalog §4 | Yes, path remap | ✅ |
 | **C** | Container citest `citest-height-sync` against mock-dapi chainoracle (no `heightsyncd`) | catalog §5 A–C | Adapt | ✅ |
 | **D** | Dapi mounts **height+hash** (`/block/latest`, `/block/:height`); hash-only Tendermint observer; **v5 ↔ old dapi** fallback. **No** `Prove()`, **no** commit-quorum requirement. | plan §7 | New | ✅ |
-| **E** | **Log plane:** `MsgHeartbeat` / `MsgHeightAck`, `observed_height`, turn record, `sync_vector`, `sync_state`, `peer_seen`, repair probe, close-ready arming, L1–L7, `(C-turn)`, marking of attributable events | §10–§12, §14 log-plane, §17 `(C-turn)`, §18.2.1, §20 params | New | ⏳ (E0–E3 ✅) |
+| **E** | **Log plane:** `MsgHeartbeat` / `MsgHeightAck`, `observed_height`, turn record, `sync_vector`, `sync_state`, `peer_seen`, repair probe, close-ready arming, L1–L7, `(C-turn)`, marking of attributable events | §10–§12, §14 log-plane, §17 `(C-turn)`, §18.2.1, §20 params | New | ⏳ (E0–E5, E9 ✅) |
 | **F** | **Strong only:** `light_block` + `D`-band escalation + `(C-strong)`/`(C-hybrid)`; dapi `Header.Commit` + IAVL `Prove()`; dispute adjudication and evidence packets | §8, §15 Strong proof, §18.4, catalog §8 | New | ⏳ |
 
 ```mermaid
@@ -421,7 +421,7 @@ Catalogued in [`height-sync-tests.md`](./height-sync-tests.md) **§6** with the 
 
 ## 8. Phase E — the log plane (§10, §11, §12, §14 L1–L7, §17 `(C-turn)`)
 
-Design is §8.1–§8.14. The ship order is **§8.15 (E0–E9)**. **E0–E4 and E9 are implemented** on this branch; **E5–E8 are not**.
+Design is §8.1–§8.14. The ship order is **§8.15 (E0–E9)**. **E0–E5 and E9 are implemented** on this branch; **E6–E8 are not**.
 
 ### 8.1 What must be true when E is done
 
@@ -913,7 +913,7 @@ Reuse A–D as-is: `ObservedHeightNow()`, `MsgForceHeightSyncTurn`, the hash-onl
 | **E2** | ✅ | User opens heartbeat turns (`session.go` `MaybeHeartbeat`). |
 | **E3** | ✅ | Host acks into mempool. |
 | **E4** | ✅ | `ValidateDiff` L0–L7, marks, `applyTx` fold into `TurnTracker`, `(C-turn)`. |
-| **E5** | ⏳ | Repair probe. |
+| **E5** | ✅ | Repair probe. |
 | **E6** | ⏳ | Close-ready arming. |
 | **E7** | ⏳ | Optional inference-tx stamps (same bump; can slip). |
 | **E8** | ⏳ | Observability + container H26/H27. |
@@ -971,7 +971,7 @@ On inbound heartbeat for this slot (§8.6):
 
 - Build `MsgHeightAck` from the **same** oracle read as the response-leg Anchor (so honest L4 never fires). `EvaluateSyncStateFromHeader` reuses that header.
 - Sign, `Mempool.Add` with `ProposedAt` (same local-propose path as `MsgConfirmStart`); ack even when the oracle is down (`ORACLE_UNAVAILABLE`).
-- Maintain `peer_seen` from `Diff` (probes land in E5).
+- Maintain `peer_seen` from `Diff` and from repair probes (E5).
 - Acks only in answer to a newly applied heartbeat addressed to this host's slot, never as a general stamp.
 
 The user `MaybeHeartbeat` flush round picks acks up from the host mempool. Open turns tick `AdvanceHeight` on each observed height so a quiet session can degrade past `D_ack` without opening a new span first.
@@ -992,13 +992,13 @@ Replay / catch-up / gossip pass `sec=nil` so L4/L5a do not run. Persist L4 blobs
 
 **Tests:** H9, H10, H11, H12, H13, H13a–e, H14, H15, H16, H32. **Landed.** H30 waits on E7. Two independent verifiers, same `Diff` → byte-identical records.
 
-#### E5 — Repair probe (no blame) ⏳
+#### E5 — Repair probe (no blame) ✅
 
 `POST /sessions/:id/heightsync/repair`, `withSessionAuth`, both legs signed (`heightsync.repair.v1`) (§8.9).
 
 Trigger: missing acks after `h_req + D_ack`. Budget: one probe per `(turn, slot)` per prober, `R_max`, stagger, skip if ack landed, stop if close-ready armed. Outcomes `HEIGHT` / `UNREACHABLE` only — **never** `USER_CHEATING`, never a mark, never a broadcast.
 
-**Tests:** H17–H20.
+**Tests:** H17–H20. **Landed.** Close-ready arming itself is E6; H20 uses an injectable `Armed` stub.
 
 #### E6 — Close-ready arming (producer only) ⏳
 
@@ -1143,7 +1143,7 @@ Blockers 1, 3 and 4 all resolve the same way: the section survives, and the achi
 10b. ✅ **E3:** Host ack into mempool (§8.6).
 10c. ✅ **E9:** Session-open height seed so nonce 1 stamps (§8.5.1); H34–H38. Transport-only; no version bump. Must precede E7.
 11. ✅ **E4:** L0–L7 in `ValidateDiff` (L4 / L5a at the transport edge) + marks + `(C-turn)`; H9–H16, H13a–e, H32.
-12. ⏳ **E5:** Repair probe + budgets; H17–H20.
+12. ✅ **E5:** Repair probe + budgets; H17–H20.
 13. ⏳ **E6:** Close-ready arming + `CloseReadyView`; H21–H23.
 14. ⏳ **E7 (optional, same bump):** inference-tx stamps; H2, H28–H31, H33.
 15. ⏳ **E8:** Observability + container H26, H27.

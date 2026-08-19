@@ -353,3 +353,17 @@ func (c *HTTPClient) wrapInferenceRequest(ctx context.Context, req host.HostRequ
 	c.logEmitUserHeightSync(nil, req.Nonce)
 	return body, contentType, nil, nil
 }
+
+// HeightSyncRepair POSTs a signed repair probe (group-member HTTP auth).
+func (c *HTTPClient) HeightSyncRepair(ctx context.Context, req *heightsync.RepairRequest) (*heightsync.RepairResponse, error) {
+	path := fmt.Sprintf("/sessions/%s/heightsync/repair", c.escrowID)
+	timeout := c.config.QueryTimeout
+	if timeout <= 0 || timeout > DefaultRepairTimeout {
+		timeout = DefaultRepairTimeout
+	}
+	var resp heightsync.RepairResponse
+	if err := c.post(ctx, path, timeout, req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}

@@ -46,6 +46,29 @@ func (p *PeerSeen) MarkFresh(slot uint32, h uint64, at time.Time) {
 	p.tips[slot] = peerTip{height: h, at: at}
 }
 
+// Has reports whether slot's tip is still fresh at now.
+func (p *PeerSeen) Has(slot uint32, now time.Time) bool {
+	if p == nil {
+		return false
+	}
+	b := p.BytesAt(now)
+	i := int(slot / 8)
+	if i >= len(b) {
+		return false
+	}
+	return b[i]&(1<<(slot%8)) != 0
+}
+
+// Height returns the last ingested claim for slot, or 0.
+func (p *PeerSeen) Height(slot uint32) uint64 {
+	if p == nil {
+		return 0
+	}
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.tips[slot].height
+}
+
 // Bytes returns the bitmap with bits expired past F cleared. Bit j is slot j.
 func (p *PeerSeen) Bytes() []byte {
 	return p.BytesAt(time.Now())

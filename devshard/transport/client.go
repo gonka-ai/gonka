@@ -242,6 +242,16 @@ func (c *HTTPClient) timestampHeader() string {
 	return HeaderTimestamp
 }
 
+func (c *HTTPClient) cloneWithSigner(signer signing.Signer, timeout time.Duration) *HTTPClient {
+	cfg := c.config
+	cfg.Admission = nil
+	if timeout > 0 {
+		cfg.QueryTimeout = timeout
+		cfg.GossipTimeout = timeout
+	}
+	return NewHTTPClient(c.baseURL, c.escrowID, signer, cfg)
+}
+
 // post sends a signed POST request, marshaling req to JSON and unmarshaling into resp.
 // If resp is nil, the response body is discarded.
 func (c *HTTPClient) post(ctx context.Context, path string, timeout time.Duration, req, resp any) error {
