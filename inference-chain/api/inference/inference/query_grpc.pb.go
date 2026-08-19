@@ -257,11 +257,8 @@ type QueryClient interface {
 	MaintenanceSchedulability(ctx context.Context, in *QueryMaintenanceSchedulabilityRequest, opts ...grpc.CallOption) (*QueryMaintenanceSchedulabilityResponse, error)
 	// Lists the scheduled per-epoch claim recipient overrides for a participant.
 	ListClaimRecipients(ctx context.Context, in *QueryListClaimRecipientsRequest, opts ...grpc.CallOption) (*QueryListClaimRecipientsResponse, error)
-	// Queries a single trainshard by id
 	Trainshard(ctx context.Context, in *QueryGetTrainshardRequest, opts ...grpc.CallOption) (*QueryGetTrainshardResponse, error)
-	// Queries all active trainshards
 	ActiveTrainshards(ctx context.Context, in *QueryActiveTrainshardsRequest, opts ...grpc.CallOption) (*QueryActiveTrainshardsResponse, error)
-	// Queries a training proposal by id
 	TrainshardProposal(ctx context.Context, in *QueryGetTrainshardProposalRequest, opts ...grpc.CallOption) (*QueryGetTrainshardProposalResponse, error)
 }
 
@@ -1213,11 +1210,8 @@ type QueryServer interface {
 	MaintenanceSchedulability(context.Context, *QueryMaintenanceSchedulabilityRequest) (*QueryMaintenanceSchedulabilityResponse, error)
 	// Lists the scheduled per-epoch claim recipient overrides for a participant.
 	ListClaimRecipients(context.Context, *QueryListClaimRecipientsRequest) (*QueryListClaimRecipientsResponse, error)
-	// Queries a single trainshard by id
 	Trainshard(context.Context, *QueryGetTrainshardRequest) (*QueryGetTrainshardResponse, error)
-	// Queries all active trainshards
 	ActiveTrainshards(context.Context, *QueryActiveTrainshardsRequest) (*QueryActiveTrainshardsResponse, error)
-	// Queries a training proposal by id
 	TrainshardProposal(context.Context, *QueryGetTrainshardProposalRequest) (*QueryGetTrainshardProposalResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }

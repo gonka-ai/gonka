@@ -44485,7 +44485,6 @@ func (*MsgCancelMaintenanceResponse) Descriptor() ([]byte, []int) {
 	return file_inference_inference_tx_proto_rawDescGZIP(), []int{69}
 }
 
-// MsgCreateTrainshardProposal stores an approved training proposal
 type MsgCreateTrainshardProposal struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -44604,7 +44603,6 @@ func (x *MsgCreateTrainshardProposalResponse) GetProposalId() uint64 {
 	return 0
 }
 
-// MsgAssembleTrainshard opens an ACTIVE shard from an OPEN proposal
 type MsgAssembleTrainshard struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -44683,7 +44681,6 @@ func (x *MsgAssembleTrainshardResponse) GetTrainshardId() uint64 {
 	return 0
 }
 
-// MsgSettleTrainshard releases reserved nodes of an active shard
 type MsgSettleTrainshard struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -44753,7 +44750,6 @@ func (*MsgSettleTrainshardResponse) Descriptor() ([]byte, []int) {
 	return file_inference_inference_tx_proto_rawDescGZIP(), []int{75}
 }
 
-// MsgAutokickTrainshardNode releases one failed node of an active shard
 type MsgAutokickTrainshardNode struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -44855,7 +44851,6 @@ func (*MsgAutokickTrainshardNodeResponse) Descriptor() ([]byte, []int) {
 	return file_inference_inference_tx_proto_rawDescGZIP(), []int{77}
 }
 
-// MsgSetTrainingNodeOptIn opts a node in or out of training eligibility
 type MsgSetTrainingNodeOptIn struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -44933,7 +44928,6 @@ func (*MsgSetTrainingNodeOptInResponse) Descriptor() ([]byte, []int) {
 	return file_inference_inference_tx_proto_rawDescGZIP(), []int{79}
 }
 
-// MsgRefreshTrainingNodeOptIn moves the opt-in expiry of ready nodes forward
 type MsgRefreshTrainingNodeOptIn struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache

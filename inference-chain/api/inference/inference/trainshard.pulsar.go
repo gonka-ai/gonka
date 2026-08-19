@@ -4083,7 +4083,6 @@ func (TrainshardNodeStatus) EnumDescriptor() ([]byte, []int) {
 	return file_inference_inference_trainshard_proto_rawDescGZIP(), []int{3}
 }
 
-// TrainshardReservedNode is a reserved GPU node with frozen PoC weight
 type TrainshardReservedNode struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -4177,7 +4176,6 @@ func (x *TrainshardReservedNode) GetReservedUntilHeight() int64 {
 	return 0
 }
 
-// Trainshard is an on-chain training run with reserved nodes
 type Trainshard struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -4301,7 +4299,6 @@ func (x *Trainshard) GetRunKey() string {
 	return ""
 }
 
-// TrainshardProposal is an approved budget consumed on assemble_trainshard
 type TrainshardProposal struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -4393,7 +4390,6 @@ func (x *TrainshardProposal) GetRunKey() string {
 	return ""
 }
 
-// TrainingParams are governance limits for training
 type TrainingParams struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
