@@ -27,3 +27,24 @@ func TestOpenAccountingTracker_DisabledOpensNoDatabase(t *testing.T) {
 	require.Nil(t, openAccountingTracker(dir))
 	require.NoFileExists(t, filepath.Join(dir, "accounting.db"))
 }
+
+// Readers already parse the booleans, so they stay; the count is what tells a single refusal apart
+// from a build that refuses everything. Deriving one from the other keeps them from disagreeing.
+func TestAccountingCapability_DerivesTheFlagsFromTheCounts(t *testing.T) {
+	perf := NewPerfTracker(nil)
+	perf.RecordVersionUnsupported("p1")
+	perf.RecordVersionUnsupported("p1")
+	perf.RecordContextLimit("p1", "m", 4096)
+	lookup := accountingCapability(&Gateway{perf: perf})
+	require.NotNil(t, lookup)
+
+	refused := lookup("p1", "m")
+	require.True(t, refused.ProtocolVersionUnsupported)
+	require.Equal(t, uint64(2), refused.VersionRefusals)
+	require.False(t, refused.ToolChoiceUnsupported, "a host that never refused tools is not flagged for them")
+	require.Equal(t, uint64(4096), refused.ContextLimit)
+
+	clean := lookup("never-seen", "m")
+	require.False(t, clean.ProtocolVersionUnsupported)
+	require.Zero(t, clean.VersionRefusals)
+}

@@ -8,8 +8,6 @@ import (
 	"sort"
 	"sync"
 	"time"
-
-	"devshard/user"
 )
 
 var (
@@ -257,15 +255,16 @@ func (r *requestRing) all() []RequestRecord {
 }
 
 type PerfTracker struct {
-	mu                 sync.RWMutex
-	hosts              map[string]*hostRing
-	requests           requestRing
-	firstTokenBuckets  map[string]*firstTokenBucketRing
-	contextLimits      map[servedModel]uint64
-	toolUnsupported    map[servedModel]bool
-	versionUnsupported map[string]bool
-	pairwise           *PairwiseTracker
-	store              *PerfStore
+	mu                sync.RWMutex
+	hosts             map[string]*hostRing
+	requests          requestRing
+	firstTokenBuckets map[string]*firstTokenBucketRing
+	contextLimits     map[servedModel]uint64
+	versionRefusals   map[string]uint64
+	toolRefusals      map[servedModel]uint64
+	contextRefusals   map[servedModel]uint64
+	pairwise          *PairwiseTracker
+	store             *PerfStore
 }
 
 type servedModel struct {
@@ -282,13 +281,14 @@ func servedModelLabel(served servedModel) string {
 
 func NewPerfTracker(store *PerfStore) *PerfTracker {
 	pt := &PerfTracker{
-		hosts:              make(map[string]*hostRing),
-		firstTokenBuckets:  make(map[string]*firstTokenBucketRing),
-		contextLimits:      make(map[servedModel]uint64),
-		toolUnsupported:    make(map[servedModel]bool),
-		versionUnsupported: make(map[string]bool),
-		pairwise:           NewPairwiseTracker(),
-		store:              store,
+		hosts:             make(map[string]*hostRing),
+		firstTokenBuckets: make(map[string]*firstTokenBucketRing),
+		contextLimits:     make(map[servedModel]uint64),
+		versionRefusals:   make(map[string]uint64),
+		toolRefusals:      make(map[servedModel]uint64),
+		contextRefusals:   make(map[servedModel]uint64),
+		pairwise:          NewPairwiseTracker(),
+		store:             store,
 	}
 	if store != nil {
 		pt.loadFromStore()
@@ -514,6 +514,7 @@ func (t *PerfTracker) RecordContextLimit(participantKey, model string, maxTokens
 	}
 	served := servedModel{participant: participantKey, model: model}
 	t.mu.Lock()
+	t.contextRefusals[served]++
 	prev, exists := t.contextLimits[served]
 	if !exists || prev != maxTokens {
 		t.contextLimits[served] = maxTokens
@@ -528,8 +529,8 @@ func (t *PerfTracker) RecordVersionUnsupported(participantKey string) {
 		return
 	}
 	t.mu.Lock()
-	if !t.versionUnsupported[participantKey] {
-		t.versionUnsupported[participantKey] = true
+	t.versionRefusals[participantKey]++
+	if t.versionRefusals[participantKey] == 1 {
 		log.Printf("perf: recorded version_unsupported participant_key=%s", participantKey)
 	}
 	t.mu.Unlock()
@@ -541,23 +542,23 @@ func (t *PerfTracker) RecordToolUnsupported(participantKey, model string) {
 	}
 	served := servedModel{participant: participantKey, model: model}
 	t.mu.Lock()
-	if !t.toolUnsupported[served] {
-		t.toolUnsupported[served] = true
+	t.toolRefusals[served]++
+	if t.toolRefusals[served] == 1 {
 		log.Printf("perf: recorded tool_unsupported participant_key=%s model=%q", participantKey, model)
 	}
 	t.mu.Unlock()
 }
 
-// CapabilityBlocks reports every limit observed for one participant, so a reader can tell a host
-// running an incompatible build from one the gateway merely stopped sending to.
-func (t *PerfTracker) CapabilityBlocks(participantKey, model string) (protocolVersion, toolChoice bool, contextLimit uint64) {
+// CapabilityRefusals reports how often a participant's build turned work away, and the context ceiling
+// it last reported. Counts rather than verdicts: nothing here withholds the host from routing.
+func (t *PerfTracker) CapabilityRefusals(participantKey, model string) (version, tool, context, contextLimit uint64) {
 	if t == nil || participantKey == "" {
-		return false, false, 0
+		return 0, 0, 0, 0
 	}
 	served := servedModel{participant: participantKey, model: model}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	return t.versionUnsupported[participantKey], t.toolUnsupported[served], t.contextLimits[served]
+	return t.versionRefusals[participantKey], t.toolRefusals[served], t.contextRefusals[served], t.contextLimits[served]
 }
 
 // ContextLimits returns a snapshot of all observed host context length limits.
@@ -580,50 +581,12 @@ func (t *PerfTracker) ToolUnsupported() map[string]bool {
 	}
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	result := make(map[string]bool, len(t.toolUnsupported))
-	for served, unsupported := range t.toolUnsupported {
-		result[servedModelLabel(served)] = unsupported
+	result := make(map[string]bool, len(t.toolRefusals))
+	for served, refusals := range t.toolRefusals {
+		result[servedModelLabel(served)] = refusals > 0
 	}
 	return result
 }
-
-func (t *PerfTracker) HostCannotServeRequest(participantKey string, params user.InferenceParams) (string, bool) {
-	if t == nil || participantKey == "" {
-		return "", false
-	}
-	requiresTools := requestRequiresTools(params)
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	if t.versionUnsupported[participantKey] {
-		return "protocol_version_unsupported", true
-	}
-	served := servedModel{participant: participantKey, model: params.Model}
-	if requiresTools && t.toolUnsupported[served] {
-		return "tool_choice_unsupported", true
-	}
-	if limit := t.contextLimits[served]; limit > 0 && params.ContextTotalHint > limit {
-		return "context_limit_exceeded", true
-	}
-	return "", false
-}
-
-func (t *PerfTracker) AllKnownToolUnsupported(participantKeys []string, model string) bool {
-	if t == nil || len(participantKeys) == 0 {
-		return false
-	}
-	t.mu.RLock()
-	defer t.mu.RUnlock()
-	for _, key := range participantKeys {
-		if key == "" {
-			continue
-		}
-		if !t.toolUnsupported[servedModel{participant: key, model: model}] {
-			return false
-		}
-	}
-	return true
-}
-
 func (t *PerfTracker) PairwiseSummaries() []PairwiseSummary {
 	if t == nil || t.pairwise == nil {
 		return nil

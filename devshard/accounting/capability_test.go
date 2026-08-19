@@ -45,13 +45,14 @@ func TestCapability_NamesWhyAHostIsUnusable(t *testing.T) {
 
 	attachCapabilities(records, func(participant, _ string) HostCapability {
 		if participant == "gonka1blocked" {
-			return HostCapability{ProtocolVersionUnsupported: true, ContextLimit: 8192}
+			return HostCapability{ProtocolVersionUnsupported: true, VersionRefusals: 3, ContextLimit: 8192}
 		}
 		return HostCapability{}
 	})
 
 	require.NotNil(t, records[0].Capability)
 	require.True(t, records[0].Capability.ProtocolVersionUnsupported)
+	require.Equal(t, uint64(3), records[0].Capability.VersionRefusals, "the count says how often, the flag only that it happened")
 	require.Equal(t, uint64(8192), records[0].Capability.ContextLimit)
 	require.Nil(t, records[1].Capability, "a host with nothing wrong carries no capability block")
 }

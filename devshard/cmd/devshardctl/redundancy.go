@@ -1768,9 +1768,6 @@ func (e *Redundancy) RunInference(ctx context.Context, params user.InferencePara
 		if errors.Is(err, types.ErrInsufficientBalance) {
 			e.fireBalanceExhausted()
 		}
-		if capErr := e.knownCapabilityExhaustionError(params, err); capErr != nil {
-			return capErr
-		}
 		return err
 	}
 	triedParticipants[e.session.HostParticipantKey(primary.hostIdx)] = true
@@ -3359,14 +3356,8 @@ func (e *Redundancy) maybeRecordVersionRefusal(inf *inflight) {
 	}
 }
 
-func (e *Redundancy) capabilityBlocked(participantKey string, params user.InferenceParams) (string, bool) {
-	if reason, blocked := e.escrowStateBlockReason(participantKey); blocked {
-		return reason, true
-	}
-	if e == nil || e.perf == nil {
-		return "", false
-	}
-	return e.perf.HostCannotServeRequest(participantKey, params)
+func (e *Redundancy) capabilityBlocked(participantKey string, _ user.InferenceParams) (string, bool) {
+	return e.escrowStateBlockReason(participantKey)
 }
 
 func (e *Redundancy) maybeRecordEscrowStateDivergence(ctx context.Context, inf *inflight, err error) {
@@ -3421,23 +3412,6 @@ func isRetriableCapabilityErrorMessage(msg string) bool {
 func isToolChoiceCapabilityError(msg string) bool {
 	return strings.Contains(msg, toolChoiceUnsupportedMessage)
 }
-
-func (e *Redundancy) knownCapabilityExhaustionError(params user.InferenceParams, err error) *hostApplicationError {
-	if e == nil || e.perf == nil || !errors.Is(err, ErrNoAvailableHost) || !requestRequiresTools(params) {
-		return nil
-	}
-	if !e.perf.AllKnownToolUnsupported(e.session.ParticipantKeys(), params.Model) {
-		return nil
-	}
-	return &hostApplicationError{
-		details: sseErrorDetails{
-			Code:    strconv.Itoa(http.StatusBadRequest),
-			Type:    "BadRequestError",
-			Message: toolChoiceUnsupportedMessage,
-		},
-	}
-}
-
 func requestRequiresTools(params user.InferenceParams) bool {
 	var raw map[string]any
 	if err := json.Unmarshal(params.Prompt, &raw); err != nil {

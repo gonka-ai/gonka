@@ -1297,6 +1297,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("/v1/admin/escrows", g.handleAdminEscrows)
 	mux.HandleFunc("/v1/admin/participants/unquarantine", g.handleAdminUnquarantine)
 	mux.HandleFunc("/v1/admin/suspicious-hosts", g.handleAdminSuspiciousHosts)
+	mux.HandleFunc("/v1/admin/accounting/purge", g.handleAdminAccountingPurge)
 	mux.HandleFunc("/v1/debug/rotation", g.handleDebugRotation)
 	mux.HandleFunc("/v1/debug/memstats", g.handleDebugMemStats)
 	// Runtime profiling, admin-gated (see isAdminPath). Mounted at the
@@ -3762,6 +3763,42 @@ func (g *Gateway) handleAdminUnquarantine(w http.ResponseWriter, r *http.Request
 	writeJSON(w, map[string]any{
 		"participant_key": req.ParticipantKey,
 		"cleared":         cleared,
+	})
+}
+
+// handleAdminAccountingPurge discards one epoch's ledger. It sits under /v1/admin so the admin API key
+// is required; the accounting listener itself has no authentication and must not grow a destructive
+// route. The epoch is named in the body rather than inferred, so no default can widen the blast radius.
+func (g *Gateway) handleAdminAccountingPurge(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+	var req struct {
+		Epoch uint64 `json:"epoch"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
+		return
+	}
+	tracker := g.accounting.Tracker()
+	if tracker == nil {
+		http.Error(w, `{"error":{"message":"accounting is not enabled"}}`, http.StatusServiceUnavailable)
+		return
+	}
+	removed, err := tracker.PurgeEpoch(r.Context(), req.Epoch)
+	if errors.Is(err, accounting.ErrPurgeEpochRequired) {
+		http.Error(w, `{"error":{"message":"epoch is required"}}`, http.StatusBadRequest)
+		return
+	}
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
+		return
+	}
+	log.Printf("admin: purged accounting epoch=%d escrows_removed=%d", req.Epoch, removed)
+	writeJSON(w, map[string]any{
+		"epoch":           req.Epoch,
+		"escrows_removed": removed,
 	})
 }
 

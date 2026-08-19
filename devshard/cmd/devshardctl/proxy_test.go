@@ -1182,25 +1182,6 @@ func TestErrorStreamSkipsParticipantFailureAccounting(t *testing.T) {
 	require.False(t, limiter.IsBlocked(participantKey))
 	require.Equal(t, 0, env.proxy.redundancy.perf.Stats(0).TotalSamples)
 }
-
-func TestRunInference_AllHostsKnownToolUnsupportedReturnsToolError(t *testing.T) {
-	env := setupTestProxy(t, 3, nil, true)
-	for _, key := range env.session.ParticipantKeys() {
-		env.proxy.redundancy.perf.RecordToolUnsupported(key, "llama")
-	}
-	params := defaultParams()
-	params.Prompt = []byte(`{"messages":[{"role":"user","content":"x"}],"tools":[{"type":"function","function":{"name":"f","parameters":{"type":"object"}}}],"tool_choice":"auto"}`)
-
-	var buf bytes.Buffer
-	err := env.proxy.redundancy.RunInference(context.Background(), params, &buf, nil)
-
-	var hostErr *hostApplicationError
-	require.ErrorAs(t, err, &hostErr)
-	require.Equal(t, toolChoiceUnsupportedMessage, hostErr.Error())
-	require.Equal(t, http.StatusBadRequest, hostErr.statusCode())
-	require.Empty(t, env.proxy.perf.RecentRequests(), "no real host attempt should be recorded")
-}
-
 func TestRunInference_StateRootDivergenceBlocksParticipantForEscrow(t *testing.T) {
 	zeroReceiptTimeout(t)
 	env := setupTestProxy(t, 2, nil, true)

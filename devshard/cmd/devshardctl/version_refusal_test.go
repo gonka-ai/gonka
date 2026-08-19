@@ -45,37 +45,22 @@ func TestOnlyAVersionRefusalIsPermanent(t *testing.T) {
 	}
 }
 
-// The point of recording it: routing skips the host with no timer, unlike an ejection that expires and
-// puts a permanently broken host back on the rota every cooldown.
-func TestARecordedVersionRefusalBlocksEveryRequestShape(t *testing.T) {
+// The nonce that met the refusal is charged as a miss through the ordinary timeout path, so the host
+// keeps its place in the rota. Holding the refusal against later nonces charged a host thousands of
+// misses for a build it had already replaced, since nothing ever re-tested it.
+func TestARecordedVersionRefusalCountsWithoutWithholdingTheHost(t *testing.T) {
 	t.Parallel()
 	tracker := NewPerfTracker(nil)
 
-	if _, blocked := tracker.HostCannotServeRequest("host-0", user.InferenceParams{}); blocked {
-		t.Fatal("a host with no recorded refusal was blocked")
-	}
+	tracker.RecordVersionUnsupported("host-0")
 	tracker.RecordVersionUnsupported("host-0")
 
-	for _, shape := range []struct {
-		name   string
-		params user.InferenceParams
-	}{
-		{name: "a plain request"},
-		{name: "a large request", params: user.InferenceParams{ContextTotalHint: 100_000}},
-	} {
-		t.Run(shape.name, func(t *testing.T) {
-			reason, blocked := tracker.HostCannotServeRequest("host-0", shape.params)
-			if !blocked {
-				t.Fatal("a host whose build cannot serve the protocol version was admitted")
-			}
-			if reason != "protocol_version_unsupported" {
-				t.Fatalf("reason = %q, want protocol_version_unsupported", reason)
-			}
-		})
+	refusals, _, _, _ := tracker.CapabilityRefusals("host-0", "m")
+	if refusals != 2 {
+		t.Fatalf("version refusals = %d, want 2", refusals)
 	}
-
-	if _, blocked := tracker.HostCannotServeRequest("host-1", user.InferenceParams{}); blocked {
-		t.Error("the refusal of one host blocked another")
+	if other, _, _, _ := tracker.CapabilityRefusals("host-1", "m"); other != 0 {
+		t.Error("the refusal of one host was counted against another")
 	}
 }
 
@@ -108,7 +93,10 @@ func TestTheDispatchErrorIsWhatRecordsAVersionRefusal(t *testing.T) {
 
 			redundancy.maybeRecordVersionRefusal(&inflight{hostIdx: 3, err: testCase.err})
 
-			_, blocked := redundancy.perf.HostCannotServeRequest(legacyHostPerfKey(3), user.InferenceParams{})
+			blocked := false
+			if refusals, _, _, _ := redundancy.perf.CapabilityRefusals(legacyHostPerfKey(3), ""); refusals > 0 {
+				blocked = true
+			}
 			if blocked != testCase.want {
 				t.Fatalf("host blocked = %v, want %v", blocked, testCase.want)
 			}
@@ -126,7 +114,7 @@ func TestAProbeRefusalIsNotRecorded(t *testing.T) {
 		err: &transport.UpstreamStatusError{StatusCode: 404, Body: `version "v3" not found`},
 	})
 
-	if _, blocked := redundancy.perf.HostCannotServeRequest(legacyHostPerfKey(3), user.InferenceParams{}); blocked {
+	if refusals, _, _, _ := redundancy.perf.CapabilityRefusals(legacyHostPerfKey(3), ""); refusals > 0 {
 		t.Fatal("a probe's refusal blocked the host")
 	}
 }
@@ -230,14 +218,15 @@ func (versionRefusingClient) VerifyTimeout(
 }
 
 // The refusal reaches the tracker only from the dispatch path, so nothing short of a real dispatch
-// proves the recording is wired at all.
-func TestARealDispatchRefusalTakesTheHostOutOfRouting(t *testing.T) {
+// proves the recording is wired at all. Routing must be unchanged by it: the refused nonce is the
+// one that pays, and the next nonce goes to the same host as if nothing had been learned.
+func TestARealDispatchRefusalIsCountedAndLeavesRoutingAlone(t *testing.T) {
 	env := setupTestProxyWithClients(t, []user.HostClient{versionRefusingClient{}})
 	env.proxy.redundancy.perf = NewPerfTracker(nil)
 	participantKey := env.proxy.redundancy.participantKeyForHost(0)
 
-	if _, blocked := env.proxy.redundancy.perf.HostCannotServeRequest(participantKey, defaultParams()); blocked {
-		t.Fatal("the host was blocked before it had refused anything")
+	if refusals, _, _, _ := env.proxy.redundancy.perf.CapabilityRefusals(participantKey, ""); refusals != 0 {
+		t.Fatal("a refusal was counted before the host had refused anything")
 	}
 
 	var buf bytes.Buffer
@@ -245,12 +234,12 @@ func TestARealDispatchRefusalTakesTheHostOutOfRouting(t *testing.T) {
 		t.Fatal("RunInference() error = nil, want the host's refusal")
 	}
 
-	reason, blocked := env.proxy.redundancy.perf.HostCannotServeRequest(participantKey, defaultParams())
-	if !blocked {
-		t.Fatal("a host that refused the protocol version is still routable")
+	refusals, _, _, _ := env.proxy.redundancy.perf.CapabilityRefusals(participantKey, "")
+	if refusals == 0 {
+		t.Fatal("a real dispatch refusal was not counted")
 	}
-	if reason != "protocol_version_unsupported" {
-		t.Fatalf("reason = %q, want protocol_version_unsupported", reason)
+	if reason, blocked := env.proxy.redundancy.capabilityBlocked(participantKey, defaultParams()); blocked {
+		t.Fatalf("the host was withheld from routing after one refusal, reason = %q", reason)
 	}
 }
 

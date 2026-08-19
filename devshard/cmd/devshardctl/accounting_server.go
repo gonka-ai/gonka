@@ -73,11 +73,14 @@ func accountingCapability(g *Gateway) accounting.CapabilityFunc {
 		return nil
 	}
 	return func(participant, model string) accounting.HostCapability {
-		protocolVersion, toolChoice, contextLimit := g.perf.CapabilityBlocks(participant, model)
+		version, tool, context, contextLimit := g.perf.CapabilityRefusals(participant, model)
 		return accounting.HostCapability{
-			ProtocolVersionUnsupported: protocolVersion,
-			ToolChoiceUnsupported:      toolChoice,
+			ProtocolVersionUnsupported: version > 0,
+			ToolChoiceUnsupported:      tool > 0,
 			ContextLimit:               contextLimit,
+			VersionRefusals:            version,
+			ToolRefusals:               tool,
+			ContextRefusals:            context,
 		}
 	}
 }
