@@ -192,8 +192,8 @@ services:
 
   versiond-router:
     build:
-      context: ../..
-      dockerfile: versiond-router/Dockerfile
+      context: ../../versiond-router
+      dockerfile: Dockerfile
     image: devshard-versiond-router:latest
     environment:
       VERSIOND_POOL_HOST: "versiond-pool"
