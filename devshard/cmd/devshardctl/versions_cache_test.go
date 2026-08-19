@@ -1,6 +1,7 @@
 package main
 
 import (
+	"compress/gzip"
 	"context"
 	"net/http"
 	"net/http/httptest"
@@ -59,5 +60,27 @@ func TestVersionsCache_StaleFailsClosed(t *testing.T) {
 	time.Sleep(time.Millisecond)
 	if c.IsNodeValidationCapable("m", "n1") {
 		t.Fatal("stale entry must fail closed")
+	}
+}
+
+func TestVersionsCache_OversizedResponseFailsClosed(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		gz := gzip.NewWriter(w)
+		gz.Write([]byte(`{"mlnodes":[{"node_id":"n1","poc_validation_inference":true}`))
+		entry := []byte(`,{"node_id":"n1","poc_validation_inference":true}`)
+		for written := 0; written <= maxVersionsResponseBytes; written += len(entry) {
+			gz.Write(entry)
+		}
+		gz.Write([]byte(`]}`))
+		gz.Close()
+	}))
+	defer srv.Close()
+
+	c := NewVersionsCache(&http.Client{Timeout: 2 * time.Second}, time.Minute)
+	c.SetCandidates(map[string]string{"m": srv.URL})
+	c.Poll(context.Background())
+	if c.IsNodeValidationCapable("m", "n1") {
+		t.Fatal("oversized response must fail closed")
 	}
 }

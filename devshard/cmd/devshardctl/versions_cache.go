@@ -21,6 +21,8 @@ type versionsResponse struct {
 	MLNodes []mlnodeVersionEntry `json:"mlnodes"`
 }
 
+const maxVersionsResponseBytes = 1 << 20
+
 type versionsEntry struct {
 	capableNodes map[string]bool // node_id -> validation-inference capable
 	fetchedAt    time.Time
@@ -105,8 +107,12 @@ func (c *VersionsCache) fetchOne(ctx context.Context, base string) map[string]bo
 		io.Copy(io.Discard, resp.Body)
 		return nil
 	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxVersionsResponseBytes+1))
+	if err != nil || len(body) > maxVersionsResponseBytes {
+		return nil
+	}
 	var parsed versionsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&parsed); err != nil {
+	if err := json.Unmarshal(body, &parsed); err != nil {
 		return nil
 	}
 	nodes := make(map[string]bool, len(parsed.MLNodes))

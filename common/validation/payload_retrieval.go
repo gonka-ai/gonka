@@ -33,6 +33,11 @@ var ErrEpochStale = errors.New("inference epoch too old, validation no longer us
 // surfacing the retrieval failure as a validation error.
 var ErrPayloadGone = errors.New("payload no longer available on executor")
 
+const (
+	maxPayloadResponseBytes = 50 << 20
+	maxPayloadErrorBytes    = 64 << 10
+)
+
 // PayloadRetrievalClient is the default HTTP client for payload retrieval.
 var PayloadRetrievalClient = &http.Client{
 	Timeout: 30 * time.Second,
@@ -88,12 +93,19 @@ func FetchPayloadsHTTP(
 		return nil, fmt.Errorf("payload not found on executor: %w", ErrPayloadGone)
 	}
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxPayloadErrorBytes))
 		return nil, fmt.Errorf("executor returned status %d: %s", resp.StatusCode, string(body))
 	}
 
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxPayloadResponseBytes+1))
+	if err != nil {
+		return nil, fmt.Errorf("failed to read response: %w", err)
+	}
+	if len(body) > maxPayloadResponseBytes {
+		return nil, fmt.Errorf("response exceeds %d byte limit", maxPayloadResponseBytes)
+	}
 	var payloadResp PayloadResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payloadResp); err != nil {
+	if err := json.Unmarshal(body, &payloadResp); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 

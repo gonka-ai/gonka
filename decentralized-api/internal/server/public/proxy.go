@@ -16,6 +16,7 @@ import (
 const (
 	defaultScannerBufferSize = 64 * 1024   // 64KB initial scanner buffer
 	maxScannerBufferSize     = 1024 * 1024 // 1MB max line size for SSE chunks
+	maxJsonResponseBytes     = 50 << 20
 )
 
 func ProxyResponse(
@@ -100,10 +101,15 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 }
 
 func proxyJsonResponse(resp *http.Response, w http.ResponseWriter, responseProcessor completionapi.ResponseProcessor, inferenceId string) {
-	var bodyBytes, err = io.ReadAll(resp.Body)
+	var bodyBytes, err = io.ReadAll(io.LimitReader(resp.Body, maxJsonResponseBytes+1))
 	if err != nil {
 		logging.Error("Failed to read inference node response body", types.Inferences, "inferenceId", inferenceId, "error", err)
 		http.Error(w, fmt.Sprintf("Failed to read inference node response body. inferenceId = %s", inferenceId), http.StatusInternalServerError)
+		return
+	}
+	if len(bodyBytes) > maxJsonResponseBytes {
+		logging.Error("Inference node response body too large", types.Inferences, "inferenceId", inferenceId)
+		http.Error(w, fmt.Sprintf("Inference node response too large. inferenceId = %s", inferenceId), http.StatusBadGateway)
 		return
 	}
 
