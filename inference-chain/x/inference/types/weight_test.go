@@ -1,6 +1,7 @@
 package types_test
 
 import (
+	"math"
 	"testing"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -101,6 +102,7 @@ func TestEffectiveConfirmedWeight(t *testing.T) {
 		{name: "zero raw total", weight: 100, confirmationWeight: 50, rawTotal: 0, expected: 0},
 		{name: "negative raw total", weight: 100, confirmationWeight: 50, rawTotal: -1, expected: 0},
 		{name: "negative confirmation treated as zero", weight: 100, confirmationWeight: -10, rawTotal: 50, expected: 0},
+		{name: "over-confirmed MaxInt64 does not wrap", weight: math.MaxInt64, confirmationWeight: math.MaxInt64, rawTotal: 1, expected: math.MaxInt64},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

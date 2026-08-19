@@ -28,12 +28,13 @@ We keep the existing `Weight` field as the **real** weight and add a new `CapWei
   - **Rewards** (settlement uses `Weight * confirmed / rawConfirmationTotal`).
   - **cPoC confirmation** (checking whether a participant confirmed its claimed weight).
   - **The cap baseline** for the *next* epoch (what a participant proved this epoch).
-  - `getEffectiveValidationBaseState`, root `ValidationWeight.Weight`, unit-of-compute pricing, and weighted random selection.
+  - Root `ValidationWeight.Weight`, unit-of-compute pricing, and weighted random selection.
 
 - **`CapWeight`** — the trust weight, equal to `Weight` by default but capped at the participant's previous-epoch confirmed weight (and `0` for participants absent last epoch). It is the value used by:
   - **Governance / validator power** (CometBFT `ValidatorUpdate` via `SetComputeValidators`).
   - **BLS threshold signing** (percentage/slot assignment).
   - **cPoC validation voting power** (per-model voting powers).
+  - **`getEffectiveValidationBaseState`** (snapshot participant weights and the total-weight denominator).
 
 Keeping `Weight` real (rather than capping it and adding an "uncapped" field for rewards) is deliberate: `Weight` is read in many places that require the *real* value — rewards, cPoC confirmation, and the cap baseline itself. Capping `Weight` would have silently corrupted all of those. Adding `CapWeight` as the new, explicitly-routed value keeps every existing reader of `Weight` correct and requires no upgrade fallback for the reward/settlement path.
 
@@ -89,7 +90,7 @@ PoC validation snapshots use trust weight for both the per-model voting powers a
 | Next-epoch cap baseline | `Weight` (real) | Unchanged |
 | Unit-of-compute pricing | `Weight` (real) | Unchanged |
 | Weighted random selection | `Weight` (real) | Unchanged |
-| PoC/cPoC validation snapshot total | `CapWeight` | Same units as per-model voting power |
+| PoC/cPoC validation snapshot (`getEffectiveValidationBaseState`) | `CapWeight` | Same units as per-model voting power |
 | Governance / CometBFT power | `CapWeight` | **Capped**, new participants dropped |
 | BLS threshold signing | `CapWeight` | **Capped**, new participants get 0 slots |
 | cPoC validation voting power | `CapWeight` | **Capped**, new participants get 0 voting power |
@@ -137,5 +138,6 @@ Wiring:
 - `resolveTrustWeights` — uses `CapWeight` when applied; falls back to `Weight` when unset.
 - `capComputeResultsToPreviousConfirmedWeight` — clamps and drops validators, exempts guardians, and falls back when `CapWeight` is unset (upgrade transition).
 - Validation snapshot and preserved-node tests cover trust-weight totals.
+- BLS key generation and guardian slot reservation tests cover mixed `CapWeight` (including a zero-cap participant with no slots).
 
 All `x/inference` and `x/bls` test suites pass.

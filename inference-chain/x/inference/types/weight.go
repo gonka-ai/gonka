@@ -30,14 +30,16 @@ func EffectiveConfirmedWeight(weight, confirmationWeight, rawConfirmationTotal i
 	if confirmationWeight < 0 {
 		confirmationWeight = 0
 	}
+	// Ratio >= 1 is clamped to weight. Do this before Int64() so an
+	// over-confirmed MaxInt64 weight cannot wrap to a negative. After this
+	// guard the quotient is strictly less than weight, so it always fits in int64.
+	if confirmationWeight >= rawConfirmationTotal {
+		return weight
+	}
 	ew := big.NewInt(confirmationWeight)
 	ew.Mul(ew, big.NewInt(weight))
 	ew.Div(ew, big.NewInt(rawConfirmationTotal))
-	result := ew.Int64()
-	if result > weight {
-		result = weight
-	}
-	return result
+	return ew.Int64()
 }
 
 func ConfirmationWeightCoefficients(scales []*ConfirmationWeightScale) map[string]mathsdk.LegacyDec {

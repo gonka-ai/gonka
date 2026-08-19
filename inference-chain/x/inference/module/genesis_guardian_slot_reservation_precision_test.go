@@ -179,3 +179,46 @@ func TestApplyBLSGuardianSlotReservation_PrimeWeights(t *testing.T) {
 	result := inference.ApplyBLSGuardianSlotReservation(ctx, k, activeParticipants)
 	require.NotNil(t, result, "Should handle prime-weight divisions without panic")
 }
+
+func TestApplyBLSGuardianSlotReservation_UsesCapWeight(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	config := sdk.GetConfig()
+	if config.GetBech32AccountAddrPrefix() != "gonka" {
+		config.SetBech32PrefixForAccount("gonka", "gonkapub")
+		config.SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
+	}
+
+	guardianAcc := sdk.AccAddress([]byte("guardian1___________"))
+	regularAcc := sdk.AccAddress([]byte("participant2________"))
+	newAcc := sdk.AccAddress([]byte("participant3________"))
+
+	p, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	p.GenesisGuardianParams = &types.GenesisGuardianParams{
+		NetworkMaturityThreshold: 10_000_000,
+		NetworkMaturityMinHeight: 0,
+		GuardianAddresses:        []string{sdk.ValAddress(guardianAcc).String()},
+	}
+	require.NoError(t, k.SetParams(ctx, p))
+	require.NoError(t, k.SetGenesisOnlyParams(ctx, &types.GenesisOnlyParams{
+		TotalSupply:               1_000_000_000,
+		OriginatorSupply:          160_000_000,
+		PreProgrammedSaleAmount:   120_000_000,
+		SupplyDenom:               "gonka",
+		GenesisGuardianMultiplier: types.DecimalFromFloat(0.52),
+		GenesisGuardianEnabled:    true,
+	}))
+
+	result := inference.ApplyBLSGuardianSlotReservation(ctx, k, []*types.ActiveParticipant{
+		{Index: guardianAcc.String(), Weight: 100, CapWeight: 100},
+		{Index: regularAcc.String(), Weight: 500, CapWeight: 50},
+		{Index: newAcc.String(), Weight: 300, CapWeight: 0},
+	})
+	require.NotNil(t, result)
+
+	_, hasGuardian := result[guardianAcc.String()]
+	require.True(t, hasGuardian)
+	require.True(t, result[newAcc.String()].IsZero(), "zero-cap participant must get no reserved share")
+	require.False(t, result[regularAcc.String()].IsZero(), "capped returning participant keeps a remainder share")
+}

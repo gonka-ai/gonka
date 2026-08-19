@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"testing"
 
+	"cosmossdk.io/math"
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
@@ -162,6 +163,70 @@ func TestBLSKeyGenerationIntegration(t *testing.T) {
 		require.True(t, ok)
 		require.Equal(t, expectedBytes, p.Secp256K1PublicKey)
 	}
+}
+
+func TestBLSKeyGenerationUsesCapWeightForSlots(t *testing.T) {
+	setupTestAddresses(t)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	allowEmptyBLSGrantQueries(mocks)
+
+	participantDetails := map[string]string{
+		aliceAccAddrStr:   aliceSecp256k1PubHex,
+		bobAccAddrStr:     bobSecp256k1PubHex,
+		charlieAccAddrStr: charlieSecp256k1PubHex,
+	}
+	setupMockAccountExpectations(t, mockAccountKeeper, participantDetails)
+
+	registry := codectypes.NewInterfaceRegistry()
+	cdc := codec.NewProtoCodec(registry)
+
+	for _, p := range []*types.Participant{
+		{Index: aliceAccAddrStr, Address: aliceAccAddrStr, Weight: 50, Status: types.ParticipantStatus_ACTIVE},
+		{Index: bobAccAddrStr, Address: bobAccAddrStr, Weight: 30, Status: types.ParticipantStatus_ACTIVE},
+		{Index: charlieAccAddrStr, Address: charlieAccAddrStr, Weight: 100, Status: types.ParticipantStatus_ACTIVE},
+	} {
+		k.SetParticipant(ctx, *p)
+	}
+
+	// Alice/Bob have proven trust weight; Charlie is new (CapWeight 0) despite
+	// a large real Weight. Slot assignment must follow CapWeight, not Weight.
+	activeParticipants := []*types.ActiveParticipant{
+		{Index: aliceAccAddrStr, Weight: 50, CapWeight: 40},
+		{Index: bobAccAddrStr, Weight: 30, CapWeight: 30},
+		{Index: charlieAccAddrStr, Weight: 100, CapWeight: 0},
+	}
+
+	appModule := inference.NewAppModule(cdc, k, mockAccountKeeper, nil, nil, nil)
+	epochID := uint64(21)
+	appModule.InitiateBLSKeyGeneration(ctx, epochID, activeParticipants)
+
+	epochBLSData, err := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+
+	byAddr := map[string]blstypes.BLSParticipantInfo{}
+	for _, p := range epochBLSData.Participants {
+		byAddr[p.Address] = p
+	}
+	_, charliePresent := byAddr[charlieAccAddrStr]
+	require.False(t, charliePresent, "zero-cap participant must receive no BLS slots")
+
+	alice, ok := byAddr[aliceAccAddrStr]
+	require.True(t, ok)
+	bob, ok := byAddr[bobAccAddrStr]
+	require.True(t, ok)
+
+	totalCap := math.LegacyNewDec(70)
+	require.True(t, alice.PercentageWeight.Equal(math.LegacyNewDec(40).Quo(totalCap).Mul(math.LegacyNewDec(100))))
+	require.True(t, bob.PercentageWeight.Equal(math.LegacyNewDec(30).Quo(totalCap).Mul(math.LegacyNewDec(100))))
+
+	aliceSlots := alice.SlotEndIndex - alice.SlotStartIndex + 1
+	bobSlots := bob.SlotEndIndex - bob.SlotStartIndex + 1
+	require.Equal(t, epochBLSData.ITotalSlots, aliceSlots+bobSlots)
+	require.Greater(t, aliceSlots, bobSlots)
 }
 
 func TestBLSKeyGenerationWithEmptyParticipants(t *testing.T) {
@@ -476,8 +541,8 @@ func TestBLSKeyGenerationPrunesExcessWarmKeys(t *testing.T) {
 		authAny, err := codectypes.NewAnyWithValue(authztypes.NewGenericAuthorization("/inference.bls.MsgSubmitDealerPart"))
 		require.NoError(t, err)
 		grants[i] = &authztypes.GrantAuthorization{
-			Granter: aliceAccAddrStr,
-			Grantee: granteeAddr.String(),
+			Granter:       aliceAccAddrStr,
+			Grantee:       granteeAddr.String(),
 			Authorization: authAny,
 		}
 		baseAcc := authtypes.NewBaseAccount(granteeAddr, warmKey.PubKey(), 0, 0)
@@ -496,10 +561,10 @@ func TestBLSKeyGenerationPrunesExcessWarmKeys(t *testing.T) {
 
 	// Setup participant
 	storedParticipant := types.Participant{
-		Index:           aliceAccAddrStr,
-		Address:         aliceAccAddrStr,
-		Weight:          100,
-		Status:          types.ParticipantStatus_ACTIVE,
+		Index:   aliceAccAddrStr,
+		Address: aliceAccAddrStr,
+		Weight:  100,
+		Status:  types.ParticipantStatus_ACTIVE,
 	}
 	k.SetParticipant(ctx, storedParticipant)
 
