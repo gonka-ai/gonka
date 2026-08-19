@@ -465,6 +465,7 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 	weightsByHeight := make(map[int64]modelWeightsAtHeight)
 	// validation duty is a penalty path, so the return buffer shields too
 	reservedWeightView := k.BuildEpochReservedWeightView(ctx, msg.EpochIndex, ReservationScopeShield)
+	rawPocByHost := k.CollectEpochRawPocWeights(ctx, msg.EpochIndex)
 	getWeightsAtHeight := func(height int64) modelWeightsAtHeight {
 		if cached, ok := weightsByHeight[height]; ok {
 			return cached
@@ -472,7 +473,7 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		weights := cloneValidationWeightMaps(modelWeightMaps)
 		totals := cloneModelTotalWeights(modelTotalWeights)
 		reservedByModelHost, reservedByHost := reservedWeightView.TotalsAt(height)
-		applyReservedWeightAdjustment(weights, totals, reservedByModelHost, reservedByHost)
+		applyReservedWeightAdjustment(weights, totals, reservedByModelHost, reservedByHost, rawPocByHost)
 		cached := modelWeightsAtHeight{weights: weights, totals: totals}
 		weightsByHeight[height] = cached
 		return cached
@@ -623,6 +624,7 @@ func applyReservedWeightAdjustment(
 	modelTotalWeights map[string]int64,
 	reservedByModelHost map[string]map[string]int64,
 	reservedByHost map[string]int64,
+	rawPocByHost map[string]int64,
 ) {
 	for modelID, weightMap := range modelWeightMaps {
 		reserved := reservedByModelHost[modelID]
@@ -638,12 +640,19 @@ func applyReservedWeightAdjustment(
 			if r <= 0 {
 				continue
 			}
-			if r > vw.Weight {
-				r = vw.Weight
+			// a submodel weight is the host's raw PoC sum for that model, so the
+			// reserved total subtracts directly; the root weight is cap- and
+			// collateral-adjusted and only its reserved share can be removed
+			free := vw.Weight - r
+			if modelID == "" {
+				free = FreeShareOfWeight(vw.Weight, r, rawPocByHost[host])
 			}
-			vw.Weight -= r
+			if free < 0 {
+				free = 0
+			}
+			removed += vw.Weight - free
+			vw.Weight = free
 			weightMap[host] = vw
-			removed += r
 		}
 		if t := modelTotalWeights[modelID] - removed; t > 0 {
 			modelTotalWeights[modelID] = t

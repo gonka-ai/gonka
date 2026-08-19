@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"cosmossdk.io/collections"
+	sdkmath "cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/productscience/inference/x/inference/utils"
@@ -632,6 +633,56 @@ func (k Keeper) collectModelFreeWeights(ctx context.Context, epochId uint64, mod
 		}
 	}
 	return weights
+}
+
+// CollectEpochRawPocWeights returns each host's raw PoC weight for the epoch,
+// deduped by node id like the reserved totals it is compared against
+func (k Keeper) CollectEpochRawPocWeights(ctx context.Context, epochIndex uint64) map[string]int64 {
+	active, found := k.GetActiveParticipants(ctx, epochIndex)
+	if !found {
+		return nil
+	}
+	weights := make(map[string]int64, len(active.Participants))
+	for _, p := range active.Participants {
+		if p == nil || p.Index == "" {
+			continue
+		}
+		counted := make(map[string]struct{})
+		for _, group := range p.MlNodes {
+			if group == nil {
+				continue
+			}
+			for _, node := range group.MlNodes {
+				if node == nil || node.NodeId == "" {
+					continue
+				}
+				if _, seen := counted[node.NodeId]; seen {
+					continue
+				}
+				counted[node.NodeId] = struct{}{}
+				weights[p.Index] += node.PocWeight
+			}
+		}
+	}
+	return weights
+}
+
+// FreeShareOfWeight drops the reserved part of a stored weight. Reserved totals
+// are raw PoC weight while stored weights are already coefficient-, cap- and
+// collateral-adjusted, so the reserved part is removed as a share of the host's
+// raw weight instead of being subtracted directly. Without a raw weight to
+// compare against we cannot size the share, so the whole weight is dropped.
+func FreeShareOfWeight(weight, reservedRaw, totalRaw int64) int64 {
+	if weight <= 0 {
+		return 0
+	}
+	if reservedRaw <= 0 {
+		return weight
+	}
+	if totalRaw <= 0 || reservedRaw >= totalRaw {
+		return 0
+	}
+	return sdkmath.LegacyNewDec(weight).MulInt64(totalRaw - reservedRaw).QuoInt64(totalRaw).TruncateInt64()
 }
 
 // epochBlockRange returns the epoch block range
