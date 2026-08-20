@@ -27,6 +27,21 @@ func (uc *ReconcileUseCase) Execute(ctx context.Context, node vo.NodeRef) error 
 	// 1. Hold the node; the ticker and every host command apply through here
 	defer uc.applying.Lock(node)()
 
+	return uc.converge(ctx, node)
+}
+
+// Record writes what the node should hold and converges it without letting the node go in
+// between, so the ticker never applies a command that is only half written
+func (uc *ReconcileUseCase) Record(ctx context.Context, node vo.NodeRef, write func(context.Context) error) error {
+	defer uc.applying.Lock(node)()
+
+	if err := write(ctx); err != nil {
+		return err
+	}
+	return uc.converge(ctx, node)
+}
+
+func (uc *ReconcileUseCase) converge(ctx context.Context, node vo.NodeRef) error {
 	// 2. Load what the machine was last told to hold
 	state, _, err := uc.runs.Load(ctx, node)
 	if err != nil {

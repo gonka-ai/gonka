@@ -98,7 +98,7 @@ func build(device string, cfg wgtypes.Config, pid int) error {
 		return err
 	}
 
-	link := &netlink.Wireguard{LinkAttrs: netlink.LinkAttrs{Name: device}}
+	link := &netlink.Wireguard{LinkAttrs: netlink.LinkAttrs{Name: device, Alias: owned}}
 	if err := netlink.LinkAdd(link); err != nil {
 		return fmt.Errorf("add %s: %w", device, err)
 	}
@@ -132,8 +132,13 @@ func configure(link netlink.Link, cfg wgtypes.Config, pid int) error {
 	return nil
 }
 
+// owned marks every link this adapter creates, so a leftover can be told apart from a link the
+// operator happens to keep under the same name
+const owned = "trainshard"
+
 // discard clears a link a setup that died mid-way left on the host. A live one lives in a sandbox,
-// so anything under this name out here is a leftover, and it would fail every later add
+// so a link of ours out here is a leftover, and it would fail every later add. A link that is not
+// ours is left alone and the run refuses the node rather than take down the operator's network
 func discard(device string) error {
 	link, err := netlink.LinkByName(device)
 	if err != nil {
@@ -143,8 +148,8 @@ func discard(device string) error {
 		}
 		return fmt.Errorf("look for a leftover %s: %w", device, err)
 	}
-	if link.Type() != "wireguard" {
-		return fmt.Errorf("%s on the host is a %s and not ours to delete", device, link.Type())
+	if link.Type() != "wireguard" || link.Attrs().Alias != owned {
+		return fmt.Errorf("%s on the host is a %s this daemon did not create, so it stays; rename it to free the slot", device, link.Type())
 	}
 	if err := netlink.LinkDel(link); err != nil {
 		return fmt.Errorf("delete leftover %s: %w", device, err)

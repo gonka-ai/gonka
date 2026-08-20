@@ -7,6 +7,7 @@ import (
 	"reflect"
 	"slices"
 	"testing"
+	"time"
 
 	"trainshard/internal/domain/mesh"
 	"trainshard/internal/domain/run"
@@ -411,5 +412,37 @@ func TestReconcileCleansTheOldShardBeforeServingANewReservation(t *testing.T) {
 
 	if calls := f.rec.sequence(); !reflect.DeepEqual(calls, []string{"mesh.remove", "mesh_store.forget"}) {
 		t.Fatalf("the previous shard must be cleaned up first, got %v", calls)
+	}
+}
+
+func TestReconcileHoldsTheNodeWhileACommandWritesDownWhatItShouldHold(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	writing, release, recorded := make(chan struct{}), make(chan struct{}), make(chan error, 1)
+	go func() {
+		recorded <- f.reconcile().Record(ctx, nodeA, func(context.Context) error {
+			close(writing)
+			<-release
+			return nil
+		})
+	}()
+	<-writing
+
+	ticked := make(chan error, 1)
+	go func() { ticked <- f.reconcile().Execute(ctx, nodeA) }()
+
+	select {
+	case <-ticked:
+		t.Fatal("the ticker applied the node while a command was still writing down what it should hold")
+	case <-time.After(100 * time.Millisecond):
+	}
+	close(release)
+
+	if err := <-recorded; err != nil {
+		t.Fatalf("record: %v", err)
+	}
+	if err := <-ticked; err != nil {
+		t.Fatalf("tick: %v", err)
 	}
 }
