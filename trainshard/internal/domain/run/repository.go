@@ -24,10 +24,31 @@ type SessionLog interface {
 	Record(ctx context.Context, shardID vo.ShardID, node vo.NodeRef, at time.Time) (io.WriteCloser, error)
 }
 
+type Op string
+
+const (
+	OpDeploy Op = "deploy"
+	OpStart  Op = "start"
+	OpStop   Op = "stop"
+	OpMesh   Op = "mesh"
+)
+
+// RequestRef names one request whole: the same id sent as another command, or under another
+// shard, is another request, and replaying the first answer to it would swallow the second
+type RequestRef struct {
+	Op    Op
+	Shard vo.ShardID
+	ID    vo.RequestID
+}
+
+func (r RequestRef) String() string {
+	return string(r.Op) + "/" + r.Shard.String() + "/" + string(r.ID)
+}
+
 // RequestLog replay by request id
 type RequestLog interface {
-	// Result returns the previous answer to this shard's request, or none
-	Result(ctx context.Context, shardID vo.ShardID, id vo.RequestID) (results []NodeResult, found bool, err error)
-	// Record stores the answer under the shard it was given for
-	Record(ctx context.Context, shardID vo.ShardID, id vo.RequestID, results []NodeResult) error
+	// Result returns the previous answer to that very request, or none
+	Result(ctx context.Context, ref RequestRef) (results []NodeResult, found bool, err error)
+	// Record stores the answer under the request that produced it
+	Record(ctx context.Context, ref RequestRef, results []NodeResult) error
 }

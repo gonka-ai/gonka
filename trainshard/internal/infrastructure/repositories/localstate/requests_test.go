@@ -12,15 +12,13 @@ import (
 	"trainshard/internal/utils/timex"
 )
 
-const (
-	ttl     = time.Hour
-	shardID = vo.ShardID(7)
-)
+const ttl = time.Hour
 
 var (
-	node   = vo.NodeRef{Participant: "gonka1host", NodeID: "node-1"}
-	now    = time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
-	answer = []run.NodeResult{{
+	node     = vo.NodeRef{Participant: "gonka1host", NodeID: "node-1"}
+	deployed = run.RequestRef{Op: run.OpDeploy, Shard: 7, ID: "req-1"}
+	now      = time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	answer   = []run.NodeResult{{
 		Node:  node,
 		State: vo.ContainerRunning,
 		Image: "sha256:abc",
@@ -41,11 +39,11 @@ func openLog(t *testing.T, dir string, clock *timex.Frozen) run.RequestLog {
 func TestARecordedAnswerSurvivesARestartOfTheDaemon(t *testing.T) {
 
 	dir, clock := t.TempDir(), timex.NewFrozen(now)
-	if err := openLog(t, dir, clock).Record(context.Background(), shardID, "req-1", answer); err != nil {
+	if err := openLog(t, dir, clock).Record(context.Background(), deployed, answer); err != nil {
 		t.Fatalf("record: %v", err)
 	}
 
-	replayed, found, err := openLog(t, dir, clock).Result(context.Background(), shardID, "req-1")
+	replayed, found, err := openLog(t, dir, clock).Result(context.Background(), deployed)
 
 	if err != nil || !found {
 		t.Fatalf("got found=%v err=%v, want the answer to outlive the process", found, err)
@@ -58,18 +56,28 @@ func TestARecordedAnswerSurvivesARestartOfTheDaemon(t *testing.T) {
 	}
 }
 
-func TestAnAnswerBelongsToTheShardItWasGivenFor(t *testing.T) {
-
-	dir, clock := t.TempDir(), timex.NewFrozen(now)
-	log := openLog(t, dir, clock)
-	if err := log.Record(context.Background(), shardID, "req-1", answer); err != nil {
-		t.Fatalf("record: %v", err)
+func TestAnAnswerBelongsToTheRequestItWasGivenFor(t *testing.T) {
+	cases := map[string]run.RequestRef{
+		"the same id under another shard":   {Op: deployed.Op, Shard: deployed.Shard + 1, ID: deployed.ID},
+		"the same id as another command":    {Op: run.OpStart, Shard: deployed.Shard, ID: deployed.ID},
+		"another id under the same command": {Op: deployed.Op, Shard: deployed.Shard, ID: "req-2"},
 	}
 
-	_, found, err := log.Result(context.Background(), shardID+1, "req-1")
+	for name, asked := range cases {
+		t.Run(name, func(t *testing.T) {
 
-	if err != nil || found {
-		t.Fatalf("got found=%v err=%v, want another shard's request to be treated as never seen", found, err)
+			dir, clock := t.TempDir(), timex.NewFrozen(now)
+			log := openLog(t, dir, clock)
+			if err := log.Record(context.Background(), deployed, answer); err != nil {
+				t.Fatalf("record: %v", err)
+			}
+
+			_, found, err := log.Result(context.Background(), asked)
+
+			if err != nil || found {
+				t.Fatalf("got found=%v err=%v, want it treated as never seen", found, err)
+			}
+		})
 	}
 }
 
@@ -77,12 +85,12 @@ func TestAnAnswerIsForgottenOnceItsTimeToLiveHasPassed(t *testing.T) {
 
 	dir, clock := t.TempDir(), timex.NewFrozen(now)
 	log := openLog(t, dir, clock)
-	if err := log.Record(context.Background(), shardID, "req-1", answer); err != nil {
+	if err := log.Record(context.Background(), deployed, answer); err != nil {
 		t.Fatalf("record: %v", err)
 	}
 	clock.Advance(ttl + time.Minute)
 
-	_, found, err := log.Result(context.Background(), shardID, "req-1")
+	_, found, err := log.Result(context.Background(), deployed)
 
 	if err != nil || found {
 		t.Fatalf("got found=%v err=%v, want a stale answer treated as never seen", found, err)

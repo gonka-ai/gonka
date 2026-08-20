@@ -17,6 +17,10 @@ type NodesCommand struct {
 	Deadline  time.Time
 }
 
+func (c NodesCommand) request(op run.Op) run.RequestRef {
+	return run.RequestRef{Op: op, Shard: c.Shard, ID: c.RequestID}
+}
+
 func (c NodesCommand) forNode(node vo.NodeRef) shard.Command {
 	return shard.Command{
 		Shard:     c.Shard,

@@ -1,10 +1,14 @@
 package run
 
-// WipePlan removes everything a run left on the machine, always in the same order
+// WipePlan removes everything a run left on the machine, always in the same order; a leftover
+// process is only known to be the run's by the container it came from, so it goes first
 func WipePlan(o Observed) []Action {
 	actions := make([]Action, 0, 5)
 	if o.Container.Running() {
 		actions = append(actions, Action{Kind: ActionStopContainer})
+	}
+	if o.TrainingProcesses {
+		actions = append(actions, Action{Kind: ActionKillGPUProcesses})
 	}
 	if o.Container.Exists() {
 		actions = append(actions, Action{Kind: ActionRemoveContainer})
@@ -14,9 +18,6 @@ func WipePlan(o Observed) []Action {
 	}
 	if o.VolumesPresent {
 		actions = append(actions, Action{Kind: ActionWipeVolumes})
-	}
-	if o.TrainingProcesses {
-		actions = append(actions, Action{Kind: ActionKillGPUProcesses})
 	}
 	return actions
 }
