@@ -13,6 +13,7 @@ import (
 
 	"trainshard/internal/domain/mesh"
 	"trainshard/internal/domain/run"
+	"trainshard/internal/domain/shard"
 	"trainshard/internal/domain/shared/ports"
 	"trainshard/internal/domain/shared/vo"
 )
@@ -171,8 +172,14 @@ func (m meshes) SaveConfig(_ context.Context, shardID vo.ShardID, node vo.NodeRe
 	return m.update(shardID, node, func(state *meshState) { state.Peers = fromConfig(config) })
 }
 
+// Forget is the one caller that may find another shard here: a sweep drops what a shard this node
+// no longer serves left behind, and there is nothing of that shard in the file to drop
 func (m meshes) Forget(_ context.Context, shardID vo.ShardID, node vo.NodeRef) error {
-	return m.update(shardID, node, func(state *meshState) { *state = meshState{} })
+	err := m.update(shardID, node, func(state *meshState) { *state = meshState{} })
+	if errors.Is(err, shard.ErrNodeNotReserved) {
+		return nil
+	}
+	return err
 }
 
 func (m meshes) state(shardID vo.ShardID, node vo.NodeRef) (*meshState, bool, error) {
@@ -186,6 +193,9 @@ func (m meshes) state(shardID vo.ShardID, node vo.NodeRef) (*meshState, bool, er
 	return file.Mesh, true, nil
 }
 
+// update refuses a node this host holds for another shard, or for none at all: the mesh hangs off
+// the reservation, and answering success without writing anything leaves the caller believing a
+// peer list was stored that nothing will ever read back
 func (m meshes) update(shardID vo.ShardID, node vo.NodeRef, apply func(*meshState)) error {
 	m.store.mu.Lock()
 	defer m.store.mu.Unlock()
@@ -195,7 +205,7 @@ func (m meshes) update(shardID vo.ShardID, node vo.NodeRef, apply func(*meshStat
 		return err
 	}
 	if vo.ShardID(file.ShardID) != shardID {
-		return nil
+		return fmt.Errorf("node %s is held for shard %d, not %s: %w", node, file.ShardID, shardID, shard.ErrNodeNotReserved)
 	}
 	if file.Mesh == nil {
 		file.Mesh = &meshState{}

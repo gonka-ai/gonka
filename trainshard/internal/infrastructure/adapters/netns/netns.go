@@ -207,6 +207,10 @@ func (n *Network) Remove(ctx context.Context, shardID vo.ShardID, node vo.NodeRe
 			return err
 		}
 	}
+	// A sandbox that is gone took its link with it, but one stranded on the host outlives it
+	if err := discard(iface(slot)); err != nil {
+		return err
+	}
 
 	if err := n.sandbox.RemoveSandbox(ctx, shardID, node); err != nil {
 		return err
