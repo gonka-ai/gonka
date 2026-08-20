@@ -21,6 +21,8 @@ func raise(int, string, string) error { return errPlatform }
 
 func build(string, wgtypes.Config, int) error { return errPlatform }
 
+func discard(string) error { return errPlatform }
+
 func inNetns(int, func(*wgctrl.Client) error) error { return errPlatform }
 
 func fence(int, string, []string, []allowance) error { return errPlatform }
