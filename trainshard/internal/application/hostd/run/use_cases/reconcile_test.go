@@ -107,7 +107,7 @@ func TestReconcileBringsUpTheRunInOrder(t *testing.T) {
 	if err := f.prepared(ctx); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
-	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec(), Start: true}
+	f.runs.states[nodeA] = run.RunState{Shard: shardID, ReservedAt: now, Spec: runSpec(), Start: true}
 
 	for range 3 {
 		if err := f.reconcile().Execute(ctx, nodeA); err != nil {
@@ -311,6 +311,26 @@ func TestReconcileHandsBackANodeThatNeverGetsReady(t *testing.T) {
 	want := fmt.Sprintf("%s:%s:%s", shardID, nodeA.NodeID, vo.ReleaseFailedPrepare)
 	if len(f.chain.releases) != 1 || string(f.chain.releases[0]) != want {
 		t.Fatalf("got %v, want the reservation released as %s", f.chain.releases, want)
+	}
+}
+
+func TestReconcileHandsBackANodeWhoseDeployRecordedTheShardFirst(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	f.control.stuck = true
+	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec()}
+
+	if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+	f.clock.Advance(f.patience)
+	if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if len(f.chain.releases) != 1 {
+		t.Fatalf("got %v, want the node handed back even though deploy recorded the shard before the first pass", f.chain.releases)
 	}
 }
 

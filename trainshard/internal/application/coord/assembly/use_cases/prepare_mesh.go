@@ -76,13 +76,11 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 				}
 				continue
 			}
-			for _, node := range missing {
-				if err := uc.submitter.Release(ctx, shardID, node, vo.ReleaseFailedPrepare); err != nil {
-					return PrepareResult{}, err
-				}
-				released = append(released, Released{Node: node, Reason: vo.ReleaseFailedPrepare})
+			gone, err := kick(ctx, uc.submitter, shardID, missing, vo.ReleaseFailedPrepare)
+			if err != nil {
+				return PrepareResult{}, err
 			}
-			kicked = uc.clock.Now()
+			released, kicked = append(released, gone...), uc.clock.Now()
 			continue
 		}
 
@@ -92,33 +90,53 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 			return PrepareResult{}, err
 		}
 
-		// 6. Hand out peer lists, every host at once
-		handed := syncx.Fan(config.Refs(), func(node vo.NodeRef) error {
+		// 6. Hand out peer lists, every host at once, and drop whoever will not take one
+		nodes := config.Refs()
+		refused := make([]vo.NodeRef, 0)
+		for index, err := range syncx.Fan(nodes, func(node vo.NodeRef) error {
 			return uc.hosts.Apply(ctx, config, node)
-		})
-		for _, err := range handed {
+		}) {
+			if err != nil {
+				refused = append(refused, nodes[index])
+			}
+		}
+		if len(refused) > 0 {
+			gone, err := kick(ctx, uc.submitter, shardID, refused, vo.ReleaseFailedPrepare)
 			if err != nil {
 				return PrepareResult{}, err
 			}
+			released, kicked = append(released, gone...), uc.clock.Now()
+			continue
 		}
 
 		// 7. Return if fully connected
 		failed := mesh.Probe(ctx, uc.hosts, config)
-		if mesh.FullyConnected(config.Refs(), failed) {
+		if mesh.FullyConnected(nodes, failed) {
 			return PrepareResult{Config: config, Released: released}, nil
 		}
 
 		// 8. Kick the worst node and retry
-		worst, found := mesh.Worst(config.Refs(), failed)
+		worst, found := mesh.Worst(nodes, failed)
 		if !found {
 			return PrepareResult{Released: released, Failed: failed}, nil
 		}
-		if err := uc.submitter.Release(ctx, shardID, worst, vo.ReleaseUnreachable); err != nil {
+		gone, err := kick(ctx, uc.submitter, shardID, []vo.NodeRef{worst}, vo.ReleaseUnreachable)
+		if err != nil {
 			return PrepareResult{}, err
 		}
-		released = append(released, Released{Node: worst, Reason: vo.ReleaseUnreachable})
-		kicked = uc.clock.Now()
+		released, kicked = append(released, gone...), uc.clock.Now()
 	}
+}
+
+func kick(ctx context.Context, submitter shard.ChainSubmitter, shardID vo.ShardID, nodes []vo.NodeRef, reason vo.ReleaseReason) ([]Released, error) {
+	released := make([]Released, 0, len(nodes))
+	for _, node := range nodes {
+		if err := submitter.Release(ctx, shardID, node, reason); err != nil {
+			return nil, err
+		}
+		released = append(released, Released{Node: node, Reason: reason})
+	}
+	return released, nil
 }
 
 func refs(released []Released) []vo.NodeRef {
