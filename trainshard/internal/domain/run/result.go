@@ -75,14 +75,19 @@ func PerHost[T Answer](
 	return results
 }
 
-// matched lines the answers up with the nodes they were asked about, so a host can neither
-// drop one of its nodes nor slip in an answer for a node that is not its own
+// matched lines the answers up with the nodes they were asked about, so a host can neither drop
+// one of its nodes, nor answer twice for the same one, nor slip in an answer for a node that is
+// not its own
 func matched[T Answer](asked []vo.NodeRef, answered []T, failed func(vo.NodeRef, error) T, cause error) []T {
 	if cause == nil {
 		cause = ErrNodeNotAnswered
 	}
 	byNode := make(map[vo.NodeRef]T, len(answered))
 	for _, answer := range answered {
+		if _, twice := byNode[answer.Ref()]; twice {
+			byNode[answer.Ref()] = failed(answer.Ref(), ErrNodeAnsweredTwice)
+			continue
+		}
 		byNode[answer.Ref()] = answer
 	}
 
@@ -123,16 +128,17 @@ func FailedStatus(node vo.NodeRef, err error) NodeStatus {
 	return NodeStatus{NodeResult: Failed(node, err)}
 }
 
-// ReadyToStart holds when every node answered, has a container, and they all hold the same
-// image; a run started on only some of its nodes waits for the rest with the gpus already taken
+// ReadyToStart holds when every node answered, every container can still be started, and they
+// all hold the same image; a run started on only some of its nodes waits for the rest with the
+// gpus already taken
 func ReadyToStart(statuses []NodeStatus) error {
 	held := make([]NodeImage, 0, len(statuses))
 	for _, status := range statuses {
 		if !status.OK() {
 			return ErrStatusUnknown
 		}
-		if !status.State.Exists() {
-			return ErrContainerMissing
+		if err := CanStart(status.State); err != nil {
+			return err
 		}
 		held = append(held, NodeImage{Node: status.Node, Image: status.Image})
 	}

@@ -16,7 +16,7 @@ const ttl = time.Hour
 
 var (
 	node     = vo.NodeRef{Participant: "gonka1host", NodeID: "node-1"}
-	deployed = run.RequestRef{Op: run.OpDeploy, Shard: 7, ID: "req-1"}
+	deployed = run.RequestRef{Op: run.OpDeploy, Shard: 7, Actor: "gonka1creator", ID: "req-1"}
 	now      = time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
 	answer   = []run.NodeResult{{
 		Node:  node,
@@ -58,9 +58,10 @@ func TestARecordedAnswerSurvivesARestartOfTheDaemon(t *testing.T) {
 
 func TestAnAnswerBelongsToTheRequestItWasGivenFor(t *testing.T) {
 	cases := map[string]run.RequestRef{
-		"the same id under another shard":   {Op: deployed.Op, Shard: deployed.Shard + 1, ID: deployed.ID},
-		"the same id as another command":    {Op: run.OpStart, Shard: deployed.Shard, ID: deployed.ID},
-		"another id under the same command": {Op: deployed.Op, Shard: deployed.Shard, ID: "req-2"},
+		"the same id under another shard":   {Op: deployed.Op, Shard: deployed.Shard + 1, Actor: deployed.Actor, ID: deployed.ID},
+		"the same id as another command":    {Op: run.OpStart, Shard: deployed.Shard, Actor: deployed.Actor, ID: deployed.ID},
+		"the same id from the other actor":  {Op: deployed.Op, Shard: deployed.Shard, Actor: "gonka1runkey", ID: deployed.ID},
+		"another id under the same command": {Op: deployed.Op, Shard: deployed.Shard, Actor: deployed.Actor, ID: "req-2"},
 	}
 
 	for name, asked := range cases {

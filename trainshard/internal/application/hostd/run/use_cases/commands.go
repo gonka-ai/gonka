@@ -18,7 +18,7 @@ type NodesCommand struct {
 }
 
 func (c NodesCommand) request(op run.Op) run.RequestRef {
-	return run.RequestRef{Op: op, Shard: c.Shard, ID: c.RequestID}
+	return run.RequestRef{Op: op, Shard: c.Shard, Actor: c.Actor.Address, ID: c.RequestID}
 }
 
 func (c NodesCommand) forNode(node vo.NodeRef) shard.Command {
