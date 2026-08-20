@@ -225,15 +225,17 @@ test-version-routing:
 		-e READYZ_SUPPORTED=false \
 		-v "$$tmpdir/upstream.py:/app.py:ro" \
 		python:3.12-alpine python /app.py >/dev/null; \
+	versions=$$(printf 'v4\t\n\rv5'); \
+	legacy_versions=$$(printf 'v1\r\n\tv2'); \
 	docker run -d --name gonka-vp-router --network $$net \
 		-p 127.0.0.1:18132:8080 -p 127.0.0.1:18134:8404 \
 		-v $$state:/var/lib/gonka-router \
-		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="v4 v5" \
+		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="$$versions" \
 		-e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
 		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
 		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
-		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
+		-e VERSIOND_NON_HA_VERSIONS="$$legacy_versions" \
 		gonka-versiond-router-probe >/dev/null; \
 	for i in $$(seq 60); do \
 		curl -s -o /dev/null -m 2 http://127.0.0.1:18132/v4/sessions/warm/x && break; \

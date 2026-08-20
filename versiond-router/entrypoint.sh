@@ -251,8 +251,8 @@ CACHED_VERSIONS_FILE="$(mktemp)"
 CACHED_DYNAMIC_VERSIONS_FILE="$(mktemp)"
 trap 'rm -f "$POOL_BACKENDS_FILE" "$STATIC_VERSIONS_FILE" "$LEGACY_VERSIONS_FILE" "$CACHED_VERSIONS_FILE" "$CACHED_DYNAMIC_VERSIONS_FILE"' EXIT
 
-printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' > "$STATIC_VERSIONS_FILE"
-printf '%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' > "$LEGACY_VERSIONS_FILE"
+printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;[:space:]' '\n' > "$STATIC_VERSIONS_FILE"
+printf '%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" | tr ',;[:space:]' '\n' > "$LEGACY_VERSIONS_FILE"
 : > "$CACHED_VERSIONS_FILE"
 if [ -n "$CATALOG_URL" ] && [ ! -e "$CATALOG_CACHE_FILE" ] && \
     [ "$CATALOG_LEGACY_CACHE_FILE" != "$CATALOG_CACHE_FILE" ] && \
