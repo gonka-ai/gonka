@@ -1,4 +1,4 @@
-.PHONY: all build-docker release test-render test-readiness-compat test-local-compose
+.PHONY: all build-docker release test-render test-readiness-compat test-local-compose test-join-compose
 
 HAPROXY_IMAGE ?= haproxy:3.2-alpine
 
@@ -19,6 +19,21 @@ test-local-compose:
 	grep -Eq 'context: .*/edge-api-router$$' "$$tmp" \
 		|| { echo 'test-local-compose: router build context is wrong' >&2; exit 1; }; \
 	echo 'test-local-compose: ok'
+
+test-join-compose:
+	@set -eu; \
+	tmp=$$(mktemp); \
+	trap 'rm -f "$$tmp"' EXIT; \
+	docker compose --project-directory ../deploy/join \
+		-f ../deploy/join/docker-compose.yml \
+		-f ../deploy/join/docker-compose.edge-api-multi.yml config > "$$tmp"; \
+	grep -q 'EDGE_API_POOL_HOST: edge-api-pool' "$$tmp" \
+		|| { echo 'test-join-compose: pool host is not rendered' >&2; exit 1; }; \
+	[ "$$(grep -c -- '- edge-api-pool' "$$tmp")" -ge 3 ] \
+		|| { echo 'test-join-compose: not every edge-api joins the pool alias' >&2; exit 1; }; \
+	grep -q 'EDGE_API_HOSTS: edge-api edge-api2 edge-api3' "$$tmp" \
+		|| { echo 'test-join-compose: legacy router compatibility was lost' >&2; exit 1; }; \
+	echo 'test-join-compose: ok'
 
 test-readiness-compat:
 	@set -eu; \
@@ -83,7 +98,7 @@ test-readiness-compat:
 	if grep -qx draining "$$tmpdir/results"; then fail "503 /readyz backend received traffic"; fi; \
 	echo "test-readiness-compat: ok"
 
-test-render: test-readiness-compat test-local-compose
+test-render: test-readiness-compat test-local-compose test-join-compose
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \

@@ -17,11 +17,23 @@ x-edge-api: &edge-api
     - EDGE_API_OTEL_ENABLED=${EDGE_API_OTEL_ENABLED:-false}
     - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
     - OTEL_HEADERS=${OTEL_HEADERS:-}
+  networks:
+    default:
+      aliases:
+        - edge-api-pool
   depends_on:
     - node
   restart: always
 
 services:
+  # The base-file replica does not inherit x-edge-api, so attach its pool alias
+  # explicitly without replacing its image or environment.
+  edge-api:
+    networks:
+      default:
+        aliases:
+          - edge-api-pool
+
   edge-api2:
     <<: *edge-api
     container_name: edge-api2
@@ -34,6 +46,10 @@ services:
     container_name: edge-api-router
     image: ghcr.io/product-science/edge-api-router:0.2.14-devshard-v4
     environment:
+      # The HAProxy router discovers every replica through this shared DNS
+      # alias. Keep EDGE_API_HOSTS during the image transition because the
+      # currently pinned nginx router still requires the static list.
+      - EDGE_API_POOL_HOST=${EDGE_API_POOL_HOST:-edge-api-pool}
       - EDGE_API_HOSTS=${EDGE_API_HOSTS:-edge-api edge-api2 edge-api3}
       - EDGE_API_PORT=18080
     depends_on:
