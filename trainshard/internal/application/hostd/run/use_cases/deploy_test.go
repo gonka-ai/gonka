@@ -24,11 +24,6 @@ func TestDeployRefusesANodeWithoutFailingTheRequest(t *testing.T) {
 		want   string
 	}{
 		{
-			name:   "actor that is neither creator nor run key",
-			mutate: func(_ *fixture, c *usecases.DeployCommand) { c.Actor = shard.Actor{Address: stranger} },
-			want:   "NOT_AUTHORIZED",
-		},
-		{
 			name:   "node the chain did not reserve",
 			mutate: func(_ *fixture, c *usecases.DeployCommand) { c.Nodes = []vo.NodeRef{nodeB} },
 			want:   "NODE_NOT_RESERVED",
@@ -80,6 +75,42 @@ func TestDeployRefusesANodeWithoutFailingTheRequest(t *testing.T) {
 				t.Fatalf("a refused deploy must record nothing, got %v", f.runs.states)
 			}
 		})
+	}
+}
+
+func TestDeployTurnsAStrangerAwayInsteadOfAnsweringPerNode(t *testing.T) {
+
+	f := newFixture()
+	cmd := deployCommand()
+	cmd.Actor = shard.Actor{Address: stranger}
+
+	_, err := f.deploy().Execute(context.Background(), cmd)
+
+	if !errors.Is(err, shard.ErrNotAuthorized) {
+		t.Fatalf("got %v, want %v", err, shard.ErrNotAuthorized)
+	}
+	if len(f.runs.states) != 0 {
+		t.Fatalf("a refused deploy must record nothing, got %v", f.runs.states)
+	}
+}
+
+func TestDeployReplaysAnAnswerToItsOwnActorOnly(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	cmd := deployCommand()
+	if _, err := f.deploy().Execute(ctx, cmd); err != nil {
+		t.Fatalf("first deploy: %v", err)
+	}
+	cmd.Actor = shard.Actor{Address: stranger}
+
+	replayed, err := f.deploy().Execute(ctx, cmd)
+
+	if !errors.Is(err, shard.ErrNotAuthorized) {
+		t.Fatalf("got %v, want a stranger refused the answer to someone else's request", err)
+	}
+	if replayed != nil {
+		t.Fatalf("got %+v, want nothing handed back", replayed)
 	}
 }
 

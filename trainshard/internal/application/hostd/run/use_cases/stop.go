@@ -30,16 +30,19 @@ func NewStopUseCase(
 }
 
 func (uc *StopUseCase) Execute(ctx context.Context, cmd StopCommand) ([]run.NodeResult, error) {
-	// 1. Replay stored answer if seen
-	recorded, found, err := uc.log.Result(ctx, cmd.RequestID)
-	if err != nil || found {
-		return recorded, err
-	}
-
-	// 2. Read the shard from chain
+	// 1. Read the shard from chain
 	record, height, err := shard.Read(ctx, uc.chain, cmd.Shard)
 	if err != nil {
 		return nil, err
+	}
+	if err := shard.CanAsk(cmd.Shard, cmd.Actor, record); err != nil {
+		return nil, err
+	}
+
+	// 2. Replay stored answer if seen
+	recorded, found, err := uc.log.Result(ctx, cmd.RequestID)
+	if err != nil || found {
+		return recorded, err
 	}
 
 	// 3. Refuse, mark should-stop and converge each node

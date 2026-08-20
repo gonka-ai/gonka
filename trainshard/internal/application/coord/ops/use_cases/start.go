@@ -18,8 +18,8 @@ func NewStartUseCase(chain shard.ChainReader, hosts run.HostCommands) *StartUseC
 }
 
 func (uc *StartUseCase) Execute(ctx context.Context, cmd RunCommand) ([]run.NodeResult, error) {
-	// 1. Load nodes from chain
-	record, _, err := shard.Read(ctx, uc.chain, cmd.Shard)
+	// 1. Load nodes from chain, refusing a shard that is already over
+	record, err := shard.ReadActive(ctx, uc.chain, cmd.Shard)
 	if err != nil {
 		return nil, err
 	}
@@ -29,11 +29,9 @@ func (uc *StartUseCase) Execute(ctx context.Context, cmd RunCommand) ([]run.Node
 		return uc.hosts.Status(ctx, participant, cmd.hostCommand(nodes))
 	})
 
-	// 3. Refuse the whole run unless they agree; only we see every host
-	if held := run.HeldImages(statuses); len(held) > 0 {
-		if _, err := run.SameImage(held); err != nil {
-			return nil, err
-		}
+	// 3. Refuse the whole run unless every node answered and they agree; only we see every host
+	if _, err := run.AgreedImage(statuses); err != nil {
+		return nil, err
 	}
 
 	// 4. One call per host; return collected results
