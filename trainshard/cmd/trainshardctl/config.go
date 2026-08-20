@@ -26,7 +26,6 @@ func load() (config, error) {
 		actor:        vo.Address(env("ACTOR", "")),
 		secret:       []byte(env("SHARED_SECRET", "")),
 		chainSeed:    env("CHAIN_SEED", ""),
-		timeout:      time.Minute,
 		pollInterval: 10 * time.Second,
 	}
 
@@ -35,6 +34,12 @@ func load() (config, error) {
 		return config{}, err
 	}
 	cfg.directory = directory
+
+	timeout, err := time.ParseDuration(env("TIMEOUT", "10m"))
+	if err != nil || timeout <= 0 {
+		return config{}, fmt.Errorf("TRAINSHARDCTL_TIMEOUT must be a positive duration, such as 10m")
+	}
+	cfg.timeout = timeout
 
 	switch {
 	case cfg.actor == "":
@@ -75,8 +80,10 @@ func loadDirectory(path string) (hosts.Directory, error) {
 }
 
 func env(name, fallback string) string {
-	if value, found := os.LookupEnv("TRAINSHARDCTL_" + name); found {
-		return value
+	for _, prefix := range []string{"TRAINSHARDCTL_", "TRAINSHARD_"} {
+		if value, found := os.LookupEnv(prefix + name); found {
+			return value
+		}
 	}
 	return fallback
 }

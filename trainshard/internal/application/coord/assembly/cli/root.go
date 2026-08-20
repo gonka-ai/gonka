@@ -9,6 +9,7 @@ import (
 
 	usecases "trainshard/internal/application/coord/assembly/use_cases"
 	"trainshard/internal/domain/shared/ports"
+	"trainshard/internal/utils/clix"
 )
 
 type Commands struct {
@@ -26,13 +27,14 @@ func (c *Commands) Register(commands map[string]func(context.Context, []string) 
 }
 
 func (c *Commands) Prepare(ctx context.Context, args []string) error {
-	flags := flag.NewFlagSet("prepare", flag.ContinueOnError)
+	flags := flag.NewFlagSet("prepare <shard> [flags]", flag.ContinueOnError)
 	wait := flags.Duration("wait", 30*time.Minute, "how long a node has to report its mesh identity before it is released")
 
-	if err := flags.Parse(args); err != nil {
+	rest, err := clix.Parse(flags, args, "shard")
+	if err != nil {
 		return err
 	}
-	shardID, err := toShardID(flags.Args())
+	shardID, err := toShardID(rest)
 	if err != nil {
 		return err
 	}

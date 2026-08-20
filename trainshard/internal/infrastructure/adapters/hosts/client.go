@@ -37,10 +37,11 @@ type Client struct {
 	directory Directory
 	signer    Signer
 	clock     ports.Clock
+	timeout   time.Duration
 }
 
-func New(client *http.Client, directory Directory, signer Signer, clock ports.Clock) *Client {
-	return &Client{http: client, directory: directory, signer: signer, clock: clock}
+func New(client *http.Client, directory Directory, signer Signer, clock ports.Clock, timeout time.Duration) *Client {
+	return &Client{http: client, directory: directory, signer: signer, clock: clock, timeout: timeout}
 }
 
 func (c *Client) call(ctx context.Context, participant vo.Participant, method, path string, requestID vo.RequestID, body, out any) error {
@@ -48,6 +49,9 @@ func (c *Client) call(ctx context.Context, participant vo.Participant, method, p
 	if err != nil {
 		return err
 	}
+
+	ctx, cancel := context.WithTimeout(ctx, c.timeout)
+	defer cancel()
 
 	var payload []byte
 	if body != nil {
