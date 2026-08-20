@@ -116,6 +116,7 @@ type hostsStub struct {
 	identities map[vo.Participant][]mesh.Identity
 	applied    []vo.NodeRef
 	failed     map[vo.NodeRef][]mesh.Pair
+	heals      bool
 	refuses    map[vo.NodeRef]bool
 	silent     map[vo.Participant]bool
 }
@@ -151,11 +152,17 @@ func (h *hostsStub) Apply(_ context.Context, _ mesh.Config, node vo.NodeRef) err
 }
 
 func (h *hostsStub) Probe(_ context.Context, cfg mesh.Config, node vo.NodeRef) ([]mesh.Pair, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
 	pairs := make([]mesh.Pair, 0)
 	for _, pair := range h.failed[node] {
 		if cfg.Contains(pair.A) && cfg.Contains(pair.B) {
 			pairs = append(pairs, pair)
 		}
+	}
+	if h.heals {
+		delete(h.failed, node)
 	}
 	return pairs, nil
 }

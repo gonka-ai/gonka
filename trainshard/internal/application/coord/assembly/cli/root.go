@@ -28,7 +28,7 @@ func (c *Commands) Register(commands map[string]func(context.Context, []string) 
 
 func (c *Commands) Prepare(ctx context.Context, args []string) error {
 	flags := flag.NewFlagSet("prepare <shard> [flags]", flag.ContinueOnError)
-	wait := flags.Duration("wait", 30*time.Minute, "how long a node has to report its mesh identity before it is released")
+	wait := flags.Duration("wait", 30*time.Minute, "how long a node has to report its mesh identity and reach its peers before it is released")
 
 	rest, err := clix.Parse(flags, args, "shard")
 	if err != nil {
