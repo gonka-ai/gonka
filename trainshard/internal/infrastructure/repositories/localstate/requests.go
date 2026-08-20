@@ -16,7 +16,7 @@ type requests struct {
 	ttl   time.Duration
 }
 
-func (r requests) Result(_ context.Context, id vo.RequestID) ([]run.NodeResult, bool, error) {
+func (r requests) Result(_ context.Context, shardID vo.ShardID, id vo.RequestID) ([]run.NodeResult, bool, error) {
 	r.store.mu.Lock()
 	defer r.store.mu.Unlock()
 
@@ -24,14 +24,14 @@ func (r requests) Result(_ context.Context, id vo.RequestID) ([]run.NodeResult, 
 	if err != nil {
 		return nil, false, err
 	}
-	recorded, found := answered[string(id)]
+	recorded, found := answered[key(shardID, id)]
 	if !found || r.clock.Now().Sub(recorded.At) > r.ttl {
 		return nil, false, nil
 	}
 	return toNodeResults(recorded.Results), true, nil
 }
 
-func (r requests) Record(_ context.Context, id vo.RequestID, results []run.NodeResult) error {
+func (r requests) Record(_ context.Context, shardID vo.ShardID, id vo.RequestID, results []run.NodeResult) error {
 	r.store.mu.Lock()
 	defer r.store.mu.Unlock()
 
@@ -46,9 +46,11 @@ func (r requests) Record(_ context.Context, id vo.RequestID, results []run.NodeR
 			delete(answered, recorded)
 		}
 	}
-	answered[string(id)] = requestEntry{Results: fromNodeResults(results), At: now}
+	answered[key(shardID, id)] = requestEntry{Results: fromNodeResults(results), At: now}
 	return r.store.writeFile(r.path(), answered)
 }
+
+func key(shardID vo.ShardID, id vo.RequestID) string { return shardID.String() + "/" + string(id) }
 
 func (r requests) load() (map[string]requestEntry, error) {
 	answered := map[string]requestEntry{}

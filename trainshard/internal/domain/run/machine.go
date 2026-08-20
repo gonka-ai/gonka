@@ -135,13 +135,8 @@ func (m Machine) Apply(ctx context.Context, node vo.NodeRef, desired Desired, ac
 		return m.Mesh.Create(ctx, shardID, node)
 	case ActionApplyMeshConfig:
 		return m.Mesh.Apply(ctx, shardID, node)
-	case ActionCreateContainer:
-		return m.createContainer(ctx, node, desired)
-	case ActionReplaceContainer:
-		if err := m.Containers.Remove(ctx, shardID, node); err != nil {
-			return err
-		}
-		return m.createContainer(ctx, node, desired)
+	case ActionCreateContainer, ActionReplaceContainer:
+		return m.createContainer(ctx, node, desired, action.Kind == ActionReplaceContainer)
 	case ActionStartContainer:
 		return m.Containers.Start(ctx, shardID, node)
 	case ActionStopContainer:
@@ -173,7 +168,9 @@ func (m Machine) grace(desired Desired) time.Duration {
 	return desired.StopGrace
 }
 
-func (m Machine) createContainer(ctx context.Context, node vo.NodeRef, desired Desired) error {
+// createContainer runs everything that can still refuse the run before it takes the old
+// container away, so a deploy that falls over leaves the node on the image it already had
+func (m Machine) createContainer(ctx context.Context, node vo.NodeRef, desired Desired, replacing bool) error {
 	if err := m.verifyImage(ctx, desired); err != nil {
 		return err
 	}
@@ -183,6 +180,11 @@ func (m Machine) createContainer(ctx context.Context, node vo.NodeRef, desired D
 	pinned, err := m.Egress.Allow(ctx, desired.Shard, node, desired.Run.Sources)
 	if err != nil {
 		return err
+	}
+	if replacing {
+		if err := m.Containers.Remove(ctx, desired.Shard, node); err != nil {
+			return err
+		}
 	}
 	if err := m.Containers.Create(ctx, ContainerSpec{Shard: desired.Shard, Node: node, Run: desired.Run, Hosts: pinned}); err != nil {
 		return err

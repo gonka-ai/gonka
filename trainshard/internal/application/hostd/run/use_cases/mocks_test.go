@@ -189,16 +189,16 @@ func (s *runStoreStub) Forget(_ context.Context, node vo.NodeRef) error {
 }
 
 type requestLogStub struct {
-	results map[vo.RequestID][]run.NodeResult
+	results map[string][]run.NodeResult
 }
 
-func (l *requestLogStub) Result(_ context.Context, id vo.RequestID) ([]run.NodeResult, bool, error) {
-	results, found := l.results[id]
+func (l *requestLogStub) Result(_ context.Context, shardID vo.ShardID, id vo.RequestID) ([]run.NodeResult, bool, error) {
+	results, found := l.results[shardID.String()+string(id)]
 	return results, found, nil
 }
 
-func (l *requestLogStub) Record(_ context.Context, id vo.RequestID, results []run.NodeResult) error {
-	l.results[id] = results
+func (l *requestLogStub) Record(_ context.Context, shardID vo.ShardID, id vo.RequestID, results []run.NodeResult) error {
+	l.results[shardID.String()+string(id)] = results
 	return nil
 }
 
@@ -506,7 +506,7 @@ func newFixture() *fixture {
 			reservations: map[vo.NodeRef]vo.ShardID{nodeA: shardID},
 		},
 		runs:       &runStoreStub{rec: rec, states: map[vo.NodeRef]run.RunState{}},
-		log:        &requestLogStub{results: map[vo.RequestID][]run.NodeResult{}},
+		log:        &requestLogStub{results: map[string][]run.NodeResult{}},
 		images:     &imagesStub{rec: rec, present: map[vo.ImageDigest]bool{}, layers: map[vo.ImageDigest]vo.ImageLayers{baseImage: baseLayers, runImage: runLayers}},
 		containers: &containersStub{rec: rec, infos: map[vo.NodeRef]run.ContainerInfo{}},
 		volumes:    &volumesStub{rec: rec, present: map[vo.ShardID]bool{}},
