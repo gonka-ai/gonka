@@ -40,7 +40,7 @@ func machinery(cfg config, clock ports.Clock, log *slog.Logger) (parts, error) {
 			probe:      fake,
 		}, nil
 	case "docker":
-		engine := docker.New(docker.Config{
+		engine, err := docker.New(docker.Config{
 			Socket:       cfg.dockerSocket,
 			VolumeRoot:   cfg.volumeRoot,
 			User:         cfg.containerUser,
@@ -48,6 +48,9 @@ func machinery(cfg config, clock ports.Clock, log *slog.Logger) (parts, error) {
 			MemoryBytes:  cfg.memoryBytes,
 			NanoCPUs:     cfg.nanoCPUs,
 		}, log)
+		if err != nil {
+			return parts{}, err
+		}
 		gpus := nvidia.New(nvidia.Config{SMI: cfg.nvidiaSMI}, engine, log)
 		volumes := xfsquota.New(xfsquota.Config{
 			Root:  cfg.volumeRoot,
