@@ -17,6 +17,7 @@ const (
 	MetricLazyAnchorsTotal      = "devshard_heightsync_lazy_anchor_total"
 	MetricStaleOriginRejected   = "devshard_heightsync_stale_origin_rejected_total"
 	MetricOriginSigInvalidTotal = "devshard_heightsync_origin_sig_invalid_total"
+	MetricOverlayClampedTotal   = "devshard_heightsync_overlay_clamped_total"
 )
 
 var (
@@ -27,6 +28,7 @@ var (
 	lazyAnchorsCounter      prometheus.Counter
 	staleOriginCounter      prometheus.Counter
 	originSigInvalidCounter prometheus.Counter
+	overlayClampedCounter   prometheus.Counter
 )
 
 // RegisterAnchorMetrics registers height-sync anchor counters on reg.
@@ -73,6 +75,10 @@ func RegisterAnchorMetrics(reg prometheus.Registerer) error {
 		Name: MetricOriginSigInvalidTotal,
 		Help: "Response-leg height-sync Anchors dropped due to invalid or missing originator signature.",
 	})
+	overlayClampedCounter = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: MetricOverlayClampedTotal,
+		Help: "Runtime height-sync overlays that failed Validate and were replaced with compiled defaults.",
+	})
 	if err := reg.Register(outboundAnchorsCounter); err != nil {
 		return err
 	}
@@ -91,7 +97,20 @@ func RegisterAnchorMetrics(reg prometheus.Registerer) error {
 	if err := reg.Register(originSigInvalidCounter); err != nil {
 		return err
 	}
+	if err := reg.Register(overlayClampedCounter); err != nil {
+		return err
+	}
 	return nil
+}
+
+func noteOverlayClamped() {
+	anchorPromMu.RLock()
+	c := overlayClampedCounter
+	anchorPromMu.RUnlock()
+	if c == nil {
+		return
+	}
+	c.Inc()
 }
 
 // IncOutboundAnchor increments outbound anchor counter when metrics are registered.

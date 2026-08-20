@@ -61,10 +61,24 @@ func (c *HTTPClient) ingestResponseHeightSync(hs *heightsync.HeightSyncSection, 
 			heightsync.IncOriginSigInvalid()
 			return
 		}
-		c.heightSyncPeerTips.RecordOriginWithBlob(hs, blob, hs.SenderSignature)
-		blobOK = true
+		if originatorObservedAtMs(hs) <= 0 {
+			logging.Debug("heightsync: origin_ts_missing",
+				heightsync.LogFieldSubsystem, "heightsync",
+				heightsync.LogFieldDirection, "response",
+				heightsync.LogFieldNonce, nonce)
+		} else {
+			c.heightSyncPeerTips.RecordOriginWithBlob(hs, blob, hs.SenderSignature)
+			blobOK = true
+		}
 	} else if c.heightSyncPeerTips != nil {
-		c.updateObservedPeerTip(hs)
+		if originatorObservedAtMs(hs) <= 0 {
+			logging.Debug("heightsync: origin_ts_missing",
+				heightsync.LogFieldSubsystem, "heightsync",
+				heightsync.LogFieldDirection, "response",
+				heightsync.LogFieldNonce, nonce)
+		} else {
+			c.updateObservedPeerTip(hs)
+		}
 	}
 	c.logPeerHeightSyncFromSSE(hs, nonce)
 	c.recordHostInboundAnchorIfAnchor(hs, source, blobOK)
@@ -194,13 +208,15 @@ func (c *HTTPClient) recordUserOutboundAnchorIfAnchor(hs *heightsync.HeightSyncS
 		return
 	}
 	c.heightSyncAudit.Append(heightsync.AnchorAttestation{
-		PeerID:           c.signer.Address(),
-		Direction:        "request",
-		MainnetHeight:    hs.MainnetHeight,
-		MainnetBlockHash: raw,
-		ObservedAtUnixMs: time.Now().UnixMilli(),
-		SourceMessage:    source,
-		Trust:            heightsync.TrustOracle,
+		PeerID:                c.signer.Address(),
+		Direction:             "request",
+		MainnetHeight:         hs.MainnetHeight,
+		MainnetBlockHash:      raw,
+		ObservedAtUnixMs:      time.Now().UnixMilli(),
+		SourceMessage:         source,
+		Trust:                 heightsync.TrustOracle,
+		OriginatorSenderID:    strings.TrimSpace(hs.OriginatorSenderID),
+		OriginatorTimestampMs: hs.OriginatorTimestampMs,
 	})
 	heightsync.IncOutboundAnchor("request", c.escrowID, c.signer.Address())
 }
@@ -274,6 +290,7 @@ func (c *HTTPClient) recordHostInboundAnchorIfAnchor(hs *heightsync.HeightSyncSe
 		SourceMessage:             source,
 		Trust:                     trust,
 		OriginatorSenderID:        strings.TrimSpace(hs.OriginatorSenderID),
+		OriginatorTimestampMs:     hs.OriginatorTimestampMs,
 		OriginSignedBlobAvailable: originBlobAvailable,
 	})
 	heightsync.IncInboundAnchor("response", string(trust), c.escrowID)

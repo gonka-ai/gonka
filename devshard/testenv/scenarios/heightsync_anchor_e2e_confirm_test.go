@@ -200,10 +200,10 @@ func TestHeightSyncAnchor_E2E_LateOracleHost_ConfirmedViaCourier(t *testing.T) {
 		nowMs := time.Now().UnixMilli()
 
 		// Each ladder step models a single host's fresh tip landing in
-		// the courier cache (calling RecordOrigin is exactly what
-		// HTTPClient.parseSSEResponse → updateObservedPeerTip does on
-		// every response). Heights are strictly increasing so MaxFresh
-		// selects this step's originator and ShouldPropagateTo holds.
+		// the courier cache (ingest stores a verified blob; tests seed
+		// RecordOriginWithBlob so MaxFresh accepts the entry). Heights
+		// are strictly increasing so MaxFresh selects this step's
+		// originator and ShouldPropagateTo holds.
 		ladder := []struct {
 			addr string
 			h    int64
@@ -213,7 +213,7 @@ func TestHeightSyncAnchor_E2E_LateOracleHost_ConfirmedViaCourier(t *testing.T) {
 			{st.HostAddrs[3], hNew + 2}, // D @ 13
 		}
 		for _, step := range ladder {
-			peerTips.RecordOrigin(&heightsync.HeightSyncSection{
+			recordCourierPeerTip(peerTips, &heightsync.HeightSyncSection{
 				ChainID:               "gonka-testenv-1",
 				ProofType:             heightsync.AnchorProofType,
 				MainnetHeight:         step.h,

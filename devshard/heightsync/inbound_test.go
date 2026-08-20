@@ -39,6 +39,24 @@ func TestClassifyInbound_StaleOriginRejected(t *testing.T) {
 	require.Equal(t, heightsync.TrustDisputeCarrier, v.Trust)
 }
 
+func TestClassifyInbound_ZeroTimestampCarryForwardIsStale(t *testing.T) {
+	hs := &heightsync.HeightSyncSection{
+		ProofType:           heightsync.AnchorProofType,
+		MainnetHeight:       11,
+		MainnetBlockHashHex: "aabb",
+		OriginatorSenderID:  "gonka1host",
+	}
+	v := heightsync.ClassifyInboundRequestAnchor(hs, heightsync.InboundValidateParams{
+		Nonce: 2,
+		K:     8,
+		Slots: 4,
+		Now:   time.Now(),
+	})
+	require.Equal(t, heightsync.ResultInvalidStaleOrigin, v.Result)
+	require.Equal(t, "stale_origin", v.Reason)
+	require.Equal(t, heightsync.TrustDisputeCarrier, v.Trust)
+}
+
 func TestClassifyInbound_LazyOutsideSyncTurn(t *testing.T) {
 	now := time.Now()
 	hs := &heightsync.HeightSyncSection{

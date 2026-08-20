@@ -33,15 +33,17 @@ type HeightSyncPeerTips struct {
 	// Freshness bounds MaxFresh and Carry; zero uses defaultPeerTipFreshness.
 	Freshness time.Duration
 	// RequireVerifiedBlob when true: MaxFresh/Carry only use entries stored via
-	// RecordOriginWithBlob (Step 8 courier path). Default false for unit tests.
+	// RecordOriginWithBlob (Step 8 courier path). NewHeightSyncPeerTips defaults
+	// this to true; tests that need unverified RecordOrigin entries opt out.
 	RequireVerifiedBlob bool
 }
 
 // NewHeightSyncPeerTips creates an empty session-scoped peer-tip cache.
 func NewHeightSyncPeerTips() *HeightSyncPeerTips {
 	return &HeightSyncPeerTips{
-		tipsByOriginator: make(map[string]*originTipEntry),
-		lastPropagated:   make(map[string]uint64),
+		tipsByOriginator:    make(map[string]*originTipEntry),
+		lastPropagated:      make(map[string]uint64),
+		RequireVerifiedBlob: true,
 	}
 }
 
@@ -84,7 +86,9 @@ func originatorObservedAtMs(sec *heightsync.HeightSyncSection) int64 {
 func (s *HeightSyncPeerTips) isFreshLocked(sec *heightsync.HeightSyncSection, now time.Time, freshness time.Duration) bool {
 	ts := originatorObservedAtMs(sec)
 	if ts <= 0 {
-		return true
+		// Missing originator time is arbitrarily old (spec §14 step 5), matching
+		// inbound freshnessOK. A zero-ts cache entry must not drive Carry.
+		return false
 	}
 	return now.Sub(time.UnixMilli(ts)) <= freshness
 }

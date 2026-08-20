@@ -2,6 +2,8 @@ package user
 
 import (
 	"context"
+	"sync"
+	"time"
 
 	"devshard/heightsync"
 	"devshard/host"
@@ -17,20 +19,112 @@ type composedDiff struct {
 }
 
 // MaybeHeartbeat opens a heartbeat turn when due, or flushes ack-carrying
-// diffs for an already-open turn. It is the E2 quiet-session / outbound-round
-// hook: call it on a timer (Interval or finer) or before other outbound work.
+// diffs for an already-open turn. StartHeartbeatLoop calls it on a timer;
+// tests and the outbound path may call it directly. Span dispatch does not
+// wait for one host before addressing the next (§10.6) and does not abort
+// remaining slots on a single send failure.
 func (s *Session) MaybeHeartbeat(ctx context.Context) error {
+	if s.sm != nil && s.sm.Phase() != types.PhaseActive {
+		return nil
+	}
 	s.ensureHeightSeed(ctx)
 	span, err := s.composeHeartbeatSpan()
 	if err != nil {
 		return err
 	}
-	for _, item := range span {
-		if err := s.sendComposedDiff(ctx, item); err != nil {
-			return err
+	s.dispatchHeartbeatSpan(ctx, span)
+	return s.flushHeartbeatAckRounds(ctx)
+}
+
+// StartHeartbeatLoop runs MaybeHeartbeat immediately and then every Interval
+// until StopHeartbeatLoop or Close. Idempotent. A Close that races Start does
+// not leave a goroutine behind.
+func (s *Session) StartHeartbeatLoop() {
+	if s == nil {
+		return
+	}
+	s.heartbeatLoopOnce.Do(func() {
+		ctx, cancel := context.WithCancel(context.Background())
+		done := make(chan struct{})
+		interval := s.heartbeat.Config().Interval
+		if interval <= 0 {
+			interval = heightsync.DefaultHeartbeatInterval
+		}
+		go func() {
+			defer close(done)
+			s.runHeartbeatLoop(ctx, interval)
+		}()
+		s.mu.Lock()
+		if s.heartbeatClosed {
+			s.mu.Unlock()
+			cancel()
+			<-done
+			return
+		}
+		s.heartbeatStop = cancel
+		s.heartbeatDone = done
+		s.mu.Unlock()
+	})
+}
+
+// StopHeartbeatLoop cancels the cadence goroutine and waits for it to exit.
+// Safe without StartHeartbeatLoop; Close calls it.
+func (s *Session) StopHeartbeatLoop() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.heartbeatClosed = true
+	stop := s.heartbeatStop
+	done := s.heartbeatDone
+	s.mu.Unlock()
+	if stop != nil {
+		stop()
+	}
+	if done != nil {
+		<-done
+	}
+}
+
+func (s *Session) runHeartbeatLoop(ctx context.Context, interval time.Duration) {
+	if err := s.MaybeHeartbeat(ctx); err != nil {
+		logging.Debug("heartbeat loop tick failed", "subsystem", "heightsync",
+			"escrow", s.escrowID, "error", err)
+	}
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			if err := s.MaybeHeartbeat(ctx); err != nil {
+				logging.Debug("heartbeat loop tick failed", "subsystem", "heightsync",
+					"escrow", s.escrowID, "error", err)
+			}
 		}
 	}
-	return s.flushHeartbeatAckRounds(ctx)
+}
+
+// dispatchHeartbeatSpan unicasts every composed heartbeat concurrently so one
+// slow or dead host cannot hold the rest of the span. Failures are logged;
+// the caller still runs the ack flush for slots that answered.
+func (s *Session) dispatchHeartbeatSpan(ctx context.Context, span []composedDiff) {
+	if len(span) == 0 {
+		return
+	}
+	var wg sync.WaitGroup
+	for _, item := range span {
+		wg.Add(1)
+		go func(item composedDiff) {
+			defer wg.Done()
+			if err := s.sendComposedDiff(ctx, item); err != nil {
+				logging.Warn("heartbeat span send failed", "subsystem", "heightsync",
+					"escrow", s.escrowID, "nonce", item.diff.Nonce, "host", item.hostIdx, "error", err)
+			}
+		}(item)
+	}
+	wg.Wait()
 }
 
 // HeartbeatSkippedNoHeight is the H3 counter.
@@ -75,7 +169,9 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 		return nil, nil
 	}
 
-	s.turnTracker.AdvanceHeight(hNow)
+	// Turn state is a function of the log. The live tip stamps the span; it
+	// must not AdvanceHeight the tracker (that is the dual of the SM oracle
+	// fold HeightSyncRepairDue used to do).
 	if rec := s.turnTracker.Latest(); rec != nil && rec.State != heightsync.TurnOpen {
 		s.heartbeat.SettleTurn()
 	}
@@ -110,7 +206,6 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 		if err != nil {
 			return nil, err
 		}
-		s.turnTracker.Observe(diff.Nonce, diff.Txs, hNow)
 		out = append(out, composedDiff{diff: diff, hostIdx: hostIdx})
 	}
 	s.heartbeat.OpenTurn(now)
@@ -130,10 +225,6 @@ func (s *Session) flushHeartbeatAckRounds(ctx context.Context) error {
 	maxRounds := len(s.group) + 1
 	for i := 0; i < maxRounds; i++ {
 		s.mu.Lock()
-		hNow, _, ok := s.observedHeightLocked()
-		if !ok {
-			hNow = 0
-		}
 		need := s.heartbeatFlushLeft > 0 || s.hasPendingHeightAckLocked()
 		open := false
 		if rec := s.turnTracker.Latest(); rec != nil && rec.State == heightsync.TurnOpen {
@@ -147,9 +238,6 @@ func (s *Session) flushHeartbeatAckRounds(ctx context.Context) error {
 		if err != nil {
 			s.mu.Unlock()
 			return err
-		}
-		if hNow > 0 {
-			s.turnTracker.Observe(diff.Nonce, diff.Txs, hNow)
 		}
 		if s.heartbeatFlushLeft > 0 {
 			s.heartbeatFlushLeft--
@@ -203,6 +291,13 @@ func (s *Session) hasPendingHeightAckLocked() bool {
 //
 // This covers MsgStartInference and MsgHeartbeat alike — every height in Diff is
 // a reference height (spec §14), and the sequencer is a carrier on both.
+//
+// A floor beyond W_conf of the sequencer's own view is declined rather than
+// carried, which leaves the caller with the same situation as an unusable oracle:
+// the start leg goes out unstamped and the heartbeat is skipped. Both are states
+// the protocol already handles — hosts arm close-ready when stamps stop — and
+// both are better than the sequencer signing a height it has no reason to think
+// exists.
 func (s *Session) referenceStampLocked(nonce uint64) (uint64, []byte, bool) {
 	h, hash, ok := s.observedHeightLocked()
 	if !heightsync.StampPresent(hash) {
@@ -210,6 +305,11 @@ func (s *Session) referenceStampLocked(nonce uint64) (uint64, []byte, bool) {
 	}
 	floor, floorHash, known := s.sm.HeightSyncFloorAsOf(nonce)
 	if known && floor > h && heightsync.StampPresent(floorHash) {
+		if s.heartbeatCfg.FloorOutOfReach(floor, h) {
+			logging.Warn("height stamp omitted: floor out of reach", "subsystem", "heightsync",
+				"escrow", s.escrowID, "nonce", nonce, "floor", floor, "own_tip", h)
+			return 0, nil, false
+		}
 		return floor, floorHash, true
 	}
 	return h, hash, ok
@@ -258,12 +358,5 @@ func (s *Session) sendComposedDiff(ctx context.Context, item composedDiff) error
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if err := s.processResponse(item.hostIdx, resp, item.diff.Nonce); err != nil {
-		return err
-	}
-	hNow, _, ok := s.observedHeightLocked()
-	if ok && hNow > 0 {
-		s.turnTracker.Observe(item.diff.Nonce, item.diff.Txs, hNow)
-	}
-	return nil
+	return s.processResponse(item.hostIdx, resp, item.diff.Nonce)
 }

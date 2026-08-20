@@ -2,15 +2,25 @@ package transport
 
 import (
 	"context"
+	"sync/atomic"
 
 	"devshard/chainoracle/blocks"
 )
 
 type heightSyncTestOracle struct {
-	hdr *blocks.Header
+	hdr         *blocks.Header
+	latestCalls atomic.Int64
+}
+
+func (o *heightSyncTestOracle) LatestCalls() int64 {
+	if o == nil {
+		return 0
+	}
+	return o.latestCalls.Load()
 }
 
 func (o *heightSyncTestOracle) Latest(context.Context) (*blocks.Header, error) {
+	o.latestCalls.Add(1)
 	if o.hdr == nil {
 		return nil, nil
 	}

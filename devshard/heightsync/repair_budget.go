@@ -1,6 +1,7 @@
 package heightsync
 
 import (
+	"context"
 	"sync"
 	"time"
 )
@@ -42,7 +43,7 @@ type RepairBudget struct {
 	counts         map[string]int
 
 	now   func() time.Time
-	sleep func(time.Duration)
+	sleep func(context.Context, time.Duration) error
 }
 
 // NewRepairBudget constructs a prober budget. MaxProbesPerWindow ≤ 0 uses
@@ -70,7 +71,7 @@ func NewRepairBudget(cfg RepairConfig, slotsNum, vSlot uint32, window time.Durat
 		backoffUntil: make(map[uint32]time.Time),
 		counts:       make(map[string]int),
 		now:          time.Now,
-		sleep:        time.Sleep,
+		sleep:        sleepCtx,
 	}
 }
 
@@ -85,7 +86,13 @@ func (b *RepairBudget) SetClock(now func() time.Time, sleep func(time.Duration))
 		b.now = now
 	}
 	if sleep != nil {
-		b.sleep = sleep
+		b.sleep = func(ctx context.Context, d time.Duration) error {
+			sleep(d)
+			if ctx != nil {
+				return ctx.Err()
+			}
+			return nil
+		}
 	}
 }
 
@@ -165,20 +172,47 @@ func (b *RepairBudget) Begin(turnSeq uint64, slot uint32, armed bool) (delay tim
 		b.counts[string(RepairSkipBudget)]++
 		return 0, RepairSkipBudget
 	}
+	b.pruneLocked(turnSeq)
 	return ProbeStagger(b.vSlot, slot, b.slotsNum, b.cfg.Stagger), RepairSkipNone
 }
 
+func sleepCtx(ctx context.Context, d time.Duration) error {
+	if d <= 0 {
+		if ctx != nil {
+			return ctx.Err()
+		}
+		return nil
+	}
+	t := time.NewTimer(d)
+	defer t.Stop()
+	if ctx == nil {
+		<-t.C
+		return nil
+	}
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-t.C:
+		return nil
+	}
+}
+
 // Sleep waits delay using the injected clock. No-op when delay ≤ 0.
-func (b *RepairBudget) Sleep(delay time.Duration) {
+// Returns ctx.Err() if the context is cancelled while waiting.
+func (b *RepairBudget) Sleep(ctx context.Context, delay time.Duration) error {
 	if b == nil || delay <= 0 {
-		return
+		if ctx != nil {
+			return ctx.Err()
+		}
+		return nil
 	}
 	b.mu.Lock()
 	sleep := b.sleep
 	b.mu.Unlock()
-	if sleep != nil {
-		sleep(delay)
+	if sleep == nil {
+		return sleepCtx(ctx, delay)
 	}
+	return sleep(ctx, delay)
 }
 
 // AfterWait re-checks ack-in-Diff after the stagger. A landed ack spends no
@@ -208,6 +242,7 @@ func (b *RepairBudget) Record(turnSeq uint64, slot uint32, outcome string) {
 	b.probed[turnSlot{turn: turnSeq, slot: slot}] = struct{}{}
 	b.probesInWindow++
 	b.counts[outcome]++
+	b.pruneLocked(turnSeq)
 	if outcome != RepairOutcomeUnreachable {
 		return
 	}
@@ -229,4 +264,162 @@ func (b *RepairBudget) rollWindowLocked() {
 		b.windowStart = now
 		b.probesInWindow = 0
 	}
+}
+
+// Prune drops (turn, slot) entries older than DefaultTurnRetain behind maxTurnSeq.
+func (b *RepairBudget) Prune(maxTurnSeq uint64) {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.pruneLocked(maxTurnSeq)
+}
+
+func (b *RepairBudget) pruneLocked(maxTurnSeq uint64) {
+	for k := range b.probed {
+		if k.turn > maxTurnSeq {
+			maxTurnSeq = k.turn
+		}
+	}
+	var cutoff uint64
+	if maxTurnSeq > DefaultTurnRetain {
+		cutoff = maxTurnSeq - DefaultTurnRetain
+	}
+	for k := range b.probed {
+		if k.turn < cutoff {
+			delete(b.probed, k)
+		}
+	}
+}
+
+// ProbedCount is the size of the (turn, slot) map (H93).
+func (b *RepairBudget) ProbedCount() int {
+	if b == nil {
+		return 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.probed)
+}
+
+// RepairResponderBudget is the target-side mirror of RepairBudget: one HEIGHT
+// build per (turn, requester slot), R_max per Interval window. It does not
+// assign blame and does not consult close-ready — answering a probe is not
+// probing.
+type RepairResponderBudget struct {
+	mu sync.Mutex
+
+	cfg               RepairConfig
+	window            time.Duration
+	served            map[turnSlot]struct{}
+	windowStart       time.Time
+	responsesInWindow int
+	counts            map[string]int
+	now               func() time.Time
+}
+
+// NewRepairResponderBudget constructs the incoming-probe budget. Defaults
+// match NewRepairBudget: MaxProbesPerWindow ≤ 0 uses slotsNum; window ≤ 0
+// uses DefaultHeartbeatInterval.
+func NewRepairResponderBudget(cfg RepairConfig, slotsNum uint32, window time.Duration) *RepairResponderBudget {
+	if slotsNum == 0 {
+		slotsNum = 1
+	}
+	if window <= 0 {
+		window = DefaultHeartbeatInterval
+	}
+	if cfg.MaxProbesPerWindow <= 0 {
+		cfg.MaxProbesPerWindow = int(slotsNum)
+	}
+	return &RepairResponderBudget{
+		cfg:    cfg,
+		window: window,
+		served: make(map[turnSlot]struct{}),
+		counts: make(map[string]int),
+		now:    time.Now,
+	}
+}
+
+// SetClock replaces now (tests).
+func (b *RepairResponderBudget) SetClock(now func() time.Time) {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if now != nil {
+		b.now = now
+	}
+}
+
+// Count returns the local counter for an outcome / skip reason.
+func (b *RepairResponderBudget) Count(outcome string) int {
+	if b == nil {
+		return 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.counts[outcome]
+}
+
+// Allow reports whether this (turn, requester) may spend an oracle read.
+// Unknown-turn rejection is the caller's job and must happen first so a
+// flood of invented turn_seqs never reaches here.
+func (b *RepairResponderBudget) Allow(turnSeq uint64, requesterSlot uint32) bool {
+	if b == nil {
+		return true
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	key := turnSlot{turn: turnSeq, slot: requesterSlot}
+	if _, ok := b.served[key]; ok {
+		b.counts[string(RepairSkipProbed)]++
+		return false
+	}
+	b.rollWindowLocked()
+	if b.responsesInWindow >= b.cfg.MaxProbesPerWindow {
+		b.counts[string(RepairSkipBudget)]++
+		return false
+	}
+	b.served[key] = struct{}{}
+	b.responsesInWindow++
+	b.counts[RepairOutcomeHeight]++
+	b.pruneLocked(turnSeq)
+	return true
+}
+
+func (b *RepairResponderBudget) rollWindowLocked() {
+	now := b.now()
+	if b.windowStart.IsZero() || now.Sub(b.windowStart) >= b.window {
+		b.windowStart = now
+		b.responsesInWindow = 0
+	}
+}
+
+func (b *RepairResponderBudget) pruneLocked(maxTurnSeq uint64) {
+	for k := range b.served {
+		if k.turn > maxTurnSeq {
+			maxTurnSeq = k.turn
+		}
+	}
+	var cutoff uint64
+	if maxTurnSeq > DefaultTurnRetain {
+		cutoff = maxTurnSeq - DefaultTurnRetain
+	}
+	for k := range b.served {
+		if k.turn < cutoff {
+			delete(b.served, k)
+		}
+	}
+}
+
+// ServedCount is the size of the (turn, requester) map (H93).
+func (b *RepairResponderBudget) ServedCount() int {
+	if b == nil {
+		return 0
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.served)
 }

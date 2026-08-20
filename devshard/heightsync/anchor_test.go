@@ -412,3 +412,67 @@ func TestAnchorScheduler_CadenceSwallowTail(t *testing.T) {
 	require.NoError(t, err)
 	require.Nil(t, got, "periodic Anchor at nonce 11 swallowed")
 }
+
+type blockingAnchorOracle struct {
+	entered chan struct{}
+	release chan struct{}
+	hdr     *blocks.Header
+}
+
+func (o *blockingAnchorOracle) Latest(ctx context.Context) (*blocks.Header, error) {
+	select {
+	case <-o.entered:
+	default:
+		close(o.entered)
+	}
+	select {
+	case <-o.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	h := *o.hdr
+	h.BlockHash = append([]byte(nil), o.hdr.BlockHash...)
+	return &h, nil
+}
+func (o *blockingAnchorOracle) At(context.Context, int64) (*blocks.Header, error) { return nil, nil }
+func (o *blockingAnchorOracle) Prove(context.Context, string, int64) (*blocks.Proof, error) {
+	return nil, nil
+}
+func (o *blockingAnchorOracle) Subscribe(context.Context, int64) (<-chan *blocks.Header, error) {
+	return nil, nil
+}
+
+func TestAnchorScheduler_BlockedOracleDoesNotHoldMutex(t *testing.T) {
+	or := &blockingAnchorOracle{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+		hdr:     &blocks.Header{Height: 100, ChainID: "gonka", BlockHash: []byte{0xab}},
+	}
+	s := heightsync.MustNewAnchorSchedulerFromOracle(10, 1, or)
+	done := make(chan struct{})
+	go func() {
+		_, _, _ = s.Decide(context.Background(), heightsync.DecideHints{Nonce: 1})
+		close(done)
+	}()
+	select {
+	case <-or.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Latest was not entered")
+	}
+	unblocked := make(chan struct{})
+	go func() {
+		_ = s.K()
+		close(unblocked)
+	}()
+	select {
+	case <-unblocked:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("scheduler mutex held during oracle I/O")
+	}
+	close(or.release)
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Decide did not return")
+	}
+}

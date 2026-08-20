@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"time"
@@ -58,6 +59,12 @@ func (s *Server) HandleHeightSyncRepair(c echo.Context) (err error) {
 
 	resp, err := s.host.BuildRepairHeightResponse(c.Request().Context(), &req)
 	if err != nil {
+		if errors.Is(err, heightsync.ErrRepairUnknownTurn) {
+			return echo.NewHTTPError(http.StatusNotFound, "unknown turn")
+		}
+		if errors.Is(err, heightsync.ErrRepairResponderBudget) {
+			return echo.NewHTTPError(http.StatusTooManyRequests, "repair budget exhausted")
+		}
 		logging.Debug("repair response failed", "subsystem", "heightsync",
 			"escrow", s.host.EscrowID(), "error", err)
 		return echo.NewHTTPError(http.StatusInternalServerError, "repair response failed")

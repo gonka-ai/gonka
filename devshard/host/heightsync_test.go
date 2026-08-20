@@ -4,9 +4,11 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"devshard/chainoracle/blocks"
 	"devshard/heightsync"
 	"devshard/internal/testutil"
 	"devshard/signing"
@@ -277,6 +279,48 @@ func TestHost_HeartbeatAck_LagsButClearsSolicitingFloor(t *testing.T) {
 		"the lag is not hidden: it moves to the label the gateway monitors")
 }
 
+// TestHost_HeartbeatAck_OmitsAStampWhenTheFloorIsOutOfReach is the second half
+// of the producer rule, and the escape step 2 of the review added.
+//
+// Carrying the floor is honest while the gap is ordinary lag: the floor is a
+// height in the log and the carrier is visibly not its author. Past W_conf no
+// plausible chain advance explains the distance — the floor is poisoned, or on a
+// branch this host will never see — and repeating it under this host's signature
+// would turn one bad claim into a roster of them. Omission is legal at any
+// floor, so the honest answer is to say nothing about the height and still ack,
+// which keeps the host inside the cadence and the turn completing.
+func TestHost_HeartbeatAck_OmitsAStampWhenTheFloorIsOutOfReach(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	or := &fakeOracle{}
+	or.setHeight(1)
+	or.setHash([]byte{0xbb})
+	h := newAckTestHost(t, 0, hosts, user, WithChainOracle(or)) // executor(3) = 0
+
+	// Three heartbeats walk the floor up one window at a time, which is the only
+	// way a single signer may raise it, leaving F(4) = 768 against a host at 1.
+	const slots = uint64(3)
+	top := []byte{0xaa}
+	w := heightsync.DefaultConfirmWindowBlocks
+	d1 := stampedHeartbeatDiff(t, user, 1, 1, w, slots, top)
+	d2 := stampedHeartbeatDiff(t, user, 2, 1, 2*w, slots, top)
+	d3 := stampedHeartbeatDiff(t, user, 3, 1, 3*w, slots, top)
+	resp, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{d1, d2, d3}})
+	require.NoError(t, err)
+
+	acks := mempoolHeightAcks(resp.Mempool)
+	require.Len(t, acks, 1, "the ack is still owed: silence is worse for the roster")
+	require.Equal(t, uint64(3), acks[0].RefNonce)
+	require.Zero(t, acks[0].ObservedHeight, "a floor this far above own tip is declined, not carried")
+	require.Empty(t, acks[0].ObservedBlockHash, "absence is keyed on the hash (H38)")
+	require.Equal(t, types.SyncState_CATCHING_UP, acks[0].SyncState,
+		"the host's real position still reaches the gateway through the label")
+}
+
 func TestHost_HeartbeatAck_OracleStale(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),
@@ -324,4 +368,51 @@ func TestHost_HeartbeatAck_AlreadyAppliedDoesNotRereadOracle(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(1), or.latestCalls.Load(), "stale catch-up must not re-ack")
 	require.Len(t, mempoolHeightAcks(resp.Mempool), 1)
+}
+
+func TestHost_BlockedOracleDoesNotHoldMutex(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	or := &blockingOracle{
+		entered: make(chan struct{}),
+		release: make(chan struct{}),
+		hdr:     &blocks.Header{Height: 100, ChainID: "fake-chain", BlockHash: []byte{0xaa}},
+	}
+	h := newAckTestHost(t, 0, hosts, user, WithChainOracle(or))
+
+	const slots = uint64(3)
+	d1 := heartbeatDiff(t, user, 1, 1, 100, slots)
+	d2 := heartbeatDiff(t, user, 2, 1, 100, slots)
+	d3 := heartbeatDiff(t, user, 3, 1, 100, slots)
+	done := make(chan error, 1)
+	go func() {
+		_, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{d1, d2, d3}})
+		done <- err
+	}()
+	select {
+	case <-or.entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Latest was not entered")
+	}
+	unblocked := make(chan struct{})
+	go func() {
+		_ = h.LatestNonce()
+		close(unblocked)
+	}()
+	select {
+	case <-unblocked:
+	case <-time.After(200 * time.Millisecond):
+		t.Fatal("host mutex held during oracle I/O")
+	}
+	close(or.release)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("HandleRequest did not return")
+	}
 }

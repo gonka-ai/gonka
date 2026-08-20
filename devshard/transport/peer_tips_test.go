@@ -9,15 +9,17 @@ import (
 	"devshard/heightsync"
 )
 
+func testVerifiedBlob() (blob, sig []byte) {
+	return []byte("blob"), []byte{1}
+}
+
 func TestHeightSyncPeerTips_SnapshotVerifiedReady(t *testing.T) {
 	tips := NewHeightSyncPeerTips()
-	tips.RequireVerifiedBlob = true
 	now := time.UnixMilli(2_000_000)
 
 	require.False(t, tips.Snapshot(now).CacheReady)
 
-	blob := []byte("blob")
-	sig := []byte("sig")
+	blob, sig := testVerifiedBlob()
 	tips.RecordOriginWithBlob(&heightsync.HeightSyncSection{
 		ProofType:             heightsync.AnchorProofType,
 		MainnetHeight:         42,
@@ -53,8 +55,9 @@ func TestHeightSyncPeerTips_FreshnessFilter(t *testing.T) {
 		OriginatorTimestampMs: now.Add(-10 * time.Second).UnixMilli(),
 	}
 
-	tips.RecordOrigin(staleHigh)
-	tips.RecordOrigin(freshLow)
+	blob, sig := testVerifiedBlob()
+	tips.RecordOriginWithBlob(staleHigh, blob, sig)
+	tips.RecordOriginWithBlob(freshLow, blob, sig)
 
 	got := tips.MaxFresh(now, tips.Freshness)
 	require.NotNil(t, got)
@@ -82,7 +85,8 @@ func TestHeightSyncPeerTips_PerPeerPropagation(t *testing.T) {
 func TestHeightSyncPeerTips_CarryPreservesOriginator(t *testing.T) {
 	tips := NewHeightSyncPeerTips()
 	now := time.Now()
-	tips.RecordOrigin(&heightsync.HeightSyncSection{
+	blob, sig := testVerifiedBlob()
+	tips.RecordOriginWithBlob(&heightsync.HeightSyncSection{
 		ProofType:             heightsync.AnchorProofType,
 		MainnetHeight:         42,
 		MainnetBlockHashHex:   "aabb",
@@ -90,7 +94,7 @@ func TestHeightSyncPeerTips_CarryPreservesOriginator(t *testing.T) {
 		OriginatorSenderID:    "gonka1hostA",
 		OriginatorTimestampMs: now.UnixMilli(),
 		TimestampUnixMs:       now.UnixMilli(),
-	})
+	}, blob, sig)
 
 	outbound := &heightsync.HeightSyncSection{
 		ProofType:           heightsync.AnchorProofType,
@@ -111,13 +115,14 @@ func TestHeightSyncPeerTips_CarryPreservesOriginator(t *testing.T) {
 func TestHeightSyncPeerTips_CarryOverwritesOriginatorAtSameHeight(t *testing.T) {
 	tips := NewHeightSyncPeerTips()
 	now := time.Now()
-	tips.RecordOrigin(&heightsync.HeightSyncSection{
+	blob, sig := testVerifiedBlob()
+	tips.RecordOriginWithBlob(&heightsync.HeightSyncSection{
 		ProofType:             heightsync.AnchorProofType,
 		MainnetHeight:         11,
 		MainnetBlockHashHex:   "aabb",
 		OriginatorSenderID:    "gonka1hostA",
 		OriginatorTimestampMs: now.UnixMilli(),
-	})
+	}, blob, sig)
 	outbound := &heightsync.HeightSyncSection{
 		ProofType:             heightsync.AnchorProofType,
 		MainnetHeight:         11,
@@ -133,13 +138,14 @@ func TestHeightSyncPeerTips_CarryOverwritesOriginatorAtSameHeight(t *testing.T) 
 func TestHeightSyncPeerTips_UpdateBackwardCompatWithoutOriginator(t *testing.T) {
 	tips := NewHeightSyncPeerTips()
 	now := time.Now()
+	blob, sig := testVerifiedBlob()
 
-	tips.Update(&heightsync.HeightSyncSection{
+	tips.RecordOriginWithBlob(&heightsync.HeightSyncSection{
 		ProofType:           heightsync.AnchorProofType,
 		MainnetHeight:       11,
 		MainnetBlockHashHex: "aa",
 		TimestampUnixMs:     now.UnixMilli(),
-	})
+	}, blob, sig)
 
 	got := tips.MaxFresh(now, time.Minute)
 	require.NotNil(t, got)
@@ -148,7 +154,6 @@ func TestHeightSyncPeerTips_UpdateBackwardCompatWithoutOriginator(t *testing.T) 
 
 func TestRecordOriginWithBlob_StoresVerbatimBlob(t *testing.T) {
 	tips := NewHeightSyncPeerTips()
-	tips.RequireVerifiedBlob = true
 	sec := &heightsync.HeightSyncSection{
 		ProofType:             heightsync.AnchorProofType,
 		MainnetHeight:         77,
@@ -168,7 +173,7 @@ func TestRecordOriginWithBlob_StoresVerbatimBlob(t *testing.T) {
 
 func TestMaxFresh_SkipsEntriesWithoutBlob(t *testing.T) {
 	tips := NewHeightSyncPeerTips()
-	tips.RequireVerifiedBlob = true
+	require.True(t, tips.RequireVerifiedBlob, "production constructor must require verified blobs")
 	now := time.Now()
 	tips.RecordOrigin(&heightsync.HeightSyncSection{
 		ProofType:             heightsync.AnchorProofType,
@@ -178,6 +183,14 @@ func TestMaxFresh_SkipsEntriesWithoutBlob(t *testing.T) {
 		OriginatorTimestampMs: now.UnixMilli(),
 	})
 	require.Nil(t, tips.MaxFresh(now, time.Minute))
+
+	unverifiedCarry := &heightsync.HeightSyncSection{
+		ProofType:           heightsync.AnchorProofType,
+		MainnetHeight:       10,
+		MainnetBlockHashHex: "local",
+	}
+	tips.Carry(unverifiedCarry)
+	require.Equal(t, int64(10), unverifiedCarry.MainnetHeight, "Carry must ignore RecordOrigin without blob")
 
 	tips.RecordOriginWithBlob(&heightsync.HeightSyncSection{
 		ProofType:             heightsync.AnchorProofType,
@@ -189,6 +202,27 @@ func TestMaxFresh_SkipsEntriesWithoutBlob(t *testing.T) {
 	got := tips.MaxFresh(now, time.Minute)
 	require.NotNil(t, got)
 	require.Equal(t, int64(51), got.MainnetHeight)
+}
+
+func TestMaxFresh_ZeroTimestampIsNotFresh(t *testing.T) {
+	tips := NewHeightSyncPeerTips()
+	now := time.Now()
+	blob, sig := testVerifiedBlob()
+	tips.RecordOriginWithBlob(&heightsync.HeightSyncSection{
+		ProofType:           heightsync.AnchorProofType,
+		MainnetHeight:       11,
+		MainnetBlockHashHex: "aabb",
+		OriginatorSenderID:  "gonka1host",
+	}, blob, sig)
+	require.Nil(t, tips.MaxFresh(now, time.Minute), "zero originator timestamp is arbitrarily old")
+
+	outbound := &heightsync.HeightSyncSection{
+		ProofType:           heightsync.AnchorProofType,
+		MainnetHeight:       1,
+		MainnetBlockHashHex: "local",
+	}
+	tips.Carry(outbound)
+	require.Equal(t, int64(1), outbound.MainnetHeight, "Carry must not promote a zero-ts cache entry")
 }
 
 func TestOriginSignedBlobFor_Lookup(t *testing.T) {

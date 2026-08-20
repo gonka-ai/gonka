@@ -8,6 +8,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	commrc "common/runtimeconfig"
+
 	"devshard/gossip"
 	"devshard/heightsync"
 	"devshard/internal/testutil"
@@ -69,6 +71,35 @@ func TestCloseReady_SilenceArmsWithoutOracleProgress(t *testing.T) {
 	armed, _ := h.CloseReadyView().Armed()
 	require.True(t, armed, "no tick and no new block: elapsed silence is enough")
 	require.Equal(t, heightsync.DefaultHeartbeatIdleTimeout+time.Second, h.CloseReadySilentFor())
+}
+
+func TestCloseReady_OverlayShortensIdle(t *testing.T) {
+	cfg := heightsync.HeartbeatConfigFromSnapshot(commrc.Snapshot{
+		HeightSync: commrc.HeightSyncParams{
+			IntervalMs: 2000, TurnTimeoutMs: 3000, IdleTimeoutMs: 9000,
+		},
+	})
+	require.Equal(t, 9*time.Second, cfg.IdleTimeout)
+
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	or := &fakeOracle{}
+	or.setHeight(100)
+	or.setHash([]byte{0xaa})
+	h := newAckTestHost(t, 0, hosts, user, WithChainOracle(or), WithHeartbeatConfig(cfg))
+	now := time.Unix(1_700_000_000, 0)
+	h.SetCloseReadyClock(func() time.Time { return now })
+
+	ctx := context.Background()
+	_, err := h.HandleRequest(ctx, HostRequest{Diffs: []types.Diff{
+		testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)}),
+	}})
+	require.NoError(t, err)
+
+	now = now.Add(10 * time.Second)
+	h.EvaluateCloseReady(ctx)
+	armed, _ := h.CloseReadyView().Armed()
+	require.True(t, armed, "overlay T_idle=9s arms before the compiled 12s")
 }
 
 func TestCloseReady_DisarmsOnContact(t *testing.T) {

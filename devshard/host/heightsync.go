@@ -22,7 +22,7 @@ type heartbeatTarget struct {
 // The oracle is read once for the whole request so ack stamps match the
 // response-leg Anchor of this exchange (honest L4). An ack is required even
 // when Latest() fails (ORACLE_UNAVAILABLE); silence is worse for the roster.
-func (h *Host) maybeAckHeartbeatsLocked(ctx context.Context, diffs []types.Diff) {
+func (h *Host) maybeAckHeartbeatsLocked(diffs []types.Diff, hdr *blocks.Header, hdrErr error) {
 	if len(diffs) == 0 {
 		return
 	}
@@ -54,7 +54,6 @@ func (h *Host) maybeAckHeartbeatsLocked(ctx context.Context, diffs []types.Diff)
 		return
 	}
 
-	hdr, hdrErr := h.latestHeaderLocked(ctx)
 	for _, item := range mine {
 		ack := h.buildHeightAckLocked(item, hdr, hdrErr, now)
 		if err := heightsync.SignAck(h.signer, ack); err != nil {
@@ -69,11 +68,71 @@ func (h *Host) maybeAckHeartbeatsLocked(ctx context.Context, diffs []types.Diff)
 	}
 }
 
-func (h *Host) latestHeaderLocked(ctx context.Context) (*blocks.Header, error) {
+func (h *Host) latestHeader(ctx context.Context) (*blocks.Header, error) {
 	if h.oracle == nil {
 		return nil, ErrNoChainOracle
 	}
 	return h.oracle.Latest(ctx)
+}
+
+func (h *Host) latestHeaderIf(ctx context.Context, need bool) (*blocks.Header, error) {
+	if !need {
+		return nil, nil
+	}
+	return h.latestHeader(ctx)
+}
+
+func headerStamp(hdr *blocks.Header, err error) (uint64, []byte) {
+	if err != nil || hdr == nil || hdr.Height <= 0 || !heightsync.StampPresent(hdr.BlockHash) {
+		return 0, nil
+	}
+	return uint64(hdr.Height), append([]byte(nil), hdr.BlockHash...)
+}
+
+func (h *Host) oracleNeededLocked(req HostRequest, newlyApplied []types.Diff) bool {
+	if h.hasOwnHeartbeatLocked(newlyApplied) {
+		return true
+	}
+	if h.closeReady != nil && len(newlyApplied) > 0 {
+		var claim uint64
+		for _, d := range newlyApplied {
+			for _, tx := range d.Txs {
+				if th := contactHeight(tx); th > claim {
+					claim = th
+				}
+			}
+		}
+		if claim == 0 {
+			return true
+		}
+	}
+	return h.receiptWantsOracleLocked(req)
+}
+
+func (h *Host) hasOwnHeartbeatLocked(diffs []types.Diff) bool {
+	slotsNum := uint64(len(h.group))
+	for _, diff := range diffs {
+		for _, tx := range diff.Txs {
+			if tx == nil {
+				continue
+			}
+			if hb := tx.GetHeartbeat(); hb != nil {
+				slot := heightsync.SlotForNonce(diff.Nonce, slotsNum)
+				if h.slotIDs[slot] {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func (h *Host) receiptWantsOracleLocked(req HostRequest) bool {
+	if req.Payload == nil || h.findDiff(req.Diffs, req.Nonce) == nil || len(h.group) == 0 {
+		return false
+	}
+	executorSlot := h.group[req.Nonce%uint64(len(h.group))].SlotID
+	return h.slotIDs[executorSlot]
 }
 
 // buildHeightAckLocked produces the ack for one heartbeat addressed to this host.
@@ -119,12 +178,23 @@ func (h *Host) buildHeightAckLocked(item heartbeatTarget, hdr *blocks.Header, hd
 // Lifting to the floor is not a false claim. The floor is a height already in
 // the log, so a stamp equal to it is self-evidently a carry: the verifier can
 // see which earlier tx established that floor and who signed it, so blame for a
-// bad height stays with its originator rather than with the carrier. The host's
-// own view stays first-party in the response-leg Anchor and in sync_state.
+// bad height stays with its originator rather than with the carrier (L6). The
+// host's own view stays first-party in the response-leg Anchor and in sync_state.
+//
+// Carrying stops where plausibility does. A floor more than W_conf above this
+// host's own tip is either poisoned or on a branch this host will never see, and
+// omission is legal at any floor, so the honest answer is to say nothing: an
+// omitted stamp costs the roster one height claim, while a carried one puts a
+// pair no chain can reconcile under another signature.
 func (h *Host) referenceStamp(producingNonce, height uint64, hash []byte) (uint64, []byte) {
 	floor, floorHash, known := h.sm.HeightSyncFloorAsOf(producingNonce)
 	if !known || floor <= height || !heightsync.StampPresent(floorHash) {
 		return height, hash
+	}
+	if h.heartbeatCfg.FloorOutOfReach(floor, height) {
+		logging.Warn("height stamp omitted: floor out of reach", "subsystem", "heightsync",
+			"escrow", h.escrowID, "nonce", producingNonce, "floor", floor, "own_tip", height)
+		return 0, nil
 	}
 	return floor, floorHash
 }

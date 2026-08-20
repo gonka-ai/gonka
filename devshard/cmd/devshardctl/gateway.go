@@ -26,6 +26,7 @@ import (
 	chaintx "common/chain/tx"
 	devshardpkg "devshard"
 	"devshard/bridge"
+	"devshard/heightsync"
 	"devshard/runtimeparams"
 	"devshard/storage"
 	"devshard/transport"
@@ -295,10 +296,14 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 		RequestAdmission:  sharedParticipantRequestLimiter,
 		Escrow:            escrow,
 		ExtraClientConfig: extraClient,
+		Heartbeat:         heartbeatFromDeps(deps),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: create session: %w", cfg.ID, err)
 	}
+	// Quiet-session cadence (§10.3). Close() cancels the loop. Not started
+	// inside NewHTTPSession so in-process / E2E stacks keep nonce 1 for inference.
+	session.StartHeartbeatLoop()
 	if err := perf.BackfillLegacyEscrowSamples(cfg.ID, legacyPerfSourcePath(legacyStoragePath), session.HostParticipantKeyList()); err != nil {
 		log.Printf("runtime %s: backfill legacy perf samples: %v", cfg.ID, err)
 	}
@@ -334,16 +339,29 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	return rt, nil
 }
 
+func heartbeatFromDeps(deps runtimeBuildDeps) *heightsync.HeartbeatConfig {
+	if deps.params == nil {
+		return nil
+	}
+	hb := deps.params.SessionParams().Heartbeat
+	return &hb
+}
+
 func (g *Gateway) runtimeBuildDeps(perf *PerfTracker) runtimeBuildDeps {
 	return g.runtimeBuildDepsFromSettings(perf, g.settings)
 }
 
 func (g *Gateway) runtimeBuildDepsFromSettings(perf *PerfTracker, settings GatewaySettings) runtimeBuildDeps {
+	var params runtimeparams.Provider
+	if g != nil && g.runtimeParams != nil {
+		params = g.runtimeParams.BindProvider()
+	}
 	return runtimeBuildDeps{
 		bridge:       g.chainBridge(),
 		chainClient:  g.chainClient,
 		defaultModel: firstNonEmpty(settings.DefaultModel, g.settings.DefaultModel),
 		perf:         perf,
+		params:       params,
 	}
 }
 

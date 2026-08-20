@@ -113,7 +113,7 @@ func NewConfirmationIndex(cfg ConfirmationConfig) *ConfirmationIndex {
 	}
 	w := cfg.WindowHeights
 	if w <= 0 {
-		w = 256
+		w = int64(DefaultConfirmWindowBlocks)
 	}
 	now := cfg.Now
 	if now == nil {
@@ -149,15 +149,16 @@ func (idx *ConfirmationIndex) RecordAttestation(a AnchorAttestation) {
 	if !idx.inRoster(key) {
 		return
 	}
-	observedAt := time.UnixMilli(a.ObservedAtUnixMs)
-	if a.ObservedAtUnixMs <= 0 {
-		observedAt = idx.now()
+	observedAt, ok := idx.attestationTime(a)
+	if !ok {
+		return
 	}
+
+	tip, _ := idx.oracleView()
 
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	tip := idx.localTipLocked()
 	if tip >= 0 {
 		idx.maybeCompactLocked(tip)
 	}
@@ -175,6 +176,27 @@ func (idx *ConfirmationIndex) RecordAttestation(a AnchorAttestation) {
 	idx.byOriginator[key] = ent
 }
 
+// attestationTime is the clock (C-quorum) freshness uses. Originator
+// observation wins when present so a carry-forward cannot reset F at receipt.
+// A non-positive originator timestamp is ineligible (step 13 fail-closed),
+// except when the field is absent entirely — first-party audit rows still
+// carry only ObservedAtUnixMs.
+func (idx *ConfirmationIndex) attestationTime(a AnchorAttestation) (time.Time, bool) {
+	if a.OriginatorTimestampMs > 0 {
+		return time.UnixMilli(a.OriginatorTimestampMs), true
+	}
+	if a.OriginatorTimestampMs < 0 {
+		return time.Time{}, false
+	}
+	if a.ObservedAtUnixMs > 0 {
+		return time.UnixMilli(a.ObservedAtUnixMs), true
+	}
+	if idx.now != nil {
+		return idx.now(), true
+	}
+	return time.Now(), true
+}
+
 // IsStrictlyConfirmed implements ConfirmationView.
 //
 // Only (C-quorum) is available here. (C-turn) is withdrawn (see RuleTurn) and
@@ -185,22 +207,31 @@ func (idx *ConfirmationIndex) IsStrictlyConfirmed(h uint64) ConfirmState {
 		return ConfirmPending
 	}
 
+	tip, stale := idx.oracleView()
+
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	return idx.quorumConfirmedLocked(h)
+	return idx.quorumConfirmedLocked(h, tip, stale)
 }
 
-func (idx *ConfirmationIndex) quorumConfirmedLocked(h uint64) ConfirmState {
+func (idx *ConfirmationIndex) quorumConfirmedLocked(h uint64, tip int64, stale bool) ConfirmState {
+	idx.maybeCompactLocked(tip)
 	if _, ok := idx.confirmedHeights[h]; ok {
 		return ConfirmConfirmed
 	}
-	if idx.isStaleLocked() {
+	if stale {
 		return ConfirmStale
 	}
-
-	tip := idx.localTipLocked()
-	idx.maybeCompactLocked(tip)
+	if tip >= 0 {
+		minH := tip - idx.windowHeights
+		if minH < 0 {
+			minH = 0
+		}
+		if int64(h) < minH {
+			return ConfirmPending
+		}
+	}
 
 	if idx.quorum <= 0 {
 		return ConfirmPending
@@ -246,30 +277,30 @@ func (idx *ConfirmationIndex) inRoster(originator string) bool {
 	return ok
 }
 
-func (idx *ConfirmationIndex) localTipLocked() int64 {
-	if idx.oracle == nil {
-		return -1
+func (idx *ConfirmationIndex) oracleView() (tip int64, stale bool) {
+	if idx == nil {
+		return -1, true
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-	defer cancel()
-	hdr, err := idx.oracle.Latest(ctx)
-	if err != nil || hdr == nil {
-		return -1
-	}
-	return hdr.Height
+	idx.mu.Lock()
+	oracle := idx.oracle
+	idx.mu.Unlock()
+	return fetchConfirmOracle(oracle)
 }
 
-func (idx *ConfirmationIndex) isStaleLocked() bool {
-	if idx.oracle == nil {
-		return true
+func fetchConfirmOracle(oracle blocks.BlockOracle) (int64, bool) {
+	if oracle == nil {
+		return -1, true
 	}
-	if so, ok := idx.oracle.(interface{ Stale() bool }); ok && so.Stale() {
-		return true
+	if so, ok := oracle.(interface{ Stale() bool }); ok && so.Stale() {
+		return -1, true
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	_, err := idx.oracle.Latest(ctx)
-	return err != nil
+	hdr, err := oracle.Latest(ctx)
+	if err != nil || hdr == nil {
+		return -1, true
+	}
+	return hdr.Height, false
 }
 
 // indexableHeight reports whether an attested height may enter the rolling index.
@@ -314,4 +345,19 @@ func (idx *ConfirmationIndex) maybeCompactLocked(tip int64) {
 			delete(idx.byOriginator, origin)
 		}
 	}
+	for h := range idx.confirmedHeights {
+		if int64(h) < minH {
+			delete(idx.confirmedHeights, h)
+		}
+	}
+}
+
+// ConfirmedCount is the size of the retained confirmed-height set (H99).
+func (idx *ConfirmationIndex) ConfirmedCount() int {
+	if idx == nil {
+		return 0
+	}
+	idx.mu.Lock()
+	defer idx.mu.Unlock()
+	return len(idx.confirmedHeights)
 }

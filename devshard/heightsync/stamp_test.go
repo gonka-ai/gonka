@@ -1,6 +1,10 @@
 package heightsync
 
-import "testing"
+import (
+	"testing"
+
+	"devshard/types"
+)
 
 func TestStampPresent_EmptyHashIsAbsent(t *testing.T) {
 	if StampPresent(nil) {
@@ -33,4 +37,24 @@ func TestStampPresent_PresentThenAbsentIsNotRegression(t *testing.T) {
 		return // skip L0b for the missing leg — not a regression
 	}
 	t.Fatal("present-then-absent pair must not be treated as height 0")
+}
+
+func TestLogResidentHeight_PrefersDiffStampThenFallback(t *testing.T) {
+	unstamped := []*types.DevshardTx{{Tx: &types.DevshardTx_ForceHeightSyncTurn{
+		ForceHeightSyncTurn: &types.MsgForceHeightSyncTurn{TriggerNonce: 1},
+	}}}
+	if got := LogResidentHeight(unstamped, 40); got != 40 {
+		t.Fatalf("unstamped fallback: got %d want 40", got)
+	}
+	txs := []*types.DevshardTx{
+		{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			ObservedHeight: 7, ObservedBlockHash: []byte{0xaa},
+		}}},
+		{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			ObservedHeight: 12, ObservedBlockHash: []byte{0xbb},
+		}}},
+	}
+	if got := LogResidentHeight(txs, 40); got != 12 {
+		t.Fatalf("max stamp: got %d want 12", got)
+	}
 }

@@ -53,6 +53,7 @@ type Server struct {
 	pendingUntrustedBySession map[string]*pendingUntrustedTip
 
 	heightSyncResponseAfterSignHook func(sec *heightsync.HeightSyncSection, nonce uint64)
+	heightSyncOriginSigner          signing.Signer // test seam; nil uses host.Signer()
 
 	holdInferenceMu    sync.Mutex
 	holdInferenceGate  chan struct{} // closed to release; non-nil while armed
@@ -436,11 +437,14 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 			s.logOutboundHeightSync(nil, req.Nonce)
 		} else if sec != nil {
 			sec.Direction = "response"
-			s.attachResponseOriginSignature(sec, req.Nonce)
-			s.recordEnvelopeBindingResponse(req.Nonce, sec)
-			receiptWrapper["height_sync"] = sec
-			s.logOutboundHeightSync(sec, req.Nonce)
-			s.recordOutboundAnchorIfAnchor(sec, c.Request().Method+" "+c.Path())
+			if s.attachResponseOriginSignature(sec, req.Nonce) {
+				s.recordEnvelopeBindingResponse(req.Nonce, sec)
+				receiptWrapper["height_sync"] = sec
+				s.logOutboundHeightSync(sec, req.Nonce)
+				s.recordOutboundAnchorIfAnchor(sec, c.Request().Method+" "+c.Path())
+			} else {
+				s.logOutboundHeightSync(nil, req.Nonce)
+			}
 		} else {
 			s.logOutboundHeightSync(nil, req.Nonce)
 		}

@@ -51,21 +51,6 @@ func RefStamp(tx *types.DevshardTx) (uint64, []byte, bool) {
 	return msg.GetObservedHeight(), msg.GetObservedBlockHash(), true
 }
 
-// MaxRefStamp returns the highest reference height in txs, with its hash.
-func MaxRefStamp(txs []*types.DevshardTx) (uint64, []byte, bool) {
-	var bestH uint64
-	var bestHash []byte
-	var ok bool
-	for _, tx := range txs {
-		h, hash, present := RefStamp(tx)
-		if !present || h <= bestH {
-			continue
-		}
-		bestH, bestHash, ok = h, hash, true
-	}
-	return bestH, bestHash, ok
-}
-
 // RefProducingNonce is the nonce whose handling produced a reference stamp.
 //
 // This is the nonce the stamp must be judged against, not the nonce it lands at:
@@ -112,4 +97,20 @@ func RefProducingNonce(diffNonce uint64, tx *types.DevshardTx) (uint64, bool) {
 func TxStamp(tx *types.DevshardTx) (uint64, bool) {
 	h, _, ok := RefStamp(tx)
 	return h, ok
+}
+
+// LogResidentHeight is the clock TurnTracker.Observe must use: the highest
+// Diff-resident stamp in txs, else lastCompleted (h_last). A live oracle read
+// is never a legal input — turn state is a pure function of the log.
+func LogResidentHeight(txs []*types.DevshardTx, lastCompleted uint64) uint64 {
+	var h uint64
+	for _, tx := range txs {
+		if s, ok := TxStamp(tx); ok && s > h {
+			h = s
+		}
+	}
+	if h == 0 {
+		return lastCompleted
+	}
+	return h
 }

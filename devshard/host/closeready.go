@@ -3,19 +3,12 @@ package host
 import (
 	"context"
 
+	"devshard/chainoracle/blocks"
 	"devshard/heightsync"
 	"devshard/types"
 )
 
-func (h *Host) oracleStampLocked(ctx context.Context) (uint64, []byte) {
-	hdr, err := h.latestHeaderLocked(ctx)
-	if err != nil || hdr == nil || hdr.Height <= 0 || !heightsync.StampPresent(hdr.BlockHash) {
-		return 0, nil
-	}
-	return uint64(hdr.Height), append([]byte(nil), hdr.BlockHash...)
-}
-
-func (h *Host) noteCloseReadyLocked(ctx context.Context, newlyApplied []types.Diff) {
+func (h *Host) noteCloseReadyLocked(newlyApplied []types.Diff, hdr *blocks.Header, hdrErr error) {
 	if h.closeReady == nil {
 		return
 	}
@@ -34,7 +27,7 @@ func (h *Host) noteCloseReadyLocked(ctx context.Context, newlyApplied []types.Di
 	}
 	hNow := claim
 	if hNow == 0 {
-		hNow, _ = h.oracleStampLocked(ctx)
+		hNow, _ = headerStamp(hdr, hdrErr)
 	}
 	h.closeReady.NoteContact(hNow, claim)
 	h.closeReady.Evaluate(hNow)
@@ -45,6 +38,7 @@ func (h *Host) noteCloseReadyLocked(ctx context.Context, newlyApplied []types.Di
 // whenever CloseReadyView().Armed() is read, so no tick is required for
 // correctness.
 func (h *Host) EvaluateCloseReady(ctx context.Context) {
+	hdr, hdrErr := h.latestHeader(ctx)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.closeReady == nil {
@@ -52,7 +46,7 @@ func (h *Host) EvaluateCloseReady(ctx context.Context) {
 	}
 	last, degraded := h.sm.HeightSyncArmingContext()
 	h.closeReady.SetTurnContext(last, degraded)
-	hNow, _ := h.oracleStampLocked(ctx)
+	hNow, _ := headerStamp(hdr, hdrErr)
 	h.closeReady.Evaluate(hNow)
 }
 

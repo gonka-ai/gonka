@@ -101,6 +101,31 @@ func (p *repairPair) applyHeartbeatSpan(t *testing.T) {
 	}
 }
 
+// applyWindowClosedStamp lands a Diff-resident height past D_ack so the
+// tracker clock — not the local oracle — closes the turn's ack window.
+func (p *repairPair) applyWindowClosedStamp(t *testing.T) {
+	t.Helper()
+	past := uint64(pastAckWindow())
+	d3 := testutil.SignDiff(t, p.user, "escrow-1", 3, []*types.DevshardTx{{
+		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			TurnSeq: 1, ObservedHeight: past, ObservedBlockHash: []byte{0xaa}, SlotsNum: 2,
+			Reason: string(heightsync.ReasonQuietSession),
+		}},
+	}})
+	ctx := context.Background()
+	for _, h := range p.hostObjs {
+		_, err := h.HandleRequest(ctx, host.HostRequest{Diffs: []types.Diff{d3}})
+		require.NoError(t, err)
+	}
+}
+
+// pastAckWindow is the first height at which the turn requested at 500 is
+// overdue: repair probes wait out the producer's whole turnover budget, so a
+// couple of blocks past h_req is still inside the window (step 4).
+func pastAckWindow() int64 {
+	return 500 + int64(heightsync.DefaultHeartbeatConfig().AckDeadlineBlocks) + 1
+}
+
 func (p *repairPair) setOracle(i int, height int64, hash []byte) {
 	p.oracles[i].hdr = &blocks.Header{Height: height, ChainID: "c", BlockHash: append([]byte(nil), hash...)}
 }
@@ -131,8 +156,9 @@ func assertNoRepairBlame(t *testing.T, h *host.Host, srv *Server) {
 func TestRepairProbe_UnreachableOrHeight(t *testing.T) {
 	p := setupRepairPair(t)
 	p.applyHeartbeatSpan(t)
+	p.applyWindowClosedStamp(t)
 
-	p.setOracle(0, 502, []byte{0xaa})
+	p.setOracle(0, pastAckWindow(), []byte{0xaa})
 	p.setOracle(1, 510, []byte{0xbb})
 	p.wirePeersFrom(0)
 
@@ -161,7 +187,8 @@ func TestRepairProbe_UnreachableOrHeight(t *testing.T) {
 func TestRepairProbe_DeadPeerBacksOff(t *testing.T) {
 	p := setupRepairPair(t)
 	p.applyHeartbeatSpan(t)
-	p.setOracle(0, 502, []byte{0xaa})
+	p.applyWindowClosedStamp(t)
+	p.setOracle(0, pastAckWindow(), []byte{0xaa})
 
 	p.httpSrv[1].Close()
 	p.wirePeersFrom(0)
@@ -178,10 +205,32 @@ func TestRepairProbe_DeadPeerBacksOff(t *testing.T) {
 	require.Zero(t, h0.RepairBudget().Count(heightsync.RepairOutcomeHeight))
 	require.Equal(t, 1, h0.RepairBudget().FailCount(1))
 	require.True(t, h0.RepairBudget().InBackoff(1))
-	require.Equal(t, uint64(500), h0.PeerSeenHeight(1), "UNREACHABLE does not ingest a probe height")
+	require.Equal(t, uint64(pastAckWindow()), h0.PeerSeenHeight(1), "UNREACHABLE does not ingest a probe height")
 	require.Equal(t, heightsync.TurnDegraded, h0.HeightSyncTurnRecord(1).State)
 	assertNoRepairBlame(t, h0, p.servers[0])
 	require.Nil(t, p.servers[0].gossip, "nothing on the wire toward the user")
+}
+
+func TestRepairProbe_OracleAheadDoesNotDegradeOpenTurn(t *testing.T) {
+	// H81: two hosts apply the same diffs; A's oracle is past D_ack. Repair
+	// must not AdvanceHeight with that tip — both trackers stay TurnOpen.
+	p := setupRepairPair(t)
+	p.applyHeartbeatSpan(t)
+
+	p.setOracle(0, pastAckWindow(), []byte{0xaa})
+	p.setOracle(1, 500, []byte{0xbb})
+	p.wirePeersFrom(0)
+
+	p.hostObjs[0].MaybeRepair(context.Background())
+
+	for i, h := range p.hostObjs {
+		rec := h.HeightSyncTurnRecord(1)
+		require.NotNil(t, rec, "host %d", i)
+		require.Equal(t, heightsync.TurnOpen, rec.State, "host %d", i)
+	}
+	require.Zero(t, p.hostObjs[0].RepairBudget().Count(heightsync.RepairOutcomeHeight))
+	require.Zero(t, p.hostObjs[0].RepairBudget().Count(heightsync.RepairOutcomeUnreachable))
+	assertNoRepairBlame(t, p.hostObjs[0], p.servers[0])
 }
 
 func TestHandleHeightSyncRepair_RejectsUser(t *testing.T) {
@@ -224,4 +273,110 @@ func TestHandleHeightSyncRepair_RejectsUnsignedDomain(t *testing.T) {
 	rec := httptest.NewRecorder()
 	p.httpSrv[0].Config.Handler.ServeHTTP(rec, httpReq)
 	require.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+func (p *repairPair) postSignedRepair(t *testing.T, from, to int, req *heightsync.RepairRequest) *httptest.ResponseRecorder {
+	t.Helper()
+	require.NoError(t, heightsync.SignRepairRequest(p.hosts[from], req))
+	body, err := json.Marshal(req)
+	require.NoError(t, err)
+	ts := time.Now().Unix()
+	sig, err := SignRequest(p.hosts[from], "escrow-1", body, ts)
+	require.NoError(t, err)
+	httpReq := httptest.NewRequest(http.MethodPost,
+		testRoutePrefix+"/sessions/escrow-1/heightsync/repair",
+		strings.NewReader(string(body)))
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set(HeaderSignature, hex.EncodeToString(sig))
+	httpReq.Header.Set(HeaderTimestamp, fmt.Sprintf("%d", ts))
+	rec := httptest.NewRecorder()
+	p.httpSrv[to].Config.Handler.ServeHTTP(rec, httpReq)
+	return rec
+}
+
+func TestHandleHeightSyncRepair_UnknownTurnSkipsOracle(t *testing.T) {
+	p := setupRepairPair(t)
+	req := &heightsync.RepairRequest{
+		TurnSeq: 1, RefNonce: 1, RequesterSlot: 0,
+		ObservedHeight: 500, ObservedBlockHash: []byte{0xaa},
+	}
+	rec := p.postSignedRepair(t, 0, 1, req)
+	require.Equal(t, http.StatusNotFound, rec.Code)
+	require.Zero(t, p.oracles[1].LatestCalls())
+	assertNoRepairBlame(t, p.hostObjs[1], p.servers[1])
+}
+
+func TestHandleHeightSyncRepair_FloodBoundsOracleReads(t *testing.T) {
+	p := setupRepairPair(t)
+	p.applyHeartbeatSpan(t)
+	require.NotNil(t, p.hostObjs[1].HeightSyncTurnRecord(1))
+	before := p.oracles[1].LatestCalls()
+
+	req := &heightsync.RepairRequest{
+		TurnSeq: 1, RefNonce: 1, RequesterSlot: 0,
+		ObservedHeight: 500, ObservedBlockHash: []byte{0xaa},
+	}
+	first := p.postSignedRepair(t, 0, 1, req)
+	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+
+	for i := 0; i < 19; i++ {
+		rec := p.postSignedRepair(t, 0, 1, req)
+		require.Equal(t, http.StatusTooManyRequests, rec.Code)
+	}
+	require.Equal(t, before+1, p.oracles[1].LatestCalls(), "one HEIGHT build per (turn, requester)")
+	assertNoRepairBlame(t, p.hostObjs[1], p.servers[1])
+}
+
+func TestRepairProbe_DegradedOlderTurnStillProbed(t *testing.T) {
+	p := setupRepairPair(t)
+	p.applyHeartbeatSpan(t)
+	p.applyWindowClosedStamp(t)
+
+	hash := []byte{0xaa}
+	d4 := testutil.SignDiff(t, p.user, "escrow-1", 4, []*types.DevshardTx{{
+		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			TurnSeq: 2, ObservedHeight: 500, ObservedBlockHash: hash, SlotsNum: 2,
+			Reason: string(heightsync.ReasonQuietSession),
+		}},
+	}})
+	d5 := testutil.SignDiff(t, p.user, "escrow-1", 5, []*types.DevshardTx{{
+		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			TurnSeq: 2, ObservedHeight: 500, ObservedBlockHash: hash, SlotsNum: 2,
+			Reason: string(heightsync.ReasonQuietSession),
+		}},
+	}})
+	ctx := context.Background()
+	for _, h := range p.hostObjs {
+		_, err := h.HandleRequest(ctx, host.HostRequest{Diffs: []types.Diff{d4, d5}})
+		require.NoError(t, err)
+	}
+
+	p.setOracle(0, pastAckWindow(), []byte{0xaa})
+	var probed []uint64
+	p.hostObjs[0].SetRepairProbe(func(_ context.Context, _ uint32, req *heightsync.RepairRequest) (*heightsync.RepairResponse, error) {
+		probed = append(probed, req.TurnSeq)
+		return &heightsync.RepairResponse{
+			Outcome:           heightsync.RepairOutcomeHeight,
+			ObservedHeight:    510,
+			ObservedBlockHash: []byte{0xbb},
+		}, nil
+	})
+	p.hostObjs[0].MaybeRepair(ctx)
+	require.Contains(t, probed, uint64(1), "turn 1 must still be probed after turn 2 opened")
+}
+
+func TestRepairProbe_CancelInterruptsSleep(t *testing.T) {
+	p := setupRepairPair(t)
+	p.applyHeartbeatSpan(t)
+	p.applyWindowClosedStamp(t)
+	p.setOracle(0, pastAckWindow(), []byte{0xaa})
+	p.wirePeersFrom(0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	start := time.Now()
+	p.hostObjs[0].MaybeRepair(ctx)
+	require.Less(t, time.Since(start), 200*time.Millisecond)
+	require.Zero(t, p.hostObjs[0].RepairBudget().Count(heightsync.RepairOutcomeHeight))
+	require.Zero(t, p.hostObjs[0].RepairBudget().Count(heightsync.RepairOutcomeUnreachable))
 }

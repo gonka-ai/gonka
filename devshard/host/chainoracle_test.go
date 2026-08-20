@@ -67,6 +67,37 @@ func (f *fakeOracle) Subscribe(ctx context.Context, fromHeight int64) (<-chan *b
 	return nil, errFakeOracleNotImpl
 }
 
+type blockingOracle struct {
+	entered chan struct{}
+	release chan struct{}
+	hdr     *blocks.Header
+}
+
+func (o *blockingOracle) Latest(ctx context.Context) (*blocks.Header, error) {
+	select {
+	case <-o.entered:
+	default:
+		close(o.entered)
+	}
+	select {
+	case <-o.release:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	h := *o.hdr
+	h.BlockHash = append([]byte(nil), o.hdr.BlockHash...)
+	return &h, nil
+}
+func (o *blockingOracle) At(context.Context, int64) (*blocks.Header, error) {
+	return nil, errFakeOracleNotImpl
+}
+func (o *blockingOracle) Prove(context.Context, string, int64) (*blocks.Proof, error) {
+	return nil, errFakeOracleNotImpl
+}
+func (o *blockingOracle) Subscribe(context.Context, int64) (<-chan *blocks.Header, error) {
+	return nil, errFakeOracleNotImpl
+}
+
 func newHostWithOracleOpts(t *testing.T, opts ...HostOption) *Host {
 	t.Helper()
 	hosts := []*signing.Secp256k1Signer{

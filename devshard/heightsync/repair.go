@@ -25,10 +25,12 @@ const (
 )
 
 var (
-	ErrRepairEmpty   = errors.New("heightsync: empty repair probe")
-	ErrRepairNoSig   = errors.New("heightsync: missing repair signature")
-	ErrRepairVerify  = errors.New("heightsync: repair signature verification failed")
-	ErrRepairOutcome = errors.New("heightsync: unknown repair outcome")
+	ErrRepairEmpty           = errors.New("heightsync: empty repair probe")
+	ErrRepairNoSig           = errors.New("heightsync: missing repair signature")
+	ErrRepairVerify          = errors.New("heightsync: repair signature verification failed")
+	ErrRepairOutcome         = errors.New("heightsync: unknown repair outcome")
+	ErrRepairUnknownTurn     = errors.New("heightsync: unknown repair turn")
+	ErrRepairResponderBudget = errors.New("heightsync: responder budget exhausted")
 )
 
 // RepairRequest is the JSON body of POST .../heightsync/repair.

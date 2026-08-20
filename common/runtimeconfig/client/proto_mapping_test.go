@@ -29,6 +29,7 @@ func TestProtoMapping_RoundTrip(t *testing.T) {
 			TurnTimeoutMs:      2500,
 			AckDeadlineBlocks:  2,
 			IdleTimeoutMs:      16000,
+			BlockTimeMs:        5000,
 			ProbeStaggerMs:     1000,
 			MaxProbesPerWindow: 4,
 		},

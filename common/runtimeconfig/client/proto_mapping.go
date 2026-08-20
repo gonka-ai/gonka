@@ -58,6 +58,7 @@ func SnapshotFromProto(c *gen.RuntimeConfig) Snapshot {
 			TurnTimeoutMs:      c.GetHeightSyncTurnTimeoutMs(),
 			AckDeadlineBlocks:  c.GetHeightSyncAckDeadlineBlocks(),
 			IdleTimeoutMs:      c.GetHeightSyncIdleTimeoutMs(),
+			BlockTimeMs:        c.GetHeightSyncBlockTimeMs(),
 			ProbeStaggerMs:     c.GetHeightSyncProbeStaggerMs(),
 			MaxProbesPerWindow: c.GetHeightSyncMaxProbesPerWindow(),
 		},
@@ -103,6 +104,7 @@ func ProtoFromSnapshot(s Snapshot) *gen.RuntimeConfig {
 		HeightSyncTurnTimeoutMs:      s.HeightSync.TurnTimeoutMs,
 		HeightSyncAckDeadlineBlocks:  s.HeightSync.AckDeadlineBlocks,
 		HeightSyncIdleTimeoutMs:      s.HeightSync.IdleTimeoutMs,
+		HeightSyncBlockTimeMs:        s.HeightSync.BlockTimeMs,
 		HeightSyncProbeStaggerMs:     s.HeightSync.ProbeStaggerMs,
 		HeightSyncMaxProbesPerWindow: s.HeightSync.MaxProbesPerWindow,
 	}

@@ -201,7 +201,7 @@ func heightSyncToProto(hs *heightsync.HeightSyncSection) *types.InferenceHeightS
 		Response:                  resp,
 		OriginatorSenderId:        hs.OriginatorSenderID,
 		OriginatorTimestampUnixMs: hs.OriginatorTimestampMs,
-		SenderSignature:           append([]byte(nil), hs.SenderSignature...),
+		SenderSignature:           cappedBytes(hs.SenderSignature, heightsync.MaxOriginSignatureBytes),
 	}
 }
 
@@ -227,6 +227,16 @@ func heightSyncFromProto(hs *types.InferenceHeightSyncSection) *heightsync.Heigh
 		Direction:             dir,
 		OriginatorSenderID:    hs.GetOriginatorSenderId(),
 		OriginatorTimestampMs: hs.GetOriginatorTimestampUnixMs(),
-		SenderSignature:       append([]byte(nil), hs.GetSenderSignature()...),
+		SenderSignature:       cappedBytes(hs.GetSenderSignature(), heightsync.MaxOriginSignatureBytes),
 	}
+}
+
+func cappedBytes(b []byte, max int) []byte {
+	if len(b) == 0 {
+		return nil
+	}
+	if len(b) > max {
+		return nil
+	}
+	return append([]byte(nil), b...)
 }

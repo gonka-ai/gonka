@@ -100,7 +100,11 @@ func freshnessOK(hs *HeightSyncSection, now time.Time, freshness time.Duration) 
 	}
 	ts := originatorObservedAt(hs)
 	if ts <= 0 {
-		return true
+		// A carry-forward with no originator time is arbitrarily old: the
+		// carrier can replay a cached (height, hash) forever. First-party
+		// anchors never reach this function (ClassifyInboundRequestAnchor
+		// gates it on isCarryForwardAnchor).
+		return false
 	}
 	return now.Sub(time.UnixMilli(ts)) <= freshness
 }

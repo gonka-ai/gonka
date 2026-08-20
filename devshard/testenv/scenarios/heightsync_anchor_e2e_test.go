@@ -590,6 +590,12 @@ func peerTipsFromSession(t *testing.T, sess *user.Session) *transport.HeightSync
 	return shared
 }
 
+// recordCourierPeerTip seeds the courier cache with a verified-shaped blob so
+// MaxFresh/Carry accept the entry under the production RequireVerifiedBlob default.
+func recordCourierPeerTip(peerTips *transport.HeightSyncPeerTips, sec *heightsync.HeightSyncSection) {
+	peerTips.RecordOriginWithBlob(sec, []byte("e2e-seed-blob"), []byte{1})
+}
+
 // seedCourierPeerTipsFromHostOracles seeds the courier cache from each host's oracle tip
 // (deterministic setup for e2e after the initial sync turn completes).
 func seedCourierPeerTipsFromHostOracles(t *testing.T, st *fourHostStack, hostOracles []*staticOracle, peerTips *transport.HeightSyncPeerTips) {
@@ -598,7 +604,7 @@ func seedCourierPeerTipsFromHostOracles(t *testing.T, st *fourHostStack, hostOra
 	now := time.Now().UnixMilli()
 	for i, or := range hostOracles {
 		require.NotNil(t, or.hdr, "host oracle %d", i)
-		peerTips.RecordOrigin(&heightsync.HeightSyncSection{
+		recordCourierPeerTip(peerTips, &heightsync.HeightSyncSection{
 			ChainID:               "gonka-testenv-1",
 			ProofType:             heightsync.AnchorProofType,
 			MainnetHeight:         or.hdr.Height,
@@ -635,7 +641,7 @@ func warmCourierPeerTipsFromResponses(t *testing.T, st *fourHostStack, peerTips 
 				if a.Direction != "response" || a.MainnetHeight <= 0 || len(a.MainnetBlockHash) == 0 {
 					continue
 				}
-				peerTips.RecordOrigin(&heightsync.HeightSyncSection{
+				recordCourierPeerTip(peerTips, &heightsync.HeightSyncSection{
 					ChainID:               "gonka-testenv-1",
 					ProofType:             heightsync.AnchorProofType,
 					MainnetHeight:         a.MainnetHeight,
@@ -656,13 +662,19 @@ func ensureHeightSyncPromMetrics(t *testing.T) {
 // courierSyncTurnWithHeldResponses runs sync-turn nonces [1, releaseAt] with HTTP
 // responses for 1..releaseAt-1 blocked on each host until PrepareInference(releaseAt),
 // then releases all holds so peer tips land deterministically before the release nonce send.
-// Requires go test -tags=dev (transport.Server inference hold hooks).
+// The E9 seed RPC is disabled so the cache stays cold until those responses ingest;
+// otherwise the seed tip is MarkPropagated to every slot in the sync turn and omit-window
+// lazy carry has nothing left to send. Requires go test -tags=dev (transport.Server
+// inference hold hooks).
 func courierSyncTurnWithHeldResponses(t *testing.T, ctx context.Context, st *fourHostStack, params user.InferenceParams, releaseAt uint64) {
 	t.Helper()
 	if !inferenceHoldsEnabled() {
 		t.Skip("courierSyncTurnWithHeldResponses requires -tags=dev")
 	}
 	require.GreaterOrEqual(t, releaseAt, uint64(2))
+	for _, srv := range st.Servers {
+		srv.SetHeightSyncSeedRPCEnabled(false)
+	}
 
 	type sendResult struct {
 		hostIdx int

@@ -31,6 +31,7 @@ import (
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/observability"
+	"devshard/runtimeparams"
 	devshardserver "devshard/server"
 	"devshard/signing"
 	"devshard/state"
@@ -58,6 +59,7 @@ type HostManager struct {
 	recorder           PayloadAuthClient
 	availability       devshardpkg.AvailabilityProvider
 	maxNonce           devshardpkg.MaxNonceProvider
+	params             runtimeparams.Provider
 
 	statsMu            sync.Mutex
 	statsShardsCache   *statsShardsResponse
@@ -130,6 +132,12 @@ func (m *HostManager) StorageReady() bool {
 // SetMaxNonceProvider enforces chain max_nonce on every host.
 func (m *HostManager) SetMaxNonceProvider(p devshardpkg.MaxNonceProvider) {
 	m.maxNonce = p
+}
+
+// SetParamsProvider overlays runtime height-sync scheduling knobs on new and
+// recovered sessions. Evaluation knobs stay compiled inside HeartbeatConfigFromSnapshot.
+func (m *HostManager) SetParamsProvider(p runtimeparams.Provider) {
+	m.params = p
 }
 
 // SetBinaryVersion sets the link-time / log build id exposed on stats endpoints
@@ -393,8 +401,7 @@ func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*trans
 	config := bridge.SessionConfigAtBind(len(group), escrow)
 
 	sm, err := state.NewStateMachine(escrowID, config, group, escrow.Amount, creatorAddr, m.verifier, m.store,
-		state.WithWarmKeyResolver(m.bridge.VerifyWarmKey),
-		state.WithVersion(m.boundVersion),
+		m.sessionSMOpts(state.WithWarmKeyResolver(m.bridge.VerifyWarmKey), state.WithVersion(m.boundVersion))...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create state machine: %w", err)
@@ -505,8 +512,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 	sm, err := state.NewStateMachine(
 		escrowID, meta.Config, meta.Group, meta.InitialBalance,
 		meta.CreatorAddr, m.verifier, m.store,
-		state.WithWarmKeyResolver(m.bridge.VerifyWarmKey),
-		state.WithVersion(recoveredVersion),
+		m.sessionSMOpts(state.WithWarmKeyResolver(m.bridge.VerifyWarmKey), state.WithVersion(recoveredVersion))...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create state machine: %w", err)
@@ -866,5 +872,16 @@ func (m *HostManager) hostOpts(epochID uint64) []host.HostOption {
 	if m.maxNonce != nil {
 		opts = append(opts, host.WithMaxNonceProvider(m.maxNonce))
 	}
+	if m.params != nil {
+		sp := m.params.SessionParams()
+		opts = append(opts, host.WithHeartbeatConfig(sp.Heartbeat), host.WithRepairConfig(sp.Repair))
+	}
 	return m.appendChainOracleOpt(opts)
+}
+
+func (m *HostManager) sessionSMOpts(extra ...state.SMOption) []state.SMOption {
+	if m.params != nil {
+		extra = append(extra, state.WithHeartbeatConfig(m.params.SessionParams().Heartbeat))
+	}
+	return extra
 }

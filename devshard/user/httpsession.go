@@ -10,6 +10,7 @@ import (
 
 	devshardpkg "devshard"
 	"devshard/bridge"
+	"devshard/heightsync"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
@@ -28,6 +29,8 @@ type HTTPSessionConfig struct {
 	// ExtraClientConfig is merged into each transport.HTTPClient when non-nil.
 	// Used to attach courier-mode HeightSync (peer-tip cache; no local follower).
 	ExtraClientConfig *transport.ClientConfig
+	// Heartbeat overlays compiled height-sync scheduling knobs. Nil keeps defaults.
+	Heartbeat *heightsync.HeartbeatConfig
 	// Escrow is an optional pre-fetched chain escrow. When set, NewHTTPSession
 	// skips Bridge.GetEscrow and builds the group from this value.
 	Escrow *bridge.EscrowInfo
@@ -211,7 +214,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	if metaErr == nil {
 		warmKeyResolver, enableWarmKeyResolver := deferredWarmKeyResolver(cfg.Bridge.VerifyWarmKey)
 		session, recSM, recErr := RecoverSession(sqlStore, signer, verifier, cfg.EscrowID, sessionVersion, group, clients,
-			state.WithWarmKeyResolver(warmKeyResolver),
+			httpSessionSMOpts(cfg, state.WithWarmKeyResolver(warmKeyResolver))...,
 		)
 		if recErr != nil {
 			sqlStore.Close()
@@ -244,15 +247,14 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	}
 
 	sm, err := state.NewStateMachine(cfg.EscrowID, config, group, escrow.Amount, escrow.CreatorAddress, verifier, sqlStore,
-		state.WithWarmKeyResolver(cfg.Bridge.VerifyWarmKey),
-		state.WithVersion(sessionVersion),
+		httpSessionSMOpts(cfg, state.WithWarmKeyResolver(cfg.Bridge.VerifyWarmKey), state.WithVersion(sessionVersion))...,
 	)
 	if err != nil {
 		sqlStore.Close()
 		return nil, nil, fmt.Errorf("create state machine: %w", err)
 	}
 
-	session, err := NewSession(sm, signer, cfg.EscrowID, group, clients, verifier, WithStorage(sqlStore))
+	session, err := NewSession(sm, signer, cfg.EscrowID, group, clients, verifier, httpSessionOpts(cfg, WithStorage(sqlStore))...)
 	if err != nil {
 		sqlStore.Close()
 		return nil, nil, fmt.Errorf("create session: %w", err)
@@ -264,4 +266,18 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	}
 
 	return session, sm, nil
+}
+
+func httpSessionSMOpts(cfg HTTPSessionConfig, extra ...state.SMOption) []state.SMOption {
+	if cfg.Heartbeat != nil {
+		extra = append(extra, state.WithHeartbeatConfig(*cfg.Heartbeat))
+	}
+	return extra
+}
+
+func httpSessionOpts(cfg HTTPSessionConfig, extra ...SessionOption) []SessionOption {
+	if cfg.Heartbeat != nil {
+		extra = append(extra, WithHeartbeatConfig(*cfg.Heartbeat))
+	}
+	return extra
 }

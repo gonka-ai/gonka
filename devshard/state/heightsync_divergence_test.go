@@ -11,16 +11,18 @@ import (
 	"devshard/types"
 )
 
-// A roster spread far wider than D = 2. Host 3 is nearly a thousand blocks
-// behind host 0, which is well past any band the protocol has, so every check
-// that consults D is exercised at once.
+// A roster spread far wider than D = 2 and still inside W_conf, which is the
+// band where carrying the floor is the honest answer for the party behind. Host
+// 3 is 245 blocks back — two orders of magnitude past D, so every check that
+// consults D fires, while the producer rule still asks it to lift rather than to
+// omit (HeartbeatConfig.FloorOutOfReach draws that line).
 var divergedTips = []struct {
 	height uint64
 	hash   []byte
 }{
-	{1000, []byte{0x10, 0x00}},
-	{998, []byte{0x09, 0x98}},
-	{500, []byte{0x05, 0x00}},
+	{250, []byte{0x02, 0x50}},
+	{248, []byte{0x02, 0x48}},
+	{150, []byte{0x01, 0x50}},
 	{5, []byte{0x00, 0x05}},
 }
 
@@ -121,10 +123,10 @@ func TestHeightSyncDivergence_InferenceFlowNeverBlocked(t *testing.T) {
 	require.NoError(t, apply(1, divHeartbeatTx(1, top.height, top.hash)))
 
 	honestStates := []types.SyncState{
-		types.SyncState_SYNCED,      // own tip 1000, exactly h_req
-		types.SyncState_SYNCED,      // own tip 998, |Δ| = 2 = D
-		types.SyncState_CATCHING_UP, // own tip 500, lifts to 1000
-		types.SyncState_CATCHING_UP, // own tip 5, lifts to 1000
+		types.SyncState_SYNCED,      // own tip 250, exactly h_req
+		types.SyncState_SYNCED,      // own tip 248, |Δ| = 2 = D
+		types.SyncState_CATCHING_UP, // own tip 150, lifts to 250
+		types.SyncState_CATCHING_UP, // own tip 5, lifts to 250
 	}
 	acks := make([]*types.DevshardTx, 0, len(hosts))
 	for i := range divergedTips {
@@ -155,9 +157,9 @@ func TestHeightSyncDivergence_InferenceFlowNeverBlocked(t *testing.T) {
 
 	// ---- Inference 3: the most-behind executor still serves ------------------
 	//
-	// F(3) is 1000 from the heartbeat, so slot 3 — a thousand blocks behind —
-	// carries the floor rather than its own tip of 5, and the inference completes.
-	// This is the liveness property the whole design exists for.
+	// F(3) is 250 from the heartbeat, so slot 3 — 245 blocks behind — carries the
+	// floor rather than its own tip of 5, and the inference completes. This is
+	// the liveness property the whole design exists for.
 	require.NoError(t, apply(3, divStartTx(3, top.height, top.hash)))
 	require.NoError(t, apply(4, divConfirmTx(t, hosts[3], 3, top.height, top.hash)),
 		"lifting to F(m) keeps a far-behind executor serving")

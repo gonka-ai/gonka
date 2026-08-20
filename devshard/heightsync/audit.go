@@ -73,6 +73,10 @@ type AnchorAttestation struct {
 	// OriginatorSenderID is the first observer of (height, hash) on carry-forward
 	// request Anchors (empty for host-oracle emissions and legacy entries).
 	OriginatorSenderID string
+	// OriginatorTimestampMs is when the originator observed the pair. (C-quorum)
+	// eligibility uses this when set so a carry-forward admitted at age F−ε
+	// cannot stay quorum-eligible for another F from receipt time.
+	OriginatorTimestampMs int64
 	// OriginSignedBlobAvailable is true when the user cached a verified response-leg
 	// signed blob for this attestation (Step 8).
 	OriginSignedBlobAvailable bool

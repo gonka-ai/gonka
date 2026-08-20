@@ -475,8 +475,12 @@ type RuntimeConfig struct {
 	HeightSyncProbeStaggerMs     uint64 `protobuf:"varint,16,opt,name=height_sync_probe_stagger_ms,json=heightSyncProbeStaggerMs,proto3" json:"height_sync_probe_stagger_ms,omitempty"`               // δ_probe
 	HeightSyncMaxProbesPerWindow uint32 `protobuf:"varint,17,opt,name=height_sync_max_probes_per_window,json=heightSyncMaxProbesPerWindow,proto3" json:"height_sync_max_probes_per_window,omitempty"` // R_max
 	HeightSyncTurnTimeoutMs      uint64 `protobuf:"varint,18,opt,name=height_sync_turn_timeout_ms,json=heightSyncTurnTimeoutMs,proto3" json:"height_sync_turn_timeout_ms,omitempty"`                  // producer patience on one open turn
-	unknownFields                protoimpl.UnknownFields
-	sizeCache                    protoimpl.SizeCache
+	// Assumed chain block interval. The log judges an ack's promptness in blocks
+	// because it has no clock, so D_ack is derived from the millisecond schedule
+	// through this rate; set it when your chain is slower than one block a second.
+	HeightSyncBlockTimeMs uint64 `protobuf:"varint,19,opt,name=height_sync_block_time_ms,json=heightSyncBlockTimeMs,proto3" json:"height_sync_block_time_ms,omitempty"`
+	unknownFields         protoimpl.UnknownFields
+	sizeCache             protoimpl.SizeCache
 }
 
 func (x *RuntimeConfig) Reset() {
@@ -631,6 +635,13 @@ func (x *RuntimeConfig) GetHeightSyncMaxProbesPerWindow() uint32 {
 func (x *RuntimeConfig) GetHeightSyncTurnTimeoutMs() uint64 {
 	if x != nil {
 		return x.HeightSyncTurnTimeoutMs
+	}
+	return 0
+}
+
+func (x *RuntimeConfig) GetHeightSyncBlockTimeMs() uint64 {
+	if x != nil {
+		return x.HeightSyncBlockTimeMs
 	}
 	return 0
 }
@@ -1429,7 +1440,7 @@ const file_nodemanager_proto_rawDesc = "" +
 	"\x10max_wait_seconds\x18\x02 \x01(\x05R\x0emaxWaitSeconds\"l\n" +
 	"\x18GetRuntimeConfigResponse\x12\x1c\n" +
 	"\tunchanged\x18\x01 \x01(\bR\tunchanged\x122\n" +
-	"\x06config\x18\x02 \x01(\v2\x1a.nodemanager.RuntimeConfigR\x06config\"\xe9\a\n" +
+	"\x06config\x18\x02 \x01(\v2\x1a.nodemanager.RuntimeConfigR\x06config\"\xa3\b\n" +
 	"\rRuntimeConfig\x12.\n" +
 	"\x13params_block_height\x18\x01 \x01(\x03R\x11paramsBlockHeight\x12(\n" +
 	"\x10current_epoch_id\x18\x02 \x01(\x04R\x0ecurrentEpochId\x12#\n" +
@@ -1449,7 +1460,8 @@ const file_nodemanager_proto_rawDesc = "" +
 	"\x1bheight_sync_idle_timeout_ms\x18\x0f \x01(\x04R\x17heightSyncIdleTimeoutMs\x12>\n" +
 	"\x1cheight_sync_probe_stagger_ms\x18\x10 \x01(\x04R\x18heightSyncProbeStaggerMs\x12G\n" +
 	"!height_sync_max_probes_per_window\x18\x11 \x01(\rR\x1cheightSyncMaxProbesPerWindow\x12<\n" +
-	"\x1bheight_sync_turn_timeout_ms\x18\x12 \x01(\x04R\x17heightSyncTurnTimeoutMs\"\x8d\x01\n" +
+	"\x1bheight_sync_turn_timeout_ms\x18\x12 \x01(\x04R\x17heightSyncTurnTimeoutMs\x128\n" +
+	"\x19height_sync_block_time_ms\x18\x13 \x01(\x04R\x15heightSyncBlockTimeMs\"\x8d\x01\n" +
 	"\x18ModelValidationThreshold\x12\x19\n" +
 	"\bmodel_id\x18\x01 \x01(\tR\amodelId\x12'\n" +
 	"\x0fthreshold_value\x18\x02 \x01(\x03R\x0ethresholdValue\x12-\n" +

@@ -126,10 +126,11 @@ func TestHeartbeat_SpanDispatchAddressesEverySlot(t *testing.T) {
 
 func heartbeatTx(turn, height, slots uint64) *types.DevshardTx {
 	return &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-		TurnSeq:        turn,
-		ObservedHeight: height,
-		SlotsNum:       slots,
-		Reason:         string(heightsync.ReasonQuietSession),
+		TurnSeq:           turn,
+		ObservedHeight:    height,
+		ObservedBlockHash: []byte{0xaa},
+		SlotsNum:          slots,
+		Reason:            string(heightsync.ReasonQuietSession),
 	}}}
 }
 
@@ -196,6 +197,12 @@ func TestTurnTracker_QuorumCompletesTurn(t *testing.T) {
 	require.True(t, tr.CompletedAtOrAbove(500), "bookkeeping only: (C-turn) is withdrawn")
 }
 
+// pastAckWindow is the first height at which the shipped ack window has closed
+// on a turn requested at h_req.
+func pastAckWindow(hReq uint64) uint64 {
+	return hReq + heightsync.DefaultHeartbeatConfig().AckDeadlineBlocks + 1
+}
+
 func TestTurnTracker_BelowQuorumDegradesNoBlame(t *testing.T) {
 	tr := heightsync.NewTurnTracker(4, 3, heightsync.DefaultHeartbeatConfig())
 	tr.Observe(10, []*types.DevshardTx{heartbeatTx(1, 500, 4)}, 500)
@@ -203,7 +210,7 @@ func TestTurnTracker_BelowQuorumDegradesNoBlame(t *testing.T) {
 		ackTx(1, 10, 0, 500, types.SyncState_SYNCED),
 		ackTx(1, 10, 1, 500, types.SyncState_SYNCED),
 	}, 500)
-	tr.AdvanceHeight(502) // D_ack=1 → window closes at h_req+1
+	tr.AdvanceHeight(pastAckWindow(500))
 	rec := tr.Record(1)
 	require.Equal(t, heightsync.TurnDegraded, rec.State)
 	require.Zero(t, tr.LastCompletedHeight())
@@ -214,25 +221,26 @@ func TestTurnTracker_BelowQuorumDegradesNoBlame(t *testing.T) {
 func TestLateAck_DoesNotClearDegraded(t *testing.T) {
 	tr := heightsync.NewTurnTracker(4, 3, heightsync.DefaultHeartbeatConfig())
 	tr.Observe(10, []*types.DevshardTx{heartbeatTx(1, 500, 4)}, 500)
+	past := pastAckWindow(500)
 	tr.Observe(14, []*types.DevshardTx{
 		ackTx(1, 10, 0, 500, types.SyncState_SYNCED),
-	}, 503)
+	}, past)
 	require.Equal(t, heightsync.TurnDegraded, tr.Record(1).State)
 
 	tr.Observe(20, []*types.DevshardTx{
-		ackTx(1, 10, 1, 504, types.SyncState_SYNCED),
-		ackTx(1, 10, 2, 504, types.SyncState_SYNCED),
-	}, 504)
+		ackTx(1, 10, 1, past+1, types.SyncState_SYNCED),
+		ackTx(1, 10, 2, past+1, types.SyncState_SYNCED),
+	}, past+1)
 	rec := tr.Record(1)
 	require.Equal(t, heightsync.TurnDegraded, rec.State, "late acks never un-degrade")
 	require.True(t, rec.Acks[1].Late)
 	require.True(t, rec.Acks[2].Late)
-	require.Equal(t, uint64(504), rec.Acks[2].Height, "late ack still admitted for height")
+	require.Equal(t, past+1, rec.Acks[2].Height, "late ack still admitted for height")
 	require.Zero(t, tr.LastCompletedHeight())
 }
 
 func TestTurnTracker_IngestNextBlockSameStampCompletes(t *testing.T) {
-	// D_ack=1: ingest height may tick during transport; stamps still at h_req count.
+	// Ingest height may tick during transport; stamps still at h_req count.
 	tr := heightsync.NewTurnTracker(4, 3, heightsync.DefaultHeartbeatConfig())
 	tr.Observe(10, []*types.DevshardTx{heartbeatTx(1, 500, 4)}, 500)
 	tr.Observe(14, []*types.DevshardTx{
@@ -246,20 +254,104 @@ func TestTurnTracker_IngestNextBlockSameStampCompletes(t *testing.T) {
 	require.True(t, tr.CompletedAtOrAbove(500))
 }
 
+// TestTurnTracker_SpanAcrossBlockBoundariesCompletes is step 4's headline case.
+// A four-slot span is dispatched slot by slot, so the acks answering it are
+// stamped at climbing heights while h_req stays at the height the whole span was
+// composed at. The window now covers the producer's own turnover budget, so the
+// turn completes and nothing is owed a repair probe. Against the old one-block
+// window every ack past the first block was late and the turn degraded in steady
+// state — asserted below, so the regression cannot come back quietly.
+func TestTurnTracker_SpanAcrossBlockBoundariesCompletes(t *testing.T) {
+	span := func(cfg heightsync.HeartbeatConfig) *heightsync.TurnTracker {
+		tr := heightsync.NewTurnTracker(4, 3, cfg)
+		for i, nonce := range heightsync.SpanNonces(10, 4) {
+			// The span carries one height; the chain ticks as it is dispatched.
+			tr.Observe(nonce, []*types.DevshardTx{heartbeatTx(1, 500, 4)}, 500+uint64(i))
+		}
+		tr.Observe(14, []*types.DevshardTx{
+			ackTx(1, 10, 0, 500, types.SyncState_SYNCED),
+			ackTx(1, 11, 1, 501, types.SyncState_SYNCED),
+			ackTx(1, 12, 2, 502, types.SyncState_SYNCED),
+			ackTx(1, 13, 3, 503, types.SyncState_SYNCED),
+		}, 503)
+		return tr
+	}
+
+	tr := span(heightsync.DefaultHeartbeatConfig())
+	rec := tr.Record(1)
+	require.Equal(t, heightsync.TurnComplete, rec.State)
+	require.Equal(t, uint64(500), rec.HReq)
+	for slot, ack := range rec.Acks {
+		require.False(t, ack.Late, "slot %d answered inside the turn's own budget", slot)
+	}
+	require.Empty(t, tr.MissingAcksDue(1, 503), "no probe is due while the window is open")
+	require.Equal(t, uint64(503), tr.LastCompletedHeight())
+
+	narrow := heightsync.DefaultHeartbeatConfig()
+	narrow.AckDeadlineBlocks = 1
+	old := span(narrow).Record(1)
+	require.Equal(t, heightsync.TurnDegraded, old.State, "the pre-step-4 window")
+	require.True(t, old.Acks[2].Late)
+	require.True(t, old.Acks[3].Late)
+}
+
 func TestTurnTracker_StampPastDeadlineDegrades(t *testing.T) {
-	// D_ack=1: observed_height > h_req+D_ack is late even if ingest is still inside the window.
+	// observed_height > h_req + D_ack is late even if ingest is still inside the
+	// window: the ack's own stamp is the host's timestamp on its answer.
 	tr := heightsync.NewTurnTracker(4, 3, heightsync.DefaultHeartbeatConfig())
 	tr.Observe(10, []*types.DevshardTx{heartbeatTx(1, 500, 4)}, 500)
+	past := pastAckWindow(500)
 	tr.Observe(14, []*types.DevshardTx{
-		ackTx(1, 10, 0, 502, types.SyncState_SYNCED),
-		ackTx(1, 10, 1, 502, types.SyncState_SYNCED),
-		ackTx(1, 10, 2, 502, types.SyncState_SYNCED),
+		ackTx(1, 10, 0, past, types.SyncState_SYNCED),
+		ackTx(1, 10, 1, past, types.SyncState_SYNCED),
+		ackTx(1, 10, 2, past, types.SyncState_SYNCED),
 	}, 501)
 	rec := tr.Record(1)
 	require.Equal(t, heightsync.TurnDegraded, rec.State)
 	require.True(t, rec.Acks[0].Late)
 	require.Zero(t, tr.LastCompletedHeight())
 	require.False(t, tr.CompletedAtOrAbove(500))
+}
+
+// TestTurnTracker_CompletedTurnIsFinal closes the mirror of attack 22: a slot
+// that answered in time re-acks at a height past the deadline, which would
+// otherwise drag its own record late and pull the count back under quorum.
+func TestTurnTracker_CompletedTurnIsFinal(t *testing.T) {
+	tr := heightsync.NewTurnTracker(4, 3, heightsync.DefaultHeartbeatConfig())
+	tr.Observe(10, []*types.DevshardTx{heartbeatTx(1, 500, 4)}, 500)
+	tr.Observe(14, []*types.DevshardTx{
+		ackTx(1, 10, 0, 500, types.SyncState_SYNCED),
+		ackTx(1, 10, 1, 500, types.SyncState_SYNCED),
+		ackTx(1, 10, 2, 500, types.SyncState_SYNCED),
+	}, 500)
+	require.Equal(t, heightsync.TurnComplete, tr.Record(1).State)
+
+	past := pastAckWindow(500)
+	tr.Observe(20, []*types.DevshardTx{ackTx(1, 10, 0, past, types.SyncState_SYNCED)}, past)
+	rec := tr.Record(1)
+	require.Equal(t, heightsync.TurnComplete, rec.State, "a settled turn is history")
+	require.Equal(t, uint64(500), rec.CompletedAtHeight,
+		"h_last records where the turn closed, not how far the log has since run")
+}
+
+// TestTurnTracker_HashlessHeartbeatDoesNotPinTheWindow keeps H38's presence rule
+// out of the turn window: a height with no hash is not a stamp, so it cannot pin
+// h_req low and make every honest ack late.
+func TestTurnTracker_HashlessHeartbeatDoesNotPinTheWindow(t *testing.T) {
+	hashless := heartbeatTx(1, 400, 4)
+	hashless.GetHeartbeat().ObservedBlockHash = nil
+
+	tr := heightsync.NewTurnTracker(4, 3, heightsync.DefaultHeartbeatConfig())
+	tr.Observe(10, []*types.DevshardTx{heartbeatTx(1, 500, 4)}, 500)
+	tr.Observe(11, []*types.DevshardTx{hashless}, 500)
+	require.Equal(t, uint64(500), tr.Record(1).HReq)
+
+	tr.Observe(14, []*types.DevshardTx{
+		ackTx(1, 10, 0, 501, types.SyncState_SYNCED),
+		ackTx(1, 10, 1, 501, types.SyncState_SYNCED),
+		ackTx(1, 10, 2, 501, types.SyncState_SYNCED),
+	}, 501)
+	require.Equal(t, heightsync.TurnComplete, tr.Record(1).State)
 }
 
 // TestHeightAck_OracleUnavailableCountsTowardQuorum pins the liveness half of
@@ -307,4 +399,78 @@ func TestHeartbeat_ExecutorClaimsDischargeCadence(t *testing.T) {
 	due, _ := hb.Due(t0.Add(cfg.Interval/2), 100)
 	require.False(t, due)
 	require.Equal(t, cfg.Interval/2, hb.SinceTurnover(t0.Add(cfg.Interval/2)))
+}
+
+func TestTurnTracker_PrunesCompletedTurns(t *testing.T) {
+	const slots uint64 = 3
+	tr := heightsync.NewTurnTracker(slots, 2, heightsync.DefaultHeartbeatConfig())
+	const n = 200
+	hash := []byte{0xaa}
+	_ = hash
+	for i := uint64(1); i <= n; i++ {
+		h := 100 + i
+		nonce := i
+		txs := []*types.DevshardTx{
+			heartbeatTx(i, h, slots),
+			ackTx(i, nonce, 0, h, types.SyncState_SYNCED),
+			ackTx(i, nonce, 1, h, types.SyncState_SYNCED),
+		}
+		tr.Observe(nonce, txs, h)
+	}
+	require.LessOrEqual(t, tr.TurnCount(), int(heightsync.DefaultTurnRetain)+1,
+		"completed turns outside the retain window must be evicted")
+	require.Equal(t, int(n), tr.HeartbeatAtCount(), "heartbeatAt is not pruned with the turn record")
+	require.Equal(t, uint64(n), tr.MaxTurnSeq())
+	require.Equal(t, uint64(100+n), tr.LastCompletedHeight(), "h_last survives prune")
+
+	_, ok := tr.HeartbeatTurn(n)
+	require.True(t, ok, "L3 still finds a heartbeat inside the retain window")
+	_, ok = tr.HeartbeatTurn(1)
+	require.True(t, ok, "L3 still finds a heartbeat after its turn record is pruned")
+	require.NotNil(t, tr.Record(n-1), "L7 still sees turn_seq-1")
+	require.Nil(t, tr.Record(1))
+
+	latest := tr.Latest()
+	require.NotNil(t, latest)
+	require.Equal(t, heightsync.TurnComplete, latest.State)
+	require.Empty(t, tr.MissingAcksDue(n, 100+n), "complete turn: probe not due")
+}
+
+func TestTurnTracker_PrunesOpenTurns(t *testing.T) {
+	const n = 5000
+	bound := int(heightsync.DefaultTurnRetain) + 1
+
+	t.Run("unstamped", func(t *testing.T) {
+		tr := heightsync.NewTurnTracker(1, 1, heightsync.DefaultHeartbeatConfig())
+		for i := uint64(1); i <= n; i++ {
+			tx := &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+				TurnSeq:  i,
+				SlotsNum: 1,
+			}}}
+			tr.Observe(i, []*types.DevshardTx{tx}, 0)
+		}
+		require.LessOrEqual(t, tr.TurnCount(), bound)
+		require.Equal(t, n, tr.HeartbeatAtCount())
+		require.Equal(t, uint64(n), tr.MaxTurnSeq())
+		require.Nil(t, tr.Record(1))
+		require.NotNil(t, tr.Latest())
+		require.Equal(t, heightsync.TurnOpen, tr.Latest().State)
+		_, ok := tr.HeartbeatTurn(1)
+		require.True(t, ok)
+	})
+
+	t.Run("flat_stamped", func(t *testing.T) {
+		tr := heightsync.NewTurnTracker(1, 1, heightsync.DefaultHeartbeatConfig())
+		const h uint64 = 100
+		for i := uint64(1); i <= n; i++ {
+			tr.Observe(i, []*types.DevshardTx{heartbeatTx(i, h, 1)}, h)
+		}
+		require.LessOrEqual(t, tr.TurnCount(), bound)
+		require.Equal(t, n, tr.HeartbeatAtCount())
+		require.Nil(t, tr.Record(1))
+		latest := tr.Latest()
+		require.NotNil(t, latest)
+		require.Equal(t, heightsync.TurnOpen, latest.State)
+		require.Equal(t, h, latest.HReq)
+	})
 }

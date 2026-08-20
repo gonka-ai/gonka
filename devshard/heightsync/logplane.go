@@ -26,6 +26,17 @@ var (
 	ErrStrongRequired = errors.New("INVALID(strong_required)")
 )
 
+// MaxObservedBlockHashBytes is Tendermint SHA-256. Empty remains legal
+// (StampPresent is false); only an upper bound is enforced so short test
+// hashes still pass L1.
+const MaxObservedBlockHashBytes = 32
+
+// MaxMainnetBlockHashHexChars is MaxObservedBlockHashBytes as unprefixed hex.
+const MaxMainnetBlockHashHexChars = MaxObservedBlockHashBytes * 2
+
+// MaxOriginSignatureBytes is a recoverable secp256k1 signature (R‖S‖recid).
+const MaxOriginSignatureBytes = 65
+
 // LogPlaneInput is one diff presented to CheckDiffLogPlane.
 type LogPlaneInput struct {
 	Nonce        uint64
@@ -35,8 +46,9 @@ type LogPlaneInput struct {
 	Oracle       blocks.BlockOracle // L6; nil leaves pairs pending
 	RequestLeg   *RequestLegEvidence
 	// Floor lets L4 check the full producer identity max(anchor, F(m)) rather
-	// than the weaker "at least the anchor". CheckDiffLogPlane fills it from
-	// LogPlaneState; transport-edge callers that have no log view leave it nil.
+	// than the weaker "at least the anchor", and lets L6 tell a carried pair
+	// from a first-party one. CheckDiffLogPlane fills it from LogPlaneState;
+	// transport-edge callers that have no log view leave it nil.
 	Floor *FloorIndex
 }
 
@@ -85,42 +97,30 @@ func CheckDiffLogPlane(ctx context.Context, in LogPlaneInput, st LogPlaneState) 
 	hbs, acks := collectLogPlaneTxs(in.Txs)
 
 	if err := checkL1(in.Nonce, hbs, acks, st); err != nil {
-		logLogPlane(in.Nonce, 0, "L1", "INVALID", err.Error())
+		logLogPlane(in.Nonce, 0, "L1", "INVALID", err.Error(), "escrow", st.EscrowID)
 		return out.invalid(err, "bad_framing")
 	}
 	if err := checkL2(acks, st); err != nil {
-		logLogPlane(in.Nonce, 0, "L2", "INVALID", err.Error())
+		logLogPlane(in.Nonce, 0, "L2", "INVALID", err.Error(), "escrow", st.EscrowID)
 		return out.invalid(err, "ack_sig_invalid")
 	}
 	if err := checkL3(in.Nonce, hbs, acks, st); err != nil {
-		logLogPlane(in.Nonce, 0, "L3", "INVALID", err.Error())
+		logLogPlane(in.Nonce, 0, "L3", "INVALID", err.Error(), "escrow", st.EscrowID)
 		return out.invalid(err, "ack_causality")
 	}
 	if err := checkL0(in.Nonce, in.Txs, st); err != nil {
-		logLogPlane(in.Nonce, 0, "L0", "INVALID", err.Error())
 		return out.invalid(err, "height_regression")
 	}
-	if err := checkL0b(in.Txs); err != nil {
-		logLogPlane(in.Nonce, 0, "L0b", "INVALID", err.Error())
+	if err := checkL0b(in.Nonce, in.Txs, st); err != nil {
 		return out.invalid(err, "height_regression")
 	}
 
-	scratch := st.Tracker.Clone()
-	if scratch == nil {
-		scratch = NewTurnTracker(st.SlotsNum, 0, st.Cfg)
-	}
-	hNow := maxStampInTxs(hbs, acks)
-	if hNow == 0 {
-		hNow = scratch.LastCompletedHeight()
-	}
-	scratch.Observe(in.Nonce, in.Txs, hNow)
+	checkL7(hbs, acks, st.Tracker, in.Nonce, &out)
 
-	checkL7(hbs, scratch, in.Nonce, &out)
-
+	if in.Floor == nil {
+		in.Floor = st.Floor
+	}
 	if in.Sec != nil {
-		if in.Floor == nil {
-			in.Floor = st.Floor
-		}
 		checkL4(in, hbs, acks, &out)
 		checkL5a(in, hbs, acks, st.Cfg, &out)
 	}
@@ -190,6 +190,12 @@ func checkL1(nonce uint64, hbs []heartbeatRef, acks []ackRef, st LogPlaneState) 
 		if hb.SlotsNum != st.SlotsNum {
 			return fmt.Errorf("%w: slots_num %d != group %d", ErrBadFraming, hb.SlotsNum, st.SlotsNum)
 		}
+		if len(hb.ObservedBlockHash) > MaxObservedBlockHashBytes {
+			return fmt.Errorf("%w: observed_block_hash len %d", ErrBadFraming, len(hb.ObservedBlockHash))
+		}
+		if len(hb.SyncVector) > int(st.SlotsNum) {
+			return fmt.Errorf("%w: sync_vector len %d for slots_num %d", ErrBadFraming, len(hb.SyncVector), st.SlotsNum)
+		}
 	}
 	for _, ref := range acks {
 		ack := ref.ack
@@ -199,16 +205,30 @@ func checkL1(nonce uint64, hbs []heartbeatRef, acks []ackRef, st LogPlaneState) 
 		if uint64(ack.SlotId) >= st.SlotsNum {
 			return fmt.Errorf("%w: slot %d >= %d", ErrBadFraming, ack.SlotId, st.SlotsNum)
 		}
-		if 8*len(ack.PeerSeen) < int(st.SlotsNum) {
-			return fmt.Errorf("%w: peer_seen len %d for slots_num %d", ErrBadFraming, len(ack.PeerSeen), st.SlotsNum)
+		n := len(ack.PeerSeen)
+		if 8*n < int(st.SlotsNum) || n > peerSeenMaxBytes(st.SlotsNum) {
+			return fmt.Errorf("%w: peer_seen len %d for slots_num %d", ErrBadFraming, n, st.SlotsNum)
+		}
+		if len(ack.ObservedBlockHash) > MaxObservedBlockHashBytes {
+			return fmt.Errorf("%w: observed_block_hash len %d", ErrBadFraming, len(ack.ObservedBlockHash))
 		}
 	}
 	return nil
 }
 
+func peerSeenMaxBytes(slots uint64) int {
+	if slots == 0 {
+		return 0
+	}
+	return int((slots + 7) / 8)
+}
+
 func checkL2(acks []ackRef, st LogPlaneState) error {
 	if st.Verifier == nil {
-		return nil
+		if len(acks) == 0 {
+			return nil
+		}
+		return fmt.Errorf("%w: verifier required", ErrAckSigInvalid)
 	}
 	for _, ref := range acks {
 		key, ok := st.SlotKeys[ref.ack.SlotId]
@@ -252,7 +272,10 @@ func checkL3(diffNonce uint64, hbs []heartbeatRef, acks []ackRef, st LogPlaneSta
 //
 // An honest producer can always satisfy this — it stamps max(own_tip, F(m)) or
 // omits the stamp entirely — so a violation is real misbehaviour and INVALID
-// carries no false positives.
+// carries no false positives. Both branches stay available however the floor
+// moved, because the floor only ever rises to a height the log already holds:
+// how far it may rise on one signer's word is FloorIndex's business, not this
+// check's.
 func checkL0(nonce uint64, txs []*types.DevshardTx, st LogPlaneState) error {
 	if st.Floor == nil {
 		return nil
@@ -271,8 +294,20 @@ func checkL0(nonce uint64, txs []*types.DevshardTx, st LogPlaneState) error {
 			continue
 		}
 		if h < floor {
-			return fmt.Errorf("%w: %s height %d < floor %d as of nonce %d",
+			err := fmt.Errorf("%w: %s height %d < floor %d as of nonce %d",
 				ErrHeightRegression, refLegName(tx), h, floor, m)
+			// Honest producers lift to F(m) or omit, so this firing is a
+			// shipping bug, a stale-floor replica, or authored misbehaviour.
+			// The nonce is not consumed; retries of the same payload will
+			// keep failing until the stamp is lifted or omitted.
+			logLogPlane(nonce, 0, "L0", "INVALID", err.Error(),
+				"escrow", st.EscrowID,
+				LogFieldLeg, refLegName(tx),
+				LogFieldHeight, h,
+				LogFieldFloor, floor,
+				LogFieldProducingNonce, m,
+			)
+			return err
 		}
 	}
 	return nil
@@ -303,7 +338,7 @@ func refLegName(tx *types.DevshardTx) string {
 // carried is not a regression, and those pairs are deliberately not checked.
 //
 // Presence is keyed on hash; unstamped legs are skipped (H38).
-func checkL0b(txs []*types.DevshardTx) error {
+func checkL0b(nonce uint64, txs []*types.DevshardTx, st LogPlaneState) error {
 	type infStamps struct {
 		confirm, finish       uint64
 		hasConfirm, hasFinish bool
@@ -336,7 +371,15 @@ func checkL0b(txs []*types.DevshardTx) error {
 	}
 	for id, s := range byID {
 		if s.hasConfirm && s.hasFinish && s.finish < s.confirm {
-			return fmt.Errorf("%w: inference %d finish %d < confirm %d", ErrHeightRegression, id, s.finish, s.confirm)
+			err := fmt.Errorf("%w: inference %d finish %d < confirm %d", ErrHeightRegression, id, s.finish, s.confirm)
+			logLogPlane(nonce, 0, "L0b", "INVALID", err.Error(),
+				"escrow", st.EscrowID,
+				LogFieldLeg, "finish",
+				LogFieldHeight, s.finish,
+				"confirm_height", s.confirm,
+				"inference_id", id,
+			)
+			return err
 		}
 	}
 	return nil
@@ -357,16 +400,36 @@ func inferenceStamp(msg any) (uint64, bool) {
 	return s.GetObservedHeight(), true
 }
 
-func checkL7(hbs []heartbeatRef, tracker *TurnTracker, nonce uint64, out *LogPlaneResult) {
+func checkL7(hbs []heartbeatRef, acks []ackRef, tracker *TurnTracker, nonce uint64, out *LogPlaneResult) {
+	acksByTurn := make(map[uint64]map[uint32]AckRecord, len(acks))
+	for _, ref := range acks {
+		if ref.ack == nil {
+			continue
+		}
+		m := acksByTurn[ref.ack.TurnSeq]
+		if m == nil {
+			m = make(map[uint32]AckRecord)
+			acksByTurn[ref.ack.TurnSeq] = m
+		}
+		m[ref.ack.SlotId] = AckRecord{
+			Nonce:     nonce,
+			Height:    ref.ack.ObservedHeight,
+			Hash:      append([]byte(nil), ref.ack.ObservedBlockHash...),
+			SyncState: ref.ack.SyncState,
+		}
+	}
 	for _, ref := range hbs {
 		if len(ref.hb.SyncVector) == 0 {
 			continue
 		}
-		var logAcks map[uint32]AckRecord
+		logAcks := map[uint32]AckRecord{}
 		if prev := tracker.Record(ref.hb.TurnSeq - 1); prev != nil {
 			logAcks = prev.Acks
-		} else {
-			logAcks = map[uint32]AckRecord{}
+		}
+		if extra := acksByTurn[ref.hb.TurnSeq-1]; extra != nil {
+			for slot, a := range extra {
+				logAcks[slot] = a
+			}
 		}
 		for _, c := range CheckVectorAgainstLog(ref.hb.SyncVector, logAcks) {
 			out.mark(AttributableMark{
@@ -384,9 +447,13 @@ func checkL7(hbs []heartbeatRef, tracker *TurnTracker, nonce uint64, out *LogPla
 // checkL4 binds the Diff-resident height to the height in the envelope of the
 // same exchange. The two legs are bound differently because they are asymmetric.
 //
-// Request leg / heartbeat: the sequencer is a carrier on both planes, so the
-// section and the heartbeat are the same carried value and must be *equal*. A
-// mismatch is a self-contradiction under one identity.
+// Request leg / heartbeat: the section is the sequencer's own first-party read
+// while the heartbeat is a reference height, so the two are tied by the same
+// producer rule as the response leg — max(anchor, F(m)) — and not by equality.
+// Strict equality named every lagging honest sequencer the author of a carrier
+// dispute, because lifting to a floor above its own tip is what L0 obliges it
+// to do. What survives is the half that is a genuine self-contradiction: a
+// heartbeat *below* the height its own signed envelope reports.
 //
 // Response leg / ack: the section anchor is the host's first-party oracle read
 // while the ack is a reference height, so they differ by design and the producer
@@ -449,18 +516,32 @@ func checkL4(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, out *LogPlaneR
 		}
 		return
 	}
+	// A carry-forward section relays some peer's tip, so the sequencer's own
+	// reading is not on the wire at all and there is nothing first-party left to
+	// bind the heartbeat against. Evading the check this way costs an attacker
+	// nothing it did not already have: the only thing it dodges is understating
+	// against its own envelope, which a self-consistent liar never does.
+	if isCarryForwardAnchor(sec) {
+		return
+	}
 	for _, ref := range hbs {
 		if !StampPresent(ref.hb.ObservedBlockHash) {
 			continue
 		}
-		if ref.hb.ObservedHeight == envH {
+		m, _ := RefProducingNonce(in.Nonce, &types.DevshardTx{
+			Tx: &types.DevshardTx_Heartbeat{Heartbeat: ref.hb},
+		})
+		want, exact := expect(m)
+		if !bad(ref.hb.ObservedHeight, want, exact) {
 			continue
 		}
 		var blob, sig []byte
 		var ts int64
 		escrow := ""
 		if in.RequestLeg != nil {
-			blob = in.RequestLeg.Body
+			// Digest, not the HTTP body: CanonicalRequestLegBytes is already
+			// what the signature covers (H32 / H87).
+			blob = CanonicalRequestLegBytes(in.RequestLeg.EscrowID, in.RequestLeg.Body, in.RequestLeg.Timestamp)
 			sig = in.RequestLeg.Sig
 			ts = in.RequestLeg.Timestamp
 			escrow = in.RequestLeg.EscrowID
@@ -473,7 +554,8 @@ func checkL4(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, out *LogPlaneR
 			Sig:       sig,
 			EscrowID:  escrow,
 			Timestamp: ts,
-			Detail:    fmt.Sprintf("heartbeat height %d != request section %d", ref.hb.ObservedHeight, envH),
+			Detail: fmt.Sprintf("heartbeat height %d != max(request section %d, floor) = %d",
+				ref.hb.ObservedHeight, envH, want),
 		})
 		logLogPlane(in.Nonce, 0, "L4", "MARK", "dispute_carrier")
 	}
@@ -508,6 +590,15 @@ func checkL5a(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, cfg Heartbeat
 	}
 }
 
+// checkL6 reconciles a Diff-resident (height, hash) against the verifier's own
+// follower and attributes what it finds.
+//
+// Attribution is the point, not detection. The producer rule obliges a party
+// behind the floor to carry F(m), so an unreconcilable pair spreads: every
+// honest carrier repeats it. A verifier holds the log, so it can separate the
+// two exactly — a pair identical to F(m) is the floor being echoed — and the
+// mark then names the signer that established that floor. Blame staying with the
+// originator is what makes lifting to the floor safe for the party lifting.
 func checkL6(ctx context.Context, in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, out *LogPlaneResult) {
 	if in.Oracle == nil {
 		return
@@ -515,7 +606,7 @@ func checkL6(ctx context.Context, in LogPlaneInput, hbs []heartbeatRef, acks []a
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	check := func(h uint64, hash []byte, slot uint32, turn uint64) {
+	check := func(h uint64, hash []byte, slot uint32, turn, producedAt uint64) {
 		if !StampPresent(hash) || h == 0 {
 			return
 		}
@@ -534,31 +625,37 @@ func checkL6(ctx context.Context, in LogPlaneInput, hbs []heartbeatRef, acks []a
 			Blob:    append([]byte(nil), hash...),
 			Detail:  fmt.Sprintf("hash at height %d != oracle %s", h, hex.EncodeToString(hdr.BlockHash)),
 		}
+		if origin, ok := carriedFrom(in.Floor, producedAt, h, hash); ok {
+			m.Origin = FloorAuthorLabel(origin.Author)
+			m.OriginNonce = origin.Nonce
+			m.Detail += fmt.Sprintf("; carried from F(%d), set by %s at nonce %d",
+				producedAt, m.Origin, origin.Nonce)
+		}
 		out.DeferredFails = append(out.DeferredFails, m)
 		out.mark(m)
 		logLogPlane(in.Nonce, slot, "L6", "DEFERRED_FAIL", m.Detail)
 	}
 	for _, ref := range hbs {
-		check(ref.hb.ObservedHeight, ref.hb.ObservedBlockHash, 0, ref.hb.TurnSeq)
+		check(ref.hb.ObservedHeight, ref.hb.ObservedBlockHash, 0, ref.hb.TurnSeq, in.Nonce)
 	}
 	for _, ref := range acks {
-		check(ref.ack.ObservedHeight, ref.ack.ObservedBlockHash, ref.ack.SlotId, ref.ack.TurnSeq)
+		check(ref.ack.ObservedHeight, ref.ack.ObservedBlockHash, ref.ack.SlotId, ref.ack.TurnSeq,
+			ref.ack.RefNonce+1)
 	}
 }
 
-func maxStampInTxs(hbs []heartbeatRef, acks []ackRef) uint64 {
-	var h uint64
-	for _, ref := range hbs {
-		if StampPresent(ref.hb.ObservedBlockHash) && ref.hb.ObservedHeight > h {
-			h = ref.hb.ObservedHeight
-		}
+// carriedFrom reports the floor a stamp reproduces exactly, if any. Equality on
+// both height and hash is the test: the producer rule offers a carrier no other
+// value, and a party inventing a pair cannot land on one already in the log.
+func carriedFrom(floor *FloorIndex, producedAt, h uint64, hash []byte) (FloorPoint, bool) {
+	if floor == nil {
+		return FloorPoint{}, false
 	}
-	for _, ref := range acks {
-		if StampPresent(ref.ack.ObservedBlockHash) && ref.ack.ObservedHeight > h {
-			h = ref.ack.ObservedHeight
-		}
+	p, known := floor.PointAsOf(producedAt)
+	if !known || p.Height != h || !bytes.Equal(p.Hash, hash) {
+		return FloorPoint{}, false
 	}
-	return h
+	return p, true
 }
 
 func absU64(a, b uint64) uint64 {
@@ -568,7 +665,7 @@ func absU64(a, b uint64) uint64 {
 	return b - a
 }
 
-func logLogPlane(nonce uint64, slot uint32, check, verdict, reason string) {
+func logLogPlane(nonce uint64, slot uint32, check, verdict, reason string, extra ...any) {
 	kvs := []any{
 		LogFieldSubsystem, "heightsync",
 		LogFieldNonce, nonce,
@@ -581,5 +678,14 @@ func logLogPlane(nonce uint64, slot uint32, check, verdict, reason string) {
 	if reason != "" {
 		kvs = append(kvs, LogFieldReason, reason)
 	}
-	logging.Debug("heightsync: logplane", kvs...)
+	kvs = append(kvs, extra...)
+	switch verdict {
+	case "INVALID":
+		// L0–L3 reject the whole diff and do not consume the nonce. A
+		// producer that keeps sending the same payload will loop on this
+		// line until it lifts to F(m) or omits.
+		logging.Error("heightsync: logplane", kvs...)
+	default:
+		logging.Debug("heightsync: logplane", kvs...)
+	}
 }

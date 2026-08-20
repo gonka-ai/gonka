@@ -15,6 +15,7 @@ import (
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"
+	"devshard/signing"
 	"devshard/types"
 )
 
@@ -70,6 +71,17 @@ func (s *Server) SetHeightSyncResponseAfterSignHook(fn func(sec *heightsync.Heig
 		return
 	}
 	s.heightSyncResponseAfterSignHook = fn
+}
+
+// SetHeightSyncSeedRPCEnabled toggles POST /sessions/:id/height-sync (tests only).
+// Held-response courier scenarios disable it so the cache warms from inference
+// responses rather than the E9 seed round, which would MarkPropagated the seed
+// tip to every slot during the initial sync turn.
+func (s *Server) SetHeightSyncSeedRPCEnabled(enabled bool) {
+	if s == nil {
+		return
+	}
+	s.heightSyncSeedRPC = enabled
 }
 
 func (s *Server) attachHeightSyncConfirmation() {
@@ -260,11 +272,12 @@ func (s *Server) recordInboundAnchorIfAnchor(peerID string, hs *heightsync.Heigh
 		Direction:          "request",
 		MainnetHeight:      hs.MainnetHeight,
 		MainnetBlockHash:   raw,
-		ObservedAtUnixMs:   time.Now().UnixMilli(),
-		SourceMessage:      source,
-		Trust:              v.Trust,
-		Tag:                v.Tag,
-		OriginatorSenderID: strings.TrimSpace(hs.OriginatorSenderID),
+		ObservedAtUnixMs:      time.Now().UnixMilli(),
+		SourceMessage:         source,
+		Trust:                 v.Trust,
+		Tag:                   v.Tag,
+		OriginatorSenderID:    strings.TrimSpace(hs.OriginatorSenderID),
+		OriginatorTimestampMs: hs.OriginatorTimestampMs,
 	})
 	heightsync.IncInboundAnchor("request", string(v.Trust), s.host.EscrowID())
 	if v.Result == heightsync.ResultValidLazyAnchor {
@@ -285,10 +298,11 @@ func (s *Server) recordInboundDispute(peerID string, hs *heightsync.HeightSyncSe
 		Direction:          "request",
 		MainnetHeight:      hs.MainnetHeight,
 		MainnetBlockHash:   raw,
-		ObservedAtUnixMs:   time.Now().UnixMilli(),
-		SourceMessage:      source,
-		Trust:              v.Trust,
-		OriginatorSenderID: strings.TrimSpace(hs.OriginatorSenderID),
+		ObservedAtUnixMs:      time.Now().UnixMilli(),
+		SourceMessage:         source,
+		Trust:                 v.Trust,
+		OriginatorSenderID:    strings.TrimSpace(hs.OriginatorSenderID),
+		OriginatorTimestampMs: hs.OriginatorTimestampMs,
 	})
 }
 
@@ -391,10 +405,11 @@ func (s *Server) recordOutboundAnchorIfAnchor(hs *heightsync.HeightSyncSection, 
 		Direction:          "response",
 		MainnetHeight:      hs.MainnetHeight,
 		MainnetBlockHash:   raw,
-		ObservedAtUnixMs:   time.Now().UnixMilli(),
-		SourceMessage:      source,
-		Trust:              heightsync.TrustOracle,
-		OriginatorSenderID: strings.TrimSpace(hs.OriginatorSenderID),
+		ObservedAtUnixMs:      time.Now().UnixMilli(),
+		SourceMessage:         source,
+		Trust:                 heightsync.TrustOracle,
+		OriginatorSenderID:    strings.TrimSpace(hs.OriginatorSenderID),
+		OriginatorTimestampMs: hs.OriginatorTimestampMs,
 	})
 	dir := hs.Direction
 	if dir == "" {
@@ -442,28 +457,45 @@ func (s *Server) HandleHeightSync(c echo.Context) error {
 	}
 	if sec != nil {
 		sec.Direction = "response"
-		s.attachResponseOriginSignature(sec, h.Nonce)
+		if !s.attachResponseOriginSignature(sec, h.Nonce) {
+			s.logOutboundHeightSync(nil, h.Nonce)
+			return writeJSON(c, http.StatusOK, heightSyncSeedResponse{})
+		}
 		s.logOutboundHeightSync(sec, h.Nonce)
 		s.recordOutboundAnchorIfAnchor(sec, c.Request().Method+" "+c.Path())
 	}
 	return writeJSON(c, http.StatusOK, heightSyncSeedResponse{HeightSync: sec})
 }
 
-func (s *Server) attachResponseOriginSignature(sec *heightsync.HeightSyncSection, nonce uint64) {
-	if s == nil || sec == nil || s.heightSync == nil {
+// SetHeightSyncOriginSigner overrides the signer used for outbound response
+// origin signatures (negative tests only).
+func (s *Server) SetHeightSyncOriginSigner(signer signing.Signer) {
+	if s == nil {
 		return
 	}
-	_, sig, err := heightsync.SignOrigin(s.host.Signer(), sec)
+	s.heightSyncOriginSigner = signer
+}
+
+func (s *Server) attachResponseOriginSignature(sec *heightsync.HeightSyncSection, nonce uint64) bool {
+	if s == nil || sec == nil || s.heightSync == nil {
+		return false
+	}
+	signer := s.host.Signer()
+	if s.heightSyncOriginSigner != nil {
+		signer = s.heightSyncOriginSigner
+	}
+	_, sig, err := heightsync.SignOrigin(signer, sec)
 	if err != nil {
 		logging.Debug("heightsync: sign response origin failed",
 			heightsync.LogFieldSubsystem, "heightsync",
 			"error", err.Error())
-		return
+		return false
 	}
 	sec.SenderSignature = sig
 	if s.heightSyncResponseAfterSignHook != nil {
 		s.heightSyncResponseAfterSignHook(sec, nonce)
 	}
+	return true
 }
 
 func (s *Server) recordEnvelopeBindingRequest(c echo.Context, req host.HostRequest, sec *heightsync.HeightSyncSection, oracleHdr *blocks.Header) {

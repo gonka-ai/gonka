@@ -136,14 +136,14 @@ func TestHTTPClient_Send_CourierLazyAnchorMarksPropagated(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	peerTips := NewHeightSyncPeerTips()
-	peerTips.RequireVerifiedBlob = false
-	peerTips.RecordOrigin(&heightsync.HeightSyncSection{
+	blob, sig := []byte("blob"), []byte{1}
+	peerTips.RecordOriginWithBlob(&heightsync.HeightSyncSection{
 		ProofType:             heightsync.AnchorProofType,
 		MainnetHeight:         51,
 		MainnetBlockHashHex:   "aabb",
 		OriginatorSenderID:    "gonka1origin",
 		OriginatorTimestampMs: time.Now().UnixMilli(),
-	})
+	}, blob, sig)
 	src := heightsync.NewPeerTipOracleSource(peerTips, peerTips.Freshness)
 	clientSched := heightsync.MustNewAnchorScheduler(8, 4, src)
 
@@ -234,13 +234,13 @@ func TestObservedHeightNow_CacheEmpty(t *testing.T) {
 func TestObservedHeightNow_FreshTip(t *testing.T) {
 	peerTips := NewHeightSyncPeerTips()
 	now := time.Now().UnixMilli()
-	peerTips.RecordOrigin(&heightsync.HeightSyncSection{
+	peerTips.RecordOriginWithBlob(&heightsync.HeightSyncSection{
 		ProofType:             heightsync.AnchorProofType,
 		MainnetHeight:         99,
 		MainnetBlockHashHex:   "aabb",
 		OriginatorSenderID:    "gonka1host",
 		OriginatorTimestampMs: now,
-	})
+	}, []byte("blob"), []byte{1})
 	src := heightsync.NewPeerTipOracleSource(peerTips, peerTips.Freshness)
 	sched := heightsync.MustNewAnchorScheduler(8, 4, src)
 	cfg := DefaultClientConfig()
@@ -363,9 +363,33 @@ func TestClient_ResponseAnchor_DropsOnInvalidSig(t *testing.T) {
 	require.Equal(t, before+1, heightsync.OriginSigInvalidTotal())
 }
 
+func TestClient_ResponseAnchor_ZeroTimestampNotCached(t *testing.T) {
+	hostSigner := testutil.MustGenerateKey(t)
+	userSigner := testutil.MustGenerateKey(t)
+	sec := &heightsync.HeightSyncSection{
+		ProofType:           heightsync.AnchorProofType,
+		MainnetHeight:       90,
+		MainnetBlockHashHex: "beef",
+		Direction:           "response",
+		OriginatorSenderID:  hostSigner.Address(),
+	}
+	_, sig, err := heightsync.SignOrigin(hostSigner, sec)
+	require.NoError(t, err)
+	sec.SenderSignature = sig
+
+	peerTips := NewHeightSyncPeerTips()
+	cfg := DefaultClientConfig()
+	cfg.HeightSyncPeerTips = peerTips
+	client := NewHTTPClient("http://host", "escrow-1", userSigner, cfg)
+
+	client.ingestResponseHeightSync(sec, 1, "test")
+	_, _, ok := peerTips.OriginSignedBlobFor(hostSigner.Address(), 90)
+	require.False(t, ok)
+	require.Nil(t, peerTips.MaxFresh(time.Now(), time.Minute))
+}
+
 func TestClient_RequestLeg_OmitsSenderSignature(t *testing.T) {
 	peerTips := NewHeightSyncPeerTips()
-	peerTips.RequireVerifiedBlob = true
 	now := time.Now().UnixMilli()
 	peerTips.RecordOriginWithBlob(&heightsync.HeightSyncSection{
 		ProofType:             heightsync.AnchorProofType,

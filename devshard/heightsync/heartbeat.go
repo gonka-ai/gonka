@@ -163,7 +163,7 @@ func (h *Heartbeat) Deadline(now time.Time) time.Time {
 	if from.IsZero() {
 		from = now
 	}
-	return from.Add(h.cfg.Interval + h.cfg.TurnTimeout)
+	return from.Add(h.cfg.TurnoverBudget())
 }
 
 // OpenTurn records a dispatched heartbeat span. A previous turn that never

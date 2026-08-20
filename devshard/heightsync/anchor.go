@@ -176,9 +176,14 @@ func MustNewAnchorSchedulerFromOracle(k, slots uint64, oracle blocks.BlockOracle
 // forceOracle is set).
 func (s *AnchorScheduler) Decide(ctx context.Context, h DecideHints) (*HeightSyncSection, error, bool) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	k, slots := s.k, s.slotsNum
+	src := s.source
+	nowFn := s.now
+	s.mu.Unlock()
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+
 	if h.Escrow != nil {
 		if h.Escrow.TurnK != 0 {
 			k = h.Escrow.TurnK
@@ -188,10 +193,10 @@ func (s *AnchorScheduler) Decide(ctx context.Context, h DecideHints) (*HeightSyn
 		}
 	}
 	syncTurn := NonceInSyncTurn(h.Nonce, k, slots, h.Escrow)
-	cadenceEmit := s.shouldEmit(h)
+	cadenceEmit := shouldEmitAnchor(k, slots, h)
 	lazyEmit := false
 	if !cadenceEmit {
-		lazyEmit = s.shouldLazyEmit(ctx, h)
+		lazyEmit = shouldLazyEmit(ctx, src, h)
 	}
 	if !cadenceEmit && !lazyEmit {
 		logDecide(h, k, slots, cadenceEmit, lazyEmit, false, syncTurn, false, DecideEventOmitNotDue, OracleDecideSnapshot{}, nil)
@@ -199,10 +204,10 @@ func (s *AnchorScheduler) Decide(ctx context.Context, h DecideHints) (*HeightSyn
 	}
 
 	forceOracle := h.ForceAnchor || inEscrowForcedWindow(h)
-	now := s.now()
-	snap := snapshotOracleForDecide(s.source, now)
+	now := nowFn()
+	snap := snapshotOracleForDecide(src, now)
 
-	if s.source == nil {
+	if src == nil {
 		if forceOracle {
 			logDecide(h, k, slots, cadenceEmit, lazyEmit, forceOracle, syncTurn, true, DecideEventOmitNoSource, snap, ErrNoOracle)
 			return nil, ErrNoOracle, true
@@ -211,8 +216,8 @@ func (s *AnchorScheduler) Decide(ctx context.Context, h DecideHints) (*HeightSyn
 		return nil, nil, false
 	}
 
-	if s.source.Stale() {
-		if sec, dErr, ok := s.tryStaleCachedTip(ctx, h, now, snap); ok {
+	if src.Stale() {
+		if sec, dErr, ok := tryStaleCachedTip(ctx, src, h, now, snap); ok {
 			logDecide(h, k, slots, cadenceEmit, lazyEmit, forceOracle, syncTurn, false, DecideEventAnchorStale, snap, dErr)
 			return sec, dErr, false
 		}
@@ -224,7 +229,7 @@ func (s *AnchorScheduler) Decide(ctx context.Context, h DecideHints) (*HeightSyn
 		return nil, nil, true
 	}
 
-	sec, err := s.source.LatestSection(ctx)
+	sec, err := src.LatestSection(ctx)
 	if err != nil {
 		if forceOracle {
 			wrapped := fmt.Errorf("latest section: %w", err)
@@ -262,7 +267,9 @@ func inEscrowForcedWindow(h DecideHints) bool {
 }
 
 func (s *AnchorScheduler) shouldEmit(h DecideHints) bool {
+	s.mu.Lock()
 	k, slots := s.k, s.slotsNum
+	s.mu.Unlock()
 	if h.Escrow != nil {
 		if h.Escrow.TurnK != 0 {
 			k = h.Escrow.TurnK
@@ -271,19 +278,19 @@ func (s *AnchorScheduler) shouldEmit(h DecideHints) bool {
 			slots = h.Escrow.TurnSlots
 		}
 	}
+	return shouldEmitAnchor(k, slots, h)
+}
 
+func shouldEmitAnchor(k, slots uint64, h DecideHints) bool {
 	if inEscrowForcedWindow(h) || h.ForceAnchor || h.SessionStart {
 		return true
 	}
 	if h.Nonce == 0 {
 		return false
 	}
-	// Initial sync turn: nonces 1..slotsNum (scheduler slots).
 	if h.Nonce <= slots {
 		return true
 	}
-	// Periodic sync turn: every K nonces a new window of slotsNum
-	// consecutive nonces opens at A=K, 2K, 3K, ...
 	if h.Nonce >= k && h.Nonce%k < slots {
 		if h.Escrow != nil && h.Escrow.CadenceSwallowUntil != 0 {
 			if h.Nonce > h.Escrow.SwallowFe && h.Nonce <= h.Escrow.CadenceSwallowUntil {
@@ -297,14 +304,14 @@ func (s *AnchorScheduler) shouldEmit(h DecideHints) bool {
 
 // shouldLazyEmit is true in Omit windows when the courier has a fresh tip that
 // has not yet been sent to Recipient (see HEIGHT_SYNC_PROTOCOL_PROPOSAL lazy carry).
-func (s *AnchorScheduler) shouldLazyEmit(ctx context.Context, h DecideHints) bool {
+func shouldLazyEmit(ctx context.Context, src OracleSource, h DecideHints) bool {
 	if h.Recipient == "" || h.Propagator == nil {
 		return false
 	}
-	if s.source == nil || s.source.Stale() {
+	if src == nil || src.Stale() {
 		return false
 	}
-	sec, err := s.source.LatestSection(ctx)
+	sec, err := src.LatestSection(ctx)
 	if err != nil || sec == nil || sec.MainnetHeight <= 0 {
 		return false
 	}
@@ -314,11 +321,11 @@ func (s *AnchorScheduler) shouldLazyEmit(ctx context.Context, h DecideHints) boo
 // tryStaleCachedTip emits the last cached mainnet tip when the oracle is quiet (no new
 // block within StaleAfter) but a prior header is still available. TipStaleAfterMs marks
 // how long since the last block; origin signature covers height/hash only (see §origin_signing).
-func (s *AnchorScheduler) tryStaleCachedTip(ctx context.Context, h DecideHints, now time.Time, snap OracleDecideSnapshot) (*HeightSyncSection, error, bool) {
-	if s == nil || s.source == nil || snap.NeverReceived {
+func tryStaleCachedTip(ctx context.Context, src OracleSource, h DecideHints, now time.Time, snap OracleDecideSnapshot) (*HeightSyncSection, error, bool) {
+	if src == nil || snap.NeverReceived {
 		return nil, nil, false
 	}
-	sec, err := s.source.LatestSection(ctx)
+	sec, err := src.LatestSection(ctx)
 	if err != nil || !IsAnchorSection(sec) {
 		return nil, err, false
 	}

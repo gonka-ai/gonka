@@ -180,3 +180,24 @@ func startsWithJSONObject(b []byte) bool {
 	}
 	return false
 }
+
+func TestUnwrapInferenceRequestBody_OversizedOriginSigDropped(t *testing.T) {
+	inner, err := jsonfast.Marshal(transport.InferenceRequest{Nonce: 1})
+	require.NoError(t, err)
+	env := &types.InferenceRequestEnvelope{
+		SchemaVersion:        int32(transport.CurrentInferenceEnvelopeSchemaVersion),
+		InferenceRequestJson: inner,
+		HeightSync: &types.InferenceHeightSyncSection{
+			ProofType:           types.InferenceHeightSyncProofType_INFERENCE_HEIGHT_SYNC_PROOF_TYPE_HEIGHT_ANCHOR_V1,
+			MainnetHeight:       11,
+			MainnetBlockHashHex: "aa",
+			SenderSignature:     make([]byte, heightsync.MaxOriginSignatureBytes+1),
+		},
+	}
+	raw, err := proto.Marshal(env)
+	require.NoError(t, err)
+	got, err := transport.UnwrapInferenceRequestBody(raw)
+	require.NoError(t, err)
+	require.NotNil(t, got.HeightSync)
+	require.Empty(t, got.HeightSync.SenderSignature, "oversized field-8 is dropped at unwrap")
+}

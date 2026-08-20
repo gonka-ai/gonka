@@ -118,7 +118,6 @@ func TestHeightSyncAnchor_E2E_CarrierExculpation(t *testing.T) {
 
 	// Cache loss ⇒ DISPUTE_CARRIER (carrier cannot produce blob).
 	emptyTips := transport.NewHeightSyncPeerTips()
-	emptyTips.RequireVerifiedBlob = true
 	_, _, lost := emptyTips.OriginSignedBlobFor(hostA, h)
 	require.False(t, lost)
 }

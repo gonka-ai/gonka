@@ -165,7 +165,7 @@ Every normative surface in the spec, the artefact that satisfies it, and the pha
 | §11.2 | `sync_state` decision table, `peer_seen` bitmap incl. probe-learned heights | `heightsync/syncstate.go`, `heightsync/peerseen.go` | **E** |
 | §11.2 `CATCHING_UP` ⇒ next heartbeat Strong | Escalation of the *next* turn to Strong | recorded in E, **enforced in F** | E/F |
 | §11.3 | `POST /sessions/:id/heightsync/repair`, both legs signed (domain `heightsync.repair.v1`), outcomes `HEIGHT` / `UNREACHABLE`, **no attribution** | `heightsync/repair.go`, `transport/server.go`, `server/routes.go` | **E** |
-| §11.4 | One probe per `(turn, slot)`, `R_max` per `Interval`, stagger `δ_probe`, backoff, zero probes on healthy path, armed hosts stop | `heightsync/repair.go` budget state | **E** |
+| §11.4 | One probe per `(turn, slot)` per prober, one HEIGHT per `(turn, requester)` per responder, `R_max` per `Interval` both sides, stagger `δ_probe`, backoff, zero probes on healthy path, armed hosts stop, unknown-turn reject | `heightsync/repair_budget.go` | **E** |
 | §12.1–12.3 | `last_signal_height`, arming at `T_idle`, level-triggered disarm, emits nothing | `heightsync/closeready.go` | **E** |
 | §12.4 | `CloseReadyView`, `UserTimeoutEvidence` (degraded turns as context) | `heightsync/closeready.go` | **E** (producer); consumer is finalization, out of scope |
 | §13 host producer rules | Anchor on every response in a turn, degraded Anchor, ack REQUIRED even when oracle unusable | `heightsync/anchor.go` (A) + `host` ack producer (E) | A + E |
@@ -554,7 +554,7 @@ Binding rules from §10.4, each with a home:
 | Rule | Enforced in | Evaluable by | Result |
 | ---- | ----------- | ------------ | ------ |
 | Ack height/hash equal `max(anchor, F(m))` for the response-leg section of the same response | L4, transport edge | only the user receiving that response | `DISPUTE_ORIGINATOR` on sight, persisted as a mark |
-| Heartbeat height equals the request-leg section when present | L4, transport edge | only the host receiving that request | `DISPUTE_CARRIER`, persisted as a mark |
+| Heartbeat height equals `max(request-leg section, F(m))` when a first-party section is present | L4, transport edge | only the host receiving that request | `DISPUTE_CARRIER`, persisted as a mark |
 | Every Diff-resident height is `≥ F(m)`, the floor at its producing nonce | L0, `ValidateDiff` | every verifier | `INVALID(height_regression)` |
 | `ref_nonce` names a `MsgHeartbeat` in `Diff` with the same `turn_seq` | L3, `ValidateDiff` | every verifier | `INVALID(ack_causality)` |
 | `slots_num` = group size and `8·len(peer_seen) ≥ slots_num` | L1, `ValidateDiff` | every verifier | `INVALID(bad_framing)` |
@@ -567,9 +567,9 @@ New files in `devshard/heightsync`:
 
 | File | Contents |
 | ---- | -------- |
-| `params.go` | `HeartbeatConfig{Interval, TurnTimeout, IdleTimeout, AckDeadlineBlocks, DeltaBlocks}`, `RepairConfig{Stagger, MaxProbesPerWindow}`, defaults + constraint validation (§8.4) |
+| `params.go` | `HeartbeatConfig{Interval, TurnTimeout, IdleTimeout, BlockTime, AckDeadlineBlocks, DeltaBlocks, WindowBlocks}`, `TurnoverBudget`, `AckWindow`, `FloorOutOfReach`, `RepairConfig{Stagger, MaxProbesPerWindow}`, defaults + constraint validation (§8.4) |
 | `heartbeat.go` | Obligation calculator: `func (h *Heartbeat) Due(hNow, hLast uint64) (bool, Reason)`; turn opener helper returning the `[]*types.DevshardTx` for a span |
-| `turn.go` | `SyncTurnRecord`, `TurnTracker` (`Observe(diff)`, `Record`, `Latest`, `MissingAcks`, `LastCompletedHeight`) |
+| `turn.go` | `SyncTurnRecord`, `TurnTracker` (`Observe(diff)`, `Record`, `Latest`, `MissingAcks`, `LastCompletedHeight`; turns bounded by `DefaultTurnRetain` including still-open ones; `heartbeatAt` retained for L3) |
 | `syncvector.go` | Vector composition (user side) + `CheckVectorAgainstLog` (verifier side, L7) |
 | `syncstate.go` | `func EvaluateSyncState(oracle Source, hRef uint64, cfg) types.SyncState` — the §11.2 table as one pure function |
 | `peerseen.go` | `PeerSeen` bitmap: `MarkFresh(slot, h, at)`, `Bytes()`, expiry by `F`, probe-learned tips included |
@@ -602,27 +602,41 @@ Touched existing files:
 
 Knobs split by unit according to what they are for. **Scheduling is milliseconds**, because it needs a `now` and mainnet height is the *result* of a height-sync turnover — a quiet user cannot notice a block passed until it syncs, and a silent host sees a frozen tip, so a block-denominated schedule cannot fire the sync it depends on. **Evaluation stays in blocks**, because it compares two claims already in `Diff` and must be replayable without any clock. No scheduling value is ever folded into `Diff` or a `SyncTurnRecord` (rule 4 of §8.11).
 
+One knob straddles the split, and `BlockTime` is why it can: `D_ack` answers a scheduling question — *did this answer arrive while the request still stood?* — with the log's only clock, which is height. Same budget, different units, so `D_ack` is derived from the schedule rather than shipped as a constant.
+
 ```go
 // heightsync/params.go
 type HeartbeatConfig struct {
     // Scheduling — local wall clock, never in Diff.
     Interval    time.Duration // default 3s; max gap between full turnovers
-    TurnTimeout time.Duration // default = Interval; patience on one open turn
+    TurnTimeout time.Duration // default 2*Interval = 6s; patience on one open turn
     IdleTimeout time.Duration // T_idle, default 4*Interval = 12s
+    BlockTime   time.Duration // default 1s; the rate that converts the two units
 
     // Evaluation — logged heights, deterministic under replay.
-    AckDeadlineBlocks uint64 // D_ack, default 1 (stamp slack; block may tick in flight)
+    AckDeadlineBlocks uint64 // D_ack, derived: ceil((Interval+TurnTimeout)/BlockTime)+1 = 10
     DeltaBlocks       uint64 // D, default 2
+    WindowBlocks      uint64 // W_conf, default 256 (plausible neighbourhood of a height)
 }
 
 func (c HeartbeatConfig) Validate(freshness time.Duration) error
-// T_idle > Interval + TurnTimeout      (one lost turnover never arms a host)
-// 2 * Interval <= freshness            (two turnovers fit inside F)
+// D_ack * BlockTime >= Interval + TurnTimeout  (the log outlasts the producer)
+// T_idle > Interval + TurnTimeout              (one lost turnover never arms a host)
+// 2 * Interval <= freshness                    (two turnovers fit inside F)
 ```
 
-`TurnTimeout` and `IdleTimeout` default off `Interval`, so overriding the interval alone cannot produce a config `Validate` rejects.
+`TurnTimeout`, `IdleTimeout` and `AckDeadlineBlocks` all default off `Interval`, so overriding the interval alone cannot produce a config `Validate` rejects — including on the block-denominated side, which a bare constant could not manage. `TurnTimeout` is `2 · Interval` rather than `Interval` because equality left a turn no patience at all: the span is dispatched slot by slot and only then waits for acks, so a turn was abandoned exactly as the next became due, and a session whose round trips ran past one interval reopened forever without ever recording a turnover.
 
-`Validate` is currently asserted only by a unit test over the shipped defaults and a synthetic overlay (H25). Nothing calls it on the live snapshot path: `HeartbeatConfigFromSnapshot` runs inside `runtimeparams.SessionParams()`, which returns no error because the snapshot arrives from a long poll rather than at startup. That gap is now more consequential than it was under block units — an operator who sets `height_sync_idle_timeout_ms` below `Interval + TurnTimeout` makes hosts arm while the user is still legitimately mid-turn. Open follow-up: reject or clamp an invalid overlay in `HeartbeatConfigFromSnapshot` and surface it as a metric, rather than shipping a config that arms spuriously.
+`D_ack` covers the producer's whole turnover budget (`Interval + TurnTimeout`) because that is what a turn's acks actually span: the heartbeats are composed together at one height, but each ack is stamped when its host is reached, so their heights climb across the span. The shipped constant of one block was shorter than that at every block time we ship, which flagged honest acks `late`, degraded turns in steady state, and fired repair probes against nobody's fault. Deriving the window from `slots_num` instead was refused for the reason step 1 refused it for `D`: a tolerance must not be coupled to a topology number.
+
+`Validate` is called on every overlay inside `HeartbeatConfigFromSnapshot`. An
+invalid combination is clamped to compiled defaults and counted
+(`OverlayClampCount`, `devshard_heightsync_overlay_clamped_total`) rather than
+shipped. Evaluation knobs (`AckDeadlineBlocks`, `DeltaBlocks`, `WindowBlocks`,
+`BlockTime`) stay compiled so two hosts on different long-poll snapshots cannot
+compute different `Late` flags for the same log; only scheduling knobs overlay.
+`devshardd` and the gateway wire `SessionParams().Heartbeat` / `.Repair` at
+session construction (step 5 of the review findings).
 
 ### 8.5 User side — obligation, dispatch, vector
 
@@ -695,14 +709,14 @@ Most checks run at **diff-ingest**: `state.StateMachine.ValidateDiff` calls `hei
 
 | # | Check | Home | Failure |
 | - | ----- | ---- | ------- |
-| L0 | **Reference-height monotonicity**: a height produced while handling nonce `m` is `≥ F(m)` = the highest reference height in the log below `m`. Scope is **every** Diff-resident height — inference legs, heartbeat and ack alike; `m` comes from `inference_id`, `ref_nonce + 1`, or the landing nonce (§8.7.1) | `logplane.go`, `floor.go` | `INVALID(height_regression)`, attributed to the stamp's signer |
+| L0 | **Reference-height monotonicity**: a height produced while handling nonce `m` is `≥ F(m)` = the reference height the log had established below `m`. Scope is **every** Diff-resident height — inference legs, heartbeat and ack alike; `m` comes from `inference_id`, `ref_nonce + 1`, or the landing nonce (§8.7.1). How far `F` may move on one signer's word is bounded: `W_conf` unaided, further only with `Q` distinct signers holding the height (§8.7.1) | `logplane.go`, `floor.go` | `INVALID(height_regression)`, attributed to the stamp's signer; an uncorroborated out-of-band claim is `FLOOR_OUT_OF_BAND` **mark** only |
 | L0b | **Same-executor causal order**: `confirm ≤ finish` on `observed_height` for one `inference_id`. `start` is user-signed, so pairs involving it are cross-signer and are not compared (§8.7.1) | `logplane.go` | `INVALID(height_regression)`, attributed to the executor |
 | L1 | Framing: `slots_num` = group size, `8·len(peer_seen) ≥ slots_num`, `turn_seq` monotonic per escrow | `logplane.go` | `INVALID(bad_framing)` |
 | L2 | `host_sig` verifies over `HeightAckContent` for `slot_id`'s registered key | `ack_signing.go` | `INVALID(ack_sig_invalid)` — blocks a user fabricating acks |
 | L3 | Causality: `ref_nonce` names a `MsgHeartbeat` in `Diff` with the same `turn_seq` | `turn.go` | `INVALID(ack_causality)`, attributed to the appending user |
-| L4 | Envelope binding (§10.4 rules 1–2). Request leg: heartbeat height **equals** the section, since the sequencer carries both. Response leg: ack height equals `max(anchor, F(ref_nonce + 1))`, since the anchor is first-party and the ack is a reference height (§8.7.1) | **`inbound.go` transport edge**, not `ValidateDiff` | `DISPUTE_ORIGINATOR` / `DISPUTE_CARRIER` **on sight**, no oracle lookup; persisted as a mark because it cannot be recomputed later |
+| L4 | Envelope binding (§10.4 rules 1–2). Both legs use the producer rule, because in both the section is a first-party oracle read and the Diff height is a reference height: ack equals `max(anchor, F(ref_nonce + 1))`, heartbeat equals `max(section, F(m))` (§8.7.1). Skipped when the request section is a carry-forward; degrades to `>= section` where the caller holds no floor | **`inbound.go` transport edge**, not `ValidateDiff` | `DISPUTE_ORIGINATOR` / `DISPUTE_CARRIER` **on sight**, no oracle lookup; persisted as a mark because it cannot be recomputed later |
 | L5a | Live `D` band: `\|observed_height − local_aligned\| > D` at admission. This is the **Strong hook** — the claimant proves the height it claimed with a `LightBlock` | `inbound.go` | refuse the exchange + **mark**; never a permanent diff verdict |
-| L6 | Oracle reconciliation of `(observed_height, observed_block_hash)`, identical to §14 step 7 including the deferred queue | reuse `inbound.go` reconciliation | `DEFERRED_FAIL` / `DISPUTE_ORIGINATOR` |
+| L6 | Oracle reconciliation of `(observed_height, observed_block_hash)`, identical to §14 step 7 including the deferred queue. A pair identical to `F(m)` is a carry, so the mark's `Origin` names the signer that established the floor | reuse `inbound.go` reconciliation | `DEFERRED_FAIL` / `DISPUTE_ORIGINATOR` |
 | L7 | Turn bookkeeping + `sync_vector` vs log | `turn.go`, `syncvector.go` | `ACKED` contradicted by the log ⇒ user-attributable **mark**, no `INVALID` (the diff is already signed). `MISSING` / `UNREACHABLE` / `REJECTED` with no ack ⇒ **no blame**. |
 
 #### Where each check can run — and why L4 cannot be replayed
@@ -738,7 +752,29 @@ The two errors, and the fix for each:
 | Own-tip claims raised the floor and were judged against it | A first-party statement — "my follower is here" — cannot be judged against a shared floor, because that makes honesty invalid for anyone behind the fastest follower in the roster | Take first-party heights **out of `Diff` entirely**. Every Diff-resident height is a reference height with one rule; the raw oracle reading moves to the envelope, where it is monitoring data (below) |
 | Stamps were judged against the floor where they *landed* | An executor receipt is produced while handling nonce `m` and lands in a later diff. Between the two, another party may raise the floor. Comparing against the landing floor demands knowledge of a height that did not exist at signing time — something pipelining guarantees will happen | Judge against `F(m)`, the floor at the **producing** nonce, which every message type already names — no wire field is added |
 
-**The floor.** `F(m)` is the highest reference height stamped at nonces `< m`. Implementation is `heightsync/floor.go`: `FloorIndex` appends one entry per *increase* of the running maximum, in nonce order, so `AsOf` is a binary search and `Clone` is a slice copy (needed for trial-apply rollback). `AsOf(m)` excludes `m` itself, so a stamp is never compared against itself and a `confirm` may legitimately sit below its own `start`. Retention is bounded by `DefaultFloorWindow`; a query into a pruned range returns `known = false` and the caller **skips** the check, because inventing a floor there would reject honest stamps. `LogPlaneState.MaxStampHeight` is replaced by `LogPlaneState.Floor`, and the state machine carries `heightSyncFloor` in place of `maxStampHeight`.
+**The floor.** `F(m)` is the reference height the log had established at nonces `< m`. Implementation is `heightsync/floor.go`: `FloorIndex` appends one entry per *increase*, in nonce order, so `AsOf` is a binary search and `Clone` is a slice copy plus a per-signer map copy (needed for trial-apply rollback). `AsOf(m)` excludes `m` itself, so a stamp is never compared against itself and a `confirm` may legitimately sit below its own `start`. Retention is bounded by `DefaultFloorWindow`; a query into a pruned range returns `known = false` and the caller **skips** the check, because inventing a floor there would reject honest stamps. `LogPlaneState.MaxStampHeight` is replaced by `LogPlaneState.Floor`, and the state machine carries `heightSyncFloor` in place of `maxStampHeight`.
+
+**How far the floor may move, and on whose word.** A running maximum over any signer gives every participant unilateral control of the escrow's logical time: one claim of `1 << 40` puts the bar past anything a chain will reach for a century. Nothing halts — carriers lift, omission stays legal — but every derived quantity is nonsense and L6 can never settle it, because no oracle can fetch a block that does not exist. Two bounds fix that without giving up L0's exactness, and both read only the applied log:
+
+| Motion | Rule | Why |
+| ------ | ---- | --- |
+| Raise within `W_conf` | any single signer | The cadence puts a full turnover every `Interval` of wall clock, so an honest advance is orders of magnitude inside the window. This is the ordinary path: a quiet session's heartbeat still establishes its turn's reference height, exactly as before |
+| Raise beyond `W_conf` | the height `Q` distinct signers hold — `QuorumForRoster(slots_num)`, at least 2 | The same two thirds `(C-quorum)` asks of envelope anchors, counted over log-resident claims so it stays replayable. Keeps a real jump — an oracle recovering from a stall, an escrow bootstrapping on mainnet heights — from being a liveness problem, while a party striking out alone moves nothing |
+| Fall | never | A falling floor needs L0 to accept stamps below it, which is the tolerance band this design rejects. Reorgs resolve without it (below) |
+
+Claims are **attributed**, because without an identity one signer echoing itself across five messages is indistinguishable from five parties agreeing. Every carrier is named in the log itself: `slot_id` on an ack (L2 verifies the signature over it), `executor_slot` on a finish, the executor of record for a confirm, the sequencer for the legs it composes. Carries cannot launder a height through the quorum condition: a carry equals the standing floor, and the floor is already at or below the `Q`-th ranked claim, so echoing it can never lift that value. `state.floorClaimsLocked` builds the attributed claim list; `FloorIndex.Observe` returns the marks.
+
+An uncorroborated claim no other party is within `W_conf` of is recorded as `FLOOR_OUT_OF_BAND` against its signer — evidence rather than a silent clamp. The test is deliberately "far from every peer" and not "beyond the raise bound": a whole roster following a chain that jumped is all far above a floor that has not caught up, and marking those would bury the signal. The first claimant of a genuine jump is briefly alone too, which is why this is a mark and never a verdict.
+
+**Reorgs.** The floor cannot fall, so a reorg leaves it briefly on a branch the chain abandoned. That resolves itself in three steps, none of which needs a new session:
+
+1. While the live branch is below `F`, no party has a first-party height that clears it, so producers carry `F` — the pair is stale, but it is the log's own value and L0 is satisfied. Diffs keep applying, which is the property that matters.
+2. L6 reconciles the pair against each verifier's own follower and marks it. `Origin` on the mark names the signer that established the floor rather than the carriers repeating it, which is what makes the carry safe to perform (`checkL6` / `carriedFrom`).
+3. Once the live branch passes `F`, own tips exceed it again and stamping is first-party once more, on the live branch.
+
+A reorg deeper than `W_conf` — like a poisoned floor — takes the other branch of the producer rule instead: `HeartbeatConfig.FloorOutOfReach` has the producer omit rather than carry, so one bad height is never repeated under every honest signature.
+
+**The floor is a function of the applied log, and of nothing else.** `FloorIndex.Observe` is called from `state.observeHeightSyncLocked` and from nowhere else, which is a stated rule and not an accident of placement. An L5a refusal at the transport edge is a local admission decision about one exchange, and the same diff arriving by catch-up or gossip carries no envelope to refuse; if admission fed the floor, the verifier that refused and the verifier that ingested would hold different floors and reach different L0 verdicts on every later diff — an escrow split produced by a check documented as replay-identical. Snapshot restore must rebuild the floor for the same reason (step 6 of the review findings, now landed: `RestoreState` replays diffs `1..snapNonce` through `observeHeightSyncLocked`).
 
 **The producing nonce, per message type.** In each case it is one past the highest nonce the producer had certainly applied, and `heightsync.RefProducingNonce` reads it off the message:
 
@@ -751,6 +787,8 @@ The two errors, and the fix for each:
 The ack row is what makes bringing acks under L0 safe. A host composes its ack from the prefix it has applied, then the ack waits in the sequencer's mempool and lands arbitrarily later. Judged against the landing floor, an honest ack would fail exactly as often as the pipeline is busy — and a `late` ack (§8.5) always would. Judged against `F(ref_nonce + 1)` the bar is the soliciting heartbeat's own height, which the host provably read, so echoing it always clears.
 
 **The producer rule.** A producer with own tip `t` handling nonce `m` stamps `max(t, F(m))`, or omits the stamp. Never below `F(m)`. Both branches are always available, so every honest party satisfies L0 unconditionally — which is what licenses a hard `INVALID` with **no tolerance band**. Call sites: `user/heartbeat.go` `referenceStampLocked` for `MsgStartInference` and `MsgHeartbeat`, and `host/heightsync.go` `referenceStamp` for `MsgConfirmStart`, `MsgFinishInference`, and `MsgHeightAck`. All read `state.StateMachine.HeightSyncFloorAsOf`.
+
+Which branch is not free choice. `F(m) − t > W_conf` means no plausible chain advance explains the distance, so the floor is poisoned or on a branch this producer will never see, and it **omits**: carrying would turn one bad claim into a roster of them, each under a different signature, and each collecting an L6 mark. Inside `W_conf` it carries, because there the gap is ordinary lag and the floor is shared logical time. A producer with no reading of its own (`ORACLE_UNAVAILABLE`, own tip `0`) has nothing to judge plausibility against, so the escape does not apply to it — it carries, which is what keeps a blind host inside the cadence (§8.11). For the sequencer, declining leaves the caller in the same position as an unusable oracle: the start leg goes out unstamped, the heartbeat is skipped, and hosts arm close-ready if stamps stop for `T_idle`.
 
 Lifting to `F(m)` is a carry, not a fabrication: the floor is a height already in the log, so a verifier can name the earlier tx and signer that set it. The carrier's own view stays visible in the response-leg Anchor of the exchange it served. That is the same carrier/originator split as the transport plane.
 
@@ -774,8 +812,7 @@ with `observed_block_hash` being the hash of whichever side won. The receiver ho
 
 **Still open, and deliberately not folded in here:**
 
-- **Plausibility bound.** Nothing yet stops a party stamping an implausibly high reference height. Liveness survives (carriers lift to the floor, absence stays legal) and attribution holds at two points — `F` names the tx and signer that set it, and L4 catches the poisoner within its own exchange unless it also claims the absurd height as its live anchor, where L5a refuses it. But honest carriers still repeat an unreconcilable pair and collect L6 marks alongside the originator. Bounding a stamp to a window above the verifier's own tip is a separate change.
-- **Snapshot recovery.** `heightSyncFloor` and the turn tracker are rebuilt by replay but are not in the persisted snapshot, so a restore-from-snapshot verifier starts with an empty floor and reaches different verdicts than a replaying one. Production `devshardd` replays from nonce 1, so this is latent rather than live.
+- **Snapshot recovery.** `heightSyncFloor` — now including its per-signer claim map — and the turn tracker are rebuilt by replay but are not in the persisted snapshot, so a restore-from-snapshot verifier starts with an empty floor and reaches different verdicts than a replaying one. Production `devshardd` replays from nonce 1, so this is latent rather than live. It is the other half of "the floor is a function of the applied log": the rule only holds if a restored verifier reconstructs the same fold.
 
 #### What makes “fresh nonce ⇒ fresh height” hold
 
@@ -827,8 +864,9 @@ Invariants to test explicitly:
 
 - `Q` is the **same** value as `(C-quorum)`'s `Q`; there is no second quorum knob.
 - Only `complete` advances `h_last`. It certifies reachability, not a height (§8.11).
-- An ack is **late** iff `observed_height > h_req + D_ack` (or the turn is already degraded). Ingest height may tick during transport and does not by itself tag the ack late.
-- A late ack is admitted for height purposes, tagged `late`, and **never** clears `degraded` (attack 22).
+- An ack is **late** iff `observed_height > h_req + D_ack` (or the turn is already degraded). Ingest height may tick during transport and does not by itself tag the ack late. The comparison is against the host's own stamp on purpose: it is the one timestamp in the log the sequencer can neither forge nor backdate.
+- `h_req` ignores a heartbeat height carried without a hash (H38 presence). It is a minimum, so a hashless height would otherwise pin the whole turn's window low and cost every honest ack a `late` flag it could not avoid.
+- A late ack is admitted for height purposes, tagged `late`, and **never** clears `degraded` (attack 22). Symmetrically it never clears `complete`: a settled turn is history, or a slot that answered in time could re-ack past the deadline and pull the count back under quorum after the fact.
 - `sync_state` does not gate counting: an `ORACLE_UNAVAILABLE` ack counts toward `Q` like any other (§8.11). Completion is a reachability certificate, and that slot is reachable; its self-report is retained in the record so consumers can see it is no height witness.
 
 ### 8.9 Repair probe (§11.3, §11.4)
@@ -867,6 +905,8 @@ Outcomes and the **only** permitted conclusions:
 | `UNREACHABLE` | peer looks down **from `V`'s view**; local record + backoff | that the peer is faulty for the roster; anything about the user |
 
 Hard invariants, each with a negative test: the probe path never emits `USER_CHEATING`, never writes an `AttributableMark`, never produces finalization evidence, never broadcasts, and never carries a verdict. A courtesy ack placed in the mempool is normal traffic — if the sequencer includes it the turn may still reach `complete`, and if it does not, nothing follows.
+
+The **responder** is budgeted independently of the prober. `BuildRepairHeightResponse` rejects a probe naming a turn it has no record of (`404`, no oracle read) and then spends at most one HEIGHT build per `(turn, requester slot)`, capped at `R_max` per `Interval`. Extra probes from the same peer return `429`. Neither reject assigns blame. `WithRateLimit` remains optional and is not a substitute: `cmd/devshard-host` does not set it.
 
 ### 8.10 Close-ready arming (§12)
 
@@ -1071,7 +1111,9 @@ H39–H49 are gateway-package tests over a fabricated session plus a registry ga
 | H10 | User fabricates an ack | `INVALID(ack_sig_invalid)` | L2 |
 | H11 | Ack references an unknown / mismatched turn | `INVALID(ack_causality)` | L3 |
 | H12 | Ack height ≠ `max(own response-leg Anchor, F(m))` | `DISPUTE_ORIGINATOR` on sight, mark written, no oracle lookup | L4, attack 18 |
-| H13 | Heartbeat height ≠ request-leg section | `DISPUTE_CARRIER` | L4 |
+| H13 | Heartbeat height ≠ `max(own request-leg section, F(m))` | `DISPUTE_CARRIER` | L4 |
+| H103 | Heartbeat lifted to `F(m)` above its own request-leg section | **no** mark — that is the producer rule, and marking it named every lagging honest sequencer | L4, step 24 |
+| H104 | Heartbeat beside a carry-forward request section | **no** binding attempted; a relayed tip is not the sequencer's own claim | L4, step 24 |
 | H13a | Same diff re-ingested from catch-up / gossip with no envelope | L4 and L5a skipped; every other verdict unchanged; a mark written at the edge is **not** re-derived | §8.7 tiers |
 | H13b | Heartbeat with a section for slot A, none for slot B (lazy carry, `last_propagated`) | A runs L4, B skips it; both accept the diff | §8.7, §16 |
 | H13c | Replay of a session whose stamps are far below the verifier's current tip | **no** `INVALID` — L5a is the only `D`-band check and it does not run off-line | §8.7 |
@@ -1094,12 +1136,22 @@ H39–H49 are gateway-package tests over a fabricated session plus a registry ga
 | H17 | Missing ack past `D_ack`, peer alive | probe returns `HEIGHT`; height ingested; `peer_seen` bit set; turn stays `degraded` | §11.3, attack 17 |
 | H18 | Missing ack, peer down | `UNREACHABLE`; local record + backoff only | §11.3 |
 | H19 | All `N−1` hosts see one dead slot | one probe per `(turn, slot)` per prober, `R_max` cap, stagger makes late probers skip when the ack landed | §11.4, attack 20 |
+| H68 | One peer floods a live responder | bounded oracle reads (one HEIGHT per `(turn, requester)`); extras `429`; no marks | §11.4, attack 20 |
+| H69 | Signed probe names a turn the responder has no record of | `404`, zero oracle reads, no marks | §11.4 |
 | H20 | Armed host with missing acks | stops probing | §11.4 |
+| H92 | Blocked `Latest()` while `HandleRequest` / `RecordAttestation` / `Decide` run | concurrent mutex holders progress; oracle I/O is outside those locks | audit step 20 |
+| H93 | retain+ extra repair `(turn, slot)` pairs | budget maps stay O(retain × slots) | §11.4, audit step 21 |
+| H94 | Degraded turn `s` missing slot `j` after turn `s+1` opened | `s` is still probed | §11.3, audit step 21 |
+| H95 | `MaybeRepair` with a cancelled context | returns before the stagger elapses | §11.4, audit step 21 |
+| H96 | Oversized `mainnet_block_hash_hex` | rejected before decode | audit step 22 |
+| H97 | Oversized origin signature (field 8) | dropped at unwrap | audit step 22 |
+| H98 | Carry-forward originator ts of `now-F+ε`, then wait `F` | not quorum-eligible | §17, audit step 22 |
+| H99 | Long monotonic tip advance | `confirmedHeights` stays O(`W_conf`) | §17, audit step 22 |
 | H21 | User silent past `T_idle` | host arms; no message emitted anywhere on the wire | §12.1–12.2, attack 14 |
 | H22 | User contacts an armed host | disarms; `[armed_at, disarmed_at)` retained | §12.3 |
 | H23 | Partitioned minority armed | arming produces no vote and no tx; closing still needs finalization quorum | attack 21 |
 | H24 | `ORACLE_UNAVAILABLE` ack | ack present and required; **counts** toward `Q` now that it can echo the floor (§8.11); contributes no anchor, so `(C-quorum)` is unaffected | §11.2, §17 |
-| H25 | Params override violating `T_idle > Interval + TurnTimeout` or `2 · Interval ≤ F` | `HeartbeatConfig.Validate` fails at startup | §20 |
+| H25 | Params override violating `D_ack · block_time ≥ Interval + TurnTimeout`, `T_idle > Interval + TurnTimeout` or `2 · Interval ≤ F` | `HeartbeatConfig.Validate` fails at startup | §20 |
 | H26 | Container: quiet compose escrow | heartbeat cadence visible in logs; turns complete; no probe traffic in the healthy path | §10, §11.4 |
 | H27 | Container: one host stopped | degraded turns, bounded probe traffic, arming only after `T_idle` of user silence | §11.4, §12 |
 
@@ -1144,7 +1196,7 @@ E0 proto/params          ✅
 
 1. Agree `DevshardTx` oneof **10 = `MsgHeartbeat`**, **11 = `MsgHeightAck`**; reserve 12/13 for cPoC (§8.2).
 2. Add messages/enums (`SyncVectorEntry`, `AckStatus`, `SyncState`).
-3. `heightsync/params.go`: `HeartbeatConfig` / `RepairConfig` with defaults `Interval=3s`, `TurnTimeout=3s`, `T_idle=12s`, `D_ack=1`, and `Validate` (`T_idle > Interval + TurnTimeout`, two turnovers inside `F`) (§8.4).
+3. `heightsync/params.go`: `HeartbeatConfig` / `RepairConfig` with defaults `Interval=3s`, `TurnTimeout=6s`, `T_idle=12s`, `block_time=1s`, `D_ack=10` (derived), and `Validate` (ack window ≥ turnover budget, `T_idle > Interval + TurnTimeout`, two turnovers inside `F`) (§8.4).
 4. Plumb via the existing runtime-config snapshot so host and user see the same numbers.
 
 **Tests:** H25. **Landed.** Bump the protocol version in the same change that first writes new hashed `applyTx` / record fields (**E7** stamps). Heartbeat/ack `applyTx` folds a derived `TurnTracker` and does not change `post_state_root`.
@@ -1158,7 +1210,7 @@ New files only: `heartbeat.go`, `turn.go`, `syncvector.go`, `syncstate.go`, `pee
 - `EvaluateSyncState` table; until F, report `CATCHING_UP` but do not require Strong.
 - Ack domain `heightsync.ack.v1` (fields 1–7).
 
-**Tests:** H1 (unit), H3, H4, H5, H6, H7, H8, H24, D9 (hash-only oracle → `complete`, no Strong). **Landed.** Cadence defaults: a turnover every `Interval=3s`, `TurnTimeout=3s` of patience per turn, one block of stamp slack (`D_ack=1`).
+**Tests:** H1 (unit), H3, H4, H5, H6, H7, H8, H24, D9 (hash-only oracle → `complete`, no Strong). **Landed.** Cadence defaults: a turnover every `Interval=3s`, `TurnTimeout=6s` of patience per turn, and an ack window that covers the whole 9s budget (`D_ack=10` at 1s blocks).
 
 #### E2 — User opens heartbeat turns ✅
 
@@ -1170,9 +1222,9 @@ New files only: `heartbeat.go`, `turn.go`, `syncvector.go`, `syncstate.go`, `pee
 - Skip if `ObservedHeightNow()` is empty (`heartbeat_skipped_no_height`).
 - Include acks in `composeDiffLocked` in arrival order; `sync_vector` reports **turn `s−1` only**.
 
-Call `Session.MaybeHeartbeat`. The span is composed before any host send so acks are not awaited. `applyTx` accepts heartbeat/ack; E4 folds them into `TurnTracker` (`h_last` / `turn_seq` are derived, not hashed).
+Call `Session.MaybeHeartbeat`. The span is composed before any host send so acks are not awaited. Span **dispatch** is concurrent and does not abort remaining slots on one send failure (§10.6). The gateway runtime starts `Session.StartHeartbeatLoop` (immediate tick, then every `Interval`; `Close` cancels). `applyTx` accepts heartbeat/ack; E4 folds them into `TurnTracker` (`h_last` / `turn_seq` are derived, not hashed).
 
-**Tests:** H1 / H3 / H4 in-process (`user/heightsync_test.go`). **Landed.**
+**Tests:** H1 / H3 / H4 in-process (`user/heightsync_test.go`); H73–H75 (loop wiring, concurrent span, Close); H88 (`RecoverSession` continues `turn_seq`). **Landed** (step 12 of the post-landing audit closed the production hook and §10.6 dispatch; step 18 restores the producer counter on recover).
 
 #### E3 — Host acks into the mempool ✅
 
@@ -1183,7 +1235,7 @@ On inbound heartbeat for this slot (§8.6):
 - Maintain `peer_seen` from `Diff` and from repair probes (E5).
 - Acks only in answer to a newly applied heartbeat addressed to this host's slot, never as a general stamp.
 
-The user `MaybeHeartbeat` flush round picks acks up from the host mempool. Open turns tick `AdvanceHeight` on each observed height so a quiet session can degrade past `D_ack` without opening a new span first.
+The user `MaybeHeartbeat` flush round picks acks up from the host mempool. Open turns recompute from log-resident stamps and `h_last` only; a live oracle read is never folded into the tracker (step 15). A quiet session degrades past `D_ack` when a later Diff carries a stamp past the window, not when a host's follower runs ahead.
 
 **Tests:** H6/H7 against a live host (`user/heightsync_test.go`); H24 host + in-process; host producer tests in `host/heightsync_test.go`. H33 is E7 (stamped busy session emits no acks). **Landed.**
 

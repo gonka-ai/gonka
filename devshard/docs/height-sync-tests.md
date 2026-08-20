@@ -25,7 +25,7 @@ later milestone.
 4. [In-process e2e — `devshard/testenv/scenarios`](#4-in-process-e2e--devshardtestenvscenarios)
 5. [Container e2e — `devshard/testenv/scenarios/container`](#5-container-e2e--devshardtestenvscenarioscontainer)
 6. [Planned: block-oracle sourcing and dapi compatibility (D1–D11)](#6-planned-block-oracle-sourcing-and-dapi-compatibility-d1d11)
-7. [Planned: log plane — heartbeat, stamps, peer sync, arming, gateway observability (H1–H49)](#7-planned-log-plane--heartbeat-stamps-peer-sync-arming-gateway-observability-h1h49)
+7. [Planned: log plane — heartbeat, stamps, peer sync, arming, gateway observability (H1–H104)](#7-planned-log-plane--heartbeat-stamps-peer-sync-arming-gateway-observability-h1h104)
 8. [Planned: Strong mode (LightBlock + VerifyCommit)](#8-planned-strong-mode-lightblock--verifycommit)
 9. [Coverage matrix per protocol section](#9-coverage-matrix-per-protocol-section)
 10. [Attack-scenario coverage](#10-attack-scenario-coverage)
@@ -102,24 +102,52 @@ Slow-running tests check `testing.Short()` and skip under `-short`.
 | ✅ `TestConfirm_StaleWhenOracleStale` | `confirmation_test.go` | `Stale()` propagates to every query while oracle is down. |
 | ✅ `TestConfirm_FreshnessAndWindowEligibility` | `confirmation_test.go` | `F` and `W_conf` jointly gate originator eligibility. |
 | ✅ `TestConfirm_CompactOnTipAdvance` | `confirmation_test.go` | Index compacts on tip advance; ineligible entries dropped. |
-| ✅ `TestConfirm_MonotonicityAfterPrune` | `confirmation_test.go` | A confirmed height never flips back to `pending`. |
+| ✅ `TestConfirm_MonotonicityAfterPrune` | `confirmation_test.go` | A confirmed height still inside `W_conf` never flips back to `pending`. |
 | ✅ `TestConfirm_IndexUsesOriginatorNotCarrier` | `confirmation_test.go` | Quorum counts originator addresses, never the carrier (user). |
 | ✅ `TestConfirm_LateOracleTipBelowH` | `confirmation_test.go` | Carry-forward heights ahead of the receiver's tip still count toward quorum. |
 | ✅ `TestQuorumForRoster` | `confirmation_test.go` | Default `Q = ceil(2/3 × N_hosts)`. |
+| ✅ `TestConfirm_BlockedOracleDoesNotHoldMutex` | `confirmation_test.go` | H92: a blocked `Latest()` does not hold the confirmation mutex. |
+| ✅ `TestConfirm_OriginatorTimestampDrivesFreshness` | `confirmation_test.go` | H98: (C-quorum) ages a carry-forward from originator ts, not receipt time. |
+| ✅ `TestConfirm_ConfirmedHeightsBounded` | `confirmation_test.go` | H99: `confirmedHeights` prunes below `tip − W_conf`. |
 | ✅ `TestSignOrigin_RoundTrip` | `origin_signing_test.go` | Canonical signing input → secp256k1 signature → verify round-trip. |
 | ✅ `TestVerifyOrigin_RejectsTamperedHash` | `origin_signing_test.go` | Any change to fields 1–7 invalidates the signature. |
 | ✅ `TestVerifyOrigin_RejectsWrongOriginator` | `origin_signing_test.go` | Recovered address must equal `OriginatorSenderID`. |
 | ✅ `TestCanonicalOriginBytes_DomainSeparated` | `origin_signing_test.go` | Domain string `heightsync.origin.v1` is bound into the signing input. |
-| ✅ `TestHeartbeatConfig_ValidateRejectsBadOverride` | `params_test.go` | H25: `T_idle ≤ Interval + TurnTimeout`, non-positive durations, and `2·Interval ≥ F` overrides fail `Validate`. |
+| ✅ `TestHeartbeatConfig_ValidateRejectsBadOverride` | `params_test.go` | H25: an ack window shorter than the turnover budget, `T_idle ≤ Interval + TurnTimeout`, non-positive durations, and `2·Interval ≥ F` overrides fail `Validate`. The pre-step-4 `D_ack = 2` is now rejected on the shipped schedule and accepted once `block_time` is `8s`. |
+| ✅ `TestHeartbeatConfig_Defaults` / `_AckWindowFollowsTheSchedule` | `params_test.go` | H25: `TurnTimeout = 2 · Interval`, and `D_ack` is derived (`⌈(Interval+TurnTimeout)/block_time⌉ + 1`) rather than shipped — a longer interval carries the window with it, slower blocks buy the same wall clock with fewer of them. |
 | ✅ `TestHeartbeat_QuietSessionOpensTurn` / `_NoObservedHeightSkips` / `_SpanDispatchAddressesEverySlot` | `heartbeat_test.go` | H1, H3, H4 unit: wall-clock cadence, skip-on-no-height, consecutive span. |
 | ✅ `TestHeartbeat_RepeatedSlotClaimsAreNotAQuorum` / `_ExecutorClaimsDischargeCadence` | `heartbeat_test.go` | A turnover needs `Q` **distinct** host claims; executor-stamped responses discharge the cadence just like acks. |
 | ✅ `TestHeartbeat_SustainedInferenceFlowNeverHeartbeats` | `user/heightsync_test.go` | H2 over time: four rounds of real inference on an injected clock spanning several `Interval`s emit **zero** heartbeats; stopping the traffic then emits one, so the zeros are load-bearing. |
 | ✅ `TestHeartbeat_StalledTurnReopensAfterTurnTimeout` / `_SettledTurnDoesNotWaitOutTurnTimeout` | `heartbeat_test.go` | One unreachable slot cannot silence the cadence forever: the turn is abandoned after `TurnTimeout`, or immediately once the log settles it. |
 | ✅ `TestCloseReady_ArmsWithoutAnyTick` | `closeready_test.go` | Arming is lazy on the clock, so a host that stops receiving anything at all — including height — still arms. |
 | ✅ `TestRepairBudget_WindowRollsOnElapsedTime` | `repair_budget_test.go` | `R_max` is a per-`Interval` budget measured in elapsed time, not in blocks. |
+| ✅ `TestRepairResponderBudget_OnePerTurnSlotAndWindow` | `repair_budget_test.go` | H68 unit: one HEIGHT per `(turn, requester)`, `R_max` per window, already-served pairs survive a refill. |
 | ✅ `TestHeartbeat_QuietSessionOpensTurn` / `_NoObservedHeightSkips` / `_SpanDispatchAddressesEverySlot` / `_AckInclusionAndSyncVectorPrevTurn` / `_LiveHostsQuorumCompletes` / `_UnavailableAcksCompleteTurnCarryingTheFloor` | `user/heightsync_test.go` | H1, H3, H4, H6, H7, H24 in-process: `MaybeHeartbeat` span, host mempool acks, quorum complete, blind hosts carrying the floor. |
+| ✅ `TestHeartbeat_LoopOpensQuietTurnWithoutCaller` / `_SpanDispatchConcurrentAndContinuesOnError` / `_LoopStopsOnClose` | `user/heightsync_test.go` | H73–H75: cadence loop without the test calling `MaybeHeartbeat`; concurrent non-aborting span; `Close` cancels the ticker. |
 | ✅ `TestTurnTracker_OutOfOrderAcksIdenticalRecord` / `_QuorumCompletesTurn` / `_BelowQuorumDegradesNoBlame` / `TestLateAck_DoesNotClearDegraded` / `TestHeightAck_OracleUnavailableCountsTowardQuorum` | `heartbeat_test.go` | H5–H8, H24: turn record, reachability quorum, late acks, `ORACLE_UNAVAILABLE`. |
-| ✅ `TestTurnTracker_IngestNextBlockSameStampCompletes` / `_StampPastDeadlineDegrades` | `heartbeat_test.go` | `D_ack=1`: ingest may tick; lateness is `observed_height > h_req + D_ack`. |
+| ✅ `TestTurnTracker_IngestNextBlockSameStampCompletes` / `_StampPastDeadlineDegrades` | `heartbeat_test.go` | Ingest may tick; lateness is `observed_height > h_req + D_ack` on the ack's own stamp. |
+| ✅ `TestTurnTracker_SpanAcrossBlockBoundariesCompletes` | `heartbeat_test.go` | H59: a four-slot span dispatched across three block boundaries completes with no `late` ack and no probe due, and the same span degrades under the pre-step-4 one-block window — so the regression cannot return quietly. |
+| ✅ `TestTurnTracker_CompletedTurnIsFinal` | `heartbeat_test.go` | H60: a slot that answered in time re-acks past the deadline; the turn stays `complete` and `completed_at_height` stays where it closed. |
+| ✅ `TestTurnTracker_HashlessHeartbeatDoesNotPinTheWindow` | `heartbeat_test.go` | H61: a heartbeat height with no hash is not a stamp (H38), so it cannot pin `h_req` low and make honest acks late. |
+| ✅ `TestHeartbeatConfig_FromSnapshotZeroUsesDefaults` / `_InvalidOverlayIsClamped` | `params_test.go` | H62/H63: scheduling knobs overlay, evaluation knobs stay compiled; an invalid overlay clamps to compiled defaults and is counted. |
+| ✅ `TestCloseReady_OverlayShortensIdle` / `TestHeartbeat_OverlayShortensCadence` | `host/closeready_test.go`, `user/heightsync_test.go` | H62: a valid overlay changes host arming and session cadence. |
+| ✅ `TestTurnTracker_PrunesCompletedTurns` | `heartbeat_test.go` | H65: after many settled turns the turn map stays bounded; `heartbeatAt` and `h_last` survive prune. |
+| ✅ `TestTurnTracker_PrunesOpenTurns` | `heartbeat_test.go` | H78: 5 000 unstamped and 5 000 flat-stamped heartbeats leave `TurnCount() ≤ retain+1`. |
+| ✅ `TestLogPlane_LateAckAfterTurnPruneAccepted` | `logplane_test.go` | H79: L3 accepts an ack whose heartbeat nonce outlives the pruned turn record. |
+| ✅ `TestCheckDiffLogPlane_LongOpenSessionBounded` | `logplane_test.go` | H80: a long open-turn session keeps the turn map at `retain`; log-plane check still succeeds. |
+| ✅ `TestRepairProbe_OracleAheadDoesNotDegradeOpenTurn` | `server_repair_test.go` | H81: a host whose oracle is past `D_ack` does not degrade a turn peers still hold open. |
+| ✅ `TestHeartbeat_SettleTurnDoesNotFireWhileSMTurnOpen` | `user/heightsync_test.go` | H82: session `SettleTurn` cannot fire while the SM still has the same turn `TurnOpen`. |
+| ✅ `TestApplyLocalBestEffort_LogPlaneInvalidFailsBeforeNonce` | `state/heightsync_test.go` | H83: L0 / L1 / L2 invalid height-sync txs fail compose; nonce is not consumed. |
+| ✅ `TestApplyLocalBestEffort_LateAckAfterTurnPruneComposesAndApplies` | `state/heightsync_test.go` | H84: a late ack whose heartbeat is in `heartbeatAt` composes and `ApplyDiff`s on a host. |
+| ✅ `TestMarkLog_CapacityDropsOldest` | `marks_test.go` | H85: N+1 marks leave at most N retained. |
+| ✅ `TestValidateDiff_FailedApplyTxDoesNotLeakMarks` / `_MarksFlushOnlyOnCommit` | `state/heightsync_test.go` | H86: trial apply and applyTx failure leave `HeightSyncMarks()` unchanged; `CommitValidated` flushes. |
+| ✅ `TestCheckEnvelopeBinding_RequestLegBlobBounded` | `logplane_test.go` | H87: request-leg L4 blob is the 32-byte canonical digest regardless of HTTP body size. |
+| ✅ `TestRecoverSession_HeartbeatContinuesTurnSeq` / `_HeartbeatEmptyStartsAtTurnOne` | `user/recover_test.go` | H88: recovered producer continues `turn_seq`; empty recover still opens turn 1. |
+| ✅ `TestLogPlane_L7SameDiffAckSatisfiesVector` | `logplane_test.go` | H66: an ack in the same diff as the next heartbeat satisfies L7 without cloning the tracker. |
+| ✅ `TestClassifyInbound_ZeroTimestampCarryForwardIsStale` | `inbound_test.go` | H67: a carry-forward with a zero originator timestamp is `INVALID(stale_origin)`. |
+| ✅ `TestLogPlane_AckWithoutVerifierRejected` / `_HeartbeatWithoutVerifierOK` | `logplane_test.go` | H70: L2 fails closed when acks are present and the verifier is nil; heartbeat-only diffs still pass. |
+| ✅ `TestLogPlane_OversizedFieldsRejected` | `logplane_test.go` | H71: oversized `peer_seen`, `sync_vector`, and `observed_block_hash` are `INVALID(bad_framing)`. |
+| ✅ `TestMissingAcksDue_RequiresWindowClosed` | `repair_budget_test.go` | A repair probe is due only once the whole turnover budget has passed, not one block after `h_req`. |
 | ✅ `TestHeartbeat_HashOnlyOracle_TurnCompletes` | `syncstate_test.go` | D9: hash-only oracle (empty Commit) reaches `complete`; `Prove` is not called. |
 | ✅ `TestEvaluateSyncStateFromHeader_DoesNotCallLatest` | `syncstate_test.go` | Ack stamp reuses the already-fetched header (same read as the response-leg Anchor). |
 | ✅ `TestSignAck_RoundTrip` / `TestCanonicalAckBytes_DomainSeparated` | `ack_signing_test.go` | Domain `heightsync.ack.v1`; field 8 excluded from the signing input. |
@@ -139,7 +167,8 @@ Slow-running tests check `testing.Short()` and skip under `-short`.
 | ✅ `TestHeightSyncPeerTips_PerPeerPropagation` | `peer_tips_test.go` | `ShouldPropagateTo` / `MarkPropagated` are per-recipient and monotonic. |
 | ✅ `TestHeightSyncPeerTips_CarryPreservesOriginator` / `CarryOverwritesOriginatorAtSameHeight` / `UpdateBackwardCompatWithoutOriginator` | `peer_tips_test.go` | Carrier never overwrites cached originator metadata. |
 | ✅ `TestRecordOriginWithBlob_StoresVerbatimBlob` | `peer_tips_test.go` | Verified response blob is cached verbatim. |
-| ✅ `TestMaxFresh_SkipsEntriesWithoutBlob` | `peer_tips_test.go` | With `RequireVerifiedBlob`, only verified entries are returned. |
+| ✅ `TestMaxFresh_SkipsEntriesWithoutBlob` | `peer_tips_test.go` | H76: production `NewHeightSyncPeerTips()` ignores `RecordOrigin` in `MaxFresh` / `Carry`. |
+| ✅ `TestMaxFresh_ZeroTimestampIsNotFresh` | `peer_tips_test.go` | H77: a cached origin with both timestamps zero is not fresh. |
 | ✅ `TestOriginSignedBlobFor_Lookup` | `peer_tips_test.go` | Evidence API returns the cached blob by (originator, height). |
 | ✅ `TestObservedHeightNow_CacheEmpty` / `FreshTip` / `NoHeightSync` | `client_heightsync_test.go` | Courier user's `ObservedHeightNow()` returns `(0, false)` on cold cache and `(H, true)` when a fresh tip exists. |
 | ✅ `TestHTTPClient_SeedHeightSync_RecordsOrigin` | `client_heightsync_test.go` | Optional seed RPC populates the peer-tip cache before the first inference. |
@@ -148,6 +177,7 @@ Slow-running tests check `testing.Short()` and skip under `-short`.
 | ✅ `TestHTTPClient_ParseSSE_InboundHeightSyncAudit` | `client_heightsync_test.go` | Inbound SSE response attestations land in the user audit ring. |
 | ✅ `TestClient_ResponseAnchor_VerifiesOriginSignature` | `client_heightsync_test.go` | User verifies host's `sender_signature` before caching. |
 | ✅ `TestClient_ResponseAnchor_DropsOnInvalidSig` | `client_heightsync_test.go` | Invalid signature ⇒ tip dropped, metric `origin_sig_invalid_total` increments, cache stays cold. |
+| ✅ `TestClient_ResponseAnchor_ZeroTimestampNotCached` | `client_heightsync_test.go` | Signed response with both originator timestamps zero is not stored. |
 | ✅ `TestClient_RequestLeg_OmitsSenderSignature` | `client_heightsync_test.go` | `Carry` strips `sender_signature` on the request leg (asymmetric verification). |
 | ✅ `TestServer_Inference_HeightSync_OutboundAnchor` | `server_heightsync_test.go` | Host emits Anchor on response inside sync turn. |
 | ✅ `TestServer_Inference_HeightSync_ForceAnchor_OnInferenceRequest` | `server_heightsync_test.go` | Server honours per-request force flag. |
@@ -158,6 +188,7 @@ Slow-running tests check `testing.Short()` and skip under `-short`.
 | ✅ `TestServer_StaleOriginRejected` | `server_heightsync_test.go` | Receiver rejects with `reason=stale_origin` past `F`. |
 | ✅ `TestServer_ConfirmationView_AfterLazyInbound` | `server_heightsync_test.go` | Server-side `IsStrictlyConfirmed` reaches `confirmed` via carried originator metadata. |
 | ✅ `TestHandleHeightSync_DisabledReturnsNotFound` / `ForcesAnchor` | `server_heightsync_test.go` | Optional seed RPC (`POST .../height-sync`) is opt-in and returns a forced Anchor on the response. |
+| ✅ `TestHandleHeightSync_OmitsSectionOnSignFailure` | `server_heightsync_test.go` | H72: `SignOrigin` failure omits the section rather than shipping an unsigned Anchor-shaped payload. |
 | ✅ `TestServer_ResponseAnchor_SignedByHost` | `server_heightsync_test.go` | Host signs the outbound response Anchor (asymmetric verification — response leg). |
 | ✅ `TestServer_RequestLeg_DoesNotVerifyOriginSig` | `server_heightsync_test.go` | Hosts accept request-leg carry-forward Anchors without inline signatures. |
 | ✅ `TestUser_ForceHeightSyncTurn_AppearsOnlyInTriggerDiff` | `user/heightsync_test.go` | User composer inserts `MsgForceHeightSyncTurn` only on the trigger nonce. |
@@ -267,7 +298,7 @@ down**, by failing over to the direct-chain adapter in the shape of
 
 ---
 
-## 7. Planned: log plane — heartbeat, stamps, peer sync, arming, gateway observability (H1–H49)
+## 7. Planned: log plane — heartbeat, stamps, peer sync, arming, gateway observability (H1–H104)
 
 Spec: [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md)
 §10–§12, §14 log-plane checks, §17 `(C-turn)`.
@@ -284,6 +315,9 @@ produces **marks**, adjudication lands with Strong.
 | ID | Test (planned name) | Package | What it will prove |
 | -- | ------------------- | ------- | ------------------ |
 | H1 | ✅ `TestHeartbeat_QuietSessionOpensTurn` + `TestHeartbeat_QuietSessionWaitsOutIntervalBetweenTurns` | `heightsync` + `user` | Quiet session opens a heartbeat turn within `Interval` of the last turnover, and waits out `Interval` before the next one (unit + `MaybeHeartbeat` in-process). |
+| H73 | ✅ `TestHeartbeat_LoopOpensQuietTurnWithoutCaller` | `user` | Production hook: `StartHeartbeatLoop` opens a turn without the test calling `MaybeHeartbeat`. Gateway runtime starts this loop. |
+| H74 | ✅ `TestHeartbeat_SpanDispatchConcurrentAndContinuesOnError` | `user` | §10.6: all slot `Send`s start while one host is blocked; a failing send does not drop the remaining heartbeats. |
+| H75 | ✅ `TestHeartbeat_LoopStopsOnClose` | `user` | `Close` cancels the ticker; nonce does not keep advancing. |
 | H2 | ✅ `TestHeartbeat_BusySessionWithStampsEmitsNone` + `_SustainedInferenceFlowNeverHeartbeats` + `TestHeartbeat_UserOwnStampIsNotATurnover` | `user` | Host-stamped inference traffic discharges the obligation ⇒ **zero** heartbeats, held across several `Interval` crossings on an injected clock, with the traffic-stops tail proving the zero is not vacuous; the user's own stamp is self-signed and discharges nothing. |
 | H3 | ✅ `TestHeartbeat_NoObservedHeightSkips` | `heightsync` + `user` | `ObservedHeightNow() == (0,false)` ⇒ no turn claiming a height; skip metric increments. |
 | H4 | ✅ `TestHeartbeat_SpanDispatchAddressesEverySlot` | `heightsync` + `user` | `slots_num` consecutive nonces, no ack awaited, every slot addressed exactly once. |
@@ -291,8 +325,32 @@ produces **marks**, adjudication lands with Strong.
 | H6 | ✅ `TestTurnTracker_QuorumCompletesTurn` + `TestHeartbeat_LiveHostsQuorumCompletes` | `heightsync` + `user` | `Q` acks ⇒ turn `complete`, `h_last` advances (unit + live hosts). Completion is reachability only; it confirms no height (H53). |
 | H7 | ✅ `TestTurnTracker_BelowQuorumDegradesNoBlame` + `TestTurnTracker_StampPastDeadlineDegrades` | `heightsync` | `< Q` counting acks past `D_ack` ⇒ `degraded` with no blame recorded. |
 | H8 | ✅ `TestLateAck_DoesNotClearDegraded` | `heightsync` | A late ack counts for height, is tagged `late`, and never clears `degraded`. |
+| H59 | ✅ `TestTurnTracker_SpanAcrossBlockBoundariesCompletes` | `heightsync` | The ack window covers the turn it is meant to judge: a four-slot span dispatched across three block boundaries completes, no ack is tagged `late`, and no repair probe is due. The same span under the old one-block window degrades, which is asserted in the same test so the regression cannot come back quietly. |
+| H60 | ✅ `TestTurnTracker_CompletedTurnIsFinal` | `heightsync` | The mirror of H8: a slot that answered in time re-acks past the deadline and the turn stays `complete`, with `completed_at_height` frozen where it closed. Without this, attack 22 runs backwards — a late re-ack pulls a settled turn under quorum. |
+| H61 | ✅ `TestTurnTracker_HashlessHeartbeatDoesNotPinTheWindow` | `heightsync` | H38's presence rule reaches `h_req`: a height carried with no hash is not a stamp, so it cannot pin the turn's window low and make every honest ack late. |
+| H62 | ✅ `TestHeartbeatConfig_FromSnapshotZeroUsesDefaults` + `TestCloseReady_OverlayShortensIdle` + `TestHeartbeat_OverlayShortensCadence` | `heightsync` + `host` + `user` | Scheduling knobs overlay; evaluation knobs stay compiled. A valid overlay shortens host `T_idle` and session `Interval`. |
+| H63 | ✅ `TestHeartbeatConfig_InvalidOverlayIsClamped` | `heightsync` | An overlay whose schedule no longer fits the compiled ack window is replaced with compiled defaults; `OverlayClampCount` increments. |
+| H64 | ✅ `TestHeightSync_SnapshotRestoreAgreesOnRootAndFloor` | `state` | Snapshot mid forced turn, restore, apply one more diff: root, floor-as-of, and tracker match the never-restarted machine; an L0 reject stays an L0 reject. |
+| H65 | ✅ `TestTurnTracker_PrunesCompletedTurns` | `heightsync` | After many turns the turn map stays bounded by `DefaultTurnRetain`; `heartbeatAt` and `h_last` survive prune. L7 and repair still resolve the tail. |
+| H78 | ✅ `TestTurnTracker_PrunesOpenTurns` | `heightsync` | 5 000 unstamped and 5 000 flat-stamped heartbeats leave `TurnCount() ≤ retain+1`. |
+| H79 | ✅ `TestLogPlane_LateAckAfterTurnPruneAccepted` | `heightsync` | After the turn record is pruned, L3 still accepts an ack whose heartbeat nonce is in `heartbeatAt`. |
+| H80 | ✅ `TestCheckDiffLogPlane_LongOpenSessionBounded` | `heightsync` | `AdvanceHeight` over a long open-turn session stays O(`retain`); log-plane check succeeds. |
+| H82 | ✅ `TestHeartbeat_SettleTurnDoesNotFireWhileSMTurnOpen` | `user` | A live oracle past `D_ack` does not `SettleTurn` while the SM still holds the same turn `TurnOpen`; `MaxTurnSeq` stays 1. |
+| H83 | ✅ `TestApplyLocalBestEffort_LogPlaneInvalidFailsBeforeNonce` | `state` | Compose of an L0-invalid stamp, L1-bad framing, or L2-bad ack fails; nonce is not consumed. A mixed set drops the invalid ack and keeps the heartbeat. |
+| H84 | ✅ `TestApplyLocalBestEffort_LateAckAfterTurnPruneComposesAndApplies` | `state` | After turn prune, a late ack whose heartbeat is still in `heartbeatAt` composes and applies on a host that replayed the same log. |
+| H85 | ✅ `TestMarkLog_CapacityDropsOldest` | `heightsync` | A mark log of capacity N retains the newest N after N+1 appends. |
+| H86 | ✅ `TestValidateDiff_FailedApplyTxDoesNotLeakMarks` + `_MarksFlushOnlyOnCommit` | `state` | `ValidateDiff` of a log-plane-OK diff that then fails `applyTx` leaves marks unchanged; a successful trial flushes only on `CommitValidated`. |
+| H87 | ✅ `TestCheckEnvelopeBinding_RequestLegBlobBounded` | `heightsync` | Request-leg L4 stores `CanonicalRequestLegBytes` (32 bytes) regardless of HTTP body size. |
+| H88 | ✅ `TestRecoverSession_HeartbeatContinuesTurnSeq` | `user` | After turns 1..3, snapshot, and `RecoverSession`, the next heartbeat is `turn_seq=4` and `sync_vector` describes turn 3. An empty recovered session still opens turn 1. |
+| H92 | ✅ `TestHost_BlockedOracleDoesNotHoldMutex` + `TestConfirm_BlockedOracleDoesNotHoldMutex` + `TestAnchorScheduler_BlockedOracleDoesNotHoldMutex` | `host` + `heightsync` | A blocked `Latest()` does not hold `host.mu`, the confirmation mutex, or the scheduler mutex. |
+| H96 | ✅ `TestDecodeMainnetBlockHashHex_OversizedRejected` | `transport` | Hex longer than 64 chars is rejected before `DecodeString`. |
+| H97 | ✅ `TestUnwrapInferenceRequestBody_OversizedOriginSigDropped` | `transport` | Field-8 longer than 65 bytes is dropped at unwrap. |
+| H66 | ✅ `TestLogPlane_L7SameDiffAckSatisfiesVector` | `heightsync` | A heartbeat for turn `S` and an ack for `S-1` in the same diff satisfy L7 without cloning the tracker. |
+| H67 | ✅ `TestClassifyInbound_ZeroTimestampCarryForwardIsStale` | `heightsync` | A carry-forward with originator id set and both timestamps zero is `INVALID(stale_origin)`. |
+| H76 | ✅ `TestMaxFresh_SkipsEntriesWithoutBlob` | `transport` | Production-shaped `NewHeightSyncPeerTips()` ignores unverified `RecordOrigin` entries in `MaxFresh` and `Carry`. |
+| H77 | ✅ `TestMaxFresh_ZeroTimestampIsNotFresh` | `transport` | A verified cache entry with both timestamps zero is not fresh and does not drive `Carry` (cache-side H67). |
 | H24 | ✅ `TestHeightAck_OracleUnavailableCountsTowardQuorum` + `TestHost_HeartbeatAck_OracleUnavailableStillRequired` + `TestHeartbeat_UnavailableAcksCompleteTurnCarryingTheFloor` | `heightsync` + `host` + `user` | `ORACLE_UNAVAILABLE` ack is present, required, and **counts** toward `Q` — it carries `F(m)` from the log the host already applies. The self-report is retained, and the slot contributes no anchor, so `(C-quorum)` is unaffected. |
-| H25 | ✅ `TestHeartbeatConfig_ValidateRejectsBadOverride` | `heightsync` | `T_idle > Interval + TurnTimeout`, positive durations, and `2 · Interval ≤ F` fail fast at startup. |
+| H25 | ✅ `TestHeartbeatConfig_ValidateRejectsBadOverride` + `_AckWindowFollowsTheSchedule` + `_InvalidOverlayIsClamped` | `heightsync` | `D_ack · block_time ≥ Interval + TurnTimeout`, `T_idle > Interval + TurnTimeout`, positive durations, and `2 · Interval ≤ F` fail fast; the live overlay path calls `Validate` and clamps rather than shipping a config that would fail. |
 | H33 | ✅ `TestHeartbeat_StampedBusySessionEmitsNoAcks` | `host` | A busy stamped escrow emits zero heartbeats **and** zero `MsgHeightAck`; acks exist only inside heartbeat turns. |
 | H34 | ✅ `TestSeed_SessionOpenStampsNonceOne` | `user` | E9: seed runs before the first outbound diff; nonce 1 `MsgHeartbeat` carries the seeded `(height, hash)`. (`MsgStartInference` stamp is E7.) |
 | H35 | ✅ `TestSeed_FanOutSurvivesDeadSlot` | `user` | One slot 404s; the seed still succeeds from another slot and every valid Anchor lands in `HeightSyncPeerTips`. |
@@ -310,10 +368,14 @@ may defer.
 | -- | ------------------- | ------- | ------------------ |
 | H9 | ✅ `TestLogPlane_DeterminismAcrossVerifiers` | `state` | Two independently built verifiers on the same diff sequence produce byte-identical `SyncTurnRecord`s and identical L0–L3 / L7 verdicts. |
 | H10 | ✅ `TestLogPlane_FabricatedAckRejected` | `heightsync` | User-fabricated ack ⇒ `INVALID(ack_sig_invalid)` (L2). |
+| H70 | ✅ `TestLogPlane_AckWithoutVerifierRejected` + `_HeartbeatWithoutVerifierOK` | `heightsync` | Acks with a nil verifier ⇒ `INVALID(ack_sig_invalid)`; heartbeat-only diffs still pass. |
+| H71 | ✅ `TestLogPlane_OversizedFieldsRejected` | `heightsync` | Oversized `peer_seen`, `sync_vector`, or `observed_block_hash` ⇒ `INVALID(bad_framing)` (L1 maxima). |
 | H11 | ✅ `TestLogPlane_AckCausalityRejected` | `heightsync` | Unknown or mismatched `turn_seq` / `ref_nonce` ⇒ `INVALID(ack_causality)` (L3). |
 | H12 | ✅ `TestHeightAck_EnvelopeBindingMismatch` | `transport` | Ack height ≠ `max(own response-leg Anchor, F(m))` ⇒ `DISPUTE_ORIGINATOR` on sight, mark written, no oracle lookup (L4). |
 | H12a | ✅ `TestLogPlane_AckLiftDoesNotTripEnvelopeBinding` | `heightsync` | The honest path of L4's asymmetry: an ack at the floor with a lower Anchor beside it draws **no** mark, because that is the producer rule; one block above both the anchor and the floor still marks. Reverting this leg to strict equality would mark every lagging host and leave every other L4 test passing. |
-| H13 | ✅ `TestHeartbeat_RequestLegBindingMismatch` | `transport` | Heartbeat height ≠ request-leg section ⇒ `DISPUTE_CARRIER` (L4). |
+| H13 | ✅ `TestHeartbeat_RequestLegBindingMismatch` | `transport` | Heartbeat height **below** the request-leg section ⇒ `DISPUTE_CARRIER` (L4): the sequencer understates a height its own signed envelope already reports. |
+| H103 | ✅ `TestLogPlane_HeartbeatLiftDoesNotTripEnvelopeBinding` | `heightsync` | The request-leg mirror of H12a. A heartbeat lifted to `F(m)` above the sequencer's own section is the producer rule, not a self-contradiction; `F(m)+1` and an understatement both still mark. Strict equality here named every lagging honest sequencer a dispute carrier while catching no attacker — a sequencer inventing a height puts the same number in both fields. |
+| H104 | ✅ `TestLogPlane_CarryForwardSectionSkipsHeartbeatBinding` | `heightsync` | A carried peer tip is nobody's first-party read, so the request leg attempts no binding against it and the relayer is not blamed for the originator's number. |
 | H13a | ✅ `TestLogPlane_NoEnvelopeSkipsCrossPlaneChecks` | `heightsync` | Catch-up / gossip re-ingest with no envelope skips L4 and L5a; every other verdict is unchanged; an edge mark is not re-derived. |
 | H13b | ✅ `TestLogPlane_SectionPresentForOneRecipientOnly` | `transport` | Lazy carry (`last_propagated`) means slot A runs L4 while slot B skips it; both accept the diff. |
 | H13c | ✅ `TestLogPlane_HistoricalReplayNoInvalidation` | `heightsync` | Replaying a session whose stamps sit far below the verifier's tip yields **no** `INVALID` — L5a is the only `D`-band check and it is admission-only. |
@@ -321,7 +383,12 @@ may defer.
 | H13f | ✅ `TestLogPlane_AckBelowFloorRejectedAndLiftAccepted` | `heightsync` | An ack or heartbeat carrying a height below `F(m)` ⇒ `INVALID(height_regression)`: the producer held the log and could have lifted. Lifting to the floor while labelling itself `CATCHING_UP` is accepted, so a lagging host is never forced into an invalid diff. |
 | H13g | ✅ `TestLogPlane_ConfirmJudgedAgainstProducingNonce` | `heightsync` | A confirm produced at nonce `m` and landing after another party raised the floor is accepted; the basis is `F(m)`, not the landing floor. Below `F(m)` still fails. |
 | H13h | ✅ `TestLogPlane_AckJudgedAgainstRefNonceFloor` | `heightsync` | The ack half of the producing-nonce rule: an ack answering the heartbeat at `r` is judged against `F(r + 1)`, so landing after the floor rose costs an honest host nothing — and a `late` ack (attack 22) is admissible for the same reason. Below its own producing floor still fails. |
-| H13i | ✅ `TestFloorIndex_*`, `TestRefStamp_CoversEveryDiffResidentHeight`, `TestRefProducingNonce_PerMessageBasis` | `heightsync` | Floor mechanics: `AsOf` excludes its own nonce, the running max is monotone in nonce, absent stamps are ignored (presence keyed on the hash), a pruned range answers "unknown" rather than a higher floor, and `Clone` isolates trial-apply. Plus the single-semantics rule: every Diff-resident message carries a reference height, and each names its own producing basis. |
+| H13i | ✅ `TestFloorIndex_*`, `TestRefStamp_CoversEveryDiffResidentHeight`, `TestRefProducingNonce_PerMessageBasis` | `heightsync` | Floor mechanics: `AsOf` excludes its own nonce, the floor is monotone in nonce, absent stamps are ignored (presence keyed on the hash), a pruned range answers "unknown" rather than a higher floor, and `Clone` isolates trial-apply. Plus the single-semantics rule: every Diff-resident message carries a reference height, and each names its own producing basis. |
+| H54 | ✅ `TestFloorIndex_LoneImplausibleClaimDoesNotMoveTheFloor`, `TestFloorIndex_UnaidedRaiseStopsAtWConf`, `TestFloorIndex_QuorumAdmitsTheJumpOneSignerCannot`, `TestFloorIndex_CarriesCannotCorroborate`, `TestFloorIndex_BootstrapSeedsFromCorroborationNotFromTheFirstStamp` | `heightsync` | The raise rule (attack 24b): one signer may lift the floor by at most `W_conf`, a larger jump needs `Q` distinct signers holding the height, and a carried claim — identical to the standing floor, which the producer rule *obliges* a lagging party to write — never corroborates, so an attacker cannot echo itself into a quorum. A bootstrap on mainnet heights still seeds, at the corroborated height rather than at the maximum anyone claimed. |
+| H55 | ✅ `TestHeightSyncFloor_ImplausibleClaimIsMarkedAndIgnored` | `state` | The same rule on the consensus path, and the liveness half of it: the poisoned diff still **applies** (L0 asks only `≥ F(m)`), the floor does not follow it, `FLOOR_OUT_OF_BAND` is recorded against the signer at the nonce that carried it, and the next honest heartbeat plus a full start/confirm flow still advance. |
+| H56 | ✅ `TestHost_HeartbeatAck_OmitsAStampWhenTheFloorIsOutOfReach` | `host` | The producer escape: a floor more than `W_conf` above the host's own tip is **omitted**, not carried, so one bad height stays under one signature instead of being repeated under every honest one. The ack is still sent, and still reports `CATCHING_UP` — silence would be worse for the roster than a missing height claim. |
+| H57 | ✅ `TestHeightSyncFloor_ReorgReturnsToTheLiveBranch`, `TestLogPlane_L6BlamesTheFloorsAuthorForACarriedPair` | `state`, `heightsync` | Reorg recovery (attack 24c) without ever lowering the floor: while the live branch is below `F` every party carries the stale pair and diffs keep applying with **no** marks, and once the live branch passes `F` stamping is first-party again with no new session. L6 is what makes carrying safe — a pair identical to `F(m)` is by construction a carry, so the mark's `Origin` names the floor's author, while a first-party pair has no origin to point at. |
+| H58 | ✅ `TestHeightSyncFloor_AdmissionRefusalCannotSplitTheFloor` | `state` | The floor folds applied diffs and nothing else (attack 24d). Two verifiers ingest identical bytes, one of them having refused the exchange at admission (L5a fires for its own follower and for no one else): same `F(m)` at every nonce, same marks, same `INVALID(height_regression)` on the next low stamp. Feeding an admission decision into the floor would split the escrow through a check documented as replay-identical. |
 | H13e | ✅ `TestLogPlane_FutureDatedStampDeferredFail` | `heightsync` | `observed_block_hash` belonging to another height ⇒ `DEFERRED_FAIL` once the follower reaches `H`; the pair never confirms (L6). |
 | H14 | ✅ `TestHeightAck_FalseSyncedDeferredFail` | `heightsync` | Host claiming `SYNCED` on a stale oracle fails L6 once the follower advances; honest `ORACLE_STALE` carries no penalty. |
 | H30 | ✅ `TestLogPlane_PerInferenceHeightOrder` | `heightsync` | `confirm` below `start` is **accepted** (cross-signer: the user carries the roster maximum, the executor its own view); `finish` below `confirm` is `INVALID(height_regression)` (L0b, same executor). |
@@ -341,7 +408,8 @@ automatic for `executor_sig`.
 | H28 | ✅ `TestConfirmStart_TamperedObservedHeightFailsExecutorSig` | `state` | Altering `MsgConfirmStart.observed_height` after signing ⇒ `ErrInvalidExecutorSig`, proving the height really is inside `ExecutorReceiptContent`. |
 | H29 | ✅ `TestFinishInference_StampCoveredByProposerSig` | `state` | A stamp on `MsgFinishInference` is covered with no signing-code change; tampering ⇒ `ErrInvalidProposerSig`. |
 | H31 | ✅ `TestApply_RecordCarriesStampHeights` | `state` | `started_at_height` / `confirmed_at_height` land on the record from the stamps, and `post_state_root` differs from an unstamped run. |
-| H32 | ✅ `TestMarks_RequestLegEvidenceVerifiesOffline` | `heightsync` | A retained request-leg mark `(body, sig, ts, escrow_id)` recovers the user's address and shows section ≠ stamp, long past the ±30 s admission window. |
+| H32 | ✅ `TestMarks_RequestLegEvidenceVerifiesOffline` | `heightsync` | A retained request-leg mark (32-byte digest, sig, ts, escrow_id) recovers the user's address and shows section ≠ stamp, long past the ±30 s admission window. |
+| H72 | ✅ `TestHandleHeightSync_OmitsSectionOnSignFailure` | `transport` | `SignOrigin` failure omits the response section rather than shipping an unsigned Anchor-shaped payload. |
 
 ### 7.4 Peer sync status and repair probe (§11)
 
@@ -349,10 +417,16 @@ automatic for `executor_sig`.
 | -- | ------------------- | ------- | ------------------ |
 | H15 | ✅ `TestSyncVector_AckedContradictsLog` | `heightsync` | `ACKED(j,h,n)` with no ack at `Diff[n]` ⇒ user-attributable mark, still no `INVALID`. |
 | H16 | ✅ `TestRepairProbe_HeightNoBlame` | `heightsync` | `MISSING` + no ack + a later probe returning `HEIGHT` ⇒ **no** mark and **no** `USER_CHEATING`; the omission stays unattributed. (E4 lands the negative; probe itself is E5.) |
-| H17 | ✅ `TestRepairProbe_UnreachableOrHeight` | `transport` | Missing ack past `D_ack` with a live peer: probe returns `HEIGHT`, height is ingested, `peer_seen` bit set, turn stays `degraded`. |
+| H17 | ✅ `TestRepairProbe_UnreachableOrHeight` | `transport` | Missing ack past `D_ack` with a live peer: probe returns `HEIGHT`, height is ingested, `peer_seen` bit set, turn stays `degraded`. Window closed by a log-resident stamp, not the prober's oracle. |
+| H81 | ✅ `TestRepairProbe_OracleAheadDoesNotDegradeOpenTurn` | `transport` | Two hosts apply the same diffs; A's oracle is `HReq+D_ack+1`. After `MaybeRepair` on A both trackers stay `TurnOpen` and no probe is sent. |
 | H18 | ✅ `TestRepairProbe_DeadPeerBacksOff` | `transport` | Dead peer ⇒ `UNREACHABLE`, local record and backoff only, nothing on the wire toward the user. |
 | H19 | ✅ `TestRepairProbe_BudgetAndStagger` | `heightsync` | One probe per `(turn, slot)` per prober, `R_max` cap per `Interval` of elapsed time, deterministic stagger so late probers skip once the ack lands. |
+| H68 | ✅ `TestHandleHeightSyncRepair_FloodBoundsOracleReads` + `TestRepairResponderBudget_OnePerTurnSlotAndWindow` | `transport` + `heightsync` | A flood from one peer spends one oracle `Latest()` per `(turn, requester)`; extras are `429`; no marks. |
+| H69 | ✅ `TestHandleHeightSyncRepair_UnknownTurnSkipsOracle` | `transport` | A signed probe naming a turn the responder has no record of is `404` with zero oracle reads. |
 | H20 | ✅ `TestRepairProbe_ArmedHostStopsProbing` | `heightsync` | An armed host stops probing entirely. |
+| H93 | ✅ `TestRepairBudget_PruneBoundsMap` | `heightsync` | After retain+ extra turns, `probed` / `served` stay O(retain × slots). |
+| H94 | ✅ `TestRepairDueAll_IncludesDegradedOlderTurn` + `TestRepairProbe_DegradedOlderTurnStillProbed` | `heightsync` + `transport` | A degraded turn `s` missing slot `j` is still probed after turn `s+1` has opened. |
+| H95 | ✅ `TestRepairBudget_SleepRespectsCancel` + `TestRepairProbe_CancelInterruptsSleep` | `heightsync` + `transport` | A cancelled context returns from `Sleep` / `MaybeRepair` before the stagger elapses. |
 
 ### 7.5 Close-ready arming (§12)
 
@@ -479,29 +553,30 @@ Files (planned): `heightsync_strong_e2e_test.go`. Suite prefix: `TestHeightSyncS
 | Carry-forward + originator | E1, E2, `TestHeightSyncPeerTips_Carry*`, `TestDecide_OriginatorOmittedInCourierMode` | — |
 | Freshness gate `F` | E3, E8, `TestServer_StaleOriginRejected`, `TestClassifyInbound_StaleOriginRejected` | — |
 | Lazy classification | E2, `TestServer_LazyAnchor*`, `TestClassifyInbound_LazyOutsideSyncTurn` | — |
-| `(C-quorum)` | E4, E5, E6, E11, `TestConfirm_*` | — |
+| `(C-quorum)` | E4, E5, E6, E11, `TestConfirm_*`, H98, H99 | — |
 | `(C-strong)` / `(C-hybrid)` | — | S5, S6, S7, `TestConfirm_RuleStrong*`, `TestConfirm_RuleHybrid*` |
-| Asymmetric response signatures | E9, E10, `TestClient_ResponseAnchor_*`, `TestServer_ResponseAnchor_SignedByHost`, `TestSignOrigin_*` | — |
+| Asymmetric response signatures | E9, E10, `TestClient_ResponseAnchor_*`, `TestServer_ResponseAnchor_SignedByHost`, `TestHandleHeightSync_OmitsSectionOnSignFailure`, `TestSignOrigin_*` | — |
 | DEFERRED_FAIL attribution | E10 (exculpation API), H13e, H14 | S11 (Strong-grade evidence) |
 | `ObservedHeightNow` (cPoC C14) | `TestObservedHeightNow_*` | — |
 | Optional seed RPC | `TestHTTPClient_SeedHeightSync_RecordsOrigin`, `TestHandleHeightSync_*` | H34–H37 (E9 session-open seed, plan §8.5.1) ✅ |
 | Audit ring | `TestAuditRing_*`, all e2e tests | — |
 | Stale / quiet oracle | Feed **unavailable**: `TestHeightSyncAnchor_E2E_HeightSyncFeedStopped_*`, E6. Feed **quiet** (cached tip): `TestAnchorScheduler_StaleFeedEmitsDegradedAnchorInSyncTurn`, `TestDecide_LogStaleSyncTurn`, container cadence | S10 |
-| §7 wire format — envelope is one plane only | `TestEnvelope_*`, `TestUnwrapInferenceRequestBody_*` | — |
-| §10.1–§10.3 heartbeat cadence + obligation | H1, H2, H3, H4, H25 (unit + in-process) | — |
-| §10.4 `MsgHeartbeat` / `MsgHeightAck` wire + binding | field-number + ack signing unit + `TestHost_HeartbeatAck_*`, H10, H11, H12, H13, H33 | — |
+| §7 wire format — envelope is one plane only | `TestEnvelope_*`, `TestUnwrapInferenceRequestBody_*`, H96, H97 | — |
+| §10.1–§10.3 heartbeat cadence + obligation | H1, H2, H3, H4, H25, H62, H63, H73, H75 (unit + in-process + loop) | — |
+| §10.4 `MsgHeartbeat` / `MsgHeightAck` wire + binding | field-number + ack signing unit + `TestHost_HeartbeatAck_*`, H10, H11, H12, H12a, H13, H33, H88 (recovered `turn_seq` is monotonic), H103–H104 (both L4 legs use the producer rule) | — |
 | §10.5 `observed_height` in the log | H6 (turn complete), H9, H13d, H13f–i (reference height vs own tip), H50 (divergence never blocks a leg), H34 (seeded nonce 1 heartbeat), H38 (absent ≠ 0) | — |
 | §10.5.1 stamp inside its producer's signature | H28 (`executor_sig` mirror), H29 (`proposer_sig` automatic) | — |
-| §10.5.2 derived record heights / logical time | H31 | switching the consumers is a later milestone |
-| §10.6 async fan-out | H4, H5 (in-process span + unit) | — |
-| §10.7 turn record + completion | H5, H6, H7, H8 (unit + live host) | — |
-| §11.1 `sync_vector` honesty | H4 ack-inclusion / prev-turn vector, H15, H16 | — |
+| §10.5.2 derived record heights / logical time | H31, H64 (snapshot restore rebuilds floor and tracker) | switching the consumers is a later milestone |
+| §10.6 async fan-out | H4, H5, H74 (in-process span + concurrent dispatch) | — |
+| §10.7 turn record + completion | H5, H6, H7, H8, H59, H60, H61, H65, H78, H82 (unit + live host) | — |
+| §11.1 `sync_vector` honesty | H4 ack-inclusion / prev-turn vector, H15, H16, H66 | — |
 | §11.2 `sync_state` + `peer_seen` | H24 (unit + live host), `TestHost_HeartbeatAck_OwnSlotIntoMempool`, H14, H17 | — |
-| §11.3–§11.4 repair probe + budgets | H16 (no-blame negative), H17, H18, H19, H20 | — |
+| §11.3–§11.4 repair probe + budgets | H16 (no-blame negative), H17, H18, H19, H20, H68, H69, H81, H93–H95 | — |
 | §12 close-ready arming | H21, H22, H23 | — |
-| §14 log-plane checks L0–L7 | H9–H16, H12a, H13a–i, H30, H50–H53 | — |
+| §14 log-plane checks L0–L7 | H9–H16, H12a, H13a–i, H30, H50–H53, H70, H71, H79, H80, H83, H84 | — |
+| §14 floor raise rule, reorg recovery, applied-log-only fold | H54, H55, H56, H57, H58 | — |
 | §14 evaluation tiers (what may invalidate) | H13a, H13b, H13c | — |
-| §15 signature layers + mark retention | E10 (exculpation), H32 | — |
+| §15 signature layers + mark retention | E10 (exculpation), H32, H85, H86, H87 | — |
 | §17 `(C-turn)` withdrawn | H53 `TestConfirm_TurnRuleWithdrawn`, plus H6 / H24 for what completion does still mean | — |
 | Block-oracle abstraction + dapi compatibility | D1–D11 | — |
 
@@ -513,7 +588,7 @@ Files (planned): `heightsync_strong_e2e_test.go`. Suite prefix: `TestHeightSyncS
 | ------ | ---------------------- | ------- |
 | Host signs wrong `(H, hash)` | Audit + `(C-quorum)` rejects a single bad vote; deferred-hash check; with Step 8 + Strong, `DISPUTE_ORIGINATOR` evidence | `TestHeightSyncAnchor_E2E_CheatingTrailStoresBogusUserHash`, E5; ⏳ S11 |
 | Carrier strips originator metadata | Sync-turn receiver expects originator on cadence; freshness gate forces fresh attestation; carrier becomes the cryptographic signer (DISPUTE_CARRIER) | `TestHeightSyncPeerTips_Carry*`, E1 (originator ≠ user) |
-| Carrier replays old originator section | Freshness gate `F` rejects with `stale_origin`; metric + audit dispute_carrier | E3, E8, `TestServer_StaleOriginRejected`, `TestClassifyInbound_StaleOriginRejected` |
+| Carrier replays old originator section | Freshness gate `F` rejects with `stale_origin`, including a missing timestamp on carry-forward; metric + audit dispute_carrier | E3, E8, `TestServer_StaleOriginRejected`, `TestClassifyInbound_StaleOriginRejected`, H67, H77 |
 | Carrier sends bogus hash with valid framing | Audit ring keeps verbatim bytes; quorum cannot include the cheater; eventually DISPUTE_ORIGINATOR with stored signed blob | E5, E10, `TestHeightSyncAnchor_E2E_CheatingTrailStoresBogusUserHash` |
 | Host returns invalid `sender_signature` on response | Drop tip + `origin_sig_invalid_total`; no cache, no carry, no slash (reputation handles persistent offenders) | E9 variant B (`…ResponseOriginSignatureInvalidDropped`), `TestClient_ResponseAnchor_DropsOnInvalidSig` |
 | User claims height well above its true follower (light path only) | Receiver classifies via `InboundTrust`; without Strong, audited as `untrusted_peer`; with Strong, `\|Δ\| > D` ⇒ INVALID(`strong_required`) | `TestServer_Inference_HeightSync_UntrustedReconcileMismatchWarns`; ⏳ S1, S8 |
@@ -527,13 +602,15 @@ Files (planned): `heightsync_strong_e2e_test.go`. Suite prefix: `TestHeightSyncS
 | Host never acks (down / broken oracle / refusing) (17) | Turn goes `degraded` identically for every verifier; probe returns `HEIGHT` or `UNREACHABLE`; omission unattributed either way | ✅ H7 (live unavailable), ✅ H17, H18 |
 | Host's ack contradicts its own response Anchor (18) | L4 self-contradiction under one identity ⇒ `DISPUTE_ORIGINATOR` on sight, no oracle lookup, mark persisted verbatim | ✅ H12 |
 | Host reports `SYNCED` with a stale oracle (19) | L6 reconciliation ⇒ `DEFERRED_FAIL`; the honest alternatives carry no penalty, so lying is strictly worse | ✅ H14 |
-| Repair-probe amplification (20) | One probe per `(turn, slot)`, `R_max` per `Interval`, deterministic stagger, backoff, zero probes on the healthy path, armed hosts stop | ✅ H19, H20 |
+| Repair-probe amplification (20) | One probe per `(turn, slot)` per prober, one HEIGHT per `(turn, requester)` per responder, `R_max` per `Interval` both sides, unknown-turn reject before the oracle, stagger, backoff, zero probes on the healthy path, armed hosts stop | ✅ H19, H20, H68, H69 |
 | Partitioned minority tries to close a healthy escrow (21) | Arming emits nothing; closing needs finalization's `2f + 1`; unarmed hosts reject `USER_TIMEOUT` | ✅ H23 |
-| Drip-fed late acks to fake a complete turn (22) | Late acks count for height only, never clear `degraded`; arming keys on `last_signal_height` toward this host | ✅ H8 |
+| Drip-fed late acks to fake a complete turn (22) | Late acks count for height only, never clear `degraded`, and never clear `complete` either — a settled turn is history in both directions. Lateness is judged on the ack's own host-signed stamp, which the sequencer cannot backdate; arming keys on `last_signal_height` toward this host | ✅ H8, ✅ H60 |
 | Sequencer rewrites a host's stamp on `MsgConfirmStart` (23) | The pair lives in `ExecutorReceiptContent` and is copied into the rebuilt content before recovery, so any edit fails `executor_sig` | ✅ H28 |
 | Stamp regression to widen a band or backdate a duration (24) | L0 against `F(m)` for every Diff-resident height, L0b within one executor; both pure functions of `Diff` | ✅ H13d, ✅ H13f, ✅ H13g, ✅ H13h, ✅ H30 |
-| Floor poisoning — an implausibly high reference height no honest producer can clear (24b) | Liveness holds: carriers lift to `F(m)` and absence stays legal, so the escrow does not stall. Attribution holds at the edge, not in the log: L4 refuses to let the poisoner's own ack match `max(anchor, F(m))` unless it also claims the absurd height as a live oracle read, where L5a rejects it. Honest carriers still repeat the unreconcilable pair and collect L6 marks alongside the originator, and bounding a stamp to a plausible window above the verifier's own tip is **open work** | ✅ H13g (basis), ✅ H50 (lift is what the shipping producers do), ✅ H12 (edge attribution); plausibility bound ⏳ |
+| Floor poisoning — an implausibly high reference height no honest producer can clear (24b) | The claim never becomes logical time: past `W_conf` the floor follows only a height `Q` distinct signers hold, and a carry cannot corroborate, so a lone claimant moves it nowhere and is marked `FLOOR_OUT_OF_BAND`. Honest parties no longer repeat the pair either — an out-of-reach floor is omitted rather than carried — so it stays under one signature, where L6 and L4 already reach it. The diff itself still applies: L0 asks only `≥ F(m)` | ✅ H54, ✅ H55, ✅ H56, ✅ H13g (basis), ✅ H12 (edge attribution) |
 | Divergence itself used as a liveness weapon — a lagging host makes every diff carrying its stamp INVALID (24c) | The producer rule is always satisfiable (`F(m)` is already in the log), so a diverged host can serve without lying; `sync_state` and the envelope anchors record the gap, and no log-plane verdict rests on it. A verdict that a lagging host cannot avoid would be a DoS against the escrow | ✅ H50, ✅ H52, ✅ `TestHeightSync_E2E_WideDivergenceNeverBlocksInferences` |
+| Reorg wedge — the chain reorgs below the floor, so nobody holds a first-party height that clears it (24d) | The floor never falls, and does not need to: carriers keep the escrow applying diffs while the live branch is below it, L6 attributes the stale pair to the floor's author rather than to the carriers, and stamping is first-party again once the live branch passes it. Deeper than `W_conf`, producers omit instead | ✅ H57 |
+| Splitting the floor by refusing a diff at admission (24e) | The floor folds applied diffs and nothing else, so an L5a refusal — which the same diff would not even face when it arrives by catch-up — cannot make two verifiers disagree about `F(m)` or about any later L0 verdict | ✅ H58 |
 | Pre-signing a future height (25) | `observed_block_hash` cannot be produced for an unmined block; L6 never confirms the pair | ✅ H13e |
 | Replay-time invalidation of an honest session (26) | Only pure-`Diff` checks may invalidate; L5a is admission-only and L4 is skipped without an envelope | ✅ H13a, H13c |
 | dapi unavailable or too old to serve `/block/*` | Failover to the direct-chain adapter (hash-only); a missing or down dapi degrades capability and never fails a session | ⏳ D4, D5, D7, D10, D11 |

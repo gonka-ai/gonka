@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -799,6 +800,10 @@ func TestHeightAck_EnvelopeBindingMismatch(t *testing.T) {
 	require.True(t, env.server.HeightSyncMarks().HasKind(heightsync.MarkDisputeOriginator))
 }
 
+// TestHeartbeat_RequestLegBindingMismatch is the understatement half of L4's
+// request leg: the sequencer signs an envelope saying it sees 900 and writes 77
+// into the log under the same identity. The lift direction is legal and is
+// covered by TestLogPlane_HeartbeatLiftDoesNotTripEnvelopeBinding.
 func TestHeartbeat_RequestLegBindingMismatch(t *testing.T) {
 	or := &heightSyncTestOracle{hdr: &blocks.Header{
 		Height:    77,
@@ -810,13 +815,16 @@ func TestHeartbeat_RequestLegBindingMismatch(t *testing.T) {
 
 	hs := &heightsync.HeightSyncSection{
 		ProofType:           heightsync.AnchorProofType,
-		MainnetHeight:       40,
+		MainnetHeight:       900,
 		MainnetBlockHashHex: "abcd",
 		Direction:           "request",
 	}
 	rec := postHeartbeatProtobuf(t, env, 1, 77, []byte{0xab, 0xcd}, hs)
 	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String(), "L4 must not reject the HTTP exchange")
 	require.True(t, env.server.HeightSyncMarks().HasKind(heightsync.MarkDisputeCarrier))
+	for _, m := range env.server.HeightSyncMarks().All() {
+		require.LessOrEqual(t, len(m.Blob), heightsync.MaxMarkBlobBytes)
+	}
 }
 
 func TestLogPlane_SectionPresentForOneRecipientOnly(t *testing.T) {
@@ -832,7 +840,7 @@ func TestLogPlane_SectionPresentForOneRecipientOnly(t *testing.T) {
 
 	hs := &heightsync.HeightSyncSection{
 		ProofType:           heightsync.AnchorProofType,
-		MainnetHeight:       40,
+		MainnetHeight:       900,
 		MainnetBlockHashHex: "abcd",
 		Direction:           "request",
 	}
@@ -842,4 +850,30 @@ func TestLogPlane_SectionPresentForOneRecipientOnly(t *testing.T) {
 	require.Equal(t, http.StatusOK, recB.Code, recB.Body.String())
 	require.True(t, envA.server.HeightSyncMarks().HasKind(heightsync.MarkDisputeCarrier))
 	require.False(t, envB.server.HeightSyncMarks().HasKind(heightsync.MarkDisputeCarrier))
+}
+
+type failOriginSigner struct{}
+
+func (failOriginSigner) Address() string { return "fail" }
+
+func (failOriginSigner) Sign([]byte) ([]byte, error) {
+	return nil, errors.New("injected origin sign failure")
+}
+
+func TestHandleHeightSync_OmitsSectionOnSignFailure(t *testing.T) {
+	or := &heightSyncTestOracle{hdr: &blocks.Header{
+		Height:    88,
+		ChainID:   "chain-seed",
+		BlockHash: []byte{0xca, 0xfe},
+	}}
+	sched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, or)
+	env := setupServerEnv(t, WithHeightSync(sched, or), WithHeightSyncSeedRPC(true))
+	env.server.SetHeightSyncOriginSigner(failOriginSigner{})
+
+	rec := env.doPost(t, "/devshard/v2/sessions/escrow-1/height-sync", []byte("{}"))
+	require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
+
+	var out heightSyncSeedResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &out))
+	require.Nil(t, out.HeightSync, "unsigned Anchor must be omitted, not sent")
 }

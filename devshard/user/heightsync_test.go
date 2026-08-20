@@ -2,11 +2,15 @@ package user
 
 import (
 	"context"
+	"errors"
+	"io"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	commrc "common/runtimeconfig"
 
 	"devshard/chainoracle/blocks"
 	"devshard/heightsync"
@@ -468,6 +472,37 @@ func TestHeartbeat_QuietSessionWaitsOutIntervalBetweenTurns(t *testing.T) {
 	require.NotNil(t, session.HeartbeatTurnTracker().Record(2))
 }
 
+func TestHeartbeat_OverlayShortensCadence(t *testing.T) {
+	cfg := heightsync.HeartbeatConfigFromSnapshot(commrc.Snapshot{
+		HeightSync: commrc.HeightSyncParams{
+			IntervalMs: 2000, TurnTimeoutMs: 3000, IdleTimeoutMs: 9000,
+		},
+	})
+	require.Equal(t, 2*time.Second, cfg.Interval)
+
+	var height uint64 = 100
+	oracles := make([]blocks.BlockOracle, 3)
+	for i := range oracles {
+		oracles[i] = &sessionOracle{hash: []byte{0xaa}}
+		oracles[i].(*sessionOracle).height.Store(100)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	session := setupHeartbeatSessionWithOracles(t, &height, oracles,
+		WithHeartbeatConfig(cfg),
+		WithHeartbeatClock(func() time.Time { return now }))
+	ctx := context.Background()
+
+	require.NoError(t, session.MaybeHeartbeat(ctx))
+	require.Equal(t, heightsync.TurnComplete, session.HeartbeatTurnTracker().Record(1).State)
+	turns := countHeartbeats(session.Diffs())
+
+	now = now.Add(2 * time.Second)
+	require.NoError(t, session.MaybeHeartbeat(ctx))
+	require.Greater(t, countHeartbeats(session.Diffs()), turns,
+		"overlay Interval=2s opens the next turn before the compiled 3s")
+	require.NotNil(t, session.HeartbeatTurnTracker().Record(2))
+}
+
 func countHeartbeats(diffs []types.Diff) int {
 	n := 0
 	for _, d := range diffs {
@@ -497,4 +532,141 @@ func countHeartbeatForce(d types.Diff) int {
 		}
 	}
 	return n
+}
+
+func TestHeartbeat_LoopOpensQuietTurnWithoutCaller(t *testing.T) {
+	var height uint64 = 100
+	session := setupHeartbeatSessionWithOracles(t, &height, nil,
+		WithHeartbeatConfig(heightsync.HeartbeatConfig{Interval: 40 * time.Millisecond}))
+	t.Cleanup(func() { _ = session.Close() })
+
+	session.StartHeartbeatLoop()
+	require.Eventually(t, func() bool {
+		return session.Nonce() >= 3 && session.HeartbeatTurnTracker().Record(1) != nil
+	}, 2*time.Second, 10*time.Millisecond, "loop must open a turn without the test calling MaybeHeartbeat")
+
+	require.GreaterOrEqual(t, countHeartbeats(session.Diffs()), 3)
+	require.Equal(t, uint64(1), session.StateMachine().HeightSyncLatestTurnSeq())
+}
+
+func TestHeartbeat_SpanDispatchConcurrentAndContinuesOnError(t *testing.T) {
+	var height uint64 = 100
+	session := setupHeartbeatSession(t, &height)
+	t.Cleanup(func() { _ = session.Close() })
+
+	release := make(chan struct{})
+	started := make(chan struct{}, 3)
+	var calls [3]atomic.Int32
+	clients := session.Clients()
+	inners := make([]*InProcessClient, len(clients))
+	for i, c := range clients {
+		inner, ok := c.(*InProcessClient)
+		require.True(t, ok, "host %d", i)
+		inners[i] = inner
+		p := &spanProbeClient{inner: inner, started: started, calls: &calls[i]}
+		if i == 0 {
+			p.block = release
+		}
+		if i == 1 {
+			p.fail = errors.New("injected span send failure")
+		}
+		clients[i] = p
+	}
+
+	done := make(chan error, 1)
+	go func() { done <- session.MaybeHeartbeat(context.Background()) }()
+
+	deadline := time.After(2 * time.Second)
+	for i := 0; i < 3; i++ {
+		select {
+		case <-started:
+		case <-deadline:
+			t.Fatalf("only %d of 3 span sends started; dispatch is waiting for slot 0", i)
+		}
+	}
+	close(release)
+
+	require.NoError(t, <-done)
+	require.GreaterOrEqual(t, calls[0].Load(), int32(1))
+	require.GreaterOrEqual(t, calls[1].Load(), int32(1))
+	require.GreaterOrEqual(t, calls[2].Load(), int32(1))
+	require.GreaterOrEqual(t, inners[0].Host.LatestNonce(), uint64(1), "slot 0 still received its heartbeat")
+	require.Zero(t, inners[1].Host.LatestNonce(), "failed send must not reach slot 1")
+	require.GreaterOrEqual(t, inners[2].Host.LatestNonce(), uint64(3), "slot 2 still received its heartbeat")
+}
+
+func TestHeartbeat_LoopStopsOnClose(t *testing.T) {
+	var height uint64 = 100
+	interval := 40 * time.Millisecond
+	session := setupHeartbeatSessionWithOracles(t, &height, nil,
+		WithHeartbeatConfig(heightsync.HeartbeatConfig{Interval: interval}))
+
+	session.StartHeartbeatLoop()
+	require.Eventually(t, func() bool { return session.Nonce() >= 3 }, 2*time.Second, 10*time.Millisecond)
+	require.NoError(t, session.Close())
+
+	nonce := session.Nonce()
+	time.Sleep(5 * interval)
+	require.Equal(t, nonce, session.Nonce(), "Close must cancel the ticker")
+}
+
+func TestHeartbeat_SettleTurnDoesNotFireWhileSMTurnOpen(t *testing.T) {
+	// H82: a live oracle past D_ack must not SettleTurn while the SM still
+	// holds the same turn Open. Hosts are silenced so acks cannot complete it.
+	var height uint64 = 100
+	session := setupHeartbeatSession(t, &height)
+	t.Cleanup(func() { _ = session.Close() })
+
+	clients := session.Clients()
+	started := make(chan struct{}, 8)
+	fail := errors.New("no host ack")
+	for i, c := range clients {
+		inner, ok := c.(*InProcessClient)
+		require.True(t, ok, "host %d", i)
+		clients[i] = &spanProbeClient{inner: inner, started: started, calls: new(atomic.Int32), fail: fail}
+	}
+
+	require.NoError(t, session.MaybeHeartbeat(context.Background()))
+	sessRec := session.HeartbeatTurnTracker().Record(1)
+	smRec := session.StateMachine().HeightSyncTurnRecord(1)
+	require.NotNil(t, sessRec)
+	require.NotNil(t, smRec)
+	require.Equal(t, heightsync.TurnOpen, sessRec.State)
+	require.Equal(t, heightsync.TurnOpen, smRec.State)
+	require.Equal(t, uint64(1), session.HeartbeatTurnTracker().MaxTurnSeq())
+
+	height = 100 + heightsync.DefaultHeartbeatConfig().AckDeadlineBlocks + 1
+	require.NoError(t, session.MaybeHeartbeat(context.Background()))
+
+	require.Equal(t, heightsync.TurnOpen, session.HeartbeatTurnTracker().Record(1).State)
+	require.Equal(t, heightsync.TurnOpen, session.StateMachine().HeightSyncTurnRecord(1).State)
+	require.Equal(t, uint64(1), session.HeartbeatTurnTracker().MaxTurnSeq())
+	require.Equal(t, uint64(1), session.StateMachine().HeightSyncLatestTurnSeq())
+}
+
+type spanProbeClient struct {
+	inner   *InProcessClient
+	started chan struct{}
+	calls   *atomic.Int32
+	block   <-chan struct{}
+	fail    error
+}
+
+func (c *spanProbeClient) Send(ctx context.Context, req host.HostRequest, _ io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+	c.calls.Add(1)
+	select {
+	case c.started <- struct{}{}:
+	default:
+	}
+	if c.block != nil {
+		select {
+		case <-c.block:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	if c.fail != nil {
+		return nil, c.fail
+	}
+	return c.inner.Send(ctx, req, nil, receiptHandler)
 }

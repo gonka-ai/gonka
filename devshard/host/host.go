@@ -150,11 +150,12 @@ type Host struct {
 	peerSeen     *heightsync.PeerSeen
 	heartbeatCfg heightsync.HeartbeatConfig
 
-	repairCfg      heightsync.RepairConfig
-	repairBudget   *heightsync.RepairBudget
-	repairProbe    heightsync.RepairProbeFn
-	repairInFlight atomic.Bool
-	closeReady     *heightsync.CloseReady
+	repairCfg       heightsync.RepairConfig
+	repairBudget    *heightsync.RepairBudget
+	repairResponder *heightsync.RepairResponderBudget
+	repairProbe     heightsync.RepairProbeFn
+	repairInFlight  atomic.Bool
+	closeReady      *heightsync.CloseReady
 }
 
 // SnapshotInterval controls how often hosts persist full state snapshots.
@@ -243,6 +244,7 @@ func NewHost(
 		opt(h)
 	}
 	h.repairBudget = heightsync.NewRepairBudget(h.repairCfg, uint32(len(group)), h.PrimarySlot(), h.heartbeatCfg.Interval)
+	h.repairResponder = heightsync.NewRepairResponderBudget(h.repairCfg, uint32(len(group)), h.heartbeatCfg.Interval)
 	h.closeReady = heightsync.NewCloseReady(h.PrimarySlot(), h.heartbeatCfg)
 	return h, nil
 }
@@ -494,13 +496,18 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 		diffsApplied = true
 	}
 
+	needOracle := h.oracleNeededLocked(req, newlyApplied)
+	h.mu.Unlock()
+	hdr, hdrErr := h.latestHeaderIf(ctx, needOracle)
+	h.mu.Lock()
+
 	// (a2) Answer heartbeats addressed to this host's slot (E3). Acks go into
 	// the mempool of this response; they are never a general stamp.
-	h.maybeAckHeartbeatsLocked(ctx, newlyApplied)
-	h.noteCloseReadyLocked(ctx, newlyApplied)
+	h.maybeAckHeartbeatsLocked(newlyApplied, hdr, hdrErr)
+	h.noteCloseReadyLocked(newlyApplied, hdr, hdrErr)
 
 	// (b) Sign executor receipt (sync, under mutex).
-	receipt, confirmedAt, job, cachedBody, receiptOutcome, err := h.signReceipt(ctx, req)
+	receipt, confirmedAt, job, cachedBody, receiptOutcome, err := h.signReceipt(ctx, req, hdr, hdrErr)
 	if err != nil {
 		h.mu.Unlock()
 		return nil, err
@@ -833,7 +840,7 @@ func (h *Host) findDiff(diffs []types.Diff, nonce uint64) *types.Diff {
 // bytes in the request. applyAndPersist may skip stale diffs without verifying them; those
 // skipped bytes must never authorize execution.
 // Caller must hold h.mu.
-func (h *Host) signReceipt(ctx context.Context, req HostRequest) ([]byte, int64, *devshard.ExecuteRequest, []byte, receiptOutcome, error) {
+func (h *Host) signReceipt(ctx context.Context, req HostRequest, hdr *blocks.Header, hdrErr error) ([]byte, int64, *devshard.ExecuteRequest, []byte, receiptOutcome, error) {
 	outcome := receiptOutcome{reason: observability.ReasonNotExecutor}
 	if req.Payload == nil {
 		outcome.reason = observability.ReasonPayloadAbsent
@@ -877,7 +884,7 @@ func (h *Host) signReceipt(ctx context.Context, req HostRequest) ([]byte, int64,
 
 	// Sign executor receipt with wall-clock confirmed_at and optional height stamp.
 	confirmedAt := time.Now().Unix()
-	obsH, obsHash := h.oracleStampLocked(ctx)
+	obsH, obsHash := headerStamp(hdr, hdrErr)
 	obsH, obsHash = h.referenceStamp(inferenceID, obsH, obsHash)
 	receiptContent := &types.ExecutorReceiptContent{
 		InferenceId:       inferenceID,
@@ -1483,6 +1490,7 @@ func (h *Host) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload
 // challengeReceiptLocked applies diffs, checks executor eligibility, and signs
 // the receipt under the mutex. Returns a non-nil ExecuteRequest when async execution is needed.
 func (h *Host) challengeReceiptLocked(ctx context.Context, inferenceID uint64, payload *InferencePayload, diffs []types.Diff) ([]byte, int64, *devshard.ExecuteRequest, error) {
+	hdr, hdrErr := h.latestHeader(ctx)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
@@ -1507,7 +1515,7 @@ func (h *Host) challengeReceiptLocked(ctx context.Context, inferenceID uint64, p
 	}
 
 	confirmedAt := time.Now().Unix()
-	obsH, obsHash := h.oracleStampLocked(ctx)
+	obsH, obsHash := headerStamp(hdr, hdrErr)
 	obsH, obsHash = h.referenceStamp(inferenceID, obsH, obsHash)
 	receiptContent := &types.ExecutorReceiptContent{
 		InferenceId:       inferenceID,

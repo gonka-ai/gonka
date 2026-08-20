@@ -277,6 +277,7 @@ func buildHostManager(
 	)
 	manager.SetAvailabilityProvider(availabilityTracker)
 	manager.SetMaxNonceProvider(runtimeparams.MaxNonceFromSnapshot(chainParams))
+	manager.SetParamsProvider(runtimeparams.FromSnapshot(chainParams))
 	manager.SetBinaryVersion(cfg.BinaryLogVersion)
 	if err := manager.SetHeightSyncFromEnv(ctx, chainRuntime.client); err != nil {
 		return nil, fmt.Errorf("height sync oracle: %w", err)

@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"devshard/heightsync"
+	"devshard/logging"
 	"devshard/types"
 )
 
@@ -120,10 +121,29 @@ func (sm *StateMachine) checkLogPlaneLocked(nonce uint64, txs []*types.DevshardT
 	if res.Err != nil {
 		return res.Err
 	}
-	if sm.heightSyncMarks != nil {
-		sm.heightSyncMarks.AppendAll(res.Marks)
-	}
+	sm.recordMarksLocked(res.Marks)
 	return nil
+}
+
+// logPlaneErrLocked is L0–L3 without appending marks. Compose uses this to
+// drop invalid height-sync txs before persist; marks stay on the applyCore
+// path so a trial Preview cannot leak them (step 17).
+func (sm *StateMachine) logPlaneErrLocked(nonce uint64, txs []*types.DevshardTx) error {
+	return heightsync.CheckDiffLogPlane(nil, heightsync.LogPlaneInput{
+		Nonce: nonce,
+		Txs:   txs,
+	}, sm.logPlaneStateLocked()).Err
+}
+
+func (sm *StateMachine) recordMarksLocked(ms []heightsync.AttributableMark) {
+	if len(ms) == 0 {
+		return
+	}
+	if sm.marksDeferred != nil {
+		*sm.marksDeferred = append(*sm.marksDeferred, ms...)
+		return
+	}
+	sm.heightSyncMarks.AppendAll(ms)
 }
 
 func (sm *StateMachine) logPlaneStateLocked() heightsync.LogPlaneState {
@@ -153,41 +173,119 @@ func (sm *StateMachine) observeHeightSyncLocked(nonce uint64, txs []*types.Devsh
 	if sm.turnTracker == nil {
 		return
 	}
-	var hNow uint64
-	for _, tx := range txs {
-		if h, ok := heightsync.TxStamp(tx); ok && h > hNow {
-			hNow = h
-		}
-	}
-	if hNow == 0 {
-		hNow = sm.turnTracker.LastCompletedHeight()
-	}
-	sm.turnTracker.Observe(nonce, txs, hNow)
+	sm.turnTracker.Observe(nonce, txs, heightsync.LogResidentHeight(txs, sm.turnTracker.LastCompletedHeight()))
 	// Every Diff-resident height is a reference height and feeds the floor,
 	// heartbeats and acks included. Producers lift to F(m) or omit, so a party
 	// that is behind is never put in an impossible position by another party's
 	// higher stamp; what it may not do is write a height below the floor.
-	if refH, refHash, ok := heightsync.MaxRefStamp(txs); ok {
-		sm.heightSyncFloor.Observe(nonce, refH, refHash)
+	//
+	// The fold happens here, on apply, and nowhere else. That is deliberate: an
+	// L5a refusal at the transport edge is a local admission decision about one
+	// exchange, and the same diff arriving by catch-up or gossip carries no
+	// envelope to refuse. Letting admission feed the floor would give two honest
+	// verifiers different floors and therefore different L0 verdicts for every
+	// later diff, which is the escrow split step 3 of the review closes by
+	// stating this rule rather than leaving it to where the call happens to sit.
+	if marks := sm.heightSyncFloor.Observe(nonce, sm.floorClaimsLocked(txs)); len(marks) > 0 {
+		sm.recordMarksLocked(marks)
 	}
 	sm.state.HeightSyncLastCompletedHeight = sm.turnTracker.LastCompletedHeight()
 	sm.state.HeightSyncLatestTurnSeq = sm.turnTracker.MaxTurnSeq()
 }
 
-// HeightSyncRepairDue advances open turns to hNow and returns missing slots
-// on the latest turn whose ack window has closed.
-func (sm *StateMachine) HeightSyncRepairDue(hNow uint64) (turnSeq, spanStart uint64, missing []uint32) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	if sm.turnTracker == nil || hNow == 0 {
-		return 0, 0, nil
+// rebuildHeightSyncLocked reconstructs the turn tracker and floor from diffs
+// 1..LatestNonce. Both are derived state: the floor's per-signer claims cannot
+// be a persisted scalar, and the tracker is reconstructible from the log.
+// RestoreState copies hashed HeightSync* fields from the snapshot; replaying
+// MsgForceHeightSyncTurn fills them for legacy snapshots that omitted them.
+func (sm *StateMachine) rebuildHeightSyncLocked() {
+	slots := uint64(len(sm.state.Group))
+	sm.turnTracker = heightsync.NewTurnTracker(slots, 0, sm.heartbeatCfg)
+	sm.heightSyncFloor = heightsync.NewFloorIndexWith(
+		heightsync.FloorConfigFor(len(sm.state.Group), sm.heartbeatCfg))
+	if sm.state.LatestNonce == 0 || sm.inferenceStore == nil {
+		return
 	}
-	sm.turnTracker.AdvanceHeight(hNow)
-	rec := sm.turnTracker.Latest()
-	if rec == nil {
-		return 0, 0, nil
+	records, err := sm.inferenceStore.GetDiffs(sm.state.EscrowID, 1, sm.state.LatestNonce)
+	if err != nil {
+		logging.Warn("heightsync: snapshot restore could not load diffs; tracker and floor start empty",
+			"escrow_id", sm.state.EscrowID, "error", err)
+		return
 	}
-	return rec.TurnSeq, rec.RequestSpan[0], sm.turnTracker.MissingAcksDue(rec.TurnSeq, hNow)
+	for _, rec := range records {
+		for _, tx := range rec.Txs {
+			if msg := tx.GetForceHeightSyncTurn(); msg != nil {
+				_ = sm.applyForceHeightSyncTurn(msg, rec.Nonce)
+			}
+		}
+		sm.observeHeightSyncLocked(rec.Nonce, rec.Txs)
+	}
+	sm.clearExpiredHeightSyncFlags()
+}
+
+// floorClaimsLocked attributes each Diff-resident height to the identity that
+// signed it, which is what the floor's raise rule counts.
+//
+// Every carrier is named in the log itself: `slot_id` on an ack (L2 verifies the
+// signature over it), `executor_slot` on a finish, the executor of record for a
+// confirm — the assignment the state machine made at PrepareInference, so no
+// wire field is added — and the sequencer for the legs it composes. A leg the
+// log cannot attribute is still judged by L0; it simply does not vote on where
+// the floor goes.
+func (sm *StateMachine) floorClaimsLocked(txs []*types.DevshardTx) []heightsync.FloorClaim {
+	claims := make([]heightsync.FloorClaim, 0, len(txs))
+	for _, tx := range txs {
+		h, hash, ok := heightsync.RefStamp(tx)
+		if !ok {
+			continue
+		}
+		signer := heightsync.SequencerSigner
+		switch {
+		case tx.GetHeightAck() != nil:
+			signer = tx.GetHeightAck().SlotId
+		case tx.GetFinishInference() != nil:
+			signer = tx.GetFinishInference().ExecutorSlot
+		case tx.GetConfirmStart() != nil:
+			rec := sm.state.Inferences[tx.GetConfirmStart().InferenceId]
+			if rec == nil {
+				continue
+			}
+			signer = rec.ExecutorSlot
+		}
+		claims = append(claims, heightsync.FloorClaim{Signer: signer, Height: h, Hash: hash})
+	}
+	return claims
+}
+
+// HeightSyncLatestTurnSeq is the highest turn_seq folded from Diff. RecoverSession
+// restores the producer counter from this; it is derived and not hashed.
+func (sm *StateMachine) HeightSyncLatestTurnSeq() uint64 {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.state.HeightSyncLatestTurnSeq
+}
+
+// HeightSyncCloneTurnTracker returns a copy of the log-folded tracker so a
+// recovered producer can keep composing without sharing the SM mutex.
+func (sm *StateMachine) HeightSyncCloneTurnTracker() *heightsync.TurnTracker {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.turnTracker == nil {
+		return nil
+	}
+	return sm.turnTracker.Clone()
+}
+
+// HeightSyncRepairDue returns every retained turn whose ack window has closed
+// with missing slots. Spec §11.3 probes turn s, not only Latest(). The probe
+// still carries the local tip on the wire; this does not AdvanceHeight with it.
+func (sm *StateMachine) HeightSyncRepairDue() []heightsync.RepairDue {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.turnTracker == nil {
+		return nil
+	}
+	return sm.turnTracker.RepairDueAll()
 }
 
 // HeightSyncArmingContext is last complete turn_seq plus degraded turn ids.
@@ -200,14 +298,15 @@ func (sm *StateMachine) HeightSyncArmingContext() (lastComplete uint64, degraded
 	return sm.turnTracker.ArmingContext()
 }
 
-// HeightSyncMissingAcks is MissingAcksDue under the SM lock (stagger re-check).
-func (sm *StateMachine) HeightSyncMissingAcks(turnSeq, hNow uint64) []uint32 {
+// HeightSyncMissingAcks is MissingAcksDue under the SM lock (stagger re-check),
+// keyed on h_last rather than a live oracle height.
+func (sm *StateMachine) HeightSyncMissingAcks(turnSeq uint64) []uint32 {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	if sm.turnTracker == nil {
 		return nil
 	}
-	return sm.turnTracker.MissingAcksDue(turnSeq, hNow)
+	return sm.turnTracker.MissingAcksDue(turnSeq, sm.turnTracker.LastCompletedHeight())
 }
 
 // HeightSyncTurnRecord is a copy of the verifier-computed turn, or nil.

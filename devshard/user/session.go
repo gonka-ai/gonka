@@ -275,7 +275,7 @@ type Session struct {
 	heartbeat        *heightsync.Heartbeat
 	turnTracker      *heightsync.TurnTracker
 	observedHeight   func() (height uint64, hash []byte, ok bool)
-	heartbeatTurnSeq uint64
+	heartbeatTurnSeq uint64 // producer counter; RecoverSession restores from SM MaxTurnSeq
 	// heartbeatFlushLeft is the number of ack-carrying rounds still owed to the
 	// open turn. The heartbeat cadence is wall clock, so the producer does not
 	// wait for a block tick to collect acks.
@@ -283,6 +283,14 @@ type Session struct {
 	// clock drives the heartbeat cadence and is injectable for tests. It is
 	// never written into Diff: turn records stay clock-free.
 	clock func() time.Time
+
+	// heartbeat loop (step 12). StartHeartbeatLoop is idempotent; Close
+	// cancels it. heartbeatClosed is set first so a Start that races Close
+	// does not spawn a goroutine after shutdown.
+	heartbeatLoopOnce sync.Once
+	heartbeatClosed   bool
+	heartbeatStop     context.CancelFunc
+	heartbeatDone     chan struct{}
 
 	// heightSeedOnce runs the E9 roster fan-out at most once per Session.
 	heightSeedOnce   sync.Once
@@ -737,15 +745,7 @@ func (s *Session) observeTurnLocked(diff types.Diff) {
 	if s.turnTracker == nil {
 		return
 	}
-	hNow, _, ok := s.observedHeightLocked()
-	if !ok {
-		hNow = 0
-	}
-	for _, tx := range diff.Txs {
-		if h, present := heightsync.TxStamp(tx); present && h > hNow {
-			hNow = h
-		}
-	}
+	hNow := heightsync.LogResidentHeight(diff.Txs, s.turnTracker.LastCompletedHeight())
 	s.turnTracker.Observe(diff.Nonce, diff.Txs, hNow)
 
 	// Acks are host-signed and name their own slot, so they are the one signal
@@ -2152,8 +2152,10 @@ func shortAddress(addr string) string {
 	return addr[len(addr)-8:]
 }
 
-// Close releases the underlying storage, if any. Safe to call multiple times.
+// Close stops the heartbeat loop (if started) and releases the underlying
+// storage, if any. Safe to call multiple times.
 func (s *Session) Close() error {
+	s.StopHeartbeatLoop()
 	if s.store != nil {
 		return s.store.Close()
 	}

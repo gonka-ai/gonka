@@ -53,11 +53,14 @@ type Snapshot struct {
 
 // HeightSyncParams are chain-carried log-plane knobs (spec §20). Zero = default.
 // Scheduling knobs are milliseconds; only the ack deadline is in blocks, because
-// it compares two claims that are already in the log.
+// it compares two claims that are already in the log. BlockTimeMs is the rate
+// that converts between the two, so setting the interval alone still yields a
+// coherent ack deadline.
 type HeightSyncParams struct {
 	IntervalMs         uint64
 	TurnTimeoutMs      uint64
 	IdleTimeoutMs      uint64
+	BlockTimeMs        uint64
 	AckDeadlineBlocks  uint64
 	ProbeStaggerMs     uint64
 	MaxProbesPerWindow uint32
@@ -103,6 +106,7 @@ func (s Snapshot) ToProto() *gen.RuntimeConfig {
 		HeightSyncTurnTimeoutMs:      s.HeightSync.TurnTimeoutMs,
 		HeightSyncAckDeadlineBlocks:  s.HeightSync.AckDeadlineBlocks,
 		HeightSyncIdleTimeoutMs:      s.HeightSync.IdleTimeoutMs,
+		HeightSyncBlockTimeMs:        s.HeightSync.BlockTimeMs,
 		HeightSyncProbeStaggerMs:     s.HeightSync.ProbeStaggerMs,
 		HeightSyncMaxProbesPerWindow: s.HeightSync.MaxProbesPerWindow,
 	}
