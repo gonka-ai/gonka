@@ -108,9 +108,10 @@ func sandboxName(shardID vo.ShardID, node vo.NodeRef) string {
 }
 
 const (
-	labelShard = "gonka.trainshard.shard"
-	labelNode  = "gonka.trainshard.node"
-	labelRole  = "gonka.trainshard.role"
+	labelShard    = "gonka.trainshard.shard"
+	labelNode     = "gonka.trainshard.node"
+	labelRole     = "gonka.trainshard.role"
+	labelRevision = "gonka.trainshard.revision"
 )
 
 func labels(shardID vo.ShardID, node vo.NodeRef, role string) map[string]string {

@@ -20,6 +20,7 @@ type nodeFile struct {
 	Sources   []string   `json:"sources,omitempty"`
 	GPUs      int        `json:"gpus,omitempty"`
 	DiskBytes int64      `json:"disk_bytes,omitempty"`
+	Revision  int        `json:"revision,omitempty"`
 	Start     bool       `json:"start"`
 	StopGrace int        `json:"stop_grace_seconds,omitempty"`
 	Images    []imageRun `json:"images,omitempty"`
@@ -81,6 +82,7 @@ func toRunState(file nodeFile) (run.RunState, error) {
 			Command:   file.Command,
 			Resources: run.Resources{GPUs: file.GPUs, DiskBytes: file.DiskBytes},
 		},
+		Revision:  file.Revision,
 		Start:     file.Start,
 		StopGrace: time.Duration(file.StopGrace) * time.Second,
 	}
@@ -117,6 +119,7 @@ func fromRunState(state run.RunState, keep *meshState) nodeFile {
 		Command:   state.Spec.Command,
 		GPUs:      state.Spec.Resources.GPUs,
 		DiskBytes: state.Spec.Resources.DiskBytes,
+		Revision:  state.Revision,
 		Start:     state.Start,
 		StopGrace: int(state.StopGrace.Seconds()),
 		Mesh:      keep,

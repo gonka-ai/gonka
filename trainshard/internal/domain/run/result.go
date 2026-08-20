@@ -128,14 +128,20 @@ func FailedStatus(node vo.NodeRef, err error) NodeStatus {
 	return NodeStatus{NodeResult: Failed(node, err)}
 }
 
-// ReadyToStart holds when every node answered, every container can still be started, and they
-// all hold the same image; a run started on only some of its nodes waits for the rest with the
-// gpus already taken
+// ReadyToStart holds when every node answered, is still prepared and on the mesh, can still
+// start its container, and they all hold the same image; a run started on only some of its
+// nodes waits for the rest with the gpus already taken
 func ReadyToStart(statuses []NodeStatus) error {
 	held := make([]NodeImage, 0, len(statuses))
 	for _, status := range statuses {
 		if !status.OK() {
 			return ErrStatusUnknown
+		}
+		if !status.Prepared {
+			return ErrNodeNotPrepared
+		}
+		if !status.MeshUp {
+			return ErrMeshDown
 		}
 		if err := CanStart(status.State); err != nil {
 			return err
@@ -193,6 +199,7 @@ type RunState struct {
 	Shard      vo.ShardID
 	ReservedAt time.Time
 	Spec       RunSpec
+	Revision   int
 	Start      bool
 	StopGrace  time.Duration
 	Images     []ImageRun

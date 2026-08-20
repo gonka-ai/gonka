@@ -11,14 +11,16 @@ import (
 type ContainerInfo struct {
 	State    vo.ContainerState
 	Image    vo.ImageDigest
+	Revision int
 	ExitCode *int
 }
 
 type ContainerSpec struct {
-	Shard vo.ShardID
-	Node  vo.NodeRef
-	Run   RunSpec
-	Hosts []PinnedHost
+	Shard    vo.ShardID
+	Node     vo.NodeRef
+	Run      RunSpec
+	Revision int
+	Hosts    []PinnedHost
 }
 
 type PinnedHost struct {

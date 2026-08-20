@@ -8,6 +8,7 @@ import (
 	"trainshard/internal/domain/run"
 	"trainshard/internal/domain/shard"
 	"trainshard/internal/domain/shared/ports"
+	"trainshard/internal/utils/signedhttp"
 )
 
 type Deps struct {
@@ -28,7 +29,7 @@ func New(cfg Config, deps Deps) *Module {
 			Logs:      usecases.NewStreamLogsUseCase(deps.Chain, deps.Streams),
 			Shell:     usecases.NewOpenShellUseCase(deps.Chain, deps.Streams, deps.Sessions, deps.Clock),
 			Artifacts: usecases.NewStreamArtifactsUseCase(deps.Chain, deps.Volumes),
-		}),
+		}, signedhttp.NewOnce(deps.Clock, cfg.Window)),
 	}
 }
 
