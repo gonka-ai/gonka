@@ -47,6 +47,30 @@ func TestStartAnswersWithTheContainerItActuallyStarted(t *testing.T) {
 	}
 }
 
+func TestStartRefusesANodeWhoseContainerHasAlreadyRun(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.prepared(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	f.containers.infos[nodeA] = run.ContainerInfo{State: vo.ContainerExited, Image: runImage}
+	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec()}
+	f.images.present[runImage] = true
+
+	results, err := f.start().Execute(ctx, nodesCommand())
+
+	if err != nil {
+		t.Fatalf("a container that has run is a per-node refusal: %v", err)
+	}
+	if len(results) != 1 || results[0].Fault == nil || results[0].Fault.Code != "CONTAINER_FINISHED" {
+		t.Fatalf("got %+v, want start to admit it cannot restart what already ran", results)
+	}
+	if f.runs.states[nodeA].Start {
+		t.Fatal("a refused start must not leave the run recorded as wanted running")
+	}
+}
+
 func TestStopAnswersWithTheContainerItActuallyStopped(t *testing.T) {
 
 	f := newFixture()
@@ -76,7 +100,7 @@ func TestStopAnswersWithTheContainerItActuallyStopped(t *testing.T) {
 		t.Fatal("the run must be recorded as wanted stopped")
 	}
 	if state.Spec.Image != runImage {
-		t.Fatal("stopping must keep the deployed image so the run can be started again")
+		t.Fatal("stopping must keep the deployed image so the node still holds the run it was given")
 	}
 }
 

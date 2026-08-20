@@ -100,6 +100,29 @@ func TestPerHostAnswersForTheNodesItAskedAboutAndNoOthers(t *testing.T) {
 	}
 }
 
+func TestPerHostFailsANodeItsHostAnsweredForTwice(t *testing.T) {
+
+	results := run.PerHost(context.Background(), []vo.NodeRef{first, second}, run.Failed,
+		func(_ context.Context, participant vo.Participant, held []vo.NodeRef) ([]run.NodeResult, error) {
+			if participant == bob {
+				return answered(held), nil
+			}
+			return answered([]vo.NodeRef{first, first}), nil
+		})
+
+	if len(results) != 2 {
+		t.Fatalf("got %d results, want one per node asked about", len(results))
+	}
+	for _, result := range results {
+		if result.Node == first && result.OK() {
+			t.Fatalf("got %+v, want a node its host could not answer for once reported as failed", result)
+		}
+		if result.Node == second && !result.OK() {
+			t.Fatalf("got %+v, want the other host's node left alone", result)
+		}
+	}
+}
+
 func TestPerHostAnswersInTheOrderTheNodesWereNamed(t *testing.T) {
 
 	answeredFirst := make(chan struct{})
