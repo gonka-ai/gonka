@@ -159,6 +159,8 @@ func (m Machine) Apply(ctx context.Context, node vo.NodeRef, desired Desired, ac
 			return err
 		}
 		return m.Runs.Forget(ctx, node)
+	case ActionForgetRun:
+		return m.Runs.Forget(ctx, node)
 	default:
 		return shared.New("UNKNOWN_ACTION", shared.ErrValidation, "unknown action "+string(action.Kind))
 	}

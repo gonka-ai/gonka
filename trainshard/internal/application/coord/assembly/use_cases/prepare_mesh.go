@@ -42,13 +42,10 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 	var kicked time.Time
 
 	for {
-		// 1. Load nodes from chain
-		record, height, err := shard.Read(ctx, uc.chain, shardID)
+		// 1. Load nodes from chain, refusing a shard that is already over
+		record, err := shard.ReadActive(ctx, uc.chain, shardID)
 		if err != nil {
 			return PrepareResult{}, err
-		}
-		if !record.IsActive(height) {
-			return PrepareResult{}, shard.ErrShardClosed
 		}
 
 		// 2. Wait until releases land, a chain needs a block or two to catch up

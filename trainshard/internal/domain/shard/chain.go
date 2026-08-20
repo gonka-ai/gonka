@@ -20,3 +20,14 @@ func Read(ctx context.Context, chain ChainReader, shardID vo.ShardID) (Shard, vo
 	}
 	return record, height, nil
 }
+
+func ReadActive(ctx context.Context, chain ChainReader, shardID vo.ShardID) (Shard, error) {
+	record, height, err := Read(ctx, chain, shardID)
+	if err != nil {
+		return Shard{}, err
+	}
+	if !record.IsActive(height) {
+		return Shard{}, ErrShardClosed
+	}
+	return record, nil
+}

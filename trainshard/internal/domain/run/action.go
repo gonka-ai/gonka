@@ -18,6 +18,7 @@ const (
 	ActionWipeVolumes        ActionKind = "wipe_volumes"
 	ActionKillGPUProcesses   ActionKind = "kill_gpu_processes"
 	ActionReturnNode         ActionKind = "return_node"
+	ActionForgetRun          ActionKind = "forget_run"
 )
 
 type Action struct {
