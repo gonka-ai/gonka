@@ -279,3 +279,26 @@ func TestOnNewBlockDispatcher_KeepsFeeTreeOnParamsError(t *testing.T) {
 	}))
 	require.False(t, called, "failed Params query must not wipe the last known-good fee cache")
 }
+
+func TestOnNewBlockDispatcher_AppliesNilFeeTreeFromParams(t *testing.T) {
+	qc := &mockParamsQueryClient{}
+	dispatcher, _ := newRuntimeCacheTestDispatcher(t, qc)
+
+	applied := false
+	var got *types.FeeParams
+	dispatcher.applyFeeTree = func(p *types.FeeParams) {
+		applied = true
+		got = p
+	}
+
+	resp := devshardParamsResponse(true, 1)
+	resp.Params.FeeParams = nil
+	qc.On("Params", mock.Anything, mock.Anything).Return(resp, nil).Once()
+
+	require.NoError(t, dispatcher.ProcessNewBlock(context.Background(), chainphase.BlockInfo{
+		Height: 402,
+		Hash:   "fee-tree-nil-params",
+	}))
+	require.True(t, applied, "successful Params with nil FeeParams must clear the cache")
+	require.Nil(t, got)
+}

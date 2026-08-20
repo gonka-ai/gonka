@@ -137,6 +137,24 @@ func TestEstimateStoreCommitGas_FeeTreeLoadedIncludesIntrinsicFloor(t *testing.T
 		"zero surcharge must not collapse the intrinsic floor")
 }
 
+func TestFeeTreeLoad_NilClearsPricing(t *testing.T) {
+	fp := inferencetypes.DefaultFeeParams()
+	fp.EnabledFeeGroups = []string{inferencetypes.FeeGroupEpoch}
+	fp.Groups[0].MinGasPrice = 10
+
+	c := newFeeTreeCache()
+	c.Load(fp)
+	require.Equal(t, int64(10), c.PriceForMsgs([]sdk.Msg{&inferencetypes.MsgPoCV2StoreCommit{}}))
+	require.True(t, c.hints().HasStoreCommitRate)
+
+	c.Load(nil)
+	h := c.hints()
+	require.True(t, h.FeeTreeLoaded)
+	require.False(t, h.HasStoreCommitRate)
+	require.False(t, h.HasStoreCommitBase)
+	require.Equal(t, int64(0), c.PriceForMsgs([]sdk.Msg{&inferencetypes.MsgPoCV2StoreCommit{}}))
+}
+
 func TestFeeTreeLoad_ZeroGasIsOptOutNotDefault(t *testing.T) {
 	fp := inferencetypes.DefaultFeeParams()
 	fp.Groups[0].Msgs[0].Base.Gas = 0

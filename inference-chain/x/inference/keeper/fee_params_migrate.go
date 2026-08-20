@@ -32,6 +32,12 @@ func (k Keeper) MigrateFeeParamsToTree(ctx context.Context) error {
 		fp.Groups = def.Groups
 	}
 
+	if types.ClampFeeTreeSafetyLimits(fp) {
+		k.LogInfo("clamped legacy fee rates to safety limits", types.Upgrades,
+			"max_period_base_gas", types.MaxPeriodBaseGas,
+			"max_gas_per_unit", types.MaxGasPerUnit)
+	}
+
 	params.FeeParams = fp
 	k.LogInfo("migrated fee params to group tree", types.Upgrades,
 		"min_gas_price_ngonka", fp.MinGasPriceNgonka,

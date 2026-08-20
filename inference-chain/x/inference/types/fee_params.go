@@ -14,9 +14,11 @@ const (
 	PeriodTypePoc   = "poc"
 	PeriodTypeBlock = "block"
 
-	maxMinGasPrice   = uint64(1_000_000)
-	maxPeriodBaseGas = uint64(10_000_000) // 20× default StoreCommit 500k
-	maxGasPerUnit    = uint64(10_000)     // 100× default StoreCommit 100
+	maxMinGasPrice = uint64(1_000_000)
+	// MaxPeriodBaseGas / MaxGasPerUnit are the Validate caps. Migration clamps
+	// legacy uncapped rates down to these rather than persisting an invalid tree.
+	MaxPeriodBaseGas = uint64(10_000_000) // 20× default StoreCommit 500k
+	MaxGasPerUnit    = uint64(10_000)     // 100× default StoreCommit 100
 
 	StoredBytesUnitB  = "b"
 	StoredBytesUnitKB = "kb"
@@ -146,11 +148,11 @@ func validatePeriodBase(base *PeriodBase, loc string) error {
 	if base == nil {
 		return nil
 	}
-	if base.PeriodLength == 0 {
-		base.PeriodLength = 1
-	}
-	if base.Gas > maxPeriodBaseGas {
-		return fmt.Errorf("%s.gas %d exceeds safety limit of %d", loc, base.Gas, maxPeriodBaseGas)
+	// Do not rewrite period_length: MsgUpdateParams.ValidateBasic runs on the
+	// governance message itself. Treat omitted 0 as 1 only at use time
+	// (PeriodLengthOrDefault / validateChargingPeriod).
+	if base.Gas > MaxPeriodBaseGas {
+		return fmt.Errorf("%s.gas %d exceeds safety limit of %d", loc, base.Gas, MaxPeriodBaseGas)
 	}
 	if base.PeriodType == "" {
 		return nil
@@ -185,10 +187,56 @@ func validateChargingPeriod(base *PeriodBase, typeURL, loc string) error {
 }
 
 func validateGasPerUnit(rate uint64, loc string) error {
-	if rate > maxGasPerUnit {
-		return fmt.Errorf("%s %d exceeds safety limit of %d", loc, rate, maxGasPerUnit)
+	if rate > MaxGasPerUnit {
+		return fmt.Errorf("%s %d exceeds safety limit of %d", loc, rate, MaxGasPerUnit)
 	}
 	return nil
+}
+
+// ClampFeeTreeSafetyLimits caps period-base gas and gas_per_unit to the
+// Validate limits. Returns true if any value was reduced. Used by the v0.2.16
+// migration so previously-valid uncapped legacy fields cannot persist a tree
+// that later MsgUpdateParams.Validate would reject.
+func ClampFeeTreeSafetyLimits(fp *FeeParams) bool {
+	if fp == nil {
+		return false
+	}
+	changed := false
+	clamp := func(v *uint64, max uint64) {
+		if v != nil && *v > max {
+			*v = max
+			changed = true
+		}
+	}
+	clamp(&fp.BaseValidationGas, MaxPeriodBaseGas)
+	clamp(&fp.GasPerPocCount, MaxGasPerUnit)
+	clampBase := func(base *PeriodBase) {
+		if base != nil {
+			clamp(&base.Gas, MaxPeriodBaseGas)
+		}
+	}
+	for _, g := range fp.Groups {
+		if g == nil {
+			continue
+		}
+		clampBase(g.Base)
+		for _, rule := range g.Msgs {
+			if rule == nil {
+				continue
+			}
+			clampBase(rule.Base)
+			if d := rule.GetStoredDelta(); d != nil {
+				clamp(&d.GasPerUnit, MaxGasPerUnit)
+			}
+			if b := rule.GetStoredBytes(); b != nil {
+				clamp(&b.GasPerUnit, MaxGasPerUnit)
+			}
+			if r := rule.GetRepeatedLen(); r != nil {
+				clamp(&r.GasPerUnit, MaxGasPerUnit)
+			}
+		}
+	}
+	return changed
 }
 
 // StoredBytesUnitSize returns the byte divisor for stored_bytes.unit.

@@ -271,8 +271,9 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 
 			// Reuse this Params response for the fee-tree cache. Do not issue a
 			// second RPC (and never context.Background()): a failed query leaves
-			// the last known-good cache in place.
-			if d.applyFeeTree != nil && params.Params.FeeParams != nil {
+			// the last known-good cache in place. A successful response with
+			// nil FeeParams must still apply so Load(nil) clears stale pricing.
+			if d.applyFeeTree != nil {
 				d.applyFeeTree(params.Params.FeeParams)
 			}
 		}

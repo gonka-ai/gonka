@@ -27,6 +27,7 @@ type commitWorkerQueryServer struct {
 	commitRoots         map[string][]byte
 	distributionOnChain map[string]bool
 	failCommitQuery     bool
+	commitQueryCalls    int
 }
 
 func (s *commitWorkerQueryServer) commitKey(req *types.QueryPoCV2StoreCommitRequest) string {
@@ -38,6 +39,7 @@ func (s *commitWorkerQueryServer) distributionKey(req *types.QueryMLNodeWeightDi
 }
 
 func (s *commitWorkerQueryServer) PoCV2StoreCommit(_ context.Context, req *types.QueryPoCV2StoreCommitRequest) (*types.QueryPoCV2StoreCommitResponse, error) {
+	s.commitQueryCalls++
 	if s.failCommitQuery {
 		return nil, fmt.Errorf("query unavailable")
 	}
@@ -578,6 +580,51 @@ func TestCommitWorker_QueryOutageDoesNotResendSamePayload(t *testing.T) {
 	}
 	mockRecorder.AssertExpectations(t)
 	assert.NotEmpty(t, worker.pending)
+}
+
+func TestCommitWorker_PendingSkipsBootstrapQuery(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "commit_worker_skip_bootstrap_test")
+	assert.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
+	defer store.Close()
+
+	pocHeight := int64(100)
+	store.ActivateStage(pocHeight)
+	artifactStore, err := store.GetOrCreateStore(pocHeight, "model-a")
+	assert.NoError(t, err)
+	assert.NoError(t, artifactStore.AddWithNode(1, []byte("test-vector"), "node-1"))
+	assert.NoError(t, artifactStore.Flush())
+
+	queryServer := &commitWorkerQueryServer{commitCounts: map[string]uint32{}}
+	queryClient, cleanup := newCommitWorkerQueryClient(t, queryServer)
+	defer cleanup()
+
+	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
+	mockRecorder.On("NewInferenceQueryClient").Return(queryClient)
+	mockRecorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).Return(nil).Once()
+
+	tracker := commitWorkerTestTracker(110)
+	worker := &CommitWorker{
+		store:              store,
+		recorder:           mockRecorder,
+		tracker:            tracker,
+		participantAddress: "participant_addr",
+		lastCommitted:      make(map[commitKey]commitState),
+		pending:            make(map[commitKey]pendingCommit),
+	}
+
+	worker.tick()
+	assert.Equal(t, 1, queryServer.commitQueryCalls, "first tick bootstraps once (no pending yet)")
+	assert.NotEmpty(t, worker.pending)
+
+	for h := int64(111); h <= 112; h++ {
+		setCommitWorkerHeight(tracker, h)
+		worker.tick()
+	}
+	assert.Equal(t, 3, queryServer.commitQueryCalls, "pending ticks must query once via reconcile, not bootstrap again")
+	mockRecorder.AssertNumberOfCalls(t, "SubmitPoCV2StoreCommit", 1)
 }
 
 func TestCommitWorker_HigherCountSubmitsWhileOlderPending(t *testing.T) {

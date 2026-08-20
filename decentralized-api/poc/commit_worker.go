@@ -206,11 +206,17 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64) {
 			continue
 		}
 
+		// Bootstrap lastCommitted from chain only when this model has no
+		// in-flight submission. reconcilePending already queried pending keys
+		// on this tick; repeating that RPC can hold w.mu across a 2s timeout
+		// per model during an outage.
 		if !hasLast && w.participantAddress != "" {
-			if resp, ok := w.queryStoreCommit(pocHeight, stageStore.ModelID); ok && resp.Found {
-				last = commitState{count: resp.Count, rootHash: bytes.Clone(resp.RootHash)}
-				w.lastCommitted[key] = last
-				hasLast = true
+			if _, inFlight := w.pending[key]; !inFlight {
+				if resp, ok := w.queryStoreCommit(pocHeight, stageStore.ModelID); ok && resp.Found {
+					last = commitState{count: resp.Count, rootHash: bytes.Clone(resp.RootHash)}
+					w.lastCommitted[key] = last
+					hasLast = true
+				}
 			}
 		}
 

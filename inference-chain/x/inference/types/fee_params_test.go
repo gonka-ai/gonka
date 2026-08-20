@@ -91,20 +91,25 @@ func TestFeeParamsValidate(t *testing.T) {
 	require.NoError(t, fp.Validate(), "repeated_len on validations is allowed")
 
 	fp = types.DefaultFeeParams()
-	fp.Groups[0].Msgs[0].Base.Gas = 10_000_001
+	fp.Groups[0].Msgs[0].Base.Gas = types.MaxPeriodBaseGas + 1
 	require.Error(t, fp.Validate(), "period base gas must be capped")
 
 	fp = types.DefaultFeeParams()
-	fp.Groups[0].Msgs[0].GetStoredDelta().GasPerUnit = 10_001
+	fp.Groups[0].Msgs[0].GetStoredDelta().GasPerUnit = types.MaxGasPerUnit + 1
 	require.Error(t, fp.Validate(), "stored_delta gas_per_unit must be capped")
 
 	fp = types.DefaultFeeParams()
-	fp.Groups[0].Msgs[1].GetStoredBytes().GasPerUnit = 10_001
+	fp.Groups[0].Msgs[1].GetStoredBytes().GasPerUnit = types.MaxGasPerUnit + 1
 	require.Error(t, fp.Validate(), "stored_bytes gas_per_unit must be capped")
 
 	fp = types.DefaultFeeParams()
 	fp.Groups[0].Msgs[1].GetStoredBytes().Unit = "gb"
 	require.Error(t, fp.Validate(), "stored_bytes.unit must be b|kb|mb")
+
+	fp = types.DefaultFeeParams()
+	fp.Groups[0].Msgs[0].Base.PeriodLength = 0
+	require.NoError(t, fp.Validate(), "omitted period_length is valid (resolved as 1)")
+	require.Equal(t, uint64(0), fp.Groups[0].Msgs[0].Base.PeriodLength, "Validate must not rewrite governance message contents")
 }
 
 func TestRepeatedFieldLen(t *testing.T) {
@@ -180,4 +185,22 @@ func TestStoredBytesParamsRoundtripUnit(t *testing.T) {
 	var got types.StoredBytesParams
 	require.NoError(t, got.Unmarshal(bz))
 	require.True(t, orig.Equal(&got))
+}
+
+func TestClampFeeTreeSafetyLimits(t *testing.T) {
+	fp := types.DefaultFeeParams()
+	require.False(t, types.ClampFeeTreeSafetyLimits(fp))
+
+	fp.BaseValidationGas = types.MaxPeriodBaseGas + 9
+	fp.GasPerPocCount = types.MaxGasPerUnit + 8
+	fp.Groups[0].Msgs[0].Base.Gas = types.MaxPeriodBaseGas + 7
+	fp.Groups[0].Msgs[0].GetStoredDelta().GasPerUnit = types.MaxGasPerUnit + 6
+	fp.Groups[0].Msgs[1].GetStoredBytes().GasPerUnit = types.MaxGasPerUnit + 5
+	require.True(t, types.ClampFeeTreeSafetyLimits(fp))
+	require.Equal(t, types.MaxPeriodBaseGas, fp.BaseValidationGas)
+	require.Equal(t, types.MaxGasPerUnit, fp.GasPerPocCount)
+	require.Equal(t, types.MaxPeriodBaseGas, fp.Groups[0].Msgs[0].Base.Gas)
+	require.Equal(t, types.MaxGasPerUnit, fp.Groups[0].Msgs[0].GetStoredDelta().GasPerUnit)
+	require.Equal(t, types.MaxGasPerUnit, fp.Groups[0].Msgs[1].GetStoredBytes().GasPerUnit)
+	require.NoError(t, fp.Validate())
 }

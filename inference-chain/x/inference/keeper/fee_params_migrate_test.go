@@ -68,3 +68,26 @@ func TestMigrateFeeParamsToTree_CopiesExplicitZeros(t *testing.T) {
 	require.Equal(t, uint64(0), updated.FeeParams.BaseValidationGas)
 	require.Equal(t, uint64(0), updated.FeeParams.GasPerPocCount)
 }
+
+func TestMigrateFeeParamsToTree_ClampsUncappedLegacyRates(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.FeeParams = &types.FeeParams{
+		MinGasPriceNgonka: 0,
+		BaseValidationGas: types.MaxPeriodBaseGas + 1,
+		GasPerPocCount:    types.MaxGasPerUnit + 1,
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, k.MigrateFeeParamsToTree(ctx))
+	updated, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.NoError(t, updated.FeeParams.Validate())
+	_, rule := updated.FeeParams.RuleForTypeURL(sdk.MsgTypeURL(&types.MsgPoCV2StoreCommit{}))
+	require.NotNil(t, rule)
+	require.Equal(t, types.MaxPeriodBaseGas, rule.Base.Gas)
+	require.Equal(t, types.MaxGasPerUnit, rule.GetStoredDelta().GasPerUnit)
+	require.Equal(t, types.MaxPeriodBaseGas, updated.FeeParams.BaseValidationGas)
+	require.Equal(t, types.MaxGasPerUnit, updated.FeeParams.GasPerPocCount)
+}
