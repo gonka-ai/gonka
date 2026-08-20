@@ -54,7 +54,7 @@ func TestPrepareReleasesTheWorstNodeAndBuildsTheMeshAgain(t *testing.T) {
 	hosts.failed[nodeB] = []mesh.Pair{mesh.NewPair(nodeB, nodeA)}
 	hosts.failed[nodeC] = []mesh.Pair{mesh.NewPair(nodeC, nodeA)}
 
-	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, forever)
+	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, expired)
 
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
@@ -67,6 +67,27 @@ func TestPrepareReleasesTheWorstNodeAndBuildsTheMeshAgain(t *testing.T) {
 	}
 	if len(result.Config.Peers) != 2 || result.Config.Contains(nodeA) {
 		t.Fatalf("got %+v, want the mesh rebuilt without the released node", result.Config.Peers)
+	}
+}
+
+func TestPrepareGivesTheTunnelsTimeToComeUpBeforeCuttingAnyone(t *testing.T) {
+
+	chain, hosts := newChainStub(), newHostsStub()
+	hosts.heals = true
+	hosts.failed[nodeA] = []mesh.Pair{mesh.NewPair(nodeA, nodeB), mesh.NewPair(nodeA, nodeC)}
+	hosts.failed[nodeB] = []mesh.Pair{mesh.NewPair(nodeB, nodeA)}
+	hosts.failed[nodeC] = []mesh.Pair{mesh.NewPair(nodeC, nodeA)}
+
+	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, forever)
+
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if len(chain.releases) != 0 {
+		t.Fatalf("got %+v, want a handshake that needed a second try to cost nobody the run", chain.releases)
+	}
+	if len(result.Config.Peers) != 3 {
+		t.Fatalf("got %+v, want the whole mesh kept", result.Config.Peers)
 	}
 }
 
@@ -94,7 +115,7 @@ func TestPrepareWaitsForTheReleaseToLandAndCarriesOn(t *testing.T) {
 	chain.lag = 2
 	hosts.failed[nodeA] = []mesh.Pair{mesh.NewPair(nodeA, nodeB), mesh.NewPair(nodeA, nodeC)}
 
-	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, forever)
+	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, expired)
 
 	if err != nil {
 		t.Fatalf("prepare: %v", err)
@@ -113,7 +134,7 @@ func TestPrepareStopsWhenTheChainNeverGivesTheReleasedNodeBack(t *testing.T) {
 	chain.applies = false
 	hosts.failed[nodeA] = []mesh.Pair{mesh.NewPair(nodeA, nodeB), mesh.NewPair(nodeA, nodeC)}
 
-	_, err := prepareWithin(chain, hosts, &verifierStub{}, 0).Execute(context.Background(), shardID, forever)
+	_, err := prepareWithin(chain, hosts, &verifierStub{}, 0).Execute(context.Background(), shardID, expired)
 
 	if !errors.Is(err, shard.ErrReleasePending) {
 		t.Fatalf("got %v, want the run to stop rather than release the node twice", err)
@@ -213,7 +234,7 @@ func TestPrepareKeepsReleasingUntilWhatIsLeftIsConnected(t *testing.T) {
 	hosts.failed[nodeB] = []mesh.Pair{mesh.NewPair(nodeB, nodeA), mesh.NewPair(nodeB, nodeC)}
 	hosts.failed[nodeC] = []mesh.Pair{mesh.NewPair(nodeC, nodeA), mesh.NewPair(nodeC, nodeB)}
 
-	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, forever)
+	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, expired)
 
 	if err != nil {
 		t.Fatalf("prepare: %v", err)

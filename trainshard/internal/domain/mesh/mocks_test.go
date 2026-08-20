@@ -82,3 +82,10 @@ func configOf(nodes ...vo.NodeRef) mesh.Config {
 	}
 	return mesh.Config{Shard: shardID, Peers: peers}
 }
+
+// emptyStore holds nothing, so every read answers "not here"
+type emptyStore struct{ mesh.Store }
+
+func (emptyStore) Config(context.Context, vo.ShardID, vo.NodeRef) (mesh.Config, bool, error) {
+	return mesh.Config{}, false, nil
+}

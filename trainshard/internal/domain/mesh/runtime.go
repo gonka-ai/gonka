@@ -36,8 +36,11 @@ func (r Runtime) Present(ctx context.Context, shardID vo.ShardID, node vo.NodeRe
 
 func (r Runtime) Apply(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) error {
 	config, found, err := r.Store.Config(ctx, shardID, node)
-	if err != nil || !found {
+	if err != nil {
 		return err
+	}
+	if !found {
+		return ErrMissingConfig
 	}
 	return r.Network.Apply(ctx, shardID, node, config.Peers)
 }

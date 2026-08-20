@@ -112,7 +112,15 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 			return PrepareResult{Config: config, Released: released}, nil
 		}
 
-		// 8. Kick the worst node and retry
+		// 8. Give the tunnels until the deadline: a first handshake is often lost and retried
+		if uc.clock.Now().Before(deadline) {
+			if err := timex.Sleep(ctx, uc.poll); err != nil {
+				return PrepareResult{}, err
+			}
+			continue
+		}
+
+		// 9. Kick the worst node and retry
 		worst, found := mesh.Worst(nodes, failed)
 		if !found {
 			return PrepareResult{Released: released, Failed: failed}, nil
