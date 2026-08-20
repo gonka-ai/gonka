@@ -63,7 +63,7 @@ func (c *Client) Create(ctx context.Context, spec run.ContainerSpec) error {
 	if _, err := c.call(ctx, http.MethodPost, "/containers/create", query, body, nil); err != nil {
 		return err
 	}
-	c.log.Info("created container", "node_id", spec.Node.NodeID, "image_digest", spec.Run.Image.String(), "network", mode)
+	c.log.Info("created container", "node_id", spec.Node.NodeID, "image_digest", spec.Run.Image.Short(), "network", mode)
 	return nil
 }
 

@@ -95,7 +95,7 @@ func (s *streamsStub) Shell(_ context.Context, _ run.ExecRequest, terminal io.Re
 	return err
 }
 
-func newServer(t *testing.T, chain *chainStub, streams *streamsStub, actor vo.Address) *httptest.Server {
+func newServer(t *testing.T, chain *chainStub, streams *streamsStub) *httptest.Server {
 	t.Helper()
 
 	mux := http.NewServeMux()
@@ -105,18 +105,18 @@ func newServer(t *testing.T, chain *chainStub, streams *streamsStub, actor vo.Ad
 		Sessions: sessionLogStub{},
 		Clock:    timex.NewFrozen(now),
 	})
-	module.Mount(mux, signedhttp.New(hmac.New([]byte(secret), actor), timex.NewFrozen(now), time.Minute).Wrap)
+	module.Mount(mux, signedhttp.New(hmac.New([]byte(secret), ""), timex.NewFrozen(now), time.Minute).Wrap)
 
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	return server
 }
 
-func sign(t *testing.T, method, path, body string) http.Header {
+func sign(t *testing.T, actor vo.Address, method, path, body string) http.Header {
 	t.Helper()
 
 	timestamp := now.Format(time.RFC3339)
-	signature := hmac.New([]byte(secret), "").Sign(contract.SigningPayload(method, path, timestamp, "req-1", []byte(body)))
+	signature := hmac.New([]byte(secret), actor).Sign(contract.SigningPayload(method, path, timestamp, "req-1", []byte(body)))
 
 	header := http.Header{}
 	header.Set(contract.HeaderTimestamp, timestamp)
@@ -127,10 +127,10 @@ func sign(t *testing.T, method, path, body string) http.Header {
 
 func TestLogsAreStreamedToWhoeverOwnsTheRun(t *testing.T) {
 
-	server := newServer(t, newChainStub(), &streamsStub{output: "step 1\nstep 2\n"}, "gonka1creator")
+	server := newServer(t, newChainStub(), &streamsStub{output: "step 1\nstep 2\n"})
 	path := "/trainshard/v0/shards/7/nodes/node-a/logs"
 	request, _ := http.NewRequest(http.MethodPost, server.URL+path, nil)
-	request.Header = sign(t, http.MethodPost, path, "")
+	request.Header = sign(t, "gonka1creator", http.MethodPost, path, "")
 
 	response, err := server.Client().Do(request)
 	if err != nil {
@@ -151,10 +151,10 @@ func TestARefusedStreamAnswersWithAnErrorAndNoOutput(t *testing.T) {
 
 	chain := newChainStub()
 	chain.record.Status = shard.StatusSettled
-	server := newServer(t, chain, &streamsStub{output: "secret"}, "gonka1creator")
+	server := newServer(t, chain, &streamsStub{output: "secret"})
 	path := "/trainshard/v0/shards/7/nodes/node-a/logs"
 	request, _ := http.NewRequest(http.MethodPost, server.URL+path, nil)
-	request.Header = sign(t, http.MethodPost, path, "")
+	request.Header = sign(t, "gonka1creator", http.MethodPost, path, "")
 
 	response, err := server.Client().Do(request)
 	if err != nil {
@@ -176,7 +176,7 @@ func TestARefusedStreamAnswersWithAnErrorAndNoOutput(t *testing.T) {
 
 func TestShellCarriesBytesBothWaysOverOneConnection(t *testing.T) {
 
-	server := newServer(t, newChainStub(), &streamsStub{}, "gonka1creator")
+	server := newServer(t, newChainStub(), &streamsStub{})
 	path := "/trainshard/v0/shards/7/nodes/node-a/shell"
 	conn, err := net.Dial("tcp", strings.TrimPrefix(server.URL, "http://"))
 	if err != nil {
@@ -185,7 +185,7 @@ func TestShellCarriesBytesBothWaysOverOneConnection(t *testing.T) {
 	defer conn.Close()
 
 	request, _ := http.NewRequest(http.MethodPost, server.URL+path, nil)
-	request.Header = sign(t, http.MethodPost, path, "")
+	request.Header = sign(t, "gonka1creator", http.MethodPost, path, "")
 	if err := request.Write(conn); err != nil {
 		t.Fatalf("write request: %v", err)
 	}
