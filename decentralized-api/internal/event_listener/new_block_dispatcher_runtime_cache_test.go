@@ -240,3 +240,42 @@ func TestOnNewBlockDispatcher_NilDevshardEscrowParams_NoPanic(t *testing.T) {
 	require.True(t, got.DevshardRequestsEnabled)
 	require.Equal(t, uint32(100), got.MaxNonce)
 }
+
+func TestOnNewBlockDispatcher_AppliesFeeTreeFromParams(t *testing.T) {
+	qc := &mockParamsQueryClient{}
+	dispatcher, _ := newRuntimeCacheTestDispatcher(t, qc)
+
+	fp := types.DefaultFeeParams()
+	fp.EnabledFeeGroups = []string{types.FeeGroupEpoch}
+	var got *types.FeeParams
+	dispatcher.applyFeeTree = func(p *types.FeeParams) {
+		got = p
+	}
+
+	resp := devshardParamsResponse(true, 1)
+	resp.Params.FeeParams = fp
+	qc.On("Params", mock.Anything, mock.Anything).Return(resp, nil).Once()
+
+	require.NoError(t, dispatcher.ProcessNewBlock(context.Background(), chainphase.BlockInfo{
+		Height: 400,
+		Hash:   "fee-tree-block",
+	}))
+	require.Equal(t, fp, got)
+}
+
+func TestOnNewBlockDispatcher_KeepsFeeTreeOnParamsError(t *testing.T) {
+	qc := &mockParamsQueryClient{}
+	dispatcher, _ := newRuntimeCacheTestDispatcher(t, qc)
+
+	called := false
+	dispatcher.applyFeeTree = func(*types.FeeParams) {
+		called = true
+	}
+	qc.On("Params", mock.Anything, mock.Anything).Return(nil, context.DeadlineExceeded).Once()
+
+	require.NoError(t, dispatcher.ProcessNewBlock(context.Background(), chainphase.BlockInfo{
+		Height: 401,
+		Hash:   "fee-tree-params-fail",
+	}))
+	require.False(t, called, "failed Params query must not wipe the last known-good fee cache")
+}
