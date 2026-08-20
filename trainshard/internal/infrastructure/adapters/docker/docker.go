@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"net"
-	"net/http"
+	"strings"
 	"time"
+
+	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/client"
 
 	"trainshard/internal/domain/shared/vo"
 )
@@ -36,9 +38,6 @@ func (c Config) withDefaults() Config {
 	if c.Socket == "" {
 		c.Socket = "/var/run/docker.sock"
 	}
-	if c.APIVersion == "" {
-		c.APIVersion = "v1.44"
-	}
 	if c.VolumeRoot == "" {
 		c.VolumeRoot = "/var/lib/trainshardd/volumes"
 	}
@@ -64,21 +63,40 @@ func (c Config) withDefaults() Config {
 }
 
 type Client struct {
-	cfg  Config
-	log  *slog.Logger
-	http *http.Client
+	cfg    Config
+	log    *slog.Logger
+	engine *client.Client
 }
 
-func New(cfg Config, log *slog.Logger) *Client {
+// New holds no timeout on the engine client: a log follow, a shell session and an image pull
+// all outlive cfg.Timeout, which is applied per call by the operations that do return
+func New(cfg Config, log *slog.Logger) (*Client, error) {
 	cfg = cfg.withDefaults()
-	dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
-		return (&net.Dialer{}).DialContext(ctx, "unix", cfg.Socket)
+
+	options := []client.Opt{client.WithHost("unix://" + cfg.Socket)}
+	if version := strings.TrimPrefix(cfg.APIVersion, "v"); version != "" {
+		options = append(options, client.WithAPIVersion(version))
+	} else {
+		options = append(options, client.WithAPIVersionNegotiation())
 	}
-	return &Client{
-		cfg:  cfg,
-		log:  log,
-		http: &http.Client{Transport: &http.Transport{DialContext: dial}},
+
+	engine, err := client.New(options...)
+	if err != nil {
+		return nil, fmt.Errorf("docker client: %w", err)
 	}
+	return &Client{cfg: cfg, log: log, engine: engine}, nil
+}
+
+func (c *Client) Close() error { return c.engine.Close() }
+
+func (c *Client) bounded(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, c.cfg.Timeout)
+}
+
+// settled reports an engine answer that leaves the machine in the state we asked for:
+// the container is already there, already gone, or already in that state
+func settled(err error) bool {
+	return err == nil || cerrdefs.IsNotFound(err) || cerrdefs.IsNotModified(err)
 }
 
 func containerName(shardID vo.ShardID, node vo.NodeRef) string {
