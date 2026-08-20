@@ -41,11 +41,10 @@ func (uc *ReconcileUseCase) Execute(ctx context.Context, node vo.NodeRef) error 
 
 	// 4. Record the shard before touching the machine
 	now := uc.clock.Now()
-	if desired.Reserved && state.Shard != desired.Shard {
+	if desired.Reserved && state.Reserve(desired.Shard, now) {
 		if err := run.RecordReservation(ctx, uc.runs, node, desired.Shard, now); err != nil {
 			return err
 		}
-		state.ReservedAt = now
 	}
 
 	// 5. Observe the machine

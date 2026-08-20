@@ -116,6 +116,7 @@ type hostsStub struct {
 	identities map[vo.Participant][]mesh.Identity
 	applied    []vo.NodeRef
 	failed     map[vo.NodeRef][]mesh.Pair
+	refuses    map[vo.NodeRef]bool
 	silent     map[vo.Participant]bool
 }
 
@@ -125,8 +126,9 @@ func newHostsStub() *hostsStub {
 			hostA: {identityOf(nodeA)},
 			hostB: {identityOf(nodeB), identityOf(nodeC)},
 		},
-		failed: map[vo.NodeRef][]mesh.Pair{},
-		silent: map[vo.Participant]bool{},
+		failed:  map[vo.NodeRef][]mesh.Pair{},
+		refuses: map[vo.NodeRef]bool{},
+		silent:  map[vo.Participant]bool{},
 	}
 }
 
@@ -141,7 +143,7 @@ func (h *hostsStub) Apply(_ context.Context, _ mesh.Config, node vo.NodeRef) err
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
-	if h.silent[node.Participant] {
+	if h.silent[node.Participant] || h.refuses[node] {
 		return errHost
 	}
 	h.applied = append(h.applied, node)

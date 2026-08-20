@@ -70,6 +70,24 @@ func TestPrepareReleasesTheWorstNodeAndBuildsTheMeshAgain(t *testing.T) {
 	}
 }
 
+func TestPrepareDropsAHostThatWillNotTakeThePeerList(t *testing.T) {
+
+	chain, hosts := newChainStub(), newHostsStub()
+	hosts.refuses[nodeA] = true
+
+	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, forever)
+
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if len(chain.releases) != 1 || chain.releases[0].node != nodeA || chain.releases[0].reason != vo.ReleaseFailedPrepare {
+		t.Fatalf("got %+v, want the refusing node released as a failed prepare", chain.releases)
+	}
+	if len(result.Config.Peers) != 2 || result.Config.Contains(nodeA) {
+		t.Fatalf("got %+v, want the mesh built from the hosts that took it", result.Config.Peers)
+	}
+}
+
 func TestPrepareWaitsForTheReleaseToLandAndCarriesOn(t *testing.T) {
 
 	chain, hosts := newChainStub(), newHostsStub()
