@@ -22,7 +22,7 @@ RUN --mount=type=cache,id=trainshard-go-build,target=/root/.cache/go-build \
 
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates iproute2 wireguard-tools util-linux xfsprogs
+RUN apk add --no-cache ca-certificates xfsprogs
 
 COPY --from=builder /out/trainshardd /usr/local/bin/trainshardd
 

@@ -3,9 +3,9 @@ package docker
 import (
 	"context"
 	"fmt"
-	"net/http"
-	"net/url"
-	"strings"
+
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 
 	"trainshard/internal/domain/shared/vo"
 )
@@ -22,8 +22,8 @@ func (c *Client) Sandbox(ctx context.Context, shardID vo.ShardID, node vo.NodeRe
 			return 0, err
 		}
 	}
-	if !found.State.Running {
-		if _, err := c.call(ctx, http.MethodPost, "/containers/"+name+"/start", nil, nil, nil); err != nil {
+	if !present || !found.State.Running {
+		if err := c.startByName(ctx, name); err != nil {
 			return 0, err
 		}
 	}
@@ -47,7 +47,7 @@ func (c *Client) SandboxPID(ctx context.Context, shardID vo.ShardID, node vo.Nod
 }
 
 func (c *Client) RemoveSandbox(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) error {
-	if err := c.remove(ctx, sandboxName(shardID, node)); err != nil {
+	if err := c.removeByName(ctx, sandboxName(shardID, node)); err != nil {
 		return err
 	}
 	c.log.Info("removed sandbox", "node_id", node.NodeID)
@@ -55,29 +55,33 @@ func (c *Client) RemoveSandbox(ctx context.Context, shardID vo.ShardID, node vo.
 }
 
 func (c *Client) createSandbox(ctx context.Context, name string, shardID vo.ShardID, node vo.NodeRef) error {
-	if err := c.pullTag(ctx, c.cfg.SandboxImage); err != nil {
+	if err := c.pull(ctx, c.cfg.SandboxImage); err != nil {
 		return err
 	}
 
-	body := createRequest{
-		Image:  c.cfg.SandboxImage,
-		Labels: labels(shardID, node, "sandbox"),
-		HostConfig: hostConfig{
-			NetworkMode:   "bridge",
+	ctx, cancel := c.bounded(ctx)
+	defer cancel()
+
+	_, err := c.engine.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Name:   name,
+		Config: &container.Config{Image: c.cfg.SandboxImage, Labels: labels(shardID, node, "sandbox")},
+		HostConfig: &container.HostConfig{
+			NetworkMode:   container.NetworkMode("bridge"),
 			CapDrop:       []string{"ALL"},
 			SecurityOpt:   []string{"no-new-privileges"},
-			RestartPolicy: restartPolicy{Name: "no"},
+			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyDisabled},
 		},
-	}
-
-	_, err := c.call(ctx, http.MethodPost, "/containers/create", url.Values{"name": {name}}, body, nil)
+	})
 	return err
 }
 
-func (c *Client) pullTag(ctx context.Context, image string) error {
-	repository, tag := image, "latest"
-	if at := strings.LastIndex(image, ":"); at > strings.LastIndex(image, "/") {
-		repository, tag = image[:at], image[at+1:]
+func (c *Client) startByName(ctx context.Context, name string) error {
+	ctx, cancel := c.bounded(ctx)
+	defer cancel()
+
+	_, err := c.engine.ContainerStart(ctx, name, client.ContainerStartOptions{})
+	if settled(err) {
+		return nil
 	}
-	return c.pull(ctx, repository, tag)
+	return err
 }

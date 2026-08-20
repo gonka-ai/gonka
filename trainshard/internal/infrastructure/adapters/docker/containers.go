@@ -2,14 +2,14 @@ package docker
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/url"
 	"path/filepath"
 	"sort"
-	"strconv"
 	"time"
+
+	cerrdefs "github.com/containerd/errdefs"
+	"github.com/moby/moby/api/types/container"
+	"github.com/moby/moby/client"
 
 	"trainshard/internal/domain/run"
 	"trainshard/internal/domain/shared/vo"
@@ -34,33 +34,42 @@ func (c *Client) Create(ctx context.Context, spec run.ContainerSpec) error {
 		return err
 	}
 
-	body := createRequest{
+	init, pids := true, c.cfg.PidsLimit
+	config := &container.Config{
 		Image:      spec.Run.Image.String(),
 		Cmd:        spec.Run.Command,
 		Env:        environment(spec.Run.Env),
 		User:       c.cfg.User,
 		WorkingDir: workdir,
 		Labels:     labels(spec.Shard, spec.Node, "run"),
-		HostConfig: hostConfig{
-			Binds:          []string{c.volumePath(spec.Shard, spec.Node) + ":" + workdir},
-			NetworkMode:    mode,
-			ExtraHosts:     extraHosts(spec.Hosts),
-			CapDrop:        []string{"ALL"},
-			SecurityOpt:    []string{"no-new-privileges"},
-			CgroupnsMode:   "private",
-			IpcMode:        "private",
-			Init:           true,
+	}
+	host := &container.HostConfig{
+		Binds:         []string{c.volumePath(spec.Shard, spec.Node) + ":" + workdir},
+		NetworkMode:   mode,
+		ExtraHosts:    extraHosts(spec.Hosts),
+		CapDrop:       []string{"ALL"},
+		SecurityOpt:   []string{"no-new-privileges"},
+		CgroupnsMode:  container.CgroupnsModePrivate,
+		IpcMode:       container.IPCModePrivate,
+		Init:          &init,
+		ShmSize:       c.cfg.ShmBytes,
+		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyDisabled},
+		Resources: container.Resources{
 			Memory:         c.cfg.MemoryBytes,
 			NanoCPUs:       c.cfg.NanoCPUs,
-			PidsLimit:      c.cfg.PidsLimit,
-			ShmSize:        c.cfg.ShmBytes,
-			RestartPolicy:  restartPolicy{Name: "no"},
+			PidsLimit:      &pids,
 			DeviceRequests: gpuRequests(spec.Run.Resources.GPUs),
 		},
 	}
 
-	query := url.Values{"name": {containerName(spec.Shard, spec.Node)}}
-	if _, err := c.call(ctx, http.MethodPost, "/containers/create", query, body, nil); err != nil {
+	ctx, cancel := c.bounded(ctx)
+	defer cancel()
+
+	if _, err := c.engine.ContainerCreate(ctx, client.ContainerCreateOptions{
+		Name:       containerName(spec.Shard, spec.Node),
+		Config:     config,
+		HostConfig: host,
+	}); err != nil {
 		return err
 	}
 	c.log.Info("created container", "node_id", spec.Node.NodeID, "image_digest", spec.Run.Image.Short(), "network", mode)
@@ -68,21 +77,36 @@ func (c *Client) Create(ctx context.Context, spec run.ContainerSpec) error {
 }
 
 func (c *Client) Start(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) error {
-	return c.act(ctx, shardID, node, "/start", nil, "started container")
+	ctx, cancel := c.bounded(ctx)
+	defer cancel()
+
+	_, err := c.engine.ContainerStart(ctx, containerName(shardID, node), client.ContainerStartOptions{})
+	if !settled(err) {
+		return err
+	}
+	c.log.Info("started container", "node_id", node.NodeID)
+	return nil
 }
 
 func (c *Client) Stop(ctx context.Context, shardID vo.ShardID, node vo.NodeRef, grace time.Duration) error {
-	seconds := strconv.Itoa(int(grace.Round(time.Second).Seconds()))
-	return c.act(ctx, shardID, node, "/stop", url.Values{"t": {seconds}}, "stopped container")
+	ctx, cancel := c.bounded(ctx)
+	defer cancel()
+
+	seconds := int(grace.Round(time.Second).Seconds())
+	_, err := c.engine.ContainerStop(ctx, containerName(shardID, node), client.ContainerStopOptions{Timeout: &seconds})
+	if !settled(err) {
+		return err
+	}
+	c.log.Info("stopped container", "node_id", node.NodeID)
+	return nil
 }
 
 func (c *Client) Remove(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) error {
-	name := containerName(shardID, node)
-	status, err := c.call(ctx, http.MethodDelete, "/containers/"+name, url.Values{"v": {"false"}}, nil, nil)
-	if status == http.StatusNotFound {
-		return nil
-	}
-	if err != nil {
+	ctx, cancel := c.bounded(ctx)
+	defer cancel()
+
+	_, err := c.engine.ContainerRemove(ctx, containerName(shardID, node), client.ContainerRemoveOptions{})
+	if !settled(err) {
 		return err
 	}
 	c.log.Info("removed container", "node_id", node.NodeID)
@@ -90,22 +114,20 @@ func (c *Client) Remove(ctx context.Context, shardID vo.ShardID, node vo.NodeRef
 }
 
 func (c *Client) Shards(ctx context.Context, node vo.NodeRef) ([]vo.ShardID, error) {
-	filters, err := json.Marshal(map[string][]string{"label": {labelNode + "=" + string(node.NodeID)}})
+	ctx, cancel := c.bounded(ctx)
+	defer cancel()
+
+	listed, err := c.engine.ContainerList(ctx, client.ContainerListOptions{
+		All:     true,
+		Filters: make(client.Filters).Add("label", labelNode+"="+string(node.NodeID)),
+	})
 	if err != nil {
 		return nil, err
 	}
 
-	var found []struct {
-		Labels map[string]string `json:"Labels"`
-	}
-	query := url.Values{"all": {"1"}, "filters": {string(filters)}}
-	if _, err := c.call(ctx, http.MethodGet, "/containers/json", query, nil, &found); err != nil {
-		return nil, err
-	}
-
-	shards := make([]vo.ShardID, 0, len(found))
-	for _, entry := range found {
-		shardID, err := vo.ParseShardID(entry.Labels[labelShard])
+	shards := make([]vo.ShardID, 0, len(listed.Items))
+	for _, item := range listed.Items {
+		shardID, err := vo.ParseShardID(item.Labels[labelShard])
 		if err != nil {
 			continue
 		}
@@ -114,49 +136,52 @@ func (c *Client) Shards(ctx context.Context, node vo.NodeRef) ([]vo.ShardID, err
 	return shards, nil
 }
 
-func (c *Client) act(ctx context.Context, shardID vo.ShardID, node vo.NodeRef, action string, query url.Values, message string) error {
-	name := containerName(shardID, node)
-	status, err := c.call(ctx, http.MethodPost, "/containers/"+name+action, query, nil, nil)
-	switch {
-	case status == http.StatusNotModified, status == http.StatusNotFound:
-		return nil
-	case err != nil:
-		return err
-	}
-	c.log.Info(message, "node_id", node.NodeID)
-	return nil
-}
-
-func (c *Client) networkMode(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) (string, error) {
-	sandbox := sandboxName(shardID, node)
-	found, present, err := c.inspectContainer(ctx, sandbox)
-	if err != nil {
-		return "", err
-	}
-	if !present || !found.State.Running {
-		return "none", nil
-	}
-	return "container:" + sandbox, nil
-}
-
-func (c *Client) inspectContainer(ctx context.Context, name string) (containerInspect, bool, error) {
-	var found containerInspect
-	status, err := c.call(ctx, http.MethodGet, "/containers/"+name+"/json", nil, nil, &found)
-	if status == http.StatusNotFound {
-		return containerInspect{}, false, nil
-	}
-	if err != nil {
-		return containerInspect{}, false, err
-	}
-	return found, true, nil
-}
-
 func (c *Client) ContainerID(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) (string, bool, error) {
 	found, present, err := c.inspectContainer(ctx, containerName(shardID, node))
 	if err != nil || !present {
 		return "", false, err
 	}
 	return found.ID, true, nil
+}
+
+func (c *Client) networkMode(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) (container.NetworkMode, error) {
+	sandbox := sandboxName(shardID, node)
+	found, present, err := c.inspectContainer(ctx, sandbox)
+	if err != nil {
+		return "", err
+	}
+	if !present || !found.State.Running {
+		return container.NetworkMode("none"), nil
+	}
+	return container.NetworkMode("container:" + sandbox), nil
+}
+
+func (c *Client) inspectContainer(ctx context.Context, name string) (container.InspectResponse, bool, error) {
+	ctx, cancel := c.bounded(ctx)
+	defer cancel()
+
+	found, err := c.engine.ContainerInspect(ctx, name, client.ContainerInspectOptions{})
+	if cerrdefs.IsNotFound(err) {
+		return container.InspectResponse{}, false, nil
+	}
+	if err != nil {
+		return container.InspectResponse{}, false, err
+	}
+	if found.Container.State == nil || found.Container.Config == nil {
+		return container.InspectResponse{}, false, fmt.Errorf("container %s: engine answered without state or config", name)
+	}
+	return found.Container, true, nil
+}
+
+func (c *Client) removeByName(ctx context.Context, name string) error {
+	ctx, cancel := c.bounded(ctx)
+	defer cancel()
+
+	_, err := c.engine.ContainerRemove(ctx, name, client.ContainerRemoveOptions{Force: true})
+	if settled(err) {
+		return nil
+	}
+	return err
 }
 
 func (c *Client) volumePath(shardID vo.ShardID, node vo.NodeRef) string {
@@ -180,24 +205,24 @@ func extraHosts(pinned []run.PinnedHost) []string {
 	return hosts
 }
 
-func gpuRequests(count int) []deviceRequest {
+func gpuRequests(count int) []container.DeviceRequest {
 	if count <= 0 {
 		return nil
 	}
-	return []deviceRequest{{
+	return []container.DeviceRequest{{
 		Driver:       "nvidia",
 		Count:        count,
 		Capabilities: [][]string{{"gpu"}},
 	}}
 }
 
-func toContainerInfo(found containerInspect) (run.ContainerInfo, error) {
+func toContainerInfo(found container.InspectResponse) (run.ContainerInfo, error) {
 	image, err := vo.ParseImageDigest(found.Config.Image)
 	if err != nil {
 		return run.ContainerInfo{}, fmt.Errorf("container %s: %w", found.Name, err)
 	}
 
-	info := run.ContainerInfo{State: toContainerState(found.State), Image: image}
+	info := run.ContainerInfo{State: toContainerState(found.State.Status), Image: image}
 	if info.State == vo.ContainerExited {
 		code := found.State.ExitCode
 		info.ExitCode = &code
@@ -205,11 +230,11 @@ func toContainerInfo(found containerInspect) (run.ContainerInfo, error) {
 	return info, nil
 }
 
-func toContainerState(state containerState) vo.ContainerState {
-	switch state.Status {
-	case "created":
+func toContainerState(state container.ContainerState) vo.ContainerState {
+	switch state {
+	case container.StateCreated:
 		return vo.ContainerCreated
-	case "running", "paused", "restarting":
+	case container.StateRunning, container.StatePaused, container.StateRestarting:
 		return vo.ContainerRunning
 	default:
 		return vo.ContainerExited
