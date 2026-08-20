@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -141,7 +142,10 @@ func (g *GPUs) computeApps(ctx context.Context) ([]computeApp, error) {
 	if err != nil {
 		return nil, err
 	}
+	return parseComputeApps(lines), nil
+}
 
+func parseComputeApps(lines []string) []computeApp {
 	apps := make([]computeApp, 0, len(lines))
 	for _, line := range lines {
 		raw, uuid, found := strings.Cut(line, ",")
@@ -154,7 +158,7 @@ func (g *GPUs) computeApps(ctx context.Context) ([]computeApp, error) {
 		}
 		apps = append(apps, computeApp{pid: pid, uuid: strings.TrimSpace(uuid)})
 	}
-	return apps, nil
+	return apps
 }
 
 func (g *GPUs) query(ctx context.Context, what string) ([]string, error) {
@@ -165,7 +169,10 @@ func (g *GPUs) query(ctx context.Context, what string) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("%s %s: %w", g.cfg.SMI, what, err)
 	}
+	return scan(out)
+}
 
+func scan(out []byte) ([]string, error) {
 	lines := make([]string, 0, 8)
 	scanner := bufio.NewScanner(bytes.NewReader(out))
 	for scanner.Scan() {
@@ -185,5 +192,5 @@ func (g *GPUs) belongsTo(pid int, container string) bool {
 }
 
 func isGone(err error) bool {
-	return err == syscall.ESRCH
+	return errors.Is(err, syscall.ESRCH)
 }
