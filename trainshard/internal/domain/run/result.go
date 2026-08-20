@@ -32,6 +32,11 @@ func ResultOf(node vo.NodeRef, container ContainerInfo) NodeResult {
 
 func (r NodeResult) OK() bool { return r.Fault == nil }
 
+func (r NodeResult) Ref() vo.NodeRef { return r.Node }
+
+// Answer is whatever a host says about one node, so a batch can be matched back to what was asked
+type Answer interface{ Ref() vo.NodeRef }
+
 func PerNode[T any](nodes []vo.NodeRef, failed func(vo.NodeRef, error) T, run func(vo.NodeRef) (T, error)) []T {
 	results := make([]T, 0, len(nodes))
 	for _, node := range nodes {
@@ -45,8 +50,9 @@ func PerNode[T any](nodes []vo.NodeRef, failed func(vo.NodeRef, error) T, run fu
 }
 
 // PerHost asks every host at once and answers grouped by host, hosts in the order their
-// first node was named, never in the order the hosts happened to finish
-func PerHost[T any](
+// first node was named, never in the order the hosts happened to finish; every node asked
+// about gets an answer, so a host cannot drop one and have the silence read as agreement
+func PerHost[T Answer](
 	ctx context.Context,
 	nodes []vo.NodeRef,
 	failed func(vo.NodeRef, error) T,
@@ -56,14 +62,10 @@ func PerHost[T any](
 
 	answers := syncx.Fan(order, func(participant vo.Participant) []T {
 		answered, err := call(ctx, participant, held[participant])
-		if err == nil {
-			return answered
+		if err != nil {
+			answered = nil
 		}
-		answered = make([]T, 0, len(held[participant]))
-		for _, node := range held[participant] {
-			answered = append(answered, failed(node, err))
-		}
-		return answered
+		return append(answered, unanswered(held[participant], answered, failed, err)...)
 	})
 
 	results := make([]T, 0, len(nodes))
@@ -71,6 +73,24 @@ func PerHost[T any](
 		results = append(results, answered...)
 	}
 	return results
+}
+
+func unanswered[T Answer](asked []vo.NodeRef, answered []T, failed func(vo.NodeRef, error) T, cause error) []T {
+	if cause == nil {
+		cause = ErrNodeNotAnswered
+	}
+	named := make(map[vo.NodeRef]bool, len(answered))
+	for _, answer := range answered {
+		named[answer.Ref()] = true
+	}
+
+	gaps := make([]T, 0)
+	for _, node := range asked {
+		if !named[node] {
+			gaps = append(gaps, failed(node, cause))
+		}
+	}
+	return gaps
 }
 
 func byParticipant(nodes []vo.NodeRef) ([]vo.Participant, map[vo.Participant][]vo.NodeRef) {
@@ -145,6 +165,8 @@ type NodeReport struct {
 	ExitCode *int
 	Fault    *shared.Fault
 }
+
+func (r NodeReport) Ref() vo.NodeRef { return r.Node }
 
 func FailedReport(node vo.NodeRef, err error) NodeReport {
 	return NodeReport{Node: node, Images: make([]ImageRun, 0), Fault: shared.NewFault(err)}

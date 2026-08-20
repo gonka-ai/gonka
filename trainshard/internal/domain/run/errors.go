@@ -13,6 +13,7 @@ var (
 	ErrImagesDiffer     = shared.New("IMAGES_DIFFER", shared.ErrConflict, "nodes hold different images")
 	ErrNoNodes          = shared.New("NO_NODES", shared.ErrValidation, "no nodes in the run")
 	ErrStatusUnknown    = shared.New("STATUS_UNKNOWN", shared.ErrUnavailable, "a node did not report the image it holds")
+	ErrNodeNotAnswered  = shared.New("NODE_NOT_ANSWERED", shared.ErrUnavailable, "host left this node out of its answer")
 	ErrVolumeMissing    = shared.New("VOLUME_MISSING", shared.ErrNotFound, "run has no volume on this node")
 	ErrQuotaUnknown     = shared.New("QUOTA_UNKNOWN", shared.ErrUnavailable, "run volume has no readable quota to cap artifacts by")
 	ErrArtifactsTooBig  = shared.New("ARTIFACTS_TOO_BIG", shared.ErrConflict, "artifacts do not fit the run's disk quota")

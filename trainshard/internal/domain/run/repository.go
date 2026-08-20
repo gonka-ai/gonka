@@ -26,8 +26,8 @@ type SessionLog interface {
 
 // RequestLog replay by request id
 type RequestLog interface {
-	// Result returns the previous answer, or none
-	Result(ctx context.Context, id vo.RequestID) (results []NodeResult, found bool, err error)
-	// Record stores the answer
-	Record(ctx context.Context, id vo.RequestID, results []NodeResult) error
+	// Result returns the previous answer to this shard's request, or none
+	Result(ctx context.Context, shardID vo.ShardID, id vo.RequestID) (results []NodeResult, found bool, err error)
+	// Record stores the answer under the shard it was given for
+	Record(ctx context.Context, shardID vo.ShardID, id vo.RequestID, results []NodeResult) error
 }

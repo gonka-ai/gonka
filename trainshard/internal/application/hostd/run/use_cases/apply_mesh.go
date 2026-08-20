@@ -41,7 +41,7 @@ func (uc *ApplyMeshUseCase) Execute(ctx context.Context, cmd MeshCommand) ([]run
 	}
 
 	// 2. Replay stored answer if seen
-	recorded, found, err := uc.log.Result(ctx, cmd.RequestID)
+	recorded, found, err := uc.log.Result(ctx, cmd.Shard, cmd.RequestID)
 	if err != nil || found {
 		return recorded, err
 	}
@@ -75,7 +75,7 @@ func (uc *ApplyMeshUseCase) Execute(ctx context.Context, cmd MeshCommand) ([]run
 	})
 
 	// 5. Store the answer by request id
-	if err := uc.log.Record(ctx, cmd.RequestID, results); err != nil {
+	if err := uc.log.Record(ctx, cmd.Shard, cmd.RequestID, results); err != nil {
 		return nil, err
 	}
 	return results, nil
