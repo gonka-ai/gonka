@@ -175,7 +175,7 @@ POOL_BACKENDS_FILE="$(mktemp)"
 trap 'rm -f "$POOL_BACKENDS_FILE"' EXIT
 render_backend versiond_ha_pool /readyz /healthz "$POOL_HOST" "$SLOTS" \
     "$(ha_header_for versiond_ha_pool)" versiond_ha_pool > "$POOL_BACKENDS_FILE"
-printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | while read -r version; do
+printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;[:space:]' '\n' | while IFS= read -r version; do
     [ -n "$version" ] || continue
     # A version name is whatever governance approved. Three things are derived
     # from it and each has its own rules:
@@ -211,7 +211,7 @@ done
 # backend per version lets a missing archive take only that version out of
 # rotation; a generic /readyz failure must not hide the owner's healthy children.
 # Trailing newline is load-bearing: without it `read` swallows the last field.
-printf '%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | while read -r version; do
+printf '%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" | tr ',;[:space:]' '\n' | while IFS= read -r version; do
     [ -n "$version" ] || continue
     validate_version "$version"
     if awk -v v="$version" '$1 "" == v "" { found = 1 } END { exit !found }' "$MAP"; then
