@@ -24,8 +24,9 @@ const (
 	FeeGroupOnboarding = "onboarding"
 )
 
-// KnownFeeGroups is the compiled set of fee-group names. Governance cannot
-// enable a typo that is not in this set unless it also appears in FeeParams.groups.
+// KnownFeeGroups is the compiled set of fee-group names. It is
+// authoritative for both groups[].name and enabled_fee_groups; Validate
+// rejects any name that is not in this set.
 var KnownFeeGroups = map[string]struct{}{
 	FeeGroupEpoch:      {},
 	FeeGroupBLS:        {},

@@ -441,7 +441,8 @@ message FeeParams {
   uint64 gas_per_poc_count = 3;
   // Governance-controlled list of fee groups that currently charge. Empty = none charge.
   repeated string enabled_fee_groups = 4;
-  // Extra-gas and per-group min_gas_price tree. Unlisted messages stay fee-less.
+  // Per-group min_gas_price plus extra-gas rules. Enabling a group charges
+  // every compiled member of that group; msgs[] only configures extra gas.
   repeated FeeGroup groups = 5;
 }
 
@@ -450,7 +451,7 @@ message PeriodBase {
   uint64 gas = 1;
   // "epoch" | "poc" | "block"
   string period_type = 2;
-  // Defaulted to 1 if 0 at Validate.
+  // 0 means omitted; resolved as 1 at use time. Validate does not rewrite this field.
   uint64 period_length = 3;
 }
 
@@ -460,6 +461,7 @@ message FeeGroup {
   // ngonka per gas; 0 = group on but free coins.
   uint64 min_gas_price = 2;
   PeriodBase base = 3;
+  // Extra-gas rules only. Coin price comes from compiled group membership and min_gas_price.
   repeated MsgGasRule msgs = 4;
 }
 

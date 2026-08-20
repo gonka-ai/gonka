@@ -2480,7 +2480,8 @@ type FeeParams struct {
 	GasPerPocCount uint64 `protobuf:"varint,3,opt,name=gas_per_poc_count,json=gasPerPocCount,proto3" json:"gas_per_poc_count,omitempty"`
 	// Governance-controlled list of fee groups that currently charge. Empty = none charge.
 	EnabledFeeGroups []string `protobuf:"bytes,4,rep,name=enabled_fee_groups,json=enabledFeeGroups,proto3" json:"enabled_fee_groups,omitempty"`
-	// Extra-gas and per-group min_gas_price tree. Unlisted messages stay fee-less.
+	// Per-group min_gas_price plus extra-gas rules. Enabling a group charges
+	// every compiled member of that group; msgs[] only configures extra gas.
 	Groups []*FeeGroup `protobuf:"bytes,5,rep,name=groups,proto3" json:"groups,omitempty"`
 }
 
@@ -2556,7 +2557,7 @@ type PeriodBase struct {
 	Gas uint64 `protobuf:"varint,1,opt,name=gas,proto3" json:"gas,omitempty"`
 	// "epoch" | "poc" | "block"
 	PeriodType string `protobuf:"bytes,2,opt,name=period_type,json=periodType,proto3" json:"period_type,omitempty"`
-	// Defaulted to 1 if 0 at Validate.
+	// 0 means omitted; resolved as 1 at use time. Validate does not rewrite this field.
 	PeriodLength uint64 `protobuf:"varint,3,opt,name=period_length,json=periodLength,proto3" json:"period_length,omitempty"`
 }
 
@@ -2617,9 +2618,10 @@ func (m *PeriodBase) GetPeriodLength() uint64 {
 type FeeGroup struct {
 	Name string `protobuf:"bytes,1,opt,name=name,proto3" json:"name,omitempty"`
 	// ngonka per gas; 0 = group on but free coins.
-	MinGasPrice uint64        `protobuf:"varint,2,opt,name=min_gas_price,json=minGasPrice,proto3" json:"min_gas_price,omitempty"`
-	Base        *PeriodBase   `protobuf:"bytes,3,opt,name=base,proto3" json:"base,omitempty"`
-	Msgs        []*MsgGasRule `protobuf:"bytes,4,rep,name=msgs,proto3" json:"msgs,omitempty"`
+	MinGasPrice uint64      `protobuf:"varint,2,opt,name=min_gas_price,json=minGasPrice,proto3" json:"min_gas_price,omitempty"`
+	Base        *PeriodBase `protobuf:"bytes,3,opt,name=base,proto3" json:"base,omitempty"`
+	// Extra-gas rules only. Coin price comes from compiled group membership and min_gas_price.
+	Msgs []*MsgGasRule `protobuf:"bytes,4,rep,name=msgs,proto3" json:"msgs,omitempty"`
 }
 
 func (m *FeeGroup) Reset()         { *m = FeeGroup{} }
@@ -2687,10 +2689,6 @@ type MsgGasRule struct {
 	TypeUrl string `protobuf:"bytes,1,opt,name=type_url,json=typeUrl,proto3" json:"type_url,omitempty"`
 	// omit (nil) → inherit group base; gas=0 → no period base.
 	Base *PeriodBase `protobuf:"bytes,2,opt,name=base,proto3" json:"base,omitempty"`
-	// Amino JSON requires a unique oneof_name on every alternative.
-	// Keep the oneof: proto JSON already emits the selected sibling field,
-	// and Validate assumes at most one function.
-	//
 	// Types that are valid to be assigned to Func:
 	//
 	//	*MsgGasRule_StoredDelta
