@@ -40,6 +40,13 @@ func heartbeatDiff(t *testing.T, user signing.Signer, nonce, turnSeq, height, sl
 	})
 }
 
+func stampedHeartbeatDiff(t *testing.T, user signing.Signer, nonce, turnSeq, height, slots uint64, hash []byte) types.Diff {
+	t.Helper()
+	d := heartbeatDiff(t, user, nonce, turnSeq, height, slots)
+	d.Txs[0].GetHeartbeat().ObservedBlockHash = hash
+	return testutil.SignDiff(t, user, "escrow-1", nonce, d.Txs)
+}
+
 func mempoolHeightAcks(txs []*types.DevshardTx) []*types.MsgHeightAck {
 	var out []*types.MsgHeightAck
 	for _, tx := range txs {
@@ -228,6 +235,46 @@ func TestHost_HeartbeatAck_CatchingUp(t *testing.T) {
 	require.Len(t, acks, 1)
 	require.Equal(t, types.SyncState_CATCHING_UP, acks[0].SyncState)
 	require.Equal(t, uint64(90), acks[0].ObservedHeight)
+}
+
+// TestHost_HeartbeatAck_LagsButClearsSolicitingFloor pins the producing-nonce
+// basis for acks. The host is really behind at 90 and the only stamped height in
+// the log is the 100 on the heartbeat it is answering, so the bar the verifier
+// applies — F(ref_nonce+1), which folds in that heartbeat — is above the host's
+// raw tip. The honest ack is therefore the lift to 100, with the lag moved into
+// sync_state.
+//
+// The slot is picked so ref_nonce is the first nonce: reading F(ref_nonce)
+// instead drops the soliciting heartbeat, because AsOf is exclusive, and leaves
+// nothing behind it. That is how an honest host ends up authoring an L0-invalid
+// ack, and no later heartbeat in the span can paper over it.
+func TestHost_HeartbeatAck_LagsButClearsSolicitingFloor(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	or := &fakeOracle{}
+	or.setHeight(90)
+	or.setHash([]byte{0xbb})
+	h := newAckTestHost(t, 1, hosts, user, WithChainOracle(or)) // executor(1) = 1
+
+	const slots = uint64(3)
+	top := []byte{0xaa}
+	d1 := stampedHeartbeatDiff(t, user, 1, 1, 100, slots, top)
+	d2 := stampedHeartbeatDiff(t, user, 2, 1, 100, slots, top)
+	d3 := stampedHeartbeatDiff(t, user, 3, 1, 100, slots, top)
+	resp, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{d1, d2, d3}})
+	require.NoError(t, err)
+
+	acks := mempoolHeightAcks(resp.Mempool)
+	require.Len(t, acks, 1)
+	require.Equal(t, uint64(1), acks[0].RefNonce, "F(1) is empty; only F(2) holds the heartbeat's 100")
+	require.Equal(t, uint64(100), acks[0].ObservedHeight, "lifted to F(ref_nonce+1), not F(ref_nonce)")
+	require.Equal(t, top, acks[0].ObservedBlockHash, "the carried pair must be the floor's, not the host's")
+	require.Equal(t, types.SyncState_CATCHING_UP, acks[0].SyncState,
+		"the lag is not hidden: it moves to the label the gateway monitors")
 }
 
 func TestHost_HeartbeatAck_OracleStale(t *testing.T) {

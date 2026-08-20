@@ -187,7 +187,7 @@ func TestSeed_DoesNotAdvanceHLastOrConsumeNonce(t *testing.T) {
 	require.Equal(t, uint64(0), env.session.Nonce())
 	require.Empty(t, env.session.Diffs())
 	require.Equal(t, uint64(0), env.session.HeartbeatTurnTracker().LastCompletedHeight())
-	require.False(t, env.session.HeartbeatTurnTracker().Confirms(55))
+	require.False(t, env.session.HeartbeatTurnTracker().CompletedAtOrAbove(55))
 
 	require.NoError(t, env.session.MaybeHeartbeat(context.Background()))
 	require.NotEmpty(t, env.session.Diffs(), "seeded session that never worked still owes a turn within K_hb")

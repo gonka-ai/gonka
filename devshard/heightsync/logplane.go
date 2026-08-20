@@ -18,7 +18,12 @@ var (
 	ErrBadFraming       = errors.New("INVALID(bad_framing)")
 	ErrAckSigInvalid    = errors.New("INVALID(ack_sig_invalid)")
 	ErrAckCausality     = errors.New("INVALID(ack_causality)")
-	ErrStrongRequired   = errors.New("INVALID(strong_required)")
+	// ErrStrongRequired belongs to the transport plane only, where refusing an
+	// exchange is a local admission decision (L5a). The log plane has no
+	// counterpart: divergence between followers is monitoring, permanently, so
+	// there is nothing in Diff for it to adjudicate. Phase F sharpens the
+	// refusal into a proof obligation without widening its scope.
+	ErrStrongRequired = errors.New("INVALID(strong_required)")
 )
 
 // LogPlaneInput is one diff presented to CheckDiffLogPlane.
@@ -29,17 +34,22 @@ type LogPlaneInput struct {
 	LocalAligned uint64             // verifier tip for L5a; 0 skips the live band
 	Oracle       blocks.BlockOracle // L6; nil leaves pairs pending
 	RequestLeg   *RequestLegEvidence
+	// Floor lets L4 check the full producer identity max(anchor, F(m)) rather
+	// than the weaker "at least the anchor". CheckDiffLogPlane fills it from
+	// LogPlaneState; transport-edge callers that have no log view leave it nil.
+	Floor *FloorIndex
 }
 
 // LogPlaneState is frozen verifier state from already-accepted diffs.
 type LogPlaneState struct {
-	SlotsNum       uint64
-	SlotKeys       map[uint32]string
-	Verifier       signing.Verifier
-	Tracker        *TurnTracker
-	MaxStampHeight uint64
-	Cfg            HeartbeatConfig
-	EscrowID       string
+	SlotsNum uint64
+	SlotKeys map[uint32]string
+	Verifier signing.Verifier
+	Tracker  *TurnTracker
+	// Floor answers F(m) for L0. Nil disables the check.
+	Floor    *FloorIndex
+	Cfg      HeartbeatConfig
+	EscrowID string
 }
 
 // LogPlaneResult is the replay-stable verdict plus edge/deferred marks.
@@ -62,7 +72,7 @@ func (r *LogPlaneResult) mark(m AttributableMark) {
 
 // CheckDiffLogPlane runs L0–L7 against one diff.
 //
-// Pure Diff (always): L0, L0b, L1, L2, L3, L5b, L7 — L0–L3/L5b may INVALID.
+// Pure Diff (always): L0, L0b, L1, L2, L3, L7 — L0–L3 may INVALID.
 // Edge (sec != nil): L4, L5a — mark only.
 // Deferred: L6 — DEFERRED_FAIL once the oracle has block H.
 func CheckDiffLogPlane(ctx context.Context, in LogPlaneInput, st LogPlaneState) LogPlaneResult {
@@ -86,7 +96,7 @@ func CheckDiffLogPlane(ctx context.Context, in LogPlaneInput, st LogPlaneState) 
 		logLogPlane(in.Nonce, 0, "L3", "INVALID", err.Error())
 		return out.invalid(err, "ack_causality")
 	}
-	if err := checkL0(in.Nonce, in.Txs, hbs, acks, st); err != nil {
+	if err := checkL0(in.Nonce, in.Txs, st); err != nil {
 		logLogPlane(in.Nonce, 0, "L0", "INVALID", err.Error())
 		return out.invalid(err, "height_regression")
 	}
@@ -105,13 +115,12 @@ func CheckDiffLogPlane(ctx context.Context, in LogPlaneInput, st LogPlaneState) 
 	}
 	scratch.Observe(in.Nonce, in.Txs, hNow)
 
-	if err := checkL5b(acks, scratch, st.Cfg); err != nil {
-		logLogPlane(in.Nonce, 0, "L5b", "INVALID", err.Error())
-		return out.invalid(err, "strong_required")
-	}
 	checkL7(hbs, scratch, in.Nonce, &out)
 
 	if in.Sec != nil {
+		if in.Floor == nil {
+			in.Floor = st.Floor
+		}
 		checkL4(in, hbs, acks, &out)
 		checkL5a(in, hbs, acks, st.Cfg, &out)
 	}
@@ -234,62 +243,70 @@ func checkL3(diffNonce uint64, hbs []heartbeatRef, acks []ackRef, st LogPlaneSta
 	return nil
 }
 
-func checkL0(nonce uint64, txs []*types.DevshardTx, hbs []heartbeatRef, acks []ackRef, st LogPlaneState) error {
-	_ = nonce
-	floor := st.MaxStampHeight
-	check := func(h uint64, present bool, who string) error {
-		if !present {
-			return nil
-		}
-		if floor > 0 && h < floor {
-			return fmt.Errorf("%w: %s height %d < %d", ErrHeightRegression, who, h, floor)
-		}
+// checkL0 enforces reference-height monotonicity against the floor the stamp's
+// *producer* could have known.
+//
+// Scope is every Diff-resident height, heartbeats and acks included: the log has
+// one height semantics, not two (spec §14). Basis is F(producing nonce), not
+// F(landing nonce) — see RefProducingNonce for how each message type names it.
+//
+// An honest producer can always satisfy this — it stamps max(own_tip, F(m)) or
+// omits the stamp entirely — so a violation is real misbehaviour and INVALID
+// carries no false positives.
+func checkL0(nonce uint64, txs []*types.DevshardTx, st LogPlaneState) error {
+	if st.Floor == nil {
 		return nil
 	}
-	for _, ref := range hbs {
-		if err := check(ref.hb.ObservedHeight, StampPresent(ref.hb.ObservedBlockHash), "heartbeat"); err != nil {
-			return err
-		}
-	}
-	for _, ref := range acks {
-		if err := check(ref.ack.ObservedHeight, StampPresent(ref.ack.ObservedBlockHash), "ack"); err != nil {
-			return err
-		}
-	}
 	for _, tx := range txs {
-		if tx == nil {
+		h, _, ok := RefStamp(tx)
+		if !ok {
 			continue
 		}
-		if start := tx.GetStartInference(); start != nil {
-			if h, ok := inferenceStamp(start); ok {
-				if err := check(h, true, "start"); err != nil {
-					return err
-				}
-			}
+		m, ok := RefProducingNonce(nonce, tx)
+		if !ok {
+			continue
 		}
-		if conf := tx.GetConfirmStart(); conf != nil {
-			if h, ok := inferenceStamp(conf); ok {
-				if err := check(h, true, "confirm"); err != nil {
-					return err
-				}
-			}
+		floor, _, known := st.Floor.AsOf(m)
+		if !known || floor == 0 {
+			continue
 		}
-		if fin := tx.GetFinishInference(); fin != nil {
-			if h, ok := inferenceStamp(fin); ok {
-				if err := check(h, true, "finish"); err != nil {
-					return err
-				}
-			}
+		if h < floor {
+			return fmt.Errorf("%w: %s height %d < floor %d as of nonce %d",
+				ErrHeightRegression, refLegName(tx), h, floor, m)
 		}
 	}
 	return nil
 }
 
+func refLegName(tx *types.DevshardTx) string {
+	switch {
+	case tx.GetStartInference() != nil:
+		return "start"
+	case tx.GetConfirmStart() != nil:
+		return "confirm"
+	case tx.GetFinishInference() != nil:
+		return "finish"
+	case tx.GetHeartbeat() != nil:
+		return "heartbeat"
+	case tx.GetHeightAck() != nil:
+		return "ack"
+	}
+	return "stamp"
+}
+
+// checkL0b keeps the one per-inference ordering that is same-signer.
+//
+// confirm and finish are both produced by the executor, so confirm ≤ finish is
+// genuine per-signer monotonicity. start is user-signed and carries a possibly
+// higher carried reference, so start-vs-confirm and start-vs-finish are
+// cross-signer comparisons: an executor legitimately behind the height the user
+// carried is not a regression, and those pairs are deliberately not checked.
+//
+// Presence is keyed on hash; unstamped legs are skipped (H38).
 func checkL0b(txs []*types.DevshardTx) error {
-	// Presence is keyed on hash; unstamped legs are skipped (H38).
 	type infStamps struct {
-		start, confirm, finish          uint64
-		hasStart, hasConfirm, hasFinish bool
+		confirm, finish       uint64
+		hasConfirm, hasFinish bool
 	}
 	byID := make(map[uint64]*infStamps)
 	stamp := func(id uint64) *infStamps {
@@ -303,12 +320,6 @@ func checkL0b(txs []*types.DevshardTx) error {
 	for _, tx := range txs {
 		if tx == nil {
 			continue
-		}
-		if start := tx.GetStartInference(); start != nil {
-			if h, ok := inferenceStamp(start); ok {
-				s := stamp(start.InferenceId)
-				s.hasStart, s.start = true, h
-			}
 		}
 		if conf := tx.GetConfirmStart(); conf != nil {
 			if h, ok := inferenceStamp(conf); ok {
@@ -324,14 +335,8 @@ func checkL0b(txs []*types.DevshardTx) error {
 		}
 	}
 	for id, s := range byID {
-		if s.hasStart && s.hasConfirm && s.confirm < s.start {
-			return fmt.Errorf("%w: inference %d confirm %d < start %d", ErrHeightRegression, id, s.confirm, s.start)
-		}
 		if s.hasConfirm && s.hasFinish && s.finish < s.confirm {
 			return fmt.Errorf("%w: inference %d finish %d < confirm %d", ErrHeightRegression, id, s.finish, s.confirm)
-		}
-		if s.hasStart && s.hasFinish && s.finish < s.start {
-			return fmt.Errorf("%w: inference %d finish %d < start %d", ErrHeightRegression, id, s.finish, s.start)
 		}
 	}
 	return nil
@@ -350,28 +355,6 @@ func inferenceStamp(msg any) (uint64, bool) {
 		return 0, false
 	}
 	return s.GetObservedHeight(), true
-}
-
-func checkL5b(acks []ackRef, tracker *TurnTracker, cfg HeartbeatConfig) error {
-	d := cfg.DeltaBlocks
-	for _, ref := range acks {
-		ack := ref.ack
-		if ack.SyncState != types.SyncState_SYNCED {
-			continue
-		}
-		if !StampPresent(ack.ObservedBlockHash) {
-			continue
-		}
-		rec := tracker.Record(ack.TurnSeq)
-		if rec == nil || rec.HReq == 0 {
-			continue
-		}
-		if absU64(ack.ObservedHeight, rec.HReq) > d {
-			return fmt.Errorf("%w: SYNCED ack height %d outside D=%d of h_req %d",
-				ErrStrongRequired, ack.ObservedHeight, d, rec.HReq)
-		}
-	}
-	return nil
 }
 
 func checkL7(hbs []heartbeatRef, tracker *TurnTracker, nonce uint64, out *LogPlaneResult) {
@@ -398,18 +381,57 @@ func checkL7(hbs []heartbeatRef, tracker *TurnTracker, nonce uint64, out *LogPla
 	}
 }
 
+// checkL4 binds the Diff-resident height to the height in the envelope of the
+// same exchange. The two legs are bound differently because they are asymmetric.
+//
+// Request leg / heartbeat: the sequencer is a carrier on both planes, so the
+// section and the heartbeat are the same carried value and must be *equal*. A
+// mismatch is a self-contradiction under one identity.
+//
+// Response leg / ack: the section anchor is the host's first-party oracle read
+// while the ack is a reference height, so they differ by design and the producer
+// rule ties them as max(anchor, F(ref_nonce)). A receiver holds the anchor and
+// the log, so it can evaluate that identity exactly — catching a host that
+// understates its tip in the anchor *or* overstates its reference height in the
+// log. Without a floor view (transport-edge callers) it degrades to the
+// floor-free half, ack >= anchor, which is all that is checkable there.
 func checkL4(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, out *LogPlaneResult) {
 	sec := in.Sec
 	if !IsAnchorSection(sec) {
 		return
 	}
 	envH := uint64(sec.MainnetHeight)
+	// expect reports the height the producer rule demands, and whether the
+	// bound is exact. m is the producing nonce of the leg being checked.
+	expect := func(m uint64) (uint64, bool) {
+		if in.Floor == nil {
+			return envH, false
+		}
+		floor, _, known := in.Floor.AsOf(m)
+		if !known {
+			return envH, false
+		}
+		if floor > envH {
+			return floor, true
+		}
+		return envH, true
+	}
+	bad := func(h, want uint64, exact bool) bool {
+		if exact {
+			return h != want
+		}
+		return h < want
+	}
 	if sec.Direction == "response" {
 		for _, ref := range acks {
 			if !StampPresent(ref.ack.ObservedBlockHash) {
 				continue
 			}
-			if ref.ack.ObservedHeight == envH {
+			m, _ := RefProducingNonce(in.Nonce, &types.DevshardTx{
+				Tx: &types.DevshardTx_HeightAck{HeightAck: ref.ack},
+			})
+			want, exact := expect(m)
+			if !bad(ref.ack.ObservedHeight, want, exact) {
 				continue
 			}
 			blob, _ := CanonicalOriginBytes(sec)
@@ -420,7 +442,8 @@ func checkL4(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, out *LogPlaneR
 				Nonce:   in.Nonce,
 				Blob:    blob,
 				Sig:     append([]byte(nil), sec.SenderSignature...),
-				Detail:  fmt.Sprintf("ack height %d != response section %d", ref.ack.ObservedHeight, envH),
+				Detail: fmt.Sprintf("ack height %d != max(response section %d, floor) = %d",
+					ref.ack.ObservedHeight, envH, want),
 			})
 			logLogPlane(in.Nonce, ref.ack.SlotId, "L4", "MARK", "dispute_originator")
 		}

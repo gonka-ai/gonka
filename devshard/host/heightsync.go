@@ -63,7 +63,7 @@ func (h *Host) maybeAckHeartbeatsLocked(ctx context.Context, diffs []types.Diff)
 			continue
 		}
 		h.mempool.Add(MempoolEntry{
-			Tx: &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}},
+			Tx:         &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}},
 			ProposedAt: h.sm.LatestNonce(),
 		})
 	}
@@ -76,6 +76,20 @@ func (h *Host) latestHeaderLocked(ctx context.Context) (*blocks.Header, error) {
 	return h.oracle.Latest(ctx)
 }
 
+// buildHeightAckLocked produces the ack for one heartbeat addressed to this host.
+//
+// The height it puts in Diff is a *reference* height — max(own tip, floor) —
+// exactly like an executor receipt, because the log has one height semantics
+// (spec §14). The host's own oracle reading stays first-party in two places that
+// do not enter the log: the response-leg Anchor of this exchange, which L4 binds
+// to the ack through that same max(), and sync_state, which labels divergence
+// for the gateway's monitoring surface.
+//
+// The floor is read at ref_nonce+1, matching RefProducingNonce: the host has
+// applied through ref_nonce inclusive, so the soliciting heartbeat's own stamp
+// is part of the bar it must clear. Reading F(ref_nonce) instead — excluding
+// that heartbeat, since AsOf is exclusive — leaves a lagging host stamping below
+// the floor the verifier will judge it against, which is L0-invalid.
 func (h *Host) buildHeightAckLocked(item heartbeatTarget, hdr *blocks.Header, hdrErr error, now time.Time) *types.MsgHeightAck {
 	st := heightsync.EvaluateSyncStateFromHeader(h.oracle, hdr, hdrErr, item.hb.ObservedHeight, h.heartbeatCfg)
 	var height uint64
@@ -87,13 +101,30 @@ func (h *Host) buildHeightAckLocked(item heartbeatTarget, hdr *blocks.Header, hd
 		hash = append([]byte(nil), hdr.BlockHash...)
 		h.peerSeen.MarkFresh(item.slot, height, now)
 	}
+	refH, refHash := h.referenceStamp(item.nonce+1, height, hash)
 	return &types.MsgHeightAck{
 		TurnSeq:           item.hb.TurnSeq,
 		RefNonce:          item.nonce,
 		SlotId:            item.slot,
-		ObservedHeight:    height,
-		ObservedBlockHash: hash,
+		ObservedHeight:    refH,
+		ObservedBlockHash: refHash,
 		SyncState:         st,
 		PeerSeen:          h.peerSeen.Bytes(),
 	}
+}
+
+// referenceStamp is the producer side of L0: a reference height must be
+// max(own_tip, F(m)) for producing nonce m, or absent. It is never below F(m).
+//
+// Lifting to the floor is not a false claim. The floor is a height already in
+// the log, so a stamp equal to it is self-evidently a carry: the verifier can
+// see which earlier tx established that floor and who signed it, so blame for a
+// bad height stays with its originator rather than with the carrier. The host's
+// own view stays first-party in the response-leg Anchor and in sync_state.
+func (h *Host) referenceStamp(producingNonce, height uint64, hash []byte) (uint64, []byte) {
+	floor, floorHash, known := h.sm.HeightSyncFloorAsOf(producingNonce)
+	if !known || floor <= height || !heightsync.StampPresent(floorHash) {
+		return height, hash
+	}
+	return floor, floorHash
 }

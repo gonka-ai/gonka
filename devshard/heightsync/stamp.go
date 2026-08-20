@@ -13,30 +13,103 @@ func StampPresent(observedBlockHash []byte) bool {
 	return len(observedBlockHash) > 0
 }
 
-// TxStamp returns the Diff-resident observed height on tx when the hash is present.
-func TxStamp(tx *types.DevshardTx) (uint64, bool) {
+// RefStamp returns the *reference height* stamped on tx: the height a producer
+// wrote to timestamp a nonce.
+//
+// Every Diff-resident height is one of these — the inference legs, MsgHeartbeat
+// and MsgHeightAck alike. There is deliberately no second semantics in the log:
+// a producer stamps max(own_tip, F(m)) or omits, so a height in Diff answers
+// "what is the honest logical time of this nonce", never "what does this
+// follower see". First-party readings live in the HeightSyncSection at the edge,
+// where §8.12's collectors aggregate them; see spec §14, *One height in the log*.
+func RefStamp(tx *types.DevshardTx) (uint64, []byte, bool) {
+	if tx == nil {
+		return 0, nil, false
+	}
+	type stamped interface {
+		GetObservedHeight() uint64
+		GetObservedBlockHash() []byte
+	}
+	var msg stamped
+	switch {
+	case tx.GetStartInference() != nil:
+		msg = tx.GetStartInference()
+	case tx.GetConfirmStart() != nil:
+		msg = tx.GetConfirmStart()
+	case tx.GetFinishInference() != nil:
+		msg = tx.GetFinishInference()
+	case tx.GetHeartbeat() != nil:
+		msg = tx.GetHeartbeat()
+	case tx.GetHeightAck() != nil:
+		msg = tx.GetHeightAck()
+	default:
+		return 0, nil, false
+	}
+	if !StampPresent(msg.GetObservedBlockHash()) {
+		return 0, nil, false
+	}
+	return msg.GetObservedHeight(), msg.GetObservedBlockHash(), true
+}
+
+// MaxRefStamp returns the highest reference height in txs, with its hash.
+func MaxRefStamp(txs []*types.DevshardTx) (uint64, []byte, bool) {
+	var bestH uint64
+	var bestHash []byte
+	var ok bool
+	for _, tx := range txs {
+		h, hash, present := RefStamp(tx)
+		if !present || h <= bestH {
+			continue
+		}
+		bestH, bestHash, ok = h, hash, true
+	}
+	return bestH, bestHash, ok
+}
+
+// RefProducingNonce is the nonce whose handling produced a reference stamp.
+//
+// This is the nonce the stamp must be judged against, not the nonce it lands at:
+// a leg is queued into a later diff, so comparing it against the floor where it
+// lands asks it to have known a height that did not exist when it was made,
+// which pipelining guarantees will happen. No extra wire field is needed to
+// recover it for any message type:
+//
+// In every case the answer is "one past the highest nonce the producer had
+// certainly applied", which each message type already names:
+//
+//   - confirm / finish carry inference_id, which *is* the nonce assigned at
+//     PrepareInference;
+//   - start and heartbeat are sequencer-composed, so they are produced at the
+//     nonce they land at;
+//   - an ack answers the heartbeat at ref_nonce, so its producer had applied
+//     through ref_nonce inclusive — the basis is ref_nonce + 1, which folds in
+//     the soliciting heartbeat's own stamp. An honest host can always clear it
+//     by echoing the height that heartbeat carried. Judging against the landing
+//     floor instead would fail honest acks whenever the floor rose in between,
+//     which is also why landing late (§10.6) costs nothing.
+func RefProducingNonce(diffNonce uint64, tx *types.DevshardTx) (uint64, bool) {
 	if tx == nil {
 		return 0, false
 	}
-	if start := tx.GetStartInference(); start != nil {
-		return inferenceStamp(start)
+	if tx.GetStartInference() != nil || tx.GetHeartbeat() != nil {
+		return diffNonce, true
 	}
-	if conf := tx.GetConfirmStart(); conf != nil {
-		return inferenceStamp(conf)
+	if c := tx.GetConfirmStart(); c != nil {
+		return c.InferenceId, true
 	}
-	if fin := tx.GetFinishInference(); fin != nil {
-		return inferenceStamp(fin)
+	if f := tx.GetFinishInference(); f != nil {
+		return f.InferenceId, true
 	}
-	if hb := tx.GetHeartbeat(); hb != nil {
-		if StampPresent(hb.ObservedBlockHash) {
-			return hb.ObservedHeight, true
-		}
-		return 0, false
-	}
-	if ack := tx.GetHeightAck(); ack != nil {
-		if StampPresent(ack.ObservedBlockHash) {
-			return ack.ObservedHeight, true
-		}
+	if a := tx.GetHeightAck(); a != nil {
+		return a.RefNonce + 1, true
 	}
 	return 0, false
+}
+
+// TxStamp returns the Diff-resident observed height on tx when the hash is
+// present. Every such height is a reference height, so this is RefStamp without
+// the hash.
+func TxStamp(tx *types.DevshardTx) (uint64, bool) {
+	h, _, ok := RefStamp(tx)
+	return h, ok
 }

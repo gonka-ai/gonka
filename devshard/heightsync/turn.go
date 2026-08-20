@@ -237,15 +237,23 @@ func (t *TurnTracker) windowClosed(rec *SyncTurnRecord, hNow uint64) bool {
 	return false
 }
 
+// countingAcks counts the acks that hold up this turn: any in-window ack from a
+// distinct slot, whatever it says about its oracle.
+//
+// sync_state used to gate this, because completion fed (C-turn) and an
+// ORACLE_UNAVAILABLE slot is no height witness. With (C-turn) withdrawn (spec
+// §17) completion certifies only that Q slots were reachable and applying the
+// log, which such a slot proves exactly as well as a SYNCED one — it echoes
+// F(m) from the log it already has, and contributes no envelope anchor, so
+// (C-quorum) is untouched. Excluding it instead made an honest host with a dead
+// follower a permanent hole in the roster's cadence.
 func (t *TurnTracker) countingAcks(rec *SyncTurnRecord) int {
 	n := 0
 	for _, a := range rec.Acks {
 		if a.Late {
 			continue
 		}
-		if a.SyncState != types.SyncState_ORACLE_UNAVAILABLE {
-			n++
-		}
+		n++
 	}
 	return n
 }
@@ -406,8 +414,13 @@ func HeartbeatNonceForSlot(spanStart uint64, slot, slotsNum uint32) uint64 {
 	return spanStart
 }
 
-// Confirms is (C-turn): a complete record exists with ≥ Q counting acks at height ≥ h.
-func (t *TurnTracker) Confirms(h uint64) bool {
+// CompletedAtOrAbove reports whether some turn completed carrying height ≥ h.
+//
+// This is bookkeeping for operators, not a confirmation predicate: it was once
+// (C-turn), which is withdrawn (see ConfirmationRule.RuleTurn). Q acks at ≥ h
+// can all be one originator's claim lifted from the floor, so this says a turn
+// closed while that height was in the air — never that h happened.
+func (t *TurnTracker) CompletedAtOrAbove(h uint64) bool {
 	if t == nil || h == 0 {
 		return false
 	}
@@ -417,9 +430,6 @@ func (t *TurnTracker) Confirms(h uint64) bool {
 		}
 		n := 0
 		for _, a := range rec.Acks {
-			if a.SyncState == types.SyncState_ORACLE_UNAVAILABLE {
-				continue
-			}
 			if a.Height >= h {
 				n++
 			}

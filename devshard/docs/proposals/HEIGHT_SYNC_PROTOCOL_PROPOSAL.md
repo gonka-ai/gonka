@@ -83,8 +83,8 @@ Height sync therefore has **two planes** that must not be confused:
 
 | Plane | Carrier | Signed by | Durable? | Consumers |
 | ----- | ------- | --------- | -------- | --------- |
-| **Transport** | `HeightSyncSection` on the inference envelope (§7) | host on the response leg only; request leg carries no *section* signature (§15) | no — per-message | receiver pipeline, audit ring, `(C-quorum)` |
-| **Log** | `observed_height` on diff-resident `MsgHeartbeat` / `MsgHeightAck`, and on stamped inference txs (§10.5) | **both** parties — user via the diff signature, host via `host_sig` / `proposer_sig` / `executor_sig` (§10.5.1) | yes — append-only `Diff` | cPoC height intervals, `(C-turn)`, finalization `USER_TIMEOUT`, close-ready arming, in-session deadlines (§10.5.2) |
+| **Transport** | `HeightSyncSection` on the inference envelope (§7) | host on the response leg only; request leg carries no *section* signature (§15) | no — per-message | receiver pipeline, audit ring, `(C-quorum)`, Strong, divergence monitoring (§8.12) |
+| **Log** | `observed_height` on diff-resident `MsgHeartbeat` / `MsgHeightAck`, and on stamped inference txs (§10.5) | **both** parties — user via the diff signature, host via `host_sig` / `proposer_sig` / `executor_sig` (§10.5.1) | yes — append-only `Diff` | cPoC height intervals, finalization `USER_TIMEOUT`, close-ready arming, in-session deadlines (§10.5.2) |
 
 No signature spans both planes: `sender_signature` covers section fields
 1–7 and never `message_body`, so a section and the diff in one exchange are
@@ -245,7 +245,7 @@ flowchart LR
     REP -- "peer reachable: ingest height<br/>no blame" --> CPOC_H
     TURN -- "user silent > T_idle" --> ARM
     ARM -- "USER_TIMEOUT evidence" --> FIN[Finalization]
-    TURN -- "(C-turn)" --> CPOC_H
+    TURN -- "reachability certificate<br/>advances h_last" --> CPOC_H
 ```
 
 Key invariants:
@@ -738,10 +738,13 @@ Rules that follow from this and that verifiers MUST honour:
   user held when it *composed* that diff. The vector therefore reports
   turn `s − 1`, not `s` (§11.1).
 - **Late acks are admitted.** An ack appended after the deadline still
-  attests a height and is admitted for confirmation subject to freshness
-  `F`, tagged `late`. It does **not** erase the turn's degraded mark
-  (§10.7) — otherwise a user could game the arming clock in §12 by
-  drip-feeding stale acks.
+  carries a reference height and is admitted for logical-time purposes,
+  tagged `late` by comparing its landing nonce against the turn's deadline —
+  a positional test on the log, not a comparison of two height readings. It
+  does **not** erase the turn's degraded mark (§10.7) — otherwise a user
+  could game the arming clock in §12 by drip-feeding stale acks. Since acks
+  no longer confirm heights at all (§17), an admitted late ack cannot
+  manufacture confirmation either.
 
 ### 10.7 Turn record and completion
 
@@ -762,17 +765,19 @@ SyncTurnRecord{
 | `complete` | acks from `≥ Q` distinct slots are in `Diff` — `Q` is the **same** `(C-quorum)` threshold as §17, deliberately not a second quorum parameter |
 | `degraded` | height passed `h_req + D_ack` with `< Q` acks |
 
-Only a `complete` turn advances `h_last` (§10.3) and only a `complete`
-turn satisfies the `(C-turn)` confirmation rule (§17). A `degraded` turn
-means the log is missing acks — `Diff` cannot say whether those hosts
-never answered or the sequencer never appended what they sent. §11 is
-how a host **contacts the missed peer and fetches a height**, not how it
-assigns blame.
+Only a `complete` turn advances `h_last` (§10.3). A `degraded` turn means
+the log is missing acks — `Diff` cannot say whether those hosts never
+answered or the sequencer never appended what they sent. §11 is how a host
+**contacts the missed peer and fetches a height**, not how it assigns blame.
 
 Because every input is in the signed log, **all honest verifiers compute
-the identical record**. This is strictly stronger than the per-`V` audit
-ring of §17: `(C-quorum)` tolerates transient disagreement between
-verifiers, whereas `(C-turn)` cannot disagree.
+the identical record**. What that record certifies is **reachability**: `Q`
+slots answered within the deadline. It deliberately does not certify that
+those slots saw any particular block — an ack carries a reference height,
+which a lagging host may lift from the floor (§14), so the record cannot
+distinguish `Q` independent observations from one observation echoed `Q`
+times. Confirmation of a height is `(C-quorum)` over distinct originators'
+envelope anchors, or `(C-strong)`; §17 has the reasoning.
 
 ---
 
@@ -803,7 +808,7 @@ the log it is signing, not the host's claim about mainnet.
 | `ACKED` | a valid ack is in `Diff` at `ack_nonce` |
 | `MISSING` | no ack for this slot is in `Diff` yet |
 | `UNREACHABLE` | the request itself could not be delivered (transport failure) |
-| `REJECTED` | an ack arrived on the p2p hop but failed a validity check (§14 L0–L3, L5b), so it was not appended |
+| `REJECTED` | an ack arrived on the p2p hop but failed a validity check (§14 L0–L3), so it was not appended |
 
 The vector carries **one entry per slot** for turn `turn_seq − 1`
 (§10.6). It is not a compression of the log — the log is authoritative,
@@ -834,18 +839,33 @@ heartbeat it answers):
 | `sync_state` | Condition at the answering host | Protocol consequence |
 | ------------ | ------------------------------- | -------------------- |
 | `SYNCED` | own oracle tip within `D` of `h_ref`, tip fresh, hash matches its oracle | none |
-| `CATCHING_UP` | `h_ref − h_local > D` | the **next** heartbeat addressed to this slot MUST be **Strong** (§8): a host that cannot reach `h_ref` on its own oracle can only verify it from a `LightBlock`. This reuses the existing `D`-band escalation instead of adding a recovery path. |
-| `ORACLE_STALE` | no new block within `StaleAfter`, cached tip present | ack is a **degraded Anchor** peer (§7 field 10); still counts toward `Q` |
-| `ORACLE_UNAVAILABLE` | `Latest()` fails, or no cached tip | does **not** count toward `Q`; the slot is transparently unusable as a height witness |
+| `CATCHING_UP` | `h_ref − h_local > D` | the **next** heartbeat addressed to this slot MUST be **Strong** (§8): a host that cannot reach `h_ref` on its own oracle can only verify it from a `LightBlock`. This is the same `D`-band escalation as L5a, seen from the answering side — the lagging host is asking to be *convinced* of `h_ref`, which is what Strong is for. |
+| `ORACLE_STALE` | no new block within `StaleAfter`, cached tip present | ack is a **degraded Anchor** peer (§7 field 10) |
+| `ORACLE_UNAVAILABLE` | `Latest()` fails, or no cached tip | the slot is transparently unusable as a height witness for `(C-quorum)`, which reads envelope anchors and simply has none from it |
+
+**`sync_state` is a label, not an input.** No protocol decision reads it:
+turn completion counts reachable slots (§10.7), arming keys on user silence
+and a wall clock (§12), repair triggers on a *missing* ack rather than a low
+one (§11.3), and confirmation reads envelope anchors (§17). The one exception
+is the `CATCHING_UP` row above, and that is a request for help rather than a
+judgement of anyone.
+
+This is deliberate and permanent: **divergence between hosts is monitoring**.
+Because nothing decides on it, it does not need to be replay-verifiable, and
+§14 explains why trying to make it so cost a second height semantics for no
+enforceable gain. The first-party readings live in the envelope, where §8.12's
+gateway collectors aggregate them into a divergence surface across the roster.
+`sync_state` and `peer_seen` remain in the ack because they are cheap and
+being log-visible makes them free for every verifier to observe — but they
+are observations, not evidence.
 
 `peer_seen` is a bitmap of the slots from which *this* host holds a
 fresh (within `F`) height claim — including heights learned from `Diff`
-**and** from repair probes. Together the two fields give every host a
-view of "was another host synchronized" *as of what this host has seen*.
-A persistently `CATCHING_UP` or `ORACLE_UNAVAILABLE` slot that **does**
-ack in `Diff` is visible to everyone from the log. A slot that **does
-not** ack in `Diff` is visible only as missing; peers fill the height
-gap via probe, without pretending the log explained the gap.
+**and** from repair probes. It tracks **connectivity**, not height: a set bit
+says "I have heard from this slot recently", which is orthogonal to whether
+that slot is caught up. A slot that **does not** ack in `Diff` is visible
+only as missing; peers fill the height gap via probe, without pretending the
+log explained the gap.
 
 ### 11.3 Repair probe — unicast, height fetch, no attribution
 
@@ -1185,16 +1205,169 @@ diff-ingest time:
 
 | # | Check | Failure |
 | - | ----- | ------- |
-| L0 | Height monotonicity: `observed_height` never decreases across nonces within the escrow — a stamp at nonce `n` is `≥` the newest stamp at any `n' < n`, whoever signed it | `INVALID(height_regression)`, attributed to the diff signer |
-| L0b | Per-inference causal order: `start ≤ confirm ≤ finish` on `observed_height` for one `inference_id` | `INVALID(height_regression)`, attributed to the stamp's signer |
+| L0 | Reference-height monotonicity: a height produced while handling nonce `m` is `≥ F(m)`, where `F(m)` is the highest reference height in the log at nonces `< m`. Scope is **every** Diff-resident height — the inference legs, `MsgHeartbeat`, and `MsgHeightAck` alike. `m` is the **producing** nonce, not the landing nonce: `inference_id` names it on the executor legs, `ref_nonce + 1` on an ack, and it is the landing nonce for the sequencer-composed messages (see *One height in the log* below) | `INVALID(height_regression)`, attributed to the stamp's signer |
+| L0b | Same-executor causal order: `confirm ≤ finish` on `observed_height` for one `inference_id`. `start` is user-signed, so `start`-vs-`confirm` and `start`-vs-`finish` are cross-signer pairs and are deliberately **not** compared (see *One height in the log* below) | `INVALID(height_regression)`, attributed to the executor |
 | L1 | Framing: `slots_num` equals group size; `8 · len(peer_seen) ≥ slots_num`; `turn_seq` monotonic per escrow | `INVALID(bad_framing)` |
 | L2 | `MsgHeightAck.host_sig` verifies over `HeightAckContent` for `slot_id`'s registered key; a stamp on `MsgConfirmStart` verifies under `executor_sig` only if mirrored into `ExecutorReceiptContent` (§10.5.1) | `INVALID(ack_sig_invalid)` / `INVALID(executor_sig)` — the user may have fabricated the height |
 | L3 | Causality: `ref_nonce` names a `MsgHeartbeat` already in `Diff` with the same `turn_seq` | `INVALID(ack_causality)`, attributed to the appending user (cPoC C3′ shape) |
-| L4 | Envelope binding: ack height/hash equal the response-leg section's; heartbeat height equals the request-leg section's when present (§10.4). **Same-exchange check only** — see the tier table below | `DISPUTE_ORIGINATOR` (ack) / `DISPUTE_CARRIER` (heartbeat) **on sight** — a self-contradiction needs no oracle — recorded as a retained mark, never as diff invalidity |
-| L5a | Live `D` band at admission: `\|observed_height − local_aligned\| > D` | receiver MAY refuse the exchange and records a mark; **never** a permanent diff verdict |
-| L5b | In-log `D` band: a signer claimed `SYNCED` while outside `D` of the ack heights of its own turn ⇒ the next heartbeat to this host must be Strong; the ack's `sync_state` SHOULD already say `CATCHING_UP` (§11.2) | `INVALID(strong_required)` if the sender claimed `SYNCED` |
+| L4 | Envelope binding: the ack's Diff height/hash equal `max(anchor, F(m))` — the reference height the producer rule requires, given the first-party `anchor` in the response-leg section of that same exchange and the floor the receiver can compute. Heartbeat height binds to the request-leg section the same way (§10.4). **Same-exchange check only** — see the tier table below | `DISPUTE_ORIGINATOR` (ack) / `DISPUTE_CARRIER` (heartbeat) **on sight** — a self-contradiction needs no oracle — recorded as a retained mark, never as diff invalidity |
+| L5a | Live `D` band at admission: `\|observed_height − local_aligned\| > D`. This is the **Strong hook**: the receiver cannot verify a reference height that far from its own follower, and Strong resolves it by having the claimant supply a `LightBlock` for the height it claimed | receiver MAY refuse the exchange and records a mark; with Strong, `INVALID(strong_required)` for that exchange; **never** a permanent diff verdict |
 | L6 | Oracle reconciliation of `(observed_height, observed_block_hash)` — identical to step 7 above, including the deferred-check queue | `DEFERRED_FAIL` / `DISPUTE_ORIGINATOR` |
 | L7 | Turn bookkeeping: update `SyncTurnRecord` (§10.7); if `sync_vector` says `ACKED(j, h, n)` and `Diff[n]` has no matching ack, that is user-attributable (§11.1). `MISSING` / `UNREACHABLE` / `REJECTED` with no ack is **inconclusive**. | `ACKED` vs log: user-attributable, no `INVALID` — the diff is already signed. Other gaps: no blame. |
+
+#### One height in the log, one at the edge
+
+Heights in this protocol answer two unrelated questions, and the split is by
+**plane**, not by message type:
+
+| | **Log plane — reference height** | **Edge plane — first-party tip** |
+| - | -------------------------------- | -------------------------------- |
+| Lives in | `Diff`: every one of `MsgStartInference`, `MsgConfirmStart`, `MsgFinishInference`, `MsgHeartbeat`, `MsgHeightAck` | the `HeightSyncSection` of one HTTP exchange; never in `Diff` |
+| Answers | “what is the honest logical time of this nonce?” | “what does *this* follower actually see right now?” |
+| Party | whoever produced the nonce, carrying the best height it can justify | strictly first-party, signed by the observer |
+| Value | `max(own_tip, F(m))`, or absent | the raw oracle read |
+| Monotone across signers? | **yes** — it timestamps a shared log | no, and it need not be |
+| Rule | L0 against `F(m)`, uniformly | L4 binding at the exchange; L5a's `D` band; `(C-quorum)` |
+| May raise `F` | yes | n/a |
+| Consumed by | duration, fees, timeouts, `h_last`, record heights (§10.5.2) | confirmation, Strong, and **monitoring only** |
+
+The single rule for the log plane is that a height must be justifiable from
+the log itself: `F(m)` is already there, so lifting to it is always
+available, and no honest party is ever forced to make a claim it cannot
+support. That is what makes L0 an exact check with no tolerance band, and it
+now applies to `MsgHeightAck` on exactly the same terms as to an executor
+receipt. There is no longer a message in `Diff` whose height means something
+different from every other message's.
+
+##### Why divergence is deliberately not in the log
+
+An earlier revision of this document put each host's raw follower height into
+`MsgHeightAck` so that divergence would be replay-verifiable, and derived two
+checks from it: per-signer own-tip monotonicity, and an in-log `D` band on
+the `sync_state` label. Both are **withdrawn**.
+
+The reason is that neither could ever produce a verdict. A tip that moves
+backwards is a reorg or a lie; a `SYNCED` label outside `D` is a lie or a
+stale read; and the log cannot separate either pair. Both therefore emitted
+marks, and marks are per-verifier rather than consensus — a verifier that
+refused a diff at the edge never records the mark its peer records. So the
+cost was a second semantics for heights in `Diff`, plus a per-slot own-tip
+index in the hashed state, in exchange for evidence that no rule was allowed
+to act on.
+
+Divergence between hosts is **monitoring, permanently**. No protocol decision
+reads it: not turn completion, not arming (which keys on user silence and a
+wall clock), not repair (which triggers on a *missing* ack, not a low one),
+and not confirmation. Its natural home is therefore the edge, where the
+observation is first-party and where §8.12's gateway collectors already
+gather every height-sync metric. Putting it in the log first bought
+replayability for a signal nothing replays.
+
+What Strong settles is the other question. A receiver that cannot verify an
+inbound *reference* height — `|observed_height − local_aligned| > D`, L5a —
+demands a `LightBlock` from the party that claimed it. That is a claimant
+proving one specific height it put in the log, at the exchange where it
+claimed it. It is not adjudication of who is behind, and it needs no in-log
+record of anyone's follower tip.
+
+##### Why the basis is the producing nonce
+
+A stamp must be judged against the floor its producer **could have
+known**. Those differ, because production and landing are separated by the
+pipeline: an executor receipt is produced while handling nonce `m` and lands
+in whatever diff the sequencer next assembles, by which time other parties
+may have pushed the floor higher. Judging it against the landing floor asks
+it to have known a height that did not exist when it was signed — a demand
+no honest party can meet, and one that concurrency guarantees will be made.
+
+No wire field is needed to recover `m`, for any message type:
+
+| Message | Producing nonce `m` | Why it is already in the log |
+| ------- | ------------------- | ---------------------------- |
+| `MsgConfirmStart`, `MsgFinishInference` | `inference_id` | it *is* the nonce assigned at `PrepareInference` |
+| `MsgStartInference`, `MsgHeartbeat` | the landing nonce | sequencer-composed, so produced at the nonce it lands at |
+| `MsgHeightAck` | `ref_nonce + 1` | names the heartbeat it answers, and L3 already requires that heartbeat to be in `Diff` under the same `turn_seq` |
+
+The ack row is what makes it safe to bring acks under L0 at all. A host
+composes its ack from the diff prefix it has applied, then the ack sits in
+the sequencer's mempool and lands arbitrarily later — possibly after other
+parties have raised the floor. Judged against the landing floor, an honest
+ack would fail exactly as often as the pipeline is busy. `ref_nonce` pins the
+basis to the heartbeat that solicited it, which is the newest thing its
+producer is known to have seen, so the bar is one the host provably could
+have cleared. This is also why `late` acks stay admissible (§10.6): landing
+late moves nothing about which floor applies.
+
+The `+ 1` is not cosmetic. Answering the heartbeat at `ref_nonce` means having
+applied through `ref_nonce` **inclusive**, while `F` is exclusive of its own
+argument — so `F(ref_nonce)` is the floor the host knew *before* reading the
+message it is replying to, and it drops that heartbeat's own stamp. Both bars
+are satisfiable, but only `F(ref_nonce + 1)` forces a lagging host to carry the
+logical time it was just handed instead of quietly re-stamping an older one.
+Producer and verifier must agree on the offset: a producer using `F(ref_nonce)`
+against a verifier using `F(ref_nonce + 1)` authors invalid acks whenever it
+lags, which is precisely when the lift matters.
+
+`F(m)` is the floor at nonces strictly below `m`, so a stamp is never
+compared against itself, and a `confirm` below its own `start` is fine — the
+`start` carries the sequencer's roster maximum while the `confirm` carries
+the executor's own view.
+
+##### Producer rule, and why zero tolerance is safe
+
+A producer with own tip `t` handling nonce `m` MUST stamp
+
+```text
+observed_height = max(t, F(m))    or omit the stamp entirely
+```
+
+and never a value below `F(m)`. Both branches are always available, so
+**every** honest party can satisfy L0 unconditionally, and therefore L0
+needs no tolerance band: any violation is a stamp its signer could have
+made correct, which is what makes `INVALID` the right verdict rather than a
+mark. Absence stays legal at any floor (H38), so a party with no oracle is
+never forced into a claim.
+
+Lifting to `F(m)` is not a false claim. The floor is a height already in
+the log, so a stamp equal to it is self-evidently a carry: a verifier can
+point at the earlier tx that established that floor and at who signed it.
+Blame for a bad height stays with its originator, and the carrier's own view
+remains separately visible in the response-leg anchor of the exchange it
+served. This is the same carrier/originator split as §15, applied to the log
+plane.
+
+##### Binding the log value to the first-party one
+
+Making every Diff height a reference height does not make a host's oracle
+read unverifiable — it moves the check to the edge, where the first-party
+value lives, and makes it **stronger** than the equality it replaces.
+
+In one exchange a host signs two things: the response-leg anchor, carrying
+its raw oracle read, and the `MsgHeightAck`, carrying a reference height. The
+producer rule ties them together by a function the receiver can evaluate,
+because the receiver holds the anchor and can compute the floor:
+
+```text
+ack.observed_height == max(anchor.mainnet_height, F(m))
+```
+
+with `observed_block_hash` being the hash of whichever side won. A host that
+understates its own tip in the anchor, or overstates its reference height in
+the ack, breaks the identity under a single signing identity — so this stays
+a `DISPUTE_ORIGINATOR` on sight, with no oracle lookup, exactly as the old
+plain equality was. The earlier form could only catch a host contradicting
+itself about one number; this one also catches it contradicting the rule.
+
+Like every L4 check this is edge-only and its result MUST be persisted
+verbatim, since a later verifier holding only `Diff` cannot recompute it.
+
+Monotonicity is thus a property of the derived sequence `F(1), F(2), …`,
+which is non-decreasing by construction — not a property of any individual
+signer's stamps. `D` plays no part here: `D` bounds what a receiver is
+willing to admit without a Strong proof (L5a) and labels divergence for
+monitoring (§11.2), and nothing else. One constant cannot serve both a
+log-ordering invariant and an admission policy merely because both are
+counted in blocks.
 
 #### Evaluation tiers — what may affect diff validity
 
@@ -1206,9 +1379,18 @@ log.
 
 | Tier | Checks | Inputs | May affect diff validity? |
 | ---- | ------ | ------ | ------------------------- |
-| **Pure `Diff`** | L0, L0b, L1, L2, L3, L5b, L7 | log bytes, registered slot keys, group size | **yes** — the same answer for every verifier, forever |
-| **Same-exchange edge** | L4, L5a | the diff **and** the `HeightSyncSection` of one HTTP exchange | **no** — records a retained mark |
+| **Pure `Diff`, verdict** | L0, L0b, L1, L2, L3, L7 | log bytes, registered slot keys, group size | **yes** — the same answer for every verifier, forever |
+| **Same-exchange edge** | L4, L5a | the diff **and** the `HeightSyncSection` of one HTTP exchange | **no** — records a retained mark; L5a may refuse the exchange |
 | **Local oracle, deferrable** | L6 | the verifier's own follower, once it reaches `H` | only via `DEFERRED_FAIL`, monotone once `H` is final |
+
+The mark-only tier is now empty, and that is the point of the previous
+section. Every check that was in it was replay-stable yet asked a question
+the log cannot answer — whether a tip that moved backwards followed a reorg
+or lied, whether a `SYNCED` label was a lie or a stale read. A check that can
+never reach a verdict does not belong in the log plane at all; the
+observations it was built on are first-party, so they belong at the edge with
+L4 and L5a, and the marks they produce are monitoring signals gathered by the
+gateway (§8.12).
 
 Two consequences that earlier revisions of this document stated
 incorrectly:
@@ -1227,10 +1409,11 @@ incorrectly:
 2. **The `D` band MUST NOT be evaluated against the verifier's current
    tip as a validity rule.** A verifier replaying a session days later
    sits thousands of blocks above every historical stamp, so a
-   `local_aligned` comparison would invalidate the whole session. Hence
-   the L5a / L5b split: the live receiver may refuse and mark, while the
-   replay-stable check compares a claim against the ack heights of its own
-   turn, which sit in the log beside it.
+   `local_aligned` comparison would invalidate the whole session. L5a is
+   therefore scoped to the live exchange — the one moment where both parties'
+   clocks are contemporaneous — and its refusal is an admission decision
+   about that exchange, never a retroactive verdict on the diff. Strong
+   sharpens the refusal into a proof obligation without changing its scope.
 
 #### Freshness is two-sided, and only one side is replayable
 
@@ -1240,7 +1423,7 @@ freshness has a cryptographic floor rather than a clock:
 | Bound | Mechanism | Replay-safe |
 | ----- | --------- | ----------- |
 | Cannot be **future-dated** | `observed_block_hash` cannot be known before block `H` exists, so the pair is an unforgeable lower bound on signing time; L6 confirms it | yes |
-| Cannot **regress** | L0 and L0b | yes |
+| Cannot **regress** | L0 against `F(m)`, on every Diff-resident height; L0b within one executor | yes |
 | Cannot **stall** while nonces advance | heartbeat obligation `now − t_last > Interval` (§10.3) | no — the schedule is the producer's clock, so it is enforced live by hosts arming on `T_idle`; what replays is which turns completed at which heights |
 | Cannot be **stale** relative to a live peer | L5a at admission | no — local, so it marks rather than invalidates |
 | Silence after the last stamp | close-ready arming on `T_idle` (§12) | yes |
@@ -1444,21 +1627,43 @@ Configured at deployment time:
 | Rule | Predicate | Verifier agreement |
 | ---- | --------- | ------------------ |
 | `(C-quorum)` | `≥ Q` distinct originators from the roster have attested heights `≥ h`, all within `F`, all in `[tip − W_conf, tip]`. | per-`V`; transient disagreement possible |
-| `(C-turn)` | A `complete` `SyncTurnRecord` (§10.7) exists in `Diff` with `≥ Q` acks whose `observed_height ≥ h`, all within `F`, `sync_state ≠ ORACLE_UNAVAILABLE`. | **identical for all verifiers** — reads the signed log only |
+| `(C-turn)` | **Withdrawn** — see below. | — |
 | `(C-strong)` | Receiver has at least one **verified `LightBlock`** for height `≥ h`. | per-`V` |
-| `(C-hybrid)` | Any of the above clears. | mixed |
+| `(C-hybrid)` | `(C-quorum)` or `(C-strong)` clears. | mixed |
 
 PoC deployments without Strong run **`(C-quorum)`**. Production-class
 deployments SHOULD select **`(C-hybrid)`** once Strong is enabled.
 
-**`(C-turn)` is the deterministic rule.** Its inputs are host-signed acks
-inside the user-signed log, so two verifiers replaying the same `Diff`
-cannot disagree about it. That matters for cPoC: its verdict step 5 holds
-an adversarial verdict `Inconclusive` until height sync confirms the
-interval endpoints, and under `(C-quorum)` alone that hold is a per-`V`
-decision. Under `(C-turn)` it becomes a shared one. Deployments that care
-about cross-verifier determinism of cPoC verdicts SHOULD include
-`(C-turn)` in the configured rule.
+**Why `(C-turn)` is withdrawn.** It read `≥ Q` acks with
+`observed_height ≥ h` out of the log, and its appeal was determinism: the
+witness set is the signed log rather than a private ring, so two verifiers
+replaying the same `Diff` could not disagree. That appeal survives the change
+to reference heights; the *soundness* does not. An ack now carries
+`max(own_tip, F(m))`, so a host whose follower has not reached `h` still acks
+`≥ h` by lifting to a floor another party established — legitimately, and by
+design. Counting `Q` such acks would confirm `h` on the strength of one
+originator's claim replicated `Q` times, which is precisely the laundering
+`(C-quorum)`'s distinct-originator requirement exists to prevent.
+
+Turn completion is a **liveness certificate**: `Q` slots were reachable and
+answered inside `TurnTimeout`. It is not a height certificate, and no
+restatement of the predicate over log-resident acks can make it one, because
+the first-party readings it would need are deliberately not in the log. Chain
+agreement is therefore confirmed only by `(C-quorum)` over distinct
+originators' envelope anchors, or by `(C-strong)`.
+
+The cost lands on cPoC, and it should be stated plainly: verdict step 5 holds
+an adversarial verdict `Inconclusive` until height sync confirms the interval
+endpoints, and that hold is now a per-`V` decision under every available
+rule. Deployments that need cross-verifier determinism there must reach it
+through `(C-strong)` — a verified `LightBlock` is replay-checkable in a way a
+carried height never is — rather than through the log-resident acks.
+
+One consequence in the other direction: with `Q` counted on responsiveness
+alone, `sync_state ≠ ORACLE_UNAVAILABLE` no longer gates turn completion
+(§11.2). A host whose oracle is down can still read `F(m)` from the log, ack
+it, and carry logical time. It is a worse height witness and says so in its
+envelope, but it is no longer a hole in the roster's cadence.
 
 ### Confirmation memory and pruning
 
@@ -1477,10 +1682,13 @@ about cross-verifier determinism of cPoC verdicts SHOULD include
 ### Per-`V` view, not global
 
 `IsStrictlyConfirmed` is computed against the **caller's own** audit
-ring and clock. Under `(C-quorum)` / `(C-strong)` two verifiers may
-transiently disagree (`pending` vs `confirmed`); cPoC's quorum-based
-slashing tolerates this. Under `(C-turn)` they cannot, because the
-witness set is the signed log rather than a private ring — see above.
+ring and clock, so two verifiers may transiently disagree (`pending` vs
+`confirmed`); cPoC's quorum-based slashing tolerates this. With `(C-turn)`
+withdrawn this is now true of **every** confirmation rule — there is no
+log-resident witness set to fall back on, because the log carries reference
+heights rather than independent observations. Deployments that need a shared
+verdict get it from `(C-strong)`, whose `LightBlock` is checkable by anyone
+who holds it.
 
 ---
 
@@ -1653,9 +1861,10 @@ the test scenario that proves it (full catalog in
 | 19 | Host reports `SYNCED` while its oracle is stale, to look healthy | Its `(H, hash)` fails L6 oracle reconciliation once the verifier's follower advances ⇒ existing `DEFERRED_FAIL` path; honest alternative (`ORACLE_STALE` / `CATCHING_UP`) carries no penalty, so lying is strictly worse | Planned: `TestHeightAck_FalseSyncedDeferredFail` |
 | 20 | **Repair-probe amplification** — a host floods peers with probes, or all `N−1` hosts probe one dead slot at once | Budgets in §11.4: one probe per `(turn, slot)`, `R_max` per `Interval`, deterministic stagger so late probers find the ack in `Diff` and skip, backoff, zero probes in the healthy path, and armed hosts stop probing | Planned: `TestRepairProbe_BudgetAndStagger` |
 | 21 | **Partitioned minority** arms close-ready and tries to close a healthy escrow | Arming emits nothing (§12.2). Closing needs finalization's `2f + 1`, which the minority cannot reach, and unarmed hosts MUST vote `REJECT` on `USER_TIMEOUT`. | Planned: `TestCloseReady_MinorityCannotClose` |
-| 22 | User drip-feeds late acks to make a degraded turn look complete and reset the arming clock | Late acks are admitted for *height* purposes only and tagged `late`; they never clear a turn's `degraded` mark (§10.6), and arming keys on contact toward **this** host, not on turn state | Planned: `TestLateAck_DoesNotClearDegraded` |
+| 22 | User drip-feeds late acks to make a degraded turn look complete and reset the arming clock | `late` is a positional test — landing nonce against the turn deadline, both in the log — so it does not depend on comparing two height readings. Late acks never clear a turn's `degraded` mark (§10.6), arming keys on contact toward **this** host rather than on turn state, and since acks no longer confirm heights (§17) an admitted late ack buys nothing | Planned: `TestLateAck_DoesNotClearDegraded` |
 | 23 | **Sequencer rewrites a host's stamp on `MsgConfirmStart`**, attributing a height the executor never signed | `observed_height` / `observed_block_hash` are inside `ExecutorReceiptContent` and copied into the reconstructed content before recovery (§10.5.1), so any edit fails `executor_sig`. A deployment that stamps the tx without mirroring the content MUST NOT treat the height as a host attestation | Planned: `TestConfirmStart_TamperedObservedHeightFailsExecutorSig` |
-| 24 | Stamp regression — a signer writes a height below one already in the log, to widen a band or backdate a duration | L0 across nonces and L0b within one inference; both pure functions of `Diff`, so every verifier rejects identically | Planned: `TestLogPlane_HeightRegression` |
+| 24 | Stamp regression — a signer writes a height below one already in the log, to widen a band or backdate a duration | L0 against `F(m)`, uniformly across every Diff-resident height, plus L0b within one executor; both pure functions of `Diff`, so every verifier reaches the same verdict | `TestLogPlane_RefStampBelowFloorRejected`, `TestLogPlane_PerInferenceHeightOrder` |
+| 24b | **Floor poisoning** — a party stamps an absurdly high reference height so no honest producer can ever clear the floor | Liveness holds: a producer whose own tip is below `F(m)` carries `F(m)` rather than failing, and absence is always legal, so the escrow does not stall. Attribution holds: `F` names the tx and the signer that set it, so the poisoner is identifiable and L6 returns `DEFERRED_FAIL` against a hash that will never reconcile. At the edge, L4 catches it within one exchange: the poisoner's own anchor cannot match `max(anchor, F(m))` unless it also claims the absurd height as its live oracle read, where L5a refuses it. **Not yet closed:** honest carriers repeat that unreconcilable pair, so they collect L6 marks alongside the originator. Bounding a stamp to a plausible window above the verifier's own tip is open work — it is the missing half of this row, not a property of L0 | `TestLogPlane_ConfirmJudgedAgainstProducingNonce` |
 | 25 | Pre-signing a **future** height to look fresher than it is | `observed_block_hash` for an unmined height cannot be produced; L6 never confirms the pair and eventually returns `DEFERRED_FAIL` | Planned: `TestLogPlane_FutureDatedStampDeferredFail` |
 | 26 | **Replay-time invalidation** — a party re-presents an old but honest session hoping a `D`-band or freshness rule rejects it, or an implementation that wrongly evaluates freshness at replay time | Only pure-`Diff` checks may invalidate (§14 tier table): L5a is admission-only, L4 is skipped without an envelope, so a historical session replays with identical verdicts regardless of when it is replayed | Planned: `TestLogPlane_HistoricalReplayNoInvalidation` |
 
@@ -1681,14 +1890,14 @@ the test scenario that proves it (full catalog in
 | --------- | ------- | ---------------- |
 | `K` | `8` | `AnchorScheduler` constructor (`NewAnchorSchedulerFromOracle(K, slots, src)`) |
 | `slots_num` | `4` (testenv) / `slots_num = escrow.HostSlots` (production) | same |
-| `D` | `2` | `StrongPolicy.D` (planned) |
+| `D` | `2` | `StrongPolicy.D` (planned). Governs **admission and the divergence label only** — L5a's refuse-or-demand-Strong decision and the `sync_state` label (§11.2). It is not an L0 tolerance: L0 compares against `F(m)`, which an honest producer always clears exactly (§14) |
 | `F` | `60 s` | `HeightSyncPeerTips.Freshness`, `ConfirmationConfig.Freshness` |
 | `W_conf` | `256` heights | `ConfirmationConfig.WindowHeights` |
 | `Q` | `ceil(2/3 × N_hosts)` | `ConfirmationConfig.Quorum` (override; defaults from roster size) |
 | Audit-ring capacity | `1024` per peer | `NewAuditRing(capacity)` |
 | Header-cache window (Strong) | `64` heights | `BlockOracleStrongSource.K` (planned) |
 | Strong recency | off (`max_lag_blocks = 0`) | follow-on hardening |
-| Confirmation rule | `(C-quorum)` | `ConfirmationConfig.Rule` (`Quorum`/`Turn`/`Strong`/`Hybrid`) |
+| Confirmation rule | `(C-quorum)` | `ConfirmationConfig.Rule` (`Quorum`/`Strong`/`Hybrid`; `Turn` withdrawn per §17) |
 | `StaleAfter` (block oracle client) | `10 s` client default; testenv: `block_time + block_interval_delta + 1s` (floor `10s`) | `MOCKDAPI_STALE_AFTER` env (compose / devshardd-testenv) |
 | `Interval` (heartbeat cadence, **milliseconds**) | `3 s`; constraint `2 · Interval ≤ F` so two turnovers always fit inside the freshness budget | chain param; `HeartbeatConfig.Interval` |
 | `TurnTimeout` (patience for one open turn, **milliseconds**) | `Interval` = `3 s`; after this the producer abandons the turn so one dead slot cannot silence the cadence | chain param; `HeartbeatConfig.TurnTimeout` |
@@ -1697,7 +1906,7 @@ the test scenario that proves it (full catalog in
 | `δ_probe` (repair stagger) | `1 s`, multiplied by `(V_slot − j) mod slots_num` | `RepairConfig.Stagger` |
 | `R_max` (repair probes per `Interval` per host) | `slots_num` | `RepairConfig.MaxProbesPerWindow` |
 | Heartbeat turn width | `slots_num` (same as every other turn) | derived from escrow group size |
-| `Q` for `(C-turn)` | reuses `(C-quorum)`'s `Q` — deliberately **not** a second quorum knob | `ConfirmationConfig.Quorum` |
+| `Q` for turn completion | reuses `(C-quorum)`'s `Q` — deliberately **not** a second quorum knob. Note the two now mean different things: `Q` reachable slots complete a turn, `Q` distinct originators confirm a height (§17) | `ConfirmationConfig.Quorum` |
 
 ---
 
@@ -1711,7 +1920,7 @@ the test scenario that proves it (full catalog in
 | Strong mode (`LightBlock` + `VerifyCommit` + `D` band + `(C-strong)` / `(C-hybrid)`) | ⏳ | Tests catalogued in [`height-sync-tests.md`](../height-sync-tests.md) §8 (S1–S12). |
 | Container parity for v2 (Phase D) | ⏳ | tracked in `CONTAINER_E2E_PLAN.md`. |
 | Container parity for Strong (Phase E) | ⏳ | follow-on. |
-| **Heartbeat turns** (§10): `MsgHeartbeat` / `MsgHeightAck` protos, time cadence `Interval`, `observed_height` stamps, turn record, `(C-turn)` | 📋 | proposed here. No wire or Go surface exists yet; `ObservedHeightNow()` is the only piece in tree. Blocks cPoC C14 closure and finalization `USER_TIMEOUT` evidence. |
+| **Heartbeat turns** (§10): `MsgHeartbeat` / `MsgHeightAck` protos, time cadence `Interval`, `observed_height` stamps, turn record | 📋 | proposed here. No wire or Go surface exists yet; `ObservedHeightNow()` is the only piece in tree. Blocks cPoC C14 closure and finalization `USER_TIMEOUT` evidence. |
 | **Peer sync status + repair probe** (§11): `sync_vector`, `sync_state`, `peer_seen`, `POST /sessions/:id/heightsync/repair` | 📋 | proposed here. Rides the existing `devshard/gossip` peer client and host mempool; no new transport. |
 | **Close-ready arming** (§12): `CloseReadyView`, `UserTimeoutEvidence` | 📋 | proposed here. Consumer is `FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`; nothing in this layer votes. Missing acks are not cheating evidence (§11.3). |
 | `observed_height` stamps on `MsgStartInference` / `MsgConfirmStart` / `MsgFinishInference` | 📋 | RECOMMENDED (§10.5). Optional migration step: without it the protocol is correct but emits more heartbeats. `MsgConfirmStart` additionally requires the `ExecutorReceiptContent` mirror (§10.5.1) or its height is not a host attestation. |

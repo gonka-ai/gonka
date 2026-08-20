@@ -14,11 +14,11 @@ import (
 type MarkKind string
 
 const (
-	MarkDisputeOriginator    MarkKind = "dispute_originator"
-	MarkDisputeCarrier       MarkKind = "dispute_carrier"
-	MarkVectorContradiction  MarkKind = "vector_contradiction"
-	MarkDeferredFail         MarkKind = "deferred_fail"
-	MarkAdmissionDelta       MarkKind = "l5a_admission"
+	MarkDisputeOriginator   MarkKind = "dispute_originator"
+	MarkDisputeCarrier      MarkKind = "dispute_carrier"
+	MarkVectorContradiction MarkKind = "vector_contradiction"
+	MarkDeferredFail        MarkKind = "deferred_fail"
+	MarkAdmissionDelta      MarkKind = "l5a_admission"
 )
 
 // AttributableMark is an append-only evidence record: kind, slot, turn_seq,

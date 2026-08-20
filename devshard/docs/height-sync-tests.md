@@ -117,13 +117,13 @@ Slow-running tests check `testing.Short()` and skip under `-short`.
 | ✅ `TestHeartbeat_StalledTurnReopensAfterTurnTimeout` / `_SettledTurnDoesNotWaitOutTurnTimeout` | `heartbeat_test.go` | One unreachable slot cannot silence the cadence forever: the turn is abandoned after `TurnTimeout`, or immediately once the log settles it. |
 | ✅ `TestCloseReady_ArmsWithoutAnyTick` | `closeready_test.go` | Arming is lazy on the clock, so a host that stops receiving anything at all — including height — still arms. |
 | ✅ `TestRepairBudget_WindowRollsOnElapsedTime` | `repair_budget_test.go` | `R_max` is a per-`Interval` budget measured in elapsed time, not in blocks. |
-| ✅ `TestHeartbeat_QuietSessionOpensTurn` / `_NoObservedHeightSkips` / `_SpanDispatchAddressesEverySlot` / `_AckInclusionAndSyncVectorPrevTurn` / `_LiveHostsQuorumCompletes` / `_UnavailableAcksDoNotCountAndDegrade` | `user/heightsync_test.go` | H1, H3, H4, H6, H7, H24 in-process: `MaybeHeartbeat` span, host mempool acks, quorum complete, unavailable does not count and degrades past `D_ack`. |
-| ✅ `TestTurnTracker_OutOfOrderAcksIdenticalRecord` / `_QuorumCompletesAndConfirms` / `_BelowQuorumDegradesNoBlame` / `TestLateAck_DoesNotClearDegraded` / `TestHeightAck_OracleUnavailableStillRequired` | `heartbeat_test.go` | H5–H8, H24: turn record, `(C-turn)`, late acks, `ORACLE_UNAVAILABLE`. |
+| ✅ `TestHeartbeat_QuietSessionOpensTurn` / `_NoObservedHeightSkips` / `_SpanDispatchAddressesEverySlot` / `_AckInclusionAndSyncVectorPrevTurn` / `_LiveHostsQuorumCompletes` / `_UnavailableAcksCompleteTurnCarryingTheFloor` | `user/heightsync_test.go` | H1, H3, H4, H6, H7, H24 in-process: `MaybeHeartbeat` span, host mempool acks, quorum complete, blind hosts carrying the floor. |
+| ✅ `TestTurnTracker_OutOfOrderAcksIdenticalRecord` / `_QuorumCompletesTurn` / `_BelowQuorumDegradesNoBlame` / `TestLateAck_DoesNotClearDegraded` / `TestHeightAck_OracleUnavailableCountsTowardQuorum` | `heartbeat_test.go` | H5–H8, H24: turn record, reachability quorum, late acks, `ORACLE_UNAVAILABLE`. |
 | ✅ `TestTurnTracker_IngestNextBlockSameStampCompletes` / `_StampPastDeadlineDegrades` | `heartbeat_test.go` | `D_ack=1`: ingest may tick; lateness is `observed_height > h_req + D_ack`. |
 | ✅ `TestHeartbeat_HashOnlyOracle_TurnCompletes` | `syncstate_test.go` | D9: hash-only oracle (empty Commit) reaches `complete`; `Prove` is not called. |
 | ✅ `TestEvaluateSyncStateFromHeader_DoesNotCallLatest` | `syncstate_test.go` | Ack stamp reuses the already-fetched header (same read as the response-leg Anchor). |
 | ✅ `TestSignAck_RoundTrip` / `TestCanonicalAckBytes_DomainSeparated` | `ack_signing_test.go` | Domain `heightsync.ack.v1`; field 8 excluded from the signing input. |
-| ✅ `TestHost_HeartbeatAck_OwnSlotIntoMempool` / `_WrongSlotSilent` / `_NoHeartbeatNoAck` / `_OracleUnavailableStillRequired` / `_OracleErrorStillRequired` / `_CatchingUp` / `_OracleStale` / `_AlreadyAppliedDoesNotRereadOracle` | `host/heightsync_test.go` | E3: ack only for this host's slot; one `Latest()` per exchange; `ORACLE_UNAVAILABLE` still required; `peer_seen` from Diff. |
+| ✅ `TestHost_HeartbeatAck_OwnSlotIntoMempool` / `_WrongSlotSilent` / `_NoHeartbeatNoAck` / `_OracleUnavailableStillRequired` / `_OracleErrorStillRequired` / `_CatchingUp` / `_LagsButClearsSolicitingFloor` / `_OracleStale` / `_AlreadyAppliedDoesNotRereadOracle` | `host/heightsync_test.go` | E3: ack only for this host's slot; one `Latest()` per exchange; `ORACLE_UNAVAILABLE` still required; the producer's floor basis is `F(ref_nonce + 1)`; `peer_seen` from Diff. |
 
 ---
 
@@ -198,6 +198,7 @@ Shared cadence: four hosts, `K = 8`, `slots_num = 4`. Initial sync turn `1..4`, 
 | ✅ `TestHeightSyncAnchor_E2E_LazyCarryForwardOutsideSyncTurn` (E2) | Cached host tip propagates to one peer per Omit nonce; `last_propagated` prevents re-send to the same recipient. (`-tags=dev` held responses.) |
 | ✅ `TestHeightSyncAnchor_E2E_StaleOriginRejected` (E3) | Backdated originator timestamp rejected at receiver with `reason=stale_origin`; audit ring records `dispute_carrier`. (`-tags=dev`.) |
 | ✅ `TestHeightSyncAnchor_E2E_HeldOriginatorReplayRejected` (E8) | A 70 s wall-clock hold of a previously valid originator section ⇒ replay rejected; skipped under `-short`; requires `-tags=dev`. |
+| ✅ `TestHeightSync_E2E_WideDivergenceNeverBlocksInferences` | Roster at `1000/998/500/5` (`≫ D`) serves twelve nonces over the real HTTP stack: the shipping producers pick stamps the verifier accepts — the slot 995 blocks behind carries `F(m)` rather than its own tip, and nonce 1 confirms *below* its start because the floor is still empty. Every inference reaches `finish`, each host still attests its own tip for the dispute layer, and honest lag draws no attribution. |
 
 ### Confirmation
 
@@ -287,10 +288,10 @@ produces **marks**, adjudication lands with Strong.
 | H3 | ✅ `TestHeartbeat_NoObservedHeightSkips` | `heightsync` + `user` | `ObservedHeightNow() == (0,false)` ⇒ no turn claiming a height; skip metric increments. |
 | H4 | ✅ `TestHeartbeat_SpanDispatchAddressesEverySlot` | `heightsync` + `user` | `slots_num` consecutive nonces, no ack awaited, every slot addressed exactly once. |
 | H5 | ✅ `TestTurnTracker_OutOfOrderAcksIdenticalRecord` | `heightsync` | Acks arriving out of order, several per diff, produce an identical `SyncTurnRecord`. |
-| H6 | ✅ `TestTurnTracker_QuorumCompletesAndConfirms` + `TestHeartbeat_LiveHostsQuorumCompletes` | `heightsync` + `user` | `Q` acks ⇒ turn `complete`, `h_last` advances, `(C-turn)` confirms (unit + live hosts). |
-| H7 | ✅ `TestTurnTracker_BelowQuorumDegradesNoBlame` + `TestHeartbeat_UnavailableAcksDoNotCountAndDegrade` | `heightsync` + `user` | `< Q` counting acks past `D_ack` ⇒ `degraded` with no blame recorded (unit + live host). |
+| H6 | ✅ `TestTurnTracker_QuorumCompletesTurn` + `TestHeartbeat_LiveHostsQuorumCompletes` | `heightsync` + `user` | `Q` acks ⇒ turn `complete`, `h_last` advances (unit + live hosts). Completion is reachability only; it confirms no height (H53). |
+| H7 | ✅ `TestTurnTracker_BelowQuorumDegradesNoBlame` + `TestTurnTracker_StampPastDeadlineDegrades` | `heightsync` | `< Q` counting acks past `D_ack` ⇒ `degraded` with no blame recorded. |
 | H8 | ✅ `TestLateAck_DoesNotClearDegraded` | `heightsync` | A late ack counts for height, is tagged `late`, and never clears `degraded`. |
-| H24 | ✅ `TestHeightAck_OracleUnavailableStillRequired` + `TestHost_HeartbeatAck_OracleUnavailableStillRequired` + `TestHeartbeat_UnavailableAcksDoNotCountAndDegrade` | `heightsync` + `host` + `user` | `ORACLE_UNAVAILABLE` ack is present and required, does not count toward `Q`, leaves `(C-turn)` unaffected. |
+| H24 | ✅ `TestHeightAck_OracleUnavailableCountsTowardQuorum` + `TestHost_HeartbeatAck_OracleUnavailableStillRequired` + `TestHeartbeat_UnavailableAcksCompleteTurnCarryingTheFloor` | `heightsync` + `host` + `user` | `ORACLE_UNAVAILABLE` ack is present, required, and **counts** toward `Q` — it carries `F(m)` from the log the host already applies. The self-report is retained, and the slot contributes no anchor, so `(C-quorum)` is unaffected. |
 | H25 | ✅ `TestHeartbeatConfig_ValidateRejectsBadOverride` | `heightsync` | `T_idle > Interval + TurnTimeout`, positive durations, and `2 · Interval ≤ F` fail fast at startup. |
 | H33 | ✅ `TestHeartbeat_StampedBusySessionEmitsNoAcks` | `host` | A busy stamped escrow emits zero heartbeats **and** zero `MsgHeightAck`; acks exist only inside heartbeat turns. |
 | H34 | ✅ `TestSeed_SessionOpenStampsNonceOne` | `user` | E9: seed runs before the first outbound diff; nonce 1 `MsgHeartbeat` carries the seeded `(height, hash)`. (`MsgStartInference` stamp is E7.) |
@@ -307,18 +308,27 @@ may defer.
 
 | ID | Test (planned name) | Package | What it will prove |
 | -- | ------------------- | ------- | ------------------ |
-| H9 | ✅ `TestLogPlane_DeterminismAcrossVerifiers` | `state` | Two independently built verifiers on the same diff sequence produce byte-identical `SyncTurnRecord`s and identical L0–L3 / L5b / L7 verdicts. |
+| H9 | ✅ `TestLogPlane_DeterminismAcrossVerifiers` | `state` | Two independently built verifiers on the same diff sequence produce byte-identical `SyncTurnRecord`s and identical L0–L3 / L7 verdicts. |
 | H10 | ✅ `TestLogPlane_FabricatedAckRejected` | `heightsync` | User-fabricated ack ⇒ `INVALID(ack_sig_invalid)` (L2). |
 | H11 | ✅ `TestLogPlane_AckCausalityRejected` | `heightsync` | Unknown or mismatched `turn_seq` / `ref_nonce` ⇒ `INVALID(ack_causality)` (L3). |
-| H12 | ✅ `TestHeightAck_EnvelopeBindingMismatch` | `transport` | Ack height ≠ its own response-leg Anchor ⇒ `DISPUTE_ORIGINATOR` on sight, mark written, no oracle lookup (L4). |
+| H12 | ✅ `TestHeightAck_EnvelopeBindingMismatch` | `transport` | Ack height ≠ `max(own response-leg Anchor, F(m))` ⇒ `DISPUTE_ORIGINATOR` on sight, mark written, no oracle lookup (L4). |
+| H12a | ✅ `TestLogPlane_AckLiftDoesNotTripEnvelopeBinding` | `heightsync` | The honest path of L4's asymmetry: an ack at the floor with a lower Anchor beside it draws **no** mark, because that is the producer rule; one block above both the anchor and the floor still marks. Reverting this leg to strict equality would mark every lagging host and leave every other L4 test passing. |
 | H13 | ✅ `TestHeartbeat_RequestLegBindingMismatch` | `transport` | Heartbeat height ≠ request-leg section ⇒ `DISPUTE_CARRIER` (L4). |
 | H13a | ✅ `TestLogPlane_NoEnvelopeSkipsCrossPlaneChecks` | `heightsync` | Catch-up / gossip re-ingest with no envelope skips L4 and L5a; every other verdict is unchanged; an edge mark is not re-derived. |
 | H13b | ✅ `TestLogPlane_SectionPresentForOneRecipientOnly` | `transport` | Lazy carry (`last_propagated`) means slot A runs L4 while slot B skips it; both accept the diff. |
-| H13c | ✅ `TestLogPlane_HistoricalReplayNoInvalidation` | `heightsync` | Replaying a session whose stamps sit far below the verifier's tip yields **no** `INVALID` — L5a is admission-only, L5b compares in-turn acks. |
-| H13d | ✅ `TestLogPlane_HeightRegressionAcrossNonces` | `heightsync` | A stamp below an earlier nonce's stamp ⇒ `INVALID(height_regression)` on every verifier (L0). |
+| H13c | ✅ `TestLogPlane_HistoricalReplayNoInvalidation` | `heightsync` | Replaying a session whose stamps sit far below the verifier's tip yields **no** `INVALID` — L5a is the only `D`-band check and it is admission-only. |
+| H13d | ✅ `TestLogPlane_RefStampBelowFloorRejected` | `heightsync` | A reference height below `F(m)` for its producing nonce ⇒ `INVALID(height_regression)` on every verifier (L0). |
+| H13f | ✅ `TestLogPlane_AckBelowFloorRejectedAndLiftAccepted` | `heightsync` | An ack or heartbeat carrying a height below `F(m)` ⇒ `INVALID(height_regression)`: the producer held the log and could have lifted. Lifting to the floor while labelling itself `CATCHING_UP` is accepted, so a lagging host is never forced into an invalid diff. |
+| H13g | ✅ `TestLogPlane_ConfirmJudgedAgainstProducingNonce` | `heightsync` | A confirm produced at nonce `m` and landing after another party raised the floor is accepted; the basis is `F(m)`, not the landing floor. Below `F(m)` still fails. |
+| H13h | ✅ `TestLogPlane_AckJudgedAgainstRefNonceFloor` | `heightsync` | The ack half of the producing-nonce rule: an ack answering the heartbeat at `r` is judged against `F(r + 1)`, so landing after the floor rose costs an honest host nothing — and a `late` ack (attack 22) is admissible for the same reason. Below its own producing floor still fails. |
+| H13i | ✅ `TestFloorIndex_*`, `TestRefStamp_CoversEveryDiffResidentHeight`, `TestRefProducingNonce_PerMessageBasis` | `heightsync` | Floor mechanics: `AsOf` excludes its own nonce, the running max is monotone in nonce, absent stamps are ignored (presence keyed on the hash), a pruned range answers "unknown" rather than a higher floor, and `Clone` isolates trial-apply. Plus the single-semantics rule: every Diff-resident message carries a reference height, and each names its own producing basis. |
 | H13e | ✅ `TestLogPlane_FutureDatedStampDeferredFail` | `heightsync` | `observed_block_hash` belonging to another height ⇒ `DEFERRED_FAIL` once the follower reaches `H`; the pair never confirms (L6). |
 | H14 | ✅ `TestHeightAck_FalseSyncedDeferredFail` | `heightsync` | Host claiming `SYNCED` on a stale oracle fails L6 once the follower advances; honest `ORACLE_STALE` carries no penalty. |
-| H30 | ✅ `TestLogPlane_PerInferenceHeightOrder` | `heightsync` | `confirm` below `start` for one `inference_id` ⇒ `INVALID(height_regression)` (L0b). |
+| H30 | ✅ `TestLogPlane_PerInferenceHeightOrder` | `heightsync` | `confirm` below `start` is **accepted** (cross-signer: the user carries the roster maximum, the executor its own view); `finish` below `confirm` is `INVALID(height_regression)` (L0b, same executor). |
+| H50 | ✅ `TestHeightSyncDivergence_InferenceFlowNeverBlocked` | `state` | A roster spread ~1000 blocks (`≫ D`) runs a full start/confirm/finish flow through `ApplyDiff`: lagging hosts lift to the floor and label themselves `CATCHING_UP`, drawing **no** mark; a raw low tip in `Diff` is refused **without consuming the nonce** so the honest retry lands at the same nonce; a mislabelled `SYNCED` ack still applies, because the log plane has no divergence verdict to reach; and traffic keeps flowing throughout. Divergence must never be a liveness dependency. |
+| H51 | ✅ `TestLogPlane_AckJudgedAgainstRefNonceFloor` | `heightsync` | See H13h — a late-landing ack judged against `F(ref_nonce + 1)` rather than the landing floor. |
+| H52 | ✅ `TestHeightSyncDivergence_DeadOracleStillCarriesTime` | `state` | The liveness gain from acks carrying reference heights: a host reporting `ORACLE_UNAVAILABLE` echoes `F(m)` from the log it already applies, its ack counts toward turn completion, and it says plainly it is not a height witness. It used to be a hole in the roster's cadence. |
+| H53 | ✅ `TestConfirm_TurnRuleWithdrawn` | `heightsync` | `(C-turn)`'s soundness argument: a turn completes on `Q` reachable slots, and that must **not** confirm a height, because `Q` acks at `≥ h` may all be one originator's claim lifted from the floor. `RuleTurn` falls through to `(C-quorum)`. |
 
 ### 7.3 Stamps on existing txs, signature coverage, evidence retention
 
@@ -480,7 +490,7 @@ Files (planned): `heightsync_strong_e2e_test.go`. Suite prefix: `TestHeightSyncS
 | §7 wire format — envelope is one plane only | `TestEnvelope_*`, `TestUnwrapInferenceRequestBody_*` | — |
 | §10.1–§10.3 heartbeat cadence + obligation | H1, H2, H3, H4, H25 (unit + in-process) | — |
 | §10.4 `MsgHeartbeat` / `MsgHeightAck` wire + binding | field-number + ack signing unit + `TestHost_HeartbeatAck_*`, H10, H11, H12, H13, H33 | — |
-| §10.5 `observed_height` in the log | H6 (turn complete), H9, H13d, H34 (seeded nonce 1 heartbeat), H38 (absent ≠ 0) | — |
+| §10.5 `observed_height` in the log | H6 (turn complete), H9, H13d, H13f–i (reference height vs own tip), H50 (divergence never blocks a leg), H34 (seeded nonce 1 heartbeat), H38 (absent ≠ 0) | — |
 | §10.5.1 stamp inside its producer's signature | H28 (`executor_sig` mirror), H29 (`proposer_sig` automatic) | — |
 | §10.5.2 derived record heights / logical time | H31 | switching the consumers is a later milestone |
 | §10.6 async fan-out | H4, H5 (in-process span + unit) | — |
@@ -489,10 +499,10 @@ Files (planned): `heightsync_strong_e2e_test.go`. Suite prefix: `TestHeightSyncS
 | §11.2 `sync_state` + `peer_seen` | H24 (unit + live host), `TestHost_HeartbeatAck_OwnSlotIntoMempool`, H14, H17 | — |
 | §11.3–§11.4 repair probe + budgets | H16 (no-blame negative), H17, H18, H19, H20 | — |
 | §12 close-ready arming | H21, H22, H23 | — |
-| §14 log-plane checks L0–L7 | H9–H16, H13a–e, H30 | — |
+| §14 log-plane checks L0–L7 | H9–H16, H12a, H13a–i, H30, H50–H53 | — |
 | §14 evaluation tiers (what may invalidate) | H13a, H13b, H13c | — |
 | §15 signature layers + mark retention | E10 (exculpation), H32 | — |
-| §17 `(C-turn)` | H6, H24 (unit + live host), `TestConfirm_TurnRule` | — |
+| §17 `(C-turn)` withdrawn | H53 `TestConfirm_TurnRuleWithdrawn`, plus H6 / H24 for what completion does still mean | — |
 | Block-oracle abstraction + dapi compatibility | D1–D11 | — |
 
 ---
@@ -521,7 +531,9 @@ Files (planned): `heightsync_strong_e2e_test.go`. Suite prefix: `TestHeightSyncS
 | Partitioned minority tries to close a healthy escrow (21) | Arming emits nothing; closing needs finalization's `2f + 1`; unarmed hosts reject `USER_TIMEOUT` | ✅ H23 |
 | Drip-fed late acks to fake a complete turn (22) | Late acks count for height only, never clear `degraded`; arming keys on `last_signal_height` toward this host | ✅ H8 |
 | Sequencer rewrites a host's stamp on `MsgConfirmStart` (23) | The pair lives in `ExecutorReceiptContent` and is copied into the rebuilt content before recovery, so any edit fails `executor_sig` | ✅ H28 |
-| Stamp regression to widen a band or backdate a duration (24) | L0 across nonces, L0b within one inference; both pure functions of `Diff` | ✅ H13d, ✅ H30 |
+| Stamp regression to widen a band or backdate a duration (24) | L0 against `F(m)` for every Diff-resident height, L0b within one executor; both pure functions of `Diff` | ✅ H13d, ✅ H13f, ✅ H13g, ✅ H13h, ✅ H30 |
+| Floor poisoning — an implausibly high reference height no honest producer can clear (24b) | Liveness holds: carriers lift to `F(m)` and absence stays legal, so the escrow does not stall. Attribution holds at the edge, not in the log: L4 refuses to let the poisoner's own ack match `max(anchor, F(m))` unless it also claims the absurd height as a live oracle read, where L5a rejects it. Honest carriers still repeat the unreconcilable pair and collect L6 marks alongside the originator, and bounding a stamp to a plausible window above the verifier's own tip is **open work** | ✅ H13g (basis), ✅ H50 (lift is what the shipping producers do), ✅ H12 (edge attribution); plausibility bound ⏳ |
+| Divergence itself used as a liveness weapon — a lagging host makes every diff carrying its stamp INVALID (24c) | The producer rule is always satisfiable (`F(m)` is already in the log), so a diverged host can serve without lying; `sync_state` and the envelope anchors record the gap, and no log-plane verdict rests on it. A verdict that a lagging host cannot avoid would be a DoS against the escrow | ✅ H50, ✅ H52, ✅ `TestHeightSync_E2E_WideDivergenceNeverBlocksInferences` |
 | Pre-signing a future height (25) | `observed_block_hash` cannot be produced for an unmined block; L6 never confirms the pair | ✅ H13e |
 | Replay-time invalidation of an honest session (26) | Only pure-`Diff` checks may invalidate; L5a is admission-only and L4 is skipped without an envelope | ✅ H13a, H13c |
 | dapi unavailable or too old to serve `/block/*` | Failover to the direct-chain adapter (hash-only); a missing or down dapi degrades capability and never fails a session | ⏳ D4, D5, D7, D10, D11 |

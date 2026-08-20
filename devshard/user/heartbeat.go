@@ -63,7 +63,11 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 	defer s.mu.Unlock()
 
 	now := s.nowLocked()
-	hNow, hash, ok := s.observedHeightLocked()
+	// The span's heartbeats land at consecutive nonces starting here, and they
+	// all carry the same height, so one floor read at the first nonce satisfies
+	// L0 for the whole span: each later heartbeat clears a floor its own
+	// predecessor set, with equality.
+	hNow, hash, ok := s.referenceStampLocked(s.nonce + 1)
 	if !ok || hNow == 0 {
 		s.heartbeat.Due(now, 0) // increments skippedNoHeight
 		logging.Info("heartbeat skipped", "subsystem", "heightsync",
@@ -191,6 +195,24 @@ func (s *Session) hasPendingHeightAckLocked() bool {
 		}
 	}
 	return false
+}
+
+// referenceStampLocked is the producer side of L0 for the sequencer: a
+// Diff-resident height is max(own view, F(nonce)), or absent. It is never below
+// F(nonce), so an honest sequencer cannot author a regression.
+//
+// This covers MsgStartInference and MsgHeartbeat alike — every height in Diff is
+// a reference height (spec §14), and the sequencer is a carrier on both.
+func (s *Session) referenceStampLocked(nonce uint64) (uint64, []byte, bool) {
+	h, hash, ok := s.observedHeightLocked()
+	if !heightsync.StampPresent(hash) {
+		h, hash, ok = 0, nil, false
+	}
+	floor, floorHash, known := s.sm.HeightSyncFloorAsOf(nonce)
+	if known && floor > h && heightsync.StampPresent(floorHash) {
+		return floor, floorHash, true
+	}
+	return h, hash, ok
 }
 
 func (s *Session) observedHeightLocked() (uint64, []byte, bool) {

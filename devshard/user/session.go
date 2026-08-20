@@ -749,16 +749,14 @@ func (s *Session) observeTurnLocked(diff types.Diff) {
 	s.turnTracker.Observe(diff.Nonce, diff.Txs, hNow)
 
 	// Acks are host-signed and name their own slot, so they are the one signal
-	// that needs no nonce arithmetic to attribute. An ORACLE_UNAVAILABLE ack
-	// carries no height, so it is required but proves no agreement — the same
-	// rule TurnTracker uses for Q.
+	// that needs no nonce arithmetic to attribute. Cadence asks whether the
+	// roster is answering, not whether it agrees on a height, so sync_state is
+	// not consulted — the same rule TurnTracker uses for Q. A stampless ack is
+	// still no round-trip to credit.
 	now := s.nowLocked()
 	for _, tx := range diff.Txs {
 		ack := tx.GetHeightAck()
-		if ack == nil || ack.ObservedHeight == 0 {
-			continue
-		}
-		if ack.SyncState == types.SyncState_ORACLE_UNAVAILABLE {
+		if ack == nil || !heightsync.StampPresent(ack.ObservedBlockHash) {
 			continue
 		}
 		s.heartbeat.NoteClaim(ack.SlotId, now)
@@ -947,7 +945,7 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 		MaxTokens:   params.MaxTokens,
 		StartedAt:   params.StartedAt,
 	}
-	if h, hash, ok := s.observedHeightLocked(); ok && heightsync.StampPresent(hash) {
+	if h, hash, ok := s.referenceStampLocked(nonce); ok {
 		start.ObservedHeight = h
 		start.ObservedBlockHash = hash
 	}

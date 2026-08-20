@@ -128,14 +128,25 @@ func (sm *StateMachine) checkLogPlaneLocked(nonce uint64, txs []*types.DevshardT
 
 func (sm *StateMachine) logPlaneStateLocked() heightsync.LogPlaneState {
 	return heightsync.LogPlaneState{
-		SlotsNum:       uint64(len(sm.state.Group)),
-		SlotKeys:       sm.slotToAddress,
-		Verifier:       sm.verifier,
-		Tracker:        sm.turnTracker,
-		MaxStampHeight: sm.maxStampHeight,
-		Cfg:            sm.heartbeatCfg,
-		EscrowID:       sm.state.EscrowID,
+		SlotsNum: uint64(len(sm.state.Group)),
+		SlotKeys: sm.slotToAddress,
+		Verifier: sm.verifier,
+		Tracker:  sm.turnTracker,
+		Floor:    sm.heightSyncFloor,
+		Cfg:      sm.heartbeatCfg,
+		EscrowID: sm.state.EscrowID,
 	}
+}
+
+// HeightSyncFloorAsOf is F(m): the highest reference height stamped below nonce
+// m, with its block hash. Producers use it to satisfy L0 — stamp
+// max(own_tip, F(m)) or omit the stamp — so this is the read side of the rule
+// the verifier enforces.
+func (sm *StateMachine) HeightSyncFloorAsOf(nonce uint64) (uint64, []byte, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	h, hash, known := sm.heightSyncFloor.AsOf(nonce)
+	return h, append([]byte(nil), hash...), known
 }
 
 func (sm *StateMachine) observeHeightSyncLocked(nonce uint64, txs []*types.DevshardTx) {
@@ -144,15 +155,6 @@ func (sm *StateMachine) observeHeightSyncLocked(nonce uint64, txs []*types.Devsh
 	}
 	var hNow uint64
 	for _, tx := range txs {
-		if tx == nil {
-			continue
-		}
-		if hb := tx.GetHeartbeat(); hb != nil && heightsync.StampPresent(hb.ObservedBlockHash) && hb.ObservedHeight > hNow {
-			hNow = hb.ObservedHeight
-		}
-		if ack := tx.GetHeightAck(); ack != nil && heightsync.StampPresent(ack.ObservedBlockHash) && ack.ObservedHeight > hNow {
-			hNow = ack.ObservedHeight
-		}
 		if h, ok := heightsync.TxStamp(tx); ok && h > hNow {
 			hNow = h
 		}
@@ -161,8 +163,12 @@ func (sm *StateMachine) observeHeightSyncLocked(nonce uint64, txs []*types.Devsh
 		hNow = sm.turnTracker.LastCompletedHeight()
 	}
 	sm.turnTracker.Observe(nonce, txs, hNow)
-	if hNow > sm.maxStampHeight {
-		sm.maxStampHeight = hNow
+	// Every Diff-resident height is a reference height and feeds the floor,
+	// heartbeats and acks included. Producers lift to F(m) or omit, so a party
+	// that is behind is never put in an impossible position by another party's
+	// higher stamp; what it may not do is write a height below the floor.
+	if refH, refHash, ok := heightsync.MaxRefStamp(txs); ok {
+		sm.heightSyncFloor.Observe(nonce, refH, refHash)
 	}
 	sm.state.HeightSyncLastCompletedHeight = sm.turnTracker.LastCompletedHeight()
 	sm.state.HeightSyncLatestTurnSeq = sm.turnTracker.MaxTurnSeq()

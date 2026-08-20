@@ -29,9 +29,18 @@ type ConfirmationRule int
 const (
 	// RuleQuorum is (C-quorum): audit-ring originators, the testenv default.
 	RuleQuorum ConfirmationRule = iota
-	// RuleTurn is (C-turn): a complete SyncTurnRecord with ≥ Q counting acks.
+	// RuleTurn is withdrawn (spec §17) and behaves as RuleQuorum.
+	//
+	// It read ≥ Q log-resident acks with observed_height ≥ h. Once every
+	// Diff-resident height became a reference height, an ack at or above h no
+	// longer witnesses that its signer saw block h — a lagging host reaches it
+	// by lifting to a floor another party established, legitimately and by
+	// design. Counting Q of those confirms h on one originator's claim echoed Q
+	// times, which is what (C-quorum)'s distinct-originator requirement exists
+	// to prevent. Turn completion still certifies reachability; it cannot
+	// certify a height.
 	RuleTurn
-	// RuleHybrid is ConfirmConfirmed if either Quorum or Turn clears.
+	// RuleHybrid is ConfirmConfirmed if (C-quorum) or (C-strong) clears.
 	RuleHybrid
 )
 
@@ -48,9 +57,9 @@ type ConfirmationConfig struct {
 	WindowHeights int64
 	Oracle        blocks.BlockOracle
 	Now           func() time.Time
-	// Rule selects (C-quorum) / (C-turn) / hybrid. Zero is RuleQuorum.
+	// Rule selects the confirmation predicate. Zero is RuleQuorum.
 	Rule ConfirmationRule
-	// Turns is required for RuleTurn and RuleHybrid.
+	// Turns is retained for turn bookkeeping; it no longer feeds confirmation.
 	Turns *TurnTracker
 }
 
@@ -166,14 +175,11 @@ func (idx *ConfirmationIndex) RecordAttestation(a AnchorAttestation) {
 	idx.byOriginator[key] = ent
 }
 
-func turnConfirmState(turns *TurnTracker, h uint64) ConfirmState {
-	if turns != nil && turns.Confirms(h) {
-		return ConfirmConfirmed
-	}
-	return ConfirmPending
-}
-
 // IsStrictlyConfirmed implements ConfirmationView.
+//
+// Only (C-quorum) is available here. (C-turn) is withdrawn (see RuleTurn) and
+// (C-strong) arrives with Phase F, at which point RuleHybrid gains its second
+// disjunct.
 func (idx *ConfirmationIndex) IsStrictlyConfirmed(h uint64) ConfirmState {
 	if idx == nil || h == 0 {
 		return ConfirmPending
@@ -182,20 +188,7 @@ func (idx *ConfirmationIndex) IsStrictlyConfirmed(h uint64) ConfirmState {
 	idx.mu.Lock()
 	defer idx.mu.Unlock()
 
-	if idx.rule == RuleTurn {
-		return turnConfirmState(idx.turns, h)
-	}
-
-	q := idx.quorumConfirmedLocked(h)
-	if q == ConfirmConfirmed {
-		return ConfirmConfirmed
-	}
-	if idx.rule == RuleHybrid {
-		if t := turnConfirmState(idx.turns, h); t == ConfirmConfirmed {
-			return ConfirmConfirmed
-		}
-	}
-	return q
+	return idx.quorumConfirmedLocked(h)
 }
 
 func (idx *ConfirmationIndex) quorumConfirmedLocked(h uint64) ConfirmState {

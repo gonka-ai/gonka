@@ -878,6 +878,7 @@ func (h *Host) signReceipt(ctx context.Context, req HostRequest) ([]byte, int64,
 	// Sign executor receipt with wall-clock confirmed_at and optional height stamp.
 	confirmedAt := time.Now().Unix()
 	obsH, obsHash := h.oracleStampLocked(ctx)
+	obsH, obsHash = h.referenceStamp(inferenceID, obsH, obsHash)
 	receiptContent := &types.ExecutorReceiptContent{
 		InferenceId:       inferenceID,
 		PromptHash:        rec.PromptHash,
@@ -974,6 +975,7 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 	}
 
 	obsH, obsHash := h.observedTip(ctx)
+	obsH, obsHash = h.referenceStamp(inferenceID, obsH, obsHash)
 	finishMsg := &types.MsgFinishInference{
 		InferenceId:       inferenceID,
 		ResponseHash:      result.ResponseHash,
@@ -1506,6 +1508,7 @@ func (h *Host) challengeReceiptLocked(ctx context.Context, inferenceID uint64, p
 
 	confirmedAt := time.Now().Unix()
 	obsH, obsHash := h.oracleStampLocked(ctx)
+	obsH, obsHash = h.referenceStamp(inferenceID, obsH, obsHash)
 	receiptContent := &types.ExecutorReceiptContent{
 		InferenceId:       inferenceID,
 		PromptHash:        rec.PromptHash,

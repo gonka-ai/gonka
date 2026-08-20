@@ -100,9 +100,36 @@ func baseState(t *testing.T, n int) (heightsync.LogPlaneState, []*signing.Secp25
 		SlotKeys: keys,
 		Verifier: signing.NewSecp256k1Verifier(),
 		Tracker:  heightsync.NewTurnTracker(uint64(n), 0, cfg),
+		Floor:    heightsync.NewFloorIndex(),
 		Cfg:      cfg,
 		EscrowID: "escrow-1",
 	}, signers
+}
+
+func startTxAt(id, height uint64, hash []byte) *types.DevshardTx {
+	return &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+		InferenceId: id, ObservedHeight: height, ObservedBlockHash: hash,
+	}}}
+}
+
+func confirmTxAt(id, height uint64, hash []byte) *types.DevshardTx {
+	return &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: id, ObservedHeight: height, ObservedBlockHash: hash,
+	}}}
+}
+
+func finishTxAt(id, height uint64, hash []byte) *types.DevshardTx {
+	return &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
+		InferenceId: id, ObservedHeight: height, ObservedBlockHash: hash,
+	}}}
+}
+
+// ackTxAt builds an unsigned ack. Use where the test drives L0 rather than L2.
+func ackTxAt(refNonce uint64, slot uint32, height uint64, hash []byte) *types.DevshardTx {
+	return signedAckTx(&types.MsgHeightAck{
+		TurnSeq: 1, RefNonce: refNonce, SlotId: slot,
+		ObservedHeight: height, ObservedBlockHash: hash, PeerSeen: []byte{0xff},
+	})
 }
 
 func TestLogPlane_FabricatedAckRejected(t *testing.T) {
@@ -141,40 +168,155 @@ func TestLogPlane_AckCausalityRejected(t *testing.T) {
 	require.ErrorIs(t, res.Err, heightsync.ErrAckCausality)
 }
 
-func TestLogPlane_HeightRegressionAcrossNonces(t *testing.T) {
+func TestLogPlane_RefStampBelowFloorRejected(t *testing.T) {
+	// L0 on a reference height: the floor as of the producing nonce is 80, so a
+	// confirm claiming 50 is a regression no honest producer could author — it
+	// had the log and could have carried 80 or omitted the stamp.
 	st, _ := baseState(t, 3)
 	hash := []byte{0xaa}
-	st.MaxStampHeight = 80
+	st.Floor.Observe(1, 80, hash)
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
-		Nonce: 2,
-		Txs:   []*types.DevshardTx{hbTx(1, 50, 3, hash, nil)},
+		Nonce: 6,
+		Txs:   []*types.DevshardTx{confirmTxAt(5, 50, hash)},
 	}, st)
 	require.ErrorIs(t, res.Err, heightsync.ErrHeightRegression)
 	require.Equal(t, "height_regression", res.Reason)
 }
 
+func TestLogPlane_AckBelowFloorRejectedAndLiftAccepted(t *testing.T) {
+	// The log has one height semantics, so an ack is under L0 exactly like an
+	// executor receipt: below F(m) is a regression, and a lagging host clears the
+	// bar by lifting to the floor rather than by writing a lower number. Its real
+	// follower tip is reported in the response-leg Anchor and sync_state instead,
+	// where divergence is monitored (spec §14).
+	st, signers := baseState(t, 3)
+	hash := []byte{0xaa}
+	st.Floor.Observe(1, 80, hash)
+	st.Tracker.Observe(2, []*types.DevshardTx{hbTx(1, 80, 3, hash, nil)}, 80)
+
+	low := signedAck(t, signers[0], 1, 2, 0, 50, hash, types.SyncState_CATCHING_UP)
+	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 3,
+		Txs:   []*types.DevshardTx{signedAckTx(low)},
+	}, st)
+	require.ErrorIs(t, res.Err, heightsync.ErrHeightRegression,
+		"an ack below F(ref_nonce) could have carried the floor instead")
+
+	lift := signedAck(t, signers[0], 1, 2, 0, 80, hash, types.SyncState_CATCHING_UP)
+	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 3,
+		Txs:   []*types.DevshardTx{signedAckTx(lift)},
+	}, st)
+	require.NoError(t, res.Err,
+		"lifting to the floor is always available, so a lagging host is never forced into an invalid diff")
+
+	// A heartbeat below the floor is the same violation, one signer over.
+	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 4,
+		Txs:   []*types.DevshardTx{hbTx(1, 50, 3, hash, nil)},
+	}, st)
+	require.ErrorIs(t, res.Err, heightsync.ErrHeightRegression)
+}
+
+func TestLogPlane_AckJudgedAgainstRefNonceFloor(t *testing.T) {
+	// The ack half of the producing-nonce rule, and what makes bringing acks
+	// under L0 safe at all. The ack answers the heartbeat at nonce 2, where the
+	// floor was 80. It lands at nonce 6, by which time another party pushed the
+	// floor to 100. Judged against the landing floor an honest ack would fail
+	// whenever the pipeline was busy — and late acks (§10.6) always would.
+	st, signers := baseState(t, 3)
+	hash := []byte{0xaa}
+	st.Floor.Observe(1, 80, hash)
+	st.Tracker.Observe(2, []*types.DevshardTx{hbTx(1, 80, 3, hash, nil)}, 80)
+	st.Floor.Observe(5, 100, hash)
+
+	ack := signedAck(t, signers[0], 1, 2, 0, 80, hash, types.SyncState_SYNCED)
+	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 6,
+		Txs:   []*types.DevshardTx{signedAckTx(ack)},
+	}, st)
+	require.NoError(t, res.Err, "80 >= F(2)=80; the landing floor of 100 is not its basis")
+
+	below := signedAck(t, signers[0], 1, 2, 0, 79, hash, types.SyncState_SYNCED)
+	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 6,
+		Txs:   []*types.DevshardTx{signedAckTx(below)},
+	}, st)
+	require.ErrorIs(t, res.Err, heightsync.ErrHeightRegression,
+		"below its own producing floor is still a regression")
+}
+
 func TestLogPlane_UnstampedLegIsNotRegression(t *testing.T) {
 	st, _ := baseState(t, 3)
-	st.MaxStampHeight = 80
+	st.Floor.Observe(1, 80, []byte{0xaa})
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 2,
 		Txs:   []*types.DevshardTx{hbTx(1, 50, 3, nil, nil)},
 	}, st)
 	require.NoError(t, res.Err)
+
+	// Same for a reference leg: absence is always legal, at any floor. Otherwise
+	// a present-then-absent pair reads as a regression on every verifier (H38).
+	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 6,
+		Txs:   []*types.DevshardTx{confirmTxAt(5, 0, nil)},
+	}, st)
+	require.NoError(t, res.Err)
+}
+
+func TestLogPlane_ConfirmJudgedAgainstProducingNonce(t *testing.T) {
+	// The pipelining case, and the reason the basis is the producing nonce rather
+	// than the landing nonce. The confirm for inference 3 was made when the floor
+	// was 80; it lands at nonce 6, by which time another party has pushed the
+	// floor to 100. Judging it against the landing floor would reject a stamp
+	// whose producer could not possibly have known 100 — which is exactly the
+	// failure the E2E courier scenarios hit.
+	st, _ := baseState(t, 3)
+	hash := []byte{0xaa}
+	st.Floor.Observe(1, 80, hash)
+	st.Floor.Observe(5, 100, hash)
+
+	floorAtProducer, _, known := st.Floor.AsOf(3)
+	require.True(t, known)
+	require.Equal(t, uint64(80), floorAtProducer, "fixture must exercise a floor that rose after production")
+
+	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 6,
+		Txs:   []*types.DevshardTx{confirmTxAt(3, 90, hash)},
+	}, st)
+	require.NoError(t, res.Err, "90 >= F(3)=80; the landing floor of 100 is not its basis")
+
+	// Below its own producing floor is still a regression.
+	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 6,
+		Txs:   []*types.DevshardTx{confirmTxAt(3, 79, hash)},
+	}, st)
+	require.ErrorIs(t, res.Err, heightsync.ErrHeightRegression)
 }
 
 func TestLogPlane_PerInferenceHeightOrder(t *testing.T) {
 	st, _ := baseState(t, 3)
 	hash := []byte{0xaa}
+
+	// start is user-signed and carries the roster maximum; confirm is the
+	// executor's own view. An executor legitimately behind that maximum is not a
+	// regression, so this cross-signer pair is deliberately not compared.
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
-		Nonce: 2,
+		Nonce: 1,
 		Txs: []*types.DevshardTx{
-			{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
-				InferenceId: 1, ObservedHeight: 100, ObservedBlockHash: hash,
-			}}},
-			{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-				InferenceId: 1, ObservedHeight: 90, ObservedBlockHash: hash,
-			}}},
+			startTxAt(1, 100, hash),
+			confirmTxAt(1, 90, hash),
+		},
+	}, st)
+	require.NoError(t, res.Err, "confirm below start across signers is honest lag, not a regression")
+
+	// confirm and finish are both executor-signed, so this pair is genuine
+	// per-signer monotonicity and stays enforced.
+	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 1,
+		Txs: []*types.DevshardTx{
+			confirmTxAt(1, 90, hash),
+			finishTxAt(1, 89, hash),
 		},
 	}, st)
 	require.ErrorIs(t, res.Err, heightsync.ErrHeightRegression)
@@ -318,7 +460,13 @@ func hasMark(marks []heightsync.AttributableMark, kind heightsync.MarkKind) bool
 	return false
 }
 
-func TestConfirm_TurnRule(t *testing.T) {
+// TestConfirm_TurnRuleWithdrawn pins the soundness argument in spec §17. A
+// complete turn is a reachability certificate, not a height certificate: every
+// ack carries a reference height, so a host whose follower never reached 500
+// still acks 500 by lifting to a floor another party set. Confirming on Q of
+// those would launder one originator's claim into Q attestations, which is
+// exactly what (C-quorum)'s distinct-originator requirement prevents.
+func TestConfirm_TurnRuleWithdrawn(t *testing.T) {
 	tr := heightsync.NewTurnTracker(4, 3, heightsync.DefaultHeartbeatConfig())
 	tr.Observe(10, []*types.DevshardTx{hbTx(1, 500, 4, []byte{1}, nil)}, 500)
 	idx := heightsync.NewConfirmationIndex(heightsync.ConfirmationConfig{
@@ -335,7 +483,9 @@ func TestConfirm_TurnRule(t *testing.T) {
 		signedAckTx(&types.MsgHeightAck{TurnSeq: 1, RefNonce: 10, SlotId: 1, ObservedHeight: 500, SyncState: types.SyncState_SYNCED}),
 		signedAckTx(&types.MsgHeightAck{TurnSeq: 1, RefNonce: 10, SlotId: 2, ObservedHeight: 500, SyncState: types.SyncState_SYNCED}),
 	}, 500)
-	require.Equal(t, heightsync.ConfirmConfirmed, idx.IsStrictlyConfirmed(500))
+	require.True(t, tr.CompletedAtOrAbove(500), "the turn itself completed: Q slots were reachable")
+	require.Equal(t, heightsync.ConfirmPending, idx.IsStrictlyConfirmed(500),
+		"a complete turn must not confirm a height; RuleTurn falls through to (C-quorum), which has no anchors here")
 }
 
 func TestLogPlane_CheckEnvelopeBindingIndependent(t *testing.T) {
@@ -352,6 +502,45 @@ func TestLogPlane_CheckEnvelopeBindingIndependent(t *testing.T) {
 		Sec:   sec,
 	}, heightsync.DefaultHeartbeatConfig())
 	require.True(t, hasMark(marks, heightsync.MarkDisputeCarrier))
+}
+
+// TestLogPlane_AckLiftDoesNotTripEnvelopeBinding is the honest path of L4's
+// asymmetric rule. The ack's Diff height is a reference height and the
+// response-leg Anchor is the host's raw reading, so on a lagging host the two
+// legitimately differ: 50 in the log, 40 on the wire. Requiring them equal —
+// which is what the heartbeat leg does, correctly, because the sequencer signs
+// both — would mark every honest lagging host as disputing itself.
+//
+// The bound is still exact, so the one-block lie L4 exists to catch is caught:
+// 51 clears neither the anchor nor the floor and is marked.
+func TestLogPlane_AckLiftDoesNotTripEnvelopeBinding(t *testing.T) {
+	_, signers := baseState(t, 3)
+	hash := []byte{0xaa}
+	sec := &heightsync.HeightSyncSection{
+		ProofType:           heightsync.AnchorProofType,
+		MainnetHeight:       40,
+		MainnetBlockHashHex: "aa",
+		Direction:           "response",
+	}
+	floor := heightsync.NewFloorIndex()
+	floor.Observe(10, 50, hash) // the heartbeat this ack answers carried 50
+
+	check := func(ackHeight uint64) []heightsync.AttributableMark {
+		ack := signedAck(t, signers[0], 1, 10, 0, ackHeight, hash, types.SyncState_CATCHING_UP)
+		return heightsync.CheckEnvelopeBinding(heightsync.LogPlaneInput{
+			Nonce: 12,
+			Txs:   []*types.DevshardTx{signedAckTx(ack)},
+			Sec:   sec,
+			Floor: floor,
+		}, heightsync.DefaultHeartbeatConfig())
+	}
+
+	require.False(t, hasMark(check(50), heightsync.MarkDisputeOriginator),
+		"lifting to F(ref_nonce+1) is the producer rule, not a self-contradiction")
+	require.True(t, hasMark(check(51), heightsync.MarkDisputeOriginator),
+		"one block above both the anchor and the floor is still a mark")
+	require.True(t, hasMark(check(40), heightsync.MarkDisputeOriginator),
+		"the raw anchor value is below the floor, so it is not a legal ack either")
 }
 
 func TestMarks_RequestLegEvidenceVerifiesOffline(t *testing.T) {

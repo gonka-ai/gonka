@@ -245,7 +245,9 @@ func TestHeartbeat_SpanDispatchAddressesEverySlot(t *testing.T) {
 
 func TestHeartbeat_AckInclusionAndSyncVectorPrevTurn(t *testing.T) {
 	var height uint64 = 100
-	session := setupHeartbeatSession(t, &height)
+	now := time.Unix(1000, 0).UTC()
+	session := setupHeartbeatSessionWithOracles(t, &height, nil,
+		WithHeartbeatClock(func() time.Time { return now }))
 	ctx := context.Background()
 	require.NoError(t, session.MaybeHeartbeat(ctx))
 
@@ -263,16 +265,20 @@ func TestHeartbeat_AckInclusionAndSyncVectorPrevTurn(t *testing.T) {
 	for _, ack := range acks {
 		require.Equal(t, uint64(1), ack.TurnSeq)
 		require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, ack.SyncState)
+		require.Equal(t, uint64(100), ack.ObservedHeight,
+			"a blind host still carries logical time: it echoes the floor the heartbeat set")
 		seen[ack.SlotId] = ack.SyncState
 	}
 	require.Len(t, seen, slots)
 
 	rec := session.HeartbeatTurnTracker().Record(1)
-	require.Equal(t, heightsync.TurnOpen, rec.State, "ORACLE_UNAVAILABLE does not count toward Q")
+	require.Equal(t, heightsync.TurnComplete, rec.State,
+		"the turn certifies reachability, which these acks prove")
 
+	// The cadence is satisfied, so the next turn is owed only after Interval.
 	height = 102
+	now = now.Add(heightsync.DefaultHeartbeatConfig().Interval + time.Second)
 	require.NoError(t, session.MaybeHeartbeat(ctx))
-	require.Equal(t, heightsync.TurnDegraded, session.HeartbeatTurnTracker().Record(1).State)
 
 	var hb *types.MsgHeartbeat
 	for _, d := range session.Diffs() {
@@ -310,10 +316,16 @@ func TestHeartbeat_LiveHostsQuorumCompletes(t *testing.T) {
 	rec := session.HeartbeatTurnTracker().Record(1)
 	require.Equal(t, heightsync.TurnComplete, rec.State)
 	require.Equal(t, uint64(100), session.HeartbeatTurnTracker().LastCompletedHeight())
-	require.True(t, session.HeartbeatTurnTracker().Confirms(100))
+	require.True(t, session.HeartbeatTurnTracker().CompletedAtOrAbove(100))
 }
 
-func TestHeartbeat_UnavailableAcksDoNotCountAndDegrade(t *testing.T) {
+// TestHeartbeat_UnavailableAcksCompleteTurnButNeverConfirm separates the two
+// jobs an ack used to do at once. A roster of blind hosts completes the turn:
+// they are reachable and applying the log, and they carry its logical time by
+// echoing the floor. None of that says anyone saw block 100 — these slots
+// produce no envelope anchor, so (C-quorum) has nothing to count, which is why
+// (C-turn) had to go (TestConfirm_TurnRuleWithdrawn).
+func TestHeartbeat_UnavailableAcksCompleteTurnCarryingTheFloor(t *testing.T) {
 	var height uint64 = 100
 	session := setupHeartbeatSession(t, &height)
 	require.NoError(t, session.MaybeHeartbeat(context.Background()))
@@ -321,16 +333,16 @@ func TestHeartbeat_UnavailableAcksDoNotCountAndDegrade(t *testing.T) {
 	acks := heightAcksInDiffs(session.Diffs())
 	require.Len(t, acks, 3, "H24: ack is required even when the oracle is down")
 	for _, ack := range acks {
-		require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, ack.SyncState)
+		require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, ack.SyncState,
+			"the self-report stays honest: this slot is no height witness")
+		require.Equal(t, uint64(100), ack.ObservedHeight, "carried from the floor, not observed")
 	}
 	rec := session.HeartbeatTurnTracker().Record(1)
-	require.Equal(t, heightsync.TurnOpen, rec.State)
-	require.False(t, session.HeartbeatTurnTracker().Confirms(100), "unavailable acks do not confirm (C-turn)")
-
-	height = 102
-	require.NoError(t, session.MaybeHeartbeat(context.Background()))
-	rec = session.HeartbeatTurnTracker().Record(1)
-	require.Equal(t, heightsync.TurnDegraded, rec.State, "H7: < Q counting acks past D_ack")
+	require.Equal(t, heightsync.TurnComplete, rec.State)
+	for slot, a := range rec.Acks {
+		require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, a.SyncState,
+			"slot %d is on record as unable to witness the height it carried", slot)
+	}
 }
 
 func TestHeartbeat_BusySessionWithStampsEmitsNone(t *testing.T) {

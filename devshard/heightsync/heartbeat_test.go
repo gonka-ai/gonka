@@ -157,7 +157,7 @@ func TestHeartbeat_SameBlockRequestAndAckCompletes(t *testing.T) {
 	require.Equal(t, heightsync.TurnComplete, rec.State)
 	require.Equal(t, uint64(500), rec.CompletedAtHeight)
 	require.False(t, rec.Acks[0].Late)
-	require.True(t, tr.Confirms(500))
+	require.True(t, tr.CompletedAtOrAbove(500))
 }
 
 func TestTurnTracker_OutOfOrderAcksIdenticalRecord(t *testing.T) {
@@ -178,7 +178,7 @@ func TestTurnTracker_OutOfOrderAcksIdenticalRecord(t *testing.T) {
 	require.Len(t, a.Acks, 3)
 }
 
-func TestTurnTracker_QuorumCompletesAndConfirms(t *testing.T) {
+func TestTurnTracker_QuorumCompletesTurn(t *testing.T) {
 	tr := heightsync.NewTurnTracker(4, 3, heightsync.DefaultHeartbeatConfig())
 	require.Equal(t, 3, tr.Quorum(), "Q is the same knob as (C-quorum)")
 	tr.Observe(10, []*types.DevshardTx{heartbeatTx(1, 500, 4)}, 500)
@@ -193,7 +193,7 @@ func TestTurnTracker_QuorumCompletesAndConfirms(t *testing.T) {
 	require.Equal(t, heightsync.TurnComplete, rec.State)
 	require.Equal(t, uint64(500), rec.CompletedAtHeight)
 	require.Equal(t, uint64(500), tr.LastCompletedHeight())
-	require.True(t, tr.Confirms(500), "(C-turn) confirms")
+	require.True(t, tr.CompletedAtOrAbove(500), "bookkeeping only: (C-turn) is withdrawn")
 }
 
 func TestTurnTracker_BelowQuorumDegradesNoBlame(t *testing.T) {
@@ -207,7 +207,7 @@ func TestTurnTracker_BelowQuorumDegradesNoBlame(t *testing.T) {
 	rec := tr.Record(1)
 	require.Equal(t, heightsync.TurnDegraded, rec.State)
 	require.Zero(t, tr.LastCompletedHeight())
-	require.False(t, tr.Confirms(500))
+	require.False(t, tr.CompletedAtOrAbove(500))
 	require.Equal(t, []uint32{2, 3}, tr.MissingAcks(1))
 }
 
@@ -243,7 +243,7 @@ func TestTurnTracker_IngestNextBlockSameStampCompletes(t *testing.T) {
 	rec := tr.Record(1)
 	require.Equal(t, heightsync.TurnComplete, rec.State)
 	require.False(t, rec.Acks[0].Late)
-	require.True(t, tr.Confirms(500))
+	require.True(t, tr.CompletedAtOrAbove(500))
 }
 
 func TestTurnTracker_StampPastDeadlineDegrades(t *testing.T) {
@@ -259,27 +259,26 @@ func TestTurnTracker_StampPastDeadlineDegrades(t *testing.T) {
 	require.Equal(t, heightsync.TurnDegraded, rec.State)
 	require.True(t, rec.Acks[0].Late)
 	require.Zero(t, tr.LastCompletedHeight())
-	require.False(t, tr.Confirms(500))
+	require.False(t, tr.CompletedAtOrAbove(500))
 }
 
-func TestHeightAck_OracleUnavailableStillRequired(t *testing.T) {
+// TestHeightAck_OracleUnavailableCountsTowardQuorum pins the liveness half of
+// withdrawing (C-turn): a turn now certifies reachability, so a host with a dead
+// follower holds up its end of the cadence. It echoes the floor from the log it
+// already applies (here 500, the height its own heartbeat carried) and labels
+// itself honestly. Under (C-turn) this slot was a permanent hole.
+func TestHeightAck_OracleUnavailableCountsTowardQuorum(t *testing.T) {
 	tr := heightsync.NewTurnTracker(4, 3, heightsync.DefaultHeartbeatConfig())
 	tr.Observe(10, []*types.DevshardTx{heartbeatTx(1, 500, 4)}, 500)
 	tr.Observe(14, []*types.DevshardTx{
 		ackTx(1, 10, 0, 500, types.SyncState_SYNCED),
-		ackTx(1, 10, 1, 0, types.SyncState_ORACLE_UNAVAILABLE),
+		ackTx(1, 10, 1, 500, types.SyncState_ORACLE_UNAVAILABLE),
 		ackTx(1, 10, 2, 500, types.SyncState_SYNCED),
 	}, 500)
 	rec := tr.Record(1)
-	require.Equal(t, heightsync.TurnOpen, rec.State, "ORACLE_UNAVAILABLE does not count toward Q")
-	require.Contains(t, rec.Acks, uint32(1), "ack is still required and recorded")
-	require.False(t, tr.Confirms(500), "(C-turn) unaffected")
-
-	tr.Observe(15, []*types.DevshardTx{
-		ackTx(1, 10, 3, 500, types.SyncState_SYNCED),
-	}, 500)
-	require.Equal(t, heightsync.TurnComplete, tr.Record(1).State)
-	require.True(t, tr.Confirms(500))
+	require.Equal(t, heightsync.TurnComplete, rec.State)
+	require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, rec.Acks[1].SyncState,
+		"the record keeps the self-report: the slot is transparently no height witness")
 }
 
 func TestTurnTracker_InferenceStampAdvancesHLast(t *testing.T) {

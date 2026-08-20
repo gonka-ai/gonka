@@ -101,7 +101,7 @@ type StateMachine struct {
 
 	heartbeatCfg    heightsync.HeartbeatConfig
 	turnTracker     *heightsync.TurnTracker
-	maxStampHeight  uint64
+	heightSyncFloor *heightsync.FloorIndex
 	heightSyncMarks *heightsync.MarkLog
 
 	// obsDeferred, when non-nil, redirects observability writes made during a
@@ -245,6 +245,7 @@ func NewStateMachine(
 		o(sm)
 	}
 	sm.turnTracker = heightsync.NewTurnTracker(uint64(len(groupCopy)), 0, sm.heartbeatCfg)
+	sm.heightSyncFloor = heightsync.NewFloorIndex()
 
 	logging.Info("NewStateMachine", "subsystem", "state",
 		"escrow_id", escrowID,
@@ -798,7 +799,7 @@ type mutableSnapshot struct {
 	HeightSyncLastCompletedHeight uint64
 	HeightSyncLatestTurnSeq       uint64
 	turnTracker                   *heightsync.TurnTracker
-	maxStampHeight                uint64
+	heightSyncFloor               *heightsync.FloorIndex
 }
 
 func (sm *StateMachine) snapshotMutable() mutableSnapshot {
@@ -838,7 +839,7 @@ func (sm *StateMachine) snapshotMutable() mutableSnapshot {
 		HeightSyncLastCompletedHeight: sm.state.HeightSyncLastCompletedHeight,
 		HeightSyncLatestTurnSeq:       sm.state.HeightSyncLatestTurnSeq,
 		turnTracker:                   sm.turnTracker.Clone(),
-		maxStampHeight:                sm.maxStampHeight,
+		heightSyncFloor:               sm.heightSyncFloor.Clone(),
 	}
 }
 
@@ -864,7 +865,7 @@ func (sm *StateMachine) restoreMutable(snap mutableSnapshot) {
 	sm.state.HeightSyncLastCompletedHeight = snap.HeightSyncLastCompletedHeight
 	sm.state.HeightSyncLatestTurnSeq = snap.HeightSyncLatestTurnSeq
 	sm.turnTracker = snap.turnTracker
-	sm.maxStampHeight = snap.maxStampHeight
+	sm.heightSyncFloor = snap.heightSyncFloor
 }
 
 func (sm *StateMachine) isDuplicateInferenceID(id uint64) bool {
