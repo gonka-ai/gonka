@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
@@ -35,13 +36,15 @@ func (c *Client) Create(ctx context.Context, spec run.ContainerSpec) error {
 	}
 
 	init, pids := true, c.cfg.PidsLimit
+	marks := labels(spec.Shard, spec.Node, "run")
+	marks[labelRevision] = strconv.Itoa(spec.Revision)
 	config := &container.Config{
 		Image:      spec.Run.Image.String(),
 		Cmd:        spec.Run.Command,
 		Env:        environment(spec.Run.Env),
 		User:       c.cfg.User,
 		WorkingDir: workdir,
-		Labels:     labels(spec.Shard, spec.Node, "run"),
+		Labels:     marks,
 	}
 	host := &container.HostConfig{
 		Binds:         []string{c.volumePath(spec.Shard, spec.Node) + ":" + workdir},
@@ -222,7 +225,8 @@ func toContainerInfo(found container.InspectResponse) (run.ContainerInfo, error)
 		return run.ContainerInfo{}, fmt.Errorf("container %s: %w", found.Name, err)
 	}
 
-	info := run.ContainerInfo{State: toContainerState(found.State.Status), Image: image}
+	revision, _ := strconv.Atoi(found.Config.Labels[labelRevision])
+	info := run.ContainerInfo{State: toContainerState(found.State.Status), Image: image, Revision: revision}
 	if info.State == vo.ContainerExited {
 		code := found.State.ExitCode
 		info.ExitCode = &code

@@ -19,7 +19,6 @@ import (
 	"trainshard/internal/domain/run"
 	"trainshard/internal/domain/shard"
 	"trainshard/internal/domain/shared/vo"
-	"trainshard/internal/infrastructure/adapters/signing/hmac"
 	"trainshard/internal/utils/signedhttp"
 	"trainshard/internal/utils/timex"
 )
@@ -27,8 +26,15 @@ import (
 const (
 	participant = vo.Participant("gonka1host")
 	shardID     = vo.ShardID(7)
-	secret      = "dev-secret"
 )
+
+// verifierStub stands in for the signing scheme these tests are not about: a caller signs with
+// its own address and the boundary reads it back
+type verifierStub struct{}
+
+func (verifierStub) Recover(_, signature []byte) (vo.Address, error) {
+	return vo.Address(signature), nil
+}
 
 var (
 	now   = time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
@@ -99,29 +105,26 @@ func newServer(t *testing.T, chain *chainStub, streams *streamsStub) *httptest.S
 	t.Helper()
 
 	mux := http.NewServeMux()
-	module := session.New(session.Config{Participant: participant}, session.Deps{
+	module := session.New(session.Config{Participant: participant, Window: time.Minute}, session.Deps{
 		Chain:    chain,
 		Streams:  streams,
 		Sessions: sessionLogStub{},
 		Clock:    timex.NewFrozen(now),
 	})
-	module.Mount(mux, signedhttp.New(hmac.New([]byte(secret), ""), timex.NewFrozen(now), time.Minute).Wrap)
+	module.Mount(mux, signedhttp.New(verifierStub{}, timex.NewFrozen(now), time.Minute).Wrap)
 
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
 	return server
 }
 
-func sign(t *testing.T, actor vo.Address, method, path, body string) http.Header {
+func sign(t *testing.T, actor vo.Address) http.Header {
 	t.Helper()
 
-	timestamp := now.Format(time.RFC3339)
-	signature := hmac.New([]byte(secret), actor).Sign(contract.SigningPayload(method, path, timestamp, "req-1", []byte(body)))
-
 	header := http.Header{}
-	header.Set(contract.HeaderTimestamp, timestamp)
+	header.Set(contract.HeaderTimestamp, now.Format(time.RFC3339))
 	header.Set(contract.HeaderRequestID, "req-1")
-	header.Set(contract.HeaderSignature, hex.EncodeToString(signature))
+	header.Set(contract.HeaderSignature, hex.EncodeToString([]byte(actor)))
 	return header
 }
 
@@ -130,7 +133,7 @@ func TestLogsAreStreamedToWhoeverOwnsTheRun(t *testing.T) {
 	server := newServer(t, newChainStub(), &streamsStub{output: "step 1\nstep 2\n"})
 	path := "/trainshard/v0/shards/7/nodes/node-a/logs"
 	request, _ := http.NewRequest(http.MethodPost, server.URL+path, nil)
-	request.Header = sign(t, "gonka1creator", http.MethodPost, path, "")
+	request.Header = sign(t, "gonka1creator")
 
 	response, err := server.Client().Do(request)
 	if err != nil {
@@ -147,6 +150,38 @@ func TestLogsAreStreamedToWhoeverOwnsTheRun(t *testing.T) {
 	}
 }
 
+func TestAStreamIsOpenedOnceForTheRequestThatAskedForIt(t *testing.T) {
+
+	server := newServer(t, newChainStub(), &streamsStub{output: "step 1\n"})
+	path := "/trainshard/v0/shards/7/nodes/node-a/logs"
+	ask := func() *http.Response {
+		request, _ := http.NewRequest(http.MethodPost, server.URL+path, nil)
+		request.Header = sign(t, "gonka1creator")
+		response, err := server.Client().Do(request)
+		if err != nil {
+			t.Fatalf("request: %v", err)
+		}
+		t.Cleanup(func() { response.Body.Close() })
+		return response
+	}
+	if first := ask(); first.StatusCode != http.StatusOK {
+		t.Fatalf("got %d, want the first request through", first.StatusCode)
+	}
+
+	repeat := ask()
+
+	if repeat.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("got %d, want a caught request refused the second time it arrives", repeat.StatusCode)
+	}
+	var envelope contract.Envelope
+	if err := json.NewDecoder(repeat.Body).Decode(&envelope); err != nil {
+		t.Fatalf("decode envelope: %v", err)
+	}
+	if envelope.OK || envelope.Error.Code != "REPLAYED_REQUEST" {
+		t.Fatalf("got %+v, want the reason the repeat was refused", envelope.Error)
+	}
+}
+
 func TestARefusedStreamAnswersWithAnErrorAndNoOutput(t *testing.T) {
 
 	chain := newChainStub()
@@ -154,7 +189,7 @@ func TestARefusedStreamAnswersWithAnErrorAndNoOutput(t *testing.T) {
 	server := newServer(t, chain, &streamsStub{output: "secret"})
 	path := "/trainshard/v0/shards/7/nodes/node-a/logs"
 	request, _ := http.NewRequest(http.MethodPost, server.URL+path, nil)
-	request.Header = sign(t, "gonka1creator", http.MethodPost, path, "")
+	request.Header = sign(t, "gonka1creator")
 
 	response, err := server.Client().Do(request)
 	if err != nil {
@@ -185,7 +220,7 @@ func TestShellCarriesBytesBothWaysOverOneConnection(t *testing.T) {
 	defer conn.Close()
 
 	request, _ := http.NewRequest(http.MethodPost, server.URL+path, nil)
-	request.Header = sign(t, "gonka1creator", http.MethodPost, path, "")
+	request.Header = sign(t, "gonka1creator")
 	if err := request.Write(conn); err != nil {
 		t.Fatalf("write request: %v", err)
 	}

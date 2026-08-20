@@ -156,6 +156,46 @@ func TestDeployAnsweredTwiceActsOnce(t *testing.T) {
 	}
 }
 
+func TestDeployBuildsANewContainerEvenWhenTheImageStaysTheSame(t *testing.T) {
+	cases := map[string]func(*usecases.DeployCommand){
+		"the same image with other parameters": func(c *usecases.DeployCommand) {
+			c.Run.Env = map[string]string{"LEARNING_RATE": "0.2"}
+		},
+		"the same run once more after it finished": func(*usecases.DeployCommand) {},
+	}
+
+	for name, change := range cases {
+		t.Run(name, func(t *testing.T) {
+
+			f := newFixture()
+			ctx := context.Background()
+			if err := f.prepared(ctx); err != nil {
+				t.Fatalf("prepare: %v", err)
+			}
+			if _, err := f.deploy().Execute(ctx, deployCommand()); err != nil {
+				t.Fatalf("first deploy: %v", err)
+			}
+			f.containers.setState(nodeA, vo.ContainerExited)
+			f.rec.reset()
+
+			cmd := deployCommand()
+			cmd.RequestID = "req-2"
+			change(&cmd)
+			results, err := f.deploy().Execute(ctx, cmd)
+
+			if err != nil {
+				t.Fatalf("second deploy: %v", err)
+			}
+			if len(results) != 1 || !results[0].OK() {
+				t.Fatalf("got %+v, want one accepted node", results)
+			}
+			if !slices.Contains(f.rec.sequence(), "containers.create") {
+				t.Fatalf("got %v, want the container built again rather than a deploy that changes nothing", f.rec.sequence())
+			}
+		})
+	}
+}
+
 func TestDeployRejectsAShardTheChainDoesNotHave(t *testing.T) {
 
 	f := newFixture()

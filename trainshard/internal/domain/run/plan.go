@@ -28,7 +28,7 @@ func Plan(d Desired, o Observed) []Action {
 	}
 
 	container := o.Container
-	if o.ContainerImage != d.Run.Image {
+	if o.ContainerImage != d.Run.Image || o.ContainerRevision != d.Revision {
 		if container.Running() {
 			if !d.Start {
 				actions = append(actions, Action{Kind: ActionStopContainer})

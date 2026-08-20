@@ -47,10 +47,27 @@ func ParseNodeRef(participant, nodeID string) (NodeRef, error) {
 		return NodeRef{}, fmt.Errorf("participant: %w", err)
 	}
 	id := strings.TrimSpace(nodeID)
-	if id == "" || len(id) > maxNodeIDLen {
+	if !plainName(id) {
 		return NodeRef{}, fmt.Errorf("node_id %q: %w", nodeID, shared.ErrValidation)
 	}
 	return NodeRef{Participant: Participant(addr), NodeID: NodeID(id)}, nil
+}
+
+// plainName holds for what is safe as a single path element, a file name and a container name:
+// a node id ends up in all three, and a separator or a dotted name would walk out of the run's
+// own directory
+func plainName(id string) bool {
+	if id == "" || len(id) > maxNodeIDLen || id == "." || id == ".." {
+		return false
+	}
+	for _, r := range id {
+		letter := (r >= 'a' && r <= 'z') || (r >= 'A' && r <= 'Z')
+		digit := r >= '0' && r <= '9'
+		if !letter && !digit && r != '-' && r != '_' && r != '.' {
+			return false
+		}
+	}
+	return true
 }
 
 func (r NodeRef) String() string { return string(r.Participant) + "/" + string(r.NodeID) }

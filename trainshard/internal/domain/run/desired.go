@@ -12,6 +12,7 @@ type Desired struct {
 	Reserved       bool
 	MeshConfigured bool
 	Run            RunSpec
+	Revision       int
 	Start          bool
 	StopGrace      time.Duration
 }
@@ -22,6 +23,7 @@ func DesiredFor(reservation Reservation, state RunState, meshConfigured bool) De
 		Reserved:       true,
 		MeshConfigured: meshConfigured,
 		Run:            state.Spec,
+		Revision:       state.Revision,
 		Start:          state.Start,
 		StopGrace:      state.StopGrace,
 	}

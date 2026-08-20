@@ -9,6 +9,7 @@ import (
 	"trainshard/internal/domain/shared"
 	"trainshard/internal/domain/shared/vo"
 	"trainshard/internal/utils/httpx"
+	"trainshard/internal/utils/signedhttp"
 )
 
 var errBadJSON = shared.New("BAD_BODY", shared.ErrValidation, "cannot decode request body")
@@ -22,16 +23,20 @@ type UseCases struct {
 type Endpoints struct {
 	participant vo.Participant
 	uc          UseCases
+	once        *signedhttp.Once
 }
 
-func NewEndpoints(participant vo.Participant, uc UseCases) *Endpoints {
-	return &Endpoints{participant: participant, uc: uc}
+func NewEndpoints(participant vo.Participant, uc UseCases, once *signedhttp.Once) *Endpoints {
+	return &Endpoints{participant: participant, uc: uc, once: once}
 }
 
+// Mount serves each session request once: a stream cannot be recorded and replayed the way a
+// command's answer is, so a repeat would open a second shell rather than answer the first again
 func (e *Endpoints) Mount(mux *http.ServeMux, boundary func(http.Handler) http.Handler) {
-	mux.Handle("POST "+contract.PathLogs, boundary(http.HandlerFunc(e.streamLogs)))
-	mux.Handle("POST "+contract.PathShell, boundary(http.HandlerFunc(e.openShell)))
-	mux.Handle("POST "+contract.PathArtifacts, boundary(http.HandlerFunc(e.streamArtifacts)))
+	served := func(h http.HandlerFunc) http.Handler { return boundary(e.once.Wrap(h)) }
+	mux.Handle("POST "+contract.PathLogs, served(e.streamLogs))
+	mux.Handle("POST "+contract.PathShell, served(e.openShell))
+	mux.Handle("POST "+contract.PathArtifacts, served(e.streamArtifacts))
 }
 
 func (e *Endpoints) streamArtifacts(w http.ResponseWriter, r *http.Request) {

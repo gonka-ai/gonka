@@ -55,11 +55,13 @@ func (chainStub) Hardware(context.Context, vo.NodeRef) (vo.GPUInventory, error) 
 func (chainStub) ActiveShards(context.Context) ([]shard.Shard, error) { return nil, nil }
 
 type hostsStub struct {
-	mu       sync.Mutex
-	images   map[vo.NodeRef]vo.ImageDigest
-	finished map[vo.NodeRef]bool
-	silent   map[vo.Participant]bool
-	started  []vo.NodeRef
+	mu         sync.Mutex
+	images     map[vo.NodeRef]vo.ImageDigest
+	finished   map[vo.NodeRef]bool
+	unprepared map[vo.NodeRef]bool
+	offMesh    map[vo.NodeRef]bool
+	silent     map[vo.Participant]bool
+	started    []vo.NodeRef
 }
 
 func (h *hostsStub) Deploy(context.Context, vo.Participant, run.DeployCall) ([]run.NodeResult, error) {
@@ -86,6 +88,8 @@ func (h *hostsStub) Status(_ context.Context, participant vo.Participant, call r
 		}
 		statuses = append(statuses, run.NodeStatus{
 			NodeResult: run.NodeResult{Node: node, State: state, Image: held},
+			Prepared:   !h.unprepared[node],
+			MeshUp:     !h.offMesh[node],
 		})
 	}
 	return statuses, nil
@@ -175,6 +179,37 @@ func TestOpsRefuseAShardTheChainHasAlreadyClosed(t *testing.T) {
 
 			if !errors.Is(err, shard.ErrShardClosed) {
 				t.Fatalf("got %v, want %v", err, shard.ErrShardClosed)
+			}
+		})
+	}
+}
+
+func TestStartRefusesARunWhoseMeshIsNotUpEverywhere(t *testing.T) {
+	images := map[vo.NodeRef]vo.ImageDigest{nodeA: runImage, nodeB: runImage}
+	cases := map[string]struct {
+		hosts *hostsStub
+		want  error
+	}{
+		"a node that lost its tunnel": {
+			hosts: &hostsStub{images: images, offMesh: map[vo.NodeRef]bool{nodeB: true}},
+			want:  run.ErrMeshDown,
+		},
+		"a node that is no longer prepared": {
+			hosts: &hostsStub{images: images, unprepared: map[vo.NodeRef]bool{nodeB: true}},
+			want:  run.ErrNodeNotPrepared,
+		},
+	}
+
+	for name, tc := range cases {
+		t.Run(name, func(t *testing.T) {
+
+			_, err := usecases.NewStartUseCase(chainStub{}, tc.hosts).Execute(context.Background(), runCommand())
+
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("got %v, want the run refused rather than started off the mesh", err)
+			}
+			if len(tc.hosts.started) != 0 {
+				t.Fatalf("a refused run must start nothing, got %v", tc.hosts.started)
 			}
 		})
 	}
