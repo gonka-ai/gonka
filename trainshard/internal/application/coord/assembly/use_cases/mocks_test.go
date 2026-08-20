@@ -3,6 +3,7 @@ package usecases_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -62,6 +63,8 @@ type chainStub struct {
 	height   vo.Height
 	releases []release
 	applies  bool
+	lag      int
+	dropping []vo.NodeRef
 	err      error
 }
 
@@ -72,6 +75,16 @@ func newChainStub() *chainStub {
 func (c *chainStub) Height(context.Context) (vo.Height, error) { return c.height, c.err }
 
 func (c *chainStub) Shard(context.Context, vo.ShardID) (shard.Shard, bool, error) {
+	if len(c.dropping) > 0 {
+		if c.lag > 0 {
+			c.lag--
+		} else {
+			c.record.Nodes = slices.DeleteFunc(c.record.Nodes, func(reserved shard.ReservedNode) bool {
+				return slices.Contains(c.dropping, reserved.Ref)
+			})
+			c.dropping = nil
+		}
+	}
 	return c.record, c.found, c.err
 }
 
@@ -92,17 +105,9 @@ func (c *chainStub) Release(_ context.Context, _ vo.ShardID, node vo.NodeRef, re
 		return c.err
 	}
 	c.releases = append(c.releases, release{node: node, reason: reason})
-	if !c.applies {
-		return nil
+	if c.applies {
+		c.dropping = append(c.dropping, node)
 	}
-
-	kept := make([]shard.ReservedNode, 0, len(c.record.Nodes))
-	for _, reserved := range c.record.Nodes {
-		if reserved.Ref != node {
-			kept = append(kept, reserved)
-		}
-	}
-	c.record.Nodes = kept
 	return nil
 }
 

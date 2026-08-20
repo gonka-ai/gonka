@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -159,6 +160,8 @@ func (c config) validate() error {
 		return fmt.Errorf("TRAINSHARD_NODES is required")
 	case len(c.secret) == 0:
 		return fmt.Errorf("TRAINSHARD_SHARED_SECRET is required")
+	case c.admin != "" && !loopback(c.admin):
+		return fmt.Errorf("TRAINSHARD_ADMIN_LISTEN %q must be a loopback address, abort carries no signature and whoever reaches the port can stop a run", c.admin)
 
 	case c.machine == "docker" && c.meshEndpoint == "":
 		return fmt.Errorf("TRAINSHARD_MESH_ENDPOINT is required on a docker machine")
@@ -174,6 +177,18 @@ func (c config) validate() error {
 		return fmt.Errorf("TRAINSHARD_REFRESH_INTERVAL must be shorter than TRAINSHARD_OPT_IN_TTL")
 	}
 	return nil
+}
+
+func loopback(address string) bool {
+	host, _, err := net.SplitHostPort(address)
+	if err != nil {
+		return false
+	}
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func portRange(spec string) (int, int, error) {
