@@ -11,6 +11,7 @@ import (
 
 	"trainshard/internal/domain/mesh"
 	"trainshard/internal/domain/run"
+	"trainshard/internal/domain/shared"
 	"trainshard/internal/domain/shared/vo"
 )
 
@@ -50,7 +51,7 @@ func (m *Machine) Pull(_ context.Context, digest vo.ImageDigest) error {
 	defer m.mu.Unlock()
 
 	m.images[digest] = struct{}{}
-	m.log.Info("pulled image", "image_digest", digest.String())
+	m.log.Info("pulled image", "image_digest", digest.Short())
 	return nil
 }
 
@@ -77,7 +78,7 @@ func (m *Machine) Create(_ context.Context, spec run.ContainerSpec) error {
 		return fmt.Errorf("container for %s already exists", spec.Node)
 	}
 	m.containers[spec.Node] = run.ContainerInfo{State: vo.ContainerCreated, Image: spec.Run.Image}
-	m.log.Info("created container", "node_id", spec.Node.NodeID, "image_digest", spec.Run.Image.String())
+	m.log.Info("created container", "node_id", spec.Node.NodeID, "image_digest", spec.Run.Image.Short())
 	return nil
 }
 
@@ -124,7 +125,7 @@ func (m *Machine) Logs(_ context.Context, req run.LogRequest, out io.Writer) err
 }
 
 func (m *Machine) Shell(context.Context, run.ExecRequest, io.ReadWriter) error {
-	return fmt.Errorf("an in-memory machine has no shell")
+	return shared.New("NO_SHELL", shared.ErrUnavailable, "an in-memory machine has no shell")
 }
 
 func (m *Machine) Allow(_ context.Context, _ vo.ShardID, _ vo.NodeRef, sources []vo.Source) ([]run.PinnedHost, error) {

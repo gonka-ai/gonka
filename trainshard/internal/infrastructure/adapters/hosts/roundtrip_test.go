@@ -130,7 +130,7 @@ func newHost(t *testing.T) *hosts.Client {
 	go func() { defer close(stopped); module.Run(ctx) }()
 	t.Cleanup(func() { stop(); <-stopped })
 
-	return hosts.New(server.Client(), hosts.Directory{host: server.URL}, signer, clock)
+	return hosts.New(server.Client(), hosts.Directory{host: server.URL}, signer, clock, time.Minute)
 }
 
 func command(nodes ...vo.NodeRef) run.HostCommand {

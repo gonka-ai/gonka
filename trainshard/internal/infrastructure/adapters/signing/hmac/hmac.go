@@ -1,6 +1,7 @@
 package hmac
 
 import (
+	"bytes"
 	"context"
 	"crypto/hmac"
 	"crypto/sha256"
@@ -11,19 +12,20 @@ import (
 
 var errSignature = errors.New("signature does not match the shared secret")
 
+const separator = 0
+
 type Shared struct {
-	secret []byte
-	actor  vo.Address
+	secret  []byte
+	address vo.Address
 }
 
-func New(secret []byte, actor vo.Address) *Shared {
-	return &Shared{secret: secret, actor: actor}
+func New(secret []byte, address vo.Address) *Shared {
+	return &Shared{secret: secret, address: address}
 }
 
 func (s *Shared) Sign(payload []byte) []byte {
-	mac := hmac.New(sha256.New, s.secret)
-	mac.Write(payload)
-	return mac.Sum(nil)
+	signature := append([]byte(s.address), separator)
+	return append(signature, s.mac(s.address, payload)...)
 }
 
 func (s *Shared) Attest(_ context.Context, payload []byte) ([]byte, error) {
@@ -31,8 +33,20 @@ func (s *Shared) Attest(_ context.Context, payload []byte) ([]byte, error) {
 }
 
 func (s *Shared) Recover(payload, signature []byte) (vo.Address, error) {
-	if !hmac.Equal(signature, s.Sign(payload)) {
+	signed, mac, found := bytes.Cut(signature, []byte{separator})
+	if !found {
 		return "", errSignature
 	}
-	return s.actor, nil
+	address := vo.Address(signed)
+	if !hmac.Equal(mac, s.mac(address, payload)) {
+		return "", errSignature
+	}
+	return address, nil
+}
+
+func (s *Shared) mac(address vo.Address, payload []byte) []byte {
+	mac := hmac.New(sha256.New, s.secret)
+	mac.Write(append([]byte(address), separator))
+	mac.Write(payload)
+	return mac.Sum(nil)
 }

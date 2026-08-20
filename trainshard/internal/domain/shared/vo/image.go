@@ -11,6 +11,8 @@ const digestAlgo = "sha256:"
 
 const digestHexLen = 64
 
+const digestShortLen = 12
+
 type ImageDigest string
 
 func ParseImageDigest(s string) (ImageDigest, error) {
@@ -30,6 +32,14 @@ func ParseImageDigest(s string) (ImageDigest, error) {
 }
 
 func (d ImageDigest) String() string { return string(d) }
+
+func (d ImageDigest) Short() string {
+	_, hex, found := strings.Cut(string(d), digestAlgo)
+	if !found || len(hex) < digestShortLen {
+		return string(d)
+	}
+	return digestAlgo + hex[:digestShortLen]
+}
 
 func (d ImageDigest) IsZero() bool { return d == "" }
 

@@ -1,7 +1,6 @@
 package cli
 
 import (
-	"flag"
 	"fmt"
 	"strconv"
 	"strings"
@@ -14,9 +13,6 @@ import (
 )
 
 func toRunCommand(args []string, timeout time.Duration, now time.Time) (usecases.RunCommand, error) {
-	if len(args) == 0 {
-		return usecases.RunCommand{}, fmt.Errorf("shard: %w", shared.ErrValidation)
-	}
 	shardID, err := vo.ParseShardID(args[0])
 	if err != nil {
 		return usecases.RunCommand{}, err
@@ -30,9 +26,6 @@ func toRunCommand(args []string, timeout time.Duration, now time.Time) (usecases
 }
 
 func toNodeCommand(args []string) (usecases.NodeCommand, error) {
-	if len(args) < 2 {
-		return usecases.NodeCommand{}, fmt.Errorf("shard and node: %w", shared.ErrValidation)
-	}
 	shardID, err := vo.ParseShardID(args[0])
 	if err != nil {
 		return usecases.NodeCommand{}, err
@@ -61,16 +54,6 @@ func toRunSpec(image string, gpus int, disk int64, env envFlag, sources *sourceF
 		Sources:   *sources,
 		Resources: run.Resources{GPUs: gpus, DiskBytes: disk},
 	}, nil
-}
-
-func parse(flags *flag.FlagSet, args []string) ([]string, error) {
-	if len(args) == 0 {
-		return nil, fmt.Errorf("shard: %w", shared.ErrValidation)
-	}
-	if err := flags.Parse(args[1:]); err != nil {
-		return nil, err
-	}
-	return args[:1], nil
 }
 
 func reason(fault *shared.Fault) string {

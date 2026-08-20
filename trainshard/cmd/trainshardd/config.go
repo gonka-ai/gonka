@@ -36,12 +36,12 @@ type config struct {
 	meshKeyDir       string
 	deniedCIDRs      []string
 	secret           []byte
-	actor            vo.Address
 	inventory        vo.GPUInventory
 	limits           run.Limits
 	minFreeDiskBytes int64
 	supportedVersion string
 	logLevel         string
+	logFormat        string
 
 	stopGrace         time.Duration
 	prepareDeadline   time.Duration
@@ -66,9 +66,9 @@ func load() (config, error) {
 		nvidiaSMI:        env("NVIDIA_SMI", "nvidia-smi"),
 		meshEndpoint:     env("MESH_ENDPOINT", ""),
 		secret:           []byte(env("SHARED_SECRET", "")),
-		actor:            vo.Address(env("ACTOR", "")),
 		supportedVersion: env("SUPPORTED_VERSION", ""),
 		logLevel:         env("LOG_LEVEL", "info"),
+		logFormat:        env("LOG_FORMAT", "text"),
 	}
 
 	gpus, err := number("GPUS", 8)
@@ -159,8 +159,6 @@ func (c config) validate() error {
 		return fmt.Errorf("TRAINSHARD_NODES is required")
 	case len(c.secret) == 0:
 		return fmt.Errorf("TRAINSHARD_SHARED_SECRET is required")
-	case c.actor == "":
-		return fmt.Errorf("TRAINSHARD_ACTOR is required, it is the address the shared secret stands for")
 
 	case c.machine == "docker" && c.meshEndpoint == "":
 		return fmt.Errorf("TRAINSHARD_MESH_ENDPOINT is required on a docker machine")

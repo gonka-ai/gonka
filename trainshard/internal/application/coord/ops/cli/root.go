@@ -11,6 +11,7 @@ import (
 	usecases "trainshard/internal/application/coord/ops/use_cases"
 	"trainshard/internal/domain/run"
 	"trainshard/internal/domain/shared/ports"
+	"trainshard/internal/utils/clix"
 )
 
 type UseCases struct {
@@ -48,7 +49,7 @@ func (c *Commands) Register(commands map[string]func(context.Context, []string) 
 }
 
 func (c *Commands) Deploy(ctx context.Context, args []string) error {
-	flags := flag.NewFlagSet("deploy", flag.ContinueOnError)
+	flags := flag.NewFlagSet("deploy <shard> [flags] [-- command]", flag.ContinueOnError)
 	image := flags.String("image", "", "image digest to run, built on the proposal's base image")
 	gpus := flags.Int("gpus", 0, "gpus per node")
 	disk := flags.Int64("disk-bytes", 0, "disk quota per node")
@@ -57,7 +58,7 @@ func (c *Commands) Deploy(ctx context.Context, args []string) error {
 	sources := &sourceFlag{}
 	flags.Var(sources, "source", "outside address the run may reach, as host:port, repeatable")
 
-	rest, err := parse(flags, args)
+	rest, err := clix.Parse(flags, args, "shard")
 	if err != nil {
 		return err
 	}
@@ -78,7 +79,11 @@ func (c *Commands) Deploy(ctx context.Context, args []string) error {
 }
 
 func (c *Commands) Start(ctx context.Context, args []string) error {
-	command, err := toRunCommand(args, c.timeout, c.clock.Now())
+	rest, err := clix.Parse(flag.NewFlagSet("start <shard>", flag.ContinueOnError), args, "shard")
+	if err != nil {
+		return err
+	}
+	command, err := toRunCommand(rest, c.timeout, c.clock.Now())
 	if err != nil {
 		return err
 	}
@@ -91,10 +96,10 @@ func (c *Commands) Start(ctx context.Context, args []string) error {
 }
 
 func (c *Commands) Stop(ctx context.Context, args []string) error {
-	flags := flag.NewFlagSet("stop", flag.ContinueOnError)
+	flags := flag.NewFlagSet("stop <shard> [flags]", flag.ContinueOnError)
 	grace := flags.Duration("grace", 30*time.Second, "how long a container may take to exit on its own")
 
-	rest, err := parse(flags, args)
+	rest, err := clix.Parse(flags, args, "shard")
 	if err != nil {
 		return err
 	}
@@ -111,7 +116,11 @@ func (c *Commands) Stop(ctx context.Context, args []string) error {
 }
 
 func (c *Commands) Status(ctx context.Context, args []string) error {
-	command, err := toRunCommand(args, c.timeout, c.clock.Now())
+	rest, err := clix.Parse(flag.NewFlagSet("status <shard>", flag.ContinueOnError), args, "shard")
+	if err != nil {
+		return err
+	}
+	command, err := toRunCommand(rest, c.timeout, c.clock.Now())
 	if err != nil {
 		return err
 	}
@@ -131,7 +140,11 @@ func (c *Commands) Status(ctx context.Context, args []string) error {
 }
 
 func (c *Commands) Report(ctx context.Context, args []string) error {
-	command, err := toRunCommand(args, c.timeout, c.clock.Now())
+	rest, err := clix.Parse(flag.NewFlagSet("report <shard>", flag.ContinueOnError), args, "shard")
+	if err != nil {
+		return err
+	}
+	command, err := toRunCommand(rest, c.timeout, c.clock.Now())
 	if err != nil {
 		return err
 	}
@@ -157,7 +170,11 @@ func (c *Commands) Report(ctx context.Context, args []string) error {
 }
 
 func (c *Commands) Artifacts(ctx context.Context, args []string) error {
-	command, err := toNodeCommand(args)
+	rest, err := clix.Parse(flag.NewFlagSet("artifacts <shard> <participant/node>", flag.ContinueOnError), args, "shard", "node")
+	if err != nil {
+		return err
+	}
+	command, err := toNodeCommand(rest)
 	if err != nil {
 		return err
 	}
@@ -165,16 +182,14 @@ func (c *Commands) Artifacts(ctx context.Context, args []string) error {
 }
 
 func (c *Commands) Logs(ctx context.Context, args []string) error {
-	flags := flag.NewFlagSet("logs", flag.ContinueOnError)
+	flags := flag.NewFlagSet("logs <shard> <participant/node> [flags]", flag.ContinueOnError)
 	tail := flags.Int("tail", 0, "how many lines to start from, newest first")
 
-	if len(args) < 2 {
-		return fmt.Errorf("logs needs a shard and a node")
-	}
-	if err := flags.Parse(args[2:]); err != nil {
+	rest, err := clix.Parse(flags, args, "shard", "node")
+	if err != nil {
 		return err
 	}
-	command, err := toNodeCommand(args)
+	command, err := toNodeCommand(rest)
 	if err != nil {
 		return err
 	}
@@ -184,7 +199,11 @@ func (c *Commands) Logs(ctx context.Context, args []string) error {
 }
 
 func (c *Commands) Shell(ctx context.Context, args []string) error {
-	command, err := toNodeCommand(args)
+	rest, err := clix.Parse(flag.NewFlagSet("shell <shard> <participant/node>", flag.ContinueOnError), args, "shard", "node")
+	if err != nil {
+		return err
+	}
+	command, err := toNodeCommand(rest)
 	if err != nil {
 		return err
 	}

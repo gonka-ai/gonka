@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"slices"
 	"sync"
 	"syscall"
 	"time"
@@ -16,11 +17,13 @@ import (
 	"trainshard/internal/application/hostd/session"
 	"trainshard/internal/domain/mesh"
 	"trainshard/internal/domain/run"
+	"trainshard/internal/domain/shared/vo"
 	chainfake "trainshard/internal/infrastructure/adapters/chain/fake"
 	clockadapter "trainshard/internal/infrastructure/adapters/clock"
 	nodemanagerfake "trainshard/internal/infrastructure/adapters/nodemanager/fake"
 	"trainshard/internal/infrastructure/adapters/signing/hmac"
 	"trainshard/internal/infrastructure/repositories/localstate"
+	"trainshard/internal/utils/httpx"
 	"trainshard/internal/utils/logger"
 	"trainshard/internal/utils/signedhttp"
 )
@@ -37,12 +40,17 @@ func main() {
 }
 
 func serve() error {
+	if len(os.Args) > 1 && slices.Contains([]string{"--version", "-version"}, os.Args[1]) {
+		fmt.Println(version)
+		return nil
+	}
+
 	cfg, err := load()
 	if err != nil {
 		return err
 	}
 
-	log := logger.New(os.Stdout, cfg.logLevel).With("participant", cfg.participant, "version", version)
+	log := logger.New(os.Stdout, cfg.logLevel, cfg.logFormat)
 	clock := clockadapter.System{}
 
 	chain, err := loadChain(cfg, clock)
@@ -59,7 +67,7 @@ func serve() error {
 		return err
 	}
 	nodeManager := nodemanagerfake.New(log)
-	signer := hmac.New(cfg.secret, cfg.actor)
+	signer := hmac.New(cfg.secret, vo.Address(cfg.participant))
 
 	if cfg.machine != "memory" {
 		log.Warn("the chain and the node manager are fakes: this daemon reserves nothing, releases nothing and stops no inference")
@@ -120,7 +128,8 @@ func serve() error {
 	})
 
 	mux := http.NewServeMux()
-	boundary := signedhttp.New(signer, clock, cfg.signatureWindow).Wrap
+	guard, logged := signedhttp.New(signer, clock, cfg.signatureWindow).Wrap, httpx.Log(log, clock)
+	boundary := func(next http.Handler) http.Handler { return logged(guard(next)) }
 	runs.Mount(mux, boundary)
 	nodes.Mount(mux, boundary)
 	sessions.Mount(mux, boundary)
@@ -134,7 +143,8 @@ func serve() error {
 	go func() { defer workers.Done(); nodes.Run(ctx) }()
 
 	server := &http.Server{Addr: cfg.listen, Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	log.Info("trainshardd listening", "listen", cfg.listen, "admin", cfg.admin, "nodes", len(cfg.nodes), "machine", cfg.machine)
+	log.Info("trainshardd listening", "participant", cfg.participant, "version", version,
+		"listen", cfg.listen, "admin", cfg.admin, "nodes", len(cfg.nodes), "machine", cfg.machine)
 
 	served := make(chan error, 1)
 	go func() { served <- server.ListenAndServe() }()
