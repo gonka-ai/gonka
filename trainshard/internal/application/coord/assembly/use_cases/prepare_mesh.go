@@ -30,14 +30,16 @@ type PrepareMeshUseCase struct {
 	submitter shard.ChainSubmitter
 	clock     ports.Clock
 	poll      time.Duration
+	settle    time.Duration
 }
 
-func NewPrepareMeshUseCase(chain shard.ChainReader, hosts mesh.Hosts, verifier ports.Verifier, submitter shard.ChainSubmitter, clock ports.Clock, poll time.Duration) *PrepareMeshUseCase {
-	return &PrepareMeshUseCase{chain: chain, hosts: hosts, verifier: verifier, submitter: submitter, clock: clock, poll: poll}
+func NewPrepareMeshUseCase(chain shard.ChainReader, hosts mesh.Hosts, verifier ports.Verifier, submitter shard.ChainSubmitter, clock ports.Clock, poll, settle time.Duration) *PrepareMeshUseCase {
+	return &PrepareMeshUseCase{chain: chain, hosts: hosts, verifier: verifier, submitter: submitter, clock: clock, poll: poll, settle: settle}
 }
 
 func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, deadline time.Time) (PrepareResult, error) {
 	released := make([]Released, 0)
+	var kicked time.Time
 
 	for {
 		// 1. Load nodes from chain
@@ -49,9 +51,15 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 			return PrepareResult{}, shard.ErrShardClosed
 		}
 
-		// 2. Wait until releases land
+		// 2. Wait until releases land, a chain needs a block or two to catch up
 		if record.ReservesAny(refs(released)) {
-			return PrepareResult{}, shard.ErrReleasePending
+			if !uc.clock.Now().Before(kicked.Add(uc.settle)) {
+				return PrepareResult{}, shard.ErrReleasePending
+			}
+			if err := timex.Sleep(ctx, uc.poll); err != nil {
+				return PrepareResult{}, err
+			}
+			continue
 		}
 
 		// 3. Collect signed members
@@ -74,6 +82,7 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 				}
 				released = append(released, Released{Node: node, Reason: vo.ReleaseFailedPrepare})
 			}
+			kicked = uc.clock.Now()
 			continue
 		}
 
@@ -108,6 +117,7 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 			return PrepareResult{}, err
 		}
 		released = append(released, Released{Node: worst, Reason: vo.ReleaseUnreachable})
+		kicked = uc.clock.Now()
 	}
 }
 

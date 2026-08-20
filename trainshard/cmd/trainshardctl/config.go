@@ -19,6 +19,7 @@ type config struct {
 	timeout   time.Duration
 
 	pollInterval time.Duration
+	settleWindow time.Duration
 }
 
 func load() (config, error) {
@@ -27,6 +28,7 @@ func load() (config, error) {
 		secret:       []byte(env("SHARED_SECRET", "")),
 		chainSeed:    env("CHAIN_SEED", ""),
 		pollInterval: 10 * time.Second,
+		settleWindow: 2 * time.Minute,
 	}
 
 	directory, err := loadDirectory(env("HOSTS", ""))
