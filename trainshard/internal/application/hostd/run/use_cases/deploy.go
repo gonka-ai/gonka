@@ -67,10 +67,10 @@ func (uc *DeployUseCase) Execute(ctx context.Context, cmd DeployCommand) ([]run.
 		if err := run.CanDeploy(cmd.Run, uc.limits, container.State); err != nil {
 			return run.NodeResult{}, err
 		}
-		if err := run.RecordDeploy(ctx, uc.runs, node, cmd.Shard, cmd.Run); err != nil {
-			return run.NodeResult{}, err
+		write := func(ctx context.Context) error {
+			return run.RecordDeploy(ctx, uc.runs, node, cmd.Shard, cmd.Run)
 		}
-		if err := uc.reconcile.Execute(ctx, node); err != nil {
+		if err := uc.reconcile.Record(ctx, node, write); err != nil {
 			return run.NodeResult{}, err
 		}
 		applied, err := uc.containers.Inspect(ctx, cmd.Shard, node)

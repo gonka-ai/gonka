@@ -10,4 +10,6 @@ import (
 // answers with the machine's real state instead of the next tick's promise
 type Reconciler interface {
 	Execute(ctx context.Context, node vo.NodeRef) error
+	// Record writes what the node should hold and converges it as one step
+	Record(ctx context.Context, node vo.NodeRef, write func(context.Context) error) error
 }
