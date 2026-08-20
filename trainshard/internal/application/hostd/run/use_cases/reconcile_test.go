@@ -215,11 +215,11 @@ func TestReconcileWipesTheRunWhenTheReservationIsGone(t *testing.T) {
 
 	want := []string{
 		"containers.stop",
+		"gpu.kill_training",
 		"containers.remove",
 		"mesh.remove",
 		"mesh_store.forget",
 		"volumes.wipe",
-		"gpu.kill_training",
 	}
 	if !reflect.DeepEqual(f.rec.sequence(), want) {
 		t.Fatalf("got %v, want %v", f.rec.sequence(), want)

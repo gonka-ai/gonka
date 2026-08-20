@@ -192,13 +192,13 @@ type requestLogStub struct {
 	results map[string][]run.NodeResult
 }
 
-func (l *requestLogStub) Result(_ context.Context, shardID vo.ShardID, id vo.RequestID) ([]run.NodeResult, bool, error) {
-	results, found := l.results[shardID.String()+string(id)]
+func (l *requestLogStub) Result(_ context.Context, ref run.RequestRef) ([]run.NodeResult, bool, error) {
+	results, found := l.results[ref.String()]
 	return results, found, nil
 }
 
-func (l *requestLogStub) Record(_ context.Context, shardID vo.ShardID, id vo.RequestID, results []run.NodeResult) error {
-	l.results[shardID.String()+string(id)] = results
+func (l *requestLogStub) Record(_ context.Context, ref run.RequestRef, results []run.NodeResult) error {
+	l.results[ref.String()] = results
 	return nil
 }
 

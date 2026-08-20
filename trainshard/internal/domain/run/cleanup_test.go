@@ -25,10 +25,10 @@ func TestCleanupPlanKeepsTheSameOrder(t *testing.T) {
 
 	want := []run.Action{
 		{Kind: run.ActionStopContainer},
+		{Kind: run.ActionKillGPUProcesses},
 		{Kind: run.ActionRemoveContainer},
 		{Kind: run.ActionRemoveMesh},
 		{Kind: run.ActionWipeVolumes},
-		{Kind: run.ActionKillGPUProcesses},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v, want %v", got, want)
@@ -59,6 +59,12 @@ func TestCleanupPlanLetsGoOfTheShardOnlyWhenNothingIsLeft(t *testing.T) {
 			desired:  cleaning,
 			observed: run.Observed{Drained: true, TrainingProcesses: true},
 			want:     []run.Action{{Kind: run.ActionKillGPUProcesses}},
+		},
+		{
+			name:     "processes outliving the container they ran in",
+			desired:  cleaning,
+			observed: run.Observed{Drained: true, Container: vo.ContainerExited, TrainingProcesses: true},
+			want:     []run.Action{{Kind: run.ActionKillGPUProcesses}, {Kind: run.ActionRemoveContainer}},
 		},
 		{
 			name:     "never drained, so only the shard is let go of",
