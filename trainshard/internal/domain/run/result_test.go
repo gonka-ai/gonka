@@ -78,6 +78,25 @@ func TestPerHostFailsOnlyTheNodesOfASilentHost(t *testing.T) {
 	}
 }
 
+func TestPerHostFillsInANodeTheHostLeftOut(t *testing.T) {
+
+	nodes := []vo.NodeRef{first, second, third}
+
+	results := run.PerHost(context.Background(), nodes, run.Failed,
+		func(_ context.Context, _ vo.Participant, held []vo.NodeRef) ([]run.NodeResult, error) {
+			return answered(held[:1]), nil
+		})
+
+	if len(results) != 3 {
+		t.Fatalf("got %d results, want one per node asked about", len(results))
+	}
+	for _, result := range results {
+		if result.Node == third && result.OK() {
+			t.Fatalf("got %+v, want the node the host said nothing about reported as failed", result)
+		}
+	}
+}
+
 func TestPerHostAnswersInTheOrderTheNodesWereNamed(t *testing.T) {
 
 	answeredFirst := make(chan struct{})

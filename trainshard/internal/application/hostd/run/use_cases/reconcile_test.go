@@ -100,6 +100,30 @@ func TestReconcileCreatesNoContainerBehindANetworkItCouldNotClose(t *testing.T) 
 	}
 }
 
+func TestReconcileKeepsTheOldContainerWhenTheNewOneCannotBeBuilt(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.prepared(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec()}
+	f.containers.infos[nodeA] = run.ContainerInfo{State: vo.ContainerExited, Image: baseImage}
+	f.egress.err = errors.New("nft is not there")
+
+	err := f.reconcile().Execute(ctx, nodeA)
+
+	if err == nil {
+		t.Fatal("a run whose box cannot be closed must not come up")
+	}
+	if slices.Contains(f.rec.sequence(), "containers.remove") {
+		t.Fatalf("got %v, want the old container left alone until the new one can be built", f.rec.sequence())
+	}
+	if held := f.containers.infos[nodeA].Image; held != baseImage {
+		t.Fatalf("got %v, want the node still on the image it already had", held)
+	}
+}
+
 func TestReconcileBringsUpTheRunInOrder(t *testing.T) {
 
 	f := newFixture()
