@@ -40,7 +40,7 @@ func (uc *StopUseCase) Execute(ctx context.Context, cmd StopCommand) ([]run.Node
 	}
 
 	// 2. Replay stored answer if seen
-	recorded, found, err := uc.log.Result(ctx, cmd.Shard, cmd.RequestID)
+	recorded, found, err := uc.log.Result(ctx, cmd.request(run.OpStop))
 	if err != nil || found {
 		return recorded, err
 	}
@@ -71,7 +71,7 @@ func (uc *StopUseCase) Execute(ctx context.Context, cmd StopCommand) ([]run.Node
 	})
 
 	// 4. Store the answer by request id
-	if err := uc.log.Record(ctx, cmd.Shard, cmd.RequestID, results); err != nil {
+	if err := uc.log.Record(ctx, cmd.request(run.OpStop), results); err != nil {
 		return nil, err
 	}
 	return results, nil

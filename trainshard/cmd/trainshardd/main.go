@@ -70,7 +70,7 @@ func serve() error {
 	signer := hmac.New(cfg.secret, vo.Address(cfg.participant))
 
 	if cfg.machine != "memory" {
-		log.Warn("the chain and the node manager are fakes: this daemon reserves nothing, releases nothing and stops no inference")
+		log.Warn("the chain, the node manager and the signer are stand-ins: this daemon reserves nothing, releases nothing, stops no inference, and anyone holding the shared secret can sign as any actor")
 	}
 
 	runs := hostdrun.New(hostdrun.Config{

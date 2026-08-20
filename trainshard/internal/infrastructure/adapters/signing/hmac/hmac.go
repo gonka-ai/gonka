@@ -14,6 +14,8 @@ var errSignature = errors.New("signature does not match the shared secret")
 
 const separator = 0
 
+// Shared stands in for the dAPI until real signing is wired up; the secret is symmetric, so
+// whoever holds it can sign as any address and it is worth no more than the hosts sharing it
 type Shared struct {
 	secret  []byte
 	address vo.Address

@@ -7,7 +7,6 @@ import (
 
 	"trainshard/internal/domain/run"
 	"trainshard/internal/domain/shared/ports"
-	"trainshard/internal/domain/shared/vo"
 )
 
 type requests struct {
@@ -16,7 +15,7 @@ type requests struct {
 	ttl   time.Duration
 }
 
-func (r requests) Result(_ context.Context, shardID vo.ShardID, id vo.RequestID) ([]run.NodeResult, bool, error) {
+func (r requests) Result(_ context.Context, ref run.RequestRef) ([]run.NodeResult, bool, error) {
 	r.store.mu.Lock()
 	defer r.store.mu.Unlock()
 
@@ -24,14 +23,14 @@ func (r requests) Result(_ context.Context, shardID vo.ShardID, id vo.RequestID)
 	if err != nil {
 		return nil, false, err
 	}
-	recorded, found := answered[key(shardID, id)]
+	recorded, found := answered[ref.String()]
 	if !found || r.clock.Now().Sub(recorded.At) > r.ttl {
 		return nil, false, nil
 	}
 	return toNodeResults(recorded.Results), true, nil
 }
 
-func (r requests) Record(_ context.Context, shardID vo.ShardID, id vo.RequestID, results []run.NodeResult) error {
+func (r requests) Record(_ context.Context, ref run.RequestRef, results []run.NodeResult) error {
 	r.store.mu.Lock()
 	defer r.store.mu.Unlock()
 
@@ -46,11 +45,9 @@ func (r requests) Record(_ context.Context, shardID vo.ShardID, id vo.RequestID,
 			delete(answered, recorded)
 		}
 	}
-	answered[key(shardID, id)] = requestEntry{Results: fromNodeResults(results), At: now}
+	answered[ref.String()] = requestEntry{Results: fromNodeResults(results), At: now}
 	return r.store.writeFile(r.path(), answered)
 }
-
-func key(shardID vo.ShardID, id vo.RequestID) string { return shardID.String() + "/" + string(id) }
 
 func (r requests) load() (map[string]requestEntry, error) {
 	answered := map[string]requestEntry{}
