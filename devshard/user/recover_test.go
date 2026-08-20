@@ -135,6 +135,58 @@ func TestRecoverSession_HappyPath(t *testing.T) {
 	require.Equal(t, uint64(numInferences+1), resp.Nonce)
 }
 
+// Production reproduction: a node that had served sub-floor reservations could not restart once the
+// floor landed, because replaying its own persisted diffs re-ran a rule written after they were made.
+func TestRecoverSession_ReplaysADiffWrittenBeforeTheMaxTokensFloor(t *testing.T) {
+	store := newTestStore(t)
+	numHosts := 3
+	hosts := make([]*signing.Secp256k1Signer, numHosts)
+	for i := range hosts {
+		hosts[i] = testutil.MustGenerateKey(t)
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(numHosts)
+	verifier := signing.NewSecp256k1Verifier()
+
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       "escrow-1",
+		Version:        testutil.RuntimeTestVersion,
+		CreatorAddr:    user.Address(),
+		Config:         config,
+		Group:          group,
+		InitialBalance: 100000,
+	}))
+
+	subFloor := []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens - 1, StartedAt: 1000,
+	}}}}
+
+	writerSM := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+	_, err := writerSM.ApplyLocal(1, subFloor)
+	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor, "the fixture must be a diff this build refuses to author")
+	root, err := writerSM.ApplyLocalPersisted(1, subFloor)
+	require.NoError(t, err)
+	require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{
+		Diff:      testutil.SignDiffWithRoot(t, user, "escrow-1", 1, subFloor, root),
+		StateHash: root,
+	}))
+
+	clients := make([]HostClient, numHosts)
+	for i := range hosts {
+		sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(10))
+		require.NoError(t, err)
+		clients[i] = &InProcessClient{Host: h}
+	}
+
+	session, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), session.Nonce())
+	require.Len(t, session.Diffs(), 1)
+}
+
 func TestRecoverSession_EmptySession(t *testing.T) {
 	store := newTestStore(t)
 	hosts := make([]*signing.Secp256k1Signer, 3)

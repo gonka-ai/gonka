@@ -762,6 +762,30 @@ func TestApplyDiff_EscrowBalanceCheck(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrInsufficientBalance)
 }
 
+// A diff written before the floor existed is already part of a recorded state root. Refusing it on
+// replay cannot undo it, only keep the node from starting.
+func TestApplyLocalPersisted_ReplaysAStartWrittenBeforeTheFloor(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	sm, _ := newTestSM(t, hosts, 10000)
+	subFloor := func(inferenceID uint64) []*types.DevshardTx {
+		return []*types.DevshardTx{txStart(&types.MsgStartInference{
+			InferenceId: inferenceID, PromptHash: []byte("prompt"), Model: "llama",
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens - 1, StartedAt: 1000,
+		})}
+	}
+
+	_, err := sm.ApplyLocal(1, subFloor(1))
+	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor, "new work still has to meet the floor")
+
+	root, err := sm.ApplyLocalPersisted(1, subFloor(1))
+	require.NoError(t, err)
+	require.NotEmpty(t, root)
+	require.Len(t, sm.SnapshotState().Inferences, 1)
+
+	_, err = sm.ApplyLocal(2, subFloor(2))
+	require.ErrorIs(t, err, types.ErrMaxTokensBelowFloor, "the relaxation must not outlive the replay")
+}
+
 func TestApplyDiff_StartInference_RejectsMaxTokensBelowFloor(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	sm, user := newTestSM(t, hosts, 10000)

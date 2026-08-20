@@ -91,6 +91,8 @@ type StateMachine struct {
 	// validation lives in committedEntries (and on disk in the snapshot).
 	sealedNonces   map[uint64]uint64
 	inferenceStore storage.Storage
+	// replayingPersisted is written only under mu, by ApplyLocalPersisted.
+	replayingPersisted bool
 
 	// Lookup maps derived from group at construction time.
 	slotToAddress      map[uint32]string
@@ -311,6 +313,17 @@ func (sm *StateMachine) verifyDiffUserSig(diff types.Diff) error {
 func (sm *StateMachine) ApplyLocal(nonce uint64, txs []*types.DevshardTx) ([]byte, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	return sm.applyCore(nonce, txs, nil, "user")
+}
+
+// ApplyLocalPersisted applies txs without signature verification, replaying a diff this node already
+// accepted. Used by recovery: a diff is part of a recorded state root, so a rule that tightened since
+// it was written cannot undo it by refusing it, only fail to start.
+func (sm *StateMachine) ApplyLocalPersisted(nonce uint64, txs []*types.DevshardTx) ([]byte, error) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.replayingPersisted = true
+	defer func() { sm.replayingPersisted = false }()
 	return sm.applyCore(nonce, txs, nil, "user")
 }
 
@@ -904,7 +917,7 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 
 	// A sub-floor reservation is refused by the executor's payload check, so the inference would sit
 	// pending until seal. Rejecting here keeps it out of state and off the balance.
-	if msg.MaxTokens < completionapi.MinTokensFloor {
+	if !sm.replayingPersisted && msg.MaxTokens < completionapi.MinTokensFloor {
 		return fmt.Errorf("%w: max_tokens %d, floor %d", types.ErrMaxTokensBelowFloor, msg.MaxTokens, completionapi.MinTokensFloor)
 	}
 
