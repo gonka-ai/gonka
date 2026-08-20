@@ -57,10 +57,10 @@ func (uc *StartUseCase) Execute(ctx context.Context, cmd NodesCommand) ([]run.No
 		if err := run.CanStart(container.State); err != nil {
 			return run.NodeResult{}, err
 		}
-		if err := run.RecordStart(ctx, uc.runs, node); err != nil {
-			return run.NodeResult{}, err
+		write := func(ctx context.Context) error {
+			return run.RecordStart(ctx, uc.runs, node)
 		}
-		if err := uc.reconcile.Execute(ctx, node); err != nil {
+		if err := uc.reconcile.Record(ctx, node, write); err != nil {
 			return run.NodeResult{}, err
 		}
 		applied, err := uc.containers.Inspect(ctx, cmd.Shard, node)

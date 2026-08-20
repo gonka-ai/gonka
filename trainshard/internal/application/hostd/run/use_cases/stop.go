@@ -57,10 +57,10 @@ func (uc *StopUseCase) Execute(ctx context.Context, cmd StopCommand) ([]run.Node
 		if err := run.CanStop(container.State); err != nil {
 			return run.NodeResult{}, err
 		}
-		if err := run.RecordStop(ctx, uc.runs, node, cmd.Grace); err != nil {
-			return run.NodeResult{}, err
+		write := func(ctx context.Context) error {
+			return run.RecordStop(ctx, uc.runs, node, cmd.Grace)
 		}
-		if err := uc.reconcile.Execute(ctx, node); err != nil {
+		if err := uc.reconcile.Record(ctx, node, write); err != nil {
 			return run.NodeResult{}, err
 		}
 		applied, err := uc.containers.Inspect(ctx, cmd.Shard, node)

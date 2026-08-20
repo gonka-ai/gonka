@@ -65,10 +65,10 @@ func (uc *ApplyMeshUseCase) Execute(ctx context.Context, cmd MeshCommand) ([]run
 		if err := shard.CanApplyMesh(cmd.forNode(node), record, drained, uc.clock.Now(), height); err != nil {
 			return run.NodeResult{}, err
 		}
-		if err := uc.store.SaveConfig(ctx, cmd.Shard, node, cmd.Config); err != nil {
-			return run.NodeResult{}, err
+		write := func(ctx context.Context) error {
+			return uc.store.SaveConfig(ctx, cmd.Shard, node, cmd.Config)
 		}
-		if err := uc.reconcile.Execute(ctx, node); err != nil {
+		if err := uc.reconcile.Record(ctx, node, write); err != nil {
 			return run.NodeResult{}, err
 		}
 		return run.NodeResult{Node: node, State: vo.ContainerUnknown}, nil
