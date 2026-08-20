@@ -99,14 +99,22 @@ func FailedStatus(node vo.NodeRef, err error) NodeStatus {
 	return NodeStatus{NodeResult: Failed(node, err)}
 }
 
-func HeldImages(statuses []NodeStatus) []NodeImage {
+// AgreedImage is the one image the whole run holds, and errors unless every node answered:
+// a node we could not read may hold anything, so its silence cannot pass for agreement
+func AgreedImage(statuses []NodeStatus) (vo.ImageDigest, error) {
 	held := make([]NodeImage, 0, len(statuses))
 	for _, status := range statuses {
-		if status.OK() && status.State.Exists() {
+		if !status.OK() {
+			return "", ErrStatusUnknown
+		}
+		if status.State.Exists() {
 			held = append(held, NodeImage{Node: status.Node, Image: status.Image})
 		}
 	}
-	return held
+	if len(held) == 0 {
+		return "", nil
+	}
+	return SameImage(held)
 }
 
 func StatusOf(node vo.NodeRef, desired Desired, observed Observed, fault *shared.Fault) NodeStatus {

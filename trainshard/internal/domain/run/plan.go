@@ -4,7 +4,7 @@ import "trainshard/internal/domain/shared/vo"
 
 func Plan(d Desired, o Observed) []Action {
 	if !d.Reserved || !d.Active {
-		return CleanupPlan(o)
+		return CleanupPlan(d, o)
 	}
 
 	actions := make([]Action, 0, 6)

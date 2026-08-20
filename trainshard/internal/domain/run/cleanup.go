@@ -21,11 +21,17 @@ func WipePlan(o Observed) []Action {
 	return actions
 }
 
-// CleanupPlan wipes the run and hands the node back once nothing of it is left
-func CleanupPlan(o Observed) []Action {
-	actions := WipePlan(o)
-	if len(actions) == 0 && o.Drained {
-		actions = append(actions, Action{Kind: ActionReturnNode})
+// CleanupPlan wipes the run, then lets go of the shard: a node taken out of inference goes
+// back, one that never left is only forgotten, and either way the state stops pinning the shard
+func CleanupPlan(d Desired, o Observed) []Action {
+	if actions := WipePlan(o); len(actions) > 0 {
+		return actions
 	}
-	return actions
+	switch {
+	case o.Drained:
+		return []Action{{Kind: ActionReturnNode}}
+	case !d.Shard.IsZero():
+		return []Action{{Kind: ActionForgetRun}}
+	}
+	return nil
 }

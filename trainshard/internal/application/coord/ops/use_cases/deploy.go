@@ -18,8 +18,8 @@ func NewDeployUseCase(chain shard.ChainReader, hosts run.HostCommands) *DeployUs
 }
 
 func (uc *DeployUseCase) Execute(ctx context.Context, cmd DeployCommand) ([]run.NodeResult, error) {
-	// 1. Load nodes from chain
-	record, _, err := shard.Read(ctx, uc.chain, cmd.Shard)
+	// 1. Load nodes from chain, refusing a shard that is already over
+	record, err := shard.ReadActive(ctx, uc.chain, cmd.Shard)
 	if err != nil {
 		return nil, err
 	}

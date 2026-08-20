@@ -314,6 +314,23 @@ func TestReconcileHandsBackANodeThatNeverGetsReady(t *testing.T) {
 	}
 }
 
+func TestReconcileLetsGoOfAnOldShardThatLeftNothingBehind(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	f.runs.states[nodeA] = run.RunState{Shard: shardID + 1}
+
+	for range 2 {
+		if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+	}
+
+	if state := f.runs.states[nodeA]; state.Shard != shardID || state.ReservedAt.IsZero() {
+		t.Fatalf("got %+v, want the node serving the shard the chain reserved it for", state)
+	}
+}
+
 func TestReconcileHandsBackANodeWhoseDeployRecordedTheShardFirst(t *testing.T) {
 
 	f := newFixture()

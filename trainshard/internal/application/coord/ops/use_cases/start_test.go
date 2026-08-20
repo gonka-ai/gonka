@@ -26,14 +26,18 @@ var (
 	baseImage = vo.ImageDigest("base@sha256:" + strings.Repeat("c", 64))
 )
 
-type chainStub struct{}
+type chainStub struct{ settled bool }
 
 func (chainStub) Height(context.Context) (vo.Height, error) { return 500, nil }
 
-func (chainStub) Shard(_ context.Context, id vo.ShardID) (shard.Shard, bool, error) {
+func (c chainStub) Shard(_ context.Context, id vo.ShardID) (shard.Shard, bool, error) {
+	status := shard.StatusActive
+	if c.settled {
+		status = shard.StatusSettled
+	}
 	return shard.Shard{
 		ID:              id,
-		Status:          shard.StatusActive,
+		Status:          status,
 		BaseImage:       baseImage,
 		ExpiresAtHeight: 1000,
 		Nodes:           []shard.ReservedNode{{Ref: nodeA}, {Ref: nodeB}},
@@ -53,6 +57,7 @@ func (chainStub) ActiveShards(context.Context) ([]shard.Shard, error) { return n
 type hostsStub struct {
 	mu      sync.Mutex
 	images  map[vo.NodeRef]vo.ImageDigest
+	silent  map[vo.Participant]bool
 	started []vo.NodeRef
 }
 
@@ -64,7 +69,10 @@ func (h *hostsStub) Stop(context.Context, vo.Participant, run.StopCall) ([]run.N
 	return nil, nil
 }
 
-func (h *hostsStub) Status(_ context.Context, _ vo.Participant, call run.HostCommand) ([]run.NodeStatus, error) {
+func (h *hostsStub) Status(_ context.Context, participant vo.Participant, call run.HostCommand) ([]run.NodeStatus, error) {
+	if h.silent[participant] {
+		return nil, errors.New("host did not answer")
+	}
 	statuses := make([]run.NodeStatus, 0, len(call.Nodes))
 	for _, node := range call.Nodes {
 		held, found := h.images[node]
@@ -120,6 +128,51 @@ func TestStartAcceptsARunWhoseHostsAgreeOnTheImage(t *testing.T) {
 	}
 	if len(results) != 2 || len(hosts.started) != 2 {
 		t.Fatalf("got %+v started %v, want both nodes started", results, hosts.started)
+	}
+}
+
+func TestStartRefusesTheWholeRunWhenAHostDoesNotSayWhatItHolds(t *testing.T) {
+
+	hosts := &hostsStub{
+		images: map[vo.NodeRef]vo.ImageDigest{nodeA: runImage, nodeB: runImage},
+		silent: map[vo.Participant]bool{hostB: true},
+	}
+
+	_, err := usecases.NewStartUseCase(chainStub{}, hosts).Execute(context.Background(), runCommand())
+
+	if !errors.Is(err, run.ErrStatusUnknown) {
+		t.Fatalf("got %v, want the run refused rather than started on an unchecked image", err)
+	}
+	if len(hosts.started) != 0 {
+		t.Fatalf("a refused run must start nothing, got %v", hosts.started)
+	}
+}
+
+func TestOpsRefuseAShardTheChainHasAlreadyClosed(t *testing.T) {
+	chain, hosts := chainStub{settled: true}, &hostsStub{images: map[vo.NodeRef]vo.ImageDigest{nodeA: runImage, nodeB: runImage}}
+	cases := map[string]func() ([]run.NodeResult, error){
+		"deploy": func() ([]run.NodeResult, error) {
+			cmd := usecases.DeployCommand{RunCommand: runCommand()}
+			return usecases.NewDeployUseCase(chain, hosts).Execute(context.Background(), cmd)
+		},
+		"start": func() ([]run.NodeResult, error) {
+			return usecases.NewStartUseCase(chain, hosts).Execute(context.Background(), runCommand())
+		},
+		"stop": func() ([]run.NodeResult, error) {
+			cmd := usecases.StopCommand{RunCommand: runCommand()}
+			return usecases.NewStopUseCase(chain, hosts).Execute(context.Background(), cmd)
+		},
+	}
+
+	for name, act := range cases {
+		t.Run(name, func(t *testing.T) {
+
+			_, err := act()
+
+			if !errors.Is(err, shard.ErrShardClosed) {
+				t.Fatalf("got %v, want %v", err, shard.ErrShardClosed)
+			}
+		})
 	}
 }
 
