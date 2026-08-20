@@ -3,9 +3,12 @@ package admin
 import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
+	"decentralized-api/chainphase"
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/middleware"
 	pserver "decentralized-api/internal/server/public"
+	"decentralized-api/mlnodeclient"
+	"decentralized-api/participant"
 	"decentralized-api/payloadstorage"
 	"net/http"
 	_ "net/http/pprof"
@@ -26,14 +29,26 @@ import (
 	restrictionstypes "github.com/productscience/inference/x/restrictions/types"
 )
 
+// participantActivity is the cached "is this participant in the active set?"
+// signal the onboarding handlers read. Narrow interface (rather than the
+// concrete *participant.ActivityTracker) so tests can drive the active and
+// unknown states directly — the auto-test gate depends on it.
+type participantActivity interface {
+	IsActive() bool
+	IsKnown() bool
+}
+
 type Server struct {
-	e              *echo.Echo
-	nodeBroker     *broker.Broker
-	configManager  *apiconfig.ConfigManager
-	recorder       cosmos_client.CosmosMessageClient
-	cdc            *codec.ProtoCodec
-	blockQueue     *pserver.BridgeQueue
-	payloadStorage payloadstorage.PayloadStorage
+	e               *echo.Echo
+	nodeBroker      *broker.Broker
+	configManager   *apiconfig.ConfigManager
+	recorder        cosmos_client.CosmosMessageClient
+	cdc             *codec.ProtoCodec
+	blockQueue      *pserver.BridgeQueue
+	payloadStorage  payloadstorage.PayloadStorage
+	phaseTracker    *chainphase.ChainPhaseTracker
+	activityTracker participantActivity
+	tester          *MLNodeTester
 }
 
 func NewServer(
@@ -41,19 +56,36 @@ func NewServer(
 	nodeBroker *broker.Broker,
 	configManager *apiconfig.ConfigManager,
 	blockQueue *pserver.BridgeQueue,
-	payloadStorage payloadstorage.PayloadStorage) *Server {
+	payloadStorage payloadstorage.PayloadStorage,
+	phaseTracker *chainphase.ChainPhaseTracker,
+	activityTracker *participant.ActivityTracker,
+	mlnodeFactory mlnodeclient.ClientFactory) *Server {
 	cdc := getCodec()
+
+	// Assign through a nil check: storing a typed nil pointer in the interface
+	// field would make `s.activityTracker != nil` true and panic on first use.
+	var activity participantActivity
+	if activityTracker != nil {
+		activity = activityTracker
+	}
 
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.TransparentErrorHandler
 	s := &Server{
-		e:              e,
-		nodeBroker:     nodeBroker,
-		configManager:  configManager,
-		recorder:       recorder,
-		cdc:            cdc,
-		blockQueue:     blockQueue,
-		payloadStorage: payloadStorage,
+		e:               e,
+		nodeBroker:      nodeBroker,
+		configManager:   configManager,
+		recorder:        recorder,
+		cdc:             cdc,
+		blockQueue:      blockQueue,
+		payloadStorage:  payloadStorage,
+		phaseTracker:    phaseTracker,
+		activityTracker: activity,
+		// Governance models are read through the admin server's own cosmos
+		// client rather than the broker's chain bridge, because the bridge binds
+		// every query to the process-lifetime context — a hung RPC there would
+		// hold a node's test slot forever.
+		tester: NewMLNodeTester(configManager, mlnodeFactory, chainGovernanceModels{client: recorder}),
 	}
 
 	e.Use(middleware.LoggingMiddleware)
@@ -66,6 +98,12 @@ func NewServer(
 	g.PUT("nodes/:id", s.createNewNode)
 	g.GET("nodes/upgrade-status", s.getUpgradeStatus)
 	g.POST("nodes/version-status", s.postVersionStatus)
+	g.POST("nodes/:id/test", s.postNodeTest)
+	// Read-only fact endpoints (see fact_handlers.go): primitives an
+	// operator/script/AI skill can compose an onboarding flow from.
+	g.GET("nodes/:id/test", s.getNodeTestResult)
+	g.GET("nodes/:id/launch-plan", s.getNodeLaunchPlan)
+	g.GET("poc/timing", s.getPoCTiming)
 	g.GET("nodes", s.getNodes)
 	g.DELETE("nodes/:id", s.deleteNode)
 	g.POST("nodes/:id/enable", s.enableNode)

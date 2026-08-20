@@ -6,18 +6,21 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
 )
 
 const (
-	stopPath        = "/api/v1/stop"
-	nodeStatePath   = "/api/v1/state"
-	powStatusPath   = "/api/v1/pow/status"
-	inferenceUpPath = "/api/v1/inference/up"
+	stopPath            = "/api/v1/stop"
+	nodeStatePath       = "/api/v1/state"
+	powStatusPath       = "/api/v1/pow/status"
+	inferenceUpPath     = "/api/v1/inference/up"
+	chatCompletionsPath = "/v1/chat/completions"
 )
 
 type Client struct {
@@ -44,12 +47,49 @@ func (api *Client) Stop(ctx context.Context) error {
 		return err
 	}
 
-	_, err = utils.SendPostJsonRequest(ctx, &api.client, requestUrl, nil)
+	resp, err := utils.SendPostJsonRequest(ctx, &api.client, requestUrl, nil)
 	if err != nil {
 		return err
 	}
+	defer drainAndClose(resp)
+
+	// The MLnode only answers 200 for /stop; anything else means the node did
+	// not stop. Reporting success on a 4xx/5xx let callers (broker redeploy,
+	// node-status reconciliation) proceed against a node still running a model.
+	if resp.StatusCode != http.StatusOK {
+		return &StatusError{Op: "stop", StatusCode: resp.StatusCode, Body: readErrorBody(resp)}
+	}
 
 	return nil
+}
+
+// maxErrorBodyBytes caps how much of an error response body is read into an
+// error message, so a misbehaving or non-MLnode endpoint cannot make us buffer
+// an unbounded response.
+const maxErrorBodyBytes = 4 << 10
+
+// readErrorBody returns a bounded, single-line excerpt of resp.Body for use in
+// error messages. Never returns an error: a body we cannot read simply yields
+// an empty excerpt.
+func readErrorBody(resp *http.Response) string {
+	if resp == nil || resp.Body == nil {
+		return ""
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(body))
+}
+
+// drainAndClose closes resp.Body after discarding any remainder, so the
+// underlying connection can be reused instead of being torn down.
+func drainAndClose(resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxErrorBodyBytes))
+	_ = resp.Body.Close()
 }
 
 type MLNodeState string
@@ -150,6 +190,74 @@ func (api *Client) InferenceHealth(ctx context.Context) (bool, error) {
 	return true, nil
 }
 
+type chatMessage struct {
+	Role    string `json:"role"`
+	Content string `json:"content"`
+}
+
+type chatCompletionRequest struct {
+	Model     string        `json:"model"`
+	Messages  []chatMessage `json:"messages"`
+	MaxTokens int           `json:"max_tokens"`
+}
+
+type chatCompletionResponse struct {
+	Choices []struct {
+		Message chatMessage `json:"message"`
+	} `json:"choices"`
+}
+
+// maxInferenceBodyBytes caps the probe response we parse. A max_tokens=1
+// completion is a few hundred bytes; anything far larger is not a response we
+// need to read in full to decide the node is answering.
+const maxInferenceBodyBytes = 1 << 20
+
+// Inference sends a minimal OpenAI-compatible chat-completion request to
+// the MLnode's inference endpoint (the same /v1/chat/completions path the
+// public handler proxies to) and validates that a usable response comes
+// back. Returns an error if the request fails or the response carries no
+// choices. Used by the pre-PoC validation test as the "send a test
+// inference request and validate the response" step.
+func (api *Client) Inference(ctx context.Context, model string) error {
+	requestURL, err := url.JoinPath(api.inferenceUrl, chatCompletionsPath)
+	if err != nil {
+		return err
+	}
+
+	req := chatCompletionRequest{
+		Model:     model,
+		Messages:  []chatMessage{{Role: "user", Content: "ping"}},
+		MaxTokens: 1,
+	}
+
+	resp, err := utils.SendPostJsonRequest(ctx, &api.client, requestURL, req)
+	if err != nil {
+		return err
+	}
+	defer drainAndClose(resp)
+
+	if resp.StatusCode != http.StatusOK {
+		return &StatusError{Op: "inference request", StatusCode: resp.StatusCode, Body: readErrorBody(resp)}
+	}
+
+	// Bound the read: a healthy probe response is tiny, and an unbounded
+	// ReadAll would let a misconfigured endpoint (or a streaming response)
+	// balloon the API process's memory.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxInferenceBodyBytes))
+	if err != nil {
+		return err
+	}
+
+	var parsed chatCompletionResponse
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		return fmt.Errorf("invalid inference response: %w", err)
+	}
+	if len(parsed.Choices) == 0 {
+		return fmt.Errorf("inference response contained no choices")
+	}
+	return nil
+}
+
 type inferenceUpDto struct {
 	Model string   `json:"model"`
 	Dtype string   `json:"dtype"`
@@ -170,11 +278,23 @@ func (api *Client) InferenceUp(ctx context.Context, model string, args []string)
 
 	logging.Info("Sending inference/up request to node", types.PoC, "inferenceUpUrl", inferenceUpUrl, "body", dto)
 
-	_, err = utils.SendPostJsonRequest(ctx, &api.client, inferenceUpUrl, dto)
+	resp, err := utils.SendPostJsonRequest(ctx, &api.client, inferenceUpUrl, dto)
 	if err != nil {
 		logging.Error("Failed to send inference/up request", types.PoC, "error", err, "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", dto)
+		return err
 	}
-	return err
+	defer drainAndClose(resp)
+
+	// The MLnode answers 409 when vLLM is already running or still starting, and
+	// 500 when startup failed. Treating those as success — the old behavior, where
+	// only transport errors were reported — meant callers believed a model was
+	// loaded when it was not, so the broker marked a failed launch healthy.
+	if resp.StatusCode != http.StatusOK {
+		statusErr := &StatusError{Op: "inference/up", StatusCode: resp.StatusCode, Body: readErrorBody(resp)}
+		logging.Error("inference/up returned a non-OK status", types.PoC, "error", statusErr, "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", dto)
+		return statusErr
+	}
+	return nil
 }
 
 // vLLMModelsResponse represents the OpenAI-compatible /v1/models response from vLLM

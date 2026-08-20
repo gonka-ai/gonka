@@ -5,6 +5,7 @@ import (
 	"decentralized-api/chainphase"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
+	"errors"
 	"fmt"
 	"testing"
 	"time"
@@ -288,6 +289,33 @@ func TestResolveNodeModelID_RejectsMultipleEpochEntries(t *testing.T) {
 	)
 	require.False(t, ok)
 	assert.Equal(t, "", modelID)
+}
+
+func TestBuildConfiguredModelLaunchPlans(t *testing.T) {
+	plans, err := BuildConfiguredModelLaunchPlans(
+		[]types.Model{
+			{Id: "model-b", ModelArgs: []string{"--gov", "b"}},
+			{Id: "model-a", ModelArgs: []string{"--shared", "gov"}},
+		},
+		map[string]ModelArgs{
+			"model-b": {Args: []string{"--local", "b"}},
+			"model-a": {Args: []string{"--shared", "local", "--local", "a"}},
+		},
+	)
+	require.NoError(t, err)
+	require.Len(t, plans, 2)
+	assert.Equal(t, "model-a", plans[0].ModelID)
+	assert.Equal(t, []string{"--shared", "gov", "--local", "a"}, plans[0].Args)
+	assert.Equal(t, "model-b", plans[1].ModelID)
+	assert.Equal(t, []string{"--gov", "b", "--local", "b"}, plans[1].Args)
+}
+
+func TestBuildConfiguredModelLaunchPlans_RejectsMissingGovernanceModel(t *testing.T) {
+	_, err := BuildConfiguredModelLaunchPlans(
+		[]types.Model{{Id: "model-a"}},
+		map[string]ModelArgs{"model-b": {}},
+	)
+	require.ErrorContains(t, err, `configured model "model-b" not found in governance models`)
 }
 
 func TestResolveSupportedNodeModelID_FiltersConfiguredFallbackAgainstPoCParams(t *testing.T) {
@@ -2291,4 +2319,171 @@ func TestSetNodesActualStatusCommand_MlNodeVersion(t *testing.T) {
 	<-cmd.Response
 
 	assert.Equal(t, "v3.0.0", node.State.MlNodeVersion)
+}
+
+// TestBrokerStop_CommandsFailFastAfterStop pins the post-Stop contract. The
+// command channels are buffered, so before this a QueueMessage after Stop()
+// succeeded and the command was never executed — any caller awaiting a response
+// (GetNodes among them) blocked forever with no error and no timeout.
+func TestBrokerStop_CommandsFailFastAfterStop(t *testing.T) {
+	mockChainBridge := &MockBrokerChainBridge{}
+	broker := newTestBrokerWithChainBridge(mockChainBridge)
+
+	// Sanity: the broker answers before it is stopped.
+	if _, err := broker.GetNodes(); err != nil {
+		t.Fatalf("GetNodes before Stop: %v", err)
+	}
+
+	broker.Stop()
+	broker.Stop() // idempotent
+
+	// Watchdog: a regression here hangs rather than fails, so bound it.
+	done := make(chan error, 1)
+	go func() {
+		_, err := broker.GetNodes()
+		done <- err
+	}()
+
+	select {
+	case err := <-done:
+		if !errors.Is(err, ErrBrokerStopped) {
+			t.Fatalf("GetNodes after Stop returned %v, want ErrBrokerStopped", err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("GetNodes blocked forever after Stop instead of returning an error")
+	}
+
+	if err := broker.QueueMessage(NewGetNodesCommand()); !errors.Is(err, ErrBrokerStopped) {
+		t.Fatalf("QueueMessage after Stop returned %v, want ErrBrokerStopped", err)
+	}
+}
+
+// TestUpdateNodeWithEpochData_KeepsPreviousViewOnSubgroupFailure covers the
+// atomic-refresh fix. A failing subgroup query used to leave assigned nodes with
+// an empty EpochModels map for the rest of the epoch: the epoch view was cleared
+// before the loop, the failure only `continue`d, and lastEpoch* was still
+// advanced so nothing retried. The router then saw a node with no model to
+// serve. Now the refresh is abandoned wholesale, the previous view survives, and
+// the next block retries.
+func TestUpdateNodeWithEpochData_KeepsPreviousViewOnSubgroupFailure(t *testing.T) {
+	mockChainBridge := &MockBrokerChainBridge{}
+	broker := newTestBrokerWithChainBridge(mockChainBridge)
+	defer broker.Stop()
+	participantAddress := broker.participantInfo.GetAddress()
+
+	parent := &types.QueryGetEpochGroupDataResponse{
+		EpochGroupData: types.EpochGroupData{
+			EpochIndex:     100,
+			SubGroupModels: []string{"model-a", "model-b"},
+			TotalWeight:    10,
+		},
+	}
+	subgroup := func(modelId string) *types.QueryGetEpochGroupDataResponse {
+		return &types.QueryGetEpochGroupDataResponse{
+			EpochGroupData: types.EpochGroupData{
+				EpochIndex:    100,
+				ModelSnapshot: &types.Model{Id: modelId},
+				TotalWeight:   10,
+				ValidationWeights: []*types.ValidationWeight{{
+					MemberAddress: participantAddress,
+					MlNodes:       []*types.MLNodeInfo{{NodeId: "node-1"}},
+				}},
+			},
+		}
+	}
+
+	mockChainBridge.On("GetEpochGroupDataByModelId", uint64(100), "").Return(parent, nil)
+	mockChainBridge.On("GetEpochGroupDataByModelId", uint64(100), "model-a").Return(subgroup("model-a"), nil)
+	// First attempt: model-b fails. Second attempt: it succeeds.
+	mockChainBridge.On("GetEpochGroupDataByModelId", uint64(100), "model-b").
+		Return(nil, fmt.Errorf("chain unavailable")).Once()
+	mockChainBridge.On("GetEpochGroupDataByModelId", uint64(100), "model-b").
+		Return(subgroup("model-b"), nil).Once()
+
+	// Seed a node that already has a usable epoch view from the previous epoch.
+	broker.mu.Lock()
+	broker.nodes["node-1"] = &NodeWithState{
+		Node: Node{Id: "node-1", Models: map[string]ModelArgs{"model-a": {}, "model-b": {}}},
+		State: NodeState{
+			EpochModels:  map[string]types.Model{"model-a": {Id: "model-a"}},
+			EpochMLNodes: map[string]types.MLNodeInfo{"model-a": {NodeId: "node-1"}},
+		},
+	}
+	broker.mu.Unlock()
+
+	epochState := broker.phaseTracker.GetCurrentEpochState()
+	require.NotNil(t, epochState)
+
+	// First refresh: partial failure. The node keeps a servable view and the
+	// epoch is not recorded as applied.
+	require.NoError(t, broker.UpdateNodeWithEpochData(epochState))
+	broker.mu.RLock()
+	state := broker.nodes["node-1"].State
+	broker.mu.RUnlock()
+	assert.NotEmpty(t, state.EpochModels, "a partial refresh must not leave the node with no model to serve")
+	assert.Zero(t, broker.lastEpochIndex, "a partial refresh must not record the epoch as applied")
+
+	// Second refresh: both subgroups succeed, and now the full view is applied.
+	require.NoError(t, broker.UpdateNodeWithEpochData(epochState))
+	broker.mu.RLock()
+	state = broker.nodes["node-1"].State
+	broker.mu.RUnlock()
+	assert.Contains(t, state.EpochMLNodes, "model-a")
+	assert.Contains(t, state.EpochMLNodes, "model-b")
+	assert.Equal(t, uint64(100), broker.lastEpochIndex)
+	mockChainBridge.AssertExpectations(t)
+}
+
+// TestUpdateNodeWithEpochData_KeepsPreviousModelsOnGovernanceFailure is the same
+// guard for the spare-node path: a transient governance RPC failure must not
+// make an unassigned node unroutable by publishing an empty model set.
+func TestUpdateNodeWithEpochData_KeepsPreviousModelsOnGovernanceFailure(t *testing.T) {
+	mockChainBridge := &MockBrokerChainBridge{}
+	broker := newTestBrokerWithChainBridge(mockChainBridge)
+	defer broker.Stop()
+
+	// Parent group lists a model this participant is NOT assigned to, so the
+	// node falls through to the configured-model path.
+	mockChainBridge.On("GetEpochGroupDataByModelId", uint64(100), "").Return(
+		&types.QueryGetEpochGroupDataResponse{
+			EpochGroupData: types.EpochGroupData{
+				EpochIndex:     100,
+				SubGroupModels: []string{"model-a"},
+				TotalWeight:    10,
+			},
+		}, nil)
+	mockChainBridge.On("GetEpochGroupDataByModelId", uint64(100), "model-a").Return(
+		&types.QueryGetEpochGroupDataResponse{
+			EpochGroupData: types.EpochGroupData{
+				EpochIndex:    100,
+				ModelSnapshot: &types.Model{Id: "model-a"},
+				TotalWeight:   10,
+				ValidationWeights: []*types.ValidationWeight{{
+					MemberAddress: "somebody-else",
+					MlNodes:       []*types.MLNodeInfo{{NodeId: "other-node"}},
+				}},
+			},
+		}, nil)
+	mockChainBridge.On("GetGovernanceModels").Return(nil, fmt.Errorf("chain unavailable")).Once()
+
+	broker.mu.Lock()
+	broker.nodes["node-1"] = &NodeWithState{
+		Node: Node{Id: "node-1", Models: map[string]ModelArgs{"model-a": {}}},
+		State: NodeState{
+			EpochModels:  map[string]types.Model{"model-a": {Id: "model-a"}},
+			EpochMLNodes: map[string]types.MLNodeInfo{},
+		},
+	}
+	broker.mu.Unlock()
+
+	epochState := broker.phaseTracker.GetCurrentEpochState()
+	require.NotNil(t, epochState)
+	require.NoError(t, broker.UpdateNodeWithEpochData(epochState))
+
+	broker.mu.RLock()
+	state := broker.nodes["node-1"].State
+	broker.mu.RUnlock()
+	assert.Contains(t, state.EpochModels, "model-a",
+		"a governance RPC blip must not strip a spare node's servable model")
+	assert.Zero(t, broker.lastEpochIndex, "the refresh is incomplete, so it must be retried")
 }

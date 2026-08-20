@@ -132,6 +132,16 @@ type Broker struct {
 	configManager        *apiconfig.ConfigManager
 	lockMap              map[string]lockEntry
 	lockMapMu            sync.Mutex
+	// stop is closed by Stop() to shut down the background workers. The
+	// production process runs one broker for its lifetime, but programmatic
+	// callers (selfcheck, tests) construct and discard brokers, and leaked
+	// workers keep querying MLnodes and the chain after their broker is gone.
+	stop     chan struct{}
+	stopOnce sync.Once
+	// commandLoopDone is closed by processCommands once it has observed stop and
+	// torn down the per-node workers, so Stop can block until teardown is
+	// complete rather than returning while workers are still shutting down.
+	commandLoopDone chan struct{}
 }
 
 type lockEntry struct {
@@ -171,25 +181,19 @@ type Node struct {
 }
 
 func (n *Node) InferenceUrl() string {
-	return fmt.Sprintf("http://%s:%d%s", n.Host, n.InferencePort, n.InferenceSegment)
+	return apiconfig.MLNodeURL(n.Host, n.InferencePort, n.InferenceSegment, "")
 }
 
 func (n *Node) InferenceUrlWithVersion(version string) string {
-	if version == "" {
-		return n.InferenceUrl()
-	}
-	return fmt.Sprintf("http://%s:%d/%s%s", n.Host, n.InferencePort, version, n.InferenceSegment)
+	return apiconfig.MLNodeURL(n.Host, n.InferencePort, n.InferenceSegment, version)
 }
 
 func (n *Node) PoCUrl() string {
-	return fmt.Sprintf("http://%s:%d%s", n.Host, n.PoCPort, n.PoCSegment)
+	return apiconfig.MLNodeURL(n.Host, n.PoCPort, n.PoCSegment, "")
 }
 
 func (n *Node) PoCUrlWithVersion(version string) string {
-	if version == "" {
-		return n.PoCUrl()
-	}
-	return fmt.Sprintf("http://%s:%d/%s%s", n.Host, n.PoCPort, version, n.PoCSegment)
+	return apiconfig.MLNodeURL(n.Host, n.PoCPort, n.PoCSegment, version)
 }
 
 type NodeWithState struct {
@@ -326,6 +330,8 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 		statusQueryTrigger:   make(chan statusQuerySignal, 1),
 		configManager:        configManager,
 		lockMap:              make(map[string]lockEntry),
+		stop:                 make(chan struct{}),
+		commandLoopDone:      make(chan struct{}),
 	}
 
 	// Initialize NodeWorkGroup
@@ -338,6 +344,23 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 	go nodeStatusQueryWorker(broker)
 	go broker.reconcilerLoop()
 	return broker
+}
+
+// Stop shuts down the broker's background workers. Idempotent and safe to call
+// from any goroutine.
+//
+// Contract after Stop: QueueMessage returns ErrBrokerStopped rather than
+// accepting a command nobody will execute, and GetNodes returns that error
+// instead of blocking. Commands already queued are not drained, so a caller that
+// needs a command's result must await it before stopping. On return the
+// per-node workers have been shut down, so a throwaway broker (selfcheck, tests)
+// leaves no goroutines still querying MLnodes or the chain.
+//
+// Must not be called from the command loop itself: Stop waits for that loop to
+// finish tearing down the workers, which cannot happen while it is blocked here.
+func (b *Broker) Stop() {
+	b.stopOnce.Do(func() { close(b.stop) })
+	<-b.commandLoopDone
 }
 
 type statusQuerySignal struct {
@@ -359,6 +382,23 @@ func (b *Broker) GetPhaseTracker() *chainphase.ChainPhaseTracker {
 	return b.phaseTracker
 }
 
+// SetNodeStatusesForTest forces a node's intended and current status. Test
+// support only: production code changes status through commands so the worker
+// state machine stays authoritative. Exported because tests in other packages
+// (the admin test-safety gates) need to place a node in a routable state.
+func (b *Broker) SetNodeStatusesForTest(nodeId string, intended, current types.HardwareNodeStatus) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	node, ok := b.nodes[nodeId]
+	if !ok {
+		return false
+	}
+	node.State.IntendedStatus = intended
+	node.State.CurrentStatus = current
+	node.State.StatusTimestamp = time.Now()
+	return true
+}
+
 func (b *Broker) LoadNodeToBroker(node *apiconfig.InferenceNodeConfig) chan NodeCommandResponse {
 	if node == nil {
 		return nil
@@ -377,15 +417,22 @@ func (b *Broker) LoadNodeToBroker(node *apiconfig.InferenceNodeConfig) chan Node
 func nodeSyncWorker(broker *Broker) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
-	for range ticker.C {
-		logging.Debug("Syncing nodes", types.Nodes)
-		if err := broker.QueueMessage(NewSyncNodesCommand()); err != nil {
-			logging.Error("Error syncing nodes", types.Nodes, "error", err)
+	for {
+		select {
+		case <-broker.stop:
+			return
+		case <-ticker.C:
+			logging.Debug("Syncing nodes", types.Nodes)
+			if err := broker.QueueMessage(NewSyncNodesCommand()); err != nil {
+				logging.Error("Error syncing nodes", types.Nodes, "error", err)
+			}
 		}
 	}
 }
 
 func (b *Broker) processCommands() {
+	// Signal Stop only after the per-node workers are torn down below.
+	defer close(b.commandLoopDone)
 	for {
 		select {
 		case command := <-b.highPriorityCommands:
@@ -396,6 +443,14 @@ func (b *Broker) processCommands() {
 				b.executeCommand(command)
 			case command := <-b.lowPriorityCommands:
 				b.executeCommand(command)
+			case <-b.stop:
+				// Shut down the per-node workers here, on the sole goroutine that
+				// submits to them, so teardown can never race a Submit into a
+				// closed channel. stop is already closed, so a draining worker's
+				// final QueueMessage returns ErrBrokerStopped instead of blocking
+				// on a queue this loop will no longer drain.
+				b.nodeWorkGroup.ShutdownAll()
+				return
 			}
 		}
 	}
@@ -441,12 +496,28 @@ type InvalidCommandError struct {
 	Message string
 }
 
+// ErrBrokerStopped is returned by QueueMessage after Stop() has been called.
+// Without it a queued command would be accepted (the channels are buffered) and
+// then never answered, so any caller awaiting a response — GetNodes, for
+// instance — would block forever with no error and no timeout.
+var ErrBrokerStopped = errors.New("broker is stopped")
+
 func (b *Broker) QueueMessage(command Command) error {
 	// Check validity of command. Primarily check all `Response` channels to make sure they
 	// support buffering, or else we could end up blocking the broker.
 	if command.GetResponseChannelCapacity() == 0 {
 		logging.Error("Message queued with unbuffered channel", types.Nodes, "command", reflect.TypeOf(command).String())
 		return errors.New("response channel must support buffering")
+	}
+
+	// Refuse once the command loop is gone. This is checked before the send
+	// rather than selected against b.stop alongside it, because the buffered
+	// channels would otherwise accept the command and leave the caller waiting
+	// on a response nobody will produce.
+	select {
+	case <-b.stop:
+		return ErrBrokerStopped
+	default:
 	}
 
 	switch command.(type) {
@@ -622,7 +693,15 @@ func (b *Broker) GetNodes() ([]NodeResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	nodes := <-command.Response
+	// Also select on b.stop: QueueMessage's check closes the common case, but a
+	// Stop() landing between that check and the command loop picking the command
+	// up would otherwise leave this receive waiting forever.
+	var nodes []NodeResponse
+	select {
+	case nodes = <-command.Response:
+	case <-b.stop:
+		return nil, ErrBrokerStopped
+	}
 
 	if nodes == nil {
 		return nil, errors.New("Error getting nodes")
@@ -833,6 +912,8 @@ func (b *Broker) reconcilerLoop() {
 
 	for {
 		select {
+		case <-b.stop:
+			return
 		case <-b.reconcileTrigger:
 			b.reconcileIfSynced("Reconciliation triggered manually")
 		case <-ticker.C:
@@ -1193,6 +1274,14 @@ func (b *Broker) supportedNodeModels(nodeModels map[string]ModelArgs) map[string
 	return filterNodeModelsByPoCParams(nodeModels, b.configManager.GetPoCParams())
 }
 
+// SupportedNodeModels returns the subset of nodeModels supported by the current
+// PoC params. Exported so the pre-PoC MLnode tester can apply the exact same
+// filter the broker uses before resolving which model to launch, keeping the
+// onboarding readiness test aligned with real broker behavior.
+func SupportedNodeModels(nodeModels map[string]ModelArgs, pocParams apiconfig.PoCParamsCache) map[string]ModelArgs {
+	return filterNodeModelsByPoCParams(nodeModels, pocParams)
+}
+
 func (b *Broker) resolveSupportedNodeModelID(epochMLNodes map[string]types.MLNodeInfo, nodeModels map[string]ModelArgs) (string, bool) {
 	return ResolveNodeModelID(epochMLNodes, b.supportedNodeModels(nodeModels))
 }
@@ -1293,6 +1382,8 @@ func nodeStatusQueryWorker(broker *Broker) {
 	for {
 		bypassDebounce := false
 		select {
+		case <-broker.stop:
+			return
 		case <-ticker.C:
 			logging.Debug("nodeStatusQueryWorker triggered by ticker", types.Nodes)
 		case sig := <-broker.statusQueryTrigger:
@@ -1491,63 +1582,206 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 
 	parentEpochData := parentGroupResp.GetEpochGroupData()
 
-	b.clearNodeEpochData()
+	// Build the new epoch view in a temporary structure and swap it in only
+	// once every subgroup has been fetched successfully. Clearing node epoch
+	// data up front (the previous behavior) and then `continue`ing past a
+	// failed subgroup query left assigned nodes with an empty EpochModels map
+	// for a full epoch/phase — the broker still recorded the epoch as applied,
+	// so nothing retried, and the router treated those nodes as having no
+	// model to serve.
+	pending, previous := b.snapshotNodeEpochInputs()
 
-	// 2. Track which nodes are found in epoch data
 	nodesInEpoch := make(map[string]bool)
+	participantAddress := b.participantInfo.GetAddress()
 
-	// 3. Iterate through each model subgroup
 	for _, modelId := range parentEpochData.SubGroupModels {
 		subgroupResp, err := b.chainBridge.GetEpochGroupDataByModelId(parentEpochData.EpochIndex, modelId)
 		if err != nil {
-			logging.Error("Failed to get subgroup epoch data", types.Nodes, "model_id", modelId, "error", err)
-			continue
+			// Abandon the whole refresh: the previously applied epoch view stays
+			// in place and lastEpoch* is left untouched, so the next block
+			// retries. Returning nil keeps the caller's phase transitions (PoC
+			// start, validation) running on this block — a transient RPC error
+			// must not cost the participant a PoC round.
+			logging.Error("Failed to get subgroup epoch data; keeping previous epoch view and retrying next block", types.Nodes, "model_id", modelId, "error", err)
+			return nil
 		}
 		if subgroupResp == nil {
-			logging.Warn("Subgroup epoch data response is nil", types.Nodes, "model_id", modelId)
-			continue
+			logging.Warn("Subgroup epoch data response is nil; keeping previous epoch view and retrying next block", types.Nodes, "model_id", modelId)
+			return nil
 		}
 
 		subgroup := subgroupResp.EpochGroupData
 		if subgroup.ModelSnapshot == nil {
-			logging.Error("ModelSnapshot is nil in subgroup", types.Nodes, "model_id", modelId)
-			continue
+			logging.Error("ModelSnapshot is nil in subgroup; keeping previous epoch view and retrying next block", types.Nodes, "model_id", modelId)
+			return nil
 		}
 
-		// 4. Iterate through participants in the subgroup
 		for _, weightInfo := range subgroup.ValidationWeights {
-			// Check if the participant is the one this broker is managing
-			if weightInfo.MemberAddress == b.participantInfo.GetAddress() {
-				// 5. Iterate through the ML nodes for this participant in the epoch data
-				b.UpdateNodeEpochData(weightInfo.MlNodes, modelId, *subgroup.ModelSnapshot)
-				// Mark these nodes as found in epoch
-				for _, mlNodeInfo := range weightInfo.MlNodes {
-					nodesInEpoch[mlNodeInfo.NodeId] = true
+			if weightInfo.MemberAddress != participantAddress {
+				continue
+			}
+			for _, mlNodeInfo := range weightInfo.MlNodes {
+				if mlNodeInfo == nil {
+					continue
 				}
+				nodesInEpoch[mlNodeInfo.NodeId] = true
+				snapshot, ok := pending[mlNodeInfo.NodeId]
+				if !ok {
+					continue
+				}
+				snapshot.EpochModels[modelId] = *subgroup.ModelSnapshot
+				snapshot.EpochMLNodes[modelId] = *mlNodeInfo
 			}
 		}
 	}
 
-	// 6. Populate governance models for nodes not in epoch data (disabled nodes)
-	b.mu.RLock()
-	nodeIds := make([]string, 0, len(b.nodes))
-	for nodeId := range b.nodes {
-		if !nodesInEpoch[nodeId] {
-			nodeIds = append(nodeIds, nodeId)
-		}
-	}
-	b.mu.RUnlock()
+	// Populate governance models for nodes absent from epoch data (spare or
+	// administratively disabled nodes), so they can still serve their
+	// configured model. Governance is fetched once for all of them instead of
+	// once per node.
+	fallbackErr := b.populateConfiguredModelsForNodesNotInEpoch(pending, previous, nodesInEpoch)
 
-	for _, nodeId := range nodeIds {
-		if err := b.populateNodeWithConfiguredModel(nodeId); err != nil {
-			logging.Warn("Failed to populate configured model for node not in epoch", types.Nodes, "node_id", nodeId, "error", err)
-		}
+	b.applyNodeEpochData(pending)
+
+	if fallbackErr != nil {
+		// The epoch assignment was applied (that part is authoritative and
+		// complete), but the configured-model fallback is stale. Leave
+		// lastEpoch* untouched so the next block retries rather than treating
+		// this partial view as the epoch's final state. Not an error to the
+		// caller: phase transitions must still run on this block.
+		logging.Warn("Configured-model fallback incomplete; will retry on next block", types.Nodes, "error", fallbackErr)
+		return nil
 	}
 
 	b.lastEpochIndex = epochState.LatestEpoch.EpochIndex
 	b.lastEpochPhase = epochState.CurrentPhase
 
 	return nil
+}
+
+// nodeEpochSnapshot is the per-node epoch view assembled before it is applied.
+type nodeEpochSnapshot struct {
+	EpochModels  map[string]types.Model
+	EpochMLNodes map[string]types.MLNodeInfo
+	// Models is the node's configured model set, captured so the fallback
+	// resolution does not need to re-lock the broker.
+	Models map[string]ModelArgs
+}
+
+// snapshotNodeEpochInputs returns a fresh (empty) epoch view per registered
+// node plus a copy of the current one, so a partial refresh can fall back to
+// what was already known instead of publishing an empty map.
+func (b *Broker) snapshotNodeEpochInputs() (pending, previous map[string]*nodeEpochSnapshot) {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+
+	pending = make(map[string]*nodeEpochSnapshot, len(b.nodes))
+	previous = make(map[string]*nodeEpochSnapshot, len(b.nodes))
+	for nodeId, node := range b.nodes {
+		models := make(map[string]ModelArgs, len(node.Node.Models))
+		for modelId, args := range node.Node.Models {
+			models[modelId] = args
+		}
+		pending[nodeId] = &nodeEpochSnapshot{
+			EpochModels:  make(map[string]types.Model),
+			EpochMLNodes: make(map[string]types.MLNodeInfo),
+			Models:       models,
+		}
+		prev := &nodeEpochSnapshot{
+			EpochModels:  make(map[string]types.Model, len(node.State.EpochModels)),
+			EpochMLNodes: make(map[string]types.MLNodeInfo, len(node.State.EpochMLNodes)),
+			Models:       models,
+		}
+		for modelId, model := range node.State.EpochModels {
+			prev.EpochModels[modelId] = model
+		}
+		for modelId, mlNode := range node.State.EpochMLNodes {
+			prev.EpochMLNodes[modelId] = mlNode
+		}
+		previous[nodeId] = prev
+	}
+	return pending, previous
+}
+
+// populateConfiguredModelsForNodesNotInEpoch fills in the deterministic
+// configured model for every pending node that the epoch data did not assign.
+// On a governance query failure it restores those nodes' previous epoch models
+// (rather than publishing an empty set, which would make a spare node
+// unroutable on a transient RPC blip) and returns the error.
+func (b *Broker) populateConfiguredModelsForNodesNotInEpoch(pending, previous map[string]*nodeEpochSnapshot, nodesInEpoch map[string]bool) error {
+	type nodeFallback struct {
+		nodeId  string
+		modelId string
+	}
+	fallbacks := make([]nodeFallback, 0, len(pending))
+	for nodeId, snapshot := range pending {
+		if nodesInEpoch[nodeId] {
+			continue
+		}
+		modelId, ok := ResolveNodeModelID(snapshot.EpochMLNodes, b.supportedNodeModels(snapshot.Models))
+		if !ok || modelId == "" {
+			continue
+		}
+		fallbacks = append(fallbacks, nodeFallback{nodeId: nodeId, modelId: modelId})
+	}
+	if len(fallbacks) == 0 {
+		return nil
+	}
+
+	govModels, err := b.chainBridge.GetGovernanceModels()
+	if err != nil || govModels == nil {
+		if err == nil {
+			err = fmt.Errorf("governance models response is nil")
+		}
+		logging.Error("Failed to get governance models for nodes not in epoch, keeping their previous epoch models", types.Nodes, "error", err)
+		for _, fallback := range fallbacks {
+			prev, ok := previous[fallback.nodeId]
+			if !ok {
+				continue
+			}
+			for modelId, model := range prev.EpochModels {
+				pending[fallback.nodeId].EpochModels[modelId] = model
+			}
+		}
+		return err
+	}
+
+	byId := make(map[string]types.Model, len(govModels.Model))
+	for _, model := range govModels.Model {
+		byId[model.Id] = model
+	}
+	for _, fallback := range fallbacks {
+		model, ok := byId[fallback.modelId]
+		if !ok {
+			logging.Warn("Configured model not found in governance models", types.Nodes, "node_id", fallback.nodeId, "model_id", fallback.modelId)
+			continue
+		}
+		pending[fallback.nodeId].EpochModels[fallback.modelId] = model
+		logging.Info("Populated node with deterministic configured model", types.Nodes, "node_id", fallback.nodeId, "model_id", fallback.modelId)
+	}
+	return nil
+}
+
+// applyNodeEpochData swaps the assembled epoch view onto the broker's nodes in
+// one critical section, so no reader ever observes a half-built view. Nodes
+// registered after the snapshot was taken are left untouched: their own
+// registration path populates them.
+func (b *Broker) applyNodeEpochData(pending map[string]*nodeEpochSnapshot) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	for nodeId, node := range b.nodes {
+		snapshot, ok := pending[nodeId]
+		if !ok {
+			continue
+		}
+		node.State.EpochModels = snapshot.EpochModels
+		node.State.EpochMLNodes = snapshot.EpochMLNodes
+		// PreservedModels is recomputed right after by
+		// EnsurePreservedMembershipCached; reset it here so a stale preserved
+		// entry cannot survive an epoch change.
+		node.State.PreservedModels = make(map[string]bool)
+	}
 }
 
 func (b *Broker) clearNodeEpochData() {
@@ -1640,12 +1874,16 @@ func (b *Broker) EnsurePreservedMembershipCached(epochState *chainphase.EpochSta
 // if that model exists in the current epoch subgroup set.
 func (b *Broker) PopulateSingleNodeEpochData(nodeId string) error {
 	if b.phaseTracker == nil {
-		logging.Warn("Cannot populate node epoch data: phase tracker not initialized", types.Nodes, "node_id", nodeId)
+		// Info, not Warn: only happens during early startup before the
+		// phase tracker is wired — expected, not an error.
+		logging.Info("Cannot populate node epoch data yet: phase tracker not initialized (normal during startup)", types.Nodes, "node_id", nodeId)
 		return fmt.Errorf("phase tracker not initialized")
 	}
 	epochState := b.phaseTracker.GetCurrentEpochState()
 	if epochState == nil || epochState.IsNilOrNotSynced() {
-		logging.Warn("Cannot populate node epoch data: epoch state not synced", types.Nodes, "node_id", nodeId)
+		// Info, not Warn: normal while the node is still syncing the chain
+		// during onboarding — epoch data is populated once it is synced.
+		logging.Info("Cannot populate node epoch data yet: epoch state not synced (normal until the chain syncs)", types.Nodes, "node_id", nodeId)
 		return fmt.Errorf("epoch state not synced")
 	}
 
@@ -1755,7 +1993,17 @@ func (b *Broker) populateNodeWithConfiguredModel(nodeId string) error {
 // MergeModelArgs combines model arguments from the epoch snapshot with locally
 // configured arguments, with epoch arguments taking precedence.
 // It understands arguments as --key or --key value pairs.
+// MergeModelArgs delegates to the package-level MergeModelArgs so callers
+// holding a *Broker keep working.
 func (b *Broker) MergeModelArgs(epochArgs []string, localArgs []string) []string {
+	return MergeModelArgs(epochArgs, localArgs)
+}
+
+// MergeModelArgs merges epoch/governance model args with local config args,
+// epoch args taking precedence. It is pure, so callers outside the broker
+// (e.g. the pre-PoC node tester) can launch a model with exactly the same
+// arguments the broker will use at PoC.
+func MergeModelArgs(epochArgs []string, localArgs []string) []string {
 	// The final merged arguments, preserving the order from epochArgs, then localArgs.
 	mergedArgs := make([]string, 0, len(epochArgs)+len(localArgs))
 	// A set to store the keys from epochArgs to check for precedence.

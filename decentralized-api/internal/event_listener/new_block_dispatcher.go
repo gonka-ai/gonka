@@ -70,6 +70,11 @@ type MlNodeReconciliationConfig struct {
 	LastTime        time.Time // Track last reconciliation time
 }
 
+// EpochStateHook is invoked after each synced phase-tracker update so other
+// subsystems can react to fresh epoch state without polling. It must return
+// promptly; any long-running work should be performed asynchronously.
+type EpochStateHook func(*chainphase.EpochState)
+
 // OnNewBlockDispatcher orchestrates processing of new block events
 type OnNewBlockDispatcher struct {
 	nodeBroker           *broker.Broker
@@ -88,6 +93,11 @@ type OnNewBlockDispatcher struct {
 	seedAttemptHeight  int64
 	seedConfirmedEpoch uint64
 	seedEnsureInFlight atomic.Bool
+
+	// onEpochState is set after the dispatcher is already running (the admin
+	// server is constructed later), so it is stored atomically to avoid a
+	// data race with ProcessNewBlock.
+	onEpochState atomic.Pointer[EpochStateHook]
 }
 
 const seedRetryCooldownBlocks int64 = 2
@@ -175,6 +185,19 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 	)
 	dispatcher.epochGroupDataCache = epochGroupDataCache
 	return dispatcher
+}
+
+// SetOnEpochState registers a hook invoked on every new block once the chain
+// is synced, with the freshly-updated epoch state.
+func (d *OnNewBlockDispatcher) SetOnEpochState(hook EpochStateHook) {
+	// Clear on a nil hook rather than storing a pointer to a nil func: the load
+	// site only nil-checks the pointer, so &hook would pass that guard and then
+	// panic when the nil func is invoked.
+	if hook == nil {
+		d.onEpochState.Store(nil)
+		return
+	}
+	d.onEpochState.Store(&hook)
 }
 
 // ProcessNewBlock is the main entry point for processing new block events
@@ -318,6 +341,17 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 	// 4. Check if reconciliation should be triggered
 	if d.shouldTriggerReconciliation(*epochState) {
 		d.triggerReconciliation(*epochState)
+	}
+
+	// Notify subscribers that a fresh, synced epoch state is available (e.g.
+	// the admin server retries pre-PoC validation for registered nodes). This
+	// runs AFTER handlePhaseTransitions has refreshed the broker's per-epoch
+	// node data (EpochMLNodes / PreservedModels) and after reconciliation, so
+	// a node just assigned or preserved on this block is not mistaken for idle
+	// and stopped mid-work. The hook must return promptly; it schedules its
+	// own async work.
+	if hook := d.onEpochState.Load(); hook != nil {
+		(*hook)(epochState)
 	}
 
 	// 5. Update config manager height

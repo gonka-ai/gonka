@@ -182,6 +182,22 @@ func (g *NodeWorkGroup) RemoveWorker(nodeId string) {
 	}
 }
 
+// ShutdownAll stops and removes every worker in the group. Broker.Stop drives
+// this from the command-loop goroutine — the only one that submits to workers —
+// so a shutdown can never race a Submit into a closed channel. The map is
+// snapshotted and cleared under the lock so each worker's Shutdown (which blocks
+// in wg.Wait) runs without holding it.
+func (g *NodeWorkGroup) ShutdownAll() {
+	g.mu.Lock()
+	workers := g.workers
+	g.workers = make(map[string]*NodeWorker)
+	g.mu.Unlock()
+
+	for _, worker := range workers {
+		worker.Shutdown()
+	}
+}
+
 // GetWorker returns a specific worker (useful for node-specific commands)
 func (g *NodeWorkGroup) GetWorker(nodeId string) (*NodeWorker, bool) {
 	g.mu.RLock()

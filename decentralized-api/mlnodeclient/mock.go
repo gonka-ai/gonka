@@ -26,11 +26,19 @@ type MockClient struct {
 	DownloadingModels map[string]*DownloadProgress
 	DiskSpace         *DiskSpaceInfo
 
+	// InferenceUpBlock, when non-nil, makes InferenceUp wait until it is closed
+	// or the context is done (returning ctx.Err() in that case). Lets a test hold
+	// a call open and drive cancellation deterministically. Set it before the
+	// call under test; it is read without the mutex held so the blocking call
+	// does not stall other mock methods.
+	InferenceUpBlock chan struct{}
+
 	// Error injection
 	StopError             error
 	NodeStateError        error
 	InferenceHealthError  error
 	InferenceUpError      error
+	InferenceError        error
 	GetGPUDevicesError    error
 	GetGPUDriverError     error
 	CheckModelStatusError error
@@ -44,6 +52,7 @@ type MockClient struct {
 	NodeStateCalled        int
 	InferenceHealthCalled  int
 	InferenceUpCalled      int
+	InferenceCalled        int
 	GetGPUDevicesCalled    int
 	GetGPUDriverCalled     int
 	CheckModelStatusCalled int
@@ -142,6 +151,8 @@ func (m *MockClient) Reset() {
 	m.NodeStateError = nil
 	m.InferenceHealthError = nil
 	m.InferenceUpError = nil
+	m.InferenceUpBlock = nil
+	m.InferenceError = nil
 	m.GetGPUDevicesError = nil
 	m.GetGPUDriverError = nil
 	m.CheckModelStatusError = nil
@@ -154,6 +165,7 @@ func (m *MockClient) Reset() {
 	m.NodeStateCalled = 0
 	m.InferenceHealthCalled = 0
 	m.InferenceUpCalled = 0
+	m.InferenceCalled = 0
 	m.GetGPUDevicesCalled = 0
 	m.GetGPUDriverCalled = 0
 	m.CheckModelStatusCalled = 0
@@ -216,15 +228,41 @@ func (m *MockClient) InferenceHealth(ctx context.Context) (bool, error) {
 
 func (m *MockClient) InferenceUp(ctx context.Context, model string, args []string) error {
 	m.Mu.Lock()
-	defer m.Mu.Unlock()
 	m.InferenceUpCalled++
 	m.LastInferenceModel = model
 	m.LastInferenceArgs = args
-	if m.InferenceUpError != nil {
-		return m.InferenceUpError
+	block := m.InferenceUpBlock
+	upErr := m.InferenceUpError
+	m.Mu.Unlock()
+
+	// Block outside the mutex so the test can inspect the mock (e.g. count Stop
+	// calls) while this call is parked.
+	if block != nil {
+		select {
+		case <-block:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
 	}
+	if upErr != nil {
+		return upErr
+	}
+
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
 	m.CurrentState = MlNodeState_INFERENCE
 	m.InferenceIsHealthy = true
+	return nil
+}
+
+func (m *MockClient) Inference(ctx context.Context, model string) error {
+	m.Mu.Lock()
+	defer m.Mu.Unlock()
+	m.InferenceCalled++
+	m.LastInferenceModel = model
+	if m.InferenceError != nil {
+		return m.InferenceError
+	}
 	return nil
 }
 

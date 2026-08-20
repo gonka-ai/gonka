@@ -92,6 +92,32 @@ func TestOnNewBlockDispatcher_ShouldTriggerReconciliation(t *testing.T) {
 	}
 }
 
+// TestOnNewBlockDispatcher_SetOnEpochStateNilClears guards the fix for the
+// nil-hook panic: SetOnEpochState(nil) must clear the stored pointer, not store
+// a pointer to a nil func. Otherwise the load site's non-nil check passes and
+// invoking the hook panics.
+func TestOnNewBlockDispatcher_SetOnEpochStateNilClears(t *testing.T) {
+	d := &OnNewBlockDispatcher{}
+
+	// Nothing set yet: the load site must see nil and skip.
+	assert.Nil(t, d.onEpochState.Load(), "no hook expected before SetOnEpochState")
+
+	called := 0
+	d.SetOnEpochState(func(*chainphase.EpochState) { called++ })
+	if h := d.onEpochState.Load(); assert.NotNil(t, h, "hook should be stored") {
+		(*h)(nil)
+	}
+	assert.Equal(t, 1, called, "stored hook should be invocable")
+
+	// Clearing with nil must store nil. On the pre-fix code the load below would
+	// return a non-nil pointer to a nil func and (*h)(nil) would panic.
+	d.SetOnEpochState(nil)
+	if h := d.onEpochState.Load(); h != nil {
+		(*h)(nil)
+		t.Fatal("SetOnEpochState(nil) should clear the hook")
+	}
+}
+
 func TestParseNewBlockInfo(t *testing.T) {
 	// This test shows how we can test the parsing logic independently
 	// without needing a real blockchain event

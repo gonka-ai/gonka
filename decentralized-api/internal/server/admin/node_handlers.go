@@ -2,10 +2,13 @@ package admin
 
 import (
 	"common/logging"
+	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
+	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
@@ -17,7 +20,15 @@ func (s *Server) getNodes(ctx echo.Context) error {
 		logging.Error("Error getting nodes", types.Nodes, "error", err)
 		return err
 	}
-	return ctx.JSON(http.StatusOK, nodes)
+
+	enriched := make([]NodeWithOnboarding, len(nodes))
+	for i, n := range nodes {
+		enriched[i] = NodeWithOnboarding{
+			NodeResponse: n,
+			Onboarding:   s.computeOnboarding(n),
+		}
+	}
+	return ctx.JSON(http.StatusOK, enriched)
 }
 
 func (s *Server) deleteNode(ctx echo.Context) error {
@@ -35,6 +46,12 @@ func (s *Server) deleteNode(ctx echo.Context) error {
 	}
 	node := <-response
 	syncNodesWithConfig(s.nodeBroker, s.configManager)
+	if s.tester != nil {
+		// Forget rather than Invalidate: the node is gone, so its bookkeeping
+		// should not be retained. This also cancels a test running against it,
+		// so a stale teardown cannot hit whatever takes its place.
+		s.tester.Forget(nodeId)
+	}
 
 	return ctx.JSON(http.StatusOK, node)
 }
@@ -146,6 +163,11 @@ func (s *Server) createNewNode(ctx echo.Context) error {
 		}
 		// sync config file with updated node list
 		syncNodesWithConfig(s.nodeBroker, s.configManager)
+		if s.tester != nil {
+			s.tester.Invalidate(node.Id)
+		}
+		// Config changed — re-test if PoC is far enough away.
+		s.maybeAutoTest(node.Id)
 		return ctx.JSON(http.StatusOK, node)
 	} else {
 		node, err := s.addNode(newNode)
@@ -184,7 +206,82 @@ func (s *Server) addNode(newNode apiconfig.InferenceNodeConfig) (apiconfig.Infer
 		return apiconfig.InferenceNodeConfig{}, echo.NewHTTPError(http.StatusInternalServerError, fmt.Sprintf("failed to save node configuration: %v", err))
 	}
 
+	if s.tester != nil {
+		s.tester.Invalidate(node.Id)
+	}
+	// Auto-test the freshly registered node if PoC is far enough away.
+	s.maybeAutoTest(node.Id)
+	// Make "waiting for PoC" the visible log right after registration.
+	s.logOnboardingStatus(false)
+
 	return *node, nil
+}
+
+// postNodeTest handles POST /admin/v1/nodes/:id/test by running a
+// synchronous one-shot validation against the configured MLnode.
+// Does not mutate broker state — the response carries the result
+// for the caller to display.
+//
+// Status codes:
+//
+//	200 — test completed (body contains TestResult, possibly with status=FAILED)
+//	404 — node id not in configManager
+//	409 — a test is already running, or the node is serving in the epoch
+func (s *Server) postNodeTest(c echo.Context) error {
+	nodeId := c.Param("id")
+	if nodeId == "" {
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": "node id is required"})
+	}
+	if s.tester == nil {
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "tester not initialized"})
+	}
+
+	// 404 before any safety gate so an unknown node never looks merely
+	// "blocked" (the gates below are node-agnostic / timing-based).
+	if !s.tester.HasNode(nodeId) {
+		return c.JSON(http.StatusNotFound, map[string]string{"error": ErrNodeNotFound.Error(), "node_id": nodeId})
+	}
+
+	// Refuse to test a node involved in broker-managed work: the test reloads
+	// models and then stops the node outside the broker's state machine.
+	if reason := s.nodeTestBlockReason(nodeId); reason != "" {
+		return c.JSON(http.StatusConflict, map[string]string{
+			"error":   reason + "; testing would take it out of service",
+			"node_id": nodeId,
+		})
+	}
+
+	// Refuse when the chain schedule leaves too little room for a full-length
+	// test. Unlike auto-test (gated a full hour out), the manual endpoint lets an
+	// operator test much closer in — but not so close that a test running to its
+	// deadline would still be holding the node down when PoC needs it. An unknown
+	// schedule refuses too: the point-in-time idle check above cannot protect a
+	// node assigned while the test is still running.
+	if reason := s.pocImminentTestBlockReason(); reason != "" {
+		return c.JSON(http.StatusConflict, map[string]string{
+			"error":   reason,
+			"node_id": nodeId,
+		})
+	}
+
+	// Per-call timeout: model load + health probe is expected to complete well
+	// under this. Clients can retry on timeout. The same budget backs the
+	// pre-PoC safety margins (see apiconfig.ManualTestMinSecondsBeforePoC), so
+	// changing it in one place keeps the gates consistent.
+	ctx, cancel := context.WithTimeout(c.Request().Context(),
+		time.Duration(apiconfig.NodeTestTimeoutSeconds)*time.Second)
+	defer cancel()
+
+	result, err := s.tester.Run(ctx, nodeId)
+	switch {
+	case errors.Is(err, ErrNodeNotFound):
+		return c.JSON(http.StatusNotFound, map[string]string{"error": err.Error(), "node_id": nodeId})
+	case errors.Is(err, ErrTestInProgress), errors.Is(err, ErrTestBusy):
+		return c.JSON(http.StatusConflict, map[string]string{"error": err.Error(), "node_id": nodeId})
+	case err != nil:
+		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})
+	}
+	return c.JSON(http.StatusOK, result)
 }
 
 // enableNode handles POST /admin/v1/nodes/:id/enable
