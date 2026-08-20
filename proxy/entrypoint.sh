@@ -31,6 +31,10 @@ export DISABLE_DEVSHARD_PROXY=${DISABLE_DEVSHARD_PROXY:-false}
 
 export EDGE_API_SERVICE_NAME=${EDGE_API_SERVICE_NAME:-}
 export EDGE_API_PORT=${EDGE_API_PORT:-18080}
+# Leasing GPUs for training is optional per machine, so /trainshard/ is routed only
+# when the operator says which service answers it.
+export TRAINSHARD_SERVICE_NAME=${TRAINSHARD_SERVICE_NAME:-}
+export TRAINSHARD_PORT=${TRAINSHARD_PORT:-9700}
 # Public Tier A read-only routes (always published when EDGE_API_SERVICE_NAME is set).
 EDGE_API_ROUTE_PATHS_DEFAULT='
 /v1/status
@@ -82,6 +86,7 @@ export FINAL_EXPLORER_SERVICE="${KEY_NAME_PREFIX}${EXPLORER_SERVICE_NAME}"
 export FINAL_PROXY_SSL_SERVICE="${KEY_NAME_PREFIX}${PROXY_SSL_SERVICE_NAME}"
 export FINAL_VERSIOND_SERVICE="${KEY_NAME_PREFIX}${VERSIOND_SERVICE_NAME}"
 export FINAL_EDGE_API_SERVICE="${KEY_NAME_PREFIX}${EDGE_API_SERVICE_NAME}"
+export FINAL_TRAINSHARD_SERVICE="${KEY_NAME_PREFIX}${TRAINSHARD_SERVICE_NAME}"
 
 
 # Real IP Configuration (Access Control List for trusted proxy hops)
@@ -198,6 +203,16 @@ if [ -n "${EDGE_API_SERVICE_NAME}" ]; then
     }"
 else
     export EDGE_API_UPSTREAM="# edge-api not configured"
+fi
+
+if [ -n "${TRAINSHARD_SERVICE_NAME}" ]; then
+    echo "   Trainshard Service: $FINAL_TRAINSHARD_SERVICE:$TRAINSHARD_PORT"
+    export TRAINSHARD_UPSTREAM="upstream trainshard_backend {
+        zone trainshard_backend 64k;
+        server ${FINAL_TRAINSHARD_SERVICE}:${TRAINSHARD_PORT} resolve;
+    }"
+else
+    export TRAINSHARD_UPSTREAM="# trainshardd not configured"
 fi
 
 is_placeholder_password() {
@@ -714,6 +729,31 @@ if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
 else
     export DEVSHARD_VERSIOND_LOCATION="# devshard proxy disabled"
     export LIMIT_REQ_ZONE_DEVSHARD_OBS=""
+fi
+
+# The training host's own API. Every request to it carries the coordinator's
+# signature over the path and the body, so nothing is rewritten here. Logs, shells
+# and artifacts are streams that stay open for as long as the researcher keeps them,
+# which is why buffering is off and the transfer timeout is the long one.
+if [ -n "${TRAINSHARD_SERVICE_NAME}" ]; then
+    export TRAINSHARD_LOCATION="location /trainshard/ {
+            set \$limit_zone_name \"EXEMPT\";
+            limit_req zone=exempt_zone burst=${EXEMPT_BURST} nodelay;
+            ${LIMIT_CONN_RULE_EXEMPT}
+            proxy_pass http://trainshard_backend;
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+
+            ${STREAMING_CONFIG}
+
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+        }"
+else
+    export TRAINSHARD_LOCATION="# trainshardd not configured"
 fi
 
 # --------------------------------------------------------------------------------
@@ -1244,6 +1284,7 @@ ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_REQ_RULE_GLOBAL,\$LIMIT_REQ_RULE_GONKA_A
 ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_REQ_RULE_CHAIN_RPC,\$LIMIT_REQ_RULE_CHAIN_API,\$LIMIT_REQ_RULE_CHAIN_GRPC"
 ENVSUBST_VARS="${ENVSUBST_VARS},\$BLOCKED_ROUTES_CONFIG,\$EXEMPT_ROUTES_CONFIG,\$API_VERSION_LOCATIONS"
 ENVSUBST_VARS="${ENVSUBST_VARS},\$VERSIOND_UPSTREAM,\$DEVSHARD_VERSIOND_LOCATION,\$EDGE_API_UPSTREAM"
+ENVSUBST_VARS="${ENVSUBST_VARS},\$TRAINSHARD_UPSTREAM,\$TRAINSHARD_LOCATION"
 
 echo "Rendering unified nginx configuration (mode: $NGINX_MODE, server_name: $SERVER_NAME)"
 envsubst "$ENVSUBST_VARS" < /etc/nginx/nginx.unified.conf.template | sed 's/\$\$/$/g' > /etc/nginx/nginx.conf
