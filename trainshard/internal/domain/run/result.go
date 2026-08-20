@@ -65,7 +65,7 @@ func PerHost[T Answer](
 		if err != nil {
 			answered = nil
 		}
-		return append(answered, unanswered(held[participant], answered, failed, err)...)
+		return matched(held[participant], answered, failed, err)
 	})
 
 	results := make([]T, 0, len(nodes))
@@ -75,22 +75,26 @@ func PerHost[T Answer](
 	return results
 }
 
-func unanswered[T Answer](asked []vo.NodeRef, answered []T, failed func(vo.NodeRef, error) T, cause error) []T {
+// matched lines the answers up with the nodes they were asked about, so a host can neither
+// drop one of its nodes nor slip in an answer for a node that is not its own
+func matched[T Answer](asked []vo.NodeRef, answered []T, failed func(vo.NodeRef, error) T, cause error) []T {
 	if cause == nil {
 		cause = ErrNodeNotAnswered
 	}
-	named := make(map[vo.NodeRef]bool, len(answered))
+	byNode := make(map[vo.NodeRef]T, len(answered))
 	for _, answer := range answered {
-		named[answer.Ref()] = true
+		byNode[answer.Ref()] = answer
 	}
 
-	gaps := make([]T, 0)
+	results := make([]T, 0, len(asked))
 	for _, node := range asked {
-		if !named[node] {
-			gaps = append(gaps, failed(node, cause))
+		answer, found := byNode[node]
+		if !found {
+			answer = failed(node, cause)
 		}
+		results = append(results, answer)
 	}
-	return gaps
+	return results
 }
 
 func byParticipant(nodes []vo.NodeRef) ([]vo.Participant, map[vo.Participant][]vo.NodeRef) {
@@ -119,22 +123,21 @@ func FailedStatus(node vo.NodeRef, err error) NodeStatus {
 	return NodeStatus{NodeResult: Failed(node, err)}
 }
 
-// AgreedImage is the one image the whole run holds, and errors unless every node answered:
-// a node we could not read may hold anything, so its silence cannot pass for agreement
-func AgreedImage(statuses []NodeStatus) (vo.ImageDigest, error) {
+// ReadyToStart holds when every node answered, has a container, and they all hold the same
+// image; a run started on only some of its nodes waits for the rest with the gpus already taken
+func ReadyToStart(statuses []NodeStatus) error {
 	held := make([]NodeImage, 0, len(statuses))
 	for _, status := range statuses {
 		if !status.OK() {
-			return "", ErrStatusUnknown
+			return ErrStatusUnknown
 		}
-		if status.State.Exists() {
-			held = append(held, NodeImage{Node: status.Node, Image: status.Image})
+		if !status.State.Exists() {
+			return ErrContainerMissing
 		}
+		held = append(held, NodeImage{Node: status.Node, Image: status.Image})
 	}
-	if len(held) == 0 {
-		return "", nil
-	}
-	return SameImage(held)
+	_, err := SameImage(held)
+	return err
 }
 
 func StatusOf(node vo.NodeRef, desired Desired, observed Observed, fault *shared.Fault) NodeStatus {
