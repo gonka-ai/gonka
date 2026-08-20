@@ -255,7 +255,7 @@ func (c *containersStub) Create(_ context.Context, spec run.ContainerSpec) error
 	if c.createErr != nil {
 		return c.createErr
 	}
-	c.infos[spec.Node] = run.ContainerInfo{State: vo.ContainerCreated, Image: spec.Run.Image}
+	c.infos[spec.Node] = run.ContainerInfo{State: vo.ContainerCreated, Image: spec.Run.Image, Revision: spec.Revision}
 	return nil
 }
 

@@ -66,6 +66,7 @@ func (m Machine) Observe(ctx context.Context, node vo.NodeRef, desired Desired) 
 		Images:            images,
 		Container:         container.State,
 		ContainerImage:    container.Image,
+		ContainerRevision: container.Revision,
 		ExitCode:          container.ExitCode,
 		MeshKey:           key,
 		MeshUp:            up,
@@ -186,7 +187,8 @@ func (m Machine) createContainer(ctx context.Context, node vo.NodeRef, desired D
 			return err
 		}
 	}
-	if err := m.Containers.Create(ctx, ContainerSpec{Shard: desired.Shard, Node: node, Run: desired.Run, Hosts: pinned}); err != nil {
+	spec := ContainerSpec{Shard: desired.Shard, Node: node, Run: desired.Run, Revision: desired.Revision, Hosts: pinned}
+	if err := m.Containers.Create(ctx, spec); err != nil {
 		return err
 	}
 	return RecordImage(ctx, m.Runs, node, desired.Run.Image, m.Clock.Now())

@@ -9,6 +9,7 @@ type Observed struct {
 	Images            []vo.ImageDigest
 	Container         vo.ContainerState
 	ContainerImage    vo.ImageDigest
+	ContainerRevision int
 	ExitCode          *int
 	MeshKey           bool
 	MeshUp            bool

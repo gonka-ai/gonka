@@ -77,7 +77,7 @@ func (m *Machine) Create(_ context.Context, spec run.ContainerSpec) error {
 	if info, found := m.containers[spec.Node]; found && info.State != vo.ContainerAbsent {
 		return fmt.Errorf("container for %s already exists", spec.Node)
 	}
-	m.containers[spec.Node] = run.ContainerInfo{State: vo.ContainerCreated, Image: spec.Run.Image}
+	m.containers[spec.Node] = run.ContainerInfo{State: vo.ContainerCreated, Image: spec.Run.Image, Revision: spec.Revision}
 	m.log.Info("created container", "node_id", spec.Node.NodeID, "image_digest", spec.Run.Image.Short())
 	return nil
 }

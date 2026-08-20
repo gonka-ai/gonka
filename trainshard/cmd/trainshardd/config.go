@@ -169,6 +169,8 @@ func (c config) validate() error {
 		return fmt.Errorf("TRAINSHARD_CONTAINER_MEMORY_BYTES is required on a docker machine, an unlimited run can take the host down")
 	case c.machine == "docker" && c.nanoCPUs <= 0:
 		return fmt.Errorf("TRAINSHARD_CONTAINER_NANO_CPUS is required on a docker machine, an unlimited run can starve the inference server")
+	case c.machine == "docker" && len(c.nodes) > 1:
+		return fmt.Errorf("TRAINSHARD_NODES holds %d nodes and a docker machine takes one: the cards are read per machine, so each node would see the other's training as foreign work and drain forever", len(c.nodes))
 
 	case len(c.nodes) > c.meshPorts:
 		return fmt.Errorf("TRAINSHARD_MESH_PORTS covers %d ports and this host holds %d nodes", c.meshPorts, len(c.nodes))
