@@ -403,11 +403,13 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 
 	// Event 1: receipt + protocol metadata.
 	receiptEvent := DevshardReceiptEvent{
-		StateSig:    resp.StateSig,
-		StateHash:   resp.StateHash,
-		Nonce:       resp.Nonce,
-		Receipt:     resp.Receipt,
-		ConfirmedAt: resp.ConfirmedAt,
+		StateSig:          resp.StateSig,
+		StateHash:         resp.StateHash,
+		Nonce:             resp.Nonce,
+		Receipt:           resp.Receipt,
+		ConfirmedAt:       resp.ConfirmedAt,
+		ObservedHeight:    resp.ObservedHeight,
+		ObservedBlockHash: resp.ObservedBlockHash,
 	}
 	receiptWrapper := map[string]interface{}{"devshard_receipt": receiptEvent}
 	if s.heightSync != nil {
@@ -560,6 +562,14 @@ func (s *Server) SetPeerClients(peers map[int]*HTTPClient) {
 	if s.host != nil {
 		s.host.SetRepairProbe(s.RepairProbe)
 	}
+}
+
+// CloseReadyView is the §12 producer on the hosted session.
+func (s *Server) CloseReadyView() heightsync.CloseReadyView {
+	if s.host == nil {
+		return nil
+	}
+	return s.host.CloseReadyView()
 }
 
 func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {

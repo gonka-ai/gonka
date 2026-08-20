@@ -8,44 +8,66 @@
 These knobs do not change inference traffic. They only govern how a quiet escrow
 keeps proving that participants still agree on mainnet height.
 
-Heights below are **mainnet blocks**, not wall-clock and not session nonces.
 `K` (nonce cadence of Anchors) is a different knob; see
 [Related transport knobs](#related-transport-knobs).
 
-### Why `K_hb` is in blocks, not milliseconds
+## The split: schedule in milliseconds, judge in blocks
 
-A millisecond cadence would be a **local clock**. Two hosts (and any later
-verifier replaying `Diff`) do not share a clock, so they cannot agree on
-whether a heartbeat was due, whether an ack was late, or whether to arm
-close-ready. Height-sync exists so those decisions key on a value every honest
-party can recompute: mainnet height.
+Every knob here belongs to exactly one of two jobs, and the unit follows the job.
 
-`IntervalBlocks` therefore cannot be a duration. Snapshot overlay and
-`Validate` are what make an override **validatable by other hosts** — they
-read the same `HeartbeatConfig` from the runtime-config snapshot (or the same
-compiled default). A per-process `time.Ticker` would not be in that snapshot
-and would not appear in `Diff`.
+**Scheduling** asks *"is it time to act?"* That needs a `now`, and the only `now`
+either party actually has is its own wall clock. Mainnet height is the **result**
+of a height-sync turnover, so a block-denominated schedule is circular: a quiet
+user cannot notice that a block passed until it syncs, and syncing is the thing
+the schedule was supposed to trigger. A silent host is in the same position — it
+learns height from traffic, so a partitioned host sees a frozen tip and would
+never count enough blocks to arm. Scheduling is therefore in **milliseconds**:
+`Interval`, `TurnTimeout`, `IdleTimeout`.
 
-### Two nonce rounds per block (near-zero divergence)
+**Evaluation** asks *"was this ack late? did this turn complete?"* Both sides of
+those comparisons are claims already sitting in `Diff`, so every replaying
+verifier recomputes the same verdict with no clock at all. Evaluation stays in
+**blocks**: `AckDeadlineBlocks`, `DeltaBlocks`.
 
-Height itself still ticks once per block. “Twice per block” is **not** `D_ack = 0`.
-It is a user-scheduler target, `MinRoundsPerBlock = 2`:
+The invariant that makes this safe: **no wall clock ever enters `Diff` or a
+`SyncTurnRecord`.** The cadence lives in `heightsync.Heartbeat` (producer-local)
+and the arming timer in `heightsync.CloseReady` (host-local). Neither is folded
+into the log, so turn state remains a pure function of `Diff` and independent
+verifiers never have to agree on a clock. Arming is a local liveness decision
+that emits nothing; finalization is where hosts must actually agree, and it
+aggregates per-host evidence rather than trusting one host's timer.
 
-1. **Request round** — `slots_num` consecutive `MsgHeartbeat` diffs (no ack wait).
-2. **Response round** — later diffs, still aiming at the same block, that append `MsgHeightAck`.
+### A turnover, not a round count
 
-`K_hb = 1` opens one *cycle* per new block. E2 must keep composing nonce rounds
-until that floor is met, without waiting for height `H+1`. Hosts cannot punish
-“only one round”; they only see whether enough acks exist. So
-`MinRoundsPerBlock` is **compiled-only** — not a snapshot overlay.
+The obligation is *"a full height-sync round-trip must land at least every
+`Interval`"*. A **turnover** is `Q` distinct host-signed height claims:
 
-`D_ack = 1` is the verifier window: an ack is on time while
+- `MsgHeightAck` from a heartbeat turn, or
+- an executor-stamped response riding ordinary Anchor traffic (E7).
+
+Either discharges the obligation, so a busy escrow emits **zero** heartbeats and
+a quiet one emits exactly as many as it needs. What does *not* count is the
+user's own stamp on `MsgStartInference`: it is self-signed and proves nothing
+about what any host saw. `ORACLE_UNAVAILABLE` acks do not count either — they
+are required, but they carry no height. This is the same rule `TurnTracker` uses
+for `Q`, so the scheduler and the record agree on what "counted".
+
+`MinRoundsPerBlock` is gone. It existed to force a second nonce round so acks
+could land inside the same block; with a wall clock the producer simply keeps
+composing ack-carrying diffs until the turn turns over. One round is always owed
+(the request span awaited no ack), and further rounds are driven by acks
+actually arriving, bounded by `slots_num + 1` because each slot acks once.
+
+`TurnTimeout` replaces the part `MinRoundsPerBlock` never covered: how long to
+wait on a turn that never reaches quorum. Without it, one unreachable slot would
+leave a turn open forever and silence the cadence for the rest of the session. A
+turn that the log has already settled as `degraded` releases the producer
+immediately, without burning the rest of `TurnTimeout`.
+
+`D_ack = 1` remains the verifier window: an ack is on time while
 `observed_height ≤ h_req + D_ack`. A block tick during transport does not
-degrade the turn if the host still stamped `H` (or `H+1`). Ingest height of
-the Diff is not the lateness clock.
-
-You cannot stamp two different heights in one block. For denser stamps while
-the escrow is busy, use `observed_height` on inference txs (E7).
+degrade the turn if the host still stamped `H` (or `H+1`). Ingest height of the
+Diff is not the lateness clock.
 
 ---
 
@@ -63,53 +85,69 @@ the escrow is busy, use `observed_height` on inference txs (E7).
 
 Zero on the wire always means “keep the compiled default”, never “disable”.
 `D_ack`’s compiled default is `1`; a snapshot value of `2` is extra slack and
-must still satisfy `T_idle > K_hb + D_ack`. `MinRoundsPerBlock` is not on the
-wire.
+must still satisfy `T_idle > Interval + TurnTimeout`.
 
-`HeartbeatConfig.Validate(blockTime, freshness)` runs against the resolved
-config. A bad override must fail fast (H25), not silently arm hosts.
+Overriding `IntervalMs` alone also moves `TurnTimeout` and `IdleTimeout`, which
+default to `Interval` and `4 · Interval`. Without that, raising the interval
+would leave an absolute `T_idle` behind and `Validate` would reject a config the
+operator had every reason to think was fine.
+
+`HeartbeatConfig.Validate(freshness)` checks the resolved config and no longer
+takes a block time — nothing left in the schedule needs converting out of
+blocks. Note that today it is only exercised by H25, not on the live overlay
+path: `SessionParams()` rebuilds from a long-poll snapshot and has no error
+channel. An `IdleTimeoutMs` override below `Interval + TurnTimeout` therefore
+takes effect unchecked and makes hosts arm mid-turn. Rejecting or clamping a bad
+overlay in `HeartbeatConfigFromSnapshot` is an open follow-up (plan §8.4).
 
 ---
 
 ## Log-plane cadence (`HeartbeatConfig`)
 
+Scheduling — local wall clock, never in `Diff`:
+
 | Spec | Go field | Default | What it regulates |
 | ---- | -------- | ------- | ----------------- |
-| `K_hb` | `IntervalBlocks` | `1` | How long the user may stay quiet before it **must** open a heartbeat cycle. Due when `h_now − h_last ≥ K_hb` (every new block). |
-| — | `MinRoundsPerBlock` | `2` (compiled only) | E2 scheduler: at least two nonce rounds per cycle (request, then ack-carrying diffs). Not a verifier deadline and not on the snapshot. |
+| `Interval` | `Interval` | `3s` | Longest gap between full height-sync turnovers. The producer opens a heartbeat turn when no turnover has landed within it. |
+| `TurnTimeout` | `TurnTimeout` | `= Interval` (`3s`) | How long the producer waits on one open turn before abandoning it and opening a fresh one. Stops a single unreachable slot from stalling the cadence. |
+| `T_idle` | `IdleTimeout` | `4 · Interval` (`12s`) | How long a **host** may see no user contact before it arms close-ready and prepares to treat the sequencer as failed. Reason is **silence only** — a missing ack never arms. |
+
+Evaluation — logged heights, deterministic under replay:
+
+| Spec | Go field | Default | What it regulates |
+| ---- | -------- | ------- | ----------------- |
 | `D_ack` | `AckDeadlineBlocks` | `1` | Stamp slack after `h_req`. An ack is late iff `observed_height > h_req + D_ack`. The turn **degrades** when that window has closed and counting acks `< Q`. Missing acks are not fraud. |
-| `T_idle` | `IdleBlocks` | `3` (`3 · K_hb`) | How long a **host** may see no user contact before it arms close-ready. Reason is **silence only** — a missing ack never arms. |
 | `D` | `DeltaBlocks` | `2` | How far a host’s oracle tip may sit from the heartbeat’s `h_ref` and still report `SYNCED`. Farther → `CATCHING_UP`. Strong escalation on that value is Phase F; E only reports it. |
 
-`DeltaBlocks` and `MinRoundsPerBlock` are **not** on the snapshot. They stay
-the compiled defaults (`DeltaBlocks` until Strong / `StrongPolicy.D` lands).
+`DeltaBlocks` is **not** on the snapshot; it stays the compiled default until
+Strong / `StrongPolicy.D` lands.
 
 ### Timeline (defaults)
 
 ```
-h_last     due (request + ack rounds)     stamp window closes          arm (if silent)
-   |            |                              |                       |
-   |← K_hb=1 →|  D_ack=1                       |                       |
-   |←———————— T_idle = 3 —————————————————————————————————————————————→|
-  100         101                            102                     103
+turnover          due: open turn        give up on turn            arm (if still silent)
+   |                  |                       |                            |
+   |←— Interval 3s —→|                        |                            |
+   |                  |←— TurnTimeout 3s —→|                               |
+   |←———————————————— T_idle = 4 × Interval = 12s ——————————————————————→|
+  t=0                t=3s                   t=6s                        t=12s
 ```
 
-At height 101 the user opens the request span and keeps composing diffs
-(`MinRoundsPerBlock = 2`) so acks can land without waiting for 102. An ack
-that still stamps `≤ 102` counts. One lost cycle occupies `K_hb + D_ack = 2`
-blocks, which is why `T_idle` must be strictly larger.
+At `t = 3s` the user opens the request span and keeps composing ack-carrying
+diffs until `Q` acks land — no waiting for a block. One lost cycle occupies
+`Interval + TurnTimeout = 6s`, which is why `T_idle` must be strictly larger:
+a host must never arm on a single missed turnover. With the shipped `4 ×`
+multiple a host tolerates two lost cycles before it arms.
 
 ### Constraints (`Validate`)
 
 | Rule | Why |
 | ---- | --- |
-| `MinRoundsPerBlock ≥ 2` | The cycle is request + ack-carrying round(s). |
-| `T_idle > K_hb + D_ack` | One lost heartbeat cycle must not arm a host. |
-| `K_hb · block_time ≤ F / 2` | Two cycles must fit inside freshness `F` (default 60s), so a height claim does not go stale between turns. |
+| `T_idle > Interval + TurnTimeout` | One lost turnover must not arm a host. |
+| `2 · Interval ≤ F` | Two turnovers must fit inside freshness `F` (default 60s), so a height claim does not go stale between them. |
 
-`Validate` uses `DefaultAssumedBlockTime` (6s) and `DefaultOriginatorFreshness`
-(`F` = 60s) when those arguments are zero. Shipped defaults pass:
-`1 · 6s = 6s ≤ 30s`, `2 ≥ 2`, and `3 > 1 + 1`.
+`Validate` uses `DefaultOriginatorFreshness` (`F` = 60s) when the argument is
+zero. Shipped defaults pass: `12s > 3s + 3s` and `2 · 3s = 6s ≤ 60s`.
 
 ---
 
@@ -121,7 +159,7 @@ past `D_ack`. Probes fetch a height; they never assign blame. Wired in E5.
 | Spec | Go field | Default | What it regulates |
 | ---- | -------- | ------- | ----------------- |
 | `δ_probe` | `Stagger` | `1s` | Delay before host `V` probes missing slot `j`: `((V_slot − j) mod slots_num) · δ_probe`. Late probers often see the ack already in `Diff` and skip. |
-| `R_max` | `MaxProbesPerWindow` | `0` → use `slots_num` | Cap on probes per host per `K_hb` window. Stops a dead slot from becoming a flood. |
+| `R_max` | `MaxProbesPerWindow` | `0` → use `slots_num` | Cap on probes per host per `Interval` of wall time. A prober that is missing acks is by definition learning no heights, so only elapsed time can refill its budget. Stops a dead slot from becoming a flood. |
 
 Snapshot fields: `ProbeStaggerMs`, `MaxProbesPerWindow`. Zero = compiled default.
 
@@ -129,18 +167,22 @@ Snapshot fields: `ProbeStaggerMs`, `MaxProbesPerWindow`. Zero = compiled default
 
 ## Snapshot overlay (`HeightSyncParams`)
 
-Carried on NodeManager `RuntimeConfig` fields 13–17. Mapped 1:1 onto
+Carried on NodeManager `RuntimeConfig` fields 13–18. Mapped 1:1 onto
 `Snapshot.HeightSync`.
 
 | Proto field | Snapshot field | Overlays |
 | ----------- | -------------- | -------- |
-| `height_sync_interval_blocks` | `IntervalBlocks` | `K_hb` |
-| `height_sync_ack_deadline_blocks` | `AckDeadlineBlocks` | `D_ack` |
-| `height_sync_idle_blocks` | `IdleBlocks` | `T_idle` |
-| `height_sync_probe_stagger_ms` | `ProbeStaggerMs` | `δ_probe` |
-| `height_sync_max_probes_per_window` | `MaxProbesPerWindow` | `R_max` |
+| `height_sync_interval_ms` (13) | `IntervalMs` | `Interval` |
+| `height_sync_ack_deadline_blocks` (14) | `AckDeadlineBlocks` | `D_ack` |
+| `height_sync_idle_timeout_ms` (15) | `IdleTimeoutMs` | `T_idle` |
+| `height_sync_probe_stagger_ms` (16) | `ProbeStaggerMs` | `δ_probe` |
+| `height_sync_max_probes_per_window` (17) | `MaxProbesPerWindow` | `R_max` |
+| `height_sync_turn_timeout_ms` (18) | `TurnTimeoutMs` | `TurnTimeout` |
 
-`MinRoundsPerBlock` has no proto field. Snapshot overlay never changes it.
+Field numbers 13 and 15 kept their slots and changed name and unit. Inference
+chain does not publish any of them yet, so no deployed sender is affected.
+
+`DeltaBlocks` has no proto field. Snapshot overlay never changes it.
 
 Testenv can override in-process via `SetSnapshot` with these fields set.
 
@@ -153,7 +195,7 @@ plane (Phases A–D) and the log plane reuses them.
 
 | Spec | Default | What it regulates |
 | ---- | ------- | ----------------- |
-| `K` | `8` (scheduler; testenv often `10`) | **Nonce** cadence of Anchor envelopes. Independent of `K_hb`. |
+| `K` | `8` (scheduler; testenv often `10`) | **Nonce** cadence of Anchor envelopes. Independent of the heartbeat `Interval`. |
 | `slots_num` | escrow group size | Width of every turn (cadence, forced, heartbeat). `executor(n) = n mod slots_num`, so any consecutive span of this length addresses every slot once. |
 | `Q` | `ceil(2/3 × N_hosts)` | Quorum for `(C-quorum)` **and** `(C-turn)`. There is no second quorum knob. `ORACLE_UNAVAILABLE` acks do not count. |
 | `F` | `60s` | Originator freshness. Carry-forward older than `F` is `stale_origin`. Also the window used by `peer_seen` bit expiry. |

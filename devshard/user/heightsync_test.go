@@ -123,7 +123,7 @@ func setupHeartbeatSession(t *testing.T, height *uint64) *Session {
 	return setupHeartbeatSessionWithOracles(t, height, nil)
 }
 
-func setupHeartbeatSessionWithOracles(t *testing.T, height *uint64, oracles []blocks.BlockOracle) *Session {
+func setupHeartbeatSessionWithOracles(t *testing.T, height *uint64, oracles []blocks.BlockOracle, extra ...SessionOption) *Session {
 	t.Helper()
 	const numHosts = 3
 	hosts := make([]*signing.Secp256k1Signer, numHosts)
@@ -148,7 +148,7 @@ func setupHeartbeatSessionWithOracles(t *testing.T, height *uint64, oracles []bl
 	}
 
 	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
-	session, err := NewSession(userSM, user, "escrow-1", group, clients, verifier,
+	opts := []SessionOption{
 		WithHeightSyncCadence(10, uint64(numHosts)),
 		WithObservedHeight(func() (uint64, []byte, bool) {
 			h := *height
@@ -157,7 +157,9 @@ func setupHeartbeatSessionWithOracles(t *testing.T, height *uint64, oracles []bl
 			}
 			return h, []byte{0xaa}, true
 		}),
-	)
+	}
+	session, err := NewSession(userSM, user, "escrow-1", group, clients, verifier,
+		append(opts, extra...)...)
 	require.NoError(t, err)
 	return session
 }
@@ -237,7 +239,7 @@ func TestHeartbeat_SpanDispatchAddressesEverySlot(t *testing.T) {
 	for i := 1; i < slots; i++ {
 		require.Equal(t, 0, countHeartbeatForce(span[i]))
 	}
-	// MinRoundsPerBlock=2 → one ack-flush nonce after the span.
+	// The span awaited no ack, so one ack-carrying nonce is always owed after it.
 	require.GreaterOrEqual(t, len(diffs), slots+1)
 }
 
@@ -329,6 +331,141 @@ func TestHeartbeat_UnavailableAcksDoNotCountAndDegrade(t *testing.T) {
 	require.NoError(t, session.MaybeHeartbeat(context.Background()))
 	rec = session.HeartbeatTurnTracker().Record(1)
 	require.Equal(t, heightsync.TurnDegraded, rec.State, "H7: < Q counting acks past D_ack")
+}
+
+func TestHeartbeat_BusySessionWithStampsEmitsNone(t *testing.T) {
+	// H2: executor-stamped receipts from a quorum of slots are a full height-sync
+	// turnover, so the log plane owes no heartbeat.
+	var height uint64 = 100
+	oracles := make([]blocks.BlockOracle, 3)
+	for i := range oracles {
+		oracles[i] = &sessionOracle{hash: []byte{0xaa}}
+		oracles[i].(*sessionOracle).height.Store(100)
+	}
+	session := setupHeartbeatSessionWithOracles(t, &height, oracles)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	}
+	_, err := session.SendInference(ctx, params)
+	require.NoError(t, err)
+	_, err = session.SendInference(ctx, params)
+	require.NoError(t, err)
+
+	require.NoError(t, session.MaybeHeartbeat(ctx))
+	require.Zero(t, countHeartbeats(session.Diffs()), "H2: stamped inference traffic emits zero heartbeats")
+	require.Equal(t, uint64(100), session.HeartbeatTurnTracker().LastCompletedHeight())
+}
+
+func TestHeartbeat_SustainedInferenceFlowNeverHeartbeats(t *testing.T) {
+	// H2 over time. BusySessionWithStampsEmitsNone only checks one instant, so it
+	// would still pass if the cadence never fired at all in this fixture. Here
+	// inference keeps flowing while the clock crosses Interval repeatedly: every
+	// crossing is a due check that must find a fresh turnover and emit nothing.
+	// The tail then stops the traffic and asserts a heartbeat *does* appear, which
+	// is what makes the zero above meaningful rather than vacuous.
+	var height uint64 = 100
+	oracles := make([]blocks.BlockOracle, 3)
+	for i := range oracles {
+		oracles[i] = &sessionOracle{hash: []byte{0xaa}}
+		oracles[i].(*sessionOracle).height.Store(100)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	session := setupHeartbeatSessionWithOracles(t, &height, oracles,
+		WithHeartbeatClock(func() time.Time { return now }))
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	}
+
+	// Each round turns the cadence over, then lets almost a full Interval pass
+	// before the due check. Over four rounds the clock advances well past several
+	// Intervals, so this is a genuinely time-driven flow and not one instant.
+	gap := heightsync.DefaultHeartbeatInterval - time.Second
+	for round := 0; round < 4; round++ {
+		// Q = 2 of 3 slots, so a turnover needs two distinct executors.
+		for i := 0; i < 2; i++ {
+			_, err := session.SendInference(ctx, params)
+			require.NoError(t, err)
+		}
+		now = now.Add(gap)
+		require.NoError(t, session.MaybeHeartbeat(ctx))
+		require.Zero(t, countHeartbeats(session.Diffs()),
+			"round %d: inference traffic discharges the cadence, so no heartbeat is owed", round)
+	}
+	require.Greater(t, now.Sub(time.Unix(1_700_000_000, 0)), 2*heightsync.DefaultHeartbeatInterval,
+		"sanity: the run must span more than one Interval or it proves nothing about time")
+	require.GreaterOrEqual(t, session.HeartbeatTurnovers(), 4,
+		"each round's executor stamps must register as a turnover")
+
+	// Traffic stops: the next crossing has nothing to ride and must heartbeat.
+	now = now.Add(heightsync.DefaultHeartbeatInterval + time.Second)
+	require.NoError(t, session.MaybeHeartbeat(ctx))
+	require.NotZero(t, countHeartbeats(session.Diffs()),
+		"a silent Interval must still open a turn — otherwise the zeros above prove nothing")
+}
+
+func TestHeartbeat_UserOwnStampIsNotATurnover(t *testing.T) {
+	// Without host oracles the executors return no stamp, so the only height in
+	// the log is the user's own claim. That proves no round-trip, so the cadence
+	// still owes a heartbeat — the gap the old block-based h_last check missed.
+	var height uint64 = 100
+	session := setupHeartbeatSession(t, &height)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	}
+	_, err := session.SendInference(ctx, params)
+	require.NoError(t, err)
+
+	require.NoError(t, session.MaybeHeartbeat(ctx))
+	require.NotZero(t, countHeartbeats(session.Diffs()),
+		"a self-signed stamp must not discharge the obligation")
+}
+
+func TestHeartbeat_QuietSessionWaitsOutIntervalBetweenTurns(t *testing.T) {
+	// The cadence is wall clock: a second turn opens because Interval elapsed,
+	// not because a block arrived. Height is held constant throughout.
+	var height uint64 = 100
+	oracles := make([]blocks.BlockOracle, 3)
+	for i := range oracles {
+		oracles[i] = &sessionOracle{hash: []byte{0xaa}}
+		oracles[i].(*sessionOracle).height.Store(100)
+	}
+	now := time.Unix(1_700_000_000, 0)
+	session := setupHeartbeatSessionWithOracles(t, &height, oracles,
+		WithHeartbeatClock(func() time.Time { return now }))
+	ctx := context.Background()
+
+	require.NoError(t, session.MaybeHeartbeat(ctx))
+	require.Equal(t, heightsync.TurnComplete, session.HeartbeatTurnTracker().Record(1).State)
+	turns := countHeartbeats(session.Diffs())
+	require.NotZero(t, turns)
+
+	require.NoError(t, session.MaybeHeartbeat(ctx))
+	require.Equal(t, turns, countHeartbeats(session.Diffs()),
+		"inside Interval the turnover already discharged the obligation")
+
+	now = now.Add(heightsync.DefaultHeartbeatInterval)
+	require.NoError(t, session.MaybeHeartbeat(ctx))
+	require.Greater(t, countHeartbeats(session.Diffs()), turns,
+		"Interval elapsed at an unchanged height still opens a turn")
+	require.NotNil(t, session.HeartbeatTurnTracker().Record(2))
+}
+
+func countHeartbeats(diffs []types.Diff) int {
+	n := 0
+	for _, d := range diffs {
+		for _, tx := range d.Txs {
+			if tx.GetHeartbeat() != nil {
+				n++
+			}
+		}
+	}
+	return n
 }
 
 func ackSigner(s *Session, slot uint32) string {

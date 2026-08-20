@@ -286,10 +286,9 @@ func checkL0(nonce uint64, txs []*types.DevshardTx, hbs []heartbeatRef, acks []a
 }
 
 func checkL0b(txs []*types.DevshardTx) error {
-	// E7 stamps on Start/Confirm/Finish are not on the wire yet. Presence is
-	// keyed on hash; unstamped legs are skipped (H38).
+	// Presence is keyed on hash; unstamped legs are skipped (H38).
 	type infStamps struct {
-		start, confirm, finish uint64
+		start, confirm, finish          uint64
 		hasStart, hasConfirm, hasFinish bool
 	}
 	byID := make(map[uint64]*infStamps)
@@ -338,8 +337,6 @@ func checkL0b(txs []*types.DevshardTx) error {
 	return nil
 }
 
-// inferenceStamp is a hook for E7. Until those proto fields exist, nothing
-// reports a present stamp and L0b is a no-op.
 func inferenceStamp(msg any) (uint64, bool) {
 	type stamped interface {
 		GetObservedHeight() uint64

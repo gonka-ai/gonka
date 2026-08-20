@@ -66,8 +66,8 @@ Section 1 is **emitted only when needed**:
 
 - **Sync turn** — the standard cadence: every `K` nonces, a window of
   `slots_num` consecutive nonces carries Anchor; in between, Omit.
-- **Heartbeat turn** — the **mandatory** cadence in *mainnet blocks*
-  (`K_hb`): when nonce traffic would leave the session quiet, the user
+- **Heartbeat turn** — the **mandatory** cadence in *wall-clock time*
+  (`Interval`): when nonce traffic would leave the session quiet, the user
   MUST open a `slots_num`-wide turn whose entries land **in `Diff`** as
   signed `observed_height` stamps (§10). This is the liveness backbone
   of the protocol, not an optimization.
@@ -186,15 +186,17 @@ As the result we provide API at devshardd and devshardctl that gives latest heig
 | **Carrier** | Any sender that forwards a section it did not originate (typically the user). Identified by the session signature. |
 | **`local_aligned`** | The receiver's view of mainnet height (its own follower, or its peer-tip cache for courier users). |
 | **`IsStrictlyConfirmed(h)`** | `{confirmed, pending, stale}` predicate consumed by cPoC. |
-| **Heartbeat turn** | A `slots_num`-wide turn opened by the **height** cadence `K_hb` instead of the nonce cadence `K`; carries `MsgHeartbeat` and obliges every slot to answer `MsgHeightAck`. §10. |
+| **Heartbeat turn** | A `slots_num`-wide turn opened by the **time** cadence `Interval` instead of the nonce cadence `K`; carries `MsgHeartbeat` and obliges every slot to answer `MsgHeightAck`. §10. |
+| **Turnover** | `Q` distinct **host-signed** height claims landing in the log — from `MsgHeightAck` or from executor stamps on ordinary inference traffic. A turnover is what discharges the heartbeat obligation; the user's own stamp does not, being self-signed. §10.3. |
 | **`observed_height`** | Diff-resident, signer-bound scalar height claim. The user signs it (diff signature) on `MsgHeartbeat`; a host signs it on `MsgHeightAck`. Distinct from `HeightSyncSection.mainnet_height`, which is transport-level and unsigned on the request leg. |
 | **`turn_seq`** | Monotonic per-escrow counter identifying a heartbeat turn; the join key for requests, acks, sync vectors, and repair probes. |
 | **Sync vector** | The user's signed per-slot report of ack status for the previous turn (`MsgHeartbeat.sync_vector`). Early visibility of who the user claims answered; only contradictions against `Diff` itself are attributable (§11.1). |
 | **Repair probe** | Unicast host→host query when a peer's ack is missing from `Diff`. Fetches that peer's current height and liveness. Does **not** attribute the omission to host vs sequencer. §11.3. |
 | **Close-ready** | Local, **unsignalled** host flag meaning "I would vote `AGREE` on a `USER_TIMEOUT` finalization". §12. |
-| **`K_hb`** | Heartbeat cadence in mainnet blocks. Default `4`; constraint `K_hb · block_time ≤ F / 2`. |
-| **`D_ack`** | Ack-tail deadline in mainnet blocks after a heartbeat request nonce. Default `2`. |
-| **`T_idle`** | User-silence budget in mainnet blocks before a host arms close-ready. Default `3 · K_hb`; constraint `T_idle > K_hb + D_ack`. |
+| **`Interval`** | Heartbeat cadence in **milliseconds**: the longest gap allowed between turnovers. Default `3 s`; constraint `2 · Interval ≤ F`. |
+| **`TurnTimeout`** | How long the user waits on one open turn before abandoning it. Default `Interval`. |
+| **`D_ack`** | Ack-tail deadline in mainnet blocks after a heartbeat request nonce. Default `2`. Stays in blocks: it judges *logged* heights, so it must replay identically. |
+| **`T_idle`** | User-silence budget in **milliseconds** before a host arms close-ready. Default `4 · Interval` = `12 s`; constraint `T_idle > Interval + TurnTimeout`. |
 
 ---
 
@@ -234,7 +236,7 @@ flowchart LR
         ARM[close-ready flag<br/>no vote emitted]
     end
 
-    TX_U -- "opens heartbeat turn<br/>K_hb blocks" --> HB
+    TX_U -- "opens heartbeat turn<br/>every Interval ms" --> HB
     HB --> RX_H
     RX_H -- "mempool" --> ACK
     ACK -- "user appends" --> TURN
@@ -469,19 +471,40 @@ turn, only answer one. This is not a trust concession — it is the reason
 §12 exists: the user's obligation is enforced by **hosts arming to close
 the escrow**, not by a slashable in-session verdict.
 
-**Obligation.** Let `h_last` be the mainnet height at which the last
-turn of any kind (cadence §9, forced §9, or heartbeat) **completed**
-(§10.7). At local height `h`:
+**Obligation.** Let `t_last` be the instant of the last **turnover**: the
+moment `Q` distinct host-signed height claims last landed, whether from
+`MsgHeightAck` (§10.4) or from executor stamps on ordinary inference
+traffic (§10.5). Then:
 
-> If `h − h_last > K_hb`, the user MUST open a heartbeat turn before
-> `h_last + K_hb + D_ack`.
+> If `now − t_last > Interval`, the user MUST open a heartbeat turn.
 
-**Real traffic discharges the obligation for free.** Any turn that
-completes — including an ordinary §9 cadence turn, and including
-inference messages that carry `observed_height` (§10.5) — advances
-`h_last`. Heartbeats are emitted *only* when the session would otherwise
-be quiet, exactly as in cPoC C14's "conditional on absence of real
-traffic" rule. A busy escrow pays nothing for this section.
+**Why time and not blocks.** The obvious formulation — "if
+`h − h_last > K_hb`, open a turn" — is circular for exactly the session
+it is meant to protect. A courier user has no follower of its own; its
+only source of mainnet height *is* a completed height sync. So a quiet
+user cannot observe `h` advancing until it heartbeats, and it will not
+heartbeat until it observes `h` advance. The cadence deadlocks precisely
+when the session is quiet. Wall-clock time is the one clock every party
+holds without asking anyone, so the *schedule* is in milliseconds.
+Everything that gets **judged** stays in blocks — `D_ack` lateness,
+`|Δ| > D`, monotonicity — because those must replay identically from the
+log, and a verifier replaying history has no access to the producer's
+clock.
+
+**Real traffic discharges the obligation for free.** Any turnover counts
+— including an ordinary §9 cadence turn, and including inference
+messages that carry a host's `observed_height` (§10.5). Heartbeats are
+emitted *only* when the session would otherwise be quiet, exactly as in
+cPoC C14's "conditional on absence of real traffic" rule. A busy escrow
+pays nothing for this section.
+
+**A stalled turn must not silence the cadence.** A turnover needs `Q`
+distinct hosts, so one unreachable slot can leave a turn open forever. The
+user therefore abandons an open turn after `TurnTimeout` and opens the
+next one, and also gives up as soon as the log settles the turn as
+`degraded`. Abandonment is a producer-side scheduling decision only: the
+`SyncTurnRecord` still degrades from the log, on logged heights, so the
+record stays replayable.
 
 **Wire compatibility with forced turns.** The first nonce of a heartbeat
 turn SHOULD also carry `MsgForceHeightSyncTurn{reason = "heartbeat"}`.
@@ -903,7 +926,7 @@ bounded by construction:
 | ----- | ----- |
 | Healthy path cost | **zero** — probes fire only for a slot missing past `D_ack` |
 | Per prober, per `(turn_seq, slot)` | at most **one** probe |
-| Per prober, per `K_hb` window | at most `R_max` probes (default `slots_num`) |
+| Per prober, per `Interval` window | at most `R_max` probes (default `slots_num`) |
 | Stagger before probing | `((V_slot − j) mod slots_num) · δ_probe` (default `δ_probe = 1 s`) so late probers usually find the ack already in `Diff` and skip |
 | Repeated failure to the same peer | exponential backoff |
 | A prober already armed close-ready (§12) | stops probing — the escrow is closing anyway |
@@ -923,17 +946,28 @@ A host has no way to force a silent user to sequence anything: only the
 user appends to `Diff`. The protocol therefore makes user silence
 **expensive** instead of trying to make it impossible.
 
-> Let `last_signal_height(V)` be the mainnet height at which `V` last
-> observed the user act toward it — any user-signed diff applied, any
-> heartbeat request received, or any of `V`'s own mempool txs included.
-> When `h_now − last_signal_height(V) > T_idle`, `V` **arms
-> close-ready**.
+> Let `last_signal_at(V)` be the instant at which `V` last observed the
+> user act toward it — any user-signed diff applied, any heartbeat request
+> received, or any of `V`'s own mempool txs included. When
+> `now − last_signal_at(V) > T_idle`, `V` **arms close-ready**. `V` also
+> records `last_signal_height(V)`, the mainnet height at that moment, for
+> the evidence item.
+
+**Silence is timed, not counted in blocks.** A host that has heard
+nothing from the user has usually also stopped seeing mainnet height
+advance — the same oracle outage or partition takes out both — so
+counting *blocks* of silence can wait forever on exactly the failure it
+is meant to detect. Elapsed time always advances, and it needs no
+counterparty. The price is that `silent_for` is one host's account of the
+gap rather than a value the roster can recompute, which is why arming
+grants only *eligibility* to vote (§12.2) and closing still needs
+finalization's `2f + 1` independently armed hosts.
 
 ```mermaid
 stateDiagram-v2
     direction LR
     [*] --> Disarmed
-    Disarmed --> Armed: silence since last_signal_height exceeds T_idle
+    Disarmed --> Armed: silence since last_signal_at exceeds T_idle
     Armed --> Disarmed: any user-signed diff, heartbeat, or ack inclusion
     Armed --> Armed: silence continues — no message emitted, ever
     note right of Armed
@@ -956,7 +990,8 @@ and slashes nobody. It has exactly two effects, both deferred:
    serving, so from its view the timeout claim is false.
 2. **Evidence supply.** Arming materialises exactly the per-host
    evidence `USER_TIMEOUT` requires: `(slot, last_signal_height,
-   armed_at_height, last complete turn_seq, degraded turns since)`.
+   armed_at_height, last complete turn_seq, degraded turns since)`, plus
+   the local timing account `(last_signal_at, armed_at, silent_for)`.
 
 Why not vote at arming time? Three reasons, and each is load-bearing:
 
@@ -974,12 +1009,13 @@ purpose of pre-computing the flag.
 ### 12.3 Arming is level-triggered, not monotone
 
 Unlike `confirmed` in §17, arming is **not** monotone: a single user
-contact disarms `V` and resets `last_signal_height`. This is correct — a
+contact disarms `V` and resets `last_signal_at`. This is correct — a
 user that heartbeats is a user that is alive, and there is no timeout to
 claim. `V` retains the last armed interval `[armed_at_height,
-disarmed_at_height)` as evidence of the gap.
+disarmed_at_height)`, and its wall-clock counterpart, as evidence of the
+gap.
 
-**Named non-defence.** A user that heartbeats at exactly `T_idle − 1`
+**Named non-defence.** A user that heartbeats just inside `T_idle`
 forever, while never submitting real inference, keeps every host
 disarmed. That is *not* a height-sync failure — heights stay aligned and
 the log stays attributable. It is an idle-escrow economics question
@@ -996,14 +1032,15 @@ type CloseReadyView interface {
 
     // TimeoutEvidence returns the USER_TIMEOUT evidence item for this host:
     // last user-signed observed_height, last_signal_height, last complete
-    // turn, and the degraded-turn list from §10.7 (context, not fraud).
+    // turn, the degraded-turn list from §10.7 (context, not fraud), and
+    // this host's timing account of the gap.
     TimeoutEvidence() UserTimeoutEvidence
 }
 ```
 
 `ArmReason` is **silence only**: no user-signed diff applied, no
 heartbeat received, and none of this host's mempool txs included, for
-more than `T_idle` blocks. Degraded turns are attached as **context** in
+longer than `T_idle`. Degraded turns are attached as **context** in
 `TimeoutEvidence`, not as a separate reason and not as fraud.
 
 **Named non-attribution.** A user that drops one host's acks while still
@@ -1049,13 +1086,15 @@ basis. If the user stops contacting the dropped host, that host arms on
   field 8 (`sender_signature`) before sending.
 - Producer never sets `OriginatorSenderID = user_address`; that field
   reflects the host that signed the cached blob.
-- **Heartbeat obligation (§10.3).** Track `h_last` (last completed turn).
-  When `h_now − h_last > K_hb`, open a heartbeat turn: dispatch
+- **Heartbeat obligation (§10.3).** Track `t_last` (last turnover).
+  When `now − t_last > Interval`, open a heartbeat turn: dispatch
   `slots_num` consecutive nonces carrying `MsgHeartbeat`, **without
   awaiting any ack** (§10.6), each envelope carrying an Anchor. Include
   every received `MsgHeightAck` in the next composed diff; report the
-  previous turn's per-slot status in `sync_vector` (§11.1). Skip the turn
-  entirely when real traffic already discharged the obligation.
+  previous turn's per-slot status in `sync_vector` (§11.1). Keep composing
+  ack-carrying diffs until the turn turns over, bounded by `slots_num + 1`
+  rounds, and abandon it after `TurnTimeout`. Skip the turn entirely when
+  real traffic already discharged the obligation.
 
 ---
 
@@ -1202,7 +1241,7 @@ freshness has a cryptographic floor rather than a clock:
 | ----- | --------- | ----------- |
 | Cannot be **future-dated** | `observed_block_hash` cannot be known before block `H` exists, so the pair is an unforgeable lower bound on signing time; L6 confirms it | yes |
 | Cannot **regress** | L0 and L0b | yes |
-| Cannot **stall** while nonces advance | heartbeat obligation `h − h_last > K_hb` (§10.3), computed from log state | yes |
+| Cannot **stall** while nonces advance | heartbeat obligation `now − t_last > Interval` (§10.3) | no — the schedule is the producer's clock, so it is enforced live by hosts arming on `T_idle`; what replays is which turns completed at which heights |
 | Cannot be **stale** relative to a live peer | L5a at admission | no — local, so it marks rather than invalidates |
 | Silence after the last stamp | close-ready arming on `T_idle` (§12) | yes |
 
@@ -1211,7 +1250,8 @@ per-diff freshness test — freshness is relative to a clock the log does
 not contain. It is: the pair proves a lower bound on when it was signed,
 monotonicity forbids regression, and the cadence bounds how far nonces can
 advance without a new stamp, giving the log a logical clock of resolution
-`K_hb`. “Recent relative to *now*” stays a live, local judgement.
+`Interval`. “Recent relative to *now*” stays a live, local judgement — and
+so, now, does the cadence deadline itself.
 
 ---
 
@@ -1605,15 +1645,15 @@ the test scenario that proves it (full catalog in
 | 10 | Host equivocates across sessions (`(H, hash_A)` then `(H, hash_B)`) | Per-`V` audit ring + dispute layer cross-session check | Audit-ring tests; full cross-session detection deferred to dispute plan |
 | 11 | User omits Anchor inside a forced sync turn | Hosts MUST still emit Anchor on responses; missing user Anchor recorded as `force_request_anchor_missing` sentinel for dispute | `TestHeightSyncAnchor_E2E_ForcedSyncTurn_HostResponsesAnchorEvenIfUserOmits` |
 | 12 | Replay an old verified `LightBlock` | Recency gate `local_tip − max_lag_blocks` → `VALID_STALE`; never advances aligned height | Planned (Strong recency) |
-| 14 | **User never heartbeats** on a quiet session, so heights never align and cPoC bands stay wide | Heartbeat is mandatory in *height* cadence (§10.3); after `T_idle` every served-nothing host arms close-ready (§12) and the escrow is closed via finalization `USER_TIMEOUT`. No in-session vote, so no hot-path traffic. | Planned: `TestHeartbeat_QuietSession_ArmsCloseReady` |
+| 14 | **User never heartbeats** on a quiet session, so heights never align and cPoC bands stay wide | Heartbeat is mandatory on a wall-clock cadence (§10.3); after `T_idle` every served-nothing host arms close-ready (§12) and the escrow is closed via finalization `USER_TIMEOUT`. No in-session vote, so no hot-path traffic. | Planned: `TestHeartbeat_QuietSession_ArmsCloseReady` |
 | 15 | **User omits a host's `MsgHeightAck`** (or the host never sent one) | `Diff` cannot tell which. Repair probe fetches the peer's height if reachable (§11.3) so alignment continues. **No** `USER_CHEATING`: a host can sign an ack at probe time that it never sent to the sequencer. Close-ready still requires user **silence** (`T_idle`), not a missing ack. | Planned: `TestRepairProbe_HeightNoBlame` |
 | 16 | User's `sync_vector` says `ACKED(j, h, n)` but `Diff[n]` has no ack | Vector is covered by the user's diff signature; contradiction is against the log the user also signed (§11.1). `MISSING` with no ack is inconclusive even if a probe later returns a signed height. | Planned: `TestSyncVector_AckedContradictsLog` |
 | 17 | Host never acks a heartbeat (down, oracle broken, refusing) | Turn goes `degraded` identically for every verifier (§10.7); probe returns `HEIGHT` or `UNREACHABLE`. Either way the omission stays unattributed. | Planned: `TestRepairProbe_UnreachableOrHeight` |
 | 18 | Host signs an ack whose `observed_height` differs from its own response-leg Anchor | L4 (§14) — self-contradiction under one identity ⇒ `DISPUTE_ORIGINATOR` **on sight**, no oracle lookup | Planned: `TestHeightAck_EnvelopeBindingMismatch` |
 | 19 | Host reports `SYNCED` while its oracle is stale, to look healthy | Its `(H, hash)` fails L6 oracle reconciliation once the verifier's follower advances ⇒ existing `DEFERRED_FAIL` path; honest alternative (`ORACLE_STALE` / `CATCHING_UP`) carries no penalty, so lying is strictly worse | Planned: `TestHeightAck_FalseSyncedDeferredFail` |
-| 20 | **Repair-probe amplification** — a host floods peers with probes, or all `N−1` hosts probe one dead slot at once | Budgets in §11.4: one probe per `(turn, slot)`, `R_max` per `K_hb`, deterministic stagger so late probers find the ack in `Diff` and skip, backoff, zero probes in the healthy path, and armed hosts stop probing | Planned: `TestRepairProbe_BudgetAndStagger` |
+| 20 | **Repair-probe amplification** — a host floods peers with probes, or all `N−1` hosts probe one dead slot at once | Budgets in §11.4: one probe per `(turn, slot)`, `R_max` per `Interval`, deterministic stagger so late probers find the ack in `Diff` and skip, backoff, zero probes in the healthy path, and armed hosts stop probing | Planned: `TestRepairProbe_BudgetAndStagger` |
 | 21 | **Partitioned minority** arms close-ready and tries to close a healthy escrow | Arming emits nothing (§12.2). Closing needs finalization's `2f + 1`, which the minority cannot reach, and unarmed hosts MUST vote `REJECT` on `USER_TIMEOUT`. | Planned: `TestCloseReady_MinorityCannotClose` |
-| 22 | User drip-feeds late acks to make a degraded turn look complete and reset the arming clock | Late acks are admitted for *height* purposes only and tagged `late`; they never clear a turn's `degraded` mark (§10.6), and arming keys on `last_signal_height` toward **this** host, not on turn state | Planned: `TestLateAck_DoesNotClearDegraded` |
+| 22 | User drip-feeds late acks to make a degraded turn look complete and reset the arming clock | Late acks are admitted for *height* purposes only and tagged `late`; they never clear a turn's `degraded` mark (§10.6), and arming keys on contact toward **this** host, not on turn state | Planned: `TestLateAck_DoesNotClearDegraded` |
 | 23 | **Sequencer rewrites a host's stamp on `MsgConfirmStart`**, attributing a height the executor never signed | `observed_height` / `observed_block_hash` are inside `ExecutorReceiptContent` and copied into the reconstructed content before recovery (§10.5.1), so any edit fails `executor_sig`. A deployment that stamps the tx without mirroring the content MUST NOT treat the height as a host attestation | Planned: `TestConfirmStart_TamperedObservedHeightFailsExecutorSig` |
 | 24 | Stamp regression — a signer writes a height below one already in the log, to widen a band or backdate a duration | L0 across nonces and L0b within one inference; both pure functions of `Diff`, so every verifier rejects identically | Planned: `TestLogPlane_HeightRegression` |
 | 25 | Pre-signing a **future** height to look fresher than it is | `observed_block_hash` for an unmined height cannot be produced; L6 never confirms the pair and eventually returns `DEFERRED_FAIL` | Planned: `TestLogPlane_FutureDatedStampDeferredFail` |
@@ -1627,7 +1667,7 @@ the test scenario that proves it (full catalog in
 - An adversary who poisons the host's local block oracle — block
   oracle has its own pinned validator-set verifier
   (`blockoracle/verifier`); height sync does not re-validate.
-- A user that heartbeats at exactly `T_idle − 1` forever while never
+- A user that heartbeats just inside `T_idle` forever while never
   submitting real inference. Heights stay aligned and the log stays
   attributable, so this is not a height-sync failure; it is idle-escrow
   economics (lease cost, `EPOCH_CHANGE_IMMINENT`). Named in §12.3 and
@@ -1650,11 +1690,12 @@ the test scenario that proves it (full catalog in
 | Strong recency | off (`max_lag_blocks = 0`) | follow-on hardening |
 | Confirmation rule | `(C-quorum)` | `ConfirmationConfig.Rule` (`Quorum`/`Turn`/`Strong`/`Hybrid`) |
 | `StaleAfter` (block oracle client) | `10 s` client default; testenv: `block_time + block_interval_delta + 1s` (floor `10s`) | `MOCKDAPI_STALE_AFTER` env (compose / devshardd-testenv) |
-| `K_hb` (heartbeat cadence, blocks) | `4`; constraint `K_hb · block_time ≤ F / 2` so two heartbeats always fit inside the freshness budget | chain param; `HeartbeatConfig.IntervalBlocks` |
+| `Interval` (heartbeat cadence, **milliseconds**) | `3 s`; constraint `2 · Interval ≤ F` so two turnovers always fit inside the freshness budget | chain param; `HeartbeatConfig.Interval` |
+| `TurnTimeout` (patience for one open turn, **milliseconds**) | `Interval` = `3 s`; after this the producer abandons the turn so one dead slot cannot silence the cadence | chain param; `HeartbeatConfig.TurnTimeout` |
 | `D_ack` (ack-tail deadline, blocks) | `2` — matches cPoC `timeout_skip_gossip` and `W_seal` | chain param; `HeartbeatConfig.AckDeadlineBlocks` |
-| `T_idle` (close-ready arming, blocks) | `3 · K_hb` = `12`; constraint `T_idle > K_hb + D_ack` so one lost turn never arms a host | chain param; `HeartbeatConfig.IdleBlocks` |
+| `T_idle` (close-ready arming, **milliseconds**) | `4 · Interval` = `12 s`; constraint `T_idle > Interval + TurnTimeout` so one lost turnover never arms a host | chain param; `HeartbeatConfig.IdleTimeout` |
 | `δ_probe` (repair stagger) | `1 s`, multiplied by `(V_slot − j) mod slots_num` | `RepairConfig.Stagger` |
-| `R_max` (repair probes per `K_hb` per host) | `slots_num` | `RepairConfig.MaxProbesPerWindow` |
+| `R_max` (repair probes per `Interval` per host) | `slots_num` | `RepairConfig.MaxProbesPerWindow` |
 | Heartbeat turn width | `slots_num` (same as every other turn) | derived from escrow group size |
 | `Q` for `(C-turn)` | reuses `(C-quorum)`'s `Q` — deliberately **not** a second quorum knob | `ConfirmationConfig.Quorum` |
 
@@ -1670,7 +1711,7 @@ the test scenario that proves it (full catalog in
 | Strong mode (`LightBlock` + `VerifyCommit` + `D` band + `(C-strong)` / `(C-hybrid)`) | ⏳ | Tests catalogued in [`height-sync-tests.md`](../height-sync-tests.md) §8 (S1–S12). |
 | Container parity for v2 (Phase D) | ⏳ | tracked in `CONTAINER_E2E_PLAN.md`. |
 | Container parity for Strong (Phase E) | ⏳ | follow-on. |
-| **Heartbeat turns** (§10): `MsgHeartbeat` / `MsgHeightAck` protos, height cadence `K_hb`, `observed_height` stamps, turn record, `(C-turn)` | 📋 | proposed here. No wire or Go surface exists yet; `ObservedHeightNow()` is the only piece in tree. Blocks cPoC C14 closure and finalization `USER_TIMEOUT` evidence. |
+| **Heartbeat turns** (§10): `MsgHeartbeat` / `MsgHeightAck` protos, time cadence `Interval`, `observed_height` stamps, turn record, `(C-turn)` | 📋 | proposed here. No wire or Go surface exists yet; `ObservedHeightNow()` is the only piece in tree. Blocks cPoC C14 closure and finalization `USER_TIMEOUT` evidence. |
 | **Peer sync status + repair probe** (§11): `sync_vector`, `sync_state`, `peer_seen`, `POST /sessions/:id/heightsync/repair` | 📋 | proposed here. Rides the existing `devshard/gossip` peer client and host mempool; no new transport. |
 | **Close-ready arming** (§12): `CloseReadyView`, `UserTimeoutEvidence` | 📋 | proposed here. Consumer is `FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`; nothing in this layer votes. Missing acks are not cheating evidence (§11.3). |
 | `observed_height` stamps on `MsgStartInference` / `MsgConfirmStart` / `MsgFinishInference` | 📋 | RECOMMENDED (§10.5). Optional migration step: without it the protocol is correct but emits more heartbeats. `MsgConfirmStart` additionally requires the `ExecutorReceiptContent` mirror (§10.5.1) or its height is not a host attestation. |

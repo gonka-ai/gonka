@@ -24,7 +24,7 @@ type turnSlot struct {
 }
 
 // RepairBudget is the per-prober §11.4 state machine: one probe per
-// (turn, slot), R_max per K_hb window, stagger, exponential backoff.
+// (turn, slot), R_max per cadence window, stagger, exponential backoff.
 // Counters are local (Prometheus waits for E8).
 type RepairBudget struct {
 	mu sync.Mutex
@@ -32,10 +32,10 @@ type RepairBudget struct {
 	cfg      RepairConfig
 	slotsNum uint32
 	vSlot    uint32
-	kHb      uint64
+	window   time.Duration
 
 	probed         map[turnSlot]struct{}
-	windowKey      uint64
+	windowStart    time.Time
 	probesInWindow int
 	failCount      map[uint32]int
 	backoffUntil   map[uint32]time.Time
@@ -47,12 +47,15 @@ type RepairBudget struct {
 
 // NewRepairBudget constructs a prober budget. MaxProbesPerWindow ≤ 0 uses
 // slotsNum. Stagger is used as-is (zero means no wait; tests rely on that).
-func NewRepairBudget(cfg RepairConfig, slotsNum, vSlot uint32, kHb uint64) *RepairBudget {
+// window is the cadence interval R_max is counted over; a prober that is
+// missing acks is by definition not learning heights, so the window is elapsed
+// time rather than a span of blocks it cannot see.
+func NewRepairBudget(cfg RepairConfig, slotsNum, vSlot uint32, window time.Duration) *RepairBudget {
 	if slotsNum == 0 {
 		slotsNum = 1
 	}
-	if kHb == 0 {
-		kHb = DefaultHeartbeatIntervalBlocks
+	if window <= 0 {
+		window = DefaultHeartbeatInterval
 	}
 	if cfg.MaxProbesPerWindow <= 0 {
 		cfg.MaxProbesPerWindow = int(slotsNum)
@@ -61,7 +64,7 @@ func NewRepairBudget(cfg RepairConfig, slotsNum, vSlot uint32, kHb uint64) *Repa
 		cfg:          cfg,
 		slotsNum:     slotsNum,
 		vSlot:        vSlot,
-		kHb:          kHb,
+		window:       window,
 		probed:       make(map[turnSlot]struct{}),
 		failCount:    make(map[uint32]int),
 		backoffUntil: make(map[uint32]time.Time),
@@ -134,7 +137,7 @@ func ProbeStagger(vSlot, j, slotsNum uint32, d time.Duration) time.Duration {
 
 // Begin decides whether to wait-then-probe slot j of turnSeq.
 // Armed stops the whole prober: callers should not continue the loop.
-func (b *RepairBudget) Begin(turnSeq uint64, slot uint32, hNow uint64, armed bool) (delay time.Duration, skip RepairSkip) {
+func (b *RepairBudget) Begin(turnSeq uint64, slot uint32, armed bool) (delay time.Duration, skip RepairSkip) {
 	if b == nil {
 		return 0, RepairSkipBudget
 	}
@@ -157,7 +160,7 @@ func (b *RepairBudget) Begin(turnSeq uint64, slot uint32, hNow uint64, armed boo
 		b.counts[string(RepairSkipBackoff)]++
 		return 0, RepairSkipBackoff
 	}
-	b.rollWindowLocked(hNow)
+	b.rollWindowLocked()
 	if b.probesInWindow >= b.cfg.MaxProbesPerWindow {
 		b.counts[string(RepairSkipBudget)]++
 		return 0, RepairSkipBudget
@@ -220,10 +223,10 @@ func (b *RepairBudget) Record(turnSeq uint64, slot uint32, outcome string) {
 	b.backoffUntil[slot] = b.now().Add(stagger << n)
 }
 
-func (b *RepairBudget) rollWindowLocked(hNow uint64) {
-	key := hNow / b.kHb
-	if key != b.windowKey {
-		b.windowKey = key
+func (b *RepairBudget) rollWindowLocked() {
+	now := b.now()
+	if b.windowStart.IsZero() || now.Sub(b.windowStart) >= b.window {
+		b.windowStart = now
 		b.probesInWindow = 0
 	}
 }

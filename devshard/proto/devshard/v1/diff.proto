@@ -97,6 +97,8 @@ message ExecutorReceiptContent {
   int64  started_at = 6;
   string escrow_id = 7;
   int64  confirmed_at = 8;
+  uint64 observed_height = 9;
+  bytes  observed_block_hash = 10;
 }
 
 // TimeoutVoteContent is what a host signs for a TimeoutVote.

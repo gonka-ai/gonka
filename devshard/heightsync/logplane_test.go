@@ -163,6 +163,24 @@ func TestLogPlane_UnstampedLegIsNotRegression(t *testing.T) {
 	require.NoError(t, res.Err)
 }
 
+func TestLogPlane_PerInferenceHeightOrder(t *testing.T) {
+	st, _ := baseState(t, 3)
+	hash := []byte{0xaa}
+	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 2,
+		Txs: []*types.DevshardTx{
+			{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+				InferenceId: 1, ObservedHeight: 100, ObservedBlockHash: hash,
+			}}},
+			{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+				InferenceId: 1, ObservedHeight: 90, ObservedBlockHash: hash,
+			}}},
+		},
+	}, st)
+	require.ErrorIs(t, res.Err, heightsync.ErrHeightRegression)
+	require.Equal(t, "height_regression", res.Reason)
+}
+
 func TestLogPlane_NoEnvelopeSkipsCrossPlaneChecks(t *testing.T) {
 	st, signers := baseState(t, 3)
 	hash := []byte{0xaa}

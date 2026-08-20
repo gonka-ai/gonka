@@ -99,10 +99,10 @@ type StateMachine struct {
 
 	warmResolver WarmKeyResolver // optional, nil = no warm key support
 
-	heartbeatCfg     heightsync.HeartbeatConfig
-	turnTracker      *heightsync.TurnTracker
-	maxStampHeight   uint64
-	heightSyncMarks  *heightsync.MarkLog
+	heartbeatCfg    heightsync.HeartbeatConfig
+	turnTracker     *heightsync.TurnTracker
+	maxStampHeight  uint64
+	heightSyncMarks *heightsync.MarkLog
 
 	// obsDeferred, when non-nil, redirects observability writes made during a
 	// trial apply (ValidateDiff / PreviewLocalBestEffort) into a buffer instead
@@ -985,6 +985,9 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 		ReservedCost: reservedCost,
 		StartedAt:    msg.StartedAt,
 	}
+	if heightsync.StampPresent(msg.ObservedBlockHash) {
+		rec.StartedAtHeight = msg.ObservedHeight
+	}
 
 	sm.state.Inferences[msg.InferenceId] = rec
 	if err := sm.updateCommittedEntryLocked(msg.InferenceId, rec); err != nil {
@@ -1013,14 +1016,16 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 
 	// Verify executor receipt (includes confirmed_at from the executor's wall clock).
 	receiptContent := &types.ExecutorReceiptContent{
-		InferenceId: msg.InferenceId,
-		PromptHash:  rec.PromptHash,
-		Model:       rec.Model,
-		InputLength: rec.InputLength,
-		MaxTokens:   rec.MaxTokens,
-		StartedAt:   rec.StartedAt,
-		EscrowId:    sm.state.EscrowID,
-		ConfirmedAt: msg.ConfirmedAt,
+		InferenceId:       msg.InferenceId,
+		PromptHash:        rec.PromptHash,
+		Model:             rec.Model,
+		InputLength:       rec.InputLength,
+		MaxTokens:         rec.MaxTokens,
+		StartedAt:         rec.StartedAt,
+		EscrowId:          sm.state.EscrowID,
+		ConfirmedAt:       msg.ConfirmedAt,
+		ObservedHeight:    msg.ObservedHeight,
+		ObservedBlockHash: msg.ObservedBlockHash,
 	}
 	receiptData, err := deterministicMarshal.Marshal(receiptContent)
 	if err != nil {
@@ -1042,6 +1047,9 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 
 	rec.Status = types.StatusStarted
 	rec.ConfirmedAt = msg.ConfirmedAt
+	if heightsync.StampPresent(msg.ObservedBlockHash) {
+		rec.ConfirmedAtHeight = msg.ObservedHeight
+	}
 	logging.Debug("inference pending -> started", "subsystem", "state",
 		"inference_id", msg.InferenceId,
 		"executor_slot", rec.ExecutorSlot,

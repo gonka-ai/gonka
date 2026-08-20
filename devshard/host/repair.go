@@ -17,15 +17,36 @@ func (h *Host) SetRepairProbe(fn heightsync.RepairProbeFn) {
 	h.repairProbe = fn
 }
 
-// SetCloseReadyArmed is the E5 stub for H20. E6 replaces this with the
-// level-triggered CloseReadyView.
+// SetCloseReadyArmed is the H20 test seam. Production never calls it.
 func (h *Host) SetCloseReadyArmed(armed bool) {
-	h.repairArmed.Store(armed)
+	if h.closeReady != nil {
+		h.closeReady.ForceArmed(armed)
+	}
 }
 
-// CloseReadyArmed reports the E5 stub.
+// SetCloseReadyClock replaces the silence clock. Test seam; production uses
+// time.Now.
+func (h *Host) SetCloseReadyClock(now func() time.Time) {
+	if h.closeReady != nil {
+		h.closeReady.SetClock(now)
+	}
+}
+
+// CloseReadySilentFor is how long this host has heard nothing from the user.
+func (h *Host) CloseReadySilentFor() time.Duration {
+	if h.closeReady == nil {
+		return 0
+	}
+	return h.closeReady.SilentFor()
+}
+
+// CloseReadyArmed reports whether this host is armed for USER_TIMEOUT.
 func (h *Host) CloseReadyArmed() bool {
-	return h.repairArmed.Load()
+	if h.closeReady == nil {
+		return false
+	}
+	armed, _ := h.closeReady.Armed()
+	return armed
 }
 
 // RepairBudget returns the probe budget (tests).
@@ -97,7 +118,7 @@ func (h *Host) MaybeRepair(ctx context.Context) {
 		if h.CloseReadyArmed() {
 			return
 		}
-		delay, skip := h.repairBudget.Begin(turnSeq, j, hNow, h.CloseReadyArmed())
+		delay, skip := h.repairBudget.Begin(turnSeq, j, h.CloseReadyArmed())
 		if skip == heightsync.RepairSkipArmed {
 			return
 		}

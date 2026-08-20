@@ -168,6 +168,44 @@ func TestHost_HeartbeatAck_OracleErrorStillRequired(t *testing.T) {
 	require.Equal(t, int64(1), or.latestCalls.Load())
 }
 
+func TestHeartbeat_StampedBusySessionEmitsNoAcks(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	or := &fakeOracle{}
+	or.setHeight(100)
+	or.setHash([]byte{0xaa})
+	h := newAckTestHost(t, 1, hosts, user, WithChainOracle(or))
+
+	start := testutil.StartTx(1)
+	start.GetStartInference().ObservedHeight = 100
+	start.GetStartInference().ObservedBlockHash = []byte{0xaa}
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{start})
+	resp, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	require.NotNil(t, resp)
+	for _, tx := range resp.Mempool {
+		require.Nil(t, tx.GetHeartbeat(), "H33: busy stamped session emits no heartbeat")
+		require.Nil(t, tx.GetHeightAck(), "H33: acks exist only inside heartbeat turns")
+	}
+	require.Zero(t, countHeartbeatsInMempool(h.MempoolTxs()))
+}
+
+func countHeartbeatsInMempool(txs []*types.DevshardTx) int {
+	n := 0
+	for _, tx := range txs {
+		if tx.GetHeartbeat() != nil || tx.GetHeightAck() != nil {
+			n++
+		}
+	}
+	return n
+}
+
 func TestHost_HeartbeatAck_CatchingUp(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),

@@ -18,7 +18,7 @@ type composedDiff struct {
 
 // MaybeHeartbeat opens a heartbeat turn when due, or flushes ack-carrying
 // diffs for an already-open turn. It is the E2 quiet-session / outbound-round
-// hook: call it on a block tick or before other outbound work.
+// hook: call it on a timer (Interval or finer) or before other outbound work.
 func (s *Session) MaybeHeartbeat(ctx context.Context) error {
 	s.ensureHeightSeed(ctx)
 	span, err := s.composeHeartbeatSpan()
@@ -43,6 +43,14 @@ func (s *Session) HeartbeatSkippedNoHeight() int {
 	return s.heartbeat.SkippedNoHeight()
 }
 
+// HeartbeatTurnovers counts full height-sync round-trips discharged so far,
+// whether by heartbeat acks or by executor stamps riding real traffic.
+func (s *Session) HeartbeatTurnovers() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.heartbeat.Turnovers()
+}
+
 // HeartbeatTurnTracker is the session's turn view (copy). Tests only.
 func (s *Session) HeartbeatTurnTracker() *heightsync.TurnTracker {
 	s.mu.Lock()
@@ -54,22 +62,24 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	now := s.nowLocked()
 	hNow, hash, ok := s.observedHeightLocked()
 	if !ok || hNow == 0 {
-		if s.heartbeat != nil {
-			s.heartbeat.Due(0, 0) // increments skippedNoHeight
-		}
+		s.heartbeat.Due(now, 0) // increments skippedNoHeight
 		logging.Info("heartbeat skipped", "subsystem", "heightsync",
 			"escrow", s.escrowID, "cause", "no_height")
 		return nil, nil
 	}
 
 	s.turnTracker.AdvanceHeight(hNow)
-	if rec := s.turnTracker.Latest(); rec != nil && rec.State == heightsync.TurnOpen {
-		return nil, nil
+	if rec := s.turnTracker.Latest(); rec != nil && rec.State != heightsync.TurnOpen {
+		s.heartbeat.SettleTurn()
 	}
 
-	due, reason := s.heartbeat.Due(hNow, s.turnTracker.LastCompletedHeight())
+	// Suppressing while a turn is open is the scheduler's job, not the log's:
+	// Heartbeat gives up on an open turn after TurnTimeout so one unreachable
+	// slot cannot silence the cadence for the rest of the session.
+	due, reason := s.heartbeat.Due(now, hNow)
 	if !due {
 		return nil, nil
 	}
@@ -99,12 +109,11 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 		s.turnTracker.Observe(diff.Nonce, diff.Txs, hNow)
 		out = append(out, composedDiff{diff: diff, hostIdx: hostIdx})
 	}
-	cfg := s.heartbeat.Config()
-	flush := int(cfg.MinRoundsPerBlock) - 1
-	if flush < 0 {
-		flush = 0
-	}
-	s.heartbeatFlushLeft = flush
+	s.heartbeat.OpenTurn(now)
+	// One ack-carrying round is always owed: the span awaited no ack, so the
+	// acks it triggered need a nonce to ride home on. Further rounds are driven
+	// by acks actually arriving, not by a configured count.
+	s.heartbeatFlushLeft = 1
 	logging.Info("heartbeat span dispatched", "subsystem", "heightsync",
 		"escrow", s.escrowID, "turn_seq", s.heartbeatTurnSeq,
 		"height", hNow, "span", len(out), "reason", string(reason))
@@ -112,7 +121,10 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 }
 
 func (s *Session) flushHeartbeatAckRounds(ctx context.Context) error {
-	for {
+	// Every slot acks at most once per turn, so the guaranteed round plus one
+	// round per slot bounds the loop without a cadence parameter.
+	maxRounds := len(s.group) + 1
+	for i := 0; i < maxRounds; i++ {
 		s.mu.Lock()
 		hNow, _, ok := s.observedHeightLocked()
 		if !ok {
@@ -143,6 +155,7 @@ func (s *Session) flushHeartbeatAckRounds(ctx context.Context) error {
 			return err
 		}
 	}
+	return nil
 }
 
 func (s *Session) heartbeatForceTxLocked(nonce uint64) *types.DevshardTx {

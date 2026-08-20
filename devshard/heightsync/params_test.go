@@ -14,26 +14,37 @@ import (
 	"devshard/types"
 )
 
+func TestHeartbeatConfig_Defaults(t *testing.T) {
+	cfg := heightsync.DefaultHeartbeatConfig()
+	require.Equal(t, 3*time.Second, cfg.Interval)
+	require.Equal(t, cfg.Interval, cfg.TurnTimeout)
+	require.Equal(t, heightsync.DefaultIdleMultiple*cfg.Interval, cfg.IdleTimeout,
+		"a host tolerates four missed turnovers before arming")
+	require.Greater(t, cfg.IdleTimeout, cfg.Interval+cfg.TurnTimeout,
+		"one lost turnover must never arm a host")
+}
+
 func TestHeartbeatConfig_ValidateRejectsBadOverride(t *testing.T) {
 	ok := heightsync.DefaultHeartbeatConfig()
-	require.NoError(t, ok.Validate(heightsync.DefaultAssumedBlockTime, heightsync.DefaultOriginatorFreshness))
+	require.NoError(t, ok.Validate(heightsync.DefaultOriginatorFreshness))
 
 	badIdle := ok
-	badIdle.IdleBlocks = ok.IntervalBlocks + ok.AckDeadlineBlocks // not strictly greater
-	require.Error(t, badIdle.Validate(heightsync.DefaultAssumedBlockTime, heightsync.DefaultOriginatorFreshness))
+	badIdle.IdleTimeout = ok.Interval + ok.TurnTimeout // not strictly greater
+	require.Error(t, badIdle.Validate(heightsync.DefaultOriginatorFreshness))
 
-	badRounds := ok
-	badRounds.MinRoundsPerBlock = 1
-	require.Error(t, badRounds.Validate(heightsync.DefaultAssumedBlockTime, heightsync.DefaultOriginatorFreshness))
+	// Overriding the interval alone stays valid: the derived knobs follow it
+	// instead of being left behind at an absolute default.
+	slower := heightsync.HeartbeatConfig{Interval: 5 * time.Second}
+	require.NoError(t, slower.Validate(heightsync.DefaultOriginatorFreshness))
 
 	dAck2 := ok
 	dAck2.AckDeadlineBlocks = 2
-	dAck2.IdleBlocks = 4
-	require.NoError(t, dAck2.Validate(heightsync.DefaultAssumedBlockTime, heightsync.DefaultOriginatorFreshness))
+	require.NoError(t, dAck2.Validate(heightsync.DefaultOriginatorFreshness))
 
 	badCadence := ok
-	badCadence.IntervalBlocks = 20 // 20 * 6s = 120s > F/2 = 30s
-	require.Error(t, badCadence.Validate(6*time.Second, 60*time.Second))
+	badCadence.Interval = 40 * time.Second // 2 * 40s = 80s > F = 60s
+	badCadence.IdleTimeout = 5 * time.Minute
+	require.Error(t, badCadence.Validate(60*time.Second))
 }
 
 func TestHeartbeatConfig_FromSnapshotZeroUsesDefaults(t *testing.T) {
@@ -41,13 +52,23 @@ func TestHeartbeatConfig_FromSnapshotZeroUsesDefaults(t *testing.T) {
 	require.Equal(t, heightsync.DefaultHeartbeatConfig(), got)
 
 	overlay := heightsync.HeartbeatConfigFromSnapshot(commrc.Snapshot{
-		HeightSync: commrc.HeightSyncParams{IntervalBlocks: 8, AckDeadlineBlocks: 2, IdleBlocks: 20},
+		HeightSync: commrc.HeightSyncParams{IntervalMs: 8000, AckDeadlineBlocks: 2},
 	})
-	require.Equal(t, uint64(8), overlay.IntervalBlocks)
+	require.Equal(t, 8*time.Second, overlay.Interval)
+	require.Equal(t, 8*time.Second, overlay.TurnTimeout, "turn timeout follows the interval")
+	require.Equal(t, 32*time.Second, overlay.IdleTimeout, "T_idle follows the interval")
 	require.Equal(t, uint64(2), overlay.AckDeadlineBlocks)
-	require.Equal(t, uint64(20), overlay.IdleBlocks)
 	require.Equal(t, heightsync.DefaultSyncDeltaBlocks, overlay.DeltaBlocks)
-	require.Equal(t, heightsync.DefaultMinRoundsPerBlock, overlay.MinRoundsPerBlock, "MinRoundsPerBlock is compiled-only")
+	require.NoError(t, overlay.Validate(heightsync.DefaultOriginatorFreshness))
+
+	explicit := heightsync.HeartbeatConfigFromSnapshot(commrc.Snapshot{
+		HeightSync: commrc.HeightSyncParams{
+			IntervalMs: 2000, TurnTimeoutMs: 1500, IdleTimeoutMs: 9000,
+		},
+	})
+	require.Equal(t, 2*time.Second, explicit.Interval)
+	require.Equal(t, 1500*time.Millisecond, explicit.TurnTimeout)
+	require.Equal(t, 9*time.Second, explicit.IdleTimeout)
 }
 
 func TestRepairConfig_FromSnapshot(t *testing.T) {

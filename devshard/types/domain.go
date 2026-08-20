@@ -46,22 +46,24 @@ const (
 
 // InferenceRecord tracks the state of a single inference within a session.
 type InferenceRecord struct {
-	Status       InferenceStatus `json:"status"`
-	ExecutorSlot uint32          `json:"executor_slot"`
-	Model        string          `json:"model"`
-	PromptHash   []byte          `json:"prompt_hash"`
-	ResponseHash []byte          `json:"response_hash,omitempty"`
-	InputLength  uint64          `json:"input_length"`
-	MaxTokens    uint64          `json:"max_tokens"`
-	InputTokens  uint64          `json:"input_tokens,omitempty"`
-	OutputTokens uint64          `json:"output_tokens,omitempty"`
-	ReservedCost uint64          `json:"reserved_cost"`
-	ActualCost   uint64          `json:"actual_cost,omitempty"`
-	StartedAt    int64           `json:"started_at"`
-	ConfirmedAt  int64           `json:"confirmed_at,omitempty"`
-	VotesValid   uint32          `json:"votes_valid,omitempty"`
-	VotesInvalid uint32          `json:"votes_invalid,omitempty"`
-	ValidatedBy  Bitmap128       `json:"validated_by,omitempty"`
+	Status            InferenceStatus `json:"status"`
+	ExecutorSlot      uint32          `json:"executor_slot"`
+	Model             string          `json:"model"`
+	PromptHash        []byte          `json:"prompt_hash"`
+	ResponseHash      []byte          `json:"response_hash,omitempty"`
+	InputLength       uint64          `json:"input_length"`
+	MaxTokens         uint64          `json:"max_tokens"`
+	InputTokens       uint64          `json:"input_tokens,omitempty"`
+	OutputTokens      uint64          `json:"output_tokens,omitempty"`
+	ReservedCost      uint64          `json:"reserved_cost"`
+	ActualCost        uint64          `json:"actual_cost,omitempty"`
+	StartedAt         int64           `json:"started_at"`
+	ConfirmedAt       int64           `json:"confirmed_at,omitempty"`
+	StartedAtHeight   uint64          `json:"started_at_height,omitempty"`
+	ConfirmedAtHeight uint64          `json:"confirmed_at_height,omitempty"`
+	VotesValid        uint32          `json:"votes_valid,omitempty"`
+	VotesInvalid      uint32          `json:"votes_invalid,omitempty"`
+	ValidatedBy       Bitmap128       `json:"validated_by,omitempty"`
 }
 
 // HostStats tracks per-host performance metrics within a session.
@@ -100,19 +102,19 @@ func ParseProtocolVersion(s string) (ProtocolVersion, error) {
 
 // SessionConfig holds session-level parameters.
 type SessionConfig struct {
-	RefusalTimeout             int64  // seconds before reason=refused timeout
-	ExecutionTimeout           int64  // seconds before reason=execution timeout
-	TokenPrice                 uint64 // price per input / output token (flat per session)
-	CreateDevshardFee          uint64 // one-time fee charged when creating a devshard session
-	FeePerNonce                uint64 // fee charged per applied nonce (diff)
+	RefusalTimeout    int64  // seconds before reason=refused timeout
+	ExecutionTimeout  int64  // seconds before reason=execution timeout
+	TokenPrice        uint64 // price per input / output token (flat per session)
+	CreateDevshardFee uint64 // one-time fee charged when creating a devshard session
+	FeePerNonce       uint64 // fee charged per applied nonce (diff)
 	// VoteThreshold is frozen in state.Config at session creation (from escrow lane A).
 	// Consensus logic must read it only via state.StateMachine (applyValidationVote,
 	// applyTimeout); external packages use StateMachine.VoteThreshold() for display.
-	VoteThreshold              uint32
-	ValidationRate             uint32 // basis points (10000 = 100%, 1000 = 10%)
-	InferenceSealGraceNonces   uint32
-	InferenceSealGraceSeconds  uint32
-	AutoSealEveryNNonces       uint32
+	VoteThreshold             uint32
+	ValidationRate            uint32 // basis points (10000 = 100%, 1000 = 10%)
+	InferenceSealGraceNonces  uint32
+	InferenceSealGraceSeconds uint32
+	AutoSealEveryNNonces      uint32
 }
 
 // EscrowState is the full state of a devshard session.
@@ -122,16 +124,16 @@ type EscrowState struct {
 	// (WithStateRootAndProtocolVersion) and copied into settlement payloads. It
 	// matches CreateSessionParams.Version / host boundVersion (approved_versions.name).
 	StateRootAndProtocolVersion string
-	Config        SessionConfig
-	Group         []SlotAssignment
-	Balance       uint64
-	Fees          uint64 // total fees collected (devshard create + per-nonce)
-	Phase         SessionPhase
-	FinalizeNonce uint64
-	Inferences    map[uint64]*InferenceRecord
-	HostStats     map[uint32]*HostStats
-	WarmKeys      map[uint32]string // slot ID -> warm key address, lazily populated
-	LatestNonce   uint64
+	Config                      SessionConfig
+	Group                       []SlotAssignment
+	Balance                     uint64
+	Fees                        uint64 // total fees collected (devshard create + per-nonce)
+	Phase                       SessionPhase
+	FinalizeNonce               uint64
+	Inferences                  map[uint64]*InferenceRecord
+	HostStats                   map[uint32]*HostStats
+	WarmKeys                    map[uint32]string // slot ID -> warm key address, lazily populated
+	LatestNonce                 uint64
 
 	// Height-sync forced turn + cadence swallow (hashed into state root).
 	HeightSyncForcedStart         uint64

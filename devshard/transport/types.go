@@ -13,9 +13,9 @@ import (
 // Proto-serialized fields travel as base64 to preserve signature integrity.
 type DiffJSON struct {
 	Nonce         uint64 `json:"nonce"`
-	Txs           []byte `json:"txs"`                        // proto bytes of DiffContent.Txs wrapper
-	UserSig       []byte `json:"user_sig"`                   // raw sig bytes
-	PostStateRoot []byte `json:"post_state_root,omitempty"`  // state root after applying txs
+	Txs           []byte `json:"txs"`                       // proto bytes of DiffContent.Txs wrapper
+	UserSig       []byte `json:"user_sig"`                  // raw sig bytes
+	PostStateRoot []byte `json:"post_state_root,omitempty"` // state root after applying txs
 }
 
 // PayloadJSON is the JSON wire format for inference payload.
@@ -283,11 +283,13 @@ func TimeoutReasonFromString(s string) (types.TimeoutReason, error) {
 
 // DevshardReceiptEvent is the first SSE event, sent before execution starts.
 type DevshardReceiptEvent struct {
-	StateSig    []byte `json:"state_sig,omitempty"`
-	StateHash   []byte `json:"state_hash,omitempty"`
-	Nonce       uint64 `json:"nonce"`
-	Receipt     []byte `json:"receipt,omitempty"`
-	ConfirmedAt int64  `json:"confirmed_at,omitempty"`
+	StateSig          []byte `json:"state_sig,omitempty"`
+	StateHash         []byte `json:"state_hash,omitempty"`
+	Nonce             uint64 `json:"nonce"`
+	Receipt           []byte `json:"receipt,omitempty"`
+	ConfirmedAt       int64  `json:"confirmed_at,omitempty"`
+	ObservedHeight    uint64 `json:"observed_height,omitempty"`
+	ObservedBlockHash []byte `json:"observed_block_hash,omitempty"`
 }
 
 // DevshardMetaEvent is the final SSE event, sent after execution completes.

@@ -76,6 +76,8 @@ func registerServer(g *echo.Group, srv *transport.Server, gsp *gossip.Gossip) {
 	}
 
 	g.POST("/sessions/:id/chat/completions", withAuth(true, srv.HandleInference))
+	g.POST("/sessions/:id/height-sync", withAuth(false, srv.HandleHeightSync))
+	g.POST("/sessions/:id/heightsync/repair", withAuth(false, srv.HandleHeightSyncRepair))
 	g.POST("/sessions/:id/verify-timeout", withAuth(false, srv.HandleVerifyTimeout))
 	g.POST("/sessions/:id/challenge-receipt", withAuth(false, srv.HandleChallengeReceipt))
 	g.POST("/sessions/:id/gossip/nonce", withAuth(false, srv.HandleGossipNonce))

@@ -25,9 +25,10 @@ func TestProtoMapping_RoundTrip(t *testing.T) {
 		ValidationRate:      5000,
 		VoteThresholdFactor: 50,
 		HeightSync: HeightSyncParams{
-			IntervalBlocks:     4,
+			IntervalMs:         4000,
+			TurnTimeoutMs:      2500,
 			AckDeadlineBlocks:  2,
-			IdleBlocks:         12,
+			IdleTimeoutMs:      16000,
 			ProbeStaggerMs:     1000,
 			MaxProbesPerWindow: 4,
 		},

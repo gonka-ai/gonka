@@ -467,11 +467,14 @@ type RuntimeConfig struct {
 	VoteThresholdFactor     uint32                      `protobuf:"varint,11,opt,name=vote_threshold_factor,json=voteThresholdFactor,proto3" json:"vote_threshold_factor,omitempty"`
 	ValidationThresholds    []*ModelValidationThreshold `protobuf:"bytes,12,rep,name=validation_thresholds,json=validationThresholds,proto3" json:"validation_thresholds,omitempty"`
 	// Height-sync log-plane params. Zero on the wire means "use compiled defaults".
-	HeightSyncIntervalBlocks     uint64 `protobuf:"varint,13,opt,name=height_sync_interval_blocks,json=heightSyncIntervalBlocks,proto3" json:"height_sync_interval_blocks,omitempty"`                 // K_hb
-	HeightSyncAckDeadlineBlocks  uint64 `protobuf:"varint,14,opt,name=height_sync_ack_deadline_blocks,json=heightSyncAckDeadlineBlocks,proto3" json:"height_sync_ack_deadline_blocks,omitempty"`      // D_ack
-	HeightSyncIdleBlocks         uint64 `protobuf:"varint,15,opt,name=height_sync_idle_blocks,json=heightSyncIdleBlocks,proto3" json:"height_sync_idle_blocks,omitempty"`                             // T_idle
+	// Scheduling knobs are milliseconds: mainnet height is the result of a
+	// height-sync turnover, so nobody can schedule the next one in blocks.
+	HeightSyncIntervalMs         uint64 `protobuf:"varint,13,opt,name=height_sync_interval_ms,json=heightSyncIntervalMs,proto3" json:"height_sync_interval_ms,omitempty"`                             // turnover interval
+	HeightSyncAckDeadlineBlocks  uint64 `protobuf:"varint,14,opt,name=height_sync_ack_deadline_blocks,json=heightSyncAckDeadlineBlocks,proto3" json:"height_sync_ack_deadline_blocks,omitempty"`      // D_ack (compares logged claims)
+	HeightSyncIdleTimeoutMs      uint64 `protobuf:"varint,15,opt,name=height_sync_idle_timeout_ms,json=heightSyncIdleTimeoutMs,proto3" json:"height_sync_idle_timeout_ms,omitempty"`                  // T_idle
 	HeightSyncProbeStaggerMs     uint64 `protobuf:"varint,16,opt,name=height_sync_probe_stagger_ms,json=heightSyncProbeStaggerMs,proto3" json:"height_sync_probe_stagger_ms,omitempty"`               // δ_probe
 	HeightSyncMaxProbesPerWindow uint32 `protobuf:"varint,17,opt,name=height_sync_max_probes_per_window,json=heightSyncMaxProbesPerWindow,proto3" json:"height_sync_max_probes_per_window,omitempty"` // R_max
+	HeightSyncTurnTimeoutMs      uint64 `protobuf:"varint,18,opt,name=height_sync_turn_timeout_ms,json=heightSyncTurnTimeoutMs,proto3" json:"height_sync_turn_timeout_ms,omitempty"`                  // producer patience on one open turn
 	unknownFields                protoimpl.UnknownFields
 	sizeCache                    protoimpl.SizeCache
 }
@@ -590,9 +593,9 @@ func (x *RuntimeConfig) GetValidationThresholds() []*ModelValidationThreshold {
 	return nil
 }
 
-func (x *RuntimeConfig) GetHeightSyncIntervalBlocks() uint64 {
+func (x *RuntimeConfig) GetHeightSyncIntervalMs() uint64 {
 	if x != nil {
-		return x.HeightSyncIntervalBlocks
+		return x.HeightSyncIntervalMs
 	}
 	return 0
 }
@@ -604,9 +607,9 @@ func (x *RuntimeConfig) GetHeightSyncAckDeadlineBlocks() uint64 {
 	return 0
 }
 
-func (x *RuntimeConfig) GetHeightSyncIdleBlocks() uint64 {
+func (x *RuntimeConfig) GetHeightSyncIdleTimeoutMs() uint64 {
 	if x != nil {
-		return x.HeightSyncIdleBlocks
+		return x.HeightSyncIdleTimeoutMs
 	}
 	return 0
 }
@@ -621,6 +624,13 @@ func (x *RuntimeConfig) GetHeightSyncProbeStaggerMs() uint64 {
 func (x *RuntimeConfig) GetHeightSyncMaxProbesPerWindow() uint32 {
 	if x != nil {
 		return x.HeightSyncMaxProbesPerWindow
+	}
+	return 0
+}
+
+func (x *RuntimeConfig) GetHeightSyncTurnTimeoutMs() uint64 {
+	if x != nil {
+		return x.HeightSyncTurnTimeoutMs
 	}
 	return 0
 }
@@ -1419,7 +1429,7 @@ const file_nodemanager_proto_rawDesc = "" +
 	"\x10max_wait_seconds\x18\x02 \x01(\x05R\x0emaxWaitSeconds\"l\n" +
 	"\x18GetRuntimeConfigResponse\x12\x1c\n" +
 	"\tunchanged\x18\x01 \x01(\bR\tunchanged\x122\n" +
-	"\x06config\x18\x02 \x01(\v2\x1a.nodemanager.RuntimeConfigR\x06config\"\xac\a\n" +
+	"\x06config\x18\x02 \x01(\v2\x1a.nodemanager.RuntimeConfigR\x06config\"\xe9\a\n" +
 	"\rRuntimeConfig\x12.\n" +
 	"\x13params_block_height\x18\x01 \x01(\x03R\x11paramsBlockHeight\x12(\n" +
 	"\x10current_epoch_id\x18\x02 \x01(\x04R\x0ecurrentEpochId\x12#\n" +
@@ -1433,12 +1443,13 @@ const file_nodemanager_proto_rawDesc = "" +
 	"\x0fvalidation_rate\x18\n" +
 	" \x01(\rR\x0evalidationRate\x122\n" +
 	"\x15vote_threshold_factor\x18\v \x01(\rR\x13voteThresholdFactor\x12Z\n" +
-	"\x15validation_thresholds\x18\f \x03(\v2%.nodemanager.ModelValidationThresholdR\x14validationThresholds\x12=\n" +
-	"\x1bheight_sync_interval_blocks\x18\r \x01(\x04R\x18heightSyncIntervalBlocks\x12D\n" +
-	"\x1fheight_sync_ack_deadline_blocks\x18\x0e \x01(\x04R\x1bheightSyncAckDeadlineBlocks\x125\n" +
-	"\x17height_sync_idle_blocks\x18\x0f \x01(\x04R\x14heightSyncIdleBlocks\x12>\n" +
+	"\x15validation_thresholds\x18\f \x03(\v2%.nodemanager.ModelValidationThresholdR\x14validationThresholds\x125\n" +
+	"\x17height_sync_interval_ms\x18\r \x01(\x04R\x14heightSyncIntervalMs\x12D\n" +
+	"\x1fheight_sync_ack_deadline_blocks\x18\x0e \x01(\x04R\x1bheightSyncAckDeadlineBlocks\x12<\n" +
+	"\x1bheight_sync_idle_timeout_ms\x18\x0f \x01(\x04R\x17heightSyncIdleTimeoutMs\x12>\n" +
 	"\x1cheight_sync_probe_stagger_ms\x18\x10 \x01(\x04R\x18heightSyncProbeStaggerMs\x12G\n" +
-	"!height_sync_max_probes_per_window\x18\x11 \x01(\rR\x1cheightSyncMaxProbesPerWindow\"\x8d\x01\n" +
+	"!height_sync_max_probes_per_window\x18\x11 \x01(\rR\x1cheightSyncMaxProbesPerWindow\x12<\n" +
+	"\x1bheight_sync_turn_timeout_ms\x18\x12 \x01(\x04R\x17heightSyncTurnTimeoutMs\"\x8d\x01\n" +
 	"\x18ModelValidationThreshold\x12\x19\n" +
 	"\bmodel_id\x18\x01 \x01(\tR\amodelId\x12'\n" +
 	"\x0fthreshold_value\x18\x02 \x01(\x03R\x0ethresholdValue\x12-\n" +

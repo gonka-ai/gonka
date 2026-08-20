@@ -271,12 +271,18 @@ type Session struct {
 	heightSyncK     uint64
 	heightSyncSlots uint64
 
-	heartbeatCfg       heightsync.HeartbeatConfig
-	heartbeat          *heightsync.Heartbeat
-	turnTracker        *heightsync.TurnTracker
-	observedHeight     func() (height uint64, hash []byte, ok bool)
-	heartbeatTurnSeq   uint64
+	heartbeatCfg     heightsync.HeartbeatConfig
+	heartbeat        *heightsync.Heartbeat
+	turnTracker      *heightsync.TurnTracker
+	observedHeight   func() (height uint64, hash []byte, ok bool)
+	heartbeatTurnSeq uint64
+	// heartbeatFlushLeft is the number of ack-carrying rounds still owed to the
+	// open turn. The heartbeat cadence is wall clock, so the producer does not
+	// wait for a block tick to collect acks.
 	heartbeatFlushLeft int
+	// clock drives the heartbeat cadence and is injectable for tests. It is
+	// never written into Diff: turn records stay clock-free.
+	clock func() time.Time
 
 	// heightSeedOnce runs the E9 roster fan-out at most once per Session.
 	heightSeedOnce   sync.Once
@@ -312,6 +318,15 @@ func (s *Session) SetHeightSyncCadence(k, slots uint64) {
 // WithHeartbeatConfig overrides compiled heartbeat defaults (tests / runtimeparams).
 func WithHeartbeatConfig(cfg heightsync.HeartbeatConfig) SessionOption {
 	return func(sess *Session) { sess.heartbeatCfg = cfg }
+}
+
+// WithHeartbeatClock overrides the wall clock driving the heartbeat cadence (tests).
+func WithHeartbeatClock(now func() time.Time) SessionOption {
+	return func(sess *Session) {
+		if now != nil {
+			sess.clock = now
+		}
+	}
 }
 
 // WithObservedHeight injects the height+hash source used by MaybeHeartbeat.
@@ -393,8 +408,12 @@ func NewSession(
 	for _, opt := range opts {
 		opt(sess)
 	}
+	if sess.clock == nil {
+		sess.clock = time.Now
+	}
 	sess.heartbeat = heightsync.NewHeartbeat(sess.heartbeatCfg)
 	slots := uint64(len(group))
+	sess.heartbeat.SetRoster(slots, 0)
 	sess.turnTracker = heightsync.NewTurnTracker(slots, 0, sess.heartbeat.Config())
 	return sess, nil
 }
@@ -567,21 +586,26 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 		s.hostSyncNonce[hostIdx] = resp.Nonce
 	}
 
-	// Queue receipt as MsgConfirmStart for the next diff.
-	// Use inferenceNonce (the logical inference ID), not resp.Nonce (host's latest state).
+	// Queue mempool txs first so a stamped ConfirmStart wins over the
+	// receipt-synthesized copy (same confirm:<id> dedup key).
+	for _, tx := range resp.Mempool {
+		s.addPendingTx(tx)
+	}
+
+	s.noteResponseClaimLocked(hostIdx, resp)
+
+	// Queue receipt as MsgConfirmStart for the next diff if mempool did not
+	// already carry it. Use inferenceNonce (the logical inference ID).
 	if resp.Receipt != nil {
 		s.addPendingTx(&types.DevshardTx{
 			Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-				InferenceId: inferenceNonce,
-				ExecutorSig: resp.Receipt,
-				ConfirmedAt: resp.ConfirmedAt,
+				InferenceId:       inferenceNonce,
+				ExecutorSig:       resp.Receipt,
+				ConfirmedAt:       resp.ConfirmedAt,
+				ObservedHeight:    resp.ObservedHeight,
+				ObservedBlockHash: resp.ObservedBlockHash,
 			}},
 		})
-	}
-
-	// Queue mempool txs (finish msgs) for the next diff.
-	for _, tx := range resp.Mempool {
-		s.addPendingTx(tx)
 	}
 
 	// Track protocol outcome for this nonce (only for prepared inferences).
@@ -690,6 +714,7 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 		s.nonce = nonce
 		s.clearPendingTxs()
 		s.maybeSaveSnapshotLocked()
+		s.observeTurnLocked(diff)
 		return diff, hostIdx, nil
 	}
 
@@ -704,7 +729,63 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 	s.diffs = append(s.diffs, diff)
 	s.nonce = nonce
 	s.clearPendingTxs()
+	s.observeTurnLocked(diff)
 	return diff, hostIdx, nil
+}
+
+func (s *Session) observeTurnLocked(diff types.Diff) {
+	if s.turnTracker == nil {
+		return
+	}
+	hNow, _, ok := s.observedHeightLocked()
+	if !ok {
+		hNow = 0
+	}
+	for _, tx := range diff.Txs {
+		if h, present := heightsync.TxStamp(tx); present && h > hNow {
+			hNow = h
+		}
+	}
+	s.turnTracker.Observe(diff.Nonce, diff.Txs, hNow)
+
+	// Acks are host-signed and name their own slot, so they are the one signal
+	// that needs no nonce arithmetic to attribute. An ORACLE_UNAVAILABLE ack
+	// carries no height, so it is required but proves no agreement — the same
+	// rule TurnTracker uses for Q.
+	now := s.nowLocked()
+	for _, tx := range diff.Txs {
+		ack := tx.GetHeightAck()
+		if ack == nil || ack.ObservedHeight == 0 {
+			continue
+		}
+		if ack.SyncState == types.SyncState_ORACLE_UNAVAILABLE {
+			continue
+		}
+		s.heartbeat.NoteClaim(ack.SlotId, now)
+	}
+}
+
+func (s *Session) nowLocked() time.Time {
+	if s.clock == nil {
+		return time.Now()
+	}
+	return s.clock()
+}
+
+// noteResponseClaimLocked credits a host-signed height claim to the host that
+// just answered. An executor stamp on its receipt proves the same round-trip a
+// heartbeat ack would, which is why a busy session owes no heartbeat.
+func (s *Session) noteResponseClaimLocked(hostIdx int, resp *host.HostResponse) {
+	if s.heartbeat == nil || resp == nil {
+		return
+	}
+	if hostIdx < 0 || hostIdx >= len(s.group) {
+		return
+	}
+	if resp.Receipt == nil || !heightsync.StampPresent(resp.ObservedBlockHash) {
+		return
+	}
+	s.heartbeat.NoteClaim(s.group[hostIdx].SlotID, s.nowLocked())
 }
 
 // persistDiffRetryLocked retries AppendDiff with backoff while holding s.mu.
@@ -858,15 +939,20 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 	if err != nil {
 		return nil, fmt.Errorf("canonical prompt hash: %w", err)
 	}
+	start := &types.MsgStartInference{
+		InferenceId: nonce,
+		Model:       params.Model,
+		PromptHash:  promptHash,
+		InputLength: params.InputLength,
+		MaxTokens:   params.MaxTokens,
+		StartedAt:   params.StartedAt,
+	}
+	if h, hash, ok := s.observedHeightLocked(); ok && heightsync.StampPresent(hash) {
+		start.ObservedHeight = h
+		start.ObservedBlockHash = hash
+	}
 	startTx := &types.DevshardTx{Tx: &types.DevshardTx_StartInference{
-		StartInference: &types.MsgStartInference{
-			InferenceId: nonce,
-			Model:       params.Model,
-			PromptHash:  promptHash,
-			InputLength: params.InputLength,
-			MaxTokens:   params.MaxTokens,
-			StartedAt:   params.StartedAt,
-		},
+		StartInference: start,
 	}}
 
 	txsForDiff := []*types.DevshardTx{startTx}

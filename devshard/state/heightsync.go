@@ -153,6 +153,9 @@ func (sm *StateMachine) observeHeightSyncLocked(nonce uint64, txs []*types.Devsh
 		if ack := tx.GetHeightAck(); ack != nil && heightsync.StampPresent(ack.ObservedBlockHash) && ack.ObservedHeight > hNow {
 			hNow = ack.ObservedHeight
 		}
+		if h, ok := heightsync.TxStamp(tx); ok && h > hNow {
+			hNow = h
+		}
 	}
 	if hNow == 0 {
 		hNow = sm.turnTracker.LastCompletedHeight()
@@ -179,6 +182,16 @@ func (sm *StateMachine) HeightSyncRepairDue(hNow uint64) (turnSeq, spanStart uin
 		return 0, 0, nil
 	}
 	return rec.TurnSeq, rec.RequestSpan[0], sm.turnTracker.MissingAcksDue(rec.TurnSeq, hNow)
+}
+
+// HeightSyncArmingContext is last complete turn_seq plus degraded turn ids.
+func (sm *StateMachine) HeightSyncArmingContext() (lastComplete uint64, degraded []uint64) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.turnTracker == nil {
+		return 0, nil
+	}
+	return sm.turnTracker.ArmingContext()
 }
 
 // HeightSyncMissingAcks is MissingAcksDue under the SM lock (stagger re-check).

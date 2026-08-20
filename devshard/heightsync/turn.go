@@ -1,6 +1,10 @@
 package heightsync
 
-import "devshard/types"
+import (
+	"slices"
+
+	"devshard/types"
+)
 
 // TurnState is the verifier-computed completion of one heartbeat turn.
 type TurnState int
@@ -51,6 +55,7 @@ type TurnTracker struct {
 	ackDeadline uint64
 	turns       map[uint64]*SyncTurnRecord
 	heartbeatAt map[uint64]uint64 // nonce → turn_seq (L3)
+	stampHeight uint64            // max inference-tx stamp; discharges h_last
 }
 
 // NewTurnTracker constructs an empty tracker. quorum ≤ 0 uses QuorumForRoster(slotsNum).
@@ -85,6 +90,26 @@ func (t *TurnTracker) SlotsNum() uint64 {
 	return t.slotsNum
 }
 
+// ArmingContext returns the highest complete turn_seq and degraded turn ids.
+func (t *TurnTracker) ArmingContext() (lastComplete uint64, degraded []uint64) {
+	if t == nil {
+		return 0, nil
+	}
+	for seq, rec := range t.turns {
+		if rec == nil {
+			continue
+		}
+		if rec.State == TurnComplete && seq > lastComplete {
+			lastComplete = seq
+		}
+		if rec.State == TurnDegraded {
+			degraded = append(degraded, seq)
+		}
+	}
+	slices.Sort(degraded)
+	return lastComplete, degraded
+}
+
 // Observe ingests one diff's txs at chain height hNow.
 func (t *TurnTracker) Observe(diffNonce uint64, txs []*types.DevshardTx, hNow uint64) {
 	if t == nil {
@@ -97,6 +122,9 @@ func (t *TurnTracker) Observe(diffNonce uint64, txs []*types.DevshardTx, hNow ui
 		if hb := tx.GetHeartbeat(); hb != nil {
 			t.observeHeartbeat(diffNonce, hb)
 		}
+		if h, ok := inferenceTxStamp(tx); ok && h > t.stampHeight {
+			t.stampHeight = h
+		}
 	}
 	for _, tx := range txs {
 		if tx == nil {
@@ -106,7 +134,23 @@ func (t *TurnTracker) Observe(diffNonce uint64, txs []*types.DevshardTx, hNow ui
 			t.observeAck(diffNonce, ack)
 		}
 	}
+	if t.stampHeight > hNow {
+		hNow = t.stampHeight
+	}
 	t.AdvanceHeight(hNow)
+}
+
+func inferenceTxStamp(tx *types.DevshardTx) (uint64, bool) {
+	if start := tx.GetStartInference(); start != nil {
+		return inferenceStamp(start)
+	}
+	if conf := tx.GetConfirmStart(); conf != nil {
+		return inferenceStamp(conf)
+	}
+	if fin := tx.GetFinishInference(); fin != nil {
+		return inferenceStamp(fin)
+	}
+	return 0, false
 }
 
 func (t *TurnTracker) observeHeartbeat(nonce uint64, hb *types.MsgHeartbeat) {
@@ -283,6 +327,7 @@ func (t *TurnTracker) Clone() *TurnTracker {
 		ackDeadline: t.ackDeadline,
 		turns:       make(map[uint64]*SyncTurnRecord, len(t.turns)),
 		heartbeatAt: make(map[uint64]uint64, len(t.heartbeatAt)),
+		stampHeight: t.stampHeight,
 	}
 	for k, v := range t.turns {
 		cp.turns[k] = cloneTurn(v)
@@ -303,6 +348,9 @@ func (t *TurnTracker) LastCompletedHeight() uint64 {
 		if rec.State == TurnComplete && rec.CompletedAtHeight > h {
 			h = rec.CompletedAtHeight
 		}
+	}
+	if t.stampHeight > h {
+		return t.stampHeight
 	}
 	return h
 }

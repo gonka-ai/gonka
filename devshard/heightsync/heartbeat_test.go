@@ -2,6 +2,7 @@ package heightsync_test
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -10,23 +11,86 @@ import (
 )
 
 func TestHeartbeat_QuietSessionOpensTurn(t *testing.T) {
-	hb := heightsync.NewHeartbeat(heightsync.DefaultHeartbeatConfig())
-	const hLast uint64 = 100
-	deadline := hb.Deadline(hLast)
-	require.Equal(t, uint64(102), deadline) // 100 + K_hb=1 + D_ack=1
+	cfg := heightsync.DefaultHeartbeatConfig()
+	hb := heightsync.NewHeartbeat(cfg)
+	hb.SetRoster(4, 3)
+	t0 := time.Unix(1_700_000_000, 0)
 
-	due, _ := hb.Due(hLast, hLast)
-	require.False(t, due, "same height as last complete turn is not due")
-
-	due, reason := hb.Due(hLast+1, hLast)
-	require.True(t, due, "K_hb=1 ⇒ due on the next block")
+	// No turnover yet, so the first check is due regardless of the clock: the
+	// producer cannot have agreed on a height with anyone.
+	due, reason := hb.Due(t0, 500)
+	require.True(t, due)
 	require.Equal(t, heightsync.ReasonQuietSession, reason)
-	require.LessOrEqual(t, hLast+1, deadline, "turn opens by h_last+K_hb+D_ack")
+	require.Equal(t, t0.Add(cfg.Interval+cfg.TurnTimeout), hb.Deadline(t0))
+
+	hb.OpenTurn(t0)
+	due, _ = hb.Due(t0, 500)
+	require.False(t, due, "an open turn suppresses a second span")
+
+	require.False(t, hb.NoteClaim(0, t0))
+	require.False(t, hb.NoteClaim(1, t0))
+	require.True(t, hb.NoteClaim(2, t0), "Q host-signed claims are one full turnover")
+	require.Equal(t, 1, hb.Turnovers())
+
+	due, _ = hb.Due(t0.Add(cfg.Interval-time.Millisecond), 500)
+	require.False(t, due, "inside Interval the obligation is discharged")
+
+	due, reason = hb.Due(t0.Add(cfg.Interval), 500)
+	require.True(t, due, "Interval elapsed with no turnover")
+	require.Equal(t, heightsync.ReasonQuietSession, reason)
+}
+
+func TestHeartbeat_RepeatedSlotClaimsAreNotAQuorum(t *testing.T) {
+	hb := heightsync.NewHeartbeat(heightsync.DefaultHeartbeatConfig())
+	hb.SetRoster(4, 3)
+	t0 := time.Unix(1_700_000_000, 0)
+	hb.OpenTurn(t0)
+	for i := 0; i < 5; i++ {
+		require.False(t, hb.NoteClaim(1, t0), "one chatty slot is not a turnover")
+	}
+	require.Zero(t, hb.Turnovers())
+}
+
+func TestHeartbeat_StalledTurnReopensAfterTurnTimeout(t *testing.T) {
+	cfg := heightsync.DefaultHeartbeatConfig()
+	hb := heightsync.NewHeartbeat(cfg)
+	hb.SetRoster(4, 3)
+	t0 := time.Unix(1_700_000_000, 0)
+	hb.OpenTurn(t0)
+	hb.NoteClaim(0, t0) // below quorum: this turn never turns over
+
+	due, _ := hb.Due(t0.Add(cfg.TurnTimeout-time.Millisecond), 500)
+	require.False(t, due)
+
+	due, reason := hb.Due(t0.Add(cfg.TurnTimeout), 500)
+	require.True(t, due, "one unreachable slot must not silence the cadence")
+	require.Equal(t, heightsync.ReasonTurnTimeout, reason)
+
+	hb.OpenTurn(t0.Add(cfg.TurnTimeout))
+	require.Equal(t, 1, hb.AbandonedTurns())
+	require.Zero(t, hb.Turnovers())
+}
+
+func TestHeartbeat_SettledTurnDoesNotWaitOutTurnTimeout(t *testing.T) {
+	// A degraded record leaves nothing to wait for, so the producer may retry
+	// immediately instead of burning the rest of TurnTimeout.
+	hb := heightsync.NewHeartbeat(heightsync.DefaultHeartbeatConfig())
+	hb.SetRoster(4, 3)
+	t0 := time.Unix(1_700_000_000, 0)
+	hb.OpenTurn(t0)
+	due, _ := hb.Due(t0, 500)
+	require.False(t, due)
+
+	hb.SettleTurn()
+	due, reason := hb.Due(t0, 500)
+	require.True(t, due)
+	require.Equal(t, heightsync.ReasonQuietSession, reason)
+	require.Zero(t, hb.Turnovers(), "settling a degraded turn is not a turnover")
 }
 
 func TestHeartbeat_NoObservedHeightSkips(t *testing.T) {
 	hb := heightsync.NewHeartbeat(heightsync.DefaultHeartbeatConfig())
-	due, reason := hb.Due(0, 10)
+	due, reason := hb.Due(time.Unix(1_700_000_000, 0), 0)
 	require.False(t, due)
 	require.Equal(t, heightsync.ReasonNoHeight, reason)
 	require.Equal(t, 1, hb.SkippedNoHeight())
@@ -80,7 +144,8 @@ func ackTx(turn, ref uint64, slot uint32, height uint64, st types.SyncState) *ty
 }
 
 func TestHeartbeat_SameBlockRequestAndAckCompletes(t *testing.T) {
-	// One cycle = two nonce rounds at the same height: heartbeat span, then acks.
+	// The record is still evaluated on logged heights: request span and acks at
+	// the same height complete the turn, whatever the producer's clock did.
 	tr := heightsync.NewTurnTracker(4, 3, heightsync.DefaultHeartbeatConfig())
 	tr.Observe(10, []*types.DevshardTx{heartbeatTx(1, 500, 4)}, 500)
 	tr.Observe(14, []*types.DevshardTx{
@@ -215,4 +280,32 @@ func TestHeightAck_OracleUnavailableStillRequired(t *testing.T) {
 	}, 500)
 	require.Equal(t, heightsync.TurnComplete, tr.Record(1).State)
 	require.True(t, tr.Confirms(500))
+}
+
+func TestTurnTracker_InferenceStampAdvancesHLast(t *testing.T) {
+	tr := heightsync.NewTurnTracker(3, 0, heightsync.DefaultHeartbeatConfig())
+	hash := []byte{0xaa}
+	tr.Observe(1, []*types.DevshardTx{{
+		Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+			InferenceId: 1, ObservedHeight: 100, ObservedBlockHash: hash,
+		}},
+	}}, 100)
+	require.Equal(t, uint64(100), tr.LastCompletedHeight())
+}
+
+func TestHeartbeat_ExecutorClaimsDischargeCadence(t *testing.T) {
+	// A stamped executor response proves the same round-trip a heartbeat ack
+	// does, which is why a busy session owes no heartbeat. The producer's own
+	// stamp is not a claim: it proves nothing about what any host saw.
+	cfg := heightsync.DefaultHeartbeatConfig()
+	hb := heightsync.NewHeartbeat(cfg)
+	hb.SetRoster(3, 2)
+	t0 := time.Unix(1_700_000_000, 0)
+
+	require.False(t, hb.NoteClaim(0, t0))
+	require.True(t, hb.NoteClaim(1, t0))
+
+	due, _ := hb.Due(t0.Add(cfg.Interval/2), 100)
+	require.False(t, due)
+	require.Equal(t, cfg.Interval/2, hb.SinceTurnover(t0.Add(cfg.Interval/2)))
 }
