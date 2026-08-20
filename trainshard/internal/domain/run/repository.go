@@ -33,16 +33,18 @@ const (
 	OpMesh   Op = "mesh"
 )
 
-// RequestRef names one request whole: the same id sent as another command, or under another
-// shard, is another request, and replaying the first answer to it would swallow the second
+// RequestRef names one request whole: the same id sent as another command, under another shard,
+// or by the other actor a run answers to, is another request, and replaying the first answer to
+// it would swallow the second
 type RequestRef struct {
 	Op    Op
 	Shard vo.ShardID
+	Actor vo.Address
 	ID    vo.RequestID
 }
 
 func (r RequestRef) String() string {
-	return string(r.Op) + "/" + r.Shard.String() + "/" + string(r.ID)
+	return string(r.Op) + "/" + r.Shard.String() + "/" + string(r.Actor) + "/" + string(r.ID)
 }
 
 // RequestLog replay by request id

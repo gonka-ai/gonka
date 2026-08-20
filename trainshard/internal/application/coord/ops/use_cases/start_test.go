@@ -55,10 +55,11 @@ func (chainStub) Hardware(context.Context, vo.NodeRef) (vo.GPUInventory, error) 
 func (chainStub) ActiveShards(context.Context) ([]shard.Shard, error) { return nil, nil }
 
 type hostsStub struct {
-	mu      sync.Mutex
-	images  map[vo.NodeRef]vo.ImageDigest
-	silent  map[vo.Participant]bool
-	started []vo.NodeRef
+	mu       sync.Mutex
+	images   map[vo.NodeRef]vo.ImageDigest
+	finished map[vo.NodeRef]bool
+	silent   map[vo.Participant]bool
+	started  []vo.NodeRef
 }
 
 func (h *hostsStub) Deploy(context.Context, vo.Participant, run.DeployCall) ([]run.NodeResult, error) {
@@ -77,7 +78,10 @@ func (h *hostsStub) Status(_ context.Context, participant vo.Participant, call r
 	for _, node := range call.Nodes {
 		held, found := h.images[node]
 		state := vo.ContainerAbsent
-		if found {
+		switch {
+		case h.finished[node]:
+			state = vo.ContainerExited
+		case found:
 			state = vo.ContainerCreated
 		}
 		statuses = append(statuses, run.NodeStatus{
@@ -173,6 +177,23 @@ func TestOpsRefuseAShardTheChainHasAlreadyClosed(t *testing.T) {
 				t.Fatalf("got %v, want %v", err, shard.ErrShardClosed)
 			}
 		})
+	}
+}
+
+func TestStartRefusesARunWhoseContainerHasAlreadyRun(t *testing.T) {
+
+	hosts := &hostsStub{
+		images:   map[vo.NodeRef]vo.ImageDigest{nodeA: runImage, nodeB: runImage},
+		finished: map[vo.NodeRef]bool{nodeB: true},
+	}
+
+	_, err := usecases.NewStartUseCase(chainStub{}, hosts).Execute(context.Background(), runCommand())
+
+	if !errors.Is(err, run.ErrContainerFinished) {
+		t.Fatalf("got %v, want a run that cannot come up whole refused before anything starts", err)
+	}
+	if len(hosts.started) != 0 {
+		t.Fatalf("a refused run must start nothing, got %v", hosts.started)
 	}
 }
 

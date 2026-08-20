@@ -35,6 +35,9 @@ func CanStart(container vo.ContainerState) error {
 	if !container.Exists() {
 		return ErrContainerMissing
 	}
+	if container == vo.ContainerExited {
+		return ErrContainerFinished
+	}
 	return nil
 }
 
