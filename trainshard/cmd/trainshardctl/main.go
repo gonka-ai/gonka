@@ -70,7 +70,7 @@ func drive() error {
 	}
 	hosts := hosts.New(&http.Client{}, cfg.directory, signer, clock, cfg.timeout)
 
-	assembly.New(assembly.Config{Poll: cfg.pollInterval}, assembly.Deps{
+	assembly.New(assembly.Config{Poll: cfg.pollInterval, Settle: cfg.settleWindow}, assembly.Deps{
 		Chain:     chain,
 		Hosts:     hosts,
 		Verifier:  signer,

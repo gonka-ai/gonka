@@ -13,7 +13,8 @@ import (
 )
 
 type Config struct {
-	Poll time.Duration
+	Poll   time.Duration
+	Settle time.Duration
 }
 
 type Deps struct {
@@ -29,7 +30,7 @@ type Module struct {
 }
 
 func New(cfg Config, deps Deps, out io.Writer) *Module {
-	prepare := usecases.NewPrepareMeshUseCase(deps.Chain, deps.Hosts, deps.Verifier, deps.Submitter, deps.Clock, cfg.Poll)
+	prepare := usecases.NewPrepareMeshUseCase(deps.Chain, deps.Hosts, deps.Verifier, deps.Submitter, deps.Clock, cfg.Poll, cfg.Settle)
 	return &Module{commands: cli.New(prepare, deps.Clock, out)}
 }
 

@@ -20,7 +20,11 @@ var (
 )
 
 func prepare(chain *chainStub, hosts *hostsStub, verifier *verifierStub) *usecases.PrepareMeshUseCase {
-	return usecases.NewPrepareMeshUseCase(chain, hosts, verifier, chain, timex.NewFrozen(now), time.Millisecond)
+	return prepareWithin(chain, hosts, verifier, time.Minute)
+}
+
+func prepareWithin(chain *chainStub, hosts *hostsStub, verifier *verifierStub, settle time.Duration) *usecases.PrepareMeshUseCase {
+	return usecases.NewPrepareMeshUseCase(chain, hosts, verifier, chain, timex.NewFrozen(now), time.Millisecond, settle)
 }
 
 func TestPrepareHandsEveryNodeItsPeerList(t *testing.T) {
@@ -66,13 +70,32 @@ func TestPrepareReleasesTheWorstNodeAndBuildsTheMeshAgain(t *testing.T) {
 	}
 }
 
-func TestPrepareStopsWhenTheChainStillReservesAReleasedNode(t *testing.T) {
+func TestPrepareWaitsForTheReleaseToLandAndCarriesOn(t *testing.T) {
+
+	chain, hosts := newChainStub(), newHostsStub()
+	chain.lag = 2
+	hosts.failed[nodeA] = []mesh.Pair{mesh.NewPair(nodeA, nodeB), mesh.NewPair(nodeA, nodeC)}
+
+	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, forever)
+
+	if err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	if len(chain.releases) != 1 {
+		t.Fatalf("got %+v, want the node kicked once rather than on every poll", chain.releases)
+	}
+	if len(result.Config.Peers) != 2 || result.Config.Contains(nodeA) {
+		t.Fatalf("got %+v, want the mesh rebuilt without the released node", result.Config.Peers)
+	}
+}
+
+func TestPrepareStopsWhenTheChainNeverGivesTheReleasedNodeBack(t *testing.T) {
 
 	chain, hosts := newChainStub(), newHostsStub()
 	chain.applies = false
 	hosts.failed[nodeA] = []mesh.Pair{mesh.NewPair(nodeA, nodeB), mesh.NewPair(nodeA, nodeC)}
 
-	_, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, forever)
+	_, err := prepareWithin(chain, hosts, &verifierStub{}, 0).Execute(context.Background(), shardID, forever)
 
 	if !errors.Is(err, shard.ErrReleasePending) {
 		t.Fatalf("got %v, want the run to stop rather than release the node twice", err)
