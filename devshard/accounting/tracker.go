@@ -40,6 +40,7 @@ type escrowState struct {
 	InvalidBySlot   map[uint32]uint64          `json:"invalid_by_slot"`
 	InvalidNonce    map[uint64]struct{}        `json:"-"`
 	Live            map[uint64]*nonceState     `json:"-"`
+	LiveRequests    map[string]struct{}        `json:"-"`
 	Events          []ProtocolEvent            `json:"-"`
 }
 
@@ -185,7 +186,28 @@ func (t *Tracker) RegisterEscrow(meta EscrowMetadata) error {
 			InvalidBySlot:   make(map[uint32]uint64),
 			InvalidNonce:    make(map[uint64]struct{}),
 			Live:            make(map[uint64]*nonceState),
+			LiveRequests:    make(map[string]struct{}),
 		}
+		return nil
+	})
+}
+
+func (t *Tracker) RecordRequestStarted(escrowID, requestID string) error {
+	if requestID == "" {
+		return nil
+	}
+	return t.withEscrow(escrowID, func(e *escrowState) error {
+		e.LiveRequests[requestID] = struct{}{}
+		return nil
+	})
+}
+
+func (t *Tracker) RecordRequestFinished(escrowID, requestID string) error {
+	if requestID == "" {
+		return nil
+	}
+	return t.withEscrow(escrowID, func(e *escrowState) error {
+		delete(e.LiveRequests, requestID)
 		return nil
 	})
 }

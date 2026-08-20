@@ -139,6 +139,7 @@ func (s *Store) Load(ctx context.Context, t *Tracker) error {
 			InvalidBySlot:   blob.InvalidBySlot,
 			InvalidNonce:    make(map[uint64]struct{}, len(blob.InvalidNonces)),
 			Live:            make(map[uint64]*nonceState),
+			LiveRequests:    make(map[string]struct{}),
 			Events:          blob.Events,
 		}
 		for _, nonce := range blob.InvalidNonces {

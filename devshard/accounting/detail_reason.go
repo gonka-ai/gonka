@@ -5,6 +5,9 @@ import "strings"
 // The host's work is real; only the delivery is not. Exported because devshardctl writes it.
 const DeliveryClientGone = "client_gone_before_delivery"
 
+// The gateway spent this nonce on itself, so it is real work by the host but not work for a user.
+const DeliveryWarmupProbe = "warmup_probe"
+
 func normalizeDetailReason(reason string) string {
 	reason = strings.TrimSpace(reason)
 	switch reason {
@@ -35,7 +38,7 @@ func normalizeDeliveryReason(reason string) string {
 	case "empty_stream", "model_burn_empty", "error_stream", "sse_truncated",
 		"eof_transport", "transport_error", "client_cancelled", "not_finished",
 		"no_receipt", "http_error", "http_429", "http_503", "http_not_found",
-		"http_forbidden", DeliveryClientGone:
+		"http_forbidden", DeliveryClientGone, DeliveryWarmupProbe:
 		return reason
 	default:
 		return "unknown"

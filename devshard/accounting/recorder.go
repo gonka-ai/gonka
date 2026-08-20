@@ -207,6 +207,24 @@ func (r *Recorder) RequestID(escrowID string, nonce uint64, requestID string) {
 	}
 }
 
+func (r *Recorder) RequestStarted(escrowID, requestID string) {
+	if r == nil || r.tracker == nil {
+		return
+	}
+	if err := r.tracker.RecordRequestStarted(escrowID, requestID); err != nil {
+		log.Printf("gateway accounting request started escrow=%s request=%s: %v", escrowID, requestID, err)
+	}
+}
+
+func (r *Recorder) RequestFinished(escrowID, requestID string) {
+	if r == nil || r.tracker == nil {
+		return
+	}
+	if err := r.tracker.RecordRequestFinished(escrowID, requestID); err != nil {
+		log.Printf("gateway accounting request finished escrow=%s request=%s: %v", escrowID, requestID, err)
+	}
+}
+
 func (r *Recorder) RealSend(escrowID string, nonce uint64, sentAt time.Time, quarantine string) {
 	if r == nil || r.tracker == nil {
 		return
@@ -235,6 +253,15 @@ func (r *Recorder) Usage(escrowID string, nonce, winnerNonce uint64, deliveryRea
 	}
 	if err := r.tracker.RecordUsage(escrowID, nonce, usage, deliveryReason); err != nil {
 		log.Printf("gateway accounting usage escrow=%s nonce=%d: %v", escrowID, nonce, err)
+	}
+}
+
+func (r *Recorder) ProbeServed(escrowID string, nonce uint64) {
+	if r == nil || r.tracker == nil {
+		return
+	}
+	if err := r.tracker.RecordUsage(escrowID, nonce, UsageLoser, DeliveryWarmupProbe); err != nil {
+		log.Printf("gateway accounting probe served escrow=%s nonce=%d: %v", escrowID, nonce, err)
 	}
 }
 

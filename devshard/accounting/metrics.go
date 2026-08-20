@@ -19,6 +19,7 @@ type Collector struct {
 	invalid               *prometheus.Desc
 	challenges            *prometheus.Desc
 	inFlight              *prometheus.Desc
+	inFlightRequests      *prometheus.Desc
 	timeoutPending        *prometheus.Desc
 	pendingClassification *prometheus.Desc
 	unclassified          *prometheus.Desc
@@ -72,6 +73,11 @@ func NewCollector(tracker *Tracker, currentEpoch CurrentEpochFunc) *Collector {
 		inFlight: prometheus.NewDesc(
 			"devshard_accounting_in_flight",
 			"Live sent nonces before finish or timeout in the current epoch.",
+			[]string{"participant", "model"}, nil,
+		),
+		inFlightRequests: prometheus.NewDesc(
+			"devshard_accounting_in_flight_requests",
+			"Client requests this host is working on right now. A live nonce cannot answer this: a losing attempt's nonce stays open long after its client was served.",
 			[]string{"participant", "model"}, nil,
 		),
 		timeoutPending: prometheus.NewDesc(
@@ -129,7 +135,7 @@ func NewPrometheusCollector(tracker *Tracker, currentEpoch CurrentEpochFunc) pro
 func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
 	for _, desc := range []*prometheus.Desc{
 		c.assigned, c.disposition, c.delivery, c.timeout, c.missed, c.invalid,
-		c.challenges, c.inFlight, c.timeoutPending, c.pendingClassification,
+		c.challenges, c.inFlight, c.inFlightRequests, c.timeoutPending, c.pendingClassification,
 		c.unclassified, c.overclassified, c.unknown, c.recordingErrors,
 		c.writerErrors, c.crossCheck, c.finding,
 	} {
@@ -155,6 +161,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		gauge(ch, c.invalid, record.ProtocolInvalid, base...)
 		gauge(ch, c.challenges, record.UnresolvedChallenges, base...)
 		gauge(ch, c.inFlight, record.InFlight, base...)
+		gauge(ch, c.inFlightRequests, record.InFlightRequests, base...)
 		gauge(ch, c.timeoutPending, record.TimeoutPending, base...)
 		gauge(ch, c.pendingClassification, record.PendingClassification, base...)
 		gauge(ch, c.unclassified, record.Unclassified, base...)

@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"devshard/accounting"
 	"devshard/logging"
 	"devshard/state"
 	"devshard/types"
@@ -237,6 +238,11 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		StartedAt:   time.Now().Unix(),
 	}
 	logRequestStage(ctx, "proxy_request_started", "escrow", p.escrowID, "model", model, "stream", req.Stream, "input_tokens", params.InputLength)
+
+	if requestID, ok := requestLogFromContext(ctx); ok {
+		p.accountingRecorder().RequestStarted(p.escrowID, requestID)
+		defer p.accountingRecorder().RequestFinished(p.escrowID, requestID)
+	}
 
 	r = r.WithContext(withClientResponseIntent(r.Context(), resolveClientResponseIntent(r.Context(), req)))
 
@@ -1009,6 +1015,13 @@ func (p *Proxy) handleCollectSignatures(w http.ResponseWriter, r *http.Request) 
 	}
 
 	writeJSON(w, resp)
+}
+
+func (p *Proxy) accountingRecorder() *accounting.Recorder {
+	if p == nil || p.redundancy == nil {
+		return nil
+	}
+	return p.redundancy.accounting
 }
 
 func (p *Proxy) handleSyncHosts(w http.ResponseWriter, r *http.Request) {

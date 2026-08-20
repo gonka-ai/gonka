@@ -72,17 +72,16 @@ type Finding struct {
 // findingsFor reads only what the record already carries, so a finding and the numbers beside it in
 // the same response can never come from different reads of the ledger.
 func findingsFor(record ParticipantRecord) []Finding {
-	delivered := record.Dispositions[DispositionFinishedUsed] +
-		record.Dispositions[DispositionFinishedUnused] +
-		record.Dispositions[DispositionFinishedUsageUnknown]
-	refused := countersWhere(record, both(is(DispositionUnfinishedRefused), blamesHost))
-	unfinished := countersWhere(record, both(is(DispositionUnfinishedExecution), blamesHost))
+	delivered := countersWhere(record, both(wasDelivered, servedAUser))
+	unused := countersWhere(record, both(is(DispositionFinishedUnused), servedAUser))
+	refused := countersWhere(record, both(is(DispositionUnfinishedRefused), both(blamesHost, servedAUser)))
+	unfinished := countersWhere(record, both(is(DispositionUnfinishedExecution), both(blamesHost, servedAUser)))
 	reached := delivered + refused + unfinished
 	// The breakdown below names every failure, excused ones included, so it needs the denominator that
 	// counts them too; the rates above measure only what the host is answerable for.
 	reachedIncludingExcused := delivered +
-		record.Dispositions[DispositionUnfinishedRefused] +
-		record.Dispositions[DispositionUnfinishedExecution]
+		countersWhere(record, both(is(DispositionUnfinishedRefused), servedAUser)) +
+		countersWhere(record, both(is(DispositionUnfinishedExecution), servedAUser))
 
 	findings := make([]Finding, 0, 4)
 	add := func(finding Finding, flagged bool) {
@@ -94,7 +93,7 @@ func findingsFor(record ParticipantRecord) []Finding {
 		FindingExecutionTimeouts))
 	add(ratio(refused, reached, refusalWarning, refusalCritical,
 		FindingRefusals))
-	add(ratio(record.Dispositions[DispositionFinishedUnused], delivered, unusedAnswerWarning, neverCritical,
+	add(ratio(unused, delivered, unusedAnswerWarning, neverCritical,
 		FindingUnusedAnswers))
 	add(ratio(record.ProtocolMisses, record.AssignedNonces, protocolMissWarning, protocolMissCritical,
 		FindingProtocolMisses))
@@ -207,6 +206,19 @@ func both(first, second func(CounterKey) bool) func(CounterKey) bool {
 
 func is(disposition Disposition) func(CounterKey) bool {
 	return func(key CounterKey) bool { return key.Disposition == disposition }
+}
+
+// Findings rate how a host serves users, so the gateway's own probes belong to neither side of a ratio.
+func servedAUser(key CounterKey) bool {
+	return key.DeliveryReason != DeliveryWarmupProbe
+}
+
+func wasDelivered(key CounterKey) bool {
+	switch key.Disposition {
+	case DispositionFinishedUsed, DispositionFinishedUnused, DispositionFinishedUsageUnknown:
+		return true
+	}
+	return false
 }
 
 // An origin the ledger could not name still counts against the host: treating "unknown" as excused

@@ -223,6 +223,7 @@ type SlotRecord struct {
 	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
 	RecordedInvalid       uint64                    `json:"recorded_invalid_transitions"`
 	InFlight              uint64                    `json:"in_flight"`
+	InFlightRequests      uint64                    `json:"in_flight_requests"`
 	TimeoutPending        uint64                    `json:"timeout_pending"`
 	PendingClassification uint64                    `json:"pending_classification"`
 	Unclassified          uint64                    `json:"unclassified"`
@@ -257,6 +258,7 @@ type ParticipantRecord struct {
 	TimeoutsApplied       uint64                    `json:"timeouts_applied"`
 	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
 	InFlight              uint64                    `json:"in_flight"`
+	InFlightRequests      uint64                    `json:"in_flight_requests"`
 	TimeoutPending        uint64                    `json:"timeout_pending"`
 	PendingClassification uint64                    `json:"pending_classification"`
 	Unclassified          uint64                    `json:"unclassified"`
@@ -282,6 +284,7 @@ type EpochSummary struct {
 	CompletedValidations  uint64                    `json:"completed_validations"`
 	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
 	InFlight              uint64                    `json:"in_flight"`
+	InFlightRequests      uint64                    `json:"in_flight_requests"`
 	TimeoutPending        uint64                    `json:"timeout_pending"`
 	PendingClassification uint64                    `json:"pending_classification"`
 	Unclassified          uint64                    `json:"unclassified"`

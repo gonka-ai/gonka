@@ -94,6 +94,11 @@ type devshardRuntime struct {
 	// same escrow.
 	participantSlotCounts map[string]int
 
+	// stopped closes when this escrow's runtime does, so work that belongs to one escrow -- and only that
+	// escrow -- ends with it, on retire as well as on gateway shutdown.
+	stopped  chan struct{}
+	stopOnce sync.Once
+
 	active             atomic.Bool
 	activeUserRequests atomic.Int64
 	reservedTokens     atomic.Int64
@@ -327,6 +332,7 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	}
 
 	rt := &devshardRuntime{
+		stopped:               make(chan struct{}),
 		id:                    cfg.ID,
 		model:                 model,
 		creationEpoch:         escrow.EpochID,
@@ -469,6 +475,7 @@ func buildReadOnlyRuntime(cfg RuntimeConfig, defaultModel string, perf *PerfTrac
 		perf:     perf,
 	}
 	rt := &devshardRuntime{
+		stopped:         make(chan struct{}),
 		id:              cfg.ID,
 		model:           model,
 		handler:         newRuntimeMux(proxy),
@@ -560,6 +567,9 @@ func hostSlotCounts(perSlotKeys []string) map[string]int {
 }
 
 func (rt *devshardRuntime) close() error {
+	if rt.stopped != nil {
+		rt.stopOnce.Do(func() { close(rt.stopped) })
+	}
 	if rt.session != nil {
 		rt.session.Close()
 	}
@@ -3157,6 +3167,7 @@ func (g *Gateway) addCreatedEscrowRuntime(record GatewayDevshardState) (GatewayD
 	g.runtimeOrder = append(g.runtimeOrder, rt)
 	g.attachRuntimeSharedState(rt)
 	g.sortRuntimeOrderLocked()
+	startEscrowWarmup(rt, g.accounting, g.metrics)
 	return record, nil
 }
 

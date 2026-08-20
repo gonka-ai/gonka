@@ -28,6 +28,7 @@ type escrowView struct {
 	timedOutBySlot  map[uint32]uint64
 	invalidBySlot   map[uint32]uint64
 	live            []nonceState
+	liveRequests    map[string]struct{}
 	events          []ProtocolEvent
 }
 
@@ -55,6 +56,43 @@ func (t *Tracker) viewsFor(filter QueryFilter) ([]escrowView, time.Time) {
 	return views, t.updated
 }
 
+// A losing attempt's nonce stays open long after its client was served, so "still open" needs both sides.
+func openRequestsOfSlot(escrow *escrowView, slot uint32) map[string]struct{} {
+	open := make(map[string]struct{})
+	for i := range escrow.live {
+		live := &escrow.live[i]
+		if live.SlotID != slot || !live.Sent || live.Finished || live.RequestID == "" {
+			continue
+		}
+		if _, stillOpen := escrow.liveRequests[live.RequestID]; stillOpen {
+			open[live.RequestID] = struct{}{}
+		}
+	}
+	return open
+}
+
+func (t *Tracker) liveRequests(filter QueryFilter) uint64 {
+	escrowFilter := stringSet(filter.EscrowIDs)
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	var open uint64
+	for escrowID, escrow := range t.escrows {
+		if escrow.Meta.CreationEpoch != filter.EpochIndex {
+			continue
+		}
+		if filter.Model != "" && escrow.Meta.Model != filter.Model {
+			continue
+		}
+		if len(escrowFilter) > 0 {
+			if _, ok := escrowFilter[escrowID]; !ok {
+				continue
+			}
+		}
+		open += uint64(len(escrow.LiveRequests))
+	}
+	return open
+}
+
 // view copies everything a query reads. Meta.Slots is shared because it is
 // copied once at registration and never mutated after. nonceState.Counted is
 // only tested for nil, never dereferenced.
@@ -70,6 +108,7 @@ func (e *escrowState) view(id string) escrowView {
 		timedOutBySlot:  copyUint32Map(e.TimedOutBySlot),
 		invalidBySlot:   copyUint32Map(e.InvalidBySlot),
 		live:            make([]nonceState, 0, len(e.Live)),
+		liveRequests:    make(map[string]struct{}, len(e.LiveRequests)),
 		events:          append([]ProtocolEvent(nil), e.Events...),
 	}
 	for key, count := range e.Counters {
@@ -80,6 +119,9 @@ func (e *escrowState) view(id string) escrowView {
 	}
 	for _, state := range e.Live {
 		out.live = append(out.live, *state)
+	}
+	for requestID := range e.LiveRequests {
+		out.liveRequests[requestID] = struct{}{}
 	}
 	return out
 }
@@ -92,6 +134,7 @@ func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
 	now := t.nowUTC()
 	records := make(map[participantKey]*ParticipantRecord)
 	nonceSeen := make(map[participantKey]map[string]struct{})
+	requestSeen := make(map[participantKey]map[string]struct{})
 
 	for i := range views {
 		escrow := &views[i]
@@ -114,6 +157,7 @@ func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
 				}
 				records[key] = record
 				nonceSeen[key] = make(map[string]struct{})
+				requestSeen[key] = make(map[string]struct{})
 			}
 			if _, ok := nonceSeen[key][escrowID]; !ok {
 				record.LatestNonces = append(record.LatestNonces, EscrowNonce{
@@ -124,6 +168,11 @@ func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
 				nonceSeen[key][escrowID] = struct{}{}
 			}
 			slotRecord := buildSlotRecord(escrow, slot.SlotID, now)
+			openRequests := openRequestsOfSlot(escrow, slot.SlotID)
+			slotRecord.InFlightRequests = uint64(len(openRequests))
+			for requestID := range openRequests {
+				requestSeen[key][requestID] = struct{}{}
+			}
 			record.Slots = append(record.Slots, slotRecord)
 			record.AssignedNonces += slotRecord.AssignedNonces
 			record.ProtocolMisses += slotRecord.ProtocolMisses
@@ -177,7 +226,8 @@ func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
 	}
 
 	out := make([]ParticipantRecord, 0, len(records))
-	for _, record := range records {
+	for key, record := range records {
+		record.InFlightRequests = uint64(len(requestSeen[key]))
 		sort.Slice(record.LatestNonces, func(i, j int) bool {
 			return record.LatestNonces[i].EscrowID < record.LatestNonces[j].EscrowID
 		})
@@ -326,6 +376,11 @@ func (t *Tracker) Epochs(filter QueryFilter) []EpochSummary {
 			EpochIndex:      epoch,
 			Dispositions:    make(map[Disposition]uint64),
 			TimeoutOutcomes: make(map[TimeoutOutcome]uint64),
+			InFlightRequests: t.liveRequests(QueryFilter{
+				EpochIndex: epoch,
+				Model:      filter.Model,
+				EscrowIDs:  filter.EscrowIDs,
+			}),
 		}
 		for _, record := range records {
 			if record.UpdatedAt.After(summary.UpdatedAt) {

@@ -3,6 +3,7 @@ package user
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -1085,6 +1086,25 @@ func (s *Session) uniquePhysicalHosts() []physicalHost {
 		hosts = append(hosts, physicalHost{idx: i, addr: addr})
 	}
 	return hosts
+}
+
+// CatchUpAllHosts gives every unique physical host the diffs it has not seen. A host the gateway never
+// dispatched to still ends up holding the escrow, so it can answer a validation or a timeout vote
+// instead of reporting the session as unknown. It spends no nonce: it replays diffs that already exist.
+func (s *Session) CatchUpAllHosts(ctx context.Context) error {
+	if phase := s.sm.Phase(); phase != types.PhaseActive {
+		return fmt.Errorf("catch up all hosts: session phase %d, want active", phase)
+	}
+	hosts := s.uniquePhysicalHosts()
+	var failures []error
+	for _, target := range hosts {
+		if err := s.sendCatchUp(ctx, target.idx); err != nil {
+			failures = append(failures, fmt.Errorf("host %d: %w", target.idx, err))
+		}
+	}
+	logging.Info("catch up all hosts", "subsystem", "sync", "escrow", s.escrowID,
+		"nonce", s.Nonce(), "unique_hosts", len(hosts), "failed", len(failures))
+	return errors.Join(failures...)
 }
 
 // SyncHosts propagates signed diffs to every unique physical host and drains
