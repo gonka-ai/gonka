@@ -94,10 +94,28 @@ func raise(pid int, device, own string) error {
 // build adds the link in this namespace on purpose: a wireguard socket stays in the namespace
 // the link was created in, so the host keeps the mesh port and the sandbox cannot use it alone
 func build(device string, cfg wgtypes.Config, pid int) error {
+	if err := discard(device); err != nil {
+		return err
+	}
+
 	link := &netlink.Wireguard{LinkAttrs: netlink.LinkAttrs{Name: device}}
 	if err := netlink.LinkAdd(link); err != nil {
 		return fmt.Errorf("add %s: %w", device, err)
 	}
+
+	// Until the move lands, the link is the host's. Leaving one behind would make it the only
+	// thing standing between this node and the mesh, and Remove looks in the sandbox, not here
+	if err := configure(link, cfg, pid); err != nil {
+		if cleanup := netlink.LinkDel(link); cleanup != nil {
+			return errors.Join(err, fmt.Errorf("delete %s after a failed setup: %w", device, cleanup))
+		}
+		return err
+	}
+	return nil
+}
+
+func configure(link netlink.Link, cfg wgtypes.Config, pid int) error {
+	device := link.Attrs().Name
 
 	wg, err := wgctrl.New()
 	if err != nil {
@@ -110,6 +128,26 @@ func build(device string, cfg wgtypes.Config, pid int) error {
 	}
 	if err := netlink.LinkSetNsPid(link, pid); err != nil {
 		return fmt.Errorf("move %s into sandbox %d: %w", device, pid, err)
+	}
+	return nil
+}
+
+// discard clears a link a setup that died mid-way left on the host. A live one lives in a sandbox,
+// so anything under this name out here is a leftover, and it would fail every later add
+func discard(device string) error {
+	link, err := netlink.LinkByName(device)
+	if err != nil {
+		var absent netlink.LinkNotFoundError
+		if errors.As(err, &absent) {
+			return nil
+		}
+		return fmt.Errorf("look for a leftover %s: %w", device, err)
+	}
+	if link.Type() != "wireguard" {
+		return fmt.Errorf("%s on the host is a %s and not ours to delete", device, link.Type())
+	}
+	if err := netlink.LinkDel(link); err != nil {
+		return fmt.Errorf("delete leftover %s: %w", device, err)
 	}
 	return nil
 }
