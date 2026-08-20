@@ -32,6 +32,10 @@ x-versiond: &versiond
     # Postgres-only payloads/sessions. Fail boot if PG is down; migrate local
     # SQLite sessions into Postgres once at startup (no file/sqlite fallback).
     - DEVSHARD_STORAGE_MODE=postgres
+  networks:
+    default:
+      aliases:
+        - versiond-pool
   depends_on:
     api:
       condition: service_started
@@ -78,6 +82,10 @@ services:
     container_name: versiond-router
     image: ghcr.io/product-science/versiond-router:0.2.15
     environment:
+      # The HAProxy router discovers every replica through this shared DNS
+      # alias. Keep VERSIOND_HOSTS during the image transition because the
+      # currently pinned nginx router still requires the static list.
+      - VERSIOND_POOL_HOST=${VERSIOND_POOL_HOST:-versiond-pool}
       - VERSIOND_HOSTS=${VERSIOND_HOSTS:-versiond versiond2}
       - VERSIOND_PORT=8080
       # SQLite-bound pre-HA versions must stay on the host that owns their data dirs.

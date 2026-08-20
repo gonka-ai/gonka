@@ -1,5 +1,5 @@
 .PHONY: all build-docker release test-render
-.PHONY: test-hash-ring test-version-routing test-local-compose
+.PHONY: test-hash-ring test-version-routing test-local-compose test-join-compose
 
 # Renders both the mixed (legacy pinning) and the all-HA shapes, asserts on the
 # result, then runs the real HAProxy from the production image over each one.
@@ -23,6 +23,22 @@ test-local-compose:
 	grep -q 'stop_signal: SIGUSR1' "$$tmp" \
 		|| { echo 'test-local-compose: router soft-stop signal is missing' >&2; exit 1; }; \
 	echo 'test-local-compose: ok'
+
+test-join-compose:
+	@set -eu; \
+	tmp=$$(mktemp); \
+	trap 'rm -f "$$tmp"' EXIT; \
+	DEVSHARD_POSTGRES_PASSWORD=test \
+		docker compose --project-directory ../deploy/join \
+		-f ../deploy/join/docker-compose.yml \
+		-f ../deploy/join/docker-compose.versiond.yml config > "$$tmp"; \
+	grep -q 'VERSIOND_POOL_HOST: versiond-pool' "$$tmp" \
+		|| { echo 'test-join-compose: pool host is not rendered' >&2; exit 1; }; \
+	[ "$$(grep -c -- '- versiond-pool' "$$tmp")" -ge 2 ] \
+		|| { echo 'test-join-compose: not every versiond joins the pool alias' >&2; exit 1; }; \
+	grep -q 'VERSIOND_HOSTS: versiond versiond2' "$$tmp" \
+		|| { echo 'test-join-compose: legacy router compatibility was lost' >&2; exit 1; }; \
+	echo 'test-join-compose: ok'
 
 # Which versiond serves an escrow must depend on who is in the pool, not on the
 # order DNS happened to hand the addresses to server-template. That is invisible
@@ -240,7 +256,7 @@ test-version-routing:
 		|| fail "the guard broke the router's own /healthz (got $$health)"; \
 	echo "test-version-routing: ok"
 
-test-render: test-local-compose test-hash-ring test-version-routing
+test-render: test-local-compose test-join-compose test-hash-ring test-version-routing
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
