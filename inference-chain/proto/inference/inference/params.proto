@@ -469,9 +469,9 @@ message MsgGasRule {
   // omit (nil) → inherit group base; gas=0 → no period base.
   PeriodBase base = 2;
   oneof func {
-    StoredDeltaParams stored_delta = 3;
-    StoredBytesParams stored_bytes = 4;
-    RepeatedLenParams repeated_len = 5;
+    StoredDeltaParams stored_delta = 3 [(amino.oneof_name) = "inference/MsgGasRule/StoredDelta"];
+    StoredBytesParams stored_bytes = 4 [(amino.oneof_name) = "inference/MsgGasRule/StoredBytes"];
+    RepeatedLenParams repeated_len = 5 [(amino.oneof_name) = "inference/MsgGasRule/RepeatedLen"];
   }
 }
 
