@@ -9,8 +9,21 @@ import (
 	"trainshard/internal/domain/shared/vo"
 )
 
+// Reserve starts the patience clock and wipes a previous shard, and reports whether anything
+// changed; the clock is stamped once, so a node under the same shard keeps running out of time
+func (s *RunState) Reserve(shardID vo.ShardID, at time.Time) bool {
+	if s.Shard == shardID && !s.ReservedAt.IsZero() {
+		return false
+	}
+	if s.Shard != shardID {
+		*s = RunState{}
+	}
+	s.Shard, s.ReservedAt = shardID, at
+	return true
+}
+
 func RecordReservation(ctx context.Context, runs RunStore, node vo.NodeRef, shardID vo.ShardID, at time.Time) error {
-	return runs.Update(ctx, node, func(state *RunState) { *state = RunState{Shard: shardID, ReservedAt: at} })
+	return runs.Update(ctx, node, func(state *RunState) { state.Reserve(shardID, at) })
 }
 
 func RecordDeploy(ctx context.Context, runs RunStore, node vo.NodeRef, shardID vo.ShardID, spec RunSpec) error {
