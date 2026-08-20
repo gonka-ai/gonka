@@ -1,0 +1,44 @@
+services:
+  trainshardd:
+    image: ghcr.io/gonka-ai/trainshardd:${TRAINSHARD_VERSION:-latest}
+    hostname: trainshardd
+    environment:
+      - TRAINSHARD_PARTICIPANT=${TRAINSHARD_PARTICIPANT}
+      - TRAINSHARD_NODES=${TRAINSHARD_NODES}
+      - TRAINSHARD_ACTOR=${TRAINSHARD_ACTOR}
+      - TRAINSHARD_SHARED_SECRET=${TRAINSHARD_SHARED_SECRET}
+      - TRAINSHARD_MACHINE=docker
+      - TRAINSHARD_MESH_ENDPOINT=${TRAINSHARD_MESH_ENDPOINT}
+      - TRAINSHARD_MESH_PORTS=${TRAINSHARD_MESH_PORTS:-51820-51827}
+      - TRAINSHARD_LISTEN=0.0.0.0:9700
+      - TRAINSHARD_ADMIN_LISTEN=127.0.0.1:9701
+      - TRAINSHARD_STATE_DIR=${TRAINSHARD_STATE_DIR:-/var/lib/trainshardd}
+      - TRAINSHARD_VOLUME_MOUNT=${TRAINSHARD_VOLUME_MOUNT:-${TRAINSHARD_STATE_DIR:-/var/lib/trainshardd}}
+      - TRAINSHARD_GPUS=${TRAINSHARD_GPUS:-8}
+      - TRAINSHARD_GPU_MODEL=${TRAINSHARD_GPU_MODEL:-H100}
+      - TRAINSHARD_MAX_DISK_BYTES=${TRAINSHARD_MAX_DISK_BYTES:-1099511627776}
+      - TRAINSHARD_MIN_FREE_DISK_BYTES=${TRAINSHARD_MIN_FREE_DISK_BYTES:-1099511627776}
+      - TRAINSHARD_CONTAINER_USER=${TRAINSHARD_CONTAINER_USER:-1000:1000}
+      - TRAINSHARD_CONTAINER_MEMORY_BYTES=${TRAINSHARD_CONTAINER_MEMORY_BYTES}
+      - TRAINSHARD_CONTAINER_NANO_CPUS=${TRAINSHARD_CONTAINER_NANO_CPUS}
+      - TRAINSHARD_DENIED_CIDRS=${TRAINSHARD_DENIED_CIDRS:-}
+      - TRAINSHARD_LOG_LEVEL=${TRAINSHARD_LOG_LEVEL:-info}
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=utility
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ${TRAINSHARD_STATE_DIR:-/var/lib/trainshardd}:${TRAINSHARD_STATE_DIR:-/var/lib/trainshardd}
+    ports:
+      - "${TRAINSHARD_MESH_PORTS:-51820-51827}:${TRAINSHARD_MESH_PORTS:-51820-51827}/udp"
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    pid: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [utility]
+    restart: always
