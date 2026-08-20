@@ -176,13 +176,25 @@ func TestOpsRefuseAShardTheChainHasAlreadyClosed(t *testing.T) {
 	}
 }
 
-func TestStartLeavesAnEmptyRunToTheHostsToRefusePerNode(t *testing.T) {
+func TestStartRefusesTheWholeRunRatherThanLeaveHalfOfItWaiting(t *testing.T) {
+	cases := map[string]map[vo.NodeRef]vo.ImageDigest{
+		"a node that was never deployed": {nodeA: runImage},
+		"a run with no containers":       {},
+	}
 
-	hosts := &hostsStub{images: map[vo.NodeRef]vo.ImageDigest{}}
+	for name, images := range cases {
+		t.Run(name, func(t *testing.T) {
 
-	_, err := usecases.NewStartUseCase(chainStub{}, hosts).Execute(context.Background(), runCommand())
+			hosts := &hostsStub{images: images}
 
-	if err != nil {
-		t.Fatalf("a run with no containers is not a whole-request failure: %v", err)
+			_, err := usecases.NewStartUseCase(chainStub{}, hosts).Execute(context.Background(), runCommand())
+
+			if err == nil {
+				t.Fatal("a run cannot start on some of its nodes and wait for the rest")
+			}
+			if len(hosts.started) != 0 {
+				t.Fatalf("a refused run must start nothing, got %v", hosts.started)
+			}
+		})
 	}
 }

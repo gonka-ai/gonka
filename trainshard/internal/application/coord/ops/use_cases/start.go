@@ -29,8 +29,8 @@ func (uc *StartUseCase) Execute(ctx context.Context, cmd RunCommand) ([]run.Node
 		return uc.hosts.Status(ctx, participant, cmd.hostCommand(nodes))
 	})
 
-	// 3. Refuse the whole run unless every node answered and they agree; only we see every host
-	if _, err := run.AgreedImage(statuses); err != nil {
+	// 3. Refuse the whole run unless every node is ready to take it; only we see every host
+	if err := run.ReadyToStart(statuses); err != nil {
 		return nil, err
 	}
 
