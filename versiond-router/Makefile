@@ -264,8 +264,8 @@ test-version-routing:
 		-e READYZ_SUPPORTED=false \
 		-v "$$tmpdir/upstream.py:/app.py:ro" \
 		python:3.12-alpine python /app.py >/dev/null; \
-	versions=$$(printf 'v4\tv5\nv6\r'); \
-	legacy_versions=$$(printf 'v1\tv2\nv3\r'); \
+	versions=$$(printf 'v4\t\n\rv5'); \
+	legacy_versions=$$(printf 'v1\r\n\tv2'); \
 	docker run -d --name gonka-vp-router --network $$net \
 		-p 127.0.0.1:18132:8080 -p 127.0.0.1:18134:8404 \
 		-v $$state:/var/lib/gonka-router \

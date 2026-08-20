@@ -158,7 +158,7 @@ validate_version() {
 
 version_excluded() {
     version=$1
-    printf '%s\n' "$excluded_versions" | tr ',;' '  ' | tr -s ' ' '\n' | \
+    printf '%s\n' "$excluded_versions" | tr ',;[:space:]' '\n' | \
         awk -v version="$version" '$0 "" == version "" { found = 1 } END { exit !found }'
 }
 
