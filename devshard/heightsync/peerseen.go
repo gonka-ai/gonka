@@ -33,7 +33,8 @@ func NewPeerSeen(slotsNum uint32, freshness time.Duration) *PeerSeen {
 	}
 }
 
-// MarkFresh records a height claim for slot (from Diff or a repair probe).
+// MarkFresh records a height claim from that slot (a Diff-resident ack or a
+// repair HEIGHT). Sequencer-composed heartbeats are not claims from the slot.
 func (p *PeerSeen) MarkFresh(slot uint32, h uint64, at time.Time) {
 	if p == nil || slot >= p.slotsNum {
 		return

@@ -40,11 +40,12 @@ func (h *Host) maybeAckHeartbeatsLocked(diffs []types.Diff, hdr *blocks.Header, 
 			}
 			if hb := tx.GetHeartbeat(); hb != nil {
 				slot := heightsync.SlotForNonce(diff.Nonce, slotsNum)
-				h.peerSeen.MarkFresh(slot, hb.ObservedHeight, now)
 				if h.slotIDs[slot] {
 					mine = append(mine, heartbeatTarget{nonce: diff.Nonce, slot: slot, hb: hb})
 				}
 			}
+			// peer_seen is claims *from* a slot (§11.2): host-signed acks and
+			// repair HEIGHT. Sequencer-composed heartbeats are not.
 			if ack := tx.GetHeightAck(); ack != nil {
 				h.peerSeen.MarkFresh(ack.SlotId, ack.ObservedHeight, now)
 			}

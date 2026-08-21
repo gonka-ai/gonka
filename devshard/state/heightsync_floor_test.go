@@ -55,10 +55,13 @@ func TestHeightSyncFloor_ImplausibleClaimIsMarkedAndIgnored(t *testing.T) {
 
 	require.NoError(t, apply(1, divHeartbeatTx(1, 250, good)))
 	require.NoError(t, apply(2,
+		divAckTx(t, hosts[1], 1, 1, 1, 250, good, types.SyncState_SYNCED),
+	), "a host ack inside W_conf of an empty floor seeds F")
+	require.NoError(t, apply(3,
 		divAckTx(t, hosts[0], 1, 1, 0, math.MaxUint64/2, poison, types.SyncState_SYNCED),
 	), "a height above the floor is valid; L0 has no plausibility to check")
 
-	floor, hash, known := sm.HeightSyncFloorAsOf(3)
+	floor, hash, known := sm.HeightSyncFloorAsOf(4)
 	require.True(t, known)
 	require.Equal(t, uint64(250), floor, "one signer cannot make its own claim the escrow's logical time")
 	require.Equal(t, good, hash)
@@ -67,15 +70,18 @@ func TestHeightSyncFloor_ImplausibleClaimIsMarkedAndIgnored(t *testing.T) {
 	require.Len(t, marks, 1)
 	require.Equal(t, heightsync.MarkFloorOutOfBand, marks[0].Kind)
 	require.Equal(t, uint32(0), marks[0].Slot, "named at the moment of the damage, not by later forensics")
-	require.Equal(t, uint64(2), marks[0].Nonce)
+	require.Equal(t, uint64(3), marks[0].Nonce)
 
 	// Liveness: the escrow neither halts nor loses its ability to advance.
-	require.NoError(t, apply(3, divHeartbeatTx(2, 260, good)))
-	floor, _, _ = sm.HeightSyncFloorAsOf(4)
-	require.Equal(t, uint64(260), floor, "the next honest diff still moves the floor")
+	require.NoError(t, apply(4, divHeartbeatTx(2, 260, good)))
+	floor, _, _ = sm.HeightSyncFloorAsOf(5)
+	require.Equal(t, uint64(250), floor, "a sequencer heartbeat still does not raise F")
+	require.NoError(t, apply(5, divAckTx(t, hosts[1], 2, 4, 1, 260, good, types.SyncState_SYNCED)))
+	floor, _, _ = sm.HeightSyncFloorAsOf(6)
+	require.Equal(t, uint64(260), floor, "the next honest host stamp still moves the floor")
 
-	require.NoError(t, apply(4, divStartTx(4, 260, good)))
-	require.NoError(t, apply(5, divConfirmTx(t, hosts[0], 4, 260, good)))
+	require.NoError(t, apply(6, divStartTx(6, 260, good)))
+	require.NoError(t, apply(7, divConfirmTx(t, hosts[2], 6, 260, good)))
 	require.Equal(t, types.PhaseActive, sm.SnapshotState().Phase)
 }
 
@@ -203,11 +209,54 @@ func TestHeightSyncFloor_AdmissionRefusalCannotSplitTheFloor(t *testing.T) {
 	// The consequence that matters: identical verdicts from here on, including on
 	// the stamp L0 is there to refuse.
 	low := testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{
-		divAckTx(t, hosts[0], 1, 1, 0, 5, []byte{0x00, 0x05}, types.SyncState_CATCHING_UP),
+		divHeartbeatTx(2, 5, []byte{0x00, 0x05}),
 	})
 	_, edgeErr := edge.ApplyDiff(low)
 	_, replayErr := replay.ApplyDiff(low)
 	require.ErrorIs(t, edgeErr, heightsync.ErrHeightRegression)
 	require.ErrorIs(t, replayErr, heightsync.ErrHeightRegression)
 	require.Equal(t, edge.LatestNonce(), replay.LatestNonce())
+}
+
+// TestHeightSyncFloor_SequencerHeartbeatDoesNotRaise is H89 on the consensus
+// path: a user-signed heartbeat (and start) above F does not move the floor on
+// apply or on a second machine that ingested the same bytes with no envelope.
+func TestHeightSyncFloor_SequencerHeartbeatDoesNotRaise(t *testing.T) {
+	hosts := fourHosts(t)
+	user := testutil.MustGenerateKey(t)
+	applySM := newFloorTestSM(t, hosts, user)
+	gossipSM := newFloorTestSM(t, hosts, user)
+	hash := []byte{0xaa}
+
+	for _, sm := range []*StateMachine{applySM, gossipSM} {
+		_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
+			divHeartbeatTx(1, 100, hash),
+		}))
+		require.NoError(t, err)
+		_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{
+			divAckTx(t, hosts[0], 1, 1, 0, 100, hash, types.SyncState_SYNCED),
+		}))
+		require.NoError(t, err)
+		_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{
+			divHeartbeatTx(2, 180, hash),
+		}))
+		require.NoError(t, err)
+		_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{
+			divStartTx(4, 180, hash),
+		}))
+		require.NoError(t, err)
+	}
+
+	for _, sm := range []*StateMachine{applySM, gossipSM} {
+		floor, _, known := sm.HeightSyncFloorAsOf(5)
+		require.True(t, known)
+		require.Equal(t, uint64(100), floor, "heartbeat and start above F must not raise")
+	}
+
+	_, err := applySM.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 5, []*types.DevshardTx{
+		divAckTx(t, hosts[1], 2, 3, 1, 180, hash, types.SyncState_SYNCED),
+	}))
+	require.NoError(t, err)
+	floor, _, _ := applySM.HeightSyncFloorAsOf(6)
+	require.Equal(t, uint64(180), floor, "a host ack at that H does raise")
 }

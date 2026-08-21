@@ -597,7 +597,7 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 	// Queue mempool txs first so a stamped ConfirmStart wins over the
 	// receipt-synthesized copy (same confirm:<id> dedup key).
 	for _, tx := range resp.Mempool {
-		s.addPendingTx(tx)
+		s.addPendingFromHostLocked(hostIdx, resp, tx)
 	}
 
 	s.noteResponseClaimLocked(hostIdx, resp)
@@ -605,7 +605,7 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 	// Queue receipt as MsgConfirmStart for the next diff if mempool did not
 	// already carry it. Use inferenceNonce (the logical inference ID).
 	if resp.Receipt != nil {
-		s.addPendingTx(&types.DevshardTx{
+		s.addPendingFromHostLocked(hostIdx, resp, &types.DevshardTx{
 			Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 				InferenceId:       inferenceNonce,
 				ExecutorSig:       resp.Receipt,
@@ -1425,6 +1425,43 @@ func (s *Session) addPendingTx(tx *types.DevshardTx) {
 		s.pendingTxKeys[key] = struct{}{}
 	}
 	s.pendingTxs = append(s.pendingTxs, tx)
+}
+
+// addPendingFromHostLocked queues a mempool/receipt tx from one host response.
+// A host-signed raise that does not match this hop's response-leg envelope is
+// dropped (spec §14 rule 2). In-process and omit-section hops leave HasEnvelope
+// unset and skip the check.
+func (s *Session) addPendingFromHostLocked(hostIdx int, resp *host.HostResponse, tx *types.DevshardTx) {
+	if tx == nil {
+		return
+	}
+	if resp != nil && resp.HasEnvelope {
+		floor, _, _ := s.sm.HeightSyncFloorAsOf(s.nonce + 1)
+		kept, n := heightsync.FilterHostRaises(floor, resp.EnvelopeHeight, true, s.ownSlotsLocked(hostIdx), []*types.DevshardTx{tx})
+		if n > 0 {
+			logging.Warn("omitted host-signed raise: stamp does not match response envelope",
+				"subsystem", "heightsync", "escrow", s.escrowID, "host_idx", hostIdx,
+				"floor", floor, "envelope", resp.EnvelopeHeight)
+			return
+		}
+		if len(kept) == 0 {
+			return
+		}
+		tx = kept[0]
+	}
+	s.addPendingTx(tx)
+}
+
+func (s *Session) ownSlotsLocked(hostIdx int) map[uint32]struct{} {
+	if hostIdx < 0 || hostIdx >= len(s.group) {
+		return nil
+	}
+	slots := s.addrToSlots[s.group[hostIdx].ValidatorAddress]
+	out := make(map[uint32]struct{}, len(slots))
+	for _, sl := range slots {
+		out[sl] = struct{}{}
+	}
+	return out
 }
 
 const maxPendingTxKeys = 100_000

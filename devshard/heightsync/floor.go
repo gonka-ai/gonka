@@ -16,10 +16,10 @@ const DefaultFloorWindow = 4096
 // the range is free for the one party that owns no slot.
 const SequencerSigner = ^uint32(0)
 
-// MinFloorQuorum is the smallest corroboration the raise rule will accept. One
-// signer agreeing with itself is not corroboration, and every escrow has at
-// least two identities in the log — its sequencer and its single slot — so this
-// is always reachable.
+// MinFloorQuorum is the default corroboration when FloorConfig.Quorum is left
+// unset (NewFloorIndex). FloorConfigFor instead uses host-only Q:
+// ceil(2/3 × slots_num), clamped to [1, slots_num], so a one-slot escrow can
+// still seed F and SequencerSigner is never padded in to make a fake second vote.
 const MinFloorQuorum = 2
 
 // FloorClaim is one Diff-resident reference height together with the identity
@@ -38,8 +38,9 @@ type FloorClaim struct {
 
 // FloorConfig tunes how the floor may move.
 type FloorConfig struct {
-	// Quorum is how many distinct signers must hold a height before the floor
-	// may jump further than WindowBlocks in one step. Clamped to MinFloorQuorum.
+	// Quorum is how many distinct *host* signers must hold a height before the
+	// floor may jump further than WindowBlocks in one step. Zero means
+	// MinFloorQuorum; FloorConfigFor sets a host-only value in [1, slots_num].
 	Quorum int
 	// WindowBlocks is W_conf: how far one signer may raise the floor unaided.
 	WindowBlocks uint64
@@ -47,19 +48,26 @@ type FloorConfig struct {
 	Window int
 }
 
-// FloorConfigFor derives the raise rule from an escrow's roster. Quorum is the
-// same two thirds (C-quorum) asks of envelope anchors, counted over log-resident
-// claims instead, so a jump nobody else can vouch for does not become the
-// escrow's logical time.
+// FloorConfigFor derives the raise rule from an escrow's host roster. Quorum is
+// the same two thirds (C-quorum) asks of envelope anchors, counted over
+// host-signed log-resident claims — SequencerSigner never fills a seat — so a
+// jump nobody else can vouch for does not become the escrow's logical time.
 func FloorConfigFor(slotsNum int, cfg HeartbeatConfig) FloorConfig {
+	q := QuorumForRoster(slotsNum)
+	if q < 1 {
+		q = 1
+	}
+	if slotsNum > 0 && q > slotsNum {
+		q = slotsNum
+	}
 	return FloorConfig{
-		Quorum:       QuorumForRoster(slotsNum),
+		Quorum:       q,
 		WindowBlocks: cfg.withDefaults().WindowBlocks,
 	}
 }
 
 func (c FloorConfig) withDefaults() FloorConfig {
-	if c.Quorum < MinFloorQuorum {
+	if c.Quorum <= 0 {
 		c.Quorum = MinFloorQuorum
 	}
 	if c.WindowBlocks == 0 {
@@ -103,16 +111,17 @@ type floorSignerClaim struct {
 // tolerance band.
 //
 // How far the floor may move in one step is bounded, and that bound is the whole
-// of step 2 of the review:
+// of step 2 of the review, with sequencer stamps excluded (spec §14 rule 3):
 //
-//   - Within W_conf of the standing floor a single signer may raise it. That is
-//     the ordinary path — a cadence of one turnover every Interval keeps honest
-//     advances far inside the window — so the quiet-session behaviour of
-//     "the heartbeat establishes the turn's reference height" is unchanged.
-//   - Beyond W_conf the floor moves only to a height Quorum distinct signers
-//     hold. A lone claim of 1<<40 therefore leaves the floor where it was
-//     instead of putting it past anything any chain will reach for a century,
-//     which is the state no honest party could clear and no oracle could refute.
+//   - Within W_conf of the standing floor a single *host* signer may raise it.
+//     That is the ordinary path — a cadence of one turnover every Interval keeps
+//     honest advances far inside the window — so a host ack or confirm at the
+//     live tip establishes the turn's reference height. MsgHeartbeat and
+//     MsgStartInference never do: they are user-signed carries at most.
+//   - Beyond W_conf the floor moves only to a height Quorum distinct *host*
+//     signers hold. SequencerSigner does not count toward Q, so sequencer + one
+//     host cannot jump 1<<40. A lone host claim of 1<<40 leaves the floor where
+//     it was instead of putting it past anything any chain will reach.
 //   - Nothing lowers it. A reorg is followed by producers declining to carry a
 //     floor beyond reach (HeartbeatConfig.FloorOutOfReach) and resuming once the
 //     live branch passes it, which needs no backward motion and keeps L0 exact.
@@ -177,6 +186,9 @@ func (f *FloorIndex) Observe(diffNonce uint64, claims []FloorClaim) []Attributab
 		return present[i].Height < present[j].Height
 	})
 	for _, c := range present {
+		if c.Signer == SequencerSigner {
+			continue // rule 3: user-signed stamps never raise and never vote
+		}
 		if held := f.claims[c.Signer]; c.Height > held.height {
 			f.claims[c.Signer] = floorSignerClaim{
 				height: c.Height,
@@ -189,6 +201,9 @@ func (f *FloorIndex) Observe(diffNonce uint64, claims []FloorClaim) []Attributab
 	best := floorEntry{nonce: diffNonce, height: cur}
 	unaided := addSat(cur, f.cfg.WindowBlocks)
 	for _, c := range present {
+		if c.Signer == SequencerSigner {
+			continue
+		}
 		if c.Height <= unaided && c.Height > best.height {
 			best = floorEntry{nonce: diffNonce, height: c.Height, hash: c.Hash, author: c.Signer}
 		}
@@ -222,9 +237,9 @@ func (f *FloorIndex) outOfBandMarks(diffNonce uint64, present []FloorClaim) []At
 			continue
 		}
 		marks = append(marks, AttributableMark{
-			Kind:   MarkFloorOutOfBand,
-			Slot:   markSlot(c.Signer),
-			Nonce:  diffNonce,
+			Kind:  MarkFloorOutOfBand,
+			Slot:  markSlot(c.Signer),
+			Nonce: diffNonce,
 			Detail: fmt.Sprintf("%s claimed height %d; nearest other signer is at %d, floor %d, W_conf %d",
 				FloorAuthorLabel(c.Signer), c.Height, peer, cur, f.cfg.WindowBlocks),
 		})
@@ -239,12 +254,15 @@ func (f *FloorIndex) outOfBandMarks(diffNonce uint64, present []FloorClaim) []At
 // the standing floor, and the floor is already at or below the Quorum-th
 // ranked value, so echoing it can never lift that value.
 func (f *FloorIndex) corroborated() (floorEntry, bool) {
-	if len(f.claims) < f.cfg.Quorum {
-		return floorEntry{}, false
-	}
 	ranked := make([]floorEntry, 0, len(f.claims))
 	for signer, held := range f.claims {
+		if signer == SequencerSigner {
+			continue
+		}
 		ranked = append(ranked, floorEntry{height: held.height, hash: held.hash, author: signer})
+	}
+	if len(ranked) < f.cfg.Quorum {
+		return floorEntry{}, false
 	}
 	sort.Slice(ranked, func(i, j int) bool {
 		if ranked[i].height != ranked[j].height {
@@ -290,7 +308,9 @@ func (f *FloorIndex) appendEntry(e floorEntry) {
 	f.entries = append(f.entries, e)
 	if len(f.entries) > f.cfg.Window {
 		drop := len(f.entries) - f.cfg.Window
-		f.entries = append([]floorEntry(nil), f.entries[drop:]...)
+		// Header shift: the window is bounded, so copying 4096 entries on every
+		// overflow is wasted. The backing array is released on the next grow.
+		f.entries = f.entries[drop:]
 		f.truncated = true
 	}
 }

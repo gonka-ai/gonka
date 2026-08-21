@@ -1147,6 +1147,9 @@ H39–H49 are gateway-package tests over a fabricated session plus a registry ga
 | H97 | Oversized origin signature (field 8) | dropped at unwrap | audit step 22 |
 | H98 | Carry-forward originator ts of `now-F+ε`, then wait `F` | not quorum-eligible | §17, audit step 22 |
 | H99 | Long monotonic tip advance | `confirmedHeights` stays O(`W_conf`) | §17, audit step 22 |
+| H100 | `HReq = MaxUint64-1`, `D_ack = 10`, ack at `HReq+1` | not `late` | audit step 23 |
+| H101 | Two heartbeats in one Diff, ack of the first nonce | L3 accepts | audit step 23 |
+| H102 | `GetDiffs` error on snapshot restore | snapshot `h_last` is kept | audit step 23 |
 | H21 | User silent past `T_idle` | host arms; no message emitted anywhere on the wire | §12.1–12.2, attack 14 |
 | H22 | User contacts an armed host | disarms; `[armed_at, disarmed_at)` retained | §12.3 |
 | H23 | Partitioned minority armed | arming produces no vote and no tx; closing still needs finalization quorum | attack 21 |

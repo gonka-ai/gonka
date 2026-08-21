@@ -63,13 +63,18 @@ type HostRequest struct {
 
 // HostResponse carries the host's reply back to the user.
 type HostResponse struct {
-	StateSig           []byte // nil = withheld
-	StateHash          []byte // always set after applying diffs
-	Nonce              uint64 // current nonce after applying diffs
-	Receipt            []byte // executor receipt sig, nil if not executor
-	ConfirmedAt        int64  // executor wall-clock timestamp, 0 if not executor
-	ObservedHeight     uint64 // executor stamp; 0 if unstamped
-	ObservedBlockHash  []byte
+	StateSig          []byte // nil = withheld
+	StateHash         []byte // always set after applying diffs
+	Nonce             uint64 // current nonce after applying diffs
+	Receipt           []byte // executor receipt sig, nil if not executor
+	ConfirmedAt       int64  // executor wall-clock timestamp, 0 if not executor
+	ObservedHeight    uint64 // executor stamp; 0 if unstamped
+	ObservedBlockHash []byte
+	// EnvelopeHeight is the response-leg HeightSyncSection.mainnet_height when
+	// the hop attached a section (HasEnvelope). Honest compose uses it to drop
+	// a host-signed raise that does not match this hop's envelope (spec §14).
+	EnvelopeHeight     uint64
+	HasEnvelope        bool
 	Mempool            []*types.DevshardTx
 	ExecutionJob       *devshard.ExecuteRequest // non-nil if this host is the executor and execution is deferred
 	CachedResponseBody []byte                   // non-nil when reconnecting to a completed inference

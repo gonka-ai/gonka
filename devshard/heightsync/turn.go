@@ -433,6 +433,21 @@ func (t *TurnTracker) Clone() *TurnTracker {
 	return cp
 }
 
+// SeedCompleted restores h_last and the latest turn_seq from a snapshot when
+// the journal cannot be replayed. Observe still ratchets both forward.
+func (t *TurnTracker) SeedCompleted(lastCompleted, maxTurnSeq uint64) {
+	if t == nil {
+		return
+	}
+	if lastCompleted > t.lastCompleted {
+		t.lastCompleted = lastCompleted
+	}
+	if maxTurnSeq > t.maxTurnSeq {
+		t.maxTurnSeq = maxTurnSeq
+		t.lastCompleteSeq = maxTurnSeq
+	}
+}
+
 // LastCompletedHeight is h_last: mainnet height at which the last complete turn finished.
 func (t *TurnTracker) LastCompletedHeight() uint64 {
 	if t == nil {

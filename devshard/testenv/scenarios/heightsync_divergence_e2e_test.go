@@ -95,35 +95,36 @@ func TestHeightSync_E2E_WideDivergenceNeverBlocksInferences(t *testing.T) {
 	// roster one height claim, never a served request.
 	//
 	// Nonce 1 is the bootstrap: the floor is still empty, because a mainnet-scale
-	// height needs corroboration before it becomes the escrow's logical time, so
-	// the executor stamps its own tip and the cross-signer gap below the start is
-	// accepted rather than blamed.
+	// height needs host corroboration before it becomes the escrow's logical time
+	// (sequencer starts never raise F), so the executor stamps its own tip and
+	// the cross-signer gap below the start is accepted rather than blamed.
 	recs := snap.Inferences
 	top := uint64(divergedOracleHeights[0])
 
-	// Bootstrap, inferences 1–3: a mainnet-scale height needs corroboration
-	// before it becomes the escrow's logical time, so F is empty here and every
-	// executor stamps its own follower. The whole spread lands in the log, one
-	// stamp per signer, and nothing is rejected — which is also how the floor
-	// then seeds, at the height the roster vouches for rather than at the highest
-	// number anyone claimed.
+	// Bootstrap, inferences 1–3: sequencer starts never raise F, and Q host
+	// confirms have not all landed by nonce 3 (the third confirm rides with
+	// nonce 4's start). F(4) is still empty, so every executor stamps its own
+	// follower. The whole spread lands in the log and nothing is rejected.
 	require.Equal(t, top, recs[1].StartedAtHeight)
 	for i, id := range []uint64{1, 2, 3} {
 		require.Equalf(t, uint64(divergedOracleHeights[i+1]), recs[id].ConfirmedAtHeight,
-			"inference %d predates the floor, so slot %d stamps its own tip", id, i+1)
+			"inference %d predates a high floor, so slot %d stamps its own tip", id, i+1)
 	}
 	floor, _, known := sm.HeightSyncFloorAsOf(4)
 	require.True(t, known)
-	require.Equal(t, uint64(divergedOracleHeights[2]), floor,
-		"three distinct signers seed the floor at the corroborated height, not at the maximum")
+	require.Zero(t, floor, "Q host signers have not all landed before nonce 4")
 
-	// Past the bootstrap, the two branches of the producer rule split by
-	// distance. Slot 2 is ~100 blocks under the floor and carries it: stamping
-	// the raw tip is what the verifier refuses, so this is the assertion that the
-	// shipping executor picks the satisfiable height.
+	floor, _, known = sm.HeightSyncFloorAsOf(5)
+	require.True(t, known)
+	require.Equal(t, uint64(divergedOracleHeights[3]), floor,
+		"the third host confirm seeds F at the Q-th ranked height (5)")
+
+	// Slot 0's confirm at 1000 then jumps F to 900 (Q over the high cluster).
+	// Inference 6 is served by slot 2 with F(6)=900 and own tip 900, so it
+	// stamps the floor rather than inventing a higher number.
 	require.Equal(t, 2, hostIdxForNonce(6))
-	require.Equal(t, top, recs[6].ConfirmedAtHeight,
-		"within W_conf of the floor, an executor carries it rather than its own tip")
+	require.Equal(t, uint64(divergedOracleHeights[2]), recs[6].ConfirmedAtHeight,
+		"at the floor, an executor stamps F(m) (here equal to its own tip)")
 
 	// Slot 3 is ~1000 blocks under, past any plausible chain advance, so it takes
 	// the other branch and omits. That escape is what stops a poisoned or

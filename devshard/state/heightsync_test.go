@@ -57,14 +57,26 @@ func TestApplyLocalBestEffort_LogPlaneInvalidFailsBeforeNonce(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, uint64(1), sm.LatestNonce())
 
-		_, applied, err := sm.ApplyLocalBestEffort(2, []*types.DevshardTx{{
+		// Sequencer stamps do not raise F. Seed the floor with a host ack, then
+		// a heartbeat below that floor is L0-invalid.
+		ack := &types.MsgHeightAck{
+			TurnSeq: 1, RefNonce: 1, SlotId: 0, ObservedHeight: 80, ObservedBlockHash: hash,
+			SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
+		}
+		require.NoError(t, heightsync.SignAck(hosts[0], ack))
+		_, _, err = sm.ApplyLocalBestEffort(2, []*types.DevshardTx{
+			{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}},
+		})
+		require.NoError(t, err)
+
+		_, applied, err := sm.ApplyLocalBestEffort(3, []*types.DevshardTx{{
 			Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
 				TurnSeq: 2, ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
 			}},
 		}})
 		require.ErrorIs(t, err, heightsync.ErrHeightRegression)
 		require.Nil(t, applied)
-		require.Equal(t, uint64(1), sm.LatestNonce())
+		require.Equal(t, uint64(2), sm.LatestNonce())
 	})
 
 	t.Run("L1", func(t *testing.T) {

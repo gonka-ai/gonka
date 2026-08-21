@@ -1,6 +1,7 @@
 package state
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -8,6 +9,7 @@ import (
 	"devshard/heightsync"
 	"devshard/internal/testutil"
 	"devshard/signing"
+	"devshard/storage"
 	"devshard/types"
 )
 
@@ -104,6 +106,56 @@ func TestHeightSync_SnapshotRestoreAgreesOnRootAndFloor(t *testing.T) {
 	require.ErrorIs(t, err, heightsync.ErrHeightRegression)
 	_, err = restored.ApplyDiff(bad)
 	require.ErrorIs(t, err, heightsync.ErrHeightRegression)
+}
+
+type failGetDiffsStore struct {
+	*storage.Memory
+}
+
+func (s *failGetDiffsStore) GetDiffs(string, uint64, uint64) ([]types.DiffRecord, error) {
+	return nil, errors.New("getdiffs failed")
+}
+
+func TestHeightSync_RestoreGetDiffsErrorKeepsLastCompletedHeight(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	store := testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000)
+
+	live, err := NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(),
+		signing.NewSecp256k1Verifier(), store)
+	require.NoError(t, err)
+	hash := []byte{0xaa}
+	apply := func(nonce uint64, txs ...*types.DevshardTx) {
+		t.Helper()
+		d := testutil.SignDiff(t, user, "escrow-1", nonce, txs)
+		root, err := live.ApplyDiff(d)
+		require.NoError(t, err)
+		require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{Diff: d, StateHash: root}))
+	}
+	apply(1, snapHeartbeat(1, 50, 3, hash))
+	apply(2, snapAck(t, hosts[0], 1, 1, 0, 50, hash))
+	apply(3, snapAck(t, hosts[1], 1, 1, 1, 50, hash))
+
+	st := live.ExportState()
+	require.Equal(t, uint64(50), st.HeightSyncLastCompletedHeight)
+	require.Greater(t, st.LatestNonce, uint64(0))
+
+	failStore := &failGetDiffsStore{Memory: testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000)}
+	restored, err := NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(),
+		signing.NewSecp256k1Verifier(), failStore)
+	require.NoError(t, err)
+	restored.RestoreState(st)
+
+	got := restored.ExportState()
+	require.Equal(t, st.HeightSyncLastCompletedHeight, got.HeightSyncLastCompletedHeight)
+	require.Equal(t, st.HeightSyncLatestTurnSeq, got.HeightSyncLatestTurnSeq)
+	require.Equal(t, st.HeightSyncLastCompletedHeight, restored.HeightSyncCloneTurnTracker().LastCompletedHeight())
 }
 
 func snapHeartbeat(turn, height, slots uint64, hash []byte) *types.DevshardTx {

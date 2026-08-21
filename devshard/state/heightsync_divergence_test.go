@@ -116,8 +116,9 @@ func TestHeightSyncDivergence_InferenceFlowNeverBlocked(t *testing.T) {
 
 	// ---- Turn 1: a lagging roster carries logical time and says so -----------
 	//
-	// The heartbeat establishes 1000 as the turn's reference height, so every ack
-	// owes at least that. The two hosts hundreds of blocks behind lift to it and
+	// Host acks establish 1000 as the turn's reference height (the heartbeat is
+	// a sequencer stamp and does not raise F), so every later producer owes at
+	// least that. The two hosts hundreds of blocks behind lift to it and
 	// label themselves CATCHING_UP: the height is shared logical time, the label
 	// is where their real position is reported. Neither is misbehaviour.
 	require.NoError(t, apply(1, divHeartbeatTx(1, top.height, top.hash)))
@@ -147,17 +148,19 @@ func TestHeightSyncDivergence_InferenceFlowNeverBlocked(t *testing.T) {
 	require.Equal(t, types.SyncState_CATCHING_UP, rec.Acks[3].SyncState,
 		"the divergence signal survives in the label, which is what the gateway monitors")
 
-	// An ack *below* the floor is the one thing that stays invalid, because the
-	// producer held the log and could have carried it.
-	err := apply(3, divAckTx(t, hosts[3], 1, 1, 3, divergedTips[3].height, divergedTips[3].hash,
-		types.SyncState_CATCHING_UP))
+	// A stamp *below* the floor is the one thing that stays invalid, because the
+	// producer held the log and could have carried it. (An ack of the first
+	// heartbeat is judged at F(ref+1)=F(2), which is still empty: sequencer
+	// stamps do not raise, so that producing nonce is the wrong place to show
+	// this. A start at nonce 3 sees F(3) from the host acks.)
+	err := apply(3, divStartTx(3, divergedTips[3].height, divergedTips[3].hash))
 	require.ErrorIs(t, err, heightsync.ErrHeightRegression,
 		"a raw low tip in Diff is authored misbehaviour, not honest lag")
 	require.Equal(t, uint64(2), sm.LatestNonce(), "a rejected diff must not consume the nonce")
 
 	// ---- Inference 3: the most-behind executor still serves ------------------
 	//
-	// F(3) is 250 from the heartbeat, so slot 3 — 245 blocks behind — carries the
+	// F(3) is 250 from the host acks, so slot 3 — 245 blocks behind — carries the
 	// floor rather than its own tip of 5, and the inference completes. This is
 	// the liveness property the whole design exists for.
 	require.NoError(t, apply(3, divStartTx(3, top.height, top.hash)))

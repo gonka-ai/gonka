@@ -181,7 +181,8 @@ As the result we provide API at devshardd and devshardctl that gives latest heig
 | **`D`** | Strong-escalation band; `\|H_peer − H_local_aligned\| > D` ⇒ Strong required. Default `2`. |
 | **`F`** | Originator freshness budget. Default `60 s`. |
 | **`W_conf`** | The span of heights treated as contemporaneous: the confirmation-index window, the distance one signer may raise the log's floor `F(m)` unaided, and how far above its own tip a producer will carry that floor (§14). Default `max(256, ⌈F / block_time⌉)`. |
-| **`F(m)`** | The reference height the log had established at nonces `< m`; the bar L0 holds every Diff-resident height to. Distinct from the freshness budget `F`. §14. |
+| **`F(m)`** | The reference height the log had established at nonces `< m`; the bar L0 holds every Diff-resident height to. Distinct from the freshness budget `F`. Raised only by **host-signed** first-party stamps; never exceeds the max reported host envelope `H` (§14). |
+| **`FloorIndex`** | The structure that answers `F(m)`: a per-signer high-water of attributed claims. Sequencer-composed stamps (`MsgHeartbeat`, `MsgStartInference`) do not raise it. Carries (`stamp = F`) do not raise it. A raise is a host-signed first-party envelope height (`MsgHeightAck`, confirm, finish). Unaided / jump bounds still apply. Never lowers. Retain window `DefaultFloorWindow` = 4096 *increases*. §14. |
 | **`Q`** | `(C-quorum)` threshold. Default `ceil(2/3 × N_hosts)`. |
 | **Originator** | The host whose **own oracle** first observed `(H, hash)`. Identified by `OriginatorSenderID` on the wire. |
 | **Carrier** | Any sender that forwards a section it did not originate (typically the user). Identified by the session signature. |
@@ -1144,6 +1145,14 @@ basis. If the user stops contacting the dropped host, that host arms on
   rounds, and abandon it after `TurnTimeout`. Skip the turn entirely when
   real traffic already discharged the obligation.
 
+### Log-plane stamps (every producer)
+
+Hosts and the courier user stamp `Diff` by the same rule, independent of
+whether they have an oracle. Read `F(m) = FloorIndex.AsOf(producing nonce)`
+and write `max(own_tip, F(m))`, or omit the stamp when
+`F(m) − own_tip > W_conf`. That is the first box of the floor cycle in
+§14; L0 and `Observe` close the loop.
+
 ---
 
 ## 14. Receiver pipeline
@@ -1259,7 +1268,7 @@ Heights in this protocol answer two unrelated questions, and the split is by
 | Value | `max(own_tip, F(m))`, or absent | the raw oracle read |
 | Monotone across signers? | **yes** — it timestamps a shared log | no, and it need not be |
 | Rule | L0 against `F(m)`, uniformly | L4 binding at the exchange; L5a's `D` band; `(C-quorum)` |
-| May raise `F` | yes, bounded: `W_conf` on one signer's word, further only with `Q` distinct signers (*How far the floor may move* below) | n/a |
+| May raise `F` | yes, and only a **host-signed** first-party envelope `H` (`MsgHeightAck`, confirm, finish). Sequencer stamps and lifts do not raise. Unaided / `Q` still bound how far a real host tip may move `F` (*How far the floor may move* below) | n/a |
 | Consumed by | duration, fees, timeouts, `h_last`, record heights (§10.5.2) | confirmation, Strong, and **monitoring only** |
 
 The single rule for the log plane is that a height must be justifiable from
@@ -1344,6 +1353,53 @@ compared against itself, and a `confirm` below its own `start` is fine — the
 `start` carries the sequencer's roster maximum while the `confirm` carries
 the executor's own view.
 
+##### The floor cycle
+
+`F(m)` is produced and consumed in one loop. A producer reads it, L0
+checks every present stamp against it, `FloorIndex.Observe` is the only
+place it moves, and the next producer reads the result. Admission, the
+oracle, and the wall clock do not feed it — which is why every verifier
+holds the same floor and returns the same L0 verdicts.
+
+```text
+producer (user or host)
+  reads F(m) = FloorIndex.AsOf(producing nonce)
+  stamps Diff with max(own_tip, F(m)), or omits if F(m) − own_tip > W_conf
+  if own_tip > F(m): this is a raise — Diff H MUST equal this hop's envelope H
+  if own_tip ≤ F(m): this is a carry  — Diff H = F(m) (or omit); envelope stays t
+       │
+       ▼
+ApplyDiff / ValidateDiff
+  L0: every present stamp ≥ F(m)
+      if AsOf(m) is unknown → skip L0
+  apply txs
+  Observe(attributed claims)     ← only place F moves
+       │
+       ▼
+FloorIndex
+  per-signer high-water (claims map)
+  sequencer stamp (heartbeat / start):  at most a carry — never raises F
+  carry (stamp = F):                    does not move F
+  raise (host-signed stamp > F):        first-party envelope H
+                                        (honest compose: stamp = response-leg envelope H)
+  unaided / jump:                       host signers only; SequencerSigner does not count toward Q
+  never lowers
+  retain last 4096 *increases*; older AsOf → known=false
+       │
+       ▼
+next producer reads the new F(m)
+```
+
+`AsOf` is exclusive of `m`, so a stamp is never compared against itself.
+When a query falls off the retained window of 4096 *increases*
+(`DefaultFloorWindow`), `known = false` and L0 is skipped rather than
+invented — a fabricated floor there would reject honest stamps. The
+sequencer is a distinct signer in the claims map (`SequencerSigner`) so L0
+can attribute its stamps, but it does **not** count toward `Q` and cannot
+raise `F`. `Q` is `ceil(2/3 × slots_num)` over **host** slots, then
+clamped to at least 1 and at most `slots_num`. The subsections below unpack
+each box.
+
 ##### How far the floor may move, and on whose word
 
 `F` is not a plain running maximum over whatever any signer wrote. A plain
@@ -1356,8 +1412,8 @@ from the applied log alone:
 
 | Motion | Requires | Rationale |
 | ------ | -------- | --------- |
-| raise by `≤ W_conf` above the standing floor | any one signer | the ordinary path. A turnover lands every `Interval` of wall clock, so an honest advance is orders of magnitude inside `W_conf`; a quiet session's heartbeat still establishes its turn's reference height |
-| raise by more | `Q` distinct signers holding that height, `Q` as in `(C-quorum)` | keeps a genuine jump — a recovering oracle, an escrow bootstrapping on mainnet heights — from becoming a liveness problem, while a party striking out alone moves nothing |
+| raise by `≤ W_conf` above the standing floor | any one **host** signer | ordinary advance from a response-leg tip. A sequencer heartbeat does not raise `F`; the first host ack/confirm/finish at that height does |
+| raise by more | `Q` distinct **host** signers holding that height | genuine jump (recovering oracle, mainnet bootstrap). Sequencer + one host is not `Q` |
 | lower | never | a floor that could fall would need L0 to accept stamps below it, i.e. the tolerance band this design exists to avoid. Reorgs resolve without it (below) |
 
 Claims are **attributed**, and must be: without an identity, one signer
@@ -1367,7 +1423,93 @@ agreeing. Every carrier is already named in the log — `slot_id` on an ack,
 sequencer for the legs it composes — so this adds no wire field. Nor can a
 carry launder a height into the quorum: a carry equals the standing floor, and
 the floor is at or below the `Q`-th ranked claim already, so echoing it cannot
-lift that value. Only first-party claims move `F`.
+lift that value. Only **host-signed first-party** claims move `F`.
+Sequencer-composed stamps (`MsgHeartbeat`, `MsgStartInference`) are
+user-signed; they are carries at most (`≤ F`) and MUST NOT increase `F`.
+
+##### Rules that bound `F` (Strong may stay deferred)
+
+These are design invariants, not Phase F. They are what stop floor poisoning
+(attack 24b) without VerifyCommit on the hot path.
+
+**Rule 1 — an envelope height cannot be in the future.** A first-party
+`HeightSyncSection` carries `(H, hash)`. `hash` is `BlockID.Hash` of block
+`H`, which does not exist until `H` is mined. An attacker who reports a
+future `H` cannot produce the matching hash, and is caught: L6 when a
+verifier's follower reaches `H` (or never does), and Strong when `|Δ| > D`
+(deferred). Punishment is attributable (`DISPUTE_ORIGINATOR` / `DEFERRED_FAIL`).
+Garbage may be *sent*; it cannot become a successful first-party tip.
+
+**Rule 2 — `F` never exceeds the max reported first-party envelope `H`.**
+`F` is a high-water of those envelope heights, not of Diff lifts. Concretely:
+
+```text
+stamp = F(m)     carry  — does not raise F (envelope may be t < F; that is lag)
+stamp > F(m)     raise  — host-signed only (ack / confirm / finish)
+                         honest compose: stamp H = that hop's response-leg envelope H
+                         F' = max(F, stamp) still ≤ max reported host envelope H
+stamp < F(m)     L0 INVALID (or omit — absence is legal)
+```
+
+Live envelopes on a later hop may sit below `F` (`F` never falls). Rule 2
+is not `F = max(envelopes this round)`. It is `F ≤ max { first-party
+**host** envelope H that has been reported }`.
+
+**Rule 3 — sequencer-composed stamps never raise `F`.** `MsgHeartbeat` and
+`MsgStartInference` are signed only by the user. `Observe` treats them as
+carries at most: they may equal `F` (or omit), they MUST NOT increase `F`.
+A raise requires a **host-signed** stamp (`MsgHeightAck`, `MsgConfirmStart`,
+`MsgFinishInference`) produced on a hop that had a response-leg envelope.
+`SequencerSigner` does not count toward `Q`. Gossip re-folds the same rule
+from `Diff` alone (the signer is already in the log).
+
+Together:
+
+```text
+future / fake H              --(1)-->  not a reported envelope tip
+Diff fiction > envelopes     --(2)-->  does not raise F
+user heartbeat / start > F   --(3)-->  does not raise F
+F                            --(1)+(2)+(3)-->  not in the future
+                             --(2)+(3)-------->  not above reported host envelope max
+```
+
+A Diff-only ratchet (`F+256` each nonce while envelopes stay ~1000) is
+rule 2. A `1<<40` envelope is rule 1. A malicious sequencer committing
+`MsgHeartbeat` at an unattested real `H` is rule 3. Strong sharpens rule 1;
+it is not required for rules 2–3.
+
+##### Replay: what is re-checked, what is not
+
+Gossip, catch-up, and recovery present a diff **without** a
+`HeightSyncSection`. `F` must still be identical for every verifier, so
+`Observe` remains a pure function of applied `Diff` (and of `F` derived
+from earlier diffs). The envelope is not an input to the fold.
+
+| Check | Inputs | On replay |
+| ----- | ------ | --------- |
+| L0 / L0b / L1–L3 / L7 | `Diff` | **re-run**; same `INVALID` or not |
+| `Observe` carry vs raise | `Diff` stamp and **signer** | **re-run**; sequencer stamps never raise; carry does not raise; host-signed `stamp > F` is a first-party raise |
+| Rule 2 vs **this hop's** envelope (`stamp > F` ⇒ `stamp = envelope.H`) | `Diff` **and** `HeightSyncSection` | **not re-run** — no envelope. Honest compose already wrote `stamp = response-leg envelope.H`. L4, when the envelope is present, marks a mismatch; it never `INVALID`s the diff (tier table) |
+| Rule 1 (`(H, hash)` is a real block) | `Diff` pair + local oracle | **deferred (L6)**; same as today. Future `H`: oracle never confirms; `DEFERRED_FAIL` once `H` is known to be absent or the hash disagrees |
+
+So replay does **not** re-prove “this stamp equalled that HTTP envelope.”
+It re-folds `F` from the stamps the log already contains, including the
+signer. That is the same constraint as L4: the envelope never enters `Diff`,
+so a later verifier cannot recompute the binding. Rule 3 **is** replayable:
+`SequencerSigner` vs host slot is in the log, so every replica refuses a
+user-only raise.
+
+**Residual (host, not sequencer).** An honest composer never logs a
+host-signed raise whose `H` is not that hop's response-leg envelope. A
+malicious **host** can still put `ack.H > F` with envelope `t < ack.H`;
+if the sequencer logs that ack, `Observe` raises (the signer is a host).
+Honest compose MUST drop or omit that stamp (rule 2 at mempool assemble).
+A matching high envelope + high Diff with a real `(H, hash)` is a real
+host tip, not this residual.
+
+`ApplyDiff` MUST NOT gate on the envelope. A host that refused L5a at
+HTTP and a host that ingested the same bytes by gossip must compute the
+same `F` (attack 24e).
 
 A claim that no other signer is within `W_conf` of is recorded as
 `FLOOR_OUT_OF_BAND` against its signer. This is evidence, not a verdict: the
@@ -1963,7 +2105,7 @@ the test scenario that proves it (full catalog in
 | 22 | User drip-feeds late acks to make a degraded turn look complete and reset the arming clock | `late` is a positional test — landing nonce against the turn deadline, both in the log — so it does not depend on comparing two height readings. Late acks never clear a turn's `degraded` mark (§10.6), arming keys on contact toward **this** host rather than on turn state, and since acks no longer confirm heights (§17) an admitted late ack buys nothing | Planned: `TestLateAck_DoesNotClearDegraded` |
 | 23 | **Sequencer rewrites a host's stamp on `MsgConfirmStart`**, attributing a height the executor never signed | `observed_height` / `observed_block_hash` are inside `ExecutorReceiptContent` and copied into the reconstructed content before recovery (§10.5.1), so any edit fails `executor_sig`. A deployment that stamps the tx without mirroring the content MUST NOT treat the height as a host attestation | Planned: `TestConfirmStart_TamperedObservedHeightFailsExecutorSig` |
 | 24 | Stamp regression — a signer writes a height below one already in the log, to widen a band or backdate a duration | L0 against `F(m)`, uniformly across every Diff-resident height, plus L0b within one executor; both pure functions of `Diff`, so every verifier reaches the same verdict | `TestLogPlane_RefStampBelowFloorRejected`, `TestLogPlane_PerInferenceHeightOrder` |
-| 24b | **Floor poisoning** — a party stamps an absurdly high reference height so no honest producer can ever clear the floor | The claim never becomes the escrow's logical time: past `W_conf` above the standing floor, `F` follows only a height `Q` distinct signers hold, and a carry cannot corroborate, so a lone claimant moves the floor nowhere and is marked `FLOOR_OUT_OF_BAND` at the diff that carried it. Nothing else changes: the diff still applies and the escrow still serves, because L0 asks only `≥ F(m)`. Honest parties no longer repeat the pair either — a floor more than `W_conf` above a producer's own tip is omitted rather than carried — so a poisoned height stays under one signature, where L6's `DEFERRED_FAIL` and L4's same-exchange binding already reach it | `TestFloorIndex_LoneImplausibleClaimDoesNotMoveTheFloor`, `TestFloorIndex_QuorumAdmitsTheJumpOneSignerCannot`, `TestHeightSyncFloor_ImplausibleClaimIsMarkedAndIgnored`, `TestHost_HeartbeatAck_OmitsAStampWhenTheFloorIsOutOfReach` |
+| 24b | **Floor poisoning** — a party stamps an absurdly high reference height so no honest producer can ever clear the floor | Three invariants, Strong not required: **(1)** a first-party envelope `(H, hash)` cannot be a future height. **(2)** `F` never exceeds the max reported **host** envelope `H` — lifts do not raise; honest compose writes a host-signed raise as `stamp = response-leg envelope.H`. **(3)** sequencer-composed stamps (`MsgHeartbeat`, `MsgStartInference`) never raise `F` — replayable from the signer in `Diff`, so a malicious sequencer cannot gossip an unattested raise. `Q` is host-only. The diff still applies; L0 asks only `≥ F(m)` | `TestFloorIndex_LoneImplausibleClaimDoesNotMoveTheFloor`, `TestFloorIndex_QuorumAdmitsTheJumpOneSignerCannot`, `TestHeightSyncFloor_ImplausibleClaimIsMarkedAndIgnored`, `TestHost_HeartbeatAck_OmitsAStampWhenTheFloorIsOutOfReach`; planned: sequencer heartbeat `> F` does not raise `F` on apply or gossip; host raise with envelope `t < stamp` is not composed |
 | 24c | **Divergence as a liveness weapon** — a lagging host is made to author invalid diffs, or to be excluded, purely for being behind | The producer rule is always satisfiable — `F(m)` is already in the log, and absence is legal — so a diverged host can serve honestly, and no log-plane verdict rests on how far behind it is (`sync_state` and the envelope anchors record the gap for monitoring). A verdict a lagging host cannot avoid would be a DoS against the escrow, not a defence | `TestHeightSyncDivergence_InferenceFlowNeverBlocked`, `TestHeightSyncDivergence_DeadOracleStillCarriesTime`, `TestHeightSync_E2E_WideDivergenceNeverBlocksInferences` |
 | 24d | **Reorg wedge** — the chain reorgs below `F`, so no party can produce a first-party height that clears the floor | `F` never falls, and it does not need to: producers carry it while the live branch is below it (diffs keep applying), L6 attributes the stale pair to the floor's author rather than to the carriers, and once the live branch passes `F` stamping is first-party again with no new session. A reorg deeper than `W_conf` takes the omission branch instead | `TestHeightSyncFloor_ReorgReturnsToTheLiveBranch`, `TestLogPlane_L6BlamesTheFloorsAuthorForACarriedPair` |
 | 24e | **Split the floor by refusing at the edge** — a party gets one verifier to refuse a diff at admission (L5a) so the two verifiers' floors, and therefore their L0 verdicts on every later diff, diverge | `F` folds applied diffs and nothing else: admission marks are local evidence and never enter the fold. Both verifiers hold the same floor and return the same verdicts, whichever path the diff arrived by | `TestHeightSyncFloor_AdmissionRefusalCannotSplitTheFloor` |
@@ -2008,6 +2150,7 @@ the test scenario that proves it (full catalog in
 | `T_idle` (close-ready arming, **milliseconds**) | `4 · Interval` = `12 s`; constraint `T_idle > Interval + TurnTimeout` so one lost turnover never arms a host | chain param; `HeartbeatConfig.IdleTimeout` |
 | `δ_probe` (repair stagger) | `1 s`, multiplied by `(V_slot − j) mod slots_num` | `RepairConfig.Stagger` |
 | `R_max` (repair probes per `Interval` per host) | `slots_num` | `RepairConfig.MaxProbesPerWindow` |
+| Floor retain window | `4096` increases | `FloorConfig.Window` (`DefaultFloorWindow`). One entry per *increase* of `F`, not per nonce; a query past the window returns `known = false` and L0 is skipped (§14) |
 | Heartbeat turn width | `slots_num` (same as every other turn) | derived from escrow group size |
 | `Q` for turn completion | reuses `(C-quorum)`'s `Q` — deliberately **not** a second quorum knob. Note the two now mean different things: `Q` reachable slots complete a turn, `Q` distinct originators confirm a height (§17) | `ConfirmationConfig.Quorum` |
 
@@ -2050,8 +2193,9 @@ Development notes and unresolved design choices:
 3. §10.1–§10.3 — why the nonce cadence alone is insufficient and why the
    heartbeat is mandatory. Read this before §14 if you are here for the
    quiet-session, cPoC-band, or `USER_TIMEOUT` problems.
-4. §14 — the receiver pipeline flowchart plus the log-plane checks
-   L0–L7 and the **evaluation tiers**; this is the load-bearing normative
+4. §14 — the receiver pipeline flowchart, the **floor cycle** (producer
+   → L0 → `FloorIndex.Observe` → next producer), the log-plane checks
+   L0–L7, and the **evaluation tiers**; this is the load-bearing normative
    section. The tier table is the rule that decides whether a new check
    may invalidate a diff or may only record a mark.
 5. §10.5.1 — where a stamp must sit to be signed by its own producer, and

@@ -134,8 +134,8 @@ func TestFloorIndex_LoneImplausibleClaimDoesNotMoveTheFloor(t *testing.T) {
 
 // TestFloorIndex_UnaidedRaiseStopsAtWConf pins the shape of the bound. Ordinary
 // advance is unaffected — a cadence of one turnover every Interval keeps honest
-// steps orders of magnitude inside the window — so the quiet-session behaviour
-// where a heartbeat establishes the turn's reference height is unchanged.
+// steps orders of magnitude inside the window — so a host ack at the live tip
+// still establishes the turn's reference height. Sequencer heartbeats do not.
 func TestFloorIndex_UnaidedRaiseStopsAtWConf(t *testing.T) {
 	hash := []byte{0xaa}
 	w := heightsync.DefaultConfirmWindowBlocks
@@ -192,9 +192,9 @@ func TestFloorIndex_CarriesCannotCorroborate(t *testing.T) {
 // TestFloorIndex_BootstrapSeedsFromCorroborationNotFromTheFirstStamp records the
 // one behaviour change the bound imposes on an honest escrow: on real mainnet
 // heights the first stamp is thousands of blocks above an empty floor, so it no
-// longer seeds F on its own. The floor arrives with the first turn's acks
-// instead — one turn of L0 being vacuous, which is the safe direction — and no
-// honest party is marked for it.
+// longer seeds F on its own. Sequencer heartbeats never seed it (rule 3). The
+// floor arrives with host acks — two host signers at the live height, which is
+// Q for NewFloorIndex — and no honest party is marked for it.
 func TestFloorIndex_BootstrapSeedsFromCorroborationNotFromTheFirstStamp(t *testing.T) {
 	f := heightsync.NewFloorIndex()
 	hash := []byte{0xaa}
@@ -208,8 +208,13 @@ func TestFloorIndex_BootstrapSeedsFromCorroborationNotFromTheFirstStamp(t *testi
 
 	marks = f.Observe(2, []heightsync.FloorClaim{claim(0, 7_999_998, hash)})
 	h, _, _ = f.AsOf(3)
+	require.Zero(t, h, "one host past W_conf of an empty floor cannot jump; sequencer does not fill Q")
+	require.Empty(t, marks)
+
+	marks = f.Observe(3, []heightsync.FloorClaim{claim(1, 7_999_998, hash)})
+	h, _, _ = f.AsOf(4)
 	require.Equal(t, uint64(7_999_998), h,
-		"the floor is the height the roster vouches for, so it seeds at the corroborated one")
+		"the floor is the height the host roster vouches for, so it seeds at the corroborated one")
 	require.Empty(t, marks)
 }
 
@@ -268,4 +273,66 @@ func TestRefProducingNonce_PerMessageBasis(t *testing.T) {
 	m, ok = heightsync.RefProducingNonce(9, ackTxAt(3, 4, 50, hash))
 	require.True(t, ok)
 	require.Equal(t, uint64(4), m)
+}
+
+// TestFloorIndex_SequencerStampsNeverRaise is H89: MsgHeartbeat / MsgStartInference
+// are user-signed. Observe ignores them as raises on apply and on a second fold
+// that stands in for gossip (same claims, no envelope).
+func TestFloorIndex_SequencerStampsNeverRaise(t *testing.T) {
+	hash := []byte{0xaa}
+	f := heightsync.NewFloorIndex()
+	f.Observe(1, []heightsync.FloorClaim{claim(0, 100, hash)})
+
+	f.Observe(2, []heightsync.FloorClaim{
+		claim(heightsync.SequencerSigner, 180, hash),
+	})
+	h, _, _ := f.AsOf(3)
+	require.Equal(t, uint64(100), h, "a heartbeat above F does not raise")
+
+	gossip := f.Clone()
+	gossip.Observe(2, []heightsync.FloorClaim{
+		claim(heightsync.SequencerSigner, 180, hash),
+	})
+	gh, _, _ := gossip.AsOf(3)
+	require.Equal(t, h, gh, "gossip of the same Diff yields the same F")
+
+	f.Observe(3, []heightsync.FloorClaim{claim(1, 180, hash)})
+	h, _, _ = f.AsOf(4)
+	require.Equal(t, uint64(180), h, "a host ack at that H does raise (unaided, inside W_conf)")
+}
+
+// TestFloorIndex_SequencerDoesNotFillQuorum is H90: sequencer + one host cannot
+// jump past W_conf. Q is host-only. A future/unmined envelope is rule 1 (L6),
+// not an Observe input — matching stamp and envelope still compose; the oracle
+// refuses the pair later.
+func TestFloorIndex_SequencerDoesNotFillQuorum(t *testing.T) {
+	hash := []byte{0xaa}
+	f := heightsync.NewFloorIndex()
+	f.Observe(1, []heightsync.FloorClaim{claim(0, 100, hash)})
+
+	f.Observe(2, []heightsync.FloorClaim{
+		claim(heightsync.SequencerSigner, 8_000_000, hash),
+		claim(0, 8_000_000, hash),
+	})
+	h, _, _ := f.AsOf(3)
+	require.Equal(t, uint64(100), h, "sequencer + one host is not Q")
+
+	f.Observe(3, []heightsync.FloorClaim{claim(1, 8_000_000, hash)})
+	h, _, _ = f.AsOf(4)
+	require.Equal(t, uint64(8_000_000), h, "two host signers holding it can jump")
+}
+
+func TestFloorConfigFor_HostOnlyQuorumClampedToRoster(t *testing.T) {
+	cfg := heightsync.DefaultHeartbeatConfig()
+	one := heightsync.FloorConfigFor(1, cfg)
+	require.Equal(t, 1, one.Quorum, "a one-slot escrow must be able to seed F")
+
+	three := heightsync.FloorConfigFor(3, cfg)
+	require.Equal(t, 2, three.Quorum)
+
+	unset := heightsync.NewFloorIndex()
+	unset.Observe(1, []heightsync.FloorClaim{claim(0, 100, []byte{0xaa})})
+	unset.Observe(2, []heightsync.FloorClaim{claim(0, 8_000_000, []byte{0xaa})})
+	h, _, _ := unset.AsOf(3)
+	require.Equal(t, uint64(100), h, "NewFloorIndex still defaults Q to 2")
 }

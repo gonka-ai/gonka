@@ -1,6 +1,7 @@
 package heightsync_test
 
 import (
+	"math"
 	"testing"
 	"time"
 
@@ -311,6 +312,24 @@ func TestTurnTracker_StampPastDeadlineDegrades(t *testing.T) {
 	require.True(t, rec.Acks[0].Late)
 	require.Zero(t, tr.LastCompletedHeight())
 	require.False(t, tr.CompletedAtOrAbove(500))
+}
+
+func TestTurnTracker_AckDeadlineDoesNotWrap(t *testing.T) {
+	cfg := heightsync.DefaultHeartbeatConfig()
+	cfg.AckDeadlineBlocks = 10
+	tr := heightsync.NewTurnTracker(3, 0, cfg)
+	hReq := uint64(math.MaxUint64 - 1)
+	tr.Observe(1, []*types.DevshardTx{heartbeatTx(1, hReq, 3)}, hReq)
+	ackH := hReq + 1
+	tr.Observe(2, []*types.DevshardTx{
+		ackTx(1, 1, 0, ackH, types.SyncState_SYNCED),
+		ackTx(1, 1, 1, ackH, types.SyncState_SYNCED),
+	}, ackH)
+	rec := tr.Record(1)
+	require.NotNil(t, rec)
+	require.False(t, rec.Acks[0].Late, "honest ack at HReq+1 must not be late when HReq+D_ack would wrap")
+	require.False(t, rec.Acks[1].Late)
+	require.Equal(t, heightsync.TurnComplete, rec.State)
 }
 
 // TestTurnTracker_CompletedTurnIsFinal closes the mirror of attack 22: a slot

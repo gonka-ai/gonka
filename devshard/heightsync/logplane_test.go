@@ -107,10 +107,9 @@ func baseState(t *testing.T, n int) (heightsync.LogPlaneState, []*signing.Secp25
 	}, signers
 }
 
-// seedFloor puts one signer's claim into the floor. Heights in these fixtures
-// are inside W_conf of the standing floor, which is the unaided path, so what a
-// single Observe establishes here is what a single heartbeat establishes in a
-// live session.
+// seedFloor puts one *host* signer's claim into the floor. Heights in these
+// fixtures are inside W_conf of the standing floor, which is the unaided path.
+// Sequencer heartbeats do not establish F (spec §14 rule 3).
 func seedFloor(f *heightsync.FloorIndex, nonce, height uint64, hash []byte) {
 	f.Observe(nonce, []heightsync.FloorClaim{{Signer: 0, Height: height, Hash: hash}})
 }
@@ -175,6 +174,22 @@ func TestLogPlane_AckCausalityRejected(t *testing.T) {
 		Txs:   []*types.DevshardTx{signedAckTx(ack2)},
 	}, st)
 	require.ErrorIs(t, res.Err, heightsync.ErrAckCausality)
+}
+
+func TestLogPlane_TwoHeartbeatsInDiffAckOfFirstAccepted(t *testing.T) {
+	st, signers := baseState(t, 3)
+	hash := []byte{0xaa}
+	const landing = uint64(10)
+	ack := signedAck(t, signers[0], 1, landing, 0, 50, hash, types.SyncState_SYNCED)
+	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: landing,
+		Txs: []*types.DevshardTx{
+			hbTx(1, 50, 3, hash, nil),
+			hbTx(2, 50, 3, hash, nil),
+			signedAckTx(ack),
+		},
+	}, st)
+	require.NoError(t, res.Err, "L3 must accept an ack of the first heartbeat's nonce")
 }
 
 func TestLogPlane_LateAckAfterTurnPruneAccepted(t *testing.T) {

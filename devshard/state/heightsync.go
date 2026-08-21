@@ -174,10 +174,11 @@ func (sm *StateMachine) observeHeightSyncLocked(nonce uint64, txs []*types.Devsh
 		return
 	}
 	sm.turnTracker.Observe(nonce, txs, heightsync.LogResidentHeight(txs, sm.turnTracker.LastCompletedHeight()))
-	// Every Diff-resident height is a reference height and feeds the floor,
-	// heartbeats and acks included. Producers lift to F(m) or omit, so a party
-	// that is behind is never put in an impossible position by another party's
-	// higher stamp; what it may not do is write a height below the floor.
+	// Every Diff-resident height is a reference height and feeds L0, heartbeats
+	// and acks included. Only host-signed first-party stamps raise F (spec §14
+	// rule 3). Producers lift to F(m) or omit, so a party that is behind is
+	// never put in an impossible position by another party's higher stamp; what
+	// it may not do is write a height below the floor.
 	//
 	// The fold happens here, on apply, and nowhere else. That is deliberate: an
 	// L5a refusal at the transport edge is a local admission decision about one
@@ -198,20 +199,33 @@ func (sm *StateMachine) observeHeightSyncLocked(nonce uint64, txs []*types.Devsh
 // be a persisted scalar, and the tracker is reconstructible from the log.
 // RestoreState copies hashed HeightSync* fields from the snapshot; replaying
 // MsgForceHeightSyncTurn fills them for legacy snapshots that omitted them.
+// A GetDiffs error keeps those snapshot scalars (h_last / latest turn_seq)
+// rather than folding an empty journal over them.
 func (sm *StateMachine) rebuildHeightSyncLocked() {
+	savedLast := sm.state.HeightSyncLastCompletedHeight
+	savedSeq := sm.state.HeightSyncLatestTurnSeq
 	slots := uint64(len(sm.state.Group))
-	sm.turnTracker = heightsync.NewTurnTracker(slots, 0, sm.heartbeatCfg)
-	sm.heightSyncFloor = heightsync.NewFloorIndexWith(
+	tracker := heightsync.NewTurnTracker(slots, 0, sm.heartbeatCfg)
+	floor := heightsync.NewFloorIndexWith(
 		heightsync.FloorConfigFor(len(sm.state.Group), sm.heartbeatCfg))
 	if sm.state.LatestNonce == 0 || sm.inferenceStore == nil {
+		sm.turnTracker = tracker
+		sm.heightSyncFloor = floor
 		return
 	}
 	records, err := sm.inferenceStore.GetDiffs(sm.state.EscrowID, 1, sm.state.LatestNonce)
 	if err != nil {
-		logging.Warn("heightsync: snapshot restore could not load diffs; tracker and floor start empty",
+		logging.Warn("heightsync: snapshot restore could not load diffs; keeping snapshot h_last",
 			"escrow_id", sm.state.EscrowID, "error", err)
+		tracker.SeedCompleted(savedLast, savedSeq)
+		sm.turnTracker = tracker
+		sm.heightSyncFloor = floor
+		sm.state.HeightSyncLastCompletedHeight = savedLast
+		sm.state.HeightSyncLatestTurnSeq = savedSeq
 		return
 	}
+	sm.turnTracker = tracker
+	sm.heightSyncFloor = floor
 	for _, rec := range records {
 		for _, tx := range rec.Txs {
 			if msg := tx.GetForceHeightSyncTurn(); msg != nil {

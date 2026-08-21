@@ -205,7 +205,7 @@ func TestRepairProbe_DeadPeerBacksOff(t *testing.T) {
 	require.Zero(t, h0.RepairBudget().Count(heightsync.RepairOutcomeHeight))
 	require.Equal(t, 1, h0.RepairBudget().FailCount(1))
 	require.True(t, h0.RepairBudget().InBackoff(1))
-	require.Equal(t, uint64(pastAckWindow()), h0.PeerSeenHeight(1), "UNREACHABLE does not ingest a probe height")
+	require.Equal(t, uint64(0), h0.PeerSeenHeight(1), "UNREACHABLE does not ingest a probe height")
 	require.Equal(t, heightsync.TurnDegraded, h0.HeightSyncTurnRecord(1).State)
 	assertNoRepairBlame(t, h0, p.servers[0])
 	require.Nil(t, p.servers[0].gossip, "nothing on the wire toward the user")

@@ -94,7 +94,7 @@ func CheckDiffLogPlane(ctx context.Context, in LogPlaneInput, st LogPlaneState) 
 	}
 	var out LogPlaneResult
 
-	hbs, acks := collectLogPlaneTxs(in.Txs)
+	hbs, acks := collectLogPlaneTxs(in.Nonce, in.Txs)
 
 	if err := checkL1(in.Nonce, hbs, acks, st); err != nil {
 		logLogPlane(in.Nonce, 0, "L1", "INVALID", err.Error(), "escrow", st.EscrowID)
@@ -104,7 +104,7 @@ func CheckDiffLogPlane(ctx context.Context, in LogPlaneInput, st LogPlaneState) 
 		logLogPlane(in.Nonce, 0, "L2", "INVALID", err.Error(), "escrow", st.EscrowID)
 		return out.invalid(err, "ack_sig_invalid")
 	}
-	if err := checkL3(in.Nonce, hbs, acks, st); err != nil {
+	if err := checkL3(hbs, acks, st); err != nil {
 		logLogPlane(in.Nonce, 0, "L3", "INVALID", err.Error(), "escrow", st.EscrowID)
 		return out.invalid(err, "ack_causality")
 	}
@@ -140,7 +140,7 @@ func CheckEnvelopeBinding(in LogPlaneInput, cfg HeartbeatConfig) []AttributableM
 	}
 	cfg = cfg.withDefaults()
 	var out LogPlaneResult
-	hbs, acks := collectLogPlaneTxs(in.Txs)
+	hbs, acks := collectLogPlaneTxs(in.Nonce, in.Txs)
 	checkL4(in, hbs, acks, &out)
 	checkL5a(in, hbs, acks, cfg, &out)
 	return out.Marks
@@ -156,7 +156,7 @@ type ackRef struct {
 	ack   *types.MsgHeightAck
 }
 
-func collectLogPlaneTxs(txs []*types.DevshardTx) ([]heartbeatRef, []ackRef) {
+func collectLogPlaneTxs(diffNonce uint64, txs []*types.DevshardTx) ([]heartbeatRef, []ackRef) {
 	var hbs []heartbeatRef
 	var acks []ackRef
 	for _, tx := range txs {
@@ -164,10 +164,10 @@ func collectLogPlaneTxs(txs []*types.DevshardTx) ([]heartbeatRef, []ackRef) {
 			continue
 		}
 		if hb := tx.GetHeartbeat(); hb != nil {
-			hbs = append(hbs, heartbeatRef{hb: hb})
+			hbs = append(hbs, heartbeatRef{nonce: diffNonce, hb: hb})
 		}
 		if ack := tx.GetHeightAck(); ack != nil {
-			acks = append(acks, ackRef{ack: ack})
+			acks = append(acks, ackRef{nonce: diffNonce, ack: ack})
 		}
 	}
 	return hbs, acks
@@ -242,10 +242,15 @@ func checkL2(acks []ackRef, st LogPlaneState) error {
 	return nil
 }
 
-func checkL3(diffNonce uint64, hbs []heartbeatRef, acks []ackRef, st LogPlaneState) error {
+func checkL3(hbs []heartbeatRef, acks []ackRef, st LogPlaneState) error {
 	inDiff := make(map[uint64]uint64, len(hbs))
 	for _, ref := range hbs {
-		inDiff[diffNonce] = ref.hb.TurnSeq
+		// A Diff may carry more than one heartbeat (batched span). Keep the
+		// first so an ack of that heartbeat's nonce still resolves.
+		if _, exists := inDiff[ref.nonce]; exists {
+			continue
+		}
+		inDiff[ref.nonce] = ref.hb.TurnSeq
 	}
 	for _, ref := range acks {
 		ack := ref.ack

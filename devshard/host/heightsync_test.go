@@ -49,6 +49,21 @@ func stampedHeartbeatDiff(t *testing.T, user signing.Signer, nonce, turnSeq, hei
 	return testutil.SignDiff(t, user, "escrow-1", nonce, d.Txs)
 }
 
+func signedAckTx(t *testing.T, signer *signing.Secp256k1Signer, turn, ref uint64, slot uint32, height uint64, hash []byte) *types.DevshardTx {
+	t.Helper()
+	ack := &types.MsgHeightAck{
+		TurnSeq:           turn,
+		RefNonce:          ref,
+		SlotId:            slot,
+		ObservedHeight:    height,
+		ObservedBlockHash: append([]byte(nil), hash...),
+		SyncState:         types.SyncState_SYNCED,
+		PeerSeen:          []byte{0xff},
+	}
+	require.NoError(t, heightsync.SignAck(signer, ack))
+	return &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}}
+}
+
 func mempoolHeightAcks(txs []*types.DevshardTx) []*types.MsgHeightAck {
 	var out []*types.MsgHeightAck
 	for _, tx := range txs {
@@ -88,11 +103,45 @@ func TestHost_HeartbeatAck_OwnSlotIntoMempool(t *testing.T) {
 	require.Equal(t, []byte{0xaa}, ack.ObservedBlockHash)
 	require.Equal(t, types.SyncState_SYNCED, ack.SyncState)
 	require.NotEmpty(t, ack.PeerSeen)
-	require.Equal(t, byte(1<<0|1<<1|1<<2), ack.PeerSeen[0], "peer_seen from Diff heartbeats")
+	require.Equal(t, byte(1<<0), ack.PeerSeen[0], "peer_seen is this host's own slot, not sequencer heartbeats")
+	require.True(t, h.PeerSeenHas(0))
+	require.False(t, h.PeerSeenHas(1), "sequencer heartbeat is not a claim from slot 1")
+	require.False(t, h.PeerSeenHas(2))
 	require.Equal(t, int64(1), or.latestCalls.Load(), "one oracle read per exchange")
 
 	err = heightsync.VerifyAck(signing.NewSecp256k1Verifier(), ack, hosts[0].Address())
 	require.NoError(t, err)
+}
+
+func TestHost_PeerSeenMarksAcksNotHeartbeats(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	or := &fakeOracle{}
+	or.setHeight(100)
+	or.setHash([]byte{0xaa})
+	h := newAckTestHost(t, 0, hosts, user, WithChainOracle(or))
+
+	const slots = uint64(3)
+	d1 := heartbeatDiff(t, user, 1, 1, 100, slots)
+	d2 := heartbeatDiff(t, user, 2, 1, 100, slots)
+	d3 := heartbeatDiff(t, user, 3, 1, 100, slots)
+	_, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{d1, d2, d3}})
+	require.NoError(t, err)
+	require.False(t, h.PeerSeenHas(1))
+	require.False(t, h.PeerSeenHas(2))
+
+	ackDiff := testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{
+		signedAckTx(t, hosts[1], 1, 2, 1, 100, []byte{0xaa}),
+	})
+	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{ackDiff}})
+	require.NoError(t, err)
+	require.True(t, h.PeerSeenHas(1), "peer_seen from a host-signed ack")
+	require.Equal(t, uint64(100), h.PeerSeenHeight(1))
+	require.False(t, h.PeerSeenHas(2))
 }
 
 func TestHost_HeartbeatAck_WrongSlotSilent(t *testing.T) {
@@ -239,18 +288,12 @@ func TestHost_HeartbeatAck_CatchingUp(t *testing.T) {
 	require.Equal(t, uint64(90), acks[0].ObservedHeight)
 }
 
-// TestHost_HeartbeatAck_LagsButClearsSolicitingFloor pins the producing-nonce
-// basis for acks. The host is really behind at 90 and the only stamped height in
-// the log is the 100 on the heartbeat it is answering, so the bar the verifier
-// applies — F(ref_nonce+1), which folds in that heartbeat — is above the host's
-// raw tip. The honest ack is therefore the lift to 100, with the lag moved into
-// sync_state.
-//
-// The slot is picked so ref_nonce is the first nonce: reading F(ref_nonce)
-// instead drops the soliciting heartbeat, because AsOf is exclusive, and leaves
-// nothing behind it. That is how an honest host ends up authoring an L0-invalid
-// ack, and no later heartbeat in the span can paper over it.
-func TestHost_HeartbeatAck_LagsButClearsSolicitingFloor(t *testing.T) {
+// TestHost_HeartbeatAck_LagsButClearsHostFloor is the producer-side lift: a host
+// whose own tip sits below a floor *host acks already established* stamps F(m),
+// not its raw tip. A soliciting MsgHeartbeat does not itself raise F (spec §14
+// rule 3), so the bar comes from a prior host-signed stamp, not from the
+// heartbeat the ack answers.
+func TestHost_HeartbeatAck_LagsButClearsHostFloor(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),
 		testutil.MustGenerateKey(t),
@@ -260,20 +303,23 @@ func TestHost_HeartbeatAck_LagsButClearsSolicitingFloor(t *testing.T) {
 	or := &fakeOracle{}
 	or.setHeight(90)
 	or.setHash([]byte{0xbb})
-	h := newAckTestHost(t, 1, hosts, user, WithChainOracle(or)) // executor(1) = 1
+	h := newAckTestHost(t, 0, hosts, user, WithChainOracle(or)) // executor(3) = 0
 
 	const slots = uint64(3)
 	top := []byte{0xaa}
 	d1 := stampedHeartbeatDiff(t, user, 1, 1, 100, slots, top)
-	d2 := stampedHeartbeatDiff(t, user, 2, 1, 100, slots, top)
-	d3 := stampedHeartbeatDiff(t, user, 3, 1, 100, slots, top)
+	d2 := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{
+		signedAckTx(t, hosts[1], 1, 1, 1, 100, top),
+		stampedHeartbeatDiff(t, user, 2, 2, 100, slots, top).Txs[0],
+	})
+	d3 := stampedHeartbeatDiff(t, user, 3, 3, 100, slots, top)
 	resp, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{d1, d2, d3}})
 	require.NoError(t, err)
 
 	acks := mempoolHeightAcks(resp.Mempool)
 	require.Len(t, acks, 1)
-	require.Equal(t, uint64(1), acks[0].RefNonce, "F(1) is empty; only F(2) holds the heartbeat's 100")
-	require.Equal(t, uint64(100), acks[0].ObservedHeight, "lifted to F(ref_nonce+1), not F(ref_nonce)")
+	require.Equal(t, uint64(3), acks[0].RefNonce)
+	require.Equal(t, uint64(100), acks[0].ObservedHeight, "lifted to the host-established floor, not own tip 90")
 	require.Equal(t, top, acks[0].ObservedBlockHash, "the carried pair must be the floor's, not the host's")
 	require.Equal(t, types.SyncState_CATCHING_UP, acks[0].SyncState,
 		"the lag is not hidden: it moves to the label the gateway monitors")
@@ -301,14 +347,20 @@ func TestHost_HeartbeatAck_OmitsAStampWhenTheFloorIsOutOfReach(t *testing.T) {
 	or.setHash([]byte{0xbb})
 	h := newAckTestHost(t, 0, hosts, user, WithChainOracle(or)) // executor(3) = 0
 
-	// Three heartbeats walk the floor up one window at a time, which is the only
-	// way a single signer may raise it, leaving F(4) = 768 against a host at 1.
+	// A peer host-ack walks the floor up one window at a time, which is the only
+	// way a single host signer may raise it, leaving F(4) = 512 against a host at 1.
 	const slots = uint64(3)
 	top := []byte{0xaa}
 	w := heightsync.DefaultConfirmWindowBlocks
 	d1 := stampedHeartbeatDiff(t, user, 1, 1, w, slots, top)
-	d2 := stampedHeartbeatDiff(t, user, 2, 1, 2*w, slots, top)
-	d3 := stampedHeartbeatDiff(t, user, 3, 1, 3*w, slots, top)
+	d2 := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{
+		signedAckTx(t, hosts[1], 1, 1, 1, w, top),
+		stampedHeartbeatDiff(t, user, 2, 2, 2*w, slots, top).Txs[0],
+	})
+	d3 := testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{
+		signedAckTx(t, hosts[1], 2, 2, 1, 2*w, top),
+		stampedHeartbeatDiff(t, user, 3, 3, 3*w, slots, top).Txs[0],
+	})
 	resp, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{d1, d2, d3}})
 	require.NoError(t, err)
 

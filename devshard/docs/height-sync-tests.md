@@ -151,7 +151,10 @@ Slow-running tests check `testing.Short()` and skip under `-short`.
 | ✅ `TestHeartbeat_HashOnlyOracle_TurnCompletes` | `syncstate_test.go` | D9: hash-only oracle (empty Commit) reaches `complete`; `Prove` is not called. |
 | ✅ `TestEvaluateSyncStateFromHeader_DoesNotCallLatest` | `syncstate_test.go` | Ack stamp reuses the already-fetched header (same read as the response-leg Anchor). |
 | ✅ `TestSignAck_RoundTrip` / `TestCanonicalAckBytes_DomainSeparated` | `ack_signing_test.go` | Domain `heightsync.ack.v1`; field 8 excluded from the signing input. |
-| ✅ `TestHost_HeartbeatAck_OwnSlotIntoMempool` / `_WrongSlotSilent` / `_NoHeartbeatNoAck` / `_OracleUnavailableStillRequired` / `_OracleErrorStillRequired` / `_CatchingUp` / `_LagsButClearsSolicitingFloor` / `_OracleStale` / `_AlreadyAppliedDoesNotRereadOracle` | `host/heightsync_test.go` | E3: ack only for this host's slot; one `Latest()` per exchange; `ORACLE_UNAVAILABLE` still required; the producer's floor basis is `F(ref_nonce + 1)`; `peer_seen` from Diff. |
+| ✅ `TestHost_HeartbeatAck_OwnSlotIntoMempool` / `_WrongSlotSilent` / `_NoHeartbeatNoAck` / `_OracleUnavailableStillRequired` / `_OracleErrorStillRequired` / `_CatchingUp` / `_LagsButClearsSolicitingFloor` / `_OracleStale` / `_AlreadyAppliedDoesNotRereadOracle` / `TestHost_PeerSeenMarksAcksNotHeartbeats` | `host/heightsync_test.go` | E3: ack only for this host's slot; one `Latest()` per exchange; `ORACLE_UNAVAILABLE` still required; the producer's floor basis is `F(ref_nonce + 1)`; `peer_seen` from Diff acks and repair HEIGHT, not sequencer heartbeats. |
+| ✅ `TestTurnTracker_AckDeadlineDoesNotWrap` | `heartbeat_test.go` | H100: `HReq + D_ack` saturates; an honest ack at `HReq+1` is not `late`. |
+| ✅ `TestLogPlane_TwoHeartbeatsInDiffAckOfFirstAccepted` | `logplane_test.go` | H101: two heartbeats in one Diff; L3 accepts an ack of the first heartbeat's nonce. |
+| ✅ `TestHeightSync_RestoreGetDiffsErrorKeepsLastCompletedHeight` | `state/heightsync_snapshot_test.go` | H102: `GetDiffs` error on restore keeps snapshot `h_last`. |
 
 ---
 
@@ -345,6 +348,9 @@ produces **marks**, adjudication lands with Strong.
 | H92 | ✅ `TestHost_BlockedOracleDoesNotHoldMutex` + `TestConfirm_BlockedOracleDoesNotHoldMutex` + `TestAnchorScheduler_BlockedOracleDoesNotHoldMutex` | `host` + `heightsync` | A blocked `Latest()` does not hold `host.mu`, the confirmation mutex, or the scheduler mutex. |
 | H96 | ✅ `TestDecodeMainnetBlockHashHex_OversizedRejected` | `transport` | Hex longer than 64 chars is rejected before `DecodeString`. |
 | H97 | ✅ `TestUnwrapInferenceRequestBody_OversizedOriginSigDropped` | `transport` | Field-8 longer than 65 bytes is dropped at unwrap. |
+| H100 | ✅ `TestTurnTracker_AckDeadlineDoesNotWrap` | `heightsync` | `HReq = MaxUint64-1`, `D_ack = 10`: honest ack at `HReq+1` is not `late`. |
+| H101 | ✅ `TestLogPlane_TwoHeartbeatsInDiffAckOfFirstAccepted` | `heightsync` | Two heartbeats in one Diff; L3 accepts an ack of the first heartbeat's nonce. |
+| H102 | ✅ `TestHeightSync_RestoreGetDiffsErrorKeepsLastCompletedHeight` | `state` | `GetDiffs` error on restore keeps snapshot `HeightSyncLastCompletedHeight`. |
 | H66 | ✅ `TestLogPlane_L7SameDiffAckSatisfiesVector` | `heightsync` | A heartbeat for turn `S` and an ack for `S-1` in the same diff satisfy L7 without cloning the tracker. |
 | H67 | ✅ `TestClassifyInbound_ZeroTimestampCarryForwardIsStale` | `heightsync` | A carry-forward with originator id set and both timestamps zero is `INVALID(stale_origin)`. |
 | H76 | ✅ `TestMaxFresh_SkipsEntriesWithoutBlob` | `transport` | Production-shaped `NewHeightSyncPeerTips()` ignores unverified `RecordOrigin` entries in `MaxFresh` and `Carry`. |

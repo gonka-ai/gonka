@@ -269,8 +269,8 @@ func TestHeartbeat_AckInclusionAndSyncVectorPrevTurn(t *testing.T) {
 	for _, ack := range acks {
 		require.Equal(t, uint64(1), ack.TurnSeq)
 		require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, ack.SyncState)
-		require.Equal(t, uint64(100), ack.ObservedHeight,
-			"a blind host still carries logical time: it echoes the floor the heartbeat set")
+		require.Equal(t, uint64(0), ack.ObservedHeight,
+			"a blind host with an empty floor omits a height claim: sequencer heartbeats do not seed F")
 		seen[ack.SlotId] = ack.SyncState
 	}
 	require.Len(t, seen, slots)
@@ -325,9 +325,10 @@ func TestHeartbeat_LiveHostsQuorumCompletes(t *testing.T) {
 
 // TestHeartbeat_UnavailableAcksCompleteTurnButNeverConfirm separates the two
 // jobs an ack used to do at once. A roster of blind hosts completes the turn:
-// they are reachable and applying the log, and they carry its logical time by
-// echoing the floor. None of that says anyone saw block 100 — these slots
-// produce no envelope anchor, so (C-quorum) has nothing to count, which is why
+// they are reachable and applying the log. They do not seed F — sequencer
+// heartbeats never raise it, and a host with no oracle has no first-party tip
+// to stamp. None of that says anyone saw block 100 — these slots produce no
+// envelope anchor, so (C-quorum) has nothing to count, which is why
 // (C-turn) had to go (TestConfirm_TurnRuleWithdrawn).
 func TestHeartbeat_UnavailableAcksCompleteTurnCarryingTheFloor(t *testing.T) {
 	var height uint64 = 100
@@ -339,7 +340,7 @@ func TestHeartbeat_UnavailableAcksCompleteTurnCarryingTheFloor(t *testing.T) {
 	for _, ack := range acks {
 		require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, ack.SyncState,
 			"the self-report stays honest: this slot is no height witness")
-		require.Equal(t, uint64(100), ack.ObservedHeight, "carried from the floor, not observed")
+		require.Zero(t, ack.ObservedHeight, "no floor yet and no oracle: the stamp is omitted, not invented")
 	}
 	rec := session.HeartbeatTurnTracker().Record(1)
 	require.Equal(t, heightsync.TurnComplete, rec.State)

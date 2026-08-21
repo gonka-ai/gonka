@@ -467,6 +467,10 @@ func (c *HTTPClient) handleSSELine(
 			if err := json.Unmarshal(rawHS, &hs); err == nil {
 				hs.Direction = "response"
 				c.ingestResponseHeightSync(&hs, result.Nonce, "SSE devshard_receipt line")
+				result.HasEnvelope = true
+				if hs.MainnetHeight > 0 {
+					result.EnvelopeHeight = uint64(hs.MainnetHeight)
+				}
 			}
 		}
 		if receiptHandler != nil {
