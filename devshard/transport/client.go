@@ -147,6 +147,16 @@ func IsUpstreamEscrowNotFound(err error) bool {
 		strings.Contains(ue.Body, "escrow not found")
 }
 
+// IsSessionNotFound returns true if err is an UpstreamStatusError from a host that does not hold the
+// escrow at all, as opposed to holding it and disagreeing about a nonce.
+func IsSessionNotFound(err error) bool {
+	var ue *UpstreamStatusError
+	if !errors.As(err, &ue) {
+		return false
+	}
+	return ue.StatusCode == http.StatusNotFound && strings.Contains(ue.Body, "session not found")
+}
+
 func DefaultClientConfig() ClientConfig {
 	return ClientConfig{
 		InferenceTimeout: 30 * time.Minute,

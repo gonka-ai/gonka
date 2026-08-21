@@ -20,6 +20,7 @@ import (
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
+	"devshard/transport"
 	"devshard/types"
 )
 
@@ -273,11 +274,6 @@ type Session struct {
 	signatureCollectMaxRetries  int
 	signatureCollectBaseDelay   time.Duration
 	signatureCollectHostTimeout time.Duration
-
-	// finalizeClients mirrors s.clients with admission control stripped.
-	// Built lazily on first CollectSignatures call so finalize catch-up
-	// can reach quarantined hosts.
-	finalizeClients []HostClient
 }
 
 // SessionOption configures optional Session behavior.
@@ -912,6 +908,12 @@ func (s *Session) confirmStartOnReceipt(inferenceNonce uint64, resp *host.HostRe
 			ConfirmedAt: resp.ConfirmedAt,
 		}},
 	})
+	// Both halves of the receipt move together: the chain learns the inference started, and this session
+	// must vote the execution timeout that matches. Leaving confirmedAt behind makes it vote a refusal
+	// against a record the chain already advanced, which every verifier then rejects.
+	if outcome, tracked := s.nonceStates[inferenceNonce]; tracked && resp.ConfirmedAt > 0 {
+		outcome.confirmedAt = resp.ConfirmedAt
+	}
 }
 
 func (s *Session) logStateRootMismatchUserDiagnostic(p *PreparedInference) {
@@ -1045,10 +1047,10 @@ func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostC
 		resp, err := client.Send(chunkCtx, host.HostRequest{Diffs: chunk, Nonce: chunkNonce}, nil, nil)
 		cancel()
 		if err != nil {
-			logging.Warn("sendCatchUp host dead", "subsystem", "finalize", "escrow", s.escrowID,
+			logging.Warn("sendCatchUp chunk failed", "subsystem", "finalize", "escrow", s.escrowID,
 				"nonce", nonce, "host", hostIdx,
 				"chunk", chunkNum, "error", err)
-			return nil // dead host
+			return fmt.Errorf("catch-up chunk %d to host %d: %w", chunkNum, hostIdx, err)
 		}
 
 		logging.Info("sendCatchUp chunk response", "subsystem", "finalize", "escrow", s.escrowID,
@@ -1145,11 +1147,12 @@ func (s *Session) SyncHosts(ctx context.Context) error {
 	logging.Info("sync hosts started", "subsystem", "sync", "escrow", s.escrowID,
 		"nonce", startNonce, "unique_hosts", len(hosts))
 
+	var failures []error
 	const syncCycles = 2
 	for cycle := 0; cycle < syncCycles; cycle++ {
 		for _, h := range hosts {
 			if err := s.sendCatchUp(ctx, h.idx); err != nil {
-				return fmt.Errorf("sync hosts cycle %d catch-up host %d: %w", cycle+1, h.idx, err)
+				failures = append(failures, fmt.Errorf("cycle %d host %d: %w", cycle+1, h.idx, err))
 			}
 		}
 		for i := 0; i < len(s.group); i++ {
@@ -1167,13 +1170,13 @@ func (s *Session) SyncHosts(ctx context.Context) error {
 
 	for _, h := range hosts {
 		if err := s.sendCatchUp(ctx, h.idx); err != nil {
-			return fmt.Errorf("sync hosts final catch-up host %d: %w", h.idx, err)
+			failures = append(failures, fmt.Errorf("final host %d: %w", h.idx, err))
 		}
 	}
 
 	logging.Info("sync hosts complete", "subsystem", "sync", "escrow", s.escrowID,
-		"start_nonce", startNonce, "end_nonce", s.Nonce())
-	return nil
+		"start_nonce", startNonce, "end_nonce", s.Nonce(), "failed", len(failures))
+	return errors.Join(failures...)
 }
 
 // Finalize completes the round in three phases.
@@ -1384,28 +1387,50 @@ func (s *Session) HasQuorumAt(nonce uint64) bool {
 	return s.hasQuorum(nonce, s.sm.QuorumThreshold())
 }
 
-// getFinalizeClients returns a client list with admission control stripped.
-// Built lazily and cached on s.finalizeClients. Each client that implements
-// a ClearAdmission method gets a shallow copy with admission disabled;
-// others are used as-is.
-func (s *Session) getFinalizeClients() []HostClient {
-	if s.finalizeClients != nil {
-		return s.finalizeClients
+// forgetHostState rewinds a host that reports it does not hold the escrow. Catch-up sends only what
+// follows the host's cursor, so a host that lost its storage is never taught again while the cursor
+// still claims it is current: the rewind is the only way back.
+func (s *Session) forgetHostState(hostIdx int, err error) {
+	if !transport.IsSessionNotFound(err) {
+		return
 	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cursor, tracked := s.hostSyncNonce[hostIdx]
+	if hostIdx < 0 || hostIdx >= len(s.group) || !tracked || cursor == 0 {
+		return
+	}
+	// Only as far back as the diffs actually held: after a restart the history starts at the group's
+	// lowest cursor, and rewinding past it would hand the host a chain missing its own beginning.
+	var earliest uint64
+	if len(s.diffs) > 0 {
+		earliest = s.diffs[0].Nonce - 1
+	}
+	if cursor <= earliest {
+		return
+	}
+	logging.Warn("host lost the escrow, rewinding its catch-up cursor", "subsystem", "session",
+		"escrow", s.escrowID, "host", hostIdx, "cursor", cursor, "rewound_to", earliest)
+	s.hostSyncNonce[hostIdx] = earliest
+}
+
+// getFinalizeClients mirrors s.clients with admission control stripped, for the protocol paths that must
+// reach a host the participant budget would refuse. Rebuilt per call: s.clients is small, both callers
+// are network-bound, and a cache would have to be invalidated by anything that swaps a client.
+func (s *Session) getFinalizeClients() []HostClient {
 	type admissionBypasser interface {
 		WithoutAdmission() any
 	}
-	s.finalizeClients = make([]HostClient, len(s.clients))
+	clients := make([]HostClient, len(s.clients))
 	for i, c := range s.clients {
+		clients[i] = c
 		if b, ok := c.(admissionBypasser); ok {
 			if hc, ok := b.WithoutAdmission().(HostClient); ok {
-				s.finalizeClients[i] = hc
-				continue
+				clients[i] = hc
 			}
 		}
-		s.finalizeClients[i] = c
 	}
-	return s.finalizeClients
+	return clients
 }
 
 // fetchSignature tries to retrieve an already-stored signature from the host
@@ -1806,7 +1831,9 @@ func (s *Session) sendPendingDiff(ctx context.Context) (types.Diff, error) {
 	catchUp := s.diffsForHost(hostIdx)
 	s.mu.Unlock()
 
-	resp, err := s.clients[hostIdx].Send(ctx, host.HostRequest{Diffs: catchUp, Nonce: diff.Nonce}, nil, nil)
+	// Admission-free, like signature collection: this diff carries a vote the verifiers already cast, so
+	// the participant budget refusing it throws that work away and costs the host nothing.
+	resp, err := s.getFinalizeClients()[hostIdx].Send(ctx, host.HostRequest{Diffs: catchUp, Nonce: diff.Nonce}, nil, nil)
 	if err != nil {
 		return diff, fmt.Errorf("send timeout diff to host %d: %w", hostIdx, err)
 	}
@@ -2298,6 +2325,7 @@ func (s *Session) collectTimeoutVotes(
 			)
 			logging.Debug("timeout vote error",
 				"subsystem", "session", "inference_id", inferenceID, "error", res.err)
+			s.forgetHostState(res.verifierIdx, res.err)
 			continue // skip failed hosts
 		}
 		if res.vote != nil {

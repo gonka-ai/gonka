@@ -1132,6 +1132,7 @@ func TestLongResponseAfterContentSkipsParticipantFailureAccounting(t *testing.T)
 		inf.setFirstTokenAt(time.Now().Add(-(longResponseFailureExemption + 800*time.Millisecond)))
 		inf.contentChunks.Store(1)
 		inf.outputChunks.Store(1)
+		inf.contentSource = "delta.content"
 		env.proxy.redundancy.recordStalledWinnerFailureOnce(inf, defaultParams())
 		env.proxy.redundancy.recordStartedAttemptSamples([]*inflight{inf}, defaultParams(), true)
 	}
@@ -2051,4 +2052,33 @@ func TestRunInference_FastReceiptDoesNotSpuriouslyEscalate(t *testing.T) {
 	require.Len(t, records[0].Hosts, 1,
 		"healthy primary should win without any spurious secondary — if this fails, "+
 			"awaitRace is firing the receipt-timeout escalation on a stale trigger")
+}
+
+// An empty stream sets no content source, so a host that took the receipt and then held the connection
+// open silently is charged for it instead of being excused as slow.
+func TestAnEmptyStreamDoesNotEarnTheLongResponseExemption(t *testing.T) {
+	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
+
+	held := &inflight{hostIdx: 0, nonce: 1, sendTime: time.Now().Add(-(longResponseFailureExemption + time.Second))}
+
+	require.False(t, longResponseFailureExempt(held, env.session),
+		"holding the stream open without a single content chunk must not buy an exemption")
+}
+
+// The chunk counter advances on error events too, so a host that emitted one error and then held the
+// stream open used to earn the same exemption as one that was still generating.
+func TestAnErrorEventDoesNotEarnTheLongResponseExemption(t *testing.T) {
+	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
+	longAgo := time.Now().Add(-(longResponseFailureExemption + time.Second))
+
+	generating := &inflight{hostIdx: 0, nonce: 1, sendTime: longAgo, contentSource: "delta.content"}
+	generating.contentChunks.Store(1)
+
+	erroring := &inflight{hostIdx: 0, nonce: 2, sendTime: longAgo}
+	erroring.contentChunks.Store(1)
+
+	require.True(t, longResponseFailureExempt(generating, env.session),
+		"a host still producing content must not be voted against for being slow")
+	require.False(t, longResponseFailureExempt(erroring, env.session),
+		"one error event is not content, and holding the stream after it must not buy an exemption")
 }

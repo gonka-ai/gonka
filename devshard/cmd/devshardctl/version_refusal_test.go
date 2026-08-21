@@ -31,6 +31,7 @@ func TestOnlyAVersionRefusalIsPermanent(t *testing.T) {
 		{name: "some other quoted thing missing", body: `model "kimi" not found`},
 		{name: "a quoted escrow missing", body: `escrow "49247" not found`},
 		{name: "a plain missing route", body: `404 page not found`},
+		{name: "both halves present but describing different things", body: `version "v4" active; model "kimi" not found`},
 		{name: "the word version alone", body: `unsupported version`},
 		{name: "nothing at all", body: ""},
 	}
@@ -281,6 +282,26 @@ func TestDecodeCostPerTokenMeasuresTheWindowAfterFirstContent(t *testing.T) {
 
 			if got := decodeCostPerToken(inf); got != testCase.want {
 				t.Fatalf("decodeCostPerToken() = %v, want %v", got, testCase.want)
+			}
+		})
+	}
+}
+
+func TestAVersionConflictCountsAsAVersionRefusal(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		body string
+		want bool
+	}{
+		{name: "route missing", body: `version "v4" not found`, want: true},
+		{name: "stored under an older binary", body: `{"message":"session version conflict: stored v3, host v4"}`, want: true},
+		{name: "unrelated failure", body: `{"message":"inference 8: expected started, got 0"}`, want: false},
+		{name: "empty", body: "", want: false},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			if got := isVersionRefusal(testCase.body); got != testCase.want {
+				t.Errorf("isVersionRefusal(%q) = %t, want %t: both refusals last until the host's binary changes",
+					testCase.body, got, testCase.want)
 			}
 		})
 	}

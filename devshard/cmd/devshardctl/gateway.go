@@ -292,6 +292,9 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	}
 	model := resolveRuntimeModel(cfg.Model, escrow.ModelID, deps.defaultModel, cfg.ID)
 	routePrefix := resolveRuntimeRoutePrefix(cfg.RoutePrefix)
+	if strings.TrimSpace(cfg.RoutePrefix) == "" {
+		log.Printf("escrow_route_prefix_unpinned escrow=%s route_prefix=%s", cfg.ID, routePrefix)
+	}
 	timeoutOverrides, err := e2econfig.SessionTimeoutOverridesFromEnv()
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: session timeout overrides: %w", cfg.ID, err)
@@ -402,22 +405,6 @@ func resolveMaxConcurrentRuntimeBuilds() int {
 		return defaultMaxConcurrentRuntimeBuilds
 	}
 	return n
-}
-
-func resolveGatewayRoutePrefix() (string, error) {
-	routePrefix := strings.TrimSpace(os.Getenv("DEVSHARD_ROUTE_PREFIX"))
-	if routePrefix == "" {
-		version := strings.TrimSpace(Version)
-		if version == "" {
-			version = "dev"
-		}
-		routePrefix = devshardpkg.VersionedRoutePrefix(version)
-	}
-	normalized, _, err := devshardpkg.ResolveRoutePrefix(routePrefix)
-	if err != nil {
-		return "", err
-	}
-	return normalized, nil
 }
 
 func gatewayHostRoutePrefix(override string) string {

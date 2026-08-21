@@ -1,18 +1,17 @@
 package main
 
 import (
+	"regexp"
 	"strings"
 
 	"devshard/accounting"
+	"devshard/storage"
 )
 
-const (
-	versionRefusalSubject = `version "`
-	versionRefusalVerdict = `" not found`
-)
+var versionNotFound = regexp.MustCompile(`version "[^"]*" not found`)
 
 func isVersionRefusal(body string) bool {
-	return strings.Contains(body, versionRefusalSubject) && strings.Contains(body, versionRefusalVerdict)
+	return versionNotFound.MatchString(body) || strings.Contains(body, storage.ErrSessionVersionConflict.Error())
 }
 
 func deliveryReasonFor(inf *inflight, session nonceFinishedChecker, winnerNonce uint64, ok bool, clientGone *cancelFlag) string {

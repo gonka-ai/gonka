@@ -3139,7 +3139,7 @@ func longResponseFailureExempt(inf *inflight, session *user.Session) bool {
 	if session.IsNonceFinished(inf.nonce) {
 		return false
 	}
-	if inf.contentChunks.Load() == 0 {
+	if inf.contentSource == "" {
 		return false
 	}
 	return time.Since(inf.sendTime) >= longResponseFailureExemption

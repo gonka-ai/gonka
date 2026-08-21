@@ -1136,7 +1136,6 @@ func TestFinalize_SettlementRerun_EmptyDiffsCollectsFromHosts(t *testing.T) {
 	session.diffs = nil
 	session.signatures = make(map[uint64]map[uint32][]byte)
 	session.clients = fetchers
-	session.finalizeClients = nil
 	session.mu.Unlock()
 	require.False(t, session.HasQuorumAt(finalNonce))
 
