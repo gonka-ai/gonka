@@ -299,6 +299,63 @@ func TestBuildBootstrapDelegationSnapshot_OnlyVotingPowerModelsTreatedAsActive(t
 	require.Equal(t, "new-model", snapshot.Preeligibility[0].ModelId)
 }
 
+func TestBuildBootstrapDelegationSnapshot_EmptyVoterAccountingModelIsNotActive(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.PocParams = &types.PocParams{
+		Models: []*types.PoCModelConfig{
+			{ModelId: "active-model", WeightScaleFactor: types.DecimalFromFloat(1)},
+			{ModelId: "new-model", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
+	}
+	params.DelegationParams = &types.DelegationParams{
+		DeployWindow: 1,
+		WThreshold:   types.DecimalFromFloat(0.5),
+		VMin:         1,
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 1))
+	ap := types.ActiveParticipants{
+		EpochGroupId: 1,
+		EpochId:      1,
+		Participants: []*types.ActiveParticipant{
+			{
+				Index:  testutil.Validator,
+				Weight: 100,
+				VotingPowers: []*types.ModelVotingPower{
+					{ModelId: "active-model", VotingPower: 100},
+				},
+			},
+			{
+				Index:  testutil.Validator2,
+				Weight: 100,
+			},
+		},
+	}
+	require.NoError(t, k.SetActiveParticipants(ctx, ap))
+	setupEpochGroupDataFromAP(k, ctx, ap)
+
+	root, found := k.GetEpochGroupData(ctx, 1, "")
+	require.True(t, found)
+	root.ConfirmationAccountingSeparated = true
+	root.ConfirmationWeightScales = []*types.ConfirmationWeightScale{
+		{ModelId: "active-model", WeightScaleFactor: types.DecimalFromFloat(1), HasTrustedVotingPower: true},
+		{ModelId: "new-model", WeightScaleFactor: types.DecimalFromFloat(1), HasTrustedVotingPower: false},
+	}
+	k.SetEpochGroupData(ctx, root)
+
+	require.NoError(t, k.SetPoCDirectIntent(ctx, "new-model", testutil.Validator))
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	snapshot, err := am.buildBootstrapDelegationSnapshot(ctx, 12)
+	require.NoError(t, err)
+	require.Len(t, snapshot.Preeligibility, 1)
+	require.Equal(t, "new-model", snapshot.Preeligibility[0].ModelId)
+}
+
 func TestBuildDelegationSnapshot_IncludesUpcomingCommittersAndExcludesIntents(t *testing.T) {
 	k, ctx := newMinimalInferenceKeeper(t)
 
@@ -657,6 +714,100 @@ func TestComputeStoreCommitVotingPowers_UsesExistingVotingPowersAndBootstrapDele
 		testutil.Executor:  70,
 		testutil.Executor2: 30,
 	}, got["existing-model"])
+	require.Equal(t, map[string]int64{
+		testutil.Executor: 140,
+	}, got["new-model"])
+}
+
+func TestComputeStoreCommitVotingPowers_EmptyPlaceholderIsNotAlreadyActive(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.PocParams = &types.PocParams{
+		Models: []*types.PoCModelConfig{
+			{ModelId: "existing-model", WeightScaleFactor: types.DecimalFromFloat(1)},
+			{ModelId: "new-model", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
+	}
+	params.DelegationParams = &types.DelegationParams{
+		WThreshold: types.DecimalFromFloat(0.5),
+		VMin:       1,
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 1))
+	ap := types.ActiveParticipants{
+		EpochId:             1,
+		EpochGroupId:        1,
+		PocStartBlockHeight: 100,
+		Participants: []*types.ActiveParticipant{
+			{
+				Index:        testutil.Executor,
+				Weight:       100,
+				Models:       []string{"existing-model"},
+				VotingPowers: []*types.ModelVotingPower{{ModelId: "existing-model", VotingPower: 70}},
+			},
+			{
+				Index:        testutil.Executor2,
+				Weight:       60,
+				Models:       []string{"existing-model"},
+				VotingPowers: []*types.ModelVotingPower{{ModelId: "existing-model", VotingPower: 30}},
+			},
+			{
+				Index:  testutil.Validator,
+				Weight: 40,
+			},
+		},
+	}
+	require.NoError(t, k.SetActiveParticipants(ctx, ap))
+	setupEpochGroupDataFromAP(k, ctx, ap)
+
+	require.NoError(t, k.SetBootstrapDelegationSnapshot(ctx, types.BootstrapDelegationSnapshot{
+		SnapshotHeight: 111,
+		Delegations: []*types.PoCDelegation{
+			{
+				ModelId:    "new-model",
+				Delegator:  testutil.Validator,
+				DelegateTo: testutil.Executor,
+			},
+		},
+		Intents: []*types.PoCDirectIntent{
+			{
+				ModelId:     "new-model",
+				Participant: testutil.Executor,
+			},
+		},
+		TotalNetworkWeight: 200,
+		Preeligibility: []*types.BootstrapModelPreEligibility{
+			{
+				ModelId:           "new-model",
+				PreEligible:       true,
+				MeetsVMin:         true,
+				MeetsReachability: true,
+			},
+		},
+	}))
+	require.NoError(t, k.SetPoCV2StoreCommit(ctx, types.PoCV2StoreCommit{
+		ParticipantAddress:       testutil.Executor,
+		PocStageStartBlockHeight: 180,
+		ModelId:                  "new-model",
+		Count:                    1,
+	}))
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	base := am.getEffectiveValidationBaseState(ctx)
+	base.existingModelVotingPowers = append(base.existingModelVotingPowers, &types.ModelVotingPowers{
+		ModelId: "new-model",
+	})
+
+	modelWeights, totalWeight := am.computeStoreCommitVotingPowers(ctx, base, 180, "test")
+	require.Equal(t, int64(200), totalWeight)
+
+	got := map[string]map[string]int64{}
+	for _, modelWeight := range modelWeights {
+		got[modelWeight.ModelId] = types.VotingPowerSliceToMap(modelWeight.VotingPowers)
+	}
 	require.Equal(t, map[string]int64{
 		testutil.Executor: 140,
 	}, got["new-model"])

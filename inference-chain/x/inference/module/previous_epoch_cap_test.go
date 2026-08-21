@@ -505,7 +505,7 @@ func TestApplyPreviousConfirmedWeightCap_UntrustedOnlyModelGetsZeroCap(t *testin
 	require.Equal(t, int64(100), result[0].Weight)
 }
 
-func TestGetEffectiveValidationBaseState_IncludesEmptyVoterAccountingModels(t *testing.T) {
+func TestGetEffectiveValidationBaseState_OmitsEmptyVoterAccountingModels(t *testing.T) {
 	k, ctx := newMinimalInferenceKeeper(t)
 	const epoch = uint64(9)
 	require.NoError(t, k.SetEffectiveEpochIndex(ctx, epoch))
@@ -545,10 +545,39 @@ func TestGetEffectiveValidationBaseState_IncludesEmptyVoterAccountingModels(t *t
 	byModel := map[string]bool{}
 	for _, mvp := range base.existingModelVotingPowers {
 		byModel[mvp.ModelId] = true
-		if mvp.ModelId == "model-b" {
-			require.Empty(t, mvp.VotingPowers, "untrusted model must appear as an explicit empty-voter model")
-		}
 	}
 	require.True(t, byModel["model-a"])
-	require.True(t, byModel["model-b"])
+	require.False(t, byModel["model-b"], "zero-voter accounting models must not look active to PoC bootstrap")
+
+	snapshotModels := withAccountingPlaceholderModels(
+		base.existingModelVotingPowers,
+		[]*types.ConfirmationWeightScale{
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1), HasTrustedVotingPower: true},
+			{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(1), HasTrustedVotingPower: false},
+		},
+		true,
+	)
+	snapshotByModel := map[string]bool{}
+	for _, mvp := range snapshotModels {
+		snapshotByModel[mvp.ModelId] = true
+		if mvp.ModelId == "model-b" {
+			require.Empty(t, mvp.VotingPowers)
+			require.False(t, modelHasActiveVotingPower(mvp))
+		}
+	}
+	require.True(t, snapshotByModel["model-a"])
+	require.True(t, snapshotByModel["model-b"], "confirmation snapshots still keep the empty-voter accounting model")
+}
+
+func TestModelHasActiveVotingPower(t *testing.T) {
+	require.False(t, modelHasActiveVotingPower(nil))
+	require.False(t, modelHasActiveVotingPower(&types.ModelVotingPowers{ModelId: "model-b"}))
+	require.False(t, modelHasActiveVotingPower(&types.ModelVotingPowers{
+		ModelId:      "model-b",
+		VotingPowers: []*types.VotingPowerEntry{{Address: testutil.Validator, VotingPower: 0}},
+	}))
+	require.True(t, modelHasActiveVotingPower(&types.ModelVotingPowers{
+		ModelId:      "model-a",
+		VotingPowers: []*types.VotingPowerEntry{{Address: testutil.Validator, VotingPower: 80}},
+	}))
 }

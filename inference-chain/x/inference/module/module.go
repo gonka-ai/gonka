@@ -1020,8 +1020,49 @@ func (am AppModule) captureValidationSnapshot(ctx context.Context, blockHeight, 
 // path to exclude members removed mid-epoch.
 func (am AppModule) captureConfirmationValidationSnapshot(ctx context.Context, blockHeight, snapshotKey int64) {
 	baseState := am.getEffectiveValidationBaseState(ctx)
+	scales, accountingSeparated := am.currentConfirmationAccounting(ctx)
 	am.writeValidationSnapshot(ctx, blockHeight, snapshotKey, "confirmation PoC",
-		baseState.existingModelVotingPowers, baseState.totalWeight)
+		withAccountingPlaceholderModels(baseState.existingModelVotingPowers, scales, accountingSeparated),
+		baseState.totalWeight)
+}
+
+func (am AppModule) currentConfirmationAccounting(ctx context.Context) ([]*types.ConfirmationWeightScale, bool) {
+	currentGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
+	if err != nil || currentGroup == nil || currentGroup.GroupData == nil {
+		return nil, false
+	}
+	return currentGroup.GroupData.ConfirmationWeightScales, currentGroup.GroupData.ConfirmationAccountingSeparated
+}
+
+// withAccountingPlaceholderModels keeps zero-voter accounting models visible on
+// confirmation snapshots without treating them as active validation models.
+func withAccountingPlaceholderModels(
+	modelWeights []*types.ModelVotingPowers,
+	scales []*types.ConfirmationWeightScale,
+	accountingSeparated bool,
+) []*types.ModelVotingPowers {
+	if !accountingSeparated {
+		return modelWeights
+	}
+	present := make(map[string]bool, len(modelWeights))
+	out := make([]*types.ModelVotingPowers, 0, len(modelWeights)+len(scales))
+	for _, mw := range modelWeights {
+		if mw == nil || mw.ModelId == "" {
+			continue
+		}
+		present[mw.ModelId] = true
+		out = append(out, mw)
+	}
+	for _, scale := range scales {
+		if scale == nil || scale.ModelId == "" || present[scale.ModelId] {
+			continue
+		}
+		out = append(out, &types.ModelVotingPowers{ModelId: scale.ModelId})
+	}
+	slices.SortFunc(out, func(a, b *types.ModelVotingPowers) int {
+		return cmp.Compare(a.ModelId, b.ModelId)
+	})
+	return out
 }
 
 type effectiveValidationBaseState struct {
@@ -1036,7 +1077,9 @@ type effectiveValidationBaseState struct {
 // mid-epoch (weight set to 0 in SDK group) are excluded because GetGroupMembers
 // does not return them.
 //
-// Epoch 0 has no model-aware voting powers yet.
+// Epoch 0 has no model-aware voting powers yet. Zero-voter confirmation
+// accounting models stay on ConfirmationWeightScales, not here, so they
+// are not treated as already-active by regular PoC bootstrap.
 //
 // TODO: upgrade handler must populate ValidationWeight.voting_power in existing
 // EpochGroupData from AP.VotingPowers so the first post-upgrade epoch reads
@@ -1118,23 +1161,24 @@ func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effecti
 		}
 	}
 
-	if rootGroupData.ConfirmationAccountingSeparated {
-		for _, scale := range rootGroupData.ConfirmationWeightScales {
-			if scale == nil || scale.ModelId == "" {
-				continue
-			}
-			if _, exists := modelVPMap[scale.ModelId]; !exists {
-				modelVPMap[scale.ModelId] = map[string]int64{}
-			}
-		}
-	}
-
 	return effectiveValidationBaseState{
 		participants:              participants,
 		weights:                   consensusWeights,
 		totalWeight:               totalWeight,
 		existingModelVotingPowers: modelVPMapToSlice(modelVPMap),
 	}
+}
+
+func modelHasActiveVotingPower(mvp *types.ModelVotingPowers) bool {
+	if mvp == nil || mvp.ModelId == "" {
+		return false
+	}
+	for _, vp := range mvp.VotingPowers {
+		if vp != nil && vp.VotingPower > 0 {
+			return true
+		}
+	}
+	return false
 }
 
 func modelVPMapToSlice(modelVPMap map[string]map[string]int64) []*types.ModelVotingPowers {
@@ -1169,6 +1213,9 @@ func (am AppModule) computeStoreCommitVotingPowers(ctx context.Context, baseStat
 
 	mergedValidationVotingPowers := make(map[string]map[string]int64, len(baseState.existingModelVotingPowers))
 	for _, mvw := range baseState.existingModelVotingPowers {
+		if !modelHasActiveVotingPower(mvw) {
+			continue
+		}
 		mergedValidationVotingPowers[mvw.ModelId] = types.VotingPowerSliceToMap(mvw.VotingPowers)
 	}
 

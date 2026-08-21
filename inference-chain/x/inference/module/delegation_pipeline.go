@@ -318,10 +318,11 @@ func (am AppModule) buildBootstrapDelegationSnapshot(
 	effectiveParticipants := baseState.participants
 	consensusWeights := baseState.weights
 	totalNetworkWeight := baseState.totalWeight
-	// Active = models with existing voting powers. Must match computeStoreCommitVotingPowers.
+	// Active = models that already have positive validation voting power.
+	// Presence of an empty placeholder must not count; those are accounting-only.
 	activeModels := make(map[string]bool)
 	for _, mvp := range baseState.existingModelVotingPowers {
-		if mvp != nil && mvp.ModelId != "" {
+		if modelHasActiveVotingPower(mvp) {
 			activeModels[mvp.ModelId] = true
 		}
 	}
