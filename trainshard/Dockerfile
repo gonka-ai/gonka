@@ -22,7 +22,8 @@ RUN --mount=type=cache,id=trainshard-go-build,target=/root/.cache/go-build \
 
 FROM alpine:3.21
 
-RUN apk add --no-cache ca-certificates xfsprogs
+# xfs_quota, which the disk limits are made of, ships apart from the rest of the xfs tools
+RUN apk add --no-cache ca-certificates xfsprogs xfsprogs-extra
 
 COPY --from=builder /out/trainshardd /usr/local/bin/trainshardd
 

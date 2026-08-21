@@ -28,7 +28,11 @@ func WriteError(w http.ResponseWriter, requestID string, err error) {
 	status, code := StatusOf(err)
 	message := err.Error()
 	if status == http.StatusInternalServerError {
+		// the caller is told nothing about a fault it cannot act on, so the server keeps the cause
 		message = "internal error"
+		if kept, ok := w.(interface{ keep(error) }); ok {
+			kept.keep(err)
+		}
 	}
 	writeEnvelope(w, status, contract.Envelope{
 		Error: &contract.Error{Code: code, Message: message},

@@ -2,10 +2,14 @@ package docker
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"io/fs"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
+	"strings"
 	"time"
 
 	cerrdefs "github.com/containerd/errdefs"
@@ -35,6 +39,11 @@ func (c *Client) Create(ctx context.Context, spec run.ContainerSpec) error {
 		return err
 	}
 
+	binds, err := c.binds(spec)
+	if err != nil {
+		return err
+	}
+
 	init, pids := true, c.cfg.PidsLimit
 	marks := labels(spec.Shard, spec.Node, "run")
 	marks[labelRevision] = strconv.Itoa(spec.Revision)
@@ -47,9 +56,8 @@ func (c *Client) Create(ctx context.Context, spec run.ContainerSpec) error {
 		Labels:     marks,
 	}
 	host := &container.HostConfig{
-		Binds:         []string{c.volumePath(spec.Shard, spec.Node) + ":" + workdir},
+		Binds:         binds,
 		NetworkMode:   mode,
-		ExtraHosts:    extraHosts(spec.Hosts),
 		CapDrop:       []string{"ALL"},
 		SecurityOpt:   []string{"no-new-privileges"},
 		CgroupnsMode:  container.CgroupnsModePrivate,
@@ -61,7 +69,7 @@ func (c *Client) Create(ctx context.Context, spec run.ContainerSpec) error {
 			Memory:         c.cfg.MemoryBytes,
 			NanoCPUs:       c.cfg.NanoCPUs,
 			PidsLimit:      &pids,
-			DeviceRequests: gpuRequests(spec.Run.Resources.GPUs),
+			DeviceRequests: c.gpuRequests(spec.Run.Resources.GPUs),
 		},
 	}
 
@@ -110,6 +118,9 @@ func (c *Client) Remove(ctx context.Context, shardID vo.ShardID, node vo.NodeRef
 
 	_, err := c.engine.ContainerRemove(ctx, containerName(shardID, node), client.ContainerRemoveOptions{})
 	if !settled(err) {
+		return err
+	}
+	if err := os.Remove(c.hostsPath(shardID, node)); err != nil && !errors.Is(err, fs.ErrNotExist) {
 		return err
 	}
 	c.log.Info("removed container", "node_id", node.NodeID)
@@ -187,6 +198,10 @@ func (c *Client) removeByName(ctx context.Context, name string) error {
 	return err
 }
 
+func (c *Client) hostsPath(shardID vo.ShardID, node vo.NodeRef) string {
+	return c.volumePath(shardID, node) + ".hosts"
+}
+
 func (c *Client) volumePath(shardID vo.ShardID, node vo.NodeRef) string {
 	return filepath.Join(c.cfg.VolumeRoot, shardID.String(), string(node.NodeID))
 }
@@ -200,23 +215,43 @@ func environment(values map[string]string) []string {
 	return env
 }
 
-func extraHosts(pinned []run.PinnedHost) []string {
-	hosts := make([]string, 0, len(pinned))
-	for _, host := range pinned {
-		hosts = append(hosts, host.Name+":"+host.IP)
+// binds hands the run its workspace, and the names it may reach as a hosts file: the run has no dns,
+// and the engine refuses host entries to a container that lives in another one's network
+func (c *Client) binds(spec run.ContainerSpec) ([]string, error) {
+	binds := []string{c.volumePath(spec.Shard, spec.Node) + ":" + workdir}
+	if len(spec.Hosts) == 0 {
+		return binds, nil
 	}
-	return hosts
+
+	lines := []string{"127.0.0.1\tlocalhost", "::1\tlocalhost ip6-localhost ip6-loopback"}
+	for _, host := range spec.Hosts {
+		lines = append(lines, host.IP+"\t"+host.Name)
+	}
+
+	path := c.hostsPath(spec.Shard, spec.Node)
+	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+		return nil, err
+	}
+	return append(binds, path+":/etc/hosts:ro"), nil
 }
 
-func gpuRequests(count int) []container.DeviceRequest {
+// gpuRequests asks for cards the way `docker run --gpus` does, leaving the engine to name the vendor:
+// engines from 28 on hand that to the device interface the driver installs, and naming a driver
+// ourselves gets the run refused there. A kind names the devices outright, for a host whose engine
+// only knows them by name
+func (c *Client) gpuRequests(count int) []container.DeviceRequest {
 	if count <= 0 {
 		return nil
 	}
-	return []container.DeviceRequest{{
-		Driver:       "nvidia",
-		Count:        count,
-		Capabilities: [][]string{{"gpu"}},
-	}}
+	if c.cfg.GPUKind == "" {
+		return []container.DeviceRequest{{Count: count, Capabilities: [][]string{{"gpu"}}}}
+	}
+
+	ids := make([]string, count)
+	for index := range ids {
+		ids[index] = fmt.Sprintf("%s=%d", c.cfg.GPUKind, index)
+	}
+	return []container.DeviceRequest{{Driver: "cdi", DeviceIDs: ids}}
 }
 
 func toContainerInfo(found container.InspectResponse) (run.ContainerInfo, error) {

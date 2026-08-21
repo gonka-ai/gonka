@@ -30,6 +30,7 @@ type config struct {
 	containerGID     int
 	memoryBytes      int64
 	nanoCPUs         int64
+	gpuKind          string
 	nvidiaSMI        string
 	meshEndpoint     string
 	meshPortBase     int
@@ -64,6 +65,7 @@ func load() (config, error) {
 		dockerSocket:     env("DOCKER_SOCKET", "/var/run/docker.sock"),
 		sandboxImage:     env("SANDBOX_IMAGE", "registry.k8s.io/pause:3.9"),
 		containerUser:    env("CONTAINER_USER", "1000:1000"),
+		gpuKind:          env("GPU_KIND", ""),
 		nvidiaSMI:        env("NVIDIA_SMI", "nvidia-smi"),
 		meshEndpoint:     env("MESH_ENDPOINT", ""),
 		secret:           []byte(env("SHARED_SECRET", "")),

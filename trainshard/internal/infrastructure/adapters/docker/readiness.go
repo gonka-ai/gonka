@@ -35,7 +35,7 @@ func (c *Client) createReadiness(ctx context.Context) error {
 			CapDrop:       []string{"ALL"},
 			SecurityOpt:   []string{"no-new-privileges"},
 			RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyDisabled},
-			Resources:     container.Resources{DeviceRequests: gpuRequests(1)},
+			Resources:     container.Resources{DeviceRequests: c.gpuRequests(1)},
 		},
 	}
 
