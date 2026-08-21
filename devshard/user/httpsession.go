@@ -226,6 +226,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 			hs := cfg.ExtraClientConfig.HeightSync
 			session.SetHeightSyncCadence(hs.K(), hs.SlotsNum())
 		}
+		session.SetHeightSyncPeerTips(sharedPeerTips)
 		return session, recSM, nil
 	}
 	if !errors.Is(metaErr, storage.ErrSessionNotFound) {
@@ -264,6 +265,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		hs := cfg.ExtraClientConfig.HeightSync
 		session.SetHeightSyncCadence(hs.K(), hs.SlotsNum())
 	}
+	session.SetHeightSyncPeerTips(sharedPeerTips)
 
 	return session, sm, nil
 }

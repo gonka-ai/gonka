@@ -367,6 +367,26 @@ func TestUser_PendingTxDedup(t *testing.T) {
 		"duplicate mempool txs should be deduplicated")
 }
 
+func TestProcessResponse_NilReturnsNamedError(t *testing.T) {
+	session, _, _ := setupSession(t, 2, 100000, 100)
+	err := session.ProcessResponse(0, nil, 1)
+	require.ErrorIs(t, err, ErrNilHostResponse)
+	require.Equal(t, uint64(0), session.SnapshotHeightSync().Overlap.Total)
+}
+
+func TestProcessResponse_FailedVerifySkipsContactAndOverlap(t *testing.T) {
+	session, _, _ := setupSessionWithOptions(t, 2, 100000, 100, WithHeightSyncCadence(10, 2))
+	err := session.ProcessResponse(0, &host.HostResponse{
+		Nonce:     99,
+		StateHash: []byte{0xde, 0xad},
+	}, 1)
+	require.Error(t, err)
+	require.ErrorIs(t, err, types.ErrStateHashMismatch)
+	require.True(t, session.lastContact[0].IsZero(), "failed verify must not refresh contact")
+	require.Equal(t, uint64(0), session.SnapshotHeightSync().Overlap.Total,
+		"failed verify must not count overlap")
+}
+
 func TestCollectTimeoutVotes_WeightEarlyExit(t *testing.T) {
 	// 4 signers with slots [1, 1, 3, 1] (total 6 slots).
 	// VoteThreshold = 6/2 = 3. Need >3 weighted accept votes.

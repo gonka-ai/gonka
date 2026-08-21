@@ -110,7 +110,7 @@ citest-observability: citest-images ## Phase 10 O1 observability smoke (Jaeger s
 
 citest-height-sync: citest-images ## Height-sync container e2e against mock-dapi chainoracle (no heightsyncd).
 	$(MAKE) build-devshardd
-	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestHeightSync_' -count=1 -v -timeout 45m
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^(TestHeightSync_|TestContainerE2E_HeightSync_)' -count=1 -v -timeout 45m
 
 # Local-only: 0.2.15-v5 (mock /block/*) vs 0.2.15 (omit /block/*). Real images
 # ghcr.io/product-science/api:0.2.15-v5 and :0.2.15 cannot replace mock-dapi

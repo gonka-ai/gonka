@@ -181,6 +181,60 @@ func TestHeightSync_LegacyDapiChatCompletes(t *testing.T) {
 	require.NotContains(t, logs, "light_block", "hash-only / old dapi must not claim Strong")
 }
 
+func TestContainerE2E_HeightSync_QuietEscrowHeartbeat(t *testing.T) {
+	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
+	harness.RequireDocker(t)
+
+	stack, _, eps := harness.BootHeightSyncStack(t, "citest-hs-h26-*")
+	client := harness.GatewayChatClient()
+	t.Cleanup(func() {
+		if t.Failed() {
+			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1")
+		}
+	})
+	harness.WaitStackHealthy(t, stack, eps)
+	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
+
+	logs := stack.WaitComposeLogsContain(t, 2*time.Minute, "heightsync: cadence", "devshardctl")
+	require.True(t, strings.Contains(logs, "heartbeat_opened") || strings.Contains(logs, "heartbeat span dispatched"),
+		"quiet escrow must open heartbeat turns; logs:\n%s", logs)
+	repair := strings.Count(logs, "repair request") + strings.Count(logs, "RepairProbe")
+	require.Zero(t, repair, "healthy quiet path must send zero repair probes")
+	harness.RequireMetricsBody(t, client, eps.GatewayHTTP+"/metrics", "devshard_gateway_heightsync_cadence_events_total")
+}
+
+func TestContainerE2E_HeightSync_OneHostStopped(t *testing.T) {
+	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
+	harness.RequireDocker(t)
+
+	stack, _, eps := harness.BootHeightSyncStack(t, "citest-hs-h27-*")
+	client := harness.GatewayChatClient()
+	t.Cleanup(func() {
+		if t.Failed() {
+			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1")
+		}
+	})
+	harness.WaitStackHealthy(t, stack, eps)
+	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
+
+	harness.Step(t, "stop versiond-1 (one host down)")
+	stack.StopService(t, "versiond-1")
+
+	var logs string
+	ok := harness.AssertEventually(t, 2*time.Minute, 2*time.Second, func() bool {
+		out, err := stack.ComposeLogsTail(800, "devshardctl", "versiond-0")
+		if err != nil {
+			return false
+		}
+		logs = out
+		return strings.Contains(out, "turn_abandoned") || strings.Contains(out, "heartbeat span dispatched")
+	})
+	require.True(t, ok, "cadence must keep running after one host stops; logs:\n%s", logs)
+	require.LessOrEqual(t, strings.Count(logs, "repair request"), 8, "repair probes stay bounded")
+	require.NotContains(t, logs, "close_ready_armed=1",
+		"a live host still receiving heartbeats must not arm just because a peer is down")
+}
+
 func postHeightSyncChat(t *testing.T, cfg *config.File, eps harness.Endpoints, prompt string) {
 	t.Helper()
 	client := harness.GatewayChatClient()

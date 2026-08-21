@@ -133,8 +133,8 @@ func TestMissingAcksDue_RequiresWindowClosed(t *testing.T) {
 		}},
 	}}, 500)
 	require.Nil(t, tr.MissingAcksDue(1, 500), "window still open at h_req")
-	// Probing while the producer is still collecting acks is the steady-state
-	// waste step 4 removed: the window has to outlast the turnover budget first.
+	// Probing while the producer is still collecting acks is steady-state
+	// waste: the window has to outlast the turnover budget first.
 	inside := 500 + cfg.AckDeadlineBlocks
 	require.Nil(t, tr.MissingAcksDue(1, inside), "still inside the turnover budget")
 	require.Equal(t, []uint32{0, 1, 2, 3}, tr.MissingAcks(1))

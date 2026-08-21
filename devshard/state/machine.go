@@ -481,7 +481,10 @@ func (sm *StateMachine) localBestEffortLocked(nonce uint64, txs []*types.Devshar
 		trial := make([]*types.DevshardTx, 0, len(applied)+1)
 		trial = append(trial, applied...)
 		trial = append(trial, tx)
-		if err := sm.logPlaneErrLocked(nonce, trial); err != nil {
+		if reason, err := sm.logPlaneErrLocked(nonce, trial); err != nil {
+			// Counted once here, where the tx is actually dropped: the same
+			// prefix is re-checked for every later tx in the set.
+			heightsync.ObserveLogPlaneReject(reason)
 			if tx.GetStartInference() != nil {
 				sm.restoreMutable(snap)
 				return nil, nil, err

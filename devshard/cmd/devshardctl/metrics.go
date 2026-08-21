@@ -357,6 +357,9 @@ func (m *DevshardMetrics) AttachGateway(g *Gateway) {
 	if m == nil || g == nil {
 		return
 	}
+	// Host-side log-plane gauges (turn_state, close_ready_armed, peer_seen_slots)
+	// stay on devshardd only — one escrow per process. The gateway already
+	// exposes labelled operator views via gatewayMetricsCollector.
 	m.registry.MustRegister(newGatewayMetricsCollector(g))
 }
 
@@ -642,6 +645,9 @@ type gatewayMetricsCollector struct {
 	escrowBlockedParticipantsDesc  *prometheus.Desc
 	hostOpenDesc                   *prometheus.Desc
 	hostStateDesc                  *prometheus.Desc
+
+	heightSync heightSyncDescs
+	peerMatrix bool
 }
 
 func newGatewayMetricsCollector(gateway *Gateway) *gatewayMetricsCollector {
@@ -782,6 +788,8 @@ func newGatewayMetricsCollectorWithHostConnections(gateway *Gateway, hostConnect
 			[]string{"address", "state"},
 			nil,
 		),
+		heightSync: newHeightSyncDescs(),
+		peerMatrix: heightSyncPeerMatrixEnabled(),
 	}
 }
 
@@ -807,6 +815,7 @@ func (c *gatewayMetricsCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.escrowBlockedParticipantsDesc
 	ch <- c.hostOpenDesc
 	ch <- c.hostStateDesc
+	c.heightSync.describe(ch)
 }
 
 func (c *gatewayMetricsCollector) Collect(ch chan<- prometheus.Metric) {
@@ -893,6 +902,8 @@ func (c *gatewayMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.MustNewConstMetric(c.escrowParticipantLimitedDesc, prometheus.GaugeValue, limited, labels...)
 		ch <- prometheus.MustNewConstMetric(c.escrowBlockedParticipantsDesc, prometheus.GaugeValue, float64(blocked), labels...)
 	}
+
+	c.collectHeightSync(ch, runtimes)
 
 	if c.hostConnections == nil {
 		return

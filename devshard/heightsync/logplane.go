@@ -72,6 +72,12 @@ type LogPlaneResult struct {
 	DeferredFails []AttributableMark
 }
 
+// invalid and mark are metric-free on purpose. One diff is evaluated many
+// times — the compose trial loop re-checks a growing prefix per tx, replay and
+// catch-up re-check the same bytes, and a rolled-back apply discards its
+// verdict — so counting here would multiply one event by the number of
+// evaluations. Rejections are counted where the verdict is acted on
+// (ObserveLogPlaneReject); marks are counted where they enter a MarkLog.
 func (r LogPlaneResult) invalid(err error, reason string) LogPlaneResult {
 	r.Err = err
 	r.Reason = reason
@@ -205,9 +211,8 @@ func checkL1(nonce uint64, hbs []heartbeatRef, acks []ackRef, st LogPlaneState) 
 		if uint64(ack.SlotId) >= st.SlotsNum {
 			return fmt.Errorf("%w: slot %d >= %d", ErrBadFraming, ack.SlotId, st.SlotsNum)
 		}
-		n := len(ack.PeerSeen)
-		if 8*n < int(st.SlotsNum) || n > peerSeenMaxBytes(st.SlotsNum) {
-			return fmt.Errorf("%w: peer_seen len %d for slots_num %d", ErrBadFraming, n, st.SlotsNum)
+		if !PeerSeenByteLenValid(ack.PeerSeen, uint32(st.SlotsNum)) {
+			return fmt.Errorf("%w: peer_seen len %d for slots_num %d", ErrBadFraming, len(ack.PeerSeen), st.SlotsNum)
 		}
 		if len(ack.ObservedBlockHash) > MaxObservedBlockHashBytes {
 			return fmt.Errorf("%w: observed_block_hash len %d", ErrBadFraming, len(ack.ObservedBlockHash))
@@ -221,6 +226,17 @@ func peerSeenMaxBytes(slots uint64) int {
 		return 0
 	}
 	return int((slots + 7) / 8)
+}
+
+// PeerSeenByteLenValid reports whether bits has a length acceptable for
+// slots_num — the same framing bound as log-plane L1. Empty is valid only
+// when slots_num is 0; otherwise length must be exactly ceil(slots_num/8).
+func PeerSeenByteLenValid(bits []byte, slotsNum uint32) bool {
+	n := len(bits)
+	if slotsNum == 0 {
+		return n == 0
+	}
+	return 8*n >= int(slotsNum) && n <= peerSeenMaxBytes(uint64(slotsNum))
 }
 
 func checkL2(acks []ackRef, st LogPlaneState) error {

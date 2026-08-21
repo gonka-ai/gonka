@@ -170,6 +170,7 @@ func (b *RepairBudget) Begin(turnSeq uint64, slot uint32, armed bool) (delay tim
 	b.rollWindowLocked()
 	if b.probesInWindow >= b.cfg.MaxProbesPerWindow {
 		b.counts[string(RepairSkipBudget)]++
+		IncRepairProbe(string(RepairSkipBudget))
 		return 0, RepairSkipBudget
 	}
 	b.pruneLocked(turnSeq)
@@ -226,6 +227,7 @@ func (b *RepairBudget) AfterWait(turnSeq uint64, slot uint32, ackLanded bool) Re
 	if ackLanded {
 		b.probed[turnSlot{turn: turnSeq, slot: slot}] = struct{}{}
 		b.counts[string(RepairSkipAckLanded)]++
+		IncRepairProbe(string(RepairSkipAckLanded))
 		return RepairSkipAckLanded
 	}
 	return RepairSkipNone
@@ -242,6 +244,7 @@ func (b *RepairBudget) Record(turnSeq uint64, slot uint32, outcome string) {
 	b.probed[turnSlot{turn: turnSeq, slot: slot}] = struct{}{}
 	b.probesInWindow++
 	b.counts[outcome]++
+	IncRepairProbe(outcome)
 	b.pruneLocked(turnSeq)
 	if outcome != RepairOutcomeUnreachable {
 		return

@@ -178,7 +178,7 @@ func (idx *ConfirmationIndex) RecordAttestation(a AnchorAttestation) {
 
 // attestationTime is the clock (C-quorum) freshness uses. Originator
 // observation wins when present so a carry-forward cannot reset F at receipt.
-// A non-positive originator timestamp is ineligible (step 13 fail-closed),
+// A non-positive originator timestamp is ineligible (fail-closed),
 // except when the field is absent entirely — first-party audit rows still
 // carry only ObservedAtUnixMs.
 func (idx *ConfirmationIndex) attestationTime(a AnchorAttestation) (time.Time, bool) {

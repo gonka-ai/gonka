@@ -64,6 +64,7 @@ func TestAdminAuthMiddlewareRequiresAdminKey(t *testing.T) {
 		"/v1/state",
 		"/devshard/12/v1/state",
 		"/v1/debug/state",
+		"/v1/debug/heightsync",
 		"/devshard/12/v1/debug/signatures/collect",
 	} {
 		handler := adminAuthMiddleware("adminkey", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

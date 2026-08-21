@@ -183,9 +183,12 @@ func (c *CloseReady) Armed() (bool, uint64) {
 		return false, 0
 	}
 	c.mu.Lock()
-	defer c.mu.Unlock()
 	c.evaluateLocked()
-	return c.armed, c.armedAtHeight
+	armed := c.armed
+	at := c.armedAtHeight
+	c.mu.Unlock()
+	SetCloseReadyArmed(armed)
+	return armed, at
 }
 
 // SilentFor is how long this host has gone without user contact.
