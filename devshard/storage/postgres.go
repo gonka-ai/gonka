@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"common/storage/pgtimeouts"
 	"devshard/types"
 
 	"github.com/jackc/pgx/v5"
@@ -49,13 +50,10 @@ type Postgres struct {
 }
 
 const (
-	// postgresConnectTimeout bounds establishing a new connection.
+	// postgresConnectTimeout bounds establishing a new connection. Longer than
+	// pgtimeouts.DefaultConnectTimeout: session open rebuilds the escrow index
+	// and tolerates a slower dial at boot than gateway/accounting fail-closed opens.
 	postgresConnectTimeout = 5 * time.Second
-	// postgresStatementTimeout aborts any single query server-side. It is the
-	// primary guard against a stalled backend hanging a caller indefinitely.
-	postgresStatementTimeout = 5 * time.Second
-	// postgresLockTimeout bounds waits on row/table locks server-side.
-	postgresLockTimeout = 3 * time.Second
 	// postgresOpTimeout bounds each storage operation Go-side. Unlike
 	// statement_timeout it also covers the time spent acquiring a pooled
 	// connection (pool exhaustion), which the server-side timeout cannot.
@@ -135,12 +133,8 @@ func NewPostgres(ctx context.Context) (*Postgres, error) {
 		return nil, fmt.Errorf("parse postgres config: %w", err)
 	}
 	cfg.ConnConfig.ConnectTimeout = postgresConnectTimeout
-	if cfg.ConnConfig.RuntimeParams == nil {
-		cfg.ConnConfig.RuntimeParams = make(map[string]string)
-	}
-	// Server-side per-query bounds applied to every pooled connection.
-	cfg.ConnConfig.RuntimeParams["statement_timeout"] = strconv.FormatInt(postgresStatementTimeout.Milliseconds(), 10)
-	cfg.ConnConfig.RuntimeParams["lock_timeout"] = strconv.FormatInt(postgresLockTimeout.Milliseconds(), 10)
+	// Server-side per-query bounds (shared with gateway/accounting).
+	pgtimeouts.ApplyRuntimeParams(&cfg.ConnConfig.RuntimeParams)
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect to postgres: %w", err)

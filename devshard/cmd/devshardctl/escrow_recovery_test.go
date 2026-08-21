@@ -18,7 +18,7 @@ import (
 // The root-cause layer: the gateway store must open in WAL with a busy timeout
 // so concurrent writes wait instead of failing with "database is locked".
 func TestGatewayStoreUsesWALAndBusyTimeout(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 
@@ -104,21 +104,21 @@ func stubQueryTxEscrowID(t *testing.T, fn func(string) (uint64, bool, error)) {
 	t.Cleanup(func() { gatewayQueryTxEscrowID = saved })
 }
 
-func newRecoveryGateway(t *testing.T) (*Gateway, *GatewayStore, GatewaySettings) {
+func newRecoveryGateway(t *testing.T) (*Gateway, GatewayStore, GatewaySettings) {
 	t.Helper()
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	settings := recoveryTestSettings()
-	require.NoError(t, store.Initialize(settings, nil))
+	require.NoError(t, store.Initialize(context.Background(), settings, nil))
 	stubRuntimeBuilder(t)
 	g := &Gateway{store: store, runtimes: map[string]*devshardRuntime{}}
 	return g, store, settings
 }
 
-func devshardIDs(t *testing.T, store *GatewayStore) map[string]GatewayDevshardState {
+func devshardIDs(t *testing.T, store GatewayStore) map[string]GatewayDevshardState {
 	t.Helper()
-	state, ok, err := store.LoadState()
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 	return gatewayDevshardsByID(state.Devshards)
@@ -136,7 +136,7 @@ func TestCreateRotationEscrowIntentFirstThenPersistAndClear(t *testing.T) {
 
 	record := devshardIDs(t, store)["777"]
 	require.Equal(t, "4", record.ProtocolVersion, "replacement escrow uses the default protocol")
-	commitments, err := store.LoadCommitments()
+	commitments, err := store.LoadCommitments(context.Background())
 	require.NoError(t, err)
 	assert.Empty(t, commitments, "commitment cleared after persist")
 }
@@ -176,12 +176,12 @@ func TestRotationEscrowProtocolVersionRouteMapping(t *testing.T) {
 
 func TestReconcileCommitmentsCarriesProtocolVersion(t *testing.T) {
 	g, store, settings := newRecoveryGateway(t)
-	require.NoError(t, store.SaveCommitment(GatewayEscrowCommitment{
+	require.NoError(t, store.SaveCommitment(context.Background(), GatewayEscrowCommitment{
 		TxHash: "TXPV2", Model: "Qwen/Test", Role: rotationRoleTemp, Epoch: 11,
 		PrivateKeyEnv: "DEVSHARD_PRIVATE_KEY", ProtocolVersion: "3",
 	}))
 
-	commitments, err := store.LoadCommitments()
+	commitments, err := store.LoadCommitments(context.Background())
 	require.NoError(t, err)
 	require.Len(t, commitments, 1)
 	assert.Equal(t, "3", commitments[0].ProtocolVersion, "commitment round-trips protocol version")
@@ -201,15 +201,16 @@ func TestCreateRotationEscrowAbortsWhenCommitmentWriteFails(t *testing.T) {
 	model := normalizedEscrowRotationModels(settings)[0]
 
 	// Make every write fail, as a locked/read-only DB would.
-	_, err := store.db.Exec("PRAGMA query_only=ON")
+	sqliteStore := requireSQLiteGatewayStore(t, store)
+	_, err := sqliteStore.db.Exec("PRAGMA query_only=ON")
 	require.NoError(t, err)
 
 	_, err = g.createRotationEscrow(context.Background(), settings, model, rotationRoleTemp, 10)
 	require.Error(t, err)
 
-	_, _ = store.db.Exec("PRAGMA query_only=OFF")
+	_, _ = sqliteStore.db.Exec("PRAGMA query_only=OFF")
 	assert.NotContains(t, devshardIDs(t, store), "778", "no escrow created when intent write fails")
-	commitments, _ := store.LoadCommitments()
+	commitments, _ := store.LoadCommitments(context.Background())
 	assert.Empty(t, commitments)
 }
 
@@ -230,7 +231,7 @@ func TestCreateRotationEscrowPersistFailureRecoversViaCommitment(t *testing.T) {
 	gatewayRuntimeBuilder = savedBuilder // restore (stubRuntimeBuilder's success)
 
 	require.NotContains(t, devshardIDs(t, store), "888", "not persisted yet")
-	commitments, err := store.LoadCommitments()
+	commitments, err := store.LoadCommitments(context.Background())
 	require.NoError(t, err)
 	require.Len(t, commitments, 1, "commitment kept for recovery")
 	assert.Equal(t, "TXCCC", commitments[0].TxHash)
@@ -243,14 +244,14 @@ func TestCreateRotationEscrowPersistFailureRecoversViaCommitment(t *testing.T) {
 	g.reconcileCommitments(context.Background(), settings)
 
 	assert.Contains(t, devshardIDs(t, store), "888", "recovered via commitment")
-	commitments, _ = store.LoadCommitments()
+	commitments, _ = store.LoadCommitments(context.Background())
 	assert.Empty(t, commitments, "commitment cleared after recovery")
 }
 
 // Reconcile persists an escrow for a pending commitment and clears it.
 func TestReconcileCommitmentsRecoversFromChain(t *testing.T) {
 	g, store, settings := newRecoveryGateway(t)
-	require.NoError(t, store.SaveCommitment(GatewayEscrowCommitment{
+	require.NoError(t, store.SaveCommitment(context.Background(), GatewayEscrowCommitment{
 		TxHash: "TXDDD", Model: "Qwen/Test", Role: rotationRoleTemp, Epoch: 11, PrivateKeyEnv: "DEVSHARD_PRIVATE_KEY",
 	}))
 	stubQueryTxEscrowID(t, func(string) (uint64, bool, error) { return 999, true, nil })
@@ -258,7 +259,7 @@ func TestReconcileCommitmentsRecoversFromChain(t *testing.T) {
 	g.reconcileCommitments(context.Background(), settings)
 
 	assert.Contains(t, devshardIDs(t, store), "999")
-	commitments, _ := store.LoadCommitments()
+	commitments, _ := store.LoadCommitments(context.Background())
 	assert.Empty(t, commitments)
 }
 
@@ -266,12 +267,12 @@ func TestReconcileCommitmentsRecoversFromChain(t *testing.T) {
 // immediately — the failure is final, the tx can never produce an escrow.
 func TestReconcileCommitmentsClearsWhenTxCommittedFailed(t *testing.T) {
 	g, store, settings := newRecoveryGateway(t)
-	require.NoError(t, store.SaveCommitment(GatewayEscrowCommitment{TxHash: "TXEEE", Model: "Qwen/Test", Role: rotationRoleTemp}))
+	require.NoError(t, store.SaveCommitment(context.Background(), GatewayEscrowCommitment{TxHash: "TXEEE", Model: "Qwen/Test", Role: rotationRoleTemp}))
 	stubQueryTxEscrowID(t, func(string) (uint64, bool, error) { return 0, false, nil })
 
 	g.reconcileCommitments(context.Background(), settings)
 
-	commitments, _ := store.LoadCommitments()
+	commitments, _ := store.LoadCommitments(context.Background())
 	assert.Empty(t, commitments, "commitment cleared when tx committed but created no escrow")
 }
 
@@ -280,12 +281,12 @@ func TestReconcileCommitmentsClearsWhenTxCommittedFailed(t *testing.T) {
 // index lag, not a failed broadcast. Clearing now would orphan a real escrow.
 func TestReconcileCommitmentsKeepsFreshTxNotFound(t *testing.T) {
 	g, store, settings := newRecoveryGateway(t)
-	require.NoError(t, store.SaveCommitment(GatewayEscrowCommitment{TxHash: "TXFRESH", Model: "Qwen/Test", Role: rotationRoleTemp}))
+	require.NoError(t, store.SaveCommitment(context.Background(), GatewayEscrowCommitment{TxHash: "TXFRESH", Model: "Qwen/Test", Role: rotationRoleTemp}))
 	stubQueryTxEscrowID(t, func(string) (uint64, bool, error) { return 0, false, errTxNotFound })
 
 	g.reconcileCommitments(context.Background(), settings)
 
-	commitments, err := store.LoadCommitments()
+	commitments, err := store.LoadCommitments(context.Background())
 	require.NoError(t, err)
 	require.Len(t, commitments, 1, "fresh not-found commitment retained until its tx can no longer land")
 	assert.Equal(t, "TXFRESH", commitments[0].TxHash)
@@ -295,7 +296,7 @@ func TestReconcileCommitmentsKeepsFreshTxNotFound(t *testing.T) {
 // never land — only then is it safe to clear.
 func TestReconcileCommitmentsClearsExpiredTxNotFound(t *testing.T) {
 	g, store, settings := newRecoveryGateway(t)
-	require.NoError(t, store.SaveCommitment(GatewayEscrowCommitment{
+	require.NoError(t, store.SaveCommitment(context.Background(), GatewayEscrowCommitment{
 		TxHash:    "TXOLD",
 		Model:     "Qwen/Test",
 		Role:      rotationRoleTemp,
@@ -305,19 +306,19 @@ func TestReconcileCommitmentsClearsExpiredTxNotFound(t *testing.T) {
 
 	g.reconcileCommitments(context.Background(), settings)
 
-	commitments, _ := store.LoadCommitments()
+	commitments, _ := store.LoadCommitments(context.Background())
 	assert.Empty(t, commitments, "commitment cleared once the unordered tx can no longer land")
 }
 
 // A transient chain error leaves the commitment for the next pass.
 func TestReconcileCommitmentsKeepsCommitmentOnChainError(t *testing.T) {
 	g, store, settings := newRecoveryGateway(t)
-	require.NoError(t, store.SaveCommitment(GatewayEscrowCommitment{TxHash: "TXFFF", Model: "Qwen/Test", Role: rotationRoleTemp}))
+	require.NoError(t, store.SaveCommitment(context.Background(), GatewayEscrowCommitment{TxHash: "TXFFF", Model: "Qwen/Test", Role: rotationRoleTemp}))
 	stubQueryTxEscrowID(t, func(string) (uint64, bool, error) { return 0, false, errors.New("chain unreachable") })
 
 	g.reconcileCommitments(context.Background(), settings)
 
-	commitments, err := store.LoadCommitments()
+	commitments, err := store.LoadCommitments(context.Background())
 	require.NoError(t, err)
 	require.Len(t, commitments, 1, "commitment retained when chain cannot be queried")
 	assert.Equal(t, "TXFFF", commitments[0].TxHash)

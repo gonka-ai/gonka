@@ -9,10 +9,10 @@ import (
 	"time"
 
 	"common/storage/mode"
+	"common/storage/pgtimeouts"
 )
 
 const (
-	defaultPGConnectTimeout    = 2 * time.Second
 	defaultPGIndexTimeout      = 30 * time.Second
 	defaultPGReconnectInterval = 5 * time.Second
 )
@@ -248,11 +248,7 @@ func waitPostgresIndexReady(ctx context.Context, store Storage) error {
 }
 
 func pgConnectTimeout() time.Duration {
-	connectTimeout, err := time.ParseDuration(os.Getenv("PG_CONNECT_TIMEOUT"))
-	if err != nil || connectTimeout <= 0 {
-		return defaultPGConnectTimeout
-	}
-	return connectTimeout
+	return pgtimeouts.ConnectTimeout()
 }
 
 func pgIndexTimeout() time.Duration {

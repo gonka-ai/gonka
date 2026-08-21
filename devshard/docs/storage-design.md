@@ -1,8 +1,14 @@
 # Devshard Storage Design
 
-This document records the storage decisions for devshard session state. It is
-intentionally decision-focused: each section states the invariant, why it exists,
-and the operational consequence.
+This document records the storage decisions for the four persistence planes in a
+gateway deployment: session storage, payload storage, gateway management store,
+and epoch accounting. It is intentionally decision-focused: each section states
+the invariant, why it exists, and the operational consequence.
+
+Session-storage sections dominate the early Decisions list for historical
+reasons; [Gateway store](#gateway-store) and
+[Epoch accounting](#epoch-accounting) document the other two gateway-owned
+planes.
 
 ## Goals
 
@@ -13,6 +19,9 @@ and the operational consequence.
 3. Use the same Postgres environment and partitioning style as payload storage.
 4. Keep routing deterministic after restarts without querying the chain on every
    storage operation.
+5. Persist gateway management state and the epoch accounting ledger with
+   fail-closed Postgres when multi-instance HA is selected, without silent
+   last-writer-wins loss on counters.
 
 ## Architecture
 
@@ -115,9 +124,17 @@ window; if old files accumulate, startup work grows until pruning catches up.
 
 ### Storage Mode Selection
 
-Decision: session storage (`NewStorage`) and payload storage
-(`common/storage/payloads.Open`) share one mode knob, resolved by
-`common/storage/mode`:
+There are **four distinct persistence planes** in a gateway deployment, all
+switched by the same knob:
+
+| Plane | What it stores | Code | Switch |
+| --- | --- | --- | --- |
+| **Session storage** | Per-escrow diffs, signatures, snapshots, validation obs (host/runtime) | `devshard/storage.NewStorage` | `DEVSHARD_STORAGE_MODE` |
+| **Payload storage** | Inference payloads (dapi) | `common/storage/payloads` | `DEVSHARD_STORAGE_MODE` |
+| **Gateway store** | Gateway registry: settings, active escrows, rotation commitments, throttles | `devshardctl` `gateway.db` / Postgres | `DEVSHARD_STORAGE_MODE` |
+| **Epoch accounting** | Gateway epoch counters ledger (`accounting.db` / Postgres) | `devshard/accounting` | `DEVSHARD_STORAGE_MODE` |
+
+`DEVSHARD_STORAGE_MODE` is resolved by `common/storage/mode`:
 
 ```text
 DEVSHARD_STORAGE_MODE = sqlite | hybrid | postgres | auto   # default: auto
@@ -131,8 +148,8 @@ postgres.
 
 | Mode | Meaning |
 | --- | --- |
-| `sqlite` | Local only (SQLite sessions / file payloads). `PGHOST` is ignored. |
-| `hybrid` | Requires `PGHOST`. Postgres primary with local fallback / reconnect. |
+| `sqlite` | Local only. `PGHOST` is ignored (warned if set). |
+| `hybrid` | Requires `PGHOST`. Postgres primary; session storage may degrade locally while reconnecting. Gateway/accounting are fail-closed. |
 | `postgres` | Requires `PGHOST`. Fail-closed Postgres-only (multi-instance / HA). |
 | `auto` (default) | Legacy-compatible derivation (below). |
 
@@ -143,6 +160,39 @@ postgres.
 
 Fail-closed multi-instance deployments must set `DEVSHARD_STORAGE_MODE=postgres`
 explicitly (compose overlays / gencompose do).
+
+#### Uniform wiring
+
+Every Postgres-capable plane calls `mode.Resolve()`:
+
+- `sqlite` → never opens Postgres, even if `PGHOST` is set (logged as ignored)
+- `hybrid` / `postgres` → require `PGHOST`; open/boot fails if Postgres is
+  unreachable for gateway store and epoch accounting (no SQLite write fallback)
+- Session storage under `hybrid` is the exception: it may serve existing
+  SQLite-owned escrows and reject new creates while reconnecting (owner-only
+  degraded mode). That fallback is intentional and session-only.
+
+**Migration is part of the switch.** Whenever `hybrid` or `postgres` opens
+successfully, local SQLite state is imported into Postgres *before* the plane
+serves:
+
+| Plane | Import on Postgres open | Runtime SQLite fallback |
+| --- | --- | --- |
+| Session storage | `MigrateSQLiteSessions` (postgres mode quarantines `*.migrated.<ts>`) | Yes (hybrid degraded / owner-only) |
+| Payload storage | `MigrateFilePayloadsToPostgres` (postgres mode quarantines trees) | Hybrid reconnect semantics |
+| Gateway store | `MigrateGatewaySQLiteToPostgres` + drain leftover `gateway_sync_journal` | **No** — Postgres-only |
+| Epoch accounting | `migrateSQLiteAccountingToPostgres` from `accounting.db` | **No** — Postgres-only |
+
+Imports are idempotent: a marker row (`gateway_migration` / `accounting_migration`)
+plus a non-empty-destination guard makes a second boot a no-op, and a Postgres
+destination that already holds state is never overwritten by a stale local file.
+Accounting carries a second marker, `blob_to_rows`, for the one-shot conversion of
+the pre-additive `accounting_escrows` blob table into the row layout in
+[Epoch accounting](#epoch-accounting).
+
+Gateway sync-journal drain exists only to absorb rows left by older builds that
+still fell back to SQLite; new gateway/accounting processes never write that
+journal.
 
 #### `sqlite` and `hybrid` (flexible)
 
@@ -398,6 +448,259 @@ per store directory** — two processes on the same `_meta.db` can race
 Revisit an external tool only if a single store grows past roughly twenty
 migration steps.
 
+### Gateway store
+
+Decision: gateway management state is a relational store behind a `GatewayStore`
+interface with two backends (`SQLiteGatewayStore`, `PostgresGatewayStore`). The
+factory (`NewGatewayStore`) selects the backend from `DEVSHARD_STORAGE_MODE` /
+`PGHOST`. When Postgres is selected the store is **Postgres-only and fail-closed**
+— there is no runtime SQLite fallback and nothing writes a sync journal. Local
+`{baseStorageDir}/gateway.db` is only a migration source (plus a read-only drain
+of leftover hybrid-era journal rows).
+
+Why: gateway settings, active escrows, rotation commitments, and throttle state
+must be shared across gateway instances. A hybrid SQLite fallback would let two
+instances diverge during a Postgres blip and then race on reconnect. Session
+storage keeps its own degraded owner-only SQLite path; gateway management does
+not — a missing Postgres is a boot/write failure, not a silent local fork.
+
+Consequence:
+
+```
+NewGatewayStore(ctx, baseStorageDir)
+  -> mode sqlite / auto-without-PGHOST: SQLiteGatewayStore(gateway.db)
+  -> mode hybrid / postgres (PGHOST required):
+       PostgresGatewayStore (fail if unreachable)
+       importGatewaySQLite: MigrateGatewaySQLiteToPostgres + drain leftover journal
+       return Postgres only
+```
+
+Tables (same names in SQLite and Postgres):
+
+| Table | Key | Purpose |
+| --- | --- | --- |
+| `gateway_settings` | singleton `id=1` | gateway config (limits, throttle policy, rotation knobs, …) |
+| `gateway_devshards` | `id` | managed escrow / topology rows |
+| `participant_throttle_state` | `participant_key` | reactive throttle / quarantine |
+| `gateway_rotation_status` | `(model_id, stage, epoch)` | rotation audit trail |
+| `gateway_suspicious_hosts` | `participant_key` | operator-flagged hosts |
+| `escrow_rotation_commitments` | `tx_hash` | write-ahead intent for escrow creates |
+| `gateway_migration` | `name` | idempotent import markers |
+
+**Migration.** `MigrateGatewaySQLiteToPostgres` copies every table in one Postgres
+transaction, then writes the `sqlite_import` marker. If Postgres already holds
+settings (or the marker already exists), the import is skipped and the marker is
+still written so later boots do not re-evaluate a stale local file. Commitments
+are part of the copy — they are write-ahead intents and must not be lost. After
+import, any leftover `gateway_pg_sync_journal` rows from older hybrid builds are
+drained read-only; new processes never write that journal. A malformed journal
+row fails boot with a loud log naming `table` / `row_key` / `op` so an operator
+can `DELETE` it by hand.
+
+**HA write semantics (gateway store).** Gateway rows are **registry / config**,
+not event counters. Concurrent writers merge with SQL upserts
+(`ON CONFLICT … DO UPDATE`) that are last-writer-wins **per primary key**:
+
+- Settings: one singleton row; the last `UpdateSettings` wins.
+- Devshards / throttles / suspicious hosts / commitments: last upsert or delete
+  for that key wins.
+- Rotation status: last write for `(model_id, stage, epoch)` wins.
+- Devshard upserts preserve an existing `settlement_pending` marker so an
+  unrelated topology refresh cannot clear a settlement in flight.
+
+That is the right merge for configuration: two gateways flipping the same
+setting should converge to one value, not add. It is **not** safe for counters —
+those live in epoch accounting below. Multi-instance gateway HA therefore
+assumes operators run one logical control plane (or accept LWW on overlapping
+admin writes), while escrow traffic accounting stays additive even if two
+instances briefly hold the same escrow.
+
+Env (shared via `common/storage/pgtimeouts`): `PGHOST` / `PGPORT` /
+`PGDATABASE` / `PGUSER` / `PGPASSWORD`, `PG_CONNECT_TIMEOUT` (default `2s`),
+`PG_OPERATION_TIMEOUT` (default `2s`, per-call deadline derived from the request
+context; `0` disables), `PG_IMPORT_TIMEOUT` (default `5m`, boot import + journal
+drain). Server-side `statement_timeout=5s` and `lock_timeout=3s` are fixed
+package defaults, not env vars. Gateway tables may share the same database as
+session/payload tables; names do not collide.
+
+Code: `devshard/cmd/devshardctl/gateway_store*.go`. Historical hybrid design notes
+remain in [gateway-postgres-backend-plan.md](./gateway-postgres-backend-plan.md);
+the shipped behaviour is this section.
+
+### Epoch accounting
+
+Decision: the gateway epoch ledger (`devshard/accounting`) records, per escrow,
+how nonces were assigned and how they resolved — not the inference payloads
+themselves. Session storage holds diffs/signatures; accounting holds the
+**aggregate view** used by `/accounting/*` and settlement-facing summaries.
+
+#### What is accounted
+
+For each registered escrow the tracker keeps:
+
+| State | Meaning |
+| --- | --- |
+| Metadata | escrow id, creation epoch, model, slot assignments, timeouts, phase (`active` → `finalizing` → `finalized` → `settled`) |
+| `latest` | highest assigned nonce watermark |
+| Counters | counts keyed by slot + disposition (+ timeout / quarantine / no-send / failure detail) |
+| Host stats | per-slot missed / invalid / cost / required & completed validations (mirrors absolute chain numbers) |
+| Protocol-only nonce set | nonces consumed without starting an inference, with the slot each was assigned to |
+| Challenge set | challenged nonces, their executor slot, and whether the challenge has been resolved |
+| Invalid nonce set | invalidated nonces and their executor slot (idempotent `recordInvalid`) |
+
+Dispositions classify a nonce's outcome (`protocol_only`, `ghost`,
+`finished_used` / `unused` / `usage_unknown`, `unfinished_refused` /
+`unfinished_execution`, …). Live in-memory nonce state is **not** persisted;
+only the folded counters and the compact sets above are. The recorder feeds the
+tracker from committed diffs, protocol events, timeouts, and host-stats sync.
+
+Per-slot unresolved-challenge and invalid totals are **derived from the sets**
+when a view is built, not stored as counts. Protocol-only nonces likewise fold
+into a `protocol_only` counter at read time. The ledger's denominator is
+arithmetic on the watermark — `AssignedNoncesForSlot` says how many nonces in
+`1..latest` belong to a slot — so every consumed nonce must be explained by
+exactly one counter or it surfaces as `Unclassified`.
+
+Challenge lifecycle, why `ChallengeBySlot` was a precomputed report counter, the
+legacy carry, and when it can leave the codebase are documented with the gateway
+accounting merge framework in
+[gateway.md](gateway.md#challenges-and-the-legacy-challengebyslot-carry).
+
+#### How multiple gateways conflict
+
+A single-process SQLite ledger never sees concurrent writers. Under Postgres HA,
+two (or more) `devshardctl` instances can observe the **same escrow** — failover
+overlap, a stale instance that has not noticed it lost traffic, an operator
+running a second gateway, or intentional multi-writer deployments.
+
+The dangerous shape is **last-writer-wins on a whole-escrow blob**:
+
+1. Instance A loads escrow `E`, counts nonces `{1,2}`, flushes blob
+   `{counters: 2, …}`.
+2. Instance B loads the same row (or an older snapshot), counts nonce `{3}`,
+   flushes blob `{counters: 1, …}` (or `{counters: 3}` if it had loaded A's
+   state, then A flushes again with only `{1,2}`).
+3. Whichever flush lands last **replaces** the payload. The other instance's
+   observations disappear with no error.
+
+Every field in the blob was exposed: counters, host stats, challenge/invalid
+maps, invalid-nonce set, `latest`, and phase. Dirty-only upserts (write only the
+escrows this process touched) stop one instance from wiping a *peer escrow*, but
+do not stop two instances from clobbering the **same** escrow.
+
+#### Mitigation: additive / aggregative Postgres ledger
+
+Postgres accounting stores an escrow as **rows with an explicit merge rule per
+field**, not as one JSON blob.
+
+Which merge rule is correct depends on **whether two instances can observe the
+same event**, so the fields fall into two groups.
+
+*Request-local facts* are produced by the instance that dispatched the nonce.
+`counterKey` only yields a disposition when a local signal is present — `Ghost`,
+`Sent`, or `Usage`, set by the gateway calling `RecordGhost`, `RecordRealSend`,
+or `RecordUsage`. A passive instance sees the start and the finish on chain but
+never learns whether the result was used, so it classifies nothing. Writers
+therefore hold **disjoint** sets and a reader sums them.
+
+*Replicated facts* are read straight off the committed diff stream, so every
+instance attached to the escrow derives them identically. No arithmetic merge
+works here: summing turns one chain event into one count per instance, and
+taking the max drops what an instance with a stale view never saw. They are
+persisted **by identity** — one row per nonce, no `writer_id` — and merged as a
+set.
+
+| Field | Table | Merge rule |
+| --- | --- | --- |
+| Counters (per slot / disposition) | `accounting_escrow_counters` | Request-local: `SUM` across `writer_id` |
+| Protocol-only nonces | `accounting_escrow_protocol_nonces` | Replicated: set union (`ON CONFLICT DO NOTHING`) |
+| Invalid nonces | `accounting_escrow_invalid_nonces` | Replicated: set union |
+| Challenges | `accounting_escrow_challenges` | Replicated: set union, `resolved` merged with monotonic `OR` |
+| Host stats | `accounting_escrow_host_stats` | `GREATEST` per column (absolute chain numbers; tracker also merges with max) |
+| `latest` nonce watermark | `accounting_escrow_state` | `GREATEST` |
+| Escrow phase | `accounting_escrow_state` | Highest rank wins (phases only move forward) |
+| Metadata (epoch, model, slots, timeouts) | `accounting_escrow_state` | Identity at registration; `RegisterEscrow` rejects conflicting metadata |
+| Flush timestamp, writer error count | `accounting_writers` | Per writer row |
+| Pre-set per-slot totals | `accounting_escrow_slot_counts` | Frozen legacy baseline, written only by the `blob_to_rows` conversion |
+
+The summed counters are **partitioned by writer instead of incremented in SQL**.
+Each instance owns rows keyed `(escrow_id, writer_id, …)` holding its own
+contribution, computed at flush time as
+`in-memory total − peer contribution observed at Load` (clamped at zero). Three
+operational consequences:
+
+- A flush is **idempotent**. Summed rows are written as absolute values the
+  instance alone owns, and set rows are insert-if-absent, so replaying a flush
+  whose commit was reported as failed (the classic ambiguous timeout) cannot
+  double count — which a bare `count = count + delta` would.
+- An instance **never touches a peer's rows**, so the ledger stays correct
+  without a lease, fencing token, or exclusive escrow ownership.
+- A challenge is never deleted on resolution, only flagged. Deleting it would let
+  a repeated verdict from another instance reopen it, and would lose the record a
+  restart needs to recognise the nonce.
+
+`Store.Save` holds one mutex across taking the snapshot **and** writing it.
+Because `takePersistSnapshot` clears the dirty set and counters are absolute, an
+interleaved older write would otherwise be lost permanently rather than corrected
+on the next tick — and `Flush` runs from the snapshot ticker as well as from
+settle and retire.
+
+`DEVSHARD_ACCOUNTING_WRITER_ID` names the request-local row set. Resolution:
+env → hostname → `"default"`.
+
+> **HA requirement.** Multi-instance gateway against shared Postgres **must**
+> set a stable, unique `DEVSHARD_ACCOUNTING_WRITER_ID` per replica. Colliding
+> ids make two processes rewrite the same `(escrow_id, writer_id, …)` rows and
+> lose request-local contributions. An *unstable* unique value (new pod name
+> every restart) does not double-count — earlier rows are read as peer
+> contributions — but leaves stale writer partitions until retention prunes the
+> escrow. Prefer a StatefulSet ordinal / persistent pod name. SQLite ignores
+> the variable.
+
+**Factory.** Same mode switch as the gateway store: `sqlite` → local
+`accounting.db`; `hybrid` / `postgres` → Postgres-only (fail-closed), with a
+one-shot `migrateSQLiteAccountingToPostgres` guarded by the `sqlite_import`
+marker. A second marker, `blob_to_rows`, converts any pre-additive
+`accounting_escrows` blob table into the row layout under a frozen
+`_legacy_blob` writer, then drains the blob table. Leftover blobs written by an
+older build after conversion are **not** re-imported (that would double count);
+boot logs a warning instead.
+
+**SQLite field evolution (no HA merge).** Staying on SQLite keeps the one-blob
+layout. New fields are new JSON keys inside `payload`; there is no SQL column
+migration and no `writer_id`. Missing keys decode as zero, and the next flush
+rewrites the blob. Representation changes keep old tags as read-only carries.
+The operator checklist for classifying fields and for Postgres DDL lives in
+[gateway.md](gateway.md#ha-merge-framework); the SQLite-only path is
+[gateway.md](gateway.md#staying-on-sqlite-how-new-fields-appear).
+
+**Read model.** In-memory `/accounting/*` stays per instance: an instance sees
+peer counts as of its last Load, not live. Postgres holds the merged truth; the
+aggregate is what a reload, a settlement job, or an aggregate over the tables
+produces.
+
+`Load` reads all tables inside one `REPEATABLE READ` read-only transaction. Read
+table by table, a peer committing an escrow mid-load would appear as counter rows
+whose state row is not there yet; such an escrow cannot be reconstructed, so it is
+logged and skipped rather than failing the load — a failed `Load` disables
+accounting for the whole process lifetime, and every later boot would fail on the
+same row. The same applies to an escrow whose metadata does not validate. `Load`
+runs under the import budget, not the 2 s per-operation timeout, for the same
+reason.
+
+**Deliberate limits.** Retention pruning deletes the escrow for *all* writers,
+matching the previous blob behavior, and it is computed from the pruning
+instance's own epoch horizon. Per-slot totals carried from the pre-set layout
+cannot be attributed to nonces, so they stay a frozen baseline the derived counts
+add to, and they age out with retention.
+
+Code: `devshard/accounting/store_postgres.go`, `store_postgres_rows.go`,
+`factory.go`. SQLite remains a single-writer blob store for local/dev mode.
+
+Adding a field to the ledger means picking a class and a merge rule first; the
+decision procedure and the touch-point checklist are in
+[gateway.md](gateway.md#ha-merge-framework).
+
 ## Load Readiness
 
 This design is not an early prototype. It is the production storage shape for
@@ -453,7 +756,16 @@ down after boot.
 ## Operational Notes
 
 - Postgres env vars: `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`.
-- Postgres connect deadline at boot: `PG_CONNECT_TIMEOUT` default `2s`.
+- Timeout defaults and env readers live in `common/storage/pgtimeouts` (shared by
+  gateway, accounting, session storage, payload reconnect):
+  - `PG_CONNECT_TIMEOUT` default `2s` (dial/auth)
+  - `PG_OPERATION_TIMEOUT` default `2s` (Go per-call deadline; `0` disables; gateway + accounting)
+  - `PG_IMPORT_TIMEOUT` default `5m` (boot SQLite→PG import; gateway + accounting)
+  - server-side `statement_timeout=5s` and `lock_timeout=3s` are **not** env-tunable;
+    they are applied as connection `RuntimeParams` on every pooled connection
+- Gateway env table: [gateway.md](./gateway.md) (devshardctl). Session / `devshardd`
+  also honor the same `PG_*` timeout env vars via the shared package.
+- Accounting writer identity: `DEVSHARD_ACCOUNTING_WRITER_ID` (default hostname).
 - Storage mode helpers and `.pg-bound`: `devshard/storage/storage_mode.go`.
 - Drain check: `HasSQLiteSessions(storeDir)` or presence of rows in `_meta.db` `escrow_epoch`.
 - Production retention is `retain=3`: current epoch plus two previous epochs.
@@ -474,5 +786,13 @@ down after boot.
 | Managed pruning | `devshard/storage/managed.go` |
 | Legacy data copy | `devshard/storage/migrate.go` |
 | Factory / mode selection | `devshard/storage/factory.go`, `storage_mode.go` |
+| Shared mode resolver | `common/storage/mode` |
+| Shared Postgres timeouts | `common/storage/pgtimeouts` |
+| Gateway store interface / factory | `devshard/cmd/devshardctl/gateway_store.go`, `gateway_store_factory.go` |
+| Gateway SQLite / Postgres | `gateway_store_sqlite.go`, `gateway_store_postgres.go` |
+| Gateway SQLite→PG migrate + journal drain | `gateway_store_migrate.go`, `gateway_store_sync_journal.go` |
+| Epoch accounting tracker | `devshard/accounting/tracker.go` |
+| Accounting SQLite / Postgres / additive rows | `store_sqlite.go`, `store_postgres.go`, `store_postgres_rows.go` |
+| Accounting factory | `devshard/accounting/factory.go` |
 | dapi wiring | `decentralized-api/main.go` |
 | devshardd wiring | `decentralized-api/cmd/devshardd/main.go` |

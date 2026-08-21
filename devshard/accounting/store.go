@@ -2,34 +2,53 @@ package accounting
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
-	"fmt"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"devshard/types"
-
-	_ "modernc.org/sqlite"
 )
 
+// Store persists Tracker snapshots. The concrete backend is SQLite and/or
+// Postgres depending on DEVSHARD_STORAGE_MODE / PGHOST (see OpenStore).
 type Store struct {
-	db        *sql.DB
-	path      string
+	backend   storeBackend
 	retention uint64
+	path      string // sqlite path (migration source / sqlite mode)
+	// saveMu serializes taking a snapshot with writing it. Flush runs from the
+	// snapshot ticker and from settle/retire concurrently, and the Postgres
+	// backend persists counters as absolute values, so a save that started from
+	// an older snapshot must never land after a newer one.
+	saveMu sync.Mutex
+}
+
+type storeBackend interface {
+	Load(ctx context.Context, t *Tracker) error
+	// Save persists snap. SQLite replaces the whole DB; Postgres upserts dirty
+	// escrows and deletes pruned IDs so concurrent gateway writers do not wipe
+	// each other's rows.
+	Save(ctx context.Context, snap storeSnapshot, dirtyIDs, deletedIDs []string) error
+	Close() error
 }
 
 type escrowBlob struct {
-	Meta            EscrowMetadata             `json:"meta"`
-	Latest          uint64                     `json:"latest"`
-	HostStats       map[uint32]types.HostStats `json:"host_stats"`
-	Counters        []counterBlob              `json:"counters"`
-	ChallengeBySlot map[uint32]uint64          `json:"challenge_by_slot"`
-	InvalidBySlot   map[uint32]uint64          `json:"invalid_by_slot"`
-	InvalidNonces   []uint64                   `json:"invalid_nonces,omitempty"`
+	Meta      EscrowMetadata             `json:"meta"`
+	Latest    uint64                     `json:"latest"`
+	HostStats map[uint32]types.HostStats `json:"host_stats"`
+	Counters  []counterBlob              `json:"counters"`
+	// The per-nonce sets: replicated facts are persisted by identity so they can
+	// be merged by union rather than by arithmetic.
+	ProtocolOnly []nonceSlot     `json:"protocol_only,omitempty"`
+	Challenges   []challengeBlob `json:"challenges,omitempty"`
+	Invalid      []nonceSlot     `json:"invalid,omitempty"`
+	// Written by the pre-set layout only; carried forward, never regrown.
+	ChallengeBySlot map[uint32]uint64 `json:"challenge_by_slot,omitempty"`
+	InvalidBySlot   map[uint32]uint64 `json:"invalid_by_slot,omitempty"`
+	InvalidNonces   []uint64          `json:"invalid_nonces,omitempty"`
 }
 
 type counterBlob struct {
@@ -37,163 +56,18 @@ type counterBlob struct {
 	Count uint64     `json:"count"`
 }
 
-func OpenStore(path string, retention uint64) (*Store, error) {
-	if strings.TrimSpace(path) == "" {
-		return nil, errors.New("accounting database path is required")
-	}
-	db, err := sql.Open("sqlite", path)
-	if err != nil {
-		return nil, err
-	}
-	db.SetMaxOpenConns(1)
-	for _, pragma := range []string{
-		"PRAGMA journal_mode=WAL",
-		"PRAGMA synchronous=NORMAL",
-		"PRAGMA busy_timeout=5000",
-	} {
-		if _, err := db.Exec(pragma); err != nil {
-			db.Close()
-			return nil, fmt.Errorf("%s: %w", pragma, err)
-		}
-	}
-	if _, err := db.Exec(schema); err != nil {
-		db.Close()
-		return nil, err
-	}
-	return &Store{db: db, path: path, retention: retention}, nil
+// nonceSlot is one member of a per-nonce set, with the slot it was attributed
+// to. Invalidations and challenges land on the executor slot from the verdict,
+// which is not derivable from the nonce, so the slot is stored with it.
+type nonceSlot struct {
+	Nonce uint64 `json:"nonce"`
+	Slot  uint32 `json:"slot"`
 }
 
-func (s *Store) Close() error {
-	if s == nil || s.db == nil {
-		return nil
-	}
-	return s.db.Close()
-}
-
-func (s *Store) Load(ctx context.Context, t *Tracker) error {
-	if s == nil || s.db == nil || t == nil {
-		return nil
-	}
-	metaRows, err := s.db.QueryContext(ctx, `SELECT key, value FROM accounting_meta`)
-	if err != nil {
-		return err
-	}
-	for metaRows.Next() {
-		var key, value string
-		if err := metaRows.Scan(&key, &value); err != nil {
-			metaRows.Close()
-			return err
-		}
-		switch key {
-		case "updated_at":
-			if updated, err := time.Parse(time.RFC3339Nano, value); err == nil {
-				t.updated = updated
-			}
-		case "writer_errors":
-			if count, err := strconv.ParseUint(value, 10, 64); err == nil {
-				t.wrCount = count
-			}
-		}
-	}
-	if err := metaRows.Err(); err != nil {
-		metaRows.Close()
-		return err
-	}
-	if err := metaRows.Close(); err != nil {
-		return err
-	}
-
-	rows, err := s.db.QueryContext(ctx, `SELECT payload FROM accounting_escrows`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	for rows.Next() {
-		var raw []byte
-		if err := rows.Scan(&raw); err != nil {
-			return err
-		}
-		var blob escrowBlob
-		if err := json.Unmarshal(raw, &blob); err != nil {
-			return err
-		}
-		meta, err := normalizeMetadata(blob.Meta)
-		if err != nil {
-			return err
-		}
-		escrow := &escrowState{
-			Meta:            meta,
-			Latest:          blob.Latest,
-			HostStats:       make(map[uint32]types.HostStats, len(blob.HostStats)),
-			Counters:        make(map[CounterKey]uint64, len(blob.Counters)),
-			OpenChallenge:   make(map[uint64]uint32),
-			ChallengeBySlot: blob.ChallengeBySlot,
-			InvalidBySlot:   blob.InvalidBySlot,
-			InvalidNonce:    make(map[uint64]struct{}, len(blob.InvalidNonces)),
-			Live:            make(map[uint64]*nonceState),
-		}
-		for _, nonce := range blob.InvalidNonces {
-			escrow.InvalidNonce[nonce] = struct{}{}
-		}
-		if escrow.ChallengeBySlot == nil {
-			escrow.ChallengeBySlot = make(map[uint32]uint64)
-		}
-		if escrow.InvalidBySlot == nil {
-			escrow.InvalidBySlot = make(map[uint32]uint64)
-		}
-		for slot, stats := range blob.HostStats {
-			escrow.HostStats[slot] = stats
-		}
-		for _, counter := range blob.Counters {
-			if counter.Count > 0 {
-				escrow.Counters[counter.Key] += counter.Count
-			}
-		}
-		t.escrows[meta.EscrowID] = escrow
-	}
-	return rows.Err()
-}
-
-func (s *Store) Save(ctx context.Context, t *Tracker) error {
-	if s == nil || s.db == nil || t == nil {
-		return nil
-	}
-	snapshot := t.snapshot(s.retention)
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	if _, err := tx.ExecContext(ctx, `DELETE FROM accounting_escrows`); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, `DELETE FROM accounting_meta`); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO accounting_meta(key, value) VALUES
-		 ('schema_version', ?), ('updated_at', ?), ('writer_errors', ?)`,
-		SchemaVersion, snapshot.UpdatedAt.Format(time.RFC3339Nano), snapshot.WriterErrors,
-	); err != nil {
-		return err
-	}
-	for _, blob := range snapshot.Escrows {
-		raw, err := json.Marshal(blob)
-		if err != nil {
-			return err
-		}
-		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO accounting_escrows(escrow_id, creation_epoch, model, payload)
-			 VALUES (?, ?, ?, ?)`,
-			blob.Meta.EscrowID, blob.Meta.CreationEpoch, blob.Meta.Model, raw,
-		); err != nil {
-			return err
-		}
-	}
-	return tx.Commit()
+type challengeBlob struct {
+	Nonce    uint64 `json:"nonce"`
+	Slot     uint32 `json:"slot"`
+	Resolved bool   `json:"resolved,omitempty"`
 }
 
 type storeSnapshot struct {
@@ -202,63 +76,134 @@ type storeSnapshot struct {
 	Escrows      []escrowBlob
 }
 
-func (t *Tracker) snapshot(retention uint64) storeSnapshot {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	now := t.nowUTC()
-	for _, escrow := range t.escrows {
-		escrow.refreshDerived(now)
-	}
-	t.updated = now
-	t.pruneLocked(retention)
-	out := storeSnapshot{UpdatedAt: t.updated, WriterErrors: t.wrCount}
-	for _, escrow := range t.escrows {
-		blob := escrowBlob{
-			Meta:            escrow.Meta,
-			Latest:          escrow.Latest,
-			HostStats:       make(map[uint32]types.HostStats, len(escrow.HostStats)),
-			ChallengeBySlot: copyUint32Map(escrow.ChallengeBySlot),
-			InvalidBySlot:   copyUint32Map(escrow.InvalidBySlot),
-			InvalidNonces:   sortedNonces(escrow.InvalidNonce),
-		}
-		for slot, stats := range escrow.HostStats {
-			blob.HostStats[slot] = stats
-		}
-		for _, key := range sortedCounterKeys(escrow.Counters) {
-			blob.Counters = append(blob.Counters, counterBlob{Key: key, Count: escrow.Counters[key]})
-		}
-		out.Escrows = append(out.Escrows, blob)
-	}
-	return out
+// OpenStore opens the accounting backend selected by DEVSHARD_STORAGE_MODE.
+// sqlitePath is the local SQLite file used in sqlite mode and as the migration
+// source when opening Postgres.
+func OpenStore(sqlitePath string, retention uint64) (*Store, error) {
+	return OpenStoreContext(context.Background(), sqlitePath, retention)
 }
 
-func (t *Tracker) pruneLocked(retention uint64) {
-	if retention == 0 {
-		return
+func (s *Store) Close() error {
+	if s == nil || s.backend == nil {
+		return nil
 	}
-	var maxEpoch uint64
-	complete := make(map[uint64]bool)
-	for _, escrow := range t.escrows {
-		epoch := escrow.Meta.CreationEpoch
-		if epoch > maxEpoch {
-			maxEpoch = epoch
-		}
-		if _, ok := complete[epoch]; !ok {
-			complete[epoch] = true
-		}
-		if escrow.Meta.Phase != EscrowSettled {
-			complete[epoch] = false
+	return s.backend.Close()
+}
+
+func (s *Store) Load(ctx context.Context, t *Tracker) error {
+	if s == nil || s.backend == nil || t == nil {
+		return nil
+	}
+	return s.backend.Load(ctx, t)
+}
+
+func (s *Store) Save(ctx context.Context, t *Tracker) error {
+	if s == nil || s.backend == nil || t == nil {
+		return nil
+	}
+	// Held across both calls: takePersistSnapshot clears the dirty set, so an
+	// interleaved older write would be lost permanently rather than corrected on
+	// the next tick.
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
+	snap, dirtyIDs, deletedIDs := t.takePersistSnapshot(s.retention)
+	if err := s.backend.Save(ctx, snap, dirtyIDs, deletedIDs); err != nil {
+		t.restorePersistState(dirtyIDs, deletedIDs)
+		return err
+	}
+	return nil
+}
+
+func applyLoadedEscrow(t *Tracker, blob escrowBlob) error {
+	meta, err := normalizeMetadata(blob.Meta)
+	if err != nil {
+		return err
+	}
+	escrow := &escrowState{
+		Meta:            meta,
+		Latest:          blob.Latest,
+		HostStats:       make(map[uint32]types.HostStats, len(blob.HostStats)),
+		Counters:        make(map[CounterKey]uint64, len(blob.Counters)),
+		ProtocolOnly:    make(map[uint64]uint32, len(blob.ProtocolOnly)),
+		Challenge:       make(map[uint64]challengeRecord, len(blob.Challenges)),
+		Invalid:         make(map[uint64]uint32, len(blob.Invalid)),
+		ChallengeBySlot: blob.ChallengeBySlot,
+		InvalidBySlot:   blob.InvalidBySlot,
+		Live:            make(map[uint64]*nonceState),
+	}
+	for _, entry := range blob.ProtocolOnly {
+		escrow.ProtocolOnly[entry.Nonce] = entry.Slot
+	}
+	for _, entry := range blob.Challenges {
+		escrow.Challenge[entry.Nonce] = challengeRecord{Slot: entry.Slot, Resolved: entry.Resolved}
+	}
+	for _, entry := range blob.Invalid {
+		escrow.Invalid[entry.Nonce] = entry.Slot
+	}
+	// Pre-set invalid nonces are kept for deduplication only: their counts live in
+	// InvalidBySlot, so promoting them into the set would count them twice.
+	if len(blob.InvalidNonces) > 0 {
+		escrow.InvalidLegacy = make(map[uint64]struct{}, len(blob.InvalidNonces))
+		for _, nonce := range blob.InvalidNonces {
+			escrow.InvalidLegacy[nonce] = struct{}{}
 		}
 	}
-	var cutoff uint64
-	if maxEpoch+1 > retention {
-		cutoff = maxEpoch + 1 - retention
+	for slot, stats := range blob.HostStats {
+		escrow.HostStats[slot] = stats
 	}
-	for id, escrow := range t.escrows {
-		if escrow.Meta.CreationEpoch < cutoff && complete[escrow.Meta.CreationEpoch] {
-			delete(t.escrows, id)
+	for _, counter := range blob.Counters {
+		if counter.Count > 0 {
+			escrow.Counters[counter.Key] += counter.Count
 		}
 	}
+	t.escrows[meta.EscrowID] = escrow
+	return nil
+}
+
+func applyLoadedMeta(t *Tracker, key, value string) {
+	switch key {
+	case "updated_at":
+		if updated, err := time.Parse(time.RFC3339Nano, value); err == nil {
+			t.updated = updated
+		}
+	case "writer_errors":
+		if count, err := strconv.ParseUint(value, 10, 64); err == nil {
+			t.wrCount = count
+		}
+	}
+}
+
+func blobFromEscrow(escrow *escrowState) escrowBlob {
+	blob := escrowBlob{
+		Meta:            escrow.Meta,
+		Latest:          escrow.Latest,
+		HostStats:       make(map[uint32]types.HostStats, len(escrow.HostStats)),
+		ProtocolOnly:    sortedNonceSlots(escrow.ProtocolOnly),
+		Invalid:         sortedNonceSlots(escrow.Invalid),
+		Challenges:      sortedChallenges(escrow.Challenge),
+		ChallengeBySlot: copyUint32Map(escrow.ChallengeBySlot),
+		InvalidBySlot:   copyUint32Map(escrow.InvalidBySlot),
+		InvalidNonces:   sortedNonces(escrow.InvalidLegacy),
+	}
+	for slot, stats := range escrow.HostStats {
+		blob.HostStats[slot] = stats
+	}
+	for _, key := range sortedCounterKeys(escrow.Counters) {
+		blob.Counters = append(blob.Counters, counterBlob{Key: key, Count: escrow.Counters[key]})
+	}
+	return blob
+}
+
+func encodeEscrowBlob(blob escrowBlob) ([]byte, error) {
+	return json.Marshal(blob)
+}
+
+func decodeEscrowBlob(raw []byte) (escrowBlob, error) {
+	var blob escrowBlob
+	if err := json.Unmarshal(raw, &blob); err != nil {
+		return escrowBlob{}, err
+	}
+	return blob, nil
 }
 
 func copyUint32Map(in map[uint32]uint64) map[uint32]uint64 {
@@ -266,6 +211,39 @@ func copyUint32Map(in map[uint32]uint64) map[uint32]uint64 {
 	for k, v := range in {
 		out[k] = v
 	}
+	return out
+}
+
+func sortedKeys(in map[string]struct{}) []string {
+	out := make([]string, 0, len(in))
+	for key := range in {
+		out = append(out, key)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func sortedNonceSlots(in map[uint64]uint32) []nonceSlot {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]nonceSlot, 0, len(in))
+	for nonce, slot := range in {
+		out = append(out, nonceSlot{Nonce: nonce, Slot: slot})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Nonce < out[j].Nonce })
+	return out
+}
+
+func sortedChallenges(in map[uint64]challengeRecord) []challengeBlob {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]challengeBlob, 0, len(in))
+	for nonce, rec := range in {
+		out = append(out, challengeBlob{Nonce: nonce, Slot: rec.Slot, Resolved: rec.Resolved})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Nonce < out[j].Nonce })
 	return out
 }
 
@@ -281,17 +259,13 @@ func sortedNonces(in map[uint64]struct{}) []uint64 {
 	return out
 }
 
-const schema = `
-CREATE TABLE IF NOT EXISTS accounting_meta (
-	key TEXT PRIMARY KEY,
-	value TEXT NOT NULL
-);
-CREATE TABLE IF NOT EXISTS accounting_escrows (
-	escrow_id TEXT PRIMARY KEY,
-	creation_epoch INTEGER NOT NULL,
-	model TEXT NOT NULL,
-	payload BLOB NOT NULL
-);
-CREATE INDEX IF NOT EXISTS accounting_escrows_epoch_model_idx
-	ON accounting_escrows(creation_epoch, model);
-`
+func requirePath(path string) error {
+	if strings.TrimSpace(path) == "" {
+		return errors.New("accounting database path is required")
+	}
+	return nil
+}
+
+func schemaVersionMeta() (string, string) {
+	return "schema_version", strconv.Itoa(SchemaVersion)
+}

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 
@@ -18,22 +19,22 @@ func TestResolveRuntimeModel(t *testing.T) {
 }
 
 func TestPersistRuntimeModelUpdatesStore(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 
-	require.NoError(t, store.Initialize(GatewaySettings{DefaultModel: "Qwen/Default"}, []GatewayDevshardState{{
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{DefaultModel: "Qwen/Default"}, []GatewayDevshardState{{
 		RuntimeConfig: RuntimeConfig{ID: "42", PrivateKeyHex: "secret", Model: "Qwen/Default"},
 		Active:        true,
 	}}))
 
-	state, ok, err := store.LoadState()
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	persistRuntimeModel(store, &state, "42", "moonshotai/Kimi-K2.6")
+	persistRuntimeModel(context.Background(), store, &state, "42", "moonshotai/Kimi-K2.6")
 
-	record, found, err := store.GetDevshard("42")
+	record, found, err := store.GetDevshard(context.Background(), "42")
 	require.NoError(t, err)
 	require.True(t, found)
 	require.Equal(t, "moonshotai/Kimi-K2.6", record.Model)

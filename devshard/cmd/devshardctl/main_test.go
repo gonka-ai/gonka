@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"log"
 	"os"
@@ -33,13 +34,13 @@ func TestBootstrapEscrowRotationSettlementDefaultsDisabled(t *testing.T) {
 }
 
 func TestBuildGatewayRuntimesDeactivatesMissingEscrow(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
 	})
 
-	require.NoError(t, store.Initialize(GatewaySettings{
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
 		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
@@ -51,7 +52,7 @@ func TestBuildGatewayRuntimesDeactivatesMissingEscrow(t *testing.T) {
 		{RuntimeConfig: RuntimeConfig{ID: "24", PrivateKeyHex: "secret", Model: "Qwen/Test"}, Active: true},
 	}))
 
-	state, ok, err := store.LoadState()
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 
@@ -70,14 +71,14 @@ func TestBuildGatewayRuntimesDeactivatesMissingEscrow(t *testing.T) {
 		gatewayRuntimeBuilder = savedBuilder
 	})
 
-	runtimes, _, err := buildGatewayRuntimes(store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
+	runtimes, _, err := buildGatewayRuntimes(context.Background(), store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
 	require.NoError(t, err)
 	require.Len(t, runtimes, 1)
 	require.Equal(t, "24", runtimes[0].id)
 	require.False(t, state.Devshards[0].Active)
 	require.True(t, state.Devshards[1].Active)
 
-	reloaded, ok, err := store.LoadState()
+	reloaded, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.False(t, reloaded.Devshards[0].Active)
@@ -85,13 +86,13 @@ func TestBuildGatewayRuntimesDeactivatesMissingEscrow(t *testing.T) {
 }
 
 func TestBuildGatewayRuntimesDeactivatesMissingPrivateKey(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
 	})
 
-	require.NoError(t, store.Initialize(GatewaySettings{
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
 		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
@@ -103,7 +104,7 @@ func TestBuildGatewayRuntimesDeactivatesMissingPrivateKey(t *testing.T) {
 		{RuntimeConfig: RuntimeConfig{ID: "24", PrivateKeyHex: "secret", Model: "Qwen/Test"}, Active: true},
 	}))
 
-	state, ok, err := store.LoadState()
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 
@@ -122,14 +123,14 @@ func TestBuildGatewayRuntimesDeactivatesMissingPrivateKey(t *testing.T) {
 		gatewayRuntimeBuilder = savedBuilder
 	})
 
-	runtimes, _, err := buildGatewayRuntimes(store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
+	runtimes, _, err := buildGatewayRuntimes(context.Background(), store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
 	require.NoError(t, err)
 	require.Len(t, runtimes, 1)
 	require.Equal(t, "24", runtimes[0].id)
 	require.False(t, state.Devshards[0].Active)
 	require.True(t, state.Devshards[1].Active)
 
-	reloaded, ok, err := store.LoadState()
+	reloaded, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.False(t, reloaded.Devshards[0].Active)
@@ -137,13 +138,13 @@ func TestBuildGatewayRuntimesDeactivatesMissingPrivateKey(t *testing.T) {
 }
 
 func TestBuildGatewayRuntimesPreservesActiveOnOtherErrors(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
 	})
 
-	require.NoError(t, store.Initialize(GatewaySettings{
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
 		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
@@ -154,7 +155,7 @@ func TestBuildGatewayRuntimesPreservesActiveOnOtherErrors(t *testing.T) {
 		{RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"}, Active: true},
 	}))
 
-	state, ok, err := store.LoadState()
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 
@@ -166,20 +167,20 @@ func TestBuildGatewayRuntimesPreservesActiveOnOtherErrors(t *testing.T) {
 		gatewayRuntimeBuilder = savedBuilder
 	})
 
-	_, _, err = buildGatewayRuntimes(store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
+	_, _, err = buildGatewayRuntimes(context.Background(), store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
 	require.Error(t, err)
 
-	reloaded, ok, err := store.LoadState()
+	reloaded, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.True(t, reloaded.Devshards[0].Active)
 }
 
 func TestBuildGatewayRuntimesDeactivatesUnrecoverableLocalState(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	require.NoError(t, store.Initialize(GatewaySettings{
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
 		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
@@ -190,7 +191,7 @@ func TestBuildGatewayRuntimesDeactivatesUnrecoverableLocalState(t *testing.T) {
 		{RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"}, Active: true},
 		{RuntimeConfig: RuntimeConfig{ID: "24", PrivateKeyHex: "secret", Model: "Qwen/Test"}, Active: true},
 	}))
-	state, ok, err := store.LoadState()
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 
@@ -214,7 +215,7 @@ func TestBuildGatewayRuntimesDeactivatesUnrecoverableLocalState(t *testing.T) {
 		log.SetFlags(previousFlags)
 	})
 
-	runtimes, skipped, err := buildGatewayRuntimes(store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
+	runtimes, skipped, err := buildGatewayRuntimes(context.Background(), store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
 
 	require.NoError(t, err)
 	require.Len(t, runtimes, 1)
@@ -227,7 +228,7 @@ func TestBuildGatewayRuntimesDeactivatesUnrecoverableLocalState(t *testing.T) {
 	require.False(t, state.Devshards[0].Active)
 	require.True(t, state.Devshards[1].Active)
 
-	reloaded, ok, err := store.LoadState()
+	reloaded, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.False(t, reloaded.Devshards[0].Active)
@@ -247,10 +248,10 @@ func TestBuildGatewayRuntimesDeactivatesUnrecoverableLocalState(t *testing.T) {
 }
 
 func TestBuildGatewayRuntimesKeepsCreateStorageSessionFailureFatal(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	require.NoError(t, store.Initialize(GatewaySettings{
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
 		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
@@ -261,7 +262,7 @@ func TestBuildGatewayRuntimesKeepsCreateStorageSessionFailureFatal(t *testing.T)
 		RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"},
 		Active:        true,
 	}}))
-	state, ok, err := store.LoadState()
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 
@@ -274,23 +275,23 @@ func TestBuildGatewayRuntimesKeepsCreateStorageSessionFailureFatal(t *testing.T)
 	}
 	t.Cleanup(func() { gatewayRuntimeBuilder = savedBuilder })
 
-	_, skipped, err := buildGatewayRuntimes(store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
+	_, skipped, err := buildGatewayRuntimes(context.Background(), store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
 
 	require.ErrorContains(t, err, "create storage session")
 	require.Empty(t, skipped)
 	require.True(t, state.Devshards[0].Active)
 
-	reloaded, ok, loadErr := store.LoadState()
+	reloaded, ok, loadErr := store.LoadState(context.Background())
 	require.NoError(t, loadErr)
 	require.True(t, ok)
 	require.True(t, reloaded.Devshards[0].Active, "create-storage failure must not deactivate escrow or rotation will refill")
 }
 
 func TestBuildGatewayRuntimesFailsWhenRecoveryQuarantineCannotPersist(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	require.NoError(t, store.Initialize(GatewaySettings{
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
 		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
@@ -309,7 +310,7 @@ func TestBuildGatewayRuntimesFailsWhenRecoveryQuarantineCannotPersist(t *testing
 			SELECT RAISE(ABORT, 'forced quarantine persistence failure');
 		END`)
 	require.NoError(t, err)
-	state, ok, err := store.LoadState()
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 
@@ -319,11 +320,11 @@ func TestBuildGatewayRuntimesFailsWhenRecoveryQuarantineCannotPersist(t *testing
 	}
 	t.Cleanup(func() { gatewayRuntimeBuilder = savedBuilder })
 
-	_, _, err = buildGatewayRuntimes(store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
+	_, _, err = buildGatewayRuntimes(context.Background(), store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
 
 	require.ErrorContains(t, err, "deactivate devshard 12")
 	require.ErrorContains(t, err, "forced quarantine persistence failure")
-	reloaded, ok, loadErr := store.LoadState()
+	reloaded, ok, loadErr := store.LoadState(context.Background())
 	require.NoError(t, loadErr)
 	require.True(t, ok)
 	require.True(t, reloaded.Devshards[0].Active)
@@ -334,10 +335,10 @@ func TestBuildGatewayRuntimesFailsWhenRecoveryQuarantineCannotPersist(t *testing
 // builder invocations.
 func measurePeakRuntimeBuildConcurrency(t *testing.T, n int) int64 {
 	t.Helper()
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	require.NoError(t, store.Initialize(GatewaySettings{
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
 		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
@@ -346,7 +347,7 @@ func measurePeakRuntimeBuildConcurrency(t *testing.T, n int) int64 {
 		MaxInputTokensInFlight:  200,
 	}, activeDevshardStates(n)))
 
-	state, ok, err := store.LoadState()
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 
@@ -369,7 +370,7 @@ func measurePeakRuntimeBuildConcurrency(t *testing.T, n int) int64 {
 	}
 	t.Cleanup(func() { gatewayRuntimeBuilder = savedBuilder })
 
-	runtimes, _, err := buildGatewayRuntimes(store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
+	runtimes, _, err := buildGatewayRuntimes(context.Background(), store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
 	require.NoError(t, err)
 	require.Len(t, runtimes, n)
 	return peakInFlight.Load()
@@ -416,10 +417,10 @@ func TestBuildGatewayRuntimesBoundedFanoutSurvivesRateLimitingLCD(t *testing.T) 
 	const devshardCount = 32
 	limit := int64(resolveMaxConcurrentRuntimeBuilds())
 
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	require.NoError(t, store.Initialize(GatewaySettings{
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
 		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
@@ -428,7 +429,7 @@ func TestBuildGatewayRuntimesBoundedFanoutSurvivesRateLimitingLCD(t *testing.T) 
 		MaxInputTokensInFlight:  200,
 	}, activeDevshardStates(devshardCount)))
 
-	state, ok, err := store.LoadState()
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 
@@ -449,7 +450,7 @@ func TestBuildGatewayRuntimesBoundedFanoutSurvivesRateLimitingLCD(t *testing.T) 
 	}
 	t.Cleanup(func() { gatewayRuntimeBuilder = savedBuilder })
 
-	runtimes, _, err := buildGatewayRuntimes(store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
+	runtimes, _, err := buildGatewayRuntimes(context.Background(), store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
 
 	require.False(t, rateLimited.Load(), "fan-out exceeded the chain's concurrency tolerance and tripped a 429")
 	require.NoError(t, err, "bounded startup must survive a rate-limiting chain")
@@ -507,13 +508,13 @@ func TestGatewayChainClientUsesQueryFallback(t *testing.T) {
 }
 
 func TestRepairPersistedGatewayEndpointSettingsBackfillsBlankPublicAPI(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
 	})
 
-	require.NoError(t, store.Initialize(GatewaySettings{
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
 		ChainGRPC:               "",
 		PublicAPI:               "",
 		DefaultModel:            "Qwen/Test",
@@ -521,13 +522,13 @@ func TestRepairPersistedGatewayEndpointSettingsBackfillsBlankPublicAPI(t *testin
 		MaxConcurrentRequests:   2,
 		MaxInputTokensInFlight:  200,
 	}, nil))
-	state, ok, err := store.LoadState()
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 
 	t.Setenv("DEVSHARD_PUBLIC_API", "http://api:9000")
 	t.Setenv("DEVSHARD_CHAIN_GRPC", "mock-chain:19090")
-	mustRepairPersistedGatewayEndpointSettings(store, &state, cliFlags{
+	mustRepairPersistedGatewayEndpointSettings(context.Background(), store, &state, cliFlags{
 		chainGRPC: defaultChainGRPCURL,
 		publicAPI: defaultPublicAPIURL,
 	})
@@ -543,13 +544,13 @@ func TestRepairPersistedGatewayEndpointSettingsBackfillsBlankPublicAPI(t *testin
 }
 
 func TestRepairPersistedGatewayEndpointSettingsPreservesConfiguredPublicAPI(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
 	})
 
-	require.NoError(t, store.Initialize(GatewaySettings{
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
 		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://configured-api:9000",
 		DefaultModel:            "Qwen/Test",
@@ -557,12 +558,12 @@ func TestRepairPersistedGatewayEndpointSettingsPreservesConfiguredPublicAPI(t *t
 		MaxConcurrentRequests:   2,
 		MaxInputTokensInFlight:  200,
 	}, nil))
-	state, ok, err := store.LoadState()
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 
 	t.Setenv("DEVSHARD_PUBLIC_API", "http://env-api:9000")
-	mustRepairPersistedGatewayEndpointSettings(store, &state, cliFlags{
+	mustRepairPersistedGatewayEndpointSettings(context.Background(), store, &state, cliFlags{
 		publicAPI: defaultPublicAPIURL,
 	})
 
@@ -573,9 +574,9 @@ func TestRepairPersistedGatewayEndpointSettingsPreservesConfiguredPublicAPI(t *t
 	require.Equal(t, "http://configured-api:9000", reloaded.Settings.PublicAPI)
 }
 
-func reloadGatewayStateForTest(t *testing.T, store *GatewayStore) (GatewayState, bool) {
+func reloadGatewayStateForTest(t *testing.T, store GatewayStore) (GatewayState, bool) {
 	t.Helper()
-	state, ok, err := store.LoadState()
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	return state, ok
 }
