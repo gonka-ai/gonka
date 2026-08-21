@@ -13,6 +13,7 @@ import (
 	"devshard/chainoracle/blocks"
 	blockclient "devshard/chainoracle/blocks/client"
 	"devshard/chainoracle/blocks/failover"
+	"devshard/chainoracle/blocks/tipcache"
 
 	"github.com/stretchr/testify/require"
 )
@@ -169,4 +170,47 @@ func TestOracle_AtDapiDownFallsBackToChain(t *testing.T) {
 	require.Equal(t, int64(99), h.Height)
 	require.Equal(t, []byte{9, 9, 9, 9}, h.BlockHash)
 	require.Greater(t, chain.calls.Load(), int64(0))
+}
+
+func TestOracle_AtUsesCachedWindow(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		t.Errorf("cached At must not hit HTTP: %s", r.URL.Path)
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(ts.Close)
+	lookup, err := blockclient.NewLookup(blockclient.HTTPConfig{BaseURL: ts.URL})
+	require.NoError(t, err)
+	cache := tipcache.New(time.Hour)
+	cache.Observe(dapiHdr())
+	o := failover.New(cache, lookup, nil)
+
+	h, err := o.At(context.Background(), 7)
+	require.NoError(t, err)
+	require.Equal(t, int64(7), h.Height)
+	require.Equal(t, []byte{1, 2, 3, 4}, h.BlockHash)
+}
+
+func TestOracle_AtRemembersHTTP(t *testing.T) {
+	var hits atomic.Int64
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		require.Equal(t, "/block/7", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(dapiHdr())
+	}))
+	t.Cleanup(ts.Close)
+	lookup, err := blockclient.NewLookup(blockclient.HTTPConfig{BaseURL: ts.URL})
+	require.NoError(t, err)
+	cache := tipcache.New(time.Hour)
+	o := failover.New(cache, lookup, nil)
+
+	h, err := o.At(context.Background(), 7)
+	require.NoError(t, err)
+	require.Equal(t, int64(7), h.Height)
+	h, err = o.At(context.Background(), 7)
+	require.NoError(t, err)
+	require.Equal(t, int64(7), h.Height)
+	require.Equal(t, int64(1), hits.Load())
+	_, err = cache.Latest(context.Background())
+	require.Error(t, err, "HTTP At must not become the Comet tip")
 }

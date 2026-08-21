@@ -30,6 +30,12 @@ func TestCache_ObserveLatestAndSubscribe(t *testing.T) {
 	require.Equal(t, []byte{0xaa}, got.BlockHash)
 	require.False(t, c.Stale())
 
+	at, err := c.At(context.Background(), 5)
+	require.NoError(t, err)
+	require.Equal(t, []byte{0xaa}, at.BlockHash)
+	_, err = c.At(context.Background(), 4)
+	require.Error(t, err)
+
 	select {
 	case h := <-ch:
 		require.Equal(t, int64(5), h.Height)
@@ -49,6 +55,55 @@ func TestWithBootstrap_FallsBackToBoot(t *testing.T) {
 	h, err = w.Latest(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, int64(9), h.Height)
+}
+
+func TestCache_WindowKeepsLast100(t *testing.T) {
+	c := tipcache.New(time.Hour)
+	for h := int64(1); h <= tipcache.HistoryWindow+1; h++ {
+		c.Observe(blocks.HashOnlyHeader(h, time.Unix(h, 0).UTC(), "gonka", []byte{byte(h)}))
+	}
+	tip := int64(tipcache.HistoryWindow + 1)
+	_, err := c.At(context.Background(), 1)
+	require.Error(t, err, "height 1 is outside the window")
+	got, err := c.At(context.Background(), tip-(tipcache.HistoryWindow-1))
+	require.NoError(t, err)
+	require.Equal(t, tip-(tipcache.HistoryWindow-1), got.Height)
+	got, err = c.At(context.Background(), tip)
+	require.NoError(t, err)
+	require.Equal(t, tip, got.Height)
+}
+
+func TestCache_RememberDoesNotAdvanceTip(t *testing.T) {
+	c := tipcache.New(time.Hour)
+	c.Remember(blocks.HashOnlyHeader(8, time.Unix(8, 0).UTC(), "gonka", []byte{8}))
+	_, err := c.Latest(context.Background())
+	require.Error(t, err)
+	require.True(t, c.Stale())
+	got, err := c.At(context.Background(), 8)
+	require.NoError(t, err)
+	require.Equal(t, int64(8), got.Height)
+
+	c.Observe(blocks.HashOnlyHeader(200, time.Unix(200, 0).UTC(), "gonka", []byte{200}))
+	_, err = c.At(context.Background(), 8)
+	require.Error(t, err, "8 is outside the window of tip 200")
+}
+
+func TestCache_RememberOutsideWindowDropped(t *testing.T) {
+	c := tipcache.New(time.Hour)
+	c.Observe(blocks.HashOnlyHeader(200, time.Unix(200, 0).UTC(), "gonka", []byte{200}))
+	c.Remember(blocks.HashOnlyHeader(50, time.Unix(50, 0).UTC(), "gonka", []byte{50}))
+	_, err := c.At(context.Background(), 50)
+	require.Error(t, err)
+}
+
+func TestCache_DummyNotStored(t *testing.T) {
+	c := tipcache.New(time.Hour)
+	c.Observe(blocks.DummyHeader(3))
+	c.Remember(blocks.DummyHeader(3))
+	_, err := c.At(context.Background(), 3)
+	require.Error(t, err)
+	_, err = c.Latest(context.Background())
+	require.Error(t, err)
 }
 
 type static struct{ hdr *blocks.Header }

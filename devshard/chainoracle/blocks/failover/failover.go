@@ -1,8 +1,9 @@
 // Package failover is the host/gateway BlockOracle: Latest/Subscribe come from
 // the Comet NewBlock cache, falling back to direct chain when that cache is
-// empty (WS not yet connected, or down). At/Prove prefer dapi GET /block/:height
-// when DEVSHARD_CHAINORACLE_URL is set; a down dapi falls back to chain At.
-// Old dapi (404) yields a dummy header so L6 does not mark.
+// empty (WS not yet connected, or down). At prefers the last 100 cached
+// heights, then dapi GET /block/:height, then chain At when dapi is down.
+// Old dapi (404) yields a dummy header so L6 does not mark. Dummy headers
+// are not cached.
 package failover
 
 import (
@@ -68,9 +69,13 @@ func (o *Oracle) At(ctx context.Context, height int64) (*blocks.Header, error) {
 	if o == nil {
 		return blocks.DummyHeader(height), nil
 	}
+	if h := o.fromWindow(ctx, height); h != nil {
+		return h, nil
+	}
 	if o.hist != nil {
 		h, err := o.hist.At(ctx, height)
 		if err == nil && h != nil {
+			o.remember(h)
 			return h, nil
 		}
 		if err != nil && blockclient.IsCapabilityMiss(err) {
@@ -86,6 +91,7 @@ func (o *Oracle) At(ctx context.Context, height int64) (*blocks.Header, error) {
 	if o.chain != nil && o.hist != nil {
 		h, err := o.chain.At(ctx, height)
 		if err == nil && h != nil {
+			o.remember(h)
 			return h, nil
 		}
 		if err != nil {
@@ -93,6 +99,26 @@ func (o *Oracle) At(ctx context.Context, height int64) (*blocks.Header, error) {
 		}
 	}
 	return blocks.DummyHeader(height), nil
+}
+
+func (o *Oracle) fromWindow(ctx context.Context, height int64) *blocks.Header {
+	if o.tip == nil {
+		return nil
+	}
+	h, err := o.tip.At(ctx, height)
+	if err != nil || h == nil || h.Height != height || blocks.IsDummyHeader(h) {
+		return nil
+	}
+	return h
+}
+
+func (o *Oracle) remember(h *blocks.Header) {
+	if h == nil || blocks.IsDummyHeader(h) {
+		return
+	}
+	if r, ok := o.tip.(interface{ Remember(*blocks.Header) }); ok {
+		r.Remember(h)
+	}
 }
 
 func (o *Oracle) Prove(ctx context.Context, path string, height int64) (*blocks.Proof, error) {

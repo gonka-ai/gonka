@@ -25,9 +25,9 @@ func TestNodeManager_GetHostEvents_WireFormat_FieldNumbersStable(t *testing.T) {
 	assertFieldNum(t, (&gen.RuntimeConfig{}).ProtoReflect().Descriptor(), "params_block_height", 1)
 	assertFieldNum(t, (&gen.RuntimeConfig{}).ProtoReflect().Descriptor(), "vote_threshold_factor", 11)
 	assertFieldNum(t, (&gen.RuntimeConfig{}).ProtoReflect().Descriptor(), "validation_thresholds", 12)
-	assertFieldNum(t, (&gen.RuntimeConfig{}).ProtoReflect().Descriptor(), "height_sync_interval_blocks", 13)
+	assertFieldNum(t, (&gen.RuntimeConfig{}).ProtoReflect().Descriptor(), "height_sync_interval_ms", 13)
 	assertFieldNum(t, (&gen.RuntimeConfig{}).ProtoReflect().Descriptor(), "height_sync_ack_deadline_blocks", 14)
-	assertFieldNum(t, (&gen.RuntimeConfig{}).ProtoReflect().Descriptor(), "height_sync_idle_blocks", 15)
+	assertFieldNum(t, (&gen.RuntimeConfig{}).ProtoReflect().Descriptor(), "height_sync_idle_timeout_ms", 15)
 	assertFieldNum(t, (&gen.RuntimeConfig{}).ProtoReflect().Descriptor(), "height_sync_probe_stagger_ms", 16)
 	assertFieldNum(t, (&gen.RuntimeConfig{}).ProtoReflect().Descriptor(), "height_sync_max_probes_per_window", 17)
 

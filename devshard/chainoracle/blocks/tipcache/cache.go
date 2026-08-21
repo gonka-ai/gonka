@@ -1,5 +1,6 @@
 // Package tipcache is a BlockOracle tip fed by Observe (Comet NewBlock).
 // Latest/Subscribe do not use HTTP /block/latest or /block/stream.
+// At() is served from the last HistoryWindow heights (Observe + Remember).
 package tipcache
 
 import (
@@ -14,16 +15,21 @@ import (
 
 const subBufSize = 16
 
+// HistoryWindow is how many recent heights Observe/Remember retain for At().
+const HistoryWindow = 100
+
 var errNoHeader = errors.New("blockoracle/tipcache: no header yet")
 
-// Cache holds the latest observed header and fans it out to subscribers.
+// Cache holds the latest observed header, the last HistoryWindow heights,
+// and fans new tips out to subscribers.
 type Cache struct {
 	staleAfter time.Duration
 
-	mu     sync.RWMutex
-	latest *blocks.Header
-	subs   map[int]*subscription
-	nextID int
+	mu       sync.RWMutex
+	latest   *blocks.Header
+	byHeight map[int64]*blocks.Header
+	subs     map[int]*subscription
+	nextID   int
 
 	lastRecvUnix atomic.Int64
 }
@@ -41,27 +47,32 @@ func New(staleAfter time.Duration) *Cache {
 	}
 	return &Cache{
 		staleAfter: staleAfter,
+		byHeight:   make(map[int64]*blocks.Header),
 		subs:       make(map[int]*subscription),
 	}
 }
 
 // Observe records a committed header from the Comet NewBlock feed.
+// Heights at or above the current tip become the tip; older heights in
+// the last HistoryWindow are kept for At() and do not move Latest().
 func (c *Cache) Observe(h *blocks.Header) {
-	if c == nil || h == nil || h.Height <= 0 {
+	if c == nil || h == nil || h.Height <= 0 || blocks.IsDummyHeader(h) {
 		return
 	}
 	cp := cloneHeader(h)
 	c.mu.Lock()
-	if c.latest != nil && cp.Height < c.latest.Height {
-		c.mu.Unlock()
-		return
+	advance := c.latest == nil || cp.Height >= c.latest.Height
+	if advance {
+		c.latest = cp
+		c.lastRecvUnix.Store(time.Now().UnixNano())
 	}
-	c.latest = cp
-	c.lastRecvUnix.Store(time.Now().UnixNano())
+	c.storeLocked(cp)
 	var live []*subscription
-	for _, sub := range c.subs {
-		if cp.Height >= sub.from {
-			live = append(live, sub)
+	if advance {
+		for _, sub := range c.subs {
+			if cp.Height >= sub.from {
+				live = append(live, sub)
+			}
 		}
 	}
 	c.mu.Unlock()
@@ -71,6 +82,18 @@ func (c *Cache) Observe(h *blocks.Header) {
 		default:
 		}
 	}
+}
+
+// Remember stores a non-dummy header in the last HistoryWindow for At().
+// It never moves Latest() or freshness; use Observe for Comet NewBlock.
+func (c *Cache) Remember(h *blocks.Header) {
+	if c == nil || h == nil || h.Height <= 0 || blocks.IsDummyHeader(h) {
+		return
+	}
+	cp := cloneHeader(h)
+	c.mu.Lock()
+	c.storeLocked(cp)
+	c.mu.Unlock()
 }
 
 func (c *Cache) Latest(context.Context) (*blocks.Header, error) {
@@ -86,15 +109,17 @@ func (c *Cache) Latest(context.Context) (*blocks.Header, error) {
 	return cloneHeader(h), nil
 }
 
-func (c *Cache) At(ctx context.Context, height int64) (*blocks.Header, error) {
-	h, err := c.Latest(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if h.Height != height {
+func (c *Cache) At(_ context.Context, height int64) (*blocks.Header, error) {
+	if c == nil {
 		return nil, errNoHeader
 	}
-	return h, nil
+	c.mu.RLock()
+	h := c.byHeight[height]
+	c.mu.RUnlock()
+	if h == nil {
+		return nil, errNoHeader
+	}
+	return cloneHeader(h), nil
 }
 
 func (c *Cache) Prove(context.Context, string, int64) (*blocks.Proof, error) {
@@ -146,6 +171,46 @@ func (c *Cache) Stale() bool {
 		return true
 	}
 	return time.Since(time.Unix(0, last)) > c.staleAfter
+}
+
+func (c *Cache) storeLocked(h *blocks.Header) {
+	if h == nil {
+		return
+	}
+	if c.byHeight == nil {
+		c.byHeight = make(map[int64]*blocks.Header)
+	}
+	if c.latest != nil {
+		floor := c.latest.Height - (HistoryWindow - 1)
+		if h.Height < floor {
+			return
+		}
+	}
+	c.byHeight[h.Height] = h
+	c.evictLocked()
+}
+
+func (c *Cache) evictLocked() {
+	if c.latest != nil {
+		floor := c.latest.Height - (HistoryWindow - 1)
+		for height := range c.byHeight {
+			if height < floor {
+				delete(c.byHeight, height)
+			}
+		}
+		return
+	}
+	for len(c.byHeight) > HistoryWindow {
+		var min int64
+		first := true
+		for height := range c.byHeight {
+			if first || height < min {
+				min = height
+				first = false
+			}
+		}
+		delete(c.byHeight, min)
+	}
 }
 
 func cloneHeader(h *blocks.Header) *blocks.Header {
