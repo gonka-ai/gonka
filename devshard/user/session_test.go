@@ -186,7 +186,7 @@ type ErrorClient struct {
 	Err error
 }
 
-func (c *ErrorClient) Send(_ context.Context, _ host.HostRequest, _ io.Writer, _ func()) (*host.HostResponse, error) {
+func (c *ErrorClient) Send(_ context.Context, _ host.HostRequest, _ io.Writer, _ func(*host.HostResponse)) (*host.HostResponse, error) {
 	return nil, c.Err
 }
 

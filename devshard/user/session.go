@@ -147,7 +147,7 @@ func HasMsgTimeout(txs []*types.DevshardTx, nonce uint64) bool {
 }
 
 type HostClient interface {
-	Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func()) (*host.HostResponse, error)
+	Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error)
 }
 
 // SignatureFetcher is optionally implemented by HostClient implementations that
@@ -174,7 +174,7 @@ func writeInProcessStreamingChunk(stream io.Writer) {
 	fmt.Fprintf(stream, "data: [DONE]\n\n")
 }
 
-func (c *InProcessClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+func (c *InProcessClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
 	resp, err := c.Host.HandleRequest(ctx, req)
 	if err != nil {
 		return nil, err
@@ -185,7 +185,7 @@ func (c *InProcessClient) Send(ctx context.Context, req host.HostRequest, stream
 	// race writer never sees a receipt and stall-detection logic cannot tell
 	// the in-process path apart from a real-world stall.
 	if receiptHandler != nil {
-		receiptHandler()
+		receiptHandler(resp)
 	}
 	if resp.ExecutionJob != nil {
 		result, execErr := c.Host.RunExecution(ctx, resp.ExecutionJob)
@@ -883,11 +883,35 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.
 		Diffs:   p.catchUp,
 		Nonce:   p.diff.Nonce,
 		Payload: p.Payload(),
-	}, stream, receiptHandler)
+	}, stream, func(partial *host.HostResponse) {
+		s.confirmStartOnReceipt(p.diff.Nonce, partial)
+		if receiptHandler != nil {
+			receiptHandler()
+		}
+	})
 	if err != nil && state.IsPostStateRootMismatchError(err) {
 		s.logStateRootMismatchUserDiagnostic(p)
 	}
 	return resp, err
+}
+
+// confirmStartOnReceipt queues the executor's receipt the moment it arrives rather than when the stream
+// ends. A host that holds an empty stream open can outlast every other nonce on the escrow, and the
+// receipt is only carried to the chain by the next diff: queued late, it can find no diff left to ride,
+// and the nonce stays Pending forever, which is the one state its execution timeout cannot be voted in.
+func (s *Session) confirmStartOnReceipt(inferenceNonce uint64, resp *host.HostResponse) {
+	if resp == nil || len(resp.Receipt) == 0 {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.addPendingTx(&types.DevshardTx{
+		Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+			InferenceId: inferenceNonce,
+			ExecutorSig: resp.Receipt,
+			ConfirmedAt: resp.ConfirmedAt,
+		}},
+	})
 }
 
 func (s *Session) logStateRootMismatchUserDiagnostic(p *PreparedInference) {

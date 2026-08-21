@@ -110,7 +110,7 @@ func (timeoutErrorClient) Send(
 	context.Context,
 	host.HostRequest,
 	io.Writer,
-	func(),
+	func(*host.HostResponse),
 ) (*host.HostResponse, error) {
 	return nil, errors.New("send not expected")
 }

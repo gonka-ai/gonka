@@ -241,7 +241,7 @@ func (c *HTTPClient) get(ctx context.Context, path string, timeout time.Duration
 }
 
 // Send implements user.HostClient.
-func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
 	timeout := c.config.InferenceTimeout
 	if req.Payload == nil {
 		// Finalize/catch-up sends only exchange protocol state, so a dead host
@@ -304,7 +304,7 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 //     ([DONE] or devshard_receipt) from a clean EOF that arrives *before* one.
 //     bufio.Scanner squashes io.EOF into a nil error, so the caller cannot tell
 //     a successful completion from a peer / middlebox closing the body early.
-func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
 	br := bufio.NewReaderSize(r, 64<<10)
 	var result host.HostResponse
 	var writeErrLogged bool
@@ -345,7 +345,7 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 func (c *HTTPClient) handleSSELine(
 	line string,
 	stream io.Writer,
-	receiptHandler func(),
+	receiptHandler func(*host.HostResponse),
 	result *host.HostResponse,
 	writeErrLogged, unexpectedLineLogged, sawTerminator *bool,
 ) {
@@ -415,7 +415,7 @@ func (c *HTTPClient) handleSSELine(
 			result.ConfirmedAt = receipt.ConfirmedAt
 		}
 		if receiptHandler != nil {
-			receiptHandler()
+			receiptHandler(result)
 		}
 		return
 	}

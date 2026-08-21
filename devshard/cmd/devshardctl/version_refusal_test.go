@@ -204,7 +204,7 @@ func TestAGoneEscrowIsNamedApartFromACollectionFailure(t *testing.T) {
 type versionRefusingClient struct{}
 
 func (versionRefusingClient) Send(
-	context.Context, host.HostRequest, io.Writer, func(),
+	context.Context, host.HostRequest, io.Writer, func(*host.HostResponse),
 ) (*host.HostResponse, error) {
 	return nil, &transport.UpstreamStatusError{
 		Path: "/v1/chat/completions", StatusCode: 404, Body: `version "v3" not found`,
