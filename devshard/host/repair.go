@@ -17,7 +17,7 @@ func (h *Host) SetRepairProbe(fn heightsync.RepairProbeFn) {
 	h.repairProbe = fn
 }
 
-// SetCloseReadyArmed is the H20 test seam. Production never calls it.
+// SetCloseReadyArmed is a test seam. Production never calls it.
 func (h *Host) SetCloseReadyArmed(armed bool) {
 	if h.closeReady != nil {
 		h.closeReady.ForceArmed(armed)

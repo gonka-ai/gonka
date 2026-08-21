@@ -113,7 +113,7 @@ func (o *staticOracle) Subscribe(context.Context, int64) (<-chan *blocks.Header,
 
 // sharedStoppingOracle simulates loss of the height-sync HTTP feed when heightsyncd stops:
 // every host and the user client share one instance; SetStopped(true) makes Latest fail so
-// AnchorScheduler degrades to Omit on cadence paths (plan §9.3 item 8).
+// AnchorScheduler degrades to Omit on cadence paths (spec §9 / §13).
 type sharedStoppingOracle struct {
 	mu      sync.Mutex
 	hdr     *blocks.Header
@@ -174,7 +174,7 @@ func (o *sharedStoppingOracle) Subscribe(context.Context, int64) (<-chan *blocks
 	return ch, nil
 }
 
-// Stale reports whether the height-sync feed is unavailable (plan §3.6 / E6).
+// Stale reports whether the height-sync feed is unavailable (spec §17).
 func (o *sharedStoppingOracle) Stale() bool {
 	o.mu.Lock()
 	defer o.mu.Unlock()
@@ -662,7 +662,7 @@ func ensureHeightSyncPromMetrics(t *testing.T) {
 // courierSyncTurnWithHeldResponses runs sync-turn nonces [1, releaseAt] with HTTP
 // responses for 1..releaseAt-1 blocked on each host until PrepareInference(releaseAt),
 // then releases all holds so peer tips land deterministically before the release nonce send.
-// The E9 seed RPC is disabled so the cache stays cold until those responses ingest;
+// The session-open seed RPC is disabled so the cache stays cold until those responses ingest;
 // otherwise the seed tip is MarkPropagated to every slot in the sync turn and omit-window
 // lazy carry has nothing left to send. Requires go test -tags=dev (transport.Server
 // inference hold hooks).
@@ -732,8 +732,8 @@ func courierSyncTurnWithHeldResponses(t *testing.T, ctx context.Context, st *fou
 
 // courierPipelinedSyncTurn prepares every nonce in [from, through] first, then runs
 // SendOnly for all of them while each host holds its HTTP response until a single
-// release processes the whole wave. E9 seeds on the first PrepareInference, so
-// Decide in the wave sees a warm cache and Anchors.
+// release processes the whole wave. The session-open seed runs on the first
+// PrepareInference, so Decide in the wave sees a warm cache and Anchors.
 func courierPipelinedSyncTurn(t *testing.T, ctx context.Context, st *fourHostStack, params user.InferenceParams, from, through uint64) {
 	t.Helper()
 	if !inferenceHoldsEnabled() {
@@ -892,7 +892,7 @@ func TestHeightSyncAnchor_E2E_CadenceLogsAndAuditTrail(t *testing.T) {
 	require.Equal(t, 9, prevReqAnchors,
 		"K=8 slots=4: Anchors at nonces in {1..4} ∪ {8..11} ∪ {16} → 9 request Anchors")
 
-	// Step 4 log scraping: user outgoing modes and host inbound modes.
+	// Log scraping: user outgoing modes and host inbound modes.
 	entries := logs.snapshot()
 	userReqEvents := extractHeightSyncRequestEmitEvents(entries)
 	require.GreaterOrEqual(t, len(userReqEvents), 16, "need one user request emit log per nonce")
@@ -1374,7 +1374,7 @@ func TestHeightSyncAnchor_E2E_CarriesHigherPeerTipAcrossHosts(t *testing.T) {
 	for nonce := 1; nonce <= 4; nonce++ {
 		prefix := strings.ToLower(strings.TrimSpace(userReq[nonce-1].kv["block_hash_prefix"]))
 		require.Equal(t, x1Prefix, prefix,
-			"E9 seed makes X+1 MaxFresh before nonce 1 (nonce=%d)", nonce)
+			"session-open seed makes X+1 MaxFresh before nonce 1 (nonce=%d)", nonce)
 	}
 	switchNonce := 1
 
@@ -1489,7 +1489,7 @@ func TestHeightSyncAnchor_E2E_LostFirstResponseSelfHealing(t *testing.T) {
 		"user audit ring should contain host attestation(s) by nonce 4")
 }
 
-// TestHeightSyncAnchor_E2E_HeightSyncFeedStopped_SyncTurnOmitsWithoutErrors covers plan §9.3 item 8:
+// TestHeightSyncAnchor_E2E_HeightSyncFeedStopped_SyncTurnOmitsWithoutErrors covers spec §9 / §13:
 // when the shared height-sync feed fails (heightsyncd stopped), cadence still wants Anchor inside
 // the initial sync turn but AnchorScheduler degrades to Omit; inferences must succeed.
 func TestHeightSyncAnchor_E2E_HeightSyncFeedStopped_SyncTurnOmitsWithoutErrors(t *testing.T) {
@@ -1566,7 +1566,7 @@ func TestHeightSyncAnchor_E2E_HeightSyncFeedStopped_RecoversWhenFeedReturns(t *t
 	require.Equal(t, "anchor", modes[7])
 }
 
-// TestHeightSyncAnchor_E2E_CheatingTrailStoresBogusUserHash covers plan §9.3 item 7:
+// TestHeightSyncAnchor_E2E_CheatingTrailStoresBogusUserHash covers spec §16 audit:
 // a dishonest user can still sign and send an Anchor at the real mainnet height but
 // with a fabricated block hash; the receiving host records that hash verbatim in the
 // audit ring so an offline verifier comparing against the canonical oracle tip can flag it.
@@ -1617,7 +1617,7 @@ func TestHeightSyncAnchor_E2E_CheatingTrailStoresBogusUserHash(t *testing.T) {
 		"recorded hash must differ from canonical BlockID.Hash at the same height")
 }
 
-// TestHeightSyncAnchor_E2E_LazyCarryForwardOutsideSyncTurn covers plan §5/E2:
+// TestHeightSyncAnchor_E2E_LazyCarryForwardOutsideSyncTurn covers spec §16:
 // omit-window nonces 5–7 lazy-carry a peer tip; per-host dedup skips repeat propagation.
 func TestHeightSyncAnchor_E2E_LazyCarryForwardOutsideSyncTurn(t *testing.T) {
 	ctx := context.Background()
@@ -1682,7 +1682,7 @@ func TestHeightSyncAnchor_E2E_LazyCarryForwardOutsideSyncTurn(t *testing.T) {
 		"receiver must not grow lazy audit ring on deduped omit-window nonce")
 }
 
-// TestHeightSyncAnchor_E2E_StaleOriginRejected covers plan §5/E3: backdated originator → stale_origin.
+// TestHeightSyncAnchor_E2E_StaleOriginRejected covers spec §16: backdated originator → stale_origin.
 func TestHeightSyncAnchor_E2E_StaleOriginRejected(t *testing.T) {
 	ctx := context.Background()
 	logs := installCaptureLogger(t)
@@ -1744,11 +1744,11 @@ func TestHeightSyncAnchor_E2E_StaleOriginRejected(t *testing.T) {
 	require.True(t, sawDispute, "audit ring must record dispute_carrier for stale origin")
 }
 
-// TestHeightSyncAnchor_E2E_HeldOriginatorReplayRejected covers plan §5/E8: held signed
+// TestHeightSyncAnchor_E2E_HeldOriginatorReplayRejected covers spec §16: held signed
 // originator section replayed after freshness budget F expires.
 func TestHeightSyncAnchor_E2E_HeldOriginatorReplayRejected(t *testing.T) {
 	if testing.Short() {
-		t.Skip("E8 requires 70s wall-clock hold (run without -short)")
+		t.Skip("held-originator replay requires 70s wall-clock hold (run without -short)")
 	}
 	ctx := context.Background()
 	logs := installCaptureLogger(t)

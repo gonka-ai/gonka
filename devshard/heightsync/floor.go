@@ -159,7 +159,7 @@ func NewFloorIndexWith(cfg FloorConfig) *FloorIndex {
 // strikes out on its own is named at the moment of the damage rather than after
 // a forensic replay.
 //
-// A zero height or absent hash is not a claim and is ignored (H38 presence rule).
+// A zero height or absent hash is not a claim and is ignored (spec §14).
 func (f *FloorIndex) Observe(diffNonce uint64, claims []FloorClaim) []AttributableMark {
 	if f == nil || len(claims) == 0 {
 		return nil

@@ -212,7 +212,7 @@ func TestRepairProbe_DeadPeerBacksOff(t *testing.T) {
 }
 
 func TestRepairProbe_OracleAheadDoesNotDegradeOpenTurn(t *testing.T) {
-	// H81: two hosts apply the same diffs; A's oracle is past D_ack. Repair
+	// Two hosts apply the same diffs; A's oracle is past D_ack. Repair
 	// must not AdvanceHeight with that tip — both trackers stay TurnOpen.
 	p := setupRepairPair(t)
 	p.applyHeartbeatSpan(t)

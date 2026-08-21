@@ -77,7 +77,7 @@ type InferenceHeightSyncSection struct {
 	Response                  bool                         `protobuf:"varint,5,opt,name=response,proto3" json:"response,omitempty"` // false = request, true = response
 	OriginatorSenderId        string                       `protobuf:"bytes,6,opt,name=originator_sender_id,json=originatorSenderId,proto3" json:"originator_sender_id,omitempty"`
 	OriginatorTimestampUnixMs int64                        `protobuf:"varint,7,opt,name=originator_timestamp_unix_ms,json=originatorTimestampUnixMs,proto3" json:"originator_timestamp_unix_ms,omitempty"`
-	// Response leg only (PoC v2.1 Step 8): signature over canonical bytes of fields 1–7.
+	// Response leg only (spec §15): signature over canonical bytes of fields 1–7.
 	SenderSignature []byte `protobuf:"bytes,8,opt,name=sender_signature,json=senderSignature,proto3" json:"sender_signature,omitempty"`
 	unknownFields   protoimpl.UnknownFields
 	sizeCache       protoimpl.SizeCache

@@ -194,11 +194,11 @@ func (t *TurnTracker) observeHeartbeat(nonce uint64, hb *types.MsgHeartbeat) {
 
 // heartbeatRequestHeight is the height a heartbeat asks about, or zero.
 //
-// Presence is keyed on the hash everywhere else in the protocol (H38): a height
-// without one is not a stamp, L0 skips it, and the floor ignores it. The turn
-// window follows suit, because HReq is a minimum — admitting a hashless height
-// would let it pin the whole turn's deadline low and cost every honest ack a
-// `late` flag it cannot avoid.
+// Presence is keyed on the hash everywhere else in the protocol (spec §14): a
+// height without one is not a stamp, L0 skips it, and the floor ignores it. The
+// turn window follows suit, because HReq is a minimum — admitting a hashless
+// height would let it pin the whole turn's deadline low and cost every honest
+// ack a `late` flag it cannot avoid.
 func heartbeatRequestHeight(hb *types.MsgHeartbeat) uint64 {
 	if hb == nil || hb.ObservedHeight == 0 || !StampPresent(hb.ObservedBlockHash) {
 		return 0

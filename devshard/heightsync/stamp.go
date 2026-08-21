@@ -4,7 +4,7 @@ import "devshard/types"
 
 // StampPresent reports whether a Diff-resident (observed_height, observed_block_hash)
 // pair is a real claim. Proto3 uint64 gives 0 for both "no stamp" and a literal
-// zero, so presence is keyed on a non-empty hash (plan §8.5.1 residual / H38).
+// zero, so presence is keyed on a non-empty hash (spec §14).
 //
 // L0 / L0b must skip any leg for which this is false; treating absence as
 // height 0 would make a present-then-absent start/confirm pair look like a
@@ -20,8 +20,8 @@ func StampPresent(observedBlockHash []byte) bool {
 // and MsgHeightAck alike. There is deliberately no second semantics in the log:
 // a producer stamps max(own_tip, F(m)) or omits, so a height in Diff answers
 // "what is the honest logical time of this nonce", never "what does this
-// follower see". First-party readings live in the HeightSyncSection at the edge,
-// where §8.12's collectors aggregate them; see spec §14, *One height in the log*.
+// follower see". First-party readings live in the HeightSyncSection at the edge
+// (spec §7 / §8); see spec §14, *One height in the log*.
 func RefStamp(tx *types.DevshardTx) (uint64, []byte, bool) {
 	if tx == nil {
 		return 0, nil, false

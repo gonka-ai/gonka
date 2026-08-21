@@ -218,8 +218,9 @@ func TestHeightSyncFloor_AdmissionRefusalCannotSplitTheFloor(t *testing.T) {
 	require.Equal(t, edge.LatestNonce(), replay.LatestNonce())
 }
 
-// TestHeightSyncFloor_SequencerHeartbeatDoesNotRaise is H89 on the consensus
-// path: a user-signed heartbeat (and start) above F does not move the floor on
+// TestHeightSyncFloor_SequencerHeartbeatDoesNotRaise is spec §14 on the
+// consensus path: a user-signed heartbeat (and start) above F does not move the
+// floor on
 // apply or on a second machine that ingested the same bytes with no envelope.
 func TestHeightSyncFloor_SequencerHeartbeatDoesNotRaise(t *testing.T) {
 	hosts := fourHosts(t)

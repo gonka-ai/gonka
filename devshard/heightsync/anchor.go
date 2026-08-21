@@ -41,7 +41,7 @@ type HeightSyncSection struct {
 	// OriginatorTimestampMs is when the originator built its Anchor; used for
 	// freshness gating on carry-forward (see HEIGHT_SYNC_PROTOCOL_PROPOSAL).
 	OriginatorTimestampMs int64 `json:"originator_timestamp_unix_ms,omitempty"`
-	// SenderSignature is the host originator signature on the response leg (Step 8).
+	// SenderSignature is the host originator signature on the response leg (spec §15).
 	// Omitted on courier request-leg carry-forward. JSON/SSE uses base64 encoding.
 	SenderSignature []byte `json:"sender_signature,omitempty"`
 	// TipStaleAfterMs is advisory wire metadata (not origin-signed): milliseconds since
@@ -80,7 +80,7 @@ type DecideHints struct {
 	Escrow *EscrowHeightSyncHints
 	// OriginatorSenderID, when non-empty, marks this emission as originating from
 	// the local oracle path (host or user with a follower). Courier re-emits
-	// (Step 3+) leave this empty so originator fields are taken from the cached
+	// (spec §16) leave this empty so originator fields are taken from the cached
 	// section instead of being overwritten here.
 	OriginatorSenderID string
 	// Recipient identifies the outbound inference peer for lazy carry-forward

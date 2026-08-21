@@ -26,7 +26,7 @@ type turnSlot struct {
 
 // RepairBudget is the per-prober §11.4 state machine: one probe per
 // (turn, slot), R_max per cadence window, stagger, exponential backoff.
-// Counters are local (Prometheus waits for E8).
+// Counters are local (gateway /metrics is a separate operator surface).
 type RepairBudget struct {
 	mu sync.Mutex
 
@@ -293,7 +293,7 @@ func (b *RepairBudget) pruneLocked(maxTurnSeq uint64) {
 	}
 }
 
-// ProbedCount is the size of the (turn, slot) map (H93).
+// ProbedCount is the size of the (turn, slot) map.
 func (b *RepairBudget) ProbedCount() int {
 	if b == nil {
 		return 0
@@ -414,7 +414,7 @@ func (b *RepairResponderBudget) pruneLocked(maxTurnSeq uint64) {
 	}
 }
 
-// ServedCount is the size of the (turn, requester) map (H93).
+// ServedCount is the size of the (turn, requester) map.
 func (b *RepairResponderBudget) ServedCount() int {
 	if b == nil {
 		return 0

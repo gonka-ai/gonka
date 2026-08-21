@@ -20,7 +20,7 @@ func TestCloseReady_ArmsAfterIdle(t *testing.T) {
 
 	now = now.Add(time.Millisecond)
 	armed, at := c.Armed()
-	require.True(t, armed, "H21: silence past T_idle arms")
+	require.True(t, armed, "silence past T_idle arms")
 	require.Equal(t, uint64(100), at,
 		"a silent host learns no new height, so it can only cite the last one it saw")
 
@@ -62,7 +62,7 @@ func TestCloseReady_DisarmsOnContact(t *testing.T) {
 	now = now.Add(time.Second)
 	c.NoteContact(105, 105)
 	armed, _ = c.Armed()
-	require.False(t, armed, "H22: contact disarms")
+	require.False(t, armed, "contact disarms")
 
 	ivs := c.Intervals()
 	require.Len(t, ivs, 1)

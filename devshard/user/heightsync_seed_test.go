@@ -107,9 +107,9 @@ func setupSeedSession(t *testing.T, seedRPC []bool) *seedEnv {
 }
 
 func TestSeed_SessionOpenStampsNonceOne(t *testing.T) {
-	// H34: E9 half. E7 StartInference stamps are not on this bump; after seed,
-	// ObservedHeightNow is set before the first outbound, so nonce 1's
-	// MsgHeartbeat carries the seeded height (the stamp that exists today).
+	// Cold-start seed primes ObservedHeightNow before the first outbound, so
+	// nonce 1's MsgHeartbeat carries the seeded height (spec §18.5).
+	// StartInference stamps are a later nonce and are not on this bump.
 	env := setupSeedSession(t, []bool{true, true, true})
 	ctx := context.Background()
 
@@ -143,7 +143,7 @@ func TestSeed_SessionOpenStampsNonceOne(t *testing.T) {
 }
 
 func TestSeed_FanOutSurvivesDeadSlot(t *testing.T) {
-	// H35: slot 0 404s; slots 1 and 2 seed. Shared peer-tip cache holds both.
+	// Slot 0 404s; slots 1 and 2 seed. Shared peer-tip cache holds both.
 	env := setupSeedSession(t, []bool{false, true, true})
 	env.session.SeedHeightSync(context.Background())
 
@@ -159,7 +159,7 @@ func TestSeed_FanOutSurvivesDeadSlot(t *testing.T) {
 }
 
 func TestSeed_TotalMissDegradesNeverFails(t *testing.T) {
-	// H36: all slots unseedable. Session stays usable; first due check skips.
+	// All slots unseedable. Session stays usable; first due check skips.
 	env := setupSeedSession(t, []bool{false, false, false})
 	env.session.SeedHeightSync(context.Background())
 	require.True(t, env.session.HeightSeedMissed())
@@ -180,7 +180,7 @@ func TestSeed_TotalMissDegradesNeverFails(t *testing.T) {
 }
 
 func TestSeed_DoesNotAdvanceHLastOrConsumeNonce(t *testing.T) {
-	// H37: seed is a transport read. Heartbeat obligation stays armed.
+	// Seed is a transport read. Heartbeat obligation stays armed.
 	env := setupSeedSession(t, []bool{true, true, true})
 	env.session.SeedHeightSync(context.Background())
 

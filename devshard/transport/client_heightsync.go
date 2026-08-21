@@ -33,7 +33,8 @@ func (c *HTTPClient) updateObservedPeerTip(hs *heightsync.HeightSyncSection) {
 	c.heightSyncPeerTips.RecordOrigin(hs)
 }
 
-// HeightSyncEvidenceFor returns the verified signed origin blob for dispute exculpation (Step 8).
+// HeightSyncEvidenceFor returns the verified signed origin blob for dispute
+// exculpation (spec §15 / §18.3).
 func (c *HTTPClient) HeightSyncEvidenceFor(originator string, height int64) (blob, sig []byte, ok bool) {
 	if c == nil || c.heightSyncPeerTips == nil {
 		return nil, nil, false
@@ -116,8 +117,9 @@ func (c *HTTPClient) HeightSyncPeerTips() *HeightSyncPeerTips {
 	return c.heightSyncPeerTips
 }
 
-// ObservedHeightNow returns the highest fresh mainnet height in the courier peer-tip
-// cache (plan §3.7). The bool is false when height sync is off or no fresh tip exists.
+// ObservedHeightNow returns the highest fresh mainnet height in the courier
+// peer-tip cache (spec §18.2). The bool is false when height sync is off or no
+// fresh tip exists.
 func (c *HTTPClient) ObservedHeightNow() (uint64, bool) {
 	h, _, ok := c.ObservedStampNow()
 	return h, ok

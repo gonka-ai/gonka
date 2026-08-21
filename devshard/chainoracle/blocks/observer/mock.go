@@ -28,7 +28,7 @@ type MockValidator struct {
 //
 // BlockInterval controls Run cadence; tests drive the observer with
 // AdvanceOne instead. Same Seed + same Validators produce byte-identical
-// headers, which the §8.1 determinism test depends on.
+// headers, which the determinism test depends on.
 //
 // The mock simulates a multi-validator Cosmos chain: every block is
 // multi-signed by (most of) the pinned validator set. Each block

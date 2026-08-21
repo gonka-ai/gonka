@@ -248,8 +248,8 @@ func TestHeartbeat_StampedBusySessionEmitsNoAcks(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	for _, tx := range resp.Mempool {
-		require.Nil(t, tx.GetHeartbeat(), "H33: busy stamped session emits no heartbeat")
-		require.Nil(t, tx.GetHeightAck(), "H33: acks exist only inside heartbeat turns")
+		require.Nil(t, tx.GetHeartbeat(), "busy stamped session emits no heartbeat")
+		require.Nil(t, tx.GetHeightAck(), "acks exist only inside heartbeat turns")
 	}
 	require.Zero(t, countHeartbeatsInMempool(h.MempoolTxs()))
 }
@@ -368,7 +368,7 @@ func TestHost_HeartbeatAck_OmitsAStampWhenTheFloorIsOutOfReach(t *testing.T) {
 	require.Len(t, acks, 1, "the ack is still owed: silence is worse for the roster")
 	require.Equal(t, uint64(3), acks[0].RefNonce)
 	require.Zero(t, acks[0].ObservedHeight, "a floor this far above own tip is declined, not carried")
-	require.Empty(t, acks[0].ObservedBlockHash, "absence is keyed on the hash (H38)")
+	require.Empty(t, acks[0].ObservedBlockHash, "absence is keyed on the hash")
 	require.Equal(t, types.SyncState_CATCHING_UP, acks[0].SyncState,
 		"the host's real position still reaches the gateway through the label")
 }

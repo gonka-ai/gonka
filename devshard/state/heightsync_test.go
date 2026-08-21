@@ -39,7 +39,7 @@ func TestApplyLocalBestEffort_HeartbeatAndAckStayInDiff(t *testing.T) {
 }
 
 func TestApplyLocalBestEffort_LogPlaneInvalidFailsBeforeNonce(t *testing.T) {
-	// H83: L0 / L1 / L2 invalid height-sync txs do not consume the nonce.
+	// L0 / L1 / L2 invalid height-sync txs do not consume the nonce.
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),
 		testutil.MustGenerateKey(t),
@@ -144,7 +144,7 @@ func TestApplyLocalBestEffort_LogPlaneInvalidAckDroppedKeepsHeartbeat(t *testing
 }
 
 func TestApplyLocalBestEffort_LateAckAfterTurnPruneComposesAndApplies(t *testing.T) {
-	// H84: a late ack whose heartbeat is still in heartbeatAt composes on the
+	// A late ack whose heartbeat is still in heartbeatAt composes on the
 	// sequencer path and ApplyDiff-s on a host that replayed the same log.
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),
@@ -210,7 +210,7 @@ func l7HeartbeatTx(slots uint64) *types.DevshardTx {
 }
 
 func TestValidateDiff_FailedApplyTxDoesNotLeakMarks(t *testing.T) {
-	// H86: L7 marks from a log-plane-OK diff must not land if applyTx then fails.
+	// L7 marks from a log-plane-OK diff must not land if applyTx then fails.
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),
 		testutil.MustGenerateKey(t),

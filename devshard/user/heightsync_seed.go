@@ -10,20 +10,20 @@ import (
 )
 
 // heightSyncSeeder is implemented by transport.HTTPClient. In-process clients
-// omit it, so E9 is a no-op there.
+// omit it, so the cold-start seed (spec §18.5) is a no-op there.
 type heightSyncSeeder interface {
 	SeedHeightSync(ctx context.Context) (ok bool, err error)
 }
 
 // SeedHeightSync fans POST /sessions/:id/height-sync across the roster once
-// (plan §8.5.1 / E9). Safe to call repeatedly; later calls no-op. Never
-// returns an error: a total miss degrades to today's unstamped-nonce-1 path.
+// (spec §18.5). Safe to call repeatedly; later calls no-op. Never returns an
+// error: a total miss degrades to today's unstamped-nonce-1 path.
 func (s *Session) SeedHeightSync(ctx context.Context) {
 	s.ensureHeightSeed(ctx)
 }
 
-// HeightSeedMissed reports whether the E9 round ran and collected no Anchor.
-// Tests only (H36).
+// HeightSeedMissed reports whether the cold-start seed ran and collected no
+// Anchor. Tests only.
 func (s *Session) HeightSeedMissed() bool {
 	return s.heightSeedMissed.Load()
 }

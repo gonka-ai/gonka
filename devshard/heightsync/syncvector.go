@@ -3,7 +3,8 @@ package heightsync
 import "devshard/types"
 
 // VectorContradiction is an ACKED vector entry that the log does not contain.
-// E4 persists this as a user-attributable mark; it never INVALID-ates the diff.
+// The receiver records this as a user-attributable mark (spec §14); it never
+// INVALID-ates the diff.
 type VectorContradiction struct {
 	Slot         uint32
 	ClaimedNonce uint64

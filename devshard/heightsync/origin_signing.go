@@ -12,7 +12,7 @@ import (
 	"devshard/types"
 )
 
-// Domain separator for response-leg origin signatures (PoC v2.1 Step 8).
+// Domain separator for response-leg origin signatures (spec §15).
 const OriginSignDomain = "heightsync.origin.v1"
 
 var (

@@ -353,8 +353,9 @@ func TestTurnTracker_CompletedTurnIsFinal(t *testing.T) {
 		"h_last records where the turn closed, not how far the log has since run")
 }
 
-// TestTurnTracker_HashlessHeartbeatDoesNotPinTheWindow keeps H38's presence rule
-// out of the turn window: a height with no hash is not a stamp, so it cannot pin
+// TestTurnTracker_HashlessHeartbeatDoesNotPinTheWindow keeps the spec §14
+// presence rule out of the turn window: a height with no hash is not a stamp,
+// so it cannot pin
 // h_req low and make every honest ack late.
 func TestTurnTracker_HashlessHeartbeatDoesNotPinTheWindow(t *testing.T) {
 	hashless := heartbeatTx(1, 400, 4)

@@ -107,7 +107,7 @@ func TestApply_RecordCarriesStampHeights(t *testing.T) {
 	require.NoError(t, err)
 	plainRoot, err := plain.ComputeStateRoot()
 	require.NoError(t, err)
-	require.NotEqual(t, plainRoot, stampedRoot, "H31: stamped record changes post_state_root")
+	require.NotEqual(t, plainRoot, stampedRoot, "stamped record changes post_state_root")
 }
 
 func protoCloneFinish(msg *types.MsgFinishInference) *types.MsgFinishInference {

@@ -149,9 +149,10 @@ func warnsContain(warns []string, substr string) bool {
 	return false
 }
 
-// TestServer_Inference_HeightSync_ForceAnchor_OnInferenceRequest covers plan §9.3 item 6 (host side):
-// InferenceRequest.force_height_sync_anchor drives DecideHints.ForceAnchor on the outbound receipt
-// so the host emits Anchor even when responseNonce falls outside the sync-turn cadence.
+// TestServer_Inference_HeightSync_ForceAnchor_OnInferenceRequest covers spec §9
+// forced turns on the host side: InferenceRequest.force_height_sync_anchor
+// drives DecideHints.ForceAnchor on the outbound receipt so the host emits
+// Anchor even when responseNonce falls outside the sync-turn cadence.
 func TestServer_Inference_HeightSync_ForceAnchor_OnInferenceRequest(t *testing.T) {
 	or := &heightSyncTestOracle{hdr: &blocks.Header{
 		Height:    77,
@@ -399,8 +400,7 @@ func TestServer_Inference_HeightSync_UntrustedReconcileMatchNoWarn(t *testing.T)
 }
 
 // TestServer_Inference_HeightSync_ForcedTurn_HostAnchorsEvenIfRequestOmits
-// covers the malicious-user variant of the forced sync turn (plan §5.5,
-// SCENARIOS.md "Manual-force forced sync turn — Scenario E"):
+// covers the malicious-user variant of the forced sync turn (spec §9):
 //
 //   - The trigger diff carries MsgForceHeightSyncTurn at nonce 2; the host
 //     applies it via catch-up and its escrow state opens a forced window.
@@ -537,7 +537,7 @@ func postProtobufInference(t *testing.T, env *serverTestEnv, nonce uint64, hs *h
 	return env.doPost(t, "/devshard/v2/sessions/escrow-1/chat/completions", body)
 }
 
-// TestServer_LazyAnchorAcceptedOutsideSyncTurn covers Step 5: VALID_LAZY_ANCHOR on omit-window nonces.
+// TestServer_LazyAnchorAcceptedOutsideSyncTurn covers spec §16: VALID_LAZY_ANCHOR on omit-window nonces.
 func TestServer_LazyAnchorAcceptedOutsideSyncTurn(t *testing.T) {
 	or := &mutableTestOracle{hdr: &blocks.Header{
 		Height:    10,
@@ -565,7 +565,7 @@ func TestServer_LazyAnchorAcceptedOutsideSyncTurn(t *testing.T) {
 	require.True(t, sawLazy, "omit-window carry-forward must be audit-tagged lazy")
 }
 
-// TestServer_StaleOriginRejected covers Step 5 freshness gate (reason=stale_origin).
+// TestServer_StaleOriginRejected covers the spec §16 freshness gate (reason=stale_origin).
 func TestServer_StaleOriginRejected(t *testing.T) {
 	capLog := &warnCaptureLogger{}
 	logging.SetLogger(capLog)
@@ -609,7 +609,7 @@ func TestServer_StaleOriginRejected(t *testing.T) {
 	require.True(t, sawDispute, "audit ring must record dispute_carrier for stale origin")
 }
 
-// TestServer_ConfirmationView_AfterLazyInbound covers Step 6: server quorum via carry-forward.
+// TestServer_ConfirmationView_AfterLazyInbound covers spec §17: server quorum via carry-forward.
 func TestServer_ConfirmationView_AfterLazyInbound(t *testing.T) {
 	or := &mutableTestOracle{hdr: &blocks.Header{
 		Height:    10,
@@ -647,7 +647,7 @@ func TestServer_ConfirmationView_AfterLazyInbound(t *testing.T) {
 	require.Equal(t, heightsync.ConfirmConfirmed, idx.IsStrictlyConfirmed(11))
 }
 
-// TestServer_LazyAnchorInsideSyncTurn_IsCadenceAnchor covers Step 5: carry-forward inside sync turn is cadence, not lazy.
+// TestServer_LazyAnchorInsideSyncTurn_IsCadenceAnchor covers spec §9 / §16: carry-forward inside sync turn is cadence, not lazy.
 func TestServer_LazyAnchorInsideSyncTurn_IsCadenceAnchor(t *testing.T) {
 	or := &mutableTestOracle{hdr: &blocks.Header{
 		Height:    10,

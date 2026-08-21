@@ -12,7 +12,8 @@ import (
 	"devshard/transport"
 )
 
-// TestHeightSyncAnchor_E2E_ResponseOriginSignatureVerified covers E9 (Step 8).
+// TestHeightSyncAnchor_E2E_ResponseOriginSignatureVerified covers spec §15
+// response-leg origin signatures.
 func TestHeightSyncAnchor_E2E_ResponseOriginSignatureVerified(t *testing.T) {
 	ensureHeightSyncPromMetrics(t)
 	ctx := context.Background()
@@ -70,7 +71,8 @@ func TestHeightSyncAnchor_E2E_ResponseOriginSignatureVerified(t *testing.T) {
 	require.True(t, ok)
 }
 
-// TestHeightSyncAnchor_E2E_CarrierExculpation covers E10 (Step 8) at the evidence layer.
+// TestHeightSyncAnchor_E2E_CarrierExculpation covers spec §15 / §18.3
+// exculpation at the evidence layer.
 func TestHeightSyncAnchor_E2E_CarrierExculpation(t *testing.T) {
 	ensureHeightSyncPromMetrics(t)
 	ctx := context.Background()
@@ -122,7 +124,8 @@ func TestHeightSyncAnchor_E2E_CarrierExculpation(t *testing.T) {
 	require.False(t, lost)
 }
 
-// TestHeightSyncAnchor_E2E_ResponseOriginSignatureInvalidDropped covers E9 variant B (Step 8).
+// TestHeightSyncAnchor_E2E_ResponseOriginSignatureInvalidDropped covers spec §15:
+// an invalid response-leg origin signature is dropped.
 func TestHeightSyncAnchor_E2E_ResponseOriginSignatureInvalidDropped(t *testing.T) {
 	ensureHeightSyncPromMetrics(t)
 	ctx := context.Background()
@@ -155,7 +158,7 @@ func TestHeightSyncAnchor_E2E_ResponseOriginSignatureInvalidDropped(t *testing.T
 
 	require.Equal(t, beforeInvalid+1, heightsync.OriginSigInvalidTotal())
 	_, _, _, ok := peerTips.VerifiedAnchorFor(origin, h)
-	require.True(t, ok, "E9 seed still stores the host's verified tip; only the inference response is dropped")
+	require.True(t, ok, "session-open seed still stores the host's verified tip; only the inference response is dropped")
 	require.NotNil(t, peerTips.MaxFresh(time.Now(), peerTips.Freshness),
 		"seed warms the cache even when the nonce-1 response signature is invalid")
 }

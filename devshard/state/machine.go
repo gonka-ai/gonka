@@ -474,7 +474,7 @@ func (sm *StateMachine) localBestEffortLocked(nonce uint64, txs []*types.Devshar
 	// heartbeat/ack is admission-only, and skipping L0–L3 here would persist
 	// a nonce every host will INVALID. Invalid txs are dropped from mixed
 	// sets so a poisoned mempool ack cannot stall a heartbeat; if nothing
-	// valid remains, fail without consuming the nonce (H83).
+	// valid remains, fail without consuming the nonce.
 	var applied []*types.DevshardTx
 	var logPlaneReject error
 	for _, tx := range txs {

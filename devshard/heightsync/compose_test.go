@@ -9,9 +9,10 @@ import (
 	"devshard/types"
 )
 
-// TestFilterHostRaises_MismatchedEnvelopeOmitsRaise is H91's compose half: a
-// host stamp > F with envelope t < stamp is not composed as a raise. Gossip of
-// whatever did land still yields the same F — Observe never sees the omitted tx.
+// TestFilterHostRaises_MismatchedEnvelopeOmitsRaise is the compose half of spec
+// §14: a host stamp > F with envelope t < stamp is not composed as a raise.
+// Gossip of whatever did land still yields the same F — Observe never sees the
+// omitted tx.
 func TestFilterHostRaises_MismatchedEnvelopeOmitsRaise(t *testing.T) {
 	hash := []byte{0xaa}
 	own := map[uint32]struct{}{0: {}}

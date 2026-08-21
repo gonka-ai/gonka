@@ -21,8 +21,8 @@ var (
 	// ErrStrongRequired belongs to the transport plane only, where refusing an
 	// exchange is a local admission decision (L5a). The log plane has no
 	// counterpart: divergence between followers is monitoring, permanently, so
-	// there is nothing in Diff for it to adjudicate. Phase F sharpens the
-	// refusal into a proof obligation without widening its scope.
+	// there is nothing in Diff for it to adjudicate. Strong (§8 / §15) sharpens
+	// the refusal into a proof obligation without widening its scope.
 	ErrStrongRequired = errors.New("INVALID(strong_required)")
 )
 
@@ -342,7 +342,7 @@ func refLegName(tx *types.DevshardTx) string {
 // cross-signer comparisons: an executor legitimately behind the height the user
 // carried is not a regression, and those pairs are deliberately not checked.
 //
-// Presence is keyed on hash; unstamped legs are skipped (H38).
+// Presence is keyed on hash; unstamped legs are skipped (spec §14).
 func checkL0b(nonce uint64, txs []*types.DevshardTx, st LogPlaneState) error {
 	type infStamps struct {
 		confirm, finish       uint64
@@ -545,7 +545,7 @@ func checkL4(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, out *LogPlaneR
 		escrow := ""
 		if in.RequestLeg != nil {
 			// Digest, not the HTTP body: CanonicalRequestLegBytes is already
-			// what the signature covers (H32 / H87).
+			// what the signature covers (spec §15 request leg).
 			blob = CanonicalRequestLegBytes(in.RequestLeg.EscrowID, in.RequestLeg.Body, in.RequestLeg.Timestamp)
 			sig = in.RequestLeg.Sig
 			ts = in.RequestLeg.Timestamp

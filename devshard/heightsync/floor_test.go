@@ -50,7 +50,7 @@ func TestFloorIndex_RunningMaxIsMonotoneInNonce(t *testing.T) {
 
 func TestFloorIndex_IgnoresAbsentStamps(t *testing.T) {
 	f := heightsync.NewFloorIndex()
-	f.Observe(1, []heightsync.FloorClaim{claim(0, 50, nil)}) // no hash is not a claim (H38)
+	f.Observe(1, []heightsync.FloorClaim{claim(0, 50, nil)}) // no hash is not a claim (spec §14)
 	f.Observe(2, []heightsync.FloorClaim{claim(0, 0, []byte{0xaa})})
 
 	h, _, known := f.AsOf(10)
@@ -239,7 +239,7 @@ func TestRefStamp_CoversEveryDiffResidentHeight(t *testing.T) {
 	require.Equal(t, uint64(50), h)
 	require.Equal(t, hash, gotHash)
 
-	// Absence is keyed on the hash, never on a zero height (H38).
+	// Absence is keyed on the hash, never on a zero height (spec §14).
 	_, _, ok = heightsync.RefStamp(ackTxAt(1, 4, 50, nil))
 	require.False(t, ok)
 }
@@ -275,7 +275,7 @@ func TestRefProducingNonce_PerMessageBasis(t *testing.T) {
 	require.Equal(t, uint64(4), m)
 }
 
-// TestFloorIndex_SequencerStampsNeverRaise is H89: MsgHeartbeat / MsgStartInference
+// TestFloorIndex_SequencerStampsNeverRaise: MsgHeartbeat / MsgStartInference
 // are user-signed. Observe ignores them as raises on apply and on a second fold
 // that stands in for gossip (same claims, no envelope).
 func TestFloorIndex_SequencerStampsNeverRaise(t *testing.T) {
@@ -301,7 +301,7 @@ func TestFloorIndex_SequencerStampsNeverRaise(t *testing.T) {
 	require.Equal(t, uint64(180), h, "a host ack at that H does raise (unaided, inside W_conf)")
 }
 
-// TestFloorIndex_SequencerDoesNotFillQuorum is H90: sequencer + one host cannot
+// TestFloorIndex_SequencerDoesNotFillQuorum: sequencer + one host cannot
 // jump past W_conf. Q is host-only. A future/unmined envelope is rule 1 (L6),
 // not an Observe input — matching stamp and envelope still compose; the oracle
 // refuses the pair later.

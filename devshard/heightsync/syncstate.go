@@ -17,7 +17,7 @@ func oracleStale(oracle blocks.BlockOracle) bool {
 }
 
 // EvaluateSyncState is the spec §11.2 table as one pure function.
-// Until Phase F, CATCHING_UP is reported but Strong is not required.
+// CATCHING_UP is reported; requiring Strong on the next heartbeat is spec §8 / §15.
 // Hash-only oracles (empty Commit) are enough for SYNCED.
 func EvaluateSyncState(ctx context.Context, oracle blocks.BlockOracle, hRef uint64, cfg HeartbeatConfig) types.SyncState {
 	cfg = cfg.withDefaults()

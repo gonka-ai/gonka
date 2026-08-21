@@ -292,7 +292,7 @@ type Session struct {
 	heartbeatStop     context.CancelFunc
 	heartbeatDone     chan struct{}
 
-	// heightSeedOnce runs the E9 roster fan-out at most once per Session.
+	// heightSeedOnce runs the spec §18.5 roster fan-out at most once per Session.
 	heightSeedOnce   sync.Once
 	heightSeedMissed atomic.Bool
 }

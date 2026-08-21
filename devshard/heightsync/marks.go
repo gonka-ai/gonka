@@ -9,8 +9,9 @@ import (
 	"devshard/signing"
 )
 
-// MarkKind names an attributable height-sync outcome (plan §8.7). None of
-// these INVALID-ate the diff except via a separate log-plane check.
+// MarkKind names an attributable height-sync outcome (spec §14 result
+// classes). None of these INVALID-ate the diff except via a separate
+// log-plane check.
 type MarkKind string
 
 const (
@@ -60,7 +61,7 @@ type RequestLegEvidence struct {
 
 // CanonicalRequestLegBytes is sha256(escrow_id || body || timestamp_be8),
 // matching transport.signatureMessage so a retained mark verifies offline
-// past the ±30s admission window (H32).
+// past the ±30s admission window (spec §15 request leg).
 func CanonicalRequestLegBytes(escrowID string, body []byte, ts int64) []byte {
 	var tsBuf [8]byte
 	binary.BigEndian.PutUint64(tsBuf[:], uint64(ts))

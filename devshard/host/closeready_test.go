@@ -43,7 +43,7 @@ func TestCloseReady_ArmsAfterIdle(t *testing.T) {
 	or.setHeight(104)
 	h.EvaluateCloseReady(ctx)
 	armed, at := h.CloseReadyView().Armed()
-	require.True(t, armed, "H21: silence past T_idle arms")
+	require.True(t, armed, "silence past T_idle arms")
 	require.Equal(t, uint64(104), at, "evidence cites the newest height this host knows")
 	require.Equal(t, afterContact, cloneMempool(h.MempoolTxs()), "arming emits nothing into the mempool")
 	require.Zero(t, peer.txsCount.Load(), "arming emits nothing on gossip")
@@ -130,7 +130,7 @@ func TestCloseReady_DisarmsOnContact(t *testing.T) {
 	}})
 	require.NoError(t, err)
 	armed, _ = h.CloseReadyView().Armed()
-	require.False(t, armed, "H22: contact disarms")
+	require.False(t, armed, "contact disarms")
 
 	ivs := h.CloseReadyIntervals()
 	require.Len(t, ivs, 1)
@@ -182,8 +182,8 @@ func TestCloseReady_MinorityCannotClose(t *testing.T) {
 	armedB, _ := b.CloseReadyView().Armed()
 	require.False(t, armedB, "served host stays unarmed")
 
-	require.False(t, mempoolHasCloseTx(a.MempoolTxs()), "H23: armed minority emits no close tx")
-	require.False(t, mempoolHasCloseTx(b.MempoolTxs()), "H23: unarmed host emits no close tx")
+	require.False(t, mempoolHasCloseTx(a.MempoolTxs()), "armed minority emits no close tx")
+	require.False(t, mempoolHasCloseTx(b.MempoolTxs()), "unarmed host emits no close tx")
 	require.Zero(t, peerA.txsCount.Load())
 	require.Zero(t, peerB.txsCount.Load())
 }

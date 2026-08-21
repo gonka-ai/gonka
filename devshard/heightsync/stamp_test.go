@@ -22,7 +22,7 @@ func TestStampPresent_EmptyHashIsAbsent(t *testing.T) {
 }
 
 func TestStampPresent_PresentThenAbsentIsNotRegression(t *testing.T) {
-	// H38: L0b would compare start ≤ confirm. A present start (hash set) and
+	// L0b would compare start ≤ confirm. A present start (hash set) and
 	// an absent confirm (hash empty, height proto-zero) must skip the check,
 	// not read confirm as height 0 and INVALID(height_regression).
 	startHash := []byte{0x11}

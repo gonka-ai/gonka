@@ -32,7 +32,7 @@ const (
 	// the instant a block ticks, which no round trip can beat.
 	MinAckDeadlineBlocks uint64 = 1
 
-	DefaultSyncDeltaBlocks uint64 = 2 // D; Strong escalation is Phase F
+	DefaultSyncDeltaBlocks uint64 = 2 // D; Strong escalation is spec §8
 
 	// DefaultConfirmWindowBlocks is W_conf: the span of heights the protocol
 	// treats as contemporaneous. It bounds which attestations may enter the
@@ -211,7 +211,7 @@ func (c RepairConfig) withDefaults() RepairConfig {
 	return c
 }
 
-// Validate checks spec §20 constraints. A bad override must fail fast (H25).
+// Validate checks spec §20 constraints. A bad override must fail fast.
 //
 //	D_ack * BlockTime >= Interval + TurnTimeout
 //	T_idle            >  Interval + TurnTimeout

@@ -36,15 +36,16 @@ func WithHeightSync(sched *heightsync.AnchorScheduler, logOracle blocks.BlockOra
 			s.heightSyncAudit = heightsync.NewAuditRing(0)
 			s.heightSyncMarks = heightsync.NewMarkLog()
 			s.pendingUntrustedBySession = make(map[string]*pendingUntrustedTip)
-			// E9: seed RPC is on whenever height sync is. WithHeightSyncSeedRPC(false)
-			// after this option still disables it (host stays correct, just unseedable).
+			// Cold-start seed RPC (spec §18.5) is on whenever height sync is.
+			// WithHeightSyncSeedRPC(false) after this option still disables it
+			// (host stays correct, just unseedable).
 			s.heightSyncSeedRPC = true
 		}
 	}
 }
 
-// WithHeightSyncSeedRPC toggles POST /sessions/:id/height-sync for courier cold-start
-// cache seeding (plan §8.5.1). Defaults to on when WithHeightSync is set.
+// WithHeightSyncSeedRPC toggles POST /sessions/:id/height-sync for courier
+// cold-start cache seeding (spec §18.5). Defaults to on when WithHeightSync is set.
 func WithHeightSyncSeedRPC(enabled bool) ServerOption {
 	return func(s *Server) {
 		s.heightSyncSeedRPC = enabled
@@ -75,8 +76,8 @@ func (s *Server) SetHeightSyncResponseAfterSignHook(fn func(sec *heightsync.Heig
 
 // SetHeightSyncSeedRPCEnabled toggles POST /sessions/:id/height-sync (tests only).
 // Held-response courier scenarios disable it so the cache warms from inference
-// responses rather than the E9 seed round, which would MarkPropagated the seed
-// tip to every slot during the initial sync turn.
+// responses rather than the cold-start seed round, which would MarkPropagated
+// the seed tip to every slot during the initial sync turn.
 func (s *Server) SetHeightSyncSeedRPCEnabled(enabled bool) {
 	if s == nil {
 		return

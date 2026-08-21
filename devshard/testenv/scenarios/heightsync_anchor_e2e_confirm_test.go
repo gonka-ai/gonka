@@ -37,7 +37,7 @@ func defaultConfirmHostOracles(t *testing.T, height int64, hash []byte) []*stati
 	}
 }
 
-// TestHeightSyncAnchor_E2E_IsStrictlyConfirmed_Quorum covers E4 (Step 6).
+// TestHeightSyncAnchor_E2E_IsStrictlyConfirmed_Quorum covers spec §17 (C-quorum).
 func TestHeightSyncAnchor_E2E_IsStrictlyConfirmed_Quorum(t *testing.T) {
 	ensureHeightSyncPromMetrics(t)
 	ctx := context.Background()
@@ -67,7 +67,7 @@ func TestHeightSyncAnchor_E2E_IsStrictlyConfirmed_Quorum(t *testing.T) {
 	require.Equal(t, heightsync.ConfirmStale, cv2.IsStrictlyConfirmed(uint64(h)))
 }
 
-// TestHeightSyncAnchor_E2E_MixedHeights_Confirmed covers E5 (Step 6).
+// TestHeightSyncAnchor_E2E_MixedHeights_Confirmed covers spec §17 mixed-height quorum.
 func TestHeightSyncAnchor_E2E_MixedHeights_Confirmed(t *testing.T) {
 	ensureHeightSyncPromMetrics(t)
 	ctx := context.Background()
@@ -98,7 +98,7 @@ func TestHeightSyncAnchor_E2E_MixedHeights_Confirmed(t *testing.T) {
 		"one dishonest host must not un-confirm quorum height")
 }
 
-// TestHeightSyncAnchor_E2E_StaleOracle_Inconclusive covers E6 (Step 6).
+// TestHeightSyncAnchor_E2E_StaleOracle_Inconclusive covers spec §17 when the oracle is stale.
 func TestHeightSyncAnchor_E2E_StaleOracle_Inconclusive(t *testing.T) {
 	ensureHeightSyncPromMetrics(t)
 	ctx := context.Background()

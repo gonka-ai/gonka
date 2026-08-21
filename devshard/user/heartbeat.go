@@ -127,7 +127,8 @@ func (s *Session) dispatchHeartbeatSpan(ctx context.Context, span []composedDiff
 	wg.Wait()
 }
 
-// HeartbeatSkippedNoHeight is the H3 counter.
+// HeartbeatSkippedNoHeight counts Due() calls that skipped because no
+// observed height was available (spec §10.3).
 func (s *Session) HeartbeatSkippedNoHeight() int {
 	s.mu.Lock()
 	defer s.mu.Unlock()

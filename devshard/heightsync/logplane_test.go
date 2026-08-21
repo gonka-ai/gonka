@@ -315,7 +315,7 @@ func TestLogPlane_UnstampedLegIsNotRegression(t *testing.T) {
 	require.NoError(t, res.Err)
 
 	// Same for a reference leg: absence is always legal, at any floor. Otherwise
-	// a present-then-absent pair reads as a regression on every verifier (H38).
+	// a present-then-absent pair reads as a regression on every verifier.
 	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 6,
 		Txs:   []*types.DevshardTx{confirmTxAt(5, 0, nil)},

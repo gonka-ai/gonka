@@ -82,7 +82,8 @@ func (h *Heartbeat) Config() HeartbeatConfig {
 	return h.cfg
 }
 
-// SkippedNoHeight is the H3 skip counter (ObservedHeightNow empty).
+// SkippedNoHeight counts Due() calls that skipped because ObservedHeightNow
+// was empty (spec §10.3).
 func (h *Heartbeat) SkippedNoHeight() int {
 	if h == nil {
 		return 0
@@ -128,7 +129,7 @@ func (h *Heartbeat) SinceTurnover(now time.Time) time.Duration {
 
 // Due reports whether the producer must open a heartbeat turn now. hNow is the
 // height it would stamp: zero means it holds no claim and must not invent one
-// (H3). An open turn suppresses new ones until TurnTimeout expires.
+// (spec §10.3). An open turn suppresses new ones until TurnTimeout expires.
 func (h *Heartbeat) Due(now time.Time, hNow uint64) (bool, HeartbeatReason) {
 	if h == nil {
 		h = NewHeartbeat(DefaultHeartbeatConfig())
@@ -233,7 +234,7 @@ func SlotForNonce(nonce, slotsNum uint64) uint32 {
 }
 
 // SpanTxs returns slots_num MsgHeartbeat txs for one turn, with no ack wait.
-// hNow == 0 yields nil (H3: do not claim a height).
+// hNow == 0 yields nil (spec §10.3: do not claim a height).
 func (h *Heartbeat) SpanTxs(turnSeq, hNow uint64, hash []byte, slotsNum uint64, reason HeartbeatReason, prevVector []*types.SyncVectorEntry) []*types.DevshardTx {
 	if h == nil {
 		h = NewHeartbeat(DefaultHeartbeatConfig())

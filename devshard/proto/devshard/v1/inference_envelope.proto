@@ -16,7 +16,7 @@ message InferenceHeightSyncSection {
   bool response = 5; // false = request, true = response
   string originator_sender_id = 6;
   int64 originator_timestamp_unix_ms = 7;
-  // Response leg only (PoC v2.1 Step 8): signature over canonical bytes of fields 1–7.
+  // Response leg only (spec §15): signature over canonical bytes of fields 1–7.
   bytes sender_signature = 8;
 }
 

@@ -22,7 +22,7 @@ type originTipEntry struct {
 }
 
 // HeightSyncPeerTips stores verbatim originator Anchor sections observed from hosts
-// and tracks per-recipient propagation for lazy carry-forward (PoC v2 Step 2).
+// and tracks per-recipient propagation for lazy carry-forward (spec §16).
 type HeightSyncPeerTips struct {
 	mu sync.Mutex
 
@@ -33,7 +33,7 @@ type HeightSyncPeerTips struct {
 	// Freshness bounds MaxFresh and Carry; zero uses defaultPeerTipFreshness.
 	Freshness time.Duration
 	// RequireVerifiedBlob when true: MaxFresh/Carry only use entries stored via
-	// RecordOriginWithBlob (Step 8 courier path). NewHeightSyncPeerTips defaults
+	// RecordOriginWithBlob (spec §15 courier path). NewHeightSyncPeerTips defaults
 	// this to true; tests that need unverified RecordOrigin entries opt out.
 	RequireVerifiedBlob bool
 }
@@ -258,7 +258,7 @@ func (s *HeightSyncPeerTips) RecordOrigin(sec *heightsync.HeightSyncSection) {
 	}
 }
 
-// RecordOriginWithBlob stores a verified response-leg Anchor and its signed blob (Step 8).
+// RecordOriginWithBlob stores a verified response-leg Anchor and its signed blob (spec §15).
 func (s *HeightSyncPeerTips) RecordOriginWithBlob(sec *heightsync.HeightSyncSection, blob, sig []byte) {
 	if s == nil {
 		return
@@ -287,7 +287,7 @@ func (s *HeightSyncPeerTips) OriginSignedBlobFor(originator string, h int64) (bl
 	return blob, sig, ok
 }
 
-// VerifiedAnchorFor returns the cached section and its signed blob (Step 8).
+// VerifiedAnchorFor returns the cached section and its signed blob (spec §15).
 func (s *HeightSyncPeerTips) VerifiedAnchorFor(originator string, h int64) (*heightsync.HeightSyncSection, []byte, []byte, bool) {
 	if s == nil || originator == "" || h <= 0 {
 		return nil, nil, nil, false

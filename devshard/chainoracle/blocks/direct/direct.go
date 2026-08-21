@@ -26,7 +26,7 @@ type Fetcher interface {
 }
 
 // Oracle prefers primary (gRPC) and falls back to secondary (Comet RPC).
-// Commit is always empty (Phase D).
+// Commit is always empty (hash-only; Strong needs LightBlock).
 type Oracle struct {
 	primary   Fetcher
 	secondary Fetcher

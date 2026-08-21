@@ -52,7 +52,7 @@ func TestObserver_ResultBlockToHeader_HashOnly(t *testing.T) {
 	require.Equal(t, int64(42), got.Height)
 	require.Equal(t, "gonka-test", got.ChainID)
 	require.Equal(t, block.Hash().Bytes(), got.BlockHash)
-	require.Empty(t, got.Commit.Signatures, "Phase D is hash-only; Commit stays empty until F")
+	require.Empty(t, got.Commit.Signatures, "hash-only header; Commit stays empty until Strong")
 	require.Empty(t, got.ValidatorsHash)
 	require.Empty(t, got.NextValidatorsHash)
 	require.Empty(t, got.AppHash)

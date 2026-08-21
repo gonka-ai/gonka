@@ -336,7 +336,7 @@ func TestHeartbeat_UnavailableAcksCompleteTurnCarryingTheFloor(t *testing.T) {
 	require.NoError(t, session.MaybeHeartbeat(context.Background()))
 
 	acks := heightAcksInDiffs(session.Diffs())
-	require.Len(t, acks, 3, "H24: ack is required even when the oracle is down")
+	require.Len(t, acks, 3, "ack is required even when the oracle is down")
 	for _, ack := range acks {
 		require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, ack.SyncState,
 			"the self-report stays honest: this slot is no height witness")
@@ -351,7 +351,7 @@ func TestHeartbeat_UnavailableAcksCompleteTurnCarryingTheFloor(t *testing.T) {
 }
 
 func TestHeartbeat_BusySessionWithStampsEmitsNone(t *testing.T) {
-	// H2: executor-stamped receipts from a quorum of slots are a full height-sync
+	// Executor-stamped receipts from a quorum of slots are a full height-sync
 	// turnover, so the log plane owes no heartbeat.
 	var height uint64 = 100
 	oracles := make([]blocks.BlockOracle, 3)
@@ -371,12 +371,12 @@ func TestHeartbeat_BusySessionWithStampsEmitsNone(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, session.MaybeHeartbeat(ctx))
-	require.Zero(t, countHeartbeats(session.Diffs()), "H2: stamped inference traffic emits zero heartbeats")
+	require.Zero(t, countHeartbeats(session.Diffs()), "stamped inference traffic emits zero heartbeats")
 	require.Equal(t, uint64(100), session.HeartbeatTurnTracker().LastCompletedHeight())
 }
 
 func TestHeartbeat_SustainedInferenceFlowNeverHeartbeats(t *testing.T) {
-	// H2 over time. BusySessionWithStampsEmitsNone only checks one instant, so it
+	// Same rule over time. BusySessionWithStampsEmitsNone only checks one instant, so it
 	// would still pass if the cadence never fired at all in this fixture. Here
 	// inference keeps flowing while the clock crosses Interval repeatedly: every
 	// crossing is a due check that must find a fresh turnover and emit nothing.
@@ -612,7 +612,7 @@ func TestHeartbeat_LoopStopsOnClose(t *testing.T) {
 }
 
 func TestHeartbeat_SettleTurnDoesNotFireWhileSMTurnOpen(t *testing.T) {
-	// H82: a live oracle past D_ack must not SettleTurn while the SM still
+	// A live oracle past D_ack must not SettleTurn while the SM still
 	// holds the same turn Open. Hosts are silenced so acks cannot complete it.
 	var height uint64 = 100
 	session := setupHeartbeatSession(t, &height)

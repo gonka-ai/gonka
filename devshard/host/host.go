@@ -150,8 +150,9 @@ type Host struct {
 	// oracle is optional mainnet height source. LatestHeight returns ErrNoChainOracle when nil.
 	oracle blocks.BlockOracle
 
-	// peerSeen and heartbeatCfg serve E3 height acks. peerSeen is the §11.2
-	// bitmap (Diff tips and repair probes). heartbeatCfg supplies D.
+	// peerSeen and heartbeatCfg serve host-signed height acks (spec §10.4).
+	// peerSeen is the spec §11.2 bitmap (Diff acks and repair HEIGHT).
+	// heartbeatCfg supplies D.
 	peerSeen     *heightsync.PeerSeen
 	heartbeatCfg heightsync.HeartbeatConfig
 
@@ -506,8 +507,8 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 	hdr, hdrErr := h.latestHeaderIf(ctx, needOracle)
 	h.mu.Lock()
 
-	// (a2) Answer heartbeats addressed to this host's slot (E3). Acks go into
-	// the mempool of this response; they are never a general stamp.
+	// (a2) Answer heartbeats addressed to this host's slot (spec §10.4).
+	// Acks go into the mempool of this response; they are never a general stamp.
 	h.maybeAckHeartbeatsLocked(newlyApplied, hdr, hdrErr)
 	h.noteCloseReadyLocked(newlyApplied, hdr, hdrErr)
 

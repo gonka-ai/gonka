@@ -55,7 +55,7 @@ func (h *Host) CloseReadyView() heightsync.CloseReadyView {
 	return h.closeReady
 }
 
-// CloseReadyIntervals is the retained [armed_at, disarmed_at) list (H22).
+// CloseReadyIntervals is the retained [armed_at, disarmed_at) list (spec §12).
 func (h *Host) CloseReadyIntervals() []heightsync.ArmedInterval {
 	if h.closeReady == nil {
 		return nil

@@ -78,7 +78,7 @@ type AnchorAttestation struct {
 	// cannot stay quorum-eligible for another F from receipt time.
 	OriginatorTimestampMs int64
 	// OriginSignedBlobAvailable is true when the user cached a verified response-leg
-	// signed blob for this attestation (Step 8).
+	// signed blob for this attestation (spec §15).
 	OriginSignedBlobAvailable bool
 }
 

@@ -9,7 +9,7 @@ import (
 )
 
 // HeaderFromResultBlock maps a Tendermint ResultBlock to a hash-only Header.
-// Commit.Signatures and validator hashes are left empty (Phase D; Strong is F).
+// Commit.Signatures and validator hashes stay empty until Strong (spec §8 / §15).
 func HeaderFromResultBlock(res *ctypes.ResultBlock) (*blocks.Header, error) {
 	if res == nil || res.Block == nil {
 		return nil, fmt.Errorf("observer: nil result block")

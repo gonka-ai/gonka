@@ -66,7 +66,7 @@ type CloseReady struct {
 	armedAtHeight uint64
 	intervals     []ArmedInterval
 
-	forceArmed bool // test injection (H20)
+	forceArmed bool // test injection
 }
 
 // NewCloseReady constructs an unarmed tracker for slot.
@@ -230,7 +230,7 @@ func (c *CloseReady) TimeoutEvidence() UserTimeoutEvidence {
 	}
 }
 
-// Intervals returns retained [armed_at, disarmed_at) gaps (H22).
+// Intervals returns retained [armed_at, disarmed_at) gaps (spec §12).
 func (c *CloseReady) Intervals() []ArmedInterval {
 	if c == nil {
 		return nil
@@ -240,7 +240,7 @@ func (c *CloseReady) Intervals() []ArmedInterval {
 	return append([]ArmedInterval(nil), c.intervals...)
 }
 
-// ForceArmed is the H20 test seam. Production never calls it.
+// ForceArmed is a test seam. Production never calls it.
 func (c *CloseReady) ForceArmed(armed bool) {
 	if c == nil {
 		return

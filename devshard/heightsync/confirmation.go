@@ -18,7 +18,7 @@ const (
 	ConfirmStale
 )
 
-// ConfirmationView exposes the IsStrictlyConfirmed contract (plan §3.6).
+// ConfirmationView exposes the IsStrictlyConfirmed contract (spec §17).
 type ConfirmationView interface {
 	IsStrictlyConfirmed(h uint64) ConfirmState
 }
@@ -200,7 +200,7 @@ func (idx *ConfirmationIndex) attestationTime(a AnchorAttestation) (time.Time, b
 // IsStrictlyConfirmed implements ConfirmationView.
 //
 // Only (C-quorum) is available here. (C-turn) is withdrawn (see RuleTurn) and
-// (C-strong) arrives with Phase F, at which point RuleHybrid gains its second
+// (C-strong) is spec §8 / §17 Strong, at which point RuleHybrid gains its second
 // disjunct.
 func (idx *ConfirmationIndex) IsStrictlyConfirmed(h uint64) ConfirmState {
 	if idx == nil || h == 0 {
@@ -352,7 +352,7 @@ func (idx *ConfirmationIndex) maybeCompactLocked(tip int64) {
 	}
 }
 
-// ConfirmedCount is the size of the retained confirmed-height set (H99).
+// ConfirmedCount is the size of the retained confirmed-height set (spec §17).
 func (idx *ConfirmationIndex) ConfirmedCount() int {
 	if idx == nil {
 		return 0
