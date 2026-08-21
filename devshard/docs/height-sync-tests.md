@@ -271,8 +271,8 @@ generated compose file.
 | Phase D | ✅ | D1–D11 (unit; D9 is the hash-only heartbeat turn). Container D6 = `TestHeightSync_MockDapiBlockLatest` (0.2.15-v5 / `/block/*`). Container D7 = `TestHeightSync_LegacyDapiChatCompletes` (0.2.15, no `/block/*`). Dapi HTTP mount lives on `ak/height-sync-protocol-dapi`. | Hash-only observer + direct chain + host failover against old dapi (404) and dapi-down (transport). |
 | Phase E | ⏳ | Container ports of Strong-mode scenarios (S1..S12, §8) | Real `LightBlock` proofs + `D` band against multi-process oracles. |
 | — | ✅ | D7 (§6) | Simulated **old** dapi with no `/block/*` (`TestHeightSync_LegacyDapiChatCompletes`; unit D4/D7). D6 is ✅ `TestHeightSync_MockDapiBlockLatest`. |
-| — | ✅ | H26, H27 (§7.6) | Heartbeat cadence on a quiet compose escrow (`TestContainerE2E_HeightSync_QuietEscrowHeartbeat`), and degraded turns with bounded probe traffic when one host is stopped (`TestContainerE2E_HeightSync_OneHostStopped`). |
-| — | ✅ | H41, H42 (§7.7) | Gateway-package tests plus H26 compose assertions: cadence events on a quiet escrow, and `discharged_by_inference` on a busy one (`TestGatewayHeightSync_QuietCadenceEventsAndRing`, `TestGatewayHeightSync_InferenceDischargeIsVisible`). |
+| — | ✅ | H26, H27 (§7.6) | Heartbeat cadence on a quiet compose escrow (`TestContainerE2E_HeightSync_QuietEscrowHeartbeat` — also scrapes metrics, `/v1/debug/heightsync`, H44/H45 gauges, and asserts peer matrix off by default), and degraded turns with bounded probe traffic when one host is stopped (`TestContainerE2E_HeightSync_OneHostStopped` — also asserts `turns_abandoned_total`, H43). |
+| — | ✅ | H41, H42 (§7.7) | Gateway-package tests plus compose: H26 quiet cadence, `TestContainerE2E_HeightSync_BusyEscrowDischarge` for `discharged_by_inference` under load. |
 
 ---
 
@@ -446,8 +446,12 @@ automatic for `executor_sig`.
 
 | ID | Test (planned name) | What it will prove |
 | -- | ------------------- | ------------------ |
-| H26 | ✅ `TestContainerE2E_HeightSync_QuietEscrowHeartbeat` | Quiet compose escrow: heartbeat cadence visible in logs, turns complete, **zero** probe traffic on the healthy path. |
-| H27 | ✅ `TestContainerE2E_HeightSync_OneHostStopped` | One host stopped: degraded turns, bounded probe traffic, arming only after `T_idle` of user silence. |
+| H26 | ✅ `TestContainerE2E_HeightSync_QuietEscrowHeartbeat` | Quiet compose escrow: heartbeat cadence visible in logs + `cadence_events_total`, turns complete, **zero** probe traffic; `/v1/debug/heightsync` lists the escrow; peer matrix series stay off by default; seal/empty-height gauges eventually appear (H44/H45 smoke). |
+| H27 | ✅ `TestContainerE2E_HeightSync_OneHostStopped` | One host stopped: degraded turns, bounded probe traffic, arming only after `T_idle` of user silence; `turns_abandoned_total` rises (H43). |
+| H40c | ✅ `TestContainerE2E_HeightSync_StaleClaimSpread` | Compose companion to H40: after a stopped host goes past `F`, claim age rises and spread does not silently shrink. |
+| H42c | ✅ `TestContainerE2E_HeightSync_BusyEscrowDischarge` | Compose companion to H42: stamped traffic surfaces as `discharged_by_inference` in metrics and the debug ring. |
+| H47c | ✅ `TestContainerE2E_HeightSync_SettleDropsSeries` | Compose companion to H47: after admin deactivate (same `retireRuntime` drop as settle), no series carries that `devshard_id`. |
+| H48c | ✅ `TestContainerE2E_HeightSync_PeerMatrixOptIn` | Compose companion to H48: with `DEVSHARD_GATEWAY_HEIGHTSYNC_PEER_MATRIX=1`, quadratic `peer_seen` series appear. |
 
 ### 7.7 Gateway observability (plan §8.12.1–§8.12.6)
 
@@ -458,15 +462,15 @@ field. Package `devshard/cmd/devshardctl` unless noted.
 | ID | Test (planned name) | What it will prove |
 | -- | ------------------- | ------------------ |
 | H39 | ✅ `TestGatewayHeightSync_DivergenceSpreadAndLag` | Two hosts claim `H`, one claims `H − 5` ⇒ `height_spread = 5`, per-slot lag `0/0/5`, leader lag `0`. |
-| H40 | ✅ `TestGatewayHeightSync_StaleClaimDropsFromSpread` | A host that stops acking loses its `host_height` series past `F` and raises `host_claim_age_seconds`; spread does **not** silently shrink to the live pair (stale claims stay in the spread set). |
+| H40 | ✅ `TestGatewayHeightSync_StaleClaimDropsFromSpread` (+ compose `TestContainerE2E_HeightSync_StaleClaimSpread`) | A host that stops acking loses its `host_height` series past `F` and raises `host_claim_age_seconds`; spread does **not** silently shrink to the live pair (stale claims stay in the spread set). |
 | H41 | ✅ `TestGatewayHeightSync_QuietCadenceEventsAndRing` | Quiet escrow: `cadence_events_total{event="heartbeat_opened"}` advances ~once per `Interval`; the ring holds one ordered entry per turn. |
-| H42 | ✅ `TestGatewayHeightSync_InferenceDischargeIsVisible` | Busy stamped escrow: events are `discharged_by_inference`, `heartbeat_opened` stays **zero**, and the ring records the substitution explicitly rather than as an absence. |
-| H43 | ✅ `TestGatewayHeightSync_AbandonedTurnCounted` | One unreachable slot: `turns_abandoned_total` rises, ring entries carry `turn_abandoned`, cadence keeps running. |
-| H44 | ✅ `TestGatewayHeightSync_BucketSealsAfterDAck` | Acks stamped `H` arriving while the tip is `H + 1` land in bucket `H`; the bucket is not published until sealed, so no fake zero for `H`. |
-| H45 | ✅ `TestGatewayHeightSync_BlockWithoutAnchorCounted` | A sealed height with no anchor increments `blocks_without_anchor_total` exactly once. |
+| H42 | ✅ `TestGatewayHeightSync_InferenceDischargeIsVisible` (+ compose `TestContainerE2E_HeightSync_BusyEscrowDischarge`) | Busy stamped escrow: events are `discharged_by_inference`, `heartbeat_opened` stays **zero**, and the ring records the substitution explicitly rather than as an absence. |
+| H43 | ✅ `TestGatewayHeightSync_AbandonedTurnCounted` (+ H27 compose scrape) | One unreachable slot: `turns_abandoned_total` rises, ring entries carry `turn_abandoned`, cadence keeps running. |
+| H44 | ✅ `TestGatewayHeightSync_BucketSealsAfterDAck` (+ H26 compose smoke) | Acks stamped `H` arriving while the tip is `H + 1` land in bucket `H`; the bucket is not published until sealed, so no fake zero for `H`. |
+| H45 | ✅ `TestGatewayHeightSync_BlockWithoutAnchorCounted` (+ H26 compose smoke) | A sealed height with no anchor increments `blocks_without_anchor_total` exactly once. |
 | H46 | ✅ `TestGatewayHeightSync_PeerSeenMatrix` | 4-slot roster with slot 2 invisible to slot 0 only: `peer_seen{observer=0,subject=2}=0`, `unseen_total{subject=2}=1`, `peer_seen_count{observer=0}=3`. |
-| H47 | ✅ `TestGatewayHeightSync_SettleDropsEverySeries` | After settle, **no** series carries that `devshard_id` — asserted by label value, not a per-series list, so a later addition that misses cleanup fails here. |
-| H48 | ✅ `TestGatewayHeightSync_PeerMatrixOptIn` | Matrix off by default ⇒ quadratic series absent while linear `peer_seen_count` / `unseen_total` remain and the matrix is still readable on `/v1/debug/heightsync`. |
+| H47 | ✅ `TestGatewayHeightSync_SettleDropsEverySeries` (+ compose `TestContainerE2E_HeightSync_SettleDropsSeries`) | After settle, **no** series carries that `devshard_id` — asserted by label value, not a per-series list, so a later addition that misses cleanup fails here. |
+| H48 | ✅ `TestGatewayHeightSync_PeerMatrixOptIn` (+ compose `TestContainerE2E_HeightSync_PeerMatrixOptIn`) | Matrix off by default ⇒ quadratic series absent while linear `peer_seen_count` / `unseen_total` remain and the matrix is still readable on `/v1/debug/heightsync`. |
 | H49 | ✅ `TestGatewayHeightSync_ArmingPredictionIsInert` | Gateway quiet toward one slot past `T_idle` ⇒ `arming_predicted{slot}=1`, and a limiter/closing test double records **zero** calls — the prediction must never drive a decision. |
 
 `heightsync_close_ready_armed` is deliberately **not** in this group: arming emits

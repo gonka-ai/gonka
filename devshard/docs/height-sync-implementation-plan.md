@@ -1096,7 +1096,7 @@ Two interpretation rules, both from §11: a cleared bit means "no fresh claim wi
 | H48 | Peer matrix not enabled (default) | matrix series absent; `peer_seen_count` / `unseen_total` still present; matrix still readable on `/v1/debug/heightsync` |
 | H49 | Gateway goes quiet toward one slot past `T_idle` | `arming_predicted{slot}=1`; asserted **not** to feed any closing or routing decision (test double sees zero calls, the hard-invariant pattern from the host-ping plan) |
 
-H39–H49 are gateway-package tests over a fabricated session plus a registry gather, in the style of the host-ping cleanup tests ([`host-ping-observability-plan.md`](./host-ping-observability-plan.md) Test plan §2). H41/H42 also run in the H26 container scenario, which already asserts cadence from gateway logs.
+H39–H49 are gateway-package tests over a fabricated session plus a registry gather, in the style of the host-ping cleanup tests ([`host-ping-observability-plan.md`](./host-ping-observability-plan.md) Test plan §2). H41/H42 also run in the H26/H42c container scenarios. Compose companions for H40/H43/H47/H48 and `/v1/debug/heightsync` live in `testenv/citest/height_sync_test.go` (no Phase F).
 
 ### 8.13 Tests for Phase E
 

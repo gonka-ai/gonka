@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -87,6 +88,27 @@ func getGatewayJSON(t *testing.T, client *http.Client, url, adminAPIKey string, 
 		return fmt.Errorf("GET %s: %d %s", url, resp.StatusCode, string(body))
 	}
 	return json.Unmarshal(body, dest)
+}
+
+// PostAdminDeactivateDevshard POSTs /v1/admin/devshards/{id}/deactivate.
+// Retires the runtime from memory (same registry drop settle uses).
+func PostAdminDeactivateDevshard(t *testing.T, client *http.Client, gatewayURL, adminAPIKey, escrowID string) {
+	t.Helper()
+	if client == nil {
+		client = HTTPClient()
+	}
+	url := strings.TrimRight(gatewayURL, "/") + "/v1/admin/devshards/" + escrowID + "/deactivate"
+	req, err := http.NewRequest(http.MethodPost, url, nil)
+	require.NoError(t, err)
+	if adminAPIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+adminAPIKey)
+	}
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "POST deactivate: %s", string(body))
 }
 
 // RestartService stops and starts a compose service without removing volumes.
