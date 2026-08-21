@@ -20,6 +20,7 @@ type Config struct {
 	BasePort          int
 	ReadyPath         string
 	ReadyTimeout      time.Duration
+	ReadyMaxWait      time.Duration
 	DrainPath         string
 	DrainStatusPath   string
 	DrainTimeout      time.Duration
@@ -44,6 +45,7 @@ func Load() (Config, error) {
 		BasePort:          5000,
 		ReadyPath:         envOrDefault("VERSIOND_READY_PATH", "/ready"),
 		ReadyTimeout:      parseDuration("VERSIOND_READY_TIMEOUT", 60*time.Second),
+		ReadyMaxWait:      parseDuration("VERSIOND_READY_MAX_WAIT", 32*time.Minute),
 		DrainPath:         envOrDefault("VERSIOND_DRAIN_PATH", "/drain"),
 		DrainStatusPath:   envOrDefault("VERSIOND_DRAIN_STATUS_PATH", "/drain/status"),
 		DrainTimeout:      parseDuration("VERSIOND_DRAIN_TIMEOUT", 15*time.Minute),

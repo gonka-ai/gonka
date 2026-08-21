@@ -37,6 +37,7 @@ const (
 	storageModePostgres          = "postgres"
 	defaultDevshardShutdownGrace = 10 * time.Minute
 	installedVersionRetain       = 3
+
 )
 
 var (
@@ -114,6 +115,12 @@ func normalizeConfig(cfg config.Config) config.Config {
 	}
 	if cfg.ReadyTimeout <= 0 {
 		cfg.ReadyTimeout = 60 * time.Second
+	}
+	if cfg.ReadyMaxWait <= 0 {
+		cfg.ReadyMaxWait = 32 * time.Minute
+	}
+	if cfg.ReadyMaxWait < cfg.ReadyTimeout {
+		cfg.ReadyMaxWait = cfg.ReadyTimeout
 	}
 	if cfg.DrainPath == "" {
 		cfg.DrainPath = "/drain"
@@ -1112,6 +1119,11 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 	backoff := time.Second
 	lastStart := time.Now()
 
+	// Grows with each failed attempt, capped at ReadyMaxWait: a restart discards the
+	// child's startup work, so a fixed window can loop forever without ever letting
+	// startup finish.
+	readyWindow := m.cfg.ReadyTimeout
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -1139,8 +1151,12 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			return
 		}
 
-		if !waitForChildServingReady(ctx, c, m.cfg.ReadyPath, m.cfg.ReadyTimeout) {
-			slog.Warn("child did not become ready in time", "version", c.version.Name, "port", c.port, "lifecycle_port", c.lifecyclePort(), "ready_path", m.cfg.ReadyPath)
+		if !waitForChildServingReady(ctx, c, m.cfg.ReadyPath, readyWindow) {
+			slog.Warn("child did not become ready in time; restarting with a longer window",
+				"version", c.version.Name, "port", c.port, "lifecycle_port", c.lifecyclePort(),
+				"ready_path", m.cfg.ReadyPath, "ready_window", readyWindow,
+				"next_ready_window", nextReadyWindow(readyWindow, m.cfg.ReadyMaxWait))
+			readyWindow = nextReadyWindow(readyWindow, m.cfg.ReadyMaxWait)
 			proc.ForceStop()
 			_ = proc.Wait()
 			m.mu.Lock()
@@ -1358,6 +1374,15 @@ func waitForReady(ctx context.Context, port int, path string, timeout time.Durat
 // waitForChildServingReady gates the Starting -> Running transition. Modern
 // devshardd children must be logically ready on their admin listener and also
 // serve health checks on the public listener that receives proxied traffic.
+// nextReadyWindow doubles the readiness window, capped at max.
+func nextReadyWindow(current, max time.Duration) time.Duration {
+	next := current * 2
+	if next > max || next <= 0 {
+		return max
+	}
+	return next
+}
+
 func waitForChildServingReady(ctx context.Context, c *child, path string, timeout time.Duration) bool {
 	if c.adminPort == 0 {
 		return waitForReady(ctx, c.port, path, timeout)
