@@ -12,9 +12,11 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-// mountChainOracle registers GET /block/latest and GET /block/:height on the
-// existing public Echo at the root (not under /v1/). Hash-only; Prove is 501.
-// Disabled with DAPI_CHAINORACLE_DISABLED. Isolated for a separate dapi PR.
+// mountChainOracle registers GET /block/:height and GET /block/:height/prove
+// on the existing public Echo at the root (not under /v1/). Hash-only
+// (height, hash, block time, chain id; empty Commit). Prove is 501.
+// Live tip is Comet NewBlock, not /block/latest or /block/stream.
+// Disabled with DAPI_CHAINORACLE_DISABLED.
 func (s *Server) mountChainOracle() {
 	if s == nil || s.e == nil {
 		return
