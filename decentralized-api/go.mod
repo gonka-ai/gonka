@@ -7,7 +7,6 @@ require (
 	cosmossdk.io/math v1.5.3
 	cosmossdk.io/x/feegrant v0.1.1
 	cosmossdk.io/x/upgrade v0.1.4
-	devshard v0.0.0-00010101000000-000000000000
 	github.com/cometbft/cometbft v0.38.21
 	github.com/consensys/gnark-crypto v0.18.1
 	github.com/cosmos/cosmos-sdk v0.53.3
@@ -85,7 +84,6 @@ require (
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/exporter/metric v0.48.1 // indirect
 	github.com/GoogleCloudPlatform/opentelemetry-operations-go/internal/resourcemapping v0.48.1 // indirect
 	github.com/Microsoft/go-winio v0.6.2 // indirect
-	github.com/ProjectZKM/Ziren/crates/go-runtime/zkvm_runtime v0.0.0-20251001021608-1fe7b43fc4d6 // indirect
 	github.com/apapsch/go-jsonmerge/v2 v2.0.0 // indirect
 	github.com/aws/aws-sdk-go v1.44.224 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
@@ -144,7 +142,6 @@ require (
 	github.com/emicklei/dot v1.6.2 // indirect
 	github.com/envoyproxy/go-control-plane/envoy v1.37.0 // indirect
 	github.com/envoyproxy/protoc-gen-validate v1.3.3 // indirect
-	github.com/ethereum/go-ethereum v1.17.2 // indirect
 	github.com/fatih/color v1.17.0 // indirect
 	github.com/fatih/structs v1.1.0 // indirect
 	github.com/felixge/httpsnoop v1.0.4 // indirect
@@ -193,7 +190,6 @@ require (
 	github.com/hashicorp/golang-lru/v2 v2.0.7 // indirect
 	github.com/hashicorp/yamux v0.1.2 // indirect
 	github.com/hdevalence/ed25519consensus v0.2.0 // indirect
-	github.com/holiman/uint256 v1.3.2 // indirect
 	github.com/huandu/skiplist v1.2.1 // indirect
 	github.com/iancoleman/strcase v0.3.0 // indirect
 	github.com/improbable-eng/grpc-web v0.15.0 // indirect
@@ -325,7 +321,6 @@ require (
 
 replace (
 	common => ../common
-	devshard => ../devshard
 	github.com/cosmos/cosmos-sdk => github.com/gonka-ai/cosmos-sdk v0.53.3-ps19-observability
 	github.com/gogo/protobuf => github.com/regen-network/protobuf v1.3.3-alpha.regen.1
 	github.com/productscience/inference => ../inference-chain

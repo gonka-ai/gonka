@@ -5,10 +5,10 @@ import (
 	"os"
 	"strings"
 
-	"devshard/chainoracle/blocks/observer"
-	blockserver "devshard/chainoracle/blocks/server"
-
+	"common/chainoracle/blocks/observer"
+	blockserver "common/chainoracle/blocks/server"
 	"common/logging"
+
 	"github.com/productscience/inference/x/inference/types"
 )
 
