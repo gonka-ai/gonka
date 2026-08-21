@@ -1,5 +1,5 @@
-// Package server mounts the unified chainoracle HTTP surface: authenticated
-// block headers (SSE) and versiond oracle routes (/versions).
+// Package server mounts the unified chainoracle HTTP surface: block lookup
+// (GET /block/:height) and versiond oracle routes (/versions).
 package server
 
 import (

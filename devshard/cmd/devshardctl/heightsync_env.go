@@ -15,6 +15,7 @@ import (
 	blockclient "devshard/chainoracle/blocks/client"
 	"devshard/chainoracle/blocks/direct"
 	"devshard/chainoracle/blocks/failover"
+	"devshard/chainoracle/blocks/tipcache"
 	"devshard/heightsync"
 	"devshard/transport"
 )
@@ -92,14 +93,22 @@ func heightSyncFlag() bool {
 	}
 }
 
+func cometRPCForHeightSync(grpcURL string) string {
+	if rpc := effectiveChainRPC(); rpc != "" {
+		return rpc
+	}
+	return chain.RPCURLFromGRPCURL(grpcURL)
+}
+
 // initGatewayHeightSync wires the process-level scheduler after the chain
-// client exists so failover can use direct chain. Safe to call once.
-func initGatewayHeightSync(chainClient *chain.Client) error {
-	_, err := loadHeightSyncProcessState(chainClient)
+// client exists so failover can use direct chain. cometRPC is the Comet
+// WebSocket endpoint (same NewBlock feed hosts use). Safe to call once.
+func initGatewayHeightSync(chainClient *chain.Client, cometRPC string) error {
+	_, err := loadHeightSyncProcessState(chainClient, cometRPC)
 	return err
 }
 
-func loadHeightSyncProcessState(chainClient *chain.Client) (*heightSyncProcessState, error) {
+func loadHeightSyncProcessState(chainClient *chain.Client, cometRPC string) (*heightSyncProcessState, error) {
 	hsOnce.Do(func() {
 		url := strings.TrimSpace(os.Getenv(envChainOracleURL))
 		if url == "" && !heightSyncFlag() {
@@ -115,43 +124,59 @@ func loadHeightSyncProcessState(chainClient *chain.Client) (*heightSyncProcessSt
 			hsErr = err
 			return
 		}
-		probe, err := parseDurationEnv(envHeightSyncProbe)
-		if err != nil {
+		if _, err := parseDurationEnv(envHeightSyncProbe); err != nil {
 			hsErr = err
 			return
 		}
 
-		var httpOracle *blockclient.Client
+		var lookup *blockclient.Lookup
 		if url != "" {
-			cli, err := blockclient.NewHTTP(context.Background(), blockclient.HTTPConfig{BaseURL: url})
+			cli, err := blockclient.NewLookup(blockclient.HTTPConfig{BaseURL: url})
 			if err != nil {
-				hsErr = fmt.Errorf("chainoracle http client: %w", err)
+				hsErr = fmt.Errorf("chainoracle lookup client: %w", err)
 				return
 			}
-			httpOracle = cli
+			lookup = cli
 		}
-		if httpOracle == nil && chainClient == nil {
+		rpc := strings.TrimSpace(cometRPC)
+		if rpc == "" {
+			rpc = effectiveChainRPC()
+		}
+		var chainOracle blocks.BlockOracle
+		if chainClient != nil || rpc != "" {
+			chainOracle = direct.NewFromChain(chainClient, rpc)
+		}
+		if lookup == nil && chainOracle == nil && rpc == "" {
 			hsErr = fmt.Errorf("%s set but no %s and no chain client", envHeightSync, envChainOracleURL)
 			return
 		}
 
-		var httpBlk blocks.BlockOracle
-		var closer func()
-		if httpOracle != nil {
-			httpBlk = httpOracle
-			closer = httpOracle.Close
+		cache := tipcache.New(0)
+		feedCtx, cancelFeed := context.WithCancel(context.Background())
+		if rpc != "" {
+			if err := tipcache.StartComet(feedCtx, rpc, cache); err != nil {
+				slog.Warn("height-sync comet feed", "err", err, "rpc", rpc)
+			}
 		}
-		oracle := failover.New(httpBlk, direct.NewFromChain(chainClient, effectiveChainRPC()), failover.Config{ProbeInterval: probe}, closer)
+		var hist failover.History
+		if lookup != nil {
+			hist = lookup
+		}
+		closer := func() {
+			cancelFeed()
+			if lookup != nil {
+				lookup.Close()
+			}
+		}
+		oracle := failover.New(cache, hist, chainOracle)
 		sched, err := heightsync.NewAnchorSchedulerFromOracle(k, slots, oracle)
 		if err != nil {
-			if closer != nil {
-				closer()
-			}
+			closer()
 			hsErr = fmt.Errorf("height-sync scheduler: %w", err)
 			return
 		}
 		hsSt = &heightSyncProcessState{sched: sched, oracle: oracle, closer: closer}
-		slog.Info("height sync enabled", "oracle_url", url, "k", sched.K(), "slots", sched.SlotsNum(), "direct_chain", chainClient != nil)
+		slog.Info("height sync enabled", "oracle_url", url, "k", sched.K(), "slots", sched.SlotsNum(), "direct_chain", chainOracle != nil, "comet_rpc", rpc)
 	})
 	return hsSt, hsErr
 }
@@ -159,7 +184,7 @@ func loadHeightSyncProcessState(chainClient *chain.Client) (*heightSyncProcessSt
 // extraClientConfigFromEnv returns a per-session ClientConfig when height-sync
 // is opted in. Peer-tip caches are not shared across escrows. Nil, nil when unset.
 func extraClientConfigFromEnv() (*transport.ClientConfig, error) {
-	st, err := loadHeightSyncProcessState(nil)
+	st, err := loadHeightSyncProcessState(nil, effectiveChainRPC())
 	if err != nil || st == nil {
 		return nil, err
 	}

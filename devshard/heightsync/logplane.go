@@ -619,6 +619,9 @@ func checkL6(ctx context.Context, in LogPlaneInput, hbs []heartbeatRef, acks []a
 		if err != nil || hdr == nil {
 			return // still pending
 		}
+		if blocks.IsDummyHeader(hdr) {
+			return // old dapi / no /block/:height; do not mark
+		}
 		if bytes.Equal(hdr.BlockHash, hash) {
 			return
 		}

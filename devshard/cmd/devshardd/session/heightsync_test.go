@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -35,27 +34,7 @@ func TestSetHeightSyncFromEnv_InvalidK(t *testing.T) {
 }
 
 func TestSetHeightSyncFromEnv_WiresScheduler(t *testing.T) {
-	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/block/latest":
-			hdr := blocks.Header{
-				Height:    7,
-				Time:      time.Unix(1_700_000_000, 0).UTC(),
-				ChainID:   "gonka-test",
-				BlockHash: []byte{1, 2, 3, 4},
-			}
-			_ = json.NewEncoder(w).Encode(hdr)
-		case "/block/stream":
-			w.Header().Set("Content-Type", "text/event-stream")
-			w.WriteHeader(http.StatusOK)
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
-			}
-			<-r.Context().Done()
-		default:
-			http.NotFound(w, r)
-		}
-	}))
+	ts := httptest.NewServer(http.NotFoundHandler())
 	t.Cleanup(ts.Close)
 
 	t.Setenv("DEVSHARD_CHAINORACLE_URL", ts.URL)
@@ -69,6 +48,15 @@ func TestSetHeightSyncFromEnv_WiresScheduler(t *testing.T) {
 	require.Equal(t, uint64(10), mgr.heightSync.K())
 	require.Equal(t, uint64(1), mgr.heightSync.SlotsNum())
 	require.Len(t, mgr.transportServerOpts(), 3)
+	mgr.ObserveChainHeader(&blocks.Header{
+		Height:    7,
+		Time:      time.Unix(1_700_000_000, 0).UTC(),
+		ChainID:   "gonka-test",
+		BlockHash: []byte{1, 2, 3, 4},
+	})
+	hdr, err := mgr.chainOracle.Latest(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, int64(7), hdr.Height)
 	mgr.CloseHeightSync()
 	require.Nil(t, mgr.heightSync)
 }

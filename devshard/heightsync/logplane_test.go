@@ -443,6 +443,22 @@ func TestLogPlane_FutureDatedStampDeferredFail(t *testing.T) {
 	require.Equal(t, heightsync.MarkDeferredFail, res.DeferredFails[0].Kind)
 }
 
+func TestLogPlane_L6SkipsDummyOracleHeader(t *testing.T) {
+	st, _ := baseState(t, 3)
+	hash := []byte{0x01}
+	or := &mapOracle{
+		latest: blocks.DummyHeader(50),
+		at:     map[int64]*blocks.Header{50: blocks.DummyHeader(50)},
+	}
+	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce:  1,
+		Txs:    []*types.DevshardTx{hbTx(1, 50, 3, hash, nil)},
+		Oracle: or,
+	}, st)
+	require.NoError(t, res.Err)
+	require.Empty(t, res.DeferredFails)
+}
+
 func TestHeightAck_FalseSyncedDeferredFail(t *testing.T) {
 	st, signers := baseState(t, 3)
 	goodHash := []byte{0xaa}

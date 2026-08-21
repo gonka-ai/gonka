@@ -21,6 +21,7 @@ import (
 	"devshard/cmd/devshardd/inference"
 	"devshard/cmd/devshardd/session"
 	chaintx "devshard/cmd/devshardd/tx"
+	"devshard/chainoracle/blocks"
 	"devshard/hostevents"
 	"devshard/runtimeparams"
 	"devshard/signing"
@@ -308,6 +309,8 @@ func buildHostManager(
 
 	var lastCleanEpoch atomic.Uint64
 	chainRuntime.chainEvents.OnNewBlock(func(bctx context.Context, e events.NewBlockEvent) {
+		manager.ObserveChainHeader(blocks.HashOnlyHeader(e.BlockHeight, e.Time, e.ChainID, e.BlockHash))
+
 		currentEpoch := phase.EpochID()
 		if currentEpoch <= lastCleanEpoch.Load() {
 			return

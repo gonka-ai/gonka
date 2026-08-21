@@ -3,6 +3,7 @@
 package citest
 
 import (
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -15,11 +16,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestHeightSync_MockDapiBlockLatest is the 0.2.15-v5 stand-in: mock-dapi
-// mounts the same /block/* surface as ghcr.io/product-science/api:0.2.15-v5
-// (ak/height-sync-protocol-dapi). Real dapi cannot replace mock-dapi in this
+// TestHeightSync_MockDapiBlockAt is the 0.2.15-v5 stand-in: mock-dapi
+// mounts GET /block/:height. Real dapi cannot replace mock-dapi in this
 // stack because mock-chain is not CometBFT.
-func TestHeightSync_MockDapiBlockLatest(t *testing.T) {
+func TestHeightSync_MockDapiBlockAt(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
@@ -32,18 +32,18 @@ func TestHeightSync_MockDapiBlockLatest(t *testing.T) {
 	harness.WaitStackHealthy(t, stack, eps)
 
 	client := harness.HTTPClient()
-	h1 := mockDapiLatestHeight(t, client, eps.MockDapiHTTP)
-	require.Greater(t, h1, int64(0), "GET /block/latest height")
+	h1 := mockDapiMaxHeight(t, client, eps.MockDapiHTTP)
+	require.Greater(t, h1, int64(0), "GET /block/:height")
 	deadline := time.Now().Add(15 * time.Second)
 	var h2 int64
 	for time.Now().Before(deadline) {
 		time.Sleep(time.Second)
-		h2 = mockDapiLatestHeight(t, client, eps.MockDapiHTTP)
+		h2 = mockDapiMaxHeight(t, client, eps.MockDapiHTTP)
 		if h2 > h1 {
 			break
 		}
 	}
-	require.Greater(t, h2, h1, "mock-dapi /block/latest should advance")
+	require.Greater(t, h2, h1, "mock-dapi /block/:height should advance")
 }
 
 // TestHeightSync_CadenceEmitsAnchor is height-sync against new dapi (0.2.15-v5
@@ -143,7 +143,7 @@ func TestHeightSync_FeedStoppedOmitsThenRecovers(t *testing.T) {
 	stack.UnpauseService(t, "mock-dapi")
 	paused = false
 	harness.WaitGETOK(t, harness.HTTPClient(), eps.MockDapiHTTP+"/healthz", 2*time.Minute, "mock-dapi healthz after unpause", stack)
-	harness.WaitGETOK(t, harness.HTTPClient(), eps.MockDapiHTTP+"/block/latest", 2*time.Minute, "mock-dapi /block/latest after unpause", stack)
+	harness.WaitGETOK(t, harness.HTTPClient(), eps.MockDapiHTTP+"/block/1", 2*time.Minute, "mock-dapi /block/1 after unpause", stack)
 	time.Sleep(3 * time.Second)
 
 	postHeightSyncChat(t, cfg, eps, "citest height-sync after feed recover")
@@ -169,7 +169,7 @@ func TestHeightSync_LegacyDapiChatCompletes(t *testing.T) {
 	})
 	harness.WaitStackHealthy(t, stack, eps)
 
-	resp, err := harness.HTTPClient().Get(eps.MockDapiHTTP + "/block/latest")
+	resp, err := harness.HTTPClient().Get(eps.MockDapiHTTP + "/block/1")
 	require.NoError(t, err)
 	_ = resp.Body.Close()
 	require.Equal(t, http.StatusNotFound, resp.StatusCode, "0.2.15 dapi has no /block/*")
@@ -195,11 +195,19 @@ func postHeightSyncChat(t *testing.T, cfg *config.File, eps harness.Endpoints, p
 	harness.RequireMockOpenAIContent(t, resp.Choices[0].Message.Content)
 }
 
-func mockDapiLatestHeight(t *testing.T, client *http.Client, mockDapiHTTP string) int64 {
+func mockDapiMaxHeight(t *testing.T, client *http.Client, mockDapiHTTP string) int64 {
 	t.Helper()
-	var hdr struct {
-		Height int64 `json:"Height"`
+	var max int64
+	for h := int64(1); h < 10_000; h++ {
+		resp, err := client.Get(fmt.Sprintf("%s/block/%d", mockDapiHTTP, h))
+		if err != nil {
+			break
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			break
+		}
+		max = h
 	}
-	require.NoError(t, harness.GetJSON(client, mockDapiHTTP+"/block/latest", &hdr))
-	return hdr.Height
+	return max
 }

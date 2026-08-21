@@ -57,3 +57,19 @@ func TestObserver_ResultBlockToHeader_HashOnly(t *testing.T) {
 	require.Empty(t, got.NextValidatorsHash)
 	require.Empty(t, got.AppHash)
 }
+
+func TestHeaderFromNewBlock(t *testing.T) {
+	block := cmttypes.MakeBlock(12, nil, nil, nil)
+	block.Header.ChainID = "gonka-test"
+	block.Header.Time = time.Unix(1_700_000_000, 0).UTC()
+	block.Header.ValidatorsHash = bytes.Repeat([]byte{0xab}, 32)
+	want := block.Header.Hash().Bytes()
+	got, ok := HeaderFromNewBlock(cmttypes.EventDataNewBlock{
+		Block:   block,
+		BlockID: cmttypes.BlockID{Hash: want},
+	})
+	require.True(t, ok)
+	require.Equal(t, int64(12), got.Height)
+	require.Equal(t, want, got.BlockHash)
+	require.Equal(t, "gonka-test", got.ChainID)
+}

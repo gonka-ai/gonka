@@ -386,7 +386,7 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 	if err != nil {
 		log.Fatalf("dial chain gRPC %s: %v", gatewayState.Settings.ChainGRPC, err)
 	}
-	if err := initGatewayHeightSync(chainClient); err != nil {
+	if err := initGatewayHeightSync(chainClient, cometRPCForHeightSync(gatewayState.Settings.ChainGRPC)); err != nil {
 		log.Fatalf("height sync oracle: %v", err)
 	}
 

@@ -11,6 +11,8 @@ import (
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	ctypes "github.com/cometbft/cometbft/rpc/core/types"
 	cmttypes "github.com/cometbft/cometbft/types"
+
+	"devshard/chainoracle/blocks/observer"
 )
 
 const (
@@ -202,13 +204,23 @@ func parseTxEvent[T txEventParser[T]](result ctypes.ResultEvent) (out T, ok bool
 	return
 }
 
-// parseNewBlockEvent extracts height from a NewBlock ResultEvent.
+// parseNewBlockEvent extracts height, hash, time, and chain id from a
+// NewBlock ResultEvent.
 func parseNewBlockEvent(result ctypes.ResultEvent) (NewBlockEvent, bool) {
 	data, ok := result.Data.(cmttypes.EventDataNewBlock)
 	if !ok {
 		return NewBlockEvent{}, false
 	}
-	return NewBlockEvent{BlockHeight: data.Block.Height}, true
+	hdr, ok := observer.HeaderFromNewBlock(data)
+	if !ok {
+		return NewBlockEvent{}, false
+	}
+	return NewBlockEvent{
+		BlockHeight: hdr.Height,
+		BlockHash:   hdr.BlockHash,
+		Time:        hdr.Time,
+		ChainID:     hdr.ChainID,
+	}, true
 }
 
 func attr(ev abci.Event, key string) string {

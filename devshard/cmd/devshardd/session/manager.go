@@ -73,6 +73,7 @@ type HostManager struct {
 	chainOracle      blocks.BlockOracle
 	heightSync       *heightsync.AnchorScheduler
 	heightSyncCloser func()
+	heightSyncTip    interface{ Observe(h *blocks.Header) }
 }
 
 const (

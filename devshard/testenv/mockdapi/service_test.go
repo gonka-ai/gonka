@@ -1,7 +1,6 @@
 package mockdapi_test
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"net"
@@ -164,7 +163,7 @@ func TestMockDAPI_OmitBlockRoutes_LooksLikeOldDapi(t *testing.T) {
 	_ = vers.Body.Close()
 	require.Equal(t, http.StatusOK, vers.StatusCode)
 
-	latest, err := http.Get(bed.httpURL + "/block/latest")
+	latest, err := http.Get(bed.httpURL + "/block/1")
 	require.NoError(t, err)
 	_ = latest.Body.Close()
 	require.Equal(t, http.StatusNotFound, latest.StatusCode)
@@ -257,31 +256,27 @@ func TestMockDAPI_VersionsJSON(t *testing.T) {
 	require.Equal(t, updated, cfg)
 }
 
-func TestMockDAPI_BlockStreamMonotonic(t *testing.T) {
+func TestMockDAPI_BlockAtAdvances(t *testing.T) {
 	bed := startBed(t)
 	t.Cleanup(bed.cleanup)
 
-	req, err := http.NewRequestWithContext(context.Background(), http.MethodGet, bed.httpURL+"/block/stream?from=1", nil)
-	require.NoError(t, err)
-	resp, err := http.DefaultClient.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	require.Equal(t, http.StatusOK, resp.StatusCode)
+	require.Eventually(t, func() bool {
+		resp, err := http.Get(bed.httpURL + "/block/1")
+		if err != nil {
+			return false
+		}
+		_ = resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	}, 3*time.Second, 20*time.Millisecond)
 
-	reader := bufio.NewReader(resp.Body)
-	var lastHeight int64
-	for i := 0; i < 2; i++ {
-		line, err := readSSEDataLine(reader)
-		require.NoError(t, err)
-		var hdr struct {
-			Height int64 `json:"height"`
+	require.Eventually(t, func() bool {
+		resp, err := http.Get(bed.httpURL + "/block/2")
+		if err != nil {
+			return false
 		}
-		require.NoError(t, json.Unmarshal([]byte(line), &hdr))
-		if i > 0 {
-			require.Greater(t, hdr.Height, lastHeight)
-		}
-		lastHeight = hdr.Height
-	}
+		_ = resp.Body.Close()
+		return resp.StatusCode == http.StatusOK
+	}, 3*time.Second, 50*time.Millisecond)
 }
 
 func TestMockDAPI_AcquireMLNode(t *testing.T) {
@@ -295,17 +290,4 @@ func TestMockDAPI_AcquireMLNode(t *testing.T) {
 	resp, err := gen.NewNodeManagerClient(conn).AcquireMLNode(context.Background(), &gen.AcquireMLNodeRequest{Model: "test-model"})
 	require.NoError(t, err)
 	require.Equal(t, "http://mock-openai:8088", resp.Endpoint)
-}
-
-func readSSEDataLine(r *bufio.Reader) (string, error) {
-	for {
-		line, err := r.ReadString('\n')
-		if err != nil {
-			return "", err
-		}
-		line = strings.TrimSpace(line)
-		if strings.HasPrefix(line, "data: ") {
-			return strings.TrimPrefix(line, "data: "), nil
-		}
-	}
 }

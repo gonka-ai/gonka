@@ -14,6 +14,7 @@ import (
 	blockclient "devshard/chainoracle/blocks/client"
 	"devshard/chainoracle/blocks/direct"
 	"devshard/chainoracle/blocks/failover"
+	"devshard/chainoracle/blocks/tipcache"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/transport"
@@ -33,6 +34,12 @@ const (
 // DEVSHARD_CHAINORACLE_URL and unset DEVSHARD_HEIGHTSYNC is a no-op even when
 // chainClient is non-nil (compose always has NODE_GRPC_URL). Call before
 // RecoverSessions so recovered sessions pick up WithHeightSync / WithChainOracle.
+//
+// Tip (Latest/Subscribe) is the Comet NewBlock cache. Direct chain is
+// used only when that cache is empty (listener not yet connected, or
+// down). DEVSHARD_CHAINORACLE_URL is unary GET /block/:height and /prove;
+// a down dapi falls back to chain At, a missing route returns a dummy
+// header. No /block/latest or /block/stream.
 func (m *HostManager) SetHeightSyncFromEnv(ctx context.Context, chainClient *chain.Client) error {
 	if m == nil {
 		return nil
@@ -49,51 +56,63 @@ func (m *HostManager) SetHeightSyncFromEnv(ctx context.Context, chainClient *cha
 	if err != nil {
 		return err
 	}
-	probe, err := parseDurationEnv(envHeightSyncProbe)
-	if err != nil {
+	if _, err := parseDurationEnv(envHeightSyncProbe); err != nil {
 		return err
 	}
 
-	var httpOracle *blockclient.Client
+	var lookup *blockclient.Lookup
 	if url != "" {
-		cli, err := blockclient.NewHTTP(ctx, blockclient.HTTPConfig{BaseURL: url})
+		cli, err := blockclient.NewLookup(blockclient.HTTPConfig{BaseURL: url})
 		if err != nil {
-			return fmt.Errorf("chainoracle http client: %w", err)
+			return fmt.Errorf("chainoracle lookup client: %w", err)
 		}
-		httpOracle = cli
+		lookup = cli
 	}
 
-	var chainOracle = direct.NewFromChain(chainClient, chainRPCFromEnv())
-	if httpOracle == nil && chainClient == nil {
+	var chainOracle blocks.BlockOracle
+	if chainClient != nil || chainRPCFromEnv() != "" {
+		chainOracle = direct.NewFromChain(chainClient, chainRPCFromEnv())
+	}
+	if lookup == nil && chainOracle == nil {
 		return fmt.Errorf("%s set but no %s and no chain client", envHeightSync, envChainOracleURL)
 	}
 
-	var httpBlk blocks.BlockOracle
-	var closer func()
-	if httpOracle != nil {
-		httpBlk = httpOracle
-		closer = httpOracle.Close
+	cache := tipcache.New(0)
+	var hist failover.History
+	if lookup != nil {
+		hist = lookup
 	}
-	oracle := failover.New(httpBlk, chainOracle, failover.Config{ProbeInterval: probe}, closer)
+	oracle := failover.New(cache, hist, chainOracle)
 
 	sched, err := heightsync.NewAnchorSchedulerFromOracle(k, slots, oracle)
 	if err != nil {
-		if closer != nil {
-			closer()
+		if lookup != nil {
+			lookup.Close()
 		}
 		return fmt.Errorf("height-sync scheduler: %w", err)
 	}
 
 	m.chainOracle = oracle
 	m.heightSync = sched
-	m.heightSyncCloser = closer
+	m.heightSyncTip = cache
+	if lookup != nil {
+		m.heightSyncCloser = lookup.Close
+	}
 	logging.Info("height sync enabled", inferenceTypes.System,
 		"oracle_url", url,
 		"k", sched.K(),
 		"slots", sched.SlotsNum(),
-		"direct_chain", chainClient != nil,
+		"direct_chain", chainOracle != nil,
 	)
 	return nil
+}
+
+// ObserveChainHeader records a Comet NewBlock on the height-sync tip cache.
+func (m *HostManager) ObserveChainHeader(h *blocks.Header) {
+	if m == nil || m.heightSyncTip == nil {
+		return
+	}
+	m.heightSyncTip.Observe(h)
 }
 
 // CloseHeightSync stops the optional chainoracle HTTP client. Idempotent.
@@ -107,6 +126,7 @@ func (m *HostManager) CloseHeightSync() {
 	}
 	m.chainOracle = nil
 	m.heightSync = nil
+	m.heightSyncTip = nil
 }
 
 func heightSyncFlag() bool {

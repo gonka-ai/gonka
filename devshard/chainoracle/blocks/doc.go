@@ -4,9 +4,13 @@
 // Ported from devshard-testenv blockoracle and renamed as part of the unified
 // chainoracle module (see devshard/docs/testenv-v2-plan.md Phase 2).
 //
-// Production decentralized-api will mount the HTTP + SSE API in-process with a
-// real Tendermint observer; testenv mock-dapi mounts the same routes via
-// devshard/chainoracle/server with a mock observer.
+// Hosts take Latest/Subscribe from the existing Comet NewBlock subscription
+// (hash + time on the event). HTTP lookup is GET /block/:height and
+// GET /block/:height/prove. Missing /block/:height (0.2.15 dapi)
+// returns a dummy header so L6 does not mark.
+//
+// Production decentralized-api and testenv mock-dapi mount those unary
+// routes via devshard/chainoracle/server.
 //
 // Strict dependency rule: this package and sub-packages MUST NOT import
 // devshard/testenv, devshard/host, or devshard/heightsync.

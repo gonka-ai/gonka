@@ -3,6 +3,7 @@ package standalone_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -161,155 +162,96 @@ func TestService_Healthz(t *testing.T) {
 	require.Equal(t, "ok", strings.TrimSpace(string(body)))
 }
 
-// TestService_LatestAfterAdvance drives the observer manually (no
-// dependency on wall clock) and checks GET /block/latest returns a
+// TestService_AtAfterAdvance drives the observer manually (no
+// dependency on wall clock) and checks GET /block/:height returns a
 // verifiable header.
-//
-// The observer emits its genesis header as soon as Run starts, so we
-// wait for the height to reach ≥1 via /block/latest before asserting.
-func TestService_LatestAfterAdvance(t *testing.T) {
+func TestService_AtAfterAdvance(t *testing.T) {
 	svc, base, vs := newService(t)
 	runInBackground(t, svc)
 
-	got := waitForLatestHeight(t, base, 1)
+	got := waitForHeight(t, base, 1)
 	require.Equal(t, "gonka-testenv-1", got.ChainID)
 	require.EqualValues(t, 1, got.Height)
 
-	// Drive one more manual header and re-check.
 	_, err := svc.Observer().AdvanceOne()
 	require.NoError(t, err)
-	got = waitForLatestHeight(t, base, 2)
+	got = waitForHeight(t, base, 2)
 	require.EqualValues(t, 2, got.Height)
 
-	// Multi-validator pinned verification passes on the header the
-	// client saw. 10 validators × power 1 ⇒ need 7/10 for > 2/3; the
-	// mock guarantees ≥ 8.
 	v := verifier.New(vs)
 	require.NoError(t, v.Verify(got, 0))
 	require.GreaterOrEqual(t, len(got.Commit.Signatures), 8,
 		"multi-validator mock must retain > 3/4 of signatures")
 }
 
-// waitForLatestHeight polls /block/latest until latest.Height ≥ min or
-// a short deadline expires. It returns the final decoded header.
-func waitForLatestHeight(t *testing.T, base string, min int64) *blocks.Header {
+func waitForHeight(t *testing.T, base string, height int64) *blocks.Header {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		resp, body := httpGet(t, base+"/block/latest")
+		resp, body := httpGet(t, fmt.Sprintf("%s/block/%d", base, height))
 		if resp.StatusCode == http.StatusOK {
 			var h blocks.Header
 			require.NoError(t, json.Unmarshal(body, &h))
-			if h.Height >= min {
-				return &h
-			}
+			return &h
 		}
 		if time.Now().After(deadline) {
-			t.Fatalf("observer did not reach height %d in time", min)
+			t.Fatalf("observer did not produce height %d in time (status %d)", height, resp.StatusCode)
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 }
 
-// TestService_StreamDeliversVerifiedHeaders wires the standalone server
-// to the production client and checks that the client successfully
-// verifies the headers produced by the observer. This is the end-to-end
-// contract that non-host consumers (devshardctl) rely on.
-//
-// Observer.Run emits one genesis header immediately, and we drive three
-// more manually: consumers must receive all four in order (heights
-// 1..4) with valid multi-signatures.
-func TestService_StreamDeliversVerifiedHeaders(t *testing.T) {
+// TestService_LookupAtVerifiedHeaders uses the unary lookup client against
+// GET /block/:height after AdvanceOne.
+func TestService_LookupAtVerifiedHeaders(t *testing.T) {
 	svc, base, vs := newService(t)
 	runInBackground(t, svc)
-
-	// Wait for genesis so the subscription actually has a replay window.
-	_ = waitForLatestHeight(t, base, 1)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	cli, err := client.NewHTTP(ctx, client.HTTPConfig{
-		BaseURL:       base,
-		Verifier:      verifier.New(vs),
-		SubscribeFrom: 1,
-	})
-	require.NoError(t, err)
-
-	sub, err := cli.Subscribe(ctx, 1)
-	require.NoError(t, err)
-
+	_ = waitForHeight(t, base, 1)
 	for i := 0; i < 3; i++ {
 		_, err := svc.Observer().AdvanceOne()
 		require.NoError(t, err)
 	}
+	_ = waitForHeight(t, base, 4)
 
-	received := make([]*blocks.Header, 0, 4)
-	for i := 0; i < 4; i++ {
-		select {
-		case h, alive := <-sub:
-			require.True(t, alive, "subscription closed early at i=%d", i)
-			received = append(received, h)
-		case <-ctx.Done():
-			t.Fatalf("timed out waiting for header %d (got %d so far)", i, len(received))
-		}
-	}
+	cli, err := client.NewLookup(client.HTTPConfig{
+		BaseURL:  base,
+		Verifier: verifier.New(vs),
+	})
+	require.NoError(t, err)
 
-	for i, h := range received {
-		require.EqualValues(t, int64(i+1), h.Height)
+	for i := int64(1); i <= 4; i++ {
+		h, err := cli.At(context.Background(), i)
+		require.NoError(t, err)
+		require.EqualValues(t, i, h.Height)
 		require.Equal(t, "gonka-testenv-1", h.ChainID)
-		// Every header delivered to a verifying client must have passed
-		// the > 2/3 rule; since the mock guarantees > 3/4, that's always
-		// at least 8 sigs of 10.
 		require.GreaterOrEqual(t, len(h.Commit.Signatures), 8)
 	}
 }
 
-// TestService_HostTrustMode asserts a host-style consumer (nil
-// Verifier) receives the full header including every Commit.Signature
-// and does NOT treat a fully-trusted stream as "rejected".
+// TestService_HostTrustMode asserts a host-style consumer (nil Verifier)
+// receives the full header including every Commit.Signature.
 func TestService_HostTrustMode(t *testing.T) {
 	svc, base, _ := newService(t)
 	runInBackground(t, svc)
+	_ = waitForHeight(t, base, 1)
+	_, err := svc.Observer().AdvanceOne()
+	require.NoError(t, err)
+	_ = waitForHeight(t, base, 2)
 
-	_ = waitForLatestHeight(t, base, 1)
-
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	cli, err := client.NewHTTP(ctx, client.HTTPConfig{
-		BaseURL:       base,
-		Verifier:      nil, // host trust mode
-		SubscribeFrom: 1,
-	})
+	cli, err := client.NewLookup(client.HTTPConfig{BaseURL: base})
 	require.NoError(t, err)
 
-	sub, err := cli.Subscribe(ctx, 1)
-	require.NoError(t, err)
-
-	for i := 0; i < 2; i++ {
-		_, err := svc.Observer().AdvanceOne()
+	for i := int64(1); i <= 2; i++ {
+		h, err := cli.At(context.Background(), i)
 		require.NoError(t, err)
-	}
-
-	for i := 0; i < 3; i++ {
-		select {
-		case h := <-sub:
-			// Host caches the full header, including every signature,
-			// so downstream settlement can forward them as proofs.
-			require.NotNil(t, h.Commit.Signatures)
-			require.GreaterOrEqual(t, len(h.Commit.Signatures), 8,
-				"trusted consumer still receives full multi-sig commit")
-			for _, sig := range h.Commit.Signatures {
-				require.Len(t, sig.Signature, 65)
-				require.Len(t, sig.ValidatorAddress, 20)
-			}
-		case <-ctx.Done():
-			t.Fatalf("timed out at i=%d", i)
+		require.NotNil(t, h.Commit.Signatures)
+		require.GreaterOrEqual(t, len(h.Commit.Signatures), 8,
+			"trusted consumer still receives full multi-sig commit")
+		for _, sig := range h.Commit.Signatures {
+			require.Len(t, sig.Signature, 65)
+			require.Len(t, sig.ValidatorAddress, 20)
 		}
 	}
-	// Zero rejections: trust mode never drops headers.
-	require.Zero(t, cli.RejectedCount())
 }
 
 // TestService_RejectsSubsequentReadOfMissingHeight asserts that
