@@ -3,12 +3,15 @@ package docker
 import (
 	"errors"
 	"fmt"
+	"os"
 	"slices"
+	"strings"
 	"testing"
 
 	cerrdefs "github.com/containerd/errdefs"
 	"github.com/moby/moby/api/types/container"
 
+	"trainshard/internal/domain/run"
 	"trainshard/internal/domain/shared"
 	"trainshard/internal/domain/shared/vo"
 )
@@ -195,7 +198,7 @@ func TestGPURequests(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			// act
-			got := gpuRequests(tc.count)
+			got := (&Client{}).gpuRequests(tc.count)
 
 			// assert
 			if len(got) != tc.want {
@@ -204,13 +207,27 @@ func TestGPURequests(t *testing.T) {
 			if tc.want == 0 {
 				return
 			}
-			if got[0].Driver != "nvidia" || got[0].Count != tc.count {
+			if got[0].Driver != "" || got[0].Count != tc.count {
 				t.Fatalf("request = %+v", got[0])
 			}
 			if len(got[0].Capabilities) != 1 || !slices.Equal(got[0].Capabilities[0], []string{"gpu"}) {
 				t.Fatalf("capabilities = %+v", got[0].Capabilities)
 			}
 		})
+	}
+}
+
+// An engine that only knows a card by name is asked for it by name, one device per card
+func TestGPURequestsNameTheDevicesWhenTheEngineNeedsThem(t *testing.T) {
+	// act
+	got := (&Client{cfg: Config{GPUKind: "nvidia.com/gpu"}}).gpuRequests(2)
+
+	// assert
+	if len(got) != 1 || got[0].Driver != "cdi" {
+		t.Fatalf("request = %+v", got)
+	}
+	if !slices.Equal(got[0].DeviceIDs, []string{"nvidia.com/gpu=0", "nvidia.com/gpu=1"}) {
+		t.Fatalf("devices = %v", got[0].DeviceIDs)
 	}
 }
 
@@ -233,6 +250,50 @@ func TestNamesAndLabelsIdentifyTheRun(t *testing.T) {
 	}
 	if tags[labelShard] != "42" || tags[labelNode] != "node-7" || tags[labelRole] != "run" {
 		t.Fatalf("labels = %v", tags)
+	}
+}
+
+// A run that named no source keeps the engine's own hosts file, and one that named a source gets it
+// as a file, since the engine refuses host entries to a container living in another one's network
+func TestSourcesReachTheRunAsAHostsFile(t *testing.T) {
+	// arrange
+	client := &Client{cfg: Config{VolumeRoot: t.TempDir()}}
+	spec := run.ContainerSpec{Shard: vo.ShardID(42), Node: node()}
+	if err := os.MkdirAll(client.volumePath(spec.Shard, spec.Node), 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	// act
+	plain, err := client.binds(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// assert
+	if len(plain) != 1 {
+		t.Fatalf("binds = %v", plain)
+	}
+
+	// act
+	spec.Hosts = []run.PinnedHost{{Name: "registry.example", IP: "10.0.0.7"}}
+	pinned, err := client.binds(spec)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// assert
+	if len(pinned) != 2 || !strings.HasSuffix(pinned[1], ":/etc/hosts:ro") {
+		t.Fatalf("binds = %v", pinned)
+	}
+	written, err := os.ReadFile(client.hostsPath(spec.Shard, spec.Node))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(written), "10.0.0.7\tregistry.example") {
+		t.Fatalf("hosts file = %q", written)
+	}
+	if !strings.Contains(string(written), "localhost") {
+		t.Fatal("the run still has to resolve localhost")
 	}
 }
 

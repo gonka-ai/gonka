@@ -28,8 +28,9 @@ func volumes(t *testing.T) *Volumes {
 
 func TestParseQuota(t *testing.T) {
 	// arrange
-	report := "#101         512      0      1024  00 [--------]\n" +
-		"#202        2048      0      8192  00 [--------]\n"
+	report := "#0                  12          0          0     00 [--------]\n" +
+		"#101               512          0       1024     00 [--------]\n" +
+		"#202              2048          0       8192     00 [--------]\n"
 
 	t.Run("blocks become bytes", func(t *testing.T) {
 		// act

@@ -24,6 +24,8 @@ type Config struct {
 
 	SandboxImage string
 
+	GPUKind string
+
 	MemoryBytes int64
 	NanoCPUs    int64
 	PidsLimit   int64

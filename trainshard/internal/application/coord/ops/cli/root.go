@@ -132,11 +132,27 @@ func (c *Commands) Status(ctx context.Context, args []string) error {
 
 	out := tabwriter.NewWriter(c.out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(out, "NODE\tSTATE\tPREPARED\tMESH\tGPUS\tDISK\tQUOTA\tREASON")
+	silent := 0
 	for _, node := range statuses {
+		if node.Fault != nil {
+			silent++
+		}
 		fmt.Fprintf(out, "%s\t%s\t%t\t%t\t%d\t%d\t%d\t%s\n",
 			node.Node, node.State, node.Prepared, node.MeshUp, node.GPUsInUse, node.DiskBytes, node.DiskQuotaBytes, reason(node.Fault))
 	}
-	return out.Flush()
+	if err := out.Flush(); err != nil {
+		return err
+	}
+	return told(silent, len(statuses))
+}
+
+// A node that answers with a fault is still an answer, but a run where none of them did leaves the
+// caller knowing nothing, and a caller that is turned away has to hear it in the exit code
+func told(silent, asked int) error {
+	if asked > 0 && silent == asked {
+		return fmt.Errorf("none of %d nodes answered", asked)
+	}
+	return nil
 }
 
 func (c *Commands) Report(ctx context.Context, args []string) error {
@@ -156,7 +172,11 @@ func (c *Commands) Report(ctx context.Context, args []string) error {
 
 	out := tabwriter.NewWriter(c.out, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(out, "NODE\tIMAGE\tRAN AT\tEXIT\tREASON")
+	silent := 0
 	for _, node := range reports {
+		if node.Fault != nil {
+			silent++
+		}
 		if len(node.Images) == 0 {
 			fmt.Fprintf(out, "%s\t\t\t%s\t%s\n", node.Node, exit(node.ExitCode), reason(node.Fault))
 			continue
@@ -166,7 +186,10 @@ func (c *Commands) Report(ctx context.Context, args []string) error {
 				node.Node, image.Image, image.At.UTC().Format(time.RFC3339), exit(node.ExitCode), reason(node.Fault))
 		}
 	}
-	return out.Flush()
+	if err := out.Flush(); err != nil {
+		return err
+	}
+	return told(silent, len(reports))
 }
 
 func (c *Commands) Artifacts(ctx context.Context, args []string) error {
