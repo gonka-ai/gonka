@@ -12,7 +12,7 @@ import (
 
 	commrc "common/runtimeconfig"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/internal/statetest"

@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
+	"common/chainoracle/blocks/server"
 	"devshard/chainoracle/blocks/observer"
-	"devshard/chainoracle/blocks/server"
 	"devshard/signing"
 
 	"github.com/labstack/echo/v4"

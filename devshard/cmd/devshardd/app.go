@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"common/chain"
+	"common/chainoracle/blocks"
 	mlnodeclient "common/nodemanager"
 	commrc "common/runtimeconfig"
 	"common/storage/payloads"
@@ -21,7 +22,6 @@ import (
 	"devshard/cmd/devshardd/inference"
 	"devshard/cmd/devshardd/session"
 	chaintx "devshard/cmd/devshardd/tx"
-	"devshard/chainoracle/blocks"
 	"devshard/hostevents"
 	"devshard/runtimeparams"
 	"devshard/signing"

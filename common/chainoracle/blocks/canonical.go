@@ -11,9 +11,6 @@ import (
 // The Commit field is intentionally excluded: signatures inside the Commit
 // are computed over these bytes, so the Commit cannot be part of the signed
 // payload. Every other field is bound.
-//
-// Stability: once shipped, changes to this encoding require a version bump
-// of the blockoracle wire protocol. See §3.2 in devshard/docs/testenv.md.
 func CanonicalHeaderBytes(h *Header) []byte {
 	if h == nil {
 		return nil

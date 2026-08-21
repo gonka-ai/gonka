@@ -4,7 +4,7 @@ import (
 	"strings"
 	"time"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 )
 
 // DefaultOriginatorFreshness is the courier carry-forward budget F (proposal default).

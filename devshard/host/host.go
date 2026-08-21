@@ -15,8 +15,8 @@ import (
 
 	"common/completionapi"
 
+	"common/chainoracle/blocks"
 	"devshard"
-	"devshard/chainoracle/blocks"
 	"devshard/gossip"
 	"devshard/heightsync"
 	"devshard/logging"

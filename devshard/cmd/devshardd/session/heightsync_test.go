@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 	"devshard/internal/testutil"
 	"devshard/stub"
 

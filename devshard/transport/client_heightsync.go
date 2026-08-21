@@ -8,7 +8,7 @@ import (
 
 	json "github.com/goccy/go-json"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"

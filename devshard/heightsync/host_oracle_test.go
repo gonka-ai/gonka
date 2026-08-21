@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 	"devshard/chainoracle/blocks/failover"
 	"devshard/heightsync"
 

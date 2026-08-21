@@ -12,7 +12,7 @@ import (
 	"time"
 
 	"common/chain"
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 
 	"github.com/cometbft/cometbft/proto/tendermint/types"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 	"devshard/chainoracle/blocks/client"
 	"devshard/chainoracle/blocks/standalone"
 	"devshard/chainoracle/blocks/verifier"

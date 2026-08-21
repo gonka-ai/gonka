@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 	"devshard/heightsync"
 
 	"github.com/stretchr/testify/require"

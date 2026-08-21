@@ -4,7 +4,7 @@ import (
 	"strings"
 	"sync"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 )
 
 const defaultAuditRingCapacity = 1024

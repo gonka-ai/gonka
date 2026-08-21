@@ -3,7 +3,7 @@ package tipcache
 import (
 	"context"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 )
 
 // WithBootstrap is Latest from the Comet cache, falling back to a chain

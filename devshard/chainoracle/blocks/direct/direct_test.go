@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 	"devshard/chainoracle/blocks/direct"
 
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"

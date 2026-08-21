@@ -6,8 +6,8 @@ import (
 	"context"
 	"net/http"
 
-	"devshard/chainoracle/blocks"
-	blockserver "devshard/chainoracle/blocks/server"
+	"common/chainoracle/blocks"
+	blockserver "common/chainoracle/blocks/server"
 
 	"github.com/labstack/echo/v4"
 )

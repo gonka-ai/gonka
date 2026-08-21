@@ -10,7 +10,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 )
 
 const subBufSize = 16

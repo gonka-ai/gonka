@@ -6,7 +6,7 @@ import (
 	"log/slog"
 	"time"
 
-	"devshard/chainoracle/blocks/observer"
+	"common/chainoracle/blocks/observer"
 
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	cmttypes "github.com/cometbft/cometbft/types"

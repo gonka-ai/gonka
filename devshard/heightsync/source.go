@@ -5,7 +5,7 @@ import (
 	"encoding/hex"
 	"time"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 )
 
 // OracleSource supplies Anchor sections for AnchorScheduler.Decide.

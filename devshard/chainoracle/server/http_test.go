@@ -8,9 +8,9 @@ import (
 	"testing"
 	"time"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
+	blockserver "common/chainoracle/blocks/server"
 	"devshard/chainoracle/blocks/observer"
-	blockserver "devshard/chainoracle/blocks/server"
 	"devshard/chainoracle/server"
 	"devshard/signing"
 

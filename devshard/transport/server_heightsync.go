@@ -11,7 +11,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"
@@ -269,10 +269,10 @@ func (s *Server) recordInboundAnchorIfAnchor(peerID string, hs *heightsync.Heigh
 		return
 	}
 	s.heightSyncAudit.Append(heightsync.AnchorAttestation{
-		PeerID:             peerID,
-		Direction:          "request",
-		MainnetHeight:      hs.MainnetHeight,
-		MainnetBlockHash:   raw,
+		PeerID:                peerID,
+		Direction:             "request",
+		MainnetHeight:         hs.MainnetHeight,
+		MainnetBlockHash:      raw,
 		ObservedAtUnixMs:      time.Now().UnixMilli(),
 		SourceMessage:         source,
 		Trust:                 v.Trust,
@@ -295,10 +295,10 @@ func (s *Server) recordInboundDispute(peerID string, hs *heightsync.HeightSyncSe
 		raw = nil
 	}
 	s.heightSyncAudit.Append(heightsync.AnchorAttestation{
-		PeerID:             peerID,
-		Direction:          "request",
-		MainnetHeight:      hs.MainnetHeight,
-		MainnetBlockHash:   raw,
+		PeerID:                peerID,
+		Direction:             "request",
+		MainnetHeight:         hs.MainnetHeight,
+		MainnetBlockHash:      raw,
 		ObservedAtUnixMs:      time.Now().UnixMilli(),
 		SourceMessage:         source,
 		Trust:                 v.Trust,
@@ -402,10 +402,10 @@ func (s *Server) recordOutboundAnchorIfAnchor(hs *heightsync.HeightSyncSection, 
 	}
 	localID := s.host.Signer().Address()
 	s.heightSyncAudit.Append(heightsync.AnchorAttestation{
-		PeerID:             localID,
-		Direction:          "response",
-		MainnetHeight:      hs.MainnetHeight,
-		MainnetBlockHash:   raw,
+		PeerID:                localID,
+		Direction:             "response",
+		MainnetHeight:         hs.MainnetHeight,
+		MainnetBlockHash:      raw,
 		ObservedAtUnixMs:      time.Now().UnixMilli(),
 		SourceMessage:         source,
 		Trust:                 heightsync.TrustOracle,

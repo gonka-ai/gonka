@@ -4,7 +4,7 @@ import (
 	"context"
 	"sync/atomic"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 )
 
 type heightSyncTestOracle struct {

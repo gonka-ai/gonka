@@ -4,9 +4,9 @@ import "time"
 
 // Header is the authenticated mainnet block header exposed to consumers.
 //
-// The wire shape (see §3.3 in devshard/docs/testenv.md) is intentionally a
-// superset of what devshardd currently needs so future consumers (e.g.
-// settlement proofs, validator-set rotation) can use the same transport.
+// The wire shape is intentionally a superset of what hosts currently need
+// so future consumers (settlement proofs, validator-set rotation) can use
+// the same transport.
 type Header struct {
 	Height             int64
 	Time               time.Time

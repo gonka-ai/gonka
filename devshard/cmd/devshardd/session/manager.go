@@ -25,9 +25,9 @@ import (
 	"github.com/productscience/inference/x/inference/calculations"
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
 
+	"common/chainoracle/blocks"
 	devshardpkg "devshard"
 	"devshard/bridge"
-	"devshard/chainoracle/blocks"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/observability"

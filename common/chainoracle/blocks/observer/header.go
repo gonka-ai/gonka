@@ -3,7 +3,7 @@ package observer
 import (
 	"fmt"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 
 	ctypes "github.com/cometbft/cometbft/rpc/core/types"
 	cmttypes "github.com/cometbft/cometbft/types"

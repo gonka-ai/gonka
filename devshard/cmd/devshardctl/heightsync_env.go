@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"common/chain"
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 	blockclient "devshard/chainoracle/blocks/client"
 	"devshard/chainoracle/blocks/direct"
 	"devshard/chainoracle/blocks/failover"

@@ -25,9 +25,9 @@ type BlockOracle interface {
 	Subscribe(ctx context.Context, fromHeight int64) (<-chan *Header, error)
 }
 
-// HashOnlyHeader is the hash-only wire payload: height + block hash
-// (+ time/chain id). Commit and validator hashes stay empty until Strong
-// (spec §8 / §15).
+// HashOnlyHeader is the hash-only wire payload: height, block hash,
+// block timestamp, and chain id. Commit and validator hashes stay empty
+// until Strong (spec §8 / §15).
 func HashOnlyHeader(height int64, t time.Time, chainID string, blockHash []byte) *Header {
 	return &Header{
 		Height:    height,

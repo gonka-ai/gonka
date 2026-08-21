@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 	"devshard/logging"
 	"devshard/signing"
 	"devshard/types"

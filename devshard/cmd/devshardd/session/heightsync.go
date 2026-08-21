@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"common/chain"
+	"common/chainoracle/blocks"
 	"common/logging"
-	"devshard/chainoracle/blocks"
 	blockclient "devshard/chainoracle/blocks/client"
 	"devshard/chainoracle/blocks/direct"
 	"devshard/chainoracle/blocks/failover"

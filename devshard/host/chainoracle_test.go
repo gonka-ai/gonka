@@ -8,7 +8,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
@@ -39,8 +39,8 @@ func (f *fakeOracle) setErr(err error) {
 }
 
 func (f *fakeOracle) setHash(h []byte) { f.hash.Store(append([]byte(nil), h...)) }
-func (f *fakeOracle) setStale(v bool) { f.stale.Store(v) }
-func (f *fakeOracle) Stale() bool     { return f.stale.Load() }
+func (f *fakeOracle) setStale(v bool)  { f.stale.Store(v) }
+func (f *fakeOracle) Stale() bool      { return f.stale.Load() }
 
 func (f *fakeOracle) Latest(ctx context.Context) (*blocks.Header, error) {
 	f.latestCalls.Add(1)

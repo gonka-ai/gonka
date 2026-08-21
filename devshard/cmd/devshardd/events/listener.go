@@ -12,7 +12,7 @@ import (
 	ctypes "github.com/cometbft/cometbft/rpc/core/types"
 	cmttypes "github.com/cometbft/cometbft/types"
 
-	"devshard/chainoracle/blocks/observer"
+	"common/chainoracle/blocks/observer"
 )
 
 const (

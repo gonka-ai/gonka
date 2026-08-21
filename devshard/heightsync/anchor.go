@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 )
 
 const (

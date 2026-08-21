@@ -4,7 +4,7 @@ import (
 	"context"
 	"time"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/types"

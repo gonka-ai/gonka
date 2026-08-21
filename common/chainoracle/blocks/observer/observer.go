@@ -1,15 +1,15 @@
-// Package observer produces authenticated block headers from a chain
-// source (Tendermint RPC in production, a mock fabricator in testenv).
+// Package observer produces hash-only block headers from a CometBFT source.
 //
-// It is split from the root blockoracle package so callers that only
-// need the BlockOracle interface and the Header types do not pull in
-// Tendermint client dependencies.
+// Production dapi mounts NewTendermint as GET /block/:height. Hosts and
+// the gateway reuse HeaderFromNewBlock on the existing Comet subscription.
+// The testenv mock fabricator stays in the devshard module so signing is
+// not compiled into the producer path.
 package observer
 
 import (
 	"context"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 )
 
 // Observer is a producer-side BlockOracle that runs a background loop to

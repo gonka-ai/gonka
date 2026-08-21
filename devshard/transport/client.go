@@ -24,7 +24,7 @@ import (
 	"devshard/signing"
 	"devshard/types"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 
 	devshardpkg "devshard"
 )

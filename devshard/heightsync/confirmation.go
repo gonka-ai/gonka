@@ -6,7 +6,7 @@ import (
 	"sync"
 	"time"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 )
 
 // ConfirmState is the discrete height-sync confirmation outcome for downstream consumers.

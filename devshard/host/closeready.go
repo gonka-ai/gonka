@@ -3,7 +3,7 @@ package host
 import (
 	"context"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 	"devshard/heightsync"
 	"devshard/types"
 )

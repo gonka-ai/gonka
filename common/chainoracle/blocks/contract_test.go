@@ -11,9 +11,7 @@ import (
 )
 
 // TestBlocksInterfaceGolden records the BlockOracle method set. Any
-// change requires updating testdata/blocks_interface_golden.txt (and
-// corresponding decentralized-api / consumer review); see
-// devshard/docs/testenv.md §8.4 item 5.
+// change requires updating testdata/blocks_interface_golden.txt.
 func TestBlocksInterfaceGolden(t *testing.T) {
 	iface := reflect.TypeOf((*BlockOracle)(nil)).Elem()
 	if iface.Kind() != reflect.Interface {

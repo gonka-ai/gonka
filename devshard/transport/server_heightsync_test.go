@@ -17,7 +17,7 @@ import (
 	json "github.com/goccy/go-json"
 	"github.com/stretchr/testify/require"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/internal/testutil"

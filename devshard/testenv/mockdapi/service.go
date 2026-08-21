@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"common/chain"
+	"common/chainoracle/blocks"
 	"common/nodemanager/gen"
 	commonruntimeconfig "common/runtimeconfig"
-	"devshard/chainoracle/blocks"
 	"devshard/chainoracle/blocks/observer"
 	"devshard/chainoracle/params"
 	cosrv "devshard/chainoracle/server"

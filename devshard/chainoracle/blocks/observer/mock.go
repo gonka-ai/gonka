@@ -10,7 +10,8 @@ import (
 	"sync"
 	"time"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
+	comobs "common/chainoracle/blocks/observer"
 	"devshard/signing"
 )
 
@@ -43,9 +44,9 @@ type MockConfig struct {
 	// BlockIntervalDelta adds symmetric jitter around BlockInterval.
 	// Example: 1s ± 250ms => [750ms, 1250ms]. ≤0 disables jitter.
 	BlockIntervalDelta time.Duration
-	Seed          int64
-	Start         time.Time
-	InitialHeight int64 // default 1
+	Seed               int64
+	Start              time.Time
+	InitialHeight      int64 // default 1
 }
 
 // Mock is a testenv-only observer that fabricates signed block headers on
@@ -617,6 +618,6 @@ func cloneHeader(h *blocks.Header) *blocks.Header {
 	return &cp
 }
 
-// Compile-time assertion that Mock implements Observer (and thus
-// blocks.BlockOracle).
-var _ Observer = (*Mock)(nil)
+// Compile-time assertion that Mock implements the shared Observer
+// (and thus blocks.BlockOracle).
+var _ comobs.Observer = (*Mock)(nil)

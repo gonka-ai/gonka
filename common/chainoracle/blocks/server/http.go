@@ -1,12 +1,8 @@
-// Package server mounts the blockoracle HTTP API on a host router.
+// Package server mounts the shared block-header HTTP API.
 //
-// The same Mount() is called in:
-//
-//   - the standalone height-sync binary (testenv)
-//   - real decentralized-api (production)
-//
-// so consumers see an identical wire protocol. Live tip motion uses Comet
-// NewBlock, not these routes.
+// The same Mount() is called from production dapi and the testenv
+// standalone binary so consumers see an identical wire protocol.
+// Live tip motion uses Comet NewBlock, not these routes.
 package server
 
 import (
@@ -16,7 +12,7 @@ import (
 	"net/http"
 	"strconv"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 
 	"github.com/labstack/echo/v4"
 )

@@ -16,9 +16,9 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"common/chainoracle/blocks"
 	"devshard"
 	"devshard/bridge"
-	"devshard/chainoracle/blocks"
 	"devshard/gossip"
 	"devshard/heightsync"
 	"devshard/host"

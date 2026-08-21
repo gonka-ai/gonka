@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"devshard/chainoracle/blocks"
+	"common/chainoracle/blocks"
 	blockclient "devshard/chainoracle/blocks/client"
 
 	"github.com/stretchr/testify/require"
