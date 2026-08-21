@@ -2,6 +2,7 @@ package inference
 
 import (
 	"context"
+	"fmt"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
@@ -39,7 +40,7 @@ import (
 func (am AppModule) applyPreviousConfirmedWeightCap(
 	ctx context.Context,
 	activeParticipants []*types.ActiveParticipant,
-) []*types.ActiveParticipant {
+) ([]*types.ActiveParticipant, error) {
 	// Default CapWeight to the real weight for everyone. Consumers read CapWeight,
 	// so it must be populated even on the skip/bootstrap paths below.
 	for _, p := range activeParticipants {
@@ -53,29 +54,19 @@ func (am AppModule) applyPreviousConfirmedWeightCap(
 		// No previous epoch (genesis bootstrap): leave CapWeight == Weight,
 		// otherwise the entire initial validator set would be zeroed.
 		am.LogInfo("Previous-epoch weight cap skipped: no effective epoch yet", types.PoC)
-		return activeParticipants
+		return activeParticipants, nil
 	}
 
-	prevRoot, found := am.keeper.GetEpochGroupData(ctx, prevEpochIndex, "")
-	if !found {
-		// Previous epoch group data is unavailable; skip capping rather than zero
-		// every participant.
-		am.LogInfo("Previous-epoch weight cap skipped: previous epoch group data missing", types.PoC,
-			"previousEpochIndex", prevEpochIndex)
-		return activeParticipants
+	prevRoot, livePrevMembers, err := am.keeper.GetRootGroupDataWithLiveMembers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load live previous-epoch members for trust cap: %w", err)
 	}
-
-	var livePrevMembers map[string]bool
-	currentGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
-	if err == nil && currentGroup != nil {
-		if members, err := currentGroup.GetGroupMembers(ctx); err == nil {
-			livePrevMembers = make(map[string]bool, len(members))
-			for _, m := range members {
-				if m != nil && m.Member != nil {
-					livePrevMembers[m.Member.Address] = true
-				}
-			}
-		}
+	if prevRoot.EpochIndex != prevEpochIndex {
+		return nil, fmt.Errorf(
+			"trust-cap epoch mismatch: effective=%d group=%d",
+			prevEpochIndex,
+			prevRoot.EpochIndex,
+		)
 	}
 
 	guardianAccounts := map[string]bool{}
@@ -127,25 +118,25 @@ func (am AppModule) applyPreviousConfirmedWeightCap(
 		"newParticipantsZeroed", newParticipantsZeroed,
 		"existingParticipantsClamped", existingParticipantsClamped)
 
-	return activeParticipants
+	return activeParticipants, nil
 }
 
 // resolveTrustWeights returns the per-participant weight to use for consensus-
 // facing operations (BLS threshold signing and cPoC validation voting power).
 //
-// It returns CapWeight when the previous-epoch cap has been applied to this set
-// (at least one participant has CapWeight > 0), otherwise it falls back to the
-// real Weight. The fallback covers contexts that construct participants without
-// running applyPreviousConfirmedWeightCap first (unit/integration tests) and the
-// degenerate all-new epoch, so those never collapse to all-zero weights. In a
-// normally-formed epoch CapWeight is always populated, so new participants
-// (CapWeight 0) correctly contribute zero.
-func resolveTrustWeights(participants []*types.ActiveParticipant) map[string]int64 {
-	anyCap := false
-	for _, p := range participants {
-		if p != nil && p.CapWeight > 0 {
-			anyCap = true
-			break
+// When capApplied is true, CapWeight is used even if every value is zero. That
+// distinguishes a post-upgrade epoch whose caps were computed and legitimately
+// equal zero from a pre-upgrade epoch whose CapWeight field was never populated.
+// If capApplied is false, a positive CapWeight still selects the cap path so
+// partially-populated test fixtures keep working; otherwise it falls back to Weight.
+func resolveTrustWeights(participants []*types.ActiveParticipant, capApplied bool) map[string]int64 {
+	useCap := capApplied
+	if !useCap {
+		for _, p := range participants {
+			if p != nil && p.CapWeight > 0 {
+				useCap = true
+				break
+			}
 		}
 	}
 	weights := make(map[string]int64, len(participants))
@@ -153,7 +144,7 @@ func resolveTrustWeights(participants []*types.ActiveParticipant) map[string]int
 		if p == nil {
 			continue
 		}
-		if anyCap {
+		if useCap {
 			weights[p.Index] = p.CapWeight
 		} else {
 			weights[p.Index] = p.Weight
@@ -200,7 +191,7 @@ func (am AppModule) capComputeResultsToPreviousConfirmedWeight(
 			anyCapSet = true
 		}
 	}
-	if !anyCapSet {
+	if !aps.CapWeightApplied && !anyCapSet {
 		// Epoch predates CapWeight (e.g. formed before the upgrade); do not cap.
 		return results
 	}
@@ -269,7 +260,7 @@ func (am AppModule) buildPreviousConfirmedWeightCaps(
 	nodesByAddress := am.keeper.AggregateMLNodesFromModelSubgroups(ctx, prevEpochIndex, prevRoot.ValidationWeights)
 
 	for _, vw := range prevRoot.ValidationWeights {
-		if vw == nil || (livePrevMembers != nil && !livePrevMembers[vw.MemberAddress]) {
+		if vw == nil || !livePrevMembers[vw.MemberAddress] {
 			continue
 		}
 		weight := vw.Weight

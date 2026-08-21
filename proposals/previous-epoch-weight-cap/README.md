@@ -100,9 +100,8 @@ PoC validation snapshots use trust weight for both the per-model voting powers a
 ## Edge cases and upgrade safety
 
 - **Genesis / bootstrap**: If there is no effective epoch yet, capping is skipped and `CapWeight` defaults to `Weight`, so the initial validator set is never zeroed.
-- **Missing previous epoch group data**: Capping is skipped (defaults to `Weight`) rather than zeroing everyone.
-- **Upgrade transition**: An epoch formed *before* this change has no `CapWeight` populated (all zero). Both the governance cap and the shared trust-weight resolver detect the "cap not applied" state (no participant has a positive `CapWeight`) and fall back to real `Weight`, so the transition epoch never collapses to an all-zero validator set.
-- **All-new epoch (degenerate)**: Same fallback applies, avoiding a chain halt.
+- **Missing previous epoch group data or live membership**: Epoch formation fails closed rather than treating historical `ValidationWeights` as live. A membership-read failure must not restore stale trust.
+- **Upgrade transition**: An epoch formed *before* this change has no `CapWeight` populated (all zero) and `cap_weight_applied` unset. Both the governance cap and the shared trust-weight resolver detect that state and fall back to real `Weight`, so the transition epoch never collapses to an all-zero validator set. After the upgrade, `cap_weight_applied` is persisted even when every cap is legitimately zero, so the all-zero fallback cannot undo a correct fail-closed result.
 - **Removed previous members**: Participants removed from the previous epoch's live root group do not provide a cap baseline and re-enter with `CapWeight = 0`, unless they are configured genesis guardians.
 - **Genesis guardians**: Configured guardians are never capped or dropped by this mechanism.
 

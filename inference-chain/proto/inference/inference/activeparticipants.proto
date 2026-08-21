@@ -20,6 +20,11 @@ message ActiveParticipants {
   int64 effective_block_height = 4;
   int64 created_at_block_height = 5; // Same as effective_block_height???
   uint64 epoch_id = 6; // The current key of the ActiveParticipants entity
+  // cap_weight_applied is true when applyPreviousConfirmedWeightCap ran for this
+  // epoch, including the legitimate all-zero case (every participant is new or
+  // was removed last epoch). False means a pre-upgrade epoch whose CapWeight
+  // field was never populated, so consumers may fall back to Weight.
+  bool cap_weight_applied = 7;
 }
 
 message ActiveParticipant {

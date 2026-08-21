@@ -63,9 +63,13 @@ func setupEpochGroupDataFromAP(k keeper.Keeper, ctx sdk.Context, ap types.Active
 type stubGroupKeeper struct {
 	keeper          keeper.Keeper
 	excludedMembers map[string]bool
+	membersErr      error
 }
 
 func (s *stubGroupKeeper) GroupMembers(ctx context.Context, req *group.QueryGroupMembersRequest) (*group.QueryGroupMembersResponse, error) {
+	if s.membersErr != nil {
+		return nil, s.membersErr
+	}
 	// Find the EpochGroupData that has this group ID, return its ValidationWeights as members
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	members := s.findMembersForGroup(sdkCtx, req.GroupId)

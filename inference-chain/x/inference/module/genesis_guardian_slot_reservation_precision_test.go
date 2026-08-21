@@ -107,9 +107,9 @@ func TestApplyBLSGuardianSlotReservation_RepeatingDecimalPrecision(t *testing.T)
 	// Each non-guardian share = 1/3 = 0.333... (infinite repeating)
 	// This triggers the >18 decimal precision issue with decimal.String()
 	activeParticipants := []*types.ActiveParticipant{
-		{Index: guardian1AccAddr.String(), Weight: 100},
-		{Index: participant2AccAddr.String(), Weight: 1},
-		{Index: participant3AccAddr.String(), Weight: 1},
+		{Index: guardian1AccAddr.String(), Weight: 100, CapWeight: 100},
+		{Index: participant2AccAddr.String(), Weight: 1, CapWeight: 1},
+		{Index: participant3AccAddr.String(), Weight: 1, CapWeight: 1},
 	}
 
 	// This should NOT panic after the fix
@@ -169,10 +169,10 @@ func TestApplyBLSGuardianSlotReservation_PrimeWeights(t *testing.T) {
 	// 7, 11, 13 are primes; sum = 31 (also prime)
 	// Divisions like 7/31, 11/31, 13/31 have long repeating periods
 	activeParticipants := []*types.ActiveParticipant{
-		{Index: guardian1AccAddr.String(), Weight: 100},
-		{Index: participant2AccAddr.String(), Weight: 7},
-		{Index: participant3AccAddr.String(), Weight: 11},
-		{Index: participant4AccAddr.String(), Weight: 13},
+		{Index: guardian1AccAddr.String(), Weight: 100, CapWeight: 100},
+		{Index: participant2AccAddr.String(), Weight: 7, CapWeight: 7},
+		{Index: participant3AccAddr.String(), Weight: 11, CapWeight: 11},
+		{Index: participant4AccAddr.String(), Weight: 13, CapWeight: 13},
 	}
 
 	// Should not panic

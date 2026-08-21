@@ -513,7 +513,7 @@ func TestSumLiveRootTotalWeight_UsesCapWeightWhenPresent(t *testing.T) {
 		},
 	}
 	liveSet := map[string]bool{"live-a": true, "live-b": true}
-	require.Equal(t, int64(100), sumLiveRootTotalWeight(rootData, liveSet, resolveTrustWeights(activeParticipants.Participants)))
+	require.Equal(t, int64(100), sumLiveRootTotalWeight(rootData, liveSet, resolveTrustWeights(activeParticipants.Participants, false)))
 }
 
 func TestCalculateParticipantWeightThreshold75Percent_UsesLiveRootTotal(t *testing.T) {

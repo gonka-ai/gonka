@@ -147,9 +147,9 @@ func TestBLSKeyGenerationIntegration(t *testing.T) {
 	}
 
 	activeParticipants := []*types.ActiveParticipant{
-		{Index: aliceAccAddrStr, Weight: 50},
-		{Index: bobAccAddrStr, Weight: 30},
-		{Index: charlieAccAddrStr, Weight: 20},
+		{Index: aliceAccAddrStr, Weight: 50, CapWeight: 50},
+		{Index: bobAccAddrStr, Weight: 30, CapWeight: 30},
+		{Index: charlieAccAddrStr, Weight: 20, CapWeight: 20},
 	}
 
 	appModule := inference.NewAppModule(cdc, k, mockAccountKeeper, nil, nil, nil)
@@ -282,9 +282,9 @@ func TestBLSKeyGenerationWithAccountKeyIssues(t *testing.T) {
 	}
 
 	activeParticipants := []*types.ActiveParticipant{
-		{Index: aliceAccAddrStr, Weight: 30},
-		{Index: bobAccAddrStr, Weight: 30},
-		{Index: charlieAccAddrStr, Weight: 40},
+		{Index: aliceAccAddrStr, Weight: 30, CapWeight: 30},
+		{Index: bobAccAddrStr, Weight: 30, CapWeight: 30},
+		{Index: charlieAccAddrStr, Weight: 40, CapWeight: 40},
 	}
 
 	appModule := inference.NewAppModule(cdc, k, mockAccountKeeper, nil, nil, nil)
@@ -329,7 +329,7 @@ func TestBLSKeyGenerationUsesAccountPubKeyOverWorkerOrValidatorKey(t *testing.T)
 	k.SetParticipant(ctx, storedParticipant)
 
 	activeParticipants := []*types.ActiveParticipant{
-		{Index: aliceAccAddrStr, Weight: 100},
+		{Index: aliceAccAddrStr, Weight: 100, CapWeight: 100},
 	}
 
 	appModule := inference.NewAppModule(cdc, k, mockAccountKeeper, nil, nil, nil)
@@ -370,7 +370,7 @@ func TestBLSKeyGenerationWithMissingParticipantsInStore(t *testing.T) {
 
 	// ActiveParticipant is listed, but NO corresponding entry via k.SetParticipant()
 	activeParticipants := []*types.ActiveParticipant{
-		{Index: missingAddr, Weight: 100},
+		{Index: missingAddr, Weight: 100, CapWeight: 100},
 	}
 
 	epochID := uint64(5)
@@ -414,7 +414,7 @@ func TestBLSKeyGenerationWithInvalidStoredWorkerKeyAndNoAccountKey(t *testing.T)
 	appModule := inference.NewAppModule(cdc, k, mockAccountKeeper, nil, nil, nil)
 
 	activeParticipants := []*types.ActiveParticipant{
-		{Index: problemAddr, Weight: 100},
+		{Index: problemAddr, Weight: 100, CapWeight: 100},
 	}
 
 	epochID := uint64(6)
@@ -458,14 +458,14 @@ func TestBLSIntegrationAllowsConcurrentDKG(t *testing.T) {
 
 	// Set up active participants for epoch 1
 	epoch1Participants := []*types.ActiveParticipant{
-		{Index: aliceAccAddrStr, Weight: 50},
-		{Index: bobAccAddrStr, Weight: 50},
+		{Index: aliceAccAddrStr, Weight: 50, CapWeight: 50},
+		{Index: bobAccAddrStr, Weight: 50, CapWeight: 50},
 	}
 
 	// Set up active participants for epoch 2
 	epoch2Participants := []*types.ActiveParticipant{
-		{Index: aliceAccAddrStr, Weight: 60},
-		{Index: bobAccAddrStr, Weight: 40},
+		{Index: aliceAccAddrStr, Weight: 60, CapWeight: 60},
+		{Index: bobAccAddrStr, Weight: 40, CapWeight: 40},
 	}
 
 	appModule := inference.NewAppModule(cdc, k, mockAccountKeeper, nil, nil, nil)
@@ -569,7 +569,7 @@ func TestBLSKeyGenerationPrunesExcessWarmKeys(t *testing.T) {
 	k.SetParticipant(ctx, storedParticipant)
 
 	activeParticipants := []*types.ActiveParticipant{
-		{Index: aliceAccAddrStr, Weight: 100},
+		{Index: aliceAccAddrStr, Weight: 100, CapWeight: 100},
 	}
 
 	appModule := inference.NewAppModule(cdc, k, mocks.AccountKeeper, nil, nil, nil)

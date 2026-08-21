@@ -498,7 +498,7 @@ func (ma *ModelAssigner) SamplePreservedForEpisode(
 	trustWeights := map[string]int64{}
 	activeParticipants, found := ma.keeper.GetActiveParticipants(ctx, epoch.Index)
 	if found {
-		trustWeights = resolveTrustWeights(activeParticipants.Participants)
+		trustWeights = resolveTrustWeights(activeParticipants.Participants, activeParticipants.CapWeightApplied)
 	}
 	liveRootTotalWeight := sumLiveRootTotalWeight(rootData, liveRootSet, trustWeights)
 

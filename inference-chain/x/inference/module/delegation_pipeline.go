@@ -743,7 +743,7 @@ func (am AppModule) computeAndSetVotingPowers(
 	// Weight. resolveTrustWeights returns CapWeight once the cap has been applied
 	// (as it always is before this in production) and falls back to Weight only
 	// for contexts that build participants without running the cap.
-	finalWeights := resolveTrustWeights(activeParticipants)
+	finalWeights := resolveTrustWeights(activeParticipants, true)
 
 	participantVP := make(map[string][]*types.ModelVotingPower)
 

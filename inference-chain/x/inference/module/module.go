@@ -396,8 +396,9 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 //     BLS key generation. Failures here should not block the inference module's epoch
 //     transition.
 //
-// Sub-functions (onEndOfPoCValidationStage, onSetNewValidatorsStage) handle errors
-// internally with log+return patterns. They do NOT propagate errors to EndBlock.
+// Sub-functions (onEndOfPoCValidationStage, onSetNewValidatorsStage) handle most
+// errors internally with log+return patterns. A previous-epoch trust-cap
+// membership-read failure is epoch-formation-critical and is propagated to EndBlock.
 func (am AppModule) EndBlock(ctx context.Context) error {
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockHeight := sdkCtx.BlockHeight()
@@ -485,7 +486,9 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 
 	if epochContext.IsEndOfPoCValidationStage(blockHeight) {
 		am.LogInfo("StartStage:onEndOfPoCValidationStage", types.Stages, "blockHeight", blockHeight)
-		am.onEndOfPoCValidationStage(ctx, blockHeight, blockTime)
+		if err := am.onEndOfPoCValidationStage(ctx, blockHeight, blockTime); err != nil {
+			return err
+		}
 	}
 
 	if epochContext.IsSetNewValidatorsStage(blockHeight) {
@@ -656,11 +659,11 @@ func getNextEpochIndex(prevEpoch types.Epoch) uint64 {
 // - Adding epoch members to the upcoming epoch group
 // This stage executes at IsEndOfPoCValidationStage(blockHeight) and must complete
 // before validator switching occurs in onSetNewValidatorsStage.
-func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight int64, blockTime int64) {
+func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight int64, blockTime int64) error {
 	effectiveEpoch, found := am.keeper.GetEffectiveEpoch(ctx)
 	if !found {
 		am.LogError("onEndOfPoCValidationStage: Unable to get effective epoch", types.EpochGroup, "blockHeight", blockHeight)
-		return
+		return nil
 	}
 
 	previousEpoch, found := am.keeper.GetPreviousEpoch(ctx)
@@ -711,7 +714,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
 	if !found || upcomingEpoch == nil {
 		am.LogError("onEndOfPoCValidationStage: Unable to get upcoming epoch group", types.EpochGroup)
-		return
+		return nil
 	}
 
 	activeParticipants := am.ComputeNewWeights(ctx, *upcomingEpoch)
@@ -734,7 +737,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 				sdk.NewAttribute("epoch", fmt.Sprintf("%d", upcomingEpoch.Index)),
 				sdk.NewAttribute("error_category", "epoch_formation"),
 			))
-			return
+			return nil
 		}
 		sdkCtx := sdk.UnwrapSDKContext(ctx)
 		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
@@ -750,7 +753,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	params, err := am.keeper.GetParams(ctx)
 	if err != nil {
 		am.LogError("onEndOfPoCValidationStage: Unable to get params", types.PoC, "error", err)
-		return
+		return nil
 	}
 
 	participationState, err := am.prepareEpochParticipationState(
@@ -761,7 +764,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	)
 	if err != nil {
 		am.LogError("onEndOfPoCValidationStage: failed to prepare participation state", types.PoC, "error", err)
-		return
+		return nil
 	}
 
 	// Compute consensus weights with caps applied and write to participants
@@ -832,7 +835,10 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	// toward consensus. Weight itself stays the real weight used for rewards and
 	// cPoC confirmation. Must run before computeAndSetVotingPowers so voting
 	// powers are derived from the capped weight.
-	activeParticipants = am.applyPreviousConfirmedWeightCap(ctx, activeParticipants)
+	activeParticipants, err = am.applyPreviousConfirmedWeightCap(ctx, activeParticipants)
+	if err != nil {
+		return fmt.Errorf("apply previous-epoch trust cap: %w", err)
+	}
 
 	// Write per-model voting powers to ActiveParticipant for visibility.
 	// Pass the governance-controlled per-model concentration cap, which
@@ -868,10 +874,11 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		// TODO [PRTODO]: not sure EffectiveBlockHeight is set by now
 		EffectiveBlockHeight: blockHeight + 2, // FIXME: verify it's +2, I'm not sure
 		CreatedAtBlockHeight: blockHeight,
+		CapWeightApplied:     true,
 	})
 	if err != nil {
 		am.LogError("onEndOfPoCValidationStage: Unable to set active participants", types.EpochGroup, "error", err.Error())
-		return
+		return nil
 	}
 	if upcomingEpoch.Index > 3 {
 		outOfDateActiveParticipants := collections.NewPrefixedPairRange[uint64, sdk.AccAddress](upcomingEpoch.Index - 2)
@@ -885,7 +892,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	if err != nil {
 		am.LogError("onEndOfPoCValidationStage: Unable to get epoch group for upcoming epoch", types.EpochGroup,
 			"upcomingEpoch.Index", upcomingEpoch.Index, "upcomingEpoch.PocStartBlockHeight", upcomingEpoch.PocStartBlockHeight, "error", err.Error())
-		return
+		return nil
 	}
 
 	upcomingEg.GroupData.ConfirmationWeightScales = confirmationWeightScales
@@ -896,7 +903,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		Penalties:  penalties,
 	}); err != nil {
 		am.LogError("onEndOfPoCValidationStage: failed to store delegation reward transfer snapshot", types.PoC, "error", err)
-		return
+		return nil
 	}
 	am.keeper.SetEpochGroupData(ctx, *upcomingEg.GroupData)
 
@@ -912,6 +919,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	if err := am.keeper.DeleteAllPoCDirectIntents(ctx); err != nil {
 		am.LogWarn("onEndOfPoCValidationStage: failed to clear PoC direct intents", types.PoC, "error", err)
 	}
+	return nil
 }
 
 // onSetNewValidatorsStage handles validator switching and epoch group activation.
@@ -1062,7 +1070,7 @@ func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effecti
 	rootGroupData := currentGroup.GroupData
 	trustWeights := map[string]int64{}
 	if activeParticipants, found := am.keeper.GetActiveParticipants(ctx, epochIndex); found {
-		trustWeights = resolveTrustWeights(activeParticipants.Participants)
+		trustWeights = resolveTrustWeights(activeParticipants.Participants, activeParticipants.CapWeightApplied)
 	}
 	consensusWeights := make(map[string]int64, len(rootGroupData.ValidationWeights))
 	totalWeight := int64(0)
@@ -1652,7 +1660,7 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 
 	// BLS threshold signing is a trust weight, so it uses CapWeight (capped at the
 	// participant's previous-epoch confirmed weight) rather than the real Weight.
-	trustWeights := resolveTrustWeights(activeParticipants)
+	trustWeights := resolveTrustWeights(activeParticipants, true)
 	totalWeight := int64(0)
 	for _, p := range activeParticipants {
 		totalWeight += trustWeights[p.Index]

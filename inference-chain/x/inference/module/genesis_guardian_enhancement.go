@@ -235,7 +235,7 @@ func ApplyBLSGuardianSlotReservation(ctx context.Context, k keeper.Keeper, activ
 	// Total network power. This runs as part of BLS slot reservation, so it uses
 	// the trust weight (CapWeight, the previous-epoch confirmed weight cap) to
 	// stay consistent with the rest of the BLS weighting.
-	trustWeights := resolveTrustWeights(activeParticipants)
+	trustWeights := resolveTrustWeights(activeParticipants, true)
 	totalWeight := int64(0)
 	for _, p := range activeParticipants {
 		totalWeight += trustWeights[p.Index]
