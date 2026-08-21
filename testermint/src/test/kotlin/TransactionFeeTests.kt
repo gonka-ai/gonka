@@ -71,19 +71,20 @@ class TransactionFeeTests : TestermintTest() {
 
         val params = genesis.getParams()
         val existing = params.feeParams ?: FeeParamsData()
-        existing.groups?.forEach { el ->
-            val g = el.asJsonObject
-            if (g.get("name")?.asString == "epoch") {
-                g.addProperty("min_gas_price", 10)
-            }
-        }
+        val groups = existing.groups?.deepCopy()
+            ?: error("FeeParams must contain the configured fee groups")
+        val epochGroup = groups
+            .map { it.asJsonObject }
+            .firstOrNull { it.get("name")?.asString == "epoch" }
+            ?: error("FeeParams must contain the epoch fee group")
+        epochGroup.addProperty("min_gas_price", 10)
         val paramsWithFees = params.copy(
             feeParams = existing.copy(
                 enabledFeeGroups = listOf("epoch"),
                 minGasPriceNgonka = 0,
                 baseValidationGas = existing.baseValidationGas.takeIf { it > 0 } ?: 500_000,
                 gasPerPocCount = existing.gasPerPocCount.takeIf { it > 0 } ?: 100,
-                groups = existing.groups,
+                groups = groups,
             )
         )
 
