@@ -348,3 +348,127 @@ func TestGetEffectiveValidationBaseState_UsesTrustWeightsForTotal(t *testing.T) 
 	require.Equal(t, int64(80), base.weights[testutil.Validator])
 	require.Equal(t, int64(120), base.weights[testutil.Validator2])
 }
+
+func TestApplyPreviousConfirmedWeightCap_UntrustedModelDoesNotInflateCap(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+
+	const prevEpoch = uint64(5)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, prevEpoch))
+
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:                      prevEpoch,
+		ModelId:                         "",
+		SubGroupModels:                  []string{"model-a", "model-b"},
+		ConfirmationAccountingSeparated: true,
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1), HasTrustedVotingPower: true},
+			{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(1), HasTrustedVotingPower: false},
+		},
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 100, ConfirmationWeight: 10},
+		},
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: prevEpoch,
+		ModelId:    "model-a",
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, MlNodes: []*types.MLNodeInfo{{PocWeight: 10}}},
+		},
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: prevEpoch,
+		ModelId:    "model-b",
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, MlNodes: []*types.MLNodeInfo{{PocWeight: 90}}},
+		},
+	})
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	result := am.applyPreviousConfirmedWeightCap(ctx, []*types.ActiveParticipant{
+		{Index: testutil.Validator, Weight: 100},
+	})
+	require.Equal(t, int64(10), result[0].CapWeight, "trusted-only confirmation must not be applied as 100% of root weight")
+	require.Equal(t, int64(100), result[0].Weight)
+}
+
+func TestApplyPreviousConfirmedWeightCap_UntrustedOnlyModelGetsZeroCap(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+
+	const prevEpoch = uint64(5)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, prevEpoch))
+
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:                      prevEpoch,
+		ModelId:                         "",
+		SubGroupModels:                  []string{"model-b"},
+		ConfirmationAccountingSeparated: true,
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
+			{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(1), HasTrustedVotingPower: false},
+		},
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 100, ConfirmationWeight: 0},
+		},
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: prevEpoch,
+		ModelId:    "model-b",
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, MlNodes: []*types.MLNodeInfo{{PocWeight: 100}}},
+		},
+	})
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	result := am.applyPreviousConfirmedWeightCap(ctx, []*types.ActiveParticipant{
+		{Index: testutil.Validator, Weight: 100},
+	})
+	require.Equal(t, int64(0), result[0].CapWeight)
+	require.Equal(t, int64(100), result[0].Weight)
+}
+
+func TestGetEffectiveValidationBaseState_IncludesEmptyVoterAccountingModels(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	const epoch = uint64(9)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, epoch))
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:      epoch,
+		EpochGroupId: epoch,
+		Participants: []*types.ActiveParticipant{
+			{Index: testutil.Validator, Weight: 100, CapWeight: 80},
+		},
+	}))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:                      epoch,
+		ModelId:                         "",
+		EpochGroupId:                    77,
+		SubGroupModels:                  []string{"model-a"},
+		ConfirmationAccountingSeparated: true,
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1), HasTrustedVotingPower: true},
+			{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(1), HasTrustedVotingPower: false},
+		},
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 100},
+		},
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:   epoch,
+		ModelId:      "model-a",
+		EpochGroupId: 78,
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 100, VotingPower: 80},
+		},
+	})
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	base := am.getEffectiveValidationBaseState(ctx)
+
+	byModel := map[string]bool{}
+	for _, mvp := range base.existingModelVotingPowers {
+		byModel[mvp.ModelId] = true
+		if mvp.ModelId == "model-b" {
+			require.Empty(t, mvp.VotingPowers, "untrusted model must appear as an explicit empty-voter model")
+		}
+	}
+	require.True(t, byModel["model-a"])
+	require.True(t, byModel["model-b"])
+}

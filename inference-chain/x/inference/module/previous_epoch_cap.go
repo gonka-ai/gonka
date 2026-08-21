@@ -253,10 +253,11 @@ func (am AppModule) capComputeResultsToPreviousConfirmedWeight(
 }
 
 // buildPreviousConfirmedWeightCaps returns per-address confirmed effective
-// weights for the previous epoch, matching the settlement reward computation
-// (including per-model confirmation weight coefficients). Addresses present in
-// the returned map were validators in the previous epoch; addresses absent from
-// the map are treated as new participants by the caller.
+// weights for the previous epoch. The cap uses the trust policy: models without
+// trusted cPoC voting power stay in the denominator but contribute zero to the
+// next-epoch cap. Addresses present in the returned map were validators in the
+// previous epoch; addresses absent from the map are treated as new participants
+// by the caller.
 func (am AppModule) buildPreviousConfirmedWeightCaps(
 	ctx context.Context,
 	prevEpochIndex uint64,
@@ -265,7 +266,6 @@ func (am AppModule) buildPreviousConfirmedWeightCaps(
 ) map[string]int64 {
 	caps := make(map[string]int64, len(prevRoot.ValidationWeights))
 	scales := prevRoot.ConfirmationWeightScales
-	coefficients := types.ConfirmationWeightCoefficients(scales)
 	nodesByAddress := am.keeper.AggregateMLNodesFromModelSubgroups(ctx, prevEpochIndex, prevRoot.ValidationWeights)
 
 	for _, vw := range prevRoot.ValidationWeights {
@@ -278,13 +278,16 @@ func (am AppModule) buildPreviousConfirmedWeightCaps(
 		}
 		capValue := weight
 		if len(scales) > 0 {
-			// Mirror the reward path: with confirmation scales present, the cap is
-			// the coefficient-weighted confirmed fraction of the consensus weight.
-			rawTotal := types.ConfirmationWeightOfModelNodesWithCoefficients(
+			// Trust policy: untrusted models stay in the denominator but contribute
+			// zero to next epoch's cap until trusted cPoC confirmation exists.
+			capValue = types.EffectiveWeightFromModels(
+				weight,
+				scales,
+				prevRoot.ConfirmationAccountingSeparated,
 				nodesByAddress[vw.MemberAddress],
-				coefficients,
+				vw.ConfirmationWeight,
+				types.TrustWeightPolicy,
 			)
-			capValue = types.EffectiveConfirmedWeight(weight, vw.ConfirmationWeight, rawTotal)
 		}
 		caps[vw.MemberAddress] = capValue
 	}

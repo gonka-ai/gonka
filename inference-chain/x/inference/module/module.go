@@ -889,6 +889,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	}
 
 	upcomingEg.GroupData.ConfirmationWeightScales = confirmationWeightScales
+	upcomingEg.GroupData.ConfirmationAccountingSeparated = true
 	if err := am.keeper.SetDelegationRewardTransferSnapshot(ctx, types.DelegationRewardTransferSnapshot{
 		EpochIndex: upcomingEpoch.Index,
 		Transfers:  allRewardTransfers,
@@ -1109,6 +1110,17 @@ func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effecti
 		}
 	}
 
+	if rootGroupData.ConfirmationAccountingSeparated {
+		for _, scale := range rootGroupData.ConfirmationWeightScales {
+			if scale == nil || scale.ModelId == "" {
+				continue
+			}
+			if _, exists := modelVPMap[scale.ModelId]; !exists {
+				modelVPMap[scale.ModelId] = map[string]int64{}
+			}
+		}
+	}
+
 	return effectiveValidationBaseState{
 		participants:              participants,
 		weights:                   consensusWeights,
@@ -1249,7 +1261,10 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 	}
 	validationParams := params.ValidationParams
 	scales := upcomingEg.GroupData.ConfirmationWeightScales
-	coefficients := types.ConfirmationWeightCoefficients(scales)
+	coefficients := types.ConfirmationWeightCoefficientsTrusted(
+		scales,
+		upcomingEg.GroupData.ConfirmationAccountingSeparated,
+	)
 
 	for _, p := range activeParticipants {
 		reputation, err := am.calculateParticipantReputation(ctx, p, validationParams)

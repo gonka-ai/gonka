@@ -772,7 +772,6 @@ func CalculateParticipantBitcoinRewardsWithTransfers(
 	// 2. Calculate effective weights with confirmation capping
 	participantWeights := make(map[string]uint64)
 	participantFullWeights := make(map[string]uint64) // Track full weights for denominator (prevents redistribution)
-	confirmationWeightCoefficients := types.ConfirmationWeightCoefficients(epochGroupData.ConfirmationWeightScales)
 
 	// Calculate effectiveWeight for each participant using helper function
 	effectiveWeights := make([]*types.ActiveParticipant, 0, len(participants))
@@ -817,11 +816,14 @@ func CalculateParticipantBitcoinRewardsWithTransfers(
 				"participant", participant.Address,
 				"fullWeight", fullWeight)
 		} else {
-			rawTotal := types.ConfirmationWeightOfModelNodesWithCoefficients(
+			effectiveWeight = types.EffectiveWeightFromModels(
+				vw.Weight,
+				epochGroupData.ConfirmationWeightScales,
+				epochGroupData.ConfirmationAccountingSeparated,
 				participantMLNodes[participant.Address],
-				confirmationWeightCoefficients,
+				vw.ConfirmationWeight,
+				types.RewardWeightPolicy,
 			)
-			effectiveWeight = types.EffectiveConfirmedWeight(vw.Weight, vw.ConfirmationWeight, rawTotal)
 		}
 		if effectiveWeight > int64(fullWeight) {
 			effectiveWeight = int64(fullWeight)

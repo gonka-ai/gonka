@@ -48,7 +48,9 @@ cap = previousWeight * previousConfirmationWeight / previousRawConfirmationTotal
 
 where `previousConfirmationWeight` and `previousRawConfirmationTotal` are aggregated across the per-model subgroups using the same confirmation-weight scale coefficients used for rewards. This guarantees the cap reflects exactly what the participant *confirmed* last epoch, honoring model coefficients and cPoC adjustments. When no confirmation scales are configured, the cap degrades to the previous consensus weight itself.
 
-This logic is centralized in a shared helper, `types.EffectiveConfirmedWeight`, used by both the reward path and the cap so the two can never drift apart.
+When a model has real validated weight but no trusted cPoC voting power (for example every host on that model is new and therefore has `CapWeight = 0`), that model is still recorded in `ConfirmationWeightScales` with `has_trusted_voting_power = false`. Reward settlement keeps that model's raw weight in the numerator. The next-epoch cap uses the same full-model denominator but contributes zero for the untrusted model, so confirmation of another model cannot be applied as a 100% ratio over the participant's full root `Weight`.
+
+This logic is centralized in shared helpers, `types.EffectiveConfirmedWeight` and `types.EffectiveWeightFromModels`, used by both the reward path and the cap.
 
 Only live members of the previous epoch provide a cap baseline. A participant removed from the root group during the previous epoch (for example by invalidation or deactivation) is treated as absent and must prove compute again before regaining trust weight.
 

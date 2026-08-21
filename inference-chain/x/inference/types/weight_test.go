@@ -118,3 +118,58 @@ func TestConfirmationWeightEmptyInputs(t *testing.T) {
 		"model-a": {&types.MLNodeInfo{PocWeight: 1}},
 	}, nil))
 }
+
+func TestEffectiveWeightFromModels_SeparatedPolicies(t *testing.T) {
+	scales := []*types.ConfirmationWeightScale{
+		{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1), HasTrustedVotingPower: true},
+		{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(1), HasTrustedVotingPower: false},
+	}
+	modelNodes := map[string][]*types.MLNodeInfo{
+		"model-a": {{PocWeight: 10}},
+		"model-b": {{PocWeight: 90}},
+	}
+
+	// Trusted model fully confirmed (10); untrusted 90 still in the full denominator.
+	require.Equal(t, int64(100), types.EffectiveWeightFromModels(
+		100, scales, true, modelNodes, 10, types.RewardWeightPolicy,
+	), "untrusted raw weight still earns rewards")
+	require.Equal(t, int64(10), types.EffectiveWeightFromModels(
+		100, scales, true, modelNodes, 10, types.TrustWeightPolicy,
+	), "untrusted weight does not become next-epoch cap")
+}
+
+func TestEffectiveWeightFromModels_UntrustedOnly(t *testing.T) {
+	scales := []*types.ConfirmationWeightScale{
+		{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(1), HasTrustedVotingPower: false},
+	}
+	modelNodes := map[string][]*types.MLNodeInfo{
+		"model-b": {{PocWeight: 100}},
+	}
+
+	require.Equal(t, int64(100), types.EffectiveWeightFromModels(
+		100, scales, true, modelNodes, 0, types.RewardWeightPolicy,
+	))
+	require.Equal(t, int64(0), types.EffectiveWeightFromModels(
+		100, scales, true, modelNodes, 0, types.TrustWeightPolicy,
+	))
+}
+
+func TestEffectiveWeightFromModels_LegacyUnseparatedMatchesOldFormula(t *testing.T) {
+	scales := []*types.ConfirmationWeightScale{
+		{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)},
+		{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(1)},
+	}
+	modelNodes := map[string][]*types.MLNodeInfo{
+		"model-a": {{PocWeight: 10}},
+		"model-b": {{PocWeight: 90}},
+	}
+	rawAll := types.ConfirmationWeightOfModelNodes(modelNodes, scales)
+	require.Equal(t,
+		types.EffectiveConfirmedWeight(100, 10, rawAll),
+		types.EffectiveWeightFromModels(100, scales, false, modelNodes, 10, types.TrustWeightPolicy),
+	)
+	require.Equal(t,
+		types.EffectiveConfirmedWeight(100, 10, rawAll),
+		types.EffectiveWeightFromModels(100, scales, false, modelNodes, 10, types.RewardWeightPolicy),
+	)
+}
