@@ -3419,7 +3419,7 @@ func TestApplyPersisted_ReplaysAnInferenceWrittenBeforeTheFloor(t *testing.T) {
 		InputLength: 100, MaxTokens: 1, StartedAt: 1000,
 	})}
 
-	root, err := sm.ApplyPersisted(1, belowFloor)
+	root, err := sm.ApplyLocalPersisted(1, belowFloor)
 
 	require.NoError(t, err, "a diff this node already accepted must replay")
 	require.NotEmpty(t, root)
@@ -3432,7 +3432,7 @@ func TestApplyPersisted_DoesNotRelaxTheFloorForNewWork(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	sm, user := newTestSM(t, hosts, 10000)
 
-	replayed, err := sm.ApplyPersisted(1, []*types.DevshardTx{txStart(&types.MsgStartInference{
+	replayed, err := sm.ApplyLocalPersisted(1, []*types.DevshardTx{txStart(&types.MsgStartInference{
 		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
 		InputLength: 100, MaxTokens: 1, StartedAt: 1000,
 	})})

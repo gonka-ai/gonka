@@ -1,9 +1,10 @@
 package accounting
 
 // HostCapability reports what a participant's build refused. The booleans keep the shape readers
-// already parse, but their meaning is now historical: a host is never withheld from routing for a
-// refusal, so true means "refused at least once this epoch", never "currently unusable". The counts
-// beside them say how often, which is what tells a one-off apart from a build that refuses everything.
+// already parse, but their meaning is now historical: true means "refused at least once this epoch",
+// never "currently unusable". Routing still screens each request against the refusal it matches, in
+// the picker; what no longer happens is a host being held out of the rota wholesale. The counts beside
+// them say how often, which is what tells a one-off apart from a build that refuses everything.
 type HostCapability struct {
 	ProtocolVersionUnsupported bool   `json:"protocol_version_unsupported,omitempty"`
 	ToolChoiceUnsupported      bool   `json:"tool_choice_unsupported,omitempty"`

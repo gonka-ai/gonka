@@ -102,11 +102,6 @@ type StateMachine struct {
 
 	warmResolver WarmKeyResolver // optional, nil = no warm key support
 
-	// replayingPersisted is set only while sm.mu is held, by ApplyPersisted. Policy that tightened
-	// since a diff was written must not reject it on replay: the diff is already in the recorded state
-	// root, so refusing it cannot reproduce that root, only fail to start.
-	replayingPersisted bool
-
 	// obsDeferred, when non-nil, redirects observability writes made during a
 	// trial apply (ValidateDiff / PreviewLocalBestEffort) into a buffer instead
 	// of the inference store. The buffer is flushed by CommitValidated once the

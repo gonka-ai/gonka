@@ -854,7 +854,7 @@ func TestRecoverSession_ReplaysADiffWrittenBeforeTheMinTokensFloor(t *testing.T)
 			StartedAt:   1000,
 		},
 	}}}
-	root, err := sm.ApplyPersisted(1, belowFloor)
+	root, err := sm.ApplyLocalPersisted(1, belowFloor)
 	require.NoError(t, err, "seeding the diff an earlier build would have written")
 	require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{
 		Diff:      testutil.SignDiffWithRoot(t, user, "escrow-1", 1, belowFloor, root),
