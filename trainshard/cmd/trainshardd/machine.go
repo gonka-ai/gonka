@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"log/slog"
+	"os"
 
 	"trainshard/internal/domain/mesh"
 	"trainshard/internal/domain/run"
@@ -40,11 +41,17 @@ func machinery(cfg config, clock ports.Clock, log *slog.Logger) (parts, error) {
 			probe:      fake,
 		}, nil
 	case "docker":
+		// the volumes root is where a run's disk is handed out from, and free space is read off it
+		// before any run exists, so it has to be there from the start
+		if err := os.MkdirAll(cfg.volumeRoot, 0o700); err != nil {
+			return parts{}, err
+		}
 		engine, err := docker.New(docker.Config{
 			Socket:       cfg.dockerSocket,
 			VolumeRoot:   cfg.volumeRoot,
 			User:         cfg.containerUser,
 			SandboxImage: cfg.sandboxImage,
+			GPUKind:      cfg.gpuKind,
 			MemoryBytes:  cfg.memoryBytes,
 			NanoCPUs:     cfg.nanoCPUs,
 		}, log)

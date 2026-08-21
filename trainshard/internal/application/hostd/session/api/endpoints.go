@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 
@@ -83,9 +84,11 @@ func (e *Endpoints) openShell(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// a caller that is done typing half-closes its side, and the server reads that as a hang up,
+	// so the shell lives as long as the connection rather than as long as the request
 	session := &duplex{writer: w}
 	defer session.close()
-	if err := e.uc.Shell.Execute(r.Context(), cmd, session); err != nil && !session.started {
+	if err := e.uc.Shell.Execute(context.WithoutCancel(r.Context()), cmd, session); err != nil && !session.started {
 		httpx.WriteError(w, requestID, err)
 	}
 }

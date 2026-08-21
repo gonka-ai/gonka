@@ -56,8 +56,9 @@ func (c *Client) Shell(ctx context.Context, req run.ExecRequest, session io.Read
 	}
 	defer attached.Close()
 
+	// the end of the input is the end of the typing, not of the session: a terminal stream carries
+	// no half close, so the input simply stops and the output is read until the shell itself exits
 	go func() {
-		defer cancel()
 		io.Copy(attached.Conn, session)
 	}()
 

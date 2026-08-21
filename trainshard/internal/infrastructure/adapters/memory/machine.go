@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log/slog"
 	"strings"
@@ -210,10 +211,13 @@ func (n network) Identity(_ context.Context, shardID vo.ShardID, node vo.NodeRef
 	if member, found := m.keys[node]; found {
 		return member, nil
 	}
+	// two machines can hold a node under the same id, so the participant is what tells them apart
+	own := fnv.New32a()
+	fmt.Fprintf(own, "%s/%s", node.Participant, node.NodeID)
 	member := mesh.Member{
 		Node:      node,
-		Address:   fmt.Sprintf("10.%d.0.1", uint64(shardID)%256),
-		PublicKey: fmt.Sprintf("memory-key-%s-%s", shardID, node.NodeID),
+		Address:   fmt.Sprintf("10.%d.%d.%d", uint64(shardID)%256, own.Sum32()%256, own.Sum32()>>8%254+1),
+		PublicKey: fmt.Sprintf("memory-key-%s-%s-%s", shardID, node.Participant, node.NodeID),
 	}
 	m.keys[node] = member
 	m.log.Info("created mesh identity", "node_id", node.NodeID)

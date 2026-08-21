@@ -96,13 +96,14 @@ func (v *Volumes) Usage(ctx context.Context, shardID vo.ShardID, node vo.NodeRef
 		return 0, 0, false, err
 	}
 
-	project := projectID(shardID, node)
-	out, err := v.report(ctx, fmt.Sprintf("quota -p -N -n -b %d", project))
+	// the report is asked for every project, since the tool says nothing about one that holds no
+	// blocks yet, and a run that has written nothing still has a disk it was given
+	out, err := v.report(ctx, "report -p -N -n -b")
 	if err != nil {
 		return 0, 0, false, err
 	}
 
-	used, quota, err := parseQuota(out, project)
+	used, quota, err := parseQuota(out, projectID(shardID, node))
 	return used, quota, true, err
 }
 
@@ -256,6 +257,7 @@ func projectID(shardID vo.ShardID, node vo.NodeRef) uint32 {
 	return sum.Sum32()%(1<<24) + 1
 }
 
+// The report holds a line per project: the id, the blocks used, the soft limit, then the hard one
 func parseQuota(out string, project uint32) (used int64, quota int64, err error) {
 	for line := range strings.Lines(out) {
 		fields := strings.Fields(line)
