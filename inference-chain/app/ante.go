@@ -229,6 +229,7 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 			Priority: 10_000_000,
 		},
 		ante.NewDeductFeeDecorator(options.AccountKeeper, options.BankKeeper, options.FeegrantKeeper, GonkaFeeChecker(options.InferenceKeeper)),
+		FeeGroupRepeatedLenDecorator{InferenceKeeper: options.InferenceKeeper},
 		// Cheap mempool filters before signature verification (avoid crypto work on
 		// obviously invalid PoC txs). CheckTx ante failures discard
 		// state (including fee deduction), so fee-first is not an economic throttle.

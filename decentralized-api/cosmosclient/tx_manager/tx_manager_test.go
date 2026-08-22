@@ -4,6 +4,7 @@ import (
 	"context"
 	"decentralized-api/internal/nats/server"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
@@ -445,4 +446,22 @@ func TestRequeueIntegration_MultipleRequeues(t *testing.T) {
 	streamInfo, err := js.StreamInfo(server.TxsToSendStream)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(2), streamInfo.State.Msgs, "Only 2 messages should be published (3rd hit max)")
+}
+
+func TestFeeRelatedHints(t *testing.T) {
+	assert.Empty(t, feeRelatedHints(""))
+	assert.Empty(t, feeRelatedHints("out of gas"))
+
+	grant := feeRelatedHints("feegrant: not found")
+	require.Len(t, grant, 1)
+	assert.Contains(t, grant[0], "grant-ml-ops-permissions")
+
+	fee := feeRelatedHints("insufficient fee: got 0ngonka, required at least 10ngonka")
+	require.Len(t, fee, 1)
+	assert.Contains(t, fee[0], "enabled_fee_groups")
+	assert.Contains(t, fee[0], "groups[].min_gas_price")
+	assert.Contains(t, fee[0], "fee-tree")
+	assert.Contains(t, fee[0], "feegrant")
+	assert.NotContains(t, strings.ToLower(fee[0]), "set min_gas_price_ngonka")
+	assert.NotContains(t, fee[0], "DAPI_CHAIN_NODE")
 }

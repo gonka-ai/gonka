@@ -2237,6 +2237,13 @@ func TestAreHardwareNodesEqual_Version(t *testing.T) {
 
 	b.Version = "v1.0.1"
 	assert.False(t, areHardwareNodesEqual(a, b), "nodes with different versions should not be equal")
+
+	a.Version = "v1.0.1"
+	a.Host = "other"
+	assert.False(t, areHardwareNodesEqual(a, b), "nodes with different hosts should not be equal")
+	a.Host = b.Host
+	a.Port = "1"
+	assert.False(t, areHardwareNodesEqual(a, b), "nodes with different ports should not be equal")
 }
 
 func TestConvertInferenceNodeToHardwareNode_Version(t *testing.T) {
