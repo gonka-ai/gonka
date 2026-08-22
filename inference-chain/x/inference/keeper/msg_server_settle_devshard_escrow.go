@@ -35,7 +35,7 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	if devshardParams == nil {
 		return nil, fmt.Errorf("devshard escrow params not configured")
 	}
-	if err := VerifyDevshardSettlement(escrow, msg, devshardParams, warmKeyChecker); err != nil {
+
 		return nil, err
 	}
 

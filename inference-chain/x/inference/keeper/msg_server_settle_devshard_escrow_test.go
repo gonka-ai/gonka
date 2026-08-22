@@ -697,3 +697,43 @@ func TestSettleDevshardEscrow_AllowlistBlocks(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "address is not allowed to create devshard escrows")
 }
+
+func TestSettleDevshardEscrow_RequestsDisabledBlocks(t *testing.T) {
+	k, ms, ctx, _ := setupDevshardEscrowTest(t)
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+
+	creator := sdk.AccAddress(make([]byte, 20))
+	creator[0] = 0xCC
+	escrow := types.DevshardEscrow{
+		Id:      1,
+		Creator: creator.String(),
+		Amount:  7_000_000_000,
+		Slots:   make([]string, keeper.DevshardGroupSize),
+		Settled: false,
+	}
+	_, err := k.StoreDevshardEscrow(ctx, &escrow, 1)
+	require.NoError(t, err)
+
+	// Kill switch off: allowlist permits everyone, but requests are disabled.
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DevshardEscrowParams = &types.DevshardEscrowParams{
+		MinAmount:               types.DefaultDevshardEscrowMinAmount,
+		MaxAmount:               types.DefaultDevshardEscrowMaxAmount,
+		MaxEscrowsPerEpoch:      types.DefaultDevshardMaxEscrowsPerEpoch,
+		GroupSize:               types.DefaultDevshardGroupSize,
+		AllowedCreatorAddresses: nil,
+		TokenPrice:              types.DefaultDevshardTokenPrice,
+		MaxNonce:                types.DefaultDevshardMaxNonce,
+		DevshardRequestsEnabled: false,
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	// No bank mock is registered: the handler must reject before moving funds.
+	_, err = ms.SettleDevshardEscrow(ctx, &types.MsgSettleDevshardEscrow{
+		Settler:  creator.String(),
+		EscrowId: 1,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "devshard requests are currently disabled")
+}

@@ -255,6 +255,7 @@ func TestCreateDevshardEscrow_ParamsOverrideDefaults(t *testing.T) {
 		AllowedCreatorAddresses: nil, // no restriction
 		TokenPrice:              types.DefaultDevshardTokenPrice,
 		MaxNonce:                types.DefaultDevshardMaxNonce,
+		DevshardRequestsEnabled: true,
 	}
 	require.NoError(t, k.SetParams(ctx, params))
 
@@ -306,4 +307,37 @@ func TestCreateDevshardEscrow_ModelGroupMustExist(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "failed to get epoch group for model")
+}
+
+func TestCreateDevshardEscrow_RequestsDisabledBlocks(t *testing.T) {
+	k, ms, ctx, _ := setupDevshardEscrowTest(t)
+
+	setupEpochGroupForDevshard(ctx, k, 5, testDevshardModelID, makeDevshardAddrs(1, 20))
+
+	creator := sdk.AccAddress(make([]byte, 20))
+	creator[0] = 0xFF
+
+	// Kill switch off: allowlist permits everyone, but requests are disabled.
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DevshardEscrowParams = &types.DevshardEscrowParams{
+		MinAmount:               types.DefaultDevshardEscrowMinAmount,
+		MaxAmount:               types.DefaultDevshardEscrowMaxAmount,
+		MaxEscrowsPerEpoch:      types.DefaultDevshardMaxEscrowsPerEpoch,
+		GroupSize:               types.DefaultDevshardGroupSize,
+		AllowedCreatorAddresses: nil,
+		TokenPrice:              types.DefaultDevshardTokenPrice,
+		MaxNonce:                types.DefaultDevshardMaxNonce,
+		DevshardRequestsEnabled: false,
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	// No bank mock is registered: the handler must reject before locking funds.
+	_, err = ms.CreateDevshardEscrow(ctx, &types.MsgCreateDevshardEscrow{
+		Creator: creator.String(),
+		Amount:  7_000_000_000,
+		ModelId: testDevshardModelID,
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "devshard requests are currently disabled")
 }
