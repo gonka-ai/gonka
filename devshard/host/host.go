@@ -15,8 +15,10 @@ import (
 
 	"common/completionapi"
 
+	"common/chainoracle/blocks"
 	"devshard"
 	"devshard/gossip"
+	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/observability"
 	"devshard/signing"
@@ -52,19 +54,31 @@ type HostRequest struct {
 	Diffs   []types.Diff
 	Nonce   uint64            // nonce of the current request
 	Payload *InferencePayload // nil if no new inference (e.g., Finalize, empty diffs)
+	// ForceHeightSyncAnchor asks transport to emit Anchor even when cadence would Omit
+	// (legacy single-message override when escrow state does not carry a forced turn).
+	ForceHeightSyncAnchor bool
+	// HeightSyncEscrow carries MsgForceHeightSyncTurn-derived state (not serialized on HTTP JSON).
+	HeightSyncEscrow *heightsync.EscrowHeightSyncHints
 }
 
 // HostResponse carries the host's reply back to the user.
 type HostResponse struct {
-	StateSig           []byte // nil = withheld
-	StateHash          []byte // always set after applying diffs
-	Nonce              uint64 // current nonce after applying diffs
-	Receipt            []byte // executor receipt sig, nil if not executor
-	ConfirmedAt        int64  // executor wall-clock timestamp, 0 if not executor
+	StateSig          []byte // nil = withheld
+	StateHash         []byte // always set after applying diffs
+	Nonce             uint64 // current nonce after applying diffs
+	Receipt           []byte // executor receipt sig, nil if not executor
+	ConfirmedAt       int64  // executor wall-clock timestamp, 0 if not executor
+	ObservedHeight    uint64 // executor stamp; 0 if unstamped
+	ObservedBlockHash []byte
+	// EnvelopeHeight is the response-leg HeightSyncSection.mainnet_height when
+	// the hop attached a section (HasEnvelope). Honest compose uses it to drop
+	// a host-signed raise that does not match this hop's envelope (spec §14).
+	EnvelopeHeight     uint64
+	HasEnvelope        bool
 	Mempool            []*types.DevshardTx
 	ExecutionJob       *devshard.ExecuteRequest // non-nil if this host is the executor and execution is deferred
-	CachedResponseBody []byte // non-nil when reconnecting to a completed inference
-	StreamBytesRead    int64  // total bytes read from the host HTTP response body (SSE streams only)
+	CachedResponseBody []byte                   // non-nil when reconnecting to a completed inference
+	StreamBytesRead    int64                    // total bytes read from the host HTTP response body (SSE streams only)
 	InferenceID        uint64
 	ReceiptExpected    bool
 	ReceiptReason      observability.Reason
@@ -76,6 +90,8 @@ type receiptOutcome struct {
 	receiptExpected   bool
 	reason            observability.Reason
 	executionExpected bool
+	observedHeight    uint64
+	observedHash      []byte
 }
 
 // AcceptanceChecker is an optional hook that lets the host withhold its
@@ -93,22 +109,22 @@ const (
 
 // Host processes user requests: applies diffs, executes inference, signs state.
 type Host struct {
-	mu           sync.Mutex
-	sm           *state.StateMachine
-	signer       signing.Signer
-	verifier     signing.Verifier
-	engine       devshard.InferenceEngine
+	mu                 sync.Mutex
+	sm                 *state.StateMachine
+	signer             signing.Signer
+	verifier           signing.Verifier
+	engine             devshard.InferenceEngine
 	validator          devshard.ValidationEngine // optional, nil = no validation
 	validationRecorder devshard.ValidationCompletionRecorder
 	escrowID           string
 	epochID            uint64
 	slotIDs            map[uint32]bool
 	group              []types.SlotAssignment
-	mempool      *Mempool
-	checker      AcceptanceChecker
-	store        storage.Storage // optional, nil = no persistence
-	gsp          *gossip.Gossip  // optional, nil = no gossip pruning
-	availability devshard.AvailabilityProvider
+	mempool            *Mempool
+	checker            AcceptanceChecker
+	store              storage.Storage // optional, nil = no persistence
+	gsp                *gossip.Gossip  // optional, nil = no gossip pruning
+	availability       devshard.AvailabilityProvider
 
 	snapshotInFlight      atomic.Bool  // prevents overlapping async snapshot writes
 	validationObsInFlight atomic.Int32 // caps concurrent async validation-obs writes
@@ -130,6 +146,22 @@ type Host struct {
 	validationClosed      bool
 
 	maxNonce devshard.MaxNonceProvider // nil = do not enforce
+
+	// oracle is optional mainnet height source. LatestHeight returns ErrNoChainOracle when nil.
+	oracle blocks.BlockOracle
+
+	// peerSeen and heartbeatCfg serve host-signed height acks (spec §10.4).
+	// peerSeen is the spec §11.2 bitmap (Diff acks and repair HEIGHT).
+	// heartbeatCfg supplies D.
+	peerSeen     *heightsync.PeerSeen
+	heartbeatCfg heightsync.HeartbeatConfig
+
+	repairCfg       heightsync.RepairConfig
+	repairBudget    *heightsync.RepairBudget
+	repairResponder *heightsync.RepairResponderBudget
+	repairProbe     heightsync.RepairProbeFn
+	repairInFlight  atomic.Bool
+	closeReady      *heightsync.CloseReady
 }
 
 // SnapshotInterval controls how often hosts persist full state snapshots.
@@ -195,25 +227,31 @@ func NewHost(
 	}
 
 	h := &Host{
-		sm:                    sm,
-		signer:                signer,
-		engine:                engine,
-		escrowID:              escrowID,
-		slotIDs:               slotIDs,
-		group:                 group,
-		mempool:               NewMempool(),
-		checker:               checker,
-		slotToAddr:            slotToAddr,
-		addrToSlots:           addrToSlots,
-		sortedSlots:           sortedSlots,
-		executing:             make(map[uint64]struct{}),
-		validating:            make(map[uint64]struct{}),
-		completedResponses:    make(map[uint64][]byte),
-		ownSeed:               ownSeed,
+		sm:                 sm,
+		signer:             signer,
+		engine:             engine,
+		escrowID:           escrowID,
+		slotIDs:            slotIDs,
+		group:              group,
+		mempool:            NewMempool(),
+		checker:            checker,
+		slotToAddr:         slotToAddr,
+		addrToSlots:        addrToSlots,
+		sortedSlots:        sortedSlots,
+		executing:          make(map[uint64]struct{}),
+		validating:         make(map[uint64]struct{}),
+		completedResponses: make(map[uint64][]byte),
+		ownSeed:            ownSeed,
+		peerSeen:           heightsync.NewPeerSeen(uint32(len(group)), 0),
+		heartbeatCfg:       heightsync.DefaultHeartbeatConfig(),
+		repairCfg:          heightsync.DefaultRepairConfig(),
 	}
 	for _, opt := range opts {
 		opt(h)
 	}
+	h.repairBudget = heightsync.NewRepairBudget(h.repairCfg, uint32(len(group)), h.PrimarySlot(), h.heartbeatCfg.Interval)
+	h.repairResponder = heightsync.NewRepairResponderBudget(h.repairCfg, uint32(len(group)), h.heartbeatCfg.Interval)
+	h.closeReady = heightsync.NewCloseReady(h.PrimarySlot(), h.heartbeatCfg)
 	return h, nil
 }
 
@@ -319,6 +357,33 @@ func WithGrace(grace uint64) HostOption {
 	}
 }
 
+// ErrNoChainOracle is returned by Host.LatestHeight when no BlockOracle was configured.
+var ErrNoChainOracle = errors.New("host: no chain oracle configured")
+
+// WithChainOracle injects a mainnet BlockOracle. LatestHeight returns ErrNoChainOracle when omitted.
+func WithChainOracle(o blocks.BlockOracle) HostOption {
+	return func(h *Host) {
+		if o != nil {
+			h.oracle = o
+		}
+	}
+}
+
+// WithHeartbeatConfig overlays compiled heartbeat defaults used for sync_state (D).
+func WithHeartbeatConfig(cfg heightsync.HeartbeatConfig) HostOption {
+	return func(h *Host) {
+		h.heartbeatCfg = cfg
+	}
+}
+
+// WithRepairConfig overlays repair-probe stagger / R_max. Stagger 0 means no
+// wait (tests); production uses DefaultRepairConfig (1s).
+func WithRepairConfig(cfg heightsync.RepairConfig) HostOption {
+	return func(h *Host) {
+		h.repairCfg = cfg
+	}
+}
+
 func (h *Host) StateRoot() ([]byte, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -376,6 +441,31 @@ func (h *Host) IsWarmKeyForSlot(addr string, slotID uint32) bool {
 
 func (h *Host) Signer() signing.Signer { return h.signer }
 
+// HeightSyncEscrowHints returns escrow-derived height-sync cadence hints after applied diffs.
+func (h *Host) HeightSyncEscrowHints(defaultK, defaultSlots uint64) *heightsync.EscrowHeightSyncHints {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.sm.HeightSyncEscrowHints(defaultK, defaultSlots)
+}
+
+// LatestHeight returns the highest mainnet block height known to the injected oracle.
+func (h *Host) LatestHeight(ctx context.Context) (int64, error) {
+	if h.oracle == nil {
+		return 0, ErrNoChainOracle
+	}
+	hdr, err := h.oracle.Latest(ctx)
+	if err != nil {
+		return 0, err
+	}
+	if hdr == nil {
+		return 0, fmt.Errorf("host: chain oracle returned nil header")
+	}
+	return hdr.Height, nil
+}
+
+// ChainOracle returns the injected BlockOracle or nil if unwired.
+func (h *Host) ChainOracle() blocks.BlockOracle { return h.oracle }
+
 func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostResponse, error) {
 	h.mu.Lock()
 
@@ -393,22 +483,37 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 
 	// (a) Apply all new diffs.
 	var lastAppliedTxs []*types.DevshardTx
+	var newlyApplied []types.Diff
 	diffsApplied := false
 	for _, diff := range req.Diffs {
 		if err := h.checkDiffNonceLimitLocked(diff); err != nil {
 			h.mu.Unlock()
 			return nil, err
 		}
+		before := h.sm.LatestNonce()
 		if err := h.applyAndPersistReconciling(ctx, diff); err != nil {
 			h.mu.Unlock()
 			return nil, observability.Classify(observability.ReasonApplyErr, observability.WhereHostApplyDiff, err)
+		}
+		if h.sm.LatestNonce() > before {
+			newlyApplied = append(newlyApplied, diff)
 		}
 		lastAppliedTxs = diff.Txs
 		diffsApplied = true
 	}
 
+	needOracle := h.oracleNeededLocked(req, newlyApplied)
+	h.mu.Unlock()
+	hdr, hdrErr := h.latestHeaderIf(ctx, needOracle)
+	h.mu.Lock()
+
+	// (a2) Answer heartbeats addressed to this host's slot (spec §10.4).
+	// Acks go into the mempool of this response; they are never a general stamp.
+	h.maybeAckHeartbeatsLocked(newlyApplied, hdr, hdrErr)
+	h.noteCloseReadyLocked(newlyApplied, hdr, hdrErr)
+
 	// (b) Sign executor receipt (sync, under mutex).
-	receipt, confirmedAt, job, cachedBody, receiptOutcome, err := h.signReceipt(req)
+	receipt, confirmedAt, job, cachedBody, receiptOutcome, err := h.signReceipt(ctx, req, hdr, hdrErr)
 	if err != nil {
 		h.mu.Unlock()
 		return nil, err
@@ -454,12 +559,18 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 		go h.broadcastTxsBestEffort(staleFinishes)
 	}
 
+	if h.repairProbe != nil {
+		go h.MaybeRepair(context.WithoutCancel(ctx))
+	}
+
 	return &HostResponse{
 		StateSig:           stateSig,
 		StateHash:          root,
 		Nonce:              nonce,
 		Receipt:            receipt,
 		ConfirmedAt:        confirmedAt,
+		ObservedHeight:     receiptOutcome.observedHeight,
+		ObservedBlockHash:  append([]byte(nil), receiptOutcome.observedHash...),
 		Mempool:            h.mempool.Txs(),
 		ExecutionJob:       job,
 		CachedResponseBody: cachedBody,
@@ -735,7 +846,7 @@ func (h *Host) findDiff(diffs []types.Diff, nonce uint64) *types.Diff {
 // bytes in the request. applyAndPersist may skip stale diffs without verifying them; those
 // skipped bytes must never authorize execution.
 // Caller must hold h.mu.
-func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteRequest, []byte, receiptOutcome, error) {
+func (h *Host) signReceipt(ctx context.Context, req HostRequest, hdr *blocks.Header, hdrErr error) ([]byte, int64, *devshard.ExecuteRequest, []byte, receiptOutcome, error) {
 	outcome := receiptOutcome{reason: observability.ReasonNotExecutor}
 	if req.Payload == nil {
 		outcome.reason = observability.ReasonPayloadAbsent
@@ -777,17 +888,21 @@ func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteReq
 		return nil, 0, nil, nil, outcome, nil
 	}
 
-	// Sign executor receipt with wall-clock confirmed_at.
+	// Sign executor receipt with wall-clock confirmed_at and optional height stamp.
 	confirmedAt := time.Now().Unix()
+	obsH, obsHash := headerStamp(hdr, hdrErr)
+	obsH, obsHash = h.referenceStamp(inferenceID, obsH, obsHash)
 	receiptContent := &types.ExecutorReceiptContent{
-		InferenceId: inferenceID,
-		PromptHash:  rec.PromptHash,
-		Model:       rec.Model,
-		InputLength: rec.InputLength,
-		MaxTokens:   rec.MaxTokens,
-		StartedAt:   rec.StartedAt,
-		EscrowId:    h.escrowID,
-		ConfirmedAt: confirmedAt,
+		InferenceId:       inferenceID,
+		PromptHash:        rec.PromptHash,
+		Model:             rec.Model,
+		InputLength:       rec.InputLength,
+		MaxTokens:         rec.MaxTokens,
+		StartedAt:         rec.StartedAt,
+		EscrowId:          h.escrowID,
+		ConfirmedAt:       confirmedAt,
+		ObservedHeight:    obsH,
+		ObservedBlockHash: obsHash,
 	}
 	receiptData, err := proto.Marshal(receiptContent)
 	if err != nil {
@@ -797,14 +912,18 @@ func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteReq
 	if err != nil {
 		return nil, 0, nil, nil, outcome, observability.Classify(observability.ReasonReceiptSignErr, observability.WhereHostSignReceipt, fmt.Errorf("sign executor receipt: %w", err))
 	}
+	outcome.observedHeight = obsH
+	outcome.observedHash = obsHash
 
 	// Add MsgConfirmStart to mempool so it survives HTTP failures.
 	// If the response is lost (e.g. 503), the next request delivers it via mempool.
 	h.mempool.Add(MempoolEntry{
 		Tx: &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-			InferenceId: inferenceID,
-			ExecutorSig: sig,
-			ConfirmedAt: confirmedAt,
+			InferenceId:       inferenceID,
+			ExecutorSig:       sig,
+			ConfirmedAt:       confirmedAt,
+			ObservedHeight:    obsH,
+			ObservedBlockHash: obsHash,
 		}}},
 		ProposedAt: h.sm.LatestNonce(),
 	})
@@ -868,13 +987,17 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 			observability.StageFinished, "execute failed", err, "inference_id", inferenceID)
 	}
 
+	obsH, obsHash := h.observedTip(ctx)
+	obsH, obsHash = h.referenceStamp(inferenceID, obsH, obsHash)
 	finishMsg := &types.MsgFinishInference{
-		InferenceId:  inferenceID,
-		ResponseHash: result.ResponseHash,
-		InputTokens:  result.InputTokens,
-		OutputTokens: result.OutputTokens,
-		ExecutorSlot: executorSlot,
-		EscrowId:     h.escrowID,
+		InferenceId:       inferenceID,
+		ResponseHash:      result.ResponseHash,
+		InputTokens:       result.InputTokens,
+		OutputTokens:      result.OutputTokens,
+		ExecutorSlot:      executorSlot,
+		EscrowId:          h.escrowID,
+		ObservedHeight:    obsH,
+		ObservedBlockHash: obsHash,
 	}
 	proposerSig, err := h.signProposer(finishMsg)
 	if err != nil {
@@ -1362,7 +1485,7 @@ func (h *Host) ApplyRecoveredDiffs(ctx context.Context, diffs []types.Diff) ([]g
 // executor IS reachable. The verifier should already have caught bad payloads
 // before forwarding (defense-in-depth).
 func (h *Host) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *InferencePayload, diffs []types.Diff) ([]byte, int64, error) {
-	receipt, confirmedAt, job, err := h.challengeReceiptLocked(inferenceID, payload, diffs)
+	receipt, confirmedAt, job, err := h.challengeReceiptLocked(ctx, inferenceID, payload, diffs)
 	if err != nil || job == nil {
 		return receipt, confirmedAt, err
 	}
@@ -1372,12 +1495,13 @@ func (h *Host) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload
 
 // challengeReceiptLocked applies diffs, checks executor eligibility, and signs
 // the receipt under the mutex. Returns a non-nil ExecuteRequest when async execution is needed.
-func (h *Host) challengeReceiptLocked(inferenceID uint64, payload *InferencePayload, diffs []types.Diff) ([]byte, int64, *devshard.ExecuteRequest, error) {
+func (h *Host) challengeReceiptLocked(ctx context.Context, inferenceID uint64, payload *InferencePayload, diffs []types.Diff) ([]byte, int64, *devshard.ExecuteRequest, error) {
+	hdr, hdrErr := h.latestHeader(ctx)
 	h.mu.Lock()
 	defer h.mu.Unlock()
 
 	for _, diff := range diffs {
-		if err := h.applyAndPersistReconciling(context.Background(), diff); err != nil {
+		if err := h.applyAndPersistReconciling(ctx, diff); err != nil {
 			return nil, 0, nil, fmt.Errorf("apply challenge diff nonce %d: %w", diff.Nonce, err)
 		}
 	}
@@ -1397,15 +1521,19 @@ func (h *Host) challengeReceiptLocked(inferenceID uint64, payload *InferencePayl
 	}
 
 	confirmedAt := time.Now().Unix()
+	obsH, obsHash := headerStamp(hdr, hdrErr)
+	obsH, obsHash = h.referenceStamp(inferenceID, obsH, obsHash)
 	receiptContent := &types.ExecutorReceiptContent{
-		InferenceId: inferenceID,
-		PromptHash:  rec.PromptHash,
-		Model:       rec.Model,
-		InputLength: rec.InputLength,
-		MaxTokens:   rec.MaxTokens,
-		StartedAt:   rec.StartedAt,
-		EscrowId:    h.escrowID,
-		ConfirmedAt: confirmedAt,
+		InferenceId:       inferenceID,
+		PromptHash:        rec.PromptHash,
+		Model:             rec.Model,
+		InputLength:       rec.InputLength,
+		MaxTokens:         rec.MaxTokens,
+		StartedAt:         rec.StartedAt,
+		EscrowId:          h.escrowID,
+		ConfirmedAt:       confirmedAt,
+		ObservedHeight:    obsH,
+		ObservedBlockHash: obsHash,
 	}
 	receiptData, err := proto.Marshal(receiptContent)
 	if err != nil {

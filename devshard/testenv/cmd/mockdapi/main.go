@@ -5,6 +5,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -35,6 +36,7 @@ func main() {
 			cfg.BlockInterval = d
 		}
 	}
+	cfg.OmitBlockRoutes = envTruthy("MOCK_DAPI_OMIT_BLOCK_ROUTES")
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -56,6 +58,15 @@ func envOr(key, def string) string {
 		return v
 	}
 	return def
+}
+
+func envTruthy(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes":
+		return true
+	default:
+		return false
+	}
 }
 
 func versionFromEnv() cosrv.Version {

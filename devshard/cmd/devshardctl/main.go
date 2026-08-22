@@ -126,6 +126,7 @@ type bootstrapOptions struct {
 var gatewayRuntimeBuilder = buildRuntime
 
 func main() {
+	initGatewaySlog()
 	ConfigurePoCRequestMode(os.Getenv("DEVSHARD_POC_REQUEST_MODE"))
 	ConfigureCapacityAwareLimits(os.Getenv("DEVSHARD_CAPACITY_AWARE_LIMITS"))
 	flags := parseCLIFlags()
@@ -384,6 +385,9 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 	chainClient, err := chain.NewWithQueryFallback(gatewayState.Settings.ChainGRPC, effectiveChainRPC())
 	if err != nil {
 		log.Fatalf("dial chain gRPC %s: %v", gatewayState.Settings.ChainGRPC, err)
+	}
+	if err := initGatewayHeightSync(chainClient, cometRPCForHeightSync(gatewayState.Settings.ChainGRPC)); err != nil {
+		log.Fatalf("height sync oracle: %v", err)
 	}
 
 	perfStore, err := NewPerfStore(filepath.Join(baseStorageDir, "perf.db"))

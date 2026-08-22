@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"common/chain"
+	"common/chainoracle/blocks"
 	mlnodeclient "common/nodemanager"
 	commrc "common/runtimeconfig"
 	"common/storage/payloads"
@@ -277,7 +278,12 @@ func buildHostManager(
 	)
 	manager.SetAvailabilityProvider(availabilityTracker)
 	manager.SetMaxNonceProvider(runtimeparams.MaxNonceFromSnapshot(chainParams))
+	manager.SetParamsProvider(runtimeparams.FromSnapshot(chainParams))
 	manager.SetBinaryVersion(cfg.BinaryLogVersion)
+	if err := manager.SetHeightSyncFromEnv(ctx, chainRuntime.client); err != nil {
+		return nil, fmt.Errorf("height sync oracle: %w", err)
+	}
+	closers.Add(manager.CloseHeightSync)
 	chainBridge.OnSettlementFinalizedHandler(manager.HandleSettlementFinalized)
 
 	startHostEventsWarm(ctx, cfg, chainBridge, mlClient, store, closers)
@@ -303,6 +309,8 @@ func buildHostManager(
 
 	var lastCleanEpoch atomic.Uint64
 	chainRuntime.chainEvents.OnNewBlock(func(bctx context.Context, e events.NewBlockEvent) {
+		manager.ObserveChainHeader(blocks.HashOnlyHeader(e.BlockHeight, e.Time, e.ChainID, e.BlockHash))
+
 		currentEpoch := phase.EpochID()
 		if currentEpoch <= lastCleanEpoch.Load() {
 			return

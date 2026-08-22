@@ -25,10 +25,13 @@ import (
 	"github.com/productscience/inference/x/inference/calculations"
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
 
+	"common/chainoracle/blocks"
 	devshardpkg "devshard"
 	"devshard/bridge"
+	"devshard/heightsync"
 	"devshard/host"
 	"devshard/observability"
+	"devshard/runtimeparams"
 	devshardserver "devshard/server"
 	"devshard/signing"
 	"devshard/state"
@@ -56,6 +59,7 @@ type HostManager struct {
 	recorder           PayloadAuthClient
 	availability       devshardpkg.AvailabilityProvider
 	maxNonce           devshardpkg.MaxNonceProvider
+	params             runtimeparams.Provider
 
 	statsMu            sync.Mutex
 	statsShardsCache   *statsShardsResponse
@@ -64,6 +68,12 @@ type HostManager struct {
 	statsNegativeCache map[string]statsNegativeCacheEntry
 
 	binaryVersion string
+
+	// Optional height-sync (DEVSHARD_CHAINORACLE_URL). Nil when unset.
+	chainOracle      blocks.BlockOracle
+	heightSync       *heightsync.AnchorScheduler
+	heightSyncCloser func()
+	heightSyncTip    interface{ Observe(h *blocks.Header) }
 }
 
 const (
@@ -125,6 +135,12 @@ func (m *HostManager) SetMaxNonceProvider(p devshardpkg.MaxNonceProvider) {
 	m.maxNonce = p
 }
 
+// SetParamsProvider overlays runtime height-sync scheduling knobs on new and
+// recovered sessions. Evaluation knobs stay compiled inside HeartbeatConfigFromSnapshot.
+func (m *HostManager) SetParamsProvider(p runtimeparams.Provider) {
+	m.params = p
+}
+
 // SetBinaryVersion sets the link-time / log build id exposed on stats endpoints
 // (same value as --print-binary-version / DEVSHARD_BINARY_LOG_VERSION).
 func (m *HostManager) SetBinaryVersion(v string) {
@@ -145,6 +161,7 @@ func (m *HostManager) Close() error {
 		srv.Host().Close()
 		observability.DeleteEscrowMetrics(escrowID)
 	}
+	m.CloseHeightSync()
 	return m.store.Close()
 }
 
@@ -385,8 +402,7 @@ func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*trans
 	config := bridge.SessionConfigAtBind(len(group), escrow)
 
 	sm, err := state.NewStateMachine(escrowID, config, group, escrow.Amount, creatorAddr, m.verifier, m.store,
-		state.WithWarmKeyResolver(m.bridge.VerifyWarmKey),
-		state.WithVersion(m.boundVersion),
+		m.sessionSMOpts(state.WithWarmKeyResolver(m.bridge.VerifyWarmKey), state.WithVersion(m.boundVersion))...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create state machine: %w", err)
@@ -412,10 +428,7 @@ func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*trans
 		return nil, fmt.Errorf("init storage session: %w", err)
 	}
 
-	srv, err := transport.NewServer(h, m.store, m.verifier, creatorAddr,
-		transport.WithBridge(m.bridge),
-		transport.WithRateLimit(transport.DefaultRateLimitConfig()),
-	)
+	srv, err := transport.NewServer(h, m.store, m.verifier, creatorAddr, m.transportServerOpts()...)
 	if err != nil {
 		h.Close()
 		return nil, fmt.Errorf("create server: %w", err)
@@ -500,8 +513,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 	sm, err := state.NewStateMachine(
 		escrowID, meta.Config, meta.Group, meta.InitialBalance,
 		meta.CreatorAddr, m.verifier, m.store,
-		state.WithWarmKeyResolver(m.bridge.VerifyWarmKey),
-		state.WithVersion(recoveredVersion),
+		m.sessionSMOpts(state.WithWarmKeyResolver(m.bridge.VerifyWarmKey), state.WithVersion(recoveredVersion))...,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("create state machine: %w", err)
@@ -541,10 +553,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 		return nil, fmt.Errorf("create host: %w", err)
 	}
 
-	srv, err := transport.NewServer(h, m.store, m.verifier, meta.CreatorAddr,
-		transport.WithBridge(m.bridge),
-		transport.WithRateLimit(transport.DefaultRateLimitConfig()),
-	)
+	srv, err := transport.NewServer(h, m.store, m.verifier, meta.CreatorAddr, m.transportServerOpts()...)
 	if err != nil {
 		h.Close()
 		return nil, fmt.Errorf("create server: %w", err)
@@ -864,5 +873,16 @@ func (m *HostManager) hostOpts(epochID uint64) []host.HostOption {
 	if m.maxNonce != nil {
 		opts = append(opts, host.WithMaxNonceProvider(m.maxNonce))
 	}
-	return opts
+	if m.params != nil {
+		sp := m.params.SessionParams()
+		opts = append(opts, host.WithHeartbeatConfig(sp.Heartbeat), host.WithRepairConfig(sp.Repair))
+	}
+	return m.appendChainOracleOpt(opts)
+}
+
+func (m *HostManager) sessionSMOpts(extra ...state.SMOption) []state.SMOption {
+	if m.params != nil {
+		extra = append(extra, state.WithHeartbeatConfig(m.params.SessionParams().Heartbeat))
+	}
+	return extra
 }

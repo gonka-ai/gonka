@@ -22,10 +22,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	devshardpkg "devshard"
 	"common/chain"
 	chaintx "common/chain/tx"
+	devshardpkg "devshard"
 	"devshard/bridge"
+	"devshard/heightsync"
 	"devshard/runtimeparams"
 	"devshard/storage"
 	"devshard/transport"
@@ -282,18 +283,27 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	}
 	model := resolveRuntimeModel(cfg.Model, escrow.ModelID, deps.defaultModel, cfg.ID)
 	routePrefix := resolveRuntimeRoutePrefix(cfg.RoutePrefix)
+	extraClient, err := extraClientConfigFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("runtime %s: height sync: %w", cfg.ID, err)
+	}
 	session, sm, err := user.NewHTTPSession(user.HTTPSessionConfig{
-		PrivateKeyHex:    keyHex,
-		EscrowID:         cfg.ID,
-		Bridge:           br,
-		StoragePath:      cfg.StoragePath,
-		RoutePrefix:      routePrefix,
-		RequestAdmission: sharedParticipantRequestLimiter,
-		Escrow:           escrow,
+		PrivateKeyHex:     keyHex,
+		EscrowID:          cfg.ID,
+		Bridge:            br,
+		StoragePath:       cfg.StoragePath,
+		RoutePrefix:       routePrefix,
+		RequestAdmission:  sharedParticipantRequestLimiter,
+		Escrow:            escrow,
+		ExtraClientConfig: extraClient,
+		Heartbeat:         heartbeatFromDeps(deps),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: create session: %w", cfg.ID, err)
 	}
+	// Quiet-session cadence (§10.3). Close() cancels the loop. Not started
+	// inside NewHTTPSession so in-process / E2E stacks keep nonce 1 for inference.
+	session.StartHeartbeatLoop()
 	if err := perf.BackfillLegacyEscrowSamples(cfg.ID, legacyPerfSourcePath(legacyStoragePath), session.HostParticipantKeyList()); err != nil {
 		log.Printf("runtime %s: backfill legacy perf samples: %v", cfg.ID, err)
 	}
@@ -329,16 +339,29 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	return rt, nil
 }
 
+func heartbeatFromDeps(deps runtimeBuildDeps) *heightsync.HeartbeatConfig {
+	if deps.params == nil {
+		return nil
+	}
+	hb := deps.params.SessionParams().Heartbeat
+	return &hb
+}
+
 func (g *Gateway) runtimeBuildDeps(perf *PerfTracker) runtimeBuildDeps {
 	return g.runtimeBuildDepsFromSettings(perf, g.settings)
 }
 
 func (g *Gateway) runtimeBuildDepsFromSettings(perf *PerfTracker, settings GatewaySettings) runtimeBuildDeps {
+	var params runtimeparams.Provider
+	if g != nil && g.runtimeParams != nil {
+		params = g.runtimeParams.BindProvider()
+	}
 	return runtimeBuildDeps{
 		bridge:       g.chainBridge(),
 		chainClient:  g.chainClient,
 		defaultModel: firstNonEmpty(settings.DefaultModel, g.settings.DefaultModel),
 		perf:         perf,
+		params:       params,
 	}
 }
 
@@ -2387,11 +2410,11 @@ func legacyPerfSourcePath(storagePath string) string {
 }
 
 type adminDevshardRequest struct {
-	ID              string `json:"id"`
-	PrivateKey      string `json:"private_key,omitempty"`
-	PrivateKeyEnv   string `json:"private_key_env,omitempty"`
-	Model           string `json:"model,omitempty"`
-	StoragePath     string `json:"storage_path,omitempty"`
+	ID            string `json:"id"`
+	PrivateKey    string `json:"private_key,omitempty"`
+	PrivateKeyEnv string `json:"private_key_env,omitempty"`
+	Model         string `json:"model,omitempty"`
+	StoragePath   string `json:"storage_path,omitempty"`
 	RoutePrefix   string `json:"route_prefix,omitempty"`
 }
 
@@ -2402,17 +2425,17 @@ type adminImportDevshardRequest struct {
 }
 
 type adminCreateEscrowRequest struct {
-	PrivateKey      string `json:"private_key,omitempty"`
-	PrivateKeyEnv   string `json:"private_key_env,omitempty"`
-	Amount          uint64 `json:"amount"`
-	ModelID         string `json:"model_id,omitempty"`
-	Register        *bool  `json:"register,omitempty"`
-	StoragePath     string `json:"storage_path,omitempty"`
-	RoutePrefix     string `json:"route_prefix,omitempty"`
-	ChainID         string `json:"chain_id,omitempty"`
-	FeeDenom        string `json:"fee_denom,omitempty"`
-	FeeAmount       uint64 `json:"fee_amount,omitempty"`
-	GasLimit        uint64 `json:"gas_limit,omitempty"`
+	PrivateKey    string `json:"private_key,omitempty"`
+	PrivateKeyEnv string `json:"private_key_env,omitempty"`
+	Amount        uint64 `json:"amount"`
+	ModelID       string `json:"model_id,omitempty"`
+	Register      *bool  `json:"register,omitempty"`
+	StoragePath   string `json:"storage_path,omitempty"`
+	RoutePrefix   string `json:"route_prefix,omitempty"`
+	ChainID       string `json:"chain_id,omitempty"`
+	FeeDenom      string `json:"fee_denom,omitempty"`
+	FeeAmount     uint64 `json:"fee_amount,omitempty"`
+	GasLimit      uint64 `json:"gas_limit,omitempty"`
 }
 
 type adminSettleEscrowRequest struct {
@@ -3063,10 +3086,10 @@ func (g *Gateway) handleAdminEscrows(w http.ResponseWriter, r *http.Request) {
 
 	record := GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{
-			ID:              strconv.FormatUint(result.EscrowID, 10),
-			Model:           modelID,
-			StoragePath:     strings.TrimSpace(req.StoragePath),
-			RoutePrefix:   strings.TrimSpace(req.RoutePrefix),
+			ID:          strconv.FormatUint(result.EscrowID, 10),
+			Model:       modelID,
+			StoragePath: strings.TrimSpace(req.StoragePath),
+			RoutePrefix: strings.TrimSpace(req.RoutePrefix),
 		},
 		Active: true,
 	}
@@ -3376,11 +3399,11 @@ func (g *Gateway) handleAdminImportDevshard(w http.ResponseWriter, r *http.Reque
 
 	record := GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{
-			ID:              req.ID,
-			PrivateKeyHex:   strings.TrimSpace(req.PrivateKey),
-			PrivateKeyEnv:   strings.TrimSpace(req.PrivateKeyEnv),
-			Model:           strings.TrimSpace(req.Model),
-			StoragePath:     req.StoragePath,
+			ID:            req.ID,
+			PrivateKeyHex: strings.TrimSpace(req.PrivateKey),
+			PrivateKeyEnv: strings.TrimSpace(req.PrivateKeyEnv),
+			Model:         strings.TrimSpace(req.Model),
+			StoragePath:   req.StoragePath,
 			RoutePrefix:   strings.TrimSpace(req.RoutePrefix),
 		},
 		Active: active,

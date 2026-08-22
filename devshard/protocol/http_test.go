@@ -49,6 +49,8 @@ func httpTestClient(baseURL string, escrowID string, signer signing.Signer) *tra
 func registerServer(g *echo.Group, srv *transport.Server) {
 	g.Use(srv.AuthMiddleware)
 	g.POST("/sessions/:id/chat/completions", srv.HandleInference)
+	g.POST("/sessions/:id/height-sync", srv.HandleHeightSync)
+	g.POST("/sessions/:id/heightsync/repair", srv.HandleHeightSyncRepair)
 	g.POST("/sessions/:id/verify-timeout", srv.HandleVerifyTimeout)
 	g.POST("/sessions/:id/challenge-receipt", srv.HandleChallengeReceipt)
 	g.POST("/sessions/:id/gossip/nonce", srv.HandleGossipNonce)

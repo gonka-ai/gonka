@@ -14,6 +14,7 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"devshard"
+	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"
 	"devshard/signing"
@@ -209,13 +210,14 @@ func (c *InProcessClient) GetSignatures(_ context.Context, nonce uint64) (map[ui
 
 // InferenceParams describes a new inference to send.
 type InferenceParams struct {
-	Model            string
-	Prompt           []byte
-	InputLength      uint64
-	MaxTokens        uint64
-	ContextTotalHint uint64
-	StartedAt        int64
-	Stream           bool
+	Model                 string
+	Prompt                []byte
+	InputLength           uint64
+	MaxTokens             uint64
+	ContextTotalHint      uint64
+	StartedAt             int64
+	Stream                bool
+	ForceHeightSyncAnchor bool
 }
 
 // Session manages the user side of the devshard protocol.
@@ -265,6 +267,34 @@ type Session struct {
 	// Built lazily on first CollectSignatures call so finalize catch-up
 	// can reach quarantined hosts.
 	finalizeClients []HostClient
+
+	heightSyncK     uint64
+	heightSyncSlots uint64
+
+	heartbeatCfg     heightsync.HeartbeatConfig
+	heartbeat        *heightsync.Heartbeat
+	turnTracker      *heightsync.TurnTracker
+	observedHeight   func() (height uint64, hash []byte, ok bool)
+	heartbeatTurnSeq uint64 // producer counter; RecoverSession restores from SM MaxTurnSeq
+	// heartbeatFlushLeft is the number of ack-carrying rounds still owed to the
+	// open turn. The heartbeat cadence is wall clock, so the producer does not
+	// wait for a block tick to collect acks.
+	heartbeatFlushLeft int
+	// clock drives the heartbeat cadence and is injectable for tests. It is
+	// never written into Diff: turn records stay clock-free.
+	clock func() time.Time
+
+	// heartbeat loop (step 12). StartHeartbeatLoop is idempotent; Close
+	// cancels it. heartbeatClosed is set first so a Start that races Close
+	// does not spawn a goroutine after shutdown.
+	heartbeatLoopOnce sync.Once
+	heartbeatClosed   bool
+	heartbeatStop     context.CancelFunc
+	heartbeatDone     chan struct{}
+
+	// heightSeedOnce runs the spec §18.5 roster fan-out at most once per Session.
+	heightSeedOnce   sync.Once
+	heightSeedMissed atomic.Bool
 }
 
 // SessionOption configures optional Session behavior.
@@ -274,6 +304,50 @@ type SessionOption func(*Session)
 // When set, diffs and signatures are persisted on each state transition.
 func WithStorage(s storage.Storage) SessionOption {
 	return func(sess *Session) { sess.store = s }
+}
+
+// WithHeightSyncCadence records K and slots for composing MsgForceHeightSyncTurn when
+// InferenceParams.ForceHeightSyncAnchor is set. Must match host/client AnchorScheduler config.
+func WithHeightSyncCadence(k, slots uint64) SessionOption {
+	return func(sess *Session) {
+		sess.heightSyncK = k
+		sess.heightSyncSlots = slots
+	}
+}
+
+// SetHeightSyncCadence sets K/slots for MsgForceHeightSyncTurn composition (e.g. after RecoverSession).
+func (s *Session) SetHeightSyncCadence(k, slots uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.heightSyncK = k
+	s.heightSyncSlots = slots
+}
+
+// WithHeartbeatConfig overrides compiled heartbeat defaults (tests / runtimeparams).
+func WithHeartbeatConfig(cfg heightsync.HeartbeatConfig) SessionOption {
+	return func(sess *Session) { sess.heartbeatCfg = cfg }
+}
+
+// WithHeartbeatClock overrides the wall clock driving the heartbeat cadence (tests).
+func WithHeartbeatClock(now func() time.Time) SessionOption {
+	return func(sess *Session) {
+		if now != nil {
+			sess.clock = now
+		}
+	}
+}
+
+// WithObservedHeight injects the height+hash source used by MaybeHeartbeat.
+// Production uses ObservedHeightNow on the HTTP clients when this is unset.
+func WithObservedHeight(fn func() (height uint64, hash []byte, ok bool)) SessionOption {
+	return func(sess *Session) { sess.observedHeight = fn }
+}
+
+// SetObservedHeight replaces the height source (e.g. after RecoverSession).
+func (s *Session) SetObservedHeight(fn func() (height uint64, hash []byte, ok bool)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.observedHeight = fn
 }
 
 // WithCollectRetry overrides signature collection retry parameters.
@@ -342,6 +416,13 @@ func NewSession(
 	for _, opt := range opts {
 		opt(sess)
 	}
+	if sess.clock == nil {
+		sess.clock = time.Now
+	}
+	sess.heartbeat = heightsync.NewHeartbeat(sess.heartbeatCfg)
+	slots := uint64(len(group))
+	sess.heartbeat.SetRoster(slots, 0)
+	sess.turnTracker = heightsync.NewTurnTracker(slots, 0, sess.heartbeat.Config())
 	return sess, nil
 }
 
@@ -513,21 +594,26 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 		s.hostSyncNonce[hostIdx] = resp.Nonce
 	}
 
-	// Queue receipt as MsgConfirmStart for the next diff.
-	// Use inferenceNonce (the logical inference ID), not resp.Nonce (host's latest state).
-	if resp.Receipt != nil {
-		s.addPendingTx(&types.DevshardTx{
-			Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-				InferenceId: inferenceNonce,
-				ExecutorSig: resp.Receipt,
-				ConfirmedAt: resp.ConfirmedAt,
-			}},
-		})
+	// Queue mempool txs first so a stamped ConfirmStart wins over the
+	// receipt-synthesized copy (same confirm:<id> dedup key).
+	for _, tx := range resp.Mempool {
+		s.addPendingFromHostLocked(hostIdx, resp, tx)
 	}
 
-	// Queue mempool txs (finish msgs) for the next diff.
-	for _, tx := range resp.Mempool {
-		s.addPendingTx(tx)
+	s.noteResponseClaimLocked(hostIdx, resp)
+
+	// Queue receipt as MsgConfirmStart for the next diff if mempool did not
+	// already carry it. Use inferenceNonce (the logical inference ID).
+	if resp.Receipt != nil {
+		s.addPendingFromHostLocked(hostIdx, resp, &types.DevshardTx{
+			Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+				InferenceId:       inferenceNonce,
+				ExecutorSig:       resp.Receipt,
+				ConfirmedAt:       resp.ConfirmedAt,
+				ObservedHeight:    resp.ObservedHeight,
+				ObservedBlockHash: resp.ObservedBlockHash,
+			}},
+		})
 	}
 
 	// Track protocol outcome for this nonce (only for prepared inferences).
@@ -636,6 +722,7 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 		s.nonce = nonce
 		s.clearPendingTxs()
 		s.maybeSaveSnapshotLocked()
+		s.observeTurnLocked(diff)
 		return diff, hostIdx, nil
 	}
 
@@ -650,7 +737,53 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 	s.diffs = append(s.diffs, diff)
 	s.nonce = nonce
 	s.clearPendingTxs()
+	s.observeTurnLocked(diff)
 	return diff, hostIdx, nil
+}
+
+func (s *Session) observeTurnLocked(diff types.Diff) {
+	if s.turnTracker == nil {
+		return
+	}
+	hNow := heightsync.LogResidentHeight(diff.Txs, s.turnTracker.LastCompletedHeight())
+	s.turnTracker.Observe(diff.Nonce, diff.Txs, hNow)
+
+	// Acks are host-signed and name their own slot, so they are the one signal
+	// that needs no nonce arithmetic to attribute. Cadence asks whether the
+	// roster is answering, not whether it agrees on a height, so sync_state is
+	// not consulted — the same rule TurnTracker uses for Q. A stampless ack is
+	// still no round-trip to credit.
+	now := s.nowLocked()
+	for _, tx := range diff.Txs {
+		ack := tx.GetHeightAck()
+		if ack == nil || !heightsync.StampPresent(ack.ObservedBlockHash) {
+			continue
+		}
+		s.heartbeat.NoteClaim(ack.SlotId, now)
+	}
+}
+
+func (s *Session) nowLocked() time.Time {
+	if s.clock == nil {
+		return time.Now()
+	}
+	return s.clock()
+}
+
+// noteResponseClaimLocked credits a host-signed height claim to the host that
+// just answered. An executor stamp on its receipt proves the same round-trip a
+// heartbeat ack would, which is why a busy session owes no heartbeat.
+func (s *Session) noteResponseClaimLocked(hostIdx int, resp *host.HostResponse) {
+	if s.heartbeat == nil || resp == nil {
+		return
+	}
+	if hostIdx < 0 || hostIdx >= len(s.group) {
+		return
+	}
+	if resp.Receipt == nil || !heightsync.StampPresent(resp.ObservedBlockHash) {
+		return
+	}
+	s.heartbeat.NoteClaim(s.group[hostIdx].SlotID, s.nowLocked())
 }
 
 // persistDiffRetryLocked retries AppendDiff with backoff while holding s.mu.
@@ -780,6 +913,7 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 	if chooser == nil {
 		return nil, fmt.Errorf("PrepareInferenceFn: chooser is nil")
 	}
+	s.ensureHeightSeed(context.Background())
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -803,18 +937,43 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 	if err != nil {
 		return nil, fmt.Errorf("canonical prompt hash: %w", err)
 	}
+	start := &types.MsgStartInference{
+		InferenceId: nonce,
+		Model:       params.Model,
+		PromptHash:  promptHash,
+		InputLength: params.InputLength,
+		MaxTokens:   params.MaxTokens,
+		StartedAt:   params.StartedAt,
+	}
+	if h, hash, ok := s.referenceStampLocked(nonce); ok {
+		start.ObservedHeight = h
+		start.ObservedBlockHash = hash
+	}
 	startTx := &types.DevshardTx{Tx: &types.DevshardTx_StartInference{
-		StartInference: &types.MsgStartInference{
-			InferenceId: nonce,
-			Model:       params.Model,
-			PromptHash:  promptHash,
-			InputLength: params.InputLength,
-			MaxTokens:   params.MaxTokens,
-			StartedAt:   params.StartedAt,
-		},
+		StartInference: start,
 	}}
 
-	diff, composedIdx, err := s.composeDiffLocked([]*types.DevshardTx{startTx})
+	txsForDiff := []*types.DevshardTx{startTx}
+	if params.ForceHeightSyncAnchor && s.heightSyncK != 0 {
+		slots := uint64(len(s.group))
+		if s.heightSyncSlots != 0 {
+			slots = s.heightSyncSlots
+		}
+		if !s.sm.HeightSyncForcedTurnActive(nonce) {
+			forceTx := &types.DevshardTx{Tx: &types.DevshardTx_ForceHeightSyncTurn{
+				ForceHeightSyncTurn: &types.MsgForceHeightSyncTurn{
+					TriggerNonce: nonce,
+					EndNonce:     nonce + slots - 1,
+					AnchorK:      s.heightSyncK,
+					SlotsNum:     slots,
+					Reason:       "manual",
+				},
+			}}
+			txsForDiff = []*types.DevshardTx{forceTx, startTx}
+		}
+	}
+
+	diff, composedIdx, err := s.composeDiffLocked(txsForDiff)
 	if err != nil {
 		return nil, err
 	}
@@ -854,9 +1013,12 @@ func (p *PreparedInference) IsProbe() bool { return p.isProbe }
 // without processing it. Use ProcessResponse separately to apply the response
 // to session state. This split allows parallel network I/O with ordered processing.
 func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+	legacyForce := p.params.ForceHeightSyncAnchor && s.heightSyncK == 0
 	resp, err := s.clients[p.hostIdx].Send(ctx, host.HostRequest{
-		Diffs: p.catchUp,
-		Nonce: p.diff.Nonce,
+		Diffs:                 p.catchUp,
+		Nonce:                 p.diff.Nonce,
+		ForceHeightSyncAnchor: legacyForce,
+		HeightSyncEscrow:      s.heightSyncEscrowHints(),
 		Payload: &host.InferencePayload{
 			Prompt:      p.params.Prompt,
 			Model:       p.params.Model,
@@ -869,6 +1031,17 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.
 		s.logStateRootMismatchUserDiagnostic(p)
 	}
 	return resp, err
+}
+
+func (s *Session) heightSyncEscrowHints() *heightsync.EscrowHeightSyncHints {
+	k, slots := s.heightSyncK, s.heightSyncSlots
+	if k == 0 {
+		k = 10
+	}
+	if slots == 0 {
+		slots = uint64(len(s.group))
+	}
+	return s.sm.HeightSyncEscrowHints(k, slots)
 }
 
 func (s *Session) logStateRootMismatchUserDiagnostic(p *PreparedInference) {
@@ -887,6 +1060,7 @@ func (s *Session) logStateRootMismatchUserDiagnostic(p *PreparedInference) {
 
 // SendInference composes diff, sends to correct host, processes response.
 func (s *Session) SendInference(ctx context.Context, params InferenceParams) (*host.HostResponse, error) {
+	s.ensureHeightSeed(ctx)
 	p, err := s.PrepareInference(params)
 	if err != nil {
 		return nil, err
@@ -906,6 +1080,7 @@ func (s *Session) SendInference(ctx context.Context, params InferenceParams) (*h
 // sendDiffRound composes a diff, sends it to the next host, processes the response.
 // Returns non-nil only on compose or processResponse errors; dead hosts are silently skipped.
 func (s *Session) sendDiffRound(ctx context.Context, extraTxs []*types.DevshardTx) error {
+	s.ensureHeightSeed(ctx)
 	s.mu.Lock()
 	diff, hostIdx, err := s.composeDiffLocked(extraTxs)
 	if err != nil {
@@ -918,7 +1093,7 @@ func (s *Session) sendDiffRound(ctx context.Context, extraTxs []*types.DevshardT
 	logging.Info("sendDiffRound sending", "subsystem", "finalize", "escrow", s.escrowID,
 		"nonce", diff.Nonce, "host", hostIdx, "catchup_count", len(catchUp))
 
-	resp, err := s.clients[hostIdx].Send(ctx, host.HostRequest{Diffs: catchUp, Nonce: diff.Nonce}, nil, nil)
+	resp, err := s.clients[hostIdx].Send(ctx, host.HostRequest{Diffs: catchUp, Nonce: diff.Nonce, HeightSyncEscrow: s.heightSyncEscrowHints()}, nil, nil)
 	if err != nil {
 		logging.Warn("sendDiffRound host dead", "subsystem", "finalize", "escrow", s.escrowID,
 			"nonce", diff.Nonce, "host", hostIdx, "error", err)
@@ -960,6 +1135,7 @@ func (s *Session) sendCatchUp(ctx context.Context, hostIdx int) error {
 // there's no point sending later chunks if the host couldn't apply earlier ones.
 // Returns non-nil only on processResponse errors; dead hosts are silently skipped.
 func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostClient) error {
+	s.ensureHeightSeed(ctx)
 	s.mu.Lock()
 	nonce := s.nonce
 	catchUp := s.diffsForHost(hostIdx)
@@ -1232,6 +1408,8 @@ func devshardTxKey(tx *types.DevshardTx) string {
 		return fmt.Sprintf("vote:%d:%d", inner.ValidationVote.InferenceId, inner.ValidationVote.VoterSlot)
 	case *types.DevshardTx_RevealSeed:
 		return fmt.Sprintf("reveal_seed:%d", inner.RevealSeed.SlotId)
+	case *types.DevshardTx_HeightAck:
+		return fmt.Sprintf("height_ack:%d:%d", inner.HeightAck.TurnSeq, inner.HeightAck.SlotId)
 	default:
 		return ""
 	}
@@ -1247,6 +1425,43 @@ func (s *Session) addPendingTx(tx *types.DevshardTx) {
 		s.pendingTxKeys[key] = struct{}{}
 	}
 	s.pendingTxs = append(s.pendingTxs, tx)
+}
+
+// addPendingFromHostLocked queues a mempool/receipt tx from one host response.
+// A host-signed raise that does not match this hop's response-leg envelope is
+// dropped (spec §14 rule 2). In-process and omit-section hops leave HasEnvelope
+// unset and skip the check.
+func (s *Session) addPendingFromHostLocked(hostIdx int, resp *host.HostResponse, tx *types.DevshardTx) {
+	if tx == nil {
+		return
+	}
+	if resp != nil && resp.HasEnvelope {
+		floor, _, _ := s.sm.HeightSyncFloorAsOf(s.nonce + 1)
+		kept, n := heightsync.FilterHostRaises(floor, resp.EnvelopeHeight, true, s.ownSlotsLocked(hostIdx), []*types.DevshardTx{tx})
+		if n > 0 {
+			logging.Warn("omitted host-signed raise: stamp does not match response envelope",
+				"subsystem", "heightsync", "escrow", s.escrowID, "host_idx", hostIdx,
+				"floor", floor, "envelope", resp.EnvelopeHeight)
+			return
+		}
+		if len(kept) == 0 {
+			return
+		}
+		tx = kept[0]
+	}
+	s.addPendingTx(tx)
+}
+
+func (s *Session) ownSlotsLocked(hostIdx int) map[uint32]struct{} {
+	if hostIdx < 0 || hostIdx >= len(s.group) {
+		return nil
+	}
+	slots := s.addrToSlots[s.group[hostIdx].ValidatorAddress]
+	out := make(map[uint32]struct{}, len(slots))
+	for _, sl := range slots {
+		out[sl] = struct{}{}
+	}
+	return out
 }
 
 const maxPendingTxKeys = 100_000
@@ -1974,8 +2189,10 @@ func shortAddress(addr string) string {
 	return addr[len(addr)-8:]
 }
 
-// Close releases the underlying storage, if any. Safe to call multiple times.
+// Close stops the heartbeat loop (if started) and releases the underlying
+// storage, if any. Safe to call multiple times.
 func (s *Session) Close() error {
+	s.StopHeartbeatLoop()
 	if s.store != nil {
 		return s.store.Close()
 	}

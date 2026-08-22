@@ -243,6 +243,52 @@ func (s *Stack) StartService(t *testing.T, service string) {
 	}
 }
 
+// PauseService freezes a compose service (fault injection; process stays up).
+func (s *Stack) PauseService(t *testing.T, service string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", append(append([]string{"compose"}, s.composeFileArgs()...), "pause", service)...)
+	cmd.Dir = s.WorkDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker compose pause %s: %v\n%s", service, err, out)
+	}
+}
+
+// UnpauseService resumes a previously paused compose service.
+func (s *Stack) UnpauseService(t *testing.T, service string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", append(append([]string{"compose"}, s.composeFileArgs()...), "unpause", service)...)
+	cmd.Dir = s.WorkDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker compose unpause %s: %v\n%s", service, err, out)
+	}
+}
+
+// WaitComposeLogsContain polls compose logs until needle appears.
+func (s *Stack) WaitComposeLogsContain(t *testing.T, timeout time.Duration, needle string, services ...string) string {
+	t.Helper()
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
+	var last string
+	ok := AssertEventually(t, timeout, 2*time.Second, func() bool {
+		out, err := s.ComposeLogsTail(400, services...)
+		if err != nil {
+			last = err.Error()
+			return false
+		}
+		last = out
+		return strings.Contains(out, needle)
+	})
+	require.True(t, ok, "compose logs missing %q within %s\n%s", needle, timeout, last)
+	return last
+}
+
 // ComposeLogs returns tail logs for optional services (all services when empty).
 func (s *Stack) ComposeLogs(services ...string) (string, error) {
 	return s.ComposeLogsTail(120, services...)
