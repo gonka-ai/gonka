@@ -60,11 +60,19 @@ func (b *BrokerChainBridgeImpl) GetHardwareNodes() (*types.QueryHardwareNodesRes
 	req := &types.QueryHardwareNodesRequest{
 		Participant: b.client.GetAccountAddress(),
 	}
-	return queryClient.HardwareNodes(b.client.GetContext(), req)
+	resp, err := queryClient.HardwareNodes(b.client.GetContext(), req)
+	if err == nil && resp != nil && resp.Nodes != nil {
+		if setter, ok := b.client.(interface {
+			SetHardwarePrev([]*types.HardwareNode)
+		}); ok {
+			setter.SetHardwarePrev(resp.Nodes.HardwareNodes)
+		}
+	}
+	return resp, err
 }
 
 func (b *BrokerChainBridgeImpl) SubmitHardwareDiff(diff *types.MsgSubmitHardwareDiff) error {
-	_, err := b.client.SendTransactionAsyncNoRetry(diff)
+	_, err := b.client.SendTransactionAsyncWithRetry(diff)
 	return err
 }
 
@@ -751,6 +759,12 @@ func areHardwareNodesEqual(a, b *types.HardwareNode) bool {
 	}
 
 	if a.Version != b.Version {
+		return false
+	}
+	if a.Host != b.Host {
+		return false
+	}
+	if a.Port != b.Port {
 		return false
 	}
 

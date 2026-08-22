@@ -208,6 +208,7 @@ func DefaultParams() Params {
 		DevshardEscrowParams: DefaultDevshardEscrowParams(),
 		MaintenanceParams:    DefaultMaintenanceParams(),
 		DelegationParams:     DefaultDelegationParams(),
+		FeeParams:            DefaultFeeParams(),
 	}
 }
 

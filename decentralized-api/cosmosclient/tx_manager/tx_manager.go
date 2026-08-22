@@ -1,10 +1,10 @@
 package tx_manager
 
 import (
+	"common/logging"
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/internal/nats/server"
-	"common/logging"
 	"decentralized-api/observability"
 	"encoding/hex"
 	"encoding/json"
@@ -71,6 +71,9 @@ type TxManager interface {
 	Status(ctx context.Context) (*ctypes.ResultStatus, error)
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
 	GetJetStream() nats.JetStreamContext
+	RefreshFeeTree(fp *types.FeeParams)
+	SetStoreCommitPrev(prev map[string]uint32)
+	SetHardwarePrev(nodes []*types.HardwareNode)
 }
 
 type blockTimeTracker struct {
@@ -94,6 +97,7 @@ type manager struct {
 	blockTimeTracker  *blockTimeTracker
 	getHeightFunc     func() int64
 	minGasPriceNgonka int64
+	feeTree           *FeeTreeCache
 }
 
 func StartTxManager(
@@ -132,6 +136,7 @@ func StartTxManager(
 		natsJetStream:     js,
 		getHeightFunc:     getHeight,
 		minGasPriceNgonka: minGasPriceNgonka,
+		feeTree:           newFeeTreeCache(),
 		blockTimeTracker: &blockTimeTracker{
 			maxBlockTimeout: 10 * time.Second,
 		},
@@ -335,7 +340,7 @@ func (m *manager) SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, e
 		return nil, err
 	}
 	resp, _, broadcastErr := m.broadcastMessage(id, rawTx)
-	return resp, broadcastErr
+	return resp, errorFromCheckTx(resp, broadcastErr)
 }
 
 func (m *manager) SendTransactionSyncNoRetry(msg proto.Message) (*ctypes.ResultTx, error) {
@@ -794,6 +799,24 @@ func (m *manager) GetJetStream() nats.JetStreamContext {
 	return m.natsJetStream
 }
 
+func (m *manager) RefreshFeeTree(fp *types.FeeParams) {
+	if m.feeTree != nil {
+		m.feeTree.Load(fp)
+	}
+}
+
+func (m *manager) SetStoreCommitPrev(prev map[string]uint32) {
+	if m.feeTree != nil {
+		m.feeTree.SetStoreCommitPrev(prev)
+	}
+}
+
+func (m *manager) SetHardwarePrev(nodes []*types.HardwareNode) {
+	if m.feeTree != nil {
+		m.feeTree.SetHardwarePrev(nodes)
+	}
+}
+
 func (m *manager) BroadcastMessages(id string, msgs ...sdk.Msg) (*sdk.TxResponse, time.Time, error) {
 	return m.broadcastMessagesAtAttempt(id, 0, msgs)
 }
@@ -840,8 +863,25 @@ func (m *manager) broadcastMessagesAtAttempt(id string, attempt int, msgs []sdk.
 		return nil, time.Time{}, err
 	}
 	// gasWanted is sized from the inner messages, not the authz wrapper.
-	gasWanted := estimateBatchGas(msgs, attempt)
-	txBytes, timestamp, err := m.getSignedBytes(id, unsignedTx, factory, gasWanted)
+	gasWanted := estimateBatchGas(msgs, attempt, m.feeTree.hints())
+	if attempt == 0 && isHardwareDiffOnly(msgs) {
+		price := m.minGasPriceNgonka
+		if m.feeTree != nil {
+			if p := m.feeTree.PriceForMsgs(msgs); p > price {
+				price = p
+			}
+		}
+		used, err := m.simulateMsgsGas(factory, finalMsgs, price)
+		if err != nil {
+			logging.Warn("HardwareDiff simulate failed; using static gas estimate",
+				types.Messages, "tx_id", id, "error", err, "gasWanted", gasWanted)
+		} else {
+			gasWanted = gasWantedFromSimulate(gasWanted, used)
+			logging.Debug("HardwareDiff gas from simulate", types.Messages,
+				"tx_id", id, "simulated", used, "gasWanted", gasWanted)
+		}
+	}
+	txBytes, timestamp, err := m.getSignedBytes(id, unsignedTx, factory, gasWanted, msgs)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -868,31 +908,36 @@ func (m *manager) broadcastMessagesAtAttempt(id string, attempt int, msgs []sdk.
 	return resp, timestamp, nil
 }
 
+const (
+	feeGrantHint = "Fee-grant from cold to warm key is missing or expired. Run " +
+		"'inferenced tx inference grant-ml-ops-permissions <cold-key> <warm-address> --from <cold-key>' " +
+		"to refresh the authz grants AND the feegrant allowance in one transaction."
+	insufficientFeeHint = "Transaction fees are below an enabled fee-group price. Inspect " +
+		"FeeParams.enabled_fee_groups, the matching groups[].min_gas_price, DAPI fee-tree refresh, " +
+		"and the cold-to-warm feegrant balance/expiration. Global min_gas_price_ngonka stays 0 and " +
+		"is not a DAPI config knob."
+)
+
 // logFeeRelatedHint inspects a tx broadcast error message and logs an
-// actionable hint when the failure is fee-related. Helps hosts understand
-// when they need to re-run grant-ml-ops-permissions post-upgrade to get a
-// feegrant allowance.
+// actionable hint when the failure is fee-related.
 func logFeeRelatedHint(rawLog string) {
-	if rawLog == "" {
-		return
+	for _, hint := range feeRelatedHints(rawLog) {
+		logging.Error(hint, types.Messages, "rawLog", rawLog)
 	}
+}
+
+func feeRelatedHints(rawLog string) []string {
+	if rawLog == "" {
+		return nil
+	}
+	var hints []string
 	if containsAny(rawLog, "fee-grant not found", "fee allowance", "feegrant: not found") {
-		logging.Error(
-			"Fee-grant from cold to warm key is missing or expired. Run "+
-				"'inferenced tx inference grant-ml-ops-permissions <cold-key> <warm-address> --from <cold-key>' "+
-				"to refresh the authz grants AND the feegrant allowance in one transaction.",
-			types.Messages,
-			"rawLog", rawLog,
-		)
+		hints = append(hints, feeGrantHint)
 	}
 	if containsAny(rawLog, "insufficient fee", "insufficient fees") {
-		logging.Error(
-			"Transaction fees are below the chain minimum. Set min_gas_price_ngonka in "+
-				"the DAPI config to at least the value of FeeParams.min_gas_price_ngonka on chain.",
-			types.Messages,
-			"rawLog", rawLog,
-		)
+		hints = append(hints, insufficientFeeHint)
 	}
+	return hints
 }
 
 func containsAny(s string, substrs ...string) bool {
@@ -967,10 +1012,44 @@ func (m *manager) getFactory(id string) (*tx.Factory, error) {
 		WithUnordered(true).
 		WithKeybase(*m.GetKeyring())
 	m.txFactory = &factory
-	return &factory, nil
+	return m.txFactory, nil
 }
 
-func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory *tx.Factory, gasWanted uint64) ([]byte, time.Time, error) {
+const hardwareDiffSimulateGas = uint64(10_000_000)
+
+func (m *manager) simulateMsgsGas(factory *tx.Factory, msgs []sdk.Msg, price int64) (uint64, error) {
+	if factory == nil {
+		return 0, errors.New("tx factory is nil")
+	}
+	if price < 0 {
+		price = 0
+	}
+	name := ""
+	if m.apiAccount != nil && m.apiAccount.SignerAccount != nil {
+		name = m.apiAccount.SignerAccount.Name
+	}
+	sim := factory.
+		WithSimulateAndExecute(true).
+		WithFromName(name).
+		WithGas(hardwareDiffSimulateGas).
+		WithGasPrices(fmt.Sprintf("%dngonka", price)).
+		WithGasAdjustment(1)
+	if m.apiAccount != nil && !m.apiAccount.IsSignerTheMainAccount() {
+		if cold, err := m.apiAccount.AccountAddress(); err == nil {
+			sim = sim.WithFeeGranter(cold)
+		}
+	}
+	simRes, _, err := tx.CalculateGas(m.client.Context(), sim, msgs...)
+	if err != nil {
+		return 0, err
+	}
+	if simRes == nil {
+		return 0, errors.New("simulate returned no result")
+	}
+	return simRes.GasInfo.GasUsed, nil
+}
+
+func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory *tx.Factory, gasWanted uint64, msgs []sdk.Msg) ([]byte, time.Time, error) {
 	blockTs := m.blockTimeTracker.latestBlockTime
 	if blockTs.IsZero() {
 		_, err := m.updateChainHalt()
@@ -985,10 +1064,16 @@ func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory
 	// Fee amount = gasWanted × gas price. gasWanted is sized per-batch by
 	// estimateBatchGas (see gas_estimate.go) instead of a constant, so
 	// routine txs aren't billed at the worst-case PoC commit ceiling.
-	// Network-duty messages (PoC, inference, validation, hardware-diff,
-	// claim-rewards, BLS DKG) are fee-exempt via NetworkDutyFeeBypassDecorator
-	// and pay nothing regardless of gasWanted.
-	applyGasAndFee(unsignedTx, gasWanted, m.minGasPriceNgonka)
+	// HardwareDiff additionally simulates on attempt 0 so a full inventory
+	// rewrite is not stuck at the static 500k floor. StoreCommit stays on
+	// the static formula (no Simulate on the PoC path).
+	price := m.minGasPriceNgonka
+	if m.feeTree != nil {
+		if p := m.feeTree.PriceForMsgs(msgs); p > price {
+			price = p
+		}
+	}
+	applyGasAndFee(unsignedTx, gasWanted, price)
 
 	// When the warm key signs on behalf of the cold account (authz mode),
 	// set the cold account as the fee granter so fees are deducted from the
