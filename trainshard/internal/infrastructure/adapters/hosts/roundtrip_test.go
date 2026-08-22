@@ -112,7 +112,6 @@ func newHost(t *testing.T) *hosts.Client {
 	streams := session.New(session.Config{Participant: host}, session.Deps{
 		Chain:    chain,
 		Streams:  machine,
-		Volumes:  machine,
 		Sessions: state.Sessions(),
 		Clock:    clock,
 	})
@@ -240,16 +239,6 @@ func TestTheResultIsCollectedOverHTTPBeforeTheShardCloses(t *testing.T) {
 	}
 	if reports[0].Images[0].At.IsZero() {
 		t.Fatalf("got %+v, want the time to survive the wire", reports[0].Images[0])
-	}
-
-	var artifacts strings.Builder
-	err = client.Artifacts(ctx, host, shardID, node, &artifacts)
-
-	if err != nil {
-		t.Fatalf("artifacts: %v", err)
-	}
-	if !strings.Contains(artifacts.String(), "no artifacts") {
-		t.Fatalf("got %q, want what the machine had in the run's volume", artifacts.String())
 	}
 }
 

@@ -88,8 +88,6 @@ type Volumes interface {
 	Usage(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) (used int64, quota int64, present bool, err error)
 	// Wipe deletes run data; ok if empty
 	Wipe(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) error
-	// Archive copies leftovers to out, capped by quota
-	Archive(ctx context.Context, shardID vo.ShardID, node vo.NodeRef, out io.Writer) error
 	// Shards returns every shard this node still has a volume for
 	Shards(ctx context.Context, node vo.NodeRef) ([]vo.ShardID, error)
 }
