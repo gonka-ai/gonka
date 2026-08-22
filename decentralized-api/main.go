@@ -34,6 +34,8 @@ import (
 	"log"
 	"log/slog"
 	"os"
+	"os/signal"
+	"syscall"
 	"strconv"
 	"strings"
 	"time"
@@ -191,9 +193,10 @@ func main() {
 	)
 	logging.Info("PoC off-chain validator initialized", types.PoC, "earlyShareGuardEnabled", earlyGuard.Enabled())
 
-	// Create a cancellable context for the entire system
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel() // Ensure resources are cleaned up
+	// Create a context that is cancelled on SIGTERM or SIGINT.
+	// This ensures deferred cleanup (config flush, etc.) runs on graceful shutdown.
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
 
 	// Start periodic config auto-flush of dynamic data to DB
 	configManager.StartAutoFlush(ctx, 60*time.Second)
