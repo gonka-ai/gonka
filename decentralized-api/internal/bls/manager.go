@@ -26,14 +26,16 @@ const (
 
 // BlsManager handles all BLS operations including DKG dealing, verification, and group key validation
 type BlsManager struct {
-	cosmosClient     cosmosclient.InferenceCosmosClient
-	ctx              context.Context
-	cache            *VerificationCache
-	recoverySF       singleflight.Group
-	maxCacheSize     uint64
-	dealerOpeningsMu sync.RWMutex
-	dealerOpenings   map[dealerOpeningKey]dealerOpeningRecord
-	dealerOpeningsDB *sql.DB
+	cosmosClient       cosmosclient.InferenceCosmosClient
+	ctx                context.Context
+	cache              *VerificationCache
+	recoverySF         singleflight.Group
+	maxCacheSize       uint64
+	dealerOpeningsMu   sync.RWMutex
+	dealerOpenings     map[dealerOpeningKey]dealerOpeningRecord
+	dealerOpeningsDB   *sql.DB
+	processedDKGMu     sync.Mutex
+	processedDKGEpochs map[uint64]struct{}
 }
 
 // VerificationResult holds the results of DKG verification for an epoch
@@ -172,10 +174,11 @@ type SlotAssignment struct {
 // NewBlsManager creates a new unified BLS manager
 func NewBlsManager(cosmosClient cosmosclient.InferenceCosmosClient) *BlsManager {
 	return &BlsManager{
-		cosmosClient:   cosmosClient,
-		ctx:            context.Background(), // Use background context for chain queries
-		cache:          NewVerificationCache(),
-		dealerOpenings: make(map[dealerOpeningKey]dealerOpeningRecord),
+		cosmosClient:       cosmosClient,
+		ctx:                context.Background(),
+		cache:              NewVerificationCache(),
+		dealerOpenings:     make(map[dealerOpeningKey]dealerOpeningRecord),
+		processedDKGEpochs: make(map[uint64]struct{}),
 	}
 }
 
