@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
@@ -174,12 +175,15 @@ func TestEnvironmentIsOrdered(t *testing.T) {
 	got := environment(values)
 
 	// assert
-	want := []string{"MASTER_ADDR=10.1.0.1", "RANK=0", "WORLD_SIZE=8"}
+	want := []string{"HOME=/workspace", "MASTER_ADDR=10.1.0.1", "RANK=0", "WORLD_SIZE=8"}
 	if !slices.Equal(got, want) {
 		t.Fatalf("environment = %q, want %q", got, want)
 	}
-	if empty := environment(nil); len(empty) != 0 {
-		t.Fatalf("environment(nil) = %q, want empty", empty)
+	if plain := environment(nil); !slices.Equal(plain, []string{"HOME=/workspace"}) {
+		t.Fatalf("environment(nil) = %q, want the home the run is given", plain)
+	}
+	if named := environment(map[string]string{"HOME": "/elsewhere"}); !slices.Equal(named, []string{"HOME=/elsewhere"}) {
+		t.Fatalf("environment = %q, want the run's own home to win", named)
 	}
 }
 
@@ -253,39 +257,42 @@ func TestNamesAndLabelsIdentifyTheRun(t *testing.T) {
 	}
 }
 
-// A run that named no source keeps the engine's own hosts file, and one that named a source gets it
-// as a file, since the engine refuses host entries to a container living in another one's network
-func TestSourcesReachTheRunAsAHostsFile(t *testing.T) {
+// The workspace is the one place a run may write, and the files the engine would hand it writable
+// on the host disk are handed read only instead, carrying the sources it named and no resolver
+func TestTheRunWritesOnlyToItsWorkspace(t *testing.T) {
 	// arrange
 	client := &Client{cfg: Config{VolumeRoot: t.TempDir()}}
-	spec := run.ContainerSpec{Shard: vo.ShardID(42), Node: node()}
+	spec := run.ContainerSpec{
+		Shard: vo.ShardID(42),
+		Node:  node(),
+		Hosts: []run.PinnedHost{{Name: "registry.example", IP: "10.0.0.7"}},
+	}
 	if err := os.MkdirAll(client.volumePath(spec.Shard, spec.Node), 0o700); err != nil {
 		t.Fatal(err)
 	}
 
 	// act
-	plain, err := client.binds(spec)
+	binds, err := client.binds(spec)
 	if err != nil {
 		t.Fatal(err)
 	}
 
 	// assert
-	if len(plain) != 1 {
-		t.Fatalf("binds = %v", plain)
+	if binds[0] != client.volumePath(spec.Shard, spec.Node)+":"+workdir {
+		t.Fatalf("the workspace is not the first bind: %v", binds)
+	}
+	for _, bind := range binds[1:] {
+		if !strings.HasSuffix(bind, ":ro") {
+			t.Fatalf("bind %q is writable", bind)
+		}
+	}
+	for _, name := range []string{"hosts", "hostname", "resolv.conf"} {
+		if !slices.ContainsFunc(binds, func(bind string) bool { return strings.Contains(bind, ":/etc/"+name+":ro") }) {
+			t.Fatalf("/etc/%s is left to the engine: %v", name, binds)
+		}
 	}
 
-	// act
-	spec.Hosts = []run.PinnedHost{{Name: "registry.example", IP: "10.0.0.7"}}
-	pinned, err := client.binds(spec)
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	// assert
-	if len(pinned) != 2 || !strings.HasSuffix(pinned[1], ":/etc/hosts:ro") {
-		t.Fatalf("binds = %v", pinned)
-	}
-	written, err := os.ReadFile(client.hostsPath(spec.Shard, spec.Node))
+	written, err := os.ReadFile(filepath.Join(client.mountsPath(spec.Shard, spec.Node), "hosts"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,6 +301,26 @@ func TestSourcesReachTheRunAsAHostsFile(t *testing.T) {
 	}
 	if !strings.Contains(string(written), "localhost") {
 		t.Fatal("the run still has to resolve localhost")
+	}
+}
+
+// Everything a run writes has to land somewhere the host counts, and the engine counts neither the
+// log it keeps of what a run prints nor the memory it hands out as scratch
+func TestNothingTheRunProducesGrowsUnmetered(t *testing.T) {
+	// arrange
+	client := &Client{cfg: Config{}.withDefaults()}
+
+	// act
+	scratch, rolled := client.scratch(), client.rolled()
+
+	// assert
+	for _, path := range []string{tmpdir, rundir} {
+		if !strings.Contains(scratch[path], "size=") {
+			t.Fatalf("%s = %q, want a bounded tmpfs", path, scratch[path])
+		}
+	}
+	if rolled.Config["max-size"] == "" || rolled.Config["max-file"] == "" {
+		t.Fatalf("log config = %v, want a rolled log", rolled.Config)
 	}
 }
 
