@@ -2,7 +2,6 @@ package hosts
 
 import (
 	"context"
-	"io"
 	"net/http"
 	"time"
 
@@ -28,9 +27,4 @@ func (c *Client) Report(ctx context.Context, participant vo.Participant, shardID
 		return nil, err
 	}
 	return toReports(participant, result.Items)
-}
-
-func (c *Client) Artifacts(ctx context.Context, participant vo.Participant, shardID vo.ShardID, node vo.NodeRef, out io.Writer) error {
-	path := toPath(contract.PathArtifacts, shardID, node.NodeID)
-	return c.stream(ctx, participant, http.MethodPost, path, vo.NewRequestID(), nil, out)
 }

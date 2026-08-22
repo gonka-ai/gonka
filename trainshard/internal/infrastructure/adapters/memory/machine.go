@@ -162,17 +162,6 @@ func (m *Machine) Wipe(_ context.Context, _ vo.ShardID, node vo.NodeRef) error {
 	return nil
 }
 
-func (m *Machine) Archive(_ context.Context, shardID vo.ShardID, node vo.NodeRef, out io.Writer) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-
-	if _, present := m.volumes[node]; !present {
-		return run.ErrVolumeMissing
-	}
-	_, err := fmt.Fprintf(out, "no artifacts: shard %s on %s runs on an in-memory machine\n", shardID, node)
-	return err
-}
-
 func (m *Machine) Inventory(context.Context, vo.NodeRef) (vo.GPUInventory, error) {
 	return m.inventory, nil
 }

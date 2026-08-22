@@ -1,12 +1,10 @@
 package xfsquota
 
 import (
-	"archive/tar"
 	"context"
 	"errors"
 	"fmt"
 	"hash/fnv"
-	"io"
 	"io/fs"
 	"log/slog"
 	"os"
@@ -17,7 +15,6 @@ import (
 	"syscall"
 	"time"
 
-	"trainshard/internal/domain/run"
 	"trainshard/internal/domain/shared/vo"
 )
 
@@ -117,87 +114,6 @@ func (v *Volumes) Wipe(ctx context.Context, shardID vo.ShardID, node vo.NodeRef)
 
 	v.log.Info("wiped volume", "node_id", node.NodeID)
 	return nil
-}
-
-func (v *Volumes) Archive(ctx context.Context, shardID vo.ShardID, node vo.NodeRef, out io.Writer) error {
-	root := v.path(shardID, node)
-	if _, err := os.Stat(root); errors.Is(err, fs.ErrNotExist) {
-		return run.ErrVolumeMissing
-	}
-
-	_, quota, _, err := v.Usage(ctx, shardID, node)
-	if err != nil {
-		return err
-	}
-	if quota <= 0 {
-		return run.ErrQuotaUnknown
-	}
-
-	archive := tar.NewWriter(&capped{out: out, left: quota})
-	defer archive.Close()
-
-	return filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if err := ctx.Err(); err != nil {
-			return err
-		}
-		if !entry.Type().IsRegular() && !entry.IsDir() {
-			return nil
-		}
-
-		info, err := entry.Info()
-		if err != nil {
-			return err
-		}
-		header, err := tar.FileInfoHeader(info, "")
-		if err != nil {
-			return err
-		}
-		name, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		if name == "." {
-			return nil
-		}
-		header.Name = filepath.ToSlash(name)
-
-		if err := archive.WriteHeader(header); err != nil {
-			return err
-		}
-		if entry.IsDir() {
-			return nil
-		}
-		return copyFile(archive, path)
-	})
-}
-
-// capped stops the archive at the run's own disk quota, so a volume that outgrew its
-// limit cannot hand the coordinator more than the run was allowed to hold
-type capped struct {
-	out  io.Writer
-	left int64
-}
-
-func (c *capped) Write(p []byte) (int, error) {
-	if int64(len(p)) > c.left {
-		return 0, run.ErrArtifactsTooBig
-	}
-	c.left -= int64(len(p))
-	return c.out.Write(p)
-}
-
-func copyFile(archive io.Writer, path string) error {
-	file, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer file.Close()
-
-	_, err = io.Copy(archive, file)
-	return err
 }
 
 func (v *Volumes) Shards(_ context.Context, node vo.NodeRef) ([]vo.ShardID, error) {

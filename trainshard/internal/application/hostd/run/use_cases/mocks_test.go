@@ -3,7 +3,6 @@ package usecases_test
 import (
 	"context"
 	"fmt"
-	"io"
 	"strings"
 	"sync"
 	"time"
@@ -317,14 +316,6 @@ func (v *volumesStub) Wipe(_ context.Context, shardID vo.ShardID, _ vo.NodeRef) 
 	v.rec.record("volumes.wipe")
 	delete(v.present, shardID)
 	return nil
-}
-
-func (v *volumesStub) Archive(_ context.Context, shardID vo.ShardID, _ vo.NodeRef, out io.Writer) error {
-	if !v.present[shardID] {
-		return run.ErrVolumeMissing
-	}
-	_, err := io.WriteString(out, "artifacts")
-	return err
 }
 
 type egressStub struct {
