@@ -15,6 +15,14 @@ import (
 const testPoCModelID = "test-poc-model"
 const testPoCModelID2 = "test-poc-model-2"
 
+func registerPoCParticipant(t *testing.T, k keeper.Keeper, ctx sdk.Context, addr string) {
+	t.Helper()
+	require.NoError(t, k.Participants.Set(ctx, sdk.MustAccAddressFromBech32(addr), types.Participant{
+		Index:   addr,
+		Address: addr,
+	}))
+}
+
 // Test SetPocValidationV2 error handling (no panic)
 func TestSetPocValidationV2_InvalidAddress(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
@@ -104,6 +112,8 @@ func TestSubmitPocValidationsV2_DuplicateSkipped(t *testing.T) {
 	}
 	k.SetEpoch(sdkCtx, upcomingEpoch)
 
+	registerPoCParticipant(t, k, sdkCtx, testutil.Validator)
+
 	msgServer := keeper.NewMsgServerImpl(k)
 
 	// First submission should succeed
@@ -154,6 +164,8 @@ func TestSubmitPocValidationsV2_PartialSuccess(t *testing.T) {
 		PocStartBlockHeight: 100,
 	}
 	k.SetEpoch(sdkCtx, upcomingEpoch)
+
+	registerPoCParticipant(t, k, sdkCtx, testutil.Validator)
 
 	msgServer := keeper.NewMsgServerImpl(k)
 
@@ -272,8 +284,7 @@ func TestPoCV2StoreCommit_InvalidCreatorAddress(t *testing.T) {
 		}},
 	}
 	_, err = msgServer.PoCV2StoreCommit(sdkCtx, msg)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "invalid")
+	require.ErrorContains(t, err, "decoding bech32 failed")
 }
 
 func setupPoCV2StoreCommitTest(
@@ -322,6 +333,8 @@ func setupPoCV2StoreCommitTest(
 	for _, modelID := range modelIDs {
 		k.SetModel(sdkCtx, &types.Model{Id: modelID})
 	}
+
+	registerPoCParticipant(t, k, sdkCtx, testutil.Executor)
 
 	return k, sdkCtx, keeper.NewMsgServerImpl(k)
 }
