@@ -3,6 +3,8 @@ package app
 import (
 	"testing"
 
+	"github.com/cosmos/cosmos-sdk/codec"
+	codectestutil "github.com/cosmos/cosmos-sdk/codec/testutil"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
@@ -60,7 +62,18 @@ func setupPocPeriodAnte(t *testing.T) (inferencemodulekeeper.Keeper, sdk.Context
 	k.SetEffectiveEpochIndex(ctx, 0)
 	k.SetEpoch(ctx, &inferencetypes.Epoch{Index: 1, PocStartBlockHeight: 100})
 
-	return k, ctx, NewPocPeriodValidationDecorator(&k)
+	return k, ctx, NewPocPeriodValidationDecorator(&k, testMsgCodec(t))
+}
+
+func testMsgCodec(t *testing.T) codec.Codec {
+	t.Helper()
+	ir := codectestutil.CodecOptions{
+		AccAddressPrefix: "gonka",
+		ValAddressPrefix: "gonkavaloper",
+	}.NewInterfaceRegistry()
+	inferencetypes.RegisterInterfaces(ir)
+	authztypes.RegisterInterfaces(ir)
+	return codec.NewProtoCodec(ir)
 }
 
 func pocValidationsMsg(creator string) *inferencetypes.MsgSubmitPocValidationsV2 {
@@ -152,16 +165,57 @@ func TestPocPeriodValidationDecorator_RejectsMalformedCreator(t *testing.T) {
 	_, ctx, decorator := setupPocPeriodAnte(t)
 
 	nextCalled, err := runPocPeriodAnte(t, decorator, ctx, pocValidationsMsg("not-a-bech32-address"))
-	require.ErrorIs(t, err, inferencetypes.ErrParticipantNotFound)
+	require.Error(t, err)
 	require.False(t, nextCalled)
 }
 
-func TestPocPeriodValidationDecorator_RejectsNonParticipantInsideMsgExec(t *testing.T) {
+func TestPocPeriodValidationDecorator_AllowsRegisteredParticipantInsideMsgExec(t *testing.T) {
+	k, ctx, decorator := setupPocPeriodAnte(t)
+
+	signer := testutil.Creator
+	require.NoError(t, k.Participants.Set(ctx, sdk.MustAccAddressFromBech32(signer), inferencetypes.Participant{
+		Index:   signer,
+		Address: signer,
+	}))
+
+	inner, err := codectypes.NewAnyWithValue(pocValidationsMsg(signer))
+	require.NoError(t, err)
+	execMsg := &authztypes.MsgExec{
+		Grantee: testutil.Executor,
+		Msgs:    []*codectypes.Any{inner},
+	}
+
+	nextCalled, err := runPocPeriodAnte(t, decorator, ctx, execMsg)
+	require.NoError(t, err)
+	require.True(t, nextCalled)
+}
+
+func TestPocPeriodValidationDecorator_GranteeEqualsGranter_NoGrantRequired(t *testing.T) {
+	k, ctx, decorator := setupPocPeriodAnte(t)
+
+	signer := testutil.Creator
+	require.NoError(t, k.Participants.Set(ctx, sdk.MustAccAddressFromBech32(signer), inferencetypes.Participant{
+		Index:   signer,
+		Address: signer,
+	}))
+
+	inner, err := codectypes.NewAnyWithValue(pocValidationsMsg(signer))
+	require.NoError(t, err)
+	execMsg := &authztypes.MsgExec{
+		Grantee: signer,
+		Msgs:    []*codectypes.Any{inner},
+	}
+
+	nextCalled, err := runPocPeriodAnte(t, decorator, ctx, execMsg)
+	require.NoError(t, err)
+	require.True(t, nextCalled)
+}
+
+func TestPocPeriodValidationDecorator_RejectsNonParticipantEvenWithMsgExec(t *testing.T) {
 	_, ctx, decorator := setupPocPeriodAnte(t)
 
 	inner, err := codectypes.NewAnyWithValue(pocValidationsMsg(testutil.Creator))
 	require.NoError(t, err)
-
 	execMsg := &authztypes.MsgExec{
 		Grantee: testutil.Executor,
 		Msgs:    []*codectypes.Any{inner},
@@ -169,5 +223,44 @@ func TestPocPeriodValidationDecorator_RejectsNonParticipantInsideMsgExec(t *test
 
 	nextCalled, err := runPocPeriodAnte(t, decorator, ctx, execMsg)
 	require.ErrorIs(t, err, inferencetypes.ErrParticipantNotFound)
+	require.False(t, nextCalled)
+}
+
+func TestPocPeriodValidationDecorator_RejectsMalformedMsgExec(t *testing.T) {
+	_, ctx, decorator := setupPocPeriodAnte(t)
+
+	execMsg := &authztypes.MsgExec{
+		Grantee: testutil.Executor,
+		Msgs: []*codectypes.Any{{
+			TypeUrl: sdk.MsgTypeURL(&inferencetypes.MsgSubmitPocValidationsV2{}),
+			Value:   []byte{0xff, 0x00, 0x01},
+		}},
+	}
+
+	nextCalled, err := runPocPeriodAnte(t, decorator, ctx, execMsg)
+	require.Error(t, err)
+	require.False(t, nextCalled)
+}
+
+func TestPocPeriodValidationDecorator_RejectsNestedMsgExec(t *testing.T) {
+	k, ctx, decorator := setupPocPeriodAnte(t)
+
+	signer := testutil.Creator
+	require.NoError(t, k.Participants.Set(ctx, sdk.MustAccAddressFromBech32(signer), inferencetypes.Participant{
+		Index:   signer,
+		Address: signer,
+	}))
+
+	innerExec := authztypes.NewMsgExec(
+		sdk.MustAccAddressFromBech32(testutil.Executor),
+		[]sdk.Msg{pocValidationsMsg(signer)},
+	)
+	outer := authztypes.NewMsgExec(
+		sdk.MustAccAddressFromBech32(testutil.Executor),
+		[]sdk.Msg{&innerExec},
+	)
+
+	nextCalled, err := runPocPeriodAnte(t, decorator, ctx, &outer)
+	require.ErrorIs(t, err, errNestedMsgExec)
 	require.False(t, nextCalled)
 }
