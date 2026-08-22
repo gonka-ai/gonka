@@ -2,11 +2,11 @@ package docker
 
 import (
 	"context"
-	"errors"
 	"fmt"
-	"io/fs"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -20,7 +20,13 @@ import (
 	"trainshard/internal/domain/shared/vo"
 )
 
-const workdir = "/workspace"
+const (
+	workdir = "/workspace"
+	tmpdir  = "/tmp"
+	rundir  = "/run"
+
+	runBytes = 16 << 20
+)
 
 func (c *Client) Inspect(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) (run.ContainerInfo, error) {
 	found, present, err := c.inspectContainer(ctx, containerName(shardID, node))
@@ -43,6 +49,10 @@ func (c *Client) Create(ctx context.Context, spec run.ContainerSpec) error {
 	if err != nil {
 		return err
 	}
+	sealed, err := c.sealed(ctx, spec)
+	if err != nil {
+		return err
+	}
 
 	init, pids := true, c.cfg.PidsLimit
 	marks := labels(spec.Shard, spec.Node, "run")
@@ -56,19 +66,23 @@ func (c *Client) Create(ctx context.Context, spec run.ContainerSpec) error {
 		Labels:     marks,
 	}
 	host := &container.HostConfig{
-		Binds:         binds,
-		NetworkMode:   mode,
-		CapDrop:       []string{"ALL"},
-		SecurityOpt:   []string{"no-new-privileges"},
-		CgroupnsMode:  container.CgroupnsModePrivate,
-		IpcMode:       container.IPCModePrivate,
-		Init:          &init,
-		ShmSize:       c.cfg.ShmBytes,
-		RestartPolicy: container.RestartPolicy{Name: container.RestartPolicyDisabled},
+		Binds:          append(binds, sealed...),
+		NetworkMode:    mode,
+		CapDrop:        []string{"ALL"},
+		SecurityOpt:    []string{"no-new-privileges"},
+		CgroupnsMode:   container.CgroupnsModePrivate,
+		IpcMode:        container.IPCModePrivate,
+		ReadonlyRootfs: true,
+		Tmpfs:          c.scratch(),
+		Init:           &init,
+		ShmSize:        c.cfg.ShmBytes,
+		RestartPolicy:  container.RestartPolicy{Name: container.RestartPolicyDisabled},
+		LogConfig:      c.rolled(),
 		Resources: container.Resources{
 			Memory:         c.cfg.MemoryBytes,
 			NanoCPUs:       c.cfg.NanoCPUs,
 			PidsLimit:      &pids,
+			Ulimits:        []*container.Ulimit{{Name: "core", Soft: 0, Hard: 0}},
 			DeviceRequests: c.gpuRequests(spec.Run.Resources.GPUs),
 		},
 	}
@@ -120,7 +134,7 @@ func (c *Client) Remove(ctx context.Context, shardID vo.ShardID, node vo.NodeRef
 	if !settled(err) {
 		return err
 	}
-	if err := os.Remove(c.hostsPath(shardID, node)); err != nil && !errors.Is(err, fs.ErrNotExist) {
+	if err := os.RemoveAll(c.mountsPath(shardID, node)); err != nil {
 		return err
 	}
 	c.log.Info("removed container", "node_id", node.NodeID)
@@ -198,41 +212,103 @@ func (c *Client) removeByName(ctx context.Context, name string) error {
 	return err
 }
 
-func (c *Client) hostsPath(shardID vo.ShardID, node vo.NodeRef) string {
-	return c.volumePath(shardID, node) + ".hosts"
+// mountsPath sits beside the volume rather than in it, out of the run's own reach
+func (c *Client) mountsPath(shardID vo.ShardID, node vo.NodeRef) string {
+	return c.volumePath(shardID, node) + ".mounts"
 }
 
 func (c *Client) volumePath(shardID vo.ShardID, node vo.NodeRef) string {
 	return filepath.Join(c.cfg.VolumeRoot, shardID.String(), string(node.NodeID))
 }
 
+// environment points the home directory at the workspace: the root is read only, and the caches a
+// training image keeps under the home would otherwise have nowhere to go
 func environment(values map[string]string) []string {
-	env := make([]string, 0, len(values))
-	for name, value := range values {
+	merged := map[string]string{"HOME": workdir}
+	maps.Copy(merged, values)
+
+	env := make([]string, 0, len(merged))
+	for name, value := range merged {
 		env = append(env, name+"="+value)
 	}
 	sort.Strings(env)
 	return env
 }
 
-// binds hands the run its workspace, and the names it may reach as a hosts file: the run has no dns,
-// and the engine refuses host entries to a container that lives in another one's network
+// scratch gives the run the writable places outside its volume that it still needs, in memory,
+// where they are held against the run's own memory limit and never reach the host disk
+func (c *Client) scratch() map[string]string {
+	return map[string]string{
+		tmpdir: fmt.Sprintf("size=%d,mode=1777", c.cfg.TmpBytes),
+		rundir: fmt.Sprintf("size=%d,mode=755", runBytes),
+	}
+}
+
+// rolled bounds what the engine keeps of everything a run prints, which it otherwise stores whole
+// and unmetered on the host disk
+func (c *Client) rolled() container.LogConfig {
+	return container.LogConfig{Type: "json-file", Config: map[string]string{
+		"max-size": strconv.FormatInt(c.cfg.LogFileBytes, 10),
+		"max-file": strconv.Itoa(c.cfg.LogFiles),
+	}}
+}
+
+// binds hands the run its workspace, and read only copies of the files the engine would otherwise
+// give it writable on the host disk and outside its quota
 func (c *Client) binds(spec run.ContainerSpec) ([]string, error) {
-	binds := []string{c.volumePath(spec.Shard, spec.Node) + ":" + workdir}
-	if len(spec.Hosts) == 0 {
-		return binds, nil
-	}
-
-	lines := []string{"127.0.0.1\tlocalhost", "::1\tlocalhost ip6-localhost ip6-loopback"}
-	for _, host := range spec.Hosts {
-		lines = append(lines, host.IP+"\t"+host.Name)
-	}
-
-	path := c.hostsPath(spec.Shard, spec.Node)
-	if err := os.WriteFile(path, []byte(strings.Join(lines, "\n")+"\n"), 0o644); err != nil {
+	dir := c.mountsPath(spec.Shard, spec.Node)
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
-	return append(binds, path+":/etc/hosts:ro"), nil
+
+	binds := []string{c.volumePath(spec.Shard, spec.Node) + ":" + workdir}
+	for _, file := range etcFiles(spec) {
+		path := filepath.Join(dir, file.name)
+		if err := os.WriteFile(path, []byte(file.body), 0o644); err != nil {
+			return nil, err
+		}
+		binds = append(binds, path+":/etc/"+file.name+":ro")
+	}
+	return binds, nil
+}
+
+// sealed covers the volumes an image declares of its own, which the engine would otherwise back
+// with storage it manages and nobody meters
+func (c *Client) sealed(ctx context.Context, spec run.ContainerSpec) ([]string, error) {
+	image, present, err := c.inspectImage(ctx, spec.Run.Image.String())
+	if err != nil || !present || image.Config == nil || len(image.Config.Volumes) == 0 {
+		return nil, err
+	}
+
+	dir := filepath.Join(c.mountsPath(spec.Shard, spec.Node), "sealed")
+	if err := os.MkdirAll(dir, 0o555); err != nil {
+		return nil, err
+	}
+
+	binds := make([]string, 0, len(image.Config.Volumes))
+	for _, path := range slices.Sorted(maps.Keys(image.Config.Volumes)) {
+		binds = append(binds, dir+":"+path+":ro")
+	}
+	return binds, nil
+}
+
+type etcFile struct {
+	name string
+	body string
+}
+
+// etcFiles carry the names a run may reach, and an empty resolver, which is what a run with no
+// dns of its own is meant to have
+func etcFiles(spec run.ContainerSpec) []etcFile {
+	hosts := []string{"127.0.0.1\tlocalhost", "::1\tlocalhost ip6-localhost ip6-loopback"}
+	for _, host := range spec.Hosts {
+		hosts = append(hosts, host.IP+"\t"+host.Name)
+	}
+	return []etcFile{
+		{"hosts", strings.Join(hosts, "\n") + "\n"},
+		{"hostname", string(spec.Node.NodeID) + "\n"},
+		{"resolv.conf", ""},
+	}
 }
 
 // gpuRequests asks for cards the way `docker run --gpus` does, leaving the engine to name the vendor:

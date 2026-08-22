@@ -30,8 +30,11 @@ type Config struct {
 	NanoCPUs    int64
 	PidsLimit   int64
 	ShmBytes    int64
+	TmpBytes    int64
 
 	LogBufferBytes int
+	LogFileBytes   int64
+	LogFiles       int
 
 	Timeout time.Duration
 }
@@ -55,8 +58,17 @@ func (c Config) withDefaults() Config {
 	if c.ShmBytes == 0 {
 		c.ShmBytes = 1 << 30
 	}
+	if c.TmpBytes == 0 {
+		c.TmpBytes = 512 << 20
+	}
 	if c.LogBufferBytes == 0 {
 		c.LogBufferBytes = 4 << 20
+	}
+	if c.LogFileBytes == 0 {
+		c.LogFileBytes = 64 << 20
+	}
+	if c.LogFiles == 0 {
+		c.LogFiles = 3
 	}
 	if c.Timeout == 0 {
 		c.Timeout = 30 * time.Second
