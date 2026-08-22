@@ -1570,11 +1570,22 @@ func (b *Broker) UpdateNodeWithEpochData(epochState *chainphase.EpochState) erro
 		}
 	}
 
-	// 6. Populate governance models for nodes not in epoch data (disabled nodes)
+	// 6. Populate governance models for nodes not in epoch data
+	// Skip nodes that are administratively disabled and past their grace period
 	b.mu.RLock()
 	nodeIds := make([]string, 0, len(b.nodes))
-	for nodeId := range b.nodes {
+	for nodeId, node := range b.nodes {
 		if !nodesInEpoch[nodeId] {
+			// Check if node should still be operational
+			// Disabled nodes should not be populated with governance models after their grace period
+			if !ShouldBeOperational(node.State.AdminState, epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase) {
+				logging.Info("Skipping disabled node from governance model population", types.Nodes,
+					"node_id", nodeId,
+					"admin_enabled", node.State.AdminState.Enabled,
+					"admin_epoch", node.State.AdminState.Epoch,
+					"current_epoch", epochState.LatestEpoch.EpochIndex)
+				continue
+			}
 			nodeIds = append(nodeIds, nodeId)
 		}
 	}
