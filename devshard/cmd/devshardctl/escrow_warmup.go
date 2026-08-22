@@ -60,7 +60,7 @@ func (d warmupDeps) observe(hostIdx int, reason string) {
 }
 
 type probeSender interface {
-	sendProbe(ctx context.Context, params user.InferenceParams) (nonce uint64, hostIdx int, err error)
+	sendProbe(ctx context.Context, params user.InferenceParams, nonceCommitted func()) (nonce uint64, hostIdx int, err error)
 	resolveUnserved(ctx context.Context, nonce uint64) error
 	catchUpAllHosts(ctx context.Context) error
 }
@@ -76,12 +76,15 @@ type unservedProbe struct {
 	sentAt  time.Time
 }
 
-func (s *sessionProbeSender) sendProbe(ctx context.Context, params user.InferenceParams) (uint64, int, error) {
+func (s *sessionProbeSender) sendProbe(ctx context.Context, params user.InferenceParams, nonceCommitted func()) (uint64, int, error) {
 	prepared, err := s.session.PrepareInference(params)
 	if err != nil {
 		return 0, 0, err
 	}
 	nonce, hostIdx, sentAt := prepared.Nonce(), prepared.HostIdx(), time.Now()
+	if nonceCommitted != nil {
+		nonceCommitted()
+	}
 	resp, sendErr := s.session.SendOnly(ctx, prepared, nil, nil)
 	if sendErr == nil {
 		sendErr = s.session.ProcessResponse(hostIdx, resp, nonce)
@@ -121,9 +124,26 @@ func warmEscrowHosts(ctx context.Context, deps warmupDeps, latestNonce uint64) {
 	if deps.sender == nil || latestNonce != 0 {
 		return
 	}
+	// The probe's diff is signed before its send, so the group can be taught now instead of an inference later.
+	var catchUp chan error
+	onNonceCommitted := func() {
+		catchUp = make(chan error, 1)
+		go func(done chan<- error) {
+			catchUpCtx, cancelCatchUp := context.WithTimeout(ctx, warmupCatchUpTimeout)
+			defer cancelCatchUp()
+			done <- deps.sender.catchUpAllHosts(catchUpCtx)
+		}(catchUp)
+	}
+
 	sendCtx, cancelSend := context.WithTimeout(ctx, warmupProbeTimeout)
-	nonce, hostIdx, probeErr := deps.sender.sendProbe(sendCtx, ghostProbeParams(deps.model))
+	nonce, hostIdx, probeErr := deps.sender.sendProbe(sendCtx, ghostProbeParams(deps.model), onNonceCommitted)
 	cancelSend()
+
+	var catchUpErr error
+	if catchUp != nil {
+		catchUpErr = <-catchUp
+	}
+
 	if nonce == 0 {
 		log.Printf("escrow_warmup_failed escrow=%s model=%q error=%v", deps.escrowID, deps.model, probeErr)
 		return
@@ -131,12 +151,6 @@ func warmEscrowHosts(ctx context.Context, deps warmupDeps, latestNonce uint64) {
 	if deps.recorder != nil {
 		deps.recorder.RealSend(deps.escrowID, nonce, time.Now(), "")
 	}
-
-	// The probe signs and persists its diff before the send, so the group can be taught the escrow even
-	// when that probe never arrived. Catch-up spends no nonce and reaches hosts the dispatch never will.
-	catchUpCtx, cancelCatchUp := context.WithTimeout(ctx, warmupCatchUpTimeout)
-	catchUpErr := deps.sender.catchUpAllHosts(catchUpCtx)
-	cancelCatchUp()
 
 	if probeErr != nil {
 		deps.observe(hostIdx, warmupOutcomeFailed)

@@ -169,6 +169,25 @@ func TestTheTimeoutDiffBypassesTheParticipantBudget(t *testing.T) {
 	require.Zero(t, refusing.refusals, "the admission-gated client must not be the one that carries it")
 }
 
+// A host locked out by the budget cannot sign or vote until it holds the diffs.
+func TestTheCatchUpBypassesTheParticipantBudget(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	// An empty catch-up returns before any client, so the refusal needs a diff to be reachable.
+	_, err := session.sendPendingDiff(context.Background())
+	require.NoError(t, err)
+	require.NotEmpty(t, session.Diffs(), "the catch-up needs a diff to carry")
+
+	refusing := &admissionRefusingClient{InProcessClient: *session.clients[1].(*InProcessClient)}
+	session.clients[1] = refusing
+	session.mu.Lock()
+	session.hostSyncNonce[1] = 0
+	session.mu.Unlock()
+
+	require.NoError(t, session.sendCatchUp(context.Background(), 1),
+		"these diffs are already signed by the group; the participant budget must not be able to refuse them")
+	require.Zero(t, refusing.refusals, "the admission-gated client must not be the one that carries them")
+}
+
 func sessionNotFound() error {
 	return &transport.UpstreamStatusError{
 		Path:       "/sessions/1/verify-timeout",

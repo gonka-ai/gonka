@@ -30,12 +30,15 @@ type fakeProbeSender struct {
 	catchUpErr error
 }
 
-func (f *fakeProbeSender) sendProbe(_ context.Context, params user.InferenceParams) (uint64, int, error) {
+func (f *fakeProbeSender) sendProbe(_ context.Context, params user.InferenceParams, nonceCommitted func()) (uint64, int, error) {
 	f.nonce++
 	slot := int(f.nonce % uint64(f.groupSize))
 	f.sentNonces = append(f.sentNonces, f.nonce)
 	f.sentSlots = append(f.sentSlots, slot)
 	f.maxTokens = append(f.maxTokens, params.MaxTokens)
+	if nonceCommitted != nil {
+		nonceCommitted()
+	}
 	if f.failSlots[slot] {
 		return f.nonce, slot, errors.New("host refused")
 	}
@@ -207,8 +210,11 @@ type blockingProbeSender struct {
 	sent    atomic.Int64
 }
 
-func (b *blockingProbeSender) sendProbe(ctx context.Context, _ user.InferenceParams) (uint64, int, error) {
+func (b *blockingProbeSender) sendProbe(ctx context.Context, _ user.InferenceParams, nonceCommitted func()) (uint64, int, error) {
 	b.once.Do(func() { close(b.started) })
+	if nonceCommitted != nil {
+		nonceCommitted()
+	}
 	b.sent.Add(1)
 	<-ctx.Done()
 	return 0, 0, ctx.Err()
@@ -267,4 +273,38 @@ func TestWarmupIsWiredOnlyToEscrowCreation(t *testing.T) {
 		require.Contains(t, signature, "addCreatedEscrowRuntime", "warmup must hang off escrow creation")
 		require.Equal(t, 1, count)
 	}
+}
+
+// Answers only once the catch-up has run, so a catch-up placed after the probe never sees one.
+type probeAwaitingCatchUp struct {
+	caughtUp   chan struct{}
+	sawCatchUp atomic.Bool
+}
+
+func (p *probeAwaitingCatchUp) sendProbe(ctx context.Context, _ user.InferenceParams, nonceCommitted func()) (uint64, int, error) {
+	nonceCommitted()
+	select {
+	case <-p.caughtUp:
+		p.sawCatchUp.Store(true)
+	case <-ctx.Done():
+	}
+	return 7, 3, nil
+}
+
+func (p *probeAwaitingCatchUp) catchUpAllHosts(context.Context) error {
+	close(p.caughtUp)
+	return nil
+}
+
+func (p *probeAwaitingCatchUp) resolveUnserved(context.Context, uint64) error { return nil }
+
+func TestCatchUpReachesHostsBeforeTheProbeIsAnswered(t *testing.T) {
+	ctx, cancelWarmup := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancelWarmup()
+	sender := &probeAwaitingCatchUp{caughtUp: make(chan struct{})}
+
+	warmEscrowHosts(ctx, warmupTestDeps(sender, nil), 0)
+
+	require.True(t, sender.sawCatchUp.Load(),
+		"the first request lands long before the probe's answer, so the group must be taught the escrow while the probe is still streaming")
 }

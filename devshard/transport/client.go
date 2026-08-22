@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	json "github.com/goccy/go-json"
@@ -155,6 +156,21 @@ func IsSessionNotFound(err error) bool {
 		return false
 	}
 	return ue.StatusCode == http.StatusNotFound && strings.Contains(ue.Body, "session not found")
+}
+
+// IsTransientWriteError reports a failure the peer never answered, whether or not it saw the request.
+func IsTransientWriteError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var status *UpstreamStatusError
+	if errors.As(err, &status) {
+		return false
+	}
+	return errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNREFUSED)
 }
 
 func DefaultClientConfig() ClientConfig {

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -535,19 +536,18 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 		})
 	}
 
-	// Queue mempool txs (finish msgs) for the next diff.
+	// A gossiped mempool carries finishes for other nonces, and each one closes its record on chain.
 	for _, tx := range resp.Mempool {
 		s.addPendingTx(tx)
+		if finish := tx.GetFinishInference(); finish != nil {
+			if outcome, tracked := s.nonceStates[finish.InferenceId]; tracked {
+				outcome.finished = true
+			}
+		}
 	}
 
-	// Track protocol outcome for this nonce (only for prepared inferences).
-	if outcome, ok := s.nonceStates[inferenceNonce]; ok {
-		if resp.Receipt != nil && resp.ConfirmedAt > 0 {
-			outcome.confirmedAt = resp.ConfirmedAt
-		}
-		if HasMsgFinish(resp.Mempool, inferenceNonce) {
-			outcome.finished = true
-		}
+	if outcome, ok := s.nonceStates[inferenceNonce]; ok && resp.Receipt != nil && resp.ConfirmedAt > 0 {
+		outcome.confirmedAt = resp.ConfirmedAt
 	}
 
 	return nil
@@ -994,9 +994,9 @@ const catchUpChunkSize = 200
 // don't hit a single overall timeout.
 const catchUpChunkTimeout = 60 * time.Second
 
-// sendCatchUp sends existing diffs to a host using the session's default clients.
+// sendCatchUp sends existing diffs to a host, admission-free: they are already signed by the group.
 func (s *Session) sendCatchUp(ctx context.Context, hostIdx int) error {
-	return s.sendCatchUpWith(ctx, hostIdx, s.clients[hostIdx])
+	return s.sendCatchUpWith(ctx, hostIdx, s.getFinalizeClients()[hostIdx])
 }
 
 // sendCatchUpWith sends existing diffs to a host using the provided client.
@@ -1122,12 +1122,20 @@ func (s *Session) CatchUpAllHosts(ctx context.Context) error {
 		return fmt.Errorf("catch up all hosts: session phase %d, want active", phase)
 	}
 	hosts := s.uniquePhysicalHosts()
-	var failures []error
-	for _, target := range hosts {
-		if err := s.sendCatchUp(ctx, target.idx); err != nil {
-			failures = append(failures, fmt.Errorf("host %d: %w", target.idx, err))
-		}
+	// Hosts are independent, so the group waits for the slowest one instead of the sum of them.
+	finalizeClients := s.getFinalizeClients()
+	perHost := make([]error, len(hosts))
+	var wg sync.WaitGroup
+	for i, target := range hosts {
+		wg.Go(func() {
+			if err := s.sendCatchUpWith(ctx, target.idx, finalizeClients[target.idx]); err != nil {
+				perHost[i] = fmt.Errorf("host %d: %w", target.idx, err)
+			}
+		})
 	}
+	wg.Wait()
+
+	failures := slices.DeleteFunc(perHost, func(err error) bool { return err == nil })
 	logging.Info("catch up all hosts", "subsystem", "sync", "escrow", s.escrowID,
 		"nonce", s.Nonce(), "unique_hosts", len(hosts), "failed", len(failures))
 	return errors.Join(failures...)
@@ -2282,6 +2290,12 @@ func (s *Session) collectTimeoutVotes(
 			}
 
 			accept, sig, voterSlot, err := av.verifier.VerifyTimeout(ctx, inferenceID, reason, payload, diffs)
+			// The slot is held and a vote is idempotent, so an unanswered request is asked once more.
+			if transport.IsTransientWriteError(err) && ctx.Err() == nil {
+				logging.Debug("retrying a vote the peer never answered", "subsystem", "session",
+					"inference_id", inferenceID, "verifier", av.verifierAddr, "error", err)
+				accept, sig, voterSlot, err = av.verifier.VerifyTimeout(ctx, inferenceID, reason, payload, diffs)
+			}
 			if err != nil {
 				results <- voteResult{err: err, verifierIdx: av.idx, verifierAddr: av.verifierAddr}
 				return
