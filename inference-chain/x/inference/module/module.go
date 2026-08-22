@@ -1080,10 +1080,6 @@ type effectiveValidationBaseState struct {
 // Epoch 0 has no model-aware voting powers yet. Zero-voter confirmation
 // accounting models stay on ConfirmationWeightScales, not here, so they
 // are not treated as already-active by regular PoC bootstrap.
-//
-// TODO: upgrade handler must populate ValidationWeight.voting_power in existing
-// EpochGroupData from AP.VotingPowers so the first post-upgrade epoch reads
-// correct values.
 func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effectiveValidationBaseState {
 	epochIndex, found := am.keeper.GetEffectiveEpochIndex(ctx)
 	if !found {
