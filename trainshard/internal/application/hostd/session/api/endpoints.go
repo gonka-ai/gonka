@@ -16,9 +16,8 @@ import (
 var errBadJSON = shared.New("BAD_BODY", shared.ErrValidation, "cannot decode request body")
 
 type UseCases struct {
-	Logs      *usecases.StreamLogsUseCase
-	Shell     *usecases.OpenShellUseCase
-	Artifacts *usecases.StreamArtifactsUseCase
+	Logs  *usecases.StreamLogsUseCase
+	Shell *usecases.OpenShellUseCase
 }
 
 type Endpoints struct {
@@ -37,22 +36,6 @@ func (e *Endpoints) Mount(mux *http.ServeMux, boundary func(http.Handler) http.H
 	served := func(h http.HandlerFunc) http.Handler { return boundary(e.once.Wrap(h)) }
 	mux.Handle("POST "+contract.PathLogs, served(e.streamLogs))
 	mux.Handle("POST "+contract.PathShell, served(e.openShell))
-	mux.Handle("POST "+contract.PathArtifacts, served(e.streamArtifacts))
-}
-
-func (e *Endpoints) streamArtifacts(w http.ResponseWriter, r *http.Request) {
-	requestID := requestIDFrom(r.Context())
-
-	cmd, err := toSessionCommand(e.participant, actorFrom(r.Context()), r.PathValue("shard_id"), r.PathValue("node_id"))
-	if err != nil {
-		httpx.WriteError(w, requestID, err)
-		return
-	}
-
-	out := &stream{writer: w}
-	if err := e.uc.Artifacts.Execute(r.Context(), cmd, out); err != nil && !out.started {
-		httpx.WriteError(w, requestID, err)
-	}
 }
 
 func (e *Endpoints) streamLogs(w http.ResponseWriter, r *http.Request) {

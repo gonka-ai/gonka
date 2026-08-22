@@ -18,7 +18,4 @@ var (
 	ErrNodeNotPrepared   = shared.New("NODE_NOT_PREPARED", shared.ErrConflict, "node is no longer prepared: it is not drained, has foreign gpu work, or lost its base image")
 	ErrMeshDown          = shared.New("MESH_DOWN", shared.ErrConflict, "node is not on the mesh")
 	ErrNodeAnsweredTwice = shared.New("NODE_ANSWERED_TWICE", shared.ErrUnavailable, "host answered more than once for this node")
-	ErrVolumeMissing     = shared.New("VOLUME_MISSING", shared.ErrNotFound, "run has no volume on this node")
-	ErrQuotaUnknown      = shared.New("QUOTA_UNKNOWN", shared.ErrUnavailable, "run volume has no readable quota to cap artifacts by")
-	ErrArtifactsTooBig   = shared.New("ARTIFACTS_TOO_BIG", shared.ErrConflict, "artifacts do not fit the run's disk quota")
 )

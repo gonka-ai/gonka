@@ -15,14 +15,13 @@ import (
 )
 
 type UseCases struct {
-	Deploy    *usecases.DeployUseCase
-	Start     *usecases.StartUseCase
-	Stop      *usecases.StopUseCase
-	Status    *usecases.StatusUseCase
-	Report    *usecases.CollectReportUseCase
-	Artifacts *usecases.CollectArtifactsUseCase
-	Logs      *usecases.StreamLogsUseCase
-	Shell     *usecases.OpenShellUseCase
+	Deploy *usecases.DeployUseCase
+	Start  *usecases.StartUseCase
+	Stop   *usecases.StopUseCase
+	Status *usecases.StatusUseCase
+	Report *usecases.CollectReportUseCase
+	Logs   *usecases.StreamLogsUseCase
+	Shell  *usecases.OpenShellUseCase
 }
 
 type Commands struct {
@@ -43,7 +42,6 @@ func (c *Commands) Register(commands map[string]func(context.Context, []string) 
 	commands["stop"] = c.Stop
 	commands["status"] = c.Status
 	commands["report"] = c.Report
-	commands["artifacts"] = c.Artifacts
 	commands["logs"] = c.Logs
 	commands["shell"] = c.Shell
 }
@@ -190,18 +188,6 @@ func (c *Commands) Report(ctx context.Context, args []string) error {
 		return err
 	}
 	return told(silent, len(reports))
-}
-
-func (c *Commands) Artifacts(ctx context.Context, args []string) error {
-	rest, err := clix.Parse(flag.NewFlagSet("artifacts <shard> <participant/node>", flag.ContinueOnError), args, "shard", "node")
-	if err != nil {
-		return err
-	}
-	command, err := toNodeCommand(rest)
-	if err != nil {
-		return err
-	}
-	return c.uc.Artifacts.Execute(ctx, command, c.out)
 }
 
 func (c *Commands) Logs(ctx context.Context, args []string) error {

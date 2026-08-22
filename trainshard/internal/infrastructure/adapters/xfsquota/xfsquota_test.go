@@ -1,16 +1,13 @@
 package xfsquota
 
 import (
-	"bytes"
 	"context"
-	"errors"
 	"log/slog"
 	"os"
 	"path/filepath"
 	"slices"
 	"testing"
 
-	"trainshard/internal/domain/run"
 	"trainshard/internal/domain/shared/vo"
 )
 
@@ -139,31 +136,6 @@ func TestProjectID(t *testing.T) {
 	}
 }
 
-func TestCappedStopsAtTheQuota(t *testing.T) {
-	// arrange
-	var out bytes.Buffer
-	writer := &capped{out: &out, left: 10}
-
-	// act
-	first, err := writer.Write([]byte("12345"))
-
-	// assert
-	if err != nil || first != 5 {
-		t.Fatalf("wrote %d bytes: %v", first, err)
-	}
-
-	// act
-	_, err = writer.Write([]byte("123456"))
-
-	// assert
-	if !errors.Is(err, run.ErrArtifactsTooBig) {
-		t.Fatalf("err = %v, want the artifacts limit", err)
-	}
-	if out.String() != "12345" {
-		t.Fatalf("buffer holds %q, want the refused write left out", out.String())
-	}
-}
-
 func TestShardsNeedTheNodesOwnVolume(t *testing.T) {
 	// arrange
 	v := volumes(t)
@@ -215,19 +187,6 @@ func TestUsageOfAMissingVolume(t *testing.T) {
 	}
 	if present || used != 0 || quota != 0 {
 		t.Fatalf("present = %v, used = %d, quota = %d", present, used, quota)
-	}
-}
-
-func TestArchiveOfAMissingVolume(t *testing.T) {
-	// arrange
-	v := volumes(t)
-
-	// act
-	err := v.Archive(context.Background(), shard, ref("a"), &bytes.Buffer{})
-
-	// assert
-	if !errors.Is(err, run.ErrVolumeMissing) {
-		t.Fatalf("err = %v, want the missing volume error", err)
 	}
 }
 

@@ -25,14 +25,13 @@ type Module struct {
 
 func New(cfg Config, deps Deps, out io.Writer, in io.Reader) *Module {
 	uc := cli.UseCases{
-		Deploy:    usecases.NewDeployUseCase(deps.Chain, deps.Hosts),
-		Start:     usecases.NewStartUseCase(deps.Chain, deps.Hosts),
-		Stop:      usecases.NewStopUseCase(deps.Chain, deps.Hosts),
-		Status:    usecases.NewStatusUseCase(deps.Chain, deps.Hosts),
-		Report:    usecases.NewCollectReportUseCase(deps.Chain, deps.Reports),
-		Artifacts: usecases.NewCollectArtifactsUseCase(deps.Reports),
-		Logs:      usecases.NewStreamLogsUseCase(deps.Streams),
-		Shell:     usecases.NewOpenShellUseCase(deps.Streams),
+		Deploy: usecases.NewDeployUseCase(deps.Chain, deps.Hosts),
+		Start:  usecases.NewStartUseCase(deps.Chain, deps.Hosts),
+		Stop:   usecases.NewStopUseCase(deps.Chain, deps.Hosts),
+		Status: usecases.NewStatusUseCase(deps.Chain, deps.Hosts),
+		Report: usecases.NewCollectReportUseCase(deps.Chain, deps.Reports),
+		Logs:   usecases.NewStreamLogsUseCase(deps.Streams),
+		Shell:  usecases.NewOpenShellUseCase(deps.Streams),
 	}
 	return &Module{commands: cli.New(uc, deps.Clock, cfg.Timeout, out, in)}
 }

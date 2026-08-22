@@ -49,6 +49,4 @@ type HostStreams interface {
 type HostReports interface {
 	// Report returns images and exit codes per node
 	Report(ctx context.Context, participant vo.Participant, shardID vo.ShardID, nodes []vo.NodeRef) ([]NodeReport, error)
-	// Artifacts copies leftover volume to out, capped by quota
-	Artifacts(ctx context.Context, participant vo.Participant, shardID vo.ShardID, node vo.NodeRef, out io.Writer) error
 }
