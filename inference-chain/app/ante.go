@@ -14,6 +14,7 @@ import (
 	circuitkeeper "cosmossdk.io/x/circuit/keeper"
 
 	"github.com/cosmos/cosmos-sdk/client"
+	"github.com/cosmos/cosmos-sdk/codec"
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/x/auth/ante"
@@ -36,6 +37,8 @@ type HandlerOptions struct {
 	TXCounterStoreService corestoretypes.KVStoreService
 	CircuitKeeper         *circuitkeeper.Keeper
 	InferenceKeeper       *inferencemodulekeeper.Keeper
+	Codec                 codec.Codec
+	AuthzKeeper           AuthzAuthorizationKeeper
 }
 
 // Gas is still charged against the tx's gas limit; this only bypasses fee checks.
@@ -211,23 +214,37 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 		},
 		NetworkDutyFeeBypassDecorator{
 			InferenceKeeper: options.InferenceKeeper,
-			// Cap for fee-exempt duty transactions. Must accommodate the
-			// DAPI's batched transactions (BatchGasLimit = 100M in tx_manager)
-			// plus headroom for future batch-size growth. 200M is 2x current
-			// batch size, giving room for larger PoC validation V2 batches
-			// without bumping against the cap. Raise if you see legitimate
-			// duty transactions rejected with "gas N exceeds cap 20000000".
-			GasCap:   3_000_000_000,
-			Priority: 500_000, // ensure zero-fee duty txs aren't starved
+			// Cap for fee-exempt duty transactions. Sized at 3x the DAPI's
+			// BatchGasLimit (1B, see decentralized-api/cosmosclient/tx_manager/
+			// tx_manager.go:58) to accommodate the largest legitimate batched
+			// PoC V2 / weight-distribution txs with headroom for future growth.
+			// Raise if you see legitimate duty transactions rejected with
+			// "gas N exceeds cap 3000000000".
+			GasCap: 3_000_000_000,
+			// Network-duty txs (PoC, validation, BLS, weight distribution) are
+			// consensus-critical and must outrank all other zero-fee bypass
+			// paths. LiquidityPoolFeeBypass uses Priority=1_000_000; this is
+			// 10x to ensure under mempool pressure the duty txs land in blocks
+			// before discretionary swap traffic.
+			Priority: 10_000_000,
 		},
 		ante.NewDeductFeeDecorator(options.AccountKeeper, options.BankKeeper, options.FeegrantKeeper, GonkaFeeChecker(options.InferenceKeeper)),
-		// Run mempool filters AFTER fee deduction (so invalid txs pay fees), but BEFORE signature verification (to avoid crypto work).
-		NewPocPeriodValidationDecorator(options.InferenceKeeper),   // Reject PoC submissions outside allowed windows
-		NewValidationEarlyRejectDecorator(options.InferenceKeeper), // Reject invalid MsgValidation txs early (duplicate / not-in-epoch)
-		ante.NewSetPubKeyDecorator(options.AccountKeeper),          // SetPubKeyDecorator must be called before all signature verification decorators
+		FeeGroupRepeatedLenDecorator{InferenceKeeper: options.InferenceKeeper},
+		// Cheap mempool filters before signature verification (avoid crypto work on
+		// obviously invalid PoC txs). CheckTx ante failures discard
+		// state (including fee deduction), so fee-first is not an economic throttle.
+		NewPocPeriodValidationDecorator(options.InferenceKeeper, options.Codec),
+		ante.NewSetPubKeyDecorator(options.AccountKeeper),
 		ante.NewValidateSigCountDecorator(options.AccountKeeper),
 		ante.NewSigGasConsumeDecorator(options.AccountKeeper, options.SigGasConsumer),
 		ante.NewSigVerificationDecorator(options.AccountKeeper, options.SignModeHandler),
+		// Authz grant lookup after signature verification: the outer Grantee has
+		// proven they signed the transaction before we read grant storage.
+		// CheckTx-only and only for network-duty fee-bypassed txs.
+		NewMsgExecAuthorizationDecorator(options.Codec, options.AuthzKeeper),
+		// Bridge early-reject after sig verification: group membership / bridge-state
+		// reads must not run on unauthenticated txs.
+		NewBridgeExchangeEarlyRejectDecorator(options.InferenceKeeper),
 		ante.NewIncrementSequenceDecorator(options.AccountKeeper),
 		ibcante.NewRedundantRelayDecorator(options.IBCKeeper),
 	}
@@ -252,6 +269,8 @@ func (app *App) setAnteHandler(txConfig client.TxConfig, nodeConfig wasmtypes.No
 			NodeConfig:            &nodeConfig,
 			WasmKeeper:            &app.WasmKeeper,
 			InferenceKeeper:       &app.InferenceKeeper,
+			Codec:                 app.appCodec,
+			AuthzKeeper:           &app.AuthzKeeper,
 			TXCounterStoreService: runtime.NewKVStoreService(txCounterStoreKey),
 			CircuitKeeper:         &app.CircuitBreakerKeeper,
 		},

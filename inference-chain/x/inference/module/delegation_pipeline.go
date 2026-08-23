@@ -707,7 +707,7 @@ func ComputeModelVotingPowers(
 //
 // The per-model cap protects validation integrity: in slot-based validation,
 // a host that attracts enough delegations could single-handedly push a model
-// group past its supermajority threshold.
+// group past its configured validation threshold.
 type VotingPowerCapParams struct {
 	PerModel mathsdk.LegacyDec
 }
@@ -822,7 +822,7 @@ func sumInt64Safe(m map[string]int64) (int64, bool) {
 //
 // The cap is applied against the original pre-capping total, so the cap
 // value is stable regardless of how many hosts end up clipped. The group's
-// post-cap total shrinks, and downstream per-group math (2/3 validation
+// post-cap total shrinks, and downstream per-group math (configured validation
 // quorum, per-group reward shares, slot sampling) is expected to operate on
 // the post-cap total. Consensus-weight concentration is capped separately
 // and is unaffected by this function.
@@ -923,7 +923,7 @@ func emitWeightPipelineLogs(
 	eligibleModels []string,
 	participants []*types.ActiveParticipant,
 	modes map[string]map[string]ParticipationMode,
-	consensus, afterPenalty map[string]int64,
+	consensus, beforeCollateral map[string]int64,
 	acc *PenaltyAccumulator,
 ) {
 	for _, g := range groups {
@@ -949,10 +949,8 @@ func emitWeightPipelineLogs(
 			"addr", p.Index,
 			"modes", formatModes(p.Index, eligibleModels, modes),
 			"consensus", consensus[p.Index],
-			"penalty", acc.AppliedFraction(p.Index).String(),
-			"transfer_in", acc.TransferIn(p.Index),
-			"transfer_out", acc.TransferOut(p.Index),
-			"after_penalty", afterPenalty[p.Index],
+			"reward_penalty", acc.AppliedFraction(p.Index).String(),
+			"before_collateral", beforeCollateral[p.Index],
 			"final", p.Weight,
 			"vp", formatVotingPowers(p.VotingPowers),
 		)

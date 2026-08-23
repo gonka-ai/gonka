@@ -2,7 +2,7 @@ package cosmosclient
 
 import (
 	"context"
-	"decentralized-api/logging"
+	"common/logging"
 	"decentralized-api/observability"
 	"fmt"
 

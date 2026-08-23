@@ -165,6 +165,22 @@ func InjectRequestContext(ctx context.Context, headers http.Header) {
 	otel.GetTextMapPropagator().Inject(ctx, propagation.HeaderCarrier(headers))
 }
 
+// RequestIDHeader is the HTTP header used to correlate outbound payload fetches
+// with the active validation trace.
+const RequestIDHeader = "X-Request-Id"
+
+// AttachRequestID propagates the active trace ID as X-Request-Id on outbound
+// HTTP requests when the request context carries a span.
+func AttachRequestID(req *http.Request) {
+	if req == nil {
+		return
+	}
+	sc := trace.SpanFromContext(req.Context()).SpanContext()
+	if sc.HasTraceID() {
+		req.Header.Set(RequestIDHeader, sc.TraceID().String())
+	}
+}
+
 // withOperation prepends a normalized "operation" label so every metric series
 // is partitioned by the span name even when the caller forgot to pass it.
 func withOperation(attrs []attribute.KeyValue, op string) []attribute.KeyValue {

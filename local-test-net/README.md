@@ -6,9 +6,14 @@ This directory contains a modular Docker Compose setup that allows you to mix an
 
 ```
 local-test-net/
-├── docker-compose-base.yml           # Core services (chain-node, api, mock-server)
+├── docker-compose-base.yml           # Core services (chain-node, api, edge-api, mock-server, proxy)
 ├── docker-compose.genesis.yml        # Genesis node specific settings
 ├── docker-compose.join.yml           # Join network specific settings  
+├── docker-compose.edge-api.yml       # Optional: 2 extra edge-api + edge-api-router
+├── docker-compose.edge-api-router-proxy.yml  # Genesis: proxy → edge-api-router
+├── docker-compose.versiond.yml       # Optional: 3× versiond + versiond-router + test fixtures
+├── docker-compose.devshard-postgres.yml      # Optional: shared Postgres for devshardd (genesis)
+├── docker-compose.devshard-router-proxy.yml  # Genesis: proxy → versiond-router
 ├── docker-compose.explorer.yml       # Adds blockchain explorer
 ├── docker-compose.proxy.yml          # Adds reverse proxy
 ├── docker-compose.bridge.yml         # Adds Ethereum bridge service
@@ -39,8 +44,74 @@ docker-compose -f docker-compose-base.yml -f docker-compose.genesis.yml -f docke
 
 ### Base (`docker-compose-base.yml`)
 - **chain-node**: Blockchain node
-- **api**: Decentralized API server  
+- **api**: Decentralized API server (inference, PoC, chat — not Tier A queries)
+- **edge-api**: Read-only Tier A `/v1/` query API (status, models, epochs, participants, BLS, etc.)
 - **mock-server**: Testing mock server
+- **proxy**: Routes 22 Tier A `/v1/` paths → edge-api (GET `/v1/participants` method-split so POST registration still hits dapi); remaining `/v1/` → dapi; `/devshard/` → versiond (when versiond overlay is present)
+
+### edge-api overlays (optional)
+
+Default base stack runs **one** edge-api per node. For multi-instance load tests:
+
+```bash
+# From repo root (--project-directory .)
+KEY_NAME=genesis docker compose \
+  -f local-test-net/docker-compose-base.yml \
+  -f local-test-net/docker-compose.genesis.yml \
+  -f local-test-net/docker-compose.edge-api.yml \
+  -f local-test-net/docker-compose.edge-api-router-proxy.yml \
+  config
+```
+
+| File | Adds |
+|------|------|
+| `docker-compose.edge-api.yml` | `edge-api-2`, `edge-api-3`, `edge-api-router` (round-robin) |
+| `docker-compose.edge-api-router-proxy.yml` | Sets `EDGE_API_SERVICE_NAME=edge-api-router` on genesis proxy |
+
+### versiond / devshardd overlays (optional)
+
+**devshardd is not a compose service** — it runs as a child process spawned by **versiond**. The versiond overlay is required for devshard session tests (Testermint `VersiondTests`, etc.):
+
+```bash
+KEY_NAME=genesis docker compose \
+  -f local-test-net/docker-compose-base.yml \
+  -f local-test-net/docker-compose.genesis.yml \
+  -f local-test-net/docker-compose.versiond.yml \
+  -f local-test-net/docker-compose.devshard-postgres.yml \
+  -f local-test-net/docker-compose.devshard-router-proxy.yml \
+  --project-directory . config
+```
+
+| File | Adds |
+|------|------|
+| `docker-compose.versiond.yml` | 3× versiond + `versiond-router` (sticky hash on escrow ID) + test fixtures |
+| `docker-compose.devshard-postgres.yml` | Shared `devshard-postgres` for devshardd children (genesis) |
+| `docker-compose.devshard-router-proxy.yml` | Sets `VERSIOND_SERVICE_NAME=versiond-router` on genesis proxy |
+
+Legacy clients calling `/v1/devshard/*` are rewritten by the proxy to `/devshard/v1/*` before reaching versiond.
+
+**devshardctl** (user-side gateway used by Testermint `startDevshardProxy`) is also **not** a compose service and is **not** baked into the api image. Build a Linux binary and let Testermint `docker cp` it into `*-api`:
+
+```bash
+make devshardctl-build   # -> build/devshardctl
+```
+
+Production join stacks use a separate gateway container (`deploy/join/docker-compose.devshard-gateway.yml`) instead.
+
+### Deploy (`deploy/join/`)
+
+Production join stack (`docker-compose.yml`) includes **one** edge-api and **one** versiond by default. Optional overlays:
+
+- `docker-compose.edge-api-multi.yml` — 3× edge-api + round-robin router
+- `docker-compose.versiond.yml` — 2× versiond + sticky router + shared devshard-postgres
+
+See [devshard/docs/merge-plan.md](../devshard/docs/merge-plan.md#runtime-topology-edge-api-versiond-and-devshardd) for the full instance-count table.
+
+Validate compose renders:
+
+```bash
+bash scripts/validate-edge-api.sh
+```
 
 ### Genesis Mode (`docker-compose.genesis.yml`)
 - Sets `IS_GENESIS=true`

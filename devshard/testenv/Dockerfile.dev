@@ -1,0 +1,14 @@
+# Shared development toolchain image (Go + air + dlv).
+# Build context is the repo root; see docker-compose.dev.yml.
+FROM golang:1.25.9-alpine3.23
+
+RUN apk add --no-cache git ca-certificates tzdata bash make curl \
+ && go install github.com/air-verse/air@latest \
+ && go install github.com/go-delve/delve/cmd/dlv@latest
+
+WORKDIR /workspace/devshard/testenv
+
+COPY devshard/go.mod devshard/go.sum /workspace/devshard/
+RUN cd /workspace/devshard && go mod download
+
+ENTRYPOINT ["air"]

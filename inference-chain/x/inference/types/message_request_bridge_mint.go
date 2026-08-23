@@ -32,6 +32,9 @@ func (msg *MsgRequestBridgeMint) ValidateBasic() error {
 	if len(msg.Amount) == 0 {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "amount cannot be empty")
 	}
+	if len(msg.Amount) > MaxBridgeAmountDigits {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "amount exceeds %d digits", MaxBridgeAmountDigits)
+	}
 
 	// Parse amount to ensure it's a valid positive integer
 	amount := new(big.Int)

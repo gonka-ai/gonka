@@ -27,12 +27,55 @@ router = APIRouter(
 )
 
 
-class StateResponse(BaseModel):
-    state: ServiceState
+class VersionedResponse(BaseModel):
     version: str = _MLNODE_VERSION
+
+
+class StateResponse(VersionedResponse):
+    state: ServiceState
     poc_status: Optional[str] = None          # "IDLE" | "GENERATING" | "VALIDATING" | "MIXED" | "NO_BACKENDS"
     inference_healthy: Optional[bool] = None  # True when ≥1 vLLM backend is up
     loaded_model: Optional[str] = None        # Model the current vLLM process was started with
+    poc_validation_inference: bool = False
+
+
+class VersionsResponse(VersionedResponse):
+    vllm_version: Optional[str] = None
+    poc_validation_inference: bool = False
+
+
+_vllm_versions_cache: Optional[VersionsResponse] = None
+
+
+async def _query_vllm_versions(backends: Optional[list[int]] = None) -> VersionsResponse:
+    global _vllm_versions_cache
+
+    if _vllm_versions_cache is not None:
+        return _vllm_versions_cache
+
+    backend_ports = backends if backends is not None else proxy_module.get_healthy_backends()
+    if not backend_ports:
+        return VersionsResponse()
+
+    try:
+        response = await proxy_module.call_backend(backend_ports[0], "GET", "/api/v1/pow/versions")
+        if response.status_code >= 400:
+            logger.debug("vLLM /api/v1/pow/versions returned status %s", response.status_code)
+            return VersionsResponse()
+        data = response.json()
+        if not isinstance(data, dict):
+            logger.debug("vLLM /api/v1/pow/versions returned non-object response")
+            return VersionsResponse()
+    except Exception as exc:
+        logger.debug("failed to query vLLM versions endpoint: %s", exc)
+        return VersionsResponse()
+
+    vllm_version = data.get("vllm_version")
+    _vllm_versions_cache = VersionsResponse(
+        vllm_version=vllm_version if isinstance(vllm_version, str) else None,
+        poc_validation_inference=data.get("poc_validation_inference") is True,
+    )
+    return _vllm_versions_cache
 
 
 @router.get("/state")
@@ -64,13 +107,21 @@ async def state(request: Request) -> StateResponse:
 
     runner = getattr(request.app.state.inference_manager, "vllm_runner", None)
     loaded_model = getattr(runner, "model", None) if runner is not None else None
+    versions_response = await _query_vllm_versions(healthy_ports)
 
     return StateResponse(
         state=current_state,
         poc_status=poc_status,
         inference_healthy=True,
         loaded_model=loaded_model,
+        poc_validation_inference=versions_response.poc_validation_inference,
     )
+
+
+@router.get("/versions")
+async def versions() -> VersionsResponse:
+    return await _query_vllm_versions()
+
 
 @router.post("/stop")
 async def stop(request: Request):

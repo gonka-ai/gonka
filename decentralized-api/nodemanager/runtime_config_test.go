@@ -6,7 +6,7 @@ import (
 
 	"decentralized-api/apiconfig"
 	"decentralized-api/chainphase"
-	"devshard/nodemanager/gen"
+	"common/nodemanager/gen"
 
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"

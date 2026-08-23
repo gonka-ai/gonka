@@ -57,12 +57,12 @@ func (k Keeper) GetUpgradePlan(ctx context.Context) (upgradetypes.Plan, error) {
 
 // SetLastUpgradeHeight stores the block height of the most recent upgrade
 func (k Keeper) SetLastUpgradeHeight(ctx context.Context, height int64) error {
-	return k.LastUpgradeHeight.Set(ctx, height)
+	return k.LastUpgradeHeightItem.Set(ctx, height)
 }
 
 // GetLastUpgradeHeight returns the block height of the most recent upgrade
 func (k Keeper) GetLastUpgradeHeight(ctx context.Context) (int64, bool) {
-	height, err := k.LastUpgradeHeight.Get(ctx)
+	height, err := k.LastUpgradeHeightItem.Get(ctx)
 	if err != nil {
 		return 0, false
 	}

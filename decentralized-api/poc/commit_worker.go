@@ -9,15 +9,23 @@ import (
 	"sync"
 	"time"
 
+	"common/logging"
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
-	"decentralized-api/logging"
 	"decentralized-api/poc/artifacts"
 
 	"github.com/productscience/inference/x/inference/types"
 )
 
-const distributionRetryInterval = 30 * time.Second
+const (
+	distributionRetryInterval = 30 * time.Second
+	storeCommitQueryTimeout   = 2 * time.Second
+	feeTreeRefreshTimeout     = 3 * time.Second
+	// confirmationGraceBlocks is how long an admitted same Count/root stays
+	// pending before a resend. Higher Counts submit immediately. Query
+	// failures do not count as "absent" — that would duplicate a live tx.
+	confirmationGraceBlocks int64 = 3
+)
 
 type commitState struct {
 	count    uint32
@@ -27,6 +35,12 @@ type commitState struct {
 type commitKey struct {
 	stage   int64
 	modelID string
+}
+
+type pendingCommit struct {
+	state           commitState
+	submittedHeight int64
+	chainAbsent     bool // query succeeded and canonical commit is not this payload
 }
 
 type CommitWorker struct {
@@ -41,8 +55,13 @@ type CommitWorker struct {
 
 	mu                      sync.Mutex
 	currentPocHeight        int64
+	blockHeight             int64
+	lastConfirmHeight       int64
 	lastDistributionAttempt time.Time
 	lastCommitted           map[commitKey]commitState
+	pending                 map[commitKey]pendingCommit
+	permanentFailed         map[commitKey]uint32
+	retryAfterHeight        map[commitKey]int64
 }
 
 // NewCommitWorker creates and starts a new commit worker.
@@ -63,6 +82,9 @@ func NewCommitWorker(
 		stop:               make(chan struct{}),
 		done:               make(chan struct{}),
 		lastCommitted:      make(map[commitKey]commitState),
+		pending:            make(map[commitKey]pendingCommit),
+		permanentFailed:    make(map[commitKey]uint32),
+		retryAfterHeight:   make(map[commitKey]int64),
 	}
 
 	// Start flush - always on (same interval as commits)
@@ -105,15 +127,21 @@ func (w *CommitWorker) tick() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 
+	w.blockHeight = epochState.CurrentBlock.Height
 	pocHeight := GetCurrentPocStageHeight(epochState)
 
 	if pocHeight > 0 && w.currentPocHeight != pocHeight {
 		w.currentPocHeight = pocHeight
 		w.lastDistributionAttempt = time.Time{}
+		w.lastConfirmHeight = 0
 		w.lastCommitted = make(map[commitKey]commitState)
+		w.pending = make(map[commitKey]pendingCommit)
+		w.permanentFailed = make(map[commitKey]uint32)
+		w.retryAfterHeight = make(map[commitKey]int64)
 	}
 
 	if pocHeight > 0 {
+		w.reconcilePending(pocHeight)
 		canCommit := ShouldAcceptStoreCommit(epochState, pocHeight)
 		logging.Debug("CommitWorker: tick", types.PoC,
 			"phase", epochState.CurrentPhase,
@@ -134,6 +162,19 @@ func (w *CommitWorker) tick() {
 }
 
 func (w *CommitWorker) maybeSubmitCommit(pocHeight int64) {
+	if w.lastCommitted == nil {
+		w.lastCommitted = make(map[commitKey]commitState)
+	}
+	if w.pending == nil {
+		w.pending = make(map[commitKey]pendingCommit)
+	}
+	if w.permanentFailed == nil {
+		w.permanentFailed = make(map[commitKey]uint32)
+	}
+	if w.retryAfterHeight == nil {
+		w.retryAfterHeight = make(map[commitKey]int64)
+	}
+
 	stageStores, err := w.store.GetStoresForStage(pocHeight)
 	if err != nil {
 		logging.Debug("CommitWorker: no stores for height", types.PoC, "pocHeight", pocHeight, "error", err)
@@ -144,8 +185,9 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64) {
 		return
 	}
 
+	height := w.blockHeight
 	entries := make([]*types.PoCV2CommitEntry, 0, len(stageStores))
-	committedStates := make(map[commitKey]commitState, len(stageStores))
+	submittedStates := make(map[commitKey]commitState, len(stageStores))
 	for _, stageStore := range stageStores {
 		if stageStore.Store == nil {
 			continue
@@ -157,18 +199,30 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64) {
 
 		key := commitKey{stage: pocHeight, modelID: stageStore.ModelID}
 		last, hasLast := w.lastCommitted[key]
-		
+		if failed, ok := w.permanentFailed[key]; ok && count == failed {
+			continue
+		}
+		if until, ok := w.retryAfterHeight[key]; ok && height > 0 && height <= until {
+			continue
+		}
+
+		// Bootstrap lastCommitted from chain only when this model has no
+		// in-flight submission. reconcilePending already queried pending keys
+		// on this tick; repeating that RPC can hold w.mu across a 2s timeout
+		// per model during an outage.
 		if !hasLast && w.participantAddress != "" {
-			queryClient := w.recorder.NewInferenceQueryClient()
-			resp, err := queryClient.PoCV2StoreCommit(context.Background(), &types.QueryPoCV2StoreCommitRequest{
-				PocStageStartBlockHeight: pocHeight,
-				ParticipantAddress:       w.participantAddress,
-				ModelId:                  stageStore.ModelID,
-			})
-			if err == nil && resp.Found {
-				last = commitState{count: resp.Count}
-				w.lastCommitted[key] = last
-				hasLast = true
+			if _, inFlight := w.pending[key]; !inFlight {
+				if resp, ok := w.queryStoreCommit(pocHeight, stageStore.ModelID); ok && resp.Found {
+					last = commitState{count: resp.Count, rootHash: bytes.Clone(resp.RootHash)}
+					w.lastCommitted[key] = last
+					hasLast = true
+				}
+			}
+		}
+
+		if pending, ok := w.pending[key]; ok && sameCommitState(pending.state, count, rootHash) {
+			if !samePayloadRetryable(pending, height) {
+				continue
 			}
 		}
 
@@ -186,7 +240,7 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64) {
 			Count:    count,
 			RootHash: rootHash,
 		})
-		committedStates[key] = commitState{
+		submittedStates[key] = commitState{
 			count:    count,
 			rootHash: bytes.Clone(rootHash),
 		}
@@ -197,20 +251,147 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64) {
 
 	msg := &types.MsgPoCV2StoreCommit{
 		PocStageStartBlockHeight: pocHeight,
-		Entries:                 entries,
+		Entries:                  entries,
+	}
+
+	if setter, ok := w.recorder.(interface{ SetStoreCommitPrev(map[string]uint32) }); ok {
+		// tick() already holds w.mu. Do not lock again: sync.Mutex is not
+		// reentrant, and production InferenceCosmosClient implements this
+		// optional method (mocks usually do not, which hid the deadlock).
+		prev := make(map[string]uint32)
+		for key, st := range w.lastCommitted {
+			if key.stage == pocHeight {
+				prev[key.modelID] = st.count
+			}
+		}
+		setter.SetStoreCommitPrev(prev)
 	}
 
 	if err := w.recorder.SubmitPoCV2StoreCommit(msg); err != nil {
-		logging.Warn("CommitWorker: commit failed", types.PoC,
+		if cosmosclient.IsInsufficientFeeBroadcastError(err) {
+			w.refreshFeeTreeBounded()
+			for key := range submittedStates {
+				delete(w.permanentFailed, key)
+				if height > 0 {
+					w.retryAfterHeight[key] = height
+				}
+			}
+			logging.Warn("CommitWorker: insufficient fee, will retry after fee refresh", types.PoC,
+				"pocHeight", pocHeight, "error", err)
+			return
+		}
+		if cosmosclient.IsPermanentBroadcastError(err) {
+			for key, state := range submittedStates {
+				w.permanentFailed[key] = state.count
+			}
+			logging.Warn("CommitWorker: commit rejected permanently, waiting for higher count", types.PoC,
+				"pocHeight", pocHeight, "error", err)
+			return
+		}
+		for key := range submittedStates {
+			if height > 0 {
+				w.retryAfterHeight[key] = height
+			}
+		}
+		logging.Warn("CommitWorker: commit failed, will retry", types.PoC,
 			"pocHeight", pocHeight, "error", err)
 		return
 	}
 
-	for key, state := range committedStates {
-		w.lastCommitted[key] = state
+	for key, state := range submittedStates {
+		w.pending[key] = pendingCommit{state: state, submittedHeight: height}
+		delete(w.retryAfterHeight, key)
+		delete(w.permanentFailed, key)
 	}
-	logging.Debug("CommitWorker: committed", types.PoC,
-		"pocHeight", pocHeight, "models", len(entries))
+	logging.Debug("CommitWorker: submitted, waiting for chain confirm", types.PoC,
+		"pocHeight", pocHeight, "models", len(entries), "height", height)
+}
+
+func (w *CommitWorker) reconcilePending(pocHeight int64) {
+	if w.participantAddress == "" || len(w.pending) == 0 {
+		return
+	}
+	height := w.blockHeight
+	if height > 0 && height == w.lastConfirmHeight {
+		return
+	}
+	if height > 0 {
+		w.lastConfirmHeight = height
+	}
+
+	for key, pending := range w.pending {
+		if key.stage != pocHeight {
+			continue
+		}
+		resp, ok := w.queryStoreCommit(pocHeight, key.modelID)
+		if !ok || resp == nil {
+			// Query outage: keep pending, do not treat as absent, do not resend.
+			continue
+		}
+		if resp.Found && resp.Count > pending.state.count {
+			w.lastCommitted[key] = commitState{count: resp.Count, rootHash: bytes.Clone(resp.RootHash)}
+			delete(w.pending, key)
+			delete(w.retryAfterHeight, key)
+			continue
+		}
+		if resp.Found && sameCommitState(pending.state, resp.Count, resp.RootHash) {
+			w.lastCommitted[key] = pending.state
+			delete(w.pending, key)
+			delete(w.retryAfterHeight, key)
+			logging.Debug("CommitWorker: confirmed on chain", types.PoC,
+				"pocHeight", pocHeight, "modelId", key.modelID, "count", pending.state.count)
+			continue
+		}
+		pending.chainAbsent = true
+		w.pending[key] = pending
+	}
+}
+
+func sameCommitState(st commitState, count uint32, rootHash []byte) bool {
+	if st.count != count {
+		return false
+	}
+	if len(st.rootHash) == 0 || len(rootHash) == 0 {
+		return true
+	}
+	return bytes.Equal(st.rootHash, rootHash)
+}
+
+func samePayloadRetryable(pending pendingCommit, height int64) bool {
+	if height == 0 || !pending.chainAbsent {
+		return false
+	}
+	return height >= pending.submittedHeight+confirmationGraceBlocks
+}
+
+func (w *CommitWorker) queryStoreCommit(pocHeight int64, modelID string) (*types.QueryPoCV2StoreCommitResponse, bool) {
+	queryClient := w.recorder.NewInferenceQueryClient()
+	ctx, cancel := context.WithTimeout(context.Background(), storeCommitQueryTimeout)
+	defer cancel()
+	resp, err := queryClient.PoCV2StoreCommit(ctx, &types.QueryPoCV2StoreCommitRequest{
+		PocStageStartBlockHeight: pocHeight,
+		ParticipantAddress:       w.participantAddress,
+		ModelId:                  modelID,
+	})
+	if err != nil {
+		logging.Debug("CommitWorker: store commit query failed", types.PoC,
+			"pocHeight", pocHeight, "modelId", modelID, "error", err)
+		return nil, false
+	}
+	return resp, true
+}
+
+func (w *CommitWorker) refreshFeeTreeBounded() {
+	refresher, ok := w.recorder.(interface{ RefreshFeeTree(context.Context) error })
+	if !ok {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), feeTreeRefreshTimeout)
+	defer cancel()
+	if err := refresher.RefreshFeeTree(ctx); err != nil {
+		logging.Warn("CommitWorker: fee tree refresh failed, keeping last known-good cache", types.PoC,
+			"error", err)
+	}
 }
 
 func (w *CommitWorker) submitWeightDistribution(pocHeight int64) {
@@ -258,6 +439,11 @@ func (w *CommitWorker) submitWeightDistribution(pocHeight int64) {
 			continue
 		}
 
+		if err := stageStore.Store.PrebuildSnapshot(commitResp.Count); err != nil {
+			logging.Warn("CommitWorker: prebuild failed", types.PoC,
+				"pocHeight", pocHeight, "modelId", stageStore.ModelID, "count", commitResp.Count, "error", err)
+		}
+
 		distributionResp, err := queryClient.MLNodeWeightDistribution(context.Background(), &types.QueryMLNodeWeightDistributionRequest{
 			PocStageStartBlockHeight: pocHeight,
 			ParticipantAddress:       w.participantAddress,
@@ -267,7 +453,16 @@ func (w *CommitWorker) submitWeightDistribution(pocHeight int64) {
 			continue
 		}
 
-		distribution := stageStore.Store.GetNodeDistribution()
+		distribution, exact, err := stageStore.Store.GetNodeDistributionAt(commitResp.Count)
+		if err != nil {
+			logging.Error("CommitWorker: failed to get distribution", types.PoC,
+				"pocHeight", pocHeight, "modelId", stageStore.ModelID, "count", commitResp.Count, "error", err)
+			continue
+		}
+		if !exact {
+			logging.Warn("CommitWorker: using simulated distribution (history miss)", types.PoC,
+				"pocHeight", pocHeight, "modelId", stageStore.ModelID, "count", commitResp.Count)
+		}
 		if len(distribution) == 0 {
 			continue
 		}
@@ -292,7 +487,7 @@ func (w *CommitWorker) submitWeightDistribution(pocHeight int64) {
 
 	msg := &types.MsgMLNodeWeightDistribution{
 		PocStageStartBlockHeight: pocHeight,
-		Entries:                 entries,
+		Entries:                  entries,
 	}
 
 	if err := w.recorder.SubmitMLNodeWeightDistribution(msg); err != nil {

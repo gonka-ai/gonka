@@ -38,7 +38,7 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 	println(validatorAccAddress2)
 
 	// Create validators to be returned by the staking keeper
-	// validator2 has 201 tokens so a single valid vote exceeds 2/3 threshold (201 > 301*2/3 = 200.67)
+	// validator2 has 201 tokens so a single valid vote exceeds the default 50% threshold.
 	validators := []stakingtypes.Validator{
 		{
 			OperatorAddress: validatorOperatorAddress1,
@@ -88,7 +88,7 @@ func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
 	// Set up weight distribution (per-node weights)
 	setWeightDistribution(ctx, k, testutil.Executor2, 100, []nodeDistWeight{{"node-1", 1}})
 
-	// Set up V2 validation - need >2/3 of total weight (300) to pass, so 201 is sufficient
+	// Set up V2 validation - need >50% of total weight (301) to pass, so 201 is sufficient.
 	validation := types.PoCValidationV2{
 		ParticipantAddress:          testutil.Executor2,
 		ValidatorParticipantAddress: validatorAccAddress2,

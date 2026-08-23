@@ -2,6 +2,7 @@ package tx_manager
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -21,6 +22,15 @@ var (
 	// Retryable tx could not be enqueued.
 	ErrTxRetryEnqueueFailed = errors.New("failed to enqueue tx for retry")
 	ErrTxNotFound           = errors.New("tx not found")
+
+	// CheckTx rejected the tx with a transient code (mempool full, OOG, …).
+	// Callers that do not enqueue retries should resubmit later.
+	ErrTxCheckTxRetry = errors.New("checktx failed, retry")
+	// CheckTx rejected the tx because attached fees were too low. Refresh
+	// FeeParams and retry the same payload; this is not a permanent failure.
+	ErrTxCheckTxInsufficientFee = errors.New("checktx insufficient fee")
+	// CheckTx rejected the tx with a permanent code. Do not resubmit the same payload.
+	ErrTxCheckTxFail = errors.New("checktx failed permanently")
 )
 
 // TxResponseAction defines the action to take after broadcast based on response classification
@@ -67,6 +77,12 @@ var retryablePatterns = []string{
 
 	"unordered transaction has a timeout_timestamp that has already passed",
 	"unordered tx ttl exceeds",
+	// Out-of-gas: the per-msg-type estimate underestimated this batch's
+	// real consumption. Retry with a bumped gasWanted (estimateBatchGas
+	// applies a multiplier per attempt, see gas_estimate.go).
+	"out of gas",
+	// Stale fee-tree / gov price bump. Retry the same payload after refresh.
+	"insufficient fee",
 }
 
 // isRetryableRawLog checks if the raw log contains any retryable error patterns
@@ -113,6 +129,58 @@ func classifyBroadcastResponse(resp *sdk.TxResponse) TxResponseAction {
 		}
 		return TxActionFail
 	}
+}
+
+// errorFromCheckTx maps BroadcastTxSync's (resp, rpcErr) onto an error the
+// NoRetry path can return. Code 0 / 19 are admission success.
+func errorFromCheckTx(resp *sdk.TxResponse, broadcastErr error) error {
+	if broadcastErr != nil {
+		return broadcastErr
+	}
+	switch classifyBroadcastResponse(resp) {
+	case TxActionObserve:
+		return nil
+	case TxActionRetry:
+		if resp != nil && isInsufficientFeeRawLog(resp.RawLog) {
+			if txErr := NewTransactionErrorFromResponse(resp); txErr != nil {
+				return fmt.Errorf("%w: %w", ErrTxCheckTxInsufficientFee, txErr)
+			}
+			return ErrTxCheckTxInsufficientFee
+		}
+		if txErr := NewTransactionErrorFromResponse(resp); txErr != nil {
+			return fmt.Errorf("%w: %w", ErrTxCheckTxRetry, txErr)
+		}
+		return ErrTxCheckTxRetry
+	case TxActionFail:
+		if txErr := NewTransactionErrorFromResponse(resp); txErr != nil {
+			return fmt.Errorf("%w: %w", ErrTxCheckTxFail, txErr)
+		}
+		return ErrTxCheckTxFail
+	default:
+		return fmt.Errorf("unexpected checktx classification")
+	}
+}
+
+func isInsufficientFeeRawLog(rawLog string) bool {
+	return strings.Contains(strings.ToLower(rawLog), "insufficient fee")
+}
+
+// IsPermanentCheckTxError reports a CheckTx rejection that should not be retried
+// with the same payload.
+func IsPermanentCheckTxError(err error) bool {
+	return err != nil && errors.Is(err, ErrTxCheckTxFail)
+}
+
+// IsInsufficientFeeCheckTxError reports a CheckTx rejection caused by attached
+// fees being too low for the current min gas price.
+func IsInsufficientFeeCheckTxError(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, ErrTxCheckTxInsufficientFee) {
+		return true
+	}
+	return isInsufficientFeeRawLog(err.Error())
 }
 
 func isTxErrorCritical(err error) bool {

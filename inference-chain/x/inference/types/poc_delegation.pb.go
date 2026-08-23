@@ -482,6 +482,186 @@ func (m *BootstrapDelegationSnapshot) GetPreeligibility() []*BootstrapModelPreEl
 	return nil
 }
 
+type DelegationRewardTransfer struct {
+	ModelId string   `protobuf:"bytes,1,opt,name=model_id,json=modelId,proto3" json:"model_id,omitempty"`
+	From    string   `protobuf:"bytes,2,opt,name=from,proto3" json:"from,omitempty"`
+	To      string   `protobuf:"bytes,3,opt,name=to,proto3" json:"to,omitempty"`
+	Share   *Decimal `protobuf:"bytes,4,opt,name=share,proto3" json:"share,omitempty"`
+}
+
+func (m *DelegationRewardTransfer) Reset()         { *m = DelegationRewardTransfer{} }
+func (m *DelegationRewardTransfer) String() string { return proto.CompactTextString(m) }
+func (*DelegationRewardTransfer) ProtoMessage()    {}
+func (*DelegationRewardTransfer) Descriptor() ([]byte, []int) {
+	return fileDescriptor_67ab536bbbc39f86, []int{7}
+}
+func (m *DelegationRewardTransfer) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *DelegationRewardTransfer) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_DelegationRewardTransfer.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *DelegationRewardTransfer) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_DelegationRewardTransfer.Merge(m, src)
+}
+func (m *DelegationRewardTransfer) XXX_Size() int {
+	return m.Size()
+}
+func (m *DelegationRewardTransfer) XXX_DiscardUnknown() {
+	xxx_messageInfo_DelegationRewardTransfer.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_DelegationRewardTransfer proto.InternalMessageInfo
+
+func (m *DelegationRewardTransfer) GetModelId() string {
+	if m != nil {
+		return m.ModelId
+	}
+	return ""
+}
+
+func (m *DelegationRewardTransfer) GetFrom() string {
+	if m != nil {
+		return m.From
+	}
+	return ""
+}
+
+func (m *DelegationRewardTransfer) GetTo() string {
+	if m != nil {
+		return m.To
+	}
+	return ""
+}
+
+func (m *DelegationRewardTransfer) GetShare() *Decimal {
+	if m != nil {
+		return m.Share
+	}
+	return nil
+}
+
+type DelegationRewardPenalty struct {
+	Participant     string   `protobuf:"bytes,1,opt,name=participant,proto3" json:"participant,omitempty"`
+	PenaltyFraction *Decimal `protobuf:"bytes,2,opt,name=penalty_fraction,json=penaltyFraction,proto3" json:"penalty_fraction,omitempty"`
+}
+
+func (m *DelegationRewardPenalty) Reset()         { *m = DelegationRewardPenalty{} }
+func (m *DelegationRewardPenalty) String() string { return proto.CompactTextString(m) }
+func (*DelegationRewardPenalty) ProtoMessage()    {}
+func (*DelegationRewardPenalty) Descriptor() ([]byte, []int) {
+	return fileDescriptor_67ab536bbbc39f86, []int{8}
+}
+func (m *DelegationRewardPenalty) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *DelegationRewardPenalty) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_DelegationRewardPenalty.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *DelegationRewardPenalty) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_DelegationRewardPenalty.Merge(m, src)
+}
+func (m *DelegationRewardPenalty) XXX_Size() int {
+	return m.Size()
+}
+func (m *DelegationRewardPenalty) XXX_DiscardUnknown() {
+	xxx_messageInfo_DelegationRewardPenalty.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_DelegationRewardPenalty proto.InternalMessageInfo
+
+func (m *DelegationRewardPenalty) GetParticipant() string {
+	if m != nil {
+		return m.Participant
+	}
+	return ""
+}
+
+func (m *DelegationRewardPenalty) GetPenaltyFraction() *Decimal {
+	if m != nil {
+		return m.PenaltyFraction
+	}
+	return nil
+}
+
+type DelegationRewardTransferSnapshot struct {
+	EpochIndex uint64                      `protobuf:"varint,1,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
+	Transfers  []*DelegationRewardTransfer `protobuf:"bytes,2,rep,name=transfers,proto3" json:"transfers,omitempty"`
+	Penalties  []*DelegationRewardPenalty  `protobuf:"bytes,3,rep,name=penalties,proto3" json:"penalties,omitempty"`
+}
+
+func (m *DelegationRewardTransferSnapshot) Reset()         { *m = DelegationRewardTransferSnapshot{} }
+func (m *DelegationRewardTransferSnapshot) String() string { return proto.CompactTextString(m) }
+func (*DelegationRewardTransferSnapshot) ProtoMessage()    {}
+func (*DelegationRewardTransferSnapshot) Descriptor() ([]byte, []int) {
+	return fileDescriptor_67ab536bbbc39f86, []int{9}
+}
+func (m *DelegationRewardTransferSnapshot) XXX_Unmarshal(b []byte) error {
+	return m.Unmarshal(b)
+}
+func (m *DelegationRewardTransferSnapshot) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	if deterministic {
+		return xxx_messageInfo_DelegationRewardTransferSnapshot.Marshal(b, m, deterministic)
+	} else {
+		b = b[:cap(b)]
+		n, err := m.MarshalToSizedBuffer(b)
+		if err != nil {
+			return nil, err
+		}
+		return b[:n], nil
+	}
+}
+func (m *DelegationRewardTransferSnapshot) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_DelegationRewardTransferSnapshot.Merge(m, src)
+}
+func (m *DelegationRewardTransferSnapshot) XXX_Size() int {
+	return m.Size()
+}
+func (m *DelegationRewardTransferSnapshot) XXX_DiscardUnknown() {
+	xxx_messageInfo_DelegationRewardTransferSnapshot.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_DelegationRewardTransferSnapshot proto.InternalMessageInfo
+
+func (m *DelegationRewardTransferSnapshot) GetEpochIndex() uint64 {
+	if m != nil {
+		return m.EpochIndex
+	}
+	return 0
+}
+
+func (m *DelegationRewardTransferSnapshot) GetTransfers() []*DelegationRewardTransfer {
+	if m != nil {
+		return m.Transfers
+	}
+	return nil
+}
+
+func (m *DelegationRewardTransferSnapshot) GetPenalties() []*DelegationRewardPenalty {
+	if m != nil {
+		return m.Penalties
+	}
+	return nil
+}
+
 type MsgSetPoCDelegation struct {
 	Sender     string `protobuf:"bytes,1,opt,name=sender,proto3" json:"sender,omitempty"`
 	ModelId    string `protobuf:"bytes,2,opt,name=model_id,json=modelId,proto3" json:"model_id,omitempty"`
@@ -492,7 +672,7 @@ func (m *MsgSetPoCDelegation) Reset()         { *m = MsgSetPoCDelegation{} }
 func (m *MsgSetPoCDelegation) String() string { return proto.CompactTextString(m) }
 func (*MsgSetPoCDelegation) ProtoMessage()    {}
 func (*MsgSetPoCDelegation) Descriptor() ([]byte, []int) {
-	return fileDescriptor_67ab536bbbc39f86, []int{7}
+	return fileDescriptor_67ab536bbbc39f86, []int{10}
 }
 func (m *MsgSetPoCDelegation) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -549,7 +729,7 @@ func (m *MsgSetPoCDelegationResponse) Reset()         { *m = MsgSetPoCDelegation
 func (m *MsgSetPoCDelegationResponse) String() string { return proto.CompactTextString(m) }
 func (*MsgSetPoCDelegationResponse) ProtoMessage()    {}
 func (*MsgSetPoCDelegationResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_67ab536bbbc39f86, []int{8}
+	return fileDescriptor_67ab536bbbc39f86, []int{11}
 }
 func (m *MsgSetPoCDelegationResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -587,7 +767,7 @@ func (m *MsgRefusePoCDelegation) Reset()         { *m = MsgRefusePoCDelegation{}
 func (m *MsgRefusePoCDelegation) String() string { return proto.CompactTextString(m) }
 func (*MsgRefusePoCDelegation) ProtoMessage()    {}
 func (*MsgRefusePoCDelegation) Descriptor() ([]byte, []int) {
-	return fileDescriptor_67ab536bbbc39f86, []int{9}
+	return fileDescriptor_67ab536bbbc39f86, []int{12}
 }
 func (m *MsgRefusePoCDelegation) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -637,7 +817,7 @@ func (m *MsgRefusePoCDelegationResponse) Reset()         { *m = MsgRefusePoCDele
 func (m *MsgRefusePoCDelegationResponse) String() string { return proto.CompactTextString(m) }
 func (*MsgRefusePoCDelegationResponse) ProtoMessage()    {}
 func (*MsgRefusePoCDelegationResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_67ab536bbbc39f86, []int{10}
+	return fileDescriptor_67ab536bbbc39f86, []int{13}
 }
 func (m *MsgRefusePoCDelegationResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -675,7 +855,7 @@ func (m *MsgDeclarePoCIntent) Reset()         { *m = MsgDeclarePoCIntent{} }
 func (m *MsgDeclarePoCIntent) String() string { return proto.CompactTextString(m) }
 func (*MsgDeclarePoCIntent) ProtoMessage()    {}
 func (*MsgDeclarePoCIntent) Descriptor() ([]byte, []int) {
-	return fileDescriptor_67ab536bbbc39f86, []int{11}
+	return fileDescriptor_67ab536bbbc39f86, []int{14}
 }
 func (m *MsgDeclarePoCIntent) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -725,7 +905,7 @@ func (m *MsgDeclarePoCIntentResponse) Reset()         { *m = MsgDeclarePoCIntent
 func (m *MsgDeclarePoCIntentResponse) String() string { return proto.CompactTextString(m) }
 func (*MsgDeclarePoCIntentResponse) ProtoMessage()    {}
 func (*MsgDeclarePoCIntentResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_67ab536bbbc39f86, []int{12}
+	return fileDescriptor_67ab536bbbc39f86, []int{15}
 }
 func (m *MsgDeclarePoCIntentResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -763,7 +943,7 @@ func (m *QueryPoCDelegationRequest) Reset()         { *m = QueryPoCDelegationReq
 func (m *QueryPoCDelegationRequest) String() string { return proto.CompactTextString(m) }
 func (*QueryPoCDelegationRequest) ProtoMessage()    {}
 func (*QueryPoCDelegationRequest) Descriptor() ([]byte, []int) {
-	return fileDescriptor_67ab536bbbc39f86, []int{13}
+	return fileDescriptor_67ab536bbbc39f86, []int{16}
 }
 func (m *QueryPoCDelegationRequest) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -816,7 +996,7 @@ func (m *QueryPoCDelegationResponse) Reset()         { *m = QueryPoCDelegationRe
 func (m *QueryPoCDelegationResponse) String() string { return proto.CompactTextString(m) }
 func (*QueryPoCDelegationResponse) ProtoMessage()    {}
 func (*QueryPoCDelegationResponse) Descriptor() ([]byte, []int) {
-	return fileDescriptor_67ab536bbbc39f86, []int{14}
+	return fileDescriptor_67ab536bbbc39f86, []int{17}
 }
 func (m *QueryPoCDelegationResponse) XXX_Unmarshal(b []byte) error {
 	return m.Unmarshal(b)
@@ -874,6 +1054,9 @@ func init() {
 	proto.RegisterType((*DelegationSnapshot)(nil), "inference.inference.DelegationSnapshot")
 	proto.RegisterType((*BootstrapModelPreEligibility)(nil), "inference.inference.BootstrapModelPreEligibility")
 	proto.RegisterType((*BootstrapDelegationSnapshot)(nil), "inference.inference.BootstrapDelegationSnapshot")
+	proto.RegisterType((*DelegationRewardTransfer)(nil), "inference.inference.DelegationRewardTransfer")
+	proto.RegisterType((*DelegationRewardPenalty)(nil), "inference.inference.DelegationRewardPenalty")
+	proto.RegisterType((*DelegationRewardTransferSnapshot)(nil), "inference.inference.DelegationRewardTransferSnapshot")
 	proto.RegisterType((*MsgSetPoCDelegation)(nil), "inference.inference.MsgSetPoCDelegation")
 	proto.RegisterType((*MsgSetPoCDelegationResponse)(nil), "inference.inference.MsgSetPoCDelegationResponse")
 	proto.RegisterType((*MsgRefusePoCDelegation)(nil), "inference.inference.MsgRefusePoCDelegation")
@@ -889,56 +1072,66 @@ func init() {
 }
 
 var fileDescriptor_67ab536bbbc39f86 = []byte{
-	// 778 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xc4, 0x56, 0x49, 0x6f, 0xdb, 0x46,
-	0x14, 0x36, 0x25, 0x2f, 0xf2, 0x93, 0x97, 0x7a, 0x6c, 0xb8, 0xf4, 0x52, 0x5a, 0x65, 0x0b, 0xd4,
-	0x30, 0x50, 0xa9, 0xee, 0x72, 0x69, 0x81, 0x1e, 0x6c, 0x17, 0xb0, 0x0f, 0x72, 0x55, 0xda, 0x75,
-	0x96, 0x0b, 0x41, 0x53, 0xcf, 0xe4, 0x20, 0x14, 0x87, 0x99, 0x19, 0xc9, 0xf1, 0x35, 0xbf, 0x20,
-	0x3f, 0x25, 0x3f, 0x21, 0xc7, 0x1c, 0x7d, 0x4c, 0x4e, 0x09, 0xec, 0x43, 0xf2, 0x33, 0x02, 0xcd,
-	0x50, 0xd4, 0x12, 0x59, 0x46, 0xa0, 0x43, 0x4e, 0x9a, 0x79, 0xdf, 0x9b, 0xef, 0x2d, 0xf3, 0xcd,
-	0x13, 0x61, 0x9b, 0xc6, 0x17, 0xc8, 0x31, 0xf6, 0xb1, 0xd2, 0x5d, 0x25, 0xcc, 0x77, 0xeb, 0x18,
-	0x61, 0xe0, 0x49, 0xca, 0xe2, 0x72, 0xc2, 0x99, 0x64, 0x64, 0x39, 0xc3, 0xcb, 0xd9, 0x6a, 0xfd,
-	0x5b, 0x9f, 0x89, 0x06, 0x13, 0x95, 0x86, 0x08, 0x2a, 0xad, 0xdd, 0xf6, 0x8f, 0xf6, 0x5e, 0x5f,
-	0xd3, 0x80, 0xab, 0x76, 0x15, 0xbd, 0xd1, 0x90, 0x4d, 0x61, 0xbe, 0xc6, 0xf6, 0x0f, 0x32, 0x7e,
-	0xb2, 0x06, 0x85, 0x06, 0xab, 0x63, 0xe4, 0xd2, 0xba, 0x69, 0x94, 0x8c, 0xed, 0x59, 0x67, 0x46,
-	0xed, 0x8f, 0xea, 0x64, 0x13, 0x66, 0xd3, 0x44, 0x18, 0x37, 0x73, 0x0a, 0xeb, 0x1a, 0xc8, 0x16,
-	0x14, 0xd3, 0x0d, 0xba, 0x92, 0x99, 0x79, 0x85, 0x43, 0xc7, 0x74, 0xca, 0xec, 0x23, 0x80, 0x1a,
-	0xdb, 0x77, 0xf0, 0xa2, 0x29, 0xbc, 0x68, 0x54, 0x9c, 0x12, 0x14, 0x13, 0x8f, 0x4b, 0xea, 0xd3,
-	0xc4, 0x8b, 0x65, 0x1a, 0xa9, 0xd7, 0x64, 0x1f, 0xc3, 0x62, 0x3b, 0x6b, 0xca, 0xd1, 0x97, 0x47,
-	0xb1, 0xc4, 0x58, 0x8e, 0xc7, 0x57, 0x83, 0x6f, 0xaa, 0x6d, 0xe7, 0x33, 0x26, 0x69, 0x1c, 0xd4,
-	0xd8, 0x25, 0xf2, 0x51, 0x84, 0xdf, 0xc3, 0x5c, 0x4b, 0x79, 0xba, 0x49, 0xdb, 0x55, 0x31, 0xe6,
-	0x9d, 0x62, 0xab, 0x7b, 0xda, 0x7e, 0x65, 0x00, 0xe9, 0x76, 0xf5, 0x24, 0xf6, 0x12, 0x11, 0x32,
-	0x49, 0x7e, 0x82, 0x45, 0x91, 0xae, 0xdd, 0x10, 0x69, 0x10, 0x4a, 0xc5, 0x9d, 0x77, 0x16, 0x3a,
-	0xe6, 0x43, 0x65, 0x25, 0x07, 0x59, 0x37, 0x29, 0x8b, 0x85, 0x99, 0x2b, 0xe5, 0xb7, 0x8b, 0xbf,
-	0xda, 0xe5, 0x21, 0xd7, 0x5e, 0xee, 0xbb, 0x3f, 0xa7, 0xf7, 0x18, 0xf9, 0x0b, 0x0a, 0x5c, 0xf7,
-	0x5b, 0x98, 0x79, 0x45, 0xb1, 0x75, 0x17, 0x45, 0x7a, 0x2f, 0x4e, 0x76, 0xc0, 0xfe, 0x98, 0x83,
-	0xcd, 0x3d, 0xc6, 0xa4, 0x90, 0xdc, 0x4b, 0x54, 0x7b, 0x6a, 0x1c, 0xff, 0x89, 0x68, 0x40, 0xcf,
-	0x69, 0x44, 0xe5, 0xd5, 0x3d, 0x1d, 0x4a, 0x38, 0xba, 0xa8, 0xbc, 0x23, 0x54, 0x1d, 0x2a, 0x38,
-	0xc5, 0xa4, 0x43, 0x10, 0x21, 0xf9, 0x1d, 0x56, 0x1b, 0x88, 0x52, 0xb8, 0x97, 0xaa, 0x62, 0x57,
-	0x86, 0x1c, 0x45, 0xc8, 0xa2, 0xba, 0x92, 0x4e, 0xc1, 0x59, 0x51, 0xe8, 0x03, 0x05, 0x9e, 0x76,
-	0x30, 0x62, 0x41, 0x51, 0x9f, 0x6a, 0xb9, 0x0d, 0x1a, 0x9b, 0x93, 0xca, 0x75, 0x56, 0x99, 0xce,
-	0xaa, 0x34, 0x26, 0x3f, 0x03, 0xd1, 0x38, 0x47, 0xcf, 0x0f, 0x3d, 0x9d, 0xa9, 0x39, 0xa5, 0xdc,
-	0x96, 0x14, 0xe2, 0xf4, 0x00, 0x64, 0x07, 0x96, 0xa8, 0xd2, 0x8f, 0x1b, 0x32, 0x21, 0x5d, 0x9f,
-	0x35, 0x63, 0x69, 0x4e, 0xab, 0x1b, 0x59, 0xd4, 0xc0, 0x21, 0x13, 0x72, 0xbf, 0x6d, 0x26, 0x3f,
-	0xc0, 0x7c, 0xea, 0xab, 0x33, 0x36, 0x67, 0x94, 0xdf, 0x9c, 0x36, 0xea, 0x44, 0xdb, 0x55, 0xa5,
-	0x91, 0x23, 0x74, 0xfb, 0x44, 0x52, 0x50, 0xde, 0x2b, 0x19, 0xda, 0xa3, 0x35, 0xfb, 0x6d, 0x0e,
-	0x36, 0xb2, 0x56, 0x7f, 0x7d, 0xd9, 0xfc, 0x0d, 0x33, 0xba, 0xa8, 0x8e, 0x6a, 0x7e, 0xbc, 0x93,
-	0xa1, 0xe7, 0x09, 0x3a, 0x9d, 0x43, 0xe4, 0x17, 0x58, 0x91, 0x4c, 0x7a, 0x91, 0x1b, 0xa3, 0xbc,
-	0x64, 0xfc, 0x49, 0xa7, 0x61, 0x93, 0x2a, 0x67, 0xa2, 0xb0, 0x63, 0x0d, 0xa5, 0x6d, 0x7b, 0x04,
-	0x0b, 0x09, 0x47, 0xec, 0x8a, 0xcb, 0x9c, 0x52, 0x81, 0x77, 0x87, 0x06, 0x1e, 0xa5, 0x4a, 0x67,
-	0x80, 0xc8, 0x6e, 0xc1, 0x72, 0x55, 0x04, 0x27, 0x28, 0xfb, 0xe7, 0xdc, 0x2a, 0x4c, 0x0b, 0x8c,
-	0xeb, 0xc8, 0x53, 0xe9, 0xa6, 0xbb, 0x3e, 0x51, 0xe7, 0xfa, 0x45, 0x7d, 0xdf, 0x84, 0xfb, 0xb3,
-	0xf8, 0xfc, 0xc3, 0xcb, 0x9d, 0x94, 0xc8, 0xfe, 0x0e, 0x36, 0x86, 0xc4, 0x75, 0x50, 0x24, 0x2c,
-	0x16, 0x68, 0x3f, 0x84, 0xd5, 0xaa, 0x08, 0xd4, 0xab, 0xc3, 0x71, 0x33, 0xeb, 0x0f, 0x5c, 0x02,
-	0x6b, 0x38, 0x73, 0x16, 0xfb, 0x7f, 0xd5, 0x92, 0x03, 0xf4, 0x23, 0x8f, 0xb7, 0x5d, 0xd2, 0x11,
-	0x3a, 0x6e, 0x60, 0x5d, 0xf1, 0x20, 0x6d, 0x4f, 0xc5, 0x6b, 0xff, 0x35, 0x91, 0x5f, 0x0d, 0xe4,
-	0xf4, 0xb4, 0x89, 0x42, 0x0e, 0xce, 0x68, 0xe3, 0xb3, 0x19, 0x3d, 0x22, 0x0b, 0xfb, 0x9d, 0x01,
-	0xeb, 0xc3, 0xa8, 0x75, 0xe0, 0xc1, 0x47, 0x61, 0x8c, 0x3f, 0x4b, 0x73, 0x5f, 0x38, 0x4b, 0xc7,
-	0x7d, 0x51, 0x7b, 0xff, 0xbe, 0xbe, 0xb1, 0x8c, 0xeb, 0x1b, 0xcb, 0x78, 0x7f, 0x63, 0x19, 0x2f,
-	0x6e, 0xad, 0x89, 0xeb, 0x5b, 0x6b, 0xe2, 0xcd, 0xad, 0x35, 0xf1, 0xf8, 0x8f, 0x80, 0xca, 0xb0,
-	0x79, 0x5e, 0xf6, 0x59, 0xa3, 0x92, 0x70, 0x56, 0x6f, 0xfa, 0x52, 0xf8, 0x74, 0xe0, 0x1b, 0xe2,
-	0x59, 0xcf, 0x5a, 0x5e, 0x25, 0x28, 0xce, 0xa7, 0xd5, 0xdf, 0xff, 0x6f, 0x9f, 0x02, 0x00, 0x00,
-	0xff, 0xff, 0xc5, 0xfc, 0xe7, 0xbc, 0x73, 0x08, 0x00, 0x00,
+	// 943 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0xc4, 0x56, 0xcf, 0x6f, 0x1b, 0x45,
+	0x14, 0xce, 0xda, 0xf9, 0x61, 0x3f, 0xb7, 0x49, 0x3b, 0x8d, 0xd2, 0x4d, 0x1a, 0x1c, 0xb3, 0x20,
+	0x11, 0x55, 0xd4, 0xa6, 0x01, 0x2e, 0x20, 0x71, 0x68, 0x02, 0x34, 0xa0, 0x14, 0xb3, 0x0d, 0xe5,
+	0xc7, 0x65, 0xb5, 0x59, 0x3f, 0x7b, 0x47, 0xac, 0x67, 0x96, 0x99, 0xb1, 0xd3, 0x5c, 0x11, 0x57,
+	0x24, 0xfe, 0x14, 0xfe, 0x04, 0x8e, 0x1c, 0x7b, 0x04, 0x09, 0x09, 0x94, 0x1c, 0xe0, 0xcf, 0x40,
+	0x9e, 0x99, 0x5d, 0xff, 0xc0, 0x4e, 0x82, 0x7c, 0xe8, 0x29, 0x33, 0xef, 0x7b, 0xef, 0x7b, 0xdf,
+	0xbc, 0xfd, 0x32, 0x63, 0xd8, 0xa5, 0xac, 0x8d, 0x02, 0x59, 0x84, 0x8d, 0xe1, 0x2a, 0xe5, 0x51,
+	0xd0, 0xc2, 0x04, 0x3b, 0xa1, 0xa2, 0x9c, 0xd5, 0x53, 0xc1, 0x15, 0x27, 0x77, 0x72, 0xbc, 0x9e,
+	0xaf, 0xb6, 0xee, 0x46, 0x5c, 0x76, 0xb9, 0x6c, 0x74, 0x65, 0xa7, 0xd1, 0x7f, 0x38, 0xf8, 0x63,
+	0xb2, 0xb7, 0x36, 0x0d, 0x10, 0xe8, 0x5d, 0xc3, 0x6c, 0x2c, 0x54, 0x9b, 0xda, 0x32, 0x14, 0x61,
+	0xd7, 0x66, 0x78, 0x14, 0x6e, 0x36, 0xf9, 0xfe, 0x41, 0xae, 0x80, 0x6c, 0x42, 0xa9, 0xcb, 0x5b,
+	0x98, 0x04, 0xb4, 0xe5, 0x3a, 0x35, 0x67, 0xb7, 0xec, 0xaf, 0xe8, 0xfd, 0x61, 0x8b, 0x6c, 0x43,
+	0xd9, 0x4a, 0xe5, 0xc2, 0x2d, 0x68, 0x6c, 0x18, 0x20, 0x3b, 0x50, 0xb1, 0x1b, 0x0c, 0x14, 0x77,
+	0x8b, 0x1a, 0x87, 0x2c, 0x74, 0xcc, 0xbd, 0x43, 0x80, 0x26, 0xdf, 0xf7, 0xb1, 0xdd, 0x93, 0x61,
+	0x72, 0x59, 0x9f, 0x1a, 0x54, 0xd2, 0x50, 0x28, 0x1a, 0xd1, 0x34, 0x64, 0xca, 0x76, 0x1a, 0x0d,
+	0x79, 0x4f, 0x60, 0x6d, 0xa0, 0x9a, 0x0a, 0x8c, 0xd4, 0x21, 0x53, 0xc8, 0xd4, 0x7c, 0x7c, 0x4d,
+	0xb8, 0x75, 0x34, 0x48, 0x7e, 0xc6, 0x15, 0x65, 0x9d, 0x26, 0x3f, 0x45, 0x71, 0x19, 0xe1, 0xab,
+	0x70, 0xa3, 0xaf, 0x33, 0x83, 0x74, 0x90, 0xaa, 0x19, 0x8b, 0x7e, 0xa5, 0x3f, 0xac, 0xf6, 0x7e,
+	0x71, 0x80, 0x0c, 0xa7, 0xfa, 0x94, 0x85, 0xa9, 0x8c, 0xb9, 0x22, 0x6f, 0xc0, 0x9a, 0xb4, 0xeb,
+	0x20, 0x46, 0xda, 0x89, 0x95, 0xe6, 0x2e, 0xfa, 0xab, 0x59, 0xf8, 0xb1, 0x8e, 0x92, 0x83, 0x7c,
+	0x9a, 0x94, 0x33, 0xe9, 0x16, 0x6a, 0xc5, 0xdd, 0xca, 0x9e, 0x57, 0x9f, 0x62, 0x8c, 0xfa, 0xd8,
+	0xf7, 0xf3, 0x47, 0xcb, 0xc8, 0xfb, 0x50, 0x12, 0x66, 0xde, 0xd2, 0x2d, 0x6a, 0x8a, 0x9d, 0x59,
+	0x14, 0xf6, 0xbb, 0xf8, 0x79, 0x81, 0xf7, 0x4f, 0x01, 0xb6, 0x1f, 0x71, 0xae, 0xa4, 0x12, 0x61,
+	0xaa, 0xc7, 0xd3, 0x14, 0xf8, 0x61, 0x42, 0x3b, 0xf4, 0x84, 0x26, 0x54, 0x9d, 0x5d, 0x31, 0xa1,
+	0x54, 0x60, 0x80, 0x3a, 0x3b, 0x41, 0x3d, 0xa1, 0x92, 0x5f, 0x49, 0x33, 0x82, 0x04, 0xc9, 0x3b,
+	0xb0, 0xd1, 0x45, 0x54, 0x32, 0x38, 0xd5, 0x27, 0x0e, 0x54, 0x2c, 0x50, 0xc6, 0x3c, 0x69, 0x69,
+	0xeb, 0x94, 0xfc, 0x75, 0x8d, 0x7e, 0xa9, 0xc1, 0xe3, 0x0c, 0x23, 0x55, 0xa8, 0x98, 0xaa, 0x7e,
+	0xd0, 0xa5, 0xcc, 0x5d, 0xd4, 0xa9, 0x65, 0x1d, 0x7a, 0x76, 0x44, 0x19, 0x79, 0x00, 0xc4, 0xe0,
+	0x02, 0xc3, 0x28, 0x0e, 0x8d, 0x52, 0x77, 0x49, 0xa7, 0xdd, 0xd6, 0x88, 0x3f, 0x02, 0x90, 0xfb,
+	0x70, 0x9b, 0x6a, 0xff, 0x04, 0x31, 0x97, 0x2a, 0x88, 0x78, 0x8f, 0x29, 0x77, 0x59, 0x7f, 0x91,
+	0x35, 0x03, 0x3c, 0xe6, 0x52, 0xed, 0x0f, 0xc2, 0xe4, 0x35, 0xb8, 0x69, 0x73, 0x8d, 0x62, 0x77,
+	0x45, 0xe7, 0xdd, 0x30, 0x41, 0x23, 0x74, 0x70, 0x2a, 0xdb, 0x39, 0xc1, 0x60, 0xcc, 0x24, 0x25,
+	0x9d, 0xbd, 0x9e, 0xa3, 0x23, 0x5e, 0xf3, 0x7e, 0x2f, 0xc0, 0xbd, 0x7c, 0xd4, 0x2f, 0xdf, 0x36,
+	0x1f, 0xc0, 0x8a, 0x39, 0x54, 0xe6, 0x9a, 0xd7, 0x67, 0x32, 0x8c, 0xfc, 0x0b, 0xfa, 0x59, 0x11,
+	0x79, 0x0b, 0xd6, 0x15, 0x57, 0x61, 0x12, 0x30, 0x54, 0xa7, 0x5c, 0x7c, 0x9b, 0x0d, 0x6c, 0x51,
+	0x6b, 0x26, 0x1a, 0x7b, 0x62, 0x20, 0x3b, 0xb6, 0xaf, 0x61, 0x35, 0x15, 0x88, 0x43, 0x73, 0xb9,
+	0x4b, 0xba, 0xf1, 0xc3, 0xa9, 0x8d, 0x2f, 0x73, 0xa5, 0x3f, 0x41, 0xe4, 0xfd, 0xe8, 0x80, 0x3b,
+	0x72, 0x50, 0x3c, 0x0d, 0x45, 0xeb, 0x58, 0x84, 0x4c, 0xb6, 0x2f, 0xff, 0x27, 0x27, 0xb0, 0xd8,
+	0x16, 0xbc, 0x6b, 0xaf, 0x0b, 0xbd, 0x26, 0xab, 0x50, 0xc8, 0xaf, 0xb6, 0x82, 0xe2, 0x64, 0x0f,
+	0x96, 0x64, 0x1c, 0x0a, 0xd4, 0x27, 0xab, 0xec, 0x6d, 0x4f, 0x55, 0x7b, 0x80, 0x11, 0xed, 0x86,
+	0x89, 0x6f, 0x52, 0xbd, 0x1f, 0x1c, 0xb8, 0x3b, 0xa9, 0xa7, 0x89, 0x2c, 0x4c, 0xd4, 0xd9, 0xe4,
+	0x4d, 0xe5, 0xfc, 0xe7, 0xa6, 0x22, 0x1f, 0xc3, 0xad, 0xd4, 0x24, 0x07, 0x6d, 0x11, 0x46, 0x03,
+	0x0a, 0xad, 0xf0, 0xaa, 0xe6, 0x6b, 0xb6, 0xea, 0x23, 0x5b, 0xe4, 0xfd, 0xe1, 0x40, 0x6d, 0xd6,
+	0x58, 0x72, 0xdf, 0xed, 0x40, 0x05, 0x53, 0x1e, 0xc5, 0x01, 0x65, 0x2d, 0x7c, 0xae, 0xf5, 0x2c,
+	0xfa, 0xa0, 0x43, 0x87, 0x83, 0x08, 0xf9, 0x14, 0xca, 0xca, 0x16, 0x65, 0x6e, 0x7b, 0x30, 0x43,
+	0xc7, 0xf4, 0x56, 0xfe, 0xb0, 0x9e, 0x7c, 0x02, 0x65, 0xa3, 0x92, 0x62, 0x66, 0xbc, 0x37, 0xaf,
+	0x45, 0x66, 0xc7, 0xe7, 0x0f, 0xcb, 0xbd, 0x3e, 0xdc, 0x39, 0x92, 0x9d, 0xa7, 0xa8, 0xc6, 0x5f,
+	0xb7, 0x0d, 0x58, 0x96, 0xc8, 0x5a, 0x28, 0xec, 0x6c, 0xed, 0x6e, 0xcc, 0x07, 0x85, 0x71, 0x1f,
+	0x5c, 0xf5, 0xae, 0xbd, 0x57, 0xf9, 0xfe, 0xef, 0x9f, 0xef, 0x5b, 0x22, 0xef, 0x15, 0xb8, 0x37,
+	0xa5, 0xaf, 0x8f, 0x32, 0xe5, 0x4c, 0xa2, 0xf7, 0x15, 0x6c, 0x1c, 0xc9, 0x8e, 0xbe, 0x6b, 0x71,
+	0x5e, 0x65, 0xe3, 0x8d, 0x6b, 0x50, 0x9d, 0xce, 0x9c, 0xf7, 0xfe, 0x42, 0x8f, 0xe4, 0x00, 0xa3,
+	0x24, 0x14, 0x83, 0x14, 0xfb, 0x70, 0xce, 0xdb, 0xd8, 0x9c, 0x78, 0x92, 0x76, 0xe4, 0xc4, 0x9b,
+	0x9f, 0xf7, 0x50, 0x9c, 0x4d, 0x68, 0xfa, 0xae, 0x87, 0x52, 0x5d, 0xc3, 0xef, 0xb3, 0x55, 0x78,
+	0x7f, 0x3a, 0xb0, 0x35, 0x8d, 0xda, 0x34, 0x9e, 0xbc, 0x0a, 0x9d, 0xf9, 0x5f, 0xd0, 0xc2, 0xff,
+	0x7c, 0x41, 0xe7, 0xbd, 0x47, 0x1f, 0x7d, 0xf6, 0xeb, 0x79, 0xd5, 0x79, 0x71, 0x5e, 0x75, 0xfe,
+	0x3a, 0xaf, 0x3a, 0x3f, 0x5d, 0x54, 0x17, 0x5e, 0x5c, 0x54, 0x17, 0x7e, 0xbb, 0xa8, 0x2e, 0x7c,
+	0xf3, 0x6e, 0x87, 0xaa, 0xb8, 0x77, 0x52, 0x8f, 0x78, 0xb7, 0x91, 0x0a, 0xde, 0xea, 0x45, 0x4a,
+	0x46, 0x74, 0xe2, 0x87, 0xde, 0xf3, 0x91, 0xb5, 0x3a, 0x4b, 0x51, 0x9e, 0x2c, 0xeb, 0x1f, 0x7d,
+	0x6f, 0xff, 0x1b, 0x00, 0x00, 0xff, 0xff, 0x25, 0x85, 0x24, 0x65, 0x8b, 0x0a, 0x00, 0x00,
 }
 
 func (m *PoCDelegation) Marshal() (dAtA []byte, err error) {
@@ -1304,6 +1497,160 @@ func (m *BootstrapDelegationSnapshot) MarshalToSizedBuffer(dAtA []byte) (int, er
 	}
 	if m.SnapshotHeight != 0 {
 		i = encodeVarintPocDelegation(dAtA, i, uint64(m.SnapshotHeight))
+		i--
+		dAtA[i] = 0x8
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *DelegationRewardTransfer) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *DelegationRewardTransfer) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *DelegationRewardTransfer) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.Share != nil {
+		{
+			size, err := m.Share.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintPocDelegation(dAtA, i, uint64(size))
+		}
+		i--
+		dAtA[i] = 0x22
+	}
+	if len(m.To) > 0 {
+		i -= len(m.To)
+		copy(dAtA[i:], m.To)
+		i = encodeVarintPocDelegation(dAtA, i, uint64(len(m.To)))
+		i--
+		dAtA[i] = 0x1a
+	}
+	if len(m.From) > 0 {
+		i -= len(m.From)
+		copy(dAtA[i:], m.From)
+		i = encodeVarintPocDelegation(dAtA, i, uint64(len(m.From)))
+		i--
+		dAtA[i] = 0x12
+	}
+	if len(m.ModelId) > 0 {
+		i -= len(m.ModelId)
+		copy(dAtA[i:], m.ModelId)
+		i = encodeVarintPocDelegation(dAtA, i, uint64(len(m.ModelId)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *DelegationRewardPenalty) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *DelegationRewardPenalty) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *DelegationRewardPenalty) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if m.PenaltyFraction != nil {
+		{
+			size, err := m.PenaltyFraction.MarshalToSizedBuffer(dAtA[:i])
+			if err != nil {
+				return 0, err
+			}
+			i -= size
+			i = encodeVarintPocDelegation(dAtA, i, uint64(size))
+		}
+		i--
+		dAtA[i] = 0x12
+	}
+	if len(m.Participant) > 0 {
+		i -= len(m.Participant)
+		copy(dAtA[i:], m.Participant)
+		i = encodeVarintPocDelegation(dAtA, i, uint64(len(m.Participant)))
+		i--
+		dAtA[i] = 0xa
+	}
+	return len(dAtA) - i, nil
+}
+
+func (m *DelegationRewardTransferSnapshot) Marshal() (dAtA []byte, err error) {
+	size := m.Size()
+	dAtA = make([]byte, size)
+	n, err := m.MarshalToSizedBuffer(dAtA[:size])
+	if err != nil {
+		return nil, err
+	}
+	return dAtA[:n], nil
+}
+
+func (m *DelegationRewardTransferSnapshot) MarshalTo(dAtA []byte) (int, error) {
+	size := m.Size()
+	return m.MarshalToSizedBuffer(dAtA[:size])
+}
+
+func (m *DelegationRewardTransferSnapshot) MarshalToSizedBuffer(dAtA []byte) (int, error) {
+	i := len(dAtA)
+	_ = i
+	var l int
+	_ = l
+	if len(m.Penalties) > 0 {
+		for iNdEx := len(m.Penalties) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.Penalties[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintPocDelegation(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x1a
+		}
+	}
+	if len(m.Transfers) > 0 {
+		for iNdEx := len(m.Transfers) - 1; iNdEx >= 0; iNdEx-- {
+			{
+				size, err := m.Transfers[iNdEx].MarshalToSizedBuffer(dAtA[:i])
+				if err != nil {
+					return 0, err
+				}
+				i -= size
+				i = encodeVarintPocDelegation(dAtA, i, uint64(size))
+			}
+			i--
+			dAtA[i] = 0x12
+		}
+	}
+	if m.EpochIndex != 0 {
+		i = encodeVarintPocDelegation(dAtA, i, uint64(m.EpochIndex))
 		i--
 		dAtA[i] = 0x8
 	}
@@ -1765,6 +2112,72 @@ func (m *BootstrapDelegationSnapshot) Size() (n int) {
 	}
 	if len(m.Preeligibility) > 0 {
 		for _, e := range m.Preeligibility {
+			l = e.Size()
+			n += 1 + l + sovPocDelegation(uint64(l))
+		}
+	}
+	return n
+}
+
+func (m *DelegationRewardTransfer) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.ModelId)
+	if l > 0 {
+		n += 1 + l + sovPocDelegation(uint64(l))
+	}
+	l = len(m.From)
+	if l > 0 {
+		n += 1 + l + sovPocDelegation(uint64(l))
+	}
+	l = len(m.To)
+	if l > 0 {
+		n += 1 + l + sovPocDelegation(uint64(l))
+	}
+	if m.Share != nil {
+		l = m.Share.Size()
+		n += 1 + l + sovPocDelegation(uint64(l))
+	}
+	return n
+}
+
+func (m *DelegationRewardPenalty) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	l = len(m.Participant)
+	if l > 0 {
+		n += 1 + l + sovPocDelegation(uint64(l))
+	}
+	if m.PenaltyFraction != nil {
+		l = m.PenaltyFraction.Size()
+		n += 1 + l + sovPocDelegation(uint64(l))
+	}
+	return n
+}
+
+func (m *DelegationRewardTransferSnapshot) Size() (n int) {
+	if m == nil {
+		return 0
+	}
+	var l int
+	_ = l
+	if m.EpochIndex != 0 {
+		n += 1 + sovPocDelegation(uint64(m.EpochIndex))
+	}
+	if len(m.Transfers) > 0 {
+		for _, e := range m.Transfers {
+			l = e.Size()
+			n += 1 + l + sovPocDelegation(uint64(l))
+		}
+	}
+	if len(m.Penalties) > 0 {
+		for _, e := range m.Penalties {
 			l = e.Size()
 			n += 1 + l + sovPocDelegation(uint64(l))
 		}
@@ -2901,6 +3314,443 @@ func (m *BootstrapDelegationSnapshot) Unmarshal(dAtA []byte) error {
 			}
 			m.Preeligibility = append(m.Preeligibility, &BootstrapModelPreEligibility{})
 			if err := m.Preeligibility[len(m.Preeligibility)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipPocDelegation(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthPocDelegation
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *DelegationRewardTransfer) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowPocDelegation
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: DelegationRewardTransfer: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: DelegationRewardTransfer: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field ModelId", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPocDelegation
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthPocDelegation
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthPocDelegation
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.ModelId = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field From", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPocDelegation
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthPocDelegation
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthPocDelegation
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.From = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field To", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPocDelegation
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthPocDelegation
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthPocDelegation
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.To = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 4:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Share", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPocDelegation
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthPocDelegation
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthPocDelegation
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.Share == nil {
+				m.Share = &Decimal{}
+			}
+			if err := m.Share.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipPocDelegation(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthPocDelegation
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *DelegationRewardPenalty) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowPocDelegation
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: DelegationRewardPenalty: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: DelegationRewardPenalty: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Participant", wireType)
+			}
+			var stringLen uint64
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPocDelegation
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				stringLen |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			intStringLen := int(stringLen)
+			if intStringLen < 0 {
+				return ErrInvalidLengthPocDelegation
+			}
+			postIndex := iNdEx + intStringLen
+			if postIndex < 0 {
+				return ErrInvalidLengthPocDelegation
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Participant = string(dAtA[iNdEx:postIndex])
+			iNdEx = postIndex
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field PenaltyFraction", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPocDelegation
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthPocDelegation
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthPocDelegation
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			if m.PenaltyFraction == nil {
+				m.PenaltyFraction = &Decimal{}
+			}
+			if err := m.PenaltyFraction.Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		default:
+			iNdEx = preIndex
+			skippy, err := skipPocDelegation(dAtA[iNdEx:])
+			if err != nil {
+				return err
+			}
+			if (skippy < 0) || (iNdEx+skippy) < 0 {
+				return ErrInvalidLengthPocDelegation
+			}
+			if (iNdEx + skippy) > l {
+				return io.ErrUnexpectedEOF
+			}
+			iNdEx += skippy
+		}
+	}
+
+	if iNdEx > l {
+		return io.ErrUnexpectedEOF
+	}
+	return nil
+}
+func (m *DelegationRewardTransferSnapshot) Unmarshal(dAtA []byte) error {
+	l := len(dAtA)
+	iNdEx := 0
+	for iNdEx < l {
+		preIndex := iNdEx
+		var wire uint64
+		for shift := uint(0); ; shift += 7 {
+			if shift >= 64 {
+				return ErrIntOverflowPocDelegation
+			}
+			if iNdEx >= l {
+				return io.ErrUnexpectedEOF
+			}
+			b := dAtA[iNdEx]
+			iNdEx++
+			wire |= uint64(b&0x7F) << shift
+			if b < 0x80 {
+				break
+			}
+		}
+		fieldNum := int32(wire >> 3)
+		wireType := int(wire & 0x7)
+		if wireType == 4 {
+			return fmt.Errorf("proto: DelegationRewardTransferSnapshot: wiretype end group for non-group")
+		}
+		if fieldNum <= 0 {
+			return fmt.Errorf("proto: DelegationRewardTransferSnapshot: illegal tag %d (wire type %d)", fieldNum, wire)
+		}
+		switch fieldNum {
+		case 1:
+			if wireType != 0 {
+				return fmt.Errorf("proto: wrong wireType = %d for field EpochIndex", wireType)
+			}
+			m.EpochIndex = 0
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPocDelegation
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				m.EpochIndex |= uint64(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+		case 2:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Transfers", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPocDelegation
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthPocDelegation
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthPocDelegation
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Transfers = append(m.Transfers, &DelegationRewardTransfer{})
+			if err := m.Transfers[len(m.Transfers)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
+				return err
+			}
+			iNdEx = postIndex
+		case 3:
+			if wireType != 2 {
+				return fmt.Errorf("proto: wrong wireType = %d for field Penalties", wireType)
+			}
+			var msglen int
+			for shift := uint(0); ; shift += 7 {
+				if shift >= 64 {
+					return ErrIntOverflowPocDelegation
+				}
+				if iNdEx >= l {
+					return io.ErrUnexpectedEOF
+				}
+				b := dAtA[iNdEx]
+				iNdEx++
+				msglen |= int(b&0x7F) << shift
+				if b < 0x80 {
+					break
+				}
+			}
+			if msglen < 0 {
+				return ErrInvalidLengthPocDelegation
+			}
+			postIndex := iNdEx + msglen
+			if postIndex < 0 {
+				return ErrInvalidLengthPocDelegation
+			}
+			if postIndex > l {
+				return io.ErrUnexpectedEOF
+			}
+			m.Penalties = append(m.Penalties, &DelegationRewardPenalty{})
+			if err := m.Penalties[len(m.Penalties)-1].Unmarshal(dAtA[iNdEx:postIndex]); err != nil {
 				return err
 			}
 			iNdEx = postIndex

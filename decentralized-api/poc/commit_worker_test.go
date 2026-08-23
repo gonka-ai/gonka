@@ -10,6 +10,7 @@ import (
 
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
+	"decentralized-api/cosmosclient/tx_manager"
 	"decentralized-api/poc/artifacts"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -23,7 +24,10 @@ import (
 type commitWorkerQueryServer struct {
 	types.UnimplementedQueryServer
 	commitCounts        map[string]uint32
+	commitRoots         map[string][]byte
 	distributionOnChain map[string]bool
+	failCommitQuery     bool
+	commitQueryCalls    int
 }
 
 func (s *commitWorkerQueryServer) commitKey(req *types.QueryPoCV2StoreCommitRequest) string {
@@ -35,10 +39,20 @@ func (s *commitWorkerQueryServer) distributionKey(req *types.QueryMLNodeWeightDi
 }
 
 func (s *commitWorkerQueryServer) PoCV2StoreCommit(_ context.Context, req *types.QueryPoCV2StoreCommitRequest) (*types.QueryPoCV2StoreCommitResponse, error) {
-	count := s.commitCounts[s.commitKey(req)]
+	s.commitQueryCalls++
+	if s.failCommitQuery {
+		return nil, fmt.Errorf("query unavailable")
+	}
+	key := s.commitKey(req)
+	count := s.commitCounts[key]
+	var root []byte
+	if s.commitRoots != nil {
+		root = s.commitRoots[key]
+	}
 	return &types.QueryPoCV2StoreCommitResponse{
-		Found: count > 0,
-		Count: count,
+		Found:    count > 0,
+		Count:    count,
+		RootHash: root,
 	}, nil
 }
 
@@ -184,6 +198,7 @@ func TestCommitWorker_MaybeSubmitCommit_SkipsUnchanged(t *testing.T) {
 	}
 
 	pocHeight := int64(100)
+	store.ActivateStage(pocHeight)
 
 	// Get or create store and add an artifact
 	artifactStore, err := store.GetOrCreateStore(pocHeight, "model-a")
@@ -199,10 +214,88 @@ func TestCommitWorker_MaybeSubmitCommit_SkipsUnchanged(t *testing.T) {
 
 	worker.maybeSubmitCommit(pocHeight)
 	mockRecorder.AssertExpectations(t)
+	assert.Empty(t, worker.lastCommitted, "CheckTx success must not promote lastCommitted")
+	assert.NotEmpty(t, worker.pending)
 
 	// Second commit with same state should NOT submit
 	worker.maybeSubmitCommit(pocHeight)
 	mockRecorder.AssertExpectations(t) // No additional calls expected
+}
+
+func TestCommitWorker_MaybeSubmitCommit_RetriesTransientCheckTx(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "commit_worker_retry_test")
+	assert.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
+	defer store.Close()
+
+	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
+	worker := &CommitWorker{
+		store:         store,
+		recorder:      mockRecorder,
+		lastCommitted: make(map[commitKey]commitState),
+	}
+
+	pocHeight := int64(100)
+	store.ActivateStage(pocHeight)
+	artifactStore, err := store.GetOrCreateStore(pocHeight, "model-a")
+	assert.NoError(t, err)
+	assert.NoError(t, artifactStore.AddWithNode(1, []byte("test-vector"), "node-1"))
+	assert.NoError(t, artifactStore.Flush())
+
+	mockRecorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).
+		Return(tx_manager.ErrTxCheckTxRetry).Once()
+	worker.maybeSubmitCommit(pocHeight)
+	assert.Empty(t, worker.lastCommitted)
+	assert.Empty(t, worker.pending)
+
+	mockRecorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).
+		Return(nil).Once()
+	worker.maybeSubmitCommit(pocHeight)
+	mockRecorder.AssertExpectations(t)
+	assert.Empty(t, worker.lastCommitted, "CheckTx success is pending, not committed")
+	assert.NotEmpty(t, worker.pending)
+}
+
+func TestCommitWorker_MaybeSubmitCommit_SkipsPermanentUntilCountGrows(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "commit_worker_permanent_test")
+	assert.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
+	defer store.Close()
+
+	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
+	worker := &CommitWorker{
+		store:         store,
+		recorder:      mockRecorder,
+		lastCommitted: make(map[commitKey]commitState),
+	}
+
+	pocHeight := int64(100)
+	store.ActivateStage(pocHeight)
+	artifactStore, err := store.GetOrCreateStore(pocHeight, "model-a")
+	assert.NoError(t, err)
+	assert.NoError(t, artifactStore.AddWithNode(1, []byte("test-vector"), "node-1"))
+	assert.NoError(t, artifactStore.Flush())
+
+	mockRecorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).
+		Return(tx_manager.ErrTxCheckTxFail).Once()
+	worker.maybeSubmitCommit(pocHeight)
+	assert.Empty(t, worker.lastCommitted)
+
+	worker.maybeSubmitCommit(pocHeight)
+	mockRecorder.AssertExpectations(t)
+
+	assert.NoError(t, artifactStore.AddWithNode(2, []byte("test-vector-2"), "node-1"))
+	assert.NoError(t, artifactStore.Flush())
+	mockRecorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).
+		Return(nil).Once()
+	worker.maybeSubmitCommit(pocHeight)
+	mockRecorder.AssertExpectations(t)
+	assert.Empty(t, worker.lastCommitted)
+	assert.NotEmpty(t, worker.pending)
 }
 
 func TestCommitWorker_MaybeSubmitCommit_BatchesModels(t *testing.T) {
@@ -222,6 +315,7 @@ func TestCommitWorker_MaybeSubmitCommit_BatchesModels(t *testing.T) {
 	}
 
 	pocHeight := int64(100)
+	store.ActivateStage(pocHeight)
 	for _, tc := range []struct {
 		modelID string
 		nonce   int32
@@ -249,6 +343,415 @@ func TestCommitWorker_MaybeSubmitCommit_BatchesModels(t *testing.T) {
 
 	worker.maybeSubmitCommit(pocHeight)
 	mockRecorder.AssertExpectations(t)
+}
+
+type storeCommitPrevRecorder struct {
+	cosmosclient.MockCosmosMessageClient
+	prev map[string]uint32
+}
+
+func (r *storeCommitPrevRecorder) SetStoreCommitPrev(prev map[string]uint32) {
+	r.prev = prev
+}
+
+type feeRefreshRecorder struct {
+	cosmosclient.MockCosmosMessageClient
+	calls       int
+	err         error
+	sawDeadline bool
+}
+
+func (r *feeRefreshRecorder) RefreshFeeTree(ctx context.Context) error {
+	r.calls++
+	_, r.sawDeadline = ctx.Deadline()
+	return r.err
+}
+
+func commitWorkerTestTracker(height int64) *chainphase.ChainPhaseTracker {
+	tracker := &chainphase.ChainPhaseTracker{}
+	setCommitWorkerHeight(tracker, height)
+	return tracker
+}
+
+func setCommitWorkerHeight(tracker *chainphase.ChainPhaseTracker, height int64) {
+	epoch := &types.Epoch{Index: 1, PocStartBlockHeight: 100}
+	params := &types.EpochParams{
+		EpochLength:         1000,
+		PocStageDuration:    100,
+		PocExchangeDuration: 50,
+	}
+	tracker.Update(chainphase.BlockInfo{Height: height, Hash: fmt.Sprintf("h-%d", height)}, epoch, params, true, nil)
+}
+
+func TestCommitWorker_TickDoesNotDeadlockWhenRecorderSetsPrev(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "commit_worker_deadlock_test")
+	assert.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
+	defer store.Close()
+
+	recorder := &storeCommitPrevRecorder{}
+	tracker := &chainphase.ChainPhaseTracker{}
+	epoch := &types.Epoch{Index: 1, PocStartBlockHeight: 100}
+	params := &types.EpochParams{
+		EpochLength:         1000,
+		PocStageDuration:    100,
+		PocExchangeDuration: 50,
+	}
+	tracker.Update(chainphase.BlockInfo{Height: 110, Hash: "test-hash"}, epoch, params, true, nil)
+
+	pocHeight := int64(100)
+	store.ActivateStage(pocHeight)
+	artifactStore, err := store.GetOrCreateStore(pocHeight, "model-a")
+	assert.NoError(t, err)
+	assert.NoError(t, artifactStore.AddWithNode(1, []byte("test-vector"), "node-1"))
+	assert.NoError(t, artifactStore.Flush())
+
+	recorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).Return(nil).Once()
+
+	worker := &CommitWorker{
+		store:         store,
+		recorder:      recorder,
+		tracker:       tracker,
+		lastCommitted: make(map[commitKey]commitState),
+	}
+
+	done := make(chan struct{})
+	go func() {
+		worker.tick()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("tick() deadlocked on SetStoreCommitPrev nested mutex")
+	}
+
+	recorder.AssertExpectations(t)
+	assert.NotNil(t, recorder.prev, "SetStoreCommitPrev must run under tick's existing lock")
+	assert.Empty(t, worker.lastCommitted)
+	assert.NotEmpty(t, worker.pending)
+}
+
+func TestCommitWorker_AdmissionSuccessStaysPendingUntilChainMatch(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "commit_worker_pending_test")
+	assert.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
+	defer store.Close()
+
+	pocHeight := int64(100)
+	store.ActivateStage(pocHeight)
+	artifactStore, err := store.GetOrCreateStore(pocHeight, "model-a")
+	assert.NoError(t, err)
+	assert.NoError(t, artifactStore.AddWithNode(1, []byte("test-vector"), "node-1"))
+	assert.NoError(t, artifactStore.Flush())
+	count, root := artifactStore.GetFlushedRoot()
+
+	queryServer := &commitWorkerQueryServer{
+		commitCounts: map[string]uint32{},
+		commitRoots:  map[string][]byte{},
+	}
+	queryClient, cleanup := newCommitWorkerQueryClient(t, queryServer)
+	defer cleanup()
+
+	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
+	mockRecorder.On("NewInferenceQueryClient").Return(queryClient)
+	mockRecorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).Return(nil).Once()
+
+	tracker := commitWorkerTestTracker(110)
+	worker := &CommitWorker{
+		store:              store,
+		recorder:           mockRecorder,
+		tracker:            tracker,
+		participantAddress: "participant_addr",
+		lastCommitted:      make(map[commitKey]commitState),
+		pending:            make(map[commitKey]pendingCommit),
+	}
+
+	worker.tick()
+	assert.Empty(t, worker.lastCommitted, "Code 0/19 must not update lastCommitted")
+	assert.NotEmpty(t, worker.pending)
+
+	queryServer.commitCounts["100|participant_addr|model-a"] = count
+	queryServer.commitRoots["100|participant_addr|model-a"] = root
+	epoch := &types.Epoch{Index: 1, PocStartBlockHeight: 100}
+	params := &types.EpochParams{EpochLength: 1000, PocStageDuration: 100, PocExchangeDuration: 50}
+	tracker.Update(chainphase.BlockInfo{Height: 111, Hash: "next"}, epoch, params, true, nil)
+
+	worker.tick()
+	mockRecorder.AssertExpectations(t)
+	key := commitKey{stage: pocHeight, modelID: "model-a"}
+	got, ok := worker.lastCommitted[key]
+	assert.True(t, ok, "canonical count/root match must promote lastCommitted")
+	assert.Equal(t, count, got.count)
+	assert.Empty(t, worker.pending)
+}
+
+func TestCommitWorker_SamePayloadWaitsGraceBeforeRetry(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "commit_worker_retry_absent_test")
+	assert.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
+	defer store.Close()
+
+	pocHeight := int64(100)
+	store.ActivateStage(pocHeight)
+	artifactStore, err := store.GetOrCreateStore(pocHeight, "model-a")
+	assert.NoError(t, err)
+	assert.NoError(t, artifactStore.AddWithNode(1, []byte("test-vector"), "node-1"))
+	assert.NoError(t, artifactStore.Flush())
+
+	queryServer := &commitWorkerQueryServer{commitCounts: map[string]uint32{}}
+	queryClient, cleanup := newCommitWorkerQueryClient(t, queryServer)
+	defer cleanup()
+
+	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
+	mockRecorder.On("NewInferenceQueryClient").Return(queryClient)
+	mockRecorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).Return(nil).Twice()
+
+	tracker := commitWorkerTestTracker(110)
+	worker := &CommitWorker{
+		store:              store,
+		recorder:           mockRecorder,
+		tracker:            tracker,
+		participantAddress: "participant_addr",
+		lastCommitted:      make(map[commitKey]commitState),
+		pending:            make(map[commitKey]pendingCommit),
+	}
+
+	worker.tick()
+	assert.Empty(t, worker.lastCommitted)
+	assert.NotEmpty(t, worker.pending)
+
+	setCommitWorkerHeight(tracker, 111)
+	worker.tick()
+	setCommitWorkerHeight(tracker, 112)
+	worker.tick()
+	mockRecorder.AssertNumberOfCalls(t, "SubmitPoCV2StoreCommit", 1)
+
+	setCommitWorkerHeight(tracker, 113)
+	worker.tick()
+	mockRecorder.AssertExpectations(t)
+	assert.Empty(t, worker.lastCommitted, "absent chain commit must not promote")
+}
+
+func TestCommitWorker_QueryOutageDoesNotResendSamePayload(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "commit_worker_query_outage_test")
+	assert.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
+	defer store.Close()
+
+	pocHeight := int64(100)
+	store.ActivateStage(pocHeight)
+	artifactStore, err := store.GetOrCreateStore(pocHeight, "model-a")
+	assert.NoError(t, err)
+	assert.NoError(t, artifactStore.AddWithNode(1, []byte("test-vector"), "node-1"))
+	assert.NoError(t, artifactStore.Flush())
+
+	queryServer := &commitWorkerQueryServer{commitCounts: map[string]uint32{}}
+	queryClient, cleanup := newCommitWorkerQueryClient(t, queryServer)
+	defer cleanup()
+
+	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
+	mockRecorder.On("NewInferenceQueryClient").Return(queryClient)
+	mockRecorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).Return(nil).Once()
+
+	tracker := commitWorkerTestTracker(110)
+	worker := &CommitWorker{
+		store:              store,
+		recorder:           mockRecorder,
+		tracker:            tracker,
+		participantAddress: "participant_addr",
+		lastCommitted:      make(map[commitKey]commitState),
+		pending:            make(map[commitKey]pendingCommit),
+	}
+
+	worker.tick()
+	queryServer.failCommitQuery = true
+	for h := int64(111); h <= 120; h++ {
+		setCommitWorkerHeight(tracker, h)
+		worker.tick()
+	}
+	mockRecorder.AssertExpectations(t)
+	assert.NotEmpty(t, worker.pending)
+}
+
+func TestCommitWorker_PendingSkipsBootstrapQuery(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "commit_worker_skip_bootstrap_test")
+	assert.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
+	defer store.Close()
+
+	pocHeight := int64(100)
+	store.ActivateStage(pocHeight)
+	artifactStore, err := store.GetOrCreateStore(pocHeight, "model-a")
+	assert.NoError(t, err)
+	assert.NoError(t, artifactStore.AddWithNode(1, []byte("test-vector"), "node-1"))
+	assert.NoError(t, artifactStore.Flush())
+
+	queryServer := &commitWorkerQueryServer{commitCounts: map[string]uint32{}}
+	queryClient, cleanup := newCommitWorkerQueryClient(t, queryServer)
+	defer cleanup()
+
+	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
+	mockRecorder.On("NewInferenceQueryClient").Return(queryClient)
+	mockRecorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).Return(nil).Once()
+
+	tracker := commitWorkerTestTracker(110)
+	worker := &CommitWorker{
+		store:              store,
+		recorder:           mockRecorder,
+		tracker:            tracker,
+		participantAddress: "participant_addr",
+		lastCommitted:      make(map[commitKey]commitState),
+		pending:            make(map[commitKey]pendingCommit),
+	}
+
+	worker.tick()
+	assert.Equal(t, 1, queryServer.commitQueryCalls, "first tick bootstraps once (no pending yet)")
+	assert.NotEmpty(t, worker.pending)
+
+	for h := int64(111); h <= 112; h++ {
+		setCommitWorkerHeight(tracker, h)
+		worker.tick()
+	}
+	assert.Equal(t, 3, queryServer.commitQueryCalls, "pending ticks must query once via reconcile, not bootstrap again")
+	mockRecorder.AssertNumberOfCalls(t, "SubmitPoCV2StoreCommit", 1)
+}
+
+func TestCommitWorker_HigherCountSubmitsWhileOlderPending(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "commit_worker_higher_count_test")
+	assert.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
+	defer store.Close()
+
+	pocHeight := int64(100)
+	store.ActivateStage(pocHeight)
+	artifactStore, err := store.GetOrCreateStore(pocHeight, "model-a")
+	assert.NoError(t, err)
+	assert.NoError(t, artifactStore.AddWithNode(1, []byte("vec-1"), "node-1"))
+	assert.NoError(t, artifactStore.Flush())
+
+	queryServer := &commitWorkerQueryServer{commitCounts: map[string]uint32{}}
+	queryClient, cleanup := newCommitWorkerQueryClient(t, queryServer)
+	defer cleanup()
+
+	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
+	mockRecorder.On("NewInferenceQueryClient").Return(queryClient)
+	mockRecorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).Return(nil).Twice()
+
+	tracker := commitWorkerTestTracker(110)
+	worker := &CommitWorker{
+		store:              store,
+		recorder:           mockRecorder,
+		tracker:            tracker,
+		participantAddress: "participant_addr",
+		lastCommitted:      make(map[commitKey]commitState),
+		pending:            make(map[commitKey]pendingCommit),
+	}
+
+	worker.tick()
+	assert.NoError(t, artifactStore.AddWithNode(2, []byte("vec-2"), "node-1"))
+	assert.NoError(t, artifactStore.Flush())
+	worker.tick()
+	mockRecorder.AssertExpectations(t)
+	key := commitKey{stage: pocHeight, modelID: "model-a"}
+	pending, ok := worker.pending[key]
+	assert.True(t, ok)
+	count, _ := artifactStore.GetFlushedRoot()
+	assert.Equal(t, count, pending.state.count)
+	assert.Greater(t, pending.state.count, uint32(1))
+}
+
+func TestCommitWorker_InsufficientFee_DoesNotPermanentFail(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "commit_worker_insuff_fee_test")
+	assert.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
+	defer store.Close()
+
+	pocHeight := int64(100)
+	store.ActivateStage(pocHeight)
+	artifactStore, err := store.GetOrCreateStore(pocHeight, "model-a")
+	assert.NoError(t, err)
+	assert.NoError(t, artifactStore.AddWithNode(1, []byte("test-vector"), "node-1"))
+	assert.NoError(t, artifactStore.Flush())
+
+	recorder := &feeRefreshRecorder{}
+	recorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).
+		Return(tx_manager.ErrTxCheckTxInsufficientFee).Once()
+
+	tracker := commitWorkerTestTracker(110)
+	worker := &CommitWorker{
+		store:           store,
+		recorder:        recorder,
+		tracker:         tracker,
+		lastCommitted:   make(map[commitKey]commitState),
+		permanentFailed: make(map[commitKey]uint32),
+	}
+
+	worker.tick()
+	assert.Empty(t, worker.permanentFailed)
+	assert.Empty(t, worker.lastCommitted)
+	assert.Equal(t, 1, recorder.calls)
+	assert.True(t, recorder.sawDeadline, "fee refresh must use a bounded context")
+
+	worker.tick()
+	recorder.AssertExpectations(t)
+
+	epoch := &types.Epoch{Index: 1, PocStartBlockHeight: 100}
+	params := &types.EpochParams{EpochLength: 1000, PocStageDuration: 100, PocExchangeDuration: 50}
+	tracker.Update(chainphase.BlockInfo{Height: 111, Hash: "next"}, epoch, params, true, nil)
+	recorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).Return(nil).Once()
+	worker.tick()
+	recorder.AssertExpectations(t)
+	assert.Empty(t, worker.permanentFailed)
+	assert.NotEmpty(t, worker.pending)
+}
+
+func TestCommitWorker_InsufficientFee_FailedRefreshKeepsCountEligible(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "commit_worker_fee_refresh_fail_test")
+	assert.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
+	defer store.Close()
+
+	pocHeight := int64(100)
+	store.ActivateStage(pocHeight)
+	artifactStore, err := store.GetOrCreateStore(pocHeight, "model-a")
+	assert.NoError(t, err)
+	assert.NoError(t, artifactStore.AddWithNode(1, []byte("test-vector"), "node-1"))
+	assert.NoError(t, artifactStore.Flush())
+
+	recorder := &feeRefreshRecorder{err: fmt.Errorf("params rpc down")}
+	recorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).
+		Return(tx_manager.ErrTxCheckTxInsufficientFee).Once()
+
+	tracker := commitWorkerTestTracker(110)
+	worker := &CommitWorker{
+		store:           store,
+		recorder:        recorder,
+		tracker:         tracker,
+		lastCommitted:   make(map[commitKey]commitState),
+		permanentFailed: make(map[commitKey]uint32),
+	}
+
+	worker.tick()
+	assert.Empty(t, worker.permanentFailed, "failed refresh must not suppress the count")
+	assert.Equal(t, 1, recorder.calls)
+	assert.True(t, recorder.sawDeadline)
 }
 
 func TestCommitWorker_StartAndStop(t *testing.T) {
@@ -318,6 +821,7 @@ func TestCommitWorker_SubmitWeightDistribution_NoCommitFound(t *testing.T) {
 
 	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
 	defer store.Close()
+	store.ActivateStage(100)
 
 	_, err = store.GetOrCreateStore(100, "model-a")
 	assert.NoError(t, err)
@@ -330,6 +834,7 @@ func TestCommitWorker_SubmitWeightDistribution_BatchesModels(t *testing.T) {
 
 	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
 	defer store.Close()
+	store.ActivateStage(100)
 
 	for idx, modelID := range []string{"model-a", "org/model-b"} {
 		artifactStore, err := store.GetOrCreateStore(100, modelID)
@@ -379,6 +884,7 @@ func TestCommitWorker_SubmitWeightDistribution_OneModelAlreadyOnChain(t *testing
 
 	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
 	defer store.Close()
+	store.ActivateStage(100)
 
 	for idx, modelID := range []string{"model-a", "org/model-b"} {
 		artifactStore, err := store.GetOrCreateStore(100, modelID)
@@ -428,6 +934,7 @@ func TestCommitWorker_HasPendingWeightDistribution(t *testing.T) {
 
 	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
 	defer store.Close()
+	store.ActivateStage(100)
 
 	for _, modelID := range []string{"model-a", "model-b"} {
 		artifactStore, err := store.GetOrCreateStore(100, modelID)
@@ -469,6 +976,7 @@ func TestCommitWorker_SubmitWeightDistribution_UpdatesLastAttemptOnNoOp(t *testi
 
 	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
 	defer store.Close()
+	store.ActivateStage(100)
 
 	artifactStore, err := store.GetOrCreateStore(100, "model-a")
 	assert.NoError(t, err)

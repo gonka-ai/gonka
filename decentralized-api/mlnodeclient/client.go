@@ -1,9 +1,9 @@
 package mlnodeclient
 
 import (
+	"common/logging"
+	"common/utils"
 	"context"
-	"decentralized-api/logging"
-	"decentralized-api/utils"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -61,8 +61,9 @@ const (
 )
 
 type StateResponse struct {
-	State   MLNodeState `json:"state"`
-	Version string      `json:"version"`
+	State                  MLNodeState `json:"state"`
+	Version                string      `json:"version"`
+	PoCValidationInference bool        `json:"poc_validation_inference"`
 }
 
 func (api *Client) NodeState(ctx context.Context) (*StateResponse, error) {

@@ -3,10 +3,12 @@ package cmd
 import (
 	"fmt"
 	"github.com/productscience/inference/internal/rpc"
+	"net"
 	"github.com/spf13/cobra"
 	"net/url"
 	"os"
 	"regexp"
+	"strings"
 )
 
 func SetSeedCommand() *cobra.Command {
@@ -62,6 +64,17 @@ type urlParseResult struct {
 }
 
 func parseURL(rawURL string) (*urlParseResult, error) {
+	if !strings.Contains(rawURL, "://") {
+		host, port, err := net.SplitHostPort(rawURL)
+		if err != nil {
+			return nil, fmt.Errorf("could not parse host:port %q: %w", rawURL, err)
+		}
+		return &urlParseResult{
+			Host: host,
+			Port: port,
+		}, nil
+	}
+
 	u, err := url.Parse(rawURL)
 	if err != nil {
 		return nil, fmt.Errorf("could not parse URL: %w", err)
@@ -77,6 +90,8 @@ func parseURL(rawURL string) (*urlParseResult, error) {
 			port = "80"
 		case "https":
 			port = "443"
+		case "tcp":
+			return nil, fmt.Errorf("missing port in tcp URL %q", rawURL)
 		default:
 			return nil, fmt.Errorf("unsupported scheme: %q", u.Scheme)
 		}

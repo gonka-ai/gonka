@@ -16,4 +16,4 @@ export SET_LATEST=1
 export DEVSHARD_VERSION="${DEVSHARD_VERSION:-$(make -C "${REPO_ROOT}" -s --no-print-directory print-devshard-version 2>/dev/null)}"
 make -C "${REPO_ROOT}" build-docker
 
-make -C "${REPO_ROOT}" versiond-build-docker devshardd-build
+make -C "${REPO_ROOT}" versiond-build-docker devshardd-build devshardctl-build

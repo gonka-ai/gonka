@@ -6,6 +6,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestDefaultSessionConfig_ExecutionTimeout(t *testing.T) {
+	require.Equal(t, int64(32*60), DefaultSessionConfig(16).ExecutionTimeout)
+}
+
 func TestDefaultInferenceSealGraceNonces(t *testing.T) {
 	t.Run("floor", func(t *testing.T) {
 		require.Equal(t, uint32(20), DefaultInferenceSealGraceNonces(0))
@@ -103,42 +107,27 @@ func TestComputeVoteThreshold(t *testing.T) {
 	require.Equal(t, uint32(6), ComputeVoteThreshold(6, 100))
 }
 
-func TestApplyLiveSessionParams_FreezesLiveFields(t *testing.T) {
+func TestSessionConfigFromEscrow_ConsensusFieldsFromEscrow(t *testing.T) {
 	const groupSize = 6
-	cfg := ApplyLiveSessionParams(
-		SessionConfigFromEscrow(groupSize, EscrowSessionFields{
-			InferenceSealGraceNonces:  55,
-			InferenceSealGraceSeconds: 99,
-		}),
-		groupSize,
-		LiveSessionBindParams{
-			RefusalTimeout:      90,
-			ExecutionTimeout:    1800,
-			ValidationRate:        6000,
-			VoteThresholdFactor: 67,
-		},
-	)
-	require.Equal(t, int64(90), cfg.RefusalTimeout)
-	require.Equal(t, int64(1800), cfg.ExecutionTimeout)
+	cfg := SessionConfigFromEscrow(groupSize, EscrowSessionFields{
+		InferenceSealGraceNonces:  55,
+		InferenceSealGraceSeconds: 99,
+		ValidationRate:            6000,
+		VoteThresholdFactor:       67,
+	})
 	require.Equal(t, uint32(6000), cfg.ValidationRate)
 	require.Equal(t, uint32(55), cfg.InferenceSealGraceNonces)
 	require.Equal(t, uint32(99), cfg.InferenceSealGraceSeconds)
 	require.Equal(t, uint32(4), cfg.VoteThreshold)
 }
 
-func TestApplyChainSessionBindParams_HonorsZeroValidationRate(t *testing.T) {
+func TestSessionConfigFromEscrow_PreservesDefaultValidationRateWhenZero(t *testing.T) {
 	const groupSize = 16
-	cfg := ApplyChainSessionBindParams(
-		SessionConfigFromEscrow(groupSize, EscrowSessionFields{
-			InferenceSealGraceNonces:  1,
-			InferenceSealGraceSeconds: 10,
-		}),
-		groupSize,
-		LiveSessionBindParams{
-			ValidationRate: 0,
-		},
-	)
-	require.Equal(t, uint32(0), cfg.ValidationRate)
+	cfg := SessionConfigFromEscrow(groupSize, EscrowSessionFields{
+		InferenceSealGraceNonces:  1,
+		InferenceSealGraceSeconds: 10,
+	})
+	require.Equal(t, uint32(5000), cfg.ValidationRate)
 	require.Equal(t, uint32(1), cfg.InferenceSealGraceNonces)
 	require.Equal(t, uint32(10), cfg.InferenceSealGraceSeconds)
 }

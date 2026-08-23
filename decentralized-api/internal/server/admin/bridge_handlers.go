@@ -1,8 +1,10 @@
 package admin
 
 import (
+	"errors"
 	"io"
 	"log/slog"
+	"net/http"
 	"strings"
 
 	pserver "decentralized-api/internal/server/public"
@@ -43,15 +45,28 @@ func (s *Server) postBridgeBlock(c echo.Context) error {
 		"receiptsRoot", blockData.ReceiptsRoot,
 		"receiptsCount", len(blockData.Receipts))
 
-	// Add the block to the shared queue
-	blockNumber := s.blockQueue.AddBlock(blockData)
-
-	// Return success response
-	return c.JSON(200, map[string]interface{}{
-		"status":        "success",
-		"message":       "Block queued for processing",
-		"blockNumber":   blockNumber,
-		"receiptsCount": len(blockData.Receipts),
-		"queueSize":     len(s.blockQueue.GetPendingBlocks()),
-	})
+	// The POST is a receipt-ACK, not a commit report. AddBlock returns an error
+	// ONLY when the block could not be accepted into the queue:
+	//   - ErrBridgeQueueFull -> 503 back-pressure (Geth's sendRangeDirectly stops
+	//     and resends later; nothing is dropped),
+	//   - any other error -> 400 (malformed / unexpected input).
+	// Otherwise the block is received (buffered/duplicate/bootstrapping) -> 200.
+	// Commit success/failure is owned by the drain and never reported here.
+	blockNumber, err := s.blockQueue.AddBlock(blockData)
+	switch {
+	case err == nil:
+		return c.JSON(http.StatusOK, map[string]interface{}{
+			"status":        "received",
+			"message":       "Block received",
+			"blockNumber":   blockNumber,
+			"receiptsCount": len(blockData.Receipts),
+			"queueSize":     len(s.blockQueue.GetPendingBlocks()),
+		})
+	case errors.Is(err, pserver.ErrBridgeQueueFull):
+		slog.Warn("Bridge: back-pressure, rejecting block", "blockNumber", blockData.BlockNumber, "error", err)
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{"error": err.Error()})
+	default:
+		slog.Error("Bridge: malformed/unexpected block", "blockNumber", blockData.BlockNumber, "error", err)
+		return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
+	}
 }

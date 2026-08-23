@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	"decentralized-api/logging"
+	"common/logging"
 
 	"github.com/productscience/inference/x/inference/types"
 )

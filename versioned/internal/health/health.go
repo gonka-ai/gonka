@@ -6,9 +6,11 @@ import (
 )
 
 type StatusEntry struct {
-	Name   string `json:"name"`
-	Port   int    `json:"port"`
-	Status string `json:"status"`
+	Name          string `json:"name"`
+	Port          int    `json:"port"`
+	Status        string `json:"status"`
+	SHA256        string `json:"sha256,omitempty"`
+	BinaryVersion string `json:"binary_version,omitempty"`
 }
 
 // Handler returns an http.HandlerFunc that writes the health status as JSON.

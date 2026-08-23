@@ -67,6 +67,36 @@ func TestSafeUint32FromInt64(t *testing.T) {
 	}
 }
 
+func TestSafeUint64FromInt64(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   int64
+		want    uint64
+		wantErr bool
+	}{
+		{"zero", 0, 0, false},
+		{"one", 1, 1, false},
+		{"negative one", -1, 0, true},
+		{"MaxUint32", math.MaxUint32, math.MaxUint32, false},
+		{"MaxUint32+1", math.MaxUint32 + 1, math.MaxUint32 + 1, false},
+		{"MaxInt64", math.MaxInt64, math.MaxInt64, false},
+		{"negative MaxInt64", -math.MaxInt64, 0, true},
+		{"MinInt64", math.MinInt64, 0, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := safeUint64FromInt64(tt.input)
+			if tt.wantErr {
+				require.Error(t, err)
+				require.Equal(t, uint64(0), got)
+			} else {
+				require.NoError(t, err)
+				require.Equal(t, tt.want, got)
+			}
+		})
+	}
+}
+
 func TestSafeUint32FromUint64(t *testing.T) {
 	tests := []struct {
 		name    string

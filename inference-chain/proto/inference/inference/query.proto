@@ -33,8 +33,10 @@ import "inference/inference/poc_v2.proto";
 import "inference/inference/random_seed.proto";
 import "inference/inference/poc_validation_snapshot.proto";
 import "inference/inference/devshard_escrow.proto";
+import "inference/inference/maintenance.proto";
 import "inference/inference/preserved_nodes_snapshot.proto";
 import "inference/inference/poc_delegation.proto";
+import "inference/inference/claim_recipient.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -96,6 +98,10 @@ service Query {
   }
   rpc SettleAmountAll (QueryAllSettleAmountRequest) returns (QueryAllSettleAmountResponse) {
     option (google.api.http).get = "/productscience/inference/inference/settle_amount";
+
+  }
+  rpc EstimateBitcoinReward (QueryEstimateBitcoinRewardRequest) returns (QueryEstimateBitcoinRewardResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/estimate_bitcoin_reward/{participant}";
 
   }
 
@@ -389,6 +395,12 @@ service Query {
 
   }
 
+  // Queries the most recent applied upgrade height.
+  rpc LastUpgradeHeight (QueryGetLastUpgradeHeightRequest) returns (QueryGetLastUpgradeHeightResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/last_upgrade_height";
+
+  }
+
   // Queries the participant allowlist.
   rpc ParticipantAllowList (QueryParticipantAllowListRequest) returns (QueryParticipantAllowListResponse) {
     option (google.api.http).get = "/productscience/inference/inference/participant_allow_list";
@@ -441,6 +453,41 @@ service Query {
 
   rpc PoCDelegation (QueryPoCDelegationRequest) returns (QueryPoCDelegationResponse) {
     option (google.api.http).get = "/productscience/inference/inference/poc_delegation/{participant}";
+  }
+
+  // Queries the maintenance credit balance for a participant.
+  rpc MaintenanceCredit (QueryMaintenanceCreditRequest) returns (QueryMaintenanceCreditResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/maintenance_credit/{participant}";
+  }
+
+  // Queries scheduled maintenance windows for a participant.
+  rpc MaintenanceScheduled (QueryMaintenanceScheduledRequest) returns (QueryMaintenanceScheduledResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/maintenance_scheduled/{participant}";
+  }
+
+  // Queries all currently active maintenance windows.
+  rpc MaintenanceActive (QueryMaintenanceActiveRequest) returns (QueryMaintenanceActiveResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/maintenance_active";
+  }
+
+  // Queries the full maintenance status for a participant at the current height.
+  rpc MaintenanceStatus (QueryMaintenanceStatusRequest) returns (QueryMaintenanceStatusResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/maintenance_status/{participant}";
+  }
+
+  // Queries the concurrent reserved participant count and power at a given height.
+  rpc MaintenanceConcurrency (QueryMaintenanceConcurrencyRequest) returns (QueryMaintenanceConcurrencyResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/maintenance_concurrency/{height}";
+  }
+
+  // Queries whether a proposed maintenance window is schedulable.
+  rpc MaintenanceSchedulability (QueryMaintenanceSchedulabilityRequest) returns (QueryMaintenanceSchedulabilityResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/maintenance_schedulability/{participant}/{start_height}/{duration_blocks}";
+  }
+
+  // Lists the scheduled per-epoch claim recipient overrides for a participant.
+  rpc ListClaimRecipients (QueryListClaimRecipientsRequest) returns (QueryListClaimRecipientsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/list_claim_recipients/{participant}";
   }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -539,6 +586,14 @@ message QueryAllSettleAmountRequest {
 message QueryAllSettleAmountResponse {
   repeated SettleAmount                           settle_amount = 1 [(gogoproto.nullable) = false];
            cosmos.base.query.v1beta1.PageResponse pagination    = 2;
+}
+
+message QueryEstimateBitcoinRewardRequest {
+  string participant = 1;
+}
+
+message QueryEstimateBitcoinRewardResponse {
+  SettleAmount settle_amount = 1 [(gogoproto.nullable) = false];
 }
 
 message QueryGetEpochGroupValidationsRequest {
@@ -663,7 +718,6 @@ message MLNodeWeightDistributionWithAddress {
 
 message QueryGetCurrentEpochRequest {}
 
-// DEPRECATED: ambiguous query, re-check what it expect as epoch: id, poc_start_block_height, or epoch_group_id
 message QueryGetCurrentEpochResponse {
   uint64 epoch = 1;
 }
@@ -1095,6 +1149,13 @@ message QueryGetMLNodeVersionResponse {
   MLNodeVersion mlnode_version = 1 [(gogoproto.nullable) = false];
 }
 
+message QueryGetLastUpgradeHeightRequest {}
+
+message QueryGetLastUpgradeHeightResponse {
+  int64 last_upgrade_height = 1;
+  bool  found               = 2;
+}
+
 // QueryExcludedParticipantsRequest requests excluded participants for an epoch.
 // If epoch_index is 0, the query should return for the current effective epoch.
 message QueryExcludedParticipantsRequest {
@@ -1186,4 +1247,69 @@ message QueryGetDevshardHostEpochStatsRequest {
 message QueryGetDevshardHostEpochStatsResponse {
   DevshardHostEpochStats stats = 1;
   bool found = 2;
+}
+
+// Maintenance query messages
+
+message QueryMaintenanceCreditRequest {
+  string participant = 1;
+}
+
+message QueryMaintenanceCreditResponse {
+  uint64 credit_blocks = 1;
+  bool   found         = 2;
+}
+
+message QueryMaintenanceScheduledRequest {
+  string participant = 1;
+}
+
+message QueryMaintenanceScheduledResponse {
+  MaintenanceReservation reservation = 1;
+  bool found = 2;
+}
+
+message QueryMaintenanceActiveRequest {}
+
+message QueryMaintenanceActiveResponse {
+  repeated MaintenanceReservation reservations = 1;
+}
+
+message QueryMaintenanceStatusRequest {
+  string participant = 1;
+}
+
+message QueryMaintenanceStatusResponse {
+  MaintenanceState state = 1;
+  MaintenanceReservation active_reservation    = 2;
+  MaintenanceReservation scheduled_reservation = 3;
+  bool found = 4;
+}
+
+message QueryMaintenanceConcurrencyRequest {
+  int64 height = 1;
+}
+
+message QueryMaintenanceConcurrencyResponse {
+  uint32 concurrent_count     = 1;
+  int64  concurrent_power_bps = 2;
+}
+
+message QueryMaintenanceSchedulabilityRequest {
+  string participant     = 1;
+  int64  start_height    = 2;
+  uint64 duration_blocks = 3;
+}
+
+message QueryMaintenanceSchedulabilityResponse {
+  bool   schedulable        = 1;
+  string rejection_reason   = 2;
+}
+
+message QueryListClaimRecipientsRequest {
+  string participant = 1;
+}
+
+message QueryListClaimRecipientsResponse {
+  repeated ClaimRecipientEntry entries = 1 [(gogoproto.nullable) = false];
 }

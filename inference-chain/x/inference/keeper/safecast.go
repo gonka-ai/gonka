@@ -24,6 +24,15 @@ func safeUint32FromInt64(v int64) (uint32, error) {
 	return uint32(v), nil
 }
 
+// safeUint64FromInt64 converts int64 to uint64, returning error if the value
+// is negative.
+func safeUint64FromInt64(v int64) (uint64, error) {
+	if v < 0 {
+		return 0, fmt.Errorf("int64 value %d cannot be cast to uint64 (negative)", v)
+	}
+	return uint64(v), nil
+}
+
 // safeUint32FromUint64 converts uint64 to uint32, returning error if the value
 // exceeds MaxUint32.
 func safeUint32FromUint64(v uint64) (uint32, error) {

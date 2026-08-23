@@ -1,0 +1,36 @@
+# syntax=docker/dockerfile:1.4
+# Build context: repo root (make e2e-images passes ..)
+
+FROM golang:1.25.9-alpine3.23 AS builder
+
+ARG DEVSHARD_VERSION=dev
+
+WORKDIR /app
+
+COPY common/ /app/common
+COPY inference-chain/ /app/inference-chain
+
+WORKDIR /app/devshard
+COPY devshard/go.mod devshard/go.sum ./
+RUN --mount=type=cache,id=go-mod-cache-devshard-host,target=/go/pkg/mod \
+    go mod download
+
+COPY devshard/ .
+RUN --mount=type=cache,id=go-build-cache-devshard-host,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build \
+    -ldflags "-X devshard/types.buildStateRootProtocolVersion=${DEVSHARD_VERSION}" \
+    -o /devshard-host ./cmd/devshard-host
+
+FROM alpine:3.23
+
+RUN apk add --no-cache ca-certificates curl && \
+    rm -rf /var/cache/apk/*
+
+COPY --from=builder /devshard-host /usr/bin/devshard-host
+
+EXPOSE 8080
+
+HEALTHCHECK --interval=10s --timeout=3s --retries=12 --start-period=3s \
+    CMD curl -f http://localhost:${DEVSHARD_PORT:-8080}/health || exit 1
+
+ENTRYPOINT ["devshard-host"]

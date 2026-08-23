@@ -9,3 +9,21 @@ func RequestTerminalCounterForTest(terminal Terminal, reason Reason) prometheus.
 	ensureMetrics()
 	return requestTerminalTotal.WithLabelValues(string(terminal), string(reason))
 }
+
+// DiffForkDetectedForTest exposes the fork counter for unit tests.
+func DiffForkDetectedForTest(escrowID string) prometheus.Counter {
+	ensureMetrics()
+	if escrowID == "" {
+		escrowID = "unknown"
+	}
+	return diffForkDetectedTotal.WithLabelValues(escrowID)
+}
+
+// DiffPersistRetryForTest exposes the persist-retry counter for unit tests.
+func DiffPersistRetryForTest(result string) prometheus.Counter {
+	ensureMetrics()
+	if result == "" {
+		result = "unknown"
+	}
+	return diffPersistRetryTotal.WithLabelValues(result)
+}

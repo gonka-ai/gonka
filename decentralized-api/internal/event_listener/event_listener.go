@@ -9,9 +9,6 @@ import (
 	"decentralized-api/internal/bls"
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/startup"
-	"decentralized-api/internal/validation"
-	"decentralized-api/logging"
-	"decentralized-api/observability"
 	"decentralized-api/statsstorage"
 	"decentralized-api/upgrade"
 	"encoding/json"
@@ -21,6 +18,8 @@ import (
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	"common/logging"
 
 	"github.com/gorilla/websocket"
 	"github.com/productscience/inference/x/inference/types"
@@ -44,7 +43,6 @@ const (
 type EventListener struct {
 	nodeBroker            *broker.Broker
 	configManager         *apiconfig.ConfigManager
-	validator             *validation.InferenceValidator
 	transactionRecorder   cosmosclient.InferenceCosmosClient
 	blsManager            *bls.BlsManager
 	nodeCaughtUp          atomic.Bool
@@ -53,6 +51,9 @@ type EventListener struct {
 	cancelFunc            context.CancelFunc
 	rewardRecoveryChecker *startup.RewardRecoveryChecker
 	statsStorage          statsstorage.StatsStorage
+	hostEvents            *apiconfig.HostEventRing
+	escrowQuery           escrowQuerier
+	participantAddress    string
 
 	eventHandlers []EventHandler
 
@@ -68,11 +69,31 @@ func WithStatsStorage(storage statsstorage.StatsStorage) EventListenerOption {
 	}
 }
 
+// WithHostEventRing enables escrow/maintenance ingest into the GetHostEvents ring.
+func WithHostEventRing(ring *apiconfig.HostEventRing) EventListenerOption {
+	return func(el *EventListener) {
+		el.hostEvents = ring
+	}
+}
+
+// WithEscrowQuerier supplies GetEscrow for slot-membership filtering on escrow events.
+func WithEscrowQuerier(q escrowQuerier) EventListenerOption {
+	return func(el *EventListener) {
+		el.escrowQuery = q
+	}
+}
+
+// WithParticipantAddress overrides broker/recorder address lookup (tests and optional inject).
+func WithParticipantAddress(addr string) EventListenerOption {
+	return func(el *EventListener) {
+		el.participantAddress = addr
+	}
+}
+
 func NewEventListener(
 	configManager *apiconfig.ConfigManager,
 	offChainValidator pocValidator,
 	nodeBroker *broker.Broker,
-	validator *validation.InferenceValidator,
 	transactionRecorder cosmosclient.InferenceCosmosClient,
 	phaseTracker *chainphase.ChainPhaseTracker,
 	cancelFunc context.CancelFunc,
@@ -87,15 +108,17 @@ func NewEventListener(
 		&transactionRecorder,
 		phaseTracker,
 		DefaultReconciliationConfig,
-		validator,
 	)
 
 	eventHandlers := []EventHandler{
 		&BlsTransactionEventHandler{},
 		&InferenceFinishedEventHandler{},
 		&InferenceStatusUpdatedEventHandler{},
-		&InferenceValidationEventHandler{},
 		&SubmitProposalEventHandler{},
+		&DevshardEscrowCreatedEventHandler{},
+		&DevshardEscrowSettledEventHandler{},
+		&MaintenanceScheduledEventHandler{},
+		&MaintenanceCanceledEventHandler{},
 	}
 
 	bo := NewBlockObserver(configManager)
@@ -104,18 +127,25 @@ func NewEventListener(
 		nodeBroker:            nodeBroker,
 		transactionRecorder:   transactionRecorder,
 		configManager:         configManager,
-		validator:             validator,
 		phaseTracker:          phaseTracker,
 		dispatcher:            dispatcher,
 		cancelFunc:            cancelFunc,
 		blsManager:            blsManager,
 		eventHandlers:         eventHandlers,
 		blockObserver:         bo,
-		rewardRecoveryChecker: startup.NewRewardRecoveryChecker(phaseTracker, &transactionRecorder, validator, configManager),
+		rewardRecoveryChecker: startup.NewRewardRecoveryChecker(phaseTracker, &transactionRecorder, configManager),
 	}
 	for _, opt := range opts {
 		opt(el)
 	}
+
+	// Filter out tx events the DAPI has no handler for at the producer, before
+	// they take a slot in the bounded tx queue. This uses the exact same gate
+	// (hasHandler) the consumer applies after dequeue, so it never drops an
+	// event that would have been handled. Barrier events bypass this filter in
+	// processBlock, so per-block progress still advances.
+	bo.SetRelevanceFilter(el.hasHandler)
+
 	return el
 }
 
@@ -307,6 +337,8 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 		if el.isNodeSynced() {
 			// Check for BLS events in NewBlock events (emitted from EndBlocker)
 			el.handleBLSEvents(event, workerName)
+			// BeginBlock maintenance_canceled (e.g. maintenance_disabled) is not in TxsResults.
+			el.handleMaintenanceLifecycleEvents(event, workerName)
 		}
 
 		// Parse the event into NewBlockInfo
@@ -465,19 +497,11 @@ func (e *InferenceFinishedEventHandler) CanHandle(event *chainevents.JSONRPCResp
 	return len(event.Result.Events["inference_finished.inference_id"]) > 0
 }
 
-func (e *InferenceFinishedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) (err error) {
-	ids := event.Result.Events["inference_finished.inference_id"]
-	_, op := observability.Inference.StartValidationEvent(context.Background(), len(ids))
-	defer func() { op.FinishErr(&err) }()
-
-	if el.isNodeSynced() {
-		el.validator.SampleInferenceToValidate(ids, el.transactionRecorder)
-	}
+func (e *InferenceFinishedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
 	if el.statsStorage == nil {
 		return nil
 	}
-	records, recErr := parseInferenceFinishedRecords(event.Result.Events)
-	err = recErr
+	records, err := parseInferenceFinishedRecords(event.Result.Events)
 	if err != nil {
 		logging.Warn("Failed to parse inference_finished records for stats storage", types.EventProcessing, "error", err)
 		return nil
@@ -601,9 +625,6 @@ func parseEventInt64(events map[string][]string, key string, idx int) (int64, er
 	return parsed, nil
 }
 
-type InferenceValidationEventHandler struct {
-}
-
 type inferenceStatusUpdateRecord struct {
 	InferenceID string
 	Status      string
@@ -620,16 +641,11 @@ func (e *InferenceStatusUpdatedEventHandler) CanHandle(event *chainevents.JSONRP
 	return len(event.Result.Events["inference_status_updated.inference_id"]) > 0
 }
 
-func (e *InferenceStatusUpdatedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) (err error) {
-	ids := event.Result.Events["inference_status_updated.inference_id"]
-	_, op := observability.Inference.StartStatusUpdateEvent(context.Background(), len(ids))
-	defer func() { op.FinishErr(&err) }()
-
+func (e *InferenceStatusUpdatedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
 	if el.statsStorage == nil {
 		return nil
 	}
-	records, recErr := parseInferenceStatusUpdatedRecords(event.Result.Events)
-	err = recErr
+	records, err := parseInferenceStatusUpdatedRecords(event.Result.Events)
 	if err != nil {
 		logging.Warn("Failed to parse inference_status_updated records for stats storage", types.EventProcessing, "error", err)
 		return nil
@@ -671,22 +687,6 @@ func parseInferenceStatusUpdatedRecords(events map[string][]string) ([]inference
 		})
 	}
 	return records, nil
-}
-
-func (e *InferenceValidationEventHandler) GetName() string {
-	return "inference_validation"
-}
-
-func (e *InferenceValidationEventHandler) CanHandle(event *chainevents.JSONRPCResponse) bool {
-	needsRevalidation := event.Result.Events["inference_validation.needs_revalidation"]
-	return len(needsRevalidation) > 0 && needsRevalidation[0] == "true"
-}
-
-func (e *InferenceValidationEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
-	if el.isNodeSynced() {
-		el.validator.VerifyInvalidation(event.Result.Events, el.transactionRecorder)
-	}
-	return nil
 }
 
 type SubmitProposalEventHandler struct{}

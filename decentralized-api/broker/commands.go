@@ -1,8 +1,8 @@
 package broker
 
 import (
+	"common/logging"
 	"decentralized-api/apiconfig"
-	"decentralized-api/logging"
 
 	"github.com/productscience/inference/x/inference/types"
 )

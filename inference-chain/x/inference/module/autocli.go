@@ -218,6 +218,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "height"}},
 				},
 				{
+					RpcMethod:      "LastUpgradeHeight",
+					Use:            "last-upgrade-height",
+					Short:          "Shows the most recent applied upgrade height",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+				{
 					RpcMethod:      "GetAllModelCapacities",
 					Use:            "all-model-capacities",
 					Short:          "Get cached capacities for all models",
@@ -289,10 +295,58 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "id"}},
 				},
 				{
+					RpcMethod:      "MaintenanceCredit",
+					Use:            "maintenance-credit [participant]",
+					Short:          "Query maintenance credit for a participant",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
+				},
+				{
+					RpcMethod:      "MaintenanceScheduled",
+					Use:            "maintenance-scheduled [participant]",
+					Short:          "Query scheduled maintenance windows for a participant",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
+				},
+				{
+					RpcMethod:      "MaintenanceActive",
+					Use:            "maintenance-active",
+					Short:          "Query all currently active maintenance windows",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{},
+				},
+				{
+					RpcMethod:      "MaintenanceStatus",
+					Use:            "maintenance-status [participant]",
+					Short:          "Query maintenance status for a participant",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
+				},
+				{
+					RpcMethod:      "MaintenanceConcurrency",
+					Use:            "maintenance-concurrency [target-height]",
+					Short:          "Query concurrent reserved participant count and power at a given height",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "height"}},
+				},
+				{
+					RpcMethod:      "MaintenanceSchedulability",
+					Use:            "maintenance-schedulability [participant] [start-height] [duration-blocks]",
+					Short:          "Query whether a proposed maintenance window is schedulable",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}, {ProtoField: "start_height"}, {ProtoField: "duration_blocks"}},
+				},
+				{
 					RpcMethod:      "PoCDelegation",
 					Use:            "poc-delegation [participant] [model-id]",
 					Short:          "Query PoC delegation state for a participant",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}, {ProtoField: "model_id", Optional: true}},
+				},
+				{
+					RpcMethod:      "EstimateBitcoinReward",
+					Use:            "estimate-bitcoin-reward [participant]",
+					Short:          "Estimate Bitcoin-style reward for a participant using the current reward snapshot",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
+				},
+				{
+					RpcMethod:      "ListClaimRecipients",
+					Use:            "list-claim-recipients [participant]",
+					Short:          "List the scheduled per-epoch claim recipient overrides for a participant",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
 				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
@@ -326,46 +380,16 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Skip:      true, // skipped because authority gated
 				},
 				{
-					RpcMethod:      "StartInference",
-					Use:            "start-inference [inference-id] [prompt-hash] [prompt-payload] [received-by]",
-					Short:          "Send a startInference tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "inference_id"}, {ProtoField: "prompt_hash"}, {ProtoField: "prompt_payload"}, {ProtoField: "requested_by"}},
-				},
-				{
-					RpcMethod:      "FinishInference",
-					Use:            "finish-inference [inference-id] [response-hash] [response-payload] [prompt-token-count] [completion-token-count] [executed-by]",
-					Short:          "Send a finishInference tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "inference_id"}, {ProtoField: "response_hash"}, {ProtoField: "response_payload"}, {ProtoField: "prompt_token_count"}, {ProtoField: "completion_token_count"}, {ProtoField: "executed_by"}},
-				},
-				{
 					RpcMethod:      "SubmitNewParticipant",
 					Use:            "submit-new-participant [url]",
 					Short:          "Send a submitNewParticipant tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "url"}},
 				},
 				{
-					RpcMethod:      "Validation",
-					Use:            "validation [id] [inference-id] [response-payload] [response-hash] [value]",
-					Short:          "Send a validation tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "id"}, {ProtoField: "inference_id"}, {ProtoField: "response_payload"}, {ProtoField: "response_hash"}, {ProtoField: "value"}},
-				},
-				{
 					RpcMethod:      "SubmitNewUnfundedParticipant",
 					Use:            "submit-new-unfunded-participant [address] [url] [pub-key] [validator-key]",
 					Short:          "Send a submitNewUnfundedParticipant tx",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "address"}, {ProtoField: "url"}, {ProtoField: "pub_key"}, {ProtoField: "validator_key"}},
-				},
-				{
-					RpcMethod:      "InvalidateInference",
-					Use:            "invalidate-inference [inference-id]",
-					Short:          "Send a invalidateInference tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "inference_id"}},
-				},
-				{
-					RpcMethod:      "RevalidateInference",
-					Use:            "revalidate-inference [inference-id]",
-					Short:          "Send a revalidateInference tx",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "inference_id"}},
 				},
 				{
 					RpcMethod:      "ClaimRewards",

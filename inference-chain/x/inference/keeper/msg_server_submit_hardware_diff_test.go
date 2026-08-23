@@ -217,3 +217,127 @@ func TestMsgServer_SubmitHardwareDiff_RemoveAll(t *testing.T) {
 	require.True(t, found)
 	require.Equal(t, 0, len(hardwareNodes.HardwareNodes))
 }
+
+// TestHardwareNodesUnchanged is a focused unit test for the helper that
+// gates the SubmitHardwareDiff no-op skip. Compares local_id, status, models,
+// hardware, host, port, and version.
+func TestHardwareNodesUnchanged(t *testing.T) {
+	n1 := &types.HardwareNode{LocalId: "n1", Status: types.HardwareNodeStatus_INFERENCE}
+	n2 := &types.HardwareNode{LocalId: "n2", Status: types.HardwareNodeStatus_POC,
+		Models: []string{"model1"}, Host: "h", Port: "8080",
+		Hardware: []*types.Hardware{{Type: "GPU", Count: 2}}}
+
+	// Both empty: equal.
+	require.True(t, keeper.HardwareNodesUnchanged(nil, nil))
+	require.True(t, keeper.HardwareNodesUnchanged([]*types.HardwareNode{}, []*types.HardwareNode{}))
+
+	// Identical content, identical order.
+	require.True(t, keeper.HardwareNodesUnchanged(
+		[]*types.HardwareNode{n1, n2}, []*types.HardwareNode{n1, n2}))
+
+	// Different lengths.
+	require.False(t, keeper.HardwareNodesUnchanged(
+		[]*types.HardwareNode{n1}, []*types.HardwareNode{n1, n2}))
+
+	// Operational field differs: detected.
+	n2DiffStatus := &types.HardwareNode{LocalId: "n2", Status: types.HardwareNodeStatus_INFERENCE,
+		Models: n2.Models, Host: n2.Host, Port: n2.Port, Hardware: n2.Hardware}
+	require.False(t, keeper.HardwareNodesUnchanged(
+		[]*types.HardwareNode{n1, n2DiffStatus}, []*types.HardwareNode{n1, n2}))
+
+	// Models reordered: detected (slices.Equal is positional).
+	n2DiffModels := &types.HardwareNode{LocalId: "n2", Status: n2.Status,
+		Models: []string{"model2"}, Host: n2.Host, Port: n2.Port, Hardware: n2.Hardware}
+	require.False(t, keeper.HardwareNodesUnchanged(
+		[]*types.HardwareNode{n1, n2DiffModels}, []*types.HardwareNode{n1, n2}))
+
+	// Hardware count differs: detected.
+	n2DiffHW := &types.HardwareNode{LocalId: "n2", Status: n2.Status,
+		Models: n2.Models, Host: n2.Host, Port: n2.Port,
+		Hardware: []*types.Hardware{{Type: "GPU", Count: 4}}}
+	require.False(t, keeper.HardwareNodesUnchanged(
+		[]*types.HardwareNode{n1, n2DiffHW}, []*types.HardwareNode{n1, n2}))
+
+	// Version differs: detected (must persist so DAPI and chain agree).
+	n2VerA := &types.HardwareNode{LocalId: "n2", Status: n2.Status,
+		Models: n2.Models, Host: n2.Host, Port: n2.Port, Hardware: n2.Hardware,
+		Version: "v1"}
+	n2VerB := &types.HardwareNode{LocalId: "n2", Status: n2.Status,
+		Models: n2.Models, Host: n2.Host, Port: n2.Port, Hardware: n2.Hardware,
+		Version: "v2"}
+	require.False(t, keeper.HardwareNodesUnchanged(
+		[]*types.HardwareNode{n1, n2VerA}, []*types.HardwareNode{n1, n2VerB}),
+		"version-only change must count as a change")
+
+	n2DiffHost := &types.HardwareNode{LocalId: "n2", Status: n2.Status,
+		Models: n2.Models, Host: "other", Port: n2.Port, Hardware: n2.Hardware}
+	require.False(t, keeper.HardwareNodesUnchanged(
+		[]*types.HardwareNode{n1, n2DiffHost}, []*types.HardwareNode{n1, n2}))
+	n2DiffPort := &types.HardwareNode{LocalId: "n2", Status: n2.Status,
+		Models: n2.Models, Host: n2.Host, Port: "9999", Hardware: n2.Hardware}
+	require.False(t, keeper.HardwareNodesUnchanged(
+		[]*types.HardwareNode{n1, n2DiffPort}, []*types.HardwareNode{n1, n2}))
+}
+
+// TestMsgServer_SubmitHardwareDiff_IdempotentOnNoChange exercises the
+// happy path of the no-op skip end-to-end: a participant submits a diff
+// once, then submits an identical (no-op) diff. Both calls succeed and
+// the stored state matches the original write.
+//
+// We can't directly assert "SetHardwareNodes was not called the second
+// time" without a keeper spy, so this test pairs with TestHardwareNodesUnchanged
+// (unit-level) for full coverage.
+func TestMsgServer_SubmitHardwareDiff_IdempotentOnNoChange(t *testing.T) {
+	k, ms, ctx := setupMsgServer(t)
+
+	mockCreator := NewMockAccount(testutil.Creator)
+	MustAddParticipant(t, ms, ctx, *mockCreator)
+	registerTestModels(t, k, ms, ctx, "model1")
+
+	node := &types.HardwareNode{
+		LocalId:  "node1",
+		Status:   types.HardwareNodeStatus_INFERENCE,
+		Models:   []string{"model1"},
+		Hardware: []*types.Hardware{{Type: "GPU", Count: 1}},
+		Host:     "localhost",
+		Port:     "8080",
+	}
+
+	// First submit: writes the node.
+	_, err := ms.SubmitHardwareDiff(ctx, &types.MsgSubmitHardwareDiff{
+		Creator:       testutil.Creator,
+		NewOrModified: []*types.HardwareNode{node},
+	})
+	require.NoError(t, err)
+
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	got, found := k.GetHardwareNodes(sdkCtx, testutil.Creator)
+	require.True(t, found)
+	require.Equal(t, 1, len(got.HardwareNodes))
+
+	// Second submit with the identical node: no-op path. Must still succeed
+	// and leave state untouched.
+	_, err = ms.SubmitHardwareDiff(ctx, &types.MsgSubmitHardwareDiff{
+		Creator:       testutil.Creator,
+		NewOrModified: []*types.HardwareNode{node},
+	})
+	require.NoError(t, err)
+
+	gotAgain, found := k.GetHardwareNodes(sdkCtx, testutil.Creator)
+	require.True(t, found)
+	require.Equal(t, 1, len(gotAgain.HardwareNodes))
+	require.Equal(t, got.HardwareNodes[0].LocalId, gotAgain.HardwareNodes[0].LocalId)
+	require.Equal(t, got.HardwareNodes[0].Status, gotAgain.HardwareNodes[0].Status)
+
+	// Empty diff (no add, no remove) is also a no-op.
+	_, err = ms.SubmitHardwareDiff(ctx, &types.MsgSubmitHardwareDiff{
+		Creator:       testutil.Creator,
+		NewOrModified: []*types.HardwareNode{},
+		Removed:       []*types.HardwareNode{},
+	})
+	require.NoError(t, err)
+
+	stillThere, found := k.GetHardwareNodes(sdkCtx, testutil.Creator)
+	require.True(t, found)
+	require.Equal(t, 1, len(stillThere.HardwareNodes))
+}

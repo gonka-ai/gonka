@@ -61,6 +61,161 @@ func createTestValidationWeight(memberAddress string, weight int64, reputation i
 	}
 }
 
+func TestApplyDelegationRewardTransfers_RewardOnlyTransfer(t *testing.T) {
+	weights := map[string]uint64{
+		"alice": 1000,
+		"bob":   500,
+	}
+	transfers := []*types.DelegationRewardTransfer{
+		{
+			ModelId: "model1",
+			From:    "alice",
+			To:      "bob",
+			Share:   types.DecimalFromFloat(0.1),
+		},
+	}
+
+	applyDelegationRewardTransfers(weights, transfers, createTestLogger(t))
+
+	require.Equal(t, uint64(900), weights["alice"])
+	require.Equal(t, uint64(600), weights["bob"])
+}
+
+func TestApplyDelegationRewardPenalties_ReducesSourceOnly(t *testing.T) {
+	weights := map[string]uint64{
+		"alice": 1000,
+		"bob":   500,
+	}
+	penalties := []*types.DelegationRewardPenalty{
+		{
+			Participant:     "alice",
+			PenaltyFraction: types.DecimalFromFloat(0.1),
+		},
+	}
+
+	applyDelegationRewardPenalties(weights, penalties, createTestLogger(t))
+
+	require.Equal(t, uint64(900), weights["alice"])
+	require.Equal(t, uint64(500), weights["bob"])
+}
+
+func TestApplyDelegationRewardTransfers_RewardOnlyDoesNotReviveZeroWeightDelegatee(t *testing.T) {
+	weights := map[string]uint64{
+		"alice": 1000,
+		"bob":   0,
+	}
+	transfers := []*types.DelegationRewardTransfer{
+		{
+			ModelId: "model1",
+			From:    "alice",
+			To:      "bob",
+			Share:   types.DecimalFromFloat(0.1),
+		},
+	}
+
+	applyDelegationRewardTransfers(weights, transfers, createTestLogger(t))
+
+	require.Equal(t, uint64(900), weights["alice"])
+	require.Equal(t, uint64(0), weights["bob"])
+}
+
+func TestApplyDelegationRewardTransfers_RewardOnlyMultipleTransfersUseSourceSnapshot(t *testing.T) {
+	// Two 10% delegations from the same source must each be computed from the
+	// pre-transfer snapshot (1000), not the already-mutated weight, so both pay
+	// 100 rather than 100 + 90.
+	weights := map[string]uint64{
+		"alice": 1000,
+		"bob":   500,
+		"carol": 500,
+	}
+	transfers := []*types.DelegationRewardTransfer{
+		{ModelId: "model1", From: "alice", To: "bob", Share: types.DecimalFromFloat(0.1)},
+		{ModelId: "model2", From: "alice", To: "carol", Share: types.DecimalFromFloat(0.1)},
+	}
+
+	applyDelegationRewardTransfers(weights, transfers, createTestLogger(t))
+
+	require.Equal(t, uint64(800), weights["alice"])
+	require.Equal(t, uint64(600), weights["bob"])
+	require.Equal(t, uint64(600), weights["carol"])
+}
+
+func TestApplyDelegationRewardPenalties_DuplicateEntriesAreAdditiveAndClamped(t *testing.T) {
+	weights := map[string]uint64{
+		"alice": 1000,
+		"bob":   400,
+	}
+	penalties := []*types.DelegationRewardPenalty{
+		{Participant: "alice", PenaltyFraction: types.DecimalFromFloat(0.5)},
+		{Participant: "alice", PenaltyFraction: types.DecimalFromFloat(0.7)},
+	}
+
+	applyDelegationRewardPenalties(weights, penalties, createTestLogger(t))
+
+	require.Equal(t, uint64(0), weights["alice"])
+	require.Equal(t, uint64(400), weights["bob"])
+}
+
+func TestApplyDelegationRewardPenaltiesThenTransfers_PenaltyReducesTransferBase(t *testing.T) {
+	weights := map[string]uint64{
+		"alice": 1000,
+		"bob":   500,
+	}
+	penalties := []*types.DelegationRewardPenalty{
+		{Participant: "alice", PenaltyFraction: types.DecimalFromFloat(0.8)},
+	}
+	transfers := []*types.DelegationRewardTransfer{
+		{ModelId: "model1", From: "alice", To: "bob", Share: types.DecimalFromFloat(0.3)},
+	}
+
+	applyDelegationRewardPenalties(weights, penalties, createTestLogger(t))
+	applyDelegationRewardTransfers(weights, transfers, createTestLogger(t))
+
+	require.Equal(t, uint64(140), weights["alice"])
+	require.Equal(t, uint64(560), weights["bob"])
+}
+
+func TestCalculateBitcoinRewards_PenaltyDoesNotRenormalizeDenominator(t *testing.T) {
+	bitcoinParams := &types.BitcoinRewardParams{
+		GenesisEpoch:       1,
+		InitialEpochReward: 1000,
+		DecayRate:          types.DecimalFromFloat(0),
+	}
+	epochGroupData := &types.EpochGroupData{
+		EpochIndex: 1,
+		ValidationWeights: []*types.ValidationWeight{
+			createTestValidationWeight("alice", 1000, 0),
+			createTestValidationWeight("bob", 1000, 0),
+		},
+	}
+	participants := []types.Participant{
+		{Address: "alice", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100, MissedRequests: 0}},
+		{Address: "bob", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100, MissedRequests: 0}},
+	}
+	penalties := []*types.DelegationRewardPenalty{
+		{Participant: "alice", PenaltyFraction: types.DecimalFromFloat(0.5)},
+	}
+
+	results, bitcoinResult, err := CalculateParticipantBitcoinRewardsWithTransfers(
+		participants,
+		epochGroupData,
+		bitcoinParams,
+		nil,
+		modelNodesAndScales(epochGroupData),
+		nil,
+		penalties,
+		createTestLogger(t),
+	)
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+
+	require.Equal(t, uint64(250), results[0].Settle.RewardCoins)
+	require.Equal(t, uint64(500), results[1].Settle.RewardCoins)
+	require.Equal(t, uint64(500), results[0].ParticipantRewardWeight)
+	require.Equal(t, uint64(2000), results[0].TotalRewardWeight)
+	require.Equal(t, int64(250), bitcoinResult.GovernanceAmount)
+}
+
 func TestExponent(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -2199,4 +2354,88 @@ func TestGetDynamicP0(t *testing.T) {
 		require.Equal(t, int64(200), p0.Value)
 		require.Equal(t, int32(-3), p0.Exponent)
 	})
+}
+
+// Regression: one zero-weight participant in a multi-model settlement must not
+// collapse the entire network to zero capped power (gonka-testnet-4 epoch 15).
+func TestApplyPowerCappingForWeights_SkipsZeroWeightParticipants(t *testing.T) {
+	participants := []*types.ActiveParticipant{
+		{Index: "guardian", Weight: 0},
+		{Index: "host-a", Weight: 10238},
+		{Index: "host-b", Weight: 34658},
+		{Index: "host-c", Weight: 36806},
+	}
+
+	capped, wasCapped := ApplyPowerCappingForWeights(participants)
+
+	total := int64(0)
+	for _, p := range capped {
+		total += p.Weight
+	}
+	require.Positive(t, total, "zero-weight bystander must not zero the network")
+	require.Equal(t, int64(0), capped[0].Weight, "zero-weight participant stays zero")
+	if wasCapped {
+		require.LessOrEqual(t, capped[1].Weight, int64(10238))
+	} else {
+		require.Equal(t, int64(81702), total)
+	}
+}
+
+// Capping must still be effective when zero-weight bystanders are present:
+// the small-network cap percentage is chosen from the positive-weight count,
+// so 3 real hosts get the 40% limit instead of an infeasible 30% one.
+func TestApplyPowerCappingForWeights_ZeroWeightBystanderKeepsCappingEffective(t *testing.T) {
+	participants := []*types.ActiveParticipant{
+		{Index: "guardian", Weight: 0},
+		{Index: "host-a", Weight: 10238},
+		{Index: "host-b", Weight: 34658},
+		{Index: "host-c", Weight: 36806},
+	}
+
+	capped, wasCapped := ApplyPowerCappingForWeights(participants)
+
+	require.True(t, wasCapped, "capping must still apply with a zero-weight bystander")
+	require.Equal(t, int64(0), capped[0].Weight)
+	require.Equal(t, int64(10238), capped[1].Weight)
+	// cap = 0.40 * 10238 / (1 - 0.40*2) = 20476; both large hosts hit it,
+	// each ending at exactly 40% of the new total (10238 + 2*20476 = 51190).
+	require.Equal(t, int64(20476), capped[2].Weight)
+	require.Equal(t, int64(20476), capped[3].Weight)
+}
+
+// A hypothetical negative-weight participant must behave exactly like a
+// zero-weight one: invisible to the capping math, unable to drag the total
+// power to <=0 and defeat the cap<=0 degeneracy guard, and left unmodified.
+func TestApplyPowerCappingForWeights_NegativeWeightIsInvisible(t *testing.T) {
+	participants := []*types.ActiveParticipant{
+		{Index: "broken", Weight: -1_000_000},
+		{Index: "host-a", Weight: 10238},
+		{Index: "host-b", Weight: 34658},
+		{Index: "host-c", Weight: 36806},
+	}
+
+	capped, wasCapped := ApplyPowerCappingForWeights(participants)
+
+	require.True(t, wasCapped, "capping must still apply with a negative-weight entry")
+	require.Equal(t, int64(-1_000_000), capped[0].Weight, "negative entry passes through unmodified")
+	// Identical outcome to the zero-weight bystander case: 3 positive hosts
+	// get the 40% small-network limit, large hosts capped to 20476.
+	require.Equal(t, int64(10238), capped[1].Weight)
+	require.Equal(t, int64(20476), capped[2].Weight)
+	require.Equal(t, int64(20476), capped[3].Weight)
+}
+
+// A single positive-weight participant among zero-weight bystanders must not
+// be capped (nothing to balance against) and must not be zeroed.
+func TestApplyPowerCappingForWeights_SinglePositiveAmongZeros(t *testing.T) {
+	participants := []*types.ActiveParticipant{
+		{Index: "zero-a", Weight: 0},
+		{Index: "zero-b", Weight: 0},
+		{Index: "host", Weight: 12345},
+	}
+
+	capped, wasCapped := ApplyPowerCappingForWeights(participants)
+
+	require.False(t, wasCapped)
+	require.Equal(t, int64(12345), capped[2].Weight)
 }

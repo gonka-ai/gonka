@@ -28,6 +28,16 @@ func (k Keeper) GranteesByMessageType(ctx context.Context, req *types.QueryGrant
 
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	blockTime := sdkCtx.BlockTime()
+	// devshard and devshardctl ship on their own upgrade cycle, so binaries in
+	// the field still probe warm keys by the pre-v0.2.15 marker. Participants
+	// who joined after v0.2.15 have no legacy grant at all, so without this
+	// alias those binaries would silently see every new host as not-warm. Keep
+	// it until no deployed devshard queries the legacy marker; the chain cannot
+	// observe that, so removal needs a deliberate rollout check.
+	messageTypeURL := req.MessageTypeUrl
+	if strings.TrimPrefix(messageTypeURL, "/") == strings.TrimPrefix(types.LegacyMsgStartInferenceTypeURL, "/") {
+		messageTypeURL = types.WarmKeyGrantMarkerTypeURL
+	}
 
 	authzKeeper := k.AuthzKeeper
 	grantees := []*types.Grantee{}
@@ -52,7 +62,7 @@ func (k Keeper) GranteesByMessageType(ctx context.Context, req *types.QueryGrant
 			authorization := grant.Authorization.GetCachedValue()
 
 			if genericAuth, ok := authorization.(*authztypes.GenericAuthorization); ok {
-				if strings.TrimPrefix(genericAuth.Msg, "/") == strings.TrimPrefix(req.MessageTypeUrl, "/") {
+				if strings.TrimPrefix(genericAuth.Msg, "/") == strings.TrimPrefix(messageTypeURL, "/") {
 					granteeAddr, err := sdk.AccAddressFromBech32(grant.Grantee)
 					if err != nil {
 						k.LogError("invalid grantee address", types.Participants, "address", grant.Grantee, "error", err)

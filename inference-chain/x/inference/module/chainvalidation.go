@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"log/slog"
+	"math/bits"
 	"slices"
 	"strconv"
 	"strings"
@@ -169,11 +170,14 @@ func (wc *PoCWeightCalculator) validatedParticipant(key types.PoCParticipantMode
 		return nil
 	}
 
-	vals := wc.getParticipantValidations(key)
-	if len(vals) == 0 {
+	// Reject only when nobody voted at all. The weight-filtered list may be
+	// empty while guardian votes are still present in the raw list; those must
+	// reach the guardian tiebreaker in pocValidated.
+	if len(wc.Validations[key]) == 0 {
 		wc.Logger.LogError("Calculate: No validations for participant found", types.PoC, "participant", key.ParticipantAddress, "modelId", key.ModelID)
 		return nil
 	}
+	vals := wc.getParticipantValidations(key)
 
 	// Get claimed weight from store commit and per-node weights from distribution
 	nodeWeights, claimedWeight := wc.calculateParticipantWeight(key)
@@ -236,9 +240,11 @@ func (wc *PoCWeightCalculator) getParticipantValidations(key types.PoCParticipan
 		"participant", key.ParticipantAddress, "modelId", key.ModelID, "len(vals)", len(vals), "validators", validators)
 
 	// Filter to validations from participants with voting power for this model.
+	// The filtered list feeds the majority math only; the guardian tiebreaker
+	// reads the raw wc.Validations[key] list directly (see guardianProtection).
 	// When no voting-power snapshot exists for the model yet, keep the original
-	// validations list for logging and guardian handling. pocValidated() still
-	// rejects later if the model has no voting-power data.
+	// validations list. pocValidated() still rejects later if the model has no
+	// voting-power data.
 	modelVP := wc.ModelVotingPowers[key.ModelID]
 	filteredVals := make([]types.PoCValidationV2, 0, len(vals))
 	if len(modelVP) == 0 {
@@ -272,6 +278,7 @@ func (wc *PoCWeightCalculator) pocValidated(vals []types.PoCValidationV2, key ty
 			"participant", key.ParticipantAddress, "modelId", key.ModelID)
 		return false
 	}
+	thresholdBps := wc.validationVoteThresholdBps()
 
 	if wc.ValidationSlots > 0 {
 		// Slot-based: sample validators, count per-slot (each slot = 1 weight).
@@ -301,20 +308,19 @@ func (wc *PoCWeightCalculator) pocValidated(vals []types.PoCValidationV2, key ty
 				invalidSlots++
 			}
 		}
-		twoThirdsSlots := totalSlots * 2 / 3
-		if validSlots > twoThirdsSlots {
+		if passesValidationVoteThreshold(validSlots, totalSlots, thresholdBps) {
 			wc.Logger.LogInfo("Calculate: Valid majority (slot-sampled). Accepting.", types.PoC,
 				"participant", key.ParticipantAddress, "modelId", key.ModelID,
-				"validSlots", validSlots, "totalSlots", totalSlots)
+				"validSlots", validSlots, "totalSlots", totalSlots, "thresholdBps", thresholdBps)
 			return true
 		}
-		if invalidSlots > twoThirdsSlots {
+		if passesValidationVoteThreshold(invalidSlots, totalSlots, thresholdBps) {
 			wc.Logger.LogWarn("Calculate: Invalid majority (slot-sampled). Rejecting.", types.PoC,
 				"participant", key.ParticipantAddress, "modelId", key.ModelID,
-				"invalidSlots", invalidSlots, "totalSlots", totalSlots)
+				"invalidSlots", invalidSlots, "totalSlots", totalSlots, "thresholdBps", thresholdBps)
 			return false
 		}
-		return wc.guardianProtection(vals, key, ValidationOutcome{
+		return wc.guardianProtection(key, ValidationOutcome{
 			TotalWeight:   totalSlots,
 			ValidWeight:   validSlots,
 			InvalidWeight: invalidSlots,
@@ -324,20 +330,35 @@ func (wc *PoCWeightCalculator) pocValidated(vals []types.PoCValidationV2, key ty
 	// Non-slot: weight approvals by votingPower, threshold against totalNetworkWeight.
 	outcome := calculateValidationOutcome(votingPowers, vals)
 	outcome.TotalWeight = wc.TotalNetworkWeight
-	twoThirds := wc.TotalNetworkWeight * 2 / 3
-	if outcome.ValidWeight > twoThirds {
+	if passesValidationVoteThreshold(outcome.ValidWeight, wc.TotalNetworkWeight, thresholdBps) {
 		wc.Logger.LogInfo("Calculate: Valid majority. Accepting.", types.PoC,
 			"participant", key.ParticipantAddress, "modelId", key.ModelID,
-			"validWeight", outcome.ValidWeight, "totalNetworkWeight", wc.TotalNetworkWeight)
+			"validWeight", outcome.ValidWeight, "totalNetworkWeight", wc.TotalNetworkWeight, "thresholdBps", thresholdBps)
 		return true
 	}
-	if outcome.InvalidWeight > twoThirds {
+	if passesValidationVoteThreshold(outcome.InvalidWeight, wc.TotalNetworkWeight, thresholdBps) {
 		wc.Logger.LogWarn("Calculate: Invalid majority. Rejecting.", types.PoC,
 			"participant", key.ParticipantAddress, "modelId", key.ModelID,
-			"invalidWeight", outcome.InvalidWeight, "totalNetworkWeight", wc.TotalNetworkWeight)
+			"invalidWeight", outcome.InvalidWeight, "totalNetworkWeight", wc.TotalNetworkWeight, "thresholdBps", thresholdBps)
 		return false
 	}
-	return wc.guardianProtection(vals, key, outcome)
+	return wc.guardianProtection(key, outcome)
+}
+
+func (wc *PoCWeightCalculator) validationVoteThresholdBps() int64 {
+	if wc.PocParams == nil || wc.PocParams.ValidationVoteThresholdBps == 0 {
+		return int64(types.DefaultPocValidationVoteThresholdBps)
+	}
+	return int64(wc.PocParams.ValidationVoteThresholdBps)
+}
+
+func passesValidationVoteThreshold(votes, total, thresholdBps int64) bool {
+	if votes <= 0 || total <= 0 || thresholdBps <= 0 {
+		return false
+	}
+	votesHi, votesLo := bits.Mul64(uint64(votes), 10000)
+	thresholdHi, thresholdLo := bits.Mul64(uint64(total), uint64(thresholdBps))
+	return votesHi > thresholdHi || votesHi == thresholdHi && votesLo > thresholdLo
 }
 
 // ValidationOutcome holds aggregated vote weight sums.
@@ -349,7 +370,12 @@ type ValidationOutcome struct {
 
 // guardianProtection handles tie-breaking when no clear majority exists.
 // All voting guardians must agree unanimously for the decision to pass.
-func (wc *PoCWeightCalculator) guardianProtection(vals []types.PoCValidationV2, key types.PoCParticipantModelKey, outcome ValidationOutcome) bool {
+// Guardian votes are read from the raw (unfiltered) validation list: a guardian
+// may have no voting weight for the model (e.g. it could not run the model this
+// epoch), and its tiebreaker vote must still count. This does not affect the
+// majority math above, which only ever counts weight-filtered or slot-assigned
+// votes.
+func (wc *PoCWeightCalculator) guardianProtection(key types.PoCParticipantModelKey, outcome ValidationOutcome) bool {
 	if !wc.GuardianEnabled || len(wc.GuardianAddresses) == 0 {
 		wc.Logger.LogWarn("Calculate: No majority and no guardians. Rejecting.", types.PoC,
 			"participant", key.ParticipantAddress,
@@ -362,7 +388,7 @@ func (wc *PoCWeightCalculator) guardianProtection(vals []types.PoCValidationV2, 
 	}
 
 	guardianValidCount, guardianInvalidCount := 0, 0
-	for _, v := range vals {
+	for _, v := range wc.Validations[key] {
 		if wc.GuardianAddresses[v.ValidatorParticipantAddress] {
 			if v.ValidatedWeight > 0 {
 				guardianValidCount++

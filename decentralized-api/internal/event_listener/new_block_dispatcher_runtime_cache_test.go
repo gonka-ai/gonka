@@ -7,7 +7,6 @@ import (
 
 	"decentralized-api/apiconfig"
 	"decentralized-api/chainphase"
-	"decentralized-api/internal/validation"
 
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -34,6 +33,14 @@ func (m *mockParamsQueryClient) Params(ctx context.Context, req *types.QueryPara
 		return nil, args.Error(1)
 	}
 	return args.Get(0).(*types.QueryParamsResponse), args.Error(1)
+}
+
+func (m *mockParamsQueryClient) ListRandomSeeds(ctx context.Context, req *types.QueryRandomSeedsRequest, opts ...grpc.CallOption) (*types.QueryRandomSeedsResponse, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryRandomSeedsResponse), args.Error(1)
 }
 
 func newRuntimeCacheTestDispatcher(t *testing.T, qc *mockParamsQueryClient) (*OnNewBlockDispatcher, *apiconfig.ConfigManager) {
@@ -73,7 +80,6 @@ func newRuntimeCacheTestDispatcher(t *testing.T, qc *mockParamsQueryClient) (*On
 		mockSeedManager,
 		defaultReconciliationConfig,
 		cm,
-		&validation.InferenceValidator{},
 	)
 	return dispatcher, cm
 }
@@ -102,10 +108,10 @@ func devshardParamsResponseFull(
 			DevshardEscrowParams: &types.DevshardEscrowParams{
 				DevshardRequestsEnabled: enabled,
 				MaxNonce:                maxNonce,
-				RefusalTimeout:                    refusalTimeout,
-				ExecutionTimeout:                  executionTimeout,
-				ValidationRate:                    validationRate,
-				VoteThresholdFactor:               voteThresholdFactor,
+				RefusalTimeout:          refusalTimeout,
+				ExecutionTimeout:        executionTimeout,
+				ValidationRate:          validationRate,
+				VoteThresholdFactor:     voteThresholdFactor,
 				ApprovedVersions: []*types.DevshardApprovedVersion{
 					{Name: "v1", Binary: "https://example/v1", Sha256: "sha1"},
 				},
@@ -233,4 +239,66 @@ func TestOnNewBlockDispatcher_NilDevshardEscrowParams_NoPanic(t *testing.T) {
 	got := cm.GetDevshardVersions()
 	require.True(t, got.DevshardRequestsEnabled)
 	require.Equal(t, uint32(100), got.MaxNonce)
+}
+
+func TestOnNewBlockDispatcher_AppliesFeeTreeFromParams(t *testing.T) {
+	qc := &mockParamsQueryClient{}
+	dispatcher, _ := newRuntimeCacheTestDispatcher(t, qc)
+
+	fp := types.DefaultFeeParams()
+	fp.EnabledFeeGroups = []string{types.FeeGroupEpoch}
+	var got *types.FeeParams
+	dispatcher.applyFeeTree = func(p *types.FeeParams) {
+		got = p
+	}
+
+	resp := devshardParamsResponse(true, 1)
+	resp.Params.FeeParams = fp
+	qc.On("Params", mock.Anything, mock.Anything).Return(resp, nil).Once()
+
+	require.NoError(t, dispatcher.ProcessNewBlock(context.Background(), chainphase.BlockInfo{
+		Height: 400,
+		Hash:   "fee-tree-block",
+	}))
+	require.Equal(t, fp, got)
+}
+
+func TestOnNewBlockDispatcher_KeepsFeeTreeOnParamsError(t *testing.T) {
+	qc := &mockParamsQueryClient{}
+	dispatcher, _ := newRuntimeCacheTestDispatcher(t, qc)
+
+	called := false
+	dispatcher.applyFeeTree = func(*types.FeeParams) {
+		called = true
+	}
+	qc.On("Params", mock.Anything, mock.Anything).Return(nil, context.DeadlineExceeded).Once()
+
+	require.NoError(t, dispatcher.ProcessNewBlock(context.Background(), chainphase.BlockInfo{
+		Height: 401,
+		Hash:   "fee-tree-params-fail",
+	}))
+	require.False(t, called, "failed Params query must not wipe the last known-good fee cache")
+}
+
+func TestOnNewBlockDispatcher_AppliesNilFeeTreeFromParams(t *testing.T) {
+	qc := &mockParamsQueryClient{}
+	dispatcher, _ := newRuntimeCacheTestDispatcher(t, qc)
+
+	applied := false
+	var got *types.FeeParams
+	dispatcher.applyFeeTree = func(p *types.FeeParams) {
+		applied = true
+		got = p
+	}
+
+	resp := devshardParamsResponse(true, 1)
+	resp.Params.FeeParams = nil
+	qc.On("Params", mock.Anything, mock.Anything).Return(resp, nil).Once()
+
+	require.NoError(t, dispatcher.ProcessNewBlock(context.Background(), chainphase.BlockInfo{
+		Height: 402,
+		Hash:   "fee-tree-nil-params",
+	}))
+	require.True(t, applied, "successful Params with nil FeeParams must clear the cache")
+	require.Nil(t, got)
 }

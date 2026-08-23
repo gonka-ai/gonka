@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
@@ -34,6 +35,17 @@ import (
 	inference "github.com/productscience/inference/x/inference/module"
 	"github.com/productscience/inference/x/inference/types"
 )
+
+var bech32ConfigOnce sync.Once
+
+func ensureBech32Config() {
+	bech32ConfigOnce.Do(func() {
+		cfg := sdk.GetConfig()
+		cfg.SetBech32PrefixForAccount("gonka", "gonkapub")
+		cfg.SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
+		cfg.SetBech32PrefixForConsensusNode("gonkavalcons", "gonkavalconspub")
+	})
+}
 
 func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
 	ctrl := gomock.NewController(t)
@@ -186,7 +198,7 @@ func InferenceKeeperWithMock(
 	authzKeeper types.AuthzKeeper,
 	upgradeKeeper types.UpgradeKeeper,
 ) (keeper.Keeper, sdk.Context) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	ensureBech32Config()
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 	transientStoreKey := storetypes.NewTransientStoreKey(types.TransientStoreKey)
 	blsStoreKey := storetypes.NewKVStoreKey(blstypes.StoreKey)

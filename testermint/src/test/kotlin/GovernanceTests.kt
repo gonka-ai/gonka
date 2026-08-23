@@ -1,4 +1,3 @@
-import ValidationTests.Companion.alwaysValidate
 import com.productscience.EpochStage
 import com.productscience.data.UpdateParams
 import com.productscience.data.ProposalStatus
@@ -8,8 +7,6 @@ import com.productscience.data.Coin
 import com.productscience.data.InferenceState
 import com.productscience.data.GenesisOnlyParams
 import com.productscience.data.Decimal
-import com.productscience.data.MsgSend
-import com.productscience.data.MsgStartInference
 import com.productscience.data.MsgTransferWithVesting
 import com.productscience.inferenceConfig
 import com.productscience.initCluster
@@ -17,7 +14,6 @@ import com.productscience.logSection
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
-import kotlin.test.assertNotNull
 
 class GovernanceTests : TestermintTest() {
     @Test
@@ -144,43 +140,27 @@ class GovernanceTests : TestermintTest() {
 
     @Test
     fun `send gov funds to an account`() {
-        val (cluster, genesis) = initCluster(mergeSpec = alwaysValidate, reboot = true)
-        genesis.waitForNextEpoch()
-        cluster.allPairs.forEach { pair ->
-            pair.waitForMlNodesToLoad()
-        }
-        val helper = InferenceTestHelper(cluster, genesis)
-        val lateValidator = cluster.joinPairs.first()
-        val mlNodeVersionResponse = genesis.node.getMlNodeVersion()
-        val mlNodeVersion = mlNodeVersionResponse.mlnodeVersion.currentVersion
-        val segment = "/${mlNodeVersion}"
-        lateValidator.mock?.setInferenceErrorResponse(500, segment = segment)
-        logSection("Make sure we're in safe inference zone")
-        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS)
-        genesis.node.waitForNextBlock(3)
-        val lateValidatorBeforeBalance = lateValidator.node.getSelfBalance()
-        logSection("Use messages only for inference")
-        val seed = lateValidator.api.getConfig().currentSeed
-        val inference = helper.runFullInference()
-        logSection("Wait for claims")
-        genesis.waitForStage(EpochStage.CLAIM_REWARDS, 3)
-        // Both helpers should have validated and been rewarded
-        val updatedInference = genesis.node.getInference(inference.inferenceId)
-        // Only the other join should have validated
-        assertNotNull(updatedInference)
-        assertNotNull(updatedInference.inference)
-
-        assertThat(
-            updatedInference.inference.validatedBy ?: listOf()
-        ).doesNotContain(lateValidator.node.getColdAddress())
-        val afterBalance = lateValidator.node.getSelfBalance()
-        assertThat(afterBalance).isEqualTo(lateValidatorBeforeBalance)
-        logSection("Wait for claims to default to gov account")
-        genesis.waitForStage(EpochStage.CLAIM_REWARDS)
-        logSection("Submit Proposal to send funds")
+        val (cluster, genesis) = initCluster(reboot = true)
+        // The gov module account is intentionally not in the app's blocked-address
+        // list, so it can be funded with a plain bank send. (Previously this test
+        // funded it indirectly through classic-inference reward defaults, which
+        // were removed along with the classic inference flow.)
+        logSection("Funding governance module account")
         val governanceAddress = genesis.node.getModuleAccount("gov").account.value.address
-        val governanceBalance = genesis.node.getBalance(governanceAddress, "ngonka")
         val genesisAddress = genesis.node.getColdAddress()
+        // MsgTransferWithVesting enforces a 10-gonka minimum per transfer
+        // (streamvesting/types/msg_transfer_with_vesting.go), so the gov account
+        // must hold at least 10 gonka for the proposal below to execute.
+        val fundAmount = 10_000_000_000L
+        // Genesis cold wallet starts lean; wait for CLAIM_REWARDS income if needed.
+        genesis.ensureGenesisSpendableForDevshard(fundAmount)
+        val fundResp = genesis.submitTransaction(
+            listOf("bank", "send", genesisAddress, governanceAddress, "$fundAmount${genesis.config.denom}")
+        )
+        assertThat(fundResp.code).isEqualTo(0)
+        logSection("Submit Proposal to send funds")
+        val governanceBalance = genesis.node.getBalance(governanceAddress, "ngonka")
+        assertThat(governanceBalance.balance.amount).isGreaterThanOrEqualTo(fundAmount)
         val genesisBalance = genesis.node.getBalance(genesisAddress, "ngonka")
         val sendFunds = MsgTransferWithVesting(
             sender = governanceAddress,

@@ -67,6 +67,26 @@ services:
     networks:
       - chain-public
 
+  edge-api:
+    container_name: ${KEY_NAME}-edge-api
+    image: edge-api:latest
+    platform: ${DOCKER_PLATFORM:-linux/amd64}
+    build:
+      context: ${EDGE_API_BUILD_CONTEXT:-..}
+      dockerfile: edge-api/Dockerfile
+    environment:
+      - EDGE_API_PORT=18080
+      - CHAIN_GRPC_URL=${KEY_NAME}-node:9090
+      - CHAIN_RPC_URL=http://${KEY_NAME}-node:26657
+      - EDGE_API_OTEL_ENABLED=${EDGE_API_OTEL_ENABLED:-false}
+      - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
+      - OTEL_HEADERS=${OTEL_HEADERS:-}
+    depends_on:
+      - chain-node
+    networks:
+      - chain-public
+    restart: unless-stopped
+
   proxy:
     container_name: ${KEY_NAME}-proxy
     image: ghcr.io/product-science/proxy:latest
@@ -83,12 +103,15 @@ services:
       - CHAIN_API_PORT=${CHAIN_API_PORT:-1317}
       - CHAIN_GRPC_PORT=${CHAIN_GRPC_PORT:-9090}
       - GONKA_API_EXEMPT_ROUTES=${GONKA_API_EXEMPT_ROUTES:-chat inference poc/proofs devshard}
+      - EDGE_API_SERVICE_NAME=${EDGE_API_SERVICE_NAME:-edge-api}
+      - EDGE_API_PORT=${EDGE_API_PORT:-18080}
       - VERSIOND_SERVICE_NAME=${VERSIOND_SERVICE_NAME:-}
       - VERSIOND_PORT=${VERSIOND_PORT_INTERNAL:-8080}
       - DASHBOARD_PORT=${DASHBOARD_PORT}
     depends_on:
       - chain-node
       - api
+      - edge-api
     networks:
       - chain-public
     restart: unless-stopped
@@ -129,10 +152,8 @@ volumes:
   postgres-data:
 
 networks:
+  # Created by Testermint ensureChainPublicNetwork / long-lived testdns project
+  # (IPAM reserves .0–.127 for static addresses like test-dns=172.25.0.10).
   chain-public:
     name: chain-public
-    driver: bridge
-    ipam:
-      driver: default
-      config:
-        - subnet: 172.25.0.0/16
+    external: true

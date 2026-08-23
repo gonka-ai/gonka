@@ -70,7 +70,7 @@ Previously, the devshard runtime lived inside the main DAPI process. Upgrading d
 To solve this, v0.2.12 decouples devshards into a standalone, versioned runtime managed by a new service called `versiond`.
 
 - `versiond` automatically downloads and runs devshard binaries approved by on-chain governance.
-- Multiple devshard versions can run side-by-side. Traffic to `/devshard/<version>/*` is routed to the corresponding binary, while the legacy `/v1/devshard/*` route remains active during the transition.
+- Multiple devshard versions can run side-by-side. Traffic to `/devshard/<version>/*` is routed to the corresponding binary.
 - The standalone devshard directly communicates with MLNodes during inference but does not manage their lifecycle, cleanly separating the roles of MLNode manager (DAPI) and client.
 - Each session is cryptographically bound to the specific binary version that served it. The settlement payload now includes a cleartext `version` field, ensuring a session cannot mix responses from different versions.
 - The term "subnet" is entirely replaced by "devshard" across the codebase. Additionally, float math in devshard settlement has been replaced with deterministic integer arithmetic to eliminate consensus-failure risks.

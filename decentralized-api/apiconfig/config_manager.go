@@ -1,9 +1,9 @@
 package apiconfig
 
 import (
+	"common/logging"
 	"context"
 	"database/sql"
-	"decentralized-api/logging"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -26,19 +26,20 @@ import (
 )
 
 type ConfigManager struct {
-	currentConfig            Config
-	KoanProvider             koanf.Provider
-	WriterProvider           WriteCloserProvider
-	sqlDb                    SqlDatabase
-	mutex                    sync.RWMutex
-	runtimePublishMu         sync.RWMutex
-	runtimePublished         runtimePublishedMarker
-	runtimeParamsBlockHeight int64 // last published revision height; guarded by runtimePublishMu
-	runtimeConfigNotifier    *RuntimeConfigNotifier
-	epochOnChangeMu          sync.Mutex
-	epochOnChange            EpochChangeListener // optional; set once at process startup
-	configDumpPath           string
-	sqlitePath               string
+	currentConfig             Config
+	KoanProvider              koanf.Provider
+	WriterProvider            WriteCloserProvider
+	sqlDb                     SqlDatabase
+	modelValidationThresholds []ModelValidationThreshold
+	mutex                     sync.RWMutex
+	runtimePublishMu          sync.RWMutex
+	runtimePublished          runtimePublishedMarker
+	runtimeParamsBlockHeight  int64 // last published revision height; guarded by runtimePublishMu
+	runtimeConfigNotifier     *RuntimeConfigNotifier
+	epochOnChangeMu           sync.Mutex
+	epochOnChange             EpochChangeListener // optional; set once at process startup
+	configDumpPath            string
+	sqlitePath                string
 }
 
 type WriteCloserProvider interface {
@@ -143,6 +144,12 @@ func (cm *ConfigManager) GetChainNodeConfig() ChainNodeConfig {
 	return cm.currentConfig.ChainNode
 }
 
+func (cm *ConfigManager) GetEarlyShareGuardConfig() EarlyShareGuardConfig {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	return cm.currentConfig.EarlyShareGuard
+}
+
 func (cm *ConfigManager) GetApiConfig() ApiConfig {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
@@ -159,12 +166,6 @@ func (cm *ConfigManager) GetTxBatchingConfig() TxBatchingConfig {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
 	cfg := cm.currentConfig.TxBatching
-	if cfg.FlushSize == 0 {
-		cfg.FlushSize = 50
-	}
-	if cfg.FlushTimeoutSeconds == 0 {
-		cfg.FlushTimeoutSeconds = 5
-	}
 	if cfg.ValidationV2FlushSize == 0 {
 		cfg.ValidationV2FlushSize = 10
 	}
@@ -334,15 +335,18 @@ func (cm *ConfigManager) liveRuntimeConfigContent() runtimeConfigContent {
 	dv := cm.currentConfig.DevshardVersionsCache
 	versions := make([]DevshardVersion, len(dv.Versions))
 	copy(versions, dv.Versions)
+	thresholds := make([]ModelValidationThreshold, len(cm.modelValidationThresholds))
+	copy(thresholds, cm.modelValidationThresholds)
 	return runtimeConfigContent{
-		LogprobsMode:            vp.LogprobsMode,
-		DevshardRequestsEnabled: dv.DevshardRequestsEnabled,
-		MaxNonce:                dv.MaxNonce,
-		ApprovedVersions:        versions,
-		RefusalTimeout:          dv.RefusalTimeout,
-		ExecutionTimeout:        dv.ExecutionTimeout,
-		ValidationRate:          dv.ValidationRate,
-		VoteThresholdFactor:     dv.VoteThresholdFactor,
+		LogprobsMode:              vp.LogprobsMode,
+		DevshardRequestsEnabled:   dv.DevshardRequestsEnabled,
+		MaxNonce:                  dv.MaxNonce,
+		ApprovedVersions:          versions,
+		RefusalTimeout:            dv.RefusalTimeout,
+		ExecutionTimeout:          dv.ExecutionTimeout,
+		ValidationRate:            dv.ValidationRate,
+		VoteThresholdFactor:       dv.VoteThresholdFactor,
+		ModelValidationThresholds: thresholds,
 	}
 }
 
@@ -440,6 +444,28 @@ func (cm *ConfigManager) GetDevshardVersions() DevshardVersionsCache {
 	cm.mutex.RLock()
 	defer cm.mutex.RUnlock()
 	return cm.currentConfig.DevshardVersionsCache
+}
+
+// SetModelValidationThresholds replaces the cached per-model validation
+// thresholds for the current epoch. Published on the next
+// ApplyRuntimeConfigBlockIfChanged when content changes.
+func (cm *ConfigManager) SetModelValidationThresholds(thresholds []ModelValidationThreshold) {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	cp := make([]ModelValidationThreshold, len(thresholds))
+	copy(cp, thresholds)
+	cm.modelValidationThresholds = cp
+	logging.Debug("runtime_config: model validation thresholds refreshed", types.Config,
+		"count", len(cp))
+}
+
+// GetModelValidationThresholds returns a copy of the cached per-model thresholds.
+func (cm *ConfigManager) GetModelValidationThresholds() []ModelValidationThreshold {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+	cp := make([]ModelValidationThreshold, len(cm.modelValidationThresholds))
+	copy(cp, cm.modelValidationThresholds)
+	return cp
 }
 
 func (cm *ConfigManager) GetHeight() int64 {
@@ -608,7 +634,11 @@ func readConfig(provider koanf.Provider) (Config, error) {
 	if err != nil {
 		log.Fatalf("error loading env: %v", err)
 	}
-	var config Config
+	// Pre-seed early-share guard defaults so any field absent from yaml/env keeps
+	// its default while explicitly-set values override. koanf unmarshals with
+	// ZeroFields=false, so only keys actually present overwrite these. This is
+	// the single defaulting mechanism for the guard (works for the bool too).
+	config := Config{EarlyShareGuard: DefaultEarlyShareGuardConfig()}
 	err = k.Unmarshal("", &config)
 	if err != nil {
 		log.Fatalf("error unmarshalling config: %v", err)

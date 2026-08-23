@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"strings"
 
+	"decentralized-api/poc/earlyshare"
+
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -28,6 +30,7 @@ type Config struct {
 	PoCParams                PoCParamsCache           `koanf:"poc_params" json:"poc_params"`
 	TransferAgentAccessCache TransferAgentAccessCache `koanf:"-" json:"-"` // not persisted, synced from chain
 	DevshardVersionsCache    DevshardVersionsCache    `koanf:"-" json:"-"` // not persisted, synced from chain
+	EarlyShareGuard          EarlyShareGuardConfig    `koanf:"early_share_guard" json:"early_share_guard"`
 }
 
 type NatsServerConfig struct {
@@ -38,8 +41,6 @@ type NatsServerConfig struct {
 
 type TxBatchingConfig struct {
 	Disabled                        bool `koanf:"disabled" json:"disabled"`
-	FlushSize                       int  `koanf:"flush_size" json:"flush_size"`
-	FlushTimeoutSeconds             int  `koanf:"flush_timeout_seconds" json:"flush_timeout_seconds"`
 	ValidationV2FlushSize           int  `koanf:"validation_v2_flush_size" json:"validation_v2_flush_size"`
 	ValidationV2FlushTimeoutSeconds int  `koanf:"validation_v2_flush_timeout_seconds" json:"validation_v2_flush_timeout_seconds"`
 	PocCommitIntervalSeconds        int  `koanf:"poc_commit_interval_seconds" json:"poc_commit_interval_seconds"`
@@ -71,6 +72,10 @@ type ApiConfig struct {
 	TestMode                  bool   `koanf:"test_mode" json:"test_mode"`
 	NodeManagerGrpcPort       int    `koanf:"node_manager_grpc_port" json:"node_manager_grpc_port"`
 	NodeManagerLockTTLSeconds int    `koanf:"node_manager_lock_ttl_seconds" json:"node_manager_lock_ttl_seconds"`
+	// MLNodeMetricsDisabled turns off the public /v1/mlnodes/metrics
+	// federation endpoint (env: DAPI_API__MLNODE_METRICS_DISABLED=true).
+	// Default (zero value) keeps it enabled.
+	MLNodeMetricsDisabled bool `koanf:"mlnode_metrics_disabled" json:"mlnode_metrics_disabled"`
 }
 
 type ChainNodeConfig struct {
@@ -252,21 +257,21 @@ func (p PoCParamsCache) GetModelConfig(modelID string) (PoCModelConfigCache, boo
 type DevshardVersionsCache struct {
 	// Versions are approved devshard binaries (`name`, download URL, sha256)
 	// used by versiond/routing policy.
-	Versions                          []DevshardVersion `json:"versions"`
+	Versions []DevshardVersion `json:"versions"`
 	// DevshardRequestsEnabled is the live governance kill-switch for host-side
 	// completion/timeout request handling.
-	DevshardRequestsEnabled bool              `json:"devshard_requests_enabled"`
+	DevshardRequestsEnabled bool `json:"devshard_requests_enabled"`
 	// MaxNonce is the chain upper bound for session nonces.
-	MaxNonce                          uint32            `json:"max_nonce"`
+	MaxNonce uint32 `json:"max_nonce"`
 	// RefusalTimeout is the live refusal timeout used by runtime-config consumers (seconds).
-	RefusalTimeout                    int64             `json:"refusal_timeout"`
+	RefusalTimeout int64 `json:"refusal_timeout"`
 	// ExecutionTimeout is the live execution timeout used by runtime-config consumers (seconds).
-	ExecutionTimeout                  int64             `json:"execution_timeout"`
+	ExecutionTimeout int64 `json:"execution_timeout"`
 	// ValidationRate is the validation sampling rate in basis points (0..10000).
-	ValidationRate                    uint32            `json:"validation_rate"`
+	ValidationRate uint32 `json:"validation_rate"`
 	// VoteThresholdFactor is the vote threshold factor in percent (1..100),
 	// converted to slot threshold at bind time.
-	VoteThresholdFactor               uint32            `json:"vote_threshold_factor"`
+	VoteThresholdFactor uint32 `json:"vote_threshold_factor"`
 }
 
 // DevshardVersion describes a single approved devshard binary.
@@ -280,4 +285,43 @@ type DevshardVersion struct {
 type TransferAgentAccessCache struct {
 	AllowedAddresses map[string]struct{} // O(1) lookup
 	IsEnabled        bool                // true if whitelist is non-empty
+}
+
+// EarlyShareGuardConfig configures the DAPI-only early PoC share guard. It
+// runs in enforce mode by default (set mode to "observe" or "disabled" to opt
+// out); see proposals/poc/early-share-guard-dapi.md. The guard
+// captures early on-chain PoC v2 commitments near the first fraction of the
+// generation window and compares them to final commitments during validation.
+type EarlyShareGuardConfig struct {
+	// Mode is one of "disabled", "observe", or "enforce". Empty means disabled.
+	Mode string `koanf:"mode" json:"mode"`
+	// FirstFraction is the fraction of the generation window at which the early
+	// checkpoint is captured (default 1/3). Must be in (0,1).
+	FirstFraction float64 `koanf:"first_fraction" json:"first_fraction"`
+	// ThresholdRatio multiplies the weighted-median early share to derive the
+	// per-stage pass threshold (default 0.5).
+	ThresholdRatio float64 `koanf:"threshold_ratio" json:"threshold_ratio"`
+	// RequireInclusionProof enables the early-vs-final nonce inclusion check.
+	// Defaults to true (set during config load via key existence); set
+	// require_inclusion_proof=false explicitly to disable.
+	RequireInclusionProof bool `koanf:"require_inclusion_proof" json:"require_inclusion_proof"`
+	// InclusionSampleSize is the number of early leaves checked for final-tree
+	// inclusion. It is clamped by the earlyshare package.
+	InclusionSampleSize int `koanf:"inclusion_sample_size" json:"inclusion_sample_size"`
+}
+
+// DefaultEarlyShareGuardConfig returns the guard defaults. It is used to
+// pre-seed the config before koanf unmarshalling so that any field absent from
+// yaml/env keeps its default, while explicitly-set values (including
+// require_inclusion_proof=false) override. Defaults live once in the earlyshare
+// package to keep a single source of truth.
+func DefaultEarlyShareGuardConfig() EarlyShareGuardConfig {
+	d := earlyshare.DefaultConfig()
+	return EarlyShareGuardConfig{
+		Mode:                  string(d.Mode),
+		FirstFraction:         d.FirstFraction,
+		ThresholdRatio:        d.ThresholdRatio,
+		RequireInclusionProof: d.RequireInclusionProof,
+		InclusionSampleSize:   d.InclusionSampleSize,
+	}
 }

@@ -13,28 +13,37 @@ import (
 
 func (k Keeper) GetRandomExecutor(goCtx context.Context, req *types.QueryGetRandomExecutorRequest) (*types.QueryGetRandomExecutorResponse, error) {
 	if req == nil {
-		k.Logger().Error("GetRandomExecutor: received nil request")
+		k.LogError("Received nil request", types.EpochGroup)
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
 
-	k.Logger().Info("GetRandomExecutor: Starting executor selection",
+	k.LogDebug("GetRandomExecutor: Starting executor selection", types.EpochGroup,
 		"model_id", req.Model)
 
 	filterFn, err := k.createFilterFn(goCtx, req.Model)
 	if err != nil {
-		k.Logger().Error("GetRandomExecutor: failed to create filter function",
+		k.LogError("GetRandomExecutor: failed to create filter function", types.EpochGroup,
 			"model_id", req.Model, "error", err.Error())
 		return nil, err
 	}
 
+	// Wrap filter to exclude participants in active maintenance windows.
+	// Maintenance-covered participants remain in epoch groups but must not
+	// receive new inference assignments during their maintenance window.
+	originalFilter := filterFn
+	filterFn = func(members []*group.GroupMember) []*group.GroupMember {
+		filtered := originalFilter(members)
+		return k.filterOutMaintenanceParticipants(goCtx, filtered)
+	}
+
 	epochGroup, err := k.GetCurrentEpochGroup(goCtx)
 	if err != nil {
-		k.Logger().Error("GetRandomExecutor: failed to get current epoch group",
+		k.LogError("GetRandomExecutor: failed to get current epoch group", types.EpochGroup,
 			"model_id", req.Model, "error", err.Error())
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	k.Logger().Info("GetRandomExecutor: Retrieved epoch group",
+	k.LogDebug("GetRandomExecutor: Retrieved epoch group", types.EpochGroup,
 		"model_id", req.Model, "epoch_id", epochGroup.GroupData.EpochIndex)
 
 	modelFound := false
@@ -50,12 +59,12 @@ func (k Keeper) GetRandomExecutor(goCtx context.Context, req *types.QueryGetRand
 
 	participant, err := epochGroup.GetRandomMemberForModel(goCtx, req.Model, filterFn)
 	if err != nil {
-		k.Logger().Error("GetRandomExecutor: failed to get random member",
+		k.LogError("GetRandomExecutor: failed to get random member", types.EpochGroup,
 			"model_id", req.Model, "error", err.Error())
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 
-	k.Logger().Info("GetRandomExecutor: Selected participant",
+	k.LogDebug("GetRandomExecutor: Selected participant", types.EpochGroup,
 		"model_id", req.Model, "participant_address", participant.Address)
 
 	return &types.QueryGetRandomExecutorResponse{
@@ -66,12 +75,12 @@ func (k Keeper) GetRandomExecutor(goCtx context.Context, req *types.QueryGetRand
 func (k Keeper) createFilterFn(goCtx context.Context, modelId string) (func(members []*group.GroupMember) []*group.GroupMember, error) {
 	sdkCtx := sdk.UnwrapSDKContext(goCtx)
 
-	k.Logger().Info("GetRandomExecutor: createFilterFn: Starting filter creation",
+	k.LogDebug("GetRandomExecutor: createFilterFn: Starting filter creation", types.EpochGroup,
 		"model_id", modelId, "block_height", sdkCtx.BlockHeight())
 
 	effectiveEpoch, found := k.GetEffectiveEpoch(goCtx)
 	if !found || effectiveEpoch == nil {
-		k.Logger().Error("GetRandomExecutor: createFilterFn: no effective epoch found",
+		k.LogError("GetRandomExecutor: createFilterFn: no effective epoch found", types.EpochGroup,
 			"model_id", modelId)
 		return nil, status.Error(codes.Unavailable, "GetRandomExecutor: no effective epoch found")
 	}
@@ -81,27 +90,27 @@ func (k Keeper) createFilterFn(goCtx context.Context, modelId string) (func(memb
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	if epochParams.EpochParams == nil {
-		k.Logger().Error("GetRandomExecutor: createFilterFn: epoch params are nil",
+		k.LogError("GetRandomExecutor: createFilterFn: epoch params are nil", types.EpochGroup,
 			"model_id", modelId, "epoch_index", effectiveEpoch.Index)
 		return nil, status.Error(codes.Unavailable, "GetRandomExecutor: epoch params are nil")
 	}
 
 	epochContext, err := types.NewEpochContextFromEffectiveEpoch(*effectiveEpoch, *epochParams.EpochParams, sdkCtx.BlockHeight())
 	if err != nil {
-		k.Logger().Error("GetRandomExecutor: createFilterFn: failed to create epoch context",
+		k.LogError("GetRandomExecutor: createFilterFn: failed to create epoch context", types.EpochGroup,
 			"model_id", modelId, "epoch_index", effectiveEpoch.Index, "error", err.Error())
 		return nil, status.Error(codes.Internal, err.Error())
 	}
 	currentPhase := epochContext.GetCurrentPhase(sdkCtx.BlockHeight())
 
-	k.Logger().Info("GetRandomExecutor: createFilterFn: Determined current phase",
+	k.LogDebug("GetRandomExecutor: createFilterFn: Determined current phase", types.EpochGroup,
 		"model_id", modelId, "current_phase", string(currentPhase),
 		"epoch_index", effectiveEpoch.Index, "latest_epoch_index", epochContext.EpochIndex,
 		"block_height", sdkCtx.BlockHeight(), "set_new_validators_block_height", epochContext.SetNewValidators())
 
 	_, isActive, err := k.GetActiveConfirmationPoCEvent(goCtx)
 	if err != nil {
-		k.Logger().Error("GetRandomExecutor: createFilterFn: failed to check confirmation PoC",
+		k.LogError("GetRandomExecutor: createFilterFn: failed to check confirmation PoC", types.EpochGroup,
 			"model_id", modelId, "error", err.Error())
 		return nil, status.Error(codes.Internal, err.Error())
 	}

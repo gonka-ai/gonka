@@ -1,0 +1,47 @@
+{
+  "version": "0.2.0",
+  "comment": [
+    "Drop-in launch.json for VS Code / Cursor remote attach to testenv dlv.",
+    "Copy into .vscode/launch.json or merge the configurations into your own.",
+    "Requires `make gen-compose && make dev-up` (dev overlay).",
+    "mock-chain dlv :2345; mock-dapi dlv :2346; mock-openai dlv :2347."
+  ],
+  "configurations": [
+    {
+      "name": "Attach: mock-chain",
+      "type": "go",
+      "request": "attach",
+      "mode": "remote",
+      "host": "127.0.0.1",
+      "port": 2345,
+      "remotePath": "/workspace",
+      "substitutePath": [
+        { "from": "${workspaceFolder}", "to": "/workspace" }
+      ]
+    },
+    {
+      "name": "Attach: mock-dapi",
+      "type": "go",
+      "request": "attach",
+      "mode": "remote",
+      "host": "127.0.0.1",
+      "port": 2346,
+      "remotePath": "/workspace",
+      "substitutePath": [
+        { "from": "${workspaceFolder}", "to": "/workspace" }
+      ]
+    },
+    {
+      "name": "Attach: mock-openai",
+      "type": "go",
+      "request": "attach",
+      "mode": "remote",
+      "host": "127.0.0.1",
+      "port": 2347,
+      "remotePath": "/workspace",
+      "substitutePath": [
+        { "from": "${workspaceFolder}", "to": "/workspace" }
+      ]
+    }
+  ]
+}
