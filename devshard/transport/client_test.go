@@ -112,6 +112,24 @@ func TestHTTPClient_Send_ReturnsUpstreamStatusError(t *testing.T) {
 	require.Contains(t, statusErr.Body, "bad signature")
 }
 
+func TestHTTPClient_Send_CapturesDevshardErrorHeader(t *testing.T) {
+	userSigner := testutil.MustGenerateKey(t)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(HeaderDevshardError, DevshardErrorEscrowSettled)
+		http.Error(w, "escrow already settled: escrow 1", http.StatusConflict)
+	}))
+	t.Cleanup(ts.Close)
+
+	client := NewHTTPClient(ts.URL, "escrow-1", userSigner)
+	_, err := client.Send(context.Background(), host.HostRequest{Nonce: 1}, nil, nil)
+	require.Error(t, err)
+
+	var statusErr *UpstreamStatusError
+	require.True(t, errors.As(err, &statusErr))
+	require.Equal(t, DevshardErrorEscrowSettled, statusErr.DevshardError)
+	require.True(t, IsUpstreamEscrowSettled(err))
+}
+
 func TestHTTPClient_Send_NoPayloadUsesQueryTimeout(t *testing.T) {
 	signer := testutil.MustGenerateKey(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

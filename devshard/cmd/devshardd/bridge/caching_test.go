@@ -67,6 +67,15 @@ func TestCachingEscrowBridge_ReturnsLiveErrOnCacheMiss(t *testing.T) {
 	require.ErrorIs(t, err, liveErr)
 }
 
+func TestCachingEscrowBridge_PassesThroughSettledFromChain(t *testing.T) {
+	inner := &fakeBridge{escrow: &bridge.EscrowInfo{EscrowID: "1", Settled: true}}
+	b := NewCachingEscrowBridge(inner, &fakeCacheStore{err: storage.ErrEscrowCacheNotFound}, nil)
+
+	got, err := b.GetEscrow("1")
+	require.NoError(t, err)
+	require.True(t, got.Settled)
+}
+
 func TestEscrowCacheRoundTrip(t *testing.T) {
 	in := &bridge.EscrowInfo{
 		EscrowID: "2", Amount: 1, CreatorAddress: "c", Slots: []string{"a", "b"},

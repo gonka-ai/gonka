@@ -217,6 +217,10 @@ func (m *HostManager) BindOwnerChat(c echo.Context) (*transport.Server, error) {
 	if escrow == nil || escrow.CreatorAddress == "" || addr != escrow.CreatorAddress {
 		return nil, echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
 	}
+	if escrow.Settled {
+		m.rememberResolutionFailure(escrowID, bridge.ErrEscrowSettled, time.Now())
+		return nil, fmt.Errorf("%w: escrow %s", bridge.ErrEscrowSettled, escrowID)
+	}
 
 	// Pass the already-fetched escrow so create() does not GetEscrow again.
 	srv, err = m.getOrCreate(escrowID, escrow)
@@ -242,15 +246,16 @@ func (m *HostManager) HandleSettlementFinalized(escrowID string) error {
 		observability.DeleteEscrowMetrics(escrowID)
 	}
 
+	// Negative-cache so a concurrent/next bind does not recoverStoredSession
+	// the just-settled row (getOrCreate also rejects non-active meta).
+	m.rememberResolutionFailure(escrowID, bridge.ErrEscrowSettled, time.Now())
+
 	if err := m.store.MarkSettled(escrowID); err != nil {
 		if errors.Is(err, storage.ErrSessionNotFound) && !hadSession {
 			return nil
 		}
 		return err
 	}
-	// Negative-cache so a concurrent/next bind does not recoverStoredSession
-	// the just-settled row (getOrCreate also rejects non-active meta).
-	m.rememberResolutionFailure(escrowID, storage.ErrSessionNotActive, time.Now())
 	return nil
 }
 
@@ -276,7 +281,11 @@ func (m *HostManager) getOrCreate(escrowID string, escrow *bridge.EscrowInfo) (*
 		// Prefer recovering an already-bound session over CreateSession.
 		srv, err := m.recoverStoredSession(escrowID)
 		if err == nil {
-			return m.storeSessionIfAbsent(escrowID, srv), nil
+			installed, storeErr := m.storeSessionIfAbsent(escrowID, srv)
+			if storeErr != nil {
+				return nil, storeErr
+			}
+			return installed, nil
 		}
 		if !errors.Is(err, storage.ErrSessionNotFound) {
 			return nil, err
@@ -287,7 +296,11 @@ func (m *HostManager) getOrCreate(escrowID string, escrow *bridge.EscrowInfo) (*
 			return nil, err
 		}
 
-		return m.storeSessionIfAbsent(escrowID, srv), nil
+		installed, storeErr := m.storeSessionIfAbsent(escrowID, srv)
+		if storeErr != nil {
+			return nil, storeErr
+		}
+		return installed, nil
 	})
 
 	if err != nil {
@@ -339,20 +352,44 @@ func isPermanentResolutionFailure(err error) bool {
 	return errors.Is(err, storage.ErrSessionVersionConflict) ||
 		errors.Is(err, storage.ErrSessionEpochConflict) ||
 		errors.Is(err, storage.ErrEpochPruned) ||
-		errors.Is(err, storage.ErrSessionNotActive)
+		errors.Is(err, storage.ErrSessionNotActive) ||
+		errors.Is(err, bridge.ErrEscrowSettled)
 }
 
-func (m *HostManager) storeSessionIfAbsent(escrowID string, srv *transport.Server) *transport.Server {
+// storeSessionIfAbsent installs srv unless the escrow was settled while the
+// caller was building it. The settled tombstone is re-checked under
+// sessionsMutex so a settlement racing create/recover cannot be erased by the
+// unconditional resolutionFailures delete below.
+func (m *HostManager) storeSessionIfAbsent(escrowID string, srv *transport.Server) (*transport.Server, error) {
+	installed, settled := m.installSession(escrowID, srv, time.Now())
+	if settled {
+		srv.Host().Close()
+		if err := m.store.MarkSettled(escrowID); err != nil && !errors.Is(err, storage.ErrSessionNotFound) {
+			logging.Error("failed to mark racing session settled", inferenceTypes.System,
+				"escrow_id", escrowID, "error", err)
+		}
+		return nil, fmt.Errorf("%w: escrow %s", bridge.ErrEscrowSettled, escrowID)
+	}
+	if installed != srv {
+		srv.Host().Close()
+	}
+	return installed, nil
+}
+
+func (m *HostManager) installSession(escrowID string, srv *transport.Server, now time.Time) (*transport.Server, bool) {
 	m.sessionsMutex.Lock()
 	defer m.sessionsMutex.Unlock()
 	if existing, ok := m.sessions[escrowID]; ok {
-		srv.Host().Close()
-		return existing
+		return existing, false
+	}
+	if cached, ok := m.resolutionFailures[escrowID]; ok &&
+		now.Before(cached.expiresAt) && errors.Is(cached.err, bridge.ErrEscrowSettled) {
+		return nil, true
 	}
 	delete(m.resolutionFailures, escrowID)
 	m.sessions[escrowID] = srv
 	srv.Host().Start()
-	return srv
+	return srv, false
 }
 
 // EvictBefore drops in-memory sessions whose epoch is below cutoffEpoch and
@@ -390,6 +427,9 @@ func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*trans
 		if err != nil {
 			return nil, fmt.Errorf("get escrow: %w", err)
 		}
+	}
+	if escrow.Settled {
+		return nil, fmt.Errorf("%w: escrow %s", bridge.ErrEscrowSettled, escrowID)
 	}
 
 	group, err := bridge.BuildGroupFromEscrow(escrow)
@@ -483,7 +523,11 @@ func (m *HostManager) recoverAndStoreSession(escrowID string) (*transport.Server
 		if err != nil {
 			return nil, err
 		}
-		return m.storeSessionIfAbsent(escrowID, srv), nil
+		installed, storeErr := m.storeSessionIfAbsent(escrowID, srv)
+		if storeErr != nil {
+			return nil, storeErr
+		}
+		return installed, nil
 	})
 	if err != nil {
 		return nil, err

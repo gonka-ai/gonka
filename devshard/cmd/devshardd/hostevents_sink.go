@@ -16,16 +16,17 @@ import (
 // It uses the live (non-caching) bridge so the warm write always reflects chain
 // truth; the caching bridge is only used on the read/bind side.
 type escrowWarmSink struct {
-	bridge bridge.MainnetBridge
-	store  devshardstorage.Storage
-	log    *slog.Logger
+	bridge    bridge.MainnetBridge
+	store     devshardstorage.Storage
+	log       *slog.Logger
+	onSettled func(escrowID string) error
 }
 
-func newEscrowWarmSink(b bridge.MainnetBridge, store devshardstorage.Storage, log *slog.Logger) *escrowWarmSink {
+func newEscrowWarmSink(b bridge.MainnetBridge, store devshardstorage.Storage, log *slog.Logger, onSettled func(string) error) *escrowWarmSink {
 	if log == nil {
 		log = slog.Default()
 	}
-	return &escrowWarmSink{bridge: b, store: store, log: log}
+	return &escrowWarmSink{bridge: b, store: store, log: log, onSettled: onSettled}
 }
 
 // WarmEscrow fetches escrow metadata from chain and caches it for lazy bind.
@@ -34,6 +35,10 @@ func (s *escrowWarmSink) WarmEscrow(escrowID string) error {
 	if err != nil {
 		return fmt.Errorf("warm escrow %s: %w", escrowID, err)
 	}
+	if info.Settled {
+		s.log.Debug("hostevents: skipping warm of settled escrow", "escrow_id", escrowID)
+		return s.OnEscrowSettled(escrowID)
+	}
 	if err := s.store.PutEscrowCache(devshardbridge.EscrowCacheFromInfo(info)); err != nil {
 		return fmt.Errorf("cache escrow %s: %w", escrowID, err)
 	}
@@ -41,12 +46,19 @@ func (s *escrowWarmSink) WarmEscrow(escrowID string) error {
 	return nil
 }
 
-// OnEscrowSettled drops the warm cache row for a settled escrow.
+// OnEscrowSettled drops the warm cache row and finalizes any live session so a
+// missed websocket event cannot leave a settled escrow serving inference.
 func (s *escrowWarmSink) OnEscrowSettled(escrowID string) error {
 	if err := s.store.DeleteEscrowCache(escrowID); err != nil {
 		return fmt.Errorf("drop escrow cache %s: %w", escrowID, err)
 	}
 	s.log.Debug("hostevents: dropped settled escrow from cache", "escrow_id", escrowID)
+	if s.onSettled == nil {
+		return nil
+	}
+	if err := s.onSettled(escrowID); err != nil {
+		return fmt.Errorf("finalize settled escrow %s: %w", escrowID, err)
+	}
 	return nil
 }
 
