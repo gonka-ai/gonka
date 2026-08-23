@@ -226,9 +226,8 @@ func TestHeightSyncDivergence_InferenceFlowNeverBlocked(t *testing.T) {
 // it can read F(m) out of the log it already applies. Under the earlier design
 // it was forced into ORACLE_UNAVAILABLE with no usable stamp and became a hole
 // in the roster's cadence; now it answers, the turn completes, and its
-// uselessness as a height *witness* is recorded in the label instead — where
-// (C-quorum), which reads envelope anchors and has none from it, already accounts
-// for it.
+// uselessness as a height *witness* is recorded in the label instead — the
+// slot contributes no envelope anchor for dispute / alignment evidence.
 func TestHeightSyncDivergence_DeadOracleStillCarriesTime(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),

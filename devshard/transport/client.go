@@ -95,9 +95,6 @@ type ClientConfig struct {
 	// HeightSyncRequestMutateHook runs after Decide and peer-tip carry-forward,
 	// before the request is marshaled. Tests / debug only.
 	HeightSyncRequestMutateHook func(sec *heightsync.HeightSyncSection, nonce uint64)
-	// HeightSyncConfirmation is a shared confirmation index across session HTTP
-	// clients when height sync is enabled.
-	HeightSyncConfirmation *heightsync.ConfirmationIndex
 }
 
 // RequestAdmissionController can reject participant-bound transport
@@ -207,9 +204,6 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 	}
 	if cfg.HeightSync != nil {
 		hc.heightSyncAudit = heightsync.NewAuditRing(0)
-		if cfg.HeightSyncConfirmation != nil {
-			hc.heightSyncAudit.AttachConfirmation(cfg.HeightSyncConfirmation)
-		}
 	}
 	if cfg.HeightSyncPeerTips != nil {
 		hc.heightSyncPeerTips = cfg.HeightSyncPeerTips

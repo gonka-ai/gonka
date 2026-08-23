@@ -115,7 +115,6 @@ func NewServer(
 	for _, o := range opts {
 		o(s)
 	}
-	s.attachHeightSyncConfirmation()
 	return s, nil
 }
 

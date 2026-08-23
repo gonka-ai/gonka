@@ -175,3 +175,11 @@ func assertFieldNum(t *testing.T, md protoreflect.MessageDescriptor, name string
 	require.NotNil(t, fd, "missing field %s", name)
 	require.Equal(t, want, fd.Number(), "field %s", name)
 }
+
+func TestQuorumForRoster(t *testing.T) {
+	require.Equal(t, 0, heightsync.QuorumForRoster(0))
+	require.Equal(t, 1, heightsync.QuorumForRoster(1))
+	require.Equal(t, 2, heightsync.QuorumForRoster(2))
+	require.Equal(t, 3, heightsync.QuorumForRoster(4))
+	require.Equal(t, 7, heightsync.QuorumForRoster(10))
+}

@@ -196,9 +196,6 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 			if cfg.ExtraClientConfig.HeightSyncRequestMutateHook != nil {
 				cc.HeightSyncRequestMutateHook = cfg.ExtraClientConfig.HeightSyncRequestMutateHook
 			}
-			if cfg.ExtraClientConfig.HeightSyncConfirmation != nil {
-				cc.HeightSyncConfirmation = cfg.ExtraClientConfig.HeightSyncConfirmation
-			}
 		}
 		var clientCfgs []transport.ClientConfig
 		if cfg.StreamCallback != nil || routePrefix != "" || cfg.RequestAdmission != nil || cfg.ExtraClientConfig != nil {

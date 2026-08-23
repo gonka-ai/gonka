@@ -53,8 +53,8 @@ type SyncTurnRecord struct {
 // by session length.
 const DefaultTurnRetain uint64 = 64
 
-// TurnTracker folds heartbeat + ack txs into SyncTurnRecords. Q is the same
-// knob as (C-quorum); there is no second quorum parameter.
+// TurnTracker folds heartbeat + ack txs into SyncTurnRecords. Q is the turn
+// reachability threshold (ceil(2/3 × slots)); it is not a height certificate.
 type TurnTracker struct {
 	slotsNum        uint64
 	quorum          int
@@ -307,13 +307,11 @@ func (t *TurnTracker) windowClosed(rec *SyncTurnRecord, hNow uint64) bool {
 // countingAcks counts the acks that hold up this turn: any in-window ack from a
 // distinct slot, whatever it says about its oracle.
 //
-// sync_state used to gate this, because completion fed (C-turn) and an
-// ORACLE_UNAVAILABLE slot is no height witness. With (C-turn) withdrawn (spec
-// §17) completion certifies only that Q slots were reachable and applying the
-// log, which such a slot proves exactly as well as a SYNCED one — it echoes
-// F(m) from the log it already has, and contributes no envelope anchor, so
-// (C-quorum) is untouched. Excluding it instead made an honest host with a dead
-// follower a permanent hole in the roster's cadence.
+// sync_state used to gate this when turn completion was mistaken for a height
+// certificate. Completion now certifies only that Q slots were reachable and
+// applying the log, which an ORACLE_UNAVAILABLE slot proves as well as a SYNCED
+// one — it echoes F(m) from the log it already has. Excluding it instead made
+// an honest host with a dead follower a permanent hole in the roster's cadence.
 func (t *TurnTracker) countingAcks(rec *SyncTurnRecord) int {
 	n := 0
 	for _, a := range rec.Acks {
@@ -550,10 +548,9 @@ func HeartbeatNonceForSlot(spanStart uint64, slot, slotsNum uint32) uint64 {
 
 // CompletedAtOrAbove reports whether some turn completed carrying height ≥ h.
 //
-// This is bookkeeping for operators, not a confirmation predicate: it was once
-// (C-turn), which is withdrawn (see ConfirmationRule.RuleTurn). Q acks at ≥ h
-// can all be one originator's claim lifted from the floor, so this says a turn
-// closed while that height was in the air — never that h happened.
+// This is bookkeeping for operators, not a confirmation predicate. Q acks at
+// ≥ h can all be one originator's claim lifted from the floor, so this says a
+// turn closed while that height was in the air — never that h happened.
 func (t *TurnTracker) CompletedAtOrAbove(h uint64) bool {
 	if t == nil || h == 0 {
 		return false

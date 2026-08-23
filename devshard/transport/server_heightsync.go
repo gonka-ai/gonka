@@ -85,38 +85,6 @@ func (s *Server) SetHeightSyncSeedRPCEnabled(enabled bool) {
 	s.heightSyncSeedRPC = enabled
 }
 
-func (s *Server) attachHeightSyncConfirmation() {
-	if s == nil || s.heightSyncAudit == nil || s.host == nil {
-		return
-	}
-	seen := make(map[string]struct{})
-	var roster []string
-	for _, slot := range s.host.Group() {
-		addr := strings.TrimSpace(slot.ValidatorAddress)
-		if addr == "" {
-			continue
-		}
-		if _, dup := seen[addr]; dup {
-			continue
-		}
-		seen[addr] = struct{}{}
-		roster = append(roster, addr)
-	}
-	idx := heightsync.NewConfirmationIndex(heightsync.ConfirmationConfig{
-		Roster: roster,
-		Oracle: s.heightSyncLogOracle,
-	})
-	s.heightSyncAudit.AttachConfirmation(idx)
-}
-
-// ConfirmationView returns host-side IsStrictlyConfirmed when height sync is enabled.
-func (s *Server) ConfirmationView() heightsync.ConfirmationView {
-	if s == nil || s.heightSyncAudit == nil {
-		return nil
-	}
-	return s.heightSyncAudit.ConfirmationView()
-}
-
 func (s *Server) latestOracleHeader(ctx context.Context) *blocks.Header {
 	if s.heightSyncLogOracle == nil {
 		return nil

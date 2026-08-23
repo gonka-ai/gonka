@@ -18,7 +18,7 @@
 
 This plan delivers **the whole spec except the Strong path**, in six phases:
 
-1. **A–C** replay the transport plane that is already implemented and tested on `devshard-testenv` (Omit/Anchor, cadence, forced turns, courier carry, response-leg signatures, `(C-quorum)`), rewired onto `chainoracle/blocks`.
+1. **A–C** replay the transport plane that is already implemented and tested on `devshard-testenv` (Omit/Anchor, cadence, forced turns, courier carry, response-leg signatures), rewired onto `chainoracle/blocks`. Envelope `(C-quorum)` withdrawn.
 2. **D** mounts a **height+hash** oracle in production dapi and keeps v5 hosts working against an **unmodified older dapi**.
 3. **E** builds the **log plane** — §10 heartbeat turns, §11 `sync_vector` / `sync_state` / `peer_seen` / repair probe, §12 close-ready arming, §14 L1–L7 verifier checks. This is new code; nothing on `devshard-testenv` covers it.
 4. **F** is **only** the Strong path (`light_block`, `D`-band escalation, `(C-strong)`/`(C-hybrid)`), the dapi work that feeds it (commit signatures, IAVL `Prove()`), and the **dispute adjudication** that consumes Strong-grade evidence.
@@ -76,7 +76,7 @@ Do **not** copy `devshard/blockoracle/**` or `testenv/cmd/heightsyncd` — repla
 
 ### `devshard-testenv` (replay source)
 
-Transport plane **done and tested**: Omit/Anchor, `K`/`slots_num` cadence, degraded Anchor (`tip_stale_after_ms`), `MsgForceHeightSyncTurn` + cadence swallow, response-leg origin signatures, courier peer tips + `last_propagated`, freshness gate `F`, `(C-quorum)`, audit ring, exculpation API, seed RPC, in-process e2e E1–E11, container Phase A–C.
+Transport plane **done and tested**: Omit/Anchor, `K`/`slots_num` cadence, degraded Anchor (`tip_stale_after_ms`), `MsgForceHeightSyncTurn` + cadence swallow, response-leg origin signatures, courier peer tips + `last_propagated`, freshness gate `F`, audit ring, exculpation API, seed RPC, in-process e2e E1–E11, container Phase A–C.
 
 **Not implemented there either** (spec-only): Strong / `light_block`, `MsgHeartbeat` / `MsgHeightAck`, `sync_vector`, `sync_state`, `peer_seen`, repair probe, close-ready.
 
@@ -118,7 +118,7 @@ Each phase is independently shippable. Strong is last, matching `devshard-testen
 
 | Phase | Deliverable | Spec | Replay? | Status |
 | ----- | ----------- | ---- | ------- | ------ |
-| **A** | `heightsync/` + envelope + force turn + host/user/transport/state seams, imports on `chainoracle/blocks` | §7–§9, §13–§17 Anchor + `(C-quorum)` | Yes | ✅ |
+| **A** | `heightsync/` + envelope + force turn + host/user/transport/state seams, imports on `chainoracle/blocks` | §7–§9, §13–§16 Anchor; §17 local-oracle readiness (no envelope quorum) | Yes | ✅ |
 | **B** | In-process e2e on current `testenv/scenarios` | catalog §4 | Yes, path remap | ✅ |
 | **C** | Container citest `citest-height-sync` against mock-dapi chainoracle (no `heightsyncd`) | catalog §5 A–C | Adapt | ✅ |
 | **D** | Dapi mounts **height+hash** (`/block/latest`, `/block/:height`); hash-only Tendermint observer; **v5 ↔ old dapi** fallback. **No** `Prove()`, **no** commit-quorum requirement. | plan §7 | New | ✅ |
@@ -160,7 +160,7 @@ Every normative surface in the spec, the artefact that satisfies it, and the pha
 | §10.4 | `MsgHeartbeat` (oneof **10**), `MsgHeightAck` (oneof **11**), `HeightAckContent` domain `heightsync.ack.v1`, four binding rules | `diff.proto`, `heightsync/logplane.go` | **E** |
 | §10.5 | `observed_height` in `DiffContent`; REQUIRED on the heartbeat pair, RECOMMENDED on `MsgStartInference` / `MsgConfirmStart` / `MsgFinishInference` | `diff.proto` + `state/machine.go`; signature coverage and the `ExecutorReceiptContent` mirror in §8.2.1 | **E** (stamps: E, gated — see §8.5) |
 | §10.6 | Async fan-out: span dispatched without awaiting acks; ack tail out of order; late acks tagged, never clear `degraded` | `user/session.go`, `heightsync/turn.go` | **E** |
-| §10.7 | `SyncTurnRecord`, `open` / `complete` / `degraded`, `Q` reused from `(C-quorum)`, only `complete` advances `h_last` | `heightsync/turn.go` | **E** |
+| §10.7 | `SyncTurnRecord`, `open` / `complete` / `degraded`, `Q = ceil(2/3 × slots)` reachability, only `complete` advances `h_last` | `heightsync/turn.go` | **E** |
 | §11.1 | `SyncVectorEntry` + `AckStatus`, one entry per slot for `turn_seq − 1`, `ACKED`-vs-log contradiction is user-attributable | `heightsync/syncvector.go`, L7 | **E** (marking) |
 | §11.2 | `sync_state` decision table, `peer_seen` bitmap incl. probe-learned heights | `heightsync/syncstate.go`, `heightsync/peerseen.go` | **E** |
 | §11.2 `CATCHING_UP` ⇒ next heartbeat Strong | Escalation of the *next* turn to Strong | recorded in E, **enforced in F** | E/F |
@@ -178,10 +178,10 @@ Every normative surface in the spec, the artefact that satisfies it, and the pha
 | §15 exception | Repair probe signs **both** legs | `heightsync/repair.go` | **E** |
 | §15 Strong proof steps 1–7 | `VerifyLightBlock` | — | **F** |
 | §16 | Originator immutability, `D` bound on carry-forward, provenance-less carry ⇒ carrier is source, `last_propagated` ladder | `transport/peer_tips.go` (`D` bound enforced only once `D` exists in F) | A (+F for the `D` clause) |
-| §17 `(C-quorum)`, `F`, `W_conf`, `Q`, monotonicity, pruning | `ConfirmationIndex` | `heightsync/confirmation.go` | A |
-| §17 `(C-turn)` | **Withdrawn** (§8.11) — a turn certifies reachability, not a height. `RuleTurn` stays as a deprecated alias falling through to `(C-quorum)` | `heightsync/confirmation.go` | **E** |
+| §17 height readiness | **Withdrawn envelope `(C-quorum)`**; consumers use local oracle | `heightsync/quorum.go` (`QuorumForRoster` for turn/floor only) | A |
+| §17 `(C-turn)` | **Withdrawn** — a turn certifies reachability, not a height | `heightsync/turn.go` | **E** |
 | §17 `(C-strong)` / `(C-hybrid)` | — | — | **F** |
-| §18.1 | `ConfirmationView()` on client + server | `transport/client.go`, `transport/server.go` | A |
+| §18.1 | Local oracle readiness for cPoC (no `ConfirmationView`) | host/oracle + `blocks.BlockOracle` | A |
 | §18.2 | `ObservedHeightNow()` | `transport/client.go` | A |
 | §18.2.1 | `TurnTracker.Record` / `Latest` / `MissingAcks`, `Server.RepairProbe`, `Server.CloseReadyView` | `heightsync/turn.go`, `repair.go`, `closeready.go` | **E** |
 | §18.3 | `HeightSyncEvidenceFor`, `VerifyOriginDetached` | `transport/client.go`, `heightsync/origin_signing.go` | A |
@@ -377,7 +377,7 @@ Latest() / At():
      probe dapi again after DefaultRPCProbeInterval (30m, same constant) so a recovered dapi
      becomes primary without restarting the host
   4. Direct chain itself is chain.NewWithQueryFallback: gRPC first, Comet RPC second
-  5. Both missing → oracle error; scheduler Omit; IsStrictlyConfirmed → stale
+  5. Both missing → oracle error; scheduler Omit; local oracle stale for consumers
 ```
 
 Height-sync never sees steps 2–4. It only calls `oracle.Latest()`. CometBFT types stay inside the adapter.
@@ -388,7 +388,7 @@ Height-sync never sees steps 2–4. It only calls `oracle.Latest()`. CometBFT ty
 | ---- | -------------------------------------------- |
 | Anchor `(H, hash)` | **Yes** |
 | Degraded Anchor (`tip_stale_after_ms`) | Yes (client `StaleAfter`) |
-| `(C-quorum)` | Yes — originators attest `(H, hash)` |
+| Local oracle / Strong | Yes — verifier tip (or verified `LightBlock`) |
 | Heartbeat turns (Phase E) | Yes — the log plane needs `(height, hash)` only |
 | Strong / `light_block` / `D`-band escalation | **No** until F — empty `Commit`. On the *transport* plane an out-of-band Anchor stays `INVALID(strong_required)`; the log plane has no `D`-band check at all (§8.7.1). Never pretend Strong succeeded |
 | `Prove()` merkle | **No** until F — unused by Anchor and by the heartbeat |
@@ -407,7 +407,7 @@ Height-sync never sees steps 2–4. It only calls `oracle.Latest()`. CometBFT ty
 | D2 | Unit: direct-chain adapter from stub gRPC + Comet RPC | `Latest().BlockHash` set; `Commit.Signatures` empty; gRPC preferred, RPC on gRPC-down |
 | D3 | Host client: `/block/latest` 200 | uses chainoracle client; Anchor still emits; Comet RPC not touched |
 | D4 | Host client: `/block/latest` 404 (old dapi) then chain ok | capability fallback; scheduler still emits Anchor |
-| D5 | Host client: dapi **and** chain missing | Omit + `ConfirmStale` |
+| D5 | Host client: dapi **and** chain missing | Omit + local oracle unavailable |
 | D6 | citest: current mock-dapi (has `/block/*`) | `TestHeightSync_MockDapiBlockLatest` (Phase C) |
 | D7 | citest or unit: simulated old dapi (no `/block/*`, chain RPC only) | cadence Anchors still flow; Strong never claimed. Container: `TestHeightSync_LegacyDapiChatCompletes` (`MOCK_DAPI_OMIT_BLOCK_ROUTES=1`). |
 | D8 | `/block/:height/prove` absent or 501 | Anchor path unaffected |
@@ -661,7 +661,7 @@ The user has no chain oracle, so at session open `ObservedHeightNow()` is `(0,fa
 **Rule: the user seeds a height before its first outbound diff round.** One fan-out round at session open, then nonce 1 stamps like every other nonce.
 
 1. **Carrier is the seed RPC, not a heartbeat span.** `POST /sessions/:id/height-sync` (§18.5, `SeedHeightSync`, already shipped in Phase A and currently unused outside tests). It **cannot** be a `MsgHeartbeat` span: `observed_height` is REQUIRED on the heartbeat pair (§10.5) and there is nothing to put in it yet. Seed first, heartbeat later — the ordering is forced, not stylistic.
-2. **Fan out across the roster, exactly like a heartbeat span.** One concurrent call per slot, so a single dead or oracle-less host cannot leave the session unseeded. Take the first valid Anchor: one is enough to stamp. Keep collecting the rest into `HeightSyncPeerTips` — they cost nothing extra and give the first cadence turn a populated `(C-quorum)` view.
+2. **Fan out across the roster, exactly like a heartbeat span.** One concurrent call per slot, so a single dead or oracle-less host cannot leave the session unseeded. Take the first valid Anchor: one is enough to stamp. Keep collecting the rest into `HeightSyncPeerTips` — they cost nothing extra and warm the peer-tip cache for carry-forward.
 3. **Consumes no nonce and appends nothing.** The seed is a transport-plane read. It **MUST NOT** advance `h_last` and **MUST NOT** count as a completed turn — otherwise a user could seed at session open and never write a height into the log at all. The heartbeat obligation starts armed exactly as it does today.
 4. **Never fails a session.** The RPC is host-opt-in (404 when `WithHeightSyncSeedRPC` is off) and can oracle-miss. On total miss, log `heightsync: seed_missed` with the per-slot outcomes and fall through to today's behaviour: nonce 1 unstamped, `heartbeat_skipped_no_height`, hosts arm if the silence persists. This follows the §10 rule "a missing or down dapi degrades to direct chain; it never fails a session".
 5. **Bounded.** One seed round per session, before the first round only — not a retry loop. If it misses, the response leg of nonce 1 supplies the height anyway, so a retry would buy at most one nonce and adds a cold-start stall on every session. Timeout it at the existing per-request budget and move on.
@@ -685,7 +685,7 @@ On an inbound envelope whose diff contains a `MsgHeartbeat` addressed to this ho
 | tip within `D` of `h_ref`, fresh, hash matches its oracle | `SYNCED` | none |
 | `h_ref − h_local > D` | `CATCHING_UP` | record "next heartbeat to me must be Strong"; **enforced in F** |
 | no new block within `StaleAfter`, cached tip present | `ORACLE_STALE` | degraded Anchor peer; still counts toward `Q` |
-| `Latest()` fails or no cached tip | `ORACLE_UNAVAILABLE` | ack is still REQUIRED and **counts** toward `Q`: it carries `F(m)` from the log the host already applies (§8.11). It contributes no Anchor, so `(C-quorum)` is untouched |
+| `Latest()` fails or no cached tip | `ORACLE_UNAVAILABLE` | ack is still REQUIRED and **counts** toward `Q`: it carries `F(m)` from the log the host already applies (§8.11). It contributes no Anchor |
 
    Until `D` exists (F), `CATCHING_UP` is derived from the same delta with `D` defaulted from `HeartbeatConfig`; the value is reported, only the Strong escalation is deferred.
 3. `peer_seen` = bitmap of slots for which this host holds a height claim fresh within `F`, from **`Diff` and from repair probes** (§11.2). Maintained by `PeerSeen`; bit *j* expires when its tip ages past `F`.
@@ -759,7 +759,7 @@ The two errors, and the fix for each:
 | Motion | Rule | Why |
 | ------ | ---- | --- |
 | Raise within `W_conf` | any single signer | The cadence puts a full turnover every `Interval` of wall clock, so an honest advance is orders of magnitude inside the window. This is the ordinary path: a quiet session's heartbeat still establishes its turn's reference height, exactly as before |
-| Raise beyond `W_conf` | the height `Q` distinct signers hold — `QuorumForRoster(slots_num)`, at least 2 | The same two thirds `(C-quorum)` asks of envelope anchors, counted over log-resident claims so it stays replayable. Keeps a real jump — an oracle recovering from a stall, an escrow bootstrapping on mainnet heights — from being a liveness problem, while a party striking out alone moves nothing |
+| Raise beyond `W_conf` | the height `Q` distinct signers hold — `QuorumForRoster(slots_num)`, at least 2 | ceil(2/3 × slots) over host-signed log-resident claims so it stays replayable. Keeps a real jump — an oracle recovering from a stall, an escrow bootstrapping on mainnet heights — from being a liveness problem, while a party striking out alone moves nothing |
 | Fall | never | A falling floor needs L0 to accept stamps below it, which is the tolerance band this design rejects. Reorgs resolve without it (below) |
 
 Claims are **attributed**, because without an identity one signer echoing itself across five messages is indistinguishable from five parties agreeing. Every carrier is named in the log itself: `slot_id` on an ack (L2 verifies the signature over it), `executor_slot` on a finish, the executor of record for a confirm, the sequencer for the legs it composes. Carries cannot launder a height through the quorum condition: a carry equals the standing floor, and the floor is already at or below the `Q`-th ranked claim, so echoing it can never lift that value. `state.floorClaimsLocked` builds the attributed claim list; `FloorIndex.Observe` returns the marks.
@@ -862,7 +862,7 @@ type SyncTurnRecord struct {
 
 Invariants to test explicitly:
 
-- `Q` is the **same** value as `(C-quorum)`'s `Q`; there is no second quorum knob.
+- `Q = ceil(2/3 × slots)` for turn reachability and floor corroboration.
 - Only `complete` advances `h_last`. It certifies reachability, not a height (§8.11).
 - An ack is **late** iff `observed_height > h_req + D_ack` (or the turn is already degraded). Ingest height may tick during transport and does not by itself tag the ack late. The comparison is against the host's own stamp on purpose: it is the one timestamp in the log the sequencer can neither forge nor backdate.
 - `h_req` ignores a heartbeat height carried without a hash (H38 presence). It is a minimum, so a hashless height would otherwise pin the whole turn's window low and cost every honest ack a `late` flag it could not avoid.
@@ -943,14 +943,14 @@ Arming **emits nothing** — no message, no round, no mainnet tx. Its only effec
 
 > A `complete` `SyncTurnRecord` exists in `Diff` with `≥ Q` acks whose `observed_height ≥ h`, all within `F`, all with `sync_state ≠ ORACLE_UNAVAILABLE`.
 
-Its appeal was that the witness set is the signed log, so two verifiers replaying the same `Diff` could not disagree. That appeal survives the §8.7.1 change; the **soundness does not**. An ack now carries `max(own_tip, F(m))`, so a host whose follower never reached `h` still acks `≥ h` by lifting to a floor another party set — legitimately, and by design. Counting `Q` of those confirms `h` on one originator's claim replicated `Q` times, which is exactly the laundering `(C-quorum)`'s distinct-originator requirement exists to prevent. No restatement over log-resident acks fixes this, because the independent readings the predicate needs are deliberately not in `Diff`.
+Its appeal was that the witness set is the signed log, so two verifiers replaying the same `Diff` could not disagree. That appeal survives the §8.7.1 change; the **soundness does not**. An ack now carries `max(own_tip, F(m))`, so a host whose follower never reached `h` still acks `≥ h` by lifting to a floor another party set — legitimately, and by design. Counting `Q` of those confirms `h` on one originator's claim replicated `Q` times, which must not be mistaken for independent height witnesses. No restatement over log-resident acks makes turn completion a height certificate, because the independent readings are deliberately not in `Diff`.
 
-Turn completion stays a **reachability certificate**: `Q` slots answered inside `TurnTimeout`, which is what advances `h_last`. It is not a height certificate. Confirmation is `(C-quorum)` over distinct originators' envelope anchors, or `(C-strong)` in F.
+Turn completion stays a **reachability certificate**: `Q` slots answered inside `TurnTimeout`, which is what advances `h_last`. Height readiness for consumers is each verifier's **local oracle** (§17); optional Strong supplies a `LightBlock`.
 
 Consequences to carry forward:
 
-- `ConfirmationRule.RuleTurn` is retained as a deprecated alias that falls through to `(C-quorum)`, so existing deployment config does not break. `RuleHybrid` is `Quorum ∪ Strong`; its second disjunct arrives with F.
-- `sync_state ≠ ORACLE_UNAVAILABLE` no longer gates turn completion. A host with a dead follower reads `F(m)` from the log, acks it, and carries logical time; it says plainly that it is not a height witness, and `(C-quorum)` already accounts for it by having no anchor from it. This is a liveness gain: that slot used to be a hole in the roster's cadence.
+- Envelope `(C-quorum)` / `ConfirmationIndex` / `ConfirmationView` are removed.
+- `sync_state ≠ ORACLE_UNAVAILABLE` no longer gates turn completion. A host with a dead follower reads `F(m)` from the log, acks it, and carries logical time; it contributes no envelope Anchor. This is a liveness gain: that slot used to be a hole in the roster's cadence.
 - cPoC pays the cost. Its verdict step 5 holds `Inconclusive` until height sync confirms the interval endpoints, and that hold is now per-`V` under every available rule. Deployments needing cross-verifier determinism there must reach it through `(C-strong)`, whose `LightBlock` is checkable by anyone holding it.
 
 ### 8.12 Observability
@@ -1122,7 +1122,7 @@ H39–H49 are gateway-package tests over a fabricated session plus a registry ga
 | H13g | `MsgConfirmStart` produced at nonce `m` landing after another party raised the floor above its height | **accepted** — the basis is `F(m)`, not the landing floor | L0, §8.7.1 |
 | H13h | Lagging host acks by lifting to `F(ref_nonce + 1)` and labels itself `CATCHING_UP` | **accepted**, no mark — logical time is shared, divergence is reported in the label | L0, §8.7.1 |
 | H51 | A `late` ack landing after the floor rose past the height it carries | **accepted** — its basis is `F(ref_nonce + 1)`, so lateness costs nothing | L0, §8.7.1 |
-| H52 | Host with `ORACLE_UNAVAILABLE` echoes `F(m)` | ack counts toward turn completion; the slot is transparently not a height witness for `(C-quorum)` | §8.11, §11.2 |
+| H52 | Host with `ORACLE_UNAVAILABLE` echoes `F(m)` | ack counts toward turn completion; no envelope Anchor | §8.11, §11.2 |
 | H13e | Stamp whose `observed_block_hash` belongs to a different height (attempted future-dating) | `DEFERRED_FAIL` once the follower reaches `H`; pair never confirms | L6 |
 | H28 | `MsgConfirmStart.observed_height` altered after the executor signed | `ErrInvalidExecutorSig` — proves the height is inside `ExecutorReceiptContent` | §8.2.1 trap |
 | H29 | `MsgFinishInference` with a stamp | `proposer_sig` covers it with no signing-code change; tampering fails `ErrInvalidProposerSig` | §8.2.1 |
@@ -1139,7 +1139,7 @@ H39–H49 are gateway-package tests over a fabricated session plus a registry ga
 | H68 | One peer floods a live responder | bounded oracle reads (one HEIGHT per `(turn, requester)`); extras `429`; no marks | §11.4, attack 20 |
 | H69 | Signed probe names a turn the responder has no record of | `404`, zero oracle reads, no marks | §11.4 |
 | H20 | Armed host with missing acks | stops probing | §11.4 |
-| H92 | Blocked `Latest()` while `HandleRequest` / `RecordAttestation` / `Decide` run | concurrent mutex holders progress; oracle I/O is outside those locks | audit step 20 |
+| H92 | Blocked `Latest()` while `HandleRequest` / audit Append / `Decide` run | concurrent mutex holders progress; oracle I/O is outside those locks | audit step 20 |
 | H93 | retain+ extra repair `(turn, slot)` pairs | budget maps stay O(retain × slots) | §11.4, audit step 21 |
 | H94 | Degraded turn `s` missing slot `j` after turn `s+1` opened | `s` is still probed | §11.3, audit step 21 |
 | H95 | `MaybeRepair` with a cancelled context | returns before the stagger elapses | §11.4, audit step 21 |
@@ -1153,7 +1153,7 @@ H39–H49 are gateway-package tests over a fabricated session plus a registry ga
 | H21 | User silent past `T_idle` | host arms; no message emitted anywhere on the wire | §12.1–12.2, attack 14 |
 | H22 | User contacts an armed host | disarms; `[armed_at, disarmed_at)` retained | §12.3 |
 | H23 | Partitioned minority armed | arming produces no vote and no tx; closing still needs finalization quorum | attack 21 |
-| H24 | `ORACLE_UNAVAILABLE` ack | ack present and required; **counts** toward `Q` now that it can echo the floor (§8.11); contributes no anchor, so `(C-quorum)` is unaffected | §11.2, §17 |
+| H24 | `ORACLE_UNAVAILABLE` ack | ack present and required; **counts** toward turn `Q`; contributes no envelope Anchor | §11.2, §17 |
 | H25 | Params override violating `D_ack · block_time ≥ Interval + TurnTimeout`, `T_idle > Interval + TurnTimeout` or `2 · Interval ≤ F` | `HeartbeatConfig.Validate` fails at startup | §20 |
 | H26 | Container: quiet compose escrow | heartbeat cadence visible in logs; turns complete; no probe traffic in the healthy path | §10, §11.4 |
 | H27 | Container: one host stopped | degraded turns, bounded probe traffic, arming only after `T_idle` of user silence | §11.4, §12 |
@@ -1209,7 +1209,7 @@ E0 proto/params          ✅
 New files only: `heartbeat.go`, `turn.go`, `syncvector.go`, `syncstate.go`, `peerseen.go`, `ack_signing.go` (§8.3, §8.8).
 
 - `Due(now, hNow)` and a span of `slots_num` nonces with no ack wait. `Heartbeat` also holds the turnover clock: `OpenTurn`, `NoteClaim`, `SettleTurn`. That state is producer-local and never enters `Diff`.
-- `TurnTracker`: `open` / `complete` / `degraded`; `Q` is the same knob as `(C-quorum)`; `sync_state` does not gate counting (§8.11); late acks never un-degrade. An ack is late iff `observed_height > h_req + D_ack` (ingest height is not the lateness clock). **Clock-free by construction**, so replay is deterministic.
+- `TurnTracker`: `open` / `complete` / `degraded`; `Q = ceil(2/3 × slots)` reachability; `sync_state` does not gate counting (§8.11); late acks never un-degrade. An ack is late iff `observed_height > h_req + D_ack` (ingest height is not the lateness clock). **Clock-free by construction**, so replay is deterministic.
 - `EvaluateSyncState` table; until F, report `CATCHING_UP` but do not require Strong.
 - Ack domain `heightsync.ack.v1` (fields 1–7).
 
@@ -1252,7 +1252,7 @@ The user `MaybeHeartbeat` flush round picks acks up from the host mempool. Open 
 | Edge only (`sec != nil`) | L4, L5a | **mark**, never `INVALID` |
 | Deferred | L6 | `DEFERRED_FAIL` when the follower reaches `H` |
 
-Replay / catch-up / gossip pass `sec=nil` so L4/L5a do not run. Persist L4 blobs verbatim (request-leg: signed HTTP; response-leg: origin + field 8). `applyTx` for heartbeat/ack folds `TurnTracker` and stores `h_last` / `turn_seq` on escrow state (not hashed — reconstructible from Diff, so no protocol-version bump). Confirmation is `(C-quorum)`; `(C-turn)` is withdrawn (§8.11).
+Replay / catch-up / gossip pass `sec=nil` so L4/L5a do not run. Persist L4 blobs verbatim (request-leg: signed HTTP; response-leg: origin + field 8). `applyTx` for heartbeat/ack folds `TurnTracker` and stores `h_last` / `turn_seq` on escrow state (not hashed — reconstructible from Diff, so no protocol-version bump). Envelope `(C-quorum)` and `(C-turn)` are withdrawn; consumers use local oracle (§17).
 
 L0's basis is the per-nonce floor `F(m)` from `floor.go`, not a scalar high-water mark, and its scope is **every** Diff-resident height — the log has one height semantics, and first-party readings live in the envelope instead. §8.7.1 has the reasoning and the bugs that shape drove. L0b keeps only the same-executor `confirm ≤ finish` pair.
 
@@ -1341,7 +1341,7 @@ Every seam below is a place where the next protocol (cPoC, finalization, validat
 | **New `AckStatus` / `SyncState` value** | `syncvector.go`, `syncstate.go` | Append a number; verifiers map unknown values to the **most conservative** existing behaviour (unknown `AckStatus` ⇒ treated as `MISSING`, i.e. inconclusive). An unknown `SyncState` needs no mapping at all: it is a label no decision reads, and counting toward `Q` keys on the ack existing, not on what it says (§8.11) | An unknown enum never creates blame and never inflates a quorum | unit test feeding an out-of-range enum |
 | **New envelope section field** | `inference_envelope.proto` `HeightSyncSection` | Append after field 10. Fields that must be signed go **before** the signature boundary only via a new domain string, never by redefining `CanonicalOriginBytes` | Existing signatures stay verifiable; advisory fields (like field 10) are set **after** signing and must not be trusted | `TestCanonicalOriginBytes_DomainSeparated` + a fixture-signature regression test |
 | **New signing domain** | `heightsync/*_signing.go` | One domain constant per message kind (`heightsync.origin.v1`, `heightsync.ack.v1`, `heightsync.repair.v1`); bump the `.vN` suffix rather than changing an input | Two message kinds never share a domain; a domain's input set is frozen once shipped | round-trip + cross-domain rejection test per domain |
-| **New confirmation rule** | `ConfirmationConfig.Rule` | Add a predicate; `(C-hybrid)` is the union | Monotonicity holds (`pending → confirmed` only); a rule that reads per-`V` state must be documented as non-deterministic across verifiers, as `(C-quorum)` is | `TestConfirm_MonotonicityAfterPrune` extended per rule |
+| **Height readiness** | local oracle (+ optional Strong) | Envelope `(C-quorum)` removed | Per-`V` tip; slash via verifier vote quorum | cPoC C6 |
 | **New oracle producer** | `blocks.BlockOracle` | Implement the interface (mock, dapi mount, direct-chain adapter, future light client) | Producers may return an empty `Commit`; consumers must degrade (Omit / no Strong), never fake | `contract_test.go` in `chainoracle/blocks` runs the same suite against every producer |
 | **New turn reason** | `MsgHeartbeat.reason` | Free-form string, metric label | Reason never changes validation: a turn is a turn | H1 variants per reason |
 | **New `INVALID` reason / result class** | `heightsync/inbound.go`, `logplane.go` | Add the constant + a metric label | Reason strings are stable once shipped (container tests grep logs); a new class must state whether it is pure-`Diff` (deterministic) or oracle-dependent (may defer) | log-label lint + H9 determinism test |
@@ -1384,7 +1384,7 @@ Anything that reverses 3 and 4 couples height alignment to work succeeding, whic
 | # | Blocker | Why the stamp cannot cover it | Possible answer |
 | - | ------- | ----------------------------- | --------------- |
 | 1 | **Exchanges with no stamped tx** | Signature collection, state-signature rounds, catch-up, timeout-vote RPCs, the seed RPC, and every response from a non-executor host carry no stamped tx at all. Round-robin means one executor per nonce; the other `slots_num − 1` hosts would go silent on height. | enumerate them and either accept the coverage loss or keep the section for exactly those routes |
-| 2 | **The log has no wall clock** | `F` freshness, `last_propagated` lazy-carry gating, `HeightSyncPeerTips` eviction and `(C-quorum)`'s `W_conf` window all key on `OriginatorTimestampUnixMs`. A tx cannot carry a wall clock without making replay clock-dependent, which rule 4 above forbids. | replace originator-time freshness with a receiver-side tip-delta bound — a protocol change, not a deletion |
+| 2 | **The log has no wall clock** | `F` freshness, `last_propagated` lazy-carry gating, and `HeightSyncPeerTips` eviction key on `OriginatorTimestampUnixMs`. A tx cannot carry a wall clock without making replay clock-dependent, which rule 4 above forbids. | replace originator-time freshness with a receiver-side tip-delta bound — a protocol change, not a deletion |
 | 3 | **Third-party attestations have no tx form** | Carry-forward relays host A's tip to host B. The user cannot author a tx signed as A, and A's ack becomes a tx only if the user sequences it. Removing the section removes carry-forward, and with it host→host alignment on busy escrows. | keep the section for carry-forward only, i.e. self-attestation drops out and relay stays |
 | 4 | **Strong** | Phase F puts a `LightBlock` with commit signatures in section field 9, and §13 rejects it in `DiffContent` permanently. | incompatible with removal unless Strong is redesigned first |
 | 5 | **L4 goes vacuous** | One source means no cross-plane binding, so `DISPUTE_CARRIER` / `DISPUTE_ORIGINATOR`-on-sight disappear. Detection falls back to L6, which needs an oracle read and can only defer. | accept the weaker detection, or keep the section on the exchanges where L4 actually fires |
@@ -1524,7 +1524,7 @@ Host contradictions need none of this: section field 8 and the tx signature (`ho
 | # | Reason | Consequence if moved |
 | - | ------ | -------------------- |
 | 1 | **The section is per-recipient; a diff is shared.** Lazy carry is gated by `last_propagated[recipient]`, so what the user sends host 2 differs from host 3. A diff is one signed object replayed byte-identically to everyone (`diffsForHost`, gossip, recovery) and feeding `post_state_root`. | either per-host diff bytes ⇒ divergent state roots ⇒ no signature quorum, or every host’s carry shipped to every host |
-| 2 | **Hosts cannot append to `Diff`.** The response leg is where a host attests its own tip immediately and unmediated. The log has no response leg — a host’s height can only enter as a mempool tx the *user* chooses to include. | every host’s height claim becomes dependent on sequencer cooperation; the missing-ack problem (§11.3, no receipt) would apply to *all* alignment, and `(C-quorum)` — which works today with zero user cooperation — disappears |
+| 2 | **Hosts cannot append to `Diff`.** The response leg is where a host attests its own tip immediately and unmediated. The log has no response leg — a host’s height can only enter as a mempool tx the *user* chooses to include. | every host’s height claim becomes dependent on sequencer cooperation; the missing-ack problem (§11.3, no receipt) would apply to *all* alignment |
 | 3 | **Diff contents are state-transition inputs.** Transport problems (stale tip, `\|Δ\| > D`, unverifiable origin) are today a per-message classification: Omit, or `INVALID` for that envelope, with the inference unaffected. | an oracle hiccup could invalidate a diff carrying real work — inference liveness coupled to oracle health |
 | 4 | **The log has no clock.** Nonces advance only when there is work; that is exactly §10.1, the reason the heartbeat exists. The envelope rides every message, including responses and catch-up. | quiet sessions would have no alignment surface at all |
 | 5 | **Diffs are permanent.** They are persisted, snapshotted, hashed, replayed. The section is ten fields of per-message provenance, and under Strong it carries a `LightBlock` with commit signatures (KBs). | per-message metadata, and eventually validator signature sets, inside the state root forever |
@@ -1543,7 +1543,7 @@ The converse move — keeping the log stamp and dropping the *section* on exchan
 | 1 | Oneof numbers | — | **taken:** HS 10/11, cPoC 12/13 reserved |
 | 2 | `observed_height` stamps on Start/Confirm/Finish | H2, heartbeat volume | **prefer in E**, same version bump (see above) |
 | 3 | Are `Interval` / `TurnTimeout` / `D_ack` / `T_idle` real chain params in v5, or runtime-config only? | §8.4 plumbing | runtime-config snapshot with in-code defaults |
-| 4 | Default confirmation rule for testenv after E | Phase A–C expectations | keep `(C-quorum)`; add `Turn` and hybrid scenarios |
+| 4 | Height readiness for testenv / cPoC | Phase A–C | local oracle; no envelope `(C-quorum)` |
 | 5 | Repair endpoint auth: group membership (as today) or a dedicated peer credential? | §8.9 route | reuse `withSessionAuth` + `isGroupMember` |
 | 6 | Is `D` defined before Strong (only to derive `CATCHING_UP`), or does E report it from `HeartbeatConfig`? | §8.6 | `HeartbeatConfig`-local `D`, superseded by `StrongPolicy.D` in F |
 | 7 | Does `WithHeightSyncSeedRPC` default to on, so the §8.5.1 seed has someone to ask? | E9, stamped nonce 1 | **on** whenever height sync is enabled; a host with it off stays correct, just unseedable |
