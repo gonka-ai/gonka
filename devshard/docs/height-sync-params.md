@@ -263,7 +263,7 @@ plane (Phases A–D) and the log plane reuses them.
 | ---- | ------- | ----------------- |
 | `K` | `8` (scheduler; testenv often `10`) | **Nonce** cadence of Anchor envelopes. Independent of the heartbeat `Interval`. |
 | `slots_num` | escrow group size | Width of every turn (cadence, forced, heartbeat). `executor(n) = n mod slots_num`, so any consecutive span of this length addresses every slot once. |
-| `Q` | `ceil(2/3 × N_hosts)` | Quorum for `(C-quorum)`, for turn completion, and for the corroboration that lets the log's floor jump further than `W_conf`. There is no second quorum knob. `(C-turn)` is withdrawn (spec §17). |
+| `Q` | `ceil(2/3 × N_hosts)` | Quorum for **turn completion** and for the corroboration that lets the log's floor jump further than `W_conf`. Envelope `(C-quorum)` / `IsStrictlyConfirmed` is **withdrawn** (spec §17); consumers use local oracle readiness. |
 | `F` | `60s` | Originator freshness. Carry-forward older than `F` is `stale_origin`. Also the window used by `peer_seen` bit expiry. |
 | `W_conf` | `256` heights | Confirmation-index window (`[tip − W_conf, tip]`), and — as `HeartbeatConfig.WindowBlocks` — the floor's unaided raise bound and the producer's carry limit. |
 | `StaleAfter` | `10s` (oracle client) | Quiet oracle with a cached tip → `ORACLE_STALE` / degraded Anchor, not `ORACLE_UNAVAILABLE`. |

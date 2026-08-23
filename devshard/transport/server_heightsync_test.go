@@ -609,44 +609,6 @@ func TestServer_StaleOriginRejected(t *testing.T) {
 	require.True(t, sawDispute, "audit ring must record dispute_carrier for stale origin")
 }
 
-// TestServer_ConfirmationView_AfterLazyInbound covers spec §17: server quorum via carry-forward.
-func TestServer_ConfirmationView_AfterLazyInbound(t *testing.T) {
-	or := &mutableTestOracle{hdr: &blocks.Header{
-		Height:    10,
-		ChainID:   "chain-x",
-		BlockHash: bytes.Repeat([]byte{0x01}, 32),
-	}}
-	sched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, or)
-	env := setupServerEnv(t, WithHeightSync(sched, or))
-
-	roster := []string{"gonka1b", "gonka1c", "gonka1d"}
-	idx := heightsync.NewConfirmationIndex(heightsync.ConfirmationConfig{
-		Roster: roster,
-		Quorum: 3,
-		Oracle: or,
-	})
-	env.server.HeightSyncAuditRing().AttachConfirmation(idx)
-
-	now := time.Now()
-	hash := bytes.Repeat([]byte{0x02}, 32)
-	for _, origin := range roster {
-		advanceSessionToNonce(t, env, 5)
-		hs := courierCarryForwardHS(11, origin, now)
-		rec := postProtobufInference(t, env, 5, hs)
-		require.Equal(t, http.StatusOK, rec.Code, rec.Body.String())
-		idx.RecordAttestation(heightsync.AnchorAttestation{
-			PeerID:             env.userSigner.Address(),
-			OriginatorSenderID: origin,
-			MainnetHeight:      11,
-			MainnetBlockHash:   hash,
-			ObservedAtUnixMs:   now.UnixMilli(),
-			Trust:              heightsync.TrustUntrustedPeer,
-			Tag:                heightsync.TagLazy,
-		})
-	}
-	require.Equal(t, heightsync.ConfirmConfirmed, idx.IsStrictlyConfirmed(11))
-}
-
 // TestServer_LazyAnchorInsideSyncTurn_IsCadenceAnchor covers spec §9 / §16: carry-forward inside sync turn is cadence, not lazy.
 func TestServer_LazyAnchorInsideSyncTurn_IsCadenceAnchor(t *testing.T) {
 	or := &mutableTestOracle{hdr: &blocks.Header{

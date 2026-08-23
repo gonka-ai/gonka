@@ -328,8 +328,8 @@ func TestHeartbeat_LiveHostsQuorumCompletes(t *testing.T) {
 // they are reachable and applying the log. They do not seed F — sequencer
 // heartbeats never raise it, and a host with no oracle has no first-party tip
 // to stamp. None of that says anyone saw block 100 — these slots produce no
-// envelope anchor, so (C-quorum) has nothing to count, which is why
-// (C-turn) had to go (TestConfirm_TurnRuleWithdrawn).
+// envelope anchor. Turn completion is reachability only
+// (TestTurnComplete_IsNotAHeightCertificate).
 func TestHeartbeat_UnavailableAcksCompleteTurnCarryingTheFloor(t *testing.T) {
 	var height uint64 = 100
 	session := setupHeartbeatSession(t, &height)

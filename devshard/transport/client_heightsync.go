@@ -104,14 +104,6 @@ func (c *HTTPClient) HeightSyncAuditRing() *heightsync.AuditRing {
 	return c.heightSyncAudit
 }
 
-// ConfirmationView returns the shared confirmation index when height sync is enabled.
-func (c *HTTPClient) ConfirmationView() heightsync.ConfirmationView {
-	if c == nil || c.heightSyncAudit == nil {
-		return nil
-	}
-	return c.heightSyncAudit.ConfirmationView()
-}
-
 // HeightSyncPeerTips returns the shared peer-tip cache when height sync is enabled, or nil.
 func (c *HTTPClient) HeightSyncPeerTips() *HeightSyncPeerTips {
 	return c.heightSyncPeerTips

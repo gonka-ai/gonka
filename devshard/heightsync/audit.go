@@ -73,9 +73,7 @@ type AnchorAttestation struct {
 	// OriginatorSenderID is the first observer of (height, hash) on carry-forward
 	// request Anchors (empty for host-oracle emissions and legacy entries).
 	OriginatorSenderID string
-	// OriginatorTimestampMs is when the originator observed the pair. (C-quorum)
-	// eligibility uses this when set so a carry-forward admitted at age F−ε
-	// cannot stay quorum-eligible for another F from receipt time.
+	// OriginatorTimestampMs is when the originator observed the pair (freshness F).
 	OriginatorTimestampMs int64
 	// OriginSignedBlobAvailable is true when the user cached a verified response-leg
 	// signed blob for this attestation (spec §15).
@@ -87,7 +85,6 @@ type AuditRing struct {
 	mu       sync.RWMutex
 	capacity int
 	peers    map[string]*peerRing
-	confirm  *ConfirmationIndex
 }
 
 type peerRing struct {
@@ -108,38 +105,9 @@ func NewAuditRing(capacity int) *AuditRing {
 	}
 }
 
-// AttachConfirmation wires quorum tracking into subsequent Append calls.
-func (r *AuditRing) AttachConfirmation(idx *ConfirmationIndex) {
-	if r == nil {
-		return
-	}
-	r.mu.Lock()
-	r.confirm = idx
-	r.mu.Unlock()
-}
-
-// ConfirmationView returns the attached confirmation index, or nil.
-func (r *AuditRing) ConfirmationView() ConfirmationView {
-	if r == nil {
-		return nil
-	}
-	r.mu.RLock()
-	idx := r.confirm
-	r.mu.RUnlock()
-	return idx
-}
-
 // Append inserts one attestation, dropping the oldest entry for that peer
 // when the configured capacity is reached.
 func (r *AuditRing) Append(a AnchorAttestation) {
-	var confirm *ConfirmationIndex
-	r.mu.Lock()
-	confirm = r.confirm
-	r.mu.Unlock()
-	if confirm != nil {
-		confirm.RecordAttestation(a)
-	}
-
 	r.mu.Lock()
 	defer r.mu.Unlock()
 

@@ -58,10 +58,9 @@ func TestHeightSync_E2E_WideDivergenceNeverBlocksInferences(t *testing.T) {
 	// Divergence must survive the round trip rather than being clamped to one
 	// roster-wide number — and the place it survives is the **envelope**, not the
 	// log. Each host's response-leg anchor carries its own first-party tip, which
-	// is what (C-quorum) counts and what the gateway's collectors aggregate into
-	// a divergence surface. The log deliberately holds one shared reference
-	// height instead, so the audit ring is the only plane where the spread is
-	// visible at all.
+	// is what the gateway's collectors aggregate into a divergence surface. The
+	// log deliberately holds one shared reference height instead, so the audit
+	// ring is the only plane where the spread is visible at all.
 	seen := make(map[int64]bool)
 	for i, srv := range st.Servers {
 		ar := srv.HeightSyncAuditRing()

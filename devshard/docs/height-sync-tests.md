@@ -98,17 +98,17 @@ Slow-running tests check `testing.Short()` and skip under `-short`.
 | ✅ `TestNonceInSyncTurn_K8Slots4` | `inbound_test.go` | Nonce → sync-turn-window predicate. |
 | ✅ `TestAuditRing_AppendsAndListsByPeer` / `BoundedCapacityDropsOldest` / `DefensiveCopy` / `ListPeers` | `audit_test.go` | Bounded per-peer audit ring stores attestations safely. |
 | ✅ `TestInboundTrust` | `audit_test.go` | Peer-aligned vs untrusted-peer trust mapping from oracle delta. |
-| ✅ `TestConfirm_QuorumThreshold` | `confirmation_test.go` | `(C-quorum)` confirms at `≥ Q` distinct originators within `F`. |
-| ✅ `TestConfirm_StaleWhenOracleStale` | `confirmation_test.go` | `Stale()` propagates to every query while oracle is down. |
-| ✅ `TestConfirm_FreshnessAndWindowEligibility` | `confirmation_test.go` | `F` and `W_conf` jointly gate originator eligibility. |
-| ✅ `TestConfirm_CompactOnTipAdvance` | `confirmation_test.go` | Index compacts on tip advance; ineligible entries dropped. |
-| ✅ `TestConfirm_MonotonicityAfterPrune` | `confirmation_test.go` | A confirmed height still inside `W_conf` never flips back to `pending`. |
-| ✅ `TestConfirm_IndexUsesOriginatorNotCarrier` | `confirmation_test.go` | Quorum counts originator addresses, never the carrier (user). |
-| ✅ `TestConfirm_LateOracleTipBelowH` | `confirmation_test.go` | Carry-forward heights ahead of the receiver's tip still count toward quorum. |
-| ✅ `TestQuorumForRoster` | `confirmation_test.go` | Default `Q = ceil(2/3 × N_hosts)`. |
-| ✅ `TestConfirm_BlockedOracleDoesNotHoldMutex` | `confirmation_test.go` | H92: a blocked `Latest()` does not hold the confirmation mutex. |
-| ✅ `TestConfirm_OriginatorTimestampDrivesFreshness` | `confirmation_test.go` | H98: (C-quorum) ages a carry-forward from originator ts, not receipt time. |
-| ✅ `TestConfirm_ConfirmedHeightsBounded` | `confirmation_test.go` | H99: `confirmedHeights` prunes below `tip − W_conf`. |
+| ❌ removed | — | Envelope `(C-quorum)` / `ConfirmationIndex` withdrawn (spec §17); use local oracle. |
+| ❌ removed | — | Envelope confirmation index withdrawn (spec §17). |
+| ❌ removed | — | Envelope confirmation index withdrawn (spec §17). |
+| ❌ removed | — | Envelope confirmation index withdrawn (spec §17). |
+| ❌ removed | — | Envelope confirmation index withdrawn (spec §17). |
+| ❌ removed | — | Envelope confirmation index withdrawn (spec §17). |
+| ❌ removed | — | Envelope confirmation index withdrawn (spec §17). |
+| ✅ `TestQuorumForRoster` | `params_test.go` | Default `Q = ceil(2/3 × N_hosts)` for turn/floor. |
+| ❌ removed | — | Envelope confirmation index withdrawn (spec §17). |
+| ❌ removed | — | H98 was (C-quorum)-only; freshness still enforced on inbound carry (`inbound.go`). |
+| ❌ removed | — | Envelope confirmation index withdrawn (spec §17). |
 | ✅ `TestSignOrigin_RoundTrip` | `origin_signing_test.go` | Canonical signing input → secp256k1 signature → verify round-trip. |
 | ✅ `TestVerifyOrigin_RejectsTamperedHash` | `origin_signing_test.go` | Any change to fields 1–7 invalidates the signature. |
 | ✅ `TestVerifyOrigin_RejectsWrongOriginator` | `origin_signing_test.go` | Recovered address must equal `OriginatorSenderID`. |
@@ -189,7 +189,7 @@ Slow-running tests check `testing.Short()` and skip under `-short`.
 | ✅ `TestServer_LazyAnchorAcceptedOutsideSyncTurn` | `server_heightsync_test.go` | `VALID_LAZY_ANCHOR` accepted outside sync-turn windows. |
 | ✅ `TestServer_LazyAnchorInsideSyncTurn_IsCadenceAnchor` | `server_heightsync_test.go` | Lazy-shaped Anchor inside sync turn is reclassified as cadence. |
 | ✅ `TestServer_StaleOriginRejected` | `server_heightsync_test.go` | Receiver rejects with `reason=stale_origin` past `F`. |
-| ✅ `TestServer_ConfirmationView_AfterLazyInbound` | `server_heightsync_test.go` | Server-side `IsStrictlyConfirmed` reaches `confirmed` via carried originator metadata. |
+| ❌ removed | — | `ConfirmationView` withdrawn (spec §17). |
 | ✅ `TestHandleHeightSync_DisabledReturnsNotFound` / `ForcesAnchor` | `server_heightsync_test.go` | Optional seed RPC (`POST .../height-sync`) is opt-in and returns a forced Anchor on the response. |
 | ✅ `TestHandleHeightSync_OmitsSectionOnSignFailure` | `server_heightsync_test.go` | H72: `SignOrigin` failure omits the section rather than shipping an unsigned Anchor-shaped payload. |
 | ✅ `TestServer_ResponseAnchor_SignedByHost` | `server_heightsync_test.go` | Host signs the outbound response Anchor (asymmetric verification — response leg). |
@@ -238,7 +238,7 @@ Shared cadence: four hosts, `K = 8`, `slots_num = 4`. Initial sync turn `1..4`, 
 
 | Test | What it proves |
 | ---- | -------------- |
-| ✅ `TestHeightSyncAnchor_E2E_IsStrictlyConfirmed_Quorum` (E4) | `(C-quorum)`: `Q = 3` of 4 honest hosts confirms; `Q = 5` stays pending; oracle stale ⇒ stale. |
+| ❌ removed (was E4) | Envelope `(C-quorum)` withdrawn; local-oracle readiness replaces it for cPoC. |
 | ✅ `TestHeightSyncAnchor_E2E_MixedHeights_Confirmed` (E5) | Three honest hosts at `H_new`, one cheater at `H_new` with bad hash: confirmation stays at the agreed max height; a single dishonest vote cannot un-confirm. |
 | ✅ `TestHeightSyncAnchor_E2E_StaleOracle_Inconclusive` (E6) | Stale shared oracle ⇒ confirmation returns `stale` for every height; downstream consumer treats verdict as `Inconclusive`. |
 | ✅ `TestHeightSyncAnchor_E2E_LateOracleHost_ConfirmedViaCourier` (E11 phases A/B/C) | Late follower host A: user reaches `confirmed` against B/C/D; A is `pending`; courier lazily delivers three distinct originators via a strictly-increasing height ladder; A reaches `confirmed` without its follower advancing. |
@@ -291,7 +291,7 @@ down**, by failing over to the direct-chain adapter in the shape of
 | D2 | ✅ `TestDirectChainOracle_PrefersGRPC_FallsBackToRPC` | `chainoracle/blocks/direct` | Adapter over stub gRPC + Comet RPC sets `Latest().BlockHash`, leaves `Commit` empty, prefers gRPC, uses RPC when gRPC is down. |
 | D3 | ✅ `TestHostOracle_BlockLatest200_UsesChainOracle` | `chainoracle/blocks/failover`, `heightsync` | With `/block/latest` returning 200 the host uses the chainoracle client and never touches Comet RPC; Anchor still emits. |
 | D4 | ✅ `TestHostOracle_BlockLatest404_FallsBackToChain` | `chainoracle/blocks/failover`, `heightsync` | Capability miss (old dapi) falls back to direct chain; the scheduler still emits Anchor. |
-| D5 | ✅ `TestHostOracle_DapiAndChainMissing_OmitsAndStale` | `chainoracle/blocks/failover`, `heightsync` | Both sources gone ⇒ Omit + `ConfirmStale`, no errors reach inference. |
+| D5 | ✅ `TestHostOracle_DapiAndChainMissing_OmitsAndStale` | `chainoracle/blocks/failover`, `heightsync` | Both sources gone ⇒ Omit; local oracle unavailable for consumers. |
 | D6 | ✅ `TestHeightSync_MockDapiBlockLatest` | `testenv/citest` | Current mock-dapi (has `/block/*`, stand-in for `api:0.2.15-v5`) serves advancing heights; v5 stack green without heightsyncd. |
 | D7 | ✅ `TestContainerE2E_HeightSync_OldDapiChainOnly` / `TestHeightSync_LegacyDapiChatCompletes` | `chainoracle/blocks/failover`, `testenv/citest` | Simulated old dapi (no `/block/*`, stand-in for `api:0.2.15` from this branch): chat completes; Strong never claimed. |
 | D8 | ✅ `TestHostOracle_ProveEndpointAbsent_AnchorUnaffected` | `chainoracle/blocks/failover` | `/block/:height/prove` absent or 501 leaves the Anchor path untouched. |
@@ -345,7 +345,7 @@ produces **marks**, adjudication lands with Strong.
 | H86 | ✅ `TestValidateDiff_FailedApplyTxDoesNotLeakMarks` + `_MarksFlushOnlyOnCommit` | `state` | `ValidateDiff` of a log-plane-OK diff that then fails `applyTx` leaves marks unchanged; a successful trial flushes only on `CommitValidated`. |
 | H87 | ✅ `TestCheckEnvelopeBinding_RequestLegBlobBounded` | `heightsync` | Request-leg L4 stores `CanonicalRequestLegBytes` (32 bytes) regardless of HTTP body size. |
 | H88 | ✅ `TestRecoverSession_HeartbeatContinuesTurnSeq` | `user` | After turns 1..3, snapshot, and `RecoverSession`, the next heartbeat is `turn_seq=4` and `sync_vector` describes turn 3. An empty recovered session still opens turn 1. |
-| H92 | ✅ `TestHost_BlockedOracleDoesNotHoldMutex` + `TestConfirm_BlockedOracleDoesNotHoldMutex` + `TestAnchorScheduler_BlockedOracleDoesNotHoldMutex` | `host` + `heightsync` | A blocked `Latest()` does not hold `host.mu`, the confirmation mutex, or the scheduler mutex. |
+| H92 | ✅ `TestHost_BlockedOracleDoesNotHoldMutex` + `TestAnchorScheduler_BlockedOracleDoesNotHoldMutex` | `host` + `heightsync` | A blocked `Latest()` does not hold `host.mu` or the scheduler mutex. |
 | H96 | ✅ `TestDecodeMainnetBlockHashHex_OversizedRejected` | `transport` | Hex longer than 64 chars is rejected before `DecodeString`. |
 | H97 | ✅ `TestUnwrapInferenceRequestBody_OversizedOriginSigDropped` | `transport` | Field-8 longer than 65 bytes is dropped at unwrap. |
 | H100 | ✅ `TestTurnTracker_AckDeadlineDoesNotWrap` | `heightsync` | `HReq = MaxUint64-1`, `D_ack = 10`: honest ack at `HReq+1` is not `late`. |
@@ -355,7 +355,7 @@ produces **marks**, adjudication lands with Strong.
 | H67 | ✅ `TestClassifyInbound_ZeroTimestampCarryForwardIsStale` | `heightsync` | A carry-forward with originator id set and both timestamps zero is `INVALID(stale_origin)`. |
 | H76 | ✅ `TestMaxFresh_SkipsEntriesWithoutBlob` | `transport` | Production-shaped `NewHeightSyncPeerTips()` ignores unverified `RecordOrigin` entries in `MaxFresh` and `Carry`. |
 | H77 | ✅ `TestMaxFresh_ZeroTimestampIsNotFresh` | `transport` | A verified cache entry with both timestamps zero is not fresh and does not drive `Carry` (cache-side H67). |
-| H24 | ✅ `TestHeightAck_OracleUnavailableCountsTowardQuorum` + `TestHost_HeartbeatAck_OracleUnavailableStillRequired` + `TestHeartbeat_UnavailableAcksCompleteTurnCarryingTheFloor` | `heightsync` + `host` + `user` | `ORACLE_UNAVAILABLE` ack is present, required, and **counts** toward `Q` — it carries `F(m)` from the log the host already applies. The self-report is retained, and the slot contributes no anchor, so `(C-quorum)` is unaffected. |
+| H24 | ✅ `TestHeightAck_OracleUnavailableCountsTowardQuorum` + `TestHost_HeartbeatAck_OracleUnavailableStillRequired` + `TestHeartbeat_UnavailableAcksCompleteTurnCarryingTheFloor` | `heightsync` + `host` + `user` | `ORACLE_UNAVAILABLE` ack is present, required, and **counts** toward `Q` — it carries `F(m)` from the log the host already applies. The self-report is retained, and the slot contributes no envelope Anchor. |
 | H25 | ✅ `TestHeartbeatConfig_ValidateRejectsBadOverride` + `_AckWindowFollowsTheSchedule` + `_InvalidOverlayIsClamped` | `heightsync` | `D_ack · block_time ≥ Interval + TurnTimeout`, `T_idle > Interval + TurnTimeout`, positive durations, and `2 · Interval ≤ F` fail fast; the live overlay path calls `Validate` and clamps rather than shipping a config that would fail. |
 | H33 | ✅ `TestHeartbeat_StampedBusySessionEmitsNoAcks` | `host` | A busy stamped escrow emits zero heartbeats **and** zero `MsgHeightAck`; acks exist only inside heartbeat turns. |
 | H34 | ✅ `TestSeed_SessionOpenStampsNonceOne` | `user` | E9: seed runs before the first outbound diff; nonce 1 `MsgHeartbeat` carries the seeded `(height, hash)`. (`MsgStartInference` stamp is E7.) |
@@ -401,7 +401,7 @@ may defer.
 | H50 | ✅ `TestHeightSyncDivergence_InferenceFlowNeverBlocked` | `state` | A roster spread ~1000 blocks (`≫ D`) runs a full start/confirm/finish flow through `ApplyDiff`: lagging hosts lift to the floor and label themselves `CATCHING_UP`, drawing **no** mark; a raw low tip in `Diff` is refused **without consuming the nonce** so the honest retry lands at the same nonce; a mislabelled `SYNCED` ack still applies, because the log plane has no divergence verdict to reach; and traffic keeps flowing throughout. Divergence must never be a liveness dependency. |
 | H51 | ✅ `TestLogPlane_AckJudgedAgainstRefNonceFloor` | `heightsync` | See H13h — a late-landing ack judged against `F(ref_nonce + 1)` rather than the landing floor. |
 | H52 | ✅ `TestHeightSyncDivergence_DeadOracleStillCarriesTime` | `state` | The liveness gain from acks carrying reference heights: a host reporting `ORACLE_UNAVAILABLE` echoes `F(m)` from the log it already applies, its ack counts toward turn completion, and it says plainly it is not a height witness. It used to be a hole in the roster's cadence. |
-| H53 | ✅ `TestConfirm_TurnRuleWithdrawn` | `heightsync` | `(C-turn)`'s soundness argument: a turn completes on `Q` reachable slots, and that must **not** confirm a height, because `Q` acks at `≥ h` may all be one originator's claim lifted from the floor. `RuleTurn` falls through to `(C-quorum)`. |
+| H53 | ✅ `TestTurnComplete_IsNotAHeightCertificate` | `heightsync` | Turn completion is reachability only; it must not be treated as a height certificate. |
 
 ### 7.3 Stamps on existing txs, signature coverage, evidence retention
 
@@ -510,11 +510,11 @@ binding), the `|Δ| > D` escalation rule, and the `(C-strong)` /
 | ⏳ `TestServer_StrongAnchorRecorded` / `_StrongRequired_Rejected` / `_StrongProofInvalid_Rejected` | `transport/server_test.go` | Receiver wiring + audit + metrics. |
 | ⏳ `TestServer_LightBlockFor_ReturnsCached` / `_AbsentOutsideWindow` | `transport/server_test.go` | Evidence API serves cached Strong proofs. |
 | ⏳ `TestServer_ForcedTurn_StrongRequired_RejectsAnchor` | `transport/server_test.go` | Anchor without `LightBlock` is INVALID under a `StrongRequired` forced turn. |
-| ⏳ `TestConfirm_RuleStrong_OneVerifiedLightBlock` | `heightsync/confirmation_test.go` | `(C-strong)` confirms on one verified proof. |
-| ⏳ `TestConfirm_RuleStrong_BelowQuorumStillConfirms` | `heightsync/confirmation_test.go` | `(C-strong)` does not require host quorum. |
-| ⏳ `TestConfirm_RuleHybrid_QuorumClearsFirst` / `_StrongClearsFirst` | `heightsync/confirmation_test.go` | `(C-hybrid)`: either path confirms. |
-| ⏳ `TestConfirm_RuleStrong_MonotonicWithValidatorSetLoss` | `heightsync/confirmation_test.go` | Loss of the pinned validator set does **not** flip an already-confirmed height. |
-| ⏳ `TestConfirm_RuleHybrid_StaleOracleDoesNotRegress` | `heightsync/confirmation_test.go` | Stale follower does not regress confirmed heights. |
+| ❌ cancelled | — | Envelope confirmation rules withdrawn; Strong is optional LightBlock verification, not `IsStrictlyConfirmed`. |
+| ❌ cancelled | — | Envelope confirmation rules withdrawn; Strong is optional LightBlock verification, not `IsStrictlyConfirmed`. |
+| ❌ cancelled | — | Envelope confirmation rules withdrawn; Strong is optional LightBlock verification, not `IsStrictlyConfirmed`. |
+| ❌ cancelled | — | Envelope confirmation rules withdrawn; Strong is optional LightBlock verification, not `IsStrictlyConfirmed`. |
+| ❌ cancelled | — | Envelope confirmation rules withdrawn; Strong is optional LightBlock verification, not `IsStrictlyConfirmed`. |
 | ⏳ `TestDeferredFail_StrongEvidence_Exonerates` | `heightsync/strong_test.go` | DEFERRED_FAIL evidence with a Strong-verified canonical header exonerates the carrier. |
 
 ### In-process e2e (planned)
@@ -527,7 +527,7 @@ Files (planned): `heightsync_strong_e2e_test.go`. Suite prefix: `TestHeightSyncS
 | ⏳ `TestHeightSyncStrong_E2E_NoEscalationInsideD` (S2) | Inside `D = 2`, sender emits Anchor; no Strong overhead. |
 | ⏳ `TestHeightSyncStrong_E2E_StrongResponseVerifiedByCourier` (S3) | Host emits Strong on a sync-turn response; courier verifies + caches; next request carries originator metadata at full trust. |
 | ⏳ `TestHeightSyncStrong_E2E_TamperedProofRejected` (S4) | Server-hook flips a `light_block` byte ⇒ classification `INVALID(strong_proof_invalid)`; metric increments; tip not cached. |
-| ⏳ `TestHeightSyncStrong_E2E_CStrongOneProofConfirms` (S5) | A single verified `LightBlock` clears `(C-strong)` `IsStrictlyConfirmed(H)`. |
+| ⏳ `TestHeightSyncStrong_E2E_VerifiedLightBlockAccepted` (S5) | A verified `LightBlock` is accepted as cryptographic height evidence (not envelope quorum). |
 | ⏳ `TestHeightSyncStrong_E2E_CHybridEitherPathClears` (S6) | `(C-hybrid)`: quorum-first vs strong-first; monotonicity holds in both orders. |
 | ⏳ `TestHeightSyncStrong_E2E_CStrongMonotonicAcrossSetLoss` (S7) | Pinned validator set rotates out: confirmed heights remain confirmed; new heights wait for the new set. |
 | ⏳ `TestHeightSyncStrong_E2E_CarryForwardOutsideD_Rejected` (S8) | Carry-forward Anchor outside `D` is INVALID even with valid origin signature; `strong_required_rejected_total` increments. |
@@ -559,8 +559,8 @@ Files (planned): `heightsync_strong_e2e_test.go`. Suite prefix: `TestHeightSyncS
 | Carry-forward + originator | E1, E2, `TestHeightSyncPeerTips_Carry*`, `TestDecide_OriginatorOmittedInCourierMode` | — |
 | Freshness gate `F` | E3, E8, `TestServer_StaleOriginRejected`, `TestClassifyInbound_StaleOriginRejected` | — |
 | Lazy classification | E2, `TestServer_LazyAnchor*`, `TestClassifyInbound_LazyOutsideSyncTurn` | — |
-| `(C-quorum)` | E4, E5, E6, E11, `TestConfirm_*`, H98, H99 | — |
-| `(C-strong)` / `(C-hybrid)` | — | S5, S6, S7, `TestConfirm_RuleStrong*`, `TestConfirm_RuleHybrid*` |
+| Envelope `(C-quorum)` | **withdrawn** (§17) | — |
+| Strong (`LightBlock`) | — | S5–S7 (optional cryptographic height; not envelope quorum) |
 | Asymmetric response signatures | E9, E10, `TestClient_ResponseAnchor_*`, `TestServer_ResponseAnchor_SignedByHost`, `TestHandleHeightSync_OmitsSectionOnSignFailure`, `TestSignOrigin_*` | — |
 | DEFERRED_FAIL attribution | E10 (exculpation API), H13e, H14 | S11 (Strong-grade evidence) |
 | `ObservedHeightNow` (cPoC C14) | `TestObservedHeightNow_*` | — |
@@ -583,7 +583,7 @@ Files (planned): `heightsync_strong_e2e_test.go`. Suite prefix: `TestHeightSyncS
 | §14 floor raise rule, reorg recovery, applied-log-only fold | H54, H55, H56, H57, H58 | — |
 | §14 evaluation tiers (what may invalidate) | H13a, H13b, H13c | — |
 | §15 signature layers + mark retention | E10 (exculpation), H32, H85, H86, H87 | — |
-| §17 `(C-turn)` withdrawn | H53 `TestConfirm_TurnRuleWithdrawn`, plus H6 / H24 for what completion does still mean | — |
+| §17 turn ≠ height; envelope `(C-quorum)` withdrawn | H53 `TestTurnComplete_IsNotAHeightCertificate`, H6 / H24 | — |
 | Block-oracle abstraction + dapi compatibility | D1–D11 | — |
 
 ---
@@ -592,7 +592,7 @@ Files (planned): `heightsync_strong_e2e_test.go`. Suite prefix: `TestHeightSyncS
 
 | Attack | Mitigation in protocol | Test(s) |
 | ------ | ---------------------- | ------- |
-| Host signs wrong `(H, hash)` | Audit + `(C-quorum)` rejects a single bad vote; deferred-hash check; with Step 8 + Strong, `DISPUTE_ORIGINATOR` evidence | `TestHeightSyncAnchor_E2E_CheatingTrailStoresBogusUserHash`, E5; ⏳ S11 |
+| Host signs wrong `(H, hash)` | Audit + deferred-hash check; `DISPUTE_ORIGINATOR` evidence; cPoC slash via verifier vote quorum on local oracles | `TestHeightSyncAnchor_E2E_CheatingTrailStoresBogusUserHash`; ⏳ S11 |
 | Carrier strips originator metadata | Sync-turn receiver expects originator on cadence; freshness gate forces fresh attestation; carrier becomes the cryptographic signer (DISPUTE_CARRIER) | `TestHeightSyncPeerTips_Carry*`, E1 (originator ≠ user) |
 | Carrier replays old originator section | Freshness gate `F` rejects with `stale_origin`, including a missing timestamp on carry-forward; metric + audit dispute_carrier | E3, E8, `TestServer_StaleOriginRejected`, `TestClassifyInbound_StaleOriginRejected`, H67, H77 |
 | Carrier sends bogus hash with valid framing | Audit ring keeps verbatim bytes; quorum cannot include the cheater; eventually DISPUTE_ORIGINATOR with stored signed blob | E5, E10, `TestHeightSyncAnchor_E2E_CheatingTrailStoresBogusUserHash` |

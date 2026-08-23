@@ -188,8 +188,6 @@ type fourHostStack struct {
 	UserAddr  string
 	HostAddrs []string
 	httpSrvs  []*httptest.Server
-	// Confirm is the shared user-side confirmation index (nil when height sync off).
-	Confirm *heightsync.ConfirmationIndex
 }
 
 type testLogEntry struct {
@@ -384,14 +382,9 @@ func setupFourHostHTTPHeightSyncFromChainOracles(t *testing.T, hostSchedOracle, 
 		hosts: brHosts,
 	}
 	clientSched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, clientOracle)
-	sharedConfirm := heightsync.NewConfirmationIndex(heightsync.ConfirmationConfig{
-		Roster: slots,
-		Oracle: clientLogOracle,
-	})
 	cc := transport.DefaultClientConfig()
 	cc.HeightSync = clientSched
 	cc.HeightSyncLogOracle = clientLogOracle
-	cc.HeightSyncConfirmation = sharedConfirm
 	for _, f := range tweak {
 		if f != nil {
 			f(&cc)
@@ -415,7 +408,6 @@ func setupFourHostHTTPHeightSyncFromChainOracles(t *testing.T, hostSchedOracle, 
 		UserAddr:  userSigner.Address(),
 		HostAddrs: hostAddrs,
 		httpSrvs:  httpSrvs,
-		Confirm:   sharedConfirm,
 	}
 	t.Cleanup(func() {
 		_ = sess.Close()

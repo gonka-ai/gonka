@@ -182,7 +182,7 @@ func TestTurnTracker_OutOfOrderAcksIdenticalRecord(t *testing.T) {
 
 func TestTurnTracker_QuorumCompletesTurn(t *testing.T) {
 	tr := heightsync.NewTurnTracker(4, 3, heightsync.DefaultHeartbeatConfig())
-	require.Equal(t, 3, tr.Quorum(), "Q is the same knob as (C-quorum)")
+	require.Equal(t, 3, tr.Quorum(), "Q = ceil(2/3 × slots) for turn reachability")
 	tr.Observe(10, []*types.DevshardTx{heartbeatTx(1, 500, 4)}, 500)
 	require.Equal(t, heightsync.TurnOpen, tr.Record(1).State)
 
@@ -195,7 +195,7 @@ func TestTurnTracker_QuorumCompletesTurn(t *testing.T) {
 	require.Equal(t, heightsync.TurnComplete, rec.State)
 	require.Equal(t, uint64(500), rec.CompletedAtHeight)
 	require.Equal(t, uint64(500), tr.LastCompletedHeight())
-	require.True(t, tr.CompletedAtOrAbove(500), "bookkeeping only: (C-turn) is withdrawn")
+	require.True(t, tr.CompletedAtOrAbove(500), "bookkeeping only: turn completion is not a height certificate")
 }
 
 // pastAckWindow is the first height at which the shipped ack window has closed
