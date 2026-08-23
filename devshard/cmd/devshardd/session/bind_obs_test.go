@@ -130,7 +130,7 @@ func TestOwnerChat_BindsSession(t *testing.T) {
 }
 
 func TestOwnerChat_RejectsChunkedBodyBeforeBinding(t *testing.T) {
-	const escrowID = "owner-bind-oversize"
+	const escrowID = "9708"
 	mgr, store, user, _ := setupBindTestManager(t, escrowID)
 	mgr.maxBodySize = 8
 	e := echo.New()
