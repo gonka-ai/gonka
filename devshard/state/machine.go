@@ -1489,17 +1489,16 @@ func (sm *StateMachine) applyFinalizeRound() error {
 // still-live inference at the Finalizing->Settlement drain.
 func (sm *StateMachine) settleLiveRecordLocked(rec *types.InferenceRecord) {
 	switch rec.Status {
-	case types.StatusStarted:
-		// Host committed via signed receipt: pay reserved (surplus == 0).
+	case types.StatusStarted, types.StatusPending:
+		// Credit reserved. ConfirmStart is sequenced only by the user, and
+		// delivery (receipt + execute + stream) happens before promotion to
+		// Started, so a still-Pending record at drain cannot be treated as
+		// "no work". Genuine no-work refunds stay on
+		// MsgTimeoutInference(REFUSED), which Missed++ and releases the
+		// reservation. Do not Missed++ here.
 		rec.ActualCost = rec.ReservedCost
 		rec.Status = types.StatusFinished
 		sm.state.HostStats[rec.ExecutorSlot].Cost += rec.ReservedCost
-	case types.StatusPending:
-		// No commitment: refund the reservation to the creator.
-		sm.state.Balance += rec.ReservedCost
-		rec.ActualCost = 0
-		rec.Status = types.StatusTimedOut
-		// Do not Missed++: state cannot distinguish user censorship from host absence.
 	case types.StatusChallenged:
 		// Mid-dispute: keep current tally-driven status; seal as-is.
 	default:

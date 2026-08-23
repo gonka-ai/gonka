@@ -2393,7 +2393,7 @@ func TestDrainSettle_StartedAutoFinishes(t *testing.T) {
 	require.Equal(t, uint64(150), sealed.ActualCost)
 }
 
-func TestDrainSettle_PendingRefunds(t *testing.T) {
+func TestDrainSettle_PendingCreditsHost(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
 	}
@@ -2412,14 +2412,14 @@ func TestDrainSettle_PendingRefunds(t *testing.T) {
 	advanceToSettlement(t, sm, user, len(hosts))
 
 	after := sm.SnapshotState()
-	require.Equal(t, before.Balance+150, after.Balance)
-	require.Equal(t, uint64(0), after.HostStats[1].Cost)
+	require.Equal(t, before.Balance, after.Balance)
+	require.Equal(t, uint64(150), after.HostStats[1].Cost)
 	require.Equal(t, uint32(0), after.HostStats[1].Missed)
 
 	sealed, ok := sm.LookupSealedInference(1)
 	require.True(t, ok)
-	require.Equal(t, types.StatusTimedOut, sealed.Status)
-	require.Equal(t, uint64(0), sealed.ActualCost)
+	require.Equal(t, types.StatusFinished, sealed.Status)
+	require.Equal(t, uint64(150), sealed.ActualCost)
 }
 
 func TestDrainSettle_ChallengedUnchanged(t *testing.T) {
@@ -2555,7 +2555,7 @@ func TestDrainSettle_MixedDeterministic(t *testing.T) {
 	require.Equal(t, stA.HostStats, stB.HostStats)
 	require.Equal(t, stA.Balance, stB.Balance)
 
-	require.Equal(t, uint64(0), stA.HostStats[1].Cost)
+	require.Equal(t, uint64(150), stA.HostStats[1].Cost)
 	require.Equal(t, uint64(150), stA.HostStats[4].Cost)
 	require.Equal(t, uint64(120), stA.HostStats[2].Cost)
 
@@ -3298,10 +3298,10 @@ func TestSettleLiveRecordLocked_Pending(t *testing.T) {
 	callSettleLiveRecordLocked(t, sm, sm.state.Inferences[1])
 
 	after := sm.SnapshotState()
-	require.Equal(t, types.StatusTimedOut, after.Inferences[1].Status)
-	require.Equal(t, uint64(0), after.Inferences[1].ActualCost)
-	require.Equal(t, before.Balance+rec.ReservedCost, after.Balance)
-	require.Equal(t, uint64(0), after.HostStats[1].Cost)
+	require.Equal(t, types.StatusFinished, after.Inferences[1].Status)
+	require.Equal(t, uint64(150), after.Inferences[1].ActualCost)
+	require.Equal(t, before.Balance, after.Balance)
+	require.Equal(t, uint64(150), after.HostStats[1].Cost)
 	require.Equal(t, uint32(0), after.HostStats[1].Missed)
 }
 
