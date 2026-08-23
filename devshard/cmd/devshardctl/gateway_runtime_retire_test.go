@@ -2,7 +2,9 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -167,4 +169,93 @@ func TestRetireRotatedDevshardRetiresAfterSettlement(t *testing.T) {
 
 	_, stillRegistered := g.runtimes["12"]
 	require.False(t, stillRegistered, "settled rotation must retire the runtime")
+}
+
+type settleCheckBridge struct {
+	bridge.MainnetBridge
+	info *bridge.EscrowInfo
+	err  error
+}
+
+func (b *settleCheckBridge) GetEscrow(string) (*bridge.EscrowInfo, error) {
+	if b.err != nil {
+		return nil, b.err
+	}
+	return b.info, nil
+}
+
+func stubChainBridge(t *testing.T, br bridge.MainnetBridge) {
+	t.Helper()
+	old := gatewayChainBridge
+	gatewayChainBridge = func(*Gateway) bridge.MainnetBridge { return br }
+	t.Cleanup(func() { gatewayChainBridge = old })
+}
+
+// A resident runtime never goes through the rehydrate path, so an escrow the
+// chain already settled surfaces only as the chain's untyped "already settled"
+// rejection. Without reclassifying it the auto-settle loop burns all 30
+// attempts against a tx that can never succeed.
+func TestSettleTerminalErrClassifiesAlreadySettled(t *testing.T) {
+	g, _ := newRetireTestGateway("12")
+	stubChainBridge(t, &settleCheckBridge{info: &bridge.EscrowInfo{EscrowID: "12", Settled: true}})
+
+	cause := fmt.Errorf("tx failed: escrow 12 already settled")
+	err := g.settleTerminalErr("12", cause)
+	require.ErrorIs(t, err, bridge.ErrEscrowSettled)
+	require.Contains(t, err.Error(), "already settled")
+}
+
+func TestSettleTerminalErrKeepsRetryableCause(t *testing.T) {
+	g, _ := newRetireTestGateway("12")
+	stubChainBridge(t, &settleCheckBridge{info: &bridge.EscrowInfo{EscrowID: "12"}})
+
+	cause := errors.New("broadcast timeout")
+	err := g.settleTerminalErr("12", cause)
+	require.ErrorIs(t, err, cause)
+	require.NotErrorIs(t, err, bridge.ErrEscrowSettled, "an open escrow must stay retryable")
+}
+
+// When the chain cannot answer we must not invent a terminal state: the
+// original error stays, so the caller keeps retrying.
+func TestSettleTerminalErrKeepsCauseWhenChainUnreachable(t *testing.T) {
+	g, _ := newRetireTestGateway("12")
+	stubChainBridge(t, &settleCheckBridge{err: errors.New("chain down")})
+
+	cause := errors.New("broadcast timeout")
+	require.ErrorIs(t, g.settleTerminalErr("12", cause), cause)
+}
+
+// The auto-settle terminal branch must persist the deactivation, otherwise the
+// stored row stays Active for an escrow the chain considers finished.
+func TestScheduleAutoSettlementPersistsDeactivationWhenAlreadySettled(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+
+	require.NoError(t, store.Initialize(GatewaySettings{
+		ChainREST:    "http://node:1317",
+		PublicAPI:    "http://api:9000",
+		DefaultModel: "Qwen/Test",
+	}, []GatewayDevshardState{
+		{RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret"}, Active: true},
+	}))
+
+	g, _ := newRetireTestGateway("12")
+	g.store = store
+
+	oldSettle := gatewaySettleDevshardOnChain
+	gatewaySettleDevshardOnChain = func(_ *Gateway, _ context.Context, id string, _ adminSettleEscrowRequest) (*SettleDevshardEscrowResult, error) {
+		return nil, fmt.Errorf("settle %s: %w", id, bridge.ErrEscrowSettled)
+	}
+	t.Cleanup(func() { gatewaySettleDevshardOnChain = oldSettle })
+
+	g.scheduleAutoSettlement("12", "test")
+
+	require.Eventually(t, func() bool {
+		state, ok, err := store.LoadState()
+		if err != nil || !ok || len(state.Devshards) == 0 {
+			return false
+		}
+		return !state.Devshards[0].Active
+	}, 5*time.Second, 20*time.Millisecond, "already-settled escrow must be persisted inactive")
 }

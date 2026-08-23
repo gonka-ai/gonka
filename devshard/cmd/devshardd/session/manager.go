@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -336,6 +337,11 @@ func (m *HostManager) rememberResolutionFailure(escrowID string, err error, now 
 	m.resolutionFailures[escrowID] = resolutionFailure{err: err, expiresAt: now.Add(ttl)}
 	if len(m.resolutionFailures) > maxResolutionFailures {
 		m.sweepExpiredResolutionFailuresLocked(now)
+		// Sweeping only drops expired entries, so it cannot hold the bound on
+		// its own: settlement events arrive for every escrow this host holds a
+		// slot in, each parking a live 10-minute tombstone. Evict the entries
+		// closest to expiry so a burst cannot grow the map without limit.
+		m.evictOldestResolutionFailuresLocked(maxResolutionFailures)
 	}
 	m.sessionsMutex.Unlock()
 }
@@ -345,6 +351,29 @@ func (m *HostManager) sweepExpiredResolutionFailuresLocked(now time.Time) {
 		if !now.Before(cached.expiresAt) {
 			delete(m.resolutionFailures, escrowID)
 		}
+	}
+}
+
+// evictOldestResolutionFailuresLocked trims the map down to limit, dropping the
+// entries nearest expiry first. Dropping a live tombstone only costs a repeated
+// resolution attempt, which then re-caches the failure.
+func (m *HostManager) evictOldestResolutionFailuresLocked(limit int) {
+	if limit <= 0 || len(m.resolutionFailures) <= limit {
+		return
+	}
+	type entry struct {
+		escrowID  string
+		expiresAt time.Time
+	}
+	entries := make([]entry, 0, len(m.resolutionFailures))
+	for escrowID, cached := range m.resolutionFailures {
+		entries = append(entries, entry{escrowID: escrowID, expiresAt: cached.expiresAt})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].expiresAt.Before(entries[j].expiresAt)
+	})
+	for _, e := range entries[:len(entries)-limit] {
+		delete(m.resolutionFailures, e.escrowID)
 	}
 }
 

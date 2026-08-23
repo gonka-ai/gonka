@@ -708,7 +708,7 @@ func (s *Postgres) MarkSettled(escrowID string) error {
 		return err
 	}
 	if tag.RowsAffected() == 0 {
-		return fmt.Errorf("session %s not found", escrowID)
+		return fmt.Errorf("%w: %s", ErrSessionNotFound, escrowID)
 	}
 	return nil
 }
@@ -1597,6 +1597,7 @@ func (s *Postgres) pruneBefore(cutoff uint64) error {
 }
 
 func (s *Postgres) PutEscrowCache(info EscrowCacheInfo) error {
+	info = stampEscrowCache(info)
 	raw, err := marshalEscrowCache(info)
 	if err != nil {
 		return err

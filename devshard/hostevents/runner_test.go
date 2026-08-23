@@ -2,13 +2,14 @@ package hostevents_test
 
 import (
 	"context"
+	"errors"
 	"net"
 	"sync"
 	"testing"
 	"time"
 
-	"devshard/hostevents"
 	"common/nodemanager/gen"
+	"devshard/hostevents"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -108,13 +109,13 @@ func TestRun_RoutesCreatedAndSettled(t *testing.T) {
 			NextCursor: 2,
 			Events: []*gen.HostEvent{
 				{
-					Seq:  1,
-					Kind: gen.HostEventKind_HOST_EVENT_KIND_ESCROW_CREATED,
+					Seq:    1,
+					Kind:   gen.HostEventKind_HOST_EVENT_KIND_ESCROW_CREATED,
 					Escrow: &gen.EscrowPayload{EscrowId: 42},
 				},
 				{
-					Seq:  2,
-					Kind: gen.HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED,
+					Seq:    2,
+					Kind:   gen.HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED,
 					Escrow: &gen.EscrowPayload{EscrowId: 42},
 				},
 			},
@@ -128,8 +129,8 @@ func TestRun_RoutesCreatedAndSettled(t *testing.T) {
 	go func() {
 		defer close(done)
 		hostevents.Run(ctx, hostevents.Config{
-			Client:        client,
-			ServerMaxWait: 100 * time.Millisecond,
+			Client:          client,
+			ServerMaxWait:   100 * time.Millisecond,
 			ErrorBackoffMin: 10 * time.Millisecond,
 			ErrorBackoffMax: 20 * time.Millisecond,
 		}, sink)
@@ -231,3 +232,126 @@ func TestRun_UpdatesLoadMapOnUnchanged(t *testing.T) {
 	<-done
 }
 
+// flakySettleSink fails OnEscrowSettled failures times before succeeding.
+type flakySettleSink struct {
+	recordingSink
+	failMu   sync.Mutex
+	failures int
+	attempts int
+}
+
+func (s *flakySettleSink) OnEscrowSettled(id string) error {
+	s.failMu.Lock()
+	s.attempts++
+	fail := s.attempts <= s.failures
+	s.failMu.Unlock()
+	if fail {
+		return errors.New("mark settled failed")
+	}
+	return s.recordingSink.OnEscrowSettled(id)
+}
+
+func (s *flakySettleSink) attemptCount() int {
+	s.failMu.Lock()
+	defer s.failMu.Unlock()
+	return s.attempts
+}
+
+// settledEventsServer serves one settled event to any cursor below its seq,
+// mimicking the ring's "seq > cursor" contract so a rewound cursor redelivers.
+// The second return value reports whether the loop has ever polled from a
+// cursor at or past the event, i.e. whether it moved on.
+func settledEventsServer(escrowID, seq uint64) (*fakeHostEventsServer, func() bool) {
+	var (
+		mu       sync.Mutex
+		advanced bool
+	)
+	srv := &fakeHostEventsServer{}
+	srv.SetSticky(func(_ context.Context, req *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
+		cursor := req.GetCursor()
+		if cursor >= seq {
+			mu.Lock()
+			advanced = true
+			mu.Unlock()
+			return &gen.GetHostEventsResponse{Unchanged: true, Generation: 1, NextCursor: seq}, nil
+		}
+		return &gen.GetHostEventsResponse{
+			Generation: 1,
+			NextCursor: seq,
+			Events: []*gen.HostEvent{{
+				Seq:    seq,
+				Kind:   gen.HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED,
+				Escrow: &gen.EscrowPayload{EscrowId: escrowID},
+			}},
+		}, nil
+	})
+	return srv, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return advanced
+	}
+}
+
+// A settlement whose sink call fails must be redelivered, not dropped: the
+// long-poll is the only settlement signal a host gets when it missed the chain
+// event, so advancing the cursor past a failed write loses it permanently.
+func TestRun_RedeliversFailedDispatch(t *testing.T) {
+	srv, _ := settledEventsServer(42, 5)
+	client := dialFake(t, srv)
+	sink := &flakySettleSink{failures: 3}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		hostevents.Run(ctx, hostevents.Config{
+			Client:              client,
+			ServerMaxWait:       50 * time.Millisecond,
+			ErrorBackoffMin:     5 * time.Millisecond,
+			ErrorBackoffMax:     10 * time.Millisecond,
+			MaxDispatchAttempts: 10,
+		}, sink)
+	}()
+
+	require.Eventually(t, func() bool {
+		_, settled, _ := sink.snapshot()
+		return len(settled) == 1 && settled[0] == "42"
+	}, 3*time.Second, 20*time.Millisecond)
+	cancel()
+	<-done
+
+	require.Equal(t, 4, sink.attemptCount(), "three failures then one success")
+}
+
+// One permanently wedged event must not stall the stream forever.
+func TestRun_SkipsDispatchAfterMaxAttempts(t *testing.T) {
+	srv, movedOn := settledEventsServer(42, 5)
+	client := dialFake(t, srv)
+	sink := &flakySettleSink{failures: 1 << 30}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		hostevents.Run(ctx, hostevents.Config{
+			Client:              client,
+			ServerMaxWait:       50 * time.Millisecond,
+			ErrorBackoffMin:     time.Millisecond,
+			ErrorBackoffMax:     2 * time.Millisecond,
+			MaxDispatchAttempts: 3,
+		}, sink)
+	}()
+
+	require.Eventually(t, func() bool {
+		return sink.attemptCount() >= 3
+	}, 3*time.Second, 10*time.Millisecond)
+
+	// Once the bound is hit the loop advances past the event, so the server
+	// starts seeing the post-event cursor instead of the rewound one.
+	require.Eventually(t, movedOn, 3*time.Second, 10*time.Millisecond)
+	cancel()
+	<-done
+
+	_, settled, _ := sink.snapshot()
+	require.Empty(t, settled, "the event never applied; it was skipped, not silently recorded")
+}

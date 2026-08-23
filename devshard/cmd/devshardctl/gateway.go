@@ -4264,8 +4264,11 @@ func (g *Gateway) scheduleAutoSettlement(id, reason string) {
 			if errors.Is(err, bridge.ErrEscrowSettled) {
 				// Terminal: the chain already recorded settlement, so retrying
 				// can only fail. Clear the pending flag so restarts stop
-				// reconciling an escrow that is already done.
+				// reconciling an escrow that is already done, and persist the
+				// deactivation so the stored row does not stay Active for an
+				// escrow the chain considers finished.
 				g.clearSettlementPending(id)
+				g.deactivateDevshardByIDWithReason(id, "escrow settled on chain")
 				log.Printf("auto_settle_already_settled escrow=%s reason=%s", id, reason)
 				g.retireRuntime(id, reason)
 				return

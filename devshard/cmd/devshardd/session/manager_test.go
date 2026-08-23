@@ -1,6 +1,7 @@
 package session
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -408,6 +409,30 @@ func TestInstallSession_IgnoresTransientAndExpiredFailures(t *testing.T) {
 	mgr.rememberResolutionFailure("2", bridge.ErrEscrowSettled, now)
 	_, settled := mgr.installSession("2", srv, now.Add(permanentFailureTTL+time.Second))
 	require.False(t, settled, "an expired settled tombstone must not block install")
+}
+
+// Settlement events arrive for every escrow this host holds a slot in, each
+// parking a live 10-minute tombstone. Sweeping only drops expired entries, so
+// the map needs a hard cap or a settlement burst grows it without limit.
+func TestRememberResolutionFailure_BoundsMapUnderLiveTombstoneBurst(t *testing.T) {
+	store := newManagerTestStore(t)
+	mgr := NewHostManager(store, mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
+
+	now := time.Now()
+	for i := 0; i < maxResolutionFailures*3; i++ {
+		// Every entry is permanent and unexpired, so sweeping cannot help.
+		mgr.rememberResolutionFailure(strconv.Itoa(i), bridge.ErrEscrowSettled, now)
+	}
+
+	mgr.sessionsMutex.RLock()
+	size := len(mgr.resolutionFailures)
+	mgr.sessionsMutex.RUnlock()
+	require.LessOrEqual(t, size, maxResolutionFailures)
+
+	// Eviction is by nearest expiry, so the most recent tombstones survive and
+	// still block a bind.
+	last := strconv.Itoa(maxResolutionFailures*3 - 1)
+	require.ErrorIs(t, mgr.cachedResolutionFailure(last, now), bridge.ErrEscrowSettled)
 }
 
 func TestRecoverSessions_EmptyStore(t *testing.T) {

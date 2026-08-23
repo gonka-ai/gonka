@@ -36,6 +36,11 @@ func Run(ctx context.Context, cfg Config, sink Sink) {
 		cursor     uint64
 		generation uint64
 		backoff    time.Duration
+		// retrySeq is the seq of the event whose dispatch failed and that the
+		// cursor is currently rewound to; retries counts how many times it has
+		// been redelivered.
+		retrySeq uint64
+		retries  int
 	)
 
 	for {
@@ -60,7 +65,6 @@ func Run(ctx context.Context, cfg Config, sink Sink) {
 			cfg.Log.Warn("hostevents: long-poll failed", "err", err, "backoff", backoff)
 			continue
 		}
-		backoff = 0
 
 		if cfg.LoadMap != nil {
 			cfg.LoadMap.Replace(resp.GetEscrowLoad(), cfg.Clock.Now())
@@ -75,23 +79,61 @@ func Run(ctx context.Context, cfg Config, sink Sink) {
 				"next_cursor", resp.GetNextCursor())
 			sink.RehydrateOpenEscrows()
 			cursor = resp.GetNextCursor()
-			continue
-		}
-		cursor = resp.GetNextCursor()
-
-		if resp.GetUnchanged() {
+			backoff, retrySeq, retries = 0, 0, 0
 			continue
 		}
 
-		for _, ev := range resp.GetEvents() {
-			if err := dispatch(cfg, sink, ev); err != nil {
-				cfg.Log.Warn("hostevents: dispatch failed",
-					"kind", ev.GetKind().String(),
-					"seq", ev.GetSeq(),
-					"err", err)
+		failed, ok := dispatchBatch(cfg, sink, resp.GetEvents())
+		if !ok && failed.GetSeq() > 0 {
+			// Settlement is the only durable signal a host gets when it missed
+			// the chain event, so a failed dispatch must not be swallowed by
+			// advancing past it. Rewind so the ring redelivers this event, and
+			// hold the cursor here: later events stay queued rather than being
+			// applied out of order ahead of a settlement we have not recorded.
+			seq := failed.GetSeq()
+			if seq != retrySeq {
+				retrySeq, retries = seq, 0
 			}
+			retries++
+			if retries <= cfg.MaxDispatchAttempts {
+				cursor = seq - 1
+				backoff = nextBackoff(backoff, cfg.ErrorBackoffMin, cfg.ErrorBackoffMax)
+				cfg.Log.Warn("hostevents: dispatch failed, redelivering",
+					"kind", failed.GetKind().String(),
+					"seq", seq,
+					"attempt", retries,
+					"max_attempts", cfg.MaxDispatchAttempts,
+					"backoff", backoff)
+				continue
+			}
+			// Wedged on one event: skipping it keeps the rest of the stream
+			// moving, but this host may now be serving a settled escrow until
+			// a bind-time chain fetch corrects it. Operator-visible.
+			cfg.Log.Error("hostevents: dispatch permanently failed, skipping event",
+				"kind", failed.GetKind().String(),
+				"seq", seq,
+				"attempts", retries)
+		}
+
+		cursor = resp.GetNextCursor()
+		backoff, retrySeq, retries = 0, 0, 0
+	}
+}
+
+// dispatchBatch applies events in order and stops at the first failure,
+// returning that event. Stopping preserves ordering for the redelivery the
+// caller schedules; the remaining events are redelivered with it.
+func dispatchBatch(cfg Config, sink Sink, events []*gen.HostEvent) (*gen.HostEvent, bool) {
+	for _, ev := range events {
+		if err := dispatch(cfg, sink, ev); err != nil {
+			cfg.Log.Warn("hostevents: dispatch failed",
+				"kind", ev.GetKind().String(),
+				"seq", ev.GetSeq(),
+				"err", err)
+			return ev, false
 		}
 	}
+	return nil, true
 }
 
 func pollOnce(ctx context.Context, cfg Config, cursor, generation uint64) (*gen.GetHostEventsResponse, error) {
