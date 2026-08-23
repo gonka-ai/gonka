@@ -6,6 +6,7 @@ OpenAI-compatible chat completions, routed to Kimi-K2.6 / Qwen3-235B / MiniMax-M
 - [Per-model overrides: Kimi-K2.6](kimi-k2.6.md)
 - [Per-model overrides: Qwen3-235B-A22B-Instruct-2507](qwen3-235b-a22b-instruct-2507.md)
 - [Per-model overrides: MiniMax-M2.7](minimax-m2.7.md)
+- [Per-model overrides: DeepSeek-V4-Flash-0731](deepseek-v4-flash-0731.md)
 - [Why was my param stripped/rejected?](troubleshooting.md)
 - [Client agents compatibility](agents.md)
 - [Source citations](references.md)
@@ -62,7 +63,7 @@ OpenAI-compatible chat completions, routed to Kimi-K2.6 / Qwen3-235B / MiniMax-M
 | `cache_key` | string | — | silent-strip ([why](troubleshooting.md#strip-cache_key)) | [[Moonshot-1]](references.md#moonshot) |
 | `extra_headers` | object | — | silent-strip ([why](troubleshooting.md#strip-extra_headers)) | [[OpenAI-5]](references.md#openai) |
 | `extra_body` | object | — | unwrap to top-level ([why](troubleshooting.md#unwrap-extra_body)) | [[OpenAI-5]](references.md#openai) |
-| `reasoning_effort` | enum string | — | validated then stripped ([why](troubleshooting.md#strip-reasoning_effort)) | [[vLLM-1]](references.md#vllm), [[OpenAI-4]](references.md#openai) |
+| `reasoning_effort` | enum string | `max` on DeepSeek-V4 only | validated everywhere; on [DeepSeek-V4-Flash-0731](deepseek-v4-flash-0731.md) an explicit value is forwarded and an omitted one defaults to `max`, stripped on every other route ([why](troubleshooting.md#strip-reasoning_effort)) | [[vLLM-1]](references.md#vllm), [[OpenAI-4]](references.md#openai) |
 | `reasoning` | object | — | translate `effort` → `reasoning_effort` ([why](troubleshooting.md#translate-reasoning)) | [[OpenRouter-4]](references.md#openrouter) |
 | `enable_thinking` | bool | — | translate to chat_template_kwargs ([why](troubleshooting.md#translate-enable_thinking)) | [[Qwen-3]](references.md#qwen) |
 | `thinking_config` | object | — | silent-strip ([why](troubleshooting.md#strip-thinking_config)) | — |

@@ -28,14 +28,16 @@ func TestReasoningValidatorDropsNonEffortKeys(t *testing.T) {
 	require.Equal(t, "medium", doc["reasoning_effort"])
 }
 
-func TestReasoningValidatorEnabledFalseDropsEverything(t *testing.T) {
+// Dropping the wrapper without a trace would leave the request indistinguishable from one that never
+// mentioned reasoning, which a route defaulting the effort reads as permission to fill it in.
+func TestReasoningValidatorEnabledFalseRecordsTheRefusal(t *testing.T) {
 	v := ReasoningValidator{}
 	doc := parseDocument(t, `{"reasoning":{"enabled":false,"effort":"high"}}`)
 
 	require.NoError(t, v.Validate(ValidatorContext{Document: doc}))
 
 	require.NotContains(t, doc, "reasoning")
-	require.NotContains(t, doc, "reasoning_effort", "enabled:false must override any effort")
+	require.Equal(t, "none", doc["reasoning_effort"], "enabled:false must override any effort")
 }
 
 func TestReasoningValidatorEnabledTrueLiftsEffort(t *testing.T) {

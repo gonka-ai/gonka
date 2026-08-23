@@ -9,6 +9,7 @@ Namespaces:
 - `[Moonshot-N]` Moonshot (includes Kimi model line)
 - `[Qwen-N]` Qwen
 - `[MiniMax-N]` MiniMax AI (MiniMax-M2 line)
+- `[DeepSeek-N]` DeepSeek (DeepSeek-V4 line)
 - `[SGLang-N]` SGLang (cross-engine parser bug references)
 - `[OpenRouter-N]` OpenRouter
 - `[CVE-N]` security advisories
@@ -63,6 +64,13 @@ Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) 
 - **[vLLM-30]** [Issue #39573 — thinking budget not enforced with MTP](https://github.com/vllm-project/vllm/issues/39573) — "Without MTP → thinking budget enforced. With MTP → thinking budget NOT enforced." Confirms vLLM-29 end to end.
 - **[vLLM-31]** [Issue #36969 — Kimi-K2.5 emits a stray `</think>` when `enable_thinking` is false](https://github.com/vllm-project/vllm/issues/36969) — top-level `enable_thinking` leaks the tag into `content`; the maintainer's working answer is `chat_template_kwargs: {"thinking": false}`.
 - **[vLLM-32]** [chat_completion/protocol.py source](https://github.com/vllm-project/vllm/blob/v0.20.0/vllm/entrypoints/openai/chat_completion/protocol.py#L183) — `thinking_token_budget` is a declared top-level request field, forwarded to `SamplingParams`; it belongs at the top level, not inside `chat_template_kwargs`.
+- **[vLLM-33]** [tokenizers/deepseek_v4.py source](https://github.com/vllm-project/vllm/blob/main/vllm/tokenizers/deepseek_v4.py) — the bundled DeepSeek-V4 chat renderer. `apply_chat_template` reads `thinking`/`enable_thinking`/`reasoning_effort`/`drop_thinking` from `**kwargs` and collapses the seven-value wire enum onto three rendered levels (`none`→thinking off, `low|minimal|medium`→`low`, `max`→`max`, anything else→`high`).
+- **[vLLM-34]** [parser/deepseek_v4.py source](https://github.com/vllm-project/vllm/blob/main/vllm/parser/deepseek_v4.py) — DeepSeek-V4 reasoning/tool parser; thinking defaults on when neither `thinking` nor `enable_thinking` is present, and is forced off by `reasoning_effort == "none"`.
+- **[vLLM-35]** [PR #43401 — map reasoning_effort to enable_thinking](https://github.com/vllm-project/vllm/pull/43401) — milestone v0.22.0; establishes the engine version floor for `reasoning_effort` having any effect.
+- **[vLLM-36]** [Reasoning outputs feature docs](https://docs.vllm.ai/en/latest/features/reasoning_outputs/) — `--reasoning-parser` values, the `reasoning` response field and its deprecated `reasoning_content` alias, and the `reasoning_effort` → thinking activation rule.
+- **[vLLM-37]** [parser/abstract_parser.py source](https://github.com/vllm-project/vllm/blob/main/vllm/parser/abstract_parser.py) — `include_reasoning=false` nulls `delta_message.reasoning` and drops the delta entirely when it carried no content and no tool calls; the same suppression is duplicated in `parser/engine/parser_engine.py`. Generation is untouched, so the tokens still land in `usage.completion_tokens`.
+- **[vLLM-38]** [chat_completion/serving.py source](https://github.com/vllm-project/vllm/blob/main/vllm/entrypoints/openai/chat_completion/serving.py) — `if not request.include_reasoning: reasoning_ended = True`, which makes structured-output grammar engage from the first token instead of after the reasoning block closes.
+- **[vLLM-39]** [tokenizers/deepseek_v4_encoding.py source](https://github.com/vllm-project/vllm/blob/main/vllm/tokenizers/deepseek_v4_encoding.py) — `REASONING_EFFORT_PROMPTS` maps the three rendered levels to literal prompt prefixes (`low` → `""`, `high` and `max` → multi-paragraph instruction blocks), `DEFAULT_REASONING_EFFORT = "low"`, and `render_message` appends the prefix only when `index == 0` and `thinking_mode == "thinking"`.
 
 ## Moonshot
 
@@ -85,6 +93,11 @@ Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) 
 - **[MiniMax-3]** [MiniMax-M2.7 vLLM deployment guide](https://huggingface.co/MiniMaxAI/MiniMax-M2.7/blob/main/docs/vllm_deploy_guide.md) — exact CLI invocations, GPU sizing (220 GB weights + 240 GB/1M tokens), 196K max context per sequence, parser flags.
 - **[MiniMax-4]** [MiniMax-M2.7 tool calling guide](https://huggingface.co/MiniMaxAI/MiniMax-M2.7/blob/main/docs/tool_calling_guide.md) — `<minimax:tool_call><invoke><parameter>` output format; `role:"tool"` with `content:[{name,type,text}]` array (no `tool_call_id`).
 - **[MiniMax-5]** [MiniMax M2 Tool Use & Interleaved Thinking docs](https://platform.minimax.io/docs/guides/text-m2-function-call) — `extra_body.reasoning_split`, `reasoning_details[]` response field, multi-turn history rules.
+
+## DeepSeek
+
+- **[DeepSeek-1]** [DeepSeek-V4-Flash-0731 model card](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731) — states the three supported `reasoning_effort` levels (`low`, `high`, `max`) and the recommended vLLM/SGLang serving invocations, both of which require `--trust-remote-code` and neither of which passes a `--reasoning-parser` flag.
+- **[DeepSeek-2]** [Model discussion #39 — reasoning loops](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731/discussions/39) — community thread, no vendor reply. Reports reasoning loops in long tool-calling sessions traced to accumulating empty `<think></think>` blocks, a ~60-turn degradation threshold, and `{"thinking": true, "reasoning_effort": "max"}` as the reported remedy. Cited as the origin of the request, not as evidence.
 
 ## SGLang
 
@@ -116,4 +129,5 @@ Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) 
 - **[CVE-12]** [CVE-2026-27893 / RAXE-2026-044 (vLLM)](https://raxe.ai/labs/advisories/RAXE-2026-044) — vLLM hardcoded trust_remote_code bypass enables RCE via malicious model repositories; direct mitigation for the MiniMax-M2.7 route is the chain-pinned `HfCommit` SHA in the governance model config.
 - **[CVE-13]** [CVE-2026-22778 (vLLM)](https://www.ox.security/blog/cve-2026-22778-vllm-rce-vulnerability/) — RCE via crafted video link in multimodal content; gateway mitigates by rejecting non-text content parts on all text-only routes (M2.7 included).
 - **[CVE-14]** [CVE-2025-62164 / GHSA-mrw7-hf4f-83pf (vLLM)](https://github.com/advisories/GHSA-mrw7-hf4f-83pf) — tensor deserialization → DoS / potential RCE; pin vLLM ≥ patched release.
+- **[CVE-15]** [CVE-2026-48746 (vLLM)](https://advisories.gitlab.com/pypi/vllm/CVE-2026-48746/) — CVSS 9.1 authentication bypass of the OpenAI-API `AuthenticationMiddleware`: the middleware rebuilt the request path with `URL(scope=scope).path`, which trusts the unsanitized `Host` header, so a crafted header makes the reconstructed path miss the `/v1` prefix check and skip auth entirely. Affects 0.3.0 through 0.21.0, fixed in 0.22.0. An RFC-conforming reverse proxy (nginx) normalizes `Host` and blocks it, so exposure depends on the host's own topology, not ours.
 

@@ -94,9 +94,13 @@ const (
 // Routed model identifiers. The parameter catalog and the message processor
 // both dispatch on these strings.
 const (
-	kimiK26ModelID    = "moonshotai/Kimi-K2.6"
-	miniMaxM27ModelID = "MiniMaxAI/MiniMax-M2.7"
+	kimiK26ModelID             = "moonshotai/Kimi-K2.6"
+	miniMaxM27ModelID          = "MiniMaxAI/MiniMax-M2.7"
+	deepSeekV4Flash0731ModelID = "deepseek-ai/DeepSeek-V4-Flash-0731"
 )
+
+// An omitted reasoning_effort renders as "high"; "max" is the strongest prefix the encoder defines.
+const deepSeekDefaultReasoningEffort = "max"
 
 // Sentinel content used by message normalization when an upstream tool result is empty.
 const emptyToolResultContent = "<empty tool result>"
