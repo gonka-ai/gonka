@@ -107,12 +107,14 @@ func Run(ctx context.Context, cfg Config, sink Sink) {
 				continue
 			}
 			// Wedged on one event: skipping it keeps the rest of the stream
-			// moving, but this host may now be serving a settled escrow until
-			// a bind-time chain fetch corrects it. Operator-visible.
+			// moving, but a skipped ESCROW_SETTLED is gone for good, so sweep
+			// open escrows against the chain to re-derive what the event would
+			// have told us. Operator-visible either way.
 			cfg.Log.Error("hostevents: dispatch permanently failed, skipping event",
 				"kind", failed.GetKind().String(),
 				"seq", seq,
 				"attempts", retries)
+			sink.RehydrateOpenEscrows()
 		}
 
 		cursor = resp.GetNextCursor()

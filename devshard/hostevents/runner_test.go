@@ -352,6 +352,8 @@ func TestRun_SkipsDispatchAfterMaxAttempts(t *testing.T) {
 	cancel()
 	<-done
 
-	_, settled, _ := sink.snapshot()
+	_, settled, rehydrate := sink.snapshot()
 	require.Empty(t, settled, "the event never applied; it was skipped, not silently recorded")
+	require.NotZero(t, rehydrate,
+		"a skipped settlement is unrecoverable from the ring, so the skip must fall back to a chain sweep")
 }

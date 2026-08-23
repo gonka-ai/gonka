@@ -81,6 +81,22 @@ const (
 	resolutionFailureTTL  = 30 * time.Second
 	permanentFailureTTL   = 10 * time.Minute
 	maxResolutionFailures = 1024
+	// resolutionFailureLowWater is the size the tombstone map is trimmed to
+	// once it exceeds maxResolutionFailures. Trimming below the cap amortises
+	// the eviction sort over many inserts; trimming exactly to the cap would
+	// re-sort on every insert while the map sits at the bound, and that sort
+	// runs under the sessionsMutex write lock that all lookups contend on.
+	resolutionFailureLowWater = maxResolutionFailures * 3 / 4
+
+	// recoveryEscrowCheckTimeout bounds the per-session chain query that
+	// RecoverSessions makes before replaying a locally-active row.
+	recoveryEscrowCheckTimeout = 5 * time.Second
+	// recoveryEscrowCheckBudget bounds those queries in aggregate. Recovery is
+	// synchronous in host startup and a host can hold many sessions, so a
+	// per-call timeout alone would still let an unresponsive chain add
+	// sessions*timeout to boot. Past the budget the remaining escrows skip the
+	// check and recover, same as any other query failure.
+	recoveryEscrowCheckBudget = 30 * time.Second
 )
 
 type resolutionFailure struct {
@@ -341,7 +357,7 @@ func (m *HostManager) rememberResolutionFailure(escrowID string, err error, now 
 		// its own: settlement events arrive for every escrow this host holds a
 		// slot in, each parking a live 10-minute tombstone. Evict the entries
 		// closest to expiry so a burst cannot grow the map without limit.
-		m.evictOldestResolutionFailuresLocked(maxResolutionFailures)
+		m.evictOldestResolutionFailuresLocked(resolutionFailureLowWater)
 	}
 	m.sessionsMutex.Unlock()
 }
@@ -507,14 +523,18 @@ func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*trans
 }
 
 // RecoverSessions rebuilds in-memory sessions from the shared store.
-// For each active session, it replays all diffs through a fresh StateMachine,
-// injecting warm key deltas from the stored DiffRecords. Call this on startup
-// after constructing the HostManager.
+// For each locally-active session it asks the chain whether the escrow is
+// already settled and, if so, finalizes instead of replaying. Transient
+// GetEscrow failures fail-open so a chain blip at boot does not drop work
+// this host already bound. Call this on startup after constructing the
+// HostManager.
 func (m *HostManager) RecoverSessions() error {
 	escrowIDs, err := m.store.ListActiveSessions()
 	if err != nil {
 		return fmt.Errorf("list active sessions: %w", err)
 	}
+
+	checkDeadline := time.Now().Add(recoveryEscrowCheckBudget)
 
 	for _, active := range escrowIDs {
 		if err := devshardpkg.ValidateEscrowID(active.EscrowID); err != nil {
@@ -523,6 +543,29 @@ func (m *HostManager) RecoverSessions() error {
 			if markErr := m.store.MarkSettled(active.EscrowID); markErr != nil {
 				logging.Error("failed to retire non-canonical devshard session", inferenceTypes.System,
 					"escrow_id", active.EscrowID, "error", markErr)
+			}
+			continue
+		}
+		// Local status is "active" only. A missed ESCROW_SETTLED (or a
+		// settlement that aged out of the dapi ring) leaves that row in place,
+		// and recoverStoredSession never asks the chain. One GetEscrow here
+		// prevents serving work that VerifyDevshardSettlement will refuse to
+		// pay for. Transient query failures fail-open: recover the row.
+		//
+		// HandleSettlementFinalized persists MarkSettled, so a chain node that
+		// wrongly reports Settled retires the session for good. That is
+		// deliberate: its in-memory tombstone expires after permanentFailureTTL,
+		// after which the still-active row would be recovered by the next bind
+		// and serve unpayable work until the following restart. Durable state is
+		// the only way to make the decision stick, and a node that lies about
+		// Settled is already outside the trust model create() relies on.
+		if m.chainReportsSettled(active.EscrowID, checkDeadline) {
+			if err := m.HandleSettlementFinalized(active.EscrowID); err != nil {
+				logging.Error("failed to finalize chain-settled escrow during recovery", inferenceTypes.System,
+					"escrow_id", active.EscrowID, "error", err)
+			} else {
+				logging.Info("skipping recovery of chain-settled escrow", inferenceTypes.System,
+					"escrow_id", active.EscrowID)
 			}
 			continue
 		}
@@ -538,6 +581,26 @@ func (m *HostManager) RecoverSessions() error {
 	}
 
 	return nil
+}
+
+// chainReportsSettled is true only when the live query says the escrow is
+// settled. A missing bridge, a nil info, or any query error (including chain
+// unavailable) returns false so RecoverSessions still brings the local row up.
+//
+// Each query is bounded by recoveryEscrowCheckTimeout and all of them together
+// by deadline, because recovery is synchronous in host startup.
+func (m *HostManager) chainReportsSettled(escrowID string, deadline time.Time) bool {
+	budget := time.Until(deadline)
+	if budget > recoveryEscrowCheckTimeout {
+		budget = recoveryEscrowCheckTimeout
+	}
+	settled, err := bridge.SettledWithin(m.bridge, escrowID, budget)
+	if err != nil {
+		logging.Warn("chain settled-check failed during recovery; recovering local row",
+			inferenceTypes.System, "escrow_id", escrowID, "error", err)
+		return false
+	}
+	return settled
 }
 
 func (m *HostManager) recoverAndStoreSession(escrowID string) (*transport.Server, error) {

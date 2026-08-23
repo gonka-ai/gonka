@@ -9,21 +9,25 @@ import (
 	"path/filepath"
 
 	"devshard/bridge"
+	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
 	"devshard/stub"
-	"devshard/internal/testutil"
 	"devshard/types"
 	"google.golang.org/protobuf/proto"
 )
 
 // mockBridge implements bridge.MainnetBridge for testing recovery.
 type mockBridge struct {
-	escrow *bridge.EscrowInfo
+	escrow       *bridge.EscrowInfo
+	getEscrowErr error
 }
 
 func (b *mockBridge) GetEscrow(_ string) (*bridge.EscrowInfo, error) {
+	if b.getEscrowErr != nil {
+		return nil, b.getEscrowErr
+	}
 	return b.escrow, nil
 }
 
@@ -47,6 +51,17 @@ func (b *mockBridge) SubmitDisputeState(_ string, _ []byte, _ uint64, _ map[uint
 }
 
 var _ bridge.MainnetBridge = (*mockBridge)(nil)
+
+// blockingBridge models a chain node that accepts the query and never answers.
+type blockingBridge struct {
+	mockBridge
+	release chan struct{}
+}
+
+func (b *blockingBridge) GetEscrow(id string) (*bridge.EscrowInfo, error) {
+	<-b.release
+	return b.mockBridge.GetEscrow(id)
+}
 
 func mustGenerateKey(t *testing.T) *signing.Secp256k1Signer {
 	t.Helper()
@@ -497,6 +512,68 @@ func TestRecoverStoredSession_RejectsSettledStatus(t *testing.T) {
 	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
 	_, err := mgr.recoverStoredSession("1")
 	require.ErrorIs(t, err, storage.ErrSessionNotActive)
+}
+
+// RecoverSessions asks the chain before replaying a locally-active row. A missed
+// settlement event (or one that aged out of the dapi ring) leaves status
+// "active"; without this check the host would serve work it can never settle.
+func TestRecoverSessions_DoesNotReviveChainSettledEscrow(t *testing.T) {
+	store := newManagerTestStore(t)
+	_, _, hostSigner := createStoredSession(t, store, "1", 7, 1)
+
+	br := &mockBridge{escrow: &bridge.EscrowInfo{EscrowID: "1", Settled: true}}
+	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+
+	require.NoError(t, mgr.RecoverSessions())
+
+	_, live := mgr.existingServer("1")
+	require.False(t, live, "a chain-settled escrow must not become a live session")
+
+	meta, err := store.GetSessionMeta("1")
+	require.NoError(t, err)
+	require.Equal(t, "settled", meta.Status)
+
+	_, err = mgr.getOrCreate("1", nil)
+	require.ErrorIs(t, err, bridge.ErrEscrowSettled)
+}
+
+// GetEscrow takes no context and the gRPC bridges use context.Background(), so
+// a chain node that never answers must not hang startup.
+func TestRecoverSessions_HungChainDoesNotBlockStartup(t *testing.T) {
+	store := newManagerTestStore(t)
+	_, _, hostSigner := createStoredSession(t, store, "1", 7, 1)
+
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	br := &blockingBridge{mockBridge: mockBridge{escrow: &bridge.EscrowInfo{EscrowID: "1", Settled: true}}, release: release}
+	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+
+	done := make(chan error, 1)
+	go func() { done <- mgr.RecoverSessions() }()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(recoveryEscrowCheckTimeout + 10*time.Second):
+		t.Fatal("RecoverSessions blocked on a hung chain query")
+	}
+
+	_, live := mgr.existingServer("1")
+	require.True(t, live, "a timed-out settled-check must fail open and recover the row")
+}
+
+// A chain blip at boot must not skip recovery of work this host already bound.
+func TestRecoverSessions_RecoversWhenChainUnreachable(t *testing.T) {
+	store := newManagerTestStore(t)
+	_, _, hostSigner := createStoredSession(t, store, "1", 7, 1)
+
+	br := &mockBridge{getEscrowErr: bridge.ErrChainUnavailable}
+	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+
+	require.NoError(t, mgr.RecoverSessions())
+
+	_, live := mgr.existingServer("1")
+	require.True(t, live, "transient GetEscrow failure must fail-open and recover the local row")
 }
 
 func TestRecoverSessions_StateRootMismatch(t *testing.T) {
