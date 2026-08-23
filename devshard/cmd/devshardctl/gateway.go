@@ -4266,6 +4266,9 @@ func finalizeRuntimeConfigs(runtimes []RuntimeConfig, defaultModel, baseStorageD
 		if cfg.ID == "" {
 			return nil, fmt.Errorf("runtime config missing id")
 		}
+		if err := devshardpkg.ValidateEscrowID(cfg.ID); err != nil {
+			return nil, fmt.Errorf("runtime config: %w", err)
+		}
 		if _, ok := seen[cfg.ID]; ok {
 			return nil, fmt.Errorf("duplicate runtime id %s", cfg.ID)
 		}

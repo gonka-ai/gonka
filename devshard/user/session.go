@@ -1702,7 +1702,8 @@ func (s *Session) AddPendingTimeoutTx(inferenceID uint64, reason types.TimeoutRe
 }
 
 // SendPendingDiff creates a diff from pending txs (no new MsgStartInference),
-// applies it locally, and sends it to the next host. Used for timeout submission.
+// applies it locally, and submits the signed diff to a reachable host. Used for
+// timeout submission and draining host-proposed transactions.
 func (s *Session) SendPendingDiff(ctx context.Context) error {
 	s.mu.Lock()
 	diff, hostIdx, err := s.composeDiffLocked(nil)
@@ -1710,17 +1711,38 @@ func (s *Session) SendPendingDiff(ctx context.Context) error {
 		s.mu.Unlock()
 		return err
 	}
-	catchUp := s.diffsForHost(hostIdx)
 	s.mu.Unlock()
 
-	resp, err := s.clients[hostIdx].Send(ctx, host.HostRequest{Diffs: catchUp, Nonce: diff.Nonce}, nil, nil)
-	if err != nil {
-		return fmt.Errorf("send timeout diff to host %d: %w", hostIdx, err)
+	var lastErr error
+	for offset := 0; offset < len(s.clients); offset++ {
+		candidateIdx := (hostIdx + offset) % len(s.clients)
+
+		s.mu.Lock()
+		catchUp := s.diffsForHost(candidateIdx)
+		s.mu.Unlock()
+
+		resp, sendErr := s.clients[candidateIdx].Send(ctx, host.HostRequest{
+			Diffs: catchUp,
+			Nonce: diff.Nonce,
+		}, nil, nil)
+		if sendErr != nil {
+			lastErr = fmt.Errorf("send pending diff to host %d: %w", candidateIdx, sendErr)
+			if ctx.Err() != nil {
+				return lastErr
+			}
+			continue
+		}
+
+		s.mu.Lock()
+		processErr := s.processResponse(candidateIdx, resp, diff.Nonce)
+		s.mu.Unlock()
+		if processErr != nil {
+			return fmt.Errorf("process pending diff response from host %d: %w", candidateIdx, processErr)
+		}
+		return nil
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.processResponse(hostIdx, resp, diff.Nonce)
+	return fmt.Errorf("send pending diff nonce %d to any host: %w", diff.Nonce, lastErr)
 }
 
 // TimeoutVerifiers returns a map of host index -> TimeoutVerifier for all
@@ -1860,6 +1882,18 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 	var reason types.TimeoutReason
 	var deadline time.Time
 	if confirmedAt > 0 {
+		// A receipt moves the inference to Started. Publish its pending
+		// ConfirmStart before asking peers to verify an execution timeout so
+		// they evaluate the same receipt-backed state.
+		st := s.sm.SnapshotState()
+		if rec, ok := st.Inferences[nonce]; !ok {
+			return TimeoutResult{}, fmt.Errorf("execution timeout inference %d not found", nonce)
+		} else if rec.Status == types.StatusPending {
+			if err := s.SendPendingDiff(ctx); err != nil {
+				return TimeoutResult{}, fmt.Errorf("publish receipt before execution timeout: %w", err)
+			}
+		}
+
 		deadline = time.Unix(confirmedAt, 0).Add(
 			time.Duration(cfg.ExecutionTimeout)*time.Second + TimeoutBuffer)
 		if !sleepUntilDeadlineWithHeartbeat(ctx, deadline, func() {

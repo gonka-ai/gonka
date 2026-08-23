@@ -66,6 +66,9 @@ func ValidateURL(fieldName, raw string) error {
 
 // ValidateURLWithSSRFProtection validates URL format and rejects private/internal addresses
 // to prevent SSRF attacks. This should be used for participant-controlled URLs.
+//
+// Deterministic only: no DNS resolution here (ValidateBasic must be pure).
+// The dial-time guard is the real defense against hostname/rebinding SSRF.
 func ValidateURLWithSSRFProtection(fieldName, raw string) error {
 	if err := ValidateURL(fieldName, raw); err != nil {
 		return err
@@ -101,8 +104,26 @@ func isLocalhost(host string) bool {
 		host == "0.0.0.0"
 }
 
+// IsPrivateIP reports whether ip is in a private/internal range that a
+// participant-controlled URL must never be allowed to reach (loopback,
+// link-local, RFC1918, ULA, cloud metadata, etc.). It is the exported wrapper
+// around isPrivateIP so out-of-package dial-time SSRF guards can reuse the exact
+// same policy as the registration gate.
+func IsPrivateIP(ip net.IP) bool {
+	return isPrivateIP(ip)
+}
+
 // isPrivateIP checks if an IP address is in a private/internal range
 func isPrivateIP(ip net.IP) bool {
+	// Normalize IPv4-mapped IPv6 (e.g. ::ffff:127.0.0.1, ::ffff:169.254.169.254)
+	// to their 4-byte form so the IPv4 rules below apply. Without this,
+	// ip.To4() inside the IPv4 block already handles mapped addresses, but the
+	// loopback/link-local checks on the mapped form are also covered by the
+	// stdlib methods; normalizing up-front keeps the whole predicate consistent.
+	if v4 := ip.To4(); v4 != nil {
+		ip = v4
+	}
+
 	// Loopback (127.0.0.0/8, ::1)
 	if ip.IsLoopback() {
 		return true

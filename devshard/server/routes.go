@@ -7,6 +7,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/observability"
 	"devshard/storage"
@@ -38,6 +39,7 @@ type PayloadHandler interface {
 func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder OwnerChatBinder, payloadHandler PayloadHandler) {
 	g.Use(observability.EchoMiddleware())
 	g.Use(observability.RequestIDMiddleware)
+	g.Use(canonicalEscrowIDMiddleware)
 
 	g.POST("/sessions/:id/chat/completions", withOwnerChat(binder, true,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleInference }))
@@ -67,6 +69,22 @@ func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder O
 			observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
 			return payloadHandler.HandlePayloads(c, srv)
 		})
+	}
+}
+
+func canonicalEscrowIDMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		escrowID := c.Param("id")
+		if escrowID == "" {
+			return next(c)
+		}
+		if err := devshardpkg.ValidateEscrowID(escrowID); err != nil {
+			observability.IncSessionResolution(routeLabel(c), observability.MetricStatusError, observability.ReasonInvalidEscrowID)
+			observability.Log(c.Request().Context(), observability.LevelWarn, "devshard rejected non-canonical escrow id",
+				observability.StageSessionResolved, observability.WhereRoutesSessionResolve, escrowID, observability.ReasonInvalidEscrowID, err)
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		return next(c)
 	}
 }
 
