@@ -62,7 +62,11 @@ func (m *mockTxManager) Status(context.Context) (*ctypes.ResultStatus, error) {
 func (m *mockTxManager) BankBalances(context.Context, string) ([]sdk.Coin, error) {
 	return nil, nil
 }
-func (m *mockTxManager) GetJetStream() nats.JetStreamContext { return nil }
+func (m *mockTxManager) GetJetStream() nats.JetStreamContext      { return nil }
+func (m *mockTxManager) RefreshFeeTree(*inferencetypes.FeeParams) {}
+func (m *mockTxManager) SetStoreCommitPrev(map[string]uint32)     {}
+func (m *mockTxManager) SetHardwarePrev([]*inferencetypes.HardwareNode) {
+}
 
 func startTestNatsServer(t *testing.T) (*server.Server, nats.JetStreamContext) {
 	opts := &server.Options{

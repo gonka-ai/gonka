@@ -11,7 +11,7 @@ import (
 
 // SubmitPocValidationsV2 handles batch submission of PoC v2 validations.
 func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgSubmitPocValidationsV2) (*types.MsgSubmitPocValidationsV2Response, error) {
-	if err := k.CheckPermission(goCtx, msg, NoPermission); err != nil {
+	if err := k.CheckPermission(goCtx, msg, ParticipantPermission); err != nil {
 		return nil, err
 	}
 
