@@ -1,0 +1,272 @@
+package mlnodeclient
+
+import (
+	"common/utils"
+	"context"
+	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
+	"testing"
+)
+
+// newTestClient points a Client at srv for both the PoC and inference URLs.
+func newTestClient(srv *httptest.Server) *Client {
+	return NewNodeClient(srv.URL, srv.URL)
+}
+
+// TestClient_InferenceUpChecksStatus covers the false-positive that mattered
+// most: the MLnode answers 409 when vLLM is already running or starting, and the
+// old implementation discarded the response and reported success. The broker
+// then treated a failed launch as healthy instead of retrying it.
+func TestClient_InferenceUpChecksStatus(t *testing.T) {
+	cases := []struct {
+		name        string
+		status      int
+		body        string
+		wantErr     bool
+		wantRetry   bool
+		wantMessage string
+	}{
+		{name: "ok", status: http.StatusOK, body: `{"status":"OK"}`},
+		{
+			name:        "already running",
+			status:      http.StatusConflict,
+			body:        `{"detail":"VLLM is already running."}`,
+			wantErr:     true,
+			wantRetry:   true,
+			wantMessage: "already running",
+		},
+		{
+			name:      "startup failed",
+			status:    http.StatusInternalServerError,
+			body:      `{"detail":"Failed to start VLLM"}`,
+			wantErr:   true,
+			wantRetry: true,
+		},
+		{
+			name:      "validation error",
+			status:    http.StatusUnprocessableEntity,
+			body:      `{"detail":"bad request"}`,
+			wantErr:   true,
+			wantRetry: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != inferenceUpPath {
+					t.Errorf("path = %s, want %s", r.URL.Path, inferenceUpPath)
+				}
+				// We now declare the body we send. FastAPI would parse it either
+				// way (it falls back to JSON when no content-type header is
+				// present), so this pins the header, not a behavior change.
+				if ct := r.Header.Get("Content-Type"); ct != "application/json" {
+					t.Errorf("Content-Type = %q, want application/json", ct)
+				}
+				w.WriteHeader(tc.status)
+				_, _ = io.WriteString(w, tc.body)
+			}))
+			defer srv.Close()
+
+			err := newTestClient(srv).InferenceUp(context.Background(), "model-a", []string{"--flag"})
+			if tc.wantErr {
+				if err == nil {
+					t.Fatalf("status %d: expected an error", tc.status)
+				}
+				if got := IsTransientStatus(err); got != tc.wantRetry {
+					t.Errorf("IsTransientStatus = %v, want %v (err=%v)", got, tc.wantRetry, err)
+				}
+				if tc.wantMessage != "" && !strings.Contains(err.Error(), tc.wantMessage) {
+					t.Errorf("error %q does not mention %q", err, tc.wantMessage)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+		})
+	}
+}
+
+// TestClient_StopChecksStatus guards the same class of bug on /stop: the MLnode
+// only answers 200, so any other status means the node did not stop. Reporting
+// success there let the broker's redeploy and the pre-PoC test proceed against a
+// node still running a model.
+func TestClient_StopChecksStatus(t *testing.T) {
+	t.Run("ok", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path != stopPath {
+				t.Errorf("path = %s, want %s", r.URL.Path, stopPath)
+			}
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+
+		if err := newTestClient(srv).Stop(context.Background()); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+	})
+
+	t.Run("server error", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, `{"detail":"could not stop"}`)
+		}))
+		defer srv.Close()
+
+		err := newTestClient(srv).Stop(context.Background())
+		if err == nil {
+			t.Fatal("a non-200 /stop must be reported as a failure")
+		}
+		var statusErr *StatusError
+		if !errors.As(err, &statusErr) {
+			t.Fatalf("error %v is not a StatusError", err)
+		}
+		if statusErr.StatusCode != http.StatusInternalServerError {
+			t.Errorf("StatusCode = %d, want 500", statusErr.StatusCode)
+		}
+	})
+}
+
+// TestReadErrorBodyExcerpt pins the two properties the excerpt promises, since
+// the body comes from an endpoint we do not control: it stays on one log line,
+// and it stays bounded.
+func TestReadErrorBodyExcerpt(t *testing.T) {
+	t.Run("multi-line body is folded onto one line", func(t *testing.T) {
+		// A Python traceback or an HTML error page from something that is not an
+		// MLnode. Trimming the ends would leave the interior newlines and spread
+		// one error across several log lines.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = io.WriteString(w, "\n<html>\n  <body>\n\tBad Gateway\n  </body>\n</html>\n")
+		}))
+		defer srv.Close()
+
+		err := newTestClient(srv).Stop(context.Background())
+		if err == nil {
+			t.Fatal("expected an error for a 502")
+		}
+		if msg := err.Error(); strings.ContainsAny(msg, "\n\r\t") {
+			t.Errorf("error message is not single-line: %q", msg)
+		}
+		if !strings.Contains(err.Error(), "Bad Gateway") {
+			t.Errorf("error %q lost the body content", err)
+		}
+	})
+
+	t.Run("oversized body is capped", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, strings.Repeat("x", maxErrorBodyBytes*4))
+		}))
+		defer srv.Close()
+
+		var statusErr *StatusError
+		if err := newTestClient(srv).Stop(context.Background()); !errors.As(err, &statusErr) {
+			t.Fatalf("error %v is not a StatusError", err)
+		}
+		if len(statusErr.Body) > maxErrorBodyBytes {
+			t.Errorf("excerpt is %d bytes, want at most %d", len(statusErr.Body), maxErrorBodyBytes)
+		}
+	})
+}
+
+// TestSendPostJsonRequest_ContentType documents the header change's actual
+// blast radius. SendPostJsonRequest is shared: every caller with a non-nil
+// payload now declares application/json, while a nil payload still sends no
+// body and no header. This is not fixing a live failure — FastAPI falls back to
+// JSON parsing when no content-type is present — it makes the request honest and
+// keeps it working under strict content-type checking.
+func TestSendPostJsonRequest_ContentType(t *testing.T) {
+	t.Run("payload declares application/json", func(t *testing.T) {
+		got := make(chan string, 1)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			got <- r.Header.Get("Content-Type")
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+
+		client := &http.Client{}
+		resp, err := utils.SendPostJsonRequest(context.Background(), client, srv.URL, map[string]string{"k": "v"})
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer resp.Body.Close()
+		if ct := <-got; ct != "application/json" {
+			t.Errorf("Content-Type = %q, want application/json", ct)
+		}
+	})
+
+	t.Run("nil payload sends no content type", func(t *testing.T) {
+		got := make(chan string, 1)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			got <- r.Header.Get("Content-Type")
+			w.WriteHeader(http.StatusOK)
+		}))
+		defer srv.Close()
+
+		client := &http.Client{}
+		resp, err := utils.SendPostJsonRequest(context.Background(), client, srv.URL, nil)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		defer resp.Body.Close()
+		if ct := <-got; ct != "" {
+			t.Errorf("Content-Type = %q, want empty for a bodyless POST", ct)
+		}
+	})
+
+	t.Run("unmarshalable payload returns an error, never (nil, nil)", func(t *testing.T) {
+		// Guards the shadowed-err fix: a marshalling failure used to be
+		// swallowed, and the function could return no response and no error —
+		// leaving the caller to dereference a nil response.
+		client := &http.Client{}
+		resp, err := utils.SendPostJsonRequest(context.Background(), client, "http://127.0.0.1:1", func() {})
+		if err == nil {
+			t.Fatal("expected an error for an unmarshalable payload")
+		}
+		if resp != nil {
+			t.Errorf("expected no response alongside the error, got %v", resp)
+			resp.Body.Close()
+		}
+	})
+}
+
+// TestStatusErrorClassification pins the transient/permanent split callers use
+// to decide whether retrying makes sense.
+func TestStatusErrorClassification(t *testing.T) {
+	cases := []struct {
+		status int
+		want   bool
+	}{
+		{status: http.StatusConflict, want: true},        // vLLM already running
+		{status: http.StatusTooManyRequests, want: true}, //
+		{status: http.StatusRequestTimeout, want: true},  //
+		{status: http.StatusInternalServerError, want: true},
+		{status: http.StatusBadGateway, want: true},
+		{status: http.StatusBadRequest, want: false},
+		{status: http.StatusNotFound, want: false},
+		{status: http.StatusUnprocessableEntity, want: false},
+	}
+	for _, tc := range cases {
+		err := &StatusError{Op: "op", StatusCode: tc.status}
+		if got := err.Transient(); got != tc.want {
+			t.Errorf("status %d: Transient() = %v, want %v", tc.status, got, tc.want)
+		}
+		if !IsStatusError(err) {
+			t.Errorf("status %d: IsStatusError should be true", tc.status)
+		}
+		if got := IsTransientStatus(err); got != tc.want {
+			t.Errorf("status %d: IsTransientStatus = %v, want %v", tc.status, got, tc.want)
+		}
+	}
+
+	// A plain error carries no status, so it is neither.
+	plain := errors.New("connection refused")
+	if IsStatusError(plain) || IsTransientStatus(plain) {
+		t.Error("a non-status error must not be classified as a StatusError")
+	}
+}

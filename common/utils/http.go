@@ -5,6 +5,7 @@ import (
 	"common/logging"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"time"
 
@@ -25,8 +26,11 @@ func SendPostJsonRequest(ctx context.Context, client *http.Client, url string, p
 		// Create a POST request with no body if payload is nil.
 		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	} else {
-		// Marshal the payload to JSON.
-		jsonData, err := json.Marshal(payload)
+		// Marshal the payload to JSON. Note: assign with = (not :=) so a
+		// marshalling or request-construction failure is not swallowed by a
+		// shadowed err, which previously could return (nil, nil).
+		var jsonData []byte
+		jsonData, err = json.Marshal(payload)
 		if err != nil {
 			return nil, err
 		}
@@ -38,7 +42,17 @@ func SendPostJsonRequest(ctx context.Context, client *http.Client, url string, p
 	}
 	if req == nil {
 		logging.Error("SendPostJsonRequest. Failed to create HTTP request", types.Server, "url", url, "payload", payload)
-		return nil, err
+		return nil, fmt.Errorf("failed to create POST request for %s", url)
+	}
+	// Declare the body we are actually sending. This is not fixing a live
+	// failure: FastAPI falls back to JSON parsing when no content-type header is
+	// present at all (routing.py, the `if not content_type_value` branch), which
+	// is why these calls have worked without it. Send it because it is correct,
+	// it matches what SendDeleteJsonRequest already does, and it is what keeps
+	// these calls working if strict content-type checking is ever enabled
+	// upstream (a proxy, or a stricter framework default).
+	if payload != nil {
+		req.Header.Set("Content-Type", "application/json")
 	}
 
 	return client.Do(req)

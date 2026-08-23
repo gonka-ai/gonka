@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -44,12 +46,58 @@ func (api *Client) Stop(ctx context.Context) error {
 		return err
 	}
 
-	_, err = utils.SendPostJsonRequest(ctx, &api.client, requestUrl, nil)
+	resp, err := utils.SendPostJsonRequest(ctx, &api.client, requestUrl, nil)
 	if err != nil {
 		return err
 	}
+	defer drainAndClose(resp)
+
+	// The MLnode only answers 200 for /stop; anything else means the node did
+	// not stop. Reporting success on a 4xx/5xx let callers (broker redeploy,
+	// node-status reconciliation) proceed against a node still running a model.
+	if resp.StatusCode != http.StatusOK {
+		return &StatusError{Op: "stop", StatusCode: resp.StatusCode, Body: readErrorBody(resp)}
+	}
 
 	return nil
+}
+
+// maxErrorBodyBytes caps how much of a response body we read: both the excerpt
+// kept in an error message and the remainder discarded before close. It keeps a
+// misbehaving or non-MLnode endpoint from making us buffer or drain an
+// unbounded response.
+const maxErrorBodyBytes = 4 << 10
+
+// readErrorBody returns a bounded single-line excerpt of resp.Body for use in
+// error messages. Never returns an error: a body we cannot read simply yields
+// an empty excerpt.
+func readErrorBody(resp *http.Response) string {
+	if resp == nil || resp.Body == nil {
+		return ""
+	}
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxErrorBodyBytes))
+	if err != nil {
+		return ""
+	}
+	// Fold every whitespace run into a single space. Trimming the ends is not
+	// enough: an excerpt from an arbitrary endpoint (an HTML error page, a
+	// Python traceback) would otherwise spread one error over several log lines.
+	return strings.Join(strings.Fields(string(body)), " ")
+}
+
+// drainAndClose closes resp.Body, first discarding up to maxErrorBodyBytes of
+// whatever the caller left unread, so the underlying connection can go back to
+// the idle pool instead of being torn down. An MLnode error body is a short
+// JSON object, so in practice the remainder is fully consumed and the
+// connection is kept. A body past the cap is deliberately left unread: losing
+// one pooled connection is cheaper than draining an endpoint that may not be an
+// MLnode at all.
+func drainAndClose(resp *http.Response) {
+	if resp == nil || resp.Body == nil {
+		return
+	}
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, maxErrorBodyBytes))
+	_ = resp.Body.Close()
 }
 
 type MLNodeState string
@@ -170,11 +218,23 @@ func (api *Client) InferenceUp(ctx context.Context, model string, args []string)
 
 	logging.Info("Sending inference/up request to node", types.PoC, "inferenceUpUrl", inferenceUpUrl, "body", dto)
 
-	_, err = utils.SendPostJsonRequest(ctx, &api.client, inferenceUpUrl, dto)
+	resp, err := utils.SendPostJsonRequest(ctx, &api.client, inferenceUpUrl, dto)
 	if err != nil {
 		logging.Error("Failed to send inference/up request", types.PoC, "error", err, "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", dto)
+		return err
 	}
-	return err
+	defer drainAndClose(resp)
+
+	// The MLnode answers 409 when vLLM is already running or still starting, and
+	// 500 when startup failed. Treating those as success — the old behavior, where
+	// only transport errors were reported — meant callers believed a model was
+	// loaded when it was not, so the broker marked a failed launch healthy.
+	if resp.StatusCode != http.StatusOK {
+		statusErr := &StatusError{Op: "inference/up", StatusCode: resp.StatusCode, Body: readErrorBody(resp)}
+		logging.Error("inference/up returned a non-OK status", types.PoC, "error", statusErr, "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", dto)
+		return statusErr
+	}
+	return nil
 }
 
 // vLLMModelsResponse represents the OpenAI-compatible /v1/models response from vLLM
