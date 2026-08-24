@@ -2132,6 +2132,20 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 
 	logging.Stage(ctx, "timeout_started", logFields("reason", result.Reason)...)
 
+	if reason == types.TimeoutReason_TIMEOUT_REASON_EXECUTION {
+		s.mu.Lock()
+		hasPendingFinish := HasMsgFinish(s.pendingTxs, nonce)
+		s.mu.Unlock()
+		if hasPendingFinish {
+			if err := s.SendPendingDiff(ctx); err != nil {
+				logging.Stage(ctx, "timeout_recovery_send_failed", logFields("reason", result.Reason, "error", err)...)
+				return result, fmt.Errorf("publish pending finish before execution timeout: %w", err)
+			}
+			logging.Stage(ctx, "timeout_recovery_published", logFields("reason", result.Reason)...)
+			return result, nil
+		}
+	}
+
 	verifiers := s.TimeoutVerifiers()
 	storedDiffs := s.Diffs()
 

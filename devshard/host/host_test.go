@@ -1176,6 +1176,88 @@ func TestHost_ChallengeReceipt_AlreadyExecuting(t *testing.T) {
 	require.Equal(t, 1, engine.calls, "engine should not be called again")
 }
 
+func setupChallengeReceiptHost(t *testing.T, engine devshard.InferenceEngine) (*Host, types.Diff) {
+	t.Helper()
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
+	require.NoError(t, err)
+	if engine == nil {
+		engine = stub.NewInferenceEngine()
+	}
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
+	require.NoError(t, err)
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	return h, diff
+}
+
+func TestHost_ChallengeReceipt_PublishesConfirmStartToMempool(t *testing.T) {
+	h, diff := setupChallengeReceiptHost(t, nil)
+
+	receipt, confirmedAt, err := h.ChallengeReceipt(context.Background(), 1, defaultPayload(), []types.Diff{diff})
+	require.NoError(t, err)
+	require.NotEmpty(t, receipt, "challenge must return the executor receipt")
+	require.NotZero(t, confirmedAt, "challenge must return the receipt timestamp")
+
+	confirmTx := findMempoolConfirm(h.MempoolTxs())
+	require.NotNil(t, confirmTx, "challenge receipt must publish MsgConfirmStart for recovery")
+	confirm := confirmTx.GetConfirmStart()
+	require.Equal(t, uint64(1), confirm.InferenceId)
+	require.Equal(t, receipt, confirm.ExecutorSig)
+	require.Equal(t, confirmedAt, confirm.ConfirmedAt)
+}
+
+func TestHost_ChallengeReceipt_ContextTimeoutStillKeepsConfirmStartInMempool(t *testing.T) {
+	engine := newCtxCapturingInferenceEngine()
+	h, diff := setupChallengeReceiptHost(t, engine)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	type challengeResult struct {
+		receipt     []byte
+		confirmedAt int64
+		err         error
+	}
+	resultCh := make(chan challengeResult, 1)
+	go func() {
+		receipt, confirmedAt, err := h.ChallengeReceipt(ctx, 1, defaultPayload(), []types.Diff{diff})
+		resultCh <- challengeResult{receipt: receipt, confirmedAt: confirmedAt, err: err}
+	}()
+
+	select {
+	case <-engine.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("execution never started")
+	}
+
+	var res challengeResult
+	select {
+	case res = <-resultCh:
+	case <-time.After(5 * time.Second):
+		t.Fatal("ChallengeReceipt did not return after starting execution")
+	}
+	require.NoError(t, res.err)
+	require.NotEmpty(t, res.receipt)
+	require.NotZero(t, res.confirmedAt)
+
+	cancel()
+
+	confirmTx := findMempoolConfirm(h.MempoolTxs())
+	require.NotNil(t, confirmTx, "cancelled challenge context must not drop recovery MsgConfirmStart")
+	confirm := confirmTx.GetConfirmStart()
+	require.Equal(t, uint64(1), confirm.InferenceId)
+	require.Equal(t, res.receipt, confirm.ExecutorSig)
+	require.Equal(t, res.confirmedAt, confirm.ConfirmedAt)
+
+	close(engine.release)
+	require.Eventually(t, func() bool {
+		return findMempoolFinish(h.MempoolTxs()) != nil
+	}, 5*time.Second, 10*time.Millisecond)
+}
+
 func TestHost_ChallengeReceipt_AlreadyFinished(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	user := testutil.MustGenerateKey(t)
