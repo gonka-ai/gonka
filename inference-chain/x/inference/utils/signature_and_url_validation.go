@@ -124,6 +124,13 @@ func isPrivateIP(ip net.IP) bool {
 		ip = v4
 	}
 
+	// Unspecified (0.0.0.0 and ::). A dial to either commonly lands on a
+	// loopback-bound listener on dual-stack hosts; 0.0.0.0 was already
+	// blocked, :: was not.
+	if ip.IsUnspecified() {
+		return true
+	}
+
 	// Loopback (127.0.0.0/8, ::1)
 	if ip.IsLoopback() {
 		return true
@@ -151,10 +158,6 @@ func isPrivateIP(ip net.IP) bool {
 		}
 		// 192.168.0.0/16
 		if ip4[0] == 192 && ip4[1] == 168 {
-			return true
-		}
-		// 0.0.0.0
-		if ip4[0] == 0 && ip4[1] == 0 && ip4[2] == 0 && ip4[3] == 0 {
 			return true
 		}
 		// AWS metadata endpoint 169.254.169.254

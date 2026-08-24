@@ -24,6 +24,11 @@ func TestValidateURLWithSSRFProtection(t *testing.T) {
 		require.ErrorIs(t, err, sdkerrors.ErrInvalidRequest)
 	})
 
+	t.Run("reject_ipv6_unspecified", func(t *testing.T) {
+		err := ValidateURLWithSSRFProtection("inference_url", "http://[::]:8080")
+		require.ErrorIs(t, err, sdkerrors.ErrInvalidRequest)
+	})
+
 	// Registration gate is intentionally DNS-free (stateless ValidateBasic must
 	// be deterministic), so a hostname always passes here regardless of what it
 	// resolves to. The real defense is the dial-time guard; see IsPrivateIP tests.
@@ -44,7 +49,9 @@ func TestIsPrivateIP(t *testing.T) {
 		"192.168.1.1",            // RFC1918 192.168/16
 		"169.254.169.254",        // cloud metadata / link-local
 		"169.254.0.1",            // link-local
-		"0.0.0.0",                // unspecified
+		"0.0.0.0",                // unspecified IPv4
+		"::",                     // unspecified IPv6
+		"::ffff:0.0.0.0",         // IPv4-mapped unspecified
 		"fe80::1",                // IPv6 link-local
 		"fc00::1",                // IPv6 ULA
 		"fd12:3456::1",           // IPv6 ULA

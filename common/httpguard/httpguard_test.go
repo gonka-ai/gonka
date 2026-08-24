@@ -51,6 +51,7 @@ func TestDialControlBlocksPrivateTargets(t *testing.T) {
 		"rfc1918_172":         "172.16.0.1",
 		"rfc1918_192":         "192.168.1.1",
 		"unspecified":         "0.0.0.0",
+		"ipv6_unspecified":    "::",
 		"ipv6_loopback":       "::1",
 		"ipv6_link_local":     "fe80::1",
 		"ipv6_ula":            "fc00::1",
