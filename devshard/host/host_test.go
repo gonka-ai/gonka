@@ -17,6 +17,7 @@ import (
 	"devshard"
 	"devshard/gossip"
 	"devshard/internal/testutil"
+	"devshard/logging"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
@@ -1343,6 +1344,7 @@ func TestHost_ChallengeReceipt_ExecutionSurvivesRequestCancel(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	ctx, reqID := logging.WithRequestID(ctx, "challenge-1")
 	errCh := make(chan error, 1)
 	go func() {
 		_, _, cErr := h.ChallengeReceipt(ctx, 1, defaultPayload(), []types.Diff{diff})
@@ -1361,7 +1363,21 @@ func TestHost_ChallengeReceipt_ExecutionSurvivesRequestCancel(t *testing.T) {
 	execCtx := engine.executionCtx()
 	cancel() // synchronous: any derived context has Err() set once this returns
 	require.NoError(t, execCtx.Err(), "execution context must not observe the request cancellation")
-	require.Nil(t, execCtx.Done(), "execution context must be uncancellable")
+
+	// WithoutCancel rather than Background: the request's observability values
+	// must survive so the detached execution's logs stay correlated with the
+	// challenge that started it. Assert on a value only the request context
+	// carries -- a bare Background() would satisfy the cancellation check above.
+	gotID, ok := logging.RequestID(execCtx)
+	require.True(t, ok, "execution context must retain the request id")
+	require.Equal(t, reqID, gotID, "detached execution must inherit the request id, not a fresh context")
+
+	// Detached but still bounded. See executeAsync: ReleaseExecution only runs
+	// when RunExecution returns, so an unbounded context would let a wedged
+	// engine hold h.executing[1] for the process lifetime.
+	deadline, hasDeadline := execCtx.Deadline()
+	require.True(t, hasDeadline, "detached execution must carry an execution budget")
+	require.WithinDuration(t, time.Now().Add(h.executionBudget()), deadline, time.Minute)
 
 	// Execution is still alive; let it finish and confirm it actually
 	// completes, not just that it avoided the cancellation.
@@ -1369,6 +1385,102 @@ func TestHost_ChallengeReceipt_ExecutionSurvivesRequestCancel(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return findMempoolFinish(h.MempoolTxs()) != nil
 	}, 5*time.Second, 10*time.Millisecond, "background execution must queue MsgFinishInference despite request cancel")
+}
+
+func TestHost_ChallengeReceipt_ExecutionBudgetReleasesWedgedInference(t *testing.T) {
+	// Detaching execution from the request context removed the only bound on its
+	// runtime. ReleaseExecution runs only when RunExecution returns, so an engine
+	// that never completes must be cut off by the execution budget -- otherwise
+	// h.executing[1] is held for the process lifetime and this host can never
+	// retry or re-serve the inference.
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	config.ExecutionTimeout = 1 // 1s budget instead of the 20m default
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
+	require.NoError(t, err)
+
+	// An ML node that only returns when its context is done.
+	engine := stub.NewInferenceEngine()
+	engine.BlockUntilContextDone = true
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
+	require.NoError(t, err)
+	require.Equal(t, time.Second, h.executionBudget())
+
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	receipt, _, err := h.ChallengeReceipt(ctx, 1, defaultPayload(), []types.Diff{diff})
+	require.NoError(t, err)
+	require.NotNil(t, receipt)
+	cancel() // challenger hangs up; execution must survive this but not run forever
+
+	require.Eventually(t, func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		_, executing := h.executing[1]
+		return !executing
+	}, 5*time.Second, 20*time.Millisecond, "execution budget must expire and release the dedup guard")
+}
+
+func TestHost_ChallengeReceipt_PublishesConfirmStartSoFinishCanApply(t *testing.T) {
+	// The verifier treats the receipt as a liveness proof and discards it after
+	// voting, so the challenge path must queue MsgConfirmStart itself. Without it
+	// the inference stays pending and applyFinishInference rejects the
+	// MsgFinishInference this execution produces as an invalid transition,
+	// leaving the work unsettleable.
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
+	require.NoError(t, err)
+	h, err := NewHost(sm, hosts[1], stub.NewInferenceEngine(), "escrow-1", group, nil, WithGrace(10))
+	require.NoError(t, err)
+
+	startDiff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	receipt, confirmedAt, err := h.ChallengeReceipt(context.Background(), 1, defaultPayload(), []types.Diff{startDiff})
+	require.NoError(t, err)
+	require.NotNil(t, receipt)
+
+	require.Eventually(t, func() bool {
+		return findMempoolFinish(h.MempoolTxs()) != nil
+	}, 5*time.Second, 10*time.Millisecond, "background execution must queue MsgFinishInference")
+
+	confirmTx := findMempoolConfirm(h.MempoolTxs())
+	require.NotNil(t, confirmTx, "challenge path must queue MsgConfirmStart alongside the receipt")
+	cs := confirmTx.GetConfirmStart()
+	require.Equal(t, uint64(1), cs.InferenceId)
+	require.Equal(t, receipt, cs.ExecutorSig, "queued ConfirmStart must carry the receipt that was returned")
+	require.Equal(t, confirmedAt, cs.ConfirmedAt)
+
+	// A repeat challenge must not stack a second ConfirmStart differing only by
+	// confirmed_at, which the state machine would reject anyway.
+	_, _, err = h.ChallengeReceipt(context.Background(), 1, defaultPayload(), nil)
+	require.NoError(t, err)
+	var confirmCount int
+	for _, tx := range h.MempoolTxs() {
+		if tx.GetConfirmStart() != nil {
+			confirmCount++
+		}
+	}
+	require.Equal(t, 1, confirmCount, "ConfirmStart must be queued once per inference")
+
+	// The decisive check: the pair the challenge path produced must actually
+	// settle the inference on a peer's state machine.
+	peerSM, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
+	require.NoError(t, err)
+	_, err = peerSM.ApplyDiff(startDiff)
+	require.NoError(t, err)
+	require.Equal(t, types.StatusPending, peerSM.SnapshotState().Inferences[1].Status)
+
+	settleDiff := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{confirmTx, findMempoolFinish(h.MempoolTxs())})
+	_, err = peerSM.ApplyDiff(settleDiff)
+	require.NoError(t, err, "ConfirmStart + FinishInference from the challenge path must apply")
+	require.Equal(t, types.StatusFinished, peerSM.SnapshotState().Inferences[1].Status)
 }
 
 func TestWarmKey_HostFindsSlotByWarmKey(t *testing.T) {
