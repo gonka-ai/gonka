@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/cosmos/cosmos-sdk/client/tx"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient/mocks"
@@ -464,4 +465,26 @@ func TestFeeRelatedHints(t *testing.T) {
 	assert.Contains(t, fee[0], "feegrant")
 	assert.NotContains(t, strings.ToLower(fee[0]), "set min_gas_price_ngonka")
 	assert.NotContains(t, fee[0], "DAPI_CHAIN_NODE")
+}
+
+func TestHardwareDiffSimFactory_SetsTimeout(t *testing.T) {
+	timeout := time.Now().Add(time.Minute)
+	sim := hardwareDiffSimFactory(tx.Factory{}.WithUnordered(true), "alice", 1, timeout, nil)
+	require.True(t, sim.Unordered())
+	require.Equal(t, timeout, sim.TimeoutTimestamp())
+	require.Equal(t, hardwareDiffSimulateGas, sim.Gas())
+	require.Equal(t, 1.0, sim.GasAdjustment())
+}
+
+func TestTimeoutTimestamp_UsesLatestBlockTime(t *testing.T) {
+	block := time.Unix(1_700_000_000, 0)
+	m := &manager{
+		defaultTimeout:   30 * time.Second,
+		blockTimeTracker: &blockTimeTracker{latestBlockTime: block},
+	}
+	got, err := m.timeoutTimestamp()
+	require.NoError(t, err)
+	require.False(t, got.IsZero())
+	require.True(t, got.After(block))
+	require.True(t, !got.Before(block.Add(30*time.Second)))
 }
