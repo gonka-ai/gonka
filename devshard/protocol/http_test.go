@@ -480,6 +480,28 @@ func TestHTTP_ChallengeReceipt_RejectsTimeout(t *testing.T) {
 	require.Equal(t, 0, len(votes), "all hosts should reject timeout because executor is alive and produced receipt")
 }
 
+func TestHTTP_RefusedTimeoutChallengeRecoveryLandsInNextDiff(t *testing.T) {
+	env := setupHTTPEnv(t, 5, 1000000, 100)
+	ctx := context.Background()
+
+	prepared, err := env.session.PrepareInference(defaultParams())
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), prepared.Nonce())
+	executorIdx := prepared.HostIdx()
+	require.Equal(t, 1, executorIdx)
+
+	result, err := env.session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), refusedPayload())
+	require.NoError(t, err, "reachable executor receipt should recover instead of timing out")
+	require.Equal(t, "refused", result.Reason)
+	require.NotNil(t, findConfirmStart(env.hosts[executorIdx].MempoolTxs(), prepared.Nonce()),
+		"executor should queue recovery MsgConfirmStart after challenge")
+
+	diffs := env.session.Diffs()
+	require.GreaterOrEqual(t, len(diffs), 2)
+	require.NotNil(t, findConfirmStart(diffs[len(diffs)-1].Txs, prepared.Nonce()),
+		"recovery MsgConfirmStart from challenge should land in the next user diff")
+}
+
 func TestHTTP_StateRecovery(t *testing.T) {
 	env := setupHTTPEnv(t, 3, 100000, 100)
 	ctx := context.Background()
