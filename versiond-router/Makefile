@@ -38,6 +38,24 @@ test-join-compose:
 		|| { echo 'test-join-compose: not every versiond joins the pool alias' >&2; exit 1; }; \
 	grep -q 'VERSIOND_HOSTS: versiond versiond2' "$$tmp" \
 		|| { echo 'test-join-compose: legacy router compatibility was lost' >&2; exit 1; }; \
+	grep -q 'GONKA_HA: "true"' "$$tmp" \
+		|| { echo 'test-join-compose: HA deployment latch is missing' >&2; exit 1; }; \
+	grep -q 'VERSIOND_VERSIONS: v4 v5 v6 v7 v8' "$$tmp" \
+		|| { echo 'test-join-compose: per-version routing contract is missing' >&2; exit 1; }; \
+	grep -q 'VERSIOND_NON_HA_VERSIONS: v1 v2 v3' "$$tmp" \
+		|| { echo 'test-join-compose: legacy version pins are missing' >&2; exit 1; }; \
+	VERSIOND_NON_HA_VERSIONS= VERSIOND_VERSIONS= \
+	VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true \
+	DEVSHARD_POSTGRES_PASSWORD=test \
+		docker compose --project-directory ../deploy/join \
+		-f ../deploy/join/docker-compose.yml \
+		-f ../deploy/join/docker-compose.versiond.yml config > "$$tmp"; \
+	grep -q 'VERSIOND_NON_HA_VERSIONS: ""' "$$tmp" \
+		|| { echo 'test-join-compose: explicit empty legacy pins were replaced by defaults' >&2; exit 1; }; \
+	grep -q 'VERSIOND_VERSIONS: ""' "$$tmp" \
+		|| { echo 'test-join-compose: explicit empty version list was replaced by defaults' >&2; exit 1; }; \
+	grep -q 'VERSIOND_ROUTER_ALLOW_COARSE_READINESS: "true"' "$$tmp" \
+		|| { echo 'test-join-compose: coarse-readiness opt-in was not forwarded' >&2; exit 1; }; \
 	echo 'test-join-compose: ok'
 
 # Which versiond serves an escrow must depend on who is in the pool, not on the
