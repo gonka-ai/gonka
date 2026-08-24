@@ -51,17 +51,18 @@ x-versiond: &versiond
       condition: service_started
     devshard-postgres:
       condition: service_healthy
+  # The pinned transition image predates /readyz. Fall back to its liveness
+  # endpoint only for an explicit 404; a lifecycle 503 must stay unhealthy.
   healthcheck:
     test:
-      [
-        "CMD",
-        "/bin/busybox",
-        "wget",
-        "-q",
-        "-O",
-        "/dev/null",
-        "http://127.0.0.1:8080/readyz",
-      ]
+      - CMD-SHELL
+      - >-
+        output=$$(/bin/busybox wget -S -O /dev/null
+        http://127.0.0.1:8080/readyz 2>&1);
+        status=$$?;
+        if [ "$$status" -eq 0 ]; then exit 0; fi;
+        case "$$output" in *"HTTP/"*" 404 "*) exec /bin/busybox wget -q
+        -O /dev/null http://127.0.0.1:8080/healthz ;; *) exit "$$status" ;; esac
     interval: 2s
     timeout: 3s
     retries: 3

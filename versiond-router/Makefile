@@ -1,5 +1,6 @@
 .PHONY: all build-docker release test-render
 .PHONY: test-catalog-cache test-hash-ring test-version-routing test-local-compose test-join-compose
+.PHONY: test-join-versiond-healthcheck
 
 # Renders both the mixed (legacy pinning) and the all-HA shapes, asserts on the
 # result, then runs the real HAProxy from the production image over each one.
@@ -163,6 +164,81 @@ test-join-compose:
 
 test-catalog-cache:
 	@../router-runtime/catalog-cache_test.sh
+
+# The join deployment temporarily supports both the pinned pre-/readyz image
+# and the replacement built from this release. A 404 means the endpoint does
+# not exist and may fall back to liveness; a real 503 must remain unready.
+test-join-versiond-healthcheck:
+	@set -eu; \
+	tmpdir=$$(mktemp -d); \
+	netns=gonka-versiond-healthcheck-probe; \
+	cleanup() { \
+		docker rm -f $$netns >/dev/null 2>&1 || true; \
+		rm -rf "$$tmpdir"; \
+	}; \
+	trap cleanup EXIT; \
+	fail() { echo "test-join-versiond-healthcheck: $$1" >&2; exit 1; }; \
+	DEVSHARD_POSTGRES_PASSWORD=test \
+		docker compose --project-directory ../deploy/join \
+		-f ../deploy/join/docker-compose.yml \
+		-f ../deploy/join/docker-compose.versiond.yml \
+		config --format json > "$$tmpdir/compose.json"; \
+	python3 -c 'import json, sys; test = json.load(open(sys.argv[1]))["services"]["versiond"]["healthcheck"]["test"]; assert test[0] == "CMD-SHELL"; print(test[1].replace("$$$$", "$$"))' \
+		"$$tmpdir/compose.json" > "$$tmpdir/healthcheck.sh"; \
+	grep -q '/readyz' "$$tmpdir/healthcheck.sh" \
+		|| fail "rendered healthcheck does not probe readiness"; \
+	grep -q '/healthz' "$$tmpdir/healthcheck.sh" \
+		|| fail "rendered healthcheck has no legacy fallback"; \
+	printf '%s\n' \
+		'import http.server, os' \
+		'READY = int(os.environ["READY_STATUS"])' \
+		'HEALTHY = int(os.environ["HEALTH_STATUS"])' \
+		'class H(http.server.BaseHTTPRequestHandler):' \
+		'    def do_GET(self):' \
+		'        status = 200 if self.path == "/live" else READY if self.path == "/readyz" else HEALTHY if self.path == "/healthz" else 404' \
+		'        self.send_response(status)' \
+		'        self.send_header("Content-Length", "0")' \
+		'        self.end_headers()' \
+		'    def log_message(self, *args): pass' \
+		'http.server.ThreadingHTTPServer(("", 8080), H).serve_forever()' \
+		> "$$tmpdir/server.py"; \
+	start_server() { \
+		docker rm -f $$netns >/dev/null 2>&1 || true; \
+		docker run -d --name $$netns \
+			-e READY_STATUS="$$1" -e HEALTH_STATUS="$$2" \
+			-v "$$tmpdir/server.py:/server.py:ro" \
+			python:3.12-alpine python /server.py >/dev/null; \
+		for _ in $$(seq 40); do \
+			if docker run --rm --network container:$$netns \
+				--entrypoint /bin/busybox \
+				ghcr.io/product-science/versiond:0.2.15 \
+				wget -q -O /dev/null http://127.0.0.1:8080/live \
+				>/dev/null 2>&1; then \
+				return 0; \
+			fi; \
+			sleep 0.1; \
+		done; \
+		fail "mock server did not start"; \
+	}; \
+	run_healthcheck() { \
+		docker run --rm --network container:$$netns \
+			--entrypoint /bin/sh \
+			ghcr.io/product-science/versiond:0.2.15 \
+			-c "$$(cat "$$tmpdir/healthcheck.sh")"; \
+	}; \
+	start_server 200 503; \
+	run_healthcheck || fail "ready versiond was rejected"; \
+	start_server 503 200; \
+	if run_healthcheck >/dev/null 2>&1; then \
+		fail "readiness failure was hidden by the liveness fallback"; \
+	fi; \
+	start_server 404 200; \
+	run_healthcheck || fail "legacy versiond was rejected"; \
+	start_server 404 503; \
+	if run_healthcheck >/dev/null 2>&1; then \
+		fail "legacy liveness failure was accepted"; \
+	fi; \
+	echo 'test-join-versiond-healthcheck: ok'
 
 # Which versiond serves an escrow must depend on who is in the pool, not on the
 # order DNS happened to hand the addresses to server-template. That is invisible
@@ -1463,7 +1539,7 @@ test-version-routing:
 		|| fail "catalog reconciliation did not recover after clock rollback"; \
 	echo "test-version-routing: ok"
 
-test-render: test-local-compose test-join-compose test-catalog-cache test-hash-ring test-version-routing
+test-render: test-local-compose test-join-compose test-join-versiond-healthcheck test-catalog-cache test-hash-ring test-version-routing
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
