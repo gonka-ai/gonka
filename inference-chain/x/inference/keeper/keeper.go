@@ -143,7 +143,7 @@ type (
 		TrainshardClosedIndex            collections.KeySet[collections.Pair[int64, uint64]]
 		TrainshardReservations           collections.Map[collections.Pair[string, string], uint64]
 		TrainshardReleaseIndex           collections.KeySet[collections.Triple[int64, string, string]]
-		TrainshardAutokickRequest        collections.KeySet[collections.Pair[uint64, string]]
+		TrainshardAutokickRequest        collections.Map[collections.Pair[uint64, string], string]
 		TrainingNodeOptIns               collections.Map[collections.Pair[string, string], int64]
 		TrainshardProposals              collections.Map[uint64, types.TrainshardProposal]
 		TrainshardProposalCounter        collections.Item[uint64]
@@ -726,11 +726,12 @@ func NewKeeper(
 			"trainshard_release_index",
 			collections.TripleKeyCodec(collections.Int64Key, collections.StringKey, collections.StringKey),
 		),
-		TrainshardAutokickRequest: collections.NewKeySet(
+		TrainshardAutokickRequest: collections.NewMap(
 			sb,
 			types.TrainshardAutokickRequestPrefix,
 			"trainshard_autokick_request",
 			collections.PairKeyCodec(collections.Uint64Key, collections.StringKey),
+			collections.StringValue,
 		),
 		TrainingNodeOptIns: collections.NewMap(
 			sb,

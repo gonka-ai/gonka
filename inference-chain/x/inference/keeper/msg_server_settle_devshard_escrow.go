@@ -194,7 +194,11 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 	}
 
 	// devshard miss penalties are a penalty path, so a model reservation at any
-	// point in the epoch shields the host from miss/invalid aggregation
+	// point in the epoch shields the host from miss/invalid aggregation.
+	// Host stats carry no node or height, so the shield can only be as coarse as
+	// the epoch. That is the same granularity the reward side uses: a node touched
+	// by a reservation forfeits the whole epoch's PoC income, and in exchange its
+	// host owes no devshard duty for that model over the same epoch.
 	reservedHosts := k.CollectEpochReservedHostsForModel(goCtx, escrow.EpochIndex, escrow.ModelId, ReservationScopeShield)
 
 	// Aggregate host stats per validator per epoch (deterministic: iterate msg.HostStats by slot_id order)

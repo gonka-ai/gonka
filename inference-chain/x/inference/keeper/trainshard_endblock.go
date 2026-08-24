@@ -16,7 +16,23 @@ func (k Keeper) ProcessTrainshardEndBlock(ctx context.Context) {
 
 	k.expireTrainshards(ctx, height, limit)
 	k.clearReturnedReservations(ctx, height, limit)
-	k.pruneClosedTrainshards(ctx, height, params.SettledShardRetentionBlocks, limit)
+	k.pruneClosedTrainshards(ctx, height, k.settledShardRetention(ctx, params), limit)
+}
+
+// settledShardRetention keeps a closed shard readable for two epochs plus the
+// return buffer. Params validation demands the same, this holds the floor even
+// if the params were written by a path that skipped it, because pruning early
+// erases the reservation history the next epoch's reward and shield reads need.
+func (k Keeper) settledShardRetention(ctx context.Context, params *types.TrainingParams) int64 {
+	full, err := k.GetParams(ctx)
+	if err != nil || full.EpochParams == nil || full.EpochParams.EpochLength <= 0 {
+		return params.SettledShardRetentionBlocks
+	}
+	floor := 2*full.EpochParams.EpochLength + params.ReleaseBufferBlocks
+	if params.SettledShardRetentionBlocks < floor {
+		return floor
+	}
+	return params.SettledShardRetentionBlocks
 }
 
 func (k Keeper) clearReturnedReservations(ctx context.Context, height int64, limit int) {

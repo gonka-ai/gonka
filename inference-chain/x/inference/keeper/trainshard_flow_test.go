@@ -178,54 +178,6 @@ func TestEpochReservationView_TimeLocalFullReservation(t *testing.T) {
 	require.False(t, view.FullyReservedAt(host, 150))
 }
 
-func TestCollectEpochFullyReservedHostsForModel(t *testing.T) {
-	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
-	const epoch = uint64(7)
-	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: epoch, PocStartBlockHeight: 100}))
-	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: epoch + 1, PocStartBlockHeight: 200}))
-
-	host := sample.AccAddress()
-	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
-		EpochId: epoch,
-		Participants: []*types.ActiveParticipant{{
-			Index:   host,
-			Models:  []string{"model1"},
-			MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{{NodeId: "n1"}, {NodeId: "n2"}}}},
-		}},
-	}))
-
-	require.NoError(t, k.Trainshards.Set(ctx, 1, types.Trainshard{
-		TrainshardId: 1, Status: types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
-		CreatedAtHeight: 110, ClosedAtHeight: 120,
-		Nodes: []*types.TrainshardReservedNode{{Participant: host, NodeId: "n1", ModelId: "model1"}},
-	}))
-	require.NoError(t, k.Trainshards.Set(ctx, 2, types.Trainshard{
-		TrainshardId: 2, Status: types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
-		CreatedAtHeight: 130, ClosedAtHeight: 140,
-		Nodes: []*types.TrainshardReservedNode{{Participant: host, NodeId: "n2", ModelId: "model1"}},
-	}))
-	require.Empty(t, k.CollectEpochFullyReservedHostsForModel(ctx, epoch, "model1"))
-
-	require.NoError(t, k.Trainshards.Set(ctx, 2, types.Trainshard{
-		TrainshardId: 2, Status: types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
-		CreatedAtHeight: 110, ClosedAtHeight: 140,
-		Nodes: []*types.TrainshardReservedNode{{Participant: host, NodeId: "n2", ModelId: "model1"}},
-	}))
-	require.Empty(t, k.CollectEpochFullyReservedHostsForModel(ctx, epoch, "model1"))
-
-	require.NoError(t, k.Trainshards.Set(ctx, 1, types.Trainshard{
-		TrainshardId: 1, Status: types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
-		CreatedAtHeight: 100, ClosedAtHeight: 199,
-		Nodes: []*types.TrainshardReservedNode{{Participant: host, NodeId: "n1", ModelId: "model1"}},
-	}))
-	require.NoError(t, k.Trainshards.Set(ctx, 2, types.Trainshard{
-		TrainshardId: 2, Status: types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
-		CreatedAtHeight: 100, ClosedAtHeight: 199,
-		Nodes: []*types.TrainshardReservedNode{{Participant: host, NodeId: "n2", ModelId: "model1"}},
-	}))
-	require.Contains(t, k.CollectEpochFullyReservedHostsForModel(ctx, epoch, "model1"), host)
-}
-
 func TestCollectEpochReservedWeightTotals(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 	const epoch = uint64(7)
@@ -325,7 +277,7 @@ func TestTrainshardLifecycle_E2E(t *testing.T) {
 	require.Equal(t, int64(100), byHost[creator])
 	require.Equal(t, int64(100), byModelHost["model1"][creator])
 
-	require.NotContains(t, k.CollectEpochFullyReservedHostsForModel(ctx, epoch, "model1"), creator)
+	require.False(t, k.BuildEpochReservationView(ctx, epoch).FullyReservedAt(creator, ctx.BlockHeight()))
 
 	_, err = ms.SettleTrainshard(ctx, &types.MsgSettleTrainshard{Creator: creator, TrainshardId: resp.TrainshardId})
 	require.NoError(t, err)
@@ -413,9 +365,6 @@ func TestTrainshardFullReservation_ShieldsPocAndUnfreezes(t *testing.T) {
 	require.True(t, k.IsNodeReserved(ctx, hostA, "node-a"))
 	require.False(t, k.IsNodeReserved(ctx, hostB, "node-b"))
 
-	fully := k.CollectEpochFullyReservedHostsForModel(ctx, epoch, "model1")
-	require.NotContains(t, fully, hostA)
-	require.NotContains(t, fully, hostB)
 	view := k.BuildEpochReservationView(ctx, epoch)
 	require.True(t, view.FullyReservedAt(hostA, 60))
 	require.False(t, view.FullyReservedAt(hostB, 60))

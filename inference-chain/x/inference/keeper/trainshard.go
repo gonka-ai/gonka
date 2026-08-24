@@ -374,6 +374,8 @@ func (k Keeper) selectTrainshardNodes(
 		if reserved.perProfile[gpuProfileId]+takenProfile+1 > profileCap {
 			continue
 		}
+		// a profile may be emptied: nothing validates per profile, so a profile
+		// with no free node left only means no more nodes of that kind
 		if view.profileCapacity[gpuProfileId]-(reserved.perProfile[gpuProfileId]+takenProfile+1) < 0 {
 			continue
 		}
@@ -383,6 +385,9 @@ func (k Keeper) selectTrainshardNodes(
 				fits = false
 				break
 			}
+			// a model always keeps one node free, so its PoC weight never reaches
+			// zero: chainvalidation accepts every inference of a model whose weight
+			// is zero, which would turn a fully reserved model into a free pass
 			if view.modelCapacity[e.ModelId]-(reserved.perModel[e.ModelId]+takenModel[e.ModelId]+1) < 1 {
 				fits = false
 				break
@@ -688,6 +693,9 @@ func FreeShareOfWeight(weight, reservedRaw, totalRaw int64) int64 {
 func (k Keeper) epochBlockRange(ctx context.Context, epochIndex uint64) (int64, int64) {
 	epoch, found := k.GetEpoch(ctx, epochIndex)
 	if !found {
+		// without epoch metadata the overlap cannot be bounded, so the range is
+		// left open: every reservation counts as touching the epoch, which shields
+		// hosts rather than penalising them on data we do not have
 		return 0, int64(math.MaxInt64)
 	}
 	end := int64(math.MaxInt64)
@@ -947,76 +955,3 @@ func (k Keeper) CollectEpochReservedHostsForModel(ctx context.Context, epochInde
 	return hosts
 }
 
-func (k Keeper) CollectEpochFullyReservedHostsForModel(ctx context.Context, epochIndex uint64, modelId string) map[string]struct{} {
-	fullyReserved := make(map[string]struct{})
-	intervals := k.collectEpochReservedIntervals(ctx, epochIndex)
-	if len(intervals) == 0 {
-		return fullyReserved
-	}
-	epochStart, epochEnd := k.epochBlockRange(ctx, epochIndex)
-	active, found := k.GetActiveParticipants(ctx, epochIndex)
-	if !found {
-		return fullyReserved
-	}
-	for _, p := range active.Participants {
-		if p == nil {
-			continue
-		}
-		modelNodes := modelNodeSet(p, modelId)
-		if len(modelNodes) > 0 && hostFullyReservedForModelWindow(modelNodes, intervals[p.Index], epochStart, epochEnd) {
-			fullyReserved[p.Index] = struct{}{}
-		}
-	}
-	return fullyReserved
-}
-
-func modelNodeSet(p *types.ActiveParticipant, modelId string) map[string]struct{} {
-	for i, m := range p.Models {
-		if m != modelId {
-			continue
-		}
-		if i >= len(p.MlNodes) || p.MlNodes[i] == nil {
-			return nil
-		}
-		set := make(map[string]struct{}, len(p.MlNodes[i].MlNodes))
-		for _, n := range p.MlNodes[i].MlNodes {
-			if n != nil && n.NodeId != "" {
-				set[n.NodeId] = struct{}{}
-			}
-		}
-		return set
-	}
-	return nil
-}
-
-// hostFullyReservedForModelWindow checks that all model nodes stayed reserved
-// across the whole epoch window. Coverage only changes where an interval starts
-// or ends, so probing those checkpoints is enough.
-func hostFullyReservedForModelWindow(modelNodes map[string]struct{}, intervals []hostReservedInterval, epochStart, epochEnd int64) bool {
-	if len(modelNodes) == 0 || len(intervals) == 0 || epochStart > epochEnd {
-		return false
-	}
-	checkpoints := make([]int64, 0, len(intervals)*2+1)
-	checkpoints = append(checkpoints, epochStart)
-	for _, iv := range intervals {
-		if iv.end < epochStart || iv.start > epochEnd {
-			continue
-		}
-		if iv.start > epochStart {
-			checkpoints = append(checkpoints, iv.start)
-		}
-		if iv.end < epochEnd {
-			checkpoints = append(checkpoints, iv.end+1)
-		}
-	}
-	sort.Slice(checkpoints, func(i, j int) bool { return checkpoints[i] < checkpoints[j] })
-	for i, checkpoint := range checkpoints {
-		if i > 0 && checkpoint == checkpoints[i-1] {
-			continue
-		}
-		if !hostFullyReservedAtHeight(modelNodes, intervals, checkpoint) {
-			return false
-		}
-	}
-	return true
-}

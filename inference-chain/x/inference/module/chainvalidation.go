@@ -282,7 +282,9 @@ func (wc *PoCWeightCalculator) pocValidated(vals []types.PoCValidationV2, key ty
 	thresholdBps := wc.validationVoteThresholdBps()
 
 	if wc.TotalNetworkWeight <= 0 {
-		// no enforceable weight left in scope: accept rather than slash or divide by zero
+		// no enforceable weight left in scope: accept rather than slash or divide by zero.
+		// Training reservations must never be what empties this scope, which is why
+		// selectTrainshardNodes always leaves at least one free node per model.
 		wc.Logger.LogWarn("Calculate: zero enforceable network weight, accepting", types.PoC,
 			"participant", key.ParticipantAddress, "modelId", key.ModelID)
 		return true

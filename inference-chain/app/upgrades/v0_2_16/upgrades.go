@@ -81,6 +81,22 @@ func backfillTrainingParamDefaults(ctx context.Context, k keeper.Keeper) error {
 	if params.TrainingParams.ReleaseBufferBlocks == 0 {
 		params.TrainingParams.ReleaseBufferBlocks = types.DefaultTrainingReleaseBufferBlocks
 	}
+	// a zero cap stops training dead, so it can never be what the chain meant
+	if params.TrainingParams.MaxActiveShards == 0 {
+		params.TrainingParams.MaxActiveShards = types.DefaultTrainingMaxActiveShards
+	}
+	if params.TrainingParams.MaxActiveShardsPerCreator == 0 {
+		params.TrainingParams.MaxActiveShardsPerCreator = types.DefaultTrainingMaxActivePerCreator
+	}
+	if params.TrainingParams.MaxTotalReservedNodes == 0 {
+		params.TrainingParams.MaxTotalReservedNodes = types.DefaultTrainingMaxTotalReserved
+	}
+	if params.TrainingParams.MaxNodesPerShard == 0 {
+		params.TrainingParams.MaxNodesPerShard = types.DefaultTrainingMaxNodesPerShard
+	}
+	if params.TrainingParams.MaxExpirationsPerBlock == 0 {
+		params.TrainingParams.MaxExpirationsPerBlock = types.DefaultTrainingMaxExpirationsPerBlk
+	}
 
 	// the block defaults are tuned for short epochs, so raise them to the
 	// minimums this chain's epoch length requires before training can be enabled

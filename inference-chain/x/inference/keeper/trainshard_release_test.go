@@ -95,6 +95,78 @@ func TestAutokickTrainshardNode_RejectsForeignSigner(t *testing.T) {
 	require.Equal(t, types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE, unchanged.Status)
 }
 
+func TestAutokickTrainshardNode_RejectsRequestIdReusedForAnotherNode(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	host := sample.AccAddress()
+
+	require.NoError(t, k.Trainshards.Set(ctx, 9, types.Trainshard{
+		TrainshardId:    9,
+		Creator:         creator,
+		GpuProfileId:    trainshardTestProfile,
+		Status:          types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE,
+		CreatedAtHeight: ctx.BlockHeight(),
+		ExpiresAtHeight: ctx.BlockHeight() + 100,
+		Nodes: []*types.TrainshardReservedNode{
+			{Participant: host, NodeId: "node-h1", ModelId: "model1", PocWeight: 100,
+				Status: types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE},
+			{Participant: host, NodeId: "node-h2", ModelId: "model1", PocWeight: 100,
+				Status: types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE},
+		},
+	}))
+
+	kick := func(nodeId string) error {
+		_, err := ms.AutokickTrainshardNode(ctx, &types.MsgAutokickTrainshardNode{
+			Creator:      host,
+			TrainshardId: 9,
+			Participant:  host,
+			NodeId:       nodeId,
+			RequestId:    "req-1",
+		})
+		return err
+	}
+	require.NoError(t, kick("node-h1"))
+	require.ErrorIs(t, kick("node-h2"), types.ErrTrainshardAutokickRequestReused)
+	require.NoError(t, kick("node-h1"))
+
+	shard, err := k.Trainshards.Get(ctx, 9)
+	require.NoError(t, err)
+	require.Equal(t, types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_AUTOKICKED, shard.Nodes[0].Status)
+	require.Equal(t, types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE, shard.Nodes[1].Status)
+}
+
+func TestAutokickTrainshardNode_LegacyHandledKeyIsNoop(t *testing.T) {
+	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
+	host := sample.AccAddress()
+
+	require.NoError(t, k.Trainshards.Set(ctx, 9, types.Trainshard{
+		TrainshardId:    9,
+		Creator:         creator,
+		GpuProfileId:    trainshardTestProfile,
+		Status:          types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE,
+		CreatedAtHeight: ctx.BlockHeight(),
+		ExpiresAtHeight: ctx.BlockHeight() + 100,
+		Nodes: []*types.TrainshardReservedNode{
+			{Participant: host, NodeId: "node-h", ModelId: "model1", PocWeight: 100,
+				Status: types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE},
+		},
+	}))
+	require.NoError(t, k.TrainshardAutokickRequest.Set(ctx, collections.Join(uint64(9), "legacy-req"), ""))
+
+	_, err := ms.AutokickTrainshardNode(ctx, &types.MsgAutokickTrainshardNode{
+		Creator:      host,
+		TrainshardId: 9,
+		Participant:  host,
+		NodeId:       "node-h",
+		RequestId:    "legacy-req",
+	})
+	require.NoError(t, err)
+
+	shard, err := k.Trainshards.Get(ctx, 9)
+	require.NoError(t, err)
+	require.Equal(t, types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE, shard.Status)
+	require.Equal(t, types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE, shard.Nodes[0].Status)
+}
+
 func TestAutokickTrainshardNode_AllowsHostForOwnNode(t *testing.T) {
 	k, ms, ctx, creator := setupTrainshardFlow(t, 1)
 	host := sample.AccAddress()

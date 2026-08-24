@@ -206,6 +206,8 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 	k.LogInfo("Using Bitcoin-style reward system", types.Settle)
 
 	var bitcoinResult BitcoinResult
+	// forfeiture is epoch-granular by design: a node reserved for any part of the
+	// epoch earns nothing for all of it, and in exchange carries no duty for it
 	reservedNodes := k.CollectEpochReservedNodeWeights(ctx, currentEpochIndex, ReservationScopeReward)
 	amounts, bitcoinResult, err = GetBitcoinSettleAmountsWithTransfers(
 		allParticipants,

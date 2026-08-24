@@ -75,6 +75,34 @@ func TestExpireTrainshards_DeferredKeyStillCloses(t *testing.T) {
 	require.False(t, hasPlanned)
 }
 
+func TestPruneClosedTrainshards_KeepsTwoEpochsEvenIfRetentionWasSetTooLow(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params := types.DefaultParams()
+	params.TrainingParams.SettledShardRetentionBlocks = 1
+	require.NoError(t, k.SetParams(ctx, params))
+
+	const closedAt = int64(10)
+	shard := types.Trainshard{
+		TrainshardId:   1,
+		Creator:        "creator",
+		Status:         types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
+		ClosedAtHeight: closedAt,
+	}
+	require.NoError(t, k.Trainshards.Set(ctx, shard.TrainshardId, shard))
+	require.NoError(t, k.TrainshardClosedIndex.Set(ctx, collections.Join(closedAt, shard.TrainshardId)))
+
+	floor := 2*params.EpochParams.EpochLength + params.TrainingParams.ReleaseBufferBlocks
+
+	k.ProcessTrainshardEndBlock(ctx.WithBlockHeight(closedAt + floor - 1))
+	_, err := k.Trainshards.Get(ctx, shard.TrainshardId)
+	require.NoError(t, err)
+
+	k.ProcessTrainshardEndBlock(ctx.WithBlockHeight(closedAt + floor))
+	_, err = k.Trainshards.Get(ctx, shard.TrainshardId)
+	require.ErrorIs(t, err, collections.ErrNotFound)
+}
+
 func TestExpireTrainshards_DrainsBacklogAcrossBlocks(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 

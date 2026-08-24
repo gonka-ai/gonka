@@ -447,8 +447,19 @@ func (p *TrainingParams) Validate(epochParams *EpochParams) error {
 	if p == nil {
 		return nil
 	}
+	// a zero cap is not "unlimited" anywhere in the trainshard code, it is a hard
+	// stop that would leave training switched on but unable to reserve anything
 	if p.MaxNodesPerShard == 0 {
 		return fmt.Errorf("training max_nodes_per_shard must be positive")
+	}
+	if p.MaxActiveShards == 0 {
+		return fmt.Errorf("training max_active_shards must be positive")
+	}
+	if p.MaxActiveShardsPerCreator == 0 {
+		return fmt.Errorf("training max_active_shards_per_creator must be positive")
+	}
+	if p.MaxTotalReservedNodes == 0 {
+		return fmt.Errorf("training max_total_reserved_nodes must be positive")
 	}
 	if p.MinDurationBlocks <= 0 {
 		return fmt.Errorf("training min_duration_blocks must be positive")
