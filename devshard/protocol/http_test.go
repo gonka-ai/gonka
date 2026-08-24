@@ -36,6 +36,19 @@ type httpTestEnv struct {
 	gossips     []*gossip.Gossip
 }
 
+type recoveryVerifierClient struct {
+	user.HostClient
+	source *recoveryVerifierSource
+}
+
+type recoveryVerifierSource struct {
+	txs []*types.DevshardTx
+}
+
+func (c *recoveryVerifierClient) VerifyTimeout(_ context.Context, _ uint64, _ types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff) (bool, []byte, uint32, []*types.DevshardTx, error) {
+	return false, nil, 0, c.source.txs, nil
+}
+
 const httpTestRoutePrefix = "/devshard/v2"
 
 func httpTestClient(baseURL string, escrowID string, signer signing.Signer) *transport.HTTPClient {
@@ -167,6 +180,40 @@ func setupHTTPEnv(t *testing.T, numHosts int, balance, grace uint64, cfgs ...typ
 		stores:      stores,
 		gossips:     gossips,
 	}
+}
+
+func setupHTTPRecoveryVerifierSession(t *testing.T, env *httpTestEnv, recovery []*types.DevshardTx) (*user.Session, *recoveryVerifierSource) {
+	t.Helper()
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine(
+		"escrow-1",
+		env.config,
+		env.group,
+		1000000,
+		env.userSigner.Address(),
+		verifier,
+		testutil.MustMemoryStore(t, "escrow-1", env.userSigner.Address(), env.config, env.group, 1000000),
+	)
+	require.NoError(t, err)
+
+	source := &recoveryVerifierSource{txs: recovery}
+	clients := make([]user.HostClient, len(env.clients))
+	for i, c := range env.clients {
+		clients[i] = &recoveryVerifierClient{HostClient: c, source: source}
+	}
+
+	session, err := user.NewSession(sm, env.userSigner, "escrow-1", env.group, clients, verifier)
+	require.NoError(t, err)
+	return session, source
+}
+
+func withHTTPTimeoutBuffer(t *testing.T, d time.Duration) {
+	t.Helper()
+	prev := user.TimeoutBuffer
+	user.TimeoutBuffer = d
+	t.Cleanup(func() {
+		user.TimeoutBuffer = prev
+	})
 }
 
 func TestHTTP_HappyPath(t *testing.T) {
@@ -500,6 +547,85 @@ func TestHTTP_RefusedTimeoutChallengeRecoveryLandsInNextDiff(t *testing.T) {
 	require.GreaterOrEqual(t, len(diffs), 2)
 	require.NotNil(t, findConfirmStart(diffs[len(diffs)-1].Txs, prepared.Nonce()),
 		"recovery MsgConfirmStart from challenge should land in the next user diff")
+}
+
+func TestHTTP_RefusedTimeoutRecoveryDeduplicatesAcrossVerifierRejects(t *testing.T) {
+	env := setupHTTPEnv(t, 5, 1000000, 100)
+	ctx := context.Background()
+
+	prepared, err := env.session.PrepareInference(defaultParams())
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), prepared.Nonce())
+
+	_, err = env.session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), refusedPayload())
+	require.NoError(t, err)
+
+	diffs := env.session.Diffs()
+	require.GreaterOrEqual(t, len(diffs), 2)
+	recovery := diffs[len(diffs)-1]
+	require.Equal(t, 1, countConfirmStart(recovery.Txs, prepared.Nonce()),
+		"multiple verifier rejects must not duplicate the executor ConfirmStart in the recovery diff")
+}
+
+func TestHTTP_RefusedTimeoutRecoveryIgnoresUnrelatedMempool(t *testing.T) {
+	env := setupHTTPEnv(t, 3, 1000000, 100)
+	ctx := context.Background()
+	unrelated := []*types.DevshardTx{
+		{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+			InferenceId: 999,
+			ExecutorSig: []byte("other-receipt"),
+			ConfirmedAt: 1000,
+		}}},
+		{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
+			InferenceId:  999,
+			ResponseHash: []byte("other-response"),
+		}}},
+	}
+	session, _ := setupHTTPRecoveryVerifierSession(t, env, unrelated)
+
+	prepared, err := session.PrepareInference(defaultParams())
+	require.NoError(t, err)
+	beforeDiffs := len(session.Diffs())
+
+	_, err = session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), refusedPayload())
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "insufficient votes")
+	require.Len(t, session.Diffs(), beforeDiffs)
+
+	rec, ok := session.StateMachine().SnapshotState().Inferences[prepared.Nonce()]
+	require.True(t, ok)
+	require.Equal(t, types.StatusPending, rec.Status)
+}
+
+func TestHTTP_ExecutionTimeoutDoesNotUseConfirmStartRecovery(t *testing.T) {
+	withHTTPTimeoutBuffer(t, 0)
+	config := testutil.DefaultConfig(3)
+	config.ExecutionTimeout = 0
+	env := setupHTTPEnv(t, 3, 1000000, 100, config)
+	ctx := context.Background()
+	session, recoverySource := setupHTTPRecoveryVerifierSession(t, env, nil)
+
+	prepared, err := session.PrepareInference(defaultParams())
+	require.NoError(t, err)
+	executorIdx := prepared.HostIdx()
+	receipt, _, err := env.hosts[executorIdx].ChallengeReceipt(ctx, prepared.Nonce(), refusedPayload(), session.Diffs())
+	require.NoError(t, err)
+	require.NotEmpty(t, receipt)
+	confirmTx := findConfirmStart(env.hosts[executorIdx].MempoolTxs(), prepared.Nonce())
+	require.NotNil(t, confirmTx)
+	recoverySource.txs = []*types.DevshardTx{confirmTx}
+
+	resp := &host.HostResponse{Receipt: receipt, ConfirmedAt: confirmTx.GetConfirmStart().ConfirmedAt}
+	require.NoError(t, session.ProcessResponse(executorIdx, resp, prepared.Nonce()))
+	require.NoError(t, session.SendPendingDiff(ctx))
+	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[prepared.Nonce()].Status)
+	beforeDiffs := len(session.Diffs())
+
+	_, err = session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), nil)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "insufficient votes")
+	require.Len(t, session.Diffs(), beforeDiffs, "execution timeout must not publish ConfirmStart recovery")
+	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[prepared.Nonce()].Status)
 }
 
 func TestHTTP_StateRecovery(t *testing.T) {
