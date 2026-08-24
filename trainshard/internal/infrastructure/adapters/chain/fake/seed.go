@@ -6,7 +6,6 @@ import (
 	"os"
 
 	"trainshard/internal/domain/shard"
-	"trainshard/internal/domain/shared/ports"
 	"trainshard/internal/domain/shared/vo"
 )
 
@@ -39,7 +38,7 @@ type seedHardware struct {
 	Count       int    `json:"count"`
 }
 
-func Load(path string, clock ports.Clock) (*Chain, error) {
+func Load(path string) (*Chain, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("chain seed: %w", err)
@@ -50,7 +49,7 @@ func Load(path string, clock ports.Clock) (*Chain, error) {
 		return nil, fmt.Errorf("chain seed %q: %w", path, err)
 	}
 
-	chain := New(clock)
+	chain := newChain()
 	chain.height = vo.Height(file.Height)
 
 	for _, entry := range file.Hardware {

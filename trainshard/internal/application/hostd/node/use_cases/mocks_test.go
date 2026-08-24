@@ -5,7 +5,6 @@ import (
 	"errors"
 	"time"
 
-	"trainshard/internal/domain/shard"
 	"trainshard/internal/domain/shared/vo"
 )
 
@@ -38,45 +37,21 @@ func (p *probeStub) FreeDiskBytes(context.Context) (int64, error) {
 
 func (p *probeStub) MeshPortReachable(context.Context) error { return p.meshPort }
 
-type gpuStub struct {
+type cardsStub struct {
 	inventory vo.GPUInventory
 	err       error
 }
 
-func (g *gpuStub) Inventory(context.Context, vo.NodeRef) (vo.GPUInventory, error) {
-	return g.inventory, g.err
+func (c *cardsStub) Inventory(context.Context, vo.NodeRef) (vo.GPUInventory, error) {
+	return c.inventory, c.err
 }
 
-func (g *gpuStub) InUse(context.Context, vo.NodeRef) (int, error) { return 0, nil }
-
-func (g *gpuStub) ForeignWork(context.Context, vo.ShardID, vo.NodeRef) (bool, error) {
-	return false, nil
-}
-
-func (g *gpuStub) TrainingProcesses(context.Context, vo.ShardID, vo.NodeRef) (bool, error) {
-	return false, nil
-}
-
-func (g *gpuStub) KillTraining(context.Context, vo.ShardID, vo.NodeRef) error { return nil }
-
-type chainStub struct {
+type claimStub struct {
 	hardware vo.GPUInventory
 	err      error
 }
 
-func (c *chainStub) Height(context.Context) (vo.Height, error) { return 500, nil }
-
-func (c *chainStub) Shard(context.Context, vo.ShardID) (shard.Shard, bool, error) {
-	return shard.Shard{}, false, nil
-}
-
-func (c *chainStub) Reservation(context.Context, vo.NodeRef) (vo.ShardID, bool, error) {
-	return 0, false, nil
-}
-
-func (c *chainStub) ActiveShards(context.Context) ([]shard.Shard, error) { return nil, nil }
-
-func (c *chainStub) Hardware(context.Context, vo.NodeRef) (vo.GPUInventory, error) {
+func (c *claimStub) Hardware(context.Context, vo.NodeRef) (vo.GPUInventory, error) {
 	return c.hardware, c.err
 }
 

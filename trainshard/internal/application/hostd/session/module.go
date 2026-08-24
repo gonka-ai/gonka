@@ -15,6 +15,7 @@ type Deps struct {
 	Chain    shard.ChainReader
 	Streams  run.Streams
 	Sessions run.SessionLog
+	Served   signedhttp.Served
 	Clock    ports.Clock
 }
 
@@ -27,7 +28,7 @@ func New(cfg Config, deps Deps) *Module {
 		endpoints: api.NewEndpoints(cfg.Participant, api.UseCases{
 			Logs:  usecases.NewStreamLogsUseCase(deps.Chain, deps.Streams),
 			Shell: usecases.NewOpenShellUseCase(deps.Chain, deps.Streams, deps.Sessions, deps.Clock),
-		}, signedhttp.NewOnce(deps.Clock, cfg.Window)),
+		}, signedhttp.NewOnce(deps.Served)),
 	}
 }
 

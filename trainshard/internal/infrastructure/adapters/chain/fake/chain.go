@@ -1,14 +1,14 @@
+// Package fake is a chain for tests and nothing else. No binary wires it: a daemon without a chain
+// reserves whatever it is asked for, so a missing one stops it at startup instead
 package fake
 
 import (
 	"context"
 	"slices"
 	"sync"
-	"time"
 
 	"trainshard/internal/domain/run"
 	"trainshard/internal/domain/shard"
-	"trainshard/internal/domain/shared/ports"
 	"trainshard/internal/domain/shared/vo"
 )
 
@@ -18,26 +18,15 @@ type Chain struct {
 	shards       map[vo.ShardID]shard.Shard
 	reservations map[vo.NodeRef]vo.ShardID
 	hardware     map[vo.NodeRef]vo.GPUInventory
-	optIns       map[vo.NodeRef]time.Time
-	releases     []Release
 	events       chan struct{}
-	clock        ports.Clock
 }
 
-type Release struct {
-	Shard  vo.ShardID
-	Node   vo.NodeRef
-	Reason vo.ReleaseReason
-}
-
-func New(clock ports.Clock) *Chain {
+func newChain() *Chain {
 	return &Chain{
 		shards:       map[vo.ShardID]shard.Shard{},
 		reservations: map[vo.NodeRef]vo.ShardID{},
 		hardware:     map[vo.NodeRef]vo.GPUInventory{},
-		optIns:       map[vo.NodeRef]time.Time{},
 		events:       make(chan struct{}, 1),
-		clock:        clock,
 	}
 }
 
@@ -97,23 +86,14 @@ func (c *Chain) Hardware(_ context.Context, node vo.NodeRef) (vo.GPUInventory, e
 	return c.hardware[node], nil
 }
 
-func (c *Chain) Watch(ctx context.Context) (<-chan struct{}, error) {
+func (c *Chain) Watch(context.Context) (<-chan struct{}, error) {
 	return c.events, nil
 }
 
-func (c *Chain) OptIn(_ context.Context, node vo.NodeRef, ttl time.Duration) error {
+func (c *Chain) Release(_ context.Context, shardID vo.ShardID, node vo.NodeRef, _ vo.ReleaseReason) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
-	c.optIns[node] = c.clock.Now().Add(ttl)
-	return nil
-}
-
-func (c *Chain) Release(_ context.Context, shardID vo.ShardID, node vo.NodeRef, reason vo.ReleaseReason) error {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.releases = append(c.releases, Release{Shard: shardID, Node: node, Reason: reason})
 	delete(c.reservations, node)
 	if record, found := c.shards[shardID]; found {
 		record.Nodes = slices.DeleteFunc(record.Nodes, func(reserved shard.ReservedNode) bool { return reserved.Ref == node })
@@ -121,20 +101,6 @@ func (c *Chain) Release(_ context.Context, shardID vo.ShardID, node vo.NodeRef, 
 	}
 	c.hint()
 	return nil
-}
-
-func (c *Chain) Releases() []Release {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return append([]Release(nil), c.releases...)
-}
-
-func (c *Chain) SetHeight(height vo.Height) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-
-	c.height = height
-	c.hint()
 }
 
 func (c *Chain) hint() {

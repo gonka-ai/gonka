@@ -255,6 +255,9 @@ func fence(pid int, device string, denied []string, allowed []allowance) error {
 		Policy:   &drop,
 	})
 
+	// the interface accepts have to come before the denied ranges and never move below them: the
+	// mesh hands out 10.42 addresses, which sit inside the private ranges an operator denies, so a
+	// deny read first would drop the training's own traffic to its peers
 	for _, side := range []struct {
 		chain *nftables.Chain
 		key   expr.MetaKey
@@ -264,6 +267,8 @@ func fence(pid int, device string, denied []string, allowed []allowance) error {
 		conn.AddRule(&nftables.Rule{Table: table, Chain: side.chain, Exprs: established()})
 	}
 
+	// denied ranges are read before the sources a run asked for, so a source that resolves into the
+	// operator's own network is dropped rather than opened
 	for _, cidr := range denied {
 		_, network, err := net.ParseCIDR(cidr)
 		if err != nil {

@@ -12,11 +12,15 @@ import (
 )
 
 type config struct {
-	actor     vo.Address
-	secret    []byte
-	chainSeed string
-	directory hosts.Directory
-	timeout   time.Duration
+	privateKey      string
+	keyringDir      string
+	keyringBackend  string
+	keyringPassword string
+	keyName         string
+	chainGRPC       string
+	chainID         string
+	directory       hosts.Directory
+	timeout         time.Duration
 
 	pollInterval time.Duration
 	settleWindow time.Duration
@@ -24,11 +28,15 @@ type config struct {
 
 func load() (config, error) {
 	cfg := config{
-		actor:        vo.Address(env("ACTOR", "")),
-		secret:       []byte(env("SHARED_SECRET", "")),
-		chainSeed:    env("CHAIN_SEED", ""),
-		pollInterval: 10 * time.Second,
-		settleWindow: 2 * time.Minute,
+		privateKey:      env("PRIVATE_KEY", ""),
+		keyringDir:      env("KEYRING_DIR", ""),
+		keyringBackend:  env("KEYRING_BACKEND", "file"),
+		keyringPassword: env("KEYRING_PASSWORD", ""),
+		keyName:         env("KEY_NAME", ""),
+		chainGRPC:       env("CHAIN_GRPC", ""),
+		chainID:         env("CHAIN_ID", "prod-sim"),
+		pollInterval:    10 * time.Second,
+		settleWindow:    2 * time.Minute,
 	}
 
 	directory, err := loadDirectory(env("HOSTS", ""))
@@ -44,14 +52,12 @@ func load() (config, error) {
 	cfg.timeout = timeout
 
 	switch {
-	case cfg.actor == "":
-		return config{}, fmt.Errorf("TRAINSHARDCTL_ACTOR is required, it is the address the shard was created from")
-	case len(cfg.secret) == 0:
-		return config{}, fmt.Errorf("TRAINSHARDCTL_SHARED_SECRET is required")
+	case cfg.privateKey == "" && cfg.keyName == "":
+		return config{}, fmt.Errorf("driving a run needs the key the shard was created from, which is the only thing a host takes an order from: TRAINSHARDCTL_PRIVATE_KEY, or TRAINSHARDCTL_KEY_NAME to take it from the keyring")
 	case len(cfg.directory) == 0:
 		return config{}, fmt.Errorf("TRAINSHARDCTL_HOSTS is required, it is a json file of participant to host url")
-	case cfg.chainSeed == "":
-		return config{}, fmt.Errorf("TRAINSHARDCTL_CHAIN_SEED is required until the chain client lands")
+	case cfg.chainGRPC == "":
+		return config{}, fmt.Errorf("TRAINSHARDCTL_CHAIN_GRPC is required, it is the chain that says what the shard reserves")
 	}
 	return cfg, nil
 }

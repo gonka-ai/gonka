@@ -17,8 +17,9 @@ import (
 )
 
 const (
-	window = time.Minute
-	path   = "/trainshard/v0/shards/7/deploy"
+	window   = time.Minute
+	path     = "/trainshard/v0/shards/7/deploy"
+	audience = vo.Address("gonka1host")
 )
 
 var now = time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
@@ -32,6 +33,18 @@ type verifierStub struct {
 func (v *verifierStub) Recover(payload, _ []byte) (vo.Address, error) {
 	v.payload = payload
 	return v.address, v.err
+}
+
+type boundVerifier struct {
+	signed  []byte
+	address vo.Address
+}
+
+func (v *boundVerifier) Recover(payload, _ []byte) (vo.Address, error) {
+	if !bytes.Equal(payload, v.signed) {
+		return "", shared.ErrUnauthorized
+	}
+	return v.address, nil
 }
 
 type signedRequest struct {
@@ -61,7 +74,7 @@ func (s signedRequest) build() *http.Request {
 func TestBoundaryEstablishesWhoIsCallingAndLeavesTheBodyReadable(t *testing.T) {
 
 	verifier := &verifierStub{address: "gonka1creator"}
-	boundary := signedhttp.New(verifier, timex.NewFrozen(now), window)
+	boundary := signedhttp.New(verifier, timex.NewFrozen(now), window, audience)
 	request := newSignedRequest()
 	recorder := httptest.NewRecorder()
 
@@ -83,9 +96,51 @@ func TestBoundaryEstablishesWhoIsCallingAndLeavesTheBodyReadable(t *testing.T) {
 	if seen.ShardID != "7" {
 		t.Fatalf("got body %+v, want the handler to still read it", seen)
 	}
-	want := contract.SigningPayload(http.MethodPost, path, request.timestamp, request.requestID, request.body)
+	want := contract.SigningPayload(string(audience), http.MethodPost, path, "", request.timestamp, request.requestID, request.body)
 	if !bytes.Equal(verifier.payload, want) {
 		t.Fatalf("the payload must be built the way the coordinator builds it:\ngot  %q\nwant %q", verifier.payload, want)
+	}
+}
+
+// A node id is local to a host, so the same signed request replayed elsewhere would name that
+// host's node of the same name
+func TestGuardRefusesARequestSignedForAnotherHost(t *testing.T) {
+	// arrange
+	request := newSignedRequest()
+	elsewhere := contract.SigningPayload("gonka1elsewhere", http.MethodPost, path, "", request.timestamp, request.requestID, request.body)
+	verifier := &boundVerifier{signed: elsewhere, address: "gonka1creator"}
+	boundary := signedhttp.New(verifier, timex.NewFrozen(now), window, audience)
+	reached := false
+	recorder := httptest.NewRecorder()
+
+	// act
+	boundary.Wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true })).
+		ServeHTTP(recorder, request.build())
+
+	// assert
+	if reached {
+		t.Fatal("a request signed for another host must never reach the handler")
+	}
+	if recorder.Code != http.StatusUnauthorized {
+		t.Fatalf("got %d, want the request turned away: %s", recorder.Code, recorder.Body)
+	}
+}
+
+func TestGuardCoversTheQueryString(t *testing.T) {
+	// arrange
+	request := newSignedRequest()
+	verifier := &verifierStub{address: "gonka1creator"}
+	boundary := signedhttp.New(verifier, timex.NewFrozen(now), window, audience)
+	built := request.build()
+	built.URL.RawQuery = "tail=100"
+
+	// act
+	boundary.Wrap(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {})).ServeHTTP(httptest.NewRecorder(), built)
+
+	// assert
+	want := contract.SigningPayload(string(audience), http.MethodPost, path, "tail=100", request.timestamp, request.requestID, request.body)
+	if !bytes.Equal(verifier.payload, want) {
+		t.Fatalf("a parameter outside the signature is a parameter nobody vouched for:\ngot  %q\nwant %q", verifier.payload, want)
 	}
 }
 
@@ -152,7 +207,7 @@ func TestGuardRefusesWhatItCannotTrust(t *testing.T) {
 			verifier := &verifierStub{address: "gonka1creator"}
 			request := newSignedRequest()
 			tc.mutate(&request, verifier)
-			boundary := signedhttp.New(verifier, timex.NewFrozen(now), window)
+			boundary := signedhttp.New(verifier, timex.NewFrozen(now), window, audience)
 			reached := false
 			handler := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { reached = true })
 			recorder := httptest.NewRecorder()

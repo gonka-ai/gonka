@@ -28,12 +28,22 @@ const (
 	shardID     = vo.ShardID(7)
 )
 
-// verifierStub stands in for the signing scheme these tests are not about: a caller signs with
-// its own address and the boundary reads it back
 type verifierStub struct{}
 
 func (verifierStub) Recover(_, signature []byte) (vo.Address, error) {
 	return vo.Address(signature), nil
+}
+
+type servedStub struct {
+	spent map[string]bool
+}
+
+func (s servedStub) First(_ context.Context, request string) (bool, error) {
+	if s.spent[request] {
+		return false, nil
+	}
+	s.spent[request] = true
+	return true, nil
 }
 
 var (
@@ -105,13 +115,14 @@ func newServer(t *testing.T, chain *chainStub, streams *streamsStub) *httptest.S
 	t.Helper()
 
 	mux := http.NewServeMux()
-	module := session.New(session.Config{Participant: participant, Window: time.Minute}, session.Deps{
+	module := session.New(session.Config{Participant: participant}, session.Deps{
 		Chain:    chain,
 		Streams:  streams,
 		Sessions: sessionLogStub{},
+		Served:   servedStub{spent: map[string]bool{}},
 		Clock:    timex.NewFrozen(now),
 	})
-	module.Mount(mux, signedhttp.New(verifierStub{}, timex.NewFrozen(now), time.Minute).Wrap)
+	module.Mount(mux, signedhttp.New(verifierStub{}, timex.NewFrozen(now), time.Minute, vo.Address(participant)).Wrap)
 
 	server := httptest.NewServer(mux)
 	t.Cleanup(server.Close)
@@ -129,12 +140,13 @@ func sign(t *testing.T, actor vo.Address) http.Header {
 }
 
 func TestLogsAreStreamedToWhoeverOwnsTheRun(t *testing.T) {
-
+	// arrange
 	server := newServer(t, newChainStub(), &streamsStub{output: "step 1\nstep 2\n"})
 	path := "/trainshard/v0/shards/7/nodes/node-a/logs"
 	request, _ := http.NewRequest(http.MethodPost, server.URL+path, nil)
 	request.Header = sign(t, "gonka1creator")
 
+	// act
 	response, err := server.Client().Do(request)
 	if err != nil {
 		t.Fatalf("request: %v", err)
@@ -142,6 +154,7 @@ func TestLogsAreStreamedToWhoeverOwnsTheRun(t *testing.T) {
 	defer response.Body.Close()
 	body, _ := io.ReadAll(response.Body)
 
+	// assert
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("got %d: %s", response.StatusCode, body)
 	}
@@ -151,7 +164,7 @@ func TestLogsAreStreamedToWhoeverOwnsTheRun(t *testing.T) {
 }
 
 func TestAStreamIsOpenedOnceForTheRequestThatAskedForIt(t *testing.T) {
-
+	// arrange
 	server := newServer(t, newChainStub(), &streamsStub{output: "step 1\n"})
 	path := "/trainshard/v0/shards/7/nodes/node-a/logs"
 	ask := func() *http.Response {
@@ -168,8 +181,10 @@ func TestAStreamIsOpenedOnceForTheRequestThatAskedForIt(t *testing.T) {
 		t.Fatalf("got %d, want the first request through", first.StatusCode)
 	}
 
+	// act
 	repeat := ask()
 
+	// assert
 	if repeat.StatusCode != http.StatusUnauthorized {
 		t.Fatalf("got %d, want a caught request refused the second time it arrives", repeat.StatusCode)
 	}
@@ -183,7 +198,7 @@ func TestAStreamIsOpenedOnceForTheRequestThatAskedForIt(t *testing.T) {
 }
 
 func TestARefusedStreamAnswersWithAnErrorAndNoOutput(t *testing.T) {
-
+	// arrange
 	chain := newChainStub()
 	chain.record.Status = shard.StatusSettled
 	server := newServer(t, chain, &streamsStub{output: "secret"})
@@ -191,12 +206,14 @@ func TestARefusedStreamAnswersWithAnErrorAndNoOutput(t *testing.T) {
 	request, _ := http.NewRequest(http.MethodPost, server.URL+path, nil)
 	request.Header = sign(t, "gonka1creator")
 
+	// act
 	response, err := server.Client().Do(request)
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
 	defer response.Body.Close()
 
+	// assert
 	if response.StatusCode != http.StatusConflict {
 		t.Fatalf("got %d, want the request refused", response.StatusCode)
 	}
@@ -210,7 +227,7 @@ func TestARefusedStreamAnswersWithAnErrorAndNoOutput(t *testing.T) {
 }
 
 func TestShellCarriesBytesBothWaysOverOneConnection(t *testing.T) {
-
+	// arrange
 	server := newServer(t, newChainStub(), &streamsStub{})
 	path := "/trainshard/v0/shards/7/nodes/node-a/shell"
 	conn, err := net.Dial("tcp", strings.TrimPrefix(server.URL, "http://"))
@@ -229,11 +246,14 @@ func TestShellCarriesBytesBothWaysOverOneConnection(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read response: %v", err)
 	}
+
+	// act
 	if _, err := fmt.Fprintln(conn, "whoami"); err != nil {
 		t.Fatalf("type into the shell: %v", err)
 	}
 	answer, err := reader.ReadString('\n')
 
+	// assert
 	if response.StatusCode != http.StatusOK {
 		t.Fatalf("got %d, want the connection handed over", response.StatusCode)
 	}

@@ -1,3 +1,5 @@
+// Package fake records what a real dapi would have taken out of inference. For tests only: a run
+// that trains on cards still serving inference is exactly what this adapter exists to prevent
 package fake
 
 import (

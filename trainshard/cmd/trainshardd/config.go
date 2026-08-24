@@ -19,7 +19,6 @@ type config struct {
 	listen           string
 	admin            string
 	stateDir         string
-	chainSeed        string
 	machine          string
 	dockerSocket     string
 	sandboxImage     string
@@ -37,7 +36,13 @@ type config struct {
 	meshPorts        int
 	meshKeyDir       string
 	deniedCIDRs      []string
-	secret           []byte
+	chainGRPC        string
+	dapiAddress      string
+	keyringDir       string
+	keyringBackend   string
+	keyringPassword  string
+	keyName          string
+	privateKey       string
 	inventory        vo.GPUInventory
 	limits           run.Limits
 	minFreeDiskBytes int64
@@ -52,6 +57,8 @@ type config struct {
 	refreshInterval   time.Duration
 	signatureWindow   time.Duration
 	requestTTL        time.Duration
+	chainPoll         time.Duration
+	dapiTimeout       time.Duration
 }
 
 func load() (config, error) {
@@ -60,15 +67,20 @@ func load() (config, error) {
 		listen:           env("LISTEN", "127.0.0.1:9700"),
 		admin:            env("ADMIN_LISTEN", ""),
 		stateDir:         env("STATE_DIR", "/var/lib/trainshardd"),
-		chainSeed:        env("CHAIN_SEED", ""),
-		machine:          env("MACHINE", "memory"),
+		machine:          env("MACHINE", ""),
 		dockerSocket:     env("DOCKER_SOCKET", "/var/run/docker.sock"),
 		sandboxImage:     env("SANDBOX_IMAGE", "registry.k8s.io/pause:3.9"),
 		containerUser:    env("CONTAINER_USER", "1000:1000"),
 		gpuKind:          env("GPU_KIND", ""),
 		nvidiaSMI:        env("NVIDIA_SMI", "nvidia-smi"),
 		meshEndpoint:     env("MESH_ENDPOINT", ""),
-		secret:           []byte(env("SHARED_SECRET", "")),
+		chainGRPC:        env("CHAIN_GRPC", ""),
+		dapiAddress:      env("DAPI", ""),
+		keyringDir:       env("KEYRING_DIR", "/root/.inference"),
+		keyringBackend:   env("KEYRING_BACKEND", "file"),
+		keyringPassword:  env("KEYRING_PASSWORD", ""),
+		keyName:          env("KEY_NAME", ""),
+		privateKey:       env("PRIVATE_KEY", ""),
 		supportedVersion: env("SUPPORTED_VERSION", ""),
 		logLevel:         env("LOG_LEVEL", "info"),
 		logFormat:        env("LOG_FORMAT", "text"),
@@ -129,6 +141,8 @@ func load() (config, error) {
 		"REFRESH_INTERVAL":   &cfg.refreshInterval,
 		"SIGNATURE_WINDOW":   &cfg.signatureWindow,
 		"REQUEST_TTL":        &cfg.requestTTL,
+		"CHAIN_POLL":         &cfg.chainPoll,
+		"DAPI_TIMEOUT":       &cfg.dapiTimeout,
 	} {
 		value, err := duration(name, defaults[name])
 		if err != nil {
@@ -152,6 +166,8 @@ var defaults = map[string]time.Duration{
 	"REFRESH_INTERVAL":   5 * time.Minute,
 	"SIGNATURE_WINDOW":   time.Minute,
 	"REQUEST_TTL":        time.Hour,
+	"CHAIN_POLL":         5 * time.Second,
+	"DAPI_TIMEOUT":       30 * time.Second,
 }
 
 func (c config) validate() error {
@@ -160,11 +176,17 @@ func (c config) validate() error {
 		return fmt.Errorf("TRAINSHARD_PARTICIPANT is required")
 	case len(c.nodes) == 0:
 		return fmt.Errorf("TRAINSHARD_NODES is required")
-	case len(c.secret) == 0:
-		return fmt.Errorf("TRAINSHARD_SHARED_SECRET is required")
+	case c.keyName == "" && c.privateKey == "":
+		return fmt.Errorf("this daemon needs the participant's own key, which is the only thing a peer believes a mesh identity from: TRAINSHARD_KEY_NAME to take it from the keyring, or TRAINSHARD_PRIVATE_KEY to hand it over directly")
+	case c.chainGRPC == "":
+		return fmt.Errorf("TRAINSHARD_CHAIN_GRPC is required, it is the only thing that says what this host reserves and to whom")
+	case c.dapiAddress == "":
+		return fmt.Errorf("TRAINSHARD_DAPI is required, it signs the transactions this machine holds no key for and takes the node out of inference")
 	case c.admin != "" && !loopback(c.admin):
 		return fmt.Errorf("TRAINSHARD_ADMIN_LISTEN %q must be a loopback address, abort carries no signature and whoever reaches the port can stop a run", c.admin)
 
+	case c.machine == "":
+		return fmt.Errorf("TRAINSHARD_MACHINE is required: docker to train on this host's cards, memory to stand in for a host that has none")
 	case c.machine == "docker" && c.meshEndpoint == "":
 		return fmt.Errorf("TRAINSHARD_MESH_ENDPOINT is required on a docker machine")
 	case c.machine == "docker" && c.memoryBytes <= 0:

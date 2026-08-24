@@ -34,10 +34,11 @@ type Guard struct {
 	verifier ports.Verifier
 	clock    ports.Clock
 	window   time.Duration
+	audience vo.Address
 }
 
-func New(verifier ports.Verifier, clock ports.Clock, window time.Duration) *Guard {
-	return &Guard{verifier: verifier, clock: clock, window: window}
+func New(verifier ports.Verifier, clock ports.Clock, window time.Duration, audience vo.Address) *Guard {
+	return &Guard{verifier: verifier, clock: clock, window: window, audience: audience}
 }
 
 func (g *Guard) Wrap(next http.Handler) http.Handler {
@@ -74,7 +75,7 @@ func (g *Guard) authenticate(r *http.Request) (vo.Address, []byte, error) {
 		return "", nil, errBadSignature
 	}
 
-	payload := contract.SigningPayload(r.Method, r.URL.Path, timestamp, string(requestID), body)
+	payload := contract.SigningPayload(string(g.audience), r.Method, r.URL.Path, r.URL.RawQuery, timestamp, string(requestID), body)
 	address, err := g.verifier.Recover(payload, signature)
 	if err != nil {
 		return "", nil, errBadSignature

@@ -12,12 +12,15 @@ ENV GOOS=${GOOS} \
     GOCACHE=/root/.cache/go-build \
     GOMODCACHE=/go/pkg/mod
 
+# the chain's own types come from the module next door, so the build starts a directory up
 WORKDIR /src
-COPY . .
+COPY inference-chain ./inference-chain
+COPY trainshard ./trainshard
 
+WORKDIR /src/trainshard
 RUN --mount=type=cache,id=trainshard-go-build,target=/root/.cache/go-build \
     --mount=type=cache,id=trainshard-go-mod,target=/go/pkg/mod \
-    go build -mod=readonly -ldflags "-s -w -X main.version=${VERSION}" \
+    go build -mod=mod -ldflags "-s -w -X main.version=${VERSION}" \
     -o /out/trainshardd ./cmd/trainshardd
 
 # the driver tool this daemon reads the cards with is injected from the host and is linked against

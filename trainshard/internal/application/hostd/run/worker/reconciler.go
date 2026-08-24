@@ -12,7 +12,7 @@ import (
 
 type Reconciler struct {
 	nodes     []vo.NodeRef
-	reconcile usecases.Reconciler
+	reconcile *usecases.ReconcileUseCase
 	watcher   shard.ChainWatcher
 	interval  time.Duration
 	log       *slog.Logger
@@ -20,7 +20,7 @@ type Reconciler struct {
 
 func NewReconciler(
 	nodes []vo.NodeRef,
-	reconcile usecases.Reconciler,
+	reconcile *usecases.ReconcileUseCase,
 	watcher shard.ChainWatcher,
 	interval time.Duration,
 	log *slog.Logger,
