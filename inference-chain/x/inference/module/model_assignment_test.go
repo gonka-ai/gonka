@@ -996,7 +996,8 @@ func TestSetModelsForParticipants_ManyNodesManyModels(t *testing.T) {
 	// Model Assigner
 	modelAssigner := NewModelAssigner(mockKeeper, mockLogger{})
 
-	// Participant data setup with legacy MLNodes list (pre-assignment state)
+	// Participant data setup with per-model buckets as produced by PoC validation:
+	// mlnode1/2/4 proved modelA, mlnode3 proved modelB (matches epochGroupData above).
 	participants := []*types.ActiveParticipant{
 		{
 			Index:  participantAddress,
@@ -1006,8 +1007,12 @@ func TestSetModelsForParticipants_ManyNodesManyModels(t *testing.T) {
 					MlNodes: []*types.MLNodeInfo{
 						{NodeId: "mlnode1", PocWeight: 30},
 						{NodeId: "mlnode2", PocWeight: 25},
-						{NodeId: "mlnode3", PocWeight: 20},
 						{NodeId: "mlnode4", PocWeight: 25},
+					},
+				},
+				{
+					MlNodes: []*types.MLNodeInfo{
+						{NodeId: "mlnode3", PocWeight: 20},
 					},
 				},
 			},

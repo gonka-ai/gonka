@@ -360,6 +360,123 @@ func sumLiveRootTotalWeight(rootData types.EpochGroupData, liveRootSet map[strin
 	return total
 }
 
+// validatedModelNodes rebuilds the model -> nodes map from the participant's
+// parallel Models[i] / MlNodes[i] arrays as produced by PoC validation,
+// preserved-node carryover, or epoch fallback. This binding is the only source
+// of model identity for seating; the hardware inventory may later exclude a
+// node but never chooses or extends its model.
+// Nodes with an empty NodeId (legacy placeholders) are dropped: they could
+// never match a hardware LocalId anyway.
+// Every collected node gets its TimeslotAllocation reset to the upcoming-epoch
+// default so later preference comparisons (resolveUniqueCompatibleClaims) never
+// depend on slot state carried over from a prior epoch.
+func validatedModelNodes(p *types.ActiveParticipant) map[string][]*types.MLNodeInfo {
+	validated := make(map[string][]*types.MLNodeInfo, len(p.Models))
+	for i, modelId := range p.Models {
+		if modelId == "" || i >= len(p.MlNodes) || p.MlNodes[i] == nil {
+			continue
+		}
+		for _, node := range p.MlNodes[i].MlNodes {
+			if node == nil || node.NodeId == "" {
+				continue
+			}
+			node.TimeslotAllocation = []bool{true, false} // [PRE_POC_SLOT, POC_SLOT]
+			validated[modelId] = append(validated[modelId], node)
+		}
+	}
+	return validated
+}
+
+type validatedNodeClaim struct {
+	modelId string
+	node    *types.MLNodeInfo
+}
+
+// resolveUniqueCompatibleClaims enforces the single-assignment rule: one NodeId
+// seats in at most one validated model bucket.
+//
+// Order of operations matters: the hardware compatibility filter runs BEFORE any
+// cross-model selection, so an incompatible claim can never shadow a compatible
+// one. Within a single model, duplicate entries for the same node id collapse to
+// the highest-preference entry (PocWeight, then Throughput, then
+// TimeslotAllocation -- same ordering as dedupMLNodesById). After filtering:
+//   - exactly one compatible claim -> the node seats there
+//   - zero compatible claims       -> the node is dropped (hardware no longer
+//     serves anything it proved)
+//   - several compatible claims    -> the node is dropped as ambiguous: one ML
+//     node serves one model, so conflicting validated claims mean inconsistent
+//     input, and no selection rule is invented for it
+//
+// When hasHardwareRecord is false (bootstrap: participant never synced an
+// inventory), the compatibility filter is skipped but single assignment still
+// applies -- a node id must not be counted under several model coefficients.
+//
+// Returns the winning claim per node id, the node ids dropped as ambiguous, and
+// the "nodeId@modelId" claims removed by the hardware filter.
+func resolveUniqueCompatibleClaims(
+	validated map[string][]*types.MLNodeInfo,
+	declaredModelsByNode map[string][]string,
+	hasHardwareRecord bool,
+) (map[string]validatedNodeClaim, []string, []string) {
+	// Best entry per (nodeId, modelId): within-model duplicates collapse first.
+	claimsByNode := make(map[string]map[string]*types.MLNodeInfo)
+	for _, modelId := range sortedKeys(validated) {
+		for _, node := range validated[modelId] {
+			perModel := claimsByNode[node.NodeId]
+			if perModel == nil {
+				perModel = make(map[string]*types.MLNodeInfo)
+				claimsByNode[node.NodeId] = perModel
+			}
+			if current := perModel[modelId]; current == nil || compareMLNodePreference(node, current) > 0 {
+				perModel[modelId] = node
+			}
+		}
+	}
+
+	owners := make(map[string]validatedNodeClaim)
+	var ambiguous []string
+	var incompatible []string
+	for _, nodeId := range sortedKeys(claimsByNode) {
+		var compatible []validatedNodeClaim
+		for _, modelId := range sortedKeys(claimsByNode[nodeId]) {
+			if hasHardwareRecord && !slices.Contains(declaredModelsByNode[nodeId], modelId) {
+				incompatible = append(incompatible, nodeId+"@"+modelId)
+				continue
+			}
+			compatible = append(compatible, validatedNodeClaim{modelId: modelId, node: claimsByNode[nodeId][modelId]})
+		}
+		switch len(compatible) {
+		case 0:
+			// Nothing compatible remains; drops already recorded in incompatible.
+		case 1:
+			owners[nodeId] = compatible[0]
+		default:
+			ambiguous = append(ambiguous, nodeId)
+		}
+	}
+	return owners, ambiguous, incompatible
+}
+
+// setModelsForParticipants seats each participant's ML nodes into per-model
+// buckets for the upcoming epoch.
+//
+// Invariant: raw PocWeight keeps the ModelID that PoC validation (or preserved
+// carry / epoch fallback) approved. The self-reported hardware inventory
+// (HardwareNode.Models) acts only as a filter, applied BEFORE any cross-model
+// selection so an incompatible claim can never shadow a compatible one:
+//   - node validated for M, hardware still lists M    -> seated in M
+//   - node validated for M, hardware dropped M        -> node dropped, never migrated
+//   - hardware lists K with no validated weight for K -> no bucket created for K
+//   - node id absent from the hardware inventory      -> dropped before any
+//     weight consumer
+//   - node id validated under several models that all pass the filter -> dropped
+//     as ambiguous (one ML node serves one model)
+//   - no HardwareNodes record at all                  -> the hardware filter is
+//     skipped (genesis bootstrap), but single assignment still applies: a node
+//     id is never counted under several model coefficients
+//
+// Preserved-carry participants flow through this same code path, so the same
+// rules apply to them.
 func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participants []*types.ActiveParticipant, upcomingEpoch types.Epoch) {
 	// TODO: We may need to populate throughput in MLNodeInfo using the model's ThroughputPerNonce
 	// This would ensure consistent throughput calculations based on governance model parameters
@@ -375,95 +492,87 @@ func (ma *ModelAssigner) setModelsForParticipants(ctx context.Context, participa
 
 	for _, p := range participants {
 		ma.LogInfo("Processing participant", types.Allocation, "flow_context", FlowContext, "step", "participant_loop_start", "participant_index", p.Index)
+
+		// Remember the validated model order before buckets are rebuilt; it is the
+		// rebuild order for bootstrap participants (no hardware record), where
+		// governance-order rebuild could silently drop carried non-governance models.
+		originalModelOrder := slices.Clone(p.Models)
+
+		validated := validatedModelNodes(p)
+		ma.LogInfo("Validated model bindings before hardware filter", types.Allocation, "flow_context", FlowContext, "step", "pre_hardware_filter", "participant_index", p.Index, "validated_models", sortedKeys(validated))
+
 		hardwareNodes, found := ma.keeper.GetHardwareNodes(ctx, p.Index)
-		// TODO: should we do that? does it makes sense to rely on hardware nodes in general?
-		// Seems like makes pipeline complicated
-		if !found {
-			// Hardware not registered yet (e.g. genesis bootstrap race).
-			// Keep per-model assignments from Calculator -- the participant proved
-			// compute for those models. Only initialize TimeslotAllocation.
-			ma.LogInfo("No hardware nodes found, keeping Calculator assignments", types.Allocation,
+		var declaredModelsByNode map[string][]string
+		if found {
+			declaredModelsByNode = supportedModelsByNode(hardwareNodes, governanceModels)
+			for _, nodeId := range sortedKeys(declaredModelsByNode) {
+				ma.LogInfo("Supported models by node", types.Allocation, "flow_context", FlowContext, "step", "supported_models_by_node", "node_id", nodeId, "supported_models", declaredModelsByNode[nodeId])
+			}
+		} else {
+			// Hardware not registered yet (e.g. genesis bootstrap race). The
+			// compatibility filter is skipped, but single assignment below still
+			// applies: no node id may count under several model coefficients.
+			ma.LogInfo("No hardware nodes found, keeping Calculator assignments without hardware filter", types.Allocation,
 				"flow_context", FlowContext, "step", "no_hardware_nodes",
 				"participant_index", p.Index, "models", p.Models)
-			for _, modelNodes := range p.MlNodes {
-				if modelNodes != nil {
-					for _, mlNode := range modelNodes.MlNodes {
-						mlNode.TimeslotAllocation = []bool{true, false}
-					}
-				}
+		}
+
+		owner, ambiguous, incompatible := resolveUniqueCompatibleClaims(validated, declaredModelsByNode, found)
+		if len(ambiguous) > 0 {
+			ma.LogWarn("Dropping ML nodes with conflicting validated model claims (one ML node serves one model)", types.Allocation,
+				"flow_context", FlowContext, "step", "ambiguous_nodes_drop",
+				"participant_index", p.Index, "node_ids", ambiguous)
+		}
+		if len(incompatible) > 0 {
+			ma.LogWarn("Dropping validated claims not declared by the hardware inventory", types.Allocation,
+				"flow_context", FlowContext, "step", "hardware_filter_drop",
+				"participant_index", p.Index, "dropped_claims", incompatible)
+		}
+
+		keptByModel := make(map[string][]*types.MLNodeInfo, len(validated))
+		for _, nodeId := range sortedKeys(owner) {
+			claim := owner[nodeId]
+			keptByModel[claim.modelId] = append(keptByModel[claim.modelId], claim.node)
+		}
+
+		// Rebuild parallel arrays deterministically: governance model order when a
+		// hardware record exists (only governance models can pass the filter),
+		// original validated order for bootstrap participants.
+		modelOrder := make([]string, 0, len(keptByModel))
+		if found {
+			for _, model := range governanceModels {
+				modelOrder = append(modelOrder, model.Id)
 			}
-			continue
-		}
-
-		var originalMLNodes []*types.MLNodeInfo
-		for _, modelNodes := range p.MlNodes {
-			if modelNodes != nil {
-				originalMLNodes = append(originalMLNodes, modelNodes.MlNodes...)
-			}
-		}
-		ma.LogInfo("Original MLNodes", types.Allocation, "flow_context", FlowContext, "step", "pre_legacy_distribution", "participant_index", p.Index, "ml_nodes", originalMLNodes)
-
-		if len(originalMLNodes) > 0 {
-			dedupedNodes, dedupStats := dedupMLNodesById(originalMLNodes)
-			ma.logMLNodeDedupStats(
-				"Duplicate ML nodes detected before participant assignment",
-				dedupStats,
-				"flow_context", FlowContext,
-				"step", "dedup_participant_nodes",
-				"participant_index", p.Index,
-			)
-			originalMLNodes = dedupedNodes
-		}
-
-		for _, mlNode := range originalMLNodes {
-			mlNode.TimeslotAllocation = []bool{true, false} // [PRE_POC_SLOT, POC_SLOT]
-		}
-		ma.LogInfo("Initialized all ML nodes to PRE_POC_SLOT=true, POC_SLOT=false", types.Allocation, "flow_context", FlowContext, "step", "init_slots", "participant_index", p.Index)
-
-		assignedMLNodes := make(map[string]bool)
-		var supportedModels []string
-		var newMLNodeArrays []*types.ModelMLNodes
-
-		supportedModelsByNode := supportedModelsByNode(hardwareNodes, governanceModels)
-		for _, nodeId := range sortedKeys(supportedModelsByNode) {
-			supportedModels := supportedModelsByNode[nodeId]
-			ma.LogInfo("Supported models by node", types.Allocation, "flow_context", FlowContext, "step", "supported_models_by_node", "node_id", nodeId, "supported_models", supportedModels)
-		}
-
-		// For each governance model, pick the available MLNodes that have the model as first supported model
-		for _, model := range governanceModels {
-			ma.LogInfo("Attempting to assign ML node for model", types.Allocation, "flow_context", FlowContext, "step", "model_assignment_loop", "participant_index", p.Index, "model_id", model.Id)
-			var modelMLNodes []*types.MLNodeInfo
-
-			for _, mlNode := range originalMLNodes {
-				if assignedMLNodes[mlNode.NodeId] {
-					ma.LogInfo("Skipping already assigned ML node", types.Allocation, "flow_context", FlowContext, "step", "node_already_assigned", "participant_index", p.Index, "model_id", model.Id, "node_id", mlNode.NodeId)
+		} else {
+			seen := make(map[string]bool, len(originalModelOrder))
+			for _, modelId := range originalModelOrder {
+				if modelId == "" || seen[modelId] {
 					continue
 				}
-
-				if slices.Contains(supportedModelsByNode[mlNode.NodeId], model.Id) {
-					ma.LogInfo("Found supporting and unassigned ML node for model", types.Allocation, "flow_context", FlowContext, "step", "assign_node_to_model", "participant_index", p.Index, "model_id", model.Id, "node_id", mlNode.NodeId)
-					modelMLNodes = append(modelMLNodes, mlNode)
-					assignedMLNodes[mlNode.NodeId] = true
-				}
-			}
-
-			if len(modelMLNodes) > 0 {
-				supportedModels = append(supportedModels, model.Id)
-				newMLNodeArrays = append(newMLNodeArrays, &types.ModelMLNodes{MlNodes: modelMLNodes})
-				ma.LogInfo("Assigned ML nodes to model", types.Allocation, "flow_context", FlowContext, "step", "model_assignment_complete", "participant_index", p.Index, "model_id", model.Id, "assigned_nodes", modelMLNodes)
-			} else {
-				ma.LogInfo("No available ML nodes support this model", types.Allocation, "flow_context", FlowContext, "step", "no_supporting_nodes", "participant_index", p.Index, "model_id", model.Id)
+				seen[modelId] = true
+				modelOrder = append(modelOrder, modelId)
 			}
 		}
 
-		var unassignedMLNodes []*types.MLNodeInfo
-		for _, mlNode := range originalMLNodes {
-			if !assignedMLNodes[mlNode.NodeId] {
-				unassignedMLNodes = append(unassignedMLNodes, mlNode)
+		var supportedModels []string
+		var newMLNodeArrays []*types.ModelMLNodes
+		for _, modelId := range modelOrder {
+			modelMLNodes := keptByModel[modelId]
+			if len(modelMLNodes) == 0 {
+				ma.LogInfo("No validated ML nodes for this model", types.Allocation, "flow_context", FlowContext, "step", "no_validated_nodes", "participant_index", p.Index, "model_id", modelId)
+				continue
 			}
+			supportedModels = append(supportedModels, modelId)
+			newMLNodeArrays = append(newMLNodeArrays, &types.ModelMLNodes{MlNodes: modelMLNodes})
+			ma.LogInfo("Assigned ML nodes to model", types.Allocation, "flow_context", FlowContext, "step", "model_assignment_complete", "participant_index", p.Index, "model_id", modelId, "assigned_nodes", modelMLNodes)
 		}
-		ma.LogInfo("Unassigned MLNodes", types.Allocation, "flow_context", FlowContext, "step", "unassigned_nodes", "participant_index", p.Index, "unassigned_nodes", unassignedMLNodes)
+
+		if len(incompatible) > 0 || len(ambiguous) > 0 {
+			ma.LogWarn("Participant lost validated ML nodes during seating", types.Allocation,
+				"flow_context", FlowContext, "step", "seating_drop_summary",
+				"participant_index", p.Index, "incompatible", incompatible,
+				"ambiguous", ambiguous, "remaining_models", supportedModels)
+		}
 
 		p.MlNodes = newMLNodeArrays
 		p.Models = supportedModels

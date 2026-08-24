@@ -717,7 +717,11 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		return nil
 	}
 
-	activeParticipants := am.ComputeNewWeights(ctx, *upcomingEpoch)
+	// Seating + post-seating invariant: participants left without seated weight
+	// are removed, and an all-empty result falls back to the current epoch's
+	// validators (or, last-ditch, keeps that carry even if hardware would
+	// filter it). See seatAndGuardParticipants in epoch_fallback.go.
+	activeParticipants := am.seatAndGuardParticipants(ctx, *upcomingEpoch, am.ComputeNewWeights(ctx, *upcomingEpoch))
 	if len(activeParticipants) == 0 {
 		// Safety mechanism: a PoC round where nobody passed validation must not
 		// produce an empty epoch. An empty epoch group can never validate anyone
@@ -746,9 +750,6 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 			sdk.NewAttribute("participants", fmt.Sprintf("%d", len(activeParticipants))),
 		))
 	}
-
-	modelAssigner := NewModelAssigner(am.keeper, am.keeper)
-	modelAssigner.setModelsForParticipants(ctx, activeParticipants, *upcomingEpoch)
 
 	params, err := am.keeper.GetParams(ctx)
 	if err != nil {
