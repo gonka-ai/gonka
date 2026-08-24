@@ -142,7 +142,7 @@ while read -r route; do
     expected_routes[$route]=1
 done < <(printf '%s\n' \
     "${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}" \
-    "${VERSIOND_VERSIONS-v4 v5 v6 v7 v8}" \
+    "${VERSIOND_VERSIONS-v4 v5}" \
     | tr ',;' '  ' | tr -s ' ' '\n')
 
 normalize_versions() {
@@ -174,7 +174,7 @@ candidate_placement_contract() {
         "${VERSIOND_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}" \
         "${VERSIOND_LEGACY_HOST:-versiond}" \
         "${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}" \
-        "${VERSIOND_VERSIONS-v4 v5 v6 v7 v8}" \
+        "${VERSIOND_VERSIONS-v4 v5}" \
         "${VERSIOND_ROUTING_CATALOG_URL-http://versiond-routing-oracle:9100/versions}" \
         "${VERSIOND_ROUTER_ALLOW_COARSE_READINESS:-false}" \
         "${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}"
