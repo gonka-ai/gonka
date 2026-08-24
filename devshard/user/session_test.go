@@ -1289,6 +1289,71 @@ func TestCollectTimeoutVotes_CollectsRejectMempool(t *testing.T) {
 	require.Equal(t, uint64(1), recovery[0].GetConfirmStart().InferenceId)
 }
 
+func TestCollectTimeoutVotes_DeduplicatesRejectRecoveryTxs(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	confirm := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 1,
+		ExecutorSig: []byte("executor-receipt"),
+		ConfirmedAt: 1000,
+	}}}
+	finish := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
+		InferenceId:  1,
+		ResponseHash: []byte("done"),
+	}}}
+
+	verifiers := map[int]TimeoutVerifier{
+		0: &mockTimeoutVerifier{accept: false, mempool: []*types.DevshardTx{confirm, finish}},
+		2: &mockTimeoutVerifier{accept: false, mempool: []*types.DevshardTx{confirm, finish}},
+	}
+
+	votes, recovery, err := session.CollectTimeoutVotes(context.Background(), 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
+		Prompt:      testutil.TestPrompt,
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   50,
+		StartedAt:   1000,
+	}, verifiers, nil)
+	require.NoError(t, err)
+	require.Empty(t, votes)
+	require.Len(t, recovery, 2, "duplicate recovery txs from multiple reject votes must collapse by tx type and inference")
+	require.Equal(t, 1, countRecoveryConfirmStart(recovery, 1))
+	require.Equal(t, 1, countRecoveryFinish(recovery, 1))
+}
+
+func TestCollectTimeoutVotes_DropsMalformedOrNilRecoveryTxs(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	unrelatedConfirm := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 99,
+		ExecutorSig: []byte("other-receipt"),
+		ConfirmedAt: 1000,
+	}}}
+	unrelatedFinish := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
+		InferenceId:  99,
+		ResponseHash: []byte("other"),
+	}}}
+	timeoutTx := &types.DevshardTx{Tx: &types.DevshardTx_TimeoutInference{TimeoutInference: &types.MsgTimeoutInference{
+		InferenceId: 1,
+		Reason:      types.TimeoutReason_TIMEOUT_REASON_REFUSED,
+	}}}
+	malformed := []*types.DevshardTx{nil, {}, unrelatedConfirm, unrelatedFinish, timeoutTx}
+
+	verifiers := map[int]TimeoutVerifier{
+		0: &mockTimeoutVerifier{accept: false, mempool: malformed},
+		2: &mockTimeoutVerifier{accept: false, mempool: malformed},
+	}
+
+	votes, recovery, err := session.CollectTimeoutVotes(context.Background(), 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
+		Prompt:      testutil.TestPrompt,
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   50,
+		StartedAt:   1000,
+	}, verifiers, nil)
+	require.NoError(t, err)
+	require.Empty(t, votes)
+	require.Empty(t, recovery, "nil, empty, user-proposed, and unrelated txs must not become recovery")
+}
+
 func TestHandleTimeout_RefusedReject_PublishesConfirmStart(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 10)
 	ctx := context.Background()
@@ -1340,6 +1405,63 @@ func TestHandleTimeout_RefusedReject_PublishesConfirmStart(t *testing.T) {
 	require.Equal(t, types.StatusStarted, peerRec.Status, "peer SM must apply ConfirmStart from the recovery diff")
 }
 
+func TestHandleTimeout_ExecutionTimeoutIgnoresConfirmStartRecovery(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	}
+	prepared, err := session.PrepareInference(params)
+	require.NoError(t, err)
+
+	payload := &host.InferencePayload{
+		Prompt:      params.Prompt,
+		Model:       params.Model,
+		InputLength: params.InputLength,
+		MaxTokens:   params.MaxTokens,
+		StartedAt:   params.StartedAt,
+	}
+
+	execIdx := int(prepared.diff.Nonce % uint64(len(session.clients)))
+	execHost := session.clients[execIdx].(*InProcessClient).Host
+	receipt, _, err := execHost.ChallengeReceipt(ctx, prepared.diff.Nonce, payload, []types.Diff{prepared.diff})
+	require.NoError(t, err)
+	require.NotEmpty(t, receipt)
+
+	var confirmTx *types.DevshardTx
+	for _, tx := range execHost.MempoolTxs() {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == prepared.diff.Nonce {
+			confirmTx = tx
+			break
+		}
+	}
+	require.NotNil(t, confirmTx)
+
+	session.mu.Lock()
+	session.addPendingTx(confirmTx)
+	session.mu.Unlock()
+	require.NoError(t, session.SendPendingDiff(ctx), "test setup must publish ConfirmStart before execution timeout")
+
+	session.mu.Lock()
+	session.nonceStates[prepared.diff.Nonce].confirmedAt = 1
+	session.mu.Unlock()
+
+	beforeDiffs := len(session.Diffs())
+	for i, c := range session.clients {
+		session.clients[i] = &timeoutRecoveryClient{HostClient: c, mempool: []*types.DevshardTx{confirmTx}}
+	}
+
+	_, err = session.HandleTimeout(ctx, prepared.diff.Nonce, time.Unix(0, 0), payload)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "insufficient votes")
+	require.Len(t, session.Diffs(), beforeDiffs, "execution timeout must not publish ConfirmStart recovery diff")
+
+	rec, ok := session.StateMachine().SnapshotState().Inferences[prepared.diff.Nonce]
+	require.True(t, ok)
+	require.Equal(t, types.StatusStarted, rec.Status)
+}
+
 func TestHandleTimeout_RefusedReject_UnrelatedMempool(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 10)
 	ctx := context.Background()
@@ -1374,4 +1496,24 @@ func TestHandleTimeout_RefusedReject_UnrelatedMempool(t *testing.T) {
 	rec, ok := session.StateMachine().SnapshotState().Inferences[prepared.diff.Nonce]
 	require.True(t, ok)
 	require.Equal(t, types.StatusPending, rec.Status, "unrelated recovery txs must not be treated as success")
+}
+
+func countRecoveryConfirmStart(txs []*types.DevshardTx, inferenceID uint64) int {
+	var count int
+	for _, tx := range txs {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+			count++
+		}
+	}
+	return count
+}
+
+func countRecoveryFinish(txs []*types.DevshardTx, inferenceID uint64) int {
+	var count int
+	for _, tx := range txs {
+		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+			count++
+		}
+	}
+	return count
 }
