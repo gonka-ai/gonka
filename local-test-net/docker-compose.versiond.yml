@@ -87,8 +87,8 @@ services:
   versiond-router:
     image: ghcr.io/product-science/versiond-router:latest
     build:
-      context: ./versiond-router
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: versiond-router/Dockerfile
     container_name: ${KEY_NAME}-versiond-router
     # Compose starts the replacement only after this container exits. Bound the
     # soft stop so one long stream cannot leave the test stack without a router.

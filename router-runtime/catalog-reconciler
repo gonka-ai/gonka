@@ -79,14 +79,17 @@ if [ -n "$cache_file" ] && [ -f "$cache_file" ]; then
         log "catalog cache exists but $cache_bin is unavailable"
         exit 1
     }
-    if ! "$cache_bin" read "$cache_file" 2147483647 > "$last_names"; then
-        log "cannot validate the last accepted catalog snapshot"
-        exit 1
+    cache_valid=1
+    "$cache_bin" read "$cache_file" 2147483647 > "$last_names" || cache_valid=
+    if [ -n "$cache_valid" ]; then
+        last_generation=$(jq -er 'if .schema == 2 then .revision else 0 end' "$cache_file") || \
+            cache_valid=
     fi
-    last_generation=$(jq -er 'if .schema == 2 then .revision else 0 end' "$cache_file") || {
-        log "cannot read the last accepted catalog generation"
-        exit 1
-    }
+    if [ -z "$cache_valid" ]; then
+        log "ignoring invalid persistent catalog cache; waiting for a fresh catalog"
+        : > "$last_names"
+        last_generation=-1
+    fi
 fi
 
 set_state() {

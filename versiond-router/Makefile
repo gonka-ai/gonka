@@ -8,12 +8,21 @@ HAPROXY_IMAGE ?= haproxy:3.2-alpine
 
 test-local-compose:
 	@set -eu; \
-	tmp=$$(mktemp); \
-	trap 'rm -f "$$tmp"' EXIT; \
+	tmp=$$(mktemp); tmp_json=$$(mktemp); \
+	trap 'rm -f "$$tmp" "$$tmp_json"' EXIT; \
 	KEY_NAME=testnet VERSIOND_SIGNER_KEY_NAME=test \
 		docker compose --project-directory .. \
 		-f ../local-test-net/docker-compose-base.yml \
 		-f ../local-test-net/docker-compose.versiond.yml config > "$$tmp"; \
+	KEY_NAME=testnet VERSIOND_SIGNER_KEY_NAME=test \
+		docker compose --project-directory .. \
+		-f ../local-test-net/docker-compose-base.yml \
+		-f ../local-test-net/docker-compose.versiond.yml config --format json > "$$tmp_json"; \
+	repo_root=$$(CDPATH='' cd -- .. && pwd); \
+	jq -e --arg root "$$repo_root" \
+		'.services["versiond-router"].build.context == $$root and .services["versiond-router"].build.dockerfile == "versiond-router/Dockerfile"' \
+		"$$tmp_json" >/dev/null \
+		|| { echo 'test-local-compose: router build context is not the repository root' >&2; exit 1; }; \
 	grep -q 'VERSIOND_POOL_HOST: testnet-versiond-pool' "$$tmp" \
 		|| { echo 'test-local-compose: pool host is not rendered' >&2; exit 1; }; \
 	! grep -q 'VERSIOND_HOSTS' "$$tmp" \
@@ -525,6 +534,33 @@ test-version-routing:
 		|| fail "capacity-exhausted v11 was routed without an assigned backend"; \
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/persisted/chat)" = b ] \
 		|| fail "a later catalog snapshot removed an already admitted route"; \
+	docker rm -f gonka-vp-router >/dev/null; \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9+hotfix"}]}' \
+		> "$$tmpdir/catalog/versions.next"; \
+	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+	docker run --rm --user 0:0 -v $$state:/state \
+		--entrypoint sh gonka-versiond-router-probe -c \
+		'printf "%s\n" "{not-json" > /state/catalog-v2.json; chown haproxy:haproxy /state/catalog-v2.json'; \
+	docker run -d --name gonka-vp-router --network $$net \
+		-p 127.0.0.1:18132:8080 -p 127.0.0.1:18134:8404 \
+		-v $$state:/var/lib/gonka-router \
+		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="v4 v5" \
+		-e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
+		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
+		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
+		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
+		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
+		gonka-versiond-router-probe >/dev/null; \
+	for i in $$(seq 30); do \
+		if curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%2Bhotfix' \
+			>/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%2Bhotfix' >/dev/null \
+		|| fail "a valid governance catalog did not recover an invalid persistent cache"; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-cache read \
+		/var/lib/gonka-router/catalog-v2.json 86400 | grep -Fqx 'v9+hotfix' \
+		|| fail "the recovered catalog did not replace the invalid persistent cache"; \
 	echo "test-version-routing: ok"
 
 test-render: test-local-compose test-join-compose test-catalog-cache test-hash-ring test-version-routing
