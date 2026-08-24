@@ -278,8 +278,21 @@ func (r RemoveNode) GetResponseChannelCapacity() int {
 }
 
 func (command RemoveNode) Execute(b *Broker) {
-	// Remove the worker first (it will wait for pending jobs)
-	b.nodeWorkGroup.RemoveWorker(command.NodeId)
+	// Cancel any in-flight worker command before shutting the worker down.
+	// Release b.mu first: the in-flight Execute may itself take b.mu.
+	b.mu.Lock()
+	var cancel func()
+	if node, ok := b.nodes[command.NodeId]; ok {
+		cancel = node.State.cancelInFlightTask
+	}
+	b.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+
+	// Unregister immediately; drain the worker off the broker command loop
+	// so a hung ML call cannot stall LockAvailableNode / inference.
+	b.nodeWorkGroup.RemoveWorkerAsync(command.NodeId)
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
