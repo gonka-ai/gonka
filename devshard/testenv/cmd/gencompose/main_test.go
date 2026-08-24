@@ -287,6 +287,7 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Contains(t, text, `VERSIOND_POOL_HOST: "versiond-pool"`)
 	require.Contains(t, text, `VERSIOND_ROUTING_CATALOG_URL: "http://mock-dapi:9100/versions"`)
 	require.Contains(t, text, `VERSIOND_ROUTING_CATALOG_POLL_SECONDS: "1"`)
+	require.Contains(t, text, `VERSIOND_ROUTING_ACTIVATION_MIN_READY: "2"`)
 	require.Equal(t, 2, strings.Count(text, "- versiond-pool"),
 		"only the sticky pair should resolve through the router pool")
 	require.Equal(t, 2, strings.Count(text, "DEVSHARD_STORAGE_MODE: postgres"))
@@ -329,6 +330,7 @@ func TestWriteCompose_SingleMode_FilePayloadFallback(t *testing.T) {
 	require.NotContains(t, text, "devshard-postgres:")
 	require.NotContains(t, text, "DEVSHARD_STORAGE_MODE")
 	require.NotContains(t, text, "PGHOST:")
+	require.Contains(t, text, `VERSIOND_ROUTING_ACTIVATION_MIN_READY: "1"`)
 }
 
 func TestWriteCompose_EnvFile(t *testing.T) {

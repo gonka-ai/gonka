@@ -357,6 +357,30 @@ test-version-routing:
 			"http://127.0.0.1:18134/readyz?version=$$version")" = 503 ] \
 			|| fail "$$version was published before the projection reserve"; \
 	done; \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v11"},{"name":"v12"}]}' \
+		> "$$tmpdir/catalog/versions.next"; \
+	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+	for i in $$(seq 20); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "activation-pending" and .dynamic_slots_used == 2 and (.detail | contains("v11"))' \
+				>/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| jq -e '.state == "activation-pending" and .dynamic_slots_used == 2 and (.detail | contains("v11"))' >/dev/null \
+		|| fail "withdrawn pending versions did not release their dynamic slots"; \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
+		> "$$tmpdir/catalog/versions.next"; \
+	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+	for i in $$(seq 20); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "activation-pending" and .dynamic_slots_used == 2 and (.detail | contains("v10"))' \
+				>/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| jq -e '.state == "activation-pending" and .dynamic_slots_used == 2 and (.detail | contains("v10"))' >/dev/null \
+		|| fail "reclaimed dynamic slots could not stage corrected versions"; \
 	docker rm -f gonka-vp-a >/dev/null; \
 	docker run -d --name gonka-vp-a --network $$net --network-alias versiond-pool \
 		-e NAME=a -e SERVES="v4 v9" -e GENERIC_READY=false \

@@ -211,6 +211,7 @@ services:
       VERSIOND_VERSIONS: "{{ $.Versiond.VersionName }}"
       VERSIOND_ROUTING_CATALOG_URL: "http://{{ $.MockDapi.Host }}:{{ $.MockDapi.HTTPPort }}/versions"
       VERSIOND_ROUTING_CATALOG_POLL_SECONDS: "1"
+      VERSIOND_ROUTING_ACTIVATION_MIN_READY: "{{ routingActivationMinReady . }}"
       # Only the router is told this deployment is HA. The versiond containers
       # are not, so scenarios that deliberately run the pool on sqlite still
       # boot and fail at request time on the storage guard instead.
@@ -276,15 +277,16 @@ services:
 
 func writeCompose(cfg *config.File, outPath string) error {
 	funcs := template.FuncMap{
-		"versionEnvSuffix":   versionEnvSuffix,
-		"versiondHosts":      versiondHosts,
-		"inVersiondPool":     inVersiondPool,
-		"haDeployment":       haDeployment,
-		"versiondKeyName":    versiondKeyName,
-		"isHAReplica":        isHAReplica,
-		"legacyVersiondHost": legacyVersiondHost,
-		"primaryEscrowID":    primaryEscrowID,
-		"primaryModelID":     primaryModelID,
+		"versionEnvSuffix":          versionEnvSuffix,
+		"versiondHosts":             versiondHosts,
+		"inVersiondPool":            inVersiondPool,
+		"haDeployment":              haDeployment,
+		"routingActivationMinReady": routingActivationMinReady,
+		"versiondKeyName":           versiondKeyName,
+		"isHAReplica":               isHAReplica,
+		"legacyVersiondHost":        legacyVersiondHost,
+		"primaryEscrowID":           primaryEscrowID,
+		"primaryModelID":            primaryModelID,
 	}
 	tmpl, err := template.New("compose").Funcs(funcs).Parse(composeTmpl)
 	if err != nil {
@@ -327,6 +329,15 @@ func haDeployment(cfg *config.File) string {
 		return "true"
 	}
 	return ""
+}
+
+// routingActivationMinReady keeps catalog admission possible in single mode
+// while requiring both members of the sticky HA pair in multi mode.
+func routingActivationMinReady(cfg *config.File) int {
+	if len(strings.Fields(versiondHosts(cfg))) > 1 {
+		return 2
+	}
+	return 1
 }
 
 // inVersiondPool reports whether the router should route sticky traffic to this

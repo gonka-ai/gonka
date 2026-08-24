@@ -1,6 +1,8 @@
 #!/bin/sh
 
-# Monotonically projects version names into pre-rendered HAProxy backend slots.
+# Monotonically publishes accepted version names into pre-rendered HAProxy
+# backends. Unpublished staging assignments may be reclaimed when governance
+# withdraws or corrects a candidate before it reaches the activation reserve.
 # The source keeps its existing {"versions":[...]} contract; generation numbers
 # are local cache metadata, not a governance or DAPI revision. The data plane
 # remains fail-closed: a version is published in
@@ -251,6 +253,37 @@ enable_slot() {
     done
 }
 
+disable_slot() {
+    backend=$1
+    index=1
+    while [ "$index" -le "$server_capacity" ]; do
+        response=$(runtime "disable server $backend/$server_prefix$index" 2>&1) || return 1
+        [ -z "$response" ] || return 1
+        index=$((index + 1))
+    done
+}
+
+reclaim_withdrawn_pending_slots() {
+    printf '%s\n' "$slot_state" | awk -v prefix="$backend_prefix" '
+        index($2, prefix) == 1 && $3 != "__unassigned__" { print $2, $3 }
+    ' > "$tmpdir/assigned.slots"
+
+    while read -r backend encoded; do
+        [ -n "$backend" ] || continue
+        if awk -v backend="$backend" '$3 == backend { found = 1 } END { exit !found }' \
+            "$tmpdir/projection.current"; then
+            continue
+        fi
+        if grep -Fqx "$encoded" "$tmpdir/catalog.encoded"; then
+            continue
+        fi
+        disable_slot "$backend" || return 1
+        assign_slot "$backend" __unassigned__ || return 1
+    done < "$tmpdir/assigned.slots"
+
+    slot_state=$(map_snapshot "$slot_map") || return 1
+}
+
 ready_server_count() {
     backend=$1
     runtime "show stat" 2>/dev/null | awk -F, -v backend="$backend" '
@@ -331,11 +364,18 @@ prepare_catalog() {
 	slot_state=$(map_snapshot "$slot_map") || return 1
 	printf '%s\n' "$projection_state" > "$tmpdir/projection.current"
 	: > "$tmpdir/projection.plan"
+	: > "$tmpdir/catalog.encoded"
+	while IFS= read -r version; do
+		[ -n "$version" ] || continue
+		urlencode "$version"
+		printf '\n'
+	done < "$tmpdir/catalog.names" > "$tmpdir/catalog.encoded"
+	reclaim_withdrawn_pending_slots || return 1
 
-    # Capacity is checked before the first Runtime API mutation. Without this
-    # preflight a snapshot with N+1 new names and N free slots would publish a
-    # prefix, report exhaustion, and then lose that uncommitted prefix after a
-    # restart because the cache correctly retained the previous full snapshot.
+    # Reclamation above only removes unpublished staging state. Before assigning
+    # any slot for the current snapshot, verify that the whole projection fits.
+    # Otherwise an N+1 snapshot with N free slots would stage a prefix, report
+    # exhaustion, and lose that uncommitted prefix after a restart.
     free_capacity=$(printf '%s\n' "$slot_state" | awk -v prefix="$backend_prefix" '
         index($2, prefix) == 1 && $3 == "__unassigned__" {n++}
         END {print n + 0}
