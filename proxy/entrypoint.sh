@@ -538,6 +538,16 @@ DEVSHARD_OBS_RATE_LIMIT_VAL=${DEVSHARD_OBS_RATE_LIMIT_RPS:-10}
 DEVSHARD_OBS_RATE_UNIT=${DEVSHARD_OBS_RATE_UNIT:-s}
 DEVSHARD_OBS_BURST=${DEVSHARD_OBS_BURST:-20}
 
+# Trainshard control plane. Every request carries a signature the daemon verifies
+# after reading the body, so unauthenticated traffic must be thinned here rather
+# than at the daemon. A coordinator drives a run with single commands, and logs
+# and shells are one long-lived request each, so concurrency is what needs room,
+# not request rate.
+TRAINSHARD_RATE_LIMIT_VAL=${TRAINSHARD_RATE_LIMIT_RPS:-10}
+TRAINSHARD_RATE_UNIT=${TRAINSHARD_RATE_UNIT:-s}
+TRAINSHARD_BURST=${TRAINSHARD_BURST:-40}
+TRAINSHARD_CONN_LIMIT=${TRAINSHARD_CONN_LIMIT:-64}
+
 # Chain API
 CHAIN_API_RATE_LIMIT_VAL=${CHAIN_API_RATE_LIMIT_RPS:-20}
 CHAIN_API_RATE_UNIT=${CHAIN_API_RATE_UNIT:-m}
@@ -571,6 +581,7 @@ echo "   Global: ${GLOBAL_RATE_LIMIT_VAL}r/${GLOBAL_RATE_UNIT} (burst=${GLOBAL_B
 echo "   App API (Standard): ${GONKA_API_RATE_LIMIT_VAL}r/${GONKA_API_RATE_UNIT} (burst=${GONKA_API_BURST})"
 echo "   App API (Exempt): ${EXEMPT_RATE_LIMIT_VAL}r/${EXEMPT_RATE_UNIT} (burst=${EXEMPT_BURST}) -> [${GONKA_API_EXEMPT_ROUTES}]"
 echo "   DevShard obs: ${DEVSHARD_OBS_RATE_LIMIT_VAL}r/${DEVSHARD_OBS_RATE_UNIT} (burst=${DEVSHARD_OBS_BURST})"
+echo "   Trainshard: ${TRAINSHARD_RATE_LIMIT_VAL}r/${TRAINSHARD_RATE_UNIT} (burst=${TRAINSHARD_BURST}, conn=${TRAINSHARD_CONN_LIMIT})"
 echo "   Chain API: ${CHAIN_API_RATE_LIMIT_VAL}r/${CHAIN_API_RATE_UNIT} (burst=${CHAIN_API_BURST})"
 echo "   Chain RPC: ${CHAIN_RPC_RATE_LIMIT_VAL}r/${CHAIN_RPC_RATE_UNIT} (burst=${CHAIN_RPC_BURST})"
 echo "   Chain gRPC: ${CHAIN_GRPC_RATE_LIMIT_VAL}r/${CHAIN_GRPC_RATE_UNIT} (burst=${CHAIN_GRPC_BURST})"
@@ -587,6 +598,7 @@ export LIMIT_REQ_ZONE_GONKA_API="limit_req_zone \$\$whitelist_limit_key zone=api
 export LIMIT_REQ_ZONE_METRICS="limit_req_zone \$\$whitelist_limit_key zone=metrics_zone:10m rate=${METRICS_RATE_LIMIT_VAL}r/${METRICS_RATE_UNIT};"
 export LIMIT_REQ_ZONE_EXEMPT="limit_req_zone \$\$whitelist_limit_key zone=exempt_zone:10m rate=${EXEMPT_RATE_LIMIT_VAL}r/${EXEMPT_RATE_UNIT};"
 export LIMIT_REQ_ZONE_DEVSHARD_OBS="limit_req_zone \$\$whitelist_limit_key zone=devshard_obs:10m rate=${DEVSHARD_OBS_RATE_LIMIT_VAL}r/${DEVSHARD_OBS_RATE_UNIT};"
+export LIMIT_REQ_ZONE_TRAINSHARD="limit_req_zone \$\$whitelist_limit_key zone=trainshard_zone:10m rate=${TRAINSHARD_RATE_LIMIT_VAL}r/${TRAINSHARD_RATE_UNIT};"
 export LIMIT_REQ_ZONE_CHAIN_API="limit_req_zone \$\$whitelist_limit_key zone=chain_api_zone:10m rate=${CHAIN_API_RATE_LIMIT_VAL}r/${CHAIN_API_RATE_UNIT};"
 export LIMIT_REQ_ZONE_CHAIN_RPC="limit_req_zone \$\$whitelist_limit_key zone=rpc_zone:10m rate=${CHAIN_RPC_RATE_LIMIT_VAL}r/${CHAIN_RPC_RATE_UNIT};"
 export LIMIT_REQ_ZONE_CHAIN_GRPC="limit_req_zone \$\$whitelist_limit_key zone=grpc_zone:10m rate=${CHAIN_GRPC_RATE_LIMIT_VAL}r/${CHAIN_GRPC_RATE_UNIT};"
@@ -607,6 +619,7 @@ export LIMIT_CONN_ZONE_GLOBAL="limit_conn_zone \$\$whitelist_limit_key zone=conn
 export LIMIT_CONN_ZONE_GONKA_API="limit_conn_zone \$\$whitelist_limit_key zone=conn_api:10m;"
 export LIMIT_CONN_ZONE_METRICS="limit_conn_zone \$\$whitelist_limit_key zone=conn_metrics:10m;"
 export LIMIT_CONN_ZONE_EXEMPT="limit_conn_zone \$\$whitelist_limit_key zone=conn_exempt:10m;"
+export LIMIT_CONN_ZONE_TRAINSHARD="limit_conn_zone \$\$whitelist_limit_key zone=conn_trainshard:10m;"
 export LIMIT_CONN_ZONE_CHAIN_RPC="limit_conn_zone \$\$whitelist_limit_key zone=conn_rpc:10m;"
 export LIMIT_CONN_ZONE_CHAIN_API="limit_conn_zone \$\$whitelist_limit_key zone=conn_chain_api:10m;"
 export LIMIT_CONN_ZONE_CHAIN_GRPC="limit_conn_zone \$\$whitelist_limit_key zone=conn_grpc:10m;"
@@ -616,6 +629,7 @@ if [ "$ENABLE_CONN_LIMITS" = "true" ]; then
     export LIMIT_CONN_RULE_GLOBAL="limit_conn conn_global ${GLOBAL_CONN_LIMIT};"
     export LIMIT_CONN_RULE_GONKA_API="limit_conn conn_api ${GONKA_API_CONN_LIMIT};"
     export LIMIT_CONN_RULE_EXEMPT="limit_conn conn_exempt ${EXEMPT_CONN_LIMIT};"
+    export LIMIT_CONN_RULE_TRAINSHARD="limit_conn conn_trainshard ${TRAINSHARD_CONN_LIMIT};"
     export LIMIT_CONN_RULE_CHAIN_RPC="limit_conn conn_rpc ${CHAIN_RPC_CONN_LIMIT};"
     export LIMIT_CONN_RULE_CHAIN_API="limit_conn conn_chain_api ${CHAIN_API_CONN_LIMIT};"
     export LIMIT_CONN_RULE_CHAIN_GRPC="limit_conn conn_grpc ${CHAIN_GRPC_CONN_LIMIT};"
@@ -625,6 +639,7 @@ else
     export LIMIT_CONN_RULE_GLOBAL=""
     export LIMIT_CONN_RULE_GONKA_API=""
     export LIMIT_CONN_RULE_EXEMPT=""
+    export LIMIT_CONN_RULE_TRAINSHARD=""
     export LIMIT_CONN_RULE_CHAIN_RPC=""
     export LIMIT_CONN_RULE_CHAIN_API=""
     export LIMIT_CONN_RULE_CHAIN_GRPC=""
@@ -737,9 +752,9 @@ fi
 # which is why buffering is off and the transfer timeout is the long one.
 if [ -n "${TRAINSHARD_SERVICE_NAME}" ]; then
     export TRAINSHARD_LOCATION="location /trainshard/ {
-            set \$limit_zone_name \"EXEMPT\";
-            limit_req zone=exempt_zone burst=${EXEMPT_BURST} nodelay;
-            ${LIMIT_CONN_RULE_EXEMPT}
+            set \$limit_zone_name \"TRAINSHARD\";
+            limit_req zone=trainshard_zone burst=${TRAINSHARD_BURST} nodelay;
+            ${LIMIT_CONN_RULE_TRAINSHARD}
             proxy_pass http://trainshard_backend;
             proxy_set_header Host \$\$host;
             proxy_set_header X-Real-IP \$\$remote_addr;
@@ -1264,11 +1279,11 @@ ENVSUBST_VARS="${ENVSUBST_VARS},\$JAEGER_PORT,\$JAEGER_BASE_PATH,\$JAEGER_UPSTRE
 ENVSUBST_VARS="${ENVSUBST_VARS},\$GRAFANA_PORT,\$GRAFANA_BASE_PATH,\$GRAFANA_UPSTREAM,\$GRAFANA_LOCATION"
 
 # Group 5: Rate Limiting Zones
-ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_REQ_ZONE_GLOBAL,\$LIMIT_REQ_ZONE_GONKA_API,\$LIMIT_REQ_ZONE_EXEMPT,\$LIMIT_REQ_ZONE_DEVSHARD_OBS"
+ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_REQ_ZONE_GLOBAL,\$LIMIT_REQ_ZONE_GONKA_API,\$LIMIT_REQ_ZONE_EXEMPT,\$LIMIT_REQ_ZONE_DEVSHARD_OBS,\$LIMIT_REQ_ZONE_TRAINSHARD"
 ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_REQ_ZONE_CHAIN_RPC,\$LIMIT_REQ_ZONE_CHAIN_API,\$LIMIT_REQ_ZONE_CHAIN_GRPC"
 
 # Group 5b: Concurrency Zones and Rules
-ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_CONN_ZONE_GLOBAL,\$LIMIT_CONN_ZONE_GONKA_API,\$LIMIT_CONN_ZONE_EXEMPT"
+ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_CONN_ZONE_GLOBAL,\$LIMIT_CONN_ZONE_GONKA_API,\$LIMIT_CONN_ZONE_EXEMPT,\$LIMIT_CONN_ZONE_TRAINSHARD"
 ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_CONN_ZONE_CHAIN_RPC,\$LIMIT_CONN_ZONE_CHAIN_API,\$LIMIT_CONN_ZONE_CHAIN_GRPC"
 ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_CONN_RULE_GLOBAL,\$LIMIT_CONN_RULE_GONKA_API,\$LIMIT_CONN_RULE_CHAIN_RPC"
 ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_CONN_RULE_CHAIN_API,\$LIMIT_CONN_RULE_CHAIN_GRPC"
