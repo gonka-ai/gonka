@@ -2,6 +2,7 @@ package inference
 
 import (
 	"context"
+	"fmt"
 	"slices"
 
 	"cosmossdk.io/collections"
@@ -31,6 +32,112 @@ import (
 // state is copied) and the result flows through the exact same epoch-formation
 // pipeline (model assignment, delegation weights, collateral adjustment, power
 // capping, epoch group membership) as a normal PoC outcome.
+
+// seatedRawWeight sums the positive PocWeight actually seated for a participant
+// after model assignment.
+func seatedRawWeight(p *types.ActiveParticipant) int64 {
+	var total int64
+	for _, modelNodes := range p.MlNodes {
+		if modelNodes == nil {
+			continue
+		}
+		for _, node := range modelNodes.MlNodes {
+			if node != nil && node.PocWeight > 0 {
+				total += node.PocWeight
+			}
+		}
+	}
+	return total
+}
+
+// participantsWithSeatedWeight keeps only participants that still hold positive
+// seated raw weight after the hardware filter. A participant whose every node
+// was filtered out must not reach epoch membership, consensus weights, or BLS.
+func participantsWithSeatedWeight(participants []*types.ActiveParticipant) []*types.ActiveParticipant {
+	kept := make([]*types.ActiveParticipant, 0, len(participants))
+	for _, p := range participants {
+		if p != nil && len(p.Models) > 0 && seatedRawWeight(p) > 0 {
+			kept = append(kept, p)
+		}
+	}
+	return kept
+}
+
+// seatAndGuardParticipants runs model seating over the computed participant set
+// and enforces the post-seating invariant: only participants with positive
+// seated weight survive. If nothing survives (either ComputeNewWeights returned
+// nothing, or the hardware filter removed every assignment), it retries once
+// with the current-epoch fallback carry-over -- seated and guarded the same way.
+// Returns an empty slice only when no current-epoch validator can be carried
+// at all (first epoch, no seeds, everyone excluded). The caller then aborts
+// formation. If the hardware filter would also wipe the carry, the carry is
+// kept as-is so the epoch index can still advance with the old team.
+func (am AppModule) seatAndGuardParticipants(ctx context.Context, upcomingEpoch types.Epoch, fresh []*types.ActiveParticipant) []*types.ActiveParticipant {
+	assigner := NewModelAssigner(am.keeper, am.keeper)
+	seat := func(participants []*types.ActiveParticipant) []*types.ActiveParticipant {
+		if len(participants) == 0 {
+			return nil
+		}
+		assigner.setModelsForParticipants(ctx, participants, upcomingEpoch)
+		return participantsWithSeatedWeight(participants)
+	}
+
+	seated := seat(fresh)
+	if len(seated) > 0 {
+		if len(seated) < len(fresh) {
+			am.LogWarn("seatAndGuardParticipants: removed participants without seated weight", types.PoC,
+				"upcomingEpoch.Index", upcomingEpoch.Index,
+				"before", len(fresh), "after", len(seated))
+		}
+		return seated
+	}
+
+	// Safety mechanism: a PoC round where nobody passed validation -- or where
+	// the hardware filter removed every seated assignment -- must not produce an
+	// empty or zero-weight epoch. An empty epoch group can never validate anyone
+	// in later rounds (voting powers derive from it), permanently stalling the
+	// network. Re-seat the current epoch's still-valid validators instead; see
+	// the carry-over rules above.
+	am.LogError("seatAndGuardParticipants: no participants with seated weight for upcoming epoch; falling back to current epoch validators", types.PoC,
+		"upcomingEpoch.Index", upcomingEpoch.Index, "computed", len(fresh))
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+
+	seated = seat(am.fallbackActiveParticipantsFromCurrentEpoch(ctx, upcomingEpoch))
+	if len(seated) > 0 {
+		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+			"empty_epoch_fallback_applied",
+			sdk.NewAttribute("epoch", fmt.Sprintf("%d", upcomingEpoch.Index)),
+			sdk.NewAttribute("participants", fmt.Sprintf("%d", len(seated))),
+		))
+		return seated
+	}
+
+	// seat() mutates its input; rebuild the carry. If hardware would wipe it
+	// too, keep it anyway so the epoch clock still advances with the old team.
+	unfiltered := am.fallbackActiveParticipantsFromCurrentEpoch(ctx, upcomingEpoch)
+	if len(unfiltered) == 0 {
+		am.LogError("seatAndGuardParticipants: fallback produced no seated participants; aborting epoch formation", types.PoC,
+			"upcomingEpoch.Index", upcomingEpoch.Index)
+		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+			"epoch_error",
+			sdk.NewAttribute("stage", "empty_epoch_fallback"),
+			sdk.NewAttribute("epoch", fmt.Sprintf("%d", upcomingEpoch.Index)),
+			sdk.NewAttribute("error_category", "epoch_formation"),
+		))
+		return nil
+	}
+	for _, p := range unfiltered {
+		_ = validatedModelNodes(p)
+	}
+	am.LogError("seatAndGuardParticipants: hardware filter zeroed fallback carry; keeping current-epoch assignments so the epoch can advance", types.PoC,
+		"upcomingEpoch.Index", upcomingEpoch.Index, "participants", len(unfiltered))
+	sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+		"empty_epoch_fallback_applied",
+		sdk.NewAttribute("epoch", fmt.Sprintf("%d", upcomingEpoch.Index)),
+		sdk.NewAttribute("participants", fmt.Sprintf("%d", len(unfiltered))),
+	))
+	return unfiltered
+}
 
 // fallbackActiveParticipantsFromCurrentEpoch rebuilds the active participant
 // list for upcomingEpoch from the current (about-to-end) epoch group.

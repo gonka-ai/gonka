@@ -885,6 +885,11 @@ data class ApplicationCLI(
             )
         }
 
+    fun queryHardwareNodesAll(): HardwareNodesAllResponse =
+        wrapLog("queryHardwareNodesAll", infoLevel = false) {
+            execAndParse(listOf("query", "inference", "hardware-nodes-all"))
+        }
+
     fun queryEpochGroupData(epochIndex: Long, modelId: String = ""): EpochGroupDataResponse =
         wrapLog("queryEpochGroupData", infoLevel = false) {
             val args = mutableListOf(
