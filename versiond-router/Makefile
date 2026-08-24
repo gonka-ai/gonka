@@ -40,7 +40,7 @@ test-join-compose:
 		|| { echo 'test-join-compose: legacy router compatibility was lost' >&2; exit 1; }; \
 	grep -q 'GONKA_HA: "true"' "$$tmp" \
 		|| { echo 'test-join-compose: HA deployment latch is missing' >&2; exit 1; }; \
-	grep -q 'VERSIOND_VERSIONS: v4 v5 v6 v7 v8' "$$tmp" \
+	grep -Eq '^[[:space:]]*VERSIOND_VERSIONS: v4 v5$$' "$$tmp" \
 		|| { echo 'test-join-compose: per-version routing contract is missing' >&2; exit 1; }; \
 	grep -q 'VERSIOND_NON_HA_VERSIONS: v1 v2 v3' "$$tmp" \
 		|| { echo 'test-join-compose: legacy version pins are missing' >&2; exit 1; }; \

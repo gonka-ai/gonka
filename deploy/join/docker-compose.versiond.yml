@@ -97,9 +97,9 @@ services:
       # All other versions sticky-hash across VERSIOND_HOSTS and get Devshard-Ha: true.
       # Default lists known pre-HA paths; clear (empty) once every live version is Postgres HA.
       - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}
-      # Give every HA-capable version an independent readiness pool. Declaring
-      # future names is harmless until versiond starts serving them.
-      - VERSIOND_VERSIONS=${VERSIOND_VERSIONS-v4 v5 v6 v7 v8}
+      # Bootstrap only the HA versions shipped with this deployment. Future
+      # names come from governance rather than being guessed in Compose.
+      - VERSIOND_VERSIONS=${VERSIOND_VERSIONS-v4 v5}
       - VERSIOND_ROUTER_ALLOW_COARSE_READINESS=${VERSIOND_ROUTER_ALLOW_COARSE_READINESS:-false}
     depends_on:
       - versiond
