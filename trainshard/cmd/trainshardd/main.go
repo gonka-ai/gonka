@@ -129,7 +129,7 @@ func serve() error {
 		Chain:    outside.chain,
 		Streams:  parts.streams,
 		Sessions: state.Sessions(),
-		Served:   state.Served(clock, cfg.signatureWindow),
+		Served:   state.Served(clock),
 		Clock:    clock,
 	})
 

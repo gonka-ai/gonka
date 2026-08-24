@@ -3,6 +3,7 @@ package signedhttp
 import (
 	"context"
 	"net/http"
+	"time"
 
 	"trainshard/internal/domain/shared"
 	"trainshard/internal/utils/httpx"
@@ -13,8 +14,10 @@ var errReplayedRequest = shared.New("REPLAYED_REQUEST", shared.ErrUnauthorized, 
 // Served is spent request ids. It outlives the process: a daemon that only remembers in memory
 // serves a captured request again after a restart
 type Served interface {
-	// First is true the first time this id is seen. A write that does not land must not report true
-	First(ctx context.Context, request string) (bool, error)
+	// First is true the first time this id is seen. The id must be held until until, the instant its
+	// signature stops passing, or a repeat lands in the gap. A write that does not land must not
+	// report true
+	First(ctx context.Context, request string, until time.Time) (bool, error)
 }
 
 // Once belongs on anything a repeat would act on twice — a shell, where the answer cannot be
@@ -30,7 +33,7 @@ func NewOnce(served Served) *Once {
 func (o *Once) Wrap(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		requestID := RequestIDFrom(r.Context())
-		first, err := o.served.First(r.Context(), string(AddressFrom(r.Context()))+"/"+requestID)
+		first, err := o.served.First(r.Context(), string(AddressFrom(r.Context()))+"/"+requestID, VerifiesUntilFrom(r.Context()))
 		if err != nil {
 			httpx.WriteError(w, requestID, err)
 			return

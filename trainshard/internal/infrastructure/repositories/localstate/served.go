@@ -11,13 +11,13 @@ import (
 type served struct {
 	store *Store
 	clock ports.Clock
-	ttl   time.Duration
 }
 
 // First writes before it answers, so a request that is being served cannot be served again by a
-// daemon that restarts mid-shell. Ids older than a signature's life are dropped: a repeat that old
-// is already turned away by its timestamp
-func (s served) First(_ context.Context, request string) (bool, error) {
+// daemon that restarts mid-shell. An id is kept until the signature that carried it stops passing,
+// never until some span measured from arrival: a caller whose clock runs ahead is admitted early and
+// its signature outlives any span counted from the moment we saw it
+func (s served) First(_ context.Context, request string, until time.Time) (bool, error) {
 	s.store.mu.Lock()
 	defer s.store.mu.Unlock()
 
@@ -26,15 +26,15 @@ func (s served) First(_ context.Context, request string) (bool, error) {
 		return false, err
 	}
 	now := s.clock.Now()
-	for id, at := range spent {
-		if now.Sub(at) > s.ttl {
+	for id, staleAfter := range spent {
+		if now.After(staleAfter) {
 			delete(spent, id)
 		}
 	}
 	if _, found := spent[request]; found {
 		return false, nil
 	}
-	spent[request] = now
+	spent[request] = until
 	return true, s.store.writeFile(s.path(), spent)
 }
 
