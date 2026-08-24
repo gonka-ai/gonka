@@ -54,6 +54,10 @@ services:
       - DEBUG=true
       - IS_TEST_NET=true
       - ENFORCED_MODEL_ID=disabled
+      # Participants register docker-internal hostnames that resolve to private
+      # IPs, so the dial-time SSRF guard must be off here. Production leaves this
+      # unset (default false = private targets blocked).
+      - DAPI_ALLOW_PRIVATE_ADDRESSES=true
       - DAPI_STATS_FILE_STORAGE_ENABLED=true
       # Empty PGHOST falls back to SQLite/file storage in dapi.
       - PGHOST=${PGHOST:-${KEY_NAME}-postgres}
