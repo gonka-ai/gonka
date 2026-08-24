@@ -1245,6 +1245,11 @@ func (c *timeoutRecoveryClient) VerifyTimeout(_ context.Context, _ uint64, _ typ
 	return false, nil, 0, c.mempool, nil
 }
 
+type timeoutVoteClient struct {
+	HostClient
+	*mockTimeoutVerifier
+}
+
 func TestCollectTimeoutVotes_CollectsRejectMempool(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 10)
 	confirm := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
@@ -1462,6 +1467,77 @@ func TestHandleTimeout_ExecutionTimeoutIgnoresConfirmStartRecovery(t *testing.T)
 	require.Equal(t, types.StatusStarted, rec.Status)
 }
 
+func TestHandleTimeout_ExecutionTimeoutPrefersPendingFinishOverTimeoutVotes(t *testing.T) {
+	prevTimeoutBuffer := TimeoutBuffer
+	TimeoutBuffer = 0
+	t.Cleanup(func() {
+		TimeoutBuffer = prevTimeoutBuffer
+	})
+
+	session, signers, _ := setupSession(t, 3, 100000, 10)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	}
+	prepared, err := session.PrepareInference(params)
+	require.NoError(t, err)
+
+	payload := &host.InferencePayload{
+		Prompt:      params.Prompt,
+		Model:       params.Model,
+		InputLength: params.InputLength,
+		MaxTokens:   params.MaxTokens,
+		StartedAt:   params.StartedAt,
+	}
+
+	execIdx := int(prepared.diff.Nonce % uint64(len(session.clients)))
+	execHost := session.clients[execIdx].(*InProcessClient).Host
+	receipt, _, err := execHost.ChallengeReceipt(ctx, prepared.diff.Nonce, payload, []types.Diff{prepared.diff})
+	require.NoError(t, err)
+	require.NotEmpty(t, receipt)
+	confirmTx := findRecoveryConfirmStart(execHost.MempoolTxs(), prepared.diff.Nonce)
+	require.NotNil(t, confirmTx)
+
+	require.NoError(t, session.ProcessResponse(execIdx, &host.HostResponse{
+		Receipt:     receipt,
+		ConfirmedAt: confirmTx.GetConfirmStart().ConfirmedAt,
+	}, prepared.diff.Nonce))
+	require.NoError(t, session.SendPendingDiff(ctx))
+	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[prepared.diff.Nonce].Status)
+
+	require.Eventually(t, func() bool {
+		return findRecoveryFinish(execHost.MempoolTxs(), prepared.diff.Nonce) != nil
+	}, 5*time.Second, 20*time.Millisecond)
+	finishTx := findRecoveryFinish(execHost.MempoolTxs(), prepared.diff.Nonce)
+	require.NotNil(t, finishTx)
+
+	session.mu.Lock()
+	session.addPendingTx(finishTx)
+	session.mu.Unlock()
+	require.NotNil(t, findRecoveryFinish(session.PendingTxs(), prepared.diff.Nonce))
+	session.mu.Lock()
+	session.nonceStates[prepared.diff.Nonce].confirmedAt = 1
+	session.mu.Unlock()
+
+	for i, c := range session.clients {
+		session.clients[i] = &timeoutVoteClient{
+			HostClient: c,
+			mockTimeoutVerifier: &mockTimeoutVerifier{
+				accept:  true,
+				signer:  signers[i],
+				group:   session.group,
+				slotIdx: i,
+			},
+		}
+	}
+
+	result, err := session.HandleTimeout(ctx, prepared.diff.Nonce, time.Unix(0, 0), nil)
+	require.NoError(t, err, "pending FinishInference should be published instead of timeout votes")
+	require.Equal(t, "execution", result.Reason)
+	require.Equal(t, types.StatusFinished, session.StateMachine().SnapshotState().Inferences[prepared.diff.Nonce].Status)
+}
+
 func TestHandleTimeout_RefusedReject_UnrelatedMempool(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 10)
 	ctx := context.Background()
@@ -1516,4 +1592,22 @@ func countRecoveryFinish(txs []*types.DevshardTx, inferenceID uint64) int {
 		}
 	}
 	return count
+}
+
+func findRecoveryConfirmStart(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
+	for _, tx := range txs {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+			return tx
+		}
+	}
+	return nil
+}
+
+func findRecoveryFinish(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
+	for _, tx := range txs {
+		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+			return tx
+		}
+	}
+	return nil
 }

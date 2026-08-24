@@ -442,6 +442,68 @@ func TestApplyDiff_Timeout_Refused(t *testing.T) {
 	require.Equal(t, uint64(10000), state.Balance)
 }
 
+func TestApplyDiff_PostTimeoutRecoveryDoesNotReviveInference(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+
+	for _, tc := range []struct {
+		name string
+		tx   func(t *testing.T, hosts []*signing.Secp256k1Signer) *types.DevshardTx
+	}{
+		{
+			name: "late confirm start",
+			tx: func(t *testing.T, hosts []*signing.Secp256k1Signer) *types.DevshardTx {
+				execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, 50, 1000, 1000)
+				return txConfirm(&types.MsgConfirmStart{InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000})
+			},
+		},
+		{
+			name: "late finish inference",
+			tx: func(t *testing.T, hosts []*signing.Secp256k1Signer) *types.DevshardTx {
+				finishMsg := &types.MsgFinishInference{
+					InferenceId: 1, ResponseHash: []byte("response"),
+					InputTokens: 80, OutputTokens: 40, ExecutorSlot: 1,
+					EscrowId: "escrow-1",
+				}
+				finishMsg.ProposerSig = testutil.SignProposerTx(t, hosts[1], finishMsg)
+				return txFinish(finishMsg)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			sm, user := newTestSM(t, hosts, 10000)
+
+			diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
+				InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
+				InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+			})})
+			_, err := sm.ApplyDiff(diff)
+			require.NoError(t, err)
+
+			var votes []*types.TimeoutVote
+			for _, slot := range []uint32{0, 2, 3} {
+				v := testutil.SignTimeoutVote(t, hosts[slot], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
+				v.VoterSlot = slot
+				votes = append(votes, v)
+			}
+
+			diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
+				InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Votes: votes,
+			})})
+			_, err = sm.ApplyDiff(diff)
+			require.NoError(t, err)
+			require.Equal(t, types.StatusTimedOut, sm.SnapshotState().Inferences[1].Status)
+
+			diff = testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{tc.tx(t, hosts)})
+			_, err = sm.ApplyDiff(diff)
+			require.ErrorIs(t, err, types.ErrInvalidTransition)
+			require.Equal(t, types.StatusTimedOut, sm.SnapshotState().Inferences[1].Status)
+		})
+	}
+}
+
 func TestApplyDiff_Timeout_Execution(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
