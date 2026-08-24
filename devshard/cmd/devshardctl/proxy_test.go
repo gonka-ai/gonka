@@ -1908,6 +1908,13 @@ func TestRunInference_SpeculativeFallsThroughMultipleDeadHosts(t *testing.T) {
 	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf, nil)
 	require.NoError(t, err)
 
+	// RunInference returns once the live host's stream settles. Dead hosts
+	// may still be finishing on the background finalizer, which is where
+	// RecordRequest runs. Wait for that record before asserting on it.
+	require.Eventually(t, func() bool {
+		return len(env.proxy.perf.RecentRequests()) >= 1
+	}, time.Second, 10*time.Millisecond, "background finalizer should have recorded the request")
+
 	requests := env.proxy.perf.RecentRequests()
 	require.NotEmpty(t, requests)
 
