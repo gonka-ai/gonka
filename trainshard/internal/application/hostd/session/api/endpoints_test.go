@@ -38,7 +38,7 @@ type servedStub struct {
 	spent map[string]bool
 }
 
-func (s servedStub) First(_ context.Context, request string) (bool, error) {
+func (s servedStub) First(_ context.Context, request string, _ time.Time) (bool, error) {
 	if s.spent[request] {
 		return false, nil
 	}
