@@ -51,7 +51,7 @@ if ! render_cleared >"$tmpdir/cleared.json" 2>"$tmpdir/cleared.stderr"; then
     exit 1
 fi
 VERSIOND_ROUTER_SLOT=test VERSIOND_NON_HA_VERSIONS='v1 v2 v3' \
-    VERSIOND_VERSIONS='v4 v5 v6 v7 v8' \
+    VERSIOND_VERSIONS='v4 v5' \
     VERSIOND_ROUTER_ALLOW_COARSE_READINESS=false \
     "${slot_compose[@]}" config --format json >"$tmpdir/slot-defaults.json"
 VERSIOND_ROUTER_SLOT=test VERSIOND_NON_HA_VERSIONS='' VERSIOND_VERSIONS='' \
@@ -200,7 +200,7 @@ def require(environment, key, expected, case):
 
 
 require(defaults, "VERSIOND_NON_HA_VERSIONS", "v1 v2 v3", "unset")
-require(defaults, "VERSIOND_VERSIONS", "v4 v5 v6 v7 v8", "unset")
+require(defaults, "VERSIOND_VERSIONS", "v4 v5", "unset")
 require(
     defaults,
     "VERSIOND_ROUTING_CATALOG_URL",
@@ -240,7 +240,7 @@ require(cleared, "VERSIOND_NON_HA_VERSIONS", "", "explicit empty")
 require(cleared, "VERSIOND_VERSIONS", "", "explicit empty")
 
 require(slot_defaults, "VERSIOND_NON_HA_VERSIONS", "v1 v2 v3", "slot unset")
-require(slot_defaults, "VERSIOND_VERSIONS", "v4 v5 v6 v7 v8", "slot unset")
+require(slot_defaults, "VERSIOND_VERSIONS", "v4 v5", "slot unset")
 require(slot_defaults, "VERSIOND_ROUTER_ALLOW_COARSE_READINESS", "false", "slot unset")
 require(
     slot_defaults,

@@ -961,7 +961,7 @@ migration_router_routes() {
     # their startup environment.
     printf '%s\n%s\n' \
         "${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}" \
-        "${VERSIOND_VERSIONS-v4 v5 v6 v7 v8}" \
+        "${VERSIOND_VERSIONS-v4 v5}" \
         | tr ',;' '  ' | tr -s ' ' '\n'
 }
 
