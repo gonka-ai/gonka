@@ -49,25 +49,18 @@ func (am AppModule) applyPreviousConfirmedWeightCap(
 		}
 	}
 
-	prevEpochIndex, found := am.keeper.GetEffectiveEpochIndex(ctx)
-	if !found {
+	previous, err := am.getPreviousConfirmedWeights(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if previous == nil {
 		// No previous epoch (genesis bootstrap): leave CapWeight == Weight,
 		// otherwise the entire initial validator set would be zeroed.
 		am.LogInfo("Previous-epoch weight cap skipped: no effective epoch yet", types.PoC)
 		return activeParticipants, nil
 	}
-
-	prevRoot, livePrevMembers, err := am.keeper.GetRootGroupDataWithLiveMembers(ctx)
-	if err != nil {
-		return nil, fmt.Errorf("load live previous-epoch members for trust cap: %w", err)
-	}
-	if prevRoot.EpochIndex != prevEpochIndex {
-		return nil, fmt.Errorf(
-			"trust-cap epoch mismatch: effective=%d group=%d",
-			prevEpochIndex,
-			prevRoot.EpochIndex,
-		)
-	}
+	prevEpochIndex := previous.epochIndex
+	capByAddress := previous.weights
 
 	guardianAccounts := map[string]bool{}
 	for _, opAddr := range am.keeper.GetGenesisGuardianAddresses(ctx) {
@@ -76,8 +69,6 @@ func (am AppModule) applyPreviousConfirmedWeightCap(
 			guardianAccounts[accAddr] = true
 		}
 	}
-
-	capByAddress := am.buildPreviousConfirmedWeightCaps(ctx, prevEpochIndex, &prevRoot, livePrevMembers)
 
 	newParticipantsZeroed := 0
 	existingParticipantsClamped := 0
@@ -283,4 +274,40 @@ func (am AppModule) buildPreviousConfirmedWeightCaps(
 		caps[vw.MemberAddress] = capValue
 	}
 	return caps
+}
+
+type previousConfirmedWeights struct {
+	epochIndex  uint64
+	weights     map[string]int64
+	totalWeight int64
+}
+
+func (am AppModule) getPreviousConfirmedWeights(ctx context.Context) (*previousConfirmedWeights, error) {
+	prevEpochIndex, found := am.keeper.GetEffectiveEpochIndex(ctx)
+	if !found {
+		return nil, nil
+	}
+
+	prevRoot, livePrevMembers, err := am.keeper.GetRootGroupDataWithLiveMembers(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("load live previous-epoch members for confirmed weights: %w", err)
+	}
+	if prevRoot.EpochIndex != prevEpochIndex {
+		return nil, fmt.Errorf(
+			"previous-confirmed-weight epoch mismatch: effective=%d group=%d",
+			prevEpochIndex,
+			prevRoot.EpochIndex,
+		)
+	}
+
+	weights := am.buildPreviousConfirmedWeightCaps(ctx, prevEpochIndex, &prevRoot, livePrevMembers)
+	totalWeight := int64(0)
+	for _, weight := range weights {
+		totalWeight += weight
+	}
+	return &previousConfirmedWeights{
+		epochIndex:  prevEpochIndex,
+		weights:     weights,
+		totalWeight: totalWeight,
+	}, nil
 }

@@ -1077,6 +1077,77 @@ func TestComputeStoreCommitVotingPowers_BootstrapModelUsesDirectCommittersAndFro
 	}, got)
 }
 
+func TestBuildDelegationWeightCalculator_UsesPreviousConfirmedWeights(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.PocParams = &types.PocParams{
+		Models: []*types.PoCModelConfig{
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
+	}
+	params.DelegationParams = &types.DelegationParams{
+		InitialModelId: "model-a",
+	}
+
+	const epoch = uint64(5)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, epoch))
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:          epoch,
+		EpochGroupId:     77,
+		CapWeightApplied: true,
+		Participants: []*types.ActiveParticipant{
+			{Index: testutil.Validator, Weight: 100, CapWeight: 10},
+			{Index: testutil.Validator2, Weight: 100, CapWeight: 10},
+		},
+	}))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:     epoch,
+		ModelId:        "",
+		EpochGroupId:   77,
+		SubGroupModels: []string{"model-a"},
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 100, ConfirmationWeight: 100},
+			{MemberAddress: testutil.Validator2, Weight: 100, ConfirmationWeight: 20},
+		},
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:   epoch,
+		ModelId:      "model-a",
+		EpochGroupId: 78,
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, MlNodes: []*types.MLNodeInfo{{PocWeight: 100}}},
+			{MemberAddress: testutil.Validator2, MlNodes: []*types.MLNodeInfo{{PocWeight: 100}}},
+		},
+	})
+
+	upcoming := []*types.ActiveParticipant{
+		{
+			Index:  testutil.Validator,
+			Models: []string{"model-a"},
+			MlNodes: []*types.ModelMLNodes{{
+				MlNodes: []*types.MLNodeInfo{{NodeId: "node-1", PocWeight: 100}},
+			}},
+		},
+	}
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	dwc, err := am.buildDelegationWeightCalculator(
+		ctx,
+		upcoming,
+		map[string]sdkmath.LegacyDec{"model-a": sdkmath.LegacyOneDec()},
+		params,
+	)
+	require.NoError(t, err)
+
+	require.Equal(t, int64(100), dwc.ConsensusWeights[testutil.Validator])
+	require.Equal(t, int64(20), dwc.ConsensusWeights[testutil.Validator2])
+	require.Equal(t, int64(120), dwc.TotalNetworkWeight)
+}
+
 func TestBuildDelegationWeightCalculator_UsesValidationSnapshotForNextEpochVotingPowers(t *testing.T) {
 	k, ctx := newMinimalInferenceKeeper(t)
 
@@ -1131,7 +1202,8 @@ func TestBuildDelegationWeightCalculator_UsesValidationSnapshotForNextEpochVotin
 	}
 
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	dwc := am.buildDelegationWeightCalculator(ctx, activeParticipants, map[string]sdkmath.LegacyDec{"model-a": sdkmath.LegacyOneDec()}, params)
+	dwc, err := am.buildDelegationWeightCalculator(ctx, activeParticipants, map[string]sdkmath.LegacyDec{"model-a": sdkmath.LegacyOneDec()}, params)
+	require.NoError(t, err)
 	modes := dwc.ResolveGroupParticipation("model-a")
 	require.Equal(t, ModeDelegate, modes[testutil.Validator])
 	require.Equal(t, ModeNone, modes[testutil.Executor2])
@@ -1349,4 +1421,3 @@ func TestCapPerModelVotingPowers_SingleHostNoOp(t *testing.T) {
 	capPerModelVotingPowers(vp, capPct, "model-test", nopCapLogger{})
 	require.Equal(t, int64(1000), vp["solo"])
 }
-

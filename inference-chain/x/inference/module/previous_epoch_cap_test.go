@@ -396,7 +396,7 @@ func TestApplyPreviousConfirmedWeightCap_EpochMismatch(t *testing.T) {
 		{Index: testutil.Validator, Weight: 100},
 	})
 	require.Error(t, err)
-	require.ErrorContains(t, err, "trust-cap epoch mismatch")
+	require.ErrorContains(t, err, "previous-confirmed-weight epoch mismatch")
 }
 
 func TestGetEffectiveValidationBaseState_UsesTrustWeightsForTotal(t *testing.T) {

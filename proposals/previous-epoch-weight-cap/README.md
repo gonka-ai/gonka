@@ -38,6 +38,8 @@ We keep the existing `Weight` field as the **real** weight and add a new `CapWei
 
 Keeping `Weight` real (rather than capping it and adding an "uncapped" field for rewards) is deliberate: `Weight` is read in many places that require the *real* value — rewards, cPoC confirmation, and the cap baseline itself. Capping `Weight` would have silently corrupted all of those. Adding `CapWeight` as the new, explicitly-routed value keeps every existing reader of `Weight` correct and requires no upgrade fallback for the reward/settlement path.
 
+Group eligibility (`WThreshold`, `VMin`) and the non-initial group cap use the previous epoch's confirmed effective weight `P_N`, not the `CapWeight` active during that epoch. This is symmetric with the trust-weight definition itself: the same `P_N` measurement is used for next-epoch eligibility and bounds the upcoming trust weight as `CapWeight_(N+1) = min(Weight_(N+1), P_N)`. Confirmed growth therefore counts after one epoch, while unconfirmed weight cannot affect eligibility or expand a group cap. Bootstrap pre-eligibility at the deploy window (including reachability) stays on the active `CapWeight`, matching the validation voting powers it predicts.
+
 ### The cap value (cPoC / model-coefficient aware)
 
 The cap for each participant is the confirmed **effective weight** they held in the previous epoch, computed identically to the settlement/reward path:
@@ -92,6 +94,7 @@ PoC validation snapshots use trust weight for both the per-model voting powers a
 | Next-epoch cap baseline | `Weight` (real) | Unchanged |
 | Unit-of-compute pricing | `Weight` (real) | Unchanged |
 | Weighted random selection | `Weight` (real) | Unchanged |
+| Group eligibility / group caps | Previous confirmed effective weight (`P_N`) | Same baseline as the upcoming trust cap |
 | PoC/cPoC validation snapshot (`getEffectiveValidationBaseState`) | `CapWeight` | Same units as per-model voting power |
 | Governance / CometBFT power | `CapWeight` | **Capped**, new participants dropped |
 | BLS threshold signing | `CapWeight` | **Capped**, new participants get 0 slots |
@@ -127,7 +130,7 @@ Shared helper — `inference-chain/x/inference/types/weight.go`:
 Wiring:
 
 - `inference-chain/x/inference/module/module.go` — pipeline order, governance cap at `SetComputeValidators`, BLS via `CapWeight`.
-- `inference-chain/x/inference/module/delegation_pipeline.go` — voting powers via `CapWeight`.
+- `inference-chain/x/inference/module/delegation_pipeline.go` — group eligibility and caps via previous confirmed effective weight; voting powers via `CapWeight`.
 - `inference-chain/x/inference/module/genesis_guardian_enhancement.go` — BLS guardian slot reservation via `CapWeight`.
 - `inference-chain/x/inference/module/model_assignment.go` — preserved-node allocation thresholds use trust-weight totals to match validation voting units.
 - `inference-chain/x/inference/keeper/bitcoin_rewards.go` — refactored to use the shared `EffectiveConfirmedWeight` helper (behavior-identical).
@@ -138,6 +141,7 @@ Wiring:
 - `applyPreviousConfirmedWeightCap` — clamps over-weight participants, zeroes new participants, preserves real `Weight`, and skips on bootstrap / missing previous group.
 - `resolveTrustWeights` — uses `CapWeight` when applied; falls back to `Weight` when unset.
 - `capComputeResultsToPreviousConfirmedWeight` — clamps and drops validators, exempts guardians, and falls back when `CapWeight` is unset (upgrade transition).
+- Delegation-weight calculator tests cover previous confirmed effective weight for group eligibility and caps.
 - Validation snapshot and preserved-node tests cover trust-weight totals.
 - BLS key generation and guardian slot reservation tests cover mixed `CapWeight` (including a zero-cap participant with no slots).
 

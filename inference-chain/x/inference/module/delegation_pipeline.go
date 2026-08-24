@@ -35,15 +35,25 @@ func (am AppModule) buildDelegationWeightCalculator(
 	activeParticipants []*types.ActiveParticipant,
 	coefficients map[string]mathsdk.LegacyDec,
 	params types.Params,
-) *DelegationWeightCalculator {
+) (*DelegationWeightCalculator, error) {
 	nextEpochDelegations, nextEpochRefusals, found := am.loadRegularDelegationSnapshotState(ctx)
 	if !found {
 		am.LogError("regular delegation snapshot not found", types.PoC, "context", "onEndOfPoCValidationStage")
 		nextEpochDelegations = map[string]map[string]string{}
 		nextEpochRefusals = map[string]map[string]bool{}
 	}
-	prevState := am.getEffectiveValidationBaseState(ctx)
-	consensusWeights, totalWeight := prevState.weights, prevState.totalWeight
+	// Eligibility and group caps use the same previous confirmed weight that
+	// bounds the upcoming trust weight.
+	previous, err := am.getPreviousConfirmedWeights(ctx)
+	if err != nil {
+		return nil, err
+	}
+	consensusWeights := map[string]int64{}
+	totalWeight := int64(0)
+	if previous != nil {
+		consensusWeights = previous.weights
+		totalWeight = previous.totalWeight
+	}
 	initialModelID := params.GetDelegationParams().GetInitialModelId()
 	groups := buildGroupData(activeParticipants, coefficients, initialModelID, am)
 
@@ -60,7 +70,7 @@ func (am AppModule) buildDelegationWeightCalculator(
 		Delegations:                nextEpochDelegations,
 		Refusals:                   nextEpochRefusals,
 		Params:                     buildWeightParams(params),
-	}
+	}, nil
 }
 
 type epochParticipationState struct {
@@ -88,7 +98,10 @@ func (am AppModule) prepareEpochParticipationState(
 	pocStageStartHeight int64,
 ) (*epochParticipationState, error) {
 	coefficients := modelCoefficients(params.PocParams)
-	calculator := am.buildDelegationWeightCalculator(ctx, activeParticipants, coefficients, params)
+	calculator, err := am.buildDelegationWeightCalculator(ctx, activeParticipants, coefficients, params)
+	if err != nil {
+		return nil, err
+	}
 	eligibleModels := calculator.EligibleGroups()
 	participationByModel := buildParticipationByModel(calculator, eligibleModels)
 
