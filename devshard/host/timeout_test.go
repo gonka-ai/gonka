@@ -130,13 +130,23 @@ func TestVerifyRefused_ReceiptInLocalMempool(t *testing.T) {
 	require.False(t, accept, "should reject: receipt in local mempool")
 }
 
-func TestVerifyRefused_ExecutorUnreachable_ValidRequest(t *testing.T) {
-	st := stateWithPendingFull(1, 1)
-	executor := &mockExecutorClient{challengeReceiptErr: errors.New("unreachable")}
+func TestVerifyRefused_ChallengeErrorAcceptsTimeout(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{name: "executor unreachable", err: errors.New("unreachable")},
+		{name: "challenge timeout", err: context.DeadlineExceeded},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			st := stateWithPendingFull(1, 1)
+			executor := &mockExecutorClient{challengeReceiptErr: tc.err}
 
-	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), nil, nil, executor, nil, st.Config, deadlinePassedRefused(st, 1))
-	require.NoError(t, err)
-	require.True(t, accept, "should accept: executor unreachable")
+			accept, err := VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), nil, nil, executor, nil, st.Config, deadlinePassedRefused(st, 1))
+			require.NoError(t, err)
+			require.True(t, accept, "challenge error should be treated as executor unreachable")
+		})
+	}
 }
 
 func TestVerifyRefused_ExecutorReturnsReceipt(t *testing.T) {
@@ -327,4 +337,3 @@ func TestRecoveryTxsFor_FiltersByInferenceID(t *testing.T) {
 	got := RecoveryTxsFor([]*types.DevshardTx{nil, empty, confirm2, confirm1, finish1}, 1)
 	require.Equal(t, []*types.DevshardTx{confirm1, finish1}, got)
 }
-
