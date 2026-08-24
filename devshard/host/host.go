@@ -401,6 +401,15 @@ func (h *Host) MempoolTxs() []*types.DevshardTx {
 	return h.mempool.Txs()
 }
 
+// AddTx inserts a tx into the local mempool (ProposedAt = 0). Used to copy
+// recovery txs from a challenge-receipt response into a verifier's pool.
+func (h *Host) AddTx(tx *types.DevshardTx) {
+	if tx == nil {
+		return
+	}
+	h.mempool.AddTx(tx)
+}
+
 func (h *Host) EscrowID() string              { return h.escrowID }
 func (h *Host) EpochID() uint64               { return h.epochID }
 func (h *Host) Group() []types.SlotAssignment { return h.group }

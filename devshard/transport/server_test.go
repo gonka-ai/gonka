@@ -561,6 +561,46 @@ func TestServer_ChallengeReceipt_GroupMemberAllowed(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
+func TestServer_ChallengeReceipt_ReturnsRecoveryMempool(t *testing.T) {
+	env := setupServerEnv(t)
+	diff := testutil.SignDiff(t, env.userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	dj, err := DiffToJSON(diff)
+	require.NoError(t, err)
+	body, err := json.Marshal(ChallengeReceiptRequest{
+		InferenceID: 1,
+		Payload: &PayloadJSON{
+			Prompt:      testutil.TestPrompt,
+			Model:       "llama",
+			InputLength: 100,
+			MaxTokens:   50,
+			StartedAt:   1000,
+		},
+		Diffs: []DiffJSON{dj},
+	})
+	require.NoError(t, err)
+
+	rec := env.doPostAs(t, "/devshard/v2/sessions/escrow-1/challenge-receipt", body, env.hostSigner)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	var resp ChallengeReceiptResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.NotEmpty(t, resp.Receipt, "challenge must return the executor receipt")
+	require.NotEmpty(t, resp.Mempool, "challenge response must return recovery mempool txs")
+
+	txs, err := DevshardTxsFromBytes(resp.Mempool)
+	require.NoError(t, err)
+	require.True(t, hasConfirmStartTx(txs, 1), "recovery mempool must include MsgConfirmStart")
+}
+
+func hasConfirmStartTx(txs []*types.DevshardTx, inferenceID uint64) bool {
+	for _, tx := range txs {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+			return true
+		}
+	}
+	return false
+}
+
 func TestServer_NonExecutor_SSE(t *testing.T) {
 	// 3 hosts, request to non-executor.
 	hostSigners := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}

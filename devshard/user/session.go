@@ -2135,7 +2135,7 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 	verifiers := s.TimeoutVerifiers()
 	storedDiffs := s.Diffs()
 
-	votes, err := s.CollectTimeoutVotes(ctx, nonce, reason, payload, verifiers, storedDiffs)
+	votes, recovery, err := s.CollectTimeoutVotes(ctx, nonce, reason, payload, verifiers, storedDiffs)
 	if err != nil {
 		return result, fmt.Errorf("collect timeout votes: %w", err)
 	}
@@ -2148,6 +2148,20 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 		}
 		logging.Stage(ctx, "timeout_completed", logFields("reason", result.Reason)...)
 		return result, fmt.Errorf("inference %d timed out: %s", nonce, reason)
+	}
+
+	if reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED && len(recovery) > 0 {
+		s.mu.Lock()
+		for _, tx := range recovery {
+			s.addPendingTx(tx)
+		}
+		s.mu.Unlock()
+		if err := s.SendPendingDiff(ctx); err != nil {
+			logging.Stage(ctx, "timeout_recovery_send_failed", logFields("reason", result.Reason, "error", err)...)
+			return result, fmt.Errorf("publish timeout recovery: %w", err)
+		}
+		logging.Stage(ctx, "timeout_recovery_published", logFields("reason", result.Reason)...)
+		return result, nil
 	}
 
 	logging.Stage(ctx, "timeout_insufficient_votes", logFields("reason", result.Reason)...)
@@ -2201,7 +2215,7 @@ func (s *Session) Close() error {
 
 // TimeoutVerifier contacts a host for timeout verification votes.
 type TimeoutVerifier interface {
-	VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff) (accept bool, sig []byte, voterSlot uint32, err error)
+	VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff) (accept bool, sig []byte, voterSlot uint32, mempool []*types.DevshardTx, err error)
 }
 
 func timeoutReasonLogLabel(reason types.TimeoutReason) string {
@@ -2216,7 +2230,8 @@ func timeoutReasonLogLabel(reason types.TimeoutReason) string {
 }
 
 // CollectTimeoutVotes contacts non-executor hosts to collect signed votes.
-// Returns votes for inclusion in MsgTimeoutInference.
+// Returns accept votes for MsgTimeoutInference and recovery txs copied from
+// reject responses (typically the executor's MsgConfirmStart).
 // Deduplicates verifiers by validator address to avoid duplicate votes
 // when the same validator occupies multiple slots.
 // Diffs are forwarded to verifiers so they can catch up to the inference nonce.
@@ -2227,7 +2242,7 @@ func (s *Session) CollectTimeoutVotes(
 	payload *host.InferencePayload,
 	verifiers map[int]TimeoutVerifier, // hostIdx -> verifier
 	diffs []types.Diff,
-) ([]*types.TimeoutVote, error) {
+) ([]*types.TimeoutVote, []*types.DevshardTx, error) {
 	// Cancel all in-flight verifier RPCs (and unblock any goroutines still
 	// waiting in the per-verifier queue) once we return — typically because
 	// the vote-weight threshold was met early. Without this, leftover
@@ -2266,6 +2281,7 @@ func (s *Session) CollectTimeoutVotes(
 		err          error
 		verifierIdx  int
 		verifierAddr string
+		mempool      []*types.DevshardTx
 	}
 
 	logFields := func(hostAddr string, extra ...any) []any {
@@ -2324,13 +2340,13 @@ func (s *Session) CollectTimeoutVotes(
 				return
 			}
 
-			accept, sig, voterSlot, err := av.verifier.VerifyTimeout(ctx, inferenceID, reason, payload, diffs)
+			accept, sig, voterSlot, mempool, err := av.verifier.VerifyTimeout(ctx, inferenceID, reason, payload, diffs)
 			if err != nil {
 				results <- voteResult{err: err, verifierIdx: av.idx, verifierAddr: av.verifierAddr}
 				return
 			}
 			if !accept {
-				results <- voteResult{verifierIdx: av.idx, verifierAddr: av.verifierAddr} // nil vote, no error
+				results <- voteResult{verifierIdx: av.idx, verifierAddr: av.verifierAddr, mempool: mempool} // nil vote, no error
 				return
 			}
 			results <- voteResult{vote: &types.TimeoutVote{
@@ -2346,6 +2362,8 @@ func (s *Session) CollectTimeoutVotes(
 	}
 
 	var votes []*types.TimeoutVote
+	var recovery []*types.DevshardTx
+	seenRecovery := make(map[string]struct{})
 	expected := len(deduped)
 
 	voteThreshold := s.sm.VoteThreshold()
@@ -2386,6 +2404,16 @@ func (s *Session) CollectTimeoutVotes(
 			)
 		} else {
 			rejects++
+			for _, tx := range res.mempool {
+				key := devshardTxKey(tx)
+				if key != "" {
+					if _, dup := seenRecovery[key]; dup {
+						continue
+					}
+					seenRecovery[key] = struct{}{}
+				}
+				recovery = append(recovery, tx)
+			}
 			logging.Stage(ctx, "timeout_vote_result",
 				logFields(
 					res.verifierAddr,
@@ -2417,7 +2445,7 @@ func (s *Session) CollectTimeoutVotes(
 		"reject", rejects, "errors", errors,
 		"threshold", voteThreshold, "verifiers", expected)
 
-	return votes, nil
+	return votes, recovery, nil
 }
 
 // HasSufficientTimeoutVotes returns true if the accept votes exceed the vote threshold.

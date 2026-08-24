@@ -329,7 +329,7 @@ func TestHTTP_TimeoutRefused(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	votes, err := env.session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
+	votes, _, err := env.session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
 		Prompt:      testutil.TestPrompt,
 		Model:       "llama",
 		InputLength: 100,
@@ -404,7 +404,7 @@ func TestHTTP_TimeoutExecution(t *testing.T) {
 		verifiers[i] = env.clients[i]
 	}
 
-	votes, err := env.session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, nil, verifiers, allDiffs) // nil payload for execution timeout
+	votes, _, err := env.session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, nil, verifiers, allDiffs) // nil payload for execution timeout
 	require.NoError(t, err)
 	require.True(t, len(votes) > int(env.config.VoteThreshold),
 		"need >%d votes, got %d", env.config.VoteThreshold, len(votes))
@@ -433,7 +433,7 @@ func TestHTTP_TimeoutRejected(t *testing.T) {
 	require.NoError(t, err)
 
 	// Try timeout verification -- should fail because inference is finished.
-	accept, _, _, err := env.clients[2].VerifyTimeout(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, nil, nil)
+	accept, _, _, _, err := env.clients[2].VerifyTimeout(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, nil, nil)
 	require.Error(t, err)
 	require.False(t, accept)
 }
@@ -469,7 +469,7 @@ func TestHTTP_ChallengeReceipt_RejectsTimeout(t *testing.T) {
 		verifiers[i] = env.clients[i]
 	}
 
-	votes, err := env.session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
+	votes, _, err := env.session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
 		Prompt:      testutil.TestPrompt,
 		Model:       "llama",
 		InputLength: 100,
@@ -975,4 +975,170 @@ func TestAttack_GossipEmptySigBypass(t *testing.T) {
 	hostClient1 := httpTestClient(env.httpServers[1].URL, "escrow-1", env.signers[0])
 	err = hostClient1.GossipNonce(ctx, 1, resp.StateHash, resp.StateSig, 0)
 	require.NoError(t, err, "real gossip must succeed after rejected bypass attempts")
+}
+
+// T1: withheld payload → refused-timeout votes reject → session recovery
+// diff carries the executor's MsgConfirmStart and a peer SM applies it.
+func TestHTTP_T1_HonestRecovery_ConfirmStartReachesSessionAndPeer(t *testing.T) {
+	env := setupHTTPEnv(t, 3, 1000000, 100)
+	ctx := context.Background()
+
+	prepared, err := env.session.PrepareInference(defaultParams())
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), prepared.Nonce())
+	executorIdx := prepared.HostIdx()
+
+	_, err = env.session.HandleTimeout(ctx, prepared.Nonce(), time.Unix(0, 0), refusedPayload())
+	require.NoError(t, err, "rejected refused-timeout must recover by publishing ConfirmStart")
+
+	diffs := env.session.Diffs()
+	require.GreaterOrEqual(t, len(diffs), 2)
+	recovery := diffs[len(diffs)-1]
+	require.Equal(t, 1, countConfirmStart(recovery.Txs, 1), "recovery diff must carry exactly one ConfirmStart for inference 1")
+	got := findConfirmStart(recovery.Txs, 1)
+	require.NotNil(t, got)
+
+	execConfirm := findConfirmStart(env.hosts[executorIdx].MempoolTxs(), 1)
+	require.NotNil(t, execConfirm, "executor must still hold the challenge ConfirmStart")
+	require.Equal(t, types.TxHash(execConfirm), types.TxHash(got), "session must copy the executor tx, not mint a new ConfirmStart")
+	require.Equal(t, execConfirm.GetConfirmStart().ExecutorSig, got.GetConfirmStart().ExecutorSig)
+	require.Equal(t, execConfirm.GetConfirmStart().ConfirmedAt, got.GetConfirmStart().ConfirmedAt)
+
+	peer := newPeerSM(t, env, 1000000)
+	_, err = peer.ApplyDiff(diffs[0])
+	require.NoError(t, err)
+	require.Equal(t, types.StatusPending, peer.SnapshotState().Inferences[1].Status)
+
+	_, err = peer.ApplyDiff(recovery)
+	require.NoError(t, err)
+	after := peer.SnapshotState().Inferences[1].Status
+	if findFinish(recovery.Txs, 1) != nil {
+		require.Equal(t, types.StatusFinished, after)
+		return
+	}
+	require.Equal(t, types.StatusStarted, after, "peer SM that only saw StartInference must apply ConfirmStart: Pending → Started")
+
+	require.Eventually(t, func() bool {
+		return findFinish(env.hosts[executorIdx].MempoolTxs(), 1) != nil
+	}, 5*time.Second, 20*time.Millisecond, "executor execution should queue FinishInference")
+	finish := findFinish(env.hosts[executorIdx].MempoolTxs(), 1)
+	require.NotNil(t, finish)
+
+	settlePeer := newPeerSM(t, env, 1000000)
+	_, err = settlePeer.ApplyDiff(diffs[0])
+	require.NoError(t, err)
+	settle := testutil.SignDiff(t, env.userSigner, "escrow-1", 2, []*types.DevshardTx{got, finish})
+	_, err = settlePeer.ApplyDiff(settle)
+	require.NoError(t, err, "ConfirmStart + FinishInference sourced after challenge must apply")
+	require.Equal(t, types.StatusFinished, settlePeer.SnapshotState().Inferences[1].Status)
+}
+
+// T2: same challenge as T1, but the user omits ConfirmStart from later diffs.
+// Voting verifiers must keep the pool copy; a later honest inclusion still applies.
+func TestHTTP_T2_OmittedConfirmStart_VotingVerifiersRetainPoolCopy(t *testing.T) {
+	env := setupHTTPEnv(t, 3, 1000000, 100)
+	ctx := context.Background()
+
+	prepared, err := env.session.PrepareInference(defaultParams())
+	require.NoError(t, err)
+	executorIdx := prepared.HostIdx()
+
+	votes, recovery, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), env.session.TimeoutVerifiers(), env.session.Diffs())
+	require.NoError(t, err)
+	require.Empty(t, votes, "alive executor must cause verifiers to reject the timeout")
+	require.NotNil(t, findConfirmStart(recovery, 1), "reject votes must carry executor ConfirmStart")
+
+	execConfirm := findConfirmStart(env.hosts[executorIdx].MempoolTxs(), 1)
+	require.NotNil(t, execConfirm)
+	wantHash := types.TxHash(execConfirm)
+
+	require.NoError(t, env.session.SendPendingDiff(ctx), "empty pending must still produce a follow-up diff")
+	omitDiffs := env.session.Diffs()
+	require.GreaterOrEqual(t, len(omitDiffs), 2)
+	require.Equal(t, 0, countConfirmStart(omitDiffs[len(omitDiffs)-1].Txs, 1), "user-omitted diff must not include ConfirmStart")
+
+	for i, h := range env.hosts {
+		_, err := h.HandleRequest(ctx, host.HostRequest{Diffs: omitDiffs, Nonce: omitDiffs[len(omitDiffs)-1].Nonce})
+		require.NoError(t, err, "host %d", i)
+		rec, ok := h.SnapshotState().Inferences[1]
+		require.True(t, ok, "host %d", i)
+		require.Equal(t, types.StatusPending, rec.Status, "host %d collective state must stay Pending when ConfirmStart is omitted", i)
+	}
+
+	for i, h := range env.hosts {
+		got := findConfirmStart(h.MempoolTxs(), 1)
+		if i == executorIdx {
+			require.NotNil(t, got, "executor must still hold ConfirmStart")
+			require.Equal(t, wantHash, types.TxHash(got))
+			continue
+		}
+		require.NotNil(t, got, "voting verifier %d must retain ConfirmStart after omission", i)
+		require.Equal(t, wantHash, types.TxHash(got), "verifier %d must keep the same hash as the executor", i)
+	}
+
+	peer := newPeerSM(t, env, 1000000)
+	for _, d := range omitDiffs {
+		_, err := peer.ApplyDiff(d)
+		require.NoError(t, err)
+	}
+	require.Equal(t, types.StatusPending, peer.SnapshotState().Inferences[1].Status)
+
+	honest := testutil.SignDiff(t, env.userSigner, "escrow-1", omitDiffs[len(omitDiffs)-1].Nonce+1, []*types.DevshardTx{execConfirm})
+	_, err = peer.ApplyDiff(honest)
+	require.NoError(t, err, "exact mempool ConfirmStart must still apply after omission")
+	require.Equal(t, types.StatusStarted, peer.SnapshotState().Inferences[1].Status)
+}
+
+func refusedPayload() *host.InferencePayload {
+	p := defaultParams()
+	return &host.InferencePayload{
+		Prompt:      p.Prompt,
+		Model:       p.Model,
+		InputLength: p.InputLength,
+		MaxTokens:   p.MaxTokens,
+		StartedAt:   p.StartedAt,
+	}
+}
+
+func findConfirmStart(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
+	for _, tx := range txs {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+			return tx
+		}
+	}
+	return nil
+}
+
+func findFinish(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
+	for _, tx := range txs {
+		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+			return tx
+		}
+	}
+	return nil
+}
+
+func countConfirmStart(txs []*types.DevshardTx, inferenceID uint64) int {
+	n := 0
+	for _, tx := range txs {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+			n++
+		}
+	}
+	return n
+}
+
+func newPeerSM(t *testing.T, env *httpTestEnv, balance uint64) *state.StateMachine {
+	t.Helper()
+	sm, err := state.NewStateMachine(
+		"escrow-1",
+		env.config,
+		env.group,
+		balance,
+		env.userSigner.Address(),
+		signing.NewSecp256k1Verifier(),
+		testutil.MustMemoryStore(t, "escrow-1", env.userSigner.Address(), env.config, env.group, balance),
+	)
+	require.NoError(t, err)
+	return sm
 }
