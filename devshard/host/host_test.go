@@ -1176,6 +1176,33 @@ func TestHost_ChallengeReceipt_AlreadyExecuting(t *testing.T) {
 	require.Equal(t, 1, engine.calls, "engine should not be called again")
 }
 
+func TestHost_ChallengeReceipt_PublishesConfirmStartToMempool(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
+	require.NoError(t, err)
+	engine := stub.NewInferenceEngine()
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
+	require.NoError(t, err)
+
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+
+	receipt, confirmedAt, err := h.ChallengeReceipt(context.Background(), 1, defaultPayload(), []types.Diff{diff})
+	require.NoError(t, err)
+	require.NotEmpty(t, receipt, "challenge must return the executor receipt")
+	require.NotZero(t, confirmedAt, "challenge must return the receipt timestamp")
+
+	confirmTx := findMempoolConfirm(h.MempoolTxs())
+	require.NotNil(t, confirmTx, "challenge receipt must publish MsgConfirmStart for recovery")
+	confirm := confirmTx.GetConfirmStart()
+	require.Equal(t, uint64(1), confirm.InferenceId)
+	require.Equal(t, receipt, confirm.ExecutorSig)
+	require.Equal(t, confirmedAt, confirm.ConfirmedAt)
+}
+
 func TestHost_ChallengeReceipt_AlreadyFinished(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	user := testutil.MustGenerateKey(t)

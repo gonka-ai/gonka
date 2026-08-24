@@ -552,6 +552,15 @@ func TestServer_VerifyTimeout_RequestsDisabled(t *testing.T) {
 	require.Equal(t, DevshardErrorRequestsDisabled, rec.Header().Get(HeaderDevshardError))
 }
 
+func hasConfirmStartTx(txs []*types.DevshardTx, inferenceID uint64) bool {
+	for _, tx := range txs {
+		if confirm := tx.GetConfirmStart(); confirm != nil && confirm.InferenceId == inferenceID {
+			return true
+		}
+	}
+	return false
+}
+
 func TestServer_ChallengeReceipt_GroupMemberAllowed(t *testing.T) {
 	env := setupServerEnv(t)
 	// Group members (peer hosts) must be allowed to call ChallengeReceipt
@@ -559,6 +568,40 @@ func TestServer_ChallengeReceipt_GroupMemberAllowed(t *testing.T) {
 	body := []byte(`{"inference_id":999,"diffs":[],"payload":null}`)
 	rec := env.doPostAs(t, "/devshard/v2/sessions/escrow-1/challenge-receipt", body, env.hostSigner)
 	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestServer_ChallengeReceipt_ReturnsRecoveryMempool(t *testing.T) {
+	env := setupServerEnv(t)
+	diff := testutil.SignDiff(t, env.userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	diffJSON, err := DiffToJSON(diff)
+	require.NoError(t, err)
+	body, err := json.Marshal(ChallengeReceiptRequest{
+		InferenceID: 1,
+		Payload: PayloadToJSON(&host.InferencePayload{
+			Prompt:      testutil.TestPrompt,
+			Model:       "llama",
+			InputLength: 100,
+			MaxTokens:   50,
+			StartedAt:   1000,
+		}),
+		Diffs: []DiffJSON{diffJSON},
+	})
+	require.NoError(t, err)
+
+	rec := env.doPost(t, "/devshard/v2/sessions/escrow-1/challenge-receipt", body)
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	var resp struct {
+		Receipt []byte   `json:"receipt"`
+		Mempool [][]byte `json:"mempool"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.NotEmpty(t, resp.Receipt, "challenge must return the executor receipt")
+	require.NotEmpty(t, resp.Mempool, "challenge response must return recovery mempool txs")
+
+	txs, err := DevshardTxsFromBytes(resp.Mempool)
+	require.NoError(t, err)
+	require.True(t, hasConfirmStartTx(txs, 1), "recovery mempool must include MsgConfirmStart")
 }
 
 func TestServer_NonExecutor_SSE(t *testing.T) {
