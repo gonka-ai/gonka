@@ -126,7 +126,7 @@ func newHost(t *testing.T) *hosts.Client {
 		Chain:    chain,
 		Streams:  machine,
 		Sessions: state.Sessions(),
-		Served:   state.Served(clock, time.Minute),
+		Served:   state.Served(clock),
 		Clock:    clock,
 	})
 
