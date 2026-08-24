@@ -1,10 +1,18 @@
-.PHONY: proto test integration-test stress-test fault-test ci-testenv-unit ci-testenv-integration devshard-gateway-release e2e e2e-test e2e-images
+.PHONY: proto test test-junit gateway-mockenv-test gateway-mockenv-test-junit integration-test stress-test fault-test ci-testenv-unit ci-testenv-integration devshard-gateway-release e2e e2e-test e2e-images
 
 DEVSHARD_VERSION ?= dev
 DEVSHARD_PROTOCOL_VERSION ?= v3
 DEVSHARD_GATEWAY_IMAGE ?= ghcr.io/gonka-ai/devshard-gateway
 DEVSHARD_GATEWAY_TAGS ?=
 PLATFORM ?= linux/amd64
+DEVSHARD_GOTESTSUM ?= gotest.tools/gotestsum@v1.13.0
+DEVSHARD_TEST_PACKAGES ?= ./...
+DEVSHARD_JUNIT_REPORT ?= junit-report.xml
+DEVSHARD_UNIT_TEST_SKIP ?= GatewayMockEnv
+DEVSHARD_TEST_FORMAT ?= testname
+GATEWAY_MOCKENV_TEST_PACKAGE ?= ./cmd/devshardctl
+GATEWAY_MOCKENV_TEST_PATTERN ?= GatewayMockEnv
+GATEWAY_MOCKENV_JUNIT_REPORT ?= mockenv-junit-report.xml
 
 DEVSHARD_E2E_MOCK_CHAIN_IMAGE ?= devshard-mock-chain:local
 DEVSHARD_E2E_HOST_IMAGE ?= devshard-host:local
@@ -16,7 +24,7 @@ DEVSHARD_E2E_VERSION ?= $(DEVSHARD_VERSION)
 DOCKER_BUILD ?= DOCKER_BUILDKIT=1 docker build
 DEVSHARD_E2E_GO_IMAGE ?= golang:1.25.9-alpine3.23
 DEVSHARD_E2E_GO_TMPFS_SIZE ?= 1g
-DEVSHARD_E2E_GOTESTSUM ?= gotest.tools/gotestsum@v1.13.0
+DEVSHARD_E2E_GOTESTSUM ?= $(DEVSHARD_GOTESTSUM)
 
 devshard-gateway-release:
 	@if [ -z "$(strip $(DEVSHARD_GATEWAY_TAGS))" ]; then \
@@ -37,7 +45,16 @@ proto:
 	PATH="$$HOME/go/bin:$$PATH" protoc --proto_path=proto --go_out=. --go_opt=module=devshard proto/devshard/v1/*.proto
 
 test:
-	go test ./... -v
+	go run $(DEVSHARD_GOTESTSUM) --format $(DEVSHARD_TEST_FORMAT) -- $(DEVSHARD_TEST_PACKAGES)
+
+test-junit:
+	go run $(DEVSHARD_GOTESTSUM) --format $(DEVSHARD_TEST_FORMAT) --junitfile $(DEVSHARD_JUNIT_REPORT) -- $(DEVSHARD_TEST_PACKAGES) -skip $(DEVSHARD_UNIT_TEST_SKIP)
+
+gateway-mockenv-test:
+	go run $(DEVSHARD_GOTESTSUM) --format $(DEVSHARD_TEST_FORMAT) -- $(GATEWAY_MOCKENV_TEST_PACKAGE) -run $(GATEWAY_MOCKENV_TEST_PATTERN) -count=1
+
+gateway-mockenv-test-junit:
+	go run $(DEVSHARD_GOTESTSUM) --format $(DEVSHARD_TEST_FORMAT) --junitfile $(GATEWAY_MOCKENV_JUNIT_REPORT) -- $(GATEWAY_MOCKENV_TEST_PACKAGE) -run $(GATEWAY_MOCKENV_TEST_PATTERN) -count=1
 
 # Phase 11 — testenv v2 unit smoke (no Docker). Run from repo root paths via sub-makes.
 ci-testenv-unit:
