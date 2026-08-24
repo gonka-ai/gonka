@@ -209,6 +209,7 @@ func DefaultParams() Params {
 		MaintenanceParams:    DefaultMaintenanceParams(),
 		DelegationParams:     DefaultDelegationParams(),
 		TrainingParams:       DefaultTrainingParams(),
+		FeeParams:            DefaultFeeParams(),
 	}
 }
 

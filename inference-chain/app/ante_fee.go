@@ -12,8 +12,6 @@ import (
 
 	inferencemodulekeeper "github.com/productscience/inference/x/inference/keeper"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
-
-	blstypes "github.com/productscience/inference/x/bls/types"
 )
 
 // --- Context key for fee bypass flag ---
@@ -84,13 +82,15 @@ func (d NetworkDutyFeeBypassDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, si
 
 // isNetworkDuty checks if a message is a fee-exempt network duty. It unwraps
 // x/authz MsgExec exactly one level (the DAPI's normal use case), then calls
-// isExemptMessageType on the inner messages. Nested MsgExec wrappers are not
-// allowed — they fail closed. Real-world use has no need for nested MsgExec
-// and allowing arbitrary recursion is unnecessary complexity.
+// inferencetypes.IsNetworkDuty on the inner messages. Nested MsgExec wrappers
+// are not allowed — they fail closed.
 func isNetworkDuty(msg sdk.Msg, ik *inferencemodulekeeper.Keeper) bool {
 	if execMsg, ok := msg.(*authztypes.MsgExec); ok {
 		if ik == nil {
 			return false // fail closed
+		}
+		if len(execMsg.Msgs) == 0 {
+			return false // empty MsgExec is not a network duty
 		}
 		for _, innerMsg := range execMsg.Msgs {
 			var unwrapped sdk.Msg
@@ -102,61 +102,80 @@ func isNetworkDuty(msg sdk.Msg, ik *inferencemodulekeeper.Keeper) bool {
 			if _, isNestedExec := unwrapped.(*authztypes.MsgExec); isNestedExec {
 				return false
 			}
-			if !isExemptMessageType(unwrapped) {
+			if !inferencetypes.IsNetworkDuty(unwrapped) {
 				return false
 			}
 		}
 		return true
 	}
-	return isExemptMessageType(msg)
+	return inferencetypes.IsNetworkDuty(msg)
 }
 
-// isExemptMessageType returns true for messages that are protocol obligations.
-// These are already rate-limited by timing windows, duplicate checks, or allowlists.
-func isExemptMessageType(msg sdk.Msg) bool {
-	switch msg.(type) {
-	// PoC duty messages (throttled by PocPeriodValidationDecorator window checks).
-	// MsgPoCV2StoreCommit is intentionally NOT exempt: it carries a
-	// count-proportional sybil-defense gas charge (see chargePoCV2StoreCommitGas
-	// in msg_server_poc_v2_commit.go) that requires the tx to pay fees.
-	case *inferencetypes.MsgSubmitPocBatch,
-		*inferencetypes.MsgSubmitPocValidationsV2,
-		*inferencetypes.MsgMLNodeWeightDistribution,
-		*inferencetypes.MsgSubmitSeed:
-		return true
+// unwrapFeeMsgs expands MsgExec wrappers so fee-group classification sees
+// inner messages. Nested MsgExec is recursed up to maxFeeExecDepth. Unpack
+// failure, a missing codec, or depth overflow returns an error — never a
+// leftover MsgExec (ungrouped would be free).
+const maxFeeExecDepth = 4
 
-	// Routine host duties on a fixed schedule. Not user-discretionary, not a
-	// sybil-attack vector. Rate-limited implicitly: hardware diff fires only
-	// on changes / per-block heartbeat, claim rewards is once per epoch per
-	// host. Excluding these from fees keeps the per-host yearly budget from
-	// being dominated by mechanical chain bookkeeping.
-	case *inferencetypes.MsgSubmitHardwareDiff,
-		*inferencetypes.MsgClaimRewards:
-		return true
+func unwrapFeeMsgs(msgs []sdk.Msg, ik *inferencemodulekeeper.Keeper) ([]sdk.Msg, error) {
+	return unwrapFeeMsgsAt(msgs, ik, 0)
+}
 
-	// Devshard escrow settlement is the protocol-side disbursement tx. It is
-	// allowlist-restricted (EscrowAllowListPermission, see permissions.go:123)
-	// and per-epoch capped via DevshardEscrowParams.MaxEscrowsPerEpoch. The
-	// MsgCreateDevshardEscrow counterpart is user-driven and intentionally
-	// NOT exempted — the escrow creator pays fees like any other user.
-	case *inferencetypes.MsgSettleDevshardEscrow:
-		return true
-
-	// BLS DKG protocol messages (epoch-scoped, duplicate-checked, deadline-enforced)
-	case *blstypes.MsgSubmitDealerPart,
-		*blstypes.MsgSubmitVerificationVector,
-		*blstypes.MsgSubmitGroupKeyValidationSignature,
-		*blstypes.MsgSubmitPartialSignature,
-		*blstypes.MsgRespondDealerComplaints:
-		return true
-
-	// NOTE: MsgRequestThresholdSignature is intentionally NOT exempt.
-	// It has no per-participant rate limit — anyone can request signatures
-	// with arbitrary RequestIds.
-
-	default:
-		return false
+func unwrapFeeMsgsAt(msgs []sdk.Msg, ik *inferencemodulekeeper.Keeper, depth int) ([]sdk.Msg, error) {
+	out := make([]sdk.Msg, 0, len(msgs))
+	for _, msg := range msgs {
+		execMsg, ok := msg.(*authztypes.MsgExec)
+		if !ok {
+			out = append(out, msg)
+			continue
+		}
+		if depth >= maxFeeExecDepth {
+			return nil, fmt.Errorf("nested MsgExec exceeds max depth %d", maxFeeExecDepth)
+		}
+		if ik == nil {
+			return nil, fmt.Errorf("MsgExec cannot be classified without a codec")
+		}
+		if len(execMsg.Msgs) == 0 {
+			return nil, fmt.Errorf("empty MsgExec cannot be classified")
+		}
+		inners := make([]sdk.Msg, 0, len(execMsg.Msgs))
+		for _, inner := range execMsg.Msgs {
+			var unwrapped sdk.Msg
+			if err := ik.Codec().UnpackAny(inner, &unwrapped); err != nil {
+				return nil, fmt.Errorf("failed to unpack MsgExec inner message: %w", err)
+			}
+			inners = append(inners, unwrapped)
+		}
+		nested, err := unwrapFeeMsgsAt(inners, ik, depth+1)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, nested...)
 	}
+	return out, nil
+}
+
+// FeeGroupRepeatedLenDecorator consumes extra gas for MsgGasRule.repeated_len
+// during ante so those rules run without each handler calling ChargeExtraGas.
+// stored_delta / stored_bytes still charge from handlers (canonical-state qty).
+type FeeGroupRepeatedLenDecorator struct {
+	InferenceKeeper *inferencemodulekeeper.Keeper
+}
+
+func (d FeeGroupRepeatedLenDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, simulate bool, next sdk.AnteHandler) (sdk.Context, error) {
+	if d.InferenceKeeper == nil {
+		return next(ctx, tx, simulate)
+	}
+	inners, err := unwrapFeeMsgs(tx.GetMsgs(), d.InferenceKeeper)
+	if err != nil {
+		return ctx, err
+	}
+	for _, msg := range inners {
+		if err := d.InferenceKeeper.ChargeMessageRuleGas(ctx, msg); err != nil {
+			return ctx, err
+		}
+	}
+	return next(ctx, tx, simulate)
 }
 
 // --- Custom TxFeeChecker ---
@@ -181,24 +200,31 @@ func GonkaFeeChecker(inferenceKeeper *inferencemodulekeeper.Keeper) ante.TxFeeCh
 		feeCoins := feeTx.GetFee()
 		gas := feeTx.GetGas()
 
-		// Read consensus-level minimum gas price from chain state.
-		var minGasPriceNgonka uint64
+		var fp *inferencetypes.FeeParams
 		if inferenceKeeper != nil {
 			params, err := inferenceKeeper.GetParams(ctx)
-			if err == nil && params.FeeParams != nil {
-				minGasPriceNgonka = params.FeeParams.MinGasPriceNgonka
+			if err == nil {
+				fp = params.FeeParams
 			}
 		}
 
-		// If min gas price is 0 (e.g., during genesis or if governance sets it to 0),
-		// fall through to accept any fee.
-		if minGasPriceNgonka == 0 {
+		inners, err := unwrapFeeMsgs(tx.GetMsgs(), inferenceKeeper)
+		if err != nil {
+			return nil, 0, errorsmod.Wrap(sdkerrors.ErrInvalidRequest, err.Error())
+		}
+
+		price := uint64(0)
+		if fp != nil {
+			price = fp.EnabledPayingPrice(inners, inferencetypes.IsNetworkDuty)
+		}
+
+		if price == 0 {
 			priority := getTxPriority(feeCoins, gas)
 			return feeCoins, priority, nil
 		}
 
 		// Calculate required fee using big-int math to avoid uint64 overflow.
-		requiredAmount := math.NewIntFromUint64(gas).Mul(math.NewIntFromUint64(minGasPriceNgonka))
+		requiredAmount := math.NewIntFromUint64(gas).Mul(math.NewIntFromUint64(price))
 		requiredFee := sdk.NewCoin("ngonka", requiredAmount)
 
 		// Check the ngonka amount specifically — sdk.Coins.IsAnyGTE compares
@@ -209,7 +235,7 @@ func GonkaFeeChecker(inferenceKeeper *inferencemodulekeeper.Keeper) ante.TxFeeCh
 		if paidNgonka.LT(requiredFee.Amount) {
 			return nil, 0, errorsmod.Wrapf(sdkerrors.ErrInsufficientFee,
 				"insufficient fee: got %s, required at least %s (gas=%d, min_gas_price=%dngonka)",
-				feeCoins, requiredFee, gas, minGasPriceNgonka)
+				feeCoins, requiredFee, gas, price)
 		}
 
 		priority := getTxPriority(feeCoins, gas)

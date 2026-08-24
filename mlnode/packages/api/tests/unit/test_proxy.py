@@ -1,21 +1,17 @@
 import pytest
 import asyncio
 import httpx
+import pytest_asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 from fastapi import Request
-from fastapi.testclient import TestClient
 from aiohttp import web
 
 from api.proxy import (
     ProxyMiddleware, 
-    setup_vllm_proxy, 
+    setup_vllm_proxy,
     start_vllm_proxy, 
     stop_vllm_proxy,
-    shutdown_event,
-    active_proxy_tasks,
-    tasks_lock,
     _proxy_request_to_backend,
-    _release_vllm_backend,
 )
 import api.proxy as proxy_module
 
@@ -51,7 +47,7 @@ async def test_proxy_middleware_routes_v1_to_vllm(proxy_middleware, mock_request
         
         # Test /v1 routing
         mock_request.url.path = "/v1/models"
-        result = await proxy_middleware.dispatch(mock_request, call_next)
+        await proxy_middleware.dispatch(mock_request, call_next)
         
         # Should call proxy, not call_next
         mock_proxy.assert_called_once_with(mock_request)
@@ -68,7 +64,7 @@ async def test_proxy_middleware_routes_api_to_main(proxy_middleware, mock_reques
     
     # Test /api routing
     mock_request.url.path = "/api/v1/inference"
-    result = await proxy_middleware.dispatch(mock_request, call_next)
+    await proxy_middleware.dispatch(mock_request, call_next)
     
     # Should call call_next, not proxy
     call_next.assert_called_once_with(mock_request)
@@ -84,7 +80,7 @@ async def test_proxy_middleware_default_routing(proxy_middleware, mock_request):
     
     # Test default routing
     mock_request.url.path = "/health"
-    result = await proxy_middleware.dispatch(mock_request, call_next)
+    await proxy_middleware.dispatch(mock_request, call_next)
     
     # Should call call_next
     call_next.assert_called_once_with(mock_request)
@@ -160,30 +156,27 @@ async def test_start_stop_vllm_proxy():
 # Graceful Shutdown Tests
 # ============================================================================
 
-@pytest.fixture
+@pytest_asyncio.fixture
 async def mock_backend_server():
-    """Create a mock aiohttp backend server for testing."""
     app = web.Application()
-    
+    release = asyncio.Event()
+
     async def slow_handler(request):
-        """Simulate a slow inference request."""
-        await asyncio.sleep(10)  # Long running operation
-        return web.Response(text="completed")
-    
-    async def instant_handler(request):
-        """Simulate an instant response."""
-        return web.Response(text="ok")
-    
-    app.router.add_get('/slow', slow_handler)
-    app.router.add_get('/instant', instant_handler)
-    
+        response = web.StreamResponse()
+        await response.prepare(request)
+        await release.wait()
+        return response
+
+    app.router.add_get("/slow", slow_handler)
+
     runner = web.AppRunner(app)
     await runner.setup()
-    site = web.TCPSite(runner, '127.0.0.1', 8765)
+    site = web.TCPSite(runner, "127.0.0.1", 8765)
     await site.start()
-    
-    yield 'http://127.0.0.1:8765'
-    
+
+    yield 8765
+
+    release.set()
     await runner.cleanup()
 
 
@@ -239,66 +232,51 @@ async def reset_proxy_state():
 
 @pytest.mark.asyncio
 async def test_task_cancellation_during_active_request(mock_backend_server):
-    """Test that active proxy tasks are cancelled during shutdown."""
-    # Setup backend
-    setup_vllm_proxy([5001])
-    proxy_module.vllm_healthy[5001] = True
-    await start_vllm_proxy()
-    
-    # Create a mock request
+    setup_vllm_proxy([mock_backend_server])
+    proxy_module.vllm_healthy[mock_backend_server] = True
+    proxy_module.vllm_client = httpx.AsyncClient()
+
     mock_request = MagicMock(spec=Request)
     mock_request.method = "GET"
     mock_request.headers = {}
     mock_request.query_params = {}
-    mock_request.stream = AsyncMock(return_value=iter([]))
-    
-    # Track streaming task
-    streaming_started = asyncio.Event()
-    streaming_task = None
-    
+
+    async def empty_body():
+        if False:
+            yield b""
+
+    mock_request.stream = empty_body
+
     async def track_and_stream():
-        nonlocal streaming_task
-        # Start the proxy request
         try:
             response = await _proxy_request_to_backend(mock_request, "/slow")
-            streaming_started.set()
-            
-            # Consume the response (this will register the task)
-            # For StreamingResponse, body_iterator is the generator
-            if hasattr(response, 'body_iterator'):
-                async for chunk in response.body_iterator:
-                    pass
+            async for _ in response.body_iterator:
+                pass
         except asyncio.CancelledError:
-            pass  # Expected during shutdown
-    
-    # Start the streaming task
+            pass
+
     streaming_task = asyncio.create_task(track_and_stream())
-    
-    # Wait a bit for task registration
-    await asyncio.sleep(0.1)
-    
-    # Verify task is registered
-    async with proxy_module.tasks_lock:
-        initial_task_count = len(proxy_module.active_proxy_tasks)
-    
-    # Trigger shutdown
+    for _ in range(100):
+        async with proxy_module.tasks_lock:
+            if streaming_task in proxy_module.active_proxy_tasks:
+                break
+        await asyncio.sleep(0.01)
+    else:
+        pytest.fail("streaming task was not registered")
+
     proxy_module.shutdown_event.set()
-    
-    # Cancel the streaming task (simulating what manager would do)
+
     async with proxy_module.tasks_lock:
         tasks = list(proxy_module.active_proxy_tasks)
         proxy_module.active_proxy_tasks.clear()
-    
+
     for task in tasks:
         task.cancel()
-    
-    # Wait for cancellation to complete
+
     await asyncio.gather(*tasks, return_exceptions=True)
-    
-    # Verify tasks were cleared
     async with proxy_module.tasks_lock:
-        assert len(proxy_module.active_proxy_tasks) == 0
-    
+        assert not proxy_module.active_proxy_tasks
+
     await stop_vllm_proxy()
 
 
@@ -442,4 +420,61 @@ async def test_resource_cleanup_verification():
     
     # Verify backend counts reset
     for port in [5001, 5002]:
-        assert proxy_module.vllm_counts[port] == 0 
+        assert proxy_module.vllm_counts[port] == 0
+
+# ---------------------------------------------------------------------------
+# Health-probe damping (_apply_health_damping)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def clean_health_state():
+    """Reset the module-level health dicts around each damping test."""
+    saved_healthy = dict(proxy_module.vllm_healthy)
+    saved_streak = dict(proxy_module.vllm_health_fail_streak)
+    proxy_module.vllm_healthy.clear()
+    proxy_module.vllm_health_fail_streak.clear()
+    yield
+    proxy_module.vllm_healthy.clear()
+    proxy_module.vllm_healthy.update(saved_healthy)
+    proxy_module.vllm_health_fail_streak.clear()
+    proxy_module.vllm_health_fail_streak.update(saved_streak)
+
+
+def _drive(port, probes, start_healthy):
+    """Feed a probe sequence through the damping and record verdicts, updating
+    vllm_healthy the same way _health_check_vllm does."""
+    proxy_module.vllm_healthy[port] = start_healthy
+    out = []
+    for probe in probes:
+        ok = proxy_module._apply_health_damping(port, probe)
+        proxy_module.vllm_healthy[port] = ok
+        out.append(ok)
+    return out
+
+
+def test_damping_startup_stays_down_until_first_success(clean_health_state):
+    assert _drive(5001, [False, False, True], start_healthy=False) == [False, False, True]
+
+
+def test_damping_two_blips_still_healthy(clean_health_state):
+    """Missed /health deadlines on a busy-but-alive engine (up to
+    HEALTH_FAIL_STREAK-1 in a row) must not stop the compatibility server."""
+    assert _drive(5001, [True, False, False, True], start_healthy=True) == [True, True, True, True]
+
+
+def test_damping_three_consecutive_failures_is_down(clean_health_state):
+    assert _drive(5001, [True, False, False, False], start_healthy=True) == [True, True, True, False]
+
+
+def test_damping_recovers_instantly_on_success(clean_health_state):
+    assert _drive(5001, [False, False, False, True], start_healthy=True) == [True, True, False, True]
+
+
+def test_damping_ports_are_independent(clean_health_state):
+    proxy_module.vllm_healthy.update({5001: True, 5002: True})
+    # 5001 fails 3x -> down; 5002 keeps succeeding -> up
+    for _ in range(3):
+        proxy_module.vllm_healthy[5001] = proxy_module._apply_health_damping(5001, False)
+        proxy_module.vllm_healthy[5002] = proxy_module._apply_health_damping(5002, True)
+    assert proxy_module.vllm_healthy[5001] is False
+    assert proxy_module.vllm_healthy[5002] is True

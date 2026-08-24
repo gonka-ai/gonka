@@ -126,6 +126,8 @@ var (
 	ClaimRecipientsPrefix                  = collections.NewPrefix(106)
 	ClaimRecipientsByEpochPrefix           = collections.NewPrefix(107)
 	DelegationRewardTransferSnapshotPrefix = collections.NewPrefix(108)
+	// Prefix 109 was reserved for an unused period-base KeySet and is left
+	// unused so it is not silently reused.
 	// Trainshard prefixes start at 130, above ASCII, so they never collide with legacy string keys like ParamsKey
 	TrainshardsPrefix               = collections.NewPrefix(130)
 	TrainshardCounterPrefix         = collections.NewPrefix(131)
