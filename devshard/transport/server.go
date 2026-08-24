@@ -667,7 +667,7 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 		resp.Signature = sig
 		resp.VoterSlot = voterSlot
 	} else {
-		mempoolBytes, mErr := DevshardTxsToBytes(s.host.MempoolTxs())
+		mempoolBytes, mErr := DevshardTxsToBytes(host.RecoveryTxsFor(s.host.MempoolTxs(), req.InferenceID))
 		if mErr != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, mErr.Error())
 		}
@@ -735,7 +735,7 @@ func (s *Server) HandleChallengeReceipt(c echo.Context) (err error) {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
-	mempoolBytes, err := DevshardTxsToBytes(s.host.MempoolTxs())
+	mempoolBytes, err := DevshardTxsToBytes(host.RecoveryTxsFor(s.host.MempoolTxs(), req.InferenceID))
 	if err != nil {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}

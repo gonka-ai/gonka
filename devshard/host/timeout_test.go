@@ -280,7 +280,15 @@ func TestVerifyRefused_CopiesChallengeMempool(t *testing.T) {
 	}}}
 	executor := &mockExecutorClient{
 		challengeReceipt: []byte("receipt-sig"),
-		challengeMempool: []*types.DevshardTx{confirm},
+		challengeMempool: []*types.DevshardTx{
+			confirm,
+			{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+				InferenceId: 99,
+				ExecutorSig: []byte("other-receipt"),
+				ConfirmedAt: 1,
+			}}},
+			{},
+		},
 	}
 	verifierPool := NewMempool()
 
@@ -292,6 +300,11 @@ func TestVerifyRefused_CopiesChallengeMempool(t *testing.T) {
 	require.NotNil(t, got, "verifier pool must copy MsgConfirmStart from challenge mempool")
 	require.Equal(t, types.TxHash(confirm), types.TxHash(got))
 	require.Equal(t, []byte("receipt-sig"), got.GetConfirmStart().ExecutorSig)
+	for _, tx := range verifierPool.Txs() {
+		if cs := tx.GetConfirmStart(); cs != nil {
+			require.Equal(t, uint64(1), cs.InferenceId, "verifier must not copy ConfirmStart for other inferences")
+		}
+	}
 
 	accept, err = VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), nil, nil, executor, verifierPool, st.Config, deadlinePassedRefused(st, 1))
 	require.NoError(t, err)
@@ -303,5 +316,15 @@ func TestVerifyRefused_CopiesChallengeMempool(t *testing.T) {
 		}
 	}
 	require.Equal(t, 1, confirmCount, "second challenge must not stack a second ConfirmStart")
+}
+
+func TestRecoveryTxsFor_FiltersByInferenceID(t *testing.T) {
+	confirm1 := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{InferenceId: 1}}}
+	confirm2 := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{InferenceId: 2}}}
+	finish1 := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: 1}}}
+	empty := &types.DevshardTx{}
+
+	got := RecoveryTxsFor([]*types.DevshardTx{nil, empty, confirm2, confirm1, finish1}, 1)
+	require.Equal(t, []*types.DevshardTx{confirm1, finish1}, got)
 }
 

@@ -579,6 +579,12 @@ func TestServer_ChallengeReceipt_ReturnsRecoveryMempool(t *testing.T) {
 	})
 	require.NoError(t, err)
 
+	env.server.host.AddTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 99,
+		ExecutorSig: []byte("other"),
+		ConfirmedAt: 1,
+	}}})
+
 	rec := env.doPostAs(t, "/devshard/v2/sessions/escrow-1/challenge-receipt", body, env.hostSigner)
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 
@@ -590,6 +596,8 @@ func TestServer_ChallengeReceipt_ReturnsRecoveryMempool(t *testing.T) {
 	txs, err := DevshardTxsFromBytes(resp.Mempool)
 	require.NoError(t, err)
 	require.True(t, hasConfirmStartTx(txs, 1), "recovery mempool must include MsgConfirmStart")
+	require.False(t, hasConfirmStartTx(txs, 99), "recovery mempool must not include other inferences")
+	requireRecoveryOnlyFor(t, txs, 1)
 }
 
 func hasConfirmStartTx(txs []*types.DevshardTx, inferenceID uint64) bool {
@@ -599,6 +607,21 @@ func hasConfirmStartTx(txs []*types.DevshardTx, inferenceID uint64) bool {
 		}
 	}
 	return false
+}
+
+func requireRecoveryOnlyFor(t *testing.T, txs []*types.DevshardTx, id uint64) {
+	t.Helper()
+	require.NotEmpty(t, txs)
+	for _, tx := range txs {
+		switch {
+		case tx.GetConfirmStart() != nil:
+			require.Equal(t, id, tx.GetConfirmStart().InferenceId)
+		case tx.GetFinishInference() != nil:
+			require.Equal(t, id, tx.GetFinishInference().InferenceId)
+		default:
+			t.Fatalf("unexpected recovery tx type: %T", tx.GetTx())
+		}
+	}
 }
 
 func TestServer_NonExecutor_SSE(t *testing.T) {

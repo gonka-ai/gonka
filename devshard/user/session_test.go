@@ -1253,9 +1253,17 @@ func TestCollectTimeoutVotes_CollectsRejectMempool(t *testing.T) {
 		ConfirmedAt: 1000,
 	}}}
 
+	other := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 999,
+		ExecutorSig: []byte("other"),
+		ConfirmedAt: 1,
+	}}}
+	empty := &types.DevshardTx{}
+	mixed := []*types.DevshardTx{empty, other, confirm}
+
 	verifiers := map[int]TimeoutVerifier{
-		0: &mockTimeoutVerifier{accept: false, mempool: []*types.DevshardTx{confirm}},
-		2: &mockTimeoutVerifier{accept: false, mempool: []*types.DevshardTx{confirm}},
+		0: &mockTimeoutVerifier{accept: false, mempool: mixed},
+		2: &mockTimeoutVerifier{accept: false, mempool: mixed},
 	}
 
 	votes, recovery, err := session.CollectTimeoutVotes(context.Background(), 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
@@ -1277,6 +1285,8 @@ func TestCollectTimeoutVotes_CollectsRejectMempool(t *testing.T) {
 	}
 	require.NotNil(t, got, "reject votes must surface recovery ConfirmStart")
 	require.Equal(t, []byte("executor-receipt"), got.ExecutorSig)
+	require.Len(t, recovery, 1, "recovery must drop empty txs and ConfirmStart for other inferences")
+	require.Equal(t, uint64(1), recovery[0].GetConfirmStart().InferenceId)
 }
 
 func TestHandleTimeout_RefusedReject_PublishesConfirmStart(t *testing.T) {
@@ -1328,4 +1338,40 @@ func TestHandleTimeout_RefusedReject_PublishesConfirmStart(t *testing.T) {
 	peerRec, ok := peerHost.SnapshotState().Inferences[prepared.diff.Nonce]
 	require.True(t, ok)
 	require.Equal(t, types.StatusStarted, peerRec.Status, "peer SM must apply ConfirmStart from the recovery diff")
+}
+
+func TestHandleTimeout_RefusedReject_UnrelatedMempool(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	}
+	prepared, err := session.PrepareInference(params)
+	require.NoError(t, err)
+
+	payload := &host.InferencePayload{
+		Prompt:      params.Prompt,
+		Model:       params.Model,
+		InputLength: params.InputLength,
+		MaxTokens:   params.MaxTokens,
+		StartedAt:   params.StartedAt,
+	}
+
+	unrelated := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 999,
+		ExecutorSig: []byte("other"),
+		ConfirmedAt: 1,
+	}}}
+	for i, c := range session.clients {
+		session.clients[i] = &timeoutRecoveryClient{HostClient: c, mempool: []*types.DevshardTx{unrelated}}
+	}
+
+	_, err = session.HandleTimeout(ctx, prepared.diff.Nonce, time.Unix(0, 0), payload)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "insufficient votes")
+
+	rec, ok := session.StateMachine().SnapshotState().Inferences[prepared.diff.Nonce]
+	require.True(t, ok)
+	require.Equal(t, types.StatusPending, rec.Status, "unrelated recovery txs must not be treated as success")
 }

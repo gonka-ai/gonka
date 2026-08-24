@@ -22,7 +22,7 @@ import (
 	"devshard/types"
 )
 
-func setupClientTestEnv(t *testing.T) (*HTTPClient, *httptest.Server, *signing.Secp256k1Signer, []types.SlotAssignment) {
+func setupClientTestEnv(t *testing.T) (*HTTPClient, *httptest.Server, *signing.Secp256k1Signer, []types.SlotAssignment, *host.Host) {
 	t.Helper()
 	hostSigner := testutil.MustGenerateKey(t)
 	userSigner := testutil.MustGenerateKey(t)
@@ -63,11 +63,11 @@ func setupClientTestEnv(t *testing.T) (*HTTPClient, *httptest.Server, *signing.S
 	// (owner is allowed on challenge-receipt). Without this, executorClient
 	// is nil and a refused timeout is accepted.
 	srv.SetPeerClients(map[int]*HTTPClient{0: client})
-	return client, ts, userSigner, group
+	return client, ts, userSigner, group, h
 }
 
 func TestHTTPClient_Send_RoundTrip(t *testing.T) {
-	client, _, userSigner, _ := setupClientTestEnv(t)
+	client, _, userSigner, _, _ := setupClientTestEnv(t)
 	ctx := context.Background()
 
 	diff := testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
@@ -100,7 +100,7 @@ func TestHTTPClient_Send_RoundTrip(t *testing.T) {
 }
 
 func TestHTTPClient_ChallengeReceipt_ReturnsRecoveryMempool(t *testing.T) {
-	client, _, userSigner, _ := setupClientTestEnv(t)
+	client, _, userSigner, _, _ := setupClientTestEnv(t)
 	ctx := context.Background()
 
 	diff := testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
@@ -129,8 +129,14 @@ func TestHTTPClient_ChallengeReceipt_ReturnsRecoveryMempool(t *testing.T) {
 }
 
 func TestHTTPClient_VerifyTimeout_ReturnsRecoveryMempool(t *testing.T) {
-	client, _, userSigner, _ := setupClientTestEnv(t)
+	client, _, userSigner, _, h := setupClientTestEnv(t)
 	ctx := context.Background()
+
+	h.AddTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 99,
+		ExecutorSig: []byte("other"),
+		ConfirmedAt: 1,
+	}}})
 
 	diff := testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
 	payload := &host.InferencePayload{
@@ -154,6 +160,7 @@ func TestHTTPClient_VerifyTimeout_ReturnsRecoveryMempool(t *testing.T) {
 		}
 	}
 	require.NotNil(t, got, "verify-timeout mempool must include MsgConfirmStart")
+	requireRecoveryOnlyFor(t, mempool, 1)
 }
 
 func TestHTTPClient_Send_ReturnsUpstreamStatusError(t *testing.T) {
@@ -195,7 +202,7 @@ func TestHTTPClient_Send_NoPayloadUsesQueryTimeout(t *testing.T) {
 }
 
 func TestHTTPClient_GetDiffs(t *testing.T) {
-	client, _, userSigner, _ := setupClientTestEnv(t)
+	client, _, userSigner, _, _ := setupClientTestEnv(t)
 	ctx := context.Background()
 
 	// Send an inference to create a stored diff.
@@ -221,7 +228,7 @@ func TestHTTPClient_GetDiffs(t *testing.T) {
 }
 
 func TestHTTPClient_GetMempool(t *testing.T) {
-	client, _, userSigner, _ := setupClientTestEnv(t)
+	client, _, userSigner, _, _ := setupClientTestEnv(t)
 	ctx := context.Background()
 
 	// Send an inference to populate mempool with MsgFinishInference.
@@ -283,7 +290,7 @@ func (r *truncatedReader) Read(p []byte) (int, error) {
 }
 
 func TestHTTPClient_Send_SSE(t *testing.T) {
-	client, _, userSigner, _ := setupClientTestEnv(t)
+	client, _, userSigner, _, _ := setupClientTestEnv(t)
 	ctx := context.Background()
 
 	var streamLines []string
@@ -342,7 +349,7 @@ func (s *stubAdmissionController) ObserveTransportFailure(participantKey, path s
 }
 
 func TestHTTPClient_Send_UsesAdmissionController(t *testing.T) {
-	client, _, userSigner, _ := setupClientTestEnv(t)
+	client, _, userSigner, _, _ := setupClientTestEnv(t)
 	ctx := context.Background()
 	admission := &stubAdmissionController{err: fmt.Errorf("participant request budget exhausted")}
 	client.config.ParticipantKey = "shared-host"

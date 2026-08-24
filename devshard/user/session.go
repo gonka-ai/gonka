@@ -2150,9 +2150,13 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 		return result, fmt.Errorf("inference %d timed out: %s", nonce, reason)
 	}
 
+	recovery = host.RecoveryTxsFor(recovery, nonce)
 	if reason == types.TimeoutReason_TIMEOUT_REASON_REFUSED && len(recovery) > 0 {
 		s.mu.Lock()
 		for _, tx := range recovery {
+			if tx == nil {
+				continue
+			}
 			s.addPendingTx(tx)
 		}
 		s.mu.Unlock()
@@ -2404,14 +2408,15 @@ func (s *Session) CollectTimeoutVotes(
 			)
 		} else {
 			rejects++
-			for _, tx := range res.mempool {
+			for _, tx := range host.RecoveryTxsFor(res.mempool, inferenceID) {
 				key := devshardTxKey(tx)
-				if key != "" {
-					if _, dup := seenRecovery[key]; dup {
-						continue
-					}
-					seenRecovery[key] = struct{}{}
+				if key == "" {
+					continue
 				}
+				if _, dup := seenRecovery[key]; dup {
+					continue
+				}
+				seenRecovery[key] = struct{}{}
 				recovery = append(recovery, tx)
 			}
 			logging.Stage(ctx, "timeout_vote_result",

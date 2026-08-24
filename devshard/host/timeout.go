@@ -29,6 +29,26 @@ type TxSink interface {
 	AddTx(tx *types.DevshardTx)
 }
 
+// RecoveryTxsFor returns ConfirmStart and FinishInference txs for inferenceID.
+// Challenge and verify-timeout recovery copy only these; the rest of a host
+// mempool snapshot is not recovery-relevant.
+func RecoveryTxsFor(txs []*types.DevshardTx, inferenceID uint64) []*types.DevshardTx {
+	var out []*types.DevshardTx
+	for _, tx := range txs {
+		if tx == nil {
+			continue
+		}
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+			out = append(out, tx)
+			continue
+		}
+		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+			out = append(out, tx)
+		}
+	}
+	return out
+}
+
 // VerifyRefusedTimeout checks if a refused timeout is valid.
 //
 // Flow:
@@ -95,10 +115,8 @@ func VerifyRefusedTimeout(
 			// Copy executor recovery txs into the verifier pool. Same bytes as
 			// the executor queued — do not mint a new ConfirmStart from receipt.
 			if ingest != nil {
-				for _, tx := range mempool {
-					if tx != nil {
-						ingest.AddTx(tx)
-					}
+				for _, tx := range RecoveryTxsFor(mempool, inferenceID) {
+					ingest.AddTx(tx)
 				}
 			}
 			return false, nil // executor produced receipt -> reject timeout
