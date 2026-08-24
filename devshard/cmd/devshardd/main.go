@@ -43,17 +43,22 @@ func run(parent context.Context, args []string, protocolVersion, binaryVersion s
 		return err
 	}
 
-	slog.SetDefault(slog.New(newPrefixedTextHandler(cfg.BinaryLogVersion, os.Stderr, slog.LevelInfo)))
+	observability.InstallLogger(os.Getenv("LOG_FORMAT"))
 
 	observability.SetRuntime(cfg.BinaryLogVersion, cfg.ProtocolVersion, "standalone")
+	// Init degrades in-process on exporter/resource failure (Ready=false);
+	// never couple host availability to OTel config.
 	shutdownObs, err := observability.Init(parent, observability.Config{
 		ServiceName:    observability.ServiceName,
 		ServiceVersion: cfg.ProtocolVersion,
 	})
 	if err != nil {
-		return err
+		slog.Error("otel init", "error", err)
 	}
 	defer func() {
+		if shutdownObs == nil {
+			return
+		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = shutdownObs(shutdownCtx)

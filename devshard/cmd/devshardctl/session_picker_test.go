@@ -9,7 +9,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel/trace"
 
+	"devshard/observability"
 	"devshard/user"
 )
 
@@ -25,9 +27,10 @@ type fakeGhost struct {
 	kinds   []ghostKind
 	hosts   []int
 	nonces  []uint64
+	ctxs    []context.Context
 }
 
-func (g *fakeGhost) dispatch(prepared *user.PreparedInference, kind ghostKind, reason string) {
+func (g *fakeGhost) dispatch(ctx context.Context, prepared *user.PreparedInference, kind ghostKind, reason string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	atomic.AddInt32(&g.count, 1)
@@ -35,6 +38,16 @@ func (g *fakeGhost) dispatch(prepared *user.PreparedInference, kind ghostKind, r
 	g.kinds = append(g.kinds, kind)
 	g.hosts = append(g.hosts, prepared.HostIdx())
 	g.nonces = append(g.nonces, prepared.Nonce())
+	g.ctxs = append(g.ctxs, ctx)
+}
+
+func (g *fakeGhost) firstCtx() context.Context {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if len(g.ctxs) == 0 {
+		return nil
+	}
+	return g.ctxs[0]
 }
 
 func (g *fakeGhost) kindCount(want ghostKind) int {
@@ -486,6 +499,41 @@ func TestPicker_ThrottledHost_BurnsGhostNoSend(t *testing.T) {
 	// participant_throttled_no_send reason string so operators can
 	// distinguish it in logs from PoC / stale-exclude burns.
 	require.Contains(t, ghost.reasons, ghostThrottled.reason())
+}
+
+// TestPicker_GhostBurnInheritsWaitingRequestTrace pins T3.5 attribution: the
+// burn exists because the queued request could not be dispatched to that host,
+// so it must be traced to that request rather than to a detached context.
+func TestPicker_GhostBurnInheritsWaitingRequestTrace(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	env.proxy.redundancy.picker.stop()
+
+	throttledKey := env.session.HostParticipantKey(1)
+	checker := func(key string) bool { return key == throttledKey }
+
+	ghost := &fakeGhost{}
+	p := newSessionPicker(env.session, "llama", ghost.dispatch, checker, nil)
+	p.start()
+	t.Cleanup(p.stop)
+
+	withAttemptSpanRecorder(t)
+	reqCtx, span := observability.StartGatewayRequest(context.Background())
+	defer span.End()
+
+	req := defaultPickerRequest()
+	req.ctx = reqCtx
+	p.submit(req)
+
+	res := waitReply(t, req, 2*time.Second)
+	require.NoError(t, res.err)
+	require.GreaterOrEqual(t, ghost.kindCount(ghostThrottled), 1)
+
+	burnCtx := ghost.firstCtx()
+	require.NotNil(t, burnCtx)
+	require.Equal(t,
+		trace.SpanContextFromContext(reqCtx).TraceID(),
+		trace.SpanContextFromContext(burnCtx).TraceID(),
+		"ghost burn must share the trace of the request it is delaying")
 }
 
 func TestPicker_CapabilityBlockedHost_BurnsGhostNoSend(t *testing.T) {

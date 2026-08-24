@@ -28,17 +28,19 @@ type FaultConfig struct {
 	Latency          time.Duration
 	HTTPStatus       int  // 0 = OK
 	DropFirstChunk   bool
-	PartialStream    bool // omit final chunk + [DONE]
+	PartialStream    bool   // omit final chunk + [DONE]
+	SSEErrorMessage  string // if set: HTTP 200 stream with OpenAI/vLLM error event + [DONE]
 	StreamChunkDelay time.Duration
 }
 
 // FaultPatch is the JSON body for POST /testenv/fault.
 type FaultPatch struct {
-	LatencyMs        *int  `json:"latency_ms,omitempty"`
-	HTTPStatus       *int  `json:"http_status,omitempty"`
-	DropFirstChunk   *bool `json:"drop_first_chunk,omitempty"`
-	PartialStream    *bool `json:"partial_stream,omitempty"`
-	StreamChunkDelay *int  `json:"stream_chunk_delay_ms,omitempty"`
+	LatencyMs        *int    `json:"latency_ms,omitempty"`
+	HTTPStatus       *int    `json:"http_status,omitempty"`
+	DropFirstChunk   *bool   `json:"drop_first_chunk,omitempty"`
+	PartialStream    *bool   `json:"partial_stream,omitempty"`
+	SSEErrorMessage  *string `json:"sse_error_message,omitempty"`
+	StreamChunkDelay *int    `json:"stream_chunk_delay_ms,omitempty"`
 }
 
 func (p FaultPatch) apply(dst *FaultConfig) {
@@ -54,8 +56,30 @@ func (p FaultPatch) apply(dst *FaultConfig) {
 	if p.PartialStream != nil {
 		dst.PartialStream = *p.PartialStream
 	}
+	if p.SSEErrorMessage != nil {
+		dst.SSEErrorMessage = *p.SSEErrorMessage
+	}
 	if p.StreamChunkDelay != nil {
 		dst.StreamChunkDelay = time.Duration(*p.StreamChunkDelay) * time.Millisecond
+	}
+}
+
+// OpenAIErrorBody is the nested OpenAI/vLLM error JSON shape.
+func OpenAIErrorBody(status int, message string) map[string]any {
+	if message == "" {
+		message = "mock-openai fault injection"
+	}
+	typ := "InternalServerError"
+	if status >= 400 && status < 500 {
+		typ = "BadRequestError"
+	}
+	return map[string]any{
+		"error": map[string]any{
+			"message": message,
+			"type":    typ,
+			"param":   nil,
+			"code":    status,
+		},
 	}
 }
 

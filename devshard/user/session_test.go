@@ -118,7 +118,7 @@ func TestPrepareInference_StartInferenceIsMandatory(t *testing.T) {
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.Error(t, err)
 	require.Nil(t, prepared)
 	require.ErrorContains(t, err, "mandatory start inference")

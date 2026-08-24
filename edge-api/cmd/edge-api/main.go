@@ -26,6 +26,7 @@ const (
 )
 
 func main() {
+	observability.InstallLogger(os.Getenv("LOG_FORMAT"))
 	cfg, err := loadConfig()
 	if err != nil {
 		slog.Error("config", "error", err)
@@ -41,14 +42,18 @@ func main() {
 		"chain_rpc", cfg.ChainRPCURL,
 	)
 
+	// Init degrades in-process on exporter/resource failure (Ready=false);
+	// never couple edge-api availability to OTel config.
 	shutdownObs, err := observability.Init(context.Background(), observability.Config{
 		ServiceName: observability.ServiceName,
 	})
 	if err != nil {
 		slog.Error("otel init", "error", err)
-		os.Exit(1)
 	}
 	defer func() {
+		if shutdownObs == nil {
+			return
+		}
 		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 		defer cancel()
 		_ = shutdownObs(ctx)

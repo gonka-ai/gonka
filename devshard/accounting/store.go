@@ -207,7 +207,7 @@ func (t *Tracker) snapshot(retention uint64) storeSnapshot {
 	defer t.mu.Unlock()
 	now := t.nowUTC()
 	for _, escrow := range t.escrows {
-		escrow.refreshDerived(now)
+		escrow.refreshDerived(t, now)
 	}
 	t.updated = now
 	t.pruneLocked(retention)

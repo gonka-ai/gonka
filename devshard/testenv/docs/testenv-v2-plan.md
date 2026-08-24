@@ -906,7 +906,7 @@ starts stack with materialized keyrings (devshardd child healthy when binary + a
 
 ```bash
 cd devshard && go test ./testenv/gatewayphase/... ./testenv/citest/... -count=1
-TESTENV_GATEWAY_SMOKE=1 go test ./testenv/citest/ -run TestGatewayPhase7_Smoke -count=1
+TESTENV_GATEWAY_SMOKE=1 go test ./testenv/citest/ -run TestGatewaySingleHostSmoke -count=1
 ```
 
 **Exit:** ✅ gateway status + chat completion through router to devshardd; create escrow via
@@ -1007,7 +1007,7 @@ Helpers: `citest/harness/adversarial.go`. Fault APIs: `POST /testenv/escrow`, `/
 on mock-chain (proxied by mock-dapi); `POST /testenv/fault` on mock-openai.
 
 Run: `make citest-adversarial` or
-`TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestA1_|TestA2_|TestA3_|TestA4_'`.
+`TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestLostFirstChunk|TestMLUpstream5xx|TestStaleEscrow|TestBadWarmKey'`.
 
 **Exit:** ≥1 multi-host adversarial scenario in Go citest ✅ (A1–A4 on 2× versiond stack).
 

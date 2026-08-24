@@ -14,6 +14,8 @@ require (
 	github.com/cosmos/btcutil v1.0.5
 	github.com/cosmos/cosmos-sdk v0.53.3
 	github.com/cosmos/gogoproto v1.7.0
+	github.com/docker/docker v28.5.2+incompatible
+	github.com/docker/go-connections v0.6.0
 	github.com/ethereum/go-ethereum v1.17.2
 	github.com/goccy/go-json v0.10.5
 	github.com/jackc/pgx/v5 v5.8.0
@@ -25,7 +27,6 @@ require (
 	github.com/testcontainers/testcontainers-go v0.40.0
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.40.0
 	go.opentelemetry.io/otel v1.40.0
-	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.39.0
 	go.opentelemetry.io/otel/sdk v1.40.0
 	go.opentelemetry.io/otel/trace v1.40.0
 	golang.org/x/crypto v0.48.0
@@ -123,8 +124,6 @@ require (
 	github.com/dgraph-io/badger/v4 v4.2.0 // indirect
 	github.com/dgraph-io/ristretto v0.1.1 // indirect
 	github.com/distribution/reference v0.6.0 // indirect
-	github.com/docker/docker v28.5.2+incompatible // indirect
-	github.com/docker/go-connections v0.6.0 // indirect
 	github.com/docker/go-units v0.5.0 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/dvsekhvalnov/jose2go v1.6.0 // indirect
@@ -271,6 +270,7 @@ require (
 	go.opentelemetry.io/contrib/instrumentation/google.golang.org/grpc/otelgrpc v0.54.0 // indirect
 	go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp v0.63.0 // indirect
 	go.opentelemetry.io/otel/exporters/otlp/otlptrace v1.39.0 // indirect
+	go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc v1.39.0 // indirect
 	go.opentelemetry.io/otel/metric v1.40.0 // indirect
 	go.opentelemetry.io/otel/sdk/metric v1.40.0 // indirect
 	go.opentelemetry.io/proto/otlp v1.9.0 // indirect

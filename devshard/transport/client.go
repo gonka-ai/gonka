@@ -20,6 +20,7 @@ import (
 
 	"devshard/host"
 	"devshard/logging"
+	"devshard/observability"
 	"devshard/signing"
 	"devshard/types"
 
@@ -100,18 +101,21 @@ type requestAdmissionBodyObserver interface {
 }
 
 // ErrSSEStreamTruncated is returned when an SSE inference stream ends (clean EOF)
-// before the upstream emitted any terminator -- neither an OpenAI-style `data: [DONE]`
-// nor a protocol receipt event was observed. Treat it as truncation,
-// not as a successful completion: a typical cause is a peer / middlebox closing the
-// HTTP body early (HTTP/1.1 Connection: close, lying Content-Length, premature
-// HTTP/2 END_STREAM, idle-timeout on a proxy, etc.) which bufio readers cannot
-// distinguish from a normal end-of-response.
-var ErrSSEStreamTruncated = errors.New("sse stream ended without [DONE] or devshard_receipt")
+// without a clean completion:
+//   - no protocol receipt and no `data: [DONE]`, or
+//   - inference content was forwarded but `data: [DONE]` never arrived (receipt alone
+//     does not complete a content-bearing stream; hosts may salvage ML truncation
+//     by publishing finish while omitting [DONE]).
+// Treat it as truncation, not as a successful completion: typical causes include a
+// peer / middlebox closing the HTTP body early or an upstream abort mid-generation.
+var ErrSSEStreamTruncated = errors.New("sse stream ended without [DONE] or clean terminator")
 
 type UpstreamStatusError struct {
 	Path       string
 	StatusCode int
 	Body       string
+	// Headers are allowlisted response headers retained for empty-body diagnostics (T4a).
+	Headers map[string]string
 }
 
 func (e *UpstreamStatusError) Error() string {
@@ -249,6 +253,8 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 		return nil, fmt.Errorf("marshal json: %w", err)
 	}
 
+	// Nonce == inferenceId on the chat path; propagate as X-Inference-Id.
+	ctx = observability.WithInferenceID(ctx, req.Nonce)
 	resp, err := c.doPostRaw(ctx, "/sessions/"+c.escrowID+"/chat/completions", body)
 	if err != nil {
 		return nil, err
@@ -292,32 +298,44 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 //     ([DONE] or devshard_receipt) from a clean EOF that arrives *before* one.
 //     bufio.Scanner squashes io.EOF into a nil error, so the caller cannot tell
 //     a successful completion from a peer / middlebox closing the body early.
+type sseParseFlags struct {
+	sawReceipt           bool
+	sawDone              bool
+	forwardedInference   bool
+	writeErrLogged       bool
+	unexpectedLineLogged bool
+}
+
 func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
 	br := bufio.NewReaderSize(r, 64<<10)
 	var result host.HostResponse
-	var writeErrLogged bool
-	var unexpectedLineLogged bool
-	var sawTerminator bool // true once we observe [DONE] or a devshard_receipt event
+	var flags sseParseFlags
 
 	for {
 		raw, readErr := br.ReadBytes('\n')
 		if len(raw) > 0 {
 			line := string(bytes.TrimRight(raw, "\r\n"))
-			c.handleSSELine(line, stream, receiptHandler, &result, &writeErrLogged, &unexpectedLineLogged, &sawTerminator)
+			c.handleSSELine(line, stream, receiptHandler, &result, &flags)
 		}
 		if readErr != nil {
 			if readErr == io.EOF {
 				// A cancelled context (client disconnect, race resolved, drain)
 				// can surface as a clean EOF once the peer closes the body after
-				// we abort the request. The receipt event sets sawTerminator
-				// early, so without this check a cancelled stream that never
-				// carried content would be reported as a successful empty
-				// response and wrongly scored against the host. Report the
-				// cancellation as the error it is.
+				// we abort the request. The receipt event arrives early, so
+				// without this check a cancelled stream that never carried
+				// content would be reported as a successful empty response and
+				// wrongly scored against the host. Report the cancellation as
+				// the error it is.
 				if ctxErr := ctx.Err(); ctxErr != nil {
 					return &result, fmt.Errorf("read SSE stream: %w", ctxErr)
 				}
-				if !sawTerminator {
+				// Content-bearing streams require [DONE]. Receipt alone is not
+				// enough: hosts may publish finish from a truncated ML response
+				// while never emitting OpenAI [DONE].
+				if flags.forwardedInference && !flags.sawDone {
+					return &result, ErrSSEStreamTruncated
+				}
+				if !flags.sawReceipt && !flags.sawDone {
 					return &result, ErrSSEStreamTruncated
 				}
 				return &result, nil
@@ -335,17 +353,17 @@ func (c *HTTPClient) handleSSELine(
 	stream io.Writer,
 	receiptHandler func(),
 	result *host.HostResponse,
-	writeErrLogged, unexpectedLineLogged, sawTerminator *bool,
+	flags *sseParseFlags,
 ) {
 	if !strings.HasPrefix(line, "data: ") {
-		if line != "" && !strings.HasPrefix(line, ":") && !*unexpectedLineLogged {
+		if line != "" && !strings.HasPrefix(line, ":") && !flags.unexpectedLineLogged {
 			lineLen, lineHex := sseLineBytesForLog(line)
 			if strings.HasPrefix(line, "data:") {
 				logging.Warn("sse_data_line_missing_space", "subsystem", "transport", "escrow", c.escrowID, "line_prefix", truncate(line, 120), "line_len", lineLen, "line_hex", lineHex)
 			} else if strings.HasPrefix(line, "event:") || strings.HasPrefix(line, "id:") || strings.HasPrefix(line, "retry:") {
 				// Standard SSE fields we intentionally skip.
 			} else {
-				*unexpectedLineLogged = true
+				flags.unexpectedLineLogged = true
 				logging.Warn("sse_unexpected_line", "subsystem", "transport", "escrow", c.escrowID, "line_prefix", truncate(line, 120), "line_len", lineLen, "line_hex", lineHex)
 			}
 		}
@@ -353,9 +371,9 @@ func (c *HTTPClient) handleSSELine(
 	}
 	data := strings.TrimPrefix(line, "data: ")
 	if data == "[DONE]" {
-		*sawTerminator = true
-		if err := writeSSELine(stream, line); err != nil && !*writeErrLogged {
-			*writeErrLogged = true
+		flags.sawDone = true
+		if err := writeSSELine(stream, line); err != nil && !flags.writeErrLogged {
+			flags.writeErrLogged = true
 			logging.Warn("sse_write_failed", "subsystem", "transport", "escrow", c.escrowID, "event", "[DONE]", "error", err)
 		}
 		return
@@ -365,15 +383,16 @@ func (c *HTTPClient) handleSSELine(
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(data), &envelope); err != nil {
 		// Not JSON -- forward as-is.
-		if werr := writeSSELine(stream, line); werr != nil && !*writeErrLogged {
-			*writeErrLogged = true
+		flags.forwardedInference = true
+		if werr := writeSSELine(stream, line); werr != nil && !flags.writeErrLogged {
+			flags.writeErrLogged = true
 			logging.Warn("sse_write_failed", "subsystem", "transport", "escrow", c.escrowID, "event", "data", "error", werr)
 		}
 		return
 	}
 
 	if raw, key, ok := c.protocolEnvelope(envelope, "receipt"); ok {
-		*sawTerminator = true
+		flags.sawReceipt = true
 		var receipt DevshardReceiptEvent
 		if err := json.Unmarshal(raw, &receipt); err != nil {
 			logging.Warn("sse_receipt_unmarshal_failed", "subsystem", "transport", "escrow", c.escrowID, "event_key", key, "error", err)
@@ -424,8 +443,9 @@ func (c *HTTPClient) handleSSELine(
 	}
 
 	// Inference data line -- forward to callback.
-	if err := writeSSELine(stream, line); err != nil && !*writeErrLogged {
-		*writeErrLogged = true
+	flags.forwardedInference = true
+	if err := writeSSELine(stream, line); err != nil && !flags.writeErrLogged {
+		flags.writeErrLogged = true
 		logging.Warn("sse_write_failed", "subsystem", "transport", "escrow", c.escrowID, "event", "data", "error", err)
 	}
 }
@@ -505,6 +525,7 @@ func (c *HTTPClient) SendVerifyTimeout(ctx context.Context, req VerifyTimeoutReq
 func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.Diff) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
 	defer cancel()
+	ctx = observability.WithInferenceID(ctx, inferenceID)
 
 	djList := make([]DiffJSON, len(diffs))
 	for i, d := range diffs {
@@ -537,6 +558,7 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 
 // VerifyTimeout implements user.TimeoutVerifier over HTTP.
 func (c *HTTPClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff) (bool, []byte, uint32, error) {
+	ctx = observability.WithInferenceID(ctx, inferenceID)
 	var djList []DiffJSON
 	if len(diffs) > 0 {
 		djList = make([]DiffJSON, len(diffs))
@@ -626,6 +648,7 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(c.signatureHeader(), hex.EncodeToString(sig))
 	req.Header.Set(c.timestampHeader(), strconv.FormatInt(ts, 10))
+	observability.InjectOutboundHeaders(ctx, req.Header)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -641,6 +664,7 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*
 			Path:       path,
 			StatusCode: resp.StatusCode,
 			Body:       string(respBody),
+			Headers:    observability.FilterResponseHeaders(resp.Header),
 		}
 	}
 	c.observeResult(path, resp.StatusCode)
@@ -668,6 +692,7 @@ func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	observability.InjectOutboundHeaders(ctx, req.Header)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -683,6 +708,7 @@ func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
 			Path:       url,
 			StatusCode: resp.StatusCode,
 			Body:       string(respBody),
+			Headers:    observability.FilterResponseHeaders(resp.Header),
 		}
 	}
 	c.observeResult(url, resp.StatusCode)

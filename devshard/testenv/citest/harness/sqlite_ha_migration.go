@@ -18,9 +18,9 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// BootSQLiteHAMigrationStack boots the 2×versiond + Postgres stack patched for §3.3 Phase 0–1:
-// DEVSHARD_STORAGE_MODE=sqlite and VERSIOND_HOSTS=versiond-0 only. versiond-1 is stopped
-// so SQLite sessions land on the legacy host volume.
+// BootSQLiteHAMigrationStack boots the 2×versiond + Postgres stack in its
+// pre-migration shape: DEVSHARD_STORAGE_MODE=sqlite and VERSIOND_HOSTS=versiond-0
+// only. versiond-1 is stopped so SQLite sessions land on the legacy host volume.
 func BootSQLiteHAMigrationStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()
 	stack := NewStack(t, prefix)

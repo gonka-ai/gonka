@@ -4,12 +4,20 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 	"sync/atomic"
+
+	commonobs "common/observability"
 
 	"devshard/logging"
 )
 
-const RequestIDHeader = "X-Request-Id"
+const (
+	RequestIDHeader   = "X-Request-Id"
+	InferenceIDHeader = "X-Inference-Id"
+)
+
+type inferenceIDKey struct{}
 
 type Stage string
 type Where string
@@ -188,12 +196,22 @@ func SetRuntime(binary, version, mode string) {
 	currentRuntime.Store(runtimeInfo{binary: binary, version: version, mode: mode})
 }
 
+// BindRequestID stores the inbound X-Request-Id on ctx when present and valid,
+// preferring it over any ID already on the context. Invalid or absent inbound
+// values fall back to any existing ctx id, otherwise a fresh id is minted.
+// Preferring a valid inbound header keeps gateway and host logs on one request_id.
 func BindRequestID(ctx context.Context, inboundID string) context.Context {
-	ctx, _ = logging.WithRequestID(ctx, inboundID)
+	if id, ok := commonobs.NormalizeRequestID(inboundID); ok {
+		return logging.SetRequestID(ctx, id)
+	}
+	ctx, _ = logging.WithRequestID(ctx)
 	return ctx
 }
 
 func SetRequestIDHeader(ctx context.Context, header http.Header) {
+	if header == nil {
+		return
+	}
 	if requestID, ok := logging.RequestID(ctx); ok {
 		header.Set(RequestIDHeader, requestID)
 	}
@@ -203,6 +221,47 @@ func AttachRequestID(req *http.Request) {
 	if req != nil {
 		SetRequestIDHeader(req.Context(), req.Header)
 	}
+}
+
+// WithInferenceID attaches the gateway nonce (== inferenceId) to ctx for
+// outbound X-Inference-Id propagation.
+func WithInferenceID(ctx context.Context, id uint64) context.Context {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if id == 0 {
+		return ctx
+	}
+	return context.WithValue(ctx, inferenceIDKey{}, id)
+}
+
+// InferenceID returns the inference/nonce id stored on ctx, if any.
+func InferenceID(ctx context.Context) (uint64, bool) {
+	if ctx == nil {
+		return 0, false
+	}
+	id, ok := ctx.Value(inferenceIDKey{}).(uint64)
+	return id, ok && id != 0
+}
+
+func SetInferenceIDHeader(ctx context.Context, header http.Header) {
+	if header == nil {
+		return
+	}
+	if id, ok := InferenceID(ctx); ok {
+		header.Set(InferenceIDHeader, strconv.FormatUint(id, 10))
+	}
+}
+
+// InjectOutboundHeaders writes W3C traceparent, X-Request-Id, and
+// X-Inference-Id (when present on ctx) onto an outbound request.
+func InjectOutboundHeaders(ctx context.Context, header http.Header) {
+	if header == nil {
+		return
+	}
+	InjectRequestContext(ctx, header)
+	SetRequestIDHeader(ctx, header)
+	SetInferenceIDHeader(ctx, header)
 }
 
 type ClassifiedError struct {
@@ -283,11 +342,11 @@ func Log(ctx context.Context, level Level, msg string, stage Stage, where Where,
 	fields = Fields(ctx, stage, where, escrowID, fields...)
 	switch level {
 	case LevelError:
-		logging.Error(msg, fields...)
+		logging.ErrorCtx(ctx, msg, fields...)
 	case LevelWarn:
-		logging.Warn(msg, fields...)
+		logging.WarnCtx(ctx, msg, fields...)
 	default:
-		logging.Info(msg, fields...)
+		logging.InfoCtx(ctx, msg, fields...)
 	}
 }
 

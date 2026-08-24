@@ -4,16 +4,17 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
-	"common/logging"
+
 	"common/nodemanager/gen"
+	commonobs "common/observability"
 	"common/runtimeconfig"
 
-	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -22,7 +23,7 @@ import (
 // broker.Broker satisfies this interface directly.
 type brokerAcquirer interface {
 	AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string) (lockID, endpoint, nodeID string, err error)
-	ReleaseMLNode(lockID string, outcome broker.InferenceResult) error
+	ReleaseMLNode(lockID string, outcome broker.InferenceResult) (nodeID string, err error)
 	TriggerStatusQuery(bypassDebounce bool)
 	GetNodes() ([]broker.NodeResponse, error)
 }
@@ -76,33 +77,77 @@ func (s *Server) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeReques
 		if s.escrowLoad != nil {
 			s.escrowLoad.Record(req.GetEscrowId())
 		}
+		commonobs.Stage(ctx, StageMLNodeAcquire,
+			"outcome", "acquired",
+			"node_id", nodeID,
+			"lock_id", lockID,
+			"endpoint", endpoint,
+			"model", req.GetModel(),
+			"escrow_id", req.GetEscrowId(),
+			"excluded", strings.Join(req.GetExcludedNodes(), ","),
+		)
 		return &gen.AcquireMLNodeResponse{LockId: lockID, Endpoint: endpoint, NodeId: nodeID}, nil
 	}
 	if errors.Is(err, broker.ErrNoNodesAvailable) {
-		logging.Error("[NodeManager] No nodes available", types.Nodes)
+		commonobs.Stage(ctx, StageMLNodeAcquire,
+			"outcome", "no_nodes_available",
+			"model", req.GetModel(),
+			"escrow_id", req.GetEscrowId(),
+			"excluded", strings.Join(req.GetExcludedNodes(), ","),
+		)
 		return nil, status.Error(codes.ResourceExhausted, "no nodes available")
 	}
 	if ctx.Err() != nil {
-		logging.Error("[NodeManager] Context error", types.Nodes, "err", ctx.Err())
+		commonobs.Stage(ctx, StageMLNodeAcquire,
+			"outcome", "context_error",
+			"model", req.GetModel(),
+			"escrow_id", req.GetEscrowId(),
+			"error", ctx.Err().Error(),
+		)
 		return nil, status.FromContextError(ctx.Err()).Err()
 	}
 	// queue is full, so returning unavailable code
+	commonobs.Stage(ctx, StageMLNodeAcquire,
+		"outcome", "unavailable",
+		"model", req.GetModel(),
+		"escrow_id", req.GetEscrowId(),
+		"error", err.Error(),
+	)
 	return nil, status.Error(codes.Unavailable, err.Error())
 }
 
-func (s *Server) ReleaseMLNode(_ context.Context, req *gen.ReleaseMLNodeRequest) (*gen.ReleaseMLNodeResponse, error) {
+func (s *Server) ReleaseMLNode(ctx context.Context, req *gen.ReleaseMLNodeRequest) (*gen.ReleaseMLNodeResponse, error) {
+	lockID := strings.TrimSpace(req.GetLockId())
 	outcome := outcomeFromProto(req.Outcome)
-	err := s.broker.ReleaseMLNode(req.LockId, outcome)
+	nodeID, err := s.broker.ReleaseMLNode(lockID, outcome)
 	if err == nil {
 		if req.Outcome == gen.ReleaseOutcome_TRANSPORT_ERROR || req.Outcome == gen.ReleaseOutcome_TIMEOUT {
 			s.broker.TriggerStatusQuery(false)
 		}
+		commonobs.Stage(ctx, StageMLNodeRelease,
+			"lock_id", lockID,
+			"node_id", nodeID,
+			"outcome", req.GetOutcome().String(),
+			"released", true,
+		)
 		return &gen.ReleaseMLNodeResponse{}, nil
 	}
 	if errors.Is(err, broker.ErrLockNotFound) {
-		logging.Error("[NodeManager] Lock not found ", types.Nodes)
+		commonobs.Stage(ctx, StageMLNodeRelease,
+			"lock_id", lockID,
+			"node_id", "",
+			"outcome", req.GetOutcome().String(),
+			"released", false,
+		)
 		return nil, status.Error(codes.NotFound, broker.ErrLockNotFound.Error())
 	}
+	commonobs.Stage(ctx, StageMLNodeRelease,
+		"lock_id", lockID,
+		"node_id", nodeID,
+		"outcome", req.GetOutcome().String(),
+		"released", false,
+		"error", err.Error(),
+	)
 	return nil, status.Error(codes.Internal, err.Error())
 }
 

@@ -3,6 +3,7 @@ package mockdapi
 import (
 	"time"
 
+	"devshard/chainoracle/params"
 	cosrv "devshard/chainoracle/server"
 )
 
@@ -13,7 +14,8 @@ type Config struct {
 	ChainGRPCAddr     string
 	ChainRPCAddr      string
 	ChainTestenvURL   string
-	MLEndpoint        string
+	MLEndpoint        string // MOCK_ML_ENDPOINT single-node shorthand
+	MLNodes           []params.MLNode
 	ChainPollInterval time.Duration
 	BlockInterval     time.Duration
 	ChainID           string
@@ -33,7 +35,7 @@ func DefaultConfig() Config {
 		HTTPAddr:          ":9100",
 		ChainGRPCAddr:     "127.0.0.1:9090",
 		ChainRPCAddr:      "http://127.0.0.1:26657",
-		MLEndpoint:        "http://mock-openai:8088",
+		MLEndpoint:        "http://mock-openai-0:8088",
 		ChainPollInterval: time.Second,
 		BlockInterval:     time.Second,
 		ChainID:           "gonka-test",

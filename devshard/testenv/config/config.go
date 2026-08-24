@@ -31,15 +31,18 @@ type File struct {
 	MockChain  MockChainCfg  `yaml:"mock_chain"`
 	MockDapi   MockDapiCfg   `yaml:"mock_dapi"`
 	MockOpenAI MockOpenAICfg `yaml:"mock_openai"`
+	// MLNodes is the number of mock-openai instances (T7). Default 1.
+	// Services are named mock-openai-0 … mock-openai-{N-1}.
+	MLNodes        int               `yaml:"ml_nodes"`
 	Versiond       VersiondCfg       `yaml:"versiond"`
 	VersiondRouter VersiondRouterCfg `yaml:"versiond_router"`
 	Devshardctl    DevshardctlCfg    `yaml:"devshardctl"`
 	Postgres       PostgresCfg       `yaml:"postgres"`
-	Escrow    EscrowMeta   `yaml:"escrow"`
-	Hosts     []HostCfg    `yaml:"hosts"`
-	User        UserCfg        `yaml:"user"`
-	WarmGrantee WarmGranteeCfg `yaml:"warm_grantee"`
-	Network     NetworkCfg     `yaml:"network"`
+	Escrow         EscrowMeta        `yaml:"escrow"`
+	Hosts          []HostCfg         `yaml:"hosts"`
+	User           UserCfg           `yaml:"user"`
+	WarmGrantee    WarmGranteeCfg    `yaml:"warm_grantee"`
+	Network        NetworkCfg        `yaml:"network"`
 }
 
 type Epoch struct {
@@ -101,7 +104,7 @@ type MockChainCfg struct {
 	GRPCPort    int    `yaml:"grpc_port"`
 	RPCPort     int    `yaml:"rpc_port"`
 	TestenvPort int    `yaml:"testenv_port"`
-	Host         string `yaml:"host"`
+	Host        string `yaml:"host"`
 }
 
 // MockDapiCfg is the listen addresses of cmd/mockdapi.
@@ -119,14 +122,14 @@ type MockOpenAICfg struct {
 
 // VersiondCfg holds versiond supervisor defaults for compose.
 type VersiondCfg struct {
-	Mode             string `yaml:"mode"` // single | multi — see VersiondModeSingle/Multi
-	VersionName      string `yaml:"version_name"`
-	HostBinaryMount  string `yaml:"host_binary_mount"`
-	OverridePath     string `yaml:"override_path"`
-	PollInterval     string `yaml:"poll_interval"`
-	BinaryVersion    string `yaml:"binary_version"`
-	KeyringDir       string `yaml:"keyring_dir"`
-	KeyringPassword  string `yaml:"keyring_password"`
+	Mode            string `yaml:"mode"` // single | multi — see VersiondModeSingle/Multi
+	VersionName     string `yaml:"version_name"`
+	HostBinaryMount string `yaml:"host_binary_mount"`
+	OverridePath    string `yaml:"override_path"`
+	PollInterval    string `yaml:"poll_interval"`
+	BinaryVersion   string `yaml:"binary_version"`
+	KeyringDir      string `yaml:"keyring_dir"`
+	KeyringPassword string `yaml:"keyring_password"`
 }
 
 // VersiondRouterCfg is the sticky nginx router in front of versiond instances.
@@ -191,17 +194,20 @@ type WarmGranteeCfg struct {
 }
 
 const (
-	DefaultChainID           = "gonka-test"
-	DefaultBlockHeight       = int64(150)
-	DefaultMockChainGRPCPort = 9090
-	DefaultMockChainRPCPort  = 26657
+	DefaultChainID              = "gonka-test"
+	DefaultBlockHeight          = int64(150)
+	DefaultMockChainGRPCPort    = 9090
+	DefaultMockChainRPCPort     = 26657
 	DefaultMockChainTestenvPort = 9191
-	DefaultMockChainHost     = "mock-chain"
-	DefaultMockDapiGRPCPort  = 9400
-	DefaultMockDapiHTTPPort  = 9100
-	DefaultMockDapiHost      = "mock-dapi"
-	DefaultMockOpenAIHTTPPort = 8088
-	DefaultMockOpenAIHost     = "mock-openai"
+	DefaultMockChainHost        = "mock-chain"
+	DefaultMockDapiGRPCPort     = 9400
+	DefaultMockDapiHTTPPort     = 9100
+	DefaultMockDapiHost         = "mock-dapi"
+	DefaultMockOpenAIHTTPPort   = 8088
+	DefaultMockOpenAIHost       = "mock-openai-0"
+	DefaultMLNodes              = 1
+	// MLNodeIPBase is the first host octet offset for mock-openai-0 (BaseIP.40+i).
+	MLNodeIPBase              = 40
 	DefaultVersionName        = "v2"
 	DefaultBinaryVersion      = "0.2.13-v2-r2"
 	VersiondModeSingle        = "single"
@@ -220,19 +226,19 @@ const (
 	DefaultPostgresDB         = "devshardd"
 	DefaultPostgresUser       = "devshardd"
 	DefaultPostgresPassword   = "devshardd"
-	DefaultEscrowSlots       = 4
+	DefaultEscrowSlots        = 4
 	// DefaultEscrowSlotURL is the versiond-router origin (no /devshard/<v> suffix).
 	// devshardctl transport clients append RoutePrefix separately.
-	DefaultEscrowSlotURL     = "http://versiond-router:8080"
-	DefaultEscrowAmount      = uint64(1_000_000)
-	DefaultTokenPrice        = uint64(100)
-	DefaultUserPort          = 8081
-	DefaultHostPort          = 8080
-	DefaultNetworkCIDR       = "172.30.0.0/24"
-	DefaultNetworkBaseIP     = "172.30.0"
-	DefaultModelID           = "test-model"
-	DefaultAdminAPIKey       = "testenv-citest-admin"
-	DefaultAppHash           = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	DefaultEscrowSlotURL = "http://versiond-router:8080"
+	DefaultEscrowAmount  = uint64(1_000_000)
+	DefaultTokenPrice    = uint64(100)
+	DefaultUserPort      = 8081
+	DefaultHostPort      = 8080
+	DefaultNetworkCIDR   = "172.30.0.0/24"
+	DefaultNetworkBaseIP = "172.30.0"
+	DefaultModelID       = "test-model"
+	DefaultAdminAPIKey   = "testenv-citest-admin"
+	DefaultAppHash       = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
 )
 
 // Load reads a YAML config file and applies defaults.
@@ -314,8 +320,12 @@ func (c *File) ApplyDefaults() {
 	if c.MockOpenAI.HTTPPort == 0 {
 		c.MockOpenAI.HTTPPort = DefaultMockOpenAIHTTPPort
 	}
-	if c.MockOpenAI.Host == "" {
-		c.MockOpenAI.Host = DefaultMockOpenAIHost
+	if c.MLNodes <= 0 {
+		c.MLNodes = DefaultMLNodes
+	}
+
+	if c.MockOpenAI.Host == "" || c.MockOpenAI.Host == "mock-openai" {
+		c.MockOpenAI.Host = c.PrimaryMLNodeID()
 	}
 
 	if c.Versiond.VersionName == "" {
@@ -416,6 +426,63 @@ func RouterBaseURL(c *File) string {
 		host = DefaultVersiondRouterHost
 	}
 	return fmt.Sprintf("http://%s:%d", host, DefaultHostPort)
+}
+
+// ResolvedMLNodes returns the effective mock-openai pool size (at least 1).
+func (c *File) ResolvedMLNodes() int {
+	if c == nil || c.MLNodes <= 0 {
+		return DefaultMLNodes
+	}
+	return c.MLNodes
+}
+
+// MLNodeID returns the compose service / AcquireMLNode id for pool index i.
+func MLNodeID(i int) string {
+	return fmt.Sprintf("mock-openai-%d", i)
+}
+
+// PrimaryMLNodeID is mock-openai-0 (the PatchMockOpenAIFault alias target).
+func (c *File) PrimaryMLNodeID() string {
+	return MLNodeID(0)
+}
+
+// MLNodeIDs returns mock-openai-0 … mock-openai-{N-1}.
+func (c *File) MLNodeIDs() []string {
+	n := c.ResolvedMLNodes()
+	ids := make([]string, n)
+	for i := 0; i < n; i++ {
+		ids[i] = MLNodeID(i)
+	}
+	return ids
+}
+
+// MLNodeEndpoint is the in-compose HTTP base URL for a pool member.
+func (c *File) MLNodeEndpoint(nodeID string) string {
+	port := DefaultMockOpenAIHTTPPort
+	if c != nil && c.MockOpenAI.HTTPPort > 0 {
+		port = c.MockOpenAI.HTTPPort
+	}
+	return fmt.Sprintf("http://%s:%d", nodeID, port)
+}
+
+// PrimaryMLEndpoint is MOCK_ML_ENDPOINT shorthand (first pool member).
+func (c *File) PrimaryMLEndpoint() string {
+	return c.MLNodeEndpoint(c.PrimaryMLNodeID())
+}
+
+// MockMLNodesEnv formats MOCK_ML_NODES: "id=url,id=url".
+func (c *File) MockMLNodesEnv() string {
+	ids := c.MLNodeIDs()
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = id + "=" + c.MLNodeEndpoint(id)
+	}
+	return strings.Join(parts, ",")
+}
+
+// MLNodeIPOffset is the fourth octet offset for mock-openai-i (40+i).
+func MLNodeIPOffset(i int) int {
+	return MLNodeIPBase + i
 }
 
 // PrimaryEscrowID returns the seeded escrow id for single-escrow gateway bootstrap.

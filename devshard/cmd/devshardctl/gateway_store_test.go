@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -20,7 +21,6 @@ func TestGatewayStoreInitializeAndLoadState(t *testing.T) {
 	})
 
 	settings := GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1234,
@@ -54,6 +54,89 @@ func TestGatewayStoreInitializeAndLoadState(t *testing.T) {
 	require.False(t, state.Settings.Disabled.Enabled)
 	require.Equal(t, defaultGatewayDisabledMessage, state.Settings.Disabled.Message)
 	require.Empty(t, state.Settings.Disabled.NewURL)
+}
+
+func TestGatewayStoreDropsLegacyChainRESTColumn(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gateway.db")
+
+	// Simulate a pre-migration DB that still has chain_rest.
+	raw, err := sql.Open("sqlite", path)
+	require.NoError(t, err)
+	_, err = raw.Exec(`
+		CREATE TABLE gateway_settings (
+			id INTEGER PRIMARY KEY CHECK (id = 1),
+			chain_rest TEXT NOT NULL,
+			public_api TEXT NOT NULL DEFAULT '',
+			default_model TEXT NOT NULL,
+			default_request_max_tokens INTEGER NOT NULL,
+			request_max_tokens_cap INTEGER NOT NULL DEFAULT 4096,
+			max_concurrent_requests INTEGER NOT NULL DEFAULT 512,
+			max_concurrent_requests_per_10000_weight REAL NOT NULL DEFAULT 5.0,
+			poc_max_concurrent_requests_per_10000_weight REAL NOT NULL DEFAULT 10.0,
+			max_input_tokens_in_flight INTEGER NOT NULL,
+			model_limits_json TEXT NOT NULL DEFAULT '',
+			model_access_json TEXT NOT NULL DEFAULT '',
+			tx_gas_limit INTEGER NOT NULL DEFAULT 0,
+			participant_request_burst INTEGER NOT NULL DEFAULT 600,
+			participant_recovery_per_minute INTEGER NOT NULL DEFAULT 10,
+			participant_http_quarantine_ms INTEGER NOT NULL DEFAULT 3600000,
+			participant_transport_failure_quarantine_ms INTEGER NOT NULL DEFAULT 1800000,
+			participant_empty_stream_quarantine_ms INTEGER NOT NULL DEFAULT 1800000,
+			participant_stalled_winner_quarantine_ms INTEGER NOT NULL DEFAULT 1800000,
+			participant_empty_stream_threshold INTEGER NOT NULL DEFAULT 3,
+			participant_eof_transport_failure_threshold INTEGER NOT NULL DEFAULT 3,
+			redundancy_receipt_timeout_ms INTEGER NOT NULL DEFAULT 5000,
+			redundancy_first_token_timeout_floor_ms INTEGER NOT NULL DEFAULT 1000,
+			redundancy_per_input_token_first_token_lag_ms INTEGER NOT NULL DEFAULT 10,
+			redundancy_inter_chunk_stall_timeout_ms INTEGER NOT NULL DEFAULT 60000,
+			redundancy_streaming_attempt_hard_timeout_ms INTEGER NOT NULL DEFAULT 1800000,
+			redundancy_non_stream_response_floor_ms INTEGER NOT NULL DEFAULT 20000,
+			redundancy_non_stream_no_content_timeout_ms INTEGER NOT NULL DEFAULT 1800000,
+			redundancy_non_stream_max_attempt_wait_ms INTEGER NOT NULL DEFAULT 1800000,
+			redundancy_per_input_token_response_lag_ms INTEGER NOT NULL DEFAULT 20,
+			redundancy_secondary_wait_after_winner_ms INTEGER NOT NULL DEFAULT 600000,
+			redundancy_parallel_advantage_threshold REAL NOT NULL DEFAULT 0.5,
+			redundancy_unresponsive_threshold REAL NOT NULL DEFAULT 1.0,
+			redundancy_speed_policy TEXT NOT NULL DEFAULT 'hybrid',
+			redundancy_pairwise_budget_percentile REAL NOT NULL DEFAULT 0.9,
+			redundancy_pairwise_max_proactive_attempts INTEGER NOT NULL DEFAULT 3,
+			redundancy_pairwise_min_direct_comparisons INTEGER NOT NULL DEFAULT 4,
+			redundancy_pairwise_winner_hold_ms INTEGER NOT NULL DEFAULT 500,
+			redundancy_pairwise_winner_hold_min_speedup REAL NOT NULL DEFAULT 0.1,
+			redundancy_pairwise_winner_hold_min_samples INTEGER NOT NULL DEFAULT 6,
+			perf_sample_size INTEGER NOT NULL DEFAULT 256,
+			perf_window_ms INTEGER NOT NULL DEFAULT 3600000,
+			escrow_rotation_enabled INTEGER NOT NULL DEFAULT 0,
+			escrow_rotation_settlement_enabled INTEGER NOT NULL DEFAULT 0,
+			escrow_rotation_pre_poc_blocks INTEGER NOT NULL DEFAULT 300,
+			escrow_rotation_models_json TEXT NOT NULL DEFAULT '',
+			gateway_disabled_enabled INTEGER NOT NULL DEFAULT 0,
+			gateway_disabled_message TEXT NOT NULL DEFAULT '',
+			gateway_disabled_new_url TEXT NOT NULL DEFAULT '',
+			updated_at TEXT NOT NULL
+		)`)
+	require.NoError(t, err)
+	_, err = raw.Exec(`INSERT INTO gateway_settings (
+		id, chain_rest, public_api, default_model, default_request_max_tokens, max_input_tokens_in_flight, updated_at
+	) VALUES (1, 'http://node:1317', 'http://api:9000', 'Qwen/Test', 1000, 200, '2026-01-01T00:00:00Z')`)
+	require.NoError(t, err)
+	require.NoError(t, raw.Close())
+
+	store, err := NewGatewayStore(path)
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	exists, err := columnExists(store.db, "gateway_settings", "chain_rest")
+	require.NoError(t, err)
+	require.False(t, exists, "legacy chain_rest column should be dropped on open")
+
+	state, ok, err := store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, "http://api:9000", state.Settings.PublicAPI)
+	require.Equal(t, "Qwen/Test", state.Settings.DefaultModel)
 }
 
 func TestAdminAuthMiddlewareRequiresAdminKey(t *testing.T) {
@@ -91,7 +174,6 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 	})
 
 	require.NoError(t, store.Initialize(GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -100,7 +182,6 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 	}, nil))
 
 	require.NoError(t, store.UpdateSettings(GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 2000,
@@ -193,7 +274,6 @@ func TestGatewayStoreLoadsLegacyModelAccessIntoModelLimits(t *testing.T) {
 		require.NoError(t, store.Close())
 	})
 	require.NoError(t, store.Initialize(GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -232,7 +312,6 @@ func TestGatewayStorePersistsSuspiciousHosts(t *testing.T) {
 		require.NoError(t, store.Close())
 	})
 	require.NoError(t, store.Initialize(GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -260,7 +339,6 @@ func TestGatewayStorePersistsSuspiciousHosts(t *testing.T) {
 
 func TestValidateGatewaySettingsRequiresRotationModels(t *testing.T) {
 	settings := GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -305,7 +383,6 @@ func TestValidateGatewaySettingsRequiresRotationModels(t *testing.T) {
 
 func TestGatewaySettingsWithTuningDefaultsTrimsPrivateKeyEnv(t *testing.T) {
 	settings := GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -330,7 +407,6 @@ func TestEscrowRotationPreparePromotesRegularEscrowsOnTempCreateFailure(t *testi
 	})
 
 	settings := GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -424,7 +500,6 @@ func TestEscrowRotationFinishDoesNotSettleTempWhenRegularCreateFails(t *testing.
 	})
 
 	settings := GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -502,7 +577,6 @@ func TestEscrowRotationSkipsCreateWhenModelAbsentFromNetwork(t *testing.T) {
 	})
 
 	settings := GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -571,7 +645,6 @@ func TestEscrowRotationCreatesWhenModelPresentInNetwork(t *testing.T) {
 	})
 
 	settings := GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -632,7 +705,6 @@ func TestEscrowRotationFinishSettlesTempFromCurrentLatestEpoch(t *testing.T) {
 	})
 
 	settings := GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -695,7 +767,6 @@ func TestEscrowRotationPrepareDeactivatesRegularWithoutSettlementWhenSettlementD
 	})
 
 	settings := GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -763,7 +834,6 @@ func TestEscrowRotationFinishDeactivatesTempWithoutSettlementWhenSettlementDisab
 	})
 
 	settings := GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -831,7 +901,6 @@ func TestEscrowRotationPrepareRotatesModelsIndependently(t *testing.T) {
 	})
 
 	settings := GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -904,7 +973,6 @@ func TestEscrowRotationUsesEpochSwitchHeightDuringPoC(t *testing.T) {
 	})
 
 	settings := GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -972,7 +1040,6 @@ func TestGatewayStoreSetDevshardSettlementPending(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 
 	require.NoError(t, store.Initialize(GatewaySettings{
-		ChainREST: "http://node:1317", DefaultModel: "m", DefaultRequestMaxTokens: 1000,
 	}.WithTuningDefaults(), []GatewayDevshardState{{
 		RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "m"},
 		Active:        true,

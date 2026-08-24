@@ -47,7 +47,59 @@ func BootObservabilityStack(t *testing.T, prefix string) (*Stack, *config.File, 
 	cfg := stack.LoadConfig(t)
 	requireTwoVersiondHosts(t, cfg)
 	stack.UpWithObservability(t, cfg)
-	return stack, cfg, stack.Endpoints(t, cfg), DefaultObservabilityEndpoints()
+	return stack, cfg, stack.Endpoints(t, cfg), ObservabilityEndpointsFor(stack.ObsProfile)
+}
+
+// BootObservabilityStackHASolo is the 3×versiond observability stack: HA pair
+// (versiond-0/1, one on-chain participant) plus a solo executor (versiond-2).
+// Stopping versiond-2 is the citest-reachable path that produces ghost burns;
+// a 2-host HA-only stack cannot, because both hosts share one participant.
+func BootObservabilityStackHASolo(t *testing.T, prefix string) (*Stack, *config.File, Endpoints, ObservabilityEndpoints) {
+	t.Helper()
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteMultiConfig(t, stack.WorkDir, MultiConfigOpts{Hosts: 3, EscrowSlots: 4})
+	stack.RunGencompose(t)
+	cfg := stack.LoadConfig(t)
+	requireThreeVersiondHosts(t, cfg)
+	stack.UpWithObservability(t, cfg)
+	return stack, cfg, stack.Endpoints(t, cfg), ObservabilityEndpointsFor(stack.ObsProfile)
+}
+
+// BootPayloadCaptureStack boots an observability stack with DEVSHARD_LOG_PAYLOADS*
+// enabled for the payload-capture citests. level should be "full" (testenv only)
+// so partial response bodies appear on the payload_captured line.
+func BootPayloadCaptureStack(t *testing.T, prefix, level string) (*Stack, *config.File, Endpoints, ObservabilityEndpoints) {
+	t.Helper()
+	if level == "" {
+		level = "full"
+	}
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteStackConfig(t, stack.WorkDir)
+	stack.RunGencompose(t)
+	cfg := stack.LoadConfig(t)
+	requireTwoVersiondHosts(t, cfg)
+	EnablePayloadCapture(t, stack, level)
+	stack.UpWithObservability(t, cfg)
+	return stack, cfg, stack.Endpoints(t, cfg), ObservabilityEndpointsFor(stack.ObsProfile)
+}
+
+// BootMLNodePoolStack boots a 2-host stack with N mock-openai instances.
+func BootMLNodePoolStack(t *testing.T, prefix string, mlNodes int) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	if mlNodes < 2 {
+		t.Fatalf("BootMLNodePoolStack requires mlNodes >= 2, got %d", mlNodes)
+	}
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteMultiConfig(t, stack.WorkDir, MultiConfigOpts{Hosts: 2, EscrowSlots: 2, MLNodes: mlNodes})
+	stack.RunGencompose(t)
+	cfg := stack.LoadConfig(t)
+	requireTwoVersiondHosts(t, cfg)
+	require.Equal(t, mlNodes, cfg.ResolvedMLNodes())
+	stack.Up(t)
+	return stack, cfg, stack.Endpoints(t, cfg)
 }
 
 // WaitStackHealthy polls the chain, dapi, router, and gateway boundaries.

@@ -95,7 +95,56 @@ func TestChatCompletions_FaultHTTPStatus(t *testing.T) {
 		bytes.NewReader([]byte(`{"messages":[{"role":"user","content":"x"}]}`)))
 	require.NoError(t, err)
 	require.Equal(t, 503, resp.StatusCode)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
 	_ = resp.Body.Close()
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(raw, &out))
+	errObj, ok := out["error"].(map[string]any)
+	require.True(t, ok, "expected nested OpenAI/vLLM error body, got %s", raw)
+	require.Equal(t, float64(503), errObj["code"])
+	require.Equal(t, "InternalServerError", errObj["type"])
+}
+
+func TestChatCompletions_SSEError(t *testing.T) {
+	srv := httptest.NewServer(mockopenai.NewServer(mockopenai.Config{
+		Faults: mockopenai.FaultConfig{SSEErrorMessage: "TimeoutError"},
+	}).Handler())
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/v1/chat/completions", "application/json",
+		bytes.NewReader([]byte(`{"stream":true,"messages":[{"role":"user","content":"x"}]}`)))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	text := string(raw)
+	require.Contains(t, text, `"error"`)
+	require.Contains(t, text, "TimeoutError")
+	require.Contains(t, text, "data: [DONE]")
+}
+
+func TestChatCompletions_PartialStreamOmitsDONE(t *testing.T) {
+	srv := httptest.NewServer(mockopenai.NewServer(mockopenai.Config{
+		Faults: mockopenai.FaultConfig{
+			PartialStream:    true,
+			StreamChunkDelay: 0,
+		},
+	}).Handler())
+	defer srv.Close()
+
+	resp, err := http.Post(srv.URL+"/v1/chat/completions", "application/json",
+		bytes.NewReader([]byte(`{"stream":true,"messages":[{"role":"user","content":"partial stream body please"}]}`)))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	text := string(raw)
+	require.Contains(t, text, "data: ")
+	require.NotContains(t, text, "data: [DONE]")
+	require.Greater(t, len(raw), 0)
 }
 
 func TestChatCompletions_FaultPatch(t *testing.T) {

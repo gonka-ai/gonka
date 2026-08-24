@@ -66,18 +66,20 @@ dev-logs: ## Follow dev overlay logs.
 .PHONY: citest-images citest-stack citest-stack-build list-citest-targets
 .PHONY: citest-validation-lease-race citest-escrow-longpoll
 .PHONY: citest-versiond-rolling-update citest-adversarial
-.PHONY: citest-observability citest-grpc-transport test-gateway-smoke
+.PHONY: citest-observability citest-dapi-correlation citest-ml-nodes citest-grpc-transport test-gateway-smoke
 
 # citest-images and citest-stack-build are build/helper rules, not standalone
 # suites, so they are excluded from the auto-discovered CI matrix.
+# citest-dapi-correlation is a focused subset of citest-observability — useful
+# while iterating, wasteful as a second matrix job.
 list-citest-targets: ## Print runnable citest suite targets (one per line) for the CI matrix.
 	@grep -hoE '^citest-[A-Za-z0-9_-]+:' $(firstword $(MAKEFILE_LIST)) \
 		| sed 's/://' \
-		| grep -vxE 'citest-images|citest-stack-build' \
+		| grep -vxE 'citest-images|citest-stack-build|citest-dapi-correlation' \
 		| sort -u
 .PHONY: obs-up obs-down
 # versiond-0 produces devshard-versiond:latest shared by all versiond-* hosts.
-CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai devshardctl versiond-router versiond-0
+CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai-0 devshardctl versiond-router versiond-0
 STACK_CITEST_PATTERN := ^Test(StackSmoke|RouterStickiness|ParamsLongPoll|EpochSwitch|GatewayChat|Versiond.*|HAStaleStandbyCatchupIdempotent|LegacyVersionPinnedToSingleHost|SQLiteToPostgresHAMigration|ValidationLeaseRace.*)$$
 
 citest-images: ## Pull hub images and build all compose images required for citest.
@@ -97,33 +99,63 @@ citest-escrow-longpoll: citest-images ## Escrow long-poll warm; first inference 
 citest-versiond-rolling-update: citest-images ## Same-version versiond rolling update and fallback.
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestVersiondRollingUpdate' -count=1 -v -timeout 30m
 
-citest-adversarial: citest-images ## Phase 9 adversarial citest (TESTENV_CITEST=1).
-	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestA1_|TestA2_|TestA3_|TestA4_' -count=1 -v -timeout 30m
+citest-adversarial: citest-images
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestLostFirstChunk|TestMLUpstream5xx|TestStaleEscrow|TestBadWarmKey' -count=1 -v -timeout 30m
 
-citest-grpc-transport: citest-images ## Phase 12b G1–G4 gRPC-only gateway citest (see docs/chain-transport-consolidation.md).
-	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestG1_|TestG2_|TestG3_' -count=1 -v -timeout 30m
-	cd .. && go test ./cmd/devshardctl/ -run TestG4_NoRESTChainClientsInGatewayProduction -count=1 -v
+citest-grpc-transport: citest-images
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestGatewayEscrowCreateGRPC|TestGatewayEscrowReadGRPC|TestGatewayChatGRPCOnly' -count=1 -v -timeout 30m
+	cd .. && go test ./cmd/devshardctl/ -run TestNoRESTChainClientsInGatewayProduction -count=1 -v
 
-citest-observability: citest-images ## Phase 10 O1 observability smoke (Jaeger spans + Loki logs + metrics).
+citest-observability: citest-images
 	$(MAKE) build-devshardd
-	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run TestO1_ObservabilitySmoke -count=1 -v -timeout 30m
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestObservabilitySmoke|TestTraceLogCorrelation|TestDispositionTrace|TestDispositionLabelValues|TestJaegerPromtailRegression|TestPayloadCapture|TestShadowHostMultiAttemptSameTrace' -count=1 -v -timeout 90m
 
-OBS_OVERLAY := $(COMPOSE_BASE) -f docker-compose.observability.yml -f docker-compose.observability.ip.yml
+citest-dapi-correlation: citest-images ## Gateway/host/mock-dapi trace + log correlation, incl. multi-host attempts.
+	$(MAKE) build-devshardd
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^(TestTraceLogCorrelationGatewayHostDapi|TestShadowHostMultiAttemptSameTrace)$$' -count=1 -v -timeout 45m
 
-obs-up: ## Start base stack + observability overlay (Jaeger/Loki/Prometheus/Grafana).
-	TESTENV_OTEL_ENABLED=true TESTENV_OTEL_ENDPOINT=http://jaeger:4317 \
+citest-ml-nodes: citest-images ## Multi mock-openai pool with per-node fault targeting.
+	$(MAKE) build-devshardd
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestMLNodePool_' -count=1 -v -timeout 45m
+
+# Default e2e profile is tempo-alloy. Override with TESTENV_OBS_PROFILE=jaeger-promtail.
+OBS_PROFILE ?= tempo-alloy
+OBS_SHARED := $(COMPOSE_BASE) -f docker-compose.observability.yml
+ifeq ($(OBS_PROFILE),tempo-alloy)
+OBS_FRAGMENTS := -f docker-compose.observability.tempo.yml -f docker-compose.observability.alloy.yml
+OBS_OTEL_ENDPOINT := http://alloy:4317
+else ifeq ($(OBS_PROFILE),jaeger-promtail)
+OBS_FRAGMENTS := -f docker-compose.observability.jaeger.yml -f docker-compose.observability.promtail.yml
+OBS_OTEL_ENDPOINT := http://jaeger:4317
+else ifeq ($(OBS_PROFILE),tempo-promtail)
+OBS_FRAGMENTS := -f docker-compose.observability.tempo.yml -f docker-compose.observability.promtail.yml
+OBS_OTEL_ENDPOINT := http://tempo:4317
+else ifeq ($(OBS_PROFILE),jaeger-alloy)
+OBS_FRAGMENTS := -f docker-compose.observability.jaeger.yml -f docker-compose.observability.alloy.yml
+OBS_OTEL_ENDPOINT := http://alloy:4317
+else
+$(error unknown OBS_PROFILE=$(OBS_PROFILE))
+endif
+OBS_OVERLAY := $(OBS_SHARED) $(OBS_FRAGMENTS) -f docker-compose.observability.ip.yml
+
+obs-up: ## Start base stack + observability overlay (default OBS_PROFILE=tempo-alloy).
+	@if [ "$(OBS_PROFILE)" != "tempo-alloy" ]; then \
+	  echo "obs-up: regenerate docker-compose.observability.ip.yml for profile $(OBS_PROFILE) (citest does this automatically)"; \
+	fi
+	TESTENV_OTEL_ENABLED=true TESTENV_OTEL_ENDPOINT=$(OBS_OTEL_ENDPOINT) TESTENV_OBS_PROFILE=$(OBS_PROFILE) \
 	  docker compose $(COMPOSE_BASE) up -d --wait
-	TESTENV_OTEL_ENABLED=true TESTENV_OTEL_ENDPOINT=http://jaeger:4317 \
+	TESTENV_OTEL_ENABLED=true TESTENV_OTEL_ENDPOINT=$(OBS_OTEL_ENDPOINT) TESTENV_OBS_PROFILE=$(OBS_PROFILE) \
+	  TESTENV_OBS_CONFIG_DIR=$(CURDIR) \
 	  docker compose $(OBS_OVERLAY) up -d
 
 obs-down: ## Stop observability overlay (and base stack if merged).
-	docker compose $(OBS_OVERLAY) down
+	TESTENV_OBS_CONFIG_DIR=$(CURDIR) docker compose $(OBS_OVERLAY) down
 
 citest-stack-build: dev-build ## Build dev images then run full stack citests.
 	$(MAKE) citest-stack
 
 test-gateway-smoke: ## Full-stack gateway smoke (TESTENV_GATEWAY_SMOKE=1; needs Docker + build-devshardd).
-	TESTENV_GATEWAY_SMOKE=1 go test ./citest/ -run TestGatewayPhase7_Smoke -count=1 -v
+	TESTENV_GATEWAY_SMOKE=1 go test ./citest/ -run TestGatewaySingleHostSmoke -count=1 -v
 
 dev-restart-mock-chain: ## Restart mock-chain under dev overlay.
 	docker compose $(DEV_OVERLAY) restart mock-chain

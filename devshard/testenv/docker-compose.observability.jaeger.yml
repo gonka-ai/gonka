@@ -1,0 +1,27 @@
+# Jaeger trace backend fragment (jaeger-promtail / jaeger-alloy profiles).
+
+services:
+  jaeger:
+    image: cr.jaegertracing.io/jaegertracing/jaeger:2.17.0
+    user: "0:0"
+    command:
+      - --config
+      - /jaeger/config.yaml
+    expose:
+      - "16686"
+      - "4317"
+    ports:
+      - "127.0.0.1:11686:16686"
+    volumes:
+      - ${TESTENV_OBS_CONFIG_DIR:-.}/observability/jaeger.config.yaml:/jaeger/config.yaml:ro
+      - testenv_jaeger_data:/var/lib/jaeger
+    networks:
+      - testenv
+    restart: unless-stopped
+
+  grafana:
+    depends_on:
+      - jaeger
+
+volumes:
+  testenv_jaeger_data:

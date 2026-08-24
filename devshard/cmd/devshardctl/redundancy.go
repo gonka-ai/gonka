@@ -21,10 +21,12 @@ import (
 	"devshard"
 	"devshard/accounting"
 	"devshard/host"
-	"devshard/logging"
+	"devshard/observability"
 	"devshard/transport"
 	"devshard/types"
 	"devshard/user"
+
+	"go.opentelemetry.io/otel/trace"
 )
 
 // errEmptyStream marks an attempt that completed successfully at the transport
@@ -862,8 +864,19 @@ type inflight struct {
 	noWinnerQuarantineMode string
 	noWinnerFailureStrikes int
 
-	role        string
-	startReason string
+	role         string
+	startReason  string
+	attemptIndex int
+	triggerNonce uint64
+
+	// Attempt / phase spans (T3.2 / T3.3). Nil when OTel is disabled.
+	span         trace.Span
+	spanCtx      context.Context
+	phaseMu      sync.Mutex
+	dispatchSpan trace.Span
+	prefillSpan  trace.Span
+	streamSpan   trace.Span
+	spanEndAt    time.Time // race-outcome time, replayed when the span is ended
 
 	receiptOnce     sync.Once
 	receiptTimeNano atomic.Int64  // unix nano; 0 means not received
@@ -933,6 +946,17 @@ type inflight struct {
 	// capture after pendingBuf is discarded to avoid accidental forwarding.
 	emptyResponseBodySample          string
 	emptyResponseBodySampleTruncated bool
+
+	// payloadResponseSample is a capped write-through copy of stream bytes for
+	// failure capture (partial streams clear pendingBuf after content). Only
+	// filled when capturePayload is set, so the default-off deployment retains
+	// nothing.
+	payloadResponseSample          []byte
+	payloadResponseSampleTruncated bool
+	payloadCaptured                atomic.Bool // once-guard for T4a ML payload log
+	// capturePayload resolves DEVSHARD_LOG_PAYLOADS* once per attempt. Probes
+	// are excluded because maybeLogMLNodePayloadForAttempt discards them.
+	capturePayload bool
 
 	resp *host.HostResponse
 	err  error
@@ -1004,6 +1028,24 @@ func (inf *inflight) captureShortContentResponseChunk(p []byte) {
 	inf.shortContentResponseBody = append(inf.shortContentResponseBody, p...)
 }
 
+// capturePayloadResponseChunk keeps a capped stream sample for T4a failure logs.
+func (inf *inflight) capturePayloadResponseChunk(p []byte) {
+	if inf == nil || !inf.capturePayload || len(p) == 0 || inf.payloadResponseSampleTruncated {
+		return
+	}
+	remaining := emptyStreamBodySampleLimit - len(inf.payloadResponseSample)
+	if remaining <= 0 {
+		inf.payloadResponseSampleTruncated = true
+		return
+	}
+	if len(p) > remaining {
+		inf.payloadResponseSample = append(inf.payloadResponseSample, p[:remaining]...)
+		inf.payloadResponseSampleTruncated = true
+		return
+	}
+	inf.payloadResponseSample = append(inf.payloadResponseSample, p...)
+}
+
 type attemptStall struct {
 	StartTime           time.Time
 	DetectedTime        time.Time
@@ -1031,8 +1073,18 @@ func (inf *inflight) finishActiveStall(now time.Time) {
 		return
 	}
 	inf.stallMu.Lock()
-	defer inf.stallMu.Unlock()
+	wasActive := inf.stallActive
 	inf.finishActiveStallLocked(now)
+	inf.stallMu.Unlock()
+	if wasActive {
+		inf.recordStallRecovered(now)
+	}
+}
+
+func (inf *inflight) stallCount() int64 {
+	inf.stallMu.Lock()
+	defer inf.stallMu.Unlock()
+	return int64(len(inf.stalls))
 }
 
 func (inf *inflight) finishActiveStallLocked(now time.Time) {
@@ -1550,6 +1602,7 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 	rw.inf.outputBytes.Add(int64(len(p)))
 	rw.inf.lastChunkAt.Store(now.UnixNano())
 	rw.inf.captureShortContentResponseChunk(p)
+	rw.inf.capturePayloadResponseChunk(p)
 
 	// Detect whether this Write contains the first content-bearing event for
 	// this attempt. Only content events promote a nonce to winner; role-only
@@ -1595,6 +1648,7 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 		} else if winnerNonce == 0 {
 			route = "pending"
 		}
+		rw.inf.onFirstTokenPhase(now)
 		logInferenceStage(rw.group.logCtx, rw.inf.escrowID, rw.nonce, "first_token", "host", rw.inf.hostID, "route", route, "winner_nonce", winnerNonce)
 	}
 
@@ -1703,8 +1757,9 @@ func (rw *raceWriter) Flush() {
 // It replaces the old retry-based runInference in proxy.go.
 func (e *Redundancy) RunInference(ctx context.Context, params user.InferenceParams, w io.Writer, clientFlag *cancelFlag) error {
 	ctx, _ = ensureRequestLogContext(ctx)
-	settleCtx, _ := ensureRequestLogContext(context.Background())
-	settleCtx = logging.PropagateRequestID(settleCtx, ctx)
+	// Detach cancel/deadline for post-response settle work, but keep
+	// request_id + span so background finalize logs stay correlatable.
+	settleCtx, _ := ensureRequestLogContext(context.WithoutCancel(ctx))
 	logRequestStage(ctx, "runner_started", "escrow", e.devshardID, "input_tokens", params.InputLength, "model", params.Model)
 	e.recordAccountingRequestStart(ctx, params)
 
@@ -1733,6 +1788,8 @@ func (e *Redundancy) RunInference(ctx context.Context, params user.InferencePara
 	triedParticipants[e.session.HostParticipantKey(primary.hostIdx)] = true
 	primary.role = "primary"
 	primary.startReason = "primary"
+	primary.attemptIndex = 0
+	primary.applyAttemptSpanAttrs()
 
 	decision := e.Decide(primary.hostIdx, params.InputLength)
 	maxAttempts := e.maxAttempts()
@@ -1782,7 +1839,7 @@ func (e *Redundancy) RunInference(ctx context.Context, params user.InferencePara
 			)
 			trigger := attempts[len(attempts)-1]
 			trigger.escalated = true
-			if secondary := e.startAdditionalInflight(ctx, settleCtx, race, params, "secondary_immediate_start", trigger, decision.Reason, triedParticipants, clientFlag); secondary != nil {
+			if secondary := e.startAdditionalInflight(ctx, settleCtx, race, params, "secondary_immediate_start", trigger, decision.Reason, triedParticipants, len(attempts), clientFlag); secondary != nil {
 				attempts = append(attempts, secondary)
 			} else {
 				break
@@ -1862,11 +1919,13 @@ func (e *Redundancy) prepareInflight(ctx context.Context, params user.InferenceP
 			noWinnerReason:           noWinner.reason,
 			noWinnerQuarantineMode:   noWinner.quarantineMode,
 			noWinnerFailureStrikes:   noWinner.failureStrikes,
+			capturePayload:           !res.isProbe && observability.LoadPayloadPolicy().MLNodeCaptureEnabled(),
 			participantClassifyBytes: participantClassify.counterFor(participantKey),
 			done:                     make(chan struct{}),
 			receiptCh:                make(chan struct{}),
 			firstTokenCh:             make(chan struct{}),
 		}
+		inf.openAttemptSpan(ctx, e, participantKey)
 		e.recordAccountingAttempt(ctx, inf)
 		return inf, nil
 	}
@@ -1881,11 +1940,15 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 	// is what unwinds SendOnly for speculative losers that outlived the winner.
 	attemptCtx, cancel := withMetaDrain(ctx, clientFlag)
 	inf.cancel = cancel
+	if inf.span != nil && inf.span.IsRecording() {
+		inf.span.SetAttributes(observability.AttrStream.Bool(params.Stream))
+	}
 	rw := &raceWriter{group: race, nonce: inf.nonce, inf: inf}
 	receiptHandler := func() {
 		inf.receiptOnce.Do(func() {
 			now := time.Now()
 			inf.setReceiptAt(now)
+			inf.onReceiptPhase(now)
 			logInferenceStage(ctx, inf.escrowID, inf.nonce, "receipt_received", "host", inf.hostID, "elapsed_ms", now.Sub(inf.sendTime).Milliseconds())
 			close(inf.receiptCh)
 		})
@@ -1917,6 +1980,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 		// Sole owner of classifyPartial: release on every exit path (incl. the early error return); content is classified synchronously via flushClassifyAndCheckEmpty below.
 		defer inf.releaseClassifyPartial()
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "started", "host", inf.hostID)
+		inf.startDispatchPhase()
 		inf.resp, inf.err = e.session.SendOnly(attemptCtx, inf.prepared, rw, receiptHandler)
 		streamBytes := int64(0)
 		if inf.resp != nil {
@@ -1931,6 +1995,8 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 				"stream_bytes_read", streamBytes,
 				"error", inf.err,
 			)
+			detail := gatewayAttemptFailureReason(inf, e.session)
+			e.maybeLogMLNodePayloadForAttempt(inf, params, accounting.FailureOriginFromDetail(detail), detail)
 			e.maybeRecordEscrowStateDivergence(ctx, inf, inf.err)
 			return
 		}
@@ -1962,6 +2028,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 				"content_source", inf.contentSource,
 				"request_flags", requestFlagsForLog(params),
 			)
+			e.maybeLogMLNodePayloadForAttempt(inf, params, accounting.FailureHostResponse, "empty_stream")
 		}
 		if !inf.probe && inf.errorSource != "" {
 			responseBodySample, responseSampleTruncated := bodySampleForLog(inf.errorBodySample, emptyStreamBodySampleLimit)
@@ -1977,6 +2044,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 				"response_body_sample_truncated", responseSampleTruncated,
 				"request_flags", requestFlagsForLog(params),
 			)
+			e.maybeLogMLNodePayloadForAttempt(inf, params, accounting.FailureHostResponse, "error_stream")
 		}
 		if e.markPhaseTransitionAbort(inf) {
 			logInferenceStage(ctx, inf.escrowID, inf.nonce, "phase_transition_aborted",
@@ -1989,7 +2057,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 
 // startDelayed waits for receipt or timeout, then starts a secondary if needed.
 // Returns nil if receipt arrived before timeout (no secondary needed).
-func (e *Redundancy) startAdditionalInflight(streamCtx, settleCtx context.Context, race *raceGroup, params user.InferenceParams, stage string, trigger *inflight, reason string, triedParticipants map[string]bool, clientFlag *cancelFlag) *inflight {
+func (e *Redundancy) startAdditionalInflight(streamCtx, settleCtx context.Context, race *raceGroup, params user.InferenceParams, stage string, trigger *inflight, reason string, triedParticipants map[string]bool, attemptIndex int, clientFlag *cancelFlag) *inflight {
 	if streamCtx.Err() != nil {
 		return nil
 	}
@@ -2000,9 +2068,11 @@ func (e *Redundancy) startAdditionalInflight(streamCtx, settleCtx context.Contex
 	if delay := e.escalationDelay(stage, params); delay > 0 {
 		fields = append(fields, "delay_ms", delay.Milliseconds())
 	}
-	logInferenceStage(settleCtx, trigger.escrowID, trigger.nonce, stage, fields...)
 	next, err := e.prepareInflight(streamCtx, params, triedParticipants)
 	if err != nil {
+		// Stage line still fires on failure (trigger-attributed) so existing
+		// greps keep matching; no new attempt span exists to carry the reason.
+		logInferenceStage(settleCtx, trigger.escrowID, trigger.nonce, stage, fields...)
 		// Distinguish exhaustion from generic prepare failures so the
 		// next stress test can measure how often the per-request
 		// exclude set actually saturates the escrow. When exhausted,
@@ -2021,14 +2091,27 @@ func (e *Redundancy) startAdditionalInflight(streamCtx, settleCtx context.Contex
 				"group_size", e.groupSize,
 				"reason_err", err.Error(),
 			)
+			observability.AddPickerExhausted(settleCtx, reason)
 			return nil
 		}
 		logRequestStage(settleCtx, "secondary_prepare_failed", "escrow", e.devshardID, "decision", reason, "error", err)
+		observability.AddSecondaryPrepareFailed(settleCtx, reason)
 		return nil
 	}
 	triedParticipants[e.session.HostParticipantKey(next.hostIdx)] = true
 	next.role = "secondary"
 	next.startReason = reason
+	next.attemptIndex = attemptIndex
+	next.triggerNonce = trigger.nonce
+	next.applyAttemptSpanAttrs()
+	fields = append(fields,
+		"reason", reason,
+		"new_nonce", next.nonce,
+		"new_host", next.hostID,
+		"attempt_index", attemptIndex,
+		"role", next.role,
+	)
+	logInferenceStage(settleCtx, trigger.escrowID, trigger.nonce, stage, fields...)
 	if e.metrics != nil {
 		e.metrics.RecordSpeculativeAttemptStart(reason)
 	}
@@ -2340,6 +2423,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 				"current_attempts", len(attempts),
 				"max_attempts", maxAttempts,
 			)
+			observability.AddEscalationSkipped(settleCtx, trigger.reason)
 		}
 		var reducedFallbackTimer *time.Timer
 		var reducedFallbackC <-chan time.Time
@@ -2392,7 +2476,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 				if !reducedMaxTokensFallbackStarted && time.Now().Before(requestStart.Add(nonStreamingReducedMaxTokensFallbackDelay)) && len(attempts) < maxAttempts {
 					trigger := attempts[len(attempts)-1]
 					trigger.escalated = true
-					if next := e.startAdditionalInflight(streamCtx, settleCtx, race, params, "attempt_failed", trigger, "attempt_failed", triedParticipants, clientFlag); next != nil {
+					if next := e.startAdditionalInflight(streamCtx, settleCtx, race, params, "attempt_failed", trigger, "attempt_failed", triedParticipants, len(attempts), clientFlag); next != nil {
 						attempts = append(attempts, next)
 						e.watchInflightDone(next, doneCh)
 					}
@@ -2453,7 +2537,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			if w == 0 && e.markPhaseTransitionAbort(inf) && phaseTransitionAbortRetryable(inf) {
 				e.reincludePhaseTransitionAbortParticipant(inf, triedParticipants)
 				if len(attempts) < maxAttempts {
-					if next := e.startAdditionalInflight(streamCtx, settleCtx, race, params, "phase_transition_retry", inf, "phase_transition_aborted", triedParticipants, clientFlag); next != nil {
+					if next := e.startAdditionalInflight(streamCtx, settleCtx, race, params, "phase_transition_retry", inf, "phase_transition_aborted", triedParticipants, len(attempts), clientFlag); next != nil {
 						attempts = append(attempts, next)
 						e.watchInflightDone(next, doneCh)
 					}
@@ -2477,7 +2561,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			}
 			trigger.inf.escalated = true
 			if len(attempts) < maxAttempts {
-				if next := e.startAdditionalInflight(streamCtx, settleCtx, race, params, trigger.stage, trigger.inf, trigger.reason, triedParticipants, clientFlag); next != nil {
+				if next := e.startAdditionalInflight(streamCtx, settleCtx, race, params, trigger.stage, trigger.inf, trigger.reason, triedParticipants, len(attempts), clientFlag); next != nil {
 					attempts = append(attempts, next)
 					e.watchInflightDone(next, doneCh)
 				}
@@ -2493,7 +2577,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			}
 			trigger := attempts[len(attempts)-1]
 			trigger.escalated = true
-			if next := e.startAdditionalInflight(streamCtx, settleCtx, race, reducedParams, "response_timeout_wait_elapsed", trigger, "response_timeout_reduced_max_tokens", triedParticipants, clientFlag); next != nil {
+			if next := e.startAdditionalInflight(streamCtx, settleCtx, race, reducedParams, "response_timeout_wait_elapsed", trigger, "response_timeout_reduced_max_tokens", triedParticipants, len(attempts), clientFlag); next != nil {
 				next.excludePairwise = true
 				attempts = append(attempts, next)
 				e.watchInflightDone(next, doneCh)
@@ -2552,6 +2636,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 				"content_chunks_before_stall", rec.ContentChunksBefore,
 				"output_bytes_before_stall", rec.OutputBytesBefore,
 			)
+			stallInf.recordStallDetected(now, rec.OutputChunksBefore, rec.ContentChunksBefore, rec.OutputBytesBefore)
 		case <-winnerHardTimeoutC:
 			w := race.winnerNonce()
 			winning := inflightByNonce(attempts, w)
@@ -2884,6 +2969,15 @@ func (e *Redundancy) recordGatewayRequestOutcome(model, outcome, reason string) 
 	}
 }
 
+// attemptCtx is the context carrying the attempt span, used so accounting
+// facts capture the attempt's own span context rather than the request's.
+func (inf *inflight) attemptCtx() context.Context {
+	if inf == nil || inf.spanCtx == nil {
+		return context.Background()
+	}
+	return inf.spanCtx
+}
+
 func (e *Redundancy) recordGatewayAttemptStarted(inf *inflight, params user.InferenceParams) {
 	if e == nil || inf == nil || inf.probe {
 		return
@@ -2893,7 +2987,15 @@ func (e *Redundancy) recordGatewayAttemptStarted(inf *inflight, params user.Infe
 	role := gatewayAttemptRole(inf)
 	reason := gatewayAttemptStartReason(inf)
 	quarantineMode := e.quarantineModeForParticipant(participantKey)
-	e.accounting.RealSend(inf.escrowID, inf.nonce, inf.sendTime, quarantineMode)
+	// The phase the recorder stamped is the one the nonce keeps; later facts
+	// must not re-read it, or a phase change mid-request would put a different
+	// value on the span than on the Prometheus label for the same nonce.
+	phase := e.accounting.RealSend(inf.attemptCtx(), inf.escrowID, inf.nonce, inf.sendTime, quarantineMode)
+	inf.applyCounterKeyAttrs(accounting.CounterKey{
+		SlotID:         uint32(inf.hostIdx),
+		DispatchPhase:  phase,
+		QuarantineMode: accounting.QuarantineFromString(quarantineMode),
+	})
 	if e.metrics == nil {
 		return
 	}
@@ -2921,7 +3023,20 @@ func (e *Redundancy) recordGatewayAttemptTerminal(inf *inflight, params user.Inf
 	if e == nil || inf == nil || inf.probe {
 		return
 	}
-	e.accounting.Usage(inf.escrowID, inf.nonce, winnerNonce)
+	e.accounting.Usage(inf.attemptCtx(), inf.escrowID, inf.nonce, winnerNonce)
+	// Dispatch phase and quarantine were stamped at real-send; this fact adds
+	// only the outcome dimensions.
+	key := accounting.CounterKey{
+		SlotID:      uint32(inf.hostIdx),
+		Disposition: accounting.DispositionForUsage(accounting.UsageFor(inf.nonce, winnerNonce)),
+	}
+	if !ok {
+		detail := gatewayAttemptFailureReason(inf, e.session)
+		key.DetailReason = detail
+		key.FailureOrigin = accounting.FailureOriginFromDetail(detail)
+		e.maybeLogMLNodePayloadForTerminal(inf, params, key.FailureOrigin, detail)
+	}
+	inf.applyCounterKeyAttrs(key)
 	if e.metrics == nil {
 		return
 	}
@@ -2982,7 +3097,21 @@ func (e *Redundancy) recordGatewayTimeoutAction(inf *inflight, params user.Infer
 	if len(detailReasons) > 0 && detailReasons[0] != "" {
 		timeoutReason = detailReasons[0]
 	}
-	e.accounting.TimeoutResult(inf.escrowID, inf.nonce, kind, action, reason, detailReason, timeoutReason)
+	phase := e.accounting.TimeoutResult(inf.attemptCtx(), inf.escrowID, inf.nonce, kind, action, reason, detailReason, timeoutReason)
+	// Only mirror what became an accounting fact, so the span can never claim a
+	// timeout dimension the counter does not carry.
+	if accounting.TimeoutActionRecorded(action, reason) {
+		outcome := accounting.TimeoutOutcomeFromAction(action, reason)
+		inf.applyCounterKeyAttrs(accounting.CounterKey{
+			SlotID:                 uint32(inf.hostIdx),
+			TimeoutEvaluationPhase: phase,
+			FailureOrigin:          accounting.FailureOriginFromDetail(detailReason),
+			DetailReason:           detailReason,
+			TimeoutKind:            accounting.TimeoutKind(kind),
+			TimeoutOutcome:         outcome,
+			TimeoutReason:          accounting.TimeoutReasonFromString(outcome, timeoutReason),
+		})
+	}
 	if e.metrics == nil {
 		return
 	}
@@ -2996,8 +3125,7 @@ func (e *Redundancy) recordGatewayTimeoutAction(inf *inflight, params user.Infer
 }
 
 func (e *Redundancy) finishRaceWhenPendingDone(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, winnerNonce uint64, opts raceFinishOptions) {
-	bgCtx, _ := ensureRequestLogContext(context.Background())
-	bgCtx = logging.PropagateRequestID(bgCtx, ctx)
+	bgCtx, _ := ensureRequestLogContext(context.WithoutCancel(ctx))
 
 	e.waitForPendingLosers(bgCtx, winnerNonce, attempts)
 
@@ -3007,8 +3135,7 @@ func (e *Redundancy) finishRaceWhenPendingDone(ctx context.Context, attempts []*
 }
 
 func (e *Redundancy) finishStalledWinnerAfterClientTimeout(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, winnerNonce uint64) {
-	bgCtx, _ := ensureRequestLogContext(context.Background())
-	bgCtx = logging.PropagateRequestID(bgCtx, ctx)
+	bgCtx, _ := ensureRequestLogContext(context.WithoutCancel(ctx))
 
 	winner := inflightByNonce(attempts, winnerNonce)
 	abandonedWinner := e.waitForClientTimedOutAttempts(bgCtx, winnerNonce, attempts)
@@ -3297,7 +3424,11 @@ func attemptCountsAsSuccessfulForPerf(inf *inflight, params user.InferenceParams
 }
 
 func isFailedStreamAttempt(inf *inflight) bool {
-	return isEmptyStreamAttempt(inf) || isErrorStreamAttempt(inf)
+	return isEmptyStreamAttempt(inf) || isErrorStreamAttempt(inf) || isTruncatedStreamAttempt(inf)
+}
+
+func isTruncatedStreamAttempt(inf *inflight) bool {
+	return inf != nil && errors.Is(inf.err, transport.ErrSSEStreamTruncated)
 }
 
 func (e *Redundancy) markPhaseTransitionAbort(inf *inflight) bool {
@@ -3777,11 +3908,16 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 		}
 		fields = append(fields, inf.stallLogFields(finishedAt)...)
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "race_completed", fields...)
+		inf.closeAttemptPhases(finishedAt)
 		e.recordGatewayAttemptTerminal(inf, params, winnerNonce, ok)
 		if !ok {
 			e.recordWinnerTerminalFailureOnce(inf, params, winnerNonce)
 			failed = append(failed, inf)
+			// Span stays open until timeout evaluation has stamped its
+			// disposition; endAttemptSpan replays finishedAt.
+			continue
 		}
+		inf.endAttemptSpan()
 	}
 	captureEmptyStreamAttemptRequest(ctx, e.devshardID, params, attempts, winnerNonce)
 	captureShortContentAttemptRequest(ctx, e.devshardID, params, attempts, winnerNonce)
@@ -3844,6 +3980,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 				e.recordGatewayTimeoutAction(inf, params, timeoutResultKind(result, inf), "completed", "none")
 			}
 		}
+		endAttemptSpans(failed)
 		if hostErr := hostApplicationErrorFromAttempts(attempts, winnerNonce); hostErr != nil {
 			captureAllAttemptsFailedRequest(ctx, e.devshardID, params, hostErr)
 			logRequestStage(ctx, "request_failed", "escrow", e.devshardID, "error", hostErr)
@@ -3900,10 +4037,12 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 			MaxTokens:   params.MaxTokens,
 			StartedAt:   params.StartedAt,
 		}
-		if anySucceeded {
+		if !anySucceeded {
+			endAttemptSpans(failed)
+		} else {
 			e.goTrackedRaceCleanup(func() {
-				bgCtx, _ := ensureRequestLogContext(context.Background())
-				bgCtx = logging.PropagateRequestID(bgCtx, ctx)
+				bgCtx, _ := ensureRequestLogContext(context.WithoutCancel(ctx))
+				defer endAttemptSpans(failed)
 				for _, inf := range failed {
 					if inf.probe {
 						logInferenceStage(bgCtx, inf.escrowID, inf.nonce, "poc_probe_failed_no_timeout", "host", inf.hostID, "poc_reason", currentPoCPhaseReason())
@@ -3968,6 +4107,14 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 	e.checkEscrowMissing(ctx, attempts)
 
 	return nil
+}
+
+// endAttemptSpans closes the attempt spans held open through timeout
+// evaluation. Idempotent per attempt.
+func endAttemptSpans(attempts []*inflight) {
+	for _, inf := range attempts {
+		inf.endAttemptSpan()
+	}
 }
 
 func (e *Redundancy) maxAttempts() int {
@@ -4095,7 +4242,7 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 			// no content. Telemetry-only — not a host fault, no quarantine.
 			e.participantLimiter.ObserveModelBurnEmpty(participantKey, e.model)
 		} else {
-			e.participantLimiter.ObserveEmptyStreamForModel(participantKey, e.model)
+			e.participantLimiter.ObserveEmptyStreamForModel(participantKey, e.model, emptyStreamQuarantineStats(inf, params))
 		}
 	}
 	if !requestSucceeded && emptyStream {
@@ -4190,13 +4337,42 @@ func ghostProbeParams(model string) user.InferenceParams {
 //
 // kind is retained on the signature for log-label differentiation only;
 // the dispatch path is identical for every kind.
-func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostKind, reason string) {
+//
+// ctx should be the originating user request when the picker burned this
+// nonce on its behalf (T3.5). Fall back to context.Background() for
+// detached burns; ensureRequestLogContext then mints a fresh request_id.
+func (e *Redundancy) runGhostProbe(ctx context.Context, prepared *user.PreparedInference, kind ghostKind, reason string) {
 	if prepared == nil || e.session == nil {
 		return
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	ctx, _ = ensureRequestLogContext(ctx)
+
 	participantKey := e.participantKeyForHost(prepared.HostIdx())
 	quarantineMode := e.quarantineModeForParticipant(participantKey)
-	e.accounting.Ghost(e.devshardID, prepared.Nonce(), reason, quarantineMode)
+	spanCtx, span := observability.StartGatewayAttempt(ctx, observability.AttemptIdentity{
+		Nonce:          prepared.Nonce(),
+		EscrowID:       e.devshardID,
+		SlotID:         uint32(prepared.HostIdx()),
+		ParticipantKey: participantKey,
+		HostID:         e.session.HostLabel(prepared.HostIdx()),
+		Model:          e.model,
+		QuarantineMode: quarantineMode,
+	})
+	defer observability.EndSpan(span)
+
+	phase := e.accounting.Ghost(spanCtx, e.devshardID, prepared.Nonce(), reason, quarantineMode)
+	noSend, detail := accounting.NoSendFromReason(reason)
+	observability.SetAttemptCounterKeyAttrs(span, accounting.CounterKey{
+		SlotID:         uint32(prepared.HostIdx()),
+		Disposition:    accounting.DispositionGhost,
+		DispatchPhase:  phase,
+		QuarantineMode: accounting.QuarantineFromString(quarantineMode),
+		NoSendReason:   noSend,
+		DetailReason:   detail,
+	})
 	if e.metrics != nil {
 		e.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
 			ParticipantKey: participantKey,
@@ -4207,8 +4383,7 @@ func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostK
 			QuarantineMode: quarantineMode,
 		})
 	}
-	ctx, _ := ensureRequestLogContext(context.Background())
-	logInferenceStage(ctx, e.devshardID, prepared.Nonce(), "ghost_probe_skipped",
+	logInferenceStage(spanCtx, e.devshardID, prepared.Nonce(), "ghost_probe_skipped",
 		"host", e.session.HostLabel(prepared.HostIdx()),
 		"kind", int(kind),
 		"reason", reason,

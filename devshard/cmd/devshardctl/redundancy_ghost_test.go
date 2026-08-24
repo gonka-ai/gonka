@@ -1,11 +1,17 @@
 package main
 
 import (
+	"bytes"
+	"context"
+	"log/slog"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
+	"devshard/logging"
+	"devshard/observability"
 	"devshard/user"
 )
 
@@ -17,8 +23,8 @@ import (
 // session_picker run loop racing with our explicit runGhostProbe call.
 func prepareForGhost(t *testing.T, session *user.Session, model string) *user.PreparedInference {
 	t.Helper()
-	prepared, err := session.PrepareInferenceFn(func(user.HostBinding) (user.InferenceParams, bool, error) {
-		return ghostProbeParams(model), true, nil
+	prepared, err := session.PrepareInferenceFn(func(user.HostBinding) (user.InferenceParams, bool, context.Context, error) {
+		return ghostProbeParams(model), true, context.Background(), nil
 	})
 	require.NoError(t, err)
 	require.NotNil(t, prepared)
@@ -55,7 +61,7 @@ func TestRunGhostProbe_AllKindsAreSilent(t *testing.T) {
 			require.Nil(t, env.killables[hostIdx].LastRequest(),
 				"precondition: no host contact before runGhostProbe")
 
-			env.proxy.redundancy.runGhostProbe(prepared, tc.kind, tc.kind.reason())
+			env.proxy.redundancy.runGhostProbe(context.Background(), prepared, tc.kind, tc.kind.reason())
 
 			// Belt-and-suspenders sleep. runGhostProbe is now strictly
 			// log-only -- no goroutine, no I/O -- so this is paranoia,
@@ -88,7 +94,7 @@ func TestRunGhostProbe_KeepsMsgStartInDiffs(t *testing.T) {
 	prepared := prepareForGhost(t, env.session, "llama")
 	nonce := prepared.Nonce()
 
-	env.proxy.redundancy.runGhostProbe(prepared, ghostThrottled, ghostThrottled.reason())
+	env.proxy.redundancy.runGhostProbe(context.Background(), prepared, ghostThrottled, ghostThrottled.reason())
 
 	require.GreaterOrEqual(t, env.session.Nonce(), nonce,
 		"PrepareInferenceFn must have advanced past the burned nonce")
@@ -107,7 +113,7 @@ func TestRunGhostProbe_NoVoteFromThisNode(t *testing.T) {
 	prepared := prepareForGhost(t, env.session, "llama")
 
 	start := time.Now()
-	env.proxy.redundancy.runGhostProbe(prepared, ghostExclude, ghostExclude.reason())
+	env.proxy.redundancy.runGhostProbe(context.Background(), prepared, ghostExclude, ghostExclude.reason())
 	elapsed := time.Since(start)
 
 	// Synchronous return is the structural guarantee that no
@@ -115,4 +121,69 @@ func TestRunGhostProbe_NoVoteFromThisNode(t *testing.T) {
 	// later. 50ms is generous; in practice this is microseconds.
 	require.Less(t, elapsed, 50*time.Millisecond,
 		"runGhostProbe must return synchronously (no background goroutines)")
+}
+
+func TestGhostProbeInheritsRequestID(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	env.proxy.redundancy.picker.stop()
+
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	ctx := logging.SetRequestID(context.Background(), "req-caller-42")
+	prepared := prepareForGhost(t, env.session, "llama")
+	env.proxy.redundancy.runGhostProbe(ctx, prepared, ghostThrottled, ghostThrottled.reason())
+
+	require.Contains(t, buf.String(), "request=req-caller-42")
+	require.Contains(t, buf.String(), "stage=ghost_probe_skipped")
+}
+
+func TestGhostProbeSpanSharesTraceWithRequest(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	env.proxy.redundancy.picker.stop()
+	rec := withAttemptSpanRecorder(t)
+
+	ctx, req := observability.StartGatewayRequest(context.Background())
+	prepared := prepareForGhost(t, env.session, "llama")
+	env.proxy.redundancy.runGhostProbe(ctx, prepared, ghostExclude, ghostExclude.reason())
+	req.End()
+
+	var reqSpan, attemptSpan sdktrace.ReadOnlySpan
+	for _, s := range rec.Ended() {
+		switch s.Name() {
+		case "gateway.request":
+			reqSpan = s
+		case observability.SpanNameGatewayAttempt:
+			attemptSpan = s
+		}
+	}
+	require.NotNil(t, reqSpan)
+	require.NotNil(t, attemptSpan)
+	require.Equal(t, reqSpan.SpanContext().TraceID(), attemptSpan.SpanContext().TraceID())
+	require.Equal(t, reqSpan.SpanContext().SpanID(), attemptSpan.Parent().SpanID())
+}
+
+func TestGhostProbeFallsBackWhenNoRequestContext(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	env.proxy.redundancy.picker.stop()
+	rec := withAttemptSpanRecorder(t)
+
+	prepared := prepareForGhost(t, env.session, "llama")
+	require.NotPanics(t, func() {
+		env.proxy.redundancy.runGhostProbe(context.Background(), prepared, ghostPoC, ghostPoC.reason())
+	})
+
+	var attempt sdktrace.ReadOnlySpan
+	for _, s := range rec.Ended() {
+		if s.Name() == observability.SpanNameGatewayAttempt {
+			attempt = s
+		}
+	}
+	require.NotNil(t, attempt)
+	require.False(t, attempt.Parent().IsValid(), "detached ghost burn must open a root attempt span")
+	attrs := spanAttrMap(attempt)
+	require.Equal(t, "ghost", attrs[string(observability.AttrDisposition)])
+	require.Equal(t, "poc_unavailable_host", attrs[string(observability.AttrNoSendReason)])
 }

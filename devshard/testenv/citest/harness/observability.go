@@ -1,15 +1,13 @@
 package harness
 
 import (
-	"encoding/json"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -21,27 +19,48 @@ import (
 
 // ObservabilityEndpoints are host-published URLs for the testenv observability overlay.
 type ObservabilityEndpoints struct {
+	Profile    ObsProfile
 	Jaeger     string
+	Tempo      string
+	Alloy      string
 	Loki       string
 	Prometheus string
 	Grafana    string
 }
 
-// DefaultObservabilityEndpoints matches docker-compose.observability.yml host bindings.
+// TraceQueryBase is the host base URL used by WaitTrace* helpers.
+func (o ObservabilityEndpoints) TraceQueryBase() string {
+	if o.Profile.TraceBackend() == "tempo" {
+		return o.Tempo
+	}
+	return o.Jaeger
+}
+
+// DefaultObservabilityEndpoints matches host bindings for the given profile.
 func DefaultObservabilityEndpoints() ObservabilityEndpoints {
+	return ObservabilityEndpointsFor(ResolveObsProfile())
+}
+
+// ObservabilityEndpointsFor returns host URLs for a profile (unused backends stay set for convenience).
+func ObservabilityEndpointsFor(profile ObsProfile) ObservabilityEndpoints {
+	host := hostPublishedAddr("")
 	return ObservabilityEndpoints{
-		Jaeger:     "http://127.0.0.1:11686",
-		Loki:       "http://127.0.0.1:13101",
-		Prometheus: "http://127.0.0.1:19099",
-		Grafana:    "http://127.0.0.1:13000",
+		Profile:    profile,
+		Jaeger:     "http://" + net.JoinHostPort(host, "11686"),
+		Tempo:      "http://" + net.JoinHostPort(host, "13200"),
+		Alloy:      "http://" + net.JoinHostPort(host, "12345"),
+		Loki:       "http://" + net.JoinHostPort(host, "13101"),
+		Prometheus: "http://" + net.JoinHostPort(host, "19099"),
+		Grafana:    "http://" + net.JoinHostPort(host, "13000"),
 	}
 }
 
 // PrepareObservabilityOverlay copies observability configs into the stack workdir and
-// patches Prometheus scrape targets for the generated stack ports/version.
+// patches Prometheus scrape targets / OTEL env / profile-specific Alloy exporter.
 func (s *Stack) PrepareObservabilityOverlay(t *testing.T, cfg *config.File) {
 	t.Helper()
 	s.Observability = true
+	s.ObsProfile = ResolveObsProfile()
 
 	src := filepath.Join(s.TestenvDir, "observability")
 	dst := filepath.Join(s.WorkDir, "observability")
@@ -60,13 +79,25 @@ func (s *Stack) PrepareObservabilityOverlay(t *testing.T, cfg *config.File) {
 	replaced = strings.ReplaceAll(replaced, "metrics_path: /v2/metrics", fmt.Sprintf("metrics_path: /%s/metrics", version))
 	require.NoError(t, os.WriteFile(promPath, []byte(replaced), 0o644))
 
+	if s.ObsProfile.UsesAlloy() {
+		// Alloy `run` accepts only one config file — merge base + profile exporter.
+		mergeAlloyConfig(t, filepath.Join(dst, "alloy"), s.ObsProfile)
+	}
+
+	patchLokiDerivedFields(t, dst, s.ObsProfile)
+
 	envPath := filepath.Join(s.WorkDir, ".env")
 	envBody, err := os.ReadFile(envPath)
 	require.NoError(t, err)
 	lines := strings.Split(string(envBody), "\n")
 	set := map[string]string{
 		"TESTENV_OTEL_ENABLED":  "true",
-		"TESTENV_OTEL_ENDPOINT": "http://jaeger:4317",
+		"TESTENV_OTEL_ENDPOINT": s.ObsProfile.OTELEndpoint(),
+		"LOG_FORMAT":            "json",
+		"TESTENV_OBS_PROFILE":   string(s.ObsProfile),
+	}
+	for k, v := range s.payloadEnv {
+		set[k] = v
 	}
 	outLines := make([]string, 0, len(lines)+len(set))
 	seen := make(map[string]struct{})
@@ -92,73 +123,105 @@ func (s *Stack) PrepareObservabilityOverlay(t *testing.T, cfg *config.File) {
 	}
 	require.NoError(t, os.WriteFile(envPath, []byte(strings.Join(outLines, "\n")+"\n"), 0o600))
 
-	writeObservabilityIPOverride(t, s.WorkDir, cfg)
+	writeObservabilityIPOverride(t, s.WorkDir, cfg, s.ObsProfile)
 }
 
-func writeObservabilityIPOverride(t *testing.T, workDir string, cfg *config.File) {
+func mergeAlloyConfig(t *testing.T, alloyDir string, profile ObsProfile) {
+	t.Helper()
+	basePath := filepath.Join(alloyDir, "config.base.alloy")
+	baseBody, err := os.ReadFile(basePath)
+	require.NoError(t, err, "read alloy base config")
+	tracePath := filepath.Join(alloyDir, profile.AlloyTraceConfigFile())
+	traceBody, err := os.ReadFile(tracePath)
+	require.NoError(t, err, "read alloy trace exporter %s", tracePath)
+	merged := append(append([]byte{}, baseBody...), '\n')
+	merged = append(merged, traceBody...)
+	if len(merged) == 0 || merged[len(merged)-1] != '\n' {
+		merged = append(merged, '\n')
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(alloyDir, "config.alloy"), merged, 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(alloyDir, "config.trace.alloy"), traceBody, 0o644))
+}
+
+func patchLokiDerivedFields(t *testing.T, obsDir string, profile ObsProfile) {
+	t.Helper()
+	path := filepath.Join(obsDir, "grafana", "provisioning", "datasources", "loki.yaml")
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	uid := profile.LokiTraceDatasourceUID()
+	// Default committed file points at tempo; rewrite for jaeger profiles.
+	patched := strings.ReplaceAll(string(body), "datasourceUid: tempo", "datasourceUid: "+uid)
+	patched = strings.ReplaceAll(patched, "datasourceUid: jaeger", "datasourceUid: "+uid)
+	require.NoError(t, os.WriteFile(path, []byte(patched), 0o644))
+}
+
+func writeObservabilityIPOverride(t *testing.T, workDir string, cfg *config.File, profile ObsProfile) {
 	t.Helper()
 	base := cfg.Network.BaseIP
 	if base == "" {
 		base = "172.30.0"
 	}
-	// High addresses avoid gencompose static IPs (.2–.11 for mocks/versiond).
-	content := fmt.Sprintf(`# Auto-generated by citest observability harness — fixed IPs on testenv network.
-services:
-  jaeger:
-    networks:
-      testenv:
-        ipv4_address: %s.60
-  prometheus:
-    networks:
-      testenv:
-        ipv4_address: %s.61
-  loki:
-    networks:
-      testenv:
-        ipv4_address: %s.62
-  promtail:
-    networks:
-      testenv:
-        ipv4_address: %s.63
-  grafana:
-    networks:
-      testenv:
-        ipv4_address: %s.64
-`, base, base, base, base, base)
+	ipByService := map[string]string{
+		"jaeger":     base + ".60",
+		"prometheus": base + ".61",
+		"loki":       base + ".62",
+		"promtail":   base + ".63",
+		"grafana":    base + ".64",
+		"tempo":      base + ".65",
+		"alloy":      base + ".66",
+	}
+
+	var b strings.Builder
+	b.WriteString("# Auto-generated by citest observability harness — fixed IPs on testenv network.\n")
+	b.WriteString(fmt.Sprintf("# profile=%s\n", profile))
+	b.WriteString("services:\n")
+	for _, svc := range profile.IPServices() {
+		ip, ok := ipByService[svc]
+		require.True(t, ok, "no static IP mapping for service %q", svc)
+		b.WriteString(fmt.Sprintf("  %s:\n", svc))
+		b.WriteString("    networks:\n")
+		b.WriteString("      testenv:\n")
+		b.WriteString(fmt.Sprintf("        ipv4_address: %s\n", ip))
+	}
 	path := filepath.Join(workDir, "docker-compose.observability.ip.yml")
-	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+	require.NoError(t, os.WriteFile(path, []byte(b.String()), 0o644))
 }
 
-// WaitObservabilityReady polls Jaeger and Loki readiness endpoints on the host.
+// WaitObservabilityReady polls readiness endpoints for the active profile.
 func WaitObservabilityReady(t *testing.T, obs ObservabilityEndpoints, timeout time.Duration) {
 	t.Helper()
 	if timeout == 0 {
 		timeout = 3 * time.Minute
 	}
 	client := &http.Client{Timeout: 5 * time.Second}
-	t.Logf("citest: waiting for observability (Jaeger %s, Loki %s)", obs.Jaeger, obs.Loki)
+	t.Logf("citest: waiting for observability profile=%s (trace=%s loki=%s)",
+		obs.Profile, obs.TraceQueryBase(), obs.Loki)
+
 	ok := assertEventually(t, timeout, 2*time.Second, func() bool {
-		if !httpReady(client, obs.Jaeger+"/jaeger/") && !httpReady(client, obs.Jaeger+"/") {
+		if !httpReady(client, obs.Loki+"/ready") {
 			return false
 		}
-		return httpReady(client, obs.Loki+"/ready")
+		switch obs.Profile.TraceBackend() {
+		case "tempo":
+			// Tempo 2.7.1 can panic in statusHandler for /status/buildinfo in this
+			// local-blocks test config, while /ready correctly gates trace reads.
+			if !httpReady(client, obs.Tempo+"/ready") {
+				return false
+			}
+		default:
+			if !httpReady(client, obs.Jaeger+"/jaeger/") && !httpReady(client, obs.Jaeger+"/") {
+				return false
+			}
+		}
+		if obs.Profile.UsesAlloy() {
+			// Alloy UI is enough to prove the process is up; OTLP is not HTTP-probed here.
+			if !httpReady(client, obs.Alloy+"/-/ready") && !httpReady(client, obs.Alloy+"/") {
+				return false
+			}
+		}
+		return true
 	})
-	require.True(t, ok, "observability stack not ready within %s", timeout)
-}
-
-// WaitJaegerSpan polls Jaeger until a trace for service contains the given operation name.
-func WaitJaegerSpan(t *testing.T, obs ObservabilityEndpoints, service, operation string, timeout time.Duration) {
-	t.Helper()
-	if timeout == 0 {
-		timeout = 2 * time.Minute
-	}
-	client := &http.Client{Timeout: 10 * time.Second}
-	t.Logf("citest: waiting for Jaeger span service=%q operation=%q", service, operation)
-	ok := assertEventually(t, timeout, 3*time.Second, func() bool {
-		return jaegerHasOperation(client, obs.Jaeger, service, operation)
-	})
-	require.True(t, ok, "Jaeger span %q for service %q not found within %s (open %s/jaeger/)",
-		operation, service, timeout, obs.Jaeger)
+	require.True(t, ok, "observability stack (profile=%s) not ready within %s", obs.Profile, timeout)
 }
 
 // WaitLokiSubstring polls Loki until a log line from versiond services contains text.
@@ -200,80 +263,4 @@ func httpReady(client *http.Client, url string) bool {
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return resp.StatusCode >= 200 && resp.StatusCode < 400
-}
-
-func jaegerHasOperation(client *http.Client, baseURL, service, operation string) bool {
-	u, err := url.Parse(baseURL + "/jaeger/api/traces")
-	if err != nil {
-		return false
-	}
-	q := u.Query()
-	q.Set("service", service)
-	q.Set("operation", operation)
-	q.Set("limit", "20")
-	q.Set("lookback", "1h")
-	u.RawQuery = q.Encode()
-
-	resp, err := client.Get(u.String())
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return false
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return false
-	}
-	if strings.Contains(string(body), operation) {
-		return true
-	}
-	var parsed struct {
-		Data []struct {
-			Spans []struct {
-				OperationName string `json:"operationName"`
-			} `json:"spans"`
-		} `json:"data"`
-	}
-	if err := json.Unmarshal(body, &parsed); err != nil {
-		return false
-	}
-	for _, trace := range parsed.Data {
-		for _, span := range trace.Spans {
-			if span.OperationName == operation {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func lokiQueryContains(client *http.Client, baseURL, query, substring string) bool {
-	end := time.Now()
-	start := end.Add(-15 * time.Minute)
-	u, err := url.Parse(baseURL + "/loki/api/v1/query_range")
-	if err != nil {
-		return false
-	}
-	q := u.Query()
-	q.Set("query", query)
-	q.Set("limit", "50")
-	q.Set("start", strconv.FormatInt(start.UnixNano(), 10))
-	q.Set("end", strconv.FormatInt(end.UnixNano(), 10))
-	u.RawQuery = q.Encode()
-
-	resp, err := client.Get(u.String())
-	if err != nil {
-		return false
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return false
-	}
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return false
-	}
-	return strings.Contains(string(body), substring)
 }

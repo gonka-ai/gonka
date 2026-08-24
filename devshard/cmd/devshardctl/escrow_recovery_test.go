@@ -50,7 +50,6 @@ func TestWithDBRetry_RespectsCancellation(t *testing.T) {
 
 func recoveryTestSettings() GatewaySettings {
 	return GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,

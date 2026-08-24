@@ -295,8 +295,6 @@ gateway-sequenced, byte-identical diffs is normal (stale standby catch-up).
 That is not a bug; failing with SQLSTATE 23505 turns a successful durable
 write into an HTTP 500. Conflicting bytes remain a hard error (real fork).
 
-See [proposals/ha-diff-persist-consistency.md](./proposals/ha-diff-persist-consistency.md).
-
 ### Legacy Migration Is Resumable
 
 Decision: `MigrateLegacySQLite` is idempotent at the migration layer; live

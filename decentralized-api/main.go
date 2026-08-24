@@ -22,12 +22,14 @@ import (
 	"net"
 
 	nmgen "common/nodemanager/gen"
+	commonobs "common/observability"
 	"decentralized-api/nodemanager"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
 	"common/logging"
+	"decentralized-api/observability"
 	"decentralized-api/participant"
 	"encoding/json"
 	"fmt"
@@ -86,6 +88,26 @@ func main() {
 	}
 	if len(os.Args) >= 2 && os.Args[1] == "pre-upgrade" {
 		os.Exit(1)
+	}
+
+	observability.InstallLogger(os.Getenv("LOG_FORMAT"))
+
+	// Init installs the W3C propagator even with OTel disabled, which is what
+	// lets inbound traceparent metadata reach the acquire/release log lines.
+	shutdownObs, err := observability.Init(context.Background(), observability.Config{
+		ServiceName: observability.ServiceName,
+	})
+	if err != nil {
+		log.Printf("observability init: %v", err)
+	}
+	if shutdownObs != nil {
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := shutdownObs(shutdownCtx); err != nil {
+				log.Printf("observability shutdown: %v", err)
+			}
+		}()
 	}
 
 	configManager, err := apiconfig.LoadDefaultConfigManager()
@@ -287,7 +309,11 @@ func main() {
 	nmGrpcPort := configManager.GetApiConfig().NodeManagerGrpcPort
 	// port should be set explicitly in the config to start NodeManager GRPC server. 0 means we skip it
 	if nmGrpcPort != 0 {
-		nmGrpcServer := grpc.NewServer()
+		// Same interceptor mock-dapi registers: continue the caller's trace and
+		// bind x-request-id so stage=mlnode_acquire/release lines join Loki.
+		nmGrpcServer := grpc.NewServer(
+			grpc.ChainUnaryInterceptor(commonobs.UnaryServerTraceInterceptor("decentralized-api.nodemanager")),
+		)
 		nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker, configManager, chainPhaseTracker,
 			nodemanager.WithHostEventRing(hostEventRing),
 			nodemanager.WithEscrowLoadTracker(escrowLoadTracker),

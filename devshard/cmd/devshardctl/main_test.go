@@ -40,7 +40,6 @@ func TestBuildGatewayRuntimesDeactivatesMissingEscrow(t *testing.T) {
 	})
 
 	require.NoError(t, store.Initialize(GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -92,7 +91,6 @@ func TestBuildGatewayRuntimesDeactivatesMissingPrivateKey(t *testing.T) {
 	})
 
 	require.NoError(t, store.Initialize(GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -144,7 +142,6 @@ func TestBuildGatewayRuntimesPreservesActiveOnOtherErrors(t *testing.T) {
 	})
 
 	require.NoError(t, store.Initialize(GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -180,7 +177,6 @@ func TestBuildGatewayRuntimesDeactivatesUnrecoverableLocalState(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	require.NoError(t, store.Initialize(GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -251,7 +247,6 @@ func TestBuildGatewayRuntimesKeepsCreateStorageSessionFailureFatal(t *testing.T)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	require.NoError(t, store.Initialize(GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -291,7 +286,6 @@ func TestBuildGatewayRuntimesFailsWhenRecoveryQuarantineCannotPersist(t *testing
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	require.NoError(t, store.Initialize(GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -338,7 +332,6 @@ func measurePeakRuntimeBuildConcurrency(t *testing.T, n int) int64 {
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	require.NoError(t, store.Initialize(GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -420,7 +413,6 @@ func TestBuildGatewayRuntimesBoundedFanoutSurvivesRateLimitingLCD(t *testing.T) 
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	require.NoError(t, store.Initialize(GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -550,7 +542,6 @@ func TestRepairPersistedGatewayEndpointSettingsPreservesConfiguredPublicAPI(t *t
 	})
 
 	require.NoError(t, store.Initialize(GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://configured-api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,

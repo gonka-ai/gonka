@@ -9,11 +9,13 @@ datasources:
     editable: false
     jsonData:
       derivedFields:
-        - datasourceUid: jaeger
+        # Default e2e profile is tempo-alloy (T2). Harness rewrites datasourceUid
+        # to jaeger when TESTENV_OBS_PROFILE=jaeger-promtail|jaeger-alloy.
+        - datasourceUid: tempo
           matcherRegex: '"trace_id":"(\w+)"'
           name: TraceID
           url: '$${__value.raw}'
-        - datasourceUid: jaeger
+        - datasourceUid: tempo
           matcherRegex: 'trace_id=(\w+)'
           name: TraceID
           url: '$${__value.raw}'

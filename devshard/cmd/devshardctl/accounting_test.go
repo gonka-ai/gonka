@@ -25,10 +25,10 @@ func TestGatewayAccountingAdapterRecordsEvents(t *testing.T) {
 	require.NotNil(t, recorder)
 	registerGatewayAccountingTestEscrow(t, tracker, "e1", 1, "m")
 	require.NoError(t, tracker.RecordDiff("e1", 1, true))
-	recorder.Ghost("e1", 1, "participant_throttled_no_send", "probe")
+	recorder.Ghost(context.Background(), "e1", 1, "participant_throttled_no_send", "probe")
 	require.NoError(t, tracker.RecordDiff("e1", 2, true))
-	recorder.RealSend("e1", 2, time.Now().Add(-time.Second), "shadow")
-	recorder.TimeoutResult("e1", 2, "refused", "failed", "insufficient_votes", "no_receipt", "")
+	recorder.RealSend(context.Background(), "e1", 2, time.Now().Add(-time.Second), "shadow")
+	recorder.TimeoutResult(context.Background(), "e1", 2, "refused", "failed", "insufficient_votes", "no_receipt", "")
 
 	records := tracker.Query(accounting.QueryFilter{EpochIndex: 1})
 	var ghost, unfinished uint64
@@ -53,7 +53,7 @@ func TestHandleTimeoutClassifiesVoteFailuresWithoutExposingWeights(t *testing.T)
 
 	t.Run("insufficient votes", func(t *testing.T) {
 		env := setupTestProxy(t, 3, nil, false)
-		prepared, err := env.session.PrepareInference(defaultParams())
+		prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 		require.NoError(t, err)
 		result, err := env.session.HandleTimeout(
 			context.Background(),
@@ -72,7 +72,7 @@ func TestHandleTimeoutClassifiesVoteFailuresWithoutExposingWeights(t *testing.T)
 			timeoutErrorClient{},
 		}
 		env := setupTestProxyWithClients(t, clients)
-		prepared, err := env.session.PrepareInference(defaultParams())
+		prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 		require.NoError(t, err)
 		result, err := env.session.HandleTimeout(
 			context.Background(),
@@ -86,7 +86,7 @@ func TestHandleTimeoutClassifiesVoteFailuresWithoutExposingWeights(t *testing.T)
 
 	t.Run("canceled wait", func(t *testing.T) {
 		env := setupTestProxy(t, 3, nil, false)
-		prepared, err := env.session.PrepareInference(defaultParams())
+		prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 		require.NoError(t, err)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
@@ -127,7 +127,7 @@ func (timeoutErrorClient) VerifyTimeout(
 
 func TestAccountingObserverTracksCommittedSessionDiffs(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
-	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
+	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
 	recorder := accounting.NewRecorder(tracker, nil)
@@ -140,9 +140,9 @@ func TestAccountingObserverTracksCommittedSessionDiffs(t *testing.T) {
 
 	_, err = env.session.SendInference(context.Background(), defaultParams())
 	require.NoError(t, err)
-	recorder.RealSend("escrow-proxy", 1, time.Now(), "")
-	recorder.Usage("escrow-proxy", 1, 1)
-	_, err = env.session.PrepareInference(defaultParams())
+	recorder.RealSend(context.Background(), "escrow-proxy", 1, time.Now(), "")
+	recorder.Usage(context.Background(), "escrow-proxy", 1, 1)
+	_, err = env.session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 
 	var finished uint64
@@ -154,7 +154,7 @@ func TestAccountingObserverTracksCommittedSessionDiffs(t *testing.T) {
 
 func TestAccountingObserverSyncsActiveProtocolMisses(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
-	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
+	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
 	recorder := accounting.NewRecorder(tracker, nil)
@@ -168,10 +168,10 @@ func TestAccountingObserverSyncsActiveProtocolMisses(t *testing.T) {
 	user.TimeoutBuffer = 0
 	t.Cleanup(func() { user.TimeoutBuffer = oldBuffer })
 	params := defaultParams()
-	prepared, err := env.session.PrepareInference(params)
+	prepared, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	sentAt := time.Now().Add(-2 * time.Second)
-	recorder.RealSend("escrow-proxy", prepared.Nonce(), sentAt, "")
+	recorder.RealSend(context.Background(), "escrow-proxy", prepared.Nonce(), sentAt, "")
 
 	result, err := env.session.HandleTimeout(context.Background(), prepared.Nonce(), sentAt, &host.InferencePayload{
 		Prompt:      params.Prompt,
@@ -182,7 +182,7 @@ func TestAccountingObserverSyncsActiveProtocolMisses(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.True(t, result.Applied)
-	recorder.TimeoutResult("escrow-proxy", prepared.Nonce(), result.Reason, "completed", "none", "", "")
+	recorder.TimeoutResult(context.Background(), "escrow-proxy", prepared.Nonce(), result.Reason, "completed", "none", "", "")
 
 	var applied, missed, crossCheckErrors uint64
 	for _, record := range tracker.Query(accounting.QueryFilter{EpochIndex: 22}) {
@@ -197,7 +197,7 @@ func TestAccountingObserverSyncsActiveProtocolMisses(t *testing.T) {
 
 func TestAccountingProductionPendingClassification(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
-	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
+	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
 	recorder := accounting.NewRecorder(tracker, nil)
@@ -208,13 +208,13 @@ func TestAccountingProductionPendingClassification(t *testing.T) {
 		TimeoutBuffer: user.TimeoutBuffer,
 	}, env.session, env.sm)
 
-	prepared, err := env.session.PrepareInference(defaultParams())
+	prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 	record := accountingRecordForParticipant(t, tracker, 23, env.group[prepared.HostIdx()].ValidatorAddress)
 	require.Equal(t, uint64(1), record.PendingClassification)
 	require.Zero(t, record.InFlight)
 
-	recorder.RealSend("escrow-proxy", prepared.Nonce(), time.Now(), "")
+	recorder.RealSend(context.Background(), "escrow-proxy", prepared.Nonce(), time.Now(), "")
 	record = accountingRecordForParticipant(t, tracker, 23, env.group[prepared.HostIdx()].ValidatorAddress)
 	require.Zero(t, record.PendingClassification)
 	require.Equal(t, uint64(1), record.InFlight)
@@ -223,7 +223,7 @@ func TestAccountingProductionPendingClassification(t *testing.T) {
 func TestAccountingProductionGhostFact(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
-	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
+	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
 	recorder := accounting.NewRecorder(tracker, nil)
@@ -240,6 +240,7 @@ func TestAccountingProductionGhostFact(t *testing.T) {
 
 	prepared := prepareForGhost(t, env.session, "llama")
 	env.proxy.redundancy.runGhostProbe(
+		context.Background(),
 		prepared,
 		ghostThrottled,
 		ghostThrottled.reason(),
@@ -264,7 +265,7 @@ func TestAccountingProductionGhostFact(t *testing.T) {
 func TestAccountingStateDivergenceRemainsUnknownPolicy(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
-	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
+	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
 	recorder := accounting.NewRecorder(tracker, nil)
@@ -279,6 +280,7 @@ func TestAccountingStateDivergenceRemainsUnknownPolicy(t *testing.T) {
 
 	prepared := prepareForGhost(t, env.session, "llama")
 	env.proxy.redundancy.runGhostProbe(
+		context.Background(),
 		prepared,
 		ghostCapability,
 		"escrow_state_root_diverged",
@@ -293,7 +295,7 @@ func TestAccountingStateDivergenceRemainsUnknownPolicy(t *testing.T) {
 
 func TestAccountingProductionUsedAndUnusedAttempts(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
-	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
+	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
 	recorder := accounting.NewRecorder(tracker, nil)
@@ -306,7 +308,7 @@ func TestAccountingProductionUsedAndUnusedAttempts(t *testing.T) {
 	env.proxy.redundancy.accounting = recorder
 	params := defaultParams()
 
-	prepared1, err := env.session.PrepareInference(params)
+	prepared1, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	attempt1 := &inflight{
 		escrowID: "escrow-proxy",
@@ -319,7 +321,7 @@ func TestAccountingProductionUsedAndUnusedAttempts(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, env.session.ProcessResponse(prepared1.HostIdx(), response1, prepared1.Nonce()))
 
-	prepared2, err := env.session.PrepareInference(params)
+	prepared2, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	attempt2 := &inflight{
 		escrowID: "escrow-proxy",
@@ -331,7 +333,7 @@ func TestAccountingProductionUsedAndUnusedAttempts(t *testing.T) {
 	response2, err := env.session.SendOnly(context.Background(), prepared2, nil, nil)
 	require.NoError(t, err)
 	require.NoError(t, env.session.ProcessResponse(prepared2.HostIdx(), response2, prepared2.Nonce()))
-	_, err = env.session.PrepareInference(params)
+	_, err = env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 
 	env.proxy.redundancy.recordGatewayAttemptTerminal(attempt1, params, prepared1.Nonce(), true)
@@ -365,7 +367,7 @@ func TestAccountingObserverSyncsActiveInvalidation(t *testing.T) {
 		userSigner.Address(),
 		signing.NewSecp256k1Verifier(),
 	)
-	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
+	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
 	recorder := accounting.NewRecorder(tracker, nil)
@@ -520,7 +522,7 @@ func TestGatewayAccountingAdapterRecordsGhostPolicyDimensions(t *testing.T) {
 	for i, tc := range cases {
 		nonce := uint64(i + 1)
 		require.NoError(t, tracker.RecordDiff("e1", nonce, true), tc.name)
-		recorder.Ghost("e1", nonce, tc.reason, tc.quarantine)
+		recorder.Ghost(context.Background(), "e1", nonce, tc.reason, tc.quarantine)
 	}
 
 	record := onlyGatewayAccountingRecord(t, tracker.Query(accounting.QueryFilter{EpochIndex: 2}))
@@ -546,7 +548,7 @@ func TestGatewayAccountingAdapterRecordsPoCGhostPolicyDimensions(t *testing.T) {
 	registerGatewayAccountingTestEscrow(t, tracker, "e1", 3, "m")
 	require.NoError(t, tracker.RecordDiff("e1", 1, true))
 
-	recorder.Ghost("e1", 1, "poc_unavailable_host", "none")
+	recorder.Ghost(context.Background(), "e1", 1, "poc_unavailable_host", "none")
 
 	record := onlyGatewayAccountingRecord(t, tracker.Query(accounting.QueryFilter{EpochIndex: 3}))
 	counter := requireGatewayAccountingCounter(t, record, func(key accounting.CounterKey) bool {
@@ -565,13 +567,13 @@ func TestGatewayAccountingAdapterRecordsRealSendPolicyDimensions(t *testing.T) {
 	registerGatewayAccountingTestEscrow(t, tracker, "e1", 4, "m")
 
 	require.NoError(t, tracker.RecordDiff("e1", 1, true))
-	recorder.RealSend("e1", 1, time.Now(), "shadow")
-	recorder.Usage("e1", 1, 1)
+	recorder.RealSend(context.Background(), "e1", 1, time.Now(), "shadow")
+	recorder.Usage(context.Background(), "e1", 1, 1)
 	require.NoError(t, tracker.RecordProtocol("e1", 1, 0, accounting.ProtocolFinishApplied, types.HostStats{}))
 
 	require.NoError(t, tracker.RecordDiff("e1", 2, true))
-	recorder.RealSend("e1", 2, time.Now(), "probation")
-	recorder.Usage("e1", 2, 1)
+	recorder.RealSend(context.Background(), "e1", 2, time.Now(), "probation")
+	recorder.Usage(context.Background(), "e1", 2, 1)
 	require.NoError(t, tracker.RecordProtocol("e1", 2, 0, accounting.ProtocolFinishApplied, types.HostStats{}))
 
 	record := onlyGatewayAccountingRecord(t, tracker.Query(accounting.QueryFilter{EpochIndex: 4}))
@@ -595,8 +597,8 @@ func TestGatewayAccountingAdapterRecordsPoCRealSendPhaseContext(t *testing.T) {
 	registerGatewayAccountingTestEscrow(t, tracker, "e1", 5, "m")
 	require.NoError(t, tracker.RecordDiff("e1", 1, true))
 
-	recorder.RealSend("e1", 1, time.Now(), "none")
-	recorder.Usage("e1", 1, 1)
+	recorder.RealSend(context.Background(), "e1", 1, time.Now(), "none")
+	recorder.Usage(context.Background(), "e1", 1, 1)
 	require.NoError(t, tracker.RecordProtocol("e1", 1, 0, accounting.ProtocolFinishApplied, types.HostStats{}))
 
 	record := onlyGatewayAccountingRecord(t, tracker.Query(accounting.QueryFilter{EpochIndex: 5}))
@@ -627,7 +629,7 @@ func TestGatewayAccountingNoNonceConsumedHasNoAccounting(t *testing.T) {
 
 func newGatewayAccountingTestTracker(t *testing.T) *accounting.Tracker {
 	t.Helper()
-	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
+	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
 	return tracker

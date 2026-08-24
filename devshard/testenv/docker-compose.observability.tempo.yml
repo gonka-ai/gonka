@@ -1,0 +1,26 @@
+# Tempo trace backend fragment (tempo-alloy / tempo-promtail profiles).
+
+services:
+  tempo:
+    image: grafana/tempo:2.7.1
+    user: "0:0"
+    command:
+      - -config.file=/etc/tempo/tempo.yaml
+    volumes:
+      - ${TESTENV_OBS_CONFIG_DIR:-.}/observability/tempo.yaml:/etc/tempo/tempo.yaml:ro
+      - testenv_tempo_data:/var/tempo
+    ports:
+      - "127.0.0.1:13200:3200"
+    expose:
+      - "4317"
+      - "4318"
+    networks:
+      - testenv
+    restart: unless-stopped
+
+  grafana:
+    depends_on:
+      - tempo
+
+volumes:
+  testenv_tempo_data:

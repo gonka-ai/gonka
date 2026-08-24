@@ -45,7 +45,7 @@ services:
     depends_on:
       - mock-chain
 
-  mock-openai:
+  mock-openai-0:
     build:
       context: ../..
       dockerfile: devshard/testenv/Dockerfile.dev

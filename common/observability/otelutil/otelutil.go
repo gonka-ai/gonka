@@ -9,11 +9,21 @@ package otelutil
 
 import "strings"
 
+// Reasons passed to ParseHeaders' onMalformed callback. Values never include
+// header contents — OTEL_HEADERS commonly carries secrets (e.g. authorization).
+const (
+	MalformedMissingSeparator = "missing_separator"
+	MalformedEmptyKey         = "empty_key"
+	MalformedEmptyValue       = "empty_value"
+)
+
 // ParseHeaders accepts the standard OTLP "key1=value1,key2=value2" form and
 // returns nil for empty/whitespace input. Malformed pairs are reported via the
 // optional onMalformed callback and skipped (so a single typo does not abort
-// init). Pass nil to silently ignore malformed pairs.
-func ParseHeaders(raw string, onMalformed func(pair string)) map[string]string {
+// init). The callback receives a reason constant and, when safe, the header
+// key only — never the raw segment or value (those may contain bearer tokens).
+// Pass nil to silently ignore malformed pairs.
+func ParseHeaders(raw string, onMalformed func(reason, key string)) map[string]string {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
 		return nil
@@ -26,10 +36,16 @@ func ParseHeaders(raw string, onMalformed func(pair string)) map[string]string {
 		}
 		key, value, found := strings.Cut(pair, "=")
 		key, value = strings.TrimSpace(key), strings.TrimSpace(value)
-		if !found || key == "" || value == "" {
-			if onMalformed != nil {
-				onMalformed(pair)
-			}
+		if !found {
+			reportMalformed(onMalformed, MalformedMissingSeparator, "")
+			continue
+		}
+		if key == "" {
+			reportMalformed(onMalformed, MalformedEmptyKey, "")
+			continue
+		}
+		if value == "" {
+			reportMalformed(onMalformed, MalformedEmptyValue, key)
 			continue
 		}
 		out[key] = value
@@ -38,4 +54,10 @@ func ParseHeaders(raw string, onMalformed func(pair string)) map[string]string {
 		return nil
 	}
 	return out
+}
+
+func reportMalformed(onMalformed func(reason, key string), reason, key string) {
+	if onMalformed != nil {
+		onMalformed(reason, key)
+	}
 }

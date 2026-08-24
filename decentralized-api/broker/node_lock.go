@@ -59,17 +59,19 @@ func (b *Broker) AcquireMLNode(ctx context.Context, model string, skipNodeIDs []
 }
 
 // ReleaseMLNode removes the lock from the map and queues a ReleaseNode command.
-func (b *Broker) ReleaseMLNode(lockID string, outcome InferenceResult) error {
+// ReleaseMLNode drops lockID and returns the node it held. Unknown locks
+// return ("", ErrLockNotFound).
+func (b *Broker) ReleaseMLNode(lockID string, outcome InferenceResult) (nodeID string, err error) {
 	b.lockMapMu.Lock()
 	entry, ok := b.lockMap[lockID]
 	delete(b.lockMap, lockID)
 	b.lockMapMu.Unlock()
 
 	if !ok {
-		return ErrLockNotFound
+		return "", ErrLockNotFound
 	}
 	b.queueReleaseNode(entry.nodeID, outcome)
-	return nil
+	return entry.nodeID, nil
 }
 
 // evictExpiredLocks is called from reconcilerLoop to release locks held longer than the TTL.

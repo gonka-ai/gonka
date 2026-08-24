@@ -7,7 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -288,14 +288,9 @@ func TestRaceWriterDefersSuspiciousWinnerUntilFallback(t *testing.T) {
 
 func TestRaceWriterLogsSuspiciousWinnerDeferredOncePerAttempt(t *testing.T) {
 	var logs bytes.Buffer
-	oldOutput := log.Writer()
-	oldFlags := log.Flags()
-	log.SetOutput(&logs)
-	log.SetFlags(0)
-	t.Cleanup(func() {
-		log.SetOutput(oldOutput)
-		log.SetFlags(oldFlags)
-	})
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
 
 	rec := httptest.NewRecorder()
 	ctx := context.Background()
@@ -1495,7 +1490,7 @@ func TestRecordStartedAttemptSamplesDoesNotCountEmptyStreamDuringRelaxedPoC(t *t
 
 func TestEmptyStreamWithoutWinnerSkipsTimeoutVoteOnlyWhenFinished(t *testing.T) {
 	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
-	prepared, err := env.session.PrepareInference(defaultParams())
+	prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 
 	inf := &inflight{
@@ -1528,7 +1523,7 @@ func TestErrorStreamWithoutFinishPostsTimeoutVote(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
 	params := defaultParams()
 	params.StartedAt = time.Now().Add(-10 * time.Second).Unix()
-	prepared, err := env.session.PrepareInference(params)
+	prepared, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 
 	body := []byte(`data: {"error":{"code":404,"message":"The model does not exist.","type":"NotFoundError"}}` + "\n\n" +

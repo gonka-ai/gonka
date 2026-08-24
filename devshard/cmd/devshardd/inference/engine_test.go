@@ -17,6 +17,10 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	otelcodes "go.opentelemetry.io/otel/codes"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
@@ -117,6 +121,102 @@ func TestDoWithLockedNode_GRPCSuccessObserves(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "node-1", nodeID)
 	assert.Equal(t, mlSrv.URL, endpoint)
+}
+
+// recordEngineSpans installs a recording tracer provider for the duration of a test.
+func recordEngineSpans(t *testing.T) *tracetest.SpanRecorder {
+	t.Helper()
+	recorder := tracetest.NewSpanRecorder()
+	previous := otel.GetTracerProvider()
+	otel.SetTracerProvider(sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder)))
+	t.Cleanup(func() { otel.SetTracerProvider(previous) })
+	return recorder
+}
+
+func engineSpanByName(spans []sdktrace.ReadOnlySpan, name string) sdktrace.ReadOnlySpan {
+	for _, s := range spans {
+		if s.Name() == name {
+			return s
+		}
+	}
+	return nil
+}
+
+func engineSpanAttr(span sdktrace.ReadOnlySpan, key string) string {
+	for _, kv := range span.Attributes() {
+		if string(kv.Key) == key {
+			return kv.Value.Emit()
+		}
+	}
+	return ""
+}
+
+// TestDoWithLockedNode_EmitsMLNodeSpans covers T5a: the dapi hop and the ML
+// HTTP call hang off the caller's trace, so a request's node selection is
+// visible in Tempo rather than only in metrics.
+func TestDoWithLockedNode_EmitsMLNodeSpans(t *testing.T) {
+	recorder := recordEngineSpans(t)
+
+	mlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(mlSrv.Close)
+
+	ml := startEngineMLClient(t, &engineMockNM{
+		acquireFunc: func(_ context.Context, _ *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
+			return &nmgen.AcquireMLNodeResponse{LockId: "lock-1", Endpoint: mlSrv.URL, NodeId: "node-1"}, nil
+		},
+	})
+	eng := newTestEngine(ml, mlnodeclient.NewManager(time.Hour), nil)
+
+	ctx, caller := otel.Tracer("test").Start(context.Background(), "caller")
+	resp, err := eng.doWithLockedNode(ctx, observability.PathExecute, "model-a", "42",
+		func(endpoint string) (*http.Response, error) { return http.Get(endpoint) })
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	caller.End()
+
+	spans := recorder.Ended()
+	acquire := engineSpanByName(spans, "devshardd.mlnode.acquire")
+	require.NotNil(t, acquire, "missing acquire span")
+	assert.Equal(t, caller.SpanContext().TraceID(), acquire.SpanContext().TraceID())
+	assert.Equal(t, "node-1", engineSpanAttr(acquire, "mlnode.node.id"))
+	assert.Equal(t, mlSrv.URL, engineSpanAttr(acquire, "mlnode.endpoint"))
+	assert.Equal(t, "lock-1", engineSpanAttr(acquire, "mlnode.lock_id"))
+	assert.Equal(t, "model-a", engineSpanAttr(acquire, "model"))
+
+	release := engineSpanByName(spans, "devshardd.mlnode.release")
+	require.NotNil(t, release, "missing release span")
+	assert.Equal(t, caller.SpanContext().TraceID(), release.SpanContext().TraceID())
+	assert.Equal(t, "SUCCESS", engineSpanAttr(release, "mlnode.release_outcome"))
+	assert.Equal(t, "lock-1", engineSpanAttr(release, "mlnode.lock_id"))
+}
+
+// TestDoWithLockedNode_AcquireFailureMarksSpan keeps a failed acquire visible
+// in the trace instead of leaving a silently OK span.
+func TestDoWithLockedNode_AcquireFailureMarksSpan(t *testing.T) {
+	recorder := recordEngineSpans(t)
+
+	ml := startEngineMLClient(t, &engineMockNM{
+		acquireFunc: func(_ context.Context, _ *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
+			return nil, status.Error(codes.ResourceExhausted, "no nodes available")
+		},
+	})
+	eng := newTestEngine(ml, mlnodeclient.NewManager(time.Hour), nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	_, err := eng.doWithLockedNode(ctx, observability.PathExecute, "model-a", "",
+		func(endpoint string) (*http.Response, error) { return http.Get(endpoint) })
+	require.Error(t, err)
+
+	acquire := engineSpanByName(recorder.Ended(), "devshardd.mlnode.acquire")
+	require.NotNil(t, acquire, "a failed acquire must still leave a span")
+	assert.Equal(t, otelcodes.Error, acquire.Status().Code)
+	assert.Nil(t, engineSpanByName(recorder.Ended(), "devshardd.mlnode.release"),
+		"nothing was locked, so nothing may be released")
 }
 
 func TestDoWithLockedNode_UnavailableFallsBack(t *testing.T) {
@@ -474,4 +574,3 @@ func TestFallback_UnknownNodeBounded(t *testing.T) {
 	}
 	assert.Equal(t, int32(1), maxInFlight.Load(), "capacity-unknown node must be bounded, not unbounded")
 }
-

@@ -17,16 +17,23 @@ scrape_configs:
       - docker: {}
       # Parse JSON body emitted by slog (decentralized-api and devshard).
       # Non-JSON lines (e.g. cosmos node output) are silently skipped.
+      # Extract correlation fields but promote only low-cardinality labels.
       - json:
           expressions:
             level: level
             service: service
+            stage: stage
+            where: where
+            trace_id: trace_id
+            span_id: span_id
+            request_id: request_id
       # Promote low-cardinality fields to Loki labels for efficient filtering.
-      # High-cardinality fields (trace_id, inference_id, model) stay in the log
-      # body; Grafana derivedFields regex extracts trace_id for Jaeger links.
+      # High-cardinality fields (trace_id, request_id, nonce, …) stay in the log
+      # body; Grafana derivedFields / `| json` extract them at read time.
       - labels:
           service:
           level:
+          stage:
     relabel_configs:
       - source_labels: [__meta_docker_container_name]
         regex: '/(.*)'
