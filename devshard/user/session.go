@@ -1338,8 +1338,11 @@ func (s *Session) HasQuorumAt(nonce uint64) bool {
 // getFinalizeClients returns a client list with admission control stripped.
 // Built lazily and cached on s.finalizeClients. Each client that implements
 // a ClearAdmission method gets a shallow copy with admission disabled;
-// others are used as-is.
+// others are used as-is. Safe for concurrent use: CollectSignatures can run
+// simultaneously from Finalize and the debug collect-signatures endpoint.
 func (s *Session) getFinalizeClients() []HostClient {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.finalizeClients != nil {
 		return s.finalizeClients
 	}

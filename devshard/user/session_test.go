@@ -1210,3 +1210,35 @@ func TestFinalize_SignatureStatus_InsufficientQuorum(t *testing.T) {
 		require.Less(t, finalEntry.SigWeight, uint32(4))
 	}
 }
+
+// TestUser_GetFinalizeClientsConcurrent verifies the lazy finalizeClients
+// init is safe under concurrent access. CollectSignatures (which triggers
+// the init) is reachable simultaneously from Finalize and from the public
+// debug endpoint POST /v1/debug/signatures/collect, so two goroutines can
+// hit the check-then-write at the same time. Run with -race.
+func TestUser_GetFinalizeClientsConcurrent(t *testing.T) {
+	const numHosts = 3
+	session, _, _ := setupSession(t, numHosts, 100000, 10)
+
+	const goroutines = 16
+	results := make([][]HostClient, goroutines)
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for g := 0; g < goroutines; g++ {
+		wg.Add(1)
+		go func(g int) {
+			defer wg.Done()
+			<-start
+			results[g] = session.getFinalizeClients()
+		}(g)
+	}
+	close(start)
+	wg.Wait()
+
+	for g, res := range results {
+		require.Len(t, res, numHosts, "goroutine %d got wrong client count", g)
+		for i, c := range res {
+			require.NotNil(t, c, "goroutine %d saw nil client at slot %d", g, i)
+		}
+	}
+}
