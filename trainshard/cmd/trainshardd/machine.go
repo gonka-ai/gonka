@@ -29,6 +29,7 @@ type parts struct {
 func machinery(cfg config, clock ports.Clock, log *slog.Logger) (parts, error) {
 	switch cfg.machine {
 	case "memory":
+		log.Warn("machine is memory: this daemon trains nothing, it only answers as though it had")
 		fake := memory.New(log, cfg.inventory)
 		return parts{
 			images:     fake,

@@ -26,6 +26,10 @@ func Plan(d Desired, o Observed) []Action {
 	if !o.HasImage(d.Run.Image) {
 		actions = append(actions, Action{Kind: ActionPullImage, Image: d.Run.Image})
 	}
+	// A container is built with the rank the peer list gives it, so it cannot exist before one
+	if !d.MeshConfigured {
+		return actions
+	}
 
 	container := o.Container
 	if o.ContainerImage != d.Run.Image || o.ContainerRevision != d.Revision {

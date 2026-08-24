@@ -169,7 +169,7 @@ func TestDeployBuildsANewContainerEvenWhenTheImageStaysTheSame(t *testing.T) {
 
 			f := newFixture()
 			ctx := context.Background()
-			if err := f.prepared(ctx); err != nil {
+			if err := f.meshed(ctx); err != nil {
 				t.Fatalf("prepare: %v", err)
 			}
 			if _, err := f.deploy().Execute(ctx, deployCommand()); err != nil {

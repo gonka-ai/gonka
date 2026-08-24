@@ -15,7 +15,9 @@ image:
 	DOCKER_BUILDKIT=1 docker build \
 		--build-arg VERSION=$(VERSION) \
 		-t $(IMAGE):$(VERSION) \
-		.
+		-t $(IMAGE):latest \
+		-f Dockerfile \
+		..
 
 push:
 	docker buildx build \
@@ -23,4 +25,5 @@ push:
 		--build-arg VERSION=$(VERSION) \
 		-t $(IMAGE):$(VERSION) \
 		--push \
-		.
+		-f Dockerfile \
+		..

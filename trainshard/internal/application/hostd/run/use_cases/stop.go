@@ -14,7 +14,7 @@ type StopUseCase struct {
 	runs       run.RunStore
 	log        run.RequestLog
 	containers run.Containers
-	reconcile  Reconciler
+	converge   *run.Converger
 	clock      ports.Clock
 }
 
@@ -23,10 +23,10 @@ func NewStopUseCase(
 	runs run.RunStore,
 	log run.RequestLog,
 	containers run.Containers,
-	reconcile Reconciler,
+	converge *run.Converger,
 	clock ports.Clock,
 ) *StopUseCase {
-	return &StopUseCase{chain: chain, runs: runs, log: log, containers: containers, reconcile: reconcile, clock: clock}
+	return &StopUseCase{chain: chain, runs: runs, log: log, containers: containers, converge: converge, clock: clock}
 }
 
 func (uc *StopUseCase) Execute(ctx context.Context, cmd StopCommand) ([]run.NodeResult, error) {
@@ -60,7 +60,7 @@ func (uc *StopUseCase) Execute(ctx context.Context, cmd StopCommand) ([]run.Node
 		write := func(ctx context.Context) error {
 			return run.RecordStop(ctx, uc.runs, node, cmd.Grace)
 		}
-		if err := uc.reconcile.Record(ctx, node, write); err != nil {
+		if err := uc.converge.Record(ctx, node, write); err != nil {
 			return run.NodeResult{}, err
 		}
 		applied, err := uc.containers.Inspect(ctx, cmd.Shard, node)

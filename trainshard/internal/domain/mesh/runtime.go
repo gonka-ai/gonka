@@ -30,6 +30,17 @@ func (r Runtime) Configured(ctx context.Context, shardID vo.ShardID, node vo.Nod
 	return found, err
 }
 
+func (r Runtime) Placement(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) (vo.Placement, error) {
+	config, found, err := r.Store.Config(ctx, shardID, node)
+	if err != nil {
+		return vo.Placement{}, err
+	}
+	if !found {
+		return vo.Placement{}, ErrMissingConfig
+	}
+	return config.Placement(node)
+}
+
 func (r Runtime) Present(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) (bool, bool, error) {
 	return r.Network.Present(ctx, shardID, node)
 }

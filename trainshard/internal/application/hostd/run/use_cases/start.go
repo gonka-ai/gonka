@@ -14,7 +14,7 @@ type StartUseCase struct {
 	runs       run.RunStore
 	log        run.RequestLog
 	containers run.Containers
-	reconcile  Reconciler
+	converge   *run.Converger
 	clock      ports.Clock
 }
 
@@ -23,10 +23,10 @@ func NewStartUseCase(
 	runs run.RunStore,
 	log run.RequestLog,
 	containers run.Containers,
-	reconcile Reconciler,
+	converge *run.Converger,
 	clock ports.Clock,
 ) *StartUseCase {
-	return &StartUseCase{chain: chain, runs: runs, log: log, containers: containers, reconcile: reconcile, clock: clock}
+	return &StartUseCase{chain: chain, runs: runs, log: log, containers: containers, converge: converge, clock: clock}
 }
 
 func (uc *StartUseCase) Execute(ctx context.Context, cmd NodesCommand) ([]run.NodeResult, error) {
@@ -60,7 +60,7 @@ func (uc *StartUseCase) Execute(ctx context.Context, cmd NodesCommand) ([]run.No
 		write := func(ctx context.Context) error {
 			return run.RecordStart(ctx, uc.runs, node)
 		}
-		if err := uc.reconcile.Record(ctx, node, write); err != nil {
+		if err := uc.converge.Record(ctx, node, write); err != nil {
 			return run.NodeResult{}, err
 		}
 		applied, err := uc.containers.Inspect(ctx, cmd.Shard, node)

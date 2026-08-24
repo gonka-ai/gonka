@@ -13,5 +13,3 @@ const (
 func (s ContainerState) Exists() bool { return s != "" && s != ContainerAbsent }
 
 func (s ContainerState) Running() bool { return s == ContainerRunning }
-
-func (s ContainerState) Stopped() bool { return s == ContainerCreated || s == ContainerExited }

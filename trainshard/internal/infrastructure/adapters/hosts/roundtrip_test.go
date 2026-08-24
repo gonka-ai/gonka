@@ -23,21 +23,35 @@ import (
 	"trainshard/internal/infrastructure/adapters/hosts"
 	"trainshard/internal/infrastructure/adapters/memory"
 	nodemanagerfake "trainshard/internal/infrastructure/adapters/nodemanager/fake"
-	"trainshard/internal/infrastructure/adapters/signing/hmac"
+	"trainshard/internal/infrastructure/adapters/signing/cosmos"
 	"trainshard/internal/infrastructure/repositories/localstate"
 	"trainshard/internal/utils/signedhttp"
 )
 
 const (
-	host      = vo.Participant("gonka1host")
-	creator   = vo.Address("gonka1creator")
-	secret    = "dev-secret"
 	shardID   = vo.ShardID(7)
 	baseImage = "ghcr.io/gonka/base@sha256:1111111111111111111111111111111111111111111111111111111111111111"
 	runImage  = "ghcr.io/gonka/train@sha256:2222222222222222222222222222222222222222222222222222222222222222"
 )
 
-var node = vo.NodeRef{Participant: host, NodeID: "node-a"}
+// the host and the coordinator each hold their own key, the way they do in production: the whole
+// point of this test is that a request crosses the wire signed and comes back believed
+var (
+	hostKey        = key("b71c71a67e1177ad4e901695e1b4b9ee17ae16c6668d313eac2f96dbcda3f291")
+	coordinatorKey = key("c87509a1c067bbde78beb793e6fa76530b6382a4c0241e5e4a9ec0a0f44dc0d3")
+
+	host    = vo.Participant(hostKey.Address())
+	creator = coordinatorKey.Address()
+	node    = vo.NodeRef{Participant: host, NodeID: "node-a"}
+)
+
+func key(raw string) *cosmos.Key {
+	loaded, err := cosmos.FromHex(raw)
+	if err != nil {
+		panic(err)
+	}
+	return loaded
+}
 
 func seedFile(t *testing.T) string {
 	t.Helper()
@@ -68,9 +82,8 @@ func newHost(t *testing.T) *hosts.Client {
 
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 	clock := clock.System{}
-	signer := hmac.New([]byte(secret), creator)
 
-	chain, err := chainfake.Load(seedFile(t), clock)
+	chain, err := chainfake.Load(seedFile(t))
 	if err != nil {
 		t.Fatalf("load chain: %v", err)
 	}
@@ -99,7 +112,7 @@ func newHost(t *testing.T) *hosts.Client {
 			Containers: machine,
 			Volumes:    machine,
 			GPU:        machine,
-			Mesh:       mesh.Runtime{Network: machine.Mesh(), Store: state.Mesh(), Attestor: signer},
+			Mesh:       mesh.Runtime{Network: machine.Mesh(), Store: state.Mesh(), Attestor: hostKey},
 			Egress:     machine,
 			Control:    nodemanagerfake.New(log),
 			Runs:       state.Runs(),
@@ -113,11 +126,12 @@ func newHost(t *testing.T) *hosts.Client {
 		Chain:    chain,
 		Streams:  machine,
 		Sessions: state.Sessions(),
+		Served:   state.Served(clock, time.Minute),
 		Clock:    clock,
 	})
 
 	mux := http.NewServeMux()
-	boundary := signedhttp.New(signer, clock, time.Minute).Wrap
+	boundary := signedhttp.New(hostKey, clock, time.Minute, vo.Address(host)).Wrap
 	module.Mount(mux, boundary)
 	streams.Mount(mux, boundary)
 
@@ -129,7 +143,7 @@ func newHost(t *testing.T) *hosts.Client {
 	go func() { defer close(stopped); module.Run(ctx) }()
 	t.Cleanup(func() { stop(); <-stopped })
 
-	return hosts.New(server.Client(), hosts.Directory{host: server.URL}, signer, clock, time.Minute)
+	return hosts.New(server.Client(), hosts.Directory{host: server.URL}, coordinatorKey, clock, time.Minute)
 }
 
 func command(nodes ...vo.NodeRef) run.HostCommand {
@@ -163,12 +177,33 @@ func waitFor(t *testing.T, why string, ready func(run.NodeStatus) bool, client *
 	}
 }
 
+// meshed takes the node as far as a coordinator would before it deploys: a container is built
+// with the rank its peer list gives it, so there is no run without one
+func meshed(t *testing.T, client *hosts.Client) {
+	t.Helper()
+
+	ctx := context.Background()
+	identities, err := client.Identities(ctx, shardID, host)
+	if err != nil {
+		t.Fatalf("identities: %v", err)
+	}
+	config, err := mesh.Order(shardID, []mesh.Member{identities[0].Member})
+	if err != nil {
+		t.Fatalf("order: %v", err)
+	}
+	if err := client.Apply(ctx, config, node); err != nil {
+		t.Fatalf("apply mesh: %v", err)
+	}
+	waitFor(t, "the mesh to come up", func(s run.NodeStatus) bool { return s.MeshUp }, client)
+}
+
 func TestARunIsDrivenOverHTTPFromEndToEnd(t *testing.T) {
 
 	client := newHost(t)
 	ctx := context.Background()
 
 	waitFor(t, "the node to be prepared", func(s run.NodeStatus) bool { return s.Prepared }, client)
+	meshed(t, client)
 
 	deployed, err := client.Deploy(ctx, host, run.DeployCall{
 		HostCommand: command(node),
@@ -218,6 +253,7 @@ func TestTheResultIsCollectedOverHTTPBeforeTheShardCloses(t *testing.T) {
 	client := newHost(t)
 	ctx := context.Background()
 	waitFor(t, "the node to be prepared", func(s run.NodeStatus) bool { return s.Prepared }, client)
+	meshed(t, client)
 	if _, err := client.Deploy(ctx, host, run.DeployCall{
 		HostCommand: command(node),
 		Run:         run.RunSpec{Image: runImage, Resources: run.Resources{GPUs: 8, DiskBytes: 1 << 30}},

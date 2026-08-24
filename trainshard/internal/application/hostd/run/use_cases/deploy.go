@@ -14,7 +14,7 @@ type DeployUseCase struct {
 	runs       run.RunStore
 	log        run.RequestLog
 	containers run.Containers
-	reconcile  Reconciler
+	converge   *run.Converger
 	clock      ports.Clock
 	limits     run.Limits
 }
@@ -24,7 +24,7 @@ func NewDeployUseCase(
 	runs run.RunStore,
 	log run.RequestLog,
 	containers run.Containers,
-	reconcile Reconciler,
+	converge *run.Converger,
 	clock ports.Clock,
 	limits run.Limits,
 ) *DeployUseCase {
@@ -33,7 +33,7 @@ func NewDeployUseCase(
 		runs:       runs,
 		log:        log,
 		containers: containers,
-		reconcile:  reconcile,
+		converge:   converge,
 		clock:      clock,
 		limits:     limits,
 	}
@@ -70,7 +70,7 @@ func (uc *DeployUseCase) Execute(ctx context.Context, cmd DeployCommand) ([]run.
 		write := func(ctx context.Context) error {
 			return run.RecordDeploy(ctx, uc.runs, node, cmd.Shard, cmd.Run)
 		}
-		if err := uc.reconcile.Record(ctx, node, write); err != nil {
+		if err := uc.converge.Record(ctx, node, write); err != nil {
 			return run.NodeResult{}, err
 		}
 		applied, err := uc.containers.Inspect(ctx, cmd.Shard, node)

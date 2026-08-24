@@ -5,8 +5,15 @@ services:
     environment:
       - TRAINSHARD_PARTICIPANT=${TRAINSHARD_PARTICIPANT}
       - TRAINSHARD_NODES=${TRAINSHARD_NODES}
-      - TRAINSHARD_SHARED_SECRET=${TRAINSHARD_SHARED_SECRET}
       - TRAINSHARD_MACHINE=docker
+      # the chain says what this host reserves, and the dapi signs for it and owns the node the
+      # training takes out of inference
+      - TRAINSHARD_CHAIN_GRPC=node:9090
+      - TRAINSHARD_DAPI=http://api:9200
+      - TRAINSHARD_KEY_NAME=${KEY_NAME}
+      - TRAINSHARD_KEYRING_DIR=/root/.inference
+      - TRAINSHARD_KEYRING_BACKEND=${KEYRING_BACKEND:-file}
+      - TRAINSHARD_KEYRING_PASSWORD=${KEYRING_PASSWORD}
       - TRAINSHARD_MESH_ENDPOINT=${TRAINSHARD_MESH_ENDPOINT}
       - TRAINSHARD_MESH_PORTS=${TRAINSHARD_MESH_PORTS:-51820-51827}
       - TRAINSHARD_LISTEN=0.0.0.0:9700
@@ -26,6 +33,7 @@ services:
       - NVIDIA_VISIBLE_DEVICES=all
       - NVIDIA_DRIVER_CAPABILITIES=utility
     volumes:
+      - .inference:/root/.inference
       - /var/run/docker.sock:/var/run/docker.sock
       - ${TRAINSHARD_STATE_DIR:-/var/lib/trainshardd}:${TRAINSHARD_STATE_DIR:-/var/lib/trainshardd}
     ports:

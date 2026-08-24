@@ -14,10 +14,12 @@ import (
 
 	"trainshard/internal/application/coord/assembly"
 	"trainshard/internal/application/coord/ops"
-	chainfake "trainshard/internal/infrastructure/adapters/chain/fake"
+	"trainshard/internal/domain/shard"
+	"trainshard/internal/domain/shared/vo"
+	"trainshard/internal/infrastructure/adapters/chain"
 	clockadapter "trainshard/internal/infrastructure/adapters/clock"
 	"trainshard/internal/infrastructure/adapters/hosts"
-	"trainshard/internal/infrastructure/adapters/signing/hmac"
+	"trainshard/internal/infrastructure/adapters/signing/cosmos"
 	"trainshard/internal/utils/clix"
 )
 
@@ -63,22 +65,27 @@ func drive() error {
 	}
 
 	clock := clockadapter.System{}
-	signer := hmac.New(cfg.secret, cfg.actor)
-	chain, err := chainfake.Load(cfg.chainSeed, clock)
+	signer, err := key(cfg)
 	if err != nil {
 		return err
 	}
+	outside, err := connect(cfg, signer)
+	if err != nil {
+		return err
+	}
+	defer outside.close()
+
 	hosts := hosts.New(&http.Client{}, cfg.directory, signer, clock, cfg.timeout)
 
 	assembly.New(assembly.Config{Poll: cfg.pollInterval, Settle: cfg.settleWindow}, assembly.Deps{
-		Chain:     chain,
+		Chain:     outside.chain,
 		Hosts:     hosts,
 		Verifier:  signer,
-		Submitter: chain,
+		Submitter: outside.submitter,
 		Clock:     clock,
 	}, os.Stdout).Register(commands)
 	ops.New(ops.Config{Timeout: cfg.timeout}, ops.Deps{
-		Chain:   chain,
+		Chain:   outside.chain,
 		Hosts:   hosts,
 		Streams: hosts,
 		Reports: hosts,
@@ -86,6 +93,37 @@ func drive() error {
 	}, os.Stdout, os.Stdin).Register(commands)
 
 	return commands[command](context.Background(), args)
+}
+
+type keys interface {
+	Address() vo.Address
+	Sign(payload []byte) []byte
+	Recover(payload, signature []byte) (vo.Address, error)
+}
+
+func key(cfg config) (keys, error) {
+	if cfg.privateKey != "" {
+		return cosmos.FromHex(cfg.privateKey)
+	}
+	return cosmos.FromKeyring(cfg.keyringDir, cfg.keyringBackend, cfg.keyringPassword, cfg.keyName)
+}
+
+type outside struct {
+	chain     shard.ChainReader
+	submitter shard.ChainSubmitter
+	close     func() error
+}
+
+func connect(cfg config, signer keys) (outside, error) {
+	client, err := chain.Dial(chain.Config{Address: cfg.chainGRPC})
+	if err != nil {
+		return outside{}, err
+	}
+	account, signs := signer.(chain.Key)
+	if !signs {
+		return outside{}, fmt.Errorf("the chain only takes what a key signs")
+	}
+	return outside{chain: client, submitter: chain.NewSigner(client, account, cfg.chainID), close: client.Close}, nil
 }
 
 func catalog() map[string]func(context.Context, []string) error {

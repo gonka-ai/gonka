@@ -57,7 +57,7 @@ func TestReconcileDoesNothingWhenTheRunAlreadyMatches(t *testing.T) {
 
 	f := newFixture()
 	ctx := context.Background()
-	if err := f.prepared(ctx); err != nil {
+	if err := f.meshed(ctx); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec(), Start: true}
@@ -82,7 +82,7 @@ func TestReconcileCreatesNoContainerBehindANetworkItCouldNotClose(t *testing.T) 
 
 	f := newFixture()
 	ctx := context.Background()
-	if err := f.prepared(ctx); err != nil {
+	if err := f.meshed(ctx); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec()}
@@ -105,7 +105,7 @@ func TestReconcileKeepsTheOldContainerWhenTheNewOneCannotBeBuilt(t *testing.T) {
 
 	f := newFixture()
 	ctx := context.Background()
-	if err := f.prepared(ctx); err != nil {
+	if err := f.meshed(ctx); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec()}
@@ -129,7 +129,7 @@ func TestReconcileBringsUpTheRunInOrder(t *testing.T) {
 
 	f := newFixture()
 	ctx := context.Background()
-	if err := f.prepared(ctx); err != nil {
+	if err := f.meshed(ctx); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 	f.runs.states[nodeA] = run.RunState{Shard: shardID, ReservedAt: now, Spec: runSpec(), Start: true}
@@ -149,11 +149,42 @@ func TestReconcileBringsUpTheRunInOrder(t *testing.T) {
 	}
 }
 
+func TestReconcileGivesTheContainerTheRankTheMeshDecided(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	if err := f.meshed(ctx); err != nil {
+		t.Fatalf("prepare: %v", err)
+	}
+	spec := runSpec()
+	spec.Env = map[string]string{"NODE_RANK": "9", "DATA": "s3://bucket"}
+	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: spec}
+	f.images.present[runImage] = true
+
+	if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	env := f.containers.created.Run.Env
+	if env["NODE_RANK"] != "0" || env["NNODES"] != "1" {
+		t.Fatalf("got %v, want the rank the peer list gave the node, not the one the run asked for", env)
+	}
+	if env["MASTER_ADDR"] != "10.7.0.1" || env["MASTER_PORT"] != "29500" {
+		t.Fatalf("got %v, want the rendezvous of rank 0 on the mesh", env)
+	}
+	if env["DATA"] != "s3://bucket" {
+		t.Fatalf("got %v, want the run's own values kept", env)
+	}
+	if f.runs.states[nodeA].Spec.Env["NODE_RANK"] != "9" {
+		t.Fatal("the placement belongs to the container, not to the run the node was asked to hold")
+	}
+}
+
 func TestReconcileRefusesAnImageNotBuiltOnTheBase(t *testing.T) {
 
 	f := newFixture()
 	ctx := context.Background()
-	if err := f.prepared(ctx); err != nil {
+	if err := f.meshed(ctx); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec()}
@@ -175,7 +206,7 @@ func TestReconcileClearsTheReasonOnceTheRunRecovers(t *testing.T) {
 
 	f := newFixture()
 	ctx := context.Background()
-	if err := f.prepared(ctx); err != nil {
+	if err := f.meshed(ctx); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec(), Fault: &oldFault}
@@ -196,7 +227,7 @@ func TestReconcileWipesTheRunWhenTheReservationIsGone(t *testing.T) {
 
 	f := newFixture()
 	ctx := context.Background()
-	if err := f.prepared(ctx); err != nil {
+	if err := f.meshed(ctx); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec(), Start: true}
@@ -297,7 +328,7 @@ func TestReconcileLeavesTheShardItIsServingToItsOwnPlan(t *testing.T) {
 
 	f := newFixture()
 	ctx := context.Background()
-	if err := f.prepared(ctx); err != nil {
+	if err := f.meshed(ctx); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 	f.runs.states[nodeA] = run.RunState{Shard: shardID, Spec: runSpec(), Start: true}
@@ -421,7 +452,7 @@ func TestReconcileHoldsTheNodeWhileACommandWritesDownWhatItShouldHold(t *testing
 	ctx := context.Background()
 	writing, release, recorded := make(chan struct{}), make(chan struct{}), make(chan error, 1)
 	go func() {
-		recorded <- f.reconcile().Record(ctx, nodeA, func(context.Context) error {
+		recorded <- f.converger.Record(ctx, nodeA, func(context.Context) error {
 			close(writing)
 			<-release
 			return nil

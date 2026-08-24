@@ -256,3 +256,27 @@ func TestRunSpecKeepsEnvironmentValuesOutOfText(t *testing.T) {
 		t.Fatalf("run spec text leaked an environment value: %s", text)
 	}
 }
+
+func TestRunSpecWithEnvLetsThePlacementWin(t *testing.T) {
+	// arrange
+	spec := runSpec()
+	spec.Env = map[string]string{"NODE_RANK": "9", "HF_TOKEN": "secret"}
+	placement := run.PlacementEnv(vo.Placement{Rank: 2, Size: 4, Master: "10.7.0.1"})
+
+	// act
+	got := spec.WithEnv(placement)
+
+	// assert
+	if got.Env["NODE_RANK"] != "2" || got.Env["NNODES"] != "4" {
+		t.Fatalf("got %v, want the rank the host gave rather than the one the run asked for", got.Env)
+	}
+	if got.Env["MASTER_ADDR"] != "10.7.0.1" || got.Env["MASTER_PORT"] != "29500" {
+		t.Fatalf("got %v, want the rendezvous of rank 0", got.Env)
+	}
+	if got.Env["HF_TOKEN"] != "secret" {
+		t.Fatalf("got %v, want the run's own values kept", got.Env)
+	}
+	if spec.Env["NODE_RANK"] != "9" {
+		t.Fatalf("got %v, want the spec it was called on left alone", spec.Env)
+	}
+}
