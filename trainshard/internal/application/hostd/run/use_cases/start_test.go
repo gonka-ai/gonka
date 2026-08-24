@@ -27,7 +27,7 @@ func TestStartAnswersWithTheContainerItActuallyStarted(t *testing.T) {
 
 	f := newFixture()
 	ctx := context.Background()
-	if err := f.prepared(ctx); err != nil {
+	if err := f.meshed(ctx); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 	f.containers.infos[nodeA] = run.ContainerInfo{State: vo.ContainerCreated, Image: runImage}
@@ -75,7 +75,7 @@ func TestStopAnswersWithTheContainerItActuallyStopped(t *testing.T) {
 
 	f := newFixture()
 	ctx := context.Background()
-	if err := f.prepared(ctx); err != nil {
+	if err := f.meshed(ctx); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 	f.containers.infos[nodeA] = run.ContainerInfo{State: vo.ContainerRunning, Image: runImage}
@@ -108,7 +108,7 @@ func TestStopClampsAGraceLongerThanTheDaemonAllows(t *testing.T) {
 
 	f := newFixture()
 	ctx := context.Background()
-	if err := f.prepared(ctx); err != nil {
+	if err := f.meshed(ctx); err != nil {
 		t.Fatalf("prepare: %v", err)
 	}
 	f.containers.infos[nodeA] = run.ContainerInfo{State: vo.ContainerRunning, Image: runImage}

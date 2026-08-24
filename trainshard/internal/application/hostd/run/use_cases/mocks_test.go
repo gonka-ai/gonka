@@ -228,6 +228,7 @@ func (i *imagesStub) Layers(_ context.Context, digest vo.ImageDigest) (vo.ImageL
 type containersStub struct {
 	rec        *recorder
 	infos      map[vo.NodeRef]run.ContainerInfo
+	created    run.ContainerSpec
 	leftover   []vo.ShardID
 	grace      time.Duration
 	inspectErr error
@@ -254,6 +255,7 @@ func (c *containersStub) Create(_ context.Context, spec run.ContainerSpec) error
 	if c.createErr != nil {
 		return c.createErr
 	}
+	c.created = spec
 	c.infos[spec.Node] = run.ContainerInfo{State: vo.ContainerCreated, Image: spec.Run.Image, Revision: spec.Revision}
 	return nil
 }
@@ -469,6 +471,7 @@ func (c *controlStub) Return(context.Context, vo.NodeRef) error {
 
 type fixture struct {
 	rec        *recorder
+	converger  *run.Converger
 	reconciler *usecases.ReconcileUseCase
 	chain      *chainStub
 	runs       *runStoreStub
@@ -511,7 +514,8 @@ func newFixture() *fixture {
 		limits:     run.Limits{MaxGPUs: 8, MaxDiskBytes: 1 << 40, MaxSources: 4},
 		patience:   time.Hour,
 	}
-	f.reconciler = usecases.NewReconcileUseCase(f.chain, f.runs, f.machine(), f.clock, f.patience)
+	f.converger = run.NewConverger(f.chain, f.runs, f.machine(), f.clock, f.patience)
+	f.reconciler = usecases.NewReconcileUseCase(f.converger)
 	return f
 }
 
@@ -535,15 +539,15 @@ func (f *fixture) reconcile() *usecases.ReconcileUseCase {
 }
 
 func (f *fixture) deploy() *usecases.DeployUseCase {
-	return usecases.NewDeployUseCase(f.chain, f.runs, f.log, f.containers, f.reconciler, f.clock, f.limits)
+	return usecases.NewDeployUseCase(f.chain, f.runs, f.log, f.containers, f.converger, f.clock, f.limits)
 }
 
 func (f *fixture) start() *usecases.StartUseCase {
-	return usecases.NewStartUseCase(f.chain, f.runs, f.log, f.containers, f.reconciler, f.clock)
+	return usecases.NewStartUseCase(f.chain, f.runs, f.log, f.containers, f.converger, f.clock)
 }
 
 func (f *fixture) stop() *usecases.StopUseCase {
-	return usecases.NewStopUseCase(f.chain, f.runs, f.log, f.containers, f.reconciler, f.clock)
+	return usecases.NewStopUseCase(f.chain, f.runs, f.log, f.containers, f.converger, f.clock)
 }
 
 func (f *fixture) status() *usecases.StatusUseCase {
@@ -559,7 +563,7 @@ func (f *fixture) report() *usecases.ReportUseCase {
 }
 
 func (f *fixture) applyMesh() *usecases.ApplyMeshUseCase {
-	return usecases.NewApplyMeshUseCase(f.chain, f.log, f.store, f.control, f.reconciler, f.clock)
+	return usecases.NewApplyMeshUseCase(f.chain, f.log, f.store, f.control, f.converger, f.clock)
 }
 
 func (f *fixture) prepared(ctx context.Context) error {
@@ -567,6 +571,26 @@ func (f *fixture) prepared(ctx context.Context) error {
 		if err := f.reconcile().Execute(ctx, nodeA); err != nil {
 			return err
 		}
+	}
+	f.rec.reset()
+	return nil
+}
+
+// meshed takes the node all the way a coordinator would before it deploys: prepared, and holding
+// the peer list a container needs to be given its rank
+func (f *fixture) meshed(ctx context.Context) error {
+	if err := f.prepared(ctx); err != nil {
+		return err
+	}
+	config, err := mesh.Order(shardID, []mesh.Member{{Node: nodeA, Address: "198.51.100.7:51820", PublicKey: "public-key"}})
+	if err != nil {
+		return err
+	}
+	if err := f.store.SaveConfig(ctx, shardID, nodeA, config); err != nil {
+		return err
+	}
+	if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		return err
 	}
 	f.rec.reset()
 	return nil

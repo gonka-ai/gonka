@@ -43,7 +43,7 @@ func (c *Client) Shell(ctx context.Context, participant vo.Participant, req run.
 	}
 
 	path := toPath(contract.PathShell, req.Shard, req.Node.NodeID)
-	request, err := c.request(ctx, http.MethodPost, base, path, vo.NewRequestID(), nil)
+	request, err := c.request(ctx, participant, http.MethodPost, base, path, vo.NewRequestID(), nil)
 	if err != nil {
 		return err
 	}

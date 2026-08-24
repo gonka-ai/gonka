@@ -130,7 +130,7 @@ func (n *Network) Apply(ctx context.Context, shardID vo.ShardID, node vo.NodeRef
 		return err
 	}
 
-	own, err := address(shardID, self.Rank)
+	own, err := mesh.Address(shardID, self.Rank)
 	if err != nil {
 		return err
 	}
@@ -431,7 +431,7 @@ func peerConfig(shardID vo.ShardID, peers []mesh.Peer) (wgtypes.Config, error) {
 		if err != nil {
 			return wgtypes.Config{}, fmt.Errorf("peer address %q: %w", peer.Address, err)
 		}
-		own, err := address(shardID, peer.Rank)
+		own, err := mesh.Address(shardID, peer.Rank)
 		if err != nil {
 			return wgtypes.Config{}, err
 		}
@@ -453,13 +453,6 @@ func peerConfig(shardID vo.ShardID, peers []mesh.Peer) (wgtypes.Config, error) {
 
 func iface(slot int) string {
 	return fmt.Sprintf("ts%d", slot)
-}
-
-func address(shardID vo.ShardID, rank int) (string, error) {
-	if rank < 0 || rank > 253 {
-		return "", fmt.Errorf("rank %d has no address on the mesh", rank)
-	}
-	return fmt.Sprintf("10.%d.0.%d", uint64(shardID)%256, rank+1), nil
 }
 
 func split(node vo.NodeRef, peers []mesh.Peer) (mesh.Peer, []mesh.Peer, error) {

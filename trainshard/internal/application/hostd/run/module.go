@@ -35,21 +35,21 @@ type Module struct {
 }
 
 func New(cfg Config, deps Deps) *Module {
-	reconcile := usecases.NewReconcileUseCase(deps.Reservations, deps.Runs, deps.Machine, deps.Clock, cfg.Patience)
+	converge := run.NewConverger(deps.Reservations, deps.Runs, deps.Machine, deps.Clock, cfg.Patience)
 
 	return &Module{
 		admin: api.NewAdmin(cfg.Participant, usecases.NewAbortUseCase(deps.Chain, deps.Submitter)),
 		endpoints: api.NewEndpoints(cfg.Participant, api.UseCases{
-			Deploy:     usecases.NewDeployUseCase(deps.Chain, deps.Runs, deps.Requests, deps.Machine.Containers, reconcile, deps.Clock, cfg.Limits),
-			Start:      usecases.NewStartUseCase(deps.Chain, deps.Runs, deps.Requests, deps.Machine.Containers, reconcile, deps.Clock),
-			Stop:       usecases.NewStopUseCase(deps.Chain, deps.Runs, deps.Requests, deps.Machine.Containers, reconcile, deps.Clock),
+			Deploy:     usecases.NewDeployUseCase(deps.Chain, deps.Runs, deps.Requests, deps.Machine.Containers, converge, deps.Clock, cfg.Limits),
+			Start:      usecases.NewStartUseCase(deps.Chain, deps.Runs, deps.Requests, deps.Machine.Containers, converge, deps.Clock),
+			Stop:       usecases.NewStopUseCase(deps.Chain, deps.Runs, deps.Requests, deps.Machine.Containers, converge, deps.Clock),
 			Status:     usecases.NewStatusUseCase(deps.Chain, deps.Runs, deps.Machine, deps.Clock),
 			Report:     usecases.NewReportUseCase(deps.Chain, deps.Runs, deps.Machine),
-			Mesh:       usecases.NewApplyMeshUseCase(deps.Chain, deps.Requests, deps.Store, deps.Machine.Control, reconcile, deps.Clock),
+			Mesh:       usecases.NewApplyMeshUseCase(deps.Chain, deps.Requests, deps.Store, deps.Machine.Control, converge, deps.Clock),
 			Identities: usecases.NewCollectIdentitiesUseCase(deps.Chain, deps.Store, cfg.Nodes),
 			Probe:      usecases.NewProbeMeshUseCase(deps.Chain, deps.Store, deps.Network),
 		}),
-		reconciler: worker.NewReconciler(cfg.Nodes, reconcile, deps.Watcher, cfg.Interval, deps.Log),
+		reconciler: worker.NewReconciler(cfg.Nodes, usecases.NewReconcileUseCase(converge), deps.Watcher, cfg.Interval, deps.Log),
 	}
 }
 

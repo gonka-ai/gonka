@@ -11,12 +11,12 @@ import (
 )
 
 type ApplyMeshUseCase struct {
-	chain     shard.ChainReader
-	log       run.RequestLog
-	store     mesh.Store
-	control   run.NodeControl
-	reconcile Reconciler
-	clock     ports.Clock
+	chain    shard.ChainReader
+	log      run.RequestLog
+	store    mesh.Store
+	control  run.NodeControl
+	converge *run.Converger
+	clock    ports.Clock
 }
 
 func NewApplyMeshUseCase(
@@ -24,10 +24,10 @@ func NewApplyMeshUseCase(
 	log run.RequestLog,
 	store mesh.Store,
 	control run.NodeControl,
-	reconcile Reconciler,
+	converge *run.Converger,
 	clock ports.Clock,
 ) *ApplyMeshUseCase {
-	return &ApplyMeshUseCase{chain: chain, log: log, store: store, control: control, reconcile: reconcile, clock: clock}
+	return &ApplyMeshUseCase{chain: chain, log: log, store: store, control: control, converge: converge, clock: clock}
 }
 
 func (uc *ApplyMeshUseCase) Execute(ctx context.Context, cmd MeshCommand) ([]run.NodeResult, error) {
@@ -68,7 +68,7 @@ func (uc *ApplyMeshUseCase) Execute(ctx context.Context, cmd MeshCommand) ([]run
 		write := func(ctx context.Context) error {
 			return uc.store.SaveConfig(ctx, cmd.Shard, node, cmd.Config)
 		}
-		if err := uc.reconcile.Record(ctx, node, write); err != nil {
+		if err := uc.converge.Record(ctx, node, write); err != nil {
 			return run.NodeResult{}, err
 		}
 		return run.NodeResult{Node: node, State: vo.ContainerUnknown}, nil

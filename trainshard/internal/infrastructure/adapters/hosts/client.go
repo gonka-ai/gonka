@@ -60,7 +60,7 @@ func (c *Client) call(ctx context.Context, participant vo.Participant, method, p
 		}
 	}
 
-	request, err := c.request(ctx, method, base, path, requestID, payload)
+	request, err := c.request(ctx, participant, method, base, path, requestID, payload)
 	if err != nil {
 		return err
 	}
@@ -83,14 +83,14 @@ func (c *Client) call(ctx context.Context, participant vo.Participant, method, p
 	return json.Unmarshal(envelope.Data, out)
 }
 
-func (c *Client) request(ctx context.Context, method, base, path string, requestID vo.RequestID, payload []byte) (*http.Request, error) {
+func (c *Client) request(ctx context.Context, participant vo.Participant, method, base, path string, requestID vo.RequestID, payload []byte) (*http.Request, error) {
 	request, err := http.NewRequestWithContext(ctx, method, base+path, bytes.NewReader(payload))
 	if err != nil {
 		return nil, err
 	}
 
 	timestamp := c.clock.Now().UTC().Format(time.RFC3339)
-	signature := c.signer.Sign(contract.SigningPayload(method, path, timestamp, string(requestID), payload))
+	signature := c.signer.Sign(contract.SigningPayload(string(participant), method, path, request.URL.RawQuery, timestamp, string(requestID), payload))
 
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set(contract.HeaderTimestamp, timestamp)
@@ -112,7 +112,7 @@ func (c *Client) stream(ctx context.Context, participant vo.Participant, method,
 		}
 	}
 
-	request, err := c.request(ctx, method, base, path, requestID, payload)
+	request, err := c.request(ctx, participant, method, base, path, requestID, payload)
 	if err != nil {
 		return err
 	}

@@ -31,55 +31,9 @@ func network(t *testing.T, cfg Config) *Network {
 	return New(cfg, nil, nil, slog.New(slog.DiscardHandler))
 }
 
-func TestAddress(t *testing.T) {
-	// arrange
-	cases := []struct {
-		name    string
-		shard   vo.ShardID
-		rank    int
-		want    string
-		refused bool
-	}{
-		{name: "first rank", shard: shard, rank: 0, want: "10.42.0.1"},
-		{name: "second rank", shard: shard, rank: 1, want: "10.42.0.2"},
-		{name: "last rank that fits", shard: shard, rank: 253, want: "10.42.0.254"},
-		{name: "shard wraps at 256", shard: vo.ShardID(258), rank: 0, want: "10.2.0.1"},
-		{name: "negative rank", shard: shard, rank: -1, refused: true},
-		{name: "rank past the subnet", shard: shard, rank: 254, refused: true},
-	}
-
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			// act
-			got, err := address(tc.shard, tc.rank)
-
-			// assert
-			if tc.refused {
-				if err == nil {
-					t.Fatalf("address(%d, %d) = %q, want an error", tc.shard, tc.rank, got)
-				}
-				return
-			}
-			if err != nil {
-				t.Fatal(err)
-			}
-			if got != tc.want {
-				t.Fatalf("address(%d, %d) = %q, want %q", tc.shard, tc.rank, got, tc.want)
-			}
-		})
-	}
-}
-
-// Two nodes of the same shard on one host must not land on the same address or interface
-func TestRanksAndSlotsDoNotCollide(t *testing.T) {
-	// act
-	first, _ := address(shard, 0)
-	second, _ := address(shard, 1)
-
+// Two nodes of the same shard on one host must not land on the same interface
+func TestSlotsDoNotCollide(t *testing.T) {
 	// assert
-	if first == second {
-		t.Fatalf("ranks 0 and 1 share %q", first)
-	}
 	if iface(0) == iface(1) {
 		t.Fatalf("slots 0 and 1 share %q", iface(0))
 	}

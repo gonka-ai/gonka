@@ -14,14 +14,16 @@ func preparedObserved() run.Observed {
 		Images:         []vo.ImageDigest{baseImage},
 		Container:      vo.ContainerAbsent,
 		MeshKey:        true,
+		MeshUp:         true,
 		VolumesPresent: true,
 	}
 }
 
 func reservedDesired() run.Desired {
 	return run.Desired{
-		Reservation: run.Reservation{Shard: 7, BaseImage: baseImage, Active: true},
-		Reserved:    true,
+		Reservation:    run.Reservation{Shard: 7, BaseImage: baseImage, Active: true},
+		Reserved:       true,
+		MeshConfigured: true,
 	}
 }
 
@@ -90,9 +92,13 @@ func TestPlan(t *testing.T) {
 			want:    []run.Action{{Kind: run.ActionPullImage, Image: baseImage}},
 		},
 		{
-			name:    "mesh identity is created once the image is cached",
-			desired: reservedDesired,
-			observe: func(o *run.Observed) { o.MeshKey = false },
+			name: "mesh identity is created once the image is cached",
+			desired: func() run.Desired {
+				d := reservedDesired()
+				d.MeshConfigured = false
+				return d
+			},
+			observe: func(o *run.Observed) { o.MeshKey, o.MeshUp = false, false },
 			want:    []run.Action{{Kind: run.ActionCreateMeshIdentity}},
 		},
 		{
@@ -102,24 +108,26 @@ func TestPlan(t *testing.T) {
 			want:    []run.Action{},
 		},
 		{
-			name: "peer list is applied again after the interface went down",
-			desired: func() run.Desired {
-				d := reservedDesired()
-				d.MeshConfigured = true
-				return d
-			},
+			name:    "peer list is applied again after the interface went down",
+			desired: reservedDesired,
 			observe: func(o *run.Observed) { o.MeshUp = false },
 			want:    []run.Action{{Kind: run.ActionApplyMeshConfig}},
 		},
 		{
-			name: "peer list already up is left alone",
-			desired: func() run.Desired {
-				d := reservedDesired()
-				d.MeshConfigured = true
-				return d
-			},
+			name:    "peer list already up is left alone",
+			desired: reservedDesired,
 			observe: func(o *run.Observed) { o.MeshUp = true },
 			want:    []run.Action{},
+		},
+		{
+			name: "run image is pulled but no container is built before the peer list lands",
+			desired: func() run.Desired {
+				d := reservedDesired()
+				d.Run, d.Start, d.MeshConfigured = runSpec(), true, false
+				return d
+			},
+			observe: func(o *run.Observed) { o.MeshUp = false },
+			want:    []run.Action{{Kind: run.ActionPullImage, Image: runImage}},
 		},
 		{
 			name: "run image is pulled before the container is created",

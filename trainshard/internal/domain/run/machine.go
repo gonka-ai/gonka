@@ -175,6 +175,10 @@ func (m Machine) createContainer(ctx context.Context, node vo.NodeRef, desired D
 	if err := m.verifyImage(ctx, desired); err != nil {
 		return err
 	}
+	placement, err := m.Mesh.Placement(ctx, desired.Shard, node)
+	if err != nil {
+		return err
+	}
 	if err := m.Volumes.Ensure(ctx, desired.Shard, node, desired.Run.Resources.DiskBytes); err != nil {
 		return err
 	}
@@ -187,7 +191,13 @@ func (m Machine) createContainer(ctx context.Context, node vo.NodeRef, desired D
 			return err
 		}
 	}
-	spec := ContainerSpec{Shard: desired.Shard, Node: node, Run: desired.Run, Revision: desired.Revision, Hosts: pinned}
+	spec := ContainerSpec{
+		Shard:    desired.Shard,
+		Node:     node,
+		Run:      desired.Run.WithEnv(PlacementEnv(placement)),
+		Revision: desired.Revision,
+		Hosts:    pinned,
+	}
 	if err := m.Containers.Create(ctx, spec); err != nil {
 		return err
 	}

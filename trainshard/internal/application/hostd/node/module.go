@@ -8,6 +8,7 @@ import (
 	"trainshard/internal/application/hostd/node/api"
 	usecases "trainshard/internal/application/hostd/node/use_cases"
 	"trainshard/internal/application/hostd/node/worker"
+	"trainshard/internal/domain/readiness"
 	"trainshard/internal/domain/run"
 	"trainshard/internal/domain/shard"
 	"trainshard/internal/domain/shared/ports"
@@ -18,6 +19,7 @@ type Deps struct {
 	GPU       run.GPU
 	Chain     shard.ChainReader
 	Submitter shard.ChainSubmitter
+	Clock     ports.Clock
 	Log       *slog.Logger
 }
 
@@ -27,20 +29,19 @@ type Module struct {
 }
 
 func New(cfg Config, deps Deps) *Module {
-	readiness := usecases.NewEvaluateReadinessUseCase(
-		deps.Probe,
-		deps.GPU,
-		deps.Chain,
-		cfg.Version,
-		cfg.SupportedVersion,
-		cfg.MinFreeDiskBytes,
-	)
+	spec := readiness.Spec{
+		Version:          cfg.Version,
+		SupportedVersion: cfg.SupportedVersion,
+		MinFreeDiskBytes: cfg.MinFreeDiskBytes,
+	}
+	prover := readiness.NewProver(deps.Probe, deps.Clock)
 
 	return &Module{
-		endpoints: api.NewEndpoints(cfg.Nodes, cfg.Version, readiness),
+		endpoints: api.NewEndpoints(cfg.Nodes, cfg.Version,
+			usecases.NewEvaluateReadinessUseCase(prover, deps.GPU, deps.Chain, spec)),
 		optIn: worker.NewOptIn(
 			cfg.Nodes,
-			usecases.NewRefreshOptInUseCase(readiness, deps.Submitter, cfg.OptInTTL),
+			usecases.NewRefreshOptInUseCase(prover, deps.GPU, deps.Chain, deps.Submitter, spec, cfg.OptInTTL),
 			cfg.RefreshInterval,
 			deps.Log,
 		),

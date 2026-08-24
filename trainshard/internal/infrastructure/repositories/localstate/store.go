@@ -16,6 +16,7 @@ import (
 	"trainshard/internal/domain/shard"
 	"trainshard/internal/domain/shared/ports"
 	"trainshard/internal/domain/shared/vo"
+	"trainshard/internal/utils/signedhttp"
 )
 
 type Store struct {
@@ -36,6 +37,10 @@ func (s *Store) Mesh() mesh.Store { return meshes{store: s} }
 
 func (s *Store) Requests(clock ports.Clock, ttl time.Duration) run.RequestLog {
 	return requests{store: s, clock: clock, ttl: ttl}
+}
+
+func (s *Store) Served(clock ports.Clock, ttl time.Duration) signedhttp.Served {
+	return served{store: s, clock: clock, ttl: ttl}
 }
 
 func (s *Store) read(node vo.NodeRef) (nodeFile, bool, error) {

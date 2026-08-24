@@ -42,7 +42,7 @@ func (o *OptIn) tick(ctx context.Context) {
 		case err != nil && ctx.Err() == nil:
 			o.log.ErrorContext(ctx, "opt-in refresh failed", "node_id", node.NodeID, "error", err)
 		case !result.Ready:
-			o.log.WarnContext(ctx, "node is not ready, letting the opt-in lapse", "node_id", node.NodeID, "reason", result.Reason())
+			o.log.WarnContext(ctx, "node is not ready, opt-in not refreshed", "node_id", node.NodeID, "reason", result.Reason())
 		}
 	}
 }

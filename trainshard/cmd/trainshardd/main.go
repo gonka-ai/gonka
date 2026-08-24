@@ -17,11 +17,12 @@ import (
 	"trainshard/internal/application/hostd/session"
 	"trainshard/internal/domain/mesh"
 	"trainshard/internal/domain/run"
+	"trainshard/internal/domain/shard"
 	"trainshard/internal/domain/shared/vo"
-	chainfake "trainshard/internal/infrastructure/adapters/chain/fake"
+	"trainshard/internal/infrastructure/adapters/chain"
 	clockadapter "trainshard/internal/infrastructure/adapters/clock"
-	nodemanagerfake "trainshard/internal/infrastructure/adapters/nodemanager/fake"
-	"trainshard/internal/infrastructure/adapters/signing/hmac"
+	"trainshard/internal/infrastructure/adapters/dapi"
+	"trainshard/internal/infrastructure/adapters/signing/cosmos"
 	"trainshard/internal/infrastructure/repositories/localstate"
 	"trainshard/internal/utils/httpx"
 	"trainshard/internal/utils/logger"
@@ -53,10 +54,20 @@ func serve() error {
 	log := logger.New(os.Stdout, cfg.logLevel, cfg.logFormat)
 	clock := clockadapter.System{}
 
-	chain, err := loadChain(cfg, clock)
+	signer, err := key(cfg)
 	if err != nil {
 		return err
 	}
+	if signer.Address() != vo.Address(cfg.participant) {
+		return fmt.Errorf("the key signs as %s and this daemon speaks for %s: a node's mesh identity is only believed from its own participant", signer.Address(), cfg.participant)
+	}
+
+	outside, err := connect(cfg)
+	if err != nil {
+		return err
+	}
+	defer outside.close()
+
 	state, err := localstate.New(cfg.stateDir)
 	if err != nil {
 		return err
@@ -66,12 +77,6 @@ func serve() error {
 	if err != nil {
 		return err
 	}
-	nodeManager := nodemanagerfake.New(log)
-	signer := hmac.New(cfg.secret, vo.Address(cfg.participant))
-
-	if cfg.machine != "memory" {
-		log.Warn("the chain, the node manager and the signer are stand-ins: this daemon reserves nothing, releases nothing, stops no inference, and anyone holding the shared secret can sign as any actor")
-	}
 
 	runs := hostdrun.New(hostdrun.Config{
 		Participant: cfg.participant,
@@ -80,10 +85,10 @@ func serve() error {
 		Interval:    cfg.reconcileInterval,
 		Patience:    cfg.prepareDeadline,
 	}, hostdrun.Deps{
-		Chain:        chain,
-		Reservations: chain,
-		Submitter:    chain,
-		Watcher:      chain,
+		Chain:        outside.chain,
+		Reservations: outside.reservations,
+		Submitter:    outside.submitter,
+		Watcher:      outside.watcher,
 		Runs:         state.Runs(),
 		Requests:     state.Requests(clock, cfg.requestTTL),
 		Store:        state.Mesh(),
@@ -95,7 +100,7 @@ func serve() error {
 			GPU:        parts.gpu,
 			Mesh:       mesh.Runtime{Network: parts.network, Store: state.Mesh(), Attestor: signer},
 			Egress:     parts.egress,
-			Control:    nodeManager,
+			Control:    outside.control,
 			Runs:       state.Runs(),
 			Clock:      clock,
 			StopGrace:  cfg.stopGrace,
@@ -114,20 +119,22 @@ func serve() error {
 	}, node.Deps{
 		Probe:     parts.probe,
 		GPU:       parts.gpu,
-		Chain:     chain,
-		Submitter: chain,
+		Chain:     outside.chain,
+		Submitter: outside.submitter,
+		Clock:     clock,
 		Log:       log,
 	})
 
-	sessions := session.New(session.Config{Participant: cfg.participant, Window: cfg.signatureWindow}, session.Deps{
-		Chain:    chain,
+	sessions := session.New(session.Config{Participant: cfg.participant}, session.Deps{
+		Chain:    outside.chain,
 		Streams:  parts.streams,
 		Sessions: state.Sessions(),
+		Served:   state.Served(clock, cfg.signatureWindow),
 		Clock:    clock,
 	})
 
 	mux := http.NewServeMux()
-	guard, logged := signedhttp.New(signer, clock, cfg.signatureWindow).Wrap, httpx.Log(log, clock)
+	guard, logged := signedhttp.New(signer, clock, cfg.signatureWindow, vo.Address(cfg.participant)).Wrap, httpx.Log(log, clock)
 	boundary := func(next http.Handler) http.Handler { return logged(guard(next)) }
 	runs.Mount(mux, boundary)
 	nodes.Mount(mux, boundary)
@@ -175,9 +182,54 @@ func serve() error {
 	return err
 }
 
-func loadChain(cfg config, clock clockadapter.System) (*chainfake.Chain, error) {
-	if cfg.chainSeed == "" {
-		return chainfake.New(clock), nil
+type keys interface {
+	Address() vo.Address
+	Sign(payload []byte) []byte
+	Attest(ctx context.Context, payload []byte) ([]byte, error)
+	Recover(payload, signature []byte) (vo.Address, error)
+}
+
+func key(cfg config) (keys, error) {
+	if cfg.privateKey != "" {
+		return cosmos.FromHex(cfg.privateKey)
 	}
-	return chainfake.Load(cfg.chainSeed, clock)
+	return cosmos.FromKeyring(cfg.keyringDir, cfg.keyringBackend, cfg.keyringPassword, cfg.keyName)
+}
+
+type outside struct {
+	chain        shard.ChainReader
+	watcher      shard.ChainWatcher
+	submitter    shard.ChainSubmitter
+	reservations run.Reservations
+	control      run.NodeControl
+	close        func() error
+}
+
+// reservations reads from the chain and writes through the dapi, because a release is a transaction
+// and this machine holds no key
+type reservations struct {
+	*chain.Client
+	dapi *dapi.Client
+}
+
+func (r reservations) Release(ctx context.Context, shardID vo.ShardID, node vo.NodeRef, reason vo.ReleaseReason) error {
+	return r.dapi.Release(ctx, shardID, node, reason)
+}
+
+func connect(cfg config) (outside, error) {
+	client, err := chain.Dial(chain.Config{Address: cfg.chainGRPC, Poll: cfg.chainPoll})
+	if err != nil {
+		return outside{}, err
+	}
+	node := dapi.New(&http.Client{}, dapi.Config{
+		Address:     cfg.dapiAddress,
+		Participant: cfg.participant,
+		Timeout:     cfg.dapiTimeout,
+	})
+	return outside{
+		chain: client, watcher: client, submitter: node,
+		reservations: reservations{Client: client, dapi: node},
+		control:      node,
+		close:        client.Close,
+	}, nil
 }
