@@ -184,6 +184,11 @@ func lookupMsgGasHinted(msg sdk.Msg, hints GasHints) (uint64, bool) {
 		return gasSubmitNewUnfundedParticipant, true
 	case *inferencetypes.MsgBridgeExchange:
 		return gasBridgeExchange, true
+	// both write a couple of small entries; left at the default until a run measures them
+	case *inferencetypes.MsgRefreshTrainingNodeOptIn:
+		return gasDefaultEstimate, true
+	case *inferencetypes.MsgAutokickTrainshardNode:
+		return gasDefaultEstimate, true
 	case *blstypes.MsgSubmitDealerPart:
 		return gasSubmitDealerPart, true
 	case *blstypes.MsgSubmitVerificationVector:
