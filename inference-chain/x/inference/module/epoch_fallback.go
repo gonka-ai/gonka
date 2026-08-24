@@ -63,16 +63,47 @@ func participantsWithSeatedWeight(participants []*types.ActiveParticipant) []*ty
 	return kept
 }
 
+func hasFreshSeatedNode(participants []*types.ActiveParticipant, freshNodeIDs map[string]map[string]struct{}) bool {
+	for _, participant := range participants {
+		if participant == nil {
+			continue
+		}
+		participantFreshNodes := freshNodeIDs[participant.Index]
+		if len(participantFreshNodes) == 0 {
+			continue
+		}
+		for _, modelNodes := range participant.MlNodes {
+			if modelNodes == nil {
+				continue
+			}
+			for _, node := range modelNodes.MlNodes {
+				if node != nil {
+					if _, ok := participantFreshNodes[node.NodeId]; ok {
+						return true
+					}
+				}
+			}
+		}
+	}
+	return false
+}
+
 // seatAndGuardParticipants runs model seating over the computed participant set
 // and enforces the post-seating invariant: only participants with positive
-// seated weight survive. If nothing survives (either ComputeNewWeights returned
-// nothing, or the hardware filter removed every assignment), it retries once
-// with the current-epoch fallback carry-over -- seated and guarded the same way.
+// fresh PoC weight survive. If no fresh PoC node survives (ComputeNewWeights
+// returned only preserved nodes, or the hardware filter removed every fresh
+// assignment), it retries once with the current-epoch fallback carry-over --
+// seated and guarded the same way.
 // Returns an empty slice only when no current-epoch validator can be carried
 // at all (first epoch, no seeds, everyone excluded). The caller then aborts
 // formation. If the hardware filter would also wipe the carry, the carry is
 // kept as-is so the epoch index can still advance with the old team.
-func (am AppModule) seatAndGuardParticipants(ctx context.Context, upcomingEpoch types.Epoch, fresh []*types.ActiveParticipant) []*types.ActiveParticipant {
+func (am AppModule) seatAndGuardParticipants(
+	ctx context.Context,
+	upcomingEpoch types.Epoch,
+	fresh []*types.ActiveParticipant,
+	freshNodeIDs map[string]map[string]struct{},
+) []*types.ActiveParticipant {
 	assigner := NewModelAssigner(am.keeper, am.keeper)
 	seat := func(participants []*types.ActiveParticipant) []*types.ActiveParticipant {
 		if len(participants) == 0 {
@@ -83,7 +114,7 @@ func (am AppModule) seatAndGuardParticipants(ctx context.Context, upcomingEpoch 
 	}
 
 	seated := seat(fresh)
-	if len(seated) > 0 {
+	if len(seated) > 0 && hasFreshSeatedNode(seated, freshNodeIDs) {
 		if len(seated) < len(fresh) {
 			am.LogWarn("seatAndGuardParticipants: removed participants without seated weight", types.PoC,
 				"upcomingEpoch.Index", upcomingEpoch.Index,
@@ -92,14 +123,14 @@ func (am AppModule) seatAndGuardParticipants(ctx context.Context, upcomingEpoch 
 		return seated
 	}
 
-	// Safety mechanism: a PoC round where nobody passed validation -- or where
-	// the hardware filter removed every seated assignment -- must not produce an
-	// empty or zero-weight epoch. An empty epoch group can never validate anyone
-	// in later rounds (voting powers derive from it), permanently stalling the
-	// network. Re-seat the current epoch's still-valid validators instead; see
-	// the carry-over rules above.
-	am.LogError("seatAndGuardParticipants: no participants with seated weight for upcoming epoch; falling back to current epoch validators", types.PoC,
-		"upcomingEpoch.Index", upcomingEpoch.Index, "computed", len(fresh))
+	// Safety mechanism: a PoC round where nobody passed validation -- even if
+	// preserved nodes made the computed set non-empty -- must not advance with
+	// only a sampled subset of the current team. Re-seat all still-valid current
+	// validators instead; see the carry-over rules above.
+	am.LogError("seatAndGuardParticipants: no fresh PoC nodes survived; falling back to current epoch validators", types.PoC,
+		"upcomingEpoch.Index", upcomingEpoch.Index,
+		"computed", len(fresh),
+		"seated", len(seated))
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 
 	seated = seat(am.fallbackActiveParticipantsFromCurrentEpoch(ctx, upcomingEpoch))
@@ -137,6 +168,52 @@ func (am AppModule) seatAndGuardParticipants(ctx context.Context, upcomingEpoch 
 		sdk.NewAttribute("participants", fmt.Sprintf("%d", len(unfiltered))),
 	))
 	return unfiltered
+}
+
+// applyZeroTrustFallback prevents a positive-real-weight epoch from persisting
+// with no validation, governance, or BLS trust. It is an explicit fail-open
+// fallback: every trust consumer sees the same persisted CapWeight values.
+func (am AppModule) applyZeroTrustFallback(
+	ctx context.Context,
+	epochIndex uint64,
+	participants []*types.ActiveParticipant,
+) bool {
+	hasRealWeight := false
+	for _, participant := range participants {
+		if participant == nil {
+			continue
+		}
+		if participant.CapWeight > 0 {
+			return false
+		}
+		if participant.Weight > 0 {
+			hasRealWeight = true
+		}
+	}
+	if !hasRealWeight {
+		return false
+	}
+
+	for _, participant := range participants {
+		if participant == nil {
+			continue
+		}
+		if participant.Weight > 0 {
+			participant.CapWeight = participant.Weight
+		} else {
+			participant.CapWeight = 0
+		}
+	}
+
+	am.LogError("applyZeroTrustFallback: restoring real weight because every trust weight is zero", types.PoC,
+		"epochIndex", epochIndex,
+		"participants", len(participants))
+	sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
+		"zero_trust_fallback_applied",
+		sdk.NewAttribute("epoch", fmt.Sprintf("%d", epochIndex)),
+		sdk.NewAttribute("participants", fmt.Sprintf("%d", len(participants))),
+	))
+	return true
 }
 
 // fallbackActiveParticipantsFromCurrentEpoch rebuilds the active participant

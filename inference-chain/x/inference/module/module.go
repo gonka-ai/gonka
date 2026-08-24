@@ -721,7 +721,13 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	// are removed, and an all-empty result falls back to the current epoch's
 	// validators (or, last-ditch, keeps that carry even if hardware would
 	// filter it). See seatAndGuardParticipants in epoch_fallback.go.
-	activeParticipants := am.seatAndGuardParticipants(ctx, *upcomingEpoch, am.ComputeNewWeights(ctx, *upcomingEpoch))
+	computed := am.computeNewWeights(ctx, *upcomingEpoch)
+	activeParticipants := am.seatAndGuardParticipants(
+		ctx,
+		*upcomingEpoch,
+		computed.participants,
+		computed.freshNodeIDs,
+	)
 	if len(activeParticipants) == 0 {
 		// Safety mechanism: a PoC round where nobody passed validation must not
 		// produce an empty epoch. An empty epoch group can never validate anyone
@@ -840,6 +846,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	if err != nil {
 		return fmt.Errorf("apply previous-epoch trust cap: %w", err)
 	}
+	am.applyZeroTrustFallback(ctx, upcomingEpoch.Index, activeParticipants)
 
 	// Write per-model voting powers to ActiveParticipant for visibility.
 	// Pass the governance-controlled per-model concentration cap, which

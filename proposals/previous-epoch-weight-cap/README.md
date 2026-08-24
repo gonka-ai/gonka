@@ -70,16 +70,19 @@ Genesis guardians are exempt from the previous-epoch cap. A configured guardian 
 
 ### Pipeline placement
 
+Before weight formation, the epoch fallback requires at least one fresh PoC node to survive model seating. Preserved nodes remain valid inputs to `ComputeNewWeights`, but a preserved-only result cannot advance a sampled subset of the current team; it triggers the existing carry-over of all still-valid current validators.
+
 `CapWeight` is computed at end-of-PoC-validation, in this order:
 
 1. Penalties applied.
 2. Collateral adjustment.
 3. Universal 30% power cap (`applyEpochPowerCapping`) — still applied to real `Weight`.
 4. **`applyPreviousConfirmedWeightCap`** — default `CapWeight = Weight` for everyone, then lower it to the previous-epoch confirmed cap (or `0` for new participants).
-5. Per-model voting powers computed from `CapWeight`.
-6. `ActiveParticipants` persisted (including `CapWeight`).
-7. Epoch members added (x/group weights remain real `Weight`).
-8. BLS key generation initiated using `CapWeight`.
+5. **`applyZeroTrustFallback`** — if every computed `CapWeight` is zero while real `Weight` is positive, restore `CapWeight = Weight` for the whole participant set.
+6. Per-model voting powers computed from `CapWeight`.
+7. `ActiveParticipants` persisted (including `CapWeight`).
+8. Epoch members added (x/group weights remain real `Weight`).
+9. BLS key generation initiated using `CapWeight`.
 
 Governance validator power is applied a couple of blocks later at `SetComputeValidators`; it reads the persisted `CapWeight` and caps/drops validators accordingly, while the x/group member weights stay real so rewards, pricing, and weighted selection are unaffected.
 
@@ -103,8 +106,10 @@ PoC validation snapshots use trust weight for both the per-model voting powers a
 ## Edge cases and upgrade safety
 
 - **Genesis / bootstrap**: If there is no effective epoch yet, capping is skipped and `CapWeight` defaults to `Weight`, so the initial validator set is never zeroed.
+- **Preserved-only result**: If no fresh PoC node survives model seating, preserved nodes do not suppress the existing epoch fallback. The next epoch carries all still-valid current validators rather than advancing only the preserved sample.
+- **All-zero trust vector**: If previous-epoch capping leaves every `CapWeight` at zero while real `Weight` remains positive, epoch formation fails open by restoring every positive `CapWeight` from `Weight` before voting powers, persistence, BLS, or governance consume it. This deliberately bypasses the cooling rule only when retaining zero trust would make the epoch unable to validate or rotate.
 - **Missing previous epoch group data or live membership**: Epoch formation fails closed rather than treating historical `ValidationWeights` as live. A membership-read failure must not restore stale trust.
-- **Upgrade transition**: An epoch formed *before* this change has no `CapWeight` populated (all zero) and `cap_weight_applied` unset. Both the governance cap and the shared trust-weight resolver detect that state and fall back to real `Weight`, so the transition epoch never collapses to an all-zero validator set. After the upgrade, `cap_weight_applied` is persisted even when every cap is legitimately zero, so the all-zero fallback cannot undo a correct fail-closed result.
+- **Upgrade transition**: An epoch formed *before* this change has no `CapWeight` populated (all zero) and `cap_weight_applied` unset. Both the governance cap and the shared trust-weight resolver detect that state and fall back to real `Weight`. Post-upgrade epochs persist `cap_weight_applied`; any global zero-trust recovery is materialized directly in `CapWeight` by the explicit epoch fallback rather than inferred from zero-valued fields.
 - **Removed previous members**: Participants removed from the previous epoch's live root group do not provide a cap baseline and re-enter with `CapWeight = 0`, unless they are configured genesis guardians.
 - **Genesis guardians**: Configured guardians are never capped or dropped by this mechanism.
 
@@ -141,6 +146,7 @@ Wiring:
 - `applyPreviousConfirmedWeightCap` — clamps over-weight participants, zeroes new participants, preserves real `Weight`, and skips on bootstrap / missing previous group.
 - `resolveTrustWeights` — uses `CapWeight` when applied; falls back to `Weight` when unset.
 - `capComputeResultsToPreviousConfirmedWeight` — clamps and drops validators, exempts guardians, and falls back when `CapWeight` is unset (upgrade transition).
+- Epoch fallback tests cover preserved-only results, fresh nodes removed during seating, and explicit all-zero trust recovery.
 - Delegation-weight calculator tests cover previous confirmed effective weight for group eligibility and caps.
 - Validation snapshot and preserved-node tests cover trust-weight totals.
 - BLS key generation and guardian slot reservation tests cover mixed `CapWeight` (including a zero-cap participant with no slots).

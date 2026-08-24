@@ -283,7 +283,7 @@ func TestSeatAndGuard_AllAssignmentsFilteredFallsBackToCurrentEpoch(t *testing.T
 		freshParticipantWithHardware(t, k, ctx, testutil.Executor2, "n1", "model-a", "model-b", 100),
 	}
 
-	result := am.seatAndGuardParticipants(ctx, upcomingEpoch, fresh)
+	result := am.seatAndGuardParticipants(ctx, upcomingEpoch, fresh, participantNodeIDs(fresh))
 
 	require.Len(t, result, 1)
 	require.Equal(t, carried, result[0].Index, "fallback must re-seat the current epoch validator")
@@ -313,8 +313,9 @@ func TestSeatAndGuard_MixedRemovesZeroSeatedKeepsOthers(t *testing.T) {
 
 	survivor := freshParticipantWithHardware(t, k, ctx, testutil.Executor, "s1", "model-a", "model-a", 100)
 	zeroed := freshParticipantWithHardware(t, k, ctx, testutil.Executor2, "z1", "model-a", "model-b", 50)
+	fresh := []*types.ActiveParticipant{survivor, zeroed}
 
-	result := am.seatAndGuardParticipants(ctx, upcomingEpoch, []*types.ActiveParticipant{survivor, zeroed})
+	result := am.seatAndGuardParticipants(ctx, upcomingEpoch, fresh, participantNodeIDs(fresh))
 
 	require.Len(t, result, 1)
 	require.Equal(t, testutil.Executor, result[0].Index)
@@ -336,7 +337,7 @@ func TestSeatAndGuard_EmptyComputeFallsBack(t *testing.T) {
 	carried := testutil.Executor
 	setupCarryableCurrentEpoch(t, k, ctx, carried, "model-a", 40)
 
-	result := am.seatAndGuardParticipants(ctx, upcomingEpoch, nil)
+	result := am.seatAndGuardParticipants(ctx, upcomingEpoch, nil, nil)
 
 	require.Len(t, result, 1)
 	require.Equal(t, carried, result[0].Index)
@@ -367,7 +368,7 @@ func TestSeatAndGuard_FallbackHardwareZeroedKeepsCarriedTeam(t *testing.T) {
 		freshParticipantWithHardware(t, k, ctx, testutil.Executor2, "n1", "model-a", "model-b", 100),
 	}
 
-	result := am.seatAndGuardParticipants(ctx, upcomingEpoch, fresh)
+	result := am.seatAndGuardParticipants(ctx, upcomingEpoch, fresh, participantNodeIDs(fresh))
 
 	require.Len(t, result, 1)
 	require.Equal(t, carried, result[0].Index)
@@ -382,6 +383,122 @@ func TestSeatAndGuard_FallbackHardwareZeroedKeepsCarriedTeam(t *testing.T) {
 		}
 	}
 	require.True(t, applied, "fallback-applied event must be emitted")
+}
+
+func TestSeatAndGuard_PreservedOnlyFallsBackToCurrentEpoch(t *testing.T) {
+	k, ctx, _ := newMinimalInferenceKeeperWithStub(t)
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	upcomingEpoch := types.Epoch{Index: 6, PocStartBlockHeight: 600}
+
+	carried := testutil.Executor
+	setupCarryableCurrentEpoch(t, k, ctx, carried, "model-a", 70)
+
+	preservedOnly := []*types.ActiveParticipant{{
+		Index:  testutil.Executor2,
+		Models: []string{"model-a"},
+		MlNodes: []*types.ModelMLNodes{{
+			MlNodes: []*types.MLNodeInfo{{NodeId: "preserved-node", PocWeight: 100}},
+		}},
+	}}
+
+	result := am.seatAndGuardParticipants(ctx, upcomingEpoch, preservedOnly, nil)
+
+	require.Len(t, result, 1)
+	require.Equal(t, carried, result[0].Index)
+	require.Nil(t, findByIndex(result, testutil.Executor2), "preserved-only subset must not bypass epoch fallback")
+}
+
+func TestSeatAndGuard_FreshFilteredPreservedSurvivesFallsBack(t *testing.T) {
+	k, ctx, _ := newMinimalInferenceKeeperWithStub(t)
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	upcomingEpoch := types.Epoch{Index: 6, PocStartBlockHeight: 600}
+
+	k.SetModel(ctx, &types.Model{ProposedBy: "genesis", Id: "model-a"})
+	k.SetModel(ctx, &types.Model{ProposedBy: "genesis", Id: "model-b"})
+
+	carried := testutil.Executor
+	setupCarryableCurrentEpoch(t, k, ctx, carried, "model-a", 70)
+
+	preserved := &types.ActiveParticipant{
+		Index:  testutil.Executor2,
+		Models: []string{"model-a"},
+		MlNodes: []*types.ModelMLNodes{{
+			MlNodes: []*types.MLNodeInfo{{NodeId: "preserved-node", PocWeight: 40}},
+		}},
+	}
+	fresh := freshParticipantWithHardware(
+		t,
+		k,
+		ctx,
+		testutil.Validator,
+		"fresh-node",
+		"model-a",
+		"model-b",
+		100,
+	)
+	computed := []*types.ActiveParticipant{preserved, fresh}
+
+	result := am.seatAndGuardParticipants(
+		ctx,
+		upcomingEpoch,
+		computed,
+		participantNodeIDs([]*types.ActiveParticipant{fresh}),
+	)
+
+	require.Len(t, result, 1)
+	require.Equal(t, carried, result[0].Index)
+	require.Nil(t, findByIndex(result, testutil.Executor2), "surviving preserved node must not mask filtered fresh PoC")
+	require.Nil(t, findByIndex(result, testutil.Validator))
+}
+
+func TestApplyZeroTrustFallback(t *testing.T) {
+	t.Run("restores positive real weights", func(t *testing.T) {
+		k, ctx := newMinimalInferenceKeeper(t)
+		am := NewAppModule(nil, k, nil, nil, nil, nil)
+		participants := []*types.ActiveParticipant{
+			{Index: "a", Weight: 100},
+			nil,
+			{Index: "b", Weight: 50},
+		}
+
+		require.True(t, am.applyZeroTrustFallback(ctx, 6, participants))
+		require.Equal(t, int64(100), participants[0].CapWeight)
+		require.Equal(t, int64(50), participants[2].CapWeight)
+
+		var emitted bool
+		for _, event := range ctx.EventManager().Events() {
+			if event.Type == "zero_trust_fallback_applied" {
+				emitted = true
+			}
+		}
+		require.True(t, emitted)
+	})
+
+	t.Run("does not override a positive trust vector", func(t *testing.T) {
+		k, ctx := newMinimalInferenceKeeper(t)
+		am := NewAppModule(nil, k, nil, nil, nil, nil)
+		participants := []*types.ActiveParticipant{
+			{Index: "a", Weight: 100, CapWeight: 20},
+			{Index: "b", Weight: 50},
+		}
+
+		require.False(t, am.applyZeroTrustFallback(ctx, 6, participants))
+		require.Equal(t, int64(20), participants[0].CapWeight)
+		require.Zero(t, participants[1].CapWeight)
+	})
+
+	t.Run("does not fabricate trust without real weight", func(t *testing.T) {
+		k, ctx := newMinimalInferenceKeeper(t)
+		am := NewAppModule(nil, k, nil, nil, nil, nil)
+		participants := []*types.ActiveParticipant{
+			{Index: "a"},
+			{Index: "b", Weight: -5},
+		}
+
+		require.False(t, am.applyZeroTrustFallback(ctx, 6, participants))
+		require.Zero(t, participants[0].CapWeight)
+		require.Zero(t, participants[1].CapWeight)
+	})
 }
 
 func TestHasPositiveComputePower(t *testing.T) {
