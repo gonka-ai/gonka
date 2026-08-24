@@ -867,6 +867,20 @@ func (p *PreparedInference) IsProbe() bool { return p.isProbe }
 // without processing it. Use ProcessResponse separately to apply the response
 // to session state. This split allows parallel network I/O with ordered processing.
 func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+	return s.SendOnlyWithCursor(ctx, p, stream, receiptHandler, 0, 0)
+}
+
+// SendOnlyWithCursor is SendOnly plus a resume cursor for same-nonce reconnect.
+// deliveredEvents/deliveredPartial are transport-only fields on
+// HostRequest — not chain messages. Reusing the same PreparedInference keeps
+// nonce, catch-up diffs, and payload identical to the original attempt.
+func (s *Session) SendOnlyWithCursor(
+	ctx context.Context,
+	p *PreparedInference,
+	stream io.Writer,
+	receiptHandler func(),
+	deliveredEvents, deliveredPartial int64,
+) (*host.HostResponse, error) {
 	resp, err := s.clients[p.hostIdx].Send(ctx, host.HostRequest{
 		Diffs: p.catchUp,
 		Nonce: p.diff.Nonce,
@@ -877,6 +891,8 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.
 			MaxTokens:   p.params.MaxTokens,
 			StartedAt:   p.params.StartedAt,
 		},
+		DeliveredEvents:  deliveredEvents,
+		DeliveredPartial: deliveredPartial,
 	}, stream, receiptHandler)
 	if err != nil && state.IsPostStateRootMismatchError(err) {
 		s.logStateRootMismatchUserDiagnostic(p)
@@ -1299,6 +1315,15 @@ func (s *Session) PendingTxs() []*types.DevshardTx {
 }
 
 func (s *Session) StateMachine() *state.StateMachine { return s.sm }
+
+// ProtocolVersion returns the escrow bind tag stamped on the session state
+// machine (StateRootAndProtocolVersion). Empty when the session is nil.
+func (s *Session) ProtocolVersion() string {
+	if s == nil || s.sm == nil {
+		return ""
+	}
+	return s.sm.ProtocolVersion()
+}
 
 // sigWeight computes the slot-weighted signature count for a set of slot signatures,
 // deduplicating by validator address. Caller must hold s.mu.

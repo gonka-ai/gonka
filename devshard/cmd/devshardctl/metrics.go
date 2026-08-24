@@ -991,6 +991,8 @@ func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker) st
 			return gatewayHTTPFailureReason(upstreamErr.StatusCode)
 		case errors.Is(inf.err, transport.ErrSSEStreamTruncated):
 			return "sse_truncated"
+		case errors.Is(inf.err, transport.ErrSSEEventTooLarge):
+			return "sse_event_too_large"
 		case errors.Is(inf.err, io.EOF), errors.Is(inf.err, io.ErrUnexpectedEOF), strings.Contains(strings.ToLower(inf.err.Error()), "eof"):
 			return "eof_transport"
 		case errors.Is(inf.err, context.Canceled), errors.Is(inf.err, context.DeadlineExceeded):

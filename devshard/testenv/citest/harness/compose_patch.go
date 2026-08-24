@@ -58,24 +58,44 @@ func PatchComposeRemoveEnvKey(t *testing.T, composePath, key string) {
 // PatchComposeInsertEnvAfter adds environment lines after the first matching env key.
 func PatchComposeInsertEnvAfter(t *testing.T, composePath, afterKey string, lines ...string) {
 	t.Helper()
+	patchComposeInsertEnvAfter(t, composePath, afterKey, false, lines...)
+}
+
+// PatchComposeInsertEnvAfterAll adds environment lines after every matching env key
+// (e.g. the same DEVSHARD_* key on each versiond-* service).
+func PatchComposeInsertEnvAfterAll(t *testing.T, composePath, afterKey string, lines ...string) {
+	t.Helper()
+	patchComposeInsertEnvAfter(t, composePath, afterKey, true, lines...)
+}
+
+func patchComposeInsertEnvAfter(t *testing.T, composePath, afterKey string, all bool, lines ...string) {
+	t.Helper()
 	body, err := os.ReadFile(composePath)
 	require.NoError(t, err)
 	re := regexp.MustCompile(`(?m)^(\s*)` + regexp.QuoteMeta(afterKey) + `:\s*.*$`)
-	loc := re.FindIndex(body)
-	require.NotNil(t, loc, "compose %s: env key %q not found", composePath, afterKey)
-	lineEnd := loc[1]
-	if lineEnd < len(body) && body[lineEnd] == '\n' {
-		lineEnd++
+	locs := re.FindAllIndex(body, -1)
+	require.NotEmpty(t, locs, "compose %s: env key %q not found", composePath, afterKey)
+	if !all {
+		locs = locs[:1]
 	}
-	indent := string(re.FindSubmatch(body[loc[0]:loc[1]])[1])
-	var insert strings.Builder
-	for _, line := range lines {
-		insert.WriteString(indent)
-		insert.WriteString(line)
-		insert.WriteByte('\n')
+	// Insert from last match to first so earlier offsets stay valid.
+	for i := len(locs) - 1; i >= 0; i-- {
+		loc := locs[i]
+		lineEnd := loc[1]
+		if lineEnd < len(body) && body[lineEnd] == '\n' {
+			lineEnd++
+		}
+		indent := string(re.FindSubmatch(body[loc[0]:loc[1]])[1])
+		var insert strings.Builder
+		for _, line := range lines {
+			insert.WriteString(indent)
+			insert.WriteString(line)
+			insert.WriteByte('\n')
+		}
+		updated := append([]byte{}, body[:lineEnd]...)
+		updated = append(updated, []byte(insert.String())...)
+		updated = append(updated, body[lineEnd:]...)
+		body = updated
 	}
-	updated := append([]byte{}, body[:lineEnd]...)
-	updated = append(updated, []byte(insert.String())...)
-	updated = append(updated, body[lineEnd:]...)
-	require.NoError(t, os.WriteFile(composePath, updated, 0o644))
+	require.NoError(t, os.WriteFile(composePath, body, 0o644))
 }

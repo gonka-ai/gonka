@@ -17,6 +17,7 @@ import (
 	"devshard"
 	"devshard/gossip"
 	"devshard/internal/testutil"
+	"devshard/observability"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
@@ -1036,10 +1037,13 @@ func TestHost_RunExecutionQueuesFinishForPartialResult(t *testing.T) {
 	responseHash := sha256.Sum256(responseBody)
 	engine := &stub.ConfigurableEngine{
 		Default: devshard.ExecuteResult{
-			ResponseHash: responseHash[:],
-			InputTokens:  12,
-			OutputTokens: 1,
-			ResponseBody: responseBody,
+			ResponseHash:          responseHash[:],
+			InputTokens:           12,
+			OutputTokens:          1,
+			ResponseBody:          responseBody,
+			PartialResponse:       true,
+			PartialResponseReason: string(observability.ReasonPartialResponseInterrupted),
+			PartialResponseWhere:  string(observability.WhereRuntimeDrainML),
 		},
 	}
 	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
@@ -1055,6 +1059,9 @@ func TestHost_RunExecutionQueuesFinishForPartialResult(t *testing.T) {
 	result, err := h.RunExecution(context.Background(), resp.ExecutionJob)
 	require.NoError(t, err)
 	require.Equal(t, responseBody, result.ResponseBody)
+	require.True(t, result.PartialResponse)
+	require.Equal(t, string(observability.ReasonPartialResponseInterrupted), result.PartialResponseReason)
+	require.Equal(t, string(observability.WhereRuntimeDrainML), result.PartialResponseWhere)
 
 	finishTx := findMempoolFinish(h.MempoolTxs())
 	require.NotNil(t, finishTx, "mempool should contain MsgFinishInference")

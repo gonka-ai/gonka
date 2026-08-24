@@ -3,7 +3,6 @@ package completionapi
 import (
 	"encoding/json"
 	"errors"
-	"strings"
 )
 
 type ResponseProcessor interface {
@@ -18,13 +17,14 @@ type ExecutorResponseProcessor struct {
 	inferenceId       string
 	jsonResponseBytes []byte
 	streamedResponse  []string
+	patcher           idPatcher
+	rewriteBuf        []byte
 }
 
 func NewExecutorResponseProcessor(inferenceId string) *ExecutorResponseProcessor {
 	return &ExecutorResponseProcessor{
-		inferenceId:       inferenceId,
-		jsonResponseBytes: nil,
-		streamedResponse:  nil,
+		inferenceId: inferenceId,
+		patcher:     idPatcher{id: inferenceId},
 	}
 }
 
@@ -40,29 +40,20 @@ func (rt *ExecutorResponseProcessor) ProcessJsonResponse(responseBytes []byte) (
 }
 
 func (rt *ExecutorResponseProcessor) ProcessStreamedResponse(line string) (string, error) {
-	updatedLine, err := getUpdatedLine(line, rt.inferenceId)
+	var err error
+	rt.rewriteBuf, err = rt.patcher.rewrite(rt.rewriteBuf[:0], []byte(line))
+	updatedLine := string(rt.rewriteBuf)
+	if err != nil {
+		// Preserve prior semantics: retain the original line on rewrite failure
+		// so finish still has something to inspect, then surface the error.
+		updatedLine = line
+	}
 	rt.streamedResponse = append(rt.streamedResponse, updatedLine)
 	return updatedLine, err
 }
 
-func getUpdatedLine(line string, id string) (string, error) {
-	if !strings.HasPrefix(line, DataPrefix) {
-		return line, nil
-	}
-
-	trimmed := strings.TrimSpace(strings.TrimPrefix(line, DataPrefix))
-	if strings.HasPrefix(trimmed, "[DONE]") {
-		return line, nil
-	}
-
-	updatedBodyBytes, err := addOrReplaceIdValue([]byte(trimmed), id)
-	if err != nil {
-		return line, err
-	}
-
-	return DataPrefix + string(updatedBodyBytes), nil
-}
-
+// addOrReplaceIdValue is the non-streamed (whole JSON body) path. Streamed
+// chunks use the surgical idPatcher instead — see idrewrite.go.
 func addOrReplaceIdValue(bytes []byte, id string) ([]byte, error) {
 	var bodyMap map[string]interface{}
 	err := json.Unmarshal(bytes, &bodyMap)

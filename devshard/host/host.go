@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"maps"
+	"net/http"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -14,6 +15,8 @@ import (
 	"google.golang.org/protobuf/proto"
 
 	"common/completionapi"
+
+	"common/storage/payloads"
 
 	"devshard"
 	"devshard/gossip"
@@ -52,6 +55,11 @@ type HostRequest struct {
 	Diffs   []types.Diff
 	Nonce   uint64            // nonce of the current request
 	Payload *InferencePayload // nil if no new inference (e.g., Finalize, empty diffs)
+
+	// Resume cursor for same-nonce reconnect (transport only; not a chain message).
+	// See gateway-attempt-reconnect-plan.md (resume cursor / live attach).
+	DeliveredEvents  int64
+	DeliveredPartial int64
 }
 
 // HostResponse carries the host's reply back to the user.
@@ -64,11 +72,16 @@ type HostResponse struct {
 	Mempool            []*types.DevshardTx
 	ExecutionJob       *devshard.ExecuteRequest // non-nil if this host is the executor and execution is deferred
 	CachedResponseBody []byte // non-nil when reconnecting to a completed inference
+	LiveAttach         bool   // true when reconnecting to an in-flight live stream
 	StreamBytesRead    int64  // total bytes read from the host HTTP response body (SSE streams only)
 	InferenceID        uint64
 	ReceiptExpected    bool
 	ReceiptReason      observability.Reason
 	ExecutionExpected  bool
+
+	// Resume cursor echoed from the request for live/cached attach.
+	DeliveredEvents  int64
+	DeliveredPartial int64
 }
 
 type receiptOutcome struct {
@@ -107,6 +120,7 @@ type Host struct {
 	mempool      *Mempool
 	checker      AcceptanceChecker
 	store        storage.Storage // optional, nil = no persistence
+	payloads     PayloadRetriever // optional, nil = no disk resume tier (5e)
 	gsp          *gossip.Gossip  // optional, nil = no gossip pruning
 	availability devshard.AvailabilityProvider
 
@@ -122,7 +136,9 @@ type Host struct {
 	validating         map[uint64]struct{} // inference IDs with queued or in-flight validation
 	validationQueue    chan validateJob
 	completedResponses map[uint64][]byte // inference ID -> cached ML response body
-	ownSeed            int64             // deterministic seed derived from signer + escrowID
+	liveStreams        map[uint64]*LiveStream // in-flight SSE fan-out hubs
+	liveStreamSpoolDir string                 // "" = no mid-flight resume tier
+	ownSeed            int64                  // deterministic seed derived from signer + escrowID
 
 	validationLifecycleMu sync.RWMutex
 	validationStartOnce   sync.Once
@@ -209,6 +225,7 @@ func NewHost(
 		executing:             make(map[uint64]struct{}),
 		validating:            make(map[uint64]struct{}),
 		completedResponses:    make(map[uint64][]byte),
+		liveStreams:           make(map[uint64]*LiveStream),
 		ownSeed:               ownSeed,
 	}
 	for _, opt := range opts {
@@ -262,10 +279,31 @@ func WithStorage(s storage.Storage) HostOption {
 	return func(h *Host) { h.store = s }
 }
 
+// PayloadRetriever is the optional disk resume tier consulted after
+// completedResponses is evicted. Matches session.PayloadStore /
+// common/storage/payloads.Storage.Retrieve.
+type PayloadRetriever interface {
+	Retrieve(ctx context.Context, escrowID string, inferenceID, epochID uint64) (prompt, response []byte, err error)
+}
+
+// WithPayloadRetriever enables same-nonce reconnect from the durable payload
+// store after the in-RAM completedResponses cache is gone.
+func WithPayloadRetriever(r PayloadRetriever) HostOption {
+	return func(h *Host) { h.payloads = r }
+}
+
 // WithEpochID pins the host to the mainnet epoch stored on its DevshardEscrow.
 // Payload storage and validation use this epoch to route across epoch changes.
 func WithEpochID(epochID uint64) HostOption {
 	return func(h *Host) { h.epochID = epochID }
+}
+
+// WithLiveStreamSpoolDir points in-flight live streams at a scratch directory
+// used as their resume tier. Without it a generation still runs and persists,
+// but a mid-flight reconnect is refused (ErrLiveStreamResumeUnavailable),
+// because only a small RAM window would be left to resume from.
+func WithLiveStreamSpoolDir(dir string) HostOption {
+	return func(h *Host) { h.liveStreamSpoolDir = dir }
 }
 
 // WithVerifier sets the signature verifier for gossip sig accumulation.
@@ -407,8 +445,9 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 		diffsApplied = true
 	}
 
-	// (b) Sign executor receipt (sync, under mutex).
-	receipt, confirmedAt, job, cachedBody, receiptOutcome, err := h.signReceipt(req)
+	// (b) Sign executor receipt (sync, under mutex; may briefly unlock for
+	// payload-store I/O on the post-eviction resume path).
+	receipt, confirmedAt, job, cachedBody, liveAttach, receiptOutcome, err := h.signReceipt(ctx, req)
 	if err != nil {
 		h.mu.Unlock()
 		return nil, err
@@ -463,10 +502,13 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 		Mempool:            h.mempool.Txs(),
 		ExecutionJob:       job,
 		CachedResponseBody: cachedBody,
+		LiveAttach:         liveAttach,
 		InferenceID:        receiptOutcome.inferenceID,
 		ReceiptExpected:    receiptOutcome.receiptExpected,
 		ReceiptReason:      receiptOutcome.reason,
 		ExecutionExpected:  receiptOutcome.executionExpected,
+		DeliveredEvents:    req.DeliveredEvents,
+		DeliveredPartial:   req.DeliveredPartial,
 	}, nil
 }
 
@@ -729,21 +771,22 @@ func (h *Host) findDiff(diffs []types.Diff, nonce uint64) *types.Diff {
 
 // signReceipt verifies the payload and signs the executor receipt (sync, under mutex).
 // Returns the receipt sig, confirmed_at timestamp, an ExecuteRequest if this host is the executor,
-// and cached response body if the inference already completed (reconnect case).
+// cached response body if the inference already completed, and liveAttach when a reconnect
+// should join an in-flight LiveStream.
 //
 // Authorization comes from applied escrow state for req.Nonce, not from MsgStartInference
 // bytes in the request. applyAndPersist may skip stale diffs without verifying them; those
 // skipped bytes must never authorize execution.
-// Caller must hold h.mu.
-func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteRequest, []byte, receiptOutcome, error) {
+// Caller must hold h.mu. May briefly unlock for payload-store I/O.
+func (h *Host) signReceipt(ctx context.Context, req HostRequest) ([]byte, int64, *devshard.ExecuteRequest, []byte, bool, receiptOutcome, error) {
 	outcome := receiptOutcome{reason: observability.ReasonNotExecutor}
 	if req.Payload == nil {
 		outcome.reason = observability.ReasonPayloadAbsent
-		return nil, 0, nil, nil, outcome, nil
+		return nil, 0, nil, nil, false, outcome, nil
 	}
 	if h.findDiff(req.Diffs, req.Nonce) == nil {
 		outcome.reason = observability.ReasonTargetDiffAbsent
-		return nil, 0, nil, nil, outcome, nil
+		return nil, 0, nil, nil, false, outcome, nil
 	}
 
 	// Protocol: inference_id == nonce. Authorize only from applied state.
@@ -752,7 +795,7 @@ func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteReq
 	executorSlot := h.group[inferenceID%uint64(len(h.group))].SlotID
 	if !h.slotIDs[executorSlot] {
 		// Here reason is default observability.ReasonNotExecutor
-		return nil, 0, nil, nil, outcome, nil
+		return nil, 0, nil, nil, false, outcome, nil
 	}
 	outcome.receiptExpected = true
 
@@ -762,22 +805,140 @@ func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteReq
 	rec, ok := h.sm.GetInference(inferenceID)
 	if !ok {
 		outcome.reason = observability.ReasonInferenceDisappeared
-		return nil, 0, nil, nil, outcome, nil
+		return nil, 0, nil, nil, false, outcome, nil
 	}
 
 	// Verify payload against the applied record (not unverified request-diff fields).
 	if err := VerifyPayload(req.Payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt); err != nil {
-		return nil, 0, nil, nil, outcome, observability.Classify(observability.ReasonPayloadVerifyErr, observability.WhereHostSignReceipt, err)
+		return nil, 0, nil, nil, false, outcome, observability.Classify(observability.ReasonPayloadVerifyErr, observability.WhereHostSignReceipt, err)
 	}
 
+	h.pruneLiveStreamLocked(inferenceID)
 	_, alreadyExecuting := h.executing[inferenceID]
+	live := h.liveStreams[inferenceID]
 	cached, hasCached := h.completedResponses[inferenceID]
-	if rec.Status != types.StatusPending && !alreadyExecuting && !hasCached {
-		outcome.reason = observability.ReasonInferenceDisappeared
-		return nil, 0, nil, nil, outcome, nil
+
+	// Prefer durable RAM cache over a live buffer (drain→persist→forget).
+	if hasCached {
+		sig, confirmedAt, err := h.ensureConfirmStartLocked(inferenceID, rec)
+		if err != nil {
+			return nil, 0, nil, nil, false, outcome, err
+		}
+		outcome.reason = observability.ReasonCachedResponse
+		return sig, confirmedAt, nil, cached, false, outcome, nil
 	}
 
-	// Sign executor receipt with wall-clock confirmed_at.
+	// Mid-generation reconnect: join the in-flight LiveStream from the resume cursor.
+	if alreadyExecuting || live != nil {
+		sig, confirmedAt, err := h.ensureConfirmStartLocked(inferenceID, rec)
+		if err != nil {
+			return nil, 0, nil, nil, false, outcome, err
+		}
+		outcome.reason = observability.ReasonAlreadyExecuting
+		if live != nil {
+			outcome.executionExpected = true
+			return sig, confirmedAt, nil, nil, true, outcome, nil
+		}
+		// Marked executing but no live buffer (race / pruned): receipt-only resume failure.
+		return sig, confirmedAt, nil, nil, false, outcome, nil
+	}
+
+	// First-path execution for a still-pending inference.
+	if rec.Status == types.StatusPending {
+		sig, confirmedAt, err := h.ensureConfirmStartLocked(inferenceID, rec)
+		if err != nil {
+			return nil, 0, nil, nil, false, outcome, err
+		}
+
+		h.executing[inferenceID] = struct{}{}
+		outcome.executionExpected = true
+		outcome.reason = observability.ReasonOK
+
+		job := &devshard.ExecuteRequest{
+			InferenceID: inferenceID,
+			Model:       rec.Model,
+			Prompt:      req.Payload.Prompt,
+			PromptHash:  rec.PromptHash,
+			InputLength: rec.InputLength,
+			MaxTokens:   rec.MaxTokens,
+			EscrowID:    h.escrowID,
+			EpochID:     h.epochID,
+		}
+		return sig, confirmedAt, job, nil, false, outcome, nil
+	}
+
+	// Terminal inference with no RAM cache: last resume tier is the payload store (5e).
+	if body, ok := h.lookupPayloadResponseLocked(ctx, inferenceID); ok {
+		rec, ok = h.sm.GetInference(inferenceID)
+		if !ok {
+			outcome.reason = observability.ReasonInferenceDisappeared
+			return nil, 0, nil, nil, false, outcome, nil
+		}
+		sig, confirmedAt, err := h.ensureConfirmStartLocked(inferenceID, rec)
+		if err != nil {
+			return nil, 0, nil, nil, false, outcome, err
+		}
+		outcome.reason = observability.ReasonCachedResponse
+		return sig, confirmedAt, nil, body, false, outcome, nil
+	}
+
+	outcome.reason = observability.ReasonInferenceDisappeared
+	return nil, 0, nil, nil, false, outcome, nil
+}
+
+// lookupPayloadResponseLocked loads a completed response body from the durable
+// payload store. Caller must hold h.mu; the method unlocks for I/O and re-locks.
+func (h *Host) lookupPayloadResponseLocked(ctx context.Context, inferenceID uint64) ([]byte, bool) {
+	if h.payloads == nil {
+		return nil, false
+	}
+	escrowID := h.escrowID
+	epochID := h.epochID
+	retriever := h.payloads
+	h.mu.Unlock()
+	_, body, err := retrievePayloadResponse(ctx, retriever, escrowID, inferenceID, epochID)
+	h.mu.Lock()
+	if err != nil || len(body) == 0 {
+		return nil, false
+	}
+	return body, true
+}
+
+// retrievePayloadResponse tries the primary epoch then adjacent epochs (epoch
+// boundary race), mirroring HostManager.retrievePayloadsWithAdjacentEpochs.
+func retrievePayloadResponse(ctx context.Context, r PayloadRetriever, escrowID string, inferenceID, epochID uint64) ([]byte, []byte, error) {
+	prompt, response, err := r.Retrieve(ctx, escrowID, inferenceID, epochID)
+	if err == nil {
+		return prompt, response, nil
+	}
+	if !errors.Is(err, payloads.ErrNotFound) {
+		return nil, nil, err
+	}
+	adjacent := make([]uint64, 0, 2)
+	if epochID > 0 {
+		adjacent = append(adjacent, epochID-1)
+	}
+	adjacent = append(adjacent, epochID+1)
+	for _, adj := range adjacent {
+		prompt, response, err = r.Retrieve(ctx, escrowID, inferenceID, adj)
+		if err == nil {
+			return prompt, response, nil
+		}
+		if !errors.Is(err, payloads.ErrNotFound) {
+			return nil, nil, err
+		}
+	}
+	return nil, nil, payloads.ErrNotFound
+}
+
+// ensureConfirmStartLocked returns an executor receipt, reusing an existing
+// mempool MsgConfirmStart for this inference when present (no-op on reconnect).
+// Caller must hold h.mu.
+func (h *Host) ensureConfirmStartLocked(inferenceID uint64, rec types.InferenceRecord) ([]byte, int64, error) {
+	if sig, confirmedAt, ok := h.findConfirmStartLocked(inferenceID); ok {
+		return sig, confirmedAt, nil
+	}
+
 	confirmedAt := time.Now().Unix()
 	receiptContent := &types.ExecutorReceiptContent{
 		InferenceId: inferenceID,
@@ -791,15 +952,12 @@ func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteReq
 	}
 	receiptData, err := proto.Marshal(receiptContent)
 	if err != nil {
-		return nil, 0, nil, nil, outcome, observability.Classify(observability.ReasonReceiptMarshalErr, observability.WhereHostSignReceipt, fmt.Errorf("marshal executor receipt: %w", err))
+		return nil, 0, observability.Classify(observability.ReasonReceiptMarshalErr, observability.WhereHostSignReceipt, fmt.Errorf("marshal executor receipt: %w", err))
 	}
 	sig, err := h.signer.Sign(receiptData)
 	if err != nil {
-		return nil, 0, nil, nil, outcome, observability.Classify(observability.ReasonReceiptSignErr, observability.WhereHostSignReceipt, fmt.Errorf("sign executor receipt: %w", err))
+		return nil, 0, observability.Classify(observability.ReasonReceiptSignErr, observability.WhereHostSignReceipt, fmt.Errorf("sign executor receipt: %w", err))
 	}
-
-	// Add MsgConfirmStart to mempool so it survives HTTP failures.
-	// If the response is lost (e.g. 503), the next request delivers it via mempool.
 	h.mempool.Add(MempoolEntry{
 		Tx: &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 			InferenceId: inferenceID,
@@ -808,34 +966,30 @@ func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteReq
 		}}},
 		ProposedAt: h.sm.LatestNonce(),
 	})
+	return sig, confirmedAt, nil
+}
 
-	// Dedup: return receipt (proves executor alive) but skip execution.
-	if alreadyExecuting {
-		outcome.reason = observability.ReasonAlreadyExecuting
-		return sig, confirmedAt, nil, nil, outcome, nil
+func (h *Host) findConfirmStartLocked(inferenceID uint64) (sig []byte, confirmedAt int64, ok bool) {
+	for _, tx := range h.mempool.Txs() {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+			return cs.ExecutorSig, cs.ConfirmedAt, true
+		}
 	}
+	return nil, 0, false
+}
 
-	// Already completed: execution finished, response cached.
-	if hasCached {
-		outcome.reason = observability.ReasonCachedResponse
-		return sig, confirmedAt, nil, cached, outcome, nil
+func (h *Host) pruneLiveStreamLocked(inferenceID uint64) {
+	stream := h.liveStreams[inferenceID]
+	if stream == nil {
+		return
 	}
-
-	h.executing[inferenceID] = struct{}{}
-	outcome.executionExpected = true
-	outcome.reason = observability.ReasonOK
-
-	job := &devshard.ExecuteRequest{
-		InferenceID: inferenceID,
-		Model:       rec.Model,
-		Prompt:      req.Payload.Prompt,
-		PromptHash:  rec.PromptHash,
-		InputLength: rec.InputLength,
-		MaxTokens:   rec.MaxTokens,
-		EscrowID:    h.escrowID,
-		EpochID:     h.epochID,
+	if !stream.Expired(time.Now()) {
+		return
 	}
-	return sig, confirmedAt, job, nil, outcome, nil
+	// Detach from the attach map so reconnects fail cleanly, but do not Close:
+	// Close would tear down the primary reader and discard in-flight ML output
+	// for a still-producing generation.
+	delete(h.liveStreams, inferenceID)
 }
 
 // executeAsync runs inference and adds MsgFinishInference to the mempool.
@@ -853,16 +1007,53 @@ func (h *Host) ReleaseExecution(inferenceID uint64) {
 // RunExecution executes an inference job and adds MsgFinishInference to the mempool.
 // This is the deferred execution path -- used when DeferExecution=true in HandleRequest.
 // The caller typically streams results to the client before calling this.
+// Execution lifetime is detached from the gateway request context inside the
+// inference engine: a client disconnect stops proxying but does not abort ML
+// drain, payload store, or finish publication (bounded by the engine drain timeout).
+//
+// While executing, a LiveStream hub is registered so same-nonce reconnects can
+// attach from a resume cursor. On success the body is persisted to
+// completedResponses and the live buffer is forgotten.
 func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
 	// Find the internal job metadata for cleanup/mempool.
 	inferenceID := job.InferenceID
 	executorSlot := h.group[inferenceID%uint64(len(h.group))].SlotID
 	diffNonce := h.LatestNonce()
 
-	defer h.ReleaseExecution(inferenceID)
+	stream := newLiveStream()
+	// Enable the disk tier before the first Write so no producer byte is only
+	// ever in RAM. A spool failure degrades reconnect for this generation; it
+	// must never stop the generation itself.
+	if h.liveStreamSpoolDir != "" {
+		if err := stream.enableSpool(h.liveStreamSpoolDir, h.escrowID, inferenceID); err != nil {
+			logging.Warn("live stream spool unavailable; mid-flight reconnect disabled",
+				"subsystem", "host", "escrow_id", h.escrowID, "inference_id", inferenceID, "error", err)
+		}
+	}
+	if job.ResponseWriter != nil {
+		stream.SetPrimary(job.ResponseWriter)
+		job.ResponseWriter = stream
+	}
+	h.mu.Lock()
+	h.liveStreams[inferenceID] = stream
+	h.mu.Unlock()
+
+	defer func() {
+		h.ReleaseExecution(inferenceID)
+		h.mu.Lock()
+		delete(h.liveStreams, inferenceID)
+		h.mu.Unlock()
+		stream.Close(nil)
+		// The caller writes devshard_meta to the same ResponseWriter, so the
+		// primary reader must be finished with it before we return.
+		stream.WaitPrimary()
+		// Frees the spool once any still-draining reconnect reader is done.
+		stream.Release()
+	}()
 
 	result, err := h.engine.Execute(ctx, *job)
 	if err != nil {
+		stream.Close(err)
 		reason, where := observability.ErrorReason(err, observability.ReasonExecuteErr, observability.WhereHostExecute)
 		return nil, observability.FailReceiptOrphan(ctx, h.escrowID, reason, where,
 			observability.StageFinished, "execute failed", err, "inference_id", inferenceID)
@@ -878,6 +1069,7 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 	}
 	proposerSig, err := h.signProposer(finishMsg)
 	if err != nil {
+		stream.Close(err)
 		return result, observability.FailReceiptOrphan(ctx, h.escrowID,
 			observability.ReasonSignFinishErr, observability.WhereHostPublishFinish,
 			observability.StageFinished, "sign finish msg failed", err, "inference_id", inferenceID)
@@ -903,11 +1095,40 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 	if len(result.ResponseBody) > 0 {
 		h.mu.Lock()
 		h.completedResponses[inferenceID] = result.ResponseBody
+		// Drain complete → persist → forget live RAM buffer.
+		delete(h.liveStreams, inferenceID)
 		h.mu.Unlock()
 	}
+	stream.Close(nil)
 	observability.SetMempoolSize(h.escrowID, h.mempool.Len())
 
 	return result, nil
+}
+
+// AttachLiveStream joins an in-flight inference from the resume cursor and
+// blocks until the stream completes or the writer fails.
+func (h *Host) AttachLiveStream(inferenceID uint64, w http.ResponseWriter, deliveredEvents, deliveredPartial int64) error {
+	if err := validateResumeCursor(deliveredEvents, deliveredPartial); err != nil {
+		return err
+	}
+	h.mu.Lock()
+	h.pruneLiveStreamLocked(inferenceID)
+	stream := h.liveStreams[inferenceID]
+	h.mu.Unlock()
+	if stream == nil {
+		// Covers never-registered, drain→persist→forget, and TTL detach alike:
+		// prune removes the map entry without Close, so it surfaces here rather
+		// than as ErrLiveStreamPruned.
+		return ErrLiveStreamGone
+	}
+	return stream.Subscribe(w, deliveredEvents, deliveredPartial)
+}
+
+// LiveStreamForTest exposes the live hub for unit tests.
+func (h *Host) LiveStreamForTest(inferenceID uint64) *LiveStream {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.liveStreams[inferenceID]
 }
 
 // validateJob captures data needed to run validateAsync outside the mutex.
@@ -1043,7 +1264,7 @@ func (h *Host) enqueueValidation(job validateJob) {
 	case q <- job:
 		h.validationLifecycleMu.RUnlock()
 		observability.IncValidation(observability.StageValidationPicked, observability.MetricStatusQueued)
-		observability.SetValidationQueueDepth(h.escrowID, len(h.validationQueue))
+		observability.SetValidationQueueDepth(h.escrowID, len(q))
 	default:
 		h.validationLifecycleMu.RUnlock()
 		h.mu.Lock()
@@ -1090,8 +1311,11 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		h.mu.Lock()
 		delete(h.validating, job.inferenceID)
 		h.mu.Unlock()
-		if h.validationQueue != nil {
-			observability.SetValidationQueueDepth(h.escrowID, len(h.validationQueue))
+		h.validationLifecycleMu.RLock()
+		q := h.validationQueue
+		h.validationLifecycleMu.RUnlock()
+		if q != nil {
+			observability.SetValidationQueueDepth(h.escrowID, len(q))
 		}
 	}()
 

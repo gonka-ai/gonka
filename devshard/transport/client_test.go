@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bufio"
 	"context"
 	"errors"
 	"fmt"
@@ -379,6 +380,88 @@ func TestParseSSE_ReceiptThenCleanEOFSucceeds(t *testing.T) {
 	require.NotNil(t, result)
 	require.Equal(t, uint64(1), result.Nonce)
 	require.NotNil(t, result.Receipt)
+}
+
+func TestParseSSE_EventTooLargeAbortsWithoutBufferingAttackerPayload(t *testing.T) {
+	const limit = 1024
+	client := &HTTPClient{config: ClientConfig{MaxSSEEventBytes: limit}}
+
+	// Multi-MiB unterminated line so a single bufio fill cannot swallow the whole
+	// attacker payload (the old ReadBytes path would keep growing past this).
+	const attackerBytes = 8 << 20
+	payload := "data: " + strings.Repeat("A", attackerBytes)
+	cr := &countingReader{r: strings.NewReader(payload)}
+
+	result, err := client.parseSSEResponse(context.Background(), cr, nil, nil)
+	require.ErrorIs(t, err, ErrSSEEventTooLarge)
+	require.NotNil(t, result)
+	// At most one bufio fill (ε) from the underlying reader; never the full payload.
+	require.LessOrEqual(t, cr.n, int64(sseReaderBufferSize),
+		"oversize abort must stop after one reader fill, got %d", cr.n)
+	require.Less(t, cr.n, int64(len(payload))/100, "must not drain the full attacker payload")
+}
+
+func TestParseSSE_NearLimitLegalEventStillParses(t *testing.T) {
+	const limit = 4096
+	client := &HTTPClient{config: ClientConfig{MaxSSEEventBytes: limit}}
+
+	// A near-limit but legal data event, then receipt + [DONE].
+	content := strings.Repeat("x", limit-len("data: \n"))
+	sse := "data: " + content + "\n" + receiptOnlySSE + "data: [DONE]\n\n"
+
+	var forwarded []string
+	result, err := client.parseSSEResponse(context.Background(), strings.NewReader(sse), lineCollector(func(line string) {
+		forwarded = append(forwarded, line)
+	}), nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, uint64(1), result.Nonce)
+	require.NotNil(t, result.Receipt)
+	require.NotEmpty(t, forwarded, "near-limit data event should still be forwarded")
+}
+
+func TestParseSSE_OversizeAfterReceiptFailsSend(t *testing.T) {
+	const limit = 512
+	client := &HTTPClient{config: ClientConfig{MaxSSEEventBytes: limit}}
+
+	// Valid receipt first, then an oversized unterminated line. Must not report success.
+	sse := receiptOnlySSE + "data: " + strings.Repeat("B", limit*4)
+	result, err := client.parseSSEResponse(context.Background(), strings.NewReader(sse), nil, nil)
+	require.ErrorIs(t, err, ErrSSEEventTooLarge)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Receipt, "receipt already seen should still be returned")
+	require.Equal(t, uint64(1), result.Nonce)
+}
+
+func TestParseSSE_LargeButLegalChunkUnderDefaultCap(t *testing.T) {
+	// High end of a real chat-completion chunk with forced logprobs / token ids:
+	// well under 1 MiB, must parse under the default cap.
+	client := &HTTPClient{config: DefaultClientConfig()}
+
+	chunkJSON := `{"id":"chatcmpl-large","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"` +
+		strings.Repeat("tok ", 8*1024) +
+		`"},"finish_reason":null}]}`
+	require.Less(t, len(chunkJSON), DefaultMaxSSEEventBytes)
+	require.Greater(t, len(chunkJSON), 16<<10, "fixture should exercise a large-but-legal chunk")
+
+	sse := "data: " + chunkJSON + "\n\n" + receiptOnlySSE + "data: [DONE]\n\n"
+	var gotContent bool
+	result, err := client.parseSSEResponse(context.Background(), strings.NewReader(sse), lineCollector(func(line string) {
+		if strings.Contains(line, "chatcmpl-large") {
+			gotContent = true
+		}
+	}), nil)
+	require.NoError(t, err)
+	require.True(t, gotContent)
+	require.NotNil(t, result.Receipt)
+}
+
+func TestReadBoundedSSELine_RejectsOversize(t *testing.T) {
+	const limit = 64
+	br := bufio.NewReaderSize(strings.NewReader(strings.Repeat("z", 256)), 32)
+	raw, err := readBoundedSSELine(br, limit)
+	require.ErrorIs(t, err, ErrSSEEventTooLarge)
+	require.Nil(t, raw)
 }
 
 func TestObserveTransportFailure_IgnoresContextCancellation(t *testing.T) {

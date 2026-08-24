@@ -150,53 +150,38 @@ func TestPrepareChatRequestBodyPreservesLargeIntegerFields(t *testing.T) {
 	require.Contains(t, string(body), `"seed":9007199254740993`)
 }
 
-func TestNormalizeChatRequestForcesSingleChoiceWithGreedySampling(t *testing.T) {
-	// vLLM rejects `n > 1` when `temperature == 0` (greedy sampling produces identical
-	// completions). Coerce silently to n=1 so 3000+ wasted retries don't reach the engine.
-	coerceCases := []string{
+func TestNormalizeChatRequestForcesSingleChoice(t *testing.T) {
+	// Reservation/settlement only budget one MaxTokens output, so any explicit
+	// n > 1 is forced to 1 before the request reaches ML. Temperature-zero
+	// greedy coercion is covered by the same force.
+	cases := []string{
 		`{"n":2,"temperature":0,"messages":[{"role":"user","content":"hi"}]}`,
 		`{"n":5,"temperature":0,"messages":[{"role":"user","content":"hi"}]}`,
 		`{"n":5,"temperature":0.0,"messages":[{"role":"user","content":"hi"}]}`,
+		`{"n":1,"temperature":0,"messages":[{"role":"user","content":"hi"}]}`,
+		`{"n":5,"temperature":0.7,"messages":[{"role":"user","content":"hi"}]}`,
+		`{"n":5,"messages":[{"role":"user","content":"hi"}]}`,
+		`{"n":5,"temperature":0.0001,"messages":[{"role":"user","content":"hi"}]}`,
+		`{"n":3,"messages":[{"role":"user","content":"hello"}]}`,
 	}
-	for _, body := range coerceCases {
-		t.Run("coerce_"+body, func(t *testing.T) {
+	for _, body := range cases {
+		t.Run(body, func(t *testing.T) {
 			out, req, err := normalizeChatRequest([]byte(body))
 			require.NoError(t, err)
 			require.EqualValues(t, 1, req.N)
 			require.Contains(t, string(out), `"n":1`)
-		})
-	}
-
-	passThroughCases := []struct {
-		body    string
-		wantN   uint64
-		wantStr string
-	}{
-		{body: `{"n":1,"temperature":0,"messages":[{"role":"user","content":"hi"}]}`, wantN: 1, wantStr: `"n":1`},
-		{body: `{"n":5,"temperature":0.7,"messages":[{"role":"user","content":"hi"}]}`, wantN: 5, wantStr: `"n":5`},
-		{body: `{"n":5,"messages":[{"role":"user","content":"hi"}]}`, wantN: 5, wantStr: `"n":5`},
-		{body: `{"n":5,"temperature":0.0001,"messages":[{"role":"user","content":"hi"}]}`, wantN: 5, wantStr: `"n":5`},
-	}
-	for _, tc := range passThroughCases {
-		t.Run("keep_"+tc.body, func(t *testing.T) {
-			out, req, err := normalizeChatRequest([]byte(tc.body))
-			require.NoError(t, err)
-			require.EqualValues(t, tc.wantN, req.N)
-			require.Contains(t, string(out), tc.wantStr)
+			require.NotContains(t, string(out), `"n":5`)
+			require.NotContains(t, string(out), `"n":3`)
+			require.NotContains(t, string(out), `"n":2`)
 		})
 	}
 }
 
-func TestNormalizeChatRequestCapsChoices(t *testing.T) {
+func TestNormalizeChatRequestCapsThenForcesSingleChoice(t *testing.T) {
 	body, req, err := normalizeChatRequest([]byte(`{"n":1638400,"messages":[{"role":"user","content":"hello"}]}`))
 	require.NoError(t, err)
-	require.EqualValues(t, MaxChatRequestChoices, req.N)
-	require.Contains(t, string(body), `"n":5`)
-
-	body, req, err = normalizeChatRequest([]byte(`{"n":3,"messages":[{"role":"user","content":"hello"}]}`))
-	require.NoError(t, err)
-	require.EqualValues(t, 3, req.N)
-	require.Contains(t, string(body), `"n":3`)
+	require.EqualValues(t, 1, req.N)
+	require.Contains(t, string(body), `"n":1`)
 
 	body, req, err = normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hello"}]}`))
 	require.NoError(t, err)
