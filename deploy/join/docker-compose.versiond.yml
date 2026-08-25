@@ -114,6 +114,8 @@ services:
       # approved route until both replicas report it ready.
       - VERSIOND_ROUTING_ACTIVATION_MIN_READY=${VERSIOND_ROUTING_ACTIVATION_MIN_READY:-2}
       - VERSIOND_ROUTER_ALLOW_COARSE_READINESS=${VERSIOND_ROUTER_ALLOW_COARSE_READINESS:-false}
+    volumes:
+      - versiond-router-state:/var/lib/gonka-router
     depends_on:
       - versiond
       - versiond2
@@ -123,3 +125,6 @@ services:
     environment:
       - VERSIOND_SERVICE_NAME=versiond-router
       - VERSIOND_PORT=8080
+
+volumes:
+  versiond-router-state:

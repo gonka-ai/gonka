@@ -274,8 +274,8 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Contains(t, text, `VERSIOND_PORT: "8080"`)
 	require.Contains(t, text, `VERSIOND_LEGACY_HOST: "versiond-0"`)
 	require.Contains(t, text, `VERSIOND_NON_HA_VERSIONS: "v1"`)
-	require.NotContains(t, text, "versiond-router-state",
-		"the router keeps no durable state: membership is DNS, health is measured")
+	require.Contains(t, text, "versiond-router-state:/var/lib/gonka-router",
+		"a replacement router must retain its last-known-good catalog")
 	require.Contains(t, text, "stop_grace_period: 10s",
 		"the stateless router replacement must not wait behind a long SSE stream")
 	require.Contains(t, text, "VERSIOND_ORACLE_URL")

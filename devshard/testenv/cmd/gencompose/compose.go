@@ -24,6 +24,9 @@ networks:
       config:
         - subnet: {{ .Network.Subnet }}
 
+volumes:
+  versiond-router-state:
+
 services:
 
   mock-chain:
@@ -218,6 +221,8 @@ services:
       GONKA_HA: "{{ haDeployment . }}"
     ports:
       - "{{ .VersiondRouter.Port }}:8080"
+    volumes:
+      - versiond-router-state:/var/lib/gonka-router
     networks:
       testenv:
         ipv4_address: {{ .VersiondRouter.IP }}

@@ -35,13 +35,21 @@ test-local-compose:
 
 test-join-compose:
 	@set -eu; \
-	tmp=$$(mktemp); \
-	trap 'rm -f "$$tmp"' EXIT; \
+	tmp=$$(mktemp); tmp_json=$$(mktemp); \
+	trap 'rm -f "$$tmp" "$$tmp_json"' EXIT; \
 	VERSIOND_ROUTER_IMAGE= VERSIOND_ROUTING_CATALOG_URL= \
 	DEVSHARD_POSTGRES_PASSWORD=test \
 		docker compose --project-directory ../deploy/join \
 		-f ../deploy/join/docker-compose.yml \
 		-f ../deploy/join/docker-compose.versiond.yml config > "$$tmp"; \
+	VERSIOND_ROUTER_IMAGE= VERSIOND_ROUTING_CATALOG_URL= \
+	DEVSHARD_POSTGRES_PASSWORD=test \
+		docker compose --project-directory ../deploy/join \
+		-f ../deploy/join/docker-compose.yml \
+		-f ../deploy/join/docker-compose.versiond.yml config --format json > "$$tmp_json"; \
+	jq -e '.services["versiond-router"].volumes | any(.type == "volume" and .source == "versiond-router-state" and .target == "/var/lib/gonka-router")' \
+		"$$tmp_json" >/dev/null \
+		|| { echo 'test-join-compose: router catalog state is not persistent' >&2; exit 1; }; \
 	grep -q 'VERSIOND_POOL_HOST: versiond-pool' "$$tmp" \
 		|| { echo 'test-join-compose: pool host is not rendered' >&2; exit 1; }; \
 	[ "$$(grep -c -- '- versiond-pool' "$$tmp")" -ge 2 ] \
