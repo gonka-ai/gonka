@@ -158,13 +158,22 @@ func (m *MockCosmosMessageClient) BridgeTransactionsByReceipt(ctx context.Contex
 	return txs, args.Error(1)
 }
 
+func txSendOptsCallArgs(msg sdk.Msg, opts []tx_manager.TxSendOptions) []interface{} {
+	args := make([]interface{}, 1+len(opts))
+	args[0] = msg
+	for i, o := range opts {
+		args[i+1] = o
+	}
+	return args
+}
+
 func (m *MockCosmosMessageClient) SendTransactionAsyncWithRetry(msg sdk.Msg, opts ...tx_manager.TxSendOptions) (*sdk.TxResponse, error) {
-	args := m.Called(msg)
+	args := m.Called(txSendOptsCallArgs(msg, opts)...)
 	return args.Get(0).(*sdk.TxResponse), args.Error(1)
 }
 
 func (m *MockCosmosMessageClient) SendTransactionAsyncNoRetry(msg sdk.Msg, opts ...tx_manager.TxSendOptions) (*sdk.TxResponse, error) {
-	args := m.Called(msg)
+	args := m.Called(txSendOptsCallArgs(msg, opts)...)
 	if args.Get(0) == nil {
 		return nil, args.Error(1)
 	}
