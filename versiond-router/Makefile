@@ -561,6 +561,39 @@ test-version-routing:
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-cache read \
 		/var/lib/gonka-router/catalog-v2.json 86400 | grep -Fqx 'v9+hotfix' \
 		|| fail "the recovered catalog did not replace the invalid persistent cache"; \
+	docker rm -f gonka-vp-router >/dev/null; \
+	stale_at=$$(($$(date +%s) - 60)); \
+	docker run --rm --user 0:0 -e STALE_AT=$$stale_at -v $$state:/state \
+		--entrypoint sh gonka-versiond-router-probe -c \
+		'printf "{\"schema\":2,\"initialized\":true,\"revision\":9,\"fetched_at_unix\":%s,\"versions\":[\"v1\",\"v2\",\"v4\",\"v5\",\"v-obsolete\"]}\n" "$$STALE_AT" > /state/catalog-v2.json; chown haproxy:haproxy /state/catalog-v2.json'; \
+	docker run -d --name gonka-vp-router --network $$net \
+		-p 127.0.0.1:18132:8080 -p 127.0.0.1:18134:8404 \
+		-v $$state:/var/lib/gonka-router \
+		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="v4 v5" \
+		-e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
+		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
+		-e VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=1 \
+		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
+		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
+		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
+		gonka-versiond-router-probe >/dev/null; \
+	for i in $$(seq 30); do \
+		if curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%2Bhotfix' \
+			>/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%2Bhotfix' >/dev/null \
+		|| fail "a stale persistent cache blocked the fresh governance catalog"; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| jq -e '.state == "ready"' >/dev/null \
+		|| fail "stale cache recovery left catalog reconciliation degraded"; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-cache read \
+		/var/lib/gonka-router/catalog-v2.json 86400 > "$$tmpdir/recovered.names"; \
+	grep -Fqx 'v9+hotfix' "$$tmpdir/recovered.names" \
+		|| fail "the fresh catalog did not replace the stale persistent cache"; \
+	if grep -Fqx 'v-obsolete' "$$tmpdir/recovered.names"; then \
+		fail "the stale catalog remained accepted history after recovery"; \
+	fi; \
 	echo "test-version-routing: ok"
 
 test-render: test-local-compose test-join-compose test-catalog-cache test-hash-ring test-version-routing

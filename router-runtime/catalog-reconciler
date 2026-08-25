@@ -25,6 +25,7 @@ activation_min_ready=${ROUTING_CATALOG_ACTIVATION_MIN_READY:-2}
 excluded_versions=${ROUTING_CATALOG_EXCLUDE:-}
 cache_file=${ROUTING_CATALOG_CACHE_FILE:-}
 cache_bin=${ROUTING_CATALOG_CACHE_BIN:-/usr/local/lib/router-runtime/catalog-cache}
+cache_max_age=${ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS:-86400}
 status_file=${ROUTING_CATALOG_STATUS_FILE:-}
 
 log() {
@@ -32,10 +33,10 @@ log() {
 }
 
 for value in "$poll_seconds" "$fetch_timeout" "$backend_capacity" \
-    "$server_capacity" "$activation_min_ready"; do
+    "$server_capacity" "$activation_min_ready" "$cache_max_age"; do
     case "$value" in
         '' | *[!0-9]* | 0)
-            log "catalog timing and capacity values must be positive integers"
+            log "catalog timing, cache age, and capacity values must be positive integers"
             exit 1
             ;;
     esac
@@ -79,14 +80,18 @@ if [ -n "$cache_file" ] && [ -f "$cache_file" ]; then
         log "catalog cache exists but $cache_bin is unavailable"
         exit 1
     }
-    cache_valid=1
-    "$cache_bin" read "$cache_file" 2147483647 > "$last_names" || cache_valid=
-    if [ -n "$cache_valid" ]; then
+    cache_status=0
+    "$cache_bin" read "$cache_file" "$cache_max_age" > "$last_names" || cache_status=$?
+    if [ "$cache_status" -eq 0 ]; then
         last_generation=$(jq -er 'if .schema == 2 then .revision else 0 end' "$cache_file") || \
-            cache_valid=
+            cache_status=$?
     fi
-    if [ -z "$cache_valid" ]; then
-        log "ignoring invalid persistent catalog cache; waiting for a fresh catalog"
+    if [ "$cache_status" -ne 0 ]; then
+        if [ "$cache_status" -eq 2 ]; then
+            log "ignoring stale persistent catalog cache; waiting for a fresh catalog"
+        else
+            log "ignoring invalid persistent catalog cache; waiting for a fresh catalog"
+        fi
         : > "$last_names"
         last_generation=-1
     fi

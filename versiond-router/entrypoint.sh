@@ -522,6 +522,7 @@ run_catalog_reconciler() {
         ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS="$CATALOG_FETCH_TIMEOUT" \
         ROUTING_CATALOG_CACHE_FILE="$CATALOG_CACHE_FILE" \
         ROUTING_CATALOG_CACHE_BIN="$CATALOG_CACHE_BIN" \
+        ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS="$CATALOG_CACHE_MAX_AGE" \
         ROUTING_CATALOG_STATUS_FILE="$CATALOG_STATUS_FILE" \
             /usr/local/lib/router-runtime/catalog-reconciler || status=$?
         echo "versiond-router: catalog reconciler exited with status $status; restarting" >&2
