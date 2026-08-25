@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http/httptest"
@@ -183,12 +184,15 @@ func (o *sharedStoppingOracle) Stale() bool {
 }
 
 type fourHostStack struct {
-	Session   *user.Session
-	Servers   []*transport.Server
-	Oracle    *staticOracle
-	UserAddr  string
-	HostAddrs []string
-	httpSrvs  []*httptest.Server
+	Session       *user.Session
+	Servers       []*transport.Server
+	Oracle        *staticOracle
+	UserAddr      string
+	PrivateKeyHex string
+	Bridge        *scenarioBridge
+	StoragePath   string
+	HostAddrs     []string
+	httpSrvs      []*httptest.Server
 }
 
 type oneHostRestartStack struct {
@@ -412,31 +416,56 @@ func setupFourHostHTTPHeightSyncFromChainOracles(t *testing.T, hostSchedOracle, 
 		}
 	}
 	extra := &cc
+	storagePath := filepath.Join(t.TempDir(), "session.db")
 	sess, _, err := user.NewHTTPSession(user.HTTPSessionConfig{
 		PrivateKeyHex:     userSigner.PrivateKeyHex(),
 		EscrowID:          hsAnchorE2EEscrowID,
 		Bridge:            br,
 		RoutePrefix:       hsE2ERoutePrefix,
-		StoragePath:       filepath.Join(t.TempDir(), "session.db"),
+		StoragePath:       storagePath,
 		ExtraClientConfig: extra,
 	})
 	require.NoError(t, err)
 
 	st := &fourHostStack{
-		Session:   sess,
-		Servers:   servers,
-		Oracle:    stackMeta,
-		UserAddr:  userSigner.Address(),
-		HostAddrs: hostAddrs,
-		httpSrvs:  httpSrvs,
+		Session:       sess,
+		Servers:       servers,
+		Oracle:        stackMeta,
+		UserAddr:      userSigner.Address(),
+		PrivateKeyHex: userSigner.PrivateKeyHex(),
+		Bridge:        br,
+		StoragePath:   storagePath,
+		HostAddrs:     hostAddrs,
+		httpSrvs:      httpSrvs,
 	}
 	t.Cleanup(func() {
-		_ = sess.Close()
+		if st.Session != nil {
+			_ = st.Session.Close()
+		}
 		for _, ts := range httpSrvs {
 			ts.Close()
 		}
 	})
 	return st
+}
+
+func (st *fourHostStack) newHTTPSession(t *testing.T) *user.Session {
+	t.Helper()
+	require.NotNil(t, st.Oracle, "four-host restart helper requires a concrete client oracle")
+	clientSched := heightsync.MustNewAnchorSchedulerFromOracle(8, 4, st.Oracle)
+	cc := transport.DefaultClientConfig()
+	cc.HeightSync = clientSched
+	cc.HeightSyncLogOracle = st.Oracle
+	sess, _, err := user.NewHTTPSession(user.HTTPSessionConfig{
+		PrivateKeyHex:     st.PrivateKeyHex,
+		EscrowID:          st.Bridge.escrow.EscrowID,
+		Bridge:            st.Bridge,
+		RoutePrefix:       hsE2ERoutePrefix,
+		StoragePath:       st.StoragePath,
+		ExtraClientConfig: &cc,
+	})
+	require.NoError(t, err)
+	return sess
 }
 
 func setupFourHostHTTPHeightSyncWithOracles(t *testing.T, hostOracles []*staticOracle, clientOracle *staticOracle, tweak ...func(*transport.ClientConfig)) *fourHostStack {
@@ -1228,6 +1257,114 @@ func TestHeightSyncAnchor_E2E_HTTPRestartSnapshotOnlyRecovery(t *testing.T) {
 	require.Equal(t, uint64(2), st.Server.Host().SnapshotState().LatestNonce)
 	require.Positive(t, countOutboundRequestAnchors(t, recovered, st.UserAddr),
 		"post-restart session should still use fresh real HTTP height-sync clients")
+}
+
+func TestHeightSyncAnchor_E2E_HTTPRestartLegacySnapshotCompatibility(t *testing.T) {
+	ctx := context.Background()
+	st := setupOneHostHTTPHeightSyncRestartStack(t)
+	params := defaultInferenceParams()
+
+	resp, err := st.Session.SendInference(ctx, params)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), resp.Nonce)
+	rootBefore, err := st.Session.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
+	bareSnapshot, err := json.Marshal(st.Session.StateMachine().SnapshotState())
+	require.NoError(t, err)
+
+	require.NoError(t, st.Session.Close())
+	st.Session = nil
+	legacyStore, err := storage.NewSQLite(st.StoragePath)
+	require.NoError(t, err)
+	require.NoError(t, legacyStore.SaveSnapshot(st.Bridge.escrow.EscrowID, 1, bareSnapshot))
+	require.NoError(t, legacyStore.Close())
+
+	recovered := st.newHTTPSession(t)
+	st.Session = recovered
+	require.Equal(t, uint64(1), recovered.Nonce())
+	require.Len(t, recovered.Diffs(), 1,
+		"legacy bare snapshots have no host cursor, so recovery must backfill pre-snapshot diffs")
+	rootAfter, err := recovered.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
+	require.Equal(t, rootBefore, rootAfter)
+
+	upgradedStore, err := storage.NewSQLite(st.StoragePath)
+	require.NoError(t, err)
+	_, upgradedData, err := upgradedStore.LoadSnapshot(st.Bridge.escrow.EscrowID)
+	require.NoError(t, err)
+	require.NoError(t, upgradedStore.Close())
+	var upgraded struct {
+		State         *types.EscrowState `json:"state"`
+		HostSyncNonce map[int]uint64     `json:"host_sync_nonce,omitempty"`
+	}
+	require.NoError(t, json.Unmarshal(upgradedData, &upgraded))
+	require.NotNil(t, upgraded.State, "legacy snapshot must be upgraded to the wrapped format")
+
+	resp, err = recovered.SendInference(ctx, params)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), resp.Nonce)
+	require.Equal(t, uint64(2), st.Server.Host().SnapshotState().LatestNonce)
+	require.Positive(t, countOutboundRequestAnchors(t, recovered, st.UserAddr),
+		"recovered legacy snapshot session should keep using real HTTP height-sync clients")
+}
+
+func TestHeightSyncAnchor_E2E_HTTPRestartPartialHostCursorRecovery(t *testing.T) {
+	ctx := context.Background()
+	st := setupFourHostHTTPHeightSync(t)
+	params := defaultInferenceParams()
+
+	for nonce := uint64(1); nonce <= 6; nonce++ {
+		resp, err := st.Session.SendInference(ctx, params)
+		require.NoError(t, err)
+		require.Equal(t, nonce, resp.Nonce)
+	}
+	syncHostsFromSession(t, st)
+	for i, srv := range st.Servers {
+		require.Equal(t, uint64(6), srv.Host().SnapshotState().LatestNonce, "host %d pre-restart", i)
+	}
+	rootBefore, err := st.Session.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
+
+	stateSnapshot := st.Session.StateMachine().SnapshotState()
+	wrappedSnapshot, err := json.Marshal(struct {
+		State         *types.EscrowState `json:"state"`
+		HostSyncNonce map[int]uint64     `json:"host_sync_nonce,omitempty"`
+	}{
+		State: &stateSnapshot,
+		HostSyncNonce: map[int]uint64{
+			0: 6,
+			1: 4,
+			2: 6,
+			3: 6,
+		},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, st.Session.Close())
+	st.Session = nil
+	store, err := storage.NewSQLite(st.StoragePath)
+	require.NoError(t, err)
+	require.NoError(t, store.SaveSnapshot(st.Bridge.escrow.EscrowID, 6, wrappedSnapshot))
+	require.NoError(t, store.Close())
+
+	recovered := st.newHTTPSession(t)
+	st.Session = recovered
+	require.Equal(t, uint64(6), recovered.Nonce())
+	diffs := recovered.Diffs()
+	require.Len(t, diffs, 2, "recovery should backfill only the suffix needed by the lowest host cursor")
+	require.Equal(t, uint64(5), diffs[0].Nonce)
+	require.Equal(t, uint64(6), diffs[1].Nonce)
+	rootAfter, err := recovered.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
+	require.Equal(t, rootBefore, rootAfter)
+
+	for nonce := uint64(7); nonce <= 9; nonce++ {
+		resp, err := recovered.SendInference(ctx, params)
+		require.NoError(t, err, "nonce %d should not fail with a catch-up/state-hash mismatch", nonce)
+		require.Equal(t, nonce, resp.Nonce)
+	}
+	require.Equal(t, uint64(9), st.Servers[1].Host().SnapshotState().LatestNonce,
+		"slot 1 had cursor N-2 and must catch up through nonce 9")
 }
 
 func TestHeightSyncAnchor_E2E_MultiHostRepairProbeTimingAndBudget(t *testing.T) {
