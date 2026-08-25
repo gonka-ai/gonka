@@ -117,7 +117,7 @@ func (m *Memory) MarkSettled(escrowID string) error {
 
 	s, ok := m.sessions[escrowID]
 	if !ok {
-		return fmt.Errorf("session %s not found", escrowID)
+		return fmt.Errorf("%w: %s", ErrSessionNotFound, escrowID)
 	}
 	s.status = "settled"
 	return nil
@@ -522,7 +522,7 @@ func (m *Memory) PutEscrowCache(info EscrowCacheInfo) error {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	cp := info
+	cp := stampEscrowCache(info)
 	if info.AppHash != nil {
 		cp.AppHash = append([]byte(nil), info.AppHash...)
 	}

@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -25,6 +24,7 @@ import (
 	"devshard/types"
 
 	"common/chainoracle/blocks"
+	"common/httpguard"
 
 	devshardpkg "devshard"
 )
@@ -36,10 +36,10 @@ func getTransport(baseURL string) *http.Transport {
 		return t.(*http.Transport)
 	}
 	fallbackAddress := transportAddress(baseURL)
-	dialer := &net.Dialer{
-		Timeout:   30 * time.Second,
-		KeepAlive: 30 * time.Second,
-	}
+	// Dial-time SSRF guard: baseURL is a participant-controlled peer URL, so
+	// every dial is vetted against the private/internal ranges unless the
+	// process explicitly opts out (dev/test). See common/httpguard.
+	dialer := httpguard.NewDialer()
 	t := &http.Transport{
 		MaxIdleConnsPerHost: 4,
 		IdleConnTimeout:     120 * time.Second,
@@ -124,9 +124,10 @@ type requestAdmissionBodyObserver interface {
 var ErrSSEStreamTruncated = errors.New("sse stream ended without [DONE] or devshard_receipt")
 
 type UpstreamStatusError struct {
-	Path       string
-	StatusCode int
-	Body       string
+	Path          string
+	StatusCode    int
+	Body          string
+	DevshardError string
 }
 
 func (e *UpstreamStatusError) Error() string {
@@ -148,6 +149,20 @@ func IsUpstreamEscrowNotFound(err error) bool {
 	}
 	return ue.StatusCode == http.StatusInternalServerError &&
 		strings.Contains(ue.Body, "escrow not found")
+}
+
+// IsUpstreamEscrowSettled returns true if err is an UpstreamStatusError whose
+// body indicates the host refused to serve an escrow already settled on chain.
+func IsUpstreamEscrowSettled(err error) bool {
+	var ue *UpstreamStatusError
+	if !errors.As(err, &ue) {
+		return false
+	}
+	if ue.DevshardError == DevshardErrorEscrowSettled {
+		return true
+	}
+	return ue.StatusCode == http.StatusConflict &&
+		strings.Contains(ue.Body, "escrow already settled")
 }
 
 func DefaultClientConfig() ClientConfig {
@@ -716,9 +731,10 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte, co
 		resp.Body.Close()
 		c.observeResultWithBody(path, resp.StatusCode, string(respBody))
 		return nil, &UpstreamStatusError{
-			Path:       path,
-			StatusCode: resp.StatusCode,
-			Body:       string(respBody),
+			Path:          path,
+			StatusCode:    resp.StatusCode,
+			Body:          string(respBody),
+			DevshardError: resp.Header.Get(HeaderDevshardError),
 		}
 	}
 	c.observeResult(path, resp.StatusCode)
@@ -758,9 +774,10 @@ func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
 		respBody, _ := io.ReadAll(resp.Body)
 		c.observeResultWithBody(url, resp.StatusCode, string(respBody))
 		return nil, &UpstreamStatusError{
-			Path:       url,
-			StatusCode: resp.StatusCode,
-			Body:       string(respBody),
+			Path:          url,
+			StatusCode:    resp.StatusCode,
+			Body:          string(respBody),
+			DevshardError: resp.Header.Get(HeaderDevshardError),
 		}
 	}
 	c.observeResult(url, resp.StatusCode)

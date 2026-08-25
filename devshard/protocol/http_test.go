@@ -6,11 +6,14 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
+
+	"common/httpguard"
 
 	"devshard/gossip"
 	"devshard/host"
@@ -23,6 +26,15 @@ import (
 	"devshard/types"
 	"devshard/user"
 )
+
+// TestMain enables the permissive dialer for this package's HTTP integration
+// tests, which spin up httptest servers on 127.0.0.1 and reach them through the
+// real transport dialer. Without this the dial-time SSRF guard (default secure)
+// would block the loopback connections.
+func TestMain(m *testing.M) {
+	httpguard.SetAllowPrivate(true)
+	os.Exit(m.Run())
+}
 
 type httpTestEnv struct {
 	session     *user.Session

@@ -281,6 +281,15 @@ func TestResolveNodeModelID_PrefersEpochMLNode(t *testing.T) {
 	assert.Equal(t, "model-b", modelID)
 }
 
+func TestResolveNodeModelID_RejectsUnsupportedEpochAssignment(t *testing.T) {
+	modelID, ok := ResolveNodeModelID(
+		map[string]types.MLNodeInfo{"model-a": {NodeId: "node-1"}},
+		map[string]ModelArgs{"model-b": {}},
+	)
+	require.False(t, ok)
+	assert.Equal(t, "", modelID)
+}
+
 func TestResolveNodeModelID_RejectsMultipleEpochEntries(t *testing.T) {
 	modelID, ok := ResolveNodeModelID(
 		map[string]types.MLNodeInfo{"model-a": {}, "model-b": {}},

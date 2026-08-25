@@ -15,6 +15,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"common/httpguard"
+
 	devshardpkg "devshard"
 	"devshard/gossip"
 	"devshard/host"
@@ -41,6 +43,17 @@ func main() {
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
+	}
+
+	// Peer URLs are participant-controlled. Default secure; e2e/compose opt
+	// out via DEVSHARD_ALLOW_PRIVATE_ADDRESSES so Docker-internal gossip works.
+	allowPrivate, err := boolEnv("DEVSHARD_ALLOW_PRIVATE_ADDRESSES", false)
+	if err != nil {
+		log.Fatalf("DEVSHARD_ALLOW_PRIVATE_ADDRESSES: %v", err)
+	}
+	httpguard.SetAllowPrivate(allowPrivate)
+	if allowPrivate {
+		log.Printf("SSRF guard disabled: dials to private/internal addresses are allowed")
 	}
 
 	srv, gsp, err := buildServer(ctx, cfg)
