@@ -17,7 +17,7 @@ import (
 	"common/chain"
 	"common/httpguard"
 	"devshard/bridge"
-	"devshard/internal/configenv"
+	"devshard/internal/boolvalue"
 	"devshard/state"
 	"devshard/types"
 	"devshard/user"
@@ -775,7 +775,7 @@ func readBoolEnv(name string, fallback bool) bool {
 	if raw == "" {
 		return fallback
 	}
-	parsed, err := configenv.ParseBool(raw)
+	parsed, err := boolvalue.Parse(raw)
 	if err != nil {
 		log.Printf("invalid %s=%q, using %t", name, raw, fallback)
 		return fallback

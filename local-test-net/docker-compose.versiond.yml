@@ -40,6 +40,9 @@ x-versiond: &versiond
     KEYRING_BACKEND: ${KEYRING_BACKEND:-file}
     KEYRING_PASSWORD: ${KEYRING_PASSWORD:-}
     KEYRING_DIR: ${KEYRING_DIR:-/root/.inference}
+    # GONKA_HA is intentionally not inherited by this generic test fixture.
+    # It starts testapp by default, and devshard scenarios may exercise SQLite
+    # before adding the Postgres overlay; the router still marks HA requests.
     # Local/dev only: peer hosts and executors register docker-internal
     # hostnames that resolve to private IPs, so devshardd's dial-time SSRF
     # guard must be disabled. Production leaves this unset (default false =

@@ -15,6 +15,12 @@ x-versiond: &versiond
   environment:
     - VERSIOND_ORACLE_URL=http://api:9100/versions
     - VERSIOND_BINARY_NAME=devshardd
+    # This overlay can run multiple devshardd instances for one escrow. Make
+    # every HA-routed child fail closed unless it uses shared PostgreSQL storage.
+    - GONKA_HA=${GONKA_HA:-true}
+    # Keep supervisor preflight aligned with the router: these versions remain
+    # single-owner and do not require the HA storage contract.
+    - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}
     - NODE_MANAGER_ADDR=api:${NODE_MANAGER_GRPC_PORT:-9400}
     - NODE_HOST=node
     - KEY_NAME=${KEY_NAME}
@@ -90,7 +96,7 @@ services:
       - VERSIOND_PORT=8080
       # This overlay always has multiple versiond replicas. Keep the HA storage
       # guard active even while only one replica is currently ready.
-      - GONKA_HA=true
+      - GONKA_HA=${GONKA_HA:-true}
       # SQLite-bound pre-HA versions must stay on the host that owns their data dirs.
       - VERSIOND_LEGACY_HOST=${VERSIOND_LEGACY_HOST:-versiond}
       # Version path segments that pin to VERSIOND_LEGACY_HOST (whitespace and/or comma).

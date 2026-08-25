@@ -75,6 +75,10 @@ func (p phaseEpochProvider) CurrentEpochID() uint64 {
 }
 
 func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error) {
+	if err := requireHADeploymentStorage(); err != nil {
+		return nil, err
+	}
+
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create data dir %s: %w", cfg.DataDir, err)
 	}

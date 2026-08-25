@@ -38,13 +38,15 @@ test-join-compose:
 		|| { echo 'test-join-compose: not every versiond joins the pool alias' >&2; exit 1; }; \
 	grep -q 'VERSIOND_HOSTS: versiond versiond2' "$$tmp" \
 		|| { echo 'test-join-compose: legacy router compatibility was lost' >&2; exit 1; }; \
-	grep -q 'GONKA_HA: "true"' "$$tmp" \
-		|| { echo 'test-join-compose: HA deployment latch is missing' >&2; exit 1; }; \
+	[ "$$(grep -c 'GONKA_HA: "true"' "$$tmp")" -eq 3 ] \
+		|| { echo 'test-join-compose: HA deployment latch is not shared by both versiond hosts and the router' >&2; exit 1; }; \
+	[ "$$(grep -c 'VERSIOND_NON_HA_VERSIONS: v1 v2 v3' "$$tmp")" -eq 3 ] \
+		|| { echo 'test-join-compose: legacy pins are not shared by both versiond hosts and the router' >&2; exit 1; }; \
 	grep -Eq '^[[:space:]]*VERSIOND_VERSIONS: v4 v5$$' "$$tmp" \
 		|| { echo 'test-join-compose: per-version routing contract is missing' >&2; exit 1; }; \
 	grep -q 'VERSIOND_NON_HA_VERSIONS: v1 v2 v3' "$$tmp" \
 		|| { echo 'test-join-compose: legacy version pins are missing' >&2; exit 1; }; \
-	VERSIOND_NON_HA_VERSIONS= VERSIOND_VERSIONS= \
+	GONKA_HA=off VERSIOND_NON_HA_VERSIONS= VERSIOND_VERSIONS= \
 	VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true \
 	DEVSHARD_POSTGRES_PASSWORD=test \
 		docker compose --project-directory ../deploy/join \
@@ -56,6 +58,8 @@ test-join-compose:
 		|| { echo 'test-join-compose: explicit empty version list was replaced by defaults' >&2; exit 1; }; \
 	grep -q 'VERSIOND_ROUTER_ALLOW_COARSE_READINESS: "true"' "$$tmp" \
 		|| { echo 'test-join-compose: coarse-readiness opt-in was not forwarded' >&2; exit 1; }; \
+	[ "$$(grep -Ec "GONKA_HA: ['\"]off['\"]" "$$tmp")" -eq 3 ] \
+		|| { echo 'test-join-compose: explicit GONKA_HA value diverged between versiond and router' >&2; exit 1; }; \
 	echo 'test-join-compose: ok'
 
 # Which versiond serves an escrow must depend on who is in the pool, not on the
@@ -462,47 +466,31 @@ test-render: test-local-compose test-join-compose test-hash-ring test-version-ro
 		./entrypoint.sh 2>/dev/null; then \
 		fail "a non-boolean GONKA_HA was accepted"; \
 	fi; \
-	HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
-	GONKA_HA=false VERSIOND_VERSIONS=v4 \
-	VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
-	VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
-	VERSIOND_ROUTER_OUT="$$tmpdir/haoff.cfg" \
-	VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/haoff.map" \
-	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/haoff.versions.map" \
-	./entrypoint.sh \
-		|| fail "GONKA_HA=false must mean off, not on"; \
-	grep -Fq 'http-request set-header Devshard-Ha true if { nbsrv(versiond_ha_pool) gt 1 }' "$$tmpdir/haoff.cfg" \
-		|| fail "GONKA_HA=false lost the coarse backend runtime guard"; \
-	grep -Fq 'http-request set-header Devshard-Ha true if { nbsrv(versiond_pool_v4) gt 1 }' "$$tmpdir/haoff.cfg" \
-		|| fail "the v4 storage guard does not count its selected backend"; \
-	if grep -Eq '^[[:space:]]*http-request set-header Devshard-Ha true[[:space:]]*$$' "$$tmpdir/haoff.cfg"; then \
-		fail "GONKA_HA=false enabled the unconditional HA declaration"; \
-	fi; \
-	HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
-	GONKA_HA=' true ' VERSIOND_VERSIONS=v4 \
-	VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
-	VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
-	VERSIOND_ROUTER_OUT="$$tmpdir/hapad.cfg" \
-	VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/hapad.map" \
-	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/hapad.versions.map" \
-	./entrypoint.sh \
-		|| fail "GONKA_HA=' true ' must read as on: Go trims whitespace, so must this parser"; \
-	grep -Eq '^[[:space:]]*http-request set-header Devshard-Ha true[[:space:]]*$$' "$$tmpdir/hapad.cfg" \
-		|| fail "GONKA_HA=' true ' parsed but did not stamp the HA header"; \
-	HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
-	GONKA_HA=' no ' \
-	VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
-	VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
-	VERSIOND_ROUTER_OUT="$$tmpdir/hapadoff.cfg" \
-	VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/hapadoff.map" \
-	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/hapadoff.versions.map" \
-	./entrypoint.sh \
-		|| fail "GONKA_HA=' no ' must read as off, not as garbage"; \
-	grep -Fq 'http-request set-header Devshard-Ha true if { nbsrv(versiond_ha_pool) gt 1 }' "$$tmpdir/hapadoff.cfg" \
-		|| fail "GONKA_HA=' no ' must leave only the runtime multi-host guard"; \
-	if grep -Eq '^[[:space:]]*http-request set-header Devshard-Ha true[[:space:]]*$$' "$$tmpdir/hapadoff.cfg"; then \
-		fail "GONKA_HA=' no ' enabled the unconditional HA declaration"; \
-	fi; \
+	render_bool() { \
+		GONKA_HA="$$1" HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+		VERSIOND_VERSIONS=v4 \
+		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+		VERSIOND_ROUTER_OUT="$$tmpdir/bool.cfg" \
+		VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/bool.map" \
+		VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/bool.versions.map" \
+		./entrypoint.sh; \
+	}; \
+	for on in 1 t true yes on ' ON '; do \
+		render_bool "$$on" || fail "GONKA_HA='$$on' was not accepted as true"; \
+		grep -Eq '^[[:space:]]*http-request set-header Devshard-Ha true[[:space:]]*$$' "$$tmpdir/bool.cfg" \
+			|| fail "GONKA_HA='$$on' did not enable the HA declaration"; \
+	done; \
+	for off in 0 f false no off ' OFF '; do \
+		render_bool "$$off" || fail "GONKA_HA='$$off' was not accepted as false"; \
+		grep -Fq 'http-request set-header Devshard-Ha true if { nbsrv(versiond_ha_pool) gt 1 }' "$$tmpdir/bool.cfg" \
+			|| fail "GONKA_HA='$$off' lost the runtime multi-host guard"; \
+		grep -Fq 'http-request set-header Devshard-Ha true if { nbsrv(versiond_pool_v4) gt 1 }' "$$tmpdir/bool.cfg" \
+			|| fail "GONKA_HA='$$off' lost the per-version runtime guard"; \
+		if grep -Eq '^[[:space:]]*http-request set-header Devshard-Ha true[[:space:]]*$$' "$$tmpdir/bool.cfg"; then \
+			fail "GONKA_HA='$$off' enabled the unconditional HA declaration"; \
+		fi; \
+	done; \
 	HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 	GONKA_HA=true VERSIOND_ROUTER_ALLOW_COARSE_READINESS=1 \
 	VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \

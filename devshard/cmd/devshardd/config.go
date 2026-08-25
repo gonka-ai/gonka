@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"devshard/cmd/devshardd/session"
-	"devshard/internal/configenv"
+	"devshard/internal/boolvalue"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
@@ -283,7 +283,7 @@ func envBoolOr(key string, fallback bool) bool {
 	if v == "" {
 		return fallback
 	}
-	parsed, err := configenv.ParseBool(v)
+	parsed, err := boolvalue.Parse(v)
 	if err != nil {
 		return fallback
 	}
