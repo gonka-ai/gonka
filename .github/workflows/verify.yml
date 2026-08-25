@@ -324,6 +324,20 @@ jobs:
         working-directory: ./devshard
 
     steps:
+      - name: Free up disk space on runner
+        working-directory: /
+        run: |
+          echo "=== Disk Space Before Cleanup ==="
+          df -h
+          sudo rm -rf /usr/share/dotnet
+          sudo rm -rf /usr/local/lib/android
+          sudo rm -rf /opt/ghc
+          sudo rm -rf /opt/hostedtoolcache/CodeQL
+          sudo docker system prune -af --volumes
+          sudo apt-get clean
+          echo "=== Disk Space After Cleanup ==="
+          df -h
+
       - name: Checkout code
         uses: actions/checkout@v3
 
@@ -370,6 +384,7 @@ jobs:
 
       - name: Run E2E Tests
         if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
+        timeout-minutes: 30
         run: make e2e
 
       - name: Publish Test Results
