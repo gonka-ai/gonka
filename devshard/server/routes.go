@@ -1,11 +1,13 @@
 package server
 
 import (
+	"compress/gzip"
 	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 
 	devshardpkg "devshard"
 	"devshard/bridge"
@@ -60,6 +62,7 @@ func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder O
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleGetSignatures }))
 
 	if payloadHandler != nil {
+		// Scoped to this route: gzip on the inference stream would buffer it.
 		g.GET("/sessions/:id/payloads", func(c echo.Context) error {
 			srv, err := resolver.SessionServerExisting(c.Param("id"))
 			if err != nil {
@@ -68,7 +71,7 @@ func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder O
 			}
 			observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
 			return payloadHandler.HandlePayloads(c, srv)
-		})
+		}, middleware.GzipWithConfig(middleware.GzipConfig{Level: gzip.BestSpeed}))
 	}
 }
 

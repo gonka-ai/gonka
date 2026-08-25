@@ -34,6 +34,7 @@ type runtimeConfig struct {
 	ProtocolVersion         string
 	NodeManagerAddr         string
 	HostEventsEnabled       bool
+	CompressPayloadFiles    bool
 	ValidationRetryInterval time.Duration
 	ValidationLeaseTTL      time.Duration
 	ShutdownGrace           time.Duration
@@ -146,6 +147,7 @@ func loadRuntimeConfig(args []string, protocolVersion, linkBinaryVersion string)
 		ProtocolVersion:         protocolVersion,
 		NodeManagerAddr:         envOr("NODE_MANAGER_ADDR", "localhost:9400"),
 		HostEventsEnabled:       envBoolOr("DEVSHARD_HOST_EVENTS_ENABLED", true),
+		CompressPayloadFiles:    envBoolOr("DEVSHARD_PAYLOAD_ZSTD_ENABLED", false),
 		ValidationRetryInterval: retryInterval,
 		ValidationLeaseTTL:      leaseTTL,
 		ShutdownGrace:           shutdownGrace,

@@ -8,8 +8,11 @@ import (
 	"strings"
 
 	"common/completionapi"
+	"common/logging"
 	devshardpkg "devshard"
 	"devshard/observability"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 type mlRequestExecutor func(ctx context.Context, model string, body []byte) (*http.Response, error)
@@ -109,7 +112,16 @@ func processExecutionHTTPResponse(
 		}
 	}
 
-	hash := sha256.Sum256(bodyBytes)
+	// A body that will not compress is stored whole rather than failing the inference.
+	storedBytes := bodyBytes
+	if compressed, compressErr := completionapi.CompressResponsePayload(bodyBytes); compressErr != nil {
+		logging.Warn("Storing the response whole: it did not compress", types.Inferences,
+			"inference_id", inferenceID, "error", compressErr)
+	} else {
+		storedBytes = compressed
+	}
+
+	hash := sha256.Sum256(storedBytes)
 	usage, err := completionResp.GetUsage()
 	if err != nil {
 		return nil, fmt.Errorf("get usage: %w", err)
@@ -119,6 +131,6 @@ func processExecutionHTTPResponse(
 		responseHash: hash[:],
 		inputTokens:  usage.PromptTokens,
 		outputTokens: usage.CompletionTokens,
-		responseBody: bodyBytes,
+		responseBody: storedBytes,
 	}, nil
 }
