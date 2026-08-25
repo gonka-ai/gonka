@@ -106,6 +106,10 @@ services:
       # Bootstrap only the HA versions shipped with this deployment. Future
       # names come from governance rather than being guessed in Compose.
       - VERSIOND_VERSIONS=${VERSIOND_VERSIONS-v4 v5}
+      - VERSIOND_ROUTING_CATALOG_URL=${VERSIOND_ROUTING_CATALOG_URL:-http://api:9100/versions}
+      # This overlay declares two versiond replicas; do not publish a newly
+      # approved route until both replicas report it ready.
+      - VERSIOND_ROUTING_ACTIVATION_MIN_READY=${VERSIOND_ROUTING_ACTIVATION_MIN_READY:-2}
       - VERSIOND_ROUTER_ALLOW_COARSE_READINESS=${VERSIOND_ROUTER_ALLOW_COARSE_READINESS:-false}
     depends_on:
       - versiond

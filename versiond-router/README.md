@@ -281,7 +281,7 @@ host lifecycle is intentionally delivered as a separate change.
 | `VERSIOND_ROUTING_CATALOG_URL` | *(empty)* | read-only governance `GET /versions` endpoint |
 | `VERSIOND_ROUTING_CATALOG_POLL_SECONDS` | `5` | catalog polling interval |
 | `VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS` | `3` | timeout for one catalog request |
-| `VERSIOND_ROUTING_ACTIVATION_MIN_READY` | `2` | ready upstreams required before publishing a new projection |
+| `VERSIOND_ROUTING_ACTIVATION_MIN_READY` | `1` | ready upstreams required before publishing a new projection. The two-replica HA Compose overlay explicitly sets `2` |
 | `VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS` | `86400` | maximum startup age of last-known-good catalog state |
 | `VERSIOND_ROUTER_VERSION_CAPACITY` | `32` | pre-rendered slots for names added after startup |
 | `VERSIOND_ROUTER_ALLOW_COARSE_READINESS` | *(unset)* | allow an HA deployment to run with no declared versions, accepting that a host with one unready version keeps receiving its traffic. Same boolean grammar |

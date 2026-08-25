@@ -53,6 +53,10 @@ test-join-compose:
 		|| { echo 'test-join-compose: legacy pins are not shared by both versiond hosts and the router' >&2; exit 1; }; \
 	grep -Eq '^[[:space:]]*VERSIOND_VERSIONS: v4 v5$$' "$$tmp" \
 		|| { echo 'test-join-compose: per-version routing contract is missing' >&2; exit 1; }; \
+	grep -q 'VERSIOND_ROUTING_CATALOG_URL: http://api:9100/versions' "$$tmp" \
+		|| { echo 'test-join-compose: governance catalog is not connected' >&2; exit 1; }; \
+	grep -q 'VERSIOND_ROUTING_ACTIVATION_MIN_READY: "2"' "$$tmp" \
+		|| { echo 'test-join-compose: two-replica catalog reserve is not explicit' >&2; exit 1; }; \
 	grep -q 'VERSIOND_NON_HA_VERSIONS: v1 v2 v3' "$$tmp" \
 		|| { echo 'test-join-compose: legacy version pins are missing' >&2; exit 1; }; \
 	GONKA_HA=off VERSIOND_NON_HA_VERSIONS= VERSIOND_VERSIONS= \
@@ -273,6 +277,7 @@ test-version-routing:
 		-e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
 		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
 		-e VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS=1 \
+		-e VERSIOND_ROUTING_ACTIVATION_MIN_READY=2 \
 		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
 		-e VERSIOND_NON_HA_VERSIONS="$$legacy_versions" \
@@ -535,6 +540,7 @@ test-version-routing:
 		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="v4 v5" \
 		-e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
 		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
+		-e VERSIOND_ROUTING_ACTIVATION_MIN_READY=2 \
 		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
 		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
@@ -640,6 +646,7 @@ test-version-routing:
 		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="v4 v5" \
 		-e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
 		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
+		-e VERSIOND_ROUTING_ACTIVATION_MIN_READY=2 \
 		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
 		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
@@ -665,6 +672,7 @@ test-version-routing:
 		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="v4 v5" \
 		-e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
 		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
+		-e VERSIOND_ROUTING_ACTIVATION_MIN_READY=2 \
 		-e VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=1 \
 		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
