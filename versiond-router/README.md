@@ -118,6 +118,13 @@ Every second HAProxy runs the complete sequence against each host.
 unavailable. In normal operation the router polls `VERSIOND_ROUTING_CATALOG_URL`,
 the same read-only `/versions` snapshot consumed by versiond.
 
+The current `/versions` response has no monotonic revision, block height, or
+source timestamp. The router can detect transport failures and invalid payloads,
+but it must treat every valid `200` snapshot as current. The cache's
+`fetched_at_unix` records when this router accepted the response; it does not
+prove governance freshness. Detecting a reachable endpoint that indefinitely
+serves an older valid snapshot requires a revision in the upstream contract.
+
 The join Compose file keeps that URL empty while its default image is the
 published legacy nginx router. Release automation activates this capability by
 supplying a published `VERSIOND_ROUTER_IMAGE` tag or digest together with the
