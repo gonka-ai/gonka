@@ -127,14 +127,17 @@ HAProxy cannot create backends at runtime, so the image pre-renders a bounded
 set of disabled `versiond_dynamic_<n>` backends. For every new valid name the
 reconciler assigns a slot, enables its per-version checks, waits until the
 configured ready reserve is present, then publishes the request-map entry. For
-a batch, every new backend must meet the reserve before the first monotonic map
-addition. If publication is interrupted, the next poll verifies the live map
-and converges the remaining suffix.
+a batch, every new backend must meet the reserve before the first map addition.
+A non-empty governance snapshot is the desired set, matching versiond: removed
+dynamic routes are durably retired and their slots become reusable. Re-adding a
+name is a fresh activation and must meet the reserve again. A completely empty
+response remains fail-closed while accepted routes exist because versiond
+applies the same misconfiguration guard.
 
 Accepted projections are written atomically under `/var/lib/gonka-router`.
 After restart, a fresh last-known-good cache keeps already learned routes alive
 while governance is temporarily unavailable. Corrupt, stale, duplicate,
-removal, and capacity-exhaustion inputs leave the last accepted routing map
+empty, and capacity-exhaustion inputs leave the last accepted routing map
 untouched and expose a degraded state through `catalog-status`.
 Catalog-enabled Compose deployments mount that directory from a named volume so
 container replacement does not discard the last-known-good projection.
@@ -144,9 +147,7 @@ restart-safe without making the pending name visible.
 
 Version names use the routing grammar
 `[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}`. Names outside it are rejected before they
-can create a path/map mismatch. Removal is deliberately not automatic: deleting
-a serving route is a maintenance operation, while additions are safe to
-reconcile continuously.
+can create a path/map mismatch.
 
 Leaving both the bootstrap set and catalog URL empty selects coarse host-level
 routing. An HA deployment refuses that mode unless

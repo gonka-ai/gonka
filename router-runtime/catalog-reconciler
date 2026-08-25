@@ -1,8 +1,8 @@
 #!/bin/sh
 
-# Monotonically publishes accepted version names into pre-rendered HAProxy
-# backends. Unpublished staging assignments may be reclaimed when governance
-# withdraws or corrects a candidate before it reaches the activation reserve.
+# Projects the authoritative version set into pre-rendered HAProxy backends.
+# Unpublished staging assignments may be reclaimed when governance withdraws or
+# corrects a candidate before it reaches the activation reserve.
 # The source keeps its existing {"versions":[...]} contract. The data plane
 # remains fail-closed: a version is published in
 # the request map only after its slot has been assigned and its servers have
@@ -218,13 +218,14 @@ fetch_catalog() {
     project_names "$raw_names" "$names"
 }
 
-validate_catalog_progression() {
-    removed=$(awk '
-        FILENAME == ARGV[1] { current[$0] = 1; next }
-        !($0 in current) { print; exit }
-    ' "$tmpdir/catalog.names" "$last_names")
-    [ -z "$removed" ] || return 1
-
+validate_catalog_snapshot() {
+    # Match versiond's safety rule: an entirely empty source is treated as a
+    # likely control-plane fault while anything is already accepted. A non-empty
+    # desired set may legitimately contain only static/legacy names, leaving the
+    # dynamic projection empty.
+    if [ ! -s "$tmpdir/catalog.raw.names" ] && [ -s "$last_names" ]; then
+        return 1
+    fi
     catalog_changed=1
     if cmp -s "$last_names" "$tmpdir/catalog.names"; then
         catalog_changed=0
@@ -261,9 +262,34 @@ map_snapshot() {
 }
 
 repair_accepted_projection() {
-    [ -s "$last_names" ] || return 0
-
     projection_state=$(map_snapshot "$projection_map") || return 1
+    slot_state=$(map_snapshot "$slot_map") || return 1
+
+    # Removal is ordered disable -> unassign -> unpublish. If any Runtime API
+    # call fails, the still-published map entry identifies the backend that must
+    # be retired on the next pass. The durable accepted set was already updated,
+    # so this repair does not need the remote source.
+    printf '%s\n' "$projection_state" | awk -v prefix="$backend_prefix" '
+        index($3, prefix) == 1 { print $2, $3 }
+    ' > "$tmpdir/published.dynamic"
+    while read -r version backend; do
+        [ -n "$version" ] || continue
+        if grep -Fqx "$version" "$last_names"; then
+            continue
+        fi
+        disable_slot "$backend" || return 1
+        assign_slot "$backend" __unassigned__ || return 1
+        escaped_key=$(runtime_key "$version")
+        runtime "del map $projection_map $escaped_key" >/dev/null 2>&1 || true
+        projection_state=$(map_snapshot "$projection_map") || return 1
+        if printf '%s\n' "$projection_state" | awk -v key="$version" '
+            $2 "" == key "" { found = 1 }
+            END { exit !found }
+        '; then
+            return 1
+        fi
+    done < "$tmpdir/published.dynamic"
+
     slot_state=$(map_snapshot "$slot_map") || return 1
     while IFS= read -r version; do
         [ -n "$version" ] || continue
@@ -295,6 +321,23 @@ repair_accepted_projection() {
                 END { exit !found }
             ' || return 1
     done < "$last_names"
+}
+
+apply_catalog_removals() {
+    : > "$tmpdir/catalog.accepted-survivors"
+    while IFS= read -r version; do
+        [ -n "$version" ] || continue
+        if grep -Fqx "$version" "$tmpdir/catalog.names"; then
+            printf '%s\n' "$version" >> "$tmpdir/catalog.accepted-survivors"
+        fi
+    done < "$last_names"
+
+    if cmp -s "$last_names" "$tmpdir/catalog.accepted-survivors"; then
+        return 0
+    fi
+    persist_snapshot "$tmpdir/catalog.accepted-survivors" 1 || return 1
+    cp "$tmpdir/catalog.accepted-survivors" "$last_names"
+    repair_accepted_projection || return 2
 }
 
 remember_slot_usage() {
@@ -402,7 +445,7 @@ publish_projection() {
 }
 
 publish_catalog() {
-	# Each ready version is one monotonic map addition. The same canonical key
+	# Each ready version is one map addition. The same canonical key
 	# drives both data routing and parent admission, so no batch transaction or
 	# second readiness mutation is needed.
 	publish_projection || return 1
@@ -511,21 +554,29 @@ while :; do
         set_state runtime-error "cannot restore the accepted catalog projection"
     elif ! fetch_catalog; then
         set_state fetch-error "cannot fetch or validate $catalog_url"
-    elif ! validate_catalog_progression; then
+    elif ! validate_catalog_snapshot; then
         set_state projection-error \
-            "catalog removed previously projected version '$removed'"
+            "catalog is empty while accepted dynamic routes still exist"
     else
+        removal_status=0
+        apply_catalog_removals || removal_status=$?
         reconcile_status=0
-        prepare_catalog || reconcile_status=$?
+        if [ "$removal_status" -eq 0 ]; then
+            prepare_catalog || reconcile_status=$?
+        fi
         cache_status=0
-        if [ "$reconcile_status" -ne 0 ]; then
+        if [ "$removal_status" -eq 0 ] && [ "$reconcile_status" -ne 0 ]; then
             # A fresh catalog that still contains every accepted name confirms the
             # durable projection remains current even when an addition cannot yet be
             # published. Refresh only the accepted subset; pending names must not
             # become restart-visible through the cache.
             refresh_accepted_catalog || cache_status=$?
         fi
-        if [ "$cache_status" -ne 0 ]; then
+        if [ "$removal_status" -eq 1 ]; then
+            set_state cache-error "cannot persist catalog removals"
+        elif [ "$removal_status" -eq 2 ]; then
+            set_state runtime-error "cannot retire removed catalog routes"
+        elif [ "$cache_status" -ne 0 ]; then
             set_state cache-error "cannot refresh the last accepted catalog snapshot"
         elif [ "$reconcile_status" -eq 2 ]; then
             set_state capacity-exhausted \

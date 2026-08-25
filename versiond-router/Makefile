@@ -667,28 +667,63 @@ test-version-routing:
 	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
-	for i in $$(seq 10); do \
+	for i in $$(seq 20); do \
 		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-			| jq -e '.state == "projection-error"' >/dev/null 2>&1; then break; fi; \
+			| jq -e '.state == "ready" and .dynamic_slots_used == 1' \
+				>/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-		| jq -e '.state == "projection-error"' >/dev/null \
-		|| fail "a catalog removal was not rejected"; \
+		| jq -e '.state == "ready" and .dynamic_slots_used == 1' >/dev/null \
+		|| fail "a non-empty desired set did not retire its removed route"; \
+	if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
+		/etc/haproxy/versions.map | grep -qx v10; then \
+		fail "a removed governance route remained published"; \
+	fi; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-cache read \
+		/var/lib/gonka-router/catalog.json 86400 > "$$tmpdir/after-removal.names"; \
+	grep -Fqx v9 "$$tmpdir/after-removal.names" \
+		|| fail "retiring one route removed a surviving route from the durable cache"; \
+	if grep -Fqx v10 "$$tmpdir/after-removal.names"; then \
+		fail "a removed governance route remained in the durable cache"; \
+	fi; \
+	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+		http://127.0.0.1:18132/v10/sessions/removed/chat)" = 503 ] \
+		|| fail "a removed governance route still accepted traffic"; \
 	docker rm -f gonka-vp-a >/dev/null; \
 	docker run -d --name gonka-vp-a --network $$net --network-alias versiond-pool \
 		-e NAME=a -e SERVES="v4 v9+hotfix" -e GENERIC_READY=false \
+		-e READYZ_SUPPORTED=true -v "$$tmpdir/upstream.py:/app.py:ro" \
+		python:3.12-alpine python /app.py >/dev/null; \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
+		> "$$tmpdir/catalog/versions.next"; \
+	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+	for i in $$(seq 30); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "activation-pending" and (.detail | contains("v10"))' \
+				>/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+		http://127.0.0.1:18132/v10/sessions/readded-pending/chat)" = 503 ] \
+		|| fail "a re-added route bypassed the activation reserve"; \
+	docker rm -f gonka-vp-a >/dev/null; \
+	docker run -d --name gonka-vp-a --network $$net --network-alias versiond-pool \
+		-e NAME=a -e SERVES="v4 v9+hotfix v10" -e GENERIC_READY=false \
 		-e READYZ_SUPPORTED=true -v "$$tmpdir/upstream.py:/app.py:ro" \
 		python:3.12-alpine python /app.py >/dev/null; \
 	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v9+hotfix"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	for i in $$(seq 30); do \
-		if curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%2Bhotfix' >/dev/null; then break; fi; \
+		if curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%2Bhotfix' >/dev/null \
+			&& curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v10' >/dev/null; then break; fi; \
 		sleep 0.5; \
 	done; \
 	curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%2Bhotfix' >/dev/null \
 		|| fail "encoded admin readiness did not follow the dynamic governance map"; \
+	curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v10' >/dev/null \
+		|| fail "a re-added route did not publish after regaining its reserve"; \
 	dynamic_host=$$(curl -fsS -m 3 \
 		'http://127.0.0.1:18132/v9+hotfix/sessions/escaped/chat'); \
 	case "$$dynamic_host" in \
