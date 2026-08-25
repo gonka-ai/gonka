@@ -38,6 +38,52 @@ func TestApplyLocalBestEffort_HeartbeatAndAckStayInDiff(t *testing.T) {
 	require.NotNil(t, applied[1].GetHeightAck())
 }
 
+func TestHeightSyncMissingAcksReportsDegradedTurnThroughSMAPI(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	sm, _ := newTestSM(t, hosts, 100000)
+	hash := []byte{0xaa}
+
+	appendHeartbeat := func(nonce, turnSeq, observedHeight uint64) {
+		t.Helper()
+		_, applied, err := sm.ApplyLocalBestEffort(nonce, []*types.DevshardTx{{
+			Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+				TurnSeq: turnSeq, ObservedHeight: observedHeight, ObservedBlockHash: hash,
+				SlotsNum: uint64(len(hosts)), Reason: "quiet_session",
+			}},
+		}})
+		require.NoError(t, err)
+		require.Len(t, applied, 1)
+	}
+
+	for nonce := uint64(1); nonce <= uint64(len(hosts)); nonce++ {
+		appendHeartbeat(nonce, 1, 500)
+	}
+	rec := sm.HeightSyncTurnRecord(1)
+	require.NotNil(t, rec)
+	require.Equal(t, heightsync.TurnOpen, rec.State)
+	require.Empty(t, sm.HeightSyncMissingAcks(1), "missing slots are gated until the ack window closes")
+
+	afterDeadline := uint64(500) + heightsync.DefaultHeartbeatConfig().AckDeadlineBlocks + 1
+	appendHeartbeat(uint64(len(hosts))+1, 2, afterDeadline)
+
+	rec = sm.HeightSyncTurnRecord(1)
+	require.NotNil(t, rec)
+	require.Equal(t, heightsync.TurnDegraded, rec.State)
+	require.Empty(t, rec.Acks)
+	require.ElementsMatch(t, []uint32{0, 1, 2, 3}, sm.HeightSyncMissingAcks(1))
+
+	due := sm.HeightSyncRepairDue()
+	require.Len(t, due, 1)
+	require.Equal(t, uint64(1), due[0].TurnSeq)
+	require.Equal(t, uint64(1), due[0].SpanStart)
+	require.ElementsMatch(t, []uint32{0, 1, 2, 3}, due[0].Missing)
+}
+
 func TestApplyLocalBestEffort_LogPlaneInvalidFailsBeforeNonce(t *testing.T) {
 	// L0 / L1 / L2 invalid height-sync txs do not consume the nonce.
 	hosts := []*signing.Secp256k1Signer{
