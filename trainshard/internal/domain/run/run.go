@@ -40,12 +40,18 @@ func (r RunSpec) WithEnv(over map[string]string) RunSpec {
 // PlacementEnv is what a training image needs to find the others. The names are node level on
 // purpose: a launcher inside the container derives the per-process rank from them
 func PlacementEnv(p vo.Placement) map[string]string {
-	return map[string]string{
+	env := map[string]string{
 		"NODE_RANK":   strconv.Itoa(p.Rank),
 		"NNODES":      strconv.Itoa(p.Size),
 		"MASTER_ADDR": p.Master,
 		"MASTER_PORT": strconv.Itoa(RendezvousPort),
 	}
+	// the link differs per node, and a collective that picks the wrong one hangs instead of failing
+	if p.Interface != "" {
+		env["NCCL_SOCKET_IFNAME"] = p.Interface
+		env["GLOO_SOCKET_IFNAME"] = p.Interface
+	}
+	return env
 }
 
 func (r RunSpec) String() string {

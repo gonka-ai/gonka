@@ -300,13 +300,18 @@ func (n *Network) dialable(ctx context.Context) error {
 	return nil
 }
 
-// bindable opens every mesh port this host owns, so a squatter is found before a node is leased
-// rather than when the mesh is being built; a running node's port is not held here, its wireguard
-// link lives in the sandbox namespace
 func (n *Network) bindable(ctx context.Context) error {
 	var open net.ListenConfig
 
-	for slot := range n.cfg.Nodes {
+	for slot, node := range n.cfg.Nodes {
+		held, err := n.Shards(ctx, node)
+		if err != nil {
+			return err
+		}
+		if len(held) > 0 {
+			continue
+		}
+
 		port := n.cfg.PortBase + slot
 		socket, err := open.ListenPacket(ctx, "udp", net.JoinHostPort("", strconv.Itoa(port)))
 		if err != nil {
@@ -401,6 +406,14 @@ func (n *Network) Shards(_ context.Context, node vo.NodeRef) ([]vo.ShardID, erro
 		held = append(held, shardID)
 	}
 	return held, nil
+}
+
+func (n *Network) Interface(node vo.NodeRef) (string, error) {
+	slot, err := n.slot(node)
+	if err != nil {
+		return "", err
+	}
+	return iface(slot), nil
 }
 
 func (n *Network) keyPath(shardID vo.ShardID, node vo.NodeRef) string {

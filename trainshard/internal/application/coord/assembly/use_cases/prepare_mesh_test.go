@@ -91,12 +91,29 @@ func TestPrepareGivesTheTunnelsTimeToComeUpBeforeCuttingAnyone(t *testing.T) {
 	}
 }
 
-func TestPrepareDropsAHostThatWillNotTakeThePeerList(t *testing.T) {
+func TestPrepareWaitsForAHostThatHasNotTakenThePeerListYet(t *testing.T) {
+
+	chain, hosts := newChainStub(), newHostsStub()
+	hosts.refuses[nodeA] = true
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+
+	_, err := prepare(chain, hosts, &verifierStub{}).Execute(ctx, shardID, forever)
+
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("got %v, want prepare still offering the peer list", err)
+	}
+	if len(chain.releases) != 0 {
+		t.Fatalf("got %+v, want a host that has not answered yet to keep its reservation", chain.releases)
+	}
+}
+
+func TestPrepareGoesOnWithoutAHostThatKeepsRefusingThePeerList(t *testing.T) {
 
 	chain, hosts := newChainStub(), newHostsStub()
 	hosts.refuses[nodeA] = true
 
-	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, forever)
+	result, err := prepare(chain, hosts, &verifierStub{}).Execute(context.Background(), shardID, expired)
 
 	if err != nil {
 		t.Fatalf("prepare: %v", err)

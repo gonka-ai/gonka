@@ -98,6 +98,15 @@ func (uc *PrepareMeshUseCase) Execute(ctx context.Context, shardID vo.ShardID, d
 			}
 		}
 		if len(refused) > 0 {
+			// a host that will not take a peer list is as often restarting as refusing, and Apply
+			// reports both the same way, so it gets the grace a silent host gets rather than losing
+			// its reservation to one unanswered call
+			if uc.clock.Now().Before(deadline) {
+				if err := timex.Sleep(ctx, uc.poll); err != nil {
+					return PrepareResult{}, err
+				}
+				continue
+			}
 			gone, err := kick(ctx, uc.submitter, shardID, refused, vo.ReleaseFailedPrepare)
 			if err != nil {
 				return PrepareResult{}, err

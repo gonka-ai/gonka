@@ -255,6 +255,9 @@ func (n network) Remove(_ context.Context, _ vo.ShardID, node vo.NodeRef) error 
 
 func (n network) Shards(context.Context, vo.NodeRef) ([]vo.ShardID, error) { return nil, nil }
 
+// the laptop machine has no namespaces, so the run shares the host's loopback
+func (n network) Interface(vo.NodeRef) (string, error) { return "lo", nil }
+
 func (m *Machine) GPUContainer(context.Context) error { return nil }
 
 func (m *Machine) FreeDiskBytes(context.Context) (int64, error) { return 1 << 44, nil }
