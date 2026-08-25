@@ -251,6 +251,15 @@ jobs:
           path: versioned/junit-report.xml
           reporter: java-junit
 
+  test-versiond-router-config:
+    runs-on: ubuntu-latest
+    name: Test versiond-router HAProxy configuration
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Render and exercise versiond-router
+        run: make -C versiond-router test-render
+
   build-and-test-edge-api:
     runs-on: ubuntu-latest
     name: Build and Test edge-api (validation)

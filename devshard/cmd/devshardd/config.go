@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"devshard/cmd/devshardd/session"
+	"devshard/internal/configenv"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
@@ -269,14 +269,14 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-// envBoolOr parses a boolean env var (strconv.ParseBool). Unset or unparseable
-// values return fallback.
+// envBoolOr parses a devshard boolean env var. Unset or unparseable values
+// return fallback.
 func envBoolOr(key string, fallback bool) bool {
 	v := strings.TrimSpace(os.Getenv(key))
 	if v == "" {
 		return fallback
 	}
-	parsed, err := strconv.ParseBool(v)
+	parsed, err := configenv.ParseBool(v)
 	if err != nil {
 		return fallback
 	}

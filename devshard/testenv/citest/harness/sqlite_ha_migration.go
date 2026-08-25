@@ -18,9 +18,11 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// BootSQLiteHAMigrationStack boots the 2×versiond + Postgres stack patched for §3.3 Phase 0–1:
-// DEVSHARD_STORAGE_MODE=sqlite and VERSIOND_HOSTS=versiond-0 only. versiond-1 is stopped
-// so SQLite sessions land on the legacy host volume.
+// BootSQLiteHAMigrationStack boots the 2×versiond + Postgres stack patched for
+// §3.3 Phase 0–1: DEVSHARD_STORAGE_MODE=sqlite and a stack that does not call
+// itself HA, so the router does not stamp Devshard-Ha and the storage guard
+// stays quiet. versiond-1 is stopped, so it also leaves the router's pool and
+// SQLite sessions land on the legacy host volume.
 func BootSQLiteHAMigrationStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()
 	stack := NewStack(t, prefix)
@@ -31,7 +33,7 @@ func BootSQLiteHAMigrationStack(t *testing.T, prefix string) (*Stack, *config.Fi
 	requireTwoVersiondHosts(t, cfg)
 
 	PatchVersiondStorageMode(t, stack.ComposePath, "sqlite")
-	PatchRouterVersiondHosts(t, stack.ComposePath, cfg.Hosts[0].ID)
+	PatchRouterHADeployment(t, stack.ComposePath, false)
 
 	stack.Up(t)
 	stack.StopService(t, cfg.Hosts[1].ID)

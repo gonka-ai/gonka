@@ -581,8 +581,9 @@ func (c *HTTPClient) SendVerifyTimeout(ctx context.Context, req VerifyTimeoutReq
 	return &resp, nil
 }
 
-// ChallengeReceipt forwards diffs + payload to the executor and returns the receipt.
-func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.Diff) ([]byte, error) {
+// ChallengeReceipt forwards diffs + payload to the executor and returns the
+// receipt plus a snapshot of the executor mempool (recovery txs).
+func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
 	defer cancel()
 
@@ -590,7 +591,7 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 	for i, d := range diffs {
 		dj, err := DiffToJSON(d)
 		if err != nil {
-			return nil, fmt.Errorf("encode diff %d: %w", i, err)
+			return nil, nil, fmt.Errorf("encode diff %d: %w", i, err)
 		}
 		djList[i] = dj
 	}
@@ -602,28 +603,32 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("marshal: %w", err)
+		return nil, nil, fmt.Errorf("marshal: %w", err)
 	}
 	respBody, err := c.doPost(ctx, "/sessions/"+c.escrowID+"/challenge-receipt", body)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var resp ChallengeReceiptResponse
 	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, fmt.Errorf("unmarshal: %w", err)
+		return nil, nil, fmt.Errorf("unmarshal: %w", err)
 	}
-	return resp.Receipt, nil
+	mempool, err := DevshardTxsFromBytes(resp.Mempool)
+	if err != nil {
+		return nil, nil, fmt.Errorf("decode mempool: %w", err)
+	}
+	return resp.Receipt, mempool, nil
 }
 
 // VerifyTimeout implements user.TimeoutVerifier over HTTP.
-func (c *HTTPClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff) (bool, []byte, uint32, error) {
+func (c *HTTPClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff) (bool, []byte, uint32, []*types.DevshardTx, error) {
 	var djList []DiffJSON
 	if len(diffs) > 0 {
 		djList = make([]DiffJSON, len(diffs))
 		for i, d := range diffs {
 			dj, err := DiffToJSON(d)
 			if err != nil {
-				return false, nil, 0, fmt.Errorf("encode diff %d: %w", i, err)
+				return false, nil, 0, nil, fmt.Errorf("encode diff %d: %w", i, err)
 			}
 			djList[i] = dj
 		}
@@ -635,9 +640,13 @@ func (c *HTTPClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reas
 		Diffs:       djList,
 	})
 	if err != nil {
-		return false, nil, 0, err
+		return false, nil, 0, nil, err
 	}
-	return resp.Accept, resp.Signature, resp.VoterSlot, nil
+	mempool, err := DevshardTxsFromBytes(resp.Mempool)
+	if err != nil {
+		return false, nil, 0, nil, fmt.Errorf("decode mempool: %w", err)
+	}
+	return resp.Accept, resp.Signature, resp.VoterSlot, mempool, nil
 }
 
 // GetDiffs fetches stored diffs from a peer.

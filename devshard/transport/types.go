@@ -57,9 +57,10 @@ type VerifyTimeoutRequest struct {
 
 // VerifyTimeoutResponse is returned by the timeout verification endpoint.
 type VerifyTimeoutResponse struct {
-	Accept    bool   `json:"accept"`
-	Signature []byte `json:"signature,omitempty"` // signed TimeoutVoteContent
-	VoterSlot uint32 `json:"voter_slot"`
+	Accept    bool     `json:"accept"`
+	Signature []byte   `json:"signature,omitempty"` // signed TimeoutVoteContent
+	VoterSlot uint32   `json:"voter_slot"`
+	Mempool   [][]byte `json:"mempool,omitempty"` // recovery txs on reject; each: proto bytes of DevshardTx
 }
 
 // ChallengeReceiptRequest is the JSON body for POST /sessions/:id/challenge-receipt.
@@ -71,7 +72,8 @@ type ChallengeReceiptRequest struct {
 
 // ChallengeReceiptResponse is returned by the challenge-receipt endpoint.
 type ChallengeReceiptResponse struct {
-	Receipt []byte `json:"receipt,omitempty"`
+	Receipt []byte   `json:"receipt,omitempty"`
+	Mempool [][]byte `json:"mempool,omitempty"` // each: proto bytes of DevshardTx
 }
 
 // GossipNonceRequest is the JSON body for POST /sessions/:id/gossip/nonce.

@@ -167,6 +167,34 @@ func TestOwnerChat_SettledLocalRow_ReturnsConflict(t *testing.T) {
 	require.Equal(t, transport.DevshardErrorEscrowSettled, rec.Header().Get(transport.HeaderDevshardError))
 }
 
+func TestOwnerChat_RejectsChunkedBodyBeforeBinding(t *testing.T) {
+	const escrowID = "9708"
+	mgr, store, user, _ := setupBindTestManager(t, escrowID)
+	mgr.maxBodySize = 8
+	e := echo.New()
+	mgr.Register(e.Group(""))
+
+	body := []byte("123456789")
+	ts := time.Now().Unix()
+	sig, err := transport.SignRequest(user, escrowID, body, ts)
+	require.NoError(t, err)
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/sessions/"+escrowID+"/chat/completions",
+		bytes.NewReader(body),
+	)
+	req.ContentLength = -1
+	req.TransferEncoding = []string{"chunked"}
+	req.Header.Set(transport.HeaderSignature, hex.EncodeToString(sig))
+	req.Header.Set(transport.HeaderTimestamp, strconv.FormatInt(ts, 10))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code, rec.Body.String())
+	_, err = store.GetSessionMeta(escrowID)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+}
+
 type countingGetEscrowBridge struct {
 	bridge.MainnetBridge
 	calls int

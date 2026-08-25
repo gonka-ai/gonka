@@ -32,6 +32,10 @@ x-versiond: &versiond
     # Postgres-only payloads/sessions. Fail boot if PG is down; migrate local
     # SQLite sessions into Postgres once at startup (no file/sqlite fallback).
     - DEVSHARD_STORAGE_MODE=postgres
+  networks:
+    default:
+      aliases:
+        - versiond-pool
   depends_on:
     api:
       condition: service_started
@@ -78,14 +82,25 @@ services:
     container_name: versiond-router
     image: ghcr.io/product-science/versiond-router:0.2.15
     environment:
+      # The HAProxy router discovers every replica through this shared DNS
+      # alias. Keep VERSIOND_HOSTS during the image transition because the
+      # currently pinned nginx router still requires the static list.
+      - VERSIOND_POOL_HOST=${VERSIOND_POOL_HOST:-versiond-pool}
       - VERSIOND_HOSTS=${VERSIOND_HOSTS:-versiond versiond2}
       - VERSIOND_PORT=8080
+      # This overlay always has multiple versiond replicas. Keep the HA storage
+      # guard active even while only one replica is currently ready.
+      - GONKA_HA=true
       # SQLite-bound pre-HA versions must stay on the host that owns their data dirs.
       - VERSIOND_LEGACY_HOST=${VERSIOND_LEGACY_HOST:-versiond}
       # Version path segments that pin to VERSIOND_LEGACY_HOST (whitespace and/or comma).
       # All other versions sticky-hash across VERSIOND_HOSTS and get Devshard-Ha: true.
       # Default lists known pre-HA paths; clear (empty) once every live version is Postgres HA.
-      - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS:-v1 v2 v3}
+      - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}
+      # Bootstrap only the HA versions shipped with this deployment. Future
+      # names come from governance rather than being guessed in Compose.
+      - VERSIOND_VERSIONS=${VERSIOND_VERSIONS-v4 v5}
+      - VERSIOND_ROUTER_ALLOW_COARSE_READINESS=${VERSIOND_ROUTER_ALLOW_COARSE_READINESS:-false}
     depends_on:
       - versiond
       - versiond2

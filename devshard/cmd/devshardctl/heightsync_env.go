@@ -17,6 +17,7 @@ import (
 	"devshard/chainoracle/blocks/failover"
 	"devshard/chainoracle/blocks/tipcache"
 	"devshard/heightsync"
+	"devshard/internal/configenv"
 	"devshard/transport"
 )
 
@@ -85,12 +86,8 @@ func parseDurationEnv(name string) (time.Duration, error) {
 }
 
 func heightSyncFlag() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(envHeightSync))) {
-	case "1", "true", "yes":
-		return true
-	default:
-		return false
-	}
+	enabled, err := configenv.ParseBool(os.Getenv(envHeightSync))
+	return err == nil && enabled
 }
 
 func cometRPCForHeightSync(grpcURL string) string {

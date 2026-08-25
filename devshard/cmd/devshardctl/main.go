@@ -16,6 +16,7 @@ import (
 
 	"common/chain"
 	"devshard/bridge"
+	"devshard/internal/configenv"
 	"devshard/state"
 	"devshard/types"
 	"devshard/user"
@@ -764,19 +765,16 @@ func readFloat64Env(name string, fallback float64) float64 {
 }
 
 func readBoolEnv(name string, fallback bool) bool {
-	raw := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
 		return fallback
 	}
-	switch raw {
-	case "1", "true", "yes", "on":
-		return true
-	case "0", "false", "no", "off":
-		return false
-	default:
+	parsed, err := configenv.ParseBool(raw)
+	if err != nil {
 		log.Printf("invalid %s=%q, using %t", name, raw, fallback)
 		return fallback
 	}
+	return parsed
 }
 
 func buildSettlementJSON(p *state.SettlementPayload) (SettlementJSON, error) {

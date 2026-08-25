@@ -61,6 +61,7 @@ type HostManager struct {
 	availability       devshardpkg.AvailabilityProvider
 	maxNonce           devshardpkg.MaxNonceProvider
 	params             runtimeparams.Provider
+	maxBodySize        int64
 
 	statsMu            sync.Mutex
 	statsShardsCache   *statsShardsResponse
@@ -130,6 +131,7 @@ func NewHostManager(
 		recorder:           recorder,
 		statsDetailsCache:  make(map[string]statsShardDetailCache),
 		statsNegativeCache: make(map[string]statsNegativeCacheEntry),
+		maxBodySize:        transport.DefaultMaxBodySize,
 	}
 }
 
@@ -210,7 +212,7 @@ func (m *HostManager) BindOwnerChat(c echo.Context) (*transport.Server, error) {
 	if err := devshardpkg.ValidateEscrowID(escrowID); err != nil {
 		return nil, echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
-	addr, body, err := transport.VerifyPOSTAuth(c, m.verifier, escrowID, 0)
+	addr, body, err := transport.VerifyPOSTAuth(c, m.verifier, escrowID, m.maxBodySize)
 	if err != nil {
 		return nil, err
 	}
