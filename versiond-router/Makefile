@@ -366,7 +366,9 @@ test-version-routing:
 			|| fail "catalog key stole the versionless /$$path route"; \
 	done; \
 	router_id=$$(docker inspect -f '{{.Id}}' gonka-vp-router); \
-	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
+	# Dropping one legacy and one static name must not block dynamic additions: \
+	# neither name consumes a governance slot or belongs in projected history. \
+	printf '%s\n' '{"versions":[{"name":"v2"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	for i in $$(seq 20); do \
@@ -454,6 +456,11 @@ test-version-routing:
 		|| fail "learning v9 disrupted the existing v4 route"; \
 	docker exec gonka-vp-router test -s /var/lib/gonka-router/catalog-v2.json \
 		|| fail "inner router did not persist its learned catalog"; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-cache read \
+		/var/lib/gonka-router/catalog-v2.json 86400 > "$$tmpdir/projected-cache.names"; \
+	printf '%s\n' v10 v9 | LC_ALL=C sort > "$$tmpdir/want-projected-cache.names"; \
+	diff -u "$$tmpdir/want-projected-cache.names" "$$tmpdir/projected-cache.names" \
+		|| fail "persistent catalog history contains static or legacy names"; \
 	cache_before=$$(docker exec gonka-vp-router sha256sum \
 		/var/lib/gonka-router/catalog-v2.json | awk '{print $$1}'); \
 	printf '%s\n' '{"versions":[]}' > "$$tmpdir/catalog/versions.next"; \

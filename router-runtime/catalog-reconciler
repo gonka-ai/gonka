@@ -70,6 +70,18 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 0' HUP INT TERM
+excluded_names=$tmpdir/excluded.names
+printf '%s\n' "$excluded_versions" | tr ',;[:space:]' '\n' | \
+    sed '/^$/d' | LC_ALL=C sort -u > "$excluded_names"
+
+project_names() {
+    source=$1 destination=$2
+    awk '
+        FILENAME == ARGV[1] { excluded[$0] = 1; next }
+        !($0 in excluded)
+    ' "$excluded_names" "$source" > "$destination"
+}
+
 last_state=starting
 last_names=$tmpdir/last.names
 : > "$last_names"
@@ -85,6 +97,10 @@ if [ -n "$cache_file" ] && [ -f "$cache_file" ]; then
     if [ "$cache_status" -eq 0 ]; then
         last_generation=$(jq -er 'if .schema == 2 then .revision else 0 end' "$cache_file") || \
             cache_status=$?
+        if [ "$cache_status" -eq 0 ]; then
+            project_names "$last_names" "$tmpdir/cache.projected.names"
+            mv "$tmpdir/cache.projected.names" "$last_names"
+        fi
     fi
     if [ "$cache_status" -ne 0 ]; then
         if [ "$cache_status" -eq 2 ]; then
@@ -158,12 +174,13 @@ validate_version() {
 
 version_excluded() {
     version=$1
-    printf '%s\n' "$excluded_versions" | tr ',;[:space:]' '\n' | \
-        awk -v version="$version" '$0 "" == version "" { found = 1 } END { exit !found }'
+    awk -v version="$version" \
+        '$0 "" == version "" { found = 1 } END { exit !found }' "$excluded_names"
 }
 
 fetch_catalog() {
     body=$tmpdir/catalog.json
+    raw_names=$tmpdir/catalog.raw.names
     names=$tmpdir/catalog.names
     if ! wget -q -T "$fetch_timeout" -O "$body" "$catalog_url"; then
         return 1
@@ -175,16 +192,17 @@ fetch_catalog() {
         | if ($versions | type) != "array" then error("versions is not an array") else $versions end
         | .[]
         | if (.name | type) != "string" then error("version name is not a string") else .name end
-    ' "$body" > "$names"; then
+    ' "$body" > "$raw_names"; then
         return 1
     fi
-    if duplicate=$(LC_ALL=C sort "$names" | uniq -d | sed -n '1p') && [ -n "$duplicate" ]; then
+    if duplicate=$(LC_ALL=C sort "$raw_names" | uniq -d | sed -n '1p') && [ -n "$duplicate" ]; then
         return 1
     fi
     while IFS= read -r version; do
         validate_version "$version" || return 1
-    done < "$names"
-    LC_ALL=C sort -u "$names" -o "$names"
+    done < "$raw_names"
+    LC_ALL=C sort -u "$raw_names" -o "$raw_names"
+    project_names "$raw_names" "$names"
 }
 
 validate_catalog_progression() {
