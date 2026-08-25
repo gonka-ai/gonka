@@ -251,14 +251,24 @@ test-version-routing:
 	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"}]}' \
 		> "$$tmpdir/catalog/versions.json"; \
 	printf '%s\n' \
-		'import http.server, json' \
+		'import http.server, os, time' \
 		'class H(http.server.BaseHTTPRequestHandler):' \
 		'    def do_GET(self):' \
 		'        if self.path != "/versions": self.send_error(404); return' \
 		'        body = open("/data/versions.json", "rb").read()' \
+		'        mode = open("/data/mode").read().strip() if os.path.exists("/data/mode") else ""' \
+		'        if mode == "slow":' \
+		'            self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers()' \
+		'            try:' \
+		'                for byte in body + b" " * 256:' \
+		'                    self.wfile.write(bytes([byte])); self.wfile.flush(); time.sleep(0.25)' \
+		'            except (BrokenPipeError, ConnectionResetError): pass' \
+		'            return' \
+		'        if mode == "oversized": body += b" " * 2048' \
 		'        self.send_response(200)' \
 		'        self.send_header("Content-Type", "application/json")' \
-		'        self.send_header("Content-Length", str(len(body)))' \
+		'        if mode != "oversized": self.send_header("Content-Length", str(len(body)))' \
+		'        else: self.send_header("Connection", "close"); self.close_connection = True' \
 		'        self.end_headers(); self.wfile.write(body)' \
 		'    def log_message(self, *a): pass' \
 		'http.server.ThreadingHTTPServer(("", 8080), H).serve_forever()' \
@@ -299,6 +309,8 @@ test-version-routing:
 		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="$$versions" \
 		-e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
 		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
+		-e VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=2 \
+		-e VERSIOND_ROUTING_CATALOG_MAX_BYTES=512 \
 		-e VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS=1 \
 		-e VERSIOND_ROUTING_ACTIVATION_MIN_READY=2 \
 		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
@@ -541,6 +553,50 @@ test-version-routing:
 		a|b) ;; \
 		*) fail "learning v9 sent the existing v4 route to '$$stable_host'" ;; \
 	esac; \
+	bounded_cache_before=$$(docker exec gonka-vp-router sha256sum \
+		/var/lib/gonka-router/catalog.json | awk '{print $$1}'); \
+	printf '%s\n' slow > "$$tmpdir/catalog/mode.next"; \
+	mv "$$tmpdir/catalog/mode.next" "$$tmpdir/catalog/mode"; \
+	for i in $$(seq 16); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "fetch-error"' >/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| jq -e '.state == "fetch-error"' >/dev/null \
+		|| fail "a continuously trickling catalog response bypassed the total deadline"; \
+	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/slow-source/chat)" = b ] \
+		|| fail "a slow catalog response removed the accepted v9 route"; \
+	slow_observed_at=$$(docker exec gonka-vp-router \
+		/usr/local/lib/router-runtime/catalog-status --state | jq -er .observed_at_unix); \
+	printf '%s\n' oversized > "$$tmpdir/catalog/mode.next"; \
+	mv "$$tmpdir/catalog/mode.next" "$$tmpdir/catalog/mode"; \
+	for i in $$(seq 16); do \
+		oversized_status=$$(docker exec gonka-vp-router \
+			/usr/local/lib/router-runtime/catalog-status --state 2>/dev/null || true); \
+		if printf '%s\n' "$$oversized_status" | jq -e \
+			--argjson previous "$$slow_observed_at" \
+			'.state == "fetch-error" and .observed_at_unix > $$previous' \
+			>/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	printf '%s\n' "$$oversized_status" | jq -e \
+		--argjson previous "$$slow_observed_at" \
+		'.state == "fetch-error" and .observed_at_unix > $$previous' >/dev/null \
+		|| fail "an oversized catalog response bypassed the response-body limit"; \
+	bounded_cache_after=$$(docker exec gonka-vp-router sha256sum \
+		/var/lib/gonka-router/catalog.json | awk '{print $$1}'); \
+	[ "$$bounded_cache_after" = "$$bounded_cache_before" ] \
+		|| fail "a bounded catalog fetch replaced the accepted snapshot"; \
+	rm -f "$$tmpdir/catalog/mode"; \
+	for i in $$(seq 20); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "ready"' >/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| jq -e '.state == "ready"' >/dev/null \
+		|| fail "catalog reconciliation did not recover after bounded fetch failures"; \
 	docker exec gonka-vp-router test -s /var/lib/gonka-router/catalog.json \
 		|| fail "inner router did not persist its learned catalog"; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-cache read \
@@ -1148,6 +1204,14 @@ test-render: test-local-compose test-join-compose test-catalog-cache test-hash-r
 		VERSIOND_ROUTER_OUT="$$tmpdir/bad-catalog.cfg" \
 		./entrypoint.sh >/dev/null 2>&1; then \
 		fail "a zero catalog Runtime API timeout was accepted"; \
+	fi; \
+	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+		VERSIOND_ROUTING_CATALOG_MAX_BYTES=0 \
+		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+		VERSIOND_ROUTER_OUT="$$tmpdir/bad-catalog.cfg" \
+		./entrypoint.sh >/dev/null 2>&1; then \
+		fail "a zero catalog response-body limit was accepted"; \
 	fi; \
 	for off in 0 false NO; do \
 		if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \

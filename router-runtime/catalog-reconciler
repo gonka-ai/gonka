@@ -17,6 +17,7 @@ component=${ROUTING_CATALOG_COMPONENT:-router}
 catalog_url=${ROUTING_CATALOG_URL:-}
 poll_seconds=${ROUTING_CATALOG_POLL_SECONDS:-5}
 fetch_timeout=${ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS:-3}
+fetch_max_bytes=${ROUTING_CATALOG_MAX_BYTES:-1048576}
 runtime_timeout=${ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS:-2}
 runtime_socket=${ROUTING_CATALOG_RUNTIME_SOCKET:-/var/run/haproxy/reconciler.sock}
 projection_map=${ROUTING_CATALOG_PROJECTION_MAP:?ROUTING_CATALOG_PROJECTION_MAP is required}
@@ -36,11 +37,11 @@ log() {
     printf '%s\n' "$component: $*" >&2
 }
 
-for value in "$poll_seconds" "$fetch_timeout" "$runtime_timeout" "$backend_capacity" \
+for value in "$poll_seconds" "$fetch_timeout" "$fetch_max_bytes" "$runtime_timeout" "$backend_capacity" \
     "$server_capacity" "$activation_min_ready" "$cache_max_age"; do
     case "$value" in
         '' | *[!0-9]* | 0)
-            log "catalog timing, cache age, and capacity values must be positive integers"
+            log "catalog timing, body limit, cache age, and capacity values must be positive integers"
             exit 1
             ;;
     esac
@@ -63,6 +64,10 @@ esac
 
 command -v jq >/dev/null 2>&1 || {
     log "jq is required for the routing catalog"
+    exit 1
+}
+command -v curl >/dev/null 2>&1 || {
+    log "curl is required for the routing catalog"
     exit 1
 }
 command -v socat >/dev/null 2>&1 || {
@@ -187,12 +192,24 @@ validate_version() {
 
 fetch_catalog() {
     body=$tmpdir/catalog.json
+    download=$tmpdir/catalog.download
     json_names=$tmpdir/catalog.json.names
     raw_names=$tmpdir/catalog.raw.names
     names=$tmpdir/catalog.names
-    if ! wget -q -T "$fetch_timeout" -O "$body" "$catalog_url"; then
+    rm -f "$download"
+    if ! curl --fail --silent --show-error --location --max-redirs 3 \
+        --proto '=http,https' --proto-redir '=http,https' \
+        --connect-timeout "$fetch_timeout" --max-time "$fetch_timeout" \
+        --max-filesize "$fetch_max_bytes" --output "$download" "$catalog_url"; then
+        rm -f "$download"
         return 1
     fi
+    downloaded_bytes=$(wc -c < "$download")
+    if [ "$downloaded_bytes" -gt "$fetch_max_bytes" ]; then
+        rm -f "$download"
+        return 1
+    fi
+    mv "$download" "$body"
     if ! jq -ac '
         if type != "object" then error("catalog is not an object") else . end
         |

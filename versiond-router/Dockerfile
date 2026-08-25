@@ -14,7 +14,7 @@ LABEL ai.gonka.component="versiond-router"
 # a symlink to /run; a runtime that mounts a tmpfs over /run would discard the
 # directory — none of the shipped compose files do.)
 USER root
-RUN apk add --no-cache jq socat \
+RUN apk add --no-cache curl jq socat \
     && mkdir -p /etc/haproxy /var/run/haproxy /var/lib/gonka-router \
        /usr/local/lib/router-runtime \
     && chown -R haproxy:haproxy /etc/haproxy /var/run/haproxy \
