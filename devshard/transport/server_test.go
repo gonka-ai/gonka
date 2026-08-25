@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 	"devshard"
 	"devshard/host"
 	"devshard/internal/testutil"
+	"devshard/observability"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
@@ -622,4 +624,239 @@ func TestServer_NonExecutor_SSE(t *testing.T) {
 
 	require.Nil(t, receipt.Receipt, "non-executor should not have receipt")
 	require.False(t, hasInferenceData, "non-executor should not have inference data")
+}
+
+func TestReplaySSEBody_StreamedEnvelopeUnwrapsEvents(t *testing.T) {
+	events := []string{
+		`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}`,
+		`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"}}]}`,
+		`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":3,"completion_tokens":1}}`,
+		`data: [DONE]`,
+	}
+	body, err := json.Marshal(map[string]any{"events": events})
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	require.NoError(t, replaySSEBody(rec, body))
+
+	got := sseDataLines(t, rec.Body.String())
+	require.Equal(t, events, got, "reconnect replay must emit the same data-line sequence as the live stream")
+}
+
+func TestReplaySSEBody_StreamedEnvelopeMarksPartialInsteadOfSynthesizingDone(t *testing.T) {
+	// A post-drain partial is stored without a real [DONE]. Synthesizing one
+	// would make a truncated stream look finished to the client.
+	events := []string{
+		`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"}}]}`,
+	}
+	body, err := json.Marshal(map[string]any{"events": events})
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	require.NoError(t, replaySSEBody(rec, body))
+
+	got := sseDataLines(t, rec.Body.String())
+	require.Equal(t, append(append([]string{}, events...), partialStreamErrorLine), got)
+	require.NotContains(t, got, "data: [DONE]")
+}
+
+func TestReplaySSEBody_PartialMarkerIsMachineReadableError(t *testing.T) {
+	var payload struct {
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+			Code    string `json:"code"`
+		} `json:"error"`
+	}
+	raw := strings.TrimPrefix(partialStreamErrorLine, "data: ")
+	require.NoError(t, json.Unmarshal([]byte(raw), &payload))
+	require.NotEmpty(t, payload.Error.Message)
+	require.Equal(t, "incomplete_stream", payload.Error.Type)
+	require.Equal(t, "stream_incomplete", payload.Error.Code)
+}
+
+func TestReplaySSEBodyFromCursor_PartialMarkerCursorAccounting(t *testing.T) {
+	events := []string{
+		`data: {"choices":[{"delta":{"content":"one"}}]}`,
+		`data: {"choices":[{"delta":{"content":"two"}}]}`,
+	}
+	body, err := json.Marshal(map[string]any{"events": events})
+	require.NoError(t, err)
+
+	// Cursor inside the stored events: remaining events, then the marker.
+	rec := httptest.NewRecorder()
+	require.NoError(t, replaySSEBodyFromCursor(rec, body, 1, 0, nil))
+	require.Equal(t, []string{events[1], partialStreamErrorLine}, sseDataLines(t, rec.Body.String()))
+
+	// Cursor exactly at the marker slot: only the marker is owed.
+	rec = httptest.NewRecorder()
+	require.NoError(t, replaySSEBodyFromCursor(rec, body, 2, 0, nil))
+	require.Equal(t, []string{partialStreamErrorLine}, sseDataLines(t, rec.Body.String()))
+
+	// Marker already delivered: fully replayed, not cursor-past.
+	rec = httptest.NewRecorder()
+	require.NoError(t, replaySSEBodyFromCursor(rec, body, 3, 0, nil))
+	require.Empty(t, sseDataLines(t, rec.Body.String()))
+
+	// Past the marker: genuinely cursor-past.
+	rec = httptest.NewRecorder()
+	require.ErrorIs(t, replaySSEBodyFromCursor(rec, body, 4, 0, nil), host.ErrResumeCursorPast)
+}
+
+func TestReplaySSEBodyFromCursor_PartialMarkerResumesMidMarker(t *testing.T) {
+	events := []string{`data: {"choices":[{"delta":{"content":"one"}}]}`}
+	body, err := json.Marshal(map[string]any{"events": events})
+	require.NoError(t, err)
+
+	// A mid-event resume emits the remainder verbatim, so it does not start
+	// with "data:" — same shape as any other partial-event resume.
+	partial := int64(10)
+	rec := httptest.NewRecorder()
+	require.NoError(t, replaySSEBodyFromCursor(rec, body, 1, partial, nil))
+	require.Equal(t, partialStreamErrorLine[partial:]+"\n\n", rec.Body.String())
+}
+
+func TestReplaySSEBodyFromCursor_MidEventStampsOpenEvent(t *testing.T) {
+	events := []string{
+		`data: {"choices":[{"delta":{"content":"one"}}]}`,
+		`data: {"choices":[{"delta":{"content":"hello-world"}}]}`,
+		`data: [DONE]`,
+	}
+	body, err := json.Marshal(map[string]any{"events": events})
+	require.NoError(t, err)
+	ml := []int64{100, 200, 300}
+
+	const partial = int64(10)
+	rec := httptest.NewRecorder()
+	require.NoError(t, replaySSEBodyFromCursor(rec, body, 1, partial, ml))
+	raw := rec.Body.String()
+
+	require.True(t, strings.HasPrefix(raw, host.DevshardTSCommentPrefix))
+	firstLine, rest, ok := strings.Cut(raw, "\n")
+	require.True(t, ok)
+	batch, ok := host.ParseDevshardTSComment(firstLine)
+	require.True(t, ok)
+	require.Equal(t, int64(1), batch.B)
+	require.Equal(t, []int64{200}, batch.ML)
+	require.Equal(t, host.HopTierCache, batch.T)
+
+	// Remainder of event 1, then DONE — comments stripped from data path.
+	require.True(t, strings.HasPrefix(rest, events[1][partial:]+"\n\n"))
+	require.Contains(t, rest, "data: [DONE]\n\n")
+}
+
+func TestReplaySSEBody_CompleteEnvelopeHasNoPartialMarker(t *testing.T) {
+	events := []string{
+		`data: {"choices":[{"delta":{"content":"Hi"}}]}`,
+		`data: [DONE]`,
+	}
+	body, err := json.Marshal(map[string]any{"events": events})
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	require.NoError(t, replaySSEBody(rec, body))
+	require.Equal(t, events, sseDataLines(t, rec.Body.String()))
+}
+
+func TestReplaySSEBody_JSONCompletionKeepsSingleEvent(t *testing.T) {
+	body := []byte(`{"id":"chatcmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"Hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1}}`)
+
+	rec := httptest.NewRecorder()
+	require.NoError(t, replaySSEBody(rec, body))
+
+	got := sseDataLines(t, rec.Body.String())
+	require.Equal(t, []string{
+		"data: " + string(body),
+		"data: [DONE]",
+	}, got)
+}
+
+func TestReplaySSEBodyFromCursor_SkipsDeliveredPrefix(t *testing.T) {
+	events := []string{
+		`data: {"choices":[{"delta":{"content":"one"}}]}`,
+		`data: {"choices":[{"delta":{"content":"two"}}]}`,
+		`data: [DONE]`,
+	}
+	body, err := json.Marshal(map[string]any{"events": events})
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	require.NoError(t, replaySSEBodyFromCursor(rec, body, 1, 0, nil))
+	got := sseDataLines(t, rec.Body.String())
+	require.Equal(t, []string{
+		`data: {"choices":[{"delta":{"content":"two"}}]}`,
+		`data: [DONE]`,
+	}, got)
+}
+
+func TestReplaySSEBodyFromCursor_PastCursorErrors(t *testing.T) {
+	events := []string{`data: {"choices":[{"delta":{"content":"one"}}]}`}
+	body, err := json.Marshal(map[string]any{"events": events})
+	require.NoError(t, err)
+	rec := httptest.NewRecorder()
+	err = replaySSEBodyFromCursor(rec, body, 5, 0, nil)
+	require.ErrorIs(t, err, host.ErrResumeCursorPast)
+}
+
+func TestLiveAttachFailureReason_MapsResumePathErrors(t *testing.T) {
+	cases := []struct {
+		err  error
+		want observability.Reason
+	}{
+		{host.ErrResumeCursorPast, observability.ReasonCachedReplayErr},
+		{host.ErrInvalidResumeCursor, observability.ReasonCachedReplayErr},
+		{host.ErrLiveStreamGone, observability.ReasonCachedReplayErr},
+		{host.ErrLiveStreamPruned, observability.ReasonCachedReplayErr},
+		{host.ErrLiveStreamResumeUnavailable, observability.ReasonCachedReplayErr},
+		{host.ErrSubscriberLagged, observability.ReasonCachedReplayErr},
+		{host.ErrLiveStreamFormingOversize, observability.ReasonCachedReplayErr},
+		{host.ErrSpoolClosed, observability.ReasonCachedReplayErr},
+		{errors.New("ml exploded"), observability.ReasonExecuteErr},
+	}
+	for _, tc := range cases {
+		require.Equal(t, tc.want, liveAttachFailureReason(tc.err), "%v", tc.err)
+	}
+}
+
+func TestReplaySSEBodyFromCursor_NegativeCursorErrors(t *testing.T) {
+	rec := httptest.NewRecorder()
+	require.ErrorIs(t, replaySSEBodyFromCursor(rec, []byte(`{}`), -1, 0, nil), host.ErrInvalidResumeCursor)
+	require.ErrorIs(t, replaySSEBodyFromCursor(rec, []byte(`{}`), 0, -1, nil), host.ErrInvalidResumeCursor)
+}
+
+func TestHostRequestFromJSON_RejectsNegativeResumeCursor(t *testing.T) {
+	_, err := HostRequestFromJSON(InferenceRequest{Nonce: 1, DeliveredEvents: -1})
+	require.ErrorIs(t, err, host.ErrInvalidResumeCursor)
+	_, err = HostRequestFromJSON(InferenceRequest{Nonce: 1, DeliveredPartial: -1})
+	require.ErrorIs(t, err, host.ErrInvalidResumeCursor)
+}
+
+func TestReplaySSEBody_NormalizesDataPrefixWithoutSpace(t *testing.T) {
+	events := []string{
+		`data:{"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"}}]}`,
+	}
+	body, err := json.Marshal(map[string]any{"events": events})
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	require.NoError(t, replaySSEBody(rec, body))
+
+	got := sseDataLines(t, rec.Body.String())
+	require.Equal(t, []string{
+		`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"}}]}`,
+		partialStreamErrorLine,
+	}, got)
+}
+
+func sseDataLines(t *testing.T, raw string) []string {
+	t.Helper()
+	var out []string
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.HasPrefix(line, "data:") {
+			out = append(out, line)
+		}
+	}
+	return out
 }

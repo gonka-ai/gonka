@@ -105,7 +105,8 @@ const openapiSpec = `{
                     "escrow_id": { "type": "string" },
                     "nonce": { "type": "integer" },
                     "phase": { "type": "string", "enum": ["active", "finalizing", "settlement"] },
-                    "balance": { "type": "integer" }
+                    "balance": { "type": "integer" },
+                    "session_version": { "type": "string", "description": "Optional escrow protocol bind tag (e.g. v4, v5). Additive; clients must not require it." }
                   }
                 }
               }

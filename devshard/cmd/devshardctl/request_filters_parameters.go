@@ -326,8 +326,8 @@ func (ctx *RequestFilterContext) DecodeRequest() error {
 // max_completion_tokens into the document (the max-completion-only branch mirrors into
 // max_tokens too), so this preservation is a harmless no-op safety net.
 //
-// Other fields are re-read so caps applied by PostLimits rules (for example `n` via
-// paramvalidators.CapUintParameter through the adapter) propagate into the projection.
+// Other fields are re-read so PostLimits mutations (for example forcing `n` to 1)
+// propagate into the projection.
 func (ctx *RequestFilterContext) SyncRequestView() error {
 	var req chatRequest
 	if err := readChatRequestFields(&ctx.Document, &req); err != nil {
@@ -440,7 +440,10 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.CapUintParameter{Min: 1, Max: MaxChatRequestChoices}}).
 				withRule(RequestFilterStagePostLimits, DocumentValidatorHandler{
 					Validator: paramvalidators.GreedySamplingValidator{},
-				}),
+				}).
+				// Force a single choice while reservation/settlement only budget one
+				// MaxTokens output. OverwriteOnly keeps omitted `n` omitted (ML default 1).
+				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.ForceLiteralParameter{Value: uint64(1), OverwriteOnly: true}}),
 			newParameter("temperature").
 				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeFloatParameter{StripNonFinite: true, Min: floatPointer(MinTemperature), Max: floatPointer(MaxTemperature)}}),
 			newParameter("repetition_penalty").

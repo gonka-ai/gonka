@@ -56,6 +56,7 @@ type HostManager struct {
 	recorder           PayloadAuthClient
 	availability       devshardpkg.AvailabilityProvider
 	maxNonce           devshardpkg.MaxNonceProvider
+	liveStreamSpoolDir string
 
 	statsMu            sync.Mutex
 	statsShardsCache   *statsShardsResponse
@@ -123,6 +124,23 @@ func (m *HostManager) StorageReady() bool {
 // SetMaxNonceProvider enforces chain max_nonce on every host.
 func (m *HostManager) SetMaxNonceProvider(p devshardpkg.MaxNonceProvider) {
 	m.maxNonce = p
+}
+
+// SetLiveStreamSpoolDir gives in-flight generations a scratch directory to use
+// as their reconnect resume tier, emptying it first: anything already there
+// belongs to a dead process. On error the spool stays disabled, which costs
+// mid-flight reconnect but nothing else.
+func (m *HostManager) SetLiveStreamSpoolDir(dir string) error {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		m.liveStreamSpoolDir = ""
+		return nil
+	}
+	if err := host.PrepareLiveStreamSpoolDir(dir); err != nil {
+		return err
+	}
+	m.liveStreamSpoolDir = dir
+	return nil
 }
 
 // SetBinaryVersion sets the link-time / log build id exposed on stats endpoints
@@ -843,8 +861,14 @@ func (m *HostManager) hostOpts(epochID uint64) []host.HostOption {
 		host.WithEpochID(epochID),
 		host.WithAvailabilityProvider(m.availability),
 	}
+	if m.payloadStore != nil {
+		opts = append(opts, host.WithPayloadRetriever(m.payloadStore))
+	}
 	if m.maxNonce != nil {
 		opts = append(opts, host.WithMaxNonceProvider(m.maxNonce))
+	}
+	if m.liveStreamSpoolDir != "" {
+		opts = append(opts, host.WithLiveStreamSpoolDir(m.liveStreamSpoolDir))
 	}
 	return opts
 }

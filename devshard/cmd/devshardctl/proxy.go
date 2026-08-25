@@ -321,8 +321,15 @@ func (d *deferredWriter) Write(p []byte) (int, error) {
 				"error", err,
 			)
 		})
+		return 0, err
 	}
-	return n, err
+	if n < len(rewritten) {
+		return 0, io.ErrShortWrite
+	}
+	// Report progress in the caller's byte space, not the rewritten one:
+	// rewriteStreamingPayload can shrink or grow a chunk, and callers use the
+	// returned count to advance the resume cursor over upstream bytes.
+	return len(p), nil
 }
 
 func (d *deferredWriter) Flush() {
@@ -651,6 +658,7 @@ type statusResponse struct {
 	Nonce                uint64              `json:"nonce"`
 	Phase                string              `json:"phase"`
 	Balance              uint64              `json:"balance"`
+	SessionVersion       string              `json:"session_version,omitempty"`
 	ChainPhase           string              `json:"chain_phase,omitempty"`
 	ConfirmationPoCPhase string              `json:"confirmation_poc_phase,omitempty"`
 	RequestsBlocked      bool                `json:"requests_blocked"`
@@ -812,10 +820,11 @@ func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
 
 	cfg := p.sm.Config()
 	status := statusResponse{
-		EscrowID: p.escrowID,
-		Nonce:    p.session.Nonce(),
-		Phase:    phaseStr,
-		Balance:  p.sm.Balance(),
+		EscrowID:       p.escrowID,
+		Nonce:          p.session.Nonce(),
+		Phase:          phaseStr,
+		Balance:        p.sm.Balance(),
+		SessionVersion: p.sm.ProtocolVersion(),
 		Config: statusSessionConfig{
 			RefusalTimeout:            cfg.RefusalTimeout,
 			ExecutionTimeout:          cfg.ExecutionTimeout,

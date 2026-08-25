@@ -8,7 +8,10 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
+
+	"common/completionapi"
 
 	json "github.com/goccy/go-json"
 	"google.golang.org/protobuf/proto"
@@ -361,6 +364,7 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 		Nonce:       resp.Nonce,
 		Receipt:     resp.Receipt,
 		ConfirmedAt: resp.ConfirmedAt,
+		ReqMs:       resp.ReqMs,
 	}
 	if s.receiptDelay > 0 {
 		timer := time.NewTimer(s.receiptDelay)
@@ -387,19 +391,29 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 	var finishFailureWhere observability.Where
 
 	// Event 2+: inference result.
-	// If reconnecting to a completed inference, replay cached response.
-	// Otherwise run deferred execution with live streaming.
-	if resp.CachedResponseBody != nil && resp.ExecutionJob == nil {
-		if werr := replaySSEBody(w, resp.CachedResponseBody); werr != nil {
+	// Cached replay, live-attach reconnect, or deferred first-path execution.
+	switch {
+	case resp.CachedResponseBody != nil && resp.ExecutionJob == nil:
+		if werr := replaySSEBodyFromCursor(w, resp.CachedResponseBody, resp.DeliveredEvents, resp.DeliveredPartial, resp.CachedResponseML); werr != nil {
 			observability.RecordReceiptNoExecutionInterrupted(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, observability.ReasonCachedReplayErr, observability.WhereRuntimeWriteClientResponse)
 			return nil
 		}
-	} else if resp.ExecutionJob != nil {
+	case resp.LiveAttach:
+		if aerr := s.host.AttachLiveStream(resp.InferenceID, w, resp.DeliveredEvents, resp.DeliveredPartial); aerr != nil {
+			reason := liveAttachFailureReason(aerr)
+			observability.RecordExecutionNoFinish(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, reason, observability.WhereRuntimeWriteClientResponse)
+			logging.Error("live attach failed", "subsystem", "server", "error", aerr)
+			return nil
+		}
+	case resp.ExecutionJob != nil:
 		resp.ExecutionJob.ResponseWriter = w
 		execResult, execErr := s.host.RunExecution(ctx, resp.ExecutionJob)
 		if execErr != nil {
 			reason, where := observability.ErrorReason(execErr, observability.ReasonExecuteErr, observability.WhereHostExecute)
-			if errors.Is(ctx.Err(), context.Canceled) {
+			// Execution is detached from the request context (ML drain continues
+			// after client disconnect). Only treat as client-cancel when the
+			// execution itself was canceled — not merely because ctx was.
+			if errors.Is(execErr, context.Canceled) {
 				observability.RecordClientCancelledAfterReceipt(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, where)
 				return nil
 			}
@@ -431,7 +445,7 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 	}
 
 	switch {
-	case resp.ExecutionExpected && resp.ExecutionJob != nil:
+	case resp.ExecutionExpected && (resp.ExecutionJob != nil || resp.LiveAttach):
 		observability.RecordFinishPublished(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, finishReason, finishFailureWhere)
 	case resp.Receipt != nil:
 		observability.RecordReceiptNoExecutionExpected(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, resp.ReceiptReason, observability.WhereHostSignReceipt)
@@ -442,16 +456,262 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 	return nil
 }
 
+// partialStreamErrorLine terminates the replay of a stored body that never
+// received the upstream terminator (ML drain ended early). Shaped like the
+// gateway's own mid-stream error event so existing clients and the gateway's
+// SSE error classification both understand it.
+const partialStreamErrorLine = `data: {"error":{"message":"upstream stream ended before completion; response is incomplete","type":"incomplete_stream","code":"stream_incomplete"}}`
+
 // replaySSEBody writes cached ML response bytes as SSE data lines.
-// The cached bytes are the raw response body (JSON). Wrap as a single SSE data event.
+//
+// Streamed inferences are stored as completionapi.SerializedStreamedResponse
+// ({"events":[…]}), where each event is already a full "data: …" line. Replay
+// those as individual SSE events so a reconnect looks like the live stream.
+// A non-envelope body (JSON chat.completion) keeps the historical single-event
+// wrap and is terminated with data: [DONE] — that wrap is how a complete
+// non-SSE body is presented as SSE.
+//
+// Streamed envelopes are different: a post-drain partial is stored without a
+// real [DONE], and synthesizing one would make a truncated stream look finished
+// to the client. Replay emits exactly the stored events and then an explicit
+// error event, so truncation is visible rather than disguised as success.
 func replaySSEBody(w http.ResponseWriter, body []byte) error {
-	if _, err := fmt.Fprintf(w, "data: %s\n\n", body); err != nil {
+	return replaySSEBodyFromCursor(w, body, 0, 0, nil)
+}
+
+// replaySSEBodyFromCursor replays a cached body starting at the resume cursor.
+// deliveredEvents indexes complete upstream data events; deliveredPartial is a
+// byte offset into the next event (0 on an event boundary).
+// ml is the optional absolute per-content-event host read times (Step 5g); when
+// present, `: devshard-ts` comments are injected before each batch (tier=cache).
+func replaySSEBodyFromCursor(w http.ResponseWriter, body []byte, deliveredEvents, deliveredPartial int64, ml []int64) error {
+	if deliveredEvents < 0 || deliveredPartial < 0 {
+		return host.ErrInvalidResumeCursor
+	}
+	if events, ok := streamedReplayEvents(body); ok {
+		sawDone := false
+		idx := int64(0)
+		var (
+			batchML  []int64
+			batchOut []string
+			batchB   int64 = -1
+		)
+		flush := func() error {
+			if len(batchOut) == 0 {
+				return nil
+			}
+			// One write: single :devshard-ts comment then ≤N data events.
+			var buf []byte
+			if len(batchML) == len(batchOut) {
+				buf = host.AppendDevshardTSComment(nil, batchB, batchML, host.FreshWriteTimes(len(batchML)), host.HopTierCache)
+			}
+			for _, out := range batchOut {
+				buf = append(buf, out...)
+				buf = append(buf, '\n', '\n')
+			}
+			if len(buf) > 0 {
+				if _, err := w.Write(buf); err != nil {
+					return err
+				}
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				}
+			}
+			batchML = batchML[:0]
+			batchOut = batchOut[:0]
+			batchB = -1
+			return nil
+		}
+		for _, event := range events {
+			line := normalizeReplaySSEEvent(event)
+			if line == "" {
+				continue
+			}
+			if isSSEDoneDataLine(line) {
+				sawDone = true
+			}
+			if idx < deliveredEvents {
+				idx++
+				continue
+			}
+			out := line
+			if idx == deliveredEvents && deliveredPartial > 0 {
+				// Stored events are "data: …" lines without a trailing newline.
+				if deliveredPartial > int64(len(out)) {
+					return host.ErrResumeCursorPast
+				}
+				if deliveredPartial == int64(len(out)) {
+					idx++
+					continue
+				}
+				out = out[deliveredPartial:]
+				// Fresh mid-event attach: stamp the open event before its
+				// remainder (same rule as LiveStream Subscribe). Do not batch
+				// with following events — this line does not *start* here.
+				if err := flush(); err != nil {
+					return err
+				}
+				var buf []byte
+				if int(idx) < len(ml) {
+					buf = host.AppendDevshardTSComment(nil, idx, []int64{ml[idx]}, host.FreshWriteTimes(1), host.HopTierCache)
+				}
+				buf = append(buf, out...)
+				buf = append(buf, '\n', '\n')
+				if _, err := w.Write(buf); err != nil {
+					return err
+				}
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				}
+				idx++
+				continue
+			}
+			if int(idx) < len(ml) {
+				if len(batchOut) == 0 {
+					batchB = idx
+				}
+				batchML = append(batchML, ml[idx])
+				batchOut = append(batchOut, out)
+				idx++
+				if len(batchOut) >= host.MaxDevshardTSEventsPerComment {
+					if err := flush(); err != nil {
+						return err
+					}
+				}
+				continue
+			}
+			if err := flush(); err != nil {
+				return err
+			}
+			if err := writeSSEDataLine(w, out); err != nil {
+				return err
+			}
+			idx++
+		}
+		if err := flush(); err != nil {
+			return err
+		}
+		if !sawDone {
+			return writePartialStreamMarker(w, deliveredEvents, deliveredPartial, idx)
+		}
+		if deliveredEvents > idx {
+			return host.ErrResumeCursorPast
+		}
+		return nil
+	}
+
+	if deliveredEvents > 0 || deliveredPartial > 0 {
+		// Single-event JSON body: only event 0 exists.
+		if deliveredEvents > 1 || (deliveredEvents == 1 && deliveredPartial > 0) {
+			return host.ErrResumeCursorPast
+		}
+		if deliveredEvents == 1 {
+			return writeSSEDataLine(w, "data: [DONE]")
+		}
+		payload := "data: " + string(body)
+		if deliveredPartial > int64(len(payload)) {
+			return host.ErrResumeCursorPast
+		}
+		if deliveredPartial < int64(len(payload)) {
+			if err := writeSSEDataLine(w, payload[deliveredPartial:]); err != nil {
+				return err
+			}
+		}
+		return writeSSEDataLine(w, "data: [DONE]")
+	}
+
+	if err := writeSSEDataLine(w, "data: "+string(body)); err != nil {
 		return err
 	}
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
+	return writeSSEDataLine(w, "data: [DONE]")
+}
+
+// liveAttachFailureReason maps host live-attach errors to the terminal reason
+// recorded for reconnect failures. Cursor / availability / resume-tier / lag
+// errors are resume-path failures (cached_replay_err); anything else stays
+// execute_err.
+func liveAttachFailureReason(err error) observability.Reason {
+	if errors.Is(err, host.ErrResumeCursorPast) || errors.Is(err, host.ErrInvalidResumeCursor) ||
+		errors.Is(err, host.ErrLiveStreamGone) || errors.Is(err, host.ErrLiveStreamPruned) ||
+		errors.Is(err, host.ErrLiveStreamResumeUnavailable) || errors.Is(err, host.ErrSubscriberLagged) ||
+		errors.Is(err, host.ErrLiveStreamFormingOversize) || errors.Is(err, host.ErrSpoolClosed) {
+		return observability.ReasonCachedReplayErr
 	}
-	if _, err := fmt.Fprintf(w, "data: [DONE]\n\n"); err != nil {
+	return observability.ReasonExecuteErr
+}
+
+// streamedReplayEvents reports whether body is a SerializedStreamedResponse
+// envelope and returns its events. Malformed JSON or a body without an
+// "events" key is treated as a single JSON completion payload.
+func streamedReplayEvents(body []byte) ([]string, bool) {
+	var generic map[string]json.RawMessage
+	if err := json.Unmarshal(body, &generic); err != nil {
+		return nil, false
+	}
+	if _, exists := generic["events"]; !exists {
+		return nil, false
+	}
+	var serialized completionapi.SerializedStreamedResponse
+	if err := json.Unmarshal(body, &serialized); err != nil {
+		return nil, false
+	}
+	return serialized.Events, true
+}
+
+// normalizeReplaySSEEvent returns a single "data: …" line for a stored event.
+// Stored streamed events usually already include the prefix; raw JSON payloads
+// get one added. Blank lines are dropped.
+func normalizeReplaySSEEvent(event string) string {
+	line := strings.TrimRight(event, "\r\n")
+	if strings.TrimSpace(line) == "" {
+		return ""
+	}
+	if strings.HasPrefix(line, completionapi.DataPrefix) {
+		return line
+	}
+	if strings.HasPrefix(line, "data:") {
+		return completionapi.DataPrefix + strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+	}
+	return completionapi.DataPrefix + line
+}
+
+// writePartialStreamMarker emits the incomplete-stream error event that closes
+// a stored body with no terminator. The marker occupies exactly one event slot
+// past the stored events, so a reconnect whose cursor already covers it is
+// fully delivered rather than cursor-past — the gateway counts it like any
+// other forwarded event.
+func writePartialStreamMarker(w http.ResponseWriter, deliveredEvents, deliveredPartial, storedEvents int64) error {
+	if deliveredEvents > storedEvents+1 {
+		return host.ErrResumeCursorPast
+	}
+	if deliveredEvents == storedEvents+1 {
+		if deliveredPartial > 0 {
+			return host.ErrResumeCursorPast
+		}
+		return nil
+	}
+	out := partialStreamErrorLine
+	if deliveredEvents == storedEvents && deliveredPartial > 0 {
+		if deliveredPartial > int64(len(out)) {
+			return host.ErrResumeCursorPast
+		}
+		if deliveredPartial == int64(len(out)) {
+			return nil
+		}
+		out = out[deliveredPartial:]
+	}
+	return writeSSEDataLine(w, out)
+}
+
+func isSSEDoneDataLine(line string) bool {
+	if !strings.HasPrefix(line, "data:") {
+		return false
+	}
+	return strings.TrimSpace(strings.TrimPrefix(line, "data:")) == "[DONE]"
+}
+
+func writeSSEDataLine(w http.ResponseWriter, line string) error {
+	if _, err := fmt.Fprintf(w, "%s\n\n", line); err != nil {
 		return err
 	}
 	if f, ok := w.(http.Flusher); ok {

@@ -15,13 +15,20 @@ gen-compose: ## Render config, keyrings, docker-compose.yml, and .env from confi
 clean-keyring: ## Delete generated ./keyring (then run make gen-compose).
 	rm -rf keyring
 
-build-devshardd: ## Build linux devshardd for containers (requires Docker).
-	$(MAKE) -C ../.. devshardd-build DEVSHARD_VERSION=v2 DEVSHARD_BINARY_VERSION=0.2.13-v2-r2
+DEVSHARD_VERSION ?= v2
+DEVSHARD_BINARY_VERSION ?= 0.2.13-$(DEVSHARD_VERSION)-r2
+
+# Extra devshardd build tags; set to testenvci only for citests that need a
+# host fault injector (see devshard/host/livestream_fault.go).
+DEVSHARD_BUILD_TAGS ?=
+
+build-devshardd: ## Build linux devshardd for containers (requires Docker). Override DEVSHARD_VERSION=v5 for reconnect citest.
+	$(MAKE) -C ../.. devshardd-build DEVSHARD_VERSION=$(DEVSHARD_VERSION) DEVSHARD_BINARY_VERSION=$(DEVSHARD_BINARY_VERSION) DEVSHARD_BUILD_TAGS=$(DEVSHARD_BUILD_TAGS)
 
 build-devshardd-local: ## Build host devshardd for --print-* checks (no Docker).
 	@mkdir -p ../../build
-	cd .. && go build -ldflags "-X main.Version=v2 -X main.BinaryVersion=0.2.13-v2-r2 -X devshard/types.buildStateRootProtocolVersion=v2" -o ../build/devshardd ./cmd/devshardd/
-	@echo "Built ../../build/devshardd for this host ($(shell uname -s)/$(shell uname -m))"
+	cd .. && go build -tags "$(DEVSHARD_BUILD_TAGS)" -ldflags "-X main.Version=$(DEVSHARD_VERSION) -X main.BinaryVersion=$(DEVSHARD_BINARY_VERSION) -X devshard/types.buildStateRootProtocolVersion=$(DEVSHARD_VERSION)" -o ../build/devshardd ./cmd/devshardd/
+	@echo "Built ../../build/devshardd for this host ($(shell uname -s)/$(shell uname -m)) version=$(DEVSHARD_VERSION)"
 	@echo "For Docker stack use: make build-devshardd (requires Docker daemon)"
 
 test-compose: ## gencompose + docker compose config validation.
@@ -66,7 +73,7 @@ dev-logs: ## Follow dev overlay logs.
 .PHONY: citest-images citest-stack citest-stack-build list-citest-targets
 .PHONY: citest-validation-lease-race citest-escrow-longpoll
 .PHONY: citest-versiond-rolling-update citest-adversarial
-.PHONY: citest-observability citest-grpc-transport test-gateway-smoke
+.PHONY: citest-observability citest-grpc-transport citest-attempt-reconnect test-gateway-smoke
 
 # citest-images and citest-stack-build are build/helper rules, not standalone
 # suites, so they are excluded from the auto-discovered CI matrix.
@@ -77,7 +84,9 @@ list-citest-targets: ## Print runnable citest suite targets (one per line) for t
 		| sort -u
 .PHONY: obs-up obs-down
 # versiond-0 produces devshard-versiond:latest shared by all versiond-* hosts.
-CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai devshardctl versiond-router versiond-0
+# Root docker-compose.yml names mock-openai as mock-openai-0 (per-host); citest
+# gencompose stacks reuse the same image tags (devshard-mock-openai:latest, …).
+CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai-0 devshardctl versiond-router versiond-0
 STACK_CITEST_PATTERN := ^Test(StackSmoke|RouterStickiness|ParamsLongPoll|EpochSwitch|GatewayChat|Versiond.*|HAStaleStandbyCatchupIdempotent|LegacyVersionPinnedToSingleHost|SQLiteToPostgresHAMigration|ValidationLeaseRace.*)$$
 
 citest-images: ## Pull hub images and build all compose images required for citest.
@@ -99,6 +108,14 @@ citest-versiond-rolling-update: citest-images ## Same-version versiond rolling u
 
 citest-adversarial: citest-images ## Phase 9 adversarial citest (TESTENV_CITEST=1).
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestA1_|TestA2_|TestA3_|TestA4_' -count=1 -v -timeout 30m
+
+citest-attempt-reconnect: ## Same-nonce reconnect citest (admin + v2 protocol gate, then v5 resume).
+	$(MAKE) build-devshardd DEVSHARD_VERSION=v2
+	$(MAKE) citest-images
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestAttemptReconnect_AdminEnables|TestAttemptReconnect_V2ProtocolSkipsSameNonce' -count=1 -v -timeout 30m
+	$(MAKE) build-devshardd DEVSHARD_VERSION=v5 DEVSHARD_BUILD_TAGS=testenvci
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestAttemptReconnect_V5MidStreamDetachResumesSameNonce' -count=1 -v -timeout 30m
+	$(MAKE) build-devshardd DEVSHARD_VERSION=v2
 
 citest-grpc-transport: citest-images ## Phase 12b G1–G4 gRPC-only gateway citest (see docs/chain-transport-consolidation.md).
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestG1_|TestG2_|TestG3_' -count=1 -v -timeout 30m

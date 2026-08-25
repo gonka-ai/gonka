@@ -55,6 +55,38 @@ func TestParseProtocolVersion_AcceptsRouteStyleV4(t *testing.T) {
 	}
 }
 
+func TestParseProtocolVersion_AcceptsRouteStyleV5(t *testing.T) {
+	got, err := ParseProtocolVersion("v5")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got != ProtocolV5 {
+		t.Fatalf("expected v5 to normalize to %s, got %s", ProtocolV5, got)
+	}
+	got, err = ParseProtocolVersion("5")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got != ProtocolV5 {
+		t.Fatalf("expected 5 to normalize to %s, got %s", ProtocolV5, got)
+	}
+}
+
+func TestProtocolVersionAtLeast(t *testing.T) {
+	if !ProtocolVersionAtLeast(ProtocolV5, ProtocolV5) {
+		t.Fatal("expected v5 >= v5")
+	}
+	if !ProtocolVersionAtLeast(ProtocolV5, ProtocolV4) {
+		t.Fatal("expected v5 >= v4")
+	}
+	if ProtocolVersionAtLeast(ProtocolV4, ProtocolV5) {
+		t.Fatal("expected v4 < v5")
+	}
+	if !ProtocolVersionAtLeast("v5", ProtocolV5) {
+		t.Fatal("expected route-style v5 >= ProtocolV5")
+	}
+}
+
 func TestParseProtocolVersion_RejectsOldProtocol(t *testing.T) {
 	if _, err := ParseProtocolVersion("0.2.11"); err == nil {
 		t.Fatal("expected old protocol to be rejected")

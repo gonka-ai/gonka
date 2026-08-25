@@ -15,6 +15,11 @@ import (
 var (
 	PerfWindowSize        = 256
 	ParticipantPerfWindow = 60 * time.Minute
+
+	// Reconnect blips are timed degradation signals (not RequestSample failures)
+	// and are recorded without affecting routing.
+	// See proposals/always-stream-upstream.md (reconnect blip accounting).
+	ReconnectBlipWindow = 5 * time.Minute
 )
 
 func DefaultPerfSettings() PerfSettings {
@@ -262,6 +267,7 @@ type PerfTracker struct {
 	firstTokenBuckets map[string]*firstTokenBucketRing
 	contextLimits     map[string]uint64 // participant_key -> observed max context length
 	toolUnsupported   map[string]bool   // participant_key -> host reported vLLM tool-choice support is disabled
+	reconnectBlips    map[string][]time.Time
 	pairwise          *PairwiseTracker
 	store             *PerfStore
 }
@@ -272,6 +278,7 @@ func NewPerfTracker(store *PerfStore) *PerfTracker {
 		firstTokenBuckets: make(map[string]*firstTokenBucketRing),
 		contextLimits:     make(map[string]uint64),
 		toolUnsupported:   make(map[string]bool),
+		reconnectBlips:    make(map[string][]time.Time),
 		pairwise:          NewPairwiseTracker(),
 		store:             store,
 	}
@@ -611,6 +618,60 @@ func (t *PerfTracker) ParticipantFailureThresholdExceeded(participantKey string)
 		return st.FailureSamples > 1
 	}
 	return float64(st.FailureSamples)/float64(st.TotalSamples) > 0.01
+}
+
+// RecordReconnectBlip notes that a participant needed a same-nonce reconnect
+// ladder. Blips age out after ReconnectBlipWindow, never touch FailureSamples,
+// and never feed Decide or the picker — they exist so operators (and
+// metrics) can see which participants drop mid-stream.
+func (t *PerfTracker) RecordReconnectBlip(participantKey string) {
+	if t == nil || participantKey == "" {
+		return
+	}
+	now := time.Now()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.reconnectBlips[participantKey] = append(
+		pruneReconnectBlips(t.reconnectBlips[participantKey], now),
+		now,
+	)
+}
+
+// ReconnectBlipCount returns how many reconnect blips remain in the window.
+func (t *PerfTracker) ReconnectBlipCount(participantKey string) int {
+	if t == nil || participantKey == "" {
+		return 0
+	}
+	now := time.Now()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	pruned := pruneReconnectBlips(t.reconnectBlips[participantKey], now)
+	if len(pruned) != len(t.reconnectBlips[participantKey]) {
+		if len(pruned) == 0 {
+			delete(t.reconnectBlips, participantKey)
+		} else {
+			t.reconnectBlips[participantKey] = pruned
+		}
+	}
+	return len(pruned)
+}
+
+func pruneReconnectBlips(blips []time.Time, now time.Time) []time.Time {
+	window := ReconnectBlipWindow
+	if window <= 0 {
+		window = 5 * time.Minute
+	}
+	cutoff := now.Add(-window)
+	kept := blips[:0]
+	for _, ts := range blips {
+		if !ts.Before(cutoff) {
+			kept = append(kept, ts)
+		}
+	}
+	if len(kept) == 0 {
+		return nil
+	}
+	return kept
 }
 
 func perfSampleKey(s RequestSample) string {

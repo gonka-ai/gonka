@@ -58,6 +58,29 @@ func TestParticipantFailureThreshold(t *testing.T) {
 	require.True(t, perf.ParticipantFailureThresholdExceeded(key), "2 failures crosses both short and 100-sample thresholds")
 }
 
+func TestReconnectBlipWindowCountsAndExpires(t *testing.T) {
+	savedWindow := ReconnectBlipWindow
+	ReconnectBlipWindow = 50 * time.Millisecond
+	t.Cleanup(func() { ReconnectBlipWindow = savedWindow })
+
+	perf := NewPerfTracker(nil)
+	key := "blip-host"
+	require.Equal(t, 0, perf.ReconnectBlipCount(key))
+
+	perf.RecordReconnectBlip(key)
+	require.Equal(t, 1, perf.ReconnectBlipCount(key))
+
+	perf.RecordReconnectBlip(key)
+	require.Equal(t, 2, perf.ReconnectBlipCount(key))
+
+	stats := perf.StatsForParticipant(key)
+	require.Zero(t, stats.TotalSamples, "blips must not create RequestSample failures")
+	require.Zero(t, stats.FailureSamples)
+
+	time.Sleep(60 * time.Millisecond)
+	require.Equal(t, 0, perf.ReconnectBlipCount(key), "blips older than window must drop out")
+}
+
 func TestPerfTrackerHostCannotServeRequestUsesCapabilities(t *testing.T) {
 	perf := NewPerfTracker(nil)
 	perf.RecordToolUnsupported("p1")

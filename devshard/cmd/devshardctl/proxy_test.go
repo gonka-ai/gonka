@@ -2115,6 +2115,23 @@ func TestDecision_UnresponsiveHost(t *testing.T) {
 	require.Equal(t, "primary_unresponsive", d.Reason)
 }
 
+// Blips are recorded for observability only: they must never buy an extra
+// generation by forcing an immediate secondary.
+func TestDecision_ReconnectBlipsDoNotChangeRouting(t *testing.T) {
+	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
+
+	perf := NewPerfTracker(nil)
+	key := legacyHostPerfKey(0)
+	redundancy := &Redundancy{perf: perf, groupSize: 3}
+	baseline := redundancy.Decide(0, 100)
+
+	for i := 0; i < 5; i++ {
+		perf.RecordReconnectBlip(key)
+	}
+	require.Equal(t, 5, perf.ReconnectBlipCount(key))
+	require.Equal(t, baseline, redundancy.Decide(0, 100))
+}
+
 func withRedundancySpeedPolicyForProxyTest(t *testing.T, policy string) {
 	t.Helper()
 	saved := RedundancySpeedPolicy

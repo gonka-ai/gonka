@@ -39,6 +39,8 @@ type DevshardMetrics struct {
 	participantFirstContent    *prometheus.HistogramVec
 	participantPrefillPerToken *prometheus.HistogramVec
 	participantTotalSeconds    *prometheus.HistogramVec
+	hopSeconds                 *prometheus.HistogramVec
+	hopCoverage                *prometheus.CounterVec
 
 	gatewayRequests       *prometheus.CounterVec
 	criticalUserFailures  *prometheus.CounterVec
@@ -238,6 +240,21 @@ func NewDevshardMetrics() *DevshardMetrics {
 			},
 			[]string{"participant_key", "model"},
 		),
+		hopSeconds: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "devshard_gateway_hop_seconds",
+				Help:    "Per-chunk hop latency across gateway↔host↔ML (Step 5g). Informational only; never feeds routing.",
+				Buckets: prometheus.ExponentialBuckets(0.001, 2, 14),
+			},
+			[]string{"hop", "participant_key", "model", "tier"},
+		),
+		hopCoverage: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_hop_coverage_total",
+				Help: "Whether a streamed data line carried host hop stamps (present) or not (absent).",
+			},
+			[]string{"result", "participant_key", "model"},
+		),
 		gatewayRequests: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "devshard_gateway_requests_total",
@@ -336,6 +353,8 @@ func NewDevshardMetrics() *DevshardMetrics {
 		m.participantFirstContent,
 		m.participantPrefillPerToken,
 		m.participantTotalSeconds,
+		m.hopSeconds,
+		m.hopCoverage,
 		m.gatewayRequests,
 		m.criticalUserFailures,
 		m.hiddenFailures,
@@ -580,6 +599,31 @@ func (m *DevshardMetrics) RecordGatewayTimeoutAction(action GatewayTimeoutAction
 		metricLabel(action.Kind, "unknown"),
 		metricLabel(action.Action, "unknown"),
 		metricLabel(action.Reason, "none"),
+	).Inc()
+}
+
+// ObserveGatewayHop records one hop sample (Step 5g). hop ∈ gw_to_host |
+// req_to_ml | host_buffer | host_to_gw. Informational only (R8).
+func (m *DevshardMetrics) ObserveGatewayHop(hop, participantKey, model, tier string, seconds float64) {
+	if m == nil || seconds < 0 {
+		return
+	}
+	m.hopSeconds.WithLabelValues(
+		metricLabel(hop, "unknown"),
+		metricLabel(participantKey, "unknown"),
+		metricLabel(model, "unknown"),
+		metricLabel(tier, "live"),
+	).Observe(seconds)
+}
+
+func (m *DevshardMetrics) RecordGatewayHopCoverage(result, participantKey, model string) {
+	if m == nil {
+		return
+	}
+	m.hopCoverage.WithLabelValues(
+		metricLabel(result, "absent"),
+		metricLabel(participantKey, "unknown"),
+		metricLabel(model, "unknown"),
 	).Inc()
 }
 
@@ -991,6 +1035,8 @@ func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker) st
 			return gatewayHTTPFailureReason(upstreamErr.StatusCode)
 		case errors.Is(inf.err, transport.ErrSSEStreamTruncated):
 			return "sse_truncated"
+		case errors.Is(inf.err, transport.ErrSSEEventTooLarge):
+			return "sse_event_too_large"
 		case errors.Is(inf.err, io.EOF), errors.Is(inf.err, io.ErrUnexpectedEOF), strings.Contains(strings.ToLower(inf.err.Error()), "eof"):
 			return "eof_transport"
 		case errors.Is(inf.err, context.Canceled), errors.Is(inf.err, context.DeadlineExceeded):

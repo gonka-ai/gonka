@@ -341,6 +341,19 @@ func (c SetNodesActualStatusCommand) Execute(b *Broker) {
 			continue
 		}
 
+		// Reject stale observations: reconciliation (or another update) may have
+		// advanced CurrentStatus after the query captured PrevStatus. Without this
+		// CAS, a mid-transition STOPPED probe can overwrite a successful INFERENCE
+		// finalize and make the node unavailable.
+		if node.State.CurrentStatus != update.PrevStatus {
+			logging.Info("Skipping status update: prev status mismatch", types.Nodes,
+				"node_id", nodeId,
+				"update.prev_status", update.PrevStatus.String(),
+				"update.status", update.NewStatus.String(),
+				"node.State.CurrentStatus", node.State.CurrentStatus)
+			continue
+		}
+
 		logging.Info("Setting actual status for node", types.Nodes,
 			"node_id", nodeId,
 			"update.status", update.NewStatus.String(),
