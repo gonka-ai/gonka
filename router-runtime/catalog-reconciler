@@ -183,27 +183,37 @@ validate_version() {
 
 fetch_catalog() {
     body=$tmpdir/catalog.json
+    json_names=$tmpdir/catalog.json.names
     raw_names=$tmpdir/catalog.raw.names
     names=$tmpdir/catalog.names
     if ! wget -q -T "$fetch_timeout" -O "$body" "$catalog_url"; then
         return 1
     fi
-    if ! jq -r '
+    if ! jq -ac '
         if type != "object" then error("catalog is not an object") else . end
         |
         .versions as $versions
         | if ($versions | type) != "array" then error("versions is not an array") else $versions end
         | .[]
         | if (.name | type) != "string" then error("version name is not a string") else .name end
-    ' "$body" > "$raw_names"; then
+    ' "$body" > "$json_names"; then
         return 1
     fi
+    : > "$raw_names"
+    while IFS= read -r json_name; do
+        # Keep each scalar JSON-framed until validation. Every character in the
+        # accepted ASCII grammar is emitted literally; any control character,
+        # quote, backslash, or non-ASCII byte remains escaped and is rejected.
+        case "$json_name" in
+            \"*\") version=${json_name#\"}; version=${version%\"} ;;
+            *) return 1 ;;
+        esac
+        validate_version "$version" || return 1
+        printf '%s\n' "$version" >> "$raw_names"
+    done < "$json_names"
     if duplicate=$(router_first_duplicate "$raw_names") && [ -n "$duplicate" ]; then
         return 1
     fi
-    while IFS= read -r version; do
-        validate_version "$version" || return 1
-    done < "$raw_names"
     LC_ALL=C sort -u "$raw_names" -o "$raw_names"
     project_names "$raw_names" "$names"
 }

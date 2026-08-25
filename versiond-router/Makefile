@@ -608,6 +608,42 @@ test-version-routing:
 		|| fail "catalog fetch errors did not retain the last known slot usage"; \
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/after-malformed/chat)" = b ] \
 		|| fail "a malformed catalog replaced the last accepted route view"; \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
+		> "$$tmpdir/catalog/versions.next"; \
+	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+	for i in $$(seq 10); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "ready" and .dynamic_slots_used == 2' \
+				>/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| jq -e '.state == "ready" and .dynamic_slots_used == 2' >/dev/null \
+		|| fail "catalog reconciliation did not recover before the framing test"; \
+	framing_cache_before=$$(docker exec gonka-vp-router sha256sum \
+		/var/lib/gonka-router/catalog.json | awk '{print $$1}'); \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v9"},{"name":"v10"},{"name":"v11\nv5"}]}' \
+		> "$$tmpdir/catalog/versions.next"; \
+	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+	for i in $$(seq 10); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "fetch-error" and .dynamic_slots_used == 2' \
+				>/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| jq -e '.state == "fetch-error" and .dynamic_slots_used == 2' >/dev/null \
+		|| fail "an embedded newline split one governance name into multiple routes"; \
+	if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
+		/etc/haproxy/versions.map | grep -qx v11; then \
+		fail "an embedded newline published a fabricated catalog route"; \
+	fi; \
+	framing_cache_after=$$(docker exec gonka-vp-router sha256sum \
+		/var/lib/gonka-router/catalog.json | awk '{print $$1}'); \
+	[ "$$framing_cache_after" = "$$framing_cache_before" ] \
+		|| fail "an embedded newline replaced the persistent catalog snapshot"; \
+	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/after-framing-error/chat)" = b ] \
+		|| fail "an embedded newline replaced the last accepted route view"; \
 	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
