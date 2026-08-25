@@ -89,7 +89,7 @@ func TestApplyPreviousConfirmedWeightCap_ClampsAndZeroes(t *testing.T) {
 	require.Equal(t, int64(300), weight[testutil.Executor], "real weight preserved for rewards")
 }
 
-func TestApplyPreviousConfirmedWeightCap_GuardianKeepsRealWeight(t *testing.T) {
+func TestApplyPreviousConfirmedWeightCap_GuardianIsCapped(t *testing.T) {
 	k, ctx := newMinimalInferenceKeeper(t)
 
 	const prevEpoch = uint64(5)
@@ -118,7 +118,7 @@ func TestApplyPreviousConfirmedWeightCap_GuardianKeepsRealWeight(t *testing.T) {
 	})
 
 	require.Equal(t, int64(100), result[0].CapWeight, "regular participant is capped")
-	require.Equal(t, int64(500), result[1].CapWeight, "guardian keeps real weight")
+	require.Equal(t, int64(100), result[1].CapWeight, "guardian follows the same trust cap")
 }
 
 func TestApplyPreviousConfirmedWeightCap_OnlyLivePreviousMembersProvideCap(t *testing.T) {
@@ -261,7 +261,7 @@ func TestResolveTrustWeights_FallsBackToWeightWhenCapUnset(t *testing.T) {
 	require.Equal(t, int64(200), weights[testutil.Validator2])
 }
 
-func TestCapComputeResultsToPreviousConfirmedWeight_ClampsAndDrops(t *testing.T) {
+func TestCapComputeResultsToPreviousConfirmedWeight_ClampsAndRetainsZero(t *testing.T) {
 	k, ctx := newMinimalInferenceKeeper(t)
 	const epoch = uint64(9)
 
@@ -271,7 +271,7 @@ func TestCapComputeResultsToPreviousConfirmedWeight_ClampsAndDrops(t *testing.T)
 		Participants: []*types.ActiveParticipant{
 			{Index: testutil.Validator, Weight: 100, CapWeight: 100},  // uncapped
 			{Index: testutil.Validator2, Weight: 500, CapWeight: 100}, // clamped
-			{Index: testutil.Executor, Weight: 300, CapWeight: 0},     // new -> dropped
+			{Index: testutil.Executor, Weight: 300, CapWeight: 0},     // retained until post-enhancement filtering
 		},
 	}))
 
@@ -290,14 +290,13 @@ func TestCapComputeResultsToPreviousConfirmedWeight_ClampsAndDrops(t *testing.T)
 	for _, r := range capped {
 		powerByOp[r.OperatorAddress] = r.Power
 	}
-	require.Len(t, capped, 2, "new participant dropped from validator set")
+	require.Len(t, capped, 3, "zero-cap entries remain available for guardian enhancement")
 	require.Equal(t, int64(100), powerByOp[valOperOf(t, testutil.Validator)], "uncapped participant unchanged")
 	require.Equal(t, int64(100), powerByOp[valOperOf(t, testutil.Validator2)], "over-weight participant clamped")
-	_, ok := powerByOp[valOperOf(t, testutil.Executor)]
-	require.False(t, ok, "new participant has no governance power")
+	require.Equal(t, int64(0), powerByOp[valOperOf(t, testutil.Executor)], "new participant has zero baseline power")
 }
 
-func TestCapComputeResultsToPreviousConfirmedWeight_SkipsGuardians(t *testing.T) {
+func TestCapComputeResultsToPreviousConfirmedWeight_CapsGuardians(t *testing.T) {
 	k, ctx := newMinimalInferenceKeeper(t)
 	const epoch = uint64(9)
 	guardianOperator := valOperOf(t, testutil.Validator2)
@@ -330,7 +329,94 @@ func TestCapComputeResultsToPreviousConfirmedWeight_SkipsGuardians(t *testing.T)
 		powerByOp[r.OperatorAddress] = r.Power
 	}
 	require.Equal(t, int64(100), powerByOp[valOperOf(t, testutil.Validator)], "regular participant is capped")
-	require.Equal(t, int64(900), powerByOp[guardianOperator], "guardian enhanced power is preserved")
+	require.Equal(t, int64(100), powerByOp[guardianOperator], "guardian is capped before temporary enhancement")
+}
+
+func TestGuardianEnhancementUsesCappedGovernanceVector(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	const epoch = uint64(9)
+
+	guardianOperator := valOperOf(t, testutil.Validator2)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.GenesisGuardianParams = &types.GenesisGuardianParams{
+		NetworkMaturityThreshold: 500,
+		NetworkMaturityMinHeight: 0,
+		GuardianAddresses:        []string{guardianOperator},
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, k.SetGenesisOnlyParams(ctx, &types.GenesisOnlyParams{
+		TotalSupply:               1_000_000_000,
+		OriginatorSupply:          160_000_000,
+		PreProgrammedSaleAmount:   120_000_000,
+		SupplyDenom:               "gonka",
+		GenesisGuardianMultiplier: types.DecimalFromFloat(0.52),
+		GenesisGuardianEnabled:    true,
+	}))
+
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:          epoch,
+		EpochGroupId:     epoch,
+		CapWeightApplied: true,
+		Participants: []*types.ActiveParticipant{
+			{Index: testutil.Validator, Weight: 1_000, CapWeight: 90},
+			{Index: testutil.Validator2, Weight: 1_000, CapWeight: 10},
+		},
+	}))
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	eg := &epochgroup.EpochGroup{GroupData: &types.EpochGroupData{EpochIndex: epoch}}
+	baseline := am.capComputeResultsToPreviousConfirmedWeight(ctx, eg, []stakingkeeper.ComputeResult{
+		{Power: 1_000, OperatorAddress: valOperOf(t, testutil.Validator)},
+		{Power: 1_000, OperatorAddress: guardianOperator},
+	})
+	enhanced := positiveComputeResults(am.applyEarlyNetworkProtection(ctx, baseline))
+
+	powerByOperator := make(map[string]int64, len(enhanced))
+	for _, result := range enhanced {
+		powerByOperator[result.OperatorAddress] = result.Power
+	}
+	require.Equal(t, int64(90), powerByOperator[valOperOf(t, testutil.Validator)])
+	require.Equal(t, int64(46), powerByOperator[guardianOperator], "guardian enhancement must use capped non-guardian power")
+
+	stored, found := k.GetActiveParticipants(ctx, epoch)
+	require.True(t, found)
+	require.Equal(t, int64(10), stored.Participants[1].CapWeight, "enhancement must not mutate persisted trust weight")
+	require.Equal(t, int64(1_000), stored.Participants[1].Weight, "enhancement must not mutate real weight")
+}
+
+func TestBLSGuardianGateUsesFullTrustVector(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	guardianOperator := valOperOf(t, testutil.Validator)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.GenesisGuardianParams = &types.GenesisGuardianParams{
+		NetworkMaturityThreshold: 200,
+		NetworkMaturityMinHeight: 0,
+		GuardianAddresses:        []string{guardianOperator},
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, k.SetGenesisOnlyParams(ctx, &types.GenesisOnlyParams{
+		TotalSupply:               1_000_000_000,
+		OriginatorSupply:          160_000_000,
+		PreProgrammedSaleAmount:   120_000_000,
+		SupplyDenom:               "gonka",
+		GenesisGuardianMultiplier: types.DecimalFromFloat(0.52),
+		GenesisGuardianEnabled:    true,
+	}))
+
+	guardian := &types.ActiveParticipant{Index: testutil.Validator, CapWeight: 10}
+	filtered := &types.ActiveParticipant{Index: testutil.Validator2, CapWeight: 100}
+	survivor := &types.ActiveParticipant{Index: testutil.Executor, CapWeight: 100}
+
+	adjusted := applyBLSGuardianSlotReservation(
+		ctx,
+		k,
+		[]*types.ActiveParticipant{guardian, filtered, survivor},
+		[]*types.ActiveParticipant{guardian, survivor},
+	)
+	require.Nil(t, adjusted, "full trust weight is mature even though the surviving subset is not")
 }
 
 func TestCapComputeResultsToPreviousConfirmedWeight_FallsBackWhenCapUnset(t *testing.T) {
@@ -358,7 +444,7 @@ func TestCapComputeResultsToPreviousConfirmedWeight_FallsBackWhenCapUnset(t *tes
 	require.Equal(t, results, capped, "no capping when CapWeight is unset")
 }
 
-func TestCapComputeResultsToPreviousConfirmedWeight_AppliedAllZeroDrops(t *testing.T) {
+func TestCapComputeResultsToPreviousConfirmedWeight_AppliedAllZeroRetains(t *testing.T) {
 	k, ctx := newMinimalInferenceKeeper(t)
 	const epoch = uint64(11)
 
@@ -378,7 +464,8 @@ func TestCapComputeResultsToPreviousConfirmedWeight_AppliedAllZeroDrops(t *testi
 		{Power: 100, OperatorAddress: valOperOf(t, testutil.Validator)},
 		{Power: 500, OperatorAddress: valOperOf(t, testutil.Validator2)},
 	})
-	require.Empty(t, capped, "authoritative all-zero caps must not fall back to real weight")
+	require.Len(t, capped, 2, "authoritative all-zero caps must not fall back to real weight")
+	require.False(t, hasPositiveComputePower(capped))
 }
 
 func TestApplyPreviousConfirmedWeightCap_EpochMismatch(t *testing.T) {

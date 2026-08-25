@@ -218,23 +218,18 @@ func ValidateGuardianEnhancementResults(original []stakingkeeper.ComputeResult, 
 	return nil
 }
 
-// ApplyBLSGuardianSlotReservation computes adjusted percentage weights for BLS slot assignment
-// using the genesis guardian multiplier f = m/(1+m). It is applied only when:
-// - genesis guardian enhancement is enabled,
-// - network is not mature,
-// - at least one guardian is present among active participants,
-// - at least two participants exist.
-// It returns a map from participant account address to percentage (0..100) and the list of guardian
-// account addresses present in the set. If no adjustment is applied, returns (nil, guardiansInSet).
-func ApplyBLSGuardianSlotReservation(ctx context.Context, k keeper.Keeper, activeParticipants []*types.ActiveParticipant) map[string]mathsdk.LegacyDec {
-	// Basic gating
-	if len(activeParticipants) < 2 {
+// applyBLSGuardianSlotReservation evaluates maturity against the complete trust
+// vector, then calculates the reservation from participants eligible for BLS.
+func applyBLSGuardianSlotReservation(
+	ctx context.Context,
+	k keeper.Keeper,
+	activeParticipants []*types.ActiveParticipant,
+	eligibleParticipants []*types.ActiveParticipant,
+) map[string]mathsdk.LegacyDec {
+	if len(activeParticipants) < 2 || len(eligibleParticipants) == 0 {
 		return nil
 	}
 
-	// Total network power. This runs as part of BLS slot reservation, so it uses
-	// the trust weight (CapWeight, the previous-epoch confirmed weight cap) to
-	// stay consistent with the rest of the BLS weighting.
 	trustWeights := resolveTrustWeights(activeParticipants, true)
 	totalWeight := int64(0)
 	for _, p := range activeParticipants {
@@ -244,109 +239,126 @@ func ApplyBLSGuardianSlotReservation(ctx context.Context, k keeper.Keeper, activ
 		return nil
 	}
 
-	// Build temporary compute-like results to reuse central gating logic
-	tmpResults := make([]stakingkeeper.ComputeResult, 0, len(activeParticipants))
-	for _, p := range activeParticipants {
-		acc, err := sdk.AccAddressFromBech32(p.Index)
-		if err != nil {
-			continue
-		}
-		op := sdk.ValAddress(acc).String()
-		tmpResults = append(tmpResults, stakingkeeper.ComputeResult{Power: trustWeights[p.Index], OperatorAddress: op})
-	}
-
-	// Centralized gating: feature enabled, maturity, guardians configured and present, len>=2
-	if !ShouldApplyGenesisGuardianEnhancement(ctx, k, totalWeight, tmpResults) {
+	baselineResults := activeParticipantsToGuardianGateResults(activeParticipants, trustWeights)
+	if !ShouldApplyGenesisGuardianEnhancement(ctx, k, totalWeight, baselineResults) {
 		return nil
 	}
 
-	// Guardian operator addresses
-	guardianOperators := k.GetGenesisGuardianAddresses(ctx)
-	guardianOpSet := make(map[string]bool, len(guardianOperators))
-	for _, op := range guardianOperators {
-		guardianOpSet[op] = true
+	eligibleResults := activeParticipantsToComputeResults(eligibleParticipants, trustWeights)
+	eligibleTotal := int64(0)
+	for _, result := range eligibleResults {
+		eligibleTotal += result.Power
+	}
+	if eligibleTotal <= 0 {
+		return nil
 	}
 
-	// Identify guardians present and compute sums (by operator address)
-	guardianIndices := []int{}
-	totalGuardianPower := int64(0)
-	for i, p := range activeParticipants {
-		acc, err := sdk.AccAddressFromBech32(p.Index)
-		if err != nil {
-			continue
-		}
-		op := sdk.ValAddress(acc).String()
-		if guardianOpSet[op] {
-			guardianIndices = append(guardianIndices, i)
-			totalGuardianPower += trustWeights[p.Index]
+	guardianOperators := make(map[string]bool)
+	for _, address := range k.GetGenesisGuardianAddresses(ctx) {
+		guardianOperators[address] = true
+	}
+
+	guardianCount := int64(0)
+	guardianWeight := int64(0)
+	for _, result := range eligibleResults {
+		if guardianOperators[result.OperatorAddress] {
+			guardianCount++
+			guardianWeight += result.Power
 		}
 	}
-	if len(guardianIndices) == 0 {
+	if guardianCount == 0 {
 		return nil
 	}
 
-	// Compute guardian fraction f = m/(1+m)
-	m := k.GetGenesisGuardianMultiplier(ctx)
-	if m == nil {
+	multiplier := k.GetGenesisGuardianMultiplier(ctx)
+	if multiplier == nil {
 		return nil
 	}
-	mDec := m.ToDecimal()
-	onePlusM := mDec.Add(decimal.NewFromInt(1))
-	if onePlusM.IsZero() {
+	m := multiplier.ToDecimal()
+	denominator := decimal.NewFromInt(1).Add(m)
+	if denominator.IsZero() {
 		return nil
 	}
-	f := mDec.Div(onePlusM)
+	guardianFraction := m.Div(denominator)
 
-	// Idempotency: detect if current guardian percentage already ≈ f
-	currentGuardianFraction := decimal.NewFromInt(totalGuardianPower).Div(decimal.NewFromInt(totalWeight))
-	fromString, err := decimal.NewFromString("0.005")
+	currentGuardianFraction := decimal.NewFromInt(guardianWeight).Div(decimal.NewFromInt(eligibleTotal))
+	tolerance, err := decimal.NewFromString("0.005")
+	if err != nil || currentGuardianFraction.Sub(guardianFraction).Abs().LessThan(tolerance) {
+		return nil
+	}
+
+	guardianPercent, err := decimalToLegacyDec(
+		guardianFraction.
+			Div(decimal.NewFromInt(guardianCount)).
+			Mul(decimal.NewFromInt(100)),
+	)
 	if err != nil {
 		return nil
 	}
-	if currentGuardianFraction.Sub(f).Abs().LessThan(fromString) {
-		return nil
-	}
 
-	// Build adjusted percentage map (0..100)
-	adjusted := make(map[string]mathsdk.LegacyDec)
-
-	// Guardians: equal split of f
-	guardianShare := f.Div(decimal.NewFromInt(int64(len(guardianIndices))))
-	guardianPercent, err := decimalToLegacyDec(guardianShare.Mul(decimal.NewFromInt(100)))
-	if err != nil {
-		// Skip reservation on conversion error
-		return nil
-	}
-	for _, idx := range guardianIndices {
-		acc := activeParticipants[idx].Index
-		adjusted[acc] = guardianPercent
-	}
-
-	// Non-guardians: scale to (1 - f) proportionally by their weights
-	remainderFraction := decimal.NewFromInt(1).Sub(f)
-	nonGuardianWeight := totalWeight - totalGuardianPower
-	if nonGuardianWeight > 0 && remainderFraction.GreaterThan(decimal.Zero) {
-		for _, ap := range activeParticipants {
-			acc, err := sdk.AccAddressFromBech32(ap.Index)
-			if err != nil {
-				continue
-			}
-			op := sdk.ValAddress(acc).String()
-			if guardianOpSet[op] {
-				continue
-			}
-			share := decimal.NewFromInt(trustWeights[ap.Index]).Div(decimal.NewFromInt(nonGuardianWeight))
-			percent := share.Mul(remainderFraction).Mul(decimal.NewFromInt(100))
-			legacyPercent, err := decimalToLegacyDec(percent)
-			if err != nil {
-				// Skip reservation on conversion error
-				return nil
-			}
-			adjusted[ap.Index] = legacyPercent
+	nonGuardianWeight := eligibleTotal - guardianWeight
+	nonGuardianFraction := decimal.NewFromInt(1).Sub(guardianFraction)
+	adjusted := make(map[string]mathsdk.LegacyDec, len(eligibleResults))
+	for _, result := range eligibleResults {
+		valAddr, err := sdk.ValAddressFromBech32(result.OperatorAddress)
+		if err != nil {
+			return nil
+		}
+		accountAddress := sdk.AccAddress(valAddr).String()
+		if guardianOperators[result.OperatorAddress] {
+			adjusted[accountAddress] = guardianPercent
+			continue
+		}
+		if nonGuardianWeight <= 0 {
+			continue
+		}
+		percent := decimal.NewFromInt(result.Power).
+			Div(decimal.NewFromInt(nonGuardianWeight)).
+			Mul(nonGuardianFraction).
+			Mul(decimal.NewFromInt(100))
+		adjusted[accountAddress], err = decimalToLegacyDec(percent)
+		if err != nil {
+			return nil
 		}
 	}
 
 	return adjusted
+}
+
+func activeParticipantsToComputeResults(
+	participants []*types.ActiveParticipant,
+	trustWeights map[string]int64,
+) []stakingkeeper.ComputeResult {
+	results := make([]stakingkeeper.ComputeResult, 0, len(participants))
+	for _, participant := range participants {
+		accountAddress, err := sdk.AccAddressFromBech32(participant.Index)
+		if err != nil {
+			continue
+		}
+		results = append(results, stakingkeeper.ComputeResult{
+			OperatorAddress: sdk.ValAddress(accountAddress).String(),
+			Power:           trustWeights[participant.Index],
+		})
+	}
+	return results
+}
+
+func activeParticipantsToGuardianGateResults(
+	participants []*types.ActiveParticipant,
+	trustWeights map[string]int64,
+) []stakingkeeper.ComputeResult {
+	results := make([]stakingkeeper.ComputeResult, 0, len(participants))
+	for _, participant := range participants {
+		operatorAddress := participant.Index
+		if accountAddress, err := sdk.AccAddressFromBech32(participant.Index); err == nil {
+			operatorAddress = sdk.ValAddress(accountAddress).String()
+		}
+		results = append(results, stakingkeeper.ComputeResult{
+			OperatorAddress: operatorAddress,
+			Power:           trustWeights[participant.Index],
+		})
+	}
+	return results
 }
 
 // decimalToLegacyDec converts shopspring/decimal to cosmossdk LegacyDec safely.

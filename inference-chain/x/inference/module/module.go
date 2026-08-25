@@ -579,12 +579,11 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		}
 		am.LogInfo("EpochGroupChanged", types.EpochGroup, "computeResult", computeResult, "error", err)
 
-		// Apply early network protection if conditions are met
-		finalComputeResult := am.applyEarlyNetworkProtection(ctx, computeResult)
-
 		// Cap governance/validator power at each participant's previous-epoch
-		// confirmed weight (CapWeight); drop participants absent last epoch.
-		finalComputeResult = am.capComputeResultsToPreviousConfirmedWeight(ctx, currentEpochGroup, finalComputeResult)
+		// confirmed weight before applying temporary guardian enhancement.
+		finalComputeResult := am.capComputeResultsToPreviousConfirmedWeight(ctx, currentEpochGroup, computeResult)
+		finalComputeResult = am.applyEarlyNetworkProtection(ctx, finalComputeResult)
+		finalComputeResult = positiveComputeResults(finalComputeResult)
 
 		// Safety mechanism: never hand the staking module a validator set with
 		// no positive power. SetComputeValidators deletes validators absent from
@@ -1520,6 +1519,16 @@ func hasPositiveComputePower(computeResults []stakingkeeper.ComputeResult) bool 
 	return false
 }
 
+func positiveComputeResults(computeResults []stakingkeeper.ComputeResult) []stakingkeeper.ComputeResult {
+	positive := make([]stakingkeeper.ComputeResult, 0, len(computeResults))
+	for _, result := range computeResults {
+		if result.Power > 0 {
+			positive = append(positive, result)
+		}
+	}
+	return positive
+}
+
 // applyEarlyNetworkProtection applies genesis guardian enhancement to compute results before validator set updates
 // This system only applies when network is immature (below maturity threshold)
 func (am AppModule) applyEarlyNetworkProtection(ctx context.Context, computeResults []stakingkeeper.ComputeResult) []stakingkeeper.ComputeResult {
@@ -1722,9 +1731,6 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 		return
 	}
 
-	// Compute adjusted percentages if genesis guardian reservation applies
-	adjustedPercentages := ApplyBLSGuardianSlotReservation(ctx, am.keeper, activeParticipants)
-
 	// Fetch BLS params to compute maximum allowed warm keys per participant
 	blsParams, err := am.keeper.BlsKeeper.GetParams(ctx)
 	var maxAdditionalKeys int
@@ -1743,6 +1749,7 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 	}
 
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	eligibleParticipants := make([]*types.ActiveParticipant, 0, len(activeParticipants))
 	for _, ap := range activeParticipants {
 		accAddr, err := sdk.AccAddressFromBech32(ap.Index)
 		if err != nil {
@@ -1774,39 +1781,50 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 		}
 		additionalPubKeys := am.collectAdditionalBLSParticipantPubKeys(ctx, ap.Index, pubKeyBytes, maxAdditionalKeys)
 
-		// Determine percentage weight: use adjusted reservation if present, else raw share
-		var percentage math.LegacyDec
-		if adjustedPercentages != nil {
-			if p, ok := adjustedPercentages[ap.Index]; ok {
-				percentage = p
-			} else {
-				// Participant not present in adjusted map, compute from cap weight
-				percentage = math.LegacyNewDec(trustWeights[ap.Index]).Quo(math.LegacyNewDec(totalWeight)).Mul(math.LegacyNewDec(100))
-			}
-		} else {
-			percentage = math.LegacyNewDec(trustWeights[ap.Index]).Quo(math.LegacyNewDec(totalWeight)).Mul(math.LegacyNewDec(100))
-		}
-
 		blsParticipant := blstypes.ParticipantWithWeightAndKey{
 			Address:                    ap.Index,
-			PercentageWeight:           percentage,
+			PercentageWeight:           math.LegacyZeroDec(),
 			Secp256k1PublicKey:         pubKeyBytes,
 			AllowedSecp256k1PublicKeys: additionalPubKeys,
 		}
 		finalizedParticipants = append(finalizedParticipants, blsParticipant)
-
-		am.LogInfo("Prepared participant for BLS key generation using AccountKeeper PubKey", types.EpochGroup,
-			"participant", ap.Index,
-			"weight", ap.Weight,
-			"percentage", percentage.String(),
-			"epochID", epochID,
-			"keyLength", len(pubKeyBytes),
-			"additionalKeyCount", len(additionalPubKeys))
+		eligibleParticipants = append(eligibleParticipants, ap)
 	}
 
 	if len(finalizedParticipants) == 0 {
 		am.LogError("No valid participants after conversion for BLS key generation", types.EpochGroup, "epochID", epochID)
 		return
+	}
+
+	// Evaluate guardian protection against the complete trust vector, then apply
+	// the target BLS reservation after invalid participants have been removed.
+	adjustedPercentages := applyBLSGuardianSlotReservation(ctx, am.keeper, activeParticipants, eligibleParticipants)
+	eligibleTotalWeight := int64(0)
+	for _, participant := range eligibleParticipants {
+		eligibleTotalWeight += trustWeights[participant.Index]
+	}
+	if adjustedPercentages == nil && eligibleTotalWeight <= 0 {
+		am.LogError("No positive trust weight after filtering BLS participants", types.EpochGroup, "epochID", epochID)
+		return
+	}
+
+	for i, participant := range eligibleParticipants {
+		percentage, adjusted := adjustedPercentages[participant.Index]
+		if !adjusted {
+			percentage = math.LegacyNewDec(trustWeights[participant.Index]).
+				Quo(math.LegacyNewDec(totalWeight)).
+				Mul(math.LegacyNewDec(100))
+		}
+		finalizedParticipants[i].PercentageWeight = percentage
+
+		am.LogInfo("Prepared participant for BLS key generation using AccountKeeper PubKey", types.EpochGroup,
+			"participant", participant.Index,
+			"weight", participant.Weight,
+			"trustWeight", trustWeights[participant.Index],
+			"percentage", percentage.String(),
+			"epochID", epochID,
+			"keyLength", len(finalizedParticipants[i].Secp256k1PublicKey),
+			"additionalKeyCount", len(finalizedParticipants[i].AllowedSecp256k1PublicKeys))
 	}
 
 	// Call the BLS module to initiate key generation

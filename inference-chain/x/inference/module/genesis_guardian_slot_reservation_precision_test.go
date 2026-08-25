@@ -1,12 +1,10 @@
-package inference_test
+package inference
 
 import (
 	"testing"
 
 	mathsdk "cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	keepertest "github.com/productscience/inference/testutil/keeper"
-	inference "github.com/productscience/inference/x/inference/module"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/require"
@@ -66,7 +64,7 @@ func TestDecimalPrecisionPanic_Isolated(t *testing.T) {
 //
 // After the fix: StringFixed(18) truncates to 18 decimals, no panic.
 func TestApplyBLSGuardianSlotReservation_RepeatingDecimalPrecision(t *testing.T) {
-	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	k, ctx := newMinimalInferenceKeeper(t)
 
 	// Setup SDK config for bech32
 	config := sdk.GetConfig()
@@ -113,7 +111,7 @@ func TestApplyBLSGuardianSlotReservation_RepeatingDecimalPrecision(t *testing.T)
 	}
 
 	// This should NOT panic after the fix
-	result := inference.ApplyBLSGuardianSlotReservation(ctx, k, activeParticipants)
+	result := applyBLSGuardianSlotReservation(ctx, k, activeParticipants, activeParticipants)
 
 	// Result should be non-nil (reservation applied successfully)
 	require.NotNil(t, result, "Should return adjusted percentages without panic")
@@ -132,7 +130,7 @@ func TestApplyBLSGuardianSlotReservation_RepeatingDecimalPrecision(t *testing.T)
 // TestApplyBLSGuardianSlotReservation_PrimeWeights tests with prime number weights
 // that create long repeating decimal expansions.
 func TestApplyBLSGuardianSlotReservation_PrimeWeights(t *testing.T) {
-	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	k, ctx := newMinimalInferenceKeeper(t)
 
 	config := sdk.GetConfig()
 	if config.GetBech32AccountAddrPrefix() != "gonka" {
@@ -176,12 +174,12 @@ func TestApplyBLSGuardianSlotReservation_PrimeWeights(t *testing.T) {
 	}
 
 	// Should not panic
-	result := inference.ApplyBLSGuardianSlotReservation(ctx, k, activeParticipants)
+	result := applyBLSGuardianSlotReservation(ctx, k, activeParticipants, activeParticipants)
 	require.NotNil(t, result, "Should handle prime-weight divisions without panic")
 }
 
 func TestApplyBLSGuardianSlotReservation_UsesCapWeight(t *testing.T) {
-	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	k, ctx := newMinimalInferenceKeeper(t)
 
 	config := sdk.GetConfig()
 	if config.GetBech32AccountAddrPrefix() != "gonka" {
@@ -210,15 +208,27 @@ func TestApplyBLSGuardianSlotReservation_UsesCapWeight(t *testing.T) {
 		GenesisGuardianEnabled:    true,
 	}))
 
-	result := inference.ApplyBLSGuardianSlotReservation(ctx, k, []*types.ActiveParticipant{
-		{Index: guardianAcc.String(), Weight: 100, CapWeight: 100},
+	activeParticipants := []*types.ActiveParticipant{
+		{Index: guardianAcc.String(), Weight: 100, CapWeight: 0},
 		{Index: regularAcc.String(), Weight: 500, CapWeight: 50},
 		{Index: newAcc.String(), Weight: 300, CapWeight: 0},
-	})
+	}
+	result := applyBLSGuardianSlotReservation(ctx, k, activeParticipants, activeParticipants)
 	require.NotNil(t, result)
 
-	_, hasGuardian := result[guardianAcc.String()]
+	guardianShare, hasGuardian := result[guardianAcc.String()]
 	require.True(t, hasGuardian)
+	require.False(t, guardianShare.IsZero(), "zero-cap guardian receives only temporary protected power")
 	require.True(t, result[newAcc.String()].IsZero(), "zero-cap participant must get no reserved share")
 	require.False(t, result[regularAcc.String()].IsZero(), "capped returning participant keeps a remainder share")
+
+	aboveTargetParticipants := []*types.ActiveParticipant{
+		{Index: guardianAcc.String(), Weight: 100, CapWeight: 100},
+		{Index: regularAcc.String(), Weight: 50, CapWeight: 50},
+	}
+	aboveTarget := applyBLSGuardianSlotReservation(ctx, k, aboveTargetParticipants, aboveTargetParticipants)
+	require.True(t,
+		aboveTarget[guardianAcc.String()].Equal(mathsdk.LegacyMustNewDecFromStr("34.210526315789470000")),
+		"BLS must reduce an above-target guardian to the exact reserved share",
+	)
 }

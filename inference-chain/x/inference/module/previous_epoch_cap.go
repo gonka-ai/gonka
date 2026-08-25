@@ -9,7 +9,6 @@ import (
 
 	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/productscience/inference/x/inference/types"
-	"github.com/productscience/inference/x/inference/utils"
 )
 
 // applyPreviousConfirmedWeightCap computes each participant's CapWeight: the
@@ -62,21 +61,10 @@ func (am AppModule) applyPreviousConfirmedWeightCap(
 	prevEpochIndex := previous.epochIndex
 	capByAddress := previous.weights
 
-	guardianAccounts := map[string]bool{}
-	for _, opAddr := range am.keeper.GetGenesisGuardianAddresses(ctx) {
-		accAddr, err := utils.OperatorAddressToAccAddress(opAddr)
-		if err == nil {
-			guardianAccounts[accAddr] = true
-		}
-	}
-
 	newParticipantsZeroed := 0
 	existingParticipantsClamped := 0
 	for _, p := range activeParticipants {
 		if p == nil {
-			continue
-		}
-		if guardianAccounts[p.Index] {
 			continue
 		}
 		capValue, existed := capByAddress[p.Index]
@@ -146,8 +134,8 @@ func resolveTrustWeights(participants []*types.ActiveParticipant, capApplied boo
 
 // capComputeResultsToPreviousConfirmedWeight lowers each validator's governance
 // power to the participant's CapWeight (their previous-epoch confirmed weight
-// cap). Participants that were absent last epoch have CapWeight 0 and are dropped
-// from the validator set entirely.
+// cap). Zero-power entries are retained here so guardian enhancement can raise a
+// zero-cap guardian. Callers remove entries that remain non-positive afterward.
 //
 // Governance validator updates happen a couple of blocks after epoch formation,
 // so this reads the persisted CapWeight from the epoch's stored
@@ -187,19 +175,9 @@ func (am AppModule) capComputeResultsToPreviousConfirmedWeight(
 		return results
 	}
 
-	guardianOperators := map[string]bool{}
-	for _, opAddr := range am.keeper.GetGenesisGuardianAddresses(ctx) {
-		guardianOperators[opAddr] = true
-	}
-
 	capped := make([]stakingkeeper.ComputeResult, 0, len(results))
-	droppedNew := 0
 	clamped := 0
 	for _, r := range results {
-		if guardianOperators[r.OperatorAddress] {
-			capped = append(capped, r)
-			continue
-		}
 		valAddr, err := sdk.ValAddressFromBech32(r.OperatorAddress)
 		if err != nil {
 			capped = append(capped, r)
@@ -216,11 +194,6 @@ func (am AppModule) capComputeResultsToPreviousConfirmedWeight(
 			r.Power = capValue
 			clamped++
 		}
-		if r.Power <= 0 {
-			// New/absent-last-epoch participant: no governance power this epoch.
-			droppedNew++
-			continue
-		}
 		capped = append(capped, r)
 	}
 
@@ -228,8 +201,7 @@ func (am AppModule) capComputeResultsToPreviousConfirmedWeight(
 		"epochIndex", epochIndex,
 		"validatorsIn", len(results),
 		"validatorsOut", len(capped),
-		"clamped", clamped,
-		"droppedNew", droppedNew)
+		"clamped", clamped)
 
 	return capped
 }

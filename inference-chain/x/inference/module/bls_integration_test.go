@@ -296,6 +296,72 @@ func TestBLSKeyGenerationWithAccountKeyIssues(t *testing.T) {
 	require.Len(t, epochBLSData.Participants, 1, "Only Charlie should be included")
 	require.Equal(t, charlieAccAddrStr, epochBLSData.Participants[0].Address)
 	require.Equal(t, expectedPubKeysMap[charlieAccAddrStr], epochBLSData.Participants[0].Secp256K1PublicKey)
+	require.True(t, epochBLSData.Participants[0].PercentageWeight.Equal(math.LegacyNewDec(40)),
+		"without guardian reservation, preserve the pre-filter percentage")
+}
+
+func TestBLSGuardianEnhancementRunsAfterParticipantFiltering(t *testing.T) {
+	setupTestAddresses(t)
+
+	ctrl := gomock.NewController(t)
+	defer ctrl.Finish()
+	mockAccountKeeper := keepertest.NewMockAccountKeeper(ctrl)
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+	allowEmptyBLSGrantQueries(mocks)
+
+	setupMockAccountExpectations(t, mockAccountKeeper, map[string]string{
+		aliceAccAddrStr:   aliceSecp256k1PubHex,
+		bobAccAddrStr:     "nil",
+		charlieAccAddrStr: charlieSecp256k1PubHex,
+	})
+
+	aliceAccount, err := sdk.AccAddressFromBech32(aliceAccAddrStr)
+	require.NoError(t, err)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.GenesisGuardianParams = &types.GenesisGuardianParams{
+		NetworkMaturityThreshold: 10_000,
+		NetworkMaturityMinHeight: 0,
+		GuardianAddresses:        []string{sdk.ValAddress(aliceAccount).String()},
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+	require.NoError(t, k.SetGenesisOnlyParams(ctx, &types.GenesisOnlyParams{
+		TotalSupply:               1_000_000_000,
+		OriginatorSupply:          160_000_000,
+		PreProgrammedSaleAmount:   120_000_000,
+		SupplyDenom:               "gonka",
+		GenesisGuardianMultiplier: types.DecimalFromFloat(0.52),
+		GenesisGuardianEnabled:    true,
+	}))
+
+	activeParticipants := []*types.ActiveParticipant{
+		{Index: aliceAccAddrStr, Weight: 10, CapWeight: 10},
+		{Index: bobAccAddrStr, Weight: 100, CapWeight: 100},
+		{Index: charlieAccAddrStr, Weight: 100, CapWeight: 100},
+	}
+
+	appModule := inference.NewAppModule(codec.NewProtoCodec(codectypes.NewInterfaceRegistry()), k, mockAccountKeeper, nil, nil, nil)
+	const epochID = uint64(22)
+	appModule.InitiateBLSKeyGeneration(ctx, epochID, activeParticipants)
+
+	epochBLSData, err := k.BlsKeeper.GetEpochBLSData(ctx, epochID)
+	require.NoError(t, err)
+	require.Len(t, epochBLSData.Participants, 2)
+
+	byAddress := make(map[string]blstypes.BLSParticipantInfo, len(epochBLSData.Participants))
+	for _, participant := range epochBLSData.Participants {
+		byAddress[participant.Address] = participant
+	}
+	_, bobIncluded := byAddress[bobAccAddrStr]
+	require.False(t, bobIncluded)
+
+	guardian, guardianIncluded := byAddress[aliceAccAddrStr]
+	require.True(t, guardianIncluded)
+	guardianSlots := guardian.SlotEndIndex - guardian.SlotStartIndex + 1
+	require.Greater(t, guardianSlots*100, epochBLSData.ITotalSlots*30,
+		"guardian enhancement must remain active after filtering")
+	require.Less(t, guardianSlots*100, epochBLSData.ITotalSlots*40,
+		"guardian reservation must be recomputed from the surviving trust vector")
 }
 
 func TestBLSKeyGenerationUsesAccountPubKeyOverWorkerOrValidatorKey(t *testing.T) {
