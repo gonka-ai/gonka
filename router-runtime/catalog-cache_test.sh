@@ -56,10 +56,16 @@ cmp "$tmpdir/expected" "$tmpdir/stale.names" || {
 }
 
 jq '.fetched_at_unix = 4102444800' "$tmpdir/catalog.json" > "$tmpdir/future.json"
-if "$cache_bin" read "$tmpdir/future.json" 60 >/dev/null 2>&1; then
-    echo "catalog-cache accepted a snapshot from the future" >&2
+status=0
+"$cache_bin" read "$tmpdir/future.json" 60 > "$tmpdir/future.names" 2>/dev/null || status=$?
+[ "$status" -eq 2 ] || {
+    echo "catalog-cache did not classify a future timestamp as stale" >&2
     exit 1
-fi
+}
+cmp "$tmpdir/expected" "$tmpdir/future.names" || {
+    echo "catalog-cache discarded safe names after a clock rollback" >&2
+    exit 1
+}
 
 for unsafe_timestamp in 1e100 9223372036854775808; do
     printf '{"schema":1,"fetched_at_unix":%s,"versions":["v4"]}\n' \

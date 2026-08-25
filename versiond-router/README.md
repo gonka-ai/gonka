@@ -149,7 +149,9 @@ Accepted projections are written atomically under `/var/lib/gonka-router`.
 After restart, a validated last-known-good cache keeps already learned routes
 alive while governance is temporarily unavailable, regardless of its local age.
 The cache age threshold produces a stale diagnostic but never revokes an
-accepted route. Corrupt caches and malformed, empty, or capacity-exhaustion
+accepted route. A timestamp ahead of the local clock is likewise treated as
+stale, preserving routes across host clock rollback. Corrupt caches and
+malformed, empty, or capacity-exhaustion
 source inputs leave the last accepted routing map untouched and expose a
 degraded state through `catalog-status`.
 If only the supervised reconciler restarts while HAProxy remains live, a missing

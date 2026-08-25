@@ -38,9 +38,10 @@ read_cache() {
         select(.schema == 1)
         | select((.fetched_at_unix | type) == "number")
         | select(.fetched_at_unix >= 0 and (.fetched_at_unix | floor) == .fetched_at_unix)
-        | select(.fetched_at_unix <= $now)
+        | select(.fetched_at_unix <= 9007199254740991)
         | select((.versions | type) == "array")
-        | (if ($now - .fetched_at_unix) > $max_age then "stale" else "fresh" end),
+        | (if .fetched_at_unix > $now or ($now - .fetched_at_unix) > $max_age
+           then "stale" else "fresh" end),
           (.versions[] | select(type == "string"))
     ' "$cache" > "$tmp"; then
         fail "invalid snapshot $cache"
