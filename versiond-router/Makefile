@@ -220,6 +220,8 @@ test-version-routing:
 		'            return self._r(200 if fields[0] in SERVES else 404, "x")' \
 		'        if u.path.endswith("/ha-header"):' \
 		'            return self._r(200, self.headers.get("Devshard-Ha", ""))' \
+		'        if u.path.endswith("/forwarded-headers"):' \
+		'            return self._r(200, self.headers.get("X-Forwarded-Proto", "") + "|" + self.headers.get("X-Real-IP", ""))' \
 		'        self._r(200, NAME)' \
 		'    def log_message(self, *a): pass' \
 		'http.server.ThreadingHTTPServer(("", 8080), H).serve_forever()' \
@@ -374,6 +376,16 @@ test-version-routing:
 		|| fail "the surviving backend did not answer the HA-header probe"; \
 	[ -z "$$ha_header" ] \
 		|| fail "client supplied Devshard-Ha survived as '$$ha_header' with one usable host"; \
+	forwarded=$$(curl -fsS -m 3 -H 'X-Forwarded-Proto: forged' \
+		-H 'X-Real-IP: forged' http://127.0.0.1:18132/v4/forwarded-headers) \
+		|| fail "the forwarded-header probe did not reach an upstream"; \
+	case "$$forwarded" in \
+		http\|*) ;; \
+		*) fail "client supplied forwarded headers survived as '$$forwarded'" ;; \
+	esac; \
+	case "$$forwarded" in \
+		*forged*) fail "client supplied identity survived as '$$forwarded'" ;; \
+	esac; \
 	undeclared=$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
 		http://127.0.0.1:18132/v9/sessions/a/chat); \
 	[ "$$undeclared" = 503 ] \
@@ -757,8 +769,10 @@ test-render: test-local-compose test-join-compose test-catalog-cache test-hash-r
 		|| fail "metrics are not bound to loopback"; \
 	grep -q '^[[:space:]]*option[[:space:]]*forwardfor' "$$tmpdir/mixed.cfg" \
 		|| fail "X-Forwarded-For is no longer appended; the client audit trail dies at this hop"; \
-	grep -q '^[[:space:]]*http-request set-header X-Real-IP' "$$tmpdir/mixed.cfg" \
-		|| fail "X-Real-IP is no longer set"; \
+	grep -Eq '^[[:space:]]*http-request set-header X-Real-IP %\[src\][[:space:]]*$$' "$$tmpdir/mixed.cfg" \
+		|| fail "X-Real-IP is not unconditionally replaced"; \
+	grep -Eq '^[[:space:]]*http-request set-header X-Forwarded-Proto %\[ssl_fc,iif\(https,http\)\][[:space:]]*$$' "$$tmpdir/mixed.cfg" \
+		|| fail "X-Forwarded-Proto is not unconditionally replaced"; \
 	grep -q '^[[:space:]]*http-request deny deny_status 413 if { req.hdr_val(content-length) gt 10485760 }' "$$tmpdir/mixed.cfg" \
 		|| fail "the advertised request body cap is gone"; \
 	grep -Eq '^[[:space:]]*accepted_payload_size 8192([[:space:]]|$$)' "$$tmpdir/mixed.cfg" \

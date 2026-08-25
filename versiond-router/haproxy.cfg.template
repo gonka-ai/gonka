@@ -106,11 +106,11 @@ frontend versiond_in
 
     http-request set-var(txn.ver) var(txn.canonpath),field(2,/)
 
-    # The private parent distributor accepts only traffic returned by the nginx
-    # policy tier. Preserve its client-derived headers and provide conservative
-    # defaults only for direct private-network probes.
-    http-request set-header X-Forwarded-Proto http if !{ req.hdr(X-Forwarded-Proto) -m found }
-    http-request set-header X-Real-IP %[src] if !{ req.hdr(X-Real-IP) -m found }
+    # This router is directly reachable in the current deployment, so neither
+    # value is trusted from the client. A later trusted proxy tier may preserve
+    # its own sanitized values when it is introduced in the same topology.
+    http-request set-header X-Forwarded-Proto %[ssl_fc,iif(https,http)]
+    http-request set-header X-Real-IP %[src]
 
     # Reject an advertised oversize body before opening an upstream connection.
     # HAProxy streams rather than buffers bodies, so devshardd independently
