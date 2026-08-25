@@ -201,6 +201,9 @@ type oneHostRestartStack struct {
 	Oracle        *staticOracle
 	UserAddr      string
 	PrivateKeyHex string
+	HostSigner    *signing.Secp256k1Signer
+	Group         []types.SlotAssignment
+	Config        types.SessionConfig
 	Bridge        *scenarioBridge
 	StoragePath   string
 	httpSrv       *httptest.Server
@@ -558,6 +561,9 @@ func setupOneHostHTTPHeightSyncRestartStack(t *testing.T) *oneHostRestartStack {
 		Oracle:        oracle,
 		UserAddr:      userSigner.Address(),
 		PrivateKeyHex: userSigner.PrivateKeyHex(),
+		HostSigner:    hostSigner,
+		Group:         group,
+		Config:        cfg,
 		Bridge:        br,
 		StoragePath:   filepath.Join(t.TempDir(), "session.db"),
 		httpSrv:       ts,
@@ -588,6 +594,49 @@ func (st *oneHostRestartStack) newHTTPSession(t *testing.T) *user.Session {
 	})
 	require.NoError(t, err)
 	return sess
+}
+
+func (st *oneHostRestartStack) restartHostAtNonce(t *testing.T, diffs []types.Diff, nonce uint64) {
+	t.Helper()
+	if st.httpSrv != nil {
+		st.httpSrv.Close()
+	}
+	verifier := signing.NewSecp256k1Verifier()
+	warmResolve := func(_, _ string) (bool, error) { return false, nil }
+	smStore := testutil.MustMemoryStore(t, st.Bridge.escrow.EscrowID, st.UserAddr, st.Config, st.Group, 100_000)
+	sm, err := state.NewStateMachine(st.Bridge.escrow.EscrowID, st.Config, st.Group, 100_000, st.UserAddr, verifier, smStore,
+		state.WithWarmKeyResolver(warmResolve))
+	require.NoError(t, err)
+	hostStore := storage.NewMemory()
+	require.NoError(t, hostStore.CreateSession(storage.CreateSessionParams{
+		EscrowID:       st.Bridge.escrow.EscrowID,
+		Version:        testutil.RuntimeTestVersion,
+		Config:         st.Config,
+		Group:          st.Group,
+		InitialBalance: 100_000,
+	}))
+	h, err := host.NewHost(sm, st.HostSigner, stub.NewInferenceEngine(), st.Bridge.escrow.EscrowID, st.Group, nil,
+		host.WithGrace(10_000), host.WithStorage(hostStore), host.WithChainOracle(st.Oracle))
+	require.NoError(t, err)
+	var prefix []types.Diff
+	for _, d := range diffs {
+		if d.Nonce <= nonce {
+			prefix = append(prefix, d)
+		}
+	}
+	h.ApplyCatchUpDiffs(prefix)
+	require.Equal(t, nonce, h.SnapshotState().LatestNonce)
+
+	hostSched := heightsync.MustNewAnchorSchedulerFromOracle(8, 1, st.Oracle)
+	srv, err := transport.NewServer(h, hostStore, verifier, st.UserAddr, transport.WithHeightSync(hostSched, st.Oracle))
+	require.NoError(t, err)
+	e := echo.New()
+	registerHeightSyncServer(e.Group(hsE2ERoutePrefix), srv)
+	ts := httptest.NewServer(e)
+
+	st.Server = srv
+	st.httpSrv = ts
+	st.Bridge.hosts[st.HostSigner.Address()].URL = ts.URL
 }
 
 func setupFourHostHTTPRepairTimingStack(t *testing.T) *repairTimingStack {
@@ -689,6 +738,36 @@ func syncHostsFromSession(t *testing.T, st *fourHostStack) {
 	for _, srv := range st.Servers {
 		srv.Host().ApplyCatchUpDiffs(diffs)
 	}
+}
+
+func diffNonces(diffs []types.Diff) []uint64 {
+	out := make([]uint64, 0, len(diffs))
+	for _, d := range diffs {
+		out = append(out, d.Nonce)
+	}
+	return out
+}
+
+func heightAcksInScenarioDiffs(diffs []types.Diff) []*types.MsgHeightAck {
+	var out []*types.MsgHeightAck
+	for _, d := range diffs {
+		for _, tx := range d.Txs {
+			if ack := tx.GetHeightAck(); ack != nil {
+				out = append(out, ack)
+			}
+		}
+	}
+	return out
+}
+
+func heightAcksInScenarioTxs(txs []*types.DevshardTx) []*types.MsgHeightAck {
+	var out []*types.MsgHeightAck
+	for _, tx := range txs {
+		if ack := tx.GetHeightAck(); ack != nil {
+			out = append(out, ack)
+		}
+	}
+	return out
 }
 
 func hostInferenceResponseAnchors(atts []heightsync.AnchorAttestation) []heightsync.AnchorAttestation {
@@ -1306,6 +1385,209 @@ func TestHeightSyncAnchor_E2E_HTTPRestartLegacySnapshotCompatibility(t *testing.
 	require.Equal(t, uint64(2), st.Server.Host().SnapshotState().LatestNonce)
 	require.Positive(t, countOutboundRequestAnchors(t, recovered, st.UserAddr),
 		"recovered legacy snapshot session should keep using real HTTP height-sync clients")
+}
+
+func TestHeightSyncAnchor_E2E_HTTPRestartLegacySnapshotUpgradeBecomesSnapshotOnly(t *testing.T) {
+	ctx := context.Background()
+	st := setupOneHostHTTPHeightSyncRestartStack(t)
+	params := defaultInferenceParams()
+
+	resp, err := st.Session.SendInference(ctx, params)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), resp.Nonce)
+	bareSnapshot, err := json.Marshal(st.Session.StateMachine().SnapshotState())
+	require.NoError(t, err)
+
+	require.NoError(t, st.Session.Close())
+	st.Session = nil
+	legacyStore, err := storage.NewSQLite(st.StoragePath)
+	require.NoError(t, err)
+	require.NoError(t, legacyStore.SaveSnapshot(st.Bridge.escrow.EscrowID, 1, bareSnapshot))
+	require.NoError(t, legacyStore.Close())
+
+	firstRecover := st.newHTTPSession(t)
+	st.Session = firstRecover
+	require.Equal(t, uint64(1), firstRecover.Nonce())
+	require.Len(t, firstRecover.Diffs(), 1,
+		"first legacy recovery must keep full pre-snapshot backfill for unknown host cursors")
+
+	resp, err = firstRecover.SendInference(ctx, params)
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), resp.Nonce)
+	require.NoError(t, firstRecover.FlushSnapshot())
+	rootBefore, err := firstRecover.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
+
+	require.NoError(t, firstRecover.Close())
+	st.Session = nil
+	secondRecover := st.newHTTPSession(t)
+	st.Session = secondRecover
+	require.Equal(t, uint64(2), secondRecover.Nonce())
+	require.Empty(t, secondRecover.Diffs(),
+		"after a live request updates host cursor and flushes a wrapped snapshot, recovery should be snapshot-only")
+	rootAfter, err := secondRecover.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
+	require.Equal(t, rootBefore, rootAfter)
+
+	resp, err = secondRecover.SendInference(ctx, params)
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), resp.Nonce)
+	require.Equal(t, uint64(3), st.Server.Host().SnapshotState().LatestNonce)
+}
+
+func TestHeightSyncAnchor_E2E_HTTPRestartHostOneBehindCarriesSnapshotSuffix(t *testing.T) {
+	ctx := context.Background()
+	st := setupFourHostHTTPHeightSync(t)
+	params := defaultInferenceParams()
+
+	for nonce := uint64(1); nonce <= 3; nonce++ {
+		resp, err := st.Session.SendInference(ctx, params)
+		require.NoError(t, err)
+		require.Equal(t, nonce, resp.Nonce)
+	}
+	diffs := st.Session.Diffs()
+	require.Len(t, diffs, 3)
+	st.Servers[0].Host().ApplyCatchUpDiffs(diffs[:2])
+	st.Servers[1].Host().ApplyCatchUpDiffs(diffs[1:3])
+	st.Servers[2].Host().ApplyCatchUpDiffs(diffs[2:3])
+	require.Equal(t, uint64(2), st.Servers[0].Host().SnapshotState().LatestNonce,
+		"slot 0 is the next request target and starts one nonce behind the snapshot")
+	for _, slot := range []int{1, 2, 3} {
+		require.Equal(t, uint64(3), st.Servers[slot].Host().SnapshotState().LatestNonce, "host %d pre-restart", slot)
+	}
+
+	stateSnapshot := st.Session.StateMachine().SnapshotState()
+	wrappedSnapshot, err := json.Marshal(struct {
+		State         *types.EscrowState `json:"state"`
+		HostSyncNonce map[int]uint64     `json:"host_sync_nonce,omitempty"`
+	}{
+		State: &stateSnapshot,
+		HostSyncNonce: map[int]uint64{
+			0: 2,
+			1: 3,
+			2: 3,
+			3: 3,
+		},
+	})
+	require.NoError(t, err)
+	rootBefore, err := st.Session.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
+
+	require.NoError(t, st.Session.Close())
+	st.Session = nil
+	store, err := storage.NewSQLite(st.StoragePath)
+	require.NoError(t, err)
+	require.NoError(t, store.SaveSnapshot(st.Bridge.escrow.EscrowID, 3, wrappedSnapshot))
+	require.NoError(t, store.Close())
+
+	recovered := st.newHTTPSession(t)
+	st.Session = recovered
+	require.Equal(t, uint64(3), recovered.Nonce())
+	require.Equal(t, []uint64{3}, diffNonces(recovered.Diffs()),
+		"recovery should keep exactly diff N for a host cursor at N-1")
+	rootAfter, err := recovered.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
+	require.Equal(t, rootBefore, rootAfter)
+
+	resp, err := recovered.SendInference(ctx, params)
+	require.NoError(t, err, "first recovered request should send diff N plus the new diff N+1")
+	require.Equal(t, uint64(4), resp.Nonce)
+	require.Equal(t, uint64(4), st.Servers[0].Host().SnapshotState().LatestNonce)
+}
+
+func TestHeightSyncAnchor_E2E_HTTPRestartHostLowerNonceCatchesUpFromSnapshot(t *testing.T) {
+	ctx := context.Background()
+	st := setupOneHostHTTPHeightSyncRestartStack(t)
+	params := defaultInferenceParams()
+
+	for nonce := uint64(1); nonce <= 2; nonce++ {
+		resp, err := st.Session.SendInference(ctx, params)
+		require.NoError(t, err)
+		require.Equal(t, nonce, resp.Nonce)
+	}
+	require.Equal(t, uint64(2), st.Server.Host().SnapshotState().LatestNonce)
+	diffs := append([]types.Diff(nil), st.Session.Diffs()...)
+	require.Equal(t, []uint64{1, 2}, diffNonces(diffs))
+	stateSnapshot := st.Session.StateMachine().SnapshotState()
+	rootBefore, err := st.Session.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
+	wrappedSnapshot, err := json.Marshal(struct {
+		State         *types.EscrowState `json:"state"`
+		HostSyncNonce map[int]uint64     `json:"host_sync_nonce,omitempty"`
+	}{
+		State:         &stateSnapshot,
+		HostSyncNonce: map[int]uint64{0: 1},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, st.Session.Close())
+	st.Session = nil
+	store, err := storage.NewSQLite(st.StoragePath)
+	require.NoError(t, err)
+	require.NoError(t, store.SaveSnapshot(st.Bridge.escrow.EscrowID, 2, wrappedSnapshot))
+	require.NoError(t, store.Close())
+	st.restartHostAtNonce(t, diffs, 1)
+	require.Equal(t, uint64(1), st.Server.Host().SnapshotState().LatestNonce)
+
+	recovered := st.newHTTPSession(t)
+	st.Session = recovered
+	require.Equal(t, uint64(2), recovered.Nonce())
+	require.Equal(t, []uint64{2}, diffNonces(recovered.Diffs()),
+		"snapshot recovery should retain diff N for a host cursor at N-1")
+	rootAfter, err := recovered.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
+	require.Equal(t, rootBefore, rootAfter)
+
+	resp, err := recovered.SendInference(ctx, params)
+	require.NoError(t, err, "first request after host restart should catch up host with diff N before applying N+1")
+	require.Equal(t, uint64(3), resp.Nonce)
+	require.Equal(t, uint64(3), st.Server.Host().SnapshotState().LatestNonce)
+}
+
+func TestHeightSyncAnchor_E2E_HTTPRestartDurableHeightAckDedupBeforeNextHeartbeat(t *testing.T) {
+	ctx := context.Background()
+	st := setupOneHostHTTPHeightSyncRestartStack(t)
+
+	require.NoError(t, st.Session.MaybeHeartbeat(ctx))
+	ackDiffs := st.Session.Diffs()
+	acks := heightAcksInScenarioDiffs(ackDiffs)
+	require.Len(t, acks, 1)
+	require.Equal(t, uint64(1), acks[0].TurnSeq)
+	require.Equal(t, uint32(0), acks[0].SlotId)
+	require.Equal(t, uint64(2), st.Session.Nonce())
+
+	require.NoError(t, st.Session.FlushSnapshot())
+	require.NoError(t, st.Session.Close())
+	st.Session = nil
+
+	recovered := st.newHTTPSession(t)
+	st.Session = recovered
+	require.Equal(t, uint64(2), recovered.Nonce())
+	require.Empty(t, recovered.Diffs(),
+		"all hosts are caught up, so recovery should restore dedup keys from durable records without replay diffs")
+
+	require.NoError(t, recovered.ProcessResponse(0, &host.HostResponse{
+		Nonce: recovered.Nonce(),
+		Mempool: []*types.DevshardTx{{
+			Tx: &types.DevshardTx_HeightAck{HeightAck: acks[0]},
+		}},
+	}, recovered.Nonce()))
+	require.Empty(t, heightAcksInScenarioTxs(recovered.PendingTxs()),
+		"late duplicate durable height_ack must not re-enter pending after recovery")
+
+	require.NoError(t, recovered.MaybeHeartbeat(ctx))
+	var oldTurnAcks []*types.MsgHeightAck
+	var newTurnAcks []*types.MsgHeightAck
+	for _, ack := range heightAcksInScenarioDiffs(recovered.Diffs()) {
+		switch ack.TurnSeq {
+		case 1:
+			oldTurnAcks = append(oldTurnAcks, ack)
+		case 2:
+			newTurnAcks = append(newTurnAcks, ack)
+		}
+	}
+	require.Empty(t, oldTurnAcks, "next heartbeat must not re-flush the old durable ack")
+	require.Len(t, newTurnAcks, 1, "fresh heartbeat may carry its own new ack")
 }
 
 func TestHeightSyncAnchor_E2E_HTTPRestartPartialHostCursorRecovery(t *testing.T) {
