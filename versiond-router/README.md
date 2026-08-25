@@ -147,6 +147,14 @@ While a valid catalog addition is waiting for capacity or its ready reserve, the
 router refreshes only the accepted cache subset. This keeps existing routes
 restart-safe without making the pending name visible.
 
+The router cache preserves routing state, not the complete version artifact
+catalog. It therefore protects a router replacement while the existing versiond
+children keep running, but it cannot bootstrap those children after every
+versiond process has restarted. A full-stack start still requires the `/versions`
+source to become reachable; until then the restored router routes have no ready
+upstreams. Persisting and replaying the artifact catalog in the versiond
+supervisor is a separate recovery contract, outside this router.
+
 Version names use the routing grammar
 `[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}`. Names outside it are rejected before they
 can create a path/map mismatch. Because the current governance contract accepts
