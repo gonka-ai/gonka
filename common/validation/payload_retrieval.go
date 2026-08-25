@@ -34,6 +34,82 @@ var ErrEpochStale = errors.New("inference epoch too old, validation no longer us
 // surfacing the retrieval failure as a validation error.
 var ErrPayloadGone = errors.New("payload no longer available on executor")
 
+// ErrPayloadTooLarge indicates the executor served more than the read cap
+// (per-inference PayloadResponseByteLimit, or MaxPayloadResponseBytes when
+// the caller did not pass one). Retrying is pointless: the body is
+// deterministic from the validator's point of view and each attempt costs
+// the full transfer.
+var ErrPayloadTooLarge = errors.New("executor payload response too large")
+
+const (
+	// maxPromptPayloadBytes matches the gateway chat-request body cap
+	// (devshardctl MaxChatRequestBodySize). The prompt is stored as JSON, not
+	// as a token stream, so the body cap — not inputTokens — bounds this side.
+	maxPromptPayloadBytes = 10 << 20
+
+	// maxSSEBytesPerOutputToken ceilings one streamed token with wide
+	// logprobs.top_logprobs (~330 B at 3 alternatives; low single-digit KiB at 20).
+	maxSSEBytesPerOutputToken = 8 << 10
+
+	// MaxPayloadResponseBytes is the default read cap when the caller does not
+	// pass a per-inference limit (unknown token counts).
+	MaxPayloadResponseBytes = 64 << 20
+
+	// maxPayloadResponseBytesHard is the last-resort memory bound on a derived
+	// per-inference cap. A 200k-token generation with wide logprobs can exceed
+	// this; operators raising request_max_tokens_cap that far need a larger
+	// process limit, but unbounded derived caps would let a claimed token count
+	// OOM the validator.
+	maxPayloadResponseBytesHard = 512 << 20
+
+	// maxPayloadErrorBodyBytes caps how much of a non-200 body is quoted into
+	// the returned error. That text reaches validation logs and, for
+	// executor-fault verdicts, the published vote details, so keep it to the
+	// leading span that identifies the failure (status line, proxy error page
+	// title) rather than the whole document.
+	maxPayloadErrorBodyBytes = 512
+
+	// maxPayloadErrorQuotedBytes bounds the snippet after quoting. Escaping
+	// binary expands up to 4x, so the raw cap alone is not a bound on the
+	// logged length.
+	maxPayloadErrorQuotedBytes = 512
+)
+
+// PayloadResponseByteLimit is the read cap for one payload GET. The response
+// side is derived from the output-token count the executor committed to on
+// chain, so the cap tracks gateway request_max_tokens_cap instead of
+// desynchronising from it the way a single constant does.
+//
+// inputTokens is deliberately not a parameter: the prompt is stored as a JSON
+// document and bounded by the gateway body cap, not by a token count, so the
+// prompt allowance is flat.
+func PayloadResponseByteLimit(outputTokens uint64) int64 {
+	// Past this many tokens the response term alone exceeds the hard bound, so
+	// clip before multiplying. Without this guard a large claimed token count
+	// overflows int64 and yields a *smaller* cap than a modest one.
+	const maxDerivableOutputTokens = maxPayloadResponseBytesHard / maxSSEBytesPerOutputToken
+	if outputTokens > maxDerivableOutputTokens {
+		return maxPayloadResponseBytesHard
+	}
+	promptWire := int64(maxPromptPayloadBytes) * 4 / 3
+	respWire := int64(outputTokens) * maxSSEBytesPerOutputToken * 4 / 3
+	total := promptWire + respWire + 64<<10
+	if total > maxPayloadResponseBytesHard {
+		return maxPayloadResponseBytesHard
+	}
+	return total
+}
+
+func payloadReadLimit(maxBytes int64) int64 {
+	if maxBytes <= 0 {
+		return MaxPayloadResponseBytes
+	}
+	if maxBytes > maxPayloadResponseBytesHard {
+		return maxPayloadResponseBytesHard
+	}
+	return maxBytes
+}
+
 // PayloadRetrievalClient is the default HTTP client for payload retrieval.
 //
 // The request URL is built from the executor's on-chain InferenceUrl, which the
@@ -42,6 +118,36 @@ var ErrPayloadGone = errors.New("payload no longer available on executor")
 // (or later rebinds) to loopback/RFC1918/cloud-metadata and make every validator
 // fetching its payloads connect there. See common/httpguard.
 var PayloadRetrievalClient = httpguard.NewNoRedirectClient(30 * time.Second)
+
+// cappedReader fails with ErrPayloadTooLarge once more than remaining bytes are
+// read, so json.Decoder surfaces the cap as a distinguishable error instead of
+// an ambiguous unexpected EOF.
+type cappedReader struct {
+	r         io.Reader
+	remaining int64
+}
+
+// quotedSnippet renders an executor-supplied body for an error message: quoted
+// so it cannot forge log lines, and bounded so it cannot flood them.
+func quotedSnippet(body []byte) string {
+	quoted := strconv.Quote(string(body))
+	if len(quoted) <= maxPayloadErrorQuotedBytes {
+		return quoted
+	}
+	return quoted[:maxPayloadErrorQuotedBytes] + `..."`
+}
+
+func (c *cappedReader) Read(p []byte) (int, error) {
+	if c.remaining <= 0 {
+		return 0, ErrPayloadTooLarge
+	}
+	if int64(len(p)) > c.remaining {
+		p = p[:c.remaining]
+	}
+	n, err := c.r.Read(p)
+	c.remaining -= int64(n)
+	return n, err
+}
 
 // PayloadResponse matches the executor endpoint response.
 // Used by both chain validation and devshard validation paths.
@@ -63,6 +169,7 @@ func FetchPayloadsHTTP(
 	timestamp int64,
 	epochId uint64,
 	signature string,
+	maxBytes int64,
 ) (_ *PayloadResponse, retErr error) {
 	ctx, op := payloadFetchObserver.StartPayloadFetch(ctx, requestUrl, validatorAddress, int64(epochId))
 	defer op.FinishErr(&retErr)
@@ -93,12 +200,17 @@ func FetchPayloadsHTTP(
 		return nil, fmt.Errorf("payload not found on executor: %w", ErrPayloadGone)
 	}
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("executor returned status %d: %s", resp.StatusCode, string(body))
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, maxPayloadErrorBodyBytes))
+		return nil, fmt.Errorf("executor returned status %d: %s", resp.StatusCode, quotedSnippet(body))
 	}
 
 	var payloadResp PayloadResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payloadResp); err != nil {
+	limit := payloadReadLimit(maxBytes)
+	body := &cappedReader{r: resp.Body, remaining: limit}
+	if err := json.NewDecoder(body).Decode(&payloadResp); err != nil {
+		if errors.Is(err, ErrPayloadTooLarge) {
+			return nil, fmt.Errorf("%w: over %d bytes", ErrPayloadTooLarge, limit)
+		}
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 

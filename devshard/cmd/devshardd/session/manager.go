@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"sort"
 	"strconv"
@@ -71,6 +72,10 @@ type HostManager struct {
 
 	binaryVersion string
 
+	// Testenv-only payload withholding (DEVSHARD_TESTENV_PAYLOAD_*). Zero status is off.
+	payloadFaultStatus int
+	payloadFaultAddr   string
+
 	// Optional height-sync (DEVSHARD_CHAINORACLE_URL). Nil when unset.
 	chainOracle      blocks.BlockOracle
 	heightSync       *heightsync.AnchorScheduler
@@ -116,6 +121,11 @@ func NewHostManager(
 	ps PayloadStore,
 	recorder PayloadAuthClient,
 ) *HostManager {
+	faultStatus, faultAddr := payloadFaultFromEnv()
+	if faultStatus > 0 {
+		slog.Warn("devshardd: payload fault injection active; testenv build only",
+			"http_status", faultStatus, "only_validator", faultAddr)
+	}
 	return &HostManager{
 		sessions:           make(map[string]*transport.Server),
 		resolutionFailures: make(map[string]resolutionFailure),
@@ -131,6 +141,8 @@ func NewHostManager(
 		recorder:           recorder,
 		statsDetailsCache:  make(map[string]statsShardDetailCache),
 		statsNegativeCache: make(map[string]statsNegativeCacheEntry),
+		payloadFaultStatus: faultStatus,
+		payloadFaultAddr:   faultAddr,
 		maxBodySize:        transport.DefaultMaxBodySize,
 	}
 }
@@ -726,6 +738,12 @@ func (m *HostManager) HandlePayloads(c echo.Context, srv *transport.Server) erro
 	if inferenceID == "" {
 		emit(observability.LevelWarn, "payload request failed", observability.MetricStatusError, observability.ReasonMissingInferenceID, nil)
 		return echo.NewHTTPError(http.StatusBadRequest, "inference_id required")
+	}
+
+	if payloadFaultMatches(m.payloadFaultStatus, m.payloadFaultAddr, validatorAddress) {
+		emit(observability.LevelWarn, "testenv payload fault", observability.MetricStatusError, observability.ReasonPayloadRetrieveErr, nil,
+			"http_status", m.payloadFaultStatus)
+		return echo.NewHTTPError(m.payloadFaultStatus, "testenv payload fault")
 	}
 
 	epochID, authReason, authErr := m.authenticatePayloadRequest(c, srv.Host().Group())

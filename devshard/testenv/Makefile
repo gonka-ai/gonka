@@ -15,12 +15,17 @@ gen-compose: ## Render config, keyrings, docker-compose.yml, and .env from confi
 clean-keyring: ## Delete generated ./keyring (then run make gen-compose).
 	rm -rf keyring
 
+# devshard_testenv compiles in payload fault injection (DEVSHARD_TESTENV_PAYLOAD_*),
+# which the production build omits. Never use these binaries for a release.
+TESTENV_BUILD_TAGS := devshard_testenv
+
 build-devshardd: ## Build linux devshardd for containers (requires Docker).
-	$(MAKE) -C ../.. devshardd-build DEVSHARD_VERSION=v2 DEVSHARD_BINARY_VERSION=0.2.13-v2-r2
+	$(MAKE) -C ../.. devshardd-build DEVSHARD_VERSION=v2 DEVSHARD_BINARY_VERSION=0.2.13-v2-r2 \
+		DEVSHARD_BUILD_TAGS='$(TESTENV_BUILD_TAGS)'
 
 build-devshardd-local: ## Build host devshardd for --print-* checks (no Docker).
 	@mkdir -p ../../build
-	cd .. && go build -ldflags "-X main.Version=v2 -X main.BinaryVersion=0.2.13-v2-r2 -X devshard/types.buildStateRootProtocolVersion=v2" -o ../build/devshardd ./cmd/devshardd/
+	cd .. && go build -tags '$(TESTENV_BUILD_TAGS)' -ldflags "-X main.Version=v2 -X main.BinaryVersion=0.2.13-v2-r2 -X devshard/types.buildStateRootProtocolVersion=v2" -o ../build/devshardd ./cmd/devshardd/
 	@echo "Built ../../build/devshardd for this host ($(shell uname -s)/$(shell uname -m))"
 	@echo "For Docker stack use: make build-devshardd (requires Docker daemon)"
 
@@ -65,7 +70,7 @@ dev-logs: ## Follow dev overlay logs.
 
 .PHONY: citest-images citest-stack citest-stack-build list-citest-targets
 .PHONY: citest-validation-lease-race citest-escrow-longpoll
-.PHONY: citest-versiond-rolling-update citest-adversarial
+.PHONY: citest-versiond-rolling-update citest-adversarial citest-payload-withholding
 .PHONY: citest-observability citest-grpc-transport citest-height-sync citest-height-sync-dapi-compat test-gateway-smoke
 
 # citest-images and citest-stack-build are build/helper rules, not standalone
@@ -89,6 +94,10 @@ citest-stack: citest-images ## Full stack behavior citests (needs Docker + build
 
 citest-validation-lease-race: citest-images ## Validation lease race, pending stretch, and stale reclaim.
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestValidationLeaseRace' -count=1 -v -timeout 45m
+
+citest-payload-withholding: citest-images ## Executor payload 500 → challenge/invalidate and D7-off lease release.
+	$(MAKE) build-devshardd
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestPayloadWithholding' -count=1 -v -timeout 45m
 
 citest-escrow-longpoll: citest-images ## Escrow long-poll warm; first inference without live escrow fetch (v4-deploy-test-plan §6).
 	$(MAKE) build-devshardd

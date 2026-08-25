@@ -22,6 +22,7 @@ var (
 	receiptOrphanTotal     *prometheus.CounterVec
 	validationTotal        *prometheus.CounterVec
 	validationOrphanTotal  *prometheus.CounterVec
+	validationFaultTotal   *prometheus.CounterVec
 	validationQueueDrops   prometheus.Counter
 	payloadRequestTotal    *prometheus.CounterVec
 	mlnodeAttemptsTotal    *prometheus.CounterVec
@@ -34,6 +35,7 @@ var (
 	buildInfo              *prometheus.GaugeVec
 	lifecycleInflight      prometheus.Gauge
 	fallbackDivisor        *prometheus.GaugeVec
+	payloadFetchTTFB       prometheus.Histogram
 
 	// HA diff/persist consistency (see docs/proposals/ha-diff-persist-consistency.md).
 	diffPersistRetryTotal     *prometheus.CounterVec
@@ -88,6 +90,10 @@ func initRegistry() {
 		Name: "devshard_validation_orphan_total",
 		Help: "Validation jobs that did not publish expected validation txs.",
 	}, []string{"reason"})
+	validationFaultTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_validation_executor_fault_total",
+		Help: "Validations that voted false because the executor did not serve usable payloads.",
+	}, []string{"reason"})
 	validationQueueDrops = prometheus.NewCounter(prometheus.CounterOpts{
 		Name: "devshard_validation_queue_drops_total",
 		Help: "Validation jobs dropped because the queue was full.",
@@ -96,6 +102,11 @@ func initRegistry() {
 		Name: "devshard_payload_request_total",
 		Help: "Executor payload-serving request outcomes.",
 	}, []string{"status", "reason"})
+	payloadFetchTTFB = prometheus.NewHistogram(prometheus.HistogramOpts{
+		Name:    "devshard_payload_fetch_ttfb_seconds",
+		Help:    "Validator payload GET time-to-first-byte (headers received, body not yet read).",
+		Buckets: durationBuckets,
+	})
 
 	mlnodeAttemptsTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "devshard_mlnode_attempts_total",
@@ -162,8 +173,10 @@ func initRegistry() {
 		receiptOrphanTotal,
 		validationTotal,
 		validationOrphanTotal,
+		validationFaultTotal,
 		validationQueueDrops,
 		payloadRequestTotal,
+		payloadFetchTTFB,
 		mlnodeAttemptsTotal,
 		mlnodeCallSeconds,
 		mlnodeTokens,
@@ -238,6 +251,14 @@ func IncValidationOrphan(reason Reason) {
 	validationOrphanTotal.WithLabelValues(string(reason)).Inc()
 }
 
+// IncValidationExecutorFault counts executor-attributable payload failures that
+// were converted into a Valid:false vote. Kept off validationTotal so the
+// published verdict is not counted as both an error and a success.
+func IncValidationExecutorFault(reason Reason) {
+	ensureMetrics()
+	validationFaultTotal.WithLabelValues(string(reason)).Inc()
+}
+
 func IncValidationQueueDrop() {
 	ensureMetrics()
 	validationQueueDrops.Inc()
@@ -246,6 +267,11 @@ func IncValidationQueueDrop() {
 func IncPayloadRequest(metricStatus MetricStatus, reason Reason) {
 	ensureMetrics()
 	payloadRequestTotal.WithLabelValues(string(metricStatus), string(reason)).Inc()
+}
+
+func ObservePayloadFetchTTFB(d time.Duration) {
+	ensureMetrics()
+	payloadFetchTTFB.Observe(d.Seconds())
 }
 
 func IncMLNodeAttempt(path Path, outcome Reason, nodeID string) {
@@ -348,5 +374,3 @@ func IncReconcileFastForward() {
 	ensureMetrics()
 	reconcileFastForwardTotal.Inc()
 }
-
-

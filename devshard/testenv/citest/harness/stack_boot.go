@@ -122,6 +122,49 @@ func requireThreeVersiondHosts(t *testing.T, cfg *config.File) {
 	}
 }
 
+// PayloadWithholdingBootOpts patches compose env after gencompose and before Up.
+type PayloadWithholdingBootOpts struct {
+	PayloadHTTPStatus string // e.g. "500"; empty leaves the compose default (off)
+	FaultValidator    string // X-Validator-Address to fail; empty = all callers; "$solo" = hosts[2]
+	VoteFalse         string // "true"/"false"; empty leaves compose default (true)
+}
+
+// BootPayloadWithholdingStack renders HA + two solos (3 identities) so Phase B
+// can still reach VoteThreshold after a fetch-failure challenge.
+func BootPayloadWithholdingStack(t *testing.T, prefix string, opts PayloadWithholdingBootOpts) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WritePayloadWithholdingConfig(t, stack.WorkDir)
+	stack.RunGencompose(t)
+	cfg := stack.LoadConfig(t)
+	requireFourVersiondHosts(t, cfg)
+	if opts.PayloadHTTPStatus != "" {
+		PatchComposeEnvKey(t, stack.ComposePath, "DEVSHARD_TESTENV_PAYLOAD_HTTP_STATUS", opts.PayloadHTTPStatus)
+	}
+	if opts.FaultValidator != "" {
+		addr := opts.FaultValidator
+		if addr == "$solo" {
+			require.GreaterOrEqual(t, len(cfg.Hosts), 3)
+			addr = cfg.Hosts[2].Address
+			require.NotEmpty(t, addr)
+		}
+		PatchComposeEnvKey(t, stack.ComposePath, "DEVSHARD_TESTENV_PAYLOAD_FAULT_VALIDATOR", addr)
+	}
+	if opts.VoteFalse != "" {
+		PatchComposeEnvKey(t, stack.ComposePath, "DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE", opts.VoteFalse)
+	}
+	stack.Up(t)
+	return stack, cfg, stack.Endpoints(t, cfg)
+}
+
+func requireFourVersiondHosts(t *testing.T, cfg *config.File) {
+	t.Helper()
+	if len(cfg.Hosts) != 4 {
+		t.Fatalf("expected 4 versiond hosts (HA pair + 2 solos), got %d", len(cfg.Hosts))
+	}
+}
+
 // RouterSessionURL builds the sticky-routed path nginx hashes on the session id segment.
 func RouterSessionURL(routerHTTP, version, sessionID, suffix string) string {
 	return routerHTTP + "/" + version + "/sessions/" + sessionID + suffix

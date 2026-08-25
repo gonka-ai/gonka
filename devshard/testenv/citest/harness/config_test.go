@@ -37,6 +37,18 @@ func TestWriteValidationLeaseRaceConfig_ValidationRate100(t *testing.T) {
 	require.Equal(t, uint32(10000), cfg.Escrows[0].ValidationRate)
 }
 
+func TestWritePayloadWithholdingConfig_FourHosts(t *testing.T) {
+	dir := t.TempDir()
+	WritePayloadWithholdingConfig(t, dir)
+
+	cfg, err := config.Load(filepath.Join(dir, "config.yaml"))
+	require.NoError(t, err)
+	require.Len(t, cfg.Hosts, 4)
+	require.Equal(t, 3, cfg.Escrow.Slots)
+	require.Equal(t, uint32(10000), cfg.Params.ValidationRate)
+	require.Equal(t, uint32(10000), cfg.Escrows[0].ValidationRate)
+}
+
 func TestWriteMultiConfig_CustomValidationRate(t *testing.T) {
 	dir := t.TempDir()
 	WriteMultiConfig(t, dir, MultiConfigOpts{Hosts: 2, EscrowSlots: 2, ValidationRate: 7500})
