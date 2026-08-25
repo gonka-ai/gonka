@@ -211,7 +211,9 @@ services:
       # future versions sticky-hash across the pool (Devshard-Ha header).
       VERSIOND_LEGACY_HOST: "{{ legacyVersiondHost . }}"
       VERSIOND_NON_HA_VERSIONS: "v1"
-      VERSIOND_VERSIONS: "{{ $.Versiond.VersionName }}"
+      # Keep the current test version out of the static bootstrap floor: this
+      # stack is the end-to-end proof that governance can admit a dynamic slot.
+      VERSIOND_VERSIONS: ""
       VERSIOND_ROUTING_CATALOG_URL: "http://{{ $.MockDapi.Host }}:{{ $.MockDapi.HTTPPort }}/versions"
       VERSIOND_ROUTING_CATALOG_POLL_SECONDS: "1"
       VERSIOND_ROUTING_ACTIVATION_MIN_READY: "{{ routingActivationMinReady . }}"

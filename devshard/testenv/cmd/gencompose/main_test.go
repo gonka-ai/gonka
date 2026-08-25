@@ -289,6 +289,8 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.NotContains(t, text, "KEY_NAME: versiond-1")
 	require.Contains(t, text, "KEY_NAME: versiond-2")
 	require.Contains(t, text, `VERSIOND_POOL_HOST: "versiond-pool"`)
+	require.Contains(t, text, `VERSIOND_VERSIONS: ""`,
+		"catalog-enabled test stacks must exercise dynamic admission")
 	require.Contains(t, text, `VERSIOND_ROUTING_CATALOG_URL: "http://mock-dapi:9100/versions"`)
 	require.Contains(t, text, `VERSIOND_ROUTING_CATALOG_POLL_SECONDS: "1"`)
 	require.Contains(t, text, `VERSIOND_ROUTING_ACTIVATION_MIN_READY: "2"`)

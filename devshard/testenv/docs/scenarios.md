@@ -146,17 +146,19 @@ while other versions sticky-hash across the `versiond-pool` members (and get
 
 **How:**
 
-1. Boot the standard stack (`VERSIOND_NON_HA_VERSIONS=v1`; legacy host
-   `versiond-0`).
-2. Probe `/v1/sessions/<id>/healthz` for 16 distinct session ids. Assert every
+1. Boot the standard stack with an empty static version floor. Wait until the
+   governance catalog admits `VersionName` into a `versiond_dynamic_*` pool and
+   verify that the pool reaches both versiond hosts.
+2. Recreate only the router with `VersionName` in
+   `VERSIOND_NON_HA_VERSIONS` and `versiond-0` as the legacy host.
+3. Probe `/<VersionName>/sessions/<id>/healthz` for 16 distinct session ids. Assert every
    response has `X-Versiond-Backend: versiond_legacy` and the same
    `X-Upstream-Addr` mapped to `versiond-0`.
-3. Reuse router-stickiness probes on `VersionName` (e.g. `v2`); require ≥2 distinct
-   upstreams and a per-version `X-Versiond-Backend: versiond_pool_*`.
 4. Stop the non-legacy versiond; repeat legacy probes — still pinned to
    `versiond-0`.
 
-**Pass criteria:** Non-HA path never fans out; HA path still multi-upstream.
+**Pass criteria:** governance admission creates a working multi-host dynamic
+pool, then the explicit non-HA pin constrains that same route to one host.
 See `devshard/docs/pr-1366-deploy-test-plan.md` §3.2.
 
 ---
