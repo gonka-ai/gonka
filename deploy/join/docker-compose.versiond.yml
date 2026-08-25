@@ -144,6 +144,9 @@ services:
     restart: always
 
   proxy:
+    depends_on:
+      versiond-router:
+        condition: service_healthy
     environment:
       - VERSIOND_SERVICE_NAME=versiond-router
       - VERSIOND_PORT=8080

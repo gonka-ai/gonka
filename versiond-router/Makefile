@@ -53,6 +53,9 @@ test-join-compose:
 	jq -e '.services["versiond-router"].healthcheck.test | join(" ") as $$check | ($$check | contains("127.0.0.1:8404/readyz")) and ($$check | contains("component=catalog") | not) and ($$check | contains("127.0.0.1:8080/healthz"))' \
 		"$$tmp_json" >/dev/null \
 		|| { echo 'test-join-compose: router healthcheck does not probe the data plane' >&2; exit 1; }; \
+	jq -e '.services.proxy.depends_on["versiond-router"].condition == "service_healthy"' \
+		"$$tmp_json" >/dev/null \
+		|| { echo 'test-join-compose: public proxy does not wait for the router data plane' >&2; exit 1; }; \
 	grep -q 'VERSIOND_POOL_HOST: versiond-pool' "$$tmp" \
 		|| { echo 'test-join-compose: pool host is not rendered' >&2; exit 1; }; \
 	[ "$$(grep -c -- '- versiond-pool' "$$tmp")" -ge 2 ] \
