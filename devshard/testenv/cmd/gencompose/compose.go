@@ -141,6 +141,9 @@ services:
       DEVSHARD_VALIDATION_RETRY_INTERVAL: ${DEVSHARD_VALIDATION_RETRY_INTERVAL:-5m}
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
+      # GONKA_HA is intentionally omitted from versiond in this fixture. The
+      # SQLite-to-HA scenario first boots children before enabling HA at the
+      # router, where Devshard-Ha exercises the request-time storage guard.
 {{ if and (eq $.Versiond.Mode "multi") (isHAReplica $ .) }}
       # HA pair shares Postgres (sticky single-writer + lease table).
       DEVSHARD_STORAGE_MODE: postgres
@@ -203,6 +206,9 @@ services:
       VERSIOND_LEGACY_HOST: "{{ legacyVersiondHost . }}"
       VERSIOND_NON_HA_VERSIONS: "v1"
       VERSIOND_VERSIONS: "{{ $.Versiond.VersionName }}"
+      # Only the router is told this deployment is HA. The versiond containers
+      # are not, so scenarios that deliberately run the pool on sqlite still
+      # boot and fail at request time on the storage guard instead.
       GONKA_HA: "{{ haDeployment . }}"
     ports:
       - "{{ .VersiondRouter.Port }}:8080"

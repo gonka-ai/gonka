@@ -40,6 +40,9 @@ x-versiond: &versiond
     KEYRING_BACKEND: ${KEYRING_BACKEND:-file}
     KEYRING_PASSWORD: ${KEYRING_PASSWORD:-}
     KEYRING_DIR: ${KEYRING_DIR:-/root/.inference}
+    # GONKA_HA is intentionally not inherited by this generic test fixture.
+    # It starts testapp by default, and devshard scenarios may exercise SQLite
+    # before adding the Postgres overlay; the router still marks HA requests.
     # devshardd child storage (overridden by docker-compose.devshard-postgres.yml).
     PGHOST: ${PGHOST:-}
     PGPORT: ${PGPORT:-5432}
