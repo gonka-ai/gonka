@@ -1051,6 +1051,14 @@ test-render: test-local-compose test-join-compose test-catalog-cache test-hash-r
 		./entrypoint.sh >/dev/null 2>&1; then \
 		fail "an invalid catalog poll interval was accepted"; \
 	fi; \
+	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+		VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS=0 \
+		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+		VERSIOND_ROUTER_OUT="$$tmpdir/bad-catalog.cfg" \
+		./entrypoint.sh >/dev/null 2>&1; then \
+		fail "a zero catalog Runtime API timeout was accepted"; \
+	fi; \
 	for off in 0 false NO; do \
 		if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 			GONKA_HA=true VERSIOND_ROUTER_ALLOW_COARSE_READINESS=$$off \

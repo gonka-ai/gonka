@@ -152,6 +152,7 @@ for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_I
 done
 if [ "$VERSION_CAPACITY" -eq 0 ] || [ "$CATALOG_POLL" -eq 0 ] || \
     [ "$CATALOG_FETCH_TIMEOUT" -eq 0 ] || \
+    [ "$CATALOG_RUNTIME_TIMEOUT" -eq 0 ] || \
     [ "$CATALOG_ACTIVATION_MIN_READY" -eq 0 ] || \
     [ "$CATALOG_ACTIVATION_MIN_READY" -gt "$SLOTS" ] || \
     [ "$CATALOG_CACHE_MAX_AGE" -eq 0 ]; then
