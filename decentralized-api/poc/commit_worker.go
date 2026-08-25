@@ -17,13 +17,16 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+var _ storeCommitRecorder = (*cosmosclient.InferenceCosmosClient)(nil)
+
 const (
 	distributionRetryInterval = 30 * time.Second
 	storeCommitQueryTimeout   = 2 * time.Second
 	feeTreeRefreshTimeout     = 3 * time.Second
 	// confirmationGraceBlocks is how long an admitted same Count/root stays
-	// pending before a resend. Higher Counts submit immediately. Query
-	// failures do not count as "absent" — that would duplicate a live tx.
+	// pending before a resend. A different (higher) count waits until the
+	// in-flight tx confirms. Query failures do not count as "absent" — that
+	// would duplicate a live tx.
 	confirmationGraceBlocks int64 = 3
 )
 
@@ -43,9 +46,14 @@ type pendingCommit struct {
 	chainAbsent     bool // query succeeded and canonical commit is not this payload
 }
 
+type storeCommitRecorder interface {
+	cosmosclient.CosmosMessageClient
+	SubmitPoCV2StoreCommitWithTimeout(msg *types.MsgPoCV2StoreCommit, timeoutHeight uint64) error
+}
+
 type CommitWorker struct {
 	store              *artifacts.ManagedArtifactStore
-	recorder           cosmosclient.CosmosMessageClient
+	recorder           storeCommitRecorder
 	tracker            *chainphase.ChainPhaseTracker
 	participantAddress string
 
@@ -53,22 +61,23 @@ type CommitWorker struct {
 	stop     chan struct{}
 	done     chan struct{}
 
-	mu                      sync.Mutex
-	currentPocHeight        int64
-	blockHeight             int64
-	lastConfirmHeight       int64
-	lastDistributionAttempt time.Time
-	lastCommitted           map[commitKey]commitState
-	pending                 map[commitKey]pendingCommit
-	permanentFailed         map[commitKey]uint32
-	retryAfterHeight        map[commitKey]int64
+	mu                          sync.Mutex
+	currentPocHeight            int64
+	blockHeight                 int64
+	lastConfirmHeight           int64
+	lastAcceptedBroadcastHeight int64
+	lastDistributionAttempt     time.Time
+	lastCommitted               map[commitKey]commitState
+	pending                     map[commitKey]pendingCommit
+	permanentFailed             map[commitKey]uint32
+	retryAfterHeight            map[commitKey]int64
 }
 
 // NewCommitWorker creates and starts a new commit worker.
 // The worker runs until Close() is called.
 func NewCommitWorker(
 	store *artifacts.ManagedArtifactStore,
-	recorder cosmosclient.CosmosMessageClient,
+	recorder storeCommitRecorder,
 	tracker *chainphase.ChainPhaseTracker,
 	participantAddress string,
 	interval time.Duration,
@@ -134,6 +143,7 @@ func (w *CommitWorker) tick() {
 		w.currentPocHeight = pocHeight
 		w.lastDistributionAttempt = time.Time{}
 		w.lastConfirmHeight = 0
+		w.lastAcceptedBroadcastHeight = 0
 		w.lastCommitted = make(map[commitKey]commitState)
 		w.pending = make(map[commitKey]pendingCommit)
 		w.permanentFailed = make(map[commitKey]uint32)
@@ -148,7 +158,7 @@ func (w *CommitWorker) tick() {
 			"pocHeight", pocHeight,
 			"canCommit", canCommit)
 		if canCommit {
-			w.maybeSubmitCommit(pocHeight)
+			w.maybeSubmitCommit(pocHeight, StoreCommitTimeoutHeight(epochState, pocHeight))
 		}
 	}
 
@@ -161,7 +171,7 @@ func (w *CommitWorker) tick() {
 	}
 }
 
-func (w *CommitWorker) maybeSubmitCommit(pocHeight int64) {
+func (w *CommitWorker) maybeSubmitCommit(pocHeight int64, timeoutHeight uint64) {
 	if w.lastCommitted == nil {
 		w.lastCommitted = make(map[commitKey]commitState)
 	}
@@ -186,6 +196,12 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64) {
 	}
 
 	height := w.blockHeight
+	if height > 0 && height == w.lastAcceptedBroadcastHeight {
+		logging.Debug("CommitWorker: already admitted a StoreCommit this height", types.PoC,
+			"pocHeight", pocHeight, "height", height)
+		return
+	}
+
 	entries := make([]*types.PoCV2CommitEntry, 0, len(stageStores))
 	submittedStates := make(map[commitKey]commitState, len(stageStores))
 	for _, stageStore := range stageStores {
@@ -220,8 +236,16 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64) {
 			}
 		}
 
-		if pending, ok := w.pending[key]; ok && sameCommitState(pending.state, count, rootHash) {
-			if !samePayloadRetryable(pending, height) {
+		if pending, ok := w.pending[key]; ok {
+			if sameCommitState(pending.state, count, rootHash) {
+				if !samePayloadRetryable(pending, height) {
+					continue
+				}
+			} else {
+				// Different payload (usually a higher count) while the
+				// previous tx may still be in the mempool. Sending now can
+				// land both in one later block → handler 1137. Wait until
+				// confirm; a lost same-payload tx still resends after grace.
 				continue
 			}
 		}
@@ -267,7 +291,7 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64) {
 		setter.SetStoreCommitPrev(prev)
 	}
 
-	if err := w.recorder.SubmitPoCV2StoreCommit(msg); err != nil {
+	if err := w.recorder.SubmitPoCV2StoreCommitWithTimeout(msg, timeoutHeight); err != nil {
 		if cosmosclient.IsInsufficientFeeBroadcastError(err) {
 			w.refreshFeeTreeBounded()
 			for key := range submittedStates {
@@ -298,13 +322,14 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64) {
 		return
 	}
 
+	w.lastAcceptedBroadcastHeight = height
 	for key, state := range submittedStates {
 		w.pending[key] = pendingCommit{state: state, submittedHeight: height}
 		delete(w.retryAfterHeight, key)
 		delete(w.permanentFailed, key)
 	}
 	logging.Debug("CommitWorker: submitted, waiting for chain confirm", types.PoC,
-		"pocHeight", pocHeight, "models", len(entries), "height", height)
+		"pocHeight", pocHeight, "models", len(entries), "height", height, "timeoutHeight", timeoutHeight)
 }
 
 func (w *CommitWorker) reconcilePending(pocHeight int64) {

@@ -139,9 +139,19 @@ func (k msgServer) buildPoCV2CommitUpdates(
 	existingByModel map[string]types.PoCV2StoreCommit,
 ) ([]pocV2CommitUpdate, uint64, error) {
 	updates := make([]pocV2CommitUpdate, 0, len(entries))
+	seenModelIDs := make(map[string]struct{}, len(entries))
 	var totalCountDelta uint64
 
 	for _, entry := range entries {
+		if entry != nil && entry.ModelId != "" {
+			if _, dup := seenModelIDs[entry.ModelId]; dup {
+				return nil, 0, sdkerrors.Wrap(
+					types.ErrIllegalState,
+					fmt.Sprintf("duplicate model_id %q in one commit", entry.ModelId),
+				)
+			}
+			seenModelIDs[entry.ModelId] = struct{}{}
+		}
 		update, err := k.buildPoCV2CommitUpdate(ctx, currentBlockHeight, existingByModel, entry)
 		if err != nil {
 			return nil, 0, err

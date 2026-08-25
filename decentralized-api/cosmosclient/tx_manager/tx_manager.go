@@ -59,10 +59,29 @@ const (
 	BatchGasLimit = 1_000_000_000
 )
 
+// TxSendOptions is per-broadcast configuration for the generic signer.
+// WithRetry, NoRetry, and SendBatch all take the same options; unused
+// fields are ignored. Do not special-case message types in getSignedBytes.
+type TxSendOptions struct {
+	// TimeoutHeight is copied onto the tx body when > 0 (SDK timeout_height).
+	TimeoutHeight uint64
+	// DeadlineBlock is the retry/observe queue cutoff. Used by WithRetry and
+	// SendBatch. If 0, WithRetry computes height + getMaxBlocksForType.
+	// NoRetry ignores this field.
+	DeadlineBlock int64
+}
+
+func firstTxSendOptions(opts []TxSendOptions) TxSendOptions {
+	if len(opts) > 0 {
+		return opts[0]
+	}
+	return TxSendOptions{}
+}
+
 type TxManager interface {
-	SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlock ...int64) (*sdk.TxResponse, error)
-	SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, error)
-	SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlock ...int64) error
+	SendTransactionAsyncWithRetry(rawTx sdk.Msg, opts ...TxSendOptions) (*sdk.TxResponse, error)
+	SendTransactionAsyncNoRetry(rawTx sdk.Msg, opts ...TxSendOptions) (*sdk.TxResponse, error)
+	SendBatchAsyncWithRetry(msgs []sdk.Msg, opts ...TxSendOptions) error
 	SendTransactionSyncNoRetry(msg proto.Message) (*ctypes.ResultTx, error)
 	BroadcastMessages(id string, msgs ...sdk.Msg) (*sdk.TxResponse, time.Time, error)
 	GetClientContext() client.Context
@@ -173,11 +192,19 @@ type txInfo struct {
 	TxHash        string
 	Timeout       time.Time
 	Attempts      int
-	DeadlineBlock int64 `json:",omitempty"` // Block after which tx is stale
+	DeadlineBlock int64  `json:",omitempty"` // Block after which retry/observe is stale
+	TimeoutHeight uint64 `json:",omitempty"` // SDK timeout_height, reapplied on retry
 }
 
 func (t *txInfo) IsBatch() bool {
 	return len(t.RawBatch) > 0
+}
+
+func (t txInfo) sendOpts() TxSendOptions {
+	return TxSendOptions{
+		TimeoutHeight: t.TimeoutHeight,
+		DeadlineBlock: t.DeadlineBlock,
+	}
 }
 
 func (m *manager) GetApiAccount() apiconfig.ApiAccount {
@@ -188,33 +215,31 @@ func (m *manager) Status(ctx context.Context) (*ctypes.ResultStatus, error) {
 	return m.client.Status(ctx)
 }
 
-func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlockOpt ...int64) (*sdk.TxResponse, error) {
+func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg, opts ...TxSendOptions) (*sdk.TxResponse, error) {
 	id := uuid.New().String()
 	logging.Debug("SendTransactionAsyncWithRetry: sending tx", types.Messages, "tx_id", id)
 
-	var deadlineBlock int64
-	if len(deadlineBlockOpt) > 0 && deadlineBlockOpt[0] > 0 {
-		deadlineBlock = deadlineBlockOpt[0]
-	} else {
+	sendOpts := firstTxSendOptions(opts)
+	if sendOpts.DeadlineBlock <= 0 {
 		msgType := sdk.MsgTypeURL(rawTx)
-		deadlineBlock = m.getLatestBlockHeight() + getMaxBlocksForType(msgType)
+		sendOpts.DeadlineBlock = m.getLatestBlockHeight() + getMaxBlocksForType(msgType)
 	}
 
 	if halt, err := m.updateChainHalt(); err != nil || halt {
 		logging.Error("chain is slowing down or couldn't fetch actual chain status", types.Messages, "latest_block_timestamp", m.blockTimeTracker.latestBlockTime)
 
-		if err := m.putOnRetry(id, "", time.Time{}, rawTx, 0, false, deadlineBlock); err != nil {
+		if err := m.putOnRetry(id, "", time.Time{}, rawTx, 0, false, sendOpts); err != nil {
 			logging.Error("failed to put in queue", types.Messages, "tx_id", id, "resend_err", err)
 			return nil, fmt.Errorf("%w: tx_id=%s: %w", ErrTxRetryEnqueueFailed, id, err)
 		}
 		return &sdk.TxResponse{}, nil
 	}
 
-	resp, timeout, broadcastErr := m.broadcastMessage(id, rawTx)
+	resp, timeout, broadcastErr := m.broadcastMessage(id, rawTx, sendOpts)
 	if broadcastErr != nil {
 		// Check if broadcast error is retryable
 		if isRetryableBroadcastError(broadcastErr) {
-			if err := m.putOnRetry(id, "", timeout, rawTx, 1, false, deadlineBlock); err != nil {
+			if err := m.putOnRetry(id, "", timeout, rawTx, 1, false, sendOpts); err != nil {
 				logging.Error("tx failed to broadcast, failed to put in queue", types.Messages, "tx_id", id, "broadcast_err", broadcastErr, "resend_err", err)
 				return nil, fmt.Errorf("%w: tx_id=%s: broadcast_err=%v: %w", ErrTxRetryEnqueueFailed, id, broadcastErr, err)
 			}
@@ -235,14 +260,14 @@ func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlockOpt 
 	case TxActionRetry:
 		logging.Warn("Retryable response error, queuing for retry", types.Messages,
 			"tx_id", id, "code", resp.Code, "rawLog", resp.RawLog)
-		if err := m.putOnRetry(id, "", timeout, rawTx, 1, false, deadlineBlock); err != nil {
+		if err := m.putOnRetry(id, "", timeout, rawTx, 1, false, sendOpts); err != nil {
 			logging.Error("tx failed, failed to put in queue for retry", types.Messages, "tx_id", id, "err", err)
 			return nil, fmt.Errorf("%w: tx_id=%s: code=%d: %w", ErrTxRetryEnqueueFailed, id, resp.Code, err)
 		}
 		return nil, ErrTxQueuedForRetry
 	case TxActionObserve:
 		// Success or tx-in-mempool - queue for observation
-		if err := m.putOnRetry(id, resp.TxHash, timeout, rawTx, 1, true, deadlineBlock); err != nil {
+		if err := m.putOnRetry(id, resp.TxHash, timeout, rawTx, 1, true, sendOpts); err != nil {
 			logging.Error("tx broadcast, but failed to put in queue", types.Messages, "tx_id", id, "err", err)
 		}
 		return resp, nil
@@ -253,26 +278,24 @@ func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlockOpt 
 	return nil, fmt.Errorf("unexpected broadcast classification result for tx_id %s", id)
 }
 
-func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlockOpt ...int64) error {
+func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg, opts ...TxSendOptions) error {
 	if len(msgs) == 0 {
 		return nil
 	}
 
-	var deadlineBlock int64
-	if len(deadlineBlockOpt) > 0 && deadlineBlockOpt[0] > 0 {
-		deadlineBlock = deadlineBlockOpt[0]
-	} else {
+	sendOpts := firstTxSendOptions(opts)
+	if sendOpts.DeadlineBlock <= 0 {
 		var minBlocks int64 = defaultMaxBlocks
 		for _, msg := range msgs {
 			if blocks := getMaxBlocksForType(sdk.MsgTypeURL(msg)); blocks < minBlocks {
 				minBlocks = blocks
 			}
 		}
-		deadlineBlock = m.getLatestBlockHeight() + minBlocks
+		sendOpts.DeadlineBlock = m.getLatestBlockHeight() + minBlocks
 	}
 
 	if len(msgs) == 1 {
-		_, err := m.SendTransactionAsyncWithRetry(msgs[0], deadlineBlock)
+		_, err := m.SendTransactionAsyncWithRetry(msgs[0], sendOpts)
 		return err
 	}
 
@@ -282,18 +305,18 @@ func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlockOpt ...in
 	if halt, err := m.updateChainHalt(); err != nil || halt {
 		logging.Error("chain is slowing down or couldn't fetch actual chain status", types.Messages, "latest_block_timestamp", m.blockTimeTracker.latestBlockTime)
 
-		if err := m.putBatchOnRetry(id, msgs, "", time.Time{}, 0, false, deadlineBlock); err != nil {
+		if err := m.putBatchOnRetry(id, msgs, "", time.Time{}, 0, false, sendOpts); err != nil {
 			logging.Error("failed to put batch in queue", types.Messages, "tx_id", id, "resend_err", err)
 			return fmt.Errorf("%w: tx_id=%s: %w", ErrTxRetryEnqueueFailed, id, err)
 		}
 		return nil
 	}
 
-	resp, timeout, broadcastErr := m.BroadcastMessages(id, msgs...)
+	resp, timeout, broadcastErr := m.broadcastMessagesAtAttemptWithOpts(id, 0, msgs, sendOpts)
 	if broadcastErr != nil {
 		// Check if broadcast error is retryable
 		if isRetryableBroadcastError(broadcastErr) {
-			if err := m.putBatchOnRetry(id, msgs, "", timeout, 1, false, deadlineBlock); err != nil {
+			if err := m.putBatchOnRetry(id, msgs, "", timeout, 1, false, sendOpts); err != nil {
 				logging.Error("batch failed to broadcast, failed to put in queue", types.Messages, "tx_id", id, "broadcast_err", broadcastErr, "resend_err", err)
 				return fmt.Errorf("%w: tx_id=%s: broadcast_err=%v: %w", ErrTxRetryEnqueueFailed, id, broadcastErr, err)
 			}
@@ -314,14 +337,14 @@ func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlockOpt ...in
 	case TxActionRetry:
 		logging.Warn("Retryable response error in batch, queuing for retry", types.Messages,
 			"tx_id", id, "code", resp.Code, "rawLog", resp.RawLog)
-		if err := m.putBatchOnRetry(id, msgs, "", timeout, 1, false, deadlineBlock); err != nil {
+		if err := m.putBatchOnRetry(id, msgs, "", timeout, 1, false, sendOpts); err != nil {
 			logging.Error("batch failed, failed to put in queue for retry", types.Messages, "tx_id", id, "err", err)
 			return fmt.Errorf("%w: tx_id=%s: code=%d: %w", ErrTxRetryEnqueueFailed, id, resp.Code, err)
 		}
 		return ErrTxQueuedForRetry
 	case TxActionObserve:
 		// Success or tx-in-mempool - queue for observation
-		if err := m.putBatchOnRetry(id, msgs, resp.TxHash, timeout, 1, true, deadlineBlock); err != nil {
+		if err := m.putBatchOnRetry(id, msgs, resp.TxHash, timeout, 1, true, sendOpts); err != nil {
 			logging.Error("batch broadcast, but failed to put in queue", types.Messages, "tx_id", id, "err", err)
 		}
 		return nil
@@ -332,14 +355,15 @@ func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlockOpt ...in
 	return fmt.Errorf("unexpected broadcast classification result for batch tx_id %s", id)
 }
 
-func (m *manager) SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, error) {
+func (m *manager) SendTransactionAsyncNoRetry(rawTx sdk.Msg, opts ...TxSendOptions) (*sdk.TxResponse, error) {
 	id := uuid.New().String()
 	logging.Debug("SendTransactionAsyncNoRetry: sending tx", types.Messages, "tx_id", id, "originalMsgType", sdk.MsgTypeURL(rawTx))
 	_, err := m.updateChainHalt()
 	if err != nil {
 		return nil, err
 	}
-	resp, _, broadcastErr := m.broadcastMessage(id, rawTx)
+	sendOpts := firstTxSendOptions(opts)
+	resp, _, broadcastErr := m.broadcastMessage(id, rawTx, sendOpts)
 	return resp, errorFromCheckTx(resp, broadcastErr)
 }
 
@@ -375,14 +399,15 @@ func (m *manager) putOnRetry(
 	rawTx sdk.Msg,
 	attempts int,
 	sent bool,
-	deadlineBlock int64,
+	opts TxSendOptions,
 ) error {
 	logging.Debug("putOnRetry: tx with params", types.Messages,
 		"tx_id", id,
 		"tx_hash", txHash,
 		"timeout", timeout.String(),
 		"sent", sent,
-		"deadlineBlock", deadlineBlock,
+		"deadlineBlock", opts.DeadlineBlock,
+		"timeoutHeight", opts.TimeoutHeight,
 	)
 
 	if attempts >= maxAttempts {
@@ -405,7 +430,8 @@ func (m *manager) putOnRetry(
 			RawTx:         bz,
 			TxHash:        txHash,
 			Timeout:       timeout,
-			DeadlineBlock: deadlineBlock,
+			DeadlineBlock: opts.DeadlineBlock,
+			TimeoutHeight: opts.TimeoutHeight,
 		},
 		Sent:     sent,
 		Attempts: attempts,
@@ -427,7 +453,7 @@ func (m *manager) putBatchOnRetry(
 	timeout time.Time,
 	attempts int,
 	sent bool,
-	deadlineBlock int64,
+	opts TxSendOptions,
 ) error {
 	logging.Debug("putBatchOnRetry: batch with params", types.Messages,
 		"tx_id", id,
@@ -435,7 +461,8 @@ func (m *manager) putBatchOnRetry(
 		"timeout", timeout.String(),
 		"sent", sent,
 		"count", len(msgs),
-		"deadlineBlock", deadlineBlock,
+		"deadlineBlock", opts.DeadlineBlock,
+		"timeoutHeight", opts.TimeoutHeight,
 	)
 
 	if attempts >= maxAttempts {
@@ -462,7 +489,8 @@ func (m *manager) putBatchOnRetry(
 			RawBatch:      rawBatch,
 			TxHash:        txHash,
 			Timeout:       timeout,
-			DeadlineBlock: deadlineBlock,
+			DeadlineBlock: opts.DeadlineBlock,
+			TimeoutHeight: opts.TimeoutHeight,
 		},
 		Sent:     sent,
 		Attempts: attempts,
@@ -577,7 +605,7 @@ func (m *manager) sendTxs() error {
 
 			if !tx.Sent {
 				logging.Debug("start broadcast batch async", types.Messages, "id", tx.TxInfo.Id, "attempt", tx.TxInfo.Attempts)
-				resp, timeout, broadcastErr = m.broadcastMessagesAtAttempt(tx.TxInfo.Id, tx.TxInfo.Attempts, msgs)
+				resp, timeout, broadcastErr = m.broadcastMessagesAtAttemptWithOpts(tx.TxInfo.Id, tx.TxInfo.Attempts, msgs, tx.TxInfo.sendOpts())
 			}
 		} else {
 			rawTx, err := m.unpackTx(tx.TxInfo.RawTx)
@@ -589,7 +617,7 @@ func (m *manager) sendTxs() error {
 
 			if !tx.Sent {
 				logging.Debug("start broadcast tx async", types.Messages, "id", tx.TxInfo.Id, "attempt", tx.TxInfo.Attempts)
-				resp, timeout, broadcastErr = m.broadcastMessageAtAttempt(tx.TxInfo.Id, tx.TxInfo.Attempts, rawTx)
+				resp, timeout, broadcastErr = m.broadcastMessagesAtAttemptWithOpts(tx.TxInfo.Id, tx.TxInfo.Attempts, []sdk.Msg{rawTx}, tx.TxInfo.sendOpts())
 			}
 		}
 
@@ -693,9 +721,9 @@ func (m *manager) observeTxs() error {
 			tx.Attempts++
 			var retryErr error
 			if tx.IsBatch() {
-				retryErr = m.putBatchOnRetry(tx.Id, msgs, "", time.Time{}, tx.Attempts, false, tx.DeadlineBlock)
+				retryErr = m.putBatchOnRetry(tx.Id, msgs, "", time.Time{}, tx.Attempts, false, tx.sendOpts())
 			} else {
-				retryErr = m.putOnRetry(tx.Id, "", time.Time{}, rawTx, tx.Attempts, false, tx.DeadlineBlock)
+				retryErr = m.putOnRetry(tx.Id, "", time.Time{}, rawTx, tx.Attempts, false, tx.sendOpts())
 			}
 
 			if retryErr != nil {
@@ -727,9 +755,9 @@ func (m *manager) observeTxs() error {
 
 				var retryErr error
 				if tx.IsBatch() {
-					retryErr = m.putBatchOnRetry(tx.Id, msgs, "", time.Time{}, tx.Attempts, false, tx.DeadlineBlock)
+					retryErr = m.putBatchOnRetry(tx.Id, msgs, "", time.Time{}, tx.Attempts, false, tx.sendOpts())
 				} else {
-					retryErr = m.putOnRetry(tx.Id, "", time.Time{}, rawTx, tx.Attempts, false, tx.DeadlineBlock)
+					retryErr = m.putOnRetry(tx.Id, "", time.Time{}, rawTx, tx.Attempts, false, tx.sendOpts())
 				}
 
 				if retryErr != nil {
@@ -826,6 +854,10 @@ func (m *manager) BroadcastMessages(id string, msgs ...sdk.Msg) (*sdk.TxResponse
 // gasWanted from the per-msg-type estimate; subsequent attempts bump
 // gasWanted to escape OOG loops. See estimateBatchGas in gas_estimate.go.
 func (m *manager) broadcastMessagesAtAttempt(id string, attempt int, msgs []sdk.Msg) (resp *sdk.TxResponse, timestamp time.Time, err error) {
+	return m.broadcastMessagesAtAttemptWithOpts(id, attempt, msgs, TxSendOptions{})
+}
+
+func (m *manager) broadcastMessagesAtAttemptWithOpts(id string, attempt int, msgs []sdk.Msg, opts TxSendOptions) (resp *sdk.TxResponse, timestamp time.Time, err error) {
 	if len(msgs) == 0 {
 		return nil, time.Time{}, nil
 	}
@@ -881,7 +913,7 @@ func (m *manager) broadcastMessagesAtAttempt(id string, attempt int, msgs []sdk.
 				"tx_id", id, "simulated", used, "gasWanted", gasWanted)
 		}
 	}
-	txBytes, timestamp, err := m.getSignedBytes(id, unsignedTx, factory, gasWanted, msgs)
+	txBytes, timestamp, err := m.getSignedBytes(id, unsignedTx, factory, gasWanted, msgs, opts.TimeoutHeight)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -949,15 +981,8 @@ func containsAny(s string, substrs ...string) bool {
 	return false
 }
 
-func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, time.Time, error) {
-	return m.broadcastMessagesAtAttempt(id, 0, []sdk.Msg{rawTx})
-}
-
-// broadcastMessageAtAttempt is the retry-aware single-message entry point.
-// Thin wrapper around broadcastMessagesAtAttempt with a one-element slice;
-// kept for symmetry with how the retry loop dispatches.
-func (m *manager) broadcastMessageAtAttempt(id string, attempt int, rawTx sdk.Msg) (*sdk.TxResponse, time.Time, error) {
-	return m.broadcastMessagesAtAttempt(id, attempt, []sdk.Msg{rawTx})
+func (m *manager) broadcastMessage(id string, rawTx sdk.Msg, opts ...TxSendOptions) (*sdk.TxResponse, time.Time, error) {
+	return m.broadcastMessagesAtAttemptWithOpts(id, 0, []sdk.Msg{rawTx}, firstTxSendOptions(opts))
 }
 
 func (m *manager) unpackTx(bz []byte) (sdk.Msg, error) {
@@ -1078,7 +1103,7 @@ func (m *manager) simulateMsgsGas(factory *tx.Factory, msgs []sdk.Msg, price int
 	return simRes.GasInfo.GasUsed, nil
 }
 
-func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory *tx.Factory, gasWanted uint64, msgs []sdk.Msg) ([]byte, time.Time, error) {
+func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory *tx.Factory, gasWanted uint64, msgs []sdk.Msg, timeoutHeight uint64) ([]byte, time.Time, error) {
 	timestamp, err := m.timeoutTimestamp()
 	if err != nil {
 		return nil, time.Time{}, err
@@ -1112,8 +1137,11 @@ func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory
 
 	unsignedTx.SetUnordered(true)
 	unsignedTx.SetTimeoutTimestamp(timestamp)
+	if timeoutHeight > 0 {
+		unsignedTx.SetTimeoutHeight(timeoutHeight)
+	}
 	name := m.apiAccount.SignerAccount.Name
-	logging.Debug("Signing transaction", types.Messages, "tx_id", id, "timeout", timestamp.String(), "name", name)
+	logging.Debug("Signing transaction", types.Messages, "tx_id", id, "timeout", timestamp.String(), "timeoutHeight", timeoutHeight, "name", name)
 
 	err = tx.Sign(m.ctx, *factory, name, unsignedTx, false)
 	if err != nil {

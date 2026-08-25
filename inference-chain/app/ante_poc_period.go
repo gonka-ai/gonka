@@ -102,6 +102,17 @@ func (ppd PocPeriodValidationDecorator) checkPocMessageTooLate(ctx sdk.Context, 
 			)
 			return err
 		}
+		if err := ppd.inferenceKeeper.CheckPoCV2StoreCommitMempool(ctx, m); err != nil {
+			ppd.inferenceKeeper.LogDebug(
+				"AnteHandle: PocPeriodValidation - rejecting MsgPoCV2StoreCommit mempool",
+				inferencetypes.PoC,
+				"msg_type_url", sdk.MsgTypeURL(msg),
+				"pocStageStartBlockHeight", m.PocStageStartBlockHeight,
+				"currentBlockHeight", ctx.BlockHeight(),
+				"error", err,
+			)
+			return err
+		}
 
 	case *inferencetypes.MsgMLNodeWeightDistribution:
 		params, err := ppd.inferenceKeeper.GetParams(ctx)

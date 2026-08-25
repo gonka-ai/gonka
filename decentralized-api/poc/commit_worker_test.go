@@ -21,6 +21,8 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 )
 
+var _ storeCommitRecorder = (*cosmosclient.MockCosmosMessageClient)(nil)
+
 type commitWorkerQueryServer struct {
 	types.UnimplementedQueryServer
 	commitCounts        map[string]uint32
@@ -210,15 +212,15 @@ func TestCommitWorker_MaybeSubmitCommit_SkipsUnchanged(t *testing.T) {
 	assert.NoError(t, err)
 
 	// First commit should submit
-	mockRecorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).Return(nil).Once()
+	mockRecorder.On("SubmitPoCV2StoreCommitWithTimeout", mock.AnythingOfType("*types.MsgPoCV2StoreCommit"), mock.Anything).Return(nil).Once()
 
-	worker.maybeSubmitCommit(pocHeight)
+	worker.maybeSubmitCommit(pocHeight, 0)
 	mockRecorder.AssertExpectations(t)
 	assert.Empty(t, worker.lastCommitted, "CheckTx success must not promote lastCommitted")
 	assert.NotEmpty(t, worker.pending)
 
 	// Second commit with same state should NOT submit
-	worker.maybeSubmitCommit(pocHeight)
+	worker.maybeSubmitCommit(pocHeight, 0)
 	mockRecorder.AssertExpectations(t) // No additional calls expected
 }
 
@@ -244,15 +246,15 @@ func TestCommitWorker_MaybeSubmitCommit_RetriesTransientCheckTx(t *testing.T) {
 	assert.NoError(t, artifactStore.AddWithNode(1, []byte("test-vector"), "node-1"))
 	assert.NoError(t, artifactStore.Flush())
 
-	mockRecorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).
+	mockRecorder.On("SubmitPoCV2StoreCommitWithTimeout", mock.AnythingOfType("*types.MsgPoCV2StoreCommit"), mock.Anything).
 		Return(tx_manager.ErrTxCheckTxRetry).Once()
-	worker.maybeSubmitCommit(pocHeight)
+	worker.maybeSubmitCommit(pocHeight, 0)
 	assert.Empty(t, worker.lastCommitted)
 	assert.Empty(t, worker.pending)
 
-	mockRecorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).
+	mockRecorder.On("SubmitPoCV2StoreCommitWithTimeout", mock.AnythingOfType("*types.MsgPoCV2StoreCommit"), mock.Anything).
 		Return(nil).Once()
-	worker.maybeSubmitCommit(pocHeight)
+	worker.maybeSubmitCommit(pocHeight, 0)
 	mockRecorder.AssertExpectations(t)
 	assert.Empty(t, worker.lastCommitted, "CheckTx success is pending, not committed")
 	assert.NotEmpty(t, worker.pending)
@@ -280,19 +282,19 @@ func TestCommitWorker_MaybeSubmitCommit_SkipsPermanentUntilCountGrows(t *testing
 	assert.NoError(t, artifactStore.AddWithNode(1, []byte("test-vector"), "node-1"))
 	assert.NoError(t, artifactStore.Flush())
 
-	mockRecorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).
+	mockRecorder.On("SubmitPoCV2StoreCommitWithTimeout", mock.AnythingOfType("*types.MsgPoCV2StoreCommit"), mock.Anything).
 		Return(tx_manager.ErrTxCheckTxFail).Once()
-	worker.maybeSubmitCommit(pocHeight)
+	worker.maybeSubmitCommit(pocHeight, 0)
 	assert.Empty(t, worker.lastCommitted)
 
-	worker.maybeSubmitCommit(pocHeight)
+	worker.maybeSubmitCommit(pocHeight, 0)
 	mockRecorder.AssertExpectations(t)
 
 	assert.NoError(t, artifactStore.AddWithNode(2, []byte("test-vector-2"), "node-1"))
 	assert.NoError(t, artifactStore.Flush())
-	mockRecorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).
+	mockRecorder.On("SubmitPoCV2StoreCommitWithTimeout", mock.AnythingOfType("*types.MsgPoCV2StoreCommit"), mock.Anything).
 		Return(nil).Once()
-	worker.maybeSubmitCommit(pocHeight)
+	worker.maybeSubmitCommit(pocHeight, 0)
 	mockRecorder.AssertExpectations(t)
 	assert.Empty(t, worker.lastCommitted)
 	assert.NotEmpty(t, worker.pending)
@@ -332,16 +334,16 @@ func TestCommitWorker_MaybeSubmitCommit_BatchesModels(t *testing.T) {
 	}
 
 	mockRecorder.
-		On("SubmitPoCV2StoreCommit", mock.MatchedBy(func(msg *types.MsgPoCV2StoreCommit) bool {
+		On("SubmitPoCV2StoreCommitWithTimeout", mock.MatchedBy(func(msg *types.MsgPoCV2StoreCommit) bool {
 			if msg == nil || msg.PocStageStartBlockHeight != pocHeight || len(msg.Entries) != 2 {
 				return false
 			}
 			return msg.Entries[0].ModelId == "model-a" && msg.Entries[1].ModelId == "org/model-b"
-		})).
+		}), mock.Anything).
 		Return(nil).
 		Once()
 
-	worker.maybeSubmitCommit(pocHeight)
+	worker.maybeSubmitCommit(pocHeight, 0)
 	mockRecorder.AssertExpectations(t)
 }
 
@@ -408,7 +410,7 @@ func TestCommitWorker_TickDoesNotDeadlockWhenRecorderSetsPrev(t *testing.T) {
 	assert.NoError(t, artifactStore.AddWithNode(1, []byte("test-vector"), "node-1"))
 	assert.NoError(t, artifactStore.Flush())
 
-	recorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).Return(nil).Once()
+	recorder.On("SubmitPoCV2StoreCommitWithTimeout", mock.AnythingOfType("*types.MsgPoCV2StoreCommit"), mock.Anything).Return(nil).Once()
 
 	worker := &CommitWorker{
 		store:         store,
@@ -459,7 +461,7 @@ func TestCommitWorker_AdmissionSuccessStaysPendingUntilChainMatch(t *testing.T) 
 
 	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
 	mockRecorder.On("NewInferenceQueryClient").Return(queryClient)
-	mockRecorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).Return(nil).Once()
+	mockRecorder.On("SubmitPoCV2StoreCommitWithTimeout", mock.AnythingOfType("*types.MsgPoCV2StoreCommit"), mock.Anything).Return(nil).Once()
 
 	tracker := commitWorkerTestTracker(110)
 	worker := &CommitWorker{
@@ -511,7 +513,7 @@ func TestCommitWorker_SamePayloadWaitsGraceBeforeRetry(t *testing.T) {
 
 	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
 	mockRecorder.On("NewInferenceQueryClient").Return(queryClient)
-	mockRecorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).Return(nil).Twice()
+	mockRecorder.On("SubmitPoCV2StoreCommitWithTimeout", mock.AnythingOfType("*types.MsgPoCV2StoreCommit"), mock.Anything).Return(nil).Twice()
 
 	tracker := commitWorkerTestTracker(110)
 	worker := &CommitWorker{
@@ -531,7 +533,7 @@ func TestCommitWorker_SamePayloadWaitsGraceBeforeRetry(t *testing.T) {
 	worker.tick()
 	setCommitWorkerHeight(tracker, 112)
 	worker.tick()
-	mockRecorder.AssertNumberOfCalls(t, "SubmitPoCV2StoreCommit", 1)
+	mockRecorder.AssertNumberOfCalls(t, "SubmitPoCV2StoreCommitWithTimeout", 1)
 
 	setCommitWorkerHeight(tracker, 113)
 	worker.tick()
@@ -560,7 +562,7 @@ func TestCommitWorker_QueryOutageDoesNotResendSamePayload(t *testing.T) {
 
 	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
 	mockRecorder.On("NewInferenceQueryClient").Return(queryClient)
-	mockRecorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).Return(nil).Once()
+	mockRecorder.On("SubmitPoCV2StoreCommitWithTimeout", mock.AnythingOfType("*types.MsgPoCV2StoreCommit"), mock.Anything).Return(nil).Once()
 
 	tracker := commitWorkerTestTracker(110)
 	worker := &CommitWorker{
@@ -603,7 +605,7 @@ func TestCommitWorker_PendingSkipsBootstrapQuery(t *testing.T) {
 
 	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
 	mockRecorder.On("NewInferenceQueryClient").Return(queryClient)
-	mockRecorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).Return(nil).Once()
+	mockRecorder.On("SubmitPoCV2StoreCommitWithTimeout", mock.AnythingOfType("*types.MsgPoCV2StoreCommit"), mock.Anything).Return(nil).Once()
 
 	tracker := commitWorkerTestTracker(110)
 	worker := &CommitWorker{
@@ -624,11 +626,83 @@ func TestCommitWorker_PendingSkipsBootstrapQuery(t *testing.T) {
 		worker.tick()
 	}
 	assert.Equal(t, 3, queryServer.commitQueryCalls, "pending ticks must query once via reconcile, not bootstrap again")
-	mockRecorder.AssertNumberOfCalls(t, "SubmitPoCV2StoreCommit", 1)
+	mockRecorder.AssertNumberOfCalls(t, "SubmitPoCV2StoreCommitWithTimeout", 1)
 }
 
-func TestCommitWorker_HigherCountSubmitsWhileOlderPending(t *testing.T) {
+func TestCommitWorker_HigherCountWaitsUntilPreviousConfirmed(t *testing.T) {
 	tmpDir, err := os.MkdirTemp("", "commit_worker_higher_count_test")
+	assert.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
+	defer store.Close()
+
+	pocHeight := int64(100)
+	store.ActivateStage(pocHeight)
+	artifactStore, err := store.GetOrCreateStore(pocHeight, "model-a")
+	assert.NoError(t, err)
+	assert.NoError(t, artifactStore.AddWithNode(1, []byte("vec-1"), "node-1"))
+	assert.NoError(t, artifactStore.Flush())
+	firstCount, firstRoot := artifactStore.GetFlushedRoot()
+
+	queryServer := &commitWorkerQueryServer{
+		commitCounts: map[string]uint32{},
+		commitRoots:  map[string][]byte{},
+	}
+	queryClient, cleanup := newCommitWorkerQueryClient(t, queryServer)
+	defer cleanup()
+
+	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
+	mockRecorder.On("NewInferenceQueryClient").Return(queryClient)
+	mockRecorder.On("SubmitPoCV2StoreCommitWithTimeout", mock.AnythingOfType("*types.MsgPoCV2StoreCommit"), mock.Anything).Return(nil)
+
+	tracker := commitWorkerTestTracker(110)
+	worker := &CommitWorker{
+		store:              store,
+		recorder:           mockRecorder,
+		tracker:            tracker,
+		participantAddress: "participant_addr",
+		lastCommitted:      make(map[commitKey]commitState),
+		pending:            make(map[commitKey]pendingCommit),
+	}
+
+	worker.tick()
+	assert.NoError(t, artifactStore.AddWithNode(2, []byte("vec-2"), "node-1"))
+	assert.NoError(t, artifactStore.Flush())
+	worker.tick()
+	mockRecorder.AssertNumberOfCalls(t, "SubmitPoCV2StoreCommitWithTimeout", 1)
+
+	setCommitWorkerHeight(tracker, 111)
+	worker.tick()
+	// Higher count must wait while the previous tx is still pending.
+	mockRecorder.AssertNumberOfCalls(t, "SubmitPoCV2StoreCommitWithTimeout", 1)
+
+	queryServer.commitCounts["100|participant_addr|model-a"] = firstCount
+	queryServer.commitRoots["100|participant_addr|model-a"] = firstRoot
+	setCommitWorkerHeight(tracker, 112)
+	worker.tick()
+	mockRecorder.AssertNumberOfCalls(t, "SubmitPoCV2StoreCommitWithTimeout", 2)
+
+	key := commitKey{stage: pocHeight, modelID: "model-a"}
+	pending, ok := worker.pending[key]
+	assert.True(t, ok)
+	count, _ := artifactStore.GetFlushedRoot()
+	assert.Equal(t, count, pending.state.count)
+	assert.Greater(t, pending.state.count, firstCount)
+}
+
+type timeoutStoreCommitRecorder struct {
+	cosmosclient.MockCosmosMessageClient
+	timeouts []uint64
+}
+
+func (r *timeoutStoreCommitRecorder) SubmitPoCV2StoreCommitWithTimeout(msg *types.MsgPoCV2StoreCommit, timeoutHeight uint64) error {
+	r.timeouts = append(r.timeouts, timeoutHeight)
+	return r.SubmitPoCV2StoreCommit(msg)
+}
+
+func TestCommitWorker_PassesTimeoutHeight(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "commit_worker_timeout_height_test")
 	assert.NoError(t, err)
 	defer os.RemoveAll(tmpDir)
 
@@ -646,31 +720,21 @@ func TestCommitWorker_HigherCountSubmitsWhileOlderPending(t *testing.T) {
 	queryClient, cleanup := newCommitWorkerQueryClient(t, queryServer)
 	defer cleanup()
 
-	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
-	mockRecorder.On("NewInferenceQueryClient").Return(queryClient)
-	mockRecorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).Return(nil).Twice()
+	recorder := &timeoutStoreCommitRecorder{}
+	recorder.On("NewInferenceQueryClient").Return(queryClient)
+	recorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).Return(nil).Once()
 
-	tracker := commitWorkerTestTracker(110)
 	worker := &CommitWorker{
 		store:              store,
-		recorder:           mockRecorder,
-		tracker:            tracker,
+		recorder:           recorder,
+		tracker:            commitWorkerTestTracker(110),
 		participantAddress: "participant_addr",
 		lastCommitted:      make(map[commitKey]commitState),
 		pending:            make(map[commitKey]pendingCommit),
 	}
-
 	worker.tick()
-	assert.NoError(t, artifactStore.AddWithNode(2, []byte("vec-2"), "node-1"))
-	assert.NoError(t, artifactStore.Flush())
-	worker.tick()
-	mockRecorder.AssertExpectations(t)
-	key := commitKey{stage: pocHeight, modelID: "model-a"}
-	pending, ok := worker.pending[key]
-	assert.True(t, ok)
-	count, _ := artifactStore.GetFlushedRoot()
-	assert.Equal(t, count, pending.state.count)
-	assert.Greater(t, pending.state.count, uint32(1))
+	assert.Len(t, recorder.timeouts, 1)
+	assert.Equal(t, uint64(250), recorder.timeouts[0])
 }
 
 func TestCommitWorker_InsufficientFee_DoesNotPermanentFail(t *testing.T) {
@@ -689,7 +753,7 @@ func TestCommitWorker_InsufficientFee_DoesNotPermanentFail(t *testing.T) {
 	assert.NoError(t, artifactStore.Flush())
 
 	recorder := &feeRefreshRecorder{}
-	recorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).
+	recorder.On("SubmitPoCV2StoreCommitWithTimeout", mock.AnythingOfType("*types.MsgPoCV2StoreCommit"), mock.Anything).
 		Return(tx_manager.ErrTxCheckTxInsufficientFee).Once()
 
 	tracker := commitWorkerTestTracker(110)
@@ -713,7 +777,7 @@ func TestCommitWorker_InsufficientFee_DoesNotPermanentFail(t *testing.T) {
 	epoch := &types.Epoch{Index: 1, PocStartBlockHeight: 100}
 	params := &types.EpochParams{EpochLength: 1000, PocStageDuration: 100, PocExchangeDuration: 50}
 	tracker.Update(chainphase.BlockInfo{Height: 111, Hash: "next"}, epoch, params, true, nil)
-	recorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).Return(nil).Once()
+	recorder.On("SubmitPoCV2StoreCommitWithTimeout", mock.AnythingOfType("*types.MsgPoCV2StoreCommit"), mock.Anything).Return(nil).Once()
 	worker.tick()
 	recorder.AssertExpectations(t)
 	assert.Empty(t, worker.permanentFailed)
@@ -736,7 +800,7 @@ func TestCommitWorker_InsufficientFee_FailedRefreshKeepsCountEligible(t *testing
 	assert.NoError(t, artifactStore.Flush())
 
 	recorder := &feeRefreshRecorder{err: fmt.Errorf("params rpc down")}
-	recorder.On("SubmitPoCV2StoreCommit", mock.AnythingOfType("*types.MsgPoCV2StoreCommit")).
+	recorder.On("SubmitPoCV2StoreCommitWithTimeout", mock.AnythingOfType("*types.MsgPoCV2StoreCommit"), mock.Anything).
 		Return(tx_manager.ErrTxCheckTxInsufficientFee).Once()
 
 	tracker := commitWorkerTestTracker(110)
