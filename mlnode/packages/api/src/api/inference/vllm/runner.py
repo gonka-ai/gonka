@@ -164,6 +164,13 @@ class VLLMRunner(IVLLMRunner):
             self.additional_args.extend(
                 ["--worker-extension-cls", self.WORKER_EXTENSION_CLASS]
             )
+        # --enable-prompt-tokens-details makes vLLM emit
+        # usage.prompt_tokens_details.cached_tokens on cache hits — the
+        # telemetry this PR's completionapi contract preserves end-to-end.
+        # (Prefix caching itself is enabled by default in vLLM V1; no flag
+        # is injected for it.)
+        if "--enable-prompt-tokens-details" not in self.additional_args:
+            self.additional_args.append("--enable-prompt-tokens-details")
         self.processes: List[subprocess.Popen] = []
         self._hb = {}
         self._hb_lock = threading.Lock()
@@ -177,6 +184,11 @@ class VLLMRunner(IVLLMRunner):
         return {
             "model": self.model,
             "dtype": self.dtype,
+            # Prefix caching is enabled by default in vLLM V1 (V0 was
+            # replaced by V1); we don't inject the flag for it.
+            "prefix_caching": True,
+            "prompt_tokens_details": "--enable-prompt-tokens-details"
+            in self.additional_args,
             "max_num_seqs": self._get_arg_value("--max-num-seqs", default=0),
             "max_model_len": self._get_arg_value("--max-model-len", default=0),
             "tensor_parallel_size": self._get_arg_value("--tensor-parallel-size", default=0),
