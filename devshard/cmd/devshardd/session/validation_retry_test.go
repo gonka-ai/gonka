@@ -370,6 +370,161 @@ func TestRetryStaleValidation_ValidateError_Releases(t *testing.T) {
 	require.Equal(t, []string{"escrow-1/7/3/addr"}, leases.releaseCalls)
 }
 
+func TestRetryStaleValidationsForEscrow_TransientErrorReleaseThenHotPathReacquireSubmits(t *testing.T) {
+	h := newFinishedRetryHost(t)
+	leases := storage.NewMemory()
+	ctx := context.Background()
+	require.NoError(t, acquireMemoryLease(ctx, leases, "escrow-1", 1, 3, "old-owner"))
+
+	validateCalls := 0
+	inner := &stubEngine{
+		validateFn: func(_ context.Context, _ devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+			validateCalls++
+			if validateCalls == 1 {
+				return nil, errors.New("local ml 503")
+			}
+			return &devshardpkg.ValidateResult{Valid: true}, nil
+		},
+	}
+	rl := &ValidationRetryLoop{
+		leases:       leases,
+		inner:        inner,
+		manager:      &stubSessionManager{snap: h},
+		instanceAddr: "addr",
+		leaseTTL:     50 * time.Millisecond,
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	rl.retryStaleValidationsForEscrow(ctx, "escrow-1")
+
+	assert.Equal(t, 1, inner.calls)
+	require.False(t, ownsMemoryLease(ctx, t, leases, "escrow-1", 1, 3, "addr"),
+		"release deletes the stale row; retry must not immediately reacquire it")
+
+	won, err := leases.Acquire(ctx, "escrow-1", 1, 3, "hot-path")
+	require.NoError(t, err)
+	require.True(t, won, "hot path should be able to recreate the released lease")
+
+	time.Sleep(60 * time.Millisecond)
+	rl.retryStaleValidationsForEscrow(ctx, "escrow-1")
+
+	assert.Equal(t, 2, inner.calls)
+	owned, err := leases.OwnsPendingLease(ctx, "escrow-1", 1, 3, "addr")
+	require.NoError(t, err)
+	require.False(t, owned, "submitted lease must no longer be pending")
+
+	var found bool
+	for _, tx := range h.HostMempool().Txs() {
+		if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+			found = true
+			assert.True(t, v.Valid)
+		}
+	}
+	require.True(t, found, "second retry should publish MsgValidation")
+}
+
+func TestRetryStaleValidation_OwnershipLostAfterValidate_DoesNotSubmit(t *testing.T) {
+	h := newFinishedRetryHost(t)
+	leases := &stubStaleLeaseStore{
+		ownsFn: func(_ context.Context, _ string, _, _ uint64, _ string) (bool, error) {
+			return false, nil
+		},
+	}
+	inner := &stubEngine{}
+	rl := &ValidationRetryLoop{
+		leases:       leases,
+		inner:        inner,
+		manager:      &stubSessionManager{snap: h},
+		instanceAddr: "addr",
+		leaseTTL:     DefaultValidationLeaseTTL,
+	}
+
+	err := rl.retryStaleValidation(context.Background(), "escrow-1", 1, 3)
+	require.NoError(t, err)
+	assert.Equal(t, 1, inner.calls)
+	require.Empty(t, leases.releaseCalls, "lost ownership means this instance no longer owns a row to release")
+	require.Empty(t, leases.setResultCalls, "lost ownership must not be marked submitted")
+	for _, tx := range h.HostMempool().Txs() {
+		require.Nil(t, tx.GetValidation(), "must not publish MsgValidation after ownership is lost")
+	}
+}
+
+func TestRetryStaleValidation_SetResultLeaseNotOwnedAfterSubmit_IsBenign(t *testing.T) {
+	h := newFinishedRetryHost(t)
+	leases := &stubStaleLeaseStore{
+		setResultFn: func(_ context.Context, _ string, _, _ uint64, _ storage.LeaseStatus, _ string) error {
+			return storage.ErrLeaseNotOwned
+		},
+	}
+	inner := &stubEngine{}
+	rl := &ValidationRetryLoop{
+		leases:       leases,
+		inner:        inner,
+		manager:      &stubSessionManager{snap: h},
+		instanceAddr: "addr",
+		leaseTTL:     DefaultValidationLeaseTTL,
+	}
+
+	err := rl.retryStaleValidation(context.Background(), "escrow-1", 1, 3)
+	require.NoError(t, err)
+	assert.Equal(t, 1, inner.calls)
+	require.Empty(t, leases.releaseCalls)
+	require.Equal(t, []string{"escrow-1/1/3/submitted"}, leases.setResultCalls)
+
+	var found bool
+	for _, tx := range h.HostMempool().Txs() {
+		if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+			found = true
+			assert.True(t, v.Valid)
+		}
+	}
+	require.True(t, found, "mempool submit should remain successful when SetResult loses ownership")
+}
+
+func TestRetryStaleValidation_OwnsPendingLeaseErrorAfterValidate_Releases(t *testing.T) {
+	h := newFinishedRetryHost(t)
+	leases := &stubStaleLeaseStore{
+		ownsFn: func(_ context.Context, _ string, _, _ uint64, _ string) (bool, error) {
+			return false, errors.New("database unavailable")
+		},
+	}
+	inner := &stubEngine{}
+	rl := &ValidationRetryLoop{
+		leases:       leases,
+		inner:        inner,
+		manager:      &stubSessionManager{snap: h},
+		instanceAddr: "addr",
+		leaseTTL:     DefaultValidationLeaseTTL,
+	}
+
+	err := rl.retryStaleValidation(context.Background(), "escrow-1", 1, 3)
+	require.ErrorContains(t, err, "owns pending lease")
+	assert.Equal(t, 1, inner.calls)
+	require.Equal(t, []string{"escrow-1/1/3/addr"}, leases.releaseCalls)
+	require.Empty(t, leases.setResultCalls)
+	for _, tx := range h.HostMempool().Txs() {
+		require.Nil(t, tx.GetValidation(), "must not publish MsgValidation when ownership check errors")
+	}
+}
+
+func acquireMemoryLease(ctx context.Context, store *storage.Memory, escrowID string, inferenceID, epochID uint64, instanceAddr string) error {
+	won, err := store.Acquire(ctx, escrowID, inferenceID, epochID, instanceAddr)
+	if err != nil {
+		return err
+	}
+	if !won {
+		return fmt.Errorf("memory lease was not acquired")
+	}
+	return nil
+}
+
+func ownsMemoryLease(ctx context.Context, t *testing.T, store *storage.Memory, escrowID string, inferenceID, epochID uint64, instanceAddr string) bool {
+	t.Helper()
+	owned, err := store.OwnsPendingLease(ctx, escrowID, inferenceID, epochID, instanceAddr)
+	require.NoError(t, err)
+	return owned
+}
+
 func TestRetryStaleValidation_TTLExceededAfterValidate_Releases(t *testing.T) {
 	leases := &stubStaleLeaseStore{}
 	inner := &stubEngine{}

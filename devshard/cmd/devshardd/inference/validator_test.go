@@ -372,6 +372,30 @@ func TestLeaseValidator_ReleaseValidationLease_NoAcquire_NoOp(t *testing.T) {
 	require.Empty(t, store.releaseCalls)
 }
 
+func TestLeaseValidator_ReleaseValidationLease_ErrorForgetsAcquire(t *testing.T) {
+	releaseErr := errors.New("release failed")
+	store := &stubLeases{
+		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ string) (bool, error) {
+			return true, nil
+		},
+		releaseFn: func(_ context.Context, _ string, _, _ uint64, _ string) error {
+			return releaseErr
+		},
+	}
+	c := newTestLeaseValidator(store, successInner)
+
+	_, err := c.Validate(context.Background(), makeReq())
+	require.NoError(t, err)
+
+	err = c.ReleaseValidationLease(context.Background(), "escrow-1", 42)
+	require.ErrorIs(t, err, releaseErr)
+	require.Equal(t, []string{"escrow-1/42/0/validator-addr"}, store.releaseCalls)
+
+	err = c.ReleaseValidationLease(context.Background(), "escrow-1", 42)
+	require.NoError(t, err)
+	require.Len(t, store.releaseCalls, 1, "release error must still forget the local acquire")
+}
+
 type stubChainParams struct{}
 
 func (stubChainParams) LogprobsMode() string { return "" }
@@ -516,6 +540,26 @@ func TestValidator_Validate_ExecutorFaultClassification(t *testing.T) {
 			phaseEpoch: 10,
 			reqEpoch:   10,
 			wantFalse:  true,
+		},
+		{
+			name: "malformed prompt with switch off errors",
+			fetch: func(context.Context, devshardpkg.ValidateRequest, string, uint64) ([]byte, []byte, error) {
+				return []byte("not-json"), validResponse, nil
+			},
+			voteFalse:  false,
+			phaseEpoch: 10,
+			reqEpoch:   10,
+			wantErr:    true,
+		},
+		{
+			name: "malformed response with switch off errors",
+			fetch: func(context.Context, devshardpkg.ValidateRequest, string, uint64) ([]byte, []byte, error) {
+				return validPrompt, []byte("not-json"), nil
+			},
+			voteFalse:  false,
+			phaseEpoch: 10,
+			reqEpoch:   10,
+			wantErr:    true,
 		},
 		{
 			name:  "local ML 503 does not vote",
