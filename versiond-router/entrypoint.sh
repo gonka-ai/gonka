@@ -28,7 +28,6 @@ TEMPLATE="${VERSIOND_ROUTER_TEMPLATE:-/etc/haproxy/haproxy.cfg.template}"
 OUT="${VERSIOND_ROUTER_OUT:-/etc/haproxy/haproxy.cfg}"
 MAP="${VERSIOND_ROUTER_NON_HA_MAP:-/etc/haproxy/non_ha.map}"
 VERSIONS_MAP="${VERSIOND_ROUTER_VERSIONS_MAP:-/etc/haproxy/versions.map}"
-READY_VERSIONS_MAP="$VERSIONS_MAP"
 SLOT_MAP="${OUT}.version-slots.map"
 READY_RULES="${VERSIOND_ROUTER_READY_RULES:-${OUT}.ready.rules}"
 POOL_TEMPLATE="${VERSIOND_ROUTER_POOL_TEMPLATE:-/etc/haproxy/pool-backend.cfg.template}"
@@ -320,7 +319,6 @@ declare_ha_version() {
     backend=$(backend_name versiond_pool "$version")
     echo "$version $backend" >> "$VERSIONS_MAP"
     encoded_version=$(urlencode "$version")
-    printf 'version=%s %s\n' "$encoded_version" "$backend" >> "$READY_VERSIONS_MAP"
     render_backend "$backend" \
         "http-check send meth GET uri /readyz?version=$encoded_version" \
         "http-check send meth GET uri /$encoded_version/healthz" \
@@ -366,7 +364,6 @@ while [ "$index" -le "$VERSION_CAPACITY" ]; do
         encoded_version=$(urlencode "$cached_version")
         printf '%s %s\n' "$backend" "$encoded_version" >> "$SLOT_MAP"
         printf '%s %s\n' "$cached_version" "$backend" >> "$VERSIONS_MAP"
-        printf 'version=%s %s\n' "$encoded_version" "$backend" >> "$READY_VERSIONS_MAP"
         server_state=
     else
         printf '%s %s\n' "$backend" __unassigned__ >> "$SLOT_MAP"
@@ -397,7 +394,6 @@ while IFS= read -r version; do
     backend=$(backend_name versiond_legacy "$version")
     echo "$version $backend" >> "$MAP"
     encoded_version=$(urlencode "$version")
-    printf 'version=%s %s\n' "$encoded_version" "$backend" >> "$READY_VERSIONS_MAP"
     render_backend "$backend" \
         "http-check send meth GET uri /readyz?version=$encoded_version" \
         "http-check send meth GET uri /$encoded_version/healthz" \
@@ -463,10 +459,10 @@ fi
 # happened to pick.
 if [ -n "$CATALOG_URL" ]; then
     UNDECLARED_GUARD="http-request return status 503 content-type \"text/plain\" lf-string \"version %[var(txn.ver)] is not present in the governance routing catalog\" if { var(txn.ver) -m reg . } !versionless_request !{ var(txn.ver),map_str($MAP) -m found } !{ var(txn.ver),map_str($VERSIONS_MAP) -m found }"
-    DYNAMIC_READY_GUARD="http-request return status 503 content-type \"text/plain\" string \"version-is-not-declared-or-ready\" if { path /readyz } { url_param(version) -m found } !{ query,map_str($READY_VERSIONS_MAP) -m found }"
+    DYNAMIC_READY_GUARD="http-request return status 503 content-type \"text/plain\" string \"version-is-not-declared-or-ready\" if { path /readyz } { url_param(version) -m found } !{ var(txn.ready_ver),map_str($MAP) -m found } !{ var(txn.ready_ver),map_str($VERSIONS_MAP) -m found }"
 elif [ -s "$VERSIONS_MAP" ]; then
     UNDECLARED_GUARD="http-request return status 503 content-type \"text/plain\" lf-string \"version %[var(txn.ver)] is not declared in VERSIOND_VERSIONS on this router\" if { var(txn.ver) -m reg . } !versionless_request !{ var(txn.ver),map_str($MAP) -m found } !{ var(txn.ver),map_str($VERSIONS_MAP) -m found }"
-    DYNAMIC_READY_GUARD="http-request return status 503 content-type \"text/plain\" string \"version-is-not-declared-or-ready\" if { path /readyz } { url_param(version) -m found } !{ query,map_str($READY_VERSIONS_MAP) -m found }"
+    DYNAMIC_READY_GUARD="http-request return status 503 content-type \"text/plain\" string \"version-is-not-declared-or-ready\" if { path /readyz } { url_param(version) -m found } !{ var(txn.ready_ver),map_str($MAP) -m found } !{ var(txn.ready_ver),map_str($VERSIONS_MAP) -m found }"
 else
     UNDECLARED_GUARD="# No versions declared: every version uses the host-level pool."
     DYNAMIC_READY_GUARD="# Dynamic version readiness is disabled."
@@ -479,7 +475,6 @@ sed \
     }" \
     -e "s|\${NON_HA_MAP}|$MAP|g" \
     -e "s|\${VERSIONS_MAP}|$VERSIONS_MAP|g" \
-    -e "s|\${READY_VERSIONS_MAP}|$READY_VERSIONS_MAP|g" \
     -e "s|\${UNDECLARED_VERSION_GUARD}|$UNDECLARED_GUARD|g" \
     -e "s|\${DYNAMIC_READY_GUARD}|$DYNAMIC_READY_GUARD|g" \
     -e "s|\${MAX_CONNECTIONS}|$MAXCONN|g" \

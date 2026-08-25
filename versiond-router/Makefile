@@ -345,6 +345,9 @@ test-version-routing:
 	curl -s -m 3 http://127.0.0.1:18132/v9/sessions/a/chat \
 		| grep -q 'governance routing catalog' \
 		|| fail "the refusal does not identify the authoritative catalog"; \
+	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+		http://127.0.0.1:18132/version=v4/sessions/a/chat)" = 503 ] \
+		|| fail "a readiness-shaped key bypassed the undeclared-version guard"; \
 	health=$$(curl -s -o /dev/null -w '%{http_code}' -m 3 http://127.0.0.1:18132/healthz); \
 	[ "$$health" = 200 ] \
 		|| fail "the guard broke the router's own /healthz (got $$health)"; \
@@ -728,14 +731,14 @@ test-render: test-local-compose test-join-compose test-catalog-cache test-hash-r
 		"$$tmpdir/mixed.cfg" \
 		|| fail "version maps can take precedence over versionless routes"; \
 	printf '%s\n' \
-		'v4 versiond_pool_v4' 'version=v4 versiond_pool_v4' \
-		'v5 versiond_pool_v5' 'version=v5 versiond_pool_v5' \
-		'version=v1 versiond_legacy_v1' \
-		'version=v2 versiond_legacy_v2' \
-		'version=v3 versiond_legacy_v3' \
+		'v4 versiond_pool_v4' \
+		'v5 versiond_pool_v5' \
 		> "$$tmpdir/want.versions.map"; \
 	diff -u "$$tmpdir/want.versions.map" "$$tmpdir/mixed.versions.map" \
 		|| fail "declared versions rendered incorrectly"; \
+	if grep -q '^version=' "$$tmpdir/mixed.versions.map"; then \
+		fail "readiness-shaped keys leaked into the data-plane routing map"; \
+	fi; \
 	for backend in versiond_ha_pool versiond_pool_v4 versiond_pool_v5 \
 		versiond_legacy_v1 versiond_legacy_v2 versiond_legacy_v3; do \
 		count=$$(awk -v b="backend $$backend" '$$0 == b {inside=1; next} /^backend /{inside=0} \
