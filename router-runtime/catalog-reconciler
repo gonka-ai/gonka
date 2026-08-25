@@ -313,6 +313,7 @@ persist_snapshot() {
     [ -x "$cache_bin" ] || return 1
     now=$(date +%s)
     if [ "$snapshot_changed" -eq 0 ] && [ "$last_persisted_at" -gt 0 ] && \
+        [ "$last_persisted_at" -le "$now" ] && \
         [ $((now - last_persisted_at)) -lt "$cache_refresh_seconds" ]; then
         return 0
     fi

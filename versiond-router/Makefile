@@ -1270,6 +1270,33 @@ test-version-routing:
 	if grep -Fqx 'v-obsolete' "$$tmpdir/recovered.names"; then \
 		fail "the stale catalog remained accepted history after recovery"; \
 	fi; \
+	docker rm -f gonka-vp-router >/dev/null; \
+	future_at=$$(($$(date +%s) + 3600)); \
+	docker run --rm --user 0:0 -e FUTURE_AT=$$future_at -v $$state:/state \
+		--entrypoint sh gonka-versiond-router-probe -c \
+		'jq ".fetched_at_unix = (env.FUTURE_AT | tonumber)" /state/catalog.json > /state/catalog.next && chmod 600 /state/catalog.next && mv /state/catalog.next /state/catalog.json && chown haproxy:haproxy /state/catalog.json'; \
+	docker run -d --name gonka-vp-router --network $$net \
+		-p 127.0.0.1:18132:8080 -p 127.0.0.1:18134:8404 \
+		-v $$state:/var/lib/gonka-router \
+		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="v4 v5" \
+		-e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
+		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
+		-e VERSIOND_ROUTING_ACTIVATION_MIN_READY=2 \
+		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
+		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
+		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
+		gonka-versiond-router-probe >/dev/null; \
+	for i in $$(seq 20); do \
+		normalized_at=$$(docker exec gonka-vp-router \
+			jq -er .fetched_at_unix /var/lib/gonka-router/catalog.json 2>/dev/null || true); \
+		if [ -n "$$normalized_at" ] && [ "$$normalized_at" -lt "$$future_at" ]; then break; fi; \
+		sleep 0.5; \
+	done; \
+	[ -n "$$normalized_at" ] && [ "$$normalized_at" -lt "$$future_at" ] \
+		|| fail "a fresh unchanged catalog did not normalize a future cache timestamp"; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| jq -e '.state == "ready"' >/dev/null \
+		|| fail "catalog reconciliation did not recover after clock rollback"; \
 	echo "test-version-routing: ok"
 
 test-render: test-local-compose test-join-compose test-catalog-cache test-hash-ring test-version-routing
