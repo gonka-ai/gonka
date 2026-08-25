@@ -33,12 +33,15 @@ read_cache() {
 
     tmp=$(mktemp)
     trap 'rm -f "$tmp"' EXIT
-    if ! jq -er '
+    now=$(date +%s)
+    if ! jq -er --argjson now "$now" --argjson max_age "$max_age" '
         select(.schema == 1)
         | select((.fetched_at_unix | type) == "number")
         | select(.fetched_at_unix >= 0 and (.fetched_at_unix | floor) == .fetched_at_unix)
+        | select(.fetched_at_unix <= $now)
         | select((.versions | type) == "array")
-        | .fetched_at_unix, (.versions[] | select(type == "string"))
+        | (if ($now - .fetched_at_unix) > $max_age then "stale" else "fresh" end),
+          (.versions[] | select(type == "string"))
     ' "$cache" > "$tmp"; then
         fail "invalid snapshot $cache"
     fi
@@ -46,17 +49,14 @@ read_cache() {
     actual=$(( $(wc -l < "$tmp") - 1 ))
     [ "$actual" -eq "$expected" ] || fail "snapshot contains a non-string version name"
 
-    fetched_at=$(sed -n '1p' "$tmp")
+    freshness=$(sed -n '1p' "$tmp")
     sed '1d' "$tmp" > "$tmp.names"
     trap 'rm -f "$tmp" "$tmp.names"' EXIT
     validate_names "$tmp.names"
-    now=$(date +%s)
-    age=$((now - fetched_at))
-    [ "$age" -ge 0 ] || fail "snapshot timestamp is in the future"
-    if [ "$age" -gt "$max_age" ]; then
-        echo "catalog-cache: snapshot is stale (age ${age}s, maximum ${max_age}s)" >&2
+    [ "$freshness" = fresh ] || {
+        echo "catalog-cache: snapshot is stale (maximum age ${max_age}s)" >&2
         exit 2
-    fi
+    }
     LC_ALL=C sort -u "$tmp.names"
     rm -f "$tmp" "$tmp.names"
     trap - EXIT

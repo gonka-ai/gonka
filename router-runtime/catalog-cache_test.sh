@@ -57,6 +57,20 @@ if "$cache_bin" read "$tmpdir/future.json" 60 >/dev/null 2>&1; then
     exit 1
 fi
 
+for unsafe_timestamp in 1e100 9223372036854775808; do
+    printf '{"schema":1,"fetched_at_unix":%s,"versions":["v4"]}\n' \
+        "$unsafe_timestamp" > "$tmpdir/unsafe-timestamp.json"
+    if "$cache_bin" read "$tmpdir/unsafe-timestamp.json" 60 \
+        > /dev/null 2> "$tmpdir/unsafe-timestamp.err"; then
+        echo "catalog-cache accepted unsafe timestamp $unsafe_timestamp" >&2
+        exit 1
+    fi
+    grep -q '^catalog-cache: invalid snapshot ' "$tmpdir/unsafe-timestamp.err" || {
+        echo "catalog-cache passed unsafe timestamp $unsafe_timestamp to shell arithmetic" >&2
+        exit 1
+    }
+done
+
 printf '%s\n' '{"schema":1,"fetched_at_unix":0,"versions":["ok",7]}' \
     > "$tmpdir/non-string.json"
 if "$cache_bin" read "$tmpdir/non-string.json" 60 >/dev/null 2>&1; then
