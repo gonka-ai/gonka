@@ -257,8 +257,7 @@ if [ -n "$CATALOG_URL" ] && [ -f "$CATALOG_CACHE_FILE" ]; then
     case "$cache_status" in
         0) echo "versiond-router: loaded the fresh routing catalog cache" >&2 ;;
         2)
-            echo "versiond-router: ignoring stale routing catalog cache" >&2
-            : > "$CACHED_VERSIONS_FILE"
+            echo "versiond-router: loaded stale accepted routes; waiting for a fresh catalog" >&2
             ;;
         *)
             echo "versiond-router: ignoring invalid routing catalog cache" >&2
@@ -331,7 +330,7 @@ while IFS= read -r version; do
 done < "$CACHED_VERSIONS_FILE"
 cached_dynamic_count=$(wc -l < "$CACHED_DYNAMIC_VERSIONS_FILE")
 if [ "$cached_dynamic_count" -gt "$VERSION_CAPACITY" ]; then
-    echo "versiond-router: fresh catalog cache needs $cached_dynamic_count dynamic slots," >&2
+    echo "versiond-router: accepted catalog cache needs $cached_dynamic_count dynamic slots," >&2
     echo "  but VERSIOND_ROUTER_VERSION_CAPACITY is $VERSION_CAPACITY" >&2
     exit 1
 fi

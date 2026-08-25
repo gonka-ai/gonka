@@ -53,11 +53,13 @@ read_cache() {
     sed '1d' "$tmp" > "$tmp.names"
     trap 'rm -f "$tmp" "$tmp.names"' EXIT
     validate_names "$tmp.names"
-    [ "$freshness" = fresh ] || {
-        echo "catalog-cache: snapshot is stale (maximum age ${max_age}s)" >&2
-        exit 2
-    }
     LC_ALL=C sort -u "$tmp.names"
+    if [ "$freshness" != fresh ]; then
+        echo "catalog-cache: snapshot is stale (maximum age ${max_age}s)" >&2
+        rm -f "$tmp" "$tmp.names"
+        trap - EXIT
+        exit 2
+    fi
     rm -f "$tmp" "$tmp.names"
     trap - EXIT
 }

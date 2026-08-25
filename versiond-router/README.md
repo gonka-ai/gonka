@@ -135,10 +135,12 @@ response remains fail-closed while accepted routes exist because versiond
 applies the same misconfiguration guard.
 
 Accepted projections are written atomically under `/var/lib/gonka-router`.
-After restart, a fresh last-known-good cache keeps already learned routes alive
-while governance is temporarily unavailable. Corrupt, stale, duplicate,
-empty, and capacity-exhaustion inputs leave the last accepted routing map
-untouched and expose a degraded state through `catalog-status`.
+After restart, a validated last-known-good cache keeps already learned routes
+alive while governance is temporarily unavailable, regardless of its local age.
+The cache age threshold produces a stale diagnostic but never revokes an
+accepted route. Corrupt caches and malformed, empty, or capacity-exhaustion
+source inputs leave the last accepted routing map untouched and expose a
+degraded state through `catalog-status`.
 Catalog-enabled Compose deployments mount that directory from a named volume so
 container replacement does not discard the last-known-good projection.
 While a valid catalog addition is waiting for capacity or its ready reserve, the
@@ -298,7 +300,7 @@ host lifecycle is intentionally delivered as a separate change.
 | `VERSIOND_ROUTING_CATALOG_POLL_SECONDS` | `5` | catalog polling interval |
 | `VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS` | `3` | timeout for one catalog request |
 | `VERSIOND_ROUTING_ACTIVATION_MIN_READY` | `1` | ready upstreams required before publishing a new projection. The two-replica HA Compose overlay explicitly sets `2` |
-| `VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS` | `86400` | maximum startup age of last-known-good catalog state |
+| `VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS` | `86400` | age after which startup reports the validated last-known-good catalog as stale; accepted routes are still restored |
 | `VERSIOND_ROUTER_VERSION_CAPACITY` | `32` | pre-rendered slots for names added after startup |
 | `VERSIOND_ROUTER_ALLOW_COARSE_READINESS` | *(unset)* | allow an HA deployment to run with no declared versions, accepting that a host with one unready version keeps receiving its traffic. Same boolean grammar |
 | `GONKA_HA` | *(unset)* | authoritative HA deployment latch; stamps `Devshard-Ha` even while only one pool member is usable. With it off, the router still stamps the header whenever more than one host is usable in the selected backend. Booleans share one grammar with devshardd: `1/t/true/yes/on` on, empty/`0/f/false/no/off` off, anything else refuses to start |

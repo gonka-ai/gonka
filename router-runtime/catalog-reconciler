@@ -99,21 +99,25 @@ if [ -n "$cache_file" ] && [ -f "$cache_file" ]; then
         log "catalog cache exists but $cache_bin is unavailable"
         exit 1
     }
-    cache_status=0
-    "$cache_bin" read "$cache_file" "$cache_max_age" > "$last_names" || cache_status=$?
-    if [ "$cache_status" -eq 0 ]; then
-        last_persisted_at=$(jq -er '.fetched_at_unix' "$cache_file") || cache_status=$?
-        if [ "$cache_status" -eq 0 ]; then
-            project_names "$last_names" "$tmpdir/cache.projected.names"
-            mv "$tmpdir/cache.projected.names" "$last_names"
-        fi
-    fi
+    cache_read_status=0
+    "$cache_bin" read "$cache_file" "$cache_max_age" > "$last_names" || cache_read_status=$?
+    cache_status=$cache_read_status
+    case "$cache_read_status" in
+        0|2)
+            cache_status=0
+            if last_persisted_at=$(jq -er '.fetched_at_unix' "$cache_file") &&
+                project_names "$last_names" "$tmpdir/cache.projected.names" &&
+                mv "$tmpdir/cache.projected.names" "$last_names"; then
+                if [ "$cache_read_status" -eq 2 ]; then
+                    log "serving stale accepted routes while waiting for a fresh catalog"
+                fi
+            else
+                cache_status=1
+            fi
+            ;;
+    esac
     if [ "$cache_status" -ne 0 ]; then
-        if [ "$cache_status" -eq 2 ]; then
-            log "ignoring stale persistent catalog cache; waiting for a fresh catalog"
-        else
-            log "ignoring invalid persistent catalog cache; waiting for a fresh catalog"
-        fi
+        log "ignoring invalid persistent catalog cache; waiting for a fresh catalog"
         : > "$last_names"
         last_persisted_at=0
     fi

@@ -579,6 +579,11 @@ test-version-routing:
 		|| fail "catalog reconciliation did not recover after the empty snapshot"; \
 	docker stop gonka-vp-catalog >/dev/null; \
 	docker rm -f gonka-vp-router >/dev/null; \
+	stale_accepted_at=$$(($$(date +%s) - 90000)); \
+	docker run --rm --user 0:0 -e STALE_ACCEPTED_AT=$$stale_accepted_at \
+		-v $$state:/state --entrypoint sh gonka-versiond-router-probe -c \
+		'jq ".fetched_at_unix = (env.STALE_ACCEPTED_AT | tonumber)" /state/catalog.json > /state/catalog.next && chmod 600 /state/catalog.next && mv /state/catalog.next /state/catalog.json && chown haproxy:haproxy /state/catalog.json' \
+		|| fail "could not age the accepted catalog cache"; \
 	docker run -d --name gonka-vp-router --network $$net \
 		-p 127.0.0.1:18132:8080 -p 127.0.0.1:18134:8404 \
 		-v $$state:/var/lib/gonka-router \
@@ -595,7 +600,7 @@ test-version-routing:
 		sleep 0.5; \
 	done; \
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/cache/chat)" = b ] \
-		|| fail "inner router lost a learned route when restarted without dapi"; \
+		|| fail "inner router discarded a stale accepted route when restarted without dapi"; \
 	printf '%s\n' 'del map /etc/haproxy/versions.map v9' \
 		| docker exec -i gonka-vp-router socat - \
 			UNIX-CONNECT:/var/run/haproxy/reconciler.sock; \

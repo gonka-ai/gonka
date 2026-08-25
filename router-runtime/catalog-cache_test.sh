@@ -45,9 +45,13 @@ fi
 
 jq '.fetched_at_unix = 0' "$tmpdir/catalog.json" > "$tmpdir/stale.json"
 status=0
-"$cache_bin" read "$tmpdir/stale.json" 1 >/dev/null 2>&1 || status=$?
+"$cache_bin" read "$tmpdir/stale.json" 1 > "$tmpdir/stale.names" 2>/dev/null || status=$?
 [ "$status" -eq 2 ] || {
     echo "catalog-cache did not report a stale snapshot with exit status 2" >&2
+    exit 1
+}
+cmp "$tmpdir/expected" "$tmpdir/stale.names" || {
+    echo "catalog-cache did not return the validated names from a stale snapshot" >&2
     exit 1
 }
 
