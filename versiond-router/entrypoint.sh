@@ -419,8 +419,10 @@ else
     http-request return status 200 content-type text/plain string "catalog disabled\n" if { path /readyz } { url_param(component) -m str catalog }
 EOF
 fi
-append_routed_ready_acl() {
+static_ready_acl_defined=0
+append_static_ready_acl() {
     printf '%s\n' "    acl routed_version_ready nbsrv($1) gt 0" >> "$READY_RULES"
+    static_ready_acl_defined=1
 }
 render_ready_rules() {
     source_map=$1
@@ -429,7 +431,7 @@ render_ready_rules() {
         case "$backend" in
             versiond_dynamic_*) continue ;;
         esac
-        append_routed_ready_acl "$backend"
+        append_static_ready_acl "$backend"
         encoded_version=$(router_urlencode "$version")
         printf '%s\n' \
             "    http-request return status 200 content-type text/plain string \"ready\\n\" if { path /readyz } { query -m str version=$encoded_version } { nbsrv($backend) gt 0 }" \
@@ -442,12 +444,21 @@ render_ready_rules "$VERSIONS_MAP"
 if [ -n "$CATALOG_URL" ]; then
     while read -r backend _; do
         [ -n "$backend" ] || continue
-        append_routed_ready_acl "$backend"
+        # A staged slot can become healthy before its batch is published. The
+        # nested lookup proves that the live version map currently points back
+        # to this slot, so readiness cannot expose an unpublished assignment.
+        printf '%s\n' \
+            "    http-request return status 200 content-type text/plain string \"ready\\n\" if { path /readyz } !{ query -m found } { str($backend),map_str($SLOT_MAP),url_dec(0),map_str($VERSIONS_MAP) -m str $backend } { nbsrv($backend) gt 0 }" \
+            >> "$READY_RULES"
     done < "$SLOT_MAP"
 fi
 if [ -n "$CATALOG_URL" ] || [ -s "$MAP" ] || [ -s "$VERSIONS_MAP" ]; then
-    cat >> "$READY_RULES" <<'EOF'
+    if [ "$static_ready_acl_defined" -eq 1 ]; then
+        cat >> "$READY_RULES" <<'EOF'
     http-request return status 200 content-type text/plain string "ready\n" if { path /readyz } !{ query -m found } routed_version_ready
+EOF
+    fi
+    cat >> "$READY_RULES" <<'EOF'
     http-request return status 503 content-type text/plain string "not ready\n" if { path /readyz } !{ query -m found }
 EOF
 else
