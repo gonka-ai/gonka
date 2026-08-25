@@ -69,3 +69,21 @@ func RecordFault(ctx context.Context, runs RunStore, node vo.NodeRef, action Act
 func ClearFault(ctx context.Context, runs RunStore, node vo.NodeRef) error {
 	return runs.Update(ctx, node, func(state *RunState) { state.Fault, state.FaultAt = nil, time.Time{} })
 }
+
+// TrackPreparedness stamps when a reserved node stopped being ready and clears it once it is ready
+// again, so the wait before it is handed back is timed the way a fault is. A node the chain no
+// longer holds is on its way out and is not timed at all
+func TrackPreparedness(ctx context.Context, runs RunStore, node vo.NodeRef, state *RunState, d Desired, o Observed, at time.Time) error {
+	was := state.UnpreparedAt
+	switch {
+	case !d.Reserved || Prepared(d, o):
+		state.UnpreparedAt = time.Time{}
+	case was.IsZero():
+		state.UnpreparedAt = at
+	}
+	if state.UnpreparedAt.Equal(was) {
+		return nil
+	}
+	mark := state.UnpreparedAt
+	return runs.Update(ctx, node, func(s *RunState) { s.UnpreparedAt = mark })
+}

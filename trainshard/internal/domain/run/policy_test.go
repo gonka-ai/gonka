@@ -218,6 +218,20 @@ func TestAutokick(t *testing.T) {
 			wantReason: vo.ReleaseFailedRun,
 			wantKick:   true,
 		},
+		{
+			name:     "was ready for hours and a card went busy a moment ago",
+			observed: run.Observed{Drained: true, Images: []vo.ImageDigest{baseImage}, MeshKey: true, ForeignGPUWork: true},
+			state:    run.RunState{UnpreparedAt: time.Date(2026, 8, 18, 21, 59, 0, 0, time.UTC)},
+			waited:   10 * time.Hour,
+		},
+		{
+			name:       "has been unready longer than the host waits",
+			observed:   run.Observed{Drained: true, Images: []vo.ImageDigest{baseImage}, MeshKey: true, ForeignGPUWork: true},
+			state:      run.RunState{UnpreparedAt: time.Date(2026, 8, 18, 20, 0, 0, 0, time.UTC)},
+			waited:     10 * time.Hour,
+			wantReason: vo.ReleaseFailedPrepare,
+			wantKick:   true,
+		},
 	}
 
 	for _, tc := range cases {
