@@ -34,6 +34,10 @@ func maybePrintVersion(args []string, stdout, stderr io.Writer) (int, bool) {
 			fmt.Fprintln(stderr, err)
 			return 1, true
 		}
+		if err := requireHADeploymentStorage(); err != nil {
+			fmt.Fprintln(stderr, err)
+			return 1, true
+		}
 		fmt.Fprintln(stdout, storageMode)
 		return 0, true
 	default:
