@@ -348,6 +348,20 @@ test-version-routing:
 	health=$$(curl -s -o /dev/null -w '%{http_code}' -m 3 http://127.0.0.1:18132/healthz); \
 	[ "$$health" = 200 ] \
 		|| fail "the guard broke the router's own /healthz (got $$health)"; \
+	for collision in healthz readyz metrics stats sessions; do \
+		docker exec gonka-vp-router sh -c \
+			'printf "%s\n" "add map /etc/haproxy/versions.map $$1 versiond_pool_v5" | socat - UNIX-CONNECT:/var/run/haproxy/haproxy.sock' \
+			sh "$$collision" >/dev/null \
+			|| fail "could not inject the $$collision collision into the runtime map"; \
+	done; \
+	for path in healthz readyz metrics stats/shards/test sessions/test/diffs; do \
+		curl -sS -D "$$tmpdir/versionless.headers" -o /dev/null -m 3 \
+			"http://127.0.0.1:18132/$$path" \
+			|| fail "versionless route /$$path stopped responding"; \
+		tr -d '\r' < "$$tmpdir/versionless.headers" \
+			| grep -qi '^x-versiond-backend: versiond_ha_pool$$' \
+			|| fail "catalog key stole the versionless /$$path route"; \
+	done; \
 	router_id=$$(docker inspect -f '{{.Id}}' gonka-vp-router); \
 	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
@@ -708,6 +722,11 @@ test-render: test-local-compose test-join-compose test-catalog-cache test-hash-r
 	fi; \
 	grep -q '^[[:space:]]*use_backend %\[var(txn.ver),map_str' "$$tmpdir/mixed.cfg" \
 		|| fail "requests are not routed to their version's pool"; \
+	awk '/use_backend versiond_ha_pool if versionless_request/ { protected = NR } \
+		/use_backend %\[var\(txn.ver\),map_str/ && first_map == 0 { first_map = NR } \
+		END { exit !(protected > 0 && first_map > protected) }' \
+		"$$tmpdir/mixed.cfg" \
+		|| fail "version maps can take precedence over versionless routes"; \
 	printf '%s\n' \
 		'v4 versiond_pool_v4' 'version=v4 versiond_pool_v4' \
 		'v5 versiond_pool_v5' 'version=v5 versiond_pool_v5' \

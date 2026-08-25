@@ -126,6 +126,11 @@ frontend versiond_in
 
     ${UNDECLARED_VERSION_GUARD}
 
+    # Versionless endpoints are part of versiond's own API namespace. Resolve
+    # them before consulting any version map so a governance name can never
+    # shadow health, metrics, stats, or session-observability routes.
+    use_backend versiond_ha_pool if versionless_request
+
     # Legacy pinning wins: the map yields that version's backend on the one host
     # that owns its SQLite data.
     use_backend %[var(txn.ver),map_str(${NON_HA_MAP})] if { var(txn.ver),map_str(${NON_HA_MAP}) -m found }
