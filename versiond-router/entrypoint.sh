@@ -419,10 +419,9 @@ else
     http-request return status 200 content-type text/plain string "catalog disabled\n" if { path /readyz } { url_param(component) -m str catalog }
 EOF
 fi
-cat >> "$READY_RULES" <<'EOF'
-    http-request return status 200 content-type text/plain string "ready\n" if { path /readyz } !{ query -m found } { nbsrv(versiond_ha_pool) gt 0 }
-    http-request return status 503 content-type text/plain string "not ready\n" if { path /readyz } !{ query -m found }
-EOF
+append_routed_ready_acl() {
+    printf '%s\n' "    acl routed_version_ready nbsrv($1) gt 0" >> "$READY_RULES"
+}
 render_ready_rules() {
     source_map=$1
     while read -r version backend; do
@@ -430,6 +429,7 @@ render_ready_rules() {
         case "$backend" in
             versiond_dynamic_*) continue ;;
         esac
+        append_routed_ready_acl "$backend"
         encoded_version=$(router_urlencode "$version")
         printf '%s\n' \
             "    http-request return status 200 content-type text/plain string \"ready\\n\" if { path /readyz } { query -m str version=$encoded_version } { nbsrv($backend) gt 0 }" \
@@ -439,6 +439,23 @@ render_ready_rules() {
 }
 render_ready_rules "$MAP"
 render_ready_rules "$VERSIONS_MAP"
+if [ -n "$CATALOG_URL" ]; then
+    while read -r backend _; do
+        [ -n "$backend" ] || continue
+        append_routed_ready_acl "$backend"
+    done < "$SLOT_MAP"
+fi
+if [ -n "$CATALOG_URL" ] || [ -s "$MAP" ] || [ -s "$VERSIONS_MAP" ]; then
+    cat >> "$READY_RULES" <<'EOF'
+    http-request return status 200 content-type text/plain string "ready\n" if { path /readyz } !{ query -m found } routed_version_ready
+    http-request return status 503 content-type text/plain string "not ready\n" if { path /readyz } !{ query -m found }
+EOF
+else
+    cat >> "$READY_RULES" <<'EOF'
+    http-request return status 200 content-type text/plain string "ready\n" if { path /readyz } !{ query -m found } { nbsrv(versiond_ha_pool) gt 0 }
+    http-request return status 503 content-type text/plain string "not ready\n" if { path /readyz } !{ query -m found }
+EOF
+fi
 
 # An HA deployment must declare its versions. The host-level check the coarse
 # mode falls back to answers "can this host serve anything", so a host whose v5

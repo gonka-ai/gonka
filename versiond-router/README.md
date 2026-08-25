@@ -378,9 +378,12 @@ The Prometheus output includes the synthetic `router_catalog_status` backend:
 one active server means the enabled catalog is fully reconciled, while zero
 means the last accepted data-plane routes remain available but catalog changes
 are not converging. Compose health follows the data plane instead: a
-catalog-aware router uses the unqualified admin `/readyz`, while the transitional
-nginx image retains its compatible `/healthz` probe. A temporary catalog-source
-failure therefore does not mark a working last-known-good router unhealthy.
+catalog-aware router uses the unqualified admin `/readyz`, which requires at
+least one published per-version backend to have a ready child; it does not use
+the coarse supervisor pool. The transitional nginx image retains its compatible
+`/healthz` probe. A temporary catalog-source failure therefore does not mark a
+working last-known-good router unhealthy, while an empty data plane cannot make
+the router healthy through supervisor liveness alone.
 Catalog diagnostics never include the configured source URL, so credentials or
 signed query parameters are not copied into status output or router logs.
 Each router image owns its graceful-stop signal: the transitional nginx image

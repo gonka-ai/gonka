@@ -417,6 +417,57 @@ test-version-routing:
 		[ "$$got" = "$$want" ] \
 			|| fail "router admin readiness for $$version returned $$got, want $$want"; \
 	done; \
+	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+		'http://127.0.0.1:18134/readyz')" = 200 ] \
+		|| fail "router data-plane readiness is false while version routes are usable"; \
+	docker stop gonka-vp-legacy >/dev/null; \
+	docker rm -f gonka-vp-a gonka-vp-b >/dev/null; \
+	for name in a b; do \
+		docker run -d --name gonka-vp-$$name --network $$net --network-alias versiond-pool \
+			-e NAME=$$name -e SERVES= -e GENERIC_READY=false \
+			-e READYZ_SUPPORTED=false -v "$$tmpdir/upstream.py:/app.py:ro" \
+			python:3.12-alpine python /app.py >/dev/null; \
+	done; \
+	coarse_up=; router_ready=; \
+	for i in $$(seq 30); do \
+		if docker exec gonka-vp-router wget -q -O - http://127.0.0.1:8405/metrics \
+			| grep -Eq '^haproxy_backend_active_servers\{proxy="versiond_ha_pool"\} [1-9]'; then \
+			coarse_up=1; \
+		fi; \
+		router_ready=$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+			http://127.0.0.1:18134/readyz); \
+		[ -n "$$coarse_up" ] && [ "$$router_ready" = 503 ] && break; \
+		sleep 0.5; \
+	done; \
+	[ -n "$$coarse_up" ] \
+		|| fail "empty supervisors did not reproduce the coarse health false-green precondition"; \
+	[ "$$router_ready" = 503 ] \
+		|| fail "router reported ready with no usable per-version backend"; \
+	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+		http://127.0.0.1:18132/v4/sessions/empty-data-plane/chat)" = 503 ] \
+		|| fail "empty per-version pools unexpectedly served v4"; \
+	docker rm -f gonka-vp-a gonka-vp-b >/dev/null; \
+	for spec in "a:v4:false:false" "b:v4 v5 v9 v9+hotfix v10:true:false"; do \
+		name=$${spec%%:*}; rest=$${spec#*:}; \
+		serves=$${rest%%:*}; rest=$${rest#*:}; \
+		generic_ready=$${rest%%:*}; readyz_supported=$${rest##*:}; \
+		docker run -d --name gonka-vp-$$name --network $$net --network-alias versiond-pool \
+			-e NAME=$$name -e SERVES="$$serves" \
+			-e GENERIC_READY=$$generic_ready \
+			-e READYZ_SUPPORTED=$$readyz_supported \
+			-v "$$tmpdir/upstream.py:/app.py:ro" \
+			python:3.12-alpine python /app.py >/dev/null; \
+	done; \
+	docker start gonka-vp-legacy >/dev/null; \
+	for i in $$(seq 30); do \
+		if curl -fsS -m 3 http://127.0.0.1:18134/readyz >/dev/null \
+			&& curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v1' >/dev/null \
+			&& curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v4' >/dev/null \
+			&& curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v5' >/dev/null; then break; fi; \
+		sleep 0.5; \
+	done; \
+	curl -fsS -m 3 http://127.0.0.1:18134/readyz >/dev/null \
+		|| fail "router data-plane readiness did not recover with version routes"; \
 	legacy=$$(curl -sS -D "$$tmpdir/legacy.headers" -m 3 \
 		http://127.0.0.1:18132/v1/sessions/legacy/chat) \
 		|| fail "healthy v1 was hidden by its legacy host's failing generic readiness"; \
