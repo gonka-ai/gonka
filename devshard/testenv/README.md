@@ -56,7 +56,7 @@ Skeleton: [`config/config.yaml`](config/config.yaml).
 |---------|---------|
 | `mock_chain`, `mock_dapi`, `mock_openai` | Mock services (ports, hosts) |
 | `versiond` | Protocol `version_name` (`v2`), `binary_version`, `mode` (`single` \| `multi`), devshardd override path, keyring |
-| `versiond_router` | Sticky nginx router (`:8080`) |
+| `versiond_router` | Sticky HAProxy router (`:8080`) |
 | `devshardctl` | Gateway listen port |
 | `postgres` | Shared Postgres — **required** for `versiond.mode: multi`; **off** for `single` (file payload fallback) |
 | `hosts` | One **versiond** + **devshardd** slot per entry (`id`, keys, IP) |
@@ -88,13 +88,15 @@ sessions are batch-migrated into Postgres once at startup.
 ### Three versiond instances (multi mode)
 
 The default skeleton defines **three** hosts (`versiond-0`, `versiond-1`, `versiond-2`).
-`gencompose` emits one compose service per host and sets:
+`gencompose` emits one compose service per host and puts `versiond-0` and
+`versiond-1` behind the `versiond-pool` network alias:
 
 ```text
-VERSIOND_HOSTS="versiond-0 versiond-1"
+VERSIOND_POOL_HOST="versiond-pool"     # on versiond-router
 ```
 
-on **versiond-router** (sticky HA pool). `versiond-2` is a **solo** participant reached via
+The router resolves that name to whichever pool members are running and
+health-checks each address. `versiond-2` is a **solo** participant reached via
 direct `inference_url` (`http://versiond-2:8080`), not the HA pool. Escrow slots round-robin
 across the HA identity (`hosts[0]`) and solo hosts (`hosts[2+]`). Solo uses **sqlite**
 storage so it does not multi-write the HA pair’s shared Postgres diffs; the HA pair keeps

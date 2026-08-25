@@ -270,6 +270,10 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Contains(t, text, `VERSIOND_PORT: "8080"`)
 	require.Contains(t, text, `VERSIOND_LEGACY_HOST: "versiond-0"`)
 	require.Contains(t, text, `VERSIOND_NON_HA_VERSIONS: "v1"`)
+	require.NotContains(t, text, "versiond-router-state",
+		"the router keeps no durable state: membership is DNS, health is measured")
+	require.Contains(t, text, "stop_grace_period: 10s",
+		"the stateless router replacement must not wait behind a long SSE stream")
 	require.Contains(t, text, "VERSIOND_ORACLE_URL")
 	require.Contains(t, text, "VERSIOND_OVERRIDE_v2")
 	require.Contains(t, text, "NODE_MANAGER_ADDR")
@@ -280,7 +284,9 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Equal(t, 2, strings.Count(text, "KEY_NAME: versiond-0"))
 	require.NotContains(t, text, "KEY_NAME: versiond-1")
 	require.Contains(t, text, "KEY_NAME: versiond-2")
-	require.Contains(t, text, `VERSIOND_HOSTS: "versiond-0 versiond-1"`)
+	require.Contains(t, text, `VERSIOND_POOL_HOST: "versiond-pool"`)
+	require.Equal(t, 2, strings.Count(text, "- versiond-pool"),
+		"only the sticky pair should resolve through the router pool")
 	require.Equal(t, 2, strings.Count(text, "DEVSHARD_STORAGE_MODE: postgres"))
 	require.Contains(t, text, "DEVSHARD_STORAGE_MODE: sqlite")
 	require.Contains(t, text, "DEVSHARD_VALIDATION_LEASE_TTL")

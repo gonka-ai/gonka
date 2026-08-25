@@ -106,6 +106,35 @@ func setupServerEnvHost(t *testing.T, hostOpts []host.HostOption, opts ...Server
 	}
 }
 
+func TestNewServer_DefaultsRequestBodyLimit(t *testing.T) {
+	env := setupServerEnv(t)
+	require.Equal(t, DefaultMaxBodySize, env.server.maxBodySize)
+}
+
+func TestServer_RejectsChunkedBodyOverActualLimit(t *testing.T) {
+	env := setupServerEnv(t)
+	env.server.maxBodySize = 8
+
+	body := []byte("123456789")
+	ts := time.Now().Unix()
+	sig, err := SignRequest(env.userSigner, "escrow-1", body, ts)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		testRoutePrefix+"/sessions/escrow-1/chat/completions",
+		strings.NewReader(string(body)),
+	)
+	req.ContentLength = -1
+	req.TransferEncoding = []string{"chunked"}
+	req.Header.Set(HeaderSignature, hex.EncodeToString(sig))
+	req.Header.Set(HeaderTimestamp, fmt.Sprintf("%d", ts))
+	rec := httptest.NewRecorder()
+	env.echo.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code, rec.Body.String())
+}
+
 func (env *serverTestEnv) doPost(t *testing.T, path string, body []byte) *httptest.ResponseRecorder {
 	t.Helper()
 

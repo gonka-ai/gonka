@@ -14,7 +14,7 @@ versiond-router, devshardctl, Postgres) and asserts production-like behaviour en
 | **mock-dapi** | NodeManager gRPC (`GetRuntimeConfig` long-poll), chainoracle HTTP, fault proxy |
 | **mock-openai** | OpenAI-compatible ML upstream for devshardd after `AcquireMLNode` |
 | **versiond-0 / versiond-1** | Supervise linux **devshardd** child (protocol `v2`); both load the **same** `KEY_NAME` (HA participant `hosts[0]`) |
-| **versiond-router** | Sticky nginx (`consistent_hash` on session id) |
+| **versiond-router** | Sticky HAProxy (consistent hash on session id, per-version health-checked pools) |
 | **devshardctl** | Gateway (`/v1/chat/completions`, `/v1/status`) |
 | **devshard-postgres** | Shared payload store (required for 2× versiond) |
 
@@ -128,7 +128,7 @@ versiond across repeated requests, and at least two distinct upstreams are reach
 
 1. Boot the standard stack; wait for router `/healthz`.
 2. Hit `/{version}/sessions/{sessionA}/healthz` **8 times**; read `X-Upstream-Addr` header
-   (exposed by router nginx template).
+   (set by the router on every response).
 3. Assert every retry returns the **same** upstream address.
 4. Probe up to 64 other session ids until one lands on a **different** upstream.
 
@@ -141,7 +141,7 @@ Validates deploy/join-style sticky routing before chat or long-poll scenarios de
 
 **What we test:** versiond-router sends version prefixes listed in
 `VERSIOND_NON_HA_VERSIONS` only to `VERSIOND_LEGACY_HOST` (`versiond_legacy`),
-while other versions sticky-hash across `VERSIOND_HOSTS` (and get
+while other versions sticky-hash across the `versiond-pool` members (and get
 `Devshard-Ha: true` for multi-host HA).
 
 **How:**
@@ -152,7 +152,7 @@ while other versions sticky-hash across `VERSIOND_HOSTS` (and get
    response has `X-Versiond-Backend: versiond_legacy` and the same
    `X-Upstream-Addr` mapped to `versiond-0`.
 3. Reuse router-stickiness probes on `VersionName` (e.g. `v2`); require ≥2 distinct
-   upstreams and `X-Versiond-Backend: versiond_ha_pool`.
+   upstreams and a per-version `X-Versiond-Backend: versiond_pool_*`.
 4. Stop the non-legacy versiond; repeat legacy probes — still pinned to
    `versiond-0`.
 
@@ -169,12 +169,12 @@ See `devshard/docs/pr-1366-deploy-test-plan.md` §3.2.
 **How:**
 
 1. Boot 2×versiond + Postgres compose patched to `DEVSHARD_STORAGE_MODE=sqlite`
-   and `VERSIOND_HOSTS=versiond-0` only; stop `versiond-1`.
-2. **Phase 0:** NON_HA `v1` → `versiond_legacy`; HA `VersionName` →
-   `versiond_ha_pool` without multi-host `Devshard-Ha` (healthz 200 on sqlite).
+   and `GONKA_HA=""`; stop `versiond-1`, removing it from the DNS pool.
+2. **Phase 0:** NON_HA `v1` → `versiond_legacy`; HA `VersionName` → its
+   `versiond_pool_*` without multi-host `Devshard-Ha` (healthz 200 on sqlite).
 3. **Phase 1:** Gateway chat ×3; inventory `{data}/versiond-0/<version>/_meta.db`
    (`escrow_epoch`).
-4. **Phase 2:** Expand `VERSIOND_HOSTS` to both hosts; recreate router; start
+4. **Phase 2:** Set `GONKA_HA=true`; recreate router; start
    `versiond-1`. HA `/<version>/healthz` → **503**; gateway chat fails; NON_HA
    still legacy-pinned.
 5. **Phase 3:** Patch `DEVSHARD_STORAGE_MODE=postgres`; recreate both versiond.
@@ -329,8 +329,8 @@ recovery with the same gateway session).
 
 ### Versiond sticky-session failover
 
-**What we test:** Behaviour when a **sticky upstream versiond is stopped** — nginx
-reroutes on the first upstream **502** / connect failure (`proxy_next_upstream`) to a
+**What we test:** Behaviour when a **sticky upstream versiond is stopped** — the
+router redispatches a connection failure to a
 surviving peer; sessions already hashed to a live upstream keep working.
 
 **Test:** `TestVersiondStickySessionFailover` (`citest/versiond_failover_test.go`)
