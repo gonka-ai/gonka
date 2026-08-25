@@ -13,8 +13,9 @@ import (
 const defaultWorkerShutdownTimeout = 5 * time.Second
 
 type commandWithContext struct {
-	cmd NodeWorkerCommand
-	ctx context.Context
+	cmd        NodeWorkerCommand
+	ctx        context.Context
+	generation uint64
 }
 
 // NodeWorker handles asynchronous operations for a specific node
@@ -70,6 +71,7 @@ func (w *NodeWorker) run() {
 		select {
 		case item := <-w.commands:
 			result := item.cmd.Execute(item.ctx, w)
+			result.DeploymentGeneration = item.generation
 
 			// Queue a command back to the broker to update the state
 			updateCmd := NewUpdateNodeResultCommand(w.nodeId, result)
@@ -84,6 +86,7 @@ func (w *NodeWorker) run() {
 			close(w.commands)
 			for item := range w.commands {
 				result := item.cmd.Execute(item.ctx, w)
+				result.DeploymentGeneration = item.generation
 				updateCmd := NewUpdateNodeResultCommand(w.nodeId, result)
 				if err := w.broker.QueueMessage(updateCmd); err != nil {
 					logging.Error("Failed to queue node result update command during shutdown", types.Nodes,
@@ -99,6 +102,10 @@ func (w *NodeWorker) run() {
 // Submit queues a command for execution on this node.
 // Returns false if the worker is shut down or the command queue is full.
 func (w *NodeWorker) Submit(ctx context.Context, cmd NodeWorkerCommand) bool {
+	return w.submit(ctx, cmd, 0)
+}
+
+func (w *NodeWorker) submit(ctx context.Context, cmd NodeWorkerCommand, generation uint64) bool {
 	w.closedMu.Lock()
 	defer w.closedMu.Unlock()
 	if w.closed {
@@ -106,7 +113,7 @@ func (w *NodeWorker) Submit(ctx context.Context, cmd NodeWorkerCommand) bool {
 	}
 	w.wg.Add(1)
 	select {
-	case w.commands <- commandWithContext{cmd: cmd, ctx: ctx}:
+	case w.commands <- commandWithContext{cmd: cmd, ctx: ctx, generation: generation}:
 		return true
 	default:
 		w.wg.Done()

@@ -1017,6 +1017,35 @@ func (m *manager) getFactory(id string) (*tx.Factory, error) {
 
 const hardwareDiffSimulateGas = uint64(10_000_000)
 
+func (m *manager) timeoutTimestamp() (time.Time, error) {
+	blockTs := m.blockTimeTracker.latestBlockTime
+	if blockTs.IsZero() {
+		_, err := m.updateChainHalt()
+		if err != nil {
+			return time.Time{}, err
+		}
+		blockTs = m.blockTimeTracker.latestBlockTime
+	}
+	return getTimestamp(blockTs.UnixNano(), m.defaultTimeout), nil
+}
+
+// hardwareDiffSimFactory copies the send factory and stamps the unordered
+// timeout the live tx already sets in getSignedBytes. Without it, CalculateGas
+// builds unordered=true / timeout=0 and ante rejects the sim.
+func hardwareDiffSimFactory(factory tx.Factory, name string, price int64, timeout time.Time, feeGranter sdk.AccAddress) tx.Factory {
+	sim := factory.
+		WithSimulateAndExecute(true).
+		WithFromName(name).
+		WithGas(hardwareDiffSimulateGas).
+		WithGasPrices(fmt.Sprintf("%dngonka", price)).
+		WithGasAdjustment(1).
+		WithTimeoutTimestamp(timeout)
+	if feeGranter != nil {
+		sim = sim.WithFeeGranter(feeGranter)
+	}
+	return sim
+}
+
 func (m *manager) simulateMsgsGas(factory *tx.Factory, msgs []sdk.Msg, price int64) (uint64, error) {
 	if factory == nil {
 		return 0, errors.New("tx factory is nil")
@@ -1024,21 +1053,21 @@ func (m *manager) simulateMsgsGas(factory *tx.Factory, msgs []sdk.Msg, price int
 	if price < 0 {
 		price = 0
 	}
+	timeout, err := m.timeoutTimestamp()
+	if err != nil {
+		return 0, err
+	}
 	name := ""
 	if m.apiAccount != nil && m.apiAccount.SignerAccount != nil {
 		name = m.apiAccount.SignerAccount.Name
 	}
-	sim := factory.
-		WithSimulateAndExecute(true).
-		WithFromName(name).
-		WithGas(hardwareDiffSimulateGas).
-		WithGasPrices(fmt.Sprintf("%dngonka", price)).
-		WithGasAdjustment(1)
+	var feeGranter sdk.AccAddress
 	if m.apiAccount != nil && !m.apiAccount.IsSignerTheMainAccount() {
 		if cold, err := m.apiAccount.AccountAddress(); err == nil {
-			sim = sim.WithFeeGranter(cold)
+			feeGranter = cold
 		}
 	}
+	sim := hardwareDiffSimFactory(*factory, name, price, timeout, feeGranter)
 	simRes, _, err := tx.CalculateGas(m.client.Context(), sim, msgs...)
 	if err != nil {
 		return 0, err
@@ -1050,16 +1079,10 @@ func (m *manager) simulateMsgsGas(factory *tx.Factory, msgs []sdk.Msg, price int
 }
 
 func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory *tx.Factory, gasWanted uint64, msgs []sdk.Msg) ([]byte, time.Time, error) {
-	blockTs := m.blockTimeTracker.latestBlockTime
-	if blockTs.IsZero() {
-		_, err := m.updateChainHalt()
-		if err != nil {
-			return nil, time.Time{}, err
-		}
-		blockTs = m.blockTimeTracker.latestBlockTime
+	timestamp, err := m.timeoutTimestamp()
+	if err != nil {
+		return nil, time.Time{}, err
 	}
-
-	timestamp := getTimestamp(blockTs.UnixNano(), m.defaultTimeout)
 
 	// Fee amount = gasWanted × gas price. gasWanted is sized per-batch by
 	// estimateBatchGas (see gas_estimate.go) instead of a constant, so
@@ -1092,7 +1115,7 @@ func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory
 	name := m.apiAccount.SignerAccount.Name
 	logging.Debug("Signing transaction", types.Messages, "tx_id", id, "timeout", timestamp.String(), "name", name)
 
-	err := tx.Sign(m.ctx, *factory, name, unsignedTx, false)
+	err = tx.Sign(m.ctx, *factory, name, unsignedTx, false)
 	if err != nil {
 		logging.Error("Failed to sign transaction", types.Messages, "tx_id", id, "error", err)
 		return nil, time.Time{}, err
