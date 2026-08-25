@@ -320,6 +320,7 @@ any config or runtime-map mutation.
 | --- | --- | --- |
 | `/metrics` | `127.0.0.1:8405` inside the container | Prometheus exporter; loopback only, never published |
 | Runtime API | `/var/run/haproxy/haproxy.sock` | admin socket, no TCP bind |
+| Catalog status | `/usr/local/lib/router-runtime/catalog-status --state` | current reconciler state; reports `stale` when updates stop |
 | `X-Upstream-Addr` | response header | which instance served the request |
 | `X-Versiond-Backend` | response header | HA backend name, or the stable `versiond_legacy` label for any pinned version |
 

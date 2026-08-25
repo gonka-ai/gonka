@@ -78,4 +78,17 @@ printf '{"schema":1,"fetched_at_unix":%s,"versions":["legacy"]}\n' "$now" \
     exit 1
 }
 
+status_bin="$root/router-runtime/catalog-status"
+now=$(date +%s)
+jq -n --argjson observed "$now" \
+    '{schema: 1, state: "ready", detail: "current", observed_at_unix: $observed}' \
+    > "$tmpdir/status.json"
+ROUTING_CATALOG_STATUS_MAX_AGE_SECONDS=10 \
+    "$status_bin" --state "$tmpdir/status.json" | jq -e '.state == "ready"' >/dev/null
+jq --argjson observed "$((now - 20))" '.observed_at_unix = $observed' \
+    "$tmpdir/status.json" > "$tmpdir/status-stale.json"
+ROUTING_CATALOG_STATUS_MAX_AGE_SECONDS=10 \
+    "$status_bin" --state "$tmpdir/status-stale.json" \
+    | jq -e '.state == "stale" and (.detail | contains("stale"))' >/dev/null
+
 echo "catalog-cache_test: ok"
