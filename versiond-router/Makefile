@@ -75,6 +75,13 @@ test-join-compose:
 		|| { echo 'test-join-compose: legacy version pins are missing' >&2; exit 1; }; \
 	VERSIOND_ROUTER_IMAGE=ghcr.io/product-science/versiond-router@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
 	VERSIOND_ROUTING_CATALOG_URL=http://api:9100/versions \
+	VERSIOND_ROUTING_CATALOG_POLL_SECONDS=7 \
+	VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=11 \
+	VERSIOND_ROUTING_CATALOG_MAX_BYTES=123456 \
+	VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS=13 \
+	VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=17 \
+	VERSIOND_ROUTING_ACTIVATION_MIN_READY=1 \
+	VERSIOND_ROUTER_VERSION_CAPACITY=19 \
 	DEVSHARD_POSTGRES_PASSWORD=test \
 		docker compose --project-directory ../deploy/join \
 		-f ../deploy/join/docker-compose.yml \
@@ -83,6 +90,17 @@ test-join-compose:
 		|| { echo 'test-join-compose: release router image override was ignored' >&2; exit 1; }; \
 	grep -q 'VERSIOND_ROUTING_CATALOG_URL: http://api:9100/versions' "$$tmp" \
 		|| { echo 'test-join-compose: release catalog URL override was ignored' >&2; exit 1; }; \
+	for expected in \
+		'VERSIOND_ROUTING_CATALOG_POLL_SECONDS: "7"' \
+		'VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS: "11"' \
+		'VERSIOND_ROUTING_CATALOG_MAX_BYTES: "123456"' \
+		'VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS: "13"' \
+		'VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS: "17"' \
+		'VERSIOND_ROUTING_ACTIVATION_MIN_READY: "1"' \
+		'VERSIOND_ROUTER_VERSION_CAPACITY: "19"'; do \
+		grep -q "$$expected" "$$tmp" \
+			|| { echo "test-join-compose: override '$$expected' was ignored" >&2; exit 1; }; \
+	done; \
 	GONKA_HA=off VERSIOND_NON_HA_VERSIONS= VERSIOND_VERSIONS= \
 	VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true \
 	DEVSHARD_POSTGRES_PASSWORD=test \
