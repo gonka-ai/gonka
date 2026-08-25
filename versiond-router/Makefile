@@ -56,6 +56,9 @@ test-join-compose:
 	jq -e '.services.proxy.depends_on["versiond-router"].condition == "service_healthy"' \
 		"$$tmp_json" >/dev/null \
 		|| { echo 'test-join-compose: public proxy does not wait for the router data plane' >&2; exit 1; }; \
+	jq -e '.services["versiond-router"].stop_signal == "SIGUSR1" and .services["versiond-router"].stop_grace_period == "10s"' \
+		"$$tmp_json" >/dev/null \
+		|| { echo 'test-join-compose: production router does not use a bounded soft stop' >&2; exit 1; }; \
 	grep -q 'VERSIOND_POOL_HOST: versiond-pool' "$$tmp" \
 		|| { echo 'test-join-compose: pool host is not rendered' >&2; exit 1; }; \
 	[ "$$(grep -c -- '- versiond-pool' "$$tmp")" -ge 2 ] \
