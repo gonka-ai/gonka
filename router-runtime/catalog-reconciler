@@ -3,8 +3,7 @@
 # Monotonically publishes accepted version names into pre-rendered HAProxy
 # backends. Unpublished staging assignments may be reclaimed when governance
 # withdraws or corrects a candidate before it reaches the activation reserve.
-# The source keeps its existing {"versions":[...]} contract; generation numbers
-# are local cache metadata, not a governance or DAPI revision. The data plane
+# The source keeps its existing {"versions":[...]} contract. The data plane
 # remains fail-closed: a version is published in
 # the request map only after its slot has been assigned and its servers have
 # been enabled for active health checks.
@@ -46,6 +45,8 @@ done
     log "catalog activation reserve exceeds backend server capacity"
     exit 1
 }
+cache_refresh_seconds=$((cache_max_age / 2))
+[ "$cache_refresh_seconds" -gt 0 ] || cache_refresh_seconds=1
 
 case "$catalog_url" in
     '') exit 0 ;;
@@ -85,7 +86,7 @@ project_names() {
 last_state=starting
 last_names=$tmpdir/last.names
 : > "$last_names"
-last_generation=-1
+last_persisted_at=0
 last_used=$(awk '$2 != "__unassigned__" { used++ } END { print used + 0 }' \
     "$slot_map")
 
@@ -97,8 +98,7 @@ if [ -n "$cache_file" ] && [ -f "$cache_file" ]; then
     cache_status=0
     "$cache_bin" read "$cache_file" "$cache_max_age" > "$last_names" || cache_status=$?
     if [ "$cache_status" -eq 0 ]; then
-        last_generation=$(jq -er 'if .schema == 2 then .revision else 0 end' "$cache_file") || \
-            cache_status=$?
+        last_persisted_at=$(jq -er '.fetched_at_unix' "$cache_file") || cache_status=$?
         if [ "$cache_status" -eq 0 ]; then
             project_names "$last_names" "$tmpdir/cache.projected.names"
             mv "$tmpdir/cache.projected.names" "$last_names"
@@ -111,7 +111,7 @@ if [ -n "$cache_file" ] && [ -f "$cache_file" ]; then
             log "ignoring invalid persistent catalog cache; waiting for a fresh catalog"
         fi
         : > "$last_names"
-        last_generation=-1
+        last_persisted_at=0
     fi
 fi
 
@@ -223,22 +223,26 @@ validate_catalog_progression() {
     ' "$tmpdir/catalog.names" "$last_names")
     [ -z "$removed" ] || return 1
 
-    if [ "$last_generation" -ge 0 ] && cmp -s "$last_names" "$tmpdir/catalog.names"; then
-        catalog_generation=$last_generation
-    else
-        catalog_generation=$((last_generation + 1))
+    catalog_changed=1
+    if cmp -s "$last_names" "$tmpdir/catalog.names"; then
+        catalog_changed=0
     fi
 }
 
 persist_catalog() {
     [ -n "$cache_file" ] || return 0
     [ -x "$cache_bin" ] || return 1
-    "$cache_bin" write "$tmpdir/catalog.names" "$cache_file" "$catalog_generation"
+    now=$(date +%s)
+    if [ "$catalog_changed" -eq 0 ] && [ "$last_persisted_at" -gt 0 ] && \
+        [ $((now - last_persisted_at)) -lt "$cache_refresh_seconds" ]; then
+        return 0
+    fi
+    "$cache_bin" write "$tmpdir/catalog.names" "$cache_file" || return 1
+    last_persisted_at=$now
 }
 
 accept_catalog() {
     cp "$tmpdir/catalog.names" "$last_names"
-    last_generation=$catalog_generation
 }
 
 map_snapshot() {
@@ -459,7 +463,7 @@ while :; do
         set_state fetch-error "cannot fetch or validate $catalog_url"
     elif ! validate_catalog_progression; then
         set_state projection-error \
-            "catalog removed a previously projected version"
+            "catalog removed previously projected version '$removed'"
     else
 		reconcile_status=0
 		prepare_catalog || reconcile_status=$?

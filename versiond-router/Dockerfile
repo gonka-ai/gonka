@@ -1,8 +1,6 @@
 FROM haproxy:3.2-alpine
 
-ARG CATALOG_CACHE_PROTOCOL_VERSION=2
-LABEL ai.gonka.component="versiond-router" \
-      ai.gonka.catalog-cache-protocol-version="${CATALOG_CACHE_PROTOCOL_VERSION}"
+LABEL ai.gonka.component="versiond-router"
 
 # Sticky reverse-proxy in front of N versiond instances. Hashes by escrow id
 # from the URL so the same session always lands on the same versiond, and takes

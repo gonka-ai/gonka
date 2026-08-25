@@ -13,25 +13,17 @@ v10-candidate
 v11.canary
 EOF
 
-"$cache_bin" write "$tmpdir/names" "$tmpdir/catalog.json" 42
+"$cache_bin" write "$tmpdir/names" "$tmpdir/catalog.json"
 [ "$(stat -c '%a' "$tmpdir/catalog.json")" = 600 ]
-[ "$(jq -r '.schema, .initialized, .revision' "$tmpdir/catalog.json")" = "$(printf '2\ntrue\n42')" ]
+[ "$(jq -r '.schema' "$tmpdir/catalog.json")" = 1 ]
 "$cache_bin" read "$tmpdir/catalog.json" 60 > "$tmpdir/actual"
 LC_ALL=C sort "$tmpdir/names" > "$tmpdir/expected"
 cmp "$tmpdir/expected" "$tmpdir/actual"
 
-"$cache_bin" migrate "$tmpdir/catalog.json" "$tmpdir/catalog-v2.json" 60
-cmp "$tmpdir/catalog.json" "$tmpdir/catalog-v2.json"
-if "$cache_bin" migrate "$tmpdir/catalog.json" "$tmpdir/catalog-v2.json" 60 \
-    2>/dev/null; then
-    echo "catalog-cache replaced an existing migration destination" >&2
-    exit 1
-fi
-
 for invalid in 'v10;candidate' 'v11:canary' 'v12 candidate'; do
     printf '%s\n' "$invalid" > "$tmpdir/invalid-name"
     if "$cache_bin" write "$tmpdir/invalid-name" \
-        "$tmpdir/invalid-name.json" 43 2>/dev/null; then
+        "$tmpdir/invalid-name.json" 2>/dev/null; then
         echo "catalog-cache accepted unroutable version $invalid" >&2
         exit 1
     fi
@@ -40,18 +32,13 @@ done
 cat > "$tmpdir/legacy-invalid.json" <<EOF
 {"schema":1,"fetched_at_unix":$(date +%s),"versions":["v10;candidate"]}
 EOF
-if "$cache_bin" migrate "$tmpdir/legacy-invalid.json" \
-    "$tmpdir/legacy-invalid-v2.json" 60 2>/dev/null; then
-    echo "catalog-cache migrated an invalid legacy snapshot" >&2
+if "$cache_bin" read "$tmpdir/legacy-invalid.json" 60 2>/dev/null; then
+    echo "catalog-cache accepted an invalid snapshot" >&2
     exit 1
 fi
-[ ! -e "$tmpdir/legacy-invalid-v2.json" ] || {
-    echo "catalog-cache published an invalid migration destination" >&2
-    exit 1
-}
 
 printf '%s\n%s\n' duplicate duplicate > "$tmpdir/duplicates"
-if "$cache_bin" write "$tmpdir/duplicates" "$tmpdir/duplicate.json" 43 2>/dev/null; then
+if "$cache_bin" write "$tmpdir/duplicates" "$tmpdir/duplicate.json" 2>/dev/null; then
     echo "catalog-cache accepted a duplicate version" >&2
     exit 1
 fi
@@ -90,17 +77,5 @@ printf '{"schema":1,"fetched_at_unix":%s,"versions":["legacy"]}\n' "$now" \
     echo "catalog-cache rejected a valid legacy snapshot" >&2
     exit 1
 }
-
-for invalid in \
-    '{"schema":2,"initialized":false,"revision":42,"fetched_at_unix":0,"versions":[]}' \
-    '{"schema":2,"initialized":true,"revision":-1,"fetched_at_unix":0,"versions":[]}' \
-    '{"schema":2,"initialized":true,"revision":1.5,"fetched_at_unix":0,"versions":[]}'
-do
-    printf '%s\n' "$invalid" > "$tmpdir/invalid-v2.json"
-    if "$cache_bin" read "$tmpdir/invalid-v2.json" 60 >/dev/null 2>&1; then
-        echo "catalog-cache accepted invalid schema 2 metadata" >&2
-        exit 1
-    fi
-done
 
 echo "catalog-cache_test: ok"

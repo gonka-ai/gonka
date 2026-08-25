@@ -33,12 +33,7 @@ read_cache() {
     tmp=$(mktemp)
     trap 'rm -f "$tmp"' EXIT
     if ! jq -er '
-        select(
-            .schema == 1 or
-            (.schema == 2 and .initialized == true and
-             (.revision | type) == "number" and .revision >= 0 and
-             (.revision | floor) == .revision)
-        )
+        select(.schema == 1)
         | select((.fetched_at_unix | type) == "number")
         | select(.fetched_at_unix >= 0 and (.fetched_at_unix | floor) == .fetched_at_unix)
         | select((.versions | type) == "array")
@@ -67,10 +62,7 @@ read_cache() {
 }
 
 write_cache() {
-    names=$1 cache=$2 generation=$3
-    case "$generation" in
-        '' | *[!0-9]*) fail "GENERATION must be a non-negative integer" ;;
-    esac
+    names=$1 cache=$2
     [ -f "$names" ] || fail "names file does not exist: $names"
     validate_names "$names"
     directory=$(dirname -- "$cache")
@@ -78,10 +70,9 @@ write_cache() {
     tmp=$(mktemp "$directory/.catalog-cache.XXXXXX")
     trap 'rm -f "$tmp"' EXIT
     now=$(date +%s)
-    if ! jq -Rn --argjson now "$now" --argjson generation "$generation" '
+    if ! jq -Rn --argjson now "$now" '
         [inputs] | sort | unique
-        | {schema: 2, initialized: true, revision: $generation,
-           fetched_at_unix: $now, versions: .}
+        | {schema: 1, fetched_at_unix: $now, versions: .}
     ' < "$names" > "$tmp"; then
         fail "cannot encode snapshot"
     fi
@@ -92,38 +83,14 @@ write_cache() {
     trap - EXIT
 }
 
-migrate_cache() {
-    source=$1 destination=$2 max_age=$3
-    [ -f "$source" ] || fail "source cache does not exist: $source"
-    [ ! -e "$destination" ] || fail "destination cache already exists: $destination"
-
-    # Validate with the new reader before publishing. Preserve the original
-    # local generation and timestamp so migration cannot make stale data fresh.
-    read_cache "$source" "$max_age" >/dev/null
-    directory=$(dirname -- "$destination")
-    [ -d "$directory" ] || fail "cache directory does not exist: $directory"
-    tmp=$(mktemp "$directory/.catalog-cache-migrate.XXXXXX")
-    trap 'rm -f "$tmp"' EXIT
-    cat "$source" > "$tmp"
-    chmod 600 "$tmp"
-    sync "$tmp"
-    mv -f "$tmp" "$destination"
-    sync "$directory"
-    trap - EXIT
-}
-
 case ${1:-} in
     read)
         [ "$#" -eq 3 ] || fail "usage: catalog-cache read FILE MAX_AGE_SECONDS"
         read_cache "$2" "$3"
         ;;
     write)
-        [ "$#" -eq 4 ] || fail "usage: catalog-cache write NAMES_FILE CACHE_FILE REVISION"
-        write_cache "$2" "$3" "$4"
+        [ "$#" -eq 3 ] || fail "usage: catalog-cache write NAMES_FILE CACHE_FILE"
+        write_cache "$2" "$3"
         ;;
-    migrate)
-        [ "$#" -eq 4 ] || fail "usage: catalog-cache migrate SOURCE_FILE CACHE_FILE MAX_AGE_SECONDS"
-        migrate_cache "$2" "$3" "$4"
-        ;;
-    *) fail "usage: catalog-cache read FILE MAX_AGE_SECONDS | write NAMES_FILE CACHE_FILE REVISION | migrate SOURCE_FILE CACHE_FILE MAX_AGE_SECONDS" ;;
+    *) fail "usage: catalog-cache read FILE MAX_AGE_SECONDS | write NAMES_FILE CACHE_FILE" ;;
 esac

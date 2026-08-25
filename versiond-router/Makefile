@@ -281,10 +281,8 @@ test-version-routing:
 		curl -s -o /dev/null -m 2 http://127.0.0.1:18132/v4/sessions/warm/x && break; \
 		sleep 0.5; \
 	done; \
-	docker exec gonka-vp-router test -s /var/lib/gonka-router/catalog-v2.json \
-		|| fail "inner router did not migrate the legacy catalog cache"; \
 	docker exec gonka-vp-router test -s /var/lib/gonka-router/catalog.json \
-		|| fail "inner router removed the rollback catalog cache"; \
+		|| fail "inner router did not retain the routing catalog cache"; \
 	sleep 4; \
 	docker exec gonka-vp-router sh -c 'kill -STOP $$(pidof haproxy)' \
 		|| fail "could not suspend HAProxy for the Runtime API timeout test"; \
@@ -311,6 +309,13 @@ test-version-routing:
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
 		| jq -e '.state == "ready"' >/dev/null \
 		|| fail "catalog reconciliation did not recover after Runtime API resumed"; \
+	steady_cache_before=$$(docker exec gonka-vp-router sha256sum \
+		/var/lib/gonka-router/catalog.json | awk '{print $$1}'); \
+	sleep 2; \
+	steady_cache_after=$$(docker exec gonka-vp-router sha256sum \
+		/var/lib/gonka-router/catalog.json | awk '{print $$1}'); \
+	[ "$$steady_cache_after" = "$$steady_cache_before" ] \
+		|| fail "an unchanged catalog rewrote its persistent cache"; \
 	for spec in 'v1:200' 'v2:503' 'v4:200' 'v5:200' 'v9:503'; do \
 		version=$${spec%%:*}; want=$${spec##*:}; \
 		got=$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
@@ -404,8 +409,10 @@ test-version-routing:
 		sleep 0.5; \
 	done; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-		| jq -e '.state == "activation-pending"' >/dev/null \
-		|| fail "one-host governance versions did not remain candidates"; \
+		| jq -e '.state == "activation-pending"' >/dev/null || { \
+			docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state >&2; \
+			fail "one-host governance versions did not remain candidates"; \
+		}; \
 	for version in v9 v10; do \
 		[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
 			"http://127.0.0.1:18134/readyz?version=$$version")" = 503 ] \
@@ -484,15 +491,15 @@ test-version-routing:
 		|| fail "learning v9 replaced the router container"; \
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v4/sessions/still-live/chat)" = b ] \
 		|| fail "learning v9 disrupted the existing v4 route"; \
-	docker exec gonka-vp-router test -s /var/lib/gonka-router/catalog-v2.json \
+	docker exec gonka-vp-router test -s /var/lib/gonka-router/catalog.json \
 		|| fail "inner router did not persist its learned catalog"; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-cache read \
-		/var/lib/gonka-router/catalog-v2.json 86400 > "$$tmpdir/projected-cache.names"; \
+		/var/lib/gonka-router/catalog.json 86400 > "$$tmpdir/projected-cache.names"; \
 	printf '%s\n' v10 v9 | LC_ALL=C sort > "$$tmpdir/want-projected-cache.names"; \
 	diff -u "$$tmpdir/want-projected-cache.names" "$$tmpdir/projected-cache.names" \
 		|| fail "persistent catalog history contains static or legacy names"; \
 	cache_before=$$(docker exec gonka-vp-router sha256sum \
-		/var/lib/gonka-router/catalog-v2.json | awk '{print $$1}'); \
+		/var/lib/gonka-router/catalog.json | awk '{print $$1}'); \
 	printf '%s\n' '{"versions":[]}' > "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	for i in $$(seq 20); do \
@@ -506,7 +513,7 @@ test-version-routing:
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/empty-catalog/chat)" = b ] \
 		|| fail "an empty catalog removed the admitted v9 route"; \
 	cache_after=$$(docker exec gonka-vp-router sha256sum \
-		/var/lib/gonka-router/catalog-v2.json | awk '{print $$1}'); \
+		/var/lib/gonka-router/catalog.json | awk '{print $$1}'); \
 	[ "$$cache_after" = "$$cache_before" ] \
 		|| fail "an empty catalog replaced the persistent last-known-good snapshot"; \
 	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
@@ -626,7 +633,7 @@ test-version-routing:
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	docker run --rm --user 0:0 -v $$state:/state \
 		--entrypoint sh gonka-versiond-router-probe -c \
-		'printf "%s\n" "{not-json" > /state/catalog-v2.json; chown haproxy:haproxy /state/catalog-v2.json'; \
+		'printf "%s\n" "{not-json" > /state/catalog.json; chown haproxy:haproxy /state/catalog.json'; \
 	docker run -d --name gonka-vp-router --network $$net \
 		-p 127.0.0.1:18132:8080 -p 127.0.0.1:18134:8404 \
 		-v $$state:/var/lib/gonka-router \
@@ -645,13 +652,13 @@ test-version-routing:
 	curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%2Bhotfix' >/dev/null \
 		|| fail "a valid governance catalog did not recover an invalid persistent cache"; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-cache read \
-		/var/lib/gonka-router/catalog-v2.json 86400 | grep -Fqx 'v9+hotfix' \
+		/var/lib/gonka-router/catalog.json 86400 | grep -Fqx 'v9+hotfix' \
 		|| fail "the recovered catalog did not replace the invalid persistent cache"; \
 	docker rm -f gonka-vp-router >/dev/null; \
 	stale_at=$$(($$(date +%s) - 60)); \
 	docker run --rm --user 0:0 -e STALE_AT=$$stale_at -v $$state:/state \
 		--entrypoint sh gonka-versiond-router-probe -c \
-		'printf "{\"schema\":2,\"initialized\":true,\"revision\":9,\"fetched_at_unix\":%s,\"versions\":[\"v1\",\"v2\",\"v4\",\"v5\",\"v-obsolete\"]}\n" "$$STALE_AT" > /state/catalog-v2.json; chown haproxy:haproxy /state/catalog-v2.json'; \
+		'printf "{\"schema\":1,\"fetched_at_unix\":%s,\"versions\":[\"v1\",\"v2\",\"v4\",\"v5\",\"v-obsolete\"]}\n" "$$STALE_AT" > /state/catalog.json; chown haproxy:haproxy /state/catalog.json'; \
 	docker run -d --name gonka-vp-router --network $$net \
 		-p 127.0.0.1:18132:8080 -p 127.0.0.1:18134:8404 \
 		-v $$state:/var/lib/gonka-router \
@@ -674,7 +681,7 @@ test-version-routing:
 		| jq -e '.state == "ready"' >/dev/null \
 		|| fail "stale cache recovery left catalog reconciliation degraded"; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-cache read \
-		/var/lib/gonka-router/catalog-v2.json 86400 > "$$tmpdir/recovered.names"; \
+		/var/lib/gonka-router/catalog.json 86400 > "$$tmpdir/recovered.names"; \
 	grep -Fqx 'v9+hotfix' "$$tmpdir/recovered.names" \
 		|| fail "the fresh catalog did not replace the stale persistent cache"; \
 	if grep -Fqx 'v-obsolete' "$$tmpdir/recovered.names"; then \

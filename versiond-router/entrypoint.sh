@@ -53,8 +53,7 @@ CATALOG_POLL="${VERSIOND_ROUTING_CATALOG_POLL_SECONDS:-5}"
 CATALOG_FETCH_TIMEOUT="${VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS:-3}"
 CATALOG_RUNTIME_TIMEOUT="${VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS:-2}"
 CATALOG_ACTIVATION_MIN_READY="${VERSIOND_ROUTING_ACTIVATION_MIN_READY:-2}"
-CATALOG_CACHE_FILE=/var/lib/gonka-router/catalog-v2.json
-CATALOG_LEGACY_CACHE_FILE="$(dirname -- "$CATALOG_CACHE_FILE")/catalog.json"
+CATALOG_CACHE_FILE=/var/lib/gonka-router/catalog.json
 CATALOG_CACHE_MAX_AGE="${VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS:-86400}"
 CATALOG_STATUS_FILE=/var/lib/gonka-router/catalog-status.json
 CATALOG_CACHE_BIN="${ROUTING_CATALOG_CACHE_BIN:-/usr/local/lib/router-runtime/catalog-cache}"
@@ -255,18 +254,6 @@ trap 'rm -f "$POOL_BACKENDS_FILE" "$STATIC_VERSIONS_FILE" "$LEGACY_VERSIONS_FILE
 printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;[:space:]' '\n' > "$STATIC_VERSIONS_FILE"
 printf '%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" | tr ',;[:space:]' '\n' > "$LEGACY_VERSIONS_FILE"
 : > "$CACHED_VERSIONS_FILE"
-if [ -n "$CATALOG_URL" ] && [ ! -e "$CATALOG_CACHE_FILE" ] && \
-    [ "$CATALOG_LEGACY_CACHE_FILE" != "$CATALOG_CACHE_FILE" ] && \
-    [ -f "$CATALOG_LEGACY_CACHE_FILE" ]; then
-    migration_status=0
-    "$CATALOG_CACHE_BIN" migrate "$CATALOG_LEGACY_CACHE_FILE" \
-        "$CATALOG_CACHE_FILE" "$CATALOG_CACHE_MAX_AGE" || migration_status=$?
-    case "$migration_status" in
-        0) echo "versiond-router: migrated the legacy routing catalog cache" >&2 ;;
-        2) echo "versiond-router: legacy routing catalog cache is stale; fetching a fresh catalog" >&2 ;;
-        *) echo "versiond-router: legacy routing catalog cache is invalid; fetching a fresh catalog" >&2 ;;
-    esac
-fi
 if [ -n "$CATALOG_URL" ] && [ -f "$CATALOG_CACHE_FILE" ]; then
     cache_status=0
     "$CATALOG_CACHE_BIN" read "$CATALOG_CACHE_FILE" "$CATALOG_CACHE_MAX_AGE" \
