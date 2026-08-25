@@ -36,7 +36,9 @@ backend ${BACKEND_NAME}
     # where a POST is written into a connection the peer is already closing.
     http-reuse safe
 
-    option redispatch 1
+    # Keep the first connection retry on the consistent-hash owner. If it still
+    # cannot connect, the final retry may use another healthy server.
+    option redispatch
     ${RETRY_ON}
     retries 2
     # Mirrors nginx's absent non_idempotent: connection-level redispatch for

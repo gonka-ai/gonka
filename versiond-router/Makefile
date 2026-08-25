@@ -499,15 +499,27 @@ test-version-routing:
 		-e NAME=a -e SERVES=v4 -e GENERIC_READY=false \
 		-e READYZ_SUPPORTED=false -v "$$tmpdir/upstream.py:/app.py:ro" \
 		python:3.12-alpine python /app.py >/dev/null; \
-	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/dynamic/chat)" = b ] \
-		|| fail "dynamically learned v9 did not reach its ready host"; \
+	dynamic_host=; \
+	for i in $$(seq 20); do \
+		dynamic_host=$$(curl -fsS -m 3 \
+			http://127.0.0.1:18132/v9/sessions/dynamic/chat 2>/dev/null || true); \
+		[ "$$dynamic_host" = b ] && break; \
+		sleep 0.5; \
+	done; \
+	[ "$$dynamic_host" = b ] \
+		|| fail "dynamically learned v9 reached '$$dynamic_host' instead of its ready host"; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
 		/etc/haproxy/versions.map | grep -qx v9 \
 		|| fail "runtime catalog does not report dynamically learned v9"; \
 	[ "$$(docker inspect -f '{{.Id}}' gonka-vp-router)" = "$$router_id" ] \
 		|| fail "learning v9 replaced the router container"; \
-	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v4/sessions/still-live/chat)" = b ] \
-		|| fail "learning v9 disrupted the existing v4 route"; \
+	stable_host=$$(curl -fsS -m 3 \
+		http://127.0.0.1:18132/v4/sessions/still-live/chat) \
+		|| fail "the existing v4 route stopped responding after learning v9"; \
+	case "$$stable_host" in \
+		a|b) ;; \
+		*) fail "learning v9 sent the existing v4 route to '$$stable_host'" ;; \
+	esac; \
 	docker exec gonka-vp-router test -s /var/lib/gonka-router/catalog.json \
 		|| fail "inner router did not persist its learned catalog"; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-cache read \
@@ -765,6 +777,11 @@ test-render: test-local-compose test-join-compose test-catalog-cache test-hash-r
 		|| fail "explicit version backends retry authoritative 404 responses"; \
 	grep -q '^[[:space:]]*http-request disable-l7-retry if !METH_GET' "$$tmpdir/mixed.cfg" \
 		|| fail "non-idempotent requests could be replayed"; \
+	grep -q '^[[:space:]]*option redispatch[[:space:]]*$$' "$$tmpdir/mixed.cfg" \
+		|| fail "connection retries no longer stay with the hash owner first"; \
+	if grep -q '^[[:space:]]*option redispatch 1' "$$tmpdir/mixed.cfg"; then \
+		fail "the first connection retry immediately abandons the hash owner"; \
+	fi; \
 	grep -q '^[[:space:]]*bind 127.0.0.1:8405' "$$tmpdir/mixed.cfg" \
 		|| fail "metrics are not bound to loopback"; \
 	grep -q '^[[:space:]]*option[[:space:]]*forwardfor' "$$tmpdir/mixed.cfg" \

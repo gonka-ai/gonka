@@ -222,11 +222,9 @@ backend_name() {
 
 # One shared fragment renders both HA pools and single-owner legacy backends, so
 # their hashing, retry, and path-rewrite policies cannot drift apart.
+DEFAULT_RETRY_ON='retry-on conn-failure empty-response 502'
+VERSIONLESS_RETRY_ON="$DEFAULT_RETRY_ON 404"
 render_backend() {
-    retry_on='retry-on conn-failure empty-response 502'
-    if [ "$1" = versiond_ha_pool ]; then
-        retry_on="$retry_on 404"
-    fi
     sed \
         -e "s|\${BACKEND_NAME}|$1|g" \
         -e "s|\${READY_CHECK_SEND}|$2|g" \
@@ -236,7 +234,7 @@ render_backend() {
         -e "s|\${BACKEND_SLOTS}|$5|g" \
         -e "s|\${REQUEST_HA_HEADER}|$6|g" \
         -e "s|\${RESPONSE_BACKEND}|$7|g" \
-        -e "s|\${RETRY_ON}|$retry_on|g" \
+        -e "s|\${RETRY_ON}|$9|g" \
         -e "s|\${SERVER_STATE}|$8|g" \
         "$POOL_TEMPLATE"
 }
@@ -279,7 +277,7 @@ render_backend versiond_ha_pool \
     'http-check send meth GET uri /readyz' \
     'http-check send meth GET uri /healthz' \
     "$POOL_HOST" "$SLOTS" "$(ha_header_for versiond_ha_pool)" \
-    versiond_ha_pool '' > "$POOL_BACKENDS_FILE"
+    versiond_ha_pool '' "$VERSIONLESS_RETRY_ON" > "$POOL_BACKENDS_FILE"
 declare_ha_version() {
     version=$1
     [ -n "$version" ] || return 0
@@ -311,6 +309,7 @@ declare_ha_version() {
         "http-check send meth GET uri /readyz?version=$encoded_version" \
         "http-check send meth GET uri /$encoded_version/healthz" \
         "$POOL_HOST" "$SLOTS" "$(ha_header_for "$backend")" "$backend" '' \
+        "$DEFAULT_RETRY_ON" \
         >> "$POOL_BACKENDS_FILE"
 }
 
@@ -360,6 +359,7 @@ while [ "$index" -le "$VERSION_CAPACITY" ]; do
         "http-check send meth GET uri-lf /readyz?version=%[be_name,map($SLOT_MAP)]" \
         "http-check send meth GET uri-lf /%[be_name,map($SLOT_MAP)]/healthz" \
         "$POOL_HOST" "$SLOTS" "$(ha_header_for "$backend")" "$backend" "$server_state" \
+        "$DEFAULT_RETRY_ON" \
         >> "$POOL_BACKENDS_FILE"
     index=$((index + 1))
 done
@@ -386,7 +386,7 @@ while IFS= read -r version; do
         "http-check send meth GET uri /readyz?version=$encoded_version" \
         "http-check send meth GET uri /$encoded_version/healthz" \
         "$LEGACY_HOST" 1 'http-request del-header Devshard-Ha' \
-        versiond_legacy '' \
+        versiond_legacy '' "$DEFAULT_RETRY_ON" \
         >> "$POOL_BACKENDS_FILE"
 done < "$LEGACY_VERSIONS_FILE"
 

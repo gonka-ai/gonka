@@ -180,6 +180,11 @@ failed, the peer closed without answering, or an upstream proxy answered `502`.
 **`503` is never retried.** It is the answer a draining host and the HA storage
 guard give, and retrying it would hit the same condition on the next host.
 
+The coarse backend additionally retries `404` for idempotent versionless
+session-observability reads. After membership changes, that state may still be
+owned by another healthy host. Per-version backends treat `404` as authoritative
+and never retry it.
+
 **Non-idempotent requests are never replayed.** `disable-l7-retry` leaves
 connection-level redispatch in place for `POST`, but forbids re-sending a
 request that may already have been executed — an inference must not run twice.
