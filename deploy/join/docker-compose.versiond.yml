@@ -86,7 +86,7 @@ services:
 
   versiond-router:
     container_name: versiond-router
-    image: ghcr.io/product-science/versiond-router:0.2.15
+    image: ${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15}
     environment:
       # The HAProxy router discovers every replica through this shared DNS
       # alias. Keep VERSIOND_HOSTS during the image transition because the
@@ -106,7 +106,10 @@ services:
       # Bootstrap only the HA versions shipped with this deployment. Future
       # names come from governance rather than being guessed in Compose.
       - VERSIOND_VERSIONS=${VERSIOND_VERSIONS-v4 v5}
-      - VERSIOND_ROUTING_CATALOG_URL=${VERSIOND_ROUTING_CATALOG_URL:-http://api:9100/versions}
+      # Catalog activation is release-driven. The published 0.2.15 image is the
+      # legacy nginx router, so its safe default is empty. A release must supply
+      # both a catalog-aware VERSIOND_ROUTER_IMAGE and this URL.
+      - VERSIOND_ROUTING_CATALOG_URL=${VERSIOND_ROUTING_CATALOG_URL:-}
       # This overlay declares two versiond replicas; do not publish a newly
       # approved route until both replicas report it ready.
       - VERSIOND_ROUTING_ACTIVATION_MIN_READY=${VERSIOND_ROUTING_ACTIVATION_MIN_READY:-2}

@@ -118,6 +118,11 @@ Every second HAProxy runs the complete sequence against each host.
 unavailable. In normal operation the router polls `VERSIOND_ROUTING_CATALOG_URL`,
 the same read-only `/versions` snapshot consumed by versiond.
 
+The join Compose file keeps that URL empty while its default image is the
+published legacy nginx router. Release automation activates this capability by
+supplying a published `VERSIOND_ROUTER_IMAGE` tag or digest together with the
+catalog URL; the Compose YAML does not name an image before it exists.
+
 HAProxy cannot create backends at runtime, so the image pre-renders a bounded
 set of disabled `versiond_dynamic_<n>` backends. For every new valid name the
 reconciler assigns a slot, enables its per-version checks, waits until the

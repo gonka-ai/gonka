@@ -37,6 +37,7 @@ test-join-compose:
 	@set -eu; \
 	tmp=$$(mktemp); \
 	trap 'rm -f "$$tmp"' EXIT; \
+	VERSIOND_ROUTER_IMAGE= VERSIOND_ROUTING_CATALOG_URL= \
 	DEVSHARD_POSTGRES_PASSWORD=test \
 		docker compose --project-directory ../deploy/join \
 		-f ../deploy/join/docker-compose.yml \
@@ -53,12 +54,24 @@ test-join-compose:
 		|| { echo 'test-join-compose: legacy pins are not shared by both versiond hosts and the router' >&2; exit 1; }; \
 	grep -Eq '^[[:space:]]*VERSIOND_VERSIONS: v4 v5$$' "$$tmp" \
 		|| { echo 'test-join-compose: per-version routing contract is missing' >&2; exit 1; }; \
-	grep -q 'VERSIOND_ROUTING_CATALOG_URL: http://api:9100/versions' "$$tmp" \
-		|| { echo 'test-join-compose: governance catalog is not connected' >&2; exit 1; }; \
+	grep -q 'image: ghcr.io/product-science/versiond-router:0.2.15' "$$tmp" \
+		|| { echo 'test-join-compose: published legacy router default changed' >&2; exit 1; }; \
+	grep -q 'VERSIOND_ROUTING_CATALOG_URL: ""' "$$tmp" \
+		|| { echo 'test-join-compose: catalog was enabled on the legacy router image' >&2; exit 1; }; \
 	grep -q 'VERSIOND_ROUTING_ACTIVATION_MIN_READY: "2"' "$$tmp" \
 		|| { echo 'test-join-compose: two-replica catalog reserve is not explicit' >&2; exit 1; }; \
 	grep -q 'VERSIOND_NON_HA_VERSIONS: v1 v2 v3' "$$tmp" \
 		|| { echo 'test-join-compose: legacy version pins are missing' >&2; exit 1; }; \
+	VERSIOND_ROUTER_IMAGE=ghcr.io/product-science/versiond-router@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
+	VERSIOND_ROUTING_CATALOG_URL=http://api:9100/versions \
+	DEVSHARD_POSTGRES_PASSWORD=test \
+		docker compose --project-directory ../deploy/join \
+		-f ../deploy/join/docker-compose.yml \
+		-f ../deploy/join/docker-compose.versiond.yml config > "$$tmp"; \
+	grep -q 'image: ghcr.io/product-science/versiond-router@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' "$$tmp" \
+		|| { echo 'test-join-compose: release router image override was ignored' >&2; exit 1; }; \
+	grep -q 'VERSIOND_ROUTING_CATALOG_URL: http://api:9100/versions' "$$tmp" \
+		|| { echo 'test-join-compose: release catalog URL override was ignored' >&2; exit 1; }; \
 	GONKA_HA=off VERSIOND_NON_HA_VERSIONS= VERSIOND_VERSIONS= \
 	VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true \
 	DEVSHARD_POSTGRES_PASSWORD=test \
