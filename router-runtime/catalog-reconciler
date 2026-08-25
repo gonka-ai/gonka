@@ -231,16 +231,25 @@ validate_catalog_progression() {
     fi
 }
 
-persist_catalog() {
+persist_snapshot() {
+    snapshot_names=$1 snapshot_changed=$2
     [ -n "$cache_file" ] || return 0
     [ -x "$cache_bin" ] || return 1
     now=$(date +%s)
-    if [ "$catalog_changed" -eq 0 ] && [ "$last_persisted_at" -gt 0 ] && \
+    if [ "$snapshot_changed" -eq 0 ] && [ "$last_persisted_at" -gt 0 ] && \
         [ $((now - last_persisted_at)) -lt "$cache_refresh_seconds" ]; then
         return 0
     fi
-    "$cache_bin" write "$tmpdir/catalog.names" "$cache_file" || return 1
+    "$cache_bin" write "$snapshot_names" "$cache_file" || return 1
     last_persisted_at=$now
+}
+
+persist_catalog() {
+    persist_snapshot "$tmpdir/catalog.names" "$catalog_changed"
+}
+
+refresh_accepted_catalog() {
+    persist_snapshot "$last_names" 0
 }
 
 accept_catalog() {
@@ -467,28 +476,38 @@ while :; do
         set_state projection-error \
             "catalog removed previously projected version '$removed'"
     else
-		reconcile_status=0
-		prepare_catalog || reconcile_status=$?
-        if [ "$reconcile_status" -eq 2 ]; then
+        reconcile_status=0
+        prepare_catalog || reconcile_status=$?
+        cache_status=0
+        if [ "$reconcile_status" -ne 0 ]; then
+            # A fresh catalog that still contains every accepted name confirms the
+            # durable projection remains current even when an addition cannot yet be
+            # published. Refresh only the accepted subset; pending names must not
+            # become restart-visible through the cache.
+            refresh_accepted_catalog || cache_status=$?
+        fi
+        if [ "$cache_status" -ne 0 ]; then
+            set_state cache-error "cannot refresh the last accepted catalog snapshot"
+        elif [ "$reconcile_status" -eq 2 ]; then
             set_state capacity-exhausted \
                 "no free backend slot for governance version '$capacity_missing'"
         elif [ "$reconcile_status" -eq 3 ]; then
             set_state activation-pending \
-				"governance version '$activation_version' has $activation_ready/$activation_min_ready ready backends"
-		elif [ "$reconcile_status" -ne 0 ]; then
-			set_state runtime-error "HAProxy rejected a catalog projection"
-		elif ! persist_catalog; then
-			set_state cache-error "cannot persist the last valid catalog snapshot"
-		else
-			# The cache is the durable commit point. A process crash after this point
-			# restores the whole projection before the catalog endpoint is available.
-			accept_catalog
-			if publish_catalog; then
-				set_state ready "catalog and runtime maps are current"
-			else
-				set_state runtime-error "HAProxy rejected an accepted catalog projection"
-			fi
-		fi
+                "governance version '$activation_version' has $activation_ready/$activation_min_ready ready backends"
+        elif [ "$reconcile_status" -ne 0 ]; then
+            set_state runtime-error "HAProxy rejected a catalog projection"
+        elif ! persist_catalog; then
+            set_state cache-error "cannot persist the last valid catalog snapshot"
+        else
+            # The cache is the durable commit point. A process crash after this point
+            # restores the whole projection before the catalog endpoint is available.
+            accept_catalog
+            if publish_catalog; then
+                set_state ready "catalog and runtime maps are current"
+            else
+                set_state runtime-error "HAProxy rejected an accepted catalog projection"
+            fi
+        fi
     fi
     sleep "$poll_seconds"
 done

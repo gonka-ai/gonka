@@ -714,6 +714,76 @@ test-version-routing:
 		|| fail "capacity-exhausted v11 was routed without an assigned backend"; \
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/persisted/chat)" = b ] \
 		|| fail "a later catalog snapshot removed an already admitted route"; \
+	docker exec gonka-vp-router sh -c \
+		'/usr/local/lib/router-runtime/catalog-cache read /var/lib/gonka-router/catalog.json 86400 > /tmp/accepted.names && /usr/local/lib/router-runtime/catalog-cache write /tmp/accepted.names /var/lib/gonka-router/catalog.json && rm -f /tmp/accepted.names' \
+		|| fail "could not establish a fresh accepted cache for the pending-addition test"; \
+	pending_cache_before=$$(docker exec gonka-vp-router \
+		jq -er .fetched_at_unix /var/lib/gonka-router/catalog.json); \
+	docker rm -f gonka-vp-router >/dev/null; \
+	docker run -d --name gonka-vp-router --network $$net \
+		-p 127.0.0.1:18132:8080 -p 127.0.0.1:18134:8404 \
+		-v $$state:/var/lib/gonka-router \
+		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="v4 v5" \
+		-e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
+		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
+		-e VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=6 \
+		-e VERSIOND_ROUTING_ACTIVATION_MIN_READY=2 \
+		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
+		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
+		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
+		gonka-versiond-router-probe >/dev/null; \
+	for i in $$(seq 20); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			2>/dev/null \
+			| jq -e '.state == "capacity-exhausted"' >/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	for i in $$(seq 16); do \
+		pending_cache_after=$$(docker exec gonka-vp-router \
+			jq -er .fetched_at_unix /var/lib/gonka-router/catalog.json); \
+		now=$$(date +%s); \
+		if [ $$((now - pending_cache_before)) -gt 6 ] \
+			&& [ "$$pending_cache_after" -gt "$$pending_cache_before" ]; then break; fi; \
+		sleep 0.5; \
+	done; \
+	[ $$((now - pending_cache_before)) -gt 6 ] \
+		&& [ "$$pending_cache_after" -gt "$$pending_cache_before" ] \
+		|| fail "a pending addition allowed the accepted catalog cache to expire"; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-cache read \
+		/var/lib/gonka-router/catalog.json 6 > "$$tmpdir/pending-cache.names" \
+		|| fail "the accepted cache was stale while the source catalog remained fresh"; \
+	grep -Fqx v9 "$$tmpdir/pending-cache.names" \
+		|| fail "refreshing the accepted cache lost an admitted route"; \
+	if grep -Fqx v11 "$$tmpdir/pending-cache.names"; then \
+		fail "refreshing the accepted cache persisted a capacity-blocked route"; \
+	fi; \
+	docker stop gonka-vp-catalog >/dev/null; \
+	docker rm -f gonka-vp-router >/dev/null; \
+	docker run -d --name gonka-vp-router --network $$net \
+		-p 127.0.0.1:18132:8080 -p 127.0.0.1:18134:8404 \
+		-v $$state:/var/lib/gonka-router \
+		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="v4 v5" \
+		-e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
+		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
+		-e VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=6 \
+		-e VERSIOND_ROUTING_ACTIVATION_MIN_READY=2 \
+		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
+		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
+		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
+		gonka-versiond-router-probe >/dev/null; \
+	restored_host=; \
+	for i in $$(seq 30); do \
+		restored_host=$$(curl -fsS -m 3 \
+			http://127.0.0.1:18132/v9/sessions/pending-cache/chat 2>/dev/null || true); \
+		[ "$$restored_host" = b ] && break; \
+		sleep 0.5; \
+	done; \
+	[ "$$restored_host" = b ] \
+		|| fail "router replacement lost an accepted route behind a pending addition"; \
+	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+		http://127.0.0.1:18132/v11/sessions/pending-cache/chat)" = 503 ] \
+		|| fail "router replacement restored a capacity-blocked route"; \
+	docker start gonka-vp-catalog >/dev/null; \
 	docker rm -f gonka-vp-router >/dev/null; \
 	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9+hotfix"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \

@@ -138,6 +138,9 @@ removal, and capacity-exhaustion inputs leave the last accepted routing map
 untouched and expose a degraded state through `catalog-status`.
 Catalog-enabled Compose deployments mount that directory from a named volume so
 container replacement does not discard the last-known-good projection.
+While a valid catalog addition is waiting for capacity or its ready reserve, the
+router refreshes only the accepted cache subset. This keeps existing routes
+restart-safe without making the pending name visible.
 
 Version names use the routing grammar
 `[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}`. Names outside it are rejected before they
