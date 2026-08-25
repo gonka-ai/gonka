@@ -100,6 +100,49 @@ func (am AppModule) applyPreviousConfirmedWeightCap(
 	return activeParticipants, nil
 }
 
+// applyTrustPowerCapping applies the universal concentration policy to the final
+// trust vector. The earlier epoch power cap operates on real Weight, but lowering
+// participants independently to their previous confirmed weights can concentrate
+// the resulting CapWeight distribution again.
+//
+// Temporary participants keep the shared power-capping implementation isolated
+// from real Weight. Only the capped values are copied back into CapWeight.
+func (am AppModule) applyTrustPowerCapping(
+	ctx context.Context,
+	activeParticipants []*types.ActiveParticipant,
+) {
+	trustParticipants := make([]*types.ActiveParticipant, 0, len(activeParticipants))
+	for _, participant := range activeParticipants {
+		if participant == nil {
+			continue
+		}
+		trustParticipants = append(trustParticipants, &types.ActiveParticipant{
+			Index:  participant.Index,
+			Weight: participant.CapWeight,
+		})
+	}
+
+	result := ApplyPowerCapping(ctx, am.keeper, trustParticipants)
+	cappedByAddress := make(map[string]int64, len(result.CappedParticipants))
+	for _, participant := range result.CappedParticipants {
+		if participant != nil {
+			cappedByAddress[participant.Index] = participant.Weight
+		}
+	}
+	for _, participant := range activeParticipants {
+		if participant == nil {
+			continue
+		}
+		participant.CapWeight = cappedByAddress[participant.Index]
+	}
+
+	if result.WasCapped {
+		am.LogInfo("Universal power capping applied to trust weights", types.PoC,
+			"cappedTotalPower", result.TotalPower,
+			"participantCount", len(trustParticipants))
+	}
+}
+
 // resolveTrustWeights returns the per-participant weight to use for consensus-
 // facing operations (BLS threshold signing and cPoC validation voting power).
 //

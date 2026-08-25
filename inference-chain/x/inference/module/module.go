@@ -845,6 +845,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		return fmt.Errorf("apply previous-epoch trust cap: %w", err)
 	}
 	am.applyZeroTrustFallback(ctx, upcomingEpoch.Index, activeParticipants)
+	am.applyTrustPowerCapping(ctx, activeParticipants)
 
 	// Write per-model voting powers to ActiveParticipant for visibility.
 	// Pass the governance-controlled per-model concentration cap, which
