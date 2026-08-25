@@ -1338,6 +1338,97 @@ func TestHeightSyncAnchor_E2E_HTTPRestartSnapshotOnlyRecovery(t *testing.T) {
 		"post-restart session should still use fresh real HTTP height-sync clients")
 }
 
+func TestHeightSyncAnchor_E2E_HTTPRestartCorruptSnapshotFallsBackToReplay(t *testing.T) {
+	ctx := context.Background()
+	st := setupOneHostHTTPHeightSyncRestartStack(t)
+	params := defaultInferenceParams()
+
+	for nonce := uint64(1); nonce <= 2; nonce++ {
+		resp, err := st.Session.SendInference(ctx, params)
+		require.NoError(t, err)
+		require.Equal(t, nonce, resp.Nonce)
+	}
+	rootBefore, err := st.Session.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
+
+	require.NoError(t, st.Session.Close())
+	st.Session = nil
+	store, err := storage.NewSQLite(st.StoragePath)
+	require.NoError(t, err)
+	require.NoError(t, store.SaveSnapshot(st.Bridge.escrow.EscrowID, 2, []byte("{corrupt snapshot")))
+	require.NoError(t, store.Close())
+
+	recovered := st.newHTTPSession(t)
+	st.Session = recovered
+	require.Equal(t, uint64(2), recovered.Nonce())
+	require.Equal(t, []uint64{1, 2}, diffNonces(recovered.Diffs()),
+		"corrupt snapshot must be ignored so recovery replays the full persisted diff history")
+	rootAfter, err := recovered.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
+	require.Equal(t, rootBefore, rootAfter)
+
+	upgradedStore, err := storage.NewSQLite(st.StoragePath)
+	require.NoError(t, err)
+	_, snapData, err := upgradedStore.LoadSnapshot(st.Bridge.escrow.EscrowID)
+	require.NoError(t, err)
+	require.NoError(t, upgradedStore.Close())
+	var repaired struct {
+		State *types.EscrowState `json:"state"`
+	}
+	require.NoError(t, json.Unmarshal(snapData, &repaired))
+	require.NotNil(t, repaired.State, "successful replay should replace the corrupt snapshot with a valid wrapper")
+
+	resp, err := recovered.SendInference(ctx, params)
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), resp.Nonce)
+	require.Equal(t, uint64(3), st.Server.Host().SnapshotState().LatestNonce)
+}
+
+func TestHeightSyncAnchor_E2E_HTTPRestartFutureSnapshotIgnored(t *testing.T) {
+	ctx := context.Background()
+	st := setupOneHostHTTPHeightSyncRestartStack(t)
+	params := defaultInferenceParams()
+
+	for nonce := uint64(1); nonce <= 2; nonce++ {
+		resp, err := st.Session.SendInference(ctx, params)
+		require.NoError(t, err)
+		require.Equal(t, nonce, resp.Nonce)
+	}
+	rootBefore, err := st.Session.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
+	stateSnapshot := st.Session.StateMachine().SnapshotState()
+	futureSnapshot, err := json.Marshal(struct {
+		State         *types.EscrowState `json:"state"`
+		HostSyncNonce map[int]uint64     `json:"host_sync_nonce,omitempty"`
+	}{
+		State:         &stateSnapshot,
+		HostSyncNonce: map[int]uint64{0: 5},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, st.Session.Close())
+	st.Session = nil
+	store, err := storage.NewSQLite(st.StoragePath)
+	require.NoError(t, err)
+	require.NoError(t, store.SaveSnapshot(st.Bridge.escrow.EscrowID, 5, futureSnapshot))
+	require.NoError(t, store.Close())
+
+	recovered := st.newHTTPSession(t)
+	st.Session = recovered
+	require.Equal(t, uint64(2), recovered.Nonce(),
+		"future snapshot nonce must not advance recovered session past persisted latest_nonce")
+	require.Equal(t, []uint64{1, 2}, diffNonces(recovered.Diffs()),
+		"future snapshot must be ignored so recovery replays the full persisted diff history")
+	rootAfter, err := recovered.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
+	require.Equal(t, rootBefore, rootAfter)
+
+	resp, err := recovered.SendInference(ctx, params)
+	require.NoError(t, err)
+	require.Equal(t, uint64(3), resp.Nonce)
+	require.Equal(t, uint64(3), st.Server.Host().SnapshotState().LatestNonce)
+}
+
 func TestHeightSyncAnchor_E2E_HTTPRestartLegacySnapshotCompatibility(t *testing.T) {
 	ctx := context.Background()
 	st := setupOneHostHTTPHeightSyncRestartStack(t)
@@ -1491,6 +1582,56 @@ func TestHeightSyncAnchor_E2E_HTTPRestartHostOneBehindCarriesSnapshotSuffix(t *t
 
 	resp, err := recovered.SendInference(ctx, params)
 	require.NoError(t, err, "first recovered request should send diff N plus the new diff N+1")
+	require.Equal(t, uint64(4), resp.Nonce)
+	require.Equal(t, uint64(4), st.Servers[0].Host().SnapshotState().LatestNonce)
+}
+
+func TestHeightSyncAnchor_E2E_HTTPRestartMissingHostCursorForcesFullBackfill(t *testing.T) {
+	ctx := context.Background()
+	st := setupFourHostHTTPHeightSync(t)
+	params := defaultInferenceParams()
+
+	for nonce := uint64(1); nonce <= 3; nonce++ {
+		resp, err := st.Session.SendInference(ctx, params)
+		require.NoError(t, err)
+		require.Equal(t, nonce, resp.Nonce)
+	}
+	require.Equal(t, uint64(0), st.Servers[0].Host().SnapshotState().LatestNonce,
+		"slot 0 has not been contacted yet and relies on the missing cursor full-backfill path")
+	stateSnapshot := st.Session.StateMachine().SnapshotState()
+	rootBefore, err := st.Session.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
+	wrappedSnapshot, err := json.Marshal(struct {
+		State         *types.EscrowState `json:"state"`
+		HostSyncNonce map[int]uint64     `json:"host_sync_nonce,omitempty"`
+	}{
+		State: &stateSnapshot,
+		HostSyncNonce: map[int]uint64{
+			1: 3,
+			2: 3,
+			3: 3,
+		},
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, st.Session.Close())
+	st.Session = nil
+	store, err := storage.NewSQLite(st.StoragePath)
+	require.NoError(t, err)
+	require.NoError(t, store.SaveSnapshot(st.Bridge.escrow.EscrowID, 3, wrappedSnapshot))
+	require.NoError(t, store.Close())
+
+	recovered := st.newHTTPSession(t)
+	st.Session = recovered
+	require.Equal(t, uint64(3), recovered.Nonce())
+	require.Equal(t, []uint64{1, 2, 3}, diffNonces(recovered.Diffs()),
+		"a missing host cursor must be treated as unknown and force full pre-snapshot backfill")
+	rootAfter, err := recovered.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
+	require.Equal(t, rootBefore, rootAfter)
+
+	resp, err := recovered.SendInference(ctx, params)
+	require.NoError(t, err, "first recovered request should carry full backfill to the missing-cursor host")
 	require.Equal(t, uint64(4), resp.Nonce)
 	require.Equal(t, uint64(4), st.Servers[0].Host().SnapshotState().LatestNonce)
 }
