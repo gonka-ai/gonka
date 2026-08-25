@@ -296,7 +296,7 @@ func buildHostManager(
 	closers.Add(manager.CloseHeightSync)
 	chainBridge.OnSettlementFinalizedHandler(manager.HandleSettlementFinalized)
 
-	startHostEventsWarm(ctx, cfg, chainBridge, mlClient, store, closers)
+	startHostEventsWarm(ctx, cfg, chainBridge, mlClient, store, manager.HandleSettlementFinalized, closers)
 
 	if err := manager.RecoverSessions(); err != nil {
 		slog.Warn("recover sessions failed", "error", err)
@@ -350,13 +350,14 @@ func startHostEventsWarm(
 	chainBridge *devshardbridge.ChainBridge,
 	mlClient *mlnodeclient.Client,
 	store devshardstorage.Storage,
+	onSettled func(escrowID string) error,
 	closers *closeStack,
 ) {
 	if !cfg.HostEventsEnabled {
 		slog.Info("hostevents: escrow long-poll warm disabled (DEVSHARD_HOST_EVENTS_ENABLED=false)")
 		return
 	}
-	sink := newEscrowWarmSink(chainBridge, store, slog.Default())
+	sink := newEscrowWarmSink(chainBridge, store, slog.Default(), onSettled)
 	hostCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	closers.Add(func() {

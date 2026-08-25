@@ -24,8 +24,8 @@ type Clock interface {
 
 type realClock struct{}
 
-func (realClock) Now() time.Time                          { return time.Now() }
-func (realClock) Since(t time.Time) time.Duration         { return time.Since(t) }
+func (realClock) Now() time.Time                         { return time.Now() }
+func (realClock) Since(t time.Time) time.Duration        { return time.Since(t) }
 func (realClock) After(d time.Duration) <-chan time.Time { return time.After(d) }
 
 // Config configures the GetHostEvents long-poll consumer.
@@ -37,6 +37,10 @@ type Config struct {
 	ErrorBackoffMax     time.Duration
 	Log                 *slog.Logger
 	Clock               Clock
+	// MaxDispatchAttempts bounds how many times a single event is redelivered
+	// after its sink call fails. Past the bound the loop skips it so one wedged
+	// escrow cannot stall the whole stream.
+	MaxDispatchAttempts int
 	// LoadMap, when set, is updated on every non-error GetHostEvents response
 	// (including unchanged / timeout) with the response's escrow_load snapshot.
 	LoadMap *LoadMap
@@ -57,6 +61,9 @@ func (c *Config) applyDefaults() error {
 	}
 	if c.ErrorBackoffMax <= 0 {
 		c.ErrorBackoffMax = 10 * time.Second
+	}
+	if c.MaxDispatchAttempts <= 0 {
+		c.MaxDispatchAttempts = 10
 	}
 	if c.Log == nil {
 		c.Log = slog.Default()

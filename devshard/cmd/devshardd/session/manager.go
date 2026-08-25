@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -81,6 +82,22 @@ const (
 	resolutionFailureTTL  = 30 * time.Second
 	permanentFailureTTL   = 10 * time.Minute
 	maxResolutionFailures = 1024
+	// resolutionFailureLowWater is the size the tombstone map is trimmed to
+	// once it exceeds maxResolutionFailures. Trimming below the cap amortises
+	// the eviction sort over many inserts; trimming exactly to the cap would
+	// re-sort on every insert while the map sits at the bound, and that sort
+	// runs under the sessionsMutex write lock that all lookups contend on.
+	resolutionFailureLowWater = maxResolutionFailures * 3 / 4
+
+	// recoveryEscrowCheckTimeout bounds the per-session chain query that
+	// RecoverSessions makes before replaying a locally-active row.
+	recoveryEscrowCheckTimeout = 5 * time.Second
+	// recoveryEscrowCheckBudget bounds those queries in aggregate. Recovery is
+	// synchronous in host startup and a host can hold many sessions, so a
+	// per-call timeout alone would still let an unresponsive chain add
+	// sessions*timeout to boot. Past the budget the remaining escrows skip the
+	// check and recover, same as any other query failure.
+	recoveryEscrowCheckBudget = 30 * time.Second
 )
 
 type resolutionFailure struct {
@@ -219,6 +236,10 @@ func (m *HostManager) BindOwnerChat(c echo.Context) (*transport.Server, error) {
 	if escrow == nil || escrow.CreatorAddress == "" || addr != escrow.CreatorAddress {
 		return nil, echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
 	}
+	if escrow.Settled {
+		m.rememberResolutionFailure(escrowID, bridge.ErrEscrowSettled, time.Now())
+		return nil, fmt.Errorf("%w: escrow %s", bridge.ErrEscrowSettled, escrowID)
+	}
 
 	// Pass the already-fetched escrow so create() does not GetEscrow again.
 	srv, err = m.getOrCreate(escrowID, escrow)
@@ -244,15 +265,16 @@ func (m *HostManager) HandleSettlementFinalized(escrowID string) error {
 		observability.DeleteEscrowMetrics(escrowID)
 	}
 
+	// Negative-cache so a concurrent/next bind does not recoverStoredSession
+	// the just-settled row (getOrCreate also rejects non-active meta).
+	m.rememberResolutionFailure(escrowID, bridge.ErrEscrowSettled, time.Now())
+
 	if err := m.store.MarkSettled(escrowID); err != nil {
 		if errors.Is(err, storage.ErrSessionNotFound) && !hadSession {
 			return nil
 		}
 		return err
 	}
-	// Negative-cache so a concurrent/next bind does not recoverStoredSession
-	// the just-settled row (getOrCreate also rejects non-active meta).
-	m.rememberResolutionFailure(escrowID, storage.ErrSessionNotActive, time.Now())
 	return nil
 }
 
@@ -278,7 +300,11 @@ func (m *HostManager) getOrCreate(escrowID string, escrow *bridge.EscrowInfo) (*
 		// Prefer recovering an already-bound session over CreateSession.
 		srv, err := m.recoverStoredSession(escrowID)
 		if err == nil {
-			return m.storeSessionIfAbsent(escrowID, srv), nil
+			installed, storeErr := m.storeSessionIfAbsent(escrowID, srv)
+			if storeErr != nil {
+				return nil, storeErr
+			}
+			return installed, nil
 		}
 		if !errors.Is(err, storage.ErrSessionNotFound) {
 			return nil, err
@@ -289,7 +315,11 @@ func (m *HostManager) getOrCreate(escrowID string, escrow *bridge.EscrowInfo) (*
 			return nil, err
 		}
 
-		return m.storeSessionIfAbsent(escrowID, srv), nil
+		installed, storeErr := m.storeSessionIfAbsent(escrowID, srv)
+		if storeErr != nil {
+			return nil, storeErr
+		}
+		return installed, nil
 	})
 
 	if err != nil {
@@ -325,6 +355,11 @@ func (m *HostManager) rememberResolutionFailure(escrowID string, err error, now 
 	m.resolutionFailures[escrowID] = resolutionFailure{err: err, expiresAt: now.Add(ttl)}
 	if len(m.resolutionFailures) > maxResolutionFailures {
 		m.sweepExpiredResolutionFailuresLocked(now)
+		// Sweeping only drops expired entries, so it cannot hold the bound on
+		// its own: settlement events arrive for every escrow this host holds a
+		// slot in, each parking a live 10-minute tombstone. Evict the entries
+		// closest to expiry so a burst cannot grow the map without limit.
+		m.evictOldestResolutionFailuresLocked(resolutionFailureLowWater)
 	}
 	m.sessionsMutex.Unlock()
 }
@@ -337,24 +372,71 @@ func (m *HostManager) sweepExpiredResolutionFailuresLocked(now time.Time) {
 	}
 }
 
+// evictOldestResolutionFailuresLocked trims the map down to limit, dropping the
+// entries nearest expiry first. Dropping a live tombstone only costs a repeated
+// resolution attempt, which then re-caches the failure.
+func (m *HostManager) evictOldestResolutionFailuresLocked(limit int) {
+	if limit <= 0 || len(m.resolutionFailures) <= limit {
+		return
+	}
+	type entry struct {
+		escrowID  string
+		expiresAt time.Time
+	}
+	entries := make([]entry, 0, len(m.resolutionFailures))
+	for escrowID, cached := range m.resolutionFailures {
+		entries = append(entries, entry{escrowID: escrowID, expiresAt: cached.expiresAt})
+	}
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].expiresAt.Before(entries[j].expiresAt)
+	})
+	for _, e := range entries[:len(entries)-limit] {
+		delete(m.resolutionFailures, e.escrowID)
+	}
+}
+
 func isPermanentResolutionFailure(err error) bool {
 	return errors.Is(err, storage.ErrSessionVersionConflict) ||
 		errors.Is(err, storage.ErrSessionEpochConflict) ||
 		errors.Is(err, storage.ErrEpochPruned) ||
-		errors.Is(err, storage.ErrSessionNotActive)
+		errors.Is(err, storage.ErrSessionNotActive) ||
+		errors.Is(err, bridge.ErrEscrowSettled)
 }
 
-func (m *HostManager) storeSessionIfAbsent(escrowID string, srv *transport.Server) *transport.Server {
+// storeSessionIfAbsent installs srv unless the escrow was settled while the
+// caller was building it. The settled tombstone is re-checked under
+// sessionsMutex so a settlement racing create/recover cannot be erased by the
+// unconditional resolutionFailures delete below.
+func (m *HostManager) storeSessionIfAbsent(escrowID string, srv *transport.Server) (*transport.Server, error) {
+	installed, settled := m.installSession(escrowID, srv, time.Now())
+	if settled {
+		srv.Host().Close()
+		if err := m.store.MarkSettled(escrowID); err != nil && !errors.Is(err, storage.ErrSessionNotFound) {
+			logging.Error("failed to mark racing session settled", inferenceTypes.System,
+				"escrow_id", escrowID, "error", err)
+		}
+		return nil, fmt.Errorf("%w: escrow %s", bridge.ErrEscrowSettled, escrowID)
+	}
+	if installed != srv {
+		srv.Host().Close()
+	}
+	return installed, nil
+}
+
+func (m *HostManager) installSession(escrowID string, srv *transport.Server, now time.Time) (*transport.Server, bool) {
 	m.sessionsMutex.Lock()
 	defer m.sessionsMutex.Unlock()
 	if existing, ok := m.sessions[escrowID]; ok {
-		srv.Host().Close()
-		return existing
+		return existing, false
+	}
+	if cached, ok := m.resolutionFailures[escrowID]; ok &&
+		now.Before(cached.expiresAt) && errors.Is(cached.err, bridge.ErrEscrowSettled) {
+		return nil, true
 	}
 	delete(m.resolutionFailures, escrowID)
 	m.sessions[escrowID] = srv
 	srv.Host().Start()
-	return srv
+	return srv, false
 }
 
 // EvictBefore drops in-memory sessions whose epoch is below cutoffEpoch and
@@ -392,6 +474,9 @@ func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*trans
 		if err != nil {
 			return nil, fmt.Errorf("get escrow: %w", err)
 		}
+	}
+	if escrow.Settled {
+		return nil, fmt.Errorf("%w: escrow %s", bridge.ErrEscrowSettled, escrowID)
 	}
 
 	group, err := bridge.BuildGroupFromEscrow(escrow)
@@ -440,14 +525,18 @@ func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*trans
 }
 
 // RecoverSessions rebuilds in-memory sessions from the shared store.
-// For each active session, it replays all diffs through a fresh StateMachine,
-// injecting warm key deltas from the stored DiffRecords. Call this on startup
-// after constructing the HostManager.
+// For each locally-active session it asks the chain whether the escrow is
+// already settled and, if so, finalizes instead of replaying. Transient
+// GetEscrow failures fail-open so a chain blip at boot does not drop work
+// this host already bound. Call this on startup after constructing the
+// HostManager.
 func (m *HostManager) RecoverSessions() error {
 	escrowIDs, err := m.store.ListActiveSessions()
 	if err != nil {
 		return fmt.Errorf("list active sessions: %w", err)
 	}
+
+	checkDeadline := time.Now().Add(recoveryEscrowCheckBudget)
 
 	for _, active := range escrowIDs {
 		if err := devshardpkg.ValidateEscrowID(active.EscrowID); err != nil {
@@ -456,6 +545,29 @@ func (m *HostManager) RecoverSessions() error {
 			if markErr := m.store.MarkSettled(active.EscrowID); markErr != nil {
 				logging.Error("failed to retire non-canonical devshard session", inferenceTypes.System,
 					"escrow_id", active.EscrowID, "error", markErr)
+			}
+			continue
+		}
+		// Local status is "active" only. A missed ESCROW_SETTLED (or a
+		// settlement that aged out of the dapi ring) leaves that row in place,
+		// and recoverStoredSession never asks the chain. One GetEscrow here
+		// prevents serving work that VerifyDevshardSettlement will refuse to
+		// pay for. Transient query failures fail-open: recover the row.
+		//
+		// HandleSettlementFinalized persists MarkSettled, so a chain node that
+		// wrongly reports Settled retires the session for good. That is
+		// deliberate: its in-memory tombstone expires after permanentFailureTTL,
+		// after which the still-active row would be recovered by the next bind
+		// and serve unpayable work until the following restart. Durable state is
+		// the only way to make the decision stick, and a node that lies about
+		// Settled is already outside the trust model create() relies on.
+		if m.chainReportsSettled(active.EscrowID, checkDeadline) {
+			if err := m.HandleSettlementFinalized(active.EscrowID); err != nil {
+				logging.Error("failed to finalize chain-settled escrow during recovery", inferenceTypes.System,
+					"escrow_id", active.EscrowID, "error", err)
+			} else {
+				logging.Info("skipping recovery of chain-settled escrow", inferenceTypes.System,
+					"escrow_id", active.EscrowID)
 			}
 			continue
 		}
@@ -473,6 +585,26 @@ func (m *HostManager) RecoverSessions() error {
 	return nil
 }
 
+// chainReportsSettled is true only when the live query says the escrow is
+// settled. A missing bridge, a nil info, or any query error (including chain
+// unavailable) returns false so RecoverSessions still brings the local row up.
+//
+// Each query is bounded by recoveryEscrowCheckTimeout and all of them together
+// by deadline, because recovery is synchronous in host startup.
+func (m *HostManager) chainReportsSettled(escrowID string, deadline time.Time) bool {
+	budget := time.Until(deadline)
+	if budget > recoveryEscrowCheckTimeout {
+		budget = recoveryEscrowCheckTimeout
+	}
+	settled, err := bridge.SettledWithin(m.bridge, escrowID, budget)
+	if err != nil {
+		logging.Warn("chain settled-check failed during recovery; recovering local row",
+			inferenceTypes.System, "escrow_id", escrowID, "error", err)
+		return false
+	}
+	return settled
+}
+
 func (m *HostManager) recoverAndStoreSession(escrowID string) (*transport.Server, error) {
 	if srv, ok := m.existingServer(escrowID); ok {
 		return srv, nil
@@ -485,7 +617,11 @@ func (m *HostManager) recoverAndStoreSession(escrowID string) (*transport.Server
 		if err != nil {
 			return nil, err
 		}
-		return m.storeSessionIfAbsent(escrowID, srv), nil
+		installed, storeErr := m.storeSessionIfAbsent(escrowID, srv)
+		if storeErr != nil {
+			return nil, storeErr
+		}
+		return installed, nil
 	})
 	if err != nil {
 		return nil, err
