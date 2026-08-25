@@ -306,7 +306,9 @@ test-version-routing:
 		--network-alias routing-catalog \
 		-v "$$tmpdir/catalog:/data:ro" -v "$$tmpdir/catalog.py:/app.py:ro" \
 		python:3.12-alpine python /app.py >/dev/null; \
-	for spec in "a:v4:false:false" "b:v4 v5 v9 v9+hotfix v10:true:true"; do \
+	# Keep one real pool member on the pre-v5 contract. Dynamic admin readiness \
+	# must follow the backend's 404 + route-health active check, not proxy /readyz. \
+	for spec in "a:v4:false:false" "b:v4 v5 v9 v9+hotfix v10:true:false"; do \
 		name=$${spec%%:*}; rest=$${spec#*:}; \
 		serves=$${rest%%:*}; rest=$${rest#*:}; \
 		generic_ready=$${rest%%:*}; readyz_supported=$${rest##*:}; \

@@ -42,6 +42,10 @@ func TestDynamicCatalogRemovalAndReadmission(t *testing.T) {
 	version := cfg.Versiond.VersionName
 	versionHealth := eps.RouterHTTP + "/" + version + "/healthz"
 	harness.WaitGETOK(t, client, versionHealth, 5*time.Minute, "initial dynamic route", stack)
+	adminReady := stack.ComposeExec(t, "versiond-router", "wget", "-qO-",
+		"http://127.0.0.1:8404/readyz?version="+version)
+	require.Equal(t, "ready", strings.TrimSpace(adminReady),
+		"router admin readiness must reflect the admitted dynamic backend")
 
 	var initial cosrv.VersionConfig
 	require.NoError(t, harness.GetJSON(client, eps.MockDapiHTTP+"/versions", &initial))

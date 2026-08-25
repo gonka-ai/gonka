@@ -154,6 +154,10 @@ ${ADMIN_LOOPBACK_BIND}
     mode http
     http-request return status 200 content-type text/plain string "live\n" if { path /livez }
     http-request set-var(txn.ready_ver) url_param(version),url_dec(0) if { path /readyz } { url_param(version) -m found }
+    # Pool backends use this internal variable to answer from their active-check
+    # state. The request must not be forwarded to a pre-v5 versiond, which has no
+    # /readyz handler even when its /<version>/healthz compatibility check passed.
+    http-request set-var(txn.router_admin_ready) str(1) if { path /readyz } { url_param(version) -m found }
 ${ROUTER_READY_RULES}
     ${DYNAMIC_READY_GUARD}
     use_backend %[var(txn.ready_ver),map_str(${NON_HA_MAP})] if { path /readyz } { var(txn.ready_ver),map_str(${NON_HA_MAP}) -m found }

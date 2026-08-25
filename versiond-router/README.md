@@ -360,6 +360,7 @@ any config or runtime-map mutation.
 | Reconciler Runtime API | `/var/run/haproxy/reconciler.sock` | local `level admin` socket used for catalog map and server-state changes |
 | Catalog status | `/usr/local/lib/router-runtime/catalog-status --state` | current reconciler state; reports `stale` when updates stop |
 | Catalog readiness | `GET http://127.0.0.1:8404/readyz?component=catalog` | `200` only when the enabled catalog is fully reconciled; independent of data-plane readiness for accepted routes |
+| Version readiness | `GET http://127.0.0.1:8404/readyz?version=<v>` | resolves `<v>` through the live route map and reports the selected backend's active-check state; the request is not forwarded upstream |
 | `X-Upstream-Addr` | response header | which instance served the request |
 | `X-Versiond-Backend` | response header | HA backend name, or the stable `versiond_legacy` label for any pinned version |
 
