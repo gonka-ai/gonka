@@ -804,6 +804,10 @@ test-version-routing:
 		|| fail "an embedded newline replaced the persistent catalog snapshot"; \
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/after-framing-error/chat)" = b ] \
 		|| fail "an embedded newline replaced the last accepted route view"; \
+	retired_slot=$$(docker exec gonka-vp-router sh -c \
+		'printf "%s\n" "show map /etc/haproxy/versions.map" | socat - UNIX-CONNECT:/var/run/haproxy/reconciler.sock' \
+		| awk '$$2 == "v10" { print $$3; exit }'); \
+	[ -n "$$retired_slot" ] || fail "could not identify v10's dynamic slot"; \
 	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
@@ -835,6 +839,22 @@ test-version-routing:
 		-e NAME=a -e SERVES="v4 v9+hotfix" -e GENERIC_READY=false \
 		-e READYZ_SUPPORTED=true -v "$$tmpdir/upstream.py:/app.py:ro" \
 		python:3.12-alpine python /app.py >/dev/null; \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v9+hotfix"}]}' \
+		> "$$tmpdir/catalog/versions.next"; \
+	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+	for i in $$(seq 30); do \
+		if curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%2Bhotfix' \
+			>/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	replacement_slot=$$(docker exec gonka-vp-router sh -c \
+		'printf "%s\n" "show map /etc/haproxy/versions.map" | socat - UNIX-CONNECT:/var/run/haproxy/reconciler.sock' \
+		| awk '$$2 == "v9+hotfix" { print $$3; exit }'); \
+	[ "$$replacement_slot" = "$$retired_slot" ] \
+		|| fail "the removal scenario did not reuse v10's dynamic slot"; \
+	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+		'http://127.0.0.1:18134/readyz?version=v10')" = 503 ] \
+		|| fail "a reused cached slot kept the retired v10 readiness green"; \
 	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
@@ -847,6 +867,9 @@ test-version-routing:
 	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
 		http://127.0.0.1:18132/v10/sessions/readded-pending/chat)" = 503 ] \
 		|| fail "a re-added route bypassed the activation reserve"; \
+	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+		'http://127.0.0.1:18134/readyz?version=v10')" = 503 ] \
+		|| fail "a cached readiness rule bypassed the re-add activation reserve"; \
 	docker rm -f gonka-vp-a >/dev/null; \
 	docker run -d --name gonka-vp-a --network $$net --network-alias versiond-pool \
 		-e NAME=a -e SERVES="v4 v9+hotfix v10" -e GENERIC_READY=false \

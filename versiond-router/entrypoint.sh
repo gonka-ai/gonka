@@ -400,10 +400,11 @@ if [ -s "$MAP" ] && [ -z "${VERSIOND_LEGACY_HOST:-}" ]; then
     exit 1
 fi
 
-# Render one static readiness rule per route. HAProxy's nbsrv() argument is a
-# configuration-time backend name, so trying to feed it a map result would turn
-# this safety decision into unsupported dynamic configuration. The generated
-# table is explicit, auditable, and uses the same maps as data-plane routing.
+# Render one static readiness rule per immutable startup route. HAProxy's
+# nbsrv() argument is a configuration-time backend name, so bootstrap and
+# legacy backends use an explicit table. Dynamic slots are deliberately skipped:
+# the reconciler can reuse them for another name, so their readiness falls
+# through to the live versions map and its currently assigned backend below.
 : > "$READY_RULES"
 if [ -n "$CATALOG_URL" ]; then
     CATALOG_STATUS_SERVER_STATE=disabled
@@ -425,6 +426,9 @@ render_ready_rules() {
     source_map=$1
     while read -r version backend; do
         [ -n "$version" ] || continue
+        case "$backend" in
+            versiond_dynamic_*) continue ;;
+        esac
         encoded_version=$(router_urlencode "$version")
         printf '%s\n' \
             "    http-request return status 200 content-type text/plain string \"ready\\n\" if { path /readyz } { query -m str version=$encoded_version } { nbsrv($backend) gt 0 }" \
