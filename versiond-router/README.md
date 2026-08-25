@@ -363,7 +363,7 @@ any config or runtime-map mutation.
 
 | Endpoint | Where | Notes |
 | --- | --- | --- |
-| `/metrics` | `127.0.0.1:8405` inside the container | Prometheus exporter; loopback only, never published |
+| `/metrics` | `127.0.0.1:8405` inside the container | Prometheus exporter; the join HA overlay also binds it to the internal Compose network for DNS-based scraping, never to a host port |
 | Diagnostic Runtime API | `/var/run/haproxy/haproxy.sock` | local `level user` socket, no TCP bind; raw HAProxy map commands remain writable |
 | Reconciler Runtime API | `/var/run/haproxy/reconciler.sock` | local `level admin` socket used for catalog map and server-state changes |
 | Catalog status | `/usr/local/lib/router-runtime/catalog-status --state` | current reconciler state; reports `stale` when updates stop |

@@ -61,6 +61,12 @@ test-join-compose:
 		|| { echo 'test-join-compose: production router does not use a bounded soft stop' >&2; exit 1; }; \
 	grep -q 'VERSIOND_POOL_HOST: versiond-pool' "$$tmp" \
 		|| { echo 'test-join-compose: pool host is not rendered' >&2; exit 1; }; \
+	grep -q 'VERSIOND_ROUTER_METRICS_BIND_HOST: versiond-router' "$$tmp" \
+		|| { echo 'test-join-compose: router metrics are not available to the internal scraper' >&2; exit 1; }; \
+	router_scrape=$$(grep -A8 'job_name: versiond-router' ../deploy/join/observability/prometheus.yml); \
+	printf '%s\n' "$$router_scrape" | grep -q -- '- versiond-router' \
+		&& printf '%s\n' "$$router_scrape" | grep -q 'port: 8405' \
+		|| { echo 'test-join-compose: router metrics DNS scrape job is missing' >&2; exit 1; }; \
 	[ "$$(grep -c -- '- versiond-pool' "$$tmp")" -ge 2 ] \
 		|| { echo 'test-join-compose: not every versiond joins the pool alias' >&2; exit 1; }; \
 	grep -q 'VERSIOND_HOSTS: versiond versiond2' "$$tmp" \
