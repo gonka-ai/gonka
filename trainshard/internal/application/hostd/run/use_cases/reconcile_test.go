@@ -25,7 +25,9 @@ func TestReconcilePullsTheBaseImageWhileTheNodeDrains(t *testing.T) {
 		}
 	}
 
-	want := []string{"runs.update", "images.pull", "control.drain", "mesh.identity", "mesh_store.save_identity"}
+	// the reservation, the node being marked unready, and the mark cleared once it is ready
+	want := []string{"runs.update", "runs.update", "images.pull", "control.drain",
+		"mesh.identity", "mesh_store.save_identity", "runs.update"}
 	if !reflect.DeepEqual(f.rec.sequence(), want) {
 		t.Fatalf("got %v, want %v", f.rec.sequence(), want)
 	}
@@ -367,6 +369,40 @@ func TestReconcileHandsBackANodeThatNeverGetsReady(t *testing.T) {
 	want := fmt.Sprintf("%s:%s:%s", shardID, nodeA.NodeID, vo.ReleaseFailedPrepare)
 	if len(f.chain.releases) != 1 || string(f.chain.releases[0]) != want {
 		t.Fatalf("got %v, want the reservation released as %s", f.chain.releases, want)
+	}
+}
+
+func TestReconcileGivesANodeThatSlipsMidRunTheSameWaitAsAFreshOne(t *testing.T) {
+
+	f := newFixture()
+	ctx := context.Background()
+	f.control.drained = true
+	f.images.present[baseImage] = true
+
+	// the first pass creates the mesh key, the second observes it: only then is the node ready
+	for range 2 {
+		if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+			t.Fatalf("reconcile: %v", err)
+		}
+	}
+	f.clock.Advance(10 * f.patience)
+	f.gpu.foreign = true
+	if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	if len(f.chain.releases) != 0 {
+		t.Fatalf("got %v, want a node hours into a run given its wait rather than handed back at once", f.chain.releases)
+	}
+
+	f.clock.Advance(f.patience)
+	if err := f.reconcile().Execute(ctx, nodeA); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	want := fmt.Sprintf("%s:%s:%s", shardID, nodeA.NodeID, vo.ReleaseFailedPrepare)
+	if len(f.chain.releases) != 1 || string(f.chain.releases[0]) != want {
+		t.Fatalf("got %v, want the reservation released as %s once the wait ran out", f.chain.releases, want)
 	}
 }
 

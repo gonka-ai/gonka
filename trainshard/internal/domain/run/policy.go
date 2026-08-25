@@ -13,7 +13,14 @@ func Autokick(d Desired, o Observed, state RunState, now time.Time, patience tim
 		return "", false
 	}
 	if !Prepared(d, o) {
-		return vo.ReleaseFailedPrepare, now.Sub(state.ReservedAt) >= patience
+		// counted from the moment readiness was lost, not from the reservation: measured from the
+		// reservation, a node an hour into a run has spent its patience long ago and is handed back
+		// on the first tick that finds a card busy or a key missing, however briefly
+		since := state.UnpreparedAt
+		if since.IsZero() {
+			since = state.ReservedAt
+		}
+		return vo.ReleaseFailedPrepare, now.Sub(since) >= patience
 	}
 	if state.Fault == nil {
 		return "", false

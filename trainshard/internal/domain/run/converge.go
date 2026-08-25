@@ -68,24 +68,30 @@ func (c *Converger) converge(ctx context.Context, node vo.NodeRef) error {
 		return err
 	}
 
-	// 5. Hand back a node that is out of time; cleanup runs on the next pass
+	// 5. Note whether the node is ready, so a node that slips mid-run is given the same wait a
+	// fresh one gets rather than none at all
+	if err := TrackPreparedness(ctx, c.runs, node, &state, desired, observed, now); err != nil {
+		return err
+	}
+
+	// 6. Hand back a node that is out of time; cleanup runs on the next pass
 	if reason, kick := Autokick(desired, observed, state, now, c.patience); kick {
 		return c.chain.Release(ctx, desired.Shard, node, reason)
 	}
 
-	// 6. Wipe what a shard this node no longer serves left behind, before it can be handed back
+	// 7. Wipe what a shard this node no longer serves left behind, before it can be handed back
 	if err := c.machine.Sweep(ctx, node, desired.Shard); err != nil {
 		return err
 	}
 
-	// 7. Apply the plan, stop on first error
+	// 8. Apply the plan, stop on first error
 	for _, action := range Plan(desired, observed) {
 		if err := c.machine.Apply(ctx, node, desired, action); err != nil {
 			return RecordFault(ctx, c.runs, node, action, err, now)
 		}
 	}
 
-	// 8. Clear a fault the plan already solved
+	// 9. Clear a fault the plan already solved
 	if state.Fault != nil {
 		return ClearFault(ctx, c.runs, node)
 	}
