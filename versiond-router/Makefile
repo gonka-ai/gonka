@@ -290,11 +290,12 @@ test-version-routing:
 		|| fail "could not suspend HAProxy for the Runtime API timeout test"; \
 	for i in $$(seq 15); do \
 		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-			| jq -e '.state == "runtime-error"' >/dev/null 2>&1; then break; fi; \
+			| jq -e '.state == "runtime-error" and .dynamic_slots_used == 0' \
+				>/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-		| jq -e '.state == "runtime-error"' >/dev/null || { \
+		| jq -e '.state == "runtime-error" and .dynamic_slots_used == 0' >/dev/null || { \
 			docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state >&2; \
 			docker exec gonka-vp-router ps -o pid,stat,comm,args >&2; \
 			docker logs --tail 30 gonka-vp-router >&2; \
@@ -552,6 +553,9 @@ test-version-routing:
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	sleep 2; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| jq -e '.state == "fetch-error" and .dynamic_slots_used == 2' >/dev/null \
+		|| fail "catalog fetch errors did not retain the last known slot usage"; \
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/after-malformed/chat)" = b ] \
 		|| fail "a malformed catalog replaced the last accepted route view"; \
 	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"}]}' \
