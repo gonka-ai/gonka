@@ -140,6 +140,10 @@ type Broker struct {
 	configManager        *apiconfig.ConfigManager
 	lockMap              map[string]lockEntry
 	lockMapMu            sync.Mutex
+	// deploymentGeneration is broker-wide and never resets when a node is
+	// deleted or re-registered, so a leftover result from an abandoned worker
+	// cannot share a generation with a new node's first reconcile.
+	deploymentGeneration atomic.Uint64
 }
 
 type lockEntry struct {
@@ -231,8 +235,10 @@ type NodeState struct {
 	PoCValidationInference  bool      `json:"poc_validation_inference"`
 	DeploymentUpdatePending bool      `json:"deployment_update_pending"`
 	DeploymentRetryAfter    time.Time `json:"deployment_retry_after,omitempty"`
-	// DeploymentGeneration increments for each dispatched reconciliation so
-	// late results from a cancelled attempt cannot be applied to a newer one.
+	// DeploymentGeneration is the last broker-wide generation assigned to this
+	// node. Uniqueness comes from Broker.deploymentGeneration, not this field:
+	// a fresh NodeState after re-register starts at 0 and is assigned the next
+	// global value on dispatch.
 	DeploymentGeneration uint64 `json:"deployment_generation,omitempty"`
 
 	// Epoch data for this node, keyed by model_id.
@@ -969,6 +975,10 @@ func (b *Broker) checkAndRefreshClientsIfNeeded() {
 	}
 }
 
+func (b *Broker) nextDeploymentGeneration() uint64 {
+	return b.deploymentGeneration.Add(1)
+}
+
 func (b *Broker) reconcileIfSynced(triggerMsg string) {
 	epochPhaseInfo := b.phaseTracker.GetCurrentEpochState()
 	if epochPhaseInfo.IsNilOrNotSynced() {
@@ -1045,8 +1055,8 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 		ctx, cancel := context.WithCancel(context.Background())
 		intendedStatusCopy := currentNode.State.IntendedStatus
 		pocIntendedStatusCopy := currentNode.State.PocIntendedStatus
-		currentNode.State.DeploymentGeneration++
-		generation := currentNode.State.DeploymentGeneration
+		generation := b.nextDeploymentGeneration()
+		currentNode.State.DeploymentGeneration = generation
 		currentNode.State.ReconcileInfo = &ReconcileInfo{
 			Status:     intendedStatusCopy,
 			PocStatus:  pocIntendedStatusCopy,

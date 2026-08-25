@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"decentralized-api/apiconfig"
+	"decentralized-api/chainphase"
 	"decentralized-api/mlnodeclient"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -143,6 +144,69 @@ func TestUpdateNodeResultCommand_AcceptsMatchingDeploymentGeneration(t *testing.
 	require.True(t, found)
 	require.Equal(t, "model-b", got.ModelID)
 	require.Equal(t, "fingerprint-b", got.Fingerprint)
+}
+
+func TestReconcile_BrokerWideGenerationSurvivesSameIdReregister(t *testing.T) {
+	b := &Broker{
+		highPriorityCommands: make(chan Command, 8),
+		lowPriorityCommands:  make(chan Command, 8),
+		nodes:                make(map[string]*NodeWithState),
+		nodeWorkGroup:        NewNodeWorkGroup(),
+		phaseTracker:         &chainphase.ChainPhaseTracker{},
+	}
+	const id = "node-7"
+	epoch := chainphase.EpochState{CurrentBlock: chainphase.BlockInfo{Height: 1}}
+
+	first := createTestNodeWithStatus(id, types.HardwareNodeStatus_UNKNOWN)
+	first.State.IntendedStatus = types.HardwareNodeStatus_STOPPED
+	w1 := NewNodeWorkerWithClient(id, first, mlnodeclient.NewMockClient(), b)
+	b.nodes[id] = first
+	b.nodeWorkGroup.AddWorker(id, w1)
+	b.reconcile(epoch)
+	require.NotNil(t, first.State.ReconcileInfo)
+	gen1 := first.State.ReconcileInfo.Generation
+	require.Equal(t, uint64(1), gen1)
+
+	b.nodeWorkGroup.RemoveWorkerAsync(id)
+	delete(b.nodes, id)
+
+	second := createTestNodeWithStatus(id, types.HardwareNodeStatus_UNKNOWN)
+	second.State.IntendedStatus = types.HardwareNodeStatus_STOPPED
+	require.Equal(t, uint64(0), second.State.DeploymentGeneration)
+	w2 := NewNodeWorkerWithClient(id, second, mlnodeclient.NewMockClient(), b)
+	defer w2.Shutdown()
+	b.nodes[id] = second
+	b.nodeWorkGroup.AddWorker(id, w2)
+	b.reconcile(epoch)
+	require.NotNil(t, second.State.ReconcileInfo)
+	gen2 := second.State.ReconcileInfo.Generation
+	require.Equal(t, uint64(2), gen2)
+	require.Equal(t, gen2, second.State.DeploymentGeneration)
+
+	leftover := NewUpdateNodeResultCommand(id, NodeResult{
+		Succeeded:            true,
+		FinalStatus:          types.HardwareNodeStatus_STOPPED,
+		OriginalTarget:       types.HardwareNodeStatus_STOPPED,
+		FinalPocStatus:       PocStatusIdle,
+		OriginalPocTarget:    PocStatusIdle,
+		DeploymentGeneration: gen1,
+	})
+	leftover.Execute(b)
+	require.NotNil(t, second.State.ReconcileInfo)
+	require.Equal(t, gen2, second.State.ReconcileInfo.Generation)
+	require.Equal(t, types.HardwareNodeStatus_UNKNOWN, second.State.CurrentStatus)
+
+	matching := NewUpdateNodeResultCommand(id, NodeResult{
+		Succeeded:            true,
+		FinalStatus:          types.HardwareNodeStatus_STOPPED,
+		OriginalTarget:       types.HardwareNodeStatus_STOPPED,
+		FinalPocStatus:       PocStatusIdle,
+		OriginalPocTarget:    PocStatusIdle,
+		DeploymentGeneration: gen2,
+	})
+	matching.Execute(b)
+	require.Nil(t, second.State.ReconcileInfo)
+	require.Equal(t, types.HardwareNodeStatus_STOPPED, second.State.CurrentStatus)
 }
 
 func TestDeploymentUpdateReadyHonorsRetryBackoff(t *testing.T) {
