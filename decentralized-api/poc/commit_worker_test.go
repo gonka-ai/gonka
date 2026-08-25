@@ -691,6 +691,71 @@ func TestCommitWorker_HigherCountWaitsUntilPreviousConfirmed(t *testing.T) {
 	assert.Greater(t, pending.state.count, firstCount)
 }
 
+func TestCommitWorker_HigherCountReplacesDroppedPendingAfterGrace(t *testing.T) {
+	tmpDir, err := os.MkdirTemp("", "commit_worker_higher_count_absent_test")
+	assert.NoError(t, err)
+	defer os.RemoveAll(tmpDir)
+
+	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
+	defer store.Close()
+
+	pocHeight := int64(100)
+	store.ActivateStage(pocHeight)
+	artifactStore, err := store.GetOrCreateStore(pocHeight, "model-a")
+	assert.NoError(t, err)
+	assert.NoError(t, artifactStore.AddWithNode(1, []byte("vec-1"), "node-1"))
+	assert.NoError(t, artifactStore.Flush())
+	firstCount, _ := artifactStore.GetFlushedRoot()
+
+	queryServer := &commitWorkerQueryServer{commitCounts: map[string]uint32{}}
+	queryClient, cleanup := newCommitWorkerQueryClient(t, queryServer)
+	defer cleanup()
+
+	var submittedCounts []uint32
+	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
+	mockRecorder.On("NewInferenceQueryClient").Return(queryClient)
+	mockRecorder.On("SubmitPoCV2StoreCommitWithTimeout", mock.AnythingOfType("*types.MsgPoCV2StoreCommit"), mock.Anything).
+		Run(func(args mock.Arguments) {
+			msg := args.Get(0).(*types.MsgPoCV2StoreCommit)
+			if msg == nil || len(msg.Entries) != 1 {
+				return
+			}
+			submittedCounts = append(submittedCounts, msg.Entries[0].Count)
+		}).
+		Return(nil)
+
+	tracker := commitWorkerTestTracker(110)
+	worker := &CommitWorker{
+		store:              store,
+		recorder:           mockRecorder,
+		tracker:            tracker,
+		participantAddress: "participant_addr",
+		lastCommitted:      make(map[commitKey]commitState),
+		pending:            make(map[commitKey]pendingCommit),
+	}
+
+	worker.tick()
+	assert.NoError(t, artifactStore.AddWithNode(2, []byte("vec-2"), "node-1"))
+	assert.NoError(t, artifactStore.Flush())
+	latestCount, _ := artifactStore.GetFlushedRoot()
+
+	for h := int64(111); h < 110+confirmationGraceBlocks; h++ {
+		setCommitWorkerHeight(tracker, h)
+		worker.tick()
+		mockRecorder.AssertNumberOfCalls(t, "SubmitPoCV2StoreCommitWithTimeout", 1)
+	}
+
+	setCommitWorkerHeight(tracker, 110+confirmationGraceBlocks)
+	worker.tick()
+	mockRecorder.AssertNumberOfCalls(t, "SubmitPoCV2StoreCommitWithTimeout", 2)
+	assert.Equal(t, []uint32{firstCount, latestCount}, submittedCounts)
+
+	key := commitKey{stage: pocHeight, modelID: "model-a"}
+	pending, ok := worker.pending[key]
+	assert.True(t, ok)
+	assert.Equal(t, latestCount, pending.state.count)
+}
+
 type timeoutStoreCommitRecorder struct {
 	cosmosclient.MockCosmosMessageClient
 	timeouts []uint64

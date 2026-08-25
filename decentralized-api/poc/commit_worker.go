@@ -23,10 +23,10 @@ const (
 	distributionRetryInterval = 30 * time.Second
 	storeCommitQueryTimeout   = 2 * time.Second
 	feeTreeRefreshTimeout     = 3 * time.Second
-	// confirmationGraceBlocks is how long an admitted same Count/root stays
-	// pending before a resend. A different (higher) count waits until the
-	// in-flight tx confirms. Query failures do not count as "absent" — that
-	// would duplicate a live tx.
+	// confirmationGraceBlocks is how long an admitted payload stays pending
+	// before a resend or replacement. A newer count is held until confirm or
+	// until the query shows chainAbsent through this grace (dropped tx).
+	// Query failures do not count as "absent" — that would duplicate a live tx.
 	confirmationGraceBlocks int64 = 3
 )
 
@@ -61,10 +61,13 @@ type CommitWorker struct {
 	stop     chan struct{}
 	done     chan struct{}
 
-	mu                          sync.Mutex
-	currentPocHeight            int64
-	blockHeight                 int64
-	lastConfirmHeight           int64
+	mu                sync.Mutex
+	currentPocHeight  int64
+	blockHeight       int64
+	lastConfirmHeight int64
+	// lastAcceptedBroadcastHeight is in-process best-effort: one StoreCommit
+	// broadcast per observed height. It resets on process restart and is not
+	// set if BroadcastTxSync fails before admission is recorded.
 	lastAcceptedBroadcastHeight int64
 	lastDistributionAttempt     time.Time
 	lastCommitted               map[commitKey]commitState
@@ -236,18 +239,8 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64, timeoutHeight uint64) 
 			}
 		}
 
-		if pending, ok := w.pending[key]; ok {
-			if sameCommitState(pending.state, count, rootHash) {
-				if !samePayloadRetryable(pending, height) {
-					continue
-				}
-			} else {
-				// Different payload (usually a higher count) while the
-				// previous tx may still be in the mempool. Sending now can
-				// land both in one later block → handler 1137. Wait until
-				// confirm; a lost same-payload tx still resends after grace.
-				continue
-			}
+		if pending, ok := w.pending[key]; ok && !samePayloadRetryable(pending, height) {
+			continue
 		}
 
 		if hasLast {
@@ -382,6 +375,10 @@ func sameCommitState(st commitState, count uint32, rootHash []byte) bool {
 	return bytes.Equal(st.rootHash, rootHash)
 }
 
+// samePayloadRetryable is true when the in-flight tx can be superseded:
+// the chain query showed it absent (or a different payload) and grace has
+// elapsed. Used both to resend the same count/root and to submit a newer
+// count after a dropped pending tx.
 func samePayloadRetryable(pending pendingCommit, height int64) bool {
 	if height == 0 || !pending.chainAbsent {
 		return false
