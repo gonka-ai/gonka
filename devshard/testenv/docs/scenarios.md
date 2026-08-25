@@ -163,6 +163,25 @@ See `devshard/docs/pr-1366-deploy-test-plan.md` §3.2.
 
 ---
 
+## Dynamic catalog removal and readmission
+
+**What we test:** the router and the real versiond supervisors interpret a
+non-empty governance snapshot as the same desired set.
+
+**How:**
+
+1. Start both versiond hosts from the catalog and wait for the dynamic route.
+2. Replace the catalog with a non-empty set that omits the running version;
+   require both children to retire and the old path to return `503`.
+3. Stop one host and re-add the version; require the surviving child to start,
+   while the router still returns `503` behind its two-host activation reserve.
+4. Start the second host and require the dynamic route to become available.
+
+**Pass criteria:** removal reaches both control loops, and re-addition cannot
+reuse the old route without satisfying admission again.
+
+---
+
 ## SQLite → Devshard-Ha fail → Postgres migrate → HA
 
 **What we test:** full §3.3 walkthrough from
