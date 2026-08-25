@@ -9,6 +9,10 @@
 # been enabled for active health checks.
 set -eu
 
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+# shellcheck disable=SC1090,SC1091
+. "$script_dir/version-contract"
+
 component=${ROUTING_CATALOG_COMPONENT:-router}
 catalog_url=${ROUTING_CATALOG_URL:-}
 poll_seconds=${ROUTING_CATALOG_POLL_SECONDS:-5}
@@ -173,20 +177,8 @@ runtime_key() {
     printf '%s' "$1" | sed 's/;/\\;/g'
 }
 
-urlencode() {
-    printf '%s' "$1" | awk '
-        BEGIN { for (i = 0; i < 256; i++) ord[sprintf("%c", i)] = i }
-        {
-            n = split($0, c, "")
-            for (i = 1; i <= n; i++) {
-                if (c[i] ~ /[A-Za-z0-9._~-]/) printf "%s", c[i]
-                else printf "%%%02X", ord[c[i]]
-            }
-        }'
-}
-
 validate_version() {
-	printf '%s\n' "$1" | LC_ALL=C grep -Eq '^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}$'
+	router_version_is_valid "$1"
 }
 
 fetch_catalog() {
@@ -206,7 +198,7 @@ fetch_catalog() {
     ' "$body" > "$raw_names"; then
         return 1
     fi
-    if duplicate=$(LC_ALL=C sort "$raw_names" | uniq -d | sed -n '1p') && [ -n "$duplicate" ]; then
+    if duplicate=$(router_first_duplicate "$raw_names") && [ -n "$duplicate" ]; then
         return 1
     fi
     while IFS= read -r version; do
@@ -373,7 +365,7 @@ prepare_catalog() {
 	: > "$tmpdir/catalog.encoded"
 	while IFS= read -r version; do
 		[ -n "$version" ] || continue
-		urlencode "$version"
+		router_urlencode "$version"
 		printf '\n'
 	done < "$tmpdir/catalog.names" > "$tmpdir/catalog.encoded"
 	reclaim_withdrawn_pending_slots || return 1
@@ -384,7 +376,7 @@ prepare_catalog() {
 	: > "$tmpdir/projection.plan"
 	while IFS= read -r version; do
 		[ -n "$version" ] || continue
-		encoded=$(urlencode "$version")
+		encoded=$(router_urlencode "$version")
 		backend=$(printf '%s\n' "$version_state" | mapped_backend "$version")
 		publish_version_entry=0
 		if [ -z "$backend" ]; then

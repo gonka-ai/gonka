@@ -1,0 +1,30 @@
+#!/bin/sh
+
+# Shared representation rules for version names used by the router renderer,
+# persistent cache, and HAProxy Runtime API reconciler.
+
+router_version_is_valid() {
+    printf '%s\n' "$1" | LC_ALL=C grep -Eq \
+        '^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}$'
+}
+
+router_urlencode() {
+    printf '%s' "$1" | awk '
+        BEGIN { for (i = 0; i < 256; i++) ord[sprintf("%c", i)] = i }
+        {
+            n = split($0, c, "")
+            for (i = 1; i <= n; i++) {
+                if (c[i] ~ /[A-Za-z0-9._~-]/) printf "%s", c[i]
+                else printf "%%%02X", ord[c[i]]
+            }
+        }'
+}
+
+router_name_in_file() {
+    awk -v version="$2" \
+        '$0 "" == version "" { found = 1 } END { exit !found }' "$1"
+}
+
+router_first_duplicate() {
+    LC_ALL=C sort "$1" | uniq -d | sed -n '1p'
+}

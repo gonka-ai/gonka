@@ -24,6 +24,18 @@
 # health from active /readyz checks. Host and version additions need no reload.
 set -eu
 
+entrypoint_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+runtime_contract=${ROUTER_RUNTIME_VERSION_CONTRACT:-}
+if [ -z "$runtime_contract" ]; then
+    if [ -r "$entrypoint_dir/../router-runtime/version-contract" ]; then
+        runtime_contract=$entrypoint_dir/../router-runtime/version-contract
+    else
+        runtime_contract=/usr/local/lib/router-runtime/version-contract
+    fi
+fi
+# shellcheck disable=SC1090,SC1091
+. "$runtime_contract"
+
 TEMPLATE="${VERSIOND_ROUTER_TEMPLATE:-/etc/haproxy/haproxy.cfg.template}"
 OUT="${VERSIOND_ROUTER_OUT:-/etc/haproxy/haproxy.cfg}"
 MAP="${VERSIOND_ROUTER_NON_HA_MAP:-/etc/haproxy/non_ha.map}"
@@ -173,20 +185,6 @@ ha_header_for() {
     fi
 }
 
-# Percent-encode everything that is not unreserved, so the check asks about the
-# name governance approved rather than about whatever the query parser made of it.
-urlencode() {
-    printf '%s' "$1" | awk '
-        BEGIN { for (i = 0; i < 256; i++) ord[sprintf("%c", i)] = i }
-        {
-            n = split($0, c, "")
-            for (i = 1; i <= n; i++) {
-                if (c[i] ~ /[A-Za-z0-9._~-]/) printf "%s", c[i]
-                else printf "%%%02X", ord[c[i]]
-            }
-        }'
-}
-
 # An HAProxy identifier for a name that is not one. The hash keeps names that
 # sanitise to the same string apart; the readable part keeps it diagnosable.
 safe_id() {
@@ -198,8 +196,7 @@ safe_id() {
 # Refuse names that cannot be represented as the literal path segment used for
 # routing. This applies equally to HA and legacy declarations.
 validate_version() {
-	if ! printf '%s\n' "$1" | LC_ALL=C grep -Eq \
-		'^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}$'; then
+	if ! router_version_is_valid "$1"; then
 		echo "versiond-router: invalid version name '$1'; expected ASCII [A-Za-z0-9][A-Za-z0-9._+~-]{0,63}" >&2
 		exit 1
 	fi
@@ -270,7 +267,7 @@ if [ -n "$CATALOG_URL" ] && [ -f "$CATALOG_CACHE_FILE" ]; then
 fi
 
 name_in_file() {
-    awk -v v="$1" '$0 "" == v "" { found = 1 } END { exit !found }' "$2"
+    router_name_in_file "$2" "$1"
 }
 
 render_backend versiond_ha_pool \
@@ -304,7 +301,7 @@ declare_ha_version() {
     fi
     backend=$(backend_name versiond_pool "$version")
     echo "$version $backend" >> "$VERSIONS_MAP"
-    encoded_version=$(urlencode "$version")
+    encoded_version=$(router_urlencode "$version")
     render_backend "$backend" \
         "http-check send meth GET uri /readyz?version=$encoded_version" \
         "http-check send meth GET uri /$encoded_version/healthz" \
@@ -348,7 +345,7 @@ while [ "$index" -le "$VERSION_CAPACITY" ]; do
     cached_version=$(sed -n "${index}p" "$CACHED_DYNAMIC_VERSIONS_FILE")
     server_state=disabled
     if [ -n "$cached_version" ]; then
-        encoded_version=$(urlencode "$cached_version")
+        encoded_version=$(router_urlencode "$cached_version")
         printf '%s %s\n' "$backend" "$encoded_version" >> "$SLOT_MAP"
         printf '%s %s\n' "$cached_version" "$backend" >> "$VERSIONS_MAP"
         server_state=
@@ -381,7 +378,7 @@ while IFS= read -r version; do
     fi
     backend=$(backend_name versiond_legacy "$version")
     echo "$version $backend" >> "$MAP"
-    encoded_version=$(urlencode "$version")
+    encoded_version=$(router_urlencode "$version")
     render_backend "$backend" \
         "http-check send meth GET uri /readyz?version=$encoded_version" \
         "http-check send meth GET uri /$encoded_version/healthz" \
@@ -414,7 +411,7 @@ render_ready_rules() {
     source_map=$1
     while read -r version backend; do
         [ -n "$version" ] || continue
-        encoded_version=$(urlencode "$version")
+        encoded_version=$(router_urlencode "$version")
         printf '%s\n' \
             "    http-request return status 200 content-type text/plain string \"ready\\n\" if { path /readyz } { query -m str version=$encoded_version } { nbsrv($backend) gt 0 }" \
             "    http-request return status 503 content-type text/plain string \"not ready\\n\" if { path /readyz } { query -m str version=$encoded_version }" \

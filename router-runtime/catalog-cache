@@ -5,21 +5,22 @@
 # render the last known-good routes before the catalog endpoint is reachable.
 set -eu
 
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+# shellcheck disable=SC1090,SC1091
+. "$script_dir/version-contract"
+
 fail() {
     echo "catalog-cache: $*" >&2
     exit 1
 }
 
-validate_version() {
-	printf '%s\n' "$1" | LC_ALL=C grep -Eq '^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}$'
-}
-
 validate_names() {
     names=$1
-    duplicate=$(LC_ALL=C sort "$names" | uniq -d | sed -n '1p')
+    duplicate=$(router_first_duplicate "$names")
     [ -z "$duplicate" ] || fail "snapshot declares version '$duplicate' more than once"
     while IFS= read -r version; do
-        validate_version "$version" || fail "snapshot contains unroutable version '$version'"
+        router_version_is_valid "$version" || \
+            fail "snapshot contains unroutable version '$version'"
     done < "$names"
 }
 
