@@ -135,11 +135,15 @@ set of disabled `versiond_dynamic_<n>` backends. For every new valid name the
 reconciler assigns a slot, enables its per-version checks, waits until the
 configured ready reserve is present, then publishes the request-map entry. For
 a batch, every new backend must meet the reserve before the first map addition.
-A non-empty governance snapshot is the desired set, matching versiond: removed
-dynamic routes are durably retired and their slots become reusable. Re-adding a
-name is a fresh activation and must meet the reserve again. A completely empty
-response remains fail-closed while accepted routes exist because versiond
-applies the same misconfiguration guard.
+
+The current source has no monotonic revision, so normal reconciliation is
+additions-only. A snapshot that omits an accepted name leaves its route and
+cache entry intact and reports `withdrawal-pending`; the backend's active check
+still returns `503` once no versiond can serve it. Planned removal requires a
+supervised maintenance run with
+`VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=true`, after which the slot becomes
+reusable. A completely empty response remains fail-closed while accepted routes
+exist because versiond applies the same misconfiguration guard.
 
 Accepted projections are written atomically under `/var/lib/gonka-router`.
 After restart, a validated last-known-good cache keeps already learned routes
@@ -167,8 +171,8 @@ Version names use the routing grammar
 can create a path/map mismatch. Because the current governance contract accepts
 a wider set of basenames, one incompatible name is isolated rather than
 rejecting the whole snapshot: accepted routes remain, compatible additions can
-still converge, removals wait for a fully representable snapshot, and
-`catalog-status` reports `contract-error`. The incompatible route itself remains
+still converge, and `catalog-status` reports `contract-error`. The incompatible
+route itself remains
 unpublished and returns `503` until governance corrects its name.
 
 Leaving both the bootstrap set and catalog URL empty selects coarse host-level
@@ -319,6 +323,7 @@ host lifecycle is intentionally delivered as a separate change.
 | `VERSIOND_ROUTING_CATALOG_MAX_BYTES` | `1048576` | maximum response body accepted from the catalog endpoint |
 | `VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS` | `2` | timeout for one HAProxy Runtime API exchange |
 | `VERSIOND_ROUTING_ACTIVATION_MIN_READY` | `1` | ready upstreams required before publishing a new projection. The two-replica HA Compose overlay explicitly sets `2` |
+| `VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS` | *(unset/false)* | allow an accepted dynamic route to be removed when omitted by a later snapshot. Keep disabled during normal operation; use only in a supervised maintenance window because the source has no monotonic revision |
 | `VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS` | `86400` | age after which startup reports the validated last-known-good catalog as stale; accepted routes are still restored |
 | `VERSIOND_ROUTER_VERSION_CAPACITY` | `32` | pre-rendered slots for names added after startup |
 | `VERSIOND_ROUTER_ALLOW_COARSE_READINESS` | *(unset)* | allow an HA deployment to run with no declared versions, accepting that a host with one unready version keeps receiving its traffic. Same boolean grammar |

@@ -27,6 +27,7 @@ backend_capacity=${ROUTING_CATALOG_BACKEND_CAPACITY:?ROUTING_CATALOG_BACKEND_CAP
 server_prefix=${ROUTING_CATALOG_SERVER_PREFIX:?ROUTING_CATALOG_SERVER_PREFIX is required}
 server_capacity=${ROUTING_CATALOG_SERVER_CAPACITY:?ROUTING_CATALOG_SERVER_CAPACITY is required}
 activation_min_ready=${ROUTING_CATALOG_ACTIVATION_MIN_READY:-2}
+allow_removals=${ROUTING_CATALOG_ALLOW_REMOVALS:-}
 excluded_versions=${ROUTING_CATALOG_EXCLUDE:-}
 cache_file=${ROUTING_CATALOG_CACHE_FILE:-}
 cache_bin=${ROUTING_CATALOG_CACHE_BIN:-/usr/local/lib/router-runtime/catalog-cache}
@@ -52,6 +53,13 @@ done
     log "catalog activation reserve exceeds backend server capacity"
     exit 1
 }
+case "$allow_removals" in
+    ''|1) ;;
+    *)
+        log "ROUTING_CATALOG_ALLOW_REMOVALS must be empty or 1"
+        exit 1
+        ;;
+esac
 [ -z "$status_backend" ] || [ -n "$status_server" ] || {
     log "ROUTING_CATALOG_STATUS_SERVER is required with ROUTING_CATALOG_STATUS_BACKEND"
     exit 1
@@ -260,6 +268,20 @@ fetch_catalog() {
     fi
     LC_ALL=C sort -u "$raw_names" -o "$raw_names"
     project_names "$raw_names" "$names"
+    catalog_withdrawal_pending=0
+    if [ -z "$allow_removals" ]; then
+        while IFS= read -r accepted_name; do
+            [ -n "$accepted_name" ] || continue
+            if ! grep -Fqx "$accepted_name" "$names"; then
+                catalog_withdrawal_pending=1
+                break
+            fi
+        done < "$last_names"
+        # The source contract has no monotonic revision. Treat a missing accepted
+        # name as a maintenance request, not as authority to mutate live traffic.
+        cat "$last_names" "$names" | LC_ALL=C sort -u > "$tmpdir/catalog.additive.names"
+        mv "$tmpdir/catalog.additive.names" "$names"
+    fi
     if [ "$catalog_contract_error" -ne 0 ]; then
         # An unrepresentable name must not let a partially understood snapshot
         # retire accepted routes. Compatible additions are still safe to stage.
@@ -650,6 +672,9 @@ while :; do
                 if [ "$catalog_contract_error" -ne 0 ]; then
                     set_state contract-error \
                         "compatible catalog routes are current; one or more names are outside the router grammar"
+                elif [ "$catalog_withdrawal_pending" -ne 0 ]; then
+                    set_state withdrawal-pending \
+                        "catalog omitted accepted routes; explicit maintenance removal is required"
                 else
                     set_state ready "catalog and runtime maps are current"
                 fi

@@ -71,6 +71,8 @@ test-join-compose:
 		|| { echo 'test-join-compose: catalog was enabled on the legacy router image' >&2; exit 1; }; \
 	grep -q 'VERSIOND_ROUTING_ACTIVATION_MIN_READY: "2"' "$$tmp" \
 		|| { echo 'test-join-compose: two-replica catalog reserve is not explicit' >&2; exit 1; }; \
+	grep -q 'VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS: "false"' "$$tmp" \
+		|| { echo 'test-join-compose: automatic catalog removals are not disabled' >&2; exit 1; }; \
 	grep -q 'VERSIOND_NON_HA_VERSIONS: v1 v2 v3' "$$tmp" \
 		|| { echo 'test-join-compose: legacy version pins are missing' >&2; exit 1; }; \
 	VERSIOND_ROUTER_IMAGE=ghcr.io/product-science/versiond-router@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa \
@@ -81,6 +83,7 @@ test-join-compose:
 	VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS=13 \
 	VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=17 \
 	VERSIOND_ROUTING_ACTIVATION_MIN_READY=1 \
+	VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=true \
 	VERSIOND_ROUTER_VERSION_CAPACITY=19 \
 	DEVSHARD_POSTGRES_PASSWORD=test \
 		docker compose --project-directory ../deploy/join \
@@ -97,6 +100,7 @@ test-join-compose:
 		'VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS: "13"' \
 		'VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS: "17"' \
 		'VERSIOND_ROUTING_ACTIVATION_MIN_READY: "1"' \
+		'VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS: "true"' \
 		'VERSIOND_ROUTER_VERSION_CAPACITY: "19"'; do \
 		grep -q "$$expected" "$$tmp" \
 			|| { echo "test-join-compose: override '$$expected' was ignored" >&2; exit 1; }; \
@@ -773,28 +777,28 @@ test-version-routing:
 		a|b) ;; \
 		*) fail "a compatible addition beside an incompatible name reached '$$contract_host'" ;; \
 	esac; \
-	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v9+hotfix"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	for i in $$(seq 20); do \
 		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-			| jq -e '.state == "ready" and .dynamic_slots_used == 2' \
+			| jq -e '.state == "ready" and .dynamic_slots_used == 3' \
 				>/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
 	framing_cache_before=$$(docker exec gonka-vp-router sha256sum \
 		/var/lib/gonka-router/catalog.json | awk '{print $$1}'); \
-	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v9"},{"name":"v10"},{"name":"v11\nv5"}]}' \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v9"},{"name":"v10"},{"name":"v9+hotfix"},{"name":"v11\nv5"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	for i in $$(seq 10); do \
 		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-			| jq -e '.state == "contract-error" and .dynamic_slots_used == 2' \
+				| jq -e '.state == "contract-error" and .dynamic_slots_used == 3' \
 				>/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-		| jq -e '.state == "contract-error" and .dynamic_slots_used == 2' >/dev/null \
+		| jq -e '.state == "contract-error" and .dynamic_slots_used == 3' >/dev/null \
 		|| fail "an embedded newline split one governance name into multiple routes"; \
 	if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
 		/etc/haproxy/versions.map | grep -qx v11; then \
@@ -806,58 +810,85 @@ test-version-routing:
 		|| fail "an embedded newline replaced the persistent catalog snapshot"; \
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/after-framing-error/chat)" = b ] \
 		|| fail "an embedded newline replaced the last accepted route view"; \
-	retired_slot=$$(docker exec gonka-vp-router sh -c \
-		'printf "%s\n" "show map /etc/haproxy/versions.map" | socat - UNIX-CONNECT:/var/run/haproxy/reconciler.sock' \
-		| awk '$$2 == "v10" { print $$3; exit }'); \
-	[ -n "$$retired_slot" ] || fail "could not identify v10's dynamic slot"; \
-	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"}]}' \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v9+hotfix"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	for i in $$(seq 20); do \
 		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-			| jq -e '.state == "ready" and .dynamic_slots_used == 1' \
+			| jq -e '.state == "withdrawal-pending" and .dynamic_slots_used == 3' \
 				>/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-		| jq -e '.state == "ready" and .dynamic_slots_used == 1' >/dev/null \
-		|| fail "a non-empty desired set did not retire its removed route"; \
-	if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
-		/etc/haproxy/versions.map | grep -qx v10; then \
-		fail "a removed governance route remained published"; \
-	fi; \
+		| jq -e '.state == "withdrawal-pending" and .dynamic_slots_used == 3' >/dev/null \
+		|| fail "an unversioned withdrawal was not held for maintenance"; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
+		/etc/haproxy/versions.map | grep -qx v10 \
+		|| fail "an unversioned snapshot removed an accepted route"; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-cache read \
 		/var/lib/gonka-router/catalog.json 86400 > "$$tmpdir/after-removal.names"; \
 	grep -Fqx v9 "$$tmpdir/after-removal.names" \
-		|| fail "retiring one route removed a surviving route from the durable cache"; \
-	if grep -Fqx v10 "$$tmpdir/after-removal.names"; then \
-		fail "a removed governance route remained in the durable cache"; \
-	fi; \
-	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
-		http://127.0.0.1:18132/v10/sessions/removed/chat)" = 503 ] \
-		|| fail "a removed governance route still accepted traffic"; \
-	docker rm -f gonka-vp-a >/dev/null; \
-	docker run -d --name gonka-vp-a --network $$net --network-alias versiond-pool \
-		-e NAME=a -e SERVES="v4 v9+hotfix" -e GENERIC_READY=false \
-		-e READYZ_SUPPORTED=true -v "$$tmpdir/upstream.py:/app.py:ro" \
-		python:3.12-alpine python /app.py >/dev/null; \
+		|| fail "holding one withdrawal removed a surviving route from the durable cache"; \
+	grep -Fqx v10 "$$tmpdir/after-removal.names" \
+		|| fail "an unversioned withdrawal removed the durable route"; \
+	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v10/sessions/held/chat)" = b ] \
+		|| fail "an unversioned withdrawal stopped an otherwise healthy route"; \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v9+hotfix"}]}' \
+		> "$$tmpdir/catalog/versions.next"; \
+	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+	for i in $$(seq 20); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "ready" and .dynamic_slots_used == 3' \
+				>/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	# Maintenance mode is explicit: only this replacement may retire v10. \
+	docker rm -f gonka-vp-router >/dev/null; \
+	docker run -d --name gonka-vp-router --network $$net \
+		-p 127.0.0.1:18132:8080 -p 127.0.0.1:18134:8404 \
+		-v $$state:/var/lib/gonka-router \
+		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="v4 v5" \
+		-e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
+		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
+		-e VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=2 \
+		-e VERSIOND_ROUTING_CATALOG_MAX_BYTES=512 \
+		-e VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS=1 \
+		-e VERSIOND_ROUTING_ACTIVATION_MIN_READY=2 \
+		-e VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=true \
+		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
+		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
+		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
+		gonka-versiond-router-probe >/dev/null; \
+	for i in $$(seq 20); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "ready" and .dynamic_slots_used == 3' \
+				>/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	retired_slot=$$(docker exec gonka-vp-router sh -c \
+		'printf "%s\n" "show map /etc/haproxy/versions.map" | socat - UNIX-CONNECT:/var/run/haproxy/reconciler.sock' \
+		| awk '$$2 == "v10" { print $$3; exit }'); \
+	[ -n "$$retired_slot" ] || fail "could not identify v10's maintenance slot"; \
 	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v9+hotfix"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
-	for i in $$(seq 30); do \
-		if curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%2Bhotfix' \
-			>/dev/null 2>&1; then break; fi; \
+	for i in $$(seq 20); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "ready" and .dynamic_slots_used == 2' \
+				>/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
-	replacement_slot=$$(docker exec gonka-vp-router sh -c \
-		'printf "%s\n" "show map /etc/haproxy/versions.map" | socat - UNIX-CONNECT:/var/run/haproxy/reconciler.sock' \
-		| awk '$$2 == "v9+hotfix" { print $$3; exit }'); \
-	[ "$$replacement_slot" = "$$retired_slot" ] \
-		|| fail "the removal scenario did not reuse v10's dynamic slot"; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| jq -e '.state == "ready" and .dynamic_slots_used == 2' >/dev/null \
+		|| fail "maintenance mode did not retire the withdrawn route"; \
+	if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
+		/etc/haproxy/versions.map | grep -qx v10; then \
+		fail "maintenance mode left the withdrawn route published"; \
+	fi; \
 	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
-		'http://127.0.0.1:18134/readyz?version=v10')" = 503 ] \
-		|| fail "a reused cached slot kept the retired v10 readiness green"; \
-	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
+		http://127.0.0.1:18132/v10/sessions/removed/chat)" = 503 ] \
+		|| fail "a maintenance-removed governance route still accepted traffic"; \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v9+hotfix"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	for i in $$(seq 30); do \
@@ -866,6 +897,11 @@ test-version-routing:
 				>/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
+	replacement_slot=$$(docker exec gonka-vp-router sh -c \
+		'printf "%s\n" "show map /etc/haproxy/haproxy.cfg.version-slots.map" | socat - UNIX-CONNECT:/var/run/haproxy/reconciler.sock' \
+		| awk '$$3 == "v10" { print $$2; exit }'); \
+	[ "$$replacement_slot" = "$$retired_slot" ] \
+		|| fail "the removal scenario did not reuse v10's dynamic slot"; \
 	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
 		http://127.0.0.1:18132/v10/sessions/readded-pending/chat)" = 503 ] \
 		|| fail "a re-added route bypassed the activation reserve"; \
@@ -1036,6 +1072,7 @@ test-version-routing:
 		-e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
 		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
 		-e VERSIOND_ROUTING_ACTIVATION_MIN_READY=2 \
+		-e VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=true \
 		-e VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=1 \
 		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
