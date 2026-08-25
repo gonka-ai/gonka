@@ -72,3 +72,34 @@ func TestHAStorageGuard_RejectsMalformedHeader(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	require.Contains(t, rec.Body.String(), mode.HeaderDevshardHA)
 }
+
+func TestRequireHADeploymentStorage(t *testing.T) {
+	t.Setenv(envHADeployment, "off")
+	t.Setenv(mode.EnvStorageMode, "sqlite")
+	require.NoError(t, requireHADeploymentStorage(),
+		"single-instance deployment must not require postgres")
+
+	t.Setenv(envHADeployment, "on")
+	require.Error(t, requireHADeploymentStorage(),
+		"HA deployment on sqlite must refuse to start")
+
+	t.Setenv(mode.EnvStorageMode, "hybrid")
+	t.Setenv("PGHOST", "pg")
+	require.Error(t, requireHADeploymentStorage(),
+		"hybrid keeps a local fallback and is not fail-closed")
+
+	t.Setenv(mode.EnvStorageMode, "postgres")
+	require.NoError(t, requireHADeploymentStorage())
+
+	t.Setenv("PGHOST", "")
+	require.Error(t, requireHADeploymentStorage(), "postgres without PGHOST")
+}
+
+func TestRequireHADeploymentStorageRejectsInvalidBoolean(t *testing.T) {
+	t.Setenv(envHADeployment, "enabled")
+
+	err := requireHADeploymentStorage()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), envHADeployment)
+	require.Contains(t, err.Error(), "invalid boolean value")
+}
