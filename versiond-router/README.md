@@ -379,6 +379,8 @@ are not converging. Compose health follows the data plane instead: a
 catalog-aware router uses the unqualified admin `/readyz`, while the transitional
 nginx image retains its compatible `/healthz` probe. A temporary catalog-source
 failure therefore does not mark a working last-known-good router unhealthy.
+Catalog diagnostics never include the configured source URL, so credentials or
+signed query parameters are not copied into status output or router logs.
 The shipped Compose overlay stops HAProxy with `SIGUSR1`, allowing active
 requests to drain for the bounded `VERSIOND_ROUTER_STOP_GRACE_PERIOD` (default
 `10s`) before Docker forces termination.

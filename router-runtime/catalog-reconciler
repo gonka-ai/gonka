@@ -669,7 +669,7 @@ while :; do
     elif ! repair_accepted_projection; then
         set_state runtime-error "cannot restore the accepted catalog projection"
     elif ! fetch_catalog; then
-        set_state fetch-error "cannot fetch or validate $catalog_url"
+        set_state fetch-error "cannot fetch or validate routing catalog"
     elif ! validate_catalog_snapshot; then
         set_state projection-error \
             "catalog is empty while accepted dynamic routes still exist"

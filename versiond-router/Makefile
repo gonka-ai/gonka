@@ -288,10 +288,10 @@ test-version-routing:
 	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"}]}' \
 		> "$$tmpdir/catalog/versions.json"; \
 	printf '%s\n' \
-		'import http.server, os, time' \
+		'import http.server, os, time, urllib.parse' \
 		'class H(http.server.BaseHTTPRequestHandler):' \
 		'    def do_GET(self):' \
-		'        if self.path != "/versions": self.send_error(404); return' \
+		'        if urllib.parse.urlparse(self.path).path != "/versions": self.send_error(404); return' \
 		'        body = open("/data/versions.json", "rb").read()' \
 		'        mode = open("/data/mode").read().strip() if os.path.exists("/data/mode") else ""' \
 		'        if mode == "slow":' \
@@ -346,7 +346,7 @@ test-version-routing:
 		-p 127.0.0.1:18132:8080 -p 127.0.0.1:18134:8404 \
 		-v $$state:/var/lib/gonka-router \
 		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="$$versions" \
-		-e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
+		-e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions?token=catalog-secret \
 		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
 		-e VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=2 \
 		-e VERSIOND_ROUTING_CATALOG_MAX_BYTES=512 \
@@ -615,6 +615,13 @@ test-version-routing:
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
 		| jq -e '.state == "fetch-error"' >/dev/null \
 		|| fail "a continuously trickling catalog response bypassed the total deadline"; \
+	if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| grep -Fq catalog-secret; then \
+		fail "catalog status exposed credentials from the source URL"; \
+	fi; \
+	if docker logs gonka-vp-router 2>&1 | grep -Fq catalog-secret; then \
+		fail "router logs exposed credentials from the source URL"; \
+	fi; \
 	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
 		'http://127.0.0.1:18134/readyz?component=catalog')" = 503 ] \
 		|| fail "catalog fetch failure remained green on the admin readiness endpoint"; \
