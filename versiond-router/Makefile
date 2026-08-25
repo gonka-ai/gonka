@@ -807,6 +807,67 @@ test-version-routing:
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
 		| jq -e '.state == "ready" and .dynamic_slots_used == 2' >/dev/null \
 		|| fail "catalog reconciliation did not recover before the framing test"; \
+	document_cache_before=$$(docker exec gonka-vp-router sha256sum \
+		/var/lib/gonka-router/catalog.json | awk '{print $$1}'); \
+	document_observed_at=$$(docker exec gonka-vp-router \
+		/usr/local/lib/router-runtime/catalog-status --state | jq -er .observed_at_unix); \
+	: > "$$tmpdir/catalog/versions.next"; \
+	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+	for i in $$(seq 20); do \
+		empty_document_status=$$(docker exec gonka-vp-router \
+			/usr/local/lib/router-runtime/catalog-status --state 2>/dev/null || true); \
+		if printf '%s\n' "$$empty_document_status" | jq -e \
+			--argjson previous "$$document_observed_at" \
+			'.state == "fetch-error" and .observed_at_unix > $$previous' \
+				>/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	printf '%s\n' "$$empty_document_status" | jq -e \
+		--argjson previous "$$document_observed_at" \
+		'.state == "fetch-error" and .observed_at_unix > $$previous' >/dev/null \
+		|| fail "an empty HTTP body was accepted as a catalog document"; \
+	empty_document_observed_at=$$(printf '%s\n' "$$empty_document_status" \
+		| jq -er .observed_at_unix); \
+	printf '%s\n%s\n' \
+		'{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
+		'{"versions":[{"name":"v11"}]}' \
+		> "$$tmpdir/catalog/versions.next"; \
+	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+	for i in $$(seq 20); do \
+		multi_document_status=$$(docker exec gonka-vp-router \
+			/usr/local/lib/router-runtime/catalog-status --state 2>/dev/null || true); \
+		if printf '%s\n' "$$multi_document_status" | jq -e \
+			--argjson previous "$$empty_document_observed_at" \
+			'.state == "fetch-error" and .observed_at_unix > $$previous' \
+				>/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	printf '%s\n' "$$multi_document_status" | jq -e \
+		--argjson previous "$$empty_document_observed_at" \
+		'.state == "fetch-error" and .observed_at_unix > $$previous' >/dev/null \
+		|| fail "multiple top-level catalog documents were accepted as one snapshot"; \
+	if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
+		/etc/haproxy/versions.map | grep -qx v11; then \
+		fail "a trailing catalog document published a fabricated route"; \
+	fi; \
+	[ "$$(docker exec gonka-vp-router sha256sum \
+		/var/lib/gonka-router/catalog.json | awk '{print $$1}')" = "$$document_cache_before" ] \
+		|| fail "invalid top-level catalog framing replaced the accepted snapshot"; \
+	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/document-framing/chat)" = b ] \
+		|| fail "invalid top-level catalog framing removed an accepted route"; \
+	printf '%s\n\n  \n' \
+		'{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
+		> "$$tmpdir/catalog/versions.next"; \
+	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+	for i in $$(seq 20); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "ready" and .dynamic_slots_used == 2' \
+				>/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| jq -e '.state == "ready" and .dynamic_slots_used == 2' >/dev/null \
+		|| fail "a single catalog document with trailing whitespace was rejected"; \
 	docker rm -f gonka-vp-a >/dev/null; \
 	docker run -d --name gonka-vp-a --network $$net --network-alias versiond-pool \
 		-e NAME=a -e SERVES="v4 v9+hotfix" -e GENERIC_READY=false \

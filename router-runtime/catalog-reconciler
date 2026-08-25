@@ -239,8 +239,9 @@ fetch_catalog() {
         return 1
     fi
     mv "$download" "$body"
-    if ! jq -ac '
-        if type != "object" then error("catalog is not an object") else . end
+    if ! jq -acs '
+        if length != 1 then error("catalog must contain exactly one JSON document") else .[0] end
+        | if type != "object" then error("catalog is not an object") else . end
         |
         .versions as $versions
         | if ($versions | type) != "array" then error("versions is not an array") else $versions end
