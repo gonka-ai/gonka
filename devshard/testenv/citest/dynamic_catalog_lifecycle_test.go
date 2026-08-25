@@ -29,7 +29,12 @@ func TestDynamicCatalogRemovalAndReadmission(t *testing.T) {
 	require.Len(t, cfg.Hosts, 2)
 
 	// The oracle, rather than VERSIOND_FORCE, must own the desired-set removal.
+	// Route withdrawal is maintenance-only until the source carries a monotonic
+	// revision, so this destructive lifecycle test opts into that contract.
 	harness.PatchComposeRemoveEnvKey(t, stack.ComposePath, "VERSIOND_FORCE")
+	harness.PatchComposeInsertEnvAfter(t, stack.ComposePath,
+		"VERSIOND_ROUTING_CATALOG_POLL_SECONDS",
+		`VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS: "true"`)
 	stack.Up(t)
 	eps := stack.Endpoints(t, cfg)
 	client := harness.HTTPClient()
