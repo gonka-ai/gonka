@@ -199,6 +199,7 @@ fetch_catalog() {
     ' "$body" > "$json_names"; then
         return 1
     fi
+    catalog_contract_error=0
     : > "$raw_names"
     while IFS= read -r json_name; do
         # Keep each scalar JSON-framed until validation. Every character in the
@@ -208,7 +209,10 @@ fetch_catalog() {
             \"*\") version=${json_name#\"}; version=${version%\"} ;;
             *) return 1 ;;
         esac
-        validate_version "$version" || return 1
+        if ! validate_version "$version"; then
+            catalog_contract_error=1
+            continue
+        fi
         printf '%s\n' "$version" >> "$raw_names"
     done < "$json_names"
     if duplicate=$(router_first_duplicate "$raw_names") && [ -n "$duplicate" ]; then
@@ -216,6 +220,12 @@ fetch_catalog() {
     fi
     LC_ALL=C sort -u "$raw_names" -o "$raw_names"
     project_names "$raw_names" "$names"
+    if [ "$catalog_contract_error" -ne 0 ]; then
+        # An unrepresentable name must not let a partially understood snapshot
+        # retire accepted routes. Compatible additions are still safe to stage.
+        cat "$last_names" "$names" | LC_ALL=C sort -u > "$tmpdir/catalog.compatible.names"
+        mv "$tmpdir/catalog.compatible.names" "$names"
+    fi
 }
 
 validate_catalog_snapshot() {
@@ -223,7 +233,7 @@ validate_catalog_snapshot() {
     # likely control-plane fault while anything is already accepted. A non-empty
     # desired set may legitimately contain only static/legacy names, leaving the
     # dynamic projection empty.
-    if [ ! -s "$tmpdir/catalog.raw.names" ] && [ -s "$last_names" ]; then
+    if [ ! -s "$tmpdir/catalog.json.names" ] && [ -s "$last_names" ]; then
         return 1
     fi
     catalog_changed=1
@@ -558,6 +568,10 @@ while :; do
         set_state projection-error \
             "catalog is empty while accepted dynamic routes still exist"
     else
+        contract_suffix=
+        if [ "$catalog_contract_error" -ne 0 ]; then
+            contract_suffix="; catalog also contains names outside the router grammar"
+        fi
         removal_status=0
         apply_catalog_removals || removal_status=$?
         reconcile_status=0
@@ -580,10 +594,10 @@ while :; do
             set_state cache-error "cannot refresh the last accepted catalog snapshot"
         elif [ "$reconcile_status" -eq 2 ]; then
             set_state capacity-exhausted \
-                "no free backend slot for governance version '$capacity_missing'"
+                "no free backend slot for governance version '$capacity_missing'$contract_suffix"
         elif [ "$reconcile_status" -eq 3 ]; then
             set_state activation-pending \
-                "governance version '$activation_version' has $activation_ready/$activation_min_ready ready backends"
+                "governance version '$activation_version' has $activation_ready/$activation_min_ready ready backends$contract_suffix"
         elif [ "$reconcile_status" -ne 0 ]; then
             set_state runtime-error "HAProxy rejected a catalog projection"
         elif ! persist_catalog; then
@@ -593,7 +607,12 @@ while :; do
             # restores the whole projection before the catalog endpoint is available.
             accept_catalog
             if publish_catalog; then
-                set_state ready "catalog and runtime maps are current"
+                if [ "$catalog_contract_error" -ne 0 ]; then
+                    set_state contract-error \
+                        "compatible catalog routes are current; one or more names are outside the router grammar"
+                else
+                    set_state ready "catalog and runtime maps are current"
+                fi
             else
                 set_state runtime-error "HAProxy rejected an accepted catalog projection"
             fi

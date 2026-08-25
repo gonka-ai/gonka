@@ -147,7 +147,12 @@ restart-safe without making the pending name visible.
 
 Version names use the routing grammar
 `[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}`. Names outside it are rejected before they
-can create a path/map mismatch.
+can create a path/map mismatch. Because the current governance contract accepts
+a wider set of basenames, one incompatible name is isolated rather than
+rejecting the whole snapshot: accepted routes remain, compatible additions can
+still converge, removals wait for a fully representable snapshot, and
+`catalog-status` reports `contract-error`. The incompatible route itself remains
+unpublished and returns `503` until governance corrects its name.
 
 Leaving both the bootstrap set and catalog URL empty selects coarse host-level
 routing. An HA deployment refuses that mode unless

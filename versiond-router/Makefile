@@ -640,6 +640,44 @@ test-version-routing:
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
 		| jq -e '.state == "ready" and .dynamic_slots_used == 2' >/dev/null \
 		|| fail "catalog reconciliation did not recover before the framing test"; \
+	docker rm -f gonka-vp-a >/dev/null; \
+	docker run -d --name gonka-vp-a --network $$net --network-alias versiond-pool \
+		-e NAME=a -e SERVES="v4 v9+hotfix" -e GENERIC_READY=false \
+		-e READYZ_SUPPORTED=true -v "$$tmpdir/upstream.py:/app.py:ro" \
+		python:3.12-alpine python /app.py >/dev/null; \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v:6"},{"name":"v9+hotfix"}]}' \
+		> "$$tmpdir/catalog/versions.next"; \
+	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+	for i in $$(seq 30); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "contract-error" and .dynamic_slots_used == 3' \
+				>/dev/null 2>&1 \
+			&& curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%2Bhotfix' \
+				>/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| jq -e '.state == "contract-error" and .dynamic_slots_used == 3' >/dev/null \
+		|| fail "one incompatible name blocked compatible catalog additions"; \
+	if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
+		/etc/haproxy/versions.map | grep -Fqx 'v:6'; then \
+		fail "an incompatible governance name reached the routing map"; \
+	fi; \
+	contract_host=$$(curl -fsS -m 3 \
+		'http://127.0.0.1:18132/v9+hotfix/sessions/contract/chat'); \
+	case "$$contract_host" in \
+		a|b) ;; \
+		*) fail "a compatible addition beside an incompatible name reached '$$contract_host'" ;; \
+	esac; \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
+		> "$$tmpdir/catalog/versions.next"; \
+	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+	for i in $$(seq 20); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "ready" and .dynamic_slots_used == 2' \
+				>/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
 	framing_cache_before=$$(docker exec gonka-vp-router sha256sum \
 		/var/lib/gonka-router/catalog.json | awk '{print $$1}'); \
 	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v9"},{"name":"v10"},{"name":"v11\nv5"}]}' \
@@ -647,12 +685,12 @@ test-version-routing:
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	for i in $$(seq 10); do \
 		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-			| jq -e '.state == "fetch-error" and .dynamic_slots_used == 2' \
+			| jq -e '.state == "contract-error" and .dynamic_slots_used == 2' \
 				>/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-		| jq -e '.state == "fetch-error" and .dynamic_slots_used == 2' >/dev/null \
+		| jq -e '.state == "contract-error" and .dynamic_slots_used == 2' >/dev/null \
 		|| fail "an embedded newline split one governance name into multiple routes"; \
 	if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
 		/etc/haproxy/versions.map | grep -qx v11; then \
