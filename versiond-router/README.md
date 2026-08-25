@@ -375,9 +375,10 @@ any config or runtime-map mutation.
 The Prometheus output includes the synthetic `router_catalog_status` backend:
 one active server means the enabled catalog is fully reconciled, while zero
 means the last accepted data-plane routes remain available but catalog changes
-are not converging. The join Compose healthcheck uses the dedicated catalog
-readiness endpoint when catalog mode is enabled; it does not feed HAProxy's
-versiond backend selection.
+are not converging. Compose health follows the data plane instead: a
+catalog-aware router uses the unqualified admin `/readyz`, while the transitional
+nginx image retains its compatible `/healthz` probe. A temporary catalog-source
+failure therefore does not mark a working last-known-good router unhealthy.
 
 Neither the metrics endpoint nor either Runtime API socket is reachable from
 outside the container, and the container runs as the unprivileged `haproxy` user

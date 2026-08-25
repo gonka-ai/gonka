@@ -133,7 +133,7 @@ services:
         - CMD-SHELL
         - >-
           if [ -n "$$VERSIOND_ROUTING_CATALOG_URL" ]; then
-            wget -q -O - 'http://127.0.0.1:8404/readyz?component=catalog';
+            wget -q -O - 'http://127.0.0.1:8404/readyz';
           else
             wget -q -O - 'http://127.0.0.1:8080/healthz';
           fi

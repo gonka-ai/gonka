@@ -50,9 +50,9 @@ test-join-compose:
 	jq -e '.services["versiond-router"].volumes | any(.type == "volume" and .source == "versiond-router-state" and .target == "/var/lib/gonka-router")' \
 		"$$tmp_json" >/dev/null \
 		|| { echo 'test-join-compose: router catalog state is not persistent' >&2; exit 1; }; \
-	jq -e '.services["versiond-router"].healthcheck.test | join(" ") | contains("readyz?component=catalog")' \
+	jq -e '.services["versiond-router"].healthcheck.test | join(" ") as $$check | ($$check | contains("127.0.0.1:8404/readyz")) and ($$check | contains("component=catalog") | not) and ($$check | contains("127.0.0.1:8080/healthz"))' \
 		"$$tmp_json" >/dev/null \
-		|| { echo 'test-join-compose: router healthcheck does not expose catalog convergence' >&2; exit 1; }; \
+		|| { echo 'test-join-compose: router healthcheck does not probe the data plane' >&2; exit 1; }; \
 	grep -q 'VERSIOND_POOL_HOST: versiond-pool' "$$tmp" \
 		|| { echo 'test-join-compose: pool host is not rendered' >&2; exit 1; }; \
 	[ "$$(grep -c -- '- versiond-pool' "$$tmp")" -ge 2 ] \
