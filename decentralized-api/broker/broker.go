@@ -253,6 +253,19 @@ func (s NodeState) MarshalJSON() ([]byte, error) {
 type ReconcileInfo struct {
 	Status    types.HardwareNodeStatus `json:"status"`
 	PocStatus PocStatus                `json:"poc_status"`
+	// StartedAt is when this reconcile attempt was dispatched. Zero means
+	// unknown/legacy; the watchdog treats that as already expired.
+	StartedAt time.Time `json:"started_at,omitempty"`
+}
+
+func (r *ReconcileInfo) isExpired(now time.Time) bool {
+	if r == nil {
+		return false
+	}
+	if r.StartedAt.IsZero() {
+		return true
+	}
+	return now.Sub(r.StartedAt) >= staleReconcileTimeout
 }
 
 func (s *NodeState) UpdateStatusAt(time time.Time, status types.HardwareNodeStatus) {
@@ -825,6 +838,13 @@ type pocParams struct {
 
 const reconciliationInterval = 30 * time.Second
 
+// staleReconcileTimeout is how long a ReconcileInfo may sit without a result
+// before reconcile aborts it and retries. Must be a few ticker intervals so a
+// lost UpdateNodeResultCommand cannot pin the node out of dispatch forever;
+// phase 1 only cancels on intended-status mismatch, which never fires if the
+// target never changes.
+const staleReconcileTimeout = 3 * reconciliationInterval
+
 // Timeouts for node health checks used in queryNodeStatus
 const (
 	nodeStatusRequestTimeout      = 5 * time.Second
@@ -976,23 +996,41 @@ func (b *Broker) reconcileIfSynced(triggerMsg string) {
 func (b *Broker) reconcile(epochState chainphase.EpochState) {
 	blockHeight := epochState.CurrentBlock.Height
 
-	// Phase 1: Cancel outdated tasks
-	nodesToCancel := make(map[string]func())
+	// Phase 1: abort in-flight reconcile that is outdated (intended status
+	// moved on) or stale (no result for staleReconcileTimeout). Clear even
+	// when cancelInFlightTask is nil, otherwise a lost result pins the node.
+	type reconcileAbort struct {
+		cancel func()
+		reason string
+	}
+	nodesToAbort := make(map[string]reconcileAbort)
+	now := time.Now()
 	b.mu.RLock()
 	for id, node := range b.nodes {
-		if node.State.ReconcileInfo != nil &&
-			(node.State.ReconcileInfo.Status != node.State.IntendedStatus ||
-				node.State.ReconcileInfo.PocStatus != node.State.PocIntendedStatus) {
-			if node.State.cancelInFlightTask != nil {
-				nodesToCancel[id] = node.State.cancelInFlightTask
-			}
+		info := node.State.ReconcileInfo
+		if info == nil {
+			continue
 		}
+		outdated := info.Status != node.State.IntendedStatus ||
+			info.PocStatus != node.State.PocIntendedStatus
+		expired := info.isExpired(now)
+		if !outdated && !expired {
+			continue
+		}
+		reason := "outdated"
+		if expired && !outdated {
+			reason = "stale"
+		}
+		nodesToAbort[id] = reconcileAbort{cancel: node.State.cancelInFlightTask, reason: reason}
 	}
 	b.mu.RUnlock()
 
-	for id, cancel := range nodesToCancel {
-		logging.Info("Cancelling outdated task for node", types.Nodes, "node_id", id, "blockHeight", blockHeight)
-		cancel()
+	for id, abort := range nodesToAbort {
+		logging.Info("Aborting in-flight reconcile for node", types.Nodes,
+			"node_id", id, "reason", abort.reason, "blockHeight", blockHeight)
+		if abort.cancel != nil {
+			abort.cancel()
+		}
 		b.mu.Lock()
 		if node, ok := b.nodes[id]; ok {
 			node.State.ReconcileInfo = nil
@@ -1036,6 +1074,7 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 		currentNode.State.ReconcileInfo = &ReconcileInfo{
 			Status:    intendedStatusCopy,
 			PocStatus: pocIntendedStatusCopy,
+			StartedAt: time.Now(),
 		}
 		currentNode.State.cancelInFlightTask = cancel
 
