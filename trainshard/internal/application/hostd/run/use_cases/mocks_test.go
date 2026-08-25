@@ -398,6 +398,8 @@ func (m *meshNetworkStub) Reach(context.Context, vo.ShardID, vo.NodeRef, mesh.Pe
 	return true, nil
 }
 
+func (m *meshNetworkStub) Interface(vo.NodeRef) (string, error) { return "ts0", nil }
+
 func (m *meshNetworkStub) Remove(_ context.Context, shardID vo.ShardID, _ vo.NodeRef) error {
 	m.rec.record("mesh.remove")
 	delete(m.keys, shardID)

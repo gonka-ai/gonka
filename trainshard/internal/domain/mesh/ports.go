@@ -20,6 +20,8 @@ type Network interface {
 	Remove(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) error
 	// Shards returns every shard this node still holds a key for
 	Shards(ctx context.Context, node vo.NodeRef) ([]vo.ShardID, error)
+	// Interface names the mesh link this node's run sees
+	Interface(node vo.NodeRef) (string, error)
 }
 
 // Hosts coordinator mesh calls to hosts

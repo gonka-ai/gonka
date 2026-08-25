@@ -15,6 +15,7 @@ import (
 	"trainshard/internal/application/coord/assembly"
 	"trainshard/internal/application/coord/ops"
 	"trainshard/internal/domain/shard"
+	"trainshard/internal/domain/shared"
 	"trainshard/internal/domain/shared/vo"
 	"trainshard/internal/infrastructure/adapters/chain"
 	clockadapter "trainshard/internal/infrastructure/adapters/clock"
@@ -30,7 +31,13 @@ func main() {
 		if errors.Is(err, flag.ErrHelp) {
 			return
 		}
-		fmt.Fprintln(os.Stderr, err)
+		// a refusal is named by its code, the same way a per-node fault is, or the caller is left
+		// with prose where the contract promised a code
+		if code := shared.CodeOf(err); code != shared.CodeInternal {
+			fmt.Fprintf(os.Stderr, "%s: %s\n", code, err)
+		} else {
+			fmt.Fprintln(os.Stderr, err)
+		}
 		os.Exit(1)
 	}
 }
