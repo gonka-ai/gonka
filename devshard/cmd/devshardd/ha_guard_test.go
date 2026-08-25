@@ -1,8 +1,11 @@
 package main
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"common/storage/mode"
@@ -102,4 +105,16 @@ func TestRequireHADeploymentStorageRejectsInvalidBoolean(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), envHADeployment)
 	require.Contains(t, err.Error(), "invalid boolean value")
+}
+
+func TestBuildAppChecksHAStorageBeforeSideEffects(t *testing.T) {
+	t.Setenv(envHADeployment, "on")
+	t.Setenv(mode.EnvStorageMode, "sqlite")
+	dataDir := filepath.Join(t.TempDir(), "data")
+
+	app, err := buildApp(context.Background(), runtimeConfig{DataDir: dataDir})
+	require.Error(t, err)
+	require.Nil(t, app)
+	_, statErr := os.Stat(dataDir)
+	require.ErrorIs(t, statErr, os.ErrNotExist)
 }
