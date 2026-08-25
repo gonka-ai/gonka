@@ -454,6 +454,35 @@ test-version-routing:
 		|| fail "learning v9 disrupted the existing v4 route"; \
 	docker exec gonka-vp-router test -s /var/lib/gonka-router/catalog-v2.json \
 		|| fail "inner router did not persist its learned catalog"; \
+	cache_before=$$(docker exec gonka-vp-router sha256sum \
+		/var/lib/gonka-router/catalog-v2.json | awk '{print $$1}'); \
+	printf '%s\n' '{"versions":[]}' > "$$tmpdir/catalog/versions.next"; \
+	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+	for i in $$(seq 20); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "projection-error"' >/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| jq -e '.state == "projection-error"' >/dev/null \
+		|| fail "an empty catalog bypassed the last-known-good removal check"; \
+	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/empty-catalog/chat)" = b ] \
+		|| fail "an empty catalog removed the admitted v9 route"; \
+	cache_after=$$(docker exec gonka-vp-router sha256sum \
+		/var/lib/gonka-router/catalog-v2.json | awk '{print $$1}'); \
+	[ "$$cache_after" = "$$cache_before" ] \
+		|| fail "an empty catalog replaced the persistent last-known-good snapshot"; \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
+		> "$$tmpdir/catalog/versions.next"; \
+	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+	for i in $$(seq 20); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "ready"' >/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| jq -e '.state == "ready"' >/dev/null \
+		|| fail "catalog reconciliation did not recover after the empty snapshot"; \
 	docker stop gonka-vp-catalog >/dev/null; \
 	docker rm -f gonka-vp-router >/dev/null; \
 	docker run -d --name gonka-vp-router --network $$net \

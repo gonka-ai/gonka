@@ -189,7 +189,7 @@ fetch_catalog() {
 
 validate_catalog_progression() {
     removed=$(awk '
-        NR == FNR { current[$0] = 1; next }
+        FILENAME == ARGV[1] { current[$0] = 1; next }
         !($0 in current) { print; exit }
     ' "$tmpdir/catalog.names" "$last_names")
     [ -z "$removed" ] || return 1
