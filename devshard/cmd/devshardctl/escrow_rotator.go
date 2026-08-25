@@ -12,6 +12,7 @@ import (
 
 	"common/chain"
 	devshardpkg "devshard"
+	"devshard/bridge"
 	"devshard/types"
 )
 
@@ -37,6 +38,7 @@ var (
 	gatewayCreateEscrowOnChain        = (*Gateway).createEscrowOnChain
 	gatewayCreateDepletionEscrow      func(*Gateway, context.Context, GatewaySettings, EscrowRotationModelSettings, string, uint64) (*CreateDevshardEscrowResult, error)
 	gatewaySettleDevshardOnChain      = (*Gateway).settleDevshardOnChain
+	gatewayChainBridge                = (*Gateway).chainBridge
 	gatewayQueryTxEscrowID            = defaultQueryTxEscrowID
 )
 
@@ -634,6 +636,25 @@ func defaultQueryTxEscrowID(ctx context.Context, client *chain.Client, settings 
 	return txMgr.GetTxEscrowID(ctx, txHash)
 }
 
+// settleTerminalErr reclassifies a settlement failure as bridge.ErrEscrowSettled
+// when the chain reports the escrow already settled. The chain rejects a
+// duplicate settle with an untyped string, and finalize against a settled escrow
+// fails the same way (every host answers 409), so without asking the chain the
+// retry loops cannot tell "try again later" from "nothing left to broadcast".
+// This also catches the case where our own settle landed but confirmation timed
+// out. Only reached on the failure path, so it costs one extra query.
+func (g *Gateway) settleTerminalErr(id string, cause error) error {
+	br := gatewayChainBridge(g)
+	if br == nil {
+		return cause
+	}
+	info, err := br.GetEscrow(id)
+	if err != nil || info == nil || !info.Settled {
+		return cause
+	}
+	return fmt.Errorf("%w: escrow %s: %v", bridge.ErrEscrowSettled, id, cause)
+}
+
 func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req adminSettleEscrowRequest) (*SettleDevshardEscrowResult, error) {
 	log.Printf("devshard_settle_start escrow=%s", id)
 	g.mu.Lock()
@@ -714,7 +735,7 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		if err := rt.session.Finalize(ctx); err != nil {
 			g.finalizeMu.Unlock()
 			log.Printf("devshard_settle_failed escrow=%s stage=finalize error=%q", id, err.Error())
-			return nil, err
+			return nil, g.settleTerminalErr(id, err)
 		}
 		g.finalizeMu.Unlock()
 		log.Printf("devshard_settle_finalize_completed escrow=%s phase=%s", id, sessionPhaseLabel(rt.proxy.sm.Phase()))
@@ -744,7 +765,7 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 	result, err := txMgr.SettleDevshardEscrow(ctx, signer, params)
 	if err != nil {
 		log.Printf("devshard_settle_failed escrow=%s stage=broadcast_or_confirm error=%q", id, err.Error())
-		return nil, err
+		return nil, g.settleTerminalErr(id, err)
 	}
 	log.Printf("devshard_settle_confirmed escrow=%s tx_hash=%s settler=%s", id, result.TxHash, result.Settler)
 	// A settled escrow is terminal: drop the resident runtime so its memory

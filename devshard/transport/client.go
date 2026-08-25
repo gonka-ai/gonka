@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -18,10 +17,14 @@ import (
 
 	json "github.com/goccy/go-json"
 
+	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"
 	"devshard/signing"
 	"devshard/types"
+
+	"common/chainoracle/blocks"
+	"common/httpguard"
 
 	devshardpkg "devshard"
 )
@@ -33,10 +36,10 @@ func getTransport(baseURL string) *http.Transport {
 		return t.(*http.Transport)
 	}
 	fallbackAddress := transportAddress(baseURL)
-	dialer := &net.Dialer{
-		Timeout:   30 * time.Second,
-		KeepAlive: 30 * time.Second,
-	}
+	// Dial-time SSRF guard: baseURL is a participant-controlled peer URL, so
+	// every dial is vetted against the private/internal ranges unless the
+	// process explicitly opts out (dev/test). See common/httpguard.
+	dialer := httpguard.NewDialer()
 	t := &http.Transport{
 		MaxIdleConnsPerHost: 4,
 		IdleConnTimeout:     120 * time.Second,
@@ -80,6 +83,18 @@ type ClientConfig struct {
 	// keys those other subsystems use.
 	ParticipantKey string
 	Admission      RequestAdmissionController
+
+	// HeightSync enables outbound Anchor sections on inference POST bodies (protobuf envelope).
+	HeightSync *heightsync.AnchorScheduler
+	// HeightSyncLogOracle optional Latest() for debug logs (local height vs peer).
+	HeightSyncLogOracle blocks.BlockOracle
+	// HeightSyncPeerTips shares observed peer tips across multiple HTTP clients
+	// in the same session (courier mode). When nil and HeightSync is set, the
+	// client allocates its own cache.
+	HeightSyncPeerTips *HeightSyncPeerTips
+	// HeightSyncRequestMutateHook runs after Decide and peer-tip carry-forward,
+	// before the request is marshaled. Tests / debug only.
+	HeightSyncRequestMutateHook func(sec *heightsync.HeightSyncSection, nonce uint64)
 }
 
 // RequestAdmissionController can reject participant-bound transport
@@ -109,9 +124,10 @@ type requestAdmissionBodyObserver interface {
 var ErrSSEStreamTruncated = errors.New("sse stream ended without [DONE] or devshard_receipt")
 
 type UpstreamStatusError struct {
-	Path       string
-	StatusCode int
-	Body       string
+	Path          string
+	StatusCode    int
+	Body          string
+	DevshardError string
 }
 
 func (e *UpstreamStatusError) Error() string {
@@ -135,6 +151,20 @@ func IsUpstreamEscrowNotFound(err error) bool {
 		strings.Contains(ue.Body, "escrow not found")
 }
 
+// IsUpstreamEscrowSettled returns true if err is an UpstreamStatusError whose
+// body indicates the host refused to serve an escrow already settled on chain.
+func IsUpstreamEscrowSettled(err error) bool {
+	var ue *UpstreamStatusError
+	if !errors.As(err, &ue) {
+		return false
+	}
+	if ue.DevshardError == DevshardErrorEscrowSettled {
+		return true
+	}
+	return ue.StatusCode == http.StatusConflict &&
+		strings.Contains(ue.Body, "escrow already settled")
+}
+
 func DefaultClientConfig() ClientConfig {
 	return ClientConfig{
 		InferenceTimeout: 30 * time.Minute,
@@ -153,6 +183,15 @@ type HTTPClient struct {
 	signer      signing.Signer
 	http        *http.Client
 	config      ClientConfig
+
+	heightSync          *heightsync.AnchorScheduler
+	heightSyncAudit     *heightsync.AuditRing
+	heightSyncLogOracle blocks.BlockOracle
+	heightSyncPeerTips  *HeightSyncPeerTips
+	heightSyncVerifier  signing.Verifier
+
+	oneShotMu               sync.Mutex
+	oneShotHeightSyncMutate func(*heightsync.HeightSyncSection, uint64)
 }
 
 // NewHTTPClient creates an HTTP client for the devshard transport layer.
@@ -162,7 +201,10 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 	if len(cfgs) > 0 {
 		cfg = cfgs[0]
 	}
-	return &HTTPClient{
+	if cfg.RoutePrefix == "" {
+		cfg.RoutePrefix = DefaultRoutePrefix()
+	}
+	hc := &HTTPClient{
 		baseURL:     baseURL,
 		routePrefix: cfg.RoutePrefix,
 		escrowID:    escrowID,
@@ -170,8 +212,20 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 		http: &http.Client{
 			Transport: DefaultHostConnectionTracker().WrapRoundTripper(getTransport(baseURL)),
 		},
-		config: cfg,
+		config:              cfg,
+		heightSync:          cfg.HeightSync,
+		heightSyncLogOracle: cfg.HeightSyncLogOracle,
+		heightSyncVerifier:  signing.NewSecp256k1Verifier(),
 	}
+	if cfg.HeightSync != nil {
+		hc.heightSyncAudit = heightsync.NewAuditRing(0)
+	}
+	if cfg.HeightSyncPeerTips != nil {
+		hc.heightSyncPeerTips = cfg.HeightSyncPeerTips
+	} else if cfg.HeightSync != nil {
+		hc.heightSyncPeerTips = NewHeightSyncPeerTips()
+	}
+	return hc
 }
 
 // WithoutAdmission returns a shallow copy of the client with admission control
@@ -195,6 +249,16 @@ func (c *HTTPClient) signatureHeader() string {
 
 func (c *HTTPClient) timestampHeader() string {
 	return HeaderTimestamp
+}
+
+func (c *HTTPClient) cloneWithSigner(signer signing.Signer, timeout time.Duration) *HTTPClient {
+	cfg := c.config
+	cfg.Admission = nil
+	if timeout > 0 {
+		cfg.QueryTimeout = timeout
+		cfg.GossipTimeout = timeout
+	}
+	return NewHTTPClient(c.baseURL, c.escrowID, signer, cfg)
 }
 
 // post sends a signed POST request, marshaling req to JSON and unmarshaling into resp.
@@ -244,19 +308,22 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 		return nil, fmt.Errorf("encode request: %w", err)
 	}
 
-	body, err := json.Marshal(ir)
+	body, contentType, outboundHS, err := c.wrapInferenceRequest(ctx, req, ir)
 	if err != nil {
-		return nil, fmt.Errorf("marshal json: %w", err)
+		return nil, err
 	}
 
-	resp, err := c.doPostRaw(ctx, "/sessions/"+c.escrowID+"/chat/completions", body)
+	resp, err := c.doPostRaw(ctx, "/sessions/"+c.escrowID+"/chat/completions", body, contentType)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if outboundHS != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		c.markHeightSyncPropagated(outboundHS)
+	}
 
-	contentType := resp.Header.Get("Content-Type")
-	if strings.HasPrefix(contentType, "text/event-stream") {
+	respContentType := resp.Header.Get("Content-Type")
+	if strings.HasPrefix(respContentType, "text/event-stream") {
 		cr := &countingReader{r: resp.Body}
 		result, err := c.parseSSEResponse(ctx, cr, stream, receiptHandler)
 		if result != nil {
@@ -401,6 +468,19 @@ func (c *HTTPClient) handleSSELine(
 			result.Nonce = receipt.Nonce
 			result.Receipt = receipt.Receipt
 			result.ConfirmedAt = receipt.ConfirmedAt
+			result.ObservedHeight = receipt.ObservedHeight
+			result.ObservedBlockHash = receipt.ObservedBlockHash
+		}
+		if rawHS, ok := envelope["height_sync"]; ok && string(rawHS) != "null" {
+			var hs heightsync.HeightSyncSection
+			if err := json.Unmarshal(rawHS, &hs); err == nil {
+				hs.Direction = "response"
+				c.ingestResponseHeightSync(&hs, result.Nonce, "SSE devshard_receipt line")
+				result.HasEnvelope = true
+				if hs.MainnetHeight > 0 {
+					result.EnvelopeHeight = uint64(hs.MainnetHeight)
+				}
+			}
 		}
 		if receiptHandler != nil {
 			receiptHandler()
@@ -501,8 +581,9 @@ func (c *HTTPClient) SendVerifyTimeout(ctx context.Context, req VerifyTimeoutReq
 	return &resp, nil
 }
 
-// ChallengeReceipt forwards diffs + payload to the executor and returns the receipt.
-func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.Diff) ([]byte, error) {
+// ChallengeReceipt forwards diffs + payload to the executor and returns the
+// receipt plus a snapshot of the executor mempool (recovery txs).
+func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
 	defer cancel()
 
@@ -510,7 +591,7 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 	for i, d := range diffs {
 		dj, err := DiffToJSON(d)
 		if err != nil {
-			return nil, fmt.Errorf("encode diff %d: %w", i, err)
+			return nil, nil, fmt.Errorf("encode diff %d: %w", i, err)
 		}
 		djList[i] = dj
 	}
@@ -522,28 +603,32 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("marshal: %w", err)
+		return nil, nil, fmt.Errorf("marshal: %w", err)
 	}
 	respBody, err := c.doPost(ctx, "/sessions/"+c.escrowID+"/challenge-receipt", body)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var resp ChallengeReceiptResponse
 	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, fmt.Errorf("unmarshal: %w", err)
+		return nil, nil, fmt.Errorf("unmarshal: %w", err)
 	}
-	return resp.Receipt, nil
+	mempool, err := DevshardTxsFromBytes(resp.Mempool)
+	if err != nil {
+		return nil, nil, fmt.Errorf("decode mempool: %w", err)
+	}
+	return resp.Receipt, mempool, nil
 }
 
 // VerifyTimeout implements user.TimeoutVerifier over HTTP.
-func (c *HTTPClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff) (bool, []byte, uint32, error) {
+func (c *HTTPClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff) (bool, []byte, uint32, []*types.DevshardTx, error) {
 	var djList []DiffJSON
 	if len(diffs) > 0 {
 		djList = make([]DiffJSON, len(diffs))
 		for i, d := range diffs {
 			dj, err := DiffToJSON(d)
 			if err != nil {
-				return false, nil, 0, fmt.Errorf("encode diff %d: %w", i, err)
+				return false, nil, 0, nil, fmt.Errorf("encode diff %d: %w", i, err)
 			}
 			djList[i] = dj
 		}
@@ -555,9 +640,13 @@ func (c *HTTPClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reas
 		Diffs:       djList,
 	})
 	if err != nil {
-		return false, nil, 0, err
+		return false, nil, 0, nil, err
 	}
-	return resp.Accept, resp.Signature, resp.VoterSlot, nil
+	mempool, err := DevshardTxsFromBytes(resp.Mempool)
+	if err != nil {
+		return false, nil, 0, nil, fmt.Errorf("decode mempool: %w", err)
+	}
+	return resp.Accept, resp.Signature, resp.VoterSlot, mempool, nil
 }
 
 // GetDiffs fetches stored diffs from a peer.
@@ -607,7 +696,7 @@ func (c *HTTPClient) GetMempool(ctx context.Context) ([]*types.DevshardTx, error
 
 // doPostRaw sends a signed POST request and returns the raw http.Response.
 // Caller is responsible for closing resp.Body.
-func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*http.Response, error) {
+func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte, contentType ...string) (*http.Response, error) {
 	url := c.baseURL + c.routePrefix + path
 	if err := c.allowRequest(path); err != nil {
 		return nil, err
@@ -623,7 +712,11 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	ct := "application/json"
+	if len(contentType) > 0 && contentType[0] != "" {
+		ct = contentType[0]
+	}
+	req.Header.Set("Content-Type", ct)
 	req.Header.Set(c.signatureHeader(), hex.EncodeToString(sig))
 	req.Header.Set(c.timestampHeader(), strconv.FormatInt(ts, 10))
 
@@ -638,9 +731,10 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*
 		resp.Body.Close()
 		c.observeResultWithBody(path, resp.StatusCode, string(respBody))
 		return nil, &UpstreamStatusError{
-			Path:       path,
-			StatusCode: resp.StatusCode,
-			Body:       string(respBody),
+			Path:          path,
+			StatusCode:    resp.StatusCode,
+			Body:          string(respBody),
+			DevshardError: resp.Header.Get(HeaderDevshardError),
 		}
 	}
 	c.observeResult(path, resp.StatusCode)
@@ -680,9 +774,10 @@ func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
 		respBody, _ := io.ReadAll(resp.Body)
 		c.observeResultWithBody(url, resp.StatusCode, string(respBody))
 		return nil, &UpstreamStatusError{
-			Path:       url,
-			StatusCode: resp.StatusCode,
-			Body:       string(respBody),
+			Path:          url,
+			StatusCode:    resp.StatusCode,
+			Body:          string(respBody),
+			DevshardError: resp.Header.Get(HeaderDevshardError),
 		}
 	}
 	c.observeResult(url, resp.StatusCode)

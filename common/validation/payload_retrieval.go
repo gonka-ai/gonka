@@ -2,6 +2,7 @@ package validation
 
 import (
 	"common/completionapi"
+	"common/httpguard"
 	"common/logging"
 	"common/utils"
 	"context"
@@ -34,9 +35,13 @@ var ErrEpochStale = errors.New("inference epoch too old, validation no longer us
 var ErrPayloadGone = errors.New("payload no longer available on executor")
 
 // PayloadRetrievalClient is the default HTTP client for payload retrieval.
-var PayloadRetrievalClient = &http.Client{
-	Timeout: 30 * time.Second,
-}
+//
+// The request URL is built from the executor's on-chain InferenceUrl, which the
+// executor controls, so this client carries the dial-time SSRF guard and refuses
+// redirects. Without it a participant could register a hostname that resolves
+// (or later rebinds) to loopback/RFC1918/cloud-metadata and make every validator
+// fetching its payloads connect there. See common/httpguard.
+var PayloadRetrievalClient = httpguard.NewNoRedirectClient(30 * time.Second)
 
 // PayloadResponse matches the executor endpoint response.
 // Used by both chain validation and devshard validation paths.

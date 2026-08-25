@@ -15,9 +15,12 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"common/httpguard"
+
 	devshardpkg "devshard"
 	"devshard/gossip"
 	"devshard/host"
+	"devshard/internal/boolvalue"
 	"devshard/observability"
 	"devshard/signing"
 	"devshard/state"
@@ -40,6 +43,17 @@ func main() {
 	cfg, err := loadConfig()
 	if err != nil {
 		log.Fatalf("load config: %v", err)
+	}
+
+	// Peer URLs are participant-controlled. Default secure; e2e/compose opt
+	// out via DEVSHARD_ALLOW_PRIVATE_ADDRESSES so Docker-internal gossip works.
+	allowPrivate, err := boolEnv("DEVSHARD_ALLOW_PRIVATE_ADDRESSES", false)
+	if err != nil {
+		log.Fatalf("DEVSHARD_ALLOW_PRIVATE_ADDRESSES: %v", err)
+	}
+	httpguard.SetAllowPrivate(allowPrivate)
+	if allowPrivate {
+		log.Printf("SSRF guard disabled: dials to private/internal addresses are allowed")
 	}
 
 	srv, gsp, err := buildServer(ctx, cfg)
@@ -76,6 +90,8 @@ func registerServer(g *echo.Group, srv *transport.Server, gsp *gossip.Gossip) {
 	}
 
 	g.POST("/sessions/:id/chat/completions", withAuth(true, srv.HandleInference))
+	g.POST("/sessions/:id/height-sync", withAuth(false, srv.HandleHeightSync))
+	g.POST("/sessions/:id/heightsync/repair", withAuth(false, srv.HandleHeightSyncRepair))
 	g.POST("/sessions/:id/verify-timeout", withAuth(false, srv.HandleVerifyTimeout))
 	g.POST("/sessions/:id/challenge-receipt", withAuth(false, srv.HandleChallengeReceipt))
 	g.POST("/sessions/:id/gossip/nonce", withAuth(false, srv.HandleGossipNonce))
@@ -362,7 +378,7 @@ func boolEnv(key string, fallback bool) (bool, error) {
 	if raw == "" {
 		return fallback, nil
 	}
-	value, err := strconv.ParseBool(raw)
+	value, err := boolvalue.Parse(raw)
 	if err != nil {
 		return false, fmt.Errorf("parse %s: %w", key, err)
 	}

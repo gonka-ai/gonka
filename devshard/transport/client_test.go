@@ -22,7 +22,7 @@ import (
 	"devshard/types"
 )
 
-func setupClientTestEnv(t *testing.T) (*HTTPClient, *httptest.Server, *signing.Secp256k1Signer, []types.SlotAssignment) {
+func setupClientTestEnv(t *testing.T) (*HTTPClient, *httptest.Server, *signing.Secp256k1Signer, []types.SlotAssignment, *host.Host) {
 	t.Helper()
 	hostSigner := testutil.MustGenerateKey(t)
 	userSigner := testutil.MustGenerateKey(t)
@@ -58,11 +58,16 @@ func setupClientTestEnv(t *testing.T) (*HTTPClient, *httptest.Server, *signing.S
 	cfg := DefaultClientConfig()
 	cfg.RoutePrefix = testRoutePrefix
 	client := NewHTTPClient(ts.URL, "escrow-1", userSigner, cfg)
-	return client, ts, userSigner, group
+	// Single-host groups map inference 1 to executor slot 0. Wire the user
+	// client as that peer so /verify-timeout can challenge-receipt itself
+	// (owner is allowed on challenge-receipt). Without this, executorClient
+	// is nil and a refused timeout is accepted.
+	srv.SetPeerClients(map[int]*HTTPClient{0: client})
+	return client, ts, userSigner, group, h
 }
 
 func TestHTTPClient_Send_RoundTrip(t *testing.T) {
-	client, _, userSigner, _ := setupClientTestEnv(t)
+	client, _, userSigner, _, _ := setupClientTestEnv(t)
 	ctx := context.Background()
 
 	diff := testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
@@ -94,6 +99,70 @@ func TestHTTPClient_Send_RoundTrip(t *testing.T) {
 	require.True(t, hasFinish, "mempool should contain MsgFinishInference")
 }
 
+func TestHTTPClient_ChallengeReceipt_ReturnsRecoveryMempool(t *testing.T) {
+	client, _, userSigner, _, _ := setupClientTestEnv(t)
+	ctx := context.Background()
+
+	diff := testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	payload := &host.InferencePayload{
+		Prompt:      testutil.TestPrompt,
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   50,
+		StartedAt:   1000,
+	}
+
+	receipt, mempool, err := client.ChallengeReceipt(ctx, 1, payload, []types.Diff{diff})
+	require.NoError(t, err)
+	require.NotEmpty(t, receipt, "challenge must return the executor receipt")
+	require.NotEmpty(t, mempool, "client must return executor mempool from challenge response")
+
+	var got *types.MsgConfirmStart
+	for _, tx := range mempool {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == 1 {
+			got = cs
+			break
+		}
+	}
+	require.NotNil(t, got, "returned mempool must include MsgConfirmStart")
+	require.Equal(t, receipt, got.ExecutorSig)
+}
+
+func TestHTTPClient_VerifyTimeout_ReturnsRecoveryMempool(t *testing.T) {
+	client, _, userSigner, _, h := setupClientTestEnv(t)
+	ctx := context.Background()
+
+	h.AddTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 99,
+		ExecutorSig: []byte("other"),
+		ConfirmedAt: 1,
+	}}})
+
+	diff := testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	payload := &host.InferencePayload{
+		Prompt:      testutil.TestPrompt,
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   50,
+		StartedAt:   1000,
+	}
+
+	accept, _, _, mempool, err := client.VerifyTimeout(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, []types.Diff{diff})
+	require.NoError(t, err)
+	require.False(t, accept, "alive executor must reject the refused timeout")
+	require.NotEmpty(t, mempool, "reject must return recovery mempool")
+
+	var got *types.MsgConfirmStart
+	for _, tx := range mempool {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == 1 {
+			got = cs
+			break
+		}
+	}
+	require.NotNil(t, got, "verify-timeout mempool must include MsgConfirmStart")
+	requireRecoveryOnlyFor(t, mempool, 1)
+}
+
 func TestHTTPClient_Send_ReturnsUpstreamStatusError(t *testing.T) {
 	userSigner := testutil.MustGenerateKey(t)
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -110,6 +179,24 @@ func TestHTTPClient_Send_ReturnsUpstreamStatusError(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, statusErr.StatusCode)
 	require.Contains(t, statusErr.Path, "/sessions/escrow-1/chat/completions")
 	require.Contains(t, statusErr.Body, "bad signature")
+}
+
+func TestHTTPClient_Send_CapturesDevshardErrorHeader(t *testing.T) {
+	userSigner := testutil.MustGenerateKey(t)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(HeaderDevshardError, DevshardErrorEscrowSettled)
+		http.Error(w, "escrow already settled: escrow 1", http.StatusConflict)
+	}))
+	t.Cleanup(ts.Close)
+
+	client := NewHTTPClient(ts.URL, "escrow-1", userSigner)
+	_, err := client.Send(context.Background(), host.HostRequest{Nonce: 1}, nil, nil)
+	require.Error(t, err)
+
+	var statusErr *UpstreamStatusError
+	require.True(t, errors.As(err, &statusErr))
+	require.Equal(t, DevshardErrorEscrowSettled, statusErr.DevshardError)
+	require.True(t, IsUpstreamEscrowSettled(err))
 }
 
 func TestHTTPClient_Send_NoPayloadUsesQueryTimeout(t *testing.T) {
@@ -133,7 +220,7 @@ func TestHTTPClient_Send_NoPayloadUsesQueryTimeout(t *testing.T) {
 }
 
 func TestHTTPClient_GetDiffs(t *testing.T) {
-	client, _, userSigner, _ := setupClientTestEnv(t)
+	client, _, userSigner, _, _ := setupClientTestEnv(t)
 	ctx := context.Background()
 
 	// Send an inference to create a stored diff.
@@ -159,7 +246,7 @@ func TestHTTPClient_GetDiffs(t *testing.T) {
 }
 
 func TestHTTPClient_GetMempool(t *testing.T) {
-	client, _, userSigner, _ := setupClientTestEnv(t)
+	client, _, userSigner, _, _ := setupClientTestEnv(t)
 	ctx := context.Background()
 
 	// Send an inference to populate mempool with MsgFinishInference.
@@ -221,7 +308,7 @@ func (r *truncatedReader) Read(p []byte) (int, error) {
 }
 
 func TestHTTPClient_Send_SSE(t *testing.T) {
-	client, _, userSigner, _ := setupClientTestEnv(t)
+	client, _, userSigner, _, _ := setupClientTestEnv(t)
 	ctx := context.Background()
 
 	var streamLines []string
@@ -280,7 +367,7 @@ func (s *stubAdmissionController) ObserveTransportFailure(participantKey, path s
 }
 
 func TestHTTPClient_Send_UsesAdmissionController(t *testing.T) {
-	client, _, userSigner, _ := setupClientTestEnv(t)
+	client, _, userSigner, _, _ := setupClientTestEnv(t)
 	ctx := context.Background()
 	admission := &stubAdmissionController{err: fmt.Errorf("participant request budget exhausted")}
 	client.config.ParticipantKey = "shared-host"

@@ -66,21 +66,21 @@ dev-logs: ## Follow dev overlay logs.
 .PHONY: citest-images citest-stack citest-stack-build list-citest-targets
 .PHONY: citest-validation-lease-race citest-escrow-longpoll
 .PHONY: citest-versiond-rolling-update citest-adversarial
-.PHONY: citest-observability citest-grpc-transport test-gateway-smoke
+.PHONY: citest-observability citest-grpc-transport citest-height-sync citest-height-sync-dapi-compat test-gateway-smoke
 
 # citest-images and citest-stack-build are build/helper rules, not standalone
 # suites, so they are excluded from the auto-discovered CI matrix.
 list-citest-targets: ## Print runnable citest suite targets (one per line) for the CI matrix.
 	@grep -hoE '^citest-[A-Za-z0-9_-]+:' $(firstword $(MAKEFILE_LIST)) \
 		| sed 's/://' \
-		| grep -vxE 'citest-images|citest-stack-build' \
+		| grep -vxE 'citest-images|citest-stack-build|citest-height-sync-dapi-compat' \
 		| sort -u
 .PHONY: obs-up obs-down
 # versiond-0 produces devshard-versiond:latest shared by all versiond-* hosts.
 CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai devshardctl versiond-router versiond-0
 STACK_CITEST_PATTERN := ^Test(StackSmoke|RouterStickiness|ParamsLongPoll|EpochSwitch|GatewayChat|Versiond.*|HAStaleStandbyCatchupIdempotent|LegacyVersionPinnedToSingleHost|SQLiteToPostgresHAMigration|ValidationLeaseRace.*)$$
 
-citest-images: ## Pull hub images and build all compose images required for citest.
+citest-images: gen-compose ## Pull hub images and build all compose images required for citest.
 	docker compose $(COMPOSE_BASE) pull devshard-postgres
 	docker compose $(COMPOSE_BASE) build $(CITEST_BUILD_SERVICES)
 
@@ -107,6 +107,17 @@ citest-grpc-transport: citest-images ## Phase 12b G1–G4 gRPC-only gateway cite
 citest-observability: citest-images ## Phase 10 O1 observability smoke (Jaeger spans + Loki logs + metrics).
 	$(MAKE) build-devshardd
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run TestO1_ObservabilitySmoke -count=1 -v -timeout 30m
+
+citest-height-sync: citest-images ## Height-sync container e2e against mock-dapi chainoracle (no heightsyncd).
+	$(MAKE) build-devshardd
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestHeightSync_' -count=1 -v -timeout 45m
+
+# Local-only: 0.2.15-v5 (mock /block/*) vs 0.2.15 (omit /block/*). Real images
+# ghcr.io/product-science/api:0.2.15-v5 and :0.2.15 cannot replace mock-dapi
+# (mock-chain is not CometBFT). Excluded from list-citest-targets.
+citest-height-sync-dapi-compat: citest-images ## Height-sync backward compat: new dapi /block/* vs old dapi 404.
+	$(MAKE) build-devshardd
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestHeightSync_(MockDapiBlockLatest|CadenceEmitsAnchor|LegacyDapiChatCompletes)$$' -count=1 -v -timeout 45m
 
 OBS_OVERLAY := $(COMPOSE_BASE) -f docker-compose.observability.yml -f docker-compose.observability.ip.yml
 

@@ -126,8 +126,8 @@ Confirmed in `versioned/internal/config/config.go` and `versiond-router/`:
 - `VERSIOND_ORACLE_URL` (**required**), `VERSIOND_BINARY_NAME` (default `devshard`),
   `VERSIOND_OVERRIDE_<v2>` (local binary), `VERSIOND_FORCE`, `VERSIOND_BIN_DIR`,
   `VERSIOND_DATA_DIR`, `VERSIOND_POLL_INTERVAL`. versiond listens on `:8080`.
-- versiond-router renders `VERSIOND_HOSTS` + `VERSIOND_PORT`, sticky `hash $sticky_key
-  consistent` on escrow id from `/<version>/sessions/<id>/…`.
+- versiond-router resolves `VERSIOND_POOL_HOST`, health-checks each address and
+  consistently hashes the escrow id from `/<version>/sessions/<id>/…`.
 - versiond polls `VERSIOND_ORACLE_URL` for the **approved-versions list** (which devshard
   versions to spawn). In testenv this oracle can be served by **mock-dapi** (`/versions`)
   or a tiny static stub. Note: this is a *separate* surface from the gRPC
@@ -860,7 +860,8 @@ injection via env and `/testenv/fault`.
 3. ✅ **Phase 6b keyring provisioning:** `testenv/keyring/materialize.go` — `gencompose` writes
    `./keyring/<host-id>/` Cosmos file keyrings from `hosts[].private_key_hex`; address checked
    against `hosts[].address`.
-4. ✅ `versiond-router`: `VERSIOND_HOSTS` from `hosts[].id`, `VERSIOND_PORT=8080`, sticky nginx image.
+4. ✅ `versiond-router`: pool aliases from `hosts[].id`, `VERSIOND_POOL_HOST=versiond-pool`,
+   `VERSIOND_PORT=8080`, sticky HAProxy image.
 5. ✅ Separate per-host `./data/<id>` dirs; router + versiond patterns from `local-test-net` /
    `deploy/join` overlays. **No `api` (dapi) service.**
 

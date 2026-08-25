@@ -38,9 +38,10 @@ func TestVersiondRollingUpdateSameVersionSHA(t *testing.T) {
 
 	for targetHostIndex := 0; targetHostIndex < 2; targetHostIndex++ {
 		t.Run(fmt.Sprintf("host_%d", targetHostIndex), func(t *testing.T) {
-			env := bootVersiondRollingStack(t, "citest-versiond-rolling-*", true, func(stack *harness.Stack, cfg *config.File) {
-				harness.PatchRouterVersiondHosts(t, stack.ComposePath, cfg.Hosts[targetHostIndex].ID)
-			})
+			env := bootVersiondRollingStack(t, "citest-versiond-rolling-*", true,
+				func(stack *harness.Stack, _ *config.File) {
+					harness.PatchComposeEnvKey(t, stack.ComposePath, "VERSIOND_NON_HA_VERSIONS", `""`)
+				})
 			client := harness.GatewayChatClient()
 
 			delayMs := 750
@@ -49,6 +50,16 @@ func TestVersiondRollingUpdateSameVersionSHA(t *testing.T) {
 			})
 
 			targetHost := env.hosts[targetHostIndex]
+			otherHost := env.hosts[1-targetHostIndex]
+			harness.Step(t, "stopping %s so every new session lands on %s", otherHost, targetHost)
+			env.stack.StopService(t, otherHost)
+			probeURL := harness.RouterSessionURL(env.eps.RouterHTTP,
+				env.cfg.Versiond.VersionName, "rolling-pin", "/healthz")
+			pinned := harness.AssertEventually(t, 60*time.Second, 250*time.Millisecond, func() bool {
+				upstream, err := harness.GetResponseHeader(client, probeURL, harness.StickyUpstreamHeader)
+				return err == nil && harness.HostIDForUpstream(env.cfg, upstream) == targetHost
+			})
+			require.True(t, pinned, "router did not withdraw stopped host %s", otherHost)
 			exerciseVersiondRollingFlip(t, &env, client, targetHost, env.oldVersion, env.newVersion, targetHost)
 		})
 	}
@@ -112,7 +123,7 @@ func exerciseVersiondRollingFlip(
 		t.Fatal("continuity probe did not stop")
 	}
 
-	requireNoOldDraining(t, env.stack, env.hosts, env.cfg.Versiond.VersionName, fromVersion.SHA256)
+	requireNoOldDraining(t, env.stack, []string{overlapHost}, env.cfg.Versiond.VersionName, fromVersion.SHA256)
 }
 
 // TestVersiondRollingUpdateHybridFallback verifies that the same sha-flip

@@ -45,6 +45,10 @@ func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder O
 
 	g.POST("/sessions/:id/chat/completions", withOwnerChat(binder, true,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleInference }))
+	g.POST("/sessions/:id/height-sync", withSessionAuth(resolver, false,
+		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleHeightSync }))
+	g.POST("/sessions/:id/heightsync/repair", withSessionAuth(resolver, false,
+		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleHeightSyncRepair }))
 	g.POST("/sessions/:id/verify-timeout", withSessionAuth(resolver, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleVerifyTimeout }))
 	g.POST("/sessions/:id/challenge-receipt", withSessionAuth(resolver, false,
@@ -160,6 +164,9 @@ func sessionResolutionStatus(err error) (observability.MetricStatus, observabili
 	if errors.Is(err, storage.ErrSessionNotFound) {
 		return observability.MetricStatusError, observability.ReasonSessionResolveErr
 	}
+	if errors.Is(err, bridge.ErrEscrowSettled) || errors.Is(err, storage.ErrSessionNotActive) {
+		return observability.MetricStatusError, observability.ReasonEscrowSettled
+	}
 	if errors.Is(err, bridge.ErrChainUnavailable) {
 		return observability.MetricStatusError, observability.ReasonGetEscrowErr
 	}
@@ -223,6 +230,9 @@ func sessionHTTPError(c echo.Context, err error) error {
 	}
 	if errors.Is(err, bridge.ErrChainUnavailable) {
 		return transport.HTTPError(c, http.StatusServiceUnavailable, transport.DevshardErrorChainUnavailable, err.Error())
+	}
+	if errors.Is(err, bridge.ErrEscrowSettled) || errors.Is(err, storage.ErrSessionNotActive) {
+		return transport.HTTPError(c, http.StatusConflict, transport.DevshardErrorEscrowSettled, err.Error())
 	}
 	if errors.Is(err, storage.ErrSessionVersionConflict) || errors.Is(err, storage.ErrSessionEpochConflict) {
 		return echo.NewHTTPError(http.StatusConflict, err.Error())

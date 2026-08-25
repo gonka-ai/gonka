@@ -31,13 +31,24 @@ func TestSessionConfigFromEnv_MapsEscrowTimeouts(t *testing.T) {
 }
 
 func TestBoolEnv(t *testing.T) {
-	t.Setenv("DEVSHARD_STUB_EXECUTION_HANG", "true")
+	const key = "DEVSHARD_STUB_EXECUTION_HANG"
 
-	value, err := boolEnv("DEVSHARD_STUB_EXECUTION_HANG", false)
+	t.Setenv(key, "on")
+	value, err := boolEnv(key, false)
 	require.NoError(t, err)
 	require.True(t, value)
 
-	t.Setenv("DEVSHARD_STUB_EXECUTION_HANG", "invalid")
-	_, err = boolEnv("DEVSHARD_STUB_EXECUTION_HANG", false)
+	t.Setenv(key, "f")
+	value, err = boolEnv(key, true)
+	require.NoError(t, err)
+	require.False(t, value)
+
+	t.Setenv(key, "")
+	value, err = boolEnv(key, true)
+	require.NoError(t, err)
+	require.True(t, value, "empty value must preserve the caller fallback")
+
+	t.Setenv(key, "invalid")
+	_, err = boolEnv(key, false)
 	require.Error(t, err)
 }

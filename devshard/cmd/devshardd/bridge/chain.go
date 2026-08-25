@@ -128,6 +128,7 @@ func (b *ChainBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo, error) {
 		ValidationRate:            e.ValidationRate,
 		VoteThresholdFactor:       e.VoteThresholdFactor,
 		EpochID:                   e.EpochIndex,
+		Settled:                   e.Settled,
 	}, nil
 }
 

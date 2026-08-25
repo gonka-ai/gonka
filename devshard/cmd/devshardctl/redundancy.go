@@ -4192,8 +4192,17 @@ func (e *Redundancy) checkEscrowMissing(ctx context.Context, attempts []*infligh
 		return
 	}
 	for _, inf := range attempts {
-		if inf.err != nil && transport.IsUpstreamEscrowNotFound(inf.err) {
+		if inf.err == nil {
+			continue
+		}
+		if transport.IsUpstreamEscrowNotFound(inf.err) {
 			logRequestStage(ctx, "escrow_not_found_reported_by_host",
+				"escrow", e.devshardID, "host", inf.hostID, "nonce", inf.nonce)
+			e.onEscrowMissing()
+			return
+		}
+		if transport.IsUpstreamEscrowSettled(inf.err) {
+			logRequestStage(ctx, "escrow_settled_reported_by_host",
 				"escrow", e.devshardID, "host", inf.hostID, "nonce", inf.nonce)
 			e.onEscrowMissing()
 			return

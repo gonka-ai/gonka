@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
 	"devshard"
+	"devshard/heightsync"
 	"devshard/host"
 	"devshard/internal/testutil"
 	"devshard/signing"
@@ -166,6 +168,155 @@ func TestRecoverSession_EmptySession(t *testing.T) {
 	session, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients)
 	require.NoError(t, err)
 	require.Equal(t, uint64(0), session.Nonce())
+}
+
+func setupRecoverableHeartbeatSession(
+	t *testing.T,
+	store storage.Storage,
+	height *uint64,
+	now *time.Time,
+) (*Session, []types.SlotAssignment, []*signing.Secp256k1Signer, *signing.Secp256k1Signer) {
+	t.Helper()
+	const numHosts = 3
+	hosts := make([]*signing.Secp256k1Signer, numHosts)
+	for i := range hosts {
+		hosts[i] = testutil.MustGenerateKey(t)
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(numHosts)
+	verifier := signing.NewSecp256k1Verifier()
+
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       "escrow-1",
+		Version:        testutil.RuntimeTestVersion,
+		CreatorAddr:    user.Address(),
+		Config:         config,
+		Group:          group,
+		InitialBalance: 100000,
+	}))
+
+	clients := make([]HostClient, numHosts)
+	for i := range hosts {
+		sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(100))
+		require.NoError(t, err)
+		clients[i] = &InProcessClient{Host: h}
+	}
+
+	userSM := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+	session, err := NewSession(userSM, user, "escrow-1", group, clients, verifier,
+		WithStorage(store),
+		WithHeightSyncCadence(10, uint64(numHosts)),
+		WithObservedHeight(func() (uint64, []byte, bool) {
+			h := *height
+			if h == 0 {
+				return 0, nil, false
+			}
+			return h, []byte{0xaa}, true
+		}),
+		WithHeartbeatClock(func() time.Time { return *now }),
+	)
+	require.NoError(t, err)
+	return session, group, hosts, user
+}
+
+func recoverHeartbeatSession(
+	t *testing.T,
+	store storage.Storage,
+	group []types.SlotAssignment,
+	hosts []*signing.Secp256k1Signer,
+	user *signing.Secp256k1Signer,
+	height *uint64,
+) *Session {
+	t.Helper()
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	clients := make([]HostClient, len(hosts))
+	for i := range hosts {
+		sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(100))
+		require.NoError(t, err)
+		clients[i] = &InProcessClient{Host: h}
+	}
+	session, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients)
+	require.NoError(t, err)
+	session.SetHeightSyncCadence(10, uint64(len(hosts)))
+	session.SetObservedHeight(func() (uint64, []byte, bool) {
+		h := *height
+		if h == 0 {
+			return 0, nil, false
+		}
+		return h, []byte{0xaa}, true
+	})
+	return session
+}
+
+func heartbeatTxForTurn(diffs []types.Diff, turnSeq uint64) *types.MsgHeartbeat {
+	for _, d := range diffs {
+		for _, tx := range d.Txs {
+			if inner := tx.GetHeartbeat(); inner != nil && inner.TurnSeq == turnSeq {
+				return inner
+			}
+		}
+	}
+	return nil
+}
+
+func TestRecoverSession_HeartbeatContinuesTurnSeq(t *testing.T) {
+	store := newTestStore(t)
+	var height uint64 = 100
+	now := time.Unix(1000, 0).UTC()
+	session, group, hosts, user := setupRecoverableHeartbeatSession(t, store, &height, &now)
+	ctx := context.Background()
+	interval := heightsync.DefaultHeartbeatConfig().Interval
+
+	for turn := uint64(1); turn <= 3; turn++ {
+		require.NoError(t, session.MaybeHeartbeat(ctx), "turn %d", turn)
+		rec := session.HeartbeatTurnTracker().Record(turn)
+		require.NotNil(t, rec, "turn %d", turn)
+		require.Equal(t, heightsync.TurnComplete, rec.State, "turn %d", turn)
+		if turn < 3 {
+			now = now.Add(interval + time.Second)
+		}
+	}
+	require.Equal(t, uint64(3), session.StateMachine().HeightSyncLatestTurnSeq())
+	require.NoError(t, session.FlushSnapshot())
+	require.NoError(t, session.Close())
+
+	recovered := recoverHeartbeatSession(t, store, group, hosts, user, &height)
+	t.Cleanup(func() { _ = recovered.Close() })
+
+	require.Equal(t, uint64(3), recovered.StateMachine().HeightSyncLatestTurnSeq())
+	prev := recovered.HeartbeatTurnTracker().Record(3)
+	require.NotNil(t, prev, "recovered producer must hold turn 3 before composing turn 4")
+	require.Equal(t, heightsync.TurnComplete, prev.State)
+
+	require.NoError(t, recovered.MaybeHeartbeat(ctx))
+	hb := heartbeatTxForTurn(recovered.Diffs(), 4)
+	require.NotNil(t, hb, "next heartbeat after recover must be turn_seq=4")
+	require.Len(t, hb.SyncVector, 3)
+	for i, ent := range hb.SyncVector {
+		require.Equal(t, types.AckStatus_ACKED, ent.Status, "slot %d", i)
+	}
+}
+
+func TestRecoverSession_HeartbeatEmptyStartsAtTurnOne(t *testing.T) {
+	store := newTestStore(t)
+	var height uint64 = 100
+	now := time.Unix(1000, 0).UTC()
+	session, group, hosts, user := setupRecoverableHeartbeatSession(t, store, &height, &now)
+	require.Equal(t, uint64(0), session.Nonce())
+	require.NoError(t, session.Close())
+
+	recovered := recoverHeartbeatSession(t, store, group, hosts, user, &height)
+	t.Cleanup(func() { _ = recovered.Close() })
+	require.Equal(t, uint64(0), recovered.StateMachine().HeightSyncLatestTurnSeq())
+
+	require.NoError(t, recovered.MaybeHeartbeat(context.Background()))
+	hb := heartbeatTxForTurn(recovered.Diffs(), 1)
+	require.NotNil(t, hb)
+	require.Nil(t, heartbeatTxForTurn(recovered.Diffs(), 2))
 }
 
 func TestRecoverSession_WarmKeyDelta(t *testing.T) {

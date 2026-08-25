@@ -1,0 +1,134 @@
+# Sticky router for N versiond instances.
+#
+# Backends:
+#   versiond_pool_<v> — one per version in VERSIOND_VERSIONS. Membership is the
+#                      whole pool; health is "can you serve <v>", asked of each
+#                      host. A host missing one version leaves that version's
+#                      ring and keeps serving the rest.
+#   versiond_ha_pool — the same pool asked the coarse "can you serve at all",
+#                      used for versions the router has not been told about
+#   versiond_legacy_<v> — one per version listed in non_ha.map; each asks the
+#                         per-version question of the single host that owns its
+#                         pre-HA SQLite session data
+#
+# Pool membership comes from DNS, health comes from active checks. Neither
+# requires a reload: adding a replica publishes another A record, and a draining
+# host fails /readyz. There is no router-side state to keep in sync.
+#
+# Failover: retry on connect failure, empty response, or upstream 502. Never on
+# 503 — that is the drain and HA-storage-guard answer, and retrying it would hit
+# the same condition on the next host. L7 retries are disabled for
+# non-idempotent methods so an inference is never executed twice.
+
+global
+    log stdout format raw local0 info
+    # Admin socket only; no TCP bind, so it cannot be published by accident.
+    stats socket /var/run/haproxy/haproxy.sock mode 660 level admin
+    stats timeout 30s
+
+defaults
+    log     global
+    mode    http
+    option  httplog
+    option  dontlognull
+    # Append the client address to X-Forwarded-For, as the nginx router did:
+    # the audit trail of who called must survive the extra hop.
+    option  forwardfor
+    timeout connect ${CONNECT_TIMEOUT_SECONDS}s
+    # SSE remains an ordinary HTX response. These are inactivity timeouts, so a
+    # stream may live indefinitely while either side keeps transferring data.
+    timeout client  ${STREAM_IDLE_SECONDS}s
+    timeout server  ${STREAM_IDLE_SECONDS}s
+    # This takes over only after an HTTP Upgrade/CONNECT. It does not govern SSE,
+    # and therefore has no ordering relationship with STREAM_IDLE_SECONDS.
+    timeout tunnel  ${TUNNEL_TIMEOUT_SECONDS}s
+    timeout http-request ${CONNECT_TIMEOUT_SECONDS}s
+    timeout http-keep-alive 10s
+    # Without `timeout check`, `inter` doubles as the entire check budget, and a
+    # host answering in just over a second reads as dead. /readyz here is a
+    # memory read, so 3s of tolerance costs nothing; a host that cannot answer a
+    # memory read in 3s is genuinely wedged.
+    #
+    # This value plus `inter` bounds how long the router can keep routing to a
+    # host after its readiness endpoint starts failing. A later lifecycle
+    # implementation must keep serving for longer than this detection bound.
+    timeout check 3s
+
+resolvers docker
+    nameserver dns 127.0.0.11:53
+    # The default 512-byte EDNS payload cannot carry all addresses represented
+    # by the 64 server-template slots. Keep DNS capacity aligned with pool size.
+    accepted_payload_size 8192
+    resolve_retries 3
+    timeout resolve 1s
+    timeout retry   1s
+    hold valid 5s
+    hold other 5s
+    hold refused 5s
+    hold nx 5s
+    hold timeout 5s
+
+frontend versiond_in
+    bind :8080
+    maxconn ${MAX_CONNECTIONS}
+
+    # This is a trusted router-to-devshardd signal, never client input. Backends
+    # below either stamp the deployment value or deliberately leave it absent.
+    http-request del-header Devshard-Ha
+
+    # Normalised path: the optional /devshard/ prefix is present only when
+    # genesis-proxy is not in front, and must not change routing. Field 2 is
+    # then the protocol version and field 4 the escrow id — field 1 is the
+    # empty string before the leading slash.
+    #
+    #   /devshard/v1/sessions/<escrow>/... -> /v1/sessions/<escrow>/...
+    #
+    # A capture group cannot be used here: HAProxy's converter-argument parser
+    # counts parentheses, so any '(' in a regsub argument swallows the comma
+    # that separates it from the replacement. field() avoids the question.
+    http-request set-var(txn.canonpath) path,regsub(^/devshard/,/)
+
+    # Routing key. Sessions hash by escrow id so one session keeps landing on
+    # the instance that holds its hot state; everything else hashes by path so
+    # non-session traffic still spreads. Derived here and never taken from a
+    # client header: it selects the upstream, so an attacker could otherwise
+    # pin themselves to a chosen host.
+    http-request set-var(txn.hashkey) var(txn.canonpath)
+    http-request set-var(txn.hashkey) var(txn.canonpath),field(4,/) if { var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+ }
+
+    http-request set-var(txn.ver) var(txn.canonpath),field(2,/)
+
+    http-request set-header X-Forwarded-Proto %[ssl_fc,iif(https,http)]
+    # Overwritten, never trusted from the client: it names the immediate peer.
+    http-request set-header X-Real-IP %[src]
+
+    # Reject an advertised oversize body before opening an upstream connection.
+    # HAProxy streams rather than buffers bodies, so devshardd independently
+    # enforces the same default against bytes actually read, including chunked
+    # requests and direct deployments without the public nginx proxy.
+    http-request deny deny_status 413 if { req.hdr_val(content-length) gt ${MAX_BODY_BYTES} }
+
+    # versiond's own route grammar has versionless endpoints, and their first
+    # path segment is not a version. Classifying by "field 2 is non-empty" would
+    # refuse /metrics, /stats and the session observability routes.
+    #   versioned/internal/proxy/proxy.go: isVersionlessObsPath
+    acl versionless_request var(txn.canonpath) -m reg ^/(healthz|readyz|metrics)$|^/stats(/|$)|^/sessions/[^/]+/(diffs|mempool|signatures)$
+
+    ${UNDECLARED_VERSION_GUARD}
+
+    # Legacy pinning wins: the map yields that version's backend on the one host
+    # that owns its SQLite data.
+    use_backend %[var(txn.ver),map_str(${NON_HA_MAP})] if { var(txn.ver),map_str(${NON_HA_MAP}) -m found }
+    # Then the version's own pool. The map yields a backend name; with no entry
+    # there is no match and the request falls through to the host-level pool,
+    # which the guard above has already restricted to non-version paths whenever
+    # any version is declared.
+    use_backend %[var(txn.ver),map_str(${VERSIONS_MAP})]
+    default_backend versiond_ha_pool
+
+${POOL_BACKENDS}
+
+frontend metrics
+    bind 127.0.0.1:8405
+    http-request use-service prometheus-exporter if { path /metrics }
+    http-request deny

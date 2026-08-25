@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"common/chain"
+	"common/chainoracle/blocks"
+	"common/httpguard"
 	mlnodeclient "common/nodemanager"
 	commrc "common/runtimeconfig"
 	"common/storage/payloads"
@@ -73,8 +75,21 @@ func (p phaseEpochProvider) CurrentEpochID() uint64 {
 }
 
 func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error) {
+	if err := requireHADeploymentStorage(); err != nil {
+		return nil, err
+	}
+
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create data dir %s: %w", cfg.DataDir, err)
+	}
+
+	// Wire the dial-time SSRF guard before anything can dial out. Guarded
+	// clients read the flag per dial, so this also covers the package-level
+	// validation.PayloadRetrievalClient constructed at init.
+	httpguard.SetAllowPrivate(cfg.AllowPrivateAddresses)
+	if cfg.AllowPrivateAddresses {
+		slog.Warn("SSRF guard disabled: dials to private/internal addresses are allowed",
+			"env", "DEVSHARD_ALLOW_PRIVATE_ADDRESSES")
 	}
 
 	var closers closeStack
@@ -277,10 +292,15 @@ func buildHostManager(
 	)
 	manager.SetAvailabilityProvider(availabilityTracker)
 	manager.SetMaxNonceProvider(runtimeparams.MaxNonceFromSnapshot(chainParams))
+	manager.SetParamsProvider(runtimeparams.FromSnapshot(chainParams))
 	manager.SetBinaryVersion(cfg.BinaryLogVersion)
+	if err := manager.SetHeightSyncFromEnv(ctx, chainRuntime.client); err != nil {
+		return nil, fmt.Errorf("height sync oracle: %w", err)
+	}
+	closers.Add(manager.CloseHeightSync)
 	chainBridge.OnSettlementFinalizedHandler(manager.HandleSettlementFinalized)
 
-	startHostEventsWarm(ctx, cfg, chainBridge, mlClient, store, closers)
+	startHostEventsWarm(ctx, cfg, chainBridge, mlClient, store, manager.HandleSettlementFinalized, closers)
 
 	if err := manager.RecoverSessions(); err != nil {
 		slog.Warn("recover sessions failed", "error", err)
@@ -303,6 +323,8 @@ func buildHostManager(
 
 	var lastCleanEpoch atomic.Uint64
 	chainRuntime.chainEvents.OnNewBlock(func(bctx context.Context, e events.NewBlockEvent) {
+		manager.ObserveChainHeader(blocks.HashOnlyHeader(e.BlockHeight, e.Time, e.ChainID, e.BlockHash))
+
 		currentEpoch := phase.EpochID()
 		if currentEpoch <= lastCleanEpoch.Load() {
 			return
@@ -332,13 +354,14 @@ func startHostEventsWarm(
 	chainBridge *devshardbridge.ChainBridge,
 	mlClient *mlnodeclient.Client,
 	store devshardstorage.Storage,
+	onSettled func(escrowID string) error,
 	closers *closeStack,
 ) {
 	if !cfg.HostEventsEnabled {
 		slog.Info("hostevents: escrow long-poll warm disabled (DEVSHARD_HOST_EVENTS_ENABLED=false)")
 		return
 	}
-	sink := newEscrowWarmSink(chainBridge, store, slog.Default())
+	sink := newEscrowWarmSink(chainBridge, store, slog.Default(), onSettled)
 	hostCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	closers.Add(func() {

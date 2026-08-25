@@ -1,43 +1,37 @@
-package events_test
+package events
 
 import (
-	"context"
+	"bytes"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-
-	"devshard/cmd/devshardd/events"
+	ctypes "github.com/cometbft/cometbft/rpc/core/types"
+	cmttypes "github.com/cometbft/cometbft/types"
+	"github.com/stretchr/testify/require"
 )
 
-func TestListener_StartWithUnreachableNode(t *testing.T) {
-	// Listener pointed at an unreachable endpoint — run() errors and Start reconnects,
-	// then the context timeout cancels it. No handlers should be called.
-	l := events.NewListener("http://localhost:26657")
-
-	var created []events.DevshardEscrowCreatedEvent
-	l.OnDevshardEscrowCreated(func(_ context.Context, e events.DevshardEscrowCreatedEvent) {
-		created = append(created, e)
+func TestParseNewBlockEvent_HashAndTime(t *testing.T) {
+	block := cmttypes.MakeBlock(12, nil, nil, nil)
+	block.Header.ChainID = "gonka-test"
+	block.Header.Time = time.Unix(1_700_000_000, 0).UTC()
+	block.Header.ValidatorsHash = bytes.Repeat([]byte{0xab}, 32)
+	want := block.Header.Hash().Bytes()
+	ev, ok := parseNewBlockEvent(ctypes.ResultEvent{
+		Data: cmttypes.EventDataNewBlock{
+			Block:   block,
+			BlockID: cmttypes.BlockID{Hash: want},
+		},
 	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	_ = l.Start(ctx)
-
-	assert.Empty(t, created)
+	require.True(t, ok)
+	require.Equal(t, int64(12), ev.BlockHeight)
+	require.Equal(t, "gonka-test", ev.ChainID)
+	require.Equal(t, block.Header.Time, ev.Time)
+	require.Equal(t, want, ev.BlockHash)
+	require.False(t, ev.Time.IsZero())
+	require.NotEmpty(t, ev.BlockHash)
 }
 
-func TestListener_OnNewBlock_NotCalledWhenUnreachable(t *testing.T) {
-	l := events.NewListener("http://localhost:26657")
-
-	var blocks []events.NewBlockEvent
-	l.OnNewBlock(func(_ context.Context, e events.NewBlockEvent) {
-		blocks = append(blocks, e)
-	})
-
-	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
-	defer cancel()
-	_ = l.Start(ctx)
-
-	assert.Empty(t, blocks)
+func TestParseNewBlockEvent_NilBlock(t *testing.T) {
+	_, ok := parseNewBlockEvent(ctypes.ResultEvent{Data: cmttypes.EventDataNewBlock{}})
+	require.False(t, ok)
 }

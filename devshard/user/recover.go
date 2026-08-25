@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 
+	"devshard/heightsync"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
@@ -159,7 +160,8 @@ func RecoverSession(
 		return nil, nil, fmt.Errorf("create state machine: %w", err)
 	}
 
-	sess, err := NewSession(sm, signer, escrowID, meta.Group, clients, verifier, WithStorage(store))
+	sess, err := NewSession(sm, signer, escrowID, meta.Group, clients, verifier,
+		WithStorage(store), WithHeartbeatConfig(sm.HeartbeatConfig()))
 	if err != nil {
 		return nil, nil, fmt.Errorf("create session: %w", err)
 	}
@@ -335,6 +337,7 @@ func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.Stat
 	if err := sm.RebuildSealedInferenceIndex(); err != nil {
 		return nil, nil, fmt.Errorf("rebuild sealed inference index: %w", err)
 	}
+	restoreHeartbeatProducer(sess, sm)
 	if sess.store == nil {
 		return sess, sm, nil
 	}
@@ -358,6 +361,32 @@ func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.Stat
 		return nil, nil, fmt.Errorf("rebuild validation obs: %w", err)
 	}
 	return sess, sm, nil
+}
+
+// restoreHeartbeatProducer continues turn_seq from the reconstructed log
+// (spec §10.4). The session tracker is a clone of the SM's so compose can
+// report turn N's sync_vector without sharing the SM mutex. Wall-clock
+// lastTurnover is not persisted: a recovered quiet session is due immediately
+// rather than waiting out Interval from a lost t_last. An in-flight turn
+// still suppresses the next span until TurnTimeout, measured from recovery.
+func restoreHeartbeatProducer(sess *Session, sm *state.StateMachine) {
+	if sess == nil || sm == nil {
+		return
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	sess.heartbeatTurnSeq = sm.HeightSyncLatestTurnSeq()
+	if clone := sm.HeightSyncCloneTurnTracker(); clone != nil {
+		sess.turnTracker = clone
+	}
+	if sess.heartbeat == nil {
+		return
+	}
+	if rec := sess.turnTracker.Latest(); rec != nil && rec.State == heightsync.TurnOpen {
+		sess.heartbeat.OpenTurn(sess.nowLocked())
+		return
+	}
+	sess.heartbeat.SettleTurn()
 }
 
 // saveSnapshot is the synchronous snapshot writer used during recovery.

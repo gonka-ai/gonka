@@ -10,6 +10,7 @@ import (
 
 	devshardpkg "devshard"
 	"devshard/bridge"
+	"devshard/heightsync"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
@@ -25,6 +26,11 @@ type HTTPSessionConfig struct {
 	StreamCallback   func(nonce uint64, line string) // optional: receives raw SSE data lines during inference
 	RoutePrefix      string                          // HTTP path prefix used to reach hosts; default devshard.DefaultRoutePrefix()
 	RequestAdmission transport.RequestAdmissionController
+	// ExtraClientConfig is merged into each transport.HTTPClient when non-nil.
+	// Used to attach courier-mode HeightSync (peer-tip cache; no local follower).
+	ExtraClientConfig *transport.ClientConfig
+	// Heartbeat overlays compiled height-sync scheduling knobs. Nil keeps defaults.
+	Heartbeat *heightsync.HeartbeatConfig
 	// Escrow is an optional pre-fetched chain escrow. When set, NewHTTPSession
 	// skips Bridge.GetEscrow and builds the group from this value.
 	Escrow *bridge.EscrowInfo
@@ -151,6 +157,14 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	clients := make([]HostClient, len(group))
 	participantKeys := make([]string, len(group))
 	clientCache := make(map[string]*transport.HTTPClient)
+	var sharedPeerTips *transport.HeightSyncPeerTips
+	if cfg.ExtraClientConfig != nil && cfg.ExtraClientConfig.HeightSync != nil {
+		if cfg.ExtraClientConfig.HeightSyncPeerTips != nil {
+			sharedPeerTips = cfg.ExtraClientConfig.HeightSyncPeerTips
+		} else {
+			sharedPeerTips = transport.NewHeightSyncPeerTips()
+		}
+	}
 	for i, slot := range group {
 		participantKeys[i] = slot.ValidatorAddress
 		if c, ok := clientCache[slot.ValidatorAddress]; ok {
@@ -162,17 +176,29 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 			sqlStore.Close()
 			return nil, nil, fmt.Errorf("get host info for %s: %w", slot.ValidatorAddress, err)
 		}
+		cc := transport.DefaultClientConfig()
+		if cfg.StreamCallback != nil {
+			cc.StreamCallback = cfg.StreamCallback
+		}
+		cc.RoutePrefix = routePrefix
+		if cfg.RequestAdmission != nil {
+			cc.ParticipantKey = slot.ValidatorAddress
+			cc.Admission = cfg.RequestAdmission
+		}
+		if cfg.ExtraClientConfig != nil {
+			if cfg.ExtraClientConfig.HeightSync != nil {
+				cc.HeightSync = cfg.ExtraClientConfig.HeightSync
+				cc.HeightSyncPeerTips = sharedPeerTips
+			}
+			if cfg.ExtraClientConfig.HeightSyncLogOracle != nil {
+				cc.HeightSyncLogOracle = cfg.ExtraClientConfig.HeightSyncLogOracle
+			}
+			if cfg.ExtraClientConfig.HeightSyncRequestMutateHook != nil {
+				cc.HeightSyncRequestMutateHook = cfg.ExtraClientConfig.HeightSyncRequestMutateHook
+			}
+		}
 		var clientCfgs []transport.ClientConfig
-		if cfg.StreamCallback != nil || routePrefix != "" || cfg.RequestAdmission != nil {
-			cc := transport.DefaultClientConfig()
-			if cfg.StreamCallback != nil {
-				cc.StreamCallback = cfg.StreamCallback
-			}
-			cc.RoutePrefix = routePrefix
-			if cfg.RequestAdmission != nil {
-				cc.ParticipantKey = slot.ValidatorAddress
-				cc.Admission = cfg.RequestAdmission
-			}
+		if cfg.StreamCallback != nil || routePrefix != "" || cfg.RequestAdmission != nil || cfg.ExtraClientConfig != nil {
 			clientCfgs = append(clientCfgs, cc)
 		}
 		c := transport.NewHTTPClient(info.URL, cfg.EscrowID, signer, clientCfgs...)
@@ -185,7 +211,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	if metaErr == nil {
 		warmKeyResolver, enableWarmKeyResolver := deferredWarmKeyResolver(cfg.Bridge.VerifyWarmKey)
 		session, recSM, recErr := RecoverSession(sqlStore, signer, verifier, cfg.EscrowID, sessionVersion, group, clients,
-			state.WithWarmKeyResolver(warmKeyResolver),
+			httpSessionSMOpts(cfg, state.WithWarmKeyResolver(warmKeyResolver))...,
 		)
 		if recErr != nil {
 			sqlStore.Close()
@@ -193,6 +219,10 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		}
 		enableWarmKeyResolver()
 		session.SetParticipantKeys(participantKeys)
+		if cfg.ExtraClientConfig != nil && cfg.ExtraClientConfig.HeightSync != nil {
+			hs := cfg.ExtraClientConfig.HeightSync
+			session.SetHeightSyncCadence(hs.K(), hs.SlotsNum())
+		}
 		return session, recSM, nil
 	}
 	if !errors.Is(metaErr, storage.ErrSessionNotFound) {
@@ -214,20 +244,37 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	}
 
 	sm, err := state.NewStateMachine(cfg.EscrowID, config, group, escrow.Amount, escrow.CreatorAddress, verifier, sqlStore,
-		state.WithWarmKeyResolver(cfg.Bridge.VerifyWarmKey),
-		state.WithVersion(sessionVersion),
+		httpSessionSMOpts(cfg, state.WithWarmKeyResolver(cfg.Bridge.VerifyWarmKey), state.WithVersion(sessionVersion))...,
 	)
 	if err != nil {
 		sqlStore.Close()
 		return nil, nil, fmt.Errorf("create state machine: %w", err)
 	}
 
-	session, err := NewSession(sm, signer, cfg.EscrowID, group, clients, verifier, WithStorage(sqlStore))
+	session, err := NewSession(sm, signer, cfg.EscrowID, group, clients, verifier, httpSessionOpts(cfg, WithStorage(sqlStore))...)
 	if err != nil {
 		sqlStore.Close()
 		return nil, nil, fmt.Errorf("create session: %w", err)
 	}
 	session.SetParticipantKeys(participantKeys)
+	if cfg.ExtraClientConfig != nil && cfg.ExtraClientConfig.HeightSync != nil {
+		hs := cfg.ExtraClientConfig.HeightSync
+		session.SetHeightSyncCadence(hs.K(), hs.SlotsNum())
+	}
 
 	return session, sm, nil
+}
+
+func httpSessionSMOpts(cfg HTTPSessionConfig, extra ...state.SMOption) []state.SMOption {
+	if cfg.Heartbeat != nil {
+		extra = append(extra, state.WithHeartbeatConfig(*cfg.Heartbeat))
+	}
+	return extra
+}
+
+func httpSessionOpts(cfg HTTPSessionConfig, extra ...SessionOption) []SessionOption {
+	if cfg.Heartbeat != nil {
+		extra = append(extra, WithHeartbeatConfig(*cfg.Heartbeat))
+	}
+	return extra
 }
