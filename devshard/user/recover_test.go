@@ -909,6 +909,57 @@ func TestRecoverSession_SnapshotOnly_RestoresSignatures(t *testing.T) {
 	}
 }
 
+func TestRecoverSession_SnapshotOnly_RestoresPendingTxDedupKeys(t *testing.T) {
+	store := newTestStore(t)
+	var height uint64 = 100
+	now := time.Unix(1000, 0).UTC()
+	session, group, hosts, user := setupRecoverableHeartbeatSession(t, store, &height, &now)
+	ctx := context.Background()
+
+	span, err := session.composeHeartbeatSpan()
+	require.NoError(t, err)
+	require.Len(t, span, 3)
+	session.dispatchHeartbeatSpan(ctx, span)
+	require.Len(t, heightAcksInTxs(session.PendingTxs()), 3)
+	session.mu.Lock()
+	ackDiff, _, err := session.composeDiffLocked(nil)
+	for i := range hosts {
+		session.hostSyncNonce[i] = ackDiff.Nonce
+	}
+	session.mu.Unlock()
+	require.NoError(t, err)
+	require.Equal(t, uint64(4), ackDiff.Nonce)
+	acks := heightAcksInDiffs([]types.Diff{ackDiff})
+	require.Len(t, acks, 3)
+	require.NoError(t, session.FlushSnapshot())
+	require.NoError(t, session.Close())
+
+	spy := &replaySpyStore{Storage: store}
+	recovered, _, err := RecoverSession(spy, user, signing.NewSecp256k1Verifier(),
+		"escrow-1", testutil.RuntimeTestVersion, group,
+		recoveryHeartbeatClients(t, group, hosts, user))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = recovered.Close() })
+	require.Equal(t, ackDiff.Nonce, recovered.Nonce())
+	require.Zero(t, spy.replayedRecords(ackDiff.Nonce), "must use snapshot-only early return")
+	require.Empty(t, recovered.Diffs(), "snapshot-only recovery keeps diffs empty when all hosts are caught up")
+
+	rootBefore, err := recovered.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
+	require.NoError(t, recovered.ProcessResponse(int(acks[0].SlotId), &host.HostResponse{
+		Nonce: recovered.Nonce(),
+		Mempool: []*types.DevshardTx{
+			{Tx: &types.DevshardTx_HeightAck{HeightAck: acks[0]}},
+		},
+	}, recovered.Nonce()))
+	require.Empty(t, heightAcksInTxs(recovered.PendingTxs()),
+		"duplicate height_ack from a durable pre-snapshot diff must not re-enter pending")
+	require.Equal(t, ackDiff.Nonce, recovered.Nonce())
+	rootAfter, err := recovered.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
+	require.Equal(t, rootBefore, rootAfter)
+}
+
 // buildRecoveryClients creates a fresh set of in-process host clients for
 // recovery, mirroring setupRecoverableSession's client factory.
 func buildRecoveryClients(t *testing.T, hosts []*signing.Secp256k1Signer, group []types.SlotAssignment, user *signing.Secp256k1Signer) []HostClient {
