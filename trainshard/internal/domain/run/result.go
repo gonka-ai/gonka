@@ -196,13 +196,14 @@ func ReportOf(node vo.NodeRef, state RunState, observed Observed) NodeReport {
 }
 
 type RunState struct {
-	Shard      vo.ShardID
-	ReservedAt time.Time
-	Spec       RunSpec
-	Revision   int
-	Start      bool
-	StopGrace  time.Duration
-	Images     []ImageRun
-	Fault      *shared.Fault
-	FaultAt    time.Time
+	Shard        vo.ShardID
+	ReservedAt   time.Time
+	Spec         RunSpec
+	Revision     int
+	Start        bool
+	StopGrace    time.Duration
+	Images       []ImageRun
+	Fault        *shared.Fault
+	FaultAt      time.Time
+	UnpreparedAt time.Time
 }

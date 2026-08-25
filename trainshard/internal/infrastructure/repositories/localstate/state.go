@@ -10,9 +10,10 @@ import (
 )
 
 type nodeFile struct {
-	ShardID    uint64    `json:"shard_id"`
-	ReservedAt time.Time `json:"reserved_at,omitzero"`
-	FaultAt    time.Time `json:"fault_at,omitzero"`
+	ShardID      uint64    `json:"shard_id"`
+	ReservedAt   time.Time `json:"reserved_at,omitzero"`
+	FaultAt      time.Time `json:"fault_at,omitzero"`
+	UnpreparedAt time.Time `json:"unprepared_at,omitzero"`
 
 	Image     string     `json:"image_digest,omitempty"`
 	Command   []string   `json:"command,omitempty"`
@@ -74,9 +75,10 @@ type peer struct {
 
 func toRunState(file nodeFile) (run.RunState, error) {
 	state := run.RunState{
-		Shard:      vo.ShardID(file.ShardID),
-		ReservedAt: file.ReservedAt,
-		FaultAt:    file.FaultAt,
+		Shard:        vo.ShardID(file.ShardID),
+		ReservedAt:   file.ReservedAt,
+		FaultAt:      file.FaultAt,
+		UnpreparedAt: file.UnpreparedAt,
 		Spec: run.RunSpec{
 			Image:     vo.ImageDigest(file.Image),
 			Command:   file.Command,
@@ -111,9 +113,10 @@ func toRunState(file nodeFile) (run.RunState, error) {
 
 func fromRunState(state run.RunState, keep *meshState) nodeFile {
 	file := nodeFile{
-		ShardID:    uint64(state.Shard),
-		ReservedAt: state.ReservedAt,
-		FaultAt:    state.FaultAt,
+		ShardID:      uint64(state.Shard),
+		ReservedAt:   state.ReservedAt,
+		FaultAt:      state.FaultAt,
+		UnpreparedAt: state.UnpreparedAt,
 
 		Image:     state.Spec.Image.String(),
 		Command:   state.Spec.Command,

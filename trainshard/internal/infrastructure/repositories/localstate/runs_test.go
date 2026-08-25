@@ -53,3 +53,33 @@ func TestADeployedRunSurvivesARestartOfTheDaemon(t *testing.T) {
 		t.Fatalf("got %+v, want the run left stopped with its grace", state)
 	}
 }
+
+// The clocks the host hands a node back by live in this file. A restart that forgets one restarts
+// the wait with it, so a node that has been unready for an hour reads as unready since just now
+// and is never handed back at all
+func TestTheClocksAHostHandsANodeBackByOutliveARestart(t *testing.T) {
+
+	dir, ctx := t.TempDir(), context.Background()
+	reservedAt := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	slipped := reservedAt.Add(time.Hour)
+
+	if err := run.RecordReservation(ctx, openRuns(t, dir), node, 7, reservedAt); err != nil {
+		t.Fatalf("reserve: %v", err)
+	}
+	state, _, err := openRuns(t, dir).Load(ctx, node)
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if err := run.TrackPreparedness(ctx, openRuns(t, dir), node, &state, run.Desired{Reserved: true}, run.Observed{}, slipped); err != nil {
+		t.Fatalf("track: %v", err)
+	}
+
+	reopened, _, err := openRuns(t, dir).Load(ctx, node)
+
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if !reopened.ReservedAt.Equal(reservedAt) || !reopened.UnpreparedAt.Equal(slipped) {
+		t.Fatalf("got reserved %v unready %v, want %v and %v", reopened.ReservedAt, reopened.UnpreparedAt, reservedAt, slipped)
+	}
+}
