@@ -152,6 +152,9 @@ The cache age threshold produces a stale diagnostic but never revokes an
 accepted route. Corrupt caches and malformed, empty, or capacity-exhaustion
 source inputs leave the last accepted routing map untouched and expose a
 degraded state through `catalog-status`.
+If only the supervised reconciler restarts while HAProxy remains live, a missing
+or corrupt cache is rebuilt from a consistent live projection before any repair
+is allowed to remove a route.
 Catalog-enabled Compose deployments mount that directory from a named volume so
 container replacement does not discard the last-known-good projection.
 While a valid catalog addition is waiting for capacity or its ready reserve, the

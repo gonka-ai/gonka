@@ -651,6 +651,46 @@ test-version-routing:
 	printf '%s\n' v10 v9 | LC_ALL=C sort > "$$tmpdir/want-projected-cache.names"; \
 	diff -u "$$tmpdir/want-projected-cache.names" "$$tmpdir/projected-cache.names" \
 		|| fail "persistent catalog history contains static or legacy names"; \
+	runtime_router_id=$$(docker inspect -f '{{.Id}}' gonka-vp-router); \
+	docker stop gonka-vp-catalog >/dev/null; \
+	for i in $$(seq 20); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "fetch-error"' >/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	reconciler_observed_at=$$(docker exec gonka-vp-router \
+		/usr/local/lib/router-runtime/catalog-status --state | jq -er .observed_at_unix); \
+	docker exec gonka-vp-router sh -c \
+		'printf "%s\n" "{not-json" > /var/lib/gonka-router/catalog.json'; \
+	docker exec gonka-vp-router sh -c \
+		'pid=$$(ps -o pid,comm | awk "\$$2 ~ /^catalog-recon/ { print \$$1; exit }"); [ -n "$$pid" ]; kill "$$pid"'; \
+	for i in $$(seq 30); do \
+		runtime_recovery_status=$$(docker exec gonka-vp-router \
+			/usr/local/lib/router-runtime/catalog-status --state 2>/dev/null || true); \
+		if printf '%s\n' "$$runtime_recovery_status" | jq -e \
+			--argjson previous "$$reconciler_observed_at" \
+			'.state == "fetch-error" and .observed_at_unix > $$previous' \
+				>/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	printf '%s\n' "$$runtime_recovery_status" | jq -e \
+		--argjson previous "$$reconciler_observed_at" \
+		'.state == "fetch-error" and .observed_at_unix > $$previous' >/dev/null \
+		|| fail "reconciler did not restart after its cache became corrupt"; \
+	[ "$$(docker inspect -f '{{.Id}}' gonka-vp-router)" = "$$runtime_router_id" ] \
+		|| fail "the corrupt-cache scenario replaced the HAProxy container"; \
+	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/live-recovery/chat)" = b ] \
+		|| fail "reconciler restart with a corrupt cache removed a live route"; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-cache read \
+		/var/lib/gonka-router/catalog.json 86400 > "$$tmpdir/runtime-recovered.names"; \
+	diff -u "$$tmpdir/want-projected-cache.names" "$$tmpdir/runtime-recovered.names" \
+		|| fail "live accepted routes did not repair the corrupt cache"; \
+	docker start gonka-vp-catalog >/dev/null; \
+	for i in $$(seq 20); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "ready"' >/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
 	cache_before=$$(docker exec gonka-vp-router sha256sum \
 		/var/lib/gonka-router/catalog.json | awk '{print $$1}'); \
 	printf '%s\n' '{"versions":[]}' > "$$tmpdir/catalog/versions.next"; \
