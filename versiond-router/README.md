@@ -121,15 +121,16 @@ the same read-only `/versions` snapshot consumed by versiond.
 HAProxy cannot create backends at runtime, so the image pre-renders a bounded
 set of disabled `versiond_dynamic_<n>` backends. For every new valid name the
 reconciler assigns a slot, enables its per-version checks, waits until the
-configured ready reserve is present, then atomically publishes the request-map
-entry. A batch of names is published as one projection; partial activation is
-not exposed.
+configured ready reserve is present, then publishes the request-map entry. For
+a batch, every new backend must meet the reserve before the first monotonic map
+addition. If publication is interrupted, the next poll verifies the live map
+and converges the remaining suffix.
 
 Accepted projections are written atomically under `/var/lib/gonka-router`.
 After restart, a fresh last-known-good cache keeps already learned routes alive
 while governance is temporarily unavailable. Corrupt, stale, duplicate,
-backwards-revision, removal, and capacity-exhaustion inputs leave the last
-accepted map untouched and expose a degraded state through `catalog-status`.
+removal, and capacity-exhaustion inputs leave the last accepted routing map
+untouched and expose a degraded state through `catalog-status`.
 
 Version names use the routing grammar
 `[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}`. Names outside it are rejected before they
@@ -140,12 +141,6 @@ reconcile continuously.
 Leaving both the bootstrap set and catalog URL empty selects coarse host-level
 routing. An HA deployment refuses that mode unless
 `VERSIOND_ROUTER_ALLOW_COARSE_READINESS=1` is explicit.
-
-Declared names are taken as governance wrote them. The one limit is that a name
-must be able to appear literally in a path segment: `/`, `?`, `#`, `%` and
-whitespace are refused at startup, because the request path would then not match
-the name at all. See [Configuration](#configuration) for how the three uses of a
-name are derived.
 
 For `/readyz?version=<v>`, a lifecycle-aware `versiond` answers `200` only while
 it accepts traffic and has a running child serving exactly that version. The
@@ -316,9 +311,8 @@ key is the name exactly as governance wrote it, because it is matched against th
 path segment; the health-check query is percent-encoded, because `+` in a query
 decodes to a space and the check would ask about a version that does not exist;
 and the backend identifier gets a hash appended when the name is not already a
-valid one. A name that cannot appear literally in a path segment — one containing
-`/`, `?`, `#`, `%` or whitespace — is refused at startup, because the request path
-would then not match the name at all.
+valid one. A name outside the routing grammar documented above is refused before
+any config or runtime-map mutation.
 
 ## Observability
 

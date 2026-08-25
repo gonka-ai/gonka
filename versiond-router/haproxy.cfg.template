@@ -54,10 +54,9 @@ defaults
     # memory read in 3s is genuinely wedged.
     #
     # This value plus `inter` bounds how long the router can keep routing to a
-    # host that has begun announcing its drain. versiond's MinDrainAnnounce is
-    # derived from these two numbers, and its contract test reads this file:
-    # raising either without revisiting the floor fails
-    # versioned/internal/config TestMinDrainAnnounceCoversTheRouterDetectionWorstCase.
+    # host that has begun announcing its drain. Any graceful host lifecycle
+    # must hold its readiness change for at least that detection window; change
+    # both sides of that contract together.
     timeout check 3s
 
 resolvers docker
