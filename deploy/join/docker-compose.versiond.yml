@@ -119,6 +119,19 @@ services:
     depends_on:
       - versiond
       - versiond2
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          if [ -n "$$VERSIOND_ROUTING_CATALOG_URL" ]; then
+            wget -q -O - 'http://127.0.0.1:8404/readyz?component=catalog';
+          else
+            wget -q -O - 'http://127.0.0.1:8080/healthz';
+          fi
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
     restart: always
 
   proxy:

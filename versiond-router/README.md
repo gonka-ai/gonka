@@ -340,8 +340,16 @@ any config or runtime-map mutation.
 | `/metrics` | `127.0.0.1:8405` inside the container | Prometheus exporter; loopback only, never published |
 | Runtime API | `/var/run/haproxy/haproxy.sock` | admin socket, no TCP bind |
 | Catalog status | `/usr/local/lib/router-runtime/catalog-status --state` | current reconciler state; reports `stale` when updates stop |
+| Catalog readiness | `GET http://127.0.0.1:8404/readyz?component=catalog` | `200` only when the enabled catalog is fully reconciled; independent of data-plane readiness for accepted routes |
 | `X-Upstream-Addr` | response header | which instance served the request |
 | `X-Versiond-Backend` | response header | HA backend name, or the stable `versiond_legacy` label for any pinned version |
+
+The Prometheus output includes the synthetic `router_catalog_status` backend:
+one active server means the enabled catalog is fully reconciled, while zero
+means the last accepted data-plane routes remain available but catalog changes
+are not converging. The join Compose healthcheck uses the dedicated catalog
+readiness endpoint when catalog mode is enabled; it does not feed HAProxy's
+versiond backend selection.
 
 Neither the metrics endpoint nor the admin socket is reachable from outside the
 container, and the container runs as the unprivileged `haproxy` user from the

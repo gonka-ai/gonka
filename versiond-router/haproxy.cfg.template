@@ -160,6 +160,12 @@ ${ROUTER_READY_RULES}
 backend router_admin_not_found
     http-request return status 404 content-type text/plain string "not found\n"
 
+# A synthetic no-traffic backend exports catalog convergence through HAProxy's
+# standard backend/server Prometheus metrics. The reconciler enables the server
+# only while the remote desired set and the accepted runtime projection agree.
+backend router_catalog_status
+    server catalog 127.0.0.1:1 ${CATALOG_STATUS_SERVER_STATE}
+
 frontend metrics
     bind 127.0.0.1:8405
 ${METRICS_NETWORK_BIND}

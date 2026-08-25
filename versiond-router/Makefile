@@ -50,6 +50,9 @@ test-join-compose:
 	jq -e '.services["versiond-router"].volumes | any(.type == "volume" and .source == "versiond-router-state" and .target == "/var/lib/gonka-router")' \
 		"$$tmp_json" >/dev/null \
 		|| { echo 'test-join-compose: router catalog state is not persistent' >&2; exit 1; }; \
+	jq -e '.services["versiond-router"].healthcheck.test | join(" ") | contains("readyz?component=catalog")' \
+		"$$tmp_json" >/dev/null \
+		|| { echo 'test-join-compose: router healthcheck does not expose catalog convergence' >&2; exit 1; }; \
 	grep -q 'VERSIOND_POOL_HOST: versiond-pool' "$$tmp" \
 		|| { echo 'test-join-compose: pool host is not rendered' >&2; exit 1; }; \
 	[ "$$(grep -c -- '- versiond-pool' "$$tmp")" -ge 2 ] \
@@ -323,6 +326,17 @@ test-version-routing:
 	done; \
 	docker exec gonka-vp-router test -s /var/lib/gonka-router/catalog.json \
 		|| fail "inner router did not retain the routing catalog cache"; \
+	for i in $$(seq 20); do \
+		if [ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+			'http://127.0.0.1:18134/readyz?component=catalog')" = 200 ]; then break; fi; \
+		sleep 0.5; \
+	done; \
+	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+		'http://127.0.0.1:18134/readyz?component=catalog')" = 200 ] \
+		|| fail "catalog convergence is not exposed through the admin readiness endpoint"; \
+	docker exec gonka-vp-router wget -q -O - http://127.0.0.1:8405/metrics \
+		| grep -Fq 'haproxy_backend_active_servers{proxy="router_catalog_status"} 1' \
+		|| fail "catalog convergence is not exposed through HAProxy metrics"; \
 	sleep 4; \
 	docker exec gonka-vp-router sh -c 'kill -STOP $$(pidof haproxy)' \
 		|| fail "could not suspend HAProxy for the Runtime API timeout test"; \
@@ -565,6 +579,12 @@ test-version-routing:
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
 		| jq -e '.state == "fetch-error"' >/dev/null \
 		|| fail "a continuously trickling catalog response bypassed the total deadline"; \
+	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+		'http://127.0.0.1:18134/readyz?component=catalog')" = 503 ] \
+		|| fail "catalog fetch failure remained green on the admin readiness endpoint"; \
+	docker exec gonka-vp-router wget -q -O - http://127.0.0.1:8405/metrics \
+		| grep -Fq 'haproxy_backend_active_servers{proxy="router_catalog_status"} 0' \
+		|| fail "catalog fetch failure remained green in HAProxy metrics"; \
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/slow-source/chat)" = b ] \
 		|| fail "a slow catalog response removed the accepted v9 route"; \
 	slow_observed_at=$$(docker exec gonka-vp-router \
@@ -597,6 +617,9 @@ test-version-routing:
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
 		| jq -e '.state == "ready"' >/dev/null \
 		|| fail "catalog reconciliation did not recover after bounded fetch failures"; \
+	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+		'http://127.0.0.1:18134/readyz?component=catalog')" = 200 ] \
+		|| fail "catalog readiness did not recover with reconciliation"; \
 	docker exec gonka-vp-router test -s /var/lib/gonka-router/catalog.json \
 		|| fail "inner router did not persist its learned catalog"; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-cache read \
@@ -1160,6 +1183,11 @@ test-render: test-local-compose test-join-compose test-catalog-cache test-hash-r
 		|| fail "the frontend must strip a client-supplied Devshard-Ha"; \
 	grep -Fq 'http-request set-header Devshard-Ha true if { nbsrv(versiond_ha_pool) gt 1 }' "$$tmpdir/allha.cfg" \
 		|| fail "unset GONKA_HA lost the runtime multi-host storage guard"; \
+	grep -Fq 'string "catalog disabled\n" if { path /readyz } { url_param(component) -m str catalog }' \
+		"$$tmpdir/allha.cfg" \
+		|| fail "static routing mode does not expose catalog readiness as not applicable"; \
+	grep -Eq '^    server catalog 127\.0\.0\.1:1[[:space:]]*$$' "$$tmpdir/allha.cfg" \
+		|| fail "static routing mode leaves the catalog status metric degraded"; \
 	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 		GONKA_HA=true \
 		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
@@ -1181,6 +1209,8 @@ test-render: test-local-compose test-join-compose test-catalog-cache test-hash-r
 		|| fail "the governance catalog cannot bootstrap an HA router without a static version list"; \
 	grep -q 'governance routing catalog' "$$tmpdir/catalog-only.cfg" \
 		|| fail "catalog mode does not fail closed for names absent from governance"; \
+	grep -q '^    server catalog 127\.0\.0\.1:1 disabled$$' "$$tmpdir/catalog-only.cfg" \
+		|| fail "catalog mode starts with a false-green status metric"; \
 	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 		VERSIOND_ROUTING_CATALOG_URL=ftp://catalog/versions \
 		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \

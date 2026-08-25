@@ -32,6 +32,8 @@ cache_file=${ROUTING_CATALOG_CACHE_FILE:-}
 cache_bin=${ROUTING_CATALOG_CACHE_BIN:-/usr/local/lib/router-runtime/catalog-cache}
 cache_max_age=${ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS:-86400}
 status_file=${ROUTING_CATALOG_STATUS_FILE:-}
+status_backend=${ROUTING_CATALOG_STATUS_BACKEND:-}
+status_server=${ROUTING_CATALOG_STATUS_SERVER:-}
 
 log() {
     printf '%s\n' "$component: $*" >&2
@@ -48,6 +50,14 @@ for value in "$poll_seconds" "$fetch_timeout" "$fetch_max_bytes" "$runtime_timeo
 done
 [ "$activation_min_ready" -le "$server_capacity" ] || {
     log "catalog activation reserve exceeds backend server capacity"
+    exit 1
+}
+[ -z "$status_backend" ] || [ -n "$status_server" ] || {
+    log "ROUTING_CATALOG_STATUS_SERVER is required with ROUTING_CATALOG_STATUS_BACKEND"
+    exit 1
+}
+[ -z "$status_server" ] || [ -n "$status_backend" ] || {
+    log "ROUTING_CATALOG_STATUS_BACKEND is required with ROUTING_CATALOG_STATUS_SERVER"
     exit 1
 }
 cache_refresh_seconds=$((cache_max_age / 2))
@@ -139,24 +149,33 @@ set_state() {
         esac
         last_state=$state
     fi
-    [ -n "$status_file" ] || return 0
-    directory=$(dirname -- "$status_file")
-    [ -d "$directory" ] || return 0
-    status_tmp=$(mktemp "$directory/.catalog-status.XXXXXX") || return 0
-    if jq -n \
-        --arg state "$state" \
-        --arg detail "$detail" \
-        --argjson observed_at_unix "$(date +%s)" \
-        --argjson used "$last_used" \
-        --argjson capacity "$backend_capacity" \
-        '{schema: 1, state: $state, detail: $detail,
-          observed_at_unix: $observed_at_unix,
-          dynamic_slots_used: $used, dynamic_slots_capacity: $capacity}' \
-        > "$status_tmp"; then
-        chmod 600 "$status_tmp"
-        mv -f "$status_tmp" "$status_file"
-    else
-        rm -f "$status_tmp"
+    if [ -n "$status_file" ]; then
+        directory=$(dirname -- "$status_file")
+        if [ -d "$directory" ]; then
+            status_tmp=$(mktemp "$directory/.catalog-status.XXXXXX") || status_tmp=
+            if [ -n "$status_tmp" ] && jq -n \
+                --arg state "$state" \
+                --arg detail "$detail" \
+                --argjson observed_at_unix "$(date +%s)" \
+                --argjson used "$last_used" \
+                --argjson capacity "$backend_capacity" \
+                '{schema: 1, state: $state, detail: $detail,
+                  observed_at_unix: $observed_at_unix,
+                  dynamic_slots_used: $used, dynamic_slots_capacity: $capacity}' \
+                > "$status_tmp"; then
+                chmod 600 "$status_tmp"
+                mv -f "$status_tmp" "$status_file"
+            else
+                [ -z "$status_tmp" ] || rm -f "$status_tmp"
+            fi
+        fi
+    fi
+    [ -n "$status_backend" ] || return 0
+    [ -S "$runtime_socket" ] || return 0
+    status_action=disable
+    [ "$state" = ready ] && status_action=enable
+    if ! runtime "$status_action server $status_backend/$status_server" >/dev/null 2>&1; then
+        log "cannot update the catalog status metric backend"
     fi
 }
 
