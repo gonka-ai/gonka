@@ -383,9 +383,11 @@ nginx image retains its compatible `/healthz` probe. A temporary catalog-source
 failure therefore does not mark a working last-known-good router unhealthy.
 Catalog diagnostics never include the configured source URL, so credentials or
 signed query parameters are not copied into status output or router logs.
-The shipped Compose overlay stops HAProxy with `SIGUSR1`, allowing active
-requests to drain for the bounded `VERSIOND_ROUTER_STOP_GRACE_PERIOD` (default
-`10s`) before Docker forces termination.
+Each router image owns its graceful-stop signal: the transitional nginx image
+uses `SIGQUIT`, while the HAProxy image declares `SIGUSR1`. The shipped Compose
+overlay only bounds the drain with `VERSIOND_ROUTER_STOP_GRACE_PERIOD` (default
+`10s`) before Docker forces termination, so selecting one image cannot override
+the shutdown contract of the other.
 
 Neither the metrics endpoint nor either Runtime API socket is reachable from
 outside the container, and the container runs as the unprivileged `haproxy` user

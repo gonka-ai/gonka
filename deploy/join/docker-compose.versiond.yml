@@ -87,9 +87,8 @@ services:
   versiond-router:
     container_name: versiond-router
     image: ${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15}
-    # Ask HAProxy to stop accepting new connections and drain active requests.
-    # Keep the bound wait short while this topology still has one router.
-    stop_signal: SIGUSR1
+    # Each image owns its graceful-stop signal: the transitional nginx image
+    # uses SIGQUIT, while the HAProxy image declares SIGUSR1.
     stop_grace_period: ${VERSIOND_ROUTER_STOP_GRACE_PERIOD:-10s}
     environment:
       # The HAProxy router discovers every replica through this shared DNS

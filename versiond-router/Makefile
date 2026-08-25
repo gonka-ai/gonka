@@ -29,8 +29,9 @@ test-local-compose:
 		|| { echo 'test-local-compose: stale static host list remains' >&2; exit 1; }; \
 	[ "$$(grep -c -- '- testnet-versiond-pool' "$$tmp")" -ge 3 ] \
 		|| { echo 'test-local-compose: not every versiond joins the pool alias' >&2; exit 1; }; \
-	grep -q 'stop_signal: SIGUSR1' "$$tmp" \
-		|| { echo 'test-local-compose: router soft-stop signal is missing' >&2; exit 1; }; \
+	jq -e '(.services["versiond-router"] | has("stop_signal") | not) and .services["versiond-router"].stop_grace_period == "10s"' \
+		"$$tmp_json" >/dev/null \
+		|| { echo 'test-local-compose: Compose overrides the image stop signal or loses the bounded grace' >&2; exit 1; }; \
 	echo 'test-local-compose: ok'
 
 test-join-compose:
@@ -56,9 +57,9 @@ test-join-compose:
 	jq -e '.services.proxy.depends_on["versiond-router"].condition == "service_healthy"' \
 		"$$tmp_json" >/dev/null \
 		|| { echo 'test-join-compose: public proxy does not wait for the router data plane' >&2; exit 1; }; \
-	jq -e '.services["versiond-router"].stop_signal == "SIGUSR1" and .services["versiond-router"].stop_grace_period == "10s"' \
+	jq -e '(.services["versiond-router"] | has("stop_signal") | not) and .services["versiond-router"].stop_grace_period == "10s"' \
 		"$$tmp_json" >/dev/null \
-		|| { echo 'test-join-compose: production router does not use a bounded soft stop' >&2; exit 1; }; \
+		|| { echo 'test-join-compose: Compose overrides the selected image stop signal or loses the bounded grace' >&2; exit 1; }; \
 	grep -q 'VERSIOND_POOL_HOST: versiond-pool' "$$tmp" \
 		|| { echo 'test-join-compose: pool host is not rendered' >&2; exit 1; }; \
 	grep -q 'VERSIOND_ROUTER_METRICS_BIND_HOST: versiond-router' "$$tmp" \
@@ -314,6 +315,9 @@ test-version-routing:
 	docker volume create $$state >/dev/null; \
 	docker build -q -t gonka-versiond-router-probe \
 		-f Dockerfile .. >/dev/null; \
+	[ "$$(docker image inspect gonka-versiond-router-probe \
+		--format '{{.Config.StopSignal}}')" = SIGUSR1 ] \
+		|| fail "HAProxy router image does not own its soft-stop signal"; \
 	cache_now=$$(date +%s); \
 	docker run --rm --user 0:0 -e CACHE_NOW=$$cache_now \
 		-v $$state:/state --entrypoint sh gonka-versiond-router-probe -c \

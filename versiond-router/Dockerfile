@@ -35,4 +35,8 @@ RUN chmod +x /usr/local/bin/entrypoint.sh \
 
 USER haproxy
 
+# HAProxy interprets SIGUSR1 as a soft stop: listeners close while established
+# connections continue until the runtime grace period expires.
+STOPSIGNAL SIGUSR1
+
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

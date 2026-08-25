@@ -90,9 +90,8 @@ services:
       context: .
       dockerfile: versiond-router/Dockerfile
     container_name: ${KEY_NAME}-versiond-router
-    # Compose starts the replacement only after this container exits. Bound the
-    # soft stop so one long stream cannot leave the test stack without a router.
-    stop_signal: SIGUSR1
+    # The image owns its graceful-stop signal. Bound the wait so one long stream
+    # cannot leave the test stack without a router during replacement.
     stop_grace_period: ${VERSIOND_ROUTER_STOP_GRACE_PERIOD:-10s}
     environment:
       VERSIOND_POOL_HOST: ${VERSIOND_POOL_HOST:-${KEY_NAME}-versiond-pool}
