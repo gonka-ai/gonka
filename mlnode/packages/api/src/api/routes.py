@@ -1,13 +1,13 @@
 from typing import Optional
-from importlib.metadata import version as pkg_version, PackageNotFoundError
 
 from fastapi import APIRouter, Request
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from api.service_management import (
     ServiceState,
     update_service_state
 )
+from api.version import get_mlnode_version
 from pow.service.manager import PowManager
 from api.inference.manager import InferenceManager
 from zeroband.service.manager import TrainManager
@@ -16,19 +16,13 @@ import api.proxy as proxy_module
 
 logger = create_logger(__name__)
 
-_MLNODE_VERSION = "unknown"
-try:
-    _MLNODE_VERSION = pkg_version("mlnode-api")
-except PackageNotFoundError:
-    logger.warning("mlnode-api package metadata not found, version will be reported as 'unknown'")
-
 router = APIRouter(
     tags=["API v1"],
 )
 
 
 class VersionedResponse(BaseModel):
-    version: str = _MLNODE_VERSION
+    version: str = Field(default_factory=get_mlnode_version)
 
 
 class StateResponse(VersionedResponse):

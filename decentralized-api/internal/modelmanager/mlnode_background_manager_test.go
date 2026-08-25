@@ -224,6 +224,45 @@ func TestIsInDownloadWindow(t *testing.T) {
 	})
 }
 
+func TestCheckNodeModelsUsesOverrideRepositoryAndCommit(t *testing.T) {
+	client := mlnodeclient.NewMockClient()
+	manager := NewMLNodeBackgroundManager(
+		&mockConfigManager{},
+		&mockPhaseTracker{},
+		&mockBroker{},
+		&mockClientFactory{client: client},
+		time.Minute,
+	)
+	commit := "0123456789abcdef0123456789abcdef01234567"
+	manager.checkNodeModels(apiconfig.InferenceNodeConfig{
+		Id:            "node-1",
+		Host:          "mlnode",
+		InferencePort: 5000,
+		PoCPort:       8080,
+		Models: map[string]apiconfig.ModelConfig{
+			"MiniMaxAI/MiniMax-M2.7": {
+				ModelOverride: &apiconfig.ModelOverride{
+					HfRepo:   "host/custom-minimax",
+					HfCommit: commit,
+				},
+			},
+		},
+	})
+
+	if client.LastModelStatusCheck == nil {
+		t.Fatal("expected model status check")
+	}
+	if client.LastModelStatusCheck.HfRepo != "host/custom-minimax" {
+		t.Fatalf("unexpected repo: %s", client.LastModelStatusCheck.HfRepo)
+	}
+	if client.LastModelStatusCheck.HfCommit == nil || *client.LastModelStatusCheck.HfCommit != commit {
+		t.Fatalf("unexpected commit: %+v", client.LastModelStatusCheck.HfCommit)
+	}
+	if client.LastModelDownload == nil || client.LastModelDownload.HfRepo != "host/custom-minimax" {
+		t.Fatalf("expected override download, got %+v", client.LastModelDownload)
+	}
+}
+
 // Test checkNodeModels
 func TestCheckNodeModels(t *testing.T) {
 	t.Run("model not found triggers download", func(t *testing.T) {
