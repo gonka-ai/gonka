@@ -23,10 +23,13 @@
 
 global
     log stdout format raw local0 info
-    # Admin socket only; no TCP bind, so it cannot be published by accident.
-    stats socket /var/run/haproxy/haproxy.sock mode 660 level operator
-    # The catalog reconciler is the only writer. Keeping a distinct mode-600
-    # socket preserves the read-only contract of the diagnostic Runtime API.
+    # Local diagnostic socket only; no TCP bind, so it cannot be published by
+    # accident. HAProxy's minimum `user` command level still permits Runtime API
+    # map mutations, so filesystem/container access is the security boundary.
+    stats socket /var/run/haproxy/haproxy.sock mode 660 level user
+    # Keep normal diagnostics away from broader server-state commands. This is
+    # least privilege and accidental-misuse protection, not UID isolation: both
+    # sockets live inside the same unprivileged container.
     stats socket /var/run/haproxy/reconciler.sock mode 600 level admin
     stats timeout 30s
 

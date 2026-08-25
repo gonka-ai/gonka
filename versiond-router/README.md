@@ -270,10 +270,12 @@ versiond_ha_pool
 One host is a separate server in every applicable backend, with its own health,
 so the same host can be serving `v4` and out of `v5`. Pinned versions appear as
 internal `versiond_legacy_<v>` backends, although their response header remains
-`versiond_legacy`. This is the router's whole state, and it is read-only — a
-formatter over the HAProxy Runtime API
-(`/var/run/haproxy/haproxy.sock`), kept off PATH because it is an internal diagnostic
-whose output the acceptance-test harness parses, not an operator CLI.
+`versiond_legacy`. `pool-status` itself performs only `show` commands: it is a
+formatter over the HAProxy Runtime API (`/var/run/haproxy/haproxy.sock`), kept
+off PATH because it is an internal diagnostic whose output the acceptance-test
+harness parses, not an operator CLI. The raw socket is not a read-only security
+interface; HAProxy permits map mutations even at its minimum `user` command
+level.
 
 **There is no manual drain.** There was, and it was wrong: HAProxy identifies a
 server by its slot in a `server-template`, and slots are reused. A drained host
@@ -339,7 +341,8 @@ any config or runtime-map mutation.
 | Endpoint | Where | Notes |
 | --- | --- | --- |
 | `/metrics` | `127.0.0.1:8405` inside the container | Prometheus exporter; loopback only, never published |
-| Runtime API | `/var/run/haproxy/haproxy.sock` | admin socket, no TCP bind |
+| Diagnostic Runtime API | `/var/run/haproxy/haproxy.sock` | local `level user` socket, no TCP bind; raw HAProxy map commands remain writable |
+| Reconciler Runtime API | `/var/run/haproxy/reconciler.sock` | local `level admin` socket used for catalog map and server-state changes |
 | Catalog status | `/usr/local/lib/router-runtime/catalog-status --state` | current reconciler state; reports `stale` when updates stop |
 | Catalog readiness | `GET http://127.0.0.1:8404/readyz?component=catalog` | `200` only when the enabled catalog is fully reconciled; independent of data-plane readiness for accepted routes |
 | `X-Upstream-Addr` | response header | which instance served the request |
@@ -352,11 +355,13 @@ are not converging. The join Compose healthcheck uses the dedicated catalog
 readiness endpoint when catalog mode is enabled; it does not feed HAProxy's
 versiond backend selection.
 
-Neither the metrics endpoint nor the admin socket is reachable from outside the
-container, and the container runs as the unprivileged `haproxy` user from the
-base image — root is used only at build time to install `socat` and hand over
-the config and socket directories. Scrape metrics with a sidecar or
-`docker compose exec`.
+Neither the metrics endpoint nor either Runtime API socket is reachable from
+outside the container, and the container runs as the unprivileged `haproxy` user
+from the base image — root is used only at build time to install packages and
+hand over the config and socket directories. Processes with filesystem access
+inside the container share that trust boundary; the two socket levels reduce
+accidental privilege, not a hostile same-UID process. Scrape metrics with a
+sidecar or `docker compose exec`.
 
 ## Tests
 

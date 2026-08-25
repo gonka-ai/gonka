@@ -1127,7 +1127,10 @@ test-render: test-local-compose test-join-compose test-catalog-cache test-hash-r
 		|| fail "unused dynamic slots are performing health checks"; \
 	grep -q 'stats socket /var/run/haproxy/reconciler.sock mode 600 level admin' \
 		"$$tmpdir/mixed.cfg" \
-		|| fail "the catalog writer does not have a dedicated restricted socket"; \
+		|| fail "the catalog reconciler does not have a dedicated admin socket"; \
+	grep -q 'stats socket /var/run/haproxy/haproxy.sock mode 660 level user' \
+		"$$tmpdir/mixed.cfg" \
+		|| fail "the diagnostic Runtime API exceeds HAProxy's minimum command level"; \
 	for version in v1 v2 v3; do \
 		backend=versiond_legacy_$$version; \
 		grep -q "^backend $$backend$$" "$$tmpdir/mixed.cfg" \
