@@ -318,20 +318,6 @@ ready_server_count() {
     '
 }
 
-prepare_map_transaction() {
-	map=$1
-	response=$(runtime "prepare map $map" 2>&1) || return 1
-	transaction=$(printf '%s\n' "$response" | awk '
-		$1 == "New" && $2 == "version" && $3 == "created:" && $4 ~ /^[0-9]+$/ {
-			print $4
-		}
-	')
-	case "$transaction" in
-		'' | *[!0-9]*) return 1 ;;
-	esac
-	printf '%s\n' "$transaction"
-}
-
 publish_projection() {
 	map=$projection_map
 	if ! awk '$4 == 1 { found = 1 } END { exit !found }' \
@@ -339,36 +325,26 @@ publish_projection() {
 		return 0
 	fi
 
-	transaction=$(prepare_map_transaction "$map") || return 1
-	# `prepare map` creates an empty replacement, not a copy. Seed the
-	# transaction with the complete live view before adding this projection.
-	while read -r _ key value; do
-		[ -n "$key" ] || continue
-		escaped_key=$(runtime_key "$key")
-		escaped_value=$(runtime_key "$value")
-		response=$(runtime "add map @$transaction $map $escaped_key $escaped_value" 2>&1) || return 1
-		[ -z "$response" ] || return 1
-	done < "$tmpdir/projection.current"
 	while read -r version _ backend publish_version_entry; do
+		[ "$publish_version_entry" -eq 1 ] || continue
 		escaped_backend=$(runtime_key "$backend")
-		if [ "$publish_version_entry" -eq 1 ]; then
-			escaped_key=$(runtime_key "$version")
-			response=$(runtime "add map @$transaction $map $escaped_key $escaped_backend" 2>&1) || return 1
-			[ -z "$response" ] || return 1
-		fi
-	done < "$tmpdir/projection.plan"
-	response=$(runtime "commit map @$transaction $map" 2>&1) || return 1
-	[ -z "$response" ] || return 1
-
-	while read -r version _ backend publish_version_entry; do
-		[ "$publish_version_entry" -ne 1 ] || \
+		escaped_key=$(runtime_key "$version")
+		response=
+		if ! response=$(runtime "add map $map $escaped_key $escaped_backend" 2>&1) || \
+			[ -n "$response" ]; then
+			# The socket may fail after HAProxy applied the mutation. Treat that
+			# ambiguous outcome as success only when the live map proves it.
 			map_value_is "$map" "$version" "$backend" || return 1
+			continue
+		fi
+		map_value_is "$map" "$version" "$backend" || return 1
 	done < "$tmpdir/projection.plan"
 }
 
 publish_catalog() {
-	# One canonical version key drives both data routing and parent admission.
-	# Publishing it makes both views visible at the same HAProxy commit point.
+	# Each ready version is one monotonic map addition. The same canonical key
+	# drives both data routing and parent admission, so no batch transaction or
+	# second readiness mutation is needed.
 	publish_projection || return 1
 	while read -r version _ _ publish_version_entry; do
 		[ "$publish_version_entry" -eq 1 ] || continue

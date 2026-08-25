@@ -440,6 +440,10 @@ test-version-routing:
 		curl -fsS -m 3 "http://127.0.0.1:18134/readyz?version=$$version" >/dev/null \
 			|| fail "catalog projection did not admit $$version"; \
 	done; \
+	docker exec gonka-vp-router sh -c \
+		'printf "%s\n" "show map" | socat - UNIX-CONNECT:/var/run/haproxy/haproxy.sock' \
+		| grep -E 'versions\.map.*curr_ver=0 next_ver=0' >/dev/null \
+		|| fail "catalog publication left prepared HAProxy map generations"; \
 	docker rm -f gonka-vp-a >/dev/null; \
 	docker run -d --name gonka-vp-a --network $$net --network-alias versiond-pool \
 		-e NAME=a -e SERVES=v4 -e GENERIC_READY=false \
