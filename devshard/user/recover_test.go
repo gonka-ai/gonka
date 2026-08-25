@@ -477,7 +477,11 @@ func TestRecoverSession_HeartbeatLateOldAckDoesNotCreditNewTurn(t *testing.T) {
 	rec2Before := recovered.HeartbeatTurnTracker().Record(2)
 	require.NotNil(t, rec2Before)
 	require.NotEmpty(t, rec2Before.Acks)
+	rec2AcksBefore := ackNoncesBySlot(rec2Before)
 	nonceAfterTurn2 := recovered.Nonce()
+	rootBefore, err := recovered.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
+	floorBefore, floorHashBefore, floorKnownBefore := recovered.StateMachine().HeightSyncFloorAsOf(nonceAfterTurn2 + 1)
 
 	require.NoError(t, recovered.ProcessResponse(span[0].hostIdx, &host.HostResponse{
 		Nonce:   recovered.Nonce(),
@@ -487,8 +491,15 @@ func TestRecoverSession_HeartbeatLateOldAckDoesNotCreditNewTurn(t *testing.T) {
 		"the late old ack was already recovered through catch-up and must not be queued again")
 	require.Equal(t, nonceAfterTurn2, recovered.Nonce())
 	rec2After := recovered.HeartbeatTurnTracker().Record(2)
-	require.Equal(t, rec2Before.Acks, rec2After.Acks,
+	require.Equal(t, rec2AcksBefore, ackNoncesBySlot(rec2After),
 		"a late turn_seq=1 ack must not count as an ack for turn_seq=2")
+	rootAfter, err := recovered.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
+	require.Equal(t, rootBefore, rootAfter, "duplicate old ack must not change state root")
+	floorAfter, floorHashAfter, floorKnownAfter := recovered.StateMachine().HeightSyncFloorAsOf(nonceAfterTurn2 + 1)
+	require.Equal(t, floorKnownBefore, floorKnownAfter)
+	require.Equal(t, floorBefore, floorAfter)
+	require.Equal(t, floorHashBefore, floorHashAfter)
 }
 
 func TestRecoverSession_HeartbeatAckFlushPersistedBeforeHostCatchup(t *testing.T) {
@@ -514,19 +525,35 @@ func TestRecoverSession_HeartbeatAckFlushPersistedBeforeHostCatchup(t *testing.T
 		"the ack-flush diff is durable before the target host receives it")
 	require.NoError(t, session.Close())
 
+	recoveryClients := recoveryHeartbeatClients(t, group, hosts, user)
+	targetHost := recoveryClients[ackHostIdx].(*InProcessClient).Host
+	require.Equal(t, uint64(0), targetHost.LatestNonce(),
+		"fresh recovered host has not received the persisted ack-flush diff yet")
+
 	recovered, _, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(),
 		"escrow-1", testutil.RuntimeTestVersion, group,
-		recoveryHeartbeatClients(t, group, hosts, user))
+		recoveryClients)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
 	recovered.SetHeightSyncCadence(10, uint64(len(hosts)))
 	recovered.SetObservedHeight(func() (uint64, []byte, bool) { return height, []byte{0xaa}, true })
 
 	require.Equal(t, uint64(4), recovered.Nonce())
+	require.Less(t, recovered.hostSyncNonce[ackHostIdx], ackDiff.Nonce,
+		"recovered cursor may still be behind the latest durable nonce")
 	require.Equal(t, heightsync.TurnComplete, recovered.HeartbeatTurnTracker().Record(1).State)
+	rootBefore, err := recovered.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
+	diffCountBefore := len(recovered.Diffs())
 	require.NoError(t, recovered.sendCatchUp(ctx, ackHostIdx))
 	require.Equal(t, ackDiff.Nonce, recovered.hostSyncNonce[ackHostIdx])
+	require.Equal(t, ackDiff.Nonce, targetHost.LatestNonce(),
+		"catch-up must apply the persisted ack-flush diff to the lagging host")
 	require.Equal(t, uint64(4), recovered.Nonce(), "catch-up must not compose a duplicate ack-flush diff")
+	require.Len(t, recovered.Diffs(), diffCountBefore, "catch-up replays existing diffs only")
+	rootAfter, err := recovered.StateMachine().ComputeStateRoot()
+	require.NoError(t, err)
+	require.Equal(t, rootBefore, rootAfter, "catch-up must not mutate sequencer state")
 	require.Empty(t, recovered.PendingTxs())
 }
 
@@ -636,6 +663,14 @@ func syncVectorStatuses(vec []*types.SyncVectorEntry) map[int]types.AckStatus {
 	out := make(map[int]types.AckStatus, len(vec))
 	for _, ent := range vec {
 		out[int(ent.SlotId)] = ent.Status
+	}
+	return out
+}
+
+func ackNoncesBySlot(rec *heightsync.SyncTurnRecord) map[uint32]uint64 {
+	out := make(map[uint32]uint64, len(rec.Acks))
+	for slot, ack := range rec.Acks {
+		out[slot] = ack.Nonce
 	}
 	return out
 }
