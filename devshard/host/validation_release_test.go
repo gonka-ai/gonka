@@ -3,6 +3,7 @@ package host
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -184,33 +185,49 @@ func mempoolHasVote(h *Host, infID uint64) bool {
 	return false
 }
 
+func cooldownUntil(h *Host, inferenceID uint64) (time.Time, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	until, ok := h.validationCooldown[inferenceID]
+	return until, ok
+}
+
+func collectValidationJobsLocked(h *Host) []validateJob {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.collectValidationJobs()
+}
+
 func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 	signFail := errors.New("sign failed")
 	tests := []struct {
-		name        string
-		status      types.InferenceStatus
-		skipApply   bool
-		validator   scriptedValidationEngine
-		allowErr    error
-		markErr     error
-		failSign    bool
-		wantRelease int
-		wantAllow   int
-		wantMark    int
-		wantVal     bool
-		wantVote    bool
+		name         string
+		status       types.InferenceStatus
+		skipApply    bool
+		validator    scriptedValidationEngine
+		allowErr     error
+		markErr      error
+		failSign     bool
+		wantRelease  int
+		wantAllow    int
+		wantMark     int
+		wantVal      bool
+		wantVote     bool
+		wantCooldown bool
 	}{
 		{
-			name:        "validate error",
-			skipApply:   true,
-			validator:   scriptedValidationEngine{err: errors.New("local ml 503")},
-			wantRelease: 1,
+			name:         "validate error",
+			skipApply:    true,
+			validator:    scriptedValidationEngine{err: errors.New("local ml 503")},
+			wantRelease:  1,
+			wantCooldown: true,
 		},
 		{
-			name:        "validation skipped",
-			skipApply:   true,
-			validator:   scriptedValidationEngine{err: devshard.ErrValidationSkipped},
-			wantRelease: 1,
+			name:         "validation skipped",
+			skipApply:    true,
+			validator:    scriptedValidationEngine{err: devshard.ErrValidationSkipped},
+			wantRelease:  1,
+			wantCooldown: true,
 		},
 		{
 			name:      "already leased",
@@ -218,33 +235,45 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 			validator: scriptedValidationEngine{err: devshard.ErrValidationAlreadyLeased},
 		},
 		{
-			name:        "inference disappeared",
-			skipApply:   true,
-			wantRelease: 1,
+			name:         "inference disappeared",
+			skipApply:    true,
+			wantRelease:  1,
+			wantCooldown: true,
 		},
 		{
-			name:        "status neither finished nor challenged",
-			status:      types.StatusStarted,
-			wantRelease: 1,
+			name:         "status neither finished nor challenged",
+			status:       types.StatusStarted,
+			wantRelease:  1,
+			wantCooldown: true,
 		},
 		{
-			name:        "sign fail finished",
-			status:      types.StatusFinished,
-			failSign:    true,
-			wantRelease: 1,
+			name:         "sign fail finished",
+			status:       types.StatusFinished,
+			failSign:     true,
+			wantRelease:  1,
+			wantCooldown: true,
 		},
 		{
-			name:        "sign fail challenged",
-			status:      types.StatusChallenged,
-			failSign:    true,
-			wantRelease: 1,
+			name:         "sign fail challenged",
+			status:       types.StatusChallenged,
+			failSign:     true,
+			wantRelease:  1,
+			wantCooldown: true,
 		},
 		{
-			name:        "allow submit refused",
+			name:        "allow submit refused: lost ownership",
 			status:      types.StatusFinished,
 			allowErr:    devshard.ErrValidationLeaseAbandoned,
 			wantRelease: 1,
 			wantAllow:   1,
+		},
+		{
+			name:         "allow submit refused: TTL exceeded",
+			status:       types.StatusFinished,
+			allowErr:     fmt.Errorf("%w: %w", devshard.ErrValidationLeaseAbandoned, devshard.ErrValidationLeaseTTLExceeded),
+			wantRelease:  1,
+			wantAllow:    1,
+			wantCooldown: true,
 		},
 		{
 			name:      "mark submitted failed after mempool add",
@@ -283,6 +312,12 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 			require.Equal(t, tt.wantMark, mark)
 			require.Equal(t, tt.wantVal, mempoolHasValidation(h, 1))
 			require.Equal(t, tt.wantVote, mempoolHasVote(h, 1))
+			until, onCooldown := cooldownUntil(h, 1)
+			require.Equal(t, tt.wantCooldown, onCooldown)
+			if tt.wantCooldown {
+				require.True(t, until.After(time.Now()), "cooldown must be in the future")
+				require.True(t, time.Until(until) <= validationCooldown)
+			}
 		})
 	}
 }
@@ -303,4 +338,99 @@ func TestHost_ChallengedInferencePublishesValidationVote(t *testing.T) {
 	_, mark, release := rec.counts()
 	require.Equal(t, 0, release)
 	require.Equal(t, 1, mark)
+	_, onCooldown := cooldownUntil(h, 1)
+	require.False(t, onCooldown)
+}
+
+func TestHost_FetchFailureVerdict_PublishesInvalidValidation(t *testing.T) {
+	rec := &recordingLeaseRecorder{}
+	val := &scriptedValidationEngine{result: &devshard.ValidateResult{
+		Valid:  false,
+		Reason: "executor_payload_unavailable",
+	}}
+	h, hosts, user := newTwoHostValidationHost(t, val)
+	h.validationRecorder = rec
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
+	h.validateAsync(context.Background(), testValidateJob())
+
+	require.True(t, mempoolHasValidation(h, 1), "fetch-failure verdict must publish MsgValidation")
+	var found bool
+	for _, tx := range h.MempoolTxs() {
+		if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+			require.False(t, v.Valid, "executor payload unavailability must vote false")
+			found = true
+		}
+	}
+	require.True(t, found)
+	_, mark, release := rec.counts()
+	require.Equal(t, 1, mark, "false verdict is submitted, not released")
+	require.Equal(t, 0, release)
+}
+
+func newTwoHostValidationHost(t *testing.T, validator devshard.ValidationEngine) (*Host, []*signing.Secp256k1Signer, *signing.Secp256k1Signer) {
+	t.Helper()
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := types.SessionConfig{
+		RefusalTimeout:   60,
+		ExecutionTimeout: 1200,
+		TokenPrice:       1,
+		VoteThreshold:    1,
+		ValidationRate:   10000,
+	}
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100000))
+	require.NoError(t, err)
+	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-1", group, nil,
+		WithGrace(10), WithValidator(validator), WithEpochID(1))
+	require.NoError(t, err)
+	return h, hosts, user
+}
+
+func TestHost_CollectValidationJobs_SkipsCooldownThenPicksAfterExpiry(t *testing.T) {
+	h, hosts, user := newTwoHostValidationHost(t, stub.NewValidationEngine())
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
+	h.Start()
+	t.Cleanup(h.Close)
+
+	h.mu.Lock()
+	h.validationCooldown[1] = time.Now().Add(time.Hour)
+	h.mu.Unlock()
+
+	jobs := collectValidationJobsLocked(h)
+	for _, job := range jobs {
+		require.NotEqual(t, uint64(1), job.inferenceID, "cooldown must block re-pick")
+	}
+
+	h.mu.Lock()
+	h.validationCooldown[1] = time.Now().Add(-time.Nanosecond)
+	delete(h.validating, 1)
+	h.mu.Unlock()
+
+	jobs = collectValidationJobsLocked(h)
+	var found bool
+	for _, job := range jobs {
+		if job.inferenceID == 1 {
+			found = true
+		}
+	}
+	require.True(t, found, "expired cooldown must allow re-pick")
+	_, still := cooldownUntil(h, 1)
+	require.False(t, still, "expired cooldown entry must be dropped on pick")
+}
+
+func TestHost_CollectValidationJobs_PrunesCooldownForEvictedInferences(t *testing.T) {
+	h, hosts, user := newTwoHostValidationHost(t, stub.NewValidationEngine())
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
+	h.Start()
+	t.Cleanup(h.Close)
+
+	h.mu.Lock()
+	h.validationCooldown[99] = time.Now().Add(time.Hour)
+	h.mu.Unlock()
+
+	_ = collectValidationJobsLocked(h)
+	_, ok := cooldownUntil(h, 99)
+	require.False(t, ok, "cooldown for an inference no longer in the live set must be pruned")
 }

@@ -76,15 +76,15 @@ func TestMemoryLease_SetResult_RequiresOwner(t *testing.T) {
 	_, err := store.Acquire(ctx, "escrow-1", 1, 10, "instance-1")
 	require.NoError(t, err)
 
-	err = store.SetResult(ctx, "escrow-1", 1, LeaseStatusSubmitted, "instance-2")
+	err = store.SetResult(ctx, "escrow-1", 1, 10, LeaseStatusSubmitted, "instance-2")
 	require.ErrorIs(t, err, ErrLeaseNotOwned)
 
-	owned, err := store.OwnsPendingLease(ctx, "escrow-1", 1, "instance-1")
+	owned, err := store.OwnsPendingLease(ctx, "escrow-1", 1, 10, "instance-1")
 	require.NoError(t, err)
 	require.True(t, owned)
 
-	require.NoError(t, store.SetResult(ctx, "escrow-1", 1, LeaseStatusSubmitted, "instance-1"))
-	owned, err = store.OwnsPendingLease(ctx, "escrow-1", 1, "instance-1")
+	require.NoError(t, store.SetResult(ctx, "escrow-1", 1, 10, LeaseStatusSubmitted, "instance-1"))
+	owned, err = store.OwnsPendingLease(ctx, "escrow-1", 1, 10, "instance-1")
 	require.NoError(t, err)
 	require.False(t, owned)
 }
@@ -105,9 +105,9 @@ func TestMemoryLease_SetResult_RejectsAfterStaleSteal(t *testing.T) {
 	_, _, err = store.AcquireOneStale(ctx, "escrow-1", "instance-2", 30*time.Minute)
 	require.NoError(t, err)
 
-	err = store.SetResult(ctx, "escrow-1", 1, LeaseStatusSubmitted, "instance-1")
+	err = store.SetResult(ctx, "escrow-1", 1, 10, LeaseStatusSubmitted, "instance-1")
 	require.ErrorIs(t, err, ErrLeaseNotOwned)
-	require.NoError(t, store.SetResult(ctx, "escrow-1", 1, LeaseStatusSubmitted, "instance-2"))
+	require.NoError(t, store.SetResult(ctx, "escrow-1", 1, 10, LeaseStatusSubmitted, "instance-2"))
 }
 
 // SQLite is single-instance, so its lease store is a deliberate no-op: Acquire
@@ -151,7 +151,7 @@ func TestSQLiteLease_SetResult_NoOp(t *testing.T) {
 	store := newTestSQLite(t)
 	ctx := context.Background()
 
-	require.NoError(t, store.SetResult(ctx, "escrow-1", 1, LeaseStatusSubmitted, "instance-1"))
+	require.NoError(t, store.SetResult(ctx, "escrow-1", 1, 10, LeaseStatusSubmitted, "instance-1"))
 }
 
 func TestSQLiteLease_Release_NoOp(t *testing.T) {
@@ -201,7 +201,7 @@ func runLeaseReleaseTests(t *testing.T, store LeaseStore) {
 		won, err := store.Acquire(ctx, "escrow-sub", 1, 10, "instance-1")
 		require.NoError(t, err)
 		require.True(t, won)
-		require.NoError(t, store.SetResult(ctx, "escrow-sub", 1, LeaseStatusSubmitted, "instance-1"))
+		require.NoError(t, store.SetResult(ctx, "escrow-sub", 1, 10, LeaseStatusSubmitted, "instance-1"))
 
 		require.NoError(t, store.Release(ctx, "escrow-sub", 1, 10, "instance-1"))
 
@@ -225,4 +225,37 @@ func runLeaseReleaseTests(t *testing.T, store LeaseStore) {
 	t.Run("missing is no-op", func(t *testing.T) {
 		require.NoError(t, store.Release(ctx, "escrow-missing", 99, 10, "instance-1"))
 	})
+}
+
+func TestMemoryLease_SetResultAndOwns_RequireEpoch(t *testing.T) {
+	runLeaseEpochScopeTests(t, NewMemory())
+}
+
+func TestPostgresLease_SetResultAndOwns_RequireEpoch(t *testing.T) {
+	runLeaseEpochScopeTests(t, newTestPostgres(t))
+}
+
+func runLeaseEpochScopeTests(t *testing.T, store LeaseStore) {
+	t.Helper()
+	ctx := context.Background()
+
+	won, err := store.Acquire(ctx, "escrow-ep", 1, 10, "instance-1")
+	require.NoError(t, err)
+	require.True(t, won)
+
+	owned, err := store.OwnsPendingLease(ctx, "escrow-ep", 1, 11, "instance-1")
+	require.NoError(t, err)
+	require.False(t, owned, "wrong epoch must not match")
+
+	owned, err = store.OwnsPendingLease(ctx, "escrow-ep", 1, 10, "instance-1")
+	require.NoError(t, err)
+	require.True(t, owned)
+
+	err = store.SetResult(ctx, "escrow-ep", 1, 11, LeaseStatusSubmitted, "instance-1")
+	require.ErrorIs(t, err, ErrLeaseNotOwned)
+
+	require.NoError(t, store.SetResult(ctx, "escrow-ep", 1, 10, LeaseStatusSubmitted, "instance-1"))
+	owned, err = store.OwnsPendingLease(ctx, "escrow-ep", 1, 10, "instance-1")
+	require.NoError(t, err)
+	require.False(t, owned)
 }

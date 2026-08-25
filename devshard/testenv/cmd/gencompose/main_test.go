@@ -103,6 +103,33 @@ func TestAssignSlots_MultiThreeHostsHAPlusSolo(t *testing.T) {
 	require.Equal(t, "versiond-0 versiond-1", versiondHosts(cfg))
 }
 
+func TestAssignSlots_MultiFourHostsHAPlusTwoSolos(t *testing.T) {
+	cfg := &config.File{
+		Versiond:       config.VersiondCfg{Mode: config.VersiondModeMulti},
+		Escrow:         config.EscrowMeta{Slots: 3, SlotURL: "http://router:8080"},
+		VersiondRouter: config.VersiondRouterCfg{Host: "versiond-router"},
+		Hosts: []config.HostCfg{
+			{ID: "versiond-0", Address: "gonka1ha"},
+			{ID: "versiond-1", Address: "gonka1replica"},
+			{ID: "versiond-2", Address: "gonka1solo-a"},
+			{ID: "versiond-3", Address: "gonka1solo-b"},
+		},
+	}
+	assignSlots(cfg)
+	require.Equal(t, []int{0}, cfg.Hosts[0].SlotIDs)
+	require.Empty(t, cfg.Hosts[1].SlotIDs)
+	require.Equal(t, []int{1}, cfg.Hosts[2].SlotIDs)
+	require.Equal(t, []int{2}, cfg.Hosts[3].SlotIDs)
+
+	syncChainSeed(cfg)
+	require.Equal(t, []string{"gonka1ha", "gonka1solo-a", "gonka1solo-b"}, cfg.Escrows[0].Slots)
+	require.Len(t, cfg.Participants, 3)
+	require.Equal(t, "gonka1solo-a", cfg.Participants[1].Address)
+	require.Equal(t, "http://versiond-2:8080", cfg.Participants[1].InferenceURL)
+	require.Equal(t, "gonka1solo-b", cfg.Participants[2].Address)
+	require.Equal(t, "http://versiond-3:8080", cfg.Participants[2].InferenceURL)
+}
+
 func TestVersiondKeyName_MultiHAPairAndSolo(t *testing.T) {
 	cfg := &config.File{
 		Versiond: config.VersiondCfg{Mode: config.VersiondModeMulti},
@@ -286,6 +313,8 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Contains(t, text, "DEVSHARD_VALIDATION_LEASE_TTL")
 	require.Contains(t, text, "DEVSHARD_VALIDATION_RETRY_INTERVAL")
 	require.Contains(t, text, "DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE")
+	require.Contains(t, text, "DEVSHARD_TESTENV_PAYLOAD_HTTP_STATUS")
+	require.Contains(t, text, "DEVSHARD_TESTENV_PAYLOAD_FAULT_VALIDATOR")
 	require.Contains(t, text, "devshardctl:")
 	require.Contains(t, text, "DEVSHARD_PRIVATE_KEY")
 	require.Contains(t, text, "DEVSHARD_ESCROW_ID")

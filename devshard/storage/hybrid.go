@@ -793,7 +793,7 @@ func (h *HybridStorage) AcquireOneStale(ctx context.Context, escrowID, instanceA
 	return ls.AcquireOneStale(ctx, escrowID, instanceAddr, ttl)
 }
 
-func (h *HybridStorage) SetResult(ctx context.Context, escrowID string, inferenceID uint64, status LeaseStatus, instanceAddr string) error {
+func (h *HybridStorage) SetResult(ctx context.Context, escrowID string, inferenceID, epochID uint64, status LeaseStatus, instanceAddr string) error {
 	b, err := h.routed(escrowID)
 	if err != nil {
 		return err
@@ -802,10 +802,10 @@ func (h *HybridStorage) SetResult(ctx context.Context, escrowID string, inferenc
 	if !ok {
 		return fmt.Errorf("storage backend does not support validation leases")
 	}
-	return ls.SetResult(ctx, escrowID, inferenceID, status, instanceAddr)
+	return ls.SetResult(ctx, escrowID, inferenceID, epochID, status, instanceAddr)
 }
 
-func (h *HybridStorage) OwnsPendingLease(ctx context.Context, escrowID string, inferenceID uint64, instanceAddr string) (bool, error) {
+func (h *HybridStorage) OwnsPendingLease(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) (bool, error) {
 	b, err := h.routed(escrowID)
 	if err != nil {
 		return false, err
@@ -814,7 +814,7 @@ func (h *HybridStorage) OwnsPendingLease(ctx context.Context, escrowID string, i
 	if !ok {
 		return false, fmt.Errorf("storage backend does not support validation leases")
 	}
-	return ls.OwnsPendingLease(ctx, escrowID, inferenceID, instanceAddr)
+	return ls.OwnsPendingLease(ctx, escrowID, inferenceID, epochID, instanceAddr)
 }
 
 func (h *HybridStorage) Release(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) error {

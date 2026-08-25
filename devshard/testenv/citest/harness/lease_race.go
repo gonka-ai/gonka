@@ -257,6 +257,23 @@ func WaitLeasePending(t *testing.T, stack *Stack, cfg *config.File, minPending i
 	return last
 }
 
+// WaitLeasePendingZero polls until pending==0 (released rows are deleted).
+func WaitLeasePendingZero(t *testing.T, stack *Stack, cfg *config.File, timeout time.Duration) LeaseSnapshot {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var last LeaseSnapshot
+	for time.Now().Before(deadline) {
+		last = stack.PostgresLeaseSnapshot(t, cfg)
+		if last.Pending == 0 {
+			return last
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("citest: pending leases still %d after %s (total=%d submitted=%d skipped=%d)",
+		last.Pending, timeout, last.Total, last.Submitted, last.Skipped)
+	return last
+}
+
 // WaitLeaseSubmittedGrowth waits until submitted count is >= minSubmitted.
 func WaitLeaseSubmittedGrowth(t *testing.T, stack *Stack, cfg *config.File, minSubmitted int, timeout time.Duration) LeaseSnapshot {
 	t.Helper()

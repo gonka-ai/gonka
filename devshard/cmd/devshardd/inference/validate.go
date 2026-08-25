@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -124,6 +126,7 @@ func fetchPayloadsFromExecutor(
 
 	payloadResp, err := fetchPayloadsHTTPWithRetry(
 		ctx, client, requestURL, validatorAddress, timestamp, epochID, signature,
+		commonvalidation.PayloadResponseByteLimit(req.OutputTokens),
 	)
 	if err != nil {
 		if errors.Is(err, commonvalidation.ErrPayloadGone) || ctx.Err() != nil {
@@ -163,7 +166,74 @@ func fetchPayloadsFromExecutor(
 
 const payloadFetchAttempts = 2
 
+// payloadFetchTimeout bounds the whole GET including body transfer. A streamed
+// or large payload can still complete after headers; shrinking this to the
+// TTFB budget would clip honest work.
+const payloadFetchTimeout = 30 * time.Second
+
+// payloadFetchHeaderTimeout is time-to-first-byte: dial, TLS, and response
+// headers. A silent executor fails here instead of occupying a worker for the
+// full body timeout on each attempt. Overridable in tests.
+var payloadFetchHeaderTimeout = 10 * time.Second
+
 var payloadFetchRetryBackoff = 500 * time.Millisecond
+
+func newPayloadFetchClient() *http.Client {
+	transport := cloneHTTPTransport()
+	transport.ResponseHeaderTimeout = payloadFetchHeaderTimeout
+	transport.TLSHandshakeTimeout = payloadFetchHeaderTimeout
+	transport.DialContext = (&net.Dialer{
+		Timeout:   payloadFetchHeaderTimeout,
+		KeepAlive: 30 * time.Second,
+	}).DialContext
+
+	// net/http ignores ResponseHeaderTimeout on HTTP/2, which would silently
+	// give a TLS executor the full body timeout to send headers. A payload GET
+	// is one small JSON document, so pin HTTP/1.1 to keep the TTFB bound.
+	transport.ForceAttemptHTTP2 = false
+	transport.TLSNextProto = map[string]func(string, *tls.Conn) http.RoundTripper{}
+
+	return &http.Client{
+		Timeout:   payloadFetchTimeout,
+		Transport: ttfbRoundTripper{base: transport},
+		CheckRedirect: func(*http.Request, []*http.Request) error {
+			return http.ErrUseLastResponse
+		},
+	}
+}
+
+func cloneHTTPTransport() *http.Transport {
+	if t, ok := http.DefaultTransport.(*http.Transport); ok && t != nil {
+		return t.Clone()
+	}
+	return &http.Transport{
+		Proxy:                 http.ProxyFromEnvironment,
+		MaxIdleConns:          100,
+		IdleConnTimeout:       90 * time.Second,
+		ExpectContinueTimeout: 1 * time.Second,
+	}
+}
+
+// ttfbRoundTripper records time-to-first-byte for a payload GET. RoundTrip
+// returns once the response headers are parsed and before the body is read, so
+// its duration is exactly TTFB.
+//
+// Only successful round trips are recorded. A blackholing executor would
+// otherwise fill the histogram with samples pinned at the header timeout,
+// inflating the very p99 the timeout is meant to be sized from.
+type ttfbRoundTripper struct {
+	base http.RoundTripper
+}
+
+func (t ttfbRoundTripper) RoundTrip(req *http.Request) (*http.Response, error) {
+	start := time.Now()
+	resp, err := t.base.RoundTrip(req)
+	if err != nil {
+		return nil, err
+	}
+	observability.ObservePayloadFetchTTFB(time.Since(start))
+	return resp, nil
+}
 
 func fetchPayloadsHTTPWithRetry(
 	ctx context.Context,
@@ -172,6 +242,7 @@ func fetchPayloadsHTTPWithRetry(
 	timestamp int64,
 	epochID uint64,
 	signature string,
+	maxBytes int64,
 ) (*commonvalidation.PayloadResponse, error) {
 	var lastErr error
 	for attempt := 1; attempt <= payloadFetchAttempts; attempt++ {
@@ -179,22 +250,29 @@ func fetchPayloadsHTTPWithRetry(
 			return nil, err
 		}
 		payloadResp, err := commonvalidation.FetchPayloadsHTTP(
-			ctx, client, requestURL, validatorAddress, timestamp, epochID, signature,
+			ctx, client, requestURL, validatorAddress, timestamp, epochID, signature, maxBytes,
 		)
 		if err == nil {
 			return payloadResp, nil
 		}
-		if errors.Is(err, commonvalidation.ErrPayloadGone) {
+		if errors.Is(err, commonvalidation.ErrPayloadGone) || errors.Is(err, commonvalidation.ErrPayloadTooLarge) {
 			return nil, err
 		}
 		lastErr = err
 		if attempt == payloadFetchAttempts {
 			break
 		}
+		timer := time.NewTimer(payloadFetchRetryBackoff)
 		select {
 		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
 			return nil, ctx.Err()
-		case <-time.After(payloadFetchRetryBackoff):
+		case <-timer.C:
 		}
 	}
 	return nil, lastErr

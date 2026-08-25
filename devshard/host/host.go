@@ -89,6 +89,7 @@ type AcceptanceChecker interface {
 const (
 	defaultValidationWorkers   = 20
 	defaultValidationQueueSize = 20_000
+	validationCooldown         = 30 * time.Second
 )
 
 // Host processes user requests: applies diffs, executes inference, signs state.
@@ -117,9 +118,10 @@ type Host struct {
 	slotToAddr  map[uint32]string   // slotID -> validator address
 	addrToSlots map[string][]uint32 // address -> all slotIDs owned
 
-	sortedSlots        []uint32            // deterministic slot order for this host
-	executing          map[uint64]struct{} // inference IDs with in-flight execution
-	validating         map[uint64]struct{} // inference IDs with queued or in-flight validation
+	sortedSlots        []uint32             // deterministic slot order for this host
+	executing          map[uint64]struct{}  // inference IDs with in-flight execution
+	validating         map[uint64]struct{}  // inference IDs with queued or in-flight validation
+	validationCooldown map[uint64]time.Time // inference ID -> not-before; bounds retry after a released attempt
 	validationQueue    chan validateJob
 	completedResponses map[uint64][]byte // inference ID -> cached ML response body
 	ownSeed            int64             // deterministic seed derived from signer + escrowID
@@ -208,6 +210,7 @@ func NewHost(
 		sortedSlots:        sortedSlots,
 		executing:          make(map[uint64]struct{}),
 		validating:         make(map[uint64]struct{}),
+		validationCooldown: make(map[uint64]time.Time),
 		completedResponses: make(map[uint64][]byte),
 		ownSeed:            ownSeed,
 	}
@@ -951,6 +954,11 @@ func (h *Host) collectValidationJobs() []validateJob {
 	if available <= 0 {
 		return nil
 	}
+	for id := range h.validationCooldown {
+		if _, live := st.Inferences[id]; !live {
+			delete(h.validationCooldown, id)
+		}
+	}
 	var jobs []validateJob
 
 	for infID, rec := range st.Inferences {
@@ -973,6 +981,12 @@ func (h *Host) collectValidationJobs() []validateJob {
 		}
 		if _, ok := h.validating[infID]; ok {
 			continue
+		}
+		if until, ok := h.validationCooldown[infID]; ok {
+			if time.Now().Before(until) {
+				continue
+			}
+			delete(h.validationCooldown, infID)
 		}
 		if h.hasMempoolValidationOrVote(infID) {
 			continue
@@ -1108,6 +1122,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	})
 	if err != nil {
 		if !errors.Is(err, devshard.ErrValidationAlreadyLeased) {
+			h.stampValidationCooldown(job.inferenceID)
 			h.releaseValidationLease(ctx, job.inferenceID)
 		}
 		// Payload already pruned on the executor: the validation window is
@@ -1133,6 +1148,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 
 	rec, ok := h.sm.GetInference(job.inferenceID)
 	if !ok {
+		h.stampValidationCooldown(job.inferenceID)
 		h.releaseValidationLease(ctx, job.inferenceID)
 		observability.FailValidationFinished(ctx, h.escrowID,
 			observability.ReasonInferenceDisappeared, observability.WhereHostValidate,
@@ -1160,6 +1176,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		}
 		proposerSig, err := h.signProposer(msg)
 		if err != nil {
+			h.stampValidationCooldown(job.inferenceID)
 			h.releaseValidationLease(ctx, job.inferenceID)
 			observability.LogValidationOrphan(ctx, h.escrowID,
 				observability.ReasonSignValidationErr, observability.WhereHostPublishValidation,
@@ -1185,6 +1202,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		}
 		proposerSig, err := h.signProposer(msg)
 		if err != nil {
+			h.stampValidationCooldown(job.inferenceID)
 			h.releaseValidationLease(ctx, job.inferenceID)
 			observability.LogValidationOrphan(ctx, h.escrowID,
 				observability.ReasonSignVoteErr, observability.WhereHostPublishValidation,
@@ -1202,6 +1220,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		tx = &types.DevshardTx{Tx: &types.DevshardTx_ValidationVote{ValidationVote: msg}}
 		validationTx = "validation_vote"
 	default:
+		h.stampValidationCooldown(job.inferenceID)
 		h.releaseValidationLease(ctx, job.inferenceID)
 		observability.IncValidation(observability.StageVotePublished, observability.MetricStatusError)
 		observability.Log(ctx, observability.LevelInfo, "validation skipped after status changed", observability.StageVotePublished, observability.WhereHostPublishValidation, h.escrowID, observability.ReasonValidationStatusChanged, nil,
@@ -1217,6 +1236,9 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 
 	if h.validationRecorder != nil {
 		if err := h.validationRecorder.AllowValidationSubmit(ctx, h.escrowID, job.inferenceID); err != nil {
+			if errors.Is(err, devshard.ErrValidationLeaseTTLExceeded) {
+				h.stampValidationCooldown(job.inferenceID)
+			}
 			h.releaseValidationLease(ctx, job.inferenceID)
 			logging.Info("validation submit abandoned after lease check",
 				"subsystem", "host",
@@ -1257,6 +1279,12 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 			}
 		}
 	}
+}
+
+func (h *Host) stampValidationCooldown(inferenceID uint64) {
+	h.mu.Lock()
+	h.validationCooldown[inferenceID] = time.Now().Add(validationCooldown)
+	h.mu.Unlock()
 }
 
 func (h *Host) releaseValidationLease(ctx context.Context, inferenceID uint64) {

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -20,28 +21,30 @@ import (
 // stubLeases implements leaseOps for testing.
 type stubLeases struct {
 	acquireFn      func(ctx context.Context, escrowId string, inferenceId uint64, epochId uint64, instanceAddr string) (bool, error)
-	setResultFn    func(ctx context.Context, escrowId string, inferenceId uint64, status storage.LeaseStatus, instanceAddr string) error
-	ownsFn         func(ctx context.Context, escrowId string, inferenceId uint64, instanceAddr string) (bool, error)
+	setResultFn    func(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, instanceAddr string) error
+	ownsFn         func(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) (bool, error)
 	releaseFn      func(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) error
-	setResultCalls []string // records "escrowId/inferenceId/status"
+	setResultCalls []string // records "escrowId/inferenceId/epochId/status"
 	releaseCalls   []string // records "escrowId/inferenceId/epochId/instanceAddr"
+	acquireEpochs  []uint64
 }
 
 func (s *stubLeases) Acquire(ctx context.Context, escrowId string, inferenceId uint64, epochId uint64, instanceAddr string) (bool, error) {
+	s.acquireEpochs = append(s.acquireEpochs, epochId)
 	return s.acquireFn(ctx, escrowId, inferenceId, epochId, instanceAddr)
 }
 
-func (s *stubLeases) SetResult(ctx context.Context, escrowId string, inferenceId uint64, status storage.LeaseStatus, instanceAddr string) error {
-	s.setResultCalls = append(s.setResultCalls, fmt.Sprintf("%s/%d/%s", escrowId, inferenceId, status))
+func (s *stubLeases) SetResult(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, instanceAddr string) error {
+	s.setResultCalls = append(s.setResultCalls, fmt.Sprintf("%s/%d/%d/%s", escrowId, inferenceId, epochId, status))
 	if s.setResultFn != nil {
-		return s.setResultFn(ctx, escrowId, inferenceId, status, instanceAddr)
+		return s.setResultFn(ctx, escrowId, inferenceId, epochId, status, instanceAddr)
 	}
 	return nil
 }
 
-func (s *stubLeases) OwnsPendingLease(ctx context.Context, escrowId string, inferenceId uint64, instanceAddr string) (bool, error) {
+func (s *stubLeases) OwnsPendingLease(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) (bool, error) {
 	if s.ownsFn != nil {
-		return s.ownsFn(ctx, escrowId, inferenceId, instanceAddr)
+		return s.ownsFn(ctx, escrowId, inferenceId, epochId, instanceAddr)
 	}
 	return true, nil
 }
@@ -80,6 +83,36 @@ func newTestLeaseValidator(leases leaseOps, innerFn func(context.Context, devsha
 // successInner returns a valid result.
 func successInner(_ context.Context, _ devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
 	return &devshardpkg.ValidateResult{Valid: true}, nil
+}
+
+func TestResolveValidationEpoch(t *testing.T) {
+	t.Parallel()
+	phase := new(chain.Phase)
+	phase.Update(10, 0)
+	assert.Equal(t, uint64(5), resolveValidationEpoch(phase, 5))
+	assert.Equal(t, uint64(10), resolveValidationEpoch(phase, 0))
+}
+
+func TestLeaseValidator_AcquireUsesRequestEpoch(t *testing.T) {
+	store := &stubLeases{
+		acquireFn: func(_ context.Context, _ string, _ uint64, epochId uint64, _ string) (bool, error) {
+			return true, nil
+		},
+	}
+	phase := new(chain.Phase)
+	phase.Update(11, 0)
+	c := NewLeaseValidator(&stubValidator{fn: successInner}, phase, store, "validator-addr", time.Hour)
+
+	req := makeReq()
+	req.EpochID = 5
+	_, err := c.Validate(context.Background(), req)
+	require.NoError(t, err)
+	require.Equal(t, []uint64{5}, store.acquireEpochs)
+
+	req.EpochID = 0
+	_, err = c.Validate(context.Background(), req)
+	require.NoError(t, err)
+	require.Equal(t, []uint64{5, 11}, store.acquireEpochs, "unset request epoch falls back to phase")
 }
 
 // TestLeaseValidator_InvalidResult_DoesNotSetSubmitted verifies that an
@@ -259,6 +292,7 @@ func TestLeaseValidator_AllowValidationSubmit_TTLExceeded(t *testing.T) {
 
 	err = c.AllowValidationSubmit(context.Background(), "escrow-1", 42)
 	require.ErrorIs(t, err, devshardpkg.ErrValidationLeaseAbandoned)
+	require.ErrorIs(t, err, devshardpkg.ErrValidationLeaseTTLExceeded)
 	require.Empty(t, store.setResultCalls)
 	require.Empty(t, store.releaseCalls, "AllowValidationSubmit must leave the acquire recorded")
 
@@ -272,7 +306,7 @@ func TestLeaseValidator_AllowValidationSubmit_NotOwned(t *testing.T) {
 		acquireFn: func(_ context.Context, _ string, _ uint64, _ uint64, _ string) (bool, error) {
 			return true, nil
 		},
-		ownsFn: func(_ context.Context, _ string, _ uint64, _ string) (bool, error) {
+		ownsFn: func(_ context.Context, _ string, _, _ uint64, _ string) (bool, error) {
 			return false, nil
 		},
 	}
@@ -282,6 +316,7 @@ func TestLeaseValidator_AllowValidationSubmit_NotOwned(t *testing.T) {
 
 	err = c.AllowValidationSubmit(context.Background(), "escrow-1", 42)
 	require.ErrorIs(t, err, devshardpkg.ErrValidationLeaseAbandoned)
+	require.NotErrorIs(t, err, devshardpkg.ErrValidationLeaseTTLExceeded)
 	require.Empty(t, store.releaseCalls, "AllowValidationSubmit must leave the acquire recorded")
 }
 
@@ -439,6 +474,14 @@ func TestValidator_Validate_ExecutorFaultClassification(t *testing.T) {
 			wantFalse:  true,
 		},
 		{
+			name:       "oversized body votes false",
+			fetch:      taggedFetch(tagExecutorPayloadFault(fmt.Errorf("%w: over 1024 bytes", commonvalidation.ErrPayloadTooLarge))),
+			voteFalse:  true,
+			phaseEpoch: 10,
+			reqEpoch:   10,
+			wantFalse:  true,
+		},
+		{
 			name:       "404 in window votes false",
 			fetch:      taggedFetch(fmt.Errorf("payload not found: %w", commonvalidation.ErrPayloadGone)),
 			voteFalse:  true,
@@ -572,7 +615,44 @@ func TestExecutorFaultVerdict_DisabledOrCancelled(t *testing.T) {
 	req := faultReq(10)
 	err := tagExecutorPayloadFault(errors.New("executor returned status 500"))
 
-	assert.Nil(t, executorFaultVerdict(context.Background(), phase, req, err, false))
-	assert.Nil(t, executorFaultVerdict(cancelledCtx(), phase, req, err, true))
-	assert.Nil(t, executorFaultVerdict(context.Background(), phase, req, errors.New("local bridge down"), true))
+	assert.Nil(t, executorFaultVerdict(context.Background(), phase, req, req.EpochID, err, false))
+	assert.Nil(t, executorFaultVerdict(cancelledCtx(), phase, req, req.EpochID, err, true))
+	assert.Nil(t, executorFaultVerdict(context.Background(), phase, req, req.EpochID, errors.New("local bridge down"), true))
+}
+
+// The D2 window must follow the epoch the payload was actually requested for.
+// req.EpochID is zero whenever the caller leaves it unset, and Validate then
+// resolves it from the phase.
+func TestExecutorFaultVerdict_UnsetRequestEpochUsesResolvedEpoch(t *testing.T) {
+	gone := fmt.Errorf("payload not found: %w", commonvalidation.ErrPayloadGone)
+	v := newFaultTestValidator(10, true, taggedFetch(gone), nil, nil)
+
+	req := faultReq(0)
+	result, err := v.Validate(context.Background(), req)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	assert.False(t, result.Valid)
+	assert.Equal(t, executorPayloadUnavailableReason, result.Reason)
+}
+
+func TestExecutorFaultVerdict_TooLargeUsesDistinctReason(t *testing.T) {
+	err := tagExecutorPayloadFault(fmt.Errorf("%w: over 1024 bytes", commonvalidation.ErrPayloadTooLarge))
+	v := newFaultTestValidator(10, true, taggedFetch(err), nil, nil)
+
+	result, verr := v.Validate(context.Background(), faultReq(10))
+	require.NoError(t, verr)
+	require.NotNil(t, result)
+	assert.False(t, result.Valid)
+	assert.Equal(t, executorPayloadUnavailableReason, result.Reason)
+	assert.Contains(t, fmt.Sprint(result.Details), "payload_too_large")
+}
+
+func TestTruncateCause(t *testing.T) {
+	t.Parallel()
+	assert.Equal(t, "short", truncateCause("short"))
+
+	long := strings.Repeat("x", maxVerdictCauseBytes*2)
+	got := truncateCause(long)
+	assert.Len(t, got, maxVerdictCauseBytes+len("...(truncated)"))
+	assert.True(t, strings.HasSuffix(got, "...(truncated)"))
 }

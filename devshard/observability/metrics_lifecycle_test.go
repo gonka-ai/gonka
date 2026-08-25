@@ -5,8 +5,10 @@ import (
 	"errors"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
+	dto "github.com/prometheus/client_model/go"
 )
 
 func TestClassifyMLNodeHTTP(t *testing.T) {
@@ -35,6 +37,23 @@ func TestClassifyMLNodeHTTP(t *testing.T) {
 				t.Fatalf("ClassifyMLNodeHTTP = %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+func TestObservePayloadFetchTTFB(t *testing.T) {
+	ensureMetrics()
+	var m dto.Metric
+	if err := payloadFetchTTFB.Write(&m); err != nil {
+		t.Fatal(err)
+	}
+	before := m.Histogram.GetSampleCount()
+	ObservePayloadFetchTTFB(25 * time.Millisecond)
+	m.Reset()
+	if err := payloadFetchTTFB.Write(&m); err != nil {
+		t.Fatal(err)
+	}
+	if got := m.Histogram.GetSampleCount() - before; got != 1 {
+		t.Fatalf("histogram sample delta = %d, want 1", got)
 	}
 }
 
