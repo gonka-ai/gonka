@@ -1148,6 +1148,33 @@ func TestBuildDelegationWeightCalculator_UsesPreviousConfirmedWeights(t *testing
 	require.Equal(t, int64(120), dwc.TotalNetworkWeight)
 }
 
+func TestPrepareEpochParticipationState_PropagatesPreviousWeightError(t *testing.T) {
+	k, ctx, groupStub := newMinimalInferenceKeeperWithStub(t)
+
+	const epoch = uint64(5)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, epoch))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:   epoch,
+		EpochGroupId: 77,
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 100},
+		},
+	})
+	groupStub.membersErr = strconv.ErrSyntax
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	_, err = am.prepareEpochParticipationState(
+		ctx,
+		[]*types.ActiveParticipant{{Index: testutil.Validator, Weight: 100}},
+		params,
+		100,
+	)
+	require.ErrorContains(t, err, "load live previous-epoch members")
+}
+
 func TestBuildDelegationWeightCalculator_UsesValidationSnapshotForNextEpochVotingPowers(t *testing.T) {
 	k, ctx := newMinimalInferenceKeeper(t)
 

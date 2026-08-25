@@ -769,8 +769,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		upcomingEpoch.PocStartBlockHeight,
 	)
 	if err != nil {
-		am.LogError("onEndOfPoCValidationStage: failed to prepare participation state", types.PoC, "error", err)
-		return nil
+		return fmt.Errorf("prepare epoch participation state: %w", err)
 	}
 
 	// Compute consensus weights with caps applied and write to participants
