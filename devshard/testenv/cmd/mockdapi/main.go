@@ -5,11 +5,11 @@ import (
 	"log"
 	"os"
 	"os/signal"
-	"strings"
 	"syscall"
 	"time"
 
 	cosrv "devshard/chainoracle/server"
+	"devshard/internal/boolvalue"
 	"devshard/testenv/mockdapi"
 )
 
@@ -61,12 +61,8 @@ func envOr(key, def string) string {
 }
 
 func envTruthy(key string) bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
-	case "1", "true", "yes":
-		return true
-	default:
-		return false
-	}
+	enabled, err := boolvalue.Parse(os.Getenv(key))
+	return err == nil && enabled
 }
 
 func versionFromEnv() cosrv.Version {
