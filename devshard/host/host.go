@@ -1031,6 +1031,18 @@ func (h *Host) collectValidationJobs() []validateJob {
 	return jobs
 }
 
+// snapshotValidationQueueDepth copies the channel under validationLifecycleMu
+// because Close nils the field. Do not hold h.mu: enqueueValidation takes the
+// lifecycle lock first, then h.mu.
+func (h *Host) snapshotValidationQueueDepth() {
+	h.validationLifecycleMu.RLock()
+	q := h.validationQueue
+	h.validationLifecycleMu.RUnlock()
+	if q != nil {
+		observability.SetValidationQueueDepth(h.escrowID, len(q))
+	}
+}
+
 func (h *Host) startValidationWorkers(q <-chan validateJob, count int) {
 	for i := 0; i < count; i++ {
 		go func() {
@@ -1055,9 +1067,10 @@ func (h *Host) enqueueValidation(job validateJob) {
 
 	select {
 	case q <- job:
+		depth := len(q)
 		h.validationLifecycleMu.RUnlock()
 		observability.IncValidation(observability.StageValidationPicked, observability.MetricStatusQueued)
-		observability.SetValidationQueueDepth(h.escrowID, len(h.validationQueue))
+		observability.SetValidationQueueDepth(h.escrowID, depth)
 	default:
 		h.validationLifecycleMu.RUnlock()
 		h.mu.Lock()
@@ -1104,9 +1117,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		h.mu.Lock()
 		delete(h.validating, job.inferenceID)
 		h.mu.Unlock()
-		if h.validationQueue != nil {
-			observability.SetValidationQueueDepth(h.escrowID, len(h.validationQueue))
-		}
+		h.snapshotValidationQueueDepth()
 	}()
 
 	result, err := h.validator.Validate(ctx, devshard.ValidateRequest{

@@ -434,3 +434,34 @@ func TestHost_CollectValidationJobs_PrunesCooldownForEvictedInferences(t *testin
 	_, ok := cooldownUntil(h, 99)
 	require.False(t, ok, "cooldown for an inference no longer in the live set must be pruned")
 }
+
+type gatedValidationEngine struct {
+	started chan struct{}
+	release chan struct{}
+}
+
+func (e *gatedValidationEngine) Validate(context.Context, devshard.ValidateRequest) (*devshard.ValidateResult, error) {
+	close(e.started)
+	<-e.release
+	return &devshard.ValidateResult{Valid: true}, nil
+}
+
+// The race detector is the assertion: Close nils validationQueue under
+// validationLifecycleMu, and validateAsync's deferred depth snapshot must
+// not read that field without the same lock.
+func TestHost_CloseDoesNotRaceValidationQueueDepth(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	h, _, _ := newTwoHostValidationHost(t, &gatedValidationEngine{started: started, release: release})
+	h.Start()
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		h.validateAsync(context.Background(), testValidateJob())
+	}()
+	<-started
+	h.Close()
+	close(release)
+	<-done
+}
