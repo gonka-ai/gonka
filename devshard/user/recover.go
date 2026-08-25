@@ -337,6 +337,7 @@ func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.Stat
 	if err := sm.RebuildSealedInferenceIndex(); err != nil {
 		return nil, nil, fmt.Errorf("rebuild sealed inference index: %w", err)
 	}
+	restorePendingTxKeys(sess)
 	restoreHeartbeatProducer(sess, sm)
 	if sess.store == nil {
 		return sess, sm, nil
@@ -361,6 +362,21 @@ func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.Stat
 		return nil, nil, fmt.Errorf("rebuild validation obs: %w", err)
 	}
 	return sess, sm, nil
+}
+
+func restorePendingTxKeys(sess *Session) {
+	if sess == nil {
+		return
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	for _, diff := range sess.diffs {
+		for _, tx := range diff.Txs {
+			if key := devshardTxKey(tx); key != "" {
+				sess.pendingTxKeys[key] = struct{}{}
+			}
+		}
+	}
 }
 
 // restoreHeartbeatProducer continues turn_seq from the reconstructed log
