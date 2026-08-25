@@ -347,10 +347,11 @@ func WithMaxNonceProvider(p devshard.MaxNonceProvider) HostOption {
 // via CompositeChecker.
 //
 // Production HostManager intentionally does not use this option: settlement
-// protection comes from deterministic drain accounting (settleLiveRecordLocked),
-// not signature withholding. WithGrace must not be paired with finish-gossip
-// recovery — gossip is a best-effort convenience for the user to sequence a
-// real Finish at actual cost; withholding would freeze settlement instead.
+// protection comes from deterministic drain accounting (settleLiveRecordLocked
+// credits reserved on both Started and Pending), not signature withholding.
+// WithGrace must not be paired with finish-gossip recovery — gossip is a
+// best-effort convenience for the user to sequence a real Finish at actual
+// cost; withholding would freeze settlement instead.
 func WithGrace(grace uint64) HostOption {
 	return func(h *Host) {
 		sc := NewStalenessChecker(h.mempool, grace)
