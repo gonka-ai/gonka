@@ -38,7 +38,12 @@ func (r Runtime) Placement(ctx context.Context, shardID vo.ShardID, node vo.Node
 	if !found {
 		return vo.Placement{}, ErrMissingConfig
 	}
-	return config.Placement(node)
+	placement, err := config.Placement(node)
+	if err != nil {
+		return vo.Placement{}, err
+	}
+	placement.Interface, err = r.Network.Interface(node)
+	return placement, err
 }
 
 func (r Runtime) Present(ctx context.Context, shardID vo.ShardID, node vo.NodeRef) (bool, bool, error) {
