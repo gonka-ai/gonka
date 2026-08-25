@@ -69,3 +69,14 @@ func TestSetHeightSyncFromEnv_FlagWithoutOracleErrors(t *testing.T) {
 	require.Error(t, err)
 	require.Nil(t, mgr.heightSync)
 }
+
+func TestHeightSyncFlagUsesDevshardBooleanGrammar(t *testing.T) {
+	t.Setenv(envHeightSync, "on")
+	require.True(t, heightSyncFlag())
+
+	t.Setenv(envHeightSync, "F")
+	require.False(t, heightSyncFlag())
+
+	t.Setenv(envHeightSync, "invalid")
+	require.False(t, heightSyncFlag(), "invalid values retain the disabled fallback")
+}

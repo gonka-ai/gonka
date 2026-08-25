@@ -18,6 +18,7 @@ import (
 	devshardpkg "devshard"
 	"devshard/gossip"
 	"devshard/host"
+	"devshard/internal/configenv"
 	"devshard/observability"
 	"devshard/signing"
 	"devshard/state"
@@ -364,7 +365,7 @@ func boolEnv(key string, fallback bool) (bool, error) {
 	if raw == "" {
 		return fallback, nil
 	}
-	value, err := strconv.ParseBool(raw)
+	value, err := configenv.ParseBool(raw)
 	if err != nil {
 		return false, fmt.Errorf("parse %s: %w", key, err)
 	}
