@@ -31,6 +31,10 @@ type LeaseStore interface {
 	SetResult(ctx context.Context, escrowID string, inferenceID uint64, status LeaseStatus, instanceAddr string) error
 	// OwnsPendingLease reports whether instanceAddr currently holds the pending lease.
 	OwnsPendingLease(ctx context.Context, escrowID string, inferenceID uint64, instanceAddr string) (bool, error)
+	// Release deletes a pending lease this instance owns, restoring the
+	// pre-acquire state so the inference can be re-picked immediately.
+	// Releasing a lease that is not owned, not pending, or absent is a no-op.
+	Release(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) error
 }
 
 type memoryLease struct {
@@ -125,6 +129,24 @@ func (m *Memory) OwnsPendingLease(_ context.Context, escrowID string, inferenceI
 	return lease.status == LeaseStatusPending && lease.instanceAddr == instanceAddr, nil
 }
 
+func (m *Memory) Release(_ context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	byInference := m.validationLeases[escrowID]
+	if byInference == nil {
+		return nil
+	}
+	lease, ok := byInference[inferenceID]
+	if !ok || lease.status != LeaseStatusPending || lease.instanceAddr != instanceAddr || lease.epochID != epochID {
+		return nil
+	}
+	delete(byInference, inferenceID)
+	if len(byInference) == 0 {
+		delete(m.validationLeases, escrowID)
+	}
+	return nil
+}
+
 func (m *Memory) pruneValidationLeasesBefore(cutoff uint64) {
 	for escrowID, byInference := range m.validationLeases {
 		for inferenceID, lease := range byInference {
@@ -148,8 +170,8 @@ func (m *Memory) pruneValidationLeasesBefore(cutoff uint64) {
 // table provides the real cross-instance dedup.
 //
 // Acquire therefore always grants (validation runs inline), and AcquireOneStale
-// / SetResult are no-ops: the SQLite retry loop has no shared lease table to
-// reclaim from. See docs/rolling-update.md ("multi-instance ⇒ Postgres").
+// / SetResult / Release are no-ops: the SQLite retry loop has no shared lease
+// table to reclaim from. See docs/rolling-update.md ("multi-instance ⇒ Postgres").
 
 func (s *SQLite) Acquire(_ context.Context, _ string, _, _ uint64, _ string) (bool, error) {
 	return true, nil
@@ -165,6 +187,10 @@ func (s *SQLite) SetResult(_ context.Context, _ string, _ uint64, _ LeaseStatus,
 
 func (s *SQLite) OwnsPendingLease(_ context.Context, _ string, _ uint64, _ string) (bool, error) {
 	return true, nil
+}
+
+func (s *SQLite) Release(_ context.Context, _ string, _, _ uint64, _ string) error {
+	return nil
 }
 
 func (s *Postgres) Acquire(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) (bool, error) {
@@ -228,6 +254,22 @@ func (s *Postgres) SetResult(ctx context.Context, escrowID string, inferenceID u
 	}
 	if tag.RowsAffected() == 0 {
 		return ErrLeaseNotOwned
+	}
+	return nil
+}
+
+func (s *Postgres) Release(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) error {
+	if err := s.WaitReady(ctx); err != nil {
+		return err
+	}
+	_, err := s.pool.Exec(ctx,
+		`DELETE FROM devshard_validation_leases
+		 WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = $3
+		   AND instance_address = $4 AND status = 'pending'`,
+		epochID, escrowID, inferenceID, instanceAddr,
+	)
+	if err != nil {
+		return fmt.Errorf("validation leases: release %s/%d: %w", escrowID, inferenceID, err)
 	}
 	return nil
 }

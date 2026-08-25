@@ -1271,6 +1271,9 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		EpochID:         job.epochID,
 	})
 	if err != nil {
+		if !errors.Is(err, devshard.ErrValidationAlreadyLeased) {
+			h.releaseValidationLease(ctx, job.inferenceID)
+		}
 		// Payload already pruned on the executor: the validation window is
 		// effectively over for us. Drop silently -- no MsgValidation, no
 		// challenge, no error in the executor receipt path.
@@ -1294,6 +1297,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 
 	rec, ok := h.sm.GetInference(job.inferenceID)
 	if !ok {
+		h.releaseValidationLease(ctx, job.inferenceID)
 		observability.FailValidationFinished(ctx, h.escrowID,
 			observability.ReasonInferenceDisappeared, observability.WhereHostValidate,
 			"validate: inference disappeared", nil,
@@ -1320,6 +1324,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		}
 		proposerSig, err := h.signProposer(msg)
 		if err != nil {
+			h.releaseValidationLease(ctx, job.inferenceID)
 			observability.LogValidationOrphan(ctx, h.escrowID,
 				observability.ReasonSignValidationErr, observability.WhereHostPublishValidation,
 				observability.StageVotePublished, "sign validation msg failed", err,
@@ -1344,6 +1349,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		}
 		proposerSig, err := h.signProposer(msg)
 		if err != nil {
+			h.releaseValidationLease(ctx, job.inferenceID)
 			observability.LogValidationOrphan(ctx, h.escrowID,
 				observability.ReasonSignVoteErr, observability.WhereHostPublishValidation,
 				observability.StageVotePublished, "sign validation vote failed", err,
@@ -1360,6 +1366,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		tx = &types.DevshardTx{Tx: &types.DevshardTx_ValidationVote{ValidationVote: msg}}
 		validationTx = "validation_vote"
 	default:
+		h.releaseValidationLease(ctx, job.inferenceID)
 		observability.IncValidation(observability.StageVotePublished, observability.MetricStatusError)
 		observability.Log(ctx, observability.LevelInfo, "validation skipped after status changed", observability.StageVotePublished, observability.WhereHostPublishValidation, h.escrowID, observability.ReasonValidationStatusChanged, nil,
 			"inference_id", job.inferenceID,
@@ -1374,6 +1381,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 
 	if h.validationRecorder != nil {
 		if err := h.validationRecorder.AllowValidationSubmit(ctx, h.escrowID, job.inferenceID); err != nil {
+			h.releaseValidationLease(ctx, job.inferenceID)
 			logging.Info("validation submit abandoned after lease check",
 				"subsystem", "host",
 				"inference_id", job.inferenceID,
@@ -1412,6 +1420,19 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 				logging.Error("mark validation submitted failed", "subsystem", "host", "inference_id", job.inferenceID, "error", err)
 			}
 		}
+	}
+}
+
+func (h *Host) releaseValidationLease(ctx context.Context, inferenceID uint64) {
+	if h.validationRecorder == nil {
+		return
+	}
+	if err := h.validationRecorder.ReleaseValidationLease(ctx, h.escrowID, inferenceID); err != nil {
+		logging.Error("release validation lease failed",
+			"subsystem", "host",
+			"inference_id", inferenceID,
+			"error", err,
+		)
 	}
 }
 

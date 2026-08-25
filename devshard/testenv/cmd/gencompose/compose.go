@@ -139,6 +139,7 @@ services:
       KEY_NAME: {{ versiondKeyName $ . }}
       DEVSHARD_VALIDATION_LEASE_TTL: ${DEVSHARD_VALIDATION_LEASE_TTL:-30m}
       DEVSHARD_VALIDATION_RETRY_INTERVAL: ${DEVSHARD_VALIDATION_RETRY_INTERVAL:-5m}
+      DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE: ${DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE:-true}
       # Peers/executors here are compose service names resolving to private IPs,
       # so the dial-time SSRF guard must be off. Production leaves this unset.
       DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -21,6 +22,22 @@ import (
 	"devshard/bridge"
 	"devshard/observability"
 )
+
+// errExecutorPayloadFault tags failures that are the executor's responsibility
+// (payload HTTP errors, bad signature, hash mismatch). Validator.Validate
+// converts tagged errors into Valid:false when the vote-false-on-fetch switch
+// is on.
+var errExecutorPayloadFault = errors.New("executor payload fault")
+
+func tagExecutorPayloadFault(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, errExecutorPayloadFault) {
+		return err
+	}
+	return fmt.Errorf("%w: %w", errExecutorPayloadFault, err)
+}
 
 func signPayloadRequest(
 	recorder PayloadAuthClient,
@@ -83,6 +100,7 @@ func fetchPayloadsFromExecutor(
 	inferenceID string,
 	epochID uint64,
 	requestPath string,
+	client *http.Client,
 ) ([]byte, []byte, error) {
 	executorInfo, err := br.GetHostInfo(req.ExecutorAddress)
 	if err != nil {
@@ -104,11 +122,14 @@ func fetchPayloadsFromExecutor(
 		return nil, nil, fmt.Errorf("sign request: %w", err)
 	}
 
-	payloadResp, err := commonvalidation.FetchPayloadsHTTP(
-		ctx, nil, requestURL, validatorAddress, timestamp, epochID, signature,
+	payloadResp, err := fetchPayloadsHTTPWithRetry(
+		ctx, client, requestURL, validatorAddress, timestamp, epochID, signature,
 	)
 	if err != nil {
-		return nil, nil, err
+		if errors.Is(err, commonvalidation.ErrPayloadGone) || ctx.Err() != nil {
+			return nil, nil, err
+		}
+		return nil, nil, tagExecutorPayloadFault(err)
 	}
 
 	encodedPubKeys, err := resolveExecutorPubKeys(ctx, recorder, req.ExecutorAddress)
@@ -124,20 +145,59 @@ func fetchPayloadsFromExecutor(
 		req.ExecutorAddress,
 		encodedPubKeys,
 	); err != nil {
-		return nil, nil, fmt.Errorf("verify executor signature: %w", err)
+		return nil, nil, tagExecutorPayloadFault(fmt.Errorf("verify executor signature: %w", err))
 	}
 
 	promptHash := sha256.Sum256(payloadResp.PromptPayload)
 	if !bytes.Equal(promptHash[:], req.PromptHash) {
-		return nil, nil, fmt.Errorf("%w: prompt expected %x got %x", commonvalidation.ErrHashMismatch, req.PromptHash, promptHash[:])
+		return nil, nil, tagExecutorPayloadFault(fmt.Errorf("%w: prompt expected %x got %x", commonvalidation.ErrHashMismatch, req.PromptHash, promptHash[:]))
 	}
 
 	responseHash := sha256.Sum256(payloadResp.ResponsePayload)
 	if !bytes.Equal(responseHash[:], req.ResponseHash) {
-		return nil, nil, fmt.Errorf("%w: response expected %x got %x", commonvalidation.ErrHashMismatch, req.ResponseHash, responseHash[:])
+		return nil, nil, tagExecutorPayloadFault(fmt.Errorf("%w: response expected %x got %x", commonvalidation.ErrHashMismatch, req.ResponseHash, responseHash[:]))
 	}
 
 	return payloadResp.PromptPayload, payloadResp.ResponsePayload, nil
+}
+
+const payloadFetchAttempts = 2
+
+var payloadFetchRetryBackoff = 500 * time.Millisecond
+
+func fetchPayloadsHTTPWithRetry(
+	ctx context.Context,
+	client *http.Client,
+	requestURL, validatorAddress string,
+	timestamp int64,
+	epochID uint64,
+	signature string,
+) (*commonvalidation.PayloadResponse, error) {
+	var lastErr error
+	for attempt := 1; attempt <= payloadFetchAttempts; attempt++ {
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		payloadResp, err := commonvalidation.FetchPayloadsHTTP(
+			ctx, client, requestURL, validatorAddress, timestamp, epochID, signature,
+		)
+		if err == nil {
+			return payloadResp, nil
+		}
+		if errors.Is(err, commonvalidation.ErrPayloadGone) {
+			return nil, err
+		}
+		lastErr = err
+		if attempt == payloadFetchAttempts {
+			break
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-time.After(payloadFetchRetryBackoff):
+		}
+	}
+	return nil, lastErr
 }
 
 func classifyExecuteValidationErr(err error) error {

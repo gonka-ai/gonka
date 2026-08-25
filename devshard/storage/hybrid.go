@@ -761,7 +761,6 @@ func (h *HybridStorage) pruneBefore(cutoff uint64) error {
 	return nil
 }
 
-
 func (h *HybridStorage) ClearValidationObs(escrowID string) error {
 	b, err := h.routed(escrowID)
 	if err != nil {
@@ -816,6 +815,18 @@ func (h *HybridStorage) OwnsPendingLease(ctx context.Context, escrowID string, i
 		return false, fmt.Errorf("storage backend does not support validation leases")
 	}
 	return ls.OwnsPendingLease(ctx, escrowID, inferenceID, instanceAddr)
+}
+
+func (h *HybridStorage) Release(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) error {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return err
+	}
+	ls, ok := b.(LeaseStore)
+	if !ok {
+		return fmt.Errorf("storage backend does not support validation leases")
+	}
+	return ls.Release(ctx, escrowID, inferenceID, epochID, instanceAddr)
 }
 
 func (h *HybridStorage) Close() error {

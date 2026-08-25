@@ -316,4 +316,12 @@ func (m *ManagedStorage) OwnsPendingLease(ctx context.Context, escrowID string, 
 	return ls.OwnsPendingLease(ctx, escrowID, inferenceID, instanceAddr)
 }
 
+func (m *ManagedStorage) Release(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) error {
+	ls, ok := m.inner.(LeaseStore)
+	if !ok {
+		return fmt.Errorf("storage backend does not support validation leases")
+	}
+	return ls.Release(ctx, escrowID, inferenceID, epochID, instanceAddr)
+}
+
 var _ Storage = (*ManagedStorage)(nil)

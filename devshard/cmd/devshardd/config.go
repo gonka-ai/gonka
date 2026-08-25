@@ -42,6 +42,7 @@ type runtimeConfig struct {
 	AllowPrivateAddresses   bool
 	ValidationRetryInterval time.Duration
 	ValidationLeaseTTL      time.Duration
+	VoteFalseOnFetchFailure bool
 	ShutdownGrace           time.Duration
 	Node                    ChainNodeConfig
 }
@@ -128,12 +129,12 @@ func loadRuntimeConfig(args []string, protocolVersion, linkBinaryVersion string)
 		return runtimeConfig{}, fmt.Errorf("binary log version: %w", err)
 	}
 
-	retryInterval, err := parseDurationEnv("DEVSHARD_VALIDATION_RETRY_INTERVAL", session.DefaultRetryInterval)
+	retryInterval, err := parseDurationEnv("DEVSHARD_VALIDATION_RETRY_INTERVAL", session.DefaultValidationRetryInterval)
 	if err != nil {
 		return runtimeConfig{}, fmt.Errorf("DEVSHARD_VALIDATION_RETRY_INTERVAL: %w", err)
 	}
 
-	leaseTTL, err := parseDurationEnv("DEVSHARD_VALIDATION_LEASE_TTL", session.DefaultLeaseTTL)
+	leaseTTL, err := parseDurationEnv("DEVSHARD_VALIDATION_LEASE_TTL", session.DefaultValidationLeaseTTL)
 	if err != nil {
 		return runtimeConfig{}, fmt.Errorf("DEVSHARD_VALIDATION_LEASE_TTL: %w", err)
 	}
@@ -155,6 +156,7 @@ func loadRuntimeConfig(args []string, protocolVersion, linkBinaryVersion string)
 		AllowPrivateAddresses:   envBoolOr("DEVSHARD_ALLOW_PRIVATE_ADDRESSES", false),
 		ValidationRetryInterval: retryInterval,
 		ValidationLeaseTTL:      leaseTTL,
+		VoteFalseOnFetchFailure: envBoolOr("DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE", true),
 		ShutdownGrace:           shutdownGrace,
 		Node:                    loadNodeConfigFromEnv(),
 	}, nil

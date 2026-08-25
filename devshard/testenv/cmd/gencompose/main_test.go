@@ -291,6 +291,7 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Contains(t, text, "DEVSHARD_STORAGE_MODE: sqlite")
 	require.Contains(t, text, "DEVSHARD_VALIDATION_LEASE_TTL")
 	require.Contains(t, text, "DEVSHARD_VALIDATION_RETRY_INTERVAL")
+	require.Contains(t, text, "DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE")
 	require.Contains(t, text, "devshardctl:")
 	require.Contains(t, text, "DEVSHARD_PRIVATE_KEY")
 	require.Contains(t, text, "DEVSHARD_ESCROW_ID")
