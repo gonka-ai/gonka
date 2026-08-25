@@ -648,7 +648,7 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 				}
 			}
 		}
-		accept, err = host.VerifyRefusedTimeout(c.Request().Context(), st, req.InferenceID, PayloadFromJSON(req.Payload), storedDiffs, localMempool, executorClient, st.Config, nowUnix)
+		accept, err = host.VerifyRefusedTimeout(c.Request().Context(), st, req.InferenceID, PayloadFromJSON(req.Payload), storedDiffs, localMempool, executorClient, s.host, st.Config, nowUnix)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
 		accept, err = host.VerifyExecutionTimeout(c.Request().Context(), st, req.InferenceID, localMempool, executorClient, st.Config, nowUnix)
 	default:
@@ -666,6 +666,12 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 		}
 		resp.Signature = sig
 		resp.VoterSlot = voterSlot
+	} else {
+		mempoolBytes, mErr := DevshardTxsToBytes(host.RecoveryTxsFor(s.host.MempoolTxs(), req.InferenceID))
+		if mErr != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, mErr.Error())
+		}
+		resp.Mempool = mempoolBytes
 	}
 	return writeJSON(c, http.StatusOK, resp)
 }
@@ -729,7 +735,11 @@ func (s *Server) HandleChallengeReceipt(c echo.Context) (err error) {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
-	return writeJSON(c, http.StatusOK, ChallengeReceiptResponse{Receipt: receipt})
+	mempoolBytes, err := DevshardTxsToBytes(host.RecoveryTxsFor(s.host.MempoolTxs(), req.InferenceID))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+	return writeJSON(c, http.StatusOK, ChallengeReceiptResponse{Receipt: receipt, Mempool: mempoolBytes})
 }
 
 func (s *Server) HandleGossipNonce(c echo.Context) (err error) {
