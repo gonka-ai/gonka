@@ -17,7 +17,7 @@ import (
 	"devshard/chainoracle/blocks/tipcache"
 	"devshard/heightsync"
 	"devshard/host"
-	"devshard/internal/configenv"
+	"devshard/internal/boolvalue"
 	"devshard/transport"
 
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
@@ -131,7 +131,7 @@ func (m *HostManager) CloseHeightSync() {
 }
 
 func heightSyncFlag() bool {
-	enabled, err := configenv.ParseBool(os.Getenv(envHeightSync))
+	enabled, err := boolvalue.Parse(os.Getenv(envHeightSync))
 	return err == nil && enabled
 }
 

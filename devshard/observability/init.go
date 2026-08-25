@@ -14,7 +14,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
-	"devshard/internal/configenv"
+	"devshard/internal/boolvalue"
 	"devshard/observability/otelutil"
 )
 
@@ -117,7 +117,7 @@ func otelEnabled() bool {
 	if raw == "" {
 		return false
 	}
-	enabled, err := configenv.ParseBool(raw)
+	enabled, err := boolvalue.Parse(raw)
 	if err != nil {
 		logWarn("config.invalid_enabled",
 			"Invalid OpenTelemetry enabled flag; observability will stay disabled",

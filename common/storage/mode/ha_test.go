@@ -1,69 +1,10 @@
 package mode
 
 import (
-	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
-
-func TestParseDevshardHAHeader(t *testing.T) {
-	ha, err := ParseDevshardHAHeader(nil)
-	require.NoError(t, err)
-	require.False(t, ha)
-	ha, err = ParseDevshardHAHeader(http.Header{})
-	require.NoError(t, err)
-	require.False(t, ha)
-
-	h := http.Header{}
-	h.Set(HeaderDevshardHA, "true")
-	ha, err = ParseDevshardHAHeader(h)
-	require.NoError(t, err)
-	require.True(t, ha)
-
-	h.Set(HeaderDevshardHA, "TRUE")
-	ha, err = ParseDevshardHAHeader(h)
-	require.NoError(t, err)
-	require.True(t, ha)
-
-	h.Set(HeaderDevshardHA, "1")
-	ha, err = ParseDevshardHAHeader(h)
-	require.NoError(t, err)
-	require.True(t, ha)
-
-	h.Set(HeaderDevshardHA, "yes")
-	ha, err = ParseDevshardHAHeader(h)
-	require.NoError(t, err)
-	require.True(t, ha)
-
-	h.Set(HeaderDevshardHA, "on")
-	ha, err = ParseDevshardHAHeader(h)
-	require.NoError(t, err)
-	require.True(t, ha)
-
-	h.Set(HeaderDevshardHA, "")
-	ha, err = ParseDevshardHAHeader(h)
-	require.NoError(t, err)
-	require.True(t, ha, "present empty value counts as HA mark")
-
-	h.Set(HeaderDevshardHA, "false")
-	ha, err = ParseDevshardHAHeader(h)
-	require.NoError(t, err)
-	require.False(t, ha)
-
-	h.Set(HeaderDevshardHA, "off")
-	ha, err = ParseDevshardHAHeader(h)
-	require.NoError(t, err)
-	require.False(t, ha)
-
-	h.Set(HeaderDevshardHA, "typo")
-	_, err = ParseDevshardHAHeader(h)
-	require.Error(t, err)
-
-	h[HeaderDevshardHA] = []string{"true", "false"}
-	_, err = ParseDevshardHAHeader(h)
-	require.Error(t, err)
-}
 
 func TestConfiguredForHA(t *testing.T) {
 	clearModeEnv(t)

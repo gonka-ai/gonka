@@ -3,7 +3,7 @@ package main
 import (
 	"sync/atomic"
 
-	"devshard/internal/configenv"
+	"devshard/internal/boolvalue"
 )
 
 // capacityAwareLimitsState gates the new capacity-aware behavior:
@@ -16,7 +16,7 @@ var capacityAwareLimitsState atomic.Bool
 // behavior based on a string value (env var, admin setting, etc.).
 // Invalid and empty values disable the behavior.
 func ConfigureCapacityAwareLimits(raw string) {
-	enabled, err := configenv.ParseBool(raw)
+	enabled, err := boolvalue.Parse(raw)
 	capacityAwareLimitsState.Store(err == nil && enabled)
 }
 

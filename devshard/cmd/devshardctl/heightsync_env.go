@@ -17,7 +17,7 @@ import (
 	"devshard/chainoracle/blocks/failover"
 	"devshard/chainoracle/blocks/tipcache"
 	"devshard/heightsync"
-	"devshard/internal/configenv"
+	"devshard/internal/boolvalue"
 	"devshard/transport"
 )
 
@@ -86,7 +86,7 @@ func parseDurationEnv(name string) (time.Duration, error) {
 }
 
 func heightSyncFlag() bool {
-	enabled, err := configenv.ParseBool(os.Getenv(envHeightSync))
+	enabled, err := boolvalue.Parse(os.Getenv(envHeightSync))
 	return err == nil && enabled
 }
 

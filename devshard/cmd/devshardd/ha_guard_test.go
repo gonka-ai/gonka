@@ -14,6 +14,54 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestParseDevshardHAHeader(t *testing.T) {
+	tests := []struct {
+		name    string
+		values  []string
+		want    bool
+		wantErr bool
+	}{
+		{name: "absent", want: false},
+		{name: "empty marker", values: []string{""}, want: true},
+		{name: "whitespace marker", values: []string{" \t"}, want: true},
+		{name: "zero", values: []string{"0"}, want: false},
+		{name: "f", values: []string{"f"}, want: false},
+		{name: "false", values: []string{"false"}, want: false},
+		{name: "no", values: []string{"no"}, want: false},
+		{name: "off", values: []string{"off"}, want: false},
+		{name: "one", values: []string{"1"}, want: true},
+		{name: "t", values: []string{"t"}, want: true},
+		{name: "true", values: []string{"true"}, want: true},
+		{name: "yes", values: []string{"yes"}, want: true},
+		{name: "on", values: []string{"on"}, want: true},
+		{name: "case and whitespace", values: []string{"  YeS\t"}, want: true},
+		{name: "invalid", values: []string{"enabled"}, wantErr: true},
+		{name: "repeated", values: []string{"true", "false"}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			header := http.Header{}
+			if tt.values != nil {
+				header[mode.HeaderDevshardHA] = tt.values
+			}
+
+			got, err := parseDevshardHAHeader(header)
+			if tt.wantErr {
+				require.Error(t, err)
+				require.False(t, got)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.want, got)
+		})
+	}
+
+	ha, err := parseDevshardHAHeader(nil)
+	require.NoError(t, err)
+	require.False(t, ha)
+}
+
 func TestHAStorageGuard_AllowsWithoutHeader(t *testing.T) {
 	t.Setenv(mode.EnvStorageMode, "sqlite")
 	t.Setenv("PGHOST", "")

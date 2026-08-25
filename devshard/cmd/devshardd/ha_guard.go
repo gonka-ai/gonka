@@ -4,9 +4,10 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	"common/storage/mode"
-	"devshard/internal/configenv"
+	"devshard/internal/boolvalue"
 
 	"github.com/labstack/echo/v4"
 )
@@ -16,7 +17,7 @@ import (
 // devshard environment settings.
 func requireHADeploymentStorage() error {
 	raw := os.Getenv(mode.EnvHADeployment)
-	ha, err := configenv.ParseBool(raw)
+	ha, err := boolvalue.Parse(raw)
 	if err != nil {
 		return fmt.Errorf("%s: %w", mode.EnvHADeployment, err)
 	}
@@ -27,6 +28,32 @@ func requireHADeploymentStorage() error {
 		return fmt.Errorf("%s=%q: %w", mode.EnvHADeployment, raw, err)
 	}
 	return nil
+}
+
+// parseDevshardHAHeader reports whether the router marked a request as
+// multi-instance HA. A present empty value is the legacy shorthand for true;
+// every non-empty value uses the same grammar as boolean environment settings.
+func parseDevshardHAHeader(h http.Header) (bool, error) {
+	if h == nil {
+		return false, nil
+	}
+	values := h.Values(mode.HeaderDevshardHA)
+	if len(values) == 0 {
+		return false, nil
+	}
+	if len(values) != 1 {
+		return false, fmt.Errorf("%s must have exactly one value", mode.HeaderDevshardHA)
+	}
+
+	raw := values[0]
+	if strings.TrimSpace(raw) == "" {
+		return true, nil
+	}
+	ha, err := boolvalue.Parse(raw)
+	if err != nil {
+		return false, fmt.Errorf("%s=%q: %w", mode.HeaderDevshardHA, raw, err)
+	}
+	return ha, nil
 }
 
 // haStorageGuard rejects multi-instance HA-marked requests unless this process
@@ -44,7 +71,7 @@ func haStorageGuard() echo.MiddlewareFunc {
 	storageErr := mode.RequireConfiguredForHA()
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			ha, err := mode.ParseDevshardHAHeader(c.Request().Header)
+			ha, err := parseDevshardHAHeader(c.Request().Header)
 			if err != nil {
 				// Treat an unrecognised internal marker conservatively as HA. A
 				// Postgres-backed process can serve it safely; an unsafe process

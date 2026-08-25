@@ -1,4 +1,4 @@
-package configenv
+package boolvalue
 
 import (
 	"testing"
@@ -6,7 +6,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestParseBool(t *testing.T) {
+func TestParse(t *testing.T) {
 	tests := []struct {
 		name    string
 		raw     string
@@ -33,7 +33,7 @@ func TestParseBool(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ParseBool(tt.raw)
+			got, err := Parse(tt.raw)
 			if tt.wantErr {
 				require.Error(t, err)
 				require.False(t, got)
