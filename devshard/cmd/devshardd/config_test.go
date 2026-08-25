@@ -37,3 +37,27 @@ func TestValidateBinaryLogVersion(t *testing.T) {
 		})
 	}
 }
+
+func TestEnvBoolOrUsesDevshardBooleanGrammar(t *testing.T) {
+	const key = "TEST_DEVSHARD_BOOL"
+
+	t.Setenv(key, "on")
+	if !envBoolOr(key, false) {
+		t.Fatal("on must enable the setting")
+	}
+
+	t.Setenv(key, "f")
+	if envBoolOr(key, true) {
+		t.Fatal("f must disable the setting")
+	}
+
+	t.Setenv(key, "")
+	if !envBoolOr(key, true) {
+		t.Fatal("empty value must preserve the caller fallback")
+	}
+
+	t.Setenv(key, "invalid")
+	if !envBoolOr(key, true) {
+		t.Fatal("invalid value must preserve the caller fallback")
+	}
+}

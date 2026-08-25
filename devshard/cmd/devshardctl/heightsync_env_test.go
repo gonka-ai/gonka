@@ -42,3 +42,14 @@ func TestParseUintEnv(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, uint64(10), v)
 }
+
+func TestHeightSyncFlagUsesDevshardBooleanGrammar(t *testing.T) {
+	t.Setenv(envHeightSync, "ON")
+	require.True(t, heightSyncFlag())
+
+	t.Setenv(envHeightSync, "no")
+	require.False(t, heightSyncFlag())
+
+	t.Setenv(envHeightSync, "invalid")
+	require.False(t, heightSyncFlag(), "invalid values retain the disabled fallback")
+}

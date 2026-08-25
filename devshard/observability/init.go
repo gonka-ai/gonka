@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"os"
-	"strconv"
 	"strings"
 	"time"
 
@@ -15,6 +14,7 @@ import (
 	"go.opentelemetry.io/otel/sdk/resource"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
+	"devshard/internal/configenv"
 	"devshard/observability/otelutil"
 )
 
@@ -117,7 +117,7 @@ func otelEnabled() bool {
 	if raw == "" {
 		return false
 	}
-	enabled, err := strconv.ParseBool(raw)
+	enabled, err := configenv.ParseBool(raw)
 	if err != nil {
 		logWarn("config.invalid_enabled",
 			"Invalid OpenTelemetry enabled flag; observability will stay disabled",
