@@ -82,6 +82,7 @@ func drive() error {
 		Hosts:     hosts,
 		Verifier:  signer,
 		Submitter: outside.submitter,
+		Lifecycle: outside.lifecycle,
 		Clock:     clock,
 	}, os.Stdout).Register(commands)
 	ops.New(ops.Config{Timeout: cfg.timeout}, ops.Deps{
@@ -111,6 +112,7 @@ func key(cfg config) (keys, error) {
 type outside struct {
 	chain     shard.ChainReader
 	submitter shard.ChainSubmitter
+	lifecycle shard.ChainLifecycle
 	close     func() error
 }
 
@@ -123,7 +125,8 @@ func connect(cfg config, signer keys) (outside, error) {
 	if !signs {
 		return outside{}, fmt.Errorf("the chain only takes what a key signs")
 	}
-	return outside{chain: client, submitter: chain.NewSigner(client, account, cfg.chainID), close: client.Close}, nil
+	creator := chain.NewSigner(client, account, cfg.chainID)
+	return outside{chain: client, submitter: creator, lifecycle: creator, close: client.Close}, nil
 }
 
 func catalog() map[string]func(context.Context, []string) error {

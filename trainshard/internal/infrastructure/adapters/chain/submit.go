@@ -2,6 +2,7 @@ package chain
 
 import (
 	"context"
+	"encoding/hex"
 	"fmt"
 	"time"
 
@@ -26,7 +27,8 @@ import (
 
 const (
 	denom = "ngonka"
-	gas   = 400_000
+	// what a transaction goes out on when the chain will not say what it costs
+	gasFallback = 400_000
 )
 
 // Key is the account a coordinator drives its run from: unlike a host, it signs for itself
@@ -79,19 +81,71 @@ func (s *Signer) Release(ctx context.Context, shardID vo.ShardID, node vo.NodeRe
 	})
 }
 
+// Assemble reserves the nodes. The chain names the shard in its answer, which is the only place
+// that number exists until the shard is on chain
+func (s *Signer) Assemble(ctx context.Context, proposal uint64) (vo.ShardID, error) {
+	answer, err := s.submit(ctx, &types.MsgAssembleTrainshard{Creator: string(s.key.Address()), ProposalId: proposal})
+	if err != nil {
+		return 0, err
+	}
+	var assembled types.MsgAssembleTrainshardResponse
+	if err := response(answer, &assembled); err != nil {
+		return 0, err
+	}
+	return vo.ShardID(assembled.TrainshardId), nil
+}
+
+func (s *Signer) Settle(ctx context.Context, shardID vo.ShardID) error {
+	return s.send(ctx, &types.MsgSettleTrainshard{
+		Creator:      string(s.key.Address()),
+		TrainshardId: uint64(shardID),
+	})
+}
+
 func (s *Signer) send(ctx context.Context, msg sdk.Msg) error {
-	number, sequence, err := s.account(ctx)
+	_, err := s.submit(ctx, msg)
+	return err
+}
+
+// gas asks the chain what the message costs, because no fixed number covers it: an assemble writes
+// an entry per node it reserves, and a settle hands each of them back
+func (s *Signer) gas(ctx context.Context, builder client.TxBuilder) (uint64, error) {
+	encoded, err := s.config.TxEncoder()(builder.GetTx())
+	if err != nil {
+		return 0, err
+	}
+	answer, err := s.sender.Simulate(ctx, &txtypes.SimulateRequest{TxBytes: encoded})
+	if err != nil {
+		return gasFallback, nil
+	}
+	return answer.GasInfo.GasUsed * 3 / 2, nil
+}
+
+func response(answer *sdk.TxResponse, out interface{ Unmarshal([]byte) error }) error {
+	raw, err := hex.DecodeString(answer.Data)
 	if err != nil {
 		return err
+	}
+	var data sdk.TxMsgData
+	if err := data.Unmarshal(raw); err != nil {
+		return err
+	}
+	if len(data.MsgResponses) == 0 {
+		return shared.New("CHAIN_SILENT", shared.ErrUnavailable, "the chain ran the message and said nothing back")
+	}
+	return out.Unmarshal(data.MsgResponses[0].Value)
+}
+
+func (s *Signer) submit(ctx context.Context, msg sdk.Msg) (*sdk.TxResponse, error) {
+	number, sequence, err := s.account(ctx)
+	if err != nil {
+		return nil, err
 	}
 
 	builder := s.config.NewTxBuilder()
 	if err := builder.SetMsgs(msg); err != nil {
-		return err
+		return nil, err
 	}
-	builder.SetGasLimit(gas)
-	builder.SetFeeAmount(sdk.NewCoins(sdk.NewCoin(denom, math.NewInt(gas*s.price(ctx)))))
-
 	// what is signed covers who signs it, so the key and the sequence go in before the signature that
 	// then replaces this blank one
 	blank := signingtypes.SignatureV2{
@@ -100,32 +154,39 @@ func (s *Signer) send(ctx context.Context, msg sdk.Msg) error {
 		Sequence: sequence,
 	}
 	if err := builder.SetSignatures(blank); err != nil {
-		return err
+		return nil, err
 	}
+
+	limit, err := s.gas(ctx, builder)
+	if err != nil {
+		return nil, err
+	}
+	builder.SetGasLimit(limit)
+	builder.SetFeeAmount(sdk.NewCoins(sdk.NewCoin(denom, math.NewInt(int64(limit)*s.price(ctx)))))
 
 	signature, err := clienttx.SignWithPrivKey(ctx, signingtypes.SignMode_SIGN_MODE_DIRECT,
 		authsigning.SignerData{ChainID: s.chainID, AccountNumber: number, Sequence: sequence},
 		builder, s.key.Account(), s.config, sequence)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if err := builder.SetSignatures(signature); err != nil {
-		return err
+		return nil, err
 	}
 
 	encoded, err := s.config.TxEncoder()(builder.GetTx())
 	if err != nil {
-		return err
+		return nil, err
 	}
 	answer, err := s.sender.BroadcastTx(ctx, &txtypes.BroadcastTxRequest{
 		TxBytes: encoded,
 		Mode:    txtypes.BroadcastMode_BROADCAST_MODE_SYNC,
 	})
 	if err != nil {
-		return shared.New("CHAIN_UNREACHABLE", shared.ErrUnavailable, err.Error())
+		return nil, shared.New("CHAIN_UNREACHABLE", shared.ErrUnavailable, err.Error())
 	}
 	if answer.TxResponse.Code != 0 {
-		return refused(msg, answer.TxResponse.Code, answer.TxResponse.RawLog)
+		return nil, refused(msg, answer.TxResponse.Code, answer.TxResponse.RawLog)
 	}
 	return s.landed(ctx, msg, answer.TxResponse.TxHash)
 }
@@ -133,18 +194,18 @@ func (s *Signer) send(ctx context.Context, msg sdk.Msg) error {
 // landed waits for the block that runs the message. The chain answers a broadcast the moment it takes
 // the transaction, so without this the next one would sign with a sequence the account no longer has,
 // and a message the chain then refused would read as done
-func (s *Signer) landed(ctx context.Context, msg sdk.Msg, hash string) error {
+func (s *Signer) landed(ctx context.Context, msg sdk.Msg, hash string) (*sdk.TxResponse, error) {
 	for {
 		answer, err := s.sender.GetTx(ctx, &txtypes.GetTxRequest{Hash: hash})
 		switch {
 		case err == nil && answer.TxResponse.Code != 0:
-			return refused(msg, answer.TxResponse.Code, answer.TxResponse.RawLog)
+			return nil, refused(msg, answer.TxResponse.Code, answer.TxResponse.RawLog)
 		case err == nil:
-			return nil
+			return answer.TxResponse, nil
 		}
 		select {
 		case <-ctx.Done():
-			return shared.New("CHAIN_SLOW", shared.ErrUnavailable,
+			return nil, shared.New("CHAIN_SLOW", shared.ErrUnavailable,
 				fmt.Sprintf("the chain took %s as %s and never ran it", sdk.MsgTypeURL(msg), hash))
 		case <-time.After(s.poll):
 		}
