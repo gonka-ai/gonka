@@ -139,6 +139,9 @@ services:
       KEY_NAME: {{ versiondKeyName $ . }}
       DEVSHARD_VALIDATION_LEASE_TTL: ${DEVSHARD_VALIDATION_LEASE_TTL:-30m}
       DEVSHARD_VALIDATION_RETRY_INTERVAL: ${DEVSHARD_VALIDATION_RETRY_INTERVAL:-5m}
+      # Peers/executors here are compose service names resolving to private IPs,
+      # so the dial-time SSRF guard must be off. Production leaves this unset.
+      DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
 {{ if and (eq $.Versiond.Mode "multi") (isHAReplica $ .) }}
@@ -237,6 +240,8 @@ services:
       DEVSHARD_PRIVATE_KEY: ${TESTENV_USER_PRIVATE_KEY}
       DEVSHARD_ADMIN_API_KEY: ${TESTENV_ADMIN_API_KEY}
       DEVSHARD_STORAGE_DIR: /var/lib/devshardctl
+      # Hosts are compose service names resolving to private IPs; see versiond.
+      DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
       GATEWAY_MAX_TOKENS_CAP: "4096"
     volumes:
       - ./data/devshardctl:/var/lib/devshardctl

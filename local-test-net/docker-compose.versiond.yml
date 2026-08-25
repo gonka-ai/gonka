@@ -40,6 +40,11 @@ x-versiond: &versiond
     KEYRING_BACKEND: ${KEYRING_BACKEND:-file}
     KEYRING_PASSWORD: ${KEYRING_PASSWORD:-}
     KEYRING_DIR: ${KEYRING_DIR:-/root/.inference}
+    # Local/dev only: peer hosts and executors register docker-internal
+    # hostnames that resolve to private IPs, so devshardd's dial-time SSRF
+    # guard must be disabled. Production leaves this unset (default false =
+    # private targets blocked). Inherited by the devshardd child process.
+    DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
     # devshardd child storage (overridden by docker-compose.devshard-postgres.yml).
     PGHOST: ${PGHOST:-}
     PGPORT: ${PGPORT:-5432}

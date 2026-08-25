@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/url"
 	"strconv"
@@ -25,6 +24,7 @@ import (
 	"devshard/types"
 
 	"common/chainoracle/blocks"
+	"common/httpguard"
 
 	devshardpkg "devshard"
 )
@@ -36,10 +36,10 @@ func getTransport(baseURL string) *http.Transport {
 		return t.(*http.Transport)
 	}
 	fallbackAddress := transportAddress(baseURL)
-	dialer := &net.Dialer{
-		Timeout:   30 * time.Second,
-		KeepAlive: 30 * time.Second,
-	}
+	// Dial-time SSRF guard: baseURL is a participant-controlled peer URL, so
+	// every dial is vetted against the private/internal ranges unless the
+	// process explicitly opts out (dev/test). See common/httpguard.
+	dialer := httpguard.NewDialer()
 	t := &http.Transport{
 		MaxIdleConnsPerHost: 4,
 		IdleConnTimeout:     120 * time.Second,
