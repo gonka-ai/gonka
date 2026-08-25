@@ -21,7 +21,8 @@ from torch.nn import functional as F
 from torch.nn.parallel import DistributedDataParallel
 
 SOURCE = os.environ.get("SOURCE", "")
-LOCAL = "/workspace/input.txt"
+# next to this file, wherever the image put it: /workspace is the volume the daemon mounts over
+LOCAL = os.path.join(os.path.dirname(os.path.abspath(__file__)), "input.txt")
 RANK = int(os.environ["NODE_RANK"])
 WORLD_SIZE = int(os.environ["NNODES"])
 MASTER = os.environ["MASTER_ADDR"]

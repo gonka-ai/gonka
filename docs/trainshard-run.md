@@ -55,7 +55,8 @@ inferenced query inference params -o json | jq -r '.params.training_params.allow
 
 2. Build the run image, the digest is what the proposal pins. `train.py` reads
    `NODE_RANK`, `NNODES`, `MASTER_ADDR` and `MASTER_PORT` from the environment,
-   that is the whole contract:
+   that is the whole contract. Bake it anywhere but `/workspace`: that path is
+   the volume the daemon mounts, and it hides whatever the image left there:
 
 ```
 cp trainshard/example/train.py .
@@ -63,8 +64,8 @@ curl -sL https://raw.githubusercontent.com/karpathy/char-rnn/master/data/tinysha
 
 cat > Dockerfile <<'EOF'
 FROM pytorch/pytorch@sha256:8312479...
-COPY train.py input.txt /workspace/
-ENTRYPOINT ["python","-u","/workspace/train.py"]
+COPY train.py input.txt /opt/train/
+ENTRYPOINT ["python","-u","/opt/train/train.py"]
 EOF
 
 docker build -t myrepo/trainer:1 . && docker push myrepo/trainer:1
