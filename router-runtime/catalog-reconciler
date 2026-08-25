@@ -260,6 +260,43 @@ map_snapshot() {
     runtime "show map $1" 2>/dev/null
 }
 
+repair_accepted_projection() {
+    [ -s "$last_names" ] || return 0
+
+    projection_state=$(map_snapshot "$projection_map") || return 1
+    slot_state=$(map_snapshot "$slot_map") || return 1
+    while IFS= read -r version; do
+        [ -n "$version" ] || continue
+        encoded=$(router_urlencode "$version")
+        backend=$(printf '%s\n' "$slot_state" | slot_for_encoded_version "$encoded")
+        [ -n "$backend" ] || return 1
+        current=$(printf '%s\n' "$projection_state" | mapped_backend "$version")
+        [ "$current" = "$backend" ] && continue
+
+        escaped_key=$(runtime_key "$version")
+        escaped_backend=$(runtime_key "$backend")
+        if [ -n "$current" ]; then
+            runtime "set map $projection_map $escaped_key $escaped_backend" \
+                >/dev/null 2>&1 || true
+        else
+            runtime "add map $projection_map $escaped_key $escaped_backend" \
+                >/dev/null 2>&1 || true
+        fi
+    done < "$last_names"
+
+    projection_state=$(map_snapshot "$projection_map") || return 1
+    while IFS= read -r version; do
+        [ -n "$version" ] || continue
+        encoded=$(router_urlencode "$version")
+        backend=$(printf '%s\n' "$slot_state" | slot_for_encoded_version "$encoded")
+        printf '%s\n' "$projection_state" | awk \
+            -v key="$version" -v expected="$backend" '
+                $2 "" == key "" && $3 "" == expected "" { found = 1 }
+                END { exit !found }
+            ' || return 1
+    done < "$last_names"
+}
+
 remember_slot_usage() {
     last_used=$(printf '%s\n' "$slot_state" | awk -v prefix="$backend_prefix" '
         index($2, prefix) == 1 && $3 != "__unassigned__" { used++ }
@@ -470,6 +507,8 @@ prepare_catalog() {
 while :; do
     if [ ! -S "$runtime_socket" ]; then
         set_state runtime-unavailable "HAProxy Runtime API is not ready"
+    elif ! repair_accepted_projection; then
+        set_state runtime-error "cannot restore the accepted catalog projection"
     elif ! fetch_catalog; then
         set_state fetch-error "cannot fetch or validate $catalog_url"
     elif ! validate_catalog_progression; then

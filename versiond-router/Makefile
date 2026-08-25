@@ -596,6 +596,18 @@ test-version-routing:
 	done; \
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/cache/chat)" = b ] \
 		|| fail "inner router lost a learned route when restarted without dapi"; \
+	printf '%s\n' 'del map /etc/haproxy/versions.map v9' \
+		| docker exec -i gonka-vp-router socat - \
+			UNIX-CONNECT:/var/run/haproxy/reconciler.sock; \
+	repaired_host=; \
+	for i in $$(seq 20); do \
+		repaired_host=$$(curl -fsS -m 3 \
+			http://127.0.0.1:18132/v9/sessions/cache-repair/chat 2>/dev/null || true); \
+		[ "$$repaired_host" = b ] && break; \
+		sleep 0.5; \
+	done; \
+	[ "$$repaired_host" = b ] \
+		|| fail "accepted catalog did not repair the runtime map while dapi was unavailable"; \
 	docker start gonka-vp-catalog >/dev/null; \
 	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v11"},{"name":"v11"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
