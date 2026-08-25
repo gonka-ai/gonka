@@ -40,4 +40,7 @@ type ValidationCompletionRecorder interface {
 	// ErrValidationLeaseAbandoned means skip submit and do not mark submitted.
 	AllowValidationSubmit(ctx context.Context, escrowID string, inferenceID uint64) error
 	MarkValidationSubmitted(ctx context.Context, escrowID string, inferenceID uint64) error
+	// ReleaseValidationLease frees a pending lease this instance owns so the
+	// inference can be re-picked. No-op if this instance has no remembered acquire.
+	ReleaseValidationLease(ctx context.Context, escrowID string, inferenceID uint64) error
 }

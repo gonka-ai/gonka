@@ -157,8 +157,9 @@ func TestValidationLeaseRacePendingStretch(t *testing.T) {
 	harness.RequireLeaseExclusivityPass(t, final, 1)
 }
 
-// TestValidationLeaseRaceStaleReclaim covers manual plan §7b: short TTL, pause ML
-// so leases stay pending, stop one replica, survivor reclaim + submit.
+// TestValidationLeaseRaceStaleReclaim covers manual plan §7b: short TTL, slow ML
+// so leases stay pending in-flight, stop the owning replica mid-validate, then
+// the survivor reclaims after TTL and submits.
 func TestValidationLeaseRaceStaleReclaim(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
@@ -194,8 +195,8 @@ func TestValidationLeaseRaceStaleReclaim(t *testing.T) {
 	escrow := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey).EscrowID
 	harness.WarmEscrowOnBothReplicas(t, stack, cfg, escrow)
 
-	harness.Step(t, "slow then pause ML so leases stay pending")
-	harness.SlowMockOpenAI(t, client, mockOpenAI, 8_000)
+	harness.Step(t, "slow ML so leases stay pending while Validate is in-flight")
+	harness.SlowMockOpenAI(t, client, mockOpenAI, 20_000)
 
 	var wg sync.WaitGroup
 	for i := 0; i < 3; i++ {
@@ -211,7 +212,7 @@ func TestValidationLeaseRaceStaleReclaim(t *testing.T) {
 				},
 				MaxTokens: 16,
 			}
-			// Chat may fail after ML pause; best-effort to create pending leases.
+			// Chat may fail after the replica is killed; best-effort to create pending leases.
 			if _, err := harness.TryPostGatewayChatCompletion(slowClient, eps.GatewayHTTP, harness.TestenvAdminAPIKey, req); err != nil {
 				t.Logf("citest: 7b chat %d: %v", i, err)
 			}
@@ -222,20 +223,17 @@ func TestValidationLeaseRaceStaleReclaim(t *testing.T) {
 	require.Equal(t, 0, pending.DuplicateGroups)
 	beforeTerminal := pending.Submitted + pending.Skipped
 
-	harness.Step(t, "hard-pause ML (503) so pending leases cannot complete on a dying replica")
-	harness.PauseMockOpenAI(t, client, mockOpenAI)
-
 	victim := cfg.Hosts[1].ID
 	survivor := cfg.Hosts[0].ID
-	harness.Step(t, "stop replica %s; re-warm survivor %s from shared PG", victim, survivor)
+	harness.Step(t, "stop replica %s mid-validate; re-warm survivor %s from shared PG", victim, survivor)
 	stack.StopService(t, victim)
 	// Sticky traffic often lived on the victim; survivor must catch up Finished
-	// inferences from Postgres or RetryLoop marks the stale lease skipped.
+	// inferences from Postgres so ValidationRetryLoop can reclaim the abandoned lease.
 	harness.WarmEscrowOnHost(t, stack, cfg, survivor, escrow)
 
 	time.Sleep(18 * time.Second) // > 15s TTL
 
-	harness.Step(t, "restore ML; survivor RetryLoop should reclaim + advance lease")
+	harness.Step(t, "restore ML; survivor ValidationRetryLoop should reclaim + advance lease")
 	harness.ResetMockOpenAIFault(t, client, mockOpenAI)
 
 	final := harness.WaitLeaseTerminal(t, stack, cfg, beforeTerminal+1, 2*time.Minute)

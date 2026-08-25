@@ -63,8 +63,8 @@ type HostResponse struct {
 	ConfirmedAt        int64  // executor wall-clock timestamp, 0 if not executor
 	Mempool            []*types.DevshardTx
 	ExecutionJob       *devshard.ExecuteRequest // non-nil if this host is the executor and execution is deferred
-	CachedResponseBody []byte // non-nil when reconnecting to a completed inference
-	StreamBytesRead    int64  // total bytes read from the host HTTP response body (SSE streams only)
+	CachedResponseBody []byte                   // non-nil when reconnecting to a completed inference
+	StreamBytesRead    int64                    // total bytes read from the host HTTP response body (SSE streams only)
 	InferenceID        uint64
 	ReceiptExpected    bool
 	ReceiptReason      observability.Reason
@@ -93,22 +93,22 @@ const (
 
 // Host processes user requests: applies diffs, executes inference, signs state.
 type Host struct {
-	mu           sync.Mutex
-	sm           *state.StateMachine
-	signer       signing.Signer
-	verifier     signing.Verifier
-	engine       devshard.InferenceEngine
+	mu                 sync.Mutex
+	sm                 *state.StateMachine
+	signer             signing.Signer
+	verifier           signing.Verifier
+	engine             devshard.InferenceEngine
 	validator          devshard.ValidationEngine // optional, nil = no validation
 	validationRecorder devshard.ValidationCompletionRecorder
 	escrowID           string
 	epochID            uint64
 	slotIDs            map[uint32]bool
 	group              []types.SlotAssignment
-	mempool      *Mempool
-	checker      AcceptanceChecker
-	store        storage.Storage // optional, nil = no persistence
-	gsp          *gossip.Gossip  // optional, nil = no gossip pruning
-	availability devshard.AvailabilityProvider
+	mempool            *Mempool
+	checker            AcceptanceChecker
+	store              storage.Storage // optional, nil = no persistence
+	gsp                *gossip.Gossip  // optional, nil = no gossip pruning
+	availability       devshard.AvailabilityProvider
 
 	snapshotInFlight      atomic.Bool  // prevents overlapping async snapshot writes
 	validationObsInFlight atomic.Int32 // caps concurrent async validation-obs writes
@@ -195,21 +195,21 @@ func NewHost(
 	}
 
 	h := &Host{
-		sm:                    sm,
-		signer:                signer,
-		engine:                engine,
-		escrowID:              escrowID,
-		slotIDs:               slotIDs,
-		group:                 group,
-		mempool:               NewMempool(),
-		checker:               checker,
-		slotToAddr:            slotToAddr,
-		addrToSlots:           addrToSlots,
-		sortedSlots:           sortedSlots,
-		executing:             make(map[uint64]struct{}),
-		validating:            make(map[uint64]struct{}),
-		completedResponses:    make(map[uint64][]byte),
-		ownSeed:               ownSeed,
+		sm:                 sm,
+		signer:             signer,
+		engine:             engine,
+		escrowID:           escrowID,
+		slotIDs:            slotIDs,
+		group:              group,
+		mempool:            NewMempool(),
+		checker:            checker,
+		slotToAddr:         slotToAddr,
+		addrToSlots:        addrToSlots,
+		sortedSlots:        sortedSlots,
+		executing:          make(map[uint64]struct{}),
+		validating:         make(map[uint64]struct{}),
+		completedResponses: make(map[uint64][]byte),
+		ownSeed:            ownSeed,
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -1107,6 +1107,9 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		EpochID:         job.epochID,
 	})
 	if err != nil {
+		if !errors.Is(err, devshard.ErrValidationAlreadyLeased) {
+			h.releaseValidationLease(ctx, job.inferenceID)
+		}
 		// Payload already pruned on the executor: the validation window is
 		// effectively over for us. Drop silently -- no MsgValidation, no
 		// challenge, no error in the executor receipt path.
@@ -1130,6 +1133,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 
 	rec, ok := h.sm.GetInference(job.inferenceID)
 	if !ok {
+		h.releaseValidationLease(ctx, job.inferenceID)
 		observability.FailValidationFinished(ctx, h.escrowID,
 			observability.ReasonInferenceDisappeared, observability.WhereHostValidate,
 			"validate: inference disappeared", nil,
@@ -1156,6 +1160,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		}
 		proposerSig, err := h.signProposer(msg)
 		if err != nil {
+			h.releaseValidationLease(ctx, job.inferenceID)
 			observability.LogValidationOrphan(ctx, h.escrowID,
 				observability.ReasonSignValidationErr, observability.WhereHostPublishValidation,
 				observability.StageVotePublished, "sign validation msg failed", err,
@@ -1180,6 +1185,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		}
 		proposerSig, err := h.signProposer(msg)
 		if err != nil {
+			h.releaseValidationLease(ctx, job.inferenceID)
 			observability.LogValidationOrphan(ctx, h.escrowID,
 				observability.ReasonSignVoteErr, observability.WhereHostPublishValidation,
 				observability.StageVotePublished, "sign validation vote failed", err,
@@ -1196,6 +1202,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		tx = &types.DevshardTx{Tx: &types.DevshardTx_ValidationVote{ValidationVote: msg}}
 		validationTx = "validation_vote"
 	default:
+		h.releaseValidationLease(ctx, job.inferenceID)
 		observability.IncValidation(observability.StageVotePublished, observability.MetricStatusError)
 		observability.Log(ctx, observability.LevelInfo, "validation skipped after status changed", observability.StageVotePublished, observability.WhereHostPublishValidation, h.escrowID, observability.ReasonValidationStatusChanged, nil,
 			"inference_id", job.inferenceID,
@@ -1210,6 +1217,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 
 	if h.validationRecorder != nil {
 		if err := h.validationRecorder.AllowValidationSubmit(ctx, h.escrowID, job.inferenceID); err != nil {
+			h.releaseValidationLease(ctx, job.inferenceID)
 			logging.Info("validation submit abandoned after lease check",
 				"subsystem", "host",
 				"inference_id", job.inferenceID,
@@ -1248,6 +1256,19 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 				logging.Error("mark validation submitted failed", "subsystem", "host", "inference_id", job.inferenceID, "error", err)
 			}
 		}
+	}
+}
+
+func (h *Host) releaseValidationLease(ctx context.Context, inferenceID uint64) {
+	if h.validationRecorder == nil {
+		return
+	}
+	if err := h.validationRecorder.ReleaseValidationLease(ctx, h.escrowID, inferenceID); err != nil {
+		logging.Error("release validation lease failed",
+			"subsystem", "host",
+			"inference_id", inferenceID,
+			"error", err,
+		)
 	}
 }
 

@@ -27,6 +27,7 @@ type leaseOps interface {
 	Acquire(ctx context.Context, escrowId string, inferenceId uint64, epochId uint64, instanceAddr string) (bool, error)
 	SetResult(ctx context.Context, escrowId string, inferenceId uint64, status storage.LeaseStatus, instanceAddr string) error
 	OwnsPendingLease(ctx context.Context, escrowId string, inferenceId uint64, instanceAddr string) (bool, error)
+	Release(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) error
 }
 
 type acquireKey struct {
@@ -38,18 +39,28 @@ type acquireKey struct {
 // It performs ML-based inference validation without lease deduplication.
 // Use LeaseValidator to add Postgres-based lease deduplication on top.
 type Validator struct {
-	bridge       bridge.MainnetBridge
-	recorder     PayloadAuthClient
-	engine       *Engine
-	phase        *chain.Phase
-	boundVersion string
-	chainParams  ChainParamsProvider
-	thresholds   ValidationThresholdResolver
+	bridge                  bridge.MainnetBridge
+	recorder                PayloadAuthClient
+	engine                  *Engine
+	phase                   *chain.Phase
+	boundVersion            string
+	chainParams             ChainParamsProvider
+	thresholds              ValidationThresholdResolver
+	voteFalseOnFetchFailure bool
+	payloadHTTPClient       *http.Client
+	fetchPayloads           payloadFetchFunc
+	executeML               mlExecuteFunc
 }
+
+type payloadFetchFunc func(ctx context.Context, req devshardpkg.ValidateRequest, inferenceID string, epochID uint64) ([]byte, []byte, error)
+
+type mlExecuteFunc func(ctx context.Context, model, escrowID string, body []byte) (*http.Response, error)
 
 // NewValidator creates a Validator. boundVersion is the runtime version string used
 // to construct the payload request path. thresholds resolves the per-model
 // similarity pass threshold (long-poll snapshot first, chain fallback).
+// voteFalseOnFetchFailure converts executor-attributable payload failures into
+// Valid:false instead of abandoning the attempt.
 func NewValidator(
 	br bridge.MainnetBridge,
 	recorder PayloadAuthClient,
@@ -58,15 +69,17 @@ func NewValidator(
 	boundVersion string,
 	chainParams ChainParamsProvider,
 	thresholds ValidationThresholdResolver,
+	voteFalseOnFetchFailure bool,
 ) *Validator {
 	return &Validator{
-		bridge:       br,
-		recorder:     recorder,
-		engine:       engine,
-		phase:        phase,
-		boundVersion: boundVersion,
-		chainParams:  chainParams,
-		thresholds:   thresholds,
+		bridge:                  br,
+		recorder:                recorder,
+		engine:                  engine,
+		phase:                   phase,
+		boundVersion:            boundVersion,
+		chainParams:             chainParams,
+		thresholds:              thresholds,
+		voteFalseOnFetchFailure: voteFalseOnFetchFailure,
 	}
 }
 
@@ -77,10 +90,11 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 	if epochID == 0 {
 		epochID = v.phase.EpochID()
 	}
-	promptPayload, responsePayload, err := fetchPayloadsFromExecutor(
-		ctx, v.bridge, v.recorder, req, inferenceID, epochID, devshardpkg.VersionedSessionPayloadPath(v.boundVersion, req.EscrowID),
-	)
+	promptPayload, responsePayload, err := v.fetchPayloadsFor(ctx, req, inferenceID, epochID)
 	if err != nil {
+		if verdict := executorFaultVerdict(ctx, v.phase, req, err, v.voteFalseOnFetchFailure); verdict != nil {
+			return verdict, nil
+		}
 		if errors.Is(err, commonvalidation.ErrPayloadGone) {
 			logging.Info("devshard validation skipped: payload pruned on executor",
 				types.Validation,
@@ -94,9 +108,17 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 	}
 
 	if _, err := completionapi.ModifyRequestBodyWithLogprobsMode(promptPayload, int32(req.InferenceID), v.chainParams.LogprobsMode()); err != nil {
+		tagged := tagExecutorPayloadFault(err)
+		if verdict := executorFaultVerdict(ctx, v.phase, req, tagged, v.voteFalseOnFetchFailure); verdict != nil {
+			return verdict, nil
+		}
 		return nil, observability.Classify(observability.ReasonValidationBuildErr, observability.WhereRuntimeValidate, fmt.Errorf("modify request body for validation: %w", err))
 	}
 	if _, err := commonvalidation.UnmarshalResponsePayload(responsePayload); err != nil {
+		tagged := tagExecutorPayloadFault(err)
+		if verdict := executorFaultVerdict(ctx, v.phase, req, tagged, v.voteFalseOnFetchFailure); verdict != nil {
+			return verdict, nil
+		}
 		return nil, observability.Classify(observability.ReasonOriginalParseErr, observability.WhereRuntimeValidate, fmt.Errorf("parse original response: %w", err))
 	}
 
@@ -121,6 +143,54 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 			fmt.Errorf("evaluate validation result: %w", err))
 	}
 	return &devshardpkg.ValidateResult{Valid: valid}, nil
+}
+
+func (v *Validator) fetchPayloadsFor(ctx context.Context, req devshardpkg.ValidateRequest, inferenceID string, epochID uint64) ([]byte, []byte, error) {
+	if v.fetchPayloads != nil {
+		return v.fetchPayloads(ctx, req, inferenceID, epochID)
+	}
+	return fetchPayloadsFromExecutor(
+		ctx, v.bridge, v.recorder, req, inferenceID, epochID,
+		devshardpkg.VersionedSessionPayloadPath(v.boundVersion, req.EscrowID),
+		v.payloadHTTPClient,
+	)
+}
+
+const executorPayloadUnavailableReason = "executor_payload_unavailable"
+
+func executorFaultVerdict(ctx context.Context, phase *chain.Phase, req devshardpkg.ValidateRequest, err error, enabled bool) *devshardpkg.ValidateResult {
+	if !enabled || err == nil || ctx.Err() != nil {
+		return nil
+	}
+	inWindow := true
+	if phase != nil {
+		inWindow = phase.EpochID() <= req.EpochID
+	}
+	switch {
+	case errors.Is(err, commonvalidation.ErrPayloadGone):
+		if !inWindow {
+			return nil
+		}
+	case errors.Is(err, errExecutorPayloadFault):
+		// executor-attributable
+	default:
+		return nil
+	}
+
+	observability.IncValidation(observability.StageValidationFinished, observability.MetricStatusError)
+	observability.Log(ctx, observability.LevelWarn, "validation voting false: executor payload unavailable",
+		observability.StageValidationFinished, observability.WhereRuntimeValidate, req.EscrowID, observability.ReasonPayloadFetchErr, err,
+		"inference_id", req.InferenceID,
+		"executor_address", req.ExecutorAddress,
+	)
+	return &devshardpkg.ValidateResult{
+		Valid:  false,
+		Reason: executorPayloadUnavailableReason,
+		Details: []any{
+			"cause", err.Error(),
+			"classified_reason", string(observability.ReasonPayloadFetchErr),
+		},
+	}
 }
 
 // evaluateValidationResult decides pass/fail from a validation outcome. Similarity
@@ -150,6 +220,9 @@ func evaluateValidationResult(
 }
 
 func (v *Validator) executeMLRequest(ctx context.Context, model, escrowID string, body []byte) (*http.Response, error) {
+	if v.executeML != nil {
+		return v.executeML(ctx, model, escrowID, body)
+	}
 	resp, err := v.engine.doWithLockedNode(ctx, observability.PathValidate, model, escrowID, func(endpoint string) (*http.Response, error) {
 		url := endpoint + "/v1/chat/completions"
 		httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -178,7 +251,12 @@ type LeaseValidator struct {
 	leases       leaseOps
 	instanceAddr string
 	leaseTTL     time.Duration
-	acquires     sync.Map // acquireKey -> time.Time
+	acquires     sync.Map // acquireKey -> acquireRec
+}
+
+type acquireRec struct {
+	epochID uint64
+	at      time.Time
 }
 
 // NewLeaseValidator wraps v with Postgres lease deduplication.
@@ -195,21 +273,21 @@ func NewLeaseValidator(v devshardpkg.ValidationEngine, phase *chain.Phase, lease
 	}
 }
 
-func (c *LeaseValidator) rememberAcquire(escrowID string, inferenceID uint64, at time.Time) {
-	c.acquires.Store(acquireKey{escrowID: escrowID, inferenceID: inferenceID}, at)
+func (c *LeaseValidator) rememberAcquire(escrowID string, inferenceID, epochID uint64, at time.Time) {
+	c.acquires.Store(acquireKey{escrowID: escrowID, inferenceID: inferenceID}, acquireRec{epochID: epochID, at: at})
 }
 
 func (c *LeaseValidator) forgetAcquire(escrowID string, inferenceID uint64) {
 	c.acquires.Delete(acquireKey{escrowID: escrowID, inferenceID: inferenceID})
 }
 
-func (c *LeaseValidator) acquiredAt(escrowID string, inferenceID uint64) (time.Time, bool) {
+func (c *LeaseValidator) loadAcquire(escrowID string, inferenceID uint64) (acquireRec, bool) {
 	v, ok := c.acquires.Load(acquireKey{escrowID: escrowID, inferenceID: inferenceID})
 	if !ok {
-		return time.Time{}, false
+		return acquireRec{}, false
 	}
-	at, ok := v.(time.Time)
-	return at, ok
+	rec, ok := v.(acquireRec)
+	return rec, ok
 }
 
 func (c *LeaseValidator) Validate(ctx context.Context, req devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
@@ -222,17 +300,11 @@ func (c *LeaseValidator) Validate(ctx context.Context, req devshardpkg.ValidateR
 	} else if !acquired {
 		return nil, devshardpkg.ErrValidationAlreadyLeased
 	}
-	c.rememberAcquire(req.EscrowID, req.InferenceID, time.Now())
+	c.rememberAcquire(req.EscrowID, req.InferenceID, epochID, time.Now())
 
 	result, err := c.validator.Validate(ctx, req)
 	if err != nil {
-		if errors.Is(err, commonvalidation.ErrHashMismatch) {
-			// Executor served wrong payload with valid signature: immediate invalidation, no retry.
-			slog.Warn("devshardd: hash mismatch — submitting immediate invalidation",
-				"escrow", req.EscrowID, "inference", req.InferenceID)
-			return &devshardpkg.ValidateResult{Valid: false}, nil
-		}
-		c.forgetAcquire(req.EscrowID, req.InferenceID)
+		c.releaseAndForget(ctx, req.EscrowID, req.InferenceID, epochID)
 		return nil, err
 	}
 
@@ -240,13 +312,11 @@ func (c *LeaseValidator) Validate(ctx context.Context, req devshardpkg.ValidateR
 }
 
 // AllowValidationSubmit gates MsgValidation publish: TTL since acquire and
-// current pending ownership must both still hold.
+// current pending ownership must both still hold. On failure the caller must
+// ReleaseValidationLease; this method leaves the local acquire recorded so
+// release can see the epoch.
 func (c *LeaseValidator) AllowValidationSubmit(ctx context.Context, escrowID string, inferenceID uint64) error {
-	if err := c.ensureLeaseStillValid(ctx, escrowID, inferenceID); err != nil {
-		c.forgetAcquire(escrowID, inferenceID)
-		return err
-	}
-	return nil
+	return c.ensureLeaseStillValid(ctx, escrowID, inferenceID)
 }
 
 func (c *LeaseValidator) MarkValidationSubmitted(ctx context.Context, escrowID string, inferenceID uint64) error {
@@ -262,12 +332,30 @@ func (c *LeaseValidator) MarkValidationSubmitted(ctx context.Context, escrowID s
 	return err
 }
 
+func (c *LeaseValidator) ReleaseValidationLease(ctx context.Context, escrowID string, inferenceID uint64) error {
+	rec, ok := c.loadAcquire(escrowID, inferenceID)
+	if !ok {
+		return nil
+	}
+	err := c.leases.Release(ctx, escrowID, inferenceID, rec.epochID, c.instanceAddr)
+	c.forgetAcquire(escrowID, inferenceID)
+	return err
+}
+
+func (c *LeaseValidator) releaseAndForget(ctx context.Context, escrowID string, inferenceID, epochID uint64) {
+	if err := c.leases.Release(ctx, escrowID, inferenceID, epochID, c.instanceAddr); err != nil {
+		slog.Warn("devshardd: validation lease release failed",
+			"escrow", escrowID, "inference", inferenceID, "error", err)
+	}
+	c.forgetAcquire(escrowID, inferenceID)
+}
+
 func (c *LeaseValidator) ensureLeaseStillValid(ctx context.Context, escrowID string, inferenceID uint64) error {
-	at, ok := c.acquiredAt(escrowID, inferenceID)
+	rec, ok := c.loadAcquire(escrowID, inferenceID)
 	if !ok {
 		return fmt.Errorf("%w: missing local acquire time", devshardpkg.ErrValidationLeaseAbandoned)
 	}
-	if time.Since(at) > c.leaseTTL {
+	if time.Since(rec.at) > c.leaseTTL {
 		slog.Info("devshardd: validation lease TTL exceeded; abandon submit",
 			"escrow", escrowID, "inference", inferenceID, "lease_ttl", c.leaseTTL)
 		return fmt.Errorf("%w: elapsed since acquire exceeds lease TTL", devshardpkg.ErrValidationLeaseAbandoned)

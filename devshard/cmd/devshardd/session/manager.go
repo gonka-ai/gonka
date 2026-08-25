@@ -835,6 +835,14 @@ func (m *HostManager) existingServer(escrowID string) (*transport.Server, bool) 
 	return srv, ok
 }
 
+func (m *HostManager) hostSnapshot(escrowID string) (hostSnap, bool) {
+	srv, ok := m.existingServer(escrowID)
+	if !ok {
+		return nil, false
+	}
+	return srv.Host(), true
+}
+
 func (m *HostManager) hostOpts(epochID uint64) []host.HostOption {
 	opts := []host.HostOption{
 		host.WithValidator(m.validator),
