@@ -34,3 +34,11 @@ type ChainSubmitter interface {
 	// Release gives the reservation back
 	Release(ctx context.Context, shardID vo.ShardID, node vo.NodeRef, reason vo.ReleaseReason) error
 }
+
+// ChainLifecycle is what only the shard's own creator may ask: where a run begins and where it ends
+type ChainLifecycle interface {
+	// Assemble turns a passed proposal into a shard that holds its nodes
+	Assemble(ctx context.Context, proposal uint64) (vo.ShardID, error)
+	// Settle closes the run and hands every node back
+	Settle(ctx context.Context, shardID vo.ShardID) error
+}

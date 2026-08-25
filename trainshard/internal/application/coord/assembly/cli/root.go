@@ -8,22 +8,56 @@ import (
 	"time"
 
 	usecases "trainshard/internal/application/coord/assembly/use_cases"
+	"trainshard/internal/domain/shard"
 	"trainshard/internal/domain/shared/ports"
 	"trainshard/internal/utils/clix"
 )
 
 type Commands struct {
-	prepare *usecases.PrepareMeshUseCase
-	clock   ports.Clock
-	out     io.Writer
+	prepare   *usecases.PrepareMeshUseCase
+	lifecycle shard.ChainLifecycle
+	clock     ports.Clock
+	out       io.Writer
 }
 
-func New(prepare *usecases.PrepareMeshUseCase, clock ports.Clock, out io.Writer) *Commands {
-	return &Commands{prepare: prepare, clock: clock, out: out}
+func New(prepare *usecases.PrepareMeshUseCase, lifecycle shard.ChainLifecycle, clock ports.Clock, out io.Writer) *Commands {
+	return &Commands{prepare: prepare, lifecycle: lifecycle, clock: clock, out: out}
 }
 
 func (c *Commands) Register(commands map[string]func(context.Context, []string) error) {
+	commands["assemble"] = c.Assemble
 	commands["prepare"] = c.Prepare
+	commands["settle"] = c.Settle
+}
+
+func (c *Commands) Assemble(ctx context.Context, args []string) error {
+	rest, err := clix.Parse(flag.NewFlagSet("assemble <proposal>", flag.ContinueOnError), args, "proposal")
+	if err != nil {
+		return err
+	}
+	proposal, err := toProposalID(rest)
+	if err != nil {
+		return err
+	}
+
+	shardID, err := c.lifecycle.Assemble(ctx, proposal)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(c.out, "%s\n", shardID)
+	return err
+}
+
+func (c *Commands) Settle(ctx context.Context, args []string) error {
+	rest, err := clix.Parse(flag.NewFlagSet("settle <shard>", flag.ContinueOnError), args, "shard")
+	if err != nil {
+		return err
+	}
+	shardID, err := toShardID(rest)
+	if err != nil {
+		return err
+	}
+	return c.lifecycle.Settle(ctx, shardID)
 }
 
 func (c *Commands) Prepare(ctx context.Context, args []string) error {
