@@ -36,12 +36,22 @@ func TestParseDevshardHAHeader(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, ha)
 
+	h.Set(HeaderDevshardHA, "on")
+	ha, err = ParseDevshardHAHeader(h)
+	require.NoError(t, err)
+	require.True(t, ha)
+
 	h.Set(HeaderDevshardHA, "")
 	ha, err = ParseDevshardHAHeader(h)
 	require.NoError(t, err)
 	require.True(t, ha, "present empty value counts as HA mark")
 
 	h.Set(HeaderDevshardHA, "false")
+	ha, err = ParseDevshardHAHeader(h)
+	require.NoError(t, err)
+	require.False(t, ha)
+
+	h.Set(HeaderDevshardHA, "off")
 	ha, err = ParseDevshardHAHeader(h)
 	require.NoError(t, err)
 	require.False(t, ha)

@@ -9,8 +9,12 @@ import (
 
 // HeaderDevshardHA is set by versiond-router on requests that sticky-hash across
 // the HA pool (version not in VERSIOND_NON_HA_VERSIONS) when the deployment
-// declares itself HA.
+// declares itself HA or the selected backend has more than one usable server.
 const HeaderDevshardHA = "Devshard-Ha"
+
+// EnvHADeployment declares that multiple devshard instances may serve the same
+// escrow and therefore require fail-closed shared storage.
+const EnvHADeployment = "GONKA_HA"
 
 // ParseDevshardHAHeader reports whether the request was marked as
 // multi-instance HA by the router. Absence means non-HA. A present malformed or
@@ -29,13 +33,13 @@ func ParseDevshardHAHeader(h http.Header) (bool, error) {
 	}
 	raw := vals[0]
 	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "", "1", "true", "yes":
+	case "", "1", "t", "true", "yes", "on":
 		return true, nil
-	case "0", "false", "no":
+	case "0", "f", "false", "no", "off":
 		return false, nil
 	default:
 		return false, fmt.Errorf(
-			"%s=%q is not a boolean; use 1/true/yes or 0/false/no",
+			"%s=%q is not a boolean; use empty/1/t/true/yes/on or 0/f/false/no/off",
 			HeaderDevshardHA,
 			raw,
 		)

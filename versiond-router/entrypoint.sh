@@ -45,7 +45,8 @@ STREAM_IDLE="${VERSIOND_ROUTER_STREAM_IDLE_SECONDS:-1200}"
 TUNNEL_TIMEOUT="${VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS:-86400}"
 
 # Booleans use one grammar, shared with devshardd's reading of GONKA_HA:
-# 1/true/yes are on, empty/0/false/no are off, anything else refuses to start.
+# 1/t/true/yes/on are on; empty/0/f/false/no/off are off. Anything else
+# refuses to start.
 # Parsed once, here — a boolean read as "non-empty" at each use site treats
 # "false" as true, and one read as "anything unknown is off" treats a typo as
 # off; each fails open in whichever direction its author was not thinking about.
@@ -54,10 +55,10 @@ bool_env() {
     # Trim edges only, matching Go's TrimSpace on the same variables: deleting
     # all whitespace would accept 't rue', which Go rejects.
     case "$(printf '%s' "$raw" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')" in
-        1 | true | yes) printf '1' ;;
-        '' | 0 | false | no) ;;
+        1 | t | true | yes | on) printf '1' ;;
+        '' | 0 | f | false | no | off) ;;
         *)
-            echo "versiond-router: $1='$raw' is not a boolean; use 1/true/yes or 0/false/no" >&2
+            echo "versiond-router: $1='$raw' is not a boolean; use 1/t/true/yes/on or empty/0/f/false/no/off" >&2
             exit 1
             ;;
     esac

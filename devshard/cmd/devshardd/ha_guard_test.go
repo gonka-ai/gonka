@@ -59,7 +59,7 @@ func TestHAStorageGuard_AllowsHAWithPostgres(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
-func TestHAStorageGuard_RejectsMalformedHeader(t *testing.T) {
+func TestHAStorageGuard_AllowsMalformedHeaderWithPostgres(t *testing.T) {
 	t.Setenv(mode.EnvStorageMode, "postgres")
 	t.Setenv("PGHOST", "db.example")
 
@@ -72,19 +72,60 @@ func TestHAStorageGuard_RejectsMalformedHeader(t *testing.T) {
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, req)
 
+	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestHAStorageGuard_RejectsMalformedHeaderWithoutPostgres(t *testing.T) {
+	t.Setenv(mode.EnvStorageMode, "sqlite")
+	t.Setenv("PGHOST", "")
+
+	for _, values := range [][]string{{"tru"}, {"true", "false"}} {
+		e := echo.New()
+		e.Use(haStorageGuard())
+		e.GET("/x", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
+
+		req := httptest.NewRequest(http.MethodGet, "/x", nil)
+		req.Header[mode.HeaderDevshardHA] = values
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+
+		require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+		require.Contains(t, rec.Body.String(), mode.EnvStorageMode)
+	}
+}
+
+func TestHAStorageGuard_CapturesStorageVerdictAtConstruction(t *testing.T) {
+	t.Setenv(mode.EnvStorageMode, "sqlite")
+	t.Setenv("PGHOST", "")
+	middleware := haStorageGuard()
+
+	// A running process cannot change its own inherited environment. Keep the
+	// request path tied to the configuration used when its middleware was built.
+	t.Setenv(mode.EnvStorageMode, "postgres")
+	t.Setenv("PGHOST", "db.example")
+
+	e := echo.New()
+	e.Use(middleware)
+	e.GET("/x", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
+	req := httptest.NewRequest(http.MethodGet, "/x", nil)
+	req.Header.Set(mode.HeaderDevshardHA, "true")
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
-	require.Contains(t, rec.Body.String(), mode.HeaderDevshardHA)
 }
 
 func TestRequireHADeploymentStorage(t *testing.T) {
-	t.Setenv(envHADeployment, "off")
+	t.Setenv(mode.EnvHADeployment, "off")
 	t.Setenv(mode.EnvStorageMode, "sqlite")
 	require.NoError(t, requireHADeploymentStorage(),
 		"single-instance deployment must not require postgres")
 
-	t.Setenv(envHADeployment, "on")
-	require.Error(t, requireHADeploymentStorage(),
-		"HA deployment on sqlite must refuse to start")
+	t.Setenv(mode.EnvHADeployment, "on")
+	err := requireHADeploymentStorage()
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `GONKA_HA="on"`)
+	require.Contains(t, err.Error(), mode.EnvStorageMode)
 
 	t.Setenv(mode.EnvStorageMode, "hybrid")
 	t.Setenv("PGHOST", "pg")
@@ -99,16 +140,16 @@ func TestRequireHADeploymentStorage(t *testing.T) {
 }
 
 func TestRequireHADeploymentStorageRejectsInvalidBoolean(t *testing.T) {
-	t.Setenv(envHADeployment, "enabled")
+	t.Setenv(mode.EnvHADeployment, "enabled")
 
 	err := requireHADeploymentStorage()
 	require.Error(t, err)
-	require.Contains(t, err.Error(), envHADeployment)
+	require.Contains(t, err.Error(), mode.EnvHADeployment)
 	require.Contains(t, err.Error(), "invalid boolean value")
 }
 
 func TestBuildAppChecksHAStorageBeforeSideEffects(t *testing.T) {
-	t.Setenv(envHADeployment, "on")
+	t.Setenv(mode.EnvHADeployment, "on")
 	t.Setenv(mode.EnvStorageMode, "sqlite")
 	dataDir := filepath.Join(t.TempDir(), "data")
 
