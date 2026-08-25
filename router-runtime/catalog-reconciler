@@ -14,6 +14,7 @@ component=${ROUTING_CATALOG_COMPONENT:-router}
 catalog_url=${ROUTING_CATALOG_URL:-}
 poll_seconds=${ROUTING_CATALOG_POLL_SECONDS:-5}
 fetch_timeout=${ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS:-3}
+runtime_timeout=${ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS:-2}
 runtime_socket=${ROUTING_CATALOG_RUNTIME_SOCKET:-/var/run/haproxy/reconciler.sock}
 projection_map=${ROUTING_CATALOG_PROJECTION_MAP:?ROUTING_CATALOG_PROJECTION_MAP is required}
 slot_map=${ROUTING_CATALOG_SLOT_MAP:?ROUTING_CATALOG_SLOT_MAP is required}
@@ -32,7 +33,7 @@ log() {
     printf '%s\n' "$component: $*" >&2
 }
 
-for value in "$poll_seconds" "$fetch_timeout" "$backend_capacity" \
+for value in "$poll_seconds" "$fetch_timeout" "$runtime_timeout" "$backend_capacity" \
     "$server_capacity" "$activation_min_ready" "$cache_max_age"; do
     case "$value" in
         '' | *[!0-9]* | 0)
@@ -63,7 +64,6 @@ command -v socat >/dev/null 2>&1 || {
     log "socat is required for the HAProxy Runtime API"
     exit 1
 }
-
 tmpdir=$(mktemp -d)
 cleanup() {
     rm -rf "$tmpdir"
@@ -146,7 +146,22 @@ set_state() {
 }
 
 runtime() {
-    printf '%s\n' "$1" | socat - "UNIX-CONNECT:$runtime_socket"
+    response=$(printf '%s;show info\n' "$1" | \
+        socat -t "$runtime_timeout" -T "$runtime_timeout" \
+            - "UNIX-CONNECT:$runtime_socket") || return 1
+
+    # A successful mutation has no payload, which otherwise looks identical to
+    # a half-open socket timing out. The appended show-info command proves that
+    # HAProxy processed the exchange; hide its response from callers.
+    printf '%s\n' "$response" | awk '
+        /^Name: HAProxy$/ { answered = 1; exit }
+        { lines[++count] = $0 }
+        END {
+            if (!answered) exit 1
+            while (count > 0 && lines[count] == "") count--
+            for (i = 1; i <= count; i++) print lines[i]
+        }
+    '
 }
 
 # HAProxy's Runtime API treats a semicolon followed by whitespace as a command
@@ -254,7 +269,8 @@ free_slot() {
 
 map_value_is() {
     map=$1 key=$2 expected=$3
-    map_snapshot "$map" | awk -v key="$key" -v expected="$expected" '
+    snapshot=$(map_snapshot "$map") || return 1
+    printf '%s\n' "$snapshot" | awk -v key="$key" -v expected="$expected" '
         $2 "" == key "" && $3 "" == expected "" { found = 1 }
         END { exit !found }
     '
@@ -312,7 +328,8 @@ reclaim_withdrawn_pending_slots() {
 
 ready_server_count() {
     backend=$1
-    runtime "show stat" 2>/dev/null | awk -F, -v backend="$backend" '
+    stats=$(runtime "show stat" 2>/dev/null) || return 1
+    printf '%s\n' "$stats" | awk -F, -v backend="$backend" '
         $1 == backend && $2 != "BACKEND" && $18 ~ /^UP/ { ready++ }
         END { print ready + 0 }
     '

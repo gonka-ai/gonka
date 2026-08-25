@@ -272,6 +272,7 @@ test-version-routing:
 		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="$$versions" \
 		-e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
 		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
+		-e VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS=1 \
 		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
 		-e VERSIOND_NON_HA_VERSIONS="$$legacy_versions" \
@@ -285,6 +286,30 @@ test-version-routing:
 	docker exec gonka-vp-router test -s /var/lib/gonka-router/catalog.json \
 		|| fail "inner router removed the rollback catalog cache"; \
 	sleep 4; \
+	docker exec gonka-vp-router sh -c 'kill -STOP $$(pidof haproxy)' \
+		|| fail "could not suspend HAProxy for the Runtime API timeout test"; \
+	for i in $$(seq 15); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "runtime-error"' >/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| jq -e '.state == "runtime-error"' >/dev/null || { \
+			docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state >&2; \
+			docker exec gonka-vp-router ps -o pid,stat,comm,args >&2; \
+			docker logs --tail 30 gonka-vp-router >&2; \
+			fail "a half-open Runtime API socket did not reach its deadline"; \
+		}; \
+	docker exec gonka-vp-router sh -c 'kill -CONT $$(pidof haproxy)' \
+		|| fail "could not resume HAProxy after the Runtime API timeout test"; \
+	for i in $$(seq 20); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "ready"' >/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| jq -e '.state == "ready"' >/dev/null \
+		|| fail "catalog reconciliation did not recover after Runtime API resumed"; \
 	for spec in 'v1:200' 'v2:503' 'v4:200' 'v5:200' 'v9:503'; do \
 		version=$${spec%%:*}; want=$${spec##*:}; \
 		got=$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
