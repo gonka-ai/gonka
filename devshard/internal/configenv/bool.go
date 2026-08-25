@@ -24,7 +24,7 @@ func ParseBool(raw string) (bool, error) {
 	parsed, err := strconv.ParseBool(value)
 	if err != nil {
 		return false, fmt.Errorf(
-			"%q is not a devshard boolean; use empty/0/f/false/no/off or 1/t/true/yes/on",
+			"invalid boolean value %q; use empty/0/f/false/no/off for false or 1/t/true/yes/on for true",
 			raw,
 		)
 	}

@@ -37,6 +37,8 @@ func TestParseBool(t *testing.T) {
 			if tt.wantErr {
 				require.Error(t, err)
 				require.False(t, got)
+				require.Contains(t, err.Error(), "invalid boolean value")
+				require.Contains(t, err.Error(), "for false or")
 				require.Contains(t, err.Error(), tt.raw)
 				return
 			}
