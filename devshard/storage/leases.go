@@ -26,6 +26,9 @@ var ErrLeaseNotOwned = errors.New("validation lease not owned or not pending")
 // LeaseStore deduplicates validation work across devshardd instances.
 type LeaseStore interface {
 	Acquire(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) (bool, error)
+	// AcquireOneStale claims a pending or submitted lease whose claimed_at is
+	// older than ttl. Submitted leases are retryable because the corresponding
+	// validation tx may have lived only in a volatile mempool.
 	AcquireOneStale(ctx context.Context, escrowID, instanceAddr string, ttl time.Duration) (uint64, uint64, error)
 	// SetResult updates status only when instanceAddr still owns a pending lease
 	// in epochID. epochID is part of the primary key and the partition key.
@@ -83,7 +86,7 @@ func (m *Memory) AcquireOneStale(_ context.Context, escrowID, instanceAddr strin
 		found      bool
 	)
 	for inferenceID, lease := range byInference {
-		if lease.status != LeaseStatusPending || !lease.claimedAt.Before(cutoff) {
+		if (lease.status != LeaseStatusPending && lease.status != LeaseStatusSubmitted) || !lease.claimedAt.Before(cutoff) {
 			continue
 		}
 		foundID = inferenceID
@@ -97,6 +100,7 @@ func (m *Memory) AcquireOneStale(_ context.Context, escrowID, instanceAddr strin
 	lease := byInference[foundID]
 	lease.instanceAddr = instanceAddr
 	lease.claimedAt = time.Now()
+	lease.status = LeaseStatusPending
 	byInference[foundID] = lease
 	return foundID, foundEpoch, nil
 }
@@ -113,6 +117,7 @@ func (m *Memory) SetResult(_ context.Context, escrowID string, inferenceID, epoc
 		return ErrLeaseNotOwned
 	}
 	lease.status = status
+	lease.claimedAt = time.Now()
 	byInference[inferenceID] = lease
 	return nil
 }
@@ -221,13 +226,13 @@ func (s *Postgres) AcquireOneStale(ctx context.Context, escrowID, instanceAddr s
 		     SELECT epoch_id, escrow_id, inference_id
 		     FROM devshard_validation_leases
 		     WHERE escrow_id = $2
-		       AND status = 'pending'
+		       AND status IN ('pending', 'submitted')
 		       AND claimed_at < now() - make_interval(secs => $3)
 		     LIMIT 1
 		     FOR UPDATE SKIP LOCKED
 		 )
 		 UPDATE devshard_validation_leases v
-		 SET instance_address = $1, claimed_at = now()
+		 SET instance_address = $1, claimed_at = now(), status = 'pending'
 		 FROM candidate
 		 WHERE v.epoch_id = candidate.epoch_id
 		   AND v.escrow_id = candidate.escrow_id
@@ -249,7 +254,7 @@ func (s *Postgres) SetResult(ctx context.Context, escrowID string, inferenceID, 
 		return err
 	}
 	tag, err := s.pool.Exec(ctx,
-		`UPDATE devshard_validation_leases SET status = $1
+		`UPDATE devshard_validation_leases SET status = $1, claimed_at = now()
 		 WHERE epoch_id = $2 AND escrow_id = $3 AND inference_id = $4
 		   AND instance_address = $5 AND status = 'pending'`,
 		status, epochID, escrowID, inferenceID, instanceAddr,

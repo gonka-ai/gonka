@@ -69,6 +69,31 @@ func TestMemoryLease_AcquireOneStale_PicksStale(t *testing.T) {
 	require.Equal(t, uint64(10), epochID)
 }
 
+func TestMemoryLease_AcquireOneStale_PicksStaleSubmitted(t *testing.T) {
+	store := NewMemory()
+	ctx := context.Background()
+
+	won, err := store.Acquire(ctx, "escrow-submitted", 1, 10, "instance-1")
+	require.NoError(t, err)
+	require.True(t, won)
+	require.NoError(t, store.SetResult(ctx, "escrow-submitted", 1, 10, LeaseStatusSubmitted, "instance-1"))
+
+	store.mu.Lock()
+	lease := store.validationLeases["escrow-submitted"][1]
+	lease.claimedAt = time.Now().Add(-time.Hour)
+	store.validationLeases["escrow-submitted"][1] = lease
+	store.mu.Unlock()
+
+	inferenceID, epochID, err := store.AcquireOneStale(ctx, "escrow-submitted", "instance-2", 30*time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), inferenceID)
+	require.Equal(t, uint64(10), epochID)
+
+	owned, err := store.OwnsPendingLease(ctx, "escrow-submitted", 1, 10, "instance-2")
+	require.NoError(t, err)
+	require.True(t, owned)
+}
+
 func TestMemoryLease_SetResult_RequiresOwner(t *testing.T) {
 	store := NewMemory()
 	ctx := context.Background()
@@ -167,6 +192,32 @@ func TestMemoryLease_Release(t *testing.T) {
 
 func TestPostgresLease_Release(t *testing.T) {
 	runLeaseReleaseTests(t, newTestPostgres(t))
+}
+
+func TestPostgresLease_AcquireOneStale_PicksStaleSubmitted(t *testing.T) {
+	store := newTestPostgres(t)
+	ctx := context.Background()
+
+	won, err := store.Acquire(ctx, "escrow-submitted", 1, 10, "instance-1")
+	require.NoError(t, err)
+	require.True(t, won)
+	require.NoError(t, store.SetResult(ctx, "escrow-submitted", 1, 10, LeaseStatusSubmitted, "instance-1"))
+	_, err = store.pool.Exec(ctx,
+		`UPDATE devshard_validation_leases
+		 SET claimed_at = now() - interval '1 hour'
+		 WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = $3`,
+		uint64(10), "escrow-submitted", uint64(1),
+	)
+	require.NoError(t, err)
+
+	inferenceID, epochID, err := store.AcquireOneStale(ctx, "escrow-submitted", "instance-2", 30*time.Minute)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), inferenceID)
+	require.Equal(t, uint64(10), epochID)
+
+	owned, err := store.OwnsPendingLease(ctx, "escrow-submitted", 1, 10, "instance-2")
+	require.NoError(t, err)
+	require.True(t, owned)
 }
 
 func runLeaseReleaseTests(t *testing.T, store LeaseStore) {

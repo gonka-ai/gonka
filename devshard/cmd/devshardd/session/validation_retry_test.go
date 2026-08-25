@@ -429,6 +429,70 @@ func TestRetryStaleValidationsForEscrow_TransientErrorReleaseThenHotPathReacquir
 	require.True(t, found, "second retry should publish MsgValidation")
 }
 
+func TestRetryStaleValidationsForEscrow_StaleSubmittedWithLocalMempoolDoesNotRevalidate(t *testing.T) {
+	h := newFinishedRetryHost(t)
+	leases := storage.NewMemory()
+	ctx := context.Background()
+	require.NoError(t, acquireMemoryLease(ctx, leases, "escrow-1", 1, 3, "old-owner"))
+
+	inner := &stubEngine{}
+	rl := &ValidationRetryLoop{
+		leases:       leases,
+		inner:        inner,
+		manager:      &stubSessionManager{snap: h},
+		instanceAddr: "addr",
+		leaseTTL:     50 * time.Millisecond,
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	rl.retryStaleValidationsForEscrow(ctx, "escrow-1")
+	require.Equal(t, 1, inner.calls)
+	require.True(t, hasValidationTx(h.MempoolTxs(), 1))
+
+	time.Sleep(60 * time.Millisecond)
+	rl.retryStaleValidationsForEscrow(ctx, "escrow-1")
+
+	require.Equal(t, 1, inner.calls, "local mempool already has the submitted validation")
+	require.True(t, hasValidationTx(h.MempoolTxs(), 1))
+}
+
+func TestRetryStaleValidationsForEscrow_StaleSubmittedAlreadyAppliedDoesNotRepublish(t *testing.T) {
+	h, hosts, user := newFinishedRetryHostWithSigners(t)
+	ctx := context.Background()
+	validatorSlot := h.PrimarySlot()
+	validationMsg := &types.MsgValidation{
+		InferenceId:   1,
+		ValidatorSlot: validatorSlot,
+		Valid:         true,
+		EscrowId:      "escrow-1",
+	}
+	validationMsg.ProposerSig = testutil.SignProposerTx(t, hosts[0], validationMsg)
+	validationDiff := testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_Validation{Validation: validationMsg}},
+	})
+	_, err := h.HandleRequest(ctx, host.HostRequest{Diffs: []types.Diff{validationDiff}})
+	require.NoError(t, err)
+	require.True(t, h.SnapshotState().Inferences[1].ValidatedBy.IsSet(validatorSlot))
+
+	leases := storage.NewMemory()
+	require.NoError(t, acquireMemoryLease(ctx, leases, "escrow-1", 1, 3, "old-owner"))
+	require.NoError(t, leases.SetResult(ctx, "escrow-1", 1, 3, storage.LeaseStatusSubmitted, "old-owner"))
+	inner := &stubEngine{}
+	rl := &ValidationRetryLoop{
+		leases:       leases,
+		inner:        inner,
+		manager:      &stubSessionManager{snap: h},
+		instanceAddr: "addr",
+		leaseTTL:     50 * time.Millisecond,
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	rl.retryStaleValidationsForEscrow(ctx, "escrow-1")
+
+	require.Equal(t, 0, inner.calls, "durably applied validation must not be revalidated")
+	require.False(t, hasValidationTx(h.MempoolTxs(), 1))
+}
+
 func TestRetryStaleValidation_OwnershipLostAfterValidate_DoesNotSubmit(t *testing.T) {
 	h := newFinishedRetryHost(t)
 	leases := &stubStaleLeaseStore{
@@ -889,7 +953,7 @@ func TestRetryStaleValidation_ObsoleteLeaseAfterLazyRecoveryStaysOutOfMempool(t 
 	}
 }
 
-func TestRetryStaleValidation_MempoolTxNotDurableAcrossManagerRestart(t *testing.T) {
+func TestRetryStaleValidation_SubmittedMempoolLossRepublishesAfterManagerRestart(t *testing.T) {
 	const escrowID = "1"
 	store, hosts, user, group := newStoredFinishedRetrySession(t, escrowID)
 	first := newRetryHostManager(t, store, hosts[0], user, group, escrowID)
@@ -925,6 +989,19 @@ func TestRetryStaleValidation_MempoolTxNotDurableAcrossManagerRestart(t *testing
 	rec := h.SnapshotState().Inferences[1]
 	require.Equal(t, types.StatusFinished, rec.Status)
 	require.False(t, rec.ValidatedBy.IsSet(group[0].SlotID))
+
+	rl = &ValidationRetryLoop{
+		leases:       store,
+		inner:        &stubEngine{},
+		manager:      restarted,
+		instanceAddr: "addr",
+		leaseTTL:     50 * time.Millisecond,
+	}
+	time.Sleep(60 * time.Millisecond)
+	rl.retryStaleValidationsForEscrow(ctx, escrowID)
+
+	require.True(t, hasValidationTx(managerMempoolEndpointTxs(t, e2, escrowID), 1),
+		"stale submitted lease must be retryable when the previous mempool tx was lost before diff apply")
 }
 
 func mempoolEndpointTxs(t *testing.T, h *host.Host) []*types.DevshardTx {
