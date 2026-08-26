@@ -182,7 +182,7 @@ func (am AppModule) ExportGenesis(ctx sdk.Context, cdc codec.JSONCodec) json.Raw
 
 // ConsensusVersion is a sequence number for state-breaking change of the module.
 // It should be incremented on each consensus-breaking change introduced by the module.
-func (AppModule) ConsensusVersion() uint64 { return 14 }
+func (AppModule) ConsensusVersion() uint64 { return 15 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 func (am AppModule) BeginBlock(ctx context.Context) error {
@@ -710,38 +710,14 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		return
 	}
 
-	activeParticipants := am.ComputeNewWeights(ctx, *upcomingEpoch)
+	// Seating + post-seating invariant: participants left without seated weight
+	// are removed, and an all-empty result falls back to the current epoch's
+	// validators (or, last-ditch, keeps that carry even if hardware would
+	// filter it). See seatAndGuardParticipants in epoch_fallback.go.
+	activeParticipants := am.seatAndGuardParticipants(ctx, *upcomingEpoch, am.ComputeNewWeights(ctx, *upcomingEpoch))
 	if len(activeParticipants) == 0 {
-		// Safety mechanism: a PoC round where nobody passed validation must not
-		// produce an empty epoch. An empty epoch group can never validate anyone
-		// in later rounds (voting powers derive from it), permanently stalling
-		// the network. Re-seat the current epoch's still-valid validators
-		// instead; see epoch_fallback.go for the carry-over rules.
-		am.LogError("onEndOfPoCValidationStage: no validated participants for upcoming epoch; falling back to current epoch validators", types.PoC,
-			"upcomingEpoch.Index", upcomingEpoch.Index)
-		activeParticipants = am.fallbackActiveParticipantsFromCurrentEpoch(ctx, *upcomingEpoch)
-		if len(activeParticipants) == 0 {
-			am.LogError("onEndOfPoCValidationStage: fallback produced no participants; aborting epoch formation", types.PoC,
-				"upcomingEpoch.Index", upcomingEpoch.Index)
-			sdkCtx := sdk.UnwrapSDKContext(ctx)
-			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-				"epoch_error",
-				sdk.NewAttribute("stage", "empty_epoch_fallback"),
-				sdk.NewAttribute("epoch", fmt.Sprintf("%d", upcomingEpoch.Index)),
-				sdk.NewAttribute("error_category", "epoch_formation"),
-			))
-			return
-		}
-		sdkCtx := sdk.UnwrapSDKContext(ctx)
-		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-			"empty_epoch_fallback_applied",
-			sdk.NewAttribute("epoch", fmt.Sprintf("%d", upcomingEpoch.Index)),
-			sdk.NewAttribute("participants", fmt.Sprintf("%d", len(activeParticipants))),
-		))
+		return
 	}
-
-	modelAssigner := NewModelAssigner(am.keeper, am.keeper)
-	modelAssigner.setModelsForParticipants(ctx, activeParticipants, *upcomingEpoch)
 
 	params, err := am.keeper.GetParams(ctx)
 	if err != nil {

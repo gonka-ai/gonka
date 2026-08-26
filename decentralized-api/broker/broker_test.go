@@ -281,6 +281,15 @@ func TestResolveNodeModelID_PrefersEpochMLNode(t *testing.T) {
 	assert.Equal(t, "model-b", modelID)
 }
 
+func TestResolveNodeModelID_RejectsUnsupportedEpochAssignment(t *testing.T) {
+	modelID, ok := ResolveNodeModelID(
+		map[string]types.MLNodeInfo{"model-a": {NodeId: "node-1"}},
+		map[string]ModelArgs{"model-b": {}},
+	)
+	require.False(t, ok)
+	assert.Equal(t, "", modelID)
+}
+
 func TestResolveNodeModelID_RejectsMultipleEpochEntries(t *testing.T) {
 	modelID, ok := ResolveNodeModelID(
 		map[string]types.MLNodeInfo{"model-a": {}, "model-b": {}},
@@ -2237,6 +2246,13 @@ func TestAreHardwareNodesEqual_Version(t *testing.T) {
 
 	b.Version = "v1.0.1"
 	assert.False(t, areHardwareNodesEqual(a, b), "nodes with different versions should not be equal")
+
+	a.Version = "v1.0.1"
+	a.Host = "other"
+	assert.False(t, areHardwareNodesEqual(a, b), "nodes with different hosts should not be equal")
+	a.Host = b.Host
+	a.Port = "1"
+	assert.False(t, areHardwareNodesEqual(a, b), "nodes with different ports should not be equal")
 }
 
 func TestConvertInferenceNodeToHardwareNode_Version(t *testing.T) {

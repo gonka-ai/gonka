@@ -4,9 +4,11 @@ import (
 	"context"
 	"decentralized-api/internal/nats/server"
 	"encoding/json"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/cosmos/cosmos-sdk/client/tx"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient/mocks"
@@ -445,4 +447,44 @@ func TestRequeueIntegration_MultipleRequeues(t *testing.T) {
 	streamInfo, err := js.StreamInfo(server.TxsToSendStream)
 	require.NoError(t, err)
 	assert.Equal(t, uint64(2), streamInfo.State.Msgs, "Only 2 messages should be published (3rd hit max)")
+}
+
+func TestFeeRelatedHints(t *testing.T) {
+	assert.Empty(t, feeRelatedHints(""))
+	assert.Empty(t, feeRelatedHints("out of gas"))
+
+	grant := feeRelatedHints("feegrant: not found")
+	require.Len(t, grant, 1)
+	assert.Contains(t, grant[0], "grant-ml-ops-permissions")
+
+	fee := feeRelatedHints("insufficient fee: got 0ngonka, required at least 10ngonka")
+	require.Len(t, fee, 1)
+	assert.Contains(t, fee[0], "enabled_fee_groups")
+	assert.Contains(t, fee[0], "groups[].min_gas_price")
+	assert.Contains(t, fee[0], "fee-tree")
+	assert.Contains(t, fee[0], "feegrant")
+	assert.NotContains(t, strings.ToLower(fee[0]), "set min_gas_price_ngonka")
+	assert.NotContains(t, fee[0], "DAPI_CHAIN_NODE")
+}
+
+func TestHardwareDiffSimFactory_SetsTimeout(t *testing.T) {
+	timeout := time.Now().Add(time.Minute)
+	sim := hardwareDiffSimFactory(tx.Factory{}.WithUnordered(true), "alice", 1, timeout, nil)
+	require.True(t, sim.Unordered())
+	require.Equal(t, timeout, sim.TimeoutTimestamp())
+	require.Equal(t, hardwareDiffSimulateGas, sim.Gas())
+	require.Equal(t, 1.0, sim.GasAdjustment())
+}
+
+func TestTimeoutTimestamp_UsesLatestBlockTime(t *testing.T) {
+	block := time.Unix(1_700_000_000, 0)
+	m := &manager{
+		defaultTimeout:   30 * time.Second,
+		blockTimeTracker: &blockTimeTracker{latestBlockTime: block},
+	}
+	got, err := m.timeoutTimestamp()
+	require.NoError(t, err)
+	require.False(t, got.IsZero())
+	require.True(t, got.After(block))
+	require.True(t, !got.Before(block.Add(30*time.Second)))
 }

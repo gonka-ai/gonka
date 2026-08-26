@@ -104,6 +104,10 @@ data class FeeParamsData(
     val baseValidationGas: Long = 0,
     @SerializedName("gas_per_poc_count")
     val gasPerPocCount: Long = 0,
+    @SerializedName("enabled_fee_groups")
+    val enabledFeeGroups: List<String> = emptyList(),
+    @SerializedName("groups")
+    val groups: com.google.gson.JsonArray? = null,
 )
 
 data class DelegationParams(
