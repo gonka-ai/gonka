@@ -259,6 +259,7 @@ func buildHostManager(
 		cfg.RuntimeVersion,
 		chainParams,
 		thresholds,
+		cfg.VoteFalseOnFetchFailure,
 	)
 
 	innerStore, err := devshardstorage.NewStorage(ctx, cfg.DataDir)
@@ -307,18 +308,18 @@ func buildHostManager(
 	}
 	store.Start()
 
-	retryLoop := session.NewRetryLoop(store, validator, manager, phase, instanceAddr)
-	retryLoop.WithInterval(cfg.ValidationRetryInterval)
-	retryLoop.WithLeaseTTL(cfg.ValidationLeaseTTL)
-	retryLoopCtx, cancelRetryLoop := context.WithCancel(ctx)
-	retryLoopDone := make(chan struct{})
+	validationRetry := session.NewValidationRetryLoop(store, validator, manager, phase, instanceAddr)
+	validationRetry.WithInterval(cfg.ValidationRetryInterval)
+	validationRetry.WithLeaseTTL(cfg.ValidationLeaseTTL)
+	validationRetryCtx, cancelValidationRetry := context.WithCancel(ctx)
+	validationRetryDone := make(chan struct{})
 	closers.Add(func() {
-		cancelRetryLoop()
-		<-retryLoopDone
+		cancelValidationRetry()
+		<-validationRetryDone
 	})
 	go func() {
-		defer close(retryLoopDone)
-		retryLoop.Run(retryLoopCtx)
+		defer close(validationRetryDone)
+		validationRetry.Run(validationRetryCtx)
 	}()
 
 	var lastCleanEpoch atomic.Uint64
