@@ -110,6 +110,24 @@ func TestHADiffPersistMetricsIncrement(t *testing.T) {
 	}
 }
 
+func TestIncPostgresHealthProbeTracksOutcomeAndSaturation(t *testing.T) {
+	ensureMetrics()
+
+	before := testutil.ToFloat64(postgresHealthProbeTotal.WithLabelValues("pool_saturated"))
+	IncPostgresHealthProbe("pool_saturated")
+	if testutil.ToFloat64(postgresHealthProbeTotal.WithLabelValues("pool_saturated"))-before != 1 {
+		t.Fatal("postgres pool-saturated probe counter delta want 1")
+	}
+	if got := testutil.ToFloat64(postgresPoolSaturated); got != 1 {
+		t.Fatalf("postgres pool-saturated gauge = %v, want 1", got)
+	}
+
+	IncPostgresHealthProbe("success")
+	if got := testutil.ToFloat64(postgresPoolSaturated); got != 0 {
+		t.Fatalf("postgres pool-saturated gauge after success = %v, want 0", got)
+	}
+}
+
 func TestDeleteEscrowMetricsRemovesPerEscrowGauges(t *testing.T) {
 	ensureMetrics()
 	const escrowID = "escrow-metrics-prune"

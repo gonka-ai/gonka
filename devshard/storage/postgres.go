@@ -11,6 +11,7 @@ import (
 	"sync"
 	"time"
 
+	"devshard/observability"
 	"devshard/types"
 
 	"github.com/jackc/pgx/v5"
@@ -42,15 +43,16 @@ type Postgres struct {
 	knownEpochs map[uint64]struct{}
 	escrowIdx   map[string]uint64
 
-	readyCh     chan struct{}
-	readyOnce   sync.Once
-	indexErr    error
-	indexCancel context.CancelFunc
-	healthReady bool
-	healthFails int
-	healthOKs   int
-	healthStop  context.CancelFunc
-	healthDone  chan struct{}
+	readyCh         chan struct{}
+	readyOnce       sync.Once
+	indexErr        error
+	indexCancel     context.CancelFunc
+	healthReady     bool
+	healthFails     int
+	healthOKs       int
+	healthSaturated bool
+	healthStop      context.CancelFunc
+	healthDone      chan struct{}
 }
 
 const (
@@ -72,13 +74,27 @@ const (
 	postgresLivePresenceTimeout = 2 * time.Second
 	// postgresHealthInterval and postgresHealthTimeout keep /ready tied to the
 	// live database without issuing a SQL probe for every router health check.
-	postgresHealthInterval = time.Second
+	// The interval exceeds the timeout so failed probes cannot run back-to-back.
+	postgresHealthInterval = 5 * time.Second
 	postgresHealthTimeout  = time.Second
 	postgresHealthQuorum   = 2
 	// postgresIndexRepairBatchSize caps rows per DELETE/INSERT when repairing
 	// devshard_session_index so a large divergence does not hold one giant lock.
 	postgresIndexRepairBatchSize = 1000
 )
+
+type postgresHealthProbeResult string
+
+const (
+	postgresHealthProbeSuccess       postgresHealthProbeResult = "success"
+	postgresHealthProbeDatabaseError postgresHealthProbeResult = "database_error"
+	postgresHealthProbePoolSaturated postgresHealthProbeResult = "pool_saturated"
+)
+
+type postgresHealthState struct {
+	ready     bool
+	saturated bool
+}
 
 const (
 	pgSessionsParent               = "devshard_sessions"
@@ -193,14 +209,28 @@ func (s *Postgres) startHealthMonitor() {
 				return
 			case <-ticker.C:
 				probeCtx, probeCancel := context.WithTimeout(ctx, postgresHealthTimeout)
-				err := s.pool.Ping(probeCtx)
+				result, err := s.probeHealth(probeCtx)
 				probeCancel()
-				changed, ready := s.recordHealthProbe(err == nil)
-				if changed {
-					if ready {
+				if ctx.Err() != nil {
+					return
+				}
+				observability.IncPostgresHealthProbe(string(result))
+				previous, current := s.recordHealthProbe(result)
+				if previous.ready != current.ready {
+					if current.ready {
 						slog.Info("devshard storage: postgres readiness recovered")
 					} else {
 						slog.Warn("devshard storage: postgres readiness lost", "error", err)
+					}
+				}
+				if previous.saturated != current.saturated {
+					if current.saturated {
+						stat := s.pool.Stat()
+						slog.Warn("devshard storage: postgres health probe could not acquire a pooled connection",
+							"acquired_connections", stat.AcquiredConns(),
+							"max_connections", stat.MaxConns())
+					} else {
+						slog.Info("devshard storage: postgres health probe pool saturation cleared")
 					}
 				}
 			}
@@ -208,11 +238,35 @@ func (s *Postgres) startHealthMonitor() {
 	}()
 }
 
-func (s *Postgres) recordHealthProbe(ok bool) (changed, ready bool) {
+// probeHealth distinguishes database failures from an inconclusive probe that
+// could not acquire a connection because application work occupied the pool.
+func (s *Postgres) probeHealth(ctx context.Context) (postgresHealthProbeResult, error) {
+	stat := s.pool.Stat()
+	poolWasSaturated := stat.MaxConns() > 0 && stat.AcquiredConns() >= stat.MaxConns()
+
+	conn, err := s.pool.Acquire(ctx)
+	if err != nil {
+		err = fmt.Errorf("acquire postgres health probe connection: %w", err)
+		if poolWasSaturated && errors.Is(err, context.DeadlineExceeded) {
+			return postgresHealthProbePoolSaturated, err
+		}
+		return postgresHealthProbeDatabaseError, err
+	}
+	defer conn.Release()
+
+	if err := conn.Ping(ctx); err != nil {
+		return postgresHealthProbeDatabaseError, fmt.Errorf("ping postgres health probe connection: %w", err)
+	}
+	return postgresHealthProbeSuccess, nil
+}
+
+func (s *Postgres) recordHealthProbe(result postgresHealthProbeResult) (previous, current postgresHealthState) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	previous := s.healthReady
-	if ok {
+	previous = postgresHealthState{ready: s.healthReady, saturated: s.healthSaturated}
+	s.healthSaturated = result == postgresHealthProbePoolSaturated
+	switch result {
+	case postgresHealthProbeSuccess:
 		s.healthFails = 0
 		if s.healthOKs < postgresHealthQuorum {
 			s.healthOKs++
@@ -220,7 +274,7 @@ func (s *Postgres) recordHealthProbe(ok bool) (changed, ready bool) {
 		if s.healthOKs >= postgresHealthQuorum {
 			s.healthReady = true
 		}
-	} else {
+	case postgresHealthProbeDatabaseError:
 		s.healthOKs = 0
 		if s.healthFails < postgresHealthQuorum {
 			s.healthFails++
@@ -228,8 +282,12 @@ func (s *Postgres) recordHealthProbe(ok bool) (changed, ready bool) {
 		if s.healthFails >= postgresHealthQuorum {
 			s.healthReady = false
 		}
+	case postgresHealthProbePoolSaturated:
+		// Saturation says nothing about database reachability. Preserve the last
+		// confirmed health state and its hysteresis counters.
 	}
-	return previous != s.healthReady, s.healthReady
+	current = postgresHealthState{ready: s.healthReady, saturated: s.healthSaturated}
+	return previous, current
 }
 
 func (s *Postgres) startIndexRebuild() {
@@ -297,7 +355,8 @@ func (s *Postgres) indexReadyErr() error {
 }
 
 // Ready reports whether the session index is usable and the live database has
-// passed the health hysteresis contract.
+// passed the health hysteresis contract. Pool saturation is reported
+// separately and does not by itself withdraw the replica from traffic.
 func (s *Postgres) Ready() bool {
 	select {
 	case <-s.readyCh:
@@ -506,6 +565,7 @@ func (s *Postgres) Close() error {
 		select {
 		case <-healthDone:
 		case <-time.After(postgresHealthTimeout):
+			slog.Warn("devshard storage: postgres health monitor did not stop before pool close")
 		}
 	}
 	s.pool.Close()
