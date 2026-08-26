@@ -30,6 +30,7 @@ type FaultConfig struct {
 	DropFirstChunk   bool
 	PartialStream    bool // omit final chunk + [DONE]
 	StreamChunkDelay time.Duration
+	PauseStream      bool // pause after first content chunk until testenv release
 	// StreamErrorEnvelope returns HTTP 200 text/event-stream with an OpenAI
 	// error envelope and [DONE], matching vLLM EngineCore failures. Distinct
 	// from HTTPStatus >= 400, which is a JSON 5xx with no Finish.
@@ -43,6 +44,7 @@ type FaultPatch struct {
 	DropFirstChunk      *bool `json:"drop_first_chunk,omitempty"`
 	PartialStream       *bool `json:"partial_stream,omitempty"`
 	StreamChunkDelay    *int  `json:"stream_chunk_delay_ms,omitempty"`
+	PauseStream         *bool `json:"pause_stream,omitempty"`
 	StreamErrorEnvelope *bool `json:"stream_error_envelope,omitempty"`
 }
 
@@ -61,6 +63,9 @@ func (p FaultPatch) apply(dst *FaultConfig) {
 	}
 	if p.StreamChunkDelay != nil {
 		dst.StreamChunkDelay = time.Duration(*p.StreamChunkDelay) * time.Millisecond
+	}
+	if p.PauseStream != nil {
+		dst.PauseStream = *p.PauseStream
 	}
 	if p.StreamErrorEnvelope != nil {
 		dst.StreamErrorEnvelope = *p.StreamErrorEnvelope

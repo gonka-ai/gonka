@@ -41,20 +41,21 @@ type childPreflight struct {
 	haDeployment *bool
 }
 
-// preflightChild verifies a downloaded binary when --print-* flags are
-// available. Legacy binaries (released before the flags) fall back per flag:
+// preflightChildWithAdminProbeContext verifies a downloaded binary when
+// --print-* flags are available. Legacy binaries fall back per flag:
 //   - --print-binary-version missing: use slotName for DEVSHARD_BINARY_LOG_VERSION
 //   - --print-protocol-version missing: trust governance slot, skip embed check
-func preflightChild(binPath, slotName string) (childPreflight, error) {
-	return preflightChildWithAdminProbe(binPath, slotName, false)
-}
-
-func preflightChildWithAdminProbe(binPath, slotName string, probeAdmin bool) (childPreflight, error) {
+func preflightChildWithAdminProbeContext(
+	ctx context.Context,
+	binPath string,
+	slotName string,
+	probeAdmin bool,
+) (childPreflight, error) {
 	if _, err := os.Stat(binPath); err != nil {
 		return childPreflight{}, fmt.Errorf("binary not found: %w", err)
 	}
 
-	binaryLogVersion, binErr := readBinaryLogVersion(binPath)
+	binaryLogVersion, binErr := readBinaryLogVersionContext(ctx, binPath)
 	if binErr != nil {
 		if !errors.Is(binErr, errVersionFlagUnsupported) {
 			return childPreflight{}, fmt.Errorf("read binary log version: %w", binErr)
@@ -68,7 +69,7 @@ func preflightChildWithAdminProbe(binPath, slotName string, probeAdmin bool) (ch
 		binaryLogVersion = slotName
 	}
 
-	embeddedProtocol, protoErr := readProtocolVersion(binPath)
+	embeddedProtocol, protoErr := readProtocolVersionContext(ctx, binPath)
 	if protoErr != nil {
 		if !errors.Is(protoErr, errVersionFlagUnsupported) {
 			return childPreflight{}, fmt.Errorf("read protocol version: %w", protoErr)
@@ -96,7 +97,7 @@ func preflightChildWithAdminProbe(binPath, slotName string, probeAdmin bool) (ch
 		}
 		childHA = &ha
 
-		if _, adminErr := readAdminAPIVersion(binPath); adminErr != nil {
+		if _, adminErr := readAdminAPIVersionContext(ctx, binPath); adminErr != nil {
 			if !errors.Is(adminErr, errVersionFlagUnsupported) {
 				return childPreflight{}, fmt.Errorf("read admin api version: %w", adminErr)
 			}
@@ -104,7 +105,7 @@ func preflightChildWithAdminProbe(binPath, slotName string, probeAdmin bool) (ch
 			adminSupported = true
 		}
 
-		mode, modeErr := readStorageMode(binPath)
+		mode, modeErr := readStorageModeContext(ctx, binPath)
 		if modeErr != nil {
 			if !errors.Is(modeErr, errVersionFlagUnsupported) {
 				return childPreflight{}, fmt.Errorf("read storage mode: %w", modeErr)
@@ -172,12 +173,13 @@ func parseHADeployment(raw string) (bool, error) {
 	}
 }
 
-// readEmbeddedVersion runs binPath with flag and returns trimmed stdout.
-func readEmbeddedVersion(binPath, flag string) (string, error) {
-	ctx, cancel := context.WithTimeout(context.Background(), embeddedVersionProbeTimeout)
+// readEmbeddedVersionContext runs binPath with flag and returns trimmed stdout.
+func readEmbeddedVersionContext(parent context.Context, binPath, flag string) (string, error) {
+	ctx, cancel := context.WithTimeout(parent, embeddedVersionProbeTimeout)
 	defer cancel()
 
 	cmd := exec.CommandContext(ctx, binPath, flag)
+	cmd.WaitDelay = time.Second
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
 	cmd.Stdout = &stdout
@@ -219,18 +221,18 @@ func isUnsupportedVersionFlagError(err error, output string) bool {
 		strings.Contains(msg, "unrecognized option")
 }
 
-func readBinaryLogVersion(binPath string) (string, error) {
-	return readEmbeddedVersion(binPath, printBinaryVersionFlag)
+func readBinaryLogVersionContext(ctx context.Context, binPath string) (string, error) {
+	return readEmbeddedVersionContext(ctx, binPath, printBinaryVersionFlag)
 }
 
-func readProtocolVersion(binPath string) (string, error) {
-	return readEmbeddedVersion(binPath, printProtocolVersionFlag)
+func readProtocolVersionContext(ctx context.Context, binPath string) (string, error) {
+	return readEmbeddedVersionContext(ctx, binPath, printProtocolVersionFlag)
 }
 
-func readAdminAPIVersion(binPath string) (string, error) {
-	return readEmbeddedVersion(binPath, printAdminAPIVersionFlag)
+func readAdminAPIVersionContext(ctx context.Context, binPath string) (string, error) {
+	return readEmbeddedVersionContext(ctx, binPath, printAdminAPIVersionFlag)
 }
 
-func readStorageMode(binPath string) (string, error) {
-	return readEmbeddedVersion(binPath, printStorageModeFlag)
+func readStorageModeContext(ctx context.Context, binPath string) (string, error) {
+	return readEmbeddedVersionContext(ctx, binPath, printStorageModeFlag)
 }

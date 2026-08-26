@@ -37,6 +37,7 @@ make citest-stack                 # all core stack behavior tests
 make citest-validation-lease-race # validation lease race only
 make citest-payload-withholding   # executor payload withholding (500 → invalidate)
 make citest-versiond-rolling-update
+make citest-versiond-host-evacuation
 make citest-escrow-longpoll       # escrow long-poll warm (rebuilds devshardd)
 make citest-adversarial           # Phase 9 A1–A5 (A5 is 3-host)
 ```
@@ -79,6 +80,7 @@ picked up automatically (no workflow edit). For a local sequential subset, use
 | **Validation lease race** | Same-key HA lease exclusivity, pending stretch, stale reclaim | `TestValidationLeaseRaceCore`, `…PendingStretch`, `…StaleReclaim` |
 | **Payload withholding** | Executor `GET /payloads` 500 → Challenged/Invalidated; D7 off releases the lease | `TestPayloadWithholding_AllCallers500_Invalidates`, `…SelectiveValidator_Challenges`, `…D7Off_LeaseReleasedAndReacquired` |
 | **Versiond rolling update** | Postgres blue/green drain and hybrid fallback | `TestVersiondRollingUpdateSameVersionSHA`, `…HybridFallback` |
+| **Versiond host evacuation** | Router withdrawal, SSE completion, survivor recovery and readiness-gated rejoin | `TestVersiondHostEvacuation` |
 | **Escrow long-poll warm** | DAPI escrow-created host event → devshardd `escrow_cache` prefetch → first inference binds from cache with the live escrow query faulted | `TestEscrowLongPollWarmWithoutInferenceNode` |
 
 Source files under `devshard/testenv/citest/` use the same behavior-oriented
@@ -263,6 +265,30 @@ converge to the new sha without ever reporting an old draining child.
 
 Tests: `TestVersiondRollingUpdateSameVersionSHA` and
 `TestVersiondRollingUpdateHybridFallback`.
+
+---
+
+## Versiond host evacuation
+
+**What we test:** stopping a versiond container first withdraws it from the
+HAProxy pool, then lets accepted work finish within a bounded shutdown budget.
+The surviving replica recovers the session from shared PostgreSQL, while a
+restarted host stays out of rotation until its requested version is ready.
+
+**How:**
+
+1. Boot two versiond pool members and pin an active SSE response to one host.
+2. Stop that host and require its per-version backend slot to leave service
+   while the accepted stream still completes with `[DONE]`.
+3. Require new traffic and the existing session to work through the survivor.
+4. Start the host with convergence deliberately blocked; it must remain out of
+   rotation even though its DNS address exists.
+5. Restore convergence and require HAProxy to admit it again.
+
+**Pass criteria:** no continuity probe fails, accepted work is not truncated,
+the stopped process exits without Docker SIGKILL, and rejoin is readiness-gated.
+
+Test: `TestVersiondHostEvacuation`.
 
 ---
 

@@ -17,6 +17,8 @@
 x-versiond: &versiond
   image: versiond:latest
   platform: ${DOCKER_PLATFORM:-linux/amd64}
+  # Outer Docker backstop; versiond owns the smaller internal shutdown budget.
+  stop_grace_period: 30m
   build:
     context: ./versioned
     dockerfile: Dockerfile
