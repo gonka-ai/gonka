@@ -477,6 +477,12 @@ func TestPostgresHealthProbeDistinguishesPoolSaturation(t *testing.T) {
 
 	conn, err := pool.Acquire(context.Background())
 	require.NoError(t, err)
+	released := false
+	defer func() {
+		if !released {
+			conn.Release()
+		}
+	}()
 	pg := &Postgres{pool: pool, healthReady: true}
 
 	probeCtx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
@@ -491,6 +497,7 @@ func TestPostgresHealthProbeDistinguishesPoolSaturation(t *testing.T) {
 	require.Equal(t, postgresHealthState{ready: true, saturated: true}, current)
 
 	conn.Release()
+	released = true
 	probeCtx, cancel = context.WithTimeout(context.Background(), time.Second)
 	result, probeErr = pg.probeHealth(probeCtx)
 	cancel()
