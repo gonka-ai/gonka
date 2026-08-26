@@ -19,6 +19,10 @@ import (
 
 const (
 	hostEvacuationShutdownBudget = 90 * time.Second
+	// The acceptance test compresses production's minute-scale shutdown
+	// contract. Keep the same phase ordering while leaving 70s for admission
+	// and child drain after the 5s announcement.
+	hostEvacuationChildShutdownGrace = 15 * time.Second
 	// Docker's SIGKILL backstop must sit outside versiond's own shutdown
 	// budget. The exit-code assertion below proves that this reserve was not
 	// consumed by a stuck process.
@@ -55,6 +59,10 @@ func TestVersiondHostEvacuation(t *testing.T) {
 		harness.PatchComposeEnvKey(t, stack.ComposePath, "VERSIOND_NON_HA_VERSIONS", `""`)
 		harness.PatchComposeEnvKey(t, stack.ComposePath, "VERSIOND_HOST_SHUTDOWN_BUDGET",
 			`"`+hostEvacuationShutdownBudget.String()+`"`)
+		harness.PatchComposeInsertEnvAfterAll(t, stack.ComposePath, "VERSIOND_HOST_SHUTDOWN_BUDGET",
+			`VERSIOND_DRAIN_KILL_GRACE: "`+hostEvacuationChildShutdownGrace.String()+`"`,
+			`DEVSHARD_SHUTDOWN_GRACE: "`+hostEvacuationChildShutdownGrace.String()+`"`,
+		)
 	})
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
