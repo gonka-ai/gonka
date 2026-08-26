@@ -488,15 +488,15 @@ func TestHeightAck_FalseSyncedDeferredFail(t *testing.T) {
 	require.False(t, hasMark(res.Marks, heightsync.MarkDeferredFail))
 }
 
-// TestLogPlane_L6BlamesTheFloorsAuthorForACarriedPair closes the exit criterion
-// step 1 of the review left open.
+// TestLogPlane_L6BlamesTheFloorsAuthorForACarriedPair: when a producer carries
+// F(m), an unreconcilable pair must blame the floor's author, not every carrier.
 //
 // The producer rule gives a party behind the floor one legal value — F(m) — so
 // an unreconcilable pair does not stay with its author: every honest carrier
-// repeats it and collects an L6 mark for it. That is only acceptable if the mark
-// says where the pair came from, which the log can always answer, because a
-// carry is by construction identical to a floor entry and the floor records who
-// set it.
+// repeats it and would otherwise collect an L6 mark for it. That is only
+// acceptable if the mark says where the pair came from, which the log can always
+// answer, because a carry is by construction identical to a floor entry and the
+// floor records who set it.
 func TestLogPlane_L6BlamesTheFloorsAuthorForACarriedPair(t *testing.T) {
 	st, signers := baseState(t, 3)
 	dead, live := []byte{0xde}, []byte{0xad}

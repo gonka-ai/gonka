@@ -72,3 +72,19 @@ services:
 	require.NoError(t, err)
 	require.Contains(t, string(body), `MOCK_DAPI_OMIT_BLOCK_ROUTES: "1"`)
 }
+
+func TestEnableHeightSyncPeerMatrixCompose(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+services:
+  devshardctl:
+    environment:
+      DEVSHARD_PUBLIC_API: http://mock-dapi:9100
+`), 0o644))
+
+	EnableHeightSyncPeerMatrixCompose(t, path)
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `DEVSHARD_GATEWAY_HEIGHTSYNC_PEER_MATRIX: "1"`)
+}

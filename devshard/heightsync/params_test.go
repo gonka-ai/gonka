@@ -26,10 +26,10 @@ func TestHeartbeatConfig_Defaults(t *testing.T) {
 		"one lost turnover must never arm a host")
 }
 
-// TestHeartbeatConfig_AckWindowFollowsTheSchedule is step 4: D_ack is not a
-// shipped constant but the millisecond schedule expressed in the only unit the
-// log can check. The old constant of one block was shorter than the turnover it
-// was meant to cover at every block time we ship.
+// TestHeartbeatConfig_AckWindowFollowsTheSchedule: D_ack is not a shipped
+// constant but the millisecond schedule expressed in the only unit the log can
+// check (proposal §20). The old constant of one block was shorter than the
+// turnover it was meant to cover at every block time we ship.
 func TestHeartbeatConfig_AckWindowFollowsTheSchedule(t *testing.T) {
 	cfg := heightsync.DefaultHeartbeatConfig()
 	require.Equal(t, time.Second, cfg.BlockTime, "the assumption is explicit, not implicit")

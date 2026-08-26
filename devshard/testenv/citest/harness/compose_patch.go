@@ -142,3 +142,12 @@ func EnableLegacyDapiCompose(t *testing.T, composePath string) {
 		`MOCK_DAPI_OMIT_BLOCK_ROUTES: "1"`,
 	)
 }
+
+// EnableHeightSyncPeerMatrixCompose turns on the quadratic peer_seen matrix
+// series on the gateway only (DEVSHARD_GATEWAY_HEIGHTSYNC_PEER_MATRIX).
+func EnableHeightSyncPeerMatrixCompose(t *testing.T, composePath string) {
+	t.Helper()
+	PatchComposeInsertEnvAfterAll(t, composePath, "DEVSHARD_PUBLIC_API",
+		`DEVSHARD_GATEWAY_HEIGHTSYNC_PEER_MATRIX: "1"`,
+	)
+}

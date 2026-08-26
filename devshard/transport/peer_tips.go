@@ -19,6 +19,10 @@ type originTipEntry struct {
 	sec  *heightsync.HeightSyncSection
 	blob []byte
 	sig  []byte
+	// storedAt is the local receipt clock. It never feeds freshness — the
+	// protocol only trusts the originator's own observation time — but it lets
+	// an operator view age a claim that arrived without one.
+	storedAt time.Time
 }
 
 // HeightSyncPeerTips stores verbatim originator Anchor sections observed from hosts
@@ -86,8 +90,8 @@ func originatorObservedAtMs(sec *heightsync.HeightSyncSection) int64 {
 func (s *HeightSyncPeerTips) isFreshLocked(sec *heightsync.HeightSyncSection, now time.Time, freshness time.Duration) bool {
 	ts := originatorObservedAtMs(sec)
 	if ts <= 0 {
-		// Missing originator time is arbitrarily old (spec §14 step 5), matching
-		// inbound freshnessOK. A zero-ts cache entry must not drive Carry.
+		// Missing originator time is arbitrarily old (proposal §14 step 5),
+		// matching inbound freshnessOK. A zero-ts cache entry must not drive Carry.
 		return false
 	}
 	return now.Sub(time.UnixMilli(ts)) <= freshness
@@ -124,7 +128,12 @@ func (s *HeightSyncPeerTips) storeOriginLocked(sec *heightsync.HeightSyncSection
 		return
 	}
 	cp := cloneHeightSyncSection(sec)
-	ent := &originTipEntry{sec: cp, blob: append([]byte(nil), blob...), sig: append([]byte(nil), sig...)}
+	ent := &originTipEntry{
+		sec:      cp,
+		blob:     append([]byte(nil), blob...),
+		sig:      append([]byte(nil), sig...),
+		storedAt: time.Now(),
+	}
 	s.tipsByOriginator[key] = ent
 	s.recomputeMaxTipLocked()
 }
@@ -332,6 +341,66 @@ func (s *HeightSyncPeerTips) MaxFresh(now time.Time, freshness time.Duration) *h
 		}
 	}
 	return cloneHeightSyncSection(best)
+}
+
+// OriginTipView is one cached originator's latest height claim for gateway
+// operator views (proposal §8.12).
+type OriginTipView struct {
+	Originator string
+	Height     int64
+	Age        time.Duration
+	Verified   bool
+	ObservedAt time.Time
+	// ObservedAtKnown is false when the claim carries no originator
+	// observation time. Such a claim is arbitrarily old to the protocol, so a
+	// consumer must not read Age (then measured from local receipt) as
+	// evidence of freshness.
+	ObservedAtKnown bool
+	// Eligible mirrors the admission rule the carry path applies: an
+	// ineligible tip is cached but never used, so it must not be reported as
+	// a live height either.
+	Eligible bool
+}
+
+// PerOriginator returns a copy of each originator's latest tip. Age is relative
+// to now. Slot identity is applied by the caller from the escrow roster.
+func (s *HeightSyncPeerTips) PerOriginator(now time.Time) []OriginTipView {
+	if s == nil {
+		return nil
+	}
+	if now.IsZero() {
+		now = time.Now()
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]OriginTipView, 0, len(s.tipsByOriginator))
+	for key, ent := range s.tipsByOriginator {
+		if ent == nil || ent.sec == nil {
+			continue
+		}
+		ts := originatorObservedAtMs(ent.sec)
+		observed := time.Time{}
+		known := ts > 0
+		if known {
+			observed = time.UnixMilli(ts)
+		} else {
+			observed = ent.storedAt
+		}
+		age := time.Duration(0)
+		if !observed.IsZero() && now.After(observed) {
+			age = now.Sub(observed)
+		}
+		out = append(out, OriginTipView{
+			Originator:      key,
+			Height:          ent.sec.MainnetHeight,
+			Age:             age,
+			Verified:        len(ent.blob) > 0 && len(ent.sig) > 0,
+			ObservedAt:      observed,
+			ObservedAtKnown: known,
+			Eligible:        s.entryEligibleLocked(ent),
+		})
+	}
+	return out
 }
 
 // ShouldPropagateTo reports whether height h has not yet been propagated to recipient.

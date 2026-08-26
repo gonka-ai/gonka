@@ -80,16 +80,19 @@ func (p *PeerSeen) BytesAt(now time.Time) []byte {
 	if p == nil {
 		return nil
 	}
-	n := (int(p.slotsNum) + 7) / 8
-	out := make([]byte, n)
+	nbytes := (int(p.slotsNum) + 7) / 8
+	out := make([]byte, nbytes)
 	p.mu.Lock()
-	defer p.mu.Unlock()
+	pop := 0
 	for slot, tip := range p.tips {
 		if now.Sub(tip.at) > p.freshness {
 			delete(p.tips, slot)
 			continue
 		}
 		out[slot/8] |= 1 << (slot % 8)
+		pop++
 	}
+	p.mu.Unlock()
+	SetPeerSeenSlots(pop)
 	return out
 }

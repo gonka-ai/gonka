@@ -326,7 +326,8 @@ func TestHost_HeartbeatAck_LagsButClearsHostFloor(t *testing.T) {
 }
 
 // TestHost_HeartbeatAck_OmitsAStampWhenTheFloorIsOutOfReach is the second half
-// of the producer rule, and the escape step 2 of the review added.
+// of the producer rule (proposal §13 / §14): when the floor is more than
+// W_conf above the host tip, omit the stamp rather than carry a poisoned pair.
 //
 // Carrying the floor is honest while the gap is ordinary lag: the floor is a
 // height in the log and the carrier is visibly not its author. Past W_conf no

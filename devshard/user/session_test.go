@@ -459,6 +459,25 @@ func TestPendingTxDedupKeys_HostProposedIdentity(t *testing.T) {
 	session.addPendingTx(unkeyedHeartbeat)
 	require.Len(t, session.PendingTxs(), before+4,
 		"user-authored/unkeyed txs are outside host-proposed pending dedup")
+  
+func TestProcessResponse_NilReturnsNamedError(t *testing.T) {
+	session, _, _ := setupSession(t, 2, 100000, 100)
+	err := session.ProcessResponse(0, nil, 1)
+	require.ErrorIs(t, err, ErrNilHostResponse)
+	require.Equal(t, uint64(0), session.SnapshotHeightSync().Overlap.Total)
+}
+
+func TestProcessResponse_FailedVerifySkipsContactAndOverlap(t *testing.T) {
+	session, _, _ := setupSessionWithOptions(t, 2, 100000, 100, WithHeightSyncCadence(10, 2))
+	err := session.ProcessResponse(0, &host.HostResponse{
+		Nonce:     99,
+		StateHash: []byte{0xde, 0xad},
+	}, 1)
+	require.Error(t, err)
+	require.ErrorIs(t, err, types.ErrStateHashMismatch)
+	require.True(t, session.lastContact[0].IsZero(), "failed verify must not refresh contact")
+	require.Equal(t, uint64(0), session.SnapshotHeightSync().Overlap.Total,
+		"failed verify must not count overlap")
 }
 
 func TestCollectTimeoutVotes_WeightEarlyExit(t *testing.T) {

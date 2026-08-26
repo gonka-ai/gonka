@@ -6,6 +6,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 
+	"devshard/heightsync"
 	"devshard/observability"
 )
 
@@ -20,6 +21,9 @@ func buildServer(lifecycle *lifecycleState) *echo.Echo {
 	e.Use(lifecycle.middleware)
 
 	observability.RegisterRuntimeCollectors()
+	_ = heightsync.RegisterAnchorMetrics(observability.Registry())
+	// devshardd is the verifier, so it also owns the log-plane instruments.
+	_ = heightsync.RegisterLogPlaneMetrics(observability.Registry())
 	e.GET("/metrics", echo.WrapHandler(observability.MetricsHandler()))
 	e.GET("/healthz", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
 

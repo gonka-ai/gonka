@@ -35,6 +35,66 @@ func TestHeightSyncPeerTips_SnapshotVerifiedReady(t *testing.T) {
 	require.Equal(t, "abc123de", st.BlockHashPrefix)
 }
 
+func TestHeightSyncPeerTips_PerOriginator(t *testing.T) {
+	tips := NewHeightSyncPeerTips()
+	now := time.UnixMilli(2_000_000)
+	blob, sig := testVerifiedBlob()
+	tips.RecordOriginWithBlob(&heightsync.HeightSyncSection{
+		ProofType:             heightsync.AnchorProofType,
+		MainnetHeight:         50,
+		MainnetBlockHashHex:   "deadbeef",
+		OriginatorSenderID:    "gonka1a",
+		OriginatorTimestampMs: now.Add(-5 * time.Second).UnixMilli(),
+	}, blob, sig)
+
+	got := tips.PerOriginator(now)
+	require.Len(t, got, 1)
+	require.Equal(t, "gonka1a", got[0].Originator)
+	require.Equal(t, int64(50), got[0].Height)
+	require.True(t, got[0].Verified)
+	require.True(t, got[0].Eligible)
+	require.True(t, got[0].ObservedAtKnown)
+	require.Equal(t, 5*time.Second, got[0].Age)
+}
+
+func TestHeightSyncPeerTips_PerOriginatorMissingTimestampIsNotFresh(t *testing.T) {
+	tips := NewHeightSyncPeerTips()
+	blob, sig := testVerifiedBlob()
+	// No originator timestamp and no envelope timestamp: the carry path calls
+	// this arbitrarily old, so the operator view must not read it as age 0.
+	tips.RecordOriginWithBlob(&heightsync.HeightSyncSection{
+		ProofType:           heightsync.AnchorProofType,
+		MainnetHeight:       50,
+		MainnetBlockHashHex: "deadbeef",
+		OriginatorSenderID:  "gonka1a",
+	}, blob, sig)
+
+	got := tips.PerOriginator(time.Now().Add(time.Minute))
+	require.Len(t, got, 1)
+	require.False(t, got[0].ObservedAtKnown)
+	require.True(t, got[0].Eligible, "the claim is admissible, it is just undated")
+	require.Greater(t, got[0].Age, 30*time.Second, "age falls back to local receipt")
+	require.Nil(t, tips.MaxFresh(time.Now(), time.Minute), "and the carry path still refuses it")
+}
+
+func TestHeightSyncPeerTips_PerOriginatorReportsIneligible(t *testing.T) {
+	tips := NewHeightSyncPeerTips()
+	now := time.UnixMilli(2_000_000)
+	tips.RecordOrigin(&heightsync.HeightSyncSection{
+		ProofType:             heightsync.AnchorProofType,
+		MainnetHeight:         50,
+		MainnetBlockHashHex:   "deadbeef",
+		OriginatorSenderID:    "gonka1a",
+		OriginatorTimestampMs: now.UnixMilli(),
+	})
+
+	got := tips.PerOriginator(now)
+	require.Len(t, got, 1)
+	require.False(t, got[0].Verified)
+	require.False(t, got[0].Eligible,
+		"an unverified tip the carry path refuses must not read as a live height")
+}
+
 func TestHeightSyncPeerTips_FreshnessFilter(t *testing.T) {
 	tips := NewHeightSyncPeerTips()
 	tips.Freshness = 60 * time.Second

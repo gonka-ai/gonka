@@ -36,8 +36,9 @@ func fourHosts(t *testing.T) []*signing.Secp256k1Signer {
 	}
 }
 
-// TestHeightSyncFloor_ImplausibleClaimIsMarkedAndIgnored is step 2 of the review
-// on the consensus path.
+// TestHeightSyncFloor_ImplausibleClaimIsMarkedAndIgnored checks the consensus
+// path for the unaided raise bound (proposal §14): a lone host claim above
+// W_conf is marked and does not become the escrow's floor.
 //
 // The claim is valid — it is above the floor, and L0 asks nothing else of it — so
 // the diff applies and the escrow keeps serving. What it does not do is become
@@ -86,11 +87,11 @@ func TestHeightSyncFloor_ImplausibleClaimIsMarkedAndIgnored(t *testing.T) {
 }
 
 // TestHeightSyncFloor_ReorgReturnsToTheLiveBranch defines what a reorg does to
-// the escrow's logical time, which step 2 of the review left undefined.
+// the escrow's logical time.
 //
 // The floor never falls. That is deliberate: a floor that could move backwards
-// would need L0 to accept stamps below it, which is the tolerance band step 1
-// rejected — and it is not needed, because a reorg resolves itself. While the
+// would need L0 to accept stamps below it — the tolerance band proposal §14
+// rejects — and it is not needed, because a reorg resolves itself. While the
 // live branch is below the floor, honest parties carry it: the pair is stale but
 // it is the log's own value, and L6 attributes it to whoever established it, not
 // to the carriers. Once the live branch passes the floor, own tips exceed F
@@ -149,8 +150,8 @@ func TestHeightSyncFloor_ReorgReturnsToTheLiveBranch(t *testing.T) {
 	require.Equal(t, types.PhaseActive, sm.SnapshotState().Phase)
 }
 
-// TestHeightSyncFloor_AdmissionRefusalCannotSplitTheFloor is step 3 of the
-// review: the floor advances from applied diffs and from nothing else.
+// TestHeightSyncFloor_AdmissionRefusalCannotSplitTheFloor: the floor advances
+// from applied diffs and from nothing else (proposal §14).
 //
 // The two are easy to conflate because L5a lives one layer up. A receiver holding
 // the envelope of a live exchange may refuse it when the claimed height is

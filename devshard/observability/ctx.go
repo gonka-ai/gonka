@@ -136,6 +136,7 @@ const (
 	ReasonCanonicalizePromptErr       Reason = "canonicalize_prompt_err"
 	ReasonPayloadStoreErr             Reason = "payload_store_err"
 	ReasonPayloadFetchErr             Reason = "payload_fetch_err"
+	ReasonPayloadTooLarge             Reason = "payload_too_large"
 	ReasonProcessResponseErr          Reason = "process_response_err"
 	ReasonValidationBuildErr          Reason = "validation_build_err"
 	ReasonValidationParseErr          Reason = "validation_parse_err"

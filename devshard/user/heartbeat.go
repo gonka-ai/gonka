@@ -30,10 +30,13 @@ func (s *Session) MaybeHeartbeat(ctx context.Context) error {
 	s.ensureHeightSeed(ctx)
 	span, err := s.composeHeartbeatSpan()
 	if err != nil {
+		s.publishHeightSyncView()
 		return err
 	}
 	s.dispatchHeartbeatSpan(ctx, span)
-	return s.flushHeartbeatAckRounds(ctx)
+	err = s.flushHeartbeatAckRounds(ctx)
+	s.publishHeightSyncView()
+	return err
 }
 
 // StartHeartbeatLoop runs MaybeHeartbeat immediately and then every Interval
@@ -174,20 +177,28 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 	// must not AdvanceHeight the tracker (that is the dual of the SM oracle
 	// fold HeightSyncRepairDue used to do).
 	if rec := s.turnTracker.Latest(); rec != nil && rec.State != heightsync.TurnOpen {
+		if rec.State == heightsync.TurnDegraded && s.heartbeat.TurnOpen() {
+			s.heartbeat.RecordCadence(heightsync.CadenceEvent{
+				At:      now,
+				Event:   heightsync.CadenceTurnSettledDegraded,
+				TurnSeq: rec.TurnSeq,
+				HRef:    rec.HReq,
+				Outcome: rec.State.String(),
+			})
+		}
 		s.heartbeat.SettleTurn()
 	}
 
-	// Suppressing while a turn is open is the scheduler's job, not the log's:
-	// Heartbeat gives up on an open turn after TurnTimeout so one unreachable
-	// slot cannot silence the cadence for the rest of the session.
 	due, reason := s.heartbeat.Due(now, hNow)
 	if !due {
+		s.heartbeat.MaybeRecordDischarged(now, hNow)
 		return nil, nil
 	}
 
 	slots := uint64(len(s.group))
+	prevSeq := s.heartbeatTurnSeq
 	s.heartbeatTurnSeq++
-	prev := s.turnTracker.Record(s.heartbeatTurnSeq - 1)
+	prev := s.turnTracker.Record(prevSeq)
 	vector := heightsync.ComposeSyncVector(uint32(slots), prev)
 	spanTxs := s.heartbeat.SpanTxs(s.heartbeatTurnSeq, hNow, hash, slots, reason, vector)
 	if len(spanTxs) == 0 {
@@ -209,11 +220,29 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 		}
 		out = append(out, composedDiff{diff: diff, hostIdx: hostIdx})
 	}
-	s.heartbeat.OpenTurn(now)
-	// One ack-carrying round is always owed: the span awaited no ack, so the
-	// acks it triggered need a nonce to ride home on. Further rounds are driven
-	// by acks actually arriving, not by a configured count.
 	s.heartbeatFlushLeft = 1
+	abandoned := s.heartbeat.OpenTurn(now)
+	if abandoned {
+		s.heartbeat.RecordCadence(heightsync.CadenceEvent{
+			At:      now,
+			Event:   heightsync.CadenceTurnAbandoned,
+			TurnSeq: prevSeq,
+			HRef:    hNow,
+			Reason:  string(reason),
+		})
+	}
+	s.heartbeat.RecordCadence(heightsync.CadenceEvent{
+		At:      now,
+		Event:   heightsync.CadenceHeartbeatOpened,
+		TurnSeq: s.heartbeatTurnSeq,
+		HRef:    hNow,
+		Span:    len(out),
+		Reason:  string(reason),
+	})
+	if s.anchors != nil {
+		s.anchors.Record(hNow, heightsync.AnchorKindHeartbeat)
+		s.anchors.ObserveTip(hNow)
+	}
 	logging.Info("heartbeat span dispatched", "subsystem", "heightsync",
 		"escrow", s.escrowID, "turn_seq", s.heartbeatTurnSeq,
 		"height", hNow, "span", len(out), "reason", string(reason))
@@ -358,6 +387,8 @@ func (s *Session) sendComposedDiff(ctx context.Context, item composedDiff) error
 		return nil
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.processResponse(item.hostIdx, resp, item.diff.Nonce)
+	err = s.processResponse(item.hostIdx, resp, item.diff.Nonce)
+	s.mu.Unlock()
+	s.publishHeightSyncView()
+	return err
 }

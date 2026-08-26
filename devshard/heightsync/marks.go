@@ -158,13 +158,26 @@ func capMarkBlob(b []byte) []byte {
 }
 
 // Append stores a copy of m, dropping the oldest entry when the ring is full.
+//
+// This is also where marks are counted. Retention is the single point where a
+// mark becomes a fact about the escrow: CheckDiffLogPlane may produce the same
+// mark on every trial-loop prefix and on every replay, and a rolled-back apply
+// discards its marks without ever reaching here.
 func (l *MarkLog) Append(m AttributableMark) {
 	if l == nil {
 		return
 	}
 	m = copyMark(m)
 	l.mu.Lock()
-	defer l.mu.Unlock()
+	l.appendLocked(m)
+	l.mu.Unlock()
+	IncMarks(string(m.Kind))
+	if m.Kind == MarkAdmissionDelta {
+		IncStaleStamp("l5a_admission")
+	}
+}
+
+func (l *MarkLog) appendLocked(m AttributableMark) {
 	if l.cap <= 0 || len(l.buf) == 0 {
 		l.cap = DefaultMarkLogCapacity
 		l.buf = make([]AttributableMark, l.cap)
