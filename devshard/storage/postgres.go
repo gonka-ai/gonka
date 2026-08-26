@@ -114,11 +114,12 @@ func (p *postgresHealthProbe) check(ctx context.Context) error {
 			return fmt.Errorf("connect postgres health probe: %w", err)
 		}
 		p.conn = conn
-		// A completed PostgreSQL startup handshake is sufficient for the first
-		// check. Subsequent checks reuse the connection and issue Ping.
-		return nil
 	}
 
+	// Always Ping, including right after connect. A startup handshake can
+	// succeed while the session is already dying; scoring that reconnect as
+	// healthy reset failure hysteresis and masked a database that kept
+	// killing backends.
 	if err := p.conn.Ping(ctx); err != nil {
 		conn := p.conn
 		p.conn = nil
