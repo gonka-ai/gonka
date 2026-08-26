@@ -1470,6 +1470,13 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	return ctx.Err()
 }
 
+// ShutdownGrace is the SIGTERM-to-SIGKILL allowance needed by the slowest
+// child. The host shutdown coordinator reserves this tail before spending the
+// rest of its absolute budget on request and lifecycle drain.
+func (m *Manager) ShutdownGrace() time.Duration {
+	return m.childStopTimeout()
+}
+
 func (m *Manager) clearStoppedChildren() {
 	m.mu.Lock()
 	defer m.mu.Unlock()

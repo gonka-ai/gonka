@@ -131,8 +131,10 @@ unwinding, including during the announce window — an operator who wants to ski
 the wait can interrupt again. Poll unwind receives at most ten percent of the
 host budget, capped at five seconds. If a worker ignores cancellation, versiond
 logs the failure and continues teardown; the manager drain barrier already
-rejects new reconcile operations and disables child restart. Child process grace
-may impose a shorter phase-local limit, but no phase receives a fresh deadline
+rejects new reconcile operations and disables child restart. Within the same
+absolute deadline, versiond reserves a final tail equal to the child process
+grace. Admission and child-idle waits stop at the earlier drain deadline, leaving
+that tail for `SIGTERM` and HTTP shutdown. No phase receives a fresh deadline
 that can extend the host shutdown budget. On expiry, versiond forces remaining
 children and HTTP connections, then confirms child reap during the external
 runtime reserve.

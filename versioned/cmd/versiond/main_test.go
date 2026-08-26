@@ -22,6 +22,7 @@ type fakeHostShutdownManager struct {
 	calls            []string
 	waitChildrenIdle func(context.Context) error
 	shutdown         func(context.Context) error
+	shutdownGrace    time.Duration
 	forceCalled      chan struct{}
 	forceOnce        sync.Once
 }
@@ -105,6 +106,10 @@ func (m *fakeHostShutdownManager) Shutdown(ctx context.Context) error {
 		return m.shutdown(ctx)
 	}
 	return nil
+}
+
+func (m *fakeHostShutdownManager) ShutdownGrace() time.Duration {
+	return m.shutdownGrace
 }
 
 func (m *fakeHostShutdownManager) ForceStopChildren() {
@@ -769,6 +774,60 @@ func TestShutdownHostWaitsForChildIdleBeforeManagerShutdown(t *testing.T) {
 	)
 	if got := hostLifecycle.Snapshot().State; got != host.StateStopped {
 		t.Fatalf("host state = %s, want stopped", got)
+	}
+}
+
+func TestShutdownHostReservesChildTerminationGrace(t *testing.T) {
+	hostLifecycle := host.NewController()
+	if err := hostLifecycle.Transition(host.StateServing); err != nil {
+		t.Fatal(err)
+	}
+	if err := hostLifecycle.Transition(host.StateDraining); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(server.Close)
+	mgr := newFakeHostShutdownManager()
+	mgr.shutdownGrace = 10 * time.Minute
+	drainDeadline := make(chan time.Time, 1)
+	shutdownDeadline := make(chan time.Time, 1)
+	mgr.waitChildrenIdle = func(ctx context.Context) error {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			t.Fatal("child drain context has no deadline")
+		}
+		drainDeadline <- deadline
+		return nil
+	}
+	mgr.shutdown = func(ctx context.Context) error {
+		deadline, ok := ctx.Deadline()
+		if !ok {
+			t.Fatal("manager shutdown context has no deadline")
+		}
+		shutdownDeadline <- deadline
+		return nil
+	}
+	force := make(chan struct{})
+	pollDone := make(chan struct{})
+	close(pollDone)
+	outerDeadline := time.Now().Add(time.Hour)
+
+	if err := shutdownHost(
+		server.Config,
+		mgr,
+		hostLifecycle,
+		force,
+		pollDone,
+		outerDeadline,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if got := <-drainDeadline; !got.Equal(outerDeadline.Add(-mgr.shutdownGrace)) {
+		t.Fatalf("drain deadline = %s, want %s", got, outerDeadline.Add(-mgr.shutdownGrace))
+	}
+	if got := <-shutdownDeadline; !got.Equal(outerDeadline) {
+		t.Fatalf("shutdown deadline = %s, want %s", got, outerDeadline)
 	}
 }
 

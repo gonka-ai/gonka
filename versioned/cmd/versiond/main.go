@@ -255,6 +255,7 @@ type hostShutdownManager interface {
 	RequestChildrenDrain(context.Context) error
 	WaitChildrenIdle(context.Context) error
 	Shutdown(context.Context) error
+	ShutdownGrace() time.Duration
 	ForceStopChildren()
 }
 
@@ -277,18 +278,21 @@ func shutdownHost(
 	if forceRequested(force) {
 		cancelShutdown()
 	}
+	drainDeadline := deadline.Add(-mgr.ShutdownGrace())
+	drainCtx, cancelDrain := context.WithDeadline(shutdownCtx, drainDeadline)
 	stopForceWatch := cancelOnSignal(shutdownCtx, cancelShutdown, force)
 	stopEscalationWatch := watchShutdownEscalation(shutdownCtx, srv, mgr, hostLifecycle)
 	defer func() {
 		stopEscalationWatch()
 		stopForceWatch()
+		cancelDrain()
 		cancelShutdown()
 	}()
 
 	if err := waitForPollWorker(
-		shutdownCtx,
+		drainCtx,
 		pollDone,
-		pollWorkerUnwindBudget(time.Until(deadline)),
+		pollWorkerUnwindBudget(time.Until(drainDeadline)),
 	); err != nil {
 		// BeginHostDrain already prevents new generation commits and disables
 		// child restart. Teardown can therefore continue without trusting a
@@ -296,7 +300,7 @@ func shutdownHost(
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
 			slog.Warn(
-				"host shutdown budget exhausted before poll worker unwound; continuing teardown",
+				"host drain budget exhausted before poll worker unwound; continuing teardown",
 				"error", err,
 			)
 		case errors.Is(err, context.Canceled):
@@ -312,14 +316,14 @@ func shutdownHost(
 		}
 	}
 
-	if err := hostLifecycle.WaitIdle(shutdownCtx); err != nil {
+	if err := hostLifecycle.WaitIdle(drainCtx); err != nil {
 		slog.Warn("host proxy drain incomplete", "error", err, "inflight", hostLifecycle.Snapshot().Inflight)
 	}
-	if shutdownCtx.Err() == nil {
-		if err := mgr.RequestChildrenDrain(shutdownCtx); err != nil {
+	if drainCtx.Err() == nil {
+		if err := mgr.RequestChildrenDrain(drainCtx); err != nil {
 			slog.Warn("one or more child drain requests failed", "error", err)
 		}
-		if err := mgr.WaitChildrenIdle(shutdownCtx); err != nil {
+		if err := mgr.WaitChildrenIdle(drainCtx); err != nil {
 			slog.Warn("child drain incomplete", "error", err)
 		}
 	}
