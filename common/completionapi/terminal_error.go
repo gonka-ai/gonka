@@ -15,48 +15,51 @@ type ErrorDetails struct {
 	Message string
 }
 
-// IsTerminalErrorResponse reports whether a stored response payload is an
-// error envelope carrying no usable completion.
+// IsTerminalErrorResponse reports whether a stored response payload is not a
+// usable completion — an error envelope and/or malformed `data:` JSON.
 //
-// This is the consensus rule for TIMEOUT_REASON_ERROR. Every host must compile
-// against this one implementation. There is no independent backstop: verifiers
-// run the same predicate over the same hash-pinned bytes as the gateway, so a
-// misclassification is agreed, not caught. Ambiguous cases therefore return
-// ok == false, which degrades to today's behaviour (no miss).
+// This is the consensus rule for MsgErrorMiss. Every host must compile against
+// this one implementation. There is no independent backstop: verifiers run the
+// same predicate over the same hash-pinned bytes as the gateway, so a
+// misclassification is agreed, not caught.
 //
-// Accept only when all hold, parsed via NewCompletionResponseFromLinesFromResponsePayload:
+// The host fully controls the payload. Unparseable extra `data:` JSON is
+// therefore a miss (the junk is the proof), not a veto. Usable content still
+// rejects so content-then-error stays on today's path.
+//
+// Accept when the payload is a streamed `{"events":[...]}` body with no usable
+// content, and either:
 //   - some event carries a top-level error object (the {"error":{code,message,type}}
-//     shape, matching the gateway's sseChunkErrorPayload);
-//   - no content anywhere — no delta.content, delta.reasoning_content,
-//     delta.tool_calls, message.content, choice.text (and, fail-closed, the
-//     sibling reasoning / message.tool_calls fields);
-//   - no unparseable extra `data:` JSON (fail-closed: when in doubt, no miss);
-//   - usage.completion_tokens == 0. When no event carries usage, GetUsage
-//     synthesizes CompletionTokens = len(logprobs.Content), so this mostly
-//     restates "no content anywhere". It still catches a host that attaches a
-//     real usage block to an error envelope.
+//     shape, matching the gateway's sseChunkErrorPayload) and
+//     usage.completion_tokens == 0; or
+//   - some `data:` line is not valid JSON.
+//
+// Lines are taken from the serialized envelope so a junk `data:` event cannot
+// veto the miss by making NewCompletionResponseFromLines fail closed.
 func IsTerminalErrorResponse(responsePayload []byte) (details ErrorDetails, ok bool) {
 	if len(responsePayload) == 0 {
 		return ErrorDetails{}, false
 	}
-	resp, err := NewCompletionResponseFromLinesFromResponsePayload(responsePayload)
-	if err != nil {
+	var serialized SerializedStreamedResponse
+	if err := json.Unmarshal(responsePayload, &serialized); err != nil || len(serialized.Events) == 0 {
 		return ErrorDetails{}, false
 	}
-	streamed, isStreamed := resp.(*StreamedCompletionResponse)
-	if !isStreamed {
-		// JSON (non-streamed) errors are out of scope: their bodies typically
-		// carry no usage block, GetUsage fails, and no Finish is ever signed.
-		return ErrorDetails{}, false
-	}
+	streamed := &StreamedCompletionResponse{Lines: serialized.Events}
 	details, hasError := terminalErrorFromLines(streamed.Lines)
+	if streamedHasUsableContent(streamed) {
+		return details, false
+	}
+	if streamedHasUnparseableData(streamed) {
+		return details, true
+	}
 	if !hasError {
 		return ErrorDetails{}, false
 	}
-	if streamedHasUsableContent(streamed) || streamedHasUnparseableData(streamed) {
+	parsed, err := NewCompletionResponseFromLines(serialized.Events)
+	if err != nil {
 		return details, false
 	}
-	usage, err := streamed.GetUsage()
+	usage, err := parsed.GetUsage()
 	if err != nil {
 		return details, false
 	}

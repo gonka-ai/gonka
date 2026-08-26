@@ -64,6 +64,10 @@ func (c *recoveryVerifierClient) VerifyTimeout(_ context.Context, _ uint64, _ ty
 	return false, nil, 0, c.source.txs, "", nil
 }
 
+func (c *recoveryVerifierClient) VerifyErrorMiss(_ context.Context, _ uint64, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, c.source.txs, "", nil
+}
+
 const httpTestRoutePrefix = "/devshard/v2"
 
 func httpTestClient(baseURL string, escrowID string, signer signing.Signer) *transport.HTTPClient {
@@ -80,6 +84,7 @@ func registerServer(g *echo.Group, srv *transport.Server) {
 	g.POST("/sessions/:id/height-sync", srv.HandleHeightSync)
 	g.POST("/sessions/:id/heightsync/repair", srv.HandleHeightSyncRepair)
 	g.POST("/sessions/:id/verify-timeout", srv.HandleVerifyTimeout)
+	g.POST("/sessions/:id/verify-error-miss", srv.HandleVerifyErrorMiss)
 	g.POST("/sessions/:id/challenge-receipt", srv.HandleChallengeReceipt)
 	g.POST("/sessions/:id/gossip/nonce", srv.HandleGossipNonce)
 	g.POST("/sessions/:id/gossip/txs", srv.HandleGossipTxs)

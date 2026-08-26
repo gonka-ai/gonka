@@ -17,7 +17,7 @@ import (
 	"devshard/types"
 )
 
-// Compile-time guard: VerifyErrorTimeout must not grow a ctx, ExecutorClient,
+// Compile-time guard: VerifyErrorMiss must not grow a ctx, ExecutorClient,
 // payload fetcher, SessionConfig, or clock. Adding any of those is a protocol
 // regression (verifiers would wait or contact the executor).
 var _ func(
@@ -27,7 +27,7 @@ var _ func(
 	[]byte,
 	[]*types.DevshardTx,
 	FinishProposerVerifier,
-) (bool, []byte, string, error) = VerifyErrorTimeout
+) (bool, []byte, string, error) = VerifyErrorMiss
 
 var engineCoreEvents = []string{
 	`data: {"error":{"code":500,"message":"EngineCore encountered an issue. See stack trace (above) for the root cause.","param":null,"type":"InternalServerError"},"id":"devshard-57577-89"}`,
@@ -122,11 +122,11 @@ func newErrorTimeoutEnv(t *testing.T) *errorTimeoutEnv {
 }
 
 func (e *errorTimeoutEnv) verify(finishTx, payload []byte, mempool []*types.DevshardTx) (bool, error) {
-	accept, _, _, err := VerifyErrorTimeout(e.st, 1, finishTx, payload, mempool, e.sm)
+	accept, _, _, err := VerifyErrorMiss(e.st, 1, finishTx, payload, mempool, e.sm)
 	return accept, err
 }
 
-func TestVerifyErrorTimeout_NoWaitGuard(t *testing.T) {
+func TestVerifyErrorMiss_NoWaitGuard(t *testing.T) {
 	e := newErrorTimeoutEnv(t)
 	now := time.Now().Unix()
 	e.st = stateWithStartedAt(1, 1, now)
@@ -139,7 +139,7 @@ func TestVerifyErrorTimeout_NoWaitGuard(t *testing.T) {
 	require.True(t, accept, "ERROR timeout must not wait on RefusalTimeout or ExecutionTimeout")
 }
 
-func TestVerifyErrorTimeout_NoNetworkGuard(t *testing.T) {
+func TestVerifyErrorMiss_NoNetworkGuard(t *testing.T) {
 	e := newErrorTimeoutEnv(t)
 	fetcher := func() {
 		t.Fatal("payload fetcher must not be called")
@@ -148,13 +148,13 @@ func TestVerifyErrorTimeout_NoNetworkGuard(t *testing.T) {
 	var executor ExecutorClient // nil: contacting it would panic
 	_ = executor
 
-	accept, hash, _, err := VerifyErrorTimeout(e.st, 1, e.finishTx, e.payload, nil, e.sm)
+	accept, hash, _, err := VerifyErrorMiss(e.st, 1, e.finishTx, e.payload, nil, e.sm)
 	require.NoError(t, err)
 	require.True(t, accept, "ERROR timeout must accept from finish_tx + payload with empty mempool and no executor client")
 	require.Equal(t, e.hash, hash)
 }
 
-func TestVerifyErrorTimeout_ValidStartedAccepts(t *testing.T) {
+func TestVerifyErrorMiss_ValidStartedAccepts(t *testing.T) {
 	e := newErrorTimeoutEnv(t)
 	require.Equal(t, types.StatusStarted, e.st.Inferences[1].Status)
 
@@ -164,7 +164,7 @@ func TestVerifyErrorTimeout_ValidStartedAccepts(t *testing.T) {
 	require.Equal(t, e.hash, e.finish.ResponseHash, "vote in step 6 is signed over this hash")
 }
 
-func TestVerifyErrorTimeout_LyingHostOutputTokensIgnored(t *testing.T) {
+func TestVerifyErrorMiss_LyingHostOutputTokensIgnored(t *testing.T) {
 	e := newErrorTimeoutEnv(t)
 	e.finish = signedErrorFinish(t, e.hosts, 1, 1, 7, e.hash)
 	e.finishTx = marshalFinishTx(t, e.finish)
@@ -174,7 +174,7 @@ func TestVerifyErrorTimeout_LyingHostOutputTokensIgnored(t *testing.T) {
 	require.True(t, accept, "body decides; OutputTokens=7 on an error envelope still accepts")
 }
 
-func TestVerifyErrorTimeout_ContentThenErrorRejects(t *testing.T) {
+func TestVerifyErrorMiss_ContentThenErrorRejects(t *testing.T) {
 	e := newErrorTimeoutEnv(t)
 	payload := streamedPayload(t, contentThenErrorEvents)
 	hash := payloadSHA256(payload)
@@ -185,7 +185,7 @@ func TestVerifyErrorTimeout_ContentThenErrorRejects(t *testing.T) {
 	require.False(t, accept, "content plus trailing error is not a terminal error envelope")
 }
 
-func TestVerifyErrorTimeout_HashMismatchRejects(t *testing.T) {
+func TestVerifyErrorMiss_HashMismatchRejects(t *testing.T) {
 	e := newErrorTimeoutEnv(t)
 	other := streamedPayload(t, []string{
 		`data: {"error":{"code":500,"message":"different body","type":"InternalServerError"},"id":"devshard-1-1"}`,
@@ -198,7 +198,7 @@ func TestVerifyErrorTimeout_HashMismatchRejects(t *testing.T) {
 	require.False(t, accept)
 }
 
-func TestVerifyErrorTimeout_EmptyPayloadRejects(t *testing.T) {
+func TestVerifyErrorMiss_EmptyPayloadRejects(t *testing.T) {
 	e := newErrorTimeoutEnv(t)
 	for _, payload := range [][]byte{nil, {}} {
 		accept, err := e.verify(e.finishTx, payload, nil)
@@ -207,7 +207,7 @@ func TestVerifyErrorTimeout_EmptyPayloadRejects(t *testing.T) {
 	}
 }
 
-func TestVerifyErrorTimeout_TamperedFinishRejects(t *testing.T) {
+func TestVerifyErrorMiss_TamperedFinishRejects(t *testing.T) {
 	e := newErrorTimeoutEnv(t)
 
 	t.Run("non-executor signer", func(t *testing.T) {
@@ -232,7 +232,7 @@ func TestVerifyErrorTimeout_TamperedFinishRejects(t *testing.T) {
 	})
 }
 
-func TestVerifyErrorTimeout_AbsentOrUndecodableFinishRejects(t *testing.T) {
+func TestVerifyErrorMiss_AbsentOrUndecodableFinishRejects(t *testing.T) {
 	e := newErrorTimeoutEnv(t)
 
 	t.Run("absent", func(t *testing.T) {
@@ -257,7 +257,7 @@ func TestVerifyErrorTimeout_AbsentOrUndecodableFinishRejects(t *testing.T) {
 	})
 }
 
-func TestVerifyErrorTimeout_WrongInferenceOrEscrowRejects(t *testing.T) {
+func TestVerifyErrorMiss_WrongInferenceOrEscrowRejects(t *testing.T) {
 	e := newErrorTimeoutEnv(t)
 
 	t.Run("different inference", func(t *testing.T) {
@@ -281,7 +281,7 @@ func TestVerifyErrorTimeout_WrongInferenceOrEscrowRejects(t *testing.T) {
 	})
 }
 
-func TestVerifyErrorTimeout_FinishedRecordHashMismatchRejects(t *testing.T) {
+func TestVerifyErrorMiss_FinishedRecordHashMismatchRejects(t *testing.T) {
 	e := newErrorTimeoutEnv(t)
 	e.st.Inferences[1].Status = types.StatusFinished
 	e.st.Inferences[1].ResponseHash = []byte("applied-hash-that-does-not-match")
@@ -291,7 +291,7 @@ func TestVerifyErrorTimeout_FinishedRecordHashMismatchRejects(t *testing.T) {
 	require.False(t, accept)
 }
 
-func TestVerifyErrorTimeout_RoundTripEngineCoreHash(t *testing.T) {
+func TestVerifyErrorMiss_RoundTripEngineCoreHash(t *testing.T) {
 	e := newErrorTimeoutEnv(t)
 	rebuilt := streamedPayload(t, engineCoreEvents)
 	require.Equal(t, e.hash, payloadSHA256(rebuilt), "gateway-rebuilt EngineCore payload must hash to the executor ResponseHash")
@@ -301,7 +301,7 @@ func TestVerifyErrorTimeout_RoundTripEngineCoreHash(t *testing.T) {
 	require.True(t, accept)
 }
 
-func TestVerifyErrorTimeout_FinishedRecordMatchingHashAccepts(t *testing.T) {
+func TestVerifyErrorMiss_FinishedRecordMatchingHashAccepts(t *testing.T) {
 	e := newErrorTimeoutEnv(t)
 	e.st.Inferences[1].Status = types.StatusFinished
 	e.st.Inferences[1].ResponseHash = append([]byte(nil), e.hash...)
@@ -311,7 +311,7 @@ func TestVerifyErrorTimeout_FinishedRecordMatchingHashAccepts(t *testing.T) {
 	require.True(t, accept)
 }
 
-func TestVerifyErrorTimeout_MempoolFallbackWhenFinishTxAbsent(t *testing.T) {
+func TestVerifyErrorMiss_MempoolFallbackWhenFinishTxAbsent(t *testing.T) {
 	e := newErrorTimeoutEnv(t)
 	mempool := []*types.DevshardTx{
 		{Tx: &types.DevshardTx_FinishInference{FinishInference: e.finish}},
@@ -321,20 +321,20 @@ func TestVerifyErrorTimeout_MempoolFallbackWhenFinishTxAbsent(t *testing.T) {
 	require.True(t, accept)
 }
 
-func TestVerifyErrorTimeout_ReturnsFinishHash(t *testing.T) {
+func TestVerifyErrorMiss_ReturnsFinishHash(t *testing.T) {
 	e := newErrorTimeoutEnv(t)
-	accept, hash, _, err := VerifyErrorTimeout(e.st, 1, e.finishTx, e.payload, nil, e.sm)
+	accept, hash, _, err := VerifyErrorMiss(e.st, 1, e.finishTx, e.payload, nil, e.sm)
 	require.NoError(t, err)
 	require.True(t, accept)
 	require.Equal(t, e.hash, hash, "signed vote must bind the Finish ResponseHash, not a second hash of the request body")
 
-	accept, hash, _, err = VerifyErrorTimeout(e.st, 1, nil, e.payload, nil, e.sm)
+	accept, hash, _, err = VerifyErrorMiss(e.st, 1, nil, e.payload, nil, e.sm)
 	require.NoError(t, err)
 	require.False(t, accept)
 	require.Nil(t, hash)
 }
 
-func TestVerifyErrorTimeout_PrefersLocalMempoolOverRequestFinishTx(t *testing.T) {
+func TestVerifyErrorMiss_PrefersLocalMempoolOverRequestFinishTx(t *testing.T) {
 	e := newErrorTimeoutEnv(t)
 	other := streamedPayload(t, []string{
 		`data: {"error":{"code":500,"message":"different body","type":"InternalServerError"},"id":"devshard-1-1"}`,
@@ -345,24 +345,24 @@ func TestVerifyErrorTimeout_PrefersLocalMempoolOverRequestFinishTx(t *testing.T)
 	mempool := []*types.DevshardTx{
 		{Tx: &types.DevshardTx_FinishInference{FinishInference: e.finish}},
 	}
-	accept, hash, _, err := VerifyErrorTimeout(e.st, 1, marshalFinishTx(t, tampered), e.payload, mempool, e.sm)
+	accept, hash, _, err := VerifyErrorMiss(e.st, 1, marshalFinishTx(t, tampered), e.payload, mempool, e.sm)
 	require.NoError(t, err)
 	require.True(t, accept, "local mempool Finish is preferred over the request artifact")
 	require.Equal(t, e.hash, hash)
 }
 
-func TestVerifyErrorTimeout_RejectCauses(t *testing.T) {
+func TestVerifyErrorMiss_RejectCauses(t *testing.T) {
 	e := newErrorTimeoutEnv(t)
 
-	_, _, cause, err := VerifyErrorTimeout(e.st, 1, e.finishTx, e.payload, nil, e.sm)
+	_, _, cause, err := VerifyErrorMiss(e.st, 1, e.finishTx, e.payload, nil, e.sm)
 	require.NoError(t, err)
 	require.Empty(t, cause, "accept must not set a reject cause")
 
-	_, _, cause, err = VerifyErrorTimeout(e.st, 1, nil, e.payload, nil, e.sm)
+	_, _, cause, err = VerifyErrorMiss(e.st, 1, nil, e.payload, nil, e.sm)
 	require.NoError(t, err)
 	require.Equal(t, ErrorTimeoutRejectNoFinishTx, cause)
 
-	_, _, cause, err = VerifyErrorTimeout(e.st, 1, e.finishTx, nil, nil, e.sm)
+	_, _, cause, err = VerifyErrorMiss(e.st, 1, e.finishTx, nil, nil, e.sm)
 	require.NoError(t, err)
 	require.Equal(t, ErrorTimeoutRejectNoPayload, cause)
 
@@ -370,13 +370,13 @@ func TestVerifyErrorTimeout_RejectCauses(t *testing.T) {
 		`data: {"error":{"code":500,"message":"different body","type":"InternalServerError"},"id":"devshard-1-1"}`,
 		`data: [DONE]`,
 	})
-	_, _, cause, err = VerifyErrorTimeout(e.st, 1, e.finishTx, other, nil, e.sm)
+	_, _, cause, err = VerifyErrorMiss(e.st, 1, e.finishTx, other, nil, e.sm)
 	require.NoError(t, err)
 	require.Equal(t, ErrorTimeoutRejectHashMismatch, cause)
 
 	contentThenError := streamedPayload(t, contentThenErrorEvents)
 	contentFinish := signedErrorFinish(t, e.hosts, 1, 1, 0, payloadSHA256(contentThenError))
-	_, _, cause, err = VerifyErrorTimeout(e.st, 1, marshalFinishTx(t, contentFinish), contentThenError, nil, e.sm)
+	_, _, cause, err = VerifyErrorMiss(e.st, 1, marshalFinishTx(t, contentFinish), contentThenError, nil, e.sm)
 	require.NoError(t, err)
 	require.Equal(t, ErrorTimeoutRejectNotErrorBody, cause)
 
@@ -387,7 +387,7 @@ func TestVerifyErrorTimeout_RejectCauses(t *testing.T) {
 		EscrowId:     "escrow-1",
 	}
 	badSigner.ProposerSig = testutil.SignProposerTx(t, e.hosts[0], badSigner)
-	_, _, cause, err = VerifyErrorTimeout(e.st, 1, marshalFinishTx(t, badSigner), e.payload, nil, e.sm)
+	_, _, cause, err = VerifyErrorMiss(e.st, 1, marshalFinishTx(t, badSigner), e.payload, nil, e.sm)
 	require.NoError(t, err)
 	require.Equal(t, ErrorTimeoutRejectSig, cause)
 }

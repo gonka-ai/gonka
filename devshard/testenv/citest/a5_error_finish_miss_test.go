@@ -16,7 +16,7 @@ import (
 )
 
 // TestA5_ErrorFinishMiss verifies a streamed OpenAI error envelope (HTTP 200 SSE)
-// is accounted as TIMEOUT_REASON_ERROR: the client still sees today's
+// is accounted as MsgErrorMiss: the client still sees today's
 // hostApplicationError, the executor takes a Missed, Cost is unchanged, the
 // client is refunded, and no validation job runs. Settlement copies HostStats.
 func TestA5_ErrorFinishMiss(t *testing.T) {

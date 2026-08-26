@@ -49,6 +49,8 @@ func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder O
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleHeightSyncRepair }))
 	g.POST("/sessions/:id/verify-timeout", withSessionAuth(resolver, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleVerifyTimeout }))
+	g.POST("/sessions/:id/verify-error-miss", withSessionAuth(resolver, false,
+		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleVerifyErrorMiss }))
 	g.POST("/sessions/:id/challenge-receipt", withSessionAuth(resolver, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleChallengeReceipt }))
 	g.POST("/sessions/:id/gossip/nonce", withSessionAuth(resolver, false,
@@ -203,6 +205,8 @@ func routeLabel(c echo.Context) string {
 		return "chat_completions"
 	case strings.HasSuffix(path, "/payloads"):
 		return "payloads"
+	case strings.Contains(path, "verify-error-miss"):
+		return "verify_error_miss"
 	case strings.Contains(path, "verify-timeout"):
 		return "verify_timeout"
 	case strings.Contains(path, "challenge-receipt"):

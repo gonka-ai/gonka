@@ -28,19 +28,36 @@ func TestTimeoutReasonErrorValue(t *testing.T) {
 	if TimeoutReason_TIMEOUT_REASON_EXECUTION != 2 {
 		t.Fatalf("EXECUTION = %d, want 2", TimeoutReason_TIMEOUT_REASON_EXECUTION)
 	}
-	if TimeoutReason_TIMEOUT_REASON_ERROR != 3 {
-		t.Fatalf("ERROR = %d, want 3", TimeoutReason_TIMEOUT_REASON_ERROR)
+	if _, ok := TimeoutReason_value["TIMEOUT_REASON_ERROR"]; ok {
+		t.Fatal("TIMEOUT_REASON_ERROR must stay reserved, not a live enum value")
 	}
 }
 
-func TestTimeoutVoteContentResponseHashFieldNumber(t *testing.T) {
+func TestTimeoutVoteContentResponseHashRemoved(t *testing.T) {
 	md := (&TimeoutVoteContent{}).ProtoReflect().Descriptor()
+	if md.Fields().ByName("response_hash") != nil {
+		t.Fatal("TimeoutVoteContent must not have response_hash; error-miss uses ErrorMissVoteContent")
+	}
+	var reserved5 bool
+	for i := 0; i < md.ReservedRanges().Len(); i++ {
+		r := md.ReservedRanges().Get(i)
+		if r[0] <= 5 && 5 < r[1] {
+			reserved5 = true
+		}
+	}
+	if !reserved5 {
+		t.Fatal("TimeoutVoteContent must reserve field number 5")
+	}
+}
+
+func TestErrorMissVoteContentResponseHashFieldNumber(t *testing.T) {
+	md := (&ErrorMissVoteContent{}).ProtoReflect().Descriptor()
 	fd := md.Fields().ByName("response_hash")
 	if fd == nil {
-		t.Fatal("TimeoutVoteContent missing response_hash")
+		t.Fatal("ErrorMissVoteContent missing response_hash")
 	}
-	if fd.Number() != 5 {
-		t.Fatalf("response_hash field number = %d, want 5", fd.Number())
+	if fd.Number() != 4 {
+		t.Fatalf("response_hash field number = %d, want 4", fd.Number())
 	}
 	if fd.Kind() != protoreflect.BytesKind {
 		t.Fatalf("response_hash kind = %s, want bytes", fd.Kind())
@@ -128,18 +145,16 @@ func TestTimeoutVoteContentExistingReasonsMarshalIdentically(t *testing.T) {
 	}
 }
 
-func TestTimeoutVoteContentEmptyHashOmittedNotZeroLength(t *testing.T) {
-	empty := &TimeoutVoteContent{
+func TestErrorMissVoteContentEmptyHashOmittedNotZeroLength(t *testing.T) {
+	empty := &ErrorMissVoteContent{
 		EscrowId:     "escrow-1",
 		InferenceId:  1,
-		Reason:       TimeoutReason_TIMEOUT_REASON_ERROR,
 		Accept:       true,
 		ResponseHash: nil,
 	}
-	zero := &TimeoutVoteContent{
+	zero := &ErrorMissVoteContent{
 		EscrowId:     "escrow-1",
 		InferenceId:  1,
-		Reason:       TimeoutReason_TIMEOUT_REASON_ERROR,
 		Accept:       true,
 		ResponseHash: []byte{},
 	}
@@ -152,12 +167,11 @@ func TestTimeoutVoteContentEmptyHashOmittedNotZeroLength(t *testing.T) {
 		t.Fatalf("marshal empty hash: %v", err)
 	}
 	if hex.EncodeToString(emptyBytes) != hex.EncodeToString(zeroBytes) {
-		t.Fatalf("nil hash %s != empty hash %s; both must omit field 5", hex.EncodeToString(emptyBytes), hex.EncodeToString(zeroBytes))
+		t.Fatalf("nil hash %s != empty hash %s; both must omit empty bytes", hex.EncodeToString(emptyBytes), hex.EncodeToString(zeroBytes))
 	}
-	populated := &TimeoutVoteContent{
+	populated := &ErrorMissVoteContent{
 		EscrowId:     "escrow-1",
 		InferenceId:  1,
-		Reason:       TimeoutReason_TIMEOUT_REASON_ERROR,
 		Accept:       true,
 		ResponseHash: []byte{0xab, 0xcd},
 	}
@@ -166,6 +180,6 @@ func TestTimeoutVoteContentEmptyHashOmittedNotZeroLength(t *testing.T) {
 		t.Fatalf("marshal populated hash: %v", err)
 	}
 	if hex.EncodeToString(popBytes) == hex.EncodeToString(emptyBytes) {
-		t.Fatal("populated response_hash marshaled identically to empty; field 5 is not being encoded")
+		t.Fatal("populated response_hash marshaled identically to empty; field is not being encoded")
 	}
 }

@@ -650,7 +650,6 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 	nowUnix := time.Now().Unix()
 
 	var accept bool
-	var responseHash []byte
 	var rejectCause string
 	switch reason {
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
@@ -668,8 +667,6 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 		accept, err = host.VerifyRefusedTimeout(c.Request().Context(), st, req.InferenceID, PayloadFromJSON(req.Payload), storedDiffs, localMempool, executorClient, s.host, st.Config, nowUnix)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
 		accept, err = host.VerifyExecutionTimeout(c.Request().Context(), st, req.InferenceID, localMempool, executorClient, st.Config, nowUnix)
-	case types.TimeoutReason_TIMEOUT_REASON_ERROR:
-		accept, responseHash, rejectCause, err = host.VerifyErrorTimeout(st, req.InferenceID, req.FinishTx, req.ResponsePayload, localMempool, s.host)
 	default:
 		return echo.NewHTTPError(http.StatusBadRequest, "unknown reason")
 	}
@@ -679,7 +676,7 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 
 	resp := VerifyTimeoutResponse{Accept: accept, RejectCause: rejectCause}
 	if accept {
-		sig, voterSlot, sErr := signTimeoutVote(s.host.EscrowID(), req.InferenceID, reason, s.host.Signer(), s.host.PrimarySlot(), responseHash)
+		sig, voterSlot, sErr := signTimeoutVote(s.host.EscrowID(), req.InferenceID, reason, s.host.Signer(), s.host.PrimarySlot())
 		if sErr != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, sErr.Error())
 		}
@@ -696,12 +693,29 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 }
 
 // signTimeoutVote marshals and signs a TimeoutVoteContent, returning the
-// signature and the voter's slot ID. responseHash is set for reason=ERROR.
-func signTimeoutVote(escrowID string, inferenceID uint64, reason types.TimeoutReason, signer signing.Signer, voterSlot uint32, responseHash []byte) ([]byte, uint32, error) {
+// signature and the voter's slot ID. Timeout votes are refused/execution only.
+func signTimeoutVote(escrowID string, inferenceID uint64, reason types.TimeoutReason, signer signing.Signer, voterSlot uint32) ([]byte, uint32, error) {
 	voteContent := &types.TimeoutVoteContent{
+		EscrowId:    escrowID,
+		InferenceId: inferenceID,
+		Reason:      reason,
+		Accept:      true,
+	}
+	voteData, err := proto.MarshalOptions{Deterministic: true}.Marshal(voteContent)
+	if err != nil {
+		return nil, 0, fmt.Errorf("marshal vote: %w", err)
+	}
+	sig, err := signer.Sign(voteData)
+	if err != nil {
+		return nil, 0, fmt.Errorf("sign vote: %w", err)
+	}
+	return sig, voterSlot, nil
+}
+
+func signErrorMissVote(escrowID string, inferenceID uint64, signer signing.Signer, voterSlot uint32, responseHash []byte) ([]byte, uint32, error) {
+	voteContent := &types.ErrorMissVoteContent{
 		EscrowId:     escrowID,
 		InferenceId:  inferenceID,
-		Reason:       reason,
 		Accept:       true,
 		ResponseHash: responseHash,
 	}
@@ -714,6 +728,70 @@ func signTimeoutVote(escrowID string, inferenceID uint64, reason types.TimeoutRe
 		return nil, 0, fmt.Errorf("sign vote: %w", err)
 	}
 	return sig, voterSlot, nil
+}
+
+func (s *Server) HandleVerifyErrorMiss(c echo.Context) (err error) {
+	op, finish := startHandlerSpan(c, "verify_error_miss")
+	defer finish(&err)
+
+	sender, err := getSender(c)
+	if err != nil {
+		return err
+	}
+	observability.Request.SetSender(op, sender)
+	if !s.isOwner(sender) {
+		return echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
+	}
+	if !s.host.CompletionRequestsEnabled() {
+		logging.Debug("HandleVerifyErrorMiss: devshard_requests_enabled=false", "subsystem", "server")
+		return HTTPError(c, http.StatusServiceUnavailable, DevshardErrorRequestsDisabled, devshard.ErrRequestsDisabled.Error())
+	}
+
+	body, err := getBody(c)
+	if err != nil {
+		return err
+	}
+
+	var req VerifyErrorMissRequest
+	if err := json.Unmarshal(body, &req); err != nil {
+		return echo.NewHTTPError(http.StatusBadRequest, "invalid json")
+	}
+
+	if len(req.Diffs) > 0 {
+		diffs := make([]types.Diff, 0, len(req.Diffs))
+		for i, dj := range req.Diffs {
+			d, dErr := DiffFromJSON(dj)
+			if dErr != nil {
+				return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("decode diff %d: %v", i, dErr))
+			}
+			diffs = append(diffs, d)
+		}
+		s.host.ApplyCatchUpDiffs(diffs)
+	}
+
+	st := s.host.SnapshotState()
+	localMempool := s.host.MempoolTxs()
+	accept, responseHash, rejectCause, err := host.VerifyErrorMiss(st, req.InferenceID, req.FinishTx, req.ResponsePayload, localMempool, s.host)
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+
+	resp := VerifyErrorMissResponse{Accept: accept, RejectCause: rejectCause}
+	if accept {
+		sig, voterSlot, sErr := signErrorMissVote(s.host.EscrowID(), req.InferenceID, s.host.Signer(), s.host.PrimarySlot(), responseHash)
+		if sErr != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, sErr.Error())
+		}
+		resp.Signature = sig
+		resp.VoterSlot = voterSlot
+	} else {
+		mempoolBytes, mErr := DevshardTxsToBytes(host.RecoveryTxsFor(s.host.MempoolTxs(), req.InferenceID))
+		if mErr != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, mErr.Error())
+		}
+		resp.Mempool = mempoolBytes
+	}
+	return writeJSON(c, http.StatusOK, resp)
 }
 
 func (s *Server) HandleChallengeReceipt(c echo.Context) (err error) {

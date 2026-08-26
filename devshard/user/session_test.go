@@ -580,7 +580,7 @@ type mockTimeoutVerifier struct {
 	onVerify    func()
 }
 
-func (m *mockTimeoutVerifier) VerifyTimeout(_ context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+func (m *mockTimeoutVerifier) VerifyTimeout(_ context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
 	if m.onVerify != nil {
 		m.onVerify()
 	}
@@ -601,9 +601,42 @@ func (m *mockTimeoutVerifier) VerifyTimeout(_ context.Context, inferenceID uint6
 		Reason:      reason,
 		Accept:      true,
 	}
-	if reason == types.TimeoutReason_TIMEOUT_REASON_ERROR && len(artifacts.ResponsePayload) > 0 {
+	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(content)
+	if err != nil {
+		return false, nil, 0, nil, "", err
+	}
+	sig, err := m.signer.Sign(data)
+	if err != nil {
+		return false, nil, 0, nil, "", err
+	}
+	return true, sig, voterSlot, nil, "", nil
+}
+
+func (m *mockTimeoutVerifier) VerifyErrorMiss(_ context.Context, inferenceID uint64, _ []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	if m.onVerify != nil {
+		m.onVerify()
+	}
+	if m.delay > 0 {
+		time.Sleep(m.delay)
+	}
+	if !m.accept {
+		return false, nil, 0, m.mempool, m.rejectCause, nil
+	}
+	eid := m.escrowID
+	if eid == "" {
+		eid = "escrow-1"
+	}
+	voterSlot := m.group[m.slotIdx].SlotID
+	var hash []byte
+	if len(artifacts.ResponsePayload) > 0 {
 		sum := sha256.Sum256(artifacts.ResponsePayload)
-		content.ResponseHash = sum[:]
+		hash = sum[:]
+	}
+	content := &types.ErrorMissVoteContent{
+		EscrowId:     eid,
+		InferenceId:  inferenceID,
+		Accept:       true,
+		ResponseHash: hash,
 	}
 	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(content)
 	if err != nil {
@@ -677,6 +710,10 @@ func (m *concurrencyMockVerifier) VerifyTimeout(ctx context.Context, inferenceID
 		return false, nil, 0, nil, "", err
 	}
 	return true, sig, voterSlot, nil, "", nil
+}
+
+func (m *concurrencyMockVerifier) VerifyErrorMiss(ctx context.Context, inferenceID uint64, diffs []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, nil, "", nil
 }
 
 // signerForSlot finds the signer whose address matches the slot's validator.
@@ -1373,6 +1410,10 @@ func (c *timeoutRecoveryClient) VerifyTimeout(_ context.Context, _ uint64, _ typ
 	return false, nil, 0, c.mempool, "", nil
 }
 
+func (c *timeoutRecoveryClient) VerifyErrorMiss(_ context.Context, _ uint64, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, c.mempool, "", nil
+}
+
 type timeoutVoteClient struct {
 	HostClient
 	*mockTimeoutVerifier
@@ -1743,6 +1784,15 @@ func findRecoveryFinish(txs []*types.DevshardTx, inferenceID uint64) *types.Devs
 func findPendingTimeout(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
 	for _, tx := range txs {
 		if to := tx.GetTimeoutInference(); to != nil && to.InferenceId == inferenceID {
+			return tx
+		}
+	}
+	return nil
+}
+
+func findPendingErrorMiss(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
+	for _, tx := range txs {
+		if em := tx.GetErrorMiss(); em != nil && em.InferenceId == inferenceID {
 			return tx
 		}
 	}

@@ -85,8 +85,17 @@ func TestIsTerminalErrorResponse_UnparseableThenError(t *testing.T) {
 		`data: [DONE]`,
 	})
 	details, ok := IsTerminalErrorResponse(payload)
-	require.False(t, ok)
-	require.Equal(t, ErrorDetails{}, details, "parse failure must not classify a miss")
+	require.True(t, ok, "unparseable data: JSON is a miss, not a veto")
+	require.Equal(t, "InternalServerError", details.Type)
+}
+
+func TestIsTerminalErrorResponse_UnparseableOnly(t *testing.T) {
+	payload := payloadFromEvents(t, []string{
+		`data: {not json`,
+		`data: [DONE]`,
+	})
+	_, ok := IsTerminalErrorResponse(payload)
+	require.True(t, ok, "a Finish over unparseable data: JSON is a miss")
 }
 
 func TestIsTerminalErrorResponse_GoldenFixtures(t *testing.T) {
@@ -118,6 +127,8 @@ func TestIsTerminalErrorResponse_GoldenFixtures(t *testing.T) {
 		"error_with_completion_tokens",
 		"empty_stream_role_done",
 		"unparseable_then_error",
+		"unparseable_only",
+		"error_then_garbage_data",
 	}
 	for _, name := range required {
 		if !seen[name] {

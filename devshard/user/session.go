@@ -132,22 +132,14 @@ type TimeoutResult struct {
 	Reason        string   // "execution", "refused", "error", or "" if deadline not reached
 	Votes         int      // accept votes collected
 	Accepted      bool     // true when accept weight exceeded the vote threshold
-	ResponseHash  []byte   // sha256 of the ERROR payload the gateway reconstructed; empty otherwise
-	VerifyRejects []string // reason=error verifier reject causes (no_finish_tx, no_payload, sig, hash_mismatch, not_error_body)
+	ResponseHash  []byte   // sha256 of the error-miss payload the gateway reconstructed; empty otherwise
+	VerifyRejects []string // error-miss verifier reject causes
 }
 
-// ErrInferenceMissed is returned by HandleTimeout when a timeout miss was
-// applied on-chain. Callers must treat it as miss-path success, not as a
+// ErrInferenceMissed is returned by HandleErrorMiss when a miss was applied
+// on-chain. Callers must treat it as miss-path success, not as a
 // vote-collection failure.
 var ErrInferenceMissed = errors.New("inference missed")
-
-// TimeoutOpts selects a HandleTimeout path. Zero value keeps today's
-// refused/execution inference from confirmedAt.
-type TimeoutOpts struct {
-	Reason          types.TimeoutReason
-	FinishTx        []byte
-	ResponsePayload []byte
-}
 
 // HasMsgFinish returns true if mempool contains MsgFinishInference for the given nonce.
 func HasMsgFinish(txs []*types.DevshardTx, nonce uint64) bool {
@@ -286,10 +278,10 @@ type Session struct {
 	hostSyncNonce   map[int]uint64               // hostIdx -> last nonce sent
 	pendingTxs      []*types.DevshardTx          // from host mempools, for next diff
 	pendingTxKeys   map[string]struct{}          // dedup set keyed by tx_type:id
-	// pinnedFinishIDs holds inference IDs whose pending Finish and Timeout
+	// pinnedFinishIDs holds inference IDs whose pending Finish and ErrorMiss
 	// must not be drained by a concurrent composeDiffLocked (heartbeat,
-	// PrepareInference, unrelated SendPendingDiff). handleErrorTimeout pins
-	// the nonce for the vote round and compose so Finish+Timeout land together.
+	// PrepareInference, unrelated SendPendingDiff). HandleErrorMiss pins
+	// the nonce for the vote round and compose so Finish+ErrorMiss land together.
 	pinnedFinishIDs map[uint64]int
 	signatures      map[uint64]map[uint32][]byte // nonce -> slotID -> sig
 	store           storage.Storage              // optional persistent storage
@@ -872,7 +864,7 @@ func errorMissPendingID(tx *types.DevshardTx) (uint64, bool) {
 	if tx == nil {
 		return 0, false
 	}
-	if to := tx.GetTimeoutInference(); to != nil {
+	if to := tx.GetErrorMiss(); to != nil {
 		return to.InferenceId, true
 	}
 	return 0, false
@@ -2125,6 +2117,15 @@ func timeoutInferenceTx(inferenceID uint64, reason types.TimeoutReason, votes []
 	}
 }
 
+func errorMissTx(inferenceID uint64, votes []*types.ErrorMissVote) *types.DevshardTx {
+	return &types.DevshardTx{
+		Tx: &types.DevshardTx_ErrorMiss{ErrorMiss: &types.MsgErrorMiss{
+			InferenceId: inferenceID,
+			Votes:       votes,
+		}},
+	}
+}
+
 // AddPendingTimeoutTx adds a MsgTimeoutInference to the pending tx queue.
 func (s *Session) AddPendingTimeoutTx(inferenceID uint64, reason types.TimeoutReason, votes []*types.TimeoutVote) {
 	s.mu.Lock()
@@ -2299,19 +2300,7 @@ func (s *Session) IsNonceFinished(nonce uint64) bool {
 // waits for the protocol deadline, collects timeout votes, and submits
 // MsgTimeoutInference if sufficient votes are gathered.
 // sendTime is when the nonce's network call started.
-//
-// Pass TimeoutOpts{Reason: TIMEOUT_REASON_ERROR, FinishTx, ResponsePayload} for
-// an evidence-backed error miss. That path does not wait on a deadline and
-// does not early-return on a pending Finish.
-func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time.Time, payload *host.InferencePayload, opts ...TimeoutOpts) (TimeoutResult, error) {
-	var opt TimeoutOpts
-	if len(opts) > 0 {
-		opt = opts[0]
-	}
-	if opt.Reason == types.TimeoutReason_TIMEOUT_REASON_ERROR {
-		return s.handleErrorTimeout(ctx, nonce, opt)
-	}
-
+func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time.Time, payload *host.InferencePayload) (TimeoutResult, error) {
 	s.mu.Lock()
 	cfg := s.sm.SnapshotState().Config
 	confirmedAt := int64(0)
@@ -2420,7 +2409,7 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 	return result, fmt.Errorf("inference %d timed out but insufficient votes", nonce)
 }
 
-func (s *Session) handleErrorTimeout(ctx context.Context, nonce uint64, opt TimeoutOpts) (TimeoutResult, error) {
+func (s *Session) HandleErrorMiss(ctx context.Context, nonce uint64, finishTx, responsePayload []byte) (TimeoutResult, error) {
 	s.pinPendingFinish(nonce)
 	defer s.unpinPendingFinish(nonce)
 
@@ -2429,8 +2418,7 @@ func (s *Session) handleErrorTimeout(ctx context.Context, nonce uint64, opt Time
 	hostID := s.HostLabel(hostIdx)
 	s.mu.Unlock()
 
-	reason := types.TimeoutReason_TIMEOUT_REASON_ERROR
-	result := TimeoutResult{Reason: timeoutReasonLogLabel(reason)}
+	result := TimeoutResult{Reason: "error"}
 	logFields := func(extra ...any) []any {
 		base := []any{"escrow", s.escrowID, "nonce", nonce, "host", hostID}
 		return append(base, extra...)
@@ -2439,33 +2427,34 @@ func (s *Session) handleErrorTimeout(ctx context.Context, nonce uint64, opt Time
 	logging.Stage(ctx, "timeout_started", logFields("reason", result.Reason)...)
 
 	verifiers := s.TimeoutVerifiers()
-	votes, _, rejectCauses, err := s.CollectTimeoutVotes(ctx, nonce, reason, nil, verifiers, nil, host.TimeoutArtifacts{
-		FinishTx:        opt.FinishTx,
-		ResponsePayload: opt.ResponsePayload,
+	votes, _, rejectCauses, err := s.CollectErrorMissVotes(ctx, nonce, verifiers, nil, host.TimeoutArtifacts{
+		FinishTx:        finishTx,
+		ResponsePayload: responsePayload,
 	})
 	if err != nil {
-		return result, fmt.Errorf("collect timeout votes: %w", err)
+		return result, fmt.Errorf("collect error-miss votes: %w", err)
 	}
 	result.Votes = len(votes)
 	result.VerifyRejects = rejectCauses
-	if len(opt.ResponsePayload) > 0 {
-		sum := sha256.Sum256(opt.ResponsePayload)
+	if len(responsePayload) > 0 {
+		sum := sha256.Sum256(responsePayload)
 		result.ResponseHash = sum[:]
 	}
 
-	if !s.HasSufficientTimeoutVotes(votes) {
+	if !s.HasSufficientErrorMissVotes(votes) {
 		logging.Stage(ctx, "timeout_insufficient_votes", logFields("reason", result.Reason)...)
 		return result, fmt.Errorf("inference %d timed out but insufficient votes", nonce)
 	}
 
-	if err := s.sendPendingDiff(ctx, []*types.DevshardTx{timeoutInferenceTx(nonce, reason, votes)}, []uint64{nonce}); err != nil {
-		logging.Stage(ctx, "timeout_diff_send_failed", logFields("reason", result.Reason, "error", err)...)
-		return result, fmt.Errorf("send timeout diff: %w", err)
-	}
+	sendErr := s.sendPendingDiff(ctx, []*types.DevshardTx{errorMissTx(nonce, votes)}, []uint64{nonce})
 	rec, ok := s.sm.Inference(nonce)
 	if !ok || rec.Status != types.StatusTimedOut {
 		logging.Stage(ctx, "timeout_not_applied", logFields("reason", result.Reason)...)
 		return result, fmt.Errorf("inference %d error timeout not applied", nonce)
+	}
+	if sendErr != nil {
+		logging.Stage(ctx, "timeout_diff_send_failed", logFields("reason", result.Reason, "error", sendErr)...)
+		return result, fmt.Errorf("send error-miss diff: %w", sendErr)
 	}
 	s.mu.Lock()
 	if o, ok := s.nonceStates[nonce]; ok {
@@ -2474,7 +2463,7 @@ func (s *Session) handleErrorTimeout(ctx context.Context, nonce uint64, opt Time
 	s.mu.Unlock()
 	result.Accepted = true
 	logging.Stage(ctx, "timeout_completed", logFields("reason", result.Reason)...)
-	return result, fmt.Errorf("inference %d timed out: %s: %w", nonce, reason, ErrInferenceMissed)
+	return result, fmt.Errorf("inference %d timed out: error: %w", nonce, ErrInferenceMissed)
 }
 
 // TimeoutHeartbeatInterval controls how often timeout_waiting logs are emitted.
@@ -2526,6 +2515,7 @@ func (s *Session) Close() error {
 // TimeoutVerifier contacts a host for timeout verification votes.
 type TimeoutVerifier interface {
 	VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff, artifacts host.TimeoutArtifacts) (accept bool, sig []byte, voterSlot uint32, mempool []*types.DevshardTx, rejectCause string, err error)
+	VerifyErrorMiss(ctx context.Context, inferenceID uint64, diffs []types.Diff, artifacts host.TimeoutArtifacts) (accept bool, sig []byte, voterSlot uint32, mempool []*types.DevshardTx, rejectCause string, err error)
 }
 
 func timeoutReasonLogLabel(reason types.TimeoutReason) string {
@@ -2534,8 +2524,6 @@ func timeoutReasonLogLabel(reason types.TimeoutReason) string {
 		return "execution"
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
 		return "refused"
-	case types.TimeoutReason_TIMEOUT_REASON_ERROR:
-		return "error"
 	default:
 		return "unknown"
 	}
@@ -2771,6 +2759,140 @@ func (s *Session) CollectTimeoutVotes(
 	return votes, recovery, rejectCauses, nil
 }
 
+func (s *Session) CollectErrorMissVotes(
+	ctx context.Context,
+	inferenceID uint64,
+	verifiers map[int]TimeoutVerifier,
+	diffs []types.Diff,
+	artifacts host.TimeoutArtifacts,
+) ([]*types.ErrorMissVote, []*types.DevshardTx, []string, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	executorIdx := int(inferenceID % uint64(len(s.group)))
+	executorAddr := s.group[executorIdx].ValidatorAddress
+
+	type addrVerifier struct {
+		idx          int
+		verifier     TimeoutVerifier
+		verifierAddr string
+	}
+	seen := make(map[string]bool)
+	seen[executorAddr] = true
+	var deduped []addrVerifier
+	for idx, v := range verifiers {
+		addr := s.group[idx].ValidatorAddress
+		if seen[addr] {
+			continue
+		}
+		seen[addr] = true
+		deduped = append(deduped, addrVerifier{idx: idx, verifier: v, verifierAddr: addr})
+	}
+
+	type voteResult struct {
+		vote         *types.ErrorMissVote
+		err          error
+		verifierIdx  int
+		verifierAddr string
+		mempool      []*types.DevshardTx
+		rejectCause  string
+	}
+
+	logFields := func(hostAddr string, extra ...any) []any {
+		base := []any{"escrow", s.escrowID, "nonce", inferenceID, "reason", "error"}
+		if hostAddr != "" {
+			base = append(base, "host", shortAddress(hostAddr))
+		}
+		return append(base, extra...)
+	}
+
+	results := make(chan voteResult, len(deduped))
+	for _, av := range deduped {
+		logging.Stage(ctx, "timeout_vote_requested", logFields(av.verifierAddr)...)
+		go func(av addrVerifier) {
+			queueStart := time.Now()
+			waitCtx, waitCancel := context.WithTimeout(ctx, VerifierQueueWaitTimeout)
+			err := s.verifierQueue.acquire(waitCtx, av.verifierAddr)
+			waitCancel()
+			if err != nil {
+				results <- voteResult{err: err, verifierIdx: av.idx, verifierAddr: av.verifierAddr}
+				return
+			}
+			waitMs := time.Since(queueStart).Milliseconds()
+			if waitMs > 0 {
+				logging.Stage(ctx, "timeout_vote_dequeued", logFields(av.verifierAddr, "wait_ms", waitMs)...)
+			}
+			defer s.verifierQueue.release(av.verifierAddr)
+			if err := ctx.Err(); err != nil {
+				results <- voteResult{err: err, verifierIdx: av.idx, verifierAddr: av.verifierAddr}
+				return
+			}
+			accept, sig, voterSlot, mempool, rejectCause, err := av.verifier.VerifyErrorMiss(ctx, inferenceID, mergeTimeoutCatchUpDiffs(s.catchUpDiffsForVerifier(av.idx), diffs), artifacts)
+			if err != nil {
+				results <- voteResult{err: err, verifierIdx: av.idx, verifierAddr: av.verifierAddr}
+				return
+			}
+			if !accept {
+				results <- voteResult{verifierIdx: av.idx, verifierAddr: av.verifierAddr, mempool: mempool, rejectCause: rejectCause}
+				return
+			}
+			results <- voteResult{vote: &types.ErrorMissVote{
+				VoterSlot: voterSlot,
+				Accept:    true,
+				Signature: sig,
+			}, verifierIdx: av.idx, verifierAddr: av.verifierAddr}
+		}(av)
+	}
+
+	var votes []*types.ErrorMissVote
+	var recovery []*types.DevshardTx
+	var rejectCauses []string
+	seenRecovery := make(map[string]struct{})
+	expected := len(deduped)
+	voteThreshold := s.sm.VoteThreshold()
+	var accWeight uint32
+	var errors, rejects int
+	for i := 0; i < expected; i++ {
+		res := <-results
+		if res.err != nil {
+			errors++
+			logging.Stage(ctx, "timeout_vote_result", logFields(res.verifierAddr, "accept", false, "error", res.err)...)
+			continue
+		}
+		if res.vote == nil {
+			rejects++
+			if res.rejectCause != "" {
+				rejectCauses = append(rejectCauses, res.rejectCause)
+			}
+			logging.Stage(ctx, "timeout_vote_result", logFields(res.verifierAddr, "accept", false, "reject_cause", res.rejectCause)...)
+			for _, tx := range host.RecoveryTxsFor(res.mempool, inferenceID) {
+				key := devshardTxKey(tx)
+				if key == "" {
+					key = fmt.Sprintf("%p", tx)
+				}
+				if _, ok := seenRecovery[key]; ok {
+					continue
+				}
+				seenRecovery[key] = struct{}{}
+				recovery = append(recovery, tx)
+			}
+			continue
+		}
+		votes = append(votes, res.vote)
+		addr := s.sm.SlotAddress(res.vote.VoterSlot)
+		accWeight += s.sm.AddressSlotCount(addr)
+		logging.Stage(ctx, "timeout_vote_result", logFields(res.verifierAddr, "accept", true)...)
+		if accWeight > voteThreshold {
+			cancel()
+		}
+	}
+
+	logging.Stage(ctx, "timeout_votes_collected",
+		logFields("", "accept", len(votes), "weight", accWeight, "reject", rejects, "errors", errors, "threshold", voteThreshold, "verifiers", expected, "sufficient", accWeight > voteThreshold)...,
+	)
+	return votes, recovery, rejectCauses, nil
+}
+
 func firstTimeoutArtifacts(artifacts []host.TimeoutArtifacts) host.TimeoutArtifacts {
 	if len(artifacts) == 0 {
 		return host.TimeoutArtifacts{}
@@ -2823,6 +2945,20 @@ func (s *Session) HasSufficientTimeoutVotes(votes []*types.TimeoutVote) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	threshold := s.sm.VoteThreshold()
+	var accWeight uint32
+	for _, v := range votes {
+		if v.Accept {
+			addr := s.sm.SlotAddress(v.VoterSlot)
+			accWeight += s.sm.AddressSlotCount(addr)
+		}
+	}
+	return accWeight > threshold
+}
+
+func (s *Session) HasSufficientErrorMissVotes(votes []*types.ErrorMissVote) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	threshold := s.sm.VoteThreshold()
 	var accWeight uint32
 	for _, v := range votes {

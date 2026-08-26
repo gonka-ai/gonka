@@ -607,6 +607,7 @@ func requestBlockedWhenUnavailable(req HostRequest) bool {
 		for _, tx := range diff.Txs {
 			if tx.GetStartInference() != nil ||
 				tx.GetTimeoutInference() != nil ||
+				tx.GetErrorMiss() != nil ||
 				tx.GetValidation() != nil ||
 				tx.GetValidationVote() != nil {
 				return true
@@ -717,6 +718,9 @@ func (h *Host) applyAndPersist(ctx context.Context, diff types.Diff) error {
 		}
 		if ti := tx.GetTimeoutInference(); ti != nil {
 			delete(h.completedResponses, ti.InferenceId)
+		}
+		if em := tx.GetErrorMiss(); em != nil {
+			delete(h.completedResponses, em.InferenceId)
 		}
 	}
 

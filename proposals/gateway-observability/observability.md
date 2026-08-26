@@ -340,7 +340,7 @@ Use existing picker and redundancy strings where possible.
 | `no_receipt` | No receipt was observed. |
 | `receipt_but_no_content` | Receipt arrived but no content appeared. |
 | `empty_stream` | Stream produced no usable content chunks. |
-| `error_stream` | Host returned an OpenAI-style streamed error. Follow-up: a `reason=ERROR` timeout miss (`stage=error_miss`, `devshard_inference_timeouts_total{reason="error"}` only after the miss applies). The served response is still today's `hostApplicationError`. |
+| `error_stream` | Host returned an OpenAI-style streamed error. Follow-up: a `MsgErrorMiss` (`stage=error_miss`, `devshard_inference_timeouts_total{reason="error"}` only after the miss applies). The served response is still today's `hostApplicationError`. |
 | `content_but_not_finished` | Content appeared but finish was missing. |
 | `winner_stalled_after_content` | Winner emitted content then stalled. |
 | `inter_chunk_stall` | Stream stalled between chunks. |

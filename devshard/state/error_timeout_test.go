@@ -57,11 +57,11 @@ func signedFinish(t *testing.T, hosts []*signing.Secp256k1Signer, inferenceID ui
 	return msg
 }
 
-func errorTimeoutVotes(t *testing.T, hosts []*signing.Secp256k1Signer, inferenceID uint64, responseHash []byte, slots []uint32) []*types.TimeoutVote {
+func errorTimeoutVotes(t *testing.T, hosts []*signing.Secp256k1Signer, inferenceID uint64, responseHash []byte, slots []uint32) []*types.ErrorMissVote {
 	t.Helper()
-	votes := make([]*types.TimeoutVote, 0, len(slots))
+	votes := make([]*types.ErrorMissVote, 0, len(slots))
 	for _, slot := range slots {
-		v := testutil.SignTimeoutVoteWithHash(t, hosts[slot], "escrow-1", inferenceID, types.TimeoutReason_TIMEOUT_REASON_ERROR, true, responseHash)
+		v := testutil.SignErrorMissVote(t, hosts[slot], "escrow-1", inferenceID, true, responseHash)
 		v.VoterSlot = slot
 		votes = append(votes, v)
 	}
@@ -82,8 +82,8 @@ func TestApplyDiff_Timeout_Error_SameDiff(t *testing.T) {
 	nonce := sm.SnapshotState().LatestNonce + 1
 	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{
 		txFinish(finish),
-		txTimeout(&types.MsgTimeoutInference{
-			InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_ERROR, Votes: votes,
+		txErrorMiss(&types.MsgErrorMiss{
+			InferenceId: 1, Votes: votes,
 		}),
 	})
 	_, err := sm.ApplyDiff(diff)
@@ -115,11 +115,11 @@ func TestApplyDiff_Timeout_Error_RequiresFinished(t *testing.T) {
 		before := sm.SnapshotState()
 
 		votes := errorTimeoutVotes(t, hosts, 1, hash, []uint32{0, 2, 3})
-		diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
-			InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_ERROR, Votes: votes,
+		diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txErrorMiss(&types.MsgErrorMiss{
+			InferenceId: 1, Votes: votes,
 		})})
 		_, err = sm.ApplyDiff(diff)
-		require.ErrorIs(t, err, types.ErrInvalidTimeoutReason)
+		require.ErrorIs(t, err, types.ErrInvalidTransition)
 		after := sm.SnapshotState()
 		require.Equal(t, types.StatusPending, after.Inferences[1].Status)
 		require.Equal(t, before.Balance, after.Balance)
@@ -133,11 +133,11 @@ func TestApplyDiff_Timeout_Error_RequiresFinished(t *testing.T) {
 
 		votes := errorTimeoutVotes(t, hosts, 1, hash, []uint32{0, 2, 3})
 		nonce := sm.SnapshotState().LatestNonce + 1
-		diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
-			InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_ERROR, Votes: votes,
+		diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txErrorMiss(&types.MsgErrorMiss{
+			InferenceId: 1, Votes: votes,
 		})})
 		_, err := sm.ApplyDiff(diff)
-		require.ErrorIs(t, err, types.ErrInvalidTimeoutReason)
+		require.ErrorIs(t, err, types.ErrInvalidTransition)
 		after := sm.SnapshotState()
 		require.Equal(t, types.StatusStarted, after.Inferences[1].Status)
 		require.Equal(t, before.Balance, after.Balance)
@@ -160,8 +160,8 @@ func TestApplyDiff_Timeout_Error_InsufficientVotes(t *testing.T) {
 
 	votes := errorTimeoutVotes(t, hosts, 1, hash, []uint32{0, 2})
 	nonce++
-	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
-		InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_ERROR, Votes: votes,
+	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txErrorMiss(&types.MsgErrorMiss{
+		InferenceId: 1, Votes: votes,
 	})}))
 	require.ErrorIs(t, err, types.ErrInsufficientVotes)
 	after := sm.SnapshotState()
@@ -182,8 +182,8 @@ func TestApplyDiff_Timeout_Error_ZeroTokenFinish(t *testing.T) {
 	nonce := sm.SnapshotState().LatestNonce + 1
 	_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{
 		txFinish(finish),
-		txTimeout(&types.MsgTimeoutInference{
-			InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_ERROR, Votes: votes,
+		txErrorMiss(&types.MsgErrorMiss{
+			InferenceId: 1, Votes: votes,
 		}),
 	}))
 	require.NoError(t, err)
@@ -207,8 +207,8 @@ func TestApplyDiff_Timeout_Error_ActualCostCappedAtReserved(t *testing.T) {
 	nonce := sm.SnapshotState().LatestNonce + 1
 	_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{
 		txFinish(finish),
-		txTimeout(&types.MsgTimeoutInference{
-			InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_ERROR, Votes: votes,
+		txErrorMiss(&types.MsgErrorMiss{
+			InferenceId: 1, Votes: votes,
 		}),
 	}))
 	require.NoError(t, err)
@@ -231,12 +231,12 @@ func TestApplyDiff_Timeout_Error_WrongOrderRejected(t *testing.T) {
 	votes := errorTimeoutVotes(t, hosts, 1, hash, []uint32{0, 2, 3})
 	nonce := sm.SnapshotState().LatestNonce + 1
 	_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{
-		txTimeout(&types.MsgTimeoutInference{
-			InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_ERROR, Votes: votes,
+		txErrorMiss(&types.MsgErrorMiss{
+			InferenceId: 1, Votes: votes,
 		}),
 		txFinish(finish),
 	}))
-	require.ErrorIs(t, err, types.ErrInvalidTimeoutReason)
+	require.ErrorIs(t, err, types.ErrInvalidTransition)
 	after := sm.SnapshotState()
 	require.Equal(t, types.StatusStarted, after.Inferences[1].Status)
 	require.Equal(t, before.Balance, after.Balance)
@@ -254,8 +254,8 @@ func TestApplyDiff_Timeout_Error_SealedFinishRejected(t *testing.T) {
 	hash := []byte(errorTimeoutResponseHash)
 	votes := errorTimeoutVotes(t, hosts, 1, hash, []uint32{0, 2, 3})
 	nonce := sm.SnapshotState().LatestNonce + 1
-	_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
-		InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_ERROR, Votes: votes,
+	_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txErrorMiss(&types.MsgErrorMiss{
+		InferenceId: 1, Votes: votes,
 	})}))
 	require.ErrorIs(t, err, types.ErrInvalidTransition)
 	require.Contains(t, err.Error(), "sealed")
@@ -276,8 +276,8 @@ func TestApplyDiff_Timeout_Error_PostTimeoutValidationRejected(t *testing.T) {
 	nonce := sm.SnapshotState().LatestNonce + 1
 	_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{
 		txFinish(finish),
-		txTimeout(&types.MsgTimeoutInference{
-			InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_ERROR, Votes: votes,
+		txErrorMiss(&types.MsgErrorMiss{
+			InferenceId: 1, Votes: votes,
 		}),
 	}))
 	require.NoError(t, err)
@@ -308,8 +308,8 @@ func TestApplyDiff_Timeout_Error_HashMismatchRejected(t *testing.T) {
 	before := sm.SnapshotState()
 	_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{
 		txFinish(finish),
-		txTimeout(&types.MsgTimeoutInference{
-			InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_ERROR, Votes: votes,
+		txErrorMiss(&types.MsgErrorMiss{
+			InferenceId: 1, Votes: votes,
 		}),
 	}))
 	require.ErrorIs(t, err, types.ErrInvalidVoteSig)
@@ -356,8 +356,8 @@ func TestApplyDiff_Timeout_Error_CrossInferenceVoteRejected(t *testing.T) {
 	before := sm.SnapshotState()
 
 	harvested := errorTimeoutVotes(t, hosts, 1, hashA, []uint32{0, 3, 4})
-	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 7, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
-		InferenceId: 2, Reason: types.TimeoutReason_TIMEOUT_REASON_ERROR, Votes: harvested,
+	_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 7, []*types.DevshardTx{txErrorMiss(&types.MsgErrorMiss{
+		InferenceId: 2, Votes: harvested,
 	})}))
 	require.ErrorIs(t, err, types.ErrInvalidVoteSig)
 	after := sm.SnapshotState()

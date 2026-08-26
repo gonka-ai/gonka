@@ -6,6 +6,15 @@
 This is the protocol design. Step-by-step implementation lives in the plan
 linked above.
 
+**Current encoding (`MsgErrorMiss`).** Error-miss is not a timeout. The
+classifier treats unparseable `data:` JSON as a miss (junk cannot veto).
+On-chain message is `MsgErrorMiss { inference_id, votes[] }` with no payload;
+the hash is re-derived from `rec.ResponseHash` after Finish. Vote RPC is
+`POST .../verify-error-miss`. `TimeoutReason` keeps `reserved 3` /
+`"TIMEOUT_REASON_ERROR"`. Sections below that still mention
+`TIMEOUT_REASON_ERROR` describe the abandoned first encoding; apply/verify
+behaviour is the same with the new message. See plan §12.
+
 ---
 
 ## Problem
@@ -127,28 +136,33 @@ enum TimeoutReason {
   TIMEOUT_REASON_UNSPECIFIED = 0;
   TIMEOUT_REASON_REFUSED     = 1;
   TIMEOUT_REASON_EXECUTION   = 2;
-  // Executor finished with an error body. Evidence-backed and immediate:
-  // verifiers check the executor-signed response hash, NOT an elapsed deadline.
-  TIMEOUT_REASON_ERROR       = 3;
+  reserved 3;
+  reserved "TIMEOUT_REASON_ERROR";
+}
+
+message MsgErrorMiss {
+  uint64 inference_id = 1;
+  repeated ErrorMissVote votes = 2;
 }
 ```
 
 `MsgTimeoutInference` and `TimeoutVote` are untouched, and every existing field
 number is preserved, so serialized snapshots and `REFUSED` / `EXECUTION`
-signatures stay byte-identical.
+signatures stay byte-identical. Error-miss votes sign `ErrorMissVoteContent`
+(hash-bound), not `TimeoutVoteContent`.
 
 ### The diff
 
 ```
 diff N: [ MsgFinishInference{id, response_hash, proposer_sig},
-          MsgTimeoutInference{id, reason=ERROR, votes[]} ]
+          MsgErrorMiss{id, votes[]} ]
 ```
 
-The **ordering** `Finish → Timeout` is the invariant, not literally "same diff".
-`applyTimeout(reason=ERROR)` requires `StatusFinished`, which the Finish
+The **ordering** `Finish → ErrorMiss` is the invariant, not literally "same diff".
+`applyErrorMiss` requires `StatusFinished`, which the Finish
 produces. Same-diff is the atomic and preferred case (the gateway holds the
 Finish in `pendingTxs` while collecting votes); if the Finish was already
-published in an earlier diff, a later solo Timeout diff applies the same way —
+published in an earlier diff, a later solo ErrorMiss diff applies the same way —
 but only inside the seal window.
 
 `sealEligibleStatus` includes `StatusFinished` (`state/seal.go:254`), so a

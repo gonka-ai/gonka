@@ -104,10 +104,33 @@
   },
   {
     "name": "unparseable_then_error",
-    "want_ok": false,
+    "want_ok": true,
+    "want_type": "InternalServerError",
+    "want_code": "500",
+    "want_message": "boom",
     "events": [
       "data: {not json",
       "data: {\"error\":{\"code\":500,\"message\":\"boom\",\"type\":\"InternalServerError\"},\"id\":\"devshard-1-1\"}",
+      "data: [DONE]"
+    ]
+  },
+  {
+    "name": "error_then_garbage_data",
+    "want_ok": true,
+    "want_type": "InternalServerError",
+    "want_code": "500",
+    "want_message": "boom",
+    "events": [
+      "data: {\"error\":{\"code\":500,\"message\":\"boom\",\"type\":\"InternalServerError\"},\"id\":\"devshard-1-1\"}",
+      "data: not-json",
+      "data: [DONE]"
+    ]
+  },
+  {
+    "name": "unparseable_only",
+    "want_ok": true,
+    "events": [
+      "data: {not json",
       "data: [DONE]"
     ]
   },

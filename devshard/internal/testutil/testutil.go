@@ -130,15 +130,27 @@ func SignExecutorReceipt(t *testing.T, signer signing.Signer, escrowID string, i
 
 func SignTimeoutVote(t *testing.T, signer signing.Signer, escrowID string, inferenceID uint64, reason types.TimeoutReason, accept bool) *types.TimeoutVote {
 	t.Helper()
-	return SignTimeoutVoteWithHash(t, signer, escrowID, inferenceID, reason, accept, nil)
+	content := &types.TimeoutVoteContent{
+		EscrowId:    escrowID,
+		InferenceId: inferenceID,
+		Reason:      reason,
+		Accept:      accept,
+	}
+	data, err := deterministicMarshal.Marshal(content)
+	require.NoError(t, err)
+	sig, err := signer.Sign(data)
+	require.NoError(t, err)
+	return &types.TimeoutVote{
+		Accept:    accept,
+		Signature: sig,
+	}
 }
 
-func SignTimeoutVoteWithHash(t *testing.T, signer signing.Signer, escrowID string, inferenceID uint64, reason types.TimeoutReason, accept bool, responseHash []byte) *types.TimeoutVote {
+func SignErrorMissVote(t *testing.T, signer signing.Signer, escrowID string, inferenceID uint64, accept bool, responseHash []byte) *types.ErrorMissVote {
 	t.Helper()
-	content := &types.TimeoutVoteContent{
+	content := &types.ErrorMissVoteContent{
 		EscrowId:     escrowID,
 		InferenceId:  inferenceID,
-		Reason:       reason,
 		Accept:       accept,
 		ResponseHash: responseHash,
 	}
@@ -146,7 +158,7 @@ func SignTimeoutVoteWithHash(t *testing.T, signer signing.Signer, escrowID strin
 	require.NoError(t, err)
 	sig, err := signer.Sign(data)
 	require.NoError(t, err)
-	return &types.TimeoutVote{
+	return &types.ErrorMissVote{
 		Accept:    accept,
 		Signature: sig,
 	}

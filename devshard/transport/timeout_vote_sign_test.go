@@ -16,7 +16,7 @@ func TestSignTimeoutVote_UsesDeterministicMarshal(t *testing.T) {
 	signer := testutil.MustGenerateKey(t)
 	verifier := signing.NewSecp256k1Verifier()
 
-	sig, slot, err := signTimeoutVote("escrow-1", 7, types.TimeoutReason_TIMEOUT_REASON_REFUSED, signer, 3, nil)
+	sig, slot, err := signTimeoutVote("escrow-1", 7, types.TimeoutReason_TIMEOUT_REASON_REFUSED, signer, 3)
 	require.NoError(t, err)
 	require.Equal(t, uint32(3), slot)
 
@@ -37,18 +37,17 @@ func TestSignTimeoutVote_UsesDeterministicMarshal(t *testing.T) {
 	require.Equal(t, data, plain, "all-scalar REFUSED content must be encoding-stable")
 }
 
-func TestSignTimeoutVote_ERRORBindsResponseHash(t *testing.T) {
+func TestSignErrorMissVote_BindsResponseHash(t *testing.T) {
 	signer := testutil.MustGenerateKey(t)
 	verifier := signing.NewSecp256k1Verifier()
 	hash := []byte{0xab, 0xcd}
 
-	sig, _, err := signTimeoutVote("escrow-1", 9, types.TimeoutReason_TIMEOUT_REASON_ERROR, signer, 1, hash)
+	sig, _, err := signErrorMissVote("escrow-1", 9, signer, 1, hash)
 	require.NoError(t, err)
 
-	bound := &types.TimeoutVoteContent{
+	bound := &types.ErrorMissVoteContent{
 		EscrowId:     "escrow-1",
 		InferenceId:  9,
-		Reason:       types.TimeoutReason_TIMEOUT_REASON_ERROR,
 		Accept:       true,
 		ResponseHash: hash,
 	}
@@ -58,10 +57,9 @@ func TestSignTimeoutVote_ERRORBindsResponseHash(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, signer.Address(), recovered)
 
-	unbound := &types.TimeoutVoteContent{
+	unbound := &types.ErrorMissVoteContent{
 		EscrowId:    "escrow-1",
 		InferenceId: 9,
-		Reason:      types.TimeoutReason_TIMEOUT_REASON_ERROR,
 		Accept:      true,
 	}
 	unboundBytes, err := proto.MarshalOptions{Deterministic: true}.Marshal(unbound)

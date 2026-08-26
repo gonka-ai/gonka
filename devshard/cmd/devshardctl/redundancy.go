@@ -1824,11 +1824,7 @@ func (e *Redundancy) runHandleTimeout(ctx context.Context, inf *inflight, params
 	}
 	if errorMiss {
 		finishTx, responsePayload := errorMissArtifacts(inf, e.session)
-		return e.session.HandleTimeout(ctx, inf.nonce, inf.sendTime, payload, user.TimeoutOpts{
-			Reason:          types.TimeoutReason_TIMEOUT_REASON_ERROR,
-			FinishTx:        finishTx,
-			ResponsePayload: responsePayload,
-		})
+		return e.session.HandleErrorMiss(ctx, inf.nonce, finishTx, responsePayload)
 	}
 	return e.session.HandleTimeout(ctx, inf.nonce, inf.sendTime, payload)
 }

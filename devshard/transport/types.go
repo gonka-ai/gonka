@@ -49,12 +49,27 @@ type InferenceResponse struct {
 
 // VerifyTimeoutRequest is the JSON body for POST /sessions/:id/verify-timeout.
 type VerifyTimeoutRequest struct {
-	InferenceID     uint64       `json:"inference_id"`
-	Reason          string       `json:"reason"` // "refused", "execution", or "error"
-	Payload         *PayloadJSON `json:"payload,omitempty"`
-	Diffs           []DiffJSON   `json:"diffs,omitempty"`            // catch-up diffs so verifier knows about the inference
-	FinishTx        []byte       `json:"finish_tx,omitempty"`        // proto DevshardTx wrapping MsgFinishInference; required for reason=error
-	ResponsePayload []byte       `json:"response_payload,omitempty"` // canonical streamed body; required for reason=error, authenticated by sha256 == ResponseHash
+	InferenceID uint64       `json:"inference_id"`
+	Reason      string       `json:"reason"` // "refused" or "execution"
+	Payload     *PayloadJSON `json:"payload,omitempty"`
+	Diffs       []DiffJSON   `json:"diffs,omitempty"` // catch-up diffs so verifier knows about the inference
+}
+
+// VerifyErrorMissRequest is the JSON body for POST /sessions/:id/verify-error-miss.
+type VerifyErrorMissRequest struct {
+	InferenceID     uint64     `json:"inference_id"`
+	Diffs           []DiffJSON `json:"diffs,omitempty"`
+	FinishTx        []byte     `json:"finish_tx"`
+	ResponsePayload []byte     `json:"response_payload"`
+}
+
+// VerifyErrorMissResponse is returned by the error-miss verification endpoint.
+type VerifyErrorMissResponse struct {
+	Accept      bool     `json:"accept"`
+	Signature   []byte   `json:"signature,omitempty"`
+	VoterSlot   uint32   `json:"voter_slot"`
+	Mempool     [][]byte `json:"mempool,omitempty"`
+	RejectCause string   `json:"reject_cause,omitempty"` // no_finish_tx, no_payload, sig, hash_mismatch, not_error_body
 }
 
 // VerifyTimeoutResponse is returned by the timeout verification endpoint.
@@ -63,7 +78,7 @@ type VerifyTimeoutResponse struct {
 	Signature   []byte   `json:"signature,omitempty"` // signed TimeoutVoteContent
 	VoterSlot   uint32   `json:"voter_slot"`
 	Mempool     [][]byte `json:"mempool,omitempty"`      // recovery txs on reject; each: proto bytes of DevshardTx
-	RejectCause string   `json:"reject_cause,omitempty"` // reason=error rejects only: no_finish_tx, no_payload, sig, hash_mismatch, not_error_body
+	RejectCause string   `json:"reject_cause,omitempty"`
 }
 
 // ChallengeReceiptRequest is the JSON body for POST /sessions/:id/challenge-receipt.
@@ -241,8 +256,6 @@ func TimeoutReasonToString(r types.TimeoutReason) string {
 		return "refused"
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
 		return "execution"
-	case types.TimeoutReason_TIMEOUT_REASON_ERROR:
-		return "error"
 	default:
 		return "unknown"
 	}
@@ -283,8 +296,6 @@ func TimeoutReasonFromString(s string) (types.TimeoutReason, error) {
 		return types.TimeoutReason_TIMEOUT_REASON_REFUSED, nil
 	case "execution":
 		return types.TimeoutReason_TIMEOUT_REASON_EXECUTION, nil
-	case "error":
-		return types.TimeoutReason_TIMEOUT_REASON_ERROR, nil
 	default:
 		return 0, fmt.Errorf("unknown timeout reason: %s", s)
 	}

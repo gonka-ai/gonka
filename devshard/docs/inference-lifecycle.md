@@ -280,7 +280,7 @@ governance defaults only affects newly created sessions.
   opaque-`rest_hash` settlement shape, so chain code does not branch
   on the tag.
 
-## 6. Streamed inference errors become a miss (`TIMEOUT_REASON_ERROR`)
+## 6. Streamed inference errors become a miss (`MsgErrorMiss`)
 
 A host that returns HTTP 200 `text/event-stream` whose body is an
 OpenAI-style error envelope still signs `MsgFinishInference` (usage
@@ -288,13 +288,13 @@ OpenAI-style error envelope still signs `MsgFinishInference` (usage
 record stays `StatusFinished`: not served as a success, not charged
 as a miss, and eligible for validation.
 
-`TIMEOUT_REASON_ERROR` is the follow-up. Apply order in one diff is
-Finish then Timeout:
+`MsgErrorMiss` is the follow-up. Apply order in one diff is
+Finish then ErrorMiss:
 
 ```
 StatusStarted
   → applyFinishInference → StatusFinished (Cost += ActualCost; surplus of ReservedCost returned)
-  → applyTimeout(ERROR)  → StatusTimedOut (Cost -= ActualCost; Balance += ActualCost; Missed++)
+  → applyErrorMiss       → StatusTimedOut (Cost -= ActualCost; Balance += ActualCost; Missed++)
 ```
 
 Net ledger: the client is made whole for the full `ReservedCost`, the

@@ -19,9 +19,9 @@ type FinishProposerVerifier interface {
 	VerifyFinishProposerSig(msg *types.MsgFinishInference) error
 }
 
-// TimeoutArtifacts is evidence forwarded with a timeout verification RPC.
-// Required for TIMEOUT_REASON_ERROR (finish_tx + response_payload); empty for
-// refused/execution.
+// TimeoutArtifacts is evidence forwarded with an error-miss verification RPC.
+// Required for MsgErrorMiss (finish_tx + response_payload). Unused for
+// refused/execution timeout votes.
 type TimeoutArtifacts struct {
 	FinishTx        []byte
 	ResponsePayload []byte
@@ -207,7 +207,7 @@ func VerifyExecutionTimeout(
 	return true, nil
 }
 
-// Reject causes for VerifyErrorTimeout. These are the verifier-side labels
+// Reject causes for VerifyErrorMiss. These are the verifier-side labels
 // for devshard_gateway_error_miss_verify_rejects_total{cause}. Failures that
 // are not a named check fold into the closest cause (no usable Finish →
 // no_finish_tx; Finish exists but does not authenticate → sig).
@@ -219,7 +219,7 @@ const (
 	ErrorTimeoutRejectNotErrorBody = "not_error_body"
 )
 
-// VerifyErrorTimeout checks whether an ERROR timeout is valid.
+// VerifyErrorMiss checks whether a finished error/malformed body is a miss.
 //
 // Local computation only: no ctx, ExecutorClient, payload fetcher,
 // SessionConfig, or clock. Gossip is disabled, so finishTx and
@@ -230,7 +230,7 @@ const (
 // finishVerifier is the executor-signature check (pass *state.StateMachine).
 // It is the keyring, not evidence. On accept, the returned hash is
 // msg.ResponseHash from the Finish this verifier authenticated.
-func VerifyErrorTimeout(
+func VerifyErrorMiss(
 	st types.EscrowState,
 	inferenceID uint64,
 	finishTx []byte,

@@ -581,6 +581,14 @@ func (c *HTTPClient) SendVerifyTimeout(ctx context.Context, req VerifyTimeoutReq
 	return &resp, nil
 }
 
+func (c *HTTPClient) SendVerifyErrorMiss(ctx context.Context, req VerifyErrorMissRequest) (*VerifyErrorMissResponse, error) {
+	var resp VerifyErrorMissResponse
+	if err := c.post(ctx, "/sessions/"+c.escrowID+"/verify-error-miss", c.config.VerifyTimeout, req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
 // ChallengeReceipt forwards diffs + payload to the executor and returns the
 // receipt plus a snapshot of the executor mempool (recovery txs).
 func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
@@ -634,9 +642,35 @@ func (c *HTTPClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reas
 		}
 	}
 	resp, err := c.SendVerifyTimeout(ctx, VerifyTimeoutRequest{
+		InferenceID: inferenceID,
+		Reason:      TimeoutReasonToString(reason),
+		Payload:     PayloadToJSON(payload),
+		Diffs:       djList,
+	})
+	if err != nil {
+		return false, nil, 0, nil, "", err
+	}
+	mempool, err := DevshardTxsFromBytes(resp.Mempool)
+	if err != nil {
+		return false, nil, 0, nil, "", fmt.Errorf("decode mempool: %w", err)
+	}
+	return resp.Accept, resp.Signature, resp.VoterSlot, mempool, resp.RejectCause, nil
+}
+
+func (c *HTTPClient) VerifyErrorMiss(ctx context.Context, inferenceID uint64, diffs []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	var djList []DiffJSON
+	if len(diffs) > 0 {
+		djList = make([]DiffJSON, len(diffs))
+		for i, d := range diffs {
+			dj, err := DiffToJSON(d)
+			if err != nil {
+				return false, nil, 0, nil, "", fmt.Errorf("encode diff %d: %w", i, err)
+			}
+			djList[i] = dj
+		}
+	}
+	resp, err := c.SendVerifyErrorMiss(ctx, VerifyErrorMissRequest{
 		InferenceID:     inferenceID,
-		Reason:          TimeoutReasonToString(reason),
-		Payload:         PayloadToJSON(payload),
 		Diffs:           djList,
 		FinishTx:        artifacts.FinishTx,
 		ResponsePayload: artifacts.ResponsePayload,

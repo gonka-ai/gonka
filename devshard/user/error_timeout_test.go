@@ -86,7 +86,7 @@ func wrapAcceptingTimeoutVerifiers(session *Session, signers []*signing.Secp256k
 	}
 }
 
-func TestHandleTimeout_Error_SameDiffFinishAndMiss(t *testing.T) {
+func TestHandleErrorMiss_SameDiffFinishAndMiss(t *testing.T) {
 	session, hosts, _ := setupSession(t, 3, 100000, 10)
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
@@ -106,11 +106,7 @@ func TestHandleTimeout_Error_SameDiffFinishAndMiss(t *testing.T) {
 
 	before := len(session.Diffs())
 	start := time.Now()
-	result, err := session.HandleTimeout(context.Background(), nonce, time.Now(), nil, TimeoutOpts{
-		Reason:          types.TimeoutReason_TIMEOUT_REASON_ERROR,
-		FinishTx:        finishBytes,
-		ResponsePayload: payload,
-	})
+	result, err := session.HandleErrorMiss(context.Background(), nonce, finishBytes, payload)
 	elapsed := time.Since(start)
 	require.Error(t, err)
 	require.ErrorIs(t, err, ErrInferenceMissed)
@@ -119,22 +115,21 @@ func TestHandleTimeout_Error_SameDiffFinishAndMiss(t *testing.T) {
 	require.True(t, result.Accepted)
 	require.Greater(t, result.Votes, 0)
 	require.NotEmpty(t, result.ResponseHash)
-	require.Less(t, elapsed, time.Second, "ERROR timeout must not wait on ExecutionTimeout")
+	require.Less(t, elapsed, time.Second, "error-miss must not wait on ExecutionTimeout")
 	require.Greater(t, session.StateMachine().SnapshotState().Config.ExecutionTimeout, int64(60))
 
 	st := session.StateMachine().SnapshotState()
 	rec := st.Inferences[nonce]
 	require.Equal(t, types.StatusTimedOut, rec.Status)
 	require.Equal(t, uint32(1), st.HostStats[uint32(execIdx)].Missed)
-	require.False(t, session.IsNonceFinished(nonce), "local finished view must match chain after ERROR miss")
+	require.False(t, session.IsNonceFinished(nonce), "local finished view must match chain after error-miss")
 
 	diffs := session.Diffs()
 	require.Equal(t, before+1, len(diffs))
 	txs := diffs[len(diffs)-1].Txs
 	require.GreaterOrEqual(t, len(txs), 2)
 	require.NotNil(t, txs[0].GetFinishInference(), "same-diff composition requires Finish first")
-	require.NotNil(t, txs[1].GetTimeoutInference(), "same-diff composition requires Timeout after Finish")
-	require.Equal(t, types.TimeoutReason_TIMEOUT_REASON_ERROR, txs[1].GetTimeoutInference().Reason)
+	require.NotNil(t, txs[1].GetErrorMiss(), "same-diff composition requires ErrorMiss after Finish")
 }
 
 func TestPinPendingFinish_ConcurrentComposeLeavesFinish(t *testing.T) {
@@ -174,7 +169,7 @@ func TestPinnedNonce_HoldsTimeoutUntilIncluded(t *testing.T) {
 	finishTx, _ := signedErrorFinishTx(t, hosts, nonce, execIdx, payload)
 	session.mu.Lock()
 	session.addPendingTx(finishTx)
-	session.addPendingTx(timeoutInferenceTx(nonce, types.TimeoutReason_TIMEOUT_REASON_ERROR, nil))
+	session.addPendingTx(errorMissTx(nonce, nil))
 	session.mu.Unlock()
 
 	session.pinPendingFinish(nonce)
@@ -182,17 +177,17 @@ func TestPinnedNonce_HoldsTimeoutUntilIncluded(t *testing.T) {
 
 	require.NoError(t, session.SendPendingDiff(context.Background()))
 	require.NotNil(t, findRecoveryFinish(session.PendingTxs(), nonce), "pinned Finish must survive an unrelated SendPendingDiff")
-	require.NotNil(t, findPendingTimeout(session.PendingTxs(), nonce), "pinned Timeout must not be stolen without Finish")
+	require.NotNil(t, findPendingErrorMiss(session.PendingTxs(), nonce), "pinned ErrorMiss must not be stolen without Finish")
 
 	next := params
 	next.Prompt = bytes.ReplaceAll(testutil.TestPrompt, []byte("xxxxxxxxxxxxxxxxxxxxxxxxx"), []byte("other concurrent prompt xx"))
 	_, err := session.PrepareInference(next)
 	require.NoError(t, err)
 	require.NotNil(t, findRecoveryFinish(session.PendingTxs(), nonce))
-	require.NotNil(t, findPendingTimeout(session.PendingTxs(), nonce), "pinned Timeout must survive PrepareInference")
+	require.NotNil(t, findPendingErrorMiss(session.PendingTxs(), nonce), "pinned ErrorMiss must survive PrepareInference")
 }
 
-func TestHandleTimeout_Error_PinnedFinishSurvivesConcurrentCompose(t *testing.T) {
+func TestHandleErrorMiss_PinnedFinishSurvivesConcurrentCompose(t *testing.T) {
 	session, hosts, _ := setupSession(t, 3, 100000, 10)
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
@@ -238,38 +233,34 @@ func TestHandleTimeout_Error_PinnedFinishSurvivesConcurrentCompose(t *testing.T)
 		}
 	}()
 
-	_, err := session.HandleTimeout(context.Background(), nonce, time.Now(), nil, TimeoutOpts{
-		Reason:          types.TimeoutReason_TIMEOUT_REASON_ERROR,
-		FinishTx:        finishBytes,
-		ResponsePayload: payload,
-	})
+	_, err := session.HandleErrorMiss(context.Background(), nonce, finishBytes, payload)
 	close(done)
 	wg.Wait()
 	require.ErrorIs(t, err, ErrInferenceMissed)
 	require.Equal(t, types.StatusTimedOut, session.StateMachine().SnapshotState().Inferences[nonce].Status)
 
-	var sawFinishWithTimeout bool
+	var sawFinishWithErrorMiss bool
 	for _, diff := range session.Diffs() {
-		var hasFinish, hasTimeout bool
+		var hasFinish, hasErrorMiss bool
 		for _, tx := range diff.Txs {
 			if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == nonce {
 				hasFinish = true
 			}
-			if to := tx.GetTimeoutInference(); to != nil && to.InferenceId == nonce {
-				hasTimeout = true
+			if em := tx.GetErrorMiss(); em != nil && em.InferenceId == nonce {
+				hasErrorMiss = true
 			}
 		}
-		if hasFinish && hasTimeout {
-			sawFinishWithTimeout = true
+		if hasFinish && hasErrorMiss {
+			sawFinishWithErrorMiss = true
 		}
-		if hasFinish && !hasTimeout {
-			t.Fatalf("Finish for nonce %d published without Timeout in the same diff", nonce)
+		if hasFinish && !hasErrorMiss {
+			t.Fatalf("Finish for nonce %d published without ErrorMiss in the same diff", nonce)
 		}
 	}
-	require.True(t, sawFinishWithTimeout, "Finish and ERROR Timeout must share a diff after concurrent compose")
+	require.True(t, sawFinishWithErrorMiss, "Finish and ErrorMiss must share a diff after concurrent compose")
 }
 
-func TestHandleTimeout_Error_InsufficientVotesKeepsToday(t *testing.T) {
+func TestHandleErrorMiss_InsufficientVotesKeepsToday(t *testing.T) {
 	session, hosts, _ := setupSession(t, 3, 100000, 10)
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
@@ -291,22 +282,18 @@ func TestHandleTimeout_Error_InsufficientVotesKeepsToday(t *testing.T) {
 	}
 
 	before := len(session.Diffs())
-	result, err := session.HandleTimeout(context.Background(), nonce, time.Now(), nil, TimeoutOpts{
-		Reason:          types.TimeoutReason_TIMEOUT_REASON_ERROR,
-		FinishTx:        finishBytes,
-		ResponsePayload: payload,
-	})
+	result, err := session.HandleErrorMiss(context.Background(), nonce, finishBytes, payload)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "insufficient votes")
 	require.False(t, errors.Is(err, ErrInferenceMissed))
 	require.Equal(t, "error", result.Reason)
 	require.False(t, result.Accepted)
-	require.Len(t, session.Diffs(), before, "insufficient votes must not emit a timeout diff")
+	require.Len(t, session.Diffs(), before, "insufficient votes must not emit an error-miss diff")
 	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[nonce].Status)
 	require.NotNil(t, findRecoveryFinish(session.PendingTxs(), nonce), "Finish stays pending for today's publish path")
 }
 
-func TestHandleTimeout_Error_DoesNotEarlyReturnOnPendingFinish(t *testing.T) {
+func TestHandleErrorMiss_DoesNotEarlyReturnOnPendingFinish(t *testing.T) {
 	session, hosts, _ := setupSession(t, 3, 100000, 10)
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
@@ -322,16 +309,12 @@ func TestHandleTimeout_Error_DoesNotEarlyReturnOnPendingFinish(t *testing.T) {
 	require.NotNil(t, findRecoveryFinish(session.PendingTxs(), nonce))
 
 	wrapAcceptingTimeoutVerifiers(session, hosts)
-	_, err := session.HandleTimeout(context.Background(), nonce, time.Now(), nil, TimeoutOpts{
-		Reason:          types.TimeoutReason_TIMEOUT_REASON_ERROR,
-		FinishTx:        finishBytes,
-		ResponsePayload: payload,
-	})
+	_, err := session.HandleErrorMiss(context.Background(), nonce, finishBytes, payload)
 	require.ErrorIs(t, err, ErrInferenceMissed)
 	require.Equal(t, types.StatusTimedOut, session.StateMachine().SnapshotState().Inferences[nonce].Status)
 }
 
-func TestHandleTimeout_Error_NotAppliedIfFinishMissing(t *testing.T) {
+func TestHandleErrorMiss_NotAppliedIfFinishMissing(t *testing.T) {
 	session, hosts, _ := setupSession(t, 3, 100000, 10)
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
@@ -349,11 +332,7 @@ func TestHandleTimeout_Error_NotAppliedIfFinishMissing(t *testing.T) {
 
 	wrapAcceptingTimeoutVerifiers(session, hosts)
 	before := len(session.Diffs())
-	result, err := session.HandleTimeout(context.Background(), nonce, time.Now(), nil, TimeoutOpts{
-		Reason:          types.TimeoutReason_TIMEOUT_REASON_ERROR,
-		FinishTx:        finishBytes,
-		ResponsePayload: payload,
-	})
+	result, err := session.HandleErrorMiss(context.Background(), nonce, finishBytes, payload)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not applied")
 	require.False(t, errors.Is(err, ErrInferenceMissed))
@@ -378,11 +357,7 @@ func TestProcessResponse_TimedOutNonceDoesNotRefinish(t *testing.T) {
 	session.nonceStates[nonce].finished = true
 	session.mu.Unlock()
 	wrapAcceptingTimeoutVerifiers(session, hosts)
-	_, err := session.HandleTimeout(context.Background(), nonce, time.Now(), nil, TimeoutOpts{
-		Reason:          types.TimeoutReason_TIMEOUT_REASON_ERROR,
-		FinishTx:        finishBytes,
-		ResponsePayload: payload,
-	})
+	_, err := session.HandleErrorMiss(context.Background(), nonce, finishBytes, payload)
 	require.ErrorIs(t, err, ErrInferenceMissed)
 	require.Equal(t, types.StatusTimedOut, session.StateMachine().SnapshotState().Inferences[nonce].Status)
 	require.False(t, session.IsNonceFinished(nonce))
@@ -458,6 +433,5 @@ func TestMergeTimeoutCatchUpDiffs(t *testing.T) {
 func TestTimeoutReasonLogLabel(t *testing.T) {
 	require.Equal(t, "execution", timeoutReasonLogLabel(types.TimeoutReason_TIMEOUT_REASON_EXECUTION))
 	require.Equal(t, "refused", timeoutReasonLogLabel(types.TimeoutReason_TIMEOUT_REASON_REFUSED))
-	require.Equal(t, "error", timeoutReasonLogLabel(types.TimeoutReason_TIMEOUT_REASON_ERROR))
 	require.Equal(t, "unknown", timeoutReasonLogLabel(types.TimeoutReason(99)))
 }

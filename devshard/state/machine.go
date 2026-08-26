@@ -1049,6 +1049,8 @@ func (sm *StateMachine) applyTx(tx *types.DevshardTx, diffNonce uint64) error {
 		return sm.applyValidationVote(inner.ValidationVote)
 	case *types.DevshardTx_TimeoutInference:
 		return sm.applyTimeout(inner.TimeoutInference)
+	case *types.DevshardTx_ErrorMiss:
+		return sm.applyErrorMiss(inner.ErrorMiss)
 	case *types.DevshardTx_RevealSeed:
 		return sm.applyRevealSeed(inner.RevealSeed)
 	case *types.DevshardTx_FinalizeRound:
@@ -1418,10 +1420,6 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 		if rec.Status != types.StatusStarted {
 			return fmt.Errorf("%w: reason=execution requires started, got %d", types.ErrInvalidTimeoutReason, rec.Status)
 		}
-	case types.TimeoutReason_TIMEOUT_REASON_ERROR:
-		if rec.Status != types.StatusFinished {
-			return fmt.Errorf("%w: reason=error requires finished, got %d", types.ErrInvalidTimeoutReason, rec.Status)
-		}
 	default:
 		return fmt.Errorf("%w: unknown reason %v", types.ErrInvalidTimeoutReason, msg.Reason)
 	}
@@ -1448,9 +1446,6 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 			InferenceId: msg.InferenceId,
 			Reason:      msg.Reason,
 			Accept:      vote.Accept,
-		}
-		if msg.Reason == types.TimeoutReason_TIMEOUT_REASON_ERROR {
-			voteContent.ResponseHash = rec.ResponseHash
 		}
 		voteData, err := deterministicMarshal.Marshal(voteContent)
 		if err != nil {
@@ -1482,25 +1477,86 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 
 	rec.Status = types.StatusTimedOut
 	sm.state.HostStats[rec.ExecutorSlot].Missed++
-
-	if msg.Reason == types.TimeoutReason_TIMEOUT_REASON_ERROR {
-		// Finish already returned surplus and credited ActualCost. Unwind that
-		// credit so the client is refunded in full and the host is not paid.
-		sm.state.Balance += rec.ActualCost
-		hs := sm.state.HostStats[rec.ExecutorSlot]
-		if hs.Cost < rec.ActualCost {
-			hs.Cost = 0
-		} else {
-			hs.Cost -= rec.ActualCost
-		}
-	} else {
-		sm.state.Balance += rec.ReservedCost
-	}
+	sm.state.Balance += rec.ReservedCost
 
 	logging.Debug("inference -> timed_out", "subsystem", "state",
 		"inference_id", msg.InferenceId,
 		"executor_slot", rec.ExecutorSlot,
 		"reason", msg.Reason.String(),
+	)
+	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+}
+
+func (sm *StateMachine) applyErrorMiss(msg *types.MsgErrorMiss) error {
+	rec, ok := sm.state.Inferences[msg.InferenceId]
+	if !ok {
+		if sm.isInferenceEvictedFromLive(msg.InferenceId) {
+			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.InferenceId)
+		}
+		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
+	}
+	if rec.Status != types.StatusFinished {
+		return fmt.Errorf("%w: error-miss requires finished, got %d", types.ErrInvalidTransition, rec.Status)
+	}
+
+	acceptCount := uint32(0)
+	seenAddrs := make(map[string]bool, len(msg.Votes))
+	for _, vote := range msg.Votes {
+		voterAddr, ok := sm.slotToAddress[vote.VoterSlot]
+		if !ok {
+			return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, vote.VoterSlot)
+		}
+		if seenAddrs[voterAddr] {
+			return fmt.Errorf("%w: slot %d", types.ErrDuplicateVote, vote.VoterSlot)
+		}
+		seenAddrs[voterAddr] = true
+
+		voteContent := &types.ErrorMissVoteContent{
+			EscrowId:     sm.state.EscrowID,
+			InferenceId:  msg.InferenceId,
+			Accept:       vote.Accept,
+			ResponseHash: rec.ResponseHash,
+		}
+		voteData, err := deterministicMarshal.Marshal(voteContent)
+		if err != nil {
+			return fmt.Errorf("marshal error-miss vote: %w", err)
+		}
+		recovered, err := sm.verifier.RecoverAddress(voteData, vote.Signature)
+		if err != nil {
+			return fmt.Errorf("%w: vote from slot %d: %v", types.ErrInvalidVoteSig, vote.VoterSlot, err)
+		}
+		if recovered != voterAddr {
+			if !sm.ResolveWarmKey(vote.VoterSlot, recovered, voterAddr) {
+				return fmt.Errorf("%w: vote from slot %d: expected %s, got %s",
+					types.ErrInvalidVoteSig, vote.VoterSlot, voterAddr, recovered)
+			}
+		}
+		if vote.Accept {
+			acceptCount += sm.addressToSlotCount[voterAddr]
+		}
+	}
+
+	threshold := sm.state.Config.VoteThreshold
+	if acceptCount <= threshold {
+		return fmt.Errorf("%w: need >%d accept votes, got %d", types.ErrInsufficientVotes, threshold, acceptCount)
+	}
+
+	rec.Status = types.StatusTimedOut
+	sm.state.HostStats[rec.ExecutorSlot].Missed++
+	// Finish already returned surplus and credited ActualCost. Unwind that
+	// credit so the client is refunded in full and the host is not paid.
+	sm.state.Balance += rec.ActualCost
+	hs := sm.state.HostStats[rec.ExecutorSlot]
+	if hs.Cost < rec.ActualCost {
+		hs.Cost = 0
+	} else {
+		hs.Cost -= rec.ActualCost
+	}
+
+	logging.Debug("inference -> timed_out", "subsystem", "state",
+		"inference_id", msg.InferenceId,
+		"executor_slot", rec.ExecutorSlot,
+		"reason", "error_miss",
 	)
 	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }

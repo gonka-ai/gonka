@@ -93,7 +93,7 @@ test files because they exercise different lifecycle contracts.
 | **A2** | ML upstream 5xx | `mock-openai` `http_status=503` → gateway chat HTTP ≥400 | `TestA2_MLUpstream5xx` | ✅ |
 | **A3** | Stale escrow | `POST /testenv/escrow` settle → mock-chain gRPC reports `settled=true` | `TestA3_StaleEscrow` | ✅ |
 | **A4** | Bad warm-key | `POST /testenv/grantees` revoke → warm grantee absent from `GranteesByMessageType` | `TestA4_BadWarmKey` | ✅ |
-| **A5** | Error-finish miss | HTTP 200 SSE error envelope → `TIMEOUT_REASON_ERROR`: client `hostApplicationError`, executor `Missed++`, no validation job, full client refund, `HostStats.Cost` unchanged | `TestA5_ErrorFinishMiss` | ✅ |
+| **A5** | Error-finish miss | HTTP 200 SSE error envelope → `MsgErrorMiss`: client `hostApplicationError`, executor `Missed++`, no validation job, full client refund, `HostStats.Cost` unchanged | `TestA5_ErrorFinishMiss` | ✅ |
 
 A1–A4 boot the standard 2× versiond stack. A5 boots a **3-host** stack so two
 non-executor verifiers can exceed `VoteThreshold` (step 10 of
@@ -489,7 +489,7 @@ calls `chaintx.CreateDevshardEscrow`, queries `DevshardEscrow` on gRPC.
 ## A5 — Error-finish miss ✅
 
 **What we test:** a streamed OpenAI error envelope (HTTP 200 SSE, companion to A2's
-HTTP 503) is accounted as `TIMEOUT_REASON_ERROR`. Accounting changes; the served
+HTTP 503) is accounted as `MsgErrorMiss`. Accounting changes; the served
 client response does not.
 
 Specified as step 10 of

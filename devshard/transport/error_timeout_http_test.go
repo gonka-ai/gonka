@@ -45,7 +45,7 @@ func applyStartedInference(t *testing.T, env *serverTestEnv, inferenceID uint64)
 	require.Equal(t, types.StatusStarted, env.server.host.SnapshotState().Inferences[inferenceID].Status)
 }
 
-func TestServer_VerifyTimeout_ERRORAcceptsAndBindsHash(t *testing.T) {
+func TestServer_VerifyErrorMiss_AcceptsAndBindsHash(t *testing.T) {
 	env := setupServerEnv(t)
 	applyStartedInference(t, env, 1)
 
@@ -61,26 +61,24 @@ func TestServer_VerifyTimeout_ERRORAcceptsAndBindsHash(t *testing.T) {
 	finishTx, err := proto.Marshal(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: msg}})
 	require.NoError(t, err)
 
-	body, err := json.Marshal(VerifyTimeoutRequest{
+	body, err := json.Marshal(VerifyErrorMissRequest{
 		InferenceID:     1,
-		Reason:          "error",
 		FinishTx:        finishTx,
 		ResponsePayload: payload,
 	})
 	require.NoError(t, err)
 
-	rec := env.doPost(t, testRoutePrefix+"/sessions/escrow-1/verify-timeout", body)
+	rec := env.doPost(t, testRoutePrefix+"/sessions/escrow-1/verify-error-miss", body)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 
-	var resp VerifyTimeoutResponse
+	var resp VerifyErrorMissResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	require.True(t, resp.Accept)
 	require.NotEmpty(t, resp.Signature)
 
-	content := &types.TimeoutVoteContent{
+	content := &types.ErrorMissVoteContent{
 		EscrowId:     "escrow-1",
 		InferenceId:  1,
-		Reason:       types.TimeoutReason_TIMEOUT_REASON_ERROR,
 		Accept:       true,
 		ResponseHash: sum[:],
 	}
@@ -92,16 +90,16 @@ func TestServer_VerifyTimeout_ERRORAcceptsAndBindsHash(t *testing.T) {
 	require.Equal(t, env.hostSigner.Address(), recovered)
 }
 
-func TestServer_VerifyTimeout_ERRORRejectsWithoutArtifacts(t *testing.T) {
+func TestServer_VerifyErrorMiss_RejectsWithoutArtifacts(t *testing.T) {
 	env := setupServerEnv(t)
 	applyStartedInference(t, env, 1)
 
-	body, err := json.Marshal(VerifyTimeoutRequest{InferenceID: 1, Reason: "error"})
+	body, err := json.Marshal(VerifyErrorMissRequest{InferenceID: 1})
 	require.NoError(t, err)
-	rec := env.doPost(t, testRoutePrefix+"/sessions/escrow-1/verify-timeout", body)
+	rec := env.doPost(t, testRoutePrefix+"/sessions/escrow-1/verify-error-miss", body)
 	require.Equal(t, 200, rec.Code, rec.Body.String())
 
-	var resp VerifyTimeoutResponse
+	var resp VerifyErrorMissResponse
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	require.False(t, resp.Accept)
 	require.Empty(t, resp.Signature)
