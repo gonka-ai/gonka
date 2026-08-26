@@ -274,10 +274,6 @@ if [ -n "$CATALOG_URL" ] && [ -f "$CATALOG_CACHE_FILE" ]; then
     esac
 fi
 
-name_in_file() {
-    router_name_in_file "$2" "$1"
-}
-
 render_backend versiond_ha_pool \
     'http-check send meth GET uri /readyz' \
     'http-check send meth GET uri /healthz' \
@@ -330,7 +326,7 @@ done < "$STATIC_VERSIONS_FILE"
 : > "$CACHED_DYNAMIC_VERSIONS_FILE"
 while IFS= read -r version; do
     [ -n "$version" ] || continue
-    name_in_file "$version" "$LEGACY_VERSIONS_FILE" && continue
+    router_name_in_file "$LEGACY_VERSIONS_FILE" "$version" && continue
     if awk -v v="$version" '$1 "" == v "" { found = 1 } END { exit !found }' "$VERSIONS_MAP"; then
         continue
     fi
