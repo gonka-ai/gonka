@@ -25,27 +25,49 @@ runtime() {
     printf '%s\n' "$1" | socat stdio "$SOCK"
 }
 
+stats_file=$(mktemp)
+trap 'rm -f "$stats_file"' EXIT
+# `show servers state` preserves DNS/runtime administrative flags that do not
+# by themselves say whether HAProxy is sending traffic to a server. In
+# particular, a dynamically enabled server may remain marked with the DNS
+# runtime-maintenance bit while `show stat` correctly reports it as UP.
+runtime "show stat" | awk -F, 'NR > 1 && $2 != "BACKEND" {
+    print $1 "\t" $2 "\t" $18
+}' > "$stats_file"
+
 backends() {
     runtime "show backend" | grep -v '^#' | grep -v '^$'
 }
 
-# `show servers state` columns: 4 = srv_name, 5 = srv_addr, 6 = srv_op_state
-# (2 means UP), 7 = srv_admin_state. Slots a DNS answer has never filled carry no
-# address and are skipped.
+# `show servers state` supplies the resolved address, which is not populated in
+# the stats CSV for DNS server-template entries. Slots a DNS answer has never
+# filled carry no address and are skipped.
 servers() {
     runtime "show servers state $1" | awk 'NR > 2 && NF > 7 && $5 != "-"'
 }
 
 serving_count() {
-    servers "$1" | awk '$6 == 2 && $7 == 0 { n++ } END { print n + 0 }'
+    awk -F '\t' -v backend="$1" '
+        $1 == backend && $3 ~ /^UP/ { n++ }
+        END { print n + 0 }
+    ' "$stats_file"
 }
 
 for backend in $(backends); do
     printf '%s\n' "$backend"
-    servers "$backend" | awk '{
-        if ($7 != 0)      state = "DRAIN"
-        else if ($6 == 2) state = "UP"
-        else              state = "DOWN"
+    servers "$backend" | awk -v backend="$backend" -v stats_file="$stats_file" '
+    BEGIN {
+        while ((getline line < stats_file) > 0) {
+            split(line, fields, "\t")
+            if (fields[1] == backend) status[fields[2]] = fields[3]
+        }
+        close(stats_file)
+    }
+    {
+        current = status[$4]
+        if (current ~ /^UP/)                         state = "UP"
+        else if (current ~ /^(DRAIN|MAINT|NOLB)/)   state = "DRAIN"
+        else                                         state = "DOWN"
         print "  " $4 "\t" $5 "\t" state
     }'
     printf '  %s server(s) taking traffic\n' "$(serving_count "$backend")"

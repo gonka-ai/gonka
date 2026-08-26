@@ -112,6 +112,32 @@ func TestParseRouterPool(t *testing.T) {
 	}, slots)
 }
 
+func TestParseRouterVersionBackend(t *testing.T) {
+	out := "# id (file) description\n" +
+		"0x1 v2 versiond_dynamic_1\n" +
+		"0x2 version=v2 versiond_dynamic_1\n" +
+		"0x3 v4 versiond_pool_v4\n"
+
+	backend, err := parseRouterVersionBackend(out, "v2")
+	require.NoError(t, err)
+	require.Equal(t, "versiond_dynamic_1", backend)
+
+	backend, err = parseRouterVersionBackend(out, "v4")
+	require.NoError(t, err)
+	require.Equal(t, "versiond_pool_v4", backend)
+
+	_, err = parseRouterVersionBackend(out, "v9")
+	require.ErrorContains(t, err, `version "v9" is not present`)
+}
+
+func TestParseRouterVersionBackendRejectsConflictingEntries(t *testing.T) {
+	_, err := parseRouterVersionBackend(
+		"0x1 v2 versiond_dynamic_1\n0x2 v2 versiond_dynamic_2\n",
+		"v2",
+	)
+	require.ErrorContains(t, err, `version "v2" maps to multiple backends`)
+}
+
 func TestPatchComposeServiceEnv(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "docker-compose.yml")
