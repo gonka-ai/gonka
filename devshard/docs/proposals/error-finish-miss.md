@@ -6,16 +6,14 @@
 This is the protocol design. Step-by-step implementation lives in the plan
 linked above.
 
-**Current encoding (`MsgErrorMiss`).** Error-miss is not a timeout. The
-classifier treats a signed Finish over an error envelope as a miss (including
-content-then-error and host-reported `completion_tokens`), and treats
-unparseable `data:` JSON as a miss (junk cannot veto). On-chain message is
-`MsgErrorMiss { inference_id, votes[] }` with no payload; the hash is
-re-derived from `rec.ResponseHash` after Finish. Vote RPC is
-`POST .../verify-error-miss`. `TimeoutReason` keeps `reserved 3` /
-`"TIMEOUT_REASON_ERROR"`. Sections below that still mention
-`TIMEOUT_REASON_ERROR` describe the abandoned first encoding; apply/verify
-behaviour is the same with the new message. See plan §12.
+**Encoding.** Error-miss is not a timeout. The classifier treats a signed
+Finish over an error envelope as a miss (including content-then-error and
+host-reported `completion_tokens`), and treats unparseable `data:` JSON as a
+miss (junk cannot veto). On-chain message is `MsgErrorMiss { inference_id,
+votes[] }` with no payload; the hash is re-derived from `rec.ResponseHash`
+after Finish. Vote RPC is `POST .../verify-error-miss`. `TimeoutReason` keeps
+`reserved 3` / `"TIMEOUT_REASON_ERROR"` so the abandoned first encoding cannot
+return. Timeouts stay `REFUSED` / `EXECUTION` only. See plan §12.
 
 ---
 
@@ -92,7 +90,7 @@ only available evidence is "a deadline passed with no answer":
   `nowUnix-rec.ConfirmedAt < config.ExecutionTimeout` (`host/timeout.go:157`) —
   **`32 * 60` seconds by default** (`types/config.go:51`).
 
-`reason=ERROR` is categorically different. The executor **did** answer, and it
+`MsgErrorMiss` is categorically different. The executor **did** answer, and it
 signed its answer: `MsgFinishInference.ProposerSig` covers
 `ResponseHash = sha256(error payload)`. That signature is complete, positive
 evidence of failure, available immediately. There is nothing left to wait for —
@@ -100,40 +98,36 @@ waiting could only weaken the case, never strengthen it.
 
 So the deadline is absent on **both** sides:
 
-- **Verifier:** `VerifyErrorTimeout` performs **no** deadline comparison. It does
+- **Verifier:** `VerifyErrorMiss` performs **no** deadline comparison. It does
   not read `RefusalTimeout`, `ExecutionTimeout`, or `TimeoutBuffer`. Reviewers
   should treat any wall-clock gate added here as a bug.
-- **Gateway:** the `ERROR` branch of `HandleTimeout` skips
-  `sleepUntilDeadlineWithHeartbeat` entirely (`session.go:2114`, `:2123`) and goes
-  straight to `CollectTimeoutVotes`. End-to-end latency is one round of verifier
-  RPCs plus one diff.
+- **Gateway:** `HandleErrorMiss` (not a branch of `HandleTimeout`) skips
+  `sleepUntilDeadlineWithHeartbeat` and goes straight to collecting error-miss
+  votes. End-to-end latency is one round of verifier RPCs plus one diff.
 
 Why this matters beyond latency:
 
-| | Without this change | With `reason=ERROR` |
+| | Without this change | With `MsgErrorMiss` |
 | --- | --- | --- |
 | Time to account the miss | never (nonce is finished, so no timeout path runs at all) | immediate |
 | If the finish were suppressed instead | ~32 min of `ExecutionTimeout` per crash | n/a |
 | `ReservedCost` held in escrow | until seal, credited to the host | released in the same diff |
 | Host reuse for retries | crashing host keeps looking healthy | miss lands before the next request picks it |
 
-The `TimeoutReason` name is now a slight misnomer for this value: `ERROR` is an
-instant, evidence-backed miss, not an elapsed-time claim. Reusing the enum is
-still the right trade — `MsgTimeoutInference` already carries exactly "executor
-owes a miss, here are the votes", which is the payload we need — but the enum
-comment should say so explicitly so nobody later "fixes" it by adding a deadline.
+Timeouts remain elapsed-time claims (`REFUSED` / `EXECUTION`). Error-miss is an
+instant, evidence-backed miss. That is why it is a new message, not a third
+`TimeoutReason`: putting it on `MsgTimeoutInference` invited a later "fix" that
+added a deadline, and mixed hash-bound body votes into a path that has none.
 
-## Design: one new `TimeoutReason`, zero new messages
+## Design: new `MsgErrorMiss`; timeouts stay deadlines
 
-Reuse `MsgTimeoutInference`. Add a third enum value.
-
-The only other proto change is one field on `TimeoutVoteContent` to bind the vote
-to the body it judged (see [Binding the vote to the body
-hash](#binding-the-vote-to-the-body-hash)). No new messages, no new transaction
-types, no new wire fields on any `Msg`.
+Error-miss is not a timeout. Keep `MsgTimeoutInference` for refused and
+execution deadlines only. Add `MsgErrorMiss` — votes over the executor-signed
+Finish body, no payload on the message. `TimeoutReason` reserves the abandoned
+`ERROR` value so it cannot come back.
 
 ```proto
-// devshard/proto/devshard/v1/tx.proto
+// proto/devshard/v1/tx.proto
 enum TimeoutReason {
   TIMEOUT_REASON_UNSPECIFIED = 0;
   TIMEOUT_REASON_REFUSED     = 1;
@@ -144,14 +138,40 @@ enum TimeoutReason {
 
 message MsgErrorMiss {
   uint64 inference_id = 1;
-  repeated ErrorMissVote votes = 2;
+  repeated ErrorMissVote votes = 2; // { voter_slot, accept, signature }
+}
+
+// proto/devshard/v1/diff.proto
+message DevshardTx {
+  oneof tx {
+    // … existing fields 1–11 …
+    MsgErrorMiss error_miss = 14; // 12/13 reserved for cPoC
+  }
+}
+
+message TimeoutVoteContent {
+  string escrow_id     = 1;
+  uint64 inference_id  = 2;
+  TimeoutReason reason = 3;
+  bool   accept        = 4;
+  reserved 5; // was ERROR-only response_hash
+}
+
+message ErrorMissVoteContent {
+  string escrow_id     = 1;
+  uint64 inference_id  = 2;
+  bool   accept        = 3;
+  bytes  response_hash = 4;
 }
 ```
 
 `MsgTimeoutInference` and `TimeoutVote` are untouched, and every existing field
 number is preserved, so serialized snapshots and `REFUSED` / `EXECUTION`
 signatures stay byte-identical. Error-miss votes sign `ErrorMissVoteContent`
-(hash-bound), not `TimeoutVoteContent`.
+(hash-bound). The hash is not a field on `MsgErrorMiss`: `applyErrorMiss`
+re-derives it from `rec.ResponseHash` after Finish (see [Binding the vote to the
+body hash](#binding-the-vote-to-the-body-hash)). Vote RPC is a new endpoint,
+`POST .../verify-error-miss`, not a new reason on verify-timeout.
 
 ### The diff
 
@@ -170,43 +190,47 @@ but only inside the seal window.
 `sealEligibleStatus` includes `StatusFinished` (`state/seal.go:254`), so a
 finished record is folded into `SealedAcc` once the nonce gate
 (`InferenceSealGraceNonces`) and the state-clock grace
-(`InferenceSealGraceSeconds`) both clear. After that `applyTimeout` hits
+(`InferenceSealGraceSeconds`) both clear. After that `applyErrorMiss` hits
 `isInferenceEvictedFromLive` and returns `inference %d is sealed`
-(`state/machine.go:1386`), and the miss is unclaimable for good. So the deferred
-path is bounded, not equivalent: emit the `ERROR` timeout in the same diff as
+(`state/machine.go`), and the miss is unclaimable for good. So the deferred
+path is bounded, not equivalent: emit `MsgErrorMiss` in the same diff as
 the Finish, or at least well inside the grace. This is another reason the design
-has no deadline — any wait pushes the timeout toward the seal boundary that
+has no deadline — any wait pushes the miss toward the seal boundary that
 would silently discard it.
 
 Tx order inside a diff is preserved: `applyCore` walks `diff.Txs` in order
-(`state/machine.go:1016` `applyTx`), and `localBestEffortLocked` applies
-candidates in queue order, so FIFO `pendingTxs` gives Finish before Timeout.
+(`state/machine.go` `applyTx`), and `localBestEffortLocked` applies
+candidates in queue order, so FIFO `pendingTxs` plus `extraTxs` gives Finish
+before ErrorMiss.
 
 ### Why this shape
 
 The Finish must land on-chain, not be suppressed. It is the *only* thing that
 binds the executor to the error body: `ProposerSig` covers `ResponseHash`. Drop
-the Finish and you lose the proof and are back to an unattributable miss. The
-Timeout immediately after it converts that proof into the accounting outcome.
+the Finish and you lose the proof and are back to an unattributable miss.
+`MsgErrorMiss` immediately after it converts that proof into the accounting
+outcome. Payload bytes stay off the message: the Finish already committed the
+hash.
 
 ## State machine
 
-### `applyTimeout` — new reason branch
+### `applyErrorMiss` — status gate
 
-`state/machine.go:1383`. Add to the reason/status gate:
+`state/machine.go`. Requires Finish first:
 
 ```go
-case types.TimeoutReason_TIMEOUT_REASON_ERROR:
-    if rec.Status != types.StatusFinished {
-        return fmt.Errorf("%w: reason=error requires finished, got %d",
-            types.ErrInvalidTimeoutReason, rec.Status)
-    }
+if rec.Status != types.StatusFinished {
+    return fmt.Errorf("%w: error-miss requires finished, got %d",
+        types.ErrInvalidTransition, rec.Status)
+}
 ```
 
 Vote counting, dedup-by-address, weight-by-slot-count and the `VoteThreshold`
-check are reused verbatim.
+check match `applyTimeout`. Votes sign `ErrorMissVoteContent`, not
+`TimeoutVoteContent`. There is no `TIMEOUT_REASON_ERROR` branch in
+`applyTimeout`; unknown reasons still hit `default` → `ErrInvalidTimeoutReason`.
 
-### `applyTimeout` — unwind the finish accounting
+### `applyErrorMiss` — unwind the finish accounting
 
 Finish always runs first. `applyFinishInference` does not look at the body; it
 only looks at token counts in `MsgFinishInference` and treats them as successful
@@ -220,7 +244,7 @@ work:
    - status becomes `StatusFinished`
 
 `HostStats.Cost` is what settlement pays the executor (`chain_tx_encode.go`). If
-the `ERROR` timeout then only flipped status to timed-out and incremented
+`MsgErrorMiss` then only flipped status to timed-out and incremented
 `Missed`, the host would be **paid and marked missed** for the same inference,
 and the client would keep paying `ActualCost`.
 
@@ -229,29 +253,25 @@ reasons require `Pending` or `Started` — Finish has not run, `HostStats.Cost`
 was never credited, and the full `ReservedCost` is still locked, so
 `Balance += rec.ReservedCost` is correct.
 
-`ERROR` is the first timeout that applies **after** Finish. The reservation is
-already split, so the branch cannot reuse the refused/execution refund. Mirror
-the `StatusInvalidated` unwind (`state/machine.go:1353`):
+`MsgErrorMiss` is the first miss that applies **after** Finish. The reservation is
+already split, so it cannot reuse the refused/execution refund. Mirror
+the `StatusInvalidated` unwind (`state/machine.go`):
 
 ```go
-if msg.Reason == types.TimeoutReason_TIMEOUT_REASON_ERROR {
-    sm.state.Balance += rec.ActualCost          // surplus was already released
-    hs := sm.state.HostStats[rec.ExecutorSlot]
-    if hs.Cost < rec.ActualCost { hs.Cost = 0 } else { hs.Cost -= rec.ActualCost }
-} else {
-    sm.state.Balance += rec.ReservedCost        // existing refused/execution path
-}
+sm.state.Balance += rec.ActualCost          // surplus was already released
+hs := sm.state.HostStats[rec.ExecutorSlot]
+if hs.Cost < rec.ActualCost { hs.Cost = 0 } else { hs.Cost -= rec.ActualCost }
 rec.Status = types.StatusTimedOut
 sm.state.HostStats[rec.ExecutorSlot].Missed++
 ```
 
-| Ledger | After Finish | What ERROR must do |
+| Ledger | After Finish | What ErrorMiss must do |
 | --- | --- | --- |
 | `Balance` | only surplus returned | add `ActualCost` so the client gets the full reservation back |
 | `HostStats.Cost` | `+= ActualCost` | subtract `ActualCost` so the host is not paid |
 | Status / miss | `Finished` | `TimedOut`, `Missed++` |
 
-Net after Finish + ERROR timeout, for one inference:
+Net after Finish + `MsgErrorMiss`, for one inference:
 
 - escrow is whole again (`surplus` at Finish + `ActualCost` here = `ReservedCost`)
 - host Cost is back to its pre-Finish value
@@ -262,7 +282,7 @@ Net after Finish + ERROR timeout, for one inference:
 Worked numbers: reserve 100, Finish reports tokens worth 30.
 
 - Finish: `Balance += 70`, `Cost += 30`
-- ERROR timeout: `Balance += 30`, `Cost -= 30`, `Missed++`
+- ErrorMiss: `Balance += 30`, `Cost -= 30`, `Missed++`
 - client paid 0; host earned 0; miss recorded
 
 If we instead did `Balance += ReservedCost` here, the 70 already returned at
@@ -271,7 +291,7 @@ Finish would be refunded again. That is why the snippet adds `ActualCost`, not
 
 The `if hs.Cost < rec.ActualCost { hs.Cost = 0 }` line is not a policy choice.
 `Cost` is a `uint64` session accumulator copied from the invalidate path. Saturating
-avoids underflow if the books are inconsistent; in a correct Finish→ERROR
+avoids underflow if the books are inconsistent; in a correct Finish→ErrorMiss
 sequence it never triggers.
 
 `Missed` vs `Invalid`: this is a miss, not an invalid completion. Invalid is
@@ -279,17 +299,17 @@ sequence it never triggers.
 produced an error envelope, which we refuse to treat as a completion." Same
 money outcome as invalidate (client refunded, host unpaid), different counter.
 
-If the error payload has `usage.completion_tokens == 0` (the classifier requires
-that) but still has prompt tokens, Finish would still credit input-token cost.
-Unwind takes that credit back too: crashing after reading the prompt is not
-billable work.
+If the error payload still has prompt tokens, Finish would still credit
+input-token cost. Unwind takes that credit back too: crashing after reading
+the prompt is not billable work. Host-reported `completion_tokens` do not
+veto the miss (see classifier).
 
 If both token counts are 0, `ActualCost` is 0, Finish already returned the full
 reservation as surplus, and the Cost/Balance lines are no-ops. The only
 accounting that remains is `Missed++` and `StatusTimedOut`. That is still the
 correct outcome.
 
-Invariant to assert in tests: after an `ERROR` timeout the escrow balance is
+Invariant to assert in tests: after `MsgErrorMiss` the escrow balance is
 restored by the **full `ReservedCost`** (`surplus` at finish + `ActualCost`
 here), identical to the refused/execution paths, and `HostStats.Cost` is back to
 its pre-finish value.
@@ -303,12 +323,12 @@ its pre-finish value.
 | Sealing | `StatusTimedOut` is already in `sealEligibleStatus` and `terminalAutoSealStatus` (`state/seal.go:256`, `:268`). |
 | Settlement | `HostStats.Missed` is already serialized to chain (`chain_tx_encode.go:89`, `state.proto` field 2). |
 | Late validation votes | `applyValidation` / `applyValidationVote` status gates already reject or no-op post-terminal records. |
-| State root | Vote content is not part of the root, so neither the enum value nor `response_hash` moves any hash. New sessions get different roots only because they carry a new protocol tag (see rollout), which is inherent to shipping under a new approved name. |
+| State root | Vote content is not part of the root, so `ErrorMissVoteContent.response_hash` moves no hash. New sessions get different roots only because they carry a new protocol tag (see rollout), which is inherent to shipping under a new approved name. |
 
 ## Flow
 
-Messages, and who talks to whom. The only new message on the wire is the
-`reason=ERROR` timeout; everything else already exists.
+Messages, and who talks to whom. The only new on-chain message is
+`MsgErrorMiss`; timeouts stay refused/execution.
 
 ```text
 ML node        Executor host          Gateway            Verifier hosts
@@ -329,9 +349,9 @@ ML node        Executor host          Gateway            Verifier hosts
    |                |  [2] devshard_meta SSE event (mempool)   |
    |                |------------------>|                     |
    |                |                   |                     |
-   |                |  [3] VerifyTimeout{inference_id,         |
-   |                |      reason=ERROR, finish_tx,            |
-   |                |      response_payload}                   |
+   |                |  [3] POST .../verify-error-miss          |
+   |                |      {inference_id, finish_tx,           |
+   |                |       response_payload}                  |
    |                |                   |-------------------->|
    |                |                   |                     |
    |                |                   |     [4] check proposer_sig on
@@ -342,14 +362,14 @@ ML node        Executor host          Gateway            Verifier hosts
    |                |                   |         NO call to executor
    |                |                   |         NO payload fetch
    |                |                   |                     |
-   |                |                   |  [5] TimeoutVote{accept,             |
-   |                |                   |      sig over {…, response_hash}}    |
+   |                |                   |  [5] ErrorMissVote{accept,            |
+   |                |                   |      sig over ErrorMissVoteContent}   |
    |                |                   |<--------------------|
    |                |                   |                     |
-   |         [6] diff N = [ MsgFinishInference, MsgTimeoutInference{ERROR, votes} ]
+   |         [6] diff N = [ MsgFinishInference, MsgErrorMiss{id, votes} ]
    |                |<------------------|-------------------->|
    |                |                   |                     |
-   |         [7] applyFinishInference then applyTimeout(ERROR):
+   |         [7] applyFinishInference then applyErrorMiss:
    |             StatusTimedOut, Missed++, cost unwound
 ```
 
@@ -357,11 +377,11 @@ ML node        Executor host          Gateway            Verifier hosts
 | --- | --- | --- | --- |
 | 1 | `MsgFinishInference` | executor signs | existing, unchanged |
 | 2 | `devshard_meta` SSE event carrying the mempool | executor → gateway | existing (`transport/server.go:507`) |
-| 3 | `VerifyTimeoutRequest{reason=ERROR, finish_tx, response_payload}` | gateway → verifiers | existing endpoint, new reason + two new fields |
+| 3 | `VerifyErrorMissRequest{finish_tx, response_payload}` | gateway → verifiers | **new** endpoint |
 | 4 | — | verifier, no outbound calls | new logic |
-| 5 | `VerifyTimeoutResponse` + `TimeoutVote` | verifier → gateway | existing, vote content gains `response_hash` |
-| 6 | `Diff{Finish, Timeout(ERROR)}` | gateway → all hosts | existing envelope, new reason |
-| 7 | — | every host applies | new reason branch |
+| 5 | `VerifyErrorMissResponse` + `ErrorMissVote` | verifier → gateway | new vote content |
+| 6 | `Diff{Finish, MsgErrorMiss}` | gateway → all hosts | new tx type |
+| 7 | — | every host applies | `applyErrorMiss` |
 
 ## Verification: the verifier never contacts the executor
 
@@ -411,12 +431,12 @@ counts are corroborating detail, never the deciding test.
 The gateway relays the response payload alongside the Finish:
 
 ```go
-// transport/types.go VerifyTimeoutRequest
+// transport/types.go VerifyErrorMissRequest
 FinishTx        []byte `json:"finish_tx,omitempty"`        // proto DevshardTx, executor-signed
 ResponsePayload []byte `json:"response_payload,omitempty"` // canonical {"events":[...]} bytes
 ```
 
-Both are **required** for `reason=ERROR`. Neither is trusted:
+Both are **required**. Neither is trusted:
 `sha256(ResponsePayload)` must equal `ResponseHash` inside the executor-signed
 Finish. That single comparison is what makes gateway delivery safe — a gateway
 cannot produce bytes matching a hash the executor signed over a different body,
@@ -449,16 +469,11 @@ signed one. Distinguish this in metrics — a `hash_mismatch` on a cancelled
 attempt is expected and must not be alerted on as serialization drift (see
 Observability).
 
-`transport/server.go:593` `HandleVerifyTimeout` gains an `ERROR` case:
-
-```go
-case types.TimeoutReason_TIMEOUT_REASON_ERROR:
-    accept, err = host.VerifyErrorTimeout(st, req.InferenceID,
-        req.FinishTx, req.ResponsePayload, localMempool)
-```
+`POST .../verify-error-miss` calls `host.VerifyErrorMiss`. Verify-timeout is
+refused/execution only: no `finish_tx`, no `response_payload`, no error reason.
 
 Note the signature: no `ctx`, no `executorClient`, no `payloadFetcher`, no
-`config`, no clock. `host.VerifyErrorTimeout` steps, all failures → reject
+`config`, no clock. `host.VerifyErrorMiss` steps, all failures → reject
 (`accept=false`):
 
 1. **No deadline check.** Unlike `VerifyRefusedTimeout` (`host/timeout.go:83`)
@@ -484,11 +499,12 @@ Note the signature: no `ctx`, no `executorClient`, no `payloadFetcher`, no
 6. **Pin the body:** `sha256(req.ResponsePayload) == msg.ResponseHash`. Reject on
    mismatch or empty payload.
 7. **Classify the pinned body** with `IsTerminalErrorResponse` (below). This is
-   the actual verdict: an error envelope with no content anywhere.
-8. If all pass → sign a `TimeoutVoteContent{escrow, inference_id, reason=ERROR,
-   accept=true, response_hash}` via `signTimeoutVote`
-   (`transport/server.go:696`), which gains a `responseHash` argument. The hash
-   signed is the one from the Finish this verifier just authenticated.
+   the actual verdict: an error envelope and/or unparseable `data:` JSON. Content
+   before the error still accepts — the signed Finish is the proof.
+8. If all pass → sign `ErrorMissVoteContent{escrow, inference_id, accept=true,
+   response_hash}` via `signErrorMissVote`. The hash signed is the one from the
+   Finish this verifier just authenticated. `signTimeoutVote` does not take a
+   hash.
 
 Why this is sound with the gateway as courier:
 
@@ -505,13 +521,13 @@ Why this is sound with the gateway as courier:
 
 Ordering note: step 4 accepts `StatusStarted` because with gossip off the
 verifier usually has not applied the Finish yet — it arrives in the same diff
-that carries the timeout. The strict `StatusFinished` requirement belongs in
-`applyTimeout`, where the Finish has provably already been applied, not here.
+that carries `MsgErrorMiss`. The strict `StatusFinished` requirement belongs in
+`applyErrorMiss`, where the Finish has provably already been applied, not here.
 
-Remaining residual, much narrower than the token-based rule: an executor that
-streams genuine content and *then* appends an error event is not eligible, since
-the classifier requires no content anywhere. That attempt stays on the normal
-validation path, which is the correct outcome — the client got tokens.
+Content-then-error is in scope: the classifier accepts an error envelope after
+usable tokens. The signed Finish hashes the whole body, including the error.
+A host cannot dodge the miss by decorating a crash with prefix tokens. Happy-path
+content with no error still rejects.
 
 ### If gossip is ever re-enabled
 
@@ -522,33 +538,29 @@ come from the gateway, since only the executor and the gateway ever see it.
 
 ## Binding the vote to the body hash
 
-Without this, a `reason=ERROR` vote asserts only "inference N failed with an
-error" — it does not name *which* body the verifier looked at. Add the binding:
+Without this, an error-miss vote asserts only "inference N failed with an
+error" — it does not name *which* body the verifier looked at. Bind it on
+`ErrorMissVoteContent`, not on `TimeoutVoteContent` (field 5 there is reserved):
 
 ```proto
-// devshard/proto/devshard/v1/diff.proto
-message TimeoutVoteContent {
-  string escrow_id      = 1;
-  uint64 inference_id   = 2;
-  TimeoutReason reason  = 3;
-  bool   accept         = 4;
-  bytes  response_hash  = 5;  // set for reason=ERROR only; empty otherwise
+message ErrorMissVoteContent {
+  string escrow_id     = 1;
+  uint64 inference_id  = 2;
+  bool   accept        = 3;
+  bytes  response_hash = 4;
 }
 ```
 
-**No new wire field is needed on `MsgTimeoutInference`.** `applyTimeout`
-reconstructs the signed content locally rather than reading it off the wire
-(`state/machine.go:1423`), so it sources the hash from state:
+**No payload and no hash on `MsgErrorMiss`.** `applyErrorMiss` reconstructs the
+signed content locally rather than reading it off the wire, so it sources the
+hash from state:
 
 ```go
-voteContent := &types.TimeoutVoteContent{
-    EscrowId:    sm.state.EscrowID,
-    InferenceId: msg.InferenceId,
-    Reason:      msg.Reason,
-    Accept:      vote.Accept,
-}
-if msg.Reason == types.TimeoutReason_TIMEOUT_REASON_ERROR {
-    voteContent.ResponseHash = rec.ResponseHash // set by the Finish applied earlier
+voteContent := &types.ErrorMissVoteContent{
+    EscrowId:     sm.state.EscrowID,
+    InferenceId:  msg.InferenceId,
+    Accept:       vote.Accept,
+    ResponseHash: rec.ResponseHash, // set by the Finish applied earlier
 }
 ```
 
@@ -571,30 +583,24 @@ requires `StatusStarted`, so exactly one body can ever be committed per
 inference — but it makes the vote self-describing, which is what makes it usable
 later as evidence outside this code path.
 
-### Compatibility of the field addition
+### Compatibility
 
-The field addition alone is signature-compatible for the existing reasons: with
-`response_hash` empty, proto3 omits it, so `REFUSED` / `EXECUTION` vote contents
-marshal to byte-identical bytes and all existing signatures still verify. Only
-`reason=ERROR` populates it, and that reason exists only in the new binary.
+`TimeoutVoteContent` is unchanged except `reserved 5`, so `REFUSED` /
+`EXECUTION` vote contents marshal byte-identically to pre-change and existing
+signatures still verify.
 
-`TimeoutVoteContent` is **not** part of the state root — the root covers
+`ErrorMissVoteContent` is **not** part of the state root — the root covers
 balance, `HostStats`, inferences, warm keys, fees, phase and the version tag
 (`ComputeStateRoot` / `ComputeStateRootFromRestHash`, `state/seal.go:134`). Vote
-content is verified transiently inside `applyTimeout` and never hashed into the
+content is verified transiently inside `applyErrorMiss` and never hashed into the
 root. So this change does not by itself alter any root.
 
-It is still protocol-breaking, because a host that does not populate
-`response_hash` for a `reason=ERROR` vote produces a signature its peers reject.
-That is what forces a new approved version name (see rollout), not a root-layout
-change.
+It is still protocol-breaking: an old host does not know `DevshardTx` oneof 14,
+so applying `MsgErrorMiss` rejects the whole diff. That is what forces a new
+approved version name (see rollout), not a root-layout change.
 
-One cleanup while here: `applyTimeout` marshals vote content with
-`deterministicMarshal.Marshal` (`state/machine.go:1429`) while `signTimeoutVote`
-uses plain `proto.Marshal` (`transport/server.go:703`). Both must use
-`deterministicMarshal`, or signer and verifier can disagree on encoding. It
-happens to work for the current all-scalar message; adding a `bytes` field is a
-good moment to make it explicit rather than incidental.
+Sign and verify error-miss votes with `deterministicMarshal.Marshal`, matching
+`applyErrorMiss`. Do not reuse `signTimeoutVote` for this content.
 
 ## The shared classifier
 
@@ -604,25 +610,24 @@ votes, degrading to today's behaviour — but it must be deterministic to be
 useful. Put it in `common/completionapi`:
 
 ```go
-// IsTerminalErrorResponse reports whether a stored response payload is an
-// error envelope carrying no usable completion.
+// IsTerminalErrorResponse reports whether a stored response payload is not a
+// usable completion — an error envelope and/or malformed data: JSON.
 func IsTerminalErrorResponse(responsePayload []byte) (details ErrorDetails, ok bool)
 ```
 
-Accept only when all hold, parsed via
-`NewCompletionResponseFromLinesFromResponsePayload`:
+Accept when the payload is a streamed `{"events":[...]}` body and **either**:
 
-- some event carries a top-level `error` object (the `{"error":{code,message,type}}`
-  shape, matching `sseChunkErrorPayload`);
-- no content anywhere — no `delta.content`, `delta.reasoning_content`,
-  `delta.tool_calls`, `message.content`, `choice.text`;
-- `usage.completion_tokens == 0`. Note this is weaker than it looks: when no
-  event carries usage, `StreamedCompletionResponse.GetUsage` synthesizes
-  `CompletionTokens = len(logprobs.Content)` (`completionresponse.go:217`), so
-  for an error body the condition mostly restates "no content anywhere" rather
-  than checking something independent. Keep it — it catches a host that attaches
-  a real usage block to an error envelope — but do not count it as a second
-  opinion.
+1. some event carries a top-level `error` object (the `{"error":{code,message,type}}`
+   shape, matching `sseChunkErrorPayload`), **including** after usable content
+   and regardless of `usage.completion_tokens`; or
+2. any `data:` payload that is not valid JSON (unparseable-only Finish).
+
+Happy-path content with no error still rejects. The host fully controls the
+signed payload: fail-closed unparseable JSON (`ok=false`) would let it dodge a
+deterministic miss by appending one junk line. Junk is the proof, not a veto.
+
+Token counts are never the criterion. Host-reported `completion_tokens` do not
+veto an error envelope.
 
 Out of scope by construction: client-fault errors. A 4xx from the ML node is
 returned to the caller without rotation (`inference/engine.go:174`), but its
@@ -641,40 +646,36 @@ agree with a misclassifying gateway by construction — the earlier token-based
 draft had a backstop here, and the hash-pinned design deliberately does not.
 The classifier is therefore the single point of truth, and its correctness is
 safety-critical in one direction: a predicate that accepted a genuine
-completion would refund the client and charge an honest host a miss. That is
-what the "no content anywhere" condition defends, and why it must stay
-conservative — when in doubt, return `ok == false` and fall through to today's
-behaviour.
+completion would refund the client and charge an honest host a miss. Bias
+ambiguous cases to `ok == false` and fall through to today's behaviour — except
+unparseable `data:` JSON, which must be a miss or the host can veto with junk.
 
-The "no content anywhere" condition is what stops this becoming an escape hatch.
-A host that streams real tokens and appends a trailing error event fails the
-predicate, so it cannot dodge validation by decorating a good response. Because
-the predicate runs on hash-pinned bytes rather than on self-reported usage, the
-host cannot influence the outcome by misreporting token counts either.
+Because the predicate runs on hash-pinned bytes rather than on self-reported
+usage, the host cannot influence the outcome by misreporting token counts.
+Content-then-error still accepts: the signed Finish is the proof, and prefix
+tokens are not an escape hatch.
 
 ## Gateway
 
 All in `devshard/cmd/devshardctl` + `devshard/user/session.go`.
 
-1. **Let the path run.** `shouldRunHandleTimeout` (`redundancy.go:3212`) returns
-   false for any finished nonce. Add an exception: run when
-   `isErrorStreamAttempt(inf)` even if the nonce finished.
-2. **New reason branch in `HandleTimeout`** (`session.go:2081`), taken *before*
-   the deadline logic. Today the execution path sees a pending Finish and returns
-   early after publishing it (`session.go:2135-2147`). For an error attempt:
-   **do not** early-return, and **do not** call
+1. **Let the path run.** `shouldRunHandleTimeout` returns false for any finished
+   nonce. Exception: run when `errorMissEnabledFor(inf)` (`errorTerminal`) even
+   if the nonce finished. `runHandleTimeout(errorMiss)` calls `HandleErrorMiss`,
+   not `HandleTimeout`.
+2. **`HandleErrorMiss`**, not a reason branch of `HandleTimeout`. Today the
+   execution path sees a pending Finish and returns early after publishing it.
+   For an error attempt: **do not** early-return, and **do not** call
    `sleepUntilDeadlineWithHeartbeat` — no `RefusalTimeout`, no `ExecutionTimeout`,
-   no `TimeoutBuffer`. Go straight to `CollectTimeoutVotes(reason=ERROR)`.
-   Structurally this means the `ERROR` case is decided at the top of
-   `HandleTimeout`, not inside the existing `confirmedAt > 0` branch that owns the
-   32-minute wait.
-3. **Same-diff composition.** Pin the pending Finish (and any Timeout already
-   queued for that nonce) for the ERROR vote round so a concurrent compose
-   cannot drain them. Pass the Timeout into the same locked compose as
-   `extraTxs` after that Finish — do not enqueue Timeout into the shared
-   pending queue first. Append order puts Finish ahead of Timeout.
-4. **Forward the artifacts — both required.** Extend
-   `TimeoutVerifier.VerifyTimeout` / `CollectTimeoutVotes` to pass:
+   no `TimeoutBuffer`. Go straight to collecting error-miss votes. Timeout path
+   stays refused/execution only.
+3. **Same-diff composition.** Pin the pending Finish (and any ErrorMiss already
+   queued for that nonce) for the vote round so a concurrent compose cannot drain
+   them. Pass `MsgErrorMiss` into the same locked compose as `extraTxs` after
+   that Finish — do not enqueue ErrorMiss into the shared pending queue first.
+   Append order puts Finish ahead of ErrorMiss.
+4. **Forward the artifacts — both required.** `verify-error-miss` (not
+   verify-timeout) carries:
    - `finish_tx`, from `inf.resp.Mempool` (the `devshard_meta` tail the gateway
      already parses for `HasMsgFinish`) or from `pendingTxs`;
    - `response_payload`, the canonical
@@ -685,31 +686,30 @@ All in `devshard/cmd/devshardctl` + `devshard/user/session.go`.
    either collects zero accepts.
 5. **Retain the full error body.** `inf.errorBodySample` is capped by
    `bodySampleForLog` and cannot be used to rebuild the payload. Capture the
-   attempt's complete `data:` line set when `errorSource` is first set — verbatim
-   as the host emitted them (post id-injection, pre `rewriteStreamingPayload`),
-   excluding `devshard_receipt` / `devshard_meta`. Bound the retention to error
-   attempts so this does not become a memory sink on the happy path.
+   attempt's complete `data:` line set — verbatim as the host emitted them (post
+   id-injection, pre `rewriteStreamingPayload`), excluding `devshard_receipt` /
+   `devshard_meta`. Bound the retention (`maxErrorStreamBytes`) so this does not
+   become a memory sink on the happy path.
 6. **Fix the local finished view.** `nonceStates[n].finished` is set from
-   `HasMsgFinish` (`session.go:624`), so gateway-local `IsNonceFinished` would
-   still report finished after an accepted error miss, disagreeing with chain
-   state. Clear it when the `ERROR` timeout applies, so
-   `completeAccountingRequest` and the debug/stats views do not bill a
-   timed-out inference.
-7. **Retire the exemption TODO** in `recordPostContentWinnerFailureOnce`
-   (`redundancy.go:3610`). Recommendation: keep gateway *perf/quarantine*
-   scoring decoupled from the on-chain miss for the first release — the miss is
-   the protocol penalty, quarantine remains a latency/health signal — but make
-   that a deliberate, commented decision instead of the current
+   `HasMsgFinish`, so gateway-local `IsNonceFinished` would still report finished
+   after an accepted error miss, disagreeing with chain state. Clear it when
+   `MsgErrorMiss` applies, so `completeAccountingRequest` and the debug/stats
+   views do not bill a timed-out inference.
+7. **Retire the exemption TODO** in `recordPostContentWinnerFailureOnce`.
+   Keep gateway *perf/quarantine* scoring decoupled from the on-chain miss —
+   the miss is the protocol penalty, quarantine remains a latency/health
+   signal — but make that a deliberate, commented decision instead of the
    "until hosts submit Finish for errors" placeholder, which this change resolves.
 8. **Client response unchanged.** `hostApplicationError` still surfaces with its
-   original status/body (`proxy.go:404`). Only accounting changes.
+   original status/body. Only accounting changes. Emit is always on, gated by
+   `errorTerminal` (retriable capability 4xx stay off). Content before the error
+   still emits.
 
 ## Rollout: ship as a new approved version
 
-An old host applying `reason=3` hits `applyTimeout`'s `default` branch and
-returns `ErrInvalidTimeoutReason`, which **rejects the whole diff** and wedges
-the session. A host that ignores `response_hash` in the vote content produces
-signatures its peers reject. Both make this a protocol-breaking change.
+An old host applying `MsgErrorMiss` (oneof 14) does not know the transaction
+and **rejects the whole diff**, which wedges the session. Both the new message
+and the vote-content type make this a protocol-breaking change.
 
 `devshard/docs/upgrade.md` already prescribes the mechanism:
 **protocol-breaking changes require a new `approved_versions` name.** Governance
@@ -725,7 +725,7 @@ Why this needs no additional gate:
   a host whose `boundVersion` differs refuses to attach
   (`session/manager.go:644`). So every participant in a `v5` session is running
   `v5` code — the error-miss path exists for all of them or none of them.
-- **Old sessions are untouched.** A `v4` session never sees `reason=ERROR`,
+- **Old sessions are untouched.** A `v4` session never sees `MsgErrorMiss`,
   because the gateway serving it is the `v4` binary, which cannot emit it.
   Sessions are not migrated; `v4` sessions keep today's behaviour (error stream
   served as `hostApplicationError`, no miss) until they settle.
@@ -747,7 +747,7 @@ reintroduced:
 - **`/versions` is not a capability probe.** It is dapi's list of
   governance-approved binaries that versiond polls in order to download and run
   them (`upgrade.md`, "Target flow"). Using it to infer whether a peer
-  understands `reason=ERROR` would be both racy and meaningless.
+  understands `MsgErrorMiss` would be both racy and meaningless.
 
 Remaining rollout rules:
 
@@ -757,7 +757,7 @@ Remaining rollout rules:
 - Emit is always on in this binary. The safety valve is the fail-closed
   classifier (`errorTerminal` + empty `contentSource`); there is no env flag to
   silence emit without a new binary. Apply and verify stay unconditional: every
-  host in a mixed-traffic session must be able to apply `reason=ERROR`.
+  host in a mixed-traffic session must be able to apply `MsgErrorMiss`.
 - State roots differ from `v4` for new sessions simply because the tag is an
   input to the root. That is the normal consequence of a new name, needs no
   migration, and settlement already carries the tag per session
@@ -769,13 +769,15 @@ Remaining rollout rules:
 
 | Alternative | Why not |
 | --- | --- |
-| New `MsgErrorInference` message | Needs a new `DevshardTx` oneof field, a new apply path, new snapshot/settlement plumbing. `MsgTimeoutInference` already carries "executor owes a miss, here are the votes". |
+| Third `TimeoutReason` on `MsgTimeoutInference` | Error-miss is not a deadline. A third reason plus `response_hash` / `finish_tx` / `response_payload` on the timeout path mixed two shapes and invited a later "fix" that added a wait. Timeouts stay `REFUSED` / `EXECUTION`; `TIMEOUT_REASON_ERROR` is reserved so it cannot return. |
+| Put payload bytes or the hash on `MsgErrorMiss` | The Finish already committed `ResponseHash`. Re-derive it from `rec.ResponseHash`. Payload stays on the verify RPC, off-chain. |
 | Suppress the Finish; emit only an execution timeout | Loses the signed `ResponseHash`, so the miss becomes unattributable and the executor can deny it. Also a lie: the executor did confirm and did answer. |
 | Host refuses to publish Finish on an error body | Then the error can never be proven, and every EngineCore crash falls back to `TIMEOUT_REASON_EXECUTION` — a **32-minute** `ExecutionTimeout` wait per crash (`types/config.go:51`) with the escrow reservation locked for the duration. |
 | Keep the Finish but wait out `ExecutionTimeout` before voting | Pointless: the executor already answered, so the deadline adds no evidence. It would also never trigger, since `VerifyExecutionTimeout` rejects as soon as it sees the Finish (`host/timeout.go:163`). |
 | Vote on `OutputTokens == 0` from the Finish alone | Host-reported, so a malicious executor returning an error body while claiming non-zero output tokens escapes the miss entirely. The codebase already distrusts this signal for the same reason (`isModelBurnEmpty`, `redundancy.go:3386`). Adopted as corroborating detail only. |
 | Verifier fetches the response payload from the executor to classify the body | Adds a network round trip per verifier per miss and makes the vote depend on the failing host being reachable — an executor could block a miss it caused by going dark. Relaying hash-pinned bytes through the gateway gives identical evidence with no such dependency. |
 | Serve the error as a successful completion | Charges the client for a crash, and any sampled validation would invalidate it (no logprobs → `InvalidInferenceResult`). |
+| Fail-closed on unparseable `data:` JSON | The host controls the signed payload. One junk line would veto a deterministic miss. Unparseable JSON is itself a miss. |
 
 ## Observability
 
@@ -799,20 +801,19 @@ Remaining rollout rules:
 
 State machine (`devshard/state/machine_test.go`):
 
-- `Finish` then `ERROR` timeout in one diff → `StatusTimedOut`, `Missed == 1`,
+- `Finish` then `MsgErrorMiss` in one diff → `StatusTimedOut`, `Missed == 1`,
   `HostStats.Cost` back to pre-finish, balance restored by full `ReservedCost`.
-- `ERROR` timeout against `StatusStarted` / `StatusPending` → `ErrInvalidTimeoutReason`.
-- `ERROR` timeout with `acceptCount <= threshold` → `ErrInsufficientVotes`, no mutation.
-- Wrong-order diff (`Timeout` before `Finish`) → rejected, state unchanged.
-- Post-`ERROR` `MsgValidation` / `MsgValidationVote` → rejected or no-op.
+- `MsgErrorMiss` against `StatusStarted` / `StatusPending` → `ErrInvalidTransition`.
+- `MsgErrorMiss` with `acceptCount <= threshold` → `ErrInsufficientVotes`, no mutation.
+- Wrong-order diff (`ErrorMiss` before `Finish`) → rejected, state unchanged.
+- Post-ErrorMiss `MsgValidation` / `MsgValidationVote` → rejected or no-op.
 - **Hash binding:** a vote signed over a *different* `response_hash` than
   `rec.ResponseHash` → `ErrInvalidVoteSig`, diff rejected, state unchanged.
 - **Cross-body replay:** a vote harvested from inference A cannot be applied to
-  inference B, even with a matching reason and voter slot.
+  inference B, even with a matching voter slot.
 - **Existing-reason signature compatibility:** `REFUSED` / `EXECUTION` vote
-  contents marshal byte-identically to pre-change, and vote signatures produced
-  by a pre-change signer still verify (empty `response_hash` must be omitted, not
-  encoded as zero-length).
+  contents marshal byte-identically to pre-change (`TimeoutVoteContent` field 5
+  reserved, not populated).
 - Golden state-root vectors: unchanged. The default test tag
   (`DevshardStateRootAndProtocolVersion`) is not touched, and vote content is not
   in the root, so every existing vector must still pass byte-for-byte. A vector
@@ -825,8 +826,10 @@ Classifier (`common/completionapi`) — this is the consensus rule:
   hashes the whole body, including the error).
 - Error event with `completion_tokens > 0` → `ok == true` (token counts are
   host-reported and do not veto an error envelope).
+- Unparseable `data:` JSON (alone or after an error) → `ok == true` (junk cannot veto).
 - Empty stream (role + `[DONE]`, no error object) → `ok == false`
   (that stays the empty-stream path).
+- Happy-path content, no error → `ok == false`.
 
 Verifier (`devshard/host`, `devshard/transport`):
 
@@ -845,8 +848,8 @@ Verifier (`devshard/host`, `devshard/transport`):
 - **Lying host:** Finish reports `OutputTokens = 7` but the pinned body is an
   error envelope → `accept`. This is the regression test that keeps the verdict
   on the body rather than on self-reported usage.
-- Body with real content and a trailing error event → reject, even when the
-  Finish reports `OutputTokens = 0`.
+- Body with real content and a trailing error event → `accept` (signed Finish is
+  the proof).
 - `sha256(response_payload) != msg.ResponseHash` → reject (covers a gateway that
   substitutes, truncates or re-serializes the body).
 - `response_payload` absent or empty → reject.
@@ -864,14 +867,14 @@ Verifier (`devshard/host`, `devshard/transport`):
 Gateway (`devshard/cmd/devshardctl`):
 
 - Error-stream attempt end to end: client still gets the original error status
-  and body, one diff carries Finish + `ERROR` timeout, `Missed == 1`, request is
+  and body, one diff carries Finish + `MsgErrorMiss`, `Missed == 1`, request is
   not billed as finished.
 - **No-wait assertion:** run with a realistic `ExecutionTimeout` (e.g. `32*60`,
   not the `1`s the existing proxy tests use at `proxy_test.go:709`) and assert the
   miss is applied in well under a second. Existing timeout tests pass only because
   they shrink the config; this path must not need that.
-- Content-then-error / non-terminal capability error → no `ERROR` timeout
-  emitted. (There is no env flag to silence emit.)
+- Content-then-error still emits (`errorTerminal`); non-terminal capability error
+  → no `MsgErrorMiss`. (There is no env flag to silence emit.)
 - Insufficient votes → today's behaviour, request still fails cleanly.
 
 E2E (`devshard/testenv/citest`): mock-openai fault returning `200` + SSE error
