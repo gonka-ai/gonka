@@ -178,7 +178,9 @@ func (h *HybridStorage) postgresBackend() Storage {
 
 // Ready reports whether the router can serve. A degraded / SQLite-only router
 // (no Postgres attached) is always ready for the escrows it owns. When Postgres
-// is attached, readiness tracks its async session-index rebuild.
+// is attached, readiness tracks its async session-index rebuild and live
+// database health. Application-pool saturation is reported separately and does
+// not by itself make the router unready.
 func (h *HybridStorage) Ready() bool {
 	pg := h.postgresBackend()
 	if pg == nil {

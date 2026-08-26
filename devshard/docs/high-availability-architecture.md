@@ -194,6 +194,14 @@ Operator signals (versiond / host logs and Prometheus):
 - `reconcile_fast_forward` — expected on failover onto a lagging replica.
 - `diff_persist_retry` / `devshard_diff_persist_retry_total` — transient Postgres blips.
 - `diff_fork_detected` / `devshard_diff_fork_detected_total` — **must stay 0** in healthy HA; non-zero means real divergence and needs alert investigation.
+- `postgres readiness lost` / `postgres readiness recovered` — the live database
+  failed or recovered across the two-probe readiness hysteresis. The devshardd
+  process stays alive; `/readyz` returns `503` while database readiness is lost.
+- `devshard_postgres_health_probe_total{result="success|database_error"}` —
+  outcomes from the dedicated PostgreSQL health connection.
+- `devshard_postgres_pool_saturated` — whether all application-pool connections
+  were in use at the latest probe. Saturation is reported independently and does
+  not by itself make `/readyz` fail.
 
 Gateway catch-up and sticky failover remain independent: router
 `proxy_next_upstream` moves the HTTP request; host reconcile heals RAM from
