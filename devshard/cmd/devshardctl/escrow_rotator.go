@@ -27,6 +27,8 @@ const (
 	escrowWriteRetryBackoff = 200 * time.Millisecond
 
 	commitmentReconcileGrace = 9*time.Minute + 2*time.Minute
+
+	settleDrainingReason = "settle requested; draining background work"
 )
 
 var (
@@ -630,16 +632,22 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 	log.Printf("devshard_settle_start escrow=%s", id)
 	g.mu.Lock()
 	rt, ok := g.runtimes[id]
-	if ok && rt.escrowHasBackgroundWork() {
-		g.mu.Unlock()
-		log.Printf("devshard_settle_blocked escrow=%s reason=background_work active_requests=%d pending_race_cleanup=%d",
-			id, rt.activeUserRequests.Load(), rt.pendingRaceCleanup.Load())
-		return nil, errDevshardBusy
-	}
+	var activeRequests, pendingCleanup int64
 	if ok {
+		activeRequests, pendingCleanup = rt.activeUserRequests.Load(), rt.pendingRaceCleanup.Load()
+	}
+	busy := ok && (activeRequests > 0 || pendingCleanup > 0)
+	if ok && !busy {
 		rt.active.Store(false)
 	}
 	g.mu.Unlock()
+	if busy {
+		g.deactivateDevshardByIDWithReason(id, settleDrainingReason)
+		g.markSettlementPending(id, settleDrainingReason)
+		log.Printf("devshard_settle_blocked escrow=%s reason=background_work active_requests=%d pending_race_cleanup=%d admission=closed",
+			id, activeRequests, pendingCleanup)
+		return nil, errDevshardBusy
+	}
 	wasResident := ok
 	if !ok {
 		// Non-resident devshard (inactive/settled): rehydrate a full runtime

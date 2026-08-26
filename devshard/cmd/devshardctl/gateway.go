@@ -136,6 +136,7 @@ type runtimeStatus struct {
 	Balance              uint64 `json:"balance,omitempty"`
 	SessionVersion       string `json:"session_version,omitempty"`
 	ActiveRequests       int64  `json:"active_requests"`
+	PendingRaceCleanup   int64  `json:"pending_race_cleanup"`
 	ReservedTokens       int64  `json:"reserved_tokens"`
 	ChainPhase           string `json:"chain_phase,omitempty"`
 	ConfirmationPoCPhase string `json:"confirmation_poc_phase,omitempty"`
@@ -638,11 +639,12 @@ func sessionPhaseLabel(phase types.SessionPhase) string {
 
 func (rt *devshardRuntime) snapshot() runtimeStatus {
 	status := runtimeStatus{
-		ID:             rt.id,
-		Model:          rt.model,
-		Active:         rt.active.Load(),
-		ActiveRequests: rt.activeUserRequests.Load(),
-		ReservedTokens: rt.reservedTokens.Load(),
+		ID:                 rt.id,
+		Model:              rt.model,
+		Active:             rt.active.Load(),
+		ActiveRequests:     rt.activeUserRequests.Load(),
+		PendingRaceCleanup: rt.pendingRaceCleanup.Load(),
+		ReservedTokens:     rt.reservedTokens.Load(),
 	}
 	if rt.proxy != nil && rt.proxy.sm != nil && rt.proxy.session != nil {
 		phase := rt.proxy.sm.Phase()
