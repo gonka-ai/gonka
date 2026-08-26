@@ -881,9 +881,9 @@ func TestVersiondReadyTracksTrafficCapacityNotConvergence(t *testing.T) {
 		t.Fatal("serving host with a running child is not ready")
 	}
 
-	// A child process can exist while unable to take a request — devshardd
-	// reports itself unready when its chain subscription drops. Available alone
-	// must not keep the host in the pool.
+	// A child process can exist while unable to take a request, for example when
+	// its storage is unavailable. Available alone must not keep the host in the
+	// pool.
 	conditions.Serving = false
 	if versiondReady(status, conditions) {
 		t.Fatal("host whose children are running but not live-ready is ready")

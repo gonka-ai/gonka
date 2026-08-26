@@ -155,10 +155,12 @@ caller could abuse — it exposes strictly less than `/healthz` already does.
 
 - the host FSM advertises readiness (`serving`), and is accepting;
 - at least one child is running **and** its live readiness is current — a child
-  that lost its chain subscription is running but not serving. The monitor
-  normally withdraws the vouch within one probe interval (1s); a probe can take
-  up to its 2s timeout, and an answer no monitor has refreshed for 5s expires on
-  its own;
+  whose storage is unavailable is running but not serving. A reconnect of the
+  shared chain listener stays route-ready after initial startup because every
+  replica sees that dependency event together while admission remains open. The
+  monitor normally withdraws a failed vouch within one probe interval (1s); a
+  probe can take up to its 2s timeout, and an answer no monitor has refreshed
+  for 5s expires on its own;
 - the manager has run every desired version at least once (`Converged`).
 
 `Converged` latches. Once a versiond has run its full desired set, a later

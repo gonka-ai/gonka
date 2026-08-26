@@ -127,10 +127,12 @@ Lifecycle controls live on a **loopback admin** listener when versiond sets
 `DEVSHARD_ADMIN_ADDR=127.0.0.1:<port>` (after `--print-admin-api-version`
 succeeds). Those paths are **not** registered on the public Echo instance.
 
-1. **`GET /ready` (admin)** — `200` when chain-event subscriptions report ready
-   and the child is not draining; otherwise `503`. versiond also requires
-   public `/healthz` `2xx` before publishing the route for admin-capable
-   children (`waitForChildServingReady`).
+1. **`GET /ready` (admin)** — initial startup requires the chain-event
+   subscriptions to connect. A later reconnect keeps returning `200` because
+   it affects all replicas together while they can still serve existing shard
+   state. Draining or unavailable storage returns `503`. versiond also requires
+   public `/healthz` `2xx` before publishing the route for admin-capable children
+   (`waitForChildServingReady`).
 2. **`GET /drain/status` (admin)** — `{ready, draining, inflight}` from the
    lifecycle middleware (all non-lifecycle HTTP, including full SSE duration).
    Same count as Prometheus `devshardd_lifecycle_inflight_requests`.

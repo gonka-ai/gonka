@@ -2828,10 +2828,10 @@ func zipBinary(t *testing.T, binaryName string, data []byte) ([]byte, string) {
 	return zipData, sha256Hex(zipData)
 }
 
-// A child is probed for readiness once when it starts, but it can lose readiness
-// afterwards — devshardd reports itself unready when its chain subscription
-// drops. If versiond kept answering 200 for that version the balancer would hold
-// a route open to a host that cannot serve.
+// A child is probed for readiness once when it starts, but it can lose serving
+// readiness afterwards, for example when its storage becomes unavailable. If
+// versiond kept answering 200 for that version the balancer would hold a route
+// open to a host that cannot serve.
 func TestServesVersion_FollowsTheChildLosingReadiness(t *testing.T) {
 	ready := atomic.Bool{}
 	ready.Store(true)
