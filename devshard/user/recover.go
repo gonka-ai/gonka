@@ -339,6 +339,7 @@ func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.Stat
 	}
 	restoreHeartbeatProducer(sess, sm)
 	if sess.store == nil {
+		restorePendingTxKeys(sess, nil)
 		return sess, sm, nil
 	}
 	meta, err := sess.store.GetSessionMeta(sess.escrowID)
@@ -352,6 +353,7 @@ func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.Stat
 			return nil, nil, fmt.Errorf("get diffs for validation obs rebuild: %w", err)
 		}
 	}
+	restorePendingTxKeys(sess, records)
 	if err := storage.RebuildValidationObsFromDiffs(
 		sess.store,
 		sess.escrowID,
@@ -361,6 +363,28 @@ func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.Stat
 		return nil, nil, fmt.Errorf("rebuild validation obs: %w", err)
 	}
 	return sess, sm, nil
+}
+
+func restorePendingTxKeys(sess *Session, records []types.DiffRecord) {
+	if sess == nil {
+		return
+	}
+	sess.mu.Lock()
+	defer sess.mu.Unlock()
+	for _, diff := range sess.diffs {
+		for _, tx := range diff.Txs {
+			if key := devshardTxKey(tx); key != "" {
+				sess.pendingTxKeys[key] = struct{}{}
+			}
+		}
+	}
+	for _, rec := range records {
+		for _, tx := range rec.Diff.Txs {
+			if key := devshardTxKey(tx); key != "" {
+				sess.pendingTxKeys[key] = struct{}{}
+			}
+		}
+	}
 }
 
 // restoreHeartbeatProducer continues turn_seq from the reconstructed log
