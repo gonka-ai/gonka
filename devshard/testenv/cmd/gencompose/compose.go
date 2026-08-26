@@ -24,6 +24,9 @@ networks:
       config:
         - subnet: {{ .Network.Subnet }}
 
+volumes:
+  versiond-router-state:
+
 services:
 
   mock-chain:
@@ -201,8 +204,8 @@ services:
 
   versiond-router:
     build:
-      context: ../../versiond-router
-      dockerfile: Dockerfile
+      context: ../..
+      dockerfile: versiond-router/Dockerfile
     image: devshard-versiond-router:latest
     environment:
       VERSIOND_POOL_HOST: "versiond-pool"
@@ -211,13 +214,20 @@ services:
       # future versions sticky-hash across the pool (Devshard-Ha header).
       VERSIOND_LEGACY_HOST: "{{ legacyVersiondHost . }}"
       VERSIOND_NON_HA_VERSIONS: "v1"
-      VERSIOND_VERSIONS: "{{ $.Versiond.VersionName }}"
+      # Keep the current test version out of the static bootstrap floor: this
+      # stack is the end-to-end proof that governance can admit a dynamic slot.
+      VERSIOND_VERSIONS: ""
+      VERSIOND_ROUTING_CATALOG_URL: "http://{{ $.MockDapi.Host }}:{{ $.MockDapi.HTTPPort }}/versions"
+      VERSIOND_ROUTING_CATALOG_POLL_SECONDS: "1"
+      VERSIOND_ROUTING_ACTIVATION_MIN_READY: "{{ routingActivationMinReady . }}"
       # Only the router is told this deployment is HA. The versiond containers
       # are not, so scenarios that deliberately run the pool on sqlite still
       # boot and fail at request time on the storage guard instead.
       GONKA_HA: "{{ haDeployment . }}"
     ports:
       - "{{ .VersiondRouter.Port }}:8080"
+    volumes:
+      - versiond-router-state:/var/lib/gonka-router
     networks:
       testenv:
         ipv4_address: {{ .VersiondRouter.IP }}
@@ -277,15 +287,16 @@ services:
 
 func writeCompose(cfg *config.File, outPath string) error {
 	funcs := template.FuncMap{
-		"versionEnvSuffix":   versionEnvSuffix,
-		"versiondHosts":      versiondHosts,
-		"inVersiondPool":     inVersiondPool,
-		"haDeployment":       haDeployment,
-		"versiondKeyName":    versiondKeyName,
-		"isHAReplica":        isHAReplica,
-		"legacyVersiondHost": legacyVersiondHost,
-		"primaryEscrowID":    primaryEscrowID,
-		"primaryModelID":     primaryModelID,
+		"versionEnvSuffix":          versionEnvSuffix,
+		"versiondHosts":             versiondHosts,
+		"inVersiondPool":            inVersiondPool,
+		"haDeployment":              haDeployment,
+		"routingActivationMinReady": routingActivationMinReady,
+		"versiondKeyName":           versiondKeyName,
+		"isHAReplica":               isHAReplica,
+		"legacyVersiondHost":        legacyVersiondHost,
+		"primaryEscrowID":           primaryEscrowID,
+		"primaryModelID":            primaryModelID,
 	}
 	tmpl, err := template.New("compose").Funcs(funcs).Parse(composeTmpl)
 	if err != nil {
@@ -328,6 +339,15 @@ func haDeployment(cfg *config.File) string {
 		return "true"
 	}
 	return ""
+}
+
+// routingActivationMinReady keeps catalog admission possible in single mode
+// while requiring both members of the sticky HA pair in multi mode.
+func routingActivationMinReady(cfg *config.File) int {
+	if len(strings.Fields(versiondHosts(cfg))) > 1 {
+		return 2
+	}
+	return 1
 }
 
 // inVersiondPool reports whether the router should route sticky traffic to this

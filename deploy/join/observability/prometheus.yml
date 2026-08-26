@@ -19,6 +19,15 @@ scrape_configs:
       - url: http://api:9100/sd/devshardd
         refresh_interval: 15s
 
+  - job_name: versiond-router
+    metrics_path: /metrics
+    dns_sd_configs:
+      - names:
+          - versiond-router
+        type: A
+        port: 8405
+        refresh_interval: 15s
+
   - job_name: gonka-node
     static_configs:
       - targets:
@@ -36,4 +45,3 @@ scrape_configs:
     static_configs:
       - targets:
           - cadvisor:8080
-

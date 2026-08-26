@@ -86,7 +86,10 @@ services:
 
   versiond-router:
     container_name: versiond-router
-    image: ghcr.io/product-science/versiond-router:0.2.15
+    image: ${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15}
+    # Each image owns its graceful-stop signal: the transitional nginx image
+    # uses SIGQUIT, while the HAProxy image declares SIGUSR1.
+    stop_grace_period: ${VERSIOND_ROUTER_STOP_GRACE_PERIOD:-10s}
     environment:
       # The HAProxy router discovers every replica through this shared DNS
       # alias. Keep VERSIOND_HOSTS during the image transition because the
@@ -106,13 +109,66 @@ services:
       # Bootstrap only the HA versions shipped with this deployment. Future
       # names come from governance rather than being guessed in Compose.
       - VERSIOND_VERSIONS=${VERSIOND_VERSIONS-v4 v5}
+      # Catalog activation is release-driven. The published 0.2.15 image is the
+      # legacy nginx router, so its safe default is empty. A release must supply
+      # both a catalog-aware VERSIOND_ROUTER_IMAGE and this URL.
+      - VERSIOND_ROUTING_CATALOG_URL=${VERSIOND_ROUTING_CATALOG_URL:-}
+      - VERSIOND_ROUTING_CATALOG_POLL_SECONDS=${VERSIOND_ROUTING_CATALOG_POLL_SECONDS:-5}
+      - VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=${VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS:-3}
+      - VERSIOND_ROUTING_CATALOG_MAX_BYTES=${VERSIOND_ROUTING_CATALOG_MAX_BYTES:-1048576}
+      - VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS=${VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS:-2}
+      - VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=${VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS:-86400}
+      # This overlay declares two versiond replicas; do not publish a newly
+      # approved route until both replicas report it ready.
+      - VERSIOND_ROUTING_ACTIVATION_MIN_READY=${VERSIOND_ROUTING_ACTIVATION_MIN_READY:-2}
+      # The source has no monotonic revision. Remove accepted routes only during
+      # an explicitly supervised maintenance run.
+      - VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=${VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS:-false}
+      - VERSIOND_ROUTER_VERSION_CAPACITY=${VERSIOND_ROUTER_VERSION_CAPACITY:-32}
       - VERSIOND_ROUTER_ALLOW_COARSE_READINESS=${VERSIOND_ROUTER_ALLOW_COARSE_READINESS:-false}
+      - VERSIOND_ROUTER_ADMIN_PORT=${VERSIOND_ROUTER_ADMIN_PORT:-8404}
+      - VERSIOND_ROUTER_FRONT_BIND_HOST=${VERSIOND_ROUTER_FRONT_BIND_HOST:-}
+      - HAPROXY_DNS_RESOLVER=${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}
+      # Internal-only exporter bind for the optional observability overlay.
+      - VERSIOND_ROUTER_METRICS_BIND_HOST=${VERSIOND_ROUTER_METRICS_BIND_HOST:-versiond-router}
+    volumes:
+      - versiond-router-state:/var/lib/gonka-router
     depends_on:
       - versiond
       - versiond2
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          if [ -x /usr/local/lib/router-runtime/catalog-reconciler ]; then
+            if [ -z "$$VERSIOND_ROUTING_CATALOG_URL" ]; then
+              echo 'catalog-capable versiond-router requires VERSIOND_ROUTING_CATALOG_URL' >&2;
+              exit 1;
+            fi;
+            wget -q -O - "http://127.0.0.1:$${VERSIOND_ROUTER_ADMIN_PORT}/livez";
+          else
+            if [ -n "$$VERSIOND_ROUTING_CATALOG_URL" ]; then
+              echo 'VERSIOND_ROUTING_CATALOG_URL requires a catalog-capable versiond-router image' >&2;
+              exit 1;
+            fi;
+            wget -q -O - 'http://127.0.0.1:8080/healthz';
+          fi
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
     restart: always
 
   proxy:
+    depends_on:
+      versiond-router:
+        condition: service_healthy
+        # A router image/catalog mismatch must remain visible as unhealthy, but
+        # it must not block public APIs that do not use the devshard route.
+        required: false
     environment:
       - VERSIOND_SERVICE_NAME=versiond-router
       - VERSIOND_PORT=8080
+
+volumes:
+  versiond-router-state:

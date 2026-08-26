@@ -2,7 +2,8 @@
 #
 #   versiond_ha_pool  — "are you able to serve?", the host-level fallback for a
 #                       version the router has not been told about
-#   versiond_pool_<v> — "are you able to serve <v>?", one per declared version
+#   versiond_pool_<v> / versiond_dynamic_<n> — "are you able to serve <v>?",
+#                            one per bootstrap or governance version
 #   versiond_legacy_<v> — the same per-version question, asked of the one host
 #                         that owns this pinned version's SQLite data
 #
@@ -17,18 +18,24 @@ backend ${BACKEND_NAME}
     balance hash var(txn.hashkey)
     hash-type consistent
 
+    # The admin frontend selects this backend through the live version map, then
+    # asks it to report the result of the same two-step active check that gates
+    # data traffic. Returning here preserves the pre-v5 /<version>/healthz
+    # fallback without forwarding /readyz to a supervisor that does not have it.
+    http-request return status 200 content-type text/plain string "ready\n" if { var(txn.router_admin_ready) -m found } { nbsrv(${BACKEND_NAME}) gt 0 }
+    http-request return status 503 content-type text/plain string "not ready\n" if { var(txn.router_admin_ready) -m found }
+
     option httpchk
-    # Readiness is authoritative when the upstream implements it: 503 removes
-    # a starting or draining host. A 404 identifies a legacy versiond, whose
-    # route health is the only readiness contract available during a mixed
-    # rollout.
+    # v5 readiness is authoritative: 503 removes a starting or draining host.
+    # A 404 identifies a pre-v5 versiond, whose route health is the only
+    # readiness contract available during rollback and mixed-version cutover.
     # The second request is required in both cases, so accepting 404 never
     # admits a legacy process that cannot actually serve this backend.
     http-check connect
-    http-check send meth GET uri ${READYZ_URI}
+    ${READY_CHECK_SEND}
     http-check expect status 200,404
     http-check connect
-    http-check send meth GET uri ${ROUTE_HEALTH_URI}
+    ${ROUTE_CHECK_SEND}
     http-check expect status 200
 
     # safe never reuses a pooled connection for a request that could not be
@@ -36,8 +43,10 @@ backend ${BACKEND_NAME}
     # where a POST is written into a connection the peer is already closing.
     http-reuse safe
 
+    # Keep the first connection retry on the consistent-hash owner. If it still
+    # cannot connect, the final retry may use another healthy server.
     option redispatch
-    retry-on conn-failure empty-response 502
+    ${RETRY_ON}
     retries 2
     # Mirrors nginx's absent non_idempotent: connection-level redispatch for
     # everything, request replay only for idempotent methods.
@@ -60,4 +69,4 @@ backend ${BACKEND_NAME}
     # init-state fully-down: a freshly resolved address is not assumed healthy.
     # Without it a host entering DNS is selectable before its first check has
     # run, which is a window straight onto a versiond that is still starting.
-    server-template versiond ${BACKEND_SLOTS} ${BACKEND_HOST}:${VERSIOND_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr
+    server-template versiond ${BACKEND_SLOTS} ${BACKEND_HOST}:${VERSIOND_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr ${SERVER_STATE}

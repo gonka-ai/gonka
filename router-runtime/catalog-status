@@ -1,0 +1,50 @@
+#!/bin/sh
+
+# Print the version names currently published in an HAProxy Runtime API map.
+set -eu
+
+if [ "${1:-}" = --state ]; then
+    state=${2:-${ROUTING_CATALOG_STATUS_FILE:-/var/run/haproxy/catalog-status.json}}
+    [ "$#" -le 2 ] || {
+        echo "usage: catalog-status MAP_FILE | --state [STATUS_FILE]" >&2
+        exit 1
+    }
+    poll_seconds=${VERSIOND_ROUTING_CATALOG_POLL_SECONDS:-5}
+    max_age=${ROUTING_CATALOG_STATUS_MAX_AGE_SECONDS:-}
+    if [ -z "$max_age" ]; then
+        case "$poll_seconds" in
+            '' | *[!0-9]* | 0)
+                echo "catalog-status: catalog poll interval must be a positive integer" >&2
+                exit 1
+                ;;
+        esac
+        max_age=$((poll_seconds * 3 + 5))
+    fi
+    case "$max_age" in
+        '' | *[!0-9]* | 0)
+            echo "catalog-status: status max age must be a positive integer" >&2
+            exit 1
+            ;;
+    esac
+    now=$(date +%s)
+    jq -e --argjson now "$now" --argjson max_age "$max_age" '
+        if .schema != 1 or
+           ((.observed_at_unix | type) != "number") or
+           .observed_at_unix < 0 or
+           (.observed_at_unix | floor) != .observed_at_unix or
+           .observed_at_unix > $now
+        then error("invalid catalog status")
+        elif ($now - .observed_at_unix) > $max_age
+        then .state = "stale"
+             | .detail = "catalog reconciler status is stale"
+        else .
+        end
+    ' "$state"
+    exit
+fi
+
+socket=${ROUTING_CATALOG_STATUS_SOCKET:-/var/run/haproxy/haproxy.sock}
+map=${1:?usage: catalog-status MAP_FILE | --state [STATUS_FILE]}
+
+printf 'show map %s\n' "$map" | socat - "UNIX-CONNECT:$socket" | \
+    awk 'NF >= 3 && $2 !~ /^version=/ { print $2 }' | LC_ALL=C sort -u

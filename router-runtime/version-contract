@@ -1,0 +1,43 @@
+#!/bin/sh
+
+# Shared representation rules and Runtime API limits used by the router
+# renderer, persistent cache, and HAProxy Runtime API reconciler.
+
+# enable/disable commands for one backend are sent as one Runtime API batch so
+# HAProxy either accepts the whole server set or rejects it before mutation.
+# With HAProxy's default 16 KiB buffer, 256 generated server commands occupy
+# less than 12 KiB with the stock backend and server names.
+# shellcheck disable=SC2034 # Public constant for scripts that source this file.
+ROUTER_RUNTIME_BATCH_SERVER_LIMIT=256
+
+router_version_is_valid() {
+    printf '%s\n' "$1" | LC_ALL=C grep -Eq \
+        '^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}$'
+}
+
+router_urlencode_stream() {
+    awk '
+        BEGIN { for (i = 0; i < 256; i++) ord[sprintf("%c", i)] = i }
+        {
+            encoded = ""
+            n = split($0, c, "")
+            for (i = 1; i <= n; i++) {
+                if (c[i] ~ /[A-Za-z0-9._~-]/) encoded = encoded c[i]
+                else encoded = encoded sprintf("%%%02X", ord[c[i]])
+            }
+            print encoded
+        }'
+}
+
+router_urlencode() {
+    printf '%s\n' "$1" | router_urlencode_stream
+}
+
+router_name_in_file() {
+    awk -v version="$2" \
+        '$0 "" == version "" { found = 1 } END { exit !found }' "$1"
+}
+
+router_first_duplicate() {
+    LC_ALL=C sort "$1" | uniq -d | sed -n '1p'
+}
