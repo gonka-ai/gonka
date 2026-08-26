@@ -347,6 +347,10 @@ host lifecycle is intentionally delivered as a separate change.
 | `VERSIOND_ROUTER_VERSION_CAPACITY` | `32` | pre-rendered slots for names added after startup |
 | `VERSIOND_ROUTER_ALLOW_COARSE_READINESS` | *(unset)* | allow an HA deployment to run with no declared versions, accepting that a host with one unready version keeps receiving its traffic. Same boolean grammar |
 | `GONKA_HA` | *(unset)* | authoritative HA deployment latch; stamps `Devshard-Ha` even while only one pool member is usable. With it off, the router still stamps the header whenever more than one host is usable in the selected backend. Booleans share one grammar with devshardd: `1/t/true/yes/on` on, empty/`0/f/false/no/off` off, anything else refuses to start |
+| `VERSIOND_ROUTER_ADMIN_PORT` | `8404` | internal liveness/readiness listener port; the shipped Compose healthcheck follows this value |
+| `VERSIOND_ROUTER_FRONT_BIND_HOST` | *(empty)* | optional container hostname whose IPv4 address receives the data and admin listeners. Empty binds both listeners on all container interfaces; a named interface keeps an additional loopback admin bind |
+| `VERSIOND_ROUTER_METRICS_BIND_HOST` | *(empty)* | optional container hostname whose IPv4 address receives a second metrics bind. Metrics always remain available on loopback; the join overlay sets `versiond-router` for its internal Prometheus scraper |
+| `HAPROXY_DNS_RESOLVER` | `127.0.0.11:53` | numeric DNS resolver address, with an optional port, used by HAProxy `server-template` slots |
 | `VERSIOND_ROUTER_POOL_SLOTS` | `64` | maximum simultaneous pool members; the resolver accepts DNS payloads up to 8192 bytes so the default pool fits in one answer |
 | `VERSIOND_ROUTER_MAX_CONNECTIONS` | `4096` | frontend `maxconn` |
 | `VERSIOND_ROUTER_MAX_BODY_BYTES` | `10485760` | early 413 for an advertised `Content-Length` above this value. `devshardd` independently caps actual bytes at 10 MiB, including chunked bodies and direct-router traffic |
@@ -382,6 +386,7 @@ any config or runtime-map mutation.
 | `/metrics` | `127.0.0.1:8405` inside the container | Prometheus exporter; the join HA overlay also binds it to the internal Compose network for DNS-based scraping, never to a host port |
 | Diagnostic Runtime API | `/var/run/haproxy/haproxy.sock` | local `level user` socket, no TCP bind; raw HAProxy map commands remain writable |
 | Reconciler Runtime API | `/var/run/haproxy/reconciler.sock` | local `level admin` socket used for catalog map and server-state changes |
+| Admin HTTP | port `8404` inside the container | liveness and readiness only; wildcard-bound by default or restricted to loopback plus `VERSIOND_ROUTER_FRONT_BIND_HOST`; never published on a host port by the shipped Compose files |
 | Catalog status | `/usr/local/lib/router-runtime/catalog-status --state` | current reconciler state; reports `stale` when updates stop |
 | Catalog readiness | `GET http://127.0.0.1:8404/readyz?component=catalog` | `200` only when the enabled catalog is fully reconciled; independent of data-plane readiness for accepted routes |
 | Version readiness | `GET http://127.0.0.1:8404/readyz?version=<v>` | resolves `<v>` through the live route map and reports the selected backend's active-check state; the request is not forwarded upstream |
@@ -406,13 +411,14 @@ overlay only bounds the drain with `VERSIOND_ROUTER_STOP_GRACE_PERIOD` (default
 `10s`) before Docker forces termination, so selecting one image cannot override
 the shutdown contract of the other.
 
-Neither the metrics endpoint nor either Runtime API socket is reachable from
-outside the container, and the container runs as the unprivileged `haproxy` user
-from the base image — root is used only at build time to install packages and
-hand over the config and socket directories. Processes with filesystem access
-inside the container share that trust boundary; the two socket levels reduce
-accidental privilege, not a hostile same-UID process. Scrape metrics with a
-sidecar or `docker compose exec`.
+The shipped Compose files do not publish the admin or metrics listener on a host
+port. They can be reached by containers on the same internal network when their
+network bind is enabled; both Runtime API sockets remain filesystem-only. The
+container runs as the unprivileged `haproxy` user from the base image — root is
+used only at build time to install packages and hand over the config and socket
+directories. Processes with filesystem access inside the container share that
+trust boundary; the two socket levels reduce accidental privilege, not a hostile
+same-UID process.
 
 ## Tests
 

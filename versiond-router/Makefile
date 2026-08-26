@@ -52,13 +52,13 @@ test-join-compose:
 	jq -e '.services["versiond-router"].volumes | any(.type == "volume" and .source == "versiond-router-state" and .target == "/var/lib/gonka-router")' \
 		"$$tmp_json" >/dev/null \
 		|| { echo 'test-join-compose: router catalog state is not persistent' >&2; exit 1; }; \
-	jq -e '.services["versiond-router"].healthcheck.test | join(" ") as $$check | ($$check | contains("-x /usr/local/lib/router-runtime/catalog-reconciler")) and ($$check | contains("catalog-capable versiond-router requires VERSIOND_ROUTING_CATALOG_URL")) and ($$check | contains("VERSIOND_ROUTING_CATALOG_URL requires a catalog-capable versiond-router image")) and ($$check | contains("127.0.0.1:8404/livez")) and ($$check | contains("127.0.0.1:8404/readyz") | not) and ($$check | contains("127.0.0.1:8080/healthz"))' \
+	jq -e '.services["versiond-router"].healthcheck.test | join(" ") as $$check | ($$check | contains("-x /usr/local/lib/router-runtime/catalog-reconciler")) and ($$check | contains("catalog-capable versiond-router requires VERSIOND_ROUTING_CATALOG_URL")) and ($$check | contains("VERSIOND_ROUTING_CATALOG_URL requires a catalog-capable versiond-router image")) and ($$check | contains("VERSIOND_ROUTER_ADMIN_PORT")) and ($$check | contains("/livez")) and ($$check | contains("/readyz") | not) and ($$check | contains("127.0.0.1:8080/healthz"))' \
 		"$$tmp_json" >/dev/null \
 		|| { echo 'test-join-compose: router healthcheck does not validate image/catalog compatibility and probe liveness' >&2; exit 1; }; \
 	healthcheck=$$(jq -r '.services["versiond-router"].healthcheck.test[1]' \
 		"$$tmp_json" | sed 's/\$$\$$/\$$/g' \
 		| sed "s#/usr/local/lib/router-runtime/catalog-reconciler#$$tmp_capability#g"); \
-	probe_healthcheck() ( wget() { return 0; }; eval "$$healthcheck"; ); \
+	probe_healthcheck() ( VERSIOND_ROUTER_ADMIN_PORT=8404; export VERSIOND_ROUTER_ADMIN_PORT; wget() { return 0; }; eval "$$healthcheck"; ); \
 	VERSIOND_ROUTING_CATALOG_URL= probe_healthcheck \
 		|| { echo 'test-join-compose: legacy image without catalog URL was rejected' >&2; exit 1; }; \
 	if VERSIOND_ROUTING_CATALOG_URL=http://api:9100/versions \
@@ -115,6 +115,10 @@ test-join-compose:
 	VERSIOND_ROUTING_ACTIVATION_MIN_READY=1 \
 	VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=true \
 	VERSIOND_ROUTER_VERSION_CAPACITY=19 \
+	VERSIOND_ROUTER_ADMIN_PORT=18404 \
+	VERSIOND_ROUTER_FRONT_BIND_HOST=router-front \
+	VERSIOND_ROUTER_METRICS_BIND_HOST=router-metrics \
+	HAPROXY_DNS_RESOLVER=10.96.0.10:53 \
 	DEVSHARD_POSTGRES_PASSWORD=test \
 		docker compose --project-directory ../deploy/join \
 		-f ../deploy/join/docker-compose.yml \
@@ -131,7 +135,11 @@ test-join-compose:
 		'VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS: "17"' \
 		'VERSIOND_ROUTING_ACTIVATION_MIN_READY: "1"' \
 		'VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS: "true"' \
-		'VERSIOND_ROUTER_VERSION_CAPACITY: "19"'; do \
+		'VERSIOND_ROUTER_VERSION_CAPACITY: "19"' \
+		'VERSIOND_ROUTER_ADMIN_PORT: "18404"' \
+		'VERSIOND_ROUTER_FRONT_BIND_HOST: router-front' \
+		'VERSIOND_ROUTER_METRICS_BIND_HOST: router-metrics' \
+		'HAPROXY_DNS_RESOLVER: 10.96.0.10:53'; do \
 		grep -q "$$expected" "$$tmp" \
 			|| { echo "test-join-compose: override '$$expected' was ignored" >&2; exit 1; }; \
 	done; \
@@ -1738,7 +1746,30 @@ test-render: test-local-compose test-join-compose test-catalog-cache test-hash-r
 		./entrypoint.sh >/dev/null 2>&1; then \
 		fail "an unsafe DNS resolver token was accepted"; \
 	fi; \
-	for cfg in mixed allha; do \
+	mkdir "$$tmpdir/bin"; \
+	printf '%s\n' '#!/bin/sh' \
+		'case "$$2" in' \
+		'  router-front) printf "%s\\n" "192.0.2.10 STREAM router-front" ;;' \
+		'  router-metrics) printf "%s\\n" "192.0.2.11 STREAM router-metrics" ;;' \
+		'  *) exec /usr/bin/getent "$$@" ;;' \
+		'esac' > "$$tmpdir/bin/getent"; \
+	chmod +x "$$tmpdir/bin/getent"; \
+	PATH="$$tmpdir/bin:$$PATH" HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+		VERSIOND_ROUTER_ADMIN_PORT=18404 \
+		VERSIOND_ROUTER_FRONT_BIND_HOST=router-front \
+		VERSIOND_ROUTER_METRICS_BIND_HOST=router-metrics \
+		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+		VERSIOND_ROUTER_OUT="$$tmpdir/custom-bind.cfg" \
+		VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/custom-bind.map" \
+		VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/custom-bind.versions.map" \
+		./entrypoint.sh; \
+	grep -q '^[[:space:]]*bind 192.0.2.10:8080' "$$tmpdir/custom-bind.cfg" \
+		&& grep -q '^[[:space:]]*bind 127.0.0.1:18404' "$$tmpdir/custom-bind.cfg" \
+		&& grep -q '^[[:space:]]*bind 192.0.2.10:18404' "$$tmpdir/custom-bind.cfg" \
+		&& grep -q '^[[:space:]]*bind 192.0.2.11:8405' "$$tmpdir/custom-bind.cfg" \
+		|| fail "custom router bind settings were not rendered"; \
+	for cfg in mixed allha custom-bind; do \
 		docker run --rm --user "$$(id -u):$$(id -g)" -v "$$tmpdir:$$tmpdir:ro" $(HAPROXY_IMAGE) \
 			haproxy -c -f "$$tmpdir/$$cfg.cfg" >/dev/null \
 			|| fail "$$cfg.cfg is not valid HAProxy configuration"; \

@@ -126,6 +126,9 @@ services:
       - VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=${VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS:-false}
       - VERSIOND_ROUTER_VERSION_CAPACITY=${VERSIOND_ROUTER_VERSION_CAPACITY:-32}
       - VERSIOND_ROUTER_ALLOW_COARSE_READINESS=${VERSIOND_ROUTER_ALLOW_COARSE_READINESS:-false}
+      - VERSIOND_ROUTER_ADMIN_PORT=${VERSIOND_ROUTER_ADMIN_PORT:-8404}
+      - VERSIOND_ROUTER_FRONT_BIND_HOST=${VERSIOND_ROUTER_FRONT_BIND_HOST:-}
+      - HAPROXY_DNS_RESOLVER=${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}
       # Internal-only exporter bind for the optional observability overlay.
       - VERSIOND_ROUTER_METRICS_BIND_HOST=${VERSIOND_ROUTER_METRICS_BIND_HOST:-versiond-router}
     volumes:
@@ -142,7 +145,7 @@ services:
               echo 'catalog-capable versiond-router requires VERSIOND_ROUTING_CATALOG_URL' >&2;
               exit 1;
             fi;
-            wget -q -O - 'http://127.0.0.1:8404/livez';
+            wget -q -O - "http://127.0.0.1:$${VERSIOND_ROUTER_ADMIN_PORT}/livez";
           else
             if [ -n "$$VERSIOND_ROUTING_CATALOG_URL" ]; then
               echo 'VERSIOND_ROUTING_CATALOG_URL requires a catalog-capable versiond-router image' >&2;
