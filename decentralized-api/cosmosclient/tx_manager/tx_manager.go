@@ -93,6 +93,10 @@ type TxManager interface {
 	RefreshFeeTree(fp *types.FeeParams)
 	SetStoreCommitPrev(prev map[string]uint32)
 	SetHardwarePrev(nodes []*types.HardwareNode)
+	SimulateMsgs(msgs []sdk.Msg) (uint64, error)
+	SetStoreCommitIntrinsic(gas uint64, calibratedEntries uint)
+	ClearStoreCommitIntrinsic()
+	StoreCommitRawLeaf() (rate, base uint64, loaded bool)
 }
 
 type blockTimeTracker struct {
@@ -845,6 +849,25 @@ func (m *manager) SetHardwarePrev(nodes []*types.HardwareNode) {
 	}
 }
 
+func (m *manager) SetStoreCommitIntrinsic(gas uint64, calibratedEntries uint) {
+	if m.feeTree != nil {
+		m.feeTree.SetStoreCommitIntrinsic(gas, calibratedEntries)
+	}
+}
+
+func (m *manager) ClearStoreCommitIntrinsic() {
+	if m.feeTree != nil {
+		m.feeTree.ClearStoreCommitIntrinsic()
+	}
+}
+
+func (m *manager) StoreCommitRawLeaf() (rate, base uint64, loaded bool) {
+	if m.feeTree == nil {
+		return 0, 0, false
+	}
+	return m.feeTree.RawStoreCommitLeaf()
+}
+
 func (m *manager) BroadcastMessages(id string, msgs ...sdk.Msg) (*sdk.TxResponse, time.Time, error) {
 	return m.broadcastMessagesAtAttempt(id, 0, msgs)
 }
@@ -879,15 +902,9 @@ func (m *manager) broadcastMessagesAtAttemptWithOpts(id string, attempt int, msg
 		return nil, time.Time{}, err
 	}
 
-	finalMsgs := msgs
-	if !m.apiAccount.IsSignerTheMainAccount() {
-		granteeAddress, err := m.apiAccount.SignerAddress()
-		if err != nil {
-			return nil, time.Time{}, fmt.Errorf("failed to get signer address: %w", err)
-		}
-		execMsg := authztypes.NewMsgExec(granteeAddress, msgs)
-		finalMsgs = []sdk.Msg{&execMsg}
-		logging.Debug("Using authz MsgExec", types.Messages, "grantee", granteeAddress.String(), "msgCount", len(msgs))
+	finalMsgs, err := m.wrapAuthzIfNeeded(msgs)
+	if err != nil {
+		return nil, time.Time{}, err
 	}
 
 	unsignedTx, err := factory.BuildUnsignedTx(finalMsgs...)
@@ -1071,6 +1088,40 @@ func hardwareDiffSimFactory(factory tx.Factory, name string, price int64, timeou
 	return sim
 }
 
+func (m *manager) wrapAuthzIfNeeded(msgs []sdk.Msg) ([]sdk.Msg, error) {
+	if m.apiAccount == nil || m.apiAccount.IsSignerTheMainAccount() {
+		return msgs, nil
+	}
+	granteeAddress, err := m.apiAccount.SignerAddress()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get signer address: %w", err)
+	}
+	execMsg := authztypes.NewMsgExec(granteeAddress, msgs)
+	logging.Debug("Using authz MsgExec", types.Messages, "grantee", granteeAddress.String(), "msgCount", len(msgs))
+	return []sdk.Msg{&execMsg}, nil
+}
+
+func (m *manager) SimulateMsgs(msgs []sdk.Msg) (uint64, error) {
+	if len(msgs) == 0 {
+		return 0, errors.New("no messages to simulate")
+	}
+	factory, err := m.getFactory("simulate")
+	if err != nil {
+		return 0, err
+	}
+	finalMsgs, err := m.wrapAuthzIfNeeded(msgs)
+	if err != nil {
+		return 0, err
+	}
+	price := m.minGasPriceNgonka
+	if m.feeTree != nil {
+		if p := m.feeTree.PriceForMsgs(msgs); p > price {
+			price = p
+		}
+	}
+	return m.simulateMsgsGas(factory, finalMsgs, price)
+}
+
 func (m *manager) simulateMsgsGas(factory *tx.Factory, msgs []sdk.Msg, price int64) (uint64, error) {
 	if factory == nil {
 		return 0, errors.New("tx factory is nil")
@@ -1112,9 +1163,10 @@ func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory
 	// Fee amount = gasWanted × gas price. gasWanted is sized per-batch by
 	// estimateBatchGas (see gas_estimate.go) instead of a constant, so
 	// routine txs aren't billed at the worst-case PoC commit ceiling.
-	// HardwareDiff additionally simulates on attempt 0 so a full inventory
-	// rewrite is not stuck at the static 500k floor. StoreCommit stays on
-	// the static formula (no Simulate on the PoC path).
+	// HardwareDiff additionally simulates on attempt 0; a working sim is
+	// padded 1.2× and is not raised back to the static 550k floor.
+	// StoreCommit sizes from the once-per-stage dummy Simulate cached on
+	// the fee tree (fallback: static formula).
 	price := m.minGasPriceNgonka
 	if m.feeTree != nil {
 		if p := m.feeTree.PriceForMsgs(msgs); p > price {

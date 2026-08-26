@@ -98,45 +98,68 @@ const (
 	gasDefaultEstimate = uint64(500_000)
 )
 
-// GasHints carries cached fee-tree rates and StoreCommit lastCommitted
-// counts into the estimator. Empty hints keep first-of-stage (total count) math.
+// GasHints is the estimator snapshot from FeeTreeCache.
+// StoreCommit and HardwareDiff fields are only read by those estimators.
 type GasHints struct {
-	StoreCommitPrev    map[string]uint32
-	StoreCommitRate    uint64
-	StoreCommitBase    uint64
-	HasStoreCommitRate bool
-	HasStoreCommitBase bool
-	HDGasPerByte       uint64
-	HDUnitSize         uint64 // 1 (b), 1000 (kb), or 1_000_000 (mb); 0 treated as 1
-	HasHDGasPerByte    bool
-	FeeTreeLoaded      bool
-	HardwarePrev       []*inferencetypes.HardwareNode
+	FeeTreeLoaded bool
+	StoreCommit   StoreCommitGas
+	HardwareDiff  HardwareDiffGas
 }
 
-func (h GasHints) pocRate() uint64 {
-	if h.HasStoreCommitRate {
-		return h.StoreCommitRate
+// StoreCommitGas is split by estimator path.
+// Static fallback uses Padded* + Prev. Measured uses Intrinsic/Entries + Chain*.
+type StoreCommitGas struct {
+	Prev map[string]uint32 // last committed counts this stage (both paths)
+
+	// Static fallback: DAPI-padded tree leaves (100→150, 500k→600k).
+	HasRate    bool
+	HasBase    bool
+	PaddedRate uint64
+	PaddedBase uint64
+
+	// Measured path: once-per-stage dummy Simulate.
+	HasMeasured       bool
+	MeasuredIntrinsic uint64
+	MeasuredEntries   uint // dummy entry count; more entries → static
+	ChainRate         uint64
+	ChainBase         uint64
+}
+
+// HardwareDiffGas is the static extra-bytes formula. A successful Simulate
+// does not read these; they are the fallback when Simulate fails.
+type HardwareDiffGas struct {
+	Prev          []*inferencetypes.HardwareNode
+	HasGasPerByte bool
+	GasPerByte    uint64
+	UnitSize      uint64 // 1 (b), 1000 (kb), or 1_000_000 (mb); 0 treated as 1
+}
+
+func (h GasHints) storeCommitStaticRate() uint64 {
+	sc := h.StoreCommit
+	if sc.HasRate {
+		return sc.PaddedRate
 	}
 	if h.FeeTreeLoaded {
 		return 0
 	}
-	if h.StoreCommitRate == 0 {
+	if sc.PaddedRate == 0 {
 		return gasPoCV2PerCount
 	}
-	return h.StoreCommitRate
+	return sc.PaddedRate
 }
 
-func (h GasHints) pocBase() uint64 {
-	if h.HasStoreCommitBase {
-		return h.StoreCommitBase
+func (h GasHints) storeCommitStaticBase() uint64 {
+	sc := h.StoreCommit
+	if sc.HasBase {
+		return sc.PaddedBase
 	}
 	if h.FeeTreeLoaded {
 		return 0
 	}
-	if h.StoreCommitBase == 0 {
+	if sc.PaddedBase == 0 {
 		return gasPoCV2Base
 	}
-	return h.StoreCommitBase
+	return sc.PaddedBase
 }
 
 // estimateMsgGas returns the gas estimate for a single message.
@@ -205,15 +228,16 @@ func lookupMsgGasHinted(msg sdk.Msg, hints GasHints) (uint64, bool) {
 
 func estimateHardwareDiffGas(m *inferencetypes.MsgSubmitHardwareDiff, hints GasHints) uint64 {
 	gas := gasSubmitHardwareDiff
-	if !hints.HasHDGasPerByte || hints.HDGasPerByte == 0 {
+	hd := hints.HardwareDiff
+	if !hd.HasGasPerByte || hd.GasPerByte == 0 {
 		return gas
 	}
-	qty := hardwareDiffByteDelta(m, hints.HardwarePrev)
-	div := hints.HDUnitSize
+	qty := hardwareDiffByteDelta(m, hd.Prev)
+	div := hd.UnitSize
 	if div == 0 {
 		div = 1
 	}
-	extra := saturatingMul(qty, hints.HDGasPerByte) / div
+	extra := saturatingMul(qty, hd.GasPerByte) / div
 	extra = saturatingAdd(extra, extra/2) // 1.5× headroom, same as *3/2 without overflow
 	return saturatingAdd(gas, extra)
 }
@@ -261,32 +285,77 @@ func hardwareNodesSize(participant string, nodeMap map[string]*inferencetypes.Ha
 }
 
 func estimateStoreCommitGas(m *inferencetypes.MsgPoCV2StoreCommit, hints GasHints) uint64 {
-	rate := hints.pocRate()
-	base := hints.pocBase()
+	sc := hints.StoreCommit
+	if useMeasuredStoreCommitGas(m, hints) {
+		extra := storeCommitSurcharge(m, sc.ChainRate, sc.ChainBase, sc.Prev)
+		return applySimulateHeadroom(saturatingAdd(sc.MeasuredIntrinsic, extra))
+	}
+	extra := storeCommitSurcharge(m, hints.storeCommitStaticRate(), hints.storeCommitStaticBase(), sc.Prev)
+	if hints.FeeTreeLoaded {
+		return saturatingAdd(gasStoreCommitIntrinsic, extra)
+	}
+	return extra
+}
+
+func useMeasuredStoreCommitGas(m *inferencetypes.MsgPoCV2StoreCommit, hints GasHints) bool {
+	sc := hints.StoreCommit
+	if !sc.HasMeasured {
+		return false
+	}
+	n := storeCommitEntryCount(m)
+	return sc.MeasuredEntries > 0 && n <= sc.MeasuredEntries
+}
+
+func storeCommitEntryCount(m *inferencetypes.MsgPoCV2StoreCommit) uint {
+	if m == nil {
+		return 0
+	}
+	var n uint
+	for _, e := range m.Entries {
+		if e != nil {
+			n++
+		}
+	}
+	return n
+}
+
+func storeCommitSurcharge(m *inferencetypes.MsgPoCV2StoreCommit, rate, base uint64, prev map[string]uint32) uint64 {
 	var delta uint64
-	anyPrev := false
 	for _, e := range m.Entries {
 		if e == nil {
 			continue
 		}
-		prev, ok := hints.StoreCommitPrev[e.ModelId]
+		p, ok := prev[e.ModelId]
 		if ok {
-			anyPrev = true
-			if e.Count > prev {
-				delta += uint64(e.Count - prev)
+			if e.Count > p {
+				delta += uint64(e.Count - p)
 			}
 		} else {
 			delta += uint64(e.Count)
 		}
 	}
 	extra := saturatingMul(delta, rate)
-	if !anyPrev {
+	// Chain charges period base once per participant+stage
+	// (len(existingByModel)==0), not once per new model in this payload.
+	if len(prev) == 0 {
 		extra = saturatingAdd(extra, base)
 	}
-	if hints.FeeTreeLoaded {
-		return saturatingAdd(gasStoreCommitIntrinsic, extra)
-	}
 	return extra
+}
+
+// StoreCommitIntrinsicFromSim peels the dummy commit's chain surcharge
+// (period base + rate×dummyCount) off Simulate gasUsed. Dummy is count=1
+// per local model on an empty stage. Returns false if the peel would
+// underflow — caller keeps the static formula.
+func StoreCommitIntrinsicFromSim(simUsed, rate, base, dummyCount uint64) (uint64, bool) {
+	if simUsed == 0 || dummyCount == 0 {
+		return 0, false
+	}
+	extra := saturatingAdd(base, saturatingMul(rate, dummyCount))
+	if simUsed <= extra {
+		return 0, false
+	}
+	return simUsed - extra, true
 }
 
 func saturatingMul(a, b uint64) uint64 {
@@ -315,6 +384,10 @@ func estimateBatchGas(msgs []sdk.Msg, attempt int, hints ...GasHints) uint64 {
 		h = hints[0]
 	}
 	gas := txOverheadGas
+	if batchUsesMeasuredStoreCommitGas(msgs, h) {
+		// Measured intrinsic already includes ante + authz unwrap.
+		gas = 0
+	}
 	for _, m := range msgs {
 		gas = saturatingAdd(gas, estimateMsgGasHinted(m, h))
 	}
@@ -338,16 +411,44 @@ func isHardwareDiffOnly(msgs []sdk.Msg) bool {
 	return ok
 }
 
-// gasWantedFromSimulate takes max(static, simulated×1.5) so a fat same-size
-// HardwareDiff rewrite is sized from real KV gas, not only stored_bytes growth.
+func isStoreCommitOnly(msgs []sdk.Msg) bool {
+	if len(msgs) == 0 {
+		return false
+	}
+	for _, m := range msgs {
+		if _, ok := m.(*inferencetypes.MsgPoCV2StoreCommit); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func batchUsesMeasuredStoreCommitGas(msgs []sdk.Msg, hints GasHints) bool {
+	if !isStoreCommitOnly(msgs) {
+		return false
+	}
+	for _, m := range msgs {
+		sc, ok := m.(*inferencetypes.MsgPoCV2StoreCommit)
+		if !ok || !useMeasuredStoreCommitGas(sc, hints) {
+			return false
+		}
+	}
+	return true
+}
+
+// applySimulateHeadroom is 1.2× with saturating arithmetic.
+func applySimulateHeadroom(v uint64) uint64 {
+	return saturatingAdd(v, v/5)
+}
+
+// gasWantedFromSimulate pads a successful Simulate with 1.2×. static is
+// used only when Simulate returned 0; a working sim is never raised back
+// to the static HardwareDiff floor.
 func gasWantedFromSimulate(static, simulated uint64) uint64 {
 	if simulated == 0 {
 		return static
 	}
-	withHeadroom := saturatingAdd(simulated, simulated/2)
-	if withHeadroom < static {
-		withHeadroom = static
-	}
+	withHeadroom := applySimulateHeadroom(simulated)
 	if withHeadroom > BatchGasLimit {
 		return BatchGasLimit
 	}

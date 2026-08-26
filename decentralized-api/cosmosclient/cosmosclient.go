@@ -419,6 +419,37 @@ func (icc *InferenceCosmosClient) SetStoreCommitPrev(prev map[string]uint32) {
 	icc.manager.SetStoreCommitPrev(prev)
 }
 
+func (icc *InferenceCosmosClient) SimulatePoCV2StoreCommit(msg *inferencetypes.MsgPoCV2StoreCommit) (uint64, error) {
+	if icc == nil || icc.manager == nil {
+		return 0, fmt.Errorf("cosmos client is not initialized")
+	}
+	if msg != nil {
+		msg.Creator = icc.Address
+	}
+	return icc.manager.SimulateMsgs([]sdk.Msg{msg})
+}
+
+func (icc *InferenceCosmosClient) SetStoreCommitIntrinsic(gas uint64, calibratedEntries uint) {
+	if icc == nil || icc.manager == nil {
+		return
+	}
+	icc.manager.SetStoreCommitIntrinsic(gas, calibratedEntries)
+}
+
+func (icc *InferenceCosmosClient) ClearStoreCommitIntrinsic() {
+	if icc == nil || icc.manager == nil {
+		return
+	}
+	icc.manager.ClearStoreCommitIntrinsic()
+}
+
+func (icc *InferenceCosmosClient) StoreCommitRawLeaf() (rate, base uint64, loaded bool) {
+	if icc == nil || icc.manager == nil {
+		return 0, 0, false
+	}
+	return icc.manager.StoreCommitRawLeaf()
+}
+
 func (icc *InferenceCosmosClient) SetHardwarePrev(nodes []*inferencetypes.HardwareNode) {
 	if icc == nil || icc.manager == nil {
 		return

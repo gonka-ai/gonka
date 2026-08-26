@@ -67,6 +67,12 @@ func (m *mockTxManager) RefreshFeeTree(*inferencetypes.FeeParams) {}
 func (m *mockTxManager) SetStoreCommitPrev(map[string]uint32)     {}
 func (m *mockTxManager) SetHardwarePrev([]*inferencetypes.HardwareNode) {
 }
+func (m *mockTxManager) SimulateMsgs([]sdk.Msg) (uint64, error) { return 0, nil }
+func (m *mockTxManager) SetStoreCommitIntrinsic(uint64, uint)   {}
+func (m *mockTxManager) ClearStoreCommitIntrinsic()             {}
+func (m *mockTxManager) StoreCommitRawLeaf() (uint64, uint64, bool) {
+	return 0, 0, false
+}
 
 func startTestNatsServer(t *testing.T) (*server.Server, nats.JetStreamContext) {
 	opts := &server.Options{

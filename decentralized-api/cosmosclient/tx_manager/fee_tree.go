@@ -17,14 +17,22 @@ type FeeTreeCache struct {
 	groupPrice         map[string]uint64
 	storeCommitRate    uint64
 	storeCommitBase    uint64
+	storeCommitRateRaw uint64
+	storeCommitBaseRaw uint64
 	hdGasPerByte       uint64
 	hdUnitSize         uint64
 	hasStoreCommitRate bool
 	hasStoreCommitBase bool
 	hasHDGasPerByte    bool
-	loaded             bool              // true after Load; distinguishes "never fetched" from "tree has no StoreCommit row"
-	storeCommitPrev    map[string]uint32 // model_id -> last committed count
-	hardwarePrev       []*types.HardwareNode
+	loaded             bool // true after Load; distinguishes "never fetched" from "tree has no StoreCommit row"
+	// Measured StoreCommit ante+handler gas from the once-per-stage dummy
+	// Simulate. Survives Load() so a params refresh does not drop a good
+	// measurement mid-window.
+	storeCommitIntrinsic         uint64
+	hasMeasuredIntrinsic         bool
+	storeCommitCalibratedEntries uint
+	storeCommitPrev              map[string]uint32 // model_id -> last committed count
+	hardwarePrev                 []*types.HardwareNode
 }
 
 func newFeeTreeCache() *FeeTreeCache {
@@ -45,6 +53,8 @@ func (c *FeeTreeCache) Load(fp *types.FeeParams) {
 	c.groupPrice = map[string]uint64{}
 	c.storeCommitRate = 0
 	c.storeCommitBase = 0
+	c.storeCommitRateRaw = 0
+	c.storeCommitBaseRaw = 0
 	c.hdGasPerByte = 0
 	c.hdUnitSize = 0
 	c.hasStoreCommitRate = false
@@ -72,10 +82,12 @@ func (c *FeeTreeCache) Load(fp *types.FeeParams) {
 			case storeCommitURL:
 				if d := rule.GetStoredDelta(); d != nil {
 					c.hasStoreCommitRate = true
+					c.storeCommitRateRaw = d.GasPerUnit
 					c.storeCommitRate = withHeadroom(d.GasPerUnit, 1, 2) // 50% if nonzero; 0 stays 0
 				}
 				if rule.Base != nil {
 					c.hasStoreCommitBase = true
+					c.storeCommitBaseRaw = rule.Base.Gas
 					c.storeCommitBase = withHeadroom(rule.Base.Gas, 1, 5) // 20% if nonzero; 0 stays 0
 				}
 			case hdURL:
@@ -110,6 +122,37 @@ func (c *FeeTreeCache) SetStoreCommitPrev(prev map[string]uint32) {
 	}
 }
 
+func (c *FeeTreeCache) SetStoreCommitIntrinsic(gas uint64, calibratedEntries uint) {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.storeCommitIntrinsic = gas
+	c.hasMeasuredIntrinsic = true
+	c.storeCommitCalibratedEntries = calibratedEntries
+}
+
+func (c *FeeTreeCache) ClearStoreCommitIntrinsic() {
+	if c == nil {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.storeCommitIntrinsic = 0
+	c.hasMeasuredIntrinsic = false
+	c.storeCommitCalibratedEntries = 0
+}
+
+func (c *FeeTreeCache) RawStoreCommitLeaf() (rate, base uint64, loaded bool) {
+	if c == nil {
+		return 0, 0, false
+	}
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.storeCommitRateRaw, c.storeCommitBaseRaw, c.loaded
+}
+
 func (c *FeeTreeCache) SetHardwarePrev(nodes []*types.HardwareNode) {
 	if c == nil {
 		return
@@ -137,16 +180,25 @@ func (c *FeeTreeCache) hints() GasHints {
 	hw := make([]*types.HardwareNode, len(c.hardwarePrev))
 	copy(hw, c.hardwarePrev)
 	return GasHints{
-		StoreCommitPrev:    prev,
-		StoreCommitRate:    c.storeCommitRate,
-		StoreCommitBase:    c.storeCommitBase,
-		HasStoreCommitRate: c.hasStoreCommitRate,
-		HasStoreCommitBase: c.hasStoreCommitBase,
-		HDGasPerByte:       c.hdGasPerByte,
-		HDUnitSize:         c.hdUnitSize,
-		HasHDGasPerByte:    c.hasHDGasPerByte,
-		FeeTreeLoaded:      c.loaded,
-		HardwarePrev:       hw,
+		FeeTreeLoaded: c.loaded,
+		StoreCommit: StoreCommitGas{
+			Prev:              prev,
+			HasRate:           c.hasStoreCommitRate,
+			HasBase:           c.hasStoreCommitBase,
+			PaddedRate:        c.storeCommitRate,
+			PaddedBase:        c.storeCommitBase,
+			HasMeasured:       c.hasMeasuredIntrinsic,
+			MeasuredIntrinsic: c.storeCommitIntrinsic,
+			MeasuredEntries:   c.storeCommitCalibratedEntries,
+			ChainRate:         c.storeCommitRateRaw,
+			ChainBase:         c.storeCommitBaseRaw,
+		},
+		HardwareDiff: HardwareDiffGas{
+			Prev:          hw,
+			HasGasPerByte: c.hasHDGasPerByte,
+			GasPerByte:    c.hdGasPerByte,
+			UnitSize:      c.hdUnitSize,
+		},
 	}
 }
 
