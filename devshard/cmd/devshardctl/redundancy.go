@@ -3152,7 +3152,7 @@ func (e *Redundancy) longResponseFailureExempt(inf *inflight) bool {
 	return longResponseFailureExempt(inf, e.session)
 }
 
-func attemptCountsAsSuccessfulForPerf(inf *inflight, params user.InferenceParams, session *user.Session) bool {
+func attemptCountsAsSuccessfulForPerf(inf *inflight, session *user.Session) bool {
 	if inf == nil {
 		return false
 	}
@@ -3903,7 +3903,7 @@ func (e *Redundancy) completeAccountingRequest(ctx context.Context, winnerNonce 
 }
 
 func (e *Redundancy) buildInvolvement(inf *inflight, winnerNonce uint64, params user.InferenceParams) HostInvolvement {
-	successfulForPerf := attemptCountsAsSuccessfulForPerf(inf, params, e.session)
+	successfulForPerf := attemptCountsAsSuccessfulForPerf(inf, e.session)
 	hi := HostInvolvement{
 		HostIdx:         inf.hostIdx,
 		ParticipantKey:  e.participantKeyForHost(inf.hostIdx),
@@ -3950,7 +3950,7 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 	if !requestSucceeded && emptyStream {
 		return
 	}
-	responsive := attemptCountsAsSuccessfulForPerf(inf, params, e.session)
+	responsive := attemptCountsAsSuccessfulForPerf(inf, e.session)
 	sample := RequestSample{
 		HostIdx:        inf.hostIdx,
 		ParticipantKey: participantKey,
@@ -4047,7 +4047,7 @@ func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostK
 	}
 	participantKey := e.participantKeyForHost(prepared.HostIdx())
 	quarantineMode := e.quarantineModeForParticipant(participantKey)
-	e.accounting.Ghost(e.devshardID, prepared.Nonce(), reason, quarantineMode)
+	e.accounting.Ghost(e.devshardID, prepared.Nonce(), reason, quarantineMode, ghostTimeoutWillBeRaised(kind))
 	if e.metrics != nil {
 		e.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
 			ParticipantKey: participantKey,
@@ -4065,7 +4065,14 @@ func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostK
 		"reason", reason,
 		"poc_reason", currentPoCPhaseReason(),
 	)
-	e.raiseGhostAccountability(prepared, kind, participantKey)
+	e.raiseGhostAccountability(prepared, kind)
+}
+
+// ghostTimeoutWillBeRaised reports whether raiseGhostAccountability will act on this burn. The ledger
+// needs it at burn time: a nonce with no timeout coming must retire at once, and one with a timeout
+// coming must wait for it.
+func ghostTimeoutWillBeRaised(kind ghostKind) bool {
+	return ghostAccountabilityEnabled() && kind.accountable()
 }
 
 // raiseGhostAccountability makes the host answer for a nonce we declined to send it. The burned
@@ -4075,8 +4082,8 @@ func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostK
 //
 // Every burn is raised, not a sample of them: a host that serves nothing has to end up as visibly
 // missed as one that accepts work and drops it, and a nonce spends the same either way.
-func (e *Redundancy) raiseGhostAccountability(prepared *user.PreparedInference, kind ghostKind, participantKey string) {
-	if !ghostAccountabilityEnabled() || !kind.accountable() {
+func (e *Redundancy) raiseGhostAccountability(prepared *user.PreparedInference, kind ghostKind) {
+	if !ghostTimeoutWillBeRaised(kind) {
 		return
 	}
 	nonce := prepared.Nonce()
@@ -4089,6 +4096,15 @@ func (e *Redundancy) raiseGhostAccountability(prepared *user.PreparedInference, 
 		// HandleTimeout reports an applied timeout by returning an error, so the outcome decides what
 		// this was; branching on err logged every success as a failure.
 		result, err := e.session.HandleTimeout(ctx, nonce, burnedAt, payload)
+		// The chain counts a miss for an applied timeout whoever raised it, so the ledger records this
+		// one the same as any other; without it the cross-check compares against a population that
+		// excludes every burn by construction.
+		action, reason := gatewayTimeoutFailureAction(result, false)
+		if err == nil {
+			action, reason = "completed", "none"
+		}
+		e.accounting.TimeoutResult(e.devshardID, nonce, timeoutResultKind(result, nil), action, reason,
+			result.DetailReason, result.DetailReason)
 		if result.Applied {
 			logInferenceStage(ctx, e.devshardID, nonce, "ghost_timeout_applied", "host", hostLabel)
 			return

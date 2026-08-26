@@ -321,7 +321,8 @@ func TestOverclassifiedIsReportedRatherThanHiddenInUnclassified(t *testing.T) {
 	record := buildSlotRecord(view, 0, accountingTestNow)
 	require.Equal(t, uint64(2), record.Overclassified, "three counters against one assigned nonce is a surplus of two")
 	require.Zero(t, record.Unclassified, "a surplus is not a shortfall")
-	require.Equal(t, uint64(2), record.CrossCheckError, "the surplus is what the cross-check reports")
+	require.Zero(t, record.CrossCheckError,
+		"a surplus is this ledger disagreeing with itself; the cross-check reports disagreement with the chain")
 }
 
 // A snapshot written before a per-slot map existed loads it as nil, and Go panics on a write to a nil

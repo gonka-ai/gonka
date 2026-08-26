@@ -23,7 +23,7 @@ func TestTrackerCountsAndCrossChecks(t *testing.T) {
 	tr := newTestTracker(t)
 	registerEscrow(t, tr, "e1", 7, "m")
 	require.NoError(t, tr.RecordDiff("e1", 1, true))
-	require.NoError(t, tr.RecordGhost("e1", 1, PhasePoC, QuarantineProbe, NoSendParticipantThrottled, ""))
+	require.NoError(t, tr.RecordGhost("e1", 1, PhasePoC, QuarantineProbe, NoSendParticipantThrottled, "", false))
 	require.NoError(t, tr.RecordDiff("e1", 2, true))
 	require.NoError(t, tr.RecordRealSend("e1", 2, accountingTestNow, PhaseNormal, QuarantineShadow))
 	require.NoError(t, tr.RecordUsage("e1", 2, UsageWinner, ""))
@@ -258,7 +258,7 @@ func TestTrackerMovesPendingClassificationToGhost(t *testing.T) {
 	require.Equal(t, uint64(1), pending.PendingClassification)
 	require.Zero(t, pending.Dispositions[DispositionGhost])
 
-	require.NoError(t, tr.RecordGhost("e1", 1, PhaseNormal, QuarantineNone, NoSendPoCUnavailable, ""))
+	require.NoError(t, tr.RecordGhost("e1", 1, PhaseNormal, QuarantineNone, NoSendPoCUnavailable, "", false))
 
 	ghost := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 19}), "p1")
 	require.Equal(t, uint64(1), ghost.Dispositions[DispositionGhost])
@@ -503,7 +503,7 @@ func TestTrackerRecordsUnknownNoSendReason(t *testing.T) {
 	tr := newTestTracker(t)
 	registerEscrow(t, tr, "e1", 31, "m")
 	require.NoError(t, tr.RecordDiff("e1", 1, true))
-	require.NoError(t, tr.RecordGhost("e1", 1, PhaseNormal, QuarantineNone, NoSendReason("not_a_reason"), "not_a_detail"))
+	require.NoError(t, tr.RecordGhost("e1", 1, PhaseNormal, QuarantineNone, NoSendReason("not_a_reason"), "not_a_detail", false))
 
 	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 31}), "p1")
 	require.Equal(t, uint64(1), record.Dispositions[DispositionGhost])
@@ -544,7 +544,7 @@ func TestHTTPFiltersAndMetrics(t *testing.T) {
 	registerEscrow(t, tr, "e2", 9, "m2")
 	require.NoError(t, tr.RecordDiff("e1", 1, false))
 	require.NoError(t, tr.RecordDiff("e2", 1, false))
-	require.Error(t, tr.RecordGhost("missing", 1, PhaseNormal, QuarantineNone, NoSendUnknown, ""))
+	require.Error(t, tr.RecordGhost("missing", 1, PhaseNormal, QuarantineNone, NoSendUnknown, "", false))
 	handler := NewHandler(tr, func(context.Context) (uint64, error) { return 9, nil }, nil)
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/epochs/current/participants?model=m1&escrow_id=e1,e2", nil)
 	rec := httptest.NewRecorder()
@@ -617,7 +617,7 @@ func TestNonExecutionCreditIdentity(t *testing.T) {
 	tr := newTestTracker(t)
 	registerEscrow(t, tr, "e1", 10, "m")
 	require.NoError(t, tr.RecordDiff("e1", 1, true))
-	require.NoError(t, tr.RecordGhost("e1", 1, PhaseNormal, QuarantineNone, NoSendPoCUnavailable, ""))
+	require.NoError(t, tr.RecordGhost("e1", 1, PhaseNormal, QuarantineNone, NoSendPoCUnavailable, "", false))
 	require.NoError(t, tr.RecordDiff("e1", 2, false))
 	require.NoError(t, tr.RecordDiff("e1", 3, true))
 	require.NoError(t, tr.RecordRealSend("e1", 3, accountingTestNow.Add(-2*time.Minute), PhaseNormal, QuarantineNone))
@@ -832,7 +832,7 @@ func TestGatewayPolicyFactsCoverAllBranches(t *testing.T) {
 		if nonce == 1 {
 			quarantine = "probe"
 		}
-		recorder.Ghost("e1", nonce, reason, quarantine)
+		recorder.Ghost("e1", nonce, reason, quarantine, false)
 	}
 
 	for i, quarantine := range []string{"shadow", "probation", ""} {
@@ -962,7 +962,7 @@ func TestUnknownTimeoutResultStaysPendingAndRecordsError(t *testing.T) {
 func TestNilRecorderMethodsAreNoOps(t *testing.T) {
 	var recorder *Recorder
 	require.NotPanics(t, func() {
-		recorder.Ghost("e1", 1, "", "")
+		recorder.Ghost("e1", 1, "", "", false)
 		recorder.RealSend("e1", 1, time.Now(), "")
 		recorder.Usage("e1", 1, 1, "")
 		recorder.TimeoutResult("e1", 1, "", "", "", "", "")

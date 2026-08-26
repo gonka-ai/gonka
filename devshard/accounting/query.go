@@ -337,8 +337,7 @@ func buildSlotRecord(escrow *escrowView, slot uint32, now time.Time) SlotRecord 
 	// would let a surplus in one escrow hide a shortfall in another.
 	record.CrossCheckError =
 		absDiff(record.TimeoutOutcomes[TimeoutApplied], record.ProtocolMisses) +
-			absDiff(record.RecordedInvalid, record.ProtocolInvalid) +
-			record.Overclassified
+			absDiff(record.RecordedInvalid, record.ProtocolInvalid)
 	return record
 }
 

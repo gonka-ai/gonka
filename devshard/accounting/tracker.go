@@ -71,6 +71,9 @@ type nonceState struct {
 	ReceiptAt         int64
 	ProtocolTimedOut  bool
 	TimeoutResultSeen bool
+	// GhostTimeoutPending marks a burned nonce the gateway will raise a timeout on. The raise resolves a
+	// refusal deadline later, so the nonce has to outlive the burn to receive its own outcome.
+	GhostTimeoutPending bool
 	RequestID         string
 	Counted           *CounterKey
 }
@@ -350,13 +353,14 @@ func (t *Tracker) SyncState(escrowID string, latest uint64, hostStats map[uint32
 	})
 }
 
-func (t *Tracker) RecordGhost(escrowID string, nonce uint64, phase Phase, quarantine QuarantineMode, reason NoSendReason, detail string) error {
+func (t *Tracker) RecordGhost(escrowID string, nonce uint64, phase Phase, quarantine QuarantineMode, reason NoSendReason, detail string, timeoutPending bool) error {
 	return t.withEscrow(escrowID, func(e *escrowState) error {
 		s, err := e.liveNonce(nonce)
 		if err != nil {
 			return err
 		}
 		s.Ghost = true
+		s.GhostTimeoutPending = timeoutPending
 		s.DispatchPhase = normalizePhase(phase)
 		s.Quarantine = normalizeQuarantine(quarantine)
 		s.NoSendReason = normalizeNoSendReason(reason)
@@ -448,7 +452,7 @@ func (t *Tracker) RecordTimeout(record TimeoutRecord) error {
 		if err != nil {
 			return err
 		}
-		if !s.Sent {
+		if !s.Sent && !s.Ghost {
 			return errors.New("timeout recorded before real send")
 		}
 		outcome, ok := normalizeTimeoutOutcome(record.Outcome)
@@ -798,7 +802,7 @@ func (s *nonceState) counterKey(meta EscrowMetadata, now time.Time) (CounterKey,
 }
 
 func (s *nonceState) terminal() bool {
-	return s.Ghost ||
+	return (s.Ghost && (!s.GhostTimeoutPending || s.TimeoutResultSeen)) ||
 		(s.Finished && s.Usage != "") ||
 		(s.ProtocolTimedOut && s.TimeoutResultSeen)
 }

@@ -128,7 +128,7 @@ func findingsFor(record ParticipantRecord) []Finding {
 			Code: FindingFailureOrigins, Severity: SeverityWarning, Part: total, Whole: reachedIncludingExcused,
 		})
 	}
-	if drift := record.CrossChecks.ErrorCount - record.Overclassified; drift > 0 && record.AssignedNonces >= findingMinimumVolume {
+	if drift := record.CrossChecks.ErrorCount; drift > 0 && record.AssignedNonces >= findingMinimumVolume {
 		findings = append(findings, Finding{
 			Code: FindingChainDisagreement, Severity: SeverityWarning, Part: drift, Whole: record.AssignedNonces,
 		})

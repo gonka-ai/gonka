@@ -25,7 +25,7 @@ func TestGatewayAccountingAdapterRecordsEvents(t *testing.T) {
 	require.NotNil(t, recorder)
 	registerGatewayAccountingTestEscrow(t, tracker, "e1", 1, "m")
 	require.NoError(t, tracker.RecordDiff("e1", 1, true))
-	recorder.Ghost("e1", 1, "participant_throttled_no_send", "probe")
+	recorder.Ghost("e1", 1, "participant_throttled_no_send", "probe", false)
 	require.NoError(t, tracker.RecordDiff("e1", 2, true))
 	recorder.RealSend("e1", 2, time.Now().Add(-time.Second), "shadow")
 	recorder.TimeoutResult("e1", 2, "refused", "failed", "insufficient_votes", "no_receipt", "")
@@ -559,7 +559,7 @@ func TestGatewayAccountingAdapterRecordsGhostPolicyDimensions(t *testing.T) {
 	for i, tc := range cases {
 		nonce := uint64(i + 1)
 		require.NoError(t, tracker.RecordDiff("e1", nonce, true), tc.name)
-		recorder.Ghost("e1", nonce, tc.reason, tc.quarantine)
+		recorder.Ghost("e1", nonce, tc.reason, tc.quarantine, false)
 	}
 
 	record := onlyGatewayAccountingRecord(t, tracker.Query(accounting.QueryFilter{EpochIndex: 2}))
@@ -585,7 +585,7 @@ func TestGatewayAccountingAdapterRecordsPoCGhostPolicyDimensions(t *testing.T) {
 	registerGatewayAccountingTestEscrow(t, tracker, "e1", 3, "m")
 	require.NoError(t, tracker.RecordDiff("e1", 1, true))
 
-	recorder.Ghost("e1", 1, "poc_unavailable_host", "none")
+	recorder.Ghost("e1", 1, "poc_unavailable_host", "none", false)
 
 	record := onlyGatewayAccountingRecord(t, tracker.Query(accounting.QueryFilter{EpochIndex: 3}))
 	counter := requireGatewayAccountingCounter(t, record, func(key accounting.CounterKey) bool {
@@ -704,4 +704,25 @@ func requireGatewayAccountingCounter(
 	}
 	t.Fatalf("missing counter in %#v", record.Counters)
 	return accounting.CounterRecord{}
+}
+
+// The chain counts a miss for an applied timeout whoever raised it, so a burn's timeout has to reach
+// the ledger the same as any other. Asserted end to end through the recorder: a burn that declares a
+// timeout stays live to receive it, and the applied outcome lands in the population the cross-check
+// compares against the chain's own count.
+func TestATimeoutRaisedOnABurnReachesTheLedger(t *testing.T) {
+	tracker := newGatewayAccountingTestTracker(t)
+	recorder := accounting.NewRecorder(tracker, nil)
+	registerGatewayAccountingTestEscrow(t, tracker, "e1", 1, "m")
+
+	require.NoError(t, tracker.RecordDiff("e1", 1, true))
+	recorder.Ghost("e1", 1, "poc_unavailable_host", "none", true)
+	recorder.TimeoutResult("e1", 1, "refused", "completed", "none", "", "")
+
+	var applied uint64
+	for _, record := range tracker.Query(accounting.QueryFilter{EpochIndex: 1}) {
+		applied += record.TimeoutOutcomes[accounting.TimeoutApplied]
+	}
+	require.Equal(t, uint64(1), applied,
+		"an applied timeout on a burned nonce must be counted, or the cross-check can never balance")
 }

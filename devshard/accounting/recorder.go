@@ -176,7 +176,9 @@ func (r *Recorder) appendHostStats(
 	return into
 }
 
-func (r *Recorder) Ghost(escrowID string, nonce uint64, reason, quarantine string) {
+// Ghost records a burned nonce. timeoutPending says the caller will raise a timeout on it, which keeps
+// the nonce live long enough to receive that outcome instead of retiring on the burn alone.
+func (r *Recorder) Ghost(escrowID string, nonce uint64, reason, quarantine string, timeoutPending bool) {
 	if r == nil || r.tracker == nil {
 		return
 	}
@@ -192,6 +194,7 @@ func (r *Recorder) Ghost(escrowID string, nonce uint64, reason, quarantine strin
 		QuarantineFromString(quarantine),
 		noSend,
 		detail,
+		timeoutPending,
 	); err != nil {
 		log.Printf("gateway accounting ghost escrow=%s nonce=%d: %v", escrowID, nonce, err)
 	}

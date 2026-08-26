@@ -386,7 +386,7 @@ func TestAPermanentlyIncapableHostIsFlagged(t *testing.T) {
 	registerEscrow(t, tr, "e1", 7, "m")
 	for nonce := uint64(2); nonce <= 60; nonce += 2 {
 		require.NoError(t, tr.RecordDiff("e1", nonce, true))
-		require.NoError(t, tr.RecordGhost("e1", nonce, PhaseNormal, QuarantineNone, NoSendParticipantCapability, ""))
+		require.NoError(t, tr.RecordGhost("e1", nonce, PhaseNormal, QuarantineNone, NoSendParticipantCapability, "", false))
 	}
 
 	finding, found := findingByCode(recordFor(t, tr, "p0"), FindingCapabilityBlocked)
@@ -402,7 +402,7 @@ func TestABurnForAnotherReasonIsNotACapabilityBlock(t *testing.T) {
 	registerEscrow(t, tr, "e1", 7, "m")
 	for nonce := uint64(2); nonce <= 60; nonce += 2 {
 		require.NoError(t, tr.RecordDiff("e1", nonce, true))
-		require.NoError(t, tr.RecordGhost("e1", nonce, PhaseNormal, QuarantineNone, NoSendParticipantThrottled, ""))
+		require.NoError(t, tr.RecordGhost("e1", nonce, PhaseNormal, QuarantineNone, NoSendParticipantThrottled, "", false))
 	}
 
 	record := recordFor(t, tr, "p0")
