@@ -561,6 +561,11 @@ test-version-routing:
 			'printf "%s\n" "add map /etc/haproxy/versions.map $$1 versiond_pool_v5" | socat - UNIX-CONNECT:/var/run/haproxy/haproxy.sock' \
 			sh "$$collision" >/dev/null \
 			|| fail "could not inject the $$collision collision into the runtime map"; \
+		docker exec gonka-vp-router sh -c \
+			'printf "%s\n" "show map /etc/haproxy/versions.map" | socat - UNIX-CONNECT:/var/run/haproxy/haproxy.sock' \
+			| awk -v key="$$collision" \
+				'$$2 == key && $$3 == "versiond_pool_v5" { found = 1 } END { exit !found }' \
+			|| fail "HAProxy did not accept the $$collision collision fixture"; \
 	done; \
 	for path in healthz readyz metrics stats/shards/test sessions/test/diffs; do \
 		curl -sS -D "$$tmpdir/versionless.headers" -o /dev/null -m 3 \
