@@ -53,6 +53,10 @@ done
     log "catalog activation reserve exceeds backend server capacity"
     exit 1
 }
+[ "$server_capacity" -le "$ROUTER_RUNTIME_BATCH_SERVER_LIMIT" ] || {
+    log "catalog server capacity exceeds the Runtime API batch limit ($ROUTER_RUNTIME_BATCH_SERVER_LIMIT)"
+    exit 1
+}
 case "$allow_removals" in
     ''|1) ;;
     *)

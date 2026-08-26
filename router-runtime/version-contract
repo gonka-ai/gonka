@@ -1,7 +1,14 @@
 #!/bin/sh
 
-# Shared representation rules for version names used by the router renderer,
-# persistent cache, and HAProxy Runtime API reconciler.
+# Shared representation rules and Runtime API limits used by the router
+# renderer, persistent cache, and HAProxy Runtime API reconciler.
+
+# enable/disable commands for one backend are sent as one Runtime API batch so
+# HAProxy either accepts the whole server set or rejects it before mutation.
+# With HAProxy's default 16 KiB buffer, 400 generated server commands occupy
+# less than 12 KiB even for the longest generated backend and server names.
+# shellcheck disable=SC2034 # Public constant for scripts that source this file.
+ROUTER_RUNTIME_BATCH_SERVER_LIMIT=400
 
 router_version_is_valid() {
     printf '%s\n' "$1" | LC_ALL=C grep -Eq \

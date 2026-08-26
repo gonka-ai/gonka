@@ -162,6 +162,10 @@ if [ "$VERSION_CAPACITY" -eq 0 ] || [ "$CATALOG_POLL" -eq 0 ] || \
     echo "versiond-router: catalog capacity, body limit, and timing values must be positive" >&2
     exit 1
 fi
+if [ -n "$CATALOG_URL" ] && [ "$SLOTS" -gt "$ROUTER_RUNTIME_BATCH_SERVER_LIMIT" ]; then
+    echo "versiond-router: VERSIOND_ROUTER_POOL_SLOTS exceeds the catalog Runtime API batch limit ($ROUTER_RUNTIME_BATCH_SERVER_LIMIT)" >&2
+    exit 1
+fi
 case "$CATALOG_URL" in
     '' | http://* | https://*) ;;
     *)

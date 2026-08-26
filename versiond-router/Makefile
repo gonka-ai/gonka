@@ -1626,6 +1626,29 @@ test-render: test-local-compose test-join-compose test-catalog-cache test-hash-r
 		./entrypoint.sh >/dev/null 2>&1; then \
 		fail "a zero catalog response-body limit was accepted"; \
 	fi; \
+	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+		VERSIOND_ROUTING_CATALOG_URL=http://catalog/versions \
+		VERSIOND_ROUTER_POOL_SLOTS=401 \
+		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+		VERSIOND_ROUTER_OUT="$$tmpdir/bad-catalog.cfg" \
+		./entrypoint.sh 2>"$$tmpdir/capacityerr"; then \
+		fail "a catalog server batch larger than HAProxy's Runtime API buffer was accepted"; \
+	fi; \
+	grep -q 'Runtime API batch limit (400)' "$$tmpdir/capacityerr" \
+		|| fail "the catalog server batch refusal does not identify the supported limit"; \
+	if ROUTING_CATALOG_URL=http://catalog/versions \
+		ROUTING_CATALOG_PROJECTION_MAP=/tmp/projection.map \
+		ROUTING_CATALOG_SLOT_MAP=/tmp/slots.map \
+		ROUTING_CATALOG_BACKEND_PREFIX=versiond_dynamic_ \
+		ROUTING_CATALOG_BACKEND_CAPACITY=32 \
+		ROUTING_CATALOG_SERVER_PREFIX=versiond \
+		ROUTING_CATALOG_SERVER_CAPACITY=401 \
+		../router-runtime/catalog-reconciler 2>"$$tmpdir/reconciler-capacityerr"; then \
+		fail "the reconciler accepted an unsafe direct server capacity"; \
+	fi; \
+	grep -q 'Runtime API batch limit (400)' "$$tmpdir/reconciler-capacityerr" \
+		|| fail "the reconciler server-capacity refusal does not identify the supported limit"; \
 	for off in 0 false NO; do \
 		if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 			GONKA_HA=true VERSIOND_ROUTER_ALLOW_COARSE_READINESS=$$off \
