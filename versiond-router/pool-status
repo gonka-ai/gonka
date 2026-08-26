@@ -25,27 +25,41 @@ runtime() {
     printf '%s\n' "$1" | socat stdio "$SOCK"
 }
 
+stats_raw=$(mktemp)
 stats_file=$(mktemp)
-trap 'rm -f "$stats_file"' EXIT
+backends_file=$(mktemp)
+backend_names_file=$(mktemp)
+servers_file=$(mktemp)
+trap 'rm -f "$stats_raw" "$stats_file" "$backends_file" "$backend_names_file" "$servers_file"' EXIT
+
+runtime_to_file() {
+    command=$1
+    target=$2
+    if ! runtime "$command" > "$target"; then
+        echo "pool-status: HAProxy Runtime API command failed: $command" >&2
+        return 1
+    fi
+}
+
 # `show servers state` preserves DNS/runtime administrative flags that do not
 # by themselves say whether HAProxy is sending traffic to a server. In
 # particular, a dynamically enabled server may remain marked with the DNS
 # runtime-maintenance bit while `show stat` correctly reports it as UP.
-runtime "show stat" | awk -F, 'NR > 1 && $2 != "BACKEND" {
+runtime_to_file "show stat" "$stats_raw"
+if ! grep -q '^# pxname,svname,' "$stats_raw"; then
+    echo "pool-status: HAProxy Runtime API returned invalid show stat output" >&2
+    exit 1
+fi
+awk -F, 'NR > 1 && $2 != "BACKEND" {
     print $1 "\t" $2 "\t" $18
-}' > "$stats_file"
+}' "$stats_raw" > "$stats_file"
 
-backends() {
-    runtime "show backend" | grep -v '^#' | grep -v '^$'
-}
+runtime_to_file "show backend" "$backends_file"
+awk '!/^#/ && NF { print $1 }' "$backends_file" > "$backend_names_file"
 
 # `show servers state` supplies the resolved address, which is not populated in
 # the stats CSV for DNS server-template entries. Slots a DNS answer has never
 # filled carry no address and are skipped.
-servers() {
-    runtime "show servers state $1" | awk 'NR > 2 && NF > 7 && $5 != "-"'
-}
-
 serving_count() {
     awk -F '\t' -v backend="$1" '
         $1 == backend && $3 ~ /^UP/ { n++ }
@@ -53,9 +67,10 @@ serving_count() {
     ' "$stats_file"
 }
 
-for backend in $(backends); do
+while IFS= read -r backend; do
+    runtime_to_file "show servers state $backend" "$servers_file"
     printf '%s\n' "$backend"
-    servers "$backend" | awk -v backend="$backend" -v stats_file="$stats_file" '
+    awk -v backend="$backend" -v stats_file="$stats_file" '
     BEGIN {
         while ((getline line < stats_file) > 0) {
             split(line, fields, "\t")
@@ -69,6 +84,6 @@ for backend in $(backends); do
         else if (current ~ /^(DRAIN|MAINT|NOLB)/)   state = "DRAIN"
         else                                         state = "DOWN"
         print "  " $4 "\t" $5 "\t" state
-    }'
+    }' "$servers_file"
     printf '  %s server(s) taking traffic\n' "$(serving_count "$backend")"
-done
+done < "$backend_names_file"

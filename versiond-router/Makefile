@@ -1,6 +1,6 @@
 .PHONY: all build-docker release test-render
 .PHONY: test-catalog-cache test-hash-ring test-version-routing test-local-compose test-join-compose
-.PHONY: test-join-versiond-healthcheck
+.PHONY: test-join-versiond-healthcheck test-pool-status
 
 # Renders both the mixed (legacy pinning) and the all-HA shapes, asserts on the
 # result, then runs the real HAProxy from the production image over each one.
@@ -164,6 +164,9 @@ test-join-compose:
 
 test-catalog-cache:
 	@../router-runtime/catalog-cache_test.sh
+
+test-pool-status:
+	@./pool-status_test.sh
 
 # The join deployment temporarily supports both the pinned pre-/readyz image
 # and the replacement built from this release. A 404 means the endpoint does
@@ -1539,7 +1542,7 @@ test-version-routing:
 		|| fail "catalog reconciliation did not recover after clock rollback"; \
 	echo "test-version-routing: ok"
 
-test-render: test-local-compose test-join-compose test-join-versiond-healthcheck test-catalog-cache test-hash-ring test-version-routing
+test-render: test-local-compose test-join-compose test-join-versiond-healthcheck test-catalog-cache test-pool-status test-hash-ring test-version-routing
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
