@@ -222,7 +222,7 @@ runtime_key() {
 }
 
 validate_version() {
-	router_version_is_valid "$1"
+    router_version_is_valid "$1"
 }
 
 fetch_catalog() {
@@ -249,7 +249,7 @@ fetch_catalog() {
         if length != 1 then error("catalog must contain exactly one JSON document") else .[0] end
         | if type != "object" then error("catalog is not an object") else . end
         |
-		(.versions // []) as $versions
+        (.versions // []) as $versions
         | if ($versions | type) != "array" then error("versions is not an array") else $versions end
         | .[]
         | if (.name | type) != "string" then error("version name is not a string") else .name end
@@ -496,28 +496,28 @@ assign_slot() {
 }
 
 set_slot_server_state() {
-	action=$1 backend=$2
-	commands=
-	index=1
-	while [ "$index" -le "$server_capacity" ]; do
-		command="$action server $backend/$server_prefix$index"
-		if [ -n "$commands" ]; then
-			commands="$commands; $command"
-		else
-			commands=$command
-		fi
-		index=$((index + 1))
-	done
-	response=$(runtime "$commands" 2>&1) || return 1
-	[ -z "$response" ]
+    action=$1 backend=$2
+    commands=
+    index=1
+    while [ "$index" -le "$server_capacity" ]; do
+        command="$action server $backend/$server_prefix$index"
+        if [ -n "$commands" ]; then
+            commands="$commands; $command"
+        else
+            commands=$command
+        fi
+        index=$((index + 1))
+    done
+    response=$(runtime "$commands" 2>&1) || return 1
+    [ -z "$response" ]
 }
 
 enable_slot() {
-	set_slot_server_state enable "$1"
+    set_slot_server_state enable "$1"
 }
 
 disable_slot() {
-	set_slot_server_state disable "$1"
+    set_slot_server_state disable "$1"
 }
 
 reclaim_withdrawn_pending_slots() {
@@ -551,181 +551,181 @@ ready_server_count() {
 }
 
 publish_projection() {
-	map=$projection_map
-	if ! awk '$4 == 1 { found = 1 } END { exit !found }' \
-		"$tmpdir/projection.plan"; then
-		return 0
-	fi
+    map=$projection_map
+    if ! awk '$4 == 1 { found = 1 } END { exit !found }' \
+        "$tmpdir/projection.plan"; then
+        return 0
+    fi
 
-	while read -r version _ backend publish_version_entry; do
-		[ "$publish_version_entry" -eq 1 ] || continue
-		escaped_backend=$(runtime_key "$backend")
-		escaped_key=$(runtime_key "$version")
-		# Verify the complete projection below. That also resolves an ambiguous
-		# socket failure after HAProxy applied a mutation.
-		runtime "add map $map $escaped_key $escaped_backend" >/dev/null 2>&1 || true
-	done < "$tmpdir/projection.plan"
+    while read -r version _ backend publish_version_entry; do
+        [ "$publish_version_entry" -eq 1 ] || continue
+        escaped_backend=$(runtime_key "$backend")
+        escaped_key=$(runtime_key "$version")
+        # Verify the complete projection below. That also resolves an ambiguous
+        # socket failure after HAProxy applied a mutation.
+        runtime "add map $map $escaped_key $escaped_backend" >/dev/null 2>&1 || true
+    done < "$tmpdir/projection.plan"
 
-	projection_state=$(map_snapshot "$map") || return 1
-	while read -r version _ backend publish_version_entry; do
-		[ "$publish_version_entry" -eq 1 ] || continue
-		printf '%s\n' "$projection_state" | awk \
-			-v key="$version" -v expected="$backend" '
-				$2 "" == key "" && $3 "" == expected "" { found = 1 }
-				END { exit !found }
-			' || return 1
-	done < "$tmpdir/projection.plan"
+    projection_state=$(map_snapshot "$map") || return 1
+    while read -r version _ backend publish_version_entry; do
+        [ "$publish_version_entry" -eq 1 ] || continue
+        printf '%s\n' "$projection_state" | awk \
+            -v key="$version" -v expected="$backend" '
+                $2 "" == key "" && $3 "" == expected "" { found = 1 }
+                END { exit !found }
+            ' || return 1
+    done < "$tmpdir/projection.plan"
 }
 
 publish_catalog() {
-	# Each ready version is one map addition. The same canonical key
-	# drives both data routing and parent admission, so no batch transaction or
-	# second readiness mutation is needed.
-	publish_projection || return 1
-	while read -r version _ _ publish_version_entry; do
-		[ "$publish_version_entry" -eq 1 ] || continue
-		log "declared governance version '$version'"
-	done < "$tmpdir/projection.plan"
+    # Each ready version is one map addition. The same canonical key
+    # drives both data routing and parent admission, so no batch transaction or
+    # second readiness mutation is needed.
+    publish_projection || return 1
+    while read -r version _ _ publish_version_entry; do
+        [ "$publish_version_entry" -eq 1 ] || continue
+        log "declared governance version '$version'"
+    done < "$tmpdir/projection.plan"
 }
 
 prepare_catalog() {
-	projection_state=$(map_snapshot "$projection_map") || return 1
-	version_state=$projection_state
-	slot_state=$(map_snapshot "$slot_map") || return 1
-	remember_slot_usage
-	printf '%s\n' "$projection_state" > "$tmpdir/projection.current"
-	router_urlencode_stream < "$tmpdir/catalog.names" > "$tmpdir/catalog.encoded"
-	reclaim_withdrawn_pending_slots || return 1
+    projection_state=$(map_snapshot "$projection_map") || return 1
+    version_state=$projection_state
+    slot_state=$(map_snapshot "$slot_map") || return 1
+    remember_slot_usage
+    printf '%s\n' "$projection_state" > "$tmpdir/projection.current"
+    router_urlencode_stream < "$tmpdir/catalog.names" > "$tmpdir/catalog.encoded"
+    reclaim_withdrawn_pending_slots || return 1
 
-	# Build the complete plan before changing HAProxy. catalog.names is already
-	# filtered to dynamic names, so lookup and encoding have one authoritative
-	# implementation instead of separate capacity and assignment passes.
-	: > "$tmpdir/projection.plan"
-	while IFS= read -r version; do
-		[ -n "$version" ] || continue
-		encoded=$(router_urlencode "$version")
-		backend=$(printf '%s\n' "$version_state" | mapped_backend "$version")
-		publish_version_entry=0
-		if [ -z "$backend" ]; then
-			backend=$(printf '%s\n' "$slot_state" | slot_for_encoded_version "$encoded")
-			[ -n "$backend" ] || backend=__new__
-			publish_version_entry=1
-		fi
-		printf '%s %s %s %s\n' "$version" "$encoded" "$backend" \
-			"$publish_version_entry" \
-			>> "$tmpdir/projection.plan"
-	done < "$tmpdir/catalog.names"
+    # Build the complete plan before changing HAProxy. catalog.names is already
+    # filtered to dynamic names, so lookup and encoding have one authoritative
+    # implementation instead of separate capacity and assignment passes.
+    : > "$tmpdir/projection.plan"
+    while IFS= read -r version; do
+        [ -n "$version" ] || continue
+        encoded=$(router_urlencode "$version")
+        backend=$(printf '%s\n' "$version_state" | mapped_backend "$version")
+        publish_version_entry=0
+        if [ -z "$backend" ]; then
+            backend=$(printf '%s\n' "$slot_state" | slot_for_encoded_version "$encoded")
+            [ -n "$backend" ] || backend=__new__
+            publish_version_entry=1
+        fi
+        printf '%s %s %s %s\n' "$version" "$encoded" "$backend" \
+            "$publish_version_entry" \
+            >> "$tmpdir/projection.plan"
+    done < "$tmpdir/catalog.names"
 
-	printf '%s\n' "$slot_state" | awk -v prefix="$backend_prefix" '
-		index($2, prefix) == 1 && $3 == "__unassigned__" { print $2 }
-	' > "$tmpdir/free.slots"
-	free_capacity=$(wc -l < "$tmpdir/free.slots")
-	required_capacity=$(awk '$3 == "__new__" { required++ } END { print required + 0 }' \
-		"$tmpdir/projection.plan")
-	if [ "$required_capacity" -gt "$free_capacity" ]; then
-		capacity_missing=$(awk -v available="$free_capacity" '
-			$3 == "__new__" && ++required > available { print $1; exit }
-		' "$tmpdir/projection.plan")
-		return 2
-	fi
+    printf '%s\n' "$slot_state" | awk -v prefix="$backend_prefix" '
+        index($2, prefix) == 1 && $3 == "__unassigned__" { print $2 }
+    ' > "$tmpdir/free.slots"
+    free_capacity=$(wc -l < "$tmpdir/free.slots")
+    required_capacity=$(awk '$3 == "__new__" { required++ } END { print required + 0 }' \
+        "$tmpdir/projection.plan")
+    if [ "$required_capacity" -gt "$free_capacity" ]; then
+        capacity_missing=$(awk -v available="$free_capacity" '
+            $3 == "__new__" && ++required > available { print $1; exit }
+        ' "$tmpdir/projection.plan")
+        return 2
+    fi
 
-	: > "$tmpdir/slot.assignments"
-	: > "$tmpdir/projection.assigned"
-	next_free=1
-	while read -r version encoded backend publish_version_entry; do
-		if [ "$backend" = __new__ ]; then
-			backend=$(sed -n "${next_free}p" "$tmpdir/free.slots")
-			next_free=$((next_free + 1))
-			assign_slot "$backend" "$encoded" || return 1
-			printf '%s %s\n' "$backend" "$encoded" >> "$tmpdir/slot.assignments"
-		fi
-		printf '%s %s %s %s\n' "$version" "$encoded" "$backend" \
-			"$publish_version_entry" >> "$tmpdir/projection.assigned"
-	done < "$tmpdir/projection.plan"
-	mv "$tmpdir/projection.assigned" "$tmpdir/projection.plan"
+    : > "$tmpdir/slot.assignments"
+    : > "$tmpdir/projection.assigned"
+    next_free=1
+    while read -r version encoded backend publish_version_entry; do
+        if [ "$backend" = __new__ ]; then
+            backend=$(sed -n "${next_free}p" "$tmpdir/free.slots")
+            next_free=$((next_free + 1))
+            assign_slot "$backend" "$encoded" || return 1
+            printf '%s %s\n' "$backend" "$encoded" >> "$tmpdir/slot.assignments"
+        fi
+        printf '%s %s %s %s\n' "$version" "$encoded" "$backend" \
+            "$publish_version_entry" >> "$tmpdir/projection.assigned"
+    done < "$tmpdir/projection.plan"
+    mv "$tmpdir/projection.assigned" "$tmpdir/projection.plan"
 
-	if [ -s "$tmpdir/slot.assignments" ]; then
-		slot_state=$(map_snapshot "$slot_map") || return 1
-		remember_slot_usage
-		while read -r backend encoded; do
-			printf '%s\n' "$slot_state" | awk \
-				-v key="$backend" -v expected="$encoded" '
-					$2 "" == key "" && $3 "" == expected "" { found = 1 }
-					END { exit !found }
-				' || return 1
-		done < "$tmpdir/slot.assignments"
-	fi
+    if [ -s "$tmpdir/slot.assignments" ]; then
+        slot_state=$(map_snapshot "$slot_map") || return 1
+        remember_slot_usage
+        while read -r backend encoded; do
+            printf '%s\n' "$slot_state" | awk \
+                -v key="$backend" -v expected="$encoded" '
+                    $2 "" == key "" && $3 "" == expected "" { found = 1 }
+                    END { exit !found }
+                ' || return 1
+        done < "$tmpdir/slot.assignments"
+    fi
 
-	while read -r _ _ backend publish_version_entry; do
-		[ "$publish_version_entry" -eq 1 ] || continue
-		enable_slot "$backend" || return 1
-	done < "$tmpdir/projection.plan"
+    while read -r _ _ backend publish_version_entry; do
+        [ "$publish_version_entry" -eq 1 ] || continue
+        enable_slot "$backend" || return 1
+    done < "$tmpdir/projection.plan"
 
-	# No route in this projection becomes visible until every new backend has the
-	# configured reserve. Slot assignment and checks are staging mutations only.
-	runtime "show stat" > "$tmpdir/runtime.stats" 2>/dev/null || return 1
-	while read -r version _ backend publish_version_entry; do
-		[ "$publish_version_entry" -eq 1 ] || continue
-		ready=$(ready_server_count "$backend" "$tmpdir/runtime.stats") || return 1
-		if [ "$ready" -lt "$activation_min_ready" ]; then
-			activation_version=$version
-			activation_ready=$ready
-			return 3
-		fi
-	done < "$tmpdir/projection.plan"
+    # No route in this projection becomes visible until every new backend has the
+    # configured reserve. Slot assignment and checks are staging mutations only.
+    runtime "show stat" > "$tmpdir/runtime.stats" 2>/dev/null || return 1
+    while read -r version _ backend publish_version_entry; do
+        [ "$publish_version_entry" -eq 1 ] || continue
+        ready=$(ready_server_count "$backend" "$tmpdir/runtime.stats") || return 1
+        if [ "$ready" -lt "$activation_min_ready" ]; then
+            activation_version=$version
+            activation_ready=$ready
+            return 3
+        fi
+    done < "$tmpdir/projection.plan"
 }
 
 ensure_accepted_projection() {
-	if [ "$projection_repair_needed" -eq 0 ] && accepted_projection_matches; then
-		return 0
-	fi
-	repair_accepted_projection || return 1
-	projection_repair_needed=0
-	# A recovered accepted projection can still coexist with an abandoned staged
-	# slot from an interrupted, not-yet-accepted catalog update. Run one complete
-	# plan before enabling the unchanged-catalog fast path.
-	catalog_plan_clean=0
+    if [ "$projection_repair_needed" -eq 0 ] && accepted_projection_matches; then
+        return 0
+    fi
+    repair_accepted_projection || return 1
+    projection_repair_needed=0
+    # A recovered accepted projection can still coexist with an abandoned staged
+    # slot from an interrupted, not-yet-accepted catalog update. Run one complete
+    # plan before enabling the unchanged-catalog fast path.
+    catalog_plan_clean=0
 }
 
 accepted_projection_matches() {
-	projection_state=$(map_snapshot "$projection_map") || return 1
-	slot_state=$(map_snapshot "$slot_map") || return 1
-	printf '%s\n' "$projection_state" > "$tmpdir/projection.verify"
-	printf '%s\n' "$slot_state" > "$tmpdir/slots.verify"
-	router_urlencode_stream < "$last_names" > "$tmpdir/accepted.encoded"
-	paste -d ' ' "$last_names" "$tmpdir/accepted.encoded" \
-		> "$tmpdir/accepted.verify"
-	awk -v prefix="$backend_prefix" '
-		FILENAME == ARGV[1] {
-			if (index($2, prefix) == 1) slot[$2] = $3
-			next
-		}
-		FILENAME == ARGV[2] { accepted[$1] = $2; next }
-		index($3, prefix) == 1 {
-			version = $2
-			if (!(version in accepted) || slot[$3] != accepted[version]) invalid = 1
-			seen[version]++
-		}
-		END {
-			for (version in accepted) if (seen[version] != 1) invalid = 1
-			exit invalid
-		}
-	' "$tmpdir/slots.verify" "$tmpdir/accepted.verify" "$tmpdir/projection.verify"
+    projection_state=$(map_snapshot "$projection_map") || return 1
+    slot_state=$(map_snapshot "$slot_map") || return 1
+    printf '%s\n' "$projection_state" > "$tmpdir/projection.verify"
+    printf '%s\n' "$slot_state" > "$tmpdir/slots.verify"
+    router_urlencode_stream < "$last_names" > "$tmpdir/accepted.encoded"
+    paste -d ' ' "$last_names" "$tmpdir/accepted.encoded" \
+        > "$tmpdir/accepted.verify"
+    awk -v prefix="$backend_prefix" '
+        FILENAME == ARGV[1] {
+            if (index($2, prefix) == 1) slot[$2] = $3
+            next
+        }
+        FILENAME == ARGV[2] { accepted[$1] = $2; next }
+        index($3, prefix) == 1 {
+            version = $2
+            if (!(version in accepted) || slot[$3] != accepted[version]) invalid = 1
+            seen[version]++
+        }
+        END {
+            for (version in accepted) if (seen[version] != 1) invalid = 1
+            exit invalid
+        }
+    ' "$tmpdir/slots.verify" "$tmpdir/accepted.verify" "$tmpdir/projection.verify"
 }
 
 set_current_catalog_state() {
-	if [ "$catalog_contract_error" -ne 0 ]; then
-		catalog_state_detail="compatible catalog routes are current; one or more names are outside the router grammar"
-		if [ "$catalog_withdrawal_pending" -ne 0 ]; then
-			catalog_state_detail="$catalog_state_detail; catalog also omitted accepted routes and requires explicit maintenance removal"
-		fi
-		set_state contract-error "$catalog_state_detail"
-	elif [ "$catalog_withdrawal_pending" -ne 0 ]; then
-		set_state withdrawal-pending \
-			"catalog omitted accepted routes; explicit maintenance removal is required"
-	else
-		set_state ready "catalog and runtime maps are current"
-	fi
+    if [ "$catalog_contract_error" -ne 0 ]; then
+        catalog_state_detail="compatible catalog routes are current; one or more names are outside the router grammar"
+        if [ "$catalog_withdrawal_pending" -ne 0 ]; then
+            catalog_state_detail="$catalog_state_detail; catalog also omitted accepted routes and requires explicit maintenance removal"
+        fi
+        set_state contract-error "$catalog_state_detail"
+    elif [ "$catalog_withdrawal_pending" -ne 0 ]; then
+        set_state withdrawal-pending \
+            "catalog omitted accepted routes; explicit maintenance removal is required"
+    else
+        set_state ready "catalog and runtime maps are current"
+    fi
 }
 
 while :; do
