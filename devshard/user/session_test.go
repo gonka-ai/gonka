@@ -459,7 +459,8 @@ func TestPendingTxDedupKeys_HostProposedIdentity(t *testing.T) {
 	session.addPendingTx(unkeyedHeartbeat)
 	require.Len(t, session.PendingTxs(), before+4,
 		"user-authored/unkeyed txs are outside host-proposed pending dedup")
-  
+}
+
 func TestProcessResponse_NilReturnsNamedError(t *testing.T) {
 	session, _, _ := setupSession(t, 2, 100000, 100)
 	err := session.ProcessResponse(0, nil, 1)
