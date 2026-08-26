@@ -52,9 +52,9 @@ test-join-compose:
 	jq -e '.services["versiond-router"].volumes | any(.type == "volume" and .source == "versiond-router-state" and .target == "/var/lib/gonka-router")' \
 		"$$tmp_json" >/dev/null \
 		|| { echo 'test-join-compose: router catalog state is not persistent' >&2; exit 1; }; \
-	jq -e '.services["versiond-router"].healthcheck.test | join(" ") as $$check | ($$check | contains("-x /usr/local/lib/router-runtime/catalog-reconciler")) and ($$check | contains("catalog-capable versiond-router requires VERSIOND_ROUTING_CATALOG_URL")) and ($$check | contains("VERSIOND_ROUTING_CATALOG_URL requires a catalog-capable versiond-router image")) and ($$check | contains("127.0.0.1:8404/readyz")) and ($$check | contains("component=catalog") | not) and ($$check | contains("127.0.0.1:8080/healthz"))' \
+	jq -e '.services["versiond-router"].healthcheck.test | join(" ") as $$check | ($$check | contains("-x /usr/local/lib/router-runtime/catalog-reconciler")) and ($$check | contains("catalog-capable versiond-router requires VERSIOND_ROUTING_CATALOG_URL")) and ($$check | contains("VERSIOND_ROUTING_CATALOG_URL requires a catalog-capable versiond-router image")) and ($$check | contains("127.0.0.1:8404/livez")) and ($$check | contains("127.0.0.1:8404/readyz") | not) and ($$check | contains("127.0.0.1:8080/healthz"))' \
 		"$$tmp_json" >/dev/null \
-		|| { echo 'test-join-compose: router healthcheck does not validate image/catalog compatibility and probe the data plane' >&2; exit 1; }; \
+		|| { echo 'test-join-compose: router healthcheck does not validate image/catalog compatibility and probe liveness' >&2; exit 1; }; \
 	healthcheck=$$(jq -r '.services["versiond-router"].healthcheck.test[1]' \
 		"$$tmp_json" | sed 's/\$$\$$/\$$/g' \
 		| sed "s#/usr/local/lib/router-runtime/catalog-reconciler#$$tmp_capability#g"); \
@@ -73,7 +73,7 @@ test-join-compose:
 		|| { echo 'test-join-compose: catalog-capable image with catalog URL was rejected' >&2; exit 1; }; \
 	jq -e '.services.proxy.depends_on["versiond-router"].condition == "service_healthy"' \
 		"$$tmp_json" >/dev/null \
-		|| { echo 'test-join-compose: public proxy does not wait for the router data plane' >&2; exit 1; }; \
+		|| { echo 'test-join-compose: public proxy does not wait for the router process' >&2; exit 1; }; \
 	jq -e '(.services["versiond-router"] | has("stop_signal") | not) and .services["versiond-router"].stop_grace_period == "10s"' \
 		"$$tmp_json" >/dev/null \
 		|| { echo 'test-join-compose: Compose overrides the selected image stop signal or loses the bounded grace' >&2; exit 1; }; \

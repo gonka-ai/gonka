@@ -142,7 +142,7 @@ services:
               echo 'catalog-capable versiond-router requires VERSIOND_ROUTING_CATALOG_URL' >&2;
               exit 1;
             fi;
-            wget -q -O - 'http://127.0.0.1:8404/readyz';
+            wget -q -O - 'http://127.0.0.1:8404/livez';
           else
             if [ -n "$$VERSIOND_ROUTING_CATALOG_URL" ]; then
               echo 'VERSIOND_ROUTING_CATALOG_URL requires a catalog-capable versiond-router image' >&2;
