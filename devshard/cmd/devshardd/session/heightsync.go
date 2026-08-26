@@ -17,6 +17,7 @@ import (
 	"devshard/chainoracle/blocks/tipcache"
 	"devshard/heightsync"
 	"devshard/host"
+	"devshard/internal/boolvalue"
 	"devshard/transport"
 
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
@@ -130,12 +131,8 @@ func (m *HostManager) CloseHeightSync() {
 }
 
 func heightSyncFlag() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(envHeightSync))) {
-	case "1", "true", "yes":
-		return true
-	default:
-		return false
-	}
+	enabled, err := boolvalue.Parse(os.Getenv(envHeightSync))
+	return err == nil && enabled
 }
 
 func chainRPCFromEnv() string {
@@ -175,6 +172,7 @@ func (m *HostManager) transportServerOpts() []transport.ServerOption {
 	opts := []transport.ServerOption{
 		transport.WithBridge(m.bridge),
 		transport.WithRateLimit(transport.DefaultRateLimitConfig()),
+		transport.WithMaxBodySize(m.maxBodySize),
 	}
 	if m.heightSync != nil {
 		opts = append(opts, transport.WithHeightSync(m.heightSync, m.chainOracle))

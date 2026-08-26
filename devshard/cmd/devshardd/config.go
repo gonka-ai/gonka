@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"devshard/cmd/devshardd/session"
+	"devshard/internal/boolvalue"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
@@ -26,14 +26,20 @@ import (
 var sdkConfigOnce sync.Once
 
 type runtimeConfig struct {
-	Port                    int
-	AdminAddr               string
-	DataDir                 string
-	BinaryLogVersion        string
-	RuntimeVersion          string
-	ProtocolVersion         string
-	NodeManagerAddr         string
-	HostEventsEnabled       bool
+	Port              int
+	AdminAddr         string
+	DataDir           string
+	BinaryLogVersion  string
+	RuntimeVersion    string
+	ProtocolVersion   string
+	NodeManagerAddr   string
+	HostEventsEnabled bool
+	// AllowPrivateAddresses disables the dial-time SSRF guard on outbound
+	// connections to participant-controlled URLs (peer devshard hosts, executor
+	// payload endpoints). Default false = secure. Set true only in local dev /
+	// docker-compose / e2e, where hosts register docker-internal hostnames that
+	// resolve to private IPs. Env: DEVSHARD_ALLOW_PRIVATE_ADDRESSES.
+	AllowPrivateAddresses   bool
 	ValidationRetryInterval time.Duration
 	ValidationLeaseTTL      time.Duration
 	ShutdownGrace           time.Duration
@@ -146,6 +152,7 @@ func loadRuntimeConfig(args []string, protocolVersion, linkBinaryVersion string)
 		ProtocolVersion:         protocolVersion,
 		NodeManagerAddr:         envOr("NODE_MANAGER_ADDR", "localhost:9400"),
 		HostEventsEnabled:       envBoolOr("DEVSHARD_HOST_EVENTS_ENABLED", true),
+		AllowPrivateAddresses:   envBoolOr("DEVSHARD_ALLOW_PRIVATE_ADDRESSES", false),
 		ValidationRetryInterval: retryInterval,
 		ValidationLeaseTTL:      leaseTTL,
 		ShutdownGrace:           shutdownGrace,
@@ -269,14 +276,14 @@ func envOr(key, fallback string) string {
 	return fallback
 }
 
-// envBoolOr parses a boolean env var (strconv.ParseBool). Unset or unparseable
-// values return fallback.
+// envBoolOr parses a devshard boolean env var. Unset or unparseable values
+// return fallback.
 func envBoolOr(key string, fallback bool) bool {
 	v := strings.TrimSpace(os.Getenv(key))
 	if v == "" {
 		return fallback
 	}
-	parsed, err := strconv.ParseBool(v)
+	parsed, err := boolvalue.Parse(v)
 	if err != nil {
 		return fallback
 	}

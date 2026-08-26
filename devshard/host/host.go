@@ -105,6 +105,11 @@ type AcceptanceChecker interface {
 const (
 	defaultValidationWorkers   = 20
 	defaultValidationQueueSize = 20_000
+
+	// defaultExecutionBudget bounds a detached execution when the session config
+	// carries no ExecutionTimeout (zero is a legal value that
+	// NormalizeSessionConfig deliberately preserves).
+	defaultExecutionBudget = 32 * time.Minute
 )
 
 // Host processes user requests: applies diffs, executes inference, signs state.
@@ -342,10 +347,11 @@ func WithMaxNonceProvider(p devshard.MaxNonceProvider) HostOption {
 // via CompositeChecker.
 //
 // Production HostManager intentionally does not use this option: settlement
-// protection comes from deterministic drain accounting (settleLiveRecordLocked),
-// not signature withholding. WithGrace must not be paired with finish-gossip
-// recovery — gossip is a best-effort convenience for the user to sequence a
-// real Finish at actual cost; withholding would freeze settlement instead.
+// protection comes from deterministic drain accounting (settleLiveRecordLocked
+// credits reserved on both Started and Pending), not signature withholding.
+// WithGrace must not be paired with finish-gossip recovery — gossip is a
+// best-effort convenience for the user to sequence a real Finish at actual
+// cost; withholding would freeze settlement instead.
 func WithGrace(grace uint64) HostOption {
 	return func(h *Host) {
 		sc := NewStalenessChecker(h.mempool, grace)
@@ -394,6 +400,15 @@ func (h *Host) MempoolTxs() []*types.DevshardTx {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.mempool.Txs()
+}
+
+// AddTx inserts a tx into the local mempool (ProposedAt = 0). Used to copy
+// recovery txs from a challenge-receipt response into a verifier's pool.
+func (h *Host) AddTx(tx *types.DevshardTx) {
+	if tx == nil {
+		return
+	}
+	h.mempool.AddTx(tx)
 }
 
 func (h *Host) EscrowID() string              { return h.escrowID }
@@ -959,8 +974,31 @@ func (h *Host) signReceipt(ctx context.Context, req HostRequest, hdr *blocks.Hea
 
 // executeAsync runs inference and adds MsgFinishInference to the mempool.
 // Delegates to RunExecution which also caches the response body for reconnection.
+// The caller must not wait for the inference: it holds a request context whose
+// deadline is far shorter than a long generation, and the executor receipt is
+// already signed. Detaching from cancellation keeps MsgFinishInference on track
+// even after the challenging host hangs up.
+//
+// The detached context still carries a deadline. ReleaseExecution only runs when
+// RunExecution returns, so under a plain uncancellable context a wedged engine
+// would hold h.executing[id] for the process lifetime and permanently block this
+// inference; engine node-acquire loops also treat ctx as their only exit.
 func (h *Host) executeAsync(ctx context.Context, job *devshard.ExecuteRequest) {
-	_, _ = h.RunExecution(ctx, job)
+	execCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), h.executionBudget())
+	go func() {
+		defer cancel()
+		_, _ = h.RunExecution(execCtx, job)
+	}()
+}
+
+// executionBudget is the wall clock a detached execution may use. Past
+// ExecutionTimeout verifiers accept an execution timeout for the inference, so
+// work continuing beyond it can no longer be settled.
+func (h *Host) executionBudget() time.Duration {
+	if secs := h.sm.Config().ExecutionTimeout; secs > 0 {
+		return time.Duration(secs) * time.Second
+	}
+	return defaultExecutionBudget
 }
 
 func (h *Host) ReleaseExecution(inferenceID uint64) {
@@ -1166,7 +1204,7 @@ func (h *Host) enqueueValidation(job validateJob) {
 	case q <- job:
 		h.validationLifecycleMu.RUnlock()
 		observability.IncValidation(observability.StageValidationPicked, observability.MetricStatusQueued)
-		observability.SetValidationQueueDepth(h.escrowID, len(h.validationQueue))
+		observability.SetValidationQueueDepth(h.escrowID, len(q))
 	default:
 		h.validationLifecycleMu.RUnlock()
 		h.mu.Lock()
@@ -1213,8 +1251,11 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		h.mu.Lock()
 		delete(h.validating, job.inferenceID)
 		h.mu.Unlock()
-		if h.validationQueue != nil {
-			observability.SetValidationQueueDepth(h.escrowID, len(h.validationQueue))
+		h.validationLifecycleMu.RLock()
+		queue := h.validationQueue
+		h.validationLifecycleMu.RUnlock()
+		if queue != nil {
+			observability.SetValidationQueueDepth(h.escrowID, len(queue))
 		}
 	}()
 
@@ -1544,15 +1585,44 @@ func (h *Host) challengeReceiptLocked(ctx context.Context, inferenceID uint64, p
 		return nil, 0, nil, fmt.Errorf("sign executor receipt: %w", err)
 	}
 
+	var hasConfirmStart, hasFinish bool
+	for _, tx := range h.mempool.Txs() {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+			hasConfirmStart = true
+		}
+		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+			hasFinish = true
+		}
+	}
+
+	// Publish MsgConfirmStart the way the SSE path does. To the verifier the
+	// receipt is only a liveness proof and is discarded after the timeout vote,
+	// so without ConfirmStart the inference stays pending and applyFinishInference
+	// rejects the MsgFinishInference this execution produces as an invalid
+	// transition -- the work could never be settled. Only reachable while the
+	// record is still pending, so this cannot confirm an already-started
+	// inference. Skipped when one is already queued to avoid stacking entries
+	// that differ only by confirmed_at.
+	if !hasConfirmStart {
+		h.mempool.Add(MempoolEntry{
+			Tx: &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+				InferenceId:       inferenceID,
+				ExecutorSig:       sig,
+				ConfirmedAt:       confirmedAt,
+				ObservedHeight:    obsH,
+				ObservedBlockHash: obsHash,
+			}}},
+			ProposedAt: h.sm.LatestNonce(),
+		})
+	}
+
 	// Dedup: return receipt (proves executor alive) but skip execution
 	// if already in-flight or already finished in mempool.
 	if _, dup := h.executing[inferenceID]; dup {
 		return sig, confirmedAt, nil, nil
 	}
-	for _, tx := range h.mempool.Txs() {
-		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
-			return sig, confirmedAt, nil, nil
-		}
+	if hasFinish {
+		return sig, confirmedAt, nil, nil
 	}
 
 	h.executing[inferenceID] = struct{}{}

@@ -49,9 +49,9 @@ type FloorConfig struct {
 }
 
 // FloorConfigFor derives the raise rule from an escrow's host roster. Quorum is
-// the same two thirds (C-quorum) asks of envelope anchors, counted over
-// host-signed log-resident claims — SequencerSigner never fills a seat — so a
-// jump nobody else can vouch for does not become the escrow's logical time.
+// ceil(2/3 × slots_num) over host-signed log-resident claims — SequencerSigner
+// never fills a seat — so a jump nobody else can vouch for does not become the
+// escrow's logical time.
 func FloorConfigFor(slotsNum int, cfg HeartbeatConfig) FloorConfig {
 	q := QuorumForRoster(slotsNum)
 	if q < 1 {

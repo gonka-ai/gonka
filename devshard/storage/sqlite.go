@@ -543,7 +543,7 @@ func (s *SQLite) MarkSettled(escrowID string) error {
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		return fmt.Errorf("session %s not found", escrowID)
+		return fmt.Errorf("%w: %s", ErrSessionNotFound, escrowID)
 	}
 	return nil
 }
@@ -1277,6 +1277,7 @@ func (s *SQLite) pruneBefore(cutoff uint64) error {
 }
 
 func (s *SQLite) PutEscrowCache(info EscrowCacheInfo) error {
+	info = stampEscrowCache(info)
 	raw, err := marshalEscrowCache(info)
 	if err != nil {
 		return err

@@ -29,7 +29,14 @@ import (
 	"devshard/types"
 )
 
-const contextKeySender = "devshard_sender"
+const (
+	contextKeySender = "devshard_sender"
+
+	// DefaultMaxBodySize matches the public proxy and versiond-router limit.
+	// The transport enforces actual bytes read, so it also covers chunked bodies
+	// and deployments that expose devshardd without the public proxy.
+	DefaultMaxBodySize int64 = 10 * 1024 * 1024
+)
 
 // Server wraps a host.Host and exposes it over HTTP via Echo.
 type Server struct {
@@ -107,15 +114,15 @@ func NewServer(
 	opts ...ServerOption,
 ) (*Server, error) {
 	s := &Server{
-		host:     h,
-		store:    store,
-		verifier: verifier,
-		userAddr: userAddr,
+		host:        h,
+		store:       store,
+		verifier:    verifier,
+		userAddr:    userAddr,
+		maxBodySize: DefaultMaxBodySize,
 	}
 	for _, o := range opts {
 		o(s)
 	}
-	s.attachHeightSyncConfirmation()
 	return s, nil
 }
 
@@ -236,6 +243,13 @@ func VerifyPOSTAuth(c echo.Context, verifier signing.Verifier, escrowID string, 
 
 	body, err := io.ReadAll(c.Request().Body)
 	if err != nil {
+		var maxBytesErr *http.MaxBytesError
+		if errors.As(err, &maxBytesErr) {
+			return "", nil, echo.NewHTTPError(
+				http.StatusRequestEntityTooLarge,
+				fmt.Sprintf("request body exceeds %d bytes", maxBytesErr.Limit),
+			)
+		}
 		return "", nil, echo.NewHTTPError(http.StatusBadRequest, "read body")
 	}
 
@@ -649,7 +663,7 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 				}
 			}
 		}
-		accept, err = host.VerifyRefusedTimeout(c.Request().Context(), st, req.InferenceID, PayloadFromJSON(req.Payload), storedDiffs, localMempool, executorClient, st.Config, nowUnix)
+		accept, err = host.VerifyRefusedTimeout(c.Request().Context(), st, req.InferenceID, PayloadFromJSON(req.Payload), storedDiffs, localMempool, executorClient, s.host, st.Config, nowUnix)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
 		accept, err = host.VerifyExecutionTimeout(c.Request().Context(), st, req.InferenceID, localMempool, executorClient, st.Config, nowUnix)
 	default:
@@ -667,6 +681,12 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 		}
 		resp.Signature = sig
 		resp.VoterSlot = voterSlot
+	} else {
+		mempoolBytes, mErr := DevshardTxsToBytes(host.RecoveryTxsFor(s.host.MempoolTxs(), req.InferenceID))
+		if mErr != nil {
+			return echo.NewHTTPError(http.StatusInternalServerError, mErr.Error())
+		}
+		resp.Mempool = mempoolBytes
 	}
 	return writeJSON(c, http.StatusOK, resp)
 }
@@ -730,7 +750,11 @@ func (s *Server) HandleChallengeReceipt(c echo.Context) (err error) {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
-	return writeJSON(c, http.StatusOK, ChallengeReceiptResponse{Receipt: receipt})
+	mempoolBytes, err := DevshardTxsToBytes(host.RecoveryTxsFor(s.host.MempoolTxs(), req.InferenceID))
+	if err != nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+	}
+	return writeJSON(c, http.StatusOK, ChallengeReceiptResponse{Receipt: receipt, Mempool: mempoolBytes})
 }
 
 func (s *Server) HandleGossipNonce(c echo.Context) (err error) {

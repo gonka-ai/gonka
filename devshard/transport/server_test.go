@@ -106,6 +106,35 @@ func setupServerEnvHost(t *testing.T, hostOpts []host.HostOption, opts ...Server
 	}
 }
 
+func TestNewServer_DefaultsRequestBodyLimit(t *testing.T) {
+	env := setupServerEnv(t)
+	require.Equal(t, DefaultMaxBodySize, env.server.maxBodySize)
+}
+
+func TestServer_RejectsChunkedBodyOverActualLimit(t *testing.T) {
+	env := setupServerEnv(t)
+	env.server.maxBodySize = 8
+
+	body := []byte("123456789")
+	ts := time.Now().Unix()
+	sig, err := SignRequest(env.userSigner, "escrow-1", body, ts)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(
+		http.MethodPost,
+		testRoutePrefix+"/sessions/escrow-1/chat/completions",
+		strings.NewReader(string(body)),
+	)
+	req.ContentLength = -1
+	req.TransferEncoding = []string{"chunked"}
+	req.Header.Set(HeaderSignature, hex.EncodeToString(sig))
+	req.Header.Set(HeaderTimestamp, fmt.Sprintf("%d", ts))
+	rec := httptest.NewRecorder()
+	env.echo.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code, rec.Body.String())
+}
+
 func (env *serverTestEnv) doPost(t *testing.T, path string, body []byte) *httptest.ResponseRecorder {
 	t.Helper()
 
@@ -559,6 +588,69 @@ func TestServer_ChallengeReceipt_GroupMemberAllowed(t *testing.T) {
 	body := []byte(`{"inference_id":999,"diffs":[],"payload":null}`)
 	rec := env.doPostAs(t, "/devshard/v2/sessions/escrow-1/challenge-receipt", body, env.hostSigner)
 	require.Equal(t, http.StatusOK, rec.Code)
+}
+
+func TestServer_ChallengeReceipt_ReturnsRecoveryMempool(t *testing.T) {
+	env := setupServerEnv(t)
+	diff := testutil.SignDiff(t, env.userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	dj, err := DiffToJSON(diff)
+	require.NoError(t, err)
+	body, err := json.Marshal(ChallengeReceiptRequest{
+		InferenceID: 1,
+		Payload: &PayloadJSON{
+			Prompt:      testutil.TestPrompt,
+			Model:       "llama",
+			InputLength: 100,
+			MaxTokens:   50,
+			StartedAt:   1000,
+		},
+		Diffs: []DiffJSON{dj},
+	})
+	require.NoError(t, err)
+
+	env.server.host.AddTx(&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 99,
+		ExecutorSig: []byte("other"),
+		ConfirmedAt: 1,
+	}}})
+
+	rec := env.doPostAs(t, "/devshard/v2/sessions/escrow-1/challenge-receipt", body, env.hostSigner)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	var resp ChallengeReceiptResponse
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.NotEmpty(t, resp.Receipt, "challenge must return the executor receipt")
+	require.NotEmpty(t, resp.Mempool, "challenge response must return recovery mempool txs")
+
+	txs, err := DevshardTxsFromBytes(resp.Mempool)
+	require.NoError(t, err)
+	require.True(t, hasConfirmStartTx(txs, 1), "recovery mempool must include MsgConfirmStart")
+	require.False(t, hasConfirmStartTx(txs, 99), "recovery mempool must not include other inferences")
+	requireRecoveryOnlyFor(t, txs, 1)
+}
+
+func hasConfirmStartTx(txs []*types.DevshardTx, inferenceID uint64) bool {
+	for _, tx := range txs {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+			return true
+		}
+	}
+	return false
+}
+
+func requireRecoveryOnlyFor(t *testing.T, txs []*types.DevshardTx, id uint64) {
+	t.Helper()
+	require.NotEmpty(t, txs)
+	for _, tx := range txs {
+		switch {
+		case tx.GetConfirmStart() != nil:
+			require.Equal(t, id, tx.GetConfirmStart().InferenceId)
+		case tx.GetFinishInference() != nil:
+			require.Equal(t, id, tx.GetFinishInference().InferenceId)
+		default:
+			t.Fatalf("unexpected recovery tx type: %T", tx.GetTx())
+		}
+	}
 }
 
 func TestServer_NonExecutor_SSE(t *testing.T) {

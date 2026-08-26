@@ -26,7 +26,7 @@ import (
 )
 
 func TestChildEnvIncludesVersionLogPrefix(t *testing.T) {
-	env := childEnv("0.2.13-v2-r2", "")
+	env := childEnv("0.2.13-v2-r2", "", nil)
 	want := map[string]bool{
 		"DEVSHARD_BINARY_LOG_VERSION=0.2.13-v2-r2": false,
 	}
@@ -43,7 +43,7 @@ func TestChildEnvIncludesVersionLogPrefix(t *testing.T) {
 }
 
 func TestChildEnvSlotNameFallback(t *testing.T) {
-	env := childEnv("v2", "")
+	env := childEnv("v2", "", nil)
 	want := "DEVSHARD_BINARY_LOG_VERSION=v2"
 	found := false
 	for _, entry := range env {
@@ -58,7 +58,7 @@ func TestChildEnvSlotNameFallback(t *testing.T) {
 }
 
 func TestChildEnvIncludesAdminAddr(t *testing.T) {
-	env := childEnv("v2", "127.0.0.1:6001")
+	env := childEnv("v2", "127.0.0.1:6001", nil)
 	want := map[string]bool{
 		"DEVSHARD_BINARY_LOG_VERSION=v2":     false,
 		"DEVSHARD_ADMIN_ADDR=127.0.0.1:6001": false,
@@ -78,11 +78,68 @@ func TestChildEnvIncludesAdminAddr(t *testing.T) {
 func TestChildEnvDoesNotLeakParentAdminAddr(t *testing.T) {
 	t.Setenv("DEVSHARD_ADMIN_ADDR", "127.0.0.1:9999")
 
-	env := childEnv("v2", "")
+	env := childEnv("v2", "", nil)
 	for _, entry := range env {
 		if strings.HasPrefix(entry, "DEVSHARD_ADMIN_ADDR=") {
 			t.Fatalf("childEnv leaked parent %q", entry)
 		}
+	}
+}
+
+func TestChildEnvOverridesParentHADeclaration(t *testing.T) {
+	t.Setenv(envHADeployment, "true")
+	ha := false
+
+	env := childEnv("v2", "", &ha)
+	values := make([]string, 0, 1)
+	for _, entry := range env {
+		if strings.HasPrefix(entry, envHADeployment+"=") {
+			values = append(values, entry)
+		}
+	}
+	if len(values) != 1 || values[0] != envHADeployment+"=false" {
+		t.Fatalf("child HA environment = %v, want one canonical false value", values)
+	}
+}
+
+func TestParseHADeployment(t *testing.T) {
+	tests := []struct {
+		raw     string
+		want    bool
+		wantErr bool
+	}{
+		{raw: ""},
+		{raw: "0"},
+		{raw: "f"},
+		{raw: "false"},
+		{raw: "no"},
+		{raw: "off"},
+		{raw: "1", want: true},
+		{raw: "t", want: true},
+		{raw: "true", want: true},
+		{raw: "yes", want: true},
+		{raw: "on", want: true},
+		{raw: " ON ", want: true},
+		{raw: " OFF ", want: false},
+		{raw: "enabled", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.raw, func(t *testing.T) {
+			got, err := parseHADeployment(tt.raw)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected invalid boolean error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got != tt.want {
+				t.Fatalf("parseHADeployment(%q) = %v, want %v", tt.raw, got, tt.want)
+			}
+		})
 	}
 }
 
@@ -272,6 +329,54 @@ esac
 
 	if _, err := preflightChildWithAdminProbe(binPath, "v2", true); err == nil {
 		t.Fatal("expected storage mode probe error to fail preflight")
+	}
+}
+
+func TestPreflightChild_HAStorageContract(t *testing.T) {
+	tests := []struct {
+		name          string
+		ha            string
+		nonHAVersions string
+		storageMode   string
+		legacy        bool
+		wantHA        bool
+		wantErr       bool
+	}{
+		{name: "postgres HA version", ha: "on", storageMode: "postgres", wantHA: true},
+		{name: "non-postgres HA version", ha: "on", storageMode: "hybrid", wantErr: true},
+		{name: "legacy binary in HA pool", ha: "on", legacy: true, wantErr: true},
+		{name: "legacy-pinned binary", ha: "on", nonHAVersions: "v1, v2;v3", legacy: true},
+		{name: "single-instance legacy binary", ha: "off", legacy: true},
+		{name: "invalid HA declaration", ha: "enabled", storageMode: "postgres", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(envHADeployment, tt.ha)
+			t.Setenv(envNonHAVersions, tt.nonHAVersions)
+			dir := t.TempDir()
+			binPath := writeStorageModeProbeBinary(t, dir, "candidate", tt.storageMode)
+			if tt.legacy {
+				binPath = writeStorageModeLegacyBinary(t, dir, "candidate")
+			}
+
+			preflight, err := preflightChildWithAdminProbe(binPath, "v2", true)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected HA storage preflight error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			if preflight.haDeployment == nil {
+				t.Fatal("devshard preflight did not set the child HA declaration")
+			}
+			if *preflight.haDeployment != tt.wantHA {
+				t.Fatalf("child HA declaration = %v, want %v", *preflight.haDeployment, tt.wantHA)
+			}
+		})
 	}
 }
 
@@ -684,34 +789,25 @@ func TestInstallBinPathUsesVersionAndSHA(t *testing.T) {
 }
 
 func TestRollingOverlapAllowedRequiresPostgresForDevshard(t *testing.T) {
-	dir := t.TempDir()
-	postgresBin := writeStorageModeProbeBinary(t, dir, "postgres-bin", "postgres")
-	hybridBin := writeStorageModeProbeBinary(t, dir, "hybrid-bin", "hybrid")
-	errorBin := writeStorageModeErrorBinary(t, dir, "error-bin")
-	legacyBin := writeStorageModeLegacyBinary(t, dir, "legacy-bin")
-
 	devshardMgr := NewManager(config.Config{BinaryName: "devshard", BasePort: 5000})
-	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: ""}, postgresBin) {
+	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: ""}, "postgres") {
 		t.Fatal("devshard overlap should be disabled when running child storage mode is unknown")
 	}
-	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "hybrid"}, postgresBin) {
+	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "hybrid"}, "postgres") {
 		t.Fatal("devshard overlap should be disabled when running child is not postgres-only")
 	}
-	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres"}, legacyBin) {
+	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres"}, "") {
 		t.Fatal("devshard overlap should be disabled when new binary does not expose storage mode")
 	}
-	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres"}, hybridBin) {
+	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres"}, "hybrid") {
 		t.Fatal("devshard overlap should be disabled when new binary is not postgres-only")
 	}
-	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres"}, errorBin) {
-		t.Fatal("devshard overlap should be disabled when new binary storage probe fails")
-	}
-	if !devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres"}, postgresBin) {
+	if !devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres"}, "postgres") {
 		t.Fatal("devshard overlap should be allowed when both children are postgres-only")
 	}
 
 	testappMgr := NewManager(config.Config{BinaryName: "testapp", BasePort: 5000})
-	if !testappMgr.rollingOverlapAllowed("v1", &child{}, legacyBin) {
+	if !testappMgr.rollingOverlapAllowed("v1", &child{}, "") {
 		t.Fatal("non-devshard test binary should allow overlap without storage mode probing")
 	}
 }
@@ -1902,6 +1998,90 @@ esac
 	}
 }
 
+func TestDownloadAndSwap_PreflightFailureKeepsOldServing(t *testing.T) {
+	tests := []struct {
+		name        string
+		ha          string
+		storageMode string
+	}{
+		{name: "invalid HA declaration", ha: "enabled", storageMode: "postgres"},
+		{name: "unsafe HA storage", ha: "on", storageMode: "hybrid"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv(envHADeployment, tt.ha)
+			t.Setenv(envNonHAVersions, "")
+			dir := t.TempDir()
+			newBinary := []byte(`#!/bin/sh
+case "$1" in
+--print-binary-version) echo "devshardd-new" ;;
+--print-protocol-version) echo "v1" ;;
+--print-admin-api-version) echo "1" ;;
+--print-storage-mode) echo "` + tt.storageMode + `" ;;
+*) exit 99 ;;
+esac
+`)
+			zipData, archiveHash := zipBinary(t, "devshardd", newBinary)
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = w.Write(zipData)
+			}))
+			defer srv.Close()
+
+			m := NewManager(config.Config{
+				BinDir:     filepath.Join(dir, "bin"),
+				DataDir:    filepath.Join(dir, "data"),
+				BinaryName: "devshardd",
+				BasePort:   6200,
+			})
+			stopped := false
+			old := &child{
+				version:       oracle.Version{Name: "v1"},
+				archiveSHA256: sha256Hex([]byte("old-archive")),
+				storageMode:   storageModePostgres,
+				port:          9001,
+				done:          make(chan struct{}),
+				status:        statusRunning,
+				restart:       true,
+				stop:          func() { stopped = true },
+			}
+
+			m.mu.Lock()
+			m.processes["v1"] = old
+			m.downloading["v1"] = struct{}{}
+			m.rebuildRoutes()
+			m.mu.Unlock()
+
+			err := m.downloadAndSwap(context.Background(), oracle.Version{
+				Name:   "v1",
+				Binary: srv.URL,
+				SHA256: archiveHash,
+			}, archiveHash, old)
+			if err == nil {
+				t.Fatal("expected replacement preflight error")
+			}
+			if stopped {
+				t.Fatal("replacement preflight failure stopped the serving child")
+			}
+
+			m.mu.Lock()
+			current := m.processes["v1"]
+			_, downloading := m.downloading["v1"]
+			m.mu.Unlock()
+			if current != old {
+				t.Fatal("replacement preflight failure changed the serving child")
+			}
+			if downloading {
+				t.Fatal("downloading marker was not cleared after preflight failure")
+			}
+			routes := m.RouteTable().Load().(proxy.RouteTable)
+			if routes["v1"].Address() != "localhost:9001" {
+				t.Fatalf("route = %q, want old child route", routes["v1"].Address())
+			}
+		})
+	}
+}
+
 func TestReconcile_DownloadedVersionDoesNotRedownloadWhenInstallStateMatches(t *testing.T) {
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")
@@ -2195,21 +2375,6 @@ func writeStorageModeLegacyBinary(t *testing.T, dir, name string) string {
 	script := `#!/bin/sh
 echo "unknown flag: $1" >&2
 exit 2
-`
-	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	return binPath
-}
-
-func writeStorageModeErrorBinary(t *testing.T, dir, name string) string {
-	t.Helper()
-	binPath := filepath.Join(dir, name)
-	script := `#!/bin/sh
-case "$1" in
---print-storage-mode) echo "invalid storage env" >&2; exit 1 ;;
-*) echo "unknown flag: $1" >&2; exit 2 ;;
-esac
 `
 	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)

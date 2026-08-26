@@ -68,8 +68,7 @@ func NewHeartbeat(cfg HeartbeatConfig) *Heartbeat {
 	}
 }
 
-// SetRoster sets the turnover quorum. quorum <= 0 uses QuorumForRoster(slotsNum),
-// the same Q as (C-quorum) and (C-turn).
+// SetRoster sets the turnover quorum. quorum <= 0 uses QuorumForRoster(slotsNum).
 func (h *Heartbeat) SetRoster(slotsNum uint64, quorum int) {
 	if h == nil {
 		return

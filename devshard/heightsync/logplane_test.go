@@ -628,23 +628,14 @@ func hasMark(marks []heightsync.AttributableMark, kind heightsync.MarkKind) bool
 	return false
 }
 
-// TestConfirm_TurnRuleWithdrawn pins the soundness argument in spec §17. A
-// complete turn is a reachability certificate, not a height certificate: every
-// ack carries a reference height, so a host whose follower never reached 500
-// still acks 500 by lifting to a floor another party set. Confirming on Q of
-// those would launder one originator's claim into Q attestations, which is
-// exactly what (C-quorum)'s distinct-originator requirement prevents.
-func TestConfirm_TurnRuleWithdrawn(t *testing.T) {
+// TestTurnComplete_IsNotAHeightCertificate pins the soundness argument that
+// withdrew (C-turn): a complete turn is a reachability certificate, not a
+// height certificate. Every ack carries a reference height, so a host whose
+// follower never reached 500 still acks 500 by lifting to a floor another party
+// set. Counting Q of those must not be treated as Q independent height witnesses.
+func TestTurnComplete_IsNotAHeightCertificate(t *testing.T) {
 	tr := heightsync.NewTurnTracker(4, 3, heightsync.DefaultHeartbeatConfig())
 	tr.Observe(10, []*types.DevshardTx{hbTx(1, 500, 4, []byte{1}, nil)}, 500)
-	idx := heightsync.NewConfirmationIndex(heightsync.ConfirmationConfig{
-		Roster: []string{"h1", "h2", "h3", "h4"},
-		Quorum: 3,
-		Rule:   heightsync.RuleTurn,
-		Turns:  tr,
-		Oracle: &mapOracle{latest: &blocks.Header{Height: 500, BlockHash: []byte{1}}},
-	})
-	require.Equal(t, heightsync.ConfirmPending, idx.IsStrictlyConfirmed(500))
 
 	tr.Observe(14, []*types.DevshardTx{
 		signedAckTx(&types.MsgHeightAck{TurnSeq: 1, RefNonce: 10, SlotId: 0, ObservedHeight: 500, SyncState: types.SyncState_SYNCED}),
@@ -652,8 +643,6 @@ func TestConfirm_TurnRuleWithdrawn(t *testing.T) {
 		signedAckTx(&types.MsgHeightAck{TurnSeq: 1, RefNonce: 10, SlotId: 2, ObservedHeight: 500, SyncState: types.SyncState_SYNCED}),
 	}, 500)
 	require.True(t, tr.CompletedAtOrAbove(500), "the turn itself completed: Q slots were reachable")
-	require.Equal(t, heightsync.ConfirmPending, idx.IsStrictlyConfirmed(500),
-		"a complete turn must not confirm a height; RuleTurn falls through to (C-quorum), which has no anchors here")
 }
 
 func TestLogPlane_CheckEnvelopeBindingIndependent(t *testing.T) {

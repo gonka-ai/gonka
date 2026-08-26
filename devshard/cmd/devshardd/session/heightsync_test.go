@@ -21,7 +21,7 @@ func TestSetHeightSyncFromEnv_EmptyIsNoop(t *testing.T) {
 	require.NoError(t, mgr.SetHeightSyncFromEnv(context.Background(), nil))
 	require.Nil(t, mgr.heightSync)
 	require.Nil(t, mgr.chainOracle)
-	require.Len(t, mgr.transportServerOpts(), 2)
+	require.Len(t, mgr.transportServerOpts(), 3)
 }
 
 func TestSetHeightSyncFromEnv_InvalidK(t *testing.T) {
@@ -47,7 +47,7 @@ func TestSetHeightSyncFromEnv_WiresScheduler(t *testing.T) {
 	require.NotNil(t, mgr.chainOracle)
 	require.Equal(t, uint64(10), mgr.heightSync.K())
 	require.Equal(t, uint64(1), mgr.heightSync.SlotsNum())
-	require.Len(t, mgr.transportServerOpts(), 3)
+	require.Len(t, mgr.transportServerOpts(), 4)
 	mgr.ObserveChainHeader(&blocks.Header{
 		Height:    7,
 		Time:      time.Unix(1_700_000_000, 0).UTC(),
@@ -68,4 +68,15 @@ func TestSetHeightSyncFromEnv_FlagWithoutOracleErrors(t *testing.T) {
 	err := mgr.SetHeightSyncFromEnv(context.Background(), nil)
 	require.Error(t, err)
 	require.Nil(t, mgr.heightSync)
+}
+
+func TestHeightSyncFlagUsesDevshardBooleanGrammar(t *testing.T) {
+	t.Setenv(envHeightSync, "on")
+	require.True(t, heightSyncFlag())
+
+	t.Setenv(envHeightSync, "F")
+	require.False(t, heightSyncFlag())
+
+	t.Setenv(envHeightSync, "invalid")
+	require.False(t, heightSyncFlag(), "invalid values retain the disabled fallback")
 }
