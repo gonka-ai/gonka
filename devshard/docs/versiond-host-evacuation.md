@@ -183,6 +183,12 @@ download or child restart does not retract it. Without the latch, a routine
 same-name SHA bump would briefly un-converge every host at once and evict the
 entire pool — the failure mode readiness exists to prevent.
 
+The join Compose healthcheck intentionally probes this coarse `/readyz`
+contract. A fresh host that has not yet run its complete desired set therefore
+remains Docker `unhealthy`, even when some precise per-version routes are already
+available; HAProxy continues to evaluate those routes with
+`/readyz?version=<v>`.
+
 A fresh versiond that has never run the complete set remains unready on the
 coarse endpoint by design. That endpoint may receive an undeclared version and
 cannot safely claim readiness from unrelated children. Exact
