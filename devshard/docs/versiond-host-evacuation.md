@@ -117,6 +117,13 @@ seconds.
 
 ## Context ownership
 
+All versiond duration settings use Go duration syntax and require an explicit
+unit, for example `30s`, `5m`, or `1h30m`. A legacy value such as
+`VERSIOND_POLL_INTERVAL=30` now fails startup instead of silently falling back;
+change it to `30s` before upgrading. Invalid and non-positive values fail
+closed, except `VERSIOND_DRAIN_ANNOUNCE=0s`, which is valid for a topology with
+no load balancer handoff.
+
 `versiond` uses separate cancellation domains:
 
 - poll context: oracle fetches, downloads, readiness waits, and reconcile;
