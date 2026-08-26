@@ -1398,6 +1398,9 @@ test-render: test-local-compose test-join-compose test-catalog-cache test-hash-r
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
 	fail() { echo "test-render: $$1" >&2; exit 1; }; \
+	encoded=$$(. ../router-runtime/version-contract; router_urlencode 'Aa09._+~-'); \
+	[ "$$encoded" = 'Aa09._%2B~-' ] \
+		|| fail "the shared version-name encoder drifted from the catalog grammar"; \
 	HAPROXY_BIN=true \
 	VERSIOND_ROUTER_RENDER_ONLY=1 \
 	VERSIOND_POOL_HOST=versiond-pool \

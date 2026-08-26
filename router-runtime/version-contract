@@ -15,16 +15,22 @@ router_version_is_valid() {
         '^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}$'
 }
 
-router_urlencode() {
-    printf '%s' "$1" | awk '
+router_urlencode_stream() {
+    awk '
         BEGIN { for (i = 0; i < 256; i++) ord[sprintf("%c", i)] = i }
         {
+            encoded = ""
             n = split($0, c, "")
             for (i = 1; i <= n; i++) {
-                if (c[i] ~ /[A-Za-z0-9._~-]/) printf "%s", c[i]
-                else printf "%%%02X", ord[c[i]]
+                if (c[i] ~ /[A-Za-z0-9._~-]/) encoded = encoded c[i]
+                else encoded = encoded sprintf("%%%02X", ord[c[i]])
             }
+            print encoded
         }'
+}
+
+router_urlencode() {
+    printf '%s\n' "$1" | router_urlencode_stream
 }
 
 router_name_in_file() {

@@ -594,12 +594,7 @@ prepare_catalog() {
 	slot_state=$(map_snapshot "$slot_map") || return 1
 	remember_slot_usage
 	printf '%s\n' "$projection_state" > "$tmpdir/projection.current"
-	: > "$tmpdir/catalog.encoded"
-	while IFS= read -r version; do
-		[ -n "$version" ] || continue
-		router_urlencode "$version"
-		printf '\n'
-	done < "$tmpdir/catalog.names" > "$tmpdir/catalog.encoded"
+	router_urlencode_stream < "$tmpdir/catalog.names" > "$tmpdir/catalog.encoded"
 	reclaim_withdrawn_pending_slots || return 1
 
 	# Build the complete plan before changing HAProxy. catalog.names is already
@@ -697,24 +692,25 @@ accepted_projection_matches() {
 	slot_state=$(map_snapshot "$slot_map") || return 1
 	printf '%s\n' "$projection_state" > "$tmpdir/projection.verify"
 	printf '%s\n' "$slot_state" > "$tmpdir/slots.verify"
+	router_urlencode_stream < "$last_names" > "$tmpdir/accepted.encoded"
+	paste -d ' ' "$last_names" "$tmpdir/accepted.encoded" \
+		> "$tmpdir/accepted.verify"
 	awk -v prefix="$backend_prefix" '
 		FILENAME == ARGV[1] {
 			if (index($2, prefix) == 1) slot[$2] = $3
 			next
 		}
-		FILENAME == ARGV[2] { accepted[$0] = 1; next }
+		FILENAME == ARGV[2] { accepted[$1] = $2; next }
 		index($3, prefix) == 1 {
 			version = $2
-			encoded = version
-			gsub(/\+/, "%2B", encoded)
-			if (!(version in accepted) || slot[$3] != encoded) invalid = 1
+			if (!(version in accepted) || slot[$3] != accepted[version]) invalid = 1
 			seen[version]++
 		}
 		END {
 			for (version in accepted) if (seen[version] != 1) invalid = 1
 			exit invalid
 		}
-	' "$tmpdir/slots.verify" "$last_names" "$tmpdir/projection.verify"
+	' "$tmpdir/slots.verify" "$tmpdir/accepted.verify" "$tmpdir/projection.verify"
 }
 
 set_current_catalog_state() {
