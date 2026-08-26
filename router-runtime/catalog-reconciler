@@ -715,8 +715,11 @@ accepted_projection_matches() {
 
 set_current_catalog_state() {
 	if [ "$catalog_contract_error" -ne 0 ]; then
-		set_state contract-error \
-			"compatible catalog routes are current; one or more names are outside the router grammar"
+		catalog_state_detail="compatible catalog routes are current; one or more names are outside the router grammar"
+		if [ "$catalog_withdrawal_pending" -ne 0 ]; then
+			catalog_state_detail="$catalog_state_detail; catalog also omitted accepted routes and requires explicit maintenance removal"
+		fi
+		set_state contract-error "$catalog_state_detail"
 	elif [ "$catalog_withdrawal_pending" -ne 0 ]; then
 		set_state withdrawal-pending \
 			"catalog omitted accepted routes; explicit maintenance removal is required"
@@ -739,9 +742,12 @@ while :; do
         set_state projection-error \
             "catalog is empty while accepted dynamic routes still exist"
     else
-        contract_suffix=
+        catalog_diagnostic_suffix=
         if [ "$catalog_contract_error" -ne 0 ]; then
-            contract_suffix="; catalog also contains names outside the router grammar"
+            catalog_diagnostic_suffix="; catalog also contains names outside the router grammar"
+        fi
+        if [ "$catalog_withdrawal_pending" -ne 0 ]; then
+            catalog_diagnostic_suffix="$catalog_diagnostic_suffix; catalog also omitted accepted routes and requires explicit maintenance removal"
         fi
         if [ "$catalog_plan_clean" -eq 1 ] && \
             cmp -s "$tmpdir/catalog.names" "$last_names"; then
@@ -768,17 +774,19 @@ while :; do
             set_state cache-error "cannot refresh the last accepted catalog snapshot"
         elif [ "$reconcile_status" -eq 2 ]; then
             set_state capacity-exhausted \
-                "no free backend slot for governance version '$capacity_missing'$contract_suffix"
+                "no free backend slot for governance version '$capacity_missing'$catalog_diagnostic_suffix"
         elif [ "$reconcile_status" -eq 3 ]; then
             set_state activation-pending \
-                "governance version '$activation_version' has $activation_ready/$activation_min_ready ready backends$contract_suffix"
+                "governance version '$activation_version' has $activation_ready/$activation_min_ready ready backends$catalog_diagnostic_suffix"
         elif [ "$reconcile_status" -ne 0 ]; then
-            set_state runtime-error "HAProxy rejected a catalog projection"
+            set_state runtime-error \
+                "HAProxy rejected a catalog projection$catalog_diagnostic_suffix"
         elif ! commit_catalog_additions; then
             set_state cache-error "cannot persist catalog additions"
         elif ! publish_catalog; then
             projection_repair_needed=1
-            set_state runtime-error "HAProxy rejected an accepted catalog projection"
+            set_state runtime-error \
+                "HAProxy rejected an accepted catalog projection$catalog_diagnostic_suffix"
         else
             removal_status=0
             apply_catalog_removals || removal_status=$?
@@ -786,7 +794,8 @@ while :; do
                 set_state cache-error "cannot persist catalog removals"
             elif [ "$removal_status" -eq 2 ]; then
                 projection_repair_needed=1
-                set_state runtime-error "cannot retire removed catalog routes"
+                set_state runtime-error \
+                    "cannot retire removed catalog routes$catalog_diagnostic_suffix"
             else
                 catalog_plan_clean=1
                 set_current_catalog_state

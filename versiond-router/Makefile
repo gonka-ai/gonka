@@ -987,7 +987,7 @@ test-version-routing:
 	done; \
 	framing_cache_before=$$(docker exec gonka-vp-router sha256sum \
 		/var/lib/gonka-router/catalog.json | awk '{print $$1}'); \
-	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v9"},{"name":"v10"},{"name":"v9+hotfix"},{"name":"v11\nv5"}]}' \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v9"},{"name":"v9+hotfix"},{"name":"v11\nv5"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	for i in $$(seq 10); do \
@@ -997,8 +997,8 @@ test-version-routing:
 		sleep 0.5; \
 	done; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-		| jq -e '.state == "contract-error" and .dynamic_slots_used == 3' >/dev/null \
-		|| fail "an embedded newline split one governance name into multiple routes"; \
+		| jq -e '.state == "contract-error" and .dynamic_slots_used == 3 and (.detail | contains("outside the router grammar")) and (.detail | contains("omitted accepted routes"))' >/dev/null \
+		|| fail "combined contract and withdrawal diagnostics were incomplete"; \
 	if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
 		/etc/haproxy/versions.map | grep -qx v11; then \
 		fail "an embedded newline published a fabricated catalog route"; \
