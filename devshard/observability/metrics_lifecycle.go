@@ -362,21 +362,20 @@ func SetFallbackDivisor(source string, divisor int) {
 	fallbackDivisor.WithLabelValues(source).Set(float64(divisor))
 }
 
-// IncPostgresHealthProbe records a PostgreSQL health probe result separately
-// from readiness so pool saturation does not masquerade as a database outage.
-func IncPostgresHealthProbe(result string) {
+// ObservePostgresHealthProbe records database reachability independently from
+// application-pool saturation.
+func ObservePostgresHealthProbe(healthy, saturated bool) {
 	ensureMetrics()
-	switch result {
-	case "success", "database_error", "pool_saturated":
-	default:
-		result = "unknown"
+	result := "database_error"
+	if healthy {
+		result = "success"
 	}
 	postgresHealthProbeTotal.WithLabelValues(result).Inc()
-	saturated := 0.0
-	if result == "pool_saturated" {
-		saturated = 1
+	saturationValue := 0.0
+	if saturated {
+		saturationValue = 1
 	}
-	postgresPoolSaturated.Set(saturated)
+	postgresPoolSaturated.Set(saturationValue)
 }
 
 // IncDiffPersistRetry records one AppendDiff retry outcome (Phase 3).
