@@ -204,7 +204,7 @@ func mempoolHasCloseTx(txs []*types.DevshardTx) bool {
 		if tx == nil {
 			continue
 		}
-		if tx.GetFinalizeRound() != nil || tx.GetTimeoutInference() != nil {
+		if tx.GetFinalizeRound() != nil || tx.GetTimeoutInference() != nil || tx.GetErrorMiss() != nil {
 			return true
 		}
 	}

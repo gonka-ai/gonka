@@ -39,6 +39,7 @@ make citest-payload-withholding   # executor payload withholding (500 → invali
 make citest-versiond-rolling-update
 make citest-versiond-host-evacuation
 make citest-escrow-longpoll       # escrow long-poll warm (rebuilds devshardd)
+make citest-adversarial           # Phase 9 A1–A5 (A5 is 3-host)
 ```
 
 Or run a single scenario:
@@ -85,6 +86,22 @@ picked up automatically (no workflow edit). For a local sequential subset, use
 Source files under `devshard/testenv/citest/` use the same behavior-oriented
 names. Versiond failover and restart persistence intentionally remain separate
 test files because they exercise different lifecycle contracts.
+
+### Phase 9 adversarial scenarios
+
+| ID | Name | What we validate | Test | Status |
+|----|------|------------------|------|--------|
+| **A1** | Lost first SSE chunk | `mock-openai` `drop_first_chunk` → gateway stream still completes; assembled text missing first rune | `TestA1_LostFirstChunk` | ✅ |
+| **A2** | ML upstream 5xx | `mock-openai` `http_status=503` → gateway chat HTTP ≥400 | `TestA2_MLUpstream5xx` | ✅ |
+| **A3** | Stale escrow | `POST /testenv/escrow` settle → mock-chain gRPC reports `settled=true` | `TestA3_StaleEscrow` | ✅ |
+| **A4** | Bad warm-key | `POST /testenv/grantees` revoke → warm grantee absent from `GranteesByMessageType` | `TestA4_BadWarmKey` | ✅ |
+| **A5** | Error-finish miss | HTTP 200 SSE error envelope → `MsgErrorMiss`: client `hostApplicationError`, executor `Missed++`, no validation job, full client refund, `HostStats.Cost` unchanged | `TestA5_ErrorFinishMiss` | ✅ |
+
+A1–A4 boot the standard 2× versiond stack. A5 boots a **3-host** stack so two
+non-executor verifiers can exceed `VoteThreshold` (step 10 of
+[`error-finish-miss-protocol-plan.md`](../docs/error-finish-miss-protocol-plan.md)).
+
+Run: `make citest-adversarial` from `devshard/testenv/`.
 
 ### Phase 12 transport scenarios (gRPC-only gateway)
 
@@ -466,7 +483,7 @@ persistence across the multi-host topology, not only mock-chain or gateway in-me
 | Suite | Command | Scenarios |
 |-------|---------|-----------|
 | gRPC transport | `make citest-grpc-transport` | G1–G4 ✅ ([`chain-transport-consolidation.md`](./chain-transport-consolidation.md)) |
-| Adversarial | `make citest-adversarial` | A1–A4 (fault injection on mock-openai / mock-chain) |
+| Adversarial | `make citest-adversarial` | A1–A5 (fault injection on mock-openai / mock-chain) |
 | Observability | `make citest-observability` | O1 Jaeger + Loki + Prometheus smoke |
 | Gateway smoke | `TESTENV_GATEWAY_SMOKE=1` | Phase 7 wiring without full citest tag |
 
@@ -513,6 +530,34 @@ calls `chaintx.CreateDevshardEscrow`, queries `DevshardEscrow` on gRPC.
 **How:** `TestG4_NoRESTChainClientsInGatewayProduction` scans non-test `.go` files in `devshard/cmd/devshardctl`.
 
 **Pass criteria:** Test fails if `NewRESTBridge` or `NewRESTChainTxClient` appear in production paths.
+
+---
+
+## A5 — Error-finish miss ✅
+
+**What we test:** a streamed OpenAI error envelope (HTTP 200 SSE, companion to A2's
+HTTP 503) is accounted as `MsgErrorMiss`. Accounting changes; the served
+client response does not.
+
+Specified as step 10 of
+[`error-finish-miss-protocol-plan.md`](../docs/error-finish-miss-protocol-plan.md).
+
+**How:** `TestA5_ErrorFinishMiss` boots a 3-host stack
+(`BootErrorMissAdversarialStack`) so two non-executor verifiers can exceed
+`VoteThreshold`. `POST /testenv/fault` sets mock-openai `stream_error_envelope`;
+the test then posts a non-stream chat through the gateway.
+
+**Pass criteria:**
+
+- Client HTTP 500 `hostApplicationError` with today's EngineCore body.
+- Inference reaches `StatusTimedOut`; executor slot `HostStats.Missed` increments
+  by 1 (settlement copies this counter).
+- Client balance unchanged (full `ReservedCost` refund).
+- Executor `HostStats.Cost` unchanged.
+- No validation votes (`VotesValid` / `VotesInvalid` stay 0) and
+  `CompletedValidations` unchanged.
+
+**Run:** `make citest-adversarial` (or `-run TestA5_`).
 
 ---
 
@@ -595,7 +640,7 @@ pattern and **no `t.Parallel()`**.
   (own project dir, own stack, Docker-assigned ports): `TestStackSmoke`,
   `TestRouterStickiness`, `TestGatewayChat`, `TestEpochSwitch`,
   `TestParamsLongPoll`, `TestLegacyVersionPinnedToSingleHost`, the `G1/G2/G3`,
-  `A1–A4`, `O1`, and **escrow long-poll warm**.
+  `A1–A5`, `O1`, and **escrow long-poll warm**.
 - They are grouped into separate Makefile targets (`citest-stack`,
   `citest-validation-lease-race`, `citest-payload-withholding`, `citest-versiond-rolling-update`,
   `citest-adversarial`, `citest-grpc-transport`, `citest-observability`,

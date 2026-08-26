@@ -55,12 +55,30 @@ type VerifyTimeoutRequest struct {
 	Diffs       []DiffJSON   `json:"diffs,omitempty"` // catch-up diffs so verifier knows about the inference
 }
 
+// VerifyErrorMissRequest is the JSON body for POST /sessions/:id/verify-error-miss.
+type VerifyErrorMissRequest struct {
+	InferenceID     uint64     `json:"inference_id"`
+	Diffs           []DiffJSON `json:"diffs,omitempty"`
+	FinishTx        []byte     `json:"finish_tx"`
+	ResponsePayload []byte     `json:"response_payload"`
+}
+
+// VerifyErrorMissResponse is returned by the error-miss verification endpoint.
+type VerifyErrorMissResponse struct {
+	Accept      bool     `json:"accept"`
+	Signature   []byte   `json:"signature,omitempty"`
+	VoterSlot   uint32   `json:"voter_slot"`
+	Mempool     [][]byte `json:"mempool,omitempty"`
+	RejectCause string   `json:"reject_cause,omitempty"` // no_finish_tx, no_payload, sig, hash_mismatch, not_error_body
+}
+
 // VerifyTimeoutResponse is returned by the timeout verification endpoint.
 type VerifyTimeoutResponse struct {
-	Accept    bool     `json:"accept"`
-	Signature []byte   `json:"signature,omitempty"` // signed TimeoutVoteContent
-	VoterSlot uint32   `json:"voter_slot"`
-	Mempool   [][]byte `json:"mempool,omitempty"` // recovery txs on reject; each: proto bytes of DevshardTx
+	Accept      bool     `json:"accept"`
+	Signature   []byte   `json:"signature,omitempty"` // signed TimeoutVoteContent
+	VoterSlot   uint32   `json:"voter_slot"`
+	Mempool     [][]byte `json:"mempool,omitempty"`      // recovery txs on reject; each: proto bytes of DevshardTx
+	RejectCause string   `json:"reject_cause,omitempty"`
 }
 
 // ChallengeReceiptRequest is the JSON body for POST /sessions/:id/challenge-receipt.

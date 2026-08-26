@@ -147,7 +147,7 @@ func TestHTTPClient_VerifyTimeout_ReturnsRecoveryMempool(t *testing.T) {
 		StartedAt:   1000,
 	}
 
-	accept, _, _, mempool, err := client.VerifyTimeout(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, []types.Diff{diff})
+	accept, _, _, mempool, _, err := client.VerifyTimeout(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, []types.Diff{diff}, host.TimeoutArtifacts{})
 	require.NoError(t, err)
 	require.False(t, accept, "alive executor must reject the refused timeout")
 	require.NotEmpty(t, mempool, "reject must return recovery mempool")

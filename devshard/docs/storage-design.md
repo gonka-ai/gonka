@@ -454,6 +454,11 @@ down after boot.
 
 - Postgres env vars: `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`.
 - Postgres connect deadline at boot: `PG_CONNECT_TIMEOUT` default `2s`.
+- Live readiness uses one dedicated PostgreSQL connection outside the
+  application pool. Two consecutive database failures make `/readyz` return
+  `503` without terminating devshardd; two successful probes restore readiness.
+  Application-pool saturation is exposed separately and does not by itself
+  change readiness.
 - Storage mode helpers and `.pg-bound`: `devshard/storage/storage_mode.go`.
 - Drain check: `HasSQLiteSessions(storeDir)` or presence of rows in `_meta.db` `escrow_epoch`.
 - Production retention is `retain=3`: current epoch plus two previous epochs.

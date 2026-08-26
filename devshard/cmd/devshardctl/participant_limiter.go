@@ -1298,7 +1298,7 @@ func participantPathKind(path string) string {
 	switch {
 	case strings.Contains(path, "/chat/completions"):
 		return "inference"
-	case strings.Contains(path, "/verify-timeout"):
+	case strings.Contains(path, "/verify-timeout"), strings.Contains(path, "/verify-error-miss"):
 		return "verify_timeout"
 	case strings.Contains(path, "/challenge-receipt"):
 		return "challenge_receipt"

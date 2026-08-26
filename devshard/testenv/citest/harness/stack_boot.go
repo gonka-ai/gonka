@@ -25,6 +25,21 @@ func BootStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	return stack, cfg, stack.Endpoints(t, cfg)
 }
 
+// BootErrorMissStack is a three-host stack. Three hosts are required so the
+// two non-executor verifiers can exceed VoteThreshold (factor 50 → threshold 1;
+// the executor cannot vote).
+func BootErrorMissStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteMultiConfig(t, stack.WorkDir, MultiConfigOpts{Hosts: 3, EscrowSlots: 3})
+	stack.RunGencompose(t)
+	cfg := stack.LoadConfig(t)
+	requireThreeVersiondHosts(t, cfg)
+	stack.Up(t)
+	return stack, cfg, stack.Endpoints(t, cfg)
+}
+
 // BootStackBuild is like BootStack but rebuilds compose images first (devshardctl gRPC wiring).
 func BootStackBuild(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()

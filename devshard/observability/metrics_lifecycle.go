@@ -15,27 +15,29 @@ var (
 	runtimeCollectorsOnce sync.Once
 	registry              *prometheus.Registry
 
-	inflight               *prometheus.GaugeVec
-	requestTerminalTotal   *prometheus.CounterVec
-	interruptionTotal      *prometheus.CounterVec
-	sessionResolutionTotal *prometheus.CounterVec
-	receiptOrphanTotal     *prometheus.CounterVec
-	validationTotal        *prometheus.CounterVec
-	validationOrphanTotal  *prometheus.CounterVec
-	validationFaultTotal   *prometheus.CounterVec
-	validationQueueDrops   prometheus.Counter
-	payloadRequestTotal    *prometheus.CounterVec
-	mlnodeAttemptsTotal    *prometheus.CounterVec
-	mlnodeCallSeconds      *prometheus.HistogramVec
-	mlnodeTokens           *prometheus.HistogramVec
-	httpConnections        *prometheus.GaugeVec
-	httpConnectionsTotal   *prometheus.CounterVec
-	validationQueueDepth   *prometheus.GaugeVec
-	mempoolSize            *prometheus.GaugeVec
-	buildInfo              *prometheus.GaugeVec
-	lifecycleInflight      prometheus.Gauge
-	fallbackDivisor        *prometheus.GaugeVec
-	payloadFetchTTFB       prometheus.Histogram
+	inflight                 *prometheus.GaugeVec
+	requestTerminalTotal     *prometheus.CounterVec
+	interruptionTotal        *prometheus.CounterVec
+	sessionResolutionTotal   *prometheus.CounterVec
+	receiptOrphanTotal       *prometheus.CounterVec
+	validationTotal          *prometheus.CounterVec
+	validationOrphanTotal    *prometheus.CounterVec
+	validationFaultTotal     *prometheus.CounterVec
+	validationQueueDrops     prometheus.Counter
+	payloadRequestTotal      *prometheus.CounterVec
+	payloadFetchTTFB         prometheus.Histogram
+	mlnodeAttemptsTotal      *prometheus.CounterVec
+	mlnodeCallSeconds        *prometheus.HistogramVec
+	mlnodeTokens             *prometheus.HistogramVec
+	httpConnections          *prometheus.GaugeVec
+	httpConnectionsTotal     *prometheus.CounterVec
+	validationQueueDepth     *prometheus.GaugeVec
+	mempoolSize              *prometheus.GaugeVec
+	buildInfo                *prometheus.GaugeVec
+	lifecycleInflight        prometheus.Gauge
+	fallbackDivisor          *prometheus.GaugeVec
+	postgresHealthProbeTotal *prometheus.CounterVec
+	postgresPoolSaturated    prometheus.Gauge
 
 	// HA diff/persist consistency (see docs/proposals/ha-diff-persist-consistency.md).
 	diffPersistRetryTotal     *prometheus.CounterVec
@@ -151,6 +153,14 @@ func initRegistry() {
 		Name: "devshardd_fallback_divisor",
 		Help: "Fallback capacity divisor (max(active_escrows, 4)); source is load_map or floor4.",
 	}, []string{"source"})
+	postgresHealthProbeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_postgres_health_probe_total",
+		Help: "PostgreSQL storage health probe outcomes.",
+	}, []string{"result"})
+	postgresPoolSaturated = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_postgres_pool_saturated",
+		Help: "Whether all PostgreSQL application-pool connections were in use at the latest health probe.",
+	})
 
 	diffPersistRetryTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "devshard_diff_persist_retry_total",
@@ -187,6 +197,8 @@ func initRegistry() {
 		buildInfo,
 		lifecycleInflight,
 		fallbackDivisor,
+		postgresHealthProbeTotal,
+		postgresPoolSaturated,
 		diffPersistRetryTotal,
 		diffForkDetectedTotal,
 		reconcileFastForwardTotal,
@@ -348,6 +360,22 @@ func SetFallbackDivisor(source string, divisor int) {
 	}
 	fallbackDivisor.Reset()
 	fallbackDivisor.WithLabelValues(source).Set(float64(divisor))
+}
+
+// ObservePostgresHealthProbe records database reachability independently from
+// application-pool saturation.
+func ObservePostgresHealthProbe(healthy, saturated bool) {
+	ensureMetrics()
+	result := "database_error"
+	if healthy {
+		result = "success"
+	}
+	postgresHealthProbeTotal.WithLabelValues(result).Inc()
+	saturationValue := 0.0
+	if saturated {
+		saturationValue = 1
+	}
+	postgresPoolSaturated.Set(saturationValue)
 }
 
 // IncDiffPersistRetry records one AppendDiff retry outcome (Phase 3).

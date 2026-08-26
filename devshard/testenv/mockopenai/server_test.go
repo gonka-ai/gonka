@@ -225,3 +225,42 @@ func TestChatCompletions_FaultPatch(t *testing.T) {
 	require.Equal(t, 500, resp.StatusCode)
 	_ = resp.Body.Close()
 }
+
+func TestChatCompletions_FaultStreamErrorEnvelope(t *testing.T) {
+	on := true
+	srv := httptest.NewServer(mockopenai.NewServer(mockopenai.DefaultConfig()).Handler())
+	defer srv.Close()
+
+	patch, err := json.Marshal(map[string]bool{"stream_error_envelope": on})
+	require.NoError(t, err)
+	resp, err := http.Post(srv.URL+"/testenv/fault", "application/json", bytes.NewReader(patch))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	_ = resp.Body.Close()
+
+	for _, body := range [][]byte{
+		[]byte(`{"messages":[{"role":"user","content":"x"}]}`),
+		[]byte(`{"stream":true,"messages":[{"role":"user","content":"x"}]}`),
+	} {
+		resp, err = http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		require.Contains(t, resp.Header.Get("Content-Type"), "text/event-stream")
+
+		var lines []string
+		sc := bufio.NewScanner(resp.Body)
+		for sc.Scan() {
+			if text := sc.Text(); text != "" {
+				lines = append(lines, text)
+			}
+		}
+		require.NoError(t, sc.Err())
+		_ = resp.Body.Close()
+		require.GreaterOrEqual(t, len(lines), 2)
+
+		payload, err := json.Marshal(completionapi.SerializedStreamedResponse{Events: lines})
+		require.NoError(t, err)
+		_, ok := completionapi.IsTerminalErrorResponse(payload)
+		require.True(t, ok, "mock-openai error envelope must be a terminal error body")
+	}
+}
