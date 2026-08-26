@@ -359,7 +359,7 @@ host lifecycle is intentionally delivered as a separate change.
 | `VERSIOND_ROUTER_FRONT_BIND_HOST` | *(empty)* | optional container hostname whose IPv4 address receives the data and admin listeners. Empty binds both listeners on all container interfaces; a named interface keeps an additional loopback admin bind |
 | `VERSIOND_ROUTER_METRICS_BIND_HOST` | *(empty)* | optional container hostname whose IPv4 address receives a second metrics bind. Metrics always remain available on loopback; the join overlay sets `versiond-router` for its internal Prometheus scraper |
 | `HAPROXY_DNS_RESOLVER` | `127.0.0.11:53` | numeric DNS resolver address, with an optional port, used by HAProxy `server-template` slots |
-| `VERSIOND_ROUTER_POOL_SLOTS` | `64` | maximum simultaneous pool members; catalog mode supports up to `400`, keeping each atomic server-state Runtime API batch below HAProxy's default command buffer. The resolver accepts DNS payloads up to 8192 bytes so the default pool fits in one answer |
+| `VERSIOND_ROUTER_POOL_SLOTS` | `64` | maximum simultaneous pool members; catalog mode supports up to `256`, keeping each atomic server-state Runtime API batch below HAProxy's default command buffer. The resolver accepts DNS payloads up to 8192 bytes so the default pool fits in one answer |
 | `VERSIOND_ROUTER_MAX_CONNECTIONS` | `4096` | frontend `maxconn` |
 | `VERSIOND_ROUTER_MAX_BODY_BYTES` | `10485760` | early 413 for an advertised `Content-Length` above this value. `devshardd` independently caps actual bytes at 10 MiB, including chunked bodies and direct-router traffic |
 | `VERSIOND_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | connect and header timeouts |
