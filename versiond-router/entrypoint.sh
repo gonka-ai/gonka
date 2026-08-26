@@ -414,14 +414,19 @@ fi
 : > "$READY_RULES"
 if [ -n "$CATALOG_URL" ]; then
     CATALOG_STATUS_SERVER_STATE=disabled
+    CATALOG_SERVING_STATUS_SERVER_STATE=disabled
     cat >> "$READY_RULES" <<'EOF'
     http-request return status 200 content-type text/plain string "catalog ready\n" if { path /readyz } { url_param(component) -m str catalog } { nbsrv(router_catalog_status) gt 0 }
     http-request return status 503 content-type text/plain string "catalog not ready\n" if { path /readyz } { url_param(component) -m str catalog }
+    http-request return status 200 content-type text/plain string "accepted routes ready\n" if { path /readyz } { url_param(component) -m str serving } { nbsrv(router_catalog_serving_status) gt 0 }
+    http-request return status 503 content-type text/plain string "accepted routes not ready\n" if { path /readyz } { url_param(component) -m str serving }
 EOF
 else
     CATALOG_STATUS_SERVER_STATE=
+    CATALOG_SERVING_STATUS_SERVER_STATE=
     cat >> "$READY_RULES" <<'EOF'
     http-request return status 200 content-type text/plain string "catalog disabled\n" if { path /readyz } { url_param(component) -m str catalog }
+    http-request return status 200 content-type text/plain string "catalog disabled\n" if { path /readyz } { url_param(component) -m str serving }
 EOF
 fi
 static_ready_acl_defined=0
@@ -520,6 +525,7 @@ sed \
     -e "s|\${ADMIN_LOOPBACK_BIND}|$ADMIN_LOOPBACK_BIND|g" \
     -e "s|\${METRICS_NETWORK_BIND}|$METRICS_NETWORK_BIND|g" \
     -e "s|\${CATALOG_STATUS_SERVER_STATE}|$CATALOG_STATUS_SERVER_STATE|g" \
+    -e "s|\${CATALOG_SERVING_STATUS_SERVER_STATE}|$CATALOG_SERVING_STATUS_SERVER_STATE|g" \
     -e "s|\${MAX_BODY_BYTES}|$MAX_BODY_BYTES|g" \
     -e "s|\${CONNECT_TIMEOUT_SECONDS}|$CONNECT_TIMEOUT|g" \
     -e "s|\${STREAM_IDLE_SECONDS}|$STREAM_IDLE|g" \
@@ -562,6 +568,8 @@ run_catalog_reconciler() {
         ROUTING_CATALOG_STATUS_FILE="$CATALOG_STATUS_FILE" \
         ROUTING_CATALOG_STATUS_BACKEND=router_catalog_status \
         ROUTING_CATALOG_STATUS_SERVER=catalog \
+        ROUTING_CATALOG_SERVING_STATUS_BACKEND=router_catalog_serving_status \
+        ROUTING_CATALOG_SERVING_STATUS_SERVER=serving \
             /usr/local/lib/router-runtime/catalog-reconciler || status=$?
         echo "versiond-router: catalog reconciler exited with status $status; restarting" >&2
         sleep 1

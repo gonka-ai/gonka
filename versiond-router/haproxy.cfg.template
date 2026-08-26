@@ -173,6 +173,12 @@ backend router_admin_not_found
 backend router_catalog_status
     server catalog 127.0.0.1:1 ${CATALOG_STATUS_SERVER_STATE}
 
+# Serving safety is intentionally separate from desired-state convergence. An
+# unavailable catalog or a staged version must not hide a router whose durable
+# accepted routes are still represented exactly by its live maps.
+backend router_catalog_serving_status
+    server serving 127.0.0.1:1 ${CATALOG_SERVING_STATUS_SERVER_STATE}
+
 frontend metrics
     bind 127.0.0.1:8405
 ${METRICS_NETWORK_BIND}

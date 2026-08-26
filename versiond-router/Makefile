@@ -409,20 +409,29 @@ test-version-routing:
 	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
 		'http://127.0.0.1:18134/readyz?component=catalog')" = 200 ] \
 		|| fail "a DAPI null versions snapshot did not converge as an empty catalog"; \
+	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+		'http://127.0.0.1:18134/readyz?component=serving')" = 200 ] \
+		|| fail "an intact empty accepted projection was not serving-ready"; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| jq -e '.serving_ready == true and .catalog_converged == true and .pending_activation == 0 and .pending_capacity == 0' \
+			>/dev/null || fail "catalog status did not separate serving and convergence"; \
 	docker exec gonka-vp-router wget -q -O - http://127.0.0.1:8405/metrics \
 		| grep -Fq 'haproxy_backend_active_servers{proxy="router_catalog_status"} 1' \
 		|| fail "catalog convergence is not exposed through HAProxy metrics"; \
+	docker exec gonka-vp-router wget -q -O - http://127.0.0.1:8405/metrics \
+		| grep -Fq 'haproxy_backend_active_servers{proxy="router_catalog_serving_status"} 1' \
+		|| fail "accepted-route readiness is not exposed through HAProxy metrics"; \
 	sleep 4; \
 	docker exec gonka-vp-router sh -c 'kill -STOP $$(pidof haproxy)' \
 		|| fail "could not suspend HAProxy for the Runtime API timeout test"; \
 	for i in $$(seq 15); do \
 		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-			| jq -e '.state == "runtime-error" and .dynamic_slots_used == 0' \
+			| jq -e '.state == "runtime-error" and .serving_ready == false and .catalog_converged == false and .dynamic_slots_used == 0' \
 				>/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-		| jq -e '.state == "runtime-error" and .dynamic_slots_used == 0' >/dev/null || { \
+		| jq -e '.state == "runtime-error" and .serving_ready == false and .catalog_converged == false and .dynamic_slots_used == 0' >/dev/null || { \
 			docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state >&2; \
 			docker exec gonka-vp-router ps -o pid,stat,comm,args >&2; \
 			docker logs --tail 30 gonka-vp-router >&2; \
@@ -651,8 +660,14 @@ test-version-routing:
 		sleep 0.5; \
 	done; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-		| jq -e '.state == "activation-pending" and (.detail | contains("v10"))' \
+		| jq -e '.state == "activation-pending" and .serving_ready == true and .catalog_converged == false and .pending_activation == 1 and (.detail | contains("v10"))' \
 			>/dev/null || fail "v10 did not remain pending behind its own reserve"; \
+	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+		'http://127.0.0.1:18134/readyz?component=catalog')" = 503 ] \
+		|| fail "a pending version reported full catalog convergence"; \
+	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+		'http://127.0.0.1:18134/readyz?component=serving')" = 200 ] \
+		|| fail "a pending version hid the intact accepted projection"; \
 	curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9' >/dev/null \
 		|| fail "ready v9 was blocked by pending v10"; \
 	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
@@ -738,7 +753,7 @@ test-version-routing:
 		sleep 0.5; \
 	done; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-		| jq -e '.state == "fetch-error"' >/dev/null \
+		| jq -e '.state == "fetch-error" and .serving_ready == true and .catalog_converged == false' >/dev/null \
 		|| fail "a continuously trickling catalog response bypassed the total deadline"; \
 	if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
 		| grep -Fq catalog-secret; then \
@@ -750,9 +765,15 @@ test-version-routing:
 	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
 		'http://127.0.0.1:18134/readyz?component=catalog')" = 503 ] \
 		|| fail "catalog fetch failure remained green on the admin readiness endpoint"; \
+	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+		'http://127.0.0.1:18134/readyz?component=serving')" = 200 ] \
+		|| fail "catalog fetch failure hid the intact accepted projection"; \
 	docker exec gonka-vp-router wget -q -O - http://127.0.0.1:8405/metrics \
 		| grep -Fq 'haproxy_backend_active_servers{proxy="router_catalog_status"} 0' \
 		|| fail "catalog fetch failure remained green in HAProxy metrics"; \
+	docker exec gonka-vp-router wget -q -O - http://127.0.0.1:8405/metrics \
+		| grep -Fq 'haproxy_backend_active_servers{proxy="router_catalog_serving_status"} 1' \
+		|| fail "catalog fetch failure made accepted-route metrics red"; \
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/slow-source/chat)" = b ] \
 		|| fail "a slow catalog response removed the accepted v9 route"; \
 	slow_observed_at=$$(docker exec gonka-vp-router \

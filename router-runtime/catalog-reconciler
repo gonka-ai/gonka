@@ -35,6 +35,8 @@ cache_max_age=${ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS:-86400}
 status_file=${ROUTING_CATALOG_STATUS_FILE:-}
 status_backend=${ROUTING_CATALOG_STATUS_BACKEND:-}
 status_server=${ROUTING_CATALOG_STATUS_SERVER:-}
+serving_status_backend=${ROUTING_CATALOG_SERVING_STATUS_BACKEND:-}
+serving_status_server=${ROUTING_CATALOG_SERVING_STATUS_SERVER:-}
 
 log() {
     printf '%s\n' "$component: $*" >&2
@@ -70,6 +72,14 @@ esac
 }
 [ -z "$status_server" ] || [ -n "$status_backend" ] || {
     log "ROUTING_CATALOG_STATUS_BACKEND is required with ROUTING_CATALOG_STATUS_SERVER"
+    exit 1
+}
+[ -z "$serving_status_backend" ] || [ -n "$serving_status_server" ] || {
+    log "ROUTING_CATALOG_SERVING_STATUS_SERVER is required with ROUTING_CATALOG_SERVING_STATUS_BACKEND"
+    exit 1
+}
+[ -z "$serving_status_server" ] || [ -n "$serving_status_backend" ] || {
+    log "ROUTING_CATALOG_SERVING_STATUS_BACKEND is required with ROUTING_CATALOG_SERVING_STATUS_SERVER"
     exit 1
 }
 cache_refresh_seconds=$((cache_max_age / 2))
@@ -125,6 +135,7 @@ projection_repair_needed=1
 catalog_plan_clean=0
 activation_pending_count=0
 capacity_pending_count=0
+serving_ready=0
 
 if [ -n "$cache_file" ] && [ -f "$cache_file" ]; then
     [ -x "$cache_bin" ] || {
@@ -156,8 +167,23 @@ if [ -n "$cache_file" ] && [ -f "$cache_file" ]; then
     fi
 fi
 
+update_status_server() {
+    update_backend=$1 update_server=$2 update_ready=$3
+    [ -n "$update_backend" ] || return 0
+    [ -S "$runtime_socket" ] || return 0
+    update_action=disable
+    [ "$update_ready" -eq 1 ] && update_action=enable
+    if ! runtime "$update_action server $update_backend/$update_server" >/dev/null 2>&1; then
+        log "cannot update the $update_backend status metric backend"
+    fi
+}
+
 set_state() {
     state=$1 detail=$2
+    catalog_converged=false
+    [ "$state" = ready ] && catalog_converged=true
+    serving_ready_json=false
+    [ "$serving_ready" -eq 1 ] && serving_ready_json=true
     if [ "$state" != "$last_state" ]; then
         case "$state" in
             ready)
@@ -177,8 +203,16 @@ set_state() {
                 --argjson observed_at_unix "$(date +%s)" \
                 --argjson used "$last_used" \
                 --argjson capacity "$backend_capacity" \
+                --argjson serving_ready "$serving_ready_json" \
+                --argjson catalog_converged "$catalog_converged" \
+                --argjson pending_activation "$activation_pending_count" \
+                --argjson pending_capacity "$capacity_pending_count" \
                 '{schema: 1, state: $state, detail: $detail,
                   observed_at_unix: $observed_at_unix,
+                  serving_ready: $serving_ready,
+                  catalog_converged: $catalog_converged,
+                  pending_activation: $pending_activation,
+                  pending_capacity: $pending_capacity,
                   dynamic_slots_used: $used, dynamic_slots_capacity: $capacity}' \
                 > "$status_tmp"; then
                 chmod 600 "$status_tmp"
@@ -188,13 +222,10 @@ set_state() {
             fi
         fi
     fi
-    [ -n "$status_backend" ] || return 0
-    [ -S "$runtime_socket" ] || return 0
-    status_action=disable
-    [ "$state" = ready ] && status_action=enable
-    if ! runtime "$status_action server $status_backend/$status_server" >/dev/null 2>&1; then
-        log "cannot update the catalog status metric backend"
-    fi
+    converged_ready=0
+    [ "$state" = ready ] && converged_ready=1
+    update_status_server "$status_backend" "$status_server" "$converged_ready"
+    update_status_server "$serving_status_backend" "$serving_status_server" "$serving_ready"
 }
 
 runtime() {
@@ -686,6 +717,7 @@ prepare_catalog() {
 
 ensure_accepted_projection() {
     if [ "$projection_repair_needed" -eq 0 ] && accepted_projection_matches; then
+        serving_ready=1
         return 0
     fi
     repair_accepted_projection || return 1
@@ -694,6 +726,7 @@ ensure_accepted_projection() {
     # slot from an interrupted, not-yet-accepted catalog update. Run one complete
     # plan before enabling the unchanged-catalog fast path.
     catalog_plan_clean=0
+    serving_ready=1
 }
 
 accepted_projection_matches() {
@@ -737,7 +770,11 @@ set_current_catalog_state() {
     fi
 }
 
+set_state starting "catalog reconciliation is starting"
 while :; do
+    serving_ready=0
+    activation_pending_count=0
+    capacity_pending_count=0
     if [ ! -S "$runtime_socket" ]; then
         set_state runtime-unavailable "HAProxy Runtime API is not ready"
     elif [ "$accepted_set_known" -eq 0 ] && ! recover_live_projection; then
@@ -785,6 +822,7 @@ while :; do
             set_state cache-error "cannot persist catalog additions"
         elif ! publish_catalog; then
             projection_repair_needed=1
+            serving_ready=0
             set_state runtime-error \
                 "HAProxy rejected an accepted catalog projection$catalog_diagnostic_suffix"
         elif [ "$capacity_pending_count" -gt 0 ]; then
@@ -800,6 +838,7 @@ while :; do
                 set_state cache-error "cannot persist catalog removals"
             elif [ "$removal_status" -eq 2 ]; then
                 projection_repair_needed=1
+                serving_ready=0
                 set_state runtime-error \
                     "cannot retire removed catalog routes$catalog_diagnostic_suffix"
             else

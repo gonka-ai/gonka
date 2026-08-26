@@ -397,22 +397,27 @@ is refused before the config is rendered.
 | Diagnostic Runtime API | `/var/run/haproxy/haproxy.sock` | local `level user` socket, no TCP bind; raw HAProxy map commands remain writable |
 | Reconciler Runtime API | `/var/run/haproxy/reconciler.sock` | local `level admin` socket used for catalog map and server-state changes |
 | Admin HTTP | port `8404` inside the container | liveness and readiness only; wildcard-bound by default or restricted to loopback plus `VERSIOND_ROUTER_FRONT_BIND_HOST`; never published on a host port by the shipped Compose files |
-| Catalog status | `/usr/local/lib/router-runtime/catalog-status --state` | current reconciler state; reports `stale` when updates stop |
+| Catalog status | `/usr/local/lib/router-runtime/catalog-status --state` | current reconciler state, independent serving/convergence booleans, and pending activation/capacity counts; reports `stale` when updates stop |
+| Accepted-route readiness | `GET http://127.0.0.1:8404/readyz?component=serving` | `200` when the durable accepted set is represented exactly by the live maps; remains ready during source outages and while unrelated additions are staged |
 | Catalog readiness | `GET http://127.0.0.1:8404/readyz?component=catalog` | `200` only when the enabled catalog is fully reconciled; independent of data-plane readiness for accepted routes |
 | Version readiness | `GET http://127.0.0.1:8404/readyz?version=<v>` | resolves `<v>` through the live route map and reports the selected backend's active-check state; the request is not forwarded upstream |
 | `X-Upstream-Addr` | response header | which instance served the request |
 | `X-Versiond-Backend` | response header | HA backend name, or the stable `versiond_legacy` label for any pinned version |
 
-The Prometheus output includes the synthetic `router_catalog_status` backend:
-one active server means the enabled catalog is fully reconciled, while zero
-means the last accepted data-plane routes remain available but catalog changes
-are not converging. Compose health is a startup liveness gate: a catalog-aware
-router uses admin `/livez`, while the transitional nginx image retains its
-compatible `/healthz` probe. It deliberately does not wait for version children
-to download and start, because the shared public proxy also serves APIs that do
-not depend on devshard routing. Use unqualified admin `/readyz` for the stricter
-data-plane signal; it requires at least one published per-version backend to
-have a ready child and does not use the coarse supervisor pool.
+The Prometheus output includes two synthetic backends.
+`router_catalog_status` reports full desired-state convergence, while
+`router_catalog_serving_status` reports that the accepted LKG projection is
+intact. A pending version or source outage therefore makes only convergence
+red; corruption of an accepted map makes both signals red. Serving readiness is
+not proof that every desired future name is available, so a parent that routes
+by version must still use per-version readiness. Compose health is a startup
+liveness gate: a catalog-aware router uses admin `/livez`, while the
+transitional nginx image retains its compatible `/healthz` probe. It deliberately
+does not wait for version children to download and start, because the shared
+public proxy also serves APIs that do not depend on devshard routing. Use
+unqualified admin `/readyz` for the stricter data-plane signal; it requires at
+least one published per-version backend to have a ready child and does not use
+the coarse supervisor pool.
 Catalog diagnostics never include the configured source URL, so credentials or
 signed query parameters are not copied into status output or router logs.
 Each router image owns its graceful-stop signal: the transitional nginx image
