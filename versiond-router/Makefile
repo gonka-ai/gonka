@@ -71,9 +71,9 @@ test-join-compose:
 	fi; \
 	VERSIOND_ROUTING_CATALOG_URL=http://api:9100/versions probe_healthcheck \
 		|| { echo 'test-join-compose: catalog-capable image with catalog URL was rejected' >&2; exit 1; }; \
-	jq -e '.services.proxy.depends_on["versiond-router"].condition == "service_healthy"' \
+	jq -e '.services.proxy.depends_on["versiond-router"] | .condition == "service_healthy" and .required == false' \
 		"$$tmp_json" >/dev/null \
-		|| { echo 'test-join-compose: public proxy does not wait for the router process' >&2; exit 1; }; \
+		|| { echo 'test-join-compose: router health is not an optional public-proxy dependency' >&2; exit 1; }; \
 	jq -e '(.services["versiond-router"] | has("stop_signal") | not) and .services["versiond-router"].stop_grace_period == "10s"' \
 		"$$tmp_json" >/dev/null \
 		|| { echo 'test-join-compose: Compose overrides the selected image stop signal or loses the bounded grace' >&2; exit 1; }; \

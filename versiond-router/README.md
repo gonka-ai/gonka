@@ -131,8 +131,10 @@ supplying a published `VERSIOND_ROUTER_IMAGE` tag or digest together with the
 catalog URL; the Compose YAML does not name an image before it exists. Its
 healthcheck verifies the selected image's catalog capability instead of trusting
 those two values independently: a catalog-capable image without the URL, or the
-legacy image with the URL, remains unhealthy and cannot satisfy the public
-proxy's startup dependency.
+legacy image with the URL, remains unhealthy. The router is an optional startup
+dependency of the shared public proxy: the mismatch remains visible to Compose
+and causes `up --wait` to fail, but it does not prevent unrelated public APIs
+from starting.
 
 HAProxy cannot create backends at runtime, so the image pre-renders a bounded
 set of disabled `versiond_dynamic_<n>` backends. For every new valid name the

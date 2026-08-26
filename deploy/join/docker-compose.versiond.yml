@@ -163,6 +163,9 @@ services:
     depends_on:
       versiond-router:
         condition: service_healthy
+        # A router image/catalog mismatch must remain visible as unhealthy, but
+        # it must not block public APIs that do not use the devshard route.
+        required: false
     environment:
       - VERSIOND_SERVICE_NAME=versiond-router
       - VERSIOND_PORT=8080
