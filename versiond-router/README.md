@@ -167,6 +167,10 @@ degraded state through `catalog-status`.
 If only the supervised reconciler restarts while HAProxy remains live, a missing
 or corrupt cache is rebuilt from a consistent live projection before any repair
 is allowed to remove a route.
+Steady polls verify the complete accepted map/slot relationship in one pass and
+skip projection planning when the source has not changed. Slot activation and
+retirement send one Runtime API batch per backend, then verify the resulting
+HAProxy state; they do not open one socket per pre-rendered server.
 Catalog-enabled Compose deployments mount that directory from a named volume so
 container replacement does not discard the last-known-good projection.
 While a valid catalog addition is waiting for capacity or its ready reserve, the

@@ -117,6 +117,8 @@ accepted_set_known=0
 last_persisted_at=0
 last_used=$(awk '$2 != "__unassigned__" { used++ } END { print used + 0 }' \
     "$slot_map")
+projection_repair_needed=1
+catalog_plan_clean=0
 
 if [ -n "$cache_file" ] && [ -f "$cache_file" ]; then
     [ -x "$cache_bin" ] || {
@@ -273,17 +275,19 @@ fetch_catalog() {
     project_names "$raw_names" "$names"
     catalog_withdrawal_pending=0
     if [ -z "$allow_removals" ]; then
-        while IFS= read -r accepted_name; do
-            [ -n "$accepted_name" ] || continue
-            if ! grep -Fqx "$accepted_name" "$names"; then
-                catalog_withdrawal_pending=1
-                break
-            fi
-        done < "$last_names"
+        if awk '
+            FILENAME == ARGV[1] { desired[$0] = 1; next }
+            !($0 in desired) { missing = 1 }
+            END { exit !missing }
+        ' "$names" "$last_names"; then
+            catalog_withdrawal_pending=1
+        fi
         # The source contract has no monotonic revision. Treat a missing accepted
         # name as a maintenance request, not as authority to mutate live traffic.
-        cat "$last_names" "$names" | LC_ALL=C sort -u > "$tmpdir/catalog.additive.names"
-        mv "$tmpdir/catalog.additive.names" "$names"
+        if ! cmp -s "$last_names" "$names"; then
+            cat "$last_names" "$names" | LC_ALL=C sort -u > "$tmpdir/catalog.additive.names"
+            mv "$tmpdir/catalog.additive.names" "$names"
+        fi
     fi
     if [ "$catalog_contract_error" -ne 0 ]; then
         # An unrepresentable name must not let a partially understood snapshot
@@ -440,6 +444,7 @@ repair_accepted_projection() {
                 END { exit !found }
             ' || return 1
     done < "$last_names"
+    remember_slot_usage
 }
 
 apply_catalog_removals() {
@@ -486,24 +491,29 @@ assign_slot() {
     [ -z "$response" ] || return 1
 }
 
+set_slot_server_state() {
+	action=$1 backend=$2
+	commands=
+	index=1
+	while [ "$index" -le "$server_capacity" ]; do
+		command="$action server $backend/$server_prefix$index"
+		if [ -n "$commands" ]; then
+			commands="$commands; $command"
+		else
+			commands=$command
+		fi
+		index=$((index + 1))
+	done
+	response=$(runtime "$commands" 2>&1) || return 1
+	[ -z "$response" ]
+}
+
 enable_slot() {
-    backend=$1
-    index=1
-    while [ "$index" -le "$server_capacity" ]; do
-        response=$(runtime "enable server $backend/$server_prefix$index" 2>&1) || return 1
-        [ -z "$response" ] || return 1
-        index=$((index + 1))
-    done
+	set_slot_server_state enable "$1"
 }
 
 disable_slot() {
-    backend=$1
-    index=1
-    while [ "$index" -le "$server_capacity" ]; do
-        response=$(runtime "disable server $backend/$server_prefix$index" 2>&1) || return 1
-        [ -z "$response" ] || return 1
-        index=$((index + 1))
-    done
+	set_slot_server_state disable "$1"
 }
 
 reclaim_withdrawn_pending_slots() {
@@ -666,13 +676,62 @@ prepare_catalog() {
 	done < "$tmpdir/projection.plan"
 }
 
+ensure_accepted_projection() {
+	if [ "$projection_repair_needed" -eq 0 ] && accepted_projection_matches; then
+		return 0
+	fi
+	repair_accepted_projection || return 1
+	projection_repair_needed=0
+	# A recovered accepted projection can still coexist with an abandoned staged
+	# slot from an interrupted, not-yet-accepted catalog update. Run one complete
+	# plan before enabling the unchanged-catalog fast path.
+	catalog_plan_clean=0
+}
+
+accepted_projection_matches() {
+	projection_state=$(map_snapshot "$projection_map") || return 1
+	slot_state=$(map_snapshot "$slot_map") || return 1
+	printf '%s\n' "$projection_state" > "$tmpdir/projection.verify"
+	printf '%s\n' "$slot_state" > "$tmpdir/slots.verify"
+	awk -v prefix="$backend_prefix" '
+		FILENAME == ARGV[1] {
+			if (index($2, prefix) == 1) slot[$2] = $3
+			next
+		}
+		FILENAME == ARGV[2] { accepted[$0] = 1; next }
+		index($3, prefix) == 1 {
+			version = $2
+			encoded = version
+			gsub(/\+/, "%2B", encoded)
+			if (!(version in accepted) || slot[$3] != encoded) invalid = 1
+			seen[version]++
+		}
+		END {
+			for (version in accepted) if (seen[version] != 1) invalid = 1
+			exit invalid
+		}
+	' "$tmpdir/slots.verify" "$last_names" "$tmpdir/projection.verify"
+}
+
+set_current_catalog_state() {
+	if [ "$catalog_contract_error" -ne 0 ]; then
+		set_state contract-error \
+			"compatible catalog routes are current; one or more names are outside the router grammar"
+	elif [ "$catalog_withdrawal_pending" -ne 0 ]; then
+		set_state withdrawal-pending \
+			"catalog omitted accepted routes; explicit maintenance removal is required"
+	else
+		set_state ready "catalog and runtime maps are current"
+	fi
+}
+
 while :; do
     if [ ! -S "$runtime_socket" ]; then
         set_state runtime-unavailable "HAProxy Runtime API is not ready"
     elif [ "$accepted_set_known" -eq 0 ] && ! recover_live_projection; then
         set_state runtime-error \
             "cannot recover accepted routes from the live HAProxy projection"
-    elif ! repair_accepted_projection; then
+    elif ! ensure_accepted_projection; then
         set_state runtime-error "cannot restore the accepted catalog projection"
     elif ! fetch_catalog; then
         set_state fetch-error "cannot fetch or validate routing catalog"
@@ -684,6 +743,17 @@ while :; do
         if [ "$catalog_contract_error" -ne 0 ]; then
             contract_suffix="; catalog also contains names outside the router grammar"
         fi
+        if [ "$catalog_plan_clean" -eq 1 ] && \
+            cmp -s "$tmpdir/catalog.names" "$last_names"; then
+            if refresh_accepted_catalog; then
+                set_current_catalog_state
+            else
+                set_state cache-error "cannot refresh the last accepted catalog snapshot"
+            fi
+            sleep "$poll_seconds"
+            continue
+        fi
+        catalog_plan_clean=0
         reconcile_status=0
         prepare_catalog || reconcile_status=$?
         cache_status=0
@@ -707,6 +777,7 @@ while :; do
         elif ! commit_catalog_additions; then
             set_state cache-error "cannot persist catalog additions"
         elif ! publish_catalog; then
+            projection_repair_needed=1
             set_state runtime-error "HAProxy rejected an accepted catalog projection"
         else
             removal_status=0
@@ -714,15 +785,11 @@ while :; do
             if [ "$removal_status" -eq 1 ]; then
                 set_state cache-error "cannot persist catalog removals"
             elif [ "$removal_status" -eq 2 ]; then
+                projection_repair_needed=1
                 set_state runtime-error "cannot retire removed catalog routes"
-            elif [ "$catalog_contract_error" -ne 0 ]; then
-                set_state contract-error \
-                    "compatible catalog routes are current; one or more names are outside the router grammar"
-            elif [ "$catalog_withdrawal_pending" -ne 0 ]; then
-                set_state withdrawal-pending \
-                    "catalog omitted accepted routes; explicit maintenance removal is required"
             else
-                set_state ready "catalog and runtime maps are current"
+                catalog_plan_clean=1
+                set_current_catalog_state
             fi
         fi
     fi
