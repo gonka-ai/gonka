@@ -174,7 +174,7 @@ func TestVerifyErrorMiss_LyingHostOutputTokensIgnored(t *testing.T) {
 	require.True(t, accept, "body decides; OutputTokens=7 on an error envelope still accepts")
 }
 
-func TestVerifyErrorMiss_ContentThenErrorRejects(t *testing.T) {
+func TestVerifyErrorMiss_ContentThenErrorAccepts(t *testing.T) {
 	e := newErrorTimeoutEnv(t)
 	payload := streamedPayload(t, contentThenErrorEvents)
 	hash := payloadSHA256(payload)
@@ -182,7 +182,7 @@ func TestVerifyErrorMiss_ContentThenErrorRejects(t *testing.T) {
 
 	accept, err := e.verify(marshalFinishTx(t, finish), payload, nil)
 	require.NoError(t, err)
-	require.False(t, accept, "content plus trailing error is not a terminal error envelope")
+	require.True(t, accept, "an error envelope on a signed Finish is a miss even after content")
 }
 
 func TestVerifyErrorMiss_HashMismatchRejects(t *testing.T) {
@@ -377,6 +377,15 @@ func TestVerifyErrorMiss_RejectCauses(t *testing.T) {
 	contentThenError := streamedPayload(t, contentThenErrorEvents)
 	contentFinish := signedErrorFinish(t, e.hosts, 1, 1, 0, payloadSHA256(contentThenError))
 	_, _, cause, err = VerifyErrorMiss(e.st, 1, marshalFinishTx(t, contentFinish), contentThenError, nil, e.sm)
+	require.NoError(t, err)
+	require.Empty(t, cause, "content-then-error is a miss")
+
+	happy := streamedPayload(t, []string{
+		`data: {"id":"devshard-1-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hello"}}]}`,
+		`data: [DONE]`,
+	})
+	happyFinish := signedErrorFinish(t, e.hosts, 1, 1, 0, payloadSHA256(happy))
+	_, _, cause, err = VerifyErrorMiss(e.st, 1, marshalFinishTx(t, happyFinish), happy, nil, e.sm)
 	require.NoError(t, err)
 	require.Equal(t, ErrorTimeoutRejectNotErrorBody, cause)
 

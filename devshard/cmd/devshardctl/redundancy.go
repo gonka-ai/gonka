@@ -934,9 +934,9 @@ type inflight struct {
 
 	// errorStreamLines is the attempt's verbatim data: lines from reassembled
 	// parseable SSE (post id-injection, pre rewriteStreamingPayload, excluding
-	// protocol envelopes). Accumulated from the first write and dropped if the
-	// attempt produces content without an error, so this is not a memory sink
-	// for successful completions.
+	// protocol envelopes). Accumulated from the first write so a later error
+	// still reconstructs the full Finish payload (content-then-error). Dropped
+	// when the stream ends without an error, and capped by maxErrorStreamBytes.
 	errorStreamLines []string
 	// errorStreamComplete is true when a data: [DONE] line was retained.
 	// Cancelled speculative attempts keep a truncated prefix and stay false.
@@ -1447,11 +1447,7 @@ func (rw *raceWriter) flushClassify() {
 		rw.inf.usageComplTokens.Store(tokens)
 	}
 	hasContent, hasError := rw.classifyParseable(rw.inf.classifyPartial)
-	if rw.inf.contentSource != "" && rw.inf.errorSource == "" {
-		rw.clearErrorStreamRetention()
-	} else {
-		rw.retainErrorStreamLines(rw.inf.classifyPartial)
-	}
+	rw.retainErrorStreamLines(rw.inf.classifyPartial)
 	rw.dropClassify()
 	if hasContent || hasError {
 		rw.inf.contentChunks.Add(1)
@@ -1597,11 +1593,7 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 	if !rw.inf.probe {
 		parseable := rw.takeParseable(p)
 		chunkHasContent, chunkHasError = rw.classifyParseable(parseable)
-		if rw.inf.contentSource != "" && rw.inf.errorSource == "" {
-			rw.clearErrorStreamRetention()
-		} else {
-			rw.retainErrorStreamLines(parseable)
-		}
+		rw.retainErrorStreamLines(parseable)
 		// Track completion_tokens so isModelBurnEmpty can tell stripped-
 		// content empties from no-tokens-generated empties.
 		if tokens, ok := sseChunkUsageCompletionTokens(parseable); ok {
@@ -3441,7 +3433,7 @@ func shouldRunHandleTimeoutOn(inf *inflight, session nonceFinishedChecker, error
 }
 
 func errorMissEnabledFor(inf *inflight) bool {
-	return inf != nil && inf.errorTerminal && inf.contentSource == ""
+	return inf != nil && inf.errorTerminal
 }
 
 func emptyStreamWithoutWinnerTimeoutSkipReason(inf *inflight, session nonceFinishedChecker) (string, bool) {

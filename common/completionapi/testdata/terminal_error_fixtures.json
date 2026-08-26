@@ -12,7 +12,7 @@
   },
   {
     "name": "content_then_error",
-    "want_ok": false,
+    "want_ok": true,
     "want_type": "InternalServerError",
     "want_code": "500",
     "want_message": "boom",
@@ -24,7 +24,7 @@
   },
   {
     "name": "error_with_completion_tokens",
-    "want_ok": false,
+    "want_ok": true,
     "want_type": "InternalServerError",
     "want_code": "500",
     "want_message": "boom",
@@ -44,7 +44,7 @@
   },
   {
     "name": "reasoning_content_then_error",
-    "want_ok": false,
+    "want_ok": true,
     "want_type": "InternalServerError",
     "want_code": "500",
     "want_message": "boom",
@@ -56,7 +56,7 @@
   },
   {
     "name": "tool_calls_then_error",
-    "want_ok": false,
+    "want_ok": true,
     "want_type": "InternalServerError",
     "want_code": "500",
     "want_message": "boom",
@@ -68,7 +68,7 @@
   },
   {
     "name": "choice_text_then_error",
-    "want_ok": false,
+    "want_ok": true,
     "want_type": "InternalServerError",
     "want_code": "500",
     "want_message": "boom",
@@ -80,7 +80,7 @@
   },
   {
     "name": "message_content_then_error",
-    "want_ok": false,
+    "want_ok": true,
     "want_type": "InternalServerError",
     "want_code": "500",
     "want_message": "boom",

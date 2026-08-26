@@ -7,9 +7,11 @@ This is the protocol design. Step-by-step implementation lives in the plan
 linked above.
 
 **Current encoding (`MsgErrorMiss`).** Error-miss is not a timeout. The
-classifier treats unparseable `data:` JSON as a miss (junk cannot veto).
-On-chain message is `MsgErrorMiss { inference_id, votes[] }` with no payload;
-the hash is re-derived from `rec.ResponseHash` after Finish. Vote RPC is
+classifier treats a signed Finish over an error envelope as a miss (including
+content-then-error and host-reported `completion_tokens`), and treats
+unparseable `data:` JSON as a miss (junk cannot veto). On-chain message is
+`MsgErrorMiss { inference_id, votes[] }` with no payload; the hash is
+re-derived from `rec.ResponseHash` after Finish. Vote RPC is
 `POST .../verify-error-miss`. `TimeoutReason` keeps `reserved 3` /
 `"TIMEOUT_REASON_ERROR"`. Sections below that still mention
 `TIMEOUT_REASON_ERROR` describe the abandoned first encoding; apply/verify
@@ -819,8 +821,10 @@ State machine (`devshard/state/machine_test.go`):
 Classifier (`common/completionapi`) — this is the consensus rule:
 
 - The exact EngineCore payload from this report → `ok == true`.
-- Real content followed by a trailing error event → `ok == false`.
-- Error event with `completion_tokens > 0` → `ok == false`.
+- Real content followed by a trailing error event → `ok == true` (the Finish
+  hashes the whole body, including the error).
+- Error event with `completion_tokens > 0` → `ok == true` (token counts are
+  host-reported and do not veto an error envelope).
 - Empty stream (role + `[DONE]`, no error object) → `ok == false`
   (that stays the empty-stream path).
 

@@ -55,7 +55,7 @@ func TestIsTerminalErrorResponse_ContentThenError(t *testing.T) {
 		`data: [DONE]`,
 	})
 	details, ok := IsTerminalErrorResponse(payload)
-	require.False(t, ok)
+	require.True(t, ok, "an error envelope on a signed Finish is a miss even after content")
 	require.Equal(t, "InternalServerError", details.Type)
 }
 
@@ -66,7 +66,7 @@ func TestIsTerminalErrorResponse_ErrorWithCompletionTokens(t *testing.T) {
 		`data: [DONE]`,
 	})
 	_, ok := IsTerminalErrorResponse(payload)
-	require.False(t, ok)
+	require.True(t, ok, "host-reported completion_tokens do not veto an error envelope")
 }
 
 func TestIsTerminalErrorResponse_EmptyStream(t *testing.T) {

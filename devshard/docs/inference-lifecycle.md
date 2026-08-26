@@ -302,9 +302,9 @@ executor earns nothing and takes one `Missed`. `StatusTimedOut` is
 not sampled for validation (`collectValidationJobs` only considers
 `StatusFinished`) and is already seal-eligible.
 
-Gateway emit is always on for a terminal error stream with no prior
-content (`errorTerminal` and empty `contentSource`). Apply and verify
-are unconditional. The served client response is still today's
+Gateway emit is always on for a terminal error stream (`errorTerminal`),
+including when content preceded the error. Apply and verify are
+unconditional. The served client response is still today's
 `hostApplicationError`; only accounting changes.
 
 Observability: stage `error_miss` (`inference_id`/`nonce`, `host`,

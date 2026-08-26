@@ -92,7 +92,10 @@ func TestRaceWriter_HappyPathContentClearsRetention(t *testing.T) {
 	require.NoError(t, err)
 	_, err = rw.Write([]byte(`data: {"choices":[{"delta":{"content":"ok"}}]}` + "\n\n"))
 	require.NoError(t, err)
-	require.Empty(t, inf.errorStreamLines, "content without error must not keep a memory sink")
+	_, err = rw.Write([]byte("data: [DONE]\n\n"))
+	require.NoError(t, err)
+	rw.flushClassify()
+	require.Empty(t, inf.errorStreamLines, "a stream that never errored must drop retention at flush")
 	require.False(t, inf.errorStreamTruncated)
 }
 
@@ -306,7 +309,7 @@ func TestErrorMissEnabledFor_RetriableCapabilityErrorDoesNotEmit(t *testing.T) {
 		require.True(t, errorMissEnabledFor(inf))
 	})
 
-	t.Run("content_then_error_does_not_emit", func(t *testing.T) {
+	t.Run("content_then_error_emits", func(t *testing.T) {
 		var sink bytes.Buffer
 		rw, inf := newErrorRaceWriter(t, newRaceGroup(ctx, ctx, "escrow-x", &sink), 1)
 		_, err := rw.Write([]byte(`data: {"id":"devshard-1-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hello"}}]}` + "\n\n"))
@@ -315,7 +318,11 @@ func TestErrorMissEnabledFor_RetriableCapabilityErrorDoesNotEmit(t *testing.T) {
 		require.NoError(t, err)
 		require.NotEmpty(t, inf.contentSource)
 		require.True(t, inf.errorTerminal)
-		require.False(t, errorMissEnabledFor(inf), "content-then-error would reconstruct a doomed payload and false-drift")
+		require.True(t, errorMissEnabledFor(inf), "error on a signed Finish is a miss even after content")
+		require.Equal(t, []string{
+			`data: {"id":"devshard-1-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"hello"}}]}`,
+			auditErrLine,
+		}, inf.errorStreamLines, "content prefix must be kept so the reconstructed payload matches Finish")
 	})
 }
 
