@@ -1,11 +1,37 @@
 package host
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"fmt"
+
+	"google.golang.org/protobuf/proto"
+
+	"common/completionapi"
 
 	"devshard/types"
 )
+
+// FinishProposerVerifier checks a Finish's ProposerSig. *state.StateMachine
+// implements this; do not reimplement the check here.
+type FinishProposerVerifier interface {
+	VerifyFinishProposerSig(msg *types.MsgFinishInference) error
+}
+
+// TimeoutArtifacts is evidence forwarded with a timeout verification RPC.
+// Required for TIMEOUT_REASON_ERROR (finish_tx + response_payload); empty for
+// refused/execution.
+type TimeoutArtifacts struct {
+	FinishTx        []byte
+	ResponsePayload []byte
+}
+
+func (h *Host) VerifyFinishProposerSig(msg *types.MsgFinishInference) error {
+	return h.sm.VerifyFinishProposerSig(msg)
+}
+
+var _ FinishProposerVerifier = (*Host)(nil)
 
 // ExecutorClient contacts the executor host to check inference status.
 type ExecutorClient interface {
@@ -179,4 +205,111 @@ func VerifyExecutionTimeout(
 	}
 
 	return true, nil
+}
+
+// Reject causes for VerifyErrorTimeout. These are the verifier-side labels
+// for devshard_gateway_error_miss_verify_rejects_total{cause}. Failures that
+// are not a named check fold into the closest cause (no usable Finish →
+// no_finish_tx; Finish exists but does not authenticate → sig).
+const (
+	ErrorTimeoutRejectNoFinishTx   = "no_finish_tx"
+	ErrorTimeoutRejectNoPayload    = "no_payload"
+	ErrorTimeoutRejectSig          = "sig"
+	ErrorTimeoutRejectHashMismatch = "hash_mismatch"
+	ErrorTimeoutRejectNotErrorBody = "not_error_body"
+)
+
+// VerifyErrorTimeout checks whether an ERROR timeout is valid.
+//
+// Local computation only: no ctx, ExecutorClient, payload fetcher,
+// SessionConfig, or clock. Gossip is disabled, so finishTx and
+// responsePayload from the request are the evidence. All failures
+// reject (accept=false); a verifier with no artifact must not vote.
+// rejectCause is set on reject and empty on accept.
+//
+// finishVerifier is the executor-signature check (pass *state.StateMachine).
+// It is the keyring, not evidence. On accept, the returned hash is
+// msg.ResponseHash from the Finish this verifier authenticated.
+func VerifyErrorTimeout(
+	st types.EscrowState,
+	inferenceID uint64,
+	finishTx []byte,
+	responsePayload []byte,
+	localMempool []*types.DevshardTx,
+	finishVerifier FinishProposerVerifier,
+) (bool, []byte, string, error) {
+	rec, ok := st.Inferences[inferenceID]
+	if !ok || rec == nil {
+		return false, nil, ErrorTimeoutRejectNoFinishTx, nil
+	}
+	if rec.Status != types.StatusStarted && rec.Status != types.StatusFinished {
+		return false, nil, ErrorTimeoutRejectNoFinishTx, nil
+	}
+
+	msg := resolveFinishMessage(finishTx, localMempool, inferenceID)
+	if msg == nil {
+		return false, nil, ErrorTimeoutRejectNoFinishTx, nil
+	}
+	if msg.InferenceId != inferenceID {
+		return false, nil, ErrorTimeoutRejectNoFinishTx, nil
+	}
+	if msg.EscrowId != st.EscrowID {
+		return false, nil, ErrorTimeoutRejectNoFinishTx, nil
+	}
+	if msg.ExecutorSlot != rec.ExecutorSlot {
+		return false, nil, ErrorTimeoutRejectNoFinishTx, nil
+	}
+	if rec.Status == types.StatusFinished && !bytes.Equal(msg.ResponseHash, rec.ResponseHash) {
+		return false, nil, ErrorTimeoutRejectHashMismatch, nil
+	}
+
+	if finishVerifier == nil {
+		return false, nil, ErrorTimeoutRejectSig, nil
+	}
+	if err := finishVerifier.VerifyFinishProposerSig(msg); err != nil {
+		return false, nil, ErrorTimeoutRejectSig, nil
+	}
+
+	if len(responsePayload) == 0 {
+		return false, nil, ErrorTimeoutRejectNoPayload, nil
+	}
+	sum := sha256.Sum256(responsePayload)
+	if !bytes.Equal(sum[:], msg.ResponseHash) {
+		return false, nil, ErrorTimeoutRejectHashMismatch, nil
+	}
+
+	if _, ok := completionapi.IsTerminalErrorResponse(responsePayload); !ok {
+		return false, nil, ErrorTimeoutRejectNotErrorBody, nil
+	}
+	return true, append([]byte(nil), msg.ResponseHash...), "", nil
+}
+
+func resolveFinishMessage(finishTx []byte, localMempool []*types.DevshardTx, inferenceID uint64) *types.MsgFinishInference {
+	if msg := finishFromMempool(localMempool, inferenceID); msg != nil {
+		return msg
+	}
+	if len(finishTx) == 0 {
+		return nil
+	}
+	return decodeFinishTx(finishTx)
+}
+
+func decodeFinishTx(finishTx []byte) *types.MsgFinishInference {
+	tx := &types.DevshardTx{}
+	if err := proto.Unmarshal(finishTx, tx); err != nil {
+		return nil
+	}
+	return tx.GetFinishInference()
+}
+
+func finishFromMempool(mempool []*types.DevshardTx, inferenceID uint64) *types.MsgFinishInference {
+	for _, tx := range mempool {
+		if tx == nil {
+			continue
+		}
+		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+			return fi
+		}
+	}
+	return nil
 }

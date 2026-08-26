@@ -49,18 +49,25 @@ func tokenCost(a, b, price uint64) (uint64, error) {
 	return cost, nil
 }
 
+func copyInferenceRecord(v *types.InferenceRecord) *types.InferenceRecord {
+	if v == nil {
+		return nil
+	}
+	cp := *v
+	if v.PromptHash != nil {
+		cp.PromptHash = append([]byte(nil), v.PromptHash...)
+	}
+	if v.ResponseHash != nil {
+		cp.ResponseHash = append([]byte(nil), v.ResponseHash...)
+	}
+	return &cp
+}
+
 // copyInferences deep-copies an inferences map.
 func copyInferences(src map[uint64]*types.InferenceRecord) map[uint64]*types.InferenceRecord {
 	dst := make(map[uint64]*types.InferenceRecord, len(src))
 	for k, v := range src {
-		cp := *v
-		if v.PromptHash != nil {
-			cp.PromptHash = append([]byte(nil), v.PromptHash...)
-		}
-		if v.ResponseHash != nil {
-			cp.ResponseHash = append([]byte(nil), v.ResponseHash...)
-		}
-		dst[k] = &cp
+		dst[k] = copyInferenceRecord(v)
 	}
 	return dst
 }
@@ -853,6 +860,18 @@ func (sm *StateMachine) SnapshotInferences() map[uint64]*types.InferenceRecord {
 	return copyInferences(sm.state.Inferences)
 }
 
+// Inference returns a deep copy of a single inference record. Use it on the
+// inference hot path instead of SnapshotState, which clones every record.
+func (sm *StateMachine) Inference(id uint64) (*types.InferenceRecord, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	rec, ok := sm.state.Inferences[id]
+	if !ok || rec == nil {
+		return nil, false
+	}
+	return copyInferenceRecord(rec), true
+}
+
 // InferenceStatusCounts returns the total number of inferences and a per-status
 // breakdown, computed under the read lock without deep-copying any records.
 func (sm *StateMachine) InferenceStatusCounts() (int, map[types.InferenceStatus]int) {
@@ -1166,10 +1185,7 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 		return fmt.Errorf("%w: expected %d, got %d", types.ErrWrongExecutorSlot, rec.ExecutorSlot, msg.ExecutorSlot)
 	}
 
-	// Verify proposer signature from executor.
-	cloned := proto.Clone(msg).(*types.MsgFinishInference)
-	cloned.ProposerSig = nil
-	if err := sm.verifyProposerSig(cloned, msg.ProposerSig, sm.slotToAddress[rec.ExecutorSlot], rec.ExecutorSlot); err != nil {
+	if err := sm.verifyFinishProposerSigLocked(msg); err != nil {
 		return err
 	}
 
@@ -1399,6 +1415,10 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 		if rec.Status != types.StatusStarted {
 			return fmt.Errorf("%w: reason=execution requires started, got %d", types.ErrInvalidTimeoutReason, rec.Status)
 		}
+	case types.TimeoutReason_TIMEOUT_REASON_ERROR:
+		if rec.Status != types.StatusFinished {
+			return fmt.Errorf("%w: reason=error requires finished, got %d", types.ErrInvalidTimeoutReason, rec.Status)
+		}
 	default:
 		return fmt.Errorf("%w: unknown reason %v", types.ErrInvalidTimeoutReason, msg.Reason)
 	}
@@ -1425,6 +1445,9 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 			InferenceId: msg.InferenceId,
 			Reason:      msg.Reason,
 			Accept:      vote.Accept,
+		}
+		if msg.Reason == types.TimeoutReason_TIMEOUT_REASON_ERROR {
+			voteContent.ResponseHash = rec.ResponseHash
 		}
 		voteData, err := deterministicMarshal.Marshal(voteContent)
 		if err != nil {
@@ -1457,8 +1480,19 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 	rec.Status = types.StatusTimedOut
 	sm.state.HostStats[rec.ExecutorSlot].Missed++
 
-	// Release reserved cost back to escrow.
-	sm.state.Balance += rec.ReservedCost
+	if msg.Reason == types.TimeoutReason_TIMEOUT_REASON_ERROR {
+		// Finish already returned surplus and credited ActualCost. Unwind that
+		// credit so the client is refunded in full and the host is not paid.
+		sm.state.Balance += rec.ActualCost
+		hs := sm.state.HostStats[rec.ExecutorSlot]
+		if hs.Cost < rec.ActualCost {
+			hs.Cost = 0
+		} else {
+			hs.Cost -= rec.ActualCost
+		}
+	} else {
+		sm.state.Balance += rec.ReservedCost
+	}
 
 	logging.Debug("inference -> timed_out", "subsystem", "state",
 		"inference_id", msg.InferenceId,
@@ -1514,6 +1548,70 @@ func BuildDiffContent(escrowID string, nonce uint64, txs []*types.DevshardTx, po
 		EscrowId:      escrowID,
 		PostStateRoot: postStateRoot,
 	}
+}
+
+// VerifyFinishProposerSig checks that msg.ProposerSig was produced by the
+// executor slot named in the message. Same check applyFinishInference uses.
+// Safe to call from a verifier goroutine. Cache hits (cold key or an already
+// bound warm key) take only a read lock; a warm-key miss takes the write lock
+// because ResolveWarmKey writes sm.state.WarmKeys and may call the bridge.
+// Callers that already hold sm.mu must use verifyFinishProposerSigLocked.
+func (sm *StateMachine) VerifyFinishProposerSig(msg *types.MsgFinishInference) error {
+	recovered, err := sm.recoveredProposerAddress(msg)
+	if err != nil {
+		return err
+	}
+
+	sm.mu.RLock()
+	expected, ok := sm.slotToAddress[msg.ExecutorSlot]
+	cached, hasCached := sm.state.WarmKeys[msg.ExecutorSlot]
+	sm.mu.RUnlock()
+	if !ok {
+		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.ExecutorSlot)
+	}
+	if recovered == expected || cached == recovered {
+		return nil
+	}
+	if hasCached {
+		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidProposerSig, expected, recovered)
+	}
+
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	if sm.ResolveWarmKey(msg.ExecutorSlot, recovered, expected) {
+		return nil
+	}
+	return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidProposerSig, expected, recovered)
+}
+
+func (sm *StateMachine) recoveredProposerAddress(msg *types.MsgFinishInference) (string, error) {
+	if msg == nil {
+		return "", fmt.Errorf("%w: nil finish", types.ErrInvalidProposerSig)
+	}
+	cloned := proto.Clone(msg).(*types.MsgFinishInference)
+	cloned.ProposerSig = nil
+	data, err := deterministicMarshal.Marshal(cloned)
+	if err != nil {
+		return "", fmt.Errorf("marshal for proposer sig: %w", err)
+	}
+	recovered, err := sm.verifier.RecoverAddress(data, msg.ProposerSig)
+	if err != nil {
+		return "", fmt.Errorf("%w: %v", types.ErrInvalidProposerSig, err)
+	}
+	return recovered, nil
+}
+
+func (sm *StateMachine) verifyFinishProposerSigLocked(msg *types.MsgFinishInference) error {
+	if msg == nil {
+		return fmt.Errorf("%w: nil finish", types.ErrInvalidProposerSig)
+	}
+	addr, ok := sm.slotToAddress[msg.ExecutorSlot]
+	if !ok {
+		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.ExecutorSlot)
+	}
+	cloned := proto.Clone(msg).(*types.MsgFinishInference)
+	cloned.ProposerSig = nil
+	return sm.verifyProposerSig(cloned, msg.ProposerSig, addr, msg.ExecutorSlot)
 }
 
 // verifyProposerSig verifies that sig was produced by expectedAddress over

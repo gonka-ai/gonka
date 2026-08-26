@@ -27,6 +27,9 @@ const (
 	TimeoutReason_TIMEOUT_REASON_UNSPECIFIED TimeoutReason = 0
 	TimeoutReason_TIMEOUT_REASON_REFUSED     TimeoutReason = 1
 	TimeoutReason_TIMEOUT_REASON_EXECUTION   TimeoutReason = 2
+	// Executor finished with an error body. Evidence-backed and immediate:
+	// verifiers check the executor-signed response hash, NOT an elapsed deadline.
+	TimeoutReason_TIMEOUT_REASON_ERROR TimeoutReason = 3
 )
 
 // Enum value maps for TimeoutReason.
@@ -35,11 +38,13 @@ var (
 		0: "TIMEOUT_REASON_UNSPECIFIED",
 		1: "TIMEOUT_REASON_REFUSED",
 		2: "TIMEOUT_REASON_EXECUTION",
+		3: "TIMEOUT_REASON_ERROR",
 	}
 	TimeoutReason_value = map[string]int32{
 		"TIMEOUT_REASON_UNSPECIFIED": 0,
 		"TIMEOUT_REASON_REFUSED":     1,
 		"TIMEOUT_REASON_EXECUTION":   2,
+		"TIMEOUT_REASON_ERROR":       3,
 	}
 )
 
@@ -792,11 +797,12 @@ const file_devshard_v1_tx_proto_rawDesc = "" +
 	"\tsignature\x18\x02 \x01(\fR\tsignature\x12!\n" +
 	"\fproposer_sig\x18\x03 \x01(\fR\vproposerSig\x12\x1b\n" +
 	"\tescrow_id\x18\x04 \x01(\tR\bescrowId\"\x12\n" +
-	"\x10MsgFinalizeRound*i\n" +
+	"\x10MsgFinalizeRound*\x83\x01\n" +
 	"\rTimeoutReason\x12\x1e\n" +
 	"\x1aTIMEOUT_REASON_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16TIMEOUT_REASON_REFUSED\x10\x01\x12\x1c\n" +
-	"\x18TIMEOUT_REASON_EXECUTION\x10\x02B\x10Z\x0edevshard/typesb\x06proto3"
+	"\x18TIMEOUT_REASON_EXECUTION\x10\x02\x12\x18\n" +
+	"\x14TIMEOUT_REASON_ERROR\x10\x03B\x10Z\x0edevshard/typesb\x06proto3"
 
 var (
 	file_devshard_v1_tx_proto_rawDescOnce sync.Once

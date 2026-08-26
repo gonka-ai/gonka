@@ -37,6 +37,17 @@ func BootAdversarialStack(t *testing.T, prefix string) (*Stack, *config.File, En
 	return stack, cfg, eps
 }
 
+// BootErrorMissAdversarialStack boots a 3-host stack for error-finish-miss votes.
+func BootErrorMissAdversarialStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	stack, cfg, eps := BootErrorMissStack(t, prefix)
+	client := GatewayChatClient()
+	WaitStackHealthy(t, stack, eps)
+	WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
+	WaitGETOK(t, client, eps.RouterHTTP+"/"+cfg.Versiond.VersionName+"/healthz", 5*time.Minute, "devshardd health via router", stack)
+	return stack, cfg, eps
+}
+
 // PatchMockOpenAIFault posts runtime fault knobs to mock-openai /testenv/fault.
 func PatchMockOpenAIFault(t *testing.T, client *http.Client, mockOpenAIURL string, patch mockopenai.FaultPatch) {
 	t.Helper()
@@ -57,11 +68,12 @@ func ResetMockOpenAIFault(t *testing.T, client *http.Client, mockOpenAIURL strin
 	zero := 0
 	f := false
 	PatchMockOpenAIFault(t, client, mockOpenAIURL, mockopenai.FaultPatch{
-		LatencyMs:        &zero,
-		HTTPStatus:       &zero,
-		DropFirstChunk:   &f,
-		PartialStream:    &f,
-		StreamChunkDelay: &zero,
+		LatencyMs:           &zero,
+		HTTPStatus:          &zero,
+		DropFirstChunk:      &f,
+		PartialStream:       &f,
+		StreamChunkDelay:    &zero,
+		StreamErrorEnvelope: &f,
 	})
 }
 
@@ -326,6 +338,16 @@ func PostGatewayChatExpectFailure(t *testing.T, client *http.Client, gatewayURL,
 	}
 	t.Fatalf("expected gateway error, got %d: %s", status, body)
 	return status
+}
+
+// PostGatewayChatFailure posts non-stream chat and requires HTTP status >= 400.
+// Unlike PostGatewayChatExpectFailure, a transport timeout is a test failure.
+func PostGatewayChatFailure(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) (int, string) {
+	t.Helper()
+	status, transportErr, body := postGatewayChatHTTPStatus(client, gatewayURL, adminAPIKey, req)
+	require.NoError(t, transportErr, "gateway chat transport error")
+	require.GreaterOrEqual(t, status, 400, "expected gateway error body, got %d: %s", status, body)
+	return status, body
 }
 
 // WaitGatewayChatExpectFailure polls until gateway chat returns HTTP >= 400 or a transport error.

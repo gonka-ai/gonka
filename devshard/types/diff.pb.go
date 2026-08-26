@@ -879,11 +879,14 @@ func (x *ExecutorReceiptContent) GetObservedBlockHash() []byte {
 
 // TimeoutVoteContent is what a host signs for a TimeoutVote.
 type TimeoutVoteContent struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	EscrowId      string                 `protobuf:"bytes,1,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
-	InferenceId   uint64                 `protobuf:"varint,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
-	Reason        TimeoutReason          `protobuf:"varint,3,opt,name=reason,proto3,enum=devshard.v1.TimeoutReason" json:"reason,omitempty"`
-	Accept        bool                   `protobuf:"varint,4,opt,name=accept,proto3" json:"accept,omitempty"`
+	state       protoimpl.MessageState `protogen:"open.v1"`
+	EscrowId    string                 `protobuf:"bytes,1,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
+	InferenceId uint64                 `protobuf:"varint,2,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	Reason      TimeoutReason          `protobuf:"varint,3,opt,name=reason,proto3,enum=devshard.v1.TimeoutReason" json:"reason,omitempty"`
+	Accept      bool                   `protobuf:"varint,4,opt,name=accept,proto3" json:"accept,omitempty"`
+	// Set for reason=ERROR only; empty otherwise. proto3 omits empty bytes, so
+	// REFUSED / EXECUTION vote contents stay byte-identical to pre-change.
+	ResponseHash  []byte `protobuf:"bytes,5,opt,name=response_hash,json=responseHash,proto3" json:"response_hash,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -944,6 +947,13 @@ func (x *TimeoutVoteContent) GetAccept() bool {
 		return x.Accept
 	}
 	return false
+}
+
+func (x *TimeoutVoteContent) GetResponseHash() []byte {
+	if x != nil {
+		return x.ResponseHash
+	}
+	return nil
 }
 
 // StateSignatureContent is what a host signs for state attestation.
@@ -1079,12 +1089,13 @@ const file_devshard_v1_diff_proto_rawDesc = "" +
 	"\fconfirmed_at\x18\b \x01(\x03R\vconfirmedAt\x12'\n" +
 	"\x0fobserved_height\x18\t \x01(\x04R\x0eobservedHeight\x12.\n" +
 	"\x13observed_block_hash\x18\n" +
-	" \x01(\fR\x11observedBlockHash\"\xa0\x01\n" +
+	" \x01(\fR\x11observedBlockHash\"\xc5\x01\n" +
 	"\x12TimeoutVoteContent\x12\x1b\n" +
 	"\tescrow_id\x18\x01 \x01(\tR\bescrowId\x12!\n" +
 	"\finference_id\x18\x02 \x01(\x04R\vinferenceId\x122\n" +
 	"\x06reason\x18\x03 \x01(\x0e2\x1a.devshard.v1.TimeoutReasonR\x06reason\x12\x16\n" +
-	"\x06accept\x18\x04 \x01(\bR\x06accept\"i\n" +
+	"\x06accept\x18\x04 \x01(\bR\x06accept\x12#\n" +
+	"\rresponse_hash\x18\x05 \x01(\fR\fresponseHash\"i\n" +
 	"\x15StateSignatureContent\x12\x1d\n" +
 	"\n" +
 	"state_root\x18\x01 \x01(\fR\tstateRoot\x12\x1b\n" +

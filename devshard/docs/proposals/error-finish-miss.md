@@ -148,7 +148,19 @@ The **ordering** `Finish → Timeout` is the invariant, not literally "same diff
 `applyTimeout(reason=ERROR)` requires `StatusFinished`, which the Finish
 produces. Same-diff is the atomic and preferred case (the gateway holds the
 Finish in `pendingTxs` while collecting votes); if the Finish was already
-published in an earlier diff, a later solo Timeout diff applies identically.
+published in an earlier diff, a later solo Timeout diff applies the same way —
+but only inside the seal window.
+
+`sealEligibleStatus` includes `StatusFinished` (`state/seal.go:254`), so a
+finished record is folded into `SealedAcc` once the nonce gate
+(`InferenceSealGraceNonces`) and the state-clock grace
+(`InferenceSealGraceSeconds`) both clear. After that `applyTimeout` hits
+`isInferenceEvictedFromLive` and returns `inference %d is sealed`
+(`state/machine.go:1386`), and the miss is unclaimable for good. So the deferred
+path is bounded, not equivalent: emit the `ERROR` timeout in the same diff as
+the Finish, or at least well inside the grace. This is another reason the design
+has no deadline — any wait pushes the timeout toward the seal boundary that
+would silently discard it.
 
 Tx order inside a diff is preserved: `applyCore` walks `diff.Txs` in order
 (`state/machine.go:1016` `applyTx`), and `localBestEffortLocked` applies
@@ -412,6 +424,15 @@ reconstruction needs the full line set. If reconstruction is off by a single
 byte the hash check fails, the verifier rejects, and behaviour degrades to
 today's (no miss). It fails closed.
 
+Second implementation requirement: only attempts whose stream the gateway read
+to completion can be reconstructed. The gateway cancels losing speculative
+attempts, so its retained lines may be a strict prefix of what the executor
+hashed, and the hash check then rejects. That fails closed, which is correct,
+but it means a cancelled error attempt yields no miss even though the executor
+signed one. Distinguish this in metrics — a `hash_mismatch` on a cancelled
+attempt is expected and must not be alerted on as serialization drift (see
+Observability).
+
 `transport/server.go:593` `HandleVerifyTimeout` gains an `ERROR` case:
 
 ```go
@@ -579,11 +600,35 @@ Accept only when all hold, parsed via
   shape, matching `sseChunkErrorPayload`);
 - no content anywhere — no `delta.content`, `delta.reasoning_content`,
   `delta.tool_calls`, `message.content`, `choice.text`;
-- `usage.completion_tokens == 0`.
+- `usage.completion_tokens == 0`. Note this is weaker than it looks: when no
+  event carries usage, `StreamedCompletionResponse.GetUsage` synthesizes
+  `CompletionTokens = len(logprobs.Content)` (`completionresponse.go:217`), so
+  for an error body the condition mostly restates "no content anywhere" rather
+  than checking something independent. Keep it — it catches a host that attaches
+  a real usage block to an error envelope — but do not count it as a second
+  opinion.
 
-A gateway that misclassifies cannot cause a wrong miss: it can only start a vote
-that verifiers then reject, because the Finish reports non-zero output tokens.
-The consensus rule is the backstop, and it is the stricter of the two.
+Out of scope by construction: client-fault errors. A 4xx from the ML node is
+returned to the caller without rotation (`inference/engine.go:174`), but its
+JSON body carries no usage block, so `JsonCompletionResponse.GetUsage()` fails
+on `Usage.IsEmpty()` (`completionresponse.go:40`), `processExecutionHTTPResponse`
+returns an error (`execute.go:113`), and **no Finish is ever signed**. This
+design only ever sees errors that produced a Finish, so a malformed request
+cannot be turned into a miss on an honest host. Keep it that way: if a future
+change makes `GetUsage` tolerant of missing usage, this predicate needs an
+explicit executor-fault condition, or a user could grief every host in the
+group with one bad prompt.
+
+There is no second, independent check behind this predicate. Verifiers run the
+same implementation over the same hash-pinned bytes as the gateway, so they
+agree with a misclassifying gateway by construction — the earlier token-based
+draft had a backstop here, and the hash-pinned design deliberately does not.
+The classifier is therefore the single point of truth, and its correctness is
+safety-critical in one direction: a predicate that accepted a genuine
+completion would refund the client and charge an honest host a miss. That is
+what the "no content anywhere" condition defends, and why it must stay
+conservative — when in doubt, return `ok == false` and fall through to today's
+behaviour.
 
 The "no content anywhere" condition is what stops this becoming an escape hatch.
 A host that streams real tokens and appends a trailing error event fails the
@@ -607,9 +652,11 @@ All in `devshard/cmd/devshardctl` + `devshard/user/session.go`.
    Structurally this means the `ERROR` case is decided at the top of
    `HandleTimeout`, not inside the existing `confirmedAt > 0` branch that owns the
    32-minute wait.
-3. **Same-diff composition.** Keep the Finish in `pendingTxs`, then
-   `AddPendingTimeoutTx(nonce, ERROR, votes)` (`session.go:1907`) and one
-   `SendPendingDiff`. FIFO ordering gives Finish → Timeout in a single diff.
+3. **Same-diff composition.** Pin the pending Finish (and any Timeout already
+   queued for that nonce) for the ERROR vote round so a concurrent compose
+   cannot drain them. Pass the Timeout into the same locked compose as
+   `extraTxs` after that Finish — do not enqueue Timeout into the shared
+   pending queue first. Append order puts Finish ahead of Timeout.
 4. **Forward the artifacts — both required.** Extend
    `TimeoutVerifier.VerifyTimeout` / `CollectTimeoutVotes` to pass:
    - `finish_tx`, from `inf.resp.Mempool` (the `devshard_meta` tail the gateway
@@ -691,10 +738,10 @@ Remaining rollout rules:
 - Ship the whole change — accept, verify, apply *and* emit — in the one `v5`
   binary. Splitting host and gateway sides across two names buys nothing here,
   since a session can never mix names.
-- Keep a kill switch (`DEVSHARD_ERROR_MISS_ENABLED`, default off for the first
-  release) on the **emit** side only, so a bad classifier can be silenced without
-  a governance round trip. Apply and verify must stay unconditional in `v5`: if
-  emit is on for any gateway, every host must be able to apply the result.
+- Emit is always on in this binary. The safety valve is the fail-closed
+  classifier (`errorTerminal` + empty `contentSource`); there is no env flag to
+  silence emit without a new binary. Apply and verify stay unconditional: every
+  host in a mixed-traffic session must be able to apply `reason=ERROR`.
 - State roots differ from `v4` for new sessions simply because the tag is an
   input to the root. That is the normal consequence of a new name, needs no
   migration, and settlement already carries the tag per session
@@ -721,10 +768,13 @@ Remaining rollout rules:
 - Extend the timeout-reason label set (`RecordInferenceTimeout`,
   `timeoutReasonLogLabel` at `session.go:2239`) with `"error"`.
 - Counter for rejected error-miss verifications by cause
-  (`no_finish_tx`, `no_payload`, `sig`, `hash_mismatch`, `not_error_body`). A
-  spike in `hash_mismatch` is the alarm that matters: it means the gateway's
-  payload reconstruction has drifted from the executor's serialization, which
-  silently disables the whole path. Alert on it.
+  (`no_finish_tx`, `no_payload`, `sig`, `hash_mismatch`, `not_error_body`),
+  labelled by whether the gateway read the attempt's stream to completion.
+  `hash_mismatch` on a cancelled attempt is expected (truncated prefix).
+  `hash_mismatch` on a fully-read attempt is the alarm that matters: the
+  gateway's payload reconstruction has drifted from the executor's
+  serialization, which silently disables the whole path. Alert on that label
+  only.
 - Update `docs/inference-lifecycle.md` (status transitions) and
   `proposals/gateway-observability/observability.md` (the `error_stream` row now
   has a follow-up outcome).
@@ -755,7 +805,6 @@ State machine (`devshard/state/machine_test.go`):
 Classifier (`common/completionapi`) — this is the consensus rule:
 
 - The exact EngineCore payload from this report → `ok == true`.
-- Deterministic 4xx (`BadRequestError`) → `ok == true`.
 - Real content followed by a trailing error event → `ok == false`.
 - Error event with `completion_tokens > 0` → `ok == false`.
 - Empty stream (role + `[DONE]`, no error object) → `ok == false`
@@ -803,9 +852,8 @@ Gateway (`devshard/cmd/devshardctl`):
   not the `1`s the existing proxy tests use at `proxy_test.go:709`) and assert the
   miss is applied in well under a second. Existing timeout tests pass only because
   they shrink the config; this path must not need that.
-- Kill switch off → no `ERROR` timeout emitted and behaviour is exactly today's.
-  (There is no version branch to test: the old behaviour lives in the old
-  binary, which does not contain this code.)
+- Content-then-error / non-terminal capability error → no `ERROR` timeout
+  emitted. (There is no env flag to silence emit.)
 - Insufficient votes → today's behaviour, request still fails cleanly.
 
 E2E (`devshard/testenv/citest`): mock-openai fault returning `200` + SSE error

@@ -582,9 +582,9 @@ func (c *blockingNonStreamingRecorderClient) MaxTokens() []uint64 {
 	return append([]uint64(nil), c.maxTokens...)
 }
 
-func (c *verifierClient) VerifyTimeout(_ context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff) (bool, []byte, uint32, []*types.DevshardTx, error) {
+func (c *verifierClient) VerifyTimeout(_ context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
 	if !c.accept {
-		return false, nil, 0, nil, nil
+		return false, nil, 0, nil, "", nil
 	}
 	voterSlot := c.group[c.slotIdx].SlotID
 	content := &types.TimeoutVoteContent{
@@ -595,13 +595,13 @@ func (c *verifierClient) VerifyTimeout(_ context.Context, inferenceID uint64, re
 	}
 	data, err := proto.Marshal(content)
 	if err != nil {
-		return false, nil, 0, nil, err
+		return false, nil, 0, nil, "", err
 	}
 	sig, err := c.signer.Sign(data)
 	if err != nil {
-		return false, nil, 0, nil, err
+		return false, nil, 0, nil, "", err
 	}
-	return true, sig, voterSlot, nil, nil
+	return true, sig, voterSlot, nil, "", nil
 }
 
 type testProxyEnv struct {

@@ -650,6 +650,8 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 	nowUnix := time.Now().Unix()
 
 	var accept bool
+	var responseHash []byte
+	var rejectCause string
 	switch reason {
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
 		// Fetch stored diffs to forward to executor during challenge.
@@ -666,6 +668,8 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 		accept, err = host.VerifyRefusedTimeout(c.Request().Context(), st, req.InferenceID, PayloadFromJSON(req.Payload), storedDiffs, localMempool, executorClient, s.host, st.Config, nowUnix)
 	case types.TimeoutReason_TIMEOUT_REASON_EXECUTION:
 		accept, err = host.VerifyExecutionTimeout(c.Request().Context(), st, req.InferenceID, localMempool, executorClient, st.Config, nowUnix)
+	case types.TimeoutReason_TIMEOUT_REASON_ERROR:
+		accept, responseHash, rejectCause, err = host.VerifyErrorTimeout(st, req.InferenceID, req.FinishTx, req.ResponsePayload, localMempool, s.host)
 	default:
 		return echo.NewHTTPError(http.StatusBadRequest, "unknown reason")
 	}
@@ -673,9 +677,9 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
-	resp := VerifyTimeoutResponse{Accept: accept}
+	resp := VerifyTimeoutResponse{Accept: accept, RejectCause: rejectCause}
 	if accept {
-		sig, voterSlot, sErr := signTimeoutVote(s.host.EscrowID(), req.InferenceID, reason, s.host.Signer(), s.host.PrimarySlot())
+		sig, voterSlot, sErr := signTimeoutVote(s.host.EscrowID(), req.InferenceID, reason, s.host.Signer(), s.host.PrimarySlot(), responseHash)
 		if sErr != nil {
 			return echo.NewHTTPError(http.StatusInternalServerError, sErr.Error())
 		}
@@ -692,15 +696,16 @@ func (s *Server) HandleVerifyTimeout(c echo.Context) (err error) {
 }
 
 // signTimeoutVote marshals and signs a TimeoutVoteContent, returning the
-// signature and the voter's slot ID.
-func signTimeoutVote(escrowID string, inferenceID uint64, reason types.TimeoutReason, signer signing.Signer, voterSlot uint32) ([]byte, uint32, error) {
+// signature and the voter's slot ID. responseHash is set for reason=ERROR.
+func signTimeoutVote(escrowID string, inferenceID uint64, reason types.TimeoutReason, signer signing.Signer, voterSlot uint32, responseHash []byte) ([]byte, uint32, error) {
 	voteContent := &types.TimeoutVoteContent{
-		EscrowId:    escrowID,
-		InferenceId: inferenceID,
-		Reason:      reason,
-		Accept:      true,
+		EscrowId:     escrowID,
+		InferenceId:  inferenceID,
+		Reason:       reason,
+		Accept:       true,
+		ResponseHash: responseHash,
 	}
-	voteData, err := proto.Marshal(voteContent)
+	voteData, err := proto.MarshalOptions{Deterministic: true}.Marshal(voteContent)
 	if err != nil {
 		return nil, 0, fmt.Errorf("marshal vote: %w", err)
 	}

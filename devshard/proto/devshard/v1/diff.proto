@@ -107,6 +107,9 @@ message TimeoutVoteContent {
   uint64 inference_id = 2;
   TimeoutReason reason = 3;
   bool   accept = 4;
+  // Set for reason=ERROR only; empty otherwise. proto3 omits empty bytes, so
+  // REFUSED / EXECUTION vote contents stay byte-identical to pre-change.
+  bytes  response_hash = 5;
 }
 
 // StateSignatureContent is what a host signs for state attestation.

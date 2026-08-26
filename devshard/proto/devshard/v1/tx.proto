@@ -6,6 +6,9 @@ enum TimeoutReason {
   TIMEOUT_REASON_UNSPECIFIED = 0;
   TIMEOUT_REASON_REFUSED = 1;
   TIMEOUT_REASON_EXECUTION = 2;
+  // Executor finished with an error body. Evidence-backed and immediate:
+  // verifiers check the executor-signed response hash, NOT an elapsed deadline.
+  TIMEOUT_REASON_ERROR = 3;
 }
 
 message MsgStartInference {

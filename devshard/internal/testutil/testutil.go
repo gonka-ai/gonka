@@ -130,11 +130,17 @@ func SignExecutorReceipt(t *testing.T, signer signing.Signer, escrowID string, i
 
 func SignTimeoutVote(t *testing.T, signer signing.Signer, escrowID string, inferenceID uint64, reason types.TimeoutReason, accept bool) *types.TimeoutVote {
 	t.Helper()
+	return SignTimeoutVoteWithHash(t, signer, escrowID, inferenceID, reason, accept, nil)
+}
+
+func SignTimeoutVoteWithHash(t *testing.T, signer signing.Signer, escrowID string, inferenceID uint64, reason types.TimeoutReason, accept bool, responseHash []byte) *types.TimeoutVote {
+	t.Helper()
 	content := &types.TimeoutVoteContent{
-		EscrowId:    escrowID,
-		InferenceId: inferenceID,
-		Reason:      reason,
-		Accept:      accept,
+		EscrowId:     escrowID,
+		InferenceId:  inferenceID,
+		Reason:       reason,
+		Accept:       accept,
+		ResponseHash: responseHash,
 	}
 	data, err := deterministicMarshal.Marshal(content)
 	require.NoError(t, err)

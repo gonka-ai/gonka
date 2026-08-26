@@ -89,6 +89,61 @@ func getGatewayJSON(t *testing.T, client *http.Client, url, adminAPIKey string, 
 	return json.Unmarshal(body, dest)
 }
 
+// GatewayHostStats is the per-slot ledger from GET /v1/state.
+type GatewayHostStats struct {
+	Missed               uint32 `json:"missed"`
+	Invalid              uint32 `json:"invalid"`
+	Cost                 uint64 `json:"cost"`
+	RequiredValidations  uint32 `json:"required_validations"`
+	CompletedValidations uint32 `json:"completed_validations"`
+}
+
+type gatewayStateBody struct {
+	Session struct {
+		Balance uint64 `json:"balance"`
+	} `json:"session"`
+	HostStats map[string]GatewayHostStats `json:"host_stats"`
+}
+
+// GetGatewayLedgerSnapshot reads /v1/state host_stats and session balance.
+func GetGatewayLedgerSnapshot(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string) (balance uint64, hostStats map[string]GatewayHostStats) {
+	t.Helper()
+	if client == nil {
+		client = HTTPClient()
+	}
+	var body gatewayStateBody
+	require.NoError(t, getGatewayJSON(t, client, gatewayURL+"/v1/state", adminAPIKey, &body))
+	return body.Session.Balance, body.HostStats
+}
+
+// GatewayDebugInference is one record from GET /v1/debug/inferences.
+type GatewayDebugInference struct {
+	Status       string `json:"status"`
+	ExecutorSlot uint32 `json:"executor_slot"`
+	ReservedCost uint64 `json:"reserved_cost"`
+	ActualCost   uint64 `json:"actual_cost"`
+	VotesValid   uint32 `json:"votes_valid"`
+	VotesInvalid uint32 `json:"votes_invalid"`
+}
+
+type gatewayInferencesBody struct {
+	Inferences map[string]GatewayDebugInference `json:"inferences"`
+}
+
+// GetGatewayDebugInferences reads GET /v1/debug/inferences.
+func GetGatewayDebugInferences(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string) map[string]GatewayDebugInference {
+	t.Helper()
+	if client == nil {
+		client = HTTPClient()
+	}
+	var body gatewayInferencesBody
+	require.NoError(t, getGatewayJSON(t, client, gatewayURL+"/v1/debug/inferences", adminAPIKey, &body))
+	if body.Inferences == nil {
+		return map[string]GatewayDebugInference{}
+	}
+	return body.Inferences
+}
+
 // RestartService stops and starts a compose service without removing volumes.
 func RestartService(t *testing.T, stack *Stack, service string) {
 	t.Helper()
