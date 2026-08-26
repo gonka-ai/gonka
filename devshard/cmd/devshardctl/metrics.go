@@ -40,17 +40,19 @@ type DevshardMetrics struct {
 	participantPrefillPerToken *prometheus.HistogramVec
 	participantTotalSeconds    *prometheus.HistogramVec
 
-	gatewayRequests       *prometheus.CounterVec
-	criticalUserFailures  *prometheus.CounterVec
-	hiddenFailures        *prometheus.CounterVec
-	userVisibleWins       *prometheus.CounterVec
-	slotDecisions         *prometheus.CounterVec
-	attemptsStarted       *prometheus.CounterVec
-	attemptsTerminal      *prometheus.CounterVec
-	attemptFailures       *prometheus.CounterVec
-	quarantineTransitions *prometheus.CounterVec
-	noWinnerAttempts      *prometheus.CounterVec
-	timeoutActions        *prometheus.CounterVec
+	gatewayRequests        *prometheus.CounterVec
+	criticalUserFailures   *prometheus.CounterVec
+	hiddenFailures         *prometheus.CounterVec
+	userVisibleWins        *prometheus.CounterVec
+	slotDecisions          *prometheus.CounterVec
+	attemptsStarted        *prometheus.CounterVec
+	attemptsTerminal       *prometheus.CounterVec
+	attemptFailures        *prometheus.CounterVec
+	quarantineTransitions  *prometheus.CounterVec
+	noWinnerAttempts       *prometheus.CounterVec
+	timeoutActions         *prometheus.CounterVec
+	errorMissRejects       *prometheus.CounterVec
+	errorMissVerifyRejects *prometheus.CounterVec
 }
 
 type GatewaySlotDecisionMetric struct {
@@ -315,6 +317,20 @@ func NewDevshardMetrics() *DevshardMetrics {
 			},
 			[]string{"participant_key", "model", "kind", "action", "reason"},
 		),
+		errorMissRejects: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_error_miss_rejects_total",
+				Help: "Rejected error-miss attempts by reconstruction cause (cancelled, drift, truncated).",
+			},
+			[]string{"cause"},
+		),
+		errorMissVerifyRejects: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_error_miss_verify_rejects_total",
+				Help: "Rejected error-miss verifier votes by cause (no_finish_tx, no_payload, sig, hash_mismatch, not_error_body) and stream completeness (cancelled, drift, truncated). Alert on cause=hash_mismatch,completeness=drift.",
+			},
+			[]string{"cause", "completeness"},
+		),
 	}
 
 	registry.MustRegister(
@@ -347,6 +363,8 @@ func NewDevshardMetrics() *DevshardMetrics {
 		m.quarantineTransitions,
 		m.noWinnerAttempts,
 		m.timeoutActions,
+		m.errorMissRejects,
+		m.errorMissVerifyRejects,
 	)
 
 	m.handler = promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
@@ -576,6 +594,23 @@ func (m *DevshardMetrics) RecordGatewayTimeoutAction(action GatewayTimeoutAction
 		metricLabel(action.Kind, "unknown"),
 		metricLabel(action.Action, "unknown"),
 		metricLabel(action.Reason, "none"),
+	).Inc()
+}
+
+func (m *DevshardMetrics) RecordErrorMissReject(cause string) {
+	if m == nil {
+		return
+	}
+	m.errorMissRejects.WithLabelValues(metricLabel(cause, "unknown")).Inc()
+}
+
+func (m *DevshardMetrics) RecordErrorMissVerifyReject(cause, completeness string) {
+	if m == nil {
+		return
+	}
+	m.errorMissVerifyRejects.WithLabelValues(
+		metricLabel(cause, "unknown"),
+		metricLabel(completeness, "unknown"),
 	).Inc()
 }
 

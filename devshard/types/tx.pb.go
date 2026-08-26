@@ -474,6 +474,123 @@ func (x *TimeoutVote) GetSignature() []byte {
 	return nil
 }
 
+// MsgErrorMiss accounts a finished inference whose signed body is an error
+// envelope or malformed stream. Evidence-backed and immediate: verifiers
+// check the executor-signed response hash, NOT an elapsed deadline.
+// Payload bytes are not on this message — re-derive the hash from the
+// Finish that applied earlier in the diff (rec.ResponseHash).
+type MsgErrorMiss struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	InferenceId   uint64                 `protobuf:"varint,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
+	Votes         []*ErrorMissVote       `protobuf:"bytes,2,rep,name=votes,proto3" json:"votes,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *MsgErrorMiss) Reset() {
+	*x = MsgErrorMiss{}
+	mi := &file_devshard_v1_tx_proto_msgTypes[5]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MsgErrorMiss) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MsgErrorMiss) ProtoMessage() {}
+
+func (x *MsgErrorMiss) ProtoReflect() protoreflect.Message {
+	mi := &file_devshard_v1_tx_proto_msgTypes[5]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MsgErrorMiss.ProtoReflect.Descriptor instead.
+func (*MsgErrorMiss) Descriptor() ([]byte, []int) {
+	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{5}
+}
+
+func (x *MsgErrorMiss) GetInferenceId() uint64 {
+	if x != nil {
+		return x.InferenceId
+	}
+	return 0
+}
+
+func (x *MsgErrorMiss) GetVotes() []*ErrorMissVote {
+	if x != nil {
+		return x.Votes
+	}
+	return nil
+}
+
+type ErrorMissVote struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	VoterSlot     uint32                 `protobuf:"varint,1,opt,name=voter_slot,json=voterSlot,proto3" json:"voter_slot,omitempty"`
+	Accept        bool                   `protobuf:"varint,2,opt,name=accept,proto3" json:"accept,omitempty"`
+	Signature     []byte                 `protobuf:"bytes,3,opt,name=signature,proto3" json:"signature,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ErrorMissVote) Reset() {
+	*x = ErrorMissVote{}
+	mi := &file_devshard_v1_tx_proto_msgTypes[6]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ErrorMissVote) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ErrorMissVote) ProtoMessage() {}
+
+func (x *ErrorMissVote) ProtoReflect() protoreflect.Message {
+	mi := &file_devshard_v1_tx_proto_msgTypes[6]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ErrorMissVote.ProtoReflect.Descriptor instead.
+func (*ErrorMissVote) Descriptor() ([]byte, []int) {
+	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{6}
+}
+
+func (x *ErrorMissVote) GetVoterSlot() uint32 {
+	if x != nil {
+		return x.VoterSlot
+	}
+	return 0
+}
+
+func (x *ErrorMissVote) GetAccept() bool {
+	if x != nil {
+		return x.Accept
+	}
+	return false
+}
+
+func (x *ErrorMissVote) GetSignature() []byte {
+	if x != nil {
+		return x.Signature
+	}
+	return nil
+}
+
 type MsgValidation struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	InferenceId   uint64                 `protobuf:"varint,1,opt,name=inference_id,json=inferenceId,proto3" json:"inference_id,omitempty"`
@@ -487,7 +604,7 @@ type MsgValidation struct {
 
 func (x *MsgValidation) Reset() {
 	*x = MsgValidation{}
-	mi := &file_devshard_v1_tx_proto_msgTypes[5]
+	mi := &file_devshard_v1_tx_proto_msgTypes[7]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -499,7 +616,7 @@ func (x *MsgValidation) String() string {
 func (*MsgValidation) ProtoMessage() {}
 
 func (x *MsgValidation) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_tx_proto_msgTypes[5]
+	mi := &file_devshard_v1_tx_proto_msgTypes[7]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -512,7 +629,7 @@ func (x *MsgValidation) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MsgValidation.ProtoReflect.Descriptor instead.
 func (*MsgValidation) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{5}
+	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{7}
 }
 
 func (x *MsgValidation) GetInferenceId() uint64 {
@@ -563,7 +680,7 @@ type MsgValidationVote struct {
 
 func (x *MsgValidationVote) Reset() {
 	*x = MsgValidationVote{}
-	mi := &file_devshard_v1_tx_proto_msgTypes[6]
+	mi := &file_devshard_v1_tx_proto_msgTypes[8]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -575,7 +692,7 @@ func (x *MsgValidationVote) String() string {
 func (*MsgValidationVote) ProtoMessage() {}
 
 func (x *MsgValidationVote) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_tx_proto_msgTypes[6]
+	mi := &file_devshard_v1_tx_proto_msgTypes[8]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -588,7 +705,7 @@ func (x *MsgValidationVote) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MsgValidationVote.ProtoReflect.Descriptor instead.
 func (*MsgValidationVote) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{6}
+	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{8}
 }
 
 func (x *MsgValidationVote) GetInferenceId() uint64 {
@@ -639,7 +756,7 @@ type MsgRevealSeed struct {
 
 func (x *MsgRevealSeed) Reset() {
 	*x = MsgRevealSeed{}
-	mi := &file_devshard_v1_tx_proto_msgTypes[7]
+	mi := &file_devshard_v1_tx_proto_msgTypes[9]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -651,7 +768,7 @@ func (x *MsgRevealSeed) String() string {
 func (*MsgRevealSeed) ProtoMessage() {}
 
 func (x *MsgRevealSeed) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_tx_proto_msgTypes[7]
+	mi := &file_devshard_v1_tx_proto_msgTypes[9]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -664,7 +781,7 @@ func (x *MsgRevealSeed) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MsgRevealSeed.ProtoReflect.Descriptor instead.
 func (*MsgRevealSeed) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{7}
+	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{9}
 }
 
 func (x *MsgRevealSeed) GetSlotId() uint32 {
@@ -703,7 +820,7 @@ type MsgFinalizeRound struct {
 
 func (x *MsgFinalizeRound) Reset() {
 	*x = MsgFinalizeRound{}
-	mi := &file_devshard_v1_tx_proto_msgTypes[8]
+	mi := &file_devshard_v1_tx_proto_msgTypes[10]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -715,7 +832,7 @@ func (x *MsgFinalizeRound) String() string {
 func (*MsgFinalizeRound) ProtoMessage() {}
 
 func (x *MsgFinalizeRound) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_tx_proto_msgTypes[8]
+	mi := &file_devshard_v1_tx_proto_msgTypes[10]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -728,7 +845,7 @@ func (x *MsgFinalizeRound) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use MsgFinalizeRound.ProtoReflect.Descriptor instead.
 func (*MsgFinalizeRound) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{8}
+	return file_devshard_v1_tx_proto_rawDescGZIP(), []int{10}
 }
 
 var File_devshard_v1_tx_proto protoreflect.FileDescriptor
@@ -772,6 +889,14 @@ const file_devshard_v1_tx_proto_rawDesc = "" +
 	"\n" +
 	"voter_slot\x18\x01 \x01(\rR\tvoterSlot\x12\x16\n" +
 	"\x06accept\x18\x02 \x01(\bR\x06accept\x12\x1c\n" +
+	"\tsignature\x18\x03 \x01(\fR\tsignature\"c\n" +
+	"\fMsgErrorMiss\x12!\n" +
+	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x120\n" +
+	"\x05votes\x18\x02 \x03(\v2\x1a.devshard.v1.ErrorMissVoteR\x05votes\"d\n" +
+	"\rErrorMissVote\x12\x1d\n" +
+	"\n" +
+	"voter_slot\x18\x01 \x01(\rR\tvoterSlot\x12\x16\n" +
+	"\x06accept\x18\x02 \x01(\bR\x06accept\x12\x1c\n" +
 	"\tsignature\x18\x03 \x01(\fR\tsignature\"\xaf\x01\n" +
 	"\rMsgValidation\x12!\n" +
 	"\finference_id\x18\x01 \x01(\x04R\vinferenceId\x12%\n" +
@@ -792,11 +917,11 @@ const file_devshard_v1_tx_proto_rawDesc = "" +
 	"\tsignature\x18\x02 \x01(\fR\tsignature\x12!\n" +
 	"\fproposer_sig\x18\x03 \x01(\fR\vproposerSig\x12\x1b\n" +
 	"\tescrow_id\x18\x04 \x01(\tR\bescrowId\"\x12\n" +
-	"\x10MsgFinalizeRound*i\n" +
+	"\x10MsgFinalizeRound*\x85\x01\n" +
 	"\rTimeoutReason\x12\x1e\n" +
 	"\x1aTIMEOUT_REASON_UNSPECIFIED\x10\x00\x12\x1a\n" +
 	"\x16TIMEOUT_REASON_REFUSED\x10\x01\x12\x1c\n" +
-	"\x18TIMEOUT_REASON_EXECUTION\x10\x02B\x10Z\x0edevshard/typesb\x06proto3"
+	"\x18TIMEOUT_REASON_EXECUTION\x10\x02\"\x04\b\x03\x10\x03*\x14TIMEOUT_REASON_ERRORB\x10Z\x0edevshard/typesb\x06proto3"
 
 var (
 	file_devshard_v1_tx_proto_rawDescOnce sync.Once
@@ -811,7 +936,7 @@ func file_devshard_v1_tx_proto_rawDescGZIP() []byte {
 }
 
 var file_devshard_v1_tx_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_devshard_v1_tx_proto_msgTypes = make([]protoimpl.MessageInfo, 9)
+var file_devshard_v1_tx_proto_msgTypes = make([]protoimpl.MessageInfo, 11)
 var file_devshard_v1_tx_proto_goTypes = []any{
 	(TimeoutReason)(0),          // 0: devshard.v1.TimeoutReason
 	(*MsgStartInference)(nil),   // 1: devshard.v1.MsgStartInference
@@ -819,19 +944,22 @@ var file_devshard_v1_tx_proto_goTypes = []any{
 	(*MsgFinishInference)(nil),  // 3: devshard.v1.MsgFinishInference
 	(*MsgTimeoutInference)(nil), // 4: devshard.v1.MsgTimeoutInference
 	(*TimeoutVote)(nil),         // 5: devshard.v1.TimeoutVote
-	(*MsgValidation)(nil),       // 6: devshard.v1.MsgValidation
-	(*MsgValidationVote)(nil),   // 7: devshard.v1.MsgValidationVote
-	(*MsgRevealSeed)(nil),       // 8: devshard.v1.MsgRevealSeed
-	(*MsgFinalizeRound)(nil),    // 9: devshard.v1.MsgFinalizeRound
+	(*MsgErrorMiss)(nil),        // 6: devshard.v1.MsgErrorMiss
+	(*ErrorMissVote)(nil),       // 7: devshard.v1.ErrorMissVote
+	(*MsgValidation)(nil),       // 8: devshard.v1.MsgValidation
+	(*MsgValidationVote)(nil),   // 9: devshard.v1.MsgValidationVote
+	(*MsgRevealSeed)(nil),       // 10: devshard.v1.MsgRevealSeed
+	(*MsgFinalizeRound)(nil),    // 11: devshard.v1.MsgFinalizeRound
 }
 var file_devshard_v1_tx_proto_depIdxs = []int32{
 	0, // 0: devshard.v1.MsgTimeoutInference.reason:type_name -> devshard.v1.TimeoutReason
 	5, // 1: devshard.v1.MsgTimeoutInference.votes:type_name -> devshard.v1.TimeoutVote
-	2, // [2:2] is the sub-list for method output_type
-	2, // [2:2] is the sub-list for method input_type
-	2, // [2:2] is the sub-list for extension type_name
-	2, // [2:2] is the sub-list for extension extendee
-	0, // [0:2] is the sub-list for field type_name
+	7, // 2: devshard.v1.MsgErrorMiss.votes:type_name -> devshard.v1.ErrorMissVote
+	3, // [3:3] is the sub-list for method output_type
+	3, // [3:3] is the sub-list for method input_type
+	3, // [3:3] is the sub-list for extension type_name
+	3, // [3:3] is the sub-list for extension extendee
+	0, // [0:3] is the sub-list for field type_name
 }
 
 func init() { file_devshard_v1_tx_proto_init() }
@@ -845,7 +973,7 @@ func file_devshard_v1_tx_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_devshard_v1_tx_proto_rawDesc), len(file_devshard_v1_tx_proto_rawDesc)),
 			NumEnums:      1,
-			NumMessages:   9,
+			NumMessages:   11,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

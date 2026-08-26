@@ -6,6 +6,8 @@ enum TimeoutReason {
   TIMEOUT_REASON_UNSPECIFIED = 0;
   TIMEOUT_REASON_REFUSED = 1;
   TIMEOUT_REASON_EXECUTION = 2;
+  reserved 3;
+  reserved "TIMEOUT_REASON_ERROR";
 }
 
 message MsgStartInference {
@@ -46,6 +48,22 @@ message MsgTimeoutInference {
 }
 
 message TimeoutVote {
+  uint32 voter_slot = 1;
+  bool   accept = 2;
+  bytes  signature = 3;
+}
+
+// MsgErrorMiss accounts a finished inference whose signed body is an error
+// envelope or malformed stream. Evidence-backed and immediate: verifiers
+// check the executor-signed response hash, NOT an elapsed deadline.
+// Payload bytes are not on this message — re-derive the hash from the
+// Finish that applied earlier in the diff (rec.ResponseHash).
+message MsgErrorMiss {
+  uint64 inference_id = 1;
+  repeated ErrorMissVote votes = 2;
+}
+
+message ErrorMissVote {
   uint32 voter_slot = 1;
   bool   accept = 2;
   bytes  signature = 3;

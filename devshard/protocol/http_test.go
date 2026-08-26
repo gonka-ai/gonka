@@ -60,8 +60,12 @@ type recoveryVerifierSource struct {
 	txs []*types.DevshardTx
 }
 
-func (c *recoveryVerifierClient) VerifyTimeout(_ context.Context, _ uint64, _ types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff) (bool, []byte, uint32, []*types.DevshardTx, error) {
-	return false, nil, 0, c.source.txs, nil
+func (c *recoveryVerifierClient) VerifyTimeout(_ context.Context, _ uint64, _ types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, c.source.txs, "", nil
+}
+
+func (c *recoveryVerifierClient) VerifyErrorMiss(_ context.Context, _ uint64, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, c.source.txs, "", nil
 }
 
 const httpTestRoutePrefix = "/devshard/v2"
@@ -80,6 +84,7 @@ func registerServer(g *echo.Group, srv *transport.Server) {
 	g.POST("/sessions/:id/height-sync", srv.HandleHeightSync)
 	g.POST("/sessions/:id/heightsync/repair", srv.HandleHeightSyncRepair)
 	g.POST("/sessions/:id/verify-timeout", srv.HandleVerifyTimeout)
+	g.POST("/sessions/:id/verify-error-miss", srv.HandleVerifyErrorMiss)
 	g.POST("/sessions/:id/challenge-receipt", srv.HandleChallengeReceipt)
 	g.POST("/sessions/:id/gossip/nonce", srv.HandleGossipNonce)
 	g.POST("/sessions/:id/gossip/txs", srv.HandleGossipTxs)
@@ -391,7 +396,7 @@ func TestHTTP_TimeoutRefused(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	votes, _, err := env.session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
+	votes, _, _, err := env.session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
 		Prompt:      testutil.TestPrompt,
 		Model:       "llama",
 		InputLength: 100,
@@ -466,7 +471,7 @@ func TestHTTP_TimeoutExecution(t *testing.T) {
 		verifiers[i] = env.clients[i]
 	}
 
-	votes, _, err := env.session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, nil, verifiers, allDiffs) // nil payload for execution timeout
+	votes, _, _, err := env.session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, nil, verifiers, allDiffs) // nil payload for execution timeout
 	require.NoError(t, err)
 	require.True(t, len(votes) > int(env.config.VoteThreshold),
 		"need >%d votes, got %d", env.config.VoteThreshold, len(votes))
@@ -495,7 +500,7 @@ func TestHTTP_TimeoutRejected(t *testing.T) {
 	require.NoError(t, err)
 
 	// Try timeout verification -- should fail because inference is finished.
-	accept, _, _, _, err := env.clients[2].VerifyTimeout(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, nil, nil)
+	accept, _, _, _, _, err := env.clients[2].VerifyTimeout(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, nil, nil, host.TimeoutArtifacts{})
 	require.Error(t, err)
 	require.False(t, accept)
 }
@@ -531,7 +536,7 @@ func TestHTTP_ChallengeReceipt_RejectsTimeout(t *testing.T) {
 		verifiers[i] = env.clients[i]
 	}
 
-	votes, _, err := env.session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
+	votes, _, _, err := env.session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
 		Prompt:      testutil.TestPrompt,
 		Model:       "llama",
 		InputLength: 100,
@@ -692,7 +697,7 @@ func TestHTTP_RefusedTimeoutChallengeTimeoutThenRecoveryTxIsAvailable(t *testing
 		srv.SetPeerClients(peers)
 	}
 
-	votes, recovery, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), env.session.TimeoutVerifiers(), env.session.Diffs())
+	votes, recovery, _, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), env.session.TimeoutVerifiers(), env.session.Diffs())
 	require.NoError(t, err)
 	require.True(t, len(votes) > int(env.config.VoteThreshold), "challenge response timeouts should initially look like executor unreachable")
 	require.Empty(t, recovery)
@@ -713,7 +718,7 @@ func TestHTTP_RefusedTimeoutChallengeTimeoutThenRecoveryTxIsAvailable(t *testing
 		srv.SetPeerClients(peers)
 	}
 
-	votes, recovery, err = env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), env.session.TimeoutVerifiers(), env.session.Diffs())
+	votes, recovery, _, err = env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), env.session.TimeoutVerifiers(), env.session.Diffs())
 	require.NoError(t, err)
 	require.Empty(t, votes, "once the executor recovery tx is reachable, timeout should no longer pass as clean refused")
 	require.NotNil(t, findConfirmStart(recovery, prepared.Nonce()), "next check must surface executor ConfirmStart as recovery")
@@ -746,7 +751,7 @@ func TestHTTP_ExecutionTimeoutRejectedWhenExecutorHasFinish(t *testing.T) {
 		return findFinish(env.hosts[executorIdx].MempoolTxs(), prepared.Nonce()) != nil
 	}, 5*time.Second, 20*time.Millisecond)
 
-	votes, recovery, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_EXECUTION, nil, env.session.TimeoutVerifiers(), env.session.Diffs())
+	votes, recovery, _, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_EXECUTION, nil, env.session.TimeoutVerifiers(), env.session.Diffs())
 	require.NoError(t, err)
 	require.Empty(t, votes, "executor finish in mempool must reject execution timeout")
 	require.Empty(t, recovery, "execution-timeout rejection should not publish refused-start recovery")
@@ -1383,7 +1388,7 @@ func TestHTTP_T2_OmittedConfirmStart_VotingVerifiersRetainPoolCopy(t *testing.T)
 	require.NoError(t, err)
 	executorIdx := prepared.HostIdx()
 
-	votes, recovery, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), env.session.TimeoutVerifiers(), env.session.Diffs())
+	votes, recovery, _, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), env.session.TimeoutVerifiers(), env.session.Diffs())
 	require.NoError(t, err)
 	require.Empty(t, votes, "alive executor must cause verifiers to reject the timeout")
 	require.NotNil(t, findConfirmStart(recovery, 1), "reject votes must carry executor ConfirmStart")

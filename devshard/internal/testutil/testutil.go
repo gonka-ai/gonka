@@ -146,6 +146,24 @@ func SignTimeoutVote(t *testing.T, signer signing.Signer, escrowID string, infer
 	}
 }
 
+func SignErrorMissVote(t *testing.T, signer signing.Signer, escrowID string, inferenceID uint64, accept bool, responseHash []byte) *types.ErrorMissVote {
+	t.Helper()
+	content := &types.ErrorMissVoteContent{
+		EscrowId:     escrowID,
+		InferenceId:  inferenceID,
+		Accept:       accept,
+		ResponseHash: responseHash,
+	}
+	data, err := deterministicMarshal.Marshal(content)
+	require.NoError(t, err)
+	sig, err := signer.Sign(data)
+	require.NoError(t, err)
+	return &types.ErrorMissVote{
+		Accept:    accept,
+		Signature: sig,
+	}
+}
+
 // MakeMultiSlotGroup creates a group where some signers own multiple slots.
 // slotsPerSigner[i] is the number of slots assigned to signers[i].
 // SlotIDs are assigned sequentially starting from 0.

@@ -65,6 +65,10 @@ func txTimeout(msg *types.MsgTimeoutInference) *types.DevshardTx {
 	return &types.DevshardTx{Tx: &types.DevshardTx_TimeoutInference{TimeoutInference: msg}}
 }
 
+func txErrorMiss(msg *types.MsgErrorMiss) *types.DevshardTx {
+	return &types.DevshardTx{Tx: &types.DevshardTx_ErrorMiss{ErrorMiss: msg}}
+}
+
 // txValidation wraps MsgValidation in a DevshardTx.
 func txValidation(msg *types.MsgValidation) *types.DevshardTx {
 	return &types.DevshardTx{Tx: &types.DevshardTx_Validation{Validation: msg}}

@@ -122,6 +122,9 @@ func (h *Host) applyDurableRecordLocked(rec types.DiffRecord) error {
 		if ti := tx.GetTimeoutInference(); ti != nil {
 			delete(h.completedResponses, ti.InferenceId)
 		}
+		if em := tx.GetErrorMiss(); em != nil {
+			delete(h.completedResponses, em.InferenceId)
+		}
 	}
 	h.recordValidationObsFromAppliedDiff(rec.Txs)
 	phaseAfter := h.sm.Phase()

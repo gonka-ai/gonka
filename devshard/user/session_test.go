@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"sync"
@@ -548,7 +549,7 @@ func TestCollectTimeoutVotes_WeightEarlyExit(t *testing.T) {
 		verifiers[i] = &mockTimeoutVerifier{accept: true, signer: slotSigner, group: group, slotIdx: i}
 	}
 
-	votes, _, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
+	votes, _, _, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
 		Prompt:      testutil.TestPrompt,
 		Model:       "llama",
 		InputLength: 100,
@@ -568,17 +569,26 @@ func TestCollectTimeoutVotes_WeightEarlyExit(t *testing.T) {
 }
 
 type mockTimeoutVerifier struct {
-	accept   bool
-	signer   *signing.Secp256k1Signer
-	group    []types.SlotAssignment
-	slotIdx  int
-	escrowID string // defaults to "escrow-1" when empty
-	mempool  []*types.DevshardTx
+	accept      bool
+	signer      *signing.Secp256k1Signer
+	group       []types.SlotAssignment
+	slotIdx     int
+	escrowID    string // defaults to "escrow-1" when empty
+	mempool     []*types.DevshardTx
+	rejectCause string
+	delay       time.Duration
+	onVerify    func()
 }
 
-func (m *mockTimeoutVerifier) VerifyTimeout(_ context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff) (bool, []byte, uint32, []*types.DevshardTx, error) {
+func (m *mockTimeoutVerifier) VerifyTimeout(_ context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	if m.onVerify != nil {
+		m.onVerify()
+	}
+	if m.delay > 0 {
+		time.Sleep(m.delay)
+	}
 	if !m.accept {
-		return false, nil, 0, m.mempool, nil
+		return false, nil, 0, m.mempool, m.rejectCause, nil
 	}
 	eid := m.escrowID
 	if eid == "" {
@@ -591,15 +601,52 @@ func (m *mockTimeoutVerifier) VerifyTimeout(_ context.Context, inferenceID uint6
 		Reason:      reason,
 		Accept:      true,
 	}
-	data, err := proto.Marshal(content)
+	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(content)
 	if err != nil {
-		return false, nil, 0, nil, err
+		return false, nil, 0, nil, "", err
 	}
 	sig, err := m.signer.Sign(data)
 	if err != nil {
-		return false, nil, 0, nil, err
+		return false, nil, 0, nil, "", err
 	}
-	return true, sig, voterSlot, nil, nil
+	return true, sig, voterSlot, nil, "", nil
+}
+
+func (m *mockTimeoutVerifier) VerifyErrorMiss(_ context.Context, inferenceID uint64, _ []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	if m.onVerify != nil {
+		m.onVerify()
+	}
+	if m.delay > 0 {
+		time.Sleep(m.delay)
+	}
+	if !m.accept {
+		return false, nil, 0, m.mempool, m.rejectCause, nil
+	}
+	eid := m.escrowID
+	if eid == "" {
+		eid = "escrow-1"
+	}
+	voterSlot := m.group[m.slotIdx].SlotID
+	var hash []byte
+	if len(artifacts.ResponsePayload) > 0 {
+		sum := sha256.Sum256(artifacts.ResponsePayload)
+		hash = sum[:]
+	}
+	content := &types.ErrorMissVoteContent{
+		EscrowId:     eid,
+		InferenceId:  inferenceID,
+		Accept:       true,
+		ResponseHash: hash,
+	}
+	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(content)
+	if err != nil {
+		return false, nil, 0, nil, "", err
+	}
+	sig, err := m.signer.Sign(data)
+	if err != nil {
+		return false, nil, 0, nil, "", err
+	}
+	return true, sig, voterSlot, nil, "", nil
 }
 
 // concurrencyMockVerifier is a TimeoutVerifier that records concurrency
@@ -619,7 +666,7 @@ type concurrencyMockVerifier struct {
 	release       <-chan struct{}       // VerifyTimeout returns when this is closed
 }
 
-func (m *concurrencyMockVerifier) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff) (bool, []byte, uint32, []*types.DevshardTx, error) {
+func (m *concurrencyMockVerifier) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
 	cur := m.perSlotActive[m.slotIdx].Add(1)
 	defer m.perSlotActive[m.slotIdx].Add(-1)
 	if m.totalEntered != nil {
@@ -644,7 +691,7 @@ func (m *concurrencyMockVerifier) VerifyTimeout(ctx context.Context, inferenceID
 		select {
 		case <-m.release:
 		case <-ctx.Done():
-			return false, nil, 0, nil, ctx.Err()
+			return false, nil, 0, nil, "", ctx.Err()
 		}
 	}
 	voterSlot := m.group[m.slotIdx].SlotID
@@ -656,13 +703,17 @@ func (m *concurrencyMockVerifier) VerifyTimeout(ctx context.Context, inferenceID
 	}
 	data, err := proto.Marshal(content)
 	if err != nil {
-		return false, nil, 0, nil, err
+		return false, nil, 0, nil, "", err
 	}
 	sig, err := m.signer.Sign(data)
 	if err != nil {
-		return false, nil, 0, nil, err
+		return false, nil, 0, nil, "", err
 	}
-	return true, sig, voterSlot, nil, nil
+	return true, sig, voterSlot, nil, "", nil
+}
+
+func (m *concurrencyMockVerifier) VerifyErrorMiss(ctx context.Context, inferenceID uint64, diffs []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, nil, "", nil
 }
 
 // signerForSlot finds the signer whose address matches the slot's validator.
@@ -742,7 +793,7 @@ func TestCollectTimeoutVotes_SerializesPerVerifier(t *testing.T) {
 
 	for i := 0; i < 2; i++ {
 		go func() {
-			votes, _, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, buildVerifiers(), nil)
+			votes, _, _, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, buildVerifiers(), nil)
 			resultsCh <- collectResult{votes: votes, err: err}
 		}()
 	}
@@ -841,7 +892,7 @@ func TestCollectTimeoutVotes_DifferentVerifiersRunInParallel(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, _, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, verifiers, nil)
+		_, _, _, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, verifiers, nil)
 		done <- err
 	}()
 
@@ -947,7 +998,7 @@ func TestCollectTimeoutVotes_WaitTimeoutDropsStaleGoroutines(t *testing.T) {
 	// Launch the blocking first call so all verifier slots are occupied.
 	firstDone := make(chan struct{})
 	go func() {
-		_, _, _ = session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, firstVerifiers, nil)
+		_, _, _, _ = session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, firstVerifiers, nil)
 		close(firstDone)
 	}()
 
@@ -960,7 +1011,7 @@ func TestCollectTimeoutVotes_WaitTimeoutDropsStaleGoroutines(t *testing.T) {
 	// Now fire the second call. Its goroutines should all time out on the
 	// queue (50ms) and return without calling VerifyTimeout.
 	start := time.Now()
-	votes, _, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, secondVerifiers, nil)
+	votes, _, _, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, secondVerifiers, nil)
 	elapsed := time.Since(start)
 	require.NoError(t, err)
 	require.Empty(t, votes, "stale goroutines must not produce votes")
@@ -1036,7 +1087,7 @@ func TestCollectTimeoutVotes_DepthGreaterThanOne(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, _, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, buildVerifiers(), nil)
+			_, _, _, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, buildVerifiers(), nil)
 			require.NoError(t, err)
 		}()
 	}
@@ -1355,8 +1406,12 @@ type timeoutRecoveryClient struct {
 	mempool []*types.DevshardTx
 }
 
-func (c *timeoutRecoveryClient) VerifyTimeout(_ context.Context, _ uint64, _ types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff) (bool, []byte, uint32, []*types.DevshardTx, error) {
-	return false, nil, 0, c.mempool, nil
+func (c *timeoutRecoveryClient) VerifyTimeout(_ context.Context, _ uint64, _ types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, c.mempool, "", nil
+}
+
+func (c *timeoutRecoveryClient) VerifyErrorMiss(_ context.Context, _ uint64, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, c.mempool, "", nil
 }
 
 type timeoutVoteClient struct {
@@ -1385,7 +1440,7 @@ func TestCollectTimeoutVotes_CollectsRejectMempool(t *testing.T) {
 		2: &mockTimeoutVerifier{accept: false, mempool: mixed},
 	}
 
-	votes, recovery, err := session.CollectTimeoutVotes(context.Background(), 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
+	votes, recovery, _, err := session.CollectTimeoutVotes(context.Background(), 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
 		Prompt:      testutil.TestPrompt,
 		Model:       "llama",
 		InputLength: 100,
@@ -1425,7 +1480,7 @@ func TestCollectTimeoutVotes_DeduplicatesRejectRecoveryTxs(t *testing.T) {
 		2: &mockTimeoutVerifier{accept: false, mempool: []*types.DevshardTx{confirm, finish}},
 	}
 
-	votes, recovery, err := session.CollectTimeoutVotes(context.Background(), 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
+	votes, recovery, _, err := session.CollectTimeoutVotes(context.Background(), 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
 		Prompt:      testutil.TestPrompt,
 		Model:       "llama",
 		InputLength: 100,
@@ -1461,7 +1516,7 @@ func TestCollectTimeoutVotes_DropsMalformedOrNilRecoveryTxs(t *testing.T) {
 		2: &mockTimeoutVerifier{accept: false, mempool: malformed},
 	}
 
-	votes, recovery, err := session.CollectTimeoutVotes(context.Background(), 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
+	votes, recovery, _, err := session.CollectTimeoutVotes(context.Background(), 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
 		Prompt:      testutil.TestPrompt,
 		Model:       "llama",
 		InputLength: 100,
@@ -1720,6 +1775,24 @@ func findRecoveryConfirmStart(txs []*types.DevshardTx, inferenceID uint64) *type
 func findRecoveryFinish(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
 	for _, tx := range txs {
 		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+			return tx
+		}
+	}
+	return nil
+}
+
+func findPendingTimeout(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
+	for _, tx := range txs {
+		if to := tx.GetTimeoutInference(); to != nil && to.InferenceId == inferenceID {
+			return tx
+		}
+	}
+	return nil
+}
+
+func findPendingErrorMiss(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
+	for _, tx := range txs {
+		if em := tx.GetErrorMiss(); em != nil && em.InferenceId == inferenceID {
 			return tx
 		}
 	}
