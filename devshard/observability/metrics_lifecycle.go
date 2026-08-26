@@ -372,10 +372,11 @@ func IncPostgresHealthProbe(result string) {
 		result = "unknown"
 	}
 	postgresHealthProbeTotal.WithLabelValues(result).Inc()
-	postgresPoolSaturated.Set(0)
+	saturated := 0.0
 	if result == "pool_saturated" {
-		postgresPoolSaturated.Set(1)
+		saturated = 1
 	}
+	postgresPoolSaturated.Set(saturated)
 }
 
 // IncDiffPersistRetry records one AppendDiff retry outcome (Phase 3).
