@@ -125,6 +125,7 @@ project_names() {
 }
 
 last_state=starting
+last_detail=
 last_names=$tmpdir/last.names
 : > "$last_names"
 accepted_set_known=0
@@ -184,15 +185,25 @@ set_state() {
     [ "$state" = ready ] && catalog_converged=true
     serving_ready_json=false
     [ "$serving_ready" -eq 1 ] && serving_ready_json=true
-    if [ "$state" != "$last_state" ]; then
-        case "$state" in
-            ready)
-                [ "$last_state" = starting ] || log "catalog reconciliation recovered"
-                ;;
-            *) log "catalog reconciliation degraded: $detail" ;;
-        esac
-        last_state=$state
-    fi
+    state_changed=0
+    detail_changed=0
+    [ "$state" = "$last_state" ] || state_changed=1
+    [ "$detail" = "$last_detail" ] || detail_changed=1
+    case "$state" in
+        ready)
+            if [ "$state_changed" -eq 1 ] && [ "$last_state" != starting ]; then
+                log "catalog reconciliation recovered"
+            fi
+            ;;
+        starting) ;;
+        *)
+            if [ "$state_changed" -eq 1 ] || [ "$detail_changed" -eq 1 ]; then
+                log "catalog reconciliation degraded: $detail"
+            fi
+            ;;
+    esac
+    last_state=$state
+    last_detail=$detail
     if [ -n "$status_file" ]; then
         directory=$(dirname -- "$status_file")
         if [ -d "$directory" ]; then

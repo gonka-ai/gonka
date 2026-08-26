@@ -634,6 +634,8 @@ test-version-routing:
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
 		| jq -e '.state == "activation-pending" and .dynamic_slots_used == 2 and (.detail | contains("v11"))' >/dev/null \
 		|| fail "withdrawn pending versions did not release their dynamic slots"; \
+	v10_log_count_before=$$(docker logs gonka-vp-router 2>&1 \
+		| grep -Fc "governance version 'v10'" || true); \
 	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
@@ -646,6 +648,10 @@ test-version-routing:
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
 		| jq -e '.state == "activation-pending" and .dynamic_slots_used == 2 and (.detail | contains("v10"))' >/dev/null \
 		|| fail "reclaimed dynamic slots could not stage corrected versions"; \
+	v10_log_count_after=$$(docker logs gonka-vp-router 2>&1 \
+		| grep -Fc "governance version 'v10'" || true); \
+	[ "$$v10_log_count_after" -gt "$$v10_log_count_before" ] \
+		|| fail "a changed activation-pending detail was not logged"; \
 	docker rm -f gonka-vp-a >/dev/null; \
 	docker run -d --name gonka-vp-a --network $$net --network-alias versiond-pool \
 		-e NAME=a -e SERVES="v4 v9" -e GENERIC_READY=false \
