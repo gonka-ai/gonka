@@ -159,7 +159,7 @@ func initRegistry() {
 	}, []string{"result"})
 	postgresPoolSaturated = prometheus.NewGauge(prometheus.GaugeOpts{
 		Name: "devshard_postgres_pool_saturated",
-		Help: "Whether the latest PostgreSQL health probe could not acquire a pooled connection.",
+		Help: "Whether all PostgreSQL application-pool connections were in use at the latest health probe.",
 	})
 
 	diffPersistRetryTotal = prometheus.NewCounterVec(prometheus.CounterOpts{

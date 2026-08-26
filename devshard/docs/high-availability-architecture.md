@@ -198,7 +198,10 @@ Operator signals (versiond / host logs and Prometheus):
   failed or recovered across the two-probe readiness hysteresis. The devshardd
   process stays alive; `/readyz` returns `503` while database readiness is lost.
 - `devshard_postgres_health_probe_total{result="success|database_error"}` —
-  outcomes from the dedicated PostgreSQL health connection.
+  outcomes from the dedicated PostgreSQL health connection. A single
+  `database_error` can be a transient connection reset and does not make the
+  service unready. Alert on `postgres readiness lost` or a sustained error
+  rate, not on one counter increment.
 - `devshard_postgres_pool_saturated` — whether all application-pool connections
   were in use at the latest probe. Saturation is reported independently and does
   not by itself make `/readyz` fail.
