@@ -197,6 +197,10 @@ Operator signals (versiond / host logs and Prometheus):
 - `postgres readiness lost` / `postgres readiness recovered` — the live database
   failed or recovered across the two-probe readiness hysteresis. The devshardd
   process stays alive; `/readyz` returns `503` while database readiness is lost.
+  With the default 5-second interval and 5-second probe deadline, a fully
+  blackholed database can take about 20 seconds after the last successful probe
+  to make `/readyz` return `503`. An upstream health checker adds its own polling
+  delay before it removes the replica from traffic.
 - `devshard_postgres_health_probe_total{result="success|database_error"}` —
   outcomes from the dedicated PostgreSQL health connection. A single
   `database_error` can be a transient connection reset and does not make the
