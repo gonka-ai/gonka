@@ -972,20 +972,25 @@ func TestRollingOverlapAllowedRequiresPostgresForDevshard(t *testing.T) {
 	}
 }
 
-func TestChildStopTimeoutHonorsDevshardShutdownGrace(t *testing.T) {
-	t.Setenv("DEVSHARD_SHUTDOWN_GRACE", "")
+func TestChildStopTimeoutUsesEffectiveConfiguredGrace(t *testing.T) {
 	devshardMgr := NewManager(config.Config{BinaryName: "devshardd", DrainKillGrace: 30 * time.Second})
-	if got := devshardMgr.childStopTimeout(); got != defaultDevshardShutdownGrace {
+	if got := devshardMgr.childStopTimeout(); got != config.DefaultDevshardShutdownGrace {
 		t.Fatalf("childStopTimeout = %s, want default devshard grace", got)
 	}
 
-	t.Setenv("DEVSHARD_SHUTDOWN_GRACE", "2m")
-	devshardMgr = NewManager(config.Config{BinaryName: "devshardd", DrainKillGrace: 30 * time.Second})
+	devshardMgr = NewManager(config.Config{
+		BinaryName:         "devshardd",
+		DrainKillGrace:     30 * time.Second,
+		ChildShutdownGrace: 2 * time.Minute,
+	})
 	if got := devshardMgr.childStopTimeout(); got != 2*time.Minute {
-		t.Fatalf("childStopTimeout = %s, want DEVSHARD_SHUTDOWN_GRACE", got)
+		t.Fatalf("childStopTimeout = %s, want configured child shutdown grace", got)
 	}
-	t.Setenv("DEVSHARD_SHUTDOWN_GRACE", "5s")
-	devshardMgr = NewManager(config.Config{BinaryName: "devshardd", DrainKillGrace: 30 * time.Second})
+	devshardMgr = NewManager(config.Config{
+		BinaryName:         "devshardd",
+		DrainKillGrace:     30 * time.Second,
+		ChildShutdownGrace: 5 * time.Second,
+	})
 	if got := devshardMgr.childStopTimeout(); got != 30*time.Second {
 		t.Fatalf("childStopTimeout = %s, want VERSIOND_DRAIN_KILL_GRACE", got)
 	}

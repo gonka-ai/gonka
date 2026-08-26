@@ -146,6 +146,11 @@ that can extend the host shutdown budget. On expiry, versiond forces remaining
 children and HTTP connections, then confirms child reap during the external
 runtime reserve.
 
+The startup contract requires
+`VERSIOND_DRAIN_ANNOUNCE + max(VERSIOND_DRAIN_KILL_GRACE, DEVSHARD_SHUTDOWN_GRACE) < VERSIOND_HOST_SHUTDOWN_BUDGET`.
+`versiond` validates this before starting, so a termination grace cannot silently
+consume the time reserved for admission and child drain.
+
 ## Health and readiness contracts
 
 Endpoints, all on the traffic listener (`:8080`):

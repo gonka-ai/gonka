@@ -27,11 +27,10 @@ import (
 )
 
 const (
-	childLoopbackHost            = "127.0.0.1"
-	maxChildPort                 = 65535
-	storageModePostgres          = "postgres"
-	defaultDevshardShutdownGrace = 10 * time.Minute
-	installedVersionRetain       = 3
+	childLoopbackHost      = "127.0.0.1"
+	maxChildPort           = 65535
+	storageModePostgres    = "postgres"
+	installedVersionRetain = 3
 )
 
 var (
@@ -169,6 +168,17 @@ func normalizeConfig(cfg config.Config) config.Config {
 	}
 	if cfg.DrainKillGrace <= 0 {
 		cfg.DrainKillGrace = config.DefaultDrainKillGrace
+	}
+	if cfg.ChildShutdownGrace <= 0 {
+		cfg.ChildShutdownGrace = cfg.DrainKillGrace
+		name := strings.ToLower(strings.TrimSpace(cfg.BinaryName))
+		if (name == "devshard" || name == "devshardd") &&
+			config.DefaultDevshardShutdownGrace > cfg.ChildShutdownGrace {
+			cfg.ChildShutdownGrace = config.DefaultDevshardShutdownGrace
+		}
+	}
+	if cfg.ChildShutdownGrace < cfg.DrainKillGrace {
+		cfg.ChildShutdownGrace = cfg.DrainKillGrace
 	}
 	return cfg
 }
@@ -1744,28 +1754,7 @@ func childEnv(binaryLogVersion, adminAddr string, haDeployment *bool) []string {
 }
 
 func (m *Manager) childStopTimeout() time.Duration {
-	timeout := m.cfg.DrainKillGrace
-	name := strings.ToLower(m.cfg.BinaryName)
-	if name != "devshard" && name != "devshardd" {
-		return timeout
-	}
-	shutdownGrace := parseDevshardShutdownGrace(os.Getenv("DEVSHARD_SHUTDOWN_GRACE"))
-	if shutdownGrace > timeout {
-		return shutdownGrace
-	}
-	return timeout
-}
-
-func parseDevshardShutdownGrace(raw string) time.Duration {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return defaultDevshardShutdownGrace
-	}
-	d, err := time.ParseDuration(raw)
-	if err != nil || d <= 0 {
-		return defaultDevshardShutdownGrace
-	}
-	return d
+	return m.cfg.ChildShutdownGrace
 }
 
 func (m *Manager) rollingOverlapAllowed(versionName string, old *child, newMode string) bool {

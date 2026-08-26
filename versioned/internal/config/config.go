@@ -10,8 +10,9 @@ import (
 )
 
 const (
-	DefaultDrainKillGrace     = 10 * time.Minute
-	DefaultHostShutdownBudget = 25 * time.Minute
+	DefaultDrainKillGrace        = 10 * time.Minute
+	DefaultDevshardShutdownGrace = 10 * time.Minute
+	DefaultHostShutdownBudget    = 25 * time.Minute
 	// DefaultDrainAnnounce must exceed the load balancer's health-check
 	// detection time (interval x fall) so no request is refused before the
 	// balancer has withdrawn this upstream.
@@ -19,19 +20,22 @@ const (
 )
 
 type Config struct {
-	OracleURL          string
-	PollInterval       time.Duration
-	BinDir             string
-	DataDir            string
-	BinaryName         string
-	BasePort           int
-	ReadyPath          string
-	ReadyTimeout       time.Duration
-	DrainPath          string
-	DrainStatusPath    string
-	DrainTimeout       time.Duration
-	DrainPollInterval  time.Duration
-	DrainKillGrace     time.Duration
+	OracleURL         string
+	PollInterval      time.Duration
+	BinDir            string
+	DataDir           string
+	BinaryName        string
+	BasePort          int
+	ReadyPath         string
+	ReadyTimeout      time.Duration
+	DrainPath         string
+	DrainStatusPath   string
+	DrainTimeout      time.Duration
+	DrainPollInterval time.Duration
+	DrainKillGrace    time.Duration
+	// ChildShutdownGrace is the effective max of the supervisor kill grace and
+	// the supervised binary's own SIGTERM shutdown budget.
+	ChildShutdownGrace time.Duration
 	HostShutdownBudget time.Duration
 	DrainAnnounce      time.Duration
 	Overrides          map[string]string // version name -> local binary path
@@ -79,7 +83,25 @@ func Load() (Config, error) {
 		}
 		*d.dst = value
 	}
-	if err := validateDrainAnnounce(cfg.DrainAnnounce, cfg.HostShutdownBudget); err != nil {
+	cfg.ChildShutdownGrace = cfg.DrainKillGrace
+	if isDevshardBinary(cfg.BinaryName) {
+		devshardGrace, err := parseDuration(
+			"DEVSHARD_SHUTDOWN_GRACE",
+			DefaultDevshardShutdownGrace,
+			false,
+		)
+		if err != nil {
+			return Config{}, err
+		}
+		if devshardGrace > cfg.ChildShutdownGrace {
+			cfg.ChildShutdownGrace = devshardGrace
+		}
+	}
+	if err := validateShutdownBudget(
+		cfg.DrainAnnounce,
+		cfg.ChildShutdownGrace,
+		cfg.HostShutdownBudget,
+	); err != nil {
 		return Config{}, err
 	}
 
@@ -88,6 +110,7 @@ func Load() (Config, error) {
 		"oracle_url", cfg.OracleURL,
 		"binary_name", cfg.BinaryName,
 		"drain_announce", cfg.DrainAnnounce,
+		"child_shutdown_grace", cfg.ChildShutdownGrace,
 		"host_shutdown_budget", cfg.HostShutdownBudget,
 		"force_versions", cfg.ForceVersions,
 		"override_versions", sortedOverrideKeys(cfg.Overrides),
@@ -171,6 +194,15 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
+func isDevshardBinary(name string) bool {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "devshard", "devshardd":
+		return true
+	default:
+		return false
+	}
+}
+
 // MinDrainAnnounce is the shortest announce window that guarantees the load
 // balancer observes the failing check before admission closes. The router
 // (versiond-router/haproxy.cfg.template) probes with `inter 1s` and grants each
@@ -181,14 +213,11 @@ func envOrDefault(key, fallback string) string {
 // still routes here, and the requests in between are refused.
 const MinDrainAnnounce = 5 * time.Second
 
-// validateDrainAnnounce accepts zero — the explicit "no balancer in front" —
-// but not a window too short for the balancer to see, nor one that swallows the
-// shutdown budget the announce phase is part of.
-func validateDrainAnnounce(announce, budget time.Duration) error {
-	if announce == 0 {
-		return nil
-	}
-	if announce < MinDrainAnnounce {
+// validateShutdownBudget accepts a zero announce window — the explicit "no
+// balancer in front" — but reserves both the announce window and the slowest
+// child's SIGTERM grace inside the one absolute host shutdown budget.
+func validateShutdownBudget(announce, childGrace, budget time.Duration) error {
+	if announce != 0 && announce < MinDrainAnnounce {
 		return fmt.Errorf(
 			"VERSIOND_DRAIN_ANNOUNCE=%s is below %s: the balancer needs up to ~4s to observe the failing check (inter 1s, timeout check 3s), and a shorter window closes admission while traffic still arrives; use 0 to declare there is no balancer",
 			announce, MinDrainAnnounce)
@@ -197,6 +226,12 @@ func validateDrainAnnounce(announce, budget time.Duration) error {
 		return fmt.Errorf(
 			"VERSIOND_DRAIN_ANNOUNCE=%s must be below VERSIOND_HOST_SHUTDOWN_BUDGET=%s: the announce window is part of the budget, not in addition to it",
 			announce, budget)
+	}
+	remainingAfterAnnounce := budget - announce
+	if childGrace >= remainingAfterAnnounce {
+		return fmt.Errorf(
+			"effective child shutdown grace=%s plus VERSIOND_DRAIN_ANNOUNCE=%s must be below VERSIOND_HOST_SHUTDOWN_BUDGET=%s: reserve time for request and child drain before SIGTERM",
+			childGrace, announce, budget)
 	}
 	return nil
 }
