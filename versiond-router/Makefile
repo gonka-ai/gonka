@@ -36,8 +36,9 @@ test-local-compose:
 
 test-join-compose:
 	@set -eu; \
-	tmp=$$(mktemp); tmp_json=$$(mktemp); \
-	trap 'rm -f "$$tmp" "$$tmp_json"' EXIT; \
+	tmp=$$(mktemp); tmp_json=$$(mktemp); tmp_capability=$$(mktemp); \
+	rm -f "$$tmp_capability"; \
+	trap 'rm -f "$$tmp" "$$tmp_json" "$$tmp_capability"' EXIT; \
 	VERSIOND_ROUTER_IMAGE= VERSIOND_ROUTING_CATALOG_URL= \
 	DEVSHARD_POSTGRES_PASSWORD=test \
 		docker compose --project-directory ../deploy/join \
@@ -51,9 +52,25 @@ test-join-compose:
 	jq -e '.services["versiond-router"].volumes | any(.type == "volume" and .source == "versiond-router-state" and .target == "/var/lib/gonka-router")' \
 		"$$tmp_json" >/dev/null \
 		|| { echo 'test-join-compose: router catalog state is not persistent' >&2; exit 1; }; \
-	jq -e '.services["versiond-router"].healthcheck.test | join(" ") as $$check | ($$check | contains("127.0.0.1:8404/readyz")) and ($$check | contains("component=catalog") | not) and ($$check | contains("127.0.0.1:8080/healthz"))' \
+	jq -e '.services["versiond-router"].healthcheck.test | join(" ") as $$check | ($$check | contains("-x /usr/local/lib/router-runtime/catalog-reconciler")) and ($$check | contains("catalog-capable versiond-router requires VERSIOND_ROUTING_CATALOG_URL")) and ($$check | contains("VERSIOND_ROUTING_CATALOG_URL requires a catalog-capable versiond-router image")) and ($$check | contains("127.0.0.1:8404/readyz")) and ($$check | contains("component=catalog") | not) and ($$check | contains("127.0.0.1:8080/healthz"))' \
 		"$$tmp_json" >/dev/null \
-		|| { echo 'test-join-compose: router healthcheck does not probe the data plane' >&2; exit 1; }; \
+		|| { echo 'test-join-compose: router healthcheck does not validate image/catalog compatibility and probe the data plane' >&2; exit 1; }; \
+	healthcheck=$$(jq -r '.services["versiond-router"].healthcheck.test[1]' \
+		"$$tmp_json" | sed 's/\$$\$$/\$$/g' \
+		| sed "s#/usr/local/lib/router-runtime/catalog-reconciler#$$tmp_capability#g"); \
+	probe_healthcheck() ( wget() { return 0; }; eval "$$healthcheck"; ); \
+	VERSIOND_ROUTING_CATALOG_URL= probe_healthcheck \
+		|| { echo 'test-join-compose: legacy image without catalog URL was rejected' >&2; exit 1; }; \
+	if VERSIOND_ROUTING_CATALOG_URL=http://api:9100/versions \
+		probe_healthcheck >/dev/null 2>&1; then \
+		echo 'test-join-compose: legacy image accepted catalog URL' >&2; exit 1; \
+	fi; \
+	: > "$$tmp_capability"; chmod +x "$$tmp_capability"; \
+	if VERSIOND_ROUTING_CATALOG_URL= probe_healthcheck >/dev/null 2>&1; then \
+		echo 'test-join-compose: catalog-capable image accepted empty catalog URL' >&2; exit 1; \
+	fi; \
+	VERSIOND_ROUTING_CATALOG_URL=http://api:9100/versions probe_healthcheck \
+		|| { echo 'test-join-compose: catalog-capable image with catalog URL was rejected' >&2; exit 1; }; \
 	jq -e '.services.proxy.depends_on["versiond-router"].condition == "service_healthy"' \
 		"$$tmp_json" >/dev/null \
 		|| { echo 'test-join-compose: public proxy does not wait for the router data plane' >&2; exit 1; }; \

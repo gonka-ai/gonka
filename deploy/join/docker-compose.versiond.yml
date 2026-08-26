@@ -137,9 +137,17 @@ services:
       test:
         - CMD-SHELL
         - >-
-          if [ -n "$$VERSIOND_ROUTING_CATALOG_URL" ]; then
+          if [ -x /usr/local/lib/router-runtime/catalog-reconciler ]; then
+            if [ -z "$$VERSIOND_ROUTING_CATALOG_URL" ]; then
+              echo 'catalog-capable versiond-router requires VERSIOND_ROUTING_CATALOG_URL' >&2;
+              exit 1;
+            fi;
             wget -q -O - 'http://127.0.0.1:8404/readyz';
           else
+            if [ -n "$$VERSIOND_ROUTING_CATALOG_URL" ]; then
+              echo 'VERSIOND_ROUTING_CATALOG_URL requires a catalog-capable versiond-router image' >&2;
+              exit 1;
+            fi;
             wget -q -O - 'http://127.0.0.1:8080/healthz';
           fi
       interval: 5s
