@@ -14,6 +14,11 @@ var ErrValidationAlreadyLeased = errors.New("validation leased by another instan
 // longer owned (stolen / completed).
 var ErrValidationLeaseAbandoned = errors.New("validation lease abandoned")
 
+// ErrValidationLeaseTTLExceeded is returned with ErrValidationLeaseAbandoned
+// when the refusal is because this instance was too slow, not because someone
+// else owns the work. Callers that release the lease should also back off.
+var ErrValidationLeaseTTLExceeded = errors.New("elapsed since acquire exceeds lease TTL")
+
 // ErrValidationSkipped signals that a validation attempt was deliberately
 // abandoned without producing a MsgValidation or MsgValidationVote.
 // The canonical trigger is the executor returning 404 for the payload
@@ -40,4 +45,7 @@ type ValidationCompletionRecorder interface {
 	// ErrValidationLeaseAbandoned means skip submit and do not mark submitted.
 	AllowValidationSubmit(ctx context.Context, escrowID string, inferenceID uint64) error
 	MarkValidationSubmitted(ctx context.Context, escrowID string, inferenceID uint64) error
+	// ReleaseValidationLease frees a pending lease this instance owns so the
+	// inference can be re-picked. No-op if this instance has no remembered acquire.
+	ReleaseValidationLease(ctx context.Context, escrowID string, inferenceID uint64) error
 }

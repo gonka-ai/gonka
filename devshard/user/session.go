@@ -22,12 +22,18 @@ import (
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
+	"devshard/transport"
 	"devshard/types"
 )
 
 // TimeoutBuffer is added to protocol deadlines so verifiers have
 // passed their own deadline before the proxy fires the timeout.
 var TimeoutBuffer = 5 * time.Second
+
+// ErrNilHostResponse is returned when ProcessResponse is given a nil resp.
+// A successful Send never yields nil without an error; treating nil as
+// success would hide a caller bug on the streaming path.
+var ErrNilHostResponse = errors.New("nil host response")
 
 // MaxConcurrentVerifierRPCs caps how many simultaneous VerifyTimeout RPCs the
 // proxy may have open against the same verifier host. When many in-flight
@@ -326,7 +332,7 @@ type Session struct {
 	// never written into Diff: turn records stay clock-free.
 	clock func() time.Time
 
-	// heartbeat loop (step 12). StartHeartbeatLoop is idempotent; Close
+	// heartbeat loop. StartHeartbeatLoop is idempotent; Close
 	// cancels it. heartbeatClosed is set first so a Start that races Close
 	// does not spawn a goroutine after shutdown.
 	heartbeatLoopOnce sync.Once
@@ -337,6 +343,39 @@ type Session struct {
 	// heightSeedOnce runs the spec §18.5 roster fan-out at most once per Session.
 	heightSeedOnce   sync.Once
 	heightSeedMissed atomic.Bool
+
+	lastContact   []time.Time
+	lastPeerSeen  map[uint32][]byte
+	lastSyncState map[uint32]string
+	peerTips      *transport.HeightSyncPeerTips
+	overlap       heightsync.ExchangeOverlap
+	anchors       *heightsync.AnchorTally
+
+	// heightSyncWired is set when courier height-sync is configured
+	// (cadence K/slots or an injected peer-tip cache). Unwired sessions
+	// never publish an operator view, so gateway scrapes skip them.
+	heightSyncWired atomic.Bool
+	// heightSyncView is the last published OperatorView. Collect and
+	// GET /v1/debug/heightsync read this only — they must not take s.mu
+	// (scrape must not stall behind persistDiffRetryLocked).
+	heightSyncView atomic.Pointer[heightSyncPublished]
+	// heightSyncPublishMu serializes snapshot+store so an older concurrent
+	// publish cannot overwrite a newer one. Never hold s.mu while taking
+	// this lock (publish runs after unlock).
+	heightSyncPublishMu sync.Mutex
+	heightSyncDirty     atomic.Bool
+	heightSyncLastPubNs atomic.Int64
+	heightSyncPubSeq    atomic.Uint64
+	heightSyncPubCount  atomic.Uint64 // tests: successful installs
+	// heightSyncFlush is the trailing edge of the publish throttle: one timer,
+	// armed by a coalesced call, so the last update of a burst reaches the
+	// cache within the throttle interval instead of waiting for the next
+	// mutation. Guarded by heightSyncPublishMu.
+	heightSyncFlush       *time.Timer
+	heightSyncFlushClosed bool
+	// heightSyncMinPublishNs is the min gap between publishes. 0 uses
+	// heightSyncDefaultMinPublish. Tests may override via TestingOnly*.
+	heightSyncMinPublishNs atomic.Int64
 }
 
 // SessionOption configures optional Session behavior.
@@ -360,9 +399,13 @@ func WithHeightSyncCadence(k, slots uint64) SessionOption {
 // SetHeightSyncCadence sets K/slots for MsgForceHeightSyncTurn composition (e.g. after RecoverSession).
 func (s *Session) SetHeightSyncCadence(k, slots uint64) {
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.heightSyncK = k
 	s.heightSyncSlots = slots
+	s.mu.Unlock()
+	if k > 0 || slots > 0 {
+		s.heightSyncWired.Store(true)
+		s.publishHeightSyncViewForce()
+	}
 }
 
 // WithHeartbeatConfig overrides compiled heartbeat defaults (tests / runtimeparams).
@@ -465,7 +508,15 @@ func NewSession(
 	sess.heartbeat = heightsync.NewHeartbeat(sess.heartbeatCfg)
 	slots := uint64(len(group))
 	sess.heartbeat.SetRoster(slots, 0)
-	sess.turnTracker = heightsync.NewTurnTracker(slots, 0, sess.heartbeat.Config())
+	cfg := sess.heartbeat.Config()
+	sess.turnTracker = heightsync.NewTurnTracker(slots, 0, cfg)
+	sess.lastContact = make([]time.Time, len(group))
+	sess.lastPeerSeen = make(map[uint32][]byte)
+	sess.lastSyncState = make(map[uint32]string)
+	sess.anchors = heightsync.NewAnchorTally(cfg.AckDeadlineBlocks, 0)
+	if sess.heightSyncK > 0 || sess.heightSyncSlots > 0 {
+		sess.heightSyncWired.Store(true)
+	}
 	return sess, nil
 }
 
@@ -583,7 +634,11 @@ func (s *Session) postStateRootForNonce(nonce uint64) ([]byte, bool) {
 // resp.Nonce may differ when the host has already advanced past inferenceNonce.
 // Caller must hold s.mu.
 func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenceNonce uint64) error {
-	// Verify state hash if the host returned one.
+	if resp == nil {
+		return ErrNilHostResponse
+	}
+	// Verify state hash if the host returned one. Contact/overlap wait until
+	// verification succeeds so a bad hash cannot inflate monitoring.
 	if len(resp.StateHash) > 0 {
 		var expected []byte
 		if root, ok := s.postStateRootForNonce(resp.Nonce); ok {
@@ -632,6 +687,9 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 		}
 	}
 
+	s.noteContactLocked(hostIdx, s.nowLocked())
+	s.noteOverlapLocked(resp)
+
 	// Update sync nonce -- only advance, never regress.
 	if resp.Nonce > s.hostSyncNonce[hostIdx] {
 		s.hostSyncNonce[hostIdx] = resp.Nonce
@@ -673,14 +731,17 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 		}
 	}
 
+	s.noteGatewayTipLocked()
 	return nil
 }
 
 // ProcessResponse updates session state from a host response. Thread-safe.
 func (s *Session) ProcessResponse(hostIdx int, resp *host.HostResponse, inferenceNonce uint64) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.processResponse(hostIdx, resp, inferenceNonce)
+	err := s.processResponse(hostIdx, resp, inferenceNonce)
+	s.mu.Unlock()
+	s.publishHeightSyncView()
+	return err
 }
 
 // PreparedInference holds the data prepared under lock for an inference send.
@@ -885,7 +946,10 @@ func (s *Session) observeTurnLocked(diff types.Diff) {
 		if ack == nil || !heightsync.StampPresent(ack.ObservedBlockHash) {
 			continue
 		}
-		s.heartbeat.NoteClaim(ack.SlotId, now)
+		if s.heartbeat.NoteClaim(ack.SlotId, now) && s.anchors != nil && ack.ObservedHeight > 0 {
+			s.anchors.RecordTurnover(ack.ObservedHeight)
+		}
+		s.noteAckObsLocked(ack)
 	}
 }
 
@@ -909,7 +973,10 @@ func (s *Session) noteResponseClaimLocked(hostIdx int, resp *host.HostResponse) 
 	if resp.Receipt == nil || !heightsync.StampPresent(resp.ObservedBlockHash) {
 		return
 	}
-	s.heartbeat.NoteClaim(s.group[hostIdx].SlotID, s.nowLocked())
+	if s.heartbeat.NoteStamp(s.group[hostIdx].SlotID, s.nowLocked()) && s.anchors != nil && resp.ObservedHeight > 0 {
+		s.anchors.RecordTurnover(resp.ObservedHeight)
+	}
+	s.noteContactLocked(hostIdx, s.nowLocked())
 }
 
 // persistDiffRetryLocked retries AppendDiff with backoff while holding s.mu.
@@ -1041,7 +1108,10 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 	}
 	s.ensureHeightSeed(context.Background())
 	s.mu.Lock()
-	defer s.mu.Unlock()
+	defer func() {
+		s.mu.Unlock()
+		s.publishHeightSyncView()
+	}()
 
 	nonce := s.nonce + 1
 	hostIdx := int(nonce % uint64(len(s.group)))
@@ -1196,8 +1266,10 @@ func (s *Session) SendInference(ctx context.Context, params InferenceParams) (*h
 		return nil, fmt.Errorf("send to host %d: %w", p.hostIdx, err)
 	}
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.processResponse(p.hostIdx, resp, p.diff.Nonce); err != nil {
+	err = s.processResponse(p.hostIdx, resp, p.diff.Nonce)
+	s.mu.Unlock()
+	s.publishHeightSyncView()
+	if err != nil {
 		return nil, fmt.Errorf("process response from host %d: %w", p.hostIdx, err)
 	}
 	return resp, nil
@@ -1231,12 +1303,13 @@ func (s *Session) sendDiffRound(ctx context.Context, extraTxs []*types.DevshardT
 		"resp_nonce", resp.Nonce, "has_sig", resp.StateSig != nil)
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := s.processResponse(hostIdx, resp, diff.Nonce); err != nil {
-		return err
+	err = s.processResponse(hostIdx, resp, diff.Nonce)
+	if err == nil {
+		s.logSignatureProgress(resp.Nonce)
 	}
-	s.logSignatureProgress(resp.Nonce)
-	return nil
+	s.mu.Unlock()
+	s.publishHeightSyncView()
+	return err
 }
 
 // catchUpChunkSize is the maximum number of diffs sent in a single catch-up
@@ -1316,12 +1389,15 @@ func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostC
 			"resp_nonce", resp.Nonce, "has_sig", resp.StateSig != nil)
 
 		s.mu.Lock()
-		if err := s.processResponse(hostIdx, resp, chunkNonce); err != nil {
-			s.mu.Unlock()
+		err = s.processResponse(hostIdx, resp, chunkNonce)
+		if err == nil {
+			s.logSignatureProgress(resp.Nonce)
+		}
+		s.mu.Unlock()
+		if err != nil {
+			s.publishHeightSyncView()
 			return err
 		}
-		s.logSignatureProgress(resp.Nonce)
-		s.mu.Unlock()
 
 		// Skip forward: if the host is already ahead of what we're about
 		// to send (e.g. it caught up via gossip), jump to the chunk that
@@ -1348,6 +1424,7 @@ func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostC
 		chunkIdx = nextChunkIdx
 	}
 
+	s.publishHeightSyncView()
 	return nil
 }
 
@@ -2094,6 +2171,7 @@ func (s *Session) sendPendingDiff(ctx context.Context, extraTxs []*types.Devshar
 		s.mu.Lock()
 		processErr := s.processResponse(candidateIdx, resp, diff.Nonce)
 		s.mu.Unlock()
+		s.publishHeightSyncView()
 		if processErr != nil {
 			return fmt.Errorf("process pending diff response from host %d: %w", candidateIdx, processErr)
 		}
@@ -2438,6 +2516,7 @@ func shortAddress(addr string) string {
 // storage, if any. Safe to call multiple times.
 func (s *Session) Close() error {
 	s.StopHeartbeatLoop()
+	s.stopHeightSyncFlush()
 	if s.store != nil {
 		return s.store.Close()
 	}

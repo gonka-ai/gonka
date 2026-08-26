@@ -368,6 +368,120 @@ func TestUser_PendingTxDedup(t *testing.T) {
 		"duplicate mempool txs should be deduplicated")
 }
 
+func TestPendingTxDedupKeys_HostProposedIdentity(t *testing.T) {
+	session := &Session{pendingTxKeys: make(map[string]struct{})}
+
+	keyed := []struct {
+		name string
+		tx   *types.DevshardTx
+		key  string
+	}{
+		{
+			name: "finish",
+			tx: &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
+				FinishInference: &types.MsgFinishInference{InferenceId: 7},
+			}},
+			key: "finish:7",
+		},
+		{
+			name: "confirm",
+			tx: &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{
+				ConfirmStart: &types.MsgConfirmStart{InferenceId: 7},
+			}},
+			key: "confirm:7",
+		},
+		{
+			name: "validation",
+			tx: &types.DevshardTx{Tx: &types.DevshardTx_Validation{
+				Validation: &types.MsgValidation{InferenceId: 7, ValidatorSlot: 2},
+			}},
+			key: "validation:7:2",
+		},
+		{
+			name: "validation_vote",
+			tx: &types.DevshardTx{Tx: &types.DevshardTx_ValidationVote{
+				ValidationVote: &types.MsgValidationVote{InferenceId: 7, VoterSlot: 2},
+			}},
+			key: "vote:7:2",
+		},
+		{
+			name: "reveal_seed",
+			tx: &types.DevshardTx{Tx: &types.DevshardTx_RevealSeed{
+				RevealSeed: &types.MsgRevealSeed{SlotId: 2},
+			}},
+			key: "reveal_seed:2",
+		},
+		{
+			name: "height_ack",
+			tx: &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{
+				HeightAck: &types.MsgHeightAck{TurnSeq: 5, SlotId: 2},
+			}},
+			key: "height_ack:5:2",
+		},
+	}
+
+	for _, tc := range keyed {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.key, devshardTxKey(tc.tx))
+			before := len(session.PendingTxs())
+			session.addPendingTx(tc.tx)
+			require.Len(t, session.PendingTxs(), before+1)
+			session.addPendingTx(tc.tx)
+			require.Len(t, session.PendingTxs(), before+1,
+				"same host-proposed tx key must not be queued twice")
+			session.clearPendingTxs()
+			session.addPendingTx(tc.tx)
+			require.Empty(t, session.PendingTxs(),
+				"clearing applied pending txs preserves the dedup key")
+		})
+	}
+
+	session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{
+		HeightAck: &types.MsgHeightAck{TurnSeq: 5, SlotId: 3},
+	}})
+	session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{
+		HeightAck: &types.MsgHeightAck{TurnSeq: 6, SlotId: 2},
+	}})
+	require.Len(t, session.PendingTxs(), 2,
+		"height ack dedup identity is turn_seq plus slot")
+
+	unkeyedStart := &types.DevshardTx{Tx: &types.DevshardTx_StartInference{
+		StartInference: &types.MsgStartInference{InferenceId: 7},
+	}}
+	unkeyedHeartbeat := &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{
+		Heartbeat: &types.MsgHeartbeat{TurnSeq: 5, SlotsNum: 3},
+	}}
+	require.Empty(t, devshardTxKey(unkeyedStart))
+	require.Empty(t, devshardTxKey(unkeyedHeartbeat))
+	before := len(session.PendingTxs())
+	session.addPendingTx(unkeyedStart)
+	session.addPendingTx(unkeyedStart)
+	session.addPendingTx(unkeyedHeartbeat)
+	session.addPendingTx(unkeyedHeartbeat)
+	require.Len(t, session.PendingTxs(), before+4,
+		"user-authored/unkeyed txs are outside host-proposed pending dedup")
+}
+
+func TestProcessResponse_NilReturnsNamedError(t *testing.T) {
+	session, _, _ := setupSession(t, 2, 100000, 100)
+	err := session.ProcessResponse(0, nil, 1)
+	require.ErrorIs(t, err, ErrNilHostResponse)
+	require.Equal(t, uint64(0), session.SnapshotHeightSync().Overlap.Total)
+}
+
+func TestProcessResponse_FailedVerifySkipsContactAndOverlap(t *testing.T) {
+	session, _, _ := setupSessionWithOptions(t, 2, 100000, 100, WithHeightSyncCadence(10, 2))
+	err := session.ProcessResponse(0, &host.HostResponse{
+		Nonce:     99,
+		StateHash: []byte{0xde, 0xad},
+	}, 1)
+	require.Error(t, err)
+	require.ErrorIs(t, err, types.ErrStateHashMismatch)
+	require.True(t, session.lastContact[0].IsZero(), "failed verify must not refresh contact")
+	require.Equal(t, uint64(0), session.SnapshotHeightSync().Overlap.Total,
+		"failed verify must not count overlap")
+}
+
 func TestCollectTimeoutVotes_WeightEarlyExit(t *testing.T) {
 	// 4 signers with slots [1, 1, 3, 1] (total 6 slots).
 	// VoteThreshold = 6/2 = 3. Need >3 weighted accept votes.

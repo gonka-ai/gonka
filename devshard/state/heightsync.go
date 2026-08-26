@@ -1,12 +1,19 @@
 package state
 
 import (
+	"context"
 	"fmt"
 
 	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/types"
 )
+
+// logPlaneCtx is the context the apply path hands to CheckDiffLogPlane. Only
+// L6 uses it, and only to reach the block oracle; neither call site supplies
+// one, so nothing here can block or be cancelled. It stays a TODO because
+// applyCore has no context of its own to plumb through yet.
+func logPlaneCtx() context.Context { return context.TODO() }
 
 func countForceHeightSyncTurn(txs []*types.DevshardTx) int {
 	n := 0
@@ -114,11 +121,12 @@ func (sm *StateMachine) applyHeightAck(msg *types.MsgHeightAck) error {
 }
 
 func (sm *StateMachine) checkLogPlaneLocked(nonce uint64, txs []*types.DevshardTx) error {
-	res := heightsync.CheckDiffLogPlane(nil, heightsync.LogPlaneInput{
+	res := heightsync.CheckDiffLogPlane(logPlaneCtx(), heightsync.LogPlaneInput{
 		Nonce: nonce,
 		Txs:   txs,
 	}, sm.logPlaneStateLocked())
 	if res.Err != nil {
+		heightsync.ObserveLogPlaneReject(res.Reason)
 		return res.Err
 	}
 	sm.recordMarksLocked(res.Marks)
@@ -127,12 +135,17 @@ func (sm *StateMachine) checkLogPlaneLocked(nonce uint64, txs []*types.DevshardT
 
 // logPlaneErrLocked is L0–L3 without appending marks. Compose uses this to
 // drop invalid height-sync txs before persist; marks stay on the applyCore
-// path so a trial Preview cannot leak them (step 17).
-func (sm *StateMachine) logPlaneErrLocked(nonce uint64, txs []*types.DevshardTx) error {
-	return heightsync.CheckDiffLogPlane(nil, heightsync.LogPlaneInput{
+// path so a trial Preview cannot leak them into retained state.
+//
+// The reason travels back to the caller rather than being counted here: the
+// caller re-checks a growing prefix once per tx, so only it knows which
+// evaluation ended in an actual drop.
+func (sm *StateMachine) logPlaneErrLocked(nonce uint64, txs []*types.DevshardTx) (string, error) {
+	res := heightsync.CheckDiffLogPlane(logPlaneCtx(), heightsync.LogPlaneInput{
 		Nonce: nonce,
 		Txs:   txs,
-	}, sm.logPlaneStateLocked()).Err
+	}, sm.logPlaneStateLocked())
+	return res.Reason, res.Err
 }
 
 func (sm *StateMachine) recordMarksLocked(ms []heightsync.AttributableMark) {
@@ -185,8 +198,7 @@ func (sm *StateMachine) observeHeightSyncLocked(nonce uint64, txs []*types.Devsh
 	// exchange, and the same diff arriving by catch-up or gossip carries no
 	// envelope to refuse. Letting admission feed the floor would give two honest
 	// verifiers different floors and therefore different L0 verdicts for every
-	// later diff, which is the escrow split step 3 of the review closes by
-	// stating this rule rather than leaving it to where the call happens to sit.
+	// later diff — an escrow split. Floor updates therefore run only on apply.
 	if marks := sm.heightSyncFloor.Observe(nonce, sm.floorClaimsLocked(txs)); len(marks) > 0 {
 		sm.recordMarksLocked(marks)
 	}

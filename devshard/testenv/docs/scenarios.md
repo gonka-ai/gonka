@@ -35,6 +35,7 @@ cd devshard/testenv
 make build-devshardd
 make citest-stack                 # all core stack behavior tests
 make citest-validation-lease-race # validation lease race only
+make citest-payload-withholding   # executor payload withholding (500 → invalidate)
 make citest-versiond-rolling-update
 make citest-escrow-longpoll       # escrow long-poll warm (rebuilds devshardd)
 make citest-adversarial           # Phase 9 A1–A5 (A5 is 3-host)
@@ -76,6 +77,7 @@ picked up automatically (no workflow edit). For a local sequential subset, use
 | **Legacy version pin** | Non-HA path → `VERSIOND_LEGACY_HOST`; HA path remains multi-upstream | `TestLegacyVersionPinnedToSingleHost` |
 | **SQLite to Postgres HA migration** | SQLite single-host, multi-host rejection, migration, HA recovery | `TestSQLiteToPostgresHAMigration` |
 | **Validation lease race** | Same-key HA lease exclusivity, pending stretch, stale reclaim | `TestValidationLeaseRaceCore`, `…PendingStretch`, `…StaleReclaim` |
+| **Payload withholding** | Executor `GET /payloads` 500 → Challenged/Invalidated; D7 off releases the lease | `TestPayloadWithholding_AllCallers500_Invalidates`, `…SelectiveValidator_Challenges`, `…D7Off_LeaseReleasedAndReacquired` |
 | **Versiond rolling update** | Postgres blue/green drain and hybrid fallback | `TestVersiondRollingUpdateSameVersionSHA`, `…HybridFallback` |
 | **Escrow long-poll warm** | DAPI escrow-created host event → devshardd `escrow_cache` prefetch → first inference binds from cache with the live escrow query faulted | `TestEscrowLongPollWarmWithoutInferenceNode` |
 
@@ -273,6 +275,43 @@ never validated).
 
 **Pass criteria:** Monitor / citest report PASS (no duplicate lease keys);
 optional paths prove pending visibility and stale reclaim after ML pause.
+
+---
+
+## Payload withholding (executor fetch failure)
+
+**What we test:** a withholding executor that fails `GET /sessions/:id/payloads`
+with HTTP 500 cannot suppress validation. Validators publish `MsgValidation{Valid:false}`
+(`Reason: executor_payload_unavailable`), the inference reaches `Challenged`,
+mandatory Phase B votes settle it `Invalidated`. A second scenario faults only
+one validator address. A third turns D7 off so the failure stays an error:
+the Postgres lease is **released** (no 30m pending park) and a later attempt
+can acquire well inside the TTL.
+
+**Topology:** 4 versionds — HA pair + two solos (3 distinct addresses) so
+Phase B still has a voter after the challenger. `validation_rate=10000`.
+Fault injection is `DEVSHARD_TESTENV_PAYLOAD_HTTP_STATUS` /
+`DEVSHARD_TESTENV_PAYLOAD_FAULT_VALIDATOR` on versiond (not mock-openai).
+
+The env vars are only read by a `devshardd` compiled with the `devshard_testenv`
+build tag. `make build-devshardd` in `testenv/` sets it; release builds do not,
+so a stray env var cannot make a production executor withhold payloads. Run this
+suite via `make citest-payload-withholding`, which rebuilds the tagged binary — a
+binary from a plain `make devshardd-build` silently ignores the fault and the
+tests will time out waiting for a challenge.
+
+**How:**
+
+1. Boot `WritePayloadWithholdingConfig` / `BootPayloadWithholdingStack`.
+2. **All callers 500:** every payload GET returns 500. Drive chat until
+   `/v1/debug/inferences` shows `invalidated` (`TestPayloadWithholding_AllCallers500_Invalidates`).
+3. **Selective:** 500 only for `hosts[2]`'s address. Assert `challenged`
+   (`TestPayloadWithholding_SelectiveValidator_Challenges`).
+4. **D7 off:** `DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE=false`. Observe
+   a pending lease, then pending=0, then a later acquire (`TestPayloadWithholding_D7Off_LeaseReleasedAndReacquired`).
+
+**Pass criteria:** unfixed code keeps inferences `Finished` and parks the lease
+for 30m; fixed code challenges/invalidates and frees the row.
 
 ---
 
@@ -556,7 +595,7 @@ pattern and **no `t.Parallel()`**.
   `TestParamsLongPoll`, `TestLegacyVersionPinnedToSingleHost`, the `G1/G2/G3`,
   `A1–A5`, `O1`, and **escrow long-poll warm**.
 - They are grouped into separate Makefile targets (`citest-stack`,
-  `citest-validation-lease-race`, `citest-versiond-rolling-update`,
+  `citest-validation-lease-race`, `citest-payload-withholding`, `citest-versiond-rolling-update`,
   `citest-adversarial`, `citest-grpc-transport`, `citest-observability`,
   `citest-escrow-longpoll`) so CI can fan them out to **separate runners** — the
   supported form of parallelism today. CI enumerates these targets automatically

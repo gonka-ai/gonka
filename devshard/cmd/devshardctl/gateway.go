@@ -45,14 +45,17 @@ type RuntimeConfig struct {
 }
 
 type Gateway struct {
-	runtimes              map[string]*devshardRuntime
-	runtimeOrder          []*devshardRuntime
-	limiter               *GatewayLimiter
-	participantLimiter    *ParticipantRequestLimiter
-	phaseGate             *ChainPhaseGate
-	escrowChecker         *EscrowChecker
-	metrics               *DevshardMetrics
-	capacity              *CapacityState
+	runtimes           map[string]*devshardRuntime
+	runtimeOrder       []*devshardRuntime
+	limiter            *GatewayLimiter
+	participantLimiter *ParticipantRequestLimiter
+	phaseGate          *ChainPhaseGate
+	escrowChecker      *EscrowChecker
+	metrics            *DevshardMetrics
+	capacity           *CapacityState
+	// heightSyncCloser is a test double for closing/routing. Collect must never
+	// call it: arming_predicted is an early warning, not a close decision.
+	heightSyncCloser      func(escrowID, slot string)
 	settings              GatewaySettings
 	store                 *GatewayStore
 	perf                  *PerfTracker
@@ -111,6 +114,10 @@ type devshardRuntime struct {
 	retireReason  string
 
 	activeConfigured bool
+
+	// testHeightSyncView, when set, is the collector source for unit tests.
+	// Production is nil.
+	testHeightSyncView *heightsync.OperatorView
 }
 
 // escrowHasBackgroundWork reports whether foreground requests or background race cleanups are in flight; settle and store-close must wait until it is false.
@@ -1296,6 +1303,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("/v1/admin/suspicious-hosts", g.handleAdminSuspiciousHosts)
 	mux.HandleFunc("/v1/debug/rotation", g.handleDebugRotation)
 	mux.HandleFunc("/v1/debug/memstats", g.handleDebugMemStats)
+	mux.HandleFunc("/v1/debug/heightsync", g.handleDebugHeightSync)
 	// Runtime profiling, admin-gated (see isAdminPath). Mounted at the
 	// canonical /debug/pprof/ path so pprof.Index's sub-profile links resolve.
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
@@ -1345,6 +1353,26 @@ func (g *Gateway) handleDebugMemStats(w http.ResponseWriter, r *http.Request) {
 		"num_gc":          m.NumGC,
 		"gc_cpu_fraction": m.GCCPUFraction,
 	})
+}
+
+// handleDebugHeightSync is the last-N cadence ring, sealed-height detail, and
+// peer_seen matrix. Admin-gated via /v1/debug/. Not a Prometheus series: the
+// payload is unbounded in label space and only ever read by a human or a citest.
+func (g *Gateway) handleDebugHeightSync(w http.ResponseWriter, r *http.Request) {
+	if !allowGetOrHead(w, r) {
+		return
+	}
+	g.mu.Lock()
+	runtimes := append([]*devshardRuntime(nil), g.runtimeOrder...)
+	g.mu.Unlock()
+	escrows := make([]heightsync.OperatorView, 0, len(runtimes))
+	for _, rt := range runtimes {
+		if rt == nil {
+			continue
+		}
+		escrows = append(escrows, rt.heightSyncView())
+	}
+	writeJSON(w, map[string]any{"escrows": escrows})
 }
 
 func (g *Gateway) handlePooledModels(w http.ResponseWriter, r *http.Request) {

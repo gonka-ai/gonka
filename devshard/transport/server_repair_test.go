@@ -121,7 +121,7 @@ func (p *repairPair) applyWindowClosedStamp(t *testing.T) {
 
 // pastAckWindow is the first height at which the turn requested at 500 is
 // overdue: repair probes wait out the producer's whole turnover budget, so a
-// couple of blocks past h_req is still inside the window (step 4).
+// couple of blocks past h_req is still inside the window.
 func pastAckWindow() int64 {
 	return 500 + int64(heightsync.DefaultHeartbeatConfig().AckDeadlineBlocks) + 1
 }

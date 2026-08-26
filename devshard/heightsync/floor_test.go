@@ -101,14 +101,13 @@ func TestFloorIndex_CloneIsIndependent(t *testing.T) {
 		"one signer's jump is uncorroborated here: the clone's second claim did not leak")
 }
 
-// TestFloorIndex_LoneImplausibleClaimDoesNotMoveTheFloor is step 2's core case.
-//
-// One participant stamping an absurd height used to set the escrow's logical
-// time to it permanently: the floor was a running maximum over any signer, so a
-// single claim of 1<<40 put the bar past anything an honest oracle would ever
-// report. Nothing halted after step 1 — carriers lift, omission stays legal —
-// but every derived quantity became nonsense and L6 could not refute a height
-// no chain will reach, so no verifier could ever settle it.
+// TestFloorIndex_LoneImplausibleClaimDoesNotMoveTheFloor: one participant
+// stamping an absurd height must not set the escrow's logical time permanently.
+// The floor is not a running maximum over any signer — a single claim of 1<<40
+// would put the bar past anything an honest oracle would ever report. Carriers
+// still lift and omission stays legal, but every derived quantity would become
+// nonsense and L6 could not refute a height no chain will reach, so no verifier
+// could ever settle it.
 func TestFloorIndex_LoneImplausibleClaimDoesNotMoveTheFloor(t *testing.T) {
 	f := heightsync.NewFloorIndex()
 	good, poison := []byte{0xaa}, []byte{0xbb}

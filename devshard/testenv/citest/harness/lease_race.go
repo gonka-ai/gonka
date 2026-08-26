@@ -226,7 +226,9 @@ func PatchVersiondLeaseTTL(t *testing.T, composePath, leaseTTL, retryInterval st
 	PatchComposeEnvKey(t, composePath, "DEVSHARD_VALIDATION_RETRY_INTERVAL", retryInterval)
 }
 
-// PauseMockOpenAIBlocks validation ML with HTTP 503 (leaves Postgres leases pending).
+// PauseMockOpenAI forces mock-openai HTTP 503. That is a local ML failure, so
+// after lease-release-on-error the Postgres row is deleted rather than left
+// pending. Use SlowMockOpenAI to hold a lease in-flight.
 func PauseMockOpenAI(t *testing.T, client *http.Client, mockOpenAIURL string) {
 	t.Helper()
 	status := 503
@@ -252,6 +254,23 @@ func WaitLeasePending(t *testing.T, stack *Stack, cfg *config.File, minPending i
 		time.Sleep(500 * time.Millisecond)
 	}
 	t.Fatalf("citest: pending leases=%d < %d after %s (total=%d)", last.Pending, minPending, timeout, last.Total)
+	return last
+}
+
+// WaitLeasePendingZero polls until pending==0 (released rows are deleted).
+func WaitLeasePendingZero(t *testing.T, stack *Stack, cfg *config.File, timeout time.Duration) LeaseSnapshot {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	var last LeaseSnapshot
+	for time.Now().Before(deadline) {
+		last = stack.PostgresLeaseSnapshot(t, cfg)
+		if last.Pending == 0 {
+			return last
+		}
+		time.Sleep(500 * time.Millisecond)
+	}
+	t.Fatalf("citest: pending leases still %d after %s (total=%d submitted=%d skipped=%d)",
+		last.Pending, timeout, last.Total, last.Submitted, last.Skipped)
 	return last
 }
 

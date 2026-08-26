@@ -13,7 +13,7 @@
 | **B** | ✅ | In-process e2e in `testenv/scenarios/heightsync_anchor_e2e_*.go` (static `blocks.BlockOracle`s, `/devshard/v2`, numeric escrow ids). Catalog §4 including `-tags=dev` E2/E3/E8. |
 | **C** | ✅ | Container citest `citest-height-sync` against mock-dapi `/block/*` (optional `DEVSHARD_CHAINORACLE_URL`; default compose unchanged) |
 | **D** | ✅ | Hash-only Tendermint observer; direct-chain adapter; host failover (old dapi / dapi-down). Dapi `/block/*` mount is in `decentralized-api` (separate commit). |
-| **E** | ⏳ | Log plane (heartbeat, sync vector/state, repair, close-ready). **E0–E7 and E9 landed** (§8.15); E8 remains. |
+| **E** | ✅ | Log plane (heartbeat, sync vector/state, repair, close-ready). **E0–E9 landed** (§8.15). |
 | **F** | ⏳ | Strong / `light_block` / dispute adjudication |
 
 This plan delivers **the whole spec except the Strong path**, in six phases:
@@ -122,7 +122,7 @@ Each phase is independently shippable. Strong is last, matching `devshard-testen
 | **B** | In-process e2e on current `testenv/scenarios` | catalog §4 | Yes, path remap | ✅ |
 | **C** | Container citest `citest-height-sync` against mock-dapi chainoracle (no `heightsyncd`) | catalog §5 A–C | Adapt | ✅ |
 | **D** | Dapi mounts **height+hash** (`/block/latest`, `/block/:height`); hash-only Tendermint observer; **v5 ↔ old dapi** fallback. **No** `Prove()`, **no** commit-quorum requirement. | plan §7 | New | ✅ |
-| **E** | **Log plane:** `MsgHeartbeat` / `MsgHeightAck`, `observed_height`, turn record, `sync_vector`, `sync_state`, `peer_seen`, repair probe, close-ready arming, L1–L7, marking of attributable events | §10–§12, §14 log-plane, §18.2.1, §20 params | New | ⏳ (E0–E5, E9 ✅) |
+| **E** | **Log plane:** `MsgHeartbeat` / `MsgHeightAck`, `observed_height`, turn record, `sync_vector`, `sync_state`, `peer_seen`, repair probe, close-ready arming, L1–L7, marking of attributable events | §10–§12, §14 log-plane, §18.2.1, §20 params | New | ✅ |
 | **F** | **Strong only:** `light_block` + `D`-band escalation + `(C-strong)`/`(C-hybrid)`; dapi `Header.Commit` + IAVL `Prove()`; dispute adjudication and evidence packets | §8, §15 Strong proof, §18.4, catalog §8 | New | ⏳ |
 
 ```mermaid
@@ -966,7 +966,9 @@ Consequences to carry forward:
 | `heightsync_repair_probes_total` | counter | `outcome{height,unreachable,skipped_ack_landed,budget_exhausted}` |
 | `heightsync_peer_seen_slots` | gauge | — |
 | `heightsync_close_ready_armed` | gauge | — |
-| `heightsync_marks_total` | counter | `kind{dispute_originator,dispute_carrier,vector_contradiction,deferred_fail,l5a_admission}` |
+| `heightsync_marks_total` | counter | `kind{dispute_originator,dispute_carrier,vector_contradiction,deferred_fail,l5a_admission,floor_out_of_band}` |
+
+Both counters above count **actions, not evaluations**. One diff passes through the log-plane checks many times — compose re-checks a growing prefix once per tx, replay and catch-up re-check the same bytes, and a rolled-back apply discards its verdict — so `marks_total` and `stale_stamp_total` increment when a mark is retained in the `MarkLog`, and `ack_rejected_total` when a diff is actually refused or a tx actually dropped. Counting inside the check helpers would multiply one event by the size of the tx set.
 
 Logging follows the existing `heightsync: decide` / `oracle_debug` pattern from `95e3996fb`; add `heightsync: logplane` with `turn_seq`, `slot`, check id (L0–L7), and verdict, so container tests can assert on log lines as catalog §5 already does.
 
@@ -1006,18 +1008,19 @@ This is also why divergence is a gateway concern rather than a protocol one: no 
 | Signal | Kind | Labels |
 | ------ | ---- | ------ |
 | `devshard_gateway_heightsync_host_height` | gauge | `devshard_id`, `slot`, `participant_key` |
-| `devshard_gateway_heightsync_host_height_lag` | gauge | `devshard_id`, `slot` — `max_claim − this slot's claim`, so `0` is the leader and the series is readable without a query-time `max()` |
-| `devshard_gateway_heightsync_height_spread` | gauge | `devshard_id` — `max_claim − min_claim` over slots fresh within `F`; **the alertable number** |
+| `devshard_gateway_heightsync_host_height_lag` | gauge | `devshard_id`, `slot` — `highest fresh claim − this slot's claim`, over exactly the fresh slots `host_height` is emitted for, so `0` is the leader and the series is readable without a query-time `max()`. Its maximum is therefore the spread across *fresh* slots: at most `height_spread`, and equal to it only when no slot is stale |
+| `devshard_gateway_heightsync_height_spread` | gauge | `devshard_id` — `max_claim − min_claim` over slots that still have a height claim (stale included); **the alertable number**. Freshness is signalled by dropping `host_height` / raising `host_claim_age_seconds`, not by shrinking spread when a host goes quiet (H40) |
 | `devshard_gateway_heightsync_host_claim_age_seconds` | gauge | `devshard_id`, `slot` — guards against reading a stale claim as agreement |
 | `devshard_gateway_heightsync_host_sync_state` | gauge | `devshard_id`, `slot`, `state` — last `sync_state` self-report, `ORACLE_UNAVAILABLE` included |
 
 Rules that keep this honest:
 
 - A slot with no claim fresher than `F` publishes **no** height and no lag; it raises `claim_age_seconds` instead. Otherwise a dead host reads as "agrees perfectly, forever".
-- Spread is computed over fresh slots only, and the gateway's own oracle tip is **not** in the set — it is a separate series (`..._gateway_tip`) so an operator can tell "hosts disagree with each other" from "hosts agree and the gateway is behind".
+- Fresh means what the carry path means by it: the claim is admissible *and* carries the host's own observation time *and* that time is within `F`. A claim with no timestamp is arbitrarily old, never brand new — otherwise a host suppresses its own staleness signal by omitting a field. Its age is then measured from local receipt and the debug surface flags it (`age_known: false`).
+- Spread is computed over **every slot that still has a height claim**, including stale ones, so a host going quiet does not silently shrink the alertable number to the live pair (H40). Freshness is the job of `host_height` (absent past `F`) and `host_claim_age_seconds`. The gateway's own oracle tip is **not** in the set — it is a separate series (`..._gateway_tip`) so an operator can tell "hosts disagree with each other" from "hosts agree and the gateway is behind".
 - Claims are host-signed. The gateway publishes what hosts asserted, not what it believes; a lying host shows up here as divergence, and settling the lie is L6's job or Strong's, never this gauge's. Divergence itself is **monitoring only** — nothing downstream may gate on this series.
 
-**Code needed:** `HeightSyncPeerTips.Snapshot` returns only aggregates (`CacheReady`, `VerifiedOriginators`, `MaxFreshHeight`). Add a per-originator snapshot (`PerOriginator() []OriginTip` with height, originator, age, verified) — the map is already keyed by originator in `tipsByOriginator`, so this exposes existing state rather than tracking anything new. Slot identity comes from the escrow roster the session already holds.
+**Code needed:** `HeightSyncPeerTips.Snapshot` returns only aggregates (`CacheReady`, `VerifiedOriginators`, `MaxFreshHeight`). Add a per-originator snapshot (`PerOriginator() []OriginTip` with height, originator, age, whether the age came from the host's own timestamp, verified, and whether the carry path would admit it) — the map is already keyed by originator in `tipsByOriginator`, so this exposes existing state rather than tracking anything new. Slot identity comes from the escrow roster the session already holds.
 
 #### 8.12.3 Heartbeat cadence: rate, and the last N triggers
 
@@ -1025,7 +1028,7 @@ A counter answers "how often"; it cannot answer "what happened the last few time
 
 | Signal | Kind | Labels |
 | ------ | ---- | ------ |
-| `devshard_gateway_heightsync_cadence_events_total` | counter | `devshard_id`, `event` |
+| `devshard_gateway_heightsync_cadence_events_total` | counter | `devshard_id`, `event` — one increment per due-check disposition. The last-N ring below samples `skipped_no_height` and `discharged_by_inference` at most once per `Interval`; this counter must not, or the ratio below reports the sampling rate instead of the saving |
 | `devshard_gateway_heightsync_seconds_since_turnover` | gauge | `devshard_id` — `Heartbeat.SinceTurnover()`; the liveness number, comparable directly against `Interval` |
 | `devshard_gateway_heightsync_turns_abandoned_total` | counter | `devshard_id` — `TurnTimeout` fired; a persistently rising value means a slot is unreachable |
 
@@ -1061,7 +1064,7 @@ Each entry also emits one `heightsync: cadence` log line with the same fields, s
 
 Per-height detail (the last ~32 sealed heights with per-kind counts and turnover count) belongs on `GET /v1/debug/heightsync`, not in a metric: one series per height is unbounded cardinality by construction.
 
-Note that a gateway with **no** fresh height cannot seal anything — it does not know the tip has moved. That state is not silence to be hidden; it surfaces as `skipped_no_height` in §8.12.3 and a rising `host_claim_age_seconds` in §8.12.2.
+Note that a gateway with **no** fresh height cannot seal anything — it does not know the tip has moved. That state is not silence to be hidden; it surfaces as `skipped_no_height` in §8.12.3 and a rising `host_claim_age_seconds` in §8.12.2. It also has no reference frame to refuse an absurd claim against, and hosts choose the height in every ack, so provisional buckets are capped while no tip exists; refused claims count as `future` rather than allocating a bucket nothing will ever seal.
 
 #### 8.12.5 `peer_seen` — each host's view of the others
 
@@ -1082,7 +1085,7 @@ Two interpretation rules, both from §11: a cleared bit means "no fresh claim wi
 | ID | Case | Asserts |
 | -- | ---- | ------- |
 | H39 | Two hosts claim `H`, one claims `H − 5` | `height_spread = 5`; lag `0/0/5` by slot; leader has lag `0` |
-| H40 | One host stops acking | its `host_height` series disappears once past `F`; `host_claim_age_seconds` rises; spread does **not** silently shrink to the live pair |
+| H40 | One host stops acking | its `host_height` series disappears once past `F`; `host_claim_age_seconds` rises; spread does **not** silently shrink to the live pair (stale claims remain in the spread set) |
 | H41 | Quiet escrow over several intervals | `cadence_events_total{event="heartbeat_opened"}` advances ~one per `Interval`; ring holds one entry per turn in order |
 | H42 | Busy stamped escrow (H2 conditions) | events are `discharged_by_inference`, `heartbeat_opened` stays **zero**, and the ring shows the substitution explicitly |
 | H43 | One unreachable slot | `turns_abandoned_total` rises; ring entries carry `turn_abandoned`; cadence keeps running |
@@ -1093,7 +1096,7 @@ Two interpretation rules, both from §11: a cleared bit means "no fresh claim wi
 | H48 | Peer matrix not enabled (default) | matrix series absent; `peer_seen_count` / `unseen_total` still present; matrix still readable on `/v1/debug/heightsync` |
 | H49 | Gateway goes quiet toward one slot past `T_idle` | `arming_predicted{slot}=1`; asserted **not** to feed any closing or routing decision (test double sees zero calls, the hard-invariant pattern from the host-ping plan) |
 
-H39–H49 are gateway-package tests over a fabricated session plus a registry gather, in the style of the host-ping cleanup tests ([`host-ping-observability-plan.md`](./host-ping-observability-plan.md) Test plan §2). H41/H42 also run in the H26 container scenario, which already asserts cadence from gateway logs.
+H39–H49 are gateway-package tests over a fabricated session plus a registry gather, in the style of the host-ping cleanup tests ([`host-ping-observability-plan.md`](./host-ping-observability-plan.md) Test plan §2). H41/H42 also run in the H26/H42c container scenarios. Compose companions for H40/H43/H47/H48 and `/v1/debug/heightsync` live in `testenv/citest/height_sync_test.go` (no Phase F).
 
 ### 8.13 Tests for Phase E
 
@@ -1180,7 +1183,7 @@ Reuse A–D as-is: `ObservedHeightNow()`, `MsgForceHeightSyncTurn`, the hash-onl
 | **E5** | ✅ | Repair probe. |
 | **E6** | ✅ | Close-ready arming. |
 | **E7** | ✅ | Optional inference-tx stamps (record fields 18/19; unstamped roots unchanged). |
-| **E8** | ⏳ | Observability + container H26/H27. |
+| **E8** | ✅ | Observability + container H26/H27. |
 | **E9** | ✅ | Session-open height seed, so nonce 1 is stamped (§8.5.1). Independent of E4–E6; needed for E7 to cover the first inference. |
 
 ```
@@ -1192,7 +1195,7 @@ E0 proto/params          ✅
  → E4 ValidateDiff (needs txs on the wire) ✅
  → E5 repair, E6 arming (after tracker + acks) ✅
  → E7 stamps (optional; E9 first or nonce 1 stays unstamped) ✅
- → E8 citest
+ → E8 citest            ✅
 ```
 
 #### E0 — Proto and params (no behaviour yet) ✅
@@ -1278,16 +1281,16 @@ Level-triggered on elapsed time: `now − last_signal_at > T_idle` ⇒ armed; an
 
 **Tests:** H2, H28–H31, H33. **Landed.**
 
-#### E8 — Observability + container ⏳
+#### E8 — Observability + container ✅
 
 Metrics/logs from §8.12 (`heightsync: logplane`), plus the four gateway-collected operator views in §8.12.1–§8.12.5: height divergence across hosts, cadence rate + last-N triggers (including heartbeats replaced by inference stamps), anchors per sealed block, and the `peer_seen` matrix. All of them land on the gateway registry and `GET /v1/debug/heightsync`; none adds a wire field or a host scrape. Supporting accessors: `HeightSyncPeerTips.PerOriginator`, a cadence event ring on `heightsync.Heartbeat`, and a sealed per-height anchor tally.
 
-Citest:
+**Tests:** H26, H27, H39–H49. **Landed.**
 
 - H26: quiet compose escrow, cadence in logs, turns complete, **zero** probes.
 - H27: one host stopped → degraded turns, bounded probes, arm only after `T_idle` of **user** silence.
 - H39–H49 (§8.12.6) for the gateway views, including the teardown-cleanup, opt-in matrix, and inert-prediction guards.
-- E8 also counts the stamp/section overlap that gates §10.1: per exchange, whether a section was present, whether a stamped tx was present, and whether the two agreed. That ratio is the measured saving of the single-source redesign; without it §10.1 is speculation. §8.12.3's `discharged_by_inference` event is the cadence half of the same measurement.
+- E8 also counts the stamp/section overlap that gates §10.1: per exchange, whether a section was present, whether a stamped tx was present, and whether the two agreed. That ratio is the measured saving of the single-source redesign; without it §10.1 is speculation. §8.12.3's `discharged_by_inference` event is the cadence half of the same measurement. Host-side counters live in `heightsync/prom_logplane.go` (registered from `devshardd` only — one escrow per process; gateway scrapes labelled operator views instead). Gateway operator views are pull-based on `GET /metrics` and `GET /v1/debug/heightsync`.
 
 #### E9 — Session-open height seed ✅
 
@@ -1415,7 +1418,7 @@ Blockers 1, 3 and 4 all resolve the same way: the section survives, and the achi
 12. ✅ **E5:** Repair probe + budgets; H17–H20.
 13. ✅ **E6:** Close-ready arming + `CloseReadyView`; H21–H23.
 14. ✅ **E7:** inference-tx stamps; H2, H28–H31, H33. Record fields 18/19; unstamped `v2` roots unchanged.
-15. ⏳ **E8:** Observability + container H26, H27.
+15. ✅ **E8:** Observability + container H26, H27.
 16. **Last:** Strong + dapi merkle `Prove()` + commit signatures + dispute adjudication (Phase F).
 
 ---

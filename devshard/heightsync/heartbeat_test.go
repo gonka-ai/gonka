@@ -255,13 +255,13 @@ func TestTurnTracker_IngestNextBlockSameStampCompletes(t *testing.T) {
 	require.True(t, tr.CompletedAtOrAbove(500))
 }
 
-// TestTurnTracker_SpanAcrossBlockBoundariesCompletes is step 4's headline case.
-// A four-slot span is dispatched slot by slot, so the acks answering it are
-// stamped at climbing heights while h_req stays at the height the whole span was
-// composed at. The window now covers the producer's own turnover budget, so the
-// turn completes and nothing is owed a repair probe. Against the old one-block
-// window every ack past the first block was late and the turn degraded in steady
-// state — asserted below, so the regression cannot come back quietly.
+// TestTurnTracker_SpanAcrossBlockBoundariesCompletes: a four-slot span is
+// dispatched slot by slot, so the acks answering it are stamped at climbing
+// heights while h_req stays at the height the whole span was composed at. The
+// window covers the producer's own turnover budget (proposal §10.3 / §20), so
+// the turn completes and nothing is owed a repair probe. Against a one-block
+// window every ack past the first block was late and the turn degraded in
+// steady state — asserted below, so the regression cannot come back quietly.
 func TestTurnTracker_SpanAcrossBlockBoundariesCompletes(t *testing.T) {
 	span := func(cfg heightsync.HeartbeatConfig) *heightsync.TurnTracker {
 		tr := heightsync.NewTurnTracker(4, 3, cfg)
