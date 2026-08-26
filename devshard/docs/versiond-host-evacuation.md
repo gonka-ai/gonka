@@ -163,12 +163,21 @@ caller could abuse — it exposes strictly less than `/healthz` already does.
   monitor normally withdraws a failed vouch within one probe interval (1s); a
   probe can take up to its 2s timeout, and an answer no monitor has refreshed
   for 5s expires on its own;
-- the manager has run every desired version at least once (`Converged`).
+- the manager has run its complete desired set together at least once
+  (`Converged`).
 
 `Converged` latches. Once a versiond has run its full desired set, a later
 download or child restart does not retract it. Without the latch, a routine
 same-name SHA bump would briefly un-converge every host at once and evict the
 entire pool — the failure mode readiness exists to prevent.
+
+A fresh versiond that has never run the complete set remains unready on the
+coarse endpoint by design. That endpoint may receive an undeclared version and
+cannot safely claim readiness from unrelated children. Exact
+`/readyz?version=<v>` checks still admit every version the host can serve.
+Remembering versions that happened to run at different times would weaken the
+coarse contract: it could report ready even though the host never served the
+whole set at one time.
 
 `/readyz?version=<v>` is the question the balancer actually has, and it needs no
 convergence latch and no view of the desired set: either a running child serves
@@ -190,11 +199,12 @@ not a routing one.
 contract existing clients parse. Reconcile failures currently have no
 machine-readable exposure; a metric is where that belongs.
 
-A host that fails to install one version is handled by the per-version check
-above rather than by the host-level one: it drops out of that version's pool and
-keeps serving the rest. Gating the *host* on it instead would be the correlated
-failure again — the same archive fails on every host, so the whole pool would
-leave at once over a version most traffic does not even use.
+After initial convergence, a host that fails to install one version is handled
+by the per-version check above: it drops out of that version's pool and keeps
+serving the rest. The latched coarse endpoint also stays available. Gating that
+endpoint on every later reconcile would be the correlated failure again — the
+same archive fails on every host, so the whole pool would leave at once over a
+version most traffic does not even use.
 
 If a condition is ever found under which accepting traffic is genuinely unsafe,
 it belongs in its own typed condition rather than in the generic reconcile error.
