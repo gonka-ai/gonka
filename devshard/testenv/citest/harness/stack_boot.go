@@ -70,6 +70,22 @@ func BootHeightSyncLegacyDapiStack(t *testing.T, prefix string) (*Stack, *config
 	return stack, cfg, stack.Endpoints(t, cfg)
 }
 
+// BootHeightSyncPeerMatrixStack is BootHeightSyncStack with the opt-in
+// peer_seen matrix series enabled on the gateway.
+func BootHeightSyncPeerMatrixStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteStackConfig(t, stack.WorkDir)
+	stack.RunGencompose(t)
+	EnableHeightSyncCompose(t, stack.ComposePath)
+	EnableHeightSyncPeerMatrixCompose(t, stack.ComposePath)
+	cfg := stack.LoadConfig(t)
+	requireTwoVersiondHosts(t, cfg)
+	stack.Up(t)
+	return stack, cfg, stack.Endpoints(t, cfg)
+}
+
 func BootObservabilityStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints, ObservabilityEndpoints) {
 	t.Helper()
 	stack := NewStack(t, prefix)

@@ -44,15 +44,27 @@ type Heartbeat struct {
 	turnOpen     bool
 	turnovers    int
 	abandoned    int
+
+	lastTurnoverFromStamp bool
+	lastLimited           map[CadenceEventKind]time.Time
+	ring                  cadenceRing
+	// cadenceTotals counts every due-check disposition, including the ones the
+	// ring rate-limits. cadence_events_total is derived from this, so the
+	// discharged-by-inference ratio reports real savings rather than one
+	// sample per Interval.
+	cadenceTotals      map[CadenceEventKind]uint64
+	skippedRealTraffic int
 }
 
 // NewHeartbeat constructs a scheduler. Zero config fields take compiled
 // defaults. Call SetRoster to supply the quorum a turnover needs.
 func NewHeartbeat(cfg HeartbeatConfig) *Heartbeat {
 	return &Heartbeat{
-		cfg:     cfg.withDefaults(),
-		quorum:  1,
-		claimed: make(map[uint32]struct{}),
+		cfg:           cfg.withDefaults(),
+		quorum:        1,
+		claimed:       make(map[uint32]struct{}),
+		ring:          newCadenceRing(DefaultCadenceRingCapacity),
+		cadenceTotals: make(map[CadenceEventKind]uint64),
 	}
 }
 
@@ -90,6 +102,18 @@ func (h *Heartbeat) SkippedNoHeight() int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.skippedNoHeight
+}
+
+// SkippedRealTraffic counts due-checks that found a stamp turnover already
+// inside Interval (inference discharged the heartbeat). Every qualifying
+// check increments this; the cadence ring is rate-limited separately.
+func (h *Heartbeat) SkippedRealTraffic() int {
+	if h == nil {
+		return 0
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.skippedRealTraffic
 }
 
 // Turnovers counts completed height-sync round-trips (heartbeat or stamped).
@@ -134,21 +158,41 @@ func (h *Heartbeat) Due(now time.Time, hNow uint64) (bool, HeartbeatReason) {
 		h = NewHeartbeat(DefaultHeartbeatConfig())
 	}
 	h.mu.Lock()
-	defer h.mu.Unlock()
+	due, reason, logEv := h.dueLocked(now, hNow)
+	h.mu.Unlock()
+	if reason == ReasonNoHeight {
+		IncHeartbeatSkipped("no_height")
+	}
+	if logEv != nil {
+		logCadence(*logEv)
+	}
+	return due, reason
+}
+
+func (h *Heartbeat) dueLocked(now time.Time, hNow uint64) (bool, HeartbeatReason, *CadenceEvent) {
 	if hNow == 0 {
 		h.skippedNoHeight++
-		return false, ReasonNoHeight
+		ev, sampled := h.recordCadenceLocked(CadenceEvent{
+			At:     now,
+			Event:  CadenceSkippedNoHeight,
+			Reason: string(ReasonNoHeight),
+			Quorum: h.quorum,
+		})
+		if !sampled {
+			return false, ReasonNoHeight, nil
+		}
+		return false, ReasonNoHeight, &ev
 	}
 	if h.turnOpen {
 		if now.Sub(h.turnOpenedAt) < h.cfg.TurnTimeout {
-			return false, ""
+			return false, "", nil
 		}
-		return true, ReasonTurnTimeout
+		return true, ReasonTurnTimeout, nil
 	}
 	if h.lastTurnover.IsZero() || now.Sub(h.lastTurnover) >= h.cfg.Interval {
-		return true, ReasonQuietSession
+		return true, ReasonQuietSession, nil
 	}
-	return false, ""
+	return false, "", nil
 }
 
 // Deadline is the instant by which a due turn must have turned over before a
@@ -168,19 +212,53 @@ func (h *Heartbeat) Deadline(now time.Time) time.Time {
 
 // OpenTurn records a dispatched heartbeat span. A previous turn that never
 // reached quorum is abandoned here: its SyncTurnRecord still degrades from the
-// log on logged heights, but the producer stops waiting on it.
-func (h *Heartbeat) OpenTurn(at time.Time) {
+// log on logged heights, but the producer stops waiting on it. The bool is
+// whether the previous open turn was abandoned.
+func (h *Heartbeat) OpenTurn(at time.Time) (abandoned bool) {
 	if h == nil {
-		return
+		return false
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.turnOpen {
 		h.abandoned++
+		abandoned = true
 	}
 	h.turnOpen = true
 	h.turnOpenedAt = at
 	h.claimed = make(map[uint32]struct{})
+	return abandoned
+}
+
+// TurnOpen reports whether the producer is waiting on an in-flight span.
+func (h *Heartbeat) TurnOpen() bool {
+	if h == nil {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.turnOpen
+}
+
+// LastTurnoverFromStamp reports whether the last Q-claim turnover was from
+// executor stamps rather than heartbeat acks.
+func (h *Heartbeat) LastTurnoverFromStamp() bool {
+	if h == nil {
+		return false
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.lastTurnoverFromStamp
+}
+
+// Quorum is the turnover Q this scheduler was configured with.
+func (h *Heartbeat) Quorum() int {
+	if h == nil {
+		return 0
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.quorum
 }
 
 // SettleTurn drops the open-turn suppression because the log has already
@@ -203,6 +281,16 @@ func (h *Heartbeat) SettleTurn() {
 // and must never be passed here — it proves no round-trip. Reaching Q distinct
 // slots is a full turnover and restarts the Interval budget.
 func (h *Heartbeat) NoteClaim(slot uint32, at time.Time) (turnover bool) {
+	return h.noteClaim(slot, at, false)
+}
+
+// NoteStamp is NoteClaim for an executor-stamped receipt. A turnover from
+// stamps is what discharges the heartbeat obligation on a busy session.
+func (h *Heartbeat) NoteStamp(slot uint32, at time.Time) (turnover bool) {
+	return h.noteClaim(slot, at, true)
+}
+
+func (h *Heartbeat) noteClaim(slot uint32, at time.Time, stamp bool) (turnover bool) {
 	if h == nil {
 		return false
 	}
@@ -219,8 +307,112 @@ func (h *Heartbeat) NoteClaim(slot uint32, at time.Time) (turnover bool) {
 	h.turnOpen = false
 	h.turnOpenedAt = time.Time{}
 	h.turnovers++
+	h.lastTurnoverFromStamp = stamp
 	h.claimed = make(map[uint32]struct{})
 	return true
+}
+
+// RecordCadence counts one due-check disposition and, unless the kind is
+// rate-limited and already sampled this Interval, appends it to the last-N ring
+// and emits `heightsync: cadence` for citest / docker logs.
+func (h *Heartbeat) RecordCadence(ev CadenceEvent) {
+	if h == nil {
+		return
+	}
+	h.mu.Lock()
+	ev, sampled := h.recordCadenceLocked(ev)
+	h.mu.Unlock()
+	if sampled {
+		logCadence(ev)
+	}
+}
+
+func cadenceKindLimited(kind CadenceEventKind) bool {
+	switch kind {
+	case CadenceSkippedNoHeight, CadenceDischargedByInference:
+		return true
+	default:
+		return false
+	}
+}
+
+func (h *Heartbeat) allowLimitedLocked(kind CadenceEventKind, now time.Time) bool {
+	if !cadenceKindLimited(kind) {
+		return true
+	}
+	last := h.lastLimited[kind]
+	if !last.IsZero() && now.Sub(last) < h.cfg.Interval {
+		return false
+	}
+	return true
+}
+
+// recordCadenceLocked is the one place a cadence disposition is booked. The
+// total always moves; sampled reports whether the event also went into the ring
+// and the log, which the two rate-limited kinds do at most once per Interval.
+func (h *Heartbeat) recordCadenceLocked(ev CadenceEvent) (CadenceEvent, bool) {
+	if ev.Quorum == 0 {
+		ev.Quorum = h.quorum
+	}
+	if h.cadenceTotals == nil {
+		h.cadenceTotals = make(map[CadenceEventKind]uint64)
+	}
+	h.cadenceTotals[ev.Event]++
+	if !h.allowLimitedLocked(ev.Event, ev.At) {
+		return ev, false
+	}
+	if h.ring.buf == nil {
+		h.ring = newCadenceRing(DefaultCadenceRingCapacity)
+	}
+	h.ring.append(ev)
+	if cadenceKindLimited(ev.Event) {
+		if h.lastLimited == nil {
+			h.lastLimited = make(map[CadenceEventKind]time.Time)
+		}
+		h.lastLimited[ev.Event] = ev.At
+	}
+	return ev, true
+}
+
+// MaybeRecordDischarged records discharged_by_inference after a stamp turnover
+// suppressed a due heartbeat. The Prometheus skip counter increments on every
+// qualifying due-check; the ring and log line are at most once per Interval.
+// An in-flight turn is not a discharge.
+func (h *Heartbeat) MaybeRecordDischarged(now time.Time, hRef uint64) bool {
+	if h == nil {
+		return false
+	}
+	h.mu.Lock()
+	if h.turnOpen || !h.lastTurnoverFromStamp {
+		h.mu.Unlock()
+		return false
+	}
+	h.skippedRealTraffic++
+	ev, sampled := h.recordCadenceLocked(CadenceEvent{
+		At:     now,
+		Event:  CadenceDischargedByInference,
+		HRef:   hRef,
+		Quorum: h.quorum,
+	})
+	h.mu.Unlock()
+	IncHeartbeatSkipped("real_traffic")
+	if !sampled {
+		return false
+	}
+	logCadence(ev)
+	return true
+}
+
+// CadenceSnapshot copies the last-N ring and the per-occurrence event totals.
+// The ring samples two kinds at most once per Interval; the totals do not.
+func (h *Heartbeat) CadenceSnapshot() (events []CadenceEvent, counts map[string]uint64) {
+	if h == nil {
+		return nil, map[string]uint64{}
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	events, _ = h.ring.snapshot()
+	return events, copyCadenceCounts(h.cadenceTotals)
 }
 
 // SlotForNonce is executor(n) = n mod slots_num. Any consecutive span of

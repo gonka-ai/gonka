@@ -33,6 +33,11 @@ var (
 
 // RegisterAnchorMetrics registers height-sync anchor counters on reg.
 // Safe to call once per process; subsequent calls are no-ops.
+//
+// Anchor counters are emitted by both hosts and the courier gateway, so this
+// deliberately does not pull in the log-plane instruments: those belong to the
+// verifier and a gateway that registered them would publish a set of
+// permanently-zero host series. Hosts call RegisterLogPlaneMetrics themselves.
 func RegisterAnchorMetrics(reg prometheus.Registerer) error {
 	if reg == nil {
 		reg = prometheus.DefaultRegisterer

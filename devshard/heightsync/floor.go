@@ -110,8 +110,8 @@ type floorSignerClaim struct {
 // to it is always available, which is what makes L0 an exact check with no
 // tolerance band.
 //
-// How far the floor may move in one step is bounded, and that bound is the whole
-// of step 2 of the review, with sequencer stamps excluded (spec §14 rule 3):
+// How far the floor may move in one step is bounded (proposal §14), with
+// sequencer stamps excluded (rule 3):
 //
 //   - Within W_conf of the standing floor a single *host* signer may raise it.
 //     That is the ordinary path — a cadence of one turnover every Interval keeps
@@ -128,7 +128,7 @@ type floorSignerClaim struct {
 //
 // Both bounds are functions of the applied log alone — no clock, no oracle, no
 // admission decision — so every verifier computes the same floor and therefore
-// the same L0 verdicts (step 3).
+// the same L0 verdicts.
 //
 // Entries are appended in nonce order and hold a running maximum, so AsOf is a
 // binary search and the structure is cheap to clone for trial-apply.

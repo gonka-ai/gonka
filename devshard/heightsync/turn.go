@@ -45,6 +45,8 @@ type SyncTurnRecord struct {
 	Acks              map[uint32]AckRecord
 	State             TurnState
 	CompletedAtHeight uint64
+	// Reason is MsgHeartbeat.reason from the opening heartbeat (proposal §10.4).
+	Reason string
 }
 
 // DefaultTurnRetain is how many turns the tracker keeps behind the latest,
@@ -179,9 +181,14 @@ func (t *TurnTracker) observeHeartbeat(nonce uint64, hb *types.MsgHeartbeat) {
 			HReq:        heartbeatRequestHeight(hb),
 			Acks:        make(map[uint32]AckRecord),
 			State:       TurnOpen,
+			Reason:      hb.Reason,
 		}
 		t.turns[hb.TurnSeq] = rec
+		SetTurnState("open")
 		return
+	}
+	if rec.Reason == "" && hb.Reason != "" {
+		rec.Reason = hb.Reason
 	}
 	if nonce < rec.RequestSpan[0] {
 		span := rec.RequestSpan[1] - rec.RequestSpan[0]
@@ -216,6 +223,7 @@ func (t *TurnTracker) observeAck(nonce uint64, ack *types.MsgHeightAck) {
 			State:   TurnOpen,
 		}
 		t.turns[ack.TurnSeq] = rec
+		SetTurnState("open")
 	}
 	// Lateness is stamp-based, and the stamp is the host's: an ack carries the
 	// height its author read when it composed the answer, which is the one
@@ -236,6 +244,9 @@ func (t *TurnTracker) observeAck(nonce uint64, ack *types.MsgHeightAck) {
 		Hash:      append([]byte(nil), ack.ObservedBlockHash...),
 		SyncState: ack.SyncState,
 		Late:      late,
+	}
+	if !had {
+		IncAck(ack.SyncState.String(), late)
 	}
 }
 
@@ -332,10 +343,6 @@ func (t *TurnTracker) recompute(rec *SyncTurnRecord, hNow uint64) {
 		return
 	}
 	counting := t.countingAcks(rec)
-	if t.windowClosed(rec, hNow) && counting < t.quorum {
-		rec.State = TurnDegraded
-		return
-	}
 	if counting >= t.quorum {
 		rec.State = TurnComplete
 		rec.CompletedAtHeight = hNow
@@ -345,6 +352,15 @@ func (t *TurnTracker) recompute(rec *SyncTurnRecord, hNow uint64) {
 		if rec.TurnSeq > t.lastCompleteSeq {
 			t.lastCompleteSeq = rec.TurnSeq
 		}
+		IncHeartbeatTurn(rec.Reason, "complete")
+		SetTurnState("complete")
+		return
+	}
+	if t.windowClosed(rec, hNow) && counting < t.quorum {
+		rec.State = TurnDegraded
+		IncHeartbeatTurn(rec.Reason, "degraded")
+		SetTurnState("degraded")
+		return
 	}
 }
 
