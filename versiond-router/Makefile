@@ -316,12 +316,20 @@ test-version-routing:
 	printf '%s\n' '{"versions":null}' \
 		> "$$tmpdir/catalog/versions.json"; \
 	printf '%s\n' \
-		'import http.server, os, time, urllib.parse' \
+		'import http.server, os, threading, time, urllib.parse' \
+		'SERVE_ONCE_LOCK = threading.Lock()' \
+		'SERVED_ONCE = False' \
 		'class H(http.server.BaseHTTPRequestHandler):' \
 		'    def do_GET(self):' \
+		'        global SERVED_ONCE' \
 		'        if urllib.parse.urlparse(self.path).path != "/versions": self.send_error(404); return' \
 		'        body = open("/data/versions.json", "rb").read()' \
 		'        mode = open("/data/mode").read().strip() if os.path.exists("/data/mode") else ""' \
+		'        if mode == "once":' \
+		'            with SERVE_ONCE_LOCK:' \
+		'                if SERVED_ONCE: self.send_error(503); return' \
+		'                body = open("/data/versions.once.json", "rb").read()' \
+		'                SERVED_ONCE = True' \
 		'        if mode == "slow":' \
 		'            self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers()' \
 		'            try:' \
@@ -1077,17 +1085,19 @@ test-version-routing:
 		| awk '$$2 == "v10" { print $$3; exit }'); \
 	[ -n "$$retired_slot" ] || fail "could not identify v10's maintenance slot"; \
 	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v9+hotfix"}]}' \
-		> "$$tmpdir/catalog/versions.next"; \
-	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+		> "$$tmpdir/catalog/versions.once.next"; \
+	mv "$$tmpdir/catalog/versions.once.next" "$$tmpdir/catalog/versions.once.json"; \
+	printf '%s\n' once > "$$tmpdir/catalog/mode.next"; \
+	mv "$$tmpdir/catalog/mode.next" "$$tmpdir/catalog/mode"; \
 	for i in $$(seq 20); do \
 		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-			| jq -e '.state == "ready" and .dynamic_slots_used == 2' \
+			| jq -e '.state == "fetch-error" and .dynamic_slots_used == 2' \
 				>/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-		| jq -e '.state == "ready" and .dynamic_slots_used == 2' >/dev/null \
-		|| fail "maintenance mode did not retire the withdrawn route"; \
+		| jq -e '.state == "fetch-error" and .dynamic_slots_used == 2' >/dev/null \
+		|| fail "maintenance removal did not preserve current slot usage during a catalog outage"; \
 	if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
 		/etc/haproxy/versions.map | grep -qx v10; then \
 		fail "maintenance mode left the withdrawn route published"; \
@@ -1095,6 +1105,7 @@ test-version-routing:
 	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
 		http://127.0.0.1:18132/v10/sessions/removed/chat)" = 503 ] \
 		|| fail "a maintenance-removed governance route still accepted traffic"; \
+	rm -f "$$tmpdir/catalog/mode" "$$tmpdir/catalog/versions.once.json"; \
 	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v9+hotfix"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
