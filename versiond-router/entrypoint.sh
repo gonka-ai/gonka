@@ -197,13 +197,18 @@ safe_id() {
         "$(printf '%s' "$1" | sha256sum | cut -c1-8)"
 }
 
-# Refuse names that cannot be represented as the literal path segment used for
-# routing. This applies equally to HA and legacy declarations.
-validate_version() {
-	if ! router_version_is_valid "$1"; then
-		echo "versiond-router: invalid version name '$1'; expected ASCII [A-Za-z0-9][A-Za-z0-9._+~-]{0,63}" >&2
-		exit 1
-	fi
+# Startup maps are rendered as files, so they can preserve the router's original
+# path-segment contract. Dynamically reconciled names use the narrower shared
+# grammar: they are also interpolated into HAProxy Runtime API commands.
+validate_static_version() {
+    case "$1" in
+        *[/?#%]* | *[[:space:]]* | *\\* | *\"* | *\'* | . | ..)
+            echo "versiond-router: version '$1' cannot be routed: a path segment" >&2
+            echo "  cannot carry / ? # % or whitespace literally, so the request path" >&2
+            echo "  would not match the configured version name" >&2
+            exit 1
+            ;;
+    esac
 }
 
 # Return an HAProxy-safe backend name without losing the version's identity.
@@ -295,7 +300,7 @@ declare_ha_version() {
     # What cannot be handled is a name that cannot appear literally in a path
     # segment: those characters would have to be encoded by the client, and then
     # the segment no longer equals the name. Refuse rather than route on a guess.
-    validate_version "$version"
+    validate_static_version "$version"
     # The comparison is forced to strings: awk would otherwise treat 1, 01 and
     # 1.0 as the same version, and 1e2 as 100.
     if awk -v v="$version" '$1 "" == v "" { found = 1 } END { exit !found }' "$VERSIONS_MAP"; then
@@ -370,7 +375,7 @@ done
 # Trailing newline is load-bearing: without it `read` swallows the last field.
 while IFS= read -r version; do
     [ -n "$version" ] || continue
-    validate_version "$version"
+    validate_static_version "$version"
     if awk -v v="$version" '$1 "" == v "" { found = 1 } END { exit !found }' "$MAP"; then
         echo "versiond-router: legacy version '$version' is declared twice" >&2
         exit 1

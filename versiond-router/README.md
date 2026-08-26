@@ -185,14 +185,20 @@ source to become reachable; until then the restored router routes have no ready
 upstreams. Persisting and replaying the artifact catalog in the versiond
 supervisor is a separate recovery contract, outside this router.
 
-Version names use the routing grammar
+Names learned dynamically from the catalog use the routing grammar
 `[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}`. Names outside it are rejected before they
-can create a path/map mismatch. Because the current governance contract accepts
-a wider set of basenames, one incompatible name is isolated rather than
+can create a path/map or Runtime API mismatch. Because the current governance
+contract accepts a wider set of basenames, one incompatible name is isolated rather than
 rejecting the whole snapshot: accepted routes remain, compatible additions can
 still converge, and `catalog-status` reports `contract-error`. The incompatible
 route itself remains
 unpublished and returns `503` until governance corrects its name.
+
+Static bootstrap and legacy lists keep the previous, wider path-segment contract,
+so an existing declaration such as `v1:beta` remains valid. Static names still
+reject `/`, `?`, `#`, `%`, whitespace, quotes, backslashes, `.` and `..`. A name
+outside the dynamic grammar must remain explicitly declared; it cannot later be
+adopted from the governance catalog without a compatible rename.
 
 Leaving both the bootstrap set and catalog URL empty selects coarse host-level
 routing. An HA deployment refuses that mode unless
@@ -334,8 +340,8 @@ host lifecycle is intentionally delivered as a separate change.
 | `VERSIOND_POOL_HOST` | `versiond-pool` | DNS name resolving to every pool member |
 | `VERSIOND_PORT` | `8080` | upstream port |
 | `VERSIOND_LEGACY_HOST` | *(none)* | single host owning pre-HA SQLite data dirs. **Required** whenever `VERSIOND_NON_HA_VERSIONS` is non-empty — the router refuses to start otherwise, because the owner of one host's data cannot default to a name that resolves to the whole pool. Unused (and may be omitted) when no version is pinned |
-| `VERSIOND_NON_HA_VERSIONS` | *(empty)* | version path segments pinned to the legacy host, whitespace and/or comma separated |
-| `VERSIOND_VERSIONS` | *(empty)* | static bootstrap floor; governance additions are learned without changing it |
+| `VERSIOND_NON_HA_VERSIONS` | *(empty)* | static version path segments pinned to the legacy host, whitespace and/or comma separated; retains the wider path-safe startup grammar described above |
+| `VERSIOND_VERSIONS` | *(empty)* | static bootstrap floor using the wider path-safe startup grammar; compatible governance additions are learned without changing it |
 | `VERSIOND_ROUTING_CATALOG_URL` | *(empty)* | read-only governance `GET /versions` endpoint |
 | `VERSIOND_ROUTING_CATALOG_POLL_SECONDS` | `5` | catalog polling interval |
 | `VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS` | `3` | timeout for one catalog request |
@@ -376,8 +382,9 @@ key is the name exactly as governance wrote it, because it is matched against th
 path segment; the health-check query is percent-encoded, because `+` in a query
 decodes to a space and the check would ask about a version that does not exist;
 and the backend identifier gets a hash appended when the name is not already a
-valid one. A name outside the routing grammar documented above is refused before
-any config or runtime-map mutation.
+valid one. A dynamic name outside the catalog grammar documented above is
+isolated before any runtime-map mutation; an unrepresentable static path segment
+is refused before the config is rendered.
 
 ## Observability
 

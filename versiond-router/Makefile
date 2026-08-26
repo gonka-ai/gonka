@@ -1405,7 +1405,7 @@ test-render: test-local-compose test-join-compose test-catalog-cache test-hash-r
 	VERSIOND_NON_HA_VERSIONS='v1,v2 v3' \
 	GONKA_HA=true \
 	HAPROXY_DNS_RESOLVER=10.96.0.10:53 \
-	VERSIOND_VERSIONS='v4,v5' \
+	VERSIOND_VERSIONS='v4,v5,v1:beta' \
 	VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
 	VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
 	VERSIOND_ROUTER_OUT="$$tmpdir/mixed.cfg" \
@@ -1415,6 +1415,8 @@ test-render: test-local-compose test-join-compose test-catalog-cache test-hash-r
 	./entrypoint.sh; \
 	grep -q '^[[:space:]]*server-template versiond 64 versiond-pool:8080' "$$tmpdir/mixed.cfg" \
 		|| fail "HA pool is not a DNS-resolved server-template"; \
+	grep -Eq '^v1:beta[[:space:]]+versiond_pool_' "$$tmpdir/mixed.versions.map" \
+		|| fail "the dynamic catalog grammar broke an existing path-safe static version"; \
 	grep -q '^[[:space:]]*hash-type consistent' "$$tmpdir/mixed.cfg" \
 		|| fail "HA pool lost consistent hashing"; \
 	grep -q 'set-var(txn.hashkey).*field(3,/).*sessions' "$$tmpdir/mixed.cfg" \
@@ -1523,6 +1525,7 @@ test-render: test-local-compose test-join-compose test-catalog-cache test-hash-r
 	printf '%s\n' \
 		'v4 versiond_pool_v4' \
 		'v5 versiond_pool_v5' \
+		'v1:beta versiond_pool_v1_beta_bd4bbb74' \
 		> "$$tmpdir/want.versions.map"; \
 	diff -u "$$tmpdir/want.versions.map" "$$tmpdir/mixed.versions.map" \
 		|| fail "declared versions rendered incorrectly"; \
@@ -1530,6 +1533,7 @@ test-render: test-local-compose test-join-compose test-catalog-cache test-hash-r
 		fail "readiness-shaped keys leaked into the data-plane routing map"; \
 	fi; \
 	for backend in versiond_ha_pool versiond_pool_v4 versiond_pool_v5 \
+		versiond_pool_v1_beta_bd4bbb74 \
 		versiond_legacy_v1 versiond_legacy_v2 versiond_legacy_v3; do \
 		count=$$(awk -v b="backend $$backend" '$$0 == b {inside=1; next} /^backend /{inside=0} \
 			inside && $$0 !~ /^[[:space:]]*#/ && \
