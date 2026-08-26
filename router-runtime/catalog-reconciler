@@ -243,7 +243,7 @@ fetch_catalog() {
         if length != 1 then error("catalog must contain exactly one JSON document") else .[0] end
         | if type != "object" then error("catalog is not an object") else . end
         |
-        .versions as $versions
+		(.versions // []) as $versions
         | if ($versions | type) != "array" then error("versions is not an array") else $versions end
         | .[]
         | if (.name | type) != "string" then error("version name is not a string") else .name end

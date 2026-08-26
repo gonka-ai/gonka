@@ -303,7 +303,9 @@ test-version-routing:
 		'http.server.ThreadingHTTPServer(("", 8080), H).serve_forever()' \
 		> "$$tmpdir/upstream.py"; \
 	mkdir "$$tmpdir/catalog"; \
-	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"}]}' \
+	# DAPI emits null before its first chain-backed version cache update. Treat it \
+	# as the same empty desired set versiond observes, not as malformed JSON. \
+	printf '%s\n' '{"versions":null}' \
 		> "$$tmpdir/catalog/versions.json"; \
 	printf '%s\n' \
 		'import http.server, os, time, urllib.parse' \
@@ -390,7 +392,7 @@ test-version-routing:
 	done; \
 	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
 		'http://127.0.0.1:18134/readyz?component=catalog')" = 200 ] \
-		|| fail "catalog convergence is not exposed through the admin readiness endpoint"; \
+		|| fail "a DAPI null versions snapshot did not converge as an empty catalog"; \
 	docker exec gonka-vp-router wget -q -O - http://127.0.0.1:8405/metrics \
 		| grep -Fq 'haproxy_backend_active_servers{proxy="router_catalog_status"} 1' \
 		|| fail "catalog convergence is not exposed through HAProxy metrics"; \
