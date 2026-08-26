@@ -1,0 +1,125 @@
+[
+  {
+    "name": "enginecore",
+    "want_ok": true,
+    "want_type": "InternalServerError",
+    "want_code": "500",
+    "want_message": "EngineCore encountered an issue. See stack trace (above) for the root cause.",
+    "events": [
+      "data: {\"error\":{\"code\":500,\"message\":\"EngineCore encountered an issue. See stack trace (above) for the root cause.\",\"param\":null,\"type\":\"InternalServerError\"},\"id\":\"devshard-57577-89\"}",
+      "data: [DONE]"
+    ]
+  },
+  {
+    "name": "content_then_error",
+    "want_ok": false,
+    "want_type": "InternalServerError",
+    "want_code": "500",
+    "want_message": "boom",
+    "events": [
+      "data: {\"id\":\"devshard-1-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"hello\"}}]}",
+      "data: {\"error\":{\"code\":500,\"message\":\"boom\",\"type\":\"InternalServerError\"},\"id\":\"devshard-1-1\"}",
+      "data: [DONE]"
+    ]
+  },
+  {
+    "name": "error_with_completion_tokens",
+    "want_ok": false,
+    "want_type": "InternalServerError",
+    "want_code": "500",
+    "want_message": "boom",
+    "events": [
+      "data: {\"error\":{\"code\":500,\"message\":\"boom\",\"type\":\"InternalServerError\"},\"id\":\"devshard-1-1\"}",
+      "data: {\"id\":\"devshard-1-1\",\"object\":\"chat.completion.chunk\",\"choices\":[],\"usage\":{\"prompt_tokens\":12,\"completion_tokens\":7}}",
+      "data: [DONE]"
+    ]
+  },
+  {
+    "name": "empty_stream_role_done",
+    "want_ok": false,
+    "events": [
+      "data: {\"id\":\"devshard-1-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"\"},\"logprobs\":null,\"finish_reason\":null}]}",
+      "data: [DONE]"
+    ]
+  },
+  {
+    "name": "reasoning_content_then_error",
+    "want_ok": false,
+    "want_type": "InternalServerError",
+    "want_code": "500",
+    "want_message": "boom",
+    "events": [
+      "data: {\"id\":\"devshard-1-1\",\"choices\":[{\"delta\":{\"reasoning_content\":\"thinking\"}}]}",
+      "data: {\"error\":{\"code\":500,\"message\":\"boom\",\"type\":\"InternalServerError\"},\"id\":\"devshard-1-1\"}",
+      "data: [DONE]"
+    ]
+  },
+  {
+    "name": "tool_calls_then_error",
+    "want_ok": false,
+    "want_type": "InternalServerError",
+    "want_code": "500",
+    "want_message": "boom",
+    "events": [
+      "data: {\"id\":\"devshard-1-1\",\"choices\":[{\"delta\":{\"tool_calls\":[{\"id\":\"call_1\",\"type\":\"function\"}]}}]}",
+      "data: {\"error\":{\"code\":500,\"message\":\"boom\",\"type\":\"InternalServerError\"},\"id\":\"devshard-1-1\"}",
+      "data: [DONE]"
+    ]
+  },
+  {
+    "name": "choice_text_then_error",
+    "want_ok": false,
+    "want_type": "InternalServerError",
+    "want_code": "500",
+    "want_message": "boom",
+    "events": [
+      "data: {\"id\":\"devshard-1-1\",\"choices\":[{\"text\":\"legacy completion\"}]}",
+      "data: {\"error\":{\"code\":500,\"message\":\"boom\",\"type\":\"InternalServerError\"},\"id\":\"devshard-1-1\"}",
+      "data: [DONE]"
+    ]
+  },
+  {
+    "name": "message_content_then_error",
+    "want_ok": false,
+    "want_type": "InternalServerError",
+    "want_code": "500",
+    "want_message": "boom",
+    "events": [
+      "data: {\"id\":\"devshard-1-1\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"hi\"}}]}",
+      "data: {\"error\":{\"code\":500,\"message\":\"boom\",\"type\":\"InternalServerError\"},\"id\":\"devshard-1-1\"}",
+      "data: [DONE]"
+    ]
+  },
+  {
+    "name": "empty_tool_calls_with_error",
+    "want_ok": true,
+    "want_type": "InternalServerError",
+    "want_code": "500",
+    "want_message": "boom",
+    "events": [
+      "data: {\"id\":\"devshard-1-1\",\"choices\":[{\"delta\":{\"tool_calls\":[]}}]}",
+      "data: {\"error\":{\"code\":500,\"message\":\"boom\",\"type\":\"InternalServerError\"},\"id\":\"devshard-1-1\"}",
+      "data: [DONE]"
+    ]
+  },
+  {
+    "name": "unparseable_then_error",
+    "want_ok": false,
+    "events": [
+      "data: {not json",
+      "data: {\"error\":{\"code\":500,\"message\":\"boom\",\"type\":\"InternalServerError\"},\"id\":\"devshard-1-1\"}",
+      "data: [DONE]"
+    ]
+  },
+  {
+    "name": "object_error_shape",
+    "want_ok": true,
+    "want_type": "internal_error",
+    "want_code": "500",
+    "want_message": "engine failed",
+    "events": [
+      "data: {\"object\":\"error\",\"type\":\"internal_error\",\"code\":500,\"message\":\"engine failed\",\"id\":\"devshard-1-1\"}",
+      "data: [DONE]"
+    ]
+  }
+]
