@@ -301,10 +301,6 @@ validate_catalog_snapshot() {
     if [ ! -s "$tmpdir/catalog.json.names" ] && [ -s "$last_names" ]; then
         return 1
     fi
-    catalog_changed=1
-    if cmp -s "$last_names" "$tmpdir/catalog.names"; then
-        catalog_changed=0
-    fi
 }
 
 persist_snapshot() {
@@ -321,16 +317,24 @@ persist_snapshot() {
     last_persisted_at=$now
 }
 
-persist_catalog() {
-    persist_snapshot "$tmpdir/catalog.names" "$catalog_changed"
-}
-
 refresh_accepted_catalog() {
     persist_snapshot "$last_names" 0
 }
 
-accept_catalog() {
-    cp "$tmpdir/catalog.names" "$last_names"
+commit_catalog_additions() {
+    # Keep every accepted route durable until all replacements have passed
+    # their activation reserve and have been published. A crash at this commit
+    # point restores both generations; the maintenance removal is a later
+    # durable transition.
+    accepted_with_additions=$tmpdir/catalog.accepted-with-additions
+    cat "$last_names" "$tmpdir/catalog.names" | LC_ALL=C sort -u \
+        > "$accepted_with_additions"
+    additions_changed=1
+    if cmp -s "$last_names" "$accepted_with_additions"; then
+        additions_changed=0
+    fi
+    persist_snapshot "$accepted_with_additions" "$additions_changed" || return 1
+    cp "$accepted_with_additions" "$last_names"
 }
 
 map_snapshot() {
@@ -680,25 +684,17 @@ while :; do
         if [ "$catalog_contract_error" -ne 0 ]; then
             contract_suffix="; catalog also contains names outside the router grammar"
         fi
-        removal_status=0
-        apply_catalog_removals || removal_status=$?
         reconcile_status=0
-        if [ "$removal_status" -eq 0 ]; then
-            prepare_catalog || reconcile_status=$?
-        fi
+        prepare_catalog || reconcile_status=$?
         cache_status=0
-        if [ "$removal_status" -eq 0 ] && [ "$reconcile_status" -ne 0 ]; then
+        if [ "$reconcile_status" -ne 0 ]; then
             # A fresh catalog that still contains every accepted name confirms the
             # durable projection remains current even when an addition cannot yet be
             # published. Refresh only the accepted subset; pending names must not
             # become restart-visible through the cache.
             refresh_accepted_catalog || cache_status=$?
         fi
-        if [ "$removal_status" -eq 1 ]; then
-            set_state cache-error "cannot persist catalog removals"
-        elif [ "$removal_status" -eq 2 ]; then
-            set_state runtime-error "cannot retire removed catalog routes"
-        elif [ "$cache_status" -ne 0 ]; then
+        if [ "$cache_status" -ne 0 ]; then
             set_state cache-error "cannot refresh the last accepted catalog snapshot"
         elif [ "$reconcile_status" -eq 2 ]; then
             set_state capacity-exhausted \
@@ -708,24 +704,25 @@ while :; do
                 "governance version '$activation_version' has $activation_ready/$activation_min_ready ready backends$contract_suffix"
         elif [ "$reconcile_status" -ne 0 ]; then
             set_state runtime-error "HAProxy rejected a catalog projection"
-        elif ! persist_catalog; then
-            set_state cache-error "cannot persist the last valid catalog snapshot"
+        elif ! commit_catalog_additions; then
+            set_state cache-error "cannot persist catalog additions"
+        elif ! publish_catalog; then
+            set_state runtime-error "HAProxy rejected an accepted catalog projection"
         else
-            # The cache is the durable commit point. A process crash after this point
-            # restores the whole projection before the catalog endpoint is available.
-            accept_catalog
-            if publish_catalog; then
-                if [ "$catalog_contract_error" -ne 0 ]; then
-                    set_state contract-error \
-                        "compatible catalog routes are current; one or more names are outside the router grammar"
-                elif [ "$catalog_withdrawal_pending" -ne 0 ]; then
-                    set_state withdrawal-pending \
-                        "catalog omitted accepted routes; explicit maintenance removal is required"
-                else
-                    set_state ready "catalog and runtime maps are current"
-                fi
+            removal_status=0
+            apply_catalog_removals || removal_status=$?
+            if [ "$removal_status" -eq 1 ]; then
+                set_state cache-error "cannot persist catalog removals"
+            elif [ "$removal_status" -eq 2 ]; then
+                set_state runtime-error "cannot retire removed catalog routes"
+            elif [ "$catalog_contract_error" -ne 0 ]; then
+                set_state contract-error \
+                    "compatible catalog routes are current; one or more names are outside the router grammar"
+            elif [ "$catalog_withdrawal_pending" -ne 0 ]; then
+                set_state withdrawal-pending \
+                    "catalog omitted accepted routes; explicit maintenance removal is required"
             else
-                set_state runtime-error "HAProxy rejected an accepted catalog projection"
+                set_state ready "catalog and runtime maps are current"
             fi
         fi
     fi

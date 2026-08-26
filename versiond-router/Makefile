@@ -1130,7 +1130,9 @@ test-version-routing:
 		/etc/haproxy/versions.map | grep -q '^version='; then \
 		fail "runtime catalog diagnostics exposed readiness projection keys as versions"; \
 	fi; \
-	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v9+hotfix"},{"name":"v11"}]}' \
+	# A maintenance replacement must not reclaim v10 to make room for v11. \
+	# Capacity and activation are checked while the serving route is still held. \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v9+hotfix"},{"name":"v11"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	for i in $$(seq 30); do \
@@ -1152,8 +1154,59 @@ test-version-routing:
 	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
 		http://127.0.0.1:18132/v11/sessions/capacity/chat)" = 503 ] \
 		|| fail "capacity-exhausted v11 was routed without an assigned backend"; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
+		/etc/haproxy/versions.map | grep -qx v10 \
+		|| fail "capacity-blocked maintenance replacement removed v10"; \
+	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v10/sessions/replacement-held/chat)" = b ] \
+		|| fail "capacity-blocked maintenance replacement stopped the old route"; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-cache read \
+		/var/lib/gonka-router/catalog.json 86400 | grep -Fqx v10 \
+		|| fail "capacity-blocked maintenance replacement removed v10 from durable state"; \
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/persisted/chat)" = b ] \
 		|| fail "a later catalog snapshot removed an already admitted route"; \
+	# With overlap capacity available, the replacement may stage, but an \
+	# activation shortfall must still retain the serving route durably. \
+	docker rm -f gonka-vp-router >/dev/null; \
+	docker run -d --name gonka-vp-router --network $$net \
+		-p 127.0.0.1:18132:8080 -p 127.0.0.1:18134:8404 \
+		-v $$state:/var/lib/gonka-router \
+		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="v4 v5" \
+		-e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
+		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
+		-e VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=2 \
+		-e VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS=1 \
+		-e VERSIOND_ROUTING_ACTIVATION_MIN_READY=2 \
+		-e VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=true \
+		-e VERSIOND_ROUTER_VERSION_CAPACITY=4 \
+		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
+		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
+		gonka-versiond-router-probe >/dev/null; \
+	for i in $$(seq 30); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "activation-pending" and .dynamic_slots_used == 4 and (.detail | contains("v11"))' \
+				>/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| jq -e '.state == "activation-pending" and .dynamic_slots_used == 4 and (.detail | contains("v11"))' \
+			>/dev/null \
+		|| fail "maintenance replacement did not wait for the new route reserve"; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
+		/etc/haproxy/versions.map | grep -qx v10 \
+		|| fail "activation-blocked maintenance replacement removed v10"; \
+	held_host=; \
+	for i in $$(seq 30); do \
+		held_host=$$(curl -fsS -m 3 \
+			http://127.0.0.1:18132/v10/sessions/activation-held/chat 2>/dev/null || true); \
+		case "$$held_host" in a|b) break ;; esac; \
+		sleep 0.5; \
+	done; \
+	case "$$held_host" in a|b) ;; \
+		*) fail "activation-blocked maintenance replacement stopped the old route" ;; \
+	esac; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-cache read \
+		/var/lib/gonka-router/catalog.json 86400 | grep -Fqx v10 \
+		|| fail "activation-blocked maintenance replacement removed v10 from durable state"; \
 	docker exec gonka-vp-router sh -c \
 		'/usr/local/lib/router-runtime/catalog-cache read /var/lib/gonka-router/catalog.json 86400 > /tmp/accepted.names && /usr/local/lib/router-runtime/catalog-cache write /tmp/accepted.names /var/lib/gonka-router/catalog.json && rm -f /tmp/accepted.names' \
 		|| fail "could not establish a fresh accepted cache for the pending-addition test"; \
@@ -1244,7 +1297,10 @@ test-version-routing:
 		gonka-versiond-router-probe >/dev/null; \
 	for i in $$(seq 30); do \
 		if curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%2Bhotfix' \
-			>/dev/null 2>&1; then break; fi; \
+			>/dev/null 2>&1 \
+			&& docker exec gonka-vp-router \
+				/usr/local/lib/router-runtime/catalog-status --state 2>/dev/null \
+				| jq -e '.state == "ready"' >/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
 	curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%2Bhotfix' >/dev/null \
@@ -1272,14 +1328,20 @@ test-version-routing:
 		gonka-versiond-router-probe >/dev/null; \
 	for i in $$(seq 30); do \
 		if curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%2Bhotfix' \
-			>/dev/null 2>&1; then break; fi; \
+			>/dev/null 2>&1 \
+			&& docker exec gonka-vp-router \
+				/usr/local/lib/router-runtime/catalog-status --state 2>/dev/null \
+				| jq -e '.state == "ready"' >/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
 	curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%2Bhotfix' >/dev/null \
 		|| fail "a stale persistent cache blocked the fresh governance catalog"; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-		| jq -e '.state == "ready"' >/dev/null \
-		|| fail "stale cache recovery left catalog reconciliation degraded"; \
+		| jq -e '.state == "ready"' >/dev/null || { \
+			docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state >&2; \
+			docker logs --tail 40 gonka-vp-router >&2; \
+			fail "stale cache recovery left catalog reconciliation degraded"; \
+		}; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-cache read \
 		/var/lib/gonka-router/catalog.json 86400 > "$$tmpdir/recovered.names"; \
 	grep -Fqx 'v9+hotfix' "$$tmpdir/recovered.names" \

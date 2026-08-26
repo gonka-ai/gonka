@@ -146,8 +146,13 @@ cache entry intact and reports `withdrawal-pending`; the backend's active check
 still returns `503` once no versiond can serve it. Planned removal requires a
 supervised maintenance run with
 `VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=true`, after which the slot becomes
-reusable. A completely empty response remains fail-closed while accepted routes
-exist because versiond applies the same misconfiguration guard.
+reusable. A maintenance snapshot that adds and removes names is applied in two
+durable phases: every addition must have spare capacity and pass its ready
+reserve before it is published, and only then are omitted routes retired. If an
+addition cannot be staged, the old route and cache entry remain in place; slot
+capacity must therefore include the intended replacement overlap. A completely
+empty response remains fail-closed while accepted routes exist because versiond
+applies the same misconfiguration guard.
 
 Accepted projections are written atomically under `/var/lib/gonka-router`.
 After restart, a validated last-known-good cache keeps already learned routes
