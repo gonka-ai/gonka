@@ -562,11 +562,7 @@ func (s *Postgres) Close() error {
 	case <-time.After(postgresOpTimeout):
 	}
 	if healthDone != nil {
-		select {
-		case <-healthDone:
-		case <-time.After(postgresHealthTimeout):
-			slog.Warn("devshard storage: postgres health monitor did not stop before pool close")
-		}
+		<-healthDone
 	}
 	s.pool.Close()
 	return nil
