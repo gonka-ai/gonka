@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
@@ -511,6 +513,47 @@ func TestPostgresHealthProbeIsIndependentOfApplicationPool(t *testing.T) {
 	require.Equal(t, postgresHealthState{ready: true, saturated: true}, current)
 	_, current = pg.recordHealthProbe(postgresHealthProbeDatabaseError, postgresPoolIsSaturated(pool))
 	require.Equal(t, postgresHealthState{saturated: true}, current)
+}
+
+func TestPostgresHealthProbePingAfterReconnectWithdraws(t *testing.T) {
+	container := startPostgresContainer(t)
+	t.Cleanup(func() { _ = container.Terminate(context.Background()) })
+
+	admin, err := pgx.Connect(context.Background(), "")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = admin.Close(context.Background()) })
+
+	cfg, err := pgxpool.ParseConfig("")
+	require.NoError(t, err)
+	cfg.ConnConfig.AfterConnect = func(ctx context.Context, conn *pgconn.PgConn) error {
+		_, err := admin.Exec(ctx, "SELECT pg_terminate_backend($1)", conn.PID())
+		return err
+	}
+
+	probe := newPostgresHealthProbe(cfg.ConnConfig)
+	t.Cleanup(func() {
+		closeCtx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = probe.close(closeCtx)
+	})
+	pg := &Postgres{healthReady: true}
+
+	for i := 0; i < postgresHealthQuorum; i++ {
+		probeCtx, cancel := context.WithTimeout(context.Background(), postgresHealthTimeout)
+		probeErr := probe.check(probeCtx)
+		cancel()
+		require.Error(t, probeErr, "probe %d: handshake-then-kill must fail Ping, not count as a healthy reconnect", i+1)
+		require.ErrorContains(t, probeErr, "ping postgres health probe connection",
+			"probe %d: connect must succeed so the failure is the skipped Ping, not handshake", i+1)
+
+		result := postgresHealthProbeDatabaseError
+		_, current := pg.recordHealthProbe(result, false)
+		if i+1 < postgresHealthQuorum {
+			require.Equal(t, postgresHealthState{ready: true}, current)
+			continue
+		}
+		require.Equal(t, postgresHealthState{}, current)
+	}
 }
 
 func TestPostgresHealthProbeBudgetCoversConnectionSetup(t *testing.T) {
