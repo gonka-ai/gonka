@@ -645,15 +645,45 @@ test-version-routing:
 	for i in $$(seq 30); do \
 		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
 			| jq -e '.state == "activation-pending" and (.detail | contains("v10"))' \
+				>/dev/null 2>&1 \
+			&& curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9' \
 				>/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
 		| jq -e '.state == "activation-pending" and (.detail | contains("v10"))' \
-			>/dev/null || fail "v10 did not hold the multi-add projection pending"; \
+			>/dev/null || fail "v10 did not remain pending behind its own reserve"; \
+	curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9' >/dev/null \
+		|| fail "ready v9 was blocked by pending v10"; \
 	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
-		'http://127.0.0.1:18134/readyz?version=v9')" = 503 ] \
-		|| fail "ready v9 was partially published while v10 was still pending"; \
+		'http://127.0.0.1:18134/readyz?version=v10')" = 503 ] \
+		|| fail "pending v10 was published before reaching its reserve"; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-cache read \
+		/var/lib/gonka-router/catalog.json 86400 > "$$tmpdir/partial-admission.names"; \
+	grep -Fqx v9 "$$tmpdir/partial-admission.names" \
+		|| fail "ready v9 was not persisted independently"; \
+	if grep -Fqx v10 "$$tmpdir/partial-admission.names"; then \
+		fail "pending v10 became restart-visible"; \
+	fi; \
+	docker stop gonka-vp-catalog >/dev/null; \
+	docker restart gonka-vp-router >/dev/null; \
+	for i in $$(seq 30); do \
+		v9_status=$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+			'http://127.0.0.1:18134/readyz?version=v9' 2>/dev/null || true); \
+		v10_status=$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+			'http://127.0.0.1:18134/readyz?version=v10' 2>/dev/null || true); \
+		[ "$$v9_status" = 200 ] && [ "$$v10_status" = 503 ] && break; \
+		sleep 0.5; \
+	done; \
+	[ "$$v9_status" = 200 ] && [ "$$v10_status" = 503 ] \
+		|| fail "LKG did not preserve only the independently admitted route"; \
+	docker start gonka-vp-catalog >/dev/null; \
+	for i in $$(seq 20); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "activation-pending" and (.detail | contains("v10"))' \
+				>/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
 	docker rm -f gonka-vp-a >/dev/null; \
 	docker run -d --name gonka-vp-a --network $$net --network-alias versiond-pool \
 		-e NAME=a -e SERVES="v4 v9 v10" -e GENERIC_READY=false \

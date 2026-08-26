@@ -139,8 +139,9 @@ from starting.
 HAProxy cannot create backends at runtime, so the image pre-renders a bounded
 set of disabled `versiond_dynamic_<n>` backends. For every new valid name the
 reconciler assigns a slot, enables its per-version checks, waits until the
-configured ready reserve is present, then publishes the request-map entry. For
-a batch, every new backend must meet the reserve before the first map addition.
+configured ready reserve is present, then publishes the request-map entry.
+Admission is independent per version: an unavailable candidate remains staged
+without blocking another candidate that has reached its reserve.
 
 The current source has no monotonic revision, so normal reconciliation is
 additions-only. A snapshot that omits an accepted name leaves its route and
@@ -149,12 +150,12 @@ still returns `503` once no versiond can serve it. Planned removal requires a
 supervised maintenance run with
 `VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=true`, after which the slot becomes
 reusable. A maintenance snapshot that adds and removes names is applied in two
-durable phases: every addition must have spare capacity and pass its ready
-reserve before it is published, and only then are omitted routes retired. If an
-addition cannot be staged, the old route and cache entry remain in place; slot
-capacity must therefore include the intended replacement overlap. A completely
-empty response remains fail-closed while accepted routes exist because versiond
-applies the same misconfiguration guard.
+durable phases: ready additions are published independently, but omitted routes
+are retired only after every addition has spare capacity and has passed its
+ready reserve. If an addition cannot be staged, the old route and cache entry
+remain in place; slot capacity must therefore include the intended replacement
+overlap. A completely empty response remains fail-closed while accepted routes
+exist because versiond applies the same misconfiguration guard.
 
 Accepted projections are written atomically under `/var/lib/gonka-router`.
 After restart, a validated last-known-good cache keeps already learned routes

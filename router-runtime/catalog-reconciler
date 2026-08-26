@@ -123,6 +123,8 @@ last_used=$(awk '$2 != "__unassigned__" { used++ } END { print used + 0 }' \
     "$slot_map")
 projection_repair_needed=1
 catalog_plan_clean=0
+activation_pending_count=0
+capacity_pending_count=0
 
 if [ -n "$cache_file" ] && [ -f "$cache_file" ]; then
     [ -x "$cache_bin" ] || {
@@ -330,12 +332,12 @@ refresh_accepted_catalog() {
 }
 
 commit_catalog_additions() {
-    # Keep every accepted route durable until all replacements have passed
-    # their activation reserve and have been published. A crash at this commit
-    # point restores both generations; the maintenance removal is a later
-    # durable transition.
+    # Persist only additions that independently reached their activation
+    # reserve. A crash at this commit point restores those ready routes, while
+    # staged candidates remain disposable Runtime API state.
     accepted_with_additions=$tmpdir/catalog.accepted-with-additions
-    cat "$last_names" "$tmpdir/catalog.names" | LC_ALL=C sort -u \
+    awk '{ print $1 }' "$tmpdir/projection.ready" > "$tmpdir/catalog.ready.names"
+    cat "$last_names" "$tmpdir/catalog.ready.names" | LC_ALL=C sort -u \
         > "$accepted_with_additions"
     additions_changed=1
     if cmp -s "$last_names" "$accepted_with_additions"; then
@@ -552,29 +554,26 @@ ready_server_count() {
 
 publish_projection() {
     map=$projection_map
-    if ! awk '$4 == 1 { found = 1 } END { exit !found }' \
-        "$tmpdir/projection.plan"; then
+    if [ ! -s "$tmpdir/projection.ready" ]; then
         return 0
     fi
 
-    while read -r version _ backend publish_version_entry; do
-        [ "$publish_version_entry" -eq 1 ] || continue
+    while read -r version _ backend _; do
         escaped_backend=$(runtime_key "$backend")
         escaped_key=$(runtime_key "$version")
         # Verify the complete projection below. That also resolves an ambiguous
         # socket failure after HAProxy applied a mutation.
         runtime "add map $map $escaped_key $escaped_backend" >/dev/null 2>&1 || true
-    done < "$tmpdir/projection.plan"
+    done < "$tmpdir/projection.ready"
 
     projection_state=$(map_snapshot "$map") || return 1
-    while read -r version _ backend publish_version_entry; do
-        [ "$publish_version_entry" -eq 1 ] || continue
+    while read -r version _ backend _; do
         printf '%s\n' "$projection_state" | awk \
             -v key="$version" -v expected="$backend" '
                 $2 "" == key "" && $3 "" == expected "" { found = 1 }
                 END { exit !found }
             ' || return 1
-    done < "$tmpdir/projection.plan"
+    done < "$tmpdir/projection.ready"
 }
 
 publish_catalog() {
@@ -582,10 +581,9 @@ publish_catalog() {
     # drives both data routing and parent admission, so no batch transaction or
     # second readiness mutation is needed.
     publish_projection || return 1
-    while read -r version _ _ publish_version_entry; do
-        [ "$publish_version_entry" -eq 1 ] || continue
+    while read -r version _ _ _; do
         log "declared governance version '$version'"
-    done < "$tmpdir/projection.plan"
+    done < "$tmpdir/projection.ready"
 }
 
 prepare_catalog() {
@@ -619,25 +617,23 @@ prepare_catalog() {
     printf '%s\n' "$slot_state" | awk -v prefix="$backend_prefix" '
         index($2, prefix) == 1 && $3 == "__unassigned__" { print $2 }
     ' > "$tmpdir/free.slots"
-    free_capacity=$(wc -l < "$tmpdir/free.slots")
-    required_capacity=$(awk '$3 == "__new__" { required++ } END { print required + 0 }' \
-        "$tmpdir/projection.plan")
-    if [ "$required_capacity" -gt "$free_capacity" ]; then
-        capacity_missing=$(awk -v available="$free_capacity" '
-            $3 == "__new__" && ++required > available { print $1; exit }
-        ' "$tmpdir/projection.plan")
-        return 2
-    fi
-
     : > "$tmpdir/slot.assignments"
     : > "$tmpdir/projection.assigned"
+    capacity_pending_count=0
+    capacity_missing=
     next_free=1
     while read -r version encoded backend publish_version_entry; do
         if [ "$backend" = __new__ ]; then
             backend=$(sed -n "${next_free}p" "$tmpdir/free.slots")
-            next_free=$((next_free + 1))
-            assign_slot "$backend" "$encoded" || return 1
-            printf '%s %s\n' "$backend" "$encoded" >> "$tmpdir/slot.assignments"
+            if [ -n "$backend" ]; then
+                next_free=$((next_free + 1))
+                assign_slot "$backend" "$encoded" || return 1
+                printf '%s %s\n' "$backend" "$encoded" >> "$tmpdir/slot.assignments"
+            else
+                backend=__capacity_pending__
+                capacity_pending_count=$((capacity_pending_count + 1))
+                [ -n "$capacity_missing" ] || capacity_missing=$version
+            fi
         fi
         printf '%s %s %s %s\n' "$version" "$encoded" "$backend" \
             "$publish_version_entry" >> "$tmpdir/projection.assigned"
@@ -658,20 +654,33 @@ prepare_catalog() {
 
     while read -r _ _ backend publish_version_entry; do
         [ "$publish_version_entry" -eq 1 ] || continue
+        [ "$backend" != __capacity_pending__ ] || continue
         enable_slot "$backend" || return 1
     done < "$tmpdir/projection.plan"
 
-    # No route in this projection becomes visible until every new backend has the
-    # configured reserve. Slot assignment and checks are staging mutations only.
+    # Readiness is route-local. One unavailable candidate must not hold unrelated
+    # ready additions behind it; only the ready subset becomes durable and visible.
+    : > "$tmpdir/projection.ready"
+    : > "$tmpdir/projection.pending"
+    activation_pending_count=0
+    activation_version=
+    activation_ready=0
     runtime "show stat" > "$tmpdir/runtime.stats" 2>/dev/null || return 1
-    while read -r version _ backend publish_version_entry; do
+    while read -r version encoded backend publish_version_entry; do
         [ "$publish_version_entry" -eq 1 ] || continue
+        [ "$backend" != __capacity_pending__ ] || continue
         ready=$(ready_server_count "$backend" "$tmpdir/runtime.stats") || return 1
         if [ "$ready" -lt "$activation_min_ready" ]; then
-            activation_version=$version
-            activation_ready=$ready
-            return 3
+            activation_pending_count=$((activation_pending_count + 1))
+            if [ -z "$activation_version" ]; then
+                activation_version=$version
+                activation_ready=$ready
+            fi
+            printf '%s %s\n' "$version" "$ready" >> "$tmpdir/projection.pending"
+            continue
         fi
+        printf '%s %s %s %s\n' "$version" "$encoded" "$backend" \
+            "$publish_version_entry" >> "$tmpdir/projection.ready"
     done < "$tmpdir/projection.plan"
 }
 
@@ -762,31 +771,28 @@ while :; do
         catalog_plan_clean=0
         reconcile_status=0
         prepare_catalog || reconcile_status=$?
-        cache_status=0
         if [ "$reconcile_status" -ne 0 ]; then
             # A fresh catalog that still contains every accepted name confirms the
-            # durable projection remains current even when an addition cannot yet be
-            # published. Refresh only the accepted subset; pending names must not
-            # become restart-visible through the cache.
-            refresh_accepted_catalog || cache_status=$?
-        fi
-        if [ "$cache_status" -ne 0 ]; then
-            set_state cache-error "cannot refresh the last accepted catalog snapshot"
-        elif [ "$reconcile_status" -eq 2 ]; then
-            set_state capacity-exhausted \
-                "no free backend slot for governance version '$capacity_missing'$catalog_diagnostic_suffix"
-        elif [ "$reconcile_status" -eq 3 ]; then
-            set_state activation-pending \
-                "governance version '$activation_version' has $activation_ready/$activation_min_ready ready backends$catalog_diagnostic_suffix"
-        elif [ "$reconcile_status" -ne 0 ]; then
-            set_state runtime-error \
-                "HAProxy rejected a catalog projection$catalog_diagnostic_suffix"
+            # durable projection remains current when staging fails. Refresh only
+            # the accepted subset; pending names must not become restart-visible.
+            if refresh_accepted_catalog; then
+                set_state runtime-error \
+                    "HAProxy rejected a catalog projection$catalog_diagnostic_suffix"
+            else
+                set_state cache-error "cannot refresh the last accepted catalog snapshot"
+            fi
         elif ! commit_catalog_additions; then
             set_state cache-error "cannot persist catalog additions"
         elif ! publish_catalog; then
             projection_repair_needed=1
             set_state runtime-error \
                 "HAProxy rejected an accepted catalog projection$catalog_diagnostic_suffix"
+        elif [ "$capacity_pending_count" -gt 0 ]; then
+            set_state capacity-exhausted \
+                "no free backend slot for governance version '$capacity_missing'; $capacity_pending_count version(s) are waiting for capacity$catalog_diagnostic_suffix"
+        elif [ "$activation_pending_count" -gt 0 ]; then
+            set_state activation-pending \
+                "governance version '$activation_version' has $activation_ready/$activation_min_ready ready backends; $activation_pending_count version(s) are waiting for activation$catalog_diagnostic_suffix"
         else
             removal_status=0
             apply_catalog_removals || removal_status=$?
