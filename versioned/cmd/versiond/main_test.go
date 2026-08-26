@@ -391,14 +391,21 @@ func TestShutdownHostBudgetCapsProxyAndHTTPDrain(t *testing.T) {
 
 	requestStarted := make(chan struct{})
 	handlerDone := make(chan struct{})
+	releaseHandler := make(chan struct{})
 	server := httptest.NewServer(hostLifecycle.Admission(http.HandlerFunc(
 		func(_ http.ResponseWriter, r *http.Request) {
 			close(requestStarted)
-			<-r.Context().Done()
+			select {
+			case <-r.Context().Done():
+			case <-releaseHandler:
+			}
 			close(handlerDone)
 		},
 	)))
-	t.Cleanup(server.Close)
+	t.Cleanup(func() {
+		close(releaseHandler)
+		server.Close()
+	})
 	requestDone := make(chan struct{})
 	go func() {
 		response, _ := server.Client().Get(server.URL + "/v1")

@@ -281,7 +281,12 @@ func shutdownHost(
 	drainDeadline := deadline.Add(-mgr.ShutdownGrace())
 	drainCtx, cancelDrain := context.WithDeadline(shutdownCtx, drainDeadline)
 	stopForceWatch := cancelOnSignal(shutdownCtx, cancelShutdown, force)
-	stopEscalationWatch := watchShutdownEscalation(shutdownCtx, srv, mgr, hostLifecycle)
+	forceShutdown, stopEscalationWatch := watchShutdownEscalation(
+		shutdownCtx,
+		srv,
+		mgr,
+		hostLifecycle,
+	)
 	defer func() {
 		stopEscalationWatch()
 		stopForceWatch()
@@ -330,6 +335,7 @@ func shutdownHost(
 
 	forced := shutdownCtx.Err() != nil
 	if forced {
+		forceShutdown()
 		if err := transitionHostToForcing(hostLifecycle); err != nil {
 			return err
 		}
@@ -345,6 +351,7 @@ func shutdownHost(
 	httpErr := <-httpDone
 	if shutdownCtx.Err() != nil {
 		forced = true
+		forceShutdown()
 		if err := transitionHostToForcing(hostLifecycle); err != nil {
 			return err
 		}
@@ -520,14 +527,11 @@ func watchShutdownEscalation(
 	srv hostHTTPServer,
 	mgr hostShutdownManager,
 	hostLifecycle *host.Controller,
-) func() {
+) (force func(), stop func()) {
 	done := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			if channelClosed(done) {
-				return
-			}
+	var forceOnce sync.Once
+	force = func() {
+		forceOnce.Do(func() {
 			slog.Warn(
 				"host shutdown escalation requested",
 				"reason", ctx.Err(),
@@ -535,13 +539,23 @@ func watchShutdownEscalation(
 			)
 			mgr.ForceStopChildren()
 			_ = srv.Close()
+		})
+	}
+	go func() {
+		select {
+		case <-ctx.Done():
+			if channelClosed(done) {
+				return
+			}
+			force()
 		case <-done:
 		}
 	}()
-	var once sync.Once
-	return func() {
-		once.Do(func() { close(done) })
+	var stopOnce sync.Once
+	stop = func() {
+		stopOnce.Do(func() { close(done) })
 	}
+	return force, stop
 }
 
 func channelClosed(done <-chan struct{}) bool {
