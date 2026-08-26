@@ -50,18 +50,47 @@ func TestMemoryLease_Acquire_ConcurrentSingleWinner(t *testing.T) {
 	require.Equal(t, 1, winCount)
 }
 
+func TestMemoryLease_Acquire_AllowsSameInferenceDifferentEpoch(t *testing.T) {
+	runLeaseEpochIdentityTests(t, NewMemory())
+}
+
+func TestPostgresLease_Acquire_AllowsSameInferenceDifferentEpoch(t *testing.T) {
+	runLeaseEpochIdentityTests(t, newTestPostgres(t))
+}
+
+func runLeaseEpochIdentityTests(t *testing.T, store LeaseStore) {
+	t.Helper()
+	ctx := context.Background()
+
+	won, err := store.Acquire(ctx, "escrow-identity", 1, 10, "instance-1")
+	require.NoError(t, err)
+	require.True(t, won)
+
+	won, err = store.Acquire(ctx, "escrow-identity", 1, 11, "instance-1")
+	require.NoError(t, err)
+	require.True(t, won, "same escrow/inference in a different epoch must be a distinct lease")
+
+	won, err = store.Acquire(ctx, "escrow-identity", 1, 10, "instance-2")
+	require.NoError(t, err)
+	require.False(t, won, "same epoch/escrow/inference must still deduplicate")
+
+	owned, err := store.OwnsPendingLease(ctx, "escrow-identity", 1, 10, "instance-1")
+	require.NoError(t, err)
+	require.True(t, owned)
+
+	require.NoError(t, store.Release(ctx, "escrow-identity", 1, 10, "instance-1"))
+	owned, err = store.OwnsPendingLease(ctx, "escrow-identity", 1, 11, "instance-1")
+	require.NoError(t, err)
+	require.True(t, owned, "releasing one epoch must not release another")
+}
+
 func TestMemoryLease_AcquireOneStale_PicksStale(t *testing.T) {
 	store := NewMemory()
 	ctx := context.Background()
 
 	_, err := store.Acquire(ctx, "escrow-1", 1, 10, "instance-1")
 	require.NoError(t, err)
-
-	store.mu.Lock()
-	lease := store.validationLeases["escrow-1"][1]
-	lease.claimedAt = time.Now().Add(-time.Hour)
-	store.validationLeases["escrow-1"][1] = lease
-	store.mu.Unlock()
+	ageMemoryLease(t, store, "escrow-1", 1, 10, time.Hour)
 
 	inferenceID, epochID, err := store.AcquireOneStale(ctx, "escrow-1", "instance-2", 30*time.Minute)
 	require.NoError(t, err)
@@ -77,12 +106,7 @@ func TestMemoryLease_AcquireOneStale_PicksStaleSubmitted(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, won)
 	require.NoError(t, store.SetResult(ctx, "escrow-submitted", 1, 10, LeaseStatusSubmitted, "instance-1"))
-
-	store.mu.Lock()
-	lease := store.validationLeases["escrow-submitted"][1]
-	lease.claimedAt = time.Now().Add(-time.Hour)
-	store.validationLeases["escrow-submitted"][1] = lease
-	store.mu.Unlock()
+	ageMemoryLease(t, store, "escrow-submitted", 1, 10, time.Hour)
 
 	inferenceID, epochID, err := store.AcquireOneStale(ctx, "escrow-submitted", "instance-2", 30*time.Minute)
 	require.NoError(t, err)
@@ -120,12 +144,7 @@ func TestMemoryLease_SetResult_RejectsAfterStaleSteal(t *testing.T) {
 
 	_, err := store.Acquire(ctx, "escrow-1", 1, 10, "instance-1")
 	require.NoError(t, err)
-
-	store.mu.Lock()
-	lease := store.validationLeases["escrow-1"][1]
-	lease.claimedAt = time.Now().Add(-time.Hour)
-	store.validationLeases["escrow-1"][1] = lease
-	store.mu.Unlock()
+	ageMemoryLease(t, store, "escrow-1", 1, 10, time.Hour)
 
 	_, _, err = store.AcquireOneStale(ctx, "escrow-1", "instance-2", 30*time.Minute)
 	require.NoError(t, err)
@@ -133,6 +152,17 @@ func TestMemoryLease_SetResult_RejectsAfterStaleSteal(t *testing.T) {
 	err = store.SetResult(ctx, "escrow-1", 1, 10, LeaseStatusSubmitted, "instance-1")
 	require.ErrorIs(t, err, ErrLeaseNotOwned)
 	require.NoError(t, store.SetResult(ctx, "escrow-1", 1, 10, LeaseStatusSubmitted, "instance-2"))
+}
+
+func ageMemoryLease(t *testing.T, store *Memory, escrowID string, inferenceID, epochID uint64, age time.Duration) {
+	t.Helper()
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	key := memoryLeaseKey{epochID: epochID, inferenceID: inferenceID}
+	lease, ok := store.validationLeases[escrowID][key]
+	require.True(t, ok)
+	lease.claimedAt = time.Now().Add(-age)
+	store.validationLeases[escrowID][key] = lease
 }
 
 // SQLite is single-instance, so its lease store is a deliberate no-op: Acquire

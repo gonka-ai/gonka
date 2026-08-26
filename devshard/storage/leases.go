@@ -43,28 +43,32 @@ type LeaseStore interface {
 }
 
 type memoryLease struct {
-	epochID      uint64
 	instanceAddr string
 	claimedAt    time.Time
 	status       LeaseStatus
+}
+
+type memoryLeaseKey struct {
+	epochID     uint64
+	inferenceID uint64
 }
 
 func (m *Memory) Acquire(_ context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) (bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.validationLeases == nil {
-		m.validationLeases = make(map[string]map[uint64]memoryLease)
+		m.validationLeases = make(map[string]map[memoryLeaseKey]memoryLease)
 	}
 	byInference := m.validationLeases[escrowID]
 	if byInference == nil {
-		byInference = make(map[uint64]memoryLease)
+		byInference = make(map[memoryLeaseKey]memoryLease)
 		m.validationLeases[escrowID] = byInference
 	}
-	if _, exists := byInference[inferenceID]; exists {
+	key := memoryLeaseKey{epochID: epochID, inferenceID: inferenceID}
+	if _, exists := byInference[key]; exists {
 		return false, nil
 	}
-	byInference[inferenceID] = memoryLease{
-		epochID:      epochID,
+	byInference[key] = memoryLease{
 		instanceAddr: instanceAddr,
 		claimedAt:    time.Now(),
 		status:       LeaseStatusPending,
@@ -81,28 +85,26 @@ func (m *Memory) AcquireOneStale(_ context.Context, escrowID, instanceAddr strin
 	}
 	cutoff := time.Now().Add(-ttl)
 	var (
-		foundID    uint64
-		foundEpoch uint64
-		found      bool
+		foundKey memoryLeaseKey
+		found    bool
 	)
-	for inferenceID, lease := range byInference {
+	for key, lease := range byInference {
 		if (lease.status != LeaseStatusPending && lease.status != LeaseStatusSubmitted) || !lease.claimedAt.Before(cutoff) {
 			continue
 		}
-		foundID = inferenceID
-		foundEpoch = lease.epochID
+		foundKey = key
 		found = true
 		break
 	}
 	if !found {
 		return 0, 0, nil
 	}
-	lease := byInference[foundID]
+	lease := byInference[foundKey]
 	lease.instanceAddr = instanceAddr
 	lease.claimedAt = time.Now()
 	lease.status = LeaseStatusPending
-	byInference[foundID] = lease
-	return foundID, foundEpoch, nil
+	byInference[foundKey] = lease
+	return foundKey.inferenceID, foundKey.epochID, nil
 }
 
 func (m *Memory) SetResult(_ context.Context, escrowID string, inferenceID, epochID uint64, status LeaseStatus, instanceAddr string) error {
@@ -112,13 +114,14 @@ func (m *Memory) SetResult(_ context.Context, escrowID string, inferenceID, epoc
 	if byInference == nil {
 		return ErrLeaseNotOwned
 	}
-	lease, ok := byInference[inferenceID]
-	if !ok || lease.status != LeaseStatusPending || lease.instanceAddr != instanceAddr || lease.epochID != epochID {
+	key := memoryLeaseKey{epochID: epochID, inferenceID: inferenceID}
+	lease, ok := byInference[key]
+	if !ok || lease.status != LeaseStatusPending || lease.instanceAddr != instanceAddr {
 		return ErrLeaseNotOwned
 	}
 	lease.status = status
 	lease.claimedAt = time.Now()
-	byInference[inferenceID] = lease
+	byInference[key] = lease
 	return nil
 }
 
@@ -129,11 +132,12 @@ func (m *Memory) OwnsPendingLease(_ context.Context, escrowID string, inferenceI
 	if byInference == nil {
 		return false, nil
 	}
-	lease, ok := byInference[inferenceID]
+	key := memoryLeaseKey{epochID: epochID, inferenceID: inferenceID}
+	lease, ok := byInference[key]
 	if !ok {
 		return false, nil
 	}
-	return lease.status == LeaseStatusPending && lease.instanceAddr == instanceAddr && lease.epochID == epochID, nil
+	return lease.status == LeaseStatusPending && lease.instanceAddr == instanceAddr, nil
 }
 
 func (m *Memory) Release(_ context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) error {
@@ -143,11 +147,12 @@ func (m *Memory) Release(_ context.Context, escrowID string, inferenceID, epochI
 	if byInference == nil {
 		return nil
 	}
-	lease, ok := byInference[inferenceID]
-	if !ok || lease.status != LeaseStatusPending || lease.instanceAddr != instanceAddr || lease.epochID != epochID {
+	key := memoryLeaseKey{epochID: epochID, inferenceID: inferenceID}
+	lease, ok := byInference[key]
+	if !ok || lease.status != LeaseStatusPending || lease.instanceAddr != instanceAddr {
 		return nil
 	}
-	delete(byInference, inferenceID)
+	delete(byInference, key)
 	if len(byInference) == 0 {
 		delete(m.validationLeases, escrowID)
 	}
@@ -156,9 +161,9 @@ func (m *Memory) Release(_ context.Context, escrowID string, inferenceID, epochI
 
 func (m *Memory) pruneValidationLeasesBefore(cutoff uint64) {
 	for escrowID, byInference := range m.validationLeases {
-		for inferenceID, lease := range byInference {
-			if lease.epochID < cutoff {
-				delete(byInference, inferenceID)
+		for key := range byInference {
+			if key.epochID < cutoff {
+				delete(byInference, key)
 			}
 		}
 		if len(byInference) == 0 {

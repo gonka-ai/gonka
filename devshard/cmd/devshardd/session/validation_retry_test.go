@@ -897,46 +897,29 @@ func TestRetryStaleValidation_RestartedManagerReclaimsPendingLease(t *testing.T)
 func TestRetryStaleValidation_ObsoleteLeaseAfterLazyRecoveryStaysOutOfMempool(t *testing.T) {
 	const escrowID = "1"
 	store, hosts, user, group := newStoredFinishedRetrySession(t, escrowID)
+	appendTerminalInvalidationDiffToStore(t, store, escrowID, hosts, user)
+
 	mgr := newRetryHostManager(t, store, hosts[0], user, group, escrowID)
 	t.Cleanup(func() { require.NoError(t, mgr.Close()) })
 	e := echo.New()
 	mgr.Register(e.Group(""))
+	require.Empty(t, mgr.ActiveEscrowIDs(), "precondition: manager starts with no live sessions")
+
 	_ = managerMempoolEndpointTxs(t, e, escrowID)
+	require.Equal(t, []string{escrowID}, mgr.ActiveEscrowIDs())
 
-	validationMsg := &types.MsgValidation{
-		InferenceId:   1,
-		ValidatorSlot: 0,
-		Valid:         false,
-		EscrowId:      escrowID,
-	}
-	validationMsg.ProposerSig = testutil.SignProposerTx(t, hosts[0], validationMsg)
-	voteMsg := &types.MsgValidationVote{
-		InferenceId: 1,
-		VoterSlot:   1,
-		VoteValid:   false,
-		EscrowId:    escrowID,
-	}
-	voteMsg.ProposerSig = testutil.SignProposerTx(t, hosts[1], voteMsg)
-	terminalDiff := testutil.SignDiff(t, user, escrowID, 4, []*types.DevshardTx{
-		{Tx: &types.DevshardTx_Validation{Validation: validationMsg}},
-		{Tx: &types.DevshardTx_ValidationVote{ValidationVote: voteMsg}},
-	})
-	dj, err := transport.DiffToJSON(terminalDiff)
-	require.NoError(t, err)
-	body, err := json.Marshal(transport.InferenceRequest{Diffs: []transport.DiffJSON{dj}})
-	require.NoError(t, err)
-	rec := signedPOST(t, e, user, "/sessions/"+escrowID+"/chat/completions", escrowID, body)
-	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
-
+	require.False(t, hasValidationTx(managerMempoolEndpointTxs(t, e, escrowID), 1),
+		"lazy recovery must not synthesize a validation mempool tx for terminal persisted state")
 	h, ok := mgr.hostSnapshot(escrowID)
 	require.True(t, ok)
 	require.Equal(t, types.StatusInvalidated, h.SnapshotState().Inferences[1].Status)
 
 	ctx := context.Background()
 	require.NoError(t, acquireMemoryLease(ctx, store, escrowID, 1, 7, "old-owner"))
+	inner := &stubEngine{}
 	rl := &ValidationRetryLoop{
 		leases:       store,
-		inner:        &stubEngine{},
+		inner:        inner,
 		manager:      mgr,
 		instanceAddr: "addr",
 		leaseTTL:     50 * time.Millisecond,
@@ -945,6 +928,7 @@ func TestRetryStaleValidation_ObsoleteLeaseAfterLazyRecoveryStaysOutOfMempool(t 
 	time.Sleep(60 * time.Millisecond)
 	rl.retryStaleValidationsForEscrow(ctx, escrowID)
 
+	require.Equal(t, 0, inner.calls, "retry must observe recovered terminal state before validation")
 	owned, err := store.OwnsPendingLease(ctx, escrowID, 1, 7, "addr")
 	require.NoError(t, err)
 	require.False(t, owned, "obsolete stale lease must be moved out of pending")
@@ -1092,6 +1076,67 @@ func newStoredFinishedRetrySession(t *testing.T, escrowID string) (*storage.Memo
 		require.NoError(t, store.AppendDiff(escrowID, types.DiffRecord{Diff: signed, StateHash: root}))
 	}
 	return store, hosts, user, group
+}
+
+func appendTerminalInvalidationDiffToStore(t *testing.T, store storage.Storage, escrowID string, hosts []*signing.Secp256k1Signer, user *signing.Secp256k1Signer) {
+	t.Helper()
+	require.Len(t, hosts, 2)
+
+	meta, err := store.GetSessionMeta(escrowID)
+	require.NoError(t, err)
+	require.Len(t, meta.Group, 2)
+
+	version := meta.Version
+	if version == "" {
+		version = testutil.RuntimeTestVersion
+	}
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine(
+		escrowID,
+		meta.Config,
+		meta.Group,
+		meta.InitialBalance,
+		meta.CreatorAddr,
+		verifier,
+		store,
+		state.WithVersion(version),
+	)
+	require.NoError(t, err)
+	if meta.LatestNonce > 0 {
+		records, err := store.GetDiffs(escrowID, 1, meta.LatestNonce)
+		require.NoError(t, err)
+		for _, rec := range records {
+			sm.InjectWarmKeys(rec.WarmKeyDelta)
+			_, err := sm.ApplyLocal(rec.Nonce, rec.Txs)
+			require.NoError(t, err)
+		}
+	}
+
+	validationMsg := &types.MsgValidation{
+		InferenceId:   1,
+		ValidatorSlot: meta.Group[0].SlotID,
+		Valid:         false,
+		EscrowId:      escrowID,
+	}
+	validationMsg.ProposerSig = testutil.SignProposerTx(t, hosts[0], validationMsg)
+	voteMsg := &types.MsgValidationVote{
+		InferenceId: 1,
+		VoterSlot:   meta.Group[1].SlotID,
+		VoteValid:   false,
+		EscrowId:    escrowID,
+	}
+	voteMsg.ProposerSig = testutil.SignProposerTx(t, hosts[1], voteMsg)
+	txs := []*types.DevshardTx{
+		{Tx: &types.DevshardTx_Validation{Validation: validationMsg}},
+		{Tx: &types.DevshardTx_ValidationVote{ValidationVote: voteMsg}},
+	}
+	nonce := sm.SnapshotState().LatestNonce + 1
+	root, err := sm.ApplyLocal(nonce, txs)
+	require.NoError(t, err)
+	require.Equal(t, types.StatusInvalidated, sm.SnapshotState().Inferences[1].Status)
+
+	signed := testutil.SignDiffWithRoot(t, user, escrowID, nonce, txs, root)
+	require.NoError(t, store.AppendDiff(escrowID, types.DiffRecord{Diff: signed, StateHash: root}))
 }
 
 func newFinishedRetryHost(t *testing.T) *host.Host {
