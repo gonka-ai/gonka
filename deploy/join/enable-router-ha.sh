@@ -617,6 +617,10 @@ restore_policy_slot() {
 					break
 				fi
 			done < <(jq -r '.[]' <<<"$expected_ids")
+			if $generation_available; then
+				[[ $(proxy_component) != proxy-router ]] || \
+					policy_service_admitted "$service" || generation_available=false
+			fi
 			$generation_available && return 0
 		fi
 	fi
@@ -843,13 +847,18 @@ policy_address_admitted() {
 	policy_address_admission_state "$@"
 }
 
-policy_address_withdrawn() {
-	local address=$1 mode backend status
-	local -a backends=()
+policy_backends() {
+	local mode
 	mode=$(proxy_env_value NGINX_MODE || true)
 	mode=${mode:-http}
-	[[ $mode == https ]] || backends+=(policy_http)
-	[[ $mode == http ]] || backends+=(policy_https)
+	[[ $mode == https ]] || printf '%s\n' policy_http
+	[[ $mode == http ]] || printf '%s\n' policy_https
+}
+
+policy_address_withdrawn() {
+	local address=$1 backend status
+	local -a backends=()
+	mapfile -t backends < <(policy_backends)
 	for backend in "${backends[@]}"; do
 		if policy_address_admission_state "$backend" "$address"; then
 			return 1
@@ -859,6 +868,50 @@ policy_address_withdrawn() {
 		fi
 	done
 	return 0
+}
+
+policy_server_ref() {
+	local backend=$1 address=$2 stats
+	stats=$("$docker_bin" exec proxy /bin/sh -ec \
+		"printf 'show stat\\n' | socat stdio /var/run/haproxy/haproxy.sock") || return 2
+	awk -F, -v backend="$backend" -v address="$address" '
+		NR == 1 {
+			for (i = 1; i <= NF; i++) {
+				name = $i
+				sub(/^#[[:space:]]*/, "", name)
+				column[name] = i
+			}
+			valid = column["pxname"] && column["svname"] && column["addr"]
+			next
+		}
+		valid && $(column["pxname"]) == backend {
+			server_address = $(column["addr"])
+			if (server_address == address || index(server_address, address ":") == 1) {
+				if (++found == 1) print backend "/" $(column["svname"])
+			}
+		}
+		END {
+			if (!valid) exit 2
+			if (found > 1) exit 2
+			exit found == 1 ? 0 : 1
+		}
+	' <<<"$stats"
+}
+
+policy_runtime_command() {
+	local command=$1 response
+	[[ $command != *"'"* ]] || return 1
+	response=$("$docker_bin" exec proxy /bin/sh -ec \
+		"printf '%s\\n' '$command' | socat stdio /var/run/haproxy/reconciler.sock") || return 1
+	[[ -z ${response//[[:space:]]/} ]]
+}
+
+ready_policy_refs() {
+	local ref restored=true
+	for ref; do
+		policy_runtime_command "set server $ref state ready" || restored=false
+	done
+	$restored
 }
 
 policy_service_addresses() {
@@ -908,15 +961,37 @@ policy_service_needs_replacement() {
 }
 
 withdraw_policy_service() {
-	local service=$1
-	local -a addresses=()
+	local service=$1 address backend ref
+	local -a addresses=() backends=() refs=()
 	mapfile -t addresses < <(policy_service_addresses "$service")
-	"${compose[@]}" stop "$service"
-	((${#addresses[@]} == 0)) && return 0
+	if ((${#addresses[@]} == 0)); then
+		"${compose[@]}" stop "$service"
+		return
+	fi
+	mapfile -t backends < <(policy_backends)
+	for address in "${addresses[@]}"; do
+		for backend in "${backends[@]}"; do
+			ref=$(policy_server_ref "$backend" "$address") || {
+				ready_policy_refs "${refs[@]}" || true
+				return 1
+			}
+			policy_runtime_command "set server $ref state drain" || {
+				ready_policy_refs "${refs[@]}" || true
+				return 1
+			}
+			refs+=("$ref")
+		done
+	done
 	wait_policy_withdrawal "${addresses[@]}" || {
-		warn "$service stopped, but its previous address remains admitted by proxy-router"
+		ready_policy_refs "${refs[@]}" || true
+		warn "$service remains admitted after its runtime drain"
 		return 1
 	}
+	"${compose[@]}" stop "$service"
+	for ref in "${refs[@]}"; do
+		policy_runtime_command "set server $ref health down" || return 1
+	done
+	ready_policy_refs "${refs[@]}" || return 1
 }
 
 policy_service_admitted() {
