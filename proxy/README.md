@@ -53,6 +53,8 @@ Key runtime environment variables:
 | `PROXY_SSL_PORT` | 8080 | Port for the cert issuer API |
 | `SSL_CERT_SOURCE` | ./secrets/nginx-ssl | Host path bind-mounted at `/etc/nginx/ssl` |
 | `PROXY_SSL_WAIT_SECONDS` | 60 | Max wait for `proxy-ssl` readiness during cert fetch |
+| `PROXY_SSL_RETRY_SECONDS` | 60 | Initial retry delay after issuer or HTTPS recovery failure; doubles up to the renewal interval |
+| `RENEW_INTERVAL_HOURS` | 24 | Interval between successful automatic renewal checks |
 | `NODE_ID` | proxy | Node identifier included in cert requests to `proxy-ssl` |
 | `API_SERVICE_NAME` | api | Service name for API upstream |
 | `NODE_SERVICE_NAME` | node | Service name for chain node upstreams |
@@ -484,4 +486,4 @@ If you're upgrading from a previous version with hardcoded ports:
 3. **Add** environment variables to your docker-compose.yml
 4. **Rebuild** your nginx container
 
-The entrypoint script provides sensible defaults, so existing setups will continue to work without changes. 
+The entrypoint script provides sensible defaults, so existing setups will continue to work without changes.
