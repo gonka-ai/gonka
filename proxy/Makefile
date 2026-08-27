@@ -1,4 +1,4 @@
-.PHONY: all build-docker release
+.PHONY: all build-docker release test-render
 
 include ../scripts/blst-portable.mk
 
@@ -27,6 +27,79 @@ define DOCKER_BUILD
 endef
 
 all: build-docker
+
+test-render:
+	@set -eu; \
+	tmpdir=$$(mktemp -d); \
+	image=gonka-proxy-render-test:$$$$; \
+	private=gonka-proxy-policy-private-$$$$; \
+	shared=gonka-proxy-policy-shared-$$$$; \
+	peer=gonka-proxy-policy-peer-$$$$; \
+	worker=gonka-proxy-policy-worker-$$$$; \
+	trap 'docker rm -f "$$peer" "$$worker" >/dev/null 2>&1 || true; docker network rm "$$private" "$$shared" >/dev/null 2>&1 || true; docker image rm "$$image" >/dev/null 2>&1 || true; rm -rf "$$tmpdir"' EXIT; \
+	fail() { echo "test-render: $$1" >&2; exit 1; }; \
+	touch "$$tmpdir/nginx.conf"; \
+	docker build -q -t "$$image" . >/dev/null; \
+	[ "$$(docker image inspect -f '{{index .Config.Labels "ai.gonka.proxy-policy-contract"}}' "$$image")" = 1 ] \
+		|| fail "policy image has no stable ingress contract label"; \
+	docker run --rm \
+		-e NGINX_MODE=http \
+		-e PROXY_PROTOCOL=true \
+		-e PROXY_PROTOCOL_BIND_ADDRESS=127.0.0.1 \
+		-e PROXY_PROTOCOL_TRUSTED_FROM=127.0.0.1/32 \
+		-e KEY_NAME=node-a \
+		-e VERSIOND_SERVICE_NAME=proxy \
+		-e VERSIOND_SERVICE_IS_ABSOLUTE=true \
+		-e VERSIOND_PORT=18081 \
+		-e EDGE_API_SERVICE_NAME=edge-api-router \
+		-e EDGE_API_SERVICE_IS_ABSOLUTE=true \
+		-e EDGE_API_PORT=18080 \
+		-v "$$tmpdir/nginx.conf:/etc/nginx/nginx.conf" \
+		"$$image" true >/dev/null; \
+	grep -q 'listen 127.0.0.1:80 proxy_protocol;' "$$tmpdir/nginx.conf" \
+		|| fail "private policy listener does not require PROXY protocol"; \
+	grep -q 'listen 127.0.0.1:8081;' "$$tmpdir/nginx.conf" \
+		|| fail "loopback health listener is absent"; \
+	grep -q 'real_ip_header proxy_protocol;' "$$tmpdir/nginx.conf" \
+		|| fail "PROXY client address is not restored"; \
+	grep -q 'set_real_ip_from 127.0.0.1/32;' "$$tmpdir/nginx.conf" \
+		|| fail "PROXY client address trusts an unexpected source"; \
+	grep -q 'server proxy:18081 resolve;' "$$tmpdir/nginx.conf" \
+		|| fail "versiond policy route does not return to the HA distributor"; \
+	grep -q 'server edge-api-router:18080 resolve;' "$$tmpdir/nginx.conf" \
+		|| fail "edge-api policy route does not preserve the existing nginx router"; \
+	if grep -q 'node-a-proxy:1808' "$$tmpdir/nginx.conf"; then \
+		fail "internal distributor received the external KEY_NAME prefix"; \
+	fi; \
+	touch "$$tmpdir/private.conf"; \
+	docker network create "$$private" >/dev/null; \
+	docker network create "$$shared" >/dev/null; \
+	docker run -d --name "$$peer" --network "$$private" \
+		--network-alias proxy-policy-ingress alpine:3.21 sleep 60 >/dev/null; \
+	docker create --name "$$worker" --network "$$private" \
+		-e NGINX_MODE=http -e PROXY_PROTOCOL=true \
+		-e PROXY_PROTOCOL_PEER=proxy-policy-ingress \
+		-e KEY_NAME=node-a \
+		-v "$$tmpdir/private.conf:/etc/nginx/nginx.conf" \
+		"$$image" sleep 30 >/dev/null; \
+	docker network connect "$$shared" "$$worker"; \
+	docker start "$$worker" >/dev/null; \
+	for _ in $$(seq 1 50); do \
+		[ -s "$$tmpdir/private.conf" ] && break; \
+		sleep 0.1; \
+	done; \
+	[ -s "$$tmpdir/private.conf" ] || fail "dynamic private-network render did not complete"; \
+	private_ip=$$(docker inspect -f "{{with index .NetworkSettings.Networks \"$$private\"}}{{.IPAddress}}{{end}}" "$$worker"); \
+	shared_ip=$$(docker inspect -f "{{with index .NetworkSettings.Networks \"$$shared\"}}{{.IPAddress}}{{end}}" "$$worker"); \
+	private_subnet=$$(docker network inspect -f '{{(index .IPAM.Config 0).Subnet}}' "$$private"); \
+	grep -q "listen $$private_ip:80 proxy_protocol;" "$$tmpdir/private.conf" \
+		|| fail "PROXY listener is not bound to the private policy interface"; \
+	grep -q "set_real_ip_from $$private_subnet;" "$$tmpdir/private.conf" \
+		|| fail "PROXY trust is not restricted to the private policy network"; \
+	if grep -q "listen $$shared_ip:80 proxy_protocol;" "$$tmpdir/private.conf"; then \
+		fail "shared application network can reach the PROXY listener"; \
+	fi; \
+	echo "test-render: ok"
 
 build-docker:
 	$(eval PLATFORM=$(DOCKER_PLATFORM))

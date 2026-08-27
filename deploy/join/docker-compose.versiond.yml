@@ -200,6 +200,18 @@ services:
       start_period: 10s
     restart: always
 
+  proxy-policy:
+    environment:
+      - VERSIOND_SERVICE_NAME=proxy-policy-ingress
+      - VERSIOND_SERVICE_IS_ABSOLUTE=true
+      - VERSIOND_PORT=18081
+
+  proxy-policy2:
+    environment:
+      - VERSIOND_SERVICE_NAME=proxy-policy-ingress
+      - VERSIOND_SERVICE_IS_ABSOLUTE=true
+      - VERSIOND_PORT=18081
+
   proxy:
     depends_on:
       versiond-router:
@@ -208,8 +220,21 @@ services:
         # it must not block public APIs that do not use the devshard route.
         required: false
     environment:
-      - VERSIOND_SERVICE_NAME=versiond-router
-      - VERSIOND_PORT=8080
+      - VERSIOND_ROUTER_POOL_HOST=versiond-router
+      - VERSIOND_ROUTER_PORT=8080
+      - VERSIOND_ROUTER_ADMIN_PORT=8404
+      - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}
+      - VERSIOND_VERSIONS=${VERSIOND_VERSIONS-v4 v5}
+      - VERSIOND_ROUTING_CATALOG_URL=${VERSIOND_ROUTING_CATALOG_URL:-}
+      - VERSIOND_ROUTING_CATALOG_POLL_SECONDS=${VERSIOND_ROUTING_CATALOG_POLL_SECONDS:-5}
+      - VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=${VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS:-3}
+      - VERSIOND_ROUTING_CATALOG_MAX_BYTES=${VERSIOND_ROUTING_CATALOG_MAX_BYTES:-1048576}
+      - VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS=${VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS:-2}
+      - VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=${VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS:-false}
+      # This Compose model has one inner router. A later fleet overlay raises
+      # this reserve independently of the two-versiond activation threshold.
+      - PROXY_ROUTER_ACTIVATION_MIN_READY=${PROXY_ROUTER_ACTIVATION_MIN_READY:-1}
+      - PROXY_ROUTER_VERSION_CAPACITY=${PROXY_ROUTER_VERSION_CAPACITY:-32}
 
 volumes:
   versiond-router-state:
