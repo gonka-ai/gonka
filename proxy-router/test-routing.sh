@@ -21,9 +21,11 @@ containers=(
     gonka-pr-proxy gonka-pr-proxy-lb gonka-pr-probe gonka-pr-catalog
     gonka-pr-proxy-both
     gonka-pr-proxy-admission
+    gonka-pr-proxy-generation
     gonka-pr-proxy-plain gonka-pr-proxy-v2
     gonka-pr-proxy-cache-floor
     gonka-pr-policy-a gonka-pr-policy-b gonka-pr-policy-admission
+    gonka-pr-policy-generation gonka-pr-policy-generation-gap
     gonka-pr-policy-plain gonka-pr-policy-v2
     gonka-pr-router-a gonka-pr-router-b gonka-pr-router-bad
     gonka-pr-router-migration
@@ -519,13 +521,27 @@ proxy_admin() {
         "http://127.0.0.1:8404$1"
 }
 
-proxy_backend_addr_up() {
-    local backend=$1 address=$2
-    docker exec gonka-pr-proxy sh -c \
+proxy_backend_addr_up_in() {
+    local proxy=$1 backend=$2 address=$3
+    docker exec "$proxy" sh -c \
         "printf 'show stat\\n' | socat - UNIX-CONNECT:/var/run/haproxy/haproxy.sock" \
         | awk -F, -v backend="$backend" -v address="$address" '
             $1 == backend && $18 ~ /^UP/ && index($0, address) { found = 1 }
             END { exit !found }
+        '
+}
+
+proxy_backend_addr_up() {
+    proxy_backend_addr_up_in gonka-pr-proxy "$@"
+}
+
+proxy_backend_addr_withdrawn_in() {
+    local proxy=$1 backend=$2 address=$3
+    docker exec "$proxy" sh -c \
+        "printf 'show stat\\n' | socat - UNIX-CONNECT:/var/run/haproxy/haproxy.sock" \
+        | awk -F, -v backend="$backend" -v address="$address" '
+            $1 == backend && $18 ~ /^UP/ && index($0, address) { admitted = 1 }
+            END { exit admitted }
         '
 }
 
@@ -578,6 +594,93 @@ done
 [[ $code == 200 ]] \
     || fail "successful policy checks did not complete admission"
 docker rm -f gonka-pr-proxy-admission gonka-pr-policy-admission >/dev/null
+
+# A DNS address change does not reset an already-UP server-template slot. The
+# rollout protocol therefore withdraws the old generation before its DNS name
+# can resolve to a replacement. The replacement must then complete a new L7
+# check sequence before it is admitted.
+docker run -d --name gonka-pr-policy-generation --network "$network" \
+    --network-alias proxy-policy-generation \
+    -v "$tmpdir/policy.conf:/etc/nginx/nginx.conf:ro" \
+    nginx:1.28-alpine3.21 >/dev/null
+docker run -d --name gonka-pr-proxy-generation --network "$network" \
+    -e PROXY_POLICY_POOL_HOST=proxy-policy-generation \
+    -e NGINX_MODE=http \
+    -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
+    "$image" >/dev/null
+generation_old_ip=$(docker inspect -f \
+    "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
+    gonka-pr-policy-generation)
+for _ in $(seq 80); do
+    proxy_backend_addr_up_in gonka-pr-proxy-generation policy_http \
+        "$generation_old_ip" && break
+    sleep 0.1
+done
+proxy_backend_addr_up_in gonka-pr-proxy-generation policy_http \
+    "$generation_old_ip" \
+    || fail "old policy generation was not admitted"
+
+docker stop --time 5 gonka-pr-policy-generation >/dev/null
+for _ in $(seq 80); do
+    proxy_backend_addr_withdrawn_in gonka-pr-proxy-generation policy_http \
+        "$generation_old_ip" && break
+    sleep 0.1
+done
+proxy_backend_addr_withdrawn_in gonka-pr-proxy-generation policy_http \
+    "$generation_old_ip" \
+    || fail "old policy generation was not withdrawn before replacement"
+docker rm gonka-pr-policy-generation >/dev/null
+# Consume the released address so this regression necessarily exercises an IP
+# change rather than a restart that happens to reuse the old address.
+docker run -d --name gonka-pr-policy-generation-gap --network "$network" \
+    python:3.12-alpine sleep 300 >/dev/null
+docker run -d --name gonka-pr-policy-generation --network "$network" \
+    --network-alias proxy-policy-generation \
+    -v "$tmpdir/policy-admission.py:/app.py:ro" \
+    python:3.12-alpine python /app.py >/dev/null
+generation_new_ip=$(docker inspect -f \
+    "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
+    gonka-pr-policy-generation)
+[[ $generation_new_ip != "$generation_old_ip" ]] \
+    || fail "replacement fixture did not receive a new IP"
+for _ in $(seq 80); do
+    docker exec gonka-pr-proxy-generation curl -fsS \
+        http://proxy-policy-generation:9000/started >/dev/null 2>&1 && break
+    sleep 0.05
+done
+docker exec gonka-pr-proxy-generation curl -fsS \
+    http://proxy-policy-generation:9000/started >/dev/null \
+    || fail "replacement policy check did not enter the pending stage"
+if proxy_backend_addr_up_in gonka-pr-proxy-generation policy_http \
+    "$generation_new_ip"; then
+    fail "replacement inherited admission before completing a new check"
+fi
+docker exec gonka-pr-proxy-generation curl -fsS \
+    http://proxy-policy-generation:9000/fail >/dev/null
+for _ in $(seq 80); do
+    docker exec gonka-pr-proxy-generation curl -fsS \
+        http://proxy-policy-generation:9000/completed >/dev/null 2>&1 && break
+    sleep 0.05
+done
+docker exec gonka-pr-proxy-generation curl -fsS \
+    http://proxy-policy-generation:9000/completed >/dev/null \
+    || fail "replacement policy check did not complete the failed stage"
+if proxy_backend_addr_up_in gonka-pr-proxy-generation policy_http \
+    "$generation_new_ip"; then
+    fail "failed replacement policy check entered admission"
+fi
+docker exec gonka-pr-proxy-generation curl -fsS \
+    http://proxy-policy-generation:9000/ready >/dev/null
+for _ in $(seq 80); do
+    proxy_backend_addr_up_in gonka-pr-proxy-generation policy_http \
+        "$generation_new_ip" && break
+    sleep 0.1
+done
+proxy_backend_addr_up_in gonka-pr-proxy-generation policy_http \
+    "$generation_new_ip" \
+    || fail "replacement policy generation was not admitted after successful checks"
+docker rm -f gonka-pr-proxy-generation gonka-pr-policy-generation \
+    gonka-pr-policy-generation-gap >/dev/null
 
 # The check must use the exact production protocol on the data connection:
 # PROXY v2, then HTTP (or TLS and HTTP), then a 200 response from /health.
@@ -733,7 +836,18 @@ for name in b a; do
     # Compose honors the nginx image's SIGQUIT stop signal during replacement.
     # A forced removal can reset an already accepted POST, which no proxy may
     # safely replay because the application might have executed it.
+    old_policy_ip=$(docker inspect -f \
+        "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
+        "gonka-pr-policy-$name")
     docker stop --time 10 "gonka-pr-policy-$name" >/dev/null
+    for _ in $(seq 80); do
+        proxy_backend_addr_withdrawn_in gonka-pr-proxy policy_http \
+            "$old_policy_ip" && break
+        sleep 0.1
+    done
+    proxy_backend_addr_withdrawn_in gonka-pr-proxy policy_http \
+        "$old_policy_ip" || fail \
+        "policy-$name remained admitted after its graceful stop"
     docker rm "gonka-pr-policy-$name" >/dev/null
     start_policy "$name"
     policy_ip=$(docker inspect -f \
