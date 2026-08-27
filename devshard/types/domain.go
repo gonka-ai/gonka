@@ -86,18 +86,23 @@ const (
 )
 
 // ParseProtocolVersion parses a string into a ProtocolVersion.
-// Empty string defaults to ProtocolV1.
+// Empty string defaults to ProtocolV1. A leading "v"/"V" is stripped so
+// route segments like "v4" and "v4.1r5" stamp as "4" and "4.1r5". Any
+// remaining non-empty token is accepted — this is a local registry stamp,
+// not the session/settlement protocol tag.
 func ParseProtocolVersion(s string) (ProtocolVersion, error) {
-	switch strings.TrimSpace(s) {
-	case "", string(ProtocolV1), "v1":
+	raw := strings.TrimSpace(s)
+	if raw == "" {
 		return ProtocolV1, nil
-	case string(ProtocolV2), "v2":
-		return ProtocolV2, nil
-	case string(ProtocolV3), "v3":
-		return ProtocolV3, nil
-	default:
-		return "", fmt.Errorf("unknown protocol version %q", s)
 	}
+	out := raw
+	if out[0] == 'v' || out[0] == 'V' {
+		out = out[1:]
+	}
+	if out == "" {
+		return "", fmt.Errorf("unknown protocol version %q", raw)
+	}
+	return ProtocolVersion(out), nil
 }
 
 // SessionConfig holds session-level parameters.
