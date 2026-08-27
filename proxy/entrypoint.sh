@@ -1271,42 +1271,68 @@ if [ "$SSL_ENABLED" = "true" ] \
       || [ ! -f "/etc/nginx/ssl/cert.pem" ] \
       || [ ! -f "/etc/nginx/ssl/private.key" ]; }; then
     RENEW_INTERVAL_HOURS=${RENEW_INTERVAL_HOURS:-24}
-    RENEW_RETRY_SECONDS=${PROXY_SSL_WAIT_SECONDS:-60}
+    RENEW_INTERVAL_SECONDS=$(( RENEW_INTERVAL_HOURS * 3600 ))
+    RENEW_RETRY_SECONDS=${PROXY_SSL_RETRY_SECONDS:-60}
     echo "Starting background renewal loop (every ${RENEW_INTERVAL_HOURS}h)"
     (
+        retry_seconds=$RENEW_RETRY_SECONDS
+        reload_pending=false
+        retry_later() {
+            echo "WARNING: $1; retrying in ${retry_seconds}s"
+            sleep "$retry_seconds"
+            retry_seconds=$(( retry_seconds * 2 ))
+            if [ "$retry_seconds" -gt "$RENEW_INTERVAL_SECONDS" ]; then
+                retry_seconds=$RENEW_INTERVAL_SECONDS
+            fi
+        }
+
         # Let the foreground entrypoint exec nginx before the first renewal.
         while [ ! -f /var/run/nginx.pid ]; do sleep 0.1; done
         while true; do
+            if [ "$HTTPS_FALLBACK" = "true" ] \
+                && [ -f "/etc/nginx/ssl/cert.pem" ] \
+                && [ -f "/etc/nginx/ssl/private.key" ]; then
+                export LISTEN_HTTPS="$DESIRED_LISTEN_HTTPS"
+                export SSL_CONFIG="$DESIRED_SSL_CONFIG"
+                next_config=/etc/nginx/nginx.conf.next
+                if render_nginx_config "$next_config" \
+                    && nginx -t -c "$next_config" \
+                    && mv -f "$next_config" /etc/nginx/nginx.conf; then
+                    reload_pending=true
+                else
+                    rm -f "$next_config"
+                    retry_later "HTTPS configuration recovery failed"
+                    continue
+                fi
+            fi
+
+            if [ "$reload_pending" = "true" ]; then
+                if nginx -s reload; then
+                    echo "Certificate configuration reloaded"
+                    reload_pending=false
+                    HTTPS_FALLBACK=false
+                    retry_seconds=$RENEW_RETRY_SECONDS
+                else
+                    retry_later "nginx reload failed"
+                    continue
+                fi
+            fi
+
             renewal_status=0
             /setup-ssl.sh renew-if-needed || renewal_status=$?
             case "$renewal_status" in
               0)
                 echo "No renewal needed"
-                sleep $(( RENEW_INTERVAL_HOURS * 3600 ))
+                retry_seconds=$RENEW_RETRY_SECONDS
+                sleep "$RENEW_INTERVAL_SECONDS"
                 ;;
               10)
-                if [ "$HTTPS_FALLBACK" = "true" ]; then
-                    export LISTEN_HTTPS="$DESIRED_LISTEN_HTTPS"
-                    export SSL_CONFIG="$DESIRED_SSL_CONFIG"
-                    next_config=/etc/nginx/nginx.conf.next
-                    if render_nginx_config "$next_config" \
-                        && nginx -t -c "$next_config" \
-                        && mv -f "$next_config" /etc/nginx/nginx.conf; then
-                        HTTPS_FALLBACK=false
-                    else
-                        echo "WARNING: HTTPS configuration recovery failed"
-                        rm -f "$next_config"
-                        sleep "$RENEW_RETRY_SECONDS"
-                        continue
-                    fi
-                fi
-                echo "Certificate renewed; reloading nginx"
-                nginx -s reload || true
-                sleep $(( RENEW_INTERVAL_HOURS * 3600 ))
+                echo "Certificate published; scheduling nginx reload"
+                retry_seconds=$RENEW_RETRY_SECONDS
+                reload_pending=true
                 ;;
               *)
-                echo "WARNING: Renewal attempt failed; retrying in ${RENEW_RETRY_SECONDS}s"
-                sleep "$RENEW_RETRY_SECONDS"
+                retry_later "Renewal attempt failed"
                 ;;
             esac
         done
