@@ -362,6 +362,141 @@ parent_diagnostic_available() {
         /usr/local/lib/proxy-router/route-status >/dev/null 2>&1
 }
 
+parent_server_refs() {
+    local address=$1 parent=${PROXY_ROUTER_CONTAINER:-proxy} stats
+    stats=$("$docker_bin" exec "$parent" /bin/sh -ec \
+        "printf 'show stat\\n' | socat stdio /var/run/haproxy/haproxy.sock") || return 2
+    awk -F, -v address="$address" '
+        NR == 1 {
+            for (i = 1; i <= NF; i++) {
+                name = $i
+                sub(/^#[[:space:]]*/, "", name)
+                column[name] = i
+            }
+            valid = column["pxname"] && column["svname"] &&
+                column["status"] && column["addr"]
+            next
+        }
+        valid {
+            backend = $(column["pxname"])
+            server_address = $(column["addr"])
+            if ((backend == "versiond_router_coarse" ||
+                    backend ~ /^versiond_routers_/) &&
+                (server_address == address ||
+                    index(server_address, address ":") == 1) &&
+                $(column["status"]) ~ /^(UP|DRAIN)/) {
+                print backend "/" $(column["svname"])
+                found = 1
+            }
+        }
+        END {
+            if (!valid) exit 2
+            exit found ? 0 : 1
+        }
+    ' <<<"$stats"
+}
+
+parent_address_withdrawal_state() {
+    local address=$1 parent=${PROXY_ROUTER_CONTAINER:-proxy} stats
+    stats=$("$docker_bin" exec "$parent" /bin/sh -ec \
+        "printf 'show stat\\n' | socat stdio /var/run/haproxy/haproxy.sock") || return 2
+    awk -F, -v address="$address" '
+        NR == 1 {
+            for (i = 1; i <= NF; i++) {
+                name = $i
+                sub(/^#[[:space:]]*/, "", name)
+                column[name] = i
+            }
+            valid = column["pxname"] && column["status"] && column["addr"]
+            next
+        }
+        valid {
+            backend = $(column["pxname"])
+            server_address = $(column["addr"])
+            if ((backend == "versiond_router_coarse" ||
+                    backend ~ /^versiond_routers_/) &&
+                (server_address == address ||
+                    index(server_address, address ":") == 1) &&
+                $(column["status"]) ~ /^UP/) admitted = 1
+        }
+        END {
+            if (!valid) exit 2
+            exit admitted ? 1 : 0
+        }
+    ' <<<"$stats"
+}
+
+parent_runtime_command() {
+    local command=$1 parent=${PROXY_ROUTER_CONTAINER:-proxy} response
+    [[ $command != *"'"* ]] || return 1
+    response=$("$docker_bin" exec "$parent" /bin/sh -ec \
+        "printf '%s\\n' '$command' | socat stdio /var/run/haproxy/reconciler.sock") || return 1
+    [[ -z ${response//[[:space:]]/} ]]
+}
+
+ready_parent_refs() {
+    local ref restored=true
+    for ref; do
+        parent_runtime_command "set server $ref state ready" || restored=false
+    done
+    $restored
+}
+
+declare -a parent_drained_refs=()
+
+prepare_parent_slot_stop() {
+    local slot=$1 address refs_output status ref
+    local -a refs=()
+    parent_drained_refs=()
+    parent_proxy_active || return 0
+    address=$(slot_front_ip "$slot") || return 1
+    if refs_output=$(parent_server_refs "$address"); then
+        mapfile -t refs <<<"$refs_output"
+    else
+        status=$?
+        ((status == 1)) && return 0
+        return 1
+    fi
+    for ref in "${refs[@]}"; do
+        parent_runtime_command "set server $ref state drain" || {
+            ready_parent_refs "${parent_drained_refs[@]}" || true
+            parent_drained_refs=()
+            return 1
+        }
+        parent_drained_refs+=("$ref")
+    done
+    local deadline=$((SECONDS + wait_timeout))
+    while ((SECONDS < deadline)); do
+        if parent_address_withdrawal_state "$address"; then
+            return 0
+        else
+            status=$?
+        fi
+        ((status == 1)) || break
+        sleep 1
+    done
+    ready_parent_refs "${parent_drained_refs[@]}" || true
+    parent_drained_refs=()
+    return 1
+}
+
+reset_parent_slot_health() {
+    local ref
+    for ref in "${parent_drained_refs[@]}"; do
+        parent_runtime_command "set server $ref health down" || return 1
+    done
+    ready_parent_refs "${parent_drained_refs[@]}" || return 1
+    parent_drained_refs=()
+}
+
+stop_slot_generation() {
+    local slot=$1 status=0
+    prepare_parent_slot_stop "$slot" || return 1
+    slot_compose "$slot" stop --timeout "$drain_timeout" router || status=$?
+    reset_parent_slot_health || return 1
+    return "$status"
+}
+
 require_parent_diagnostic() {
     parent_proxy_active || return 1
     parent_diagnostic_available || fail \
@@ -905,7 +1040,7 @@ repair_fleet_capacity() {
                     # This slot is already outside the ready reserve, but it may
                     # still own accepted SSE responses. Drain it without
                     # consuming any healthy peer.
-                    slot_compose "$slot" stop --timeout "$drain_timeout" router
+                    stop_slot_generation "$slot"
                     ;;
                 created | exited | dead) ;;
                 *) fail "slot $slot cannot be recovered from container state '$state'" ;;
@@ -981,8 +1116,7 @@ maintenance_rollback() {
     if [[ $maintenance_active == true ]]; then
         warn "maintenance rollout failed; draining candidates before restoring the exact previous fleet"
         for slot in "${slots[@]}"; do
-            slot_compose "$slot" stop --timeout "$drain_timeout" router \
-                >/dev/null 2>&1 || true
+            stop_slot_generation "$slot" >/dev/null 2>&1 || ok=false
         done
         for slot in "${slots[@]}"; do
             if ! VERSIOND_ROUTER_IMAGE="${maintenance_images[$slot]}" \
@@ -1018,7 +1152,8 @@ rollback_current() {
     trap - ERR INT TERM HUP
     if [[ -n $current_slot && -n $rollback_image ]]; then
         warn "restoring slot $current_slot from $rollback_image"
-        if VERSIOND_ROUTER_IMAGE=$rollback_image \
+        if stop_slot_generation "$current_slot" && \
+            VERSIOND_ROUTER_IMAGE=$rollback_image \
             VERSIOND_POOL_HOST="${rollback_env[VERSIOND_POOL_HOST]}" \
             VERSIOND_ROUTER_BACK_NETWORK="${rollback_env[VERSIOND_ROUTER_BACK_NETWORK_NAME]}" \
             VERSIOND_LEGACY_HOST="${rollback_env[VERSIOND_LEGACY_HOST]}" \
@@ -1078,7 +1213,7 @@ stop_slot() {
     local slot=$1
     [[ -n ${expected[$slot]-} ]] || fail "slot '$slot' is not configured"
     require_ready_reserve "$slot"
-    slot_compose "$slot" stop --timeout "$drain_timeout" router
+    stop_slot_generation "$slot"
 }
 
 stop_fleet_containers() {
@@ -1339,7 +1474,7 @@ fleet_rollout() {
         current_slot=$slot
         rollback_image=$rollback_tag
         echo "Draining versiond-router slot $slot"
-        slot_compose "$slot" stop --timeout "$drain_timeout" router
+        stop_slot_generation "$slot"
         echo "Starting replacement for slot $slot"
         start_slot "$slot"
         slot_ready "$slot" || false
@@ -1371,7 +1506,7 @@ fleet_maintenance_rollout() {
 
     echo "Draining the complete old router fleet for an atomic placement change"
     for slot in "${slots[@]}"; do
-        slot_compose "$slot" stop --timeout "$drain_timeout" router
+        stop_slot_generation "$slot"
     done
     for slot in "${slots[@]}"; do
         echo "Starting maintenance replacement for slot $slot"

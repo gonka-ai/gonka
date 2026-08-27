@@ -581,6 +581,13 @@ for slot in "${slots[@]}"; do
 done
 
 selected_slot=${slots[0]}
+selected_slot_id=$(docker ps -q \
+    --filter label=ai.gonka.component=versiond-router \
+    --filter "label=ai.gonka.fleet=$fleet_id" \
+    --filter "label=ai.gonka.slot=$selected_slot")
+selected_slot_ip=$(docker inspect --format \
+    "{{with index .NetworkSettings.Networks \"$front\"}}{{.IPAddress}}{{end}}" \
+    "$selected_slot_id")
 # Address a known inner router directly so the test does not require a public
 # response header that exposes the selected container address.
 docker exec "gonka-router-fleet-probe-$suffix" sh -c \
@@ -599,6 +606,20 @@ docker exec "gonka-router-fleet-probe-$suffix" \
 
 "${fleet[@]}" stop "$selected_slot" >/dev/null &
 stop_pid=$!
+parent_withdrew=false
+for _ in $(seq 30); do
+    if ! docker exec "gonka-router-fleet-proxy-$suffix" \
+        /usr/local/lib/proxy-router/route-status v4 "$selected_slot_ip" \
+        >/dev/null 2>&1; then
+        parent_withdrew=true
+        break
+    fi
+    sleep 0.1
+done
+[[ $parent_withdrew == true ]] || fail \
+    "parent proxy did not withdraw slot $selected_slot before its stop"
+[[ $(docker inspect --format '{{.State.Running}}' "$selected_slot_id") == true ]] \
+    || fail "slot $selected_slot exited before parent withdrawal was observable"
 for _ in $(seq 20); do
     "${probe[@]}" -X POST -d request=continuity \
         http://proxy-router:18081/v4/sessions/fleet-test/chat >/dev/null \

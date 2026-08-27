@@ -272,9 +272,13 @@ The router fleet itself is managed with `versiond-router-fleet.sh`. `apply`
 bootstraps missing slots and rolls changed ones while preserving
 `VERSIOND_ROUTER_MIN_READY`; `rollout` forces that rolling reconciliation;
 `maintenance-rollout` is required for placement-contract changes that cannot
-mix old and new rings. Whole-node maintenance uses `stop-all --maintenance`,
-then `down --maintenance` after the main Compose project is down. Fleet
-resources are ownership-labelled, so cleanup does not cross into another fleet.
+mix old and new rings. Before replacing a slot, the fleet drains every matching
+coarse and per-version server in the parent HAProxy and confirms withdrawal.
+After the old process stops, those servers are reset to health `DOWN`; the new
+address must complete a fresh L7 `rise` before it is admitted. Whole-node
+maintenance uses `stop-all --maintenance`, then `down --maintenance` after the
+main Compose project is down. Fleet resources are ownership-labelled, so
+cleanup does not cross into another fleet.
 
 ## Configuration
 
