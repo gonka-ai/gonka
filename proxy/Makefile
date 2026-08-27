@@ -55,9 +55,9 @@ test-render:
 		-e VERSIOND_SERVICE_NAME=proxy \
 		-e VERSIOND_SERVICE_IS_ABSOLUTE=true \
 		-e VERSIOND_PORT=18081 \
-		-e EDGE_API_SERVICE_NAME=edge-api-router \
+		-e EDGE_API_SERVICE_NAME=proxy \
 		-e EDGE_API_SERVICE_IS_ABSOLUTE=true \
-		-e EDGE_API_PORT=18080 \
+		-e EDGE_API_PORT=18082 \
 		-v "$$tmpdir/nginx.conf:/etc/nginx/nginx.conf" \
 		"$$image" true >/dev/null; \
 	grep -q 'listen 127.0.0.1:80 proxy_protocol;' "$$tmpdir/nginx.conf" \
@@ -70,8 +70,8 @@ test-render:
 		|| fail "PROXY client address trusts an unexpected source"; \
 	grep -q 'server proxy:18081 resolve;' "$$tmpdir/nginx.conf" \
 		|| fail "versiond policy route does not return to the HA distributor"; \
-	grep -q 'server edge-api-router:18080 resolve;' "$$tmpdir/nginx.conf" \
-		|| fail "edge-api policy route does not preserve the existing nginx router"; \
+	grep -q 'server proxy:18082 resolve;' "$$tmpdir/nginx.conf" \
+		|| fail "edge-api policy route does not return to the HA distributor"; \
 	if grep -q 'node-a-proxy:1808' "$$tmpdir/nginx.conf"; then \
 		fail "internal distributor received the external KEY_NAME prefix"; \
 	fi; \

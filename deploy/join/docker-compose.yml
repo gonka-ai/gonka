@@ -23,8 +23,10 @@ x-proxy-policy: &proxy-policy
     - DISABLE_CHAIN_GRPC=${DISABLE_CHAIN_GRPC:-true}
     - DISABLE_VALIDATOR_WHITELIST=${DISABLE_VALIDATOR_WHITELIST:-true}
     - DISABLE_FAIL2BAN=${DISABLE_FAIL2BAN:-true}
-    - EDGE_API_SERVICE_NAME=${EDGE_API_SERVICE_NAME:-}
-    - EDGE_API_PORT=${EDGE_API_PORT:-18080}
+    # nginx keeps route policy; the public HAProxy owns edge-api membership.
+    - EDGE_API_SERVICE_NAME=proxy-policy-ingress
+    - EDGE_API_SERVICE_IS_ABSOLUTE=true
+    - EDGE_API_PORT=18082
   volumes:
     - ${SSL_CERT_SOURCE:-./secrets/nginx-ssl}:/etc/nginx/ssl
   networks:
@@ -154,9 +156,9 @@ services:
       - EDGE_API_OTEL_ENABLED=${EDGE_API_OTEL_ENABLED:-false}
       - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
       - OTEL_HEADERS=${OTEL_HEADERS:-}
-      # The base topology has no readiness-aware edge-api balancer, so there
-      # is nothing to announce to before draining.
-      - EDGE_API_DRAIN_ANNOUNCE=0s
+      # Report unready before listener shutdown so HAProxy can withdraw this
+      # instance while already accepted requests continue draining.
+      - EDGE_API_DRAIN_ANNOUNCE=${EDGE_API_DRAIN_ANNOUNCE:-5s}
       - EDGE_API_SHUTDOWN_BUDGET=${EDGE_API_SHUTDOWN_BUDGET:-2m}
     depends_on:
       - node
@@ -240,6 +242,10 @@ services:
       - PROXY_ROUTER_POLICY_BIND_HOST=proxy-policy-ingress
       - PROXY_ROUTER_METRICS_BIND_HOST=proxy-router-metrics
       - PROXY_ROUTER_PUBLIC_IDLE_SECONDS=${PROXY_ROUTER_PUBLIC_IDLE_SECONDS:-86400}
+      - EDGE_API_POOL_HOST=${EDGE_API_POOL_HOST:-edge-api}
+      - EDGE_API_PORT=18080
+      - PROXY_EDGE_API_POOL_SLOTS=${PROXY_EDGE_API_POOL_SLOTS:-16}
+      - PROXY_EDGE_API_PORT=18082
       - HAPROXY_DNS_RESOLVER=${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}
       - VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=${VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS:-86400}
       - PROXY_VERSIOND_PORT=18081
