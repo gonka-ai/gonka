@@ -16,8 +16,9 @@ capacity_state=gonka-proxy-router-capacity-state-$$
 containers=(
     gonka-pr-proxy gonka-pr-proxy-lb gonka-pr-probe gonka-pr-catalog
     gonka-pr-proxy-both
+    gonka-pr-proxy-cold
     gonka-pr-proxy-cache-floor
-    gonka-pr-policy-a gonka-pr-policy-b
+    gonka-pr-policy-a gonka-pr-policy-b gonka-pr-policy-cold
     gonka-pr-router-a gonka-pr-router-b gonka-pr-router-bad
     gonka-pr-router-migration
     gonka-pr-router-legacy gonka-pr-proxy-legacy
@@ -141,6 +142,36 @@ if data_enabled:
         daemon=True,
     ).start()
 threading.Event().wait()
+PY
+
+cat >"$tmpdir/policy-cold.py" <<'PY'
+import http.server
+import socketserver
+import threading
+import time
+
+
+class Data(socketserver.BaseRequestHandler):
+    def handle(self):
+        self.request.recv(256)
+
+
+class Readiness(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        time.sleep(2)
+        self.send_response(503)
+        self.send_header("Content-Length", "0")
+        self.end_headers()
+
+    def log_message(self, *_):
+        pass
+
+
+threading.Thread(
+    target=lambda: socketserver.ThreadingTCPServer(("", 80), Data).serve_forever(),
+    daemon=True,
+).start()
+http.server.ThreadingHTTPServer(("", 8081), Readiness).serve_forever()
 PY
 
 mkdir "$tmpdir/catalog"
@@ -388,6 +419,31 @@ proxy_backend_addr_up() {
             END { exit !found }
         '
 }
+
+# A newly resolved worker stays excluded while its first L7 check is still in
+# flight. The delayed 503 makes the former init-state UP/INI window observable.
+docker run -d --name gonka-pr-proxy-cold --network "$network" \
+    -e PROXY_POLICY_POOL_HOST=proxy-policy-cold \
+    -e NGINX_MODE=http \
+    -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
+    "$image" >/dev/null
+(
+    for _ in $(seq 80); do
+        code=$(docker exec gonka-pr-proxy-cold curl -sS -o /dev/null \
+            -w '%{http_code}' http://127.0.0.1:8404/readyz 2>/dev/null || true)
+        [[ $code != 200 ]] || exit 1
+        sleep 0.05
+    done
+) &
+cold_watch_pid=$!
+sleep 0.2
+docker run -d --name gonka-pr-policy-cold --network "$network" \
+    --network-alias proxy-policy-cold \
+    -v "$tmpdir/policy-cold.py:/app.py:ro" \
+    python:3.12-alpine python /app.py >/dev/null
+wait "$cold_watch_pid" \
+    || fail "policy worker was admitted before its first successful L7 check"
+docker rm -f gonka-pr-proxy-cold gonka-pr-policy-cold >/dev/null
 
 # A healthy sidecar cannot make an absent TLS listener look ready. This is the
 # production HTTP-fallback shape after nginx rejects an invalid certificate.
