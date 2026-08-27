@@ -6,7 +6,7 @@ LABEL ai.gonka.component="proxy-router" \
       ai.gonka.proxy-policy-contract="1"
 
 USER root
-RUN apk add --no-cache jq socat \
+RUN apk add --no-cache curl jq socat \
     && mkdir -p /etc/haproxy /var/run/haproxy /usr/local/lib/proxy-router \
        /usr/local/lib/router-runtime /var/lib/gonka-router \
     && chown -R haproxy:haproxy /etc/haproxy /var/run/haproxy \
