@@ -19,68 +19,6 @@ echo "setup-ssl.sh mode: $MODE"
 
 mkdir -p "$SSL_DIR"
 
-atomic_write_file() {
-  local content="$1"
-  local target="$2"
-  local mode="$3"
-  local target_dir target_name temporary
-
-  target_dir=$(dirname -- "$target")
-  target_name=${target##*/}
-  if ! temporary=$(mktemp "$target_dir/.${target_name}.tmp.XXXXXX"); then
-    return 1
-  fi
-  if printf '%s\n' "$content" > "$temporary" \
-      && chmod "$mode" "$temporary" \
-      && mv -f "$temporary" "$target"; then
-    return 0
-  fi
-
-  rm -f "$temporary"
-  return 1
-}
-
-install_certificate_bundle() {
-  local certificate="$1"
-  local private_key="$2"
-  local order_id="$3"
-  local cert_temporary
-
-  if [ -z "$order_id" ]; then
-    echo "ERROR: Certificate response does not contain an order ID"
-    return 1
-  fi
-  if ! cert_temporary=$(mktemp "$SSL_DIR/.cert.pem.tmp.XXXXXX"); then
-    return 1
-  fi
-  if ! printf '%s\n' "$certificate" > "$cert_temporary" \
-      || ! chmod 644 "$cert_temporary"; then
-    rm -f -- "$cert_temporary"
-    return 1
-  fi
-
-  # cert.pem is the only commit marker. Remove it before touching companion
-  # files, so an interrupted update is incomplete rather than mismatched.
-  if ! rm -f -- "$CERT_FILE" \
-      || ! rm -f -- "$KEY_FILE" "$ORDER_ID_FILE"; then
-    rm -f -- "$cert_temporary"
-    return 1
-  fi
-
-  # Secret material is written only to its final 0600 paths while cert.pem is
-  # absent. No private-key staging file or backup is created.
-  if ! (umask 077 \
-      && printf '%s\n' "$order_id" > "$ORDER_ID_FILE" \
-      && printf '%s\n' "$private_key" > "$KEY_FILE"); then
-    rm -f -- "$cert_temporary" "$KEY_FILE" "$ORDER_ID_FILE"
-    return 1
-  fi
-  if ! mv -f "$cert_temporary" "$CERT_FILE"; then
-    rm -f -- "$cert_temporary" "$CERT_FILE"
-    return 1
-  fi
-}
-
 # Resolve proxy-ssl host/port (respect KEY_NAME_PREFIX) and node_id
 PROXY_SSL_SERVICE_NAME=${PROXY_SSL_SERVICE_NAME:-proxy-ssl}
 PROXY_SSL_PORT=${PROXY_SSL_PORT:-8080}
@@ -180,7 +118,13 @@ elif [ "$MODE" = "renew" ] || [ "$MODE" = "renew-if-needed" ]; then
       if [ -n "$BUNDLE" ]; then
         # Basic sanity: ensure it looks like PEM
         if echo "$BUNDLE" | grep -q "BEGIN CERTIFICATE"; then
-          atomic_write_file "$BUNDLE" "$CERT_FILE" 644
+          CERT_TMP="${CERT_FILE}.tmp.$$"
+          if ! printf '%s\n' "$BUNDLE" > "$CERT_TMP" \
+              || ! chmod 644 "$CERT_TMP" \
+              || ! mv -f "$CERT_TMP" "$CERT_FILE"; then
+            rm -f "$CERT_TMP"
+            exit 1
+          fi
           echo "Installed renewed certificate for order $ORDER_ID"
           # exit code 10 indicates renewed
           exit 10
@@ -212,7 +156,7 @@ for i in 1 2 3 4 5; do
   CERT=$(echo "$RESPONSE" | jq -r '.certificate // empty' 2>/dev/null || true)
   KEY=$(echo "$RESPONSE" | jq -r '.private_key // empty' 2>/dev/null || true)
   ORDER_ID=$(echo "$RESPONSE" | jq -r '.order_id // empty' 2>/dev/null || true)
-  if [ -n "${CERT:-}" ] && [ -n "${KEY:-}" ] && [ "${CERT}" != "null" ] && [ "${KEY}" != "null" ]; then
+  if [ -n "${CERT:-}" ] && [ -n "${KEY:-}" ]; then
     break
   fi
   sleep 2
@@ -222,16 +166,22 @@ CERT=$(echo "$RESPONSE" | jq -r '.certificate // empty')
 KEY=$(echo "$RESPONSE" | jq -r '.private_key // empty')
 ORDER_ID=$(echo "$RESPONSE" | jq -r '.order_id // empty')
 
-if [ -z "$CERT" ] || [ -z "$KEY" ] || [ "$CERT" = "null" ] || [ "$KEY" = "null" ]; then
+if [ -z "$CERT" ] || [ -z "$KEY" ] || [ -z "$ORDER_ID" ]; then
   echo "ERROR: Failed to obtain certificate bundle from ${FINAL_PROXY_SSL_SERVICE}:${PROXY_SSL_PORT}"
   echo "$RESPONSE"
   exit 1
 fi
 
-if [ "$ORDER_ID" = "null" ]; then
-  ORDER_ID=""
+CERT_TMP="${CERT_FILE}.tmp.$$"
+# cert.pem is the marker: key and order must be complete before it appears.
+if ! printf '%s\n' "$CERT" > "$CERT_TMP" || ! chmod 644 "$CERT_TMP" \
+    || ! rm -f "$CERT_FILE" "$KEY_FILE" "$ORDER_ID_FILE" \
+    || ! (umask 077; printf '%s\n' "$ORDER_ID" > "$ORDER_ID_FILE" \
+      && printf '%s\n' "$KEY" > "$KEY_FILE") \
+    || ! mv -f "$CERT_TMP" "$CERT_FILE"; then
+  rm -f "$CERT_TMP" "$CERT_FILE" "$KEY_FILE" "$ORDER_ID_FILE"
+  exit 1
 fi
-install_certificate_bundle "$CERT" "$KEY" "$ORDER_ID"
 
 echo "SSL certificate obtained and installed for ${CERT_ISSUER_DOMAIN}"
 if [ "$FALLBACK_TO_ISSUE" = true ]; then

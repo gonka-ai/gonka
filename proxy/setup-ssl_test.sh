@@ -253,10 +253,10 @@ wait_for_setup 1
   || fail "fallback test did not inject the certificate rename failure"
 [ ! -e "$SSL_DIR/cert.pem" ] \
   || fail "failed fallback left a certificate marker"
-[ "$(cat "$SSL_DIR/private.key")" = 'RECOVERED PRIVATE KEY' ] \
-  || fail "failed fallback did not finish the private-key write"
-[ "$(cat "$SSL_DIR/order.id")" = 'order-3' ] \
-  || fail "failed fallback did not finish the order ID write"
+[ ! -e "$SSL_DIR/private.key" ] \
+  || fail "failed fallback left private-key material"
+[ ! -e "$SSL_DIR/order.id" ] \
+  || fail "failed fallback left order metadata"
 assert_no_staging_files
 if find "$SSL_DIR" \( -name '.private.key.*' -o -name '.order.id.*' \) \
     -print -quit | grep -q .; then
