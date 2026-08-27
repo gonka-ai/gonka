@@ -168,10 +168,20 @@ services:
       - VERSIOND_ROUTER_VERSION_CAPACITY=${VERSIOND_ROUTER_VERSION_CAPACITY:-32}
       - VERSIOND_ROUTER_ALLOW_COARSE_READINESS=${VERSIOND_ROUTER_ALLOW_COARSE_READINESS:-false}
       - VERSIOND_ROUTER_ADMIN_PORT=${VERSIOND_ROUTER_ADMIN_PORT:-8404}
-      - VERSIOND_ROUTER_FRONT_BIND_HOST=${VERSIOND_ROUTER_FRONT_BIND_HOST:-}
+      - VERSIOND_ROUTER_FRONT_BIND_HOST=${VERSIOND_ROUTER_FRONT_BIND_HOST:-versiond-router-ingress}
+      # The data/admin listener is isolated on proxy-policy-front, so forwarded
+      # identity from the policy tier is trusted instead of being replaced.
+      - VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS=${VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS:-true}
       - HAPROXY_DNS_RESOLVER=${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}
       # Internal-only exporter bind for the optional observability overlay.
-      - VERSIOND_ROUTER_METRICS_BIND_HOST=${VERSIOND_ROUTER_METRICS_BIND_HOST:-versiond-router}
+      - VERSIOND_ROUTER_METRICS_BIND_HOST=${VERSIOND_ROUTER_METRICS_BIND_HOST:-versiond-router-metrics}
+    networks:
+      default:
+        aliases:
+          - versiond-router-metrics
+      proxy-policy-front:
+        aliases:
+          - versiond-router-ingress
     volumes:
       - versiond-router-state:/var/lib/gonka-router
     depends_on:
@@ -220,7 +230,7 @@ services:
         # it must not block public APIs that do not use the devshard route.
         required: false
     environment:
-      - VERSIOND_ROUTER_POOL_HOST=versiond-router
+      - VERSIOND_ROUTER_POOL_HOST=versiond-router-ingress
       - VERSIOND_ROUTER_PORT=8080
       - VERSIOND_ROUTER_ADMIN_PORT=${VERSIOND_ROUTER_ADMIN_PORT:-8404}
       # The published 0.2.15 router is nginx and exposes health on its data

@@ -30,7 +30,10 @@ worker. That listener is bound only to the internal `proxy-policy-front`
 network; nginx derives both its bind address and trusted PROXY CIDR from the
 `proxy-policy-ingress` peer. Containers on the shared application network
 cannot reach or spoof that hop. nginx returns `/devshard` to the private HTTP
-frontend on that network; HAProxy then reaches the versiond-router pool. Edge
+frontend on that network; HAProxy then reaches the versiond-router pool through
+the isolated `versiond-router-ingress` alias. A catalog-aware inner HAProxy
+preserves the client identity derived by the trusted policy tier on this
+private hop. Edge
 API traffic keeps the pre-existing nginx path in this release: a single worker
 targets `edge-api` directly, while the multi-instance overlay targets the
 existing `edge-api-router` nginx service.

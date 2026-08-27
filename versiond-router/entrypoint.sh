@@ -129,6 +129,15 @@ HA_DEPLOYMENT=$(bool_env GONKA_HA)
 ALLOW_COARSE_READINESS=$(bool_env VERSIOND_ROUTER_ALLOW_COARSE_READINESS)
 CATALOG_ALLOW_REMOVALS=$(bool_env VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS)
 RENDER_ONLY=$(bool_env VERSIOND_ROUTER_RENDER_ONLY)
+TRUST_FORWARDED_HEADERS=$(bool_env VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS)
+
+if [ -n "$TRUST_FORWARDED_HEADERS" ]; then
+    FORWARDED_PROTO_RULE='# Preserve X-Forwarded-Proto from the isolated trusted ingress.'
+    REAL_IP_RULE='# Preserve X-Real-IP from the isolated trusted ingress.'
+else
+    FORWARDED_PROTO_RULE='http-request set-header X-Forwarded-Proto %[ssl_fc,iif(https,http)]'
+    REAL_IP_RULE='http-request set-header X-Real-IP %[src]'
+fi
 
 # Hostnames are substituted into the config by sed, and sed is not inert to
 # them: '&' expands to the matched placeholder and '|' terminates the
@@ -531,6 +540,8 @@ sed \
     -e "s|\${STREAM_IDLE_SECONDS}|$STREAM_IDLE|g" \
     -e "s|\${TUNNEL_TIMEOUT_SECONDS}|$TUNNEL_TIMEOUT|g" \
     -e "s|\${DNS_RESOLVER}|$DNS_RESOLVER|g" \
+    -e "s|\${FORWARDED_PROTO_RULE}|$FORWARDED_PROTO_RULE|g" \
+    -e "s|\${REAL_IP_RULE}|$REAL_IP_RULE|g" \
     -e "/\${ROUTER_READY_RULES}/{
         r $READY_RULES
         d

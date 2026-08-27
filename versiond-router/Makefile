@@ -1616,6 +1616,21 @@ test-render: test-local-compose test-join-compose test-join-versiond-healthcheck
 		|| fail "X-Real-IP is not unconditionally replaced"; \
 	grep -Eq '^[[:space:]]*http-request set-header X-Forwarded-Proto %\[ssl_fc,iif\(https,http\)\][[:space:]]*$$' "$$tmpdir/mixed.cfg" \
 		|| fail "X-Forwarded-Proto is not unconditionally replaced"; \
+	HAPROXY_BIN=true \
+	VERSIOND_ROUTER_RENDER_ONLY=1 \
+	VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS=true \
+	VERSIOND_VERSIONS=v4 \
+	VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+	VERSIOND_ROUTER_OUT="$$tmpdir/trusted-ingress.cfg" \
+	VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/trusted-ingress.map" \
+	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/trusted-ingress.versions.map" \
+	VERSIOND_ROUTER_READY_RULES="$$tmpdir/trusted-ingress.ready.rules" \
+	./entrypoint.sh; \
+	if grep -Eq 'http-request set-header (X-Real-IP|X-Forwarded-Proto)' \
+		"$$tmpdir/trusted-ingress.cfg"; then \
+		fail "trusted ingress identity is overwritten by the inner router"; \
+	fi; \
 	grep -q '^[[:space:]]*http-request deny deny_status 413 if { req.hdr_val(content-length) gt 10485760 }' "$$tmpdir/mixed.cfg" \
 		|| fail "the advertised request body cap is gone"; \
 	grep -Eq '^[[:space:]]*accepted_payload_size 8192([[:space:]]|$$)' "$$tmpdir/mixed.cfg" \
