@@ -119,7 +119,7 @@ if [[ ${1:-} == inspect ]]; then
                 case ${4:-} in
                     proxy)
                         printf '%s\n' \
-                            'NGINX_MODE=http' \
+                            "NGINX_MODE=${FAKE_NGINX_MODE:-http}" \
                             'PROXY_POLICY_POOL_SLOTS=7' \
                             'PROXY_ROUTER_PUBLIC_IDLE_SECONDS=86400' \
                             'HAPROXY_DNS_RESOLVER=127.0.0.11:53' \
@@ -250,6 +250,8 @@ if [[ ${1:-} == compose ]]; then
 		exit 0
 	fi
 	if [[ $action == up && $service == proxy-policy* ]]; then
+		rm -f "$STATE_DIR/health-down-policy_http-$service" \
+			"$STATE_DIR/health-down-policy_https-$service"
 			if [[ -f $model_file && $model_file == *.gonka-rollback-model.* ]]; then
 			printf 'policy-image=%s\n' \
 				"$(jq -r --arg service "$service" '.services[$service].image' "$model_file")" \
@@ -354,8 +356,35 @@ fi
 
 if [[ ${1:-} == exec && ${2:-} == proxy && \
     ${3:-} == /bin/sh && ${4:-} == -ec && \
+    ${5:-} == *'set server '* ]]; then
+	command=${5:-}
+	for backend in policy_http policy_https; do
+		for service in proxy-policy proxy-policy2; do
+			ref=$backend/$service
+			if [[ $backend == "${RUNTIME_FAIL_BACKEND-}" && \
+				$service == "${RUNTIME_FAIL_SERVICE-}" && \
+				$command == *"set server $ref ${RUNTIME_FAIL_COMMAND-}"* ]]; then
+				exit 1
+			fi
+			if [[ $command == *"set server $ref state drain"* ]]; then
+				printf 'runtime drain %s\n' "$ref" >>"$DOCKER_LOG"
+				: >"$STATE_DIR/drained-$backend-$service"
+			elif [[ $command == *"set server $ref health down"* ]]; then
+				printf 'runtime down %s\n' "$ref" >>"$DOCKER_LOG"
+				: >"$STATE_DIR/health-down-$backend-$service"
+			elif [[ $command == *"set server $ref state ready"* ]]; then
+				printf 'runtime ready %s\n' "$ref" >>"$DOCKER_LOG"
+				rm -f "$STATE_DIR/drained-$backend-$service"
+			fi
+		done
+	done
+	exit 0
+fi
+
+if [[ ${1:-} == exec && ${2:-} == proxy && \
+    ${3:-} == /bin/sh && ${4:-} == -ec && \
     ${5:-} == *'show stat'* ]]; then
-	printf '# pxname,svname,status,addr\n'
+	printf '# pxname,svname,status,check_status,check_rise,check_fall,check_health,addr\n'
 	for service in proxy-policy proxy-policy2; do
 		[[ -f $STATE_DIR/present-$service ]] || continue
 		case $service in
@@ -370,14 +399,26 @@ if [[ ${1:-} == exec && ${2:-} == proxy && \
 		esac
 		address=$old_address
 		[[ ! -f $STATE_DIR/generation-$service ]] || address=$new_address
-		status=UP
-		if [[ -f $STATE_DIR/stopped-$service && \
-			($service != "${WITHDRAW_FAIL_SERVICE-}" || \
-			 -f $STATE_DIR/stopped-twice-$service) ]]; then
-			status=DOWN
-		fi
-		printf 'policy_http,%s,%s,%s:80\n' "$service" "$status" "$address"
-		printf 'policy_https,%s,%s,%s:443\n' "$service" "$status" "$address"
+		for backend in policy_http policy_https; do
+			status=UP
+			if [[ -f $STATE_DIR/drained-$backend-$service && \
+				$service != "${WITHDRAW_FAIL_SERVICE-}" ]]; then
+				status=DRAIN
+			elif [[ -f $STATE_DIR/stopped-$service ]]; then
+				status=DOWN
+			fi
+			check_status=L7OK
+			check_health=3
+			if [[ -f $STATE_DIR/health-down-$backend-$service && \
+				-f $STATE_DIR/stopped-$service ]]; then
+				check_status=L4CON
+				check_health=0
+			fi
+			port=80
+			[[ $backend == policy_http ]] || port=443
+			printf '%s,%s,%s,%s,2,2,%s,%s:%s\n' "$backend" "$service" \
+				"$status" "$check_status" "$check_health" "$address" "$port"
+		done
 	done
 	exit 0
 fi
@@ -456,6 +497,7 @@ run_cutover() {
 	rm -f "$tmpdir"/present-proxy-policy*
 	rm -f "$tmpdir"/generation-proxy*
 	rm -f "$tmpdir"/stopped-proxy-policy*
+	rm -f "$tmpdir"/drained-policy_* "$tmpdir"/health-down-policy_*
     if [[ -n ${INITIAL_PROXY_COMPONENT:-} ]]; then
         printf '%s\n' "$INITIAL_PROXY_COMPONENT" >"$tmpdir/current"
     fi
@@ -563,12 +605,28 @@ INITIAL_PROXY_COMPONENT=proxy-router \
     run_cutover "$tmpdir/idempotent.log" env
 policy2_stop_line=$(grep -n ' stop .*proxy-policy2$' "$tmpdir/idempotent.log" | head -n1 | cut -d: -f1)
 policy2_up_line=$(grep -n ' up .*proxy-policy2$' "$tmpdir/idempotent.log" | head -n1 | cut -d: -f1)
+policy2_drain_line=$(grep -n '^runtime drain policy_http/proxy-policy2$' "$tmpdir/idempotent.log" | head -n1 | cut -d: -f1)
+policy2_down_line=$(grep -n '^runtime down policy_http/proxy-policy2$' "$tmpdir/idempotent.log" | head -n1 | cut -d: -f1)
+policy2_ready_line=$(grep -n '^runtime ready policy_http/proxy-policy2$' "$tmpdir/idempotent.log" | tail -n1 | cut -d: -f1)
 policy_stop_line=$(grep -n ' stop .*proxy-policy$' "$tmpdir/idempotent.log" | head -n1 | cut -d: -f1)
 policy_up_line=$(grep -n ' up .*proxy-policy$' "$tmpdir/idempotent.log" | head -n1 | cut -d: -f1)
-[[ -n $policy2_stop_line && -n $policy2_up_line && -n $policy_stop_line && \
-    -n $policy_up_line && $policy2_stop_line -lt $policy2_up_line && \
-    $policy2_up_line -lt $policy_stop_line && $policy_stop_line -lt $policy_up_line ]] \
-    || fail "day-2 policy replacements did not withdraw each old generation before recreation"
+policy_drain_line=$(grep -n '^runtime drain policy_http/proxy-policy$' "$tmpdir/idempotent.log" | head -n1 | cut -d: -f1)
+policy_down_line=$(grep -n '^runtime down policy_http/proxy-policy$' "$tmpdir/idempotent.log" | head -n1 | cut -d: -f1)
+policy_ready_line=$(grep -n '^runtime ready policy_http/proxy-policy$' "$tmpdir/idempotent.log" | tail -n1 | cut -d: -f1)
+[[ -n $policy2_drain_line && -n $policy2_stop_line && -n $policy2_down_line && \
+    -n $policy2_up_line && -n $policy2_ready_line && \
+    $policy2_drain_line -lt $policy2_stop_line && \
+    $policy2_stop_line -lt $policy2_down_line && \
+    $policy2_down_line -lt $policy2_ready_line && \
+    $policy2_ready_line -lt $policy2_up_line && \
+    -n $policy_drain_line && -n $policy_stop_line && -n $policy_down_line && \
+    -n $policy_up_line && -n $policy_ready_line && \
+    $policy_drain_line -lt $policy_stop_line && \
+    $policy_stop_line -lt $policy_down_line && \
+    $policy_down_line -lt $policy_ready_line && \
+    $policy_ready_line -lt $policy_up_line && \
+    $policy2_up_line -lt $policy_drain_line ]] || fail \
+    "day-2 policy replacements did not cross drain, stop, health, and admission stages reserve-first"
 grep -q '^docker tag ' "$tmpdir/idempotent.log" || fail \
     "day-2 convergence did not arm public proxy rollback"
 grep -q 'docker image rm gonka/router-ha-proxy-rollback:' \
@@ -583,6 +641,19 @@ grep -q '^fleet apply$' "$tmpdir/idempotent.log" || fail \
 jq -e '.transaction.ingress.state == "committed"' \
     "$tmpdir/.gonka-router-ha-transaction.json" >/dev/null || fail \
     "rerun after TERM did not commit the recovered ingress transaction"
+
+INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
+INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/both-policy-backends.log" env FAKE_NGINX_MODE=both
+for backend in policy_http policy_https; do
+	for service in proxy-policy proxy-policy2; do
+		for transition in drain down ready; do
+			grep -q "^runtime $transition $backend/$service$" \
+				"$tmpdir/both-policy-backends.log" || fail \
+				"$service did not cross $transition in $backend"
+		done
+	done
+done
 
 INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
 INITIAL_POLICY_GENERATION=candidate \
@@ -617,11 +688,37 @@ if INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
         WITHDRAW_FAIL_SERVICE=proxy-policy2; then
 	fail "policy replacement proceeded while the old address remained admitted"
 fi
-grep -q ' stop .*proxy-policy2$' "$tmpdir/withdrawal-failure.log" || fail \
-    "withdrawal failure did not stop the selected old generation"
+grep -q '^runtime drain policy_http/proxy-policy2$' \
+    "$tmpdir/withdrawal-failure.log" || fail \
+    "withdrawal failure did not drain the selected old generation"
+if grep -q ' stop .*proxy-policy2$' "$tmpdir/withdrawal-failure.log"; then
+	fail "withdrawal failure stopped a generation that was still admitted"
+fi
+grep -q '^runtime ready policy_http/proxy-policy2$' \
+    "$tmpdir/withdrawal-failure.log" || fail \
+    "withdrawal failure did not restore the old generation admission state"
 if grep ' up .*proxy-policy2$' "$tmpdir/withdrawal-failure.log" \
     | grep -vq 'gonka-rollback-model'; then
 	fail "replacement started before withdrawal was confirmed"
+fi
+
+if INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
+    INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/partial-drain-failure.log" env \
+        FAKE_NGINX_MODE=both \
+        RUNTIME_FAIL_BACKEND=policy_https \
+        RUNTIME_FAIL_SERVICE=proxy-policy2 \
+        RUNTIME_FAIL_COMMAND='state drain'; then
+	fail "policy replacement proceeded after a partial runtime drain"
+fi
+grep -q '^runtime drain policy_http/proxy-policy2$' \
+    "$tmpdir/partial-drain-failure.log" || fail \
+    "partial drain failure did not exercise the first policy backend"
+grep -q '^runtime ready policy_http/proxy-policy2$' \
+    "$tmpdir/partial-drain-failure.log" || fail \
+    "partial drain failure left the first policy backend withdrawn"
+if grep -q ' stop .*proxy-policy2$' "$tmpdir/partial-drain-failure.log"; then
+	fail "partial drain failure stopped the still-serving policy generation"
 fi
 
 if INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
