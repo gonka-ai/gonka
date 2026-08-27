@@ -112,8 +112,8 @@ Key runtime environment variables:
 | `CHAIN_GRPC_RATE_LIMIT_RPS` | 20 | Rate limit for `/chain-grpc/` (default: 20). |
 | `CHAIN_GRPC_RATE_UNIT` | m | Unit for chain gRPC (`s` or `m`). Default `m`. |
 | `CHAIN_GRPC_BURST` | 200 | Burst for chain gRPC. |
-| `EDGE_API_SERVICE_NAME` | (empty) | Upstream for read-only `/v1/` query routes served by **edge-api**. Empty sends all `/v1/` traffic to dapi. The single topology targets `edge-api`; the multi-instance overlay targets `edge-api-router`. |
-| `EDGE_API_PORT` | 18080 | Port on the selected edge-api or existing edge-api-router upstream. |
+| `EDGE_API_SERVICE_NAME` | (empty) | Upstream for read-only `/v1/` query routes served by **edge-api**. Empty sends all `/v1/` traffic to dapi. Shipped Compose points both policy workers at the public HAProxy's private edge frontend. |
+| `EDGE_API_PORT` | 18080 | Edge upstream port; shipped policy workers use `18082` to return Tier A requests to the public HAProxy. |
 | `EDGE_API_ROUTE_PATHS` | (18 public paths) | Space-separated public Tier A `/v1/` paths steered to edge-api before the catch-all `/v1/` → dapi block. Defaults: `EDGE_API_ROUTE_PATHS_DEFAULT` in `proxy/entrypoint.sh`. |
 | `EDGE_API_OPTIONAL_ROUTE_PATHS` | verify/debug (4) | CPU-heavy helpers (`/v1/verify-proof`, `/v1/verify-block`, `/v1/debug/...`). **Not published by default.** |
 | `EDGE_API_EXPOSE_OPTIONAL_ROUTES` | false | Set `true` to publish optional verify/debug routes to edge-api. Keep `false` and put auth (basic/mTLS/IP allowlist) on nginx if you expose them. When private, proxy returns **403** for those paths. |
@@ -213,12 +213,13 @@ export EDGE_API_EXPOSE_OPTIONAL_ROUTES=true
 Multi-instance edge-api (`deploy/join/docker-compose.edge-api-multi.yml`):
 
 ```text
-Client -> proxy-router -> proxy-policy -> edge-api-router nginx -> edge-api-N
+Client -> proxy-router -> proxy-policy -> proxy-router :18082 -> edge-api-N
 ```
 
-This release deliberately preserves the existing edge-api nginx router and does
-not require a new edge-api readiness contract. Moving that pool into the public
-HAProxy is a separate edge-api lifecycle change.
+nginx still owns Tier A path and method policy. The public HAProxy owns DNS pool
+membership, active `/readyz` checks, round-robin selection, and withdrawal of a
+draining replica. The separate `edge-api-router` nginx service is not part of
+the join topology.
 
 ### Observability UI security
 

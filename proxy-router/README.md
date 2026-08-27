@@ -1,13 +1,15 @@
 # proxy-router
 
 `proxy-router` is the host-local HAProxy at the edge of the Compose deployment.
-It has three data-plane responsibilities:
+It has four data-plane responsibilities:
 
 1. expose public TCP listeners on ports 80 and 443 and distribute connections
    across private nginx `proxy-policy` workers with PROXY protocol v2;
-2. distribute `/devshard` requests from those workers across ready
+2. distribute Tier A requests from those workers across ready `edge-api`
+   replicas with round-robin selection;
+3. distribute `/devshard` requests from those workers across ready
    `versiond-router` replicas, using route-specific health checks;
-3. expose only DAPI's read-only `GET /versions` catalog on the isolated inner
+4. expose only DAPI's read-only `GET /versions` catalog on the isolated inner
    router network.
 
 The nginx workers still own TLS, HTTP/2, CORS, rate limits, path rewrites, and
@@ -20,7 +22,8 @@ the service-pool distributors to scale and restart independently.
 client
   -> proxy-router :80/:443
   -> proxy-policy2 + proxy-policy (fixed rolling slots)
-       -> ordinary and edge-api routes -> existing services
+       -> ordinary routes -> existing services
+       -> Tier A routes -> proxy-router :18082 -> edge-api pool
        -> /devshard/* -> proxy-router :18081 -> versiond-router fleet
 ```
 
@@ -30,10 +33,24 @@ worker. That listener is bound only to the internal `proxy-policy-front`
 network; nginx derives both its bind address and trusted PROXY CIDR from the
 `proxy-policy-ingress` peer. Containers on the shared application network
 cannot reach or spoof that hop. nginx returns `/devshard` to the private HTTP
-frontend on that network; HAProxy then reaches the versiond-router pool. Edge
-API traffic keeps the pre-existing nginx path in this release: a single worker
-targets `edge-api` directly, while the multi-instance overlay targets the
-existing `edge-api-router` nginx service.
+frontends on that network. HAProxy then reaches the versiond-router or edge-api
+pool. nginx still decides which Tier A paths are public and preserves their
+rate limits, CORS, rewrites, and method split; it no longer owns edge-api pool
+membership.
+
+## Edge-api selection
+
+The single topology resolves one `edge-api` service. The multi overlay assigns
+`edge-api-pool` to all three replicas. HAProxy round-robins new Tier A requests
+across addresses that pass active health checks.
+
+During rolling adoption, a legacy image without `/readyz` remains eligible only
+when `/healthz` passes. A lifecycle-aware image reports `/readyz` 503 before
+listener shutdown, stays alive for the announcement window, and drains accepted
+requests after HAProxy withdraws it. Edge readiness is component-scoped: an
+empty edge pool makes `/readyz?component=edge-api` fail but does not make the
+generic public readiness fail, because ordinary and devshard APIs are still
+independently usable.
 
 ## Versiond-router selection
 
@@ -81,6 +98,8 @@ backends through a local Unix Runtime API socket. The process has no shared
 routing database, leader, or peer protocol. It does not need Redis:
 
 - `proxy-policy-front` resolves to both private nginx policy slots;
+- `edge-api-pool` resolves to all edge-api replicas in the multi overlay (the
+  single topology uses the `edge-api` service name directly);
 - `versiond-router` resolves to the router instances declared by the active
   Compose topology. A later fleet overlay can supply a multi-address alias
   without changing this routing contract.
@@ -107,8 +126,10 @@ outage. Multi-host ingress belongs in a later layer above this one.
 | --- | --- |
 | `:80`, `:443` | public TCP ingress to policy workers |
 | policy network `:18081` | private versiond-router distributor |
+| policy network `:18082` | private edge-api distributor |
 | `127.0.0.1:8404/livez` | process liveness |
 | `127.0.0.1:8404/readyz` | active policy-worker availability |
+| `127.0.0.1:8404/readyz?component=edge-api` | edge-api pool availability |
 | `127.0.0.1:8404/readyz?component=versiond` | coarse router-fleet availability |
 | `127.0.0.1:8404/readyz?version=<v>` | end-to-end router capacity for one bootstrap or governance version |
 | `127.0.0.1:8405/metrics`, `proxy-router-metrics:8405/metrics` | HAProxy Prometheus exporter; internal only, no host port |
@@ -131,6 +152,10 @@ and cannot mutate routing.
 | --- | --- | --- |
 | `PROXY_POLICY_POOL_HOST` | `proxy-policy` | policy-worker DNS alias; Compose sets the shared private `proxy-policy-front` alias |
 | `PROXY_POLICY_POOL_SLOTS` | `4` | reserved policy-worker slots |
+| `EDGE_API_POOL_HOST` | `edge-api` | edge-api DNS name; the multi overlay sets `edge-api-pool` |
+| `EDGE_API_PORT` | `18080` | edge-api data and readiness port |
+| `PROXY_EDGE_API_POOL_SLOTS` | `16` | reserved edge-api DNS slots |
+| `PROXY_EDGE_API_PORT` | `18082` | private policy-to-edge distributor port |
 | `VERSIOND_ROUTER_POOL_HOST` | `versiond-router-fleet` | router-fleet DNS alias |
 | `VERSIOND_ROUTER_FLEET_CAPACITY` | `16` | reserved router slots |
 | `VERSIOND_ROUTER_PORT` | `8080` | router data port |
@@ -195,7 +220,7 @@ make -C proxy-router test-routing
 ```
 
 The routing test uses real Docker networks, HAProxy, policy workers, route-aware
-router health, an unavailable router data port, and a legacy edge-api-router
-fixture. It verifies failover, proves that the proxy does not replay a
-non-idempotent POST in the tested connection-failure path, and ensures edge-api
-traffic does not enter a new HAProxy backend in this release.
+router health, an unavailable router data port, and a mixed edge-api pool. It
+verifies legacy `/healthz` fallback, readiness withdrawal while the listener is
+still serving, edge-only outage isolation, policy failover, and that the proxy
+does not replay a non-idempotent POST in the tested connection-failure path.
