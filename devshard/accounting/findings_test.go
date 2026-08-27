@@ -389,7 +389,7 @@ func TestAPermanentlyIncapableHostIsFlagged(t *testing.T) {
 		require.NoError(t, tr.RecordGhost("e1", nonce, PhaseNormal, QuarantineNone, NoSendParticipantCapability, "", false))
 	}
 
-	finding, found := findingByCode(recordFor(t, tr, "p0"), FindingCapabilityBlocked)
+	finding, found := findingByCode(recordFor(t, tr, "p0"), FindingStateDiverged)
 
 	require.True(t, found, "a host that can serve nothing must be named")
 	require.Equal(t, uint64(30), finding.Part)
@@ -406,7 +406,7 @@ func TestABurnForAnotherReasonIsNotACapabilityBlock(t *testing.T) {
 	}
 
 	record := recordFor(t, tr, "p0")
-	_, flagged := findingByCode(record, FindingCapabilityBlocked)
+	_, flagged := findingByCode(record, FindingStateDiverged)
 
 	require.False(t, flagged, "a throttle is not an incapability")
 	_, throttled := findingByCode(record, FindingGatewayThrottled)

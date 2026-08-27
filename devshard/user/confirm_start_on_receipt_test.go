@@ -348,3 +348,36 @@ func TestOneRefusingHostDoesNotStopTheOthersFromSyncing(t *testing.T) {
 	require.NotZero(t, counting.sends.Load(),
 		"a host after the refusing one must still be reached: stopping there leaves the group half taught")
 }
+
+func TestRewindMakesTheNextCatchUpCarryTheWholeHistory(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	for range 6 {
+		_, err := session.PrepareInference(InferenceParams{
+			Model: "llama", Prompt: testutil.TestPrompt,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		})
+		require.NoError(t, err)
+	}
+	session.mu.Lock()
+	session.hostSyncNonce[2] = 4
+	before := len(session.diffsForHost(2))
+	session.mu.Unlock()
+	require.NotZero(t, before, "precondition: the cursor hides part of a non-empty history")
+
+	require.True(t, session.RewindHostCatchUp(2, "escrow_state_root_diverged"))
+
+	session.mu.Lock()
+	defer session.mu.Unlock()
+	require.Greater(t, len(session.diffsForHost(2)), before,
+		"a rewound host has to be handed the chain its cursor claimed it already had")
+}
+
+func TestRewindIsANoOpForAHostAlreadyAtTheStartOfTheHistory(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	session.mu.Lock()
+	session.hostSyncNonce[2] = 0
+	session.mu.Unlock()
+
+	require.False(t, session.RewindHostCatchUp(2, "escrow_state_root_diverged"),
+		"rewinding past the retained history would hand the host a chain missing its own beginning")
+}

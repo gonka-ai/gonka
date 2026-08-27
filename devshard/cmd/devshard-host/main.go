@@ -55,13 +55,17 @@ func main() {
 	if hasStubInferenceHTTPStatus && (stubInferenceHTTPStatus < http.StatusBadRequest || stubInferenceHTTPStatus > 599) {
 		log.Fatalf("invalid %s: must be an HTTP error status", e2econfig.StubInferenceHTTPStatusEnv)
 	}
+	stubInferenceHTTPMessage, err := e2econfig.StringFromEnv(e2econfig.StubInferenceHTTPMessageEnv)
+	if err != nil {
+		log.Fatalf("load %s: %v", e2econfig.StubInferenceHTTPMessageEnv, err)
+	}
 
 	e := echo.New()
 	e.HideBanner = true
 	e.GET("/health", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
-	registerServer(e.Group(devshardpkg.DefaultRoutePrefix()), srv, stubInferenceHTTPStatus)
+	registerServer(e.Group(devshardpkg.DefaultRoutePrefix()), srv, stubInferenceHTTPStatus, stubInferenceHTTPMessage)
 
 	addr := ":" + *port
 	log.Printf("devshard-host listening on %s slot=%d address=%s route_prefix=%s",
@@ -73,7 +77,7 @@ func main() {
 
 // registerServer mounts the transport handlers the same way production
 // RegisterLazySessionRoutes does, for a single pre-bound e2e host session.
-func registerServer(g *echo.Group, srv *transport.Server, stubInferenceHTTPStatus int) {
+func registerServer(g *echo.Group, srv *transport.Server, stubInferenceHTTPStatus int, stubInferenceHTTPMessage string) {
 	g.Use(observability.EchoMiddleware())
 	g.Use(observability.RequestIDMiddleware)
 
@@ -87,7 +91,10 @@ func registerServer(g *echo.Group, srv *transport.Server, stubInferenceHTTPStatu
 	inferenceHandler := srv.HandleInference
 	if stubInferenceHTTPStatus != 0 {
 		inferenceHandler = func(c echo.Context) error {
-			message := http.StatusText(stubInferenceHTTPStatus)
+			message := stubInferenceHTTPMessage
+			if message == "" {
+				message = http.StatusText(stubInferenceHTTPStatus)
+			}
 			if message == "" {
 				message = fmt.Sprintf("stub inference HTTP status %d", stubInferenceHTTPStatus)
 			}

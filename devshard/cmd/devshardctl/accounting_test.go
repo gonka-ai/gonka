@@ -223,6 +223,7 @@ func TestAccountingProductionPendingClassification(t *testing.T) {
 }
 
 func TestAccountingProductionGhostFact(t *testing.T) {
+	disableThrottleProbe(t)
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
 	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
@@ -282,7 +283,7 @@ func TestAccountingStateDivergenceRemainsUnknownPolicy(t *testing.T) {
 	prepared := prepareForGhost(t, env.session, "llama")
 	env.proxy.redundancy.runGhostProbe(
 		prepared,
-		ghostCapability,
+		ghostStateDiverged,
 		"escrow_state_root_diverged",
 	)
 
@@ -534,7 +535,14 @@ func TestGatewayAccountingAdapterRecordsGhostPolicyDimensions(t *testing.T) {
 			wantMode:   accounting.QuarantineNone,
 		},
 		{
-			name:       "capability exclusion",
+			name:       "state divergence",
+			reason:     "participant_state_diverged_no_send",
+			quarantine: "none",
+			wantReason: accounting.NoSendParticipantStateDiverged,
+			wantMode:   accounting.QuarantineNone,
+		},
+		{
+			name:       "state divergence, the spelling written before the rename",
 			reason:     "participant_capability_no_send",
 			quarantine: "none",
 			wantReason: accounting.NoSendParticipantCapability,

@@ -59,6 +59,7 @@ func waitForMiss(t *testing.T, env *testProxyEnv, slot int) {
 func TestGhostAccountability_ChargesTheHostForANonceItRefused(t *testing.T) {
 	shortRefusalWindow(t)
 	enableGhostAccountability(t)
+	disableThrottleProbe(t)
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
 
@@ -81,7 +82,7 @@ func TestGhostAccountability_NeverContactsTheRefusingHost(t *testing.T) {
 	prepared := prepareForGhost(t, env.session, "llama")
 	slot := prepared.HostIdx()
 
-	env.proxy.redundancy.runGhostProbe(prepared, ghostCapability, ghostCapability.reason())
+	env.proxy.redundancy.runGhostProbe(prepared, ghostStateDiverged, ghostStateDiverged.reason())
 	waitForMiss(t, env, slot)
 
 	require.Nil(t, env.killables[slot].LastRequest(),
@@ -93,6 +94,7 @@ func TestGhostAccountability_NeverContactsTheRefusingHost(t *testing.T) {
 func TestGhostAccountability_ChargesEveryBurnNotJustTheFirst(t *testing.T) {
 	shortRefusalWindow(t)
 	enableGhostAccountability(t)
+	disableThrottleProbe(t)
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
 
@@ -174,7 +176,7 @@ func TestGhostAccountability_SparesBurnsTheHostDidNotCause(t *testing.T) {
 
 func TestGhostAccountability_AccountableKinds(t *testing.T) {
 	require.True(t, ghostThrottled.accountable())
-	require.True(t, ghostCapability.accountable())
+	require.True(t, ghostStateDiverged.accountable())
 	require.False(t, ghostPoC.accountable())
 	require.False(t, ghostExclude.accountable())
 	require.False(t, ghostNone.accountable())
@@ -214,6 +216,7 @@ func captureStages(t *testing.T) *stageRecorder {
 func TestGhostAccountability_ASuccessfulTimeoutIsNotLoggedAsAFailure(t *testing.T) {
 	shortRefusalWindow(t)
 	enableGhostAccountability(t)
+	disableThrottleProbe(t)
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
 	captured := captureStages(t)

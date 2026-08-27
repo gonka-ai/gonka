@@ -107,11 +107,11 @@ var errPickerStopped = errors.New("session picker: stopped")
 type ghostKind int
 
 const (
-	ghostNone       ghostKind = iota
-	ghostPoC                  // host requires PoC under relaxed bypass
-	ghostExclude              // queue had no compatible request after pickerStaleThreshold
-	ghostThrottled            // host is reactively throttled (tokens<1)
-	ghostCapability           // host is known incompatible with queued request shape
+	ghostNone          ghostKind = iota
+	ghostPoC                     // host requires PoC under relaxed bypass
+	ghostExclude                 // queue had no compatible request after pickerStaleThreshold
+	ghostThrottled               // host is reactively throttled (tokens<1)
+	ghostStateDiverged           // host's escrow state root diverged from ours
 )
 
 func (g ghostKind) reason() string {
@@ -122,8 +122,8 @@ func (g ghostKind) reason() string {
 		return "no_compatible_request_after_stale"
 	case ghostThrottled:
 		return "participant_throttled_no_send"
-	case ghostCapability:
-		return "participant_capability_no_send"
+	case ghostStateDiverged:
+		return "participant_state_diverged_no_send"
 	default:
 		return ""
 	}
@@ -177,7 +177,8 @@ type ghostDispatcher func(prepared *user.PreparedInference, kind ghostKind, reas
 // info available" (everything passes through to branch 2).
 type throttleChecker func(participantKey string) bool
 
-type capabilityChecker func(participantKey string, params user.InferenceParams) (string, bool)
+// The block is a property of the participant, not of the request, so the checker cannot see one.
+type stateBlockChecker func(participantKey string) (string, bool)
 
 // sessionPicker serializes nonce dispatch for one Session. It owns the
 // run loop goroutine that drains the queue.
@@ -186,7 +187,7 @@ type sessionPicker struct {
 	model           string // escrow's registered model; used for ghost probe params
 	dispatchGhost   ghostDispatcher
 	throttleBlocked throttleChecker
-	capabilityBlock capabilityChecker
+	stateBlocked    stateBlockChecker
 	logCtx          context.Context
 
 	mu     sync.Mutex
@@ -198,13 +199,13 @@ type sessionPicker struct {
 	stopped  chan struct{}
 }
 
-func newSessionPicker(session *user.Session, model string, dispatchGhost ghostDispatcher, throttleBlocked throttleChecker, capabilityBlock capabilityChecker) *sessionPicker {
+func newSessionPicker(session *user.Session, model string, dispatchGhost ghostDispatcher, throttleBlocked throttleChecker, stateBlocked stateBlockChecker) *sessionPicker {
 	return &sessionPicker{
 		session:         session,
 		model:           model,
 		dispatchGhost:   dispatchGhost,
 		throttleBlocked: throttleBlocked,
-		capabilityBlock: capabilityBlock,
+		stateBlocked:    stateBlocked,
 		logCtx:          context.Background(),
 		notify:          make(chan struct{}, 1),
 		stopped:         make(chan struct{}),
@@ -373,8 +374,8 @@ func (p *sessionPicker) run() {
 				if r.excludeParticipants[b.ParticipantKey] {
 					continue
 				}
-				if p.capabilityBlock != nil {
-					if reason, blocked := p.capabilityBlock(b.ParticipantKey, r.params); blocked {
+				if p.stateBlocked != nil {
+					if reason, blocked := p.stateBlocked(b.ParticipantKey); blocked {
 						if blockReason == "" {
 							blockReason = reason
 						}
@@ -398,11 +399,8 @@ func (p *sessionPicker) run() {
 				return user.InferenceParams{}, false, errPickerHold
 			}
 			if blockReason != "" {
-				ghost = ghostCapability
-				if blockReason == "escrow_state_root_diverged" {
-					ghostReason = blockReason
-				}
-				logRequestStage(p.logCtx, "session_picker_capability_blocked",
+				ghost = ghostStateDiverged
+				logRequestStage(p.logCtx, "session_picker_state_blocked",
 					"reason", blockReason,
 					"participant_key", b.ParticipantKey,
 					"host_idx", b.HostIdx,
@@ -589,8 +587,8 @@ func (p *sessionPicker) hasCompatibleParticipantLocked(req *pickerRequest, avail
 		if req.excludeParticipants[key] {
 			continue
 		}
-		if p.capabilityBlock != nil {
-			if _, blocked := p.capabilityBlock(key, req.params); blocked {
+		if p.stateBlocked != nil {
+			if _, blocked := p.stateBlocked(key); blocked {
 				continue
 			}
 		}

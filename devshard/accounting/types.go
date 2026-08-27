@@ -43,11 +43,12 @@ const (
 type NoSendReason string
 
 const (
-	NoSendPoCUnavailable         NoSendReason = "poc_unavailable_host"
-	NoSendParticipantThrottled   NoSendReason = "participant_throttled_no_send"
-	NoSendParticipantCapability  NoSendReason = "participant_capability_no_send"
-	NoSendNoCompatibleAfterStale NoSendReason = "no_compatible_request_after_stale"
-	NoSendUnknown                NoSendReason = "unknown"
+	NoSendPoCUnavailable           NoSendReason = "poc_unavailable_host"
+	NoSendParticipantThrottled     NoSendReason = "participant_throttled_no_send"
+	NoSendParticipantStateDiverged NoSendReason = "participant_state_diverged_no_send"
+	NoSendParticipantCapability    NoSendReason = "participant_capability_no_send"
+	NoSendNoCompatibleAfterStale   NoSendReason = "no_compatible_request_after_stale"
+	NoSendUnknown                  NoSendReason = "unknown"
 )
 
 type FailureOrigin string
@@ -304,7 +305,7 @@ type CurrentEpochFunc func(context.Context) (uint64, error)
 
 func NoSendReasonFromString(reason string) NoSendReason {
 	switch value := NoSendReason(reason); value {
-	case NoSendPoCUnavailable, NoSendParticipantThrottled, NoSendParticipantCapability, NoSendNoCompatibleAfterStale:
+	case NoSendPoCUnavailable, NoSendParticipantThrottled, NoSendParticipantStateDiverged, NoSendParticipantCapability, NoSendNoCompatibleAfterStale:
 		return value
 	default:
 		return NoSendUnknown

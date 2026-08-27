@@ -570,7 +570,8 @@ type Redundancy struct {
 	picker               *sessionPicker
 	participantLimiter   *ParticipantRequestLimiter
 	stateBlockMu         sync.RWMutex
-	stateBlockedHosts    map[string]string // escrow-local participant blocks for non-recoverable state divergence
+	stateBlockedHosts    map[string]string // escrow-local participant blocks for state divergence that survived a replay
+	stateRewoundHosts    map[string]bool   // participants whose one catch-up replay has been spent
 	throttleProbes       throttleProbeGate // bounds the ghost probes sent to a throttled host
 
 	onRaceCleanupStart func()
@@ -619,7 +620,7 @@ func NewRedundancyWithThrottle(session *user.Session, perf *PerfTracker, groupSi
 		groupSize: groupSize,
 		model:     model,
 	}
-	e.picker = newSessionPicker(session, model, e.runGhostProbe, throttleBlocked, e.capabilityBlocked)
+	e.picker = newSessionPicker(session, model, e.runGhostProbe, throttleBlocked, e.escrowStateBlockReason)
 	e.picker.start()
 	return e
 }
@@ -3357,10 +3358,6 @@ func (e *Redundancy) maybeRecordVersionRefusal(inf *inflight) {
 	}
 }
 
-func (e *Redundancy) capabilityBlocked(participantKey string, _ user.InferenceParams) (string, bool) {
-	return e.escrowStateBlockReason(participantKey)
-}
-
 func (e *Redundancy) maybeRecordEscrowStateDivergence(ctx context.Context, inf *inflight, err error) {
 	if e == nil || inf == nil || inf.probe || !isStateRootDivergenceError(err) {
 		return
@@ -3374,9 +3371,31 @@ func (e *Redundancy) maybeRecordEscrowStateDivergence(ctx context.Context, inf *
 	if e.stateBlockedHosts == nil {
 		e.stateBlockedHosts = make(map[string]string)
 	}
+	if e.stateRewoundHosts == nil {
+		e.stateRewoundHosts = make(map[string]bool)
+	}
+	spentRetry := e.stateRewoundHosts[participantKey]
 	_, existed := e.stateBlockedHosts[participantKey]
-	e.stateBlockedHosts[participantKey] = reason
+	if spentRetry {
+		e.stateBlockedHosts[participantKey] = reason
+	} else {
+		e.stateRewoundHosts[participantKey] = true
+	}
 	e.stateBlockMu.Unlock()
+
+	// A host rolls the diff back when its root disagrees, so its state survives the refusal intact and a
+	// replay of the whole retained chain costs one request to try. Only a second disagreement blocks.
+	if !spentRetry {
+		rewound := e.session != nil && e.session.RewindHostCatchUp(inf.hostIdx, reason)
+		logInferenceStage(ctx, inf.escrowID, inf.nonce, "escrow_participant_state_rewound",
+			"host", inf.hostID,
+			"participant_key", participantKey,
+			"reason", reason,
+			"rewound", rewound,
+			"error", err,
+		)
+		return
+	}
 	if !existed {
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "escrow_participant_state_blocked",
 			"host", inf.hostID,

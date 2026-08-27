@@ -1183,15 +1183,45 @@ func TestErrorStreamSkipsParticipantFailureAccounting(t *testing.T) {
 	require.False(t, limiter.IsBlocked(participantKey))
 	require.Equal(t, 0, env.proxy.redundancy.perf.Stats(0).TotalSamples)
 }
-func TestRunInference_StateRootDivergenceBlocksParticipantForEscrow(t *testing.T) {
+
+const divergenceUpstreamError = `http /sessions/escrow-proxy/chat/completions: status 500: {"error":"apply diff nonce 1: post_state_root does not match computed state root: diff 00, computed 11"}`
+
+// A host rolls the diff back when its root disagrees, so its state survives intact and one replay of the
+// retained chain is worth trying before the escrow writes it off.
+func TestRunInference_AStateRootDivergenceBuysAReplayBeforeTheBlock(t *testing.T) {
 	zeroReceiptTimeout(t)
 	env := setupTestProxy(t, 2, nil, true)
 	divergent := env.killables[1]
-	divergent.ForceError(fmt.Errorf(`http /sessions/escrow-proxy/chat/completions: status 500: {"error":"apply diff nonce 1: post_state_root does not match computed state root: diff 00, computed 11"}`))
+	divergent.ForceError(errors.New(divergenceUpstreamError))
 
 	var first bytes.Buffer
 	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &first, nil))
 	require.EqualValues(t, 1, divergent.LastRequest().Nonce)
+
+	_, blocked := env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
+	require.False(t, blocked, "the first disagreement buys a replay, not a verdict")
+
+	divergent.ForceError(nil)
+	var second bytes.Buffer
+	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &second, nil))
+	require.EqualValues(t, 3, divergent.LastRequest().Nonce, "the host has to be dispatched to again to prove itself")
+
+	_, blocked = env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
+	require.False(t, blocked, "a host that agreed on the replay must not be written off")
+}
+
+// A disagreement that survives the replay is the evidence the block wanted.
+func TestRunInference_AStateRootDivergenceThatSurvivesTheReplayBlocksTheHost(t *testing.T) {
+	zeroReceiptTimeout(t)
+	env := setupTestProxy(t, 2, nil, true)
+	divergent := env.killables[1]
+	divergent.ForceError(errors.New(divergenceUpstreamError))
+
+	for range 2 {
+		var body bytes.Buffer
+		require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &body, nil))
+	}
+
 	require.Eventually(t, func() bool {
 		_, blocked := env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
 		return blocked
@@ -1200,9 +1230,10 @@ func TestRunInference_StateRootDivergenceBlocksParticipantForEscrow(t *testing.T
 	// Even if the host would answer now, this escrow must stop sending it
 	// real traffic because its local state no longer matches our diff chain.
 	divergent.ForceError(nil)
-	var second bytes.Buffer
-	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &second, nil))
-	require.EqualValues(t, 1, divergent.LastRequest().Nonce)
+	lastNonce := divergent.LastRequest().Nonce
+	var after bytes.Buffer
+	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &after, nil))
+	require.EqualValues(t, lastNonce, divergent.LastRequest().Nonce)
 
 	reason, blocked := env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
 	require.True(t, blocked)

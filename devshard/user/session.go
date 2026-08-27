@@ -1402,11 +1402,17 @@ func (s *Session) forgetHostState(hostIdx int, err error) {
 	if !transport.IsSessionNotFound(err) {
 		return
 	}
+	s.RewindHostCatchUp(hostIdx, "host lost the escrow")
+}
+
+// RewindHostCatchUp rewinds a host to the start of the history we still hold, so the next request
+// carries the whole chain instead of the tail its cursor claims it needs. Reports whether it moved.
+func (s *Session) RewindHostCatchUp(hostIdx int, cause string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	cursor, tracked := s.hostSyncNonce[hostIdx]
 	if hostIdx < 0 || hostIdx >= len(s.group) || !tracked || cursor == 0 {
-		return
+		return false
 	}
 	// Only as far back as the diffs actually held: after a restart the history starts at the group's
 	// lowest cursor, and rewinding past it would hand the host a chain missing its own beginning.
@@ -1415,11 +1421,12 @@ func (s *Session) forgetHostState(hostIdx int, err error) {
 		earliest = s.diffs[0].Nonce - 1
 	}
 	if cursor <= earliest {
-		return
+		return false
 	}
-	logging.Warn("host lost the escrow, rewinding its catch-up cursor", "subsystem", "session",
+	logging.Warn("rewinding a host's catch-up cursor", "subsystem", "session", "cause", cause,
 		"escrow", s.escrowID, "host", hostIdx, "cursor", cursor, "rewound_to", earliest)
 	s.hostSyncNonce[hostIdx] = earliest
+	return true
 }
 
 // getFinalizeClients mirrors s.clients with admission control stripped, for the protocol paths that must

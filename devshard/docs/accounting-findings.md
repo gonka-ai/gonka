@@ -44,7 +44,7 @@ The offset is measured against the midpoint of the send-to-receipt round trip, n
 | `challenges_unresolved` | assigned nonces whose challenge has no verdict | 1% | 5% |
 | `timeouts_undecided` | timeout rounds that reached no verdict | 10% | 50% |
 
-**`chain_recorded_misses`** — the chain's own verdict, taken from settled host statistics. This is the number that costs the host its reward. It tracks `execution_timeouts` above, and also `throttled_by_gateway` and `blocked_by_capability` below: a nonce the gateway declined to send now raises a refusal timeout of its own, so a host that refuses everything is charged for it instead of disappearing from the count. Which nonce and which client request each miss came from is at `GET /api/v1/epochs/{epoch}/events`.
+**`chain_recorded_misses`** — the chain's own verdict, taken from settled host statistics. This is the number that costs the host its reward. It tracks `execution_timeouts` above, and also `throttled_by_gateway` and `blocked_by_state_divergence` below: a nonce the gateway declined to send now raises a refusal timeout of its own, so a host that refuses everything is charged for it instead of disappearing from the count. Which nonce and which client request each miss came from is at `GET /api/v1/epochs/{epoch}/events`.
 
 **`chain_recorded_invalid`** — a validator replayed the work and got a different answer. Not about speed: check the model and the runtime version the host serves, and check `logprobs_not_token_ids` first.
 
@@ -58,14 +58,16 @@ The offset is measured against the midpoint of the send-to-receipt round trip, n
 |---|---|---|---|
 | `throttled_by_gateway` | assigned nonces burned without being sent | 10% | — |
 | `quarantined_by_gateway` | assigned nonces handled under quarantine | 10% | — |
-| `blocked_by_capability` | assigned nonces burned because the host cannot serve at all | 1% | — |
+| `blocked_by_state_divergence` | assigned nonces burned because the host's escrow state root disagrees with ours | 1% | — |
 | `failure_origins` | nonces that reached the host and produced no usable answer | any | — |
 
 **`throttled_by_gateway`** — our decision, but it follows the host's: the window narrows after its failures and widens as they stop, so this trails the other findings rather than leading them. The nonces are not free to the host either. Every burn raises a timeout the verifiers decide, so a host that is merely busy clears itself when challenged and one that serves nothing ends up as visibly missed as one that accepts work and drops it.
 
 **`quarantined_by_gateway`** — also ours: the host was being probed, shadowed, or held on probation, so these nonces were not served the way a healthy host's are.
 
-**`blocked_by_capability`** — the gateway declined to send at all because the host cannot serve this shape of work: it does not support tools, its context is too small, or its build does not speak the escrow's protocol version. Unlike a throttle or an ejection this does not expire, because none of those conditions passes with time. The nonce is still spent — arithmetic decides which host a nonce lands on, and a nonce landing on a host that can serve nothing is burned. A participant sitting at a high rate here is one to take out of the group rather than to wait on. Which of the three conditions it is stands in the record's `capability` block: `protocol_version_unsupported`, `tool_choice_unsupported`, or a `context_limit`. The block is absent for a participant with nothing wrong.
+**`blocked_by_state_divergence`** — the gateway declined to send because the host computed a different state root for a diff than we did, so it can no longer follow our chain. The first disagreement is not the verdict: the host rolls the diff back and keeps its state, so the gateway rewinds its catch-up cursor and replays the whole retained history on the next request. Only a second disagreement blocks the participant for the rest of the escrow. The nonce is still spent — arithmetic decides which host a nonce lands on, and a nonce landing on a blocked host is burned. A participant sitting at a high rate here is one to take out of the group rather than to wait on: nothing lifts the block once the replay has failed.
+
+This is not about what a host's build can serve. What it refused for lack of tool support, context, or protocol version is in the record's `capability` block — `protocol_version_unsupported`, `tool_choice_unsupported`, or a `context_limit` — which is recorded but does not by itself stop the gateway from dispatching. The block is absent for a participant with nothing wrong.
 
 These burns are charged like throttled ones, one timeout per burn.
 

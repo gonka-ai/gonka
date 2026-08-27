@@ -39,7 +39,7 @@ func TestRunGhostProbe_UnprobedKindsAreSilent(t *testing.T) {
 	}{
 		{"poc", ghostPoC},
 		{"exclude", ghostExclude},
-		{"capability", ghostCapability},
+		{"capability", ghostStateDiverged},
 	}
 	for _, tc := range cases {
 		tc := tc

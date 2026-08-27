@@ -954,7 +954,7 @@ func normalizeQuarantine(q QuarantineMode) QuarantineMode {
 
 func normalizeNoSendReason(r NoSendReason) NoSendReason {
 	switch r {
-	case NoSendPoCUnavailable, NoSendParticipantThrottled, NoSendParticipantCapability, NoSendNoCompatibleAfterStale:
+	case NoSendPoCUnavailable, NoSendParticipantThrottled, NoSendParticipantStateDiverged, NoSendParticipantCapability, NoSendNoCompatibleAfterStale:
 		return r
 	default:
 		return NoSendUnknown

@@ -31,5 +31,5 @@ func ghostAccountabilityEnabled() bool {
 // accountable reports whether a burn is the host's own doing. PoC is unavailability the protocol
 // grants, and an empty queue is our own scheduling, so neither earns a miss.
 func (g ghostKind) accountable() bool {
-	return g == ghostThrottled || g == ghostCapability
+	return g == ghostThrottled || g == ghostStateDiverged
 }

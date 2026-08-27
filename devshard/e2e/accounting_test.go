@@ -547,32 +547,35 @@ func TestE2E_AccountingFocusedGhostRequestNotSent(t *testing.T) {
 }
 
 // Test flow:
-//  1. Start the three-host environment with the nonce-1 host returning a retriable tool capability error.
-//  2. Send tool completions so the gateway learns that participant cannot serve tool requests.
-//  3. Continue tool traffic until the participant's next assigned slot is skipped as a ghost no-send.
-//  4. Poll accounting until no_send_reason=participant_capability_no_send is visible.
-//  5. Assert the capability ghost is not a quarantine probe and every assigned nonce is counted once.
-func TestE2E_AccountingGhostCapabilityNoSendReason(t *testing.T) {
+//  1. Start the three-host environment with the nonce-1 host refusing every diff on a state-root mismatch.
+//  2. Send completions until that participant has disagreed twice: the first rewinds its catch-up, the second blocks it.
+//  3. Continue until the blocked participant's next assigned slot is skipped as a ghost no-send.
+//  4. Poll accounting until no_send_reason=participant_state_diverged_no_send is visible.
+//  5. Assert the ghost is not a quarantine probe and every assigned nonce is counted once.
+func TestE2E_AccountingGhostStateDivergedNoSendReason(t *testing.T) {
 	env, client := startNonStreamingEnvWithOptions(t, e2eEnvOptions{
 		hostEnvOverrides: map[int]map[string]string{
 			1: {
-				e2econfig.StubInferenceSSEErrorEnv: testutil.ToolChoiceUnsupportedMessage,
+				e2econfig.StubInferenceHTTPStatusEnv:  "500",
+				e2econfig.StubInferenceHTTPMessageEnv: testutil.StateRootDivergenceMessage,
 			},
 		},
 	})
 
 	nextSlot := int((testutil.LatestSessionNonce(t, client, env.clientURL) + 1) % uint64(len(env.hostURLs)))
-	require.Equal(t, 1, nextSlot, "test setup expects the tool-capability-error host to own the first traffic nonce")
+	require.Equal(t, 1, nextSlot, "test setup expects the diverging host to own the first traffic nonce")
 
 	before := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
 		return len(resp.Participants) > 0
 	})
-	beforeCapabilityGhost := testutil.AccountingGhostCounterCount(before, "participant_capability_no_send", "none")
+	beforeStateDivergedGhost := testutil.AccountingGhostCounterCount(before, "participant_state_diverged_no_send", "none")
 	beforeAssigned := testutil.AccountingAssignedTotal(before)
 
-	for i := 0; i < len(env.hostURLs)+2; i++ {
-		label := fmt.Sprintf("accounting capability ghost %d", i+1)
-		resp := testutil.PostJSONRaw(t, client, env.clientURL+"/v1/chat/completions", testutil.ToolCompletionBody(label, false), testutil.AdminAPIKey)
+	// The first disagreement only rewinds the host, so the block -- and the ghost that follows it -- needs
+	// the participant to be dispatched to more than once.
+	for i := 0; i < 3*len(env.hostURLs); i++ {
+		label := fmt.Sprintf("accounting state divergence ghost %d", i+1)
+		resp := testutil.PostJSONRaw(t, client, env.clientURL+"/v1/chat/completions", testutil.ChatCompletionBody(label, false), testutil.AdminAPIKey)
 		testutil.LogRawResponse(t, label, resp)
 		testutil.RequireOpenAINonStreamingCompletion(t, resp)
 	}
@@ -580,12 +583,12 @@ func TestE2E_AccountingGhostCapabilityNoSendReason(t *testing.T) {
 	accounting := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
 		return len(resp.Participants) > 0 &&
 			testutil.AccountingAssignedTotal(resp) > beforeAssigned &&
-			testutil.AccountingGhostCounterCount(resp, "participant_capability_no_send", "none") > beforeCapabilityGhost
+			testutil.AccountingGhostCounterCount(resp, "participant_state_diverged_no_send", "none") > beforeStateDivergedGhost
 	})
 	require.Greater(t,
-		testutil.AccountingGhostCounterCount(accounting, "participant_capability_no_send", "none"),
-		beforeCapabilityGhost,
-		"tool-capability-incompatible participant should be accounted with capability no-send reason and no quarantine mode",
+		testutil.AccountingGhostCounterCount(accounting, "participant_state_diverged_no_send", "none"),
+		beforeStateDivergedGhost,
+		"a participant blocked for state divergence should be accounted with that no-send reason and no quarantine mode",
 	)
 	testutil.RequireAccountingResponseCoherent(t, accounting, "stub-model")
 	testutil.RequireNonceAccountingBalanced(t, accounting)

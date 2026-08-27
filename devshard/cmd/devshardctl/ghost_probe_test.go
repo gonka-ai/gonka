@@ -2,16 +2,17 @@ package main
 
 import (
 	"errors"
+	"net/http"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
-func enableThrottleProbe(t *testing.T) {
+func disableThrottleProbe(t *testing.T) {
 	t.Helper()
-	throttleProbeEnabled.Store(true)
-	t.Cleanup(func() { throttleProbeEnabled.Store(false) })
+	throttleProbeEnabled.Store(false)
+	t.Cleanup(func() { throttleProbeEnabled.Store(true) })
 }
 
 func waitForHostContact(t *testing.T, env *testProxyEnv, slot int) {
@@ -22,7 +23,6 @@ func waitForHostContact(t *testing.T, env *testProxyEnv, slot int) {
 }
 
 func TestThrottleProbe_ContactsTheHost(t *testing.T) {
-	enableThrottleProbe(t)
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
 
@@ -38,7 +38,6 @@ func TestThrottleProbe_ContactsTheHost(t *testing.T) {
 func TestThrottleProbe_AServedProbeRaisesNoMiss(t *testing.T) {
 	shortRefusalWindow(t)
 	enableGhostAccountability(t)
-	enableThrottleProbe(t)
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
 
@@ -56,7 +55,6 @@ func TestThrottleProbe_AServedProbeRaisesNoMiss(t *testing.T) {
 func TestThrottleProbe_AnUnservedProbeStillMisses(t *testing.T) {
 	shortRefusalWindow(t)
 	enableGhostAccountability(t)
-	enableThrottleProbe(t)
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
 
@@ -72,6 +70,7 @@ func TestThrottleProbe_AnUnservedProbeStillMisses(t *testing.T) {
 func TestThrottleProbe_OffMeansTheSilentBurn(t *testing.T) {
 	shortRefusalWindow(t)
 	enableGhostAccountability(t)
+	disableThrottleProbe(t)
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
 
@@ -85,8 +84,8 @@ func TestThrottleProbe_OffMeansTheSilentBurn(t *testing.T) {
 		"the probe is off, so the burn must stay silent")
 }
 
-func TestThrottleProbe_OffByDefault(t *testing.T) {
-	require.False(t, throttleProbeEnabled.Load())
+func TestThrottleProbe_OnByDefault(t *testing.T) {
+	require.True(t, throttleProbeEnabled.Load())
 }
 
 func TestThrottleProbeGate_AdmitsOneProbeAtATimePerParticipant(t *testing.T) {
@@ -114,4 +113,24 @@ func TestThrottleProbeGate_HoldsTheIntervalAfterRelease(t *testing.T) {
 func TestThrottleProbeGate_RefusesAnEmptyParticipant(t *testing.T) {
 	var gate throttleProbeGate
 	require.False(t, gate.admit("", time.Unix(1_700_000_000, 0)))
+}
+
+func TestThrottleProbe_AServedProbeReleasesTheHostFromQuarantine(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	env.proxy.redundancy.picker.stop()
+
+	limiter := NewParticipantRequestLimiter(10, 10)
+	env.proxy.redundancy.participantLimiter = limiter
+
+	prepared := prepareForGhost(t, env.session, "llama")
+	slot := prepared.HostIdx()
+	participantKey := env.proxy.redundancy.participantKeyForHost(slot)
+	limiter.ObserveResult(participantKey, "/inference", http.StatusServiceUnavailable)
+	require.True(t, limiter.IsBlocked(participantKey), "precondition: the host is quarantined")
+
+	env.proxy.redundancy.runGhostProbe(prepared, ghostThrottled, ghostThrottled.reason())
+
+	require.Eventually(t, func() bool { return !limiter.IsBlocked(participantKey) },
+		5*time.Second, 20*time.Millisecond,
+		"a host that served the probe must not stay quarantined")
 }

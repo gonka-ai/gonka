@@ -16,7 +16,7 @@ const (
 	protocolInvalidWarning   = 0.01
 	protocolInvalidCritical  = 0.05
 	gatewayThrottleWarning   = 0.10
-	capabilityBlockedWarning = 0.01
+	stateDivergedWarning     = 0.01
 	quarantineWarning        = 0.10
 	unknownReasonWarning     = 0.05
 	slowReceiptWarning       = 0.05
@@ -49,7 +49,7 @@ const (
 	FindingSlowChunks          = "slow_chunks"
 	FindingClockDrift          = "clock_drift"
 	FindingSlowDecode          = "slow_decode"
-	FindingCapabilityBlocked   = "blocked_by_capability"
+	FindingStateDiverged       = "blocked_by_state_divergence"
 )
 
 type Severity string
@@ -107,8 +107,8 @@ func findingsFor(record ParticipantRecord) []Finding {
 		FindingGatewayThrottled))
 	add(ratio(countersWhere(record, wasQuarantined), record.AssignedNonces, quarantineWarning, neverCritical,
 		FindingQuarantined))
-	add(ratio(ghostsBecause(record, NoSendParticipantCapability), record.AssignedNonces, capabilityBlockedWarning, neverCritical,
-		FindingCapabilityBlocked))
+	add(ratio(ghostsBecause(record, NoSendParticipantStateDiverged)+ghostsBecause(record, NoSendParticipantCapability),
+		record.AssignedNonces, stateDivergedWarning, neverCritical, FindingStateDiverged))
 	add(ratio(record.UnknownReasonTotal, record.AssignedNonces, unknownReasonWarning, neverCritical,
 		FindingUnknownReasons))
 

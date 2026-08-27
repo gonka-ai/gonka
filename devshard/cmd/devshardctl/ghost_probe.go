@@ -54,8 +54,9 @@ func (g *throttleProbeGate) release(participantKey string, now time.Time) {
 	g.states[participantKey] = throttleProbeState{nextAt: now.Add(throttleProbeMinInterval)}
 }
 
-// throttleProbeEnabled is off unless something turns it on: probing puts traffic on an overloaded host.
 var throttleProbeEnabled atomic.Bool
+
+func init() { throttleProbeEnabled.Store(true) }
 
 // sendThrottleProbe asks the host over the channel its users use; one that will not answer earns the
 // same timeout the silent burn raised outright.
@@ -92,7 +93,11 @@ func (e *Redundancy) sendThrottleProbe(prepared *user.PreparedInference, partici
 		cancelSend()
 		if err == nil {
 			e.accounting.ProbeServed(e.devshardID, nonce, accounting.DeliveryThrottleProbe)
-			logInferenceStage(ctx, e.devshardID, nonce, "ghost_probe_served", "host", hostLabel)
+			// The quarantine is a guess about a host that has now answered; probation catches it again if
+			// the answer was a fluke.
+			released := e.participantLimiter != nil && e.participantLimiter.ClearQuarantine(participantKey)
+			logInferenceStage(ctx, e.devshardID, nonce, "ghost_probe_served",
+				"host", hostLabel, "quarantine_cleared", released)
 			return
 		}
 

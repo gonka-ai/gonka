@@ -239,7 +239,7 @@ func TestARealDispatchRefusalIsCountedAndLeavesRoutingAlone(t *testing.T) {
 	if refusals == 0 {
 		t.Fatal("a real dispatch refusal was not counted")
 	}
-	if reason, blocked := env.proxy.redundancy.capabilityBlocked(participantKey, defaultParams()); blocked {
+	if reason, blocked := env.proxy.redundancy.escrowStateBlockReason(participantKey); blocked {
 		t.Fatalf("the host was withheld from routing after one refusal, reason = %q", reason)
 	}
 }
