@@ -192,11 +192,17 @@ safe_id() {
         "$(printf '%s' "$1" | sha256sum | cut -c1-8)"
 }
 
-validate_version() {
-	if ! router_version_is_valid "$1"; then
-		echo "proxy-router: invalid version name '$1'; expected ASCII [A-Za-z0-9][A-Za-z0-9._+~-]{0,63}" >&2
-		exit 1
-	fi
+validate_static_version() {
+    case "$1" in
+        *[/?#%]* | *[[:space:]]* | *\\* | *\"* | *\'*)
+            echo "proxy-router: version '$1' cannot be routed as a literal path segment" >&2
+            exit 1
+            ;;
+        . | ..)
+            echo "proxy-router: version '$1' is not a safe path segment" >&2
+            exit 1
+            ;;
+    esac
 }
 
 backend_name() {
@@ -296,7 +302,7 @@ render_router_backend versiond_router_coarse \
 declare_version() {
         version=$1
         [ -n "$version" ] || return 0
-        validate_version "$version"
+        validate_static_version "$version"
         if awk -v v="$version" '$1 "" == v "" { found = 1 } END { exit !found }' "$VERSION_MAP"; then
             echo "proxy-router: version '$version' is declared more than once" >&2
             exit 1
@@ -308,8 +314,8 @@ declare_version() {
             "http-check send meth GET uri /$encoded/healthz hdr Host $ROUTER_POOL_HOST" \
             "http-check send meth GET uri /readyz?version=$encoded hdr Host $ROUTER_POOL_HOST" ''
         printf '%s\n' \
-            "    http-request return status 200 content-type text/plain string \"ready\\n\" if { path /readyz } { var(txn.ready_ver) -m str $version } { nbsrv($backend) gt 0 }" \
-            "    http-request return status 503 content-type text/plain string \"not ready\\n\" if { path /readyz } { var(txn.ready_ver) -m str $version }" \
+            "    http-request return status 200 content-type text/plain string \"ready\\n\" if { path /readyz } { var(txn.ready_ver),map_str($VERSION_MAP) -m str $backend } { nbsrv($backend) gt 0 }" \
+            "    http-request return status 503 content-type text/plain string \"not ready\\n\" if { path /readyz } { var(txn.ready_ver),map_str($VERSION_MAP) -m str $backend }" \
             >> "$VERSION_READY_RULES_FILE"
 }
 
