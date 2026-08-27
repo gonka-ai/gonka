@@ -438,49 +438,28 @@ ${PUBLIC_URL}/jaeger/
 ${PUBLIC_URL}/grafana/
 ```
 
-- Update currently running node:
-  - With proxy-ssl (automated certs):
+### Host updates and rollback
 
-```
-source ./config.env && \
-docker compose --profile "ssl" -f docker-compose.yml -f docker-compose.mlnode.yml pull proxy proxy-policy proxy-policy2 proxy-ssl && \
-docker compose --profile "ssl" -f docker-compose.yml -f docker-compose.mlnode.yml up -d proxy-policy proxy-policy2 proxy proxy-ssl
-```
+`proxy`, `proxy-policy`, and `proxy-policy2` form one deployment unit. Host
+release updates apply the complete active Compose model: the base files plus
+the host's ML, versiond, edge-api, observability, managed-service, and operator
+overrides in their original order.
 
-  - With manual certs (no proxy-ssl):
+The release updater rolls this unit reserve-first. It replaces one policy
+worker, waits until the public HAProxy admits that exact container, replaces
+the other worker, and changes the public `proxy` generation last. This is the
+same sequence exercised by `proxy-router/test-routing.sh` while continuously
+sending non-idempotent requests.
 
-```
-source ./config.env && \
-docker compose -f docker-compose.yml -f docker-compose.mlnode.yml pull proxy proxy-policy proxy-policy2 && \
-docker compose -f docker-compose.yml -f docker-compose.mlnode.yml up -d proxy-policy proxy-policy2 proxy
-```
+Rollback restores the captured image, environment, networks, capabilities, and
+Compose definition for the same deployment unit. The updater targets these
+services explicitly, so unrelated node services and overlay-owned containers
+remain in their existing model. Use the release's host updater and rollback
+instructions with the same `config.env`, Compose files, and profiles that
+describe the running host.
 
-Notes:
-- Ensure your env matches one of the setups above (proxy-ssl vs manual). See sections on environment configuration and manual certificate issuance.
-- General operational guidance aligns with the Quickstart docs at [gonka.ai Host Quickstart](https://gonka.ai/host/quickstart/#how-to-stop-mlnode).
-
-### Deployment rollback
-
-`proxy`, `proxy-policy`, and `proxy-policy2` are one deployment unit. The public
-service is HAProxy in this topology, while the previous Compose model used the
-nginx image directly as `proxy`; their image, environment, networks,
-capabilities, and service set form one contract.
-
-To roll back, restore the previous release checkout and its complete set of
-Compose/override files, source the matching `config.env`, and apply that model
-with the same profiles and `-f` arguments used by the host. For the standard
-SSL deployment, the apply command is:
-
-```sh
-source ./config.env && \
-docker compose --profile "ssl" -f docker-compose.yml -f docker-compose.mlnode.yml \
-  up -d --force-recreate --remove-orphans
-```
-
-`--remove-orphans` removes policy-worker services that are absent from the
-restored model. Changing only `PROXY_ROUTER_IMAGE` leaves the new HAProxy
-capability and network contract in place and is therefore not a topology
-rollback.
+General operational guidance aligns with the
+[Gonka Host Quickstart](https://gonka.ai/host/quickstart/#how-to-stop-mlnode).
 
 ## Health Check
 
