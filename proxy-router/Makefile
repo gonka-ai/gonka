@@ -95,9 +95,22 @@ test-render: test-route-status
 		|| fail "explicit version backends retry authoritative 404 responses"; \
 	grep -q 'disable-l7-retry if !METH_GET !METH_HEAD !METH_OPTIONS' "$$tmpdir/proxy.cfg" \
 		|| fail "non-idempotent replay protection was removed"; \
-	if grep -Eq 'edge_api|EDGE_API|18082' "$$tmpdir/proxy.cfg"; then \
-		fail "public distributor unexpectedly owns edge-api routing"; \
-	fi; \
+	grep -q '^frontend edge_api_in$$' "$$tmpdir/proxy.cfg" \
+		|| fail "private edge-api frontend was not rendered"; \
+	grep -q '^ *bind 0.0.0.0:18082$$' "$$tmpdir/proxy.cfg" \
+		|| fail "private edge-api frontend does not use its dedicated port"; \
+	grep -q '^backend edge_api_pool$$' "$$tmpdir/proxy.cfg" \
+		|| fail "edge-api pool was not rendered"; \
+	grep -q 'server-template edgeapi 16 edge-api:18080 check inter 1s fall 1 rise 2 .*init-state fully-down' "$$tmpdir/proxy.cfg" \
+		|| fail "edge-api DNS pool or health timing changed"; \
+	awk '/^backend edge_api_pool$$/{inside=1; next} /^backend /{inside=0} \
+		inside && /http-check send meth GET uri \/readyz/{ready=1} \
+		inside && /http-check expect status 200,404/{compat=1} \
+		inside && /http-check send meth GET uri \/healthz/{live=1} \
+		END{exit !ready || !compat || !live}' "$$tmpdir/proxy.cfg" \
+		|| fail "edge-api readiness is not legacy-compatible"; \
+	grep -q 'query -m str component=edge-api.*nbsrv(edge_api_pool)' "$$tmpdir/proxy.cfg" \
+		|| fail "edge-api component readiness does not follow its pool"; \
 	grep -q '^ *bind 127.0.0.1:8404$$' "$$tmpdir/proxy.cfg" \
 		|| fail "admin listener is not loopback-only"; \
 	if grep -q 'set-header X-Real-IP' "$$tmpdir/proxy.cfg"; then \

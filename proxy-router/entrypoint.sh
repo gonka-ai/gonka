@@ -23,11 +23,15 @@ HAPROXY_BIN="${HAPROXY_BIN:-haproxy}"
 
 POLICY_POOL_HOST="${PROXY_POLICY_POOL_HOST:-proxy-policy}"
 POLICY_POOL_SLOTS="${PROXY_POLICY_POOL_SLOTS:-4}"
+EDGE_API_POOL_HOST="${EDGE_API_POOL_HOST:-edge-api}"
+EDGE_API_POOL_SLOTS="${PROXY_EDGE_API_POOL_SLOTS:-16}"
+EDGE_API_PORT="${EDGE_API_PORT:-18080}"
 ROUTER_POOL_HOST="${VERSIOND_ROUTER_POOL_HOST:-versiond-router-fleet}"
 ROUTER_POOL_SLOTS="${VERSIOND_ROUTER_FLEET_CAPACITY:-16}"
 ROUTER_PORT="${VERSIOND_ROUTER_PORT:-8080}"
 ROUTER_ADMIN_PORT="${VERSIOND_ROUTER_ADMIN_PORT:-8404}"
 VERSIOND_FRONTEND_PORT="${PROXY_VERSIOND_PORT:-18081}"
+EDGE_API_FRONTEND_PORT="${PROXY_EDGE_API_PORT:-18082}"
 ADMIN_PORT=8404
 MAX_CONNECTIONS=8192
 CONNECT_TIMEOUT="${PROXY_ROUTER_CONNECT_TIMEOUT_SECONDS:-2}"
@@ -114,7 +118,7 @@ bool_env() {
 CATALOG_ALLOW_REMOVALS=$(bool_env VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS)
 RENDER_ONLY=$(bool_env PROXY_ROUTER_RENDER_ONLY)
 
-for host in "$POLICY_POOL_HOST" "$ROUTER_POOL_HOST"; do
+for host in "$POLICY_POOL_HOST" "$EDGE_API_POOL_HOST" "$ROUTER_POOL_HOST"; do
     case "$host" in
         '' | *[!A-Za-z0-9._-]*)
             echo "proxy-router: invalid hostname '$host'" >&2
@@ -130,8 +134,9 @@ if [ -n "$CATALOG_UPSTREAM_HOST" ]; then
             ;;
     esac
 fi
-for value in "$POLICY_POOL_SLOTS" "$ROUTER_POOL_SLOTS" "$ROUTER_PORT" \
-    "$ROUTER_ADMIN_PORT" "$VERSIOND_FRONTEND_PORT" "$ADMIN_PORT" \
+for value in "$POLICY_POOL_SLOTS" "$EDGE_API_POOL_SLOTS" "$EDGE_API_PORT" \
+    "$ROUTER_POOL_SLOTS" "$ROUTER_PORT" "$ROUTER_ADMIN_PORT" \
+    "$VERSIOND_FRONTEND_PORT" "$EDGE_API_FRONTEND_PORT" "$ADMIN_PORT" \
     "$MAX_CONNECTIONS" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$PUBLIC_IDLE" \
     "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" \
     "$CATALOG_MAX_BYTES" "$CATALOG_RUNTIME_TIMEOUT" \
@@ -144,6 +149,11 @@ for value in "$POLICY_POOL_SLOTS" "$ROUTER_POOL_SLOTS" "$ROUTER_PORT" \
             ;;
     esac
 done
+if [ "$EDGE_API_POOL_SLOTS" -eq 0 ] || [ "$EDGE_API_PORT" -eq 0 ] || \
+    [ "$EDGE_API_FRONTEND_PORT" -eq 0 ]; then
+    echo "proxy-router: edge-api pool capacity and ports must be positive" >&2
+    exit 1
+fi
 if [ "$VERSION_CAPACITY" -eq 0 ] || [ "$CATALOG_POLL" -eq 0 ] || \
     [ "$CATALOG_FETCH_TIMEOUT" -eq 0 ] || [ "$CATALOG_CACHE_MAX_AGE" -eq 0 ] || \
     [ "$CATALOG_MAX_BYTES" -eq 0 ] || [ "$CATALOG_RUNTIME_TIMEOUT" -eq 0 ] || \
@@ -369,12 +379,18 @@ esac
 cat >> "$ADMIN_RULES_FILE" <<'EOF'
     http-request return status 200 content-type text/plain string "ready\n" if { path /readyz } { query -m str component=versiond } { nbsrv(versiond_router_coarse) gt 0 }
     http-request return status 503 content-type text/plain string "not ready\n" if { path /readyz } { query -m str component=versiond }
+    http-request return status 200 content-type text/plain string "ready\n" if { path /readyz } { query -m str component=edge-api } { nbsrv(edge_api_pool) gt 0 }
+    http-request return status 503 content-type text/plain string "not ready\n" if { path /readyz } { query -m str component=edge-api }
 EOF
 cat "$VERSION_READY_RULES_FILE" >> "$ADMIN_RULES_FILE"
 
 sed \
     -e "s|\${POLICY_POOL_HOST}|$POLICY_POOL_HOST|g" \
     -e "s|\${POLICY_POOL_SLOTS}|$POLICY_POOL_SLOTS|g" \
+    -e "s|\${EDGE_API_POOL_HOST}|$EDGE_API_POOL_HOST|g" \
+    -e "s|\${EDGE_API_POOL_SLOTS}|$EDGE_API_POOL_SLOTS|g" \
+    -e "s|\${EDGE_API_PORT}|$EDGE_API_PORT|g" \
+    -e "s|\${EDGE_API_FRONTEND_PORT}|$EDGE_API_FRONTEND_PORT|g" \
     -e "s|\${VERSION_BACKEND_MAP}|$VERSION_MAP|g" \
     -e "s|\${UNDECLARED_VERSION_GUARD}|$UNDECLARED_VERSION_GUARD|g" \
     -e "s|\${DYNAMIC_READY_GUARD}|$DYNAMIC_READY_GUARD|g" \

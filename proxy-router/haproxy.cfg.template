@@ -2,9 +2,9 @@
 #
 # Public traffic first crosses the existing nginx policy workers in TCP mode,
 # preserving TLS, CORS, rate limits, rewrites and the on-chain route contract.
-# Those workers send /devshard back to the internal HTTP frontend:
+# Those workers send routed application traffic back to private HTTP frontends:
 #   :18081 -> versiond-router fleet -> versiond
-# Edge-api keeps its existing nginx routing path in this release.
+#   :18082 -> edge-api pool
 #
 # The tier has no shared state. DNS is membership, active checks are availability,
 # and dapi's governance catalog supplies protocol names. Each process projects
@@ -94,6 +94,34 @@ frontend versiond_router_in
     default_backend versiond_router_coarse
 
 ${VERSIOND_ROUTER_BACKENDS}
+
+frontend edge_api_in
+    option httplog
+    bind ${POLICY_BIND_ADDRESS}:${EDGE_API_FRONTEND_PORT}
+    maxconn ${MAX_CONNECTIONS}
+    default_backend edge_api_pool
+
+backend edge_api_pool
+    balance roundrobin
+
+    option httpchk
+    # During rolling adoption, a legacy edge-api returns 404 for /readyz and
+    # is admitted only if its existing /healthz check also succeeds. A
+    # lifecycle-aware process returns 503 while draining and leaves the pool.
+    http-check connect
+    http-check send meth GET uri /readyz
+    http-check expect status 200,404
+    http-check connect
+    http-check send meth GET uri /healthz
+    http-check expect status 200
+
+    http-reuse safe
+    option redispatch 1
+    retry-on conn-failure empty-response 502
+    retries 2
+    http-request disable-l7-retry if !METH_GET !METH_HEAD !METH_OPTIONS
+
+    server-template edgeapi ${EDGE_API_POOL_SLOTS} ${EDGE_API_POOL_HOST}:${EDGE_API_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down
 
 ${CATALOG_PROXY_CONFIG}
 
