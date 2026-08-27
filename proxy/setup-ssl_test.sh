@@ -59,7 +59,8 @@ esac
 EOF
 
 REAL_MV=$(command -v mv)
-export REAL_MV STATE_DIR
+REAL_CHMOD=$(command -v chmod)
+export REAL_MV REAL_CHMOD STATE_DIR
 cat > "$TEST_ROOT/bin/mv" <<'EOF'
 #!/bin/sh
 set -eu
@@ -92,7 +93,14 @@ if [ "${TEST_MV_PAUSE:-}" = after ] \
   pause
 fi
 EOF
-chmod +x "$TEST_ROOT/bin/curl" "$TEST_ROOT/bin/mv"
+cat > "$TEST_ROOT/bin/chmod" <<'EOF'
+#!/bin/sh
+set -eu
+
+[ "${TEST_CHMOD_FAIL:-}" != true ] || exit 1
+exec "$REAL_CHMOD" "$@"
+EOF
+chmod +x "$TEST_ROOT/bin/curl" "$TEST_ROOT/bin/mv" "$TEST_ROOT/bin/chmod"
 
 wait_for_mv() {
   for _ in $(seq 1 200); do
@@ -114,6 +122,7 @@ start_setup() {
     TEST_MV_PAUSE="$pause" \
     TEST_MV_TARGET="$target" \
     TEST_MV_FAIL_TARGET="${TEST_MV_FAIL_TARGET:-}" \
+    TEST_CHMOD_FAIL="${TEST_CHMOD_FAIL:-false}" \
     TEST_ISSUE_CERT="${TEST_ISSUE_CERT:-INITIAL CERTIFICATE}" \
     TEST_ISSUE_KEY="${TEST_ISSUE_KEY:-INITIAL PRIVATE KEY}" \
     TEST_ISSUE_ORDER_ID="${TEST_ISSUE_ORDER_ID-order-1}" \
@@ -183,6 +192,20 @@ wait_for_setup 0
 [ "$(file_mode "$SSL_DIR/order.id")" = 600 ] \
   || fail "initial order ID mode is not 0600"
 assert_no_staging_files
+
+# A failure while staging the public certificate happens before commit and
+# must not touch the active certificate, key, or order metadata.
+TEST_CHMOD_FAIL=true
+start_setup none none issue "$TEST_ROOT/staging-failure.log"
+wait_for_setup 1
+[ "$(cat "$SSL_DIR/cert.pem")" = 'INITIAL CERTIFICATE' ] \
+  || fail "staging failure changed the active certificate"
+[ "$(cat "$SSL_DIR/private.key")" = 'INITIAL PRIVATE KEY' ] \
+  || fail "staging failure changed the active private key"
+[ "$(cat "$SSL_DIR/order.id")" = 'order-1' ] \
+  || fail "staging failure changed the active order"
+assert_no_staging_files
+TEST_CHMOD_FAIL=false
 
 # The issuer always supplies an order ID. Rejecting a malformed response before
 # changing live files is safer than silently disabling future renewal.

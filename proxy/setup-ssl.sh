@@ -173,9 +173,12 @@ if [ -z "$CERT" ] || [ -z "$KEY" ] || [ -z "$ORDER_ID" ]; then
 fi
 
 CERT_TMP="${CERT_FILE}.tmp.$$"
+if ! printf '%s\n' "$CERT" > "$CERT_TMP" || ! chmod 644 "$CERT_TMP"; then
+  rm -f "$CERT_TMP"
+  exit 1
+fi
 # cert.pem is the marker: key and order must be complete before it appears.
-if ! printf '%s\n' "$CERT" > "$CERT_TMP" || ! chmod 644 "$CERT_TMP" \
-    || ! rm -f "$CERT_FILE" "$KEY_FILE" "$ORDER_ID_FILE" \
+if ! rm -f "$CERT_FILE" "$KEY_FILE" "$ORDER_ID_FILE" \
     || ! (umask 077; printf '%s\n' "$ORDER_ID" > "$ORDER_ID_FILE" \
       && printf '%s\n' "$KEY" > "$KEY_FILE") \
     || ! mv -f "$CERT_TMP" "$CERT_FILE"; then
