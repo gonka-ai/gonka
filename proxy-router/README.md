@@ -145,6 +145,13 @@ They are one trust domain, additionally constrained by dropped capabilities and
 narrow privileged broker. The loopback admin HTTP listener reports readiness
 and cannot mutate routing.
 
+The observability overlay scrapes this tier as the `proxy-router` Prometheus
+job and the inner tier as `versiond-router`. Generic readiness intentionally
+tracks the policy workers so ordinary APIs remain available during a devshard
+incident. Use `/readyz?component=versiond`, per-version readiness, and the
+`versiond_router_*` backend metrics from the `proxy-router` job for devshard
+availability.
+
 ## Configuration
 
 | Variable | Default | Meaning |
