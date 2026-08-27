@@ -476,7 +476,9 @@ proxy_admin /readyz >/dev/null \
     || fail "public policy pool did not recover after cached-route restart"
 for worker in a b; do
     worker_route=
-    for _ in $(seq 40); do
+    # DNS cache expiry and nginx's default upstream fail_timeout can overlap if
+    # the worker reaches the replacement before HAProxy has bound its listener.
+    for _ in $(seq 120); do
         worker_route=$(probe --haproxy-protocol \
             "http://gonka-pr-policy-$worker/devshard/v5/sessions/dns-refresh/healthz" \
             2>/dev/null || true)
@@ -484,7 +486,7 @@ for worker in a b; do
         sleep 0.25
     done
     [[ $worker_route == b ]] || fail \
-        "policy worker $worker did not re-resolve the replaced proxy-router"
+        "policy worker $worker did not re-resolve the replaced proxy-router (last response: '$worker_route')"
 done
 printf '%s\n' '{"versions":"not-an-array"}' \
     >"$tmpdir/catalog/versions.next"
