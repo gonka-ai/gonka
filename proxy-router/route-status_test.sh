@@ -15,7 +15,11 @@ if [ "$command" = "${FAIL_COMMAND:-}" ]; then
 fi
 case "$command" in
     "show map /etc/haproxy/version-router.map")
-        printf '%s\n' '0x1 v5 versiond_routers_v5'
+        if [ "${INVALID_MAP_OUTPUT:-}" = true ]; then
+            printf '%s\n' 'Unknown map identifier. Please use #<id> or <file>.'
+        else
+            printf '%s\n' '0x1 v5 versiond_routers_v5'
+        fi
         ;;
     "show servers state versiond_routers_v5")
         printf '%s\n' '# header' '# fields' \
@@ -86,5 +90,16 @@ for command in \
         }
     fi
 done
+
+if INVALID_MAP_OUTPUT=true run_status v4 192.0.2.10 >/dev/null 2>&1; then
+    echo "route-status accepted an invalid show map response" >&2
+    exit 1
+else
+    status=$?
+    [ "$status" -eq 1 ] || {
+        echo "route-status returned $status instead of 1 for invalid show map output" >&2
+        exit 1
+    }
+fi
 
 echo "route-status_test: ok"
