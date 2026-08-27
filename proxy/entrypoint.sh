@@ -374,8 +374,14 @@ export STREAMING_CONFIG='
 
 # Validate or repair the TLS bundle before nginx reads it.
 if [ "$SSL_ENABLED" = "true" ]; then
+    run_ssl_setup() (
+        # Policy workers share this volume, so only one may issue or renew at a time.
+        flock 9
+        /setup-ssl.sh "$@"
+    ) 9>/etc/nginx/ssl/.gonka-ssl.lock
+
     ssl_setup_status=0
-    /setup-ssl.sh repair || ssl_setup_status=$?
+    run_ssl_setup repair || ssl_setup_status=$?
     case "$ssl_setup_status" in
       0|10) ;;
       *) echo "WARNING: SSL setup failed; will attempt to continue" ;;
@@ -1315,7 +1321,7 @@ if [ "$SSL_ENABLED" = "true" ] \
                 else
                     rm -f "$next_config"
                     repair_status=0
-                    /setup-ssl.sh repair || repair_status=$?
+                    run_ssl_setup repair || repair_status=$?
                     if [ "$repair_status" -eq 10 ]; then
                         echo "TLS bundle repaired; retrying HTTPS configuration"
                         retry_seconds=$RENEW_RETRY_SECONDS
@@ -1343,7 +1349,7 @@ if [ "$SSL_ENABLED" = "true" ] \
             fi
 
             renewal_status=0
-            /setup-ssl.sh renew-if-needed || renewal_status=$?
+            run_ssl_setup renew-if-needed || renewal_status=$?
             case "$renewal_status" in
               0)
                 echo "No renewal needed"
