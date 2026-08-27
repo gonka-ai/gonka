@@ -353,9 +353,9 @@ while IFS= read -r version; do
 done < "$CACHED_VERSIONS_FILE"
 cached_dynamic_count=$(wc -l < "$CACHED_DYNAMIC_VERSIONS_FILE")
 if [ "$cached_dynamic_count" -gt "$VERSION_CAPACITY" ]; then
-    echo "proxy-router: fresh catalog cache needs $cached_dynamic_count dynamic slots," >&2
-    echo "  but PROXY_ROUTER_VERSION_CAPACITY is $VERSION_CAPACITY" >&2
-    exit 1
+    echo "proxy-router: preserving $cached_dynamic_count cached dynamic routes" >&2
+    echo "  above configured minimum capacity $VERSION_CAPACITY" >&2
+    VERSION_CAPACITY=$cached_dynamic_count
 fi
 
 index=1
