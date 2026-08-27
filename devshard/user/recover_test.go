@@ -1624,6 +1624,205 @@ func TestRecoverSession_SnapshotOnly_RestoresPendingTxDedupKeys(t *testing.T) {
 	require.Equal(t, rootBefore, rootAfter)
 }
 
+func TestRecoverSession_SnapshotOnly_RestoresPendingTxDedupKeysForHostProposedTypes(t *testing.T) {
+	tests := []struct {
+		name string
+		tx   *types.DevshardTx
+	}{
+		{
+			name: "finish",
+			tx: &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
+				FinishInference: &types.MsgFinishInference{InferenceId: 7, ExecutorSlot: 1, EscrowId: "escrow-1"},
+			}},
+		},
+		{
+			name: "confirm",
+			tx: &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{
+				ConfirmStart: &types.MsgConfirmStart{InferenceId: 7},
+			}},
+		},
+		{
+			name: "validation",
+			tx: &types.DevshardTx{Tx: &types.DevshardTx_Validation{
+				Validation: &types.MsgValidation{InferenceId: 7, ValidatorSlot: 1, EscrowId: "escrow-1"},
+			}},
+		},
+		{
+			name: "validation_vote",
+			tx: &types.DevshardTx{Tx: &types.DevshardTx_ValidationVote{
+				ValidationVote: &types.MsgValidationVote{InferenceId: 7, VoterSlot: 2, EscrowId: "escrow-1"},
+			}},
+		},
+		{
+			name: "reveal_seed",
+			tx: &types.DevshardTx{Tx: &types.DevshardTx_RevealSeed{
+				RevealSeed: &types.MsgRevealSeed{SlotId: 2, EscrowId: "escrow-1"},
+			}},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			recovered := recoverSnapshotOnlyWithDurableHostTx(t, tc.tx)
+			t.Cleanup(func() { _ = recovered.Close() })
+
+			rootBefore, err := recovered.StateMachine().ComputeStateRoot()
+			require.NoError(t, err)
+			require.NoError(t, recovered.ProcessResponse(0, &host.HostResponse{
+				Nonce:   recovered.Nonce(),
+				Mempool: []*types.DevshardTx{tc.tx},
+			}, recovered.Nonce()))
+			require.Empty(t, recovered.PendingTxs(),
+				"duplicate %s from a durable pre-snapshot diff must not re-enter pending", tc.name)
+			require.Equal(t, uint64(1), recovered.Nonce())
+			rootAfter, err := recovered.StateMachine().ComputeStateRoot()
+			require.NoError(t, err)
+			require.Equal(t, rootBefore, rootAfter)
+		})
+	}
+}
+
+func TestRecoverSession_SnapshotOnly_RestoresSealedInferenceIndexes(t *testing.T) {
+	store := newTestStore(t)
+	const escrowID = "escrow-1"
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       escrowID,
+		Version:        testutil.RuntimeTestVersion,
+		CreatorAddr:    user.Address(),
+		Config:         config,
+		Group:          group,
+		InitialBalance: 100000,
+	}))
+
+	sm, err := state.NewStateMachine(escrowID, config, group, 100000, user.Address(), verifier, store,
+		state.WithStateRootAndProtocolVersion(testutil.RuntimeTestVersion))
+	require.NoError(t, err)
+	appendAppliedDiff := func(nonce uint64, txs []*types.DevshardTx) {
+		t.Helper()
+		root, err := sm.ApplyLocal(nonce, txs)
+		require.NoError(t, err)
+		diff := testutil.SignDiffWithRoot(t, user, escrowID, nonce, txs, root)
+		require.NoError(t, store.AppendDiff(escrowID, types.DiffRecord{Diff: diff, StateHash: root}))
+	}
+
+	promptHash, err := devshard.CanonicalPromptHash(testutil.TestPrompt)
+	require.NoError(t, err)
+	appendAppliedDiff(1, []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{
+		StartInference: &types.MsgStartInference{
+			InferenceId: 1, PromptHash: promptHash, Model: "llama",
+			InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		},
+	}}})
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, promptHash, "llama", 100, 50, 1000, 2000)
+	appendAppliedDiff(2, []*types.DevshardTx{{Tx: &types.DevshardTx_ConfirmStart{
+		ConfirmStart: &types.MsgConfirmStart{InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000},
+	}}})
+	finish := &types.MsgFinishInference{
+		InferenceId: 1, ResponseHash: []byte("response"),
+		InputTokens: 10, OutputTokens: 20, ExecutorSlot: 1, EscrowId: escrowID,
+	}
+	finish.ProposerSig = testutil.SignProposerTx(t, hosts[1], finish)
+	appendAppliedDiff(3, []*types.DevshardTx{{Tx: &types.DevshardTx_FinishInference{FinishInference: finish}}})
+
+	require.NoError(t, sm.SealInference(1))
+	_, live := sm.SnapshotState().Inferences[1]
+	require.False(t, live, "precondition: sealed inference must be absent from live state")
+	before, ok := sm.ExportAllInferenceRecords()[1]
+	require.True(t, ok)
+	require.Equal(t, types.StatusFinished, before.Status)
+	row, ok, err := store.GetSealedInference(escrowID, 1)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, row.ObsPresent)
+
+	saveSnapshot(store, sm, escrowID, 3, map[int]uint64{0: 3, 1: 3, 2: 3})
+	spy := &replaySpyStore{Storage: store}
+	recovered, recSM, err := RecoverSession(spy, user, verifier, escrowID, testutil.RuntimeTestVersion, group,
+		buildRecoveryClients(t, hosts, group, user))
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = recovered.Close() })
+	require.Equal(t, uint64(3), recovered.Nonce())
+	require.Empty(t, recovered.Diffs(), "all hosts are caught up, so recovery should be snapshot-only")
+	require.Zero(t, spy.replayedRecords(3), "must use snapshot-only early return")
+
+	records := recSM.ExportAllInferenceRecords()
+	got, ok := records[1]
+	require.True(t, ok, "sealed inference must remain visible after snapshot-only recovery")
+	require.Equal(t, types.StatusFinished, got.Status)
+	require.Equal(t, "llama", got.Model)
+	require.Equal(t, uint64(10), got.InputTokens)
+	require.Equal(t, uint64(20), got.OutputTokens)
+	sealed, ok := recSM.LookupSealedInference(1)
+	require.True(t, ok)
+	require.Equal(t, got.Status, sealed.Status)
+	_, live = recSM.SnapshotState().Inferences[1]
+	require.False(t, live, "sealed inference must not be resurrected into live state")
+
+	lateValidation := &types.MsgValidation{
+		InferenceId:   1,
+		ValidatorSlot: 2,
+		Valid:         false,
+		EscrowId:      escrowID,
+	}
+	lateValidation.ProposerSig = testutil.SignProposerTx(t, hosts[2], lateValidation)
+	_, err = recSM.ApplyLocal(4, []*types.DevshardTx{{Tx: &types.DevshardTx_Validation{
+		Validation: lateValidation,
+	}}})
+	require.ErrorIs(t, err, types.ErrInferenceSealed)
+}
+
+func recoverSnapshotOnlyWithDurableHostTx(t *testing.T, tx *types.DevshardTx) *Session {
+	t.Helper()
+	store := newTestStore(t)
+	const escrowID = "escrow-1"
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       escrowID,
+		Version:        testutil.RuntimeTestVersion,
+		CreatorAddr:    user.Address(),
+		Config:         config,
+		Group:          group,
+		InitialBalance: 100000,
+	}))
+	diff := types.Diff{Nonce: 1, Txs: []*types.DevshardTx{tx}}
+	require.NoError(t, store.AppendDiff(escrowID, types.DiffRecord{Diff: diff}))
+
+	stateSnapshot := newTestStateMachine(t, escrowID, config, group, 100000, user.Address(), verifier).SnapshotState()
+	stateSnapshot.LatestNonce = 1
+	blob, err := json.Marshal(sessionSnapshot{
+		State:         &stateSnapshot,
+		HostSyncNonce: map[int]uint64{0: 1, 1: 1, 2: 1},
+	})
+	require.NoError(t, err)
+	require.NoError(t, store.SaveSnapshot(escrowID, 1, blob))
+
+	spy := &replaySpyStore{Storage: store}
+	recovered, _, err := RecoverSession(spy, user, verifier, escrowID, testutil.RuntimeTestVersion, group,
+		buildRecoveryClients(t, hosts, group, user))
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), recovered.Nonce())
+	require.Empty(t, recovered.Diffs(), "all hosts are caught up, so recovery should be snapshot-only")
+	require.Zero(t, spy.replayedRecords(1), "must use snapshot-only early return")
+	return recovered
+}
+
 // buildRecoveryClients creates a fresh set of in-process host clients for
 // recovery, mirroring setupRecoverableSession's client factory.
 func buildRecoveryClients(t *testing.T, hosts []*signing.Secp256k1Signer, group []types.SlotAssignment, user *signing.Secp256k1Signer) []HostClient {
