@@ -13,6 +13,8 @@ export NODE_SERVICE_NAME=${NODE_SERVICE_NAME:-node}
 export EXPLORER_SERVICE_NAME=${EXPLORER_SERVICE_NAME:-explorer}
 export PROXY_SSL_SERVICE_NAME=${PROXY_SSL_SERVICE_NAME:-proxy-ssl}
 export PROXY_SSL_PORT=${PROXY_SSL_PORT:-8080}
+# setup-ssl.sh accepts SSL_DIR for isolated tests; the image uses this mount.
+export SSL_DIR=/etc/nginx/ssl
 export JAEGER_ENABLED=${JAEGER_ENABLED:-false}
 export JAEGER_SERVICE_NAME=${JAEGER_SERVICE_NAME:-jaeger}
 export JAEGER_PORT=${JAEGER_PORT:-16686}

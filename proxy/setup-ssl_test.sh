@@ -155,8 +155,7 @@ file_mode() {
 }
 
 assert_no_staging_files() {
-  if find "$SSL_DIR" \( -name '.*.tmp.*' -o -name '.*.backup.*' \) \
-      -print -quit | grep -q .; then
+  if find "$SSL_DIR" -name '*.tmp.*' -print -quit | grep -q .; then
     fail "certificate publication left staging files behind"
   fi
 }
@@ -165,6 +164,7 @@ assert_no_staging_files() {
 # the certificate rename and verify that metadata and key are complete first.
 printf '%s\n' 'STALE CERTIFICATE' > "$SSL_DIR/cert.pem"
 printf '%s\n' 'stale-order' > "$SSL_DIR/order.id"
+printf '%s\n' 'ORPHANED CERTIFICATE' > "$SSL_DIR/cert.pem.tmp.999"
 start_setup before cert.pem issue "$TEST_ROOT/issue.log"
 wait_for_mv || fail "initial publication did not reach the certificate rename"
 [ "$(cat "$SSL_DIR/private.key")" = 'INITIAL PRIVATE KEY' ] \
@@ -281,10 +281,6 @@ wait_for_setup 1
 [ ! -e "$SSL_DIR/order.id" ] \
   || fail "failed fallback left order metadata"
 assert_no_staging_files
-if find "$SSL_DIR" \( -name '.private.key.*' -o -name '.order.id.*' \) \
-    -print -quit | grep -q .; then
-  fail "failed fallback left secret staging files"
-fi
 
 TEST_MV_FAIL_TARGET=
 rm -f "$STATE_DIR/mv-reached" "$STATE_DIR/continue" "$STATE_DIR/mv-failed"

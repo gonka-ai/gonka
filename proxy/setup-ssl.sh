@@ -18,6 +18,7 @@ echo "Getting SSL certificate for proxy..."
 echo "setup-ssl.sh mode: $MODE"
 
 mkdir -p "$SSL_DIR"
+rm -f "$SSL_DIR"/cert.pem.tmp.*
 
 # Resolve proxy-ssl host/port (respect KEY_NAME_PREFIX) and node_id
 PROXY_SSL_SERVICE_NAME=${PROXY_SSL_SERVICE_NAME:-proxy-ssl}
@@ -156,7 +157,7 @@ for i in 1 2 3 4 5; do
   CERT=$(echo "$RESPONSE" | jq -r '.certificate // empty' 2>/dev/null || true)
   KEY=$(echo "$RESPONSE" | jq -r '.private_key // empty' 2>/dev/null || true)
   ORDER_ID=$(echo "$RESPONSE" | jq -r '.order_id // empty' 2>/dev/null || true)
-  if [ -n "${CERT:-}" ] && [ -n "${KEY:-}" ]; then
+  if [ -n "${CERT:-}" ] && [ -n "${KEY:-}" ] && [ -n "${ORDER_ID:-}" ]; then
     break
   fi
   sleep 2
