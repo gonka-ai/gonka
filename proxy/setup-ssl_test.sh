@@ -73,6 +73,7 @@ done
 pause() {
   : > "$STATE_DIR/mv-reached"
   while [ ! -f "$STATE_DIR/continue" ]; do
+    [ -d "$STATE_DIR" ] || exit 1
     sleep 0.01
   done
 }
@@ -165,6 +166,8 @@ assert_no_staging_files() {
 printf '%s\n' 'STALE CERTIFICATE' > "$SSL_DIR/cert.pem"
 printf '%s\n' 'stale-order' > "$SSL_DIR/order.id"
 printf '%s\n' 'ORPHANED CERTIFICATE' > "$SSL_DIR/cert.pem.tmp.999"
+printf '%s\n' 'ORPHANED PRIVATE KEY' > "$SSL_DIR/private.key.tmp.999"
+printf '%s\n' 'orphaned-order' > "$SSL_DIR/order.id.tmp.999"
 start_setup before cert.pem issue "$TEST_ROOT/issue.log"
 wait_for_mv || fail "initial publication did not reach the certificate rename"
 [ "$(cat "$SSL_DIR/private.key")" = 'INITIAL PRIVATE KEY' ] \
@@ -222,6 +225,23 @@ TEST_ISSUE_ORDER_ID=order-1
 
 # Renewal must leave the complete old certificate visible until the atomic
 # rename. The private key is unchanged by the renewal contract.
+TEST_RENEWED_CERT='UNPUBLISHED RENEWED CERTIFICATE'
+TEST_MV_FAIL_TARGET=cert.pem
+rm -f "$STATE_DIR/mv-reached" "$STATE_DIR/continue" "$STATE_DIR/mv-failed"
+start_setup none none renew-if-needed "$TEST_ROOT/renew-failure.log"
+wait_for_setup 1
+[ -f "$STATE_DIR/mv-failed" ] \
+  || fail "renew-if-needed test did not inject the certificate rename failure"
+[ "$(cat "$SSL_DIR/cert.pem")" = 'INITIAL CERTIFICATE' ] \
+  || fail "failed renewal changed the active certificate"
+[ "$(cat "$SSL_DIR/private.key")" = 'INITIAL PRIVATE KEY' ] \
+  || fail "failed renewal changed the private key"
+[ "$(cat "$SSL_DIR/order.id")" = 'order-1' ] \
+  || fail "failed renewal changed the order ID"
+assert_no_staging_files
+
+TEST_RENEWED_CERT='RENEWED CERTIFICATE'
+TEST_MV_FAIL_TARGET=
 rm -f "$STATE_DIR/mv-reached" "$STATE_DIR/continue"
 start_setup before cert.pem renew "$TEST_ROOT/renew.log"
 wait_for_mv || fail "renewal did not reach the certificate rename"
@@ -268,6 +288,7 @@ assert_no_staging_files
 TEST_ISSUE_CERT='RECOVERED CERTIFICATE'
 TEST_ISSUE_KEY='RECOVERED PRIVATE KEY'
 TEST_ISSUE_ORDER_ID='order-3'
+TEST_RENEW_STATUS=404
 TEST_MV_FAIL_TARGET=cert.pem
 rm -f "$STATE_DIR/mv-reached" "$STATE_DIR/continue" "$STATE_DIR/mv-failed"
 start_setup none none renew "$TEST_ROOT/fallback-failure.log"
@@ -276,10 +297,10 @@ wait_for_setup 1
   || fail "fallback test did not inject the certificate rename failure"
 [ ! -e "$SSL_DIR/cert.pem" ] \
   || fail "failed fallback left a certificate marker"
-[ ! -e "$SSL_DIR/private.key" ] \
-  || fail "failed fallback left private-key material"
-[ ! -e "$SSL_DIR/order.id" ] \
-  || fail "failed fallback left order metadata"
+[ "$(cat "$SSL_DIR/private.key")" = 'RECOVERED PRIVATE KEY' ] \
+  || fail "failed fallback lost the staged private key"
+[ "$(cat "$SSL_DIR/order.id")" = 'order-3' ] \
+  || fail "failed fallback lost the order needed for background recovery"
 assert_no_staging_files
 
 TEST_MV_FAIL_TARGET=

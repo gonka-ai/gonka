@@ -18,7 +18,9 @@ echo "Getting SSL certificate for proxy..."
 echo "setup-ssl.sh mode: $MODE"
 
 mkdir -p "$SSL_DIR"
-rm -f "$SSL_DIR"/cert.pem.tmp.*
+rm -f "$SSL_DIR"/cert.pem.tmp.* \
+  "$SSL_DIR"/private.key.tmp.* \
+  "$SSL_DIR"/order.id.tmp.*
 
 # Resolve proxy-ssl host/port (respect KEY_NAME_PREFIX) and node_id
 PROXY_SSL_SERVICE_NAME=${PROXY_SSL_SERVICE_NAME:-proxy-ssl}
@@ -163,10 +165,6 @@ for i in 1 2 3 4 5; do
   sleep 2
 done
 
-CERT=$(echo "$RESPONSE" | jq -r '.certificate // empty')
-KEY=$(echo "$RESPONSE" | jq -r '.private_key // empty')
-ORDER_ID=$(echo "$RESPONSE" | jq -r '.order_id // empty')
-
 if [ -z "$CERT" ] || [ -z "$KEY" ] || [ -z "$ORDER_ID" ]; then
   echo "ERROR: Failed to obtain certificate bundle from ${FINAL_PROXY_SSL_SERVICE}:${PROXY_SSL_PORT}"
   echo "$RESPONSE"
@@ -174,16 +172,20 @@ if [ -z "$CERT" ] || [ -z "$KEY" ] || [ -z "$ORDER_ID" ]; then
 fi
 
 CERT_TMP="${CERT_FILE}.tmp.$$"
-if ! printf '%s\n' "$CERT" > "$CERT_TMP" || ! chmod 644 "$CERT_TMP"; then
-  rm -f "$CERT_TMP"
+KEY_TMP="${KEY_FILE}.tmp.$$"
+ORDER_ID_TMP="${ORDER_ID_FILE}.tmp.$$"
+if ! printf '%s\n' "$CERT" > "$CERT_TMP" || ! chmod 644 "$CERT_TMP" \
+    || ! (umask 077; printf '%s\n' "$ORDER_ID" > "$ORDER_ID_TMP" \
+      && printf '%s\n' "$KEY" > "$KEY_TMP"); then
+  rm -f "$CERT_TMP" "$KEY_TMP" "$ORDER_ID_TMP"
   exit 1
 fi
 # cert.pem is the marker: key and order must be complete before it appears.
-if ! rm -f "$CERT_FILE" "$KEY_FILE" "$ORDER_ID_FILE" \
-    || ! (umask 077; printf '%s\n' "$ORDER_ID" > "$ORDER_ID_FILE" \
-      && printf '%s\n' "$KEY" > "$KEY_FILE") \
+if ! rm -f "$CERT_FILE" \
+    || ! mv -f "$ORDER_ID_TMP" "$ORDER_ID_FILE" \
+    || ! mv -f "$KEY_TMP" "$KEY_FILE" \
     || ! mv -f "$CERT_TMP" "$CERT_FILE"; then
-  rm -f "$CERT_TMP" "$CERT_FILE" "$KEY_FILE" "$ORDER_ID_FILE"
+  rm -f "$CERT_TMP" "$KEY_TMP" "$ORDER_ID_TMP" "$CERT_FILE"
   exit 1
 fi
 
