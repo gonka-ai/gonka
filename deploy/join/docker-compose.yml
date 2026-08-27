@@ -265,9 +265,6 @@ services:
 
   proxy-policy:
     <<: *proxy-policy
-    depends_on:
-      proxy-policy2:
-        condition: service_healthy
 
   # The only public listener. It balances the policy workers in TCP mode and
   # owns the active, route-aware versiond-router and edge-api pools on private
@@ -302,32 +299,15 @@ services:
     volumes:
       - proxy-router-state:/var/lib/gonka-router
     restart: unless-stopped
-    cap_drop:
-      - ALL
-    cap_add:
-      - NET_BIND_SERVICE
-    security_opt:
-      - no-new-privileges:true
+    cap_drop: [ALL]
+    cap_add: [NET_BIND_SERVICE]
+    security_opt: [no-new-privileges:true]
     healthcheck:
-      test:
-        [
-          "CMD",
-          "/bin/busybox",
-          "wget",
-          "-q",
-          "-O",
-          "/dev/null",
-          "http://127.0.0.1:8404/readyz",
-        ]
+      test: ["CMD", "/bin/busybox", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8404/readyz"]
       interval: 2s
       timeout: 3s
       retries: 10
       start_period: 15s
-    depends_on:
-      proxy-policy:
-        condition: service_healthy
-      proxy-policy2:
-        condition: service_healthy
 
   proxy-ssl:
     container_name: proxy-ssl
