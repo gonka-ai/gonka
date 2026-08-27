@@ -10,6 +10,7 @@ containers=(
     gonka-pr-policy-a gonka-pr-policy-b
     gonka-pr-router-a gonka-pr-router-b gonka-pr-router-bad
     gonka-pr-router-migration
+    gonka-pr-router-legacy gonka-pr-proxy-legacy
     gonka-pr-edge-router
 )
 tmpdir=$(mktemp -d)
@@ -229,6 +230,43 @@ docker run -d --name gonka-pr-router-migration --network "$network" \
     -e GENERIC_READY=true -e DATA_ENABLED=true \
     -v "$tmpdir/upstream.py:/app.py:ro" \
     python:3.12-alpine python /app.py >/dev/null
+
+# The standard v5 transition starts with the published 0.2.15 nginx router.
+# It has no admin listener, so the outer distributor must use the explicit
+# legacy data-path health contract until the router fleet is installed.
+docker run -d --name gonka-pr-router-legacy --network "$network" \
+    --network-alias versiond-router-legacy \
+    -e VERSIOND_HOSTS=gonka-pr-router-a -e VERSIOND_PORT=8080 \
+    -e VERSIOND_VERSIONS=v4 -e VERSIOND_NON_HA_VERSIONS= \
+    ghcr.io/product-science/versiond-router:0.2.15 >/dev/null
+for _ in $(seq 40); do
+    if docker exec gonka-pr-router-legacy wget -q -O /dev/null \
+        http://127.0.0.1:8080/v4/healthz 2>/dev/null; then
+        break
+    fi
+    sleep 0.25
+done
+docker exec gonka-pr-router-legacy wget -q -O /dev/null \
+    http://127.0.0.1:8080/v4/healthz \
+    || fail "published legacy versiond-router did not become healthy"
+docker run -d --name gonka-pr-proxy-legacy --network "$network" \
+    -e PROXY_POLICY_POOL_HOST=missing-policy \
+    -e VERSIOND_ROUTER_POOL_HOST=versiond-router-legacy \
+    -e VERSIOND_ROUTER_FLEET_CAPACITY=1 \
+    -e PROXY_ROUTER_VERSION_CAPACITY=1 \
+    -e VERSIOND_ROUTER_HEALTH_CONTRACT=legacy \
+    -e VERSIOND_VERSIONS=v4 "$image" >/dev/null
+for _ in $(seq 40); do
+    if docker exec gonka-pr-proxy-legacy curl -fsS \
+        'http://127.0.0.1:8404/readyz?version=v4' >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.25
+done
+docker exec gonka-pr-proxy-legacy curl -fsS \
+    'http://127.0.0.1:8404/readyz?version=v4' >/dev/null \
+    || fail "outer distributor rejected the published legacy versiond-router"
+docker rm -f gonka-pr-proxy-legacy gonka-pr-router-legacy >/dev/null
 
 # This fixture represents the nginx edge-api-router shipped by the previous
 # release. The public HAProxy must leave that HTTP routing hop unchanged.

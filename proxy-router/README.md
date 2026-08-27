@@ -38,16 +38,18 @@ existing `edge-api-router` nginx service.
 ## Versiond-router selection
 
 Every bootstrap or governance protocol version gets a separate HAProxy backend.
-A router is eligible for version `v` only while its private admin endpoint
-answers:
+A router is eligible for version `v` only while its data endpoint answers
+`/<v>/healthz`. A catalog-aware HAProxy router is additionally required to
+answer on its private admin endpoint:
 
 ```text
 GET http://versiond-router:8404/readyz?version=v
 ```
 
-The data request still goes to that router's port 8080. Separating health and
-traffic ports keeps lifecycle state off the public API. Versionless requests use
-the coarse `/readyz` check.
+The `readyz` health contract therefore verifies both the data listener and the
+lifecycle state. The `legacy` contract supports the transitional nginx router,
+which has no admin listener, by checking only `/healthz` or
+`/<v>/healthz` on port 8080. Versionless requests use the matching coarse check.
 
 Selection among eligible routers uses the same escrow-derived consistent hash
 as the inner router. Versioned session paths, versionless session observability
@@ -135,6 +137,7 @@ and cannot mutate routing.
 | `VERSIOND_ROUTER_FLEET_CAPACITY` | `16` | reserved router slots |
 | `VERSIOND_ROUTER_PORT` | `8080` | router data port |
 | `VERSIOND_ROUTER_ADMIN_PORT` | `8404` | router health port |
+| `VERSIOND_ROUTER_HEALTH_CONTRACT` | `readyz` | `readyz` verifies both data health and lifecycle readiness; `legacy` checks the nginx router's data endpoint only |
 | `VERSIOND_VERSIONS` | *(empty)* | static bootstrap floor; day-2 governance names are learned automatically |
 | `VERSIOND_NON_HA_VERSIONS` | *(empty)* | static legacy pins; these still define placement and must match every inner router |
 | `VERSIOND_ROUTING_CATALOG_URL` | *(empty)* | read-only dapi `GET /versions` endpoint; release configuration enables it together with catalog-aware router images |
