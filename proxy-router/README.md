@@ -159,7 +159,9 @@ and cannot mutate routing.
 
 `VERSIOND_NON_HA_VERSIONS` and the bootstrap `VERSIOND_VERSIONS` must match every
 inner router. Runtime additions come from the same catalog on both tiers and do
-not change escrow placement.
+not change escrow placement. Static names preserve the inner router's existing
+literal path-segment contract. Dynamically learned names use the narrower
+`[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}` grammar required by the Runtime API.
 
 Invalid catalog URL, timing, or capacity values fail startup. Every fully
 ready addition is persisted before its request-map entry is published. Admission
