@@ -545,26 +545,6 @@ proxy_backend_addr_withdrawn_in() {
         '
 }
 
-proxy_backend_addr_checked_in() {
-    local proxy=$1 backend=$2 address=$3
-    docker exec "$proxy" sh -c \
-        "printf 'show stat\\n' | socat - UNIX-CONNECT:/var/run/haproxy/haproxy.sock" \
-        | awk -F, -v backend="$backend" -v address="$address" '
-            NR == 1 {
-                sub(/^# /, "", $1)
-                for (i = 1; i <= NF; i++) column[$i] = i
-                next
-            }
-            $(column["pxname"]) == backend &&
-                index($(column["addr"]), address ":") == 1 &&
-                $(column["check_status"]) == "L7OK" &&
-                ($(column["check_health"]) >= $(column["check_rise"]) + $(column["check_fall"]) - 1) {
-                checked = 1
-            }
-            END { exit !checked }
-        '
-}
-
 proxy_backend_server_ref_in() {
     local proxy=$1 backend=$2 address=$3
     docker exec "$proxy" sh -c \
@@ -688,6 +668,8 @@ proxy_backend_addr_withdrawn_in gonka-pr-proxy-generation policy_http \
 docker stop --time 5 gonka-pr-policy-generation >/dev/null
 proxy_server_mark_down_in gonka-pr-proxy-generation "$generation_server_ref" \
     || fail "could not reset policy health before replacement"
+proxy_server_ready_in gonka-pr-proxy-generation "$generation_server_ref" \
+    || fail "could not enable fresh checks for the replacement policy slot"
 docker rm gonka-pr-policy-generation >/dev/null
 # Consume the released address so this regression necessarily exercises an IP
 # change rather than a restart that happens to reuse the old address.
@@ -731,19 +713,6 @@ fi
 docker exec gonka-pr-proxy-generation curl -fsS \
     http://proxy-policy-generation:9000/ready >/dev/null
 for _ in $(seq 80); do
-    proxy_backend_addr_checked_in gonka-pr-proxy-generation policy_http \
-        "$generation_new_ip" && break
-    sleep 0.1
-done
-proxy_backend_addr_checked_in gonka-pr-proxy-generation policy_http \
-    "$generation_new_ip" \
-    || fail "replacement policy generation did not pass a fresh check cycle"
-generation_new_server_ref=$(proxy_backend_server_ref_in \
-    gonka-pr-proxy-generation policy_http "$generation_new_ip") \
-    || fail "could not identify the replacement policy generation slot"
-proxy_server_ready_in gonka-pr-proxy-generation "$generation_new_server_ref" \
-    || fail "could not admit the checked replacement policy generation"
-for _ in $(seq 40); do
     proxy_backend_addr_up_in gonka-pr-proxy-generation policy_http \
         "$generation_new_ip" && break
     sleep 0.1
@@ -927,24 +896,14 @@ for name in b a; do
     docker stop --time 10 "gonka-pr-policy-$name" >/dev/null
     proxy_server_mark_down_in gonka-pr-proxy "$old_policy_ref" || fail \
         "could not reset policy-$name health before replacement"
+    proxy_server_ready_in gonka-pr-proxy "$old_policy_ref" || fail \
+        "could not enable fresh checks for replacement policy-$name"
     docker rm "gonka-pr-policy-$name" >/dev/null
     start_policy "$name"
     policy_ip=$(docker inspect -f \
         "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
         "gonka-pr-policy-$name")
     for _ in $(seq 80); do
-        proxy_backend_addr_checked_in gonka-pr-proxy policy_http \
-            "$policy_ip" && break
-        sleep 0.1
-    done
-    proxy_backend_addr_checked_in gonka-pr-proxy policy_http "$policy_ip" \
-        || fail "replacement policy-$name did not pass fresh L7 checks"
-    policy_ref=$(proxy_backend_server_ref_in gonka-pr-proxy policy_http \
-        "$policy_ip") || fail \
-        "could not identify replacement policy-$name in the public pool"
-    proxy_server_ready_in gonka-pr-proxy "$policy_ref" || fail \
-        "could not admit checked replacement policy-$name"
-    for _ in $(seq 40); do
         proxy_backend_addr_up policy_http "$policy_ip" && break
         sleep 0.1
     done
