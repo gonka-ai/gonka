@@ -121,6 +121,12 @@ The public `proxy-router` also remains one process on one host. Loss of that
 host, Docker daemon, public listener, or its network is therefore a host-level
 outage. Multi-host ingress belongs in a later layer above this one.
 
+The public router and both `proxy-policy` workers are one Compose deployment
+unit. Updating or rolling back that unit applies its image, environment,
+network, capability, and service definitions together. A rollback restores the
+previous release's Compose model and recreates it with `--remove-orphans`, so
+workers that are not part of that model cannot remain active.
+
 ## Endpoints
 
 | Listener | Purpose |
