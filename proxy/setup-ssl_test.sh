@@ -41,7 +41,7 @@ case " $* " in
     printf '{"certificate":"%s","private_key":"%s","order_id":"%s"}\n' \
       "${TEST_ISSUE_CERT:-INITIAL CERTIFICATE}" \
       "${TEST_ISSUE_KEY:-INITIAL PRIVATE KEY}" \
-      "${TEST_ISSUE_ORDER_ID:-order-1}"
+      "${TEST_ISSUE_ORDER_ID-order-1}"
     ;;
   *"/renew "*)
     printf '%s' "${TEST_RENEW_STATUS:-200}"
@@ -116,7 +116,7 @@ start_setup() {
     TEST_MV_FAIL_TARGET="${TEST_MV_FAIL_TARGET:-}" \
     TEST_ISSUE_CERT="${TEST_ISSUE_CERT:-INITIAL CERTIFICATE}" \
     TEST_ISSUE_KEY="${TEST_ISSUE_KEY:-INITIAL PRIVATE KEY}" \
-    TEST_ISSUE_ORDER_ID="${TEST_ISSUE_ORDER_ID:-order-1}" \
+    TEST_ISSUE_ORDER_ID="${TEST_ISSUE_ORDER_ID-order-1}" \
     TEST_RENEW_STATUS="${TEST_RENEW_STATUS:-200}" \
     TEST_RENEWED_CERT="${TEST_RENEWED_CERT:-RENEWED CERTIFICATE}" \
     bash "$ROOT/setup-ssl.sh" "$mode" > "$log" 2>&1 &
@@ -152,13 +152,12 @@ assert_no_staging_files() {
   fi
 }
 
-# A stale half-pair must not combine with one newly published file. Pause after
-# the key rename and verify that metadata and key are complete before cert.pem,
-# the bundle's commit marker, becomes visible.
+# A stale half-pair must not combine with a newly issued bundle. Pause before
+# the certificate rename and verify that metadata and key are complete first.
 printf '%s\n' 'STALE CERTIFICATE' > "$SSL_DIR/cert.pem"
 printf '%s\n' 'stale-order' > "$SSL_DIR/order.id"
-start_setup after private.key issue "$TEST_ROOT/issue.log"
-wait_for_mv || fail "initial publication did not reach the private-key rename"
+start_setup before cert.pem issue "$TEST_ROOT/issue.log"
+wait_for_mv || fail "initial publication did not reach the certificate rename"
 [ "$(cat "$SSL_DIR/private.key")" = 'INITIAL PRIVATE KEY' ] \
   || fail "initial private key was not published as a complete file"
 [ "$(cat "$SSL_DIR/order.id")" = 'order-1' ] \
@@ -185,6 +184,19 @@ wait_for_setup 0
   || fail "initial order ID mode is not 0600"
 assert_no_staging_files
 
+# The issuer always supplies an order ID. Rejecting a malformed response before
+# changing live files is safer than silently disabling future renewal.
+TEST_ISSUE_ORDER_ID=
+start_setup none none issue "$TEST_ROOT/missing-order.log"
+wait_for_setup 1
+[ "$(cat "$SSL_DIR/cert.pem")" = 'INITIAL CERTIFICATE' ] \
+  || fail "missing order ID changed the active certificate"
+[ "$(cat "$SSL_DIR/private.key")" = 'INITIAL PRIVATE KEY' ] \
+  || fail "missing order ID changed the active private key"
+[ "$(cat "$SSL_DIR/order.id")" = 'order-1' ] \
+  || fail "missing order ID removed the active order"
+TEST_ISSUE_ORDER_ID=order-1
+
 # Renewal must leave the complete old certificate visible until the atomic
 # rename. The private key is unchanged by the renewal contract.
 rm -f "$STATE_DIR/mv-reached" "$STATE_DIR/continue"
@@ -206,36 +218,15 @@ grep -q '^RENEWED CERTIFICATE$' "$SSL_DIR/cert.pem" \
   || fail "renewal replaced the order ID"
 assert_no_staging_files
 
-# A failed 404 fallback must restore the complete previous bundle instead of
-# deleting live TLS material. Fail the first cert.pem rename; the mock permits
-# the rollback rename that follows.
-previous_certificate=$(cat "$SSL_DIR/cert.pem")
-previous_key=$(cat "$SSL_DIR/private.key")
-previous_order_id=$(cat "$SSL_DIR/order.id")
+# A successful 404 fallback can replace the key, so it must request an nginx
+# reload instead of reporting "no renewal needed".
 TEST_RENEW_STATUS=404
 TEST_ISSUE_CERT='FALLBACK CERTIFICATE'
 TEST_ISSUE_KEY='FALLBACK PRIVATE KEY'
 TEST_ISSUE_ORDER_ID='order-2'
-TEST_MV_FAIL_TARGET=cert.pem
 rm -f "$STATE_DIR/mv-reached" "$STATE_DIR/continue" "$STATE_DIR/mv-failed"
-start_setup none none renew "$TEST_ROOT/fallback-failure.log"
-wait_for_setup 1
-[ -f "$STATE_DIR/mv-failed" ] \
-  || fail "fallback test did not inject the certificate rename failure"
-[ "$(cat "$SSL_DIR/cert.pem")" = "$previous_certificate" ] \
-  || fail "failed fallback did not restore the previous certificate"
-[ "$(cat "$SSL_DIR/private.key")" = "$previous_key" ] \
-  || fail "failed fallback did not restore the previous private key"
-[ "$(cat "$SSL_DIR/order.id")" = "$previous_order_id" ] \
-  || fail "failed fallback did not restore the previous order ID"
-assert_no_staging_files
-
-# Retrying the same 404 fallback publishes the new order ID and key before the
-# new certificate marker, then leaves a complete replacement bundle.
-TEST_MV_FAIL_TARGET=
-rm -f "$STATE_DIR/mv-reached" "$STATE_DIR/continue" "$STATE_DIR/mv-failed"
-start_setup after private.key renew "$TEST_ROOT/fallback-success.log"
-wait_for_mv || fail "404 fallback did not reach the private-key rename"
+start_setup before cert.pem renew "$TEST_ROOT/fallback-success.log"
+wait_for_mv || fail "404 fallback did not reach the certificate rename"
 [ ! -e "$SSL_DIR/cert.pem" ] \
   || fail "404 fallback exposed its certificate before the bundle was ready"
 [ "$(cat "$SSL_DIR/private.key")" = 'FALLBACK PRIVATE KEY' ] \
@@ -243,19 +234,55 @@ wait_for_mv || fail "404 fallback did not reach the private-key rename"
 [ "$(cat "$SSL_DIR/order.id")" = 'order-2' ] \
   || fail "404 fallback did not publish the replacement order ID first"
 : > "$STATE_DIR/continue"
-wait_for_setup 0
+wait_for_setup 10
 [ "$(cat "$SSL_DIR/cert.pem")" = 'FALLBACK CERTIFICATE' ] \
   || fail "404 fallback did not publish the replacement certificate"
-[ "$(cat "$SSL_DIR/private.key")" = 'FALLBACK PRIVATE KEY' ] \
-  || fail "404 fallback did not retain the replacement private key"
-[ "$(cat "$SSL_DIR/order.id")" = 'order-2' ] \
-  || fail "404 fallback did not retain the replacement order ID"
+assert_no_staging_files
+
+# A failed final rename leaves cert.pem absent rather than exposing a mismatched
+# bundle. The next renewal invocation detects that marker and self-heals by
+# issuing a complete replacement without using rollback files.
+TEST_ISSUE_CERT='RECOVERED CERTIFICATE'
+TEST_ISSUE_KEY='RECOVERED PRIVATE KEY'
+TEST_ISSUE_ORDER_ID='order-3'
+TEST_MV_FAIL_TARGET=cert.pem
+rm -f "$STATE_DIR/mv-reached" "$STATE_DIR/continue" "$STATE_DIR/mv-failed"
+start_setup none none renew "$TEST_ROOT/fallback-failure.log"
+wait_for_setup 1
+[ -f "$STATE_DIR/mv-failed" ] \
+  || fail "fallback test did not inject the certificate rename failure"
+[ ! -e "$SSL_DIR/cert.pem" ] \
+  || fail "failed fallback left a certificate marker"
+[ "$(cat "$SSL_DIR/private.key")" = 'RECOVERED PRIVATE KEY' ] \
+  || fail "failed fallback did not finish the private-key write"
+[ "$(cat "$SSL_DIR/order.id")" = 'order-3' ] \
+  || fail "failed fallback did not finish the order ID write"
+assert_no_staging_files
+if find "$SSL_DIR" \( -name '.private.key.*' -o -name '.order.id.*' \) \
+    -print -quit | grep -q .; then
+  fail "failed fallback left secret staging files"
+fi
+
+TEST_MV_FAIL_TARGET=
+rm -f "$STATE_DIR/mv-reached" "$STATE_DIR/continue" "$STATE_DIR/mv-failed"
+start_setup before cert.pem renew "$TEST_ROOT/fallback-recovery.log"
+wait_for_mv || fail "missing-marker recovery did not reach certificate rename"
+[ ! -e "$SSL_DIR/cert.pem" ] \
+  || fail "recovery exposed its certificate before the bundle was ready"
+: > "$STATE_DIR/continue"
+wait_for_setup 10
+[ "$(cat "$SSL_DIR/cert.pem")" = 'RECOVERED CERTIFICATE' ] \
+  || fail "missing-marker recovery did not publish the certificate"
+[ "$(cat "$SSL_DIR/private.key")" = 'RECOVERED PRIVATE KEY' ] \
+  || fail "missing-marker recovery did not publish the private key"
+[ "$(cat "$SSL_DIR/order.id")" = 'order-3' ] \
+  || fail "missing-marker recovery did not publish the order ID"
 [ "$(file_mode "$SSL_DIR/cert.pem")" = 644 ] \
-  || fail "fallback certificate mode is not 0644"
+  || fail "recovered certificate mode is not 0644"
 [ "$(file_mode "$SSL_DIR/private.key")" = 600 ] \
-  || fail "fallback private key mode is not 0600"
+  || fail "recovered private key mode is not 0600"
 [ "$(file_mode "$SSL_DIR/order.id")" = 600 ] \
-  || fail "fallback order ID mode is not 0600"
+  || fail "recovered order ID mode is not 0600"
 
 assert_no_staging_files
 
