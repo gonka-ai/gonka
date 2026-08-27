@@ -31,7 +31,7 @@ RUN chmod +x /entrypoint.sh /setup-ssl.sh
 RUN mkdir -p /var/log/nginx /etc/nginx/ssl
 
 # Expose ports
-EXPOSE 80 443
+EXPOSE 80 443 8081
 
 # Use custom entrypoint
 ENTRYPOINT ["/entrypoint.sh"]
