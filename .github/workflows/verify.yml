@@ -260,6 +260,15 @@ jobs:
       - name: Render and exercise versiond-router
         run: make -C versiond-router test-render
 
+  test-proxy-ssl-install:
+    runs-on: ubuntu-latest
+    name: Test proxy TLS certificate publication
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Exercise atomic certificate installation
+        run: ./proxy/setup-ssl_test.sh
+
   build-and-test-edge-api:
     runs-on: ubuntu-latest
     name: Build and Test edge-api (validation)
