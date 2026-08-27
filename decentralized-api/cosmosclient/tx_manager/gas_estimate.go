@@ -444,6 +444,12 @@ func applySimulateHeadroom(v uint64) uint64 {
 // gasWantedFromSimulate pads a successful Simulate with 1.2×. static is
 // used only when Simulate returned 0; a working sim is never raised back
 // to the static HardwareDiff floor.
+//
+// TODO(simulate-gas): Re-measure Simulate vs FinalizeBlock gas_used on a small
+// HardwareDiff after CountTXSimulateGasDecorator + UnorderedNonceSimGasDecorator.
+// HardwareRelabelTests previously needed 1.5× (38_627 sim vs 48_212 deliver).
+// If deliver_used still exceeds simulated×1.2, add a fixed pad — do not go back
+// to 1.5× on large txs.
 func gasWantedFromSimulate(static, simulated uint64) uint64 {
 	if simulated == 0 {
 		return static
