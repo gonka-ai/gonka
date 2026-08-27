@@ -105,11 +105,11 @@ down and become eligible only after their configured readiness checks succeed.
 HAProxy retains the health state of an occupied slot when Docker DNS changes
 its address. A policy-worker replacement therefore follows an explicit
 generation boundary: put the old address in runtime drain, confirm withdrawal
-from new selection, gracefully stop the worker, and reset its health to `DOWN`
-while it remains drained. After the replacement appears, its address must
-complete a new L7 `rise` before that slot returns to `READY`. The host updater
-owns this sequence. TCP redispatch moves a new connection to another admitted
-worker after the selected address stops accepting connections.
+from new selection, gracefully stop the worker, reset its health to `DOWN`,
+and return the empty slot to check-enabled `READY` state. After the replacement
+appears, its address must complete a new L7 `rise` before HAProxy admits it.
+The host updater owns this sequence. TCP redispatch moves a new connection to
+another admitted worker after the selected address stops accepting connections.
 
 ## Availability scope
 
