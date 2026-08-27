@@ -10,7 +10,7 @@ containers=(
     gonka-pr-policy-a gonka-pr-policy-b
     gonka-pr-router-a gonka-pr-router-b gonka-pr-router-bad
     gonka-pr-router-migration
-    gonka-pr-edge-router
+    gonka-pr-edge-a gonka-pr-edge-b gonka-pr-edge-legacy
 )
 tmpdir=$(mktemp -d)
 
@@ -45,6 +45,8 @@ generic_ready = os.environ.get("GENERIC_READY", "true") == "true"
 data_enabled = os.environ.get("DATA_ENABLED", "true") == "true"
 data_port = int(os.environ.get("DATA_PORT", "8080"))
 missing_versionless = os.environ.get("MISSING_VERSIONLESS", "false") == "true"
+readyz_supported = os.environ.get("READYZ_SUPPORTED", "true") == "true"
+data_ready = True
 post_count = 0
 lock = threading.Lock()
 data_server = None
@@ -62,7 +64,11 @@ class Data(http.server.BaseHTTPRequestHandler):
 
     def do_GET(self):
         if self.path == "/readyz":
-            return self.reply(200, "ready")
+            if not readyz_supported:
+                return self.reply(404, "not found")
+            with lock:
+                ready = data_ready
+            return self.reply(200 if ready else 503, "ready" if ready else "not ready")
         if missing_versionless and self.path.startswith("/sessions/retry-404-"):
             return self.reply(404, "route not owned here")
         if self.path.endswith("/headers"):
@@ -97,6 +103,7 @@ class Admin(http.server.BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def do_GET(self):
+        global data_ready
         if self.path == "/count":
             with lock:
                 return self.reply(200, str(post_count))
@@ -105,6 +112,14 @@ class Admin(http.server.BaseHTTPRequestHandler):
                 data_server.shutdown()
                 data_server.server_close()
             return self.reply(200, "disabled")
+        if self.path == "/drain":
+            with lock:
+                data_ready = False
+            return self.reply(200, "draining")
+        if self.path == "/resume":
+            with lock:
+                data_ready = True
+            return self.reply(200, "ready")
         url = urllib.parse.urlparse(self.path)
         if url.path != "/readyz":
             return self.reply(404, "not found")
@@ -165,9 +180,9 @@ http {
         zone versiond_distributor 64k;
         server proxy-router:18081 resolve;
     }
-    upstream edge_router {
-        zone edge_router 64k;
-        server edge-api-router:18080 resolve;
+    upstream edge_distributor {
+        zone edge_distributor 64k;
+        server proxy-router:18082 resolve;
     }
     server {
         listen 80 proxy_protocol;
@@ -181,7 +196,7 @@ http {
         location /tier-a/ {
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_pass http://edge_router/;
+            proxy_pass http://edge_distributor/;
         }
         location / { return 200 "$hostname:$remote_addr\n"; }
     }
@@ -230,13 +245,16 @@ docker run -d --name gonka-pr-router-migration --network "$network" \
     -v "$tmpdir/upstream.py:/app.py:ro" \
     python:3.12-alpine python /app.py >/dev/null
 
-# This fixture represents the nginx edge-api-router shipped by the previous
-# release. The public HAProxy must leave that HTTP routing hop unchanged.
-docker run -d --name gonka-pr-edge-router --hostname edge-api-router \
-    --network "$network" --network-alias edge-api-router \
-    -e NAME=legacy-edge-router -e 'SERVES=' -e DATA_PORT=18080 \
-    -v "$tmpdir/upstream.py:/app.py:ro" \
-    python:3.12-alpine python /app.py >/dev/null
+for spec in 'a:true' 'b:true' 'legacy:false'; do
+    name=${spec%%:*}
+    readyz_supported=${spec##*:}
+    docker run -d --name "gonka-pr-edge-$name" --network "$network" \
+        --network-alias edge-api-pool \
+        -e "NAME=edge-$name" -e DATA_PORT=18080 \
+        -e "READYZ_SUPPORTED=$readyz_supported" \
+        -v "$tmpdir/upstream.py:/app.py:ro" \
+        python:3.12-alpine python /app.py >/dev/null
+done
 
 docker run -d --name gonka-pr-proxy --network "$network" \
     --network-alias proxy-router \
@@ -246,6 +264,8 @@ docker run -d --name gonka-pr-proxy --network "$network" \
     -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
     -e PROXY_ROUTER_VERSION_CAPACITY=1 \
     -e PROXY_ROUTER_ACTIVATION_MIN_READY=2 \
+    -e EDGE_API_POOL_HOST=edge-api-pool \
+    -e PROXY_EDGE_API_POOL_SLOTS=4 \
     -e PROXY_ROUTER_METRICS_BIND_HOST=proxy-router \
     -e PROXY_ROUTER_CATALOG_BIND_HOST=proxy-router \
     -e PROXY_ROUTER_CATALOG_UPSTREAM_HOST=routing-catalog \
@@ -292,6 +312,7 @@ proxy_backend_addr_up() {
 
 for _ in $(seq 60); do
     if proxy_admin /readyz >/dev/null 2>&1 &&
+        proxy_admin '/readyz?component=edge-api' >/dev/null 2>&1 &&
         proxy_admin '/readyz?component=versiond' >/dev/null 2>&1 &&
         proxy_admin '/readyz?version=v4' >/dev/null 2>&1 &&
         proxy_admin '/readyz?version=v5' >/dev/null 2>&1; then
@@ -449,6 +470,8 @@ docker run -d --name gonka-pr-proxy --network "$network" \
     -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
     -e PROXY_ROUTER_VERSION_CAPACITY=1 \
     -e PROXY_ROUTER_ACTIVATION_MIN_READY=2 \
+    -e EDGE_API_POOL_HOST=edge-api-pool \
+    -e PROXY_EDGE_API_POOL_SLOTS=4 \
     -e PROXY_ROUTER_METRICS_BIND_HOST=proxy-router \
     -e PROXY_ROUTER_CATALOG_BIND_HOST=proxy-router \
     -e PROXY_ROUTER_CATALOG_UPSTREAM_HOST=routing-catalog \
@@ -599,12 +622,71 @@ done
 docker start gonka-pr-router-bad >/dev/null
 sleep 2
 
-[[ $(probe http://proxy-router/tier-a/status) == legacy-edge-router ]] \
-    || fail "public Tier A path did not preserve the existing edge-api-router hop"
-edge_admin_status=$(docker exec gonka-pr-proxy curl -sS -o /dev/null \
-    -w '%{http_code}' 'http://127.0.0.1:8404/readyz?component=edge-api')
-[[ $edge_admin_status == 404 ]] \
-    || fail "public HAProxy unexpectedly exposes edge-api readiness"
+for edge in a b legacy; do
+    edge_ip=$(docker inspect -f \
+        "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
+        "gonka-pr-edge-$edge")
+    for _ in $(seq 40); do
+        proxy_backend_addr_up edge_api_pool "$edge_ip" && break
+        sleep 0.1
+    done
+    proxy_backend_addr_up edge_api_pool "$edge_ip" || fail \
+        "edge-$edge was not admitted into the shared pool"
+done
+
+tier_a=$(probe http://proxy-router/tier-a/status)
+[[ $tier_a =~ ^edge-(a|b|legacy)$ ]] \
+    || fail "public Tier A path bypassed the shared edge-api pool: $tier_a"
+
+# A pre-lifecycle image has no /readyz. It remains available during a rolling
+# adoption only after its existing /healthz contract passes (asserted above by
+# the legacy slot reaching UP).
+edge_a_ip=$(docker inspect -f \
+    "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
+    gonka-pr-edge-a)
+probe http://gonka-pr-edge-a:8404/drain >/dev/null
+for _ in $(seq 50); do
+    if ! proxy_backend_addr_up edge_api_pool "$edge_a_ip"; then
+        break
+    fi
+    sleep 0.1
+done
+if proxy_backend_addr_up edge_api_pool "$edge_a_ip"; then
+    fail "draining edge-a remained in the shared pool"
+fi
+[[ $(probe http://gonka-pr-edge-a:18080/status) == edge-a ]] \
+    || fail "draining edge-a closed its listener before HAProxy withdrew it"
+for _ in $(seq 12); do
+    next_edge=$(probe http://proxy-router/tier-a/status)
+    [[ $next_edge =~ ^edge-(b|legacy)$ ]] \
+        || fail "Tier A reached withdrawn edge-a: $next_edge"
+done
+
+# Edge readiness is component-scoped. Losing all edge replicas must not mark
+# the public policy tier unready or hide unrelated APIs.
+probe http://gonka-pr-edge-b:8404/drain >/dev/null
+docker stop gonka-pr-edge-legacy >/dev/null
+for _ in $(seq 50); do
+    if ! proxy_admin '/readyz?component=edge-api' >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.1
+done
+if proxy_admin '/readyz?component=edge-api' >/dev/null 2>&1; then
+    fail "empty edge-api pool remained component-ready"
+fi
+proxy_admin /readyz >/dev/null \
+    || fail "edge-api outage made unrelated public routes unready"
+policy_during_edge_outage=$(probe http://proxy-router/)
+[[ $policy_during_edge_outage == policy-* ]] \
+    || fail "ordinary public routing failed with an empty edge-api pool"
+probe http://gonka-pr-edge-a:8404/resume >/dev/null
+for _ in $(seq 50); do
+    proxy_admin '/readyz?component=edge-api' >/dev/null 2>&1 && break
+    sleep 0.1
+done
+proxy_admin '/readyz?component=edge-api' >/dev/null \
+    || fail "edge-api component readiness did not recover"
 
 for _ in $(seq 8); do
     [[ $(probe http://proxy-router:18081/v5/sessions/test/healthz) == b ]] \
