@@ -1266,7 +1266,10 @@ else
     fi
 fi
 
-if [ "$SSL_ENABLED" = "true" ]; then
+if [ "$SSL_ENABLED" = "true" ] \
+    && { [ -f "/etc/nginx/ssl/order.id" ] \
+      || [ ! -f "/etc/nginx/ssl/cert.pem" ] \
+      || [ ! -f "/etc/nginx/ssl/private.key" ]; }; then
     RENEW_INTERVAL_HOURS=${RENEW_INTERVAL_HOURS:-24}
     RENEW_RETRY_SECONDS=${PROXY_SSL_WAIT_SECONDS:-60}
     echo "Starting background renewal loop (every ${RENEW_INTERVAL_HOURS}h)"
