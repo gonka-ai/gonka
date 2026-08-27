@@ -1385,7 +1385,7 @@ test-version-routing:
 		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
 		-e VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=6 \
 		-e VERSIOND_ROUTING_ACTIVATION_MIN_READY=2 \
-		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
+		-e VERSIOND_ROUTER_VERSION_CAPACITY=1 \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
 		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
 		gonka-versiond-router-probe >/dev/null; \
@@ -1395,6 +1395,9 @@ test-version-routing:
 			| jq -e '.state == "capacity-exhausted"' >/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
+	[ "$$(docker exec gonka-vp-router grep -c '^backend versiond_dynamic_' \
+		/etc/haproxy/haproxy.cfg)" -eq 3 ] \
+		|| fail "accepted LKG routes did not raise the inner router's effective capacity"; \
 	for i in $$(seq 16); do \
 		pending_cache_after=$$(docker exec gonka-vp-router \
 			jq -er .fetched_at_unix /var/lib/gonka-router/catalog.json); \
