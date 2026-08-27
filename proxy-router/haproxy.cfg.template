@@ -67,10 +67,15 @@ backend policy_http
     option redispatch
     retries 2
     timeout server ${PUBLIC_IDLE_SECONDS}s
-    option httpchk
-    http-check send meth GET uri /health hdr Host policy-health
-    http-check expect status 200
-    server-template policy ${POLICY_POOL_SLOTS} ${POLICY_POOL_HOST}:80 check port 8081 inter 1s fall 2 rise 2 resolvers docker init-addr none init-state up hash-key addr send-proxy-v2
+    option tcp-check
+    # A worker is usable only when both its public data listener and application
+    # readiness endpoint are available. The first connection carries PROXY just
+    # like production traffic; the second is the private health listener.
+    tcp-check connect port 80 send-proxy
+    tcp-check connect port 8081
+    tcp-check send-binary 474554202f6865616c746820485454502f312e310d0a486f73743a20706f6c6963792d6865616c74680d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a
+    tcp-check expect rstring ^HTTP/1\.[01][[:space:]]+200
+    server-template policy ${POLICY_POOL_SLOTS} ${POLICY_POOL_HOST}:80 check inter 1s fall 2 rise 2 resolvers docker init-addr none init-state up hash-key addr send-proxy-v2
 
 backend policy_https
     mode tcp
@@ -79,10 +84,12 @@ backend policy_https
     option redispatch
     retries 2
     timeout server ${PUBLIC_IDLE_SECONDS}s
-    option httpchk
-    http-check send meth GET uri /health hdr Host policy-health
-    http-check expect status 200
-    server-template policy ${POLICY_POOL_SLOTS} ${POLICY_POOL_HOST}:443 check port 8081 inter 1s fall 2 rise 2 resolvers docker init-addr none init-state up hash-key addr send-proxy-v2
+    option tcp-check
+    tcp-check connect port 443 ssl send-proxy
+    tcp-check connect port 8081
+    tcp-check send-binary 474554202f6865616c746820485454502f312e310d0a486f73743a20706f6c6963792d6865616c74680d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a
+    tcp-check expect rstring ^HTTP/1\.[01][[:space:]]+200
+    server-template policy ${POLICY_POOL_SLOTS} ${POLICY_POOL_HOST}:443 check inter 1s fall 2 rise 2 resolvers docker init-addr none init-state up hash-key addr send-proxy-v2 verify none
 
 frontend versiond_router_in
     option httplog
