@@ -87,9 +87,10 @@ const (
 
 // ParseProtocolVersion parses a string into a ProtocolVersion.
 // Empty string defaults to ProtocolV1. A leading "v"/"V" is stripped so
-// route segments like "v4" and "v4.1r5" stamp as "4" and "4.1r5". Any
-// remaining non-empty token is accepted — this is a local registry stamp,
-// not the session/settlement protocol tag.
+// route segments like "v4" stamp as "4". Any remaining non-empty token is
+// accepted — this is a local registry stamp, not the session/settlement
+// protocol tag. Callers that want a major-only stamp (v2.1.0 -> 2) truncate
+// before calling.
 func ParseProtocolVersion(s string) (ProtocolVersion, error) {
 	raw := strings.TrimSpace(s)
 	if raw == "" {

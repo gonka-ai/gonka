@@ -169,7 +169,7 @@ func TestCreateRotationEscrowCarriesProtocolVersionFromV4RoutePrefix(t *testing.
 	assert.Equal(t, "4", record.ProtocolVersion, "v4 route prefix stamps protocol 4, not empty")
 }
 
-// A leading "v" is stripped; the rest of the route version segment is kept.
+// A leading "v" is stripped after taking the major (v2.1.0 -> v2 -> "2").
 func TestRotationEscrowProtocolVersionRouteMapping(t *testing.T) {
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/mainnet-canary")
 	assert.Equal(t, "mainnet-canary", rotationEscrowProtocolVersion())
@@ -178,9 +178,9 @@ func TestRotationEscrowProtocolVersionRouteMapping(t *testing.T) {
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v4")
 	assert.Equal(t, "4", rotationEscrowProtocolVersion())
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v4.1r5")
-	assert.Equal(t, "4.1r5", rotationEscrowProtocolVersion())
+	assert.Equal(t, "4", rotationEscrowProtocolVersion())
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v2.1.0")
-	assert.Equal(t, "2.1.0", rotationEscrowProtocolVersion())
+	assert.Equal(t, "2", rotationEscrowProtocolVersion())
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/3")
 	assert.Equal(t, "3", rotationEscrowProtocolVersion())
 }
