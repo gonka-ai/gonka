@@ -277,17 +277,32 @@ docker run -d --name gonka-pr-router-legacy --network "$network" \
     --network-alias versiond-router-legacy \
     -e VERSIOND_HOSTS=gonka-pr-router-a -e VERSIOND_PORT=8080 \
     -e VERSIOND_VERSIONS=v4 -e VERSIOND_NON_HA_VERSIONS= \
+    -e VERSIOND_ROUTER_FRONT_BIND_HOST=versiond-router-legacy \
+    -e VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS=true \
+    -v "$PWD/../versiond-router/legacy-public-tier-compat.sh:/docker-entrypoint.d/50-gonka-public-tier-compat.sh:ro" \
     ghcr.io/product-science/versiond-router:0.2.15 >/dev/null
+legacy_address=$(docker inspect -f \
+    "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
+    gonka-pr-router-legacy)
 for _ in $(seq 40); do
     if docker exec gonka-pr-router-legacy wget -q -O /dev/null \
-        http://127.0.0.1:8080/v4/healthz 2>/dev/null; then
+        "http://$legacy_address:8080/v4/healthz" 2>/dev/null; then
         break
     fi
     sleep 0.25
 done
 docker exec gonka-pr-router-legacy wget -q -O /dev/null \
-    http://127.0.0.1:8080/v4/healthz \
+    "http://$legacy_address:8080/v4/healthz" \
     || fail "published legacy versiond-router did not become healthy"
+docker exec gonka-pr-router-legacy grep -q "listen $legacy_address:8080" \
+    /etc/nginx/conf.d/default.conf \
+    || fail "legacy versiond-router still listens outside the isolated ingress network"
+legacy_headers=$(docker exec gonka-pr-router-legacy wget -q -O - \
+    --header='X-Real-IP: 203.0.113.45' \
+    --header='X-Forwarded-Proto: https' \
+    "http://$legacy_address:8080/v4/sessions/legacy/headers")
+[[ $legacy_headers == '203.0.113.45|https' ]] \
+    || fail "legacy versiond-router overwrote trusted policy identity: $legacy_headers"
 docker run -d --name gonka-pr-proxy-legacy --network "$network" \
     -e PROXY_POLICY_POOL_HOST=missing-policy \
     -e VERSIOND_ROUTER_POOL_HOST=versiond-router-legacy \
