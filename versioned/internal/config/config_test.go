@@ -41,6 +41,12 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.BasePort != 5000 {
 		t.Errorf("BasePort = %d, want %d", cfg.BasePort, 5000)
 	}
+	if cfg.ReadyTimeout != 60*time.Second {
+		t.Errorf("ReadyTimeout = %v, want %v", cfg.ReadyTimeout, 60*time.Second)
+	}
+	if cfg.ReadyMaxWait != 32*time.Minute {
+		t.Errorf("ReadyMaxWait = %v, want %v", cfg.ReadyMaxWait, 32*time.Minute)
+	}
 	if cfg.DrainKillGrace != DefaultDrainKillGrace {
 		t.Errorf("DrainKillGrace = %v, want %v", cfg.DrainKillGrace, DefaultDrainKillGrace)
 	}
@@ -97,12 +103,28 @@ func TestLoad_CustomValues(t *testing.T) {
 	}
 }
 
+func TestLoad_ReadyMaxWaitClampedToReadyTimeout(t *testing.T) {
+	t.Setenv("VERSIOND_ORACLE_URL", "http://oracle:8080/versions")
+	t.Setenv("VERSIOND_READY_TIMEOUT", "10m")
+	t.Setenv("VERSIOND_READY_MAX_WAIT", "1m")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.ReadyMaxWait != 10*time.Minute {
+		t.Fatalf("ReadyMaxWait = %v, want it raised to ReadyTimeout (10m)", cfg.ReadyMaxWait)
+	}
+}
+
 // A malformed duration refuses to boot rather than silently borrowing the
 // default: a typo in a drain or shutdown budget would otherwise surface during
 // the outage it was meant to bound.
 func TestLoad_MalformedDurationsRefuseToBoot(t *testing.T) {
 	for _, key := range []string{
 		"VERSIOND_POLL_INTERVAL",
+		"VERSIOND_READY_TIMEOUT",
+		"VERSIOND_READY_MAX_WAIT",
 		"VERSIOND_HOST_SHUTDOWN_BUDGET",
 		"VERSIOND_DRAIN_ANNOUNCE",
 		"DEVSHARD_SHUTDOWN_GRACE",
