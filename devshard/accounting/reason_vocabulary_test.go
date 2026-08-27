@@ -86,6 +86,7 @@ func TestNormalizeDeliveryReason_KeepsWhatADeliveryCanBe(t *testing.T) {
 	for _, reason := range []string{
 		"empty_stream", "model_burn_empty", "error_stream", "client_cancelled",
 		"eof_transport", "http_not_found", DeliveryClientGone,
+		DeliveryWarmupProbe, DeliveryThrottleProbe,
 	} {
 		require.Equal(t, reason, normalizeDeliveryReason(reason))
 	}

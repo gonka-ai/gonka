@@ -571,6 +571,7 @@ type Redundancy struct {
 	participantLimiter   *ParticipantRequestLimiter
 	stateBlockMu         sync.RWMutex
 	stateBlockedHosts    map[string]string // escrow-local participant blocks for non-recoverable state divergence
+	throttleProbes       throttleProbeGate // bounds the ghost probes sent to a throttled host
 
 	onRaceCleanupStart func()
 	onRaceCleanupDone  func()
@@ -4046,6 +4047,10 @@ func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostK
 		return
 	}
 	participantKey := e.participantKeyForHost(prepared.HostIdx())
+	if kind == ghostThrottled && throttleProbeEnabled.Load() && e.throttleProbes.admit(participantKey, time.Now()) {
+		e.sendThrottleProbe(prepared, participantKey, reason)
+		return
+	}
 	quarantineMode := e.quarantineModeForParticipant(participantKey)
 	e.accounting.Ghost(e.devshardID, prepared.Nonce(), reason, quarantineMode, ghostTimeoutWillBeRaised(kind))
 	if e.metrics != nil {
@@ -4092,26 +4097,32 @@ func (e *Redundancy) raiseGhostAccountability(prepared *user.PreparedInference, 
 	payload := prepared.Payload()
 	e.goTrackedRaceCleanup(func() {
 		ctx, _ := ensureRequestLogContext(context.Background())
-		logInferenceStage(ctx, e.devshardID, nonce, "ghost_timeout_started", "host", hostLabel, "kind", int(kind))
-		// HandleTimeout reports an applied timeout by returning an error, so the outcome decides what
-		// this was; branching on err logged every success as a failure.
-		result, err := e.session.HandleTimeout(ctx, nonce, burnedAt, payload)
-		// The chain counts a miss for an applied timeout whoever raised it, so the ledger records this
-		// one the same as any other; without it the cross-check compares against a population that
-		// excludes every burn by construction.
-		action, reason := gatewayTimeoutFailureAction(result, false)
-		if err == nil {
-			action, reason = "completed", "none"
-		}
-		e.accounting.TimeoutResult(e.devshardID, nonce, timeoutResultKind(result, nil), action, reason,
-			result.DetailReason, result.DetailReason)
-		if result.Applied {
-			logInferenceStage(ctx, e.devshardID, nonce, "ghost_timeout_applied", "host", hostLabel)
-			return
-		}
-		logInferenceStage(ctx, e.devshardID, nonce, "ghost_timeout_failed",
-			"host", hostLabel, "outcome", result.Outcome, "error", err)
+		e.raiseGhostTimeout(ctx, nonce, burnedAt, payload, hostLabel, kind)
 	})
+}
+
+// raiseGhostTimeout runs the timeout on the caller's goroutine: the silent burn and an unserved probe
+// both end here, so a verifier sees the same outcome either way.
+func (e *Redundancy) raiseGhostTimeout(ctx context.Context, nonce uint64, burnedAt time.Time, payload *host.InferencePayload, hostLabel string, kind ghostKind) {
+	logInferenceStage(ctx, e.devshardID, nonce, "ghost_timeout_started", "host", hostLabel, "kind", int(kind))
+	// HandleTimeout reports an applied timeout by returning an error, so the outcome decides what
+	// this was; branching on err logged every success as a failure.
+	result, err := e.session.HandleTimeout(ctx, nonce, burnedAt, payload)
+	// The chain counts a miss for an applied timeout whoever raised it, so the ledger records this
+	// one the same as any other; without it the cross-check compares against a population that
+	// excludes every burn by construction.
+	action, reason := gatewayTimeoutFailureAction(result, false)
+	if err == nil {
+		action, reason = "completed", "none"
+	}
+	e.accounting.TimeoutResult(e.devshardID, nonce, timeoutResultKind(result, nil), action, reason,
+		result.DetailReason, result.DetailReason)
+	if result.Applied {
+		logInferenceStage(ctx, e.devshardID, nonce, "ghost_timeout_applied", "host", hostLabel)
+		return
+	}
+	logInferenceStage(ctx, e.devshardID, nonce, "ghost_timeout_failed",
+		"host", hostLabel, "outcome", result.Outcome, "error", err)
 }
 
 // fireBalanceExhausted fires onBalanceExhausted at most once per Redundancy

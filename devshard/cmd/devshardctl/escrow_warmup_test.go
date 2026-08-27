@@ -144,7 +144,7 @@ func (s *spyRecorder) RealSend(_ string, nonce uint64, _ time.Time, _ string) {
 	s.nonces = append(s.nonces, nonce)
 }
 
-func (s *spyRecorder) ProbeServed(_ string, nonce uint64) {
+func (s *spyRecorder) ProbeServed(_ string, nonce uint64, _ string) {
 	s.served = append(s.served, nonce)
 }
 

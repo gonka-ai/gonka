@@ -236,7 +236,7 @@ func TestProbeServedMarksTheNonceAsTheGatewaysOwnWork(t *testing.T) {
 		require.NoError(t, tr.RecordDiff("e1", nonce, true))
 		require.NoError(t, tr.RecordRealSend("e1", nonce, accountingTestNow, PhaseNormal, QuarantineNone))
 		require.NoError(t, tr.RecordProtocol("e1", nonce, uint32(nonce%2), ProtocolFinishApplied, types.HostStats{}))
-		recorder.ProbeServed("e1", nonce)
+		recorder.ProbeServed("e1", nonce, DeliveryWarmupProbe)
 	}
 
 	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 15}), "p1")
@@ -244,5 +244,43 @@ func TestProbeServedMarksTheNonceAsTheGatewaysOwnWork(t *testing.T) {
 	for _, finding := range record.Findings {
 		require.NotEqual(t, FindingUnusedAnswers, finding.Code,
 			"ProbeServed must stamp the reason findings filter on, not just settle the nonce")
+	}
+}
+
+// A probe is work the host did that nobody asked for: counted as work, kept out of the user ratios.
+func TestServedThrottleProbesDoNotRaiseUnusedAnswersOnAHost(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 15, "m")
+	for nonce := uint64(1); nonce <= 60; nonce++ {
+		require.NoError(t, tr.RecordDiff("e1", nonce, true))
+		require.NoError(t, tr.RecordProbeSend("e1", nonce, accountingTestNow, PhaseNormal, QuarantineNone, DeliveryThrottleProbe))
+		require.NoError(t, tr.RecordProtocol("e1", nonce, uint32(nonce%2), ProtocolFinishApplied, types.HostStats{}))
+		require.NoError(t, tr.RecordUsage("e1", nonce, UsageLoser, DeliveryThrottleProbe))
+	}
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 15}), "p1")
+	require.NotZero(t, record.Dispositions[DispositionFinishedUnused], "the probes are still counted as work")
+	require.Zero(t, record.Unclassified, "a served probe that finishes must classify, not fall through")
+	for _, finding := range record.Findings {
+		require.NotEqual(t, FindingUnusedAnswers, finding.Code,
+			"an escrow whose only traffic is probes must not read as a host nobody uses")
+	}
+}
+
+// Probing a host must not raise its refusal rate by the act of measuring it.
+func TestUnservedThrottleProbesDoNotRaiseRefusalsOnAHost(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 15, "m")
+	for nonce := uint64(1); nonce <= 60; nonce++ {
+		require.NoError(t, tr.RecordDiff("e1", nonce, true))
+		require.NoError(t, tr.RecordProbeSend("e1", nonce, accountingTestNow.Add(-2*time.Minute), PhaseNormal, QuarantineNone, DeliveryThrottleProbe))
+	}
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 15}), "p1")
+	require.NotZero(t, record.Dispositions[DispositionUnfinishedRefused],
+		"the probes must be classified, or this asserts nothing")
+	for _, finding := range record.Findings {
+		require.NotEqual(t, FindingRefusals, finding.Code,
+			"probing a host must not raise its refusal rate by the act of measuring it")
 	}
 }

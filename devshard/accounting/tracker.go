@@ -74,8 +74,8 @@ type nonceState struct {
 	// GhostTimeoutPending marks a burned nonce the gateway will raise a timeout on. The raise resolves a
 	// refusal deadline later, so the nonce has to outlive the burn to receive its own outcome.
 	GhostTimeoutPending bool
-	RequestID         string
-	Counted           *CounterKey
+	RequestID           string
+	Counted             *CounterKey
 }
 
 func OpenTracker(path string, retention uint64, interval time.Duration) (*Tracker, error) {
@@ -396,6 +396,23 @@ func (t *Tracker) RecordRealSend(escrowID string, nonce uint64, sentAt time.Time
 		s.SendAt = sentAt.UTC()
 		s.DispatchPhase = normalizePhase(phase)
 		s.Quarantine = normalizeQuarantine(quarantine)
+		e.reclassify(nonce, s, t.nowUTC())
+		return nil
+	})
+}
+
+// RecordProbeSend stamps the reason at send, so a probe stays out of the user-facing ratios even when it fails.
+func (t *Tracker) RecordProbeSend(escrowID string, nonce uint64, sentAt time.Time, phase Phase, quarantine QuarantineMode, deliveryReason string) error {
+	return t.withEscrow(escrowID, func(e *escrowState) error {
+		s, err := e.liveNonce(nonce)
+		if err != nil {
+			return err
+		}
+		s.Sent = true
+		s.SendAt = sentAt.UTC()
+		s.DispatchPhase = normalizePhase(phase)
+		s.Quarantine = normalizeQuarantine(quarantine)
+		s.DeliveryReason = normalizeDeliveryReason(deliveryReason)
 		e.reclassify(nonce, s, t.nowUTC())
 		return nil
 	})

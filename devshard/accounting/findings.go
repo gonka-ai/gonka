@@ -210,7 +210,7 @@ func is(disposition Disposition) func(CounterKey) bool {
 
 // Findings rate how a host serves users, so the gateway's own probes belong to neither side of a ratio.
 func servedAUser(key CounterKey) bool {
-	return key.DeliveryReason != DeliveryWarmupProbe
+	return key.DeliveryReason != DeliveryWarmupProbe && key.DeliveryReason != DeliveryThrottleProbe
 }
 
 func wasDelivered(key CounterKey) bool {

@@ -25,21 +25,21 @@ func prepareForGhost(t *testing.T, session *user.Session, model string) *user.Pr
 	return prepared
 }
 
-// TestRunGhostProbe_AllKindsAreSilent is the regression guard for the
+// TestRunGhostProbe_UnprobedKindsAreSilent is the regression guard for the
 // uniform-silent-probe contract. No matter what kind the picker
 // produces, runGhostProbe must NOT contact the host. The MsgStart for
 // the burned nonce stays in s.diffs and will catch-up on the host's
 // next real dispatch; here we only verify the dispatcher's no-Send
 // invariant, which is what protects the host from probe load during
 // PoC, exclude-stale, and 503-recovery windows alike.
-func TestRunGhostProbe_AllKindsAreSilent(t *testing.T) {
+func TestRunGhostProbe_UnprobedKindsAreSilent(t *testing.T) {
 	cases := []struct {
 		name string
 		kind ghostKind
 	}{
 		{"poc", ghostPoC},
 		{"exclude", ghostExclude},
-		{"throttled", ghostThrottled},
+		{"capability", ghostCapability},
 	}
 	for _, tc := range cases {
 		tc := tc

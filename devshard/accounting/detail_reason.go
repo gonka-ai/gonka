@@ -6,7 +6,10 @@ import "strings"
 const DeliveryClientGone = "client_gone_before_delivery"
 
 // The gateway spent this nonce on itself, so it is real work by the host but not work for a user.
-const DeliveryWarmupProbe = "warmup_probe"
+const (
+	DeliveryWarmupProbe   = "warmup_probe"
+	DeliveryThrottleProbe = "throttle_probe"
+)
 
 func normalizeDetailReason(reason string) string {
 	reason = strings.TrimSpace(reason)
@@ -38,7 +41,7 @@ func normalizeDeliveryReason(reason string) string {
 	case "empty_stream", "model_burn_empty", "error_stream", "sse_truncated",
 		"eof_transport", "transport_error", "client_cancelled", "not_finished",
 		"no_receipt", "http_error", "http_429", "http_503", "http_not_found",
-		"http_forbidden", DeliveryClientGone, DeliveryWarmupProbe:
+		"http_forbidden", DeliveryClientGone, DeliveryWarmupProbe, DeliveryThrottleProbe:
 		return reason
 	default:
 		return "unknown"

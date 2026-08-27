@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	"devshard/accounting"
 	"devshard/host"
 	"devshard/user"
 )
@@ -26,7 +27,7 @@ const (
 
 type sendRecorder interface {
 	RealSend(escrowID string, nonce uint64, sentAt time.Time, quarantine string)
-	ProbeServed(escrowID string, nonce uint64)
+	ProbeServed(escrowID string, nonce uint64, deliveryReason string)
 }
 
 type warmupMetrics interface {
@@ -159,7 +160,7 @@ func warmEscrowHosts(ctx context.Context, deps warmupDeps, latestNonce uint64) {
 		}
 	} else {
 		if deps.recorder != nil {
-			deps.recorder.ProbeServed(deps.escrowID, nonce)
+			deps.recorder.ProbeServed(deps.escrowID, nonce, accounting.DeliveryWarmupProbe)
 		}
 		deps.observe(hostIdx, warmupOutcomeServed)
 	}

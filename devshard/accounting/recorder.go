@@ -259,11 +259,27 @@ func (r *Recorder) Usage(escrowID string, nonce, winnerNonce uint64, deliveryRea
 	}
 }
 
-func (r *Recorder) ProbeServed(escrowID string, nonce uint64) {
+func (r *Recorder) ProbeSend(escrowID string, nonce uint64, sentAt time.Time, quarantine, deliveryReason string) {
 	if r == nil || r.tracker == nil {
 		return
 	}
-	if err := r.tracker.RecordUsage(escrowID, nonce, UsageLoser, DeliveryWarmupProbe); err != nil {
+	if err := r.tracker.RecordProbeSend(
+		escrowID,
+		nonce,
+		sentAt,
+		r.currentPhase(),
+		QuarantineFromString(quarantine),
+		deliveryReason,
+	); err != nil {
+		log.Printf("gateway accounting probe send escrow=%s nonce=%d: %v", escrowID, nonce, err)
+	}
+}
+
+func (r *Recorder) ProbeServed(escrowID string, nonce uint64, deliveryReason string) {
+	if r == nil || r.tracker == nil {
+		return
+	}
+	if err := r.tracker.RecordUsage(escrowID, nonce, UsageLoser, deliveryReason); err != nil {
 		log.Printf("gateway accounting probe served escrow=%s nonce=%d: %v", escrowID, nonce, err)
 	}
 }
