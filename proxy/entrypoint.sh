@@ -440,8 +440,13 @@ if [ "$SSL_ENABLED" = "true" ]; then
         /setup-ssl.sh "$@"
     ) 9>/etc/nginx/ssl/.gonka-ssl.lock
 
-    run_ssl_setup --if-missing \
-        || echo "WARNING: SSL setup failed; will attempt to continue"
+    # Existing certificates are immediately usable. Avoid waiting for a sibling
+    # policy worker that currently holds the shared lock for renewal. The
+    # second check inside run_ssl_setup still serializes cold-start issuance.
+    if [ ! -f /etc/nginx/ssl/cert.pem ] || [ ! -f /etc/nginx/ssl/private.key ]; then
+        run_ssl_setup --if-missing \
+            || echo "WARNING: SSL setup failed; will attempt to continue"
+    fi
 
     # Start background renewal loop if order.id exists (indicates auto issuance)
     if [ -f "/etc/nginx/ssl/order.id" ]; then

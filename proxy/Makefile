@@ -38,7 +38,9 @@ test-render:
 	worker=gonka-proxy-policy-worker-$$$$; \
 	ssl_worker_a=gonka-proxy-policy-ssl-a-$$$$; \
 	ssl_worker_b=gonka-proxy-policy-ssl-b-$$$$; \
-	trap 'docker rm -f "$$peer" "$$worker" "$$ssl_worker_a" "$$ssl_worker_b" >/dev/null 2>&1 || true; docker network rm "$$private" "$$shared" >/dev/null 2>&1 || true; docker image rm "$$image" >/dev/null 2>&1 || true; rm -rf "$$tmpdir"' EXIT; \
+	ssl_worker_fast=gonka-proxy-policy-ssl-fast-$$$$; \
+	ssl_lock_holder=gonka-proxy-policy-ssl-lock-$$$$; \
+	trap 'docker rm -f "$$peer" "$$worker" "$$ssl_worker_a" "$$ssl_worker_b" "$$ssl_worker_fast" "$$ssl_lock_holder" >/dev/null 2>&1 || true; docker network rm "$$private" "$$shared" >/dev/null 2>&1 || true; docker image rm "$$image" >/dev/null 2>&1 || true; rm -rf "$$tmpdir"' EXIT; \
 	fail() { echo "test-render: $$1" >&2; exit 1; }; \
 	touch "$$tmpdir/nginx.conf"; \
 	docker build -q -t "$$image" . >/dev/null; \
@@ -131,6 +133,32 @@ test-render:
 		|| fail "concurrent TLS policy workers did not finish startup"; \
 	[ "$$(wc -l < "$$tmpdir/ssl/setup.calls")" -eq 1 ] \
 		|| fail "concurrent TLS policy workers placed more than one initial certificate order"; \
+	touch "$$tmpdir/ssl-fast.conf"; \
+	docker run -d --name "$$ssl_lock_holder" --entrypoint sh \
+		-v "$$tmpdir/ssl:/etc/nginx/ssl" "$$image" -c \
+		'flock /etc/nginx/ssl/.gonka-ssl.lock sh -c "touch /etc/nginx/ssl/lock-held; sleep 15"' >/dev/null; \
+	for _ in $$(seq 1 50); do \
+		[ -f "$$tmpdir/ssl/lock-held" ] && break; \
+		sleep 0.1; \
+	done; \
+	[ -f "$$tmpdir/ssl/lock-held" ] \
+		|| fail "TLS renewal test did not acquire the shared lock"; \
+	docker create --name "$$ssl_worker_fast" \
+		-e NGINX_MODE=https -e CERT_ISSUER_DOMAIN=example.test \
+		-e PROXY_CERT_RELOAD_POLL_SECONDS=60 \
+		-v "$$tmpdir/ssl:/etc/nginx/ssl" \
+		-v "$$tmpdir/setup-ssl.sh:/setup-ssl.sh:ro" \
+		-v "$$tmpdir/ssl-fast.conf:/etc/nginx/nginx.conf" \
+		"$$image" sleep 30 >/dev/null; \
+	docker start "$$ssl_worker_fast" >/dev/null; \
+	for _ in $$(seq 1 50); do \
+		[ -s "$$tmpdir/ssl-fast.conf" ] && break; \
+		sleep 0.1; \
+	done; \
+	[ -s "$$tmpdir/ssl-fast.conf" ] \
+		|| fail "policy worker with existing certificates waited for a sibling renewal"; \
+	[ "$$(wc -l < "$$tmpdir/ssl/setup.calls")" -eq 1 ] \
+		|| fail "policy worker with existing certificates requested another order"; \
 	echo "test-render: ok"
 
 build-docker:
