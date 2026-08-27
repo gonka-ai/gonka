@@ -171,7 +171,7 @@ availability.
 | `PROXY_ROUTER_ACTIVATION_MIN_READY` | `1` | ready inner routers required before publishing a newly learned governance name; a later fleet overlay raises this reserve |
 | `VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS` | `false` | permit route removal only during supervised maintenance |
 | `VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS` | `86400` | maximum age of the persistent last-known-good catalog loaded before startup |
-| `PROXY_ROUTER_VERSION_CAPACITY` | `32` | backends reserved for names added after process start |
+| `PROXY_ROUTER_VERSION_CAPACITY` | `32` | minimum number of backends reserved for names added after process start; a larger valid LKG cache raises this floor automatically |
 | `PROXY_ROUTER_STREAM_IDLE_SECONDS` | `1200` | client/server inactivity timeout |
 | `PROXY_ROUTER_PUBLIC_IDLE_SECONDS` | `86400` | TCP inactivity timeout before nginx, including WebSocket/TLS connections |
 | `PROXY_ROUTER_PROXY_PROTOCOL_FROM` | *(empty)* | space-separated trusted external L4 load-balancer CIDRs that must send PROXY protocol |
@@ -195,8 +195,9 @@ is independent per version: an unavailable candidate remains staged without
 blocking another candidate that has reached its reserve. A candidate with no
 slot remains unpublished as `capacity-exhausted`, while already accepted routes
 continue to serve. Cached additions remain assigned to bounded dynamic slots, so
-a restart never resets capacity usage; startup fails if reduced capacity cannot
-represent the accepted cache.
+a restart never resets capacity usage. If the configured capacity was reduced
+below the number of accepted cached additions, the router preserves those routes
+and renders enough slots for the LKG projection.
 
 The catalog is additions-only during normal operation. A snapshot that omits an
 accepted name keeps that route and cache entry and reports `withdrawal-pending`.
