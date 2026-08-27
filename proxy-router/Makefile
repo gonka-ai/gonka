@@ -40,8 +40,8 @@ test-render: test-route-status
 		|| fail "connection failures are not redispatched across both policy pools"; \
 	grep -q '^ *option redispatch 1$$' "$$tmpdir/proxy.cfg" \
 		|| fail "versiond router pools lost owner-preserving redispatch"; \
-	[ "$$(grep -c 'server-template policy .*init-state up' "$$tmpdir/proxy.cfg")" -eq 2 ] \
-		|| fail "resolved policy workers do not start in connect-failover mode"; \
+	[ "$$(grep -c 'server-template policy .*init-state fully-down' "$$tmpdir/proxy.cfg")" -eq 2 ] \
+		|| fail "policy workers can be admitted before their first successful check"; \
 	grep -q '^ *timeout client 86400s$$' "$$tmpdir/proxy.cfg" \
 		|| fail "public TCP client idle timeout does not cover upgraded streams"; \
 	grep -q '^ *timeout server 86400s$$' "$$tmpdir/proxy.cfg" \
