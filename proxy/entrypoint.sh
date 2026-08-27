@@ -1312,6 +1312,8 @@ if [ "$SSL_ENABLED" = "true" ] \
                     reload_pending=false
                     HTTPS_FALLBACK=false
                     retry_seconds=$RENEW_RETRY_SECONDS
+                    sleep "$RENEW_INTERVAL_SECONDS"
+                    continue
                 else
                     retry_later "nginx reload failed"
                     continue
