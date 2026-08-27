@@ -27,6 +27,7 @@ ROUTER_POOL_HOST="${VERSIOND_ROUTER_POOL_HOST:-versiond-router-fleet}"
 ROUTER_POOL_SLOTS="${VERSIOND_ROUTER_FLEET_CAPACITY:-16}"
 ROUTER_PORT="${VERSIOND_ROUTER_PORT:-8080}"
 ROUTER_ADMIN_PORT="${VERSIOND_ROUTER_ADMIN_PORT:-8404}"
+ROUTER_HEALTH_CONTRACT="${VERSIOND_ROUTER_HEALTH_CONTRACT:-readyz}"
 VERSIOND_FRONTEND_PORT="${PROXY_VERSIOND_PORT:-18081}"
 ADMIN_PORT=8404
 MAX_CONNECTIONS=8192
@@ -177,6 +178,14 @@ case "$NGINX_MODE" in
         ;;
 esac
 
+case "$ROUTER_HEALTH_CONTRACT" in
+    legacy | readyz) ;;
+    *)
+        echo "proxy-router: VERSIOND_ROUTER_HEALTH_CONTRACT must be legacy or readyz" >&2
+        exit 1
+        ;;
+esac
+
 safe_id() {
     printf '%s_%s' \
         "$(printf '%s' "$1" | tr -c 'A-Za-z0-9_' '_')" \
@@ -250,15 +259,27 @@ fi
 
 render_router_backend() {
     backend=$1
-    ready_check=$2
-    server_state=$3
+    data_check=$2
+    ready_check=$3
+    server_state=$4
     retry_on='retry-on conn-failure empty-response 502'
     if [ "$backend" = versiond_router_coarse ]; then
         retry_on="$retry_on 404"
     fi
+    if [ "$ROUTER_HEALTH_CONTRACT" = readyz ]; then
+        ready_connect="http-check connect port $ROUTER_ADMIN_PORT"
+        ready_expect='http-check expect status 200'
+    else
+        ready_connect='# Legacy router readiness is its data-path health check.'
+        ready_check='# No separate readiness listener in the legacy router.'
+        ready_expect='# End of the legacy health-check sequence.'
+    fi
     sed \
         -e "s|\${BACKEND_NAME}|$backend|g" \
+        -e "s|\${DATA_CHECK_SEND}|$data_check|g" \
+        -e "s|\${READY_CHECK_CONNECT}|$ready_connect|g" \
         -e "s|\${READY_CHECK_SEND}|$ready_check|g" \
+        -e "s|\${READY_CHECK_EXPECT}|$ready_expect|g" \
         -e "s|\${ROUTER_POOL_SLOTS}|$ROUTER_POOL_SLOTS|g" \
         -e "s|\${ROUTER_POOL_HOST}|$ROUTER_POOL_HOST|g" \
         -e "s|\${ROUTER_PORT}|$ROUTER_PORT|g" \
@@ -269,7 +290,8 @@ render_router_backend() {
 }
 
 render_router_backend versiond_router_coarse \
-    'http-check send meth GET uri /readyz' ''
+    "http-check send meth GET uri /healthz hdr Host $ROUTER_POOL_HOST" \
+    "http-check send meth GET uri /readyz hdr Host $ROUTER_POOL_HOST" ''
 
 declare_version() {
         version=$1
@@ -283,7 +305,8 @@ declare_version() {
         encoded=$(router_urlencode "$version")
         printf '%s %s\n' "$version" "$backend" >> "$VERSION_MAP"
         render_router_backend "$backend" \
-            "http-check send meth GET uri /readyz?version=$encoded" ''
+            "http-check send meth GET uri /$encoded/healthz hdr Host $ROUTER_POOL_HOST" \
+            "http-check send meth GET uri /readyz?version=$encoded hdr Host $ROUTER_POOL_HOST" ''
         printf '%s\n' \
             "    http-request return status 200 content-type text/plain string \"ready\\n\" if { path /readyz } { var(txn.ready_ver) -m str $version } { nbsrv($backend) gt 0 }" \
             "    http-request return status 503 content-type text/plain string \"not ready\\n\" if { path /readyz } { var(txn.ready_ver) -m str $version }" \
@@ -326,7 +349,8 @@ while [ "$index" -le "$VERSION_CAPACITY" ]; do
         printf '%s %s\n' "$backend" __unassigned__ >> "$SLOT_MAP"
     fi
     render_router_backend "$backend" \
-        "http-check send meth GET uri-lf /readyz?version=%[be_name,map($SLOT_MAP)]" \
+        "http-check send meth GET uri-lf /%[be_name,map($SLOT_MAP)]/healthz hdr Host $ROUTER_POOL_HOST" \
+        "http-check send meth GET uri-lf /readyz?version=%[be_name,map($SLOT_MAP)] hdr Host $ROUTER_POOL_HOST" \
         "$server_state"
     printf '%s\n' \
         "    http-request return status 200 content-type text/plain string \"ready\\n\" if { path /readyz } { var(txn.ready_ver),map_str($VERSION_MAP) -m str $backend } { nbsrv($backend) gt 0 }" \

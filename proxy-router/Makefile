@@ -57,14 +57,20 @@ test-render: test-route-status
 	grep -q 'stats socket /var/run/haproxy/reconciler.sock mode 600 level admin' \
 		"$$tmpdir/proxy.cfg" \
 		|| fail "the catalog writer does not have a dedicated restricted socket"; \
-	grep -q 'http-check send meth GET uri /readyz?version=v5' "$$tmpdir/proxy.cfg" \
+	grep -q 'http-check connect port 8080' "$$tmpdir/proxy.cfg" \
+		|| fail "router health does not verify the data listener"; \
+	grep -q 'http-check send meth GET uri /v5/healthz hdr Host versiond-router-fleet' "$$tmpdir/proxy.cfg" \
+		|| fail "router data health is not version-aware"; \
+	grep -q 'http-check connect port 8404' "$$tmpdir/proxy.cfg" \
+		|| fail "router lifecycle health does not use the admin listener"; \
+	grep -q 'http-check send meth GET uri /readyz?version=v5 hdr Host versiond-router-fleet' "$$tmpdir/proxy.cfg" \
 		|| fail "router health is not version-aware"; \
 	grep -q 'var(txn.ready_ver) -m str v5.*nbsrv(versiond_routers_v5)' "$$tmpdir/proxy.cfg" \
 		|| fail "top-level version readiness is not route-aware"; \
 	grep -q 'var(txn.ready_ver),map_str(.*versions.map) -m str versiond_routers_dynamic_1.*nbsrv(versiond_routers_dynamic_1)' "$$tmpdir/proxy.cfg" \
 		|| fail "dynamic version readiness does not follow the live slot assignment"; \
-	grep -q 'server-template router 16 versiond-router-fleet:8080 check port 8404' "$$tmpdir/proxy.cfg" \
-		|| fail "router data and admin ports are not separated"; \
+	grep -q 'server-template router 16 versiond-router-fleet:8080 check inter' "$$tmpdir/proxy.cfg" \
+		|| fail "router server template does not use the data endpoint"; \
 	grep -q '^ *balance hash var(txn.hashkey)$$' "$$tmpdir/proxy.cfg" \
 		|| fail "router selection is not sticky by the canonical escrow key"; \
 	grep -q '^ *hash-type consistent$$' "$$tmpdir/proxy.cfg" \
@@ -147,6 +153,27 @@ test-render: test-route-status
 	PROXY_ROUTER_RENDER_ONLY=1 \
 	PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
 	PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
+	PROXY_ROUTER_OUT="$$tmpdir/legacy.cfg" \
+	PROXY_ROUTER_VERSION_MAP="$$tmpdir/legacy.map" \
+	VERSIOND_ROUTER_HEALTH_CONTRACT=legacy VERSIOND_VERSIONS=v5 \
+	./entrypoint.sh; \
+	grep -q 'http-check send meth GET uri /v5/healthz hdr Host versiond-router-fleet' "$$tmpdir/legacy.cfg" \
+		|| fail "legacy contract does not use the version data health endpoint"; \
+	if grep -q 'http-check connect port 8404' "$$tmpdir/legacy.cfg"; then \
+		fail "legacy contract requires an admin listener"; \
+	fi; \
+	if HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \
+		PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
+		PROXY_ROUTER_OUT="$$tmpdir/invalid-health.cfg" \
+		VERSIOND_ROUTER_HEALTH_CONTRACT=automatic \
+		./entrypoint.sh >/dev/null 2>&1; then \
+		fail "an unknown router health contract was accepted"; \
+	fi; \
+	HAPROXY_BIN=true \
+	PROXY_ROUTER_RENDER_ONLY=1 \
+	PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
 	PROXY_ROUTER_OUT="$$tmpdir/both.cfg" \
 	PROXY_ROUTER_VERSION_MAP="$$tmpdir/both.map" \
 	NGINX_MODE=both VERSIOND_VERSIONS=v5 \
@@ -173,7 +200,12 @@ test-compose:
 		-f "$$root/deploy/join/docker-compose.yml" \
 		-f "$$root/deploy/join/docker-compose.versiond.yml" \
 		config --format json 2>/dev/null); \
-	printf '%s\n' "$$versiond" | jq -e '.services["proxy-policy"].environment.VERSIOND_SERVICE_NAME == "proxy-policy-ingress" and .services["proxy-policy"].environment.VERSIOND_PORT == "18081" and .services["proxy-policy2"].environment.VERSIOND_SERVICE_NAME == "proxy-policy-ingress" and .services["proxy-policy2"].environment.VERSIOND_PORT == "18081" and .services.proxy.environment.VERSIOND_ROUTER_POOL_HOST == "versiond-router" and .services.proxy.environment.VERSIOND_ROUTER_PORT == "8080"' >/dev/null || { echo "test-compose: versiond distributor contract changed" >&2; exit 1; }; \
+	printf '%s\n' "$$versiond" | jq -e '.services["proxy-policy"].environment.VERSIOND_SERVICE_NAME == "proxy-policy-ingress" and .services["proxy-policy"].environment.VERSIOND_PORT == "18081" and .services["proxy-policy2"].environment.VERSIOND_SERVICE_NAME == "proxy-policy-ingress" and .services["proxy-policy2"].environment.VERSIOND_PORT == "18081" and .services.proxy.environment.VERSIOND_ROUTER_POOL_HOST == "versiond-router" and .services.proxy.environment.VERSIOND_ROUTER_PORT == "8080" and .services.proxy.environment.VERSIOND_ROUTER_ADMIN_PORT == "8404" and .services.proxy.environment.VERSIOND_ROUTER_HEALTH_CONTRACT == "legacy"' >/dev/null || { echo "test-compose: versiond distributor contract changed" >&2; exit 1; }; \
+	custom_admin=$$(DEVSHARD_POSTGRES_PASSWORD=test VERSIOND_ROUTER_ADMIN_PORT=9410 docker compose \
+		-f "$$root/deploy/join/docker-compose.yml" \
+		-f "$$root/deploy/join/docker-compose.versiond.yml" \
+		config --format json); \
+	printf '%s\n' "$$custom_admin" | jq -e '.services["versiond-router"].environment.VERSIOND_ROUTER_ADMIN_PORT == "9410" and .services.proxy.environment.VERSIOND_ROUTER_ADMIN_PORT == "9410"' >/dev/null || { echo "test-compose: router admin port is not shared across tiers" >&2; exit 1; }; \
 	echo "test-compose: ok"
 
 VERSION ?= $(shell git describe --always)
