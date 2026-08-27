@@ -36,6 +36,12 @@ scrape_configs:
         port: 8405
         refresh_interval: 15s
 
+  - job_name: proxy-router
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - proxy-router-metrics:8405
+
   - job_name: gonka-node
     static_configs:
       - targets:
