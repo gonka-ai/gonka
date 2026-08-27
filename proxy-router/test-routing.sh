@@ -8,6 +8,7 @@ state=gonka-proxy-router-state-$$
 capacity_state=gonka-proxy-router-capacity-state-$$
 containers=(
     gonka-pr-proxy gonka-pr-proxy-lb gonka-pr-probe gonka-pr-catalog
+    gonka-pr-proxy-both
     gonka-pr-proxy-cache-floor
     gonka-pr-policy-a gonka-pr-policy-b
     gonka-pr-router-a gonka-pr-router-b gonka-pr-router-bad
@@ -365,6 +366,38 @@ proxy_backend_addr_up() {
             END { exit !found }
         '
 }
+
+# A healthy sidecar cannot make an absent TLS listener look ready. This is the
+# production HTTP-fallback shape after nginx rejects an invalid certificate.
+docker run -d --name gonka-pr-proxy-both --network "$network" \
+    -e PROXY_POLICY_POOL_HOST=proxy-policy \
+    -e NGINX_MODE=both \
+    -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
+    "$image" >/dev/null
+for _ in $(seq 60); do
+    if docker exec gonka-pr-proxy-both sh -c \
+        "printf 'show stat\\n' | socat - UNIX-CONNECT:/var/run/haproxy/haproxy.sock" \
+        2>/dev/null | awk -F, '
+            $1 == "policy_http" && $18 ~ /^UP/ { http_up = 1 }
+            $1 == "policy_https" && $18 ~ /^UP/ { https_up = 1 }
+            END { exit !(http_up && !https_up) }
+        '; then
+        break
+    fi
+    sleep 0.25
+done
+docker exec gonka-pr-proxy-both sh -c \
+    "printf 'show stat\\n' | socat - UNIX-CONNECT:/var/run/haproxy/haproxy.sock" \
+    | awk -F, '
+        $1 == "policy_http" && $18 ~ /^UP/ { http_up = 1 }
+        $1 == "policy_https" && $18 ~ /^UP/ { https_up = 1 }
+        END { exit !(http_up && !https_up) }
+    ' || fail "missing TLS listener did not withdraw only the HTTPS policy pool"
+both_ready=$(docker exec gonka-pr-proxy-both curl -sS -o /dev/null \
+    -w '%{http_code}' http://127.0.0.1:8404/readyz)
+[[ $both_ready == 503 ]] \
+    || fail "both-mode readiness stayed green with every TLS listener absent"
+docker rm -f gonka-pr-proxy-both >/dev/null
 
 for _ in $(seq 60); do
     if proxy_admin /readyz >/dev/null 2>&1 &&
