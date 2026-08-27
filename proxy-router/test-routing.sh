@@ -5,8 +5,10 @@ set -Eeuo pipefail
 network=gonka-proxy-router-test-$$
 image=gonka-proxy-router-test:$$
 state=gonka-proxy-router-state-$$
+capacity_state=gonka-proxy-router-capacity-state-$$
 containers=(
     gonka-pr-proxy gonka-pr-proxy-lb gonka-pr-probe gonka-pr-catalog
+    gonka-pr-proxy-cache-floor
     gonka-pr-policy-a gonka-pr-policy-b
     gonka-pr-router-a gonka-pr-router-b gonka-pr-router-bad
     gonka-pr-router-migration
@@ -22,7 +24,7 @@ cleanup() {
     fi
     docker rm -f "${containers[@]}" >/dev/null 2>&1 || true
     docker network rm "$network" >/dev/null 2>&1 || true
-    docker volume rm "$state" >/dev/null 2>&1 || true
+    docker volume rm "$state" "$capacity_state" >/dev/null 2>&1 || true
     docker image rm "$image" >/dev/null 2>&1 || true
     rm -rf "$tmpdir"
 	return "$status"
@@ -196,6 +198,7 @@ EOF
 
 docker network create "$network" >/dev/null
 docker volume create "$state" >/dev/null
+docker volume create "$capacity_state" >/dev/null
 docker build -q -t "$image" -f Dockerfile .. >/dev/null
 [[ $(docker image inspect -f \
     '{{index .Config.Labels "ai.gonka.proxy-policy-contract"}}' "$image") == 1 ]] \
@@ -204,13 +207,16 @@ cache_now=$(date +%s)
 docker run --rm --user 0:0 -e "CACHE_NOW=$cache_now" \
     -v "$state:/state" --entrypoint sh "$image" -c \
     'printf "{\"schema\":1,\"fetched_at_unix\":%s,\"versions\":[\"v4\",\"v5\"]}\n" "$CACHE_NOW" > /state/catalog.json; chown -R haproxy:haproxy /state'
+docker run --rm --user 0:0 -e "CACHE_NOW=$cache_now" \
+    -v "$capacity_state:/state" --entrypoint sh "$image" -c \
+    'printf "{\"schema\":1,\"fetched_at_unix\":%s,\"versions\":[\"v4\",\"v5\",\"v9\",\"v10\"]}\n" "$CACHE_NOW" > /state/catalog.json; chown -R haproxy:haproxy /state'
 
 docker run -d --name gonka-pr-catalog --network "$network" \
     --network-alias routing-catalog \
     -v "$tmpdir/catalog:/data:ro" -v "$tmpdir/catalog.py:/app.py:ro" \
     python:3.12-alpine python /app.py >/dev/null
 
-for spec in 'a:v4:true:true' 'b:v4 v5 v9:true:true' 'bad:v4:true:true'; do
+for spec in 'a:v4:true:true' 'b:v4 v5 v9 v10:true:true' 'bad:v4:true:true'; do
     name=${spec%%:*}
     rest=${spec#*:}
     serves=${rest%%:*}
@@ -225,6 +231,33 @@ for spec in 'a:v4:true:true' 'b:v4 v5 v9:true:true' 'bad:v4:true:true'; do
         -v "$tmpdir/upstream.py:/app.py:ro" \
         python:3.12-alpine python /app.py >/dev/null
 done
+
+# A valid LKG projection is authoritative across restarts. Reducing the
+# configured reservation must not make already accepted routes unrepresentable.
+docker run -d --name gonka-pr-proxy-cache-floor --network "$network" \
+    -v "$capacity_state:/var/lib/gonka-router" \
+    -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
+    -e VERSIOND_ROUTING_CATALOG_URL=http://missing-catalog:8080/versions \
+    -e PROXY_ROUTER_VERSION_CAPACITY=1 \
+    -e VERSIOND_ROUTER_POOL_HOST=versiond-router-fleet \
+    -e VERSIOND_ROUTER_FLEET_CAPACITY=3 \
+    "$image" >/dev/null
+for version in v9 v10; do
+    for _ in $(seq 40); do
+        if docker exec gonka-pr-proxy-cache-floor curl -fsS \
+            "http://127.0.0.1:8404/readyz?version=$version" >/dev/null 2>&1; then
+            break
+        fi
+        sleep 0.25
+    done
+    docker exec gonka-pr-proxy-cache-floor curl -fsS \
+        "http://127.0.0.1:8404/readyz?version=$version" >/dev/null \
+        || fail "reduced capacity dropped cached route $version"
+done
+[[ $(docker exec gonka-pr-proxy-cache-floor grep -c \
+    '^backend versiond_routers_dynamic_' /etc/haproxy/haproxy.cfg) == 2 ]] \
+    || fail "LKG routes did not raise the effective dynamic capacity"
+docker rm -f gonka-pr-proxy-cache-floor >/dev/null
 
 # The reversible upgrade keeps a healthy singleton for v4 nginx rollback. Its
 # historical DNS name must never enter the steady-state fleet pool, otherwise
