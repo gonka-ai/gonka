@@ -3,8 +3,12 @@ backend ${BACKEND_NAME}
     hash-type consistent
 
     option httpchk
-    ${READY_CHECK_SEND}
+    http-check connect port ${ROUTER_PORT}
+    ${DATA_CHECK_SEND}
     http-check expect status 200
+    ${READY_CHECK_CONNECT}
+    ${READY_CHECK_SEND}
+    ${READY_CHECK_EXPECT}
 
     http-reuse safe
     option redispatch 1
@@ -13,4 +17,4 @@ backend ${BACKEND_NAME}
     # A request that may already have reached a router must not be replayed.
     http-request disable-l7-retry if !METH_GET !METH_HEAD !METH_OPTIONS
 
-    server-template router ${ROUTER_POOL_SLOTS} ${ROUTER_POOL_HOST}:${ROUTER_PORT} check port ${ROUTER_ADMIN_PORT} inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr ${SERVER_STATE}
+    server-template router ${ROUTER_POOL_SLOTS} ${ROUTER_POOL_HOST}:${ROUTER_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr ${SERVER_STATE}
