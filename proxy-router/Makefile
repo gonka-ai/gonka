@@ -1,10 +1,13 @@
-.PHONY: all build-docker release test-render test-compose test-routing
+.PHONY: all build-docker release test-render test-route-status test-compose test-routing
 
 include ../scripts/blst-portable.mk
 
 HAPROXY_IMAGE ?= haproxy:3.2-alpine
 
-test-render:
+test-route-status:
+	@./route-status_test.sh
+
+test-render: test-route-status
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
