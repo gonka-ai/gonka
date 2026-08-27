@@ -184,6 +184,9 @@ services:
           - versiond-router-ingress
     volumes:
       - versiond-router-state:/var/lib/gonka-router
+      # The published nginx transition image runs this after its own renderer;
+      # catalog-aware HAProxy images have no stock nginx hook runner and ignore it.
+      - ../../versiond-router/legacy-public-tier-compat.sh:/docker-entrypoint.d/50-gonka-public-tier-compat.sh:ro
     depends_on:
       - versiond
       - versiond2
@@ -202,7 +205,8 @@ services:
               echo 'VERSIOND_ROUTING_CATALOG_URL requires a catalog-capable versiond-router image' >&2;
               exit 1;
             fi;
-            wget -q -O - 'http://127.0.0.1:8080/healthz';
+            legacy_address=$$(cat /var/run/versiond-router-listen-address 2>/dev/null || echo 127.0.0.1);
+            wget -q -O - "http://$${legacy_address}:8080/healthz";
           fi
       interval: 5s
       timeout: 3s
