@@ -112,6 +112,9 @@ test-render: test-route-status
 	if grep -q 'X-Versiond-Router-Addr' "$$tmpdir/proxy.cfg"; then \
 		fail "public responses expose an internal upstream address"; \
 	fi; \
+	if grep -q 'expect-proxy' "$$tmpdir/proxy.cfg"; then \
+		fail "direct ingress unexpectedly requires an incoming PROXY preamble"; \
+	fi; \
 	docker run --rm --user "$$(id -u):$$(id -g)" \
 		-v "$$tmpdir:$$tmpdir:ro" $(HAPROXY_IMAGE) \
 		haproxy -c -f "$$tmpdir/proxy.cfg" >/dev/null \
@@ -193,6 +196,30 @@ test-render: test-route-status
 		VERSIOND_ROUTER_HEALTH_CONTRACT=automatic \
 		./entrypoint.sh >/dev/null 2>&1; then \
 		fail "an unknown router health contract was accepted"; \
+	fi; \
+	HAPROXY_BIN=true \
+	PROXY_ROUTER_RENDER_ONLY=1 \
+	PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
+	PROXY_ROUTER_OUT="$$tmpdir/trusted-lb.cfg" \
+	PROXY_ROUTER_VERSION_MAP="$$tmpdir/trusted-lb.map" \
+	PROXY_ROUTER_PROXY_PROTOCOL_FROM='192.0.2.10/32 2001:db8::/48' \
+	./entrypoint.sh; \
+	[ "$$(grep -c '^ *acl trusted_external_proxy src 192.0.2.10/32 2001:db8::/48$$' "$$tmpdir/trusted-lb.cfg")" -eq 2 ] \
+		|| fail "trusted external LB CIDRs were not rendered on both public listeners"; \
+	[ "$$(grep -c '^ *tcp-request connection expect-proxy layer4 if trusted_external_proxy$$' "$$tmpdir/trusted-lb.cfg")" -eq 2 ] \
+		|| fail "public listeners do not consume trusted PROXY preambles"; \
+	docker run --rm --user "$$(id -u):$$(id -g)" \
+		-v "$$tmpdir:$$tmpdir:ro" $(HAPROXY_IMAGE) \
+		haproxy -c -f "$$tmpdir/trusted-lb.cfg" >/dev/null \
+		|| fail "trusted external LB config is invalid"; \
+	if HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \
+		PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
+		PROXY_ROUTER_OUT="$$tmpdir/invalid-lb.cfg" \
+		PROXY_ROUTER_PROXY_PROTOCOL_FROM='192.0.2.1/32;shutdown' \
+		./entrypoint.sh >/dev/null 2>&1; then \
+		fail "an unsafe trusted LB CIDR was accepted"; \
 	fi; \
 	HAPROXY_BIN=true \
 	PROXY_ROUTER_RENDER_ONLY=1 \

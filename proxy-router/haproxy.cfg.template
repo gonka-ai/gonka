@@ -46,6 +46,8 @@ frontend public_http
     mode tcp
     option tcplog
     bind :80
+    ${PUBLIC_PROXY_ACL}
+    ${PUBLIC_PROXY_EXPECT}
     timeout client ${PUBLIC_IDLE_SECONDS}s
     default_backend policy_http
 
@@ -53,6 +55,8 @@ frontend public_https
     mode tcp
     option tcplog
     bind :443
+    ${PUBLIC_PROXY_ACL}
+    ${PUBLIC_PROXY_EXPECT}
     timeout client ${PUBLIC_IDLE_SECONDS}s
     default_backend policy_https
 

@@ -35,6 +35,14 @@ API traffic keeps the pre-existing nginx path in this release: a single worker
 targets `edge-api` directly, while the multi-instance overlay targets the
 existing `edge-api-router` nginx service.
 
+An external L4 load balancer can preserve client addresses by sending PROXY
+protocol and listing only its source CIDRs in
+`PROXY_ROUTER_PROXY_PROTOCOL_FROM`. Connections from those CIDRs are rejected
+unless they carry a valid PROXY preamble; direct clients from every other source
+continue to use ordinary TCP. An L7 load balancer that terminates HTTP must be
+configured as an L4 PROXY-protocol hop for this TCP ingress tier rather than
+relying on `X-Forwarded-For`.
+
 ## Versiond-router selection
 
 Every bootstrap or governance protocol version gets a separate HAProxy backend.
@@ -149,6 +157,7 @@ and cannot mutate routing.
 | `PROXY_ROUTER_VERSION_CAPACITY` | `32` | backends reserved for names added after process start |
 | `PROXY_ROUTER_STREAM_IDLE_SECONDS` | `1200` | client/server inactivity timeout |
 | `PROXY_ROUTER_PUBLIC_IDLE_SECONDS` | `86400` | TCP inactivity timeout before nginx, including WebSocket/TLS connections |
+| `PROXY_ROUTER_PROXY_PROTOCOL_FROM` | *(empty)* | space-separated trusted external L4 load-balancer CIDRs that must send PROXY protocol |
 | `PROXY_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | upstream connect timeout |
 | `PROXY_ROUTER_METRICS_BIND_HOST` | *(empty; loopback)* | internal DNS alias whose interface receives the read-only Prometheus listener; join Compose uses `proxy-router-metrics` |
 | `PROXY_ROUTER_CATALOG_BIND_HOST` | *(empty; disabled)* | DNS alias whose isolated interface receives the read-only catalog bridge |
