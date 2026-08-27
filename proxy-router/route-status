@@ -26,6 +26,12 @@ if [ "$1" = --coarse ]; then
     backend=versiond_router_coarse
 else
     runtime_to_file "show map $VERSION_MAP" "$tmpdir/map"
+    if ! awk '
+            NF && ($1 !~ /^0x[[:xdigit:]]+$/ || NF < 3) { exit 1 }
+        ' "$tmpdir/map"; then
+        echo "route-status: HAProxy Runtime API returned invalid show map output" >&2
+        exit 1
+    fi
     backend=$(awk -v version="$1" \
         '$2 "" == version "" { print $3; found = 1; exit } END { if (!found) exit 3 }' \
         "$tmpdir/map") || {
