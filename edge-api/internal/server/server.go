@@ -21,7 +21,7 @@ type Server struct {
 
 // New creates the Echo instance with Tier A read-only routes mounted:
 //   - GET /healthz — liveness, 200 while the process is up
-//   - GET /readyz  — readiness, probed by edge-api-router
+//   - GET /readyz  — readiness for a health-aware balancer
 //   - /v1/... (queryapi: status, participants, models, epochs, BLS, etc.)
 func New(chainClient *chain.Client) *Server {
 	e := echo.New()
