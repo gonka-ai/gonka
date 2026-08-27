@@ -465,14 +465,20 @@ func TestFeeRelatedHints(t *testing.T) {
 	assert.Contains(t, fee[0], "feegrant")
 	assert.NotContains(t, strings.ToLower(fee[0]), "set min_gas_price_ngonka")
 	assert.NotContains(t, fee[0], "DAPI_CHAIN_NODE")
+
+	funds := feeRelatedHints("spendable balance 105000000ngonka is smaller than 10000000000ngonka: insufficient funds")
+	require.Len(t, funds, 1)
+	assert.Contains(t, funds[0], "spendable")
+	assert.Contains(t, funds[0], "CheckTx")
+	assert.NotContains(t, funds[0], "will not send")
 }
 
-func TestHardwareDiffSimFactory_SetsTimeout(t *testing.T) {
+func TestSimFactory_SetsTimeoutAndGas(t *testing.T) {
 	timeout := time.Now().Add(time.Minute)
-	sim := hardwareDiffSimFactory(tx.Factory{}.WithUnordered(true), "alice", 1, timeout, nil)
+	sim := simFactory(tx.Factory{}.WithUnordered(true), "alice", 1, timeout, nil, 105_000)
 	require.True(t, sim.Unordered())
 	require.Equal(t, timeout, sim.TimeoutTimestamp())
-	require.Equal(t, hardwareDiffSimulateGas, sim.Gas())
+	require.Equal(t, uint64(105_000), sim.Gas())
 	require.Equal(t, 1.0, sim.GasAdjustment())
 }
 
@@ -487,4 +493,17 @@ func TestTimeoutTimestamp_UsesLatestBlockTime(t *testing.T) {
 	require.False(t, got.IsZero())
 	require.True(t, got.After(block))
 	require.True(t, !got.Before(block.Add(30*time.Second)))
+}
+
+func TestRefreshBlockTimeForTimeout_NoClientLeavesCache(t *testing.T) {
+	stale := time.Unix(1_700_000_000, 0)
+	m := &manager{
+		defaultTimeout: 30 * time.Second,
+		blockTimeTracker: &blockTimeTracker{
+			latestBlockTime: stale,
+			lastUpdatedAt:   time.Unix(1, 0),
+		},
+	}
+	require.NoError(t, m.refreshBlockTimeForTimeout())
+	require.Equal(t, stale, m.blockTimeTracker.latestBlockTime)
 }

@@ -7,6 +7,7 @@ import (
 
 	"decentralized-api/apiconfig"
 
+	ctypes "github.com/cometbft/cometbft/rpc/core/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient/mocks"
@@ -62,7 +63,10 @@ func newSigningManager(t *testing.T, authzMode bool) *manager {
 		defaultTimeout:    30 * time.Second,
 		minGasPriceNgonka: 0,
 		feeTree:           newFeeTreeCache(),
-		blockTimeTracker:  &blockTimeTracker{latestBlockTime: time.Unix(1_700_000_000, 0)},
+		blockTimeTracker: &blockTimeTracker{
+			latestBlockTime: time.Unix(1_700_000_000, 0),
+			lastUpdatedAt:   time.Now(),
+		},
 	}
 }
 
@@ -121,6 +125,35 @@ func assertTimeoutBody(t *testing.T, decoded sdk.Tx, wantHeight uint64, wantTs t
 	gotTs := unord.GetTimeoutTimeStamp()
 	require.False(t, gotTs.IsZero())
 	require.Equal(t, wantTs.UnixNano(), gotTs.UnixNano())
+}
+
+func TestTimeoutTimestamp_RefreshesStaleCacheFromStatus(t *testing.T) {
+	stale := time.Unix(1_700_000_000, 0)
+	fresh := time.Now().UTC().Truncate(time.Second)
+
+	rpc := mocks.NewRPCClient(t)
+	client := testutil.NewMockClient(t, rpc, signedBytesNetwork, signedBytesAccountName, signedBytesMnemonic, signedBytesPassphrase)
+	rpc.EXPECT().Status(context.Background()).Return(&ctypes.ResultStatus{
+		SyncInfo: ctypes.SyncInfo{
+			LatestBlockTime:   fresh,
+			LatestBlockHeight: 123,
+		},
+	}, nil).Once()
+
+	m := &manager{
+		ctx:            context.Background(),
+		client:         &client,
+		defaultTimeout: 30 * time.Second,
+		blockTimeTracker: &blockTimeTracker{
+			latestBlockTime: stale,
+			lastUpdatedAt:   time.Unix(1, 0),
+			maxBlockTimeout: 10 * time.Second,
+		},
+	}
+	got, err := m.timeoutTimestamp()
+	require.NoError(t, err)
+	require.Equal(t, fresh, m.blockTimeTracker.latestBlockTime)
+	require.True(t, !got.Before(fresh.Add(30*time.Second)))
 }
 
 func TestGetSignedBytes_DirectStoreCommitSetsTimeoutHeight(t *testing.T) {

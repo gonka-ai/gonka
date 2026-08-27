@@ -30,6 +30,8 @@ import (
 
 	"github.com/nats-io/nats.go"
 
+	"cosmossdk.io/math"
+	"cosmossdk.io/x/feegrant"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
@@ -147,6 +149,7 @@ func StartTxManager(
 	restrictionstypes.RegisterInterfaces(client.Context().InterfaceRegistry)
 	blstypes.RegisterInterfaces(client.Context().InterfaceRegistry)
 	streamvestingtypes.RegisterInterfaces(client.Context().InterfaceRegistry)
+	feegrant.RegisterInterfaces(client.Context().InterfaceRegistry)
 
 	m := &manager{
 		ctx:               ctx,
@@ -913,13 +916,13 @@ func (m *manager) broadcastMessagesAtAttemptWithOpts(id string, attempt int, msg
 	}
 	// gasWanted is sized from the inner messages, not the authz wrapper.
 	gasWanted := estimateBatchGas(msgs, attempt, m.feeTree.hints())
-	if attempt == 0 && isHardwareDiffOnly(msgs) {
-		price := m.minGasPriceNgonka
-		if m.feeTree != nil {
-			if p := m.feeTree.PriceForMsgs(msgs); p > price {
-				price = p
-			}
+	price := m.minGasPriceNgonka
+	if m.feeTree != nil {
+		if p := m.feeTree.PriceForMsgs(msgs); p > price {
+			price = p
 		}
+	}
+	if attempt == 0 && isHardwareDiffOnly(msgs) {
 		used, err := m.simulateMsgsGas(factory, finalMsgs, price)
 		if err != nil {
 			logging.Warn("HardwareDiff simulate failed; using static gas estimate",
@@ -965,6 +968,8 @@ const (
 		"FeeParams.enabled_fee_groups, the matching groups[].min_gas_price, DAPI fee-tree refresh, " +
 		"and the cold-to-warm feegrant balance/expiration. Global min_gas_price_ngonka stays 0 and " +
 		"is not a DAPI config knob."
+	insufficientFundsHint = "Fee-payer spendable is below gasWanted × min_gas_price. Fund the paying " +
+		"account (cold key if authz/feegrant). CheckTx rejected this broadcast."
 )
 
 // logFeeRelatedHint inspects a tx broadcast error message and logs an
@@ -985,6 +990,9 @@ func feeRelatedHints(rawLog string) []string {
 	}
 	if containsAny(rawLog, "insufficient fee", "insufficient fees") {
 		hints = append(hints, insufficientFeeHint)
+	}
+	if containsAny(rawLog, "insufficient funds") {
+		hints = append(hints, insufficientFundsHint)
 	}
 	return hints
 }
@@ -1057,28 +1065,38 @@ func (m *manager) getFactory(id string) (*tx.Factory, error) {
 	return m.txFactory, nil
 }
 
-const hardwareDiffSimulateGas = uint64(10_000_000)
-
 func (m *manager) timeoutTimestamp() (time.Time, error) {
-	blockTs := m.blockTimeTracker.latestBlockTime
-	if blockTs.IsZero() {
-		_, err := m.updateChainHalt()
-		if err != nil {
-			return time.Time{}, err
-		}
-		blockTs = m.blockTimeTracker.latestBlockTime
+	if err := m.refreshBlockTimeForTimeout(); err != nil {
+		return time.Time{}, err
 	}
+	blockTs := m.blockTimeTracker.latestBlockTime
 	return getTimestamp(blockTs.UnixNano(), m.defaultTimeout), nil
 }
 
-// hardwareDiffSimFactory copies the send factory and stamps the unordered
-// timeout the live tx already sets in getSignedBytes. Without it, CalculateGas
-// builds unordered=true / timeout=0 and ante rejects the sim.
-func hardwareDiffSimFactory(factory tx.Factory, name string, price int64, timeout time.Time, feeGranter sdk.AccAddress) tx.Factory {
+// refreshBlockTimeForTimeout pulls LatestBlockTime from node Status before
+// stamping an unordered timeout. Simulate does not go through the send
+// path, so a quiet stretch (typical before mid-epoch CPoC) left the cache
+// minutes old and ante rejected the dummy as already timed out.
+func (m *manager) refreshBlockTimeForTimeout() error {
+	if m.client == nil {
+		return nil
+	}
+	_, err := m.updateChainHalt()
+	if err != nil && m.blockTimeTracker.latestBlockTime.IsZero() {
+		return err
+	}
+	return nil
+}
+
+// simFactory copies the send factory and stamps the unordered timeout the
+// live tx already sets in getSignedBytes. Without it, CalculateGas builds
+// unordered=true / timeout=0 and ante rejects the sim. gas is the DeductFee
+// ceiling for this attempt (must be ≤ spendable/price).
+func simFactory(factory tx.Factory, name string, price int64, timeout time.Time, feeGranter sdk.AccAddress, gas uint64) tx.Factory {
 	sim := factory.
 		WithSimulateAndExecute(true).
 		WithFromName(name).
-		WithGas(hardwareDiffSimulateGas).
+		WithGas(gas).
 		WithGasPrices(fmt.Sprintf("%dngonka", price)).
 		WithGasAdjustment(1).
 		WithTimeoutTimestamp(timeout)
@@ -1138,20 +1156,67 @@ func (m *manager) simulateMsgsGas(factory *tx.Factory, msgs []sdk.Msg, price int
 		name = m.apiAccount.SignerAccount.Name
 	}
 	var feeGranter sdk.AccAddress
-	if m.apiAccount != nil && !m.apiAccount.IsSignerTheMainAccount() {
+	if m.apiAccount != nil && m.apiAccount.SignerAccount != nil && !m.apiAccount.IsSignerTheMainAccount() {
 		if cold, err := m.apiAccount.AccountAddress(); err == nil {
 			feeGranter = cold
 		}
 	}
-	sim := hardwareDiffSimFactory(*factory, name, price, timeout, feeGranter)
+
+	// Size the sim DeductFee ceiling to what the fee payer can actually
+	// pay. A failed sim does not skip the real send; callers fall back
+	// to static gasWanted and still broadcast.
+	var spendable math.Int
+	if price > 0 {
+		spendable, err = m.feePayerSpendable(m.ctx)
+		if err != nil {
+			return 0, err
+		}
+	}
+	limit := maxAffordableGas(spendable, price)
+	if price > 0 && limit == 0 {
+		return 0, ErrSimulateInsufficientSpendable
+	}
+
+	sim := simFactory(*factory, name, price, timeout, feeGranter, limit)
 	simRes, _, err := tx.CalculateGas(m.client.Context(), sim, msgs...)
 	if err != nil {
+		if isInsufficientFundsErr(err) {
+			return 0, fmt.Errorf("%w: %v", ErrSimulateInsufficientSpendable, err)
+		}
 		return 0, err
 	}
 	if simRes == nil {
 		return 0, errors.New("simulate returned no result")
 	}
 	return simRes.GasInfo.GasUsed, nil
+}
+
+func (m *manager) feePayerBech32() (string, error) {
+	if m.apiAccount == nil {
+		return m.address, nil
+	}
+	if m.apiAccount.SignerAccount != nil && !m.apiAccount.IsSignerTheMainAccount() {
+		return m.apiAccount.AccountAddressBech32()
+	}
+	if m.apiAccount.SignerAccount != nil {
+		return m.apiAccount.SignerAddressBech32()
+	}
+	return m.apiAccount.AccountAddressBech32()
+}
+
+func (m *manager) feePayerSpendable(ctx context.Context) (math.Int, error) {
+	addr, err := m.feePayerBech32()
+	if err != nil {
+		return math.ZeroInt(), err
+	}
+	signer := addr
+	if m.apiAccount != nil && m.apiAccount.SignerAccount != nil && !m.apiAccount.IsSignerTheMainAccount() {
+		signer, err = m.apiAccount.SignerAddressBech32()
+		if err != nil {
+			return math.ZeroInt(), err
+		}
+	}
+	return FeePayerSpendable(ctx, m.client.Context(), addr, signer, time.Now(), m.BankBalances)
 }
 
 func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory *tx.Factory, gasWanted uint64, msgs []sdk.Msg, timeoutHeight uint64) ([]byte, time.Time, error) {
