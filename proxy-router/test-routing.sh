@@ -6,6 +6,10 @@ command -v flock >/dev/null || {
     echo "test-routing: flock is required to serialize fixed-name Docker fixtures" >&2
     exit 1
 }
+command -v openssl >/dev/null || {
+    echo "test-routing: openssl is required for the PROXY v2 TLS fixture" >&2
+    exit 1
+}
 exec 9>"${TMPDIR:-/tmp}/gonka-proxy-router-test-routing.lock"
 flock -w 600 9
 
@@ -16,8 +20,10 @@ containers=(
     gonka-pr-proxy gonka-pr-proxy-lb gonka-pr-probe gonka-pr-catalog
     gonka-pr-proxy-both
     gonka-pr-proxy-cold
+    gonka-pr-proxy-plain gonka-pr-proxy-v2
     gonka-pr-proxy-cache-floor
     gonka-pr-policy-a gonka-pr-policy-b gonka-pr-policy-cold
+    gonka-pr-policy-plain gonka-pr-policy-v2
     gonka-pr-router-a gonka-pr-router-b gonka-pr-router-bad
     gonka-pr-router-migration
     gonka-pr-edge-a gonka-pr-edge-b
@@ -168,6 +174,82 @@ threading.Thread(
 ).start()
 http.server.ThreadingHTTPServer(("", 8081), Readiness).serve_forever()
 PY
+
+cat >"$tmpdir/policy-v2.py" <<'PY'
+import socket
+import ssl
+import threading
+
+
+PP2_SIGNATURE = b"\r\n\r\n\x00\r\nQUIT\n"
+
+
+def recv_exact(conn, size):
+    data = b""
+    while len(data) < size:
+        chunk = conn.recv(size - len(data))
+        if not chunk:
+            raise ConnectionError("short read")
+        data += chunk
+    return data
+
+
+def handle(conn, tls_context):
+    try:
+        header = recv_exact(conn, 16)
+        if header[:12] != PP2_SIGNATURE or header[12] >> 4 != 2:
+            return
+        recv_exact(conn, int.from_bytes(header[14:16], "big"))
+        if tls_context is not None:
+            conn = tls_context.wrap_socket(conn, server_side=True)
+        request = b""
+        while b"\r\n\r\n" not in request and len(request) < 8192:
+            request += conn.recv(1024)
+        status = b"200 OK" if request.startswith(b"GET /health ") else b"404 Not Found"
+        body = b"ready\n" if status == b"200 OK" else b"not found\n"
+        conn.sendall(
+            b"HTTP/1.1 " + status + b"\r\nContent-Length: "
+            + str(len(body)).encode() + b"\r\nConnection: close\r\n\r\n" + body
+        )
+    except (ConnectionError, OSError, ssl.SSLError):
+        pass
+    finally:
+        conn.close()
+
+
+def serve(port, tls_context=None):
+    listener = socket.socket()
+    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    listener.bind(("", port))
+    listener.listen()
+    while True:
+        conn, _ = listener.accept()
+        threading.Thread(target=handle, args=(conn, tls_context), daemon=True).start()
+
+
+tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+tls.load_cert_chain("/tls/cert.pem", "/tls/key.pem")
+threading.Thread(target=serve, args=(80,), daemon=True).start()
+serve(443, tls)
+PY
+
+cat >"$tmpdir/policy-plain.conf" <<'EOF'
+events {}
+http {
+    access_log off;
+    server {
+        listen 80;
+        listen 8081;
+        location = /health { return 200 "ready\n"; }
+    }
+}
+EOF
+
+mkdir "$tmpdir/tls"
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+    -subj /CN=policy-v2 \
+    -keyout "$tmpdir/tls/key.pem" -out "$tmpdir/tls/cert.pem" \
+    >/dev/null 2>&1
 
 mkdir "$tmpdir/catalog"
 printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v5"}]}' \
@@ -355,6 +437,49 @@ docker run -d --name gonka-pr-policy-cold --network "$network" \
 wait "$cold_watch_pid" \
     || fail "policy worker was admitted before its first successful L7 check"
 docker rm -f gonka-pr-proxy-cold gonka-pr-policy-cold >/dev/null
+
+# The check must use the exact production protocol on the data connection:
+# PROXY v2, then HTTP (or TLS and HTTP), then a 200 response from /health.
+docker run -d --name gonka-pr-policy-v2 --network "$network" \
+    --network-alias proxy-policy-v2 \
+    -v "$tmpdir/policy-v2.py:/app.py:ro" -v "$tmpdir/tls:/tls:ro" \
+    python:3.12-alpine python /app.py >/dev/null
+docker run -d --name gonka-pr-proxy-v2 --network "$network" \
+    -e PROXY_POLICY_POOL_HOST=proxy-policy-v2 \
+    -e NGINX_MODE=both \
+    -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
+    "$image" >/dev/null
+for _ in $(seq 80); do
+    code=$(docker exec gonka-pr-proxy-v2 curl -sS -o /dev/null \
+        -w '%{http_code}' http://127.0.0.1:8404/readyz 2>/dev/null || true)
+    [[ $code == 200 ]] && break
+    sleep 0.1
+done
+[[ $code == 200 ]] \
+    || fail "production-equivalent HTTP and HTTPS policy checks did not pass"
+docker exec gonka-pr-proxy-v2 curl -fsS http://127.0.0.1/health >/dev/null \
+    || fail "production HTTP connection did not carry PROXY v2"
+docker exec gonka-pr-proxy-v2 curl -fkSs https://127.0.0.1/health >/dev/null \
+    || fail "production HTTPS connection did not carry PROXY v2 before TLS"
+docker rm -f gonka-pr-proxy-v2 gonka-pr-policy-v2 >/dev/null
+
+# A separate healthy sidecar cannot admit a data listener that does not accept
+# the production PROXY v2 preamble.
+docker run -d --name gonka-pr-policy-plain --network "$network" \
+    --network-alias proxy-policy-plain \
+    -v "$tmpdir/policy-plain.conf:/etc/nginx/nginx.conf:ro" \
+    nginx:1.28-alpine3.21 >/dev/null
+docker run -d --name gonka-pr-proxy-plain --network "$network" \
+    -e PROXY_POLICY_POOL_HOST=proxy-policy-plain \
+    -e NGINX_MODE=http \
+    -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
+    "$image" >/dev/null
+sleep 4
+plain_ready=$(docker exec gonka-pr-proxy-plain curl -sS -o /dev/null \
+    -w '%{http_code}' http://127.0.0.1:8404/readyz)
+[[ $plain_ready == 503 ]] \
+    || fail "plain HTTP listener was admitted through its unrelated sidecar"
+docker rm -f gonka-pr-proxy-plain gonka-pr-policy-plain >/dev/null
 
 # A healthy sidecar cannot make an absent TLS listener look ready. This is the
 # production HTTP-fallback shape after nginx rejects an invalid certificate.
