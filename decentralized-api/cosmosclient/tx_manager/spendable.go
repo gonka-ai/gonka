@@ -51,7 +51,7 @@ func querySpendable(ctx context.Context, clientCtx client.Context, addr string, 
 		qc := banktypes.NewQueryClient(clientCtx)
 		resp, err := qc.SpendableBalances(ctx, &banktypes.QuerySpendableBalancesRequest{Address: addr})
 		if err == nil && resp != nil {
-			return ngonkaOf(resp.Balances), nil
+			return feeDenomAmount(resp.Balances), nil
 		}
 		spendableErr = err
 		if bankFallback == nil {
@@ -74,7 +74,7 @@ func querySpendable(ctx context.Context, clientCtx client.Context, addr string, 
 		}
 		return math.ZeroInt(), err
 	}
-	return ngonkaOf(sdk.NewCoins(coins...)), nil
+	return feeDenomAmount(sdk.NewCoins(coins...)), nil
 }
 
 func queryFeegrantRemaining(ctx context.Context, clientCtx client.Context, granter, grantee string, now time.Time) (math.Int, error) {

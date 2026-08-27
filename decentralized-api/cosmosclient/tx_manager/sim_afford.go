@@ -30,7 +30,7 @@ func maxAffordableGas(spendable math.Int, price int64) uint64 {
 	return quot.Uint64()
 }
 
-func ngonkaOf(coins sdk.Coins) math.Int {
+func feeDenomAmount(coins sdk.Coins) math.Int {
 	if coins == nil {
 		return math.ZeroInt()
 	}
@@ -41,7 +41,7 @@ func isInsufficientFundsErr(err error) bool {
 	return err != nil && strings.Contains(strings.ToLower(err.Error()), "insufficient funds")
 }
 
-// feegrantRemaining is remaining ngonka on the allowance, or -1 if unlimited.
+// feegrantRemaining is remaining fee-denom on the allowance, or -1 if unlimited.
 func feegrantRemaining(allowance feegrant.FeeAllowanceI, now time.Time) math.Int {
 	if allowance == nil {
 		return math.ZeroInt()
@@ -55,16 +55,16 @@ func feegrantRemaining(allowance feegrant.FeeAllowanceI, now time.Time) math.Int
 		if a.SpendLimit == nil || a.SpendLimit.IsZero() {
 			return unlimited
 		}
-		return ngonkaOf(a.SpendLimit)
+		return feeDenomAmount(a.SpendLimit)
 	case *feegrant.PeriodicAllowance:
 		if a.Basic.Expiration != nil && !a.Basic.Expiration.After(now) {
 			return math.ZeroInt()
 		}
 		remaining := unlimited
 		if a.Basic.SpendLimit != nil && !a.Basic.SpendLimit.IsZero() {
-			remaining = ngonkaOf(a.Basic.SpendLimit)
+			remaining = feeDenomAmount(a.Basic.SpendLimit)
 		}
-		period := ngonkaOf(a.PeriodCanSpend)
+		period := feeDenomAmount(periodicCanSpend(a, now))
 		if remaining.IsNegative() {
 			return period
 		}
@@ -72,7 +72,34 @@ func feegrantRemaining(allowance feegrant.FeeAllowanceI, now time.Time) math.Int
 			return period
 		}
 		return remaining
+	case *feegrant.AllowedMsgAllowance:
+		if a == nil || a.Allowance == nil {
+			return math.ZeroInt()
+		}
+		inner, err := a.GetAllowance()
+		if err != nil || inner == nil {
+			return math.ZeroInt()
+		}
+		return feegrantRemaining(inner, now)
 	default:
-		return unlimited
+		return math.ZeroInt()
 	}
+}
+
+// periodicCanSpend mirrors feegrant.PeriodicAllowance.tryResetPeriod: once
+// PeriodReset is reached, PeriodCanSpend in state is stale until the next
+// Accept writes the grant. Use the post-reset top-up for spendable queries.
+func periodicCanSpend(a *feegrant.PeriodicAllowance, now time.Time) sdk.Coins {
+	if a == nil {
+		return nil
+	}
+	if a.PeriodReset.IsZero() || now.Before(a.PeriodReset) {
+		return a.PeriodCanSpend
+	}
+	if a.Basic.SpendLimit != nil && !a.Basic.SpendLimit.Empty() {
+		if _, isNeg := a.Basic.SpendLimit.SafeSub(a.PeriodSpendLimit...); isNeg {
+			return a.Basic.SpendLimit
+		}
+	}
+	return a.PeriodSpendLimit
 }

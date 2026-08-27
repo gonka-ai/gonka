@@ -14,7 +14,7 @@ import (
 
 func TestMaxAffordableGas_CapsToSpendable(t *testing.T) {
 	price := int64(1000)
-	// 105M ngonka → 105k gas, not a dummy 10M bill.
+	// 105M fee denom → 105k gas, not a dummy 10M bill.
 	require.Equal(t, uint64(105_000), maxAffordableGas(math.NewInt(105_000_000), price))
 
 	whale := math.NewInt(1_000_000).MulRaw(1_000_000_000) // 1e15 / 1000 > BatchGasLimit
@@ -44,4 +44,31 @@ func TestFeegrantRemaining(t *testing.T) {
 	exp := now.Add(-time.Hour)
 	expired := feegrantRemaining(&feegrant.BasicAllowance{Expiration: &exp}, now)
 	require.True(t, expired.IsZero())
+
+	periodLimit := sdk.NewCoins(sdk.NewInt64Coin(inferencetypes.BaseCoin, 10_000_000))
+	stalePeriod := feegrantRemaining(&feegrant.PeriodicAllowance{
+		Basic:            feegrant.BasicAllowance{SpendLimit: sdk.NewCoins(sdk.NewInt64Coin(inferencetypes.BaseCoin, 50_000_000))},
+		Period:           time.Hour,
+		PeriodSpendLimit: periodLimit,
+		PeriodCanSpend:   sdk.NewCoins(sdk.NewInt64Coin(inferencetypes.BaseCoin, 0)),
+		PeriodReset:      now.Add(-time.Minute),
+	}, now)
+	require.Equal(t, int64(10_000_000), stalePeriod.Int64(), "after PeriodReset, remaining is PeriodSpendLimit not stale PeriodCanSpend")
+
+	beforeReset := feegrantRemaining(&feegrant.PeriodicAllowance{
+		Basic:            feegrant.BasicAllowance{SpendLimit: sdk.NewCoins(sdk.NewInt64Coin(inferencetypes.BaseCoin, 50_000_000))},
+		Period:           time.Hour,
+		PeriodSpendLimit: periodLimit,
+		PeriodCanSpend:   sdk.NewCoins(sdk.NewInt64Coin(inferencetypes.BaseCoin, 1_000)),
+		PeriodReset:      now.Add(time.Hour),
+	}, now)
+	require.Equal(t, int64(1_000), beforeReset.Int64())
+
+	wrapped, err := feegrant.NewAllowedMsgAllowance(&feegrant.BasicAllowance{
+		SpendLimit: sdk.NewCoins(sdk.NewInt64Coin(inferencetypes.BaseCoin, 7_000_000)),
+	}, []string{"/inference.inference.MsgSubmitHardwareDiff"})
+	require.NoError(t, err)
+	require.Equal(t, int64(7_000_000), feegrantRemaining(wrapped, now).Int64())
+
+	require.True(t, feegrantRemaining(&feegrant.AllowedMsgAllowance{}, now).IsZero(), "unpacked-empty wrapper is fail-closed")
 }

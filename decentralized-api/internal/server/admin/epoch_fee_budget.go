@@ -168,6 +168,8 @@ func maxConfirmationPocs(ep *types.EpochParams, cp *types.ConfirmationPoCParams)
 	if ep == nil || cp == nil || cp.ExpectedConfirmationsPerEpoch == 0 {
 		return 0
 	}
+	// Last legal trigger: a CPoC started here must finish before the next
+	// epoch PoC. Safety window belongs only in this bound, not in spacing.
 	confirmationWindow := ep.PocStageDuration +
 		ep.PocExchangeDuration +
 		ep.PocValidationDelay +
@@ -184,19 +186,35 @@ func maxConfirmationPocs(ep *types.EpochParams, cp *types.ConfirmationPoCParams)
 	if triggerWindowLength <= 0 {
 		return 0
 	}
-	grace := ep.InferenceValidationCutoff
-	if grace < 1 {
-		grace = 1
-	}
-	occupied := grace + confirmationWindow
-	if occupied <= 0 {
-		return 1
-	}
-	n := triggerWindowLength / occupied
+	span := confirmationPocEventSpan(ep)
+	n := (triggerWindowLength-1)/span + 1
 	if n < 1 {
 		return 1
 	}
 	return uint64(n)
+}
+
+// confirmationPocEventSpan is trigger → clear. The next CPoC may start on the
+// clear block (BeginBlocker clears, then may trigger). Safety window is not
+// part of this: it only keeps the last trigger from overlapping the next epoch.
+func confirmationPocEventSpan(ep *types.EpochParams) int64 {
+	if ep == nil {
+		return 1
+	}
+	grace := ep.InferenceValidationCutoff
+	if grace < 1 {
+		grace = 1
+	}
+	span := grace +
+		ep.PocStageDuration +
+		ep.PocExchangeDuration +
+		ep.PocValidationDelay +
+		ep.PocValidationDuration +
+		ep.SetNewValidatorsDelay - 1
+	if span < 1 {
+		return 1
+	}
+	return span
 }
 
 func commitHeightsPerStage(ep *types.EpochParams) uint64 {

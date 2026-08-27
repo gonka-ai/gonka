@@ -39,6 +39,41 @@ func TestMaxConfirmationPocs_FitsWindow(t *testing.T) {
 	require.GreaterOrEqual(t, n, uint64(1))
 }
 
+func TestConfirmationPocEventSpan_IgnoresSafetyWindow(t *testing.T) {
+	ep := types.DefaultEpochParams()
+	ep.ConfirmationPocSafetyWindow = 50
+	span := confirmationPocEventSpan(ep)
+	ep.ConfirmationPocSafetyWindow = 5_000
+	require.Equal(t, span, confirmationPocEventSpan(ep))
+}
+
+func TestMaxConfirmationPocs_SafetyWindowDoesNotInflateSpacing(t *testing.T) {
+	ep := types.DefaultEpochParams()
+	ep.EpochLength = 20_000
+	ep.ConfirmationPocSafetyWindow = 50
+	cp := &types.ConfirmationPoCParams{ExpectedConfirmationsPerEpoch: 1}
+	withSafety := maxConfirmationPocs(ep, cp)
+
+	// Old occupied = grace + phases + safety. Span excludes safety, so more
+	// sequential CPoCs fit than if safety were treated as inter-event delay.
+	grace := ep.InferenceValidationCutoff
+	if grace < 1 {
+		grace = 1
+	}
+	oldOccupied := grace + ep.PocStageDuration + ep.PocExchangeDuration +
+		ep.PocValidationDelay + ep.PocValidationDuration +
+		ep.SetNewValidatorsDelay + ep.ConfirmationPocSafetyWindow
+	ec := types.EpochContext{EpochIndex: 2, PocStartBlockHeight: ep.EpochLength, EpochParams: *ep}
+	confirmationWindow := oldOccupied - grace
+	triggerWindowEnd := ec.NextPoCStart() - ep.InferenceValidationCutoff - confirmationWindow
+	triggerWindowLength := triggerWindowEnd - ec.SetNewValidators() + 1
+	oldN := triggerWindowLength / oldOccupied
+	if oldN < 1 {
+		oldN = 1
+	}
+	require.GreaterOrEqual(t, withSafety, uint64(oldN))
+}
+
 func TestEpochFeeBudgetNgonka_ZeroWhenFeesOff(t *testing.T) {
 	fp := types.DefaultFeeParams()
 	got := epochFeeBudgetNgonka(fp, types.DefaultEpochParams(), types.DefaultConfirmationPoCParams(), 10_000)
@@ -100,7 +135,7 @@ func TestGetEpochFeeBudget_HTTPCountParam(t *testing.T) {
 	rec.On("GetSignerAddress").Return("gonka1payer")
 	rec.On("GetClientContext").Return(sdkclient.Context{})
 	rec.On("BankBalances", mock.Anything, "gonka1payer").Return(
-		[]sdk.Coin{sdk.NewInt64Coin(types.BaseCoin, 1_000_000_000_000)}, nil)
+		[]sdk.Coin{sdk.NewInt64Coin(types.BaseCoin, 9_000_000_000_000_000)}, nil)
 
 	req := httptest.NewRequest(http.MethodGet, "/admin/v1/epoch-fee-budget?count=100", nil)
 	recw := httptest.NewRecorder()
@@ -114,7 +149,7 @@ func TestGetEpochFeeBudget_HTTPCountParam(t *testing.T) {
 	assert.Equal(t, uint64(100), body.Count)
 	assert.Equal(t, countSourceParam, body.CountSource)
 	assert.True(t, body.BudgetKnown)
-	assert.Equal(t, "1000000000000", body.SpendableBalance)
+	assert.Equal(t, "9000000000000000", body.SpendableBalance)
 	assert.Equal(t, expected.String(), body.BudgetBalance)
 	assert.True(t, body.SpendableCoversBudget)
 }
