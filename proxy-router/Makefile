@@ -294,6 +294,11 @@ test-compose:
 		"$$root/deploy/join/observability/prometheus.yml" \
 		| grep -q 'proxy-router-metrics:8405' \
 		|| { echo "test-compose: public router metrics are not scraped" >&2; exit 1; }; \
+	if grep -Eq 'up -d proxy-policy proxy-policy2|up -d proxy-policy2 proxy-policy|--remove-orphans' \
+		"$$root/proxy/README.md"; then \
+		echo "test-compose: proxy runbook contains a non-rolling or whole-project mutation" >&2; \
+		exit 1; \
+	fi; \
 	echo "test-compose: ok"
 
 VERSION ?= $(shell git describe --always)
