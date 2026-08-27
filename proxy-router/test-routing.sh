@@ -172,6 +172,7 @@ http {
     }
     server {
         listen 80 proxy_protocol;
+        listen 8081;
         set_real_ip_from 0.0.0.0/0;
         real_ip_header proxy_protocol;
         location /devshard/ {
@@ -179,6 +180,7 @@ http {
             proxy_set_header X-Forwarded-Proto $scheme;
             proxy_pass http://versiond_distributor/;
         }
+        location = /health { return 200 "ready\n"; }
         location /tier-a/ {
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-Proto $scheme;

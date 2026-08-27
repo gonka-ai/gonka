@@ -78,6 +78,7 @@ Key runtime environment variables:
 | `PROXY_REAL_IP_RECURSIVE` | off | Value for nginx `real_ip_recursive`. Keep `off` unless you explicitly trust a multi-hop proxy chain. |
 | `PROXY_PROTOCOL` | false | Require PROXY v2 on the traffic listeners. The shipped `proxy-policy` service sets this to true; do not expose those listeners directly. |
 | `PROXY_PROTOCOL_TRUSTED_FROM` | `0.0.0.0/0` | Trusted source range on the private container network. Narrow it when the deployment has a stable ingress subnet. |
+| `PROXY_POLICY_READINESS_HOST` | *(empty)* | DNS alias that proves the worker is still attached to its application network; join Compose supplies a network-scoped alias |
 | `PROXY_CERT_RELOAD_POLL_SECONDS` | `30` | How often sibling policy workers check the shared certificate files and reload after another replica renews them. |
 | `DISABLE_GONKA_API` | false | Set to `true` to disable `/api/v1/` and `/v1/` routes |
 | `DISABLE_CHAIN_RPC` | false | Set to `true` to disable `/chain-rpc/` routes |

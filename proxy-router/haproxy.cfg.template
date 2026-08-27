@@ -67,7 +67,10 @@ backend policy_http
     option redispatch
     retries 2
     timeout server ${PUBLIC_IDLE_SECONDS}s
-    server-template policy ${POLICY_POOL_SLOTS} ${POLICY_POOL_HOST}:80 check inter 1s fall 2 rise 2 resolvers docker init-addr none init-state up hash-key addr send-proxy-v2
+    option httpchk
+    http-check send meth GET uri /health hdr Host policy-health
+    http-check expect status 200
+    server-template policy ${POLICY_POOL_SLOTS} ${POLICY_POOL_HOST}:80 check port 8081 inter 1s fall 2 rise 2 resolvers docker init-addr none init-state up hash-key addr send-proxy-v2
 
 backend policy_https
     mode tcp
@@ -76,7 +79,10 @@ backend policy_https
     option redispatch
     retries 2
     timeout server ${PUBLIC_IDLE_SECONDS}s
-    server-template policy ${POLICY_POOL_SLOTS} ${POLICY_POOL_HOST}:443 check inter 1s fall 2 rise 2 resolvers docker init-addr none init-state up hash-key addr send-proxy-v2
+    option httpchk
+    http-check send meth GET uri /health hdr Host policy-health
+    http-check expect status 200
+    server-template policy ${POLICY_POOL_SLOTS} ${POLICY_POOL_HOST}:443 check port 8081 inter 1s fall 2 rise 2 resolvers docker init-addr none init-state up hash-key addr send-proxy-v2
 
 frontend versiond_router_in
     option httplog
