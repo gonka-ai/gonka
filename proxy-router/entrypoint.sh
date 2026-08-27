@@ -53,6 +53,7 @@ CATALOG_PROXY_PORT="${PROXY_ROUTER_CATALOG_PORT:-9100}"
 CATALOG_UPSTREAM_HOST="${PROXY_ROUTER_CATALOG_UPSTREAM_HOST:-}"
 CATALOG_UPSTREAM_PORT="${PROXY_ROUTER_CATALOG_UPSTREAM_PORT:-9100}"
 DNS_RESOLVER="${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}"
+TRUSTED_PROXY_CIDRS="${PROXY_ROUTER_PROXY_PROTOCOL_FROM:-}"
 
 resolve_ipv4() {
     getent ahostsv4 "$1" | awk 'NR == 1 { print $1 }'
@@ -168,6 +169,22 @@ esac
 if ! printf '%s\n' "$DNS_RESOLVER" | grep -Eq '^(\[[0-9A-Fa-f:]+\]|[0-9A-Fa-f:.]+)(:[0-9]+)?$'; then
     echo "proxy-router: HAPROXY_DNS_RESOLVER must be a numeric IP with an optional port" >&2
     exit 1
+fi
+
+if [ -n "$TRUSTED_PROXY_CIDRS" ]; then
+    for cidr in $TRUSTED_PROXY_CIDRS; do
+        case "$cidr" in
+            *[!0-9A-Fa-f:./]*)
+                echo "proxy-router: invalid CIDR in PROXY_ROUTER_PROXY_PROTOCOL_FROM: '$cidr'" >&2
+                exit 1
+                ;;
+        esac
+    done
+    PUBLIC_PROXY_ACL="acl trusted_external_proxy src $TRUSTED_PROXY_CIDRS"
+    PUBLIC_PROXY_EXPECT='tcp-request connection expect-proxy layer4 if trusted_external_proxy'
+else
+    PUBLIC_PROXY_ACL='# No trusted external PROXY-protocol sources configured.'
+    PUBLIC_PROXY_EXPECT='# Direct client connection; no incoming PROXY preamble.'
 fi
 
 case "$NGINX_MODE" in
@@ -417,6 +434,8 @@ sed \
     -e "s|\${STREAM_IDLE_SECONDS}|$STREAM_IDLE|g" \
     -e "s|\${PUBLIC_IDLE_SECONDS}|$PUBLIC_IDLE|g" \
     -e "s|\${DNS_RESOLVER}|$DNS_RESOLVER|g" \
+    -e "s|\${PUBLIC_PROXY_ACL}|$PUBLIC_PROXY_ACL|g" \
+    -e "s|\${PUBLIC_PROXY_EXPECT}|$PUBLIC_PROXY_EXPECT|g" \
 	-e "/\${CATALOG_PROXY_CONFIG}/{
 		r $CATALOG_PROXY_FILE
 		d

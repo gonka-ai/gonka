@@ -6,7 +6,7 @@ network=gonka-proxy-router-test-$$
 image=gonka-proxy-router-test:$$
 state=gonka-proxy-router-state-$$
 containers=(
-    gonka-pr-proxy gonka-pr-probe gonka-pr-catalog
+    gonka-pr-proxy gonka-pr-proxy-lb gonka-pr-probe gonka-pr-catalog
     gonka-pr-policy-a gonka-pr-policy-b
     gonka-pr-router-a gonka-pr-router-b gonka-pr-router-bad
     gonka-pr-router-migration
@@ -342,6 +342,33 @@ proxy_admin '/readyz?version=v4' >/dev/null \
     || fail "top-level v4 readiness did not follow the router pool"
 proxy_admin '/readyz?version=v5' >/dev/null \
     || fail "top-level v5 readiness did not follow the router pool"
+
+# A trusted external L4 balancer supplies the client address in a PROXY
+# preamble. Other source networks remain ordinary direct ingress.
+probe_ip=$(docker inspect -f \
+    "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
+    gonka-pr-probe)
+docker run -d --name gonka-pr-proxy-lb --network "$network" \
+    -e PROXY_POLICY_POOL_HOST=proxy-policy \
+    -e PROXY_ROUTER_PROXY_PROTOCOL_FROM="$probe_ip/32" \
+    -e VERSIOND_ROUTER_POOL_HOST=missing-router \
+    -e PROXY_ROUTER_VERSION_CAPACITY=1 "$image" >/dev/null
+for _ in $(seq 40); do
+    if docker exec gonka-pr-proxy-lb curl -fsS \
+        http://127.0.0.1:8404/readyz >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.25
+done
+external=$(probe --haproxy-clientip 203.0.113.77 http://gonka-pr-proxy-lb/)
+case "$external" in
+    policy-a:203.0.113.77 | policy-b:203.0.113.77) ;;
+    *) fail "trusted external PROXY address was not preserved: '$external'" ;;
+esac
+if probe http://gonka-pr-proxy-lb/ >/dev/null 2>&1; then
+    fail "trusted external LB source was accepted without a PROXY preamble"
+fi
+docker rm -f gonka-pr-proxy-lb >/dev/null
 
 # The deployment rolls the two fixed policy slots reserve-first. Keep POSTs in
 # flight while each slot is replaced and require both continuity and exactly-once
