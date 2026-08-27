@@ -52,6 +52,9 @@ x-proxy-policy: &proxy-policy
       condition: service_healthy
       required: false
   restart: unless-stopped
+  # nginx uses SIGQUIT for graceful stop. Keep Docker's SIGKILL backstop beyond
+  # the longest default upstream transfer/SSE timeout (20 minutes).
+  stop_grace_period: ${PROXY_POLICY_STOP_GRACE_PERIOD:-30m}
   healthcheck:
     test: ["CMD", "curl", "-f", "http://127.0.0.1:8081/health"]
     interval: 2s

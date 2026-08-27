@@ -38,6 +38,7 @@ cat >"$tmpdir/upstream.py" <<'PY'
 import http.server
 import os
 import threading
+import time
 import urllib.parse
 
 name = os.environ["NAME"]
@@ -72,6 +73,8 @@ class Data(http.server.BaseHTTPRequestHandler):
                 f'{self.headers.get("X-Real-IP", "")}|'
                 f'{self.headers.get("X-Forwarded-Proto", "")}',
             )
+        if self.path.endswith("/slow"):
+            time.sleep(2)
         self.reply(200, name)
 
     def do_POST(self):
@@ -344,6 +347,21 @@ proxy_admin '/readyz?version=v4' >/dev/null \
     || fail "top-level v4 readiness did not follow the router pool"
 proxy_admin '/readyz?version=v5' >/dev/null \
     || fail "top-level v5 readiness did not follow the router pool"
+
+# nginx's SIGQUIT stop must leave an accepted long response alive. Compose
+# supplies the larger production budget; this short probe exercises the signal
+# and confirms Docker does not reach its SIGKILL backstop.
+slow_response=$tmpdir/policy-slow-response
+probe --haproxy-protocol \
+    http://gonka-pr-policy-a/devshard/v5/sessions/graceful/slow \
+    >"$slow_response" &
+slow_pid=$!
+sleep 0.5
+docker stop --time 5 gonka-pr-policy-a >/dev/null
+wait "$slow_pid" || fail "accepted policy response was reset during SIGQUIT drain"
+case "$(cat "$slow_response")" in a | b) ;; *) fail "slow policy response was incomplete" ;; esac
+docker rm gonka-pr-policy-a >/dev/null
+start_policy a
 
 # A trusted external L4 balancer supplies the client address in a PROXY
 # preamble. Other source networks remain ordinary direct ingress.
