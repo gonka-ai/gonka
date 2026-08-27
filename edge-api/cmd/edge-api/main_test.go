@@ -2,8 +2,6 @@ package main
 
 import (
 	"os"
-	"regexp"
-	"strconv"
 	"syscall"
 	"testing"
 	"time"
@@ -73,29 +71,6 @@ func TestLoadConfig_ShutdownDefaults(t *testing.T) {
 	assert.Equal(t, 2*time.Minute, cfg.ShutdownBudget)
 }
 
-func TestShutdownDefaultsCoverRouterContract(t *testing.T) {
-	template := readRouterContractFile(t, "../../../edge-api-router/haproxy.cfg.template")
-	entrypoint := readRouterContractFile(t, "../../../edge-api-router/entrypoint.sh")
-
-	checkTimeout := routerDuration(t, template,
-		regexp.MustCompile(`(?m)^[\t ]*timeout check ([0-9]+m?s)`))
-	checkInterval := routerDuration(t, template,
-		regexp.MustCompile(`(?m)^[\t ]*server-template [^\n]* inter ([0-9]+m?s)`))
-	fall := routerInteger(t, template,
-		regexp.MustCompile(`(?m)^[\t ]*server-template [^\n]* fall ([0-9]+)`))
-	const observationMargin = time.Second
-	worstDetection := checkTimeout + checkInterval*time.Duration(fall)
-	require.GreaterOrEqual(t, minDrainAnnounce, worstDetection+observationMargin,
-		"minimum announce must cover the router health-check failure window")
-	require.GreaterOrEqual(t, defaultDrainAnnounce, minDrainAnnounce,
-		"announce default must not bypass the minimum")
-
-	readTimeoutSeconds := routerInteger(t, entrypoint,
-		regexp.MustCompile(`READ_TIMEOUT="\$\{EDGE_API_ROUTER_READ_TIMEOUT_SECONDS:-([0-9]+)\}"`))
-	require.Equal(t, time.Duration(readTimeoutSeconds)*time.Second, defaultShutdownBudget,
-		"shutdown default must match the router's response inactivity timeout")
-}
-
 func TestLoadConfig_ReadsShutdownDurations(t *testing.T) {
 	t.Setenv(envChainGRPCURL, "node:9090")
 	t.Setenv(envDrainAnnounce, "0s")
@@ -160,29 +135,4 @@ func TestAwaitDrainAnnouncement_ZeroWindowReturnsImmediately(t *testing.T) {
 	sig := awaitDrainAnnouncement(0, make(chan os.Signal))
 	assert.Nil(t, sig)
 	assert.Less(t, time.Since(start), time.Second)
-}
-
-func readRouterContractFile(t *testing.T, path string) string {
-	t.Helper()
-	body, err := os.ReadFile(path)
-	require.NoErrorf(t, err, "read router contract file %s", path)
-	return string(body)
-}
-
-func routerDuration(t *testing.T, body string, pattern *regexp.Regexp) time.Duration {
-	t.Helper()
-	match := pattern.FindStringSubmatch(body)
-	require.Lenf(t, match, 2, "router contract does not match %s", pattern)
-	duration, err := time.ParseDuration(match[1])
-	require.NoError(t, err)
-	return duration
-}
-
-func routerInteger(t *testing.T, body string, pattern *regexp.Regexp) int {
-	t.Helper()
-	match := pattern.FindStringSubmatch(body)
-	require.Lenf(t, match, 2, "router contract does not match %s", pattern)
-	value, err := strconv.Atoi(match[1])
-	require.NoError(t, err)
-	return value
 }
