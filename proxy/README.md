@@ -55,6 +55,7 @@ Key runtime environment variables:
 | `PROXY_SSL_WAIT_SECONDS` | 60 | Max wait for `proxy-ssl` readiness during cert fetch |
 | `PROXY_SSL_RETRY_SECONDS` | 60 | Initial retry delay after issuer or HTTPS recovery failure; doubles up to the renewal interval |
 | `RENEW_INTERVAL_HOURS` | 24 | Interval between successful automatic renewal checks |
+| `RENEW_BEFORE_DAYS` | 30 | Renew the certificate when it expires within this many days |
 | `NODE_ID` | proxy | Node identifier included in cert requests to `proxy-ssl` |
 | `API_SERVICE_NAME` | api | Service name for API upstream |
 | `NODE_SERVICE_NAME` | node | Service name for chain node upstreams |
@@ -290,6 +291,8 @@ Avoid:
 - `NGINX_MODE=both`: listen on 80 and 443; same SSL requirements as `https`.
 
 When SSL is enabled and no certs are present under `/etc/nginx/ssl`, `entrypoint.sh` will call `setup-ssl.sh` to fetch a certificate via the `proxy-ssl` service.
+
+If issuance fails at startup (for example, `proxy-ssl` is not reachable yet) and `NGINX_MODE=both`, the entrypoint temporarily serves HTTP only. A background worker keeps retrying with exponential backoff (starting at `PROXY_SSL_RETRY_SECONDS`, capped at the renewal interval) and, once a certificate is issued, re-renders the HTTPS configuration, validates it with `nginx -t`, and reloads nginx — port 443 comes back without a container restart. The same worker renews certificates issued through `proxy-ssl` (identified by a stored `order.id`) within `RENEW_BEFORE_DAYS` of expiry; manually supplied cert/key pairs without `order.id` are left under operator management.
 
 ### Setup Environment
 
