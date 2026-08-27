@@ -55,7 +55,7 @@ test-join-compose:
 	jq -e '.services["versiond-router"].volumes | any(.type == "volume" and .source == "versiond-router-state" and .target == "/var/lib/gonka-router")' \
 		"$$tmp_json" >/dev/null \
 		|| { echo 'test-join-compose: router catalog state is not persistent' >&2; exit 1; }; \
-	jq -e '.services["versiond-router"].healthcheck.test | join(" ") as $$check | ($$check | contains("-x /usr/local/lib/router-runtime/catalog-reconciler")) and ($$check | contains("catalog-capable versiond-router requires VERSIOND_ROUTING_CATALOG_URL")) and ($$check | contains("VERSIOND_ROUTING_CATALOG_URL requires a catalog-capable versiond-router image")) and ($$check | contains("VERSIOND_ROUTER_ADMIN_PORT")) and ($$check | contains("/livez")) and ($$check | contains("/readyz") | not) and ($$check | contains("127.0.0.1:8080/healthz"))' \
+	jq -e '.services["versiond-router"].healthcheck.test | join(" ") as $$check | ($$check | contains("-x /usr/local/lib/router-runtime/catalog-reconciler")) and ($$check | contains("catalog-capable versiond-router requires VERSIOND_ROUTING_CATALOG_URL")) and ($$check | contains("VERSIOND_ROUTING_CATALOG_URL requires a catalog-capable versiond-router image")) and ($$check | contains("VERSIOND_ROUTER_ADMIN_PORT")) and ($$check | contains("/livez")) and ($$check | contains("/readyz") | not) and ($$check | contains("versiond-router-listen-address")) and ($$check | contains(":8080/healthz"))' \
 		"$$tmp_json" >/dev/null \
 		|| { echo 'test-join-compose: router healthcheck does not validate image/catalog compatibility and probe liveness' >&2; exit 1; }; \
 	healthcheck=$$(jq -r '.services["versiond-router"].healthcheck.test[1]' \
@@ -74,9 +74,12 @@ test-join-compose:
 	fi; \
 	VERSIOND_ROUTING_CATALOG_URL=http://api:9100/versions probe_healthcheck \
 		|| { echo 'test-join-compose: catalog-capable image with catalog URL was rejected' >&2; exit 1; }; \
-	jq -e '.services.proxy.depends_on["versiond-router"] | .condition == "service_healthy" and .required == false' \
+	jq -e '((.services.proxy.depends_on // {}) | has("versiond-router") | not)' \
 		"$$tmp_json" >/dev/null \
-		|| { echo 'test-join-compose: router health is not an optional public-proxy dependency' >&2; exit 1; }; \
+		|| { echo 'test-join-compose: inner router delays unrelated public proxy startup' >&2; exit 1; }; \
+	jq -e '.services["versiond-router"].volumes | any(.type == "bind" and .target == "/docker-entrypoint.d/50-gonka-public-tier-compat.sh" and .read_only == true)' \
+		"$$tmp_json" >/dev/null \
+		|| { echo 'test-join-compose: legacy router private-listener hook is missing' >&2; exit 1; }; \
 	jq -e '(.services["versiond-router"] | has("stop_signal") | not) and .services["versiond-router"].stop_grace_period == "10s"' \
 		"$$tmp_json" >/dev/null \
 		|| { echo 'test-join-compose: Compose overrides the selected image stop signal or loses the bounded grace' >&2; exit 1; }; \
