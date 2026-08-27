@@ -65,7 +65,7 @@ test-render: test-route-status
 		|| fail "router lifecycle health does not use the admin listener"; \
 	grep -q 'http-check send meth GET uri /readyz?version=v5 hdr Host versiond-router-fleet' "$$tmpdir/proxy.cfg" \
 		|| fail "router health is not version-aware"; \
-	grep -q 'var(txn.ready_ver) -m str v5.*nbsrv(versiond_routers_v5)' "$$tmpdir/proxy.cfg" \
+	grep -q 'var(txn.ready_ver),map_str(.*versions.map) -m str versiond_routers_v5.*nbsrv(versiond_routers_v5)' "$$tmpdir/proxy.cfg" \
 		|| fail "top-level version readiness is not route-aware"; \
 	grep -q 'var(txn.ready_ver),map_str(.*versions.map) -m str versiond_routers_dynamic_1.*nbsrv(versiond_routers_dynamic_1)' "$$tmpdir/proxy.cfg" \
 		|| fail "dynamic version readiness does not follow the live slot assignment"; \
@@ -124,6 +124,30 @@ test-render: test-route-status
 		VERSIOND_NON_HA_VERSIONS=v4 VERSIOND_VERSIONS=v4 \
 		./entrypoint.sh >/dev/null 2>&1; then \
 		fail "duplicate version declaration was accepted"; \
+	fi; \
+	HAPROXY_BIN=true \
+	PROXY_ROUTER_RENDER_ONLY=1 \
+	PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
+	PROXY_ROUTER_OUT="$$tmpdir/path-safe.cfg" \
+	PROXY_ROUTER_VERSION_MAP="$$tmpdir/path-safe.map" \
+	VERSIOND_VERSIONS='v1:beta' \
+	./entrypoint.sh; \
+	grep -q '^v1:beta versiond_routers_v1_beta_' "$$tmpdir/path-safe.map" \
+		|| fail "a path-safe static version accepted by the inner router was rejected"; \
+	grep -q 'uri /v1%3Abeta/healthz' "$$tmpdir/path-safe.cfg" \
+		|| fail "path-safe static version health URI was not encoded"; \
+	docker run --rm --user "$$(id -u):$$(id -g)" \
+		-v "$$tmpdir:$$tmpdir:ro" $(HAPROXY_IMAGE) \
+		haproxy -c -f "$$tmpdir/path-safe.cfg" >/dev/null \
+		|| fail "path-safe static version produced invalid HAProxy config"; \
+	if HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \
+		PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
+		PROXY_ROUTER_OUT="$$tmpdir/path-unsafe.cfg" \
+		VERSIOND_VERSIONS='v1/beta' \
+		./entrypoint.sh >/dev/null 2>&1; then \
+		fail "a static version that cannot be a literal path segment was accepted"; \
 	fi; \
 	if HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \
 		PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
