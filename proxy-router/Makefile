@@ -24,11 +24,12 @@ test-render:
 	grep -q 'server-template policy 4 proxy-policy:443 .*send-proxy-v2' "$$tmpdir/proxy.cfg" \
 		|| fail "public HTTPS does not use the PROXY-protocol policy pool"; \
 	grep -q '^ *tcp-check connect port 80 send-proxy$$' "$$tmpdir/proxy.cfg" \
-		|| fail "HTTP policy health does not verify the data listener"; \
+		|| fail "HTTP policy health does not exercise the production PROXY v2 listener"; \
 	grep -q '^ *tcp-check connect port 443 ssl send-proxy$$' "$$tmpdir/proxy.cfg" \
-		|| fail "HTTPS policy health does not verify the TLS listener"; \
-	[ "$$(grep -c '^ *tcp-check connect port 8081$$' "$$tmpdir/proxy.cfg")" -eq 2 ] \
-		|| fail "policy pools do not check per-worker application readiness"; \
+		|| fail "HTTPS policy health does not exercise the production PROXY v2 listener"; \
+	if grep -q '^ *tcp-check connect port 8081$$' "$$tmpdir/proxy.cfg"; then \
+		fail "policy health can be satisfied by a connection other than the data listener"; \
+	fi; \
 	[ "$$(grep -c '^ *tcp-check send-binary 474554202f6865616c7468' "$$tmpdir/proxy.cfg")" -eq 2 ] \
 		|| fail "policy readiness endpoint is not checked"; \
 	[ "$$(grep -c '^ *option redispatch$$' "$$tmpdir/proxy.cfg")" -ge 3 ] \

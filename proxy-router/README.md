@@ -87,12 +87,22 @@ routing database, leader, or peer protocol. It does not need Redis:
   fleet readiness during the one-time upgrade;
 - `edge-api-pool` resolves to edge-api replicas.
 
-`server-template` reserves host capacity and `PROXY_ROUTER_VERSION_CAPACITY`
-reserves version-backend capacity. Neither a new address nor a new governance
-name requires a reload. Application and inner-router addresses become eligible
-only after successful readiness checks. Long-lived policy workers start as
-connect candidates immediately; TCP redispatch moves a connection to another
-worker if the selected address is not listening yet.
+Each policy slot exposes `/health` through its production HTTP and HTTPS
+listeners on the isolated policy network. The active check sends the same PROXY
+v2 preamble as production traffic, completes HTTP or TLS on that connection,
+and requires `/health` to return `200`. The endpoint is backed by the existing
+policy sidecar and resolves an alias scoped to the shared application network.
+Losing the data listener, PROXY support, that interface, or its Docker DNS view
+therefore removes only the affected worker from the corresponding public pool,
+while failures of an individual upstream application remain visible at their
+own route rather than collapsing the entire policy tier.
+
+`server-template` reserves router capacity and `PROXY_ROUTER_VERSION_CAPACITY`
+reserves version-backend capacity. Neither a new router address nor a new
+governance name requires a reload. Router and policy addresses start fully down
+and become eligible only after their configured readiness checks succeed. TCP
+redispatch moves a new connection to another admitted worker if the selected
+address later stops accepting connections.
 
 ## Availability scope
 

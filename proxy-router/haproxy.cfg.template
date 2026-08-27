@@ -64,11 +64,11 @@ backend policy_http
     retries 2
     timeout server ${PUBLIC_IDLE_SECONDS}s
     option tcp-check
-    # A worker is usable only when both its public data listener and application
-    # readiness endpoint are available. The first connection carries PROXY just
-    # like production traffic; the second is the private health listener.
+    # Exercise the production listener end to end: the same connection carries
+    # the production PROXY v2 preamble, request and application-ready response.
+    # HAProxy derives v2 from the server's send-proxy-v2 setting; the check
+    # directive itself uses the generic send-proxy keyword.
     tcp-check connect port 80 send-proxy
-    tcp-check connect port 8081
     tcp-check send-binary 474554202f6865616c746820485454502f312e310d0a486f73743a20706f6c6963792d6865616c74680d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a
     tcp-check expect rstring ^HTTP/1\.[01][[:space:]]+200
     server-template policy ${POLICY_POOL_SLOTS} ${POLICY_POOL_HOST}:80 check inter 1s fall 2 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr send-proxy-v2
@@ -82,7 +82,6 @@ backend policy_https
     timeout server ${PUBLIC_IDLE_SECONDS}s
     option tcp-check
     tcp-check connect port 443 ssl send-proxy
-    tcp-check connect port 8081
     tcp-check send-binary 474554202f6865616c746820485454502f312e310d0a486f73743a20706f6c6963792d6865616c74680d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a
     tcp-check expect rstring ^HTTP/1\.[01][[:space:]]+200
     server-template policy ${POLICY_POOL_SLOTS} ${POLICY_POOL_HOST}:443 check inter 1s fall 2 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr send-proxy-v2 verify none
