@@ -430,13 +430,18 @@ if [ "$SSL_ENABLED" = "true" ]; then
         # issuance/renewal so they cannot publish competing orders or partial
         # files. flock is tied to this process and cannot leave a stale lock.
         flock 9
+        if [ "${1:-}" = --if-missing ]; then
+            shift
+            if [ -f /etc/nginx/ssl/cert.pem ] && [ -f /etc/nginx/ssl/private.key ]; then
+                exit 0
+            fi
+            echo "SSL enabled but certificates not found; requesting via proxy-ssl"
+        fi
         /setup-ssl.sh "$@"
     ) 9>/etc/nginx/ssl/.gonka-ssl.lock
 
-    if [ ! -f "/etc/nginx/ssl/cert.pem" ] || [ ! -f "/etc/nginx/ssl/private.key" ]; then
-        echo "SSL enabled but certificates not found; requesting via proxy-ssl"
-        run_ssl_setup || echo "WARNING: SSL setup failed; will attempt to continue"
-    fi
+    run_ssl_setup --if-missing \
+        || echo "WARNING: SSL setup failed; will attempt to continue"
 
     # Start background renewal loop if order.id exists (indicates auto issuance)
     if [ -f "/etc/nginx/ssl/order.id" ]; then

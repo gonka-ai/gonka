@@ -36,7 +36,9 @@ test-render:
 	shared=gonka-proxy-policy-shared-$$$$; \
 	peer=gonka-proxy-policy-peer-$$$$; \
 	worker=gonka-proxy-policy-worker-$$$$; \
-	trap 'docker rm -f "$$peer" "$$worker" >/dev/null 2>&1 || true; docker network rm "$$private" "$$shared" >/dev/null 2>&1 || true; docker image rm "$$image" >/dev/null 2>&1 || true; rm -rf "$$tmpdir"' EXIT; \
+	ssl_worker_a=gonka-proxy-policy-ssl-a-$$$$; \
+	ssl_worker_b=gonka-proxy-policy-ssl-b-$$$$; \
+	trap 'docker rm -f "$$peer" "$$worker" "$$ssl_worker_a" "$$ssl_worker_b" >/dev/null 2>&1 || true; docker network rm "$$private" "$$shared" >/dev/null 2>&1 || true; docker image rm "$$image" >/dev/null 2>&1 || true; rm -rf "$$tmpdir"' EXIT; \
 	fail() { echo "test-render: $$1" >&2; exit 1; }; \
 	touch "$$tmpdir/nginx.conf"; \
 	docker build -q -t "$$image" . >/dev/null; \
@@ -99,6 +101,36 @@ test-render:
 	if grep -q "listen $$shared_ip:80 proxy_protocol;" "$$tmpdir/private.conf"; then \
 		fail "shared application network can reach the PROXY listener"; \
 	fi; \
+	mkdir "$$tmpdir/ssl"; \
+	touch "$$tmpdir/ssl-a.conf" "$$tmpdir/ssl-b.conf"; \
+	printf '%s\n' '#!/bin/sh' 'set -eu' \
+		'printf "%s\n" called >> /etc/nginx/ssl/setup.calls' \
+		'sleep 2' ': > /etc/nginx/ssl/cert.pem' \
+		': > /etc/nginx/ssl/private.key' > "$$tmpdir/setup-ssl.sh"; \
+	chmod +x "$$tmpdir/setup-ssl.sh"; \
+	docker create --name "$$ssl_worker_a" \
+		-e NGINX_MODE=https -e CERT_ISSUER_DOMAIN=example.test \
+		-e PROXY_CERT_RELOAD_POLL_SECONDS=60 \
+		-v "$$tmpdir/ssl:/etc/nginx/ssl" \
+		-v "$$tmpdir/setup-ssl.sh:/setup-ssl.sh:ro" \
+		-v "$$tmpdir/ssl-a.conf:/etc/nginx/nginx.conf" \
+		"$$image" sleep 30 >/dev/null; \
+	docker create --name "$$ssl_worker_b" \
+		-e NGINX_MODE=https -e CERT_ISSUER_DOMAIN=example.test \
+		-e PROXY_CERT_RELOAD_POLL_SECONDS=60 \
+		-v "$$tmpdir/ssl:/etc/nginx/ssl" \
+		-v "$$tmpdir/setup-ssl.sh:/setup-ssl.sh:ro" \
+		-v "$$tmpdir/ssl-b.conf:/etc/nginx/nginx.conf" \
+		"$$image" sleep 30 >/dev/null; \
+	docker start "$$ssl_worker_a" "$$ssl_worker_b" >/dev/null; \
+	for _ in $$(seq 1 100); do \
+		[ -s "$$tmpdir/ssl-a.conf" ] && [ -s "$$tmpdir/ssl-b.conf" ] && break; \
+		sleep 0.1; \
+	done; \
+	[ -s "$$tmpdir/ssl-a.conf" ] && [ -s "$$tmpdir/ssl-b.conf" ] \
+		|| fail "concurrent TLS policy workers did not finish startup"; \
+	[ "$$(wc -l < "$$tmpdir/ssl/setup.calls")" -eq 1 ] \
+		|| fail "concurrent TLS policy workers placed more than one initial certificate order"; \
 	echo "test-render: ok"
 
 build-docker:
