@@ -13,23 +13,21 @@ type unorderedNonceAdder interface {
 	TryAddUnorderedNonce(ctx sdk.Context, sender []byte, timestamp time.Time) error
 }
 
-// UnorderedNonceSimGasDecorator meters TryAddUnorderedNonce during Simulate.
+// UnorderedNonceSimGasDecorator exists because SDK
+// SigVerificationDecorator.verifyUnorderedNonce returns before
+// TryAddUnorderedNonce in ExecModeSimulate (duplicate timeout must not fail
+// gas estimation). Finalize still does the Has+Set. Same Simulate-versus-
+// Finalize hole as CountTXSimulateGasDecorator; together they let
+// HardwareRelabelTests pass at 1.2× (38_627 sim vs 48_212 deliver).
 //
-// SDK SigVerificationDecorator.verifyUnorderedNonce returns before
-// TryAddUnorderedNonce when ExecModeSimulate so a duplicate timeout does not
-// fail gas estimation. Finalize still does the Has+Set. DAPI sizes gasWanted
-// from Simulate, so that skip was part of the HardwareRelabelTests
-// Simulate-versus-Finalize hole.
+// Simulate-only: TryAdd on the discarded cache, ignore "already used timeout".
+// CheckTx/Finalize: SDK still owns the real insert.
 //
-// This decorator runs only when simulate=true, on the cache (discarded).
-// Duplicate "already used timeout" is ignored so Simulate still succeeds.
-// CheckTx and Finalize do not run it; the SDK decorator owns the real insert.
-//
-// TODO(simulate-gas): Remove this decorator if gonka-ai/cosmos-sdk starts
-// running TryAddUnorderedNonce during Simulate — otherwise Simulate would
-// double-meter the nonce KV. Re-measure a small HardwareDiff after removal.
-// TODO(simulate-gas): WithUnorderedTxGasCost is 0 on both paths and does not
-// close this hole; do not restore the 2240 default as a substitute.
+// Remove when gonka-ai/cosmos-sdk meters TryAdd during Simulate and still
+// ignores duplicate errors. Delete this type and its NewAnteHandler entry.
+// Do not substitute WithUnorderedTxGasCost(2240) — that charge already runs
+// on both paths and does not replace the KV. Confirm HardwareRelabelTests
+// still passes at 1.2× and Simulate of an already-used timeout still succeeds.
 type UnorderedNonceSimGasDecorator struct {
 	ak unorderedNonceAdder
 }

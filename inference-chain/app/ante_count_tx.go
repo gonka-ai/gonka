@@ -11,23 +11,19 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
-// CountTXSimulateGasDecorator wraps wasmd CountTXDecorator so Simulate meters
-// the same TXCounterPrefix Get+Set that FinalizeBlock pays, without assigning
-// CosmWasm env.transaction.index.
+// CountTXSimulateGasDecorator exists because wasmd CountTXDecorator returns
+// before the TXCounterPrefix Get+Set when simulate=true, so Simulate gas_used
+// omits KV that FinalizeBlock still pays. DAPI sets gasWanted from Simulate;
+// that hole OOGd small HardwareDiff at 1.2× (HardwareRelabelTests: 38_627 sim
+// vs 48_212 deliver).
 //
-// wasmd skips the whole decorator when simulate=true ("Simulations don't get a
-// tx counter value assigned"). That is correct for the Wasm env, but DAPI sizes
-// gasWanted from Simulate gas_used, so the skipped KV showed up as a
-// Simulate-versus-Finalize hole (HardwareRelabelTests: 38_627 vs 48_212).
+// Simulate: same Get+Set on BaseApp's discarded cache, without WithTXCounter
+// so CosmWasm env.transaction stays unset. CheckTx/Finalize: wasmd unchanged.
 //
-// CheckTx and Finalize still go through wasmd unchanged (counter assigned).
-// The Simulate Get+Set is on BaseApp's cache and is discarded.
-//
-// TODO(simulate-gas): After a small HardwareDiff re-measure (Simulate gas_used
-// vs the tx's FinalizeBlock gas_used), drop DAPI's 1.5× HardwareDiff
-// multiplier in gasWantedFromSimulate if the remaining gap fits in 1.2×.
-// TODO(simulate-gas): Gating CountTX to wasm messages is a separate fee cut
-// (duty txs never read env.transaction); do not mix it with this metering.
+// Remove when wasmd meters that KV during Simulate and still does not assign
+// env.transaction. Replace this with wasmkeeper.NewCountTXDecorator in
+// NewAnteHandler. Confirm HardwareRelabelTests still passes at 1.2×
+// (gasWantedFromSimulate).
 type CountTXSimulateGasDecorator struct {
 	inner sdk.AnteDecorator
 	store corestoretypes.KVStoreService

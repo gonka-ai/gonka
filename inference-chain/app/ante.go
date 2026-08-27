@@ -198,7 +198,7 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 	anteDecorators := []sdk.AnteDecorator{
 		ante.NewSetUpContextDecorator(), // outermost AnteDecorator. SetUpContext must be called first
 		wasmkeeper.NewLimitSimulationGasDecorator(options.NodeConfig.SimulationGasLimit), // after setup context to enforce limits early
-		// Wraps wasmd CountTX: Simulate meters the counter KV, Finalize still assigns env.transaction.
+		// wasmd CountTX skips KV in Simulate; this wrapper meters it. Remove when wasmd does.
 		NewCountTXSimulateGasDecorator(options.TXCounterStoreService),
 		wasmkeeper.NewGasRegisterDecorator(options.WasmKeeper.GetGasRegister()),
 		circuitante.NewCircuitBreakerDecorator(options.CircuitKeeper),
@@ -239,7 +239,7 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 		ante.NewValidateSigCountDecorator(options.AccountKeeper),
 		ante.NewSigGasConsumeDecorator(options.AccountKeeper, options.SigGasConsumer),
 		ante.NewSigVerificationDecorator(options.AccountKeeper, options.SignModeHandler),
-		// Simulate-only: meter unordered nonce Has+Set the SDK skips in ExecModeSimulate.
+		// SDK skips unordered nonce KV in Simulate; this meters it. Remove when the SDK does.
 		NewUnorderedNonceSimGasDecorator(options.AccountKeeper),
 		// Authz grant lookup after signature verification: the outer Grantee has
 		// proven they signed the transaction before we read grant storage.
