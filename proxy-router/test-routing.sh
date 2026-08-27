@@ -2,6 +2,13 @@
 
 set -Eeuo pipefail
 
+command -v flock >/dev/null || {
+    echo "test-routing: flock is required to serialize fixed-name Docker fixtures" >&2
+    exit 1
+}
+exec 9>"${TMPDIR:-/tmp}/gonka-proxy-router-test-routing.lock"
+flock -w 600 9
+
 network=gonka-proxy-router-test-$$
 image=gonka-proxy-router-test:$$
 state=gonka-proxy-router-state-$$
