@@ -221,9 +221,6 @@ services:
 
   proxy-policy:
     <<: *proxy-policy
-    depends_on:
-      proxy-policy2:
-        condition: service_healthy
 
   proxy:
     container_name: proxy
@@ -250,11 +247,6 @@ services:
           - proxy-policy-ingress
     volumes:
       - proxy-router-state:/var/lib/gonka-router
-    depends_on:
-      proxy-policy:
-        condition: service_healthy
-      proxy-policy2:
-        condition: service_healthy
     restart: unless-stopped
     cap_drop: [ALL]
     cap_add: [NET_BIND_SERVICE]
