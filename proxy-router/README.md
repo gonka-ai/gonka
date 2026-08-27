@@ -99,10 +99,16 @@ own route rather than collapsing the entire policy tier.
 
 `server-template` reserves router capacity and `PROXY_ROUTER_VERSION_CAPACITY`
 reserves version-backend capacity. Neither a new router address nor a new
-governance name requires a reload. Router and policy addresses start fully down
-and become eligible only after their configured readiness checks succeed. TCP
-redispatch moves a new connection to another admitted worker if the selected
-address later stops accepting connections.
+governance name requires a reload. Fresh router and policy slots start fully
+down and become eligible only after their configured readiness checks succeed.
+
+HAProxy retains the health state of an occupied slot when Docker DNS changes
+its address. A policy-worker replacement therefore follows an explicit
+generation boundary: gracefully stop the old worker, wait until the public
+router has withdrawn its old address, start the replacement, then wait until
+the replacement address passes a new L7 check sequence. The host updater owns
+this sequence. TCP redispatch moves a new connection to another admitted worker
+after the selected address stops accepting connections.
 
 ## Availability scope
 
@@ -246,5 +252,6 @@ make -C versiond-router test-fleet
 
 The routing test uses real Docker networks, HAProxy, policy workers, route-aware
 router health, an unavailable router data port, and multiple edge-api replicas.
-It verifies failover and proves that the proxy does not replay a
-non-idempotent POST in the tested connection-failure path.
+It verifies failover, a policy replacement that receives a new Docker IP,
+withdrawal before replacement admission, exactly-once POST execution in the
+tested connection-failure path, and edge-api pool routing.
