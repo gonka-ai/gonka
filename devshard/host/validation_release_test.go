@@ -322,6 +322,117 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 	}
 }
 
+func TestHost_ValidateAsync_ErrorReleaseCooldownThenRecollects(t *testing.T) {
+	rec := &recordingLeaseRecorder{}
+	validator := &scriptedValidationEngine{err: errors.New("local ml 503")}
+	h, hosts, user := newTwoHostValidationHost(t, validator)
+	h.validationRecorder = rec
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
+
+	h.validationLifecycleMu.Lock()
+	h.validationQueue = make(chan validateJob, defaultValidationQueueSize)
+	h.validationLifecycleMu.Unlock()
+
+	h.validateAsync(context.Background(), testValidateJob())
+
+	_, _, release := rec.counts()
+	require.Equal(t, 1, release, "validation error must release the owned lease")
+	_, onCooldown := cooldownUntil(h, 1)
+	require.True(t, onCooldown, "validation error must stamp cooldown")
+
+	jobs := collectValidationJobsLocked(h)
+	for _, job := range jobs {
+		require.NotEqual(t, uint64(1), job.inferenceID, "cooldown must block immediate re-pick")
+	}
+
+	h.mu.Lock()
+	h.validationCooldown[1] = time.Now().Add(-time.Nanosecond)
+	delete(h.validating, 1)
+	h.mu.Unlock()
+
+	jobs = collectValidationJobsLocked(h)
+	var found bool
+	for _, job := range jobs {
+		if job.inferenceID == 1 {
+			found = true
+		}
+	}
+	require.True(t, found, "expired cooldown must allow the same inference to be collected again")
+	_, still := cooldownUntil(h, 1)
+	require.False(t, still, "expired cooldown entry must be cleared when the job is collected")
+}
+
+func TestHost_ValidateAsync_SubmitAbandonedLostOwnershipReleasesWithoutCooldown(t *testing.T) {
+	rec := &recordingLeaseRecorder{allowErr: devshard.ErrValidationLeaseAbandoned}
+	validator := &scriptedValidationEngine{result: &devshard.ValidateResult{Valid: true}}
+	h, hosts, user := newTwoHostValidationHost(t, validator)
+	h.validationRecorder = rec
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
+
+	h.validateAsync(context.Background(), testValidateJob())
+
+	allow, mark, release := rec.counts()
+	require.Equal(t, 1, allow)
+	require.Equal(t, 0, mark)
+	require.Equal(t, 1, release, "lost ownership must release the local remembered lease")
+	require.False(t, mempoolHasValidation(h, 1), "abandoned submit must not publish validation")
+	_, onCooldown := cooldownUntil(h, 1)
+	require.False(t, onCooldown, "lost ownership should not throttle future collection")
+}
+
+func TestHost_ValidateAsync_SubmitAbandonedTTLExceededReleasesAndCooldowns(t *testing.T) {
+	rec := &recordingLeaseRecorder{
+		allowErr: fmt.Errorf("%w: %w", devshard.ErrValidationLeaseAbandoned, devshard.ErrValidationLeaseTTLExceeded),
+	}
+	validator := &scriptedValidationEngine{result: &devshard.ValidateResult{Valid: true}}
+	h, hosts, user := newTwoHostValidationHost(t, validator)
+	h.validationRecorder = rec
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
+
+	h.validateAsync(context.Background(), testValidateJob())
+
+	allow, mark, release := rec.counts()
+	require.Equal(t, 1, allow)
+	require.Equal(t, 0, mark)
+	require.Equal(t, 1, release, "TTL abandonment must release the local remembered lease")
+	require.False(t, mempoolHasValidation(h, 1), "abandoned submit must not publish validation")
+	until, onCooldown := cooldownUntil(h, 1)
+	require.True(t, onCooldown, "TTL exceeded should throttle immediate recollection")
+	require.True(t, until.After(time.Now()), "cooldown must be in the future")
+	require.True(t, time.Until(until) <= validationCooldown)
+}
+
+func TestHost_ValidateAsync_AllowSubmitGenericErrorReleasesWithoutCooldown(t *testing.T) {
+	rec := &recordingLeaseRecorder{allowErr: errors.New("owns pending lease: database unavailable")}
+	validator := &scriptedValidationEngine{result: &devshard.ValidateResult{Valid: true}}
+	h, hosts, user := newTwoHostValidationHost(t, validator)
+	h.validationRecorder = rec
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
+
+	h.validationLifecycleMu.Lock()
+	h.validationQueue = make(chan validateJob, defaultValidationQueueSize)
+	h.validationLifecycleMu.Unlock()
+
+	h.validateAsync(context.Background(), testValidateJob())
+
+	allow, mark, release := rec.counts()
+	require.Equal(t, 1, allow)
+	require.Equal(t, 0, mark)
+	require.Equal(t, 1, release, "submit gate errors must release the remembered lease")
+	require.False(t, mempoolHasValidation(h, 1), "submit gate errors must not publish validation")
+	_, onCooldown := cooldownUntil(h, 1)
+	require.False(t, onCooldown, "generic submit gate errors currently do not stamp cooldown")
+
+	jobs := collectValidationJobsLocked(h)
+	var found bool
+	for _, job := range jobs {
+		if job.inferenceID == 1 {
+			found = true
+		}
+	}
+	require.True(t, found, "without cooldown, the same inference is immediately collectible again")
+}
+
 func TestHost_ChallengedInferencePublishesValidationVote(t *testing.T) {
 	rec := &recordingLeaseRecorder{}
 	valEngine := &trackingValidationEngine{valid: true}
@@ -433,4 +544,24 @@ func TestHost_CollectValidationJobs_PrunesCooldownForEvictedInferences(t *testin
 	_ = collectValidationJobsLocked(h)
 	_, ok := cooldownUntil(h, 99)
 	require.False(t, ok, "cooldown for an inference no longer in the live set must be pruned")
+}
+
+func TestHost_CollectValidationJobs_QueueFullDoesNotAcquireOrCooldown(t *testing.T) {
+	h, hosts, user := newTwoHostValidationHost(t, stub.NewValidationEngine())
+	applyInferenceTo(t, h, hosts, user, types.StatusFinished)
+
+	h.validationLifecycleMu.Lock()
+	h.validationQueue = make(chan validateJob, 1)
+	h.validationQueue <- testValidateJob()
+	h.validationLifecycleMu.Unlock()
+
+	jobs := collectValidationJobsLocked(h)
+	require.Empty(t, jobs, "full validation queue must skip collection")
+
+	h.mu.Lock()
+	_, validating := h.validating[1]
+	_, onCooldown := h.validationCooldown[1]
+	h.mu.Unlock()
+	require.False(t, validating, "queue-full collection must not reserve the inference")
+	require.False(t, onCooldown, "queue-full collection must not stamp cooldown")
 }

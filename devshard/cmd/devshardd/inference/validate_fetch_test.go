@@ -68,6 +68,27 @@ func TestFetchPayloadsHTTPWithRetry(t *testing.T) {
 		assert.Equal(t, int32(2), n.Load())
 	})
 
+	t.Run("malformed 200 retries then restored response succeeds", func(t *testing.T) {
+		var n atomic.Int32
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			if n.Add(1) == 1 {
+				_, _ = w.Write([]byte(`{"inference_id":"1"`))
+				return
+			}
+			_ = json.NewEncoder(w).Encode(commonvalidation.PayloadResponse{
+				InferenceId: "1",
+			})
+		}))
+		t.Cleanup(srv.Close)
+
+		resp, err := fetchPayloadsHTTPWithRetry(context.Background(), srv.Client(), srv.URL, "val", 1, 10, "sig", 0)
+		require.NoError(t, err)
+		require.NotNil(t, resp)
+		assert.Equal(t, "1", resp.InferenceId)
+		assert.Equal(t, int32(2), n.Load())
+	})
+
 	t.Run("cancelled context stops immediately", func(t *testing.T) {
 		var n atomic.Int32
 		ctx, cancel := context.WithCancel(context.Background())
