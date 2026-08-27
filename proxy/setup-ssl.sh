@@ -23,9 +23,13 @@ atomic_write_file() {
   local content="$1"
   local target="$2"
   local mode="$3"
-  local temporary
+  local target_dir target_name temporary
 
-  temporary=$(mktemp "$SSL_DIR/.${target##*/}.tmp.XXXXXX")
+  target_dir=$(dirname -- "$target")
+  target_name=${target##*/}
+  if ! temporary=$(mktemp "$target_dir/.${target_name}.tmp.XXXXXX"); then
+    return 1
+  fi
   if printf '%s\n' "$content" > "$temporary" \
       && chmod "$mode" "$temporary" \
       && mv -f "$temporary" "$target"; then
@@ -36,33 +40,138 @@ atomic_write_file() {
   return 1
 }
 
-install_certificate_pair() {
+remove_staged_files() {
+  local path
+
+  for path in "$@"; do
+    if [ -n "$path" ]; then
+      rm -f -- "$path" || true
+    fi
+  done
+}
+
+restore_certificate_bundle() {
+  local had_pair="$1"
+  local had_order_id="$2"
+  local cert_backup="$3"
+  local key_backup="$4"
+  local order_id_backup="$5"
+
+  if ! rm -f -- "$CERT_FILE" "$KEY_FILE" "$ORDER_ID_FILE"; then
+    return 1
+  fi
+  if [ "$had_pair" != true ]; then
+    return 0
+  fi
+
+  # Restore the certificate last so a visible cert.pem still means that all
+  # other files belonging to the previous bundle are complete.
+  if ! mv -f "$key_backup" "$KEY_FILE"; then
+    return 1
+  fi
+  if [ "$had_order_id" = true ] \
+      && ! mv -f "$order_id_backup" "$ORDER_ID_FILE"; then
+    rm -f -- "$KEY_FILE"
+    return 1
+  fi
+  if ! mv -f "$cert_backup" "$CERT_FILE"; then
+    rm -f -- "$KEY_FILE" "$ORDER_ID_FILE"
+    return 1
+  fi
+}
+
+install_certificate_bundle() {
   local certificate="$1"
   local private_key="$2"
-  local cert_temporary key_temporary
+  local order_id="$3"
+  local cert_temporary="" key_temporary="" order_id_temporary=""
+  local cert_backup="" key_backup="" order_id_backup=""
+  local had_pair=false had_order_id=false
 
-  cert_temporary=$(mktemp "$SSL_DIR/.cert.pem.tmp.XXXXXX")
-  key_temporary=$(mktemp "$SSL_DIR/.private.key.tmp.XXXXXX")
+  if ! cert_temporary=$(mktemp "$SSL_DIR/.cert.pem.tmp.XXXXXX"); then
+    return 1
+  fi
+  if ! key_temporary=$(mktemp "$SSL_DIR/.private.key.tmp.XXXXXX"); then
+    remove_staged_files "$cert_temporary"
+    return 1
+  fi
+  if [ -n "$order_id" ] \
+      && ! order_id_temporary=$(mktemp "$SSL_DIR/.order.id.tmp.XXXXXX"); then
+    remove_staged_files "$cert_temporary" "$key_temporary"
+    return 1
+  fi
 
   if ! printf '%s\n' "$certificate" > "$cert_temporary" \
       || ! chmod 644 "$cert_temporary" \
       || ! printf '%s\n' "$private_key" > "$key_temporary" \
       || ! chmod 600 "$key_temporary"; then
-    rm -f "$cert_temporary" "$key_temporary"
+    remove_staged_files "$cert_temporary" "$key_temporary" "$order_id_temporary"
+    return 1
+  fi
+  if [ -n "$order_id" ] \
+      && { ! printf '%s\n' "$order_id" > "$order_id_temporary" \
+        || ! chmod 600 "$order_id_temporary"; }; then
+    remove_staged_files "$cert_temporary" "$key_temporary" "$order_id_temporary"
     return 1
   fi
 
-  # Do not let a stale half-pair combine with one newly published file. Publish
-  # the key first and cert.pem last as the pair's commit marker.
-  if ! rm -f "$CERT_FILE" "$KEY_FILE" \
-      || ! mv -f "$key_temporary" "$KEY_FILE"; then
-    rm -f "$cert_temporary" "$key_temporary" "$CERT_FILE" "$KEY_FILE"
+  # Preserve a complete previous bundle so handled publication failures can
+  # return the running proxy to its exact pre-update state.
+  if [ -f "$CERT_FILE" ] && [ -f "$KEY_FILE" ]; then
+    had_pair=true
+    if ! cert_backup=$(mktemp "$SSL_DIR/.cert.pem.backup.XXXXXX") \
+        || ! key_backup=$(mktemp "$SSL_DIR/.private.key.backup.XXXXXX") \
+        || ! cp -p -- "$CERT_FILE" "$cert_backup" \
+        || ! cp -p -- "$KEY_FILE" "$key_backup"; then
+      remove_staged_files "$cert_temporary" "$key_temporary" \
+        "$order_id_temporary" "$cert_backup" "$key_backup"
+      return 1
+    fi
+    if [ -f "$ORDER_ID_FILE" ]; then
+      had_order_id=true
+      if ! order_id_backup=$(mktemp "$SSL_DIR/.order.id.backup.XXXXXX") \
+          || ! cp -p -- "$ORDER_ID_FILE" "$order_id_backup"; then
+        remove_staged_files "$cert_temporary" "$key_temporary" \
+          "$order_id_temporary" "$cert_backup" "$key_backup" \
+          "$order_id_backup"
+        return 1
+      fi
+    fi
+  fi
+
+  # Remove cert.pem before changing the key or order ID. This creates an
+  # intentional absent-marker window, but prevents a crash from leaving an old
+  # certificate next to a newly published key as an apparently complete pair.
+  if ! rm -f -- "$CERT_FILE" "$KEY_FILE" "$ORDER_ID_FILE"; then
+    if restore_certificate_bundle "$had_pair" "$had_order_id" \
+        "$cert_backup" "$key_backup" "$order_id_backup"; then
+      remove_staged_files "$cert_temporary" "$key_temporary" \
+        "$order_id_temporary" "$cert_backup" "$key_backup" "$order_id_backup"
+    else
+      echo "ERROR: Failed to restore the previous certificate bundle; backup files remain in $SSL_DIR"
+      remove_staged_files "$cert_temporary" "$key_temporary" "$order_id_temporary"
+    fi
     return 1
   fi
-  if ! mv -f "$cert_temporary" "$CERT_FILE"; then
-    rm -f "$cert_temporary" "$CERT_FILE" "$KEY_FILE"
+
+  # Metadata and key are committed before cert.pem. The certificate is the
+  # bundle marker: once it is visible, every required companion file is ready.
+  if { [ -n "$order_id_temporary" ] \
+        && ! mv -f "$order_id_temporary" "$ORDER_ID_FILE"; } \
+      || ! mv -f "$key_temporary" "$KEY_FILE" \
+      || ! mv -f "$cert_temporary" "$CERT_FILE"; then
+    if restore_certificate_bundle "$had_pair" "$had_order_id" \
+        "$cert_backup" "$key_backup" "$order_id_backup"; then
+      remove_staged_files "$cert_temporary" "$key_temporary" \
+        "$order_id_temporary" "$cert_backup" "$key_backup" "$order_id_backup"
+    else
+      echo "ERROR: Failed to restore the previous certificate bundle; backup files remain in $SSL_DIR"
+      remove_staged_files "$cert_temporary" "$key_temporary" "$order_id_temporary"
+    fi
     return 1
   fi
+
+  remove_staged_files "$cert_backup" "$key_backup" "$order_id_backup"
 }
 
 # Resolve proxy-ssl host/port (respect KEY_NAME_PREFIX) and node_id
@@ -123,6 +232,7 @@ will_expire_within_days() {
   fi
 }
 
+FALLBACK_TO_ISSUE=false
 if [ "$MODE" = "renew" ] || [ "$MODE" = "renew-if-needed" ]; then
   if [ ! -f "$ORDER_ID_FILE" ]; then
     echo "ERROR: Cannot renew: missing $ORDER_ID_FILE"
@@ -144,8 +254,8 @@ if [ "$MODE" = "renew" ] || [ "$MODE" = "renew-if-needed" ]; then
     -H "Content-Type: application/json" || true)
 
   if [ "$HTTP_STATUS" = "404" ]; then
-    echo "WARNING: Order $ORDER_ID not found (404). Clearing stale order ID and falling back to new issuance."
-    rm "$ORDER_ID_FILE"
+    echo "WARNING: Order $ORDER_ID not found (404). Falling back to new issuance."
+    FALLBACK_TO_ISSUE=true
     # Fall through to the default "issue" logic below
   elif [ "$HTTP_STATUS" != "200" ]; then
     echo "ERROR: Failed to initiate renewal. HTTP status: $HTTP_STATUS"
@@ -173,13 +283,9 @@ if [ "$MODE" = "renew" ] || [ "$MODE" = "renew-if-needed" ]; then
   fi
 fi
 
-# Only proceed to issue logic if we are not in pure renewal mode, or if we fell through due to 404
-if [ "$MODE" = "renew" ] && [ -f "$ORDER_ID_FILE" ]; then 
-   # If we are here, it means we attempted renewal and it wasn't a 404 (which deletes the file), 
-   # but we didn't exit 10 (success) or exit 1 (failure) above? 
-   # Actually the logic above exits on success or failure unless 404.
-   # If 404, file is deleted, so condition -f "$ORDER_ID_FILE" fails, so we continue to issue logic.
-   exit 1
+# A pure renewal reaches issuance only after the server rejected its old order.
+if [ "$MODE" = "renew" ] && [ "$FALLBACK_TO_ISSUE" != true ]; then
+  exit 1
 fi
 
 # Default mode: issue (initial one-shot)
@@ -216,10 +322,10 @@ if [ -z "$CERT" ] || [ -z "$KEY" ] || [ "$CERT" = "null" ] || [ "$KEY" = "null" 
   exit 1
 fi
 
-install_certificate_pair "$CERT" "$KEY"
-if [ -n "$ORDER_ID" ] && [ "$ORDER_ID" != "null" ]; then
-  atomic_write_file "$ORDER_ID" "$ORDER_ID_FILE" 600
+if [ "$ORDER_ID" = "null" ]; then
+  ORDER_ID=""
 fi
+install_certificate_bundle "$CERT" "$KEY" "$ORDER_ID"
 
 echo "SSL certificate obtained and installed for ${CERT_ISSUER_DOMAIN}"
 
