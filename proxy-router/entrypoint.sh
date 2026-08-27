@@ -196,9 +196,16 @@ case "$NGINX_MODE" in
 esac
 
 case "$ROUTER_HEALTH_CONTRACT" in
+    auto)
+        if [ -n "$CATALOG_URL" ]; then
+            ROUTER_HEALTH_CONTRACT=readyz
+        else
+            ROUTER_HEALTH_CONTRACT=legacy
+        fi
+        ;;
     legacy | readyz) ;;
     *)
-        echo "proxy-router: VERSIOND_ROUTER_HEALTH_CONTRACT must be legacy or readyz" >&2
+        echo "proxy-router: VERSIOND_ROUTER_HEALTH_CONTRACT must be auto, legacy, or readyz" >&2
         exit 1
         ;;
 esac

@@ -197,6 +197,26 @@ test-render: test-route-status
 	if grep -q 'http-check connect port 8404' "$$tmpdir/legacy.cfg"; then \
 		fail "legacy contract requires an admin listener"; \
 	fi; \
+	HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \
+		PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
+		PROXY_ROUTER_OUT="$$tmpdir/auto-legacy.cfg" \
+		PROXY_ROUTER_VERSION_MAP="$$tmpdir/auto-legacy.map" \
+		VERSIOND_ROUTER_HEALTH_CONTRACT=auto VERSIOND_VERSIONS=v5 \
+		./entrypoint.sh; \
+	if grep -q 'http-check connect port 8404' "$$tmpdir/auto-legacy.cfg"; then \
+		fail "auto health requires an admin listener before catalog activation"; \
+	fi; \
+	HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \
+		PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
+		PROXY_ROUTER_OUT="$$tmpdir/auto-readyz.cfg" \
+		PROXY_ROUTER_VERSION_MAP="$$tmpdir/auto-readyz.map" \
+		VERSIOND_ROUTER_HEALTH_CONTRACT=auto \
+		VERSIOND_ROUTING_CATALOG_URL=http://catalog/versions VERSIOND_VERSIONS=v5 \
+		./entrypoint.sh; \
+	grep -q 'http-check connect port 8404' "$$tmpdir/auto-readyz.cfg" \
+		|| fail "auto health did not activate lifecycle readiness with the catalog"; \
 	if HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \
 		PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
 		PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
@@ -262,7 +282,7 @@ test-compose:
 		-f "$$root/deploy/join/docker-compose.yml" \
 		-f "$$root/deploy/join/docker-compose.versiond.yml" \
 		config --format json 2>/dev/null); \
-	printf '%s\n' "$$versiond" | jq -e '.services["proxy-policy"].environment.VERSIOND_SERVICE_NAME == "proxy-policy-ingress" and .services["proxy-policy"].environment.VERSIOND_PORT == "18081" and .services["proxy-policy2"].environment.VERSIOND_SERVICE_NAME == "proxy-policy-ingress" and .services["proxy-policy2"].environment.VERSIOND_PORT == "18081" and .services.proxy.environment.VERSIOND_ROUTER_POOL_HOST == "versiond-router-ingress" and .services.proxy.environment.VERSIOND_ROUTER_PORT == "8080" and .services.proxy.environment.VERSIOND_ROUTER_ADMIN_PORT == "8404" and .services.proxy.environment.VERSIOND_ROUTER_HEALTH_CONTRACT == "legacy" and .services["versiond-router"].environment.VERSIOND_ROUTER_FRONT_BIND_HOST == "versiond-router-ingress" and .services["versiond-router"].environment.VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS == "true" and .services["versiond-router"].networks["proxy-policy-front"].aliases == ["versiond-router-ingress"]' >/dev/null || { echo "test-compose: versiond distributor contract changed" >&2; exit 1; }; \
+	printf '%s\n' "$$versiond" | jq -e '.services["proxy-policy"].environment.VERSIOND_SERVICE_NAME == "proxy-policy-ingress" and .services["proxy-policy"].environment.VERSIOND_PORT == "18081" and .services["proxy-policy2"].environment.VERSIOND_SERVICE_NAME == "proxy-policy-ingress" and .services["proxy-policy2"].environment.VERSIOND_PORT == "18081" and .services.proxy.environment.VERSIOND_ROUTER_POOL_HOST == "versiond-router-ingress" and .services.proxy.environment.VERSIOND_ROUTER_PORT == "8080" and .services.proxy.environment.VERSIOND_ROUTER_ADMIN_PORT == "8404" and .services.proxy.environment.VERSIOND_ROUTER_HEALTH_CONTRACT == "auto" and .services["versiond-router"].environment.VERSIOND_ROUTER_FRONT_BIND_HOST == "versiond-router-ingress" and .services["versiond-router"].environment.VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS == "true" and .services["versiond-router"].networks["proxy-policy-front"].aliases == ["versiond-router-ingress"]' >/dev/null || { echo "test-compose: versiond distributor contract changed" >&2; exit 1; }; \
 	printf '%s\n' "$$versiond" | jq -e '((.services.proxy.depends_on // {}) | has("versiond-router") | not)' >/dev/null || { echo "test-compose: inner router delays public proxy startup" >&2; exit 1; }; \
 	printf '%s\n' "$$versiond" | jq -e 'any(.services["versiond-router"].volumes[]; .target == "/docker-entrypoint.d/50-gonka-public-tier-compat.sh" and .read_only == true) and (.services["versiond-router"].healthcheck.test[1] | contains("versiond-router-listen-address"))' >/dev/null || { echo "test-compose: legacy router private-listener compatibility hook is missing" >&2; exit 1; }; \
 	custom_admin=$$(DEVSHARD_POSTGRES_PASSWORD=test VERSIOND_ROUTER_ADMIN_PORT=9410 docker compose \
