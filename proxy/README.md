@@ -456,21 +456,44 @@ ${PUBLIC_URL}/grafana/
 
 ```
 source ./config.env && \
-docker compose --profile "ssl" -f docker-compose.yml -f docker-compose.mlnode.yml pull proxy proxy-policy proxy-ssl && \
-docker compose --profile "ssl" -f docker-compose.yml -f docker-compose.mlnode.yml up -d proxy-policy proxy proxy-ssl
+docker compose --profile "ssl" -f docker-compose.yml -f docker-compose.mlnode.yml pull proxy proxy-policy proxy-policy2 proxy-ssl && \
+docker compose --profile "ssl" -f docker-compose.yml -f docker-compose.mlnode.yml up -d proxy-policy proxy-policy2 proxy proxy-ssl
 ```
 
   - With manual certs (no proxy-ssl):
 
 ```
 source ./config.env && \
-docker compose -f docker-compose.yml -f docker-compose.mlnode.yml pull proxy proxy-policy && \
-docker compose -f docker-compose.yml -f docker-compose.mlnode.yml up -d proxy-policy proxy
+docker compose -f docker-compose.yml -f docker-compose.mlnode.yml pull proxy proxy-policy proxy-policy2 && \
+docker compose -f docker-compose.yml -f docker-compose.mlnode.yml up -d proxy-policy proxy-policy2 proxy
 ```
 
 Notes:
 - Ensure your env matches one of the setups above (proxy-ssl vs manual). See sections on environment configuration and manual certificate issuance.
 - General operational guidance aligns with the Quickstart docs at [gonka.ai Host Quickstart](https://gonka.ai/host/quickstart/#how-to-stop-mlnode).
+
+### Deployment rollback
+
+`proxy`, `proxy-policy`, and `proxy-policy2` are one deployment unit. The public
+service is HAProxy in this topology, while the previous Compose model used the
+nginx image directly as `proxy`; their image, environment, networks,
+capabilities, and service set form one contract.
+
+To roll back, restore the previous release checkout and its complete set of
+Compose/override files, source the matching `config.env`, and apply that model
+with the same profiles and `-f` arguments used by the host. For the standard
+SSL deployment, the apply command is:
+
+```sh
+source ./config.env && \
+docker compose --profile "ssl" -f docker-compose.yml -f docker-compose.mlnode.yml \
+  up -d --force-recreate --remove-orphans
+```
+
+`--remove-orphans` removes policy-worker services that are absent from the
+restored model. Changing only `PROXY_ROUTER_IMAGE` leaves the new HAProxy
+capability and network contract in place and is therefore not a topology
+rollback.
 
 ## Health Check
 
