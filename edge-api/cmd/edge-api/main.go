@@ -27,14 +27,13 @@ const (
 	envDrainAnnounce  = "EDGE_API_DRAIN_ANNOUNCE"
 	envShutdownBudget = "EDGE_API_SHUTDOWN_BUDGET"
 
-	// minDrainAnnounce covers edge-api-router's complete health-check failure
-	// window plus an observation margin. Zero explicitly means no balancer.
+	// minDrainAnnounce is the health-check observation contract for a balancer.
+	// The deployment that enables a balancer verifies its concrete check window
+	// against this value. Zero explicitly means no readiness-aware balancer.
 	minDrainAnnounce = 5 * time.Second
-	// The default is the minimum safe value for the shipped router.
+	// The default is the minimum supported readiness announcement window.
 	defaultDrainAnnounce = 5 * time.Second
-	// defaultShutdownBudget matches the router's default read timeout: the
-	// process should wait for exactly as long as the hop in front is still
-	// willing to wait for the answer, and no longer.
+	// defaultShutdownBudget bounds how long accepted requests may drain.
 	defaultShutdownBudget = 2 * time.Minute
 	// observabilityShutdownTimeout flushes traces after serving has stopped.
 	observabilityShutdownTimeout = 10 * time.Second

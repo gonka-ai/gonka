@@ -17,9 +17,8 @@ const (
 	// load: the balancer probes every second, the chain is asked far less often.
 	readinessCacheTTL = 3 * time.Second
 	// readinessTimeout is how slow the chain may be before this instance calls
-	// it unreachable. The router's `timeout check` must exceed it (it ships 3s;
-	// see edge-api-router/haproxy.cfg.template): with only `inter 1s` the whole
-	// check would time out before a 1–2s chain answer arrives, and every
+	// it unreachable. A balancer's check timeout must exceed it: otherwise the
+	// check can time out before a 1–2s chain answer arrives, and every
 	// instance — they share the chain node — would leave the pool at once over
 	// a chain that is merely slow.
 	readinessTimeout = 2 * time.Second
