@@ -84,8 +84,6 @@ test-render: test-sidecar
 	touch "$$tmpdir/private.conf"; \
 	docker network create "$$private" >/dev/null; \
 	docker network create "$$shared" >/dev/null; \
-	docker run -d --name "$$peer" --network "$$private" \
-		--network-alias proxy-policy-ingress alpine:3.21 sleep 60 >/dev/null; \
 	docker create --name "$$worker" --network "$$private" \
 		-e NGINX_MODE=http -e PROXY_PROTOCOL=true \
 		-e PROXY_PROTOCOL_PEER=proxy-policy-ingress \
@@ -94,6 +92,11 @@ test-render: test-sidecar
 		"$$image" sleep 30 >/dev/null; \
 	docker network connect "$$shared" "$$worker"; \
 	docker start "$$worker" >/dev/null; \
+	sleep 1; \
+	[ ! -s "$$tmpdir/private.conf" ] \
+		|| fail "policy worker did not wait for the missing private ingress"; \
+	docker run -d --name "$$peer" --network "$$private" \
+		--network-alias proxy-policy-ingress alpine:3.21 sleep 60 >/dev/null; \
 	for _ in $$(seq 1 50); do \
 		[ -s "$$tmpdir/private.conf" ] && break; \
 		sleep 0.1; \
