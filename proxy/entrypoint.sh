@@ -416,6 +416,20 @@ fi
 DESIRED_LISTEN_HTTPS=$LISTEN_HTTPS
 DESIRED_SSL_CONFIG=$SSL_CONFIG
 
+# Docker health checks originate inside the container and do not carry a PROXY
+# header. The public router also checks the same endpoint on the isolated policy
+# interface; it is not reachable from the shared application network.
+if [ "$PROXY_PROTOCOL" = "true" ]; then
+    if [ "$PROXY_PROTOCOL_BIND_ADDRESS" = "127.0.0.1" ]; then
+        export LISTEN_HEALTH="listen 127.0.0.1:8081;"
+    else
+        export LISTEN_HEALTH="listen 127.0.0.1:8081;
+            listen ${PROXY_PROTOCOL_BIND_ADDRESS}:8081;"
+    fi
+else
+    export LISTEN_HEALTH="listen 127.0.0.1:8081;"
+fi
+
 # Route Disabling Logic
 # If DISABLE_* env vars are set to true, inject a "return 404" into the location block
 

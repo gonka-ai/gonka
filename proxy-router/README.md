@@ -96,7 +96,14 @@ routing database, leader, or peer protocol. It does not need Redis:
 - `proxy-policy-front` resolves to both private nginx policy slots;
 - `versiond-router` resolves to the router instances declared by the active
   Compose topology. A later fleet overlay can supply a multi-address alias
-  without changing this routing contract.
+without changing this routing contract.
+
+Each policy slot exposes `/health` only on loopback and the isolated policy
+network. That endpoint is backed by the existing policy sidecar and resolves an
+alias scoped to the shared application network. Losing that interface or its
+Docker DNS view therefore removes only the affected worker from both public
+pools, while failures of an individual upstream application remain visible at
+their own route rather than collapsing the entire policy tier.
 
 `server-template` reserves router capacity and `PROXY_ROUTER_VERSION_CAPACITY`
 reserves version-backend capacity. Neither a new router address nor a new

@@ -28,6 +28,10 @@ test-render: test-route-status
 		|| fail "public HTTP does not use the PROXY-protocol policy pool"; \
 	grep -q 'server-template policy 4 proxy-policy:443 .*send-proxy-v2' "$$tmpdir/proxy.cfg" \
 		|| fail "public HTTPS does not use the PROXY-protocol policy pool"; \
+	[ "$$(grep -c 'server-template policy .* check port 8081 .*send-proxy-v2' "$$tmpdir/proxy.cfg")" -eq 2 ] \
+		|| fail "policy pools do not check per-worker readiness"; \
+	[ "$$(grep -c 'http-check send meth GET uri /health hdr Host policy-health' "$$tmpdir/proxy.cfg")" -eq 2 ] \
+		|| fail "policy readiness endpoint is not checked"; \
 	[ "$$(grep -c '^ *option redispatch$$' "$$tmpdir/proxy.cfg")" -eq 2 ] \
 		|| fail "connection failures are not redispatched across both policy pools"; \
 	grep -q '^ *option redispatch 1$$' "$$tmpdir/proxy.cfg" \
@@ -245,7 +249,7 @@ test-compose:
 		-f "$$root/deploy/join/docker-compose.yml" \
 		-f "$$root/deploy/join/docker-compose.edge-api-multi.yml" \
 		config --format json 2>/dev/null); \
-	printf '%s\n' "$$edge" | jq -e '.services["edge-api-router"] != null and .services["proxy-policy"].environment.EDGE_API_SERVICE_NAME == "edge-api-router" and .services["proxy-policy"].environment.EDGE_API_PORT == "18080" and .services["proxy-policy2"].environment.EDGE_API_SERVICE_NAME == "edge-api-router" and .services["proxy-policy2"].environment.EDGE_API_PORT == "18080" and (.services.proxy.environment | has("EDGE_API_POOL_HOST") | not) and (.services.proxy.environment | has("PROXY_EDGE_API_PORT") | not)' >/dev/null || { echo "test-compose: legacy edge-api router contract changed" >&2; exit 1; }; \
+	printf '%s\n' "$$edge" | jq -e '.services["edge-api-router"] != null and .services["proxy-policy"].environment.EDGE_API_SERVICE_NAME == "edge-api-router" and .services["proxy-policy"].environment.EDGE_API_PORT == "18080" and .services["proxy-policy2"].environment.EDGE_API_SERVICE_NAME == "edge-api-router" and .services["proxy-policy2"].environment.EDGE_API_PORT == "18080" and .services["proxy-policy"].environment.PROXY_POLICY_READINESS_HOST == "proxy-policy-app-network" and .services["proxy-policy"].networks.default.aliases == ["proxy-policy-app-network"] and (.services.proxy.environment | has("EDGE_API_POOL_HOST") | not) and (.services.proxy.environment | has("PROXY_EDGE_API_PORT") | not)' >/dev/null || { echo "test-compose: legacy edge-api router contract changed" >&2; exit 1; }; \
 	printf '%s\n' "$$edge" | jq -e '((.services.proxy.depends_on // {}) | has("proxy-policy") | not) and ((.services.proxy.depends_on // {}) | has("proxy-policy2") | not) and ([.services["proxy-policy"], .services["proxy-policy2"]] | all(.depends_on.api.condition == "service_started" and .depends_on.versiond.condition == "service_started" and .depends_on["proxy-ssl"].condition == "service_healthy" and .depends_on["proxy-ssl"].required == false and (.depends_on | has("proxy-policy2") | not)))' >/dev/null || { echo "test-compose: policy workers no longer start independently behind an ungated HAProxy" >&2; exit 1; }; \
 	versiond=$$(DEVSHARD_POSTGRES_PASSWORD=test docker compose \
 		-f "$$root/deploy/join/docker-compose.yml" \

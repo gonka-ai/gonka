@@ -1,4 +1,4 @@
-.PHONY: all build-docker release test-render
+.PHONY: all build-docker release test-render test-sidecar
 
 include ../scripts/blst-portable.mk
 
@@ -28,7 +28,11 @@ endef
 
 all: build-docker
 
-test-render:
+test-sidecar:
+	@docker run --rm -v "$(CURDIR)/sidecar:/app:ro" -w /app \
+		-e GO111MODULE=off golang:1.24.2-alpine3.21 go test
+
+test-render: test-sidecar
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	image=gonka-proxy-render-test:$$$$; \
@@ -36,11 +40,13 @@ test-render:
 	shared=gonka-proxy-policy-shared-$$$$; \
 	peer=gonka-proxy-policy-peer-$$$$; \
 	worker=gonka-proxy-policy-worker-$$$$; \
+	ready_worker=gonka-proxy-policy-ready-worker-$$$$; \
+	app_sentinel=gonka-proxy-policy-app-sentinel-$$$$; \
 	ssl_worker_a=gonka-proxy-policy-ssl-a-$$$$; \
 	ssl_worker_b=gonka-proxy-policy-ssl-b-$$$$; \
 	ssl_worker_fast=gonka-proxy-policy-ssl-fast-$$$$; \
 	ssl_lock_holder=gonka-proxy-policy-ssl-lock-$$$$; \
-	trap 'docker rm -f "$$peer" "$$worker" "$$ssl_worker_a" "$$ssl_worker_b" "$$ssl_worker_fast" "$$ssl_lock_holder" >/dev/null 2>&1 || true; docker network rm "$$private" "$$shared" >/dev/null 2>&1 || true; docker image rm "$$image" >/dev/null 2>&1 || true; rm -rf "$$tmpdir"' EXIT; \
+	trap 'docker rm -f "$$peer" "$$worker" "$$ready_worker" "$$app_sentinel" "$$ssl_worker_a" "$$ssl_worker_b" "$$ssl_worker_fast" "$$ssl_lock_holder" >/dev/null 2>&1 || true; docker network rm "$$private" "$$shared" >/dev/null 2>&1 || true; docker image rm "$$image" >/dev/null 2>&1 || true; rm -rf "$$tmpdir"' EXIT; \
 	fail() { echo "test-render: $$1" >&2; exit 1; }; \
 	touch "$$tmpdir/nginx.conf"; \
 	docker build -q -t "$$image" . >/dev/null; \
@@ -98,10 +104,36 @@ test-render:
 	private_subnet=$$(docker network inspect -f '{{(index .IPAM.Config 0).Subnet}}' "$$private"); \
 	grep -q "listen $$private_ip:80 proxy_protocol;" "$$tmpdir/private.conf" \
 		|| fail "PROXY listener is not bound to the private policy interface"; \
+	grep -q "listen $$private_ip:8081;" "$$tmpdir/private.conf" \
+		|| fail "policy readiness is not bound to the private policy interface"; \
 	grep -q "set_real_ip_from $$private_subnet;" "$$tmpdir/private.conf" \
 		|| fail "PROXY trust is not restricted to the private policy network"; \
 	if grep -q "listen $$shared_ip:80 proxy_protocol;" "$$tmpdir/private.conf"; then \
 		fail "shared application network can reach the PROXY listener"; \
+	fi; \
+	docker run -d --name "$$app_sentinel" --network "$$shared" \
+		--network-alias proxy-policy-app-network alpine:3.21 sleep 60 >/dev/null; \
+	docker create --name "$$ready_worker" --network "$$private" \
+		-e NGINX_MODE=http -e PROXY_PROTOCOL=true \
+		-e PROXY_PROTOCOL_PEER=proxy-policy-ingress \
+		-e PROXY_POLICY_READINESS_HOST=proxy-policy-app-network \
+		"$$image" >/dev/null; \
+	docker network connect "$$shared" "$$ready_worker"; \
+	docker start "$$ready_worker" >/dev/null; \
+	ready_ip=$$(docker inspect -f "{{with index .NetworkSettings.Networks \"$$private\"}}{{.IPAddress}}{{end}}" "$$ready_worker"); \
+	for _ in $$(seq 1 50); do \
+		docker exec "$$peer" wget -q -O /dev/null "http://$$ready_ip:8081/health" 2>/dev/null && break; \
+		sleep 0.1; \
+	done; \
+	docker exec "$$peer" wget -q -O /dev/null "http://$$ready_ip:8081/health" \
+		|| fail "policy worker did not become ready with its application network"; \
+	docker network disconnect "$$shared" "$$ready_worker"; \
+	for _ in $$(seq 1 30); do \
+		if ! docker exec "$$peer" wget -q -O /dev/null "http://$$ready_ip:8081/health" 2>/dev/null; then break; fi; \
+		sleep 0.1; \
+	done; \
+	if docker exec "$$peer" wget -q -O /dev/null "http://$$ready_ip:8081/health" 2>/dev/null; then \
+		fail "policy worker stayed ready after losing its application network"; \
 	fi; \
 	mkdir "$$tmpdir/ssl"; \
 	touch "$$tmpdir/ssl-a.conf" "$$tmpdir/ssl-b.conf"; \

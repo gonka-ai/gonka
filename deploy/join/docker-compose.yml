@@ -4,6 +4,7 @@ x-proxy-policy: &proxy-policy
     - NGINX_MODE=${NGINX_MODE:-http}
     - PROXY_PROTOCOL=true
     - PROXY_PROTOCOL_PEER=proxy-policy-ingress
+    - PROXY_POLICY_READINESS_HOST=proxy-policy-app-network
     - SERVER_NAME=${SERVER_NAME:-}
     - GONKA_API_PORT=9000
     - GONKA_API_EXEMPT_ROUTES=chat inference poc/proofs subnet devshard
@@ -28,7 +29,9 @@ x-proxy-policy: &proxy-policy
   volumes:
     - ${SSL_CERT_SOURCE:-./secrets/nginx-ssl}:/etc/nginx/ssl
   networks:
-    default: {}
+    default:
+      aliases:
+        - proxy-policy-app-network
     proxy-policy-front:
       aliases:
         - proxy-policy-front
