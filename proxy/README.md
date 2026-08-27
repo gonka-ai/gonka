@@ -16,7 +16,7 @@ Each nginx policy worker routes requests to backend services by URL path:
 - `/chain-grpc/` → Blockchain gRPC endpoint (port 9090)
 - `/jaeger/` → Jaeger UI when `JAEGER_ENABLED=true` and the observability overlay is running (nginx basic auth required)
 - `/grafana/` → Grafana UI when `GRAFANA_ENABLED=true` and the observability overlay is running (Grafana login required)
-- `/health` → Policy readiness: nginx data listener and application-network DNS
+- `/health` → Nginx health check endpoint
 - `/` → Explorer dashboard when `DASHBOARD_PORT` is set, otherwise a simple "dashboard not configured" page
 
 ## Benefits
@@ -56,9 +56,6 @@ Key runtime environment variables:
 | `PROXY_SSL_PORT` | 8080 | Port for the cert issuer API |
 | `SSL_CERT_SOURCE` | ./secrets/nginx-ssl | Host path bind-mounted at `/etc/nginx/ssl` |
 | `PROXY_SSL_WAIT_SECONDS` | 60 | Max wait for `proxy-ssl` readiness during cert fetch |
-| `PROXY_SSL_RETRY_SECONDS` | 60 | Initial retry delay after issuer or HTTPS recovery failure; doubles up to the renewal interval |
-| `RENEW_INTERVAL_HOURS` | 24 | Interval between successful automatic renewal checks |
-| `RENEW_BEFORE_DAYS` | 30 | Renew the certificate when it expires within this many days |
 | `NODE_ID` | proxy | Node identifier included in cert requests to `proxy-ssl` |
 | `API_SERVICE_NAME` | api | Service name for API upstream |
 | `NODE_SERVICE_NAME` | node | Service name for chain node upstreams |
@@ -115,8 +112,8 @@ Key runtime environment variables:
 | `CHAIN_GRPC_RATE_LIMIT_RPS` | 20 | Rate limit for `/chain-grpc/` (default: 20). |
 | `CHAIN_GRPC_RATE_UNIT` | m | Unit for chain gRPC (`s` or `m`). Default `m`. |
 | `CHAIN_GRPC_BURST` | 200 | Burst for chain gRPC. |
-| `EDGE_API_SERVICE_NAME` | (empty) | Upstream for read-only `/v1/` query routes served by **edge-api**. Empty sends all `/v1/` traffic to dapi. The shipped multi-instance topology sets the absolute service `proxy` on its private edge-api frontend. |
-| `EDGE_API_PORT` | 18080 | Port on the selected edge-api upstream; `18082` for the shipped internal distributor. |
+| `EDGE_API_SERVICE_NAME` | (empty) | Upstream for read-only `/v1/` query routes served by **edge-api**. Empty sends all `/v1/` traffic to dapi. The single topology targets `edge-api`; the multi-instance overlay targets `edge-api-router`. |
+| `EDGE_API_PORT` | 18080 | Port on the selected edge-api or existing edge-api-router upstream. |
 | `EDGE_API_ROUTE_PATHS` | (18 public paths) | Space-separated public Tier A `/v1/` paths steered to edge-api before the catch-all `/v1/` → dapi block. Defaults: `EDGE_API_ROUTE_PATHS_DEFAULT` in `proxy/entrypoint.sh`. |
 | `EDGE_API_OPTIONAL_ROUTE_PATHS` | verify/debug (4) | CPU-heavy helpers (`/v1/verify-proof`, `/v1/verify-block`, `/v1/debug/...`). **Not published by default.** |
 | `EDGE_API_EXPOSE_OPTIONAL_ROUTES` | false | Set `true` to publish optional verify/debug routes to edge-api. Keep `false` and put auth (basic/mTLS/IP allowlist) on nginx if you expose them. When private, proxy returns **403** for those paths. |
@@ -216,11 +213,12 @@ export EDGE_API_EXPOSE_OPTIONAL_ROUTES=true
 Multi-instance edge-api (`deploy/join/docker-compose.edge-api-multi.yml`):
 
 ```text
-Client -> proxy-router -> proxy-policy -> proxy-router:18082 -> edge-api-N:18080
+Client -> proxy-router -> proxy-policy -> edge-api-router nginx -> edge-api-N
 ```
 
-The top HAProxy uses least-connections and active `/readyz` checks. There is no
-dedicated edge-api-router in the steady-state Compose model.
+This release deliberately preserves the existing edge-api nginx router and does
+not require a new edge-api readiness contract. Moving that pool into the public
+HAProxy is a separate edge-api lifecycle change.
 
 ### Observability UI security
 
@@ -299,17 +297,7 @@ Avoid:
 - `NGINX_MODE=https`: listen on 443 with SSL; requires `CERT_ISSUER_DOMAIN` and a reachable `proxy-ssl` service to obtain certs if missing.
 - `NGINX_MODE=both`: listen on 80 and 443; same SSL requirements as `https`.
 
-When SSL is enabled, `entrypoint.sh` validates the local certificate/key pair before rendering nginx configuration. A valid pair continues without contacting `proxy-ssl`. A missing, truncated, or mismatched pair is repaired through `setup-ssl.sh` before the first `nginx -t`, including in HTTPS-only mode.
-
-If the certificate marker is missing while `private.key` and `order.id` remain, startup first recovers the certificate from that order. A new order is created only when the saved order cannot recover the local key.
-
-If issuance fails at startup (for example, `proxy-ssl` is not reachable yet) and `NGINX_MODE=both`, the entrypoint temporarily serves HTTP only. A background worker keeps retrying with exponential backoff (starting at `PROXY_SSL_RETRY_SECONDS`, capped at the renewal interval) and, once a certificate is issued, re-renders the HTTPS configuration, validates it with `nginx -t`, and reloads nginx — port 443 comes back without a container restart. The same worker renews certificates issued through `proxy-ssl` (identified by a stored `order.id`) within `RENEW_BEFORE_DAYS` of expiry.
-
-Valid manually supplied certificate/key pairs without `order.id` remain under operator management and are not sent to `proxy-ssl`. An invalid manual pair cannot serve HTTPS, so startup treats it as an incomplete bundle, obtains a replacement from `proxy-ssl`, and stores the resulting `order.id` for automatic renewal.
-
-The worker also repairs legacy incomplete bundles. If HTTPS validation finds a truncated certificate or a certificate that does not match its private key, `setup-ssl.sh repair` first requests the certificate for the stored `order.id` and verifies that it belongs to the local key. It creates a new order only when the stored order cannot recover that key. After a valid pair is published, nginx is validated and reloaded automatically.
-
-`PROXY_SSL_RETRY_SECONDS` and `RENEW_INTERVAL_HOURS` must be positive integers. Invalid values stop the container during configuration validation instead of starting a busy retry loop.
+When SSL is enabled and no certs are present under `/etc/nginx/ssl`, `entrypoint.sh` will call `setup-ssl.sh` to fetch a certificate via the `proxy-ssl` service.
 
 ### Setup Environment
 
@@ -462,18 +450,9 @@ Notes:
 - Ensure your env matches one of the setups above (proxy-ssl vs manual). See sections on environment configuration and manual certificate issuance.
 - General operational guidance aligns with the Quickstart docs at [gonka.ai Host Quickstart](https://gonka.ai/host/quickstart/#how-to-stop-mlnode).
 
-The host updater replaces the policy workers reserve-first and waits for exact
-admission between replacements. `proxy-router/test-routing.sh` exercises
-continuity for non-idempotent requests during that policy rollout. The public
-`proxy` is a singleton: replacing it is a maintenance boundary and may interrupt
-active connections.
-
 ## Health Check
 
-`/health` is served through nginx's production listener and returns `200` while
-the local policy sidecar can resolve the configured application-network alias.
-It returns `503` while that network is unavailable or the sidecar is restarting,
-allowing the public HAProxy to withdraw this policy worker.
+The proxy includes a health check endpoint at `/health` that returns HTTP 200 with "healthy" response.
 
 ## Troubleshooting
 

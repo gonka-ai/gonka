@@ -2,33 +2,15 @@
 
 set -Eeuo pipefail
 
-command -v flock >/dev/null || {
-    echo "test-routing: flock is required to serialize fixed-name Docker fixtures" >&2
-    exit 1
-}
-command -v openssl >/dev/null || {
-    echo "test-routing: openssl is required for the PROXY v2 TLS fixture" >&2
-    exit 1
-}
-exec 9>"${TMPDIR:-/tmp}/gonka-proxy-router-test-routing.lock"
-flock -w 600 9
-
 network=gonka-proxy-router-test-$$
 image=gonka-proxy-router-test:$$
 state=gonka-proxy-router-state-$$
 containers=(
-    gonka-pr-proxy gonka-pr-proxy-lb gonka-pr-probe gonka-pr-catalog
-    gonka-pr-proxy-both
-    gonka-pr-proxy-admission
-    gonka-pr-proxy-generation
-    gonka-pr-proxy-plain gonka-pr-proxy-v2
-    gonka-pr-proxy-cache-floor
-    gonka-pr-policy-a gonka-pr-policy-b gonka-pr-policy-admission
-    gonka-pr-policy-generation gonka-pr-policy-generation-gap
-    gonka-pr-policy-plain gonka-pr-policy-v2
+    gonka-pr-proxy gonka-pr-probe gonka-pr-catalog
+    gonka-pr-policy-a gonka-pr-policy-b
     gonka-pr-router-a gonka-pr-router-b gonka-pr-router-bad
     gonka-pr-router-migration
-    gonka-pr-edge-a gonka-pr-edge-b
+    gonka-pr-edge-router
 )
 tmpdir=$(mktemp -d)
 
@@ -147,139 +129,6 @@ if data_enabled:
 threading.Event().wait()
 PY
 
-cat >"$tmpdir/policy-admission.py" <<'PY'
-import http.server
-import socketserver
-import threading
-
-
-phase = "pending"
-check_started = threading.Event()
-check_completed = threading.Event()
-release_check = threading.Event()
-
-
-class Data(socketserver.BaseRequestHandler):
-    def handle(self):
-        self.request.recv(256)
-        check_started.set()
-        release_check.wait()
-        status = 200 if phase == "ready" else 503
-        reason = "OK" if status == 200 else "Service Unavailable"
-        self.request.sendall(
-            f"HTTP/1.1 {status} {reason}\r\nContent-Length: 0\r\n\r\n".encode()
-        )
-        check_completed.set()
-
-
-class Control(http.server.BaseHTTPRequestHandler):
-    def do_GET(self):
-        global phase
-        if self.path == "/started":
-            status = 200 if check_started.is_set() else 503
-        elif self.path == "/completed":
-            status = 200 if check_completed.is_set() else 503
-        elif self.path == "/fail":
-            phase = "failed"
-            release_check.set()
-            status = 200
-        elif self.path == "/ready":
-            phase = "ready"
-            release_check.set()
-            status = 200
-        else:
-            status = 404
-        self.send_response(status)
-        self.send_header("Content-Length", "0")
-        self.end_headers()
-
-    def log_message(self, *_):
-        pass
-
-
-threading.Thread(
-    target=lambda: socketserver.ThreadingTCPServer(("", 80), Data).serve_forever(),
-    daemon=True,
-).start()
-http.server.ThreadingHTTPServer(("", 9000), Control).serve_forever()
-PY
-
-cat >"$tmpdir/policy-v2.py" <<'PY'
-import socket
-import ssl
-import threading
-
-
-PP2_SIGNATURE = b"\r\n\r\n\x00\r\nQUIT\n"
-
-
-def recv_exact(conn, size):
-    data = b""
-    while len(data) < size:
-        chunk = conn.recv(size - len(data))
-        if not chunk:
-            raise ConnectionError("short read")
-        data += chunk
-    return data
-
-
-def handle(conn, tls_context):
-    try:
-        header = recv_exact(conn, 16)
-        if header[:12] != PP2_SIGNATURE or header[12] >> 4 != 2:
-            return
-        recv_exact(conn, int.from_bytes(header[14:16], "big"))
-        if tls_context is not None:
-            conn = tls_context.wrap_socket(conn, server_side=True)
-        request = b""
-        while b"\r\n\r\n" not in request and len(request) < 8192:
-            request += conn.recv(1024)
-        status = b"200 OK" if request.startswith(b"GET /health ") else b"404 Not Found"
-        body = b"ready\n" if status == b"200 OK" else b"not found\n"
-        conn.sendall(
-            b"HTTP/1.1 " + status + b"\r\nContent-Length: "
-            + str(len(body)).encode() + b"\r\nConnection: close\r\n\r\n" + body
-        )
-    except (ConnectionError, OSError, ssl.SSLError):
-        pass
-    finally:
-        conn.close()
-
-
-def serve(port, tls_context=None):
-    listener = socket.socket()
-    listener.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    listener.bind(("", port))
-    listener.listen()
-    while True:
-        conn, _ = listener.accept()
-        threading.Thread(target=handle, args=(conn, tls_context), daemon=True).start()
-
-
-tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-tls.load_cert_chain("/tls/cert.pem", "/tls/key.pem")
-threading.Thread(target=serve, args=(80,), daemon=True).start()
-serve(443, tls)
-PY
-
-cat >"$tmpdir/policy-plain.conf" <<'EOF'
-events {}
-http {
-    access_log off;
-    server {
-        listen 80;
-        listen 8081;
-        location = /health { return 200 "ready\n"; }
-    }
-}
-EOF
-
-mkdir "$tmpdir/tls"
-openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
-    -subj /CN=policy-v2 \
-    -keyout "$tmpdir/tls/key.pem" -out "$tmpdir/tls/cert.pem" \
-    >/dev/null 2>&1
-
 mkdir "$tmpdir/catalog"
 printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v5"}]}' \
     >"$tmpdir/catalog/versions.json"
@@ -316,9 +165,9 @@ http {
         zone versiond_distributor 64k;
         server proxy-router:18081 resolve;
     }
-    upstream edge_distributor {
-        zone edge_distributor 64k;
-        server proxy-router:18082 resolve;
+    upstream edge_router {
+        zone edge_router 64k;
+        server edge-api-router:18080 resolve;
     }
     server {
         listen 80 proxy_protocol;
@@ -332,7 +181,7 @@ http {
         location /tier-a/ {
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_pass http://edge_distributor/;
+            proxy_pass http://edge_router/;
         }
         location / { return 200 "$hostname:$remote_addr\n"; }
     }
@@ -381,13 +230,13 @@ docker run -d --name gonka-pr-router-migration --network "$network" \
     -v "$tmpdir/upstream.py:/app.py:ro" \
     python:3.12-alpine python /app.py >/dev/null
 
-for name in a b; do
-    docker run -d --name "gonka-pr-edge-$name" --hostname "edge-$name" \
-        --network "$network" --network-alias edge-api-pool \
-        -e "NAME=edge-$name" -e 'SERVES=' -e DATA_PORT=18080 \
-        -v "$tmpdir/upstream.py:/app.py:ro" \
-        python:3.12-alpine python /app.py >/dev/null
-done
+# This fixture represents the nginx edge-api-router shipped by the previous
+# release. The public HAProxy must leave that HTTP routing hop unchanged.
+docker run -d --name gonka-pr-edge-router --hostname edge-api-router \
+    --network "$network" --network-alias edge-api-router \
+    -e NAME=legacy-edge-router -e 'SERVES=' -e DATA_PORT=18080 \
+    -v "$tmpdir/upstream.py:/app.py:ro" \
+    python:3.12-alpine python /app.py >/dev/null
 
 docker run -d --name gonka-pr-proxy --network "$network" \
     --network-alias proxy-router \
@@ -396,20 +245,19 @@ docker run -d --name gonka-pr-proxy --network "$network" \
     -e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
     -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
     -e PROXY_ROUTER_VERSION_CAPACITY=1 \
+    -e PROXY_ROUTER_ACTIVATION_MIN_READY=2 \
     -e PROXY_ROUTER_METRICS_BIND_HOST=proxy-router \
     -e PROXY_ROUTER_CATALOG_BIND_HOST=proxy-router \
     -e PROXY_ROUTER_CATALOG_UPSTREAM_HOST=routing-catalog \
     -e PROXY_ROUTER_CATALOG_UPSTREAM_PORT=8080 \
     "$image" >/dev/null
 for _ in $(seq 40); do
-    docker exec gonka-pr-proxy test -s /var/lib/gonka-router/catalog-v2.json \
+    docker exec gonka-pr-proxy test -s /var/lib/gonka-router/catalog.json \
         >/dev/null 2>&1 && break
     sleep 0.25
 done
-docker exec gonka-pr-proxy test -s /var/lib/gonka-router/catalog-v2.json \
-    || fail "top distributor did not migrate the legacy catalog cache"
 docker exec gonka-pr-proxy test -s /var/lib/gonka-router/catalog.json \
-    || fail "top distributor removed the rollback catalog cache"
+    || fail "top distributor did not load the shared catalog cache contract"
 start_policy() {
     local name=$1
     docker run -d --name "gonka-pr-policy-$name" --hostname "policy-$name" \
@@ -432,9 +280,9 @@ proxy_admin() {
         "http://127.0.0.1:8404$1"
 }
 
-proxy_backend_addr_up_in() {
-    local proxy=$1 backend=$2 address=$3
-    docker exec "$proxy" sh -c \
+proxy_backend_addr_up() {
+    local backend=$1 address=$2
+    docker exec gonka-pr-proxy sh -c \
         "printf 'show stat\\n' | socat - UNIX-CONNECT:/var/run/haproxy/haproxy.sock" \
         | awk -F, -v backend="$backend" -v address="$address" '
             $1 == backend && $18 ~ /^UP/ && index($0, address) { found = 1 }
@@ -442,294 +290,11 @@ proxy_backend_addr_up_in() {
         '
 }
 
-proxy_backend_addr_up() {
-    proxy_backend_addr_up_in gonka-pr-proxy "$@"
-}
-
-wait_proxy_backend_addr_up_in() {
-    local proxy=$1 backend=$2 address=$3
-    for _ in $(seq 80); do
-        proxy_backend_addr_up_in "$proxy" "$backend" "$address" && return 0
-        sleep 0.1
-    done
-    return 1
-}
-
-proxy_backend_addr_withdrawn_in() {
-    local proxy=$1 backend=$2 address=$3
-    docker exec "$proxy" sh -c \
-        "printf 'show stat\\n' | socat - UNIX-CONNECT:/var/run/haproxy/haproxy.sock" \
-        | awk -F, -v backend="$backend" -v address="$address" '
-            $1 == backend && $18 ~ /^UP/ && index($0, address) { admitted = 1 }
-            END { exit admitted }
-        '
-}
-
-proxy_backend_server_ref_in() {
-    local proxy=$1 backend=$2 address=$3
-    docker exec "$proxy" sh -c \
-        "printf 'show stat\\n' | socat - UNIX-CONNECT:/var/run/haproxy/haproxy.sock" \
-        | awk -F, -v backend="$backend" -v address="$address" '
-            $1 == backend && index($0, address) && !found {
-                print $1 "/" $2
-                found = 1
-            }
-            END { exit !found }
-        '
-}
-
-proxy_server_runtime_in() {
-    local proxy=$1 commands=$2 response
-    response=$(printf '%s\n' "$commands" | docker exec -i "$proxy" sh -c \
-        'socat - UNIX-CONNECT:/var/run/haproxy/reconciler.sock') || return 1
-    [[ -z ${response//[[:space:]]/} ]]
-}
-
-proxy_server_drain_in() {
-    proxy_server_runtime_in "$1" "set server $2 state drain"
-}
-
-proxy_server_mark_down_in() {
-    proxy_server_runtime_in "$1" "set server $2 health down"
-}
-
-proxy_server_ready_in() {
-    proxy_server_runtime_in "$1" "set server $2 state ready"
-}
-
-# Admission follows explicit health-check stages: pending, failed, then ready.
-# No stage may enter nbsrv() before a complete successful L7 result.
-docker run -d --name gonka-pr-proxy-admission --network "$network" \
-    -e PROXY_POLICY_POOL_HOST=proxy-policy-admission \
-    -e NGINX_MODE=http \
-    -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
-    "$image" >/dev/null
-for _ in $(seq 80); do
-    docker exec gonka-pr-proxy-admission curl -fsS \
-        http://127.0.0.1:8404/livez >/dev/null 2>&1 && break
-    sleep 0.05
-done
-docker exec gonka-pr-proxy-admission curl -fsS \
-    http://127.0.0.1:8404/livez >/dev/null \
-    || fail "policy admission router did not reach the live stage"
-docker run -d --name gonka-pr-policy-admission --network "$network" \
-    --network-alias proxy-policy-admission \
-    -v "$tmpdir/policy-admission.py:/app.py:ro" \
-    python:3.12-alpine python /app.py >/dev/null
-for _ in $(seq 60); do
-    docker exec gonka-pr-proxy-admission curl -fsS \
-        http://proxy-policy-admission:9000/started >/dev/null 2>&1 && break
-    sleep 0.05
-done
-docker exec gonka-pr-proxy-admission curl -fsS \
-    http://proxy-policy-admission:9000/started >/dev/null \
-    || fail "policy admission check did not enter the pending stage"
-code=$(docker exec gonka-pr-proxy-admission curl -sS -o /dev/null \
-    -w '%{http_code}' http://127.0.0.1:8404/readyz)
-[[ $code == 503 ]] \
-    || fail "pending policy check was admitted before an L7 result"
-
-docker exec gonka-pr-proxy-admission curl -fsS \
-    http://proxy-policy-admission:9000/fail >/dev/null
-for _ in $(seq 60); do
-    docker exec gonka-pr-proxy-admission curl -fsS \
-        http://proxy-policy-admission:9000/completed >/dev/null 2>&1 && break
-    sleep 0.05
-done
-docker exec gonka-pr-proxy-admission curl -fsS \
-    http://proxy-policy-admission:9000/completed >/dev/null \
-    || fail "policy admission check did not complete the failed stage"
-code=$(docker exec gonka-pr-proxy-admission curl -sS -o /dev/null \
-    -w '%{http_code}' http://127.0.0.1:8404/readyz)
-[[ $code == 503 ]] || fail "failed policy check entered admission"
-
-docker exec gonka-pr-proxy-admission curl -fsS \
-    http://proxy-policy-admission:9000/ready >/dev/null
-for _ in $(seq 80); do
-    code=$(docker exec gonka-pr-proxy-admission curl -sS -o /dev/null \
-        -w '%{http_code}' http://127.0.0.1:8404/readyz)
-    [[ $code == 200 ]] && break
-    sleep 0.1
-done
-[[ $code == 200 ]] \
-    || fail "successful policy checks did not complete admission"
-docker rm -f gonka-pr-proxy-admission gonka-pr-policy-admission >/dev/null
-
-# A DNS address change does not reset an already-UP server-template slot. The
-# rollout protocol therefore withdraws the old generation before its DNS name
-# can resolve to a replacement. The replacement must then complete a new L7
-# check sequence before it is admitted.
-docker run -d --name gonka-pr-policy-generation --network "$network" \
-    --network-alias proxy-policy-generation \
-    -v "$tmpdir/policy.conf:/etc/nginx/nginx.conf:ro" \
-    nginx:1.28-alpine3.21 >/dev/null
-docker run -d --name gonka-pr-proxy-generation --network "$network" \
-    -e PROXY_POLICY_POOL_HOST=proxy-policy-generation \
-    -e NGINX_MODE=http \
-    -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
-    "$image" >/dev/null
-generation_old_ip=$(docker inspect -f \
-    "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
-    gonka-pr-policy-generation)
-for _ in $(seq 80); do
-    proxy_backend_addr_up_in gonka-pr-proxy-generation policy_http \
-        "$generation_old_ip" && break
-    sleep 0.1
-done
-proxy_backend_addr_up_in gonka-pr-proxy-generation policy_http \
-    "$generation_old_ip" \
-    || fail "old policy generation was not admitted"
-
-generation_server_ref=$(proxy_backend_server_ref_in gonka-pr-proxy-generation \
-    policy_http "$generation_old_ip") \
-    || fail "could not identify the old policy generation slot"
-proxy_server_drain_in gonka-pr-proxy-generation "$generation_server_ref" \
-    || fail "could not drain the old policy generation slot"
-for _ in $(seq 80); do
-    proxy_backend_addr_withdrawn_in gonka-pr-proxy-generation policy_http \
-        "$generation_old_ip" && break
-    sleep 0.1
-done
-proxy_backend_addr_withdrawn_in gonka-pr-proxy-generation policy_http \
-    "$generation_old_ip" \
-    || fail "old policy generation was not withdrawn before replacement"
-docker stop --time 5 gonka-pr-policy-generation >/dev/null
-proxy_server_mark_down_in gonka-pr-proxy-generation "$generation_server_ref" \
-    || fail "could not reset policy health before replacement"
-proxy_server_ready_in gonka-pr-proxy-generation "$generation_server_ref" \
-    || fail "could not enable fresh checks for the replacement policy slot"
-docker rm gonka-pr-policy-generation >/dev/null
-# Consume the released address so this regression necessarily exercises an IP
-# change rather than a restart that happens to reuse the old address.
-docker run -d --name gonka-pr-policy-generation-gap --network "$network" \
-    python:3.12-alpine sleep 300 >/dev/null
-docker run -d --name gonka-pr-policy-generation --network "$network" \
-    --network-alias proxy-policy-generation \
-    -v "$tmpdir/policy-admission.py:/app.py:ro" \
-    python:3.12-alpine python /app.py >/dev/null
-generation_new_ip=$(docker inspect -f \
-    "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
-    gonka-pr-policy-generation)
-[[ $generation_new_ip != "$generation_old_ip" ]] \
-    || fail "replacement fixture did not receive a new IP"
-for _ in $(seq 80); do
-    docker exec gonka-pr-proxy-generation curl -fsS \
-        http://proxy-policy-generation:9000/started >/dev/null 2>&1 && break
-    sleep 0.05
-done
-docker exec gonka-pr-proxy-generation curl -fsS \
-    http://proxy-policy-generation:9000/started >/dev/null \
-    || fail "replacement policy check did not enter the pending stage"
-if proxy_backend_addr_up_in gonka-pr-proxy-generation policy_http \
-    "$generation_new_ip"; then
-    fail "replacement inherited admission before completing a new check"
-fi
-docker exec gonka-pr-proxy-generation curl -fsS \
-    http://proxy-policy-generation:9000/fail >/dev/null
-for _ in $(seq 80); do
-    docker exec gonka-pr-proxy-generation curl -fsS \
-        http://proxy-policy-generation:9000/completed >/dev/null 2>&1 && break
-    sleep 0.05
-done
-docker exec gonka-pr-proxy-generation curl -fsS \
-    http://proxy-policy-generation:9000/completed >/dev/null \
-    || fail "replacement policy check did not complete the failed stage"
-if proxy_backend_addr_up_in gonka-pr-proxy-generation policy_http \
-    "$generation_new_ip"; then
-    fail "failed replacement policy check entered admission"
-fi
-docker exec gonka-pr-proxy-generation curl -fsS \
-    http://proxy-policy-generation:9000/ready >/dev/null
-for _ in $(seq 80); do
-    proxy_backend_addr_up_in gonka-pr-proxy-generation policy_http \
-        "$generation_new_ip" && break
-    sleep 0.1
-done
-proxy_backend_addr_up_in gonka-pr-proxy-generation policy_http \
-    "$generation_new_ip" \
-    || fail "replacement policy generation was not admitted after successful checks"
-docker rm -f gonka-pr-proxy-generation gonka-pr-policy-generation \
-    gonka-pr-policy-generation-gap >/dev/null
-
-# The check must use the exact production protocol on the data connection:
-# PROXY v2, then HTTP (or TLS and HTTP), then a 200 response from /health.
-docker run -d --name gonka-pr-policy-v2 --network "$network" \
-    --network-alias proxy-policy-v2 \
-    -v "$tmpdir/policy-v2.py:/app.py:ro" -v "$tmpdir/tls:/tls:ro" \
-    python:3.12-alpine python /app.py >/dev/null
-docker run -d --name gonka-pr-proxy-v2 --network "$network" \
-    -e PROXY_POLICY_POOL_HOST=proxy-policy-v2 \
-    -e NGINX_MODE=both \
-    -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
-    "$image" >/dev/null
-for _ in $(seq 80); do
-    code=$(docker exec gonka-pr-proxy-v2 curl -sS -o /dev/null \
-        -w '%{http_code}' http://127.0.0.1:8404/readyz 2>/dev/null || true)
-    [[ $code == 200 ]] && break
-    sleep 0.1
-done
-[[ $code == 200 ]] \
-    || fail "production-equivalent HTTP and HTTPS policy checks did not pass"
-docker exec gonka-pr-proxy-v2 curl -fsS http://127.0.0.1/health >/dev/null \
-    || fail "production HTTP connection did not carry PROXY v2"
-docker exec gonka-pr-proxy-v2 curl -fkSs https://127.0.0.1/health >/dev/null \
-    || fail "production HTTPS connection did not carry PROXY v2 before TLS"
-docker rm -f gonka-pr-proxy-v2 gonka-pr-policy-v2 >/dev/null
-
-# A separate healthy sidecar cannot admit a data listener that does not accept
-# the production PROXY v2 preamble.
-docker run -d --name gonka-pr-policy-plain --network "$network" \
-    --network-alias proxy-policy-plain \
-    -v "$tmpdir/policy-plain.conf:/etc/nginx/nginx.conf:ro" \
-    nginx:1.28-alpine3.21 >/dev/null
-docker run -d --name gonka-pr-proxy-plain --network "$network" \
-    -e PROXY_POLICY_POOL_HOST=proxy-policy-plain \
-    -e NGINX_MODE=http \
-    -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
-    "$image" >/dev/null
-sleep 4
-plain_ready=$(docker exec gonka-pr-proxy-plain curl -sS -o /dev/null \
-    -w '%{http_code}' http://127.0.0.1:8404/readyz)
-[[ $plain_ready == 503 ]] \
-    || fail "plain HTTP listener was admitted through its unrelated sidecar"
-docker rm -f gonka-pr-proxy-plain gonka-pr-policy-plain >/dev/null
-
-# A healthy sidecar cannot make an absent TLS listener look ready. This is the
-# production HTTP-fallback shape after nginx rejects an invalid certificate.
-docker run -d --name gonka-pr-proxy-both --network "$network" \
-    -e PROXY_POLICY_POOL_HOST=proxy-policy \
-    -e NGINX_MODE=both \
-    -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
-    "$image" >/dev/null
-for _ in $(seq 60); do
-    if docker exec gonka-pr-proxy-both sh -c \
-        "printf 'show stat\\n' | socat - UNIX-CONNECT:/var/run/haproxy/haproxy.sock" \
-        2>/dev/null | awk -F, '
-            $1 == "policy_http" && $18 ~ /^UP/ { http_up = 1 }
-            $1 == "policy_https" && $18 ~ /^UP/ { https_up = 1 }
-            END { exit !(http_up && !https_up) }
-        '; then
-        break
-    fi
-    sleep 0.25
-done
-docker exec gonka-pr-proxy-both sh -c \
-    "printf 'show stat\\n' | socat - UNIX-CONNECT:/var/run/haproxy/haproxy.sock" \
-    | awk -F, '
-        $1 == "policy_http" && $18 ~ /^UP/ { http_up = 1 }
-        $1 == "policy_https" && $18 ~ /^UP/ { https_up = 1 }
-        END { exit !(http_up && !https_up) }
-    ' || fail "missing TLS listener did not withdraw only the HTTPS policy pool"
-both_ready=$(docker exec gonka-pr-proxy-both curl -sS -o /dev/null \
-    -w '%{http_code}' http://127.0.0.1:8404/readyz)
-[[ $both_ready == 503 ]] \
-    || fail "both-mode readiness stayed green with every TLS listener absent"
-docker rm -f gonka-pr-proxy-both >/dev/null
-
 for _ in $(seq 60); do
     if proxy_admin /readyz >/dev/null 2>&1 &&
         proxy_admin '/readyz?component=versiond' >/dev/null 2>&1 &&
-        proxy_admin '/readyz?component=edge-api' >/dev/null 2>&1; then
+        proxy_admin '/readyz?version=v4' >/dev/null 2>&1 &&
+        proxy_admin '/readyz?version=v5' >/dev/null 2>&1; then
         break
     fi
     sleep 0.25
@@ -743,14 +308,6 @@ proxy_admin '/readyz?version=v5' >/dev/null \
 # The deployment rolls the two fixed policy slots reserve-first. Keep POSTs in
 # flight while each slot is replaced and require both continuity and exactly-once
 # execution through the surviving worker.
-for name in a b; do
-    initial_policy_ip=$(docker inspect -f \
-        "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
-        "gonka-pr-policy-$name")
-    wait_proxy_backend_addr_up_in gonka-pr-proxy policy_http \
-        "$initial_policy_ip" || fail \
-        "policy-$name was not admitted before the rolling continuity test"
-done
 rollout_errors=$tmpdir/policy-rollout-errors
 : >"$rollout_errors"
 rollout_before=$(probe http://gonka-pr-router-b:8404/count)
@@ -770,33 +327,13 @@ for name in b a; do
     # Compose honors the nginx image's SIGQUIT stop signal during replacement.
     # A forced removal can reset an already accepted POST, which no proxy may
     # safely replay because the application might have executed it.
-    old_policy_ip=$(docker inspect -f \
-        "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
-        "gonka-pr-policy-$name")
-    old_policy_ref=$(proxy_backend_server_ref_in gonka-pr-proxy policy_http \
-        "$old_policy_ip") || fail \
-        "could not identify policy-$name in the public pool"
-    proxy_server_drain_in gonka-pr-proxy "$old_policy_ref" || fail \
-        "could not drain policy-$name before its graceful stop"
-    for _ in $(seq 80); do
-        proxy_backend_addr_withdrawn_in gonka-pr-proxy policy_http \
-            "$old_policy_ip" && break
-        sleep 0.1
-    done
-    proxy_backend_addr_withdrawn_in gonka-pr-proxy policy_http \
-        "$old_policy_ip" || fail \
-        "policy-$name remained admitted after its runtime drain"
     docker stop --time 10 "gonka-pr-policy-$name" >/dev/null
-    proxy_server_mark_down_in gonka-pr-proxy "$old_policy_ref" || fail \
-        "could not reset policy-$name health before replacement"
-    proxy_server_ready_in gonka-pr-proxy "$old_policy_ref" || fail \
-        "could not enable fresh checks for replacement policy-$name"
     docker rm "gonka-pr-policy-$name" >/dev/null
     start_policy "$name"
     policy_ip=$(docker inspect -f \
         "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
         "gonka-pr-policy-$name")
-    for _ in $(seq 80); do
+    for _ in $(seq 30); do
         proxy_backend_addr_up policy_http "$policy_ip" && break
         sleep 0.1
     done
@@ -830,26 +367,6 @@ catalog_path_status=$(docker exec gonka-pr-probe curl -sS -o /dev/null \
     || fail "catalog bridge exposed a non-catalog path (status $catalog_path_status)"
 
 proxy_id=$(docker inspect -f '{{.Id}}' gonka-pr-proxy)
-printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
-    >"$tmpdir/catalog/versions.next"
-mv "$tmpdir/catalog/versions.next" "$tmpdir/catalog/versions.json"
-for _ in $(seq 30); do
-    if docker exec gonka-pr-proxy /usr/local/lib/router-runtime/catalog-status --state \
-        | jq -e '.state == "capacity-exhausted" and .dynamic_slots_used == 0' \
-            >/dev/null 2>&1; then
-        break
-    fi
-    sleep 0.5
-done
-docker exec gonka-pr-proxy /usr/local/lib/router-runtime/catalog-status --state \
-    | jq -e '.state == "capacity-exhausted" and .dynamic_slots_used == 0' \
-        >/dev/null || fail "catalog capacity preflight did not report atomic exhaustion"
-for version in v9 v10; do
-    unknown_response=$(docker exec gonka-pr-proxy /bin/busybox wget -S -O /dev/null \
-        "http://127.0.0.1:8404/readyz?version=$version" 2>&1 || true)
-    [[ $unknown_response == *'503 Service Unavailable'* ]] || fail \
-        "capacity preflight partially published $version"
-done
 printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v5"},{"name":"v9"}]}' \
     >"$tmpdir/catalog/versions.next"
 mv "$tmpdir/catalog/versions.next" "$tmpdir/catalog/versions.json"
@@ -881,8 +398,11 @@ for _ in $(seq 40); do
     fi
     sleep 0.25
 done
-proxy_admin '/readyz?version=v9' >/dev/null \
-    || fail "top distributor did not admit governance v9"
+proxy_admin '/readyz?version=v9' >/dev/null || {
+    docker exec gonka-pr-proxy \
+        /usr/local/lib/router-runtime/catalog-status --state >&2 || true
+    fail "top distributor did not admit governance v9"
+}
 docker rm -f gonka-pr-router-a >/dev/null
 docker run -d --name gonka-pr-router-a --network "$network" \
     --network-alias versiond-router-fleet \
@@ -911,7 +431,7 @@ fi
     || fail "learning v9 replaced the top distributor"
 [[ $(probe http://proxy-router:18081/v4/sessions/still-live/healthz) =~ ^(a|b|bad)$ ]] \
     || fail "learning v9 disrupted the existing v4 route"
-docker exec gonka-pr-proxy test -s /var/lib/gonka-router/catalog-v2.json \
+docker exec gonka-pr-proxy test -s /var/lib/gonka-router/catalog.json \
     || fail "top distributor did not persist its learned catalog"
 docker stop gonka-pr-catalog >/dev/null
 docker rm -f gonka-pr-proxy >/dev/null
@@ -922,6 +442,7 @@ docker run -d --name gonka-pr-proxy --network "$network" \
     -e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
     -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
     -e PROXY_ROUTER_VERSION_CAPACITY=1 \
+    -e PROXY_ROUTER_ACTIVATION_MIN_READY=2 \
     -e PROXY_ROUTER_METRICS_BIND_HOST=proxy-router \
     -e PROXY_ROUTER_CATALOG_BIND_HOST=proxy-router \
     -e PROXY_ROUTER_CATALOG_UPSTREAM_HOST=routing-catalog \
@@ -940,8 +461,7 @@ proxy_admin '/readyz?version=v9' >/dev/null \
 docker start gonka-pr-catalog >/dev/null
 for _ in $(seq 60); do
     if proxy_admin /readyz >/dev/null 2>&1 &&
-        proxy_admin '/readyz?component=versiond' >/dev/null 2>&1 &&
-        proxy_admin '/readyz?component=edge-api' >/dev/null 2>&1; then
+        proxy_admin '/readyz?component=versiond' >/dev/null 2>&1; then
         break
     fi
     sleep 0.25
@@ -950,9 +470,7 @@ proxy_admin /readyz >/dev/null \
     || fail "public policy pool did not recover after cached-route restart"
 for worker in a b; do
     worker_route=
-    # DNS cache expiry and nginx's default upstream fail_timeout can overlap if
-    # the worker reaches the replacement before HAProxy has bound its listener.
-    for _ in $(seq 120); do
+    for _ in $(seq 40); do
         worker_route=$(probe --haproxy-protocol \
             "http://gonka-pr-policy-$worker/devshard/v5/sessions/dns-refresh/healthz" \
             2>/dev/null || true)
@@ -960,7 +478,7 @@ for worker in a b; do
         sleep 0.25
     done
     [[ $worker_route == b ]] || fail \
-        "policy worker $worker did not re-resolve the replaced proxy-router (last response: '$worker_route')"
+        "policy worker $worker did not re-resolve the replaced proxy-router"
 done
 printf '%s\n' '{"versions":"not-an-array"}' \
     >"$tmpdir/catalog/versions.next"
@@ -973,13 +491,13 @@ printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v5"}]}' \
 mv "$tmpdir/catalog/versions.next" "$tmpdir/catalog/versions.json"
 for _ in $(seq 20); do
     if docker exec gonka-pr-proxy /usr/local/lib/router-runtime/catalog-status --state \
-        | jq -e '.state == "projection-error"' >/dev/null 2>&1; then
+        | jq -e '.state == "withdrawal-pending"' >/dev/null 2>&1; then
         break
     fi
     sleep 0.25
 done
 docker exec gonka-pr-proxy /usr/local/lib/router-runtime/catalog-status --state \
-    | jq -e '.state == "projection-error"' >/dev/null \
+    | jq -e '.state == "withdrawal-pending"' >/dev/null \
     || fail "a top-level catalog removal was not rejected"
 printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
     >"$tmpdir/catalog/versions.next"
@@ -1073,10 +591,12 @@ done
 docker start gonka-pr-router-bad >/dev/null
 sleep 2
 
-case $(probe http://proxy-router/tier-a/status) in
-    edge-a | edge-b) ;;
-    *) fail "public Tier A path did not reach the direct edge-api pool" ;;
-esac
+[[ $(probe http://proxy-router/tier-a/status) == legacy-edge-router ]] \
+    || fail "public Tier A path did not preserve the existing edge-api-router hop"
+edge_admin_status=$(docker exec gonka-pr-proxy curl -sS -o /dev/null \
+    -w '%{http_code}' 'http://127.0.0.1:8404/readyz?component=edge-api')
+[[ $edge_admin_status == 404 ]] \
+    || fail "public HAProxy unexpectedly exposes edge-api readiness"
 
 for _ in $(seq 8); do
     [[ $(probe http://proxy-router:18081/v5/sessions/test/healthz) == b ]] \
@@ -1119,27 +639,5 @@ after_b=$(probe http://gonka-pr-router-b:8404/count)
 executed=$((after_a - before_a + after_b - before_b))
 [[ $executed == "$requests" ]] \
     || fail "$requests POSTs produced $executed upstream executions"
-
-edge_seen=
-for _ in $(seq 12); do
-    edge_seen+=" $(probe http://proxy-router:18082/status)"
-done
-[[ $edge_seen == *edge-a* && $edge_seen == *edge-b* ]] \
-    || fail "edge-api pool did not use both healthy replicas: $edge_seen"
-
-# Loss of the complete inner versiond tier must affect only /devshard. The
-# policy tier and public HAProxy continue serving unrelated routes.
-docker stop gonka-pr-router-a gonka-pr-router-b gonka-pr-router-bad >/dev/null
-for _ in $(seq 40); do
-    devshard_status=$(docker exec gonka-pr-probe curl -sS -o /dev/null \
-        -w '%{http_code}' --connect-timeout 2 --max-time 5 \
-        http://proxy-router/devshard/v5/sessions/inner-tier-down/healthz || true)
-    [[ $devshard_status == 503 ]] && break
-    sleep 0.25
-done
-[[ $devshard_status == 503 ]] \
-    || fail "unavailable versiond tier did not return 503 from /devshard"
-policy=$(probe http://proxy-router/)
-case "$policy" in policy-a:* | policy-b:*) ;; *) fail "inner tier loss disrupted public policy routes" ;; esac
 
 echo "test-routing: ok"

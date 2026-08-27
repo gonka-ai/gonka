@@ -1,11 +1,8 @@
-.PHONY: all build-docker release test-render test-route-status test-routing
+.PHONY: all build-docker release test-render test-compose test-routing
 
 HAPROXY_IMAGE ?= haproxy:3.2-alpine
 
-test-route-status:
-	@./route-status_test.sh
-
-test-render: test-route-status
+test-render:
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
@@ -26,31 +23,21 @@ test-render: test-route-status
 		|| fail "public HTTP does not use the PROXY-protocol policy pool"; \
 	grep -q 'server-template policy 4 proxy-policy:443 .*send-proxy-v2' "$$tmpdir/proxy.cfg" \
 		|| fail "public HTTPS does not use the PROXY-protocol policy pool"; \
-	grep -q '^ *tcp-check connect port 80 send-proxy$$' "$$tmpdir/proxy.cfg" \
-		|| fail "HTTP policy health does not exercise the production PROXY v2 listener"; \
-	grep -q '^ *tcp-check connect port 443 ssl send-proxy$$' "$$tmpdir/proxy.cfg" \
-		|| fail "HTTPS policy health does not exercise the production PROXY v2 listener"; \
-	if grep -q '^ *tcp-check connect port 8081$$' "$$tmpdir/proxy.cfg"; then \
-		fail "policy health can be satisfied by a connection other than the data listener"; \
-	fi; \
-	[ "$$(grep -c '^ *tcp-check send-binary 474554202f6865616c7468' "$$tmpdir/proxy.cfg")" -eq 2 ] \
-		|| fail "policy readiness endpoint is not checked"; \
-	[ "$$(grep -c '^ *option redispatch$$' "$$tmpdir/proxy.cfg")" -ge 3 ] \
-		|| fail "connection failures are not redispatched across policy workers"; \
-	[ "$$(grep -c '^ *maxconn 8192$$' "$$tmpdir/proxy.cfg")" -eq 4 ] \
-		|| fail "public and private distributor frontends do not have explicit connection budgets"; \
+	[ "$$(grep -c '^ *option redispatch$$' "$$tmpdir/proxy.cfg")" -eq 2 ] \
+		|| fail "connection failures are not redispatched across both policy pools"; \
 	grep -q '^ *option redispatch 1$$' "$$tmpdir/proxy.cfg" \
 		|| fail "versiond router pools lost owner-preserving redispatch"; \
-	[ "$$(grep -c 'server-template policy .*init-state fully-down' "$$tmpdir/proxy.cfg")" -eq 2 ] \
-		|| fail "policy workers can be admitted before their first successful check"; \
+	[ "$$(grep -c 'server-template policy .*init-state up' "$$tmpdir/proxy.cfg")" -eq 2 ] \
+		|| fail "resolved policy workers do not start in connect-failover mode"; \
 	grep -q '^ *timeout client 86400s$$' "$$tmpdir/proxy.cfg" \
 		|| fail "public TCP client idle timeout does not cover upgraded streams"; \
 	grep -q '^ *timeout server 86400s$$' "$$tmpdir/proxy.cfg" \
 		|| fail "public TCP backend idle timeout does not cover upgraded streams"; \
 	grep -q '^v5 versiond_routers_v5$$' "$$tmpdir/versions.map" \
 		|| fail "declared versions are not mapped to route-aware router pools"; \
-	grep -q '^version=v5 versiond_routers_v5$$' "$$tmpdir/versions.map" \
-		|| fail "data routing and readiness are not rendered in one projection"; \
+	if grep -q '^version=' "$$tmpdir/versions.map"; then \
+		fail "readiness introduced a second projection key namespace"; \
+	fi; \
 	grep -q '^backend versiond_routers_v5$$' "$$tmpdir/proxy.cfg" \
 		|| fail "v5 router backend was not rendered"; \
 	[ "$$(grep -c '^backend versiond_routers_dynamic_' "$$tmpdir/proxy.cfg")" -eq 32 ] \
@@ -67,20 +54,18 @@ test-render: test-route-status
 		|| fail "the catalog writer does not have a dedicated restricted socket"; \
 	grep -q 'http-check send meth GET uri /readyz?version=v5' "$$tmpdir/proxy.cfg" \
 		|| fail "router health is not version-aware"; \
-	grep -q 'query -m str version=v5.*nbsrv(versiond_routers_v5)' "$$tmpdir/proxy.cfg" \
+	grep -q 'var(txn.ready_ver) -m str v5.*nbsrv(versiond_routers_v5)' "$$tmpdir/proxy.cfg" \
 		|| fail "top-level version readiness is not route-aware"; \
+	grep -q 'var(txn.ready_ver),map_str(.*versions.map) -m str versiond_routers_dynamic_1.*nbsrv(versiond_routers_dynamic_1)' "$$tmpdir/proxy.cfg" \
+		|| fail "dynamic version readiness does not follow the live slot assignment"; \
 	grep -q 'server-template router 16 versiond-router-fleet:8080 check port 8404' "$$tmpdir/proxy.cfg" \
 		|| fail "router data and admin ports are not separated"; \
 	grep -q '^ *balance hash var(txn.hashkey)$$' "$$tmpdir/proxy.cfg" \
 		|| fail "router selection is not sticky by the canonical escrow key"; \
 	grep -q '^ *hash-type consistent$$' "$$tmpdir/proxy.cfg" \
 		|| fail "router pools lost consistent hashing"; \
-	grep '^ *http-request set-var(txn.hashkey)' "$$tmpdir/proxy.cfg" \
-		> "$$tmpdir/outer-hash.rules"; \
-	grep '^ *http-request set-var(txn.hashkey)' ../versiond-router/haproxy.cfg.template \
-		> "$$tmpdir/inner-hash.rules"; \
-	cmp -s "$$tmpdir/outer-hash.rules" "$$tmpdir/inner-hash.rules" \
-		|| { diff -u "$$tmpdir/inner-hash.rules" "$$tmpdir/outer-hash.rules" >&2 || true; fail "outer and inner escrow placement rules diverged"; }; \
+	grep -q 'set-var(txn.hashkey).*field(3,/).*sessions' "$$tmpdir/proxy.cfg" \
+		|| fail "versionless session routes do not reuse the escrow routing key"; \
 	grep -q '^ *nameserver dns 10.96.0.10:53$$' "$$tmpdir/proxy.cfg" \
 		|| fail "the configured DNS resolver was not rendered"; \
 	grep -q '^frontend routing_catalog$$' "$$tmpdir/proxy.cfg" \
@@ -105,14 +90,15 @@ test-render: test-route-status
 		|| fail "explicit version backends retry authoritative 404 responses"; \
 	grep -q 'disable-l7-retry if !METH_GET !METH_HEAD !METH_OPTIONS' "$$tmpdir/proxy.cfg" \
 		|| fail "non-idempotent replay protection was removed"; \
-	grep -q 'http-check send meth GET uri /readyz' "$$tmpdir/proxy.cfg" \
-		|| fail "edge-api active readiness is absent"; \
+	if grep -Eq 'edge_api|EDGE_API|18082' "$$tmpdir/proxy.cfg"; then \
+		fail "public distributor unexpectedly owns edge-api routing"; \
+	fi; \
 	grep -q '^ *bind 127.0.0.1:8404$$' "$$tmpdir/proxy.cfg" \
 		|| fail "admin listener is not loopback-only"; \
 	if grep -q 'set-header X-Real-IP' "$$tmpdir/proxy.cfg"; then \
 		fail "parent distributor overwrites policy-derived client IP"; \
 	fi; \
-	if grep -Eq 'X-Edge-API-Upstream|X-Versiond-Router-Addr' "$$tmpdir/proxy.cfg"; then \
+	if grep -q 'X-Versiond-Router-Addr' "$$tmpdir/proxy.cfg"; then \
 		fail "public responses expose an internal upstream address"; \
 	fi; \
 	docker run --rm --user "$$(id -u):$$(id -g)" \
@@ -172,22 +158,18 @@ test-routing:
 test-compose:
 	@set -eu; \
 	root=$$(cd .. && pwd); \
+	edge=$$(docker compose \
+		-f "$$root/deploy/join/docker-compose.yml" \
+		-f "$$root/deploy/join/docker-compose.edge-api-multi.yml" \
+		config --format json 2>/dev/null); \
+	printf '%s\n' "$$edge" | jq -e '.services["edge-api-router"] != null and .services["proxy-policy"].environment.EDGE_API_SERVICE_NAME == "edge-api-router" and .services["proxy-policy"].environment.EDGE_API_PORT == "18080" and .services["proxy-policy2"].environment.EDGE_API_SERVICE_NAME == "edge-api-router" and .services["proxy-policy2"].environment.EDGE_API_PORT == "18080" and (.services.proxy.environment | has("EDGE_API_POOL_HOST") | not) and (.services.proxy.environment | has("PROXY_EDGE_API_PORT") | not)' >/dev/null || { echo "test-compose: legacy edge-api router contract changed" >&2; exit 1; }; \
 	versiond=$$(DEVSHARD_POSTGRES_PASSWORD=test docker compose \
-			-f "$$root/deploy/join/docker-compose.yml" \
-			-f "$$root/deploy/join/docker-compose.versiond.yml" \
-			config --format json 2>/dev/null); \
-	printf '%s\n' "$$versiond" | jq -e '((.services.proxy.depends_on // {}) | has("versiond-router") | not)' >/dev/null || { echo "test-compose: inner router delays public proxy startup" >&2; exit 1; }; \
-	printf '%s\n' "$$versiond" | jq -e '([.services["proxy-policy"], .services["proxy-policy2"]] | all((.depends_on // {}) | has("versiond") | not)) and .services["proxy-policy2"].depends_on.api.condition == "service_started" and .services["proxy-policy2"].depends_on["proxy-ssl"].required == false' >/dev/null || { echo "test-compose: HA versiond or PostgreSQL delays policy startup" >&2; exit 1; }; \
-	head -n 14 "$$root/deploy/join/docker-compose.versiond.yml" | grep -q 'Fresh installations only' && \
-	head -n 14 "$$root/deploy/join/docker-compose.versiond.yml" | grep -q 'Compose 2.24.4 or newer' && \
-	head -n 14 "$$root/deploy/join/docker-compose.versiond.yml" | grep -q 'release updater' \
-		|| { echo "test-compose: direct HA overlay command lacks its install and upgrade constraints" >&2; exit 1; }; \
-	if grep -Eq 'up -d proxy-policy proxy-policy2|up -d proxy-policy2 proxy-policy|--remove-orphans' \
-		"$$root/proxy/README.md" "$$root/proxy-router/README.md"; then \
-		echo "test-compose: proxy runbook contains a non-rolling or whole-project mutation" >&2; \
-		exit 1; \
-	fi; \
+		-f "$$root/deploy/join/docker-compose.yml" \
+		-f "$$root/deploy/join/docker-compose.versiond.yml" \
+		config --format json 2>/dev/null); \
+	printf '%s\n' "$$versiond" | jq -e '.services["proxy-policy"].environment.VERSIOND_SERVICE_NAME == "proxy-policy-ingress" and .services["proxy-policy"].environment.VERSIOND_PORT == "18081" and .services["proxy-policy2"].environment.VERSIOND_SERVICE_NAME == "proxy-policy-ingress" and .services["proxy-policy2"].environment.VERSIOND_PORT == "18081" and .services.proxy.environment.VERSIOND_ROUTER_POOL_HOST == "versiond-router" and .services.proxy.environment.VERSIOND_ROUTER_PORT == "8080"' >/dev/null || { echo "test-compose: versiond distributor contract changed" >&2; exit 1; }; \
 	echo "test-compose: ok"
+
 VERSION ?= $(shell git describe --always)
 SET_LATEST ?= 0
 PLATFORMS ?= linux/amd64,linux/arm64

@@ -2,9 +2,9 @@
 #
 # Public traffic first crosses the existing nginx policy workers in TCP mode,
 # preserving TLS, CORS, rate limits, rewrites and the on-chain route contract.
-# Those workers send only the two HA paths back to the internal HTTP frontends:
+# Those workers send /devshard back to the internal HTTP frontend:
 #   :18081 -> versiond-router fleet -> versiond
-#   :18082 -> edge-api pool
+# Edge-api keeps its existing nginx routing path in this release.
 #
 # The tier has no shared state. DNS is membership, active checks are availability,
 # and dapi's governance catalog supplies protocol names. Each process projects
@@ -46,7 +46,6 @@ frontend public_http
     mode tcp
     option tcplog
     bind :80
-    maxconn ${MAX_CONNECTIONS}
     timeout client ${PUBLIC_IDLE_SECONDS}s
     default_backend policy_http
 
@@ -54,7 +53,6 @@ frontend public_https
     mode tcp
     option tcplog
     bind :443
-    maxconn ${MAX_CONNECTIONS}
     timeout client ${PUBLIC_IDLE_SECONDS}s
     default_backend policy_https
 
@@ -65,15 +63,7 @@ backend policy_http
     option redispatch
     retries 2
     timeout server ${PUBLIC_IDLE_SECONDS}s
-    option tcp-check
-    # Exercise the production listener end to end: the same connection carries
-    # the production PROXY v2 preamble, request and application-ready response.
-    # HAProxy derives v2 from the server's send-proxy-v2 setting; the check
-    # directive itself uses the generic send-proxy keyword.
-    tcp-check connect port 80 send-proxy
-    tcp-check send-binary 474554202f6865616c746820485454502f312e310d0a486f73743a20706f6c6963792d6865616c74680d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a
-    tcp-check expect rstring ^HTTP/1\.[01][[:space:]]+200
-    server-template policy ${POLICY_POOL_SLOTS} ${POLICY_POOL_HOST}:80 check inter 1s fall 2 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr send-proxy-v2
+    server-template policy ${POLICY_POOL_SLOTS} ${POLICY_POOL_HOST}:80 check inter 1s fall 2 rise 2 resolvers docker init-addr none init-state up hash-key addr send-proxy-v2
 
 backend policy_https
     mode tcp
@@ -82,11 +72,7 @@ backend policy_https
     option redispatch
     retries 2
     timeout server ${PUBLIC_IDLE_SECONDS}s
-    option tcp-check
-    tcp-check connect port 443 ssl send-proxy
-    tcp-check send-binary 474554202f6865616c746820485454502f312e310d0a486f73743a20706f6c6963792d6865616c74680d0a436f6e6e656374696f6e3a20636c6f73650d0a0d0a
-    tcp-check expect rstring ^HTTP/1\.[01][[:space:]]+200
-    server-template policy ${POLICY_POOL_SLOTS} ${POLICY_POOL_HOST}:443 check inter 1s fall 2 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr send-proxy-v2 verify none
+    server-template policy ${POLICY_POOL_SLOTS} ${POLICY_POOL_HOST}:443 check inter 1s fall 2 rise 2 resolvers docker init-addr none init-state up hash-key addr send-proxy-v2
 
 frontend versiond_router_in
     option httplog
@@ -109,34 +95,15 @@ frontend versiond_router_in
 
 ${VERSIOND_ROUTER_BACKENDS}
 
-frontend edge_api_in
-    option httplog
-    bind ${POLICY_BIND_ADDRESS}:${EDGE_FRONTEND_PORT}
-    maxconn ${MAX_CONNECTIONS}
-    # Preserve X-Real-IP and X-Forwarded-Proto set by the policy worker.
-    default_backend edge_api_pool
-
-backend edge_api_pool
-    balance leastconn
-    option httpchk
-    http-check send meth GET uri /readyz
-    http-check expect status 200
-    http-reuse safe
-    option redispatch
-    retry-on conn-failure empty-response 502
-    retries 2
-    http-request disable-l7-retry if !METH_GET !METH_HEAD !METH_OPTIONS
-    server-template edgeapi ${EDGE_POOL_SLOTS} ${EDGE_POOL_HOST}:${EDGE_API_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr
-
 ${CATALOG_PROXY_CONFIG}
 
 frontend admin
     option httplog
     bind 127.0.0.1:${ADMIN_PORT}
     http-request return status 200 content-type text/plain string "live\n" if { path /livez }
+    http-request set-var(txn.ready_ver) url_param(version),url_dec(0) if { path /readyz } { url_param(version) -m found }
 ${ADMIN_READY_RULES}
     ${DYNAMIC_READY_GUARD}
-    use_backend %[query,map_str(${READY_VERSION_BACKEND_MAP})] if { path /readyz } { query,map_str(${READY_VERSION_BACKEND_MAP}) -m found }
     default_backend admin_not_found
 
 backend admin_not_found

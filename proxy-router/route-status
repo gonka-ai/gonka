@@ -5,18 +5,6 @@ set -eu
 SOCK=${HAPROXY_SOCKET:-/var/run/haproxy/haproxy.sock}
 VERSION_MAP=${PROXY_ROUTER_VERSION_MAP:-/etc/haproxy/version-router.map}
 
-tmpdir=$(mktemp -d)
-trap 'rm -rf "$tmpdir"' EXIT
-
-runtime_to_file() {
-    command=$1
-    target=$2
-    if ! printf '%s\n' "$command" | socat stdio "$SOCK" > "$target"; then
-        echo "route-status: HAProxy Runtime API command failed: $command" >&2
-        return 1
-    fi
-}
-
 if [ "$#" -ne 2 ]; then
     echo "usage: route-status VERSION|--coarse ADDRESS" >&2
     exit 2
@@ -25,61 +13,20 @@ fi
 if [ "$1" = --coarse ]; then
     backend=versiond_router_coarse
 else
-    runtime_to_file "show map $VERSION_MAP" "$tmpdir/map"
-    if ! awk '
-            NF && ($1 !~ /^0x[[:xdigit:]]+$/ || NF < 3) { exit 1 }
-        ' "$tmpdir/map"; then
-        echo "route-status: HAProxy Runtime API returned invalid show map output" >&2
-        exit 1
-    fi
-    backend=$(awk -v version="$1" \
-        '$2 "" == version "" { print $3; found = 1; exit } END { if (!found) exit 3 }' \
-        "$tmpdir/map") || {
+    backend=$(printf 'show map %s\n' "$VERSION_MAP" | socat stdio "$SOCK" | \
+        awk -v version="$1" '$2 "" == version "" { print $3; found = 1; exit } END { if (!found) exit 3 }') || {
         status=$?
         [ "$status" -eq 3 ] && exit 3
         exit "$status"
     }
 fi
 
-runtime_to_file "show servers state $backend" "$tmpdir/servers"
-server=$(awk -v address="$2" '
-        $1 == "#" {
-            # The leading '#' is a header marker, not a data column.
-            for (i = 2; i <= NF; i++) column[$i] = i - 1
-            header = 1
-            next
-        }
-        header && column["srv_addr"] && column["srv_name"] && \
-                $column["srv_addr"] == address {
-            print $column["srv_name"]
+printf 'show servers state %s\n' "$backend" | socat stdio "$SOCK" | \
+    awk -v address="$2" '
+        NR > 2 && $5 == address {
             found = 1
-            exit
-        }
-        END {
-            if (!header || !column["srv_addr"] || !column["srv_name"]) exit 2
-            if (!found) exit 1
-        }
-    ' "$tmpdir/servers") || {
-        status=$?
-        if [ "$status" -eq 2 ]; then
-            echo "route-status: HAProxy Runtime API returned invalid show servers state output" >&2
-        fi
-        exit 1
-    }
-
-# Administrative state from `show servers state` can retain DNS/runtime flags
-# after a dynamic slot is enabled. `show stat` is the serving authority: an UP
-# status means HAProxy currently admits the server into the backend.
-runtime_to_file "show stat" "$tmpdir/stats"
-if ! grep -q '^# pxname,svname,' "$tmpdir/stats"; then
-    echo "route-status: HAProxy Runtime API returned invalid show stat output" >&2
-    exit 1
-fi
-awk -F, -v backend="$backend" -v server="$server" '
-        $1 == backend && $2 == server {
-            found = 1
-            if ($18 ~ /^UP/) exit 0
+            if ($6 == 2 && $7 == 0) exit 0
             exit 1
         }
         END { if (!found) exit 1 }
-    ' "$tmpdir/stats"
+    '

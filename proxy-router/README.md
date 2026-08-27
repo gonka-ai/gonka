@@ -1,15 +1,13 @@
 # proxy-router
 
 `proxy-router` is the host-local HAProxy at the edge of the Compose deployment.
-It has three independent data-plane responsibilities:
+It has three data-plane responsibilities:
 
 1. expose public TCP listeners on ports 80 and 443 and distribute connections
    across private nginx `proxy-policy` workers with PROXY protocol v2;
 2. distribute `/devshard` requests from those workers across ready
    `versiond-router` replicas, using route-specific health checks;
-3. distribute Tier A read-only requests directly across ready `edge-api`
-   replicas;
-4. expose only DAPI's read-only `GET /versions` catalog on the isolated inner
+3. expose only DAPI's read-only `GET /versions` catalog on the isolated inner
    router network.
 
 The nginx workers still own TLS, HTTP/2, CORS, rate limits, path rewrites, and
@@ -22,9 +20,8 @@ the service-pool distributors to scale and restart independently.
 client
   -> proxy-router :80/:443
   -> proxy-policy2 + proxy-policy (fixed rolling slots)
-       -> ordinary routes -> existing services
+       -> ordinary and edge-api routes -> existing services
        -> /devshard/* -> proxy-router :18081 -> versiond-router fleet
-       -> Tier A /v1/* -> proxy-router :18082 -> edge-api pool
 ```
 
 The public-to-policy hop is TCP, so encrypted HTTP/2 remains end-to-end between
@@ -32,9 +29,11 @@ the client and nginx. `send-proxy-v2` carries the original source address to the
 worker. That listener is bound only to the internal `proxy-policy-front`
 network; nginx derives both its bind address and trusted PROXY CIDR from the
 `proxy-policy-ingress` peer. Containers on the shared application network
-cannot reach or spoof that hop. nginx returns the two HA routes to the private
-HTTP frontends on that network; HAProxy then reaches each application pool on
-its own internal network.
+cannot reach or spoof that hop. nginx returns `/devshard` to the private HTTP
+frontend on that network; HAProxy then reaches the versiond-router pool. Edge
+API traffic keeps the pre-existing nginx path in this release: a single worker
+targets `edge-api` directly, while the multi-instance overlay targets the
+existing `edge-api-router` nginx service.
 
 ## Versiond-router selection
 
@@ -82,55 +81,25 @@ backends through a local Unix Runtime API socket. The process has no shared
 routing database, leader, or peer protocol. It does not need Redis:
 
 - `proxy-policy-front` resolves to both private nginx policy slots;
-- `versiond-router-fleet` resolves only to the independently managed router
-  slots; the distinct name prevents a transitional singleton from satisfying
-  fleet readiness during the one-time upgrade;
-- `edge-api-pool` resolves to edge-api replicas.
-
-Each policy slot exposes `/health` through its production HTTP and HTTPS
-listeners on the isolated policy network. The active check sends the same PROXY
-v2 preamble as production traffic, completes HTTP or TLS on that connection,
-and requires `/health` to return `200`. The endpoint is backed by the existing
-policy sidecar and resolves an alias scoped to the shared application network.
-Losing the data listener, PROXY support, that interface, or its Docker DNS view
-therefore removes only the affected worker from the corresponding public pool,
-while failures of an individual upstream application remain visible at their
-own route rather than collapsing the entire policy tier.
-
-Each policy container runs its own sidecar, and a crashed sidecar is restarted
-after five seconds. Readiness deliberately remains fail-closed during that
-restart: returning a fallback `200` would admit a worker whose application
-network has not been verified. A defect shared by the identical sidecar binaries
-can therefore withdraw both policy workers at once even while nginx itself is
-running; this is a correlated software failure of the policy deployment unit.
+- `versiond-router` resolves to the router instances declared by the active
+  Compose topology. A later fleet overlay can supply a multi-address alias
+  without changing this routing contract.
 
 `server-template` reserves router capacity and `PROXY_ROUTER_VERSION_CAPACITY`
 reserves version-backend capacity. Neither a new router address nor a new
-governance name requires a reload. Fresh router and policy slots start fully
-down and become eligible only after their configured readiness checks succeed.
-
-HAProxy retains the health state of an occupied slot when Docker DNS changes
-its address. A policy-worker replacement therefore follows an explicit
-generation boundary: put the old address in runtime drain, confirm withdrawal
-from new selection, gracefully stop the worker, reset its health to `DOWN`,
-and return the empty slot to check-enabled `READY` state. After the replacement
-appears, its address must complete a new L7 `rise` before HAProxy admits it.
-The host updater owns this sequence. TCP redispatch moves a new connection to
-another admitted worker after the selected address stops accepting connections.
+governance name requires a reload. Inner-router addresses become eligible only
+after successful readiness checks. Long-lived policy workers start as connect
+candidates immediately; TCP redispatch moves a connection to another worker if
+the selected address is not listening yet.
 
 ## Availability scope
 
-The inner `versiond-router` tier and nginx policy tier are replicated. The
-public `proxy-router` remains one process on one host in this Compose design.
-Loss of that host, Docker daemon, public listener, or its network is therefore a
-host-level outage. Multi-host ingress belongs in a later layer above this one
-(provider LB, VIP, or Kubernetes Service).
-
-The public router and both `proxy-policy` workers are one Compose deployment
-unit. Updating or rolling back that unit applies its image, environment,
-network, capability, and service definitions together. The host updater restores
-the captured model by targeting these three services explicitly. Unrelated
-services and containers owned by other active overlays remain unchanged.
+The nginx policy tier is replicated, and the private versiond distributor is
+ready for multiple independently managed routers. The current join overlay
+still declares one `versiond-router`; fleet management is a separate follow-up.
+The public `proxy-router` also remains one process on one host. Loss of that
+host, Docker daemon, public listener, or its network is therefore a host-level
+outage. Multi-host ingress belongs in a later layer above this one.
 
 ## Endpoints
 
@@ -138,11 +107,9 @@ services and containers owned by other active overlays remain unchanged.
 | --- | --- |
 | `:80`, `:443` | public TCP ingress to policy workers |
 | policy network `:18081` | private versiond-router distributor |
-| policy network `:18082` | private edge-api distributor |
 | `127.0.0.1:8404/livez` | process liveness |
 | `127.0.0.1:8404/readyz` | active policy-worker availability |
 | `127.0.0.1:8404/readyz?component=versiond` | coarse router-fleet availability |
-| `127.0.0.1:8404/readyz?component=edge-api` | edge-api availability |
 | `127.0.0.1:8404/readyz?version=<v>` | end-to-end router capacity for one bootstrap or governance version |
 | `127.0.0.1:8405/metrics`, `proxy-router-metrics:8405/metrics` | HAProxy Prometheus exporter; internal only, no host port |
 | router-back `:9100/versions` | read-only bridge to DAPI's governance catalog; other methods and paths are rejected |
@@ -170,13 +137,13 @@ and cannot mutate routing.
 | `VERSIOND_ROUTER_ADMIN_PORT` | `8404` | router health port |
 | `VERSIOND_VERSIONS` | *(empty)* | static bootstrap floor; day-2 governance names are learned automatically |
 | `VERSIOND_NON_HA_VERSIONS` | *(empty)* | static legacy pins; these still define placement and must match every inner router |
-| `VERSIOND_ROUTING_CATALOG_URL` | *(empty)* | read-only dapi `GET /versions` endpoint; join Compose uses `http://api:9100/versions` |
+| `VERSIOND_ROUTING_CATALOG_URL` | *(empty)* | read-only dapi `GET /versions` endpoint; release configuration enables it together with catalog-aware router images |
 | `VERSIOND_ROUTING_CATALOG_POLL_SECONDS` | `5` | governance-name discovery interval |
 | `VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS` | `3` | one catalog request timeout |
-| `VERSIOND_ROUTING_ACTIVATION_MIN_READY` | `2` | ready inner routers required before publishing a newly learned governance name; does not retract an active route during later degradation |
+| `PROXY_ROUTER_ACTIVATION_MIN_READY` | `1` | ready inner routers required before publishing a newly learned governance name; a later fleet overlay raises this reserve |
+| `VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS` | `false` | permit route removal only during supervised maintenance |
 | `VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS` | `86400` | maximum age of the persistent last-known-good catalog loaded before startup |
 | `PROXY_ROUTER_VERSION_CAPACITY` | `32` | backends reserved for names added after process start |
-| `EDGE_API_POOL_HOST` | `edge-api-pool` | edge-api DNS alias |
 | `PROXY_ROUTER_STREAM_IDLE_SECONDS` | `1200` | client/server inactivity timeout |
 | `PROXY_ROUTER_PUBLIC_IDLE_SECONDS` | `86400` | TCP inactivity timeout before nginx, including WebSocket/TLS connections |
 | `PROXY_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | upstream connect timeout |
@@ -187,97 +154,48 @@ and cannot mutate routing.
 | `PROXY_ROUTER_CATALOG_UPSTREAM_PORT` | `9100` | DAPI catalog port |
 | `HAPROXY_DNS_RESOLVER` | `127.0.0.11:53` | numeric DNS nameserver used by HAProxy service discovery; Docker Compose uses the default, while another runtime may inject its cluster DNS IP |
 
-The prefixes identify which contract owns a setting:
-
-- `PROXY_ROUTER_*` configures this outer public distributor.
-- `VERSIOND_ROUTER_*` describes the inner router fleet consumed by this tier;
-  the same names configure the inner router deployment where applicable.
-- `VERSIOND_ROUTING_*` is the catalog projection contract shared by both tiers.
-
-Consequently, `PROXY_ROUTER_ACTIVATION_MIN_READY` is the number of inner routers
-the outer tier requires, while `VERSIOND_ROUTING_ACTIVATION_MIN_READY` is the
-number of versiond hosts each inner router requires. They are separate reserves,
-not aliases.
-
 `VERSIOND_NON_HA_VERSIONS` and the bootstrap `VERSIOND_VERSIONS` must match every
 inner router. Runtime additions come from the same catalog on both tiers and do
 not change escrow placement.
 
 Invalid catalog URL, timing, or capacity values fail startup. Every fully
-projected snapshot is atomically persisted before the HAProxy request map is
-atomically replaced. All additions observed in one poll pass their ready reserve
-together, so a partially ready projection cannot expose only a prefix. A replacement renders a fresh
-snapshot before HAProxy starts, so a transient dapi failure does not erase
-learned routes; stale, corrupt, and future-dated snapshots fail closed to the
-bootstrap floor. Cached additions remain assigned to bounded dynamic slots, so
-a restart never resets capacity usage; startup fails if a reduced capacity
-cannot represent a fresh cache. `catalog-status --state` exposes a persistent
-machine-readable projection state, including `capacity-exhausted`, for log and
-host monitoring. The entrypoint restarts an unexpectedly exited reconciler
-without restarting HAProxy.
+ready addition is persisted before its request-map entry is published. Admission
+is independent per version: an unavailable candidate remains staged without
+blocking another candidate that has reached its reserve. A candidate with no
+slot remains unpublished as `capacity-exhausted`, while already accepted routes
+continue to serve. Cached additions remain assigned to bounded dynamic slots, so
+a restart never resets capacity usage; startup fails if reduced capacity cannot
+represent the accepted cache.
+
+The catalog is additions-only during normal operation. A snapshot that omits an
+accepted name keeps that route and cache entry and reports `withdrawal-pending`.
+Removal requires an explicit maintenance run with
+`VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=true`. Accepted snapshots are written
+atomically under `/var/lib/gonka-router`; stale or future-dated timestamps are
+diagnostic and do not revoke accepted routes. Malformed or empty source data
+leaves the last-known-good projection untouched. `catalog-status --state`
+exposes these persistent states for monitoring, and the entrypoint restarts an
+unexpectedly exited reconciler without restarting HAProxy.
 
 The router consumes DAPI's existing `{"versions":[...]}` response. Names must
 be valid and unique, and the local projection only grows without an explicit
 maintenance operation. A malformed or removal snapshot leaves the last admitted
 routes unchanged. This is a local HA safety policy, not a governance rule.
-Existing schema-1 cache payloads are accepted as local generation zero. Cache
-protocol 2 uses `catalog-v2.json`; the first startup
-validates and atomically migrates a fresh legacy `catalog.json` while retaining
-the original for rollback. Invalid or stale legacy data is ignored and obtained
-again from DAPI, with the static bootstrap floor remaining fail-closed.
-
-## Operations
-
-The main Compose project owns `proxy-router`, the private policy network, and
-the policy workers. It does not own the inner router slots or their two external
-data-plane networks. Router slots also join the main project's default network
-through a metrics-only listener so the shipped Prometheus can discover every
-slot. The fleet creates/validates the data-plane networks, so main-stack `down`
-cannot remove infrastructure required by stopped slots. Use:
-
-```bash
-source deploy/join/config.env
-deploy/join/versiond-router-fleet.sh prepare-networks
-deploy/join/versiond-router-fleet.sh up
-deploy/join/versiond-router-fleet.sh status
-deploy/join/versiond-router-fleet.sh rollout
-```
-
-`status` checks both each slot's effective runtime route view and, when the
-active parent is `proxy-router`, the slot's actual parent admission. Before the
-one-time cutover it reports parent admission as not applicable rather than
-confusing local bootstrap health with production admission. The rollout checks
-the same two layers and replaces one slot only after that reserve is visible at
-both levels. A failed slot is restored from the exact pre-rollout image and
-environment.
-
-For a newly approved protocol, hosters do not edit `config.env` or roll either
-router tier. Network activation automation can use the local end-to-end gate:
-
-```bash
-deploy/join/versiond-router-fleet.sh wait-version v6
-```
-
-It requires every slot to have learned the name and at least the configured
-ready reserve to be admitted by this parent. The approved catalog cannot provide
-a pre-approval signal; a staged pre-approval workflow would need a separate
-signed candidate feed.
-
-Every fleet command locks the same deployment-local file next to `config.env`.
-The lock is opened read-only after creation, so invocations by the deployment
-user and through `sudo` coordinate on the same inode without relying on a
-per-user runtime directory.
+The parent and inner routers use the same validated schema-1 cache contract.
+A stale cache retains already accepted routes while fresh catalog convergence
+is pending; malformed cache data is ignored and obtained again from DAPI, with
+the static bootstrap floor remaining fail-closed.
 
 ## Tests
 
 ```bash
 make -C proxy-router test-render
+make -C proxy-router test-compose
 make -C proxy-router test-routing
-make -C versiond-router test-fleet
 ```
 
 The routing test uses real Docker networks, HAProxy, policy workers, route-aware
-router health, an unavailable router data port, and multiple edge-api replicas.
-It verifies failover, a policy replacement that receives a new Docker IP,
-withdrawal before replacement admission, exactly-once POST execution in the
-tested connection-failure path, and edge-api pool routing.
+router health, an unavailable router data port, and a legacy edge-api-router
+fixture. It verifies failover, proves that the proxy does not replay a
+non-idempotent POST in the tested connection-failure path, and ensures edge-api
+traffic does not enter a new HAProxy backend in this release.
