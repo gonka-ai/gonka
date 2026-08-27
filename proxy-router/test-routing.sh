@@ -495,6 +495,14 @@ docker run -d --name gonka-pr-proxy-admission --network "$network" \
     -e NGINX_MODE=http \
     -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
     "$image" >/dev/null
+for _ in $(seq 80); do
+    docker exec gonka-pr-proxy-admission curl -fsS \
+        http://127.0.0.1:8404/livez >/dev/null 2>&1 && break
+    sleep 0.05
+done
+docker exec gonka-pr-proxy-admission curl -fsS \
+    http://127.0.0.1:8404/livez >/dev/null \
+    || fail "policy admission router did not reach the live stage"
 docker run -d --name gonka-pr-policy-admission --network "$network" \
     --network-alias proxy-policy-admission \
     -v "$tmpdir/policy-admission.py:/app.py:ro" \
