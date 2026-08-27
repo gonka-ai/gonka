@@ -379,26 +379,6 @@ if [ "$SSL_ENABLED" = "true" ]; then
         /setup-ssl.sh || echo "WARNING: SSL setup failed; will attempt to continue"
     fi
 
-    # Start background renewal loop if order.id exists (indicates auto issuance)
-    if [ -f "/etc/nginx/ssl/order.id" ]; then
-        RENEW_INTERVAL_HOURS=${RENEW_INTERVAL_HOURS:-24}
-        echo "Starting background renewal loop (every ${RENEW_INTERVAL_HOURS}h)"
-        (
-            while true; do
-                if /setup-ssl.sh renew-if-needed; then
-                    echo "No renewal needed"
-                else
-                    if [ "$?" -eq 10 ]; then
-                        echo "Certificate renewed; reloading nginx"
-                        nginx -s reload || true
-                    else
-                        echo "WARNING: Renewal attempt failed"
-                    fi
-                fi
-                sleep $(( RENEW_INTERVAL_HOURS * 3600 ))
-            done
-        ) &
-    fi
 fi
 
 # Prepare template vars for unified config
@@ -426,6 +406,8 @@ else
     export LISTEN_HTTPS="# HTTPS disabled"
     export SSL_CONFIG="# SSL disabled"
 fi
+DESIRED_LISTEN_HTTPS=$LISTEN_HTTPS
+DESIRED_SSL_CONFIG=$SSL_CONFIG
 
 # Route Disabling Logic
 # If DISABLE_* env vars are set to true, inject a "return 404" into the location block
@@ -1248,21 +1230,26 @@ ENVSUBST_VARS="${ENVSUBST_VARS},\$BLOCKED_ROUTES_CONFIG,\$EXEMPT_ROUTES_CONFIG,\
 ENVSUBST_VARS="${ENVSUBST_VARS},\$VERSIOND_UPSTREAM,\$DEVSHARD_VERSIOND_LOCATION,\$EDGE_API_UPSTREAM"
 
 echo "Rendering unified nginx configuration (mode: $NGINX_MODE, server_name: $SERVER_NAME)"
-envsubst "$ENVSUBST_VARS" < /etc/nginx/nginx.unified.conf.template | sed 's/\$\$/$/g' > /etc/nginx/nginx.conf
+render_nginx_config() {
+    envsubst "$ENVSUBST_VARS" < /etc/nginx/nginx.unified.conf.template \
+        | sed 's/\$\$/$/g' > "$1"
+}
+render_nginx_config /etc/nginx/nginx.conf
 
 # Validate nginx configuration (with fallback if SSL config fails)
+HTTPS_FALLBACK=false
 if nginx -t; then
     echo "Nginx configuration is valid"
 else
     echo "WARNING: Nginx configuration invalid"
     if [ "$ENABLE_HTTPS" = "true" ] && [ "$ENABLE_HTTP" = "true" ]; then
         echo "FALLBACK: Falling back to HTTP-only configuration"
-        ENABLE_HTTPS="false"
+        HTTPS_FALLBACK=true
         export LISTEN_HTTPS="# HTTPS disabled"
         export SSL_CONFIG="# SSL disabled"
 
         # Retry rendering with HTTP-only settings
-        envsubst "$ENVSUBST_VARS" < /etc/nginx/nginx.unified.conf.template | sed 's/\$\$/$/g' > /etc/nginx/nginx.conf
+        render_nginx_config /etc/nginx/nginx.conf
 
         if nginx -t; then
             echo "SUCCESS: Nginx configuration is valid (HTTP-only fallback)"
@@ -1277,6 +1264,50 @@ else
         echo "--- End Debug ---"
         exit 1
     fi
+fi
+
+if [ "$SSL_ENABLED" = "true" ]; then
+    RENEW_INTERVAL_HOURS=${RENEW_INTERVAL_HOURS:-24}
+    RENEW_RETRY_SECONDS=${PROXY_SSL_WAIT_SECONDS:-60}
+    echo "Starting background renewal loop (every ${RENEW_INTERVAL_HOURS}h)"
+    (
+        # Let the foreground entrypoint exec nginx before the first renewal.
+        while [ ! -f /var/run/nginx.pid ]; do sleep 0.1; done
+        while true; do
+            renewal_status=0
+            /setup-ssl.sh renew-if-needed || renewal_status=$?
+            case "$renewal_status" in
+              0)
+                echo "No renewal needed"
+                sleep $(( RENEW_INTERVAL_HOURS * 3600 ))
+                ;;
+              10)
+                if [ "$HTTPS_FALLBACK" = "true" ]; then
+                    export LISTEN_HTTPS="$DESIRED_LISTEN_HTTPS"
+                    export SSL_CONFIG="$DESIRED_SSL_CONFIG"
+                    next_config=/etc/nginx/nginx.conf.next
+                    if render_nginx_config "$next_config" \
+                        && nginx -t -c "$next_config" \
+                        && mv -f "$next_config" /etc/nginx/nginx.conf; then
+                        HTTPS_FALLBACK=false
+                    else
+                        echo "WARNING: HTTPS configuration recovery failed"
+                        rm -f "$next_config"
+                        sleep "$RENEW_RETRY_SECONDS"
+                        continue
+                    fi
+                fi
+                echo "Certificate renewed; reloading nginx"
+                nginx -s reload || true
+                sleep $(( RENEW_INTERVAL_HOURS * 3600 ))
+                ;;
+              *)
+                echo "WARNING: Renewal attempt failed; retrying in ${RENEW_RETRY_SECONDS}s"
+                sleep "$RENEW_RETRY_SECONDS"
+                ;;
+            esac
+        done
+    ) &
 fi
 
 echo "Available endpoints:"
