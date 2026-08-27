@@ -403,6 +403,12 @@ proxy_admin '/readyz?version=v9' >/dev/null || {
         /usr/local/lib/router-runtime/catalog-status --state >&2 || true
     fail "top distributor did not admit governance v9"
 }
+router_b_ip=$(docker inspect -f \
+    "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
+    gonka-pr-router-b)
+docker exec gonka-pr-proxy /usr/local/lib/proxy-router/route-status \
+    v9 "$router_b_ip" >/dev/null \
+    || fail "route-status did not report the admitted dynamic v9 slot"
 docker rm -f gonka-pr-router-a >/dev/null
 docker run -d --name gonka-pr-router-a --network "$network" \
     --network-alias versiond-router-fleet \

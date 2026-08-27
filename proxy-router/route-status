@@ -36,11 +36,28 @@ else
 fi
 
 runtime_to_file "show servers state $backend" "$tmpdir/servers"
-awk -v address="$2" '
+server=$(awk -v address="$2" '
         NR > 2 && $5 == address {
+            print $4
             found = 1
-            if ($6 == 2 && $7 == 0) exit 0
+            exit
+        }
+        END { if (!found) exit 1 }
+    ' "$tmpdir/servers") || exit 1
+
+# Administrative state from `show servers state` can retain DNS/runtime flags
+# after a dynamic slot is enabled. `show stat` is the serving authority: an UP
+# status means HAProxy currently admits the server into the backend.
+runtime_to_file "show stat" "$tmpdir/stats"
+if ! grep -q '^# pxname,svname,' "$tmpdir/stats"; then
+    echo "route-status: HAProxy Runtime API returned invalid show stat output" >&2
+    exit 1
+fi
+awk -F, -v backend="$backend" -v server="$server" '
+        $1 == backend && $2 == server {
+            found = 1
+            if ($18 ~ /^UP/) exit 0
             exit 1
         }
         END { if (!found) exit 1 }
-    ' "$tmpdir/servers"
+    ' "$tmpdir/stats"
