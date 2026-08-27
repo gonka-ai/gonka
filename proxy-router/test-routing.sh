@@ -19,10 +19,10 @@ state=gonka-proxy-router-state-$$
 containers=(
     gonka-pr-proxy gonka-pr-proxy-lb gonka-pr-probe gonka-pr-catalog
     gonka-pr-proxy-both
-    gonka-pr-proxy-cold
+    gonka-pr-proxy-admission
     gonka-pr-proxy-plain gonka-pr-proxy-v2
     gonka-pr-proxy-cache-floor
-    gonka-pr-policy-a gonka-pr-policy-b gonka-pr-policy-cold
+    gonka-pr-policy-a gonka-pr-policy-b gonka-pr-policy-admission
     gonka-pr-policy-plain gonka-pr-policy-v2
     gonka-pr-router-a gonka-pr-router-b gonka-pr-router-bad
     gonka-pr-router-migration
@@ -145,22 +145,49 @@ if data_enabled:
 threading.Event().wait()
 PY
 
-cat >"$tmpdir/policy-cold.py" <<'PY'
+cat >"$tmpdir/policy-admission.py" <<'PY'
 import http.server
 import socketserver
 import threading
-import time
+
+
+phase = "pending"
+check_started = threading.Event()
+check_completed = threading.Event()
+release_check = threading.Event()
 
 
 class Data(socketserver.BaseRequestHandler):
     def handle(self):
         self.request.recv(256)
+        check_started.set()
+        release_check.wait()
+        status = 200 if phase == "ready" else 503
+        reason = "OK" if status == 200 else "Service Unavailable"
+        self.request.sendall(
+            f"HTTP/1.1 {status} {reason}\r\nContent-Length: 0\r\n\r\n".encode()
+        )
+        check_completed.set()
 
 
-class Readiness(http.server.BaseHTTPRequestHandler):
+class Control(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
-        time.sleep(2)
-        self.send_response(503)
+        global phase
+        if self.path == "/started":
+            status = 200 if check_started.is_set() else 503
+        elif self.path == "/completed":
+            status = 200 if check_completed.is_set() else 503
+        elif self.path == "/fail":
+            phase = "failed"
+            release_check.set()
+            status = 200
+        elif self.path == "/ready":
+            phase = "ready"
+            release_check.set()
+            status = 200
+        else:
+            status = 404
+        self.send_response(status)
         self.send_header("Content-Length", "0")
         self.end_headers()
 
@@ -172,7 +199,7 @@ threading.Thread(
     target=lambda: socketserver.ThreadingTCPServer(("", 80), Data).serve_forever(),
     daemon=True,
 ).start()
-http.server.ThreadingHTTPServer(("", 8081), Readiness).serve_forever()
+http.server.ThreadingHTTPServer(("", 9000), Control).serve_forever()
 PY
 
 cat >"$tmpdir/policy-v2.py" <<'PY'
@@ -413,30 +440,55 @@ proxy_backend_addr_up() {
         '
 }
 
-# A newly resolved worker stays excluded while its first L7 check is still in
-# flight. The delayed 503 makes the former init-state UP/INI window observable.
-docker run -d --name gonka-pr-proxy-cold --network "$network" \
-    -e PROXY_POLICY_POOL_HOST=proxy-policy-cold \
+# Admission follows explicit health-check stages: pending, failed, then ready.
+# No stage may enter nbsrv() before a complete successful L7 result.
+docker run -d --name gonka-pr-proxy-admission --network "$network" \
+    -e PROXY_POLICY_POOL_HOST=proxy-policy-admission \
     -e NGINX_MODE=http \
     -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
     "$image" >/dev/null
-(
-    for _ in $(seq 80); do
-        code=$(docker exec gonka-pr-proxy-cold curl -sS -o /dev/null \
-            -w '%{http_code}' http://127.0.0.1:8404/readyz 2>/dev/null || true)
-        [[ $code != 200 ]] || exit 1
-        sleep 0.05
-    done
-) &
-cold_watch_pid=$!
-sleep 0.2
-docker run -d --name gonka-pr-policy-cold --network "$network" \
-    --network-alias proxy-policy-cold \
-    -v "$tmpdir/policy-cold.py:/app.py:ro" \
+docker run -d --name gonka-pr-policy-admission --network "$network" \
+    --network-alias proxy-policy-admission \
+    -v "$tmpdir/policy-admission.py:/app.py:ro" \
     python:3.12-alpine python /app.py >/dev/null
-wait "$cold_watch_pid" \
-    || fail "policy worker was admitted before its first successful L7 check"
-docker rm -f gonka-pr-proxy-cold gonka-pr-policy-cold >/dev/null
+for _ in $(seq 60); do
+    docker exec gonka-pr-proxy-admission curl -fsS \
+        http://proxy-policy-admission:9000/started >/dev/null 2>&1 && break
+    sleep 0.05
+done
+docker exec gonka-pr-proxy-admission curl -fsS \
+    http://proxy-policy-admission:9000/started >/dev/null \
+    || fail "policy admission check did not enter the pending stage"
+code=$(docker exec gonka-pr-proxy-admission curl -sS -o /dev/null \
+    -w '%{http_code}' http://127.0.0.1:8404/readyz)
+[[ $code == 503 ]] \
+    || fail "pending policy check was admitted before an L7 result"
+
+docker exec gonka-pr-proxy-admission curl -fsS \
+    http://proxy-policy-admission:9000/fail >/dev/null
+for _ in $(seq 60); do
+    docker exec gonka-pr-proxy-admission curl -fsS \
+        http://proxy-policy-admission:9000/completed >/dev/null 2>&1 && break
+    sleep 0.05
+done
+docker exec gonka-pr-proxy-admission curl -fsS \
+    http://proxy-policy-admission:9000/completed >/dev/null \
+    || fail "policy admission check did not complete the failed stage"
+code=$(docker exec gonka-pr-proxy-admission curl -sS -o /dev/null \
+    -w '%{http_code}' http://127.0.0.1:8404/readyz)
+[[ $code == 503 ]] || fail "failed policy check entered admission"
+
+docker exec gonka-pr-proxy-admission curl -fsS \
+    http://proxy-policy-admission:9000/ready >/dev/null
+for _ in $(seq 80); do
+    code=$(docker exec gonka-pr-proxy-admission curl -sS -o /dev/null \
+        -w '%{http_code}' http://127.0.0.1:8404/readyz)
+    [[ $code == 200 ]] && break
+    sleep 0.1
+done
+[[ $code == 200 ]] \
+    || fail "successful policy checks did not complete admission"
+docker rm -f gonka-pr-proxy-admission gonka-pr-policy-admission >/dev/null
 
 # The check must use the exact production protocol on the data connection:
 # PROXY v2, then HTTP (or TLS and HTTP), then a 200 response from /health.
