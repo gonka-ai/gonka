@@ -261,6 +261,10 @@ test-compose:
 		-f "$$root/deploy/join/docker-compose.versiond.yml" \
 		config --format json); \
 	printf '%s\n' "$$custom_admin" | jq -e '.services["versiond-router"].environment.VERSIOND_ROUTER_ADMIN_PORT == "9410" and .services.proxy.environment.VERSIOND_ROUTER_ADMIN_PORT == "9410"' >/dev/null || { echo "test-compose: router admin port is not shared across tiers" >&2; exit 1; }; \
+	grep -A5 '^  - job_name: proxy-router$$' \
+		"$$root/deploy/join/observability/prometheus.yml" \
+		| grep -q 'proxy-router-metrics:8405' \
+		|| { echo "test-compose: public router metrics are not scraped" >&2; exit 1; }; \
 	echo "test-compose: ok"
 
 VERSION ?= $(shell git describe --always)
