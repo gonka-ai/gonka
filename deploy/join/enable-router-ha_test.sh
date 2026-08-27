@@ -23,7 +23,13 @@ if [[ -n ${PROXY_POLICY_IMAGE-} ]]; then
 fi
 
 if [[ ${1:-} == image && ${2:-} == inspect ]]; then
-	if [[ ${4:-} == *ai.gonka.catalog-cache-protocol-version* ]]; then
+	if [[ ${4:-} == '{{.Id}}' ]]; then
+		case ${!#} in
+			candidate-policy) printf 'sha256:candidate-policy\n' ;;
+			candidate-proxy) printf 'sha256:candidate-proxy\n' ;;
+			*) printf 'sha256:candidate-other\n' ;;
+		esac
+	elif [[ ${4:-} == *ai.gonka.catalog-cache-protocol-version* ]]; then
 		case ${!#} in
 			candidate-proxy) printf '%s\n' "${CANDIDATE_PROXY_CACHE_PROTOCOL-2}" ;;
 			*) printf '%s\n' "${CANDIDATE_ROUTER_CACHE_PROTOCOL-2}" ;;
@@ -40,10 +46,16 @@ fi
 
 if [[ ${1:-} == inspect ]]; then
     if [[ ${2:-} == --format ]]; then
-		case ${3:-} in
-			'{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')
-				if [[ -f $STATE_DIR/stopped-${4:-unknown} ]]; then
-					printf 'false none\n'
+			case ${3:-} in
+				'{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')
+					service=
+					case ${4:-} in
+						cid-proxy-policy2*) service=proxy-policy2 ;;
+						cid-proxy-policy*) service=proxy-policy ;;
+					esac
+					if [[ -f $STATE_DIR/stopped-${4:-unknown} || \
+						(-n $service && -f $STATE_DIR/stopped-$service) ]]; then
+						printf 'false none\n'
 				else
 					printf 'true healthy\n'
 				fi
@@ -68,9 +80,10 @@ if [[ ${1:-} == inspect ]]; then
 					proxy) printf '%s\n' "${PROXY_CONFIG_HASH:-hash-proxy}" ;;
 				esac
 				;;
-            '{{.Image}}')
-                case ${4:-} in
-                    cid-proxy-policy*) printf 'sha256:old-policy\n' ;;
+			'{{.Image}}')
+				case ${4:-} in
+					cid-proxy-policy*-new) printf 'sha256:candidate-policy\n' ;;
+					cid-proxy-policy*) printf 'sha256:old-policy\n' ;;
                     *) printf 'sha256:old-proxy\n' ;;
                 esac
                 ;;
@@ -87,13 +100,18 @@ if [[ ${1:-} == inspect ]]; then
 				;;
 			'{{.Config.Image}}')
 				case ${4:-} in
+					cid-proxy-policy*-new) printf 'candidate-policy\n' ;;
 					cid-proxy-policy*) printf 'old-policy-ref\n' ;;
 					*) printf 'old-proxy-ref\n' ;;
 				esac
 				;;
-            *NetworkSettings.Networks*)
-                case ${4:-} in
-                    cid-proxy-policy2*) printf '172.30.0.12\n' ;;
+			*NetworkSettings.Networks*)
+				case ${4:-} in
+					cid-proxy-policy2-new) printf '172.30.0.22\n' ;;
+					cid-proxy-policy-new | cid-proxy-policy-1-new | cid-proxy-policy-2-new)
+						printf '172.30.0.21\n'
+						;;
+					cid-proxy-policy2*) printf '172.30.0.12\n' ;;
                     cid-proxy-policy*) printf '172.30.0.11\n' ;;
                 esac
                 ;;
@@ -173,7 +191,7 @@ if [[ ${1:-} == compose ]]; then
         [[ $arg == *docker-compose.proxy-v4-compat.yml ]] && compat=true
 		[[ $previous == -f ]] && model_file=$arg
 		[[ $arg == --hash ]] && config_hash=true
-        case $arg in config | pull | up | ps | rm) action=$arg ;; esac
+		case $arg in config | pull | up | stop | ps | rm) action=$arg ;; esac
         case $arg in proxy | proxy-policy | proxy-policy2) service=$arg ;; esac
 		previous=$arg
     done
@@ -220,17 +238,26 @@ if [[ ${1:-} == compose ]]; then
         fi
         exit 0
     fi
-    if [[ $action == rm ]]; then
+	if [[ $action == rm ]]; then
         rm -f "$STATE_DIR/present-$service"
-        exit 0
-    fi
-    if [[ $action == up && $service == proxy-policy* ]]; then
-		if [[ -f $model_file && $model_file == *.gonka-rollback-model.* ]]; then
+		exit 0
+	fi
+	if [[ $action == stop && $service == proxy-policy* ]]; then
+		if [[ -f $STATE_DIR/stopped-$service ]]; then
+			: >"$STATE_DIR/stopped-twice-$service"
+		fi
+		: >"$STATE_DIR/stopped-$service"
+		exit 0
+	fi
+	if [[ $action == up && $service == proxy-policy* ]]; then
+			if [[ -f $model_file && $model_file == *.gonka-rollback-model.* ]]; then
 			printf 'policy-image=%s\n' \
 				"$(jq -r --arg service "$service" '.services[$service].image' "$model_file")" \
 				>>"$DOCKER_LOG"
-			: >"$STATE_DIR/present-$service"
-			rm -f "$STATE_DIR/generation-$service"
+				: >"$STATE_DIR/present-$service"
+				rm -f "$STATE_DIR/generation-$service"
+				rm -f "$STATE_DIR/stopped-$service"
+				rm -f "$STATE_DIR/stopped-twice-$service"
 			exit 0
 		fi
 		if [[ $service == "${KILL_POLICY_SERVICE-}" ]]; then
@@ -242,8 +269,10 @@ if [[ ${1:-} == compose ]]; then
 			: >"$STATE_DIR/generation-$service"
             exit 1
         fi
-        : >"$STATE_DIR/present-$service"
-		: >"$STATE_DIR/generation-$service"
+		: >"$STATE_DIR/present-$service"
+			: >"$STATE_DIR/generation-$service"
+		rm -f "$STATE_DIR/stopped-$service"
+		rm -f "$STATE_DIR/stopped-twice-$service"
         if [[ $service == "${DRIFT_AFTER_POLICY_SERVICE-}" ]]; then
             : >"$STATE_DIR/model-drift"
         fi
@@ -325,11 +354,32 @@ fi
 
 if [[ ${1:-} == exec && ${2:-} == proxy && \
     ${3:-} == /bin/sh && ${4:-} == -ec && \
-    ${5:-} == *'show servers state'* ]]; then
-    printf '# header\n# header2\n'
-    printf '1 policy 1 policy1 172.30.0.11 2 0\n'
-    printf '1 policy 2 policy2 172.30.0.12 2 0\n'
-    exit 0
+    ${5:-} == *'show stat'* ]]; then
+	printf '# pxname,svname,status,addr\n'
+	for service in proxy-policy proxy-policy2; do
+		[[ -f $STATE_DIR/present-$service ]] || continue
+		case $service in
+			proxy-policy)
+				old_address=172.30.0.11
+				new_address=172.30.0.21
+				;;
+			proxy-policy2)
+				old_address=172.30.0.12
+				new_address=172.30.0.22
+				;;
+		esac
+		address=$old_address
+		[[ ! -f $STATE_DIR/generation-$service ]] || address=$new_address
+		status=UP
+		if [[ -f $STATE_DIR/stopped-$service && \
+			($service != "${WITHDRAW_FAIL_SERVICE-}" || \
+			 -f $STATE_DIR/stopped-twice-$service) ]]; then
+			status=DOWN
+		fi
+		printf 'policy_http,%s,%s,%s:80\n' "$service" "$status" "$address"
+		printf 'policy_https,%s,%s,%s:443\n' "$service" "$status" "$address"
+	done
+	exit 0
 fi
 
 case ${1:-} in
@@ -403,14 +453,18 @@ run_cutover() {
     rm -f "$tmpdir/current"
     rm -f "$tmpdir/model-drift"
     rm -f "$tmpdir/fleet-spec-drift"
-    rm -f "$tmpdir"/present-proxy-policy*
+	rm -f "$tmpdir"/present-proxy-policy*
 	rm -f "$tmpdir"/generation-proxy*
+	rm -f "$tmpdir"/stopped-proxy-policy*
     if [[ -n ${INITIAL_PROXY_COMPONENT:-} ]]; then
         printf '%s\n' "$INITIAL_PROXY_COMPONENT" >"$tmpdir/current"
     fi
-    for service in ${INITIAL_POLICY_SERVICES-}; do
-        : >"$tmpdir/present-$service"
-    done
+	for service in ${INITIAL_POLICY_SERVICES-}; do
+		: >"$tmpdir/present-$service"
+		if [[ ${INITIAL_POLICY_GENERATION:-old} == candidate ]]; then
+			: >"$tmpdir/generation-$service"
+		fi
+	done
     env DOCKER_BIN="$tmpdir/docker" \
         DOCKER_LOG="$log" \
         STATE_DIR="$tmpdir" \
@@ -507,6 +561,14 @@ fi
 INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
 INITIAL_PROXY_COMPONENT=proxy-router \
     run_cutover "$tmpdir/idempotent.log" env
+policy2_stop_line=$(grep -n ' stop .*proxy-policy2$' "$tmpdir/idempotent.log" | head -n1 | cut -d: -f1)
+policy2_up_line=$(grep -n ' up .*proxy-policy2$' "$tmpdir/idempotent.log" | head -n1 | cut -d: -f1)
+policy_stop_line=$(grep -n ' stop .*proxy-policy$' "$tmpdir/idempotent.log" | head -n1 | cut -d: -f1)
+policy_up_line=$(grep -n ' up .*proxy-policy$' "$tmpdir/idempotent.log" | head -n1 | cut -d: -f1)
+[[ -n $policy2_stop_line && -n $policy2_up_line && -n $policy_stop_line && \
+    -n $policy_up_line && $policy2_stop_line -lt $policy2_up_line && \
+    $policy2_up_line -lt $policy_stop_line && $policy_stop_line -lt $policy_up_line ]] \
+    || fail "day-2 policy replacements did not withdraw each old generation before recreation"
 grep -q '^docker tag ' "$tmpdir/idempotent.log" || fail \
     "day-2 convergence did not arm public proxy rollback"
 grep -q 'docker image rm gonka/router-ha-proxy-rollback:' \
@@ -521,6 +583,14 @@ grep -q '^fleet apply$' "$tmpdir/idempotent.log" || fail \
 jq -e '.transaction.ingress.state == "committed"' \
     "$tmpdir/.gonka-router-ha-transaction.json" >/dev/null || fail \
     "rerun after TERM did not commit the recovered ingress transaction"
+
+INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
+INITIAL_POLICY_GENERATION=candidate \
+INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/already-converged.log" env
+if grep -Eq ' (stop|up) .*proxy-policy2?$' "$tmpdir/already-converged.log"; then
+	fail "already-converged policy generations were restarted"
+fi
 
 # If only slot B is admitted, update the failed A first. A fixed B->A order
 # would stop the final serving policy worker and drop all public traffic.
@@ -537,7 +607,21 @@ if INITIAL_POLICY_SERVICES='' INITIAL_PROXY_COMPONENT=proxy-router \
     fail "rollout proceeded without an admitted policy reserve"
 fi
 if grep -q ' up .*proxy-policy' "$tmpdir/no-policy-reserve.log"; then
-    fail "missing policy reserve was detected after mutation"
+	fail "missing policy reserve was detected after mutation"
+fi
+
+if INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
+    INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/withdrawal-failure.log" env \
+        ROUTER_HA_CUTOVER_TIMEOUT_SECONDS=1 \
+        WITHDRAW_FAIL_SERVICE=proxy-policy2; then
+	fail "policy replacement proceeded while the old address remained admitted"
+fi
+grep -q ' stop .*proxy-policy2$' "$tmpdir/withdrawal-failure.log" || fail \
+    "withdrawal failure did not stop the selected old generation"
+if grep ' up .*proxy-policy2$' "$tmpdir/withdrawal-failure.log" \
+    | grep -vq 'gonka-rollback-model'; then
+	fail "replacement started before withdrawal was confirmed"
 fi
 
 if INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \

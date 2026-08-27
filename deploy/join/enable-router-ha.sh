@@ -631,6 +631,11 @@ restore_policy_slot() {
 		fi
 		return 0
 	fi
+	if [[ $(proxy_component) == proxy-router ]] && \
+		! withdraw_policy_service "$service"; then
+		warn "could not withdraw the failed $service generation before rollback"
+		return 1
+	fi
 	if ! rollback_compose '.transaction.ingress.rollback_models.policy' \
 		up -d --no-deps --force-recreate --wait \
 		--wait-timeout "$cutover_timeout" --scale "$service=$replicas" \
@@ -807,18 +812,111 @@ verify_policy_contract() {
 	fi
 }
 
-policy_address_admitted() {
-	local backend=$1 address=$2
-	"$docker_bin" exec proxy /bin/sh -ec \
-		"printf 'show servers state $backend\\n' | socat stdio /var/run/haproxy/haproxy.sock" |
-		awk -v address="$address" '
-			NR > 2 && $5 == address {
-				found = 1
-				if ($6 == 2 && $7 == 0) exit 0
-				exit 1
+policy_address_admission_state() {
+	local backend=$1 address=$2 stats
+	stats=$("$docker_bin" exec proxy /bin/sh -ec \
+		"printf 'show stat\\n' | socat stdio /var/run/haproxy/haproxy.sock") || return 2
+	awk -F, -v backend="$backend" -v address="$address" '
+		NR == 1 {
+			for (i = 1; i <= NF; i++) {
+				name = $i
+				sub(/^#[[:space:]]*/, "", name)
+				column[name] = i
 			}
-			END { if (!found) exit 1 }
-		'
+			valid = column["pxname"] && column["status"] && column["addr"]
+			next
+		}
+		valid && $(column["pxname"]) == backend {
+			server_address = $(column["addr"])
+			if (server_address == address || index(server_address, address ":") == 1) {
+				if ($(column["status"]) ~ /^UP/) admitted = 1
+			}
+		}
+		END {
+			if (!valid) exit 2
+			exit admitted ? 0 : 1
+		}
+	' <<<"$stats"
+}
+
+policy_address_admitted() {
+	policy_address_admission_state "$@"
+}
+
+policy_address_withdrawn() {
+	local address=$1 mode backend status
+	local -a backends=()
+	mode=$(proxy_env_value NGINX_MODE || true)
+	mode=${mode:-http}
+	[[ $mode == https ]] || backends+=(policy_http)
+	[[ $mode == http ]] || backends+=(policy_https)
+	for backend in "${backends[@]}"; do
+		if policy_address_admission_state "$backend" "$address"; then
+			return 1
+		else
+			status=$?
+			((status == 1)) || return 2
+		fi
+	done
+	return 0
+}
+
+policy_service_addresses() {
+	local service=$1 id address
+	local -a ids=()
+	mapfile -t ids < <("${compose[@]}" ps --all --quiet "$service")
+	for id in "${ids[@]}"; do
+		address=$("$docker_bin" inspect --format \
+			"{{with index .NetworkSettings.Networks \"$policy_network\"}}{{.IPAddress}}{{end}}" \
+			"$id") || return 1
+		[[ $address =~ ^[0-9]+(\.[0-9]+){3}$ ]] && printf '%s\n' "$address"
+	done
+}
+
+wait_policy_withdrawal() {
+	local deadline=$((SECONDS + cutover_timeout)) address all_withdrawn
+	local -a addresses=("$@")
+	while ((SECONDS < deadline)); do
+		all_withdrawn=true
+		for address in "${addresses[@]}"; do
+			if ! policy_address_withdrawn "$address"; then
+				all_withdrawn=false
+				break
+			fi
+		done
+		$all_withdrawn && return 0
+		sleep 1
+	done
+	return 1
+}
+
+policy_service_needs_replacement() {
+	local service=$1 config image desired_image desired_hash id
+	local -a ids=()
+	config=$("${compose[@]}" config --format json) || return 0
+	image=$(jq -er --arg service "$service" '.services[$service].image' \
+		<<<"$config") || return 0
+	desired_image=$("$docker_bin" image inspect --format '{{.Id}}' "$image") || return 0
+	desired_hash=$(compose_service_hash "$service" "${compose[@]}") || return 0
+	mapfile -t ids < <("${compose[@]}" ps --all --quiet "$service")
+	((${#ids[@]} > 0)) || return 0
+	for id in "${ids[@]}"; do
+		[[ $("$docker_bin" inspect --format '{{.Image}}' "$id") == "$desired_image" ]] || return 0
+		[[ $(container_config_hash "$id") == "$desired_hash" ]] || return 0
+	done
+	return 1
+}
+
+withdraw_policy_service() {
+	local service=$1
+	local -a addresses=()
+	mapfile -t addresses < <(policy_service_addresses "$service")
+	"${compose[@]}" stop "$service"
+	((${#addresses[@]} == 0)) && return 0
+	wait_policy_withdrawal "${addresses[@]}" || {
+		warn "$service stopped, but its previous address remains admitted by proxy-router"
+		return 1
+	}
 }
 
 policy_service_admitted() {
@@ -865,8 +963,19 @@ roll_policy_slots() {
 		fi
 	fi
 	for service in "${rollout[@]}"; do
+		if ! policy_service_needs_replacement "$service"; then
+			if [[ $(proxy_component) == proxy-router ]]; then
+				wait_policy_admission "$service" || fail \
+					"unchanged $service is not admitted by the public proxy"
+			fi
+			continue
+		fi
 		verify_ingress_model_unchanged
 		record_ingress_touch "policy:$service"
+		if [[ $(proxy_component) == proxy-router ]]; then
+			withdraw_policy_service "$service" || fail \
+				"$service did not leave admission before replacement"
+		fi
 		"${compose[@]}" up -d --no-deps --wait \
 			--wait-timeout "$cutover_timeout" "$service"
 		if [[ $(proxy_component) == proxy-router ]]; then
