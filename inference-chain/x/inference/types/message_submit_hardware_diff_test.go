@@ -25,6 +25,16 @@ func TestMsgSubmitHardwareDiff_ValidateBasic(t *testing.T) {
 			msg: MsgSubmitHardwareDiff{
 				Creator: sample.AccAddress(),
 			},
+		}, {
+			name: "version too long",
+			msg: MsgSubmitHardwareDiff{
+				Creator: sample.AccAddress(),
+				NewOrModified: []*HardwareNode{{
+					LocalId: "node-1",
+					Version: string(make([]byte, MaxHardwareNodeVersionLen+1)),
+				}},
+			},
+			err: sdkerrors.ErrInvalidRequest,
 		},
 	}
 	for _, tt := range tests {

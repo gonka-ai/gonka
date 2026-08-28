@@ -10,6 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/productscience/inference/testutil"
+	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
 
@@ -204,6 +205,183 @@ func TestFallbackActiveParticipantsGuards(t *testing.T) {
 		},
 	})
 	require.Empty(t, am.fallbackActiveParticipantsFromCurrentEpoch(ctx, types.Epoch{Index: 10}))
+}
+
+// setupCarryableCurrentEpoch prepares the minimal state so that
+// fallbackActiveParticipantsFromCurrentEpoch can carry one participant with one
+// model node into upcoming epoch 6. The participant has no hardware record, so
+// re-seating keeps its carried assignment (bootstrap path).
+func setupCarryableCurrentEpoch(t *testing.T, k keeper.Keeper, ctx sdk.Context, addr string, model string, weight int64) {
+	t.Helper()
+	const currentEpochIndex = uint64(5)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, currentEpochIndex))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:     currentEpochIndex,
+		ModelId:        "",
+		EpochGroupId:   77,
+		SubGroupModels: []string{model},
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: addr, Weight: weight},
+		},
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:   currentEpochIndex,
+		ModelId:      model,
+		EpochGroupId: 78,
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: addr, Weight: weight, MlNodes: []*types.MLNodeInfo{
+				{NodeId: "fb-node", PocWeight: weight},
+			}},
+		},
+	})
+	require.NoError(t, k.Participants.Set(ctx, mustAccAddr(t, addr), types.Participant{
+		Index:        addr,
+		Address:      addr,
+		Status:       types.ParticipantStatus_ACTIVE,
+		ValidatorKey: "valkey-" + addr,
+		InferenceUrl: "http://" + addr,
+	}))
+	require.NoError(t, k.SetRandomSeed(ctx, types.RandomSeed{Participant: addr, EpochIndex: currentEpochIndex, Signature: "sig-" + addr}))
+}
+
+// freshParticipantWithHardware builds a computed participant whose single node
+// proved `validatedModel`, with a registered hardware record declaring
+// `declaredModel` for that node.
+func freshParticipantWithHardware(t *testing.T, k keeper.Keeper, ctx sdk.Context, addr, nodeId, validatedModel, declaredModel string, weight int64) *types.ActiveParticipant {
+	t.Helper()
+	require.NoError(t, k.SetHardwareNodes(ctx, &types.HardwareNodes{
+		Participant: addr,
+		HardwareNodes: []*types.HardwareNode{
+			{LocalId: nodeId, Models: []string{declaredModel}},
+		},
+	}))
+	return &types.ActiveParticipant{
+		Index:  addr,
+		Models: []string{validatedModel},
+		MlNodes: []*types.ModelMLNodes{
+			{MlNodes: []*types.MLNodeInfo{{NodeId: nodeId, PocWeight: weight}}},
+		},
+	}
+}
+
+// The hardware filter removing every fresh assignment must not activate a
+// zero-weight epoch: the guard falls back to the current epoch's validators.
+func TestSeatAndGuard_AllAssignmentsFilteredFallsBackToCurrentEpoch(t *testing.T) {
+	k, ctx, _ := newMinimalInferenceKeeperWithStub(t)
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	upcomingEpoch := types.Epoch{Index: 6, PocStartBlockHeight: 600}
+
+	k.SetModel(ctx, &types.Model{ProposedBy: "genesis", Id: "model-a"})
+	k.SetModel(ctx, &types.Model{ProposedBy: "genesis", Id: "model-b"})
+
+	carried := testutil.Executor
+	setupCarryableCurrentEpoch(t, k, ctx, carried, "model-a", 70)
+
+	// Fresh participant proved model-a, but its inventory now declares only
+	// model-b -> every assignment is filtered, seated weight is zero.
+	fresh := []*types.ActiveParticipant{
+		freshParticipantWithHardware(t, k, ctx, testutil.Executor2, "n1", "model-a", "model-b", 100),
+	}
+
+	result := am.seatAndGuardParticipants(ctx, upcomingEpoch, fresh)
+
+	require.Len(t, result, 1)
+	require.Equal(t, carried, result[0].Index, "fallback must re-seat the current epoch validator")
+	require.Equal(t, []string{"model-a"}, result[0].Models)
+	require.Equal(t, int64(70), seatedRawWeight(result[0]))
+	require.Nil(t, findByIndex(result, testutil.Executor2), "zero-seated fresh participant must not survive")
+
+	events := ctx.EventManager().Events()
+	var applied bool
+	for _, e := range events {
+		if e.Type == "empty_epoch_fallback_applied" {
+			applied = true
+		}
+	}
+	require.True(t, applied, "fallback-applied event must be emitted")
+}
+
+// Mixed outcome: participants that keep seated weight survive, zero-seated ones
+// are removed, and no fallback is triggered.
+func TestSeatAndGuard_MixedRemovesZeroSeatedKeepsOthers(t *testing.T) {
+	k, ctx, _ := newMinimalInferenceKeeperWithStub(t)
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	upcomingEpoch := types.Epoch{Index: 6, PocStartBlockHeight: 600}
+
+	k.SetModel(ctx, &types.Model{ProposedBy: "genesis", Id: "model-a"})
+	k.SetModel(ctx, &types.Model{ProposedBy: "genesis", Id: "model-b"})
+
+	survivor := freshParticipantWithHardware(t, k, ctx, testutil.Executor, "s1", "model-a", "model-a", 100)
+	zeroed := freshParticipantWithHardware(t, k, ctx, testutil.Executor2, "z1", "model-a", "model-b", 50)
+
+	result := am.seatAndGuardParticipants(ctx, upcomingEpoch, []*types.ActiveParticipant{survivor, zeroed})
+
+	require.Len(t, result, 1)
+	require.Equal(t, testutil.Executor, result[0].Index)
+	require.Equal(t, int64(100), seatedRawWeight(result[0]))
+
+	for _, e := range ctx.EventManager().Events() {
+		require.NotEqual(t, "empty_epoch_fallback_applied", e.Type, "fallback must not fire on a mixed result")
+		require.NotEqual(t, "epoch_error", e.Type)
+	}
+}
+
+// Pre-existing behavior preserved: an empty ComputeNewWeights result still
+// reaches the fallback (now with the seating guard applied to the fallback too).
+func TestSeatAndGuard_EmptyComputeFallsBack(t *testing.T) {
+	k, ctx, _ := newMinimalInferenceKeeperWithStub(t)
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	upcomingEpoch := types.Epoch{Index: 6, PocStartBlockHeight: 600}
+
+	carried := testutil.Executor
+	setupCarryableCurrentEpoch(t, k, ctx, carried, "model-a", 40)
+
+	result := am.seatAndGuardParticipants(ctx, upcomingEpoch, nil)
+
+	require.Len(t, result, 1)
+	require.Equal(t, carried, result[0].Index)
+	require.Equal(t, int64(40), seatedRawWeight(result[0]))
+}
+
+// When the hardware filter would also wipe the fallback carry, keep the
+// current-epoch assignments so the epoch index can still advance.
+func TestSeatAndGuard_FallbackHardwareZeroedKeepsCarriedTeam(t *testing.T) {
+	k, ctx, _ := newMinimalInferenceKeeperWithStub(t)
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	upcomingEpoch := types.Epoch{Index: 6, PocStartBlockHeight: 600}
+
+	k.SetModel(ctx, &types.Model{ProposedBy: "genesis", Id: "model-a"})
+	k.SetModel(ctx, &types.Model{ProposedBy: "genesis", Id: "model-b"})
+
+	carried := testutil.Executor
+	setupCarryableCurrentEpoch(t, k, ctx, carried, "model-a", 70)
+	// The carried participant's inventory also dropped its model.
+	require.NoError(t, k.SetHardwareNodes(ctx, &types.HardwareNodes{
+		Participant: carried,
+		HardwareNodes: []*types.HardwareNode{
+			{LocalId: "fb-node", Models: []string{"model-b"}},
+		},
+	}))
+
+	fresh := []*types.ActiveParticipant{
+		freshParticipantWithHardware(t, k, ctx, testutil.Executor2, "n1", "model-a", "model-b", 100),
+	}
+
+	result := am.seatAndGuardParticipants(ctx, upcomingEpoch, fresh)
+
+	require.Len(t, result, 1)
+	require.Equal(t, carried, result[0].Index)
+	require.Equal(t, []string{"model-a"}, result[0].Models)
+	require.Equal(t, int64(70), seatedRawWeight(result[0]))
+
+	var applied bool
+	for _, e := range ctx.EventManager().Events() {
+		require.NotEqual(t, "epoch_error", e.Type, "last-ditch carry must not abort")
+		if e.Type == "empty_epoch_fallback_applied" {
+			applied = true
+		}
+	}
+	require.True(t, applied, "fallback-applied event must be emitted")
 }
 
 func TestHasPositiveComputePower(t *testing.T) {
