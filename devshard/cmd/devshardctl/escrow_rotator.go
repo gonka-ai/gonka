@@ -386,12 +386,11 @@ func newRotationDevshardState(result *CreateDevshardEscrowResult, model EscrowRo
 
 // rotationEscrowProtocolVersion is the protocol version stamped on escrows
 // created by rotation/depletion. It is derived from the gateway-wide route
-// prefix (DEVSHARD_ROUTE_PREFIX / build version), so a gateway serving
-// /devshard/v3 mints protocol-v3 escrows. Semver-like route versions map by
-// major (v2.1.0 -> v2), relying on the same naming convention that ties a
-// route version to its protocol. An unparseable version segment (e.g. a
-// named versiond runtime) falls back to the v1 default, matching the
-// pre-existing behavior for explicit registrations without a protocol.
+// prefix (DEVSHARD_ROUTE_PREFIX / build version). Semver-like route versions
+// map by their major (v2.1.0 -> v2, v4.1r5 -> v4); a leading "v" is then
+// stripped (v4 -> "4"). Named runtimes such as mainnet-canary are stamped
+// as-is. An unresolvable prefix falls back to empty (the pre-existing
+// v1-default for registrations without a protocol).
 func rotationEscrowProtocolVersion() string {
 	routePrefix, err := resolveGatewayRoutePrefix()
 	if err != nil {
