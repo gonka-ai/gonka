@@ -460,9 +460,11 @@ overrides in their original order.
 
 The release updater rolls this unit reserve-first. It replaces one policy
 worker, waits until the public HAProxy admits that exact container, replaces
-the other worker, and changes the public `proxy` generation last. This is the
-same sequence exercised by `proxy-router/test-routing.sh` while continuously
-sending non-idempotent requests.
+the other worker, and changes the public `proxy` generation last.
+`proxy-router/test-routing.sh` exercises continuity for non-idempotent requests
+while the replicated policy workers are replaced. The public `proxy` is a
+singleton: replacing it is a maintenance boundary and may interrupt active
+connections.
 
 Rollback restores the captured image, environment, networks, capabilities, and
 Compose definition for the same deployment unit. The updater targets these
