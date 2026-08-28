@@ -1,4 +1,4 @@
-.PHONY: all build-docker release test-render
+.PHONY: all build-docker release test-render test-compose-contract test-fleet
 .PHONY: test-catalog-cache test-hash-ring test-version-routing test-local-compose test-join-compose
 .PHONY: test-join-versiond-healthcheck test-pool-status
 
@@ -167,6 +167,12 @@ test-join-compose:
 
 test-catalog-cache:
 	@../router-runtime/catalog-cache_test.sh
+
+test-compose-contract:
+	@../deploy/join/versiond-compose-config_test.sh
+
+test-fleet:
+	@../deploy/join/versiond-router-fleet_test.sh
 
 test-pool-status:
 	@./pool-status_test.sh
@@ -353,7 +359,7 @@ test-version-routing:
 	state=gonka-version-probe-state; \
 	cleanup() { \
 		docker rm -f gonka-vp-router gonka-vp-a gonka-vp-b gonka-vp-legacy \
-			gonka-vp-catalog \
+			gonka-vp-catalog gonka-vp-bind-a gonka-vp-bind-b \
 			>/dev/null 2>&1 || true; \
 		docker network rm $$net >/dev/null 2>&1 || true; \
 		docker volume rm $$state >/dev/null 2>&1 || true; \
@@ -437,6 +443,30 @@ test-version-routing:
 	[ "$$(docker image inspect gonka-versiond-router-probe \
 		--format '{{.Config.StopSignal}}')" = SIGUSR1 ] \
 		|| fail "HAProxy router image does not own its soft-stop signal"; \
+	for name in a b; do \
+		docker run -d --name gonka-vp-bind-$$name --network $$net \
+			--network-alias versiond-router-ingress \
+			-e VERSIOND_ROUTER_FRONT_BIND_HOST=versiond-router-ingress \
+			-e VERSIOND_ROUTER_METRICS_BIND_HOST=versiond-router-ingress \
+			gonka-versiond-router-probe >/dev/null; \
+	done; \
+	wait_local_bind() { \
+		name=$$1; \
+		address=$$(docker inspect -f \
+			'{{with index .NetworkSettings.Networks "gonka-version-probe"}}{{.IPAddress}}{{end}}' \
+			gonka-vp-bind-$$name); \
+		for i in $$(seq 80); do \
+			if docker exec gonka-vp-bind-$$name grep -q \
+				"^[[:space:]]*bind $$address:8080" /etc/haproxy/haproxy.cfg \
+				2>/dev/null; then return 0; fi; \
+			sleep 0.1; \
+		done; \
+		fail "router $$name did not select its own address from the shared alias"; \
+	}; \
+	for name in a b; do wait_local_bind $$name; done; \
+	docker restart gonka-vp-bind-a >/dev/null; \
+	for name in a b; do wait_local_bind $$name; done; \
+	docker rm -f gonka-vp-bind-a gonka-vp-bind-b >/dev/null; \
 	cache_now=$$(date +%s); \
 	docker run --rm --user 0:0 -e CACHE_NOW=$$cache_now \
 		-v $$state:/state --entrypoint sh gonka-versiond-router-probe -c \
@@ -1548,7 +1578,7 @@ test-version-routing:
 		|| fail "catalog reconciliation did not recover after clock rollback"; \
 	echo "test-version-routing: ok"
 
-test-render: test-local-compose test-join-compose test-join-versiond-healthcheck test-catalog-cache test-pool-status test-hash-ring test-version-routing
+test-render: test-local-compose test-compose-contract test-join-versiond-healthcheck test-catalog-cache test-pool-status test-hash-ring test-version-routing
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
@@ -1962,11 +1992,14 @@ test-render: test-local-compose test-join-compose test-join-versiond-healthcheck
 	mkdir "$$tmpdir/bin"; \
 	printf '%s\n' '#!/bin/sh' \
 		'case "$$2" in' \
-		'  router-front) printf "%s\\n" "192.0.2.10 STREAM router-front" ;;' \
-		'  router-metrics) printf "%s\\n" "192.0.2.11 STREAM router-metrics" ;;' \
+		'  router-front) printf "%s\\n" "192.0.2.99 STREAM router-front" "192.0.2.10 STREAM router-front" ;;' \
+		'  router-metrics) printf "%s\\n" "192.0.2.99 STREAM router-metrics" "192.0.2.11 STREAM router-metrics" ;;' \
 		'  *) exec /usr/bin/getent "$$@" ;;' \
 		'esac' > "$$tmpdir/bin/getent"; \
-	chmod +x "$$tmpdir/bin/getent"; \
+	printf '%s\n' '#!/bin/sh' \
+		'printf "%s\\n" "2: eth0 inet 192.0.2.10/24 scope global eth0" "3: eth1 inet 192.0.2.11/24 scope global eth1"' \
+		> "$$tmpdir/bin/ip"; \
+	chmod +x "$$tmpdir/bin/getent" "$$tmpdir/bin/ip"; \
 	PATH="$$tmpdir/bin:$$PATH" HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 		VERSIOND_ROUTER_ADMIN_PORT=18404 \
 		VERSIOND_ROUTER_FRONT_BIND_HOST=router-front \
