@@ -269,6 +269,12 @@ jobs:
       - name: Exercise atomic certificate installation
         run: ./proxy/setup-ssl_test.sh
 
+      - name: Build proxy image
+        run: docker build -t gonka-proxy-ssl-recovery-test ./proxy
+
+      - name: Exercise HTTPS recovery from a damaged certificate
+        run: ./proxy/ssl-recovery_test.sh
+
   build-and-test-edge-api:
     runs-on: ubuntu-latest
     name: Build and Test edge-api (validation)

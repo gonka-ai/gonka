@@ -1301,7 +1301,16 @@ if [ "$SSL_ENABLED" = "true" ] \
                     reload_pending=true
                 else
                     rm -f "$next_config"
-                    retry_later "HTTPS configuration recovery failed"
+                    repair_status=0
+                    /setup-ssl.sh repair || repair_status=$?
+                    if [ "$repair_status" -eq 10 ]; then
+                        echo "TLS bundle repaired; retrying HTTPS configuration"
+                        retry_seconds=$RENEW_RETRY_SECONDS
+                    elif [ "$repair_status" -eq 0 ]; then
+                        retry_later "HTTPS configuration recovery failed with a valid TLS bundle"
+                    else
+                        retry_later "TLS bundle repair failed"
+                    fi
                     continue
                 fi
             fi

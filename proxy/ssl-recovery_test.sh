@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+IMAGE=${PROXY_SSL_RECOVERY_TEST_IMAGE:-gonka-proxy-ssl-recovery-test}
+TEST_ROOT=$(mktemp -d)
+CONTAINER="gonka-proxy-ssl-recovery-test-$$"
+
+cleanup() {
+  docker rm -f "$CONTAINER" >/dev/null 2>&1 || true
+  rm -rf "$TEST_ROOT"
+}
+trap cleanup EXIT
+
+fail() {
+  echo "ssl-recovery_test: $*" >&2
+  docker logs "$CONTAINER" >&2 || true
+  exit 1
+}
+
+mkdir -p "$TEST_ROOT/ssl"
+openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+  -subj /CN=example.test \
+  -keyout "$TEST_ROOT/ssl/private.key" \
+  -out "$TEST_ROOT/recovered.crt" >/dev/null 2>&1
+: > "$TEST_ROOT/ssl/cert.pem"
+printf '%s\n' order-legacy > "$TEST_ROOT/ssl/order.id"
+: > "$TEST_ROOT/setup-calls"
+
+cat > "$TEST_ROOT/setup-ssl.sh" <<'EOF'
+#!/bin/sh
+set -eu
+
+printf '%s\n' "$1" >> /test/setup-calls
+case "$1" in
+  repair)
+    cp /test/recovered.crt /etc/nginx/ssl/cert.pem.tmp
+    chmod 644 /etc/nginx/ssl/cert.pem.tmp
+    mv -f /etc/nginx/ssl/cert.pem.tmp /etc/nginx/ssl/cert.pem
+    exit 10
+    ;;
+  renew-if-needed)
+    exit 0
+    ;;
+esac
+exit 1
+EOF
+chmod +x "$TEST_ROOT/setup-ssl.sh"
+
+docker run -d --name "$CONTAINER" \
+  -v "$TEST_ROOT/ssl:/etc/nginx/ssl" \
+  -v "$TEST_ROOT/recovered.crt:/test/recovered.crt:ro" \
+  -v "$TEST_ROOT/setup-ssl.sh:/setup-ssl.sh:ro" \
+  -v "$TEST_ROOT/setup-calls:/test/setup-calls" \
+  -e NGINX_MODE=both \
+  -e CERT_ISSUER_DOMAIN=example.test \
+  -e PROXY_SSL_RETRY_SECONDS=1 \
+  -e RENEW_INTERVAL_HOURS=1 \
+  -e DISABLE_DEVSHARD_PROXY=true \
+  "$IMAGE" >/dev/null
+
+for _ in $(seq 1 100); do
+  if docker logs "$CONTAINER" 2>&1 \
+      | grep -q 'Certificate configuration reloaded'; then
+    break
+  fi
+  sleep 0.1
+done
+
+logs=$(docker logs "$CONTAINER" 2>&1)
+grep -q 'Falling back to HTTP-only configuration' <<< "$logs" \
+  || fail "nginx did not enter HTTP fallback"
+grep -q 'TLS bundle repaired; retrying HTTPS configuration' <<< "$logs" \
+  || fail "the invalid TLS bundle was not repaired"
+grep -q 'Certificate configuration reloaded' <<< "$logs" \
+  || fail "HTTPS was not restored"
+[ "$(cat "$TEST_ROOT/setup-calls")" = repair ] \
+  || fail "the worker did not use the repair operation"
+docker exec "$CONTAINER" curl -ksSf https://127.0.0.1/health >/dev/null \
+  || fail "HTTPS health endpoint is unavailable after repair"
+
+echo "ssl-recovery_test: ok"
