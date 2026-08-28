@@ -368,30 +368,20 @@ func (f *FloorIndex) Len() int {
 	return len(f.entries)
 }
 
-// Clone returns a deep copy so trial-apply and snapshot restore cannot leak
-// into the live index.
+// Clone returns a copy so trial-apply cannot leak into committed state. It runs
+// on the apply hot path (snapshotMutable, several times per diff), so the hashes
+// are shared rather than copied: appendEntry and the claim insert each store a
+// fresh slice and nothing rewrites one in place afterwards.
 func (f *FloorIndex) Clone() *FloorIndex {
 	if f == nil {
 		return nil
 	}
-	entries := make([]floorEntry, len(f.entries))
-	for i, e := range f.entries {
-		entries[i] = floorEntry{
-			nonce:  e.nonce,
-			height: e.height,
-			hash:   append([]byte(nil), e.hash...),
-			author: e.author,
-		}
-	}
 	claims := make(map[uint32]floorSignerClaim, len(f.claims))
 	for signer, held := range f.claims {
-		claims[signer] = floorSignerClaim{
-			height: held.height,
-			hash:   append([]byte(nil), held.hash...),
-		}
+		claims[signer] = held
 	}
 	return &FloorIndex{
-		entries:   entries,
+		entries:   append([]floorEntry(nil), f.entries...),
 		claims:    claims,
 		cfg:       f.cfg,
 		truncated: f.truncated,

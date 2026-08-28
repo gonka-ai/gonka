@@ -207,8 +207,9 @@ type EscrowStateProto struct {
 	LatestNonce                 uint64                           `protobuf:"varint,12,opt,name=latest_nonce,json=latestNonce,proto3" json:"latest_nonce,omitempty"`
 	SealedAcc                   []byte                           `protobuf:"bytes,13,opt,name=sealed_acc,json=sealedAcc,proto3" json:"sealed_acc,omitempty"`
 	// Height-sync escrow commit (hashed into the state root). The turn tracker
-	// is rebuilt from snapshot scalars; the floor is a sibling on
-	// StateSnapshotProto (not hashed) so restore does not reread diffs 1..N.
+	// and floor are rebuilt by replaying diffs 1..latest_nonce; the floor also
+	// rides on StateSnapshotProto (not hashed) as the fallback for when that
+	// replay cannot run.
 	HeightSyncForcedStart         uint64 `protobuf:"varint,14,opt,name=height_sync_forced_start,json=heightSyncForcedStart,proto3" json:"height_sync_forced_start,omitempty"`
 	HeightSyncForcedEnd           uint64 `protobuf:"varint,15,opt,name=height_sync_forced_end,json=heightSyncForcedEnd,proto3" json:"height_sync_forced_end,omitempty"`
 	HeightSyncCadenceSwallowUntil uint64 `protobuf:"varint,16,opt,name=height_sync_cadence_swallow_until,json=heightSyncCadenceSwallowUntil,proto3" json:"height_sync_cadence_swallow_until,omitempty"`
@@ -391,7 +392,9 @@ func (x *EscrowStateProto) GetHeightSyncTurnReason() string {
 }
 
 // FloorIndexProto is the derived height-sync floor (entries + per-signer
-// claims). It is not hashed into the state root.
+// claims). It is not hashed into the state root. Entries are ordered by nonce
+// and hold a running maximum height; a reader that cannot confirm that must
+// discard the blob rather than answer F(m) from it.
 type FloorIndexEntryProto struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Nonce         uint64                 `protobuf:"varint,1,opt,name=nonce,proto3" json:"nonce,omitempty"`

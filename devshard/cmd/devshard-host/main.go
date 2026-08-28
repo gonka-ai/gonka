@@ -358,7 +358,16 @@ func recoverHostState(store storage.Storage, sm *state.StateMachine, escrowID st
 		if err != nil {
 			return fmt.Errorf("unmarshal snapshot nonce %d: %w", snapNonce, err)
 		}
-		floor := heightsync.FloorIndexFromProto(heightsync.FloorConfigFor(len(snapState.Group), sm.HeartbeatConfig()), floorProto)
+		// A rejected blob degrades to a journal replay; if that cannot run
+		// either, RestoreStateWithFloor fails closed rather than serving L0
+		// from a floor we could not verify.
+		floor, floorErr := heightsync.FloorIndexFromProto(
+			heightsync.FloorConfigFor(len(snapState.Group), sm.HeartbeatConfig()), floorProto)
+		if floorErr != nil {
+			log.Printf("recover_host escrow=%s snapshot_nonce=%d floor_blob_rejected=%v (rebuilding from diffs)",
+				escrowID, snapNonce, floorErr)
+			floor = nil
+		}
 		if err := sm.RestoreStateWithFloor(snapState, floor); err != nil {
 			return fmt.Errorf("restore snapshot nonce %d: %w", snapNonce, err)
 		}

@@ -68,7 +68,9 @@ func TestHeightSync_SnapshotRestoreAgreesOnRootAndFloor(t *testing.T) {
 	require.NotNil(t, floorProto)
 
 	restored := newSM()
-	floor := heightsync.FloorIndexFromProto(heightsync.FloorConfigFor(len(group), restored.HeartbeatConfig()), floorProto)
+	floor, err := heightsync.FloorIndexFromProto(
+		heightsync.FloorConfigFor(len(group), restored.HeartbeatConfig()), floorProto)
+	require.NoError(t, err)
 	require.NoError(t, restored.RestoreStateWithFloor(restoredState, floor))
 	require.True(t, restored.HeightSyncFloorReady())
 
@@ -168,6 +170,12 @@ func TestHeightSync_RestoreGetDiffsErrorFailsClosed(t *testing.T) {
 	bad := testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{snapHeartbeat(2, 10, 3, hash)})
 	_, err = restored.ApplyDiff(bad)
 	require.ErrorIs(t, err, types.ErrFloorNotRestored)
+
+	// The empty floor this machine is holding must never reach a snapshot: a
+	// present blob is authoritative on restore, so writing one here would turn
+	// "could not rebuild" into "the fold is empty" for the next reader.
+	require.Nil(t, restored.ExportHeightSyncFloor())
+	require.NotNil(t, live.ExportHeightSyncFloor())
 }
 
 func TestHeightSync_RestoreFloorBlobSkipsJournal(t *testing.T) {
@@ -197,10 +205,11 @@ func TestHeightSync_RestoreFloorBlobSkipsJournal(t *testing.T) {
 	apply(3, snapAck(t, hosts[1], 1, 1, 1, 50, hash))
 
 	st := live.ExportState()
-	floor := heightsync.FloorIndexFromProto(
+	floor, err := heightsync.FloorIndexFromProto(
 		heightsync.FloorConfigFor(len(group), live.HeartbeatConfig()),
 		live.ExportHeightSyncFloor(),
 	)
+	require.NoError(t, err)
 
 	failStore := &failGetDiffsStore{Memory: testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000)}
 	restored, err := NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(),

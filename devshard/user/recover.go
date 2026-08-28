@@ -187,7 +187,16 @@ func RecoverSession(
 		if decodeErr != nil {
 			log.Printf("recover_session escrow=%s snapshot_nonce=%d unmarshal_failed=%v (replaying from 1)", escrowID, snapNonce, decodeErr)
 		} else {
-			floor := heightsync.FloorIndexFromProto(heightsync.FloorConfigFor(len(snapState.Group), sm.HeartbeatConfig()), floorProto)
+			// A rejected blob degrades to a journal replay; if that cannot run
+			// either, RestoreStateWithFloor fails closed rather than serving
+			// L0 from a floor we could not verify.
+			floor, floorErr := heightsync.FloorIndexFromProto(
+				heightsync.FloorConfigFor(len(snapState.Group), sm.HeartbeatConfig()), floorProto)
+			if floorErr != nil {
+				log.Printf("recover_session escrow=%s snapshot_nonce=%d floor_blob_rejected=%v (rebuilding from diffs)",
+					escrowID, snapNonce, floorErr)
+				floor = nil
+			}
 			if restErr := sm.RestoreStateWithFloor(snapState, floor); restErr != nil {
 				return nil, nil, fmt.Errorf("restore snapshot nonce %d: %w", snapNonce, restErr)
 			}

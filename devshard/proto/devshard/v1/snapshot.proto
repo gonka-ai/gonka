@@ -39,8 +39,9 @@ message EscrowStateProto {
   uint64 latest_nonce = 12;
   bytes sealed_acc = 13;
   // Height-sync escrow commit (hashed into the state root). The turn tracker
-  // is rebuilt from snapshot scalars; the floor is a sibling on
-  // StateSnapshotProto (not hashed) so restore does not reread diffs 1..N.
+  // and floor are rebuilt by replaying diffs 1..latest_nonce; the floor also
+  // rides on StateSnapshotProto (not hashed) as the fallback for when that
+  // replay cannot run.
   uint64 height_sync_forced_start = 14;
   uint64 height_sync_forced_end = 15;
   uint64 height_sync_cadence_swallow_until = 16;
@@ -51,7 +52,9 @@ message EscrowStateProto {
 }
 
 // FloorIndexProto is the derived height-sync floor (entries + per-signer
-// claims). It is not hashed into the state root.
+// claims). It is not hashed into the state root. Entries are ordered by nonce
+// and hold a running maximum height; a reader that cannot confirm that must
+// discard the blob rather than answer F(m) from it.
 message FloorIndexEntryProto {
   uint64 nonce = 1;
   uint64 height = 2;

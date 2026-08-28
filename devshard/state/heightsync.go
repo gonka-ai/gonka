@@ -192,10 +192,15 @@ func (sm *StateMachine) HeightSyncFloorReady() bool {
 }
 
 // ExportHeightSyncFloor copies the derived floor for the snapshot envelope.
+//
+// A floor that never folded 1..LatestNonce is omitted rather than written out
+// empty. Restore installs a present blob as authoritative, so persisting one
+// from a not-ready machine would launder "we could not rebuild the fold" into
+// "the fold is empty" — the split this blob exists to prevent.
 func (sm *StateMachine) ExportHeightSyncFloor() *types.FloorIndexProto {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	if sm.heightSyncFloor == nil {
+	if sm.heightSyncFloor == nil || !sm.floorReady {
 		return nil
 	}
 	return sm.heightSyncFloor.ToProto()
