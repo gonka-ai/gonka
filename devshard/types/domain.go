@@ -81,6 +81,7 @@ const (
 	ProtocolV1 ProtocolVersion = "1"
 	ProtocolV2 ProtocolVersion = "2"
 	ProtocolV3 ProtocolVersion = "3"
+	ProtocolV4 ProtocolVersion = "4"
 )
 
 // ParseProtocolVersion parses a string into a ProtocolVersion.
@@ -93,6 +94,8 @@ func ParseProtocolVersion(s string) (ProtocolVersion, error) {
 		return ProtocolV2, nil
 	case string(ProtocolV3), "v3":
 		return ProtocolV3, nil
+	case string(ProtocolV4), "v4":
+		return ProtocolV4, nil
 	default:
 		return "", fmt.Errorf("unknown protocol version %q", s)
 	}

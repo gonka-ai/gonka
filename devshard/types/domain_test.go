@@ -45,6 +45,16 @@ func TestParseProtocolVersion_AcceptsRouteStyleV3(t *testing.T) {
 	}
 }
 
+func TestParseProtocolVersion_AcceptsRouteStyleV4(t *testing.T) {
+	got, err := ParseProtocolVersion("v4")
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
+	}
+	if got != ProtocolV4 {
+		t.Fatalf("expected v4 to normalize to %s, got %s", ProtocolV4, got)
+	}
+}
+
 func TestParseProtocolVersion_RejectsOldProtocol(t *testing.T) {
 	if _, err := ParseProtocolVersion("0.2.11"); err == nil {
 		t.Fatal("expected old protocol to be rejected")
