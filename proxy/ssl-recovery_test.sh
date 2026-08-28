@@ -152,6 +152,7 @@ assert_invalid_interval() {
 }
 
 assert_invalid_interval PROXY_SSL_RETRY_SECONDS 0
+assert_invalid_interval PROXY_SSL_RETRY_SECONDS 00
 assert_invalid_interval RENEW_INTERVAL_HOURS -1
 
 echo "ssl-recovery_test: ok"
