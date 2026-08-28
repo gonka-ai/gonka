@@ -96,6 +96,7 @@ func (r *Recorder) DiffObserver(escrowID string, state ProtocolView) func(types.
 // the diff cannot tell it and allocates nothing for a plain start inference.
 func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state ProtocolView) {
 	var verdicts []VerdictRecord
+	var validatorSlots []uint32
 	var seen map[uint64]struct{}
 	var hostStats map[uint32]*types.HostStats
 
@@ -110,6 +111,7 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 			inferenceID = timeout.InferenceId
 		case validation != nil:
 			inferenceID, verdict = validation.InferenceId, true
+			validatorSlots = append(validatorSlots, validation.ValidatorSlot)
 		case vote != nil:
 			inferenceID, verdict = vote.InferenceId, true
 		default:
@@ -128,6 +130,11 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 		}
 		hostStats = r.appendHostStats(record.ExecutorSlot, state, hostStats)
 		if !verdict {
+			verdicts = append(verdicts, VerdictRecord{
+				Nonce: inferenceID,
+				Slot:  record.ExecutorSlot,
+				Kind:  ProtocolTimeoutApplied,
+			})
 			continue
 		}
 		kind := protocolKindForStatus(record.Status)
@@ -142,6 +149,9 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 	}
 
 	phase := escrowPhase(state.Phase())
+	if err := r.tracker.RecordValidatorWork(escrowID, validatorSlots); err != nil {
+		log.Printf("gateway accounting validator work escrow=%s nonce=%d: %v", escrowID, diff.Nonce, err)
+	}
 	if err := r.tracker.RecordCommittedState(escrowID, diff, verdicts, phase, hostStats); err != nil {
 		log.Printf("gateway accounting diff escrow=%s nonce=%d: %v", escrowID, diff.Nonce, err)
 	}
@@ -166,7 +176,9 @@ func (r *Recorder) appendHostStats(
 	return into
 }
 
-func (r *Recorder) Ghost(escrowID string, nonce uint64, reason, quarantine string) {
+// Ghost records a burned nonce. timeoutPending says the caller will raise a timeout on it, which keeps
+// the nonce live long enough to receive that outcome instead of retiring on the burn alone.
+func (r *Recorder) Ghost(escrowID string, nonce uint64, reason, quarantine string, timeoutPending bool) {
 	if r == nil || r.tracker == nil {
 		return
 	}
@@ -182,8 +194,37 @@ func (r *Recorder) Ghost(escrowID string, nonce uint64, reason, quarantine strin
 		QuarantineFromString(quarantine),
 		noSend,
 		detail,
+		timeoutPending,
 	); err != nil {
 		log.Printf("gateway accounting ghost escrow=%s nonce=%d: %v", escrowID, nonce, err)
+	}
+}
+
+// RequestID names the client request a nonce came from, so a later miss or invalid can point at it.
+func (r *Recorder) RequestID(escrowID string, nonce uint64, requestID string) {
+	if r == nil || r.tracker == nil || requestID == "" {
+		return
+	}
+	if err := r.tracker.RecordRequestID(escrowID, nonce, requestID); err != nil {
+		log.Printf("gateway accounting request id escrow=%s nonce=%d: %v", escrowID, nonce, err)
+	}
+}
+
+func (r *Recorder) RequestStarted(escrowID, requestID string) {
+	if r == nil || r.tracker == nil {
+		return
+	}
+	if err := r.tracker.RecordRequestStarted(escrowID, requestID); err != nil {
+		log.Printf("gateway accounting request started escrow=%s request=%s: %v", escrowID, requestID, err)
+	}
+}
+
+func (r *Recorder) RequestFinished(escrowID, requestID string) {
+	if r == nil || r.tracker == nil {
+		return
+	}
+	if err := r.tracker.RecordRequestFinished(escrowID, requestID); err != nil {
+		log.Printf("gateway accounting request finished escrow=%s request=%s: %v", escrowID, requestID, err)
 	}
 }
 
@@ -202,7 +243,7 @@ func (r *Recorder) RealSend(escrowID string, nonce uint64, sentAt time.Time, qua
 	}
 }
 
-func (r *Recorder) Usage(escrowID string, nonce, winnerNonce uint64) {
+func (r *Recorder) Usage(escrowID string, nonce, winnerNonce uint64, deliveryReason string) {
 	if r == nil || r.tracker == nil {
 		return
 	}
@@ -213,8 +254,51 @@ func (r *Recorder) Usage(escrowID string, nonce, winnerNonce uint64) {
 	case nonce == winnerNonce:
 		usage = UsageWinner
 	}
-	if err := r.tracker.RecordUsage(escrowID, nonce, usage); err != nil {
+	if err := r.tracker.RecordUsage(escrowID, nonce, usage, deliveryReason); err != nil {
 		log.Printf("gateway accounting usage escrow=%s nonce=%d: %v", escrowID, nonce, err)
+	}
+}
+
+func (r *Recorder) ProbeSend(escrowID string, nonce uint64, sentAt time.Time, quarantine, deliveryReason string) {
+	if r == nil || r.tracker == nil {
+		return
+	}
+	if err := r.tracker.RecordProbeSend(
+		escrowID,
+		nonce,
+		sentAt,
+		r.currentPhase(),
+		QuarantineFromString(quarantine),
+		deliveryReason,
+	); err != nil {
+		log.Printf("gateway accounting probe send escrow=%s nonce=%d: %v", escrowID, nonce, err)
+	}
+}
+
+func (r *Recorder) ProbeServed(escrowID string, nonce uint64, deliveryReason string) {
+	if r == nil || r.tracker == nil {
+		return
+	}
+	if err := r.tracker.RecordUsage(escrowID, nonce, UsageLoser, deliveryReason); err != nil {
+		log.Printf("gateway accounting probe served escrow=%s nonce=%d: %v", escrowID, nonce, err)
+	}
+}
+
+func (r *Recorder) LogprobsDecoded(escrowID string, nonce uint64) {
+	if r == nil || r.tracker == nil {
+		return
+	}
+	if err := r.tracker.RecordLogprobsDecoded(escrowID, nonce); err != nil {
+		log.Printf("gateway accounting logprobs escrow=%s nonce=%d: %v", escrowID, nonce, err)
+	}
+}
+
+func (r *Recorder) AttemptTiming(escrowID string, nonce uint64, timing AttemptTiming) {
+	if r == nil || r.tracker == nil {
+		return
+	}
+	if err := r.tracker.RecordAttemptTiming(escrowID, nonce, timing); err != nil {
+		log.Printf("gateway accounting timing escrow=%s nonce=%d: %v", escrowID, nonce, err)
 	}
 }
 

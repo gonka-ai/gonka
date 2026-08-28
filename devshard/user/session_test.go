@@ -186,7 +186,7 @@ type ErrorClient struct {
 	Err error
 }
 
-func (c *ErrorClient) Send(_ context.Context, _ host.HostRequest, _ io.Writer, _ func()) (*host.HostResponse, error) {
+func (c *ErrorClient) Send(_ context.Context, _ host.HostRequest, _ io.Writer, _ func(*host.HostResponse)) (*host.HostResponse, error) {
 	return nil, c.Err
 }
 
@@ -1136,7 +1136,6 @@ func TestFinalize_SettlementRerun_EmptyDiffsCollectsFromHosts(t *testing.T) {
 	session.diffs = nil
 	session.signatures = make(map[uint64]map[uint32][]byte)
 	session.clients = fetchers
-	session.finalizeClients = nil
 	session.mu.Unlock()
 	require.False(t, session.HasQuorumAt(finalNonce))
 

@@ -35,7 +35,7 @@ const (
 	eofTransportFailureThreshold      = participantFailureStrikeThreshold
 	// participantStrikesAfterQuarantine keeps recently recovered hosts one bad
 	// signal away from re-quarantine while they prove they can finish normally.
-	participantStrikesAfterQuarantine = participantFailureStrikeThreshold - 1
+	participantStrikesAfterQuarantine            = participantFailureStrikeThreshold - 1
 	participantProbationSuccessesAfterQuarantine = participantStrikesAfterQuarantine
 	// participantStatusTransport is persisted in last_throttle_status when
 	// the last signal was a transport failure (not an HTTP 429/503).
@@ -437,12 +437,17 @@ func (l *ParticipantRequestLimiter) SetStore(store ParticipantThrottleStore) {
 // During relaxed PoC the legacy behavior bypasses the limiter entirely;
 // when capacity-aware mode is on we keep the reactive throttle active
 // and rely on CapacityState-driven scaling for relief instead.
-func (l *ParticipantRequestLimiter) AllowRequest(participantKey, _ string) error {
-	return l.AllowRequestForModel(participantKey, "", "")
+func (l *ParticipantRequestLimiter) AllowRequest(participantKey, path string) error {
+	return l.AllowRequestForModel(participantKey, "", path)
 }
 
-func (l *ParticipantRequestLimiter) AllowRequestForModel(participantKey, modelID, _ string) error {
+func (l *ParticipantRequestLimiter) AllowRequestForModel(participantKey, modelID, path string) error {
 	if participantKey == "" {
+		return nil
+	}
+	// The budget throttles user traffic; accountability calls must outlive the misbehaviour they record.
+	switch participantPathKind(path) {
+	case "verify_timeout", "challenge_receipt":
 		return nil
 	}
 	if !capacityAwareLimitsEnabled() && relaxedPoCBypassActive() {

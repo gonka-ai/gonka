@@ -8,7 +8,8 @@ import (
 	"devshard/types"
 )
 
-const SchemaVersion = 4
+// 6 adds the capability block to a participant record and the protocol event feed.
+const SchemaVersion = 6
 
 type Disposition string
 
@@ -42,11 +43,12 @@ const (
 type NoSendReason string
 
 const (
-	NoSendPoCUnavailable         NoSendReason = "poc_unavailable_host"
-	NoSendParticipantThrottled   NoSendReason = "participant_throttled_no_send"
-	NoSendParticipantCapability  NoSendReason = "participant_capability_no_send"
-	NoSendNoCompatibleAfterStale NoSendReason = "no_compatible_request_after_stale"
-	NoSendUnknown                NoSendReason = "unknown"
+	NoSendPoCUnavailable           NoSendReason = "poc_unavailable_host"
+	NoSendParticipantThrottled     NoSendReason = "participant_throttled_no_send"
+	NoSendParticipantStateDiverged NoSendReason = "participant_state_diverged_no_send"
+	NoSendParticipantCapability    NoSendReason = "participant_capability_no_send"
+	NoSendNoCompatibleAfterStale   NoSendReason = "no_compatible_request_after_stale"
+	NoSendUnknown                  NoSendReason = "unknown"
 )
 
 type FailureOrigin string
@@ -92,7 +94,15 @@ const (
 	TimeoutContextCanceled          TimeoutReason = "context_canceled"
 	TimeoutDiffDeliveryFailed       TimeoutReason = "timeout_diff_delivery_failed"
 	TimeoutNotApplied               TimeoutReason = "timeout_not_applied"
+	TimeoutHostServedProbe          TimeoutReason = "host_served_probe"
+	TimeoutEscrowGone               TimeoutReason = "escrow_gone_from_hosts"
 	TimeoutReasonUnknown            TimeoutReason = "unknown"
+	// Why a round failed to gather votes. The outcome says the round was lost; these say how.
+	TimeoutVerifierVersionUnsupported TimeoutReason = "verifier_version_unsupported"
+	TimeoutVerifierEscrowMissing      TimeoutReason = "verifier_escrow_missing"
+	TimeoutVerifierInferenceMissing   TimeoutReason = "verifier_inference_missing"
+	TimeoutVerifierUnreachable        TimeoutReason = "verifier_unreachable"
+	TimeoutVoteWeightShort            TimeoutReason = "vote_weight_short"
 )
 
 type ProtocolKind string
@@ -143,6 +153,30 @@ type VerdictRecord struct {
 	Kind  ProtocolKind
 }
 
+const (
+	SlowReceiptAfter  = 2500 * time.Millisecond
+	SlowChunkGapAfter = 5 * time.Second
+	ClockDriftBeyond  = 5 * time.Second
+	SlowDecodeAfter   = 40 * time.Millisecond
+)
+
+type AttemptTiming struct {
+	Acknowledgement    time.Duration
+	MaxChunkGap        time.Duration
+	ClockOffset        time.Duration
+	ClockMeasured      bool
+	TimePerOutputToken time.Duration
+}
+
+func (t AttemptTiming) receiptWasSlow() bool { return t.Acknowledgement > SlowReceiptAfter }
+func (t AttemptTiming) chunkWasSlow() bool   { return t.MaxChunkGap > SlowChunkGapAfter }
+func (t AttemptTiming) decodeWasSlow() bool {
+	return t.TimePerOutputToken > SlowDecodeAfter
+}
+func (t AttemptTiming) clockHasDrifted() bool {
+	return t.ClockMeasured && (t.ClockOffset > ClockDriftBeyond || t.ClockOffset < -ClockDriftBeyond)
+}
+
 type CounterKey struct {
 	SlotID                 uint32         `json:"slot_id"`
 	Disposition            Disposition    `json:"disposition"`
@@ -151,7 +185,13 @@ type CounterKey struct {
 	QuarantineMode         QuarantineMode `json:"quarantine_mode,omitempty"`
 	NoSendReason           NoSendReason   `json:"no_send_reason,omitempty"`
 	FailureOrigin          FailureOrigin  `json:"failure_origin,omitempty"`
+	LogprobsDecoded        bool           `json:"logprobs_decoded,omitempty"`
+	SlowReceipt            bool           `json:"slow_receipt,omitempty"`
+	SlowChunk              bool           `json:"slow_chunk,omitempty"`
+	ClockDrifted           bool           `json:"clock_drifted,omitempty"`
+	SlowDecode             bool           `json:"slow_decode,omitempty"`
 	DetailReason           string         `json:"detail_reason,omitempty"`
+	DeliveryReason         string         `json:"delivery_reason,omitempty"`
 	TimeoutKind            TimeoutKind    `json:"timeout_kind,omitempty"`
 	TimeoutOutcome         TimeoutOutcome `json:"timeout_outcome,omitempty"`
 	TimeoutReason          TimeoutReason  `json:"timeout_reason,omitempty"`
@@ -175,11 +215,17 @@ type SlotRecord struct {
 	AssignedNonces        uint64                    `json:"assigned_nonces"`
 	Dispositions          map[Disposition]uint64    `json:"dispositions"`
 	TimeoutOutcomes       map[TimeoutOutcome]uint64 `json:"timeout_outcomes"`
+	DeliveryReasons       map[string]uint64         `json:"delivery_reasons,omitempty"`
 	ProtocolMisses        uint64                    `json:"protocol_misses"`
 	ProtocolInvalid       uint64                    `json:"protocol_invalid"`
+	RequiredValidations   uint64                    `json:"required_validations"`
+	CompletedValidations  uint64                    `json:"completed_validations"`
+	ValidationsPerformed  uint64                    `json:"validations_performed"`
+	TimeoutsApplied       uint64                    `json:"timeouts_applied"`
 	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
 	RecordedInvalid       uint64                    `json:"recorded_invalid_transitions"`
 	InFlight              uint64                    `json:"in_flight"`
+	InFlightRequests      uint64                    `json:"in_flight_requests"`
 	TimeoutPending        uint64                    `json:"timeout_pending"`
 	PendingClassification uint64                    `json:"pending_classification"`
 	Unclassified          uint64                    `json:"unclassified"`
@@ -208,14 +254,21 @@ type ParticipantRecord struct {
 	TimeoutOutcomes       map[TimeoutOutcome]uint64 `json:"timeout_outcomes"`
 	ProtocolMisses        uint64                    `json:"protocol_misses"`
 	ProtocolInvalid       uint64                    `json:"protocol_invalid"`
+	RequiredValidations   uint64                    `json:"required_validations"`
+	CompletedValidations  uint64                    `json:"completed_validations"`
+	ValidationsPerformed  uint64                    `json:"validations_performed"`
+	TimeoutsApplied       uint64                    `json:"timeouts_applied"`
 	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
 	InFlight              uint64                    `json:"in_flight"`
+	InFlightRequests      uint64                    `json:"in_flight_requests"`
 	TimeoutPending        uint64                    `json:"timeout_pending"`
 	PendingClassification uint64                    `json:"pending_classification"`
 	Unclassified          uint64                    `json:"unclassified"`
 	Overclassified        uint64                    `json:"overclassified"`
 	UnknownReasonTotal    uint64                    `json:"unknown_reason_total"`
 	CrossChecks           CrossChecks               `json:"cross_checks"`
+	Capability            *HostCapability           `json:"capability,omitempty"`
+	Findings              []Finding                 `json:"findings"`
 	Counters              []CounterRecord           `json:"counters"`
 	Slots                 []SlotRecord              `json:"slots"`
 }
@@ -229,8 +282,11 @@ type EpochSummary struct {
 	TimeoutOutcomes       map[TimeoutOutcome]uint64 `json:"timeout_outcomes"`
 	ProtocolMisses        uint64                    `json:"protocol_misses"`
 	ProtocolInvalid       uint64                    `json:"protocol_invalid"`
+	RequiredValidations   uint64                    `json:"required_validations"`
+	CompletedValidations  uint64                    `json:"completed_validations"`
 	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
 	InFlight              uint64                    `json:"in_flight"`
+	InFlightRequests      uint64                    `json:"in_flight_requests"`
 	TimeoutPending        uint64                    `json:"timeout_pending"`
 	PendingClassification uint64                    `json:"pending_classification"`
 	Unclassified          uint64                    `json:"unclassified"`
@@ -250,7 +306,7 @@ type CurrentEpochFunc func(context.Context) (uint64, error)
 
 func NoSendReasonFromString(reason string) NoSendReason {
 	switch value := NoSendReason(reason); value {
-	case NoSendPoCUnavailable, NoSendParticipantThrottled, NoSendParticipantCapability, NoSendNoCompatibleAfterStale:
+	case NoSendPoCUnavailable, NoSendParticipantThrottled, NoSendParticipantStateDiverged, NoSendParticipantCapability, NoSendNoCompatibleAfterStale:
 		return value
 	default:
 		return NoSendUnknown
@@ -283,39 +339,62 @@ func TimeoutOutcomeFromAction(action, reason string) TimeoutOutcome {
 	}
 }
 
+// reasonOrigin is the ledger's vocabulary of named reasons and who each one blames. A reason absent
+// from it is one the ledger does not report, so a new cause has to be entered here to reach a counter.
+var reasonOrigin = map[string]FailureOrigin{
+	"context_canceled":             FailureClient,
+	"phase_transition_aborted":     FailureGatewayPolicy,
+	"long_response_after_content":  FailureGatewayPolicy,
+	"timeout_not_applied":          FailureGatewayPolicy,
+	"host_served_probe":            FailureGatewayPolicy,
+	"nonce_already_finished":       FailureGatewayPolicy,
+	"not_finished":                 FailureHostResponse,
+	"escrow_state_root_diverged":   FailureHostResponse,
+	"timeout_diff_delivery_failed": FailureHostResponse,
+	"escrow_gone_from_hosts":       FailureHostResponse,
+	"verifier_version_unsupported": FailureTransportUnknown,
+	"verifier_escrow_missing":      FailureTransportUnknown,
+	"verifier_inference_missing":   FailureTransportUnknown,
+	"verifier_unreachable":         FailureTransportUnknown,
+	"vote_weight_short":            FailureTransportUnknown,
+}
+
+// originOfFragment places reasons that are generated rather than named: transport errors and stream
+// states carry a host's own wording. Order decides ties, so the narrower fragment comes first.
+var originOfFragment = []struct {
+	fragment string
+	origin   FailureOrigin
+}{
+	{"client", FailureClient},
+	{"policy", FailureGatewayPolicy},
+	{"http_", FailureHostResponse},
+	{"stream", FailureHostResponse},
+	{"response", FailureHostResponse},
+}
+
+// TimeoutReasonFromString reports why a timeout ended as it did. An outcome that ends a round without
+// concluding it has no reason of its own, so it reads as unknown rather than repeating the outcome.
 func TimeoutReasonFromString(outcome TimeoutOutcome, reason string) TimeoutReason {
-	switch value := TimeoutReason(reason); value {
-	case TimeoutPhaseTransitionAborted, TimeoutLongResponseAfterContent, TimeoutStateRootDiverged,
-		TimeoutContextCanceled, TimeoutDiffDeliveryFailed, TimeoutNotApplied:
-		return value
-	}
-	if outcome == TimeoutSkipped {
-		return TimeoutReasonUnknown
+	if _, named := reasonOrigin[reason]; named {
+		return TimeoutReason(reason)
 	}
 	switch outcome {
-	case TimeoutVoteCollectionFailed, TimeoutInsufficientVotes, TimeoutDiffSendFailed:
+	case TimeoutSkipped, TimeoutVoteCollectionFailed, TimeoutInsufficientVotes, TimeoutDiffSendFailed:
 		return TimeoutReasonUnknown
 	}
 	return ""
 }
 
+// FailureOriginFromDetail attributes a failure. A named reason is settled first so one that merely
+// contains another's word cannot be misfiled; anything unplaceable reached no one far enough to blame.
 func FailureOriginFromDetail(detail string) FailureOrigin {
-	switch {
-	case detail == "context_canceled" || strings.Contains(detail, "client"):
-		return FailureClient
-	case detail == "phase_transition_aborted",
-		detail == "long_response_after_content",
-		detail == "timeout_not_applied",
-		detail == "nonce_already_finished",
-		strings.Contains(detail, "policy"):
-		return FailureGatewayPolicy
-	case detail == "not_finished",
-		detail == "escrow_state_root_diverged",
-		strings.Contains(detail, "http_"),
-		strings.Contains(detail, "stream"),
-		strings.Contains(detail, "response"):
-		return FailureHostResponse
-	default:
-		return FailureTransportUnknown
+	if origin, named := reasonOrigin[detail]; named {
+		return origin
 	}
+	for _, rule := range originOfFragment {
+		if strings.Contains(detail, rule.fragment) {
+			return rule.origin
+		}
+	}
+	return FailureTransportUnknown
 }

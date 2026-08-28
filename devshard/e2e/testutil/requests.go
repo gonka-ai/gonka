@@ -85,6 +85,9 @@ func ChatCompletionBody(content string, stream bool) map[string]any {
 
 const ToolChoiceUnsupportedMessage = "tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"
 
+// The gateway classifies a state divergence off this wording, so a stub host has to reproduce it verbatim.
+const StateRootDivergenceMessage = "apply diff nonce 1: post_state_root does not match computed state root: diff 00, computed 11"
+
 func ToolCompletionBody(content string, stream bool) map[string]any {
 	body := ChatCompletionBody(content, stream)
 	body["tool_choice"] = "auto"

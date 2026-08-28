@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	json "github.com/goccy/go-json"
@@ -108,6 +109,18 @@ type requestAdmissionBodyObserver interface {
 // distinguish from a normal end-of-response.
 var ErrSSEStreamTruncated = errors.New("sse stream ended without [DONE] or devshard_receipt")
 
+// maxErrorBodyBytes bounds the body kept from a failed response. It reaches an error string, a
+// metric label and a log line, none of which a host's error page should be free to size.
+const maxErrorBodyBytes = 64 << 10
+
+func readErrorBody(body io.Reader) string {
+	if body == nil {
+		return ""
+	}
+	read, _ := io.ReadAll(io.LimitReader(body, maxErrorBodyBytes))
+	return string(read)
+}
+
 type UpstreamStatusError struct {
 	Path       string
 	StatusCode int
@@ -133,6 +146,31 @@ func IsUpstreamEscrowNotFound(err error) bool {
 	}
 	return ue.StatusCode == http.StatusInternalServerError &&
 		strings.Contains(ue.Body, "escrow not found")
+}
+
+// IsSessionNotFound returns true if err is an UpstreamStatusError from a host that does not hold the
+// escrow at all, as opposed to holding it and disagreeing about a nonce.
+func IsSessionNotFound(err error) bool {
+	var ue *UpstreamStatusError
+	if !errors.As(err, &ue) {
+		return false
+	}
+	return ue.StatusCode == http.StatusNotFound && strings.Contains(ue.Body, "session not found")
+}
+
+// IsTransientWriteError reports a failure the peer never answered, whether or not it saw the request.
+func IsTransientWriteError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var status *UpstreamStatusError
+	if errors.As(err, &status) {
+		return false
+	}
+	return errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNREFUSED)
 }
 
 func DefaultClientConfig() ClientConfig {
@@ -229,7 +267,7 @@ func (c *HTTPClient) get(ctx context.Context, path string, timeout time.Duration
 }
 
 // Send implements user.HostClient.
-func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
 	timeout := c.config.InferenceTimeout
 	if req.Payload == nil {
 		// Finalize/catch-up sends only exchange protocol state, so a dead host
@@ -292,7 +330,7 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 //     ([DONE] or devshard_receipt) from a clean EOF that arrives *before* one.
 //     bufio.Scanner squashes io.EOF into a nil error, so the caller cannot tell
 //     a successful completion from a peer / middlebox closing the body early.
-func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
 	br := bufio.NewReaderSize(r, 64<<10)
 	var result host.HostResponse
 	var writeErrLogged bool
@@ -333,7 +371,7 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 func (c *HTTPClient) handleSSELine(
 	line string,
 	stream io.Writer,
-	receiptHandler func(),
+	receiptHandler func(*host.HostResponse),
 	result *host.HostResponse,
 	writeErrLogged, unexpectedLineLogged, sawTerminator *bool,
 ) {
@@ -403,7 +441,7 @@ func (c *HTTPClient) handleSSELine(
 			result.ConfirmedAt = receipt.ConfirmedAt
 		}
 		if receiptHandler != nil {
-			receiptHandler()
+			receiptHandler(result)
 		}
 		return
 	}
@@ -634,13 +672,13 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readErrorBody(resp.Body)
 		resp.Body.Close()
-		c.observeResultWithBody(path, resp.StatusCode, string(respBody))
+		c.observeResultWithBody(path, resp.StatusCode, respBody)
 		return nil, &UpstreamStatusError{
 			Path:       path,
 			StatusCode: resp.StatusCode,
-			Body:       string(respBody),
+			Body:       respBody,
 		}
 	}
 	c.observeResult(path, resp.StatusCode)
@@ -677,12 +715,12 @@ func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		c.observeResultWithBody(url, resp.StatusCode, string(respBody))
+		respBody := readErrorBody(resp.Body)
+		c.observeResultWithBody(url, resp.StatusCode, respBody)
 		return nil, &UpstreamStatusError{
 			Path:       url,
 			StatusCode: resp.StatusCode,
-			Body:       string(respBody),
+			Body:       respBody,
 		}
 	}
 	c.observeResult(url, resp.StatusCode)

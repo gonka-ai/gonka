@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -95,9 +96,12 @@ func (c *chatResponseCache) sweepExpiredLocked(now time.Time) {
 	}
 }
 
-func chatCacheKey(model string, body []byte) string {
+// The body is already normalized, so it no longer records what the client asked for: the intent must key too.
+func chatCacheKey(model string, body []byte, intent clientResponseIntent) string {
 	h := sha256.New()
 	io.WriteString(h, strings.TrimSpace(model))
+	h.Write([]byte{0})
+	fmt.Fprintf(h, "%t|%t|%t", intent.keepLogprobs, intent.keepTopLogprobs, intent.keepUsage)
 	h.Write([]byte{0})
 	h.Write(body)
 	return hex.EncodeToString(h.Sum(nil))

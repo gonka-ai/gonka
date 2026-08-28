@@ -35,9 +35,13 @@ type escrowState struct {
 	Counters        map[CounterKey]uint64      `json:"counters"`
 	OpenChallenge   map[uint64]uint32          `json:"-"`
 	ChallengeBySlot map[uint32]uint64          `json:"challenge_by_slot"`
+	ValidatedBySlot map[uint32]uint64          `json:"validated_by_slot"`
+	TimedOutBySlot  map[uint32]uint64          `json:"timed_out_by_slot"`
 	InvalidBySlot   map[uint32]uint64          `json:"invalid_by_slot"`
 	InvalidNonce    map[uint64]struct{}        `json:"-"`
 	Live            map[uint64]*nonceState     `json:"-"`
+	LiveRequests    map[string]struct{}        `json:"-"`
+	Events          []ProtocolEvent            `json:"-"`
 }
 
 type nonceState struct {
@@ -52,7 +56,13 @@ type nonceState struct {
 	Quarantine        QuarantineMode
 	NoSendReason      NoSendReason
 	FailureOrigin     FailureOrigin
+	LogprobsDecoded   bool
+	SlowReceipt       bool
+	SlowChunk         bool
+	ClockDrifted      bool
+	SlowDecode        bool
 	DetailReason      string
+	DeliveryReason    string
 	TimeoutKind       TimeoutKind
 	TimeoutPhase      Phase
 	TimeoutOutcome    TimeoutOutcome
@@ -61,7 +71,11 @@ type nonceState struct {
 	ReceiptAt         int64
 	ProtocolTimedOut  bool
 	TimeoutResultSeen bool
-	Counted           *CounterKey
+	// GhostTimeoutPending marks a burned nonce the gateway will raise a timeout on. The raise resolves a
+	// refusal deadline later, so the nonce has to outlive the burn to receive its own outcome.
+	GhostTimeoutPending bool
+	RequestID           string
+	Counted             *CounterKey
 }
 
 func OpenTracker(path string, retention uint64, interval time.Duration) (*Tracker, error) {
@@ -170,10 +184,33 @@ func (t *Tracker) RegisterEscrow(meta EscrowMetadata) error {
 			Counters:        make(map[CounterKey]uint64),
 			OpenChallenge:   make(map[uint64]uint32),
 			ChallengeBySlot: make(map[uint32]uint64),
+			ValidatedBySlot: make(map[uint32]uint64),
+			TimedOutBySlot:  make(map[uint32]uint64),
 			InvalidBySlot:   make(map[uint32]uint64),
 			InvalidNonce:    make(map[uint64]struct{}),
 			Live:            make(map[uint64]*nonceState),
+			LiveRequests:    make(map[string]struct{}),
 		}
+		return nil
+	})
+}
+
+func (t *Tracker) RecordRequestStarted(escrowID, requestID string) error {
+	if requestID == "" {
+		return nil
+	}
+	return t.withEscrow(escrowID, func(e *escrowState) error {
+		e.LiveRequests[requestID] = struct{}{}
+		return nil
+	})
+}
+
+func (t *Tracker) RecordRequestFinished(escrowID, requestID string) error {
+	if requestID == "" {
+		return nil
+	}
+	return t.withEscrow(escrowID, func(e *escrowState) error {
+		delete(e.LiveRequests, requestID)
 		return nil
 	})
 }
@@ -200,6 +237,24 @@ func (t *Tracker) RecordCommittedDiff(escrowID string, diff types.Diff, verdicts
 			return err
 		}
 		e.recordCommittedDiff(diff, verdicts, t.nowUTC())
+		return nil
+	})
+}
+
+// RecordValidatorWork counts a validation against the slot that performed it. HostStats carries a
+// field for this, but nothing writes it: the count rides the state root, so filling it there would
+// need every host to agree on the same build.
+func (t *Tracker) RecordValidatorWork(escrowID string, validatorSlots []uint32) error {
+	if len(validatorSlots) == 0 {
+		return nil
+	}
+	return t.withEscrow(escrowID, func(e *escrowState) error {
+		for _, slot := range validatorSlots {
+			if int(slot) >= len(e.Meta.Slots) {
+				return fmt.Errorf("slot %d out of range", slot)
+			}
+			e.ValidatedBySlot[slot]++
+		}
 		return nil
 	})
 }
@@ -232,6 +287,9 @@ func (t *Tracker) RecordProtocol(escrowID string, nonce uint64, slot uint32, kin
 			return fmt.Errorf("slot %d out of range", slot)
 		}
 		e.HostStats[slot] = maxHostStats(e.HostStats[slot], stats)
+		if recordsProtocolEvent(kind) {
+			e.appendProtocolEvent(nonce, slot, kind, t.nowUTC())
+		}
 		switch kind {
 		case ProtocolReceiptApplied:
 			if s := e.Live[nonce]; s != nil {
@@ -295,18 +353,35 @@ func (t *Tracker) SyncState(escrowID string, latest uint64, hostStats map[uint32
 	})
 }
 
-func (t *Tracker) RecordGhost(escrowID string, nonce uint64, phase Phase, quarantine QuarantineMode, reason NoSendReason, detail string) error {
+func (t *Tracker) RecordGhost(escrowID string, nonce uint64, phase Phase, quarantine QuarantineMode, reason NoSendReason, detail string, timeoutPending bool) error {
 	return t.withEscrow(escrowID, func(e *escrowState) error {
 		s, err := e.liveNonce(nonce)
 		if err != nil {
 			return err
 		}
 		s.Ghost = true
+		s.GhostTimeoutPending = timeoutPending
 		s.DispatchPhase = normalizePhase(phase)
 		s.Quarantine = normalizeQuarantine(quarantine)
 		s.NoSendReason = normalizeNoSendReason(reason)
 		s.DetailReason = normalizeDetailReason(detail)
 		e.reclassify(nonce, s, t.nowUTC())
+		return nil
+	})
+}
+
+// RecordRequestID ties a nonce to the client request that produced it. One request fans out across
+// several nonces during a redundancy race, so this is the only route back from a miss to its cause.
+func (t *Tracker) RecordRequestID(escrowID string, nonce uint64, requestID string) error {
+	if requestID == "" {
+		return nil
+	}
+	return t.withEscrow(escrowID, func(e *escrowState) error {
+		s, err := e.liveNonce(nonce)
+		if err != nil {
+			return err
+		}
+		s.RequestID = requestID
 		return nil
 	})
 }
@@ -326,13 +401,63 @@ func (t *Tracker) RecordRealSend(escrowID string, nonce uint64, sentAt time.Time
 	})
 }
 
-func (t *Tracker) RecordUsage(escrowID string, nonce uint64, usage Usage) error {
+// RecordProbeSend stamps the reason at send, so a probe stays out of the user-facing ratios even when it fails.
+func (t *Tracker) RecordProbeSend(escrowID string, nonce uint64, sentAt time.Time, phase Phase, quarantine QuarantineMode, deliveryReason string) error {
+	return t.withEscrow(escrowID, func(e *escrowState) error {
+		s, err := e.liveNonce(nonce)
+		if err != nil {
+			return err
+		}
+		s.Sent = true
+		s.SendAt = sentAt.UTC()
+		s.DispatchPhase = normalizePhase(phase)
+		s.Quarantine = normalizeQuarantine(quarantine)
+		s.DeliveryReason = normalizeDeliveryReason(deliveryReason)
+		e.reclassify(nonce, s, t.nowUTC())
+		return nil
+	})
+}
+
+// RecordUsage also carries what the host delivered on this nonce: a settled nonce that streamed
+// nothing is one we paid for and could not use, and winner/loser alone cannot tell it from a
+// healthy one.
+func (t *Tracker) RecordUsage(escrowID string, nonce uint64, usage Usage, deliveryReason string) error {
 	return t.withEscrow(escrowID, func(e *escrowState) error {
 		s, err := e.liveNonce(nonce)
 		if err != nil {
 			return err
 		}
 		s.Usage = normalizeUsage(usage)
+		s.DeliveryReason = normalizeDeliveryReason(deliveryReason)
+		e.reclassify(nonce, s, t.nowUTC())
+		return nil
+	})
+}
+
+// RecordLogprobsDecoded marks an answer whose logprobs named tokens by text rather than by id. A
+// validator replays an inference from those ids, so it votes such an answer invalid.
+func (t *Tracker) RecordLogprobsDecoded(escrowID string, nonce uint64) error {
+	return t.withEscrow(escrowID, func(e *escrowState) error {
+		s, err := e.liveNonce(nonce)
+		if err != nil {
+			return err
+		}
+		s.LogprobsDecoded = true
+		e.reclassify(nonce, s, t.nowUTC())
+		return nil
+	})
+}
+
+func (t *Tracker) RecordAttemptTiming(escrowID string, nonce uint64, timing AttemptTiming) error {
+	return t.withEscrow(escrowID, func(e *escrowState) error {
+		s, err := e.liveNonce(nonce)
+		if err != nil {
+			return err
+		}
+		s.SlowReceipt = timing.receiptWasSlow()
+		s.SlowChunk = timing.chunkWasSlow()
+		s.ClockDrifted = timing.clockHasDrifted()
+		s.SlowDecode = timing.decodeWasSlow()
 		e.reclassify(nonce, s, t.nowUTC())
 		return nil
 	})
@@ -344,7 +469,7 @@ func (t *Tracker) RecordTimeout(record TimeoutRecord) error {
 		if err != nil {
 			return err
 		}
-		if !s.Sent {
+		if !s.Sent && !s.Ghost {
 			return errors.New("timeout recorded before real send")
 		}
 		outcome, ok := normalizeTimeoutOutcome(record.Outcome)
@@ -481,6 +606,10 @@ func (e *escrowState) recordCommittedDiff(diff types.Diff, verdicts []VerdictRec
 			continue
 		}
 		if msg := tx.GetTimeoutInference(); msg != nil {
+			// The chain counts a miss on the executor slot for every one of these, so the ledger side
+			// of that cross-check is read from the same diff rather than from what the gateway
+			// reported: a timeout raised on a nonce nobody dispatched is reported nowhere.
+			e.TimedOutBySlot[AssignedNonceSlot(msg.InferenceId, uint64(len(e.Meta.Slots)))]++
 			if state := e.Live[msg.InferenceId]; state != nil {
 				state.markProtocolTimeout()
 				e.reclassify(msg.InferenceId, state, now)
@@ -488,6 +617,9 @@ func (e *escrowState) recordCommittedDiff(diff types.Diff, verdicts []VerdictRec
 		}
 	}
 	for _, verdict := range verdicts {
+		if recordsProtocolEvent(verdict.Kind) {
+			e.appendProtocolEvent(verdict.Nonce, verdict.Slot, verdict.Kind, now)
+		}
 		switch verdict.Kind {
 		case ProtocolChallenged:
 			if _, ok := e.OpenChallenge[verdict.Nonce]; !ok {
@@ -656,7 +788,13 @@ func (s *nonceState) counterKey(meta EscrowMetadata, now time.Time) (CounterKey,
 		QuarantineMode:         s.Quarantine,
 		NoSendReason:           s.NoSendReason,
 		FailureOrigin:          s.FailureOrigin,
+		LogprobsDecoded:        s.LogprobsDecoded,
+		SlowReceipt:            s.SlowReceipt,
+		SlowChunk:              s.SlowChunk,
+		ClockDrifted:           s.ClockDrifted,
+		SlowDecode:             s.SlowDecode,
 		DetailReason:           s.DetailReason,
+		DeliveryReason:         s.DeliveryReason,
 		TimeoutKind:            s.TimeoutKind,
 		TimeoutOutcome:         s.TimeoutOutcome,
 		TimeoutReason:          s.TimeoutReason,
@@ -681,7 +819,7 @@ func (s *nonceState) counterKey(meta EscrowMetadata, now time.Time) (CounterKey,
 }
 
 func (s *nonceState) terminal() bool {
-	return s.Ghost ||
+	return (s.Ghost && (!s.GhostTimeoutPending || s.TimeoutResultSeen)) ||
 		(s.Finished && s.Usage != "") ||
 		(s.ProtocolTimedOut && s.TimeoutResultSeen)
 }
@@ -816,7 +954,7 @@ func normalizeQuarantine(q QuarantineMode) QuarantineMode {
 
 func normalizeNoSendReason(r NoSendReason) NoSendReason {
 	switch r {
-	case NoSendPoCUnavailable, NoSendParticipantThrottled, NoSendParticipantCapability, NoSendNoCompatibleAfterStale:
+	case NoSendPoCUnavailable, NoSendParticipantThrottled, NoSendParticipantStateDiverged, NoSendParticipantCapability, NoSendNoCompatibleAfterStale:
 		return r
 	default:
 		return NoSendUnknown
@@ -848,7 +986,7 @@ func normalizeTimeoutOutcome(o TimeoutOutcome) (TimeoutOutcome, bool) {
 
 func normalizeTimeoutReason(r TimeoutReason) TimeoutReason {
 	switch r {
-	case TimeoutPhaseTransitionAborted, TimeoutLongResponseAfterContent, TimeoutStateRootDiverged, TimeoutContextCanceled, TimeoutDiffDeliveryFailed, TimeoutNotApplied:
+	case TimeoutPhaseTransitionAborted, TimeoutLongResponseAfterContent, TimeoutStateRootDiverged, TimeoutContextCanceled, TimeoutDiffDeliveryFailed, TimeoutNotApplied, TimeoutHostServedProbe:
 		return r
 	default:
 		if r == "" {
@@ -872,24 +1010,6 @@ func normalizeFailureOrigin(origin FailureOrigin, detail string) FailureOrigin {
 		return FailureHostResponse
 	default:
 		return FailureTransportUnknown
-	}
-}
-
-func normalizeDetailReason(reason string) string {
-	reason = strings.TrimSpace(reason)
-	switch reason {
-	case "", "none":
-		return ""
-	case "phase_transition_aborted", "error_stream", "empty_stream", "sse_truncated",
-		"eof_transport", "client_cancelled", "transport_error", "no_receipt",
-		"not_finished", "http_429", "http_503", "http_forbidden", "http_not_found",
-		"http_timestamp_drift", "http_error", "long_response_after_content",
-		"escrow_state_root_diverged", "context_canceled", "timeout_diff_delivery_failed",
-		"timeout_not_applied", "poc_unavailable_host", "participant_throttled_no_send",
-		"participant_capability_no_send", "no_compatible_request_after_stale":
-		return reason
-	default:
-		return "unknown"
 	}
 }
 

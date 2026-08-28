@@ -8,10 +8,31 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"time"
 
 	"devshard/accounting"
 )
+
+// openAccountingTracker returns nil when stats are off, which switches off the whole subsystem rather
+// than just the listener: the snapshots, the metrics collector and the API all hang off the tracker,
+// and every one of them already handles its absence.
+func openAccountingTracker(baseStorageDir string) *accounting.Tracker {
+	if !readBoolEnv("DEVSHARD_STATS_ENABLED", true) {
+		log.Printf("devshard accounting disabled by DEVSHARD_STATS_ENABLED")
+		return nil
+	}
+	tracker, err := accounting.OpenTracker(
+		filepath.Join(baseStorageDir, "accounting.db"),
+		accountingRetentionEpochs(),
+		accountingSnapshotInterval(),
+	)
+	if err != nil {
+		log.Printf("open accounting store: %v (accounting disabled)", err)
+		return nil
+	}
+	return tracker
+}
 
 func accountingRetentionEpochs() uint64 {
 	value := readInt64Env("DEVSHARD_STATS_RETENTION_EPOCHS", 0)
@@ -45,6 +66,25 @@ func accountingCurrentEpoch(g *Gateway) accounting.CurrentEpochFunc {
 	}
 }
 
+// accountingCapability exposes what PerfTracker learned about a host's build. The participant key is
+// the slot's gonka validator address in both subsystems, which is what makes the lookup line up.
+func accountingCapability(g *Gateway) accounting.CapabilityFunc {
+	if g == nil || g.perf == nil {
+		return nil
+	}
+	return func(participant, model string) accounting.HostCapability {
+		version, tool, context, contextLimit := g.perf.CapabilityRefusals(participant, model)
+		return accounting.HostCapability{
+			ProtocolVersionUnsupported: version > 0,
+			ToolChoiceUnsupported:      tool > 0,
+			ContextLimit:               contextLimit,
+			VersionRefusals:            version,
+			ToolRefusals:               tool,
+			ContextRefusals:            context,
+		}
+	}
+}
+
 const defaultStatsPort = "9091"
 
 // accountingStatsAddr binds every interface: the reader is a dashboard sidecar in
@@ -61,7 +101,7 @@ func startAccountingServer(g *Gateway) (*http.Server, error) {
 	addr := accountingStatsAddr()
 	server := &http.Server{
 		Addr:              addr,
-		Handler:           accounting.NewHandler(g.accounting.Tracker(), accountingCurrentEpoch(g)),
+		Handler:           accounting.NewHandler(g.accounting.Tracker(), accountingCurrentEpoch(g), accountingCapability(g)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

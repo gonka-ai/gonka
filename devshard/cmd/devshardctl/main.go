@@ -17,6 +17,7 @@ import (
 	"common/chain"
 	"devshard/accounting"
 	"devshard/bridge"
+	"devshard/logging"
 	"devshard/state"
 	"devshard/types"
 	"devshard/user"
@@ -127,8 +128,10 @@ type bootstrapOptions struct {
 var gatewayRuntimeBuilder = buildRuntime
 
 func main() {
+	logging.ConfigureFormat(os.Getenv("DEVSHARD_LOG_FORMAT"))
 	ConfigurePoCRequestMode(os.Getenv("DEVSHARD_POC_REQUEST_MODE"))
 	ConfigureCapacityAwareLimits(os.Getenv("DEVSHARD_CAPACITY_AWARE_LIMITS"))
+	ConfigureGhostAccountability(os.Getenv("DEVSHARD_GHOST_ACCOUNTABILITY"))
 	flags := parseCLIFlags()
 	runtimeOpts := mustLoadRuntimeOptions(flags)
 	gatewayStore := mustOpenGatewayStore(runtimeOpts.baseStorageDir)
@@ -438,14 +441,7 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 		perfStore.Close()
 		log.Fatalf("create runtimes: %v", err)
 	}
-	accountingTracker, err := accounting.OpenTracker(
-		filepath.Join(baseStorageDir, "accounting.db"),
-		accountingRetentionEpochs(),
-		accountingSnapshotInterval(),
-	)
-	if err != nil {
-		log.Printf("open accounting store: %v (accounting disabled)", err)
-	}
+	accountingTracker := openAccountingTracker(baseStorageDir)
 	limiter := NewGatewayLimiter(
 		gatewayState.Settings.MaxConcurrentRequests,
 		gatewayState.Settings.MaxInputTokensInFlight,

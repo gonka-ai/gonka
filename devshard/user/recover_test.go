@@ -832,3 +832,39 @@ func TestRecoverSession_IgnoredFutureSnapshotRecovers(t *testing.T) {
 	require.Equal(t, uint64(3), session.Nonce())
 	require.Len(t, session.Diffs(), 3)
 }
+
+// The production failure this guards: a gateway built after the min_tokens floor could not start at
+// all, because recovery replays diffs an earlier build wrote and one of them reserved a single token.
+// "create runtimes: runtime 51153: create session: recover session: replay nonce 1003:
+// max_tokens below min_tokens floor: max_tokens 1, floor 64".
+func TestRecoverSession_ReplaysADiffWrittenBeforeTheMinTokensFloor(t *testing.T) {
+	store := newTestStore(t)
+	group, hosts, user := setupRecoverableSession(t, 2, 0, store)
+	verifier := signing.NewSecp256k1Verifier()
+	config := testutil.DefaultConfig(len(hosts))
+
+	sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+	belowFloor := []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{
+		StartInference: &types.MsgStartInference{
+			InferenceId: 1,
+			PromptHash:  testutil.TestPromptHash[:],
+			Model:       "llama",
+			InputLength: 100,
+			MaxTokens:   1,
+			StartedAt:   1000,
+		},
+	}}}
+	root, err := sm.ApplyLocalPersisted(1, belowFloor)
+	require.NoError(t, err, "seeding the diff an earlier build would have written")
+	require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{
+		Diff:      testutil.SignDiffWithRoot(t, user, "escrow-1", 1, belowFloor, root),
+		StateHash: root,
+	}))
+
+	clients := make([]HostClient, len(hosts))
+	session, recovered, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, clients)
+
+	require.NoError(t, err, "recovery must replay history the running policy would no longer create")
+	require.NotNil(t, session)
+	require.Equal(t, types.StatusPending, recovered.SnapshotState().Inferences[1].Status)
+}

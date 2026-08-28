@@ -25,7 +25,7 @@ func TestGatewayAccountingAdapterRecordsEvents(t *testing.T) {
 	require.NotNil(t, recorder)
 	registerGatewayAccountingTestEscrow(t, tracker, "e1", 1, "m")
 	require.NoError(t, tracker.RecordDiff("e1", 1, true))
-	recorder.Ghost("e1", 1, "participant_throttled_no_send", "probe")
+	recorder.Ghost("e1", 1, "participant_throttled_no_send", "probe", false)
 	require.NoError(t, tracker.RecordDiff("e1", 2, true))
 	recorder.RealSend("e1", 2, time.Now().Add(-time.Second), "shadow")
 	recorder.TimeoutResult("e1", 2, "refused", "failed", "insufficient_votes", "no_receipt", "")
@@ -41,7 +41,7 @@ func TestGatewayAccountingAdapterRecordsEvents(t *testing.T) {
 }
 
 func TestGatewayTimeoutFailureActionKeepsUnknownVisible(t *testing.T) {
-	action, reason := gatewayTimeoutFailureAction(user.TimeoutResult{})
+	action, reason := gatewayTimeoutFailureAction(user.TimeoutResult{}, false)
 	require.Equal(t, "failed", action)
 	require.Equal(t, "unknown", reason)
 }
@@ -110,7 +110,7 @@ func (timeoutErrorClient) Send(
 	context.Context,
 	host.HostRequest,
 	io.Writer,
-	func(),
+	func(*host.HostResponse),
 ) (*host.HostResponse, error) {
 	return nil, errors.New("send not expected")
 }
@@ -141,7 +141,7 @@ func TestAccountingObserverTracksCommittedSessionDiffs(t *testing.T) {
 	_, err = env.session.SendInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 	recorder.RealSend("escrow-proxy", 1, time.Now(), "")
-	recorder.Usage("escrow-proxy", 1, 1)
+	recorder.Usage("escrow-proxy", 1, 1, "")
 	_, err = env.session.PrepareInference(defaultParams())
 	require.NoError(t, err)
 
@@ -173,12 +173,14 @@ func TestAccountingObserverSyncsActiveProtocolMisses(t *testing.T) {
 	sentAt := time.Now().Add(-2 * time.Second)
 	recorder.RealSend("escrow-proxy", prepared.Nonce(), sentAt, "")
 
+	// StartedAt is stamped when the request arrives, so it never postdates the send; backdating one
+	// without the other would ask verifiers to judge a deadline that has not run yet.
 	result, err := env.session.HandleTimeout(context.Background(), prepared.Nonce(), sentAt, &host.InferencePayload{
 		Prompt:      params.Prompt,
 		Model:       params.Model,
 		InputLength: params.InputLength,
 		MaxTokens:   params.MaxTokens,
-		StartedAt:   params.StartedAt,
+		StartedAt:   sentAt.Unix(),
 	})
 	require.Error(t, err)
 	require.True(t, result.Applied)
@@ -221,6 +223,7 @@ func TestAccountingProductionPendingClassification(t *testing.T) {
 }
 
 func TestAccountingProductionGhostFact(t *testing.T) {
+	disableThrottleProbe(t)
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
 	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
@@ -280,7 +283,7 @@ func TestAccountingStateDivergenceRemainsUnknownPolicy(t *testing.T) {
 	prepared := prepareForGhost(t, env.session, "llama")
 	env.proxy.redundancy.runGhostProbe(
 		prepared,
-		ghostCapability,
+		ghostStateDiverged,
 		"escrow_state_root_diverged",
 	)
 
@@ -289,6 +292,43 @@ func TestAccountingStateDivergenceRemainsUnknownPolicy(t *testing.T) {
 	require.Equal(t, accounting.NoSendUnknown, record.Counters[0].Key.NoSendReason)
 	require.Equal(t, "escrow_state_root_diverged", record.Counters[0].Key.DetailReason)
 	require.Equal(t, uint64(1), record.UnknownReasonTotal)
+}
+
+// The request identifier only exists in the gateway's log context. Unless the dispatch path hands it
+// to accounting, a later miss can name its nonce but never the request that produced it.
+func TestAccountingCarriesTheRequestIDFromTheDispatchContext(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
+	recorder := accounting.NewRecorder(tracker, nil)
+	recorder.Attach(accounting.RuntimeMetadata{
+		EscrowID:      "escrow-proxy",
+		CreationEpoch: 25,
+		Model:         "llama",
+		TimeoutBuffer: user.TimeoutBuffer,
+	}, env.session, env.sm)
+	env.proxy.redundancy.accounting = recorder
+
+	params := defaultParams()
+	prepared, err := env.session.PrepareInference(params)
+	require.NoError(t, err)
+	attempt := &inflight{
+		escrowID: "escrow-proxy",
+		nonce:    prepared.Nonce(),
+		hostIdx:  prepared.HostIdx(),
+		sendTime: time.Now(),
+	}
+	ctx, requestID := ensureRequestLogContext(context.Background())
+
+	env.proxy.redundancy.recordGatewayAttemptStarted(ctx, attempt, params)
+	require.NoError(t, tracker.RecordProtocol("escrow-proxy", attempt.nonce,
+		uint32(attempt.hostIdx), accounting.ProtocolTimeoutApplied, types.HostStats{}))
+
+	events := tracker.Events(accounting.QueryFilter{EpochIndex: 25})
+	require.Len(t, events, 1)
+	require.Equal(t, attempt.nonce, events[0].Nonce)
+	require.Equal(t, requestID, events[0].RequestID)
 }
 
 func TestAccountingProductionUsedAndUnusedAttempts(t *testing.T) {
@@ -314,7 +354,7 @@ func TestAccountingProductionUsedAndUnusedAttempts(t *testing.T) {
 		hostIdx:  prepared1.HostIdx(),
 		sendTime: time.Now(),
 	}
-	env.proxy.redundancy.recordGatewayAttemptStarted(attempt1, params)
+	env.proxy.redundancy.recordGatewayAttemptStarted(context.Background(), attempt1, params)
 	response1, err := env.session.SendOnly(context.Background(), prepared1, nil, nil)
 	require.NoError(t, err)
 	require.NoError(t, env.session.ProcessResponse(prepared1.HostIdx(), response1, prepared1.Nonce()))
@@ -327,15 +367,15 @@ func TestAccountingProductionUsedAndUnusedAttempts(t *testing.T) {
 		hostIdx:  prepared2.HostIdx(),
 		sendTime: time.Now(),
 	}
-	env.proxy.redundancy.recordGatewayAttemptStarted(attempt2, params)
+	env.proxy.redundancy.recordGatewayAttemptStarted(context.Background(), attempt2, params)
 	response2, err := env.session.SendOnly(context.Background(), prepared2, nil, nil)
 	require.NoError(t, err)
 	require.NoError(t, env.session.ProcessResponse(prepared2.HostIdx(), response2, prepared2.Nonce()))
 	_, err = env.session.PrepareInference(params)
 	require.NoError(t, err)
 
-	env.proxy.redundancy.recordGatewayAttemptTerminal(attempt1, params, prepared1.Nonce(), true)
-	env.proxy.redundancy.recordGatewayAttemptTerminal(attempt2, params, prepared1.Nonce(), true)
+	env.proxy.redundancy.recordGatewayAttemptTerminal(attempt1, params, prepared1.Nonce(), true, nil)
+	env.proxy.redundancy.recordGatewayAttemptTerminal(attempt2, params, prepared1.Nonce(), true, nil)
 
 	var used, unused uint64
 	for _, record := range tracker.Query(accounting.QueryFilter{EpochIndex: 25}) {
@@ -495,7 +535,14 @@ func TestGatewayAccountingAdapterRecordsGhostPolicyDimensions(t *testing.T) {
 			wantMode:   accounting.QuarantineNone,
 		},
 		{
-			name:       "capability exclusion",
+			name:       "state divergence",
+			reason:     "participant_state_diverged_no_send",
+			quarantine: "none",
+			wantReason: accounting.NoSendParticipantStateDiverged,
+			wantMode:   accounting.QuarantineNone,
+		},
+		{
+			name:       "state divergence, the spelling written before the rename",
 			reason:     "participant_capability_no_send",
 			quarantine: "none",
 			wantReason: accounting.NoSendParticipantCapability,
@@ -520,7 +567,7 @@ func TestGatewayAccountingAdapterRecordsGhostPolicyDimensions(t *testing.T) {
 	for i, tc := range cases {
 		nonce := uint64(i + 1)
 		require.NoError(t, tracker.RecordDiff("e1", nonce, true), tc.name)
-		recorder.Ghost("e1", nonce, tc.reason, tc.quarantine)
+		recorder.Ghost("e1", nonce, tc.reason, tc.quarantine, false)
 	}
 
 	record := onlyGatewayAccountingRecord(t, tracker.Query(accounting.QueryFilter{EpochIndex: 2}))
@@ -546,7 +593,7 @@ func TestGatewayAccountingAdapterRecordsPoCGhostPolicyDimensions(t *testing.T) {
 	registerGatewayAccountingTestEscrow(t, tracker, "e1", 3, "m")
 	require.NoError(t, tracker.RecordDiff("e1", 1, true))
 
-	recorder.Ghost("e1", 1, "poc_unavailable_host", "none")
+	recorder.Ghost("e1", 1, "poc_unavailable_host", "none", false)
 
 	record := onlyGatewayAccountingRecord(t, tracker.Query(accounting.QueryFilter{EpochIndex: 3}))
 	counter := requireGatewayAccountingCounter(t, record, func(key accounting.CounterKey) bool {
@@ -566,12 +613,12 @@ func TestGatewayAccountingAdapterRecordsRealSendPolicyDimensions(t *testing.T) {
 
 	require.NoError(t, tracker.RecordDiff("e1", 1, true))
 	recorder.RealSend("e1", 1, time.Now(), "shadow")
-	recorder.Usage("e1", 1, 1)
+	recorder.Usage("e1", 1, 1, "")
 	require.NoError(t, tracker.RecordProtocol("e1", 1, 0, accounting.ProtocolFinishApplied, types.HostStats{}))
 
 	require.NoError(t, tracker.RecordDiff("e1", 2, true))
 	recorder.RealSend("e1", 2, time.Now(), "probation")
-	recorder.Usage("e1", 2, 1)
+	recorder.Usage("e1", 2, 1, "")
 	require.NoError(t, tracker.RecordProtocol("e1", 2, 0, accounting.ProtocolFinishApplied, types.HostStats{}))
 
 	record := onlyGatewayAccountingRecord(t, tracker.Query(accounting.QueryFilter{EpochIndex: 4}))
@@ -596,7 +643,7 @@ func TestGatewayAccountingAdapterRecordsPoCRealSendPhaseContext(t *testing.T) {
 	require.NoError(t, tracker.RecordDiff("e1", 1, true))
 
 	recorder.RealSend("e1", 1, time.Now(), "none")
-	recorder.Usage("e1", 1, 1)
+	recorder.Usage("e1", 1, 1, "")
 	require.NoError(t, tracker.RecordProtocol("e1", 1, 0, accounting.ProtocolFinishApplied, types.HostStats{}))
 
 	record := onlyGatewayAccountingRecord(t, tracker.Query(accounting.QueryFilter{EpochIndex: 5}))
@@ -665,4 +712,25 @@ func requireGatewayAccountingCounter(
 	}
 	t.Fatalf("missing counter in %#v", record.Counters)
 	return accounting.CounterRecord{}
+}
+
+// The chain counts a miss for an applied timeout whoever raised it, so a burn's timeout has to reach
+// the ledger the same as any other. Asserted end to end through the recorder: a burn that declares a
+// timeout stays live to receive it, and the applied outcome lands in the population the cross-check
+// compares against the chain's own count.
+func TestATimeoutRaisedOnABurnReachesTheLedger(t *testing.T) {
+	tracker := newGatewayAccountingTestTracker(t)
+	recorder := accounting.NewRecorder(tracker, nil)
+	registerGatewayAccountingTestEscrow(t, tracker, "e1", 1, "m")
+
+	require.NoError(t, tracker.RecordDiff("e1", 1, true))
+	recorder.Ghost("e1", 1, "poc_unavailable_host", "none", true)
+	recorder.TimeoutResult("e1", 1, "refused", "completed", "none", "", "")
+
+	var applied uint64
+	for _, record := range tracker.Query(accounting.QueryFilter{EpochIndex: 1}) {
+		applied += record.TimeoutOutcomes[accounting.TimeoutApplied]
+	}
+	require.Equal(t, uint64(1), applied,
+		"an applied timeout on a burned nonce must be counted, or the cross-check can never balance")
 }

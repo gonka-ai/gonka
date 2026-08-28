@@ -20,7 +20,7 @@ type fakeFetcher struct {
 	sigs map[uint32][]byte
 }
 
-func (f *fakeFetcher) Send(_ context.Context, _ host.HostRequest, _ io.Writer, _ func()) (*host.HostResponse, error) {
+func (f *fakeFetcher) Send(_ context.Context, _ host.HostRequest, _ io.Writer, _ func(*host.HostResponse)) (*host.HostResponse, error) {
 	return &host.HostResponse{}, nil
 }
 

@@ -307,7 +307,7 @@ func (g *ChainPhaseGate) Start() {
 	if g == nil {
 		return
 	}
-		if g.versions != nil {
+	if g.versions != nil {
 		// Derive a context whose lifetime matches the gate's stopCh so the
 		// versions poller stops cleanly without introducing a second lifecycle.
 		ctx, cancel := context.WithCancel(context.Background())
@@ -1179,7 +1179,6 @@ func rawPoCBlockingState(epochPhase, confirmationPhase string) (bool, string) {
 	}
 	return false, ""
 }
-
 
 func rawPoCGenerationState(epochPhase, confirmationPhase string) bool {
 	switch epochPhase {
