@@ -108,6 +108,13 @@ therefore removes only the affected worker from the corresponding public pool,
 while failures of an individual upstream application remain visible at their
 own route rather than collapsing the entire policy tier.
 
+Each policy container runs its own sidecar, and a crashed sidecar is restarted
+after five seconds. Readiness deliberately remains fail-closed during that
+restart: returning a fallback `200` would admit a worker whose application
+network has not been verified. A defect shared by the identical sidecar binaries
+can therefore withdraw both policy workers at once even while nginx itself is
+running; this is a correlated software failure of the policy deployment unit.
+
 `server-template` reserves router capacity and `PROXY_ROUTER_VERSION_CAPACITY`
 reserves version-backend capacity. Neither a new router address nor a new
 governance name requires a reload. Fresh router and policy slots start fully
