@@ -132,7 +132,10 @@ func TestFileStorageRefusesAPayloadThatInflatesPastTheBound(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	bomb := compressPayloadFile(make([]byte, maxPayloadFileBytes+1))
+	bomb, err := compressPayloadFile(make([]byte, maxPayloadFileBytes+1))
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(bomb) >= maxPayloadFileBytes {
 		t.Fatalf("the fixture is not a bomb: %d compressed bytes", len(bomb))
 	}
@@ -140,7 +143,61 @@ func TestFileStorageRefusesAPayloadThatInflatesPastTheBound(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, _, err := NewFileStorage(baseDir).Retrieve(context.Background(), "60453", 7, 11)
+	_, _, err = NewFileStorage(baseDir).Retrieve(context.Background(), "60453", 7, 11)
 	require.Error(t, err, "a file inflating past the bound must be refused, not read")
 	require.Contains(t, err.Error(), "bound")
+}
+
+// The suffix is the reader's only clue to the format, so a store that could not compress must not
+// claim it did: plain JSON under the compressed name is a payload nothing can open again.
+func TestAFailedEncodeIsNamedForWhatItActuallyHolds(t *testing.T) {
+	plain := []byte(`{"prompt":"p"}`)
+	compressed, err := compressPayloadFile(plain)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body, suffix := namePayloadFile(plain, compressed, nil, 7)
+	if suffix != compressedSuffix || string(body) != string(compressed) {
+		t.Fatalf("a successful encode must be written compressed under %q, got %q", compressedSuffix, suffix)
+	}
+
+	body, suffix = namePayloadFile(plain, nil, errors.New("encoder unavailable"), 7)
+	if suffix != plainSuffix {
+		t.Fatalf("a failed encode must take the plain name, got %q", suffix)
+	}
+	if string(body) != string(plain) {
+		t.Fatalf("a failed encode must write the plain bytes, got %q", body)
+	}
+}
+
+// The reader prefers the compressed name, so a file left behind under the other setting would
+// outrank a newer write and serve a payload that no longer matches the committed hash.
+func TestStoringAgainUnderTheOtherSettingLeavesNoStaleSibling(t *testing.T) {
+	dir := t.TempDir()
+	ctx := context.Background()
+
+	if err := NewCompressingFileStorage(dir).Store(ctx, "esc", 7, 1, []byte(`"old"`), []byte(`"old"`)); err != nil {
+		t.Fatalf("first store: %v", err)
+	}
+	plainStore := NewFileStorage(dir)
+	if err := plainStore.Store(ctx, "esc", 7, 1, []byte(`"new"`), []byte(`"new"`)); err != nil {
+		t.Fatalf("second store: %v", err)
+	}
+
+	prompt, response, err := plainStore.Retrieve(ctx, "esc", 7, 1)
+	if err != nil {
+		t.Fatalf("retrieve: %v", err)
+	}
+	if string(prompt) != `"new"` || string(response) != `"new"` {
+		t.Fatalf("the superseded payload was served: prompt=%s response=%s", prompt, response)
+	}
+
+	escrowDir, err := plainStore.escrowDir("esc", 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(escrowDir, "7"+compressedSuffix)); !os.IsNotExist(err) {
+		t.Fatalf("the compressed sibling outlived the write that replaced it: %v", err)
+	}
 }

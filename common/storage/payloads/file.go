@@ -98,10 +98,12 @@ func (f *FileStorage) Store(ctx context.Context, escrowId string, inferenceId, e
 
 	suffix := plainSuffix
 	if f.compressFile {
-		data, suffix = compressPayloadFile(data), compressedSuffix
+		compressed, compressErr := compressPayloadFile(data)
+		data, suffix = namePayloadFile(data, compressed, compressErr, inferenceId)
 	}
 
-	targetPath := filepath.Join(dir, strconv.FormatUint(inferenceId, 10)+suffix)
+	name := strconv.FormatUint(inferenceId, 10)
+	targetPath := filepath.Join(dir, name+suffix)
 	tempPath := targetPath + ".tmp"
 	if err := os.WriteFile(tempPath, data, 0o644); err != nil {
 		return fmt.Errorf("payloads: write temp: %w", err)
@@ -110,7 +112,28 @@ func (f *FileStorage) Store(ctx context.Context, escrowId string, inferenceId, e
 		_ = os.Remove(tempPath)
 		return fmt.Errorf("payloads: rename: %w", err)
 	}
+	// The reader prefers the compressed name, so a sibling written under the other setting would
+	// outrank what was just stored.
+	_ = os.Remove(filepath.Join(dir, name+siblingSuffix(suffix)))
 	return nil
+}
+
+// namePayloadFile picks the bytes to write and the suffix that describes them. An encoder that failed
+// is stored plain, because plain JSON under the compressed name is a file the reader cannot open.
+func namePayloadFile(plain, compressed []byte, compressErr error, inferenceId uint64) ([]byte, string) {
+	if compressErr != nil {
+		logging.Warn("Storing the payload uncompressed: zstd failed", types.PayloadStorage,
+			"inferenceId", inferenceId, "error", compressErr)
+		return plain, plainSuffix
+	}
+	return compressed, compressedSuffix
+}
+
+func siblingSuffix(suffix string) string {
+	if suffix == compressedSuffix {
+		return plainSuffix
+	}
+	return compressedSuffix
 }
 
 func (f *FileStorage) Retrieve(ctx context.Context, escrowId string, inferenceId, epochId uint64) ([]byte, []byte, error) {
@@ -144,25 +167,25 @@ var _ Storage = (*FileStorage)(nil)
 
 // The suffix names the format; both are read, so files written before compression stay readable.
 const (
-	compressedSuffix = ".json.zst"
-	plainSuffix      = ".json"
+	compressedSuffix    = ".json.zst"
+	plainSuffix         = ".json"
 	maxPayloadFileBytes = 256 << 20
 )
 
-func compressPayloadFile(data []byte) []byte {
+func compressPayloadFile(data []byte) ([]byte, error) {
 	var compressed bytes.Buffer
 	writer, err := zstd.NewWriter(&compressed, zstd.WithEncoderLevel(zstd.SpeedDefault))
 	if err != nil {
-		return data
+		return nil, fmt.Errorf("payloads: zstd writer: %w", err)
 	}
 	if _, err := writer.Write(data); err != nil {
 		_ = writer.Close()
-		return data
+		return nil, fmt.Errorf("payloads: zstd write: %w", err)
 	}
 	if err := writer.Close(); err != nil {
-		return data
+		return nil, fmt.Errorf("payloads: zstd close: %w", err)
 	}
-	return compressed.Bytes()
+	return compressed.Bytes(), nil
 }
 
 func readPayloadFile(dir string, inferenceId uint64) ([]byte, error) {
