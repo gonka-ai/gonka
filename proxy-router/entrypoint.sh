@@ -45,12 +45,26 @@ CATALOG_UPSTREAM_HOST="${PROXY_ROUTER_CATALOG_UPSTREAM_HOST:-}"
 CATALOG_UPSTREAM_PORT="${PROXY_ROUTER_CATALOG_UPSTREAM_PORT:-9100}"
 DNS_RESOLVER="${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}"
 
-resolve_ipv4() {
-    getent ahostsv4 "$1" | awk 'NR == 1 { print $1 }'
+resolve_local_ipv4() {
+    host=$1
+    for candidate in $(getent ahostsv4 "$host" | awk '!seen[$1]++ { print $1 }'); do
+        if ip -o -4 addr show | awk -v candidate="$candidate" '
+            {
+                address = $4
+                sub(/\/.*/, "", address)
+                if (address == candidate) found = 1
+            }
+            END { exit !found }
+        '; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
 }
 
 if [ -n "$POLICY_BIND_HOST" ]; then
-    POLICY_BIND_ADDRESS=$(resolve_ipv4 "$POLICY_BIND_HOST")
+    POLICY_BIND_ADDRESS=$(resolve_local_ipv4 "$POLICY_BIND_HOST")
     case "$POLICY_BIND_ADDRESS" in
         '' | *[!0-9.]*)
             echo "proxy-router: cannot resolve policy bind host '$POLICY_BIND_HOST' to IPv4" >&2
@@ -66,7 +80,7 @@ if [ -n "$CATALOG_BIND_HOST" ]; then
         echo "proxy-router: PROXY_ROUTER_CATALOG_UPSTREAM_HOST is required when the catalog bridge is enabled" >&2
         exit 1
     fi
-    CATALOG_BIND_ADDRESS=$(resolve_ipv4 "$CATALOG_BIND_HOST")
+    CATALOG_BIND_ADDRESS=$(resolve_local_ipv4 "$CATALOG_BIND_HOST")
     case "$CATALOG_BIND_ADDRESS" in
         '' | *[!0-9.]*)
             echo "proxy-router: cannot resolve catalog bind host '$CATALOG_BIND_HOST' to IPv4" >&2
@@ -79,7 +93,7 @@ elif [ -n "$CATALOG_UPSTREAM_HOST" ]; then
 fi
 
 if [ -n "$METRICS_BIND_HOST" ]; then
-    METRICS_BIND_ADDRESS=$(resolve_ipv4 "$METRICS_BIND_HOST")
+    METRICS_BIND_ADDRESS=$(resolve_local_ipv4 "$METRICS_BIND_HOST")
     case "$METRICS_BIND_ADDRESS" in
         '' | *[!0-9.]*)
             echo "proxy-router: cannot resolve metrics bind host '$METRICS_BIND_HOST' to IPv4" >&2
