@@ -377,7 +377,7 @@ cleanup does not cross into another fleet.
 | `VERSIOND_ROUTER_ADMIN_PORT` | `8404` | internal liveness/readiness listener port; the shipped Compose healthcheck follows this value |
 | `VERSIOND_ROUTER_FRONT_BIND_HOST` | *(empty)* | optional container hostname whose IPv4 address receives the data and admin listeners. Empty binds both listeners on all container interfaces; a named interface keeps an additional loopback admin bind |
 | `VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS` | `false` | preserve `X-Real-IP` and `X-Forwarded-Proto` only when the listener is isolated behind the trusted public/policy proxy tier |
-| `VERSIOND_ROUTER_METRICS_BIND_HOST` | *(empty)* | optional container hostname whose IPv4 address receives a second metrics bind. Metrics always remain available on loopback; the join overlay sets `versiond-router` for its internal Prometheus scraper |
+| `VERSIOND_ROUTER_METRICS_BIND_HOST` | *(empty)* | optional container hostname whose IPv4 address receives a second metrics bind. Metrics always remain available on loopback; fleet slots bind their metrics-network address and share the `versiond-router-metrics` discovery alias |
 | `HAPROXY_DNS_RESOLVER` | `127.0.0.11:53` | numeric DNS resolver address, with an optional port, used by HAProxy `server-template` slots |
 | `VERSIOND_ROUTER_POOL_SLOTS` | `64` | maximum simultaneous pool members; catalog mode supports up to `256`, keeping each atomic server-state Runtime API batch below HAProxy's default command buffer. The resolver accepts DNS payloads up to 8192 bytes so the default pool fits in one answer |
 | `VERSIOND_ROUTER_MAX_CONNECTIONS` | `4096` | frontend `maxconn` |

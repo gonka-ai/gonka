@@ -23,7 +23,7 @@ scrape_configs:
     metrics_path: /metrics
     dns_sd_configs:
       - names:
-          - versiond-router
+          - versiond-router-metrics
         type: A
         port: 8405
         refresh_interval: 15s

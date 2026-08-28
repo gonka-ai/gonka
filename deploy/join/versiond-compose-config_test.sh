@@ -38,11 +38,20 @@ jq -e '
   (.services.router.networks.front.aliases | index("versiond-router-fleet")) and
   (.services.router.environment.VERSIOND_ROUTING_CATALOG_URL ==
     "http://versiond-routing-oracle:9100/versions") and
+  (.services.router.networks.metrics.aliases | index("versiond-router-metrics")) and
   (.services.router.stop_signal == "SIGUSR1") and
   (.services.router.volumes | length == 1) and
   (.networks.front.external == true) and
   (.networks.back.external == true) and
   (.networks.metrics.external == true)
 ' "$tmpdir/slot.json" >/dev/null
+
+router_scrape=$(awk '
+  /job_name: versiond-router/ { capture = 1 }
+  capture { print }
+  capture && /refresh_interval:/ { exit }
+' "$script_dir/observability/prometheus.yml")
+grep -q -- '- versiond-router-metrics' <<<"$router_scrape"
+grep -q 'port: 8405' <<<"$router_scrape"
 
 echo "versiond-compose-config_test: ok"
