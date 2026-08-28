@@ -296,6 +296,8 @@ If issuance fails at startup (for example, `proxy-ssl` is not reachable yet) and
 
 The worker also repairs legacy incomplete bundles. If HTTPS validation finds a truncated certificate or a certificate that does not match its private key, `setup-ssl.sh repair` first requests the certificate for the stored `order.id` and verifies that it belongs to the local key. It creates a new order only when the stored order cannot recover that key. After a valid pair is published, nginx is validated and reloaded automatically.
 
+`PROXY_SSL_RETRY_SECONDS` and `RENEW_INTERVAL_HOURS` must be positive integers. Invalid values stop the container during configuration validation instead of starting a busy retry loop.
+
 ### Setup Environment
 
 Below are minimal environment configurations for the compose stack under `deploy/join/config.env`. This section lists only environment variables; Docker commands are provided separately below.

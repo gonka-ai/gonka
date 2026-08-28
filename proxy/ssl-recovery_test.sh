@@ -79,4 +79,24 @@ grep -q 'Certificate configuration reloaded' <<< "$logs" \
 docker exec "$CONTAINER" curl -ksSf https://127.0.0.1/health >/dev/null \
   || fail "HTTPS health endpoint is unavailable after repair"
 
+assert_invalid_interval() {
+  local name=$1 value=$2 log="$TEST_ROOT/$1.log"
+
+  docker rm -f "$CONTAINER" >/dev/null
+  if docker run --name "$CONTAINER" \
+      -v "$TEST_ROOT/ssl:/etc/nginx/ssl" \
+      -e NGINX_MODE=both \
+      -e CERT_ISSUER_DOMAIN=example.test \
+      -e DISABLE_DEVSHARD_PROXY=true \
+      -e "$name=$value" \
+      "$IMAGE" > "$log" 2>&1; then
+    fail "$name=$value was accepted"
+  fi
+  grep -q "ERROR: $name must be a positive integer" "$log" \
+    || fail "$name=$value did not report a validation error"
+}
+
+assert_invalid_interval PROXY_SSL_RETRY_SECONDS 0
+assert_invalid_interval RENEW_INTERVAL_HOURS -1
+
 echo "ssl-recovery_test: ok"

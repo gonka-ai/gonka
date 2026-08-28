@@ -1271,8 +1271,20 @@ if [ "$SSL_ENABLED" = "true" ] \
       || [ ! -f "/etc/nginx/ssl/cert.pem" ] \
       || [ ! -f "/etc/nginx/ssl/private.key" ]; }; then
     RENEW_INTERVAL_HOURS=${RENEW_INTERVAL_HOURS:-24}
-    RENEW_INTERVAL_SECONDS=$(( RENEW_INTERVAL_HOURS * 3600 ))
     RENEW_RETRY_SECONDS=${PROXY_SSL_RETRY_SECONDS:-60}
+    case "$RENEW_INTERVAL_HOURS" in
+      ''|*[!0-9]*|0)
+        echo "ERROR: RENEW_INTERVAL_HOURS must be a positive integer"
+        exit 1
+        ;;
+    esac
+    case "$RENEW_RETRY_SECONDS" in
+      ''|*[!0-9]*|0)
+        echo "ERROR: PROXY_SSL_RETRY_SECONDS must be a positive integer"
+        exit 1
+        ;;
+    esac
+    RENEW_INTERVAL_SECONDS=$(( RENEW_INTERVAL_HOURS * 3600 ))
     echo "Starting background renewal loop (every ${RENEW_INTERVAL_HOURS}h)"
     (
         retry_seconds=$RENEW_RETRY_SECONDS
