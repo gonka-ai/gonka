@@ -111,7 +111,7 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 	closers.Add(func() { mlClient.Close() })
 
 	payloadDir := filepath.Join(cfg.DataDir, "payloads")
-	payloadStore, payloadClose, err := payloads.Open(ctx, payloads.OpenConfig{Dir: payloadDir})
+	payloadStore, payloadClose, err := payloads.Open(ctx, payloads.OpenConfig{Dir: payloadDir, CompressFiles: cfg.CompressPayloadFiles})
 	if err != nil {
 		return nil, fmt.Errorf("payload store: %w", err)
 	}

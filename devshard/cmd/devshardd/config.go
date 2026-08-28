@@ -26,14 +26,15 @@ import (
 var sdkConfigOnce sync.Once
 
 type runtimeConfig struct {
-	Port              int
-	AdminAddr         string
-	DataDir           string
-	BinaryLogVersion  string
-	RuntimeVersion    string
-	ProtocolVersion   string
-	NodeManagerAddr   string
-	HostEventsEnabled bool
+	Port                 int
+	AdminAddr            string
+	DataDir              string
+	BinaryLogVersion     string
+	RuntimeVersion       string
+	ProtocolVersion      string
+	NodeManagerAddr      string
+	HostEventsEnabled    bool
+	CompressPayloadFiles bool
 	// AllowPrivateAddresses disables the dial-time SSRF guard on outbound
 	// connections to participant-controlled URLs (peer devshard hosts, executor
 	// payload endpoints). Default false = secure. Set true only in local dev /
@@ -153,6 +154,7 @@ func loadRuntimeConfig(args []string, protocolVersion, linkBinaryVersion string)
 		ProtocolVersion:         protocolVersion,
 		NodeManagerAddr:         envOr("NODE_MANAGER_ADDR", "localhost:9400"),
 		HostEventsEnabled:       envBoolOr("DEVSHARD_HOST_EVENTS_ENABLED", true),
+		CompressPayloadFiles:    envBoolOr("DEVSHARD_PAYLOAD_ZSTD_ENABLED", false),
 		AllowPrivateAddresses:   envBoolOr("DEVSHARD_ALLOW_PRIVATE_ADDRESSES", false),
 		ValidationRetryInterval: retryInterval,
 		ValidationLeaseTTL:      leaseTTL,

@@ -8,8 +8,11 @@ import (
 	"strings"
 
 	"common/completionapi"
+	"common/logging"
 	devshardpkg "devshard"
 	"devshard/observability"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 type mlRequestExecutor func(ctx context.Context, model string, body []byte) (*http.Response, error)
@@ -103,12 +106,21 @@ func processExecutionHTTPResponse(
 	}
 
 	if req.ResponseWriter != nil && !isSSE {
-		fmt.Fprintf(req.ResponseWriter, "data: %s\n\ndata: [DONE]\n\n", bodyBytes)
+		// Falling back to the stored copy would quietly hand the gateway a body with the logprobs
+		// already cut out, which is the regression this split exists to prevent.
+		relayed := processor.GetForwardedJSONBytes()
+		if relayed == nil {
+			logging.Warn("Relaying the stored copy: no forwarded body was produced", types.Inferences,
+				"inference_id", inferenceID)
+			relayed = bodyBytes
+		}
+		fmt.Fprintf(req.ResponseWriter, "data: %s\n\ndata: [DONE]\n\n", relayed)
 		if f, ok := req.ResponseWriter.(http.Flusher); ok {
 			f.Flush()
 		}
 	}
 
+	// The processor slimmed each chunk as it parsed it, so what it hands back is already what is stored.
 	hash := sha256.Sum256(bodyBytes)
 	usage, err := completionResp.GetUsage()
 	if err != nil {
