@@ -187,6 +187,18 @@ and cannot mutate routing.
 | `PROXY_ROUTER_CATALOG_UPSTREAM_PORT` | `9100` | DAPI catalog port |
 | `HAPROXY_DNS_RESOLVER` | `127.0.0.11:53` | numeric DNS nameserver used by HAProxy service discovery; Docker Compose uses the default, while another runtime may inject its cluster DNS IP |
 
+The prefixes identify which contract owns a setting:
+
+- `PROXY_ROUTER_*` configures this outer public distributor.
+- `VERSIOND_ROUTER_*` describes the inner router fleet consumed by this tier;
+  the same names configure the inner router deployment where applicable.
+- `VERSIOND_ROUTING_*` is the catalog projection contract shared by both tiers.
+
+Consequently, `PROXY_ROUTER_ACTIVATION_MIN_READY` is the number of inner routers
+the outer tier requires, while `VERSIOND_ROUTING_ACTIVATION_MIN_READY` is the
+number of versiond hosts each inner router requires. They are separate reserves,
+not aliases.
+
 `VERSIOND_NON_HA_VERSIONS` and the bootstrap `VERSIOND_VERSIONS` must match every
 inner router. Runtime additions come from the same catalog on both tiers and do
 not change escrow placement.
