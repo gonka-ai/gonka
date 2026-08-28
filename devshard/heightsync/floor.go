@@ -368,21 +368,43 @@ func (f *FloorIndex) Len() int {
 	return len(f.entries)
 }
 
-// Clone returns a deep copy so trial-apply cannot leak into committed state.
+// Clone returns a deep copy so trial-apply and snapshot restore cannot leak
+// into the live index.
 func (f *FloorIndex) Clone() *FloorIndex {
 	if f == nil {
 		return nil
 	}
+	entries := make([]floorEntry, len(f.entries))
+	for i, e := range f.entries {
+		entries[i] = floorEntry{
+			nonce:  e.nonce,
+			height: e.height,
+			hash:   append([]byte(nil), e.hash...),
+			author: e.author,
+		}
+	}
 	claims := make(map[uint32]floorSignerClaim, len(f.claims))
 	for signer, held := range f.claims {
-		claims[signer] = held
+		claims[signer] = floorSignerClaim{
+			height: held.height,
+			hash:   append([]byte(nil), held.hash...),
+		}
 	}
 	return &FloorIndex{
-		entries:   append([]floorEntry(nil), f.entries...),
+		entries:   entries,
 		claims:    claims,
 		cfg:       f.cfg,
 		truncated: f.truncated,
 	}
+}
+
+// ApplyConfig replaces the raise-rule parameters. Snapshot blobs omit cfg;
+// restore recomputes it from the roster.
+func (f *FloorIndex) ApplyConfig(cfg FloorConfig) {
+	if f == nil {
+		return
+	}
+	f.cfg = cfg.withDefaults()
 }
 
 // FloorAuthorLabel names a claim signer for marks and log lines.

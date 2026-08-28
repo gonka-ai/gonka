@@ -59,15 +59,18 @@ func TestHeightSync_SnapshotRestoreAgreesOnRootAndFloor(t *testing.T) {
 	require.Equal(t, uint64(3), st.HeightSyncForcedEnd)
 	require.Equal(t, uint64(10), st.HeightSyncTurnK)
 
-	data, err := types.MarshalStateSnapshotProto(st, nil, nil)
+	data, err := types.MarshalStateSnapshotProto(st, nil, nil, live.ExportHeightSyncFloor())
 	require.NoError(t, err)
-	restoredState, _, _, err := types.UnmarshalStateSnapshotProto(data)
+	restoredState, _, _, floorProto, err := types.UnmarshalStateSnapshotProto(data)
 	require.NoError(t, err)
 	require.Equal(t, st.HeightSyncForcedStart, restoredState.HeightSyncForcedStart)
 	require.Equal(t, st.HeightSyncTurnReason, restoredState.HeightSyncTurnReason)
+	require.NotNil(t, floorProto)
 
 	restored := newSM()
-	restored.RestoreState(restoredState)
+	floor := heightsync.FloorIndexFromProto(heightsync.FloorConfigFor(len(group), restored.HeartbeatConfig()), floorProto)
+	require.NoError(t, restored.RestoreStateWithFloor(restoredState, floor))
+	require.True(t, restored.HeightSyncFloorReady())
 
 	got := restored.ExportState()
 	require.Equal(t, st.HeightSyncForcedStart, got.HeightSyncForcedStart)
@@ -78,12 +81,20 @@ func TestHeightSync_SnapshotRestoreAgreesOnRootAndFloor(t *testing.T) {
 	require.Equal(t, st.HeightSyncTurnSlots, got.HeightSyncTurnSlots)
 	require.Equal(t, st.HeightSyncTurnReason, got.HeightSyncTurnReason)
 
+	journaled := newSM()
+	require.NoError(t, journaled.RestoreState(restoredState))
+	require.True(t, journaled.HeightSyncFloorReady())
+
 	for _, m := range []uint64{2, 3, 4} {
 		wantH, wantHash, wantKnown := live.HeightSyncFloorAsOf(m)
 		gotH, gotHash, gotKnown := restored.HeightSyncFloorAsOf(m)
-		require.Equal(t, wantKnown, gotKnown, "AsOf(%d)", m)
-		require.Equal(t, wantH, gotH, "AsOf(%d)", m)
-		require.Equal(t, wantHash, gotHash, "AsOf(%d)", m)
+		require.Equal(t, wantKnown, gotKnown, "blob AsOf(%d)", m)
+		require.Equal(t, wantH, gotH, "blob AsOf(%d)", m)
+		require.Equal(t, wantHash, gotHash, "blob AsOf(%d)", m)
+		jh, jhash, jknown := journaled.HeightSyncFloorAsOf(m)
+		require.Equal(t, wantKnown, jknown, "journal AsOf(%d)", m)
+		require.Equal(t, wantH, jh, "journal AsOf(%d)", m)
+		require.Equal(t, wantHash, jhash, "journal AsOf(%d)", m)
 	}
 
 	liveRec := live.HeightSyncTurnRecord(1)
@@ -116,7 +127,7 @@ func (s *failGetDiffsStore) GetDiffs(string, uint64, uint64) ([]types.DiffRecord
 	return nil, errors.New("getdiffs failed")
 }
 
-func TestHeightSync_RestoreGetDiffsErrorKeepsLastCompletedHeight(t *testing.T) {
+func TestHeightSync_RestoreGetDiffsErrorFailsClosed(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),
 		testutil.MustGenerateKey(t),
@@ -150,12 +161,68 @@ func TestHeightSync_RestoreGetDiffsErrorKeepsLastCompletedHeight(t *testing.T) {
 	restored, err := NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(),
 		signing.NewSecp256k1Verifier(), failStore)
 	require.NoError(t, err)
-	restored.RestoreState(st)
+	err = restored.RestoreState(st)
+	require.ErrorIs(t, err, types.ErrFloorNotRestored)
+	require.False(t, restored.HeightSyncFloorReady())
 
-	got := restored.ExportState()
-	require.Equal(t, st.HeightSyncLastCompletedHeight, got.HeightSyncLastCompletedHeight)
-	require.Equal(t, st.HeightSyncLatestTurnSeq, got.HeightSyncLatestTurnSeq)
-	require.Equal(t, st.HeightSyncLastCompletedHeight, restored.HeightSyncCloneTurnTracker().LastCompletedHeight())
+	bad := testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{snapHeartbeat(2, 10, 3, hash)})
+	_, err = restored.ApplyDiff(bad)
+	require.ErrorIs(t, err, types.ErrFloorNotRestored)
+}
+
+func TestHeightSync_RestoreFloorBlobSkipsJournal(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	store := testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000)
+
+	live, err := NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(),
+		signing.NewSecp256k1Verifier(), store)
+	require.NoError(t, err)
+	hash := []byte{0xaa}
+	apply := func(nonce uint64, txs ...*types.DevshardTx) {
+		t.Helper()
+		d := testutil.SignDiff(t, user, "escrow-1", nonce, txs)
+		root, err := live.ApplyDiff(d)
+		require.NoError(t, err)
+		require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{Diff: d, StateHash: root}))
+	}
+	apply(1, snapHeartbeat(1, 50, 3, hash))
+	apply(2, snapAck(t, hosts[0], 1, 1, 0, 50, hash))
+	apply(3, snapAck(t, hosts[1], 1, 1, 1, 50, hash))
+
+	st := live.ExportState()
+	floor := heightsync.FloorIndexFromProto(
+		heightsync.FloorConfigFor(len(group), live.HeartbeatConfig()),
+		live.ExportHeightSyncFloor(),
+	)
+
+	failStore := &failGetDiffsStore{Memory: testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000)}
+	restored, err := NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(),
+		signing.NewSecp256k1Verifier(), failStore)
+	require.NoError(t, err)
+	require.NoError(t, restored.RestoreStateWithFloor(st, floor))
+	require.True(t, restored.HeightSyncFloorReady())
+
+	for _, m := range []uint64{2, 3, 4} {
+		wantH, wantHash, wantKnown := live.HeightSyncFloorAsOf(m)
+		gotH, gotHash, gotKnown := restored.HeightSyncFloorAsOf(m)
+		require.Equal(t, wantKnown, gotKnown, "AsOf(%d)", m)
+		require.Equal(t, wantH, gotH, "AsOf(%d)", m)
+		require.Equal(t, wantHash, gotHash, "AsOf(%d)", m)
+	}
+
+	// Replica A (journal) and replica B (blob, no journal) both reject a below-floor stamp.
+	bad := testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{snapHeartbeat(2, 10, 3, hash)})
+	_, err = live.ApplyDiff(bad)
+	require.ErrorIs(t, err, heightsync.ErrHeightRegression)
+	_, err = restored.ApplyDiff(bad)
+	require.ErrorIs(t, err, heightsync.ErrHeightRegression)
 }
 
 func snapHeartbeat(turn, height, slots uint64, hash []byte) *types.DevshardTx {

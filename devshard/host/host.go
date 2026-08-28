@@ -771,17 +771,18 @@ func (h *Host) maybeSaveSnapshotLocked(nonce uint64, shouldSnapshot, settledNow 
 	state := h.sm.ExportState()
 	committedEntries := h.sm.ExportCommittedEntries()
 	sealedNonces := h.sm.ExportSealedNonces()
+	heightSyncFloor := h.sm.ExportHeightSyncFloor()
 
 	go func() {
 		if !settledNow {
 			defer h.snapshotInFlight.Store(false)
 		}
-		writeSnapshot(store, escrowID, nonce, state, committedEntries, sealedNonces)
+		writeSnapshot(store, escrowID, nonce, state, committedEntries, sealedNonces, heightSyncFloor)
 	}()
 }
 
-func writeSnapshot(store storage.Storage, escrowID string, nonce uint64, state *types.EscrowState, committedEntries map[uint64][]byte, sealedNonces map[uint64]uint64) {
-	data, err := MarshalStateSnapshotWithCommitted(state, committedEntries, sealedNonces)
+func writeSnapshot(store storage.Storage, escrowID string, nonce uint64, state *types.EscrowState, committedEntries map[uint64][]byte, sealedNonces map[uint64]uint64, heightSyncFloor *types.FloorIndexProto) {
+	data, err := MarshalStateSnapshotWithCommitted(state, committedEntries, sealedNonces, heightSyncFloor)
 	if err != nil {
 		logging.Warn("failed to marshal host snapshot", "escrow_id", escrowID, "nonce", nonce, "error", err)
 		return
