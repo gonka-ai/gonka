@@ -433,9 +433,70 @@ message DevshardEscrowParams {
 message FeeParams {
   option (gogoproto.equal) = true;
   // Minimum gas price in ngonka enforced at consensus level.
+  // Unused for group pricing after v0.2.16; kept at 0. Group min_gas_price is the switch.
   uint64 min_gas_price_ngonka = 1;
-  // Extra gas consumed on the first MsgPoCV2StoreCommit per participant per epoch.
+  // Deprecated alias. Migrated into groups[epoch].msgs[StoreCommit] PeriodBase.gas.
   uint64 base_validation_gas = 2;
-  // Additional gas consumed per unit of Count delta in MsgPoCV2StoreCommit.
+  // Deprecated alias. Migrated into groups[epoch].msgs[StoreCommit] stored_delta.gas_per_unit.
   uint64 gas_per_poc_count = 3;
+  // Governance-controlled list of fee groups that currently charge. Empty = none charge.
+  repeated string enabled_fee_groups = 4;
+  // Per-group min_gas_price plus extra-gas rules. Enabling a group charges
+  // every compiled member of that group; msgs[] only configures extra gas.
+  repeated FeeGroup groups = 5;
+}
+
+message PeriodBase {
+  option (gogoproto.equal) = true;
+  uint64 gas = 1;
+  // "epoch" | "poc" | "block"
+  string period_type = 2;
+  // 0 means omitted; resolved as 1 at use time. Validate does not rewrite this field.
+  uint64 period_length = 3;
+}
+
+message FeeGroup {
+  option (gogoproto.equal) = true;
+  string name = 1;
+  // ngonka per gas; 0 = group on but free coins.
+  uint64 min_gas_price = 2;
+  PeriodBase base = 3;
+  // Extra-gas rules only. Coin price comes from compiled group membership and min_gas_price.
+  repeated MsgGasRule msgs = 4;
+}
+
+message MsgGasRule {
+  option (gogoproto.equal) = true;
+  string type_url = 1;
+  // omit (nil) → inherit group base; gas=0 → no period base.
+  PeriodBase base = 2;
+  oneof func {
+    StoredDeltaParams stored_delta = 3 [(amino.oneof_name) = "inference/MsgGasRule/StoredDelta"];
+    StoredBytesParams stored_bytes = 4 [(amino.oneof_name) = "inference/MsgGasRule/StoredBytes"];
+    RepeatedLenParams repeated_len = 5 [(amino.oneof_name) = "inference/MsgGasRule/RepeatedLen"];
+  }
+}
+
+message StoredDeltaParams {
+  option (gogoproto.equal) = true;
+  uint64 gas_per_unit = 1;
+  string items = 2;
+  string value_field = 3;
+  string id_field = 4;
+  repeated string scope_fields = 5;
+}
+
+message StoredBytesParams {
+  option (gogoproto.equal) = true;
+  // Extra gas per `unit` of inventory growth. 0 = magnifier off.
+  uint64 gas_per_unit = 1;
+  // Byte scale for gas_per_unit: "b" | "kb" | "mb" (1000-based). Empty = "b".
+  // Example: gas_per_unit=100, unit="kb" → 100 gas per 1000 bytes.
+  string unit = 2;
+}
+
+message RepeatedLenParams {
+  option (gogoproto.equal) = true;
+  uint64 gas_per_unit = 1;
+  string field = 2;
 }
