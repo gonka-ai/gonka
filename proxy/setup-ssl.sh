@@ -64,6 +64,51 @@ if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
   echo "$TOKEN_RESPONSE"
   exit 1
 fi
+
+certificate_matches_key() {
+  local cert_file=$1 key_file=$2 cert_digest key_digest
+
+  [ -s "$cert_file" ] && [ -s "$key_file" ] || return 1
+  cert_digest=$(openssl x509 -in "$cert_file" -pubkey -noout 2>/dev/null \
+    | openssl pkey -pubin -outform DER 2>/dev/null \
+    | openssl dgst -sha256 2>/dev/null) || return 1
+  key_digest=$(openssl pkey -in "$key_file" -pubout -outform DER 2>/dev/null \
+    | openssl dgst -sha256 2>/dev/null) || return 1
+  [ -n "$cert_digest" ] && [ "$cert_digest" = "$key_digest" ]
+}
+
+publish_certificate() {
+  local source_file=$1
+
+  chmod 644 "$source_file" && mv -f "$source_file" "$CERT_FILE"
+}
+
+# Return 0 after recovery, 1 for a transient issuer failure, and 2 when the
+# stored order cannot recover the local key and a complete issuance is needed.
+recover_certificate_from_order() {
+  local order_id recovery_tmp http_status
+
+  [ -s "$ORDER_ID_FILE" ] && [ -s "$KEY_FILE" ] || return 2
+  order_id=$(cat "$ORDER_ID_FILE")
+  [ -n "$order_id" ] || return 2
+  recovery_tmp="${CERT_FILE}.tmp.$$"
+  http_status=$(curl -sS -o "$recovery_tmp" -w '%{http_code}' \
+    -X GET "${PROXY_SSL_BASE_URL}/v1/certs/orders/${order_id}/bundle" \
+    -H "Authorization: Bearer $TOKEN" || true)
+  if [ "$http_status" != 200 ]; then
+    rm -f "$recovery_tmp"
+    [ "$http_status" = 404 ] && return 2
+    return 1
+  fi
+  if ! chmod 644 "$recovery_tmp" \
+      || ! certificate_matches_key "$recovery_tmp" "$KEY_FILE"; then
+    rm -f "$recovery_tmp"
+    return 2
+  fi
+  mv -f "$recovery_tmp" "$CERT_FILE"
+  echo "Recovered SSL certificate for order $order_id"
+}
+
 # Helper: check if cert expires within N days using openssl -checkend
 will_expire_within_days() {
   local days="$1"
@@ -81,10 +126,33 @@ will_expire_within_days() {
 }
 
 FALLBACK_TO_ISSUE=false
-if { [ "$MODE" = "renew" ] || [ "$MODE" = "renew-if-needed" ]; } \
+if [ "$MODE" = repair ]; then
+  if certificate_matches_key "$CERT_FILE" "$KEY_FILE"; then
+    echo "SSL certificate and private key are valid"
+    exit 0
+  fi
+  recovery_status=0
+  recover_certificate_from_order || recovery_status=$?
+  case "$recovery_status" in
+    0) exit 10 ;;
+    1) exit 1 ;;
+    2)
+      echo "WARNING: Stored TLS bundle cannot be recovered. Falling back to new issuance."
+      FALLBACK_TO_ISSUE=true
+      ;;
+  esac
+elif { [ "$MODE" = "renew" ] || [ "$MODE" = "renew-if-needed" ]; } \
     && [ ! -f "$CERT_FILE" ]; then
-  echo "WARNING: Certificate marker is missing. Falling back to new issuance."
-  FALLBACK_TO_ISSUE=true
+  recovery_status=0
+  recover_certificate_from_order || recovery_status=$?
+  case "$recovery_status" in
+    0) exit 10 ;;
+    1) exit 1 ;;
+    2)
+      echo "WARNING: Certificate marker is missing and the stored order cannot recover it. Falling back to new issuance."
+      FALLBACK_TO_ISSUE=true
+      ;;
+  esac
 elif [ "$MODE" = "renew" ] || [ "$MODE" = "renew-if-needed" ]; then
   if [ ! -f "$ORDER_ID_FILE" ]; then
     echo "ERROR: Cannot renew: missing $ORDER_ID_FILE"
@@ -119,19 +187,18 @@ elif [ "$MODE" = "renew" ] || [ "$MODE" = "renew-if-needed" ]; then
       BUNDLE=$(curl -sS -X GET "${PROXY_SSL_BASE_URL}/v1/certs/orders/${ORDER_ID}/bundle" \
         -H "Authorization: Bearer $TOKEN" || true)
       if [ -n "$BUNDLE" ]; then
-        # Basic sanity: ensure it looks like PEM
-        if echo "$BUNDLE" | grep -q "BEGIN CERTIFICATE"; then
-          CERT_TMP="${CERT_FILE}.tmp.$$"
-          if ! printf '%s\n' "$BUNDLE" > "$CERT_TMP" \
-              || ! chmod 644 "$CERT_TMP" \
-              || ! mv -f "$CERT_TMP" "$CERT_FILE"; then
-            rm -f "$CERT_TMP"
-            exit 1
+        CERT_TMP="${CERT_FILE}.tmp.$$"
+        if printf '%s\n' "$BUNDLE" > "$CERT_TMP" \
+            && certificate_matches_key "$CERT_TMP" "$KEY_FILE"; then
+          if publish_certificate "$CERT_TMP"; then
+            echo "Installed renewed certificate for order $ORDER_ID"
+            # exit code 10 indicates renewed
+            exit 10
           fi
-          echo "Installed renewed certificate for order $ORDER_ID"
-          # exit code 10 indicates renewed
-          exit 10
+          rm -f "$CERT_TMP"
+          exit 1
         fi
+        rm -f "$CERT_TMP"
       fi
       sleep 5
     done
@@ -177,6 +244,11 @@ ORDER_ID_TMP="${ORDER_ID_FILE}.tmp.$$"
 if ! printf '%s\n' "$CERT" > "$CERT_TMP" || ! chmod 644 "$CERT_TMP" \
     || ! (umask 077; printf '%s\n' "$ORDER_ID" > "$ORDER_ID_TMP" \
       && printf '%s\n' "$KEY" > "$KEY_TMP"); then
+  rm -f "$CERT_TMP" "$KEY_TMP" "$ORDER_ID_TMP"
+  exit 1
+fi
+if ! certificate_matches_key "$CERT_TMP" "$KEY_TMP"; then
+  echo "ERROR: Issuer returned an invalid certificate/private-key pair"
   rm -f "$CERT_TMP" "$KEY_TMP" "$ORDER_ID_TMP"
   exit 1
 fi
