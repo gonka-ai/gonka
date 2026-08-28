@@ -95,7 +95,6 @@ gonka_compose_parse_runtime_files() {
     local -a raw=()
     local file canonical
     local versiond_compat="$script_dir/docker-compose.versiond-v5-compat.yml"
-    local edge_compat="$script_dir/docker-compose.edge-api-v5-compat.yml"
     local proxy_compat="$script_dir/docker-compose.proxy-v4-compat.yml"
 
     output_ref=()
@@ -108,7 +107,7 @@ gonka_compose_parse_runtime_files() {
         # recreated by an interrupted upgrade may carry them in Docker labels,
         # but they are not part of the operator's durable Compose topology.
         case $canonical in
-            "$versiond_compat" | "$edge_compat" | "$proxy_compat") continue ;;
+            "$versiond_compat" | "$proxy_compat") continue ;;
         esac
         gonka_compose_append_unique output_ref "$canonical"
     done
@@ -157,7 +156,6 @@ gonka_compose_runtime_metadata_for_explicit() {
     local labels files_label raw_working file path directory filename
     local -a raw=()
     local versiond_compat="$script_dir/docker-compose.versiond-v5-compat.yml"
-    local edge_compat="$script_dir/docker-compose.edge-api-v5-compat.yml"
     local proxy_compat="$script_dir/docker-compose.proxy-v4-compat.yml"
 
     labels=$("$docker_bin" inspect --format '{{json .Config.Labels}}' "$container") ||
@@ -187,7 +185,7 @@ gonka_compose_runtime_metadata_for_explicit() {
         filename=$(basename -- "$path")
         path=$directory/$filename
         case $path in
-            "$versiond_compat" | "$edge_compat" | "$proxy_compat") continue ;;
+            "$versiond_compat" | "$proxy_compat") continue ;;
         esac
         gonka_compose_append_unique files_out "$path"
     done

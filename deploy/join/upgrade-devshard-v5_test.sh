@@ -609,6 +609,17 @@ assert_no_compose_mutation() {
     fi
 }
 
+assert_edge_api_untouched() {
+    local file=$1
+
+    if grep -E -- \
+        ' :: compose .* (pull|up|stop|start|rm)( |$).*edge-api| :: (tag|image rm).*edge-api| :: exec (cid-)?edge-api' \
+        "$file" >/dev/null; then
+        cat "$file" >&2
+        fail "the devshard v5 updater mutated the existing edge-api deployment"
+    fi
+}
+
 line_number() {
     local file=$1
     local pattern=$2
@@ -1005,10 +1016,7 @@ grep -q 'record incompatible Compose file sets' \
     fail "incompatible runtime metadata did not produce a useful error"
 }
 assert_no_compose_mutation "$tmpdir/incompatible-metadata.log"
-if ! grep -E -- '--wait-timeout 180 edge-api$' "$tmpdir/base.log" >/dev/null; then
-    cat "$tmpdir/base.log" >&2
-    fail "base-only edge-api was not replaced"
-fi
+assert_edge_api_untouched "$tmpdir/base.log"
 
 run_auto_upgrade \
     "versiond edge-api edge-api2 edge-api3 edge-api-router" \
@@ -1496,8 +1504,7 @@ assert_contains "$tmpdir/active-with-marker.log" \
     "--wait-timeout 2100 versiond2"
 assert_contains "$tmpdir/active-with-marker.log" \
     "--wait-timeout 2100 versiond"
-assert_contains "$tmpdir/active-with-marker.log" \
-    "--wait-timeout 180 edge-api"
+assert_edge_api_untouched "$tmpdir/active-with-marker.log"
 jq -e '.schema == 2 and (.compose.files | length > 0)' \
     "$tmpdir/upgrade-complete" >/dev/null || fail \
     "legacy marker was not upgraded to the desired-state schema"
@@ -1698,7 +1705,7 @@ assert_contains "$tmpdir/versiond-router-missing-route.log" \
 
 PERSISTED_VERSIOND_BARRIER=true \
 VERSIOND2_UNIQUE_VERSION=true \
-    run_upgrade single edge-api "$tmpdir/versiond-barrier-retry.log"
+    run_upgrade single versiond "$tmpdir/versiond-barrier-retry.log"
 barrier_remove_line=$(line_number "$tmpdir/versiond-barrier-retry.log" \
     "exec versiond-router rm -f /etc/gonka-upgrade-barrier")
 router_v5_probe_line=$(line_number "$tmpdir/versiond-barrier-retry.log" \
@@ -1749,46 +1756,11 @@ for signal in HUP INT TERM; do
     }
 done
 
-run_upgrade multi edge-api3 "$tmpdir/edge-api3.log"
-edge_barrier_line=$(line_number "$tmpdir/edge-api3.log" \
-    "EDGE_API_HOSTS=edge-api\\ edge-api3")
-edge_api2_line=$(line_number "$tmpdir/edge-api3.log" \
-    "--wait-timeout 180 edge-api2")
-router_line=$(line_number "$tmpdir/edge-api3.log" \
-    "--wait-timeout 60 edge-api-router")
-replica_line=$(line_number "$tmpdir/edge-api3.log" \
-    "--wait-timeout 180 edge-api3")
-[[ -n $edge_barrier_line && -n $edge_api2_line && -n $router_line && \
-    -n $replica_line && $edge_barrier_line -lt $edge_api2_line && \
-    $edge_api2_line -lt $router_line && $router_line -lt $replica_line ]] ||
-    fail "edge-api traffic barrier or HAProxy cutover order is wrong"
-assert_contains "$tmpdir/edge-api3.log" " stop edge-api3"
-assert_not_contains "$tmpdir/edge-api3.log" \
-    "EDGE_API_IMAGE=gonka-upgrade-rollback/edge-api3:"
-if grep -E -- '--wait-timeout 180 edge-api$' "$tmpdir/edge-api3.log" >/dev/null; then
-    cat "$tmpdir/edge-api3.log" >&2
-    fail "edge-api was replaced after edge-api3 failed"
-fi
-
-run_upgrade multi edge-api-router "$tmpdir/edge-router.log"
-assert_contains "$tmpdir/edge-router.log" \
-    "EDGE_API_ROUTER_IMAGE=gonka-upgrade-rollback/edge-api-router:"
-assert_contains "$tmpdir/edge-router.log" \
-    "http://127.0.0.1:18080/v1/versions"
-if grep -F -- '--wait-timeout 180 edge-api3' "$tmpdir/edge-router.log" >/dev/null; then
-    cat "$tmpdir/edge-router.log" >&2
-    fail "edge-api3 was replaced after the HAProxy cutover failed"
-fi
-
-run_upgrade single edge-api "$tmpdir/edge-api.log"
-assert_contains "$tmpdir/edge-api.log" \
-    "EDGE_API_IMAGE=gonka-upgrade-rollback/edge-api:"
-assert_contains "$tmpdir/edge-api.log" \
-    "http://127.0.0.1:18080/v1/versions"
-
-ROLLBACK_PROBE_FAIL_SERVICE=edge-api \
-UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \
-    run_upgrade single edge-api "$tmpdir/edge-api-unavailable.log"
-assert_contains "$tmpdir/edge-api-unavailable.log" " stop edge-api"
+run_auto_upgrade \
+    "versiond versiond2 versiond-router devshard-postgres edge-api edge-api2 edge-api3 edge-api-router" \
+    "$tmpdir/edge-api-preserved.log" "$tmpdir/edge-api-preserved.stdout"
+assert_edge_api_untouched "$tmpdir/edge-api-preserved.log"
+assert_not_contains "$tmpdir/edge-api-preserved.log" \
+    "docker-compose.edge-api-v5-compat.yml"
 
 echo "upgrade-devshard-v5_test: ok"

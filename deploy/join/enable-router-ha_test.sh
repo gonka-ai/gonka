@@ -543,8 +543,9 @@ proxy_line=$(grep -n ' up .*proxy$' "$tmpdir/success.log" | head -n1 | cut -d: -
     "policy slots were not rolled reserve-first before the public cutover"
 grep -q 'docker rm -f versiond-router' "$tmpdir/success.log" || fail \
     "singleton versiond-router was not removed after commit"
-grep -q 'docker rm -f edge-api-router' "$tmpdir/success.log" || fail \
-    "singleton edge-api-router was not removed after commit"
+if grep -q 'docker rm -f edge-api-router' "$tmpdir/success.log"; then
+    fail "versiond router cutover removed the existing edge-api router"
+fi
 verify_line=$(grep -n '^fleet verify-admission ' "$tmpdir/success.log" | head -n1 | cut -d: -f1)
 remove_line=$(grep -n 'docker rm -f versiond-router' "$tmpdir/success.log" | head -n1 | cut -d: -f1)
 [[ -n $verify_line && -n $remove_line && $verify_line -lt $remove_line ]] || fail \

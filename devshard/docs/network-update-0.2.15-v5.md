@@ -9,9 +9,9 @@
 
 ### Required host update: devshard deployment `0.2.15-devshard-v5`
 
-The v5 host deployment adds actively checked HAProxy service pools, replicated
-`versiond-router`, per-version readiness, and bounded graceful shutdown for
-`versiond` and `edge-api`. It also migrates the local HA PostgreSQL deployment
+The v5 host deployment adds an actively checked HAProxy versiond pool,
+replicated `versiond-router`, per-version readiness, and bounded graceful
+shutdown for `versiond`. It also migrates the local HA PostgreSQL deployment
 from its v4 anonymous volume to persistent host storage.
 
 **Upgrade deadline (UTC): `<UPGRADE_DEADLINE_UTC>`**
@@ -53,7 +53,8 @@ history backwards.
 Supported source topologies are the v0.2.15 standard join stack and the
 v0.2.15 base with `0.2.14-devshard-v4` HA overlays: local or managed PostgreSQL,
 single or multi edge-api, and complete observability/operator Compose
-overrides. Pre-v0.2.15 base stacks, pre-v4 devshard, renamed core services,
+overrides. The updater preserves the detected edge-api deployment without
+changing its containers or images. Pre-v0.2.15 base stacks, pre-v4 devshard, renamed core services,
 split Compose projects, Swarm, and Kubernetes are not qualified by this updater.
 
 Full compatibility, local-change, rollback, and recovery details:

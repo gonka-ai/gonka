@@ -8,22 +8,19 @@ versiond_overlay="$script_dir/docker-compose.versiond.yml"
 edge_overlay="$script_dir/docker-compose.edge-api-multi.yml"
 slot_compose="$script_dir/versiond-router-slot/docker-compose.yml"
 versiond_compat="$script_dir/docker-compose.versiond-v5-compat.yml"
-edge_compat="$script_dir/docker-compose.edge-api-v5-compat.yml"
 proxy_compat="$script_dir/docker-compose.proxy-v4-compat.yml"
 
 release_contract=$script_dir/devshard-v5-release.env
 # shellcheck disable=SC1090 # Runtime path is anchored to this script.
 source "$release_contract"
-edge_image=$DEVSHARD_V5_EDGE_API_IMAGE
 versiond_image=$DEVSHARD_V5_VERSIOND_IMAGE
-edge_router_image=$DEVSHARD_V5_EDGE_API_ROUTER_IMAGE
 versiond_router_image=$DEVSHARD_V5_VERSIOND_ROUTER_IMAGE
 proxy_policy_image=$DEVSHARD_V5_PROXY_POLICY_IMAGE
 proxy_router_image=$DEVSHARD_V5_PROXY_ROUTER_IMAGE
 postgres_image=$DEVSHARD_V5_POSTGRES_IMAGE
 
 # This test validates the shipped defaults, not an operator's local override.
-unset EDGE_API_IMAGE VERSIOND_IMAGE EDGE_API_ROUTER_IMAGE VERSIOND_ROUTER_IMAGE
+unset VERSIOND_IMAGE VERSIOND_ROUTER_IMAGE
 unset PROXY_POLICY_IMAGE PROXY_ROUTER_IMAGE DEVSHARD_POSTGRES_IMAGE
 export VERSIOND_ROUTER_METRICS_NETWORK=join_default
 
@@ -114,10 +111,6 @@ assert_hardened() {
 }
 
 check_compose_contract() {
-    assert_image "base edge-api" "$edge_image" \
-        "$(compose_image edge-api -f "$base")"
-    assert_image "edge-api-multi edge-api" "$edge_image" \
-        "$(compose_image edge-api -f "$base" -f "$edge_overlay")"
     assert_image "base versiond" "$versiond_image" \
         "$(compose_image versiond -f "$base")"
     assert_healthcheck_url "base versiond healthcheck" versiond \
@@ -144,9 +137,6 @@ check_compose_contract() {
         "http://127.0.0.1:8081/health" -f "$base"
     assert_service_absent "steady-state versiond model" versiond-router \
         -f "$base" -f "$versiond_overlay"
-    assert_service_absent "steady-state edge-api model" edge-api-router \
-        -f "$base" -f "$edge_overlay"
-
     assert_image "versiond router slot" "$versiond_router_image" \
         "$(VERSIOND_ROUTER_SLOT=0 compose_image router -f "$slot_compose")"
     VERSIOND_ROUTER_SLOT=0 assert_healthcheck_url \
@@ -157,15 +147,9 @@ check_compose_contract() {
 
     assert_image "versiond migration router" "$versiond_router_image" \
         "$(compose_image versiond-router -f "$base" -f "$versiond_overlay" -f "$versiond_compat")"
-    assert_image "edge-api migration router" "$edge_router_image" \
-        "$(compose_image edge-api-router -f "$base" -f "$edge_overlay" -f "$edge_compat")"
     assert_environment "versiond v4 rollback hosts" versiond-router \
         VERSIOND_HOSTS "versiond versiond2" \
         -f "$base" -f "$versiond_overlay" -f "$versiond_compat"
-    assert_environment "edge-api v4 rollback hosts" edge-api-router \
-        EDGE_API_HOSTS "edge-api edge-api2 edge-api3" \
-        -f "$base" -f "$edge_overlay" -f "$edge_compat"
-
     rollback_proxy=$(PROXY_V4_IMAGE=sha256:captured-proxy \
         PROXY_V4_VERSIOND_SERVICE_NAME=versiond-router \
         PROXY_V4_EDGE_API_SERVICE_NAME=edge-api-router \
@@ -198,9 +182,7 @@ command -v curl >/dev/null || fail "curl is required"
 
 case ${RELEASE_IMAGE_PULL:-true} in
     true)
-        docker pull "$edge_image"
         docker pull "$versiond_image"
-        docker pull "$edge_router_image"
         docker pull "$versiond_router_image"
         docker pull "$proxy_policy_image"
         docker pull "$proxy_router_image"
@@ -210,9 +192,7 @@ case ${RELEASE_IMAGE_PULL:-true} in
     *) fail "RELEASE_IMAGE_PULL must be true or false" ;;
 esac
 
-edge_image_id=$(docker image inspect "$edge_image" --format '{{.Id}}')
 versiond_image_id=$(docker image inspect "$versiond_image" --format '{{.Id}}')
-edge_router_image_id=$(docker image inspect "$edge_router_image" --format '{{.Id}}')
 versiond_router_image_id=$(docker image inspect "$versiond_router_image" --format '{{.Id}}')
 proxy_policy_image_id=$(docker image inspect "$proxy_policy_image" --format '{{.Id}}')
 proxy_router_image_id=$(docker image inspect "$proxy_router_image" --format '{{.Id}}')
@@ -229,8 +209,6 @@ docker run --rm "$postgres_image_id" postgres --version >/dev/null
 
 # Router images are release artifacts too. Render-only mode executes their real
 # entrypoint and HAProxy config validation without requiring live upstreams.
-docker run --rm -e EDGE_API_ROUTER_RENDER_ONLY=true \
-    "$edge_router_image_id"
 docker run --rm -e VERSIOND_ROUTER_RENDER_ONLY=true \
     "$versiond_router_image_id"
 docker run --rm -e PROXY_ROUTER_RENDER_ONLY=true \
@@ -256,16 +234,14 @@ docker run --rm \
     "$proxy_policy_image_id" nginx -t
 
 suffix=$$
-edge_container="gonka-release-edge-$suffix"
 versiond_container="gonka-release-versiond-$suffix"
 
 cleanup() {
-    docker rm -f "$edge_container" "$versiond_container" >/dev/null 2>&1 || true
+    docker rm -f "$versiond_container" >/dev/null 2>&1 || true
 }
 trap cleanup EXIT
 
 container_logs() {
-    docker logs "$edge_container" >&2 2>/dev/null || true
     docker logs "$versiond_container" >&2 2>/dev/null || true
 }
 
@@ -286,18 +262,6 @@ wait_for_status() {
     container_logs
     fail "$description returned ${status:-no response}, expected $expected"
 }
-
-docker run -d --name "$edge_container" \
-    -p 127.0.0.1::18080 \
-    -e EDGE_API_PORT=18080 \
-    -e CHAIN_GRPC_URL=127.0.0.1:1 \
-    -e CHAIN_RPC_URL=http://127.0.0.1:1 \
-    -e EDGE_API_DRAIN_ANNOUNCE=0 \
-    "$edge_image_id" >/dev/null
-edge_addr=$(docker port "$edge_container" 18080/tcp | tail -n1)
-[[ -n $edge_addr ]] || fail "edge-api did not publish port 18080"
-wait_for_status "http://$edge_addr/healthz" 200 "edge-api /healthz"
-wait_for_status "http://$edge_addr/readyz" 503 "edge-api /readyz"
 
 docker run -d --name "$versiond_container" \
     -p 127.0.0.1::8080 \

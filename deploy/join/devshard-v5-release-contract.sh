@@ -24,9 +24,7 @@ devshard_v5_load_release_contract() {
         DEVSHARD_V5_RELEASE_ID \
         DEVSHARD_V5_RELEASE_GIT_TAG \
         DEVSHARD_V5_RELEASE_IMAGE_TAG \
-        DEVSHARD_V5_EDGE_API_IMAGE \
         DEVSHARD_V5_VERSIOND_IMAGE \
-        DEVSHARD_V5_EDGE_API_ROUTER_IMAGE \
         DEVSHARD_V5_VERSIOND_ROUTER_IMAGE \
         DEVSHARD_V5_PROXY_POLICY_IMAGE \
         DEVSHARD_V5_PROXY_ROUTER_IMAGE \
@@ -49,9 +47,7 @@ devshard_v5_load_release_contract() {
     [[ $DEVSHARD_V5_RELEASE_IMAGE_TAG =~ ^[A-Za-z0-9._-]+$ ]] || \
         devshard_v5_contract_error "invalid release image tag" || return
     for name in \
-        DEVSHARD_V5_EDGE_API_IMAGE \
         DEVSHARD_V5_VERSIOND_IMAGE \
-        DEVSHARD_V5_EDGE_API_ROUTER_IMAGE \
         DEVSHARD_V5_VERSIOND_ROUTER_IMAGE \
         DEVSHARD_V5_PROXY_POLICY_IMAGE \
         DEVSHARD_V5_PROXY_ROUTER_IMAGE \
@@ -68,9 +64,7 @@ devshard_v5_verify_release_image_digests() {
     local name
 
     for name in \
-        DEVSHARD_V5_EDGE_API_IMAGE \
         DEVSHARD_V5_VERSIOND_IMAGE \
-        DEVSHARD_V5_EDGE_API_ROUTER_IMAGE \
         DEVSHARD_V5_VERSIOND_ROUTER_IMAGE \
         DEVSHARD_V5_PROXY_POLICY_IMAGE \
         DEVSHARD_V5_PROXY_ROUTER_IMAGE \
@@ -132,7 +126,6 @@ deploy/join/enable-router-ha.sh
 deploy/join/versiond-router-fleet.sh
 deploy/join/docker-compose.versiond-v5-compat.yml
 deploy/join/docker-compose.versiond-external-postgres.yml
-deploy/join/docker-compose.edge-api-v5-compat.yml
 deploy/join/docker-compose.proxy-v4-compat.yml
 deploy/join/versiond-router-slot/docker-compose.yml
 router-runtime/catalog-reconciler

@@ -59,9 +59,7 @@ grep -q 'must be pinned as repo@sha256:digest' "$tmpdir/mutable.stderr" || {
 }
 
 digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-DEVSHARD_V5_EDGE_API_IMAGE=${DEVSHARD_V5_EDGE_API_IMAGE%:*}@sha256:$digest
 DEVSHARD_V5_VERSIOND_IMAGE=${DEVSHARD_V5_VERSIOND_IMAGE%:*}@sha256:$digest
-DEVSHARD_V5_EDGE_API_ROUTER_IMAGE=${DEVSHARD_V5_EDGE_API_ROUTER_IMAGE%:*}@sha256:$digest
 DEVSHARD_V5_VERSIOND_ROUTER_IMAGE=${DEVSHARD_V5_VERSIOND_ROUTER_IMAGE%:*}@sha256:$digest
 DEVSHARD_V5_PROXY_POLICY_IMAGE=${DEVSHARD_V5_PROXY_POLICY_IMAGE%:*}@sha256:$digest
 DEVSHARD_V5_PROXY_ROUTER_IMAGE=${DEVSHARD_V5_PROXY_ROUTER_IMAGE%:*}@sha256:$digest
