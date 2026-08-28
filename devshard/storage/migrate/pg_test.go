@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
@@ -76,6 +77,47 @@ func TestApplyPG_Idempotent(t *testing.T) {
 	require.Equal(t, 2, n2)
 
 	exists, err := migrate.TableExistsPG(ctx, pool, "widget")
+	require.NoError(t, err)
+	require.True(t, exists)
+}
+
+func TestApplyPG_ConcurrentCallersSerialize(t *testing.T) {
+	ctx := context.Background()
+	pool := testPGPool(t)
+
+	steps := []migrate.Step{
+		{
+			ID:   1,
+			Name: "concurrent_create",
+			Statements: []string{
+				`SELECT pg_sleep(0.2)`,
+				`CREATE TABLE concurrent_migration_probe (id INT PRIMARY KEY)`,
+			},
+		},
+	}
+
+	start := make(chan struct{})
+	errs := make(chan error, 2)
+	var wg sync.WaitGroup
+	for range 2 {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			<-start
+			errs <- migrate.ApplyPG(ctx, pool, steps)
+		}()
+	}
+	close(start)
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		require.NoError(t, err)
+	}
+	n, err := migrate.AppliedPG(ctx, pool)
+	require.NoError(t, err)
+	require.Equal(t, 1, n)
+	exists, err := migrate.TableExistsPG(ctx, pool, "concurrent_migration_probe")
 	require.NoError(t, err)
 	require.True(t, exists)
 }
