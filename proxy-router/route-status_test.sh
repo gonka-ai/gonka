@@ -22,12 +22,18 @@ case "$command" in
         fi
         ;;
     "show servers state versiond_routers_v5")
-        printf '%s\n' '# header' '# fields' \
-            '1 2 3 router1 192.0.2.10 0 32 8'
+        if [ "${INVALID_SERVERS_OUTPUT:-}" = true ]; then
+            printf '%s\n' 'Unknown backend name.'
+        else
+            printf '%s\n' '1' \
+                '# be_id srv_addr be_name srv_id srv_name srv_op_state' \
+                '1 192.0.2.10 2 3 router1 2'
+        fi
         ;;
     "show servers state versiond_router_coarse")
-        printf '%s\n' '# header' '# fields' \
-            '1 2 3 router1 192.0.2.10 0 32 8'
+        printf '%s\n' '1' \
+            '# be_id srv_addr be_name srv_id srv_name srv_op_state' \
+            '1 192.0.2.10 2 3 router1 2'
         ;;
     "show stat")
         printf '%s\n' '# pxname,svname,status'
@@ -100,6 +106,11 @@ else
         echo "route-status returned $status instead of 1 for invalid show map output" >&2
         exit 1
     }
+fi
+
+if INVALID_SERVERS_OUTPUT=true run_status v5 192.0.2.10 >/dev/null 2>&1; then
+    echo "route-status accepted an invalid show servers state response" >&2
+    exit 1
 fi
 
 echo "route-status_test: ok"
