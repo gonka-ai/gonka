@@ -8,6 +8,23 @@ CERT_FILE="$SSL_DIR/cert.pem"
 KEY_FILE="$SSL_DIR/private.key"
 ORDER_ID_FILE="$SSL_DIR/order.id"
 
+certificate_matches_key() {
+  local cert_file=$1 key_file=$2 cert_digest key_digest
+
+  [ -s "$cert_file" ] && [ -s "$key_file" ] || return 1
+  cert_digest=$(openssl x509 -in "$cert_file" -pubkey -noout 2>/dev/null \
+    | openssl pkey -pubin -outform DER 2>/dev/null \
+    | openssl dgst -sha256 2>/dev/null) || return 1
+  key_digest=$(openssl pkey -in "$key_file" -pubout -outform DER 2>/dev/null \
+    | openssl dgst -sha256 2>/dev/null) || return 1
+  [ -n "$cert_digest" ] && [ "$cert_digest" = "$key_digest" ]
+}
+
+if [ "$MODE" = repair ] && certificate_matches_key "$CERT_FILE" "$KEY_FILE"; then
+  echo "SSL certificate and private key are valid"
+  exit 0
+fi
+
 if [ -z "${CERT_ISSUER_DOMAIN:-}" ]; then
   echo "ERROR: CERT_ISSUER_DOMAIN is not set"
   exit 1
@@ -65,18 +82,6 @@ if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
   exit 1
 fi
 
-certificate_matches_key() {
-  local cert_file=$1 key_file=$2 cert_digest key_digest
-
-  [ -s "$cert_file" ] && [ -s "$key_file" ] || return 1
-  cert_digest=$(openssl x509 -in "$cert_file" -pubkey -noout 2>/dev/null \
-    | openssl pkey -pubin -outform DER 2>/dev/null \
-    | openssl dgst -sha256 2>/dev/null) || return 1
-  key_digest=$(openssl pkey -in "$key_file" -pubout -outform DER 2>/dev/null \
-    | openssl dgst -sha256 2>/dev/null) || return 1
-  [ -n "$cert_digest" ] && [ "$cert_digest" = "$key_digest" ]
-}
-
 publish_certificate() {
   local source_file=$1
 
@@ -127,10 +132,6 @@ will_expire_within_days() {
 
 FALLBACK_TO_ISSUE=false
 if [ "$MODE" = repair ]; then
-  if certificate_matches_key "$CERT_FILE" "$KEY_FILE"; then
-    echo "SSL certificate and private key are valid"
-    exit 0
-  fi
   recovery_status=0
   recover_certificate_from_order || recovery_status=$?
   case "$recovery_status" in

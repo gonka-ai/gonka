@@ -372,18 +372,14 @@ export STREAMING_CONFIG='
             proxy_request_buffering off;
             gzip off;'
 
-# If SSL is intended, ensure certificates are present (attempt issuance if missing)
+# Validate or repair the TLS bundle before nginx reads it.
 if [ "$SSL_ENABLED" = "true" ]; then
-    if [ ! -f "/etc/nginx/ssl/cert.pem" ] || [ ! -f "/etc/nginx/ssl/private.key" ]; then
-        echo "SSL enabled but the certificate bundle is incomplete; repairing via proxy-ssl"
-        ssl_setup_status=0
-        /setup-ssl.sh repair || ssl_setup_status=$?
-        case "$ssl_setup_status" in
-          0|10) ;;
-          *) echo "WARNING: SSL setup failed; will attempt to continue" ;;
-        esac
-    fi
-
+    ssl_setup_status=0
+    /setup-ssl.sh repair || ssl_setup_status=$?
+    case "$ssl_setup_status" in
+      0|10) ;;
+      *) echo "WARNING: SSL setup failed; will attempt to continue" ;;
+    esac
 fi
 
 # Prepare template vars for unified config
