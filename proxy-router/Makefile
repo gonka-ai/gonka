@@ -160,6 +160,41 @@ test-render:
 test-routing:
 	@./test-routing.sh
 
+test-compose:
+	@set -eu; \
+	root=$$(cd .. && pwd); \
+	edge=$$(docker compose \
+		-f "$$root/deploy/join/docker-compose.yml" \
+		-f "$$root/deploy/join/docker-compose.edge-api-multi.yml" \
+		config --format json 2>/dev/null); \
+	printf '%s\n' "$$edge" | jq -e '.services["edge-api-router"] != null and .services["proxy-policy"].environment.EDGE_API_SERVICE_NAME == "edge-api-router" and .services["proxy-policy"].environment.EDGE_API_PORT == "18080" and .services["proxy-policy2"].environment.EDGE_API_SERVICE_NAME == "edge-api-router" and .services["proxy-policy2"].environment.EDGE_API_PORT == "18080" and .services["proxy-policy"].environment.PROXY_POLICY_READINESS_HOST == "proxy-policy-app-network" and .services["proxy-policy"].networks.default.aliases == ["proxy-policy-app-network"] and .services["proxy-policy"].stop_grace_period == "30m0s" and .services["proxy-policy2"].stop_grace_period == "30m0s" and (.services.proxy.environment | has("EDGE_API_POOL_HOST") | not) and (.services.proxy.environment | has("PROXY_EDGE_API_PORT") | not)' >/dev/null || { echo "test-compose: legacy edge-api router contract changed" >&2; exit 1; }; \
+	short_grace=$$(PROXY_POLICY_STOP_GRACE_PERIOD=25m docker compose \
+		-f "$$root/deploy/join/docker-compose.yml" config --format json); \
+	printf '%s\n' "$$short_grace" | jq -e '.services["proxy-policy"].stop_grace_period == "25m0s" and .services["proxy-policy2"].stop_grace_period == "25m0s"' >/dev/null || { echo "test-compose: policy stop grace override was not applied" >&2; exit 1; }; \
+	printf '%s\n' "$$edge" | jq -e '((.services.proxy.depends_on // {}) | has("proxy-policy") | not) and ((.services.proxy.depends_on // {}) | has("proxy-policy2") | not) and ([.services["proxy-policy"], .services["proxy-policy2"]] | all(.depends_on.api.condition == "service_started" and .depends_on.versiond.condition == "service_started" and .depends_on["proxy-ssl"].condition == "service_healthy" and .depends_on["proxy-ssl"].required == false and (.depends_on | has("proxy-policy2") | not)))' >/dev/null || { echo "test-compose: policy workers no longer start independently behind an ungated HAProxy" >&2; exit 1; }; \
+	versiond=$$(DEVSHARD_POSTGRES_PASSWORD=test docker compose \
+		-f "$$root/deploy/join/docker-compose.yml" \
+		-f "$$root/deploy/join/docker-compose.versiond.yml" \
+		config --format json 2>/dev/null); \
+	printf '%s\n' "$$versiond" | jq -e '.services["proxy-policy"].environment.VERSIOND_SERVICE_NAME == "proxy-policy-ingress" and .services["proxy-policy"].environment.VERSIOND_PORT == "18081" and .services["proxy-policy2"].environment.VERSIOND_SERVICE_NAME == "proxy-policy-ingress" and .services["proxy-policy2"].environment.VERSIOND_PORT == "18081" and .services.proxy.environment.VERSIOND_ROUTER_POOL_HOST == "versiond-router-ingress" and .services.proxy.environment.VERSIOND_ROUTER_PORT == "8080" and .services.proxy.environment.VERSIOND_ROUTER_ADMIN_PORT == "8404" and .services.proxy.environment.VERSIOND_ROUTER_HEALTH_CONTRACT == "auto" and .services["versiond-router"].environment.VERSIOND_ROUTER_FRONT_BIND_HOST == "versiond-router-ingress" and .services["versiond-router"].environment.VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS == "true" and .services["versiond-router"].networks["proxy-policy-front"].aliases == ["versiond-router-ingress"]' >/dev/null || { echo "test-compose: versiond distributor contract changed" >&2; exit 1; }; \
+	printf '%s\n' "$$versiond" | jq -e '((.services.proxy.depends_on // {}) | has("versiond-router") | not)' >/dev/null || { echo "test-compose: inner router delays public proxy startup" >&2; exit 1; }; \
+	printf '%s\n' "$$versiond" | jq -e '([.services["proxy-policy"], .services["proxy-policy2"]] | all(((.depends_on // {}) | has("versiond") | not) and .depends_on.api.condition == "service_started" and .depends_on["proxy-ssl"].required == false))' >/dev/null || { echo "test-compose: HA versiond or PostgreSQL delays policy startup" >&2; exit 1; }; \
+	printf '%s\n' "$$versiond" | jq -e 'any(.services["versiond-router"].volumes[]; .target == "/docker-entrypoint.d/50-gonka-public-tier-compat.sh" and .read_only == true) and (.services["versiond-router"].healthcheck.test[1] | contains("versiond-router-listen-address"))' >/dev/null || { echo "test-compose: legacy router private-listener compatibility hook is missing" >&2; exit 1; }; \
+	custom_admin=$$(DEVSHARD_POSTGRES_PASSWORD=test VERSIOND_ROUTER_ADMIN_PORT=9410 docker compose \
+		-f "$$root/deploy/join/docker-compose.yml" \
+		-f "$$root/deploy/join/docker-compose.versiond.yml" \
+		config --format json); \
+	printf '%s\n' "$$custom_admin" | jq -e '.services["versiond-router"].environment.VERSIOND_ROUTER_ADMIN_PORT == "9410" and .services.proxy.environment.VERSIOND_ROUTER_ADMIN_PORT == "9410"' >/dev/null || { echo "test-compose: router admin port is not shared across tiers" >&2; exit 1; }; \
+	grep -A5 '^  - job_name: proxy-router$$' \
+		"$$root/deploy/join/observability/prometheus.yml" \
+		| grep -q 'proxy-router-metrics:8405' \
+		|| { echo "test-compose: public router metrics are not scraped" >&2; exit 1; }; \
+	if grep -Eq 'up -d proxy-policy proxy-policy2|up -d proxy-policy2 proxy-policy|--remove-orphans' \
+		"$$root/proxy/README.md"; then \
+		echo "test-compose: proxy runbook contains a non-rolling or whole-project mutation" >&2; \
+		exit 1; \
+	fi; \
+	echo "test-compose: ok"
 VERSION ?= $(shell git describe --always)
 SET_LATEST ?= 0
 PLATFORMS ?= linux/amd64,linux/arm64
