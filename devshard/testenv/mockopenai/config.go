@@ -4,6 +4,8 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"hash/fnv"
+	"strconv"
 	"time"
 )
 
@@ -122,8 +124,12 @@ func promptTokenEstimate(body []byte) int {
 
 // buildLogprobContent returns OpenAI-shaped logprobs.content entries for text.
 // topN mirrors the request's top_logprobs (gateway forces 5 upstream).
-// bytes must be []int (UTF-8 code units): []byte would JSON-encode as base64
-// and break completionapi.Response unmarshalling on the host.
+//
+// "token" is a numeric token ID (decimal string), matching vLLM after
+// gm/enforced-str. The decoded text lives in "bytes" (UTF-8 code units as
+// []int — []byte would JSON-encode as base64 and break completionapi.Response).
+// Validators reject decoded-text tokens via HasNonNumericTokens before the
+// ML replay; citest SlowMockOpenAI needs that replay so leases stay pending.
 func buildLogprobContent(text string, topN int) []map[string]any {
 	if topN < 0 {
 		topN = 0
@@ -134,8 +140,9 @@ func buildLogprobContent(text string, topN int) []map[string]any {
 	var out []map[string]any
 	for _, r := range []rune(text) {
 		tok := string(r)
+		id := mockTokenID(tok)
 		entry := map[string]any{
-			"token":   tok,
+			"token":   id,
 			"logprob": -0.1,
 			"bytes":   utf8CodeUnits(tok),
 		}
@@ -146,7 +153,7 @@ func buildLogprobContent(text string, topN int) []map[string]any {
 				alt = tok + string(rune('a'+i-1))
 			}
 			tops = append(tops, map[string]any{
-				"token":   alt,
+				"token":   mockTokenID(alt),
 				"logprob": -0.1 - float64(i),
 				"bytes":   utf8CodeUnits(alt),
 			})
@@ -155,6 +162,18 @@ func buildLogprobContent(text string, topN int) []map[string]any {
 		out = append(out, entry)
 	}
 	return out
+}
+
+// mockTokenID maps token text to a stable non-negative decimal id so executor
+// and validator logprobs compare equal, and HasNonNumericTokens stays false.
+func mockTokenID(s string) string {
+	h := fnv.New32a()
+	_, _ = h.Write([]byte(s))
+	n := h.Sum32()
+	if n == 0 {
+		n = 1
+	}
+	return strconv.FormatUint(uint64(n), 10)
 }
 
 func utf8CodeUnits(s string) []int {

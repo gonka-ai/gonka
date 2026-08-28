@@ -4,7 +4,6 @@ package main
 const (
 	MaxChatRequestBodySize       = 10 * 1024 * 1024
 	MaxLoggedResponseFormatBytes = 2048 * 1024
-	MaxChatRequestChoices        = 5
 	MinTemperature               = 0.0
 	MaxTemperature               = 2.0
 	MinPMin                      = 0.0
