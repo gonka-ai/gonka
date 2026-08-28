@@ -20,12 +20,16 @@ on:
       - deploy/join/legacy-router-upgrade-barrier_test.sh
       - deploy/join/upgrade-devshard-v5.sh
       - deploy/join/upgrade-devshard-v5_test.sh
+      - deploy/join/upgrade-edge-api-0.2.16.sh
+      - deploy/join/upgrade-edge-api-0.2.16_test.sh
+      - deploy/join/edge-api-0.2.16-release.env
       - deploy/join/devshard-v5-release.env
       - deploy/join/devshard-v5-release-contract.sh
       - deploy/join/devshard-v5-release-contract_test.sh
       - deploy/join/devshard-v5-release-gate.sh
       - deploy/join/devshard-v5-release-gate_test.sh
       - devshard/docs/network-update-0.2.15-v5.md
+      - devshard/docs/network-update-0.2.16-edge-api.md
       - devshard/docs/release-0.2.15-v5.md
       - deploy/join/compose-topology.sh
       - deploy/join/deployment-lock.sh
@@ -88,6 +92,8 @@ jobs:
             deploy/join/devshard-v5-release-gate_test.sh \
             deploy/join/upgrade-devshard-v5.sh \
             deploy/join/upgrade-devshard-v5_test.sh \
+            deploy/join/upgrade-edge-api-0.2.16.sh \
+            deploy/join/upgrade-edge-api-0.2.16_test.sh \
             deploy/join/enable-router-ha.sh \
             deploy/join/enable-router-ha_test.sh \
             deploy/join/versiond-router-fleet.sh \
@@ -103,6 +109,7 @@ jobs:
           deploy/join/devshard-v5-release-contract_test.sh
           deploy/join/devshard-v5-release-gate_test.sh
           deploy/join/upgrade-devshard-v5_test.sh
+          deploy/join/upgrade-edge-api-0.2.16_test.sh
           deploy/join/enable-router-ha_test.sh
           deploy/join/versiond-compose-config_test.sh
 
