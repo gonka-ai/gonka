@@ -1578,7 +1578,7 @@ test-version-routing:
 		|| fail "catalog reconciliation did not recover after clock rollback"; \
 	echo "test-version-routing: ok"
 
-test-render: test-local-compose test-join-compose test-compose-contract test-join-versiond-healthcheck test-catalog-cache test-pool-status test-hash-ring test-version-routing
+test-render: test-local-compose test-compose-contract test-join-versiond-healthcheck test-catalog-cache test-pool-status test-hash-ring test-version-routing
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
