@@ -74,6 +74,9 @@ type RedundancySettings struct {
 	PairwiseWinnerHoldMS          int64   `json:"pairwise_winner_hold_ms"`
 	PairwiseWinnerHoldMinSpeedup  float64 `json:"pairwise_winner_hold_min_speedup"`
 	PairwiseWinnerHoldMinSamples  int     `json:"pairwise_winner_hold_min_samples"`
+	// ForceUpstreamStreaming is a kill switch for always-stream-to-host.
+	// nil (omitted in JSON) and true keep #1581's force; false rolls it back.
+	ForceUpstreamStreaming *bool `json:"force_upstream_streaming,omitempty"`
 }
 
 type PerfSettings struct {
@@ -155,6 +158,9 @@ func (s GatewaySettings) WithTuningDefaults() GatewaySettings {
 	}
 	if s.Redundancy.PairwiseWinnerHoldMinSamples == 0 {
 		s.Redundancy.PairwiseWinnerHoldMinSamples = redundancyDefaults.PairwiseWinnerHoldMinSamples
+	}
+	if s.Redundancy.ForceUpstreamStreaming == nil {
+		s.Redundancy.ForceUpstreamStreaming = boolPtr(true)
 	}
 	if s.Perf == (PerfSettings{}) {
 		s.Perf = perfDefaults
@@ -358,6 +364,7 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 			redundancy_pairwise_winner_hold_ms INTEGER NOT NULL DEFAULT 500,
 			redundancy_pairwise_winner_hold_min_speedup REAL NOT NULL DEFAULT 0.1,
 			redundancy_pairwise_winner_hold_min_samples INTEGER NOT NULL DEFAULT 6,
+			redundancy_force_upstream_streaming INTEGER NOT NULL DEFAULT 1,
 			perf_sample_size INTEGER NOT NULL DEFAULT 256,
 			perf_window_ms INTEGER NOT NULL DEFAULT 3600000,
 			escrow_rotation_enabled INTEGER NOT NULL DEFAULT 0,
@@ -558,6 +565,7 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 		       redundancy_pairwise_max_proactive_attempts, redundancy_pairwise_min_direct_comparisons,
 		       redundancy_pairwise_winner_hold_ms, redundancy_pairwise_winner_hold_min_speedup,
 		       redundancy_pairwise_winner_hold_min_samples,
+		       redundancy_force_upstream_streaming,
 		       perf_sample_size, perf_window_ms,
 		       escrow_rotation_enabled, escrow_rotation_settlement_enabled,
 		       escrow_rotation_pre_poc_blocks, escrow_rotation_models_json,
@@ -567,6 +575,7 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 	var rotationEnabled int
 	var rotationSettlementEnabled int
 	var disabledEnabled int
+	var forceUpstreamStreaming int
 	var rotationModelsJSON string
 	var modelLimitsJSON string
 	var modelAccessJSON string
@@ -607,6 +616,7 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 		&state.Settings.Redundancy.PairwiseWinnerHoldMS,
 		&state.Settings.Redundancy.PairwiseWinnerHoldMinSpeedup,
 		&state.Settings.Redundancy.PairwiseWinnerHoldMinSamples,
+		&forceUpstreamStreaming,
 		&state.Settings.Perf.SampleSize,
 		&state.Settings.Perf.WindowMS,
 		&rotationEnabled,
@@ -643,6 +653,7 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 		state.Settings.ModelLimits = applyLegacyModelAccessToLimits(state.Settings.ModelLimits, legacyModelAccess)
 	}
 	state.Settings.Disabled.Enabled = disabledEnabled != 0
+	state.Settings.Redundancy.ForceUpstreamStreaming = boolPtr(forceUpstreamStreaming != 0)
 	state.Settings = state.Settings.WithTuningDefaults()
 
 	rows, err := s.db.Query(`
@@ -726,12 +737,13 @@ func (s *GatewayStore) Initialize(settings GatewaySettings, devshards []GatewayD
 			redundancy_pairwise_max_proactive_attempts, redundancy_pairwise_min_direct_comparisons,
 			redundancy_pairwise_winner_hold_ms, redundancy_pairwise_winner_hold_min_speedup,
 			redundancy_pairwise_winner_hold_min_samples,
+			redundancy_force_upstream_streaming,
 			perf_sample_size, perf_window_ms,
 			escrow_rotation_enabled, escrow_rotation_settlement_enabled,
 			escrow_rotation_pre_poc_blocks, escrow_rotation_models_json,
 			gateway_disabled_enabled, gateway_disabled_message, gateway_disabled_new_url,
 			updated_at
-		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		strings.TrimSpace(settings.ChainREST),
 		strings.TrimSpace(settings.PublicAPI),
 		strings.TrimSpace(settings.DefaultModel),
@@ -768,6 +780,7 @@ func (s *GatewayStore) Initialize(settings GatewaySettings, devshards []GatewayD
 		settings.Redundancy.PairwiseWinnerHoldMS,
 		settings.Redundancy.PairwiseWinnerHoldMinSpeedup,
 		settings.Redundancy.PairwiseWinnerHoldMinSamples,
+		gatewayOptionalBoolToInt(settings.Redundancy.ForceUpstreamStreaming, true),
 		settings.Perf.SampleSize,
 		settings.Perf.WindowMS,
 		gatewayBoolToInt(settings.EscrowRotation.Enabled),
@@ -830,6 +843,7 @@ func (s *GatewayStore) UpdateSettings(settings GatewaySettings) error {
 		    redundancy_pairwise_winner_hold_ms = ?,
 		    redundancy_pairwise_winner_hold_min_speedup = ?,
 		    redundancy_pairwise_winner_hold_min_samples = ?,
+		    redundancy_force_upstream_streaming = ?,
 		    perf_sample_size = ?,
 		    perf_window_ms = ?,
 		    escrow_rotation_enabled = ?,
@@ -877,6 +891,7 @@ func (s *GatewayStore) UpdateSettings(settings GatewaySettings) error {
 		settings.Redundancy.PairwiseWinnerHoldMS,
 		settings.Redundancy.PairwiseWinnerHoldMinSpeedup,
 		settings.Redundancy.PairwiseWinnerHoldMinSamples,
+		gatewayOptionalBoolToInt(settings.Redundancy.ForceUpstreamStreaming, true),
 		settings.Perf.SampleSize,
 		settings.Perf.WindowMS,
 		gatewayBoolToInt(settings.EscrowRotation.Enabled),
@@ -1453,6 +1468,16 @@ func gatewayBoolToInt(v bool) int {
 	return 0
 }
 
+func gatewayOptionalBoolToInt(v *bool, defaultTrue bool) int {
+	if v == nil {
+		if defaultTrue {
+			return 1
+		}
+		return 0
+	}
+	return gatewayBoolToInt(*v)
+}
+
 func mustMarshalEscrowRotationModels(models []EscrowRotationModelSettings) string {
 	if len(models) == 0 {
 		return ""
@@ -1509,6 +1534,7 @@ func ensureGatewaySettingsTuningColumns(db *sql.DB) error {
 		{"redundancy_pairwise_winner_hold_ms", "INTEGER NOT NULL DEFAULT 500"},
 		{"redundancy_pairwise_winner_hold_min_speedup", "REAL NOT NULL DEFAULT 0.1"},
 		{"redundancy_pairwise_winner_hold_min_samples", "INTEGER NOT NULL DEFAULT 6"},
+		{"redundancy_force_upstream_streaming", "INTEGER NOT NULL DEFAULT 1"},
 		{"perf_sample_size", "INTEGER NOT NULL DEFAULT 256"},
 		{"perf_window_ms", "INTEGER NOT NULL DEFAULT 3600000"},
 	}

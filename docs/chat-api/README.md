@@ -21,7 +21,7 @@ OpenAI-compatible chat completions, routed to Kimi-K2.6 / Qwen3-235B / MiniMax-M
 | Max body size | 10 MiB | gateway-level; pre-`json.Unmarshal` check |
 | Max nesting depth | 32 | `ensureRequestNestingDepth`; defense against deeply-nested JSON DoS |
 | Max messages count | 2048 | OpenAI Chat Completions convention; defensive cap |
-| Max choices (`n`) | 5 | `MaxChatRequestChoices`; ceiling on completion fan-out |
+| Max choices (`n`) | 1 | forced to 1 when present; reservation/settlement budget a single `MaxTokens` output ([why](troubleshooting.md#coerce-n-when-temperature-zero)) |
 
 ## Supported parameters (universal behavior)
 
@@ -42,7 +42,7 @@ OpenAI-compatible chat completions, routed to Kimi-K2.6 / Qwen3-235B / MiniMax-M
 | `stream` | bool | false | pass-through | [[OpenAI-1]](references.md#openai) |
 | `stream_options` | object | — | strip when stream≠true; whitelist `include_usage`; strip `continuous_usage_stats` | [[OpenAI-1]](references.md#openai) |
 | `stop` | str\|array | — | array entries must be strings (else reject — [why](troubleshooting.md#reject-malformed-param-types)); ≤16 entries × 256 B each | [[OpenAI-1]](references.md#openai) |
-| `n` | int | 1 | hard cap ≤5; coerce to 1 when temperature==0 ([why](troubleshooting.md#coerce-n-when-temperature-zero)) | [[OpenAI-1]](references.md#openai), [[CVE-9]](references.md#security-advisories) |
+| `n` | int | 1 | force `1` when present (omitted stays omitted; ML default is 1). Reservation only budgets one `MaxTokens` output ([why](troubleshooting.md#coerce-n-when-temperature-zero)) | [[OpenAI-1]](references.md#openai), [[CVE-9]](references.md#security-advisories) |
 | `seed` | uint64 | — | must be a non-negative integer (else reject — [why](troubleshooting.md#reject-malformed-param-types)); pass-through | [[OpenAI-1]](references.md#openai) |
 | `logprobs` | bool | — | force `true`; observability pipeline | — |
 | `top_logprobs` | int | — | force `5`; observability pipeline | — |

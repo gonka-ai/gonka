@@ -450,7 +450,32 @@ func DefaultRedundancySettings() RedundancySettings {
 		PairwiseWinnerHoldMS:          500,
 		PairwiseWinnerHoldMinSpeedup:  0.10,
 		PairwiseWinnerHoldMinSamples:  6,
+		ForceUpstreamStreaming:        boolPtr(true),
 	}
+}
+
+func boolPtr(v bool) *bool { return &v }
+
+func forceUpstreamStreamingFromSettings(settings RedundancySettings) bool {
+	if settings.ForceUpstreamStreaming == nil {
+		return true
+	}
+	return *settings.ForceUpstreamStreaming
+}
+
+var forceUpstreamStreaming atomic.Bool
+
+func init() {
+	forceUpstreamStreaming.Store(true)
+}
+
+// ForceUpstreamStreamingEnabled reports the process-wide always-stream-upstream flag.
+func ForceUpstreamStreamingEnabled() bool {
+	return forceUpstreamStreaming.Load()
+}
+
+func setForceUpstreamStreaming(on bool) {
+	forceUpstreamStreaming.Store(on)
 }
 
 func ApplyRedundancySettings(settings RedundancySettings) {
@@ -520,6 +545,7 @@ func ApplyRedundancySettings(settings RedundancySettings) {
 	PairwiseWinnerHold = time.Duration(settings.PairwiseWinnerHoldMS) * time.Millisecond
 	PairwiseWinnerHoldMinSpeedup = settings.PairwiseWinnerHoldMinSpeedup
 	PairwiseWinnerHoldMinSamples = settings.PairwiseWinnerHoldMinSamples
+	setForceUpstreamStreaming(forceUpstreamStreamingFromSettings(settings))
 }
 
 func normalizeRedundancySpeedPolicy(policy string) string {

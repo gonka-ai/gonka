@@ -17,7 +17,7 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 | Silent disappearance of a param | silent-strip allowlist | search by param name under [#silent-strips](#silent-strips) |
 | `thinking.type` value normalized | `adaptive` / `auto` resolved to `enabled` | see [Kimi overrides](kimi-k2.6.md#parameter-overrides) |
 | `tool_choice: "required"` becomes `"auto"` | network policy | [#coerce-tool-choice-required](#coerce-tool-choice-required) |
-| `n` becomes 1 at `temperature == 0` | vLLM constraint | [#coerce-n-when-temperature-zero](#coerce-n-when-temperature-zero) |
+| `n` becomes 1 | reservation budgets one `MaxTokens` output | [#coerce-n-when-temperature-zero](#coerce-n-when-temperature-zero) |
 | `extra_body` keys appear at top level | OpenAI Python SDK passthrough | [#unwrap-extra_body](#unwrap-extra_body) |
 | `enable_thinking` lifts into `chat_template_kwargs` | Qwen3 canonical placement | [#translate-enable_thinking](#translate-enable_thinking) |
 | `reasoning` object decomposed to top-level `reasoning_effort` | OpenRouter unified-reasoning convention | [#translate-reasoning](#translate-reasoning) |
@@ -260,13 +260,13 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 ### #coerce-n-when-temperature-zero
 
-**What**: `n: <N>` coerced to `n: 1` whenever `temperature == 0`.
+**What**: any present `n` is rewritten to `n: 1` before the request reaches ML. An omitted `n` stays omitted (vLLM default is 1). This includes `n: 0`, `n > 1`, and unbounded `n`.
 
-**Why**: vLLM rejects `n > 1` with `temperature == 0` — greedy sampling produces identical completions, so vLLM treats this as a malformed request (`Best of with temperature 0` error). Rather than returning a 400, the gateway silently rounds down to `n: 1`, matching the sole semantically valid value under deterministic sampling.
+**Why**: signed reservation and settlement budget a single `MaxTokens` output. Forwarding `n > 1` lets aggregate choice tokens exceed `ReservedCost`, so the host is undercharged. Forcing a single choice closes that hole (and also covers the old vLLM `Best of with temperature 0` reject, which is now unreachable). Unbounded `n` is the same rewrite, which also mitigates [[CVE-9]](references.md#security-advisories) (vLLM OOM on huge `n`).
 
-**When to restore**: when vLLM relaxes the constraint.
+**When to restore**: when reservation/settlement include `n × max_tokens` and validation supports multi-choice.
 
-**Fix (client-side)**: either set `temperature > 0` (typical) or accept `n: 1` — deterministic sampling produces one output anyway.
+**Fix (client-side)**: send one completion (`n` omitted or `n: 1`). Multi-choice is not available.
 
 ---
 

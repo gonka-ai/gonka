@@ -2510,6 +2510,7 @@ type adminRedundancyRequest struct {
 	PairwiseWinnerHoldMS          *int64   `json:"pairwise_winner_hold_ms,omitempty"`
 	PairwiseWinnerHoldMinSpeedup  *float64 `json:"pairwise_winner_hold_min_speedup,omitempty"`
 	PairwiseWinnerHoldMinSamples  *int     `json:"pairwise_winner_hold_min_samples,omitempty"`
+	ForceUpstreamStreaming        *bool    `json:"force_upstream_streaming,omitempty"`
 }
 
 type adminPerfRequest struct {
@@ -2832,6 +2833,10 @@ func applyRedundancyRequest(settings *RedundancySettings, req *adminRedundancyRe
 	}
 	if req.PairwiseWinnerHoldMinSamples != nil {
 		settings.PairwiseWinnerHoldMinSamples = *req.PairwiseWinnerHoldMinSamples
+	}
+	if req.ForceUpstreamStreaming != nil {
+		v := *req.ForceUpstreamStreaming
+		settings.ForceUpstreamStreaming = &v
 	}
 }
 
