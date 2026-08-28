@@ -16,7 +16,7 @@ Each nginx policy worker routes requests to backend services by URL path:
 - `/chain-grpc/` → Blockchain gRPC endpoint (port 9090)
 - `/jaeger/` → Jaeger UI when `JAEGER_ENABLED=true` and the observability overlay is running (nginx basic auth required)
 - `/grafana/` → Grafana UI when `GRAFANA_ENABLED=true` and the observability overlay is running (Grafana login required)
-- `/health` → Nginx health check endpoint
+- `/health` → Policy readiness: nginx data listener and application-network DNS
 - `/` → Explorer dashboard when `DASHBOARD_PORT` is set, otherwise a simple "dashboard not configured" page
 
 ## Benefits
@@ -457,7 +457,10 @@ active connections.
 
 ## Health Check
 
-The proxy includes a health check endpoint at `/health` that returns HTTP 200 with "healthy" response.
+`/health` is served through nginx's production listener and returns `200` while
+the local policy sidecar can resolve the configured application-network alias.
+It returns `503` while that network is unavailable or the sidecar is restarting,
+allowing the public HAProxy to withdraw this policy worker.
 
 ## Troubleshooting
 
