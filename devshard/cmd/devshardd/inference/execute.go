@@ -106,22 +106,22 @@ func processExecutionHTTPResponse(
 	}
 
 	if req.ResponseWriter != nil && !isSSE {
-		fmt.Fprintf(req.ResponseWriter, "data: %s\n\ndata: [DONE]\n\n", bodyBytes)
+		// Falling back to the stored copy would quietly hand the gateway a body with the logprobs
+		// already cut out, which is the regression this split exists to prevent.
+		relayed := processor.GetForwardedJSONBytes()
+		if relayed == nil {
+			logging.Warn("Relaying the stored copy: no forwarded body was produced", types.Inferences,
+				"inference_id", inferenceID)
+			relayed = bodyBytes
+		}
+		fmt.Fprintf(req.ResponseWriter, "data: %s\n\ndata: [DONE]\n\n", relayed)
 		if f, ok := req.ResponseWriter.(http.Flusher); ok {
 			f.Flush()
 		}
 	}
 
-	// A body that will not compress is stored whole rather than failing the inference.
-	storedBytes := bodyBytes
-	if compressed, compressErr := completionapi.CompressResponsePayload(bodyBytes); compressErr != nil {
-		logging.Warn("Storing the response whole: it did not compress", types.Inferences,
-			"inference_id", inferenceID, "error", compressErr)
-	} else {
-		storedBytes = compressed
-	}
-
-	hash := sha256.Sum256(storedBytes)
+	// The processor slimmed each chunk as it parsed it, so what it hands back is already what is stored.
+	hash := sha256.Sum256(bodyBytes)
 	usage, err := completionResp.GetUsage()
 	if err != nil {
 		return nil, fmt.Errorf("get usage: %w", err)
@@ -131,6 +131,6 @@ func processExecutionHTTPResponse(
 		responseHash: hash[:],
 		inputTokens:  usage.PromptTokens,
 		outputTokens: usage.CompletionTokens,
-		responseBody: storedBytes,
+		responseBody: bodyBytes,
 	}, nil
 }

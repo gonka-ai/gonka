@@ -83,9 +83,7 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 
 		logging.Debug("Chunk to proxy", types.Inferences, "inference_id", inferenceId, "line", lineToProxy)
 
-		// The processor has already kept the whole line for validation; the gateway gets it without
-		// the fields it would drop anyway.
-		_, err := fmt.Fprintln(w, stripWireOnlyFields(lineToProxy))
+		_, err := fmt.Fprintln(w, lineToProxy)
 		if err != nil {
 			if opErr, ok := err.(*net.OpError); ok {
 				logging.Warn("Stream cancelled during streaming", types.Inferences, "inferenceId", inferenceId, "error", opErr)
@@ -121,10 +119,6 @@ func proxyJSONResponse(resp *http.Response, w http.ResponseWriter, responseProce
 			http.Error(w, fmt.Sprintf("Failed to process inference node response. inferenceId = %s", inferenceId), http.StatusInternalServerError)
 			return
 		}
-	}
-
-	if stripped, ok := stripWireOnlyFieldsFromJSON(bodyBytes); ok {
-		bodyBytes = stripped
 	}
 
 	w.WriteHeader(resp.StatusCode)
