@@ -133,9 +133,9 @@ outage. Multi-host ingress belongs in a later layer above this one.
 
 The public router and both `proxy-policy` workers are one Compose deployment
 unit. Updating or rolling back that unit applies its image, environment,
-network, capability, and service definitions together. A rollback restores the
-previous release's Compose model and recreates it with `--remove-orphans`, so
-workers that are not part of that model cannot remain active.
+network, capability, and service definitions together. The host updater restores
+the captured model by targeting these three services explicitly. Unrelated
+services and containers owned by other active overlays remain unchanged.
 
 ## Endpoints
 
