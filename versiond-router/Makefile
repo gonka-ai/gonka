@@ -94,8 +94,8 @@ test-join-compose:
 		|| { echo 'test-join-compose: legacy router compatibility was lost' >&2; exit 1; }; \
 	[ "$$(grep -c 'GONKA_HA: "true"' "$$tmp")" -eq 3 ] \
 		|| { echo 'test-join-compose: HA deployment latch is not shared by both versiond hosts and the router' >&2; exit 1; }; \
-	[ "$$(grep -c 'VERSIOND_NON_HA_VERSIONS: v1 v2 v3' "$$tmp")" -eq 3 ] \
-		|| { echo 'test-join-compose: legacy pins are not shared by both versiond hosts and the router' >&2; exit 1; }; \
+	[ "$$(grep -c 'VERSIOND_NON_HA_VERSIONS: v1 v2 v3' "$$tmp")" -eq 4 ] \
+		|| { echo 'test-join-compose: legacy pins are not shared by both versiond hosts and both router tiers' >&2; exit 1; }; \
 	grep -Eq '^[[:space:]]*VERSIOND_VERSIONS: v4 v5$$' "$$tmp" \
 		|| { echo 'test-join-compose: per-version routing contract is missing' >&2; exit 1; }; \
 	grep -q 'image: ghcr.io/product-science/versiond-router:0.2.15' "$$tmp" \

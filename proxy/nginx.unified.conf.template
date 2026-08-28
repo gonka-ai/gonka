@@ -123,6 +123,7 @@ http {
     server {
         ${LISTEN_HTTP}
         ${LISTEN_HTTPS}
+        ${LISTEN_HEALTH}
         server_name ${SERVER_NAME};
         ${SSL_CONFIG}
 

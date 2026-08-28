@@ -14,35 +14,35 @@ Related: [merge-plan.md](./merge-plan.md) (runtime topology),
 
 ## 1. Top-level topology
 
-A single public nginx (`proxy/`) is the edge of every node. It fans requests
-out to three independently-deployable backends:
+A public HAProxy (`proxy-router/`) distributes connections across private nginx
+policy workers (`proxy/`). nginx applies TLS, HTTP policy, limits, and path
+classification, then returns edge-api and devshard traffic to private HAProxy
+frontends that own service-pool membership:
 
 ```text
-                         ┌──────────────┐
-        client  ───────▶ │   proxy      │  :80 / :443  (proxy/)
-                         └──────┬───────┘
-          ┌─────────────────────┼─────────────────────────┐
-          ▼                     ▼                           ▼
-  ┌───────────────┐     ┌──────────────┐         ┌────────────────────┐
-  │  edge-api      │     │ decentralized│         │ versiond[-router]  │
-  │ [-router]      │     │ -api (dapi)  │         │      :8080         │
-  │   :18080       │     │    :9000     │         └─────────┬──────────┘
-  └───────┬────────┘     └──────┬───────┘                   │ per-version child
-          │ Tier A /v1          │ chat, PoC, admin,         ▼
-          │ (read-only)         │ node mgmt, bridge   ┌──────────────┐
-          ▼                     ▼                     │  devshardd   │ :5000+
-   inference-chain         inference-chain            │ (per version)│
-     gRPC :9090         gRPC :9090 + RPC :26657       └──────┬───────┘
-                                                             │
-                                              ┌──────────────┼───────────────┐
-                                              ▼              ▼               ▼
-                                        sqlite OR      nodemanager      chain RPC
-                                      devshard-postgres  :9400 → ML        + gRPC
+client -> proxy-router :80/:443 (HAProxy)
+              |
+              v
+         proxy-policy x2 (nginx)
+              |
+              +-- Tier A /v1 -> proxy-router :18082 -> edge-api pool
+              |
+              +-- ordinary API/chain routes -> dapi, node, explorer
+              |
+              +-- /devshard -> proxy-router :18081 -> versiond-router pool
+                                                        |
+                                                        v
+                                                   versiond pool
+                                                        |
+                                                        v
+                                                devshardd per version
+                                                   /      |      \
+                                           Postgres   ML node   chain RPC/gRPC
 ```
 
 | Path (public) | Backend | Purpose |
 |---------------|---------|---------|
-| 22 Tier A `/v1/*` query routes | `edge-api` (or `edge-api-router`) | Read-only chain queries |
+| 22 Tier A `/v1/*` query routes | public HAProxy → ready `edge-api` pool | Read-only chain queries |
 | Other `/v1/*`, `/api/v1/*` | `dapi` (`api:9000`) | Chat/inference, PoC, payloads, bridge, identity |
 | `/devshard/<version>/sessions/...` (protocol) | `versiond` (or `versiond-router`) → `devshardd` | Chat, gossip, payloads — version binds on owner chat |
 | `/devshard/sessions/...`, `/devshard/stats/...`, `/devshard/metrics` | `versiond` → bound/`primary` child | Versionless public observability (no bind) |
@@ -53,8 +53,9 @@ out to three independently-deployable backends:
 Routing is rendered by `proxy/entrypoint.sh` into
 `proxy/nginx.unified.conf.template`. Tier A locations are emitted **before** the
 generic `/v1/ → dapi` location so they take precedence. Key env:
-`EDGE_API_SERVICE_NAME`, `VERSIOND_SERVICE_NAME` (set to the `*-router` service
-name when running multi-instance overlays).
+`EDGE_API_SERVICE_NAME` and `VERSIOND_SERVICE_NAME`. Shipped policy workers set
+both to private frontends on the public HAProxy; nginx retains URL policy while
+HAProxy owns ready service membership.
 
 ---
 
@@ -84,14 +85,12 @@ helpers, versions).
 
 ### Multi-instance today
 
-Because edge-api holds no state, it scales horizontally already:
-
-- `edge-api-router/` is an nginx **round-robin** (not sticky) load balancer over
-  `EDGE_API_HOSTS`.
-- Compose overlays add `edge-api-2`, `edge-api-3` + `edge-api-router`
-  (`local-test-net/docker-compose.edge-api.yml`,
-  `deploy/join/docker-compose.edge-api-multi.yml`), and point the proxy at the
-  router via `EDGE_API_SERVICE_NAME=edge-api-router`.
+Because edge-api holds no state, it scales horizontally already. The join
+multi overlay adds `edge-api2` and `edge-api3` to the `edge-api-pool` DNS alias.
+The public HAProxy actively checks `/readyz`, round-robins across ready members,
+and withdraws a draining instance before its listener closes. The local
+Testermint harness still uses its legacy standalone edge router until that
+harness adopts the public tier.
 
 > edge-api is the natural foundation for the future HA "chain access layer" — see
 > the [HA proposal](./proposals/high-availability.md).
@@ -297,7 +296,7 @@ highly-available edge-api.
 | Service | Stateless? | Multi-instance today | Shared state needed for HA |
 |---------|-----------|----------------------|----------------------------|
 | `proxy` | yes | yes (immutable) | — |
-| `edge-api` | yes | **yes** (+ `edge-api-router`, round-robin) | none |
+| `edge-api` | yes | **yes** (public HAProxy, round-robin ready pool) | none |
 | `versiond` + `devshardd` | per-escrow state | **yes** (+ `versiond-router`, sticky hash) | **shared Postgres** |
 | `decentralized-api` | no (event loop, NATS, keyring) | **no** (single-instance) | NATS, Redis, Postgres + leader election (proposed) |
 
