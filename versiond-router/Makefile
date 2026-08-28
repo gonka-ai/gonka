@@ -211,21 +211,22 @@ test-version-routing:
 			-e VERSIOND_ROUTER_METRICS_BIND_HOST=versiond-router-ingress \
 			gonka-versiond-router-probe >/dev/null; \
 	done; \
-	docker restart gonka-vp-bind-a >/dev/null; \
-	for name in a b; do \
+	wait_local_bind() { \
+		name=$$1; \
 		address=$$(docker inspect -f \
 			'{{with index .NetworkSettings.Networks "gonka-version-probe"}}{{.IPAddress}}{{end}}' \
 			gonka-vp-bind-$$name); \
-		for i in $$(seq 20); do \
+		for i in $$(seq 80); do \
 			if docker exec gonka-vp-bind-$$name grep -q \
 				"^[[:space:]]*bind $$address:8080" /etc/haproxy/haproxy.cfg \
-				2>/dev/null; then break; fi; \
-			sleep 0.25; \
+				2>/dev/null; then return 0; fi; \
+			sleep 0.1; \
 		done; \
-		docker exec gonka-vp-bind-$$name grep -q \
-			"^[[:space:]]*bind $$address:8080" /etc/haproxy/haproxy.cfg \
-			|| fail "router $$name did not select its own address from the shared alias"; \
-	done; \
+		fail "router $$name did not select its own address from the shared alias"; \
+	}; \
+	for name in a b; do wait_local_bind $$name; done; \
+	docker restart gonka-vp-bind-a >/dev/null; \
+	for name in a b; do wait_local_bind $$name; done; \
 	docker rm -f gonka-vp-bind-a gonka-vp-bind-b >/dev/null; \
 	cache_now=$$(date +%s); \
 	docker run --rm --user 0:0 -e CACHE_NOW=$$cache_now \
