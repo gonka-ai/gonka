@@ -1,18 +1,15 @@
+import asyncio
 import pytest
+import threading
 import time
-from unittest.mock import MagicMock, AsyncMock, patch
+from unittest.mock import MagicMock, AsyncMock
 from fastapi import FastAPI, Response
 from fastapi.testclient import TestClient
 from api.health import (
     router,
     get_health_data,
+    get_readiness,
     HealthResponse,
-    ReadinessResponse,
-    ManagerStatus,
-    ManagersInfo,
-    GPUInfo,
-    cache,
-    CACHE_TTL,
 )
 from api.service_management import ServiceState
 from api.gpu.types import GPUDevice
@@ -177,6 +174,29 @@ class TestGetHealthData:
         assert health_data.gpu.available is False
         assert health_data.gpu.count == 0
         assert health_data.status == "unhealthy"  # GPU unavailable makes system unhealthy
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("endpoint", ["health", "readiness"])
+async def test_inference_health_check_does_not_block_event_loop(endpoint):
+    request = MockRequest()
+    request.app.state.service_state = ServiceState.INFERENCE
+    release = threading.Event()
+    request.app.state.inference_manager.is_healthy.side_effect = (
+        lambda: release.wait(timeout=1) or True
+    )
+
+    if endpoint == "health":
+        call = get_health_data(request)
+    else:
+        call = get_readiness(request, Response())
+    task = asyncio.create_task(call)
+    started = time.monotonic()
+    await asyncio.sleep(0.05)
+    assert time.monotonic() - started < 0.5
+
+    release.set()
+    await task
 
 
 # ============================================================================

@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
+	"strings"
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -38,18 +40,32 @@ func NewNodeClient(pocUrl string, inferenceUrl string) *Client {
 	}
 }
 
+func requireHTTPSuccess(resp *http.Response, operation string) error {
+	if resp == nil {
+		return fmt.Errorf("%s returned no response", operation)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+		return nil
+	}
+
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+	return fmt.Errorf("%s failed with HTTP %d: %s",
+		operation, resp.StatusCode, strings.TrimSpace(string(body)))
+}
+
 func (api *Client) Stop(ctx context.Context) error {
 	requestUrl, err := url.JoinPath(api.pocUrl, stopPath)
 	if err != nil {
 		return err
 	}
 
-	_, err = utils.SendPostJsonRequest(ctx, &api.client, requestUrl, nil)
+	resp, err := utils.SendPostJsonRequest(ctx, &api.client, requestUrl, nil)
 	if err != nil {
 		return err
 	}
-
-	return nil
+	return requireHTTPSuccess(resp, "stop inference")
 }
 
 type MLNodeState string
@@ -64,6 +80,7 @@ type StateResponse struct {
 	State                  MLNodeState `json:"state"`
 	Version                string      `json:"version"`
 	PoCValidationInference bool        `json:"poc_validation_inference"`
+	LoadedModel            string      `json:"loaded_model"`
 }
 
 func (api *Client) NodeState(ctx context.Context) (*StateResponse, error) {
@@ -170,11 +187,16 @@ func (api *Client) InferenceUp(ctx context.Context, model string, args []string)
 
 	logging.Info("Sending inference/up request to node", types.PoC, "inferenceUpUrl", inferenceUpUrl, "body", dto)
 
-	_, err = utils.SendPostJsonRequest(ctx, &api.client, inferenceUpUrl, dto)
+	resp, err := utils.SendPostJsonRequest(ctx, &api.client, inferenceUpUrl, dto)
 	if err != nil {
 		logging.Error("Failed to send inference/up request", types.PoC, "error", err, "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", dto)
+		return err
 	}
-	return err
+	if err := requireHTTPSuccess(resp, "start inference"); err != nil {
+		logging.Error("Failed to send inference/up request", types.PoC, "error", err, "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", dto)
+		return err
+	}
+	return nil
 }
 
 // vLLMModelsResponse represents the OpenAI-compatible /v1/models response from vLLM
