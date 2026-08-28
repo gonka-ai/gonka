@@ -46,6 +46,7 @@ frontend public_http
     mode tcp
     option tcplog
     bind :80
+    maxconn ${MAX_CONNECTIONS}
     ${PUBLIC_PROXY_ACL}
     ${PUBLIC_PROXY_EXPECT}
     timeout client ${PUBLIC_IDLE_SECONDS}s
@@ -55,6 +56,7 @@ frontend public_https
     mode tcp
     option tcplog
     bind :443
+    maxconn ${MAX_CONNECTIONS}
     ${PUBLIC_PROXY_ACL}
     ${PUBLIC_PROXY_EXPECT}
     timeout client ${PUBLIC_IDLE_SECONDS}s

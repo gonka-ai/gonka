@@ -39,6 +39,8 @@ test-render: test-route-status
 		|| fail "policy readiness endpoint is not checked"; \
 	[ "$$(grep -c '^ *option redispatch$$' "$$tmpdir/proxy.cfg")" -eq 2 ] \
 		|| fail "connection failures are not redispatched across both policy pools"; \
+	[ "$$(grep -c '^ *maxconn 8192$$' "$$tmpdir/proxy.cfg")" -eq 3 ] \
+		|| fail "public and versiond frontends do not have an explicit connection budget"; \
 	grep -q '^ *option redispatch 1$$' "$$tmpdir/proxy.cfg" \
 		|| fail "versiond router pools lost owner-preserving redispatch"; \
 	[ "$$(grep -c 'server-template policy .*init-state fully-down' "$$tmpdir/proxy.cfg")" -eq 2 ] \
