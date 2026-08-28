@@ -84,8 +84,12 @@ test-render: test-route-status
 		|| fail "router selection is not sticky by the canonical escrow key"; \
 	grep -q '^ *hash-type consistent$$' "$$tmpdir/proxy.cfg" \
 		|| fail "router pools lost consistent hashing"; \
-	grep -q 'set-var(txn.hashkey).*field(3,/).*sessions' "$$tmpdir/proxy.cfg" \
-		|| fail "versionless session routes do not reuse the escrow routing key"; \
+	grep '^ *http-request set-var(txn.hashkey)' "$$tmpdir/proxy.cfg" \
+		> "$$tmpdir/outer-hash.rules"; \
+	grep '^ *http-request set-var(txn.hashkey)' ../versiond-router/haproxy.cfg.template \
+		> "$$tmpdir/inner-hash.rules"; \
+	cmp -s "$$tmpdir/outer-hash.rules" "$$tmpdir/inner-hash.rules" \
+		|| { diff -u "$$tmpdir/inner-hash.rules" "$$tmpdir/outer-hash.rules" >&2 || true; fail "outer and inner escrow placement rules diverged"; }; \
 	grep -q '^ *nameserver dns 10.96.0.10:53$$' "$$tmpdir/proxy.cfg" \
 		|| fail "the configured DNS resolver was not rendered"; \
 	grep -q '^frontend routing_catalog$$' "$$tmpdir/proxy.cfg" \
