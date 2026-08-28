@@ -119,6 +119,12 @@ Loss of that host, Docker daemon, public listener, or its network is therefore a
 host-level outage. Multi-host ingress belongs in a later layer above this one
 (provider LB, VIP, or Kubernetes Service).
 
+The public router and both `proxy-policy` workers are one Compose deployment
+unit. Updating or rolling back that unit applies its image, environment,
+network, capability, and service definitions together. The host updater restores
+the captured model by targeting these three services explicitly. Unrelated
+services and containers owned by other active overlays remain unchanged.
+
 ## Endpoints
 
 | Listener | Purpose |
