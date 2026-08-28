@@ -65,7 +65,7 @@ func TestAssembleSSEBody_JoinsTheDeltasIntoOneMessage(t *testing.T) {
 		"data: {\"id\":\"cmpl-1\",\"object\":\"chat.completion.chunk\",\"choices\":[{\"index\":0,\"delta\":{\"content\":\"o\"},\"finish_reason\":\"stop\"}]}\n\n" +
 		"data: [DONE]\n\n"
 
-	assembled := assembleSSEBody([]byte(stream))
+	assembled := aggregateSSEStream([]byte(stream), clientResponseIntent{})
 
 	decoded := decodeAssembled(t, assembled)
 	require.Equal(t, "chat.completion", decoded["object"])
@@ -80,7 +80,7 @@ func TestAssembleSSEBody_JoinsTheDeltasIntoOneMessage(t *testing.T) {
 func TestAssembleSSEBody_KeepsACompletedBodyAsItStands(t *testing.T) {
 	stream := "data: {\"id\":\"cmpl-1\",\"object\":\"chat.completion\",\"choices\":[{\"index\":0,\"message\":{\"role\":\"assistant\",\"content\":\"Hello\"}}]}\n\n"
 
-	assembled := assembleSSEBody([]byte(stream))
+	assembled := aggregateSSEStream([]byte(stream), clientResponseIntent{})
 
 	require.Equal(t, "Hello", assembledContent(t, assembled))
 	require.Equal(t, "chat.completion", decodeAssembled(t, assembled)["object"])
@@ -90,7 +90,7 @@ func TestAssembleSSEBody_OrdersChoicesByIndex(t *testing.T) {
 	stream := "data: {\"choices\":[{\"index\":1,\"delta\":{\"content\":\"second\"}}]}\n\n" +
 		"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"first\"}}]}\n\n"
 
-	choices := decodeAssembled(t, assembleSSEBody([]byte(stream)))["choices"].([]any)
+	choices := decodeAssembled(t, aggregateSSEStream([]byte(stream), clientResponseIntent{}))["choices"].([]any)
 
 	require.Len(t, choices, 2)
 	require.Equal(t, "first", choices[0].(map[string]any)["message"].(map[string]any)["content"])
@@ -103,7 +103,7 @@ func TestAssembleSSEBody_GrowsToolCallArgumentsPerIndex(t *testing.T) {
 		"data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"\\\"Minsk\\\"\"}}]}}]}\n\n" +
 		"data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"}\"}}]}}]}\n\n"
 
-	message := decodeAssembled(t, assembleSSEBody([]byte(stream)))["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)
+	message := decodeAssembled(t, aggregateSSEStream([]byte(stream), clientResponseIntent{}))["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)
 	call := message["tool_calls"].([]any)[0].(map[string]any)
 
 	require.Equal(t, "call-1", call["id"], "an identity field is restated, not accumulated")
@@ -119,7 +119,7 @@ func TestAssembleSSEBody_ReplacesArgumentsAHostResendsWhole(t *testing.T) {
 		"data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"city\\\":\\\"Minsk\\\"\"}}]}}]}\n\n" +
 		"data: {\"choices\":[{\"index\":0,\"delta\":{\"tool_calls\":[{\"index\":0,\"function\":{\"arguments\":\"{\\\"city\\\":\\\"Minsk\\\"}\"}}]}}]}\n\n"
 
-	call := decodeAssembled(t, assembleSSEBody([]byte(stream)))["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)["tool_calls"].([]any)[0].(map[string]any)
+	call := decodeAssembled(t, aggregateSSEStream([]byte(stream), clientResponseIntent{}))["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)["tool_calls"].([]any)[0].(map[string]any)
 
 	require.Equal(t, `{"city":"Minsk"}`, call["function"].(map[string]any)["arguments"])
 }
@@ -128,18 +128,26 @@ func TestAssembleSSEBody_ReplacesArgumentsAHostResendsWhole(t *testing.T) {
 func TestAssembleSSEBody_KeepsContentBesideANonFiniteNumber(t *testing.T) {
 	stream := "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"Hi\"},\"logprobs\":{\"content\":[{\"token\":\"Hi\",\"logprob\":-Infinity}]}}]}\n\n"
 
-	assembled := assembleSSEBody([]byte(stream))
+	assembled := aggregateSSEStream([]byte(stream), clientResponseIntent{})
 
 	require.Equal(t, "Hi", assembledContent(t, assembled))
+}
+
+func TestReplaceNonFiniteNumbers_RewritesBareLiteralsLeavesStrings(t *testing.T) {
+	rewritten, ok := replaceNonFiniteNumbers([]byte(`{"a":-Infinity,"b":Infinity,"c":NaN,"d":"-Infinity"}`))
+	require.True(t, ok)
+	require.JSONEq(t, `{"a":null,"b":null,"c":null,"d":"-Infinity"}`, string(rewritten))
+
+	_, ok = replaceNonFiniteNumbers([]byte(`{"a":1}`))
+	require.False(t, ok)
 }
 
 func TestAssembleSSEBody_LeavesGeneratedMarkupUnescaped(t *testing.T) {
 	stream := "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"<b>\"}}]}\n\n" +
 		"data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\" & </b>\"}}]}\n\n"
 
-	assembled := assembleSSEBody([]byte(stream))
+	assembled := aggregateSSEStream([]byte(stream), clientResponseIntent{})
 
-	require.Contains(t, string(assembled), "<b> & </b>")
 	require.Equal(t, "<b> & </b>", assembledContent(t, assembled))
 }
 
@@ -148,19 +156,19 @@ func TestAssembleSSEBody_JoinsAnEventSplitAcrossDataLines(t *testing.T) {
 	stream := "data: {\"choices\":[{\"index\":0,\n" +
 		"data: \"delta\":{\"content\":\"Hi\"}}]}\n\n"
 
-	require.Equal(t, "Hi", assembledContent(t, assembleSSEBody([]byte(stream))))
+	require.Equal(t, "Hi", assembledContent(t, aggregateSSEStream([]byte(stream), clientResponseIntent{})))
 }
 
 func TestAssembleSSEBody_ReportsAStreamThatCarriedNothing(t *testing.T) {
-	require.Equal(t, noResponseDataBody, assembleSSEBody([]byte("data: [DONE]\n\n")))
-	require.Equal(t, noResponseDataBody, assembleSSEBody(nil))
+	require.JSONEq(t, string(noResponseDataBody), string(aggregateSSEStream([]byte("data: [DONE]\n\n"), clientResponseIntent{})))
+	require.JSONEq(t, string(noResponseDataBody), string(aggregateSSEStream(nil, clientResponseIntent{})))
 }
 
 // A host that answers with a plain JSON error never frames it as SSE; that body is the answer.
 func TestAssembleSSEBody_PassesAnUnframedBodyThrough(t *testing.T) {
 	body := []byte(`{"error":{"message":"model not found"}}`)
 
-	require.Equal(t, body, assembleSSEBody(body))
+	require.JSONEq(t, string(body), string(aggregateSSEStream(body, clientResponseIntent{})))
 }
 
 func TestRewriteStreamingPayload_DropsTheUsageChunkTheClientNeverAskedFor(t *testing.T) {

@@ -555,17 +555,20 @@ func logProxyResponseFinished(ctx context.Context, escrowID, outcome string, dw 
 }
 
 func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, params user.InferenceParams) {
-	var buf bytes.Buffer
+	buf := newAggregateResponseBuffer()
+	defer func() { _ = buf.Close() }()
+
 	flag := newCancelFlag()
 	stopClientWatch := watchClientCancel(r, flag)
 	defer stopClientWatch()
 
-	err := p.redundancy.RunInference(detachedInferenceContext(r.Context()), params, &buf, flag)
+	err := p.redundancy.RunInference(detachedInferenceContext(r.Context()), params, buf, flag)
 	if flag.Gone() {
 		return
 	}
 	if err != nil {
-		logRequestStage(r.Context(), "proxy_request_failed", "escrow", p.escrowID, "error", err)
+		logRequestStage(r.Context(), "proxy_request_failed", "escrow", p.escrowID, "error", err,
+			"aggregate_bytes", buf.Len(), "aggregate_spilled", buf.Spilled())
 		var hostErr *hostApplicationError
 		if errors.As(err, &hostErr) {
 			writeJSONPayload(w, hostErr.statusCode(), hostErr.jsonPayload())
@@ -575,10 +578,25 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 		return
 	}
 
+	src, err := buf.OpenReader()
+	if err != nil {
+		logRequestStage(r.Context(), "proxy_aggregate_read_failed", "escrow", p.escrowID, "error", err)
+		writeGatewayJSONError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if closer, ok := src.(io.Closer); ok {
+		defer closer.Close()
+	}
 	intent, _ := clientResponseIntentFromContext(r.Context())
-	assembled := filterClientInternalFields(assembleSSEBody(buf.Bytes()), intent)
+	assembled := filterClientInternalFields(aggregateSSEStreamReader(src, intent), intent)
 	if rid, ok := requestLogFromContext(r.Context()); ok {
 		w.Header().Set("X-Request-Id", rid)
+	}
+	if isAggregateFoldTooLargePayload(assembled) {
+		logRequestStage(r.Context(), "proxy_aggregate_fold_too_large", "escrow", p.escrowID,
+			"aggregate_bytes", buf.Len(), "aggregate_spilled", buf.Spilled())
+		writeGatewayJSONError(w, gatewayStatusCodeForError(ErrAggregateFoldTooLarge), ErrAggregateFoldTooLarge.Error())
+		return
 	}
 	if details, ok := jsonErrorPayloadDetails(assembled); ok {
 		writeJSONPayload(w, (&hostApplicationError{details: details, payload: assembled}).statusCode(), assembled)
@@ -586,7 +604,8 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 		return
 	}
 	writeJSONPayload(w, http.StatusOK, assembled)
-	logRequestStage(r.Context(), "proxy_request_completed", "escrow", p.escrowID)
+	logRequestStage(r.Context(), "proxy_request_completed", "escrow", p.escrowID,
+		"aggregate_bytes", buf.Len(), "aggregate_spilled", buf.Spilled())
 }
 
 func (p *Proxy) settlementJSON() (SettlementJSON, error) {

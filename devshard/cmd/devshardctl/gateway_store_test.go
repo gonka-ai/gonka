@@ -134,6 +134,7 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 			SecondaryWaitAfterWinnerMS:    2100,
 			ParallelAdvantageThreshold:    0.4,
 			UnresponsiveThreshold:         0.8,
+			ForceUpstreamStreaming:        boolPtr(false),
 		},
 		EscrowRotation: EscrowRotationSettings{
 			Enabled:           true,
@@ -169,6 +170,8 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 	require.EqualValues(t, 17, state.Settings.Redundancy.PerInputTokenFirstTokenLagMS)
 	require.EqualValues(t, 1810, state.Settings.Redundancy.StreamingAttemptHardTimeoutMS)
 	require.Equal(t, 0.4, state.Settings.Redundancy.ParallelAdvantageThreshold)
+	require.NotNil(t, state.Settings.Redundancy.ForceUpstreamStreaming)
+	require.False(t, *state.Settings.Redundancy.ForceUpstreamStreaming)
 	require.True(t, state.Settings.EscrowRotation.Enabled)
 	require.True(t, state.Settings.EscrowRotation.SettlementEnabled)
 	require.EqualValues(t, 123, state.Settings.EscrowRotation.PrePoCBlocks)
@@ -179,6 +182,51 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 		Amount:        555,
 		PrivateKeyEnv: "KIMI_ROTATION_KEY",
 	}}, state.Settings.EscrowRotation.Models)
+}
+
+func TestGatewayStorePersistsForceUpstreamStreaming(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	settings := GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}
+	require.NoError(t, store.Initialize(settings, nil))
+	state, ok, err := store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotNil(t, state.Settings.Redundancy.ForceUpstreamStreaming)
+	require.True(t, *state.Settings.Redundancy.ForceUpstreamStreaming)
+
+	state.Settings.Redundancy.ForceUpstreamStreaming = boolPtr(false)
+	require.NoError(t, store.UpdateSettings(state.Settings))
+	reloaded, ok, err := store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotNil(t, reloaded.Settings.Redundancy.ForceUpstreamStreaming)
+	require.False(t, *reloaded.Settings.Redundancy.ForceUpstreamStreaming)
+}
+
+func TestGatewaySettingsWithTuningDefaultsFillsNilForceUpstreamStreaming(t *testing.T) {
+	settings := GatewaySettings{
+		Redundancy: RedundancySettings{ReceiptTimeoutMS: 1500},
+	}.WithTuningDefaults()
+	require.NotNil(t, settings.Redundancy.ForceUpstreamStreaming)
+	require.True(t, *settings.Redundancy.ForceUpstreamStreaming)
+
+	off := GatewaySettings{
+		Redundancy: RedundancySettings{ForceUpstreamStreaming: boolPtr(false)},
+	}.WithTuningDefaults()
+	require.NotNil(t, off.Redundancy.ForceUpstreamStreaming)
+	require.False(t, *off.Redundancy.ForceUpstreamStreaming)
 }
 
 func TestGatewayStoreLoadsLegacyModelAccessIntoModelLimits(t *testing.T) {

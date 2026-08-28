@@ -85,6 +85,48 @@ func TestChatCompletions_StreamCompletionAPI(t *testing.T) {
 	require.True(t, strings.HasPrefix(content, "mock-openai:"))
 }
 
+func TestChatCompletions_MaxTokensPadsDeterministicContent(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	body := []byte(`{"model":"test-model","max_tokens":64,"messages":[{"role":"user","content":"pad me"}]}`)
+	resp, err := http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(raw, &out))
+	content := out["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)["content"].(string)
+	require.True(t, strings.HasPrefix(content, "mock-openai:"))
+	require.Equal(t, 64, len([]rune(content)))
+}
+
+func TestChatCompletions_EmitsLogprobsWhenRequested(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	body := []byte(`{"model":"test-model","logprobs":true,"top_logprobs":3,"messages":[{"role":"user","content":"lp"}]}`)
+	resp, err := http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	raw, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	var out map[string]any
+	require.NoError(t, json.Unmarshal(raw, &out))
+	lp := out["choices"].([]any)[0].(map[string]any)["logprobs"].(map[string]any)
+	content := lp["content"].([]any)
+	require.NotEmpty(t, content)
+	entry := content[0].(map[string]any)
+	tops := entry["top_logprobs"].([]any)
+	require.Len(t, tops, 3)
+	bytesField, ok := entry["bytes"].([]any)
+	require.True(t, ok, "bytes must be a JSON array of ints, not base64: %#v", entry["bytes"])
+	require.NotEmpty(t, bytesField)
+}
+
 func TestChatCompletions_FaultHTTPStatus(t *testing.T) {
 	srv := httptest.NewServer(mockopenai.NewServer(mockopenai.Config{
 		Faults: mockopenai.FaultConfig{HTTPStatus: 503},

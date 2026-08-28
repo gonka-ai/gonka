@@ -127,16 +127,22 @@ func (p ChatRequestPipeline) Normalize(body []byte, adminAuthenticated bool, lim
 	if err := ctx.SyncRequestView(); err != nil {
 		return nil, chatRequest{}, err
 	}
-	if p.forceStreaming {
-		// After SyncRequestView on purpose: ctx.Request keeps the shape the client asked for.
-		ctx.Document.Set("stream", true)
-		ctx.Document.Set("stream_options", forcedStreamOptions)
-	}
+	p.applyForcedStreaming(ctx)
 	updatedBody, err := ctx.Document.Marshal()
 	if err != nil {
 		return nil, chatRequest{}, err
 	}
 	return updatedBody, ctx.Request, nil
+}
+
+func (p ChatRequestPipeline) applyForcedStreaming(ctx *RequestFilterContext) {
+	if ctx == nil || !p.forceStreaming || !ctx.ForceUpstreamStreaming {
+		return
+	}
+	// After SyncRequestView on purpose: ctx.Request keeps the shape the client asked for.
+	// Both fields come from the request snapshot so a mid-flight flag flip cannot split them.
+	ctx.Document.Set("stream", true)
+	ctx.Document.Set("stream_options", forcedStreamOptions)
 }
 
 func (p ChatRequestPipeline) applyOutputTokenLimits(ctx *RequestFilterContext) {
