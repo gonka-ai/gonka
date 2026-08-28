@@ -489,6 +489,8 @@ EOF
 
 run_cutover() {
     local log=$1
+    local -a script_args=()
+    local run_edge_mode=${RUN_EDGE_MODE:-multi}
     shift
     : >"$log"
     rm -f "$tmpdir/current"
@@ -507,6 +509,7 @@ run_cutover() {
 			: >"$tmpdir/generation-$service"
 		fi
 	done
+    [[ ${RUN_INGRESS_ONLY:-false} != true ]] || script_args+=(--ingress-only)
     env DOCKER_BIN="$tmpdir/docker" \
         DOCKER_LOG="$log" \
         STATE_DIR="$tmpdir" \
@@ -515,7 +518,7 @@ run_cutover() {
         ROUTER_HA_POSTGRES_PREFLIGHT_BIN="$tmpdir/postgres-preflight" \
         GONKA_CONFIG_ENV="$tmpdir/config.env" \
         "$@" "$script_dir/enable-router-ha.sh" \
-        --versiond-mode ha --edge-mode multi
+        --versiond-mode ha --edge-mode "$run_edge_mode" "${script_args[@]}"
 }
 
 run_cutover "$tmpdir/success.log" env MISSING_NETWORKS=true
@@ -639,6 +642,21 @@ grep -q '^fleet verify-admission$' "$tmpdir/idempotent.log" || fail \
     "idempotent convergence skipped strict parent admission verification"
 grep -q '^fleet apply$' "$tmpdir/idempotent.log" || fail \
     "idempotent convergence did not apply router fleet image/config updates"
+
+RUN_INGRESS_ONLY=true RUN_EDGE_MODE=single \
+INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
+INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/ingress-only.log" env
+if grep -q '^fleet apply$' "$tmpdir/ingress-only.log"; then
+    fail "ingress-only convergence applied the versiond-router fleet"
+fi
+if grep -q 'docker rm -f versiond-router' "$tmpdir/ingress-only.log"; then
+    fail "ingress-only convergence removed a versiond migration container"
+fi
+grep -q '^fleet verify-admission$' "$tmpdir/ingress-only.log" || fail \
+    "ingress-only convergence skipped versiond-router admission verification"
+grep -q 'readyz\\?component=edge-api' "$tmpdir/ingress-only.log" || fail \
+    "ingress-only convergence skipped single edge-api admission verification"
 jq -e '.transaction.ingress.state == "committed"' \
     "$tmpdir/.gonka-router-ha-transaction.json" >/dev/null || fail \
     "rerun after TERM did not commit the recovered ingress transaction"

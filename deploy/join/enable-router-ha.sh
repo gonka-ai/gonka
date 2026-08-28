@@ -7,6 +7,7 @@ config_env=${GONKA_CONFIG_ENV:-$script_dir/config.env}
 versiond_mode=auto
 edge_mode=auto
 recover_only=false
+ingress_only=false
 compose_project_name=
 compose_project_directory=
 rollback_pending=false
@@ -55,6 +56,7 @@ Options:
   --compose-project-name NAME      must match the running Compose project
   --compose-project-directory DIR  must match the running Compose project
   --recover-only                   recover an active transaction and exit
+  --ingress-only                   update only policy workers and public proxy
 
 Without --compose-file or COMPOSE_FILE, the script recovers the ordered file
 list and project identity from Docker Compose labels on the running services.
@@ -91,6 +93,10 @@ while (($# > 0)); do
             ;;
         --recover-only)
             recover_only=true
+            shift
+            ;;
+        --ingress-only)
+            ingress_only=true
             shift
             ;;
         -h | --help)
@@ -1157,6 +1163,7 @@ remove_migration_container() {
 }
 
 remove_migration_routers() {
+    [[ $ingress_only == false ]] || return 0
     [[ $versiond_mode != ha ]] || remove_migration_container versiond-router
 }
 
@@ -1222,7 +1229,7 @@ if [[ $versiond_mode == ha ]]; then
 	gonka_compose_validate_ha_version_catalog "$docker_bin" versiond
 fi
 ensure_compose_network proxy-policy-front "$policy_network" "$compose_project"
-if [[ $versiond_mode == ha ]]; then
+if [[ $versiond_mode == ha && $ingress_only == false ]]; then
     # `apply` is the lifecycle bridge between the main Compose project and the
     # independent router projects. It bootstraps an absent fleet, but on an
     # existing deployment it pulls and rolls only slots whose image or rendered
@@ -1285,7 +1292,10 @@ if [[ $current_proxy_component == proxy-router ]]; then
     "${compose[@]}" up -d --no-deps --wait \
         --wait-timeout "$cutover_timeout" proxy
     [[ $versiond_mode != ha ]] || run_fleet verify-admission
-		verify_ingress_model_unchanged
+	if [[ $edge_mode == multi || $ingress_only == true ]]; then
+		wait_component edge-api
+	fi
+	verify_ingress_model_unchanged
 	verify_outer_compose_generation
 	verify_fleet_spec_unchanged
 	commit_ingress_transaction
@@ -1304,6 +1314,10 @@ fi
 [[ $versiond_mode != ha ]] || \
     run_fleet verify-admission "${migration_routes[@]}" || fail \
         "proxy-router did not admit the complete router fleet and migration route baseline"
+if [[ $edge_mode == multi || $ingress_only == true ]]; then
+	wait_component edge-api || fail \
+		"proxy-router cannot reach the ready edge-api pool"
+fi
 verify_ingress_model_unchanged
 verify_outer_compose_generation
 verify_fleet_spec_unchanged
