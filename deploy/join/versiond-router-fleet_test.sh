@@ -746,6 +746,7 @@ VERSIOND_ROUTER_SLOT=0 \
     VERSIOND_ROUTER_IMAGE=$image \
     VERSIOND_NON_HA_VERSIONS='' \
     VERSIOND_VERSIONS='' \
+    VERSIOND_ROUTING_CATALOG_URL='' \
     VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true \
     docker compose --project-directory "$script_dir" \
         --project-name "$prefix-0" \
