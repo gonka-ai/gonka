@@ -22,6 +22,10 @@ docker compose --project-directory "$script_dir" \
 jq -e '
   (.services | has("versiond-router") | not) and
   (.services.proxy.environment.VERSIOND_ROUTER_POOL_HOST == "versiond-router-fleet") and
+  (.services.proxy.environment.VERSIOND_ROUTER_FLEET_CAPACITY == "16") and
+  (.services.proxy.environment.PROXY_ROUTER_ACTIVATION_MIN_READY == "2") and
+  (.services.proxy.environment.VERSIOND_ROUTING_CATALOG_URL ==
+    "http://api:9100/versions") and
   (.services.proxy.networks | has("versiond-router-front")) and
   (.services.proxy.networks | has("versiond-router-back")) and
   (.services.versiond.networks["versiond-router-back"].aliases | index("versiond-pool")) and
