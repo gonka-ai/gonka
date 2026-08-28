@@ -197,8 +197,7 @@ esac
 service_startup_timeout() {
     case $1 in
         versiond | versiond2 | devshard-postgres) printf '2100\n' ;;
-        edge-api | edge-api2 | edge-api3) printf '180\n' ;;
-        versiond-router | edge-api-router) printf '60\n' ;;
+        versiond-router) printf '60\n' ;;
         *) fail "internal error: no startup timeout for $1" ;;
     esac
 }
@@ -247,7 +246,6 @@ service_instances_match_release() {
 
 verify_release_application_state() {
     service_instances_match_release versiond "$DEVSHARD_V5_VERSIOND_IMAGE" || return 1
-    service_instances_match_release edge-api "$DEVSHARD_V5_EDGE_API_IMAGE" || return 1
     if [[ $versiond_mode == ha ]]; then
         service_instances_match_release versiond2 "$DEVSHARD_V5_VERSIOND_IMAGE" || return 1
         verify_shared_postgres_identity || return 1
@@ -255,10 +253,6 @@ verify_release_application_state() {
             service_instances_match_release devshard-postgres \
                 "$DEVSHARD_V5_POSTGRES_IMAGE" || return 1
         fi
-    fi
-    if [[ $edge_mode == multi ]]; then
-        service_instances_match_release edge-api2 "$DEVSHARD_V5_EDGE_API_IMAGE" || return 1
-        service_instances_match_release edge-api3 "$DEVSHARD_V5_EDGE_API_IMAGE" || return 1
     fi
 }
 
@@ -535,11 +529,9 @@ if [[ $edge_mode == auto ]]; then
 fi
 echo "Deployment topology: versiond=$versiond_mode, edge-api=$edge_mode"
 
-# Pin this operation to the exact release. The Compose files expose these
-# variables so a failed replacement can be recreated from its captured image.
-export EDGE_API_IMAGE=$DEVSHARD_V5_EDGE_API_IMAGE
+# Pin the services owned by this operation to the exact release. Edge API is
+# intentionally left on its current image and topology for the 0.2.15 update.
 export VERSIOND_IMAGE=$DEVSHARD_V5_VERSIOND_IMAGE
-export EDGE_API_ROUTER_IMAGE=$DEVSHARD_V5_EDGE_API_ROUTER_IMAGE
 export VERSIOND_ROUTER_IMAGE=$DEVSHARD_V5_VERSIOND_ROUTER_IMAGE
 export PROXY_POLICY_IMAGE=$DEVSHARD_V5_PROXY_POLICY_IMAGE
 export PROXY_ROUTER_IMAGE=$DEVSHARD_V5_PROXY_ROUTER_IMAGE
@@ -571,10 +563,6 @@ compose=("${GONKA_COMPOSE_COMMAND[@]}")
 if [[ $versiond_mode == ha ]]; then
     compose+=(-f "$script_dir/docker-compose.versiond-v5-compat.yml")
 fi
-if [[ $edge_mode == multi ]]; then
-    compose+=(-f "$script_dir/docker-compose.edge-api-v5-compat.yml")
-fi
-
 # An ingress transaction may have been interrupted after the public listener
 # changed. Recover it as soon as the saved topology can be rendered, before
 # capacity checks, PostgreSQL preflight, image pulls, or application startup.
@@ -622,9 +610,7 @@ desired_upgrade_state=$(jq -cn \
     --arg config_sha256 "$compose_config_sha" \
     --arg fleet_spec_sha256 "$fleet_spec_sha" \
     --argjson files "$compose_files_json" \
-    --arg edge_api "$DEVSHARD_V5_EDGE_API_IMAGE" \
     --arg versiond "$DEVSHARD_V5_VERSIOND_IMAGE" \
-    --arg edge_api_router "$DEVSHARD_V5_EDGE_API_ROUTER_IMAGE" \
     --arg versiond_router "$DEVSHARD_V5_VERSIOND_ROUTER_IMAGE" \
     --arg proxy_policy "$DEVSHARD_V5_PROXY_POLICY_IMAGE" \
     --arg proxy_router "$DEVSHARD_V5_PROXY_ROUTER_IMAGE" \
@@ -642,9 +628,7 @@ desired_upgrade_state=$(jq -cn \
         },
         router_fleet: {spec_sha256: $fleet_spec_sha256},
         images: {
-            edge_api: $edge_api,
             versiond: $versiond,
-            edge_api_router: $edge_api_router,
             versiond_router: $versiond_router,
             proxy_policy: $proxy_policy,
             proxy_router: $proxy_router,
@@ -762,13 +746,6 @@ if [[ $existing_proxy_component == proxy-router ]]; then
     else
         converge_release_service versiond
     fi
-    if [[ $edge_mode == multi ]]; then
-        for service in edge-api2 edge-api3 edge-api; do
-            converge_release_service "$service"
-        done
-    else
-        converge_release_service edge-api
-    fi
     verify_release_application_state || fail \
         "application state did not converge to $release_id"
     write_upgrade_journal applications_verified
@@ -803,10 +780,6 @@ declare -A image_variables=(
     [versiond]=VERSIOND_IMAGE
     [versiond2]=VERSIOND_IMAGE
     [versiond-router]=VERSIOND_ROUTER_IMAGE
-    [edge-api]=EDGE_API_IMAGE
-    [edge-api2]=EDGE_API_IMAGE
-    [edge-api3]=EDGE_API_IMAGE
-    [edge-api-router]=EDGE_API_ROUTER_IMAGE
 )
 declare -A rollback_images=()
 declare -A rollback_version_baselines=()
@@ -1172,15 +1145,6 @@ rollback_versiond_is_available() {
     versiond_routes_are_available "$container_id" "$required"
 }
 
-rollback_edge_is_available() {
-    local container_id=$1
-
-    # /v1/versions executes a gRPC query against the chain. Unlike /healthz,
-    # it fails when edge-api is alive but cannot serve its production workload.
-    "$docker_bin" exec "$container_id" /bin/busybox wget \
-        -q -T 3 -O /dev/null http://127.0.0.1:18080/v1/versions
-}
-
 versiond_production_routes_are_available() {
     local service=$1
     local runtime router_id required
@@ -1211,9 +1175,6 @@ rollback_service_is_available() {
         versiond | versiond2 | versiond-router)
             rollback_versiond_is_available \
                 "$service" "$container_id" || return 1
-            ;;
-        edge-api | edge-api2 | edge-api3 | edge-api-router)
-            rollback_edge_is_available "$container_id" || return 1
             ;;
         *)
             return 1
@@ -1439,25 +1400,19 @@ trap 'handle_signal INT 130' INT
 trap 'handle_signal TERM 143' TERM
 trap 'handle_exit $?' EXIT
 
-services=(versiond edge-api)
+services=(versiond)
 if [[ $versiond_mode == ha ]]; then
     services+=(versiond2 versiond-router)
-fi
-if [[ $edge_mode == multi ]]; then
-    services+=(edge-api2 edge-api3 edge-api-router)
 fi
 for service in "${services[@]}"; do
     capture_rollback_image "$service"
 done
 
-pull_services=(versiond edge-api)
+pull_services=(versiond)
 if [[ $versiond_mode == ha ]]; then
     pull_services+=(versiond2 versiond-router)
     [[ $GONKA_COMPOSE_POSTGRES_MODE != local ]] || \
         pull_services+=(devshard-postgres)
-fi
-if [[ $edge_mode == multi ]]; then
-    pull_services+=(edge-api2 edge-api3 edge-api-router)
 fi
 run_interruptible "${compose[@]}" pull "${pull_services[@]}"
 
@@ -1514,24 +1469,6 @@ else
     # PostgreSQL. Replace its only supervisor and restore the old image if the
     # v5 /readyz contract does not converge.
     replace_service versiond "$(service_startup_timeout versiond)" rollback
-fi
-
-if [[ $edge_mode == single ]]; then
-    # There is no second Tier A replica in this topology, so preserve the old
-    # image if the only edge-api replacement does not become ready.
-    replace_service edge-api "$(service_startup_timeout edge-api)" rollback
-else
-    # First remove edge-api2 from the v4 nginx pool. Once it passes /readyz,
-    # switch to HAProxy; active checks then isolate every later replacement.
-    begin_traffic_barrier \
-        edge-api-router EDGE_API_HOSTS edge-api2 \
-        /docker-entrypoint.d/40-render-edge-api-upstream.sh
-    replace_service edge-api2 "$(service_startup_timeout edge-api2)" rollback
-    replace_service edge-api-router \
-        "$(service_startup_timeout edge-api-router)" rollback
-    clear_traffic_barrier
-    replace_service edge-api3 "$(service_startup_timeout edge-api3)" stop
-    replace_service edge-api "$(service_startup_timeout edge-api)" stop
 fi
 
 verify_release_application_state || fail \

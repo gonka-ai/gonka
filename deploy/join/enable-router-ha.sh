@@ -687,7 +687,6 @@ restore_public_proxy() {
 				run_fleet verify-admission || return 1
 			fi
 		fi
-		[[ $edge_mode != multi ]] || wait_component edge-api || return 1
 	fi
 }
 
@@ -1045,7 +1044,7 @@ roll_policy_slots() {
 			fi
 			continue
 		fi
-		verify_ingress_model_unchanged
+	verify_ingress_model_unchanged
 		record_ingress_touch "policy:$service"
 		if [[ $(proxy_component) == proxy-router ]]; then
 			withdraw_policy_service "$service" || fail \
@@ -1159,7 +1158,6 @@ remove_migration_container() {
 
 remove_migration_routers() {
     [[ $versiond_mode != ha ]] || remove_migration_container versiond-router
-    [[ $edge_mode != multi ]] || remove_migration_container edge-api-router
 }
 
 restore_proxy() {
@@ -1287,8 +1285,7 @@ if [[ $current_proxy_component == proxy-router ]]; then
     "${compose[@]}" up -d --no-deps --wait \
         --wait-timeout "$cutover_timeout" proxy
     [[ $versiond_mode != ha ]] || run_fleet verify-admission
-    [[ $edge_mode != multi ]] || wait_component edge-api
-	verify_ingress_model_unchanged
+		verify_ingress_model_unchanged
 	verify_outer_compose_generation
 	verify_fleet_spec_unchanged
 	commit_ingress_transaction
@@ -1307,16 +1304,13 @@ fi
 [[ $versiond_mode != ha ]] || \
     run_fleet verify-admission "${migration_routes[@]}" || fail \
         "proxy-router did not admit the complete router fleet and migration route baseline"
-[[ $edge_mode != multi ]] || wait_component edge-api || fail \
-    "proxy-router cannot reach a ready edge-api"
-
 verify_ingress_model_unchanged
 verify_outer_compose_generation
 verify_fleet_spec_unchanged
 commit_ingress_transaction
 
-# These singleton migration bridges are outside the steady-state model. Remove
-# them only after the new public path has passed all component checks.
+# The transitional versiond router is outside the steady-state model. Remove
+# it only after the new public path has passed all component checks.
 remove_migration_routers
 
 echo "Router HA cutover completed"

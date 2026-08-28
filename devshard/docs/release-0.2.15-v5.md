@@ -11,8 +11,8 @@ The release is identified by Git tag `release/v0.2.15-devshard-v5`. Images are
 published under staging tag `0.2.15-devshard-v5`, then the machine-readable
 release contract is pinned to each final `repo@sha256:...` manifest before the
 Git tag is created. The release gate and host updater reject mutable image tags
-outside explicit unreleased testing. The old `edge-api-router` image is retained
-only for the one-time v4 migration bridge. The machine-readable values live in
+outside explicit unreleased testing. The existing edge-api topology and images
+remain unchanged in this release. The machine-readable values live in
 [`devshard-v5-release.env`](../../deploy/join/devshard-v5-release.env), which is
 also consumed by the updater and release-image smoke test.
 
@@ -22,7 +22,7 @@ also consumed by the updater and release-image smoke test.
 
 This release converts the host-local devshard ingress and service pools to an
 actively checked HAProxy topology, adds a three-slot `versiond-router` fleet,
-and gives `versiond` and `edge-api` bounded graceful shutdown. It also provides
+and gives `versiond` bounded graceful shutdown. It also provides
 the one-time, topology-aware migration from existing v0.2.15 join deployments:
 the updater preserves the effective Compose model, migrates local HA PostgreSQL
 to persistent storage, replaces application replicas behind traffic barriers,
@@ -111,7 +111,7 @@ rollback commands.
 | Standard v0.2.15 join stack (`versiond=single`, `edge-api=single`) | Yes | Existing `proxy`, `versiond`, and `edge-api` must belong to one valid Compose project |
 | v0.2.15 base plus `0.2.14-devshard-v4` HA versiond with local PostgreSQL | Yes | Shared Postgres identity must be unchanged; source volume and persistent target must pass the exact copy-space check |
 | v0.2.15 base plus `0.2.14-devshard-v4` HA versiond with managed/external PostgreSQL | Yes | Both replicas must retain identical `PGHOST`, `PGPORT`, `PGDATABASE`, and `PGUSER`; the updater does not manage that database |
-| Single or three-replica edge-api | Yes | Existing topology is detected independently from versiond mode |
+| Single or three-replica edge-api | Yes | Existing topology is detected and preserved; its containers and images are not updated by this release |
 | Observability and operator override files | Yes | The complete ordered file set must be present and render the required service/container/network contract |
 | Renamed core services, split Compose projects, Docker Swarm, or Kubernetes | No | Preflight fails before pull or service mutation; Kubernetes is a separate deployment track |
 | Pre-v0.2.15 base deployment, pre-v4 devshard, or custom application images | Not release-qualified | Upgrade to a supported v0.2.15 + devshard-v4 join contract or rehearse and qualify the custom source separately |
@@ -155,13 +155,10 @@ migration models, router configurations, and application readiness endpoints.
   replicas are stateless, use active route-aware checks, and roll one slot at a
   time.
 - **Replicated private nginx policy workers** retain TLS and HTTP policy, while
-  public and service-pool balancing moves to `proxy-router`. The dedicated
-  `edge-api-router` hop is no longer needed in steady state.
+  public and versiond routing move to `proxy-router`. Existing edge-api routing
+  remains on its current single-instance or nginx-router path.
 - **Graceful `versiond` shutdown budgets** for both the single-instance join
   stack and the HA overlay (below).
-- **`edge-api` readiness and graceful shutdown** — an instance that cannot reach
-  the chain leaves the round-robin rotation instead of answering with failing
-  queries, and a stopping instance drains the same way versiond does (below).
 
 ## Breaking / operator-facing changes
 
@@ -170,10 +167,9 @@ migration models, router configurations, and application readiness endpoints.
 `proxy-router` and every `versiond-router` replica are HAProxy. Three
 consequences for operators:
 
-1. **The pool is no longer a host list.** `VERSIOND_HOSTS` and `EDGE_API_HOSTS`
-   are replaced by `VERSIOND_POOL_HOST` / `EDGE_API_POOL_HOST`: one DNS name that
-   resolves to every instance. In Compose that is a network alias
-   (`versiond-pool`, `edge-api-pool`), which the shipped overlays set for you.
+1. **The versiond pool is no longer a host list.** `VERSIOND_HOSTS` is replaced
+   by `VERSIOND_POOL_HOST`: one DNS name that resolves to every instance. In
+   Compose that is the `versiond-pool` network alias set by the shipped overlay.
    Starting or stopping an instance changes the pool; nothing else has to.
 2. **Health is measured, not declared.** Each inner router polls `GET /readyz`
    on every versiond once a second. The top HAProxy also polls every router for
@@ -192,7 +188,7 @@ Removed with the old model:
 | --- | --- |
 | `gonka-routerctl`, `gonka-hostctl` | `docker compose stop` / `start`; a read-only pool diagnostic ships inside the router image |
 | Router state volume (`/var/lib/gonka/versiond-router`) | nothing — the router holds no durable state |
-| `VERSIOND_HOSTS`, `EDGE_API_HOSTS` | DNS aliases `VERSIOND_POOL_HOST`, `EDGE_API_POOL_HOST` |
+| `VERSIOND_HOSTS` | DNS alias `VERSIOND_POOL_HOST` |
 | `VERSIOND_ADMIN_LISTEN_ADDR` (loopback readiness listener) | `GET :8080/readyz` on the traffic listener |
 
 Sticky routing keys its hash ring on each versiond's address, so every router
@@ -248,8 +244,8 @@ journal temporarily embeds the exact previous Compose generation, including
 its environment, so crash recovery does not depend on changed files. Those
 rollback bytes are removed before commit; the final marker contains only
 hashes, non-secret identities, and transaction receipts. The
-proxy container label alone is not evidence that PostgreSQL, versiond, and
-edge-api were migrated; both application and ingress postconditions must pass
+proxy container label alone is not evidence that PostgreSQL and versiond were
+migrated; both application and ingress postconditions must pass
 before the final marker is committed.
 
 If the process stops during ingress replacement, the next ordinary updater run
@@ -280,7 +276,7 @@ same UUID.
 
 Rerunning the same upgrade is also the normal reconciliation path for this
 release. It restores the committed Compose model from the marker, converges
-PostgreSQL and each application replica in HA-safe order, rolls changed router
+PostgreSQL and each owned versiond replica in HA-safe order, rolls changed router
 slots one at a time, reconverges public ingress, verifies every expected image
 and health check, and rewrites the marker only after success. Image/config-
 current containers remain untouched. A main-project `pull` or `up -d` alone
@@ -306,9 +302,11 @@ commit this model to the upgrade marker, which is authoritative on later runs:
 | `edge-api` | only `edge-api` | `edge-api2`, `edge-api3`, or `edge-api-router` exists |
 
 The standard Host Quickstart therefore selects `versiond=single` and
-`edge-api=single` automatically. Its existing ML, observability, and local
-override files remain in the model even though only services owned by this
-upgrade are targeted. In particular, the observability overlay supplies Jaeger
+`edge-api=single` automatically. Edge mode is recorded only so ingress cutover
+and rollback preserve the existing route; edge-api containers are not pulled,
+stopped, or recreated. Existing ML, observability, and local override files
+remain in the model even though only services owned by this upgrade are
+targeted. In particular, the observability overlay supplies Jaeger
 and Grafana routing variables to both the v4 rollback proxy and the fixed v5
 `proxy-policy2` and `proxy-policy` nginx slots. For each replacement, the
 updater runtime-drains the old generation, confirms that HAProxy has withdrawn
@@ -359,7 +357,7 @@ replacement fails or the script is interrupted, it attempts to recreate the
 previous image; a newly introduced service is stopped instead. A restored v4
 service must pass three consecutive functional probes before rollback is
 reported as successful. Rollback uses the same startup budget as forward
-replacement: 35 minutes for versiond and 3 minutes for edge-api. A restored
+replacement: 35 minutes for versiond. A restored
 versiond must report and route every version from its captured baseline;
 restoring only one of several versions is a failed rollback. Router rollback
 must route the union captured from all versiond replicas rather than trusting
@@ -367,19 +365,13 @@ its hash-selected `/healthz` response. Once HAProxy is active, supervisor
 rollback is also probed through the production router. HAProxy treats a `404`
 from `/readyz` as the explicit pre-v5 capability case and then requires the real
 version route's `/healthz`; a v5 `503` remains authoritative for starting and
-draining hosts. Edge-api must execute the chain-backed `/v1/versions` query. If
-a check fails, the service is stopped and the script requires operator recovery.
+draining hosts. If a check fails, the service is stopped and the script requires operator recovery.
 A replica interrupted after the nginx barrier remains isolated; rerunning the
 command first replaces that replica, then restores the complete nginx upstream
 and captures the router baseline. Temporary rollback tags are removed only
 after the whole upgrade succeeds. After a failed attempt, keep the reported
 `gonka-upgrade-rollback/*` tags until recovery is verified; they can then be
 removed with `docker image rm`.
-
-For multi-edge, the script replaces `edge-api2` first and waits for its v5
-`/readyz`, then switches from nginx to HAProxy. HAProxy excludes old or unready
-replicas, so each later replacement either joins after `/readyz` passes or is
-stopped without poisoning the live pool.
 
 For versiond HA, the migration order is `versiond2`, a temporary v5 singleton
 router, then the legacy owner `versiond`. Once application replacement is
@@ -611,29 +603,6 @@ longer than the old Docker default of roughly 10 seconds. Keep
 finish its own escalation and child reap. Operators may override these for a
 deliberately shorter maintenance window, but doing so can terminate accepted
 inference streams; do not shorten only the outer Docker grace.
-
-### edge-api drains instead of cutting queries at 10 seconds
-
-`edge-api` used to answer `SIGTERM` with a fixed 10-second `Shutdown`, which cut
-any query still running. It now follows the same contract as versiond:
-
-| Setting | Default | Role |
-| --- | --- | --- |
-| `EDGE_API_DRAIN_ANNOUNCE` | `5s` | `/readyz` answers 503 while the instance keeps serving, so the router drops it before it stops accepting. `0` declares no balancer; any other value below `5s` refuses to boot |
-| `EDGE_API_HEALTH_START_PERIOD` | `2m` | Compose allowance for a replacement to reach the chain and pass `/readyz`; ordered upgrades wait at most three minutes |
-| `EDGE_API_SHUTDOWN_BUDGET` | `2m` | How long accepted queries then have to finish; matches the router's default read timeout |
-| `EDGE_API_STOP_GRACE_PERIOD` | `3m` | Compose `stop_grace_period`, the outer Docker `SIGKILL` backstop |
-
-A second `SIGTERM`/`SIGINT` cuts the announce window short, and a further one
-during the drain itself closes remaining connections immediately — the process
-handles the signals itself, so without that an operator watching a stuck drain
-would have nothing left but `SIGKILL`. If the budget expires with queries still
-running, edge-api closes them and logs why, rather than being `SIGKILL`ed
-mid-write.
-
-The shipped Compose files set `stop_grace_period` on every edge-api service,
-including the single-instance one: without it Docker's 10-second default would
-`SIGKILL` the process during its own drain.
 
 ### Routing is per version, not per host
 
@@ -901,9 +870,8 @@ daemon restart. Persist the corresponding replica count as `0` first.
       size `VERSIOND_ROUTER_VERSION_CAPACITY` / `PROXY_ROUTER_VERSION_CAPACITY`
       for additions between releases; hosters do not edit `VERSIOND_VERSIONS`
       for each governance name
-- [ ] For HA or multi-edge, replace `VERSIOND_HOSTS` / `EDGE_API_HOSTS` with
-      `VERSIOND_POOL_HOST` / `EDGE_API_POOL_HOST`, or drop them and take the
-      shipped defaults
+- [ ] For HA, replace `VERSIOND_HOSTS` with `VERSIOND_POOL_HOST`, or drop it and
+      take the shipped default
 - [ ] Remove `VERSIOND_ADMIN_LISTEN_ADDR` from `config.env`; readiness is now
       `:8080/readyz`
 - [ ] Confirm every versiond in the HA overlay has
@@ -928,12 +896,8 @@ daemon restart. Persist the corresponding replica count as `0` first.
       back before the legacy owner or router is touched
 - [ ] Start the mutating phase only with `--acknowledge-maintenance`; existing
       public connections can close at the nginx-to-HAProxy cutover
-- [ ] For edge-api-multi, confirm auto-detection reports `edge-api=multi`; the
-      script replaces every replica behind the migration barrier, then the
-      final ingress cutover connects the ready pool directly to `proxy-router`
-- [ ] Confirm `EDGE_API_STOP_GRACE_PERIOD` exceeds
-      `EDGE_API_DRAIN_ANNOUNCE + EDGE_API_SHUTDOWN_BUDGET` if any of them is
-      overridden
+- [ ] Confirm edge-api topology detection is correct; the updater preserves that
+      route without changing edge-api containers or images
 - [ ] For HA, use the targeted upgrade script: it migrates PostgreSQL, replaces
       the supervisors behind the compatibility router, starts the independent
       router slots, and commits the public cutover only after component checks
