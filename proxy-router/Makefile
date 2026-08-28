@@ -169,6 +169,10 @@ test-compose:
 			config --format json 2>/dev/null); \
 	printf '%s\n' "$$versiond" | jq -e '((.services.proxy.depends_on // {}) | has("versiond-router") | not)' >/dev/null || { echo "test-compose: inner router delays public proxy startup" >&2; exit 1; }; \
 	printf '%s\n' "$$versiond" | jq -e '([.services["proxy-policy"], .services["proxy-policy2"]] | all((.depends_on // {}) | has("versiond") | not)) and .services["proxy-policy2"].depends_on.api.condition == "service_started" and .services["proxy-policy2"].depends_on["proxy-ssl"].required == false' >/dev/null || { echo "test-compose: HA versiond or PostgreSQL delays policy startup" >&2; exit 1; }; \
+	head -n 14 "$$root/deploy/join/docker-compose.versiond.yml" | grep -q 'Fresh installations only' && \
+	head -n 14 "$$root/deploy/join/docker-compose.versiond.yml" | grep -q 'Compose 2.24.4 or newer' && \
+	head -n 14 "$$root/deploy/join/docker-compose.versiond.yml" | grep -q 'release updater' \
+		|| { echo "test-compose: direct HA overlay command lacks its install and upgrade constraints" >&2; exit 1; }; \
 	if grep -Eq 'up -d proxy-policy proxy-policy2|up -d proxy-policy2 proxy-policy|--remove-orphans' \
 		"$$root/proxy/README.md" "$$root/proxy-router/README.md"; then \
 		echo "test-compose: proxy runbook contains a non-rolling or whole-project mutation" >&2; \
