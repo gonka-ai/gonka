@@ -43,13 +43,29 @@ fi
 
 runtime_to_file "show servers state $backend" "$tmpdir/servers"
 server=$(awk -v address="$2" '
-        NR > 2 && $5 == address {
-            print $4
+        $1 == "#" {
+            # The leading '#' is a header marker, not a data column.
+            for (i = 2; i <= NF; i++) column[$i] = i - 1
+            header = 1
+            next
+        }
+        header && column["srv_addr"] && column["srv_name"] && \
+                $column["srv_addr"] == address {
+            print $column["srv_name"]
             found = 1
             exit
         }
-        END { if (!found) exit 1 }
-    ' "$tmpdir/servers") || exit 1
+        END {
+            if (!header || !column["srv_addr"] || !column["srv_name"]) exit 2
+            if (!found) exit 1
+        }
+    ' "$tmpdir/servers") || {
+        status=$?
+        if [ "$status" -eq 2 ]; then
+            echo "route-status: HAProxy Runtime API returned invalid show servers state output" >&2
+        fi
+        exit 1
+    }
 
 # Administrative state from `show servers state` can retain DNS/runtime flags
 # after a dynamic slot is enabled. `show stat` is the serving authority: an UP
