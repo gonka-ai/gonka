@@ -1,12 +1,17 @@
 package main
 
 import (
+	"context"
 	"errors"
+	"io"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"devshard/host"
+	"devshard/user"
 )
 
 func disableThrottleProbe(t *testing.T) {
@@ -88,31 +93,40 @@ func TestThrottleProbe_OnByDefault(t *testing.T) {
 	require.True(t, throttleProbeEnabled.Load())
 }
 
-func TestThrottleProbeGate_AdmitsOneProbeAtATimePerParticipant(t *testing.T) {
+func TestThrottleProbeGate_SendsOnlyTheFirstBurnOfAWindow(t *testing.T) {
 	var gate throttleProbeGate
 	now := time.Unix(1_700_000_000, 0)
 
-	require.True(t, gate.admit("host-a", now))
-	require.False(t, gate.admit("host-a", now.Add(time.Hour)),
+	require.Equal(t, throttleProbeSend, gate.decide("host-a", now, nil))
+	require.Equal(t, throttleProbeWait, gate.decide("host-a", now.Add(time.Hour), nil),
 		"a probe still in flight must not be joined by another, however long it takes")
-	require.True(t, gate.admit("host-b", now), "the bound is per participant, not global")
+	require.Equal(t, throttleProbeSend, gate.decide("host-b", now, nil), "the bound is per participant")
 }
 
-func TestThrottleProbeGate_HoldsTheIntervalAfterRelease(t *testing.T) {
+func windowAnswers(t *testing.T, served bool, inherited throttleProbeVerdict) {
+	t.Helper()
 	var gate throttleProbeGate
 	now := time.Unix(1_700_000_000, 0)
+	answers := []bool{}
 
-	require.True(t, gate.admit("host-a", now))
-	gate.release("host-a", now)
+	require.Equal(t, throttleProbeSend, gate.decide("host-a", now, nil))
+	require.Equal(t, throttleProbeWait, gate.decide("host-a", now, func(answer bool) { answers = append(answers, answer) }))
+	require.Equal(t, throttleProbeWait, gate.decide("host-a", now, func(answer bool) { answers = append(answers, answer) }))
 
-	require.False(t, gate.admit("host-a", now.Add(throttleProbeMinInterval-time.Millisecond)),
-		"a fast-failing host must not be retried sooner than a slow one")
-	require.True(t, gate.admit("host-a", now.Add(throttleProbeMinInterval)))
+	gate.release("host-a", now, served)
+
+	require.Equal(t, []bool{served, served}, answers, "every waiter is handed the probe's own answer")
+	require.Equal(t, inherited, gate.decide("host-a", now.Add(throttleProbeMinInterval-time.Millisecond), nil),
+		"a burn inside the interval inherits the answer instead of polling the group")
+	require.Equal(t, throttleProbeSend, gate.decide("host-a", now.Add(throttleProbeMinInterval), nil))
 }
 
-func TestThrottleProbeGate_RefusesAnEmptyParticipant(t *testing.T) {
-	var gate throttleProbeGate
-	require.False(t, gate.admit("", time.Unix(1_700_000_000, 0)))
+func TestThrottleProbeGate_AServedAnswerCarriesTheWholeWindow(t *testing.T) {
+	windowAnswers(t, true, throttleProbeServed)
+}
+
+func TestThrottleProbeGate_AnUnservedAnswerCarriesTheWholeWindow(t *testing.T) {
+	windowAnswers(t, false, throttleProbeUnserved)
 }
 
 func TestThrottleProbe_AServedProbeReleasesTheHostFromQuarantine(t *testing.T) {
@@ -133,4 +147,94 @@ func TestThrottleProbe_AServedProbeReleasesTheHostFromQuarantine(t *testing.T) {
 	require.Eventually(t, func() bool { return !limiter.IsBlocked(participantKey) },
 		5*time.Second, 20*time.Millisecond,
 		"a host that served the probe must not stay quarantined")
+}
+
+func TestThrottleProbe_AnUnservedProbeHonoursTheAccountabilitySwitch(t *testing.T) {
+	shortRefusalWindow(t)
+	disableGhostAccountability(t)
+	env := setupTestProxy(t, 3, nil, true)
+	env.proxy.redundancy.picker.stop()
+
+	prepared := prepareForGhost(t, env.session, "llama")
+	slot := prepared.HostIdx()
+	env.killables[slot].ForceError(errors.New("503 over capacity"))
+
+	env.proxy.redundancy.runGhostProbe(prepared, ghostThrottled, ghostThrottled.reason())
+	waitForHostContact(t, env, slot)
+
+	require.Never(t, func() bool { return missesForSlot(t, env, slot) > 0 },
+		ghostMissObservationWindow, 25*time.Millisecond,
+		"accountability is off, so an unserved probe must not charge the host either")
+}
+
+// refuseAfterClient holds the probe open until the test releases it, so the second burn is decided
+// by this probe rather than one of its own, and then refuses it.
+type refuseAfterClient struct {
+	releaseCh chan struct{}
+}
+
+func (c *refuseAfterClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	select {
+	case <-c.releaseCh:
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	return nil, errors.New("host refuses the probe")
+}
+
+// twoBurnsOnOneSlot returns two prepared burns bound to the same host, so the second is decided by
+// the probe the first sends rather than by a probe of its own.
+func twoBurnsOnOneSlot(t *testing.T, env *testProxyEnv) (*user.PreparedInference, *user.PreparedInference, int) {
+	t.Helper()
+	first := prepareForGhost(t, env.session, "llama")
+	slot := first.HostIdx()
+	for attempt := 0; attempt < len(env.group); attempt++ {
+		if candidate := prepareForGhost(t, env.session, "llama"); candidate.HostIdx() == slot {
+			return first, candidate, slot
+		}
+	}
+	t.Fatalf("a group of %d must reassign slot %d within that many nonces", len(env.group), slot)
+	return nil, nil, 0
+}
+
+// A burn that waits on someone else's probe still has to be charged when that probe goes unanswered,
+// or letting one probe speak for the window would quietly forgive every burn behind it.
+func TestThrottleProbe_AnUnansweredProbeChargesTheBurnsWaitingOnIt(t *testing.T) {
+	shortRefusalWindow(t)
+	enableGhostAccountability(t)
+	env := setupTestProxy(t, 3, nil, true)
+	env.proxy.redundancy.picker.stop()
+	first, second, slot := twoBurnsOnOneSlot(t, env)
+
+	holdProbe := make(chan struct{})
+	env.killables[slot].inner = &refuseAfterClient{releaseCh: holdProbe}
+
+	env.proxy.redundancy.runGhostProbe(first, ghostThrottled, ghostThrottled.reason())
+	env.proxy.redundancy.runGhostProbe(second, ghostThrottled, ghostThrottled.reason())
+	close(holdProbe)
+
+	require.Eventually(t, func() bool { return missesForSlot(t, env, slot) >= 2 },
+		5*time.Second, 20*time.Millisecond,
+		"the burn that waited on the unanswered probe must be charged too")
+}
+
+// The probe exists to tell a host that is refusing from one that is merely busy. A host that answers
+// must not be charged for the burns that were waiting on that answer.
+func TestThrottleProbe_AnAnsweredProbeClearsTheBurnsWaitingOnIt(t *testing.T) {
+	shortRefusalWindow(t)
+	enableGhostAccountability(t)
+	env := setupTestProxy(t, 3, nil, true)
+	env.proxy.redundancy.picker.stop()
+	first, second, slot := twoBurnsOnOneSlot(t, env)
+
+	holdProbe := make(chan struct{})
+	env.killables[slot].inner = &releaseAfterClient{releaseCh: holdProbe}
+
+	env.proxy.redundancy.runGhostProbe(first, ghostThrottled, ghostThrottled.reason())
+	env.proxy.redundancy.runGhostProbe(second, ghostThrottled, ghostThrottled.reason())
+	close(holdProbe)
+
+	require.Never(t, func() bool { return missesForSlot(t, env, slot) > 0 },
+		ghostMissObservationWindow, 20*time.Millisecond,
+		"a host that answered the probe owes nothing for the burns that waited on it")
 }

@@ -570,9 +570,9 @@ type Redundancy struct {
 	picker               *sessionPicker
 	participantLimiter   *ParticipantRequestLimiter
 	stateBlockMu         sync.RWMutex
-	stateBlockedHosts    map[string]string // escrow-local participant blocks for state divergence that survived a replay
-	stateRewoundHosts    map[string]bool   // participants whose one catch-up replay has been spent
-	throttleProbes       throttleProbeGate // bounds the ghost probes sent to a throttled host
+	stateBlockedHosts    map[string]string    // escrow-local participant blocks for state divergence that survived a replay
+	stateRewoundAt       map[string]time.Time // when each participant's one catch-up replay was spent
+	throttleProbes       throttleProbeGate    // bounds the ghost probes sent to a throttled host
 
 	onRaceCleanupStart func()
 	onRaceCleanupDone  func()
@@ -3371,20 +3371,21 @@ func (e *Redundancy) maybeRecordEscrowStateDivergence(ctx context.Context, inf *
 	if e.stateBlockedHosts == nil {
 		e.stateBlockedHosts = make(map[string]string)
 	}
-	if e.stateRewoundHosts == nil {
-		e.stateRewoundHosts = make(map[string]bool)
+	if e.stateRewoundAt == nil {
+		e.stateRewoundAt = make(map[string]time.Time)
 	}
-	spentRetry := e.stateRewoundHosts[participantKey]
+	_, spentRetry := e.stateRewoundAt[participantKey]
 	_, existed := e.stateBlockedHosts[participantKey]
 	if spentRetry {
 		e.stateBlockedHosts[participantKey] = reason
 	} else {
-		e.stateRewoundHosts[participantKey] = true
+		e.stateRewoundAt[participantKey] = time.Now()
 	}
 	e.stateBlockMu.Unlock()
 
 	// A host rolls the diff back when its root disagrees, so its state survives the refusal intact and a
-	// replay of the whole retained chain costs one request to try. Only a second disagreement blocks.
+	// replay of the whole retained chain costs one request to try. Disagreeing again without having served
+	// anything in between is what blocks.
 	if !spentRetry {
 		rewound := e.session != nil && e.session.RewindHostCatchUp(inf.hostIdx, reason)
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "escrow_participant_state_rewound",
@@ -3404,6 +3405,20 @@ func (e *Redundancy) maybeRecordEscrowStateDivergence(ctx context.Context, inf *
 			"error", err,
 		)
 	}
+}
+
+func (e *Redundancy) clearSpentStateReplay(participantKey string, sentAt time.Time) {
+	if e == nil || participantKey == "" {
+		return
+	}
+	e.stateBlockMu.Lock()
+	defer e.stateBlockMu.Unlock()
+	// Requests run concurrently on one participant, so a success dispatched before the rewind proves
+	// nothing about the replayed state and must not spend the block on the next divergence.
+	if rewoundAt, spent := e.stateRewoundAt[participantKey]; spent && !sentAt.After(rewoundAt) {
+		return
+	}
+	delete(e.stateRewoundAt, participantKey)
 }
 
 func (e *Redundancy) escrowStateBlockReason(participantKey string) (string, bool) {
@@ -3986,6 +4001,10 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 		sample.TotalTime = time.Since(inf.sendTime)
 	}
 	e.perf.Record(sample)
+	if responsive {
+		// A finished nonce means the host applied our diffs, so the next disagreement is a new incident.
+		e.clearSpentStateReplay(participantKey, inf.sendTime)
+	}
 	if e.participantLimiter != nil {
 		switch {
 		case responsive:
@@ -4019,59 +4038,28 @@ func ghostProbeParams(model string) user.InferenceParams {
 	})
 }
 
-// runGhostProbe records a synthetic probe inference WITHOUT contacting
-// the host. The picker invokes this when it must consume a nonce but
-// no real request should land on the host (PoC-required, queue
-// excluded all available hosts past pickerStaleThreshold, or host is
-// reactively throttled). Every kind behaves identically: log + return.
-//
-// Why silent for every kind:
-//
-//   - PoC: the host cannot serve user traffic during PoC. We previously
-//     sent a tiny inference so the host produced MsgFinishInference
-//     for the nonce; that produces the same chain settlement an idle
-//     host's own probe would, but at the cost of an HTTP round-trip
-//     per burned nonce. Skipping the round-trip removes the per-nonce
-//     load on a host that is already busy with PoC stitching.
-//
-//   - Exclude: the queue had no compatible request for this host
-//     after the stale-hold window. Sending a tiny inference settled
-//     the chain protocol, but again at HTTP cost. Skipping it leaves
-//     the nonce as an orphan MsgStart -- chain-side, other validators
-//     may post a timeout vote; we don't.
-//
-//   - Throttled: the host just 503'd / 429'd and is over capacity.
-//     Sending anything would only deepen the overload. This was the
-//     original silent path; PoC and Exclude now match it.
-//
-// Side effects accepted across all kinds:
-//
-//   - The MsgStart for the burned nonce is composed inside
-//     PrepareInferenceFn and lives in s.diffs. It will replay to the
-//     host as catch-up on the host's next real dispatch (so the chain
-//     view eventually converges). For PoC-required hosts that means a
-//     backlog of orphan MsgStarts arriving once PoC ends.
-//
-//   - PerfTracker is not updated (no attempt happened from our POV).
-//
-// Liveness: every nonce the session advances through is accounted for
-// exactly once -- by a real request via the picker, or by this
-// log-only no-op. Without this method the picker would have to dequeue
-// a real request and turn IT into a probe, costing that request a turn.
-//
-// The dispatch path is identical for every kind. kind additionally
-// selects who answers for the burn: see raiseGhostAccountability.
+// runGhostProbe spends a nonce the picker must consume but no user request should ride: the host is
+// doing PoC, the queue held nothing compatible past pickerStaleThreshold, or the host just refused.
+// A throttled burn buys a real chat probe; the rest only compose the MsgStart, which reaches the host
+// as catch-up on its next real dispatch. kind picks who answers for the burn -- see raiseGhostAccountability.
 func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostKind, reason string) {
 	if prepared == nil || e.session == nil {
 		return
 	}
 	participantKey := e.participantKeyForHost(prepared.HostIdx())
-	if kind == ghostThrottled && throttleProbeEnabled.Load() && e.throttleProbes.admit(participantKey, time.Now()) {
-		e.sendThrottleProbe(prepared, participantKey, reason)
-		return
+	probed := kind == ghostThrottled && throttleProbeEnabled.Load() && participantKey != ""
+	verdict := throttleProbeUnserved
+	if probed {
+		verdict = e.throttleProbes.decide(participantKey, time.Now(), e.answerWaitingBurn(prepared, reason))
+		if verdict == throttleProbeSend {
+			e.sendThrottleProbe(prepared, participantKey, reason)
+			return
+		}
 	}
 	quarantineMode := e.quarantineModeForParticipant(participantKey)
-	e.accounting.Ghost(e.devshardID, prepared.Nonce(), reason, quarantineMode, ghostTimeoutWillBeRaised(kind))
+	// Only the unanswered case is booked with a timeout on the way; a served probe settles the burn.
+	timeoutPending := ghostTimeoutWillBeRaised(kind) && (!probed || verdict != throttleProbeServed)
+	e.accounting.Ghost(e.devshardID, prepared.Nonce(), reason, quarantineMode, timeoutPending)
 	if e.metrics != nil {
 		e.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
 			ParticipantKey: participantKey,
@@ -4087,8 +4075,12 @@ func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostK
 		"host", e.session.HostLabel(prepared.HostIdx()),
 		"kind", int(kind),
 		"reason", reason,
+		"probe_verdict", int(verdict),
 		"poc_reason", currentPoCPhaseReason(),
 	)
+	if probed && verdict != throttleProbeUnserved {
+		return
+	}
 	e.raiseGhostAccountability(prepared, kind)
 }
 
@@ -4104,8 +4096,8 @@ func ghostTimeoutWillBeRaised(kind ghostKind) bool {
 // executor themselves, so a host that is alive and willing still clears itself by returning a
 // receipt, and we contact it no more than the silent path already did.
 //
-// Every burn is raised, not a sample of them: a host that serves nothing has to end up as visibly
-// missed as one that accepts work and drops it, and a nonce spends the same either way.
+// Every accountable burn is answered for, but not every one raises its own timeout: a probe in flight
+// speaks for the burns of its window, and only its silence sends them here.
 func (e *Redundancy) raiseGhostAccountability(prepared *user.PreparedInference, kind ghostKind) {
 	if !ghostTimeoutWillBeRaised(kind) {
 		return
@@ -4120,9 +4112,12 @@ func (e *Redundancy) raiseGhostAccountability(prepared *user.PreparedInference, 
 	})
 }
 
-// raiseGhostTimeout runs the timeout on the caller's goroutine: the silent burn and an unserved probe
-// both end here, so a verifier sees the same outcome either way.
+// raiseGhostTimeout is where the silent burn and the unserved probe both end, so a verifier sees the
+// same outcome either way and no new caller can charge past a disabled operator switch.
 func (e *Redundancy) raiseGhostTimeout(ctx context.Context, nonce uint64, burnedAt time.Time, payload *host.InferencePayload, hostLabel string, kind ghostKind) {
+	if !ghostTimeoutWillBeRaised(kind) {
+		return
+	}
 	logInferenceStage(ctx, e.devshardID, nonce, "ghost_timeout_started", "host", hostLabel, "kind", int(kind))
 	// HandleTimeout reports an applied timeout by returning an error, so the outcome decides what
 	// this was; branching on err logged every success as a failure.

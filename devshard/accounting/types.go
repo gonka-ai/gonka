@@ -94,6 +94,7 @@ const (
 	TimeoutContextCanceled          TimeoutReason = "context_canceled"
 	TimeoutDiffDeliveryFailed       TimeoutReason = "timeout_diff_delivery_failed"
 	TimeoutNotApplied               TimeoutReason = "timeout_not_applied"
+	TimeoutHostServedProbe          TimeoutReason = "host_served_probe"
 	TimeoutEscrowGone               TimeoutReason = "escrow_gone_from_hosts"
 	TimeoutReasonUnknown            TimeoutReason = "unknown"
 	// Why a round failed to gather votes. The outcome says the round was lost; these say how.
@@ -345,6 +346,7 @@ var reasonOrigin = map[string]FailureOrigin{
 	"phase_transition_aborted":     FailureGatewayPolicy,
 	"long_response_after_content":  FailureGatewayPolicy,
 	"timeout_not_applied":          FailureGatewayPolicy,
+	"host_served_probe":            FailureGatewayPolicy,
 	"nonce_already_finished":       FailureGatewayPolicy,
 	"not_finished":                 FailureHostResponse,
 	"escrow_state_root_diverged":   FailureHostResponse,

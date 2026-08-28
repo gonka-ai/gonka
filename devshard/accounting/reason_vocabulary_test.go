@@ -13,7 +13,7 @@ func TestTimeoutReasonFromString_KeepsWhatItCanName(t *testing.T) {
 		TimeoutPhaseTransitionAborted, TimeoutLongResponseAfterContent, TimeoutStateRootDiverged,
 		TimeoutContextCanceled, TimeoutDiffDeliveryFailed, TimeoutNotApplied, TimeoutEscrowGone,
 		TimeoutVerifierVersionUnsupported, TimeoutVerifierEscrowMissing, TimeoutVerifierInferenceMissing,
-		TimeoutVerifierUnreachable, TimeoutVoteWeightShort,
+		TimeoutVerifierUnreachable, TimeoutVoteWeightShort, TimeoutHostServedProbe,
 	} {
 		require.Equal(t, reason, TimeoutReasonFromString(TimeoutVoteCollectionFailed, string(reason)),
 			"a named reason must survive whatever outcome carried it")
@@ -97,4 +97,16 @@ func TestNormalizeDeliveryReason_KeepsWhatADeliveryCanBe(t *testing.T) {
 // The burn split is only visible in the ledger if the delivery vocabulary admits it.
 func TestNormalizeDetailReason_AdmitsTheModelBurn(t *testing.T) {
 	require.Equal(t, "model_burn_empty", normalizeDetailReason("model_burn_empty"))
+}
+
+// A named timeout reason travels as the detail reason as well, and that is a separate whitelist: a
+// reason entered in one and not the other still lands in the ledger as "unknown".
+func TestBothVocabulariesNameTheSameReasons(t *testing.T) {
+	for _, reason := range []TimeoutReason{
+		TimeoutPhaseTransitionAborted, TimeoutLongResponseAfterContent, TimeoutStateRootDiverged,
+		TimeoutContextCanceled, TimeoutDiffDeliveryFailed, TimeoutNotApplied, TimeoutHostServedProbe,
+	} {
+		require.Equal(t, string(reason), normalizeDetailReason(string(reason)),
+			"a reason the timeout vocabulary names must survive the detail vocabulary too")
+	}
 }

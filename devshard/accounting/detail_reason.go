@@ -21,7 +21,7 @@ func normalizeDetailReason(reason string) string {
 		"not_finished", "http_429", "http_503", "http_forbidden", "http_not_found",
 		"http_timestamp_drift", "http_error", "long_response_after_content",
 		"escrow_state_root_diverged", "context_canceled", "timeout_diff_delivery_failed",
-		"timeout_not_applied", "poc_unavailable_host", "participant_throttled_no_send",
+		"timeout_not_applied", "host_served_probe", "poc_unavailable_host", "participant_throttled_no_send",
 		"participant_state_diverged_no_send", "participant_capability_no_send", "no_compatible_request_after_stale",
 		DeliveryClientGone:
 		return reason

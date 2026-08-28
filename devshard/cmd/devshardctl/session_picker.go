@@ -8,12 +8,10 @@
 // Branches per nonce
 // ------------------
 //
-// Every branch that does NOT dispatch a real user request marks the
-// nonce as a silent ghost probe: the MsgStart is composed inside
-// PrepareInferenceFn (and lives in s.diffs for catch-up), but the
-// dispatcher does not contact the host. The nonce stream advances,
-// no HTTP call is made, no vote is posted from this node, no response
-// is awaited. The kind is preserved for log labeling only.
+// Every branch that does NOT dispatch a real user request marks the nonce as a ghost probe: the
+// MsgStart is composed inside PrepareInferenceFn (and lives in s.diffs for catch-up). Whether the
+// dispatcher then contacts the host depends on the kind -- a throttled burn may be spent on a real
+// chat probe, the rest stay silent. The nonce stream advances and no vote is posted from this node.
 //
 //	1a. PoC-required host (host needs a probe under relaxed bypass):
 //	    fire ghostPoC. The host cannot serve user traffic now.
@@ -98,12 +96,9 @@ var errPickerHold = errors.New("session picker: holding nonce; waiting for stale
 
 var errPickerStopped = errors.New("session picker: stopped")
 
-// ghostKind classifies why a nonce is being burned as a synthetic
-// probe. All kinds are dispatched identically -- the MsgStart is
-// composed inside PrepareInferenceFn and added to s.diffs, but no
-// HTTP call is made and no response is awaited. The kind exists for
-// log-label differentiation so operators can tell at a glance whether
-// a burn was driven by PoC, exclude-stale, or reactive throttle.
+// ghostKind classifies why a nonce is being burned as a synthetic probe, so operators can tell a
+// PoC burn from an exclude-stale one from a reactive throttle, and so runGhostProbe knows which
+// burns are worth spending on a real probe.
 type ghostKind int
 
 const (
@@ -345,15 +340,9 @@ func (p *sessionPicker) run() {
 				return ghostProbeParams(p.model), true, nil
 			}
 
-			// Branch 1b: host is reactively throttled (just 503'd or
-			// 429'd, bucket below 1 token). Burn the nonce as a
-			// silent ghost probe so the queue keeps flowing without
-			// poisoning a real request's per-host retry budget on a
-			// host the transport-layer admission gate would reject
-			// anyway. The MsgStart is already composed in the diff
-			// produced by PrepareInferenceFn; the dispatcher just
-			// logs and returns -- no HTTP call, so we don't pile
-			// more load on a host that just told us it's overwhelmed.
+			// Branch 1b: the host just refused, so burning the nonce keeps the queue flowing without
+			// spending a real request's retry budget on a host the admission gate would reject anyway.
+			// The dispatcher asks such a host once per window, not once per nonce.
 			if p.throttleBlocked != nil && p.throttleBlocked(b.ParticipantKey) {
 				ghost = ghostThrottled
 				ghostParticipantKey = b.ParticipantKey

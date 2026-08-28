@@ -986,7 +986,7 @@ func normalizeTimeoutOutcome(o TimeoutOutcome) (TimeoutOutcome, bool) {
 
 func normalizeTimeoutReason(r TimeoutReason) TimeoutReason {
 	switch r {
-	case TimeoutPhaseTransitionAborted, TimeoutLongResponseAfterContent, TimeoutStateRootDiverged, TimeoutContextCanceled, TimeoutDiffDeliveryFailed, TimeoutNotApplied:
+	case TimeoutPhaseTransitionAborted, TimeoutLongResponseAfterContent, TimeoutStateRootDiverged, TimeoutContextCanceled, TimeoutDiffDeliveryFailed, TimeoutNotApplied, TimeoutHostServedProbe:
 		return r
 	default:
 		if r == "" {
