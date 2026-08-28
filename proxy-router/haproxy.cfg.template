@@ -46,6 +46,7 @@ frontend public_http
     mode tcp
     option tcplog
     bind :80
+    maxconn ${MAX_CONNECTIONS}
     timeout client ${PUBLIC_IDLE_SECONDS}s
     default_backend policy_http
 
@@ -53,6 +54,7 @@ frontend public_https
     mode tcp
     option tcplog
     bind :443
+    maxconn ${MAX_CONNECTIONS}
     timeout client ${PUBLIC_IDLE_SECONDS}s
     default_backend policy_https
 
