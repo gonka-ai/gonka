@@ -20,6 +20,11 @@ certificate_matches_key() {
   [ -n "$cert_digest" ] && [ "$cert_digest" = "$key_digest" ]
 }
 
+mkdir -p "$SSL_DIR"
+rm -f "$SSL_DIR"/cert.pem.tmp.* \
+  "$SSL_DIR"/private.key.tmp.* \
+  "$SSL_DIR"/order.id.tmp.*
+
 if [ "$MODE" = repair ] && certificate_matches_key "$CERT_FILE" "$KEY_FILE"; then
   echo "SSL certificate and private key are valid"
   exit 0
@@ -33,11 +38,6 @@ fi
 echo "Getting SSL certificate for proxy..."
 
 echo "setup-ssl.sh mode: $MODE"
-
-mkdir -p "$SSL_DIR"
-rm -f "$SSL_DIR"/cert.pem.tmp.* \
-  "$SSL_DIR"/private.key.tmp.* \
-  "$SSL_DIR"/order.id.tmp.*
 
 # Resolve proxy-ssl host/port (respect KEY_NAME_PREFIX) and node_id
 PROXY_SSL_SERVICE_NAME=${PROXY_SSL_SERVICE_NAME:-proxy-ssl}

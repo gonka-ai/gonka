@@ -405,6 +405,18 @@ wait_for_setup 1
 [ "$(cat "$SSL_DIR/cert.pem")" = "$RECOVERED_CERT" ] \
   || fail "invalid issuer response changed the active certificate"
 
+# A valid manually managed pair exits before issuer setup, but each invocation
+# must still remove staging files left by an interrupted writer.
+rm -f "$SSL_DIR/order.id"
+printf '%s\n' stale > "$SSL_DIR/cert.pem.tmp.100"
+printf '%s\n' stale > "$SSL_DIR/private.key.tmp.100"
+printf '%s\n' stale > "$SSL_DIR/order.id.tmp.100"
+: > "$CURL_LOG"
+unset CERT_ISSUER_DOMAIN
+PATH="$TEST_ROOT/bin:$PATH" SSL_DIR="$SSL_DIR" \
+  bash "$ROOT/setup-ssl.sh" repair > "$TEST_ROOT/manual-repair.log" 2>&1 \
+  || fail "valid manual bundle did not use the local repair fast path"
+[ ! -s "$CURL_LOG" ] || fail "valid manual bundle contacted proxy-ssl"
 assert_no_staging_files
 
 echo "setup-ssl_test: ok"
