@@ -449,6 +449,12 @@ Notes:
 - Ensure your env matches one of the setups above (proxy-ssl vs manual). See sections on environment configuration and manual certificate issuance.
 - General operational guidance aligns with the Quickstart docs at [gonka.ai Host Quickstart](https://gonka.ai/host/quickstart/#how-to-stop-mlnode).
 
+The host updater replaces the policy workers reserve-first and waits for exact
+admission between replacements. `proxy-router/test-routing.sh` exercises
+continuity for non-idempotent requests during that policy rollout. The public
+`proxy` is a singleton: replacing it is a maintenance boundary and may interrupt
+active connections.
+
 ## Health Check
 
 The proxy includes a health check endpoint at `/health` that returns HTTP 200 with "healthy" response.
