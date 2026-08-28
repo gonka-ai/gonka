@@ -18,6 +18,13 @@ docker compose --project-directory "$script_dir" \
     --project-name gonka-versiond-router-test \
     -f "$script_dir/versiond-router-slot/docker-compose.yml" \
     config --format json >"$tmpdir/slot.json"
+VERSIOND_ROUTER_IMAGE=example.invalid/versiond-router:test \
+VERSIOND_POOL_HOST=custom-versiond-pool \
+VERSIOND_ROUTING_CATALOG_URL=http://catalog.example.test/versions \
+    docker compose --project-directory "$script_dir" \
+    --project-name gonka-versiond-router-test \
+    -f "$script_dir/versiond-router-slot/docker-compose.yml" \
+    config --format json >"$tmpdir/slot-overrides.json"
 
 jq -e '
   (.services | has("versiond-router") | not) and
@@ -35,6 +42,7 @@ jq -e '
 
 jq -e '
   (.services.router.labels["ai.gonka.component"] == "versiond-router") and
+  (.services.router.environment.VERSIOND_POOL_HOST == "versiond-pool") and
   (.services.router.networks.front.aliases | index("versiond-router-fleet")) and
   (.services.router.environment.VERSIOND_ROUTING_CATALOG_URL ==
     "http://versiond-routing-oracle:9100/versions") and
@@ -45,6 +53,13 @@ jq -e '
   (.networks.back.external == true) and
   (.networks.metrics.external == true)
 ' "$tmpdir/slot.json" >/dev/null
+
+jq -e '
+  (.services.router.image == "example.invalid/versiond-router:test") and
+  (.services.router.environment.VERSIOND_POOL_HOST == "custom-versiond-pool") and
+  (.services.router.environment.VERSIOND_ROUTING_CATALOG_URL ==
+    "http://catalog.example.test/versions")
+' "$tmpdir/slot-overrides.json" >/dev/null
 
 router_scrape=$(awk '
   /job_name: versiond-router/ { capture = 1 }
