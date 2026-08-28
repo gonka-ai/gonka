@@ -5,6 +5,10 @@
 # hash on escrow/session ID) in front of both. Sets proxy
 # VERSIOND_SERVICE_NAME=versiond-router.
 #
+# Fresh installations only. This overlay uses !reset and requires Docker
+# Compose 2.24.4 or newer. Upgrade an existing host with the release updater so
+# policy workers cross the required drain and fresh-admission sequence.
+#
 #   docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d
 #
 # x-versiond anchor holds everything shared between versiond and versiond2;
