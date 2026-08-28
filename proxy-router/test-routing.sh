@@ -1243,4 +1243,19 @@ executed=$((after_a - before_a + after_b - before_b))
 [[ $executed == "$requests" ]] \
     || fail "$requests POSTs produced $executed upstream executions"
 
+# Loss of the complete inner versiond tier must affect only /devshard. The
+# policy tier and public HAProxy continue serving unrelated routes.
+docker stop gonka-pr-router-a gonka-pr-router-b gonka-pr-router-bad >/dev/null
+for _ in $(seq 40); do
+    devshard_status=$(docker exec gonka-pr-probe curl -sS -o /dev/null \
+        -w '%{http_code}' --connect-timeout 2 --max-time 5 \
+        http://proxy-router/devshard/v5/sessions/inner-tier-down/healthz || true)
+    [[ $devshard_status == 503 ]] && break
+    sleep 0.25
+done
+[[ $devshard_status == 503 ]] \
+    || fail "unavailable versiond tier did not return 503 from /devshard"
+policy=$(probe http://proxy-router/)
+case "$policy" in policy-a:* | policy-b:*) ;; *) fail "inner tier loss disrupted public policy routes" ;; esac
+
 echo "test-routing: ok"

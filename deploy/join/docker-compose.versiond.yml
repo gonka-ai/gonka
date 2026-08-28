@@ -195,12 +195,18 @@ services:
     restart: always
 
   proxy-policy:
+    # Policy nginx can serve every non-devshard route while the HA versiond
+    # stack is still starting or its PostgreSQL dependency is unavailable.
+    depends_on:
+      versiond: !reset null
     environment:
       - VERSIOND_SERVICE_NAME=proxy-policy-ingress
       - VERSIOND_SERVICE_IS_ABSOLUTE=true
       - VERSIOND_PORT=18081
 
   proxy-policy2:
+    depends_on:
+      versiond: !reset null
     environment:
       - VERSIOND_SERVICE_NAME=proxy-policy-ingress
       - VERSIOND_SERVICE_IS_ABSOLUTE=true
