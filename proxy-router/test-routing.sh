@@ -446,6 +446,15 @@ proxy_backend_addr_up() {
     proxy_backend_addr_up_in gonka-pr-proxy "$@"
 }
 
+wait_proxy_backend_addr_up_in() {
+    local proxy=$1 backend=$2 address=$3
+    for _ in $(seq 80); do
+        proxy_backend_addr_up_in "$proxy" "$backend" "$address" && return 0
+        sleep 0.1
+    done
+    return 1
+}
+
 proxy_backend_addr_withdrawn_in() {
     local proxy=$1 backend=$2 address=$3
     docker exec "$proxy" sh -c \
@@ -734,6 +743,14 @@ proxy_admin '/readyz?version=v5' >/dev/null \
 # The deployment rolls the two fixed policy slots reserve-first. Keep POSTs in
 # flight while each slot is replaced and require both continuity and exactly-once
 # execution through the surviving worker.
+for name in a b; do
+    initial_policy_ip=$(docker inspect -f \
+        "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
+        "gonka-pr-policy-$name")
+    wait_proxy_backend_addr_up_in gonka-pr-proxy policy_http \
+        "$initial_policy_ip" || fail \
+        "policy-$name was not admitted before the rolling continuity test"
+done
 rollout_errors=$tmpdir/policy-rollout-errors
 : >"$rollout_errors"
 rollout_before=$(probe http://gonka-pr-router-b:8404/count)
