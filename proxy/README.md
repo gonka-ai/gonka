@@ -292,6 +292,8 @@ Avoid:
 
 When SSL is enabled and no certs are present under `/etc/nginx/ssl`, `entrypoint.sh` will call `setup-ssl.sh` to fetch a certificate via the `proxy-ssl` service.
 
+If the certificate marker is missing while `private.key` and `order.id` remain, startup first recovers the certificate from that order. A new order is created only when the saved order cannot recover the local key.
+
 If issuance fails at startup (for example, `proxy-ssl` is not reachable yet) and `NGINX_MODE=both`, the entrypoint temporarily serves HTTP only. A background worker keeps retrying with exponential backoff (starting at `PROXY_SSL_RETRY_SECONDS`, capped at the renewal interval) and, once a certificate is issued, re-renders the HTTPS configuration, validates it with `nginx -t`, and reloads nginx — port 443 comes back without a container restart. The same worker renews certificates issued through `proxy-ssl` (identified by a stored `order.id`) within `RENEW_BEFORE_DAYS` of expiry; manually supplied cert/key pairs without `order.id` are left under operator management.
 
 The worker also repairs legacy incomplete bundles. If HTTPS validation finds a truncated certificate or a certificate that does not match its private key, `setup-ssl.sh repair` first requests the certificate for the stored `order.id` and verifies that it belongs to the local key. It creates a new order only when the stored order cannot recover that key. After a valid pair is published, nginx is validated and reloaded automatically.

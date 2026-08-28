@@ -375,8 +375,13 @@ export STREAMING_CONFIG='
 # If SSL is intended, ensure certificates are present (attempt issuance if missing)
 if [ "$SSL_ENABLED" = "true" ]; then
     if [ ! -f "/etc/nginx/ssl/cert.pem" ] || [ ! -f "/etc/nginx/ssl/private.key" ]; then
-        echo "SSL enabled but certificates not found; requesting via proxy-ssl"
-        /setup-ssl.sh || echo "WARNING: SSL setup failed; will attempt to continue"
+        echo "SSL enabled but the certificate bundle is incomplete; repairing via proxy-ssl"
+        ssl_setup_status=0
+        /setup-ssl.sh repair || ssl_setup_status=$?
+        case "$ssl_setup_status" in
+          0|10) ;;
+          *) echo "WARNING: SSL setup failed; will attempt to continue" ;;
+        esac
     fi
 
 fi

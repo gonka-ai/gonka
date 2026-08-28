@@ -79,6 +79,30 @@ grep -q 'Certificate configuration reloaded' <<< "$logs" \
 docker exec "$CONTAINER" curl -ksSf https://127.0.0.1/health >/dev/null \
   || fail "HTTPS health endpoint is unavailable after repair"
 
+docker rm -f "$CONTAINER" >/dev/null
+: > "$TEST_ROOT/setup-calls"
+rm -f "$TEST_ROOT/ssl/cert.pem"
+docker run -d --name "$CONTAINER" \
+  -v "$TEST_ROOT/ssl:/etc/nginx/ssl" \
+  -v "$TEST_ROOT/recovered.crt:/test/recovered.crt:ro" \
+  -v "$TEST_ROOT/setup-ssl.sh:/setup-ssl.sh:ro" \
+  -v "$TEST_ROOT/setup-calls:/test/setup-calls" \
+  -e NGINX_MODE=both \
+  -e CERT_ISSUER_DOMAIN=example.test \
+  -e DISABLE_DEVSHARD_PROXY=true \
+  "$IMAGE" >/dev/null
+for _ in $(seq 1 100); do
+  if docker exec "$CONTAINER" \
+      curl -ksSf https://127.0.0.1/health >/dev/null 2>&1; then
+    break
+  fi
+  sleep 0.1
+done
+[ "$(head -n 1 "$TEST_ROOT/setup-calls")" = repair ] \
+  || fail "startup did not recover the missing certificate through repair"
+docker exec "$CONTAINER" curl -ksSf https://127.0.0.1/health >/dev/null \
+  || fail "HTTPS did not start after missing-marker recovery"
+
 assert_invalid_interval() {
   local name=$1 value=$2 log="$TEST_ROOT/$1.log"
 
