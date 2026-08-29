@@ -198,11 +198,15 @@ func pgValidationLeasesPartition(epochID uint64) string {
 // idempotently. The escrow index is rebuilt asynchronously; use WaitReady
 // (bounded by PG_INDEX_TIMEOUT) before promote/boot paths that need ownership.
 func NewPostgres(ctx context.Context) (*Postgres, error) {
+	return newPostgres(ctx, postgresConnectTimeout, defaultPGMigrationTimeout)
+}
+
+func newPostgres(ctx context.Context, connectTimeout, migrationTimeout time.Duration) (*Postgres, error) {
 	cfg, err := pgxpool.ParseConfig("") // reads libpq env vars
 	if err != nil {
 		return nil, fmt.Errorf("parse postgres config: %w", err)
 	}
-	cfg.ConnConfig.ConnectTimeout = postgresConnectTimeout
+	cfg.ConnConfig.ConnectTimeout = connectTimeout
 	if cfg.ConnConfig.RuntimeParams == nil {
 		cfg.ConnConfig.RuntimeParams = make(map[string]string)
 	}
@@ -212,16 +216,20 @@ func NewPostgres(ctx context.Context) (*Postgres, error) {
 	// Health owns one dedicated connection, leaving every configured pool slot
 	// available to application work and keeping MaxConns an application concern.
 	healthConfig := cfg.ConnConfig.Copy()
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	connectCtx, cancelConnect := context.WithTimeout(ctx, connectTimeout)
+	defer cancelConnect()
+	pool, err := pgxpool.NewWithConfig(connectCtx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect to postgres: %w", err)
 	}
-	if err := pool.Ping(ctx); err != nil {
+	if err := pool.Ping(connectCtx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
 
-	if err := MigratePostgres(ctx, pool); err != nil {
+	migrationCtx, cancelMigration := context.WithTimeout(ctx, migrationTimeout)
+	defer cancelMigration()
+	if err := MigratePostgres(migrationCtx, pool); err != nil {
 		pool.Close()
 		return nil, err
 	}
