@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -73,7 +74,7 @@ func run(ctx context.Context) error {
 	listenAddr := config.ListenAddr()
 	srv := &http.Server{
 		Addr:    listenAddr,
-		Handler: publicHandler(mgr, hostLifecycle, lookup, proxyOpts...),
+		Handler: publicHandler(mgr, hostLifecycle, mgr, proxyOpts...),
 	}
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
@@ -444,13 +445,14 @@ func readinessHandler(mgr *process.Manager, hostLifecycle *host.Controller) http
 func publicHandler(
 	mgr *process.Manager,
 	hostLifecycle *host.Controller,
-	storageIdentity storageIdentityReader,
+	storage storageVerifier,
 	proxyOpts ...proxy.HandlerOption,
 ) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", health.Handler(mgr.Status))
 	mux.HandleFunc("/readyz", readinessHandler(mgr, hostLifecycle))
-	mux.HandleFunc("/internal/storage-identity", storageIdentityHandler(storageIdentity))
+	mux.HandleFunc("/internal/storage-identity", storageIdentityHandler(storage))
+	mux.HandleFunc("/internal/storage-challenge", storageChallengeHandler(storage))
 	mux.Handle(
 		"/",
 		hostLifecycle.Admission(proxy.Handler(mgr.RouteTable(), proxyOpts...)),
@@ -459,13 +461,19 @@ func publicHandler(
 }
 
 type storageIdentityReader interface {
-	StorageIdentity(context.Context) (string, error)
+	StorageIdentity(context.Context) (process.StorageProof, error)
+}
+
+type storageChallengeRunner interface {
+	StorageChallenge(context.Context, string, string) (process.StorageProof, error)
+}
+
+type storageVerifier interface {
+	storageIdentityReader
+	storageChallengeRunner
 }
 
 func storageIdentityHandler(reader storageIdentityReader) http.HandlerFunc {
-	type response struct {
-		Identity string `json:"identity"`
-	}
 	return func(w http.ResponseWriter, r *http.Request) {
 		host, _, err := net.SplitHostPort(r.RemoteAddr)
 		if err != nil || !net.ParseIP(host).IsLoopback() {
@@ -481,16 +489,54 @@ func storageIdentityHandler(reader storageIdentityReader) http.HandlerFunc {
 			http.Error(w, "postgres storage identity unavailable", http.StatusServiceUnavailable)
 			return
 		}
-		// OpenFromEnv returns *sessionversion.Lookup. A nil pointer converted to
-		// this interface is non-nil, so StorageIdentity deliberately handles a
-		// nil receiver and turns the unavailable lookup into the same 503.
-		identity, err := reader.StorageIdentity(r.Context())
+		proof, err := reader.StorageIdentity(r.Context())
 		if err != nil {
+			slog.Warn("versiond storage identity unavailable", "error", err)
 			http.Error(w, "postgres storage identity unavailable", http.StatusServiceUnavailable)
 			return
 		}
 		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(response{Identity: identity})
+		_ = json.NewEncoder(w).Encode(proof)
+	}
+}
+
+type storageChallengeRequest struct {
+	Operation string `json:"operation"`
+	Nonce     string `json:"nonce"`
+}
+
+func storageChallengeHandler(runner storageChallengeRunner) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		host, _, err := net.SplitHostPort(r.RemoteAddr)
+		if err != nil || !net.ParseIP(host).IsLoopback() {
+			http.NotFound(w, r)
+			return
+		}
+		if r.Method != http.MethodPost {
+			w.Header().Set("Allow", http.MethodPost)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if runner == nil {
+			http.Error(w, "postgres storage challenge unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		var request storageChallengeRequest
+		decoder := json.NewDecoder(io.LimitReader(r.Body, 4096))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&request); err != nil ||
+			(request.Operation != "write" && request.Operation != "read") || request.Nonce == "" {
+			http.Error(w, "invalid storage challenge", http.StatusBadRequest)
+			return
+		}
+		proof, err := runner.StorageChallenge(r.Context(), request.Operation, request.Nonce)
+		if err != nil {
+			slog.Warn("versiond storage challenge failed", "operation", request.Operation, "error", err)
+			http.Error(w, "postgres storage challenge unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(proof)
 	}
 }
 

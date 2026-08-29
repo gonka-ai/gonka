@@ -15,7 +15,6 @@ import (
 	"versioned/internal/config"
 	"versioned/internal/host"
 	"versioned/internal/process"
-	"versioned/internal/sessionversion"
 )
 
 type fakeHostShutdownManager struct {
@@ -1095,14 +1094,23 @@ func TestReadinessIsServedOnTheTrafficListener(t *testing.T) {
 
 type staticStorageIdentity string
 
-func (s staticStorageIdentity) StorageIdentity(context.Context) (string, error) {
-	return string(s), nil
+func (s staticStorageIdentity) StorageIdentity(context.Context) (process.StorageProof, error) {
+	return process.StorageProof{Identity: string(s), Children: 1}, nil
 }
 
 type unavailableStorageIdentity struct{}
 
-func (unavailableStorageIdentity) StorageIdentity(context.Context) (string, error) {
-	return "", errors.New("identity unavailable")
+func (unavailableStorageIdentity) StorageIdentity(context.Context) (process.StorageProof, error) {
+	return process.StorageProof{}, errors.New("identity unavailable")
+}
+
+type staticStorageChallenge struct {
+	proof process.StorageProof
+	err   error
+}
+
+func (s staticStorageChallenge) StorageChallenge(context.Context, string, string) (process.StorageProof, error) {
+	return s.proof, s.err
 }
 
 func TestStorageIdentityIsLocalOnly(t *testing.T) {
@@ -1123,7 +1131,7 @@ func TestStorageIdentityIsLocalOnly(t *testing.T) {
 	if localResponse.Code != http.StatusOK {
 		t.Fatalf("local storage identity status = %d, want 200", localResponse.Code)
 	}
-	if got := localResponse.Body.String(); got != "{\"identity\":\"database-1\"}\n" {
+	if got := localResponse.Body.String(); got != "{\"identity\":\"database-1\",\"children\":1}\n" {
 		t.Fatalf("local storage identity response = %q", got)
 	}
 
@@ -1148,13 +1156,11 @@ func TestStorageIdentityIsLocalOnly(t *testing.T) {
 }
 
 func TestStorageIdentityUnavailable(t *testing.T) {
-	var typedNilLookup *sessionversion.Lookup
 	tests := []struct {
 		name   string
 		reader storageIdentityReader
 	}{
 		{name: "nil interface", reader: nil},
-		{name: "typed nil lookup", reader: typedNilLookup},
 		{name: "query failure", reader: unavailableStorageIdentity{}},
 	}
 	for _, tt := range tests {
@@ -1169,6 +1175,45 @@ func TestStorageIdentityUnavailable(t *testing.T) {
 				t.Fatalf("storage identity status = %d, want 503", response.Code)
 			}
 		})
+	}
+}
+
+func TestStorageChallengeIsLocalAndValidated(t *testing.T) {
+	runner := staticStorageChallenge{proof: process.StorageProof{
+		Identity: "database-1",
+		Found:    true,
+		Children: 2,
+	}}
+	handler := storageChallengeHandler(runner)
+
+	external := httptest.NewRequest(http.MethodPost, "/internal/storage-challenge",
+		strings.NewReader(`{"operation":"write","nonce":"8aa1c262-ea39-43c2-928c-263e966cc9b4"}`))
+	external.RemoteAddr = "192.0.2.10:1234"
+	externalResponse := httptest.NewRecorder()
+	handler.ServeHTTP(externalResponse, external)
+	if externalResponse.Code != http.StatusNotFound {
+		t.Fatalf("external storage challenge status = %d, want 404", externalResponse.Code)
+	}
+
+	local := httptest.NewRequest(http.MethodPost, "/internal/storage-challenge",
+		strings.NewReader(`{"operation":"write","nonce":"8aa1c262-ea39-43c2-928c-263e966cc9b4"}`))
+	local.RemoteAddr = "127.0.0.1:1234"
+	localResponse := httptest.NewRecorder()
+	handler.ServeHTTP(localResponse, local)
+	if localResponse.Code != http.StatusOK {
+		t.Fatalf("local storage challenge status = %d, want 200", localResponse.Code)
+	}
+	if got := localResponse.Body.String(); got != "{\"identity\":\"database-1\",\"found\":true,\"children\":2}\n" {
+		t.Fatalf("local storage challenge response = %q", got)
+	}
+
+	invalid := httptest.NewRequest(http.MethodPost, "/internal/storage-challenge",
+		strings.NewReader(`{"operation":"delete","nonce":"x"}`))
+	invalid.RemoteAddr = "127.0.0.1:1234"
+	invalidResponse := httptest.NewRecorder()
+	handler.ServeHTTP(invalidResponse, invalid)
+	if invalidResponse.Code != http.StatusBadRequest {
+		t.Fatalf("invalid storage challenge status = %d, want 400", invalidResponse.Code)
 	}
 }
 
