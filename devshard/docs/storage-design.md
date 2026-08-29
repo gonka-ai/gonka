@@ -475,8 +475,9 @@ down after boot.
   pool must observe that fence in `pg_locks` and report a writable primary before
   pgx admits it. Advisory locks are not WAL-replicated, so a promoted fork does
   not inherit the fence. The fence session is monitored for the entire child
-  lifetime. Losing it terminates devshardd so versiond can replace the child and
-  establish a fresh fence. A DNS or load-balancer endpoint may expose multiple
+  lifetime. Losing it withdraws readiness and force-closes devshardd listeners
+  so versiond can immediately replace the child and establish a fresh fence. A
+  DNS or load-balancer endpoint may expose multiple
   addresses for one logical writer, but it cannot silently mix independent
   writable branches within one child pool. The endpoint must preserve PostgreSQL
   session semantics; transaction-pooling proxies such as PgBouncer in transaction
