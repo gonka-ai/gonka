@@ -332,6 +332,20 @@ func TestPostgresChildStorageConfigured(t *testing.T) {
 	}
 }
 
+func TestResolvedStorageInitCandidatesSkipWorkAfterInitialization(t *testing.T) {
+	m := NewManager(config.Config{
+		Overrides: map[string]string{"v5": filepath.Join(t.TempDir(), "missing-override")},
+	})
+	m.storageInitOnce.Do(func() { close(m.storageInitDone) })
+
+	got := m.resolveStorageInitCandidates(map[string]oracle.Version{
+		"v5": {Name: "v5"},
+	})
+	if len(got) != 0 {
+		t.Fatalf("resolved candidates after initialization = %v, want none", got)
+	}
+}
+
 func TestPostgresSchemaInitializationIgnoresStaleSHAClassification(t *testing.T) {
 	t.Setenv(envHADeployment, "true")
 	t.Setenv("PGHOST", "postgres")
