@@ -476,7 +476,9 @@ down after boot.
   current HA children, `R` versiond replicas, and application-pool limit `P`, it
   requires `2 * N * (P + 2) + R * (4 + 1)` non-reserved server connections.
   The doubled child term allows every updated version to keep its predecessor
-  alive during asynchronous drain. The per-replica term reserves the
+  alive during asynchronous drain. Versiond enforces this bound by deferring a
+  second same-name replacement until the first predecessor has finished
+  draining. The per-replica term reserves the
   four-connection versiond session-lookup pool and one schema-initializer
   connection. Other applications sharing an external PostgreSQL server remain
   the database operator's capacity responsibility.

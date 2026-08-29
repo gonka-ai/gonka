@@ -454,7 +454,7 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 				version:        v,
 				overrideSrc:    overrideSrc,
 				binPath:        binPath,
-				blockedByDrain: !isRunning && isDraining,
+				blockedByDrain: isDraining,
 			})
 			continue
 		}
@@ -510,6 +510,10 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 		if snap.isRunning {
 			matches, metadata, diskBinaryHash, stateErr := installedVersionMatches(filepath.Dir(snap.child.binPath), snap.child.binPath, desiredHash)
 			if stateErr == nil && matches {
+				continue
+			}
+			if snap.isDraining {
+				slog.Info("version replacement deferred while previous child is draining", "version", snap.version.Name)
 				continue
 			}
 			logInstalledVersionMismatch(
@@ -568,11 +572,16 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 		m.downloading[a.version.Name] = struct{}{}
 		scheduledDownloads = append(scheduledDownloads, a)
 	}
+	scheduledSwaps := make([]versionAction, 0, len(toSwap))
 	for _, a := range toSwap {
 		if _, already := m.downloading[a.version.Name]; already {
 			continue
 		}
+		if current, running := m.processes[a.version.Name]; !running || current != a.child || m.versionStartBlockedLocked(a.version.Name) {
+			continue
+		}
 		m.downloading[a.version.Name] = struct{}{}
+		scheduledSwaps = append(scheduledSwaps, a)
 	}
 
 	var toStop []*child
@@ -586,7 +595,7 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 		}
 	}
 
-	changed := len(scheduledDownloads) > 0 || len(toSwap) > 0 || len(toStop) > 0 || started > 0
+	changed := len(scheduledDownloads) > 0 || len(scheduledSwaps) > 0 || len(toStop) > 0 || started > 0
 	if changed {
 		m.rebuildRoutes()
 	}
@@ -613,7 +622,7 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 
 	// Download first, then overlap generations where their storage permits it;
 	// otherwise the stop/start path withdraws the old route before stopping it.
-	for _, a := range toSwap {
+	for _, a := range scheduledSwaps {
 		if err := m.downloadAndSwap(ctx, a.version, a.sha256, a.child); err != nil {
 			slog.Error("swap failed, keeping old version", "version", a.version.Name, "error", err)
 			actionErrs = append(actionErrs, fmt.Errorf("swap %s: %w", a.version.Name, err))
@@ -631,8 +640,9 @@ type versionAction struct {
 	child   *child // non-nil for swap actions
 }
 
-// versionStartBlockedLocked reports whether a retired generation with the same
-// version name still owns the version's data directory.
+// versionStartBlockedLocked reports whether a predecessor with the same version
+// name is still draining. Besides protecting the version's data directory, this
+// bounds each version to one current generation and one predecessor.
 func (m *Manager) versionStartBlockedLocked(name string) bool {
 	return len(m.draining[name]) > 0
 }
@@ -689,6 +699,11 @@ func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overr
 		if m.hostDraining {
 			m.mu.Unlock()
 			return ErrHostDraining
+		}
+		if m.versionStartBlockedLocked(v.Name) {
+			m.mu.Unlock()
+			slog.Info("override replacement deferred while previous child is draining", "version", v.Name)
+			return nil
 		}
 		proxyDrained, retired := m.retireChildForStopStartLocked(existing)
 		m.mu.Unlock()
@@ -924,8 +939,9 @@ func (m *Manager) downloadAndStart(ctx context.Context, v oracle.Version, sha st
 }
 
 // downloadAndSwap downloads the new binary. Shared-storage generations overlap:
-// the replacement starts on a fresh port before the route swap. Other storage
-// modes withdraw and drain the old route before a stop/start replacement.
+// the replacement starts on a fresh port before the route swap, with at most one
+// predecessor per version. Other storage modes withdraw and drain the old route
+// before a stop/start replacement.
 func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha string, old *child) error {
 	dlErr := m.downloadBinary(ctx, v, sha)
 	if dlErr != nil || ctx.Err() != nil {
@@ -944,6 +960,17 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 		delete(m.downloading, v.Name)
 		m.mu.Unlock()
 		return ErrHostDraining
+	}
+	if current, running := m.processes[v.Name]; !running || current != old {
+		delete(m.downloading, v.Name)
+		m.mu.Unlock()
+		return fmt.Errorf("current child changed before replacement start")
+	}
+	if m.versionStartBlockedLocked(v.Name) {
+		delete(m.downloading, v.Name)
+		m.mu.Unlock()
+		slog.Info("version replacement deferred while previous child is draining", "version", v.Name)
+		return nil
 	}
 	m.mu.Unlock()
 	preflight, err := preflightChildWithAdminProbeContext(
@@ -1008,6 +1035,17 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 		delete(m.downloading, v.Name)
 		m.mu.Unlock()
 		return ErrHostDraining
+	}
+	if current, running := m.processes[v.Name]; !running || current != old {
+		delete(m.downloading, v.Name)
+		m.mu.Unlock()
+		return fmt.Errorf("current child changed before replacement start")
+	}
+	if m.versionStartBlockedLocked(v.Name) {
+		delete(m.downloading, v.Name)
+		m.mu.Unlock()
+		slog.Info("version replacement deferred while previous child is draining", "version", v.Name)
+		return nil
 	}
 	newChild, startErr := m.newChild(ctx, v, sha, newBinPath, false)
 	if startErr != nil {
