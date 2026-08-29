@@ -2,6 +2,7 @@ package transport
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -437,6 +438,77 @@ func (c lineCollector) Write(p []byte) (int, error) {
 }
 
 const receiptOnlySSE = "data: {\"devshard_receipt\":{\"state_sig\":\"c2ln\",\"state_hash\":\"aGFzaA==\",\"nonce\":1,\"receipt\":\"cmVjZWlwdA==\",\"confirmed_at\":1000}}\n\n"
+
+const engineCoreErrorSSE = "data: {\"error\":{\"code\":500,\"message\":\"EngineCore encountered an issue\",\"type\":\"InternalServerError\"},\"id\":\"devshard-1-1\"}\n\n"
+
+func sseMetaWithFinish(t *testing.T, inferenceID uint64) string {
+	t.Helper()
+	tx := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: inferenceID}}}
+	b, err := DevshardTxsToBytes([]*types.DevshardTx{tx})
+	require.NoError(t, err)
+	raw, err := json.Marshal(map[string]any{"devshard_meta": DevshardMetaEvent{Mempool: b}})
+	require.NoError(t, err)
+	return "data: " + string(raw) + "\n\n"
+}
+
+type failAllWrites struct{ err error }
+
+func (w failAllWrites) Write([]byte) (int, error) { return 0, w.err }
+
+func TestParseSSE_ReadsMetaAfterErrorAndDone(t *testing.T) {
+	// Host order is receipt, OpenAI error envelope, [DONE], then
+	// devshard_meta with MsgFinishInference. The reader must not stop at
+	// [DONE] or a stream-write error: Finish is the signed miss artifact.
+	client := &HTTPClient{config: DefaultClientConfig()}
+	body := receiptOnlySSE + engineCoreErrorSSE + "data: [DONE]\n\n" + sseMetaWithFinish(t, 1)
+
+	result, err := client.parseSSEResponse(context.Background(), strings.NewReader(body), failAllWrites{err: errors.New("client gone")}, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Receipt)
+	require.True(t, userHasFinish(result.Mempool, 1), "devshard_meta after [DONE] must populate Finish")
+}
+
+func TestParseSSE_ErrorDoneEOFWithoutMetaHasNoFinish(t *testing.T) {
+	// Stream ended after the error envelope with no meta. There is no signed
+	// artifact; the gateway must not treat this as an error-miss.
+	client := &HTTPClient{config: DefaultClientConfig()}
+	body := receiptOnlySSE + engineCoreErrorSSE + "data: [DONE]\n\n"
+
+	result, err := client.parseSSEResponse(context.Background(), strings.NewReader(body), nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Receipt)
+	require.False(t, userHasFinish(result.Mempool, 1))
+	require.Empty(t, result.Mempool)
+}
+
+func TestParseSSE_CancelledContextKeepsMetaTail(t *testing.T) {
+	// If the attempt context is cancelled as the body closes, a complete
+	// devshard_meta tail is still a successful response. Dropping it would
+	// lose MsgFinishInference and produce no_finish_tx votes.
+	client := &HTTPClient{config: DefaultClientConfig()}
+	body := receiptOnlySSE + engineCoreErrorSSE + "data: [DONE]\n\n" + sseMetaWithFinish(t, 1)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := client.parseSSEResponse(ctx, strings.NewReader(body), nil, nil)
+	require.NoError(t, err)
+	require.True(t, userHasFinish(result.Mempool, 1))
+}
+
+func userHasFinish(txs []*types.DevshardTx, nonce uint64) bool {
+	for _, tx := range txs {
+		if tx == nil {
+			continue
+		}
+		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == nonce {
+			return true
+		}
+	}
+	return false
+}
 
 func TestParseSSE_CancelledContextReportsCancellation(t *testing.T) {
 	// A cancelled attempt (client disconnect, race resolved, drain) can see the

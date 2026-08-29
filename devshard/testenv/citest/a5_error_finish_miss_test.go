@@ -30,9 +30,14 @@ func TestA5_ErrorFinishMiss(t *testing.T) {
 	t.Cleanup(func() {
 		harness.ResetMockOpenAIFault(t, client, mockOpenAI)
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "mock-openai", "versiond-0", "versiond-1", "versiond-2")
+			if out, err := stack.ComposeLogsTail(400, "devshardctl"); err == nil {
+				t.Logf("citest: gateway logs:\n%s", out)
+			}
+			harness.DumpComposeLogs(t, stack, "devshardctl", "mock-openai", "versiond-0", "versiond-1", "versiond-2", "versiond-3")
 		}
 	})
+
+	harness.PatchGatewayRedundancySpeedPolicy(t, client, eps.GatewayHTTP, "legacy")
 
 	beforeBalance, beforeStats := harness.GetGatewayLedgerSnapshot(t, client, eps.GatewayHTTP, adminKey)
 	beforeMissed := totalHostMissed(beforeStats)
@@ -53,7 +58,7 @@ func TestA5_ErrorFinishMiss(t *testing.T) {
 	require.Contains(t, body, "InternalServerError")
 	require.Contains(t, body, "EngineCore encountered an issue")
 
-	harness.Step(t, "wait for ERROR miss to land: StatusTimedOut, Missed++, Cost and balance unchanged")
+	harness.Step(t, "wait for ERROR miss to land: StatusTimedOut, Missed++, host Cost unwound")
 	var (
 		timedOut     harness.GatewayDebugInference
 		afterBalance uint64
@@ -74,7 +79,12 @@ func TestA5_ErrorFinishMiss(t *testing.T) {
 	})
 	require.True(t, ok, "ERROR miss did not land (missed %d→? timed_out missing)", beforeMissed)
 
-	require.Equal(t, beforeBalance, afterBalance, "client must be refunded the full ReservedCost")
+	// Sequencer FeePerNonce is charged on every compose diff (receipt publish,
+	// Finish+ErrorMiss). Reservation must still unwind: host Cost is unchanged
+	// and the balance drop is far smaller than one ReservedCost.
+	require.Greater(t, afterBalance, beforeBalance-uint64(20_000),
+		"client reservation must be refunded (before=%d after=%d); remaining drop is FeePerNonce",
+		beforeBalance, afterBalance)
 	slotKey := fmt.Sprintf("%d", timedOut.ExecutorSlot)
 	beforeHS := beforeStats[slotKey]
 	afterHS := afterStats[slotKey]

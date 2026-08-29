@@ -3869,12 +3869,19 @@ func (e *Redundancy) processInflightOnce(inf *inflight) error {
 // attempt later completes successfully on the protocol layer.
 func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, winnerNonce uint64, opts raceFinishOptions) error {
 	// Process all responses first so Session has complete protocol state.
+	// Pin error-stream Finishes immediately: ProcessResponse queues them in
+	// pending, and a height-sync heartbeat can composeDiff them as a normal
+	// Finish before HandleErrorMiss runs — the inference then looks finished
+	// and is sampled for validation instead of missed.
 	for _, inf := range attempts {
 		if err := e.processInflightOnce(inf); err != nil {
 			logInferenceStage(ctx, inf.escrowID, inf.nonce, "process_response_failed", "host", inf.hostID, "error", err)
 			if errors.Is(err, types.ErrStateHashMismatch) {
 				e.maybeRecordEscrowStateDivergence(ctx, inf, fmt.Errorf("apply diff nonce %d: post_state_root does not match computed state root: %w", inf.nonce, err))
 			}
+		}
+		if errorMissEnabledFor(inf) {
+			e.session.PinPendingFinish(inf.nonce)
 		}
 	}
 
@@ -3962,6 +3969,9 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 		for _, inf := range failed {
 			func(inf *inflight) {
 				defer inf.releaseErrorStreamRetention()
+				if errorMissEnabledFor(inf) {
+					defer e.session.UnpinPendingFinish(inf.nonce)
+				}
 				if inf.probe {
 					logInferenceStage(ctx, inf.escrowID, inf.nonce, "poc_probe_failed_no_timeout", "host", inf.hostID, "poc_reason", currentPoCPhaseReason())
 					return
@@ -4056,6 +4066,9 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 				for _, inf := range failed {
 					func(inf *inflight) {
 						defer inf.releaseErrorStreamRetention()
+						if errorMissEnabledFor(inf) {
+							defer e.session.UnpinPendingFinish(inf.nonce)
+						}
 						if inf.probe {
 							logInferenceStage(bgCtx, inf.escrowID, inf.nonce, "poc_probe_failed_no_timeout", "host", inf.hostID, "poc_reason", currentPoCPhaseReason())
 							return

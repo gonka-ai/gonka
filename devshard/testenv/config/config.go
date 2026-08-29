@@ -440,6 +440,17 @@ func PrimaryModelID(c *File) string {
 	return DefaultModelID
 }
 
+// onChainHostCount is the number of distinct validator identities. In multi
+// mode hosts[1] is the HA replica of hosts[0] (same KEY_NAME) and does not
+// occupy an escrow slot.
+func (c *File) onChainHostCount() int {
+	n := len(c.Hosts)
+	if c.Versiond.Mode == VersiondModeMulti && n >= 2 {
+		return n - 1
+	}
+	return n
+}
+
 // Validate enforces invariants gencompose and mock-chain rely on.
 func (c *File) Validate() error {
 	if c.ChainID == "" {
@@ -448,9 +459,9 @@ func (c *File) Validate() error {
 	if len(c.Hosts) == 0 {
 		return errors.New("at least one host is required")
 	}
-	if c.Escrow.Slots < len(c.Hosts) {
-		return fmt.Errorf("escrow.slots (%d) must be >= number of hosts (%d)",
-			c.Escrow.Slots, len(c.Hosts))
+	if c.Escrow.Slots < c.onChainHostCount() {
+		return fmt.Errorf("escrow.slots (%d) must be >= number of on-chain host identities (%d)",
+			c.Escrow.Slots, c.onChainHostCount())
 	}
 	for i, h := range c.Hosts {
 		if strings.TrimSpace(h.Address) == "" {

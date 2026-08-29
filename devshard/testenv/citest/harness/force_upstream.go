@@ -69,6 +69,36 @@ func PatchGatewayForceUpstreamStreaming(t *testing.T, client *http.Client, gatew
 		"force_upstream_streaming not applied: %s", string(raw))
 }
 
+// PatchGatewayRedundancySpeedPolicy sets redundancy.speed_policy (legacy / hybrid / pairwise).
+func PatchGatewayRedundancySpeedPolicy(t *testing.T, client *http.Client, gatewayURL, policy string) {
+	t.Helper()
+	if client == nil {
+		client = GatewayChatClient()
+	}
+	body := map[string]any{
+		"redundancy": map[string]any{
+			"speed_policy": policy,
+		},
+	}
+	data, err := json.Marshal(body)
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, gatewayURL+"/v1/admin/settings", bytes.NewReader(data))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+TestenvAdminAPIKey)
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	raw, _ := io.ReadAll(resp.Body)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "POST /v1/admin/settings: %s", string(raw))
+
+	var got map[string]any
+	require.NoError(t, json.Unmarshal(raw, &got))
+	red, _ := got["redundancy"].(map[string]any)
+	require.NotNil(t, red, "admin settings response missing redundancy")
+	require.Equal(t, policy, red["speed_policy"], "speed_policy not applied: %s", string(raw))
+}
+
 // PatchComposeAggregateByteLimits inserts GATEWAY_AGGREGATE_* byte caps on
 // devshardctl. Caller must RecreateServices(t, "devshardctl") for them to take effect.
 func PatchComposeAggregateByteLimits(t *testing.T, composePath string, maxMemoryBytes, maxResponseBytes int64) {

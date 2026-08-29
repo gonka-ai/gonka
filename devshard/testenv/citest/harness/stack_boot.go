@@ -25,17 +25,18 @@ func BootStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	return stack, cfg, stack.Endpoints(t, cfg)
 }
 
-// BootErrorMissStack is a three-host stack. Three hosts are required so the
-// two non-executor verifiers can exceed VoteThreshold (factor 50 → threshold 1;
-// the executor cannot vote).
+// BootErrorMissStack is HA pair + two solos (4 containers, 3 escrow slots).
+// Three distinct identities are required so two non-executor verifiers can
+// exceed VoteThreshold (need weight > 1). A 3-container stack is only two
+// identities (HA+solo), so the solo cannot vote a miss against the HA.
 func BootErrorMissStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()
 	stack := NewStack(t, prefix)
 	RequireLinuxDevshardd(t, stack.TestenvDir)
-	WriteMultiConfig(t, stack.WorkDir, MultiConfigOpts{Hosts: 3, EscrowSlots: 3})
+	WriteMultiConfig(t, stack.WorkDir, MultiConfigOpts{Hosts: 4, EscrowSlots: 3})
 	stack.RunGencompose(t)
 	cfg := stack.LoadConfig(t)
-	requireThreeVersiondHosts(t, cfg)
+	requireFourVersiondHosts(t, cfg)
 	stack.Up(t)
 	return stack, cfg, stack.Endpoints(t, cfg)
 }

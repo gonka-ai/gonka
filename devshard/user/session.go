@@ -908,6 +908,18 @@ func (s *Session) pinPendingFinish(inferenceID uint64) {
 	s.pinnedFinishIDs[inferenceID]++
 }
 
+// PinPendingFinish holds a pending MsgFinishInference out of composeDiff so a
+// concurrent heartbeat or catch-up cannot apply it as a normal Finish before
+// HandleErrorMiss. Safe to call when no Finish is pending.
+func (s *Session) PinPendingFinish(inferenceID uint64) {
+	s.pinPendingFinish(inferenceID)
+}
+
+// UnpinPendingFinish releases a pin taken with PinPendingFinish.
+func (s *Session) UnpinPendingFinish(inferenceID uint64) {
+	s.unpinPendingFinish(inferenceID)
+}
+
 func (s *Session) unpinPendingFinish(inferenceID uint64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -2653,6 +2665,19 @@ func (s *Session) HandleErrorMiss(ctx context.Context, nonce uint64, finishTx, r
 	logFields := func(extra ...any) []any {
 		base := []any{"escrow", s.escrowID, "nonce", nonce, "host", hostID}
 		return append(base, extra...)
+	}
+
+	// ConfirmStart is queued from the receipt but often not composed yet.
+	// VerifyErrorMiss rejects Pending as no_finish_tx (Started/Finished only),
+	// and pairwise AB can leave a second nonce in flight so no heartbeat
+	// drains the receipt first. Publish catch-up while the Finish stays pinned.
+	st := s.sm.SnapshotState()
+	if rec, ok := st.Inferences[nonce]; !ok {
+		return result, fmt.Errorf("error miss inference %d not found", nonce)
+	} else if rec.Status == types.StatusPending {
+		if err := s.SendPendingDiff(ctx); err != nil {
+			return result, fmt.Errorf("publish receipt before error miss: %w", err)
+		}
 	}
 
 	logging.Stage(ctx, "timeout_started", logFields("reason", result.Reason)...)

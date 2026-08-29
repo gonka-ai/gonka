@@ -1,6 +1,6 @@
 # Proposal: Account host/ML-node inference errors as a miss
 
-**Status:** Draft / proposal
+**Status:** Implemented (A5 citest green on the HTTP error-stream path)
 **Implementation:** [error-finish-miss-protocol-plan.md](../error-finish-miss-protocol-plan.md)
 
 This is the protocol design. Step-by-step implementation lives in the plan
@@ -9,11 +9,15 @@ linked above.
 **Encoding.** Error-miss is not a timeout. The classifier treats a signed
 Finish over an error envelope as a miss (including content-then-error and
 host-reported `completion_tokens`), and treats unparseable `data:` JSON as a
-miss (junk cannot veto). On-chain message is `MsgErrorMiss { inference_id,
-votes[] }` with no payload; the hash is re-derived from `rec.ResponseHash`
-after Finish. Vote RPC is `POST .../verify-error-miss`. `TimeoutReason` keeps
-`reserved 3` / `"TIMEOUT_REASON_ERROR"` so the abandoned first encoding cannot
-return. Timeouts stay `REFUSED` / `EXECUTION` only. See plan §12.
+miss (junk cannot veto). There is no miss without that signed Finish: the
+gateway must keep reading the SSE through `devshard_meta`, and EOF with no
+Finish is ordinary `HandleTimeout`. Verifiers reject `StatusPending` as
+`no_finish_tx`, so `HandleErrorMiss` publishes ConfirmStart (Finish pinned)
+before votes. On-chain message is `MsgErrorMiss { inference_id, votes[] }`
+with no payload; the hash is re-derived from `rec.ResponseHash` after Finish.
+Vote RPC is `POST .../verify-error-miss`. `TimeoutReason` keeps `reserved 3` /
+`"TIMEOUT_REASON_ERROR"` so the abandoned first encoding cannot return.
+Timeouts stay `REFUSED` / `EXECUTION` only. See plan §12.
 
 ---
 
@@ -102,8 +106,11 @@ So the deadline is absent on **both** sides:
   not read `RefusalTimeout`, `ExecutionTimeout`, or `TimeoutBuffer`. Reviewers
   should treat any wall-clock gate added here as a bug.
 - **Gateway:** `HandleErrorMiss` (not a branch of `HandleTimeout`) skips
-  `sleepUntilDeadlineWithHeartbeat` and goes straight to collecting error-miss
-  votes. End-to-end latency is one round of verifier RPCs plus one diff.
+  `sleepUntilDeadlineWithHeartbeat`. If the record is still `Pending`, it
+  publishes the queued ConfirmStart first (Finish stays pinned) so verifiers
+  see `Started`; then it collects error-miss votes. That extra receipt diff is
+  catch-up, not a deadline. End-to-end latency is at most one receipt compose
+  plus one round of verifier RPCs plus the Finish+ErrorMiss diff.
 
 Why this matters beyond latency:
 
@@ -346,8 +353,15 @@ ML node        Executor host          Gateway            Verifier hosts
    |             input_tokens, output_tokens,                 |
    |             proposer_sig }                                |
    |                |                   |                     |
-   |                |  [2] devshard_meta SSE event (mempool)   |
-   |                |------------------>|                     |
+   |                |  [2] error envelope + [DONE], then      |
+   |                |      devshard_meta SSE (mempool Finish) |
+   |                |------------------>|  gateway keeps      |
+   |                |                   |  reading past the   |
+   |                |                   |  error to meta      |
+   |                |                   |                     |
+   |                |                   |  [2b] if StatusPending:|
+   |                |                   |  compose ConfirmStart |
+   |                |                   |  (Finish pinned)    |
    |                |                   |                     |
    |                |  [3] POST .../verify-error-miss          |
    |                |      {inference_id, finish_tx,           |
@@ -376,7 +390,8 @@ ML node        Executor host          Gateway            Verifier hosts
 | Step | Message | Direction | New? |
 | --- | --- | --- | --- |
 | 1 | `MsgFinishInference` | executor signs | existing, unchanged |
-| 2 | `devshard_meta` SSE event carrying the mempool | executor → gateway | existing (`transport/server.go:507`) |
+| 2 | error envelope, then `devshard_meta` with mempool Finish | executor → gateway | existing; gateway **must not** stop at `[DONE]` |
+| 2b | ConfirmStart catch-up diff if still `Pending` | gateway → hosts | existing compose; required so verifiers see `Started` |
 | 3 | `VerifyErrorMissRequest{finish_tx, response_payload}` | gateway → verifiers | **new** endpoint |
 | 4 | — | verifier, no outbound calls | new logic |
 | 5 | `VerifyErrorMissResponse` + `ErrorMissVote` | verifier → gateway | new vote content |
@@ -491,7 +506,12 @@ Note the signature: no `ctx`, no `executorClient`, no `payloadFetcher`, no
    `msg.EscrowId == state.EscrowID`, and `msg.ExecutorSlot == rec.ExecutorSlot`.
    The record must be `StatusStarted` (Finish not yet applied, the common case)
    or `StatusFinished`; if `StatusFinished`, also require
-   `msg.ResponseHash == rec.ResponseHash`.
+   `msg.ResponseHash == rec.ResponseHash`. **`StatusPending` is
+   `no_finish_tx`.** ConfirmStart is often still in the gateway pending queue
+   when the error stream ends; a verifier that has only `MsgStartInference`
+   cannot vote. The gateway must publish that receipt (same as execution
+   timeout) before `CollectErrorMissVotes`. OpenAI `data:` chunks are unsigned;
+   they are not a substitute for ConfirmStart or Finish.
 5. **Verify the executor `ProposerSig`** against `slotToAddress[rec.ExecutorSlot]`
    using the same logic as `applyFinishInference` (`state/machine.go:1170`).
    Export a thin `StateMachine.VerifyFinishProposerSig(msg)` helper rather than
@@ -521,7 +541,8 @@ Why this is sound with the gateway as courier:
 
 Ordering note: step 4 accepts `StatusStarted` because with gossip off the
 verifier usually has not applied the Finish yet — it arrives in the same diff
-that carries `MsgErrorMiss`. The strict `StatusFinished` requirement belongs in
+that carries `MsgErrorMiss`. It does **not** accept `Pending`: that is
+`no_finish_tx`, not a vote. The strict `StatusFinished` requirement belongs in
 `applyErrorMiss`, where the Finish has provably already been applied, not here.
 
 Content-then-error is in scope: the classifier accepts an error envelope after
@@ -663,18 +684,30 @@ All in `devshard/cmd/devshardctl` + `devshard/user/session.go`.
    nonce. Exception: run when `errorMissEnabledFor(inf)` (`errorTerminal`) even
    if the nonce finished. `runHandleTimeout(errorMiss)` calls `HandleErrorMiss`,
    not `HandleTimeout`.
-2. **`HandleErrorMiss`**, not a reason branch of `HandleTimeout`. Today the
+2. **Keep reading the SSE body through `devshard_meta`.** After a terminal
+   error envelope (and `[DONE]`), `parseSSEResponse` must not stop. The host
+   still emits `devshard_meta` with the signed Finish. Stopping at the error
+   leaves `inf.resp.Mempool` empty, `errorMissRunnable` false, and the path
+   never votes. OpenAI `data:` chunks are unsigned; only
+   `MsgFinishInference.ProposerSig` over `sha256(stored body)` is evidence.
+3. **No Finish → no miss.** If the stream ends at EOF with no signed Finish,
+   do **not** call `HandleErrorMiss`. `no_finish_tx` is not evidence. Fall
+   back to ordinary `HandleTimeout` (refusal / execution deadline).
+4. **`HandleErrorMiss`**, not a reason branch of `HandleTimeout`. Today the
    execution path sees a pending Finish and returns early after publishing it.
    For an error attempt: **do not** early-return, and **do not** call
    `sleepUntilDeadlineWithHeartbeat` — no `RefusalTimeout`, no `ExecutionTimeout`,
-   no `TimeoutBuffer`. Go straight to collecting error-miss votes. Timeout path
-   stays refused/execution only.
-3. **Same-diff composition.** Pin the pending Finish (and any ErrorMiss already
-   queued for that nonce) for the vote round so a concurrent compose cannot drain
-   them. Pass `MsgErrorMiss` into the same locked compose as `extraTxs` after
-   that Finish — do not enqueue ErrorMiss into the shared pending queue first.
-   Append order puts Finish ahead of ErrorMiss.
-4. **Forward the artifacts — both required.** `verify-error-miss` (not
+   no `TimeoutBuffer`. If the record is still `Pending`, publish ConfirmStart
+   first (`SendPendingDiff`, Finish pinned) so verifiers see `Started`; then
+   collect error-miss votes. Timeout path stays refused/execution only.
+5. **Same-diff composition.** Pin the pending Finish (and any ErrorMiss already
+   queued for that nonce) as soon as `ProcessResponse` queues it, and again
+   for the vote round, so a height-sync heartbeat or unrelated `composeDiff`
+   cannot apply it as a normal Finish (validation would then sample it). Pass
+   `MsgErrorMiss` into the same locked compose as `extraTxs` after that Finish
+   — do not enqueue ErrorMiss into the shared pending queue first. Append
+   order puts Finish ahead of ErrorMiss.
+6. **Forward the artifacts — both required.** `verify-error-miss` (not
    verify-timeout) carries:
    - `finish_tx`, from `inf.resp.Mempool` (the `devshard_meta` tail the gateway
      already parses for `HasMsgFinish`) or from `pendingTxs`;
@@ -684,26 +717,26 @@ All in `devshard/cmd/devshardctl` + `devshard/user/session.go`.
 
    With gossip off these are the verifiers' only sources, so a round missing
    either collects zero accepts.
-5. **Retain the full error body.** `inf.errorBodySample` is capped by
+7. **Retain the full error body.** `inf.errorBodySample` is capped by
    `bodySampleForLog` and cannot be used to rebuild the payload. Capture the
    attempt's complete `data:` line set — verbatim as the host emitted them (post
    id-injection, pre `rewriteStreamingPayload`), excluding `devshard_receipt` /
    `devshard_meta`. Bound the retention (`maxErrorStreamBytes`) so this does not
    become a memory sink on the happy path.
-6. **Fix the local finished view.** `nonceStates[n].finished` is set from
+8. **Fix the local finished view.** `nonceStates[n].finished` is set from
    `HasMsgFinish`, so gateway-local `IsNonceFinished` would still report finished
    after an accepted error miss, disagreeing with chain state. Clear it when
    `MsgErrorMiss` applies, so `completeAccountingRequest` and the debug/stats
    views do not bill a timed-out inference.
-7. **Retire the exemption TODO** in `recordPostContentWinnerFailureOnce`.
+9. **Retire the exemption TODO** in `recordPostContentWinnerFailureOnce`.
    Keep gateway *perf/quarantine* scoring decoupled from the on-chain miss —
    the miss is the protocol penalty, quarantine remains a latency/health
    signal — but make that a deliberate, commented decision instead of the
    "until hosts submit Finish for errors" placeholder, which this change resolves.
-8. **Client response unchanged.** `hostApplicationError` still surfaces with its
-   original status/body. Only accounting changes. Emit is always on, gated by
-   `errorTerminal` (retriable capability 4xx stay off). Content before the error
-   still emits.
+10. **Client response unchanged.** `hostApplicationError` still surfaces with its
+    original status/body. Only accounting changes. Emit is always on, gated by
+    `errorTerminal` (retriable capability 4xx stay off). Content before the error
+    still emits.
 
 ## Rollout: ship as a new approved version
 
@@ -859,6 +892,8 @@ Verifier (`devshard/host`, `devshard/transport`):
 - `finish_tx` naming a different inference or escrow → reject.
 - Record already `StatusFinished` and `msg.ResponseHash != rec.ResponseHash` →
   reject.
+- Record still `StatusPending` → reject (`no_finish_tx`). Gateway must publish
+  ConfirmStart first; this is not a verifier workaround.
 - **Round-trip determinism:** payload rebuilt from the host's emitted lines by
   the gateway hashes equal to the executor's `ResponseHash` for the exact
   EngineCore case. This is the test that protects the whole scheme from a
@@ -867,8 +902,16 @@ Verifier (`devshard/host`, `devshard/transport`):
 Gateway (`devshard/cmd/devshardctl`):
 
 - Error-stream attempt end to end: client still gets the original error status
-  and body, one diff carries Finish + `MsgErrorMiss`, `Missed == 1`, request is
-  not billed as finished.
+  and body, Finish + `MsgErrorMiss` share a diff (after any ConfirmStart
+  catch-up), `Missed == 1`, request is not billed as finished.
+- **Keep-reading:** SSE with error + `[DONE]` + `devshard_meta` Finish lands
+  on `resp.Mempool`; error + `[DONE]` + EOF with no meta does **not** vote a
+  miss (`TestParseSSE_ReadsMetaAfterErrorAndDone`,
+  `TestParseSSE_ErrorDoneEOFWithoutMetaHasNoFinish`,
+  `TestErrorMissRunnable_RequiresSignedFinish`).
+- **ConfirmStart before votes:** start from `StatusPending` with ConfirmStart
+  still pending; real `VerifyErrorMiss` accepts only after the gateway
+  publishes the receipt (`TestHandleErrorMiss_PublishesConfirmStartBeforeVotes`).
 - **No-wait assertion:** run with a realistic `ExecutionTimeout` (e.g. `32*60`,
   not the `1`s the existing proxy tests use at `proxy_test.go:709`) and assert the
   miss is applied in well under a second. Existing timeout tests pass only because
@@ -877,6 +920,21 @@ Gateway (`devshard/cmd/devshardctl`):
   → no `MsgErrorMiss`. (There is no env flag to silence emit.)
 - Insufficient votes → today's behaviour, request still fails cleanly.
 
-E2E (`devshard/testenv/citest`): mock-openai fault returning `200` + SSE error
-envelope (companion to the existing `a2_ml_upstream_5xx_test.go` which covers the
-HTTP 5xx case). Assert `Missed` on the executor slot and no validation job.
+E2E (`devshard/testenv/citest` `TestA5_ErrorFinishMiss`): mock-openai fault
+returning `200` + SSE error envelope (companion to
+`a2_ml_upstream_5xx_test.go`, which covers HTTP 5xx). Assert `Missed` on the
+executor slot, host `Cost` unwound, no validation job.
+
+Citest topology is part of the vote, not optional fixture colour:
+
+- Multi-mode `hosts[0]+hosts[1]` share a key, so a 3-container stack is only
+  **two** identities. VoteThreshold needs `weight > 1`; the solo cannot vote a
+  miss against the HA. Boot **4 containers / 3 slots / 3 identities**.
+  `config.Validate()` compares slots to on-chain identities, not container
+  count.
+- Set `speed_policy=legacy` for this test. Hybrid always pairwise-AB-samples
+  until it has 4 direct comparisons, which opens extra nonces the original A5
+  assertions (one miss, one reservation) do not cover.
+- Do **not** require byte-equal session balance. `FeePerNonce` is charged on
+  the extra compose diffs (receipt publish, Finish+ErrorMiss). Assert Cost
+  unwind and that the balance drop is far smaller than one `ReservedCost`.

@@ -37,7 +37,8 @@ func BootAdversarialStack(t *testing.T, prefix string) (*Stack, *config.File, En
 	return stack, cfg, eps
 }
 
-// BootErrorMissAdversarialStack boots a 3-host stack for error-finish-miss votes.
+// BootErrorMissAdversarialStack boots HA + two solos so error-finish-miss
+// votes from two non-executor identities exceed VoteThreshold.
 func BootErrorMissAdversarialStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()
 	stack, cfg, eps := BootErrorMissStack(t, prefix)
