@@ -63,6 +63,27 @@ wait_for_postgres() {
     fail "PostgreSQL did not become ready"
 }
 
+seed_probe() {
+    local table=$1
+    local value=$2
+    local _
+    shift 2
+    local -a compose=("$@")
+    local sql="CREATE TABLE IF NOT EXISTS $table (value text PRIMARY KEY); INSERT INTO $table VALUES ('$value') ON CONFLICT DO NOTHING;"
+
+    # pg_isready can succeed immediately before a transient server restart.
+    # Confirm readiness with the idempotent write the fixture actually needs.
+    for _ in {1..10}; do
+        if "${compose[@]}" exec -T "$service" psql \
+            -U devshardd -d devshardd -v ON_ERROR_STOP=1 \
+            -c "$sql" >/dev/null 2>&1; then
+            return 0
+        fi
+        sleep 1
+    done
+    fail "PostgreSQL did not remain ready for fixture setup"
+}
+
 mkdir -p "$GONKA_POSTGRES_TEST_DATA" \
     "$GONKA_POSTGRES_TEST_EXISTING/v4" \
     "$GONKA_POSTGRES_TEST_VERSIOND_DATA" \
@@ -72,11 +93,7 @@ printf 'existing v4 installation\n' \
 
 "${old_compose[@]}" up -d "$service"
 wait_for_postgres "${old_compose[@]}"
-"${old_compose[@]}" exec -T "$service" psql \
-    -U devshardd -d devshardd -v ON_ERROR_STOP=1 \
-    -c "CREATE TABLE migration_probe (value text NOT NULL);" \
-    -c "INSERT INTO migration_probe VALUES ('preserved-v4-row');" \
-    >/dev/null
+seed_probe migration_probe preserved-v4-row "${old_compose[@]}"
 
 old_container=$("${old_compose[@]}" ps -q "$service")
 old_volume=$(docker inspect "$old_container" --format \
@@ -139,11 +156,8 @@ printf 'existing v4 installation\n' \
 
 "${guard_old_compose[@]}" up -d "$service"
 wait_for_postgres "${guard_old_compose[@]}"
-"${guard_old_compose[@]}" exec -T "$service" psql \
-    -U devshardd -d devshardd -v ON_ERROR_STOP=1 \
-    -c "CREATE TABLE detached_volume_probe (value text NOT NULL);" \
-    -c "INSERT INTO detached_volume_probe VALUES ('recovered-v4-row');" \
-    >/dev/null
+seed_probe detached_volume_probe recovered-v4-row \
+    "${guard_old_compose[@]}"
 guard_old_container=$("${guard_old_compose[@]}" ps -q "$service")
 guard_old_volume=$(docker inspect "$guard_old_container" --format \
     '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}')
