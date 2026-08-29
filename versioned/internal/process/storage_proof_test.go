@@ -11,6 +11,9 @@ import (
 
 func TestStorageProofAggregatesEveryRunningChild(t *testing.T) {
 	mgr := NewManager(config.Config{BasePort: 5000})
+	if _, err := mgr.StorageIdentity(t.Context()); err == nil {
+		t.Fatal("StorageIdentity() succeeded before any child was running")
+	}
 	addStorageProofChild(t, mgr, "v4", "database-1", true)
 	addStorageProofChild(t, mgr, "v5", "database-1", true)
 
