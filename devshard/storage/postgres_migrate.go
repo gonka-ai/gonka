@@ -194,7 +194,7 @@ CREATE TABLE IF NOT EXISTS devshard_storage_identity (
 INSERT INTO devshard_storage_identity (singleton, identity)
 VALUES (
     TRUE,
-    md5(current_database() || clock_timestamp()::text || random()::text)::uuid
+    gen_random_uuid()
 )
 ON CONFLICT (singleton) DO NOTHING`},
 	},
