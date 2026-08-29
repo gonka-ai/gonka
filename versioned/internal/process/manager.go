@@ -1801,6 +1801,11 @@ type storageInitCandidate struct {
 }
 
 func (m *Manager) resolveStorageInitCandidates(desired map[string]oracle.Version) map[storageInitCandidate]struct{} {
+	select {
+	case <-m.storageInitDone:
+		return nil
+	default:
+	}
 	expected := make(map[storageInitCandidate]struct{}, len(desired))
 	for name, version := range desired {
 		artifact := ""
