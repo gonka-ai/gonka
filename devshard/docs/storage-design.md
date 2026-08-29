@@ -467,12 +467,20 @@ down after boot.
 - `devshard_storage_identity.identity` is a durable database-lineage marker.
   Copies restored from one backup retain the same marker, so equality alone is
   not proof that two hosts currently share a database.
-- Each devshard process also writes a unique token to
-  `devshard_connection_lineage` before serving. Every connection subsequently
-  created by its application pool must observe that token and report a writable
-  primary before pgx admits it. A DNS or load-balancer endpoint may therefore
-  expose multiple addresses for one logical writer, but it cannot silently mix
-  independent writable clones within one child pool.
+- Each devshard process also holds a unique session-scoped PostgreSQL advisory
+  fence before serving. Every connection subsequently created by its application
+  pool must observe that fence in `pg_locks` and report a writable primary before
+  pgx admits it. Advisory locks are not WAL-replicated, so a promoted fork does
+  not inherit the fence. A DNS or load-balancer endpoint may expose multiple
+  addresses for one logical writer, but it cannot silently mix independent
+  writable branches within one child pool. Losing the fence session is
+  fail-closed for new connections; restoring service on a promoted writer
+  requires restarting the child so it establishes a fresh fence.
+- The PostgreSQL endpoint remains responsible for cluster-level writer fencing:
+  it must expose at most one writable primary for a logical database. The
+  advisory fence prevents one child pool from crossing branches, and the live
+  challenge detects divergent children when deployment preflight runs; neither
+  mechanism elects a PostgreSQL primary or replaces database-layer consensus.
 - HA deployment preflight obtains a stable generation snapshot from each
   versiond replica. For every HA-routed child generation across those snapshots,
   it writes a unique random nonce through that one child's application pool and
