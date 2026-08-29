@@ -1,6 +1,8 @@
 package testutil
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -18,11 +20,22 @@ const TestMaxTokens = completionapi.MinTokensFloor
 
 var deterministicMarshal = proto.MarshalOptions{Deterministic: true}
 
-// TestPrompt is exactly 100 bytes and includes max_tokens:64 (the MinTokensFloor)
-// so host workload checks (input_length == len(prompt), body max_tokens <= declared,
-// declared >= floor) pass with the StartTx defaults below.
-var TestPrompt = []byte(`{"model":"llama","messages":[{"role":"user","content":"xxxxxxxxxxxxxxxxxxxxxxxxx"}],"max_tokens":64}`)
+// TestPrompt is exactly 100 bytes and embeds TestMaxTokens so host workload
+// checks (input_length == len(prompt), body max_tokens <= declared, declared
+// >= floor) pass with the StartTx defaults below.
+var TestPrompt = mustTestPrompt(TestMaxTokens)
 var TestPromptHash = mustCanonicalPromptHash(TestPrompt)
+
+func mustTestPrompt(maxTokens uint64) []byte {
+	const total = 100
+	prefix := `{"model":"llama","messages":[{"role":"user","content":"`
+	suffix := fmt.Sprintf(`"}],"max_tokens":%d}`, maxTokens)
+	n := total - len(prefix) - len(suffix)
+	if n < 1 {
+		panic("testutil: TestPrompt cannot stay 100 bytes at this MinTokensFloor")
+	}
+	return []byte(prefix + strings.Repeat("x", n) + suffix)
+}
 
 func mustCanonicalPromptHash(prompt []byte) [32]byte {
 	h, err := devshard.CanonicalPromptHash(prompt)

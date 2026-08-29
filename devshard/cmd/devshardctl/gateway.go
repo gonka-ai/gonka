@@ -1417,6 +1417,12 @@ func (g *Gateway) handlePooledModels(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// gatewayStatusPhaseNotFound is the pooled /v1/status phase when no runtime is
+// registered. Keep HTTP 200: the process is healthy (compose healthchecks use
+// this path). Do not emit an empty escrow_id — callers treat the key as "a
+// session exists".
+const gatewayStatusPhaseNotFound = "not_found"
+
 func (g *Gateway) handlePooledStatus(w http.ResponseWriter, r *http.Request) {
 	g.refreshCapacityScale()
 	g.mu.Lock()
@@ -1433,13 +1439,21 @@ func (g *Gateway) handlePooledStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	models := g.statusModels(runtimes)
 	modelRuntimeStatuses := g.gatewayModelRuntimeStatuses(runtimes)
-	writeJSON(w, map[string]any{
+	body := map[string]any{
 		"mode":      "gateway",
 		"devshards": statuses,
 		"limiter":   g.limiter.SnapshotWithModelCapacities(g.limiterModelCapacities(models, modelRuntimeStatuses)),
 		"capacity":  g.capacityStatus(models, modelRuntimeStatuses),
 		"runtimes":  len(runtimes),
-	})
+	}
+	if len(runtimes) == 0 {
+		body["phase"] = gatewayStatusPhaseNotFound
+		body["error"] = map[string]any{
+			"message": "no active escrow",
+			"type":    gatewayStatusPhaseNotFound,
+		}
+	}
+	writeJSON(w, body)
 }
 
 func (g *Gateway) handleSingleOnly(w http.ResponseWriter, r *http.Request) {
@@ -2243,11 +2257,30 @@ func gatewayStatusCodeForError(err error) int {
 	if errors.As(err, &admissionErr) {
 		return http.StatusServiceUnavailable
 	}
+	if u := transport.UndeclaredVersionFromError(err); u != nil {
+		return http.StatusServiceUnavailable
+	}
 	var upstreamErr *transport.UpstreamStatusError
 	if errors.As(err, &upstreamErr) && isParticipantThrottleStatus(upstreamErr.StatusCode) {
 		return http.StatusTooManyRequests
 	}
 	return http.StatusBadGateway
+}
+
+func writeGatewayError(w http.ResponseWriter, err error) {
+	if u := transport.UndeclaredVersionFromError(err); u != nil {
+		code := strings.TrimSpace(u.DevshardError)
+		if code == "" {
+			code = transport.DevshardErrorUndeclaredVersion
+		}
+		w.Header().Set(transport.HeaderDevshardError, code)
+		router := strings.TrimSpace(u.RouterError)
+		if router == "" {
+			router = transport.DevshardErrorUndeclaredVersion
+		}
+		w.Header().Set(transport.HeaderDevshardRouterError, router)
+	}
+	writeGatewayJSONError(w, gatewayStatusCodeForError(err), err.Error())
 }
 
 func isParticipantRateLimitError(err error) bool {

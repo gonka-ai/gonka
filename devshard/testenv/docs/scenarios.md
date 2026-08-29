@@ -180,7 +180,8 @@ while other versions sticky-hash across the `versiond-pool` members (and get
 
 **Pass criteria:** governance admission creates a working multi-host dynamic
 pool, then the explicit non-HA pin constrains that same route to one host.
-See `devshard/docs/pr-1366-deploy-test-plan.md` §3.2.
+See `devshard/docs/v5-deploy-test-plan.md` (v4 nginx dummy-`v1` probes in
+`v4-deploy-test-plan.md` §1.6 do not apply to HAProxy).
 
 ---
 
@@ -205,24 +206,30 @@ reuse the old route without satisfying admission again.
 
 ## SQLite → Devshard-Ha fail → Postgres migrate → HA
 
-**What we test:** full §3.3 walkthrough from
-`devshard/docs/pr-1366-deploy-test-plan.md` (Phases 0–4).
+**What we test:** sqlite → Devshard-Ha 503 → postgres migrate → HA (v4
+§1.7 intent; v5 pin/catalog procedure in
+`devshard/docs/v5-deploy-test-plan.md`).
 
 **How:**
 
-1. Boot 2×versiond + Postgres compose patched to `DEVSHARD_STORAGE_MODE=sqlite`
-   and `GONKA_HA=""`; stop `versiond-1`, removing it from the DNS pool.
-2. **Phase 0:** NON_HA `v1` → `versiond_legacy`; HA `VersionName` → its
-   `versiond_pool_*` without multi-host `Devshard-Ha` (healthz 200 on sqlite).
-3. **Phase 1:** Gateway chat ×3; inventory `{data}/versiond-0/<version>/_meta.db`
-   (`escrow_epoch`).
-4. **Phase 2:** Set `GONKA_HA=true`; recreate router; start
-   `versiond-1`. HA `/<version>/healthz` → **503**; gateway chat fails; NON_HA
-   still legacy-pinned.
+1. Boot 2×versiond + Postgres compose patched to `DEVSHARD_STORAGE_MODE=sqlite`,
+   `GONKA_HA=""`, and `VERSIOND_NON_HA_VERSIONS` set to the running `VersionName`
+   (a real child, same pattern as `TestLegacyVersionPinnedToSingleHost`); stop
+   `versiond-1`. Do not pin a fictional `v1` — HAProxy L7-checks `/{version}/healthz`.
+2. **Phase 0:** assert `/{VersionName}/healthz` 200 and session probes hit
+   `versiond_legacy` / `versiond-0`. Pin at boot so the router is not recreated
+   while the gateway is seeding.
+3. **Phase 1:** Gateway chat ×3 while still pinned; inventory
+   `{data}/versiond-0/<version>/_meta.db` (`escrow_epoch`).
+4. **Phase 2:** Stop the gateway (router recreates otherwise persist a participant
+   quarantine). Unpin `VersionName`, set `GONKA_HA=true`, start `versiond-1`,
+   recreate the router once. HA `/<version>/healthz` → **503** with routing headers
+   (not catalog NOSRV).
 5. **Phase 3:** Patch `DEVSHARD_STORAGE_MODE=postgres`; recreate both versiond.
    Assert `*.migrated.*`, `.pg-bound`, and Postgres `devshard_session_index`
    matches the SQLite inventory.
-6. **Phase 4:** Gateway chat OK; sticky fan-out across hosts; NON_HA unchanged.
+6. **Phase 4:** Recreate the router (DNS) while the gateway is still down; start
+   the gateway; chat OK; sticky fan-out across hosts.
 
 **Pass criteria:** Multi-host + sqlite is rejected; migrate preserves escrow
 index; HA + postgres serves. Test: `TestSQLiteToPostgresHAMigration`.
@@ -484,7 +491,7 @@ persistence across the multi-host topology, not only mock-chain or gateway in-me
 |-------|---------|-----------|
 | gRPC transport | `make citest-grpc-transport` | G1–G4 ✅ ([`chain-transport-consolidation.md`](./chain-transport-consolidation.md)) |
 | Adversarial | `make citest-adversarial` | A1–A5 (fault injection on mock-openai / mock-chain) |
-| Observability | `make citest-observability` | O1 Jaeger + Loki + Prometheus smoke |
+| Observability | `make citest-observability` | O1 Jaeger + Loki + host histogram scrape (isolated overlay) |
 | Gateway smoke | `TESTENV_GATEWAY_SMOKE=1` | Phase 7 wiring without full citest tag |
 
 See [`README.md`](../README.md) for adversarial and observability detail.

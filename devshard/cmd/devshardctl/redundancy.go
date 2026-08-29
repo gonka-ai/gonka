@@ -3514,6 +3514,31 @@ func hostApplicationErrorFromAttempts(attempts []*inflight, winnerNonce uint64) 
 	return nil
 }
 
+func undeclaredVersionErrorFromAttempts(attempts []*inflight) *transport.UpstreamStatusError {
+	for _, inf := range attempts {
+		if inf == nil || inf.probe {
+			continue
+		}
+		if u := transport.UndeclaredVersionFromError(inf.err); u != nil {
+			return u
+		}
+	}
+	return nil
+}
+
+// clientVisibleAllAttemptsFailedError prefers an OpenAI-shaped host error,
+// then a router catalog miss so the client can retry instead of treating
+// boot-window 503s as a generic 502.
+func clientVisibleAllAttemptsFailedError(attempts []*inflight, winnerNonce uint64) error {
+	if hostErr := hostApplicationErrorFromAttempts(attempts, winnerNonce); hostErr != nil {
+		return hostErr
+	}
+	if undeclared := undeclaredVersionErrorFromAttempts(attempts); undeclared != nil {
+		return undeclared
+	}
+	return nil
+}
+
 // inflightFinished checks the raw response for MsgFinishInference.
 // Used during the race loop before ProcessResponse has been called.
 // Non-probe attempts that completed the chain protocol but produced no
@@ -4016,14 +4041,14 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 				e.recordHandleTimeoutResult(ctx, inf, params, result, err, errorMiss, "timeout_failed")
 			}(inf)
 		}
-		if hostErr := hostApplicationErrorFromAttempts(attempts, winnerNonce); hostErr != nil {
-			captureAllAttemptsFailedRequest(ctx, e.devshardID, params, hostErr)
-			logRequestStage(ctx, "request_failed", "escrow", e.devshardID, "error", hostErr)
+		if failErr := clientVisibleAllAttemptsFailedError(attempts, winnerNonce); failErr != nil {
+			captureAllAttemptsFailedRequest(ctx, e.devshardID, params, failErr)
+			logRequestStage(ctx, "request_failed", "escrow", e.devshardID, "error", failErr)
 			e.recordGatewayRequestOutcome(params.Model, "failed", gatewayRequestFailureReason(failed))
 			e.completeAccountingRequest(ctx, 0, decision, "failed")
 			e.logRequestSettled(ctx, 0, decision, "failed")
 			e.checkEscrowMissing(ctx, attempts)
-			return hostErr
+			return failErr
 		}
 		errMsg := "inference: no non-probe attempt finished"
 		if opts.forceTreatAsFailure && anySucceeded {

@@ -288,7 +288,13 @@ curl -sG 'http://127.0.0.1:13101/loki/api/v1/query_range' \
 curl -sf http://127.0.0.1:18080/v2/metrics | grep devshardd_request_duration_seconds | head
 ```
 
-**Automated O1 citest:**
+**Automated O1 citest** uses a **copy** of this overlay in the stack workdir:
+bind-mounted empty `./data/{jaeger,loki,…}` (not the named `testenv_*_data`
+volumes), random host ports (discovered with `docker compose port`), Promtail
+kept to this compose project, Loki queried with `{compose_project=…}`, and
+histogram samples scraped **inside each versiond host** (`wget /{version}/metrics`).
+Sticky `GET {router}/{version}/metrics` can land on the idle replica and omit
+`HistogramVec` names until the first Observe.
 
 ```bash
 make citest-observability

@@ -104,16 +104,16 @@ func TestE2E_TimeoutProtocolEndToEnd(t *testing.T) {
 // Test flow:
 //  1. Start the three-host environment with persistent SQLite volumes and the
 //     slot 1 stub executor configured to hang after its receipt is accepted.
-//  2. Reduce only gateway response waiting so the stalled request is cancelled
-//     while the protocol still uses the escrow-bound execution timeout.
-//  3. Send a non-streaming completion and assert it fails after slot 1 returns
-//     its executor receipt but does not complete execution.
-//  4. Wait for the execution deadline and assert inference 1 becomes timed
-//     out with TIMEOUT_REASON_EXECUTION and threshold-sufficient votes.
-//  5. Assert the timeout transaction is persisted and the executor receives a
+//  2. Shorten the post-winner speculative wait so the hanging primary is
+//     cancelled quickly and HandleTimeout can start. Always-stream first-token
+//     escalation still fails over to another host, so the client gets a
+//     completion while nonce 1 remains started-without-Finish on slot 1.
+//  3. Wait for the escrow-bound execution deadline and assert inference 1
+//     becomes timed out with TIMEOUT_REASON_EXECUTION and threshold-sufficient
+//     votes.
+//  4. Assert the timeout transaction is persisted and the executor receives a
 //     missed-host count.
-//  6. Restart slot 1 without the hang, continue the session, and finalize
-//     successfully.
+//  5. Restart slot 1, continue the session, and finalize successfully.
 func TestE2E_ExecutionTimeoutProtocolEndToEnd(t *testing.T) {
 	requireE2EEnabled(t)
 
@@ -137,15 +137,13 @@ func TestE2E_ExecutionTimeoutProtocolEndToEnd(t *testing.T) {
 
 	testutil.PostJSON(t, client, env.clientURL+"/v1/admin/settings", map[string]any{
 		"redundancy": map[string]any{
-			"non_stream_no_content_timeout_ms": 1000,
-			"non_stream_max_attempt_wait_ms":   5000,
-			"speed_policy":                     "legacy",
+			"secondary_wait_after_winner_ms": int64(500),
 		},
 	})
 
 	response := testutil.SendCompletionRaw(t, client, env.clientURL, "execution timeout protocol", testutil.AdminAPIKey)
-	testutil.LogRawResponse(t, "execution timeout stalled completion", response)
-	require.GreaterOrEqual(t, response.StatusCode, 500, "stalled execution should fail the gateway request")
+	testutil.LogRawResponse(t, "execution timeout failover completion", response)
+	testutil.RequireOpenAINonStreamingCompletion(t, response)
 
 	var timedOut map[string]any
 	timeoutApplied := assert.Eventually(t, func() bool {
@@ -155,7 +153,7 @@ func TestE2E_ExecutionTimeoutProtocolEndToEnd(t *testing.T) {
 		}
 		timedOut = inference
 		return true
-	}, 30*time.Second, time.Second, "started inference should become execution timed out")
+	}, 40*time.Second, time.Second, "started inference should become execution timed out")
 	require.True(t, timeoutApplied, "started inference should become execution timed out")
 	require.Equal(t, uint64(executorSlot), testutil.NumericField(t, timedOut, "executor_slot"))
 	require.NotZero(t, testutil.NumericField(t, timedOut, "confirmed_at"),

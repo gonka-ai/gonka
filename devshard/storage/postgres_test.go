@@ -16,17 +16,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
 	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
-)
 
-func postgresContainerWaitStrategy() wait.Strategy {
-	return wait.ForAll(
-		wait.ForLog("database system is ready to accept connections").
-			WithOccurrence(2),
-		wait.ForListeningPort("5432/tcp"),
-	).WithStartupTimeout(60 * time.Second)
-}
+	"devshard/storage/pgtest"
+)
 
 // setupPostgresContainer spins a fresh PG container per test and points the
 // pgx env vars at it. Mirrors the pattern from
@@ -45,14 +37,7 @@ func startPostgresContainer(t *testing.T) testcontainers.Container {
 	}
 
 	ctx := context.Background()
-	container, err := postgres.Run(ctx,
-		"postgres:18.1-bookworm",
-		postgres.WithDatabase("testdb"),
-		postgres.WithUsername("testuser"),
-		postgres.WithPassword("testpass"),
-		testcontainers.WithWaitStrategy(postgresContainerWaitStrategy()),
-	)
-	require.NoError(t, err)
+	container := pgtest.MustStart(t, ctx)
 
 	host, err := container.Host(ctx)
 	require.NoError(t, err)

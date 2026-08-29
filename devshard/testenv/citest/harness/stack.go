@@ -30,6 +30,10 @@ type Stack struct {
 	ComposePath   string
 	Timeout       time.Duration
 	Observability bool
+	// ComposeProject is the docker compose project label. Empty uses the
+	// workdir basename (Compose default). Observability citest sets this so
+	// Promtail only ships this stack's containers.
+	ComposeProject string
 }
 
 // Endpoints are host-published URLs for health probes.
@@ -57,11 +61,12 @@ func NewStack(t *testing.T, prefix string) *Stack {
 	t.Cleanup(func() { _ = os.RemoveAll(workDir) })
 
 	return &Stack{
-		WorkDir:     workDir,
-		TestenvDir:  testenvDir,
-		ConfigPath:  filepath.Join(workDir, "config.yaml"),
-		ComposePath: filepath.Join(workDir, "docker-compose.yml"),
-		Timeout:     defaultStackTimeout,
+		WorkDir:        workDir,
+		TestenvDir:     testenvDir,
+		ConfigPath:     filepath.Join(workDir, "config.yaml"),
+		ComposePath:    filepath.Join(workDir, "docker-compose.yml"),
+		Timeout:        defaultStackTimeout,
+		ComposeProject: strings.ToLower(filepath.Base(workDir)),
 	}
 }
 
@@ -118,6 +123,13 @@ func (s *Stack) Endpoints(t *testing.T, cfg *config.File) Endpoints {
 	return eps
 }
 
+// RouterHTTP is the host-published versiond-router URL. Use this when the
+// gateway is stopped (`Endpoints` also queries devshardctl).
+func (s *Stack) RouterHTTP(t *testing.T) string {
+	t.Helper()
+	return "http://" + s.composePublishedAddr(t, "versiond-router", 8080)
+}
+
 // MockChainEndpoints reads Docker-assigned host ports for a mock-chain-only stack.
 func (s *Stack) MockChainEndpoints(t *testing.T, cfg *config.File) Endpoints {
 	t.Helper()
@@ -136,6 +148,7 @@ func (s *Stack) composePublishedAddr(t *testing.T, service string, targetPort in
 	args = append(args, "port", service, strconv.Itoa(targetPort))
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = s.WorkDir
+	cmd.Env = s.composeEnv()
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "docker compose port %s %d\n%s", service, targetPort, out)
 	raw := strings.TrimSpace(string(out))
@@ -175,13 +188,25 @@ func (s *Stack) UpWithObservability(t *testing.T, cfg *config.File) {
 func (s *Stack) composeFileArgs() []string {
 	args := []string{"-f", s.ComposePath}
 	if s.Observability {
-		args = append(args, "-f", filepath.Join(s.TestenvDir, "docker-compose.observability.yml"))
+		overlay := filepath.Join(s.WorkDir, "docker-compose.observability.yml")
+		if _, err := os.Stat(overlay); err != nil {
+			overlay = filepath.Join(s.TestenvDir, "docker-compose.observability.yml")
+		}
+		args = append(args, "-f", overlay)
 		ipOverride := filepath.Join(s.WorkDir, "docker-compose.observability.ip.yml")
 		if _, err := os.Stat(ipOverride); err == nil {
 			args = append(args, "-f", ipOverride)
 		}
 	}
 	return args
+}
+
+func (s *Stack) composeEnv() []string {
+	env := append(os.Environ(), "COMPOSE_HTTP_TIMEOUT=300")
+	if s.ComposeProject != "" {
+		env = append(env, "COMPOSE_PROJECT_NAME="+s.ComposeProject)
+	}
+	return env
 }
 
 func (s *Stack) composeUp(t *testing.T, build bool, services []string) {
@@ -199,7 +224,7 @@ func (s *Stack) composeUp(t *testing.T, build bool, services []string) {
 	args = append(args, services...)
 	up := exec.CommandContext(ctx, "docker", args...)
 	up.Dir = s.WorkDir
-	up.Env = append(os.Environ(), "COMPOSE_HTTP_TIMEOUT=300")
+	up.Env = s.composeEnv()
 	out, err := up.CombinedOutput()
 	if err != nil {
 		DumpComposeLogs(t, s)
@@ -222,6 +247,7 @@ func (s *Stack) Down(t *testing.T) {
 	)
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = s.WorkDir
+	cmd.Env = s.composeEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Logf("docker compose cleanup: %v\n%s", err, out)
@@ -235,6 +261,7 @@ func (s *Stack) StopService(t *testing.T, service string) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "docker", append(append([]string{"compose"}, s.composeFileArgs()...), "stop", service)...)
 	cmd.Dir = s.WorkDir
+	cmd.Env = s.composeEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker compose stop %s: %v\n%s", service, err, out)
@@ -264,6 +291,7 @@ func (s *Stack) StopServiceGracefully(service string, grace time.Duration) (Serv
 	args = append(args, "stop", "--timeout", strconv.Itoa(graceSeconds), service)
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = s.WorkDir
+	cmd.Env = s.composeEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return ServiceStopResult{}, fmt.Errorf("docker compose stop %s: %w: %s", service, err, out)
@@ -282,6 +310,7 @@ func (s *Stack) StartService(t *testing.T, service string) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "docker", append(append([]string{"compose"}, s.composeFileArgs()...), "start", service)...)
 	cmd.Dir = s.WorkDir
+	cmd.Env = s.composeEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker compose start %s: %v\n%s", service, err, out)
@@ -295,6 +324,7 @@ func (s *Stack) PauseService(t *testing.T, service string) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "docker", append(append([]string{"compose"}, s.composeFileArgs()...), "pause", service)...)
 	cmd.Dir = s.WorkDir
+	cmd.Env = s.composeEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker compose pause %s: %v\n%s", service, err, out)
@@ -308,6 +338,7 @@ func (s *Stack) UnpauseService(t *testing.T, service string) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "docker", append(append([]string{"compose"}, s.composeFileArgs()...), "unpause", service)...)
 	cmd.Dir = s.WorkDir
+	cmd.Env = s.composeEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker compose unpause %s: %v\n%s", service, err, out)
@@ -348,6 +379,7 @@ func (s *Stack) ComposeLogsTail(tail int, services ...string) (string, error) {
 	args = append(args, services...)
 	cmd := exec.Command("docker", args...)
 	cmd.Dir = s.WorkDir
+	cmd.Env = s.composeEnv()
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -374,6 +406,7 @@ func (s *Stack) ServiceRunning(service string) (bool, error) {
 func (s *Stack) runningServices() (map[string]struct{}, error) {
 	cmd := exec.Command("docker", append(append([]string{"compose"}, s.composeFileArgs()...), "ps", "--status", "running", "--format", "{{.Service}}")...)
 	cmd.Dir = s.WorkDir
+	cmd.Env = s.composeEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("docker compose ps: %w: %s", err, out)

@@ -16,12 +16,57 @@ const (
 	nonInferenceRetryInitial = 50 * time.Millisecond
 )
 
-// IsUndeclaredVersionError reports a versiond-router catalog miss. The
-// participant never saw the request; it is not a host throttle.
-func IsUndeclaredVersionError(body string) bool {
+// IsUndeclaredVersionError reports a versiond-router catalog miss. Used to
+// classify the error for clients and retries. Status must be 503 — a host
+// must not look like a catalog miss by putting the phrase in some other body.
+//
+// Quarantine skipping is NOT this function: see SkipCatalogQuarantine.
+func IsUndeclaredVersionError(statusCode int, body, devshardError string) bool {
+	if statusCode != http.StatusServiceUnavailable {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(devshardError), DevshardErrorUndeclaredVersion) {
+		return true
+	}
 	b := strings.ToLower(body)
 	return strings.Contains(b, "not present in the governance routing catalog") ||
 		strings.Contains(b, "not declared in versiond_versions")
+}
+
+// SkipCatalogQuarantine is the limiter exemption for a router-generated
+// undeclared-version 503. It applies only to non-inference paths (height-sync
+// seed, heartbeat, …). /chat/completions always records the 503 as a host
+// fault, even when the router stamped X-Devshard-Router-Error: a host must
+// not buy inference-path immunity, and chat is one-shot so it is not the
+// seed retry loop that produced (0/0).
+//
+// Only X-Devshard-Router-Error counts. X-Devshard-Error and the body phrase
+// are host-spoofable and do not skip quarantine.
+func SkipCatalogQuarantine(path string, statusCode int, routerError string) bool {
+	if isInferencePath(path) {
+		return false
+	}
+	if statusCode != http.StatusServiceUnavailable {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(routerError), DevshardErrorUndeclaredVersion)
+}
+
+// UndeclaredVersionFromError returns the upstream 503 catalog miss wrapped in
+// err, or nil if err is not that class of failure.
+func UndeclaredVersionFromError(err error) *UpstreamStatusError {
+	var status *UpstreamStatusError
+	if !errors.As(err, &status) {
+		return nil
+	}
+	if IsUndeclaredVersionError(status.StatusCode, status.Body, status.DevshardError) {
+		return status
+	}
+	if status.StatusCode == http.StatusServiceUnavailable &&
+		strings.EqualFold(strings.TrimSpace(status.RouterError), DevshardErrorUndeclaredVersion) {
+		return status
+	}
+	return nil
 }
 
 func isInferencePath(path string) bool {
@@ -32,7 +77,12 @@ func isContextFinished(err error) bool {
 	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
-func isRetryableNonInference(err error) bool {
+// IsRetryableNonInference reports a 429/503 or transient dial that the
+// non-inference retry loop (and the height-sync seed) should retry. Context
+// cancellation and deadline expiry are not retryable: the caller already
+// decided to stop. Catalog 503s are retryable because they are 503s, not
+// because of their body.
+func IsRetryableNonInference(err error) bool {
 	if err == nil {
 		return false
 	}
@@ -41,17 +91,14 @@ func isRetryableNonInference(err error) bool {
 	}
 	var status *UpstreamStatusError
 	if errors.As(err, &status) {
-		if IsUndeclaredVersionError(status.Body) {
-			return true
-		}
 		return status.StatusCode == http.StatusTooManyRequests ||
 			status.StatusCode == http.StatusServiceUnavailable
 	}
 	return IsTransientWriteError(err)
 }
 
-func shouldObserveUpstreamStatus(statusCode int, body string) bool {
-	if IsUndeclaredVersionError(body) {
+func shouldObserveUpstreamStatus(path string, statusCode int, _, _, routerError string) bool {
+	if SkipCatalogQuarantine(path, statusCode, routerError) {
 		return false
 	}
 	return statusCode > 0

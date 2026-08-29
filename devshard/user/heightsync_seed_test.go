@@ -274,6 +274,45 @@ func TestSeed_Catalog503RetriesUntilDeadlineThenMisses(t *testing.T) {
 	require.Greater(t, hits.Load(), int32(1), "catalog 503 must retry until the seed deadline")
 }
 
+func TestSeed_InlineBudgetDoesNotStallInferenceAndStaysResumable(t *testing.T) {
+	// The inference path must not wait out the catalog-admission deadline: a
+	// seed miss only degrades to the unstamped-nonce-1 path. The seed is left
+	// unfinished so a later caller resumes the retry.
+	var hits atomic.Int32
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Error(w, "version v2 is not present in the governance routing catalog", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(ts.Close)
+
+	hostKey := testutil.MustGenerateKey(t)
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup([]*signing.Secp256k1Signer{hostKey})
+	config := testutil.DefaultConfig(1)
+	verifier := signing.NewSecp256k1Verifier()
+	cfg := transport.DefaultClientConfig()
+	cfg.RoutePrefix = "/"
+	cfg.QueryTimeout = 80 * time.Millisecond
+	cfg.HeightSyncPeerTips = transport.NewHeightSyncPeerTips()
+	client := transport.NewHTTPClient(ts.URL, "escrow-1", user, cfg)
+	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+	session, err := NewSession(userSM, user, "escrow-1", group, []HostClient{client}, verifier)
+	require.NoError(t, err)
+
+	start := time.Now()
+	prepared, err := session.PrepareInference(InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, prepared)
+	require.Less(t, time.Since(start), 30*time.Second,
+		"a pending catalog must not hold a chat for the full seed deadline")
+	require.Greater(t, hits.Load(), int32(1), "the inline budget still retries")
+	require.False(t, session.HeightSeedMissed(),
+		"an elapsed inline budget is not a terminal miss while the seed deadline stands")
+}
+
 func TestSeed_Catalog503ThenServingSucceeds(t *testing.T) {
 	env := setupSeedSession(t, []bool{true})
 	var hits atomic.Int32
@@ -302,5 +341,57 @@ func TestSeed_Catalog503ThenServingSucceeds(t *testing.T) {
 	h, ok := client.ObservedHeightNow()
 	require.True(t, ok)
 	require.Equal(t, uint64(55), h)
-	require.GreaterOrEqual(t, hits.Load(), int32(3))
+	require.GreaterOrEqual(t, hits.Load(), int32(4),
+		"3 one-shot retries until serving plus 1 post-quorum sweep")
+}
+
+func TestSeed_RetriesOnlyMissingThenSweepsAll(t *testing.T) {
+	// Slot 0 serves immediately. Slots 1 and 2 503 until later hits. Retry
+	// rounds must skip slot 0; once 2/3 quorum is reached the leftover slot
+	// is attempted once more as part of a full-roster sweep, not until it
+	// itself succeeds.
+	env := setupSeedSession(t, []bool{true, true, true})
+	var hits [3]atomic.Int32
+	clients := make([]HostClient, 3)
+	const catalog503 = "version v2 is not present in the governance routing catalog"
+	for i := 0; i < 3; i++ {
+		i := i
+		inner := env.slots[i].server.Config.Handler
+		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			n := hits[i].Add(1)
+			switch i {
+			case 0:
+				inner.ServeHTTP(w, r)
+			case 1:
+				if n < 3 {
+					http.Error(w, catalog503, http.StatusServiceUnavailable)
+					return
+				}
+				inner.ServeHTTP(w, r)
+			default:
+				if n < 5 {
+					http.Error(w, catalog503, http.StatusServiceUnavailable)
+					return
+				}
+				inner.ServeHTTP(w, r)
+			}
+		}))
+		t.Cleanup(proxy.Close)
+		cfg := transport.DefaultClientConfig()
+		cfg.RoutePrefix = seedTestRoutePrefix
+		cfg.QueryTimeout = 2 * time.Second
+		cfg.HeightSync = heightsync.MustNewAnchorScheduler(10, 3, heightsync.NewPeerTipOracleSource(env.peerTips, env.peerTips.Freshness))
+		cfg.HeightSyncPeerTips = env.peerTips
+		clients[i] = transport.NewHTTPClient(proxy.URL, "escrow-1", env.session.signer, cfg)
+	}
+	env.session.clients = clients
+
+	env.session.SeedHeightSync(context.Background())
+	require.False(t, env.session.HeightSeedMissed())
+	require.Equal(t, int32(2), hits[0].Load(),
+		"already-seeded slot is skipped on retry rounds and hit once more on the post-quorum sweep")
+	require.Equal(t, int32(4), hits[1].Load(),
+		"slot 1: 3 attempts to succeed + 1 sweep")
+	require.Equal(t, int32(4), hits[2].Load(),
+		"slot 2 keeps retrying until quorum, then one sweep, not until it itself succeeds")
 }

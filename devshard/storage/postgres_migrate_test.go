@@ -9,10 +9,9 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"devshard/storage/migrate"
+	"devshard/storage/pgtest"
 )
 
 type postgresPartitionDDLTracer struct {
@@ -49,14 +48,7 @@ func setupDevshardPostgresPool(t *testing.T, tracer pgx.QueryTracer) (*pgxpool.P
 	}
 
 	ctx := context.Background()
-	container, err := postgres.Run(ctx,
-		"postgres:18.1-bookworm",
-		postgres.WithDatabase("testdb"),
-		postgres.WithUsername("testuser"),
-		postgres.WithPassword("testpass"),
-		testcontainers.WithWaitStrategy(postgresContainerWaitStrategy()),
-	)
-	require.NoError(t, err)
+	container := pgtest.MustStart(t, ctx)
 
 	host, err := container.Host(ctx)
 	require.NoError(t, err)

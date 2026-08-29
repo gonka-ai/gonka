@@ -111,8 +111,11 @@ func BootObservabilityStack(t *testing.T, prefix string) (*Stack, *config.File, 
 	stack.RunGencompose(t)
 	cfg := stack.LoadConfig(t)
 	requireTwoVersiondHosts(t, cfg)
+	started := time.Now()
 	stack.UpWithObservability(t, cfg)
-	return stack, cfg, stack.Endpoints(t, cfg), DefaultObservabilityEndpoints()
+	obs := stack.ObservabilityHostEndpoints(t)
+	obs.StartedAt = started
+	return stack, cfg, stack.Endpoints(t, cfg), obs
 }
 
 // WaitStackHealthy polls the chain, dapi, router, and gateway boundaries.

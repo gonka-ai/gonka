@@ -602,7 +602,7 @@ func TestServer_ChallengeReceipt_ReturnsRecoveryMempool(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 		Diffs: []DiffJSON{dj},

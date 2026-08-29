@@ -36,7 +36,11 @@ import (
 )
 
 const hsAnchorE2EEscrowID = "9001"
-const hsE2ERoutePrefix = "/devshard/v2"
+
+// hsE2ERoutePrefix tracks RuntimeTestVersion so the user session (which binds
+// SM version from the route) and host SMs (EffectiveStateRootAndProtocolVersion)
+// compute the same state root.
+var hsE2ERoutePrefix = testutil.TestRoutePrefix()
 
 func registerHeightSyncServer(g *echo.Group, srv *transport.Server) {
 	withAuth := func(recordChatTerminal bool, handler echo.HandlerFunc) echo.HandlerFunc {
@@ -275,7 +279,7 @@ func defaultInferenceParams() user.InferenceParams {
 		Model:       "llama",
 		Prompt:      testutil.TestPrompt,
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 		StartedAt:   1000,
 	}
 }

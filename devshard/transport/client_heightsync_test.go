@@ -2,8 +2,10 @@ package transport
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -77,7 +79,7 @@ func TestHTTPClient_Send_HeightSync_ProtobufRequestAndAudit(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	}, nil, nil)
@@ -156,12 +158,14 @@ func TestHTTPClient_Send_CourierLazyAnchorMarksPropagated(t *testing.T) {
 	require.True(t, peerTips.ShouldPropagateTo(ts.URL, 51))
 
 	ctx := context.Background()
-	plain := NewHTTPClient(ts.URL, "escrow-1", userSigner)
+	plainCfg := DefaultClientConfig()
+	plainCfg.RoutePrefix = testRoutePrefix
+	plain := NewHTTPClient(ts.URL, "escrow-1", userSigner, plainCfg)
 	payload := &host.InferencePayload{
 		Prompt:      testutil.TestPrompt,
 		Model:       "llama",
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 		StartedAt:   1000,
 	}
 	for n := uint64(1); n <= 4; n++ {
@@ -309,6 +313,27 @@ func TestHTTPClient_SeedHeightSync_RecordsOrigin(t *testing.T) {
 	obsH, ok := client.ObservedHeightNow()
 	require.True(t, ok)
 	require.Equal(t, uint64(55), obsH)
+}
+
+func TestHTTPClient_SeedHeightSync_DoesNotRetry503(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Error(w, "version v2 is not present in the governance routing catalog", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewHTTPClient(server.URL, "escrow-1", signer, ClientConfig{
+		QueryTimeout:       5 * time.Second,
+		RoutePrefix:        "/",
+		HeightSyncPeerTips: NewHeightSyncPeerTips(),
+	})
+	ok, err := client.SeedHeightSync(context.Background())
+	require.Error(t, err)
+	require.False(t, ok)
+	require.Equal(t, int32(1), hits.Load(),
+		"SeedHeightSync must not nest doPostRaw's 5s 429/503 retry")
 }
 
 func TestClient_ResponseAnchor_VerifiesOriginSignature(t *testing.T) {

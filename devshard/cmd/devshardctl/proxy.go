@@ -414,7 +414,6 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 			return
 		}
 		logRequestStage(r.Context(), "proxy_stream_failed", "escrow", p.escrowID, "error", err)
-		statusCode := gatewayStatusCodeForError(err)
 		var hostErr *hostApplicationError
 		if errors.As(err, &hostErr) {
 			if !dw.started {
@@ -441,7 +440,7 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 			return
 		}
 		if !dw.started {
-			writeGatewayJSONError(w, statusCode, err.Error())
+			writeGatewayError(w, err)
 			return
 		}
 		if dw.sawDone {
@@ -574,7 +573,7 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 			writeJSONPayload(w, hostErr.statusCode(), hostErr.jsonPayload())
 			return
 		}
-		writeGatewayJSONError(w, gatewayStatusCodeForError(err), err.Error())
+		writeGatewayError(w, err)
 		return
 	}
 

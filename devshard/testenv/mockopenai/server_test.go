@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -92,7 +93,8 @@ func TestChatCompletions_MaxTokensPadsDeterministicContent(t *testing.T) {
 	srv := newTestServer(t)
 	defer srv.Close()
 
-	body := []byte(`{"model":"test-model","max_tokens":64,"messages":[{"role":"user","content":"pad me"}]}`)
+	n := int(completionapi.MinTokensFloor)
+	body := []byte(fmt.Sprintf(`{"model":"test-model","max_tokens":%d,"messages":[{"role":"user","content":"pad me"}]}`, n))
 	resp, err := http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -103,7 +105,7 @@ func TestChatCompletions_MaxTokensPadsDeterministicContent(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &out))
 	content := out["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)["content"].(string)
 	require.True(t, strings.HasPrefix(content, "mock-openai:"))
-	require.Equal(t, 64, len([]rune(content)))
+	require.Equal(t, n, len([]rune(content)))
 }
 
 func TestChatCompletions_EmitsLogprobsWhenRequested(t *testing.T) {

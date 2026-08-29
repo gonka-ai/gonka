@@ -12,9 +12,14 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"devshard/transport"
 )
 
-const gatewayChatTimeout = 3 * time.Minute
+const (
+	gatewayChatTimeout           = 3 * time.Minute
+	gatewayChatReadyProbeTimeout = 45 * time.Second
+)
 
 // TestenvAdminAPIKey matches DEVSHARD_ADMIN_API_KEY in gencompose .env.
 const TestenvAdminAPIKey = "testenv-citest-admin"
@@ -171,13 +176,23 @@ func PostGatewayChatCompletionStream(t *testing.T, client *http.Client, gatewayU
 // Unlike PostGatewayChatCompletion it does not require HTTP 200.
 func PostGatewayChatHTTP(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) GatewayChatHTTPResult {
 	t.Helper()
+	result, err := postGatewayChatHTTP(client, gatewayURL, adminAPIKey, req)
+	require.NoError(t, err)
+	return result
+}
+
+func postGatewayChatHTTP(client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) (GatewayChatHTTPResult, error) {
 	if client == nil {
 		client = GatewayChatClient()
 	}
 	data, err := json.Marshal(req)
-	require.NoError(t, err)
+	if err != nil {
+		return GatewayChatHTTPResult{}, err
+	}
 	httpReq, err := http.NewRequest(http.MethodPost, gatewayURL+"/v1/chat/completions", bytes.NewReader(data))
-	require.NoError(t, err)
+	if err != nil {
+		return GatewayChatHTTPResult{}, err
+	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	if req.Stream {
 		httpReq.Header.Set("Accept", "text/event-stream")
@@ -186,16 +201,20 @@ func PostGatewayChatHTTP(t *testing.T, client *http.Client, gatewayURL, adminAPI
 		httpReq.Header.Set("Authorization", "Bearer "+adminAPIKey)
 	}
 	resp, err := client.Do(httpReq)
-	require.NoError(t, err)
+	if err != nil {
+		return GatewayChatHTTPResult{}, err
+	}
 	defer resp.Body.Close()
 	body, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
+	if err != nil {
+		return GatewayChatHTTPResult{}, err
+	}
 	return GatewayChatHTTPResult{
 		Status:      resp.StatusCode,
 		ContentType: resp.Header.Get("Content-Type"),
 		Body:        body,
 		Header:      resp.Header.Clone(),
-	}
+	}, nil
 }
 
 // ParseSSEDataChunks returns JSON payloads from SSE data: lines (excluding [DONE]).
@@ -280,7 +299,11 @@ func postGatewayJSON(client *http.Client, url, adminAPIKey string, payload, dest
 	return json.Unmarshal(body, dest)
 }
 
-// WaitGatewayChatReady polls /v1/status until the gateway has a routable devshard runtime.
+// WaitGatewayChatReady polls until the gateway has a runtime and a throwaway
+// /v1/chat/completions is no longer a router catalog miss (HTTP 503 with
+// X-Devshard-Error or X-Devshard-Router-Error undeclared_version). Any other
+// completion status ends the wait: the catalog has admitted the version, even
+// if the probe itself failed for a different reason.
 func WaitGatewayChatReady(t *testing.T, client *http.Client, gatewayURL string, timeout time.Duration, stack ...*Stack) {
 	t.Helper()
 	if client == nil {
@@ -289,7 +312,8 @@ func WaitGatewayChatReady(t *testing.T, client *http.Client, gatewayURL string, 
 	if timeout == 0 {
 		timeout = 3 * time.Minute
 	}
-	t.Logf("citest: waiting for gateway chat runtime → %s/v1/status", gatewayURL)
+	probeClient := &http.Client{Timeout: gatewayChatReadyProbeTimeout, Transport: client.Transport}
+	t.Logf("citest: waiting for gateway chat runtime → %s/v1/status then throwaway /v1/chat/completions", gatewayURL)
 	var attempts int
 	var lastDetail string
 	ok := assertEventually(t, timeout, 2*time.Second, func() bool {
@@ -299,11 +323,40 @@ func WaitGatewayChatReady(t *testing.T, client *http.Client, gatewayURL string, 
 			lastDetail = err.Error()
 			return false
 		}
-		if gatewayStatusHasRuntime(status) {
-			return true
+		if !gatewayStatusHasRuntime(status) {
+			lastDetail = fmt.Sprintf("no active runtime in status: %v", status)
+			return false
 		}
-		lastDetail = fmt.Sprintf("no active runtime in status: %v", status)
-		return false
+		model, err := firstGatewayModelID(client, gatewayURL)
+		if err != nil {
+			lastDetail = err.Error()
+			return false
+		}
+		if model == "" {
+			lastDetail = "gateway /v1/models returned no model id"
+			return false
+		}
+		result, err := postGatewayChatHTTP(probeClient, gatewayURL, TestenvAdminAPIKey, ChatCompletionRequest{
+			Model: model,
+			Messages: []ChatMessage{
+				{Role: "user", Content: "citest gateway chat ready probe"},
+			},
+			MaxTokens: 8,
+		})
+		if err != nil {
+			lastDetail = err.Error()
+			return false
+		}
+		if gatewayChatCatalogNotReady(result.Status, result.Header, result.Body) {
+			snippet := strings.TrimSpace(string(result.Body))
+			if len(snippet) > 240 {
+				snippet = snippet[:240]
+			}
+			lastDetail = fmt.Sprintf("HTTP %d undeclared_version: %s", result.Status, snippet)
+			maybeLogWaitAttempt(t, "gateway chat catalog", attempts, lastDetail)
+			return false
+		}
+		return true
 	})
 	if !ok {
 		if len(stack) > 0 && stack[0] != nil {
@@ -311,6 +364,34 @@ func WaitGatewayChatReady(t *testing.T, client *http.Client, gatewayURL string, 
 		}
 		t.Fatalf("citest: gateway chat runtime not ready after %d attempts: %s", attempts, lastDetail)
 	}
+}
+
+func firstGatewayModelID(client *http.Client, gatewayURL string) (string, error) {
+	var listed struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := GetJSON(client, gatewayURL+"/v1/models", &listed); err != nil {
+		return "", err
+	}
+	for _, m := range listed.Data {
+		if id := strings.TrimSpace(m.ID); id != "" {
+			return id, nil
+		}
+	}
+	return "", nil
+}
+
+func gatewayChatCatalogNotReady(status int, header http.Header, body []byte) bool {
+	if status != http.StatusServiceUnavailable {
+		return false
+	}
+	devshardError := header.Get(transport.HeaderDevshardRouterError)
+	if strings.TrimSpace(devshardError) == "" {
+		devshardError = header.Get(transport.HeaderDevshardError)
+	}
+	return transport.IsUndeclaredVersionError(status, string(body), devshardError)
 }
 
 func gatewayStatusHasRuntime(status map[string]any) bool {

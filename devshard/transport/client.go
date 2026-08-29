@@ -127,7 +127,7 @@ type RequestAdmissionController interface {
 }
 
 type requestAdmissionBodyObserver interface {
-	ObserveResultWithBody(participantKey, path string, statusCode int, body string)
+	ObserveResultWithBody(participantKey, path string, statusCode int, body, devshardError, routerError string)
 }
 
 // ErrSSEStreamTruncated is returned when an SSE inference stream ends (clean EOF)
@@ -186,6 +186,7 @@ type UpstreamStatusError struct {
 	StatusCode    int
 	Body          string
 	DevshardError string
+	RouterError   string
 }
 
 func (e *UpstreamStatusError) Error() string {
@@ -347,13 +348,28 @@ func (c *HTTPClient) cloneWithSigner(signer signing.Signer, timeout time.Duratio
 // post sends a signed POST request, marshaling req to JSON and unmarshaling into resp.
 // If resp is nil, the response body is discarded.
 func (c *HTTPClient) post(ctx context.Context, path string, timeout time.Duration, req, resp any) error {
+	return c.postJSON(ctx, path, timeout, req, resp, false)
+}
+
+// postOnce is post without the non-inference 429/503 retry. SeedHeightSync
+// owns its own retry loop and must not nest inside doPostRaw's 5s budget.
+func (c *HTTPClient) postOnce(ctx context.Context, path string, timeout time.Duration, req, resp any) error {
+	return c.postJSON(ctx, path, timeout, req, resp, true)
+}
+
+func (c *HTTPClient) postJSON(ctx context.Context, path string, timeout time.Duration, req, resp any, once bool) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	body, err := json.Marshal(req)
 	if err != nil {
 		return fmt.Errorf("marshal request: %w", err)
 	}
-	respBody, err := c.doPost(ctx, path, body)
+	var respBody []byte
+	if once {
+		respBody, err = c.doPostOnce(ctx, path, body)
+	} else {
+		respBody, err = c.doPost(ctx, path, body)
+	}
 	if err != nil {
 		return err
 	}
@@ -884,7 +900,8 @@ func (c *HTTPClient) GetMempool(ctx context.Context) ([]*types.DevshardTx, error
 // doPostRaw sends a signed POST request and returns the raw http.Response.
 // Caller is responsible for closing resp.Body. Non-inference 429/503 and
 // transient dial failures retry with exponential delay up to 5s; admission
-// sees only the last attempt (and never an undeclared-version catalog 503).
+// sees only the last attempt. A router undeclared-version 503 on a
+// non-inference path is not observed (SkipCatalogQuarantine).
 func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte, contentType ...string) (*http.Response, error) {
 	ct := "application/json"
 	if len(contentType) > 0 && contentType[0] != "" {
@@ -893,16 +910,23 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte, co
 	if isInferencePath(path) {
 		return c.doPostRawOnce(ctx, path, body, ct, true)
 	}
+	// Admission is per logical request, not per attempt: checking it inside the
+	// loop would burn one slot per retry. A rejection here is our own limiter
+	// decision, so it must not reach observeNonInferenceFinal -- reporting it as
+	// a host transport fault would quarantine the host we just throttled.
+	if err := c.allowRequest(path); err != nil {
+		return nil, err
+	}
 	deadline := nonInferenceRetryDeadline(ctx)
 	delay := nonInferenceRetryInitial
 	var lastRetryable error
 	for {
-		resp, err := c.doPostRawOnce(ctx, path, body, ct, false)
+		resp, err := c.postRawAttempt(ctx, path, body, ct, false)
 		if err == nil {
 			c.observeResult(path, http.StatusOK)
 			return resp, nil
 		}
-		if !isRetryableNonInference(err) {
+		if !IsRetryableNonInference(err) {
 			if lastRetryable != nil && isContextFinished(err) {
 				c.observeNonInferenceFinal(path, lastRetryable)
 				return nil, lastRetryable
@@ -932,10 +956,16 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte, co
 }
 
 func (c *HTTPClient) doPostRawOnce(ctx context.Context, path string, body []byte, contentType string, observe bool) (*http.Response, error) {
-	url := c.baseURL + c.routePrefix + path
 	if err := c.allowRequest(path); err != nil {
 		return nil, err
 	}
+	return c.postRawAttempt(ctx, path, body, contentType, observe)
+}
+
+// postRawAttempt is one signed POST with no admission check. Callers that may
+// retry admit once and then loop on this.
+func (c *HTTPClient) postRawAttempt(ctx context.Context, path string, body []byte, contentType string, observe bool) (*http.Response, error) {
+	url := c.baseURL + c.routePrefix + path
 
 	ts := time.Now().Unix()
 	sig, err := SignRequest(c.signer, c.escrowID, body, ts)
@@ -962,14 +992,17 @@ func (c *HTTPClient) doPostRawOnce(ctx context.Context, path string, body []byte
 	if resp.StatusCode != http.StatusOK {
 		respBody := readErrorBody(resp.Body)
 		resp.Body.Close()
-		if observe && shouldObserveUpstreamStatus(resp.StatusCode, respBody) {
-			c.observeResultWithBody(path, resp.StatusCode, respBody)
+		devshardError := resp.Header.Get(HeaderDevshardError)
+		routerError := resp.Header.Get(HeaderDevshardRouterError)
+		if observe && shouldObserveUpstreamStatus(path, resp.StatusCode, respBody, devshardError, routerError) {
+			c.observeResultWithBody(path, resp.StatusCode, respBody, devshardError, routerError)
 		}
 		return nil, &UpstreamStatusError{
 			Path:          path,
 			StatusCode:    resp.StatusCode,
 			Body:          respBody,
-			DevshardError: resp.Header.Get(HeaderDevshardError),
+			DevshardError: devshardError,
+			RouterError:   routerError,
 		}
 	}
 	if observe {
@@ -981,8 +1014,8 @@ func (c *HTTPClient) doPostRawOnce(ctx context.Context, path string, body []byte
 func (c *HTTPClient) observeNonInferenceFinal(path string, err error) {
 	var status *UpstreamStatusError
 	if errors.As(err, &status) {
-		if shouldObserveUpstreamStatus(status.StatusCode, status.Body) {
-			c.observeResultWithBody(path, status.StatusCode, status.Body)
+		if shouldObserveUpstreamStatus(path, status.StatusCode, status.Body, status.DevshardError, status.RouterError) {
+			c.observeResultWithBody(path, status.StatusCode, status.Body, status.DevshardError, status.RouterError)
 		}
 		return
 	}
@@ -999,22 +1032,36 @@ func (c *HTTPClient) doPost(ctx context.Context, path string, body []byte) ([]by
 	return io.ReadAll(resp.Body)
 }
 
+func (c *HTTPClient) doPostOnce(ctx context.Context, path string, body []byte) ([]byte, error) {
+	resp, err := c.doPostRawOnce(ctx, path, body, "application/json", true)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	return io.ReadAll(resp.Body)
+}
+
 // doGet sends a GET request and returns the response body.
 // No auth signing -- GET endpoints skip auth on the server side for now.
 func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
 	if isInferencePath(url) {
 		return c.doGetOnce(ctx, url, true)
 	}
+	// See doPostRaw: admit once per logical request, and never attribute a local
+	// limiter rejection to the host.
+	if err := c.allowRequest(url); err != nil {
+		return nil, err
+	}
 	deadline := nonInferenceRetryDeadline(ctx)
 	delay := nonInferenceRetryInitial
 	var lastRetryable error
 	for {
-		body, err := c.doGetOnce(ctx, url, false)
+		body, err := c.getAttempt(ctx, url, false)
 		if err == nil {
 			c.observeResult(url, http.StatusOK)
 			return body, nil
 		}
-		if !isRetryableNonInference(err) {
+		if !IsRetryableNonInference(err) {
 			if lastRetryable != nil && isContextFinished(err) {
 				c.observeNonInferenceFinal(url, lastRetryable)
 				return nil, lastRetryable
@@ -1047,6 +1094,11 @@ func (c *HTTPClient) doGetOnce(ctx context.Context, url string, observe bool) ([
 	if err := c.allowRequest(url); err != nil {
 		return nil, err
 	}
+	return c.getAttempt(ctx, url, observe)
+}
+
+// getAttempt is one GET with no admission check. See postRawAttempt.
+func (c *HTTPClient) getAttempt(ctx context.Context, url string, observe bool) ([]byte, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -1063,14 +1115,17 @@ func (c *HTTPClient) doGetOnce(ctx context.Context, url string, observe bool) ([
 
 	if resp.StatusCode != http.StatusOK {
 		respBody := readErrorBody(resp.Body)
-		if observe && shouldObserveUpstreamStatus(resp.StatusCode, respBody) {
-			c.observeResultWithBody(url, resp.StatusCode, respBody)
+		devshardError := resp.Header.Get(HeaderDevshardError)
+		routerError := resp.Header.Get(HeaderDevshardRouterError)
+		if observe && shouldObserveUpstreamStatus(url, resp.StatusCode, respBody, devshardError, routerError) {
+			c.observeResultWithBody(url, resp.StatusCode, respBody, devshardError, routerError)
 		}
 		return nil, &UpstreamStatusError{
 			Path:          url,
 			StatusCode:    resp.StatusCode,
 			Body:          respBody,
-			DevshardError: resp.Header.Get(HeaderDevshardError),
+			DevshardError: devshardError,
+			RouterError:   routerError,
 		}
 	}
 	if observe {
@@ -1093,12 +1148,12 @@ func (c *HTTPClient) observeResult(path string, statusCode int) {
 	c.config.Admission.ObserveResult(c.config.ParticipantKey, path, statusCode)
 }
 
-func (c *HTTPClient) observeResultWithBody(path string, statusCode int, body string) {
+func (c *HTTPClient) observeResultWithBody(path string, statusCode int, body, devshardError, routerError string) {
 	if c == nil || c.config.Admission == nil || strings.TrimSpace(c.config.ParticipantKey) == "" {
 		return
 	}
 	if observer, ok := c.config.Admission.(requestAdmissionBodyObserver); ok {
-		observer.ObserveResultWithBody(c.config.ParticipantKey, path, statusCode, body)
+		observer.ObserveResultWithBody(c.config.ParticipantKey, path, statusCode, body, devshardError, routerError)
 		return
 	}
 	c.config.Admission.ObserveResult(c.config.ParticipantKey, path, statusCode)

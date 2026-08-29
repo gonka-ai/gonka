@@ -166,7 +166,12 @@ Returns current session state.
 }
 ```
 
-Phase values: `active`, `finalizing`, `settlement`.
+Phase values: `active`, `finalizing`, `settlement`. With **zero** resident
+runtimes (last escrow retired, or none created yet) pooled `/v1/status` stays
+HTTP 200 — compose healthchecks use this path — and reports
+`phase: "not_found"` plus `error: { "type": "not_found", "message": "no active escrow" }`.
+It does **not** emit an empty `escrow_id`; callers treat that key as “a session
+exists”.
 
 `config` mirrors the session's frozen `SessionConfig`, including the paired seal-grace gates (`inference_seal_grace_nonces`, `inference_seal_grace_seconds`).
 

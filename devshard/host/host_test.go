@@ -696,7 +696,7 @@ func TestHost_PayloadMismatch_InputLengthWorkload(t *testing.T) {
 	h := newTestHost(t, 1, hosts, user, 10000, 10)
 
 	// Large prompt signed/reported with underreported input_length.
-	largePrompt := []byte(`{"model":"llama","messages":[{"role":"user","content":"A very large prompt / context goes here..."}],"max_tokens":64}`)
+	largePrompt := []byte(fmt.Sprintf(`{"model":"llama","messages":[{"role":"user","content":"A very large prompt / context goes here..."}],"max_tokens":%d}`, testutil.TestMaxTokens))
 	promptHash, err := devshard.CanonicalPromptHash(largePrompt)
 	require.NoError(t, err)
 	start := &types.MsgStartInference{
@@ -774,7 +774,7 @@ func TestVerifyPayloadWorkload_RejectsUnderReservedFloor(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrPayloadMismatch)
 	require.Contains(t, err.Error(), "below floor")
 
-	atFloor := []byte(`{"model":"llama","messages":[{"role":"user","content":"hi"}],"max_tokens":64}`)
+	atFloor := []byte(fmt.Sprintf(`{"model":"llama","messages":[{"role":"user","content":"hi"}],"max_tokens":%d}`, testutil.TestMaxTokens))
 	require.NoError(t, verifyPayloadWorkload(&InferencePayload{
 		Prompt:      atFloor,
 		Model:       "llama",

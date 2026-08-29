@@ -56,7 +56,7 @@ a real devshard runtime.
 | --- | --- | --- |
 | `/v1/chat/completions` | Pooled chat: validate, authorize, limit, choose runtime, forward | Covered |
 | `/devshard/{id}/v1/chat/completions` | Direct chat: select requested runtime, validate model, limit, forward | Covered |
-| `/v1/status` | Single runtime proxies status; multi-runtime returns aggregate gateway status | Multi-runtime covered |
+| `/v1/status` | Single runtime proxies status; multi-runtime returns aggregate; zero runtimes is HTTP 200 `phase=not_found` | Zero- and multi-runtime covered |
 | `/v1/models` | Lists configured gateway models and caps | Indirectly covered through model validation |
 | `/v1/admin/state` | Admin-only gateway state view with runtime snapshots and redacted inline keys | Covered |
 | `/v1/admin/settings` | Admin-only settings update/read path | Not covered by mockenv yet |
@@ -253,12 +253,15 @@ flowchart TD
     Count["count configured runtimes"]
     Single["single runtime"]
     Multi["multiple runtimes"]
+    None["zero runtimes"]
     Proxy["proxy status to the only runtime"]
     Aggregate["return gateway aggregate status"]
+    NotFound["HTTP 200 phase=not_found, no escrow_id"]
 
     Start --> Refresh --> Count
     Count -->|"1 runtime"| Single --> Proxy
-    Count -->|"0 or 2+ runtimes"| Multi --> Aggregate
+    Count -->|"2+ runtimes"| Multi --> Aggregate
+    Count -->|"0 runtimes"| None --> NotFound
 ```
 
 Mock coverage:
@@ -268,6 +271,7 @@ Mock coverage:
 | Multi-runtime status returns aggregate gateway status | `TestGatewayMockEnvMultiRuntimeStatusIsAggregate` |
 | Multi-runtime status does not proxy fake runtime handlers | `TestGatewayMockEnvMultiRuntimeStatusIsAggregate` |
 | Single-runtime status proxies runtime handler | `TestGatewayMockEnvSingleRuntimeStatusProxiesRuntime` |
+| Zero-runtime status is HTTP 200 `phase=not_found` | `TestGatewayMockEnvZeroRuntimeStatusIsNotFound` |
 
 ## Admin State Flow
 

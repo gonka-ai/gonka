@@ -36,19 +36,20 @@ func TestNormalizeChatRequestDefaultsAndCapsOutputTokens(t *testing.T) {
 	require.Contains(t, string(body), `"max_tokens":3072`)
 	require.NotContains(t, string(body), `"max_completion_tokens"`)
 
-	body, req, err = normalizeChatRequest([]byte(`{"max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`))
+	floor := completionapi.MinTokensFloor
+	body, req, err = normalizeChatRequest([]byte(fmt.Sprintf(`{"max_tokens":%d,"messages":[{"role":"user","content":"hello"}]}`, floor)))
 	require.NoError(t, err)
-	require.EqualValues(t, 64, req.MaxTokens)
+	require.EqualValues(t, floor, req.MaxTokens)
 	require.Zero(t, req.MaxCompletionTokens)
-	require.Contains(t, string(body), `"max_tokens":64`)
+	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, floor))
 	require.NotContains(t, string(body), `"max_completion_tokens"`)
 
-	body, req, err = normalizeChatRequest([]byte(`{"max_completion_tokens":64,"messages":[{"role":"user","content":"hello"}]}`))
+	body, req, err = normalizeChatRequest([]byte(fmt.Sprintf(`{"max_completion_tokens":%d,"messages":[{"role":"user","content":"hello"}]}`, floor)))
 	require.NoError(t, err)
-	require.EqualValues(t, 64, req.MaxTokens)
-	require.EqualValues(t, 64, req.MaxCompletionTokens)
-	require.Contains(t, string(body), `"max_tokens":64`)
-	require.Contains(t, string(body), `"max_completion_tokens":64`)
+	require.EqualValues(t, floor, req.MaxTokens)
+	require.EqualValues(t, floor, req.MaxCompletionTokens)
+	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, floor))
+	require.Contains(t, string(body), fmt.Sprintf(`"max_completion_tokens":%d`, floor))
 
 	body, req, err = normalizeChatRequest([]byte(`{"max_tokens":10001,"max_completion_tokens":20000,"messages":[{"role":"user","content":"hello"}]}`))
 	require.NoError(t, err)
@@ -57,12 +58,12 @@ func TestNormalizeChatRequestDefaultsAndCapsOutputTokens(t *testing.T) {
 	require.Contains(t, string(body), `"max_tokens":4096`)
 	require.Contains(t, string(body), `"max_completion_tokens":4096`)
 
-	body, req, err = normalizeChatRequest([]byte(`{"max_tokens":64,"max_completion_tokens":10000,"messages":[{"role":"user","content":"hello"}]}`))
+	body, req, err = normalizeChatRequest([]byte(fmt.Sprintf(`{"max_tokens":%d,"max_completion_tokens":10000,"messages":[{"role":"user","content":"hello"}]}`, floor)))
 	require.NoError(t, err)
-	require.EqualValues(t, 64, req.MaxTokens)
-	require.EqualValues(t, 64, req.MaxCompletionTokens)
-	require.Contains(t, string(body), `"max_tokens":64`)
-	require.Contains(t, string(body), `"max_completion_tokens":64`)
+	require.EqualValues(t, floor, req.MaxTokens)
+	require.EqualValues(t, floor, req.MaxCompletionTokens)
+	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, floor))
+	require.Contains(t, string(body), fmt.Sprintf(`"max_completion_tokens":%d`, floor))
 }
 
 func TestNormalizeChatRequestUsesProvidedOutputTokenLimits(t *testing.T) {
@@ -2383,13 +2384,15 @@ func TestNormalizeChatRequestThinkingTokenBudgetStrippedForOtherModelsEvenIfClie
 	require.NotContains(t, string(body), `thinking_token_budget`)
 }
 
-// The universal MinTokensFloor (64) dominates the Kimi max_tokens min (16): any value below the
-// floor is bumped to 64, so the Kimi-specific clamp is no longer separately observable here.
+// The universal MinTokensFloor dominates the Kimi max_tokens min (16): any value below the
+// floor is bumped to MinTokensFloor, so the Kimi-specific clamp is no longer separately observable here.
 func TestNormalizeChatRequestKimiMaxTokensClampedBelow(t *testing.T) {
+	floor := uint64(completionapi.MinTokensFloor)
+	above := floor + 36
 	for _, c := range []struct {
 		in, want uint64
 	}{
-		{1, 64}, {8, 64}, {16, 64}, {100, 100},
+		{1, floor}, {8, floor}, {16, floor}, {above, above},
 	} {
 		body := fmt.Sprintf(`{"messages":[{"role":"user","content":"x"}],"max_tokens":%d,"thinking_token_budget":0}`, c.in)
 		out, req, err := normalizeChatRequestForModel([]byte(body), kimiK26ModelID)
@@ -2406,8 +2409,8 @@ func TestNormalizeChatRequestKimiMaxCompletionTokensClampedBelow(t *testing.T) {
 		kimiK26ModelID,
 	)
 	require.NoError(t, err)
-	require.Contains(t, string(body), `"max_completion_tokens":64`)
-	require.EqualValues(t, 64, req.MaxTokens)
+	require.Contains(t, string(body), fmt.Sprintf(`"max_completion_tokens":%d`, completionapi.MinTokensFloor))
+	require.EqualValues(t, completionapi.MinTokensFloor, req.MaxTokens)
 }
 
 func TestNormalizeChatRequestMaxTokensFlooredForOtherModels(t *testing.T) {
@@ -2416,8 +2419,8 @@ func TestNormalizeChatRequestMaxTokensFlooredForOtherModels(t *testing.T) {
 		"some/other-model",
 	)
 	require.NoError(t, err)
-	require.Contains(t, string(body), `"max_tokens":64`)
-	require.EqualValues(t, 64, req.MaxTokens)
+	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, completionapi.MinTokensFloor))
+	require.EqualValues(t, completionapi.MinTokensFloor, req.MaxTokens)
 }
 
 // safety_identifier is forwarded to Kimi K2.6 (Moonshot consumes it for abuse tracking)

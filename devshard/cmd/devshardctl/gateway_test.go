@@ -20,6 +20,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 
+	"common/completionapi"
 	"devshard/bridge"
 	"devshard/internal/statetest"
 	"devshard/internal/testutil"
@@ -2328,11 +2329,52 @@ func TestParticipantRequestLimiterMarksParticipantExhaustedOn503(t *testing.T) {
 
 func TestParticipantRequestLimiterSkipsUndeclaredVersionCatalog503(t *testing.T) {
 	limiter := NewParticipantRequestLimiter(2, 10)
-	limiter.ObserveResultWithBody("shared-host", "/sessions/1/height-sync", http.StatusServiceUnavailable,
-		"version v2 is not present in the governance routing catalog")
+	limiter.ObserveResultWithBodyForModel("shared-host", "", "/sessions/1/height-sync",
+		http.StatusServiceUnavailable, "version v2 is not present in the governance routing catalog", "",
+		transport.DevshardErrorUndeclaredVersion)
 	require.False(t, limiter.IsBlocked("shared-host"))
 	require.Equal(t, 0, limiter.ExhaustedCount())
 	require.NoError(t, limiter.AllowRequest("shared-host", "/sessions/1/chat/completions"))
+}
+
+func TestParticipantRequestLimiterSkipsUndeclaredVersionHeader503(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(2, 10)
+	limiter.ObserveResultWithBodyForModel("shared-host", "", "/sessions/1/height-sync",
+		http.StatusServiceUnavailable, "busy", "", transport.DevshardErrorUndeclaredVersion)
+	require.False(t, limiter.IsBlocked("shared-host"))
+	require.Equal(t, 0, limiter.ExhaustedCount())
+}
+
+func TestParticipantRequestLimiterDoesNotSkipHostSpoofedUndeclaredHeaderOnSeed(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(2, 10)
+	limiter.ObserveResultWithBodyForModel("shared-host", "", "/sessions/1/height-sync",
+		http.StatusServiceUnavailable, "busy", transport.DevshardErrorUndeclaredVersion, "")
+	require.True(t, limiter.IsBlocked("shared-host"),
+		"X-Devshard-Error on seed must not skip quarantine; only X-Devshard-Router-Error does")
+}
+
+func TestParticipantRequestLimiterDoesNotSkipCatalogBodyOnSeed(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(2, 10)
+	limiter.ObserveResultWithBody("shared-host", "/sessions/1/height-sync", http.StatusServiceUnavailable,
+		"version v2 is not present in the governance routing catalog")
+	require.True(t, limiter.IsBlocked("shared-host"),
+		"catalog body phrase on seed is host-spoofable and must not skip quarantine")
+}
+
+func TestParticipantRequestLimiterDoesNotSkipRouterHeaderOnChat(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(2, 10)
+	limiter.ObserveResultWithBodyForModel("shared-host", "", "/sessions/1/chat/completions",
+		http.StatusServiceUnavailable, "busy", "", transport.DevshardErrorUndeclaredVersion)
+	require.True(t, limiter.IsBlocked("shared-host"),
+		"chat 503s always quarantine, even with X-Devshard-Router-Error")
+}
+
+func TestParticipantRequestLimiterDoesNotSkipCatalogPhraseOn404(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(2, 10)
+	limiter.ObserveResultWithBody("shared-host", "/sessions/1/chat/completions", http.StatusNotFound,
+		"version v2 is not present in the governance routing catalog")
+	require.True(t, limiter.IsBlocked("shared-host"),
+		"catalog phrase on a non-503 must not grant quarantine immunity")
 }
 
 func TestParticipantRequestLimiterExpiresOnFullRecovery(t *testing.T) {
@@ -2631,10 +2673,11 @@ func TestNormalizeChatRequestDefaultsAndCapsMaxTokens(t *testing.T) {
 	require.EqualValues(t, 3_072, req.MaxTokens)
 	require.Contains(t, string(body), `"max_tokens":3072`)
 
-	body, req, err = normalizeChatRequest([]byte(`{"max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`))
+	floor := completionapi.MinTokensFloor
+	body, req, err = normalizeChatRequest([]byte(fmt.Sprintf(`{"max_tokens":%d,"messages":[{"role":"user","content":"hello"}]}`, floor)))
 	require.NoError(t, err)
-	require.EqualValues(t, 64, req.MaxTokens)
-	require.Contains(t, string(body), `"max_tokens":64`)
+	require.EqualValues(t, floor, req.MaxTokens)
+	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, floor))
 	require.NotContains(t, string(body), `"max_completion_tokens"`)
 
 	body, req, err = normalizeChatRequest([]byte(`{"max_tokens":10001,"messages":[{"role":"user","content":"hello"}]}`))
@@ -3133,6 +3176,29 @@ func TestGatewayStatusCodeForErrorMapsUpstream503To429(t *testing.T) {
 		Body:       "nginx limit",
 	})
 	require.Equal(t, http.StatusTooManyRequests, code)
+}
+
+func TestGatewayStatusCodeForErrorMapsUndeclaredVersionTo503(t *testing.T) {
+	code := gatewayStatusCodeForError(&transport.UpstreamStatusError{
+		Path:          "/sessions/12/chat/completions",
+		StatusCode:    http.StatusServiceUnavailable,
+		Body:          "version v2 is not present in the governance routing catalog",
+		DevshardError: transport.DevshardErrorUndeclaredVersion,
+	})
+	require.Equal(t, http.StatusServiceUnavailable, code)
+}
+
+func TestWriteGatewayErrorSetsUndeclaredVersionHeader(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeGatewayError(rec, &transport.UpstreamStatusError{
+		Path:          "/sessions/12/chat/completions",
+		StatusCode:    http.StatusServiceUnavailable,
+		Body:          "version v2 is not present in the governance routing catalog",
+		DevshardError: transport.DevshardErrorUndeclaredVersion,
+	})
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Equal(t, transport.DevshardErrorUndeclaredVersion, rec.Header().Get(transport.HeaderDevshardError))
+	require.Equal(t, transport.DevshardErrorUndeclaredVersion, rec.Header().Get(transport.HeaderDevshardRouterError))
 }
 
 func TestParticipantLimiterBypassedDuringRelaxedPoC(t *testing.T) {

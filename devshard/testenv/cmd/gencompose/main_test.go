@@ -300,7 +300,7 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.NotContains(t, text, "context: ../../versiond-router")
 	require.Contains(t, text, `VERSIOND_PORT: "8080"`)
 	require.Contains(t, text, `VERSIOND_LEGACY_HOST: "versiond-0"`)
-	require.Contains(t, text, `VERSIOND_NON_HA_VERSIONS: "v1"`)
+	require.Contains(t, text, `VERSIOND_NON_HA_VERSIONS: ""`)
 	require.Contains(t, text, "versiond-router-state:/var/lib/gonka-router",
 		"a replacement router must retain its last-known-good catalog")
 	require.Equal(t, 3, strings.Count(text, "stop_grace_period: 30m"),

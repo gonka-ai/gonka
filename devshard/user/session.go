@@ -348,9 +348,16 @@ type Session struct {
 
 	// heightSeedDone is set after a successful seed, a terminal miss (404 /
 	// omit), or the retry deadline. heightSeedMu serializes the retry loop.
+	// heightSeedUntil pins that deadline on the first attempt so a caller with
+	// a shorter budget (the inference path) resumes it instead of ending it.
 	heightSeedMu     sync.Mutex
 	heightSeedDone   atomic.Bool
 	heightSeedMissed atomic.Bool
+	heightSeedUntil  atomic.Int64
+	// heightSeedOK is the set of unique-seeder slot indexes that have already
+	// returned an Anchor. Survives a resumed seed so we do not re-POST those
+	// slots while still short of quorum. Caller holds heightSeedMu.
+	heightSeedOK map[int]struct{}
 
 	lastContact   []time.Time
 	lastPeerSeen  map[uint32][]byte
@@ -1143,7 +1150,7 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 	if chooser == nil {
 		return nil, fmt.Errorf("PrepareInferenceFn: chooser is nil")
 	}
-	s.ensureHeightSeed(context.Background())
+	s.ensureHeightSeedInline()
 	s.mu.Lock()
 	defer func() {
 		s.mu.Unlock()

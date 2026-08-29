@@ -319,26 +319,29 @@ func TestEffectiveMaxTokens(t *testing.T) {
 }
 
 func TestEnforceTokenBudgetFloor(t *testing.T) {
+	floor := MinTokensFloor
+	above := floor + 16
+	capMax := floor + 36
 	tests := []struct {
 		name        string
 		requestMap  map[string]interface{}
 		expectedMin int
 		expectedMax int
 	}{
-		{"AbsentMinDefaultsToFloor", map[string]interface{}{"max_tokens": float64(100)}, 64, 100},
-		{"BelowFloorRaisedToFloor", map[string]interface{}{"min_tokens": float64(1), "max_tokens": float64(100)}, 64, 100},
-		{"AtFloorKept", map[string]interface{}{"min_tokens": float64(64), "max_tokens": float64(100)}, 64, 100},
-		{"AboveFloorKept", map[string]interface{}{"min_tokens": float64(80), "max_tokens": float64(100)}, 80, 100},
-		{"AboveMaxClampedToMax", map[string]interface{}{"min_tokens": float64(128), "max_tokens": float64(100)}, 100, 100},
-		{"SmallMaxRaisesBothToFloor", map[string]interface{}{"min_tokens": float64(100), "max_tokens": float64(50)}, 64, 64},
-		{"AbsentMaxUsesDefault", map[string]interface{}{}, 64, calculations.DefaultMaxTokens},
-		{"MaxCompletionTokensOnlyBelowFloor", map[string]interface{}{"max_completion_tokens": float64(50)}, 64, 64},
-		{"NegativeMinRaisedToFloor", map[string]interface{}{"min_tokens": float64(-5), "max_tokens": float64(100)}, 64, 100},
-		{"ZeroMaxRaisesBothToFloor", map[string]interface{}{"min_tokens": float64(10), "max_tokens": float64(0)}, 64, 64},
-		{"IntMinBelowFloor", map[string]interface{}{"min_tokens": 10, "max_tokens": float64(100)}, 64, 100},
-		{"UnusableMinTypeDefaultsToFloor", map[string]interface{}{"min_tokens": "oops", "max_tokens": float64(100)}, 64, 100},
-		{"IntMaxTokens", map[string]interface{}{"max_tokens": 200}, 64, 200},
-		{"IntMaxCompletionTokens", map[string]interface{}{"max_completion_tokens": 200}, 64, 200},
+		{"AbsentMinDefaultsToFloor", map[string]interface{}{"max_tokens": float64(capMax)}, floor, capMax},
+		{"BelowFloorRaisedToFloor", map[string]interface{}{"min_tokens": float64(1), "max_tokens": float64(capMax)}, floor, capMax},
+		{"AtFloorKept", map[string]interface{}{"min_tokens": float64(floor), "max_tokens": float64(capMax)}, floor, capMax},
+		{"AboveFloorKept", map[string]interface{}{"min_tokens": float64(above), "max_tokens": float64(capMax)}, above, capMax},
+		{"AboveMaxClampedToMax", map[string]interface{}{"min_tokens": float64(capMax + 28), "max_tokens": float64(capMax)}, capMax, capMax},
+		{"SmallMaxRaisesBothToFloor", map[string]interface{}{"min_tokens": float64(capMax), "max_tokens": float64(1)}, floor, floor},
+		{"AbsentMaxUsesDefault", map[string]interface{}{}, floor, calculations.DefaultMaxTokens},
+		{"MaxCompletionTokensOnlyBelowFloor", map[string]interface{}{"max_completion_tokens": float64(1)}, floor, floor},
+		{"NegativeMinRaisedToFloor", map[string]interface{}{"min_tokens": float64(-5), "max_tokens": float64(capMax)}, floor, capMax},
+		{"ZeroMaxRaisesBothToFloor", map[string]interface{}{"min_tokens": float64(10), "max_tokens": float64(0)}, floor, floor},
+		{"IntMinBelowFloor", map[string]interface{}{"min_tokens": 10, "max_tokens": float64(capMax)}, floor, capMax},
+		{"UnusableMinTypeDefaultsToFloor", map[string]interface{}{"min_tokens": "oops", "max_tokens": float64(capMax)}, floor, capMax},
+		{"IntMaxTokens", map[string]interface{}{"max_tokens": capMax + 100}, floor, capMax + 100},
+		{"IntMaxCompletionTokens", map[string]interface{}{"max_completion_tokens": capMax + 100}, floor, capMax + 100},
 	}
 
 	for _, tt := range tests {
@@ -359,9 +362,9 @@ func TestModifyRequestBody_FloorsMinTokensAndStripsStopTokenIds(t *testing.T) {
 
 	var raw map[string]interface{}
 	require.NoError(t, json.Unmarshal(r.NewBody, &raw))
-	require.EqualValues(t, 64, raw["min_tokens"])
-	require.EqualValues(t, 64, raw["max_tokens"])
-	require.EqualValues(t, 64, raw["max_completion_tokens"])
+	require.EqualValues(t, MinTokensFloor, raw["min_tokens"])
+	require.EqualValues(t, MinTokensFloor, raw["max_tokens"])
+	require.EqualValues(t, MinTokensFloor, raw["max_completion_tokens"])
 	require.NotContains(t, raw, "stop_token_ids")
 }
 

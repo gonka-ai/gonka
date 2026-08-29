@@ -212,10 +212,12 @@ services:
     environment:
       VERSIOND_POOL_HOST: "versiond-pool"
       VERSIOND_PORT: "8080"
-      # Pin only explicitly non-HA paths to the SQLite host; VersionName and all
-      # future versions sticky-hash across the pool (Devshard-Ha header).
+      # Pin only versions that actually have a child. A fictional v1 makes
+      # HAProxy L7-check /v1/healthz (must be 200) and marks the backend NOSRV.
+      # Tests that need a SQLite pin set this to VersionName (see
+      # TestLegacyVersionPinnedToSingleHost).
       VERSIOND_LEGACY_HOST: "{{ legacyVersiondHost . }}"
-      VERSIOND_NON_HA_VERSIONS: "v1"
+      VERSIOND_NON_HA_VERSIONS: ""
       # Keep the current test version out of the static bootstrap floor: this
       # stack is the end-to-end proof that governance can admit a dynamic slot.
       VERSIOND_VERSIONS: ""

@@ -174,11 +174,11 @@ func (a modelScopedParticipantAdmission) ObserveResult(participantKey, path stri
 	a.limiter.ObserveResultForModel(participantKey, a.modelID, path, statusCode)
 }
 
-func (a modelScopedParticipantAdmission) ObserveResultWithBody(participantKey, path string, statusCode int, body string) {
+func (a modelScopedParticipantAdmission) ObserveResultWithBody(participantKey, path string, statusCode int, body, devshardError, routerError string) {
 	if a.limiter == nil {
 		return
 	}
-	a.limiter.ObserveResultWithBodyForModel(participantKey, a.modelID, path, statusCode, body)
+	a.limiter.ObserveResultWithBodyForModel(participantKey, a.modelID, path, statusCode, body, devshardError, routerError)
 }
 
 func (a modelScopedParticipantAdmission) ObserveTransportFailure(participantKey, path string, err error) {
@@ -525,25 +525,25 @@ func (l *ParticipantRequestLimiter) CanAcceptEscrow(participantKeys []string) er
 }
 
 func (l *ParticipantRequestLimiter) ObserveResult(participantKey, path string, statusCode int) {
-	l.ObserveResultWithBodyForModel(participantKey, "", path, statusCode, "")
+	l.ObserveResultWithBodyForModel(participantKey, "", path, statusCode, "", "", "")
 }
 
 func (l *ParticipantRequestLimiter) ObserveResultWithBody(participantKey, path string, statusCode int, body string) {
-	l.ObserveResultWithBodyForModel(participantKey, "", path, statusCode, body)
+	l.ObserveResultWithBodyForModel(participantKey, "", path, statusCode, body, "", "")
 }
 
 func (l *ParticipantRequestLimiter) ObserveResultForModel(participantKey, modelID, path string, statusCode int) {
-	l.ObserveResultWithBodyForModel(participantKey, modelID, path, statusCode, "")
+	l.ObserveResultWithBodyForModel(participantKey, modelID, path, statusCode, "", "", "")
 }
 
-func (l *ParticipantRequestLimiter) ObserveResultWithBodyForModel(participantKey, modelID, path string, statusCode int, body string) {
+func (l *ParticipantRequestLimiter) ObserveResultWithBodyForModel(participantKey, modelID, path string, statusCode int, body, devshardError, routerError string) {
 	if participantKey == "" || statusCode <= 0 {
 		return
 	}
 	if l.metrics != nil && statusCode >= http.StatusBadRequest {
 		l.metrics.RecordParticipantTransportError(participantKey, normalizeModelID(modelID), participantPathKind(path), statusCode)
 	}
-	if transport.IsUndeclaredVersionError(body) {
+	if transport.SkipCatalogQuarantine(path, statusCode, routerError) {
 		log.Printf("participant_limit_ignored participant_key=%s status=%d path_kind=%s reason=undeclared_version_catalog",
 			participantKey, statusCode, participantPathKind(path))
 		return
