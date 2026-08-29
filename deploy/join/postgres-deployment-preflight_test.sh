@@ -169,6 +169,14 @@ grep -qx db-1 "$tmpdir/ok" || fail "matching identity was not returned"
 [[ $(grep -c ' read ' "$tmpdir/challenge.log") -eq 4 ]] || fail \
     "preflight did not connect every writer and reader to the anchor generation"
 
+if run_preflight --expected-identity '' >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "an explicitly empty expected identity was accepted"
+fi
+grep -q -- '--expected-identity requires a non-empty value' "$tmpdir/err" || fail \
+    "empty expected identity was not diagnosed"
+[[ ! -s $tmpdir/docker.log ]] || fail \
+    "empty expected identity reached Docker before argument validation"
+
 TARGETS_PER_REPLICA=2
 export TARGETS_PER_REPLICA
 run_preflight >"$tmpdir/linear-proof"
@@ -276,7 +284,7 @@ for proof_api_mode in 404 503 timeout; do
     fi
     case $proof_api_mode in
         404) expected_error='does not expose the live storage-proof API' ;;
-        503) expected_error="not ready (HTTP 503); inspect 'docker compose logs versiond'" ;;
+        503) expected_error="not ready (HTTP 503); inspect 'docker logs container-1'" ;;
         timeout) expected_error='storage identity timed out' ;;
     esac
     grep -Fq "$expected_error" "$tmpdir/err" || fail \
