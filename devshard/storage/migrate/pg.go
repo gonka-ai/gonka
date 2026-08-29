@@ -85,11 +85,13 @@ func applyPGStep(ctx context.Context, pool *pgxpool.Pool, step Step) error {
 	}
 	defer func() { _ = tx.Rollback(ctx) }()
 
-	var maxApplied int
-	if err := tx.QueryRow(ctx, `SELECT COALESCE(MAX(id), 0) FROM schema_migrations`).Scan(&maxApplied); err != nil {
+	var applied bool
+	if err := tx.QueryRow(ctx, `
+		SELECT EXISTS (SELECT 1 FROM schema_migrations WHERE id = $1)
+	`, step.ID).Scan(&applied); err != nil {
 		return fmt.Errorf("migrate: read schema_migrations: %w", err)
 	}
-	if step.ID <= maxApplied {
+	if applied {
 		if err := tx.Commit(ctx); err != nil {
 			return fmt.Errorf("migrate: commit skipped step %d (%s): %w", step.ID, step.Name, err)
 		}
