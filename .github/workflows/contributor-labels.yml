@@ -34,73 +34,79 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            const { owner, repo } = context.repo;
-            const author = context.payload.pull_request.user.login;
-            const prNumber = context.payload.pull_request.number;
-
-            // Bots don't get contributor tiers.
-            if (context.payload.pull_request.user.type === 'Bot') {
-              core.info(`Skipping bot author: ${author}`);
-              return;
-            }
-
-            // Definition of the contributor tier labels (created if missing).
-            const LABELS = {
-              'contributor:first-time':  { color: '0E8A16', description: 'First pull request to this repository' },
-              'contributor:new':         { color: '5319E7', description: '1-10 merged pull requests' },
-              'contributor:regular':     { color: '1D76DB', description: '11-30 merged pull requests' },
-              'contributor:established': { color: 'B60205', description: 'More than 30 merged pull requests' },
-            };
-
-            // Count merged PRs authored by this user in this repo.
-            const q = `repo:${owner}/${repo} type:pr author:${author} is:merged`;
-            const search = await github.rest.search.issuesAndPullRequests({ q, per_page: 1 });
-            const mergedCount = search.data.total_count;
-            core.info(`${author} has ${mergedCount} merged PR(s) in ${owner}/${repo}`);
-
-            // Pick the tier.
-            let target;
-            if (mergedCount <= 0) {
-              target = 'contributor:first-time';
-            } else if (mergedCount <= 10) {
-              target = 'contributor:new';
-            } else if (mergedCount <= 30) {
-              target = 'contributor:regular';
-            } else {
-              target = 'contributor:established';
-            }
-            core.info(`Target label: ${target}`);
-
-            // Ensure the target label exists in the repo.
-            const spec = LABELS[target];
+            // Fail-soft: labeling is a convenience, never block the PR check.
+            // Any unexpected error is downgraded to a warning annotation.
             try {
-              await github.rest.issues.getLabel({ owner, repo, name: target });
-            } catch (err) {
-              if (err.status === 404) {
-                core.info(`Creating missing label: ${target}`);
-                await github.rest.issues.createLabel({
-                  owner, repo, name: target, color: spec.color, description: spec.description,
-                });
+              const { owner, repo } = context.repo;
+              const author = context.payload.pull_request.user.login;
+              const prNumber = context.payload.pull_request.number;
+
+              // Bots don't get contributor tiers.
+              if (context.payload.pull_request.user.type === 'Bot') {
+                core.info(`Skipping bot author: ${author}`);
+                return;
+              }
+
+              // Definition of the contributor tier labels (created if missing).
+              const LABELS = {
+                'contributor:first-time':  { color: '0E8A16', description: 'First pull request to this repository' },
+                'contributor:new':         { color: '5319E7', description: '1-10 merged pull requests' },
+                'contributor:regular':     { color: '1D76DB', description: '11-30 merged pull requests' },
+                'contributor:established': { color: 'B60205', description: 'More than 30 merged pull requests' },
+              };
+
+              // Count merged PRs authored by this user in this repo.
+              const q = `repo:${owner}/${repo} type:pr author:${author} is:merged`;
+              const search = await github.rest.search.issuesAndPullRequests({ q, per_page: 1 });
+              const mergedCount = search.data.total_count;
+              core.info(`${author} has ${mergedCount} merged PR(s) in ${owner}/${repo}`);
+
+              // Pick the tier.
+              let target;
+              if (mergedCount <= 0) {
+                target = 'contributor:first-time';
+              } else if (mergedCount <= 10) {
+                target = 'contributor:new';
+              } else if (mergedCount <= 30) {
+                target = 'contributor:regular';
               } else {
-                throw err;
+                target = 'contributor:established';
               }
-            }
+              core.info(`Target label: ${target}`);
 
-            // Remove any other contributor:* labels currently on the PR.
-            const current = await github.rest.issues.listLabelsOnIssue({
-              owner, repo, issue_number: prNumber,
-            });
-            for (const label of current.data) {
-              if (label.name.startsWith('contributor:') && label.name !== target) {
-                core.info(`Removing stale label: ${label.name}`);
-                await github.rest.issues.removeLabel({
-                  owner, repo, issue_number: prNumber, name: label.name,
-                });
+              // Ensure the target label exists in the repo.
+              const spec = LABELS[target];
+              try {
+                await github.rest.issues.getLabel({ owner, repo, name: target });
+              } catch (err) {
+                if (err.status === 404) {
+                  core.info(`Creating missing label: ${target}`);
+                  await github.rest.issues.createLabel({
+                    owner, repo, name: target, color: spec.color, description: spec.description,
+                  });
+                } else {
+                  throw err;
+                }
               }
-            }
 
-            // Add the target label (no-op if already present).
-            await github.rest.issues.addLabels({
-              owner, repo, issue_number: prNumber, labels: [target],
-            });
-            core.info(`Applied ${target} to PR #${prNumber}`);
+              // Remove any other contributor:* labels currently on the PR.
+              const current = await github.rest.issues.listLabelsOnIssue({
+                owner, repo, issue_number: prNumber,
+              });
+              for (const label of current.data) {
+                if (label.name.startsWith('contributor:') && label.name !== target) {
+                  core.info(`Removing stale label: ${label.name}`);
+                  await github.rest.issues.removeLabel({
+                    owner, repo, issue_number: prNumber, name: label.name,
+                  });
+                }
+              }
+
+              // Add the target label (no-op if already present).
+              await github.rest.issues.addLabels({
+                owner, repo, issue_number: prNumber, labels: [target],
+              });
+              core.info(`Applied ${target} to PR #${prNumber}`);
+            } catch (err) {
+              core.warning(`contributor-labels failed (non-blocking): ${err && err.message ? err.message : err}`);
+            }
