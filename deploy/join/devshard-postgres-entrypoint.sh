@@ -75,7 +75,7 @@ validate_runtime_family() {
     case "$libc_version" in
         musl\ libc*) ;;
         *)
-            die "bundled devshard PostgreSQL requires a musl-based image; changing the libc family requires a dedicated PostgreSQL migration"
+            die "the selected PostgreSQL image is not compatible with the existing devshard PGDATA; use the release image or migrate the cluster before changing image variants"
             ;;
     esac
 }

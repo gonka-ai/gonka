@@ -235,7 +235,8 @@ if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
     fail "a glibc image was allowed to open the musl PostgreSQL cluster"
 fi
 unset entrypoint_path
-grep -q 'requires a musl-based image' "$case_dir/stderr" || fail \
+grep -q 'not compatible with the existing devshard PGDATA' \
+    "$case_dir/stderr" || fail \
     "unsupported-libc failure was not diagnosed"
 [[ $(<"$persistent/data/session-row") == preserved ]] || fail \
     "unsupported runtime modified PGDATA before failing"
