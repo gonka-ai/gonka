@@ -146,6 +146,33 @@ func TestApplyPG_RejectsOutOfOrderIDs(t *testing.T) {
 	require.True(t, errors.Is(err, migrate.ErrOutOfOrder))
 }
 
+func TestApplyPG_AppliesMissingStepBelowHigherID(t *testing.T) {
+	ctx := context.Background()
+	pool := testPGPool(t)
+	step13 := migrate.Step{
+		ID:         13,
+		Name:       "prototype_successor",
+		Statements: []string{`CREATE TABLE migration_step_13 (id INT PRIMARY KEY)`},
+	}
+
+	require.NoError(t, migrate.ApplyPG(ctx, pool, []migrate.Step{step13}))
+	require.NoError(t, migrate.ApplyPG(ctx, pool, []migrate.Step{
+		{
+			ID:         12,
+			Name:       "late_reserved_step",
+			Statements: []string{`CREATE TABLE migration_step_12 (id INT PRIMARY KEY)`},
+		},
+		step13,
+	}))
+
+	n, err := migrate.AppliedPG(ctx, pool)
+	require.NoError(t, err)
+	require.Equal(t, 2, n)
+	exists, err := migrate.TableExistsPG(ctx, pool, "migration_step_12")
+	require.NoError(t, err)
+	require.True(t, exists)
+}
+
 func TestApplyPG_StepWithoutIFNotExists(t *testing.T) {
 	ctx := context.Background()
 	pool := testPGPool(t)
