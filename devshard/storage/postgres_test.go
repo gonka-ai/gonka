@@ -560,6 +560,33 @@ func TestPostgresReadyTracksLiveDatabaseLoss(t *testing.T) {
 		30*time.Second, 100*time.Millisecond)
 }
 
+func TestPostgresFenceSessionLossIsTerminal(t *testing.T) {
+	container := startPostgresContainer(t)
+	t.Cleanup(func() { _ = container.Terminate(context.Background()) })
+
+	pg, err := NewPostgres(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = pg.Close() })
+	require.NoError(t, pg.WaitReady(context.Background()))
+
+	admin, err := pgx.Connect(context.Background(), "")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = admin.Close(context.Background()) })
+	pid := pg.connectionGuard.fenceConn.PgConn().PID()
+	var terminated bool
+	require.NoError(t, admin.QueryRow(context.Background(),
+		"SELECT pg_terminate_backend($1)", pid).Scan(&terminated))
+	require.True(t, terminated)
+
+	select {
+	case fatalErr := <-pg.FatalErrors():
+		require.ErrorContains(t, fatalErr, "postgres fence session lost")
+	case <-time.After(2*postgresHealthInterval + postgresHealthTimeout):
+		t.Fatal("postgres fence loss did not terminate the storage lifecycle")
+	}
+	require.False(t, pg.Ready())
+}
+
 func TestPostgres_NewPostgres_ConnectBudgetDoesNotIncludeIndex(t *testing.T) {
 	cleanup := setupPostgresContainer(t)
 	defer cleanup()

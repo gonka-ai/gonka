@@ -161,6 +161,15 @@ func (m *HostManager) StorageReady() bool {
 	return true
 }
 
+// StorageFatalErrors reports storage failures that require replacing this
+// devshardd process rather than waiting for readiness recovery.
+func (m *HostManager) StorageFatalErrors() <-chan error {
+	if reporter, ok := m.store.(interface{ FatalErrors() <-chan error }); ok {
+		return reporter.FatalErrors()
+	}
+	return nil
+}
+
 // StorageProof uses the same storage object as inference and session traffic.
 // Deployment checks therefore cannot accidentally validate a separate pool.
 func (m *HostManager) StorageProof(

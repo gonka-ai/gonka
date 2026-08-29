@@ -41,6 +41,7 @@ type devshardApp struct {
 	port          int
 	lifecycle     *lifecycleState
 	shutdownGrace time.Duration
+	storageErrors <-chan error
 	close         func()
 }
 
@@ -139,6 +140,7 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 		port:          cfg.Port,
 		lifecycle:     lifecycle,
 		shutdownGrace: cfg.ShutdownGrace,
+		storageErrors: manager.StorageFatalErrors(),
 		close:         closers.Close,
 	}, nil
 }
@@ -450,6 +452,8 @@ func (a *devshardApp) Run(ctx context.Context) error {
 		} else {
 			runErr = fmt.Errorf("chain events listener stopped")
 		}
+	case err := <-a.storageErrors:
+		runErr = fmt.Errorf("terminal storage failure: %w", err)
 	}
 
 	a.lifecycle.StartDrain()
