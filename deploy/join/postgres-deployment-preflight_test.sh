@@ -16,7 +16,7 @@ write_config() {
     local first_extra=${1:-} second_extra=${2:-${1:-}}
     local first_host=${3:-pg} second_host=${4:-${3:-pg}}
     cat >"$tmpdir/config.json" <<EOF
-{"services":{"versiond":{"environment":{"DEVSHARD_STORAGE_MODE":"postgres","PGHOST":"$first_host","PGPORT":"5432","PGDATABASE":"devshardd","PGUSER":"user"$first_extra}},"versiond2":{"environment":{"DEVSHARD_STORAGE_MODE":"postgres","PGHOST":"$second_host","PGPORT":"5432","PGDATABASE":"devshardd","PGUSER":"user"$second_extra}}}}
+{"name":"preflight-test","services":{"versiond":{"environment":{"DEVSHARD_STORAGE_MODE":"postgres","PGHOST":"$first_host","PGPORT":"5432","PGDATABASE":"devshardd","PGUSER":"user"$first_extra}},"versiond2":{"environment":{"DEVSHARD_STORAGE_MODE":"postgres","PGHOST":"$second_host","PGPORT":"5432","PGDATABASE":"devshardd","PGUSER":"user"$second_extra}}}}
 EOF
 }
 
@@ -43,6 +43,11 @@ elif [[ $1 == inspect ]]; then
         PGDATABASE=devshardd PGUSER=user "${RUNTIME_EXTRA:-}"
 elif [[ $1 == exec ]]; then
     container=$2
+    case $PROOF_API_MODE in
+        ready) ;;
+        404 | 503) exit 8 ;;
+        *) exit 1 ;;
+    esac
     if [[ $container == container-1 ]]; then
         identity=$IDENTITY_ONE
         snapshot=snapshot-1
@@ -122,6 +127,7 @@ run_preflight() {
         RUNTIME_HOST_TWO="${RUNTIME_HOST_TWO:-pg}" \
         LIVE_MODE="${LIVE_MODE:-both}" INVALID_PROOF="${INVALID_PROOF:-none}" \
         SNAPSHOT_DRIFT="${SNAPSHOT_DRIFT:-false}" \
+        PROOF_API_MODE="${PROOF_API_MODE:-ready}" \
         CHALLENGE_STATE_DIR="$tmpdir/challenge-state" \
         CHALLENGE_LOG="$tmpdir/challenge.log" \
         "$preflight" "$@" -- -f base.yml -f ha.yml
@@ -144,7 +150,7 @@ fi
 grep -q 'changed from other-database to db-1' "$tmpdir/err" || fail \
     "expected-identity failure was not diagnosed"
 
-for key in DATABASE_URL PGSERVICE PGSERVICEFILE PGOPTIONS; do
+for key in DATABASE_URL PGHOSTADDR PGSERVICE PGSERVICEFILE PGOPTIONS; do
     write_config ",\"$key\":\"override\""
     if run_preflight >"$tmpdir/out" 2>"$tmpdir/err"; then
         fail "rendered $key bypass was accepted"
@@ -216,17 +222,41 @@ unset INVALID_PROOF
 grep -q 'invalid PostgreSQL storage proof' "$tmpdir/err" || fail \
     "malformed-proof failure was not diagnosed"
 
+for proof_api_mode in 404 503; do
+    PROOF_API_MODE=$proof_api_mode
+    export PROOF_API_MODE
+    if run_preflight >"$tmpdir/out" 2>"$tmpdir/err"; then
+        fail "storage-proof endpoint HTTP $proof_api_mode was accepted"
+    fi
+    grep -q 'requires a proof-capable versiond image and a stable migrated HA devshard child' \
+        "$tmpdir/err" || fail "storage-proof HTTP $proof_api_mode was not diagnosed"
+done
+unset PROOF_API_MODE
+
 LIVE_MODE=none
 export LIVE_MODE
-run_preflight >"$tmpdir/no-live"
-grep -q 'no live replicas to compare' "$tmpdir/no-live" || fail \
-    "configuration-only preflight did not explain the missing replicas"
-if run_preflight --require-live >"$tmpdir/out" 2>"$tmpdir/err"; then
-    fail "--require-live passed without versiond replicas"
+if run_preflight >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "live preflight passed without versiond replicas"
 fi
+grep -q "Compose project 'preflight-test' has no running versiond replicas" \
+    "$tmpdir/err" || fail "missing-project replicas were not diagnosed"
+if run_preflight --expected-identity db-1 >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "--expected-identity passed without a live identity"
+fi
+grep -q "has no running versiond replicas" "$tmpdir/err" || fail \
+    "missing expected identity was not diagnosed"
+run_preflight --compose-only >"$tmpdir/compose-only"
+grep -q "rendered PostgreSQL contract is valid for Compose project 'preflight-test'" \
+    "$tmpdir/compose-only" || fail "explicit Compose-only validation failed"
+! grep -q ' ps -q ' "$tmpdir/docker.log" || fail \
+    "Compose-only validation inspected runtime containers"
+if run_preflight --compose-only --expected-identity db-1 \
+    >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "--compose-only accepted --expected-identity"
+fi
+grep -q -- '--expected-identity requires the live PostgreSQL proof' "$tmpdir/err" ||
+    fail "incompatible Compose-only options were not diagnosed"
 unset LIVE_MODE
-grep -q 'cannot prove shared PostgreSQL storage' "$tmpdir/err" || fail \
-    "required-live failure was not diagnosed"
 
 LIVE_MODE=one
 export LIVE_MODE
@@ -234,7 +264,32 @@ if run_preflight >"$tmpdir/out" 2>"$tmpdir/err"; then
     fail "preflight passed with only one versiond replica"
 fi
 unset LIVE_MODE
-grep -q 'only one versiond replica is running' "$tmpdir/err" || fail \
+grep -q 'has only one running versiond replica' "$tmpdir/err" || fail \
     "partial-replica failure was not diagnosed"
+
+write_config
+jq 'del(.services.versiond2)' "$tmpdir/config.json" >"$tmpdir/config-without-versiond2.json"
+mv "$tmpdir/config-without-versiond2.json" "$tmpdir/config.json"
+if run_preflight --compose-only >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "Compose topology without versiond2 was accepted"
+fi
+grep -q 'Compose topology has no versiond2 service' "$tmpdir/err" || fail \
+    "missing versiond2 service was not diagnosed"
+
+real_docker_bin=${REAL_DOCKER_BIN:-docker}
+command -v "$real_docker_bin" >/dev/null 2>&1 || fail \
+    "$real_docker_bin is required for the real Compose render test"
+(
+    cd "$script_dir"
+    DEVSHARD_POSTGRES_PASSWORD=preflight-test \
+        DOCKER_BIN="$real_docker_bin" "$preflight" --compose-only -- \
+        --project-name postgres-preflight-render-test \
+        -f docker-compose.yml -f docker-compose.versiond.yml
+) >"$tmpdir/real-compose" 2>"$tmpdir/real-compose-err" || {
+    cat "$tmpdir/real-compose-err" >&2
+    fail "the real join Compose topology did not pass configuration validation"
+}
+grep -q "Compose project 'postgres-preflight-render-test'" "$tmpdir/real-compose" ||
+    fail "the real Compose project name was not preserved"
 
 echo "postgres-deployment-preflight_test: ok"

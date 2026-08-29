@@ -4,8 +4,9 @@ set -Eeuo pipefail
 
 docker_bin=${DOCKER_BIN:-docker}
 expected_identity=
-require_live=false
+compose_only=false
 compose_args=()
+forbidden_libpq=(DATABASE_URL PGHOSTADDR PGSERVICE PGSERVICEFILE PGOPTIONS)
 
 fail() {
     echo "postgres-deployment-preflight: $*" >&2
@@ -14,15 +15,16 @@ fail() {
 
 usage() {
     cat >&2 <<'EOF'
-Usage: postgres-deployment-preflight.sh [--expected-identity UUID] [--require-live] -- COMPOSE_ARGS...
+Usage: postgres-deployment-preflight.sh [--expected-identity UUID] [--compose-only] -- COMPOSE_ARGS...
 
 Example:
   postgres-deployment-preflight.sh -- \
     -f docker-compose.yml -f docker-compose.versiond.yml
 
-The command does not change the deployment. It validates the rendered HA
-PostgreSQL contract and, when both versiond containers exist, exchanges a
-short-lived challenge through every running HA devshard generation.
+The default mode requires both versiond replicas and exchanges a short-lived
+challenge through every running HA devshard generation. --compose-only checks
+only the rendered target topology and cannot be combined with
+--expected-identity.
 EOF
 }
 
@@ -33,8 +35,8 @@ while (($#)); do
             expected_identity=$2
             shift 2
             ;;
-        --require-live)
-            require_live=true
+        --compose-only)
+            compose_only=true
             shift
             ;;
         --)
@@ -54,11 +56,15 @@ while (($#)); do
 done
 
 ((${#compose_args[@]} > 0)) || fail "Compose arguments are required after --"
+[[ $compose_only == false || -z $expected_identity ]] || fail \
+    "--expected-identity requires the live PostgreSQL proof"
 command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
 command -v jq >/dev/null 2>&1 || fail "jq is required"
 
 compose=("$docker_bin" compose "${compose_args[@]}")
 config=$("${compose[@]}" config --format json) || fail "cannot render Compose topology"
+project_name=$(jq -er '.name | strings | select(length > 0)' <<<"$config") || fail \
+    "rendered Compose topology has no project name"
 
 for service in versiond versiond2; do
     jq -e --arg service "$service" '.services | has($service)' \
@@ -66,7 +72,7 @@ for service in versiond versiond2; do
     mode=$(jq -r --arg service "$service" \
         '.services[$service].environment.DEVSHARD_STORAGE_MODE // ""' <<<"$config")
     [[ $mode == postgres ]] || fail "$service must use DEVSHARD_STORAGE_MODE=postgres"
-    for key in DATABASE_URL PGSERVICE PGSERVICEFILE PGOPTIONS; do
+    for key in "${forbidden_libpq[@]}"; do
         value=$(jq -r --arg service "$service" --arg key "$key" \
             '.services[$service].environment[$key] // ""' <<<"$config")
         [[ -z $value ]] || fail \
@@ -86,6 +92,11 @@ first=$(jq -r '.services.versiond.environment.PGPORT // "5432"' <<<"$config")
 second=$(jq -r '.services.versiond2.environment.PGPORT // "5432"' <<<"$config")
 [[ $first == "$second" ]] || fail "versiond services must use the same PGPORT"
 
+if [[ $compose_only == true ]]; then
+    echo "postgres-deployment-preflight: rendered PostgreSQL contract is valid for Compose project '$project_name'"
+    exit 0
+fi
+
 container_env() {
     local container=$1 name=$2 line
     while IFS= read -r line; do
@@ -103,19 +114,18 @@ for service in versiond versiond2; do
     containers+=("$container")
 done
 if [[ -z ${containers[0]} && -z ${containers[1]} ]]; then
-    [[ $require_live == false ]] || fail \
-        "no live versiond replicas; cannot prove shared PostgreSQL storage"
-    echo "postgres-deployment-preflight: rendered contract is valid; no live replicas to compare"
-    exit 0
+    fail "Compose project '$project_name' has no running versiond replicas;" \
+        "use the deployment's exact project arguments or select --compose-only explicitly"
 fi
 [[ -n ${containers[0]} && -n ${containers[1]} ]] || fail \
-    "only one versiond replica is running; cannot prove shared PostgreSQL identity"
+    "Compose project '$project_name' has only one running versiond replica;" \
+    "cannot prove shared PostgreSQL storage"
 
 for index in 0 1; do
     service=versiond
     ((index == 0)) || service=versiond2
     container=${containers[index]}
-    for key in DATABASE_URL PGSERVICE PGSERVICEFILE PGOPTIONS; do
+    for key in "${forbidden_libpq[@]}"; do
         value=$(container_env "$container" "$key") || value=
         [[ -z $value ]] || fail "running $service sets forbidden $key"
     done
@@ -135,7 +145,7 @@ for index in 0 1; do
 done
 
 read_storage_identity() {
-    "$docker_bin" exec "$1" wget -qO- -T 5 \
+    "$docker_bin" exec "$1" /bin/busybox wget -qO- -T 5 \
         http://127.0.0.1:8080/internal/storage-identity
 }
 
@@ -163,7 +173,7 @@ run_storage_challenge() {
         --arg snapshot "$snapshot" \
         --arg generation "$generation" \
         '{operation:$operation, nonce:$nonce, snapshot:$snapshot, generation:$generation}')
-    "$docker_bin" exec "$container" wget -qO- -T 5 \
+    "$docker_bin" exec "$container" /bin/busybox wget -qO- -T 5 \
         --header 'Content-Type: application/json' \
         --post-data "$request" \
         http://127.0.0.1:8080/internal/storage-challenge
@@ -199,7 +209,8 @@ for index in "${!containers[@]}"; do
     service=versiond
     ((index == 0)) || service=versiond2
     proof=$(read_storage_identity "${containers[index]}") || fail \
-        "cannot read PostgreSQL storage proof through $service"
+        "cannot read PostgreSQL storage proof through $service;" \
+        "the live gate requires a proof-capable versiond image and a stable migrated HA devshard child"
     validate_storage_identity <<<"$proof" || fail \
         "$service returned an invalid PostgreSQL storage proof"
     observed_identity=$(jq -r '.identity' <<<"$proof")
