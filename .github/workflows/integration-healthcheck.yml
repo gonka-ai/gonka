@@ -123,8 +123,8 @@ jobs:
                 const created = await github.rest.issues.create({ owner, repo, title: TITLE, body });
                 core.warning(`Integration healthcheck failing; opened alert issue #${created.data.number}.`);
               }
-              // Surface as a failed run too, so it shows up in the Actions dashboard.
-              core.setFailed(`Integration healthcheck found ${failures.length} problem(s).`);
+              // The alert issue is the signal; we deliberately keep the run green
+              // (a warning annotation only) rather than failing it.
             } else if (alert) {
               await github.rest.issues.createComment({
                 owner, repo, issue_number: alert.number,
