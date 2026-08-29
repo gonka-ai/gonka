@@ -2,12 +2,14 @@ name: Triage External PRs
 
 # Adds pull requests opened by NON-collaborators (people who are not invited to
 # the repository as collaborators/maintainers and are not org members/owners)
-# to the "triage" project and sets their status to "new".
+# to the "triage" project. The status is set to "new" ONLY when the item has no
+# status yet, so re-opening a PR (or moving its card) never resets progress.
 #
 # Requires a token with access to GitHub Projects (v2). The default GITHUB_TOKEN
 # cannot manage org/user projects, so provide a PAT in the PROJECTS_TOKEN secret
 # (classic PAT with `project` + `repo` scopes, or a fine-grained token with
-# read/write access to Projects and Pull requests).
+# read/write access to Projects and Pull requests). If the token is missing or
+# lacks access, the workflow warns and exits WITHOUT failing the PR check.
 
 on:
   pull_request_target:
@@ -30,14 +32,23 @@ jobs:
         env:
           # Login of the org or user that OWNS the project (not necessarily the repo owner).
           PROJECT_OWNER: ${{ github.repository_owner }}
-          # The project's number, visible in the project URL: .../projects/<NUMBER>
-          PROJECT_NUMBER: "7"
+          # The triage project's number, from its URL: https://github.com/orgs/gonka-ai/projects/<NUMBER>
+          # Confirmed triage board is #7; override with the TRIAGE_PROJECT_NUMBER repo variable if it changes.
+          PROJECT_NUMBER: ${{ vars.TRIAGE_PROJECT_NUMBER || '7' }}
           # Single-select field and option to set on the added item (matched case-insensitively).
           STATUS_FIELD_NAME: "Status"
           STATUS_VALUE: "new"
+          # Exposed so we can detect a missing token and bail gracefully (see below).
+          PROJECTS_TOKEN: ${{ secrets.PROJECTS_TOKEN }}
         with:
           github-token: ${{ secrets.PROJECTS_TOKEN }}
           script: |
+            // Missing token must NOT fail the PR check — warn and bail.
+            if (!process.env.PROJECTS_TOKEN) {
+              core.warning('PROJECTS_TOKEN is not set; skipping external PR triage (not failing the PR check).');
+              return;
+            }
+
             const author = context.payload.pull_request.user.login;
             const association = context.payload.pull_request.author_association;
 
@@ -55,84 +66,109 @@ jobs:
             const statusValue = process.env.STATUS_VALUE;
             const contentId = context.payload.pull_request.node_id;
 
-            // Look up the project (try organization first, then user) and its fields.
-            const projectQuery = `
-              query($owner: String!, $number: Int!) {
-                organization(login: $owner) {
-                  projectV2(number: $number) {
-                    id
-                    fields(first: 50) {
-                      nodes {
-                        ... on ProjectV2SingleSelectField { id name options { id name } }
+            try {
+              // Look up the project (try organization first, then user) and its fields.
+              const projectQuery = `
+                query($owner: String!, $number: Int!) {
+                  organization(login: $owner) {
+                    projectV2(number: $number) {
+                      id
+                      fields(first: 50) {
+                        nodes {
+                          ... on ProjectV2SingleSelectField { id name options { id name } }
+                        }
                       }
                     }
                   }
-                }
-                user(login: $owner) {
-                  projectV2(number: $number) {
-                    id
-                    fields(first: 50) {
-                      nodes {
-                        ... on ProjectV2SingleSelectField { id name options { id name } }
+                  user(login: $owner) {
+                    projectV2(number: $number) {
+                      id
+                      fields(first: 50) {
+                        nodes {
+                          ... on ProjectV2SingleSelectField { id name options { id name } }
+                        }
                       }
                     }
                   }
-                }
-              }`;
+                }`;
 
-            const result = await github.graphql(projectQuery, {
-              owner: projectOwner,
-              number: projectNumber,
-            });
-
-            const project = result.organization?.projectV2 || result.user?.projectV2;
-            if (!project) {
-              core.setFailed(`Project #${projectNumber} not found for owner "${projectOwner}".`);
-              return;
-            }
-
-            // Add the PR to the project (idempotent: returns existing item if already added).
-            const addRes = await github.graphql(`
-              mutation($projectId: ID!, $contentId: ID!) {
-                addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) {
-                  item { id }
-                }
-              }`, { projectId: project.id, contentId });
-
-            const itemId = addRes.addProjectV2ItemById.item.id;
-            core.info(`PR added to project as item ${itemId}.`);
-
-            // Resolve the status field and its "new" option (both case-insensitive) and set it.
-            const field = (project.fields?.nodes || []).find(
-              f => f && f.name && f.name.toLowerCase() === statusFieldName.toLowerCase()
-            );
-            if (!field || !field.options) {
-              core.warning(`Single-select field "${statusFieldName}" not found on project; item added without status.`);
-              return;
-            }
-            const option = field.options.find(
-              o => o.name.toLowerCase() === statusValue.toLowerCase()
-            );
-            if (!option) {
-              core.warning(`Option "${statusValue}" not found on field "${statusFieldName}"; item added without status.`);
-              return;
-            }
-
-            await github.graphql(`
-              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
-                updateProjectV2ItemFieldValue(input: {
-                  projectId: $projectId,
-                  itemId: $itemId,
-                  fieldId: $fieldId,
-                  value: { singleSelectOptionId: $optionId }
-                }) {
-                  projectV2Item { id }
-                }
-              }`, {
-                projectId: project.id,
-                itemId,
-                fieldId: field.id,
-                optionId: option.id,
+              const result = await github.graphql(projectQuery, {
+                owner: projectOwner,
+                number: projectNumber,
               });
 
-            core.info(`Set ${statusFieldName}="${statusValue}" on item ${itemId}.`);
+              const project = result.organization?.projectV2 || result.user?.projectV2;
+              if (!project) {
+                core.warning(`Project #${projectNumber} not found for owner "${projectOwner}"; skipping (not failing the PR check).`);
+                return;
+              }
+
+              // Add the PR to the project (idempotent: returns existing item if already added).
+              const addRes = await github.graphql(`
+                mutation($projectId: ID!, $contentId: ID!) {
+                  addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) {
+                    item { id }
+                  }
+                }`, { projectId: project.id, contentId });
+
+              const itemId = addRes.addProjectV2ItemById.item.id;
+              core.info(`PR added to project as item ${itemId}.`);
+
+              // Only set the status on the FIRST add. If the item already has a status
+              // (e.g. someone moved the card, or the PR was closed/reopened), leave it
+              // as-is so we never reset progress back to "new".
+              const currentValue = await github.graphql(`
+                query($itemId: ID!, $fieldName: String!) {
+                  node(id: $itemId) {
+                    ... on ProjectV2Item {
+                      fieldValueByName(name: $fieldName) {
+                        ... on ProjectV2ItemFieldSingleSelectValue { optionId name }
+                      }
+                    }
+                  }
+                }`, { itemId, fieldName: statusFieldName });
+
+              const existing = currentValue.node?.fieldValueByName;
+              if (existing && (existing.optionId || existing.name)) {
+                core.info(`Status already set to "${existing.name || existing.optionId}"; leaving it unchanged.`);
+                return;
+              }
+
+              // Resolve the status field and its "new" option (both case-insensitive) and set it.
+              const field = (project.fields?.nodes || []).find(
+                f => f && f.name && f.name.toLowerCase() === statusFieldName.toLowerCase()
+              );
+              if (!field || !field.options) {
+                core.warning(`Single-select field "${statusFieldName}" not found on project; item added without status.`);
+                return;
+              }
+              const option = field.options.find(
+                o => o.name.toLowerCase() === statusValue.toLowerCase()
+              );
+              if (!option) {
+                core.warning(`Option "${statusValue}" not found on field "${statusFieldName}"; item added without status.`);
+                return;
+              }
+
+              await github.graphql(`
+                mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $projectId,
+                    itemId: $itemId,
+                    fieldId: $fieldId,
+                    value: { singleSelectOptionId: $optionId }
+                  }) {
+                    projectV2Item { id }
+                  }
+                }`, {
+                  projectId: project.id,
+                  itemId,
+                  fieldId: field.id,
+                  optionId: option.id,
+                });
+
+              core.info(`Set ${statusFieldName}="${statusValue}" on item ${itemId}.`);
+            } catch (err) {
+              // Broken/insufficient token or transient API issues should not block the PR.
+              core.warning(`Could not triage external PR (token/permission/API issue): ${err.message}. Not failing the PR check.`);
+            }
