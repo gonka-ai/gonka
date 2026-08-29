@@ -123,6 +123,8 @@ type Manager struct {
 	proofEpoch          string
 	storageInitDone     chan struct{}
 	storageInitOnce     sync.Once
+	storageInitExpected map[string]struct{}
+	storageInitLegacy   map[string]struct{}
 	conditions          Conditions
 	everConverged       bool
 	available           chan struct{}
@@ -137,19 +139,21 @@ func NewManager(cfg config.Config) *Manager {
 	cfg = normalizeConfig(cfg)
 	childCtx, cancelChildren := context.WithCancel(context.Background())
 	m := &Manager{
-		cfg:             cfg,
-		processes:       make(map[string]*child),
-		draining:        make(map[string][]*child),
-		children:        make(map[*child]struct{}),
-		downloading:     make(map[string]struct{}),
-		allocatedPorts:  make(map[int]struct{}),
-		reservedPorts:   reservedChildPorts(),
-		operations:      make(map[uint64]controlOperation),
-		childCtx:        childCtx,
-		cancelChildren:  cancelChildren,
-		available:       make(chan struct{}, 1),
-		proofEpoch:      rand.Text(),
-		storageInitDone: make(chan struct{}),
+		cfg:                 cfg,
+		processes:           make(map[string]*child),
+		draining:            make(map[string][]*child),
+		children:            make(map[*child]struct{}),
+		downloading:         make(map[string]struct{}),
+		allocatedPorts:      make(map[int]struct{}),
+		reservedPorts:       reservedChildPorts(),
+		operations:          make(map[uint64]controlOperation),
+		childCtx:            childCtx,
+		cancelChildren:      cancelChildren,
+		available:           make(chan struct{}, 1),
+		proofEpoch:          rand.Text(),
+		storageInitDone:     make(chan struct{}),
+		storageInitExpected: make(map[string]struct{}),
+		storageInitLegacy:   make(map[string]struct{}),
 	}
 	m.routes.Store(proxy.RouteTable{})
 	return m
@@ -419,6 +423,7 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 		"force_versions", m.cfg.ForceVersions,
 		"desired_versions", versionNamesMap(desiredSet),
 	)
+	m.configureStorageInitCandidates(desiredSet)
 
 	// Phase A (lock): snapshot state, identify overrides.
 	m.mu.Lock()
@@ -1767,6 +1772,7 @@ func (m *Manager) ensurePostgresSchemaInitialized(ctx context.Context, c *child,
 		m.storageInitOnce.Do(func() { close(m.storageInitDone) })
 		return nil
 	}
+	m.noteLegacyStorageInitializer(c.version.Name)
 
 	slog.Info("legacy child waiting for lock-aware PostgreSQL schema initialization",
 		"version", c.version.Name)
@@ -1776,6 +1782,47 @@ func (m *Manager) ensurePostgresSchemaInitialized(ctx context.Context, c *child,
 	case <-m.storageInitDone:
 		return nil
 	}
+}
+
+func (m *Manager) configureStorageInitCandidates(desired map[string]oracle.Version) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	select {
+	case <-m.storageInitDone:
+		return
+	default:
+	}
+	expected := make(map[string]struct{}, len(desired))
+	for name := range desired {
+		expected[name] = struct{}{}
+	}
+	legacy := make(map[string]struct{}, len(m.storageInitLegacy))
+	for name := range m.storageInitLegacy {
+		if _, ok := expected[name]; ok {
+			legacy[name] = struct{}{}
+		}
+	}
+	m.storageInitExpected = expected
+	m.storageInitLegacy = legacy
+	m.closeLegacyOnlyStorageInitLocked()
+}
+
+func (m *Manager) noteLegacyStorageInitializer(name string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, expected := m.storageInitExpected[name]; !expected {
+		return
+	}
+	m.storageInitLegacy[name] = struct{}{}
+	m.closeLegacyOnlyStorageInitLocked()
+}
+
+func (m *Manager) closeLegacyOnlyStorageInitLocked() {
+	if len(m.storageInitExpected) == 0 || len(m.storageInitLegacy) != len(m.storageInitExpected) {
+		return
+	}
+	slog.Info("desired devshard catalog has no lock-aware PostgreSQL initializer; preserving legacy startup")
+	m.storageInitOnce.Do(func() { close(m.storageInitDone) })
 }
 
 func (m *Manager) waitForRestartBackoff(ctx context.Context, c *child, backoff time.Duration) bool {

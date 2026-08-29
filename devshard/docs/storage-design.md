@@ -463,7 +463,10 @@ down after boot.
   downloaded artifact. Children that predate this command wait behind the
   initialization barrier. Concurrent versiond replicas may run the initializer,
   but the database lock serializes them. This gives fresh mixed-version installs
-  the same deterministic schema ordering as normal upgrades.
+  the same deterministic schema ordering as normal upgrades. Versiond first
+  classifies every desired binary; when the entire desired catalog predates the
+  initializer command, it preserves the legacy startup behavior instead of
+  waiting for a capability that is not present.
 - `devshard_storage_identity.identity` is a durable database-lineage marker.
   Copies restored from one backup retain the same marker, so equality alone is
   not proof that two hosts currently share a database.

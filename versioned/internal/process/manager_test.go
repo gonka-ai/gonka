@@ -203,6 +203,10 @@ exit 2
 	}
 
 	m := NewManager(config.Config{BinaryName: "devshardd"})
+	m.configureStorageInitCandidates(map[string]oracle.Version{
+		"legacy":  {Name: "legacy"},
+		"current": {Name: "current"},
+	})
 	legacyDone := make(chan error, 1)
 	go func() {
 		legacyDone <- m.ensurePostgresSchemaInitialized(context.Background(), &child{
@@ -231,6 +235,55 @@ exit 2
 		}
 	case <-time.After(time.Second):
 		t.Fatal("legacy child did not pass the barrier after schema initialization")
+	}
+}
+
+func TestPostgresSchemaInitializationAllowsLegacyOnlyCatalog(t *testing.T) {
+	t.Setenv(envHADeployment, "true")
+	t.Setenv("PGHOST", "postgres")
+	dir := t.TempDir()
+	legacyBin := filepath.Join(dir, "legacy")
+	if err := os.WriteFile(legacyBin, []byte(`#!/bin/sh
+echo "unknown flag: $1" >&2
+exit 2
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(config.Config{BinaryName: "devshardd"})
+	m.configureStorageInitCandidates(map[string]oracle.Version{
+		"legacy-a": {Name: "legacy-a"},
+		"legacy-b": {Name: "legacy-b"},
+	})
+	firstDone := make(chan error, 1)
+	go func() {
+		firstDone <- m.ensurePostgresSchemaInitialized(context.Background(), &child{
+			version: oracle.Version{Name: "legacy-a"},
+			binPath: legacyBin,
+		}, childPreflight{binaryLogVersion: "legacy-a", haDeployment: boolPointer(false)})
+	}()
+	select {
+	case err := <-firstDone:
+		t.Fatalf("first legacy child passed before every desired binary was classified: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	err := m.ensurePostgresSchemaInitialized(ctx, &child{
+		version: oracle.Version{Name: "legacy-b"},
+		binPath: legacyBin,
+	}, childPreflight{binaryLogVersion: "legacy-b", haDeployment: boolPointer(false)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-firstDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("legacy-only catalog did not start after every desired binary was classified")
 	}
 }
 
