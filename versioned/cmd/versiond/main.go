@@ -465,7 +465,7 @@ type storageIdentityReader interface {
 }
 
 type storageChallengeRunner interface {
-	StorageChallenge(context.Context, string, string) (process.StorageProof, error)
+	StorageChallenge(context.Context, string, string, string, string) (process.StorageProof, error)
 }
 
 type storageVerifier interface {
@@ -501,8 +501,10 @@ func storageIdentityHandler(reader storageIdentityReader) http.HandlerFunc {
 }
 
 type storageChallengeRequest struct {
-	Operation string `json:"operation"`
-	Nonce     string `json:"nonce"`
+	Operation  string `json:"operation"`
+	Nonce      string `json:"nonce"`
+	Snapshot   string `json:"snapshot"`
+	Generation string `json:"generation"`
 }
 
 func storageChallengeHandler(runner storageChallengeRunner) http.HandlerFunc {
@@ -525,11 +527,18 @@ func storageChallengeHandler(runner storageChallengeRunner) http.HandlerFunc {
 		decoder := json.NewDecoder(io.LimitReader(r.Body, 4096))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&request); err != nil ||
-			(request.Operation != "write" && request.Operation != "read") || request.Nonce == "" {
+			(request.Operation != "write" && request.Operation != "read") ||
+			request.Nonce == "" || request.Snapshot == "" || request.Generation == "" {
 			http.Error(w, "invalid storage challenge", http.StatusBadRequest)
 			return
 		}
-		proof, err := runner.StorageChallenge(r.Context(), request.Operation, request.Nonce)
+		proof, err := runner.StorageChallenge(
+			r.Context(),
+			request.Snapshot,
+			request.Generation,
+			request.Operation,
+			request.Nonce,
+		)
 		if err != nil {
 			slog.Warn("versiond storage challenge failed", "operation", request.Operation, "error", err)
 			http.Error(w, "postgres storage challenge unavailable", http.StatusServiceUnavailable)

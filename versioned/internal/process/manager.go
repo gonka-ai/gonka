@@ -2,6 +2,7 @@ package process
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,15 +45,19 @@ type child struct {
 	archiveSHA256 string
 	binaryVersion string
 	storageMode   string
-	binPath       string
-	port          int
-	adminPort     atomic.Int64
-	stop          context.CancelFunc
-	forceStopCh   chan struct{}
-	forceStopOnce sync.Once
-	done          chan struct{} // closed when runChild exits
-	ready         chan struct{} // closed after readiness succeeds
-	readyOnce     sync.Once
+	// haDeployment is populated by binary preflight. Nil means the generation
+	// has not yet established whether it belongs to the HA PostgreSQL set.
+	haDeployment    *bool
+	proofGeneration uint64
+	binPath         string
+	port            int
+	adminPort       atomic.Int64
+	stop            context.CancelFunc
+	forceStopCh     chan struct{}
+	forceStopOnce   sync.Once
+	done            chan struct{} // closed when runChild exits
+	ready           chan struct{} // closed after readiness succeeds
+	readyOnce       sync.Once
 	// serving is this generation's own live readiness, refreshed by a monitor
 	// started when it begins running. It is per generation on purpose: a probe
 	// answered by a child that has since been swapped out must not decide
@@ -105,23 +110,25 @@ func (c *child) Done() <-chan struct{} {
 }
 
 type Manager struct {
-	cfg             config.Config
-	processes       map[string]*child
-	draining        map[string][]*child
-	children        map[*child]struct{}
-	downloading     map[string]struct{}
-	allocatedPorts  map[int]struct{}
-	reservedPorts   map[int]struct{}
-	operations      map[uint64]controlOperation
-	nextOperationID uint64
-	conditions      Conditions
-	everConverged   bool
-	available       chan struct{}
-	childCtx        context.Context
-	cancelChildren  context.CancelFunc
-	hostDraining    bool
-	mu              sync.Mutex
-	routes          atomic.Value // proxy.RouteTable
+	cfg                 config.Config
+	processes           map[string]*child
+	draining            map[string][]*child
+	children            map[*child]struct{}
+	downloading         map[string]struct{}
+	allocatedPorts      map[int]struct{}
+	reservedPorts       map[int]struct{}
+	operations          map[uint64]controlOperation
+	nextOperationID     uint64
+	nextProofGeneration uint64
+	proofEpoch          string
+	conditions          Conditions
+	everConverged       bool
+	available           chan struct{}
+	childCtx            context.Context
+	cancelChildren      context.CancelFunc
+	hostDraining        bool
+	mu                  sync.Mutex
+	routes              atomic.Value // proxy.RouteTable
 }
 
 func NewManager(cfg config.Config) *Manager {
@@ -139,6 +146,7 @@ func NewManager(cfg config.Config) *Manager {
 		childCtx:       childCtx,
 		cancelChildren: cancelChildren,
 		available:      make(chan struct{}, 1),
+		proofEpoch:     rand.Text(),
 	}
 	m.routes.Store(proxy.RouteTable{})
 	return m
@@ -1548,6 +1556,12 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 	m.mu.Lock()
 	c.binaryVersion = preflight.binaryLogVersion
 	c.storageMode = preflight.storageMode
+	if preflight.haDeployment != nil {
+		ha := *preflight.haDeployment
+		c.haDeployment = &ha
+	} else {
+		c.haDeployment = nil
+	}
 	if preflight.adminAPISupported && c.adminPort.Load() == 0 {
 		adminPort, portErr := m.assignPort()
 		if portErr != nil {
@@ -1653,6 +1667,8 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		c.servingAt.Store(time.Now().UnixNano())
 
 		m.mu.Lock()
+		m.nextProofGeneration++
+		c.proofGeneration = m.nextProofGeneration
 		transitionGenerationLocked(c, statusRunning)
 		c.proxyTarget = proxy.NewTarget(fmt.Sprintf("localhost:%d", c.port))
 		c.readyOnce.Do(func() { close(c.ready) })
