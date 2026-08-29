@@ -463,9 +463,10 @@ down after boot.
   PostgreSQL-backed devshard generation. The explicit default replaces pgx's
   CPU-sized default so versiond replicas and overlapping generations cannot
   each reserve a host-sized pool.
-- The session-fence check runs every `5s` with a separate `30s` timeout. A
-  timeout invalidates that PostgreSQL session and triggers child replacement;
-  ordinary readiness probes retain their shorter `5s` budget.
+- The session-fence check runs in its own loop every `5s` with a `30s` timeout.
+  A timeout invalidates that PostgreSQL session and triggers child replacement;
+  independent readiness probes retain their shorter `5s` budget and can remove
+  the child from traffic while the terminal fence decision is still pending.
 - Each PostgreSQL-backed child uses its application pool plus two dedicated
   sessions: one for readiness and one for the advisory fence. Schema bootstrap
   transiently opens a separate pool. External PostgreSQL capacity planning must
