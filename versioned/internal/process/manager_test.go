@@ -346,6 +346,33 @@ func TestResolvedStorageInitCandidatesSkipWorkAfterInitialization(t *testing.T) 
 	}
 }
 
+func TestResolvedStorageInitCandidatesExcludeNonHAVersions(t *testing.T) {
+	t.Setenv(envHADeployment, "true")
+	t.Setenv(envNonHAVersions, "v1")
+	m := NewManager(config.Config{})
+
+	got := m.resolveStorageInitCandidates(map[string]oracle.Version{
+		"v1": {Name: "v1", SHA256: strings.Repeat("1", 64)},
+		"v5": {Name: "v5", SHA256: strings.Repeat("5", 64)},
+	})
+	if len(got) != 1 {
+		t.Fatalf("resolved candidates = %v, want only v5", got)
+	}
+	if _, ok := got[storageInitCandidate{version: "v5", artifact: strings.Repeat("5", 64)}]; !ok {
+		t.Fatalf("resolved candidates = %v, want v5 artifact", got)
+	}
+}
+
+func TestEmptyHAInitializerSetCompletesBarrier(t *testing.T) {
+	m := NewManager(config.Config{})
+	m.configureStorageInitCandidates(nil)
+	select {
+	case <-m.storageInitDone:
+	default:
+		t.Fatal("empty HA initializer set did not complete the barrier")
+	}
+}
+
 func TestPostgresSchemaInitializationIgnoresStaleSHAClassification(t *testing.T) {
 	t.Setenv(envHADeployment, "true")
 	t.Setenv("PGHOST", "postgres")

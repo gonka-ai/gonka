@@ -1808,6 +1808,10 @@ func (m *Manager) resolveStorageInitCandidates(desired map[string]oracle.Version
 	}
 	expected := make(map[storageInitCandidate]struct{}, len(desired))
 	for name, version := range desired {
+		ha, err := childHADeployment(name)
+		if err == nil && !ha {
+			continue
+		}
 		artifact := ""
 		if overrideSrc, override := m.cfg.Overrides[name]; override {
 			if hash, err := download.HashFile(overrideSrc); err == nil {
@@ -1845,6 +1849,10 @@ func (m *Manager) configureStorageInitCandidates(expected map[storageInitCandida
 	}
 	m.storageInitExpected = expected
 	m.storageInitLegacy = legacy
+	if len(expected) == 0 {
+		m.storageInitOnce.Do(func() { close(m.storageInitDone) })
+		return
+	}
 	m.closeLegacyOnlyStorageInitLocked()
 }
 
