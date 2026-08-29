@@ -123,8 +123,8 @@ type Manager struct {
 	proofEpoch          string
 	storageInitDone     chan struct{}
 	storageInitOnce     sync.Once
-	storageInitExpected map[string]struct{}
-	storageInitLegacy   map[string]struct{}
+	storageInitExpected map[storageInitCandidate]struct{}
+	storageInitLegacy   map[storageInitCandidate]struct{}
 	conditions          Conditions
 	everConverged       bool
 	available           chan struct{}
@@ -152,8 +152,8 @@ func NewManager(cfg config.Config) *Manager {
 		available:           make(chan struct{}, 1),
 		proofEpoch:          rand.Text(),
 		storageInitDone:     make(chan struct{}),
-		storageInitExpected: make(map[string]struct{}),
-		storageInitLegacy:   make(map[string]struct{}),
+		storageInitExpected: make(map[storageInitCandidate]struct{}),
+		storageInitLegacy:   make(map[storageInitCandidate]struct{}),
 	}
 	m.routes.Store(proxy.RouteTable{})
 	return m
@@ -423,7 +423,7 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 		"force_versions", m.cfg.ForceVersions,
 		"desired_versions", versionNamesMap(desiredSet),
 	)
-	m.configureStorageInitCandidates(desiredSet)
+	m.configureStorageInitCandidates(m.resolveStorageInitCandidates(desiredSet))
 
 	// Phase A (lock): snapshot state, identify overrides.
 	m.mu.Lock()
@@ -1772,10 +1772,11 @@ func (m *Manager) ensurePostgresSchemaInitialized(ctx context.Context, c *child,
 		m.storageInitOnce.Do(func() { close(m.storageInitDone) })
 		return nil
 	}
-	m.noteLegacyStorageInitializer(c.version.Name)
+	candidate := storageInitCandidate{version: c.version.Name, artifact: c.archiveSHA256}
+	m.noteLegacyStorageInitializer(candidate)
 
 	slog.Info("legacy child waiting for lock-aware PostgreSQL schema initialization",
-		"version", c.version.Name)
+		"version", c.version.Name, "artifact", c.archiveSHA256)
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -1784,7 +1785,36 @@ func (m *Manager) ensurePostgresSchemaInitialized(ctx context.Context, c *child,
 	}
 }
 
-func (m *Manager) configureStorageInitCandidates(desired map[string]oracle.Version) {
+type storageInitCandidate struct {
+	version  string
+	artifact string
+}
+
+func (m *Manager) resolveStorageInitCandidates(desired map[string]oracle.Version) map[storageInitCandidate]struct{} {
+	expected := make(map[storageInitCandidate]struct{}, len(desired))
+	for name, version := range desired {
+		artifact := ""
+		if overrideSrc, override := m.cfg.Overrides[name]; override {
+			if hash, err := download.HashFile(overrideSrc); err == nil {
+				artifact = "override:" + hash
+			} else {
+				// Keep an unresolved override distinct from every runnable artifact.
+				// Its normal reconcile path will report the underlying file error.
+				artifact = "unresolved-override:" + overrideSrc
+			}
+		} else if hash, err := version.ResolvedSHA256(); err == nil {
+			artifact = hash
+		} else {
+			// Invalid catalog entries cannot start, but must not let reports from
+			// an older artifact close the initialization barrier.
+			artifact = "unresolved-catalog:" + version.SHA256 + "\x00" + version.Binary
+		}
+		expected[storageInitCandidate{version: name, artifact: artifact}] = struct{}{}
+	}
+	return expected
+}
+
+func (m *Manager) configureStorageInitCandidates(expected map[storageInitCandidate]struct{}) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	select {
@@ -1792,14 +1822,10 @@ func (m *Manager) configureStorageInitCandidates(desired map[string]oracle.Versi
 		return
 	default:
 	}
-	expected := make(map[string]struct{}, len(desired))
-	for name := range desired {
-		expected[name] = struct{}{}
-	}
-	legacy := make(map[string]struct{}, len(m.storageInitLegacy))
-	for name := range m.storageInitLegacy {
-		if _, ok := expected[name]; ok {
-			legacy[name] = struct{}{}
+	legacy := make(map[storageInitCandidate]struct{}, len(m.storageInitLegacy))
+	for candidate := range m.storageInitLegacy {
+		if _, ok := expected[candidate]; ok {
+			legacy[candidate] = struct{}{}
 		}
 	}
 	m.storageInitExpected = expected
@@ -1807,13 +1833,13 @@ func (m *Manager) configureStorageInitCandidates(desired map[string]oracle.Versi
 	m.closeLegacyOnlyStorageInitLocked()
 }
 
-func (m *Manager) noteLegacyStorageInitializer(name string) {
+func (m *Manager) noteLegacyStorageInitializer(candidate storageInitCandidate) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if _, expected := m.storageInitExpected[name]; !expected {
+	if _, expected := m.storageInitExpected[candidate]; !expected {
 		return
 	}
-	m.storageInitLegacy[name] = struct{}{}
+	m.storageInitLegacy[candidate] = struct{}{}
 	m.closeLegacyOnlyStorageInitLocked()
 }
 
