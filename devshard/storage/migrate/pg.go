@@ -57,6 +57,17 @@ func beginLockedPGMigrationTx(ctx context.Context, pool *pgxpool.Pool) (pgx.Tx, 
 	if err != nil {
 		return nil, err
 	}
+	// Application queries use short server-side timeouts. A migration waiting
+	// behind another migrator is normal coordination, so let the caller's context
+	// bound this transaction instead of failing the process on lock_timeout.
+	if _, err := tx.Exec(ctx, `SET LOCAL lock_timeout = 0`); err != nil {
+		_ = tx.Rollback(context.Background())
+		return nil, fmt.Errorf("disable migration lock timeout: %w", err)
+	}
+	if _, err := tx.Exec(ctx, `SET LOCAL statement_timeout = 0`); err != nil {
+		_ = tx.Rollback(context.Background())
+		return nil, fmt.Errorf("disable migration statement timeout: %w", err)
+	}
 	if _, err := tx.Exec(ctx,
 		`SELECT pg_advisory_xact_lock($1, hashtext(current_database()))`,
 		pgMigrationLockNamespace,
