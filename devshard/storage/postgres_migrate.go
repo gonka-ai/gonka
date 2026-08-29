@@ -204,7 +204,16 @@ VALUES (
 		Statements: []string{`
 ALTER TABLE devshard_storage_identity
     ADD COLUMN IF NOT EXISTS challenge UUID,
-    ADD COLUMN IF NOT EXISTS challenged_at TIMESTAMPTZ`},
+	    ADD COLUMN IF NOT EXISTS challenged_at TIMESTAMPTZ`},
+	},
+	{
+		ID:   15,
+		Name: "devshard_connection_lineage",
+		Statements: []string{`
+CREATE TABLE IF NOT EXISTS devshard_connection_lineage (
+    token      UUID        PRIMARY KEY,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+)`},
 	},
 }
 
