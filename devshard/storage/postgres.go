@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -81,6 +82,10 @@ const (
 	postgresHealthInterval = 5 * time.Second
 	postgresHealthTimeout  = postgresConnectTimeout
 	postgresHealthQuorum   = 2
+	// pgx otherwise scales the default pool to runtime.NumCPU. Versiond runs
+	// several devshard processes per host, so a CPU-sized pool per generation
+	// can exhaust PostgreSQL before application load reaches its own limits.
+	defaultPostgresPoolMaxConns int32 = 4
 	// A timed-out pgx query closes the session and therefore releases its
 	// advisory fence. Give this terminal check a wider budget than ordinary
 	// readiness probes so transient database stalls do not replace every child.
@@ -212,6 +217,9 @@ func newPostgres(ctx context.Context, connectTimeout, migrationTimeout time.Dura
 	if err != nil {
 		return nil, fmt.Errorf("parse postgres config: %w", err)
 	}
+	if err := configurePostgresPool(cfg); err != nil {
+		return nil, err
+	}
 	cfg.ConnConfig.ConnectTimeout = connectTimeout
 	if cfg.ConnConfig.RuntimeParams == nil {
 		cfg.ConnConfig.RuntimeParams = make(map[string]string)
@@ -262,6 +270,20 @@ func newPostgres(ctx context.Context, connectTimeout, migrationTimeout time.Dura
 	s.startHealthMonitor(healthConfig)
 	s.startIndexRebuild()
 	return s, nil
+}
+
+func configurePostgresPool(cfg *pgxpool.Config) error {
+	raw := strings.TrimSpace(os.Getenv("PG_POOL_MAX_CONNS"))
+	if raw == "" {
+		cfg.MaxConns = defaultPostgresPoolMaxConns
+		return nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil || value <= 0 {
+		return fmt.Errorf("PG_POOL_MAX_CONNS must be a positive integer, got %q", raw)
+	}
+	cfg.MaxConns = int32(value)
+	return nil
 }
 
 func (s *Postgres) startHealthMonitor(connConfig *pgx.ConnConfig) {

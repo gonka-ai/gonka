@@ -39,6 +39,9 @@ x-versiond: &versiond
     - PGDATABASE=${DEVSHARD_POSTGRES_DB:-devshardd}
     - PGUSER=${DEVSHARD_POSTGRES_USER:-devshardd}
     - PGPASSWORD=${DEVSHARD_POSTGRES_PASSWORD:?DEVSHARD_POSTGRES_PASSWORD is required}
+    # Bound every child independently; pgx's CPU-sized default is unsafe when
+    # several versions and generations share one PostgreSQL server.
+    - PG_POOL_MAX_CONNS=${DEVSHARD_POSTGRES_POOL_MAX_CONNS:-4}
     # Postgres-only payloads/sessions. Fail boot if PG is down; migrate local
     # SQLite sessions into Postgres once at startup (no file/sqlite fallback).
     - DEVSHARD_STORAGE_MODE=postgres

@@ -17,8 +17,11 @@ import (
 )
 
 type StorageProofTarget struct {
-	Generation string `json:"generation"`
-	Version    string `json:"version"`
+	Generation                string `json:"generation"`
+	Version                   string `json:"version"`
+	PoolMaxConnections        int32  `json:"pool_max_connections"`
+	ServerMaxConnections      int32  `json:"server_max_connections"`
+	ServerReservedConnections int32  `json:"server_reserved_connections"`
 }
 
 // StorageProof carries a stable generation snapshot and either the aggregate
@@ -33,8 +36,11 @@ type StorageProof struct {
 }
 
 type childStorageProof struct {
-	Identity string `json:"identity"`
-	Found    bool   `json:"found,omitempty"`
+	Identity                  string `json:"identity"`
+	Found                     bool   `json:"found,omitempty"`
+	PoolMaxConnections        int32  `json:"pool_max_connections"`
+	ServerMaxConnections      int32  `json:"server_max_connections"`
+	ServerReservedConnections int32  `json:"server_reserved_connections"`
 }
 
 type storageChallengeRequest struct {
@@ -93,14 +99,25 @@ func (m *Manager) StorageIdentity(ctx context.Context) (StorageProof, error) {
 			errs = append(errs, fmt.Errorf("child %s: empty storage identity", result.target.version))
 			continue
 		}
+		if result.proof.PoolMaxConnections <= 0 {
+			errs = append(errs, fmt.Errorf("child %s: invalid PostgreSQL pool capacity", result.target.version))
+			continue
+		}
+		if result.proof.ServerMaxConnections <= result.proof.ServerReservedConnections {
+			errs = append(errs, fmt.Errorf("child %s: invalid PostgreSQL server capacity", result.target.version))
+			continue
+		}
 		if proof.Identity == "" {
 			proof.Identity = result.proof.Identity
 		} else if proof.Identity != result.proof.Identity {
 			errs = append(errs, fmt.Errorf("child %s: storage identity mismatch", result.target.version))
 		}
 		proof.Targets = append(proof.Targets, StorageProofTarget{
-			Generation: result.target.generation,
-			Version:    result.target.version,
+			Generation:                result.target.generation,
+			Version:                   result.target.version,
+			PoolMaxConnections:        result.proof.PoolMaxConnections,
+			ServerMaxConnections:      result.proof.ServerMaxConnections,
+			ServerReservedConnections: result.proof.ServerReservedConnections,
 		})
 	}
 	if err := errors.Join(errs...); err != nil {

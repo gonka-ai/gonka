@@ -12,19 +12,33 @@ import (
 )
 
 type fakeProofDatabase struct {
-	mu       sync.Mutex
-	identity string
-	nonces   map[string]bool
+	mu                        sync.Mutex
+	identity                  string
+	poolMaxConnections        int32
+	serverMaxConnections      int32
+	serverReservedConnections int32
+	nonces                    map[string]bool
 }
 
 func newFakeProofDatabase(identity string) *fakeProofDatabase {
-	return &fakeProofDatabase{identity: identity, nonces: make(map[string]bool)}
+	return &fakeProofDatabase{
+		identity:                  identity,
+		poolMaxConnections:        4,
+		serverMaxConnections:      100,
+		serverReservedConnections: 3,
+		nonces:                    make(map[string]bool),
+	}
 }
 
 func (db *fakeProofDatabase) handler(w http.ResponseWriter, r *http.Request) {
 	db.mu.Lock()
 	defer db.mu.Unlock()
-	proof := childStorageProof{Identity: db.identity}
+	proof := childStorageProof{
+		Identity:                  db.identity,
+		PoolMaxConnections:        db.poolMaxConnections,
+		ServerMaxConnections:      db.serverMaxConnections,
+		ServerReservedConnections: db.serverReservedConnections,
+	}
 	switch r.URL.Path {
 	case "/storage/identity":
 	case "/storage/challenge":
@@ -66,6 +80,12 @@ func TestStorageProofAddressesOneGeneration(t *testing.T) {
 	}
 	if identity.Identity != "cloned-database" || identity.Children != 2 || len(identity.Targets) != 2 {
 		t.Fatalf("StorageIdentity() = %+v", identity)
+	}
+	for _, target := range identity.Targets {
+		if target.PoolMaxConnections != 4 || target.ServerMaxConnections != 100 ||
+			target.ServerReservedConnections != 3 {
+			t.Fatalf("StorageIdentity() target capacity = %+v", target)
+		}
 	}
 
 	const nonce = "8aa1c262-ea39-43c2-928c-263e966cc9b4"
@@ -159,6 +179,16 @@ func TestStorageProofFailsOnChildIdentityMismatch(t *testing.T) {
 	addStorageProofChild(t, mgr, "v5", newFakeProofDatabase("database-2"))
 	if _, err := mgr.StorageIdentity(t.Context()); err == nil {
 		t.Fatal("StorageIdentity() succeeded with mismatched child storage")
+	}
+}
+
+func TestStorageProofFailsOnInvalidConnectionCapacity(t *testing.T) {
+	mgr := newStorageProofManager()
+	db := newFakeProofDatabase("database-1")
+	db.poolMaxConnections = 0
+	addStorageProofChild(t, mgr, "v5", db)
+	if _, err := mgr.StorageIdentity(t.Context()); err == nil {
+		t.Fatal("StorageIdentity() accepted an invalid application pool capacity")
 	}
 }
 

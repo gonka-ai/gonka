@@ -17,6 +17,10 @@ func TestStorageProofUsesLiveSharedPostgres(t *testing.T) {
 
 	first := &Postgres{pool: pool}
 	peer := &Postgres{pool: pool}
+	identity, err := first.StorageProof(ctx, ProofIdentity, "")
+	require.NoError(t, err)
+	require.Equal(t, pool.Stat().MaxConns(), identity.PoolMaxConnections)
+	require.Greater(t, identity.ServerMaxConnections, identity.ServerReservedConnections)
 	nonce := uuid.NewString()
 	written, err := first.StorageProof(ctx, ProofWriteChallenge, nonce)
 	require.NoError(t, err)

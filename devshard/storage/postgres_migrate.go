@@ -228,6 +228,9 @@ func InitializePostgresSchema(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("parse postgres config: %w", err)
 	}
+	if err := configurePostgresPool(cfg); err != nil {
+		return err
+	}
 	connectTimeout := pgConnectTimeout()
 	cfg.ConnConfig.ConnectTimeout = connectTimeout
 	if cfg.ConnConfig.RuntimeParams == nil {

@@ -459,6 +459,10 @@ down after boot.
 - Postgres schema migration deadline: `PG_MIGRATION_TIMEOUT` default `2m`.
   It includes time waiting for another devshard migrator to release the
   database-scoped migration lock.
+- Application pool limit: `PG_POOL_MAX_CONNS`, default `4`, per running
+  PostgreSQL-backed devshard generation. The explicit default replaces pgx's
+  CPU-sized default so versiond replicas and overlapping generations cannot
+  each reserve a host-sized pool.
 - The session-fence check runs every `5s` with a separate `30s` timeout. A
   timeout invalidates that PostgreSQL session and triggers child replacement;
   ordinary readiness probes retain their shorter `5s` budget.
