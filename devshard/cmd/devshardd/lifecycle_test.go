@@ -169,7 +169,7 @@ func TestLifecycleDrainKeepsAdmittedRequestInflight(t *testing.T) {
 func TestLifecycleReadyAndDrainStatus(t *testing.T) {
 	lifecycle := newLifecycleState()
 	e := buildServer(lifecycle)
-	admin := buildAdminServer(lifecycle, func() bool { return true })
+	admin := buildAdminServer(lifecycle, func() bool { return true }, nil)
 	e.GET("/work", func(c echo.Context) error {
 		time.Sleep(20 * time.Millisecond)
 		return c.String(http.StatusOK, "done")
@@ -217,7 +217,7 @@ func TestLifecycleDrainRejectsNewWork(t *testing.T) {
 	lifecycle := newLifecycleState()
 	lifecycle.SetReady(true)
 	e := buildServer(lifecycle)
-	admin := buildAdminServer(lifecycle, func() bool { return true })
+	admin := buildAdminServer(lifecycle, func() bool { return true }, nil)
 	e.GET("/work", func(c echo.Context) error {
 		return c.String(http.StatusOK, "done")
 	})
@@ -250,7 +250,7 @@ func TestReadyReflectsStorageReadiness(t *testing.T) {
 	lifecycle := newLifecycleState()
 	lifecycle.SetReady(true)
 	storageReady := false
-	admin := buildAdminServer(lifecycle, func() bool { return storageReady })
+	admin := buildAdminServer(lifecycle, func() bool { return storageReady }, nil)
 
 	rec := httptest.NewRecorder()
 	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))

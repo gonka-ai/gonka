@@ -454,6 +454,24 @@ down after boot.
 
 - Postgres env vars: `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`.
 - Postgres connect deadline at boot: `PG_CONNECT_TIMEOUT` default `2s`.
+- Postgres schema migration deadline: `PG_MIGRATION_TIMEOUT` default `2m`.
+  It includes time waiting for another devshard migrator to release the
+  database-scoped migration lock.
+- Migration bootstrap and all pending application steps are serialized by a
+  database-scoped advisory lock. Binaries predating this lock cannot join that
+  coordination protocol. A fresh empty database must therefore be initialized
+  by a current devshardd before starting a mixed set of legacy and current
+  children. Normal upgrades already have the legacy schema applied.
+- `devshard_storage_identity.identity` is a durable database-lineage marker.
+  Copies restored from one backup retain the same marker, so equality alone is
+  not proof that two hosts currently share a database.
+- HA deployment preflight proves live sharing with two random challenges. Host
+  A writes through every running devshardd application pool and host B reads;
+  then B writes a different nonce and A reads. Each operation also requires
+  `pg_is_in_recovery() = false`. This catches independent clones, read replicas,
+  and configuration differences between a supervisor and its children.
+  Deployment tooling serializes this exchange; concurrent challenges can only
+  cause a safe false negative because each write replaces the previous nonce.
 - Live readiness uses one dedicated PostgreSQL connection outside the
   application pool. Two consecutive database failures make `/readyz` return
   `503` without terminating devshardd; two successful probes restore readiness.
