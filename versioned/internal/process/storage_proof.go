@@ -131,8 +131,7 @@ func (m *Manager) StorageIdentity(ctx context.Context) (StorageProof, error) {
 }
 
 // StorageChallenge addresses exactly one child generation. Deployment tooling
-// repeats this for every writer and asks every target to read that writer's
-// unique nonce.
+// connects every generation's writer and reader to one live proof anchor.
 func (m *Manager) StorageChallenge(
 	ctx context.Context,
 	snapshotToken string,
