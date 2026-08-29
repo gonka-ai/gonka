@@ -161,6 +161,20 @@ func (m *HostManager) StorageReady() bool {
 	return true
 }
 
+// StorageProof uses the same storage object as inference and session traffic.
+// Deployment checks therefore cannot accidentally validate a separate pool.
+func (m *HostManager) StorageProof(
+	ctx context.Context,
+	operation storage.ProofOperation,
+	nonce string,
+) (storage.StorageProof, error) {
+	provider, ok := m.store.(storage.ProofProvider)
+	if !ok {
+		return storage.StorageProof{}, errors.New("postgres storage proof is unavailable")
+	}
+	return provider.StorageProof(ctx, operation, nonce)
+}
+
 // SetMaxNonceProvider enforces chain max_nonce on every host.
 func (m *HostManager) SetMaxNonceProvider(p devshardpkg.MaxNonceProvider) {
 	m.maxNonce = p

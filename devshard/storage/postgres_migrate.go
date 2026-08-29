@@ -196,7 +196,15 @@ VALUES (
     TRUE,
     gen_random_uuid()
 )
-ON CONFLICT (singleton) DO NOTHING`},
+		ON CONFLICT (singleton) DO NOTHING`},
+	},
+	{
+		ID:   14,
+		Name: "devshard_storage_challenge",
+		Statements: []string{`
+ALTER TABLE devshard_storage_identity
+    ADD COLUMN IF NOT EXISTS challenge UUID,
+    ADD COLUMN IF NOT EXISTS challenged_at TIMESTAMPTZ`},
 	},
 }
 
