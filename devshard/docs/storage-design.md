@@ -457,6 +457,9 @@ down after boot.
 - Postgres schema migration deadline: `PG_MIGRATION_TIMEOUT` default `2m`.
   It includes time waiting for another devshard migrator to release the
   database-scoped migration lock.
+- The session-fence check runs every `5s` with a separate `30s` timeout. A
+  timeout invalidates that PostgreSQL session and triggers child replacement;
+  ordinary readiness probes retain their shorter `5s` budget.
 - Migration bootstrap and all pending application steps are serialized by a
   database-scoped advisory lock. Before starting children in an HA deployment,
   versiond runs `devshardd --initialize-postgres-schema` through a current

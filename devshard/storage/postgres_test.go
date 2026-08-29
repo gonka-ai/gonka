@@ -545,6 +545,11 @@ func TestPostgresHealthProbeBudgetCoversConnectionSetup(t *testing.T) {
 	require.GreaterOrEqual(t, postgresHealthTimeout, postgresConnectTimeout)
 }
 
+func TestPostgresFenceCheckHasIndependentBudget(t *testing.T) {
+	require.Greater(t, postgresFenceCheckTimeout, postgresHealthTimeout)
+	require.Equal(t, 30*time.Second, postgresFenceCheckTimeout)
+}
+
 func TestPostgresReadyTracksLiveDatabaseLoss(t *testing.T) {
 	container := startPostgresContainer(t)
 	t.Cleanup(func() { _ = container.Terminate(context.Background()) })

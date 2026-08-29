@@ -81,6 +81,10 @@ const (
 	postgresHealthInterval = 5 * time.Second
 	postgresHealthTimeout  = postgresConnectTimeout
 	postgresHealthQuorum   = 2
+	// A timed-out pgx query closes the session and therefore releases its
+	// advisory fence. Give this terminal check a wider budget than ordinary
+	// readiness probes so transient database stalls do not replace every child.
+	postgresFenceCheckTimeout = 30 * time.Second
 	// postgresIndexRepairBatchSize caps rows per DELETE/INSERT when repairing
 	// devshard_session_index so a large divergence does not hold one giant lock.
 	postgresIndexRepairBatchSize = 1000
@@ -282,9 +286,9 @@ func (s *Postgres) startHealthMonitor(connConfig *pgx.ConnConfig) {
 			case <-ctx.Done():
 				return
 			case <-timer.C:
-				probeCtx, probeCancel := context.WithTimeout(ctx, postgresHealthTimeout)
-				if err := s.connectionGuard.check(probeCtx); err != nil {
-					probeCancel()
+				fenceCtx, fenceCancel := context.WithTimeout(ctx, postgresFenceCheckTimeout)
+				if err := s.connectionGuard.check(fenceCtx); err != nil {
+					fenceCancel()
 					if ctx.Err() != nil {
 						return
 					}
@@ -296,6 +300,9 @@ func (s *Postgres) startHealthMonitor(connConfig *pgx.ConnConfig) {
 					s.fatalErrors <- fatalErr
 					return
 				}
+				fenceCancel()
+
+				probeCtx, probeCancel := context.WithTimeout(ctx, postgresHealthTimeout)
 				err := probe.check(probeCtx)
 				probeCancel()
 				if ctx.Err() != nil {
