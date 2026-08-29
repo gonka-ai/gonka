@@ -22,8 +22,11 @@ const (
 // observed through this storage handle. Identity alone is not proof of a shared
 // live database because snapshots and replicas preserve it.
 type StorageProof struct {
-	Identity string `json:"identity"`
-	Found    bool   `json:"found,omitempty"`
+	Identity                  string `json:"identity"`
+	Found                     bool   `json:"found,omitempty"`
+	PoolMaxConnections        int32  `json:"pool_max_connections,omitempty"`
+	ServerMaxConnections      int32  `json:"server_max_connections,omitempty"`
+	ServerReservedConnections int32  `json:"server_reserved_connections,omitempty"`
 }
 
 // ProofProvider is implemented by storage wrappers that can reach the actual
@@ -73,10 +76,18 @@ func (s *Postgres) StorageProof(ctx context.Context, operation ProofOperation, n
 	proof := StorageProof{}
 	switch operation {
 	case ProofIdentity:
+		proof.PoolMaxConnections = s.pool.Stat().MaxConns()
 		err = tx.QueryRow(ctx, `
-			SELECT identity::text
+			SELECT identity::text,
+			       current_setting('max_connections')::integer,
+			       current_setting('superuser_reserved_connections')::integer
+			         + COALESCE(current_setting('reserved_connections', true), '0')::integer
 			FROM devshard_storage_identity
-			WHERE singleton`).Scan(&proof.Identity)
+			WHERE singleton`).Scan(
+			&proof.Identity,
+			&proof.ServerMaxConnections,
+			&proof.ServerReservedConnections,
+		)
 	case ProofWriteChallenge:
 		err = tx.QueryRow(ctx, `
 			UPDATE devshard_storage_identity

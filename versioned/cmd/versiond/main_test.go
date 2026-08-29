@@ -1099,7 +1099,13 @@ func (s staticStorageIdentity) StorageIdentity(context.Context) (process.Storage
 		Identity: string(s),
 		Children: 1,
 		Snapshot: "snapshot-1",
-		Targets:  []process.StorageProofTarget{{Generation: "1", Version: "v5"}},
+		Targets: []process.StorageProofTarget{{
+			Generation:                "1",
+			Version:                   "v5",
+			PoolMaxConnections:        4,
+			ServerMaxConnections:      100,
+			ServerReservedConnections: 3,
+		}},
 	}, nil
 }
 
@@ -1136,7 +1142,7 @@ func TestStorageIdentityIsLocalOnly(t *testing.T) {
 	if localResponse.Code != http.StatusOK {
 		t.Fatalf("local storage identity status = %d, want 200", localResponse.Code)
 	}
-	if got := localResponse.Body.String(); got != "{\"identity\":\"database-1\",\"children\":1,\"snapshot\":\"snapshot-1\",\"targets\":[{\"generation\":\"1\",\"version\":\"v5\"}]}\n" {
+	if got := localResponse.Body.String(); got != "{\"identity\":\"database-1\",\"children\":1,\"snapshot\":\"snapshot-1\",\"targets\":[{\"generation\":\"1\",\"version\":\"v5\",\"pool_max_connections\":4,\"server_max_connections\":100,\"server_reserved_connections\":3}]}\n" {
 		t.Fatalf("local storage identity response = %q", got)
 	}
 
