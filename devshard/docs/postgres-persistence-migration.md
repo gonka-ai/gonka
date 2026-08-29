@@ -89,13 +89,29 @@ not applied the storage-identity migrations returns 503. These responses fail
 closed. The release updater therefore runs `--compose-only` before service
 replacement, starts compatible versiond/devshard generations behind the
 existing traffic path, and runs the live gate before router admission or public
-cutover.
+cutover. The Compose-only phase validates structure and connection selectors;
+image capabilities, downloaded devshard artifacts, credentials, and live
+connectivity are established by the staged candidate and the live phase while
+the updater still owns the rollback baseline.
 
 The live result is a point-in-time admission proof, not a PostgreSQL monitor.
 Run it immediately before admission and do not replace generations between the
 proof and cutover. After admission, the session fence and readiness lifecycle
 from the storage implementation withdraw and restart a child that loses its
 database fence.
+
+The lineage UUID and challenge do not select a recovery point. A backup or
+clone of the same database retains its UUID, and a single shared writable clone
+can satisfy the challenge. Backup freshness, restore approval, and fencing the
+operator-selected PostgreSQL primary remain properties of the database recovery
+procedure. The expected identity prevents an unrelated lineage from being
+admitted; it must not be treated as proof that a restored copy contains every
+session written after that backup.
+
+Storage proof is one gate in admission, not the final fleet-ready signal. The
+release updater separately verifies that every desired route has the required
+number of admitted router replicas before committing the cutover. A successful
+storage proof therefore cannot make a partial version catalog production-ready.
 
 These commands are deployment gates, not a standalone replacement procedure.
 The release updater keeps the old traffic path and rollback baseline until the
