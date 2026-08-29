@@ -102,6 +102,8 @@ func (l *Lookup) LookupSessionVersion(ctx context.Context, escrowID string) (str
 // StorageIdentity returns the durable identity created by the devshard schema.
 // It lets deployment tooling prove that independently configured supervisors
 // resolve to the same database, rather than merely comparing libpq settings.
+// The nil receiver check is required because a typed nil *Lookup is non-nil
+// after conversion to versiond's storageIdentityReader interface.
 func (l *Lookup) StorageIdentity(ctx context.Context) (string, error) {
 	if l == nil || l.pool == nil {
 		return "", errors.New("postgres session lookup is unavailable")

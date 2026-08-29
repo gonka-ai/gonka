@@ -481,6 +481,9 @@ func storageIdentityHandler(reader storageIdentityReader) http.HandlerFunc {
 			http.Error(w, "postgres storage identity unavailable", http.StatusServiceUnavailable)
 			return
 		}
+		// OpenFromEnv returns *sessionversion.Lookup. A nil pointer converted to
+		// this interface is non-nil, so StorageIdentity deliberately handles a
+		// nil receiver and turns the unavailable lookup into the same 503.
 		identity, err := reader.StorageIdentity(r.Context())
 		if err != nil {
 			http.Error(w, "postgres storage identity unavailable", http.StatusServiceUnavailable)
