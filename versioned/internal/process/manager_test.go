@@ -213,7 +213,7 @@ exit 2
 			version:       oracle.Version{Name: "legacy"},
 			archiveSHA256: "legacy-sha",
 			binPath:       legacyBin,
-		}, childPreflight{binaryLogVersion: "legacy", haDeployment: boolPointer(false)})
+		}, childPreflight{binaryLogVersion: "legacy", haDeployment: boolPointer(true)})
 	}()
 
 	select {
@@ -263,7 +263,7 @@ exit 2
 			version:       oracle.Version{Name: "legacy-a"},
 			archiveSHA256: "legacy-a-sha",
 			binPath:       legacyBin,
-		}, childPreflight{binaryLogVersion: "legacy-a", haDeployment: boolPointer(false)})
+		}, childPreflight{binaryLogVersion: "legacy-a", haDeployment: boolPointer(true)})
 	}()
 	select {
 	case err := <-firstDone:
@@ -277,7 +277,7 @@ exit 2
 		version:       oracle.Version{Name: "legacy-b"},
 		archiveSHA256: "legacy-b-sha",
 		binPath:       legacyBin,
-	}, childPreflight{binaryLogVersion: "legacy-b", haDeployment: boolPointer(false)})
+	}, childPreflight{binaryLogVersion: "legacy-b", haDeployment: boolPointer(true)})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,6 +288,47 @@ exit 2
 		}
 	case <-time.After(time.Second):
 		t.Fatal("legacy-only catalog did not start after every desired binary was classified")
+	}
+}
+
+func TestPostgresSchemaInitializationDoesNotBlockNonHAChild(t *testing.T) {
+	t.Setenv(envHADeployment, "true")
+	t.Setenv("PGHOST", "unavailable-postgres")
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "initializer-called")
+	t.Setenv("INIT_MARKER", marker)
+	legacyBin := filepath.Join(dir, "legacy")
+	if err := os.WriteFile(legacyBin, []byte(`#!/bin/sh
+touch "$INIT_MARKER"
+exit 1
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(config.Config{BinaryName: "devshardd"})
+	err := m.ensurePostgresSchemaInitialized(context.Background(), &child{
+		version:       oracle.Version{Name: "v1"},
+		archiveSHA256: "legacy-sha",
+		binPath:       legacyBin,
+	}, childPreflight{binaryLogVersion: "v1", haDeployment: boolPointer(false)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(marker); !os.IsNotExist(err) {
+		t.Fatalf("non-HA child invoked PostgreSQL initializer: %v", err)
+	}
+}
+
+func TestPostgresChildStorageConfigured(t *testing.T) {
+	for _, key := range []string{"PGHOST", "PGSERVICE"} {
+		t.Run(key, func(t *testing.T) {
+			t.Setenv("PGHOST", "")
+			t.Setenv("PGSERVICE", "")
+			t.Setenv(key, "configured")
+			if !postgresChildStorageConfigured() {
+				t.Fatalf("%s did not select PostgreSQL child storage", key)
+			}
+		})
 	}
 }
 
@@ -328,7 +369,7 @@ exit 2
 			version:       oracle.Version{Name: "v5"},
 			archiveSHA256: "old-sha",
 			binPath:       legacyBin,
-		}, childPreflight{binaryLogVersion: "v5-old", haDeployment: boolPointer(false)})
+		}, childPreflight{binaryLogVersion: "v5-old", haDeployment: boolPointer(true)})
 	}()
 	deadline := time.Now().Add(time.Second)
 	for {

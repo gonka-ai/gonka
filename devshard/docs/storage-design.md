@@ -469,7 +469,9 @@ down after boot.
   the same deterministic schema ordering as normal upgrades. Versiond first
   classifies every desired binary; when the entire desired catalog predates the
   initializer command, it preserves the legacy startup behavior instead of
-  waiting for a capability that is not present.
+  waiting for a capability that is not present. Versions explicitly listed in
+  `VERSIOND_NON_HA_VERSIONS` retain single-host SQLite ownership and bypass this
+  PostgreSQL barrier.
 - `devshard_storage_identity.identity` is a durable database-lineage marker.
   Copies restored from one backup retain the same marker, so equality alone is
   not proof that two hosts currently share a database.
