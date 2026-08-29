@@ -56,7 +56,11 @@ func (s *Postgres) StorageProof(ctx context.Context, operation ProofOperation, n
 	if err != nil {
 		return StorageProof{}, fmt.Errorf("begin storage proof: %w", err)
 	}
-	defer func() { _ = tx.Rollback(context.Background()) }()
+	defer func() {
+		rollbackCtx, cancel := context.WithTimeout(context.Background(), postgresStatementTimeout)
+		defer cancel()
+		_ = tx.Rollback(rollbackCtx)
+	}()
 
 	var inRecovery bool
 	if err := tx.QueryRow(ctx, `SELECT pg_is_in_recovery()`).Scan(&inRecovery); err != nil {
