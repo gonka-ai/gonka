@@ -580,6 +580,65 @@ func TestPostgresFenceCheckHasIndependentBudget(t *testing.T) {
 	require.Equal(t, 30*time.Second, postgresFenceCheckTimeout)
 }
 
+func TestPostgresReadinessDoesNotWaitForFenceCheck(t *testing.T) {
+	healthChecks := make(chan struct{}, postgresHealthQuorum)
+	fenceStarted := make(chan struct{}, 1)
+	pg := &Postgres{
+		healthReady: true,
+		healthDone:  make(chan struct{}),
+		fatalErrors: make(chan error, 1),
+	}
+	pg.startPostgresMonitors(postgresMonitorConfig{
+		interval:      time.Millisecond,
+		healthTimeout: 10 * time.Millisecond,
+		fenceTimeout:  time.Second,
+		healthCheck: func(context.Context) error {
+			select {
+			case healthChecks <- struct{}{}:
+			default:
+			}
+			return errors.New("database unavailable")
+		},
+		healthClose: func(context.Context) error { return nil },
+		fenceCheck: func(ctx context.Context) error {
+			fenceStarted <- struct{}{}
+			<-ctx.Done()
+			return ctx.Err()
+		},
+		poolSaturated: func() bool { return false },
+	})
+	t.Cleanup(func() {
+		pg.mu.Lock()
+		cancel := pg.healthStop
+		pg.mu.Unlock()
+		cancel()
+		<-pg.healthDone
+	})
+
+	select {
+	case <-fenceStarted:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("fence monitor did not start")
+	}
+	for range postgresHealthQuorum {
+		select {
+		case <-healthChecks:
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("readiness probe was blocked by the in-flight fence check")
+		}
+	}
+	require.Eventually(t, func() bool {
+		pg.mu.RLock()
+		defer pg.mu.RUnlock()
+		return !pg.healthReady
+	}, 100*time.Millisecond, time.Millisecond)
+	select {
+	case err := <-pg.fatalErrors:
+		t.Fatalf("blocked fence check became terminal before its deadline: %v", err)
+	default:
+	}
+}
+
 func TestPostgresReadyTracksLiveDatabaseLoss(t *testing.T) {
 	container := startPostgresContainer(t)
 	t.Cleanup(func() { _ = container.Terminate(context.Background()) })

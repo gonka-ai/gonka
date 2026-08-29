@@ -287,77 +287,134 @@ func configurePostgresPool(cfg *pgxpool.Config) error {
 }
 
 func (s *Postgres) startHealthMonitor(connConfig *pgx.ConnConfig) {
+	probe := newPostgresHealthProbe(connConfig)
+	s.startPostgresMonitors(postgresMonitorConfig{
+		interval:      postgresHealthInterval,
+		healthTimeout: postgresHealthTimeout,
+		fenceTimeout:  postgresFenceCheckTimeout,
+		healthCheck:   probe.check,
+		healthClose:   probe.close,
+		fenceCheck:    s.connectionGuard.check,
+		poolSaturated: func() bool { return postgresPoolIsSaturated(s.pool) },
+	})
+}
+
+type postgresMonitorConfig struct {
+	interval      time.Duration
+	healthTimeout time.Duration
+	fenceTimeout  time.Duration
+	healthCheck   func(context.Context) error
+	healthClose   func(context.Context) error
+	fenceCheck    func(context.Context) error
+	poolSaturated func() bool
+}
+
+func (s *Postgres) startPostgresMonitors(config postgresMonitorConfig) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.mu.Lock()
 	s.healthStop = cancel
 	s.mu.Unlock()
-	go func() {
-		defer close(s.healthDone)
-		probe := newPostgresHealthProbe(connConfig)
-		defer func() {
-			closeCtx, closeCancel := context.WithTimeout(context.Background(), postgresHealthTimeout)
-			defer closeCancel()
-			if err := probe.close(closeCtx); err != nil {
-				slog.Warn("devshard storage: close postgres health connection", "error", err)
-			}
-		}()
-		timer := time.NewTimer(postgresHealthInterval)
-		defer timer.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-timer.C:
-				fenceCtx, fenceCancel := context.WithTimeout(ctx, postgresFenceCheckTimeout)
-				if err := s.connectionGuard.check(fenceCtx); err != nil {
-					fenceCancel()
-					if ctx.Err() != nil {
-						return
-					}
-					s.mu.Lock()
-					s.healthReady = false
-					s.mu.Unlock()
-					fatalErr := fmt.Errorf("postgres fence session lost: %w", err)
-					slog.Error("devshard storage: postgres fence session lost; terminating process", "error", err)
-					s.fatalErrors <- fatalErr
-					return
-				}
-				fenceCancel()
 
-				probeCtx, probeCancel := context.WithTimeout(ctx, postgresHealthTimeout)
-				err := probe.check(probeCtx)
-				probeCancel()
-				if ctx.Err() != nil {
-					return
-				}
-				result := postgresHealthProbeSuccess
-				if err != nil {
-					result = postgresHealthProbeDatabaseError
-				}
-				saturated := postgresPoolIsSaturated(s.pool)
-				observability.ObservePostgresHealthProbe(err == nil, saturated)
-				previous, current := s.recordHealthProbe(result, saturated)
-				if previous.ready != current.ready {
-					if current.ready {
-						slog.Info("devshard storage: postgres readiness recovered")
-					} else {
-						slog.Warn("devshard storage: postgres readiness lost", "error", err)
-					}
-				}
-				if previous.saturated != current.saturated {
-					if current.saturated {
-						stat := s.pool.Stat()
-						slog.Warn("devshard storage: postgres application pool is saturated",
-							"acquired_connections", stat.AcquiredConns(),
-							"max_connections", stat.MaxConns())
-					} else {
-						slog.Info("devshard storage: postgres application pool saturation cleared")
-					}
-				}
-				timer.Reset(postgresHealthInterval)
-			}
+	var monitors sync.WaitGroup
+	monitors.Add(2)
+	go func() {
+		defer monitors.Done()
+		s.runPostgresReadinessMonitor(ctx, config)
+	}()
+	go func() {
+		defer monitors.Done()
+		s.runPostgresFenceMonitor(ctx, cancel, config)
+	}()
+	go func() {
+		monitors.Wait()
+		close(s.healthDone)
+	}()
+}
+
+func (s *Postgres) runPostgresReadinessMonitor(ctx context.Context, config postgresMonitorConfig) {
+	defer func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), config.healthTimeout)
+		defer closeCancel()
+		if err := config.healthClose(closeCtx); err != nil {
+			slog.Warn("devshard storage: close postgres health connection", "error", err)
 		}
 	}()
+	timer := time.NewTimer(config.interval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+
+		probeCtx, probeCancel := context.WithTimeout(ctx, config.healthTimeout)
+		err := config.healthCheck(probeCtx)
+		probeCancel()
+		if ctx.Err() != nil {
+			return
+		}
+		result := postgresHealthProbeSuccess
+		if err != nil {
+			result = postgresHealthProbeDatabaseError
+		}
+		saturated := config.poolSaturated()
+		observability.ObservePostgresHealthProbe(err == nil, saturated)
+		previous, current := s.recordHealthProbe(result, saturated)
+		if previous.ready != current.ready {
+			if current.ready {
+				slog.Info("devshard storage: postgres readiness recovered")
+			} else {
+				slog.Warn("devshard storage: postgres readiness lost", "error", err)
+			}
+		}
+		if previous.saturated != current.saturated {
+			if current.saturated {
+				stat := s.pool.Stat()
+				slog.Warn("devshard storage: postgres application pool is saturated",
+					"acquired_connections", stat.AcquiredConns(),
+					"max_connections", stat.MaxConns())
+			} else {
+				slog.Info("devshard storage: postgres application pool saturation cleared")
+			}
+		}
+		timer.Reset(config.interval)
+	}
+}
+
+func (s *Postgres) runPostgresFenceMonitor(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	config postgresMonitorConfig,
+) {
+	timer := time.NewTimer(config.interval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+
+		fenceCtx, fenceCancel := context.WithTimeout(ctx, config.fenceTimeout)
+		err := config.fenceCheck(fenceCtx)
+		fenceCancel()
+		if err == nil {
+			timer.Reset(config.interval)
+			continue
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		s.mu.Lock()
+		s.healthReady = false
+		s.mu.Unlock()
+		fatalErr := fmt.Errorf("postgres fence session lost: %w", err)
+		slog.Error("devshard storage: postgres fence session lost; terminating process", "error", err)
+		s.fatalErrors <- fatalErr
+		cancel()
+		return
+	}
 }
 
 // FatalErrors reports storage failures that require replacing this process.
