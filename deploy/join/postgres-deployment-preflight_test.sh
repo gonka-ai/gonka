@@ -15,8 +15,10 @@ fail() {
 write_config() {
     local first_extra=${1:-} second_extra=${2:-${1:-}}
     local first_host=${3:-pg} second_host=${4:-${3:-pg}}
+    local first_pool=${RENDERED_POOL_ONE:-4}
+    local second_pool=${RENDERED_POOL_TWO:-$first_pool}
     cat >"$tmpdir/config.json" <<EOF
-{"name":"preflight-test","services":{"versiond":{"environment":{"DEVSHARD_STORAGE_MODE":"postgres","PGHOST":"$first_host","PGPORT":"5432","PGDATABASE":"devshardd","PGUSER":"user"$first_extra}},"versiond2":{"environment":{"DEVSHARD_STORAGE_MODE":"postgres","PGHOST":"$second_host","PGPORT":"5432","PGDATABASE":"devshardd","PGUSER":"user"$second_extra}}}}
+{"name":"preflight-test","services":{"versiond":{"environment":{"DEVSHARD_STORAGE_MODE":"postgres","PGHOST":"$first_host","PGPORT":"5432","PGDATABASE":"devshardd","PGUSER":"user","PG_POOL_MAX_CONNS":"$first_pool"$first_extra}},"versiond2":{"environment":{"DEVSHARD_STORAGE_MODE":"postgres","PGHOST":"$second_host","PGPORT":"5432","PGDATABASE":"devshardd","PGUSER":"user","PG_POOL_MAX_CONNS":"$second_pool"$second_extra}}}}
 EOF
 }
 
@@ -42,11 +44,14 @@ elif [[ $1 == inspect ]]; then
     }
     runtime_host=pg
     [[ $container != container-2 ]] || runtime_host=$RUNTIME_HOST_TWO
+    runtime_pool=$RUNTIME_POOL_ONE
+    [[ $container != container-2 ]] || runtime_pool=$RUNTIME_POOL_TWO
     jq -cn \
         --arg host "$runtime_host" \
+        --arg pool "$runtime_pool" \
         --arg extra "${RUNTIME_EXTRA:-}" '
         ["DEVSHARD_STORAGE_MODE=postgres", "PGHOST=" + $host, "PGPORT=5432",
-         "PGDATABASE=devshardd", "PGUSER=user"]
+         "PGDATABASE=devshardd", "PGUSER=user", "PG_POOL_MAX_CONNS=" + $pool]
         + (if $extra == "" then [] else [$extra] end)'
 elif [[ $1 == exec ]]; then
     container=$2
@@ -74,11 +79,17 @@ elif [[ $1 == exec ]]; then
         snapshot=snapshot-1
         generation=generation-1
         database=$DATABASE_ONE
+        pool_max_connections=$PROOF_POOL_ONE
+        server_max_connections=$SERVER_MAX_ONE
+        server_reserved_connections=$SERVER_RESERVED_ONE
     else
         identity=$IDENTITY_TWO
         snapshot=snapshot-2
         generation=generation-2
         database=$DATABASE_TWO
+        pool_max_connections=$PROOF_POOL_TWO
+        server_max_connections=$SERVER_MAX_TWO
+        server_reserved_connections=$SERVER_RESERVED_TWO
     fi
     endpoint=${*: -1}
     case $endpoint in
@@ -93,10 +104,16 @@ elif [[ $1 == exec ]]; then
                     --arg identity "$identity" \
                     --arg snapshot "$snapshot" \
                     --arg generation_prefix "$generation" \
+                    --argjson pool_max_connections "$pool_max_connections" \
+                    --argjson server_max_connections "$server_max_connections" \
+                    --argjson server_reserved_connections "$server_reserved_connections" \
                     --argjson children "$TARGETS_PER_REPLICA" '
                     {identity:$identity, children:$children, snapshot:$snapshot,
                      targets:[range(1; $children + 1)
-                         | {generation:($generation_prefix + "-" + tostring), version:"v5"}]}'
+                         | {generation:($generation_prefix + "-" + tostring), version:"v5",
+                            pool_max_connections:$pool_max_connections,
+                            server_max_connections:$server_max_connections,
+                            server_reserved_connections:$server_reserved_connections}]}'
             fi
             ;;
         */internal/storage-challenge)
@@ -149,6 +166,14 @@ run_preflight() {
         IDENTITY_TWO="${IDENTITY_TWO:-db-1}" RUNTIME_EXTRA="${RUNTIME_EXTRA:-}" \
         DATABASE_ONE="${DATABASE_ONE:-shared}" DATABASE_TWO="${DATABASE_TWO:-shared}" \
         RUNTIME_HOST_TWO="${RUNTIME_HOST_TWO:-pg}" \
+        RUNTIME_POOL_ONE="${RUNTIME_POOL_ONE:-4}" \
+        RUNTIME_POOL_TWO="${RUNTIME_POOL_TWO:-4}" \
+        PROOF_POOL_ONE="${PROOF_POOL_ONE:-4}" \
+        PROOF_POOL_TWO="${PROOF_POOL_TWO:-4}" \
+        SERVER_MAX_ONE="${SERVER_MAX_ONE:-100}" \
+        SERVER_MAX_TWO="${SERVER_MAX_TWO:-100}" \
+        SERVER_RESERVED_ONE="${SERVER_RESERVED_ONE:-3}" \
+        SERVER_RESERVED_TWO="${SERVER_RESERVED_TWO:-3}" \
         LIVE_MODE="${LIVE_MODE:-both}" INVALID_PROOF="${INVALID_PROOF:-none}" \
         SNAPSHOT_DRIFT="${SNAPSHOT_DRIFT:-false}" \
         PROOF_API_MODE="${PROOF_API_MODE:-ready}" \
@@ -185,6 +210,27 @@ unset TARGETS_PER_REPLICA
     "linear proof did not write through every generation"
 [[ $(grep -c ' read ' "$tmpdir/challenge.log") -eq 8 ]] || fail \
     "storage proof did not remain linear as generations increased"
+
+RENDERED_POOL_ONE=0
+export RENDERED_POOL_ONE
+write_config
+if run_preflight --compose-only >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "a non-positive rendered PostgreSQL pool limit was accepted"
+fi
+unset RENDERED_POOL_ONE
+grep -q 'must set PG_POOL_MAX_CONNS to a positive integer' "$tmpdir/err" || fail \
+    "invalid rendered PostgreSQL pool limit was not diagnosed"
+
+RENDERED_POOL_TWO=8
+export RENDERED_POOL_TWO
+write_config
+if run_preflight --compose-only >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "different rendered PostgreSQL pool limits were accepted"
+fi
+unset RENDERED_POOL_TWO
+grep -q 'must use the same PG_POOL_MAX_CONNS' "$tmpdir/err" || fail \
+    "rendered PostgreSQL pool-limit mismatch was not diagnosed"
+write_config
 
 if run_preflight --expected-identity other-database \
     >"$tmpdir/out" 2>"$tmpdir/err"; then
@@ -229,6 +275,15 @@ unset RUNTIME_HOST_TWO
 grep -q "running versiond2 has PGHOST='pg-other'" "$tmpdir/err" || fail \
     "runtime-host mismatch was not diagnosed"
 
+RUNTIME_POOL_TWO=8
+export RUNTIME_POOL_TWO
+if run_preflight >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "runtime PostgreSQL pool-limit drift was accepted"
+fi
+unset RUNTIME_POOL_TWO
+grep -q "running versiond2 has PG_POOL_MAX_CONNS='8'" "$tmpdir/err" || fail \
+    "runtime PostgreSQL pool-limit mismatch was not diagnosed"
+
 INSPECT_FAILURE_CONTAINER=container-1
 export INSPECT_FAILURE_CONTAINER
 if run_preflight >"$tmpdir/out" 2>"$tmpdir/err"; then
@@ -246,6 +301,34 @@ fi
 unset IDENTITY_TWO
 grep -q 'different PostgreSQL database lineages' "$tmpdir/err" ||
     fail "identity mismatch was not diagnosed"
+
+PROOF_POOL_TWO=8
+export PROOF_POOL_TWO
+if run_preflight >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "a child pool larger than the rendered contract was accepted"
+fi
+unset PROOF_POOL_TWO
+grep -q 'reports PostgreSQL pool capacity 8' "$tmpdir/err" || fail \
+    "live child-pool mismatch was not diagnosed"
+
+SERVER_MAX_TWO=99
+export SERVER_MAX_TWO
+if run_preflight >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "different PostgreSQL server capacities were accepted"
+fi
+unset SERVER_MAX_TWO
+grep -q 'server capacity differs between HA generations' "$tmpdir/err" || fail \
+    "PostgreSQL server-capacity mismatch was not diagnosed"
+
+SERVER_MAX_ONE=35
+SERVER_MAX_TWO=35
+export SERVER_MAX_ONE SERVER_MAX_TWO
+if run_preflight >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "an insufficient PostgreSQL connection budget was accepted"
+fi
+unset SERVER_MAX_ONE SERVER_MAX_TWO
+grep -q 'connection budget is insufficient: 34 required' "$tmpdir/err" || fail \
+    "insufficient PostgreSQL connection budget was not diagnosed"
 
 DATABASE_TWO=clone
 export DATABASE_TWO

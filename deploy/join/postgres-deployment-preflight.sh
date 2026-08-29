@@ -7,6 +7,8 @@ expected_identity=
 compose_only=false
 compose_args=()
 forbidden_libpq=(DATABASE_URL PGHOSTADDR PGSERVICE PGSERVICEFILE PGOPTIONS)
+versiond_lookup_pool_max_connections=4
+schema_initializer_connections=1
 
 fail() {
     echo "postgres-deployment-preflight: $*" >&2
@@ -62,6 +64,11 @@ done
 command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
 command -v jq >/dev/null 2>&1 || fail "jq is required"
 
+is_positive_int32() {
+    local value=$1
+    [[ $value =~ ^[1-9][0-9]{0,9}$ ]] && ((value <= 2147483647))
+}
+
 compose=("$docker_bin" compose "${compose_args[@]}")
 config=$("${compose[@]}" config --format json) || fail "cannot render Compose topology"
 project_name=$(jq -er '.name | strings | select(length > 0)' <<<"$config") || fail \
@@ -92,6 +99,14 @@ done
 first=$(jq -r '.services.versiond.environment.PGPORT // "5432"' <<<"$config")
 second=$(jq -r '.services.versiond2.environment.PGPORT // "5432"' <<<"$config")
 [[ $first == "$second" ]] || fail "versiond services must use the same PGPORT"
+pool_max_connections=$(jq -r \
+    '.services.versiond.environment.PG_POOL_MAX_CONNS // ""' <<<"$config")
+second=$(jq -r \
+    '.services.versiond2.environment.PG_POOL_MAX_CONNS // ""' <<<"$config")
+is_positive_int32 "$pool_max_connections" || fail \
+    "versiond must set PG_POOL_MAX_CONNS to a positive integer"
+[[ $pool_max_connections == "$second" ]] || fail \
+    "versiond services must use the same PG_POOL_MAX_CONNS"
 
 if [[ $compose_only == true ]]; then
     echo "postgres-deployment-preflight: rendered PostgreSQL contract is valid for Compose project '$project_name'"
@@ -146,6 +161,9 @@ for index in 0 1; do
     [[ -n $actual ]] || actual=5432
     [[ $actual == "$expected" ]] || fail \
         "running $service has PGPORT='$actual', rendered topology expects '$expected'"
+    actual=$(container_env "$runtime_environment" PG_POOL_MAX_CONNS) || actual=
+    [[ $actual == "$pool_max_connections" ]] || fail \
+        "running $service has PG_POOL_MAX_CONNS='$actual', rendered topology expects '$pool_max_connections'"
 done
 
 versiond_http() {
@@ -214,8 +232,47 @@ validate_storage_identity() {
           and ([$proof.targets[].generation] | unique | length == $proof.children)
           and all($proof.targets[];
               (.generation | type == "string" and length > 0)
-              and (.version | type == "string" and length > 0))
+              and (.version | type == "string" and length > 0)
+              and (.pool_max_connections | type == "number" and . > 0 and floor == .)
+              and (.server_max_connections | type == "number" and . > 0 and floor == .)
+              and (.server_reserved_connections | type == "number" and . >= 0 and floor == .)
+              and (.server_reserved_connections < .server_max_connections))
     ' >/dev/null
+}
+
+validate_connection_budget() {
+    local proof generation target_pool target_server_max target_server_reserved
+    local server_max='' server_reserved='' total_targets=0
+
+    for proof in "${proofs[@]}"; do
+        while IFS=$'\t' read -r generation target_pool target_server_max target_server_reserved; do
+            [[ $target_pool == "$pool_max_connections" ]] || fail \
+                "generation $generation reports PostgreSQL pool capacity $target_pool; rendered topology expects $pool_max_connections"
+            if [[ -z $server_max ]]; then
+                server_max=$target_server_max
+                server_reserved=$target_server_reserved
+            elif [[ $target_server_max != "$server_max" || \
+                $target_server_reserved != "$server_reserved" ]]; then
+                fail "PostgreSQL server capacity differs between HA generations"
+            fi
+            ((total_targets += 1))
+        done < <(jq -r '.targets[] | [
+            .generation,
+            .pool_max_connections,
+            .server_max_connections,
+            .server_reserved_connections
+        ] | @tsv' <<<"$proof")
+    done
+
+    local supervisors=${#containers[@]}
+    local per_child=$((pool_max_connections + 2))
+    local per_supervisor=$((
+        per_child + versiond_lookup_pool_max_connections + schema_initializer_connections
+    ))
+    local required=$((total_targets * per_child + supervisors * per_supervisor))
+    local available=$((server_max - server_reserved))
+    ((required <= available)) || fail \
+        "PostgreSQL connection budget is insufficient: $required required for $total_targets current generations, rolling replacements, readiness/fence sessions, versiond lookup, and schema initialization; $available non-reserved connections available"
 }
 
 run_storage_challenge() {
@@ -276,6 +333,7 @@ done
 
 [[ -z $expected_identity || $identity == "$expected_identity" ]] || fail \
     "live PostgreSQL identity changed from $expected_identity to $identity"
+validate_connection_budget
 
 anchor_container=${containers[0]}
 anchor_snapshot=${snapshots[0]}
