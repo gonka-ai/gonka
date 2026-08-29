@@ -452,7 +452,9 @@ down after boot.
 
 ## Operational Notes
 
-- Postgres env vars: `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`.
+- Postgres env vars: `PGHOST` (or `PGSERVICE`), `PGPORT`, `PGDATABASE`,
+  `PGUSER`, `PGPASSWORD`. The schema bootstrap uses the same pgx environment
+  selectors as the child storage path.
 - Postgres connect deadline at boot: `PG_CONNECT_TIMEOUT` default `2s`.
 - Postgres schema migration deadline: `PG_MIGRATION_TIMEOUT` default `2m`.
   It includes time waiting for another devshard migrator to release the
@@ -460,6 +462,11 @@ down after boot.
 - The session-fence check runs every `5s` with a separate `30s` timeout. A
   timeout invalidates that PostgreSQL session and triggers child replacement;
   ordinary readiness probes retain their shorter `5s` budget.
+- Each PostgreSQL-backed child uses its application pool plus two dedicated
+  sessions: one for readiness and one for the advisory fence. Schema bootstrap
+  transiently opens a separate pool. External PostgreSQL capacity planning must
+  include every simultaneously running child generation on both versiond
+  replicas.
 - Migration bootstrap and all pending application steps are serialized by a
   database-scoped advisory lock. Before starting children in an HA deployment,
   versiond runs `devshardd --initialize-postgres-schema` through a current
@@ -488,7 +495,10 @@ down after boot.
   session semantics; transaction-pooling proxies such as PgBouncer in transaction
   mode are unsupported because the advisory lock must stay bound to one backend
   session. The dedicated fence session disables `idle_session_timeout`; its
-  lifetime is controlled by devshardd and the active fence check instead.
+  lifetime is controlled by devshardd and the active fence check instead. This
+  terminal path resets in-flight requests rather than waiting for the normal
+  shutdown grace; the replacement then follows versiond's restart backoff,
+  capped at `60s`.
 - The PostgreSQL endpoint remains responsible for cluster-level writer fencing:
   it must expose at most one writable primary for a logical database. The
   advisory fence prevents one child pool from crossing branches, and the live
@@ -505,6 +515,10 @@ down after boot.
   supervisor and its children. A final snapshot read closes the transaction.
   Deployment tooling serializes the exchange; concurrent challenges can cause
   only a safe false negative because each write replaces the previous nonce.
+  It must wait for preparing, swapping, and draining generations to settle. On
+  the first rollout it must start a current artifact and initialize the schema
+  before requiring proof support from the fleet; legacy children do not expose
+  the proof API.
 - Live readiness uses one dedicated PostgreSQL connection outside the
   application pool. Two consecutive database failures make `/readyz` return
   `503` without terminating devshardd; two successful probes restore readiness.
