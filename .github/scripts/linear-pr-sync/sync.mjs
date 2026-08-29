@@ -15,6 +15,10 @@
 //
 // All identity/state resolution is done by NAME at runtime, so the only hard config
 // is: the Linear team key and the reviewer mapping.
+//
+// Fail-soft: Linear syncing is a side-channel automation and must never block a
+// pull request. Missing config (e.g. an expired/unset secret) or any runtime
+// error is downgraded to a GitHub warning annotation and the process exits 0.
 
 import fs from "node:fs";
 import { LinearClient } from "@linear/sdk";
@@ -22,6 +26,10 @@ import { LinearClient } from "@linear/sdk";
 // ---------------------------------------------------------------------------
 // Config
 // ---------------------------------------------------------------------------
+
+// Names of required env vars that were missing. We collect them instead of
+// throwing at module-load time so the script can fail soft (see main()).
+const missingEnv = [];
 
 const cfg = {
   apiKey: requireEnv("LINEAR_API_KEY"),
@@ -71,7 +79,9 @@ const cfg = {
 const milestoneProjectName = (milestone) =>
   `${cfg.milestoneProjectPrefix}${milestone}`;
 
-const client = new LinearClient({ apiKey: cfg.apiKey });
+// Constructed only when the API key is present; when it's missing, main() bails
+// early (fail-soft) before any client call is made.
+const client = cfg.apiKey ? new LinearClient({ apiKey: cfg.apiKey }) : null;
 
 // Marker embedded in the parent issue description. Also used as an attachment URL,
 // which is how we reliably find the issue again on later events.
@@ -82,6 +92,16 @@ const prMarker = (repo, number) => `github-pr:${repo}#${number}`;
 // ---------------------------------------------------------------------------
 
 async function main() {
+  // Fail-soft: if the Linear credentials/config are missing (e.g. an expired or
+  // unset secret), warn and exit cleanly instead of blocking the PR check.
+  if (missingEnv.length) {
+    ghWarn(
+      `Linear sync skipped — missing config: ${missingEnv.join(", ")}. ` +
+        `Set the repository secrets/variables to re-enable Linear syncing.`,
+    );
+    return;
+  }
+
   const pr = await loadPullRequest();
   if (!pr) return;
 
@@ -788,8 +808,18 @@ function parentDescription(pr) {
 
 function requireEnv(name) {
   const v = process.env[name];
-  if (!v) throw new Error(`Missing required environment variable: ${name}`);
+  if (!v) {
+    missingEnv.push(name);
+    return "";
+  }
   return v;
+}
+
+// Emit a GitHub Actions warning annotation (visible in the checks UI) without
+// failing the job.
+function ghWarn(message) {
+  const oneLine = String(message).replace(/\r?\n/g, " ");
+  console.log(`::warning title=linear-pr-sync::${oneLine}`);
 }
 
 function warnNoParent(pr) {
@@ -799,6 +829,12 @@ function warnNoParent(pr) {
 }
 
 main().catch((err) => {
+  // Fail-soft: Linear syncing is a side-channel automation and must never block
+  // a pull request. Log the full error for debugging, surface a warning
+  // annotation, and exit 0 so the check stays green.
   console.error(err);
-  process.exit(1);
+  ghWarn(
+    `Linear sync failed (non-blocking): ${err && err.message ? err.message : err}`,
+  );
+  process.exit(0);
 });
