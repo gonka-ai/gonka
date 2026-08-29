@@ -458,16 +458,21 @@ down after boot.
   It includes time waiting for another devshard migrator to release the
   database-scoped migration lock.
 - Migration bootstrap and all pending application steps are serialized by a
-  database-scoped advisory lock. Binaries predating this lock cannot join that
-  coordination protocol. A fresh empty database must therefore be initialized
-  by a current devshardd before starting a mixed set of legacy and current
-  children. Normal upgrades already have the legacy schema applied. The current
-  Compose fresh-install path does not enforce this ordering; until deployment
-  tooling provides an explicit init stage, a legacy child can lose the initial
-  migration race, roll back, and converge through versiond restart/backoff.
+  database-scoped advisory lock. Before starting children in an HA deployment,
+  versiond runs `devshardd --initialize-postgres-schema` through a current
+  downloaded artifact. Children that predate this command wait behind the
+  initialization barrier. Concurrent versiond replicas may run the initializer,
+  but the database lock serializes them. This gives fresh mixed-version installs
+  the same deterministic schema ordering as normal upgrades.
 - `devshard_storage_identity.identity` is a durable database-lineage marker.
   Copies restored from one backup retain the same marker, so equality alone is
   not proof that two hosts currently share a database.
+- Each devshard process also writes a unique token to
+  `devshard_connection_lineage` before serving. Every connection subsequently
+  created by its application pool must observe that token and report a writable
+  primary before pgx admits it. A DNS or load-balancer endpoint may therefore
+  expose multiple addresses for one logical writer, but it cannot silently mix
+  independent writable clones within one child pool.
 - HA deployment preflight obtains a stable generation snapshot from each
   versiond replica. For every HA-routed child generation across those snapshots,
   it writes a unique random nonce through that one child's application pool and

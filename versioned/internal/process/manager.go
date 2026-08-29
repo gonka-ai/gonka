@@ -121,6 +121,8 @@ type Manager struct {
 	nextOperationID     uint64
 	nextProofGeneration uint64
 	proofEpoch          string
+	storageInitDone     chan struct{}
+	storageInitOnce     sync.Once
 	conditions          Conditions
 	everConverged       bool
 	available           chan struct{}
@@ -135,18 +137,19 @@ func NewManager(cfg config.Config) *Manager {
 	cfg = normalizeConfig(cfg)
 	childCtx, cancelChildren := context.WithCancel(context.Background())
 	m := &Manager{
-		cfg:            cfg,
-		processes:      make(map[string]*child),
-		draining:       make(map[string][]*child),
-		children:       make(map[*child]struct{}),
-		downloading:    make(map[string]struct{}),
-		allocatedPorts: make(map[int]struct{}),
-		reservedPorts:  reservedChildPorts(),
-		operations:     make(map[uint64]controlOperation),
-		childCtx:       childCtx,
-		cancelChildren: cancelChildren,
-		available:      make(chan struct{}, 1),
-		proofEpoch:     rand.Text(),
+		cfg:             cfg,
+		processes:       make(map[string]*child),
+		draining:        make(map[string][]*child),
+		children:        make(map[*child]struct{}),
+		downloading:     make(map[string]struct{}),
+		allocatedPorts:  make(map[int]struct{}),
+		reservedPorts:   reservedChildPorts(),
+		operations:      make(map[uint64]controlOperation),
+		childCtx:        childCtx,
+		cancelChildren:  cancelChildren,
+		available:       make(chan struct{}, 1),
+		proofEpoch:      rand.Text(),
+		storageInitDone: make(chan struct{}),
 	}
 	m.routes.Store(proxy.RouteTable{})
 	return m
@@ -1553,6 +1556,13 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		m.mu.Unlock()
 		return
 	}
+	if err := m.ensurePostgresSchemaInitialized(ctx, c, preflight); err != nil {
+		slog.Error("postgres schema initialization barrier failed", "version", c.version.Name, "error", err)
+		m.mu.Lock()
+		transitionGenerationFailureLocked(c)
+		m.mu.Unlock()
+		return
+	}
 	m.mu.Lock()
 	c.binaryVersion = preflight.binaryLogVersion
 	c.storageMode = preflight.storageMode
@@ -1725,6 +1735,46 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		if backoff > 60*time.Second {
 			backoff = 60 * time.Second
 		}
+	}
+}
+
+func (m *Manager) ensurePostgresSchemaInitialized(ctx context.Context, c *child, preflight childPreflight) error {
+	if !m.devshardAdminEligible() || os.Getenv("PGHOST") == "" {
+		return nil
+	}
+	ha, err := parseHADeployment(os.Getenv(envHADeployment))
+	if err != nil {
+		return fmt.Errorf("read HA deployment mode: %w", err)
+	}
+	if !ha {
+		return nil
+	}
+	select {
+	case <-m.storageInitDone:
+		return nil
+	default:
+	}
+
+	supported, err := initializePostgresSchemaContext(
+		ctx,
+		c.binPath,
+		childEnv(preflight.binaryLogVersion, "", preflight.haDeployment),
+	)
+	if err != nil {
+		return err
+	}
+	if supported {
+		m.storageInitOnce.Do(func() { close(m.storageInitDone) })
+		return nil
+	}
+
+	slog.Info("legacy child waiting for lock-aware PostgreSQL schema initialization",
+		"version", c.version.Name)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-m.storageInitDone:
+		return nil
 	}
 }
 

@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"fmt"
+	"strconv"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -223,6 +224,41 @@ func MigratePostgres(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("devshard postgres migrate: %w", err)
 	}
 	return nil
+}
+
+// InitializePostgresSchema applies the current schema without starting a
+// devshard server. Versiond uses this as the lock-aware initialization stage
+// before it permits legacy children to start against a fresh shared database.
+func InitializePostgresSchema(ctx context.Context) error {
+	cfg, err := pgxpool.ParseConfig("")
+	if err != nil {
+		return fmt.Errorf("parse postgres config: %w", err)
+	}
+	connectTimeout := pgConnectTimeout()
+	cfg.ConnConfig.ConnectTimeout = connectTimeout
+	if cfg.ConnConfig.RuntimeParams == nil {
+		cfg.ConnConfig.RuntimeParams = make(map[string]string)
+	}
+	cfg.ConnConfig.RuntimeParams["statement_timeout"] = strconv.FormatInt(postgresStatementTimeout.Milliseconds(), 10)
+	cfg.ConnConfig.RuntimeParams["lock_timeout"] = strconv.FormatInt(postgresLockTimeout.Milliseconds(), 10)
+
+	connectCtx, cancelConnect := context.WithTimeout(ctx, connectTimeout)
+	pool, err := pgxpool.NewWithConfig(connectCtx, cfg)
+	if err == nil {
+		err = pool.Ping(connectCtx)
+	}
+	cancelConnect()
+	if err != nil {
+		if pool != nil {
+			pool.Close()
+		}
+		return fmt.Errorf("connect to postgres for schema initialization: %w", err)
+	}
+	defer pool.Close()
+
+	migrationCtx, cancelMigration := context.WithTimeout(ctx, pgMigrationTimeout())
+	defer cancelMigration()
+	return MigratePostgres(migrationCtx, pool)
 }
 
 // PostgresMigrationSteps returns a copy of registered Postgres migration steps (for tests).
