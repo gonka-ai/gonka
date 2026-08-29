@@ -65,10 +65,13 @@ services:
       start_period: ${DEVSHARD_POSTGRES_START_PERIOD:-30m}
     volumes:
       - ${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}:/var/lib/postgresql/gonka:Z
-      - ./devshard-postgres-entrypoint.sh:/usr/local/bin/gonka-postgres-entrypoint:ro,Z
-      # Existing artifacts prove that an empty target beside a v4 installation
-      # is data loss, not a legitimate first initialization.
+      - ./devshard-postgres-entrypoint.sh:/usr/local/bin/gonka-postgres-entrypoint:ro,z
+      # .pg-bound is definitive evidence that PostgreSQL still owns sessions.
+      # Downloaded artifacts alone leave an explicit first-HA-vs-lost-volume
+      # decision for the operator; both checks happen before empty init.
       - ./devshards/bin:/var/lib/postgresql/gonka-existing-versiond:ro,z
+      - ./devshards/data:/var/lib/postgresql/gonka-versiond-data:ro,z
+      - ./devshards2/data:/var/lib/postgresql/gonka-versiond2-data:ro,z
     stop_grace_period: ${DEVSHARD_POSTGRES_STOP_GRACE_PERIOD:-5m}
     restart: always
 

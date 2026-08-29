@@ -14,6 +14,8 @@ service=devshard-postgres
 export GONKA_POSTGRES_TEST_DATA="$tmpdir/persistent"
 export GONKA_POSTGRES_TEST_ENTRYPOINT="$script_dir/devshard-postgres-entrypoint.sh"
 export GONKA_POSTGRES_TEST_EXISTING="$tmpdir/existing-versiond"
+export GONKA_POSTGRES_TEST_VERSIOND_DATA="$tmpdir/versiond-data"
+export GONKA_POSTGRES_TEST_VERSIOND2_DATA="$tmpdir/versiond2-data"
 
 old_compose=(docker compose --project-name "$project" -f "$base")
 new_compose=(docker compose --project-name "$project" -f "$base" -f "$overlay")
@@ -62,7 +64,9 @@ wait_for_postgres() {
 }
 
 mkdir -p "$GONKA_POSTGRES_TEST_DATA" \
-    "$GONKA_POSTGRES_TEST_EXISTING/v4"
+    "$GONKA_POSTGRES_TEST_EXISTING/v4" \
+    "$GONKA_POSTGRES_TEST_VERSIOND_DATA" \
+    "$GONKA_POSTGRES_TEST_VERSIOND2_DATA"
 printf 'existing v4 installation\n' \
     >"$GONKA_POSTGRES_TEST_EXISTING/v4/install.json"
 
@@ -101,6 +105,8 @@ row=$("${new_compose[@]}" exec -T "$service" psql \
 "${new_compose[@]}" exec -T "$service" \
     test -s /var/lib/postgresql/gonka/data/PG_VERSION || fail \
     "persistent PGDATA was not published"
+[[ ! -e $GONKA_POSTGRES_TEST_DATA/.gonka-copy-complete ]] || fail \
+    "migration completion marker remained after PGDATA publication"
 preflight_result=$("$preflight" --source-container "$new_container" \
     --target-dir "$GONKA_POSTGRES_TEST_DATA")
 grep -q 'no migration copy is required' <<<"$preflight_result" || fail \
@@ -122,8 +128,12 @@ row=$("${new_compose[@]}" exec -T "$service" psql \
 # closed rather than initialize an empty database beside an existing install.
 export GONKA_POSTGRES_TEST_DATA="$tmpdir/guard-persistent"
 export GONKA_POSTGRES_TEST_EXISTING="$tmpdir/guard-existing-versiond"
+export GONKA_POSTGRES_TEST_VERSIOND_DATA="$tmpdir/guard-versiond-data"
+export GONKA_POSTGRES_TEST_VERSIOND2_DATA="$tmpdir/guard-versiond2-data"
 mkdir -p "$GONKA_POSTGRES_TEST_DATA" \
-    "$GONKA_POSTGRES_TEST_EXISTING/v4"
+    "$GONKA_POSTGRES_TEST_EXISTING/v4" \
+    "$GONKA_POSTGRES_TEST_VERSIOND_DATA" \
+    "$GONKA_POSTGRES_TEST_VERSIOND2_DATA"
 printf 'existing v4 installation\n' \
     >"$GONKA_POSTGRES_TEST_EXISTING/v4/install.json"
 
@@ -149,7 +159,7 @@ guard_old_volume=$(docker inspect "$guard_old_container" --format \
 restart_target="$tmpdir/recovery-restart"
 mkdir -p "$restart_target/.migrating"
 printf '16\n' >"$restart_target/.migrating/PG_VERSION"
-: >"$restart_target/.migrating/.gonka-copy-complete"
+: >"$restart_target/.gonka-copy-complete"
 restart_result=$("$preflight" --source-volume "$guard_old_volume" \
     --target-dir "$restart_target")
 grep -q 'staging is complete' <<<"$restart_result" || fail \
@@ -165,10 +175,33 @@ done
 [[ ${guard_state:-} == exited ]] || fail \
     "detached-volume guard did not stop PostgreSQL"
 guard_logs=$("${guard_new_compose[@]}" logs --no-color "$service" 2>&1)
-grep -q 'refusing to initialize an empty database' <<<"$guard_logs" || fail \
+grep -q 'first-time HA enablement or a detached drained database' \
+    <<<"$guard_logs" || fail \
     "detached-volume guard did not explain the failure"
 [[ ! -e $GONKA_POSTGRES_TEST_DATA/data/PG_VERSION ]] || fail \
     "detached-volume guard initialized an empty PostgreSQL cluster"
+
+# A .pg-bound marker is definitive evidence that the detached PostgreSQL
+# cluster owns live devshard state. The first-HA override must not bypass it.
+mkdir -p "$GONKA_POSTGRES_TEST_VERSIOND_DATA/v5"
+touch "$GONKA_POSTGRES_TEST_VERSIOND_DATA/v5/.pg-bound"
+export GONKA_POSTGRES_TEST_ALLOW_EMPTY_INIT=true
+"${guard_new_compose[@]}" up -d --force-recreate "$service"
+guard_container=$("${guard_new_compose[@]}" ps -aq "$service")
+for _ in {1..30}; do
+    guard_state=$(docker inspect "$guard_container" --format '{{.State.Status}}')
+    [[ $guard_state == exited ]] && break
+    sleep 0.2
+done
+unset GONKA_POSTGRES_TEST_ALLOW_EMPTY_INIT
+[[ ${guard_state:-} == exited ]] || fail \
+    "PostgreSQL-bound empty-init guard did not stop PostgreSQL"
+guard_logs=$("${guard_new_compose[@]}" logs --no-color "$service" 2>&1)
+grep -q 'PostgreSQL-bound devshard data exists' <<<"$guard_logs" || fail \
+    "PostgreSQL-bound guard did not identify the data-loss state"
+grep -q 'do not use DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT' \
+    <<<"$guard_logs" || fail \
+    "PostgreSQL-bound guard suggested the destructive override"
 
 # The shipped recovery overlay reattaches the selected external volume at the
 # legacy mount. The same entrypoint then performs its validated atomic copy into

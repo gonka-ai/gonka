@@ -54,6 +54,8 @@ while [[ $# -gt 0 ]]; do
 done
 
 [[ -n $target_dir ]] || fail "--target-dir is required"
+[[ $target_dir != *,* ]] || fail \
+    "target directory must not contain a comma: $target_dir"
 if [[ -n $source_container && -n $source_volume ]]; then
     fail "use either --source-container or --source-volume, not both"
 fi
@@ -69,7 +71,7 @@ probe_script=$(cat <<'PROBE'
 if [ -s "$2/data/PG_VERSION" ]; then
     printf 'target-ready\n'
 elif [ -s "$2/.migrating/PG_VERSION" ] &&
-    [ -f "$2/.migrating/.gonka-copy-complete" ]; then
+    [ -f "$2/.gonka-copy-complete" ]; then
     printf 'staging-ready\n'
 elif [ -s "$1/PG_VERSION" ]; then
     source_kib=$(du -sk "$1" | cut -f1)
