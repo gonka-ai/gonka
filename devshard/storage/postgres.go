@@ -37,7 +37,8 @@ import (
 // serving; escrow-keyed methods also WaitReady so requests block until rebuild
 // finishes or fails.
 type Postgres struct {
-	pool *pgxpool.Pool
+	pool            *pgxpool.Pool
+	connectionGuard *postgresConnectionGuard
 
 	mu          sync.RWMutex
 	knownEpochs map[uint64]struct{}
@@ -213,6 +214,8 @@ func newPostgres(ctx context.Context, connectTimeout, migrationTimeout time.Dura
 	// Server-side per-query bounds applied to every pooled connection.
 	cfg.ConnConfig.RuntimeParams["statement_timeout"] = strconv.FormatInt(postgresStatementTimeout.Milliseconds(), 10)
 	cfg.ConnConfig.RuntimeParams["lock_timeout"] = strconv.FormatInt(postgresLockTimeout.Milliseconds(), 10)
+	connectionGuard := newPostgresConnectionGuard()
+	connectionGuard.installValidator(cfg)
 	// Health owns one dedicated connection, leaving every configured pool slot
 	// available to application work and keeping MaxConns an application concern.
 	healthConfig := cfg.ConnConfig.Copy()
@@ -233,14 +236,19 @@ func newPostgres(ctx context.Context, connectTimeout, migrationTimeout time.Dura
 		pool.Close()
 		return nil, err
 	}
+	if err := connectionGuard.arm(migrationCtx, pool); err != nil {
+		pool.Close()
+		return nil, err
+	}
 
 	s := &Postgres{
-		pool:        pool,
-		knownEpochs: make(map[uint64]struct{}),
-		escrowIdx:   make(map[string]uint64),
-		readyCh:     make(chan struct{}),
-		healthReady: true,
-		healthDone:  make(chan struct{}),
+		pool:            pool,
+		connectionGuard: connectionGuard,
+		knownEpochs:     make(map[uint64]struct{}),
+		escrowIdx:       make(map[string]uint64),
+		readyCh:         make(chan struct{}),
+		healthReady:     true,
+		healthDone:      make(chan struct{}),
 	}
 	s.startHealthMonitor(healthConfig)
 	s.startIndexRebuild()
@@ -611,6 +619,9 @@ func (s *Postgres) Close() error {
 	if healthDone != nil {
 		<-healthDone
 	}
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), postgresOpTimeout)
+	defer cleanupCancel()
+	s.connectionGuard.remove(cleanupCtx, s.pool)
 	s.pool.Close()
 	return nil
 }

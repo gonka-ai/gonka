@@ -59,6 +59,46 @@ func TestStorageProofRejectsClonedIdentityOnIndependentDatabase(t *testing.T) {
 	require.False(t, cloneProof.Found, "live challenge must not cross independent databases")
 }
 
+func TestPostgresConnectionGuardRejectsIndependentClone(t *testing.T) {
+	ctx := context.Background()
+	bootstrapPool, cleanup := setupDevshardPostgresPool(t, nil)
+	defer cleanup()
+	require.NoError(t, MigratePostgres(ctx, bootstrapPool))
+
+	_, err := bootstrapPool.Exec(ctx, `CREATE DATABASE connection_guard_clone`)
+	require.NoError(t, err)
+	cloneConfig := bootstrapPool.Config().Copy()
+	cloneConfig.ConnConfig.Database = "connection_guard_clone"
+	clonePool, err := pgxpool.NewWithConfig(ctx, cloneConfig)
+	require.NoError(t, err)
+	require.NoError(t, MigratePostgres(ctx, clonePool))
+
+	var identity string
+	require.NoError(t, bootstrapPool.QueryRow(ctx, `
+		SELECT identity::text FROM devshard_storage_identity WHERE singleton`).Scan(&identity))
+	_, err = clonePool.Exec(ctx, `
+		UPDATE devshard_storage_identity SET identity = $1::uuid WHERE singleton`, identity)
+	require.NoError(t, err)
+	clonePool.Close()
+
+	guard := newPostgresConnectionGuard()
+	primaryConfig := bootstrapPool.Config().Copy()
+	guard.installValidator(primaryConfig)
+	primaryPool, err := pgxpool.NewWithConfig(ctx, primaryConfig)
+	require.NoError(t, err)
+	defer primaryPool.Close()
+	require.NoError(t, guard.arm(ctx, primaryPool))
+	require.NoError(t, primaryPool.Ping(ctx), "the database containing the process token must remain usable")
+
+	guardedCloneConfig := cloneConfig.Copy()
+	guard.installValidator(guardedCloneConfig)
+	guardedClonePool, err := pgxpool.NewWithConfig(ctx, guardedCloneConfig)
+	require.NoError(t, err)
+	defer guardedClonePool.Close()
+	require.Error(t, guardedClonePool.Ping(ctx),
+		"a clone with the same durable identity but without the process token must be rejected")
+}
+
 func TestStorageProofRejectsInvalidNonce(t *testing.T) {
 	_, err := (&Postgres{}).StorageProof(context.Background(), ProofReadChallenge, "not-a-uuid")
 	require.Error(t, err)
