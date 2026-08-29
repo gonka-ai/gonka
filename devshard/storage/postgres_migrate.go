@@ -11,7 +11,10 @@ import (
 )
 
 // postgresMigrationSteps is the ordered forward-only schema for devshard Postgres parents.
-// Per-epoch partitions are created lazily via ensurePartition only.
+// ApplyPG executes all pending steps in one transaction, so statements that
+// require running outside a transaction (for example CREATE INDEX CONCURRENTLY)
+// need a separate migration primitive. Per-epoch partitions are created lazily
+// via ensurePartition only.
 var postgresMigrationSteps = []migrate.Step{
 	{
 		ID:   1,
