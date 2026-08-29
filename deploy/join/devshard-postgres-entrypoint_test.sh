@@ -6,6 +6,13 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 entrypoint="$script_dir/devshard-postgres-entrypoint.sh"
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
+mkdir -p "$tmpdir/bin"
+cat >"$tmpdir/bin/postgres" <<'EOF'
+#!/bin/sh
+printf '%s\n' 'postgres (PostgreSQL) 16.15'
+EOF
+chmod +x "$tmpdir/bin/postgres"
+test_path="$tmpdir/bin:$PATH"
 
 fail() {
     echo "devshard-postgres-entrypoint_test: $*" >&2
@@ -25,7 +32,7 @@ new_case() {
 
 run_entrypoint() {
     env \
-        PATH="${entrypoint_path:-$PATH}" \
+        PATH="${entrypoint_path:-$test_path}" \
         GONKA_POSTGRES_LEGACY_DATA="$legacy" \
         GONKA_POSTGRES_PERSISTENT_ROOT="$persistent" \
         GONKA_POSTGRES_EXISTING_VERSIOND="$existing" \
@@ -63,7 +70,7 @@ printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
 printf '/dev/fake 100 99 1 99%% /persistent\n'
 EOF
 chmod +x "$case_dir/bin/df"
-entrypoint_path="$case_dir/bin:$PATH"
+entrypoint_path="$case_dir/bin:$test_path"
 if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
     fail "migration started without enough free space"
 fi
@@ -150,6 +157,29 @@ grep -q 'do not use DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT' \
     "$case_dir/stderr" || fail \
     "PostgreSQL-bound failure suggested the destructive override"
 
+new_case reject-postgres-bound-second-root
+mkdir -p "$existing/v4" "$versiond2_data/v5"
+printf 'install metadata\n' > "$existing/v4/install.json"
+touch "$versiond2_data/v5/.pg-bound"
+allow_empty=true
+if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+    fail "PostgreSQL binding in the second data root was ignored"
+fi
+unset allow_empty
+grep -q "$versiond2_data/v5/.pg-bound" "$case_dir/stderr" || fail \
+    "PostgreSQL-bound failure did not identify the second data root"
+
+new_case reject-missing-evidence-mount
+rmdir "$versiond2_data"
+allow_empty=true
+if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+    fail "empty initialization was allowed without both evidence mounts"
+fi
+unset allow_empty
+grep -q 'required devshard data directories are not mounted' \
+    "$case_dir/stderr" || fail \
+    "missing-evidence-mount failure was not diagnosed"
+
 new_case explicit-empty
 mkdir -p "$existing/v4"
 printf 'install metadata\n' > "$existing/v4/install.json"
@@ -176,5 +206,26 @@ if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
 fi
 grep -q 'uses major version 15; expected 16' "$case_dir/stderr" || fail \
     "wrong-major failure was not diagnosed"
+
+new_case reject-wrong-target-major
+mkdir -p "$persistent/data"
+printf '15\n' > "$persistent/data/PG_VERSION"
+if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+    fail "PostgreSQL 15 target was accepted by the PostgreSQL 16 image"
+fi
+grep -q 'uses major version 15; expected 16' "$case_dir/stderr" || fail \
+    "wrong-target-major failure was not diagnosed"
+
+new_case follow-image-major
+mkdir -p "$persistent/data" "$case_dir/bin"
+printf '17\n' > "$persistent/data/PG_VERSION"
+cat >"$case_dir/bin/postgres" <<'EOF'
+#!/bin/sh
+printf '%s\n' 'postgres (PostgreSQL) 17.5'
+EOF
+chmod +x "$case_dir/bin/postgres"
+entrypoint_path="$case_dir/bin:$test_path"
+run_entrypoint
+unset entrypoint_path
 
 echo "devshard-postgres-entrypoint_test: ok"

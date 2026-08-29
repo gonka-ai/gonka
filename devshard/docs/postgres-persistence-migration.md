@@ -24,7 +24,7 @@ Empty initialization is fail-closed. The entrypoint distinguishes these states:
 | Host state | Action |
 | --- | --- |
 | Existing HA PostgreSQL; normal Compose upgrade | Recreate in place and keep the old container until replacement starts. |
-| First HA enablement; versiond files exist but no `.pg-bound` marker exists | Pass `DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT=true` to the first `docker compose up` command only, then verify PostgreSQL. |
+| First HA enablement; versiond files exist but no `.pg-bound` marker exists | Pass `DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT=true` inline to the first `docker compose up` command only, then verify PostgreSQL. Do not store the override in `config.env`. |
 | `.pg-bound` exists under either versiond data root | Restore the legacy PostgreSQL volume. Empty initialization is rejected even with the override. |
 | The old container was removed before migration | Use the recovery overlay with the exact dangling volume name. |
 
@@ -39,6 +39,24 @@ For a detached legacy volume, attach
 `devshard-postgres-migration-preflight.sh` before replacement to verify source,
 target, and free-space requirements. Remove the recovery overlay after the bind
 copy is healthy; the legacy volume remains available for explicit rollback.
+
+If the old PostgreSQL volume is permanently lost, restoring service requires an
+explicit data-loss decision. All PostgreSQL-owned sessions have already been
+lost in this state. Stop the versiond services, inspect the markers, and remove
+them only after recording that loss:
+
+```bash
+find ./devshards/data ./devshards2/data -type f -name .pg-bound -print
+# After confirming that the PostgreSQL volume cannot be recovered:
+find ./devshards/data ./devshards2/data -type f -name .pg-bound -delete
+DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT=true \
+  docker compose <the same ordered -f options> \
+  up -d --force-recreate devshard-postgres
+```
+
+Do not add the override to `config.env`. Verify the new PostgreSQL instance
+before restarting versiond. This procedure restores availability with an empty
+database; it does not recover the lost sessions.
 
 The upstream PostgreSQL image declares `/var/lib/postgresql/data` as a volume.
 After migration, a later `down`/`up` can therefore create an unused empty

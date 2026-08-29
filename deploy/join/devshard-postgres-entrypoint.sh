@@ -11,7 +11,7 @@ official_entrypoint=${GONKA_POSTGRES_OFFICIAL_ENTRYPOINT:-/usr/local/bin/docker-
 target_data=${PGDATA:-$persistent_root/data}
 staging_data=$persistent_root/.migrating
 staging_complete=$persistent_root/.gonka-copy-complete
-expected_major=16
+expected_major=
 
 log() {
     printf '%s\n' "gonka-postgres-entrypoint: $*" >&2
@@ -42,7 +42,7 @@ validate_cluster() {
 
 postgres_binding_marker() {
     for storage_root in "$versiond_data" "$versiond2_data"; do
-        [ -d "$storage_root" ] || continue
+        [ -d "$storage_root" ] || return 3
         marker=$(find "$storage_root" -type f -name .pg-bound -print -quit) ||
             return 2
         if [ -n "$marker" ]; then
@@ -51,6 +51,23 @@ postgres_binding_marker() {
         fi
     done
     return 1
+}
+
+detect_postgres_major() {
+    postgres_version=$(postgres --version 2>/dev/null) ||
+        die "cannot determine PostgreSQL server version"
+    case "$postgres_version" in
+        'postgres (PostgreSQL) '*)
+            postgres_version=${postgres_version#'postgres (PostgreSQL) '}
+            expected_major=${postgres_version%%.*}
+            ;;
+        *) die "cannot parse PostgreSQL server version: $postgres_version" ;;
+    esac
+    case "$expected_major" in
+        '' | *[!0-9]*)
+            die "invalid PostgreSQL server major version: $expected_major"
+            ;;
+    esac
 }
 
 ensure_migration_space() {
@@ -90,9 +107,7 @@ case "$target_data" in
 esac
 [ "$legacy_data" != "$target_data" ] || die "legacy and persistent PGDATA are identical"
 [ -x "$official_entrypoint" ] || die "official PostgreSQL entrypoint is not executable"
-case "$expected_major" in
-    '' | *[!0-9]*) die "invalid expected PostgreSQL major version: $expected_major" ;;
-esac
+detect_postgres_major
 mkdir -p "$persistent_root"
 
 if cluster_exists "$target_data"; then
@@ -149,8 +164,12 @@ else
         die "PostgreSQL-bound devshard data exists at $binding_marker but no PostgreSQL cluster is attached; restore the exact legacy volume and do not use DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT"
     else
         marker_status=$?
-        [ "$marker_status" -eq 1 ] ||
-            die "cannot inspect devshard data for PostgreSQL binding markers"
+        case "$marker_status" in
+            1) ;;
+            2) die "cannot inspect devshard data for PostgreSQL binding markers" ;;
+            3) die "required devshard data directories are not mounted; refusing empty PostgreSQL initialization" ;;
+            *) die "unexpected devshard binding-marker inspection status: $marker_status" ;;
+        esac
     fi
 
     if directory_has_entries "$existing_versiond" && [ "$allow_empty" != true ]; then
