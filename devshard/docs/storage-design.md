@@ -472,6 +472,13 @@ down after boot.
   transiently opens a separate pool. External PostgreSQL capacity planning must
   include every simultaneously running child generation on both versiond
   replicas.
+- The live deployment gate checks that capacity before admission. For `N`
+  current HA children, `R` versiond replicas, and application-pool limit `P`, it
+  requires `N * (P + 2) + R * ((P + 2) + 4 + 1)` non-reserved server
+  connections. The second term reserves one overlapping rolling generation,
+  the four-connection versiond session-lookup pool, and one schema-initializer
+  connection per replica. Other applications sharing an external PostgreSQL
+  server remain the database operator's capacity responsibility.
 - Migration bootstrap and all pending application steps are serialized by a
   database-scoped advisory lock. Before starting children in an HA deployment,
   versiond runs `devshardd --initialize-postgres-schema` through a current

@@ -73,7 +73,10 @@ It verifies the shared lineage UUID and connects every generation's writer and
 reader to one anchor generation with short-lived challenges. This linear proof
 detects an independent database while reducing the time in which a child restart
 can invalidate the snapshot. A final snapshot read rejects replacement during
-the proof.
+the proof. It also verifies that every child uses the rendered application-pool
+limit and that PostgreSQL has enough non-reserved connections for the current
+children, one rolling replacement on each versiond replica, readiness and fence
+sessions, versiond lookups, and concurrent schema initializers.
 
 Both commands must receive the exact Compose files, project directory, and
 project name used by the host. Preserve an existing `-p`/`--project-name` or
