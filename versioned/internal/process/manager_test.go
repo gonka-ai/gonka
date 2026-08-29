@@ -203,15 +203,16 @@ exit 2
 	}
 
 	m := NewManager(config.Config{BinaryName: "devshardd"})
-	m.configureStorageInitCandidates(map[string]oracle.Version{
-		"legacy":  {Name: "legacy"},
-		"current": {Name: "current"},
+	m.configureStorageInitCandidates(map[storageInitCandidate]struct{}{
+		{version: "legacy", artifact: "legacy-sha"}:   {},
+		{version: "current", artifact: "current-sha"}: {},
 	})
 	legacyDone := make(chan error, 1)
 	go func() {
 		legacyDone <- m.ensurePostgresSchemaInitialized(context.Background(), &child{
-			version: oracle.Version{Name: "legacy"},
-			binPath: legacyBin,
+			version:       oracle.Version{Name: "legacy"},
+			archiveSHA256: "legacy-sha",
+			binPath:       legacyBin,
 		}, childPreflight{binaryLogVersion: "legacy", haDeployment: boolPointer(false)})
 	}()
 
@@ -222,8 +223,9 @@ exit 2
 	}
 
 	err := m.ensurePostgresSchemaInitialized(context.Background(), &child{
-		version: oracle.Version{Name: "current"},
-		binPath: currentBin,
+		version:       oracle.Version{Name: "current"},
+		archiveSHA256: "current-sha",
+		binPath:       currentBin,
 	}, childPreflight{binaryLogVersion: "current", haDeployment: boolPointer(true)})
 	if err != nil {
 		t.Fatal(err)
@@ -251,15 +253,16 @@ exit 2
 	}
 
 	m := NewManager(config.Config{BinaryName: "devshardd"})
-	m.configureStorageInitCandidates(map[string]oracle.Version{
-		"legacy-a": {Name: "legacy-a"},
-		"legacy-b": {Name: "legacy-b"},
+	m.configureStorageInitCandidates(map[storageInitCandidate]struct{}{
+		{version: "legacy-a", artifact: "legacy-a-sha"}: {},
+		{version: "legacy-b", artifact: "legacy-b-sha"}: {},
 	})
 	firstDone := make(chan error, 1)
 	go func() {
 		firstDone <- m.ensurePostgresSchemaInitialized(context.Background(), &child{
-			version: oracle.Version{Name: "legacy-a"},
-			binPath: legacyBin,
+			version:       oracle.Version{Name: "legacy-a"},
+			archiveSHA256: "legacy-a-sha",
+			binPath:       legacyBin,
 		}, childPreflight{binaryLogVersion: "legacy-a", haDeployment: boolPointer(false)})
 	}()
 	select {
@@ -271,8 +274,9 @@ exit 2
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 	err := m.ensurePostgresSchemaInitialized(ctx, &child{
-		version: oracle.Version{Name: "legacy-b"},
-		binPath: legacyBin,
+		version:       oracle.Version{Name: "legacy-b"},
+		archiveSHA256: "legacy-b-sha",
+		binPath:       legacyBin,
 	}, childPreflight{binaryLogVersion: "legacy-b", haDeployment: boolPointer(false)})
 	if err != nil {
 		t.Fatal(err)
@@ -284,6 +288,92 @@ exit 2
 		}
 	case <-time.After(time.Second):
 		t.Fatal("legacy-only catalog did not start after every desired binary was classified")
+	}
+}
+
+func TestPostgresSchemaInitializationIgnoresStaleSHAClassification(t *testing.T) {
+	t.Setenv(envHADeployment, "true")
+	t.Setenv("PGHOST", "postgres")
+	dir := t.TempDir()
+	currentBin := filepath.Join(dir, "current")
+	legacyBin := filepath.Join(dir, "legacy")
+	entered := filepath.Join(dir, "entered")
+	release := filepath.Join(dir, "release")
+	t.Setenv("INIT_ENTERED", entered)
+	t.Setenv("INIT_RELEASE", release)
+	if err := os.WriteFile(currentBin, []byte(`#!/bin/sh
+case "$1" in
+--initialize-postgres-schema) exit 0 ;;
+*) echo "unknown flag: $1" >&2; exit 2 ;;
+esac
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyBin, []byte(`#!/bin/sh
+touch "$INIT_ENTERED"
+while [ ! -e "$INIT_RELEASE" ]; do sleep 0.01; done
+echo "unknown flag: $1" >&2
+exit 2
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(config.Config{BinaryName: "devshardd"})
+	oldCandidate := storageInitCandidate{version: "v5", artifact: "old-sha"}
+	newCandidate := storageInitCandidate{version: "v5", artifact: "new-sha"}
+	m.configureStorageInitCandidates(map[storageInitCandidate]struct{}{oldCandidate: {}})
+	oldDone := make(chan error, 1)
+	go func() {
+		oldDone <- m.ensurePostgresSchemaInitialized(context.Background(), &child{
+			version:       oracle.Version{Name: "v5"},
+			archiveSHA256: "old-sha",
+			binPath:       legacyBin,
+		}, childPreflight{binaryLogVersion: "v5-old", haDeployment: boolPointer(false)})
+	}()
+	deadline := time.Now().Add(time.Second)
+	for {
+		if _, err := os.Stat(entered); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("old artifact did not enter initializer classification")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+
+	m.configureStorageInitCandidates(map[storageInitCandidate]struct{}{newCandidate: {}})
+	if err := os.WriteFile(release, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	select {
+	case err := <-oldDone:
+		t.Fatalf("stale SHA closed the replacement barrier: %v", err)
+	case <-m.storageInitDone:
+		t.Fatal("stale SHA classified the replacement artifact as legacy")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	err := m.ensurePostgresSchemaInitialized(context.Background(), &child{
+		version:       oracle.Version{Name: "v5"},
+		archiveSHA256: "new-sha",
+		binPath:       currentBin,
+	}, childPreflight{binaryLogVersion: "v5", haDeployment: boolPointer(true)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-m.storageInitDone:
+	default:
+		t.Fatal("replacement artifact did not complete PostgreSQL initialization")
+	}
+	select {
+	case err := <-oldDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("stale child did not leave the barrier after replacement initialization")
 	}
 }
 
