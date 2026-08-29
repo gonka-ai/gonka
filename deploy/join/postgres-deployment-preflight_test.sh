@@ -205,11 +205,26 @@ grep -q -- '--expected-identity requires a non-empty value' "$tmpdir/err" || fai
 TARGETS_PER_REPLICA=2
 export TARGETS_PER_REPLICA
 run_preflight >"$tmpdir/linear-proof"
-unset TARGETS_PER_REPLICA
 [[ $(grep -c ' write ' "$tmpdir/challenge.log") -eq 4 ]] || fail \
     "linear proof did not write through every generation"
 [[ $(grep -c ' read ' "$tmpdir/challenge.log") -eq 8 ]] || fail \
     "storage proof did not remain linear as generations increased"
+
+SERVER_MAX_ONE=55
+SERVER_MAX_TWO=55
+export SERVER_MAX_ONE SERVER_MAX_TWO
+if run_preflight >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "a connection budget covering only one rolling generation per replica was accepted"
+fi
+grep -q 'connection budget is insufficient: 58 required for 4 current generations' \
+    "$tmpdir/err" || fail "all-version rolling overlap was not included in the connection budget"
+
+SERVER_MAX_ONE=61
+SERVER_MAX_TWO=61
+run_preflight >"$tmpdir/exact-capacity"
+grep -qx db-1 "$tmpdir/exact-capacity" || fail \
+    "the exact all-version rolling connection budget was rejected"
+unset TARGETS_PER_REPLICA SERVER_MAX_ONE SERVER_MAX_TWO
 
 RENDERED_POOL_ONE=0
 export RENDERED_POOL_ONE

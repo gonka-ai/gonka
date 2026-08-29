@@ -267,12 +267,12 @@ validate_connection_budget() {
     local supervisors=${#containers[@]}
     local per_child=$((pool_max_connections + 2))
     local per_supervisor=$((
-        per_child + versiond_lookup_pool_max_connections + schema_initializer_connections
+        versiond_lookup_pool_max_connections + schema_initializer_connections
     ))
-    local required=$((total_targets * per_child + supervisors * per_supervisor))
+    local required=$((2 * total_targets * per_child + supervisors * per_supervisor))
     local available=$((server_max - server_reserved))
     ((required <= available)) || fail \
-        "PostgreSQL connection budget is insufficient: $required required for $total_targets current generations, rolling replacements, readiness/fence sessions, versiond lookup, and schema initialization; $available non-reserved connections available"
+        "PostgreSQL connection budget is insufficient: $required required for $total_targets current generations and their concurrently draining predecessors, readiness/fence sessions, versiond lookup, and schema initialization; $available non-reserved connections available"
 }
 
 run_storage_challenge() {

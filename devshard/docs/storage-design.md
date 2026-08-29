@@ -474,11 +474,12 @@ down after boot.
   replicas.
 - The live deployment gate checks that capacity before admission. For `N`
   current HA children, `R` versiond replicas, and application-pool limit `P`, it
-  requires `N * (P + 2) + R * ((P + 2) + 4 + 1)` non-reserved server
-  connections. The second term reserves one overlapping rolling generation,
-  the four-connection versiond session-lookup pool, and one schema-initializer
-  connection per replica. Other applications sharing an external PostgreSQL
-  server remain the database operator's capacity responsibility.
+  requires `2 * N * (P + 2) + R * (4 + 1)` non-reserved server connections.
+  The doubled child term allows every updated version to keep its predecessor
+  alive during asynchronous drain. The per-replica term reserves the
+  four-connection versiond session-lookup pool and one schema-initializer
+  connection. Other applications sharing an external PostgreSQL server remain
+  the database operator's capacity responsibility.
 - Migration bootstrap and all pending application steps are serialized by a
   database-scoped advisory lock. Before starting children in an HA deployment,
   versiond runs `devshardd --initialize-postgres-schema` through a current
