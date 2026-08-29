@@ -5,10 +5,10 @@ name: Triage External PRs
 # to the "triage" project. The status is set to "new" ONLY when the item has no
 # status yet, so re-opening a PR (or moving its card) never resets progress.
 #
-# Accept cross-sync: when a maintainer adds the "accepted" label to an external PR,
-# this workflow sets the board Status to "accepted" (overwriting the current value).
-# Projects v2 board changes can't trigger a workflow, so the label is the signal;
-# the Linear sync reacts to the same label to move the Linear issue into a project.
+# Acceptance is expressed by a maintainer moving the card to "Accepted" on the
+# board; that is picked up by the scheduled accept-reconcile workflow (which reads
+# the board and updates Linear). This workflow only puts new external PRs on the
+# board — it never changes the status away from what a human set.
 #
 # Requires a token with access to GitHub Projects (v2). The default GITHUB_TOKEN
 # cannot manage org/user projects, so provide a PAT in the PROJECTS_TOKEN secret
@@ -18,9 +18,7 @@ name: Triage External PRs
 
 on:
   pull_request_target:
-    # opened/reopened -> add to triage with Status=new (only if empty).
-    # labeled         -> if a maintainer added the "accepted" label, set Status=accepted.
-    types: [opened, reopened, labeled]
+    types: [opened, reopened]
 
 permissions:
   contents: read
@@ -45,11 +43,6 @@ jobs:
           # Single-select field and option to set on the added item (matched case-insensitively).
           STATUS_FIELD_NAME: "Status"
           STATUS_VALUE: "new"
-          # Accept cross-sync: label a maintainer adds to accept a PR, and the board
-          # status it maps to. (Projects v2 board changes can't trigger a workflow,
-          # so the label is the signal.)
-          ACCEPTED_LABEL: ${{ vars.TRIAGE_ACCEPTED_LABEL || 'accepted' }}
-          ACCEPTED_STATUS_VALUE: ${{ vars.TRIAGE_ACCEPTED_STATUS_VALUE || 'accepted' }}
           # Exposed so we can detect a missing token and bail gracefully (see below).
           PROJECTS_TOKEN: ${{ secrets.PROJECTS_TOKEN }}
         with:
@@ -61,7 +54,6 @@ jobs:
               return;
             }
 
-            const action = context.payload.action;
             const author = context.payload.pull_request.user.login;
             const association = context.payload.pull_request.author_association;
 
@@ -71,30 +63,9 @@ jobs:
               core.info(`${author} is ${association}; skipping triage.`);
               return;
             }
+            core.info(`${author} is external (${association}); adding PR to triage project.`);
 
-            const acceptedLabel = (process.env.ACCEPTED_LABEL || 'accepted');
-
-            // Decide what this event should do:
-            //   labeled with the accept label -> set Status = accepted (overwrite)
-            //   opened/reopened               -> add + set Status = new (only if empty)
-            //   labeled with any other label  -> nothing
-            let statusValue;
-            let overwriteStatus;
-            if (action === 'labeled') {
-              const label = context.payload.label?.name || '';
-              if (label.toLowerCase() !== acceptedLabel.toLowerCase()) {
-                core.info(`Label "${label}" is not the accept label; nothing to do.`);
-                return;
-              }
-              statusValue = process.env.ACCEPTED_STATUS_VALUE || 'accepted';
-              overwriteStatus = true;
-              core.info(`Accept label added; setting board Status="${statusValue}".`);
-            } else {
-              statusValue = process.env.STATUS_VALUE;
-              overwriteStatus = false;
-              core.info(`${author} is external (${association}); adding PR to triage project.`);
-            }
-
+            const statusValue = process.env.STATUS_VALUE;
             const projectOwner = process.env.PROJECT_OWNER;
             const projectNumber = parseInt(process.env.PROJECT_NUMBER, 10);
             const statusFieldName = process.env.STATUS_FIELD_NAME;
@@ -148,27 +119,24 @@ jobs:
               const itemId = addRes.addProjectV2ItemById.item.id;
               core.info(`PR added to project as item ${itemId}.`);
 
-              // For the "new" path only set the status on the FIRST add: if the item
-              // already has a status (someone moved the card, or the PR was
-              // closed/reopened), leave it so we never reset progress back to "new".
-              // The accept path (overwriteStatus) always sets the status.
-              if (!overwriteStatus) {
-                const currentValue = await github.graphql(`
-                  query($itemId: ID!, $fieldName: String!) {
-                    node(id: $itemId) {
-                      ... on ProjectV2Item {
-                        fieldValueByName(name: $fieldName) {
-                          ... on ProjectV2ItemFieldSingleSelectValue { optionId name }
-                        }
+              // Only set the status on the FIRST add. If the item already has a status
+              // (e.g. someone moved the card, or the PR was closed/reopened), leave it
+              // as-is so we never reset progress back to "new".
+              const currentValue = await github.graphql(`
+                query($itemId: ID!, $fieldName: String!) {
+                  node(id: $itemId) {
+                    ... on ProjectV2Item {
+                      fieldValueByName(name: $fieldName) {
+                        ... on ProjectV2ItemFieldSingleSelectValue { optionId name }
                       }
                     }
-                  }`, { itemId, fieldName: statusFieldName });
+                  }
+                }`, { itemId, fieldName: statusFieldName });
 
-                const existing = currentValue.node?.fieldValueByName;
-                if (existing && (existing.optionId || existing.name)) {
-                  core.info(`Status already set to "${existing.name || existing.optionId}"; leaving it unchanged.`);
-                  return;
-                }
+              const existing = currentValue.node?.fieldValueByName;
+              if (existing && (existing.optionId || existing.name)) {
+                core.info(`Status already set to "${existing.name || existing.optionId}"; leaving it unchanged.`);
+                return;
               }
 
               // Resolve the status field and its "new" option (both case-insensitive) and set it.
