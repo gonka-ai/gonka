@@ -20,9 +20,6 @@ on:
       - closed
       - milestoned
       - demilestoned
-      # A maintainer accepting a PR is signalled by adding the "accepted" label
-      # (Projects v2 board changes can't trigger a workflow).
-      - labeled
 
   # Reviews (approvals). This event runs in the base-repo context and has secrets,
   # even for fork PRs, so no *_target variant is needed.
@@ -85,11 +82,6 @@ jobs:
           MILESTONE_PROJECT_PREFIX: ${{ vars.LINEAR_MILESTONE_PROJECT_PREFIX }}
           # Bucket for PRs merged/approved without a milestone.
           UNSORTED_PROJECT_NAME: ${{ vars.LINEAR_UNSORTED_PROJECT_NAME }}
-          # --- Accept cross-sync (maintainer adds the "accepted" label) ---
-          ACCEPTED_LABEL: ${{ vars.LINEAR_ACCEPTED_LABEL }}
-          # Project for accepted PRs without a milestone (must already exist).
-          BACKLOG_PROJECT_NAME: ${{ vars.LINEAR_BACKLOG_PROJECT_NAME }}
-          ACCEPTED_STATE_NAME: ${{ vars.LINEAR_ACCEPTED_STATE_NAME }}
           FIRST_CONTRIBUTOR_LABEL: ${{ vars.LINEAR_FIRST_CONTRIBUTOR_LABEL }}
           BACKLOG_STATE_NAME: ${{ vars.LINEAR_BACKLOG_STATE_NAME }}
           DONE_STATE_NAME: ${{ vars.LINEAR_DONE_STATE_NAME }}

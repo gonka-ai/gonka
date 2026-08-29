@@ -4,10 +4,13 @@
 //   opened / reopened  -> create parent issue + "review needed" sub-issues,
 //                         and request the reviewers on the GitHub PR itself
 //   milestoned         -> move parent (and children) out of Triage into the release project
-//   labeled (accepted) -> a maintainer accepted the PR: move parent out of Triage into the
-//                         release project (if milestoned) or the "Backlog for future mainnet
-//                         upgrades" project (state Backlog) otherwise
 //   demilestoned       -> move parent (and children) back to the core project / Triage
+//
+// Plus a scheduled "reconcile" mode (MODE=reconcile-board): reads the triage board
+// (GitHub Projects v2) and, for every item a maintainer moved to "Accepted", moves
+// the matching Linear parent out of Triage into the release project (if milestoned)
+// or the "Backlog for future mainnet upgrades" project (state Backlog). This is how
+// acceptance is synced, because Projects v2 board changes can't trigger a workflow.
 //   closed (merged)    -> parent -> "Merged. Ready for testing", review sub-issues -> Done,
 //                         and (if the parent is in a release project) a Q&A testing sub-issue
 //                         is created (state "Todo", assigned to the QA owner)
@@ -48,13 +51,17 @@ const cfg = {
   // sorted into the right release project manually. Created if missing.
   unsortedProjectName:
     process.env.UNSORTED_PROJECT_NAME || "Merged — no milestone (to sort)",
-  // Cross-sync: a maintainer accepting a PR is signalled by adding this label on
-  // GitHub (Projects v2 board changes can't trigger a workflow, so we key off the
-  // label instead). Only users with write access can add labels, so the label
-  // itself means "a maintainer accepted this".
-  acceptedLabel: process.env.ACCEPTED_LABEL || "accepted",
-  // Where an accepted PR WITHOUT a milestone goes (a milestoned PR goes to its
-  // release project instead). Must already exist in Linear.
+  // Accept cross-sync (reconcile mode): a maintainer accepts a PR/issue by moving
+  // its card on the triage board to "Accepted". Projects v2 board changes can't
+  // trigger a workflow, so a scheduled run reads the board and reconciles.
+  // Only people with write access to the project can change the status, so
+  // "Accepted" on the board means "a maintainer accepted this".
+  triageProjectOwner: process.env.PROJECT_OWNER || "",
+  triageProjectNumber: parseInt(process.env.PROJECT_NUMBER || "0", 10),
+  triageStatusField: process.env.STATUS_FIELD_NAME || "Status",
+  acceptedStatusValue: process.env.ACCEPTED_STATUS_VALUE || "Accepted",
+  // Where an accepted PR/issue WITHOUT a milestone goes (a milestoned one goes to
+  // its release project instead). Must already exist in Linear.
   backlogProjectName:
     process.env.BACKLOG_PROJECT_NAME || "Backlog for future mainnet upgrades",
   // State the parent gets when accepted without a milestone.
@@ -116,6 +123,14 @@ async function main() {
     return;
   }
 
+  // Scheduled reconcile: read the triage board and act on items a maintainer
+  // moved to "Accepted". (Projects v2 board changes can't trigger a workflow,
+  // so acceptance is picked up by polling instead of a webhook.)
+  if ((process.env.MODE || "") === "reconcile-board") {
+    await reconcileAcceptedFromBoard();
+    return;
+  }
+
   const pr = await loadPullRequest();
   if (!pr) return;
 
@@ -137,9 +152,6 @@ async function main() {
       break;
     case "milestoned":
       await onMilestoned(pr);
-      break;
-    case "labeled":
-      await onLabeled(pr);
       break;
     case "demilestoned":
       await onDemilestoned(pr);
@@ -256,47 +268,6 @@ async function onMilestoned(pr) {
   }
   console.log(
     `Moved ${parent.identifier} to release project "${pr.milestone}".`,
-  );
-}
-
-// A maintainer accepted the PR by adding the "accepted" label. Move the parent
-// out of Triage: into the release project if a milestone is set, otherwise into
-// the "Backlog for future mainnet upgrades" project (state Backlog). Children
-// follow the parent's project.
-async function onLabeled(pr) {
-  if (
-    !pr.labelName ||
-    pr.labelName.toLowerCase() !== cfg.acceptedLabel.toLowerCase()
-  ) {
-    console.log(
-      `Label "${pr.labelName || ""}" is not the accept label; nothing to do.`,
-    );
-    return;
-  }
-
-  const parent = await findParentIssue(pr);
-  if (!parent) return warnNoParent(pr);
-
-  const team = await getTeam();
-  const states = await getStates(team);
-  const children = await getChildren(parent);
-
-  let project;
-  let stateId;
-  if (pr.milestone) {
-    project = await getOrCreateProject(milestoneProjectName(pr.milestone), team.id);
-    stateId = states.releaseStart.id;
-  } else {
-    project = await getOrCreateProject(cfg.backlogProjectName, team.id);
-    stateId = states.accepted.id;
-  }
-
-  await client.updateIssue(parent.id, { projectId: project.id, stateId });
-  for (const child of children) {
-    await client.updateIssue(child.id, { projectId: project.id });
-  }
-  console.log(
-    `PR accepted (label "${pr.labelName}") -> moved ${parent.identifier} to "${project.name}".`,
   );
 }
 
@@ -439,6 +410,134 @@ async function onReviewSubmitted(pr) {
       );
     }
   }
+}
+
+// ---------------------------------------------------------------------------
+// Board reconcile (scheduled): triage board "Accepted" -> Linear
+// ---------------------------------------------------------------------------
+
+// Read the triage board (Projects v2) and, for every item a maintainer moved to
+// "Accepted", move the matching Linear parent out of Triage. Runs on a schedule
+// because Projects v2 board changes can't trigger a workflow.
+async function reconcileAcceptedFromBoard() {
+  const token = process.env.PROJECTS_TOKEN;
+  if (!token || !cfg.triageProjectOwner || !cfg.triageProjectNumber) {
+    ghWarn(
+      "reconcile-board skipped — need PROJECTS_TOKEN, PROJECT_OWNER and PROJECT_NUMBER.",
+    );
+    return;
+  }
+
+  const team = await getTeam();
+  const states = await getStates(team);
+
+  const gql = (query, variables) =>
+    fetch("https://api.github.com/graphql", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Accept: "application/vnd.github+json",
+      },
+      body: JSON.stringify({ query, variables }),
+    }).then((r) => r.json());
+
+  const projRes = await gql(
+    `query($owner:String!,$number:Int!){
+       organization(login:$owner){ projectV2(number:$number){ id } }
+       user(login:$owner){ projectV2(number:$number){ id } }
+     }`,
+    { owner: cfg.triageProjectOwner, number: cfg.triageProjectNumber },
+  );
+  const projectNode =
+    projRes.data?.organization?.projectV2 || projRes.data?.user?.projectV2;
+  if (!projectNode) {
+    ghWarn(
+      `reconcile-board: triage project #${cfg.triageProjectNumber} not found for "${cfg.triageProjectOwner}".`,
+    );
+    return;
+  }
+
+  const wanted = cfg.acceptedStatusValue.toLowerCase();
+  let after = null;
+  let seen = 0;
+  let moved = 0;
+  do {
+    const page = await gql(
+      `query($projectId:ID!,$after:String){
+         node(id:$projectId){ ... on ProjectV2 {
+           items(first:100, after:$after){
+             pageInfo{ hasNextPage endCursor }
+             nodes{
+               fieldValueByName(name:"${cfg.triageStatusField}"){ ... on ProjectV2ItemFieldSingleSelectValue { name } }
+               content{
+                 __typename
+                 ... on PullRequest { url number milestone { title } }
+                 ... on Issue { url number milestone { title } }
+               }
+             }
+           }
+         } }
+       }`,
+      { projectId: projectNode.id, after },
+    );
+    const items = page.data?.node?.items;
+    if (!items) break;
+    for (const it of items.nodes || []) {
+      if ((it.fieldValueByName?.name || "").toLowerCase() !== wanted) continue;
+      const content = it.content;
+      if (!content || !content.url) continue;
+      seen++;
+      const did = await moveAcceptedToProject(
+        {
+          url: content.url,
+          number: content.number,
+          milestone: content.milestone?.title || null,
+        },
+        team,
+        states,
+      );
+      if (did) moved++;
+    }
+    after = items.pageInfo?.hasNextPage ? items.pageInfo.endCursor : null;
+  } while (after);
+
+  console.log(
+    `reconcile-board: ${seen} "Accepted" item(s) seen, ${moved} moved in Linear.`,
+  );
+}
+
+// Move an accepted item's Linear parent out of Triage. Idempotent: if the parent
+// already has a project (already accepted/milestoned), leave it untouched so we
+// never override a later manual move.
+async function moveAcceptedToProject(item, team, states) {
+  const parent = await findParentIssue(item);
+  if (!parent) {
+    console.log(`No Linear issue for ${item.url}; skipping.`);
+    return false;
+  }
+  if (await parent.project) return false;
+
+  let project;
+  let stateId;
+  if (item.milestone) {
+    project = await getOrCreateProject(
+      milestoneProjectName(item.milestone),
+      team.id,
+    );
+    stateId = states.releaseStart.id;
+  } else {
+    project = await getOrCreateProject(cfg.backlogProjectName, team.id);
+    stateId = states.accepted.id;
+  }
+  await client.updateIssue(parent.id, { projectId: project.id, stateId });
+  for (const child of await getChildren(parent)) {
+    await client.updateIssue(child.id, { projectId: project.id });
+  }
+  console.log(
+    `Accepted ${item.url} -> moved ${parent.identifier} to "${project.name}".`,
+  );
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -822,8 +921,6 @@ async function loadPullRequest() {
     review: event.review
       ? { state: event.review.state, login: event.review.user?.login }
       : null,
-    // For "labeled" events: the name of the label that was just added.
-    labelName: event.label?.name || null,
   };
 }
 

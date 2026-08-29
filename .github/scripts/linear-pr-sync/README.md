@@ -15,8 +15,8 @@ logic below — hence this Action.
 | PR **opened** / **reopened** (no milestone) | Parent issue created in the **GON** team **Triage** (no project). First-time contributor → label added. One **"`<title>` — review needed"** sub-issue (state **Backlog**) per reviewer. The reviewers are also **requested on the GitHub PR** itself. |
 | PR **opened** with a milestone already set | Same, but parent + sub-issues go straight into the release project (named after the milestone), not Triage. |
 | PR **milestoned** (release milestone added) | Parent (and its sub-issues) move out of Triage into the project named after the milestone (created if missing). |
-| PR **labeled `accepted`** by a maintainer | Parent (and sub-issues) move out of Triage into the release project (if a milestone is set) or the **Backlog for future mainnet upgrades** project (parent state **Backlog**) otherwise. This is how maintainer *acceptance* is cross-synced — GitHub Projects v2 board changes can't trigger a workflow, so we key off the label. The companion triage workflow sets the board **Status = accepted** on the same event. |
 | PR **demilestoned** | Parent moves back to the GON team / Triage. |
+| Triage board **Status → Accepted** (set by a maintainer) | Picked up by the scheduled **reconcile** run (every 15 min): parent (and sub-issues) move out of Triage into the release project (if a milestone is set) or the **Backlog for future mainnet upgrades** project (parent state **Backlog**) otherwise. Idempotent — items already in a project are left alone. Only people with write access to the board can change the status, so this means a maintainer accepted it. |
 | PR **review submitted = approved** by a reviewer | That reviewer's review sub-issue → **Done**. If the PR has no milestone, the parent is parked in the **unsorted** project so approved-but-unassigned work is visible. |
 | PR **merged** | Parent → **Merged. Ready for testing**. Each review sub-issue → **Done** *only if that reviewer actually approved on GitHub*, otherwise → **Not done**. A **"`<title>` — Testing"** sub-issue is created in the **Q&A** team (state **Todo**), assigned to the QA owner, reviewers subscribed. If there was no milestone, the parent is first moved into the **unsorted** project (full pipeline still runs). |
 | PR **closed** by a reviewer (Dima / Gabriel) without merge | Parent → **Done**, that reviewer's sub-issue → **Done**, the other sub-issue → **Cancelled**. |
@@ -47,9 +47,10 @@ Settings → Secrets and variables → Actions → **Variables**:
 | `LINEAR_REVIEWERS` | ✅ | see below | Maps GitHub logins to Linear users. |
 | `LINEAR_MILESTONE_PROJECT_PREFIX` | – | `Upgrade ` | GitHub milestone `v0.2.15` → project `Upgrade v0.2.15`. Default already `Upgrade `. |
 | `LINEAR_UNSORTED_PROJECT_NAME` | – | `Merged — no milestone (to sort)` | Bucket for PRs merged/approved without a milestone. Created if missing. |
-| `LINEAR_ACCEPTED_LABEL` | – | `accepted` | GitHub label a maintainer adds to mark a PR accepted (drives the accept cross-sync). |
-| `LINEAR_BACKLOG_PROJECT_NAME` | – | `Backlog for future mainnet upgrades` | Project an *accepted* PR without a milestone moves into. Must already exist. |
+| `LINEAR_BACKLOG_PROJECT_NAME` | – | `Backlog for future mainnet upgrades` | Project an *accepted* PR without a milestone moves into (used by the reconcile job). Must already exist. |
 | `LINEAR_ACCEPTED_STATE_NAME` | – | `Backlog` | Parent state when accepted without a milestone. |
+| `TRIAGE_PROJECT_NUMBER` | – | `7` | The triage board number (`https://github.com/orgs/<owner>/projects/<N>`). |
+| `TRIAGE_ACCEPTED_STATUS_VALUE` | – | `Accepted` | Board Status value that the reconcile job treats as "accepted". |
 | `LINEAR_CORE_PROJECT_NAME` | – | *(leave empty)* | The "Gonka core" folder is the GON team; un-milestoned PRs stay in Triage with no project. |
 | `LINEAR_FIRST_CONTRIBUTOR_LABEL` | – | `first-time contributor` | Created if missing. (Existing alternatives: `contributor`, `Community-driven`.) |
 | `LINEAR_BACKLOG_STATE_NAME` | – | `Backlog` | Default. |
@@ -83,10 +84,12 @@ PR manually, use the workflow's **Run workflow** button and pass the PR number.
   script emits a GitHub **warning annotation** and exits 0 (green check). Because failures are
   silent by design, a scheduled monitoring workflow pings the Linear API and opens/refreshes a
   GitHub issue if the key stops working — see `.github/workflows/integration-healthcheck.yml`.
-- **Accept cross-sync:** a maintainer accepts a PR by adding the `accepted` label. Only users with
-  write access can add labels, so the label itself implies maintainer acceptance (external
-  contributors can't add it). The board's Status field (Projects v2) can't trigger a workflow, so
-  the label is the signal in both directions.
+- **Accept cross-sync:** a maintainer accepts a PR by moving its card on the triage board to
+  **Accepted**. GitHub Projects v2 board changes can't trigger a workflow, so the scheduled
+  **`accept-reconcile.yml`** run (every 15 min) reads the board and moves the matching Linear
+  parent out of Triage. Only people with write access to the board can change the status, so
+  "Accepted" implies maintainer acceptance. The move is idempotent (items already in a project
+  are left alone), so a later manual re-sort in Linear is never overridden.
 - Uses `pull_request_target` so secrets are available for fork PRs. It never checks out or runs
   PR code — only reads metadata and calls Linear. Do not add a checkout of the PR head.
 - Workflow states, projects, users and labels are resolved **by name** at runtime, so no Linear
