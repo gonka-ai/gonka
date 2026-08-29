@@ -214,7 +214,10 @@ func newPostgres(ctx context.Context, connectTimeout, migrationTimeout time.Dura
 	// Server-side per-query bounds applied to every pooled connection.
 	cfg.ConnConfig.RuntimeParams["statement_timeout"] = strconv.FormatInt(postgresStatementTimeout.Milliseconds(), 10)
 	cfg.ConnConfig.RuntimeParams["lock_timeout"] = strconv.FormatInt(postgresLockTimeout.Milliseconds(), 10)
-	connectionGuard := newPostgresConnectionGuard()
+	connectionGuard, err := newPostgresConnectionGuard()
+	if err != nil {
+		return nil, err
+	}
 	connectionGuard.installValidator(cfg)
 	// Health owns one dedicated connection, leaving every configured pool slot
 	// available to application work and keeping MaxConns an application concern.
@@ -236,7 +239,7 @@ func newPostgres(ctx context.Context, connectTimeout, migrationTimeout time.Dura
 		pool.Close()
 		return nil, err
 	}
-	if err := connectionGuard.arm(migrationCtx, pool); err != nil {
+	if err := connectionGuard.arm(migrationCtx, pool, cfg.ConnConfig); err != nil {
 		pool.Close()
 		return nil, err
 	}
@@ -621,7 +624,7 @@ func (s *Postgres) Close() error {
 	}
 	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), postgresOpTimeout)
 	defer cleanupCancel()
-	s.connectionGuard.remove(cleanupCtx, s.pool)
+	s.connectionGuard.close(cleanupCtx)
 	s.pool.Close()
 	return nil
 }

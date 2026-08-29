@@ -81,13 +81,15 @@ func TestPostgresConnectionGuardRejectsIndependentClone(t *testing.T) {
 	require.NoError(t, err)
 	clonePool.Close()
 
-	guard := newPostgresConnectionGuard()
+	guard, err := newPostgresConnectionGuard()
+	require.NoError(t, err)
 	primaryConfig := bootstrapPool.Config().Copy()
 	guard.installValidator(primaryConfig)
 	primaryPool, err := pgxpool.NewWithConfig(ctx, primaryConfig)
 	require.NoError(t, err)
 	defer primaryPool.Close()
-	require.NoError(t, guard.arm(ctx, primaryPool))
+	require.NoError(t, guard.arm(ctx, primaryPool, primaryConfig.ConnConfig))
+	defer guard.close(ctx)
 	require.NoError(t, primaryPool.Ping(ctx), "the database containing the process token must remain usable")
 
 	guardedCloneConfig := cloneConfig.Copy()
@@ -96,7 +98,13 @@ func TestPostgresConnectionGuardRejectsIndependentClone(t *testing.T) {
 	require.NoError(t, err)
 	defer guardedClonePool.Close()
 	require.Error(t, guardedClonePool.Ping(ctx),
-		"a clone with the same durable identity but without the process token must be rejected")
+		"a clone with the same durable identity but without the session fence must be rejected")
+
+	require.NoError(t, guard.fenceConn.Close(ctx))
+	guard.fenceConn = nil
+	primaryPool.Reset()
+	require.Error(t, primaryPool.Ping(ctx),
+		"new connections must fail closed after the non-replicated fence session disappears")
 }
 
 func TestStorageProofRejectsInvalidNonce(t *testing.T) {
