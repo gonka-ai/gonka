@@ -1744,7 +1744,12 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 }
 
 func (m *Manager) ensurePostgresSchemaInitialized(ctx context.Context, c *child, preflight childPreflight) error {
-	if !m.devshardAdminEligible() || os.Getenv("PGHOST") == "" {
+	if !m.devshardAdminEligible() || !postgresChildStorageConfigured() {
+		return nil
+	}
+	// Explicitly pinned versions retain their single-host SQLite ownership and
+	// must remain available while the shared PostgreSQL tier is unavailable.
+	if preflight.haDeployment != nil && !*preflight.haDeployment {
 		return nil
 	}
 	ha, err := parseHADeployment(os.Getenv(envHADeployment))
@@ -1783,6 +1788,11 @@ func (m *Manager) ensurePostgresSchemaInitialized(ctx context.Context, c *child,
 	case <-m.storageInitDone:
 		return nil
 	}
+}
+
+func postgresChildStorageConfigured() bool {
+	return strings.TrimSpace(os.Getenv("PGHOST")) != "" ||
+		strings.TrimSpace(os.Getenv("PGSERVICE")) != ""
 }
 
 type storageInitCandidate struct {
