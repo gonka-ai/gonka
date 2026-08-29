@@ -15,14 +15,18 @@ import (
 
 // Server serves OpenAI-compatible /v1/chat/completions.
 type Server struct {
-	echo  *echo.Echo
-	mu    sync.RWMutex
-	fault FaultConfig
+	echo       *echo.Echo
+	mu         sync.RWMutex
+	fault      FaultConfig
+	streamGate chan struct{}
 }
 
 // NewServer builds the HTTP server.
 func NewServer(cfg Config) *Server {
 	s := &Server{fault: cfg.Faults}
+	if s.fault.PauseStream {
+		s.streamGate = make(chan struct{})
+	}
 	if s.fault.StreamChunkDelay <= 0 {
 		s.fault.StreamChunkDelay = 5 * time.Millisecond
 	}
@@ -31,20 +35,48 @@ func NewServer(cfg Config) *Server {
 	e.POST("/v1/chat/completions", s.handleChatCompletions)
 	e.GET("/healthz", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
 	e.POST("/testenv/fault", s.handleFaultPatch)
+	e.POST("/testenv/stream/release", s.handleStreamRelease)
 	s.echo = e
 	return s
-}
-
-func (s *Server) faults() FaultConfig {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.fault
 }
 
 func (s *Server) patchFault(p FaultPatch) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if p.PauseStream != nil {
+		if *p.PauseStream {
+			s.releaseStreamLocked()
+			s.streamGate = make(chan struct{})
+		} else {
+			s.releaseStreamLocked()
+		}
+	}
 	p.apply(&s.fault)
+}
+
+func (s *Server) streamFaults() (FaultConfig, <-chan struct{}) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.fault, s.streamGate
+}
+
+func (s *Server) releaseStreamLocked() {
+	if s.streamGate == nil {
+		return
+	}
+	select {
+	case <-s.streamGate:
+	default:
+		close(s.streamGate)
+	}
+}
+
+func (s *Server) handleStreamRelease(c echo.Context) error {
+	s.mu.Lock()
+	s.releaseStreamLocked()
+	s.fault.PauseStream = false
+	s.mu.Unlock()
+	return c.JSON(http.StatusOK, map[string]string{"status": "released"})
 }
 
 func (s *Server) handleFaultPatch(c echo.Context) error {
@@ -57,9 +89,12 @@ func (s *Server) handleFaultPatch(c echo.Context) error {
 }
 
 func (s *Server) handleChatCompletions(c echo.Context) error {
-	f := s.faults()
+	f, streamGate := s.streamFaults()
 	if f.Latency > 0 {
 		time.Sleep(f.Latency)
+	}
+	if f.StreamErrorEnvelope {
+		return s.streamErrorEnvelope(c)
 	}
 	if f.HTTPStatus >= 400 {
 		return c.JSON(f.HTTPStatus, map[string]string{"error": "mock-openai fault injection"})
@@ -80,7 +115,7 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 
 	text := completionText(body)
 	if req.Stream {
-		return s.streamCompletion(c, req, text, body, f)
+		return s.streamCompletion(c, req, text, body, f, streamGate)
 	}
 	return s.jsonCompletion(c, req, text, body)
 }
@@ -121,7 +156,7 @@ func (s *Server) jsonCompletion(c echo.Context, req ChatRequest, text string, bo
 	return c.JSON(http.StatusOK, resp)
 }
 
-func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, body []byte, f FaultConfig) error {
+func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, body []byte, f FaultConfig, streamGate <-chan struct{}) error {
 	c.Response().Header().Set(echo.HeaderContentType, "text/event-stream")
 	c.Response().Header().Set("Cache-Control", "no-cache")
 	c.Response().Header().Set("Connection", "keep-alive")
@@ -165,6 +200,7 @@ func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, 
 		tokens = []rune(" ")
 	}
 	first := true
+	paused := false
 	for i, r := range tokens {
 		if first && f.DropFirstChunk {
 			first = false
@@ -180,6 +216,14 @@ func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, 
 		}
 		if err := writeChunk(map[string]any{"content": tok}, nil, lp); err != nil {
 			return err
+		}
+		if !paused && f.PauseStream && streamGate != nil {
+			paused = true
+			select {
+			case <-streamGate:
+			case <-c.Request().Context().Done():
+				return c.Request().Context().Err()
+			}
 		}
 		if f.PartialStream && i == len(tokens)/2 {
 			return nil
@@ -212,6 +256,30 @@ func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, 
 		flusher.Flush()
 	}
 	_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	if flusher != nil {
+		flusher.Flush()
+	}
+	return nil
+}
+
+const engineCoreErrorEvent = `data: {"error":{"code":500,"message":"EngineCore encountered an issue. See stack trace (above) for the root cause.","param":null,"type":"InternalServerError"},"id":"chatcmpl-mockopenai"}`
+
+func (s *Server) streamErrorEnvelope(c echo.Context) error {
+	c.Response().Header().Set(echo.HeaderContentType, "text/event-stream")
+	c.Response().Header().Set("Cache-Control", "no-cache")
+	c.Response().Header().Set("Connection", "keep-alive")
+	c.Response().WriteHeader(http.StatusOK)
+	w := c.Response().Writer
+	flusher, _ := w.(http.Flusher)
+	if _, err := fmt.Fprintf(w, "%s\n\n", engineCoreErrorEvent); err != nil {
+		return err
+	}
+	if flusher != nil {
+		flusher.Flush()
+	}
+	if _, err := fmt.Fprint(w, "data: [DONE]\n\n"); err != nil {
+		return err
+	}
 	if flusher != nil {
 		flusher.Flush()
 	}

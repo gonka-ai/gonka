@@ -206,8 +206,17 @@ type EscrowStateProto struct {
 	WarmKeys                    map[uint32]string                `protobuf:"bytes,11,rep,name=warm_keys,json=warmKeys,proto3" json:"warm_keys,omitempty" protobuf_key:"varint,1,opt,name=key" protobuf_val:"bytes,2,opt,name=value"`
 	LatestNonce                 uint64                           `protobuf:"varint,12,opt,name=latest_nonce,json=latestNonce,proto3" json:"latest_nonce,omitempty"`
 	SealedAcc                   []byte                           `protobuf:"bytes,13,opt,name=sealed_acc,json=sealedAcc,proto3" json:"sealed_acc,omitempty"`
-	unknownFields               protoimpl.UnknownFields
-	sizeCache                   protoimpl.SizeCache
+	// Height-sync escrow commit (hashed into the state root). Tracker and floor
+	// are rebuilt from diffs 1..latest_nonce on restore, not persisted here.
+	HeightSyncForcedStart         uint64 `protobuf:"varint,14,opt,name=height_sync_forced_start,json=heightSyncForcedStart,proto3" json:"height_sync_forced_start,omitempty"`
+	HeightSyncForcedEnd           uint64 `protobuf:"varint,15,opt,name=height_sync_forced_end,json=heightSyncForcedEnd,proto3" json:"height_sync_forced_end,omitempty"`
+	HeightSyncCadenceSwallowUntil uint64 `protobuf:"varint,16,opt,name=height_sync_cadence_swallow_until,json=heightSyncCadenceSwallowUntil,proto3" json:"height_sync_cadence_swallow_until,omitempty"`
+	HeightSyncSwallowFe           uint64 `protobuf:"varint,17,opt,name=height_sync_swallow_fe,json=heightSyncSwallowFe,proto3" json:"height_sync_swallow_fe,omitempty"`
+	HeightSyncTurnK               uint64 `protobuf:"varint,18,opt,name=height_sync_turn_k,json=heightSyncTurnK,proto3" json:"height_sync_turn_k,omitempty"`
+	HeightSyncTurnSlots           uint64 `protobuf:"varint,19,opt,name=height_sync_turn_slots,json=heightSyncTurnSlots,proto3" json:"height_sync_turn_slots,omitempty"`
+	HeightSyncTurnReason          string `protobuf:"bytes,20,opt,name=height_sync_turn_reason,json=heightSyncTurnReason,proto3" json:"height_sync_turn_reason,omitempty"`
+	unknownFields                 protoimpl.UnknownFields
+	sizeCache                     protoimpl.SizeCache
 }
 
 func (x *EscrowStateProto) Reset() {
@@ -331,6 +340,55 @@ func (x *EscrowStateProto) GetSealedAcc() []byte {
 	return nil
 }
 
+func (x *EscrowStateProto) GetHeightSyncForcedStart() uint64 {
+	if x != nil {
+		return x.HeightSyncForcedStart
+	}
+	return 0
+}
+
+func (x *EscrowStateProto) GetHeightSyncForcedEnd() uint64 {
+	if x != nil {
+		return x.HeightSyncForcedEnd
+	}
+	return 0
+}
+
+func (x *EscrowStateProto) GetHeightSyncCadenceSwallowUntil() uint64 {
+	if x != nil {
+		return x.HeightSyncCadenceSwallowUntil
+	}
+	return 0
+}
+
+func (x *EscrowStateProto) GetHeightSyncSwallowFe() uint64 {
+	if x != nil {
+		return x.HeightSyncSwallowFe
+	}
+	return 0
+}
+
+func (x *EscrowStateProto) GetHeightSyncTurnK() uint64 {
+	if x != nil {
+		return x.HeightSyncTurnK
+	}
+	return 0
+}
+
+func (x *EscrowStateProto) GetHeightSyncTurnSlots() uint64 {
+	if x != nil {
+		return x.HeightSyncTurnSlots
+	}
+	return 0
+}
+
+func (x *EscrowStateProto) GetHeightSyncTurnReason() string {
+	if x != nil {
+		return x.HeightSyncTurnReason
+	}
+	return ""
+}
+
 // StateSnapshotProto matches the shared storage/recovery envelope. Hosts do not
 // use host_sync_nonce, but keeping the field makes snapshots portable across
 // proxy and host recovery code.
@@ -422,7 +480,7 @@ const file_devshard_v1_snapshot_proto_rawDesc = "" +
 	" \x01(\rR\x14autoSealEveryNNonces\"[\n" +
 	"\x13SlotAssignmentProto\x12\x17\n" +
 	"\aslot_id\x18\x01 \x01(\rR\x06slotId\x12+\n" +
-	"\x11validator_address\x18\x02 \x01(\tR\x10validatorAddress\"\xf3\x06\n" +
+	"\x11validator_address\x18\x02 \x01(\tR\x10validatorAddress\"\xf9\t\n" +
 	"\x10EscrowStateProto\x12\x1b\n" +
 	"\tescrow_id\x18\x01 \x01(\tR\bescrowId\x12D\n" +
 	"\x1fstate_root_and_protocol_version\x18\x02 \x01(\tR\x1bstateRootAndProtocolVersion\x127\n" +
@@ -441,7 +499,14 @@ const file_devshard_v1_snapshot_proto_rawDesc = "" +
 	"\twarm_keys\x18\v \x03(\v2+.devshard.v1.EscrowStateProto.WarmKeysEntryR\bwarmKeys\x12!\n" +
 	"\flatest_nonce\x18\f \x01(\x04R\vlatestNonce\x12\x1d\n" +
 	"\n" +
-	"sealed_acc\x18\r \x01(\fR\tsealedAcc\x1a`\n" +
+	"sealed_acc\x18\r \x01(\fR\tsealedAcc\x127\n" +
+	"\x18height_sync_forced_start\x18\x0e \x01(\x04R\x15heightSyncForcedStart\x123\n" +
+	"\x16height_sync_forced_end\x18\x0f \x01(\x04R\x13heightSyncForcedEnd\x12H\n" +
+	"!height_sync_cadence_swallow_until\x18\x10 \x01(\x04R\x1dheightSyncCadenceSwallowUntil\x123\n" +
+	"\x16height_sync_swallow_fe\x18\x11 \x01(\x04R\x13heightSyncSwallowFe\x12+\n" +
+	"\x12height_sync_turn_k\x18\x12 \x01(\x04R\x0fheightSyncTurnK\x123\n" +
+	"\x16height_sync_turn_slots\x18\x13 \x01(\x04R\x13heightSyncTurnSlots\x125\n" +
+	"\x17height_sync_turn_reason\x18\x14 \x01(\tR\x14heightSyncTurnReason\x1a`\n" +
 	"\x0fInferencesEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\x04R\x03key\x127\n" +
 	"\x05value\x18\x02 \x01(\v2!.devshard.v1.InferenceRecordProtoR\x05value:\x028\x01\x1aY\n" +

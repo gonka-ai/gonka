@@ -2,6 +2,7 @@ package user
 
 import (
 	"context"
+	"crypto/sha256"
 	"fmt"
 	"io"
 	"sync"
@@ -240,6 +241,30 @@ func TestUser_HostError_StateConsistency(t *testing.T) {
 	require.Equal(t, uint64(2), session.Nonce())
 }
 
+func TestSession_SendPendingDiffRetriesReachableHost(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+
+	// Advance to nonce 3 so the next pending diff targets slot 1.
+	for range 3 {
+		_, err := session.SendInference(ctx, params)
+		require.NoError(t, err)
+	}
+	session.clients[1] = &ErrorClient{Err: fmt.Errorf("host unavailable")}
+
+	require.NoError(t, session.SendPendingDiff(ctx))
+	require.Equal(t, uint64(4), session.Nonce())
+
+	// Slot 1 is the deterministic target for nonce 4. The retry must deliver
+	// the diff, including its catch-up history, to the next reachable slot.
+	fallback := session.clients[2].(*InProcessClient)
+	require.Equal(t, uint64(4), fallback.Host.SnapshotState().LatestNonce)
+}
+
 func TestUser_Finalize(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 100)
 	ctx := context.Background()
@@ -343,6 +368,120 @@ func TestUser_PendingTxDedup(t *testing.T) {
 		"duplicate mempool txs should be deduplicated")
 }
 
+func TestPendingTxDedupKeys_HostProposedIdentity(t *testing.T) {
+	session := &Session{pendingTxKeys: make(map[string]struct{})}
+
+	keyed := []struct {
+		name string
+		tx   *types.DevshardTx
+		key  string
+	}{
+		{
+			name: "finish",
+			tx: &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
+				FinishInference: &types.MsgFinishInference{InferenceId: 7},
+			}},
+			key: "finish:7",
+		},
+		{
+			name: "confirm",
+			tx: &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{
+				ConfirmStart: &types.MsgConfirmStart{InferenceId: 7},
+			}},
+			key: "confirm:7",
+		},
+		{
+			name: "validation",
+			tx: &types.DevshardTx{Tx: &types.DevshardTx_Validation{
+				Validation: &types.MsgValidation{InferenceId: 7, ValidatorSlot: 2},
+			}},
+			key: "validation:7:2",
+		},
+		{
+			name: "validation_vote",
+			tx: &types.DevshardTx{Tx: &types.DevshardTx_ValidationVote{
+				ValidationVote: &types.MsgValidationVote{InferenceId: 7, VoterSlot: 2},
+			}},
+			key: "vote:7:2",
+		},
+		{
+			name: "reveal_seed",
+			tx: &types.DevshardTx{Tx: &types.DevshardTx_RevealSeed{
+				RevealSeed: &types.MsgRevealSeed{SlotId: 2},
+			}},
+			key: "reveal_seed:2",
+		},
+		{
+			name: "height_ack",
+			tx: &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{
+				HeightAck: &types.MsgHeightAck{TurnSeq: 5, SlotId: 2},
+			}},
+			key: "height_ack:5:2",
+		},
+	}
+
+	for _, tc := range keyed {
+		t.Run(tc.name, func(t *testing.T) {
+			require.Equal(t, tc.key, devshardTxKey(tc.tx))
+			before := len(session.PendingTxs())
+			session.addPendingTx(tc.tx)
+			require.Len(t, session.PendingTxs(), before+1)
+			session.addPendingTx(tc.tx)
+			require.Len(t, session.PendingTxs(), before+1,
+				"same host-proposed tx key must not be queued twice")
+			session.clearPendingTxs()
+			session.addPendingTx(tc.tx)
+			require.Empty(t, session.PendingTxs(),
+				"clearing applied pending txs preserves the dedup key")
+		})
+	}
+
+	session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{
+		HeightAck: &types.MsgHeightAck{TurnSeq: 5, SlotId: 3},
+	}})
+	session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{
+		HeightAck: &types.MsgHeightAck{TurnSeq: 6, SlotId: 2},
+	}})
+	require.Len(t, session.PendingTxs(), 2,
+		"height ack dedup identity is turn_seq plus slot")
+
+	unkeyedStart := &types.DevshardTx{Tx: &types.DevshardTx_StartInference{
+		StartInference: &types.MsgStartInference{InferenceId: 7},
+	}}
+	unkeyedHeartbeat := &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{
+		Heartbeat: &types.MsgHeartbeat{TurnSeq: 5, SlotsNum: 3},
+	}}
+	require.Empty(t, devshardTxKey(unkeyedStart))
+	require.Empty(t, devshardTxKey(unkeyedHeartbeat))
+	before := len(session.PendingTxs())
+	session.addPendingTx(unkeyedStart)
+	session.addPendingTx(unkeyedStart)
+	session.addPendingTx(unkeyedHeartbeat)
+	session.addPendingTx(unkeyedHeartbeat)
+	require.Len(t, session.PendingTxs(), before+4,
+		"user-authored/unkeyed txs are outside host-proposed pending dedup")
+}
+
+func TestProcessResponse_NilReturnsNamedError(t *testing.T) {
+	session, _, _ := setupSession(t, 2, 100000, 100)
+	err := session.ProcessResponse(0, nil, 1)
+	require.ErrorIs(t, err, ErrNilHostResponse)
+	require.Equal(t, uint64(0), session.SnapshotHeightSync().Overlap.Total)
+}
+
+func TestProcessResponse_FailedVerifySkipsContactAndOverlap(t *testing.T) {
+	session, _, _ := setupSessionWithOptions(t, 2, 100000, 100, WithHeightSyncCadence(10, 2))
+	err := session.ProcessResponse(0, &host.HostResponse{
+		Nonce:     99,
+		StateHash: []byte{0xde, 0xad},
+	}, 1)
+	require.Error(t, err)
+	require.ErrorIs(t, err, types.ErrStateHashMismatch)
+	require.True(t, session.lastContact[0].IsZero(), "failed verify must not refresh contact")
+	require.Equal(t, uint64(0), session.SnapshotHeightSync().Overlap.Total,
+		"failed verify must not count overlap")
+}
+
 func TestCollectTimeoutVotes_WeightEarlyExit(t *testing.T) {
 	// 4 signers with slots [1, 1, 3, 1] (total 6 slots).
 	// VoteThreshold = 6/2 = 3. Need >3 weighted accept votes.
@@ -410,7 +549,7 @@ func TestCollectTimeoutVotes_WeightEarlyExit(t *testing.T) {
 		verifiers[i] = &mockTimeoutVerifier{accept: true, signer: slotSigner, group: group, slotIdx: i}
 	}
 
-	votes, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
+	votes, _, _, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
 		Prompt:      testutil.TestPrompt,
 		Model:       "llama",
 		InputLength: 100,
@@ -430,16 +569,26 @@ func TestCollectTimeoutVotes_WeightEarlyExit(t *testing.T) {
 }
 
 type mockTimeoutVerifier struct {
-	accept   bool
-	signer   *signing.Secp256k1Signer
-	group    []types.SlotAssignment
-	slotIdx  int
-	escrowID string // defaults to "escrow-1" when empty
+	accept      bool
+	signer      *signing.Secp256k1Signer
+	group       []types.SlotAssignment
+	slotIdx     int
+	escrowID    string // defaults to "escrow-1" when empty
+	mempool     []*types.DevshardTx
+	rejectCause string
+	delay       time.Duration
+	onVerify    func()
 }
 
-func (m *mockTimeoutVerifier) VerifyTimeout(_ context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff) (bool, []byte, uint32, error) {
+func (m *mockTimeoutVerifier) VerifyTimeout(_ context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	if m.onVerify != nil {
+		m.onVerify()
+	}
+	if m.delay > 0 {
+		time.Sleep(m.delay)
+	}
 	if !m.accept {
-		return false, nil, 0, nil
+		return false, nil, 0, m.mempool, m.rejectCause, nil
 	}
 	eid := m.escrowID
 	if eid == "" {
@@ -452,15 +601,52 @@ func (m *mockTimeoutVerifier) VerifyTimeout(_ context.Context, inferenceID uint6
 		Reason:      reason,
 		Accept:      true,
 	}
-	data, err := proto.Marshal(content)
+	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(content)
 	if err != nil {
-		return false, nil, 0, err
+		return false, nil, 0, nil, "", err
 	}
 	sig, err := m.signer.Sign(data)
 	if err != nil {
-		return false, nil, 0, err
+		return false, nil, 0, nil, "", err
 	}
-	return true, sig, voterSlot, nil
+	return true, sig, voterSlot, nil, "", nil
+}
+
+func (m *mockTimeoutVerifier) VerifyErrorMiss(_ context.Context, inferenceID uint64, _ []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	if m.onVerify != nil {
+		m.onVerify()
+	}
+	if m.delay > 0 {
+		time.Sleep(m.delay)
+	}
+	if !m.accept {
+		return false, nil, 0, m.mempool, m.rejectCause, nil
+	}
+	eid := m.escrowID
+	if eid == "" {
+		eid = "escrow-1"
+	}
+	voterSlot := m.group[m.slotIdx].SlotID
+	var hash []byte
+	if len(artifacts.ResponsePayload) > 0 {
+		sum := sha256.Sum256(artifacts.ResponsePayload)
+		hash = sum[:]
+	}
+	content := &types.ErrorMissVoteContent{
+		EscrowId:     eid,
+		InferenceId:  inferenceID,
+		Accept:       true,
+		ResponseHash: hash,
+	}
+	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(content)
+	if err != nil {
+		return false, nil, 0, nil, "", err
+	}
+	sig, err := m.signer.Sign(data)
+	if err != nil {
+		return false, nil, 0, nil, "", err
+	}
+	return true, sig, voterSlot, nil, "", nil
 }
 
 // concurrencyMockVerifier is a TimeoutVerifier that records concurrency
@@ -480,7 +666,7 @@ type concurrencyMockVerifier struct {
 	release       <-chan struct{}       // VerifyTimeout returns when this is closed
 }
 
-func (m *concurrencyMockVerifier) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff) (bool, []byte, uint32, error) {
+func (m *concurrencyMockVerifier) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
 	cur := m.perSlotActive[m.slotIdx].Add(1)
 	defer m.perSlotActive[m.slotIdx].Add(-1)
 	if m.totalEntered != nil {
@@ -505,7 +691,7 @@ func (m *concurrencyMockVerifier) VerifyTimeout(ctx context.Context, inferenceID
 		select {
 		case <-m.release:
 		case <-ctx.Done():
-			return false, nil, 0, ctx.Err()
+			return false, nil, 0, nil, "", ctx.Err()
 		}
 	}
 	voterSlot := m.group[m.slotIdx].SlotID
@@ -517,13 +703,17 @@ func (m *concurrencyMockVerifier) VerifyTimeout(ctx context.Context, inferenceID
 	}
 	data, err := proto.Marshal(content)
 	if err != nil {
-		return false, nil, 0, err
+		return false, nil, 0, nil, "", err
 	}
 	sig, err := m.signer.Sign(data)
 	if err != nil {
-		return false, nil, 0, err
+		return false, nil, 0, nil, "", err
 	}
-	return true, sig, voterSlot, nil
+	return true, sig, voterSlot, nil, "", nil
+}
+
+func (m *concurrencyMockVerifier) VerifyErrorMiss(ctx context.Context, inferenceID uint64, diffs []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, nil, "", nil
 }
 
 // signerForSlot finds the signer whose address matches the slot's validator.
@@ -603,7 +793,7 @@ func TestCollectTimeoutVotes_SerializesPerVerifier(t *testing.T) {
 
 	for i := 0; i < 2; i++ {
 		go func() {
-			votes, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, buildVerifiers(), nil)
+			votes, _, _, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, buildVerifiers(), nil)
 			resultsCh <- collectResult{votes: votes, err: err}
 		}()
 	}
@@ -702,7 +892,7 @@ func TestCollectTimeoutVotes_DifferentVerifiersRunInParallel(t *testing.T) {
 
 	done := make(chan error, 1)
 	go func() {
-		_, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, verifiers, nil)
+		_, _, _, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, verifiers, nil)
 		done <- err
 	}()
 
@@ -808,7 +998,7 @@ func TestCollectTimeoutVotes_WaitTimeoutDropsStaleGoroutines(t *testing.T) {
 	// Launch the blocking first call so all verifier slots are occupied.
 	firstDone := make(chan struct{})
 	go func() {
-		_, _ = session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, firstVerifiers, nil)
+		_, _, _, _ = session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, firstVerifiers, nil)
 		close(firstDone)
 	}()
 
@@ -821,7 +1011,7 @@ func TestCollectTimeoutVotes_WaitTimeoutDropsStaleGoroutines(t *testing.T) {
 	// Now fire the second call. Its goroutines should all time out on the
 	// queue (50ms) and return without calling VerifyTimeout.
 	start := time.Now()
-	votes, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, secondVerifiers, nil)
+	votes, _, _, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, secondVerifiers, nil)
 	elapsed := time.Since(start)
 	require.NoError(t, err)
 	require.Empty(t, votes, "stale goroutines must not produce votes")
@@ -897,7 +1087,7 @@ func TestCollectTimeoutVotes_DepthGreaterThanOne(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			_, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, buildVerifiers(), nil)
+			_, _, _, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, buildVerifiers(), nil)
 			require.NoError(t, err)
 		}()
 	}
@@ -1208,4 +1398,402 @@ func TestFinalize_SignatureStatus_InsufficientQuorum(t *testing.T) {
 		require.False(t, finalEntry.HasQuorum)
 		require.Less(t, finalEntry.SigWeight, uint32(4))
 	}
+}
+
+type timeoutRecoveryClient struct {
+	HostClient
+	mempool []*types.DevshardTx
+}
+
+func (c *timeoutRecoveryClient) VerifyTimeout(_ context.Context, _ uint64, _ types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, c.mempool, "", nil
+}
+
+func (c *timeoutRecoveryClient) VerifyErrorMiss(_ context.Context, _ uint64, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, c.mempool, "", nil
+}
+
+type timeoutVoteClient struct {
+	HostClient
+	*mockTimeoutVerifier
+}
+
+func TestCollectTimeoutVotes_CollectsRejectMempool(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	confirm := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 1,
+		ExecutorSig: []byte("executor-receipt"),
+		ConfirmedAt: 1000,
+	}}}
+
+	other := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 999,
+		ExecutorSig: []byte("other"),
+		ConfirmedAt: 1,
+	}}}
+	empty := &types.DevshardTx{}
+	mixed := []*types.DevshardTx{empty, other, confirm}
+
+	verifiers := map[int]TimeoutVerifier{
+		0: &mockTimeoutVerifier{accept: false, mempool: mixed},
+		2: &mockTimeoutVerifier{accept: false, mempool: mixed},
+	}
+
+	votes, recovery, _, err := session.CollectTimeoutVotes(context.Background(), 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
+		Prompt:      testutil.TestPrompt,
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   testutil.TestMaxTokens,
+		StartedAt:   1000,
+	}, verifiers, nil)
+	require.NoError(t, err)
+	require.Empty(t, votes)
+
+	var got *types.MsgConfirmStart
+	for _, tx := range recovery {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == 1 {
+			got = cs
+			break
+		}
+	}
+	require.NotNil(t, got, "reject votes must surface recovery ConfirmStart")
+	require.Equal(t, []byte("executor-receipt"), got.ExecutorSig)
+	require.Len(t, recovery, 1, "recovery must drop empty txs and ConfirmStart for other inferences")
+	require.Equal(t, uint64(1), recovery[0].GetConfirmStart().InferenceId)
+}
+
+func TestCollectTimeoutVotes_DeduplicatesRejectRecoveryTxs(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	confirm := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 1,
+		ExecutorSig: []byte("executor-receipt"),
+		ConfirmedAt: 1000,
+	}}}
+	finish := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
+		InferenceId:  1,
+		ResponseHash: []byte("done"),
+	}}}
+
+	verifiers := map[int]TimeoutVerifier{
+		0: &mockTimeoutVerifier{accept: false, mempool: []*types.DevshardTx{confirm, finish}},
+		2: &mockTimeoutVerifier{accept: false, mempool: []*types.DevshardTx{confirm, finish}},
+	}
+
+	votes, recovery, _, err := session.CollectTimeoutVotes(context.Background(), 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
+		Prompt:      testutil.TestPrompt,
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   testutil.TestMaxTokens,
+		StartedAt:   1000,
+	}, verifiers, nil)
+	require.NoError(t, err)
+	require.Empty(t, votes)
+	require.Len(t, recovery, 2, "duplicate recovery txs from multiple reject votes must collapse by tx type and inference")
+	require.Equal(t, 1, countRecoveryConfirmStart(recovery, 1))
+	require.Equal(t, 1, countRecoveryFinish(recovery, 1))
+}
+
+func TestCollectTimeoutVotes_DropsMalformedOrNilRecoveryTxs(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	unrelatedConfirm := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 99,
+		ExecutorSig: []byte("other-receipt"),
+		ConfirmedAt: 1000,
+	}}}
+	unrelatedFinish := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{
+		InferenceId:  99,
+		ResponseHash: []byte("other"),
+	}}}
+	timeoutTx := &types.DevshardTx{Tx: &types.DevshardTx_TimeoutInference{TimeoutInference: &types.MsgTimeoutInference{
+		InferenceId: 1,
+		Reason:      types.TimeoutReason_TIMEOUT_REASON_REFUSED,
+	}}}
+	malformed := []*types.DevshardTx{nil, {}, unrelatedConfirm, unrelatedFinish, timeoutTx}
+
+	verifiers := map[int]TimeoutVerifier{
+		0: &mockTimeoutVerifier{accept: false, mempool: malformed},
+		2: &mockTimeoutVerifier{accept: false, mempool: malformed},
+	}
+
+	votes, recovery, _, err := session.CollectTimeoutVotes(context.Background(), 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
+		Prompt:      testutil.TestPrompt,
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   testutil.TestMaxTokens,
+		StartedAt:   1000,
+	}, verifiers, nil)
+	require.NoError(t, err)
+	require.Empty(t, votes)
+	require.Empty(t, recovery, "nil, empty, user-proposed, and unrelated txs must not become recovery")
+}
+
+func TestHandleTimeout_RefusedReject_PublishesConfirmStart(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+	prepared, err := session.PrepareInference(params)
+	require.NoError(t, err)
+
+	payload := &host.InferencePayload{
+		Prompt:      params.Prompt,
+		Model:       params.Model,
+		InputLength: params.InputLength,
+		MaxTokens:   params.MaxTokens,
+		StartedAt:   params.StartedAt,
+	}
+
+	execIdx := int(prepared.diff.Nonce % uint64(len(session.clients)))
+	execHost := session.clients[execIdx].(*InProcessClient).Host
+	receipt, _, err := execHost.ChallengeReceipt(ctx, prepared.diff.Nonce, payload, []types.Diff{prepared.diff})
+	require.NoError(t, err)
+	require.NotEmpty(t, receipt)
+
+	var confirmTx *types.DevshardTx
+	for _, tx := range execHost.MempoolTxs() {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == prepared.diff.Nonce {
+			confirmTx = tx
+			break
+		}
+	}
+	require.NotNil(t, confirmTx, "executor challenge must queue MsgConfirmStart")
+
+	for i, c := range session.clients {
+		session.clients[i] = &timeoutRecoveryClient{HostClient: c, mempool: []*types.DevshardTx{confirmTx}}
+	}
+
+	_, err = session.HandleTimeout(ctx, prepared.diff.Nonce, time.Unix(0, 0), payload)
+	require.NoError(t, err, "recovery publish must not be treated as a timeout failure")
+
+	rec, ok := session.StateMachine().SnapshotState().Inferences[prepared.diff.Nonce]
+	require.True(t, ok)
+	require.Equal(t, types.StatusStarted, rec.Status)
+
+	peerIdx := int((prepared.diff.Nonce + 1) % uint64(len(session.clients)))
+	peerHost := session.clients[peerIdx].(*timeoutRecoveryClient).HostClient.(*InProcessClient).Host
+	peerRec, ok := peerHost.SnapshotState().Inferences[prepared.diff.Nonce]
+	require.True(t, ok)
+	require.Equal(t, types.StatusStarted, peerRec.Status, "peer SM must apply ConfirmStart from the recovery diff")
+}
+
+func TestHandleTimeout_ExecutionTimeoutIgnoresConfirmStartRecovery(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+	prepared, err := session.PrepareInference(params)
+	require.NoError(t, err)
+
+	payload := &host.InferencePayload{
+		Prompt:      params.Prompt,
+		Model:       params.Model,
+		InputLength: params.InputLength,
+		MaxTokens:   params.MaxTokens,
+		StartedAt:   params.StartedAt,
+	}
+
+	execIdx := int(prepared.diff.Nonce % uint64(len(session.clients)))
+	execHost := session.clients[execIdx].(*InProcessClient).Host
+	receipt, _, err := execHost.ChallengeReceipt(ctx, prepared.diff.Nonce, payload, []types.Diff{prepared.diff})
+	require.NoError(t, err)
+	require.NotEmpty(t, receipt)
+
+	var confirmTx *types.DevshardTx
+	for _, tx := range execHost.MempoolTxs() {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == prepared.diff.Nonce {
+			confirmTx = tx
+			break
+		}
+	}
+	require.NotNil(t, confirmTx)
+
+	session.mu.Lock()
+	session.addPendingTx(confirmTx)
+	session.mu.Unlock()
+	require.NoError(t, session.SendPendingDiff(ctx), "test setup must publish ConfirmStart before execution timeout")
+
+	session.mu.Lock()
+	session.nonceStates[prepared.diff.Nonce].confirmedAt = 1
+	session.mu.Unlock()
+
+	beforeDiffs := len(session.Diffs())
+	for i, c := range session.clients {
+		session.clients[i] = &timeoutRecoveryClient{HostClient: c, mempool: []*types.DevshardTx{confirmTx}}
+	}
+
+	_, err = session.HandleTimeout(ctx, prepared.diff.Nonce, time.Unix(0, 0), payload)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "insufficient votes")
+	require.Len(t, session.Diffs(), beforeDiffs, "execution timeout must not publish ConfirmStart recovery diff")
+
+	rec, ok := session.StateMachine().SnapshotState().Inferences[prepared.diff.Nonce]
+	require.True(t, ok)
+	require.Equal(t, types.StatusStarted, rec.Status)
+}
+
+func TestHandleTimeout_ExecutionTimeoutPrefersPendingFinishOverTimeoutVotes(t *testing.T) {
+	prevTimeoutBuffer := TimeoutBuffer
+	TimeoutBuffer = 0
+	t.Cleanup(func() {
+		TimeoutBuffer = prevTimeoutBuffer
+	})
+
+	session, signers, _ := setupSession(t, 3, 100000, 10)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+	prepared, err := session.PrepareInference(params)
+	require.NoError(t, err)
+
+	payload := &host.InferencePayload{
+		Prompt:      params.Prompt,
+		Model:       params.Model,
+		InputLength: params.InputLength,
+		MaxTokens:   params.MaxTokens,
+		StartedAt:   params.StartedAt,
+	}
+
+	execIdx := int(prepared.diff.Nonce % uint64(len(session.clients)))
+	execHost := session.clients[execIdx].(*InProcessClient).Host
+	receipt, _, err := execHost.ChallengeReceipt(ctx, prepared.diff.Nonce, payload, []types.Diff{prepared.diff})
+	require.NoError(t, err)
+	require.NotEmpty(t, receipt)
+	confirmTx := findRecoveryConfirmStart(execHost.MempoolTxs(), prepared.diff.Nonce)
+	require.NotNil(t, confirmTx)
+
+	require.NoError(t, session.ProcessResponse(execIdx, &host.HostResponse{
+		Receipt:     receipt,
+		ConfirmedAt: confirmTx.GetConfirmStart().ConfirmedAt,
+	}, prepared.diff.Nonce))
+	require.NoError(t, session.SendPendingDiff(ctx))
+	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[prepared.diff.Nonce].Status)
+
+	require.Eventually(t, func() bool {
+		return findRecoveryFinish(execHost.MempoolTxs(), prepared.diff.Nonce) != nil
+	}, 5*time.Second, 20*time.Millisecond)
+	finishTx := findRecoveryFinish(execHost.MempoolTxs(), prepared.diff.Nonce)
+	require.NotNil(t, finishTx)
+
+	session.mu.Lock()
+	session.addPendingTx(finishTx)
+	session.mu.Unlock()
+	require.NotNil(t, findRecoveryFinish(session.PendingTxs(), prepared.diff.Nonce))
+	session.mu.Lock()
+	session.nonceStates[prepared.diff.Nonce].confirmedAt = 1
+	session.mu.Unlock()
+
+	for i, c := range session.clients {
+		session.clients[i] = &timeoutVoteClient{
+			HostClient: c,
+			mockTimeoutVerifier: &mockTimeoutVerifier{
+				accept:  true,
+				signer:  signers[i],
+				group:   session.group,
+				slotIdx: i,
+			},
+		}
+	}
+
+	result, err := session.HandleTimeout(ctx, prepared.diff.Nonce, time.Unix(0, 0), nil)
+	require.NoError(t, err, "pending FinishInference should be published instead of timeout votes")
+	require.Equal(t, "execution", result.Reason)
+	require.Equal(t, types.StatusFinished, session.StateMachine().SnapshotState().Inferences[prepared.diff.Nonce].Status)
+}
+
+func TestHandleTimeout_RefusedReject_UnrelatedMempool(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+	prepared, err := session.PrepareInference(params)
+	require.NoError(t, err)
+
+	payload := &host.InferencePayload{
+		Prompt:      params.Prompt,
+		Model:       params.Model,
+		InputLength: params.InputLength,
+		MaxTokens:   params.MaxTokens,
+		StartedAt:   params.StartedAt,
+	}
+
+	unrelated := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 999,
+		ExecutorSig: []byte("other"),
+		ConfirmedAt: 1,
+	}}}
+	for i, c := range session.clients {
+		session.clients[i] = &timeoutRecoveryClient{HostClient: c, mempool: []*types.DevshardTx{unrelated}}
+	}
+
+	_, err = session.HandleTimeout(ctx, prepared.diff.Nonce, time.Unix(0, 0), payload)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "insufficient votes")
+
+	rec, ok := session.StateMachine().SnapshotState().Inferences[prepared.diff.Nonce]
+	require.True(t, ok)
+	require.Equal(t, types.StatusPending, rec.Status, "unrelated recovery txs must not be treated as success")
+}
+
+func countRecoveryConfirmStart(txs []*types.DevshardTx, inferenceID uint64) int {
+	var count int
+	for _, tx := range txs {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+			count++
+		}
+	}
+	return count
+}
+
+func countRecoveryFinish(txs []*types.DevshardTx, inferenceID uint64) int {
+	var count int
+	for _, tx := range txs {
+		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+			count++
+		}
+	}
+	return count
+}
+
+func findRecoveryConfirmStart(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
+	for _, tx := range txs {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+			return tx
+		}
+	}
+	return nil
+}
+
+func findRecoveryFinish(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
+	for _, tx := range txs {
+		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+			return tx
+		}
+	}
+	return nil
+}
+
+func findPendingTimeout(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
+	for _, tx := range txs {
+		if to := tx.GetTimeoutInference(); to != nil && to.InferenceId == inferenceID {
+			return tx
+		}
+	}
+	return nil
+}
+
+func findPendingErrorMiss(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
+	for _, tx := range txs {
+		if em := tx.GetErrorMiss(); em != nil && em.InferenceId == inferenceID {
+			return tx
+		}
+	}
+	return nil
 }

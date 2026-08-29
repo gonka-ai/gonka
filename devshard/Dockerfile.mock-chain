@@ -17,6 +17,7 @@ FROM alpine:3.23
 RUN apk add --no-cache ca-certificates
 COPY --from=build /mockchain /usr/local/bin/mockchain
 COPY devshard/e2e/mock-chain-config.yaml /app/mock-chain-config.yaml
+COPY devshard/e2e/mock-chain-timeout-config.yaml /app/mock-chain-timeout-config.yaml
 ENV MOCK_CHAIN_CONFIG=/app/mock-chain-config.yaml
 ENV MOCK_CHAIN_GRPC_ADDR=:9090
 ENV MOCK_CHAIN_RPC_ADDR=:26657

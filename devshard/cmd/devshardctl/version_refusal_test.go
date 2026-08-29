@@ -213,9 +213,15 @@ func (versionRefusingClient) Send(
 }
 
 func (versionRefusingClient) VerifyTimeout(
-	context.Context, uint64, types.TimeoutReason, *host.InferencePayload, []types.Diff,
-) (bool, []byte, uint32, error) {
-	return false, nil, 0, errors.New("verifier unavailable")
+	context.Context, uint64, types.TimeoutReason, *host.InferencePayload, []types.Diff, host.TimeoutArtifacts,
+) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, nil, "", errors.New("verifier unavailable")
+}
+
+func (versionRefusingClient) VerifyErrorMiss(
+	context.Context, uint64, []types.Diff, host.TimeoutArtifacts,
+) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, nil, "", errors.New("verifier unavailable")
 }
 
 // The refusal reaches the tracker only from the dispatch path, so nothing short of a real dispatch

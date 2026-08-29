@@ -19,10 +19,14 @@ import (
 
 	json "github.com/goccy/go-json"
 
+	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"
 	"devshard/signing"
 	"devshard/types"
+
+	"common/chainoracle/blocks"
+	"common/httpguard"
 
 	devshardpkg "devshard"
 )
@@ -34,10 +38,10 @@ func getTransport(baseURL string) *http.Transport {
 		return t.(*http.Transport)
 	}
 	fallbackAddress := transportAddress(baseURL)
-	dialer := &net.Dialer{
-		Timeout:   30 * time.Second,
-		KeepAlive: 30 * time.Second,
-	}
+	// Dial-time SSRF guard: baseURL is a participant-controlled peer URL, so
+	// every dial is vetted against the private/internal ranges unless the
+	// process explicitly opts out (dev/test). See common/httpguard.
+	dialer := httpguard.NewDialer()
 	t := &http.Transport{
 		MaxIdleConnsPerHost: 4,
 		IdleConnTimeout:     120 * time.Second,
@@ -95,6 +99,18 @@ type ClientConfig struct {
 	// keys those other subsystems use.
 	ParticipantKey string
 	Admission      RequestAdmissionController
+
+	// HeightSync enables outbound Anchor sections on inference POST bodies (protobuf envelope).
+	HeightSync *heightsync.AnchorScheduler
+	// HeightSyncLogOracle optional Latest() for debug logs (local height vs peer).
+	HeightSyncLogOracle blocks.BlockOracle
+	// HeightSyncPeerTips shares observed peer tips across multiple HTTP clients
+	// in the same session (courier mode). When nil and HeightSync is set, the
+	// client allocates its own cache.
+	HeightSyncPeerTips *HeightSyncPeerTips
+	// HeightSyncRequestMutateHook runs after Decide and peer-tip carry-forward,
+	// before the request is marshaled. Tests / debug only.
+	HeightSyncRequestMutateHook func(sec *heightsync.HeightSyncSection, nonce uint64)
 }
 
 // RequestAdmissionController can reject participant-bound transport
@@ -166,9 +182,10 @@ func readErrorBody(body io.Reader) string {
 }
 
 type UpstreamStatusError struct {
-	Path       string
-	StatusCode int
-	Body       string
+	Path          string
+	StatusCode    int
+	Body          string
+	DevshardError string
 }
 
 func (e *UpstreamStatusError) Error() string {
@@ -217,6 +234,20 @@ func IsTransientWriteError(err error) bool {
 		errors.Is(err, syscall.ECONNREFUSED)
 }
 
+// IsUpstreamEscrowSettled returns true if err is an UpstreamStatusError whose
+// body indicates the host refused to serve an escrow already settled on chain.
+func IsUpstreamEscrowSettled(err error) bool {
+	var ue *UpstreamStatusError
+	if !errors.As(err, &ue) {
+		return false
+	}
+	if ue.DevshardError == DevshardErrorEscrowSettled {
+		return true
+	}
+	return ue.StatusCode == http.StatusConflict &&
+		strings.Contains(ue.Body, "escrow already settled")
+}
+
 func DefaultClientConfig() ClientConfig {
 	return ClientConfig{
 		InferenceTimeout: 30 * time.Minute,
@@ -235,6 +266,15 @@ type HTTPClient struct {
 	signer      signing.Signer
 	http        *http.Client
 	config      ClientConfig
+
+	heightSync          *heightsync.AnchorScheduler
+	heightSyncAudit     *heightsync.AuditRing
+	heightSyncLogOracle blocks.BlockOracle
+	heightSyncPeerTips  *HeightSyncPeerTips
+	heightSyncVerifier  signing.Verifier
+
+	oneShotMu               sync.Mutex
+	oneShotHeightSyncMutate func(*heightsync.HeightSyncSection, uint64)
 }
 
 // NewHTTPClient creates an HTTP client for the devshard transport layer.
@@ -244,7 +284,10 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 	if len(cfgs) > 0 {
 		cfg = cfgs[0]
 	}
-	return &HTTPClient{
+	if cfg.RoutePrefix == "" {
+		cfg.RoutePrefix = DefaultRoutePrefix()
+	}
+	hc := &HTTPClient{
 		baseURL:     baseURL,
 		routePrefix: cfg.RoutePrefix,
 		escrowID:    escrowID,
@@ -252,8 +295,20 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 		http: &http.Client{
 			Transport: DefaultHostConnectionTracker().WrapRoundTripper(getTransport(baseURL)),
 		},
-		config: cfg,
+		config:              cfg,
+		heightSync:          cfg.HeightSync,
+		heightSyncLogOracle: cfg.HeightSyncLogOracle,
+		heightSyncVerifier:  signing.NewSecp256k1Verifier(),
 	}
+	if cfg.HeightSync != nil {
+		hc.heightSyncAudit = heightsync.NewAuditRing(0)
+	}
+	if cfg.HeightSyncPeerTips != nil {
+		hc.heightSyncPeerTips = cfg.HeightSyncPeerTips
+	} else if cfg.HeightSync != nil {
+		hc.heightSyncPeerTips = NewHeightSyncPeerTips()
+	}
+	return hc
 }
 
 // WithoutAdmission returns a shallow copy of the client with admission control
@@ -277,6 +332,16 @@ func (c *HTTPClient) signatureHeader() string {
 
 func (c *HTTPClient) timestampHeader() string {
 	return HeaderTimestamp
+}
+
+func (c *HTTPClient) cloneWithSigner(signer signing.Signer, timeout time.Duration) *HTTPClient {
+	cfg := c.config
+	cfg.Admission = nil
+	if timeout > 0 {
+		cfg.QueryTimeout = timeout
+		cfg.GossipTimeout = timeout
+	}
+	return NewHTTPClient(c.baseURL, c.escrowID, signer, cfg)
 }
 
 // post sends a signed POST request, marshaling req to JSON and unmarshaling into resp.
@@ -326,19 +391,22 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 		return nil, fmt.Errorf("encode request: %w", err)
 	}
 
-	body, err := json.Marshal(ir)
+	body, contentType, outboundHS, err := c.wrapInferenceRequest(ctx, req, ir)
 	if err != nil {
-		return nil, fmt.Errorf("marshal json: %w", err)
+		return nil, err
 	}
 
-	resp, err := c.doPostRaw(ctx, "/sessions/"+c.escrowID+"/chat/completions", body)
+	resp, err := c.doPostRaw(ctx, "/sessions/"+c.escrowID+"/chat/completions", body, contentType)
 	if err != nil {
 		return nil, err
 	}
 	defer resp.Body.Close()
+	if outboundHS != nil && resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		c.markHeightSyncPropagated(outboundHS)
+	}
 
-	contentType := resp.Header.Get("Content-Type")
-	if strings.HasPrefix(contentType, "text/event-stream") {
+	respContentType := resp.Header.Get("Content-Type")
+	if strings.HasPrefix(respContentType, "text/event-stream") {
 		cr := &countingReader{r: resp.Body}
 		result, err := c.parseSSEResponse(ctx, cr, stream, receiptHandler)
 		if result != nil {
@@ -367,6 +435,13 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 // parseSSEResponse reads an SSE stream and extracts protocol receipt/meta events.
 // Non-protocol data lines are forwarded to stream if configured.
 //
+// The host writes OpenAI events (including a terminal error envelope and
+// [DONE]) first, then tails the body with devshard_meta carrying the mempool
+// (MsgFinishInference). This reader never stops at [DONE] or a stream-write
+// error: it keeps consuming until EOF so Finish is on the response before
+// Send returns. A cancelled context that wins the race with a complete meta
+// tail still returns that mempool rather than dropping the artifact.
+//
 // Uses bufio.Reader (not bufio.Scanner) so a clean EOF that arrives *after* a
 // terminator ([DONE] or devshard_receipt) can be told apart from a clean EOF
 // that arrives *before* one: bufio.Scanner squashes io.EOF into a nil error, so
@@ -386,12 +461,13 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 	var writeErrLogged bool
 	var unexpectedLineLogged bool
 	var sawTerminator bool // true once we observe [DONE] or a devshard_receipt event
+	var sawMeta bool       // true once we observe a devshard_meta tail
 
 	for {
 		raw, readErr := readBoundedSSELine(br, maxLine)
 		if len(raw) > 0 {
 			line := string(bytes.TrimRight(raw, "\r\n"))
-			c.handleSSELine(line, stream, receiptHandler, &result, &writeErrLogged, &unexpectedLineLogged, &sawTerminator)
+			c.handleSSELine(line, stream, receiptHandler, &result, &writeErrLogged, &unexpectedLineLogged, &sawTerminator, &sawMeta)
 		}
 		if readErr != nil {
 			if errors.Is(readErr, ErrSSEEventTooLarge) {
@@ -407,8 +483,10 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 				// early, so without this check a cancelled stream that never
 				// carried content would be reported as a successful empty
 				// response and wrongly scored against the host. Report the
-				// cancellation as the error it is.
-				if ctxErr := ctx.Err(); ctxErr != nil {
+				// cancellation as the error it is — unless the host already
+				// tailed devshard_meta: that mempool is the signed Finish
+				// artifact and must not be dropped.
+				if ctxErr := ctx.Err(); ctxErr != nil && !sawMeta {
 					return &result, fmt.Errorf("read SSE stream: %w", ctxErr)
 				}
 				if !sawTerminator {
@@ -464,13 +542,15 @@ func readBoundedSSELine(br *bufio.Reader, max int) ([]byte, error) {
 
 // handleSSELine processes a single SSE line (terminator already stripped).
 // Mutates result / flags in place; never returns an error -- read errors are
-// the caller's job to detect via the underlying reader.
+// the caller's job to detect via the underlying reader. A stream-write failure
+// (race loser, client gone) is logged and ignored so the body is still drained
+// through devshard_meta.
 func (c *HTTPClient) handleSSELine(
 	line string,
 	stream io.Writer,
 	receiptHandler func(*host.HostResponse),
 	result *host.HostResponse,
-	writeErrLogged, unexpectedLineLogged, sawTerminator *bool,
+	writeErrLogged, unexpectedLineLogged, sawTerminator, sawMeta *bool,
 ) {
 	if !strings.HasPrefix(line, "data: ") {
 		if line != "" && !strings.HasPrefix(line, ":") && !*unexpectedLineLogged {
@@ -536,6 +616,19 @@ func (c *HTTPClient) handleSSELine(
 			result.Nonce = receipt.Nonce
 			result.Receipt = receipt.Receipt
 			result.ConfirmedAt = receipt.ConfirmedAt
+			result.ObservedHeight = receipt.ObservedHeight
+			result.ObservedBlockHash = receipt.ObservedBlockHash
+		}
+		if rawHS, ok := envelope["height_sync"]; ok && string(rawHS) != "null" {
+			var hs heightsync.HeightSyncSection
+			if err := json.Unmarshal(rawHS, &hs); err == nil {
+				hs.Direction = "response"
+				c.ingestResponseHeightSync(&hs, result.Nonce, "SSE devshard_receipt line")
+				result.HasEnvelope = true
+				if hs.MainnetHeight > 0 {
+					result.EnvelopeHeight = uint64(hs.MainnetHeight)
+				}
+			}
 		}
 		if receiptHandler != nil {
 			receiptHandler(result)
@@ -544,6 +637,9 @@ func (c *HTTPClient) handleSSELine(
 	}
 
 	if raw, key, ok := c.protocolEnvelope(envelope, "meta"); ok {
+		if sawMeta != nil {
+			*sawMeta = true
+		}
 		var meta DevshardMetaEvent
 		if err := json.Unmarshal(raw, &meta); err != nil {
 			logging.Warn("sse_meta_unmarshal_failed", "subsystem", "transport", "escrow", c.escrowID, "event_key", key, "error", err)
@@ -636,8 +732,17 @@ func (c *HTTPClient) SendVerifyTimeout(ctx context.Context, req VerifyTimeoutReq
 	return &resp, nil
 }
 
-// ChallengeReceipt forwards diffs + payload to the executor and returns the receipt.
-func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.Diff) ([]byte, error) {
+func (c *HTTPClient) SendVerifyErrorMiss(ctx context.Context, req VerifyErrorMissRequest) (*VerifyErrorMissResponse, error) {
+	var resp VerifyErrorMissResponse
+	if err := c.post(ctx, "/sessions/"+c.escrowID+"/verify-error-miss", c.config.VerifyTimeout, req, &resp); err != nil {
+		return nil, err
+	}
+	return &resp, nil
+}
+
+// ChallengeReceipt forwards diffs + payload to the executor and returns the
+// receipt plus a snapshot of the executor mempool (recovery txs).
+func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.Diff) ([]byte, []*types.DevshardTx, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
 	defer cancel()
 
@@ -645,7 +750,7 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 	for i, d := range diffs {
 		dj, err := DiffToJSON(d)
 		if err != nil {
-			return nil, fmt.Errorf("encode diff %d: %w", i, err)
+			return nil, nil, fmt.Errorf("encode diff %d: %w", i, err)
 		}
 		djList[i] = dj
 	}
@@ -657,28 +762,32 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
-		return nil, fmt.Errorf("marshal: %w", err)
+		return nil, nil, fmt.Errorf("marshal: %w", err)
 	}
 	respBody, err := c.doPost(ctx, "/sessions/"+c.escrowID+"/challenge-receipt", body)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	var resp ChallengeReceiptResponse
 	if err := json.Unmarshal(respBody, &resp); err != nil {
-		return nil, fmt.Errorf("unmarshal: %w", err)
+		return nil, nil, fmt.Errorf("unmarshal: %w", err)
 	}
-	return resp.Receipt, nil
+	mempool, err := DevshardTxsFromBytes(resp.Mempool)
+	if err != nil {
+		return nil, nil, fmt.Errorf("decode mempool: %w", err)
+	}
+	return resp.Receipt, mempool, nil
 }
 
 // VerifyTimeout implements user.TimeoutVerifier over HTTP.
-func (c *HTTPClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff) (bool, []byte, uint32, error) {
+func (c *HTTPClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
 	var djList []DiffJSON
 	if len(diffs) > 0 {
 		djList = make([]DiffJSON, len(diffs))
 		for i, d := range diffs {
 			dj, err := DiffToJSON(d)
 			if err != nil {
-				return false, nil, 0, fmt.Errorf("encode diff %d: %w", i, err)
+				return false, nil, 0, nil, "", fmt.Errorf("encode diff %d: %w", i, err)
 			}
 			djList[i] = dj
 		}
@@ -690,9 +799,41 @@ func (c *HTTPClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reas
 		Diffs:       djList,
 	})
 	if err != nil {
-		return false, nil, 0, err
+		return false, nil, 0, nil, "", err
 	}
-	return resp.Accept, resp.Signature, resp.VoterSlot, nil
+	mempool, err := DevshardTxsFromBytes(resp.Mempool)
+	if err != nil {
+		return false, nil, 0, nil, "", fmt.Errorf("decode mempool: %w", err)
+	}
+	return resp.Accept, resp.Signature, resp.VoterSlot, mempool, resp.RejectCause, nil
+}
+
+func (c *HTTPClient) VerifyErrorMiss(ctx context.Context, inferenceID uint64, diffs []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	var djList []DiffJSON
+	if len(diffs) > 0 {
+		djList = make([]DiffJSON, len(diffs))
+		for i, d := range diffs {
+			dj, err := DiffToJSON(d)
+			if err != nil {
+				return false, nil, 0, nil, "", fmt.Errorf("encode diff %d: %w", i, err)
+			}
+			djList[i] = dj
+		}
+	}
+	resp, err := c.SendVerifyErrorMiss(ctx, VerifyErrorMissRequest{
+		InferenceID:     inferenceID,
+		Diffs:           djList,
+		FinishTx:        artifacts.FinishTx,
+		ResponsePayload: artifacts.ResponsePayload,
+	})
+	if err != nil {
+		return false, nil, 0, nil, "", err
+	}
+	mempool, err := DevshardTxsFromBytes(resp.Mempool)
+	if err != nil {
+		return false, nil, 0, nil, "", fmt.Errorf("decode mempool: %w", err)
+	}
+	return resp.Accept, resp.Signature, resp.VoterSlot, mempool, resp.RejectCause, nil
 }
 
 // GetDiffs fetches stored diffs from a peer.
@@ -741,8 +882,56 @@ func (c *HTTPClient) GetMempool(ctx context.Context) ([]*types.DevshardTx, error
 }
 
 // doPostRaw sends a signed POST request and returns the raw http.Response.
-// Caller is responsible for closing resp.Body.
-func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*http.Response, error) {
+// Caller is responsible for closing resp.Body. Non-inference 429/503 and
+// transient dial failures retry with exponential delay up to 5s; admission
+// sees only the last attempt (and never an undeclared-version catalog 503).
+func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte, contentType ...string) (*http.Response, error) {
+	ct := "application/json"
+	if len(contentType) > 0 && contentType[0] != "" {
+		ct = contentType[0]
+	}
+	if isInferencePath(path) {
+		return c.doPostRawOnce(ctx, path, body, ct, true)
+	}
+	deadline := nonInferenceRetryDeadline(ctx)
+	delay := nonInferenceRetryInitial
+	var lastRetryable error
+	for {
+		resp, err := c.doPostRawOnce(ctx, path, body, ct, false)
+		if err == nil {
+			c.observeResult(path, http.StatusOK)
+			return resp, nil
+		}
+		if !isRetryableNonInference(err) {
+			if lastRetryable != nil && isContextFinished(err) {
+				c.observeNonInferenceFinal(path, lastRetryable)
+				return nil, lastRetryable
+			}
+			c.observeNonInferenceFinal(path, err)
+			return nil, err
+		}
+		lastRetryable = err
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			c.observeNonInferenceFinal(path, err)
+			return nil, err
+		}
+		sleep := delay
+		if sleep > remaining {
+			sleep = remaining
+		}
+		logging.Debug("non_inference_retry", "path", path, "error", err.Error(), "sleep", sleep.String())
+		if sleepErr := sleepContext(ctx, sleep); sleepErr != nil {
+			c.observeNonInferenceFinal(path, lastRetryable)
+			return nil, lastRetryable
+		}
+		if delay < nonInferenceRetryBudget {
+			delay *= 2
+		}
+	}
+}
+
+func (c *HTTPClient) doPostRawOnce(ctx context.Context, path string, body []byte, contentType string, observe bool) (*http.Response, error) {
 	url := c.baseURL + c.routePrefix + path
 	if err := c.allowRequest(path); err != nil {
 		return nil, err
@@ -758,29 +947,46 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", contentType)
 	req.Header.Set(c.signatureHeader(), hex.EncodeToString(sig))
 	req.Header.Set(c.timestampHeader(), strconv.FormatInt(ts, 10))
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		c.observeTransportFailure(path, err)
+		if observe {
+			c.observeTransportFailure(path, err)
+		}
 		return nil, fmt.Errorf("POST %s: %w", url, err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
 		respBody := readErrorBody(resp.Body)
 		resp.Body.Close()
-		c.observeResultWithBody(path, resp.StatusCode, respBody)
+		if observe && shouldObserveUpstreamStatus(resp.StatusCode, respBody) {
+			c.observeResultWithBody(path, resp.StatusCode, respBody)
+		}
 		return nil, &UpstreamStatusError{
-			Path:       path,
-			StatusCode: resp.StatusCode,
-			Body:       respBody,
+			Path:          path,
+			StatusCode:    resp.StatusCode,
+			Body:          respBody,
+			DevshardError: resp.Header.Get(HeaderDevshardError),
 		}
 	}
-	c.observeResult(path, resp.StatusCode)
-
+	if observe {
+		c.observeResult(path, resp.StatusCode)
+	}
 	return resp, nil
+}
+
+func (c *HTTPClient) observeNonInferenceFinal(path string, err error) {
+	var status *UpstreamStatusError
+	if errors.As(err, &status) {
+		if shouldObserveUpstreamStatus(status.StatusCode, status.Body) {
+			c.observeResultWithBody(path, status.StatusCode, status.Body)
+		}
+		return
+	}
+	c.observeTransportFailure(path, err)
 }
 
 // doPost sends a signed POST request and returns the response body.
@@ -796,6 +1002,48 @@ func (c *HTTPClient) doPost(ctx context.Context, path string, body []byte) ([]by
 // doGet sends a GET request and returns the response body.
 // No auth signing -- GET endpoints skip auth on the server side for now.
 func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
+	if isInferencePath(url) {
+		return c.doGetOnce(ctx, url, true)
+	}
+	deadline := nonInferenceRetryDeadline(ctx)
+	delay := nonInferenceRetryInitial
+	var lastRetryable error
+	for {
+		body, err := c.doGetOnce(ctx, url, false)
+		if err == nil {
+			c.observeResult(url, http.StatusOK)
+			return body, nil
+		}
+		if !isRetryableNonInference(err) {
+			if lastRetryable != nil && isContextFinished(err) {
+				c.observeNonInferenceFinal(url, lastRetryable)
+				return nil, lastRetryable
+			}
+			c.observeNonInferenceFinal(url, err)
+			return nil, err
+		}
+		lastRetryable = err
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			c.observeNonInferenceFinal(url, err)
+			return nil, err
+		}
+		sleep := delay
+		if sleep > remaining {
+			sleep = remaining
+		}
+		logging.Debug("non_inference_retry", "path", url, "error", err.Error(), "sleep", sleep.String())
+		if sleepErr := sleepContext(ctx, sleep); sleepErr != nil {
+			c.observeNonInferenceFinal(url, lastRetryable)
+			return nil, lastRetryable
+		}
+		if delay < nonInferenceRetryBudget {
+			delay *= 2
+		}
+	}
+}
+
+func (c *HTTPClient) doGetOnce(ctx context.Context, url string, observe bool) ([]byte, error) {
 	if err := c.allowRequest(url); err != nil {
 		return nil, err
 	}
@@ -806,22 +1054,28 @@ func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
 
 	resp, err := c.http.Do(req)
 	if err != nil {
-		c.observeTransportFailure(url, err)
+		if observe {
+			c.observeTransportFailure(url, err)
+		}
 		return nil, err
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody := readErrorBody(resp.Body)
-		c.observeResultWithBody(url, resp.StatusCode, respBody)
+		if observe && shouldObserveUpstreamStatus(resp.StatusCode, respBody) {
+			c.observeResultWithBody(url, resp.StatusCode, respBody)
+		}
 		return nil, &UpstreamStatusError{
-			Path:       url,
-			StatusCode: resp.StatusCode,
-			Body:       respBody,
+			Path:          url,
+			StatusCode:    resp.StatusCode,
+			Body:          respBody,
+			DevshardError: resp.Header.Get(HeaderDevshardError),
 		}
 	}
-	c.observeResult(url, resp.StatusCode)
-
+	if observe {
+		c.observeResult(url, resp.StatusCode)
+	}
 	return io.ReadAll(resp.Body)
 }
 

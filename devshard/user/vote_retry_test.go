@@ -22,11 +22,15 @@ type failFirstVerifier struct {
 	calls atomic.Int32
 }
 
-func (v *failFirstVerifier) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff) (bool, []byte, uint32, error) {
+func (v *failFirstVerifier) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
 	if v.calls.Add(1) == 1 {
-		return false, nil, 0, v.err
+		return false, nil, 0, nil, "", v.err
 	}
-	return v.inner.VerifyTimeout(ctx, inferenceID, reason, payload, diffs)
+	return v.inner.VerifyTimeout(ctx, inferenceID, reason, payload, diffs, artifacts)
+}
+
+func (v *failFirstVerifier) VerifyErrorMiss(ctx context.Context, inferenceID uint64, diffs []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return v.inner.VerifyErrorMiss(ctx, inferenceID, diffs, artifacts)
 }
 
 // A round short of weight because a connection was stale is a round lost to nothing.

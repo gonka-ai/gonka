@@ -54,10 +54,10 @@ type Params struct {
 	LogprobsMode            string `yaml:"logprobs_mode"`
 	DevshardRequestsEnabled bool   `yaml:"devshard_requests_enabled"`
 	MaxNonce                uint32 `yaml:"max_nonce"`
-	RefusalTimeout          int64  `yaml:"refusal_timeout"`
-	ExecutionTimeout        int64  `yaml:"execution_timeout"`
-	ValidationRate          uint32 `yaml:"validation_rate"`
-	VoteThresholdFactor     uint32 `yaml:"vote_threshold_factor"`
+	RefusalTimeout      int64  `yaml:"refusal_timeout"`
+	ExecutionTimeout    int64  `yaml:"execution_timeout"`
+	ValidationRate      uint32 `yaml:"validation_rate"`
+	VoteThresholdFactor uint32 `yaml:"vote_threshold_factor"`
 }
 
 type Participant struct {
@@ -81,6 +81,9 @@ type Escrow struct {
 	AutoSealEveryNNonces      uint32   `yaml:"auto_seal_every_n_nonces"`
 	ValidationRate            uint32   `yaml:"validation_rate"`
 	VoteThresholdFactor       uint32   `yaml:"vote_threshold_factor"`
+	// Optional. Omitted values inherit the mock-chain params timeout values.
+	RefusalTimeout   int64 `yaml:"refusal_timeout"`
+	ExecutionTimeout int64 `yaml:"execution_timeout"`
 }
 
 type GranteeBinding struct {
@@ -129,7 +132,7 @@ type VersiondCfg struct {
 	KeyringPassword  string `yaml:"keyring_password"`
 }
 
-// VersiondRouterCfg is the sticky nginx router in front of versiond instances.
+// VersiondRouterCfg is the sticky HAProxy router in front of versiond instances.
 type VersiondRouterCfg struct {
 	Host string `yaml:"host"`
 	Port int    `yaml:"port"`

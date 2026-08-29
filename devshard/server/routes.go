@@ -1,12 +1,15 @@
 package server
 
 import (
+	"compress/gzip"
 	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 
+	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/observability"
 	"devshard/storage"
@@ -38,11 +41,18 @@ type PayloadHandler interface {
 func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder OwnerChatBinder, payloadHandler PayloadHandler) {
 	g.Use(observability.EchoMiddleware())
 	g.Use(observability.RequestIDMiddleware)
+	g.Use(canonicalEscrowIDMiddleware)
 
 	g.POST("/sessions/:id/chat/completions", withOwnerChat(binder, true,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleInference }))
+	g.POST("/sessions/:id/height-sync", withSessionAuth(resolver, false,
+		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleHeightSync }))
+	g.POST("/sessions/:id/heightsync/repair", withSessionAuth(resolver, false,
+		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleHeightSyncRepair }))
 	g.POST("/sessions/:id/verify-timeout", withSessionAuth(resolver, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleVerifyTimeout }))
+	g.POST("/sessions/:id/verify-error-miss", withSessionAuth(resolver, false,
+		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleVerifyErrorMiss }))
 	g.POST("/sessions/:id/challenge-receipt", withSessionAuth(resolver, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleChallengeReceipt }))
 	g.POST("/sessions/:id/gossip/nonce", withSessionAuth(resolver, false,
@@ -58,6 +68,7 @@ func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder O
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleGetSignatures }))
 
 	if payloadHandler != nil {
+		// Scoped to this route: gzip on the inference stream would buffer it.
 		g.GET("/sessions/:id/payloads", func(c echo.Context) error {
 			srv, err := resolver.SessionServerExisting(c.Param("id"))
 			if err != nil {
@@ -66,7 +77,23 @@ func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder O
 			}
 			observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
 			return payloadHandler.HandlePayloads(c, srv)
-		})
+		}, middleware.GzipWithConfig(middleware.GzipConfig{Level: gzip.BestSpeed}))
+	}
+}
+
+func canonicalEscrowIDMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		escrowID := c.Param("id")
+		if escrowID == "" {
+			return next(c)
+		}
+		if err := devshardpkg.ValidateEscrowID(escrowID); err != nil {
+			observability.IncSessionResolution(routeLabel(c), observability.MetricStatusError, observability.ReasonInvalidEscrowID)
+			observability.Log(c.Request().Context(), observability.LevelWarn, "devshard rejected non-canonical escrow id",
+				observability.StageSessionResolved, observability.WhereRoutesSessionResolve, escrowID, observability.ReasonInvalidEscrowID, err)
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		return next(c)
 	}
 }
 
@@ -139,6 +166,9 @@ func sessionResolutionStatus(err error) (observability.MetricStatus, observabili
 	if errors.Is(err, storage.ErrSessionNotFound) {
 		return observability.MetricStatusError, observability.ReasonSessionResolveErr
 	}
+	if errors.Is(err, bridge.ErrEscrowSettled) || errors.Is(err, storage.ErrSessionNotActive) {
+		return observability.MetricStatusError, observability.ReasonEscrowSettled
+	}
 	if errors.Is(err, bridge.ErrChainUnavailable) {
 		return observability.MetricStatusError, observability.ReasonGetEscrowErr
 	}
@@ -178,6 +208,8 @@ func routeLabel(c echo.Context) string {
 		return "chat_completions"
 	case strings.HasSuffix(path, "/payloads"):
 		return "payloads"
+	case strings.Contains(path, "verify-error-miss"):
+		return "verify_error_miss"
 	case strings.Contains(path, "verify-timeout"):
 		return "verify_timeout"
 	case strings.Contains(path, "challenge-receipt"):
@@ -202,6 +234,9 @@ func sessionHTTPError(c echo.Context, err error) error {
 	}
 	if errors.Is(err, bridge.ErrChainUnavailable) {
 		return transport.HTTPError(c, http.StatusServiceUnavailable, transport.DevshardErrorChainUnavailable, err.Error())
+	}
+	if errors.Is(err, bridge.ErrEscrowSettled) || errors.Is(err, storage.ErrSessionNotActive) {
+		return transport.HTTPError(c, http.StatusConflict, transport.DevshardErrorEscrowSettled, err.Error())
 	}
 	if errors.Is(err, storage.ErrSessionVersionConflict) || errors.Is(err, storage.ErrSessionEpochConflict) {
 		return echo.NewHTTPError(http.StatusConflict, err.Error())

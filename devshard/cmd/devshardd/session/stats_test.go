@@ -187,7 +187,7 @@ func TestStatsShardsSkipsSessionsWithUnreadableMeta(t *testing.T) {
 
 func TestStatsShardDetailReturnsStatsOnly(t *testing.T) {
 	base := newManagerTestStore(t)
-	group, user, hostSigner := createStoredSession(t, base, "escrow-detail", 7, 1)
+	group, user, hostSigner := createStoredSession(t, base, "9401", 7, 1)
 	store := currentEpochStore{Storage: base, epoch: 7}
 	addresses := make([]string, len(group))
 	for i, s := range group {
@@ -195,7 +195,7 @@ func TestStatsShardDetailReturnsStatsOnly(t *testing.T) {
 	}
 	br := &mockBridge{
 		escrow: &bridge.EscrowInfo{
-			EscrowID:       "escrow-detail",
+			EscrowID:       "9401",
 			EpochID:        7,
 			Amount:         100000000,
 			CreatorAddress: user.Address(),
@@ -206,7 +206,7 @@ func TestStatsShardDetailReturnsStatsOnly(t *testing.T) {
 	mgr.SetBinaryVersion("0.2.14-v4")
 	require.NoError(t, mgr.RecoverSessions())
 
-	rec := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/escrow-detail")
+	rec := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/9401")
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	require.NotContains(t, rec.Body.String(), "inferences")
 	require.NotContains(t, rec.Body.String(), "proof")
@@ -241,7 +241,7 @@ func TestStatsShardDetailReturnsStatsOnly(t *testing.T) {
 		Group []types.SlotAssignment `json:"group"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	require.Equal(t, "escrow-detail", resp.EscrowID)
+	require.Equal(t, "9401", resp.EscrowID)
 	require.Equal(t, uint64(7), resp.EpochID)
 	require.Equal(t, uint64(1), resp.Nonce)
 	require.Equal(t, testutil.RuntimeTestVersion, resp.Version)
@@ -251,14 +251,14 @@ func TestStatsShardDetailReturnsStatsOnly(t *testing.T) {
 	require.Len(t, resp.HostStats, len(group))
 	require.Equal(t, group, resp.Group)
 
-	cached := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/escrow-detail")
+	cached := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/9401")
 	require.Equal(t, http.StatusOK, cached.Code, "body: %s", cached.Body.String())
 	require.Equal(t, rec.Body.String(), cached.Body.String())
 }
 
 func TestStatsShardDetailServesPriorEpochSession(t *testing.T) {
 	base := newManagerTestStore(t)
-	group, user, hostSigner := createStoredSession(t, base, "escrow-prior", 6, 1)
+	group, user, hostSigner := createStoredSession(t, base, "9501", 6, 1)
 	// Chain has advanced; session remains active until prune.
 	store := currentEpochStore{Storage: base, epoch: 7}
 	addresses := make([]string, len(group))
@@ -267,7 +267,7 @@ func TestStatsShardDetailServesPriorEpochSession(t *testing.T) {
 	}
 	br := &mockBridge{
 		escrow: &bridge.EscrowInfo{
-			EscrowID:       "escrow-prior",
+			EscrowID:       "9501",
 			EpochID:        6,
 			Amount:         100000000,
 			CreatorAddress: user.Address(),
@@ -277,7 +277,7 @@ func TestStatsShardDetailServesPriorEpochSession(t *testing.T) {
 	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
 	require.NoError(t, mgr.RecoverSessions())
 
-	rec := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/escrow-prior")
+	rec := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/9501")
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 
 	var resp struct {
@@ -286,7 +286,7 @@ func TestStatsShardDetailServesPriorEpochSession(t *testing.T) {
 		Nonce    uint64 `json:"nonce"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
-	require.Equal(t, "escrow-prior", resp.EscrowID)
+	require.Equal(t, "9501", resp.EscrowID)
 	require.Equal(t, uint64(6), resp.EpochID)
 	require.Equal(t, uint64(1), resp.Nonce)
 }
@@ -320,9 +320,9 @@ func (s *countingMetaStore) ListActiveSessions() ([]storage.ActiveSession, error
 
 func TestStatsShardDetailResolvesO1WithoutListScan(t *testing.T) {
 	base := newManagerTestStore(t)
-	group, user, hostSigner := createStoredSession(t, base, "escrow-o1", 7, 1)
-	createStoredSession(t, base, "escrow-noise-a", 7, 0)
-	createStoredSession(t, base, "escrow-noise-b", 7, 0)
+	group, user, hostSigner := createStoredSession(t, base, "9601", 7, 1)
+	createStoredSession(t, base, "9602", 7, 0)
+	createStoredSession(t, base, "9603", 7, 0)
 
 	counting := &countingMetaStore{Storage: currentEpochStore{Storage: base, epoch: 7}}
 	addresses := make([]string, len(group))
@@ -331,7 +331,7 @@ func TestStatsShardDetailResolvesO1WithoutListScan(t *testing.T) {
 	}
 	br := &mockBridge{
 		escrow: &bridge.EscrowInfo{
-			EscrowID:       "escrow-o1",
+			EscrowID:       "9601",
 			EpochID:        7,
 			Amount:         100000000,
 			CreatorAddress: user.Address(),
@@ -343,7 +343,7 @@ func TestStatsShardDetailResolvesO1WithoutListScan(t *testing.T) {
 	counting.metaCalls = 0
 	counting.listCalls = 0
 
-	rec := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/escrow-o1")
+	rec := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/9601")
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	require.Equal(t, 0, counting.listCalls, "detail must not ListActiveSessions")
 	require.Equal(t, 1, counting.metaCalls, "detail should GetSessionMeta once")

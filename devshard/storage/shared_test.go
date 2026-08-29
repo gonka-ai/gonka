@@ -363,6 +363,12 @@ func runMarkSettled(t *testing.T, store Storage) {
 	meta, err = store.GetSessionMeta("escrow-1")
 	require.NoError(t, err)
 	require.Equal(t, "settled", meta.Status)
+
+	// Settlement arrives for escrows this host never bound (chain events and
+	// the dapi long-poll are both broadcast-ish). Callers distinguish that from
+	// a real write failure with errors.Is, so the sentinel must survive.
+	err = store.MarkSettled("escrow-never-bound")
+	require.ErrorIs(t, err, ErrSessionNotFound)
 }
 
 func runListActiveSessions(t *testing.T, store Storage) {

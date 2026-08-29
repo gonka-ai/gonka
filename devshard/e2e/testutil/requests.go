@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,6 +12,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+	"google.golang.org/protobuf/proto"
+
+	"devshard/types"
 )
 
 func SendCompletion(t *testing.T, client *http.Client, clientURL, content string) map[string]any {
@@ -150,6 +154,94 @@ func LatestSessionNonce(t *testing.T, client *http.Client, clientURL string) uin
 	session, ok := state["session"].(map[string]any)
 	require.True(t, ok, "state session should be an object")
 	return NumericField(t, session, "latest_nonce")
+}
+
+func GetSignatureStatus(t *testing.T, client *http.Client, clientURL string) map[string]any {
+	t.Helper()
+	return GetJSON(t, client, clientURL+"/v1/debug/signatures")
+}
+
+func GetStatus(t *testing.T, client *http.Client, clientURL string) map[string]any {
+	t.Helper()
+	return GetJSON(t, client, clientURL+"/v1/status")
+}
+
+func CollectSignatures(t *testing.T, client *http.Client, clientURL string, nonce uint64) map[string]any {
+	t.Helper()
+	return PostJSON(t, client, fmt.Sprintf("%s/v1/debug/signatures/collect?nonce=%d", clientURL, nonce), map[string]any{})
+}
+
+type GossipNonceStatus struct {
+	Nonce      uint64
+	Seen       bool
+	StateHash  string
+	StateSig   string
+	SenderSlot uint64
+}
+
+type TimeoutInferenceTransaction struct {
+	Nonce       uint64
+	InferenceID uint64
+	Reason      types.TimeoutReason
+	VoterSlots  []uint32
+}
+
+func FindTimeoutInferenceTransaction(t *testing.T, client *http.Client, hostURL, routePrefix, escrowID string, toNonce uint64) (TimeoutInferenceTransaction, bool) {
+	t.Helper()
+	diffs := GetJSONArray(t, client, fmt.Sprintf("%s%s/sessions/%s/diffs?from=1&to=%d", hostURL, routePrefix, escrowID, toNonce))
+	for _, raw := range diffs {
+		record, ok := raw.(map[string]any)
+		require.True(t, ok, "host diff record should be an object")
+		diff, ok := record["diff"].(map[string]any)
+		require.True(t, ok, "host diff record should include a diff object")
+		rawTxs, ok := diff["txs"].(string)
+		require.True(t, ok, "host diff txs should be base64")
+		txs, err := base64.StdEncoding.DecodeString(rawTxs)
+		require.NoError(t, err, "decode host diff txs")
+
+		var content types.DiffContent
+		require.NoError(t, proto.Unmarshal(txs, &content), "decode host diff content")
+		for _, tx := range content.Txs {
+			timeout := tx.GetTimeoutInference()
+			if timeout == nil {
+				continue
+			}
+			voterSlots := make([]uint32, len(timeout.Votes))
+			for i, vote := range timeout.Votes {
+				voterSlots[i] = vote.VoterSlot
+			}
+			return TimeoutInferenceTransaction{
+				Nonce:       content.Nonce,
+				InferenceID: timeout.InferenceId,
+				Reason:      timeout.Reason,
+				VoterSlots:  voterSlots,
+			}, true
+		}
+	}
+	return TimeoutInferenceTransaction{}, false
+}
+
+func InferenceStatus(t *testing.T, client *http.Client, clientURL string, inferenceID uint64) (map[string]any, bool) {
+	t.Helper()
+	state := GetJSON(t, client, clientURL+"/v1/debug/inferences")
+	inferences, ok := state["inferences"].(map[string]any)
+	require.True(t, ok, "debug inferences should be an object")
+	inference, ok := inferences[fmt.Sprintf("%d", inferenceID)].(map[string]any)
+	return inference, ok
+}
+
+func GetGossipNonceStatus(t *testing.T, client *http.Client, hostURL, routePrefix string, nonce uint64) GossipNonceStatus {
+	t.Helper()
+	status := GetJSON(t, client, fmt.Sprintf("%s%s/debug/gossip?nonce=%d", hostURL, routePrefix, nonce))
+	seen, ok := status["seen"].(bool)
+	require.True(t, ok, "gossip status seen should be a boolean")
+	return GossipNonceStatus{
+		Nonce:      NumericField(t, status, "nonce"),
+		Seen:       seen,
+		StateHash:  fmt.Sprint(status["state_hash"]),
+		StateSig:   fmt.Sprint(status["state_sig"]),
+		SenderSlot: NumericField(t, status, "sender_slot"),
+	}
 }
 
 func FinalizeSession(t *testing.T, client *http.Client, clientURL string) map[string]any {

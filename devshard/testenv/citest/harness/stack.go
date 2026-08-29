@@ -17,7 +17,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const defaultStackTimeout = 12 * time.Minute
+const (
+	defaultStackTimeout       = 12 * time.Minute
+	composeCleanupStopTimeout = 5 * time.Second
+)
 
 // Stack is a generated compose workdir for Docker citest.
 type Stack struct {
@@ -211,10 +214,18 @@ func (s *Stack) Down(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	args := append([]string{"compose"}, s.composeFileArgs()...)
-	args = append(args, "down", "-v")
+	args = append(args,
+		"down",
+		"--volumes",
+		"--remove-orphans",
+		"--timeout", strconv.Itoa(int(composeCleanupStopTimeout/time.Second)),
+	)
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = s.WorkDir
-	_, _ = cmd.CombinedOutput()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Logf("docker compose cleanup: %v\n%s", err, out)
+	}
 }
 
 // StopService stops a compose service without removing volumes (fault injection).
@@ -230,6 +241,40 @@ func (s *Stack) StopService(t *testing.T, service string) {
 	}
 }
 
+// ServiceStopResult records Docker's terminal state after a compose stop. Exit
+// code 137 proves Docker had to consume its SIGKILL backstop even though the
+// compose command itself reports success.
+type ServiceStopResult struct {
+	ContainerID string
+	ExitCode    int
+}
+
+// StopServiceGracefully sends the container stop signal and gives versiond a
+// caller-controlled grace before Docker's SIGKILL backstop. It returns errors
+// instead of failing a test so callers can run it concurrently with live work.
+func (s *Stack) StopServiceGracefully(service string, grace time.Duration) (ServiceStopResult, error) {
+	containerID, err := s.containerID(service)
+	if err != nil {
+		return ServiceStopResult{}, err
+	}
+	graceSeconds := int((grace + time.Second - 1) / time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), grace+30*time.Second)
+	defer cancel()
+	args := append([]string{"compose"}, s.composeFileArgs()...)
+	args = append(args, "stop", "--timeout", strconv.Itoa(graceSeconds), service)
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Dir = s.WorkDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return ServiceStopResult{}, fmt.Errorf("docker compose stop %s: %w: %s", service, err, out)
+	}
+	exitCode, err := containerExitCode(containerID)
+	if err != nil {
+		return ServiceStopResult{}, err
+	}
+	return ServiceStopResult{ContainerID: containerID, ExitCode: exitCode}, nil
+}
+
 // StartService starts a previously stopped compose service.
 func (s *Stack) StartService(t *testing.T, service string) {
 	t.Helper()
@@ -241,6 +286,52 @@ func (s *Stack) StartService(t *testing.T, service string) {
 	if err != nil {
 		t.Fatalf("docker compose start %s: %v\n%s", service, err, out)
 	}
+}
+
+// PauseService freezes a compose service (fault injection; process stays up).
+func (s *Stack) PauseService(t *testing.T, service string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", append(append([]string{"compose"}, s.composeFileArgs()...), "pause", service)...)
+	cmd.Dir = s.WorkDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker compose pause %s: %v\n%s", service, err, out)
+	}
+}
+
+// UnpauseService resumes a previously paused compose service.
+func (s *Stack) UnpauseService(t *testing.T, service string) {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "docker", append(append([]string{"compose"}, s.composeFileArgs()...), "unpause", service)...)
+	cmd.Dir = s.WorkDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("docker compose unpause %s: %v\n%s", service, err, out)
+	}
+}
+
+// WaitComposeLogsContain polls compose logs until needle appears.
+func (s *Stack) WaitComposeLogsContain(t *testing.T, timeout time.Duration, needle string, services ...string) string {
+	t.Helper()
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
+	var last string
+	ok := AssertEventually(t, timeout, 2*time.Second, func() bool {
+		out, err := s.ComposeLogsTail(400, services...)
+		if err != nil {
+			last = err.Error()
+			return false
+		}
+		last = out
+		return strings.Contains(out, needle)
+	})
+	require.True(t, ok, "compose logs missing %q within %s\n%s", needle, timeout, last)
+	return last
 }
 
 // ComposeLogs returns tail logs for optional services (all services when empty).
@@ -269,6 +360,15 @@ func (s *Stack) RequireServicesRunning(t *testing.T, services ...string) {
 	for _, name := range services {
 		require.Contains(t, running, name, "service %s not running; running=%v", name, running)
 	}
+}
+
+func (s *Stack) ServiceRunning(service string) (bool, error) {
+	running, err := s.runningServices()
+	if err != nil {
+		return false, err
+	}
+	_, ok := running[service]
+	return ok, nil
 }
 
 func (s *Stack) runningServices() (map[string]struct{}, error) {

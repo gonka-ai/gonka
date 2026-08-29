@@ -139,7 +139,7 @@ func TestSeal_BuildSettlement_RestHashMatchesAfterSeal(t *testing.T) {
 	require.NoError(t, err)
 
 	acc := sealedAccBytes32(st.SealedAcc)
-	restFromState, err := ComputeRestHashV2(st.Balance, acc, st.Inferences, st.WarmKeys)
+	restFromState, err := ComputeRestHashV2(st.Balance, acc, st.Inferences, st.WarmKeys, types.HeightSyncEscrowCommitFromState(&st))
 	require.NoError(t, err)
 	require.Equal(t, restFromState, payload.RestHash)
 

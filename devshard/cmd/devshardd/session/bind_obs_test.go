@@ -61,7 +61,7 @@ func signedPOST(t *testing.T, e *echo.Echo, signer *signing.Secp256k1Signer, pat
 }
 
 func TestObsGET_DoesNotBindSession(t *testing.T) {
-	const escrowID = "obs-unbound"
+	const escrowID = "9701"
 	mgr, store, _, _ := setupBindTestManager(t, escrowID)
 
 	e := echo.New()
@@ -81,7 +81,7 @@ func TestObsGET_DoesNotBindSession(t *testing.T) {
 }
 
 func TestObsMempoolSignatures_DoNotBindSession(t *testing.T) {
-	const escrowID = "obs-unbound-2"
+	const escrowID = "9702"
 	mgr, store, _, _ := setupBindTestManager(t, escrowID)
 	e := echo.New()
 	mgr.Register(e.Group(""))
@@ -101,7 +101,7 @@ func TestObsMempoolSignatures_DoNotBindSession(t *testing.T) {
 }
 
 func TestGossipUnbound_DoesNotBindSession(t *testing.T) {
-	const escrowID = "gossip-unbound"
+	const escrowID = "9703"
 	mgr, store, _, hostSigner := setupBindTestManager(t, escrowID)
 	e := echo.New()
 	mgr.Register(e.Group(""))
@@ -115,7 +115,7 @@ func TestGossipUnbound_DoesNotBindSession(t *testing.T) {
 }
 
 func TestOwnerChat_BindsSession(t *testing.T) {
-	const escrowID = "owner-bind"
+	const escrowID = "9704"
 	mgr, store, user, _ := setupBindTestManager(t, escrowID)
 	e := echo.New()
 	mgr.Register(e.Group(""))
@@ -129,6 +129,72 @@ func TestOwnerChat_BindsSession(t *testing.T) {
 	require.Equal(t, user.Address(), meta.CreatorAddr)
 }
 
+func TestOwnerChat_SettledEscrow_DoesNotBindSession(t *testing.T) {
+	const escrowID = "9709"
+	mgr, store, user, _ := setupBindTestManager(t, escrowID)
+	mgr.bridge.(*mockBridge).escrow.Settled = true
+	e := echo.New()
+	mgr.Register(e.Group(""))
+
+	body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
+	rec := signedPOST(t, e, user, "/sessions/"+escrowID+"/chat/completions", escrowID, body)
+	require.Equal(t, http.StatusConflict, rec.Code, "body: %s", rec.Body.String())
+
+	_, err := store.GetSessionMeta(escrowID)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+
+	active, err := store.ListActiveSessions()
+	require.NoError(t, err)
+	require.Empty(t, active)
+}
+
+func TestOwnerChat_SettledLocalRow_ReturnsConflict(t *testing.T) {
+	const escrowID = "9710"
+	mgr, store, user, _ := setupBindTestManager(t, escrowID)
+	e := echo.New()
+	mgr.Register(e.Group(""))
+
+	body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
+	signedPOST(t, e, user, "/sessions/"+escrowID+"/chat/completions", escrowID, body)
+	meta, err := store.GetSessionMeta(escrowID)
+	require.NoError(t, err, "precondition: first chat must bind the session")
+	require.Equal(t, "active", meta.Status)
+
+	require.NoError(t, mgr.HandleSettlementFinalized(escrowID))
+
+	rec := signedPOST(t, e, user, "/sessions/"+escrowID+"/chat/completions", escrowID, body)
+	require.Equal(t, http.StatusConflict, rec.Code, "body: %s", rec.Body.String())
+	require.Equal(t, transport.DevshardErrorEscrowSettled, rec.Header().Get(transport.HeaderDevshardError))
+}
+
+func TestOwnerChat_RejectsChunkedBodyBeforeBinding(t *testing.T) {
+	const escrowID = "9708"
+	mgr, store, user, _ := setupBindTestManager(t, escrowID)
+	mgr.maxBodySize = 8
+	e := echo.New()
+	mgr.Register(e.Group(""))
+
+	body := []byte("123456789")
+	ts := time.Now().Unix()
+	sig, err := transport.SignRequest(user, escrowID, body, ts)
+	require.NoError(t, err)
+	req := httptest.NewRequest(
+		http.MethodPost,
+		"/sessions/"+escrowID+"/chat/completions",
+		bytes.NewReader(body),
+	)
+	req.ContentLength = -1
+	req.TransferEncoding = []string{"chunked"}
+	req.Header.Set(transport.HeaderSignature, hex.EncodeToString(sig))
+	req.Header.Set(transport.HeaderTimestamp, strconv.FormatInt(ts, 10))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusRequestEntityTooLarge, rec.Code, rec.Body.String())
+	_, err = store.GetSessionMeta(escrowID)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+}
+
 type countingGetEscrowBridge struct {
 	bridge.MainnetBridge
 	calls int
@@ -140,7 +206,7 @@ func (b *countingGetEscrowBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo
 }
 
 func TestOwnerChat_FirstBindSingleGetEscrow(t *testing.T) {
-	const escrowID = "owner-bind-once"
+	const escrowID = "9705"
 	store := newManagerTestStore(t)
 	hosts := make([]*signing.Secp256k1Signer, 3)
 	for i := range hosts {
@@ -176,7 +242,7 @@ func TestOwnerChat_FirstBindSingleGetEscrow(t *testing.T) {
 }
 
 func TestNonOwnerChat_DoesNotBindSession(t *testing.T) {
-	const escrowID = "non-owner-bind"
+	const escrowID = "9706"
 	mgr, store, _, hostSigner := setupBindTestManager(t, escrowID)
 	e := echo.New()
 	mgr.Register(e.Group(""))
@@ -190,7 +256,7 @@ func TestNonOwnerChat_DoesNotBindSession(t *testing.T) {
 }
 
 func TestSessionServerExisting_NoCreate(t *testing.T) {
-	const escrowID = "existing-miss"
+	const escrowID = "9707"
 	mgr, store, _, _ := setupBindTestManager(t, escrowID)
 
 	_, err := mgr.SessionServerExisting(escrowID)

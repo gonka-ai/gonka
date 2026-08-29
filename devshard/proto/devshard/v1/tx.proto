@@ -6,6 +6,8 @@ enum TimeoutReason {
   TIMEOUT_REASON_UNSPECIFIED = 0;
   TIMEOUT_REASON_REFUSED = 1;
   TIMEOUT_REASON_EXECUTION = 2;
+  reserved 3;
+  reserved "TIMEOUT_REASON_ERROR";
 }
 
 message MsgStartInference {
@@ -15,12 +17,16 @@ message MsgStartInference {
   uint64 input_length = 4;
   uint64 max_tokens = 5;
   int64  started_at = 6;
+  uint64 observed_height = 7;
+  bytes  observed_block_hash = 8;
 }
 
 message MsgConfirmStart {
   uint64 inference_id = 1;
   bytes  executor_sig = 2;
   int64  confirmed_at = 3;
+  uint64 observed_height = 4;
+  bytes  observed_block_hash = 5;
 }
 
 message MsgFinishInference {
@@ -31,6 +37,8 @@ message MsgFinishInference {
   uint32 executor_slot = 5;
   bytes  proposer_sig = 6;
   string escrow_id = 7;
+  uint64 observed_height = 8;
+  bytes  observed_block_hash = 9;
 }
 
 message MsgTimeoutInference {
@@ -40,6 +48,22 @@ message MsgTimeoutInference {
 }
 
 message TimeoutVote {
+  uint32 voter_slot = 1;
+  bool   accept = 2;
+  bytes  signature = 3;
+}
+
+// MsgErrorMiss accounts a finished inference whose signed body is an error
+// envelope or malformed stream. Evidence-backed and immediate: verifiers
+// check the executor-signed response hash, NOT an elapsed deadline.
+// Payload bytes are not on this message — re-derive the hash from the
+// Finish that applied earlier in the diff (rec.ResponseHash).
+message MsgErrorMiss {
+  uint64 inference_id = 1;
+  repeated ErrorMissVote votes = 2;
+}
+
+message ErrorMissVote {
   uint32 voter_slot = 1;
   bool   accept = 2;
   bytes  signature = 3;

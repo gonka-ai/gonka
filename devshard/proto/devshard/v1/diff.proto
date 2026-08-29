@@ -12,7 +12,17 @@ message DiffContent {
   bytes post_state_root = 4;  // state root AFTER applying this diff's txs
 }
 
-// DevshardTx wraps all 8 tx types in a oneof for deterministic serialization.
+// MsgForceHeightSyncTurn opens a forced height-sync turn of slots_num consecutive
+// nonces (same width as a cadence sync turn).
+message MsgForceHeightSyncTurn {
+  uint64 trigger_nonce = 1; // must equal diff nonce
+  uint64 end_nonce = 2;     // trigger_nonce + slots_num - 1
+  uint64 anchor_k = 3;      // scheduler K (must match host/user height-sync config)
+  uint64 slots_num = 4;     // must equal escrow group size
+  string reason = 5;
+}
+
+// DevshardTx wraps all tx types in a oneof for deterministic serialization.
 message DevshardTx {
   oneof tx {
     MsgStartInference start_inference = 1;
@@ -24,7 +34,58 @@ message DevshardTx {
     // Deprecated: retained for wire compatibility; reveal-seed txs are ignored at runtime.
     MsgRevealSeed reveal_seed = 7;
     MsgFinalizeRound finalize_round = 8;
+    MsgForceHeightSyncTurn force_height_sync_turn = 9;
+    MsgHeartbeat heartbeat = 10;
+    MsgHeightAck height_ack = 11;
+    MsgErrorMiss error_miss = 14;
   }
+  // cPoC MsgSkipProbe / CarrySkip claim 12 / 13; reserved so they cannot be reused.
+  reserved 12, 13;
+}
+
+// MsgHeartbeat stamps a user-signed height into Diff and publishes roster sync status.
+message MsgHeartbeat {
+  uint64 turn_seq                      = 1;
+  uint64 observed_height               = 2;
+  bytes  observed_block_hash           = 3;
+  uint64 slots_num                     = 4;
+  string reason                        = 5; // height_cadence|quiet_session|forced|cpoc_band
+  repeated SyncVectorEntry sync_vector = 6; // status of turn_seq - 1
+}
+
+// MsgHeightAck is the host-signed answer to a heartbeat (mempool → Diff).
+message MsgHeightAck {
+  uint64    turn_seq            = 1;
+  uint64    ref_nonce           = 2;
+  uint32    slot_id             = 3;
+  uint64    observed_height     = 4;
+  bytes     observed_block_hash = 5;
+  SyncState sync_state          = 6;
+  bytes     peer_seen           = 7; // bitmap, bit j = "slot j fresh within F"
+  bytes     host_sig            = 8; // over fields 1–7, domain heightsync.ack.v1
+}
+
+message SyncVectorEntry {
+  uint32    slot_id         = 1;
+  AckStatus status          = 2;
+  uint64    observed_height = 3;
+  uint64    ack_nonce       = 4;
+}
+
+enum AckStatus {
+  ACK_STATUS_UNSPECIFIED = 0;
+  ACKED                  = 1;
+  MISSING                = 2;
+  UNREACHABLE            = 3;
+  REJECTED               = 4;
+}
+
+enum SyncState {
+  SYNC_STATE_UNSPECIFIED = 0;
+  SYNCED                 = 1;
+  CATCHING_UP            = 2;
+  ORACLE_STALE           = 3;
+  ORACLE_UNAVAILABLE     = 4;
 }
 
 // ExecutorReceiptContent is what the executor signs for MsgConfirmStart.
@@ -37,6 +98,8 @@ message ExecutorReceiptContent {
   int64  started_at = 6;
   string escrow_id = 7;
   int64  confirmed_at = 8;
+  uint64 observed_height = 9;
+  bytes  observed_block_hash = 10;
 }
 
 // TimeoutVoteContent is what a host signs for a TimeoutVote.
@@ -45,6 +108,15 @@ message TimeoutVoteContent {
   uint64 inference_id = 2;
   TimeoutReason reason = 3;
   bool   accept = 4;
+  reserved 5; // was ERROR-only response_hash; error-miss uses ErrorMissVoteContent
+}
+
+// ErrorMissVoteContent is what a host signs for an ErrorMissVote.
+message ErrorMissVoteContent {
+  string escrow_id = 1;
+  uint64 inference_id = 2;
+  bool   accept = 3;
+  bytes  response_hash = 4;
 }
 
 // StateSignatureContent is what a host signs for state attestation.

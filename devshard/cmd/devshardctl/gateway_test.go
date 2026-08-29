@@ -1063,9 +1063,9 @@ func TestGatewayHostRoutePrefixDefaultsToBuildVersion(t *testing.T) {
 	require.Error(t, validateGatewayHostRoutePrefix("/v1/devshard"))
 }
 
-func TestRuntimeRoutePrefixDefaultsToV4(t *testing.T) {
+func TestRuntimeRoutePrefixDefaultsToV5(t *testing.T) {
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "")
-	require.Equal(t, "/devshard/v4", resolveRuntimeRoutePrefix(""))
+	require.Equal(t, "/devshard/v5", resolveRuntimeRoutePrefix(""))
 }
 
 func TestRuntimeRoutePrefixPreservesExplicitDev(t *testing.T) {
@@ -1089,7 +1089,7 @@ func TestEscrowCheckerUsesBridgeGetEscrow(t *testing.T) {
 	})
 
 	deactivated := false
-	ec.TriggerCheck("83", func() { deactivated = true })
+	ec.TriggerCheck("83", func(string) { deactivated = true })
 	require.Equal(t, "83", gotID)
 	require.True(t, deactivated)
 }
@@ -2324,6 +2324,15 @@ func TestParticipantRequestLimiterMarksParticipantExhaustedOn503(t *testing.T) {
 	require.Equal(t, 1, limiter.ExhaustedCount())
 	require.Equal(t, 1, limiter.TrackedCount())
 	require.Error(t, limiter.CanAcceptEscrow([]string{"shared-host"}))
+}
+
+func TestParticipantRequestLimiterSkipsUndeclaredVersionCatalog503(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(2, 10)
+	limiter.ObserveResultWithBody("shared-host", "/sessions/1/height-sync", http.StatusServiceUnavailable,
+		"version v2 is not present in the governance routing catalog")
+	require.False(t, limiter.IsBlocked("shared-host"))
+	require.Equal(t, 0, limiter.ExhaustedCount())
+	require.NoError(t, limiter.AllowRequest("shared-host", "/sessions/1/chat/completions"))
 }
 
 func TestParticipantRequestLimiterExpiresOnFullRecovery(t *testing.T) {

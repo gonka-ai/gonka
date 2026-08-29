@@ -24,7 +24,7 @@ async def watch_managers(
     while True:
         await asyncio.sleep(interval)
         for manager in managers:
-            if not manager.is_healthy():
+            if not await asyncio.to_thread(manager.is_healthy):
                 unhealthy_counts[manager] += 1
                 logger.error(f"Manager {manager.__class__.__name__} is unhealthy (count: {unhealthy_counts[manager]}/{MAX_UNHEALTHY_COUNT})")
                 

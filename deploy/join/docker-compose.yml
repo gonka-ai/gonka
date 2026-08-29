@@ -49,7 +49,7 @@ services:
 
   api:
     container_name: api
-    image: ghcr.io/product-science/api:0.2.15
+    image: ghcr.io/product-science/api:0.2.15-post3
     volumes:
       - .inference:/root/.inference
       - .dapi:/root/.dapi
@@ -107,6 +107,10 @@ services:
     environment:
       - VERSIOND_ORACLE_URL=http://api:9100/versions
       - VERSIOND_BINARY_NAME=devshardd
+      - VERSIOND_HOST_SHUTDOWN_BUDGET=${VERSIOND_HOST_SHUTDOWN_BUDGET:-25m}
+      # The base deployment has no versiond load balancer, so there is nothing
+      # to announce to before closing admission.
+      - VERSIOND_DRAIN_ANNOUNCE=0s
       - NODE_MANAGER_ADDR=api:${NODE_MANAGER_GRPC_PORT:-9400}
       - NODE_HOST=node
       - KEY_NAME=${KEY_NAME}
@@ -124,6 +128,8 @@ services:
       - ./devshards/data:/opt/versiond/data
     depends_on:
       - api
+    # External SIGKILL backstop after versiond's complete internal budget.
+    stop_grace_period: ${VERSIOND_STOP_GRACE_PERIOD:-30m}
     restart: always
 
   bridge:

@@ -105,7 +105,7 @@ func (e *Redundancy) answerWaitingBurn(prepared *user.PreparedInference, reason 
 		if !ghostTimeoutWillBeRaised(ghostThrottled) {
 			return
 		}
-		e.accounting.TimeoutResult(e.devshardID, nonce, timeoutResultKind(user.TimeoutResult{}, nil),
+		e.accounting.TimeoutResult(e.devshardID, nonce, timeoutResultKind(user.TimeoutResult{}, nil, false),
 			"skipped", string(accounting.TimeoutHostServedProbe),
 			string(accounting.TimeoutHostServedProbe), string(accounting.TimeoutHostServedProbe))
 		logInferenceStage(ctx, e.devshardID, nonce, "ghost_probe_answered_for", "host", hostLabel, "reason", reason)

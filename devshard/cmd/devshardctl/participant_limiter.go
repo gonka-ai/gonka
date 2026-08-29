@@ -10,6 +10,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"devshard/transport"
 )
 
 const (
@@ -540,6 +542,11 @@ func (l *ParticipantRequestLimiter) ObserveResultWithBodyForModel(participantKey
 	}
 	if l.metrics != nil && statusCode >= http.StatusBadRequest {
 		l.metrics.RecordParticipantTransportError(participantKey, normalizeModelID(modelID), participantPathKind(path), statusCode)
+	}
+	if transport.IsUndeclaredVersionError(body) {
+		log.Printf("participant_limit_ignored participant_key=%s status=%d path_kind=%s reason=undeclared_version_catalog",
+			participantKey, statusCode, participantPathKind(path))
+		return
 	}
 	quarantineFor := l.participantHTTPQuarantine(path, statusCode, body)
 	if quarantineFor == 0 {
@@ -1303,7 +1310,7 @@ func participantPathKind(path string) string {
 	switch {
 	case strings.Contains(path, "/chat/completions"):
 		return "inference"
-	case strings.Contains(path, "/verify-timeout"):
+	case strings.Contains(path, "/verify-timeout"), strings.Contains(path, "/verify-error-miss"):
 		return "verify_timeout"
 	case strings.Contains(path, "/challenge-receipt"):
 		return "challenge_receipt"

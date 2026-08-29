@@ -57,6 +57,9 @@ func TestGatewayCoreV1MetricsRecordBoundedLabels(t *testing.T) {
 		Action:         "completed",
 		Reason:         "none",
 	})
+	m.RecordErrorMissReject("drift")
+	m.RecordErrorMissVerifyReject("hash_mismatch", "drift")
+	m.RecordInferenceTimeout("error")
 
 	families, err := m.registry.Gather()
 	require.NoError(t, err)
@@ -72,6 +75,9 @@ func TestGatewayCoreV1MetricsRecordBoundedLabels(t *testing.T) {
 	requireMetricCounterValue(t, families, "devshard_gateway_attempt_failures_total", map[string]string{"participant_key": "participant-1", "model": "Qwen/Test", "role": "extra", "reason": "empty_stream", "visibility": "failed_not_finished"}, 1)
 	requireMetricCounterValue(t, families, "devshard_gateway_no_winner_attempts_total", map[string]string{"participant_key": "participant-1", "model": "Qwen/Test", "reason": "shadow_quarantine", "quarantine_mode": "shadow"}, 1)
 	requireMetricCounterValue(t, families, "devshard_gateway_timeout_actions_total", map[string]string{"participant_key": "participant-1", "model": "Qwen/Test", "kind": "execution", "action": "completed", "reason": "none"}, 1)
+	requireMetricCounterValue(t, families, "devshard_gateway_error_miss_rejects_total", map[string]string{"cause": "drift"}, 1)
+	requireMetricCounterValue(t, families, "devshard_gateway_error_miss_verify_rejects_total", map[string]string{"cause": "hash_mismatch", "completeness": "drift"}, 1)
+	requireMetricCounterValue(t, families, "devshard_inference_timeouts_total", map[string]string{"reason": "error"}, 1)
 }
 
 func TestStartupSkippedEscrowMetric(t *testing.T) {

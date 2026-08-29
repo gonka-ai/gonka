@@ -69,13 +69,13 @@ const TestInferenceSealGraceSeconds uint32 = 1
 // and the production default ValidationRate.
 func DefaultConfig(numHosts int) types.SessionConfig {
 	return types.NormalizeSessionConfig(types.SessionConfig{
-		RefusalTimeout:             60,
-		ExecutionTimeout:           1200,
-		TokenPrice:                 1,
-		VoteThreshold:              uint32(numHosts) / 2,
-		ValidationRate:             5000,
-		CreateDevshardFee:          0,
-		FeePerNonce:                0,
+		RefusalTimeout:            60,
+		ExecutionTimeout:          1200,
+		TokenPrice:                1,
+		VoteThreshold:             uint32(numHosts) / 2,
+		ValidationRate:            5000,
+		CreateDevshardFee:         0,
+		FeePerNonce:               0,
 		InferenceSealGraceSeconds: TestInferenceSealGraceSeconds,
 	}, numHosts)
 }
@@ -104,7 +104,13 @@ func SignProposerTx(t *testing.T, signer signing.Signer, msg proto.Message) []by
 	return sig
 }
 
-func SignExecutorReceipt(t *testing.T, signer signing.Signer, escrowID string, inferenceID uint64, promptHash []byte, model string, inputLength, maxTokens uint64, startedAt, confirmedAt int64) []byte {
+// ReceiptStamp is the optional observed_height pair on ExecutorReceiptContent.
+type ReceiptStamp struct {
+	Height uint64
+	Hash   []byte
+}
+
+func SignExecutorReceipt(t *testing.T, signer signing.Signer, escrowID string, inferenceID uint64, promptHash []byte, model string, inputLength, maxTokens uint64, startedAt, confirmedAt int64, stamp ...ReceiptStamp) []byte {
 	t.Helper()
 	content := &types.ExecutorReceiptContent{
 		InferenceId: inferenceID,
@@ -115,6 +121,10 @@ func SignExecutorReceipt(t *testing.T, signer signing.Signer, escrowID string, i
 		StartedAt:   startedAt,
 		EscrowId:    escrowID,
 		ConfirmedAt: confirmedAt,
+	}
+	if len(stamp) > 0 && len(stamp[0].Hash) > 0 {
+		content.ObservedHeight = stamp[0].Height
+		content.ObservedBlockHash = stamp[0].Hash
 	}
 	data, err := deterministicMarshal.Marshal(content)
 	require.NoError(t, err)
@@ -136,6 +146,24 @@ func SignTimeoutVote(t *testing.T, signer signing.Signer, escrowID string, infer
 	sig, err := signer.Sign(data)
 	require.NoError(t, err)
 	return &types.TimeoutVote{
+		Accept:    accept,
+		Signature: sig,
+	}
+}
+
+func SignErrorMissVote(t *testing.T, signer signing.Signer, escrowID string, inferenceID uint64, accept bool, responseHash []byte) *types.ErrorMissVote {
+	t.Helper()
+	content := &types.ErrorMissVoteContent{
+		EscrowId:     escrowID,
+		InferenceId:  inferenceID,
+		Accept:       accept,
+		ResponseHash: responseHash,
+	}
+	data, err := deterministicMarshal.Marshal(content)
+	require.NoError(t, err)
+	sig, err := signer.Sign(data)
+	require.NoError(t, err)
+	return &types.ErrorMissVote{
 		Accept:    accept,
 		Signature: sig,
 	}
