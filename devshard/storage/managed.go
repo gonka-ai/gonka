@@ -156,6 +156,14 @@ func (m *ManagedStorage) Ready() bool {
 	return true
 }
 
+// FatalErrors forwards failures that require replacing the owning process.
+func (m *ManagedStorage) FatalErrors() <-chan error {
+	if reporter, ok := m.inner.(interface{ FatalErrors() <-chan error }); ok {
+		return reporter.FatalErrors()
+	}
+	return nil
+}
+
 // --- Storage delegation ---
 
 func (m *ManagedStorage) CreateSession(params CreateSessionParams) error {

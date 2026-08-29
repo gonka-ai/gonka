@@ -474,11 +474,14 @@ down after boot.
   fence before serving. Every connection subsequently created by its application
   pool must observe that fence in `pg_locks` and report a writable primary before
   pgx admits it. Advisory locks are not WAL-replicated, so a promoted fork does
-  not inherit the fence. A DNS or load-balancer endpoint may expose multiple
+  not inherit the fence. The fence session is monitored for the entire child
+  lifetime. Losing it terminates devshardd so versiond can replace the child and
+  establish a fresh fence. A DNS or load-balancer endpoint may expose multiple
   addresses for one logical writer, but it cannot silently mix independent
-  writable branches within one child pool. Losing the fence session is
-  fail-closed for new connections; restoring service on a promoted writer
-  requires restarting the child so it establishes a fresh fence.
+  writable branches within one child pool. The endpoint must preserve PostgreSQL
+  session semantics; transaction-pooling proxies such as PgBouncer in transaction
+  mode are unsupported because the advisory lock must stay bound to one backend
+  session.
 - The PostgreSQL endpoint remains responsible for cluster-level writer fencing:
   it must expose at most one writable primary for a logical database. The
   advisory fence prevents one child pool from crossing branches, and the live

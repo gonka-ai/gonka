@@ -54,6 +54,7 @@ type Postgres struct {
 	healthSaturated bool
 	healthStop      context.CancelFunc
 	healthDone      chan struct{}
+	fatalErrors     chan error
 }
 
 const (
@@ -252,6 +253,7 @@ func newPostgres(ctx context.Context, connectTimeout, migrationTimeout time.Dura
 		readyCh:         make(chan struct{}),
 		healthReady:     true,
 		healthDone:      make(chan struct{}),
+		fatalErrors:     make(chan error, 1),
 	}
 	s.startHealthMonitor(healthConfig)
 	s.startIndexRebuild()
@@ -281,6 +283,19 @@ func (s *Postgres) startHealthMonitor(connConfig *pgx.ConnConfig) {
 				return
 			case <-timer.C:
 				probeCtx, probeCancel := context.WithTimeout(ctx, postgresHealthTimeout)
+				if err := s.connectionGuard.check(probeCtx); err != nil {
+					probeCancel()
+					if ctx.Err() != nil {
+						return
+					}
+					s.mu.Lock()
+					s.healthReady = false
+					s.mu.Unlock()
+					fatalErr := fmt.Errorf("postgres fence session lost: %w", err)
+					slog.Error("devshard storage: postgres fence session lost; terminating process", "error", err)
+					s.fatalErrors <- fatalErr
+					return
+				}
 				err := probe.check(probeCtx)
 				probeCancel()
 				if ctx.Err() != nil {
@@ -314,6 +329,13 @@ func (s *Postgres) startHealthMonitor(connConfig *pgx.ConnConfig) {
 			}
 		}
 	}()
+}
+
+// FatalErrors reports storage failures that require replacing this process.
+// A lost session fence cannot be re-armed safely while old pool connections
+// may still exist, so versiond must start a fresh child generation.
+func (s *Postgres) FatalErrors() <-chan error {
+	return s.fatalErrors
 }
 
 func postgresPoolIsSaturated(pool *pgxpool.Pool) bool {

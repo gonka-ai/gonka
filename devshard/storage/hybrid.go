@@ -192,6 +192,15 @@ func (h *HybridStorage) Ready() bool {
 	return true
 }
 
+// FatalErrors forwards terminal failures from the active Postgres backend.
+func (h *HybridStorage) FatalErrors() <-chan error {
+	pg := h.postgresBackend()
+	if reporter, ok := pg.(interface{ FatalErrors() <-chan error }); ok {
+		return reporter.FatalErrors()
+	}
+	return nil
+}
+
 func (h *HybridStorage) newSessionError() error {
 	h.mu.RLock()
 	defer h.mu.RUnlock()

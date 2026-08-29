@@ -94,6 +94,30 @@ func (g *postgresConnectionGuard) arm(ctx context.Context, pool *pgxpool.Pool, c
 	return nil
 }
 
+func (g *postgresConnectionGuard) check(ctx context.Context) error {
+	if g == nil || !g.armed.Load() || g.fenceConn == nil {
+		return errors.New("postgres connection fence is not armed")
+	}
+	var held bool
+	if err := g.fenceConn.QueryRow(ctx, `
+SELECT EXISTS (
+    SELECT 1
+    FROM pg_locks
+    WHERE locktype = 'advisory'
+      AND pid = pg_backend_pid()
+      AND classid = $1::bigint::oid
+      AND objid = $2::bigint::oid
+      AND objsubid = 2
+      AND granted
+) AND NOT pg_is_in_recovery()`, postgresConnectionGuardNamespace, g.key).Scan(&held); err != nil {
+		return fmt.Errorf("check postgres connection fence: %w", err)
+	}
+	if !held {
+		return errors.New("postgres connection fence is no longer held on the writable database")
+	}
+	return nil
+}
+
 func (g *postgresConnectionGuard) close(ctx context.Context) {
 	if g == nil || g.fenceConn == nil {
 		return
