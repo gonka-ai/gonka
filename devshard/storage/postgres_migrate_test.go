@@ -129,6 +129,22 @@ SELECT identity::text FROM devshard_storage_identity WHERE singleton`).Scan(&ide
 	require.Equal(t, storageIdentity, identityAfterRerun)
 }
 
+func TestInitializePostgresSchemaFromEnvironment(t *testing.T) {
+	_, cleanup := setupDevshardPostgresPool(t, nil)
+	defer cleanup()
+
+	require.NoError(t, InitializePostgresSchema(context.Background()))
+
+	cfg, err := pgxpool.ParseConfig("")
+	require.NoError(t, err)
+	pool, err := pgxpool.NewWithConfig(context.Background(), cfg)
+	require.NoError(t, err)
+	defer pool.Close()
+	count, err := migrate.AppliedPG(context.Background(), pool)
+	require.NoError(t, err)
+	require.Equal(t, len(PostgresMigrationSteps()), count)
+}
+
 func TestSaveSnapshot_SameEpoch_PartitionCreateOnce(t *testing.T) {
 	ctx := context.Background()
 	tracer := &postgresPartitionDDLTracer{}

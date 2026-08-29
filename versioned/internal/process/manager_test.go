@@ -181,6 +181,59 @@ exit 2
 	}
 }
 
+func TestPostgresSchemaInitializationPrecedesLegacyChildren(t *testing.T) {
+	t.Setenv(envHADeployment, "true")
+	t.Setenv("PGHOST", "postgres")
+	dir := t.TempDir()
+	currentBin := filepath.Join(dir, "current")
+	legacyBin := filepath.Join(dir, "legacy")
+	if err := os.WriteFile(currentBin, []byte(`#!/bin/sh
+case "$1" in
+--initialize-postgres-schema) exit 0 ;;
+*) echo "unknown flag: $1" >&2; exit 2 ;;
+esac
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacyBin, []byte(`#!/bin/sh
+echo "unknown flag: $1" >&2
+exit 2
+`), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(config.Config{BinaryName: "devshardd"})
+	legacyDone := make(chan error, 1)
+	go func() {
+		legacyDone <- m.ensurePostgresSchemaInitialized(context.Background(), &child{
+			version: oracle.Version{Name: "legacy"},
+			binPath: legacyBin,
+		}, childPreflight{binaryLogVersion: "legacy", haDeployment: boolPointer(false)})
+	}()
+
+	select {
+	case err := <-legacyDone:
+		t.Fatalf("legacy initialization barrier returned before a current child initialized the schema: %v", err)
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	err := m.ensurePostgresSchemaInitialized(context.Background(), &child{
+		version: oracle.Version{Name: "current"},
+		binPath: currentBin,
+	}, childPreflight{binaryLogVersion: "current", haDeployment: boolPointer(true)})
+	if err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case err := <-legacyDone:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("legacy child did not pass the barrier after schema initialization")
+	}
+}
+
 func TestPreflightChild_ProtocolFlagUnsupported(t *testing.T) {
 	dir := t.TempDir()
 	binPath := filepath.Join(dir, "binary-only-stamp")
