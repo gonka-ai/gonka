@@ -36,16 +36,37 @@ elif [[ $1 == compose && ${*: -3:1} == ps && ${*: -2:1} == -q ]]; then
     esac
 elif [[ $1 == inspect ]]; then
     container=${*: -1}
+    [[ $container != "$INSPECT_FAILURE_CONTAINER" ]] || {
+        echo 'simulated Docker daemon inspect failure' >&2
+        exit 1
+    }
     runtime_host=pg
     [[ $container != container-2 ]] || runtime_host=$RUNTIME_HOST_TWO
-    printf '%s\n' \
-        DEVSHARD_STORAGE_MODE=postgres "PGHOST=$runtime_host" PGPORT=5432 \
-        PGDATABASE=devshardd PGUSER=user "${RUNTIME_EXTRA:-}"
+    jq -cn \
+        --arg host "$runtime_host" \
+        --arg extra "${RUNTIME_EXTRA:-}" '
+        ["DEVSHARD_STORAGE_MODE=postgres", "PGHOST=" + $host, "PGPORT=5432",
+         "PGDATABASE=devshardd", "PGUSER=user"]
+        + (if $extra == "" then [] else [$extra] end)'
 elif [[ $1 == exec ]]; then
     container=$2
     case $PROOF_API_MODE in
         ready) ;;
-        404 | 503) exit 8 ;;
+        404)
+            echo '  HTTP/1.1 404 Not Found' >&2
+            echo 'wget: server returned error: HTTP/1.1 404 Not Found' >&2
+            exit 8
+            ;;
+        503)
+            printf '{"error":"no stable HA children"}\n'
+            echo '  HTTP/1.1 503 Service Unavailable' >&2
+            echo 'wget: server returned error: HTTP/1.1 503 Service Unavailable' >&2
+            exit 8
+            ;;
+        timeout)
+            echo 'wget: download timed out' >&2
+            exit 1
+            ;;
         *) exit 1 ;;
     esac
     if [[ $container == container-1 ]]; then
@@ -71,8 +92,11 @@ elif [[ $1 == exec ]]; then
                 jq -cn \
                     --arg identity "$identity" \
                     --arg snapshot "$snapshot" \
-                    --arg generation "$generation" \
-                    '{identity:$identity,children:1,snapshot:$snapshot,targets:[{generation:$generation,version:"v5"}]}'
+                    --arg generation_prefix "$generation" \
+                    --argjson children "$TARGETS_PER_REPLICA" '
+                    {identity:$identity, children:$children, snapshot:$snapshot,
+                     targets:[range(1; $children + 1)
+                         | {generation:($generation_prefix + "-" + tostring), version:"v5"}]}'
             fi
             ;;
         */internal/storage-challenge)
@@ -88,7 +112,7 @@ elif [[ $1 == exec ]]; then
             operation=$(jq -er '.operation' <<<"$payload")
             nonce=$(jq -er '.nonce' <<<"$payload")
             [[ $(jq -er '.snapshot' <<<"$payload") == "$snapshot" ]] || exit 1
-            [[ $(jq -er '.generation' <<<"$payload") == "$generation" ]] || exit 1
+            generation=$(jq -er '.generation' <<<"$payload")
             found=false
             if [[ $operation == write ]]; then
                 printf '%s\n' "$nonce" >"$CHALLENGE_STATE_DIR/$database"
@@ -128,6 +152,8 @@ run_preflight() {
         LIVE_MODE="${LIVE_MODE:-both}" INVALID_PROOF="${INVALID_PROOF:-none}" \
         SNAPSHOT_DRIFT="${SNAPSHOT_DRIFT:-false}" \
         PROOF_API_MODE="${PROOF_API_MODE:-ready}" \
+        INSPECT_FAILURE_CONTAINER="${INSPECT_FAILURE_CONTAINER:-none}" \
+        TARGETS_PER_REPLICA="${TARGETS_PER_REPLICA:-1}" \
         CHALLENGE_STATE_DIR="$tmpdir/challenge-state" \
         CHALLENGE_LOG="$tmpdir/challenge.log" \
         "$preflight" "$@" -- -f base.yml -f ha.yml
@@ -141,7 +167,16 @@ grep -qx db-1 "$tmpdir/ok" || fail "matching identity was not returned"
 [[ $(grep -c ' write ' "$tmpdir/challenge.log") -eq 2 ]] || fail \
     "preflight did not write through every generation"
 [[ $(grep -c ' read ' "$tmpdir/challenge.log") -eq 4 ]] || fail \
-    "preflight did not read every writer challenge through every generation"
+    "preflight did not connect every writer and reader to the anchor generation"
+
+TARGETS_PER_REPLICA=2
+export TARGETS_PER_REPLICA
+run_preflight >"$tmpdir/linear-proof"
+unset TARGETS_PER_REPLICA
+[[ $(grep -c ' write ' "$tmpdir/challenge.log") -eq 4 ]] || fail \
+    "linear proof did not write through every generation"
+[[ $(grep -c ' read ' "$tmpdir/challenge.log") -eq 8 ]] || fail \
+    "storage proof did not remain linear as generations increased"
 
 if run_preflight --expected-identity other-database \
     >"$tmpdir/out" 2>"$tmpdir/err"; then
@@ -186,6 +221,15 @@ unset RUNTIME_HOST_TWO
 grep -q "running versiond2 has PGHOST='pg-other'" "$tmpdir/err" || fail \
     "runtime-host mismatch was not diagnosed"
 
+INSPECT_FAILURE_CONTAINER=container-1
+export INSPECT_FAILURE_CONTAINER
+if run_preflight >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "a Docker inspect failure was accepted as missing runtime variables"
+fi
+unset INSPECT_FAILURE_CONTAINER
+grep -q 'cannot inspect runtime environment for versiond container container-1' \
+    "$tmpdir/err" || fail "Docker inspect failure was not diagnosed"
+
 IDENTITY_TWO=db-2
 export IDENTITY_TWO
 if run_preflight >"$tmpdir/out" 2>"$tmpdir/err"; then
@@ -203,6 +247,8 @@ fi
 unset DATABASE_TWO
 grep -q 'cannot observe the challenge' "$tmpdir/err" || fail \
     "independent-database failure was not diagnosed"
+grep -q 'serialize preflight runs and retry' "$tmpdir/err" || fail \
+    "concurrent-preflight ambiguity was not diagnosed"
 
 SNAPSHOT_DRIFT=true
 export SNAPSHOT_DRIFT
@@ -222,14 +268,23 @@ unset INVALID_PROOF
 grep -q 'invalid PostgreSQL storage proof' "$tmpdir/err" || fail \
     "malformed-proof failure was not diagnosed"
 
-for proof_api_mode in 404 503; do
+for proof_api_mode in 404 503 timeout; do
     PROOF_API_MODE=$proof_api_mode
     export PROOF_API_MODE
     if run_preflight >"$tmpdir/out" 2>"$tmpdir/err"; then
         fail "storage-proof endpoint HTTP $proof_api_mode was accepted"
     fi
-    grep -q 'requires a proof-capable versiond image and a stable migrated HA devshard child' \
-        "$tmpdir/err" || fail "storage-proof HTTP $proof_api_mode was not diagnosed"
+    case $proof_api_mode in
+        404) expected_error='does not expose the live storage-proof API' ;;
+        503) expected_error="not ready (HTTP 503); inspect 'docker compose logs versiond'" ;;
+        timeout) expected_error='storage identity timed out' ;;
+    esac
+    grep -Fq "$expected_error" "$tmpdir/err" || fail \
+        "storage-proof $proof_api_mode was not diagnosed"
+    if [[ $proof_api_mode == 503 ]]; then
+        grep -Fq 'HTTP/1.1 503 Service Unavailable' "$tmpdir/err" || fail \
+            "storage-proof HTTP 503 diagnostics were not preserved"
+    fi
 done
 unset PROOF_API_MODE
 

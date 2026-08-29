@@ -510,20 +510,22 @@ down after boot.
   challenge detects divergent children when deployment preflight runs; neither
   mechanism elects a PostgreSQL primary or replaces database-layer consensus.
 - HA deployment preflight obtains a stable generation snapshot from each
-  versiond replica. For every HA-routed child generation across those snapshots,
-  it writes a unique random nonce through that one child's application pool and
-  requires every other generation to read it. Each operation names its child
-  generation and carries the original snapshot token; transitional generations
-  and changed snapshots fail closed. Every operation also requires
-  `pg_is_in_recovery() = false`. This catches independent clones, read replicas,
-  cross-wired protocol versions, and configuration differences between a
-  supervisor and its children. A final snapshot read closes the transaction.
-  Deployment tooling serializes the exchange; concurrent challenges can cause
-  only a safe false negative because each write replaces the previous nonce.
-  It must wait for preparing, swapping, and draining generations to settle. On
-  the first rollout it must start a current artifact and initialize the schema
-  before requiring proof support from the fleet; legacy children do not expose
-  the proof API.
+  versiond replica and selects one generation as the proof anchor. Every
+  HA-routed generation writes a unique random nonce through its application pool
+  and the anchor reads it; every generation then reads the final confirmed
+  nonce. This proves that all writers and readers share the anchor's live state
+  with a linear number of requests. Each operation names its child generation
+  and carries the original snapshot token; transitional generations and changed
+  snapshots fail closed. Every operation also requires `pg_is_in_recovery() =
+  false`. This catches independent clones, read replicas, cross-wired protocol
+  versions, and configuration differences between a supervisor and its
+  children. A final snapshot read closes the transaction.
+  Deployment tooling must serialize the exchange; concurrent challenges can
+  cause only a safe false negative because each write replaces the previous
+  nonce. It must wait for preparing, swapping, and draining generations to
+  settle. On the first rollout it must start a current artifact and initialize
+  the schema before requiring proof support from the fleet; legacy children do
+  not expose the proof API.
 - Live readiness uses one dedicated PostgreSQL connection outside the
   application pool. Two consecutive database failures make `/readyz` return
   `503` without terminating devshardd; two successful probes restore readiness.
