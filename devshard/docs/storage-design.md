@@ -493,7 +493,10 @@ down after boot.
   PostgreSQL barrier.
 - `devshard_storage_identity.identity` is a durable database-lineage marker.
   Copies restored from one backup retain the same marker, so equality alone is
-  not proof that two hosts currently share a database.
+  not proof that two hosts currently share a database. The live challenge
+  proves that candidate children share one writable state at admission time; it
+  does not establish backup freshness or choose the operator-approved recovery
+  point.
 - Each devshard process also holds a unique session-scoped PostgreSQL advisory
   fence before serving. Every connection subsequently created by its application
   pool must observe that fence in `pg_locks` and report a writable primary before
@@ -532,7 +535,9 @@ down after boot.
   nonce. It must wait for preparing, swapping, and draining generations to
   settle. On the first rollout it must start a current artifact and initialize
   the schema before requiring proof support from the fleet; legacy children do
-  not expose the proof API.
+  not expose the proof API. Route-catalog completeness and minimum-ready replica
+  counts are separate admission checks performed by the router deployment
+  tooling after storage proof succeeds.
 - Live readiness uses one dedicated PostgreSQL connection outside the
   application pool. Two consecutive database failures make `/readyz` return
   `503` without terminating devshardd; two successful probes restore readiness.
