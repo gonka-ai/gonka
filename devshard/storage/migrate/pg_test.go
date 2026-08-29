@@ -16,6 +16,10 @@ import (
 )
 
 func testPGPool(t *testing.T) *pgxpool.Pool {
+	return testPGPoolWithRuntimeParams(t, nil)
+}
+
+func testPGPoolWithRuntimeParams(t *testing.T, runtimeParams map[string]string) *pgxpool.Pool {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping postgres migration tests in -short mode (requires Docker)")
@@ -38,7 +42,12 @@ func testPGPool(t *testing.T) *pgxpool.Pool {
 		dsn = fmt.Sprintf("postgres://testuser:testpass@%s:%s/testdb?sslmode=disable", host, port.Port())
 	}
 
-	pool, err := pgxpool.New(ctx, dsn)
+	cfg, err := pgxpool.ParseConfig(dsn)
+	require.NoError(t, err)
+	for key, value := range runtimeParams {
+		cfg.ConnConfig.RuntimeParams[key] = value
+	}
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	require.NoError(t, err)
 	require.NoError(t, pool.Ping(ctx))
 	t.Cleanup(pool.Close)
@@ -67,7 +76,10 @@ func TestApplyPG_Idempotent(t *testing.T) {
 
 func TestApplyPG_ConcurrentCallersSerialize(t *testing.T) {
 	ctx := context.Background()
-	pool := testPGPool(t)
+	pool := testPGPoolWithRuntimeParams(t, map[string]string{
+		"lock_timeout":      "50",
+		"statement_timeout": "50",
+	})
 
 	steps := []migrate.Step{
 		{
