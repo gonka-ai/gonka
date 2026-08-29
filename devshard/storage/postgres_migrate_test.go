@@ -51,7 +51,7 @@ func setupDevshardPostgresPool(t *testing.T, tracer pgx.QueryTracer) (*pgxpool.P
 
 	ctx := context.Background()
 	container, err := postgres.Run(ctx,
-		"postgres:18.1-bookworm",
+		"postgres:16-bookworm",
 		postgres.WithDatabase("testdb"),
 		postgres.WithUsername("testuser"),
 		postgres.WithPassword("testpass"),
@@ -115,7 +115,7 @@ func TestMigratePostgres_Idempotent(t *testing.T) {
 SELECT identity::text FROM devshard_storage_identity WHERE singleton`).Scan(&storageIdentity)
 	require.NoError(t, err)
 	require.Regexp(t,
-		`^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$`,
+		`^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$`,
 		storageIdentity,
 	)
 
