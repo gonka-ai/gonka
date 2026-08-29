@@ -15,6 +15,7 @@ import (
 	"versioned/internal/config"
 	"versioned/internal/host"
 	"versioned/internal/process"
+	"versioned/internal/sessionversion"
 )
 
 type fakeHostShutdownManager struct {
@@ -1098,6 +1099,12 @@ func (s staticStorageIdentity) StorageIdentity(context.Context) (string, error) 
 	return string(s), nil
 }
 
+type unavailableStorageIdentity struct{}
+
+func (unavailableStorageIdentity) StorageIdentity(context.Context) (string, error) {
+	return "", errors.New("identity unavailable")
+}
+
 func TestStorageIdentityIsLocalOnly(t *testing.T) {
 	handler := storageIdentityHandler(staticStorageIdentity("database-1"))
 
@@ -1118,6 +1125,50 @@ func TestStorageIdentityIsLocalOnly(t *testing.T) {
 	}
 	if got := localResponse.Body.String(); got != "{\"identity\":\"database-1\"}\n" {
 		t.Fatalf("local storage identity response = %q", got)
+	}
+
+	ipv6 := httptest.NewRequest(http.MethodGet, "/internal/storage-identity", nil)
+	ipv6.RemoteAddr = "[::1]:1234"
+	ipv6Response := httptest.NewRecorder()
+	handler.ServeHTTP(ipv6Response, ipv6)
+	if ipv6Response.Code != http.StatusOK {
+		t.Fatalf("IPv6 loopback storage identity status = %d, want 200", ipv6Response.Code)
+	}
+
+	post := httptest.NewRequest(http.MethodPost, "/internal/storage-identity", nil)
+	post.RemoteAddr = "127.0.0.1:1234"
+	postResponse := httptest.NewRecorder()
+	handler.ServeHTTP(postResponse, post)
+	if postResponse.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("POST storage identity status = %d, want 405", postResponse.Code)
+	}
+	if got := postResponse.Header().Get("Allow"); got != http.MethodGet {
+		t.Fatalf("POST storage identity Allow = %q, want GET", got)
+	}
+}
+
+func TestStorageIdentityUnavailable(t *testing.T) {
+	var typedNilLookup *sessionversion.Lookup
+	tests := []struct {
+		name   string
+		reader storageIdentityReader
+	}{
+		{name: "nil interface", reader: nil},
+		{name: "typed nil lookup", reader: typedNilLookup},
+		{name: "query failure", reader: unavailableStorageIdentity{}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			request := httptest.NewRequest(http.MethodGet, "/internal/storage-identity", nil)
+			request.RemoteAddr = "127.0.0.1:1234"
+			response := httptest.NewRecorder()
+
+			storageIdentityHandler(tt.reader).ServeHTTP(response, request)
+
+			if response.Code != http.StatusServiceUnavailable {
+				t.Fatalf("storage identity status = %d, want 503", response.Code)
+			}
+		})
 	}
 }
 
