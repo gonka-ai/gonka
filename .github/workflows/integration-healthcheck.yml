@@ -1,0 +1,137 @@
+name: Integration Healthcheck
+
+# The Linear sync and external-PR triage are intentionally fail-soft: if a token
+# expires or is unset, they warn and let the PR check stay green. That means a
+# broken token is SILENT. This scheduled job actively probes the credentials and
+# opens (or refreshes) a GitHub issue when something is wrong, and closes it once
+# everything is healthy again.
+
+on:
+  schedule:
+    # Every day at 08:00 UTC.
+    - cron: "0 8 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: integration-healthcheck
+  cancel-in-progress: false
+
+jobs:
+  healthcheck:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Probe integrations and manage alert issue
+        uses: actions/github-script@v7
+        env:
+          LINEAR_API_KEY: ${{ secrets.LINEAR_API_KEY }}
+          PROJECTS_TOKEN: ${{ secrets.PROJECTS_TOKEN }}
+          PROJECT_OWNER: ${{ github.repository_owner }}
+          PROJECT_NUMBER: ${{ vars.TRIAGE_PROJECT_NUMBER || '7' }}
+        with:
+          script: |
+            const failures = [];
+
+            // 1) Linear API key: a simple authenticated `viewer` query.
+            if (!process.env.LINEAR_API_KEY) {
+              failures.push('`LINEAR_API_KEY` secret is not set.');
+            } else {
+              try {
+                const res = await fetch('https://api.linear.app/graphql', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: process.env.LINEAR_API_KEY,
+                  },
+                  body: JSON.stringify({ query: '{ viewer { id name } }' }),
+                });
+                const json = await res.json().catch(() => ({}));
+                if (!res.ok || json.errors) {
+                  failures.push(`Linear API check failed (HTTP ${res.status}): ${JSON.stringify(json.errors || json).slice(0, 300)}`);
+                } else {
+                  core.info(`Linear OK (viewer: ${json.data?.viewer?.name || 'unknown'}).`);
+                }
+              } catch (err) {
+                failures.push(`Linear API check threw: ${err.message}`);
+              }
+            }
+
+            // 2) Projects token: read the triage project (Projects v2) it manages.
+            if (!process.env.PROJECTS_TOKEN) {
+              failures.push('`PROJECTS_TOKEN` secret is not set (external-PR triage board updates will be skipped).');
+            } else {
+              try {
+                const owner = process.env.PROJECT_OWNER;
+                const number = parseInt(process.env.PROJECT_NUMBER, 10);
+                const res = await fetch('https://api.github.com/graphql', {
+                  method: 'POST',
+                  headers: {
+                    'Content-Type': 'application/json',
+                    Authorization: `Bearer ${process.env.PROJECTS_TOKEN}`,
+                  },
+                  body: JSON.stringify({
+                    query: `query($owner:String!,$number:Int!){ organization(login:$owner){ projectV2(number:$number){ id title } } user(login:$owner){ projectV2(number:$number){ id title } } }`,
+                    variables: { owner, number },
+                  }),
+                });
+                const json = await res.json().catch(() => ({}));
+                const project = json.data?.organization?.projectV2 || json.data?.user?.projectV2;
+                if (!res.ok || json.errors) {
+                  failures.push(`Projects token check failed (HTTP ${res.status}): ${JSON.stringify(json.errors || json).slice(0, 300)}`);
+                } else if (!project) {
+                  failures.push(`Projects token authenticated but project #${number} not visible to it (check scopes/access).`);
+                } else {
+                  core.info(`Projects OK (project: ${project.title}).`);
+                }
+              } catch (err) {
+                failures.push(`Projects token check threw: ${err.message}`);
+              }
+            }
+
+            // Manage a single alert issue, identified by this marker.
+            const { owner, repo } = context.repo;
+            const MARKER = '<!-- gonka:integration-healthcheck -->';
+            const TITLE = 'Integration healthcheck: Linear/Projects credentials';
+
+            const open = await github.paginate(github.rest.issues.listForRepo, {
+              owner, repo, state: 'open', per_page: 100,
+            });
+            const alert = open.find(i => (i.body || '').includes(MARKER));
+
+            if (failures.length) {
+              const list = failures.map(f => `- ${f}`).join('\n');
+              const body = [
+                '**One or more integration credentials look broken.**',
+                '',
+                'The Linear PR sync and external-PR triage are fail-soft, so PR checks stay green even',
+                'when a token expires. This issue is the alert that something needs attention:',
+                '',
+                list,
+                '',
+                `_Checked at ${new Date().toISOString()} by the Integration Healthcheck workflow._`,
+                '',
+                MARKER,
+              ].join('\n');
+
+              if (alert) {
+                await github.rest.issues.createComment({ owner, repo, issue_number: alert.number, body });
+                core.warning(`Integration healthcheck failing; refreshed alert issue #${alert.number}.`);
+              } else {
+                const created = await github.rest.issues.create({ owner, repo, title: TITLE, body });
+                core.warning(`Integration healthcheck failing; opened alert issue #${created.data.number}.`);
+              }
+              // Surface as a failed run too, so it shows up in the Actions dashboard.
+              core.setFailed(`Integration healthcheck found ${failures.length} problem(s).`);
+            } else if (alert) {
+              await github.rest.issues.createComment({
+                owner, repo, issue_number: alert.number,
+                body: `✅ All integration credentials are healthy again as of ${new Date().toISOString()}. Closing.\n\n${MARKER}`,
+              });
+              await github.rest.issues.update({ owner, repo, issue_number: alert.number, state: 'closed' });
+              core.info(`Recovered; closed alert issue #${alert.number}.`);
+            } else {
+              core.info('All integration credentials healthy.');
+            }
