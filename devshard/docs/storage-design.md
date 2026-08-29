@@ -461,17 +461,24 @@ down after boot.
   database-scoped advisory lock. Binaries predating this lock cannot join that
   coordination protocol. A fresh empty database must therefore be initialized
   by a current devshardd before starting a mixed set of legacy and current
-  children. Normal upgrades already have the legacy schema applied.
+  children. Normal upgrades already have the legacy schema applied. The current
+  Compose fresh-install path does not enforce this ordering; until deployment
+  tooling provides an explicit init stage, a legacy child can lose the initial
+  migration race, roll back, and converge through versiond restart/backoff.
 - `devshard_storage_identity.identity` is a durable database-lineage marker.
   Copies restored from one backup retain the same marker, so equality alone is
   not proof that two hosts currently share a database.
-- HA deployment preflight proves live sharing with two random challenges. Host
-  A writes through every running devshardd application pool and host B reads;
-  then B writes a different nonce and A reads. Each operation also requires
+- HA deployment preflight obtains a stable generation snapshot from each
+  versiond replica. For every HA-routed child generation across those snapshots,
+  it writes a unique random nonce through that one child's application pool and
+  requires every other generation to read it. Each operation names its child
+  generation and carries the original snapshot token; transitional generations
+  and changed snapshots fail closed. Every operation also requires
   `pg_is_in_recovery() = false`. This catches independent clones, read replicas,
-  and configuration differences between a supervisor and its children.
-  Deployment tooling serializes this exchange; concurrent challenges can only
-  cause a safe false negative because each write replaces the previous nonce.
+  cross-wired protocol versions, and configuration differences between a
+  supervisor and its children. A final snapshot read closes the transaction.
+  Deployment tooling serializes the exchange; concurrent challenges can cause
+  only a safe false negative because each write replaces the previous nonce.
 - Live readiness uses one dedicated PostgreSQL connection outside the
   application pool. Two consecutive database failures make `/readyz` return
   `503` without terminating devshardd; two successful probes restore readiness.
