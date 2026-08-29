@@ -11,7 +11,12 @@ cat >"$tmpdir/bin/postgres" <<'EOF'
 #!/bin/sh
 printf '%s\n' 'postgres (PostgreSQL) 16.15'
 EOF
-chmod +x "$tmpdir/bin/postgres"
+cat >"$tmpdir/bin/ldd" <<'EOF'
+#!/bin/sh
+printf '%s\n' 'musl libc (x86_64)' 'Version 1.2.6'
+exit 1
+EOF
+chmod +x "$tmpdir/bin/postgres" "$tmpdir/bin/ldd"
 test_path="$tmpdir/bin:$PATH"
 
 fail() {
@@ -215,6 +220,25 @@ if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
 fi
 grep -q 'uses major version 15; expected 16' "$case_dir/stderr" || fail \
     "wrong-target-major failure was not diagnosed"
+
+new_case reject-glibc-runtime
+mkdir -p "$persistent/data" "$case_dir/bin"
+printf '16\n' > "$persistent/data/PG_VERSION"
+printf 'preserved\n' > "$persistent/data/session-row"
+cat >"$case_dir/bin/ldd" <<'EOF'
+#!/bin/sh
+printf '%s\n' 'ldd (Debian GLIBC 2.36) 2.36'
+EOF
+chmod +x "$case_dir/bin/ldd"
+entrypoint_path="$case_dir/bin:$test_path"
+if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+    fail "a glibc image was allowed to open the musl PostgreSQL cluster"
+fi
+unset entrypoint_path
+grep -q 'requires a musl-based image' "$case_dir/stderr" || fail \
+    "unsupported-libc failure was not diagnosed"
+[[ $(<"$persistent/data/session-row") == preserved ]] || fail \
+    "unsupported runtime modified PGDATA before failing"
 
 new_case follow-image-major
 mkdir -p "$persistent/data" "$case_dir/bin"
