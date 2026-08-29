@@ -32,6 +32,7 @@ while (($#)); do
     case $1 in
         --expected-identity)
             (($# >= 2)) || fail "--expected-identity requires a value"
+            [[ -n $2 ]] || fail "--expected-identity requires a non-empty value"
             expected_identity=$2
             shift 2
             ;;
@@ -183,12 +184,12 @@ versiond_http() {
             echo "postgres-deployment-preflight: $service $description returned HTTP 404; the running versiond image does not expose the live storage-proof API" >&2
             ;;
         503)
-            echo "postgres-deployment-preflight: $service $description is not ready (HTTP 503); inspect 'docker compose logs $service' for HA child and PostgreSQL state${details:+; details: $details}" >&2
+            echo "postgres-deployment-preflight: $service $description is not ready (HTTP 503); inspect 'docker logs $container' for HA child and PostgreSQL state${details:+; details: $details}" >&2
             ;;
         *)
             lower_details=${details,,}
             if [[ $lower_details == *"timed out"* || $lower_details == *timeout* ]]; then
-                echo "postgres-deployment-preflight: $service $description timed out; inspect 'docker compose logs $service' and PostgreSQL availability" >&2
+                echo "postgres-deployment-preflight: $service $description timed out; inspect 'docker logs $container' and PostgreSQL availability" >&2
             else
                 echo "postgres-deployment-preflight: $service $description request failed${status:+ (HTTP $status)}${details:+: $details}" >&2
             fi
