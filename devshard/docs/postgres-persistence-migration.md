@@ -40,7 +40,7 @@ PostgreSQL session has drained, so downloaded versiond artifacts remain a
 conservative guard for that ambiguous state.
 
 Before changing an existing HA topology, validate the rendered and running
-PostgreSQL contract without mutating it:
+PostgreSQL contract without changing the deployment:
 
 ```bash
 cd deploy/join
@@ -49,11 +49,15 @@ source ./config.env
   -f docker-compose.yml -f docker-compose.versiond.yml
 ```
 
-The command requires both versiond replicas to use PostgreSQL, rejects libpq
-overrides that can bypass the rendered DSN, compares their live storage UUIDs,
-and prints the verified UUID. Release tooling calls the same gate automatically;
-`--expected-identity UUID` additionally prevents switching away from a database
-recorded by an earlier successful upgrade.
+The command requires both versiond replicas to use PostgreSQL and rejects libpq
+overrides that can bypass the rendered DSN. It first verifies the shared lineage
+UUID, then writes a unique short-lived challenge through every stable HA child
+generation and requires every other generation to read it. A final snapshot
+check rejects child replacement during the proof. The command prints the
+verified UUID; `--expected-identity UUID` additionally prevents switching away
+from a lineage recorded by an earlier successful upgrade, and `--require-live`
+rejects a configuration-only result when the deployment gate requires running
+replicas.
 
 For a detached legacy volume, attach
 `docker-compose.versiond-postgres-recovery.yml` temporarily and set
