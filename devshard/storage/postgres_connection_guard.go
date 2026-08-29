@@ -80,6 +80,10 @@ func (g *postgresConnectionGuard) arm(ctx context.Context, pool *pgxpool.Pool, c
 	if err != nil {
 		return fmt.Errorf("connect postgres fence session: %w", err)
 	}
+	if _, err := conn.Exec(ctx, `SET idle_session_timeout = 0`); err != nil {
+		_ = conn.Close(context.Background())
+		return fmt.Errorf("disable postgres fence idle timeout: %w", err)
+	}
 	if _, err := conn.Exec(ctx,
 		`SELECT pg_advisory_lock($1, $2)`, postgresConnectionGuardNamespace, g.key); err != nil {
 		_ = conn.Close(context.Background())

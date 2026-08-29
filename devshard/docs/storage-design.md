@@ -487,7 +487,8 @@ down after boot.
   writable branches within one child pool. The endpoint must preserve PostgreSQL
   session semantics; transaction-pooling proxies such as PgBouncer in transaction
   mode are unsupported because the advisory lock must stay bound to one backend
-  session.
+  session. The dedicated fence session disables `idle_session_timeout`; its
+  lifetime is controlled by devshardd and the active fence check instead.
 - The PostgreSQL endpoint remains responsible for cluster-level writer fencing:
   it must expose at most one writable primary for a logical database. The
   advisory fence prevents one child pool from crossing branches, and the live
