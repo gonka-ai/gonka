@@ -4,6 +4,9 @@
 //   opened / reopened  -> create parent issue + "review needed" sub-issues,
 //                         and request the reviewers on the GitHub PR itself
 //   milestoned         -> move parent (and children) out of Triage into the release project
+//   labeled (accepted) -> a maintainer accepted the PR: move parent out of Triage into the
+//                         release project (if milestoned) or the "Backlog for future mainnet
+//                         upgrades" project (state Backlog) otherwise
 //   demilestoned       -> move parent (and children) back to the core project / Triage
 //   closed (merged)    -> parent -> "Merged. Ready for testing", review sub-issues -> Done,
 //                         and (if the parent is in a release project) a Q&A testing sub-issue
@@ -45,6 +48,17 @@ const cfg = {
   // sorted into the right release project manually. Created if missing.
   unsortedProjectName:
     process.env.UNSORTED_PROJECT_NAME || "Merged — no milestone (to sort)",
+  // Cross-sync: a maintainer accepting a PR is signalled by adding this label on
+  // GitHub (Projects v2 board changes can't trigger a workflow, so we key off the
+  // label instead). Only users with write access can add labels, so the label
+  // itself means "a maintainer accepted this".
+  acceptedLabel: process.env.ACCEPTED_LABEL || "accepted",
+  // Where an accepted PR WITHOUT a milestone goes (a milestoned PR goes to its
+  // release project instead). Must already exist in Linear.
+  backlogProjectName:
+    process.env.BACKLOG_PROJECT_NAME || "Backlog for future mainnet upgrades",
+  // State the parent gets when accepted without a milestone.
+  acceptedStateName: process.env.ACCEPTED_STATE_NAME || "Backlog",
   reviewers: JSON.parse(process.env.REVIEWERS || "[]"),
   firstContributorLabel:
     process.env.FIRST_CONTRIBUTOR_LABEL || "first-time contributor",
@@ -123,6 +137,9 @@ async function main() {
       break;
     case "milestoned":
       await onMilestoned(pr);
+      break;
+    case "labeled":
+      await onLabeled(pr);
       break;
     case "demilestoned":
       await onDemilestoned(pr);
@@ -239,6 +256,47 @@ async function onMilestoned(pr) {
   }
   console.log(
     `Moved ${parent.identifier} to release project "${pr.milestone}".`,
+  );
+}
+
+// A maintainer accepted the PR by adding the "accepted" label. Move the parent
+// out of Triage: into the release project if a milestone is set, otherwise into
+// the "Backlog for future mainnet upgrades" project (state Backlog). Children
+// follow the parent's project.
+async function onLabeled(pr) {
+  if (
+    !pr.labelName ||
+    pr.labelName.toLowerCase() !== cfg.acceptedLabel.toLowerCase()
+  ) {
+    console.log(
+      `Label "${pr.labelName || ""}" is not the accept label; nothing to do.`,
+    );
+    return;
+  }
+
+  const parent = await findParentIssue(pr);
+  if (!parent) return warnNoParent(pr);
+
+  const team = await getTeam();
+  const states = await getStates(team);
+  const children = await getChildren(parent);
+
+  let project;
+  let stateId;
+  if (pr.milestone) {
+    project = await getOrCreateProject(milestoneProjectName(pr.milestone), team.id);
+    stateId = states.releaseStart.id;
+  } else {
+    project = await getOrCreateProject(cfg.backlogProjectName, team.id);
+    stateId = states.accepted.id;
+  }
+
+  await client.updateIssue(parent.id, { projectId: project.id, stateId });
+  for (const child of children) {
+    await client.updateIssue(child.id, { projectId: project.id });
+  }
+  console.log(
+    `PR accepted (label "${pr.labelName}") -> moved ${parent.identifier} to "${project.name}".`,
   );
 }
 
@@ -466,6 +524,11 @@ async function getStates(team) {
       ["backlog", "unstarted"],
     ),
     merged: pickState(nodes, [cfg.mergedStateName], ["started"]),
+    accepted: pickState(
+      nodes,
+      [cfg.acceptedStateName],
+      ["backlog", "unstarted"],
+    ),
   };
 
   for (const [k, v] of Object.entries(_states)) {
@@ -759,6 +822,8 @@ async function loadPullRequest() {
     review: event.review
       ? { state: event.review.state, login: event.review.user?.login }
       : null,
+    // For "labeled" events: the name of the label that was just added.
+    labelName: event.label?.name || null,
   };
 }
 
