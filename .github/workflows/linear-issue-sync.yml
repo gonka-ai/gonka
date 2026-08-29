@@ -13,7 +13,6 @@ on:
       - opened
       - reopened
       - closed
-      - labeled
       - milestoned
       - demilestoned
   workflow_dispatch: {}
@@ -52,11 +51,8 @@ jobs:
 
           # --- Optional Linear config (defaults in the script) ---
           MILESTONE_PROJECT_PREFIX: ${{ vars.LINEAR_MILESTONE_PROJECT_PREFIX }}
-          ACCEPTED_LABEL: ${{ vars.LINEAR_ACCEPTED_LABEL }}
-          BACKLOG_PROJECT_NAME: ${{ vars.LINEAR_BACKLOG_PROJECT_NAME }}
           FIRST_CONTRIBUTOR_LABEL: ${{ vars.LINEAR_FIRST_CONTRIBUTOR_LABEL }}
           BACKLOG_STATE_NAME: ${{ vars.LINEAR_BACKLOG_STATE_NAME }}
-          ACCEPTED_STATE_NAME: ${{ vars.LINEAR_ACCEPTED_STATE_NAME }}
           RELEASE_START_STATE_NAME: ${{ vars.LINEAR_RELEASE_START_STATE_NAME }}
           DONE_STATE_NAME: ${{ vars.LINEAR_DONE_STATE_NAME }}
           CANCELLED_STATE_NAME: ${{ vars.LINEAR_CANCELLED_STATE_NAME }}
@@ -66,7 +62,6 @@ jobs:
           PROJECT_NUMBER: ${{ vars.TRIAGE_PROJECT_NUMBER || '7' }}
           STATUS_FIELD_NAME: "Status"
           STATUS_VALUE: "new"
-          ACCEPTED_STATUS_VALUE: ${{ vars.TRIAGE_ACCEPTED_STATUS_VALUE || 'accepted' }}
           # PAT with Projects access (same secret as the PR triage workflow). If
           # unset, board updates are skipped (Linear syncing still works).
           PROJECTS_TOKEN: ${{ secrets.PROJECTS_TOKEN }}

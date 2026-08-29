@@ -8,13 +8,13 @@
 //                         contributor -> label. If the author is external, also
 //                         post a polite acknowledgment comment and add the issue
 //                         to the GitHub triage board (Status=new, only if empty).
-//   labeled (accepted) -> a maintainer accepted it: move out of Triage into the
-//                         release project (if milestoned) or the "Backlog for
-//                         future mainnet upgrades" project (state Backlog). The
-//                         GitHub board Status is set to accepted.
 //   milestoned         -> move into the release project named after the milestone.
 //   demilestoned       -> move back to Triage.
 //   closed             -> completed -> Done; not planned -> Cancelled.
+//
+// Acceptance (a maintainer moving the triage-board card to "Accepted") is handled
+// centrally by the scheduled accept-reconcile job (in .github/scripts/linear-pr-sync),
+// which reconciles both PRs and issues — so there is no accept handling here.
 //
 // Fail-soft: this is a side-channel automation and must never block anything.
 // Missing config or any runtime error becomes a GitHub warning annotation and the
@@ -33,15 +33,10 @@ const cfg = {
   apiKey: requireEnv("LINEAR_API_KEY"),
   teamKey: requireEnv("LINEAR_TEAM_KEY"),
   milestoneProjectPrefix: process.env.MILESTONE_PROJECT_PREFIX || "Upgrade ",
-  // Accept cross-sync (a maintainer adds this label).
-  acceptedLabel: process.env.ACCEPTED_LABEL || "accepted",
-  backlogProjectName:
-    process.env.BACKLOG_PROJECT_NAME || "Backlog for future mainnet upgrades",
   firstContributorLabel:
     process.env.FIRST_CONTRIBUTOR_LABEL || "first-time contributor",
   // States (resolved by name, with type fallbacks).
   backlogStateName: process.env.BACKLOG_STATE_NAME || "Backlog",
-  acceptedStateName: process.env.ACCEPTED_STATE_NAME || "Backlog",
   releaseStartStateName: process.env.RELEASE_START_STATE_NAME || "Backlog",
   doneStateName: process.env.DONE_STATE_NAME || "Done",
   cancelledStateName: process.env.CANCELLED_STATE_NAME || "Canceled",
@@ -51,7 +46,6 @@ const cfg = {
   triageProjectNumber: parseInt(process.env.PROJECT_NUMBER || "0", 10),
   triageStatusField: process.env.STATUS_FIELD_NAME || "Status",
   triageNewStatus: process.env.STATUS_VALUE || "new",
-  triageAcceptedStatus: process.env.ACCEPTED_STATUS_VALUE || "accepted",
 
   // Post an acknowledgment comment on external issues.
   postAck: (process.env.POST_ACK || "true").toLowerCase() !== "false",
@@ -105,9 +99,6 @@ async function main() {
     case "opened":
     case "reopened":
       await onOpenedOrReopened(issue);
-      break;
-    case "labeled":
-      await onLabeled(issue);
       break;
     case "milestoned":
       await onMilestoned(issue);
@@ -171,45 +162,6 @@ async function onOpenedOrReopened(issue) {
     if (cfg.postAck) await postAcknowledgment(issue);
     await addToTriageBoard(issue, cfg.triageNewStatus, { overwrite: false });
   }
-}
-
-async function onLabeled(issue) {
-  if (
-    !issue.labelName ||
-    issue.labelName.toLowerCase() !== cfg.acceptedLabel.toLowerCase()
-  ) {
-    console.log(
-      `Label "${issue.labelName || ""}" is not the accept label; nothing to do.`,
-    );
-    return;
-  }
-
-  const linear = await findLinearIssue(issue);
-  if (linear) {
-    const team = await getTeam();
-    const states = await getStates(team);
-    let project;
-    let stateId;
-    if (issue.milestone) {
-      project = await getOrCreateProject(
-        milestoneProjectName(issue.milestone),
-        team.id,
-      );
-      stateId = states.releaseStart.id;
-    } else {
-      project = await getOrCreateProject(cfg.backlogProjectName, team.id);
-      stateId = states.accepted.id;
-    }
-    await client.updateIssue(linear.id, { projectId: project.id, stateId });
-    console.log(
-      `Issue accepted (label "${issue.labelName}") -> moved ${linear.identifier} to "${project.name}".`,
-    );
-  } else {
-    warnNoLinear(issue);
-  }
-
-  // Reflect acceptance on the GitHub board too.
-  await addToTriageBoard(issue, cfg.triageAcceptedStatus, { overwrite: true });
 }
 
 async function onMilestoned(issue) {
@@ -290,7 +242,6 @@ async function getStates(team) {
   _states = {
     triage: pickState(nodes, [], ["triage"]),
     backlog: pickState(nodes, [cfg.backlogStateName], ["backlog"]),
-    accepted: pickState(nodes, [cfg.acceptedStateName], ["backlog", "unstarted"]),
     releaseStart: pickState(
       nodes,
       [cfg.releaseStartStateName],
@@ -520,7 +471,6 @@ function loadIssue() {
     firstTimeContributor:
       gh.author_association === "FIRST_TIME_CONTRIBUTOR" ||
       gh.author_association === "FIRST_TIMER",
-    labelName: event.label?.name || null,
   };
 }
 
