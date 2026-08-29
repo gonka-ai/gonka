@@ -39,25 +39,42 @@ it is not a permanent “HA was enabled” marker. It can disappear after every
 PostgreSQL session has drained, so downloaded versiond artifacts remain a
 conservative guard for that ambiguous state.
 
-Before changing an existing HA topology, validate the rendered and running
-PostgreSQL contract without changing the deployment:
+The PostgreSQL gate has two explicit phases. Before replacing services, validate
+the rendered target topology without reading runtime state:
 
 ```bash
 cd deploy/join
 source ./config.env
-./postgres-deployment-preflight.sh -- \
+./postgres-deployment-preflight.sh --compose-only -- \
   -f docker-compose.yml -f docker-compose.versiond.yml
 ```
 
-The command requires both versiond replicas to use PostgreSQL and rejects libpq
-overrides that can bypass the rendered DSN. It first verifies the shared lineage
-UUID, then writes a unique short-lived challenge through every stable HA child
-generation and requires every other generation to read it. A final snapshot
-check rejects child replacement during the proof. The command prints the
-verified UUID; `--expected-identity UUID` additionally prevents switching away
-from a lineage recorded by an earlier successful upgrade, and `--require-live`
-rejects a configuration-only result when the deployment gate requires running
-replicas.
+After proof-capable versiond images and migrated HA devshard children are
+running, perform the live gate before admitting the new topology to production:
+
+```bash
+./postgres-deployment-preflight.sh --expected-identity "$RECORDED_STORAGE_IDENTITY" -- \
+  -f docker-compose.yml -f docker-compose.versiond.yml
+```
+
+Omit `--expected-identity` only when no storage identity has been committed by
+an earlier successful deployment. The live mode requires both versiond
+replicas. It verifies the shared lineage UUID, writes a unique short-lived
+challenge through every stable HA child generation, requires every other
+generation to read it, and rejects child replacement during the proof.
+
+Both commands must receive the exact Compose files, project directory, and
+project name used by the host. Preserve an existing `-p`/`--project-name` or
+`COMPOSE_PROJECT_NAME`; selecting another project fails because its live
+replicas cannot satisfy the gate.
+
+The live endpoints are supplied by the versiond and devshard changes that this
+preflight depends on. A legacy versiond image returns 404, and a child that has
+not applied the storage-identity migrations returns 503. These responses fail
+closed. The release updater therefore runs `--compose-only` before service
+replacement, starts compatible versiond/devshard generations behind the
+existing traffic path, and runs the live gate before router admission or public
+cutover.
 
 For a detached legacy volume, attach
 `docker-compose.versiond-postgres-recovery.yml` temporarily and set
