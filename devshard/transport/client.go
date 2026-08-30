@@ -75,14 +75,22 @@ const DefaultMaxSSEEventBytes = 1 << 20
 // data in the reader buffer (not the full attacker payload).
 const sseReaderBufferSize = 64 << 10
 
+// DefaultHeightSeedTimeout is the per-attempt bound for POST /height-sync.
+// QueryTimeout (30s) is far too long for a hung seed peer: one silent TCP
+// connection would dominate a seed round and chew the 2-minute retry budget.
+const DefaultHeightSeedTimeout = 5 * time.Second
+
 // ClientConfig holds per-endpoint timeout settings.
 type ClientConfig struct {
-	InferenceTimeout time.Duration                   // /chat/completions, default 20m
-	GossipTimeout    time.Duration                   // gossip/nonce, gossip/txs, default 10s
-	VerifyTimeout    time.Duration                   // verify-timeout, default 3m
-	QueryTimeout     time.Duration                   // diffs, mempool GETs, default 30s
-	StreamCallback   func(nonce uint64, line string) // if set, receives raw SSE data lines during inference
-	RoutePrefix      string                          // path prefix for all session routes; default /devshard/<version>
+	InferenceTimeout time.Duration // /chat/completions, default 20m
+	GossipTimeout    time.Duration // gossip/nonce, gossip/txs, default 10s
+	VerifyTimeout    time.Duration // verify-timeout, default 3m
+	QueryTimeout     time.Duration // diffs, mempool GETs, default 30s
+	// HeightSeedTimeout bounds one POST /height-sync. Zero means
+	// DefaultHeightSeedTimeout. The session seed loop owns 429/503 retry.
+	HeightSeedTimeout time.Duration
+	StreamCallback    func(nonce uint64, line string) // if set, receives raw SSE data lines during inference
+	RoutePrefix       string                          // path prefix for all session routes; default /devshard/<version>
 	// MaxSSEEventBytes caps a single SSE line (including the trailing newline).
 	// Zero means DefaultMaxSSEEventBytes. Oversize lines abort with
 	// ErrSSEEventTooLarge; they are never silently truncated.
@@ -251,11 +259,12 @@ func IsUpstreamEscrowSettled(err error) bool {
 
 func DefaultClientConfig() ClientConfig {
 	return ClientConfig{
-		InferenceTimeout: 30 * time.Minute,
-		GossipTimeout:    10 * time.Second,
-		VerifyTimeout:    3 * time.Minute,
-		QueryTimeout:     30 * time.Second,
-		RoutePrefix:      DefaultRoutePrefix(),
+		InferenceTimeout:  30 * time.Minute,
+		GossipTimeout:     10 * time.Second,
+		VerifyTimeout:     3 * time.Minute,
+		QueryTimeout:      30 * time.Second,
+		HeightSeedTimeout: DefaultHeightSeedTimeout,
+		RoutePrefix:       DefaultRoutePrefix(),
 	}
 }
 
@@ -276,6 +285,25 @@ type HTTPClient struct {
 
 	oneShotMu               sync.Mutex
 	oneShotHeightSyncMutate func(*heightsync.HeightSyncSection, uint64)
+}
+
+// CatalogHealthzURL is GET /{version}/healthz at this client's host base
+// (the versiond-router catalog probe). Empty when the client has no
+// versioned prefix or base URL. The GET is unsigned and is not an
+// inference request.
+func (c *HTTPClient) CatalogHealthzURL() string {
+	if c == nil {
+		return ""
+	}
+	version, err := devshardpkg.VersionForRoutePrefix(c.routePrefix)
+	if err != nil || strings.TrimSpace(version) == "" {
+		return ""
+	}
+	base := strings.TrimRight(strings.TrimSpace(c.baseURL), "/")
+	if base == "" {
+		return ""
+	}
+	return base + devshardpkg.RouterCatalogHealthzPath(version)
 }
 
 // NewHTTPClient creates an HTTP client for the devshard transport layer.

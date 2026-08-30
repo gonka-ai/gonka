@@ -39,9 +39,10 @@ func (s *Session) MaybeHeartbeat(ctx context.Context) error {
 	return err
 }
 
-// StartHeartbeatLoop runs MaybeHeartbeat immediately and then every Interval
-// until StopHeartbeatLoop or Close. Idempotent. A Close that races Start does
-// not leave a goroutine behind.
+// StartHeartbeatLoop waits for router catalog admission, then runs
+// MaybeHeartbeat immediately and every Interval until StopHeartbeatLoop
+// or Close. Idempotent. A Close that races Start does not leave a
+// goroutine behind. In-process clients have no catalog URL and skip the wait.
 func (s *Session) StartHeartbeatLoop() {
 	if s == nil {
 		return
@@ -90,6 +91,11 @@ func (s *Session) StopHeartbeatLoop() {
 }
 
 func (s *Session) runHeartbeatLoop(ctx context.Context, interval time.Duration) {
+	if err := s.WaitRouterCatalog(ctx); err != nil {
+		logging.Debug("heartbeat loop stopped before catalog", "subsystem", "heightsync",
+			"escrow", s.escrowID, "error", err)
+		return
+	}
 	if err := s.MaybeHeartbeat(ctx); err != nil {
 		logging.Debug("heartbeat loop tick failed", "subsystem", "heightsync",
 			"escrow", s.escrowID, "error", err)

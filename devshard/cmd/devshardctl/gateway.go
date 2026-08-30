@@ -332,7 +332,9 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 		return nil, fmt.Errorf("runtime %s: create session: %w", cfg.ID, err)
 	}
 	// Quiet-session cadence (§10.3). Close() cancels the loop. Not started
-	// inside NewHTTPSession so in-process / E2E stacks keep nonce 1 for inference.
+	// inside NewHTTPSession so in-process / E2E stacks keep nonce 1 for
+	// inference. The loop waits for router catalog admission before the
+	// first heartbeat/seed so a cold router cannot 503 those into quarantine.
 	session.StartHeartbeatLoop()
 	if err := perf.BackfillLegacyEscrowSamples(cfg.ID, legacyPerfSourcePath(legacyStoragePath), session.HostParticipantKeyList()); err != nil {
 		log.Printf("runtime %s: backfill legacy perf samples: %v", cfg.ID, err)
@@ -1515,7 +1517,7 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 		if err := g.limiter.AcquireForModelWithCapacity(limitModel, inputTokens, g.limiterCapacityForModel(limitModel)); err != nil {
 			g.metrics.RecordLimitRejection(limiterReasonLabel(err))
 			logRequestStage(ctx, "gateway_limiter_rejected", append([]any{"model", limitModel, "input_tokens", inputTokens}, limiterRejectionLogFields(err)...)...)
-			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusTooManyRequests)
+			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), gatewayStatusCodeForError(err))
 			return
 		}
 		defer g.limiter.ReleaseForModel(limitModel, inputTokens)
@@ -1655,7 +1657,7 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 				g.metrics.RecordLimitRejection(reason)
 				g.recordGatewayRequestOutcome(limitModel, "gateway_limited", reason)
 				logRequestStage(ctx, "gateway_devshard_limiter_rejected", append([]any{"escrow", devshardID, "model", limitModel, "input_tokens", inputTokens}, limiterRejectionLogFields(err)...)...)
-				http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusTooManyRequests)
+				http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), gatewayStatusCodeForError(err))
 				return
 			}
 			defer g.limiter.ReleaseForModel(limitModel, inputTokens)
@@ -1958,17 +1960,18 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64)
 	}
 
 	// All candidates score +Inf only when every escrow's W(e) == 0 -
-	// i.e. every host is PoC-excluded or fully throttled. Surface this
-	// as a participant-rate-limit error so callers see the existing
-	// 429 path instead of dispatching a request that is guaranteed to
-	// fail upstream. We deliberately don't enumerate which hosts caused
-	// it: a host can have W(e)==0 for many reasons (raw capacity 0, PoC
-	// exclusion, reactive throttle, share rounding) and surfacing only
-	// the throttled subset would mislead operators about the root
-	// cause. Per-escrow W(e) is logged below for diagnostics.
+	// i.e. every host is PoC-excluded or fully throttled. That is zero
+	// live capacity, not a concurrency overflow: return
+	// EscrowParticipantRateLimitError (HTTP 503) instead of dispatching
+	// a request that is guaranteed to fail upstream. We deliberately
+	// don't enumerate which hosts caused it: a host can have W(e)==0 for
+	// many reasons (raw capacity 0, PoC exclusion, reactive throttle,
+	// share rounding) and surfacing only the throttled subset would
+	// mislead operators about the root cause. Per-escrow W(e) is logged
+	// below for diagnostics.
 	if math.IsInf(bestScore, +1) {
 		log.Printf(
-			"gateway: all %d candidate escrow(s) at zero capacity, returning 429; per-escrow weights: %s",
+			"gateway: all %d candidate escrow(s) at zero capacity, returning 503; per-escrow weights: %s",
 			len(candidates), g.formatCandidateWeightsLocked(candidates, requestModel),
 		)
 		return nil, &EscrowParticipantRateLimitError{}
@@ -2249,6 +2252,17 @@ func gatewayStatusCodeForError(err error) int {
 			return accessDeniedErr.StatusCode
 		}
 		return http.StatusUnauthorized
+	}
+	var rejection *LimiterRejection
+	if errors.As(err, &rejection) {
+		if rejection.Kind == LimitedByZeroLiveWeight {
+			return http.StatusServiceUnavailable
+		}
+		return http.StatusTooManyRequests
+	}
+	var escrowErr *EscrowParticipantRateLimitError
+	if errors.As(err, &escrowErr) {
+		return http.StatusServiceUnavailable
 	}
 	if isParticipantRateLimitError(err) {
 		return http.StatusTooManyRequests

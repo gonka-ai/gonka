@@ -20,6 +20,11 @@ import (
 const (
 	defaultStackTimeout       = 12 * time.Minute
 	composeCleanupStopTimeout = 5 * time.Second
+	// gatewayComposeService is the citest gateway. Heartbeat/seed and escrow
+	// warmup wait for catalog admission inside the process, but client chat
+	// does not. Start the process after the router has admitted the version
+	// so the first chat is not a catalog-503 flake.
+	gatewayComposeService = "devshardctl"
 )
 
 // Stack is a generated compose workdir for Docker citest.
@@ -161,15 +166,17 @@ func (s *Stack) composePublishedAddr(t *testing.T, service string, targetPort in
 }
 
 // Up starts the stack with docker compose up (expects citest-images built; pulls missing hub images).
+// The gateway starts only after GET /{version}/healthz succeeds so heartbeats
+// are not 503 undeclared_version.
 func (s *Stack) Up(t *testing.T) {
 	t.Helper()
-	s.composeUp(t, false, nil)
+	s.upAfterCatalog(t, false)
 }
 
 // UpBuild starts the stack and rebuilds images first.
 func (s *Stack) UpBuild(t *testing.T) {
 	t.Helper()
-	s.composeUp(t, true, nil)
+	s.upAfterCatalog(t, true)
 }
 
 // UpServices starts only the named compose services (optionally rebuilding images).
@@ -182,7 +189,50 @@ func (s *Stack) UpServices(t *testing.T, build bool, services ...string) {
 func (s *Stack) UpWithObservability(t *testing.T, cfg *config.File) {
 	t.Helper()
 	s.PrepareObservabilityOverlay(t, cfg)
-	s.composeUp(t, false, nil)
+	s.upAfterCatalog(t, false)
+}
+
+// upAfterCatalog brings up every compose service except the gateway, waits for
+// router catalog admission, then starts the gateway.
+func (s *Stack) upAfterCatalog(t *testing.T, build bool) {
+	t.Helper()
+	infra := withoutComposeService(s.composeServiceNames(t), gatewayComposeService)
+	require.NotEmpty(t, infra, "compose has no services besides %s", gatewayComposeService)
+	s.composeUp(t, build, infra)
+	WaitRouterCatalogAdmitted(t, s, 5*time.Minute)
+	s.composeUp(t, false, []string{gatewayComposeService})
+}
+
+func (s *Stack) composeServiceNames(t *testing.T) []string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	args := append([]string{"compose"}, s.composeFileArgs()...)
+	args = append(args, "config", "--services")
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Dir = s.WorkDir
+	cmd.Env = s.composeEnv()
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "docker compose config --services\n%s", out)
+	var names []string
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			names = append(names, line)
+		}
+	}
+	require.NotEmpty(t, names, "compose has no services")
+	return names
+}
+
+func withoutComposeService(names []string, skip string) []string {
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		if name != skip {
+			out = append(out, name)
+		}
+	}
+	return out
 }
 
 func (s *Stack) composeFileArgs() []string {
@@ -301,6 +351,15 @@ func (s *Stack) StopServiceGracefully(service string, grace time.Duration) (Serv
 		return ServiceStopResult{}, err
 	}
 	return ServiceStopResult{ContainerID: containerID, ExitCode: exitCode}, nil
+}
+
+// StartGateway starts the previously stopped gateway after catalog admission.
+// Heartbeats begin as soon as the process is up; starting before
+// GET /{version}/healthz 503s them.
+func (s *Stack) StartGateway(t *testing.T) {
+	t.Helper()
+	WaitRouterCatalogAdmitted(t, s, 5*time.Minute)
+	s.StartService(t, gatewayComposeService)
 }
 
 // StartService starts a previously stopped compose service.

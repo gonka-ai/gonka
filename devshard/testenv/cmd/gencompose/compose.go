@@ -390,24 +390,8 @@ func versiondHosts(cfg *config.File) string {
 }
 
 // versiondKeyName is the Cosmos keyring entry each versiond child loads.
-// Multi/HA: hosts[0] and hosts[1] share hosts[0]'s key (join-style). Solo
-// hosts (index ≥ 2) keep their own key. Single mode is per-host.
 func versiondKeyName(cfg *config.File, h config.HostCfg) string {
-	if cfg != nil && cfg.Versiond.Mode == config.VersiondModeMulti && len(cfg.Hosts) > 0 {
-		for i, host := range cfg.Hosts {
-			if host.ID != h.ID {
-				continue
-			}
-			if i <= 1 {
-				return cfg.Hosts[0].ID
-			}
-			return h.ID
-		}
-	}
-	if h.ID != "" {
-		return h.ID
-	}
-	return ""
+	return config.VersiondKeyName(cfg, h)
 }
 
 // isHAReplica reports whether h is in the sticky HA pair (hosts[0], hosts[1]).

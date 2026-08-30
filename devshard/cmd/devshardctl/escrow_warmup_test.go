@@ -244,6 +244,47 @@ func TestRetiringAnEscrowStopsItsWarmup(t *testing.T) {
 	}
 }
 
+func TestWarmupWaitsForCatalog(t *testing.T) {
+	rt := &devshardRuntime{id: "escrow-1", stopped: make(chan struct{})}
+	sender := &blockingProbeSender{started: make(chan struct{})}
+	admit := make(chan struct{})
+	done := make(chan struct{})
+
+	go func() {
+		defer close(done)
+		warmUntilStopped(warmupDeps{
+			sender:   sender,
+			escrowID: rt.id,
+			waitCatalog: func(ctx context.Context) error {
+				select {
+				case <-admit:
+					return nil
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			},
+		}, 0, rt.stopped)
+	}()
+
+	select {
+	case <-sender.started:
+		t.Fatal("warmup probed before catalog admission")
+	case <-time.After(150 * time.Millisecond):
+	}
+	close(admit)
+	select {
+	case <-sender.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("warmup did not start after catalog admission")
+	}
+	require.NoError(t, rt.close())
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("warmup outlived the escrow after catalog wait")
+	}
+}
+
 // The warmup once sat in attachRuntimeSharedState, which every restart calls for every runtime: a
 // restart then re-warmed 15 live escrows at once. Creation is the only moment a group is cold.
 func TestWarmupIsWiredOnlyToEscrowCreation(t *testing.T) {

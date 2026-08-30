@@ -336,6 +336,39 @@ func TestHTTPClient_SeedHeightSync_DoesNotRetry503(t *testing.T) {
 		"SeedHeightSync must not nest doPostRaw's 5s 429/503 retry")
 }
 
+func TestHTTPClient_SeedHeightSync_UsesHeightSeedTimeout(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	release := make(chan struct{})
+	started := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(func() { close(release) })
+
+	client := NewHTTPClient(server.URL, "escrow-1", signer, ClientConfig{
+		QueryTimeout:       30 * time.Second,
+		HeightSeedTimeout:  50 * time.Millisecond,
+		RoutePrefix:        "/",
+		HeightSyncPeerTips: NewHeightSyncPeerTips(),
+	})
+	start := time.Now()
+	ok, err := client.SeedHeightSync(context.Background())
+	require.Error(t, err)
+	require.False(t, ok)
+	require.Less(t, time.Since(start), 5*time.Second,
+		"a hung seed POST must not wait out QueryTimeout")
+	select {
+	case <-started:
+	default:
+		t.Fatal("seed POST never reached the handler")
+	}
+}
+
 func TestClient_ResponseAnchor_VerifiesOriginSignature(t *testing.T) {
 	hostSigner := testutil.MustGenerateKey(t)
 	userSigner := testutil.MustGenerateKey(t)

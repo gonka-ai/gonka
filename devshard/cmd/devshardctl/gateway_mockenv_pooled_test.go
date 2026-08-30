@@ -375,7 +375,7 @@ func TestGatewayMockEnvConcurrencyLimitRejectsBeforeRuntime(t *testing.T) {
 // Steps:
 // - Configure two pooled runtimes whose participant host is probe-quarantined.
 // - Send pooled chat for their model through the full gateway handler.
-// - Assert participant capacity rejection returns 429 before any runtime call.
+// - Assert participant capacity rejection returns 503 before any runtime call.
 func TestGatewayMockEnvPooledChatParticipantLimiterAllHostsRejectedBeforeRuntime(t *testing.T) {
 	limiter := NewParticipantRequestLimiter(1, 10)
 	limiter.ObserveResult("shared-host", "/sessions/12/chat/completions", http.StatusServiceUnavailable)
@@ -407,8 +407,8 @@ func TestGatewayMockEnvPooledChatParticipantLimiterAllHostsRejectedBeforeRuntime
 
 	rec := env.postChat(mockenvChatBody("Qwen/Test", "all hosts quarantined"))
 
-	require.Equal(t, http.StatusTooManyRequests, rec.Code)
-	require.Contains(t, rec.Body.String(), "participant request budget exhausted")
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Contains(t, rec.Body.String(), "no live host capacity")
 	require.EqualValues(t, 0, alpha.calls.Load())
 	require.EqualValues(t, 0, beta.calls.Load())
 }

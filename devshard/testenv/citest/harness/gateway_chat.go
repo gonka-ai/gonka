@@ -12,14 +12,9 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-
-	"devshard/transport"
 )
 
-const (
-	gatewayChatTimeout           = 3 * time.Minute
-	gatewayChatReadyProbeTimeout = 45 * time.Second
-)
+const gatewayChatTimeout = 3 * time.Minute
 
 // TestenvAdminAPIKey matches DEVSHARD_ADMIN_API_KEY in gencompose .env.
 const TestenvAdminAPIKey = "testenv-citest-admin"
@@ -299,11 +294,12 @@ func postGatewayJSON(client *http.Client, url, adminAPIKey string, payload, dest
 	return json.Unmarshal(body, dest)
 }
 
-// WaitGatewayChatReady polls until the gateway has a runtime and a throwaway
-// /v1/chat/completions is no longer a router catalog miss (HTTP 503 with
-// X-Devshard-Error or X-Devshard-Router-Error undeclared_version). Any other
-// completion status ends the wait: the catalog has admitted the version, even
-// if the probe itself failed for a different reason.
+// WaitGatewayChatReady waits for catalog admission first (when stack is
+// provided), then polls GET /v1/status until the gateway reports a runtime
+// (escrow_id, runtimes > 0, or a non-empty devshards list). Catalog must come
+// before treating the gateway as chat-ready: heartbeats and warmup POST
+// /chat/completions, and a 503 undeclared_version quarantines the host. It
+// does not POST /v1/chat/completions.
 func WaitGatewayChatReady(t *testing.T, client *http.Client, gatewayURL string, timeout time.Duration, stack ...*Stack) {
 	t.Helper()
 	if client == nil {
@@ -312,8 +308,10 @@ func WaitGatewayChatReady(t *testing.T, client *http.Client, gatewayURL string, 
 	if timeout == 0 {
 		timeout = 3 * time.Minute
 	}
-	probeClient := &http.Client{Timeout: gatewayChatReadyProbeTimeout, Transport: client.Transport}
-	t.Logf("citest: waiting for gateway chat runtime → %s/v1/status then throwaway /v1/chat/completions", gatewayURL)
+	if len(stack) > 0 && stack[0] != nil {
+		WaitRouterCatalogAdmitted(t, stack[0], timeout)
+	}
+	t.Logf("citest: waiting for gateway chat runtime → %s/v1/status", gatewayURL)
 	var attempts int
 	var lastDetail string
 	ok := assertEventually(t, timeout, 2*time.Second, func() bool {
@@ -321,39 +319,12 @@ func WaitGatewayChatReady(t *testing.T, client *http.Client, gatewayURL string, 
 		var status map[string]any
 		if err := GetJSON(client, gatewayURL+"/v1/status", &status); err != nil {
 			lastDetail = err.Error()
+			maybeLogWaitAttempt(t, "gateway chat runtime", attempts, lastDetail)
 			return false
 		}
 		if !gatewayStatusHasRuntime(status) {
 			lastDetail = fmt.Sprintf("no active runtime in status: %v", status)
-			return false
-		}
-		model, err := firstGatewayModelID(client, gatewayURL)
-		if err != nil {
-			lastDetail = err.Error()
-			return false
-		}
-		if model == "" {
-			lastDetail = "gateway /v1/models returned no model id"
-			return false
-		}
-		result, err := postGatewayChatHTTP(probeClient, gatewayURL, TestenvAdminAPIKey, ChatCompletionRequest{
-			Model: model,
-			Messages: []ChatMessage{
-				{Role: "user", Content: "citest gateway chat ready probe"},
-			},
-			MaxTokens: 8,
-		})
-		if err != nil {
-			lastDetail = err.Error()
-			return false
-		}
-		if gatewayChatCatalogNotReady(result.Status, result.Header, result.Body) {
-			snippet := strings.TrimSpace(string(result.Body))
-			if len(snippet) > 240 {
-				snippet = snippet[:240]
-			}
-			lastDetail = fmt.Sprintf("HTTP %d undeclared_version: %s", result.Status, snippet)
-			maybeLogWaitAttempt(t, "gateway chat catalog", attempts, lastDetail)
+			maybeLogWaitAttempt(t, "gateway chat runtime", attempts, lastDetail)
 			return false
 		}
 		return true
@@ -366,32 +337,28 @@ func WaitGatewayChatReady(t *testing.T, client *http.Client, gatewayURL string, 
 	}
 }
 
-func firstGatewayModelID(client *http.Client, gatewayURL string) (string, error) {
-	var listed struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
+// WaitRouterCatalogAdmitted polls GET /{version}/healthz on the versiond router.
+// That is the catalog-admission signal; it is not an inference request.
+// Uses RouterHTTP so it works while the gateway is still down.
+func WaitRouterCatalogAdmitted(t *testing.T, stack *Stack, timeout time.Duration) {
+	t.Helper()
+	if stack == nil {
+		return
 	}
-	if err := GetJSON(client, gatewayURL+"/v1/models", &listed); err != nil {
-		return "", err
+	if timeout <= 0 {
+		timeout = 5 * time.Minute
 	}
-	for _, m := range listed.Data {
-		if id := strings.TrimSpace(m.ID); id != "" {
-			return id, nil
-		}
+	cfg := stack.LoadConfig(t)
+	ver := strings.TrimSpace(cfg.Versiond.VersionName)
+	if ver == "" {
+		return
 	}
-	return "", nil
+	routerHTTP := stack.RouterHTTP(t)
+	WaitGETOK(t, HTTPClient(), routerCatalogHealthzURL(routerHTTP, ver), timeout, "devshardd health via router (catalog)", stack)
 }
 
-func gatewayChatCatalogNotReady(status int, header http.Header, body []byte) bool {
-	if status != http.StatusServiceUnavailable {
-		return false
-	}
-	devshardError := header.Get(transport.HeaderDevshardRouterError)
-	if strings.TrimSpace(devshardError) == "" {
-		devshardError = header.Get(transport.HeaderDevshardError)
-	}
-	return transport.IsUndeclaredVersionError(status, string(body), devshardError)
+func routerCatalogHealthzURL(routerHTTP, version string) string {
+	return strings.TrimRight(routerHTTP, "/") + "/" + version + "/healthz"
 }
 
 func gatewayStatusHasRuntime(status map[string]any) bool {

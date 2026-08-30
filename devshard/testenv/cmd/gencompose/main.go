@@ -280,17 +280,25 @@ func syncChainSeed(cfg *config.File) {
 		slots[i] = cfg.Hosts[i%n].Address
 	}
 
-	// Distinct on-chain participants. hosts[1] is the HA replica of hosts[0]
-	// (same KEY_NAME) — skip its generated address. Solo hosts (index ≥ 2)
-	// use a direct InferenceURL so gateway/gossip bypass the HA sticky pool.
+	// Distinct on-chain participants: one per KEY_NAME. Multi/HA is 2-of-N
+	// (hosts[0]+hosts[1] share hosts[0]'s key); extra hosts with the same
+	// KEY_NAME are replicas, not extra identities. Solos (index ≥ 2) keep
+	// their own key and a direct InferenceURL so gateway/gossip bypass the
+	// HA sticky pool.
 	participants := make([]config.Participant, 0, len(cfg.Hosts))
+	seenKeys := make(map[string]struct{}, len(cfg.Hosts))
 	for i, h := range cfg.Hosts {
 		if h.Address == "" {
 			continue
 		}
-		if cfg.Versiond.Mode == config.VersiondModeMulti && i == 1 {
+		keyName := config.VersiondKeyName(cfg, h)
+		if keyName == "" {
 			continue
 		}
+		if _, dup := seenKeys[keyName]; dup {
+			continue
+		}
+		seenKeys[keyName] = struct{}{}
 		url := routerURL
 		if cfg.Versiond.Mode == config.VersiondModeMulti && i >= 2 {
 			url = fmt.Sprintf("http://%s:%d", h.ID, config.DefaultHostPort)

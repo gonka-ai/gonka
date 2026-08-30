@@ -217,6 +217,30 @@ func GetGatewayEscrowID(t *testing.T, client *http.Client, gatewayURL string) st
 	return id
 }
 
+// WaitGatewayEscrowRetired polls GET /v1/status until escrowID is no longer
+// the resident runtime (missing escrow_id, typically phase=not_found, or a
+// different id after rotation). Height-sync series drop only after retireRuntime
+// removes the runtime from the registry.
+func WaitGatewayEscrowRetired(t *testing.T, client *http.Client, gatewayURL, escrowID string, timeout time.Duration) {
+	t.Helper()
+	if client == nil {
+		client = HTTPClient()
+	}
+	if timeout == 0 {
+		timeout = 2 * time.Minute
+	}
+	require.NotEmpty(t, escrowID)
+	ok := AssertEventually(t, timeout, 500*time.Millisecond, func() bool {
+		var status map[string]any
+		if err := GetJSON(client, gatewayURL+"/v1/status", &status); err != nil {
+			return false
+		}
+		id, present := statusEscrowID(status)
+		return !present || id != escrowID
+	})
+	require.True(t, ok, "escrow %s still resident on /v1/status after %s", escrowID, timeout)
+}
+
 // RequireGatewayEscrowNotRotated asserts /v1/status did not pick up a new
 // escrow after previousEscrowID died. A retired last runtime leaves no
 // escrow_id and reports phase=not_found; that is deactivation, not rotation.

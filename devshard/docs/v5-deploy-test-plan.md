@@ -147,6 +147,27 @@ then start the gateway. Citest does this in
 
 ---
 
+## Testenv multi KEY_NAME (corrects v4 §1.1.1)
+
+v4 §1.1.1 says testenv multi mode uses `KEY_NAME=hosts[0]` on **every**
+versiond replica. Do not edit that released walkthrough. The implemented
+convention is narrower — **2-of-N**, same as join for one participant:
+
+| Host | `KEY_NAME` |
+| --- | --- |
+| `hosts[0]`, `hosts[1]` | `hosts[0].ID` (join-style HA pair, one on-chain identity) |
+| `hosts[2+]` | their own `hosts[i].ID` (solo executor / validator identities) |
+
+`gencompose` `VersiondKeyName`, participant seed (skip duplicate `KEY_NAME`s),
+and `config.onChainHostCount` all count **distinct key names**, not
+`len(hosts)-1` by roster index. A second HA replica is another identity unless
+it shares a `KEY_NAME` with an existing host.
+
+Join HA is unchanged: every replica of **one** participant still shares one
+`KEY_NAME` / keyring.
+
+---
+
 ## What is not changing
 
 - Same-key HA replicas, shared Postgres, `DEVSHARD_STORAGE_MODE=postgres` for

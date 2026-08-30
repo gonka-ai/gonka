@@ -39,8 +39,10 @@ func TestA5_ErrorFinishMiss(t *testing.T) {
 
 	harness.PatchGatewayRedundancySpeedPolicy(t, client, eps.GatewayHTTP, "legacy")
 
-	beforeBalance, beforeStats := harness.GetGatewayLedgerSnapshot(t, client, eps.GatewayHTTP, adminKey)
-	beforeMissed := totalHostMissed(beforeStats)
+	feePerNonce := harness.GetGatewayFeePerNonce(t, client, eps.GatewayHTTP, adminKey)
+	require.NotZero(t, feePerNonce, "session FeePerNonce must be set")
+	before := harness.GetGatewayLedgerSnapshot(t, client, eps.GatewayHTTP, adminKey)
+	beforeMissed := totalHostMissed(before.HostStats)
 
 	on := true
 	harness.PatchMockOpenAIFault(t, client, mockOpenAI, mockopenai.FaultPatch{StreamErrorEnvelope: &on})
@@ -60,13 +62,12 @@ func TestA5_ErrorFinishMiss(t *testing.T) {
 
 	harness.Step(t, "wait for ERROR miss to land: StatusTimedOut, Missed++, host Cost unwound")
 	var (
-		timedOut     harness.GatewayDebugInference
-		afterBalance uint64
-		afterStats   map[string]harness.GatewayHostStats
+		timedOut harness.GatewayDebugInference
+		after    harness.GatewayLedgerSnapshot
 	)
 	ok := harness.AssertEventually(t, 2*time.Minute, 500*time.Millisecond, func() bool {
-		afterBalance, afterStats = harness.GetGatewayLedgerSnapshot(t, client, eps.GatewayHTTP, adminKey)
-		if totalHostMissed(afterStats) < beforeMissed+1 {
+		after = harness.GetGatewayLedgerSnapshot(t, client, eps.GatewayHTTP, adminKey)
+		if totalHostMissed(after.HostStats) < beforeMissed+1 {
 			return false
 		}
 		for _, inf := range harness.GetGatewayDebugInferences(t, client, eps.GatewayHTTP, adminKey) {
@@ -79,15 +80,21 @@ func TestA5_ErrorFinishMiss(t *testing.T) {
 	})
 	require.True(t, ok, "ERROR miss did not land (missed %d→? timed_out missing)", beforeMissed)
 
-	// Sequencer FeePerNonce is charged on every compose diff (receipt publish,
-	// Finish+ErrorMiss). Reservation must still unwind: host Cost is unchanged
-	// and the balance drop is far smaller than one ReservedCost.
-	require.Greater(t, afterBalance, beforeBalance-uint64(20_000),
-		"client reservation must be refunded (before=%d after=%d); remaining drop is FeePerNonce",
-		beforeBalance, afterBalance)
+	// Sequencer FeePerNonce is charged on every applied nonce (receipt, Finish+
+	// ErrorMiss, height-sync heartbeats). Error-miss refunds ActualCost, so the
+	// balance drop in this window must equal fees for the new diffs — not a
+	// leftover reservation.
+	require.Greater(t, after.LatestNonce, before.LatestNonce)
+	charged := feePerNonce * (after.LatestNonce - before.LatestNonce)
+	require.GreaterOrEqual(t, before.Balance, charged,
+		"balance underflow: before=%d fees=%d (nonce %d→%d fee=%d)",
+		before.Balance, charged, before.LatestNonce, after.LatestNonce, feePerNonce)
+	require.Equal(t, before.Balance-charged, after.Balance,
+		"client reservation must be refunded (before=%d after=%d nonce %d→%d fee=%d); drop must equal FeePerNonce × new diffs",
+		before.Balance, after.Balance, before.LatestNonce, after.LatestNonce, feePerNonce)
 	slotKey := fmt.Sprintf("%d", timedOut.ExecutorSlot)
-	beforeHS := beforeStats[slotKey]
-	afterHS := afterStats[slotKey]
+	beforeHS := before.HostStats[slotKey]
+	afterHS := after.HostStats[slotKey]
 	require.Equal(t, beforeHS.Missed+1, afterHS.Missed, "executor slot %s must take the miss (settlement copies HostStats.Missed)", slotKey)
 	require.Equal(t, beforeHS.Cost, afterHS.Cost, "executor HostStats.Cost must be unchanged after ERROR unwind")
 	require.Equal(t, uint32(0), timedOut.VotesValid, "timed-out inferences are not sampled for validation")

@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"devshard/heightsync"
 	"devshard/testenv/citest/harness"
 	"devshard/testenv/config"
 	"devshard/testenv/mockopenai"
@@ -210,8 +211,13 @@ func TestContainerE2E_HeightSync_QuietEscrowHeartbeat(t *testing.T) {
 	})
 	require.NotContains(t, body, "devshard_gateway_heightsync_peer_seen{",
 		"peer matrix series stay off by default (H48)")
+	body = harness.WaitMetricsPredicate(t, client, metricsURL, 2*time.Minute, func(b string) bool {
+		return strings.Contains(b, "devshard_gateway_heightsync_peer_seen_count")
+	})
 	require.Contains(t, body, "devshard_gateway_heightsync_peer_seen_count",
 		"linear peer_seen_count remains on by default")
+	require.NotContains(t, body, "devshard_gateway_heightsync_peer_seen{",
+		"peer matrix series stay off by default (H48)")
 
 	// Anchor seal / empty-height counters become visible once the tip has
 	// moved past D_ack (H44/H45). Either a sealed last-block gauge or the
@@ -292,14 +298,20 @@ func TestContainerE2E_HeightSync_BusyEscrowDischarge(t *testing.T) {
 	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
 
-	// Keep the escrow busy across several Interval windows so stamps, not
-	// quiet-session heartbeats, discharge the cadence.
+	metricsURL := eps.GatewayHTTP + "/metrics"
+	harness.WaitMetricsPredicate(t, client, metricsURL, 2*time.Minute, func(b string) bool {
+		v, ok := harness.MetricLineValue(b, "devshard_gateway_heightsync_cadence_events_total",
+			map[string]string{"event": "heartbeat_opened"})
+		return ok && v >= 1
+	})
+
+	// MaybeRecordDischarged needs a stamp turnover and no open heartbeat turn.
+	// Interval is DefaultHeartbeatInterval; sub-interval chats miss the window.
 	for i := 0; i < 8; i++ {
 		postHeightSyncChat(t, cfg, eps, "citest height-sync busy discharge")
-		time.Sleep(500 * time.Millisecond)
+		time.Sleep(heightsync.DefaultHeartbeatInterval)
 	}
 
-	metricsURL := eps.GatewayHTTP + "/metrics"
 	body := harness.WaitMetricsPredicate(t, client, metricsURL, 2*time.Minute, func(b string) bool {
 		v, ok := harness.MetricLineValue(b, "devshard_gateway_heightsync_cadence_events_total",
 			map[string]string{"event": "discharged_by_inference"})
@@ -409,6 +421,7 @@ func TestContainerE2E_HeightSync_SettleDropsSeries(t *testing.T) {
 
 	harness.Step(t, "retire escrow %s via admin deactivate (same registry drop as settle)", escrowID)
 	harness.PostAdminDeactivateDevshard(t, client, eps.GatewayHTTP, admin, escrowID)
+	harness.WaitGatewayEscrowRetired(t, client, eps.GatewayHTTP, escrowID, 2*time.Minute)
 
 	harness.WaitMetricsPredicate(t, client, metricsURL, 2*time.Minute, func(b string) bool {
 		return !harness.AnyMetricHasLabel(b, "devshard_id", escrowID)

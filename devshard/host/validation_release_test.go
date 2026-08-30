@@ -322,6 +322,30 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 	}
 }
 
+func TestHost_ValidateAsync_CanceledReleases(t *testing.T) {
+	rec := &recordingLeaseRecorder{}
+	h, _, _ := newLeaseReleaseHost(t, &scriptedValidationEngine{err: errors.New("local ml 503")}, rec)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	h.validateAsync(ctx, testValidateJob())
+
+	_, _, release := rec.counts()
+	require.Equal(t, 1, release, "aborted Validate must free the lease for sibling re-acquire")
+}
+
+func TestHost_ValidateAsync_ClosedDoesNotRelease(t *testing.T) {
+	rec := &recordingLeaseRecorder{}
+	h, _, _ := newLeaseReleaseHost(t, &scriptedValidationEngine{err: errors.New("local ml 503")}, rec)
+	h.Close()
+	h.validateAsync(context.Background(), testValidateJob())
+
+	_, _, release := rec.counts()
+	require.Equal(t, 0, release, "Host.Close must not double-release after workers are canceled")
+	_, onCooldown := cooldownUntil(h, 1)
+	require.False(t, onCooldown)
+}
+
 func TestHost_ValidateAsync_ErrorReleaseCooldownThenRecollects(t *testing.T) {
 	rec := &recordingLeaseRecorder{}
 	validator := &scriptedValidationEngine{err: errors.New("local ml 503")}

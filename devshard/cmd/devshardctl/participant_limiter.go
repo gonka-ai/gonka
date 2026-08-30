@@ -218,11 +218,12 @@ func (e *ParticipantRateLimitError) Error() string {
 // for many reasons (raw capacity 0, PoC exclusion, reactive throttle,
 // share rounding) and pinning the blame on the throttled subset would
 // mislead operators about the actual cause. The picker logs per-escrow
-// W(e) at the call site for diagnostics.
+// W(e) at the call site for diagnostics. Callers must not treat this as
+// HTTP 429 occupancy: live weight is already 0.
 type EscrowParticipantRateLimitError struct{}
 
 func (e *EscrowParticipantRateLimitError) Error() string {
-	return "no available escrows: participant request budget exhausted"
+	return "no live host capacity"
 }
 
 // ParticipantThrottleStore is the persistence interface for reactive throttle state.

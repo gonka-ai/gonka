@@ -358,6 +358,16 @@ type Session struct {
 	// returned an Anchor. Survives a resumed seed so we do not re-POST those
 	// slots while still short of quorum. Caller holds heightSeedMu.
 	heightSeedOK map[int]struct{}
+	// heightSeedRetryPending is the last round's retryable slots. nil means
+	// no prior round (resume from every unseeded slot). A 404/omit is kept
+	// out of this set so resume does not re-POST a terminal miss. Caller
+	// holds heightSeedMu.
+	heightSeedRetryPending map[int]struct{}
+	// heightSeedBackoff is the next sleep between seed rounds. Survives
+	// resume so a persistent 503 does not reset to heightSeedRetryInitial
+	// on every inline budget. Reset only on a successful seed. Caller holds
+	// heightSeedMu.
+	heightSeedBackoff time.Duration
 
 	lastContact   []time.Time
 	lastPeerSeen  map[uint32][]byte

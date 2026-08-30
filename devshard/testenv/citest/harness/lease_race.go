@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -178,14 +179,109 @@ func WarmEscrowOnBothReplicas(t *testing.T, stack *Stack, cfg *config.File, escr
 }
 
 // WarmEscrowOnHost GETs /mempool on one versiond to lazy-load / catch up the Host.
+// Sticky seed only hits the HA pair; a solo host often 404s until RecoverSessions
+// catches up, so this retries until wget gets HTTP 200.
 func WarmEscrowOnHost(t *testing.T, stack *Stack, cfg *config.File, hostID, escrowID string) {
 	t.Helper()
 	require.NotEmpty(t, escrowID)
 	require.NotEmpty(t, hostID)
 	ver := cfg.Versiond.VersionName
 	url := fmt.Sprintf("http://%s:8080/%s/sessions/%s/mempool", hostID, ver, escrowID)
-	out := stack.ComposeExec(t, "mock-chain", "wget", "-q", "-O", "-", url)
-	t.Logf("citest: warm %s → %s (%d bytes)", hostID, url, len(out))
+	var (
+		attempts int
+		lastErr  string
+		lastOut  string
+	)
+	ok := assertEventually(t, 2*time.Minute, 2*time.Second, func() bool {
+		attempts++
+		out, err := stack.ComposeExecOutput("mock-chain", "wget", "-q", "-O", "-", "-T", "15", url)
+		if err != nil {
+			lastErr = err.Error()
+			maybeLogWaitAttempt(t, "warm escrow "+hostID, attempts, lastErr)
+			return false
+		}
+		lastOut = out
+		return true
+	})
+	if !ok {
+		DumpComposeLogs(t, stack, hostID, "versiond-0", "versiond-1", "versiond-router", "devshardctl")
+		t.Fatalf("citest: warm %s mempool not 200 after %d attempts → %s: %s", hostID, attempts, url, lastErr)
+	}
+	t.Logf("citest: warm %s → %s (%d bytes)", hostID, url, len(lastOut))
+}
+
+// WaitHostDurableNonce polls GET /sessions/{escrow}/diffs on a versiond host
+// until the highest durable nonce is at least want. Mempool byte length is not
+// a catch-up signal (empty can mean caught-up or still at the seed nonce).
+func WaitHostDurableNonce(t *testing.T, stack *Stack, cfg *config.File, hostID, escrowID string, want uint64, timeout time.Duration) uint64 {
+	t.Helper()
+	require.NotEmpty(t, escrowID)
+	require.NotEmpty(t, hostID)
+	ver := cfg.Versiond.VersionName
+	url := fmt.Sprintf("http://%s:8080/%s/sessions/%s/diffs?from=1&to=10000", hostID, ver, escrowID)
+	deadline := time.Now().Add(timeout)
+	var (
+		attempts int
+		lastErr  string
+		last     uint64
+	)
+	for time.Now().Before(deadline) {
+		attempts++
+		out, err := stack.ComposeExecOutput("mock-chain", "wget", "-q", "-O", "-", "-T", "15", url)
+		if err != nil {
+			lastErr = err.Error()
+			maybeLogWaitAttempt(t, "host durable nonce "+hostID, attempts, lastErr)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		n, parseErr := maxDiffNonceJSON(out)
+		if parseErr != nil {
+			lastErr = parseErr.Error()
+			maybeLogWaitAttempt(t, "host durable nonce "+hostID, attempts, lastErr)
+			time.Sleep(2 * time.Second)
+			continue
+		}
+		last = n
+		if n >= want {
+			t.Logf("citest: %s durable nonce=%d (want>=%d) after %d attempts", hostID, n, want, attempts)
+			return n
+		}
+		lastErr = fmt.Sprintf("nonce=%d < %d", n, want)
+		time.Sleep(2 * time.Second)
+	}
+	DumpComposeLogs(t, stack, hostID, "versiond-0", "versiond-1", "versiond-router", "devshardctl")
+	t.Fatalf("citest: %s durable nonce=%d < %d after %s (%d attempts) → %s: %s",
+		hostID, last, want, timeout, attempts, url, lastErr)
+	return last
+}
+
+func maxDiffNonceJSON(raw string) (uint64, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "null" {
+		return 0, nil
+	}
+	var recs []struct {
+		Diff struct {
+			Nonce uint64 `json:"nonce"`
+		} `json:"diff"`
+	}
+	if err := json.Unmarshal([]byte(raw), &recs); err != nil {
+		return 0, fmt.Errorf("decode diffs %q: %w", truncateForLog(raw, 200), err)
+	}
+	var max uint64
+	for _, rec := range recs {
+		if rec.Diff.Nonce > max {
+			max = rec.Diff.Nonce
+		}
+	}
+	return max, nil
+}
+
+func truncateForLog(s string, n int) string {
+	if len(s) <= n {
+		return s
+	}
+	return s[:n] + "..."
 }
 
 // DriveLeaseRaceLoad posts non-stream + stream chats through the gateway.

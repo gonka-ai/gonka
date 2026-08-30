@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -96,7 +97,11 @@ func runOnce(ctx context.Context) (container *postgres.PostgresContainer, err er
 		if rec := recover(); rec != nil {
 			terminate(container)
 			container = nil
-			err = fmt.Errorf("%w: %v", ErrDockerUnavailable, rec)
+			if isDockerUnavailablePanic(rec) {
+				err = fmt.Errorf("%w: %v", ErrDockerUnavailable, rec)
+				return
+			}
+			panic(rec)
 		}
 	}()
 	return postgres.Run(ctx,
@@ -106,6 +111,31 @@ func runOnce(ctx context.Context) (container *postgres.PostgresContainer, err er
 		postgres.WithPassword("testpass"),
 		testcontainers.WithWaitStrategy(waitStrategy()),
 	)
+}
+
+func isDockerUnavailablePanic(rec any) bool {
+	msg := strings.ToLower(fmt.Sprint(rec))
+	switch {
+	case strings.Contains(msg, "cannot connect to the docker daemon"):
+		return true
+	case strings.Contains(msg, "docker: command not found"):
+		return true
+	case strings.Contains(msg, "command not found") && strings.Contains(msg, "docker"):
+		return true
+	case strings.Contains(msg, "executable file not found") && strings.Contains(msg, "docker"):
+		return true
+	case strings.Contains(msg, "is the docker daemon running"):
+		return true
+	case strings.Contains(msg, "rootless"):
+		return true
+	case strings.Contains(msg, "permission denied") &&
+		(strings.Contains(msg, "docker") || strings.Contains(msg, ".sock")):
+		return true
+	case strings.Contains(msg, "docker.sock"):
+		return true
+	default:
+		return false
+	}
 }
 
 func terminate(c *postgres.PostgresContainer) {

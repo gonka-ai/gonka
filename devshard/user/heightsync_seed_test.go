@@ -395,3 +395,142 @@ func TestSeed_RetriesOnlyMissingThenSweepsAll(t *testing.T) {
 	require.Equal(t, int32(4), hits[2].Load(),
 		"slot 2 keeps retrying until quorum, then one sweep, not until it itself succeeds")
 }
+
+func TestHeightSeedAttemptTimeout_ClampsToRemainingBudget(t *testing.T) {
+	ctx := context.Background()
+	got := heightSeedAttemptTimeout(ctx, time.Now().Add(1500*time.Millisecond))
+	if got > 1500*time.Millisecond || got <= 0 {
+		t.Fatalf("heightSeedAttemptTimeout(1.5s remaining)=%s, want (0, 1.5s]", got)
+	}
+
+	short, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	got = heightSeedAttemptTimeout(short, time.Now().Add(time.Minute))
+	if got > 80*time.Millisecond {
+		t.Fatalf("heightSeedAttemptTimeout(ctx 80ms)=%s, want <= 80ms", got)
+	}
+
+	past := heightSeedAttemptTimeout(ctx, time.Now().Add(-time.Second))
+	if past != 0 {
+		t.Fatalf("heightSeedAttemptTimeout(past deadline)=%s, want 0", past)
+	}
+}
+
+func TestSeed_HungSlotDoesNotWaitQueryTimeout(t *testing.T) {
+	env := setupSeedSession(t, []bool{true, true})
+	release := make(chan struct{})
+	hang := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(hang.Close)
+	t.Cleanup(func() { close(release) })
+
+	cfg := transport.DefaultClientConfig()
+	cfg.RoutePrefix = seedTestRoutePrefix
+	cfg.QueryTimeout = 30 * time.Second
+	cfg.HeightSeedTimeout = 80 * time.Millisecond
+	cfg.HeightSync = heightsync.MustNewAnchorScheduler(10, 2, heightsync.NewPeerTipOracleSource(env.peerTips, env.peerTips.Freshness))
+	cfg.HeightSyncPeerTips = env.peerTips
+	env.session.clients = []HostClient{
+		transport.NewHTTPClient(hang.URL, "escrow-1", env.session.signer, cfg),
+		transport.NewHTTPClient(env.slots[1].server.URL, "escrow-1", env.session.signer, cfg),
+	}
+
+	start := time.Now()
+	env.session.SeedHeightSync(context.Background())
+	require.Less(t, time.Since(start), 5*time.Second,
+		"one hung seed target must not stall the round for QueryTimeout")
+	require.False(t, env.session.HeightSeedMissed())
+	st := env.peerTips.Snapshot(time.Now())
+	require.GreaterOrEqual(t, st.VerifiedOriginators, 1,
+		"the live slot must still record its Anchor")
+}
+
+func TestSeed_ResumeSkipsTerminalMiss(t *testing.T) {
+	env := setupSeedSession(t, []bool{false, true})
+	var hits [2]atomic.Int32
+	const catalog503 = "version v2 is not present in the governance routing catalog"
+	clients := make([]HostClient, 2)
+	for i := 0; i < 2; i++ {
+		i := i
+		inner := env.slots[i].server.Config.Handler
+		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			hits[i].Add(1)
+			if i == 0 {
+				inner.ServeHTTP(w, r)
+				return
+			}
+			http.Error(w, catalog503, http.StatusServiceUnavailable)
+		}))
+		t.Cleanup(proxy.Close)
+		cfg := transport.DefaultClientConfig()
+		cfg.RoutePrefix = seedTestRoutePrefix
+		cfg.QueryTimeout = 80 * time.Millisecond
+		cfg.HeightSeedTimeout = 80 * time.Millisecond
+		cfg.HeightSync = heightsync.MustNewAnchorScheduler(10, 2, heightsync.NewPeerTipOracleSource(env.peerTips, env.peerTips.Freshness))
+		cfg.HeightSyncPeerTips = env.peerTips
+		clients[i] = transport.NewHTTPClient(proxy.URL, "escrow-1", env.session.signer, cfg)
+	}
+	env.session.clients = clients
+
+	_, err := env.session.PrepareInference(InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	})
+	require.NoError(t, err)
+	require.False(t, env.session.HeightSeedMissed())
+	first404 := hits[0].Load()
+	require.Equal(t, int32(1), first404, "terminal 404 is attempted on the first round only")
+	require.Greater(t, hits[1].Load(), int32(1))
+
+	_, err = env.session.PrepareInference(InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	})
+	require.NoError(t, err)
+	require.Equal(t, first404, hits[0].Load(),
+		"resume must not re-POST a slot that already answered non-retryably")
+	require.Greater(t, hits[1].Load(), int32(1))
+}
+
+func TestSeed_ResumeKeepsBackoff(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "version v2 is not present in the governance routing catalog", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(ts.Close)
+
+	hostKey := testutil.MustGenerateKey(t)
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup([]*signing.Secp256k1Signer{hostKey})
+	config := testutil.DefaultConfig(1)
+	verifier := signing.NewSecp256k1Verifier()
+	cfg := transport.DefaultClientConfig()
+	cfg.RoutePrefix = "/"
+	cfg.QueryTimeout = 80 * time.Millisecond
+	cfg.HeightSeedTimeout = 80 * time.Millisecond
+	cfg.HeightSyncPeerTips = transport.NewHeightSyncPeerTips()
+	client := transport.NewHTTPClient(ts.URL, "escrow-1", user, cfg)
+	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
+	session, err := NewSession(userSM, user, "escrow-1", group, []HostClient{client}, verifier)
+	require.NoError(t, err)
+
+	_, err = session.PrepareInference(InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	})
+	require.NoError(t, err)
+	require.False(t, session.HeightSeedMissed())
+	require.Greater(t, session.heightSeedBackoff, heightSeedRetryInitial,
+		"backoff must advance across the inline budget, not reset on resume")
+	backoff := session.heightSeedBackoff
+
+	_, err = session.PrepareInference(InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	})
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, session.heightSeedBackoff, backoff)
+}

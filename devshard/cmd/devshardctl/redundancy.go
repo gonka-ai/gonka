@@ -34,6 +34,15 @@ import (
 // offending host is recorded as non-responsive in the local PerfTracker.
 var errEmptyStream = errors.New("empty content stream")
 
+// Fail-closed when every attempted host receipts (or never receipts) and none
+// produce a first token, with no unused host left to start. Always-stream
+// first-token / receipt timers are failover triggers; at the attempt limit they
+// must still fail the client instead of waiting for host Execute or meta-drain.
+var (
+	errAllHostsFirstTokenTimeout = errors.New("all hosts timed out waiting for first token")
+	errAllHostsReceiptTimeout    = errors.New("all hosts timed out waiting for receipt")
+)
+
 const emptyStreamBodySampleLimit = 256 * 1024
 
 const longResponseFailureExemption = 280 * time.Second
@@ -2519,7 +2528,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 		maxAttempts := e.maxAttempts()
 		var escalationTimer *time.Timer
 		var escalationC <-chan time.Time
-		if hasTrigger && winner == 0 && len(attempts) < maxAttempts {
+		if shouldArmEscalationTimer(hasTrigger, winner, len(attempts), maxAttempts, trigger.stage) {
 			wait := time.Until(trigger.deadline)
 			if wait < 0 {
 				wait = 0
@@ -2631,13 +2640,34 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			if !stillValid || current.stage != trigger.stage {
 				break
 			}
-			trigger.inf.escalated = true
+			if race.winnerNonce() != 0 {
+				break
+			}
 			if len(attempts) < maxAttempts {
 				if next := e.startAdditionalInflight(streamCtx, settleCtx, race, params, trigger.stage, trigger.inf, trigger.reason, triedParticipants, clientFlag); next != nil {
+					trigger.inf.escalated = true
 					attempts = append(attempts, next)
 					e.watchInflightDone(next, doneCh)
+					break
 				}
 			}
+			if failClosedEscalationStage(trigger.stage) {
+				if stallTimer != nil {
+					stopTimer(stallTimer)
+				}
+				if winnerHardTimeoutTimer != nil {
+					stopTimer(winnerHardTimeoutTimer)
+				}
+				return e.failClosedNoWinner(settleCtx, attempts, params, decision, trigger, clientFlag)
+			}
+			trigger.inf.escalated = true
+			logInferenceStage(settleCtx, trigger.inf.escrowID, trigger.inf.nonce, "escalation_skipped",
+				"host", trigger.inf.hostID,
+				"stage", trigger.stage,
+				"reason", "attempt_limit",
+				"current_attempts", len(attempts),
+				"max_attempts", maxAttempts,
+			)
 		case <-stallC:
 			now := time.Now()
 			if stallInf == nil {
@@ -2746,6 +2776,68 @@ func (e *Redundancy) nextEscalationTrigger(attempts []*inflight, params user.Inf
 		}
 	}
 	return chosen, ok
+}
+
+func failClosedEscalationStage(stage string) bool {
+	switch stage {
+	case "first_token_timeout_wait_elapsed", "receipt_timeout_wait_elapsed":
+		return true
+	default:
+		return false
+	}
+}
+
+func shouldArmEscalationTimer(hasTrigger bool, winner uint64, nAttempts, maxAttempts int, stage string) bool {
+	if !hasTrigger || winner != 0 {
+		return false
+	}
+	if nAttempts < maxAttempts {
+		return true
+	}
+	return failClosedEscalationStage(stage)
+}
+
+func failClosedErrorForStage(stage string) error {
+	if stage == "receipt_timeout_wait_elapsed" {
+		return errAllHostsReceiptTimeout
+	}
+	return errAllHostsFirstTokenTimeout
+}
+
+func (e *Redundancy) failClosedNoWinner(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, trigger escalationTrigger, clientFlag *cancelFlag) error {
+	err := failClosedErrorForStage(trigger.stage)
+	pending := pendingInflights(attempts)
+	hostID := ""
+	nonce := uint64(0)
+	escrowID := e.devshardID
+	if trigger.inf != nil {
+		hostID = trigger.inf.hostID
+		nonce = trigger.inf.nonce
+		escrowID = trigger.inf.escrowID
+	}
+	logInferenceStage(ctx, escrowID, nonce, "escalation_fail_closed",
+		"host", hostID,
+		"stage", trigger.stage,
+		"reason", trigger.reason,
+		"pending", len(pending),
+		"attempts", len(attempts),
+		"max_attempts", e.maxAttempts(),
+		"decision", decision.Reason,
+		"error", err,
+	)
+	for _, inf := range pending {
+		if inf.cancel != nil {
+			inf.cancel()
+		}
+	}
+	e.goTrackedRaceCleanup(func() {
+		e.finishRaceWhenPendingDone(ctx, attempts, params, decision, 0, raceFinishOptions{
+			forceTreatAsFailure:  true,
+			recordFailureSamples: true,
+			clientGone:           clientFlag,
+		})
+	})
+	return err
 }
 
 func (e *Redundancy) escalationForInflight(inf *inflight, params user.InferenceParams) (escalationTrigger, bool) {

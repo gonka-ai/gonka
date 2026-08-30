@@ -137,13 +137,14 @@ func (c *HTTPClient) ObservedStampNow() (uint64, []byte, bool) {
 // SeedHeightSync calls the optional host cold-start RPC and records the returned
 // Anchor in the peer-tip cache. ok is false when height sync is disabled, the RPC
 // is unavailable (404), or the host omitted the section (oracle miss). One HTTP
-// attempt: the session seed loop owns 429/503 retry, not doPostRaw.
+// attempt, bounded by HeightSeedTimeout rather than QueryTimeout: the session
+// seed loop owns 429/503 retry, not doPostRaw.
 func (c *HTTPClient) SeedHeightSync(ctx context.Context) (ok bool, err error) {
 	if c == nil || c.heightSyncPeerTips == nil {
 		return false, nil
 	}
 	var out heightSyncSeedResponse
-	err = c.postOnce(ctx, "/sessions/"+c.escrowID+"/height-sync", c.config.QueryTimeout, struct{}{}, &out)
+	err = c.postOnce(ctx, "/sessions/"+c.escrowID+"/height-sync", c.heightSeedTimeout(), struct{}{}, &out)
 	if err != nil {
 		return false, err
 	}
@@ -157,6 +158,13 @@ func (c *HTTPClient) SeedHeightSync(ctx context.Context) (ok bool, err error) {
 		out.HeightSync.MainnetHeight,
 	)
 	return ok, nil
+}
+
+func (c *HTTPClient) heightSeedTimeout() time.Duration {
+	if c != nil && c.config.HeightSeedTimeout > 0 {
+		return c.config.HeightSeedTimeout
+	}
+	return DefaultHeightSeedTimeout
 }
 
 func (c *HTTPClient) logEmitUserHeightSync(sec *heightsync.HeightSyncSection, nonce uint64) {

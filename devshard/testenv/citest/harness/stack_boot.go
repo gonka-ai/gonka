@@ -118,7 +118,10 @@ func BootObservabilityStack(t *testing.T, prefix string) (*Stack, *config.File, 
 	return stack, cfg, stack.Endpoints(t, cfg), obs
 }
 
-// WaitStackHealthy polls the chain, dapi, router, and gateway boundaries.
+// WaitStackHealthy polls the chain, dapi, router catalog, and gateway boundaries.
+// Catalog admission (GET /{version}/healthz) is required before treating the
+// gateway as ready: a process-up router /healthz is not enough, and a gateway
+// that is already heartbeating into an undeclared version quarantines hosts.
 func WaitStackHealthy(t *testing.T, stack *Stack, eps Endpoints) {
 	t.Helper()
 	client := HTTPClient()
@@ -128,6 +131,7 @@ func WaitStackHealthy(t *testing.T, stack *Stack, eps Endpoints) {
 	WaitGETOK(t, client, eps.MockDapiHTTP+"/healthz", poll, "mock-dapi healthz")
 	WaitGETOK(t, client, eps.MockDapiHTTP+"/v1/epochs/latest", 30*time.Second, "mock-dapi epochs/latest", stack)
 	WaitGETOK(t, client, eps.RouterHTTP+"/healthz", poll, "versiond-router healthz", stack)
+	WaitRouterCatalogAdmitted(t, stack, poll)
 	WaitGETOK(t, client, eps.GatewayHTTP+"/v1/status", poll, "gateway /v1/status", stack)
 }
 

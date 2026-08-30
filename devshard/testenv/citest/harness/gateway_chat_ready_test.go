@@ -1,32 +1,25 @@
 package harness
 
 import (
-	"net/http"
 	"testing"
 
 	"github.com/stretchr/testify/require"
-
-	"devshard/transport"
 )
 
-func TestGatewayChatCatalogNotReady(t *testing.T) {
-	header := http.Header{}
-	header.Set(transport.HeaderDevshardError, transport.DevshardErrorUndeclaredVersion)
-	require.True(t, gatewayChatCatalogNotReady(http.StatusServiceUnavailable, header, []byte("busy")),
-		"X-Devshard-Error: undeclared_version on 503 is not-ready")
+func TestRouterCatalogHealthzURL(t *testing.T) {
+	require.Equal(t, "http://127.0.0.1:9/v2/healthz",
+		routerCatalogHealthzURL("http://127.0.0.1:9", "v2"))
+	require.Equal(t, "http://127.0.0.1:9/v2/healthz",
+		routerCatalogHealthzURL("http://127.0.0.1:9/", "v2"))
+}
 
-	router := http.Header{}
-	router.Set(transport.HeaderDevshardRouterError, transport.DevshardErrorUndeclaredVersion)
-	require.True(t, gatewayChatCatalogNotReady(http.StatusServiceUnavailable, router, nil),
-		"X-Devshard-Router-Error: undeclared_version on 503 is not-ready")
+func TestGatewayStatusHasRuntime(t *testing.T) {
+	require.False(t, gatewayStatusHasRuntime(nil))
+	require.False(t, gatewayStatusHasRuntime(map[string]any{}))
+	require.False(t, gatewayStatusHasRuntime(map[string]any{"runtimes": float64(0)}))
+	require.False(t, gatewayStatusHasRuntime(map[string]any{"devshards": []any{}}))
 
-	bodyOnly := http.Header{}
-	require.True(t, gatewayChatCatalogNotReady(http.StatusServiceUnavailable, bodyOnly,
-		[]byte("version v2 is not present in the governance routing catalog")))
-
-	require.False(t, gatewayChatCatalogNotReady(http.StatusTooManyRequests, header, nil),
-		"429 must end the wait even with the undeclared_version header")
-	require.False(t, gatewayChatCatalogNotReady(http.StatusOK, header, nil))
-	require.False(t, gatewayChatCatalogNotReady(http.StatusServiceUnavailable, http.Header{}, []byte("nginx limit")),
-		"host 503 without catalog markers must end the wait")
+	require.True(t, gatewayStatusHasRuntime(map[string]any{"escrow_id": "1"}))
+	require.True(t, gatewayStatusHasRuntime(map[string]any{"runtimes": float64(1)}))
+	require.True(t, gatewayStatusHasRuntime(map[string]any{"devshards": []any{map[string]any{"id": "1"}}}))
 }

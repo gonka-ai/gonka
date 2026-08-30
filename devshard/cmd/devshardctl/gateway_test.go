@@ -1735,8 +1735,8 @@ func TestGatewayPooledChatRefreshesCapacityScaleBeforeAcquire(t *testing.T) {
 
 	g.handlePooledChat(rec, req)
 
-	require.Equal(t, http.StatusTooManyRequests, rec.Code)
-	require.Contains(t, rec.Body.String(), "too many concurrent requests")
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Contains(t, rec.Body.String(), "no live host capacity")
 	snap := g.limiter.Snapshot()
 	require.EqualValues(t, 2, snap.EffectiveMaxConcurrent)
 	require.EqualValues(t, 2, snap.InFlightRequests)
@@ -3186,6 +3186,16 @@ func TestGatewayStatusCodeForErrorMapsUndeclaredVersionTo503(t *testing.T) {
 		DevshardError: transport.DevshardErrorUndeclaredVersion,
 	})
 	require.Equal(t, http.StatusServiceUnavailable, code)
+}
+
+func TestGatewayStatusCodeForErrorMapsZeroLiveWeightTo503(t *testing.T) {
+	require.Equal(t, http.StatusServiceUnavailable, gatewayStatusCodeForError(&LimiterRejection{
+		Kind: LimitedByZeroLiveWeight, Limit: 0,
+	}))
+	require.Equal(t, http.StatusServiceUnavailable, gatewayStatusCodeForError(&EscrowParticipantRateLimitError{}))
+	require.Equal(t, http.StatusTooManyRequests, gatewayStatusCodeForError(&LimiterRejection{
+		Kind: LimitedByConcurrentRequests, InFlight: 4, Limit: 4,
+	}))
 }
 
 func TestWriteGatewayErrorSetsUndeclaredVersionHeader(t *testing.T) {

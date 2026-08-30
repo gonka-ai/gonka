@@ -23,6 +23,7 @@ const (
 	// boot). After this, seed degrades to omit.
 	defaultHeightSeedRetryDeadline = 2 * time.Minute
 	heightSeedRetryInitial         = 50 * time.Millisecond
+	heightSeedRetryMax             = 5 * time.Second
 	// inlineHeightSeedBudget bounds the seed when it runs on the inference
 	// path. A miss only degrades to the unstamped-nonce-1 path, so a chat must
 	// never wait out the full catalog-admission deadline.
@@ -176,6 +177,8 @@ func (s *Session) runHeightSeed(ctx context.Context, deadline time.Time) {
 		return h
 	}
 	finishOK := func() {
+		s.heightSeedBackoff = 0
+		s.heightSeedRetryPending = nil
 		s.heightSeedDone.Store(true)
 		logging.Info("heightsync: seed_ok",
 			heightsync.LogFieldSubsystem, "heightsync",
@@ -186,7 +189,9 @@ func (s *Session) runHeightSeed(ctx context.Context, deadline time.Time) {
 		)
 	}
 	sweepAll := func() {
-		applySeedOutcomes(escrow, s.heightSeedOK, fanHeightSeed(ctx, targets))
+		attemptCtx, cancel := heightSeedAttemptContext(ctx, deadline)
+		applySeedOutcomes(escrow, s.heightSeedOK, fanHeightSeed(attemptCtx, targets))
+		cancel()
 		logMutation()
 		finishOK()
 	}
@@ -199,14 +204,19 @@ func (s *Session) runHeightSeed(ctx context.Context, deadline time.Time) {
 		return
 	}
 
-	pending := unseededHeightTargets(targets, s.heightSeedOK)
-	delay := heightSeedRetryInitial
+	pending := resumeHeightTargets(targets, s.heightSeedOK, s.heightSeedRetryPending)
+	delay := s.heightSeedBackoff
+	if delay <= 0 {
+		delay = heightSeedRetryInitial
+	}
 	for {
 		if len(pending) == 0 {
 			break
 		}
 
-		out := fanHeightSeed(ctx, pending)
+		attemptCtx, cancel := heightSeedAttemptContext(ctx, deadline)
+		out := fanHeightSeed(attemptCtx, pending)
+		cancel()
 		retryable, misses := applySeedOutcomes(escrow, s.heightSeedOK, out)
 		logMutation()
 
@@ -219,6 +229,7 @@ func (s *Session) runHeightSeed(ctx context.Context, deadline time.Time) {
 		}
 
 		pending = retryableHeightTargets(targets, out)
+		s.heightSeedRetryPending = heightSeedSlotSet(pending)
 		remaining := time.Until(deadline)
 		if retryable && len(pending) > 0 && remaining > 0 && ctx.Err() == nil {
 			sleep := delay
@@ -241,13 +252,15 @@ func (s *Session) runHeightSeed(ctx context.Context, deadline time.Time) {
 			case <-timer.C:
 			}
 			if ctx.Err() == nil && time.Now().Before(deadline) {
-				if delay < 5*time.Second {
+				if delay < heightSeedRetryMax {
 					delay *= 2
 				}
+				s.heightSeedBackoff = delay
 				continue
 			}
 		}
 
+		s.heightSeedBackoff = delay
 		// This caller's budget expired but the seed's own deadline has not, and
 		// the misses are still retryable (catalog admission still pending). Leave the
 		// seed unfinished so the next caller resumes it.
@@ -285,6 +298,26 @@ type seedOutcome struct {
 	slot int
 	ok   bool
 	err  error
+}
+
+func heightSeedAttemptTimeout(ctx context.Context, deadline time.Time) time.Duration {
+	timeout := transport.DefaultHeightSeedTimeout
+	if remaining := time.Until(deadline); remaining < timeout {
+		timeout = remaining
+	}
+	if dl, ok := ctx.Deadline(); ok {
+		if left := time.Until(dl); left < timeout {
+			timeout = left
+		}
+	}
+	if timeout < 0 {
+		return 0
+	}
+	return timeout
+}
+
+func heightSeedAttemptContext(ctx context.Context, deadline time.Time) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(ctx, heightSeedAttemptTimeout(ctx, deadline))
 }
 
 func fanHeightSeed(ctx context.Context, targets []seedTarget) []seedOutcome {
@@ -335,6 +368,13 @@ func unseededHeightTargets(targets []seedTarget, okSlots map[int]struct{}) []see
 	return pending
 }
 
+func resumeHeightTargets(targets []seedTarget, okSlots, retryPending map[int]struct{}) []seedTarget {
+	if retryPending == nil {
+		return unseededHeightTargets(targets, okSlots)
+	}
+	return filterHeightTargets(targets, retryPending)
+}
+
 func retryableHeightTargets(targets []seedTarget, out []seedOutcome) []seedTarget {
 	bySlot := make(map[int]seedTarget, len(targets))
 	for _, t := range targets {
@@ -350,4 +390,25 @@ func retryableHeightTargets(targets []seedTarget, out []seedOutcome) []seedTarge
 		}
 	}
 	return pending
+}
+
+func filterHeightTargets(targets []seedTarget, slots map[int]struct{}) []seedTarget {
+	if len(slots) == 0 {
+		return nil
+	}
+	var pending []seedTarget
+	for _, t := range targets {
+		if _, ok := slots[t.slot]; ok {
+			pending = append(pending, t)
+		}
+	}
+	return pending
+}
+
+func heightSeedSlotSet(targets []seedTarget) map[int]struct{} {
+	slots := make(map[int]struct{}, len(targets))
+	for _, t := range targets {
+		slots[t.slot] = struct{}{}
+	}
+	return slots
 }

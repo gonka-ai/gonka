@@ -68,6 +68,14 @@ func setupClientTestEnv(t *testing.T) (*HTTPClient, *httptest.Server, *signing.S
 	return client, ts, userSigner, group, h
 }
 
+func TestHTTPClient_CatalogHealthzURL(t *testing.T) {
+	cfg := DefaultClientConfig()
+	cfg.RoutePrefix = "/devshard/v2"
+	c := NewHTTPClient("http://router:8080", "1", nil, cfg)
+	require.Equal(t, "http://router:8080/v2/healthz", c.CatalogHealthzURL())
+	require.Empty(t, (*HTTPClient)(nil).CatalogHealthzURL())
+}
+
 func TestHTTPClient_Send_RoundTrip(t *testing.T) {
 	client, _, userSigner, _, _ := setupClientTestEnv(t)
 	ctx := context.Background()

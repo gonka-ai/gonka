@@ -2120,6 +2120,111 @@ func TestRunInference_FastReceiptDoesNotSpuriouslyEscalate(t *testing.T) {
 			"awaitRace is firing the receipt-timeout escalation on a stale trigger")
 }
 
+func seedFirstTokenFallbackDelay(t *testing.T, perf *PerfTracker, model string, inputTokens uint64, delay time.Duration) {
+	t.Helper()
+	ms := float64(delay.Milliseconds())
+	if ms < 1 {
+		ms = 1
+	}
+	rec := RequestRecord{
+		Model:       model,
+		InputTokens: inputTokens,
+		Hosts: []HostInvolvement{{
+			FirstTokenMs: ms,
+			Responsive:   true,
+			Finished:     true,
+			Winner:       true,
+		}},
+	}
+	for i := 0; i < firstTokenBucketSampleSize; i++ {
+		perf.RecordRequest(rec)
+	}
+}
+
+type receiptThenHangClient struct{}
+
+func (receiptThenHangClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	if receiptHandler != nil {
+		receiptHandler(&host.HostResponse{Receipt: []byte("receipt"), ConfirmedAt: time.Now().Unix()})
+	}
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+type hangBeforeReceiptClient struct{}
+
+func (hangBeforeReceiptClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestShouldArmEscalationTimerFailClosedAtAttemptLimit(t *testing.T) {
+	require.True(t, shouldArmEscalationTimer(true, 0, 2, 3, "first_token_timeout_wait_elapsed"))
+	require.True(t, shouldArmEscalationTimer(true, 0, 3, 3, "first_token_timeout_wait_elapsed"))
+	require.True(t, shouldArmEscalationTimer(true, 0, 3, 3, "receipt_timeout_wait_elapsed"))
+	require.False(t, shouldArmEscalationTimer(true, 0, 3, 3, "attempt_failed"))
+	require.False(t, shouldArmEscalationTimer(true, 7, 3, 3, "first_token_timeout_wait_elapsed"))
+	require.False(t, shouldArmEscalationTimer(false, 0, 3, 3, "first_token_timeout_wait_elapsed"))
+}
+
+func TestRunInference_AllHostsHangAfterReceiptFailsClosed(t *testing.T) {
+	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
+	setSpeculativeTiming(t, 50*time.Millisecond, 20*time.Millisecond, 0, 50*time.Millisecond)
+	env := setupTestProxyWithClients(t, []user.HostClient{
+		receiptThenHangClient{},
+		receiptThenHangClient{},
+		receiptThenHangClient{},
+	})
+	params := defaultParams()
+	seedFirstTokenFallbackDelay(t, env.proxy.redundancy.perf, params.Model, params.InputLength, 20*time.Millisecond)
+
+	start := time.Now()
+	var buf bytes.Buffer
+	err := env.proxy.redundancy.RunInference(context.Background(), params, &buf, nil)
+	elapsed := time.Since(start)
+
+	require.ErrorIs(t, err, errAllHostsFirstTokenTimeout)
+	require.Less(t, elapsed, 2*time.Second, "fail-closed must not wait for meta-drain or the client timeout")
+	require.GreaterOrEqual(t, gatewayStatusCodeForError(err), http.StatusInternalServerError)
+}
+
+func TestRunInference_AllHostsHangBeforeReceiptFailsClosed(t *testing.T) {
+	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
+	setSpeculativeTiming(t, 20*time.Millisecond, 20*time.Millisecond, 0, 50*time.Millisecond)
+	env := setupTestProxyWithClients(t, []user.HostClient{
+		hangBeforeReceiptClient{},
+		hangBeforeReceiptClient{},
+		hangBeforeReceiptClient{},
+	})
+
+	start := time.Now()
+	var buf bytes.Buffer
+	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf, nil)
+	elapsed := time.Since(start)
+
+	require.ErrorIs(t, err, errAllHostsReceiptTimeout)
+	require.Less(t, elapsed, 2*time.Second, "fail-closed must not wait for meta-drain or the client timeout")
+	require.GreaterOrEqual(t, gatewayStatusCodeForError(err), http.StatusInternalServerError)
+}
+
+func TestRunInference_OneHostHangAfterReceiptFailovers(t *testing.T) {
+	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
+	setSpeculativeTiming(t, 50*time.Millisecond, 20*time.Millisecond, 0, 50*time.Millisecond)
+	hang := stub.NewInferenceEngine()
+	hang.BlockUntilContextDone = true
+	env := setupTestProxy(t, 3, []devshard.InferenceEngine{
+		stub.NewInferenceEngine(),
+		hang,
+		stub.NewInferenceEngine(),
+	}, true)
+	params := defaultParams()
+	seedFirstTokenFallbackDelay(t, env.proxy.redundancy.perf, params.Model, params.InputLength, 20*time.Millisecond)
+
+	var buf bytes.Buffer
+	err := env.proxy.redundancy.RunInference(context.Background(), params, &buf, nil)
+	require.NoError(t, err, "one hung executor must still fail over to a live host")
+}
+
 // An empty stream sets no content source, so a host that took the receipt and then held the connection
 // open silently is charged for it instead of being excused as slow.
 func TestAnEmptyStreamDoesNotEarnTheLongResponseExemption(t *testing.T) {

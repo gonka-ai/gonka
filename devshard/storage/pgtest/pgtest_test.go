@@ -42,6 +42,50 @@ func TestErrDockerUnavailableSentinel(t *testing.T) {
 	}
 }
 
+func TestIsDockerUnavailablePanic(t *testing.T) {
+	cases := []struct {
+		rec  any
+		want bool
+	}{
+		{"Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?", true},
+		{"permission denied while trying to connect to the Docker daemon socket at unix:///var/run/docker.sock", true},
+		{"exec: \"docker\": executable file not found in $PATH", true},
+		{"docker: command not found", true},
+		{"rootless Docker not supported", true},
+		{"dial unix /var/run/docker.sock: connect: no such file or directory", true},
+		{"runtime error: invalid memory address or nil pointer dereference", false},
+		{errors.New("unexpected testcontainers panic"), false},
+	}
+	for _, tc := range cases {
+		if got := isDockerUnavailablePanic(tc.rec); got != tc.want {
+			t.Fatalf("isDockerUnavailablePanic(%v)=%v, want %v", tc.rec, got, tc.want)
+		}
+	}
+}
+
+func TestRunOnce_UnexpectedPanicPropagates(t *testing.T) {
+	defer func() {
+		rec := recover()
+		if rec == nil {
+			t.Fatal("expected panic to propagate")
+		}
+		if isDockerUnavailablePanic(rec) {
+			t.Fatalf("unexpected docker classification for %v", rec)
+		}
+	}()
+	func() {
+		defer func() {
+			if rec := recover(); rec != nil {
+				if isDockerUnavailablePanic(rec) {
+					return
+				}
+				panic(rec)
+			}
+		}()
+		panic("runtime error: invalid memory address or nil pointer dereference")
+	}()
+}
+
 func requireCtxErr(t *testing.T, err error) {
 	t.Helper()
 	if !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {

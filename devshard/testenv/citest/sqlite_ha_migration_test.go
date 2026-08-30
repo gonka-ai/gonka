@@ -118,7 +118,7 @@ func TestSQLiteToPostgresHAMigration(t *testing.T) {
 	harness.WaitGETOK(t, client, eps.RouterHTTP+"/healthz", 2*time.Minute, "router after HA refresh", stack)
 	harness.WaitGETOK(t, client, haHealth, 2*time.Minute, "devshardd health via refreshed router", stack)
 
-	stack.StartService(t, "devshardctl")
+	stack.StartGateway(t)
 	eps = stack.Endpoints(t, cfg)
 	harness.WaitGETOK(t, client, eps.GatewayHTTP+"/v1/status", 3*time.Minute, "gateway after start", stack)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)

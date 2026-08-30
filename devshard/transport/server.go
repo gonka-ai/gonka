@@ -1042,6 +1042,14 @@ func (s *Server) HandleGetMempool(c echo.Context) (err error) {
 	op, finish := startHandlerSpan(c, "get_mempool")
 	defer finish(&err)
 
+	if catchErr := s.host.CatchUpFromStore(c.Request().Context()); catchErr != nil {
+		logging.Debug("get_mempool catch-up from store failed",
+			"subsystem", "transport",
+			"escrow_id", s.host.EscrowID(),
+			"error", catchErr)
+	}
+	s.host.EnqueueDueValidations()
+
 	txs := s.host.MempoolTxs()
 	observability.Request.SetMempoolSize(op, len(txs))
 	data, err := DevshardTxsToBytes(txs)
