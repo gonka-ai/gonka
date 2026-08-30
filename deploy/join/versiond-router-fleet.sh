@@ -108,6 +108,7 @@ min_ready=${VERSIOND_ROUTER_MIN_READY:-2}
 drain_timeout=${VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS:-1800}
 wait_timeout=${VERSIOND_ROUTER_START_TIMEOUT_SECONDS:-60}
 version_wait_timeout=${VERSIOND_ROUTING_ACTIVATION_TIMEOUT_SECONDS:-2100}
+runtime_timeout=${VERSIOND_ROUTER_RUNTIME_TIMEOUT_SECONDS:-5}
 pull_policy=${VERSIOND_ROUTER_PULL_POLICY:-always}
 config_dir=$(cd -- "$(dirname -- "$config_env")" && pwd -P)
 operation_id="$(date +%s%N)-$$"
@@ -116,15 +117,20 @@ command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
 command -v flock >/dev/null 2>&1 || fail "flock is required"
 command -v jq >/dev/null 2>&1 || fail "jq is required"
 command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required"
+command -v timeout >/dev/null 2>&1 || fail "timeout is required"
 # shellcheck source=deploy/join/deployment-lock.sh
 source "$script_dir/deployment-lock.sh"
 
 case $min_ready in '' | *[!0-9]*) fail "VERSIOND_ROUTER_MIN_READY must be a non-negative integer" ;; esac
 case $pull_policy in always | missing | never) ;; *) fail "VERSIOND_ROUTER_PULL_POLICY must be always, missing, or never" ;; esac
 case $fleet_id in '' | *[!A-Za-z0-9._-]*) fail "invalid VERSIOND_ROUTER_FLEET_ID '$fleet_id'" ;; esac
-for value in "$drain_timeout" "$wait_timeout" "$version_wait_timeout"; do
+for value in "$drain_timeout" "$wait_timeout" "$version_wait_timeout" "$runtime_timeout"; do
     case $value in '' | *[!0-9]* | 0) fail "router timeouts must be positive integer seconds" ;; esac
 done
+
+runtime_exec() {
+    timeout --kill-after=1s "${runtime_timeout}s" "$docker_bin" exec "$@"
+}
 
 read -r -a slots <<<"$slot_list"
 ((${#slots[@]} >= 2)) || fail "at least two router slots are required"
@@ -367,7 +373,7 @@ parent_diagnostic_available() {
 parent_server_refs() {
     local address=$1 status_pattern=${2:-'^(UP|DRAIN)'}
     local parent=${PROXY_ROUTER_CONTAINER:-proxy} stats
-    stats=$("$docker_bin" exec "$parent" /bin/sh -ec \
+    stats=$(runtime_exec "$parent" /bin/sh -ec \
         "printf 'show stat\\n' | socat stdio /var/run/haproxy/haproxy.sock") || return 2
     awk -F, -v address="$address" -v status_pattern="$status_pattern" '
         NR == 1 {
@@ -421,7 +427,7 @@ repair_stale_parent_drain() {
 
 parent_address_withdrawal_state() {
     local address=$1 parent=${PROXY_ROUTER_CONTAINER:-proxy} stats
-    stats=$("$docker_bin" exec "$parent" /bin/sh -ec \
+    stats=$(runtime_exec "$parent" /bin/sh -ec \
         "printf 'show stat\\n' | socat stdio /var/run/haproxy/haproxy.sock") || return 2
     awk -F, -v address="$address" '
         NR == 1 {
@@ -452,7 +458,7 @@ parent_address_withdrawal_state() {
 parent_runtime_command() {
     local command=$1 parent=${PROXY_ROUTER_CONTAINER:-proxy} response
     [[ $command != *"'"* ]] || return 1
-    response=$("$docker_bin" exec "$parent" /bin/sh -ec \
+    response=$(runtime_exec "$parent" /bin/sh -ec \
         "printf '%s\\n' '$command' | socat stdio /var/run/haproxy/reconciler.sock") || return 1
     [[ -z ${response//[[:space:]]/} ]]
 }

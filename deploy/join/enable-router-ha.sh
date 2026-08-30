@@ -122,11 +122,20 @@ container_generation_available() {
 
 initialize_base_tools() {
 	docker_bin=${DOCKER_BIN:-docker}
+	runtime_timeout=${ROUTER_HA_RUNTIME_TIMEOUT_SECONDS:-5}
+	case $runtime_timeout in
+		'' | *[!0-9]* | 0) fail "ROUTER_HA_RUNTIME_TIMEOUT_SECONDS must be positive" ;;
+	esac
 	command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
 	command -v flock >/dev/null 2>&1 || fail "flock is required"
 	command -v jq >/dev/null 2>&1 || fail "jq is required"
+	command -v timeout >/dev/null 2>&1 || fail "timeout is required"
 	# shellcheck source=deploy/join/deployment-lock.sh disable=SC1091
 	source "$script_dir/deployment-lock.sh"
+}
+
+runtime_exec() {
+	timeout --kill-after=1s "${runtime_timeout}s" "$docker_bin" exec "$@"
 }
 
 initialize_forward_context() {
@@ -811,7 +820,7 @@ verify_policy_contract() {
 
 policy_address_admission_state() {
 	local backend=$1 address=$2 stats
-	stats=$("$docker_bin" exec proxy /bin/sh -ec \
+	stats=$(runtime_exec proxy /bin/sh -ec \
 		"printf 'show stat\\n' | socat stdio /var/run/haproxy/haproxy.sock") || return 2
 	awk -F, -v backend="$backend" -v address="$address" '
 		NR == 1 {
@@ -865,7 +874,7 @@ policy_address_withdrawn() {
 
 policy_server_ref() {
 	local backend=$1 address=$2 stats
-	stats=$("$docker_bin" exec proxy /bin/sh -ec \
+	stats=$(runtime_exec proxy /bin/sh -ec \
 		"printf 'show stat\\n' | socat stdio /var/run/haproxy/haproxy.sock") || return 2
 	awk -F, -v backend="$backend" -v address="$address" '
 		NR == 1 {
@@ -894,7 +903,7 @@ policy_server_ref() {
 policy_runtime_command() {
 	local command=$1 response
 	[[ $command != *"'"* ]] || return 1
-	response=$("$docker_bin" exec proxy /bin/sh -ec \
+	response=$(runtime_exec proxy /bin/sh -ec \
 		"printf '%s\\n' '$command' | socat stdio /var/run/haproxy/reconciler.sock") || return 1
 	[[ -z ${response//[[:space:]]/} ]]
 }

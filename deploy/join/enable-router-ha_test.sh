@@ -384,6 +384,9 @@ fi
 if [[ ${1:-} == exec && ${2:-} == proxy && \
     ${3:-} == /bin/sh && ${4:-} == -ec && \
     ${5:-} == *'show stat'* ]]; then
+	if [[ ${RUNTIME_HANG:-false} == true ]]; then
+		sleep 300
+	fi
 	printf '# pxname,svname,status,check_status,check_rise,check_fall,check_health,addr\n'
 	for service in proxy-policy proxy-policy2; do
 		[[ -f $STATE_DIR/present-$service ]] || continue
@@ -721,6 +724,17 @@ grep -q '^runtime ready policy_http/proxy-policy2$' \
 if grep -q ' stop .*proxy-policy2$' "$tmpdir/partial-drain-failure.log"; then
 	fail "partial drain failure stopped the still-serving policy generation"
 fi
+
+runtime_timeout_started=$SECONDS
+if INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
+    INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/runtime-timeout.log" env \
+        ROUTER_HA_RUNTIME_TIMEOUT_SECONDS=1 \
+        ROUTER_HA_CUTOVER_TIMEOUT_SECONDS=3 RUNTIME_HANG=true; then
+	fail "a hung HAProxy Runtime API call was accepted"
+fi
+((SECONDS - runtime_timeout_started < 60)) || fail \
+	"hung HAProxy Runtime API call exceeded its external timeout"
 
 if INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
     INITIAL_PROXY_COMPONENT=proxy-router \
