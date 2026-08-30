@@ -1,6 +1,7 @@
 package user
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"strings"
@@ -17,14 +18,27 @@ const (
 	VoteErrorEscrowMissing      = "verifier_escrow_missing"
 	VoteErrorInferenceMissing   = "verifier_inference_missing"
 	VoteErrorUnreachable        = "verifier_unreachable"
+	VoteErrorQueueExpired       = "queue_expired"
+	VoteErrorRPCTimeout         = "rpc_timeout"
 )
+
+// errVerifierQueueExpired wraps an acquire wait that never got a slot. Distinct
+// from a VerifyTimeout that was sent and then hit a deadline, so classifyVoteError
+// can split the two.
+var errVerifierQueueExpired = errors.New("verifier queue wait expired")
 
 // classifyVoteError names a failed vote. Anything that never got far enough to say more counts as
 // unreachable, which is what a verifier that answered nothing at all amounts to.
 func classifyVoteError(err error) string {
+	if errors.Is(err, errVerifierQueueExpired) {
+		return VoteErrorQueueExpired
+	}
 	var upstream *transport.UpstreamStatusError
 	if errors.As(err, &upstream) {
 		return classifyUpstreamStatus(upstream)
+	}
+	if errors.Is(err, context.DeadlineExceeded) {
+		return VoteErrorRPCTimeout
 	}
 	return VoteErrorUnreachable
 }
