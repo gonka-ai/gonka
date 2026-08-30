@@ -122,6 +122,29 @@ func TestUser_ForceHeightSyncTurn_AppearsOnlyInTriggerDiff(t *testing.T) {
 	require.Equal(t, 2*slots, tx2.EndNonce)
 }
 
+func TestUser_ForceHeightSyncTurn_SlotsNumFollowsGroupNotCadenceOverride(t *testing.T) {
+	const numHosts = 3
+	session, _, _ := setupSessionWithOptions(t, numHosts, 100000, 100, WithHeightSyncCadence(10, 1))
+	ctx := context.Background()
+	_, err := session.SendInference(ctx, InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+		ForceHeightSyncAnchor: true,
+	})
+	require.NoError(t, err)
+	var force *types.MsgForceHeightSyncTurn
+	for _, tx := range session.Diffs()[0].Txs {
+		if inner := tx.GetForceHeightSyncTurn(); inner != nil {
+			force = inner
+			break
+		}
+	}
+	require.NotNil(t, force)
+	require.Equal(t, uint64(numHosts), force.SlotsNum,
+		"scheduler default slots=1 must not be copied onto MsgForceHeightSyncTurn")
+	require.Equal(t, uint64(numHosts), force.EndNonce)
+}
+
 func setupHeartbeatSession(t *testing.T, height *uint64) *Session {
 	t.Helper()
 	return setupHeartbeatSessionWithOracles(t, height, nil)
@@ -200,6 +223,18 @@ func TestHeartbeat_QuietSessionOpensTurn(t *testing.T) {
 	require.NotNil(t, rec)
 	require.Equal(t, uint64(1), rec.TurnSeq)
 	require.Equal(t, uint64(100), rec.HReq)
+}
+
+func TestHeartbeat_ForceSlotsNumFollowsGroupNotCadenceOverride(t *testing.T) {
+	var height uint64 = 100
+	session := setupHeartbeatSession(t, &height)
+	session.SetHeightSyncCadence(10, 1)
+	require.NoError(t, session.MaybeHeartbeat(context.Background()))
+	force := session.Diffs()[0].Txs[0].GetForceHeightSyncTurn()
+	require.NotNil(t, force)
+	require.Equal(t, uint64(3), force.SlotsNum,
+		"scheduler default slots=1 must not be copied onto MsgForceHeightSyncTurn")
+	require.Equal(t, uint64(3), force.EndNonce)
 }
 
 func TestHeartbeat_NoObservedHeightSkips(t *testing.T) {

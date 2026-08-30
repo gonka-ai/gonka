@@ -9,7 +9,6 @@ import (
 	"testing"
 	"time"
 
-	"devshard/heightsync"
 	"devshard/testenv/citest/harness"
 	"devshard/testenv/config"
 	"devshard/testenv/mockopenai"
@@ -274,10 +273,16 @@ func TestContainerE2E_HeightSync_OneHostStopped(t *testing.T) {
 	require.NotContains(t, logs, "close_ready_armed=1",
 		"a live host still receiving heartbeats must not arm just because a peer is down")
 
-	// H43: the abandoned-turn counter must move, not just the log line.
+	// One unreachable slot must show up as a planned cadence disposition, not
+	// silent reopen. Compose mock-chain usually seals D_ack before TurnTimeout,
+	// so the producer SettleTurn path emits turn_settled_degraded (plan §8.12.3).
+	// turns_abandoned_total is the TurnTimeout path; unit H43 covers that in
+	// isolation. Either counter moving means the stuck turn was accounted for.
 	harness.WaitMetricsPredicate(t, client, metricsURL, 2*time.Minute, func(b string) bool {
-		v, ok := harness.MetricLineValue(b, "devshard_gateway_heightsync_turns_abandoned_total", nil)
-		return ok && v >= 1
+		abandoned, aok := harness.MetricLineValue(b, "devshard_gateway_heightsync_turns_abandoned_total", nil)
+		settled, sok := harness.MetricLineValue(b, "devshard_gateway_heightsync_cadence_events_total",
+			map[string]string{"event": "turn_settled_degraded"})
+		return (aok && abandoned >= 1) || (sok && settled >= 1)
 	})
 }
 
@@ -306,10 +311,10 @@ func TestContainerE2E_HeightSync_BusyEscrowDischarge(t *testing.T) {
 	})
 
 	// MaybeRecordDischarged needs a stamp turnover and no open heartbeat turn.
-	// Interval is DefaultHeartbeatInterval; sub-interval chats miss the window.
+	// Sleeping Interval between chats leaves a quiet window the heartbeat loop
+	// wins; burst inside Interval so executor stamps can form Q first.
 	for i := 0; i < 8; i++ {
 		postHeightSyncChat(t, cfg, eps, "citest height-sync busy discharge")
-		time.Sleep(heightsync.DefaultHeartbeatInterval)
 	}
 
 	body := harness.WaitMetricsPredicate(t, client, metricsURL, 2*time.Minute, func(b string) bool {
@@ -416,7 +421,7 @@ func TestContainerE2E_HeightSync_SettleDropsSeries(t *testing.T) {
 	escrowID := harness.GetGatewayEscrowID(t, client, eps.GatewayHTTP)
 	metricsURL := eps.GatewayHTTP + "/metrics"
 	harness.WaitMetricsPredicate(t, client, metricsURL, 2*time.Minute, func(b string) bool {
-		return harness.AnyMetricHasLabel(b, "devshard_id", escrowID)
+		return harness.AnyHeightSyncMetricHasLabel(b, "devshard_id", escrowID)
 	})
 
 	harness.Step(t, "retire escrow %s via admin deactivate (same registry drop as settle)", escrowID)
@@ -424,7 +429,7 @@ func TestContainerE2E_HeightSync_SettleDropsSeries(t *testing.T) {
 	harness.WaitGatewayEscrowRetired(t, client, eps.GatewayHTTP, escrowID, 2*time.Minute)
 
 	harness.WaitMetricsPredicate(t, client, metricsURL, 2*time.Minute, func(b string) bool {
-		return !harness.AnyMetricHasLabel(b, "devshard_id", escrowID)
+		return !harness.AnyHeightSyncMetricHasLabel(b, "devshard_id", escrowID)
 	})
 }
 

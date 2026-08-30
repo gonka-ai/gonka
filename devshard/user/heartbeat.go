@@ -289,10 +289,7 @@ func (s *Session) flushHeartbeatAckRounds(ctx context.Context) error {
 }
 
 func (s *Session) heartbeatForceTxLocked(nonce uint64) *types.DevshardTx {
-	slots := uint64(len(s.group))
-	if s.heightSyncSlots != 0 {
-		slots = s.heightSyncSlots
-	}
+	slots := s.heightSyncForceSlotsLocked()
 	k := s.heightSyncK
 	if k == 0 {
 		k = 10

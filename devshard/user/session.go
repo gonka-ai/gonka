@@ -406,8 +406,9 @@ func WithStorage(s storage.Storage) SessionOption {
 	return func(sess *Session) { sess.store = s }
 }
 
-// WithHeightSyncCadence records K and slots for composing MsgForceHeightSyncTurn when
-// InferenceParams.ForceHeightSyncAnchor is set. Must match host/client AnchorScheduler config.
+// WithHeightSyncCadence records K (and optional scheduler slots) for height-sync
+// wiring. MsgForceHeightSyncTurn.slots_num always follows the escrow roster;
+// applyForceHeightSyncTurn rejects any other value.
 func WithHeightSyncCadence(k, slots uint64) SessionOption {
 	return func(sess *Session) {
 		sess.heightSyncK = k
@@ -415,7 +416,9 @@ func WithHeightSyncCadence(k, slots uint64) SessionOption {
 	}
 }
 
-// SetHeightSyncCadence sets K/slots for MsgForceHeightSyncTurn composition (e.g. after RecoverSession).
+// SetHeightSyncCadence records K (and optional scheduler slots) after RecoverSession
+// or ExtraClientConfig. Force-turn slots_num is always len(group); see
+// heightSyncForceSlotsLocked.
 func (s *Session) SetHeightSyncCadence(k, slots uint64) {
 	s.mu.Lock()
 	s.heightSyncK = k
@@ -425,6 +428,13 @@ func (s *Session) SetHeightSyncCadence(k, slots uint64) {
 		s.heightSyncWired.Store(true)
 		s.publishHeightSyncViewForce()
 	}
+}
+
+// heightSyncForceSlotsLocked is the SM invariant: MsgForceHeightSyncTurn.slots_num
+// must equal group size. Courier scheduler defaults (env unset → slots=1) must
+// not override this or the tx is dropped.
+func (s *Session) heightSyncForceSlotsLocked() uint64 {
+	return uint64(len(s.group))
 }
 
 // WithHeartbeatConfig overrides compiled heartbeat defaults (tests / runtimeparams).
@@ -1198,16 +1208,17 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 
 	txsForDiff := []*types.DevshardTx{startTx}
 	if params.ForceHeightSyncAnchor && s.heightSyncK != 0 {
-		slots := uint64(len(s.group))
-		if s.heightSyncSlots != 0 {
-			slots = s.heightSyncSlots
+		slots := s.heightSyncForceSlotsLocked()
+		k := s.heightSyncK
+		if k < slots {
+			k = slots
 		}
 		if !s.sm.HeightSyncForcedTurnActive(nonce) {
 			forceTx := &types.DevshardTx{Tx: &types.DevshardTx_ForceHeightSyncTurn{
 				ForceHeightSyncTurn: &types.MsgForceHeightSyncTurn{
 					TriggerNonce: nonce,
 					EndNonce:     nonce + slots - 1,
-					AnchorK:      s.heightSyncK,
+					AnchorK:      k,
 					SlotsNum:     slots,
 					Reason:       "manual",
 				},
