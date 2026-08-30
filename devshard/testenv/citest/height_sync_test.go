@@ -239,11 +239,16 @@ func TestContainerE2E_HeightSync_OneHostStopped(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, _, eps := harness.BootHeightSyncStack(t, "citest-hs-h27-*")
+	// H43 is one unreachable slot. The default 2-container stack is an HA pair
+	// of one identity: versiond-0 owns every slot and versiond-1 owns none, so
+	// stopping the replica still lets Q complete. HA pair + solo (3 containers,
+	// 2 slots) makes stopping the solo drop a real roster slot.
+	stack, cfg, eps := harness.BootHeightSyncHAPlusSoloStack(t, "citest-hs-h27-*")
+	solo := harness.FirstSoloHostID(t, cfg)
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1")
+			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", solo)
 		}
 	})
 	harness.WaitStackHealthy(t, stack, eps)
@@ -256,8 +261,8 @@ func TestContainerE2E_HeightSync_OneHostStopped(t *testing.T) {
 		return ok && v >= 1
 	})
 
-	harness.Step(t, "stop versiond-1 (one host down)")
-	stack.StopService(t, "versiond-1")
+	harness.Step(t, "stop "+solo+" (solo identity / one slot down)")
+	stack.StopService(t, solo)
 
 	var logs string
 	ok := harness.AssertEventually(t, 2*time.Minute, 2*time.Second, func() bool {
@@ -293,29 +298,28 @@ func TestContainerE2E_HeightSync_BusyEscrowDischarge(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps := harness.BootHeightSyncStack(t, "citest-hs-h42-*")
+	// Q stamp turnover needs two distinct SlotIDs. The default 2-container
+	// stack is one identity: versiond-0 owns both slots and heartbeat acks
+	// already take Q. HA pair + solo is two executors, matching unit H2.
+	stack, cfg, eps := harness.BootHeightSyncHAPlusSoloStack(t, "citest-hs-h42-*")
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1")
+			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1",
+				harness.FirstSoloHostID(t, cfg))
 		}
 	})
 	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
 
 	metricsURL := eps.GatewayHTTP + "/metrics"
-	harness.WaitMetricsPredicate(t, client, metricsURL, 2*time.Minute, func(b string) bool {
-		v, ok := harness.MetricLineValue(b, "devshard_gateway_heightsync_cadence_events_total",
-			map[string]string{"event": "heartbeat_opened"})
-		return ok && v >= 1
-	})
-
-	// MaybeRecordDischarged needs a stamp turnover and no open heartbeat turn.
-	// Sleeping Interval between chats leaves a quiet window the heartbeat loop
-	// wins; burst inside Interval so executor stamps can form Q first.
-	for i := 0; i < 8; i++ {
-		postHeightSyncChat(t, cfg, eps, "citest height-sync busy discharge")
-	}
+	// Do not wait for heartbeat_opened: that spends the Interval on ack Q
+	// (plan H42 is substitution, heartbeat_opened stays zero in the unit).
+	// Two back-to-back chats address nonce%2 == both slots, like
+	// TestHeartbeat_BusySessionWithStampsEmitsNone, then the ticker's next
+	// due-check should see lastTurnoverFromStamp.
+	postHeightSyncChat(t, cfg, eps, "citest height-sync busy discharge slot-a")
+	postHeightSyncChat(t, cfg, eps, "citest height-sync busy discharge slot-b")
 
 	body := harness.WaitMetricsPredicate(t, client, metricsURL, 2*time.Minute, func(b string) bool {
 		v, ok := harness.MetricLineValue(b, "devshard_gateway_heightsync_cadence_events_total",

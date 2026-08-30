@@ -70,6 +70,43 @@ func BootHeightSyncStack(t *testing.T, prefix string) (*Stack, *config.File, End
 	return stack, cfg, stack.Endpoints(t, cfg)
 }
 
+// BootHeightSyncHAPlusSoloStack is height-sync with an HA pair plus one solo
+// identity (3 containers, 2 escrow slots). Stopping the solo unreachs a slot;
+// stopping versiond-1 only takes down a replica that owns none.
+func BootHeightSyncHAPlusSoloStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteMultiConfig(t, stack.WorkDir, MultiConfigOpts{Hosts: 3, EscrowSlots: 2})
+	stack.RunGencompose(t)
+	EnableHeightSyncCompose(t, stack.ComposePath)
+	cfg := stack.LoadConfig(t)
+	requireThreeVersiondHosts(t, cfg)
+	require.Len(t, config.OnChainIdentityHosts(cfg), 2, "HA pair + solo is two identities")
+	require.Empty(t, cfg.Hosts[1].SlotIDs, "versiond-1 is the HA replica and must own no slots")
+	require.NotEmpty(t, cfg.Hosts[2].SlotIDs, "the solo must own a slot so stopping it is H43")
+	stack.Up(t)
+	return stack, cfg, stack.Endpoints(t, cfg)
+}
+
+// FirstSoloHostID is the compose service of the first on-chain identity that
+// does not share hosts[0]'s KEY_NAME. On the default 3-host multi roster that
+// is versiond-2.
+func FirstSoloHostID(t *testing.T, cfg *config.File) string {
+	t.Helper()
+	require.NotNil(t, cfg)
+	require.NotEmpty(t, cfg.Hosts)
+	haKey := config.VersiondKeyName(cfg, cfg.Hosts[0])
+	for _, h := range config.OnChainIdentityHosts(cfg) {
+		if config.VersiondKeyName(cfg, h) != haKey {
+			require.NotEmpty(t, h.ID)
+			return h.ID
+		}
+	}
+	t.Fatal("expected a solo identity besides the HA pair")
+	return ""
+}
+
 // BootHeightSyncLegacyDapiStack is BootHeightSyncStack with mock-dapi omitting
 // /block/* (stand-in for ghcr.io/product-science/api:0.2.15 built from this
 // branch). Real dapi cannot replace mock-dapi here: mock-chain is not CometBFT.

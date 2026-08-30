@@ -706,3 +706,54 @@ func (c *spanProbeClient) Send(ctx context.Context, req host.HostRequest, _ io.W
 	}
 	return c.inner.Send(ctx, req, nil, receiptHandler)
 }
+
+func stampedConfirmTx(inferenceID, height uint64) *types.DevshardTx {
+	return &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: inferenceID, ObservedHeight: height, ObservedBlockHash: []byte{0xaa},
+	}}}
+}
+
+// A confirm whose HTTP response never came back still discharges the cadence
+// once it lands in the log through a peer's mempool: the executor signature over
+// the stamp is the same round-trip an ack proves.
+func TestHeartbeat_LogResidentStampsDischargeCadence(t *testing.T) {
+	var height uint64 = 100
+	session := setupHeartbeatSession(t, &height)
+	t.Cleanup(func() { _ = session.Close() })
+	require.Equal(t, 2, session.heartbeat.Quorum())
+
+	// Inferences 1 and 2 belong to different executors under id % len(group).
+	session.observeTurnLocked(types.Diff{Nonce: 1, Txs: []*types.DevshardTx{
+		stampedConfirmTx(1, 100),
+		stampedConfirmTx(2, 100),
+	}})
+
+	require.Equal(t, 1, session.heartbeat.Turnovers())
+	require.True(t, session.heartbeat.LastTurnoverFromStamp(), "Q stamps must turn the cadence over as stamps")
+	require.True(t, session.heartbeat.MaybeRecordDischarged(time.Now(), 100))
+}
+
+func TestHeartbeat_LogResidentStampsNeedDistinctExecutors(t *testing.T) {
+	var height uint64 = 100
+	session := setupHeartbeatSession(t, &height)
+	t.Cleanup(func() { _ = session.Close() })
+
+	// 1 and 4 are the same executor, so this is one claim, not Q.
+	session.observeTurnLocked(types.Diff{Nonce: 1, Txs: []*types.DevshardTx{
+		stampedConfirmTx(1, 100),
+		stampedConfirmTx(4, 100),
+	}})
+	require.Zero(t, session.heartbeat.Turnovers())
+
+	// A stamped start is the sequencer's own reading and credits nobody.
+	session.observeTurnLocked(types.Diff{Nonce: 2, Txs: []*types.DevshardTx{
+		{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+			InferenceId: 2, ObservedHeight: 100, ObservedBlockHash: []byte{0xaa},
+		}}},
+	}})
+	require.Zero(t, session.heartbeat.Turnovers())
+
+	// A second executor completes Q.
+	session.observeTurnLocked(types.Diff{Nonce: 3, Txs: []*types.DevshardTx{stampedConfirmTx(2, 100)}})
+	require.Equal(t, 1, session.heartbeat.Turnovers())
+}

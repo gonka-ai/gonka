@@ -51,6 +51,37 @@ func RefStamp(tx *types.DevshardTx) (uint64, []byte, bool) {
 	return msg.GetObservedHeight(), msg.GetObservedBlockHash(), true
 }
 
+// ExecutorStamp returns the inference id and reference height of a host-signed
+// executor stamp: MsgConfirmStart, whose executor_sig covers
+// ExecutorReceiptContent, or MsgFinishInference, whose proposer_sig covers the
+// message. Both bind the height to the executor slot, so a stamped leg proves
+// the same host round-trip a MsgHeightAck does and is worth the same claim on
+// the cadence (spec §10.5). The id attributes it: the executor of inference i is
+// group[i % len(group)], the arithmetic RefProducingNonce already relies on.
+//
+// MsgStartInference is excluded even though it carries a stamp: that height is
+// the sequencer's own reading, and a producer cannot discharge its own cadence.
+func ExecutorStamp(tx *types.DevshardTx) (inferenceID, height uint64, ok bool) {
+	if tx == nil {
+		return 0, 0, false
+	}
+	var id uint64
+	var msg any
+	switch {
+	case tx.GetConfirmStart() != nil:
+		id, msg = tx.GetConfirmStart().InferenceId, tx.GetConfirmStart()
+	case tx.GetFinishInference() != nil:
+		id, msg = tx.GetFinishInference().InferenceId, tx.GetFinishInference()
+	default:
+		return 0, 0, false
+	}
+	h, stamped := inferenceStamp(msg)
+	if !stamped {
+		return 0, 0, false
+	}
+	return id, h, true
+}
+
 // RefProducingNonce is the nonce whose handling produced a reference stamp.
 //
 // This is the nonce the stamp must be judged against, not the nonce it lands at:

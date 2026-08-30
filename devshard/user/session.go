@@ -989,22 +989,52 @@ func (s *Session) observeTurnLocked(diff types.Diff) {
 	hNow := heightsync.LogResidentHeight(diff.Txs, s.turnTracker.LastCompletedHeight())
 	s.turnTracker.Observe(diff.Nonce, diff.Txs, hNow)
 
-	// Acks are host-signed and name their own slot, so they are the one signal
-	// that needs no nonce arithmetic to attribute. Cadence asks whether the
-	// roster is answering, not whether it agrees on a height, so sync_state is
-	// not consulted — the same rule TurnTracker uses for Q. A stampless ack is
-	// still no round-trip to credit.
+	// Any host-signed stamp in the log is a claim: an ack, which names its own
+	// slot, or a stamped confirm / finish, which the executor rule attributes to
+	// one. Crediting the log and not only the HTTP reply is what keeps a
+	// recovered exchange — response dropped, leg arriving through a peer's
+	// mempool — from still owing a heartbeat. Cadence asks whether the roster is
+	// answering, not whether it agrees on a height, so sync_state is not
+	// consulted; that is the rule TurnTracker uses for Q. A stampless leg is
+	// still no round-trip to credit. Double-crediting an exchange that also came
+	// back over HTTP is harmless: claimed is a set keyed by slot, cleared on Q.
+	//
+	// These txs are the applied set, so every signature here has already been
+	// verified by the state machine.
 	now := s.nowLocked()
 	for _, tx := range diff.Txs {
-		ack := tx.GetHeightAck()
-		if ack == nil || !heightsync.StampPresent(ack.ObservedBlockHash) {
+		if ack := tx.GetHeightAck(); ack != nil {
+			if !heightsync.StampPresent(ack.ObservedBlockHash) {
+				continue
+			}
+			if s.heartbeat.NoteClaim(ack.SlotId, now) && s.anchors != nil && ack.ObservedHeight > 0 {
+				s.anchors.RecordTurnover(ack.ObservedHeight)
+			}
+			s.noteAckObsLocked(ack)
 			continue
 		}
-		if s.heartbeat.NoteClaim(ack.SlotId, now) && s.anchors != nil && ack.ObservedHeight > 0 {
-			s.anchors.RecordTurnover(ack.ObservedHeight)
+		inferenceID, height, ok := heightsync.ExecutorStamp(tx)
+		if !ok {
+			continue
 		}
-		s.noteAckObsLocked(ack)
+		slot, known := s.executorSlotLocked(inferenceID)
+		if !known {
+			continue
+		}
+		if s.heartbeat.NoteStamp(slot, now) && s.anchors != nil && height > 0 {
+			s.anchors.RecordTurnover(height)
+		}
 	}
+}
+
+// executorSlotLocked is the state machine's executor rule, group[id % len(group)],
+// which is what applyStartInference records as the record's ExecutorSlot and
+// therefore the slot confirm and finish signatures are verified against.
+func (s *Session) executorSlotLocked(inferenceID uint64) (uint32, bool) {
+	if len(s.group) == 0 {
+		return 0, false
+	}
+	return s.group[inferenceID%uint64(len(s.group))].SlotID, true
 }
 
 func (s *Session) nowLocked() time.Time {

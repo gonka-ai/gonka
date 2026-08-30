@@ -77,6 +77,27 @@ func TestAssignSlots_MultiTwoHostsHAOwnsAllSlots(t *testing.T) {
 	require.Equal(t, "gonka1ha", cfg.Participants[0].Address)
 }
 
+func TestAssignSlots_MultiThreeHostsTwoSlotsHAPlusSolo(t *testing.T) {
+	cfg := &config.File{
+		Versiond:       config.VersiondCfg{Mode: config.VersiondModeMulti},
+		Escrow:         config.EscrowMeta{Slots: 2, SlotURL: "http://router:8080"},
+		VersiondRouter: config.VersiondRouterCfg{Host: "versiond-router"},
+		Hosts: []config.HostCfg{
+			{ID: "versiond-0", Address: "gonka1ha"},
+			{ID: "versiond-1", Address: "gonka1replica"},
+			{ID: "versiond-2", Address: "gonka1solo"},
+		},
+	}
+	assignSlots(cfg)
+	require.Equal(t, []int{0}, cfg.Hosts[0].SlotIDs)
+	require.Empty(t, cfg.Hosts[1].SlotIDs, "HA replica owns no slots")
+	require.Equal(t, []int{1}, cfg.Hosts[2].SlotIDs)
+
+	syncChainSeed(cfg)
+	require.Equal(t, []string{"gonka1ha", "gonka1solo"}, cfg.Escrows[0].Slots)
+	require.Len(t, cfg.Participants, 2)
+}
+
 func TestAssignSlots_MultiThreeHostsHAPlusSolo(t *testing.T) {
 	cfg := &config.File{
 		Versiond:       config.VersiondCfg{Mode: config.VersiondModeMulti},
