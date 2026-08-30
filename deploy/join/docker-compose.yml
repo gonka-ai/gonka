@@ -153,8 +153,7 @@ services:
 
   edge-api:
     container_name: edge-api
-    image: >-
-      ${EDGE_API_IMAGE:-ghcr.io/product-science/edge-api:0.2.15-devshard-v5}
+    image: ghcr.io/product-science/edge-api:0.2.15
     environment:
       - EDGE_API_PORT=18080
       - CHAIN_GRPC_URL=node:9090
@@ -162,30 +161,8 @@ services:
       - EDGE_API_OTEL_ENABLED=${EDGE_API_OTEL_ENABLED:-false}
       - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
       - OTEL_HEADERS=${OTEL_HEADERS:-}
-      # Compose passes only what is listed here, so these must be declared for
-      # the values in config.env to reach the process at all.
-      - EDGE_API_DRAIN_ANNOUNCE=${EDGE_API_DRAIN_ANNOUNCE:-5s}
-      - EDGE_API_SHUTDOWN_BUDGET=${EDGE_API_SHUTDOWN_BUDGET:-2m}
     depends_on:
       - node
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "/bin/busybox",
-          "wget",
-          "-q",
-          "-O",
-          "/dev/null",
-          "http://127.0.0.1:18080/readyz",
-        ]
-      interval: 1s
-      timeout: 3s
-      retries: 3
-      start_period: ${EDGE_API_HEALTH_START_PERIOD:-2m}
-    # Outer Docker backstop; keep it above the internal shutdown budget so a
-    # query in flight is not cut by SIGKILL.
-    stop_grace_period: ${EDGE_API_STOP_GRACE_PERIOD:-3m}
     restart: always
 
   versiond:
@@ -273,8 +250,8 @@ services:
     <<: *proxy-policy
 
   # The only public listener. It balances the policy workers in TCP mode and
-  # owns the active, route-aware versiond-router and edge-api pools on private
-  # ports consumed by those workers.
+  # owns the active, route-aware versiond-router pools on private ports consumed
+  # by those workers.
   proxy:
     container_name: proxy
     image: >-
@@ -293,9 +270,6 @@ services:
       - HAPROXY_DNS_RESOLVER=${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}
       - VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=${VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS:-86400}
       - PROXY_VERSIOND_PORT=18081
-      - PROXY_EDGE_API_PORT=18082
-      - EDGE_API_POOL_HOST=${EDGE_API_POOL_HOST:-edge-api-pool}
-      - EDGE_API_PORT=${EDGE_API_PORT:-18080}
     networks:
       default:
         aliases:
