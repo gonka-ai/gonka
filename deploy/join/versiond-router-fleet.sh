@@ -1518,6 +1518,9 @@ fleet_maintenance_rollout() {
     # point. This catches partial catalog convergence while exact rollback
     # images and environments are still available.
     select_candidate_route_view
+    for slot in "${slots[@]}"; do
+        wait_parent_admission "$slot"
+    done
     fleet_status
 
     maintenance_active=false
