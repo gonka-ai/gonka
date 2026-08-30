@@ -102,8 +102,8 @@ const (
 	TimeoutVerifierEscrowMissing      TimeoutReason = "verifier_escrow_missing"
 	TimeoutVerifierInferenceMissing   TimeoutReason = "verifier_inference_missing"
 	TimeoutVerifierUnreachable        TimeoutReason = "verifier_unreachable"
-	TimeoutVerifierQueueExpired       TimeoutReason = "queue_expired"
-	TimeoutVerifierRPCTimeout         TimeoutReason = "rpc_timeout"
+	TimeoutVerifierQueueExpired       TimeoutReason = "verifier_queue_expired"
+	TimeoutVerifierRPCTimeout         TimeoutReason = "verifier_rpc_timeout"
 	TimeoutVoteWeightShort            TimeoutReason = "vote_weight_short"
 )
 
@@ -358,8 +358,8 @@ var reasonOrigin = map[string]FailureOrigin{
 	"verifier_escrow_missing":      FailureTransportUnknown,
 	"verifier_inference_missing":   FailureTransportUnknown,
 	"verifier_unreachable":         FailureTransportUnknown,
-	"queue_expired":                FailureTransportUnknown,
-	"rpc_timeout":                  FailureTransportUnknown,
+	"verifier_queue_expired":       FailureTransportUnknown,
+	"verifier_rpc_timeout":         FailureTransportUnknown,
 	"vote_weight_short":            FailureTransportUnknown,
 }
 

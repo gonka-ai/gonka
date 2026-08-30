@@ -116,9 +116,9 @@ Fast accepts (`elapsed ≤ 15s`) stay on `timeout_vote_result` only.
 
 ### 5. `timeout_vote_tally` — name the error class
 
-Add `error_classes=queue_expired:4` (or `rpc_timeout:2,queue_expired:2`). Today `errors=4` does not say whether the host was reached.
+Add `error_classes=verifier_queue_expired:4` (or `verifier_queue_expired:2,verifier_rpc_timeout:2`). Today `errors=4` does not say whether the host was reached.
 
-Add `VoteErrorQueueExpired = "queue_expired"` in `classifyVoteError` for `errors.Is(err, context.DeadlineExceeded)` **before** the RPC (acquire wait). RPC deadline after send stays a separate class `VoteErrorRPCTimeout = "rpc_timeout"` (or keep `verifier_unreachable` for RPC and only split queue). Prefer two classes: queue vs RPC. Accounting already uses this string as a counter key — two new bounded names, not addresses.
+Add `VoteErrorQueueExpired = "verifier_queue_expired"` in `classifyVoteError` for the acquire wait, and `VoteErrorRPCTimeout = "verifier_rpc_timeout"` for a deadline **after** the RPC was sent. Both keep the `verifier_` prefix its siblings use, because the value is a shared accounting counter key — two new bounded names, not addresses.
 
 ---
 

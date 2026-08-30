@@ -75,7 +75,7 @@ func TestFormatInflightSnapshot_OldestFirstCappedAtEight(t *testing.T) {
 
 func TestFormatErrorClasses_Sorted(t *testing.T) {
 	require.Empty(t, formatErrorClasses(nil))
-	require.Equal(t, "queue_expired:4,rpc_timeout:2", formatErrorClasses(map[string]int{
+	require.Equal(t, "verifier_queue_expired:4,verifier_rpc_timeout:2", formatErrorClasses(map[string]int{
 		VoteErrorRPCTimeout:   2,
 		VoteErrorQueueExpired: 4,
 	}))
