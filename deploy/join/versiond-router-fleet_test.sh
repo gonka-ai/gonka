@@ -453,6 +453,14 @@ docker exec "gonka-router-fleet-proxy-$suffix" /bin/busybox wget \
     >/dev/null \
     || fail "top HAProxy did not observe the router fleet"
 
+# Maintenance replacement crosses its commit point only after the parent has
+# completed fresh L7 admission for every replacement slot.
+VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true \
+    VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
+    "${fleet[@]}" maintenance-rollout >/dev/null
+"${fleet[@]}" verify-admission v4 >/dev/null || fail \
+    "maintenance rollout committed before parent admission converged"
+
 for slot in "${slots[@]}"; do
     id=$(docker ps -q \
         --filter label=ai.gonka.component=versiond-router \
