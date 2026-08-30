@@ -308,40 +308,35 @@ func TestHandleErrorMiss_PinnedFinishSurvivesConcurrentCompose(t *testing.T) {
 	session.mu.Unlock()
 
 	started := make(chan struct{})
+	composed := make(chan struct{})
 	var once sync.Once
 	for i, c := range session.clients {
 		session.clients[i] = &timeoutVoteClient{
 			HostClient: c,
 			mockTimeoutVerifier: &mockTimeoutVerifier{
-				accept:   true,
-				signer:   hosts[i],
-				group:    session.group,
-				slotIdx:  i,
-				delay:    80 * time.Millisecond,
-				onVerify: func() { once.Do(func() { close(started) }) },
+				accept:  true,
+				signer:  hosts[i],
+				group:   session.group,
+				slotIdx: i,
+				onVerify: func() {
+					once.Do(func() {
+						close(started)
+						<-composed
+					})
+				},
 			},
 		}
 	}
 
-	var wg sync.WaitGroup
-	done := make(chan struct{})
-	wg.Add(1)
+	composeErr := make(chan error, 1)
 	go func() {
-		defer wg.Done()
 		<-started
-		for {
-			select {
-			case <-done:
-				return
-			default:
-				_ = session.SendPendingDiff(context.Background())
-			}
-		}
+		composeErr <- session.SendPendingDiff(context.Background())
+		close(composed)
 	}()
 
 	_, err := session.HandleErrorMiss(context.Background(), nonce, finishBytes, payload)
-	close(done)
-	wg.Wait()
+	require.NoError(t, <-composeErr)
 	require.ErrorIs(t, err, ErrInferenceMissed)
 	require.Equal(t, types.StatusTimedOut, session.StateMachine().SnapshotState().Inferences[nonce].Status)
 
