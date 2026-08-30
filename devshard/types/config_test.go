@@ -150,3 +150,32 @@ func TestSessionConfigWithPrice_WrapsBuilder(t *testing.T) {
 		)
 	})
 }
+
+func TestSessionConfigFromEscrow_LogprobsMode(t *testing.T) {
+	const groupSize = 4
+
+	t.Run("unset falls back to default", func(t *testing.T) {
+		cfg := SessionConfigFromEscrow(groupSize, EscrowSessionFields{})
+		require.Equal(t, DefaultLogprobsMode, cfg.LogprobsMode)
+	})
+
+	t.Run("unrecognized falls back to default", func(t *testing.T) {
+		cfg := SessionConfigFromEscrow(groupSize, EscrowSessionFields{LogprobsMode: "processed"})
+		require.Equal(t, DefaultLogprobsMode, cfg.LogprobsMode)
+	})
+
+	t.Run("legal values are preserved", func(t *testing.T) {
+		require.Equal(t, LogprobsModeRaw,
+			SessionConfigFromEscrow(groupSize, EscrowSessionFields{LogprobsMode: LogprobsModeRaw}).LogprobsMode)
+		require.Equal(t, LogprobsModeProcessed,
+			SessionConfigFromEscrow(groupSize, EscrowSessionFields{LogprobsMode: LogprobsModeProcessed}).LogprobsMode)
+	})
+}
+
+func TestNormalizeLogprobsMode(t *testing.T) {
+	require.Equal(t, DefaultLogprobsMode, NormalizeLogprobsMode(""))
+	require.Equal(t, DefaultLogprobsMode, NormalizeLogprobsMode("raw"))
+	require.Equal(t, DefaultLogprobsMode, NormalizeLogprobsMode("processed"))
+	require.Equal(t, LogprobsModeRaw, NormalizeLogprobsMode(LogprobsModeRaw))
+	require.Equal(t, LogprobsModeProcessed, NormalizeLogprobsMode(LogprobsModeProcessed))
+}

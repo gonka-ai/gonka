@@ -831,9 +831,10 @@ func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteReq
 		Prompt:      req.Payload.Prompt,
 		PromptHash:  rec.PromptHash,
 		InputLength: rec.InputLength,
-		MaxTokens:   rec.MaxTokens,
-		EscrowID:    h.escrowID,
-		EpochID:     h.epochID,
+		MaxTokens:    rec.MaxTokens,
+		EscrowID:     h.escrowID,
+		EpochID:      h.epochID,
+		LogprobsMode: h.sm.Config().LogprobsMode,
 	}
 	return sig, confirmedAt, job, nil, outcome, nil
 }
@@ -1105,6 +1106,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		EscrowID:        job.escrowID,
 		ExecutorAddress: job.executorAddress,
 		EpochID:         job.epochID,
+		LogprobsMode:    h.sm.Config().LogprobsMode,
 	})
 	if err != nil {
 		// Payload already pruned on the executor: the validation window is
@@ -1435,9 +1437,10 @@ func (h *Host) challengeReceiptLocked(inferenceID uint64, payload *InferencePayl
 		Prompt:      payload.Prompt,
 		PromptHash:  rec.PromptHash,
 		InputLength: rec.InputLength,
-		MaxTokens:   rec.MaxTokens,
-		EscrowID:    h.escrowID,
-		EpochID:     h.epochID,
+		MaxTokens:    rec.MaxTokens,
+		EscrowID:     h.escrowID,
+		EpochID:      h.epochID,
+		LogprobsMode: h.sm.Config().LogprobsMode,
 	}
 	return sig, confirmedAt, job, nil
 }
