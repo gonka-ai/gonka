@@ -19,7 +19,8 @@
 # only container_name and per-instance data volumes differ.
 
 x-versiond: &versiond
-  image: ghcr.io/product-science/versiond:0.2.15
+  image: >-
+    ${VERSIOND_IMAGE:-ghcr.io/product-science/versiond:0.2.15-devshard-v5}
   environment:
     - VERSIOND_ORACLE_URL=http://api:9100/versions
     - VERSIOND_BINARY_NAME=devshardd
@@ -87,7 +88,8 @@ x-versiond: &versiond
 services:
   devshard-postgres:
     container_name: devshard-postgres
-    image: ${DEVSHARD_POSTGRES_IMAGE:-postgres:16-alpine}
+    image: >-
+      ${DEVSHARD_POSTGRES_IMAGE:-postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777}
     environment:
       POSTGRES_DB: ${DEVSHARD_POSTGRES_DB:-devshardd}
       POSTGRES_USER: ${DEVSHARD_POSTGRES_USER:-devshardd}
