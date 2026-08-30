@@ -588,14 +588,25 @@ func (sm *StateMachine) RebuildSealedInferenceIndex() error {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
-	if err := sm.inferenceStore.DeleteSealedInferences(sm.state.EscrowID); err != nil {
-		return err
-	}
 	ids := make([]uint64, 0, len(sm.sealedNonces))
 	for id := range sm.sealedNonces {
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
+
+	existing := make(map[uint64]storage.InferenceRow, len(ids))
+	for _, id := range ids {
+		row, ok, err := sm.inferenceStore.GetSealedInference(sm.state.EscrowID, id)
+		if err != nil {
+			return err
+		}
+		if ok {
+			existing[id] = row
+		}
+	}
+	if err := sm.inferenceStore.DeleteSealedInferences(sm.state.EscrowID); err != nil {
+		return err
+	}
 	for _, id := range ids {
 		if _, live := sm.state.Inferences[id]; live {
 			continue
@@ -609,6 +620,9 @@ func (sm *StateMachine) RebuildSealedInferenceIndex() error {
 			if entryID, rec, err := unmarshalInferenceEntry(cached); err == nil && entryID == id {
 				row = inferenceObsRow(id, nonce, rec)
 			}
+		} else if existingRow, ok := existing[id]; ok {
+			existingRow.SealedNonce = nonce
+			row = existingRow
 		}
 		if err := sm.inferenceStore.InsertSealedInference(sm.state.EscrowID, row); err != nil {
 			return err

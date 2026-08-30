@@ -140,16 +140,21 @@ test-render: test-sidecar
 	fi; \
 	mkdir "$$tmpdir/ssl"; \
 	touch "$$tmpdir/ssl-a.conf" "$$tmpdir/ssl-b.conf"; \
+	openssl req -x509 -newkey rsa:2048 -nodes -days 1 \
+		-subj /CN=example.test \
+		-keyout "$$tmpdir/issued.key" -out "$$tmpdir/issued.crt" >/dev/null 2>&1; \
 	printf '%s\n' '#!/bin/sh' 'set -eu' \
 		'printf "%s\n" called >> /etc/nginx/ssl/setup.calls' \
-		'sleep 2' ': > /etc/nginx/ssl/cert.pem' \
-		': > /etc/nginx/ssl/private.key' > "$$tmpdir/setup-ssl.sh"; \
+		'sleep 2' 'cp /test/issued.crt /etc/nginx/ssl/cert.pem' \
+		'cp /test/issued.key /etc/nginx/ssl/private.key' > "$$tmpdir/setup-ssl.sh"; \
 	chmod +x "$$tmpdir/setup-ssl.sh"; \
 	docker create --name "$$ssl_worker_a" \
 		-e NGINX_MODE=https -e CERT_ISSUER_DOMAIN=example.test \
 		-e PROXY_CERT_RELOAD_POLL_SECONDS=60 \
 		-v "$$tmpdir/ssl:/etc/nginx/ssl" \
 		-v "$$tmpdir/setup-ssl.sh:/setup-ssl.sh:ro" \
+		-v "$$tmpdir/issued.crt:/test/issued.crt:ro" \
+		-v "$$tmpdir/issued.key:/test/issued.key:ro" \
 		-v "$$tmpdir/ssl-a.conf:/etc/nginx/nginx.conf" \
 		"$$image" sleep 30 >/dev/null; \
 	docker create --name "$$ssl_worker_b" \
@@ -157,6 +162,8 @@ test-render: test-sidecar
 		-e PROXY_CERT_RELOAD_POLL_SECONDS=60 \
 		-v "$$tmpdir/ssl:/etc/nginx/ssl" \
 		-v "$$tmpdir/setup-ssl.sh:/setup-ssl.sh:ro" \
+		-v "$$tmpdir/issued.crt:/test/issued.crt:ro" \
+		-v "$$tmpdir/issued.key:/test/issued.key:ro" \
 		-v "$$tmpdir/ssl-b.conf:/etc/nginx/nginx.conf" \
 		"$$image" sleep 30 >/dev/null; \
 	docker start "$$ssl_worker_a" "$$ssl_worker_b" >/dev/null; \
@@ -183,6 +190,8 @@ test-render: test-sidecar
 		-e PROXY_CERT_RELOAD_POLL_SECONDS=60 \
 		-v "$$tmpdir/ssl:/etc/nginx/ssl" \
 		-v "$$tmpdir/setup-ssl.sh:/setup-ssl.sh:ro" \
+		-v "$$tmpdir/issued.crt:/test/issued.crt:ro" \
+		-v "$$tmpdir/issued.key:/test/issued.key:ro" \
 		-v "$$tmpdir/ssl-fast.conf:/etc/nginx/nginx.conf" \
 		"$$image" sleep 30 >/dev/null; \
 	docker start "$$ssl_worker_fast" >/dev/null; \

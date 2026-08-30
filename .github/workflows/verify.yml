@@ -277,6 +277,21 @@ jobs:
       - name: Render private policy configuration
         run: make -C proxy test-render
 
+  test-proxy-ssl-install:
+    runs-on: ubuntu-latest
+    name: Test proxy TLS certificate publication
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Exercise atomic certificate installation
+        run: ./proxy/setup-ssl_test.sh
+
+      - name: Build proxy image
+        run: docker build -t gonka-proxy-ssl-recovery-test ./proxy
+
+      - name: Exercise HTTPS recovery from a damaged certificate
+        run: ./proxy/ssl-recovery_test.sh
+
   build-and-test-edge-api:
     runs-on: ubuntu-latest
     name: Build and Test edge-api (validation)
@@ -430,3 +445,17 @@ jobs:
           name: Devshard E2E Tests
           path: devshard/build/test-results/e2e/junit.xml
           reporter: java-junit
+
+  test-devshard-postgres-migration:
+    runs-on: ubuntu-latest
+    name: Test devshard PostgreSQL persistence migration
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Check migration scripts
+        run: |
+          shellcheck deploy/join/devshard-postgres-*.sh
+          deploy/join/devshard-postgres-entrypoint_test.sh
+          deploy/join/devshard-postgres-migration-preflight_test.sh
+      - name: Preserve a real PostgreSQL cluster across replacement
+        run: deploy/join/devshard-postgres-upgrade_test.sh

@@ -156,14 +156,29 @@ func TestCreateRotationEscrowCarriesProtocolVersionFromRoutePrefix(t *testing.T)
 	assert.Equal(t, "3", record.ProtocolVersion, "persisted escrow inherits protocol from route prefix")
 }
 
-// A route prefix whose version segment is not a protocol version (e.g. a named
-// versiond runtime) keeps the empty/v1-default behavior; semver-like versions
-// map by their major component.
+func TestCreateRotationEscrowCarriesProtocolVersionFromV4RoutePrefix(t *testing.T) {
+	g, store, settings := newRecoveryGateway(t)
+	stubCreateOnChain(t, "TXPV4", 557)
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v4")
+	model := normalizedEscrowRotationModels(settings)[0]
+
+	_, err := g.createRotationEscrow(context.Background(), settings, model, rotationRoleTemp, 10)
+	require.NoError(t, err)
+
+	record := devshardIDs(t, store)["557"]
+	assert.Equal(t, "4", record.ProtocolVersion, "v4 route prefix stamps protocol 4, not empty")
+}
+
+// A leading "v" is stripped after taking the major (v2.1.0 -> v2 -> "2").
 func TestRotationEscrowProtocolVersionRouteMapping(t *testing.T) {
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/mainnet-canary")
-	assert.Empty(t, rotationEscrowProtocolVersion())
+	assert.Equal(t, "mainnet-canary", rotationEscrowProtocolVersion())
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v3")
 	assert.Equal(t, "3", rotationEscrowProtocolVersion())
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v4")
+	assert.Equal(t, "4", rotationEscrowProtocolVersion())
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v4.1r5")
+	assert.Equal(t, "4", rotationEscrowProtocolVersion())
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v2.1.0")
 	assert.Equal(t, "2", rotationEscrowProtocolVersion())
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/3")

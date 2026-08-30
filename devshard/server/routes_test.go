@@ -1,9 +1,13 @@
 package server
 
 import (
+	"bytes"
+	"compress/gzip"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/labstack/echo/v4"
@@ -105,4 +109,70 @@ func TestSessionHTTPErrorDefault(t *testing.T) {
 	httpErr, ok := sessionHTTPError(c, fmt.Errorf("boom")).(*echo.HTTPError)
 	require.True(t, ok)
 	require.Equal(t, http.StatusInternalServerError, httpErr.Code)
+}
+
+// payloadsOnlyResolver refuses every escrow but one, so a route can be exercised without a real session.
+type payloadsOnlyResolver struct{ resolves string }
+
+func (r payloadsOnlyResolver) SessionServerExisting(escrowID string) (*transport.Server, error) {
+	if escrowID != r.resolves {
+		return nil, ErrInitializing
+	}
+	return nil, nil
+}
+
+// writingBinder writes to the response itself, as the inference route does.
+type writingBinder struct{ body []byte }
+
+func (b writingBinder) BindOwnerChat(c echo.Context) (*transport.Server, error) {
+	if _, err := c.Response().Write(b.body); err != nil {
+		return nil, err
+	}
+	return nil, ErrInitializing
+}
+
+type staticPayloadHandler struct{ body []byte }
+
+func (h staticPayloadHandler) HandlePayloads(c echo.Context, _ *transport.Server) error {
+	return c.JSONBlob(http.StatusOK, h.body)
+}
+
+// The inference half only says the route passes bytes through: echo leaves a handler-written body
+// uncompressed either way, so it does not prove the middleware is scoped rather than group-wide.
+func TestOnlyThePayloadsRouteCompresses(t *testing.T) {
+	body := []byte(`{"inference_id":"1","response_payload":"` + strings.Repeat("A", 8192) + `"}`)
+
+	e := echo.New()
+	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: "60453"}, writingBinder{body: body}, staticPayloadHandler{body: body})
+
+	request := httptest.NewRequest(http.MethodGet, "/sessions/60453/payloads", nil)
+	request.Header.Set("Accept-Encoding", "gzip")
+	recorder := httptest.NewRecorder()
+	e.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, "gzip", recorder.Header().Get("Content-Encoding"))
+	require.Less(t, recorder.Body.Len(), len(body)/4, "the compressed body should be a fraction of the payload")
+
+	reader, err := gzip.NewReader(bytes.NewReader(recorder.Body.Bytes()))
+	require.NoError(t, err)
+	defer reader.Close()
+	decompressed, err := io.ReadAll(reader)
+	require.NoError(t, err)
+	require.JSONEq(t, string(body), string(decompressed), "the payload must survive the wire unchanged")
+
+	plain := httptest.NewRequest(http.MethodGet, "/sessions/60453/payloads", nil)
+	plainRecorder := httptest.NewRecorder()
+	e.ServeHTTP(plainRecorder, plain)
+	require.Equal(t, http.StatusOK, plainRecorder.Code)
+	require.Empty(t, plainRecorder.Header().Get("Content-Encoding"))
+	require.JSONEq(t, string(body), plainRecorder.Body.String())
+
+	streaming := httptest.NewRequest(http.MethodPost, "/sessions/60453/chat/completions", nil)
+	streaming.Header.Set("Accept-Encoding", "gzip")
+	streamingRecorder := httptest.NewRecorder()
+	e.ServeHTTP(streamingRecorder, streaming)
+	require.Equal(t, len(body), streamingRecorder.Body.Len(),
+		"the inference route passes bytes through untouched")
+	require.Empty(t, streamingRecorder.Header().Get("Content-Encoding"))
 }

@@ -2,22 +2,28 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
+	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"common/chain"
 	devshardpkg "devshard"
+	"devshard/bridge"
 	"devshard/host"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
 	"devshard/stub"
+	"devshard/transport"
 	"devshard/types"
 )
 
@@ -370,6 +376,225 @@ func TestRetryStaleValidation_ValidateError_Releases(t *testing.T) {
 	require.Equal(t, []string{"escrow-1/7/3/addr"}, leases.releaseCalls)
 }
 
+func TestRetryStaleValidationsForEscrow_TransientErrorReleaseThenHotPathReacquireSubmits(t *testing.T) {
+	h := newFinishedRetryHost(t)
+	leases := storage.NewMemory()
+	ctx := context.Background()
+	require.NoError(t, acquireMemoryLease(ctx, leases, "escrow-1", 1, 3, "old-owner"))
+
+	validateCalls := 0
+	inner := &stubEngine{
+		validateFn: func(_ context.Context, _ devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+			validateCalls++
+			if validateCalls == 1 {
+				return nil, errors.New("local ml 503")
+			}
+			return &devshardpkg.ValidateResult{Valid: true}, nil
+		},
+	}
+	rl := &ValidationRetryLoop{
+		leases:       leases,
+		inner:        inner,
+		manager:      &stubSessionManager{snap: h},
+		instanceAddr: "addr",
+		leaseTTL:     50 * time.Millisecond,
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	rl.retryStaleValidationsForEscrow(ctx, "escrow-1")
+
+	assert.Equal(t, 1, inner.calls)
+	require.False(t, ownsMemoryLease(ctx, t, leases, "escrow-1", 1, 3, "addr"),
+		"release deletes the stale row; retry must not immediately reacquire it")
+
+	won, err := leases.Acquire(ctx, "escrow-1", 1, 3, "hot-path")
+	require.NoError(t, err)
+	require.True(t, won, "hot path should be able to recreate the released lease")
+
+	time.Sleep(60 * time.Millisecond)
+	rl.retryStaleValidationsForEscrow(ctx, "escrow-1")
+
+	assert.Equal(t, 2, inner.calls)
+	owned, err := leases.OwnsPendingLease(ctx, "escrow-1", 1, 3, "addr")
+	require.NoError(t, err)
+	require.False(t, owned, "submitted lease must no longer be pending")
+
+	var found bool
+	for _, tx := range h.HostMempool().Txs() {
+		if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+			found = true
+			assert.True(t, v.Valid)
+		}
+	}
+	require.True(t, found, "second retry should publish MsgValidation")
+}
+
+func TestRetryStaleValidationsForEscrow_StaleSubmittedWithLocalMempoolDoesNotRevalidate(t *testing.T) {
+	h := newFinishedRetryHost(t)
+	leases := storage.NewMemory()
+	ctx := context.Background()
+	require.NoError(t, acquireMemoryLease(ctx, leases, "escrow-1", 1, 3, "old-owner"))
+
+	inner := &stubEngine{}
+	rl := &ValidationRetryLoop{
+		leases:       leases,
+		inner:        inner,
+		manager:      &stubSessionManager{snap: h},
+		instanceAddr: "addr",
+		leaseTTL:     50 * time.Millisecond,
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	rl.retryStaleValidationsForEscrow(ctx, "escrow-1")
+	require.Equal(t, 1, inner.calls)
+	require.True(t, hasValidationTx(h.MempoolTxs(), 1))
+
+	time.Sleep(60 * time.Millisecond)
+	rl.retryStaleValidationsForEscrow(ctx, "escrow-1")
+
+	require.Equal(t, 1, inner.calls, "local mempool already has the submitted validation")
+	require.True(t, hasValidationTx(h.MempoolTxs(), 1))
+}
+
+func TestRetryStaleValidationsForEscrow_StaleSubmittedAlreadyAppliedDoesNotRepublish(t *testing.T) {
+	h, hosts, user := newFinishedRetryHostWithSigners(t)
+	ctx := context.Background()
+	validatorSlot := h.PrimarySlot()
+	validationMsg := &types.MsgValidation{
+		InferenceId:   1,
+		ValidatorSlot: validatorSlot,
+		Valid:         true,
+		EscrowId:      "escrow-1",
+	}
+	validationMsg.ProposerSig = testutil.SignProposerTx(t, hosts[0], validationMsg)
+	validationDiff := testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_Validation{Validation: validationMsg}},
+	})
+	_, err := h.HandleRequest(ctx, host.HostRequest{Diffs: []types.Diff{validationDiff}})
+	require.NoError(t, err)
+	require.True(t, h.SnapshotState().Inferences[1].ValidatedBy.IsSet(validatorSlot))
+
+	leases := storage.NewMemory()
+	require.NoError(t, acquireMemoryLease(ctx, leases, "escrow-1", 1, 3, "old-owner"))
+	require.NoError(t, leases.SetResult(ctx, "escrow-1", 1, 3, storage.LeaseStatusSubmitted, "old-owner"))
+	inner := &stubEngine{}
+	rl := &ValidationRetryLoop{
+		leases:       leases,
+		inner:        inner,
+		manager:      &stubSessionManager{snap: h},
+		instanceAddr: "addr",
+		leaseTTL:     50 * time.Millisecond,
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	rl.retryStaleValidationsForEscrow(ctx, "escrow-1")
+
+	require.Equal(t, 0, inner.calls, "durably applied validation must not be revalidated")
+	require.False(t, hasValidationTx(h.MempoolTxs(), 1))
+}
+
+func TestRetryStaleValidation_OwnershipLostAfterValidate_DoesNotSubmit(t *testing.T) {
+	h := newFinishedRetryHost(t)
+	leases := &stubStaleLeaseStore{
+		ownsFn: func(_ context.Context, _ string, _, _ uint64, _ string) (bool, error) {
+			return false, nil
+		},
+	}
+	inner := &stubEngine{}
+	rl := &ValidationRetryLoop{
+		leases:       leases,
+		inner:        inner,
+		manager:      &stubSessionManager{snap: h},
+		instanceAddr: "addr",
+		leaseTTL:     DefaultValidationLeaseTTL,
+	}
+
+	err := rl.retryStaleValidation(context.Background(), "escrow-1", 1, 3)
+	require.NoError(t, err)
+	assert.Equal(t, 1, inner.calls)
+	require.Empty(t, leases.releaseCalls, "lost ownership means this instance no longer owns a row to release")
+	require.Empty(t, leases.setResultCalls, "lost ownership must not be marked submitted")
+	for _, tx := range h.HostMempool().Txs() {
+		require.Nil(t, tx.GetValidation(), "must not publish MsgValidation after ownership is lost")
+	}
+}
+
+func TestRetryStaleValidation_SetResultLeaseNotOwnedAfterSubmit_IsBenign(t *testing.T) {
+	h := newFinishedRetryHost(t)
+	leases := &stubStaleLeaseStore{
+		setResultFn: func(_ context.Context, _ string, _, _ uint64, _ storage.LeaseStatus, _ string) error {
+			return storage.ErrLeaseNotOwned
+		},
+	}
+	inner := &stubEngine{}
+	rl := &ValidationRetryLoop{
+		leases:       leases,
+		inner:        inner,
+		manager:      &stubSessionManager{snap: h},
+		instanceAddr: "addr",
+		leaseTTL:     DefaultValidationLeaseTTL,
+	}
+
+	err := rl.retryStaleValidation(context.Background(), "escrow-1", 1, 3)
+	require.NoError(t, err)
+	assert.Equal(t, 1, inner.calls)
+	require.Empty(t, leases.releaseCalls)
+	require.Equal(t, []string{"escrow-1/1/3/submitted"}, leases.setResultCalls)
+
+	var found bool
+	for _, tx := range h.HostMempool().Txs() {
+		if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+			found = true
+			assert.True(t, v.Valid)
+		}
+	}
+	require.True(t, found, "mempool submit should remain successful when SetResult loses ownership")
+}
+
+func TestRetryStaleValidation_OwnsPendingLeaseErrorAfterValidate_Releases(t *testing.T) {
+	h := newFinishedRetryHost(t)
+	leases := &stubStaleLeaseStore{
+		ownsFn: func(_ context.Context, _ string, _, _ uint64, _ string) (bool, error) {
+			return false, errors.New("database unavailable")
+		},
+	}
+	inner := &stubEngine{}
+	rl := &ValidationRetryLoop{
+		leases:       leases,
+		inner:        inner,
+		manager:      &stubSessionManager{snap: h},
+		instanceAddr: "addr",
+		leaseTTL:     DefaultValidationLeaseTTL,
+	}
+
+	err := rl.retryStaleValidation(context.Background(), "escrow-1", 1, 3)
+	require.ErrorContains(t, err, "owns pending lease")
+	assert.Equal(t, 1, inner.calls)
+	require.Equal(t, []string{"escrow-1/1/3/addr"}, leases.releaseCalls)
+	require.Empty(t, leases.setResultCalls)
+	for _, tx := range h.HostMempool().Txs() {
+		require.Nil(t, tx.GetValidation(), "must not publish MsgValidation when ownership check errors")
+	}
+}
+
+func acquireMemoryLease(ctx context.Context, store *storage.Memory, escrowID string, inferenceID, epochID uint64, instanceAddr string) error {
+	won, err := store.Acquire(ctx, escrowID, inferenceID, epochID, instanceAddr)
+	if err != nil {
+		return err
+	}
+	if !won {
+		return fmt.Errorf("memory lease was not acquired")
+	}
+	return nil
+}
+
+func ownsMemoryLease(ctx context.Context, t *testing.T, store *storage.Memory, escrowID string, inferenceID, epochID uint64, instanceAddr string) bool {
+	t.Helper()
+	owned, err := store.OwnsPendingLease(ctx, escrowID, inferenceID, epochID, instanceAddr)
+	require.NoError(t, err)
+	return owned
+}
+
 func TestRetryStaleValidation_TTLExceededAfterValidate_Releases(t *testing.T) {
 	leases := &stubStaleLeaseStore{}
 	inner := &stubEngine{}
@@ -427,31 +652,520 @@ func TestRetryStaleValidation_Finished_SubmitsInline(t *testing.T) {
 	require.True(t, found, "MsgValidation should be in mempool")
 }
 
+func TestRetryStaleValidation_ReclaimedValidationAppearsInMempoolEndpoint(t *testing.T) {
+	h := newFinishedRetryHost(t)
+	leases := storage.NewMemory()
+	ctx := context.Background()
+	require.NoError(t, acquireMemoryLease(ctx, leases, "escrow-1", 1, 3, "old-owner"))
+
+	rl := &ValidationRetryLoop{
+		leases:       leases,
+		inner:        &stubEngine{},
+		manager:      &stubSessionManager{snap: h},
+		instanceAddr: "addr",
+		leaseTTL:     50 * time.Millisecond,
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	rl.retryStaleValidationsForEscrow(ctx, "escrow-1")
+
+	txs := mempoolEndpointTxs(t, h)
+
+	var found bool
+	for _, tx := range txs {
+		if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+			found = true
+			require.True(t, v.Valid)
+			require.NotEmpty(t, v.ProposerSig)
+		}
+	}
+	require.True(t, found, "reclaimed retry validation must be visible through /mempool")
+}
+
+func TestRetryStaleValidation_TerminalInferenceDoesNotAppearInMempoolEndpoint(t *testing.T) {
+	h, hosts, user := newFinishedRetryHostWithSigners(t)
+	validationMsg := &types.MsgValidation{
+		InferenceId:   1,
+		ValidatorSlot: 0,
+		Valid:         false,
+		EscrowId:      "escrow-1",
+	}
+	validationMsg.ProposerSig = testutil.SignProposerTx(t, hosts[0], validationMsg)
+	voteMsg := &types.MsgValidationVote{
+		InferenceId: 1,
+		VoterSlot:   1,
+		VoteValid:   false,
+		EscrowId:    "escrow-1",
+	}
+	voteMsg.ProposerSig = testutil.SignProposerTx(t, hosts[1], voteMsg)
+	validationDiff := testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_Validation{Validation: validationMsg}},
+		{Tx: &types.DevshardTx_ValidationVote{ValidationVote: voteMsg}},
+	})
+	_, err := h.HandleRequest(context.Background(), host.HostRequest{Diffs: []types.Diff{validationDiff}})
+	require.NoError(t, err)
+	require.Equal(t, types.StatusInvalidated, h.SnapshotState().Inferences[1].Status)
+
+	leases := storage.NewMemory()
+	ctx := context.Background()
+	require.NoError(t, acquireMemoryLease(ctx, leases, "escrow-1", 1, 3, "old-owner"))
+	rl := &ValidationRetryLoop{
+		leases:       leases,
+		inner:        &stubEngine{},
+		manager:      &stubSessionManager{snap: h},
+		instanceAddr: "addr",
+		leaseTTL:     50 * time.Millisecond,
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	rl.retryStaleValidationsForEscrow(ctx, "escrow-1")
+
+	owned, err := leases.OwnsPendingLease(ctx, "escrow-1", 1, 3, "addr")
+	require.NoError(t, err)
+	require.False(t, owned, "terminal retry must mark the stale lease skipped")
+	for _, tx := range mempoolEndpointTxs(t, h) {
+		require.Nil(t, tx.GetValidation(), "terminal retry must not publish obsolete MsgValidation")
+	}
+}
+
+func TestRetryStaleValidation_ChallengedInferenceDoesNotAppearInMempoolEndpoint(t *testing.T) {
+	h, hosts, user := newFinishedRetryHostWithSigners(t)
+	validationMsg := &types.MsgValidation{
+		InferenceId:   1,
+		ValidatorSlot: 0,
+		Valid:         false,
+		EscrowId:      "escrow-1",
+	}
+	validationMsg.ProposerSig = testutil.SignProposerTx(t, hosts[0], validationMsg)
+	challengeDiff := testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_Validation{Validation: validationMsg}},
+	})
+	_, err := h.HandleRequest(context.Background(), host.HostRequest{Diffs: []types.Diff{challengeDiff}})
+	require.NoError(t, err)
+	require.Equal(t, types.StatusChallenged, h.SnapshotState().Inferences[1].Status)
+
+	leases := storage.NewMemory()
+	ctx := context.Background()
+	require.NoError(t, acquireMemoryLease(ctx, leases, "escrow-1", 1, 3, "old-owner"))
+	inner := &stubEngine{}
+	rl := &ValidationRetryLoop{
+		leases:       leases,
+		inner:        inner,
+		manager:      &stubSessionManager{snap: h},
+		instanceAddr: "addr",
+		leaseTTL:     50 * time.Millisecond,
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	rl.retryStaleValidationsForEscrow(ctx, "escrow-1")
+
+	require.Equal(t, 0, inner.calls, "retry loop must leave challenged validation to the hot path")
+	owned, err := leases.OwnsPendingLease(ctx, "escrow-1", 1, 3, "addr")
+	require.NoError(t, err)
+	require.False(t, owned, "challenged retry must release the reclaimed lease")
+	for _, tx := range mempoolEndpointTxs(t, h) {
+		require.Nil(t, tx.GetValidation(), "challenged retry must not publish MsgValidation")
+	}
+}
+
+func TestRetryStaleValidation_MempoolValidationAppliesThroughPeerEndpoint(t *testing.T) {
+	producer, consumer, hosts, user := newFinishedRetryHostPair(t)
+	leases := storage.NewMemory()
+	ctx := context.Background()
+	require.NoError(t, acquireMemoryLease(ctx, leases, "escrow-1", 1, 3, "old-owner"))
+	rl := &ValidationRetryLoop{
+		leases:       leases,
+		inner:        &stubEngine{},
+		manager:      &stubSessionManager{snap: producer},
+		instanceAddr: "addr",
+		leaseTTL:     50 * time.Millisecond,
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	rl.retryStaleValidationsForEscrow(ctx, "escrow-1")
+
+	var validationTx *types.DevshardTx
+	for _, tx := range mempoolEndpointTxs(t, producer) {
+		if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+			validationTx = tx
+			break
+		}
+	}
+	require.NotNil(t, validationTx, "producer /mempool must expose reclaimed validation")
+
+	validationDiff := testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{validationTx})
+	dj, err := transport.DiffToJSON(validationDiff)
+	require.NoError(t, err)
+	body, err := json.Marshal(transport.InferenceRequest{Diffs: []transport.DiffJSON{dj}})
+	require.NoError(t, err)
+
+	e := echo.New()
+	verifier := signing.NewSecp256k1Verifier()
+	store := storage.NewMemory()
+	srv, err := transport.NewServer(consumer, store, verifier, user.Address())
+	require.NoError(t, err)
+	e.POST("/sessions/:id/chat/completions", srv.AuthMiddleware(srv.HandleInference))
+	rec := signedPOST(t, e, user, "/sessions/escrow-1/chat/completions", "escrow-1", body)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+
+	consumerRec := consumer.SnapshotState().Inferences[1]
+	require.Equal(t, types.StatusFinished, consumerRec.Status, "single valid vote records participation but does not exceed threshold")
+	require.True(t, consumerRec.ValidatedBy.IsSet(hosts[0].SlotID), "peer endpoint must apply validator participation")
+	require.Equal(t, uint32(1), consumerRec.VotesValid)
+}
+
+func TestRetryStaleValidation_LazyRecoveredManagerMempoolEndpoint(t *testing.T) {
+	const escrowID = "1"
+	store, hosts, user, group := newStoredFinishedRetrySession(t, escrowID)
+	mgr := newRetryHostManager(t, store, hosts[0], user, group, escrowID)
+	t.Cleanup(func() { require.NoError(t, mgr.Close()) })
+
+	e := echo.New()
+	mgr.Register(e.Group(""))
+	require.Empty(t, mgr.ActiveEscrowIDs(), "precondition: manager starts with no live sessions")
+
+	_ = managerMempoolEndpointTxs(t, e, escrowID)
+	require.Equal(t, []string{escrowID}, mgr.ActiveEscrowIDs())
+
+	ctx := context.Background()
+	require.NoError(t, acquireMemoryLease(ctx, store, escrowID, 1, 7, "old-owner"))
+	rl := &ValidationRetryLoop{
+		leases:       store,
+		inner:        &stubEngine{},
+		manager:      mgr,
+		instanceAddr: "addr",
+		leaseTTL:     50 * time.Millisecond,
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	rl.retryStaleValidationsForEscrow(ctx, escrowID)
+
+	txs := managerMempoolEndpointTxs(t, e, escrowID)
+
+	var found bool
+	for _, tx := range txs {
+		if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+			found = true
+			require.True(t, v.Valid)
+			require.NotEmpty(t, v.ProposerSig)
+		}
+	}
+	require.True(t, found, "lazy manager /mempool must expose retry-produced MsgValidation")
+}
+
+func TestRetryStaleValidation_RestartedManagerReclaimsPendingLease(t *testing.T) {
+	const escrowID = "1"
+	store, hosts, user, group := newStoredFinishedRetrySession(t, escrowID)
+	first := newRetryHostManager(t, store, hosts[0], user, group, escrowID)
+	e1 := echo.New()
+	first.Register(e1.Group(""))
+	_ = managerMempoolEndpointTxs(t, e1, escrowID)
+
+	ctx := context.Background()
+	require.NoError(t, acquireMemoryLease(ctx, store, escrowID, 1, 7, "old-owner"))
+	require.NoError(t, first.Close())
+
+	restarted := newRetryHostManager(t, store, hosts[0], user, group, escrowID)
+	t.Cleanup(func() { require.NoError(t, restarted.Close()) })
+	e2 := echo.New()
+	restarted.Register(e2.Group(""))
+	_ = managerMempoolEndpointTxs(t, e2, escrowID)
+	require.Equal(t, []string{escrowID}, restarted.ActiveEscrowIDs())
+
+	rl := &ValidationRetryLoop{
+		leases:       store,
+		inner:        &stubEngine{},
+		manager:      restarted,
+		instanceAddr: "addr",
+		leaseTTL:     50 * time.Millisecond,
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	rl.retryStaleValidationsForEscrow(ctx, escrowID)
+
+	var found bool
+	for _, tx := range managerMempoolEndpointTxs(t, e2, escrowID) {
+		if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+			found = true
+			require.True(t, v.Valid)
+			require.NotEmpty(t, v.ProposerSig)
+		}
+	}
+	require.True(t, found, "restarted manager must reclaim stale pending lease and expose MsgValidation")
+}
+
+func TestRetryStaleValidation_ObsoleteLeaseAfterLazyRecoveryStaysOutOfMempool(t *testing.T) {
+	const escrowID = "1"
+	store, hosts, user, group := newStoredFinishedRetrySession(t, escrowID)
+	appendTerminalInvalidationDiffToStore(t, store, escrowID, hosts, user)
+
+	mgr := newRetryHostManager(t, store, hosts[0], user, group, escrowID)
+	t.Cleanup(func() { require.NoError(t, mgr.Close()) })
+	e := echo.New()
+	mgr.Register(e.Group(""))
+	require.Empty(t, mgr.ActiveEscrowIDs(), "precondition: manager starts with no live sessions")
+
+	_ = managerMempoolEndpointTxs(t, e, escrowID)
+	require.Equal(t, []string{escrowID}, mgr.ActiveEscrowIDs())
+
+	require.False(t, hasValidationTx(managerMempoolEndpointTxs(t, e, escrowID), 1),
+		"lazy recovery must not synthesize a validation mempool tx for terminal persisted state")
+	h, ok := mgr.hostSnapshot(escrowID)
+	require.True(t, ok)
+	require.Equal(t, types.StatusInvalidated, h.SnapshotState().Inferences[1].Status)
+
+	ctx := context.Background()
+	require.NoError(t, acquireMemoryLease(ctx, store, escrowID, 1, 7, "old-owner"))
+	inner := &stubEngine{}
+	rl := &ValidationRetryLoop{
+		leases:       store,
+		inner:        inner,
+		manager:      mgr,
+		instanceAddr: "addr",
+		leaseTTL:     50 * time.Millisecond,
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	rl.retryStaleValidationsForEscrow(ctx, escrowID)
+
+	require.Equal(t, 0, inner.calls, "retry must observe recovered terminal state before validation")
+	owned, err := store.OwnsPendingLease(ctx, escrowID, 1, 7, "addr")
+	require.NoError(t, err)
+	require.False(t, owned, "obsolete stale lease must be moved out of pending")
+	for _, tx := range managerMempoolEndpointTxs(t, e, escrowID) {
+		require.Nil(t, tx.GetValidation(), "obsolete retry must not publish MsgValidation through manager route")
+	}
+}
+
+func TestRetryStaleValidation_SubmittedMempoolLossRepublishesAfterManagerRestart(t *testing.T) {
+	const escrowID = "1"
+	store, hosts, user, group := newStoredFinishedRetrySession(t, escrowID)
+	first := newRetryHostManager(t, store, hosts[0], user, group, escrowID)
+	e1 := echo.New()
+	first.Register(e1.Group(""))
+	_ = managerMempoolEndpointTxs(t, e1, escrowID)
+
+	ctx := context.Background()
+	require.NoError(t, acquireMemoryLease(ctx, store, escrowID, 1, 7, "old-owner"))
+	rl := &ValidationRetryLoop{
+		leases:       store,
+		inner:        &stubEngine{},
+		manager:      first,
+		instanceAddr: "addr",
+		leaseTTL:     50 * time.Millisecond,
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	rl.retryStaleValidationsForEscrow(ctx, escrowID)
+	require.True(t, hasValidationTx(managerMempoolEndpointTxs(t, e1, escrowID), 1),
+		"precondition: retry produced a local mempool validation before restart")
+	require.NoError(t, first.Close())
+
+	restarted := newRetryHostManager(t, store, hosts[0], user, group, escrowID)
+	t.Cleanup(func() { require.NoError(t, restarted.Close()) })
+	e2 := echo.New()
+	restarted.Register(e2.Group(""))
+
+	require.False(t, hasValidationTx(managerMempoolEndpointTxs(t, e2, escrowID), 1),
+		"retry-produced mempool tx must not be durable unless applied as a diff")
+	h, ok := restarted.hostSnapshot(escrowID)
+	require.True(t, ok)
+	rec := h.SnapshotState().Inferences[1]
+	require.Equal(t, types.StatusFinished, rec.Status)
+	require.False(t, rec.ValidatedBy.IsSet(group[0].SlotID))
+
+	rl = &ValidationRetryLoop{
+		leases:       store,
+		inner:        &stubEngine{},
+		manager:      restarted,
+		instanceAddr: "addr",
+		leaseTTL:     50 * time.Millisecond,
+	}
+	time.Sleep(60 * time.Millisecond)
+	rl.retryStaleValidationsForEscrow(ctx, escrowID)
+
+	require.True(t, hasValidationTx(managerMempoolEndpointTxs(t, e2, escrowID), 1),
+		"stale submitted lease must be retryable when the previous mempool tx was lost before diff apply")
+}
+
+func mempoolEndpointTxs(t *testing.T, h *host.Host) []*types.DevshardTx {
+	t.Helper()
+	store := storage.NewMemory()
+	verifier := signing.NewSecp256k1Verifier()
+	srv, err := transport.NewServer(h, store, verifier, "")
+	require.NoError(t, err)
+
+	e := echo.New()
+	e.GET("/sessions/:id/mempool", srv.HandleGetMempool)
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/sessions/escrow-1/mempool", nil)
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	return decodeMempoolResponse(t, rec)
+}
+
+func managerMempoolEndpointTxs(t *testing.T, e *echo.Echo, escrowID string) []*types.DevshardTx {
+	t.Helper()
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/sessions/"+escrowID+"/mempool", nil)
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	return decodeMempoolResponse(t, rec)
+}
+
+func decodeMempoolResponse(t *testing.T, rec *httptest.ResponseRecorder) []*types.DevshardTx {
+	t.Helper()
+	var body struct {
+		Txs [][]byte `json:"txs"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	txs, err := transport.DevshardTxsFromBytes(body.Txs)
+	require.NoError(t, err)
+	return txs
+}
+
+func hasValidationTx(txs []*types.DevshardTx, inferenceID uint64) bool {
+	for _, tx := range txs {
+		if v := tx.GetValidation(); v != nil && v.InferenceId == inferenceID {
+			return true
+		}
+	}
+	return false
+}
+
+func newRetryHostManager(t *testing.T, store storage.Storage, signer *signing.Secp256k1Signer, user *signing.Secp256k1Signer, group []types.SlotAssignment, escrowID string) *HostManager {
+	t.Helper()
+	addresses := make([]string, len(group))
+	for i, slot := range group {
+		addresses[i] = slot.ValidatorAddress
+	}
+	return NewHostManager(store, signer, stub.NewInferenceEngine(), nil, nil, testutil.RuntimeTestVersion, &mockBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID:       escrowID,
+			EpochID:        7,
+			Amount:         100000,
+			CreatorAddress: user.Address(),
+			Slots:          addresses,
+			TokenPrice:     1,
+		},
+	}, nil, nil)
+}
+
+func newStoredFinishedRetrySession(t *testing.T, escrowID string) (*storage.Memory, []*signing.Secp256k1Signer, *signing.Secp256k1Signer, []types.SlotAssignment) {
+	t.Helper()
+	hosts, user, group, diffs := newFinishedRetryFixtureForEscrow(t, escrowID)
+	store := storage.NewMemory()
+	config := retrySessionConfig()
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       escrowID,
+		EpochID:        7,
+		Version:        testutil.RuntimeTestVersion,
+		CreatorAddr:    user.Address(),
+		Config:         config,
+		Group:          group,
+		InitialBalance: 100000,
+	}))
+
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine(escrowID, config, group, 100000, user.Address(), verifier, store, state.WithVersion(testutil.RuntimeTestVersion))
+	require.NoError(t, err)
+	for _, diff := range diffs {
+		root, err := sm.ApplyLocal(diff.Nonce, diff.Txs)
+		require.NoError(t, err)
+		signed := testutil.SignDiffWithRoot(t, user, escrowID, diff.Nonce, diff.Txs, root)
+		require.NoError(t, store.AppendDiff(escrowID, types.DiffRecord{Diff: signed, StateHash: root}))
+	}
+	return store, hosts, user, group
+}
+
+func appendTerminalInvalidationDiffToStore(t *testing.T, store storage.Storage, escrowID string, hosts []*signing.Secp256k1Signer, user *signing.Secp256k1Signer) {
+	t.Helper()
+	require.Len(t, hosts, 2)
+
+	meta, err := store.GetSessionMeta(escrowID)
+	require.NoError(t, err)
+	require.Len(t, meta.Group, 2)
+
+	version := meta.Version
+	if version == "" {
+		version = testutil.RuntimeTestVersion
+	}
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine(
+		escrowID,
+		meta.Config,
+		meta.Group,
+		meta.InitialBalance,
+		meta.CreatorAddr,
+		verifier,
+		store,
+		state.WithVersion(version),
+	)
+	require.NoError(t, err)
+	if meta.LatestNonce > 0 {
+		records, err := store.GetDiffs(escrowID, 1, meta.LatestNonce)
+		require.NoError(t, err)
+		for _, rec := range records {
+			sm.InjectWarmKeys(rec.WarmKeyDelta)
+			_, err := sm.ApplyLocal(rec.Nonce, rec.Txs)
+			require.NoError(t, err)
+		}
+	}
+
+	validationMsg := &types.MsgValidation{
+		InferenceId:   1,
+		ValidatorSlot: meta.Group[0].SlotID,
+		Valid:         false,
+		EscrowId:      escrowID,
+	}
+	validationMsg.ProposerSig = testutil.SignProposerTx(t, hosts[0], validationMsg)
+	voteMsg := &types.MsgValidationVote{
+		InferenceId: 1,
+		VoterSlot:   meta.Group[1].SlotID,
+		VoteValid:   false,
+		EscrowId:    escrowID,
+	}
+	voteMsg.ProposerSig = testutil.SignProposerTx(t, hosts[1], voteMsg)
+	txs := []*types.DevshardTx{
+		{Tx: &types.DevshardTx_Validation{Validation: validationMsg}},
+		{Tx: &types.DevshardTx_ValidationVote{ValidationVote: voteMsg}},
+	}
+	nonce := sm.SnapshotState().LatestNonce + 1
+	root, err := sm.ApplyLocal(nonce, txs)
+	require.NoError(t, err)
+	require.Equal(t, types.StatusInvalidated, sm.SnapshotState().Inferences[1].Status)
+
+	signed := testutil.SignDiffWithRoot(t, user, escrowID, nonce, txs, root)
+	require.NoError(t, store.AppendDiff(escrowID, types.DiffRecord{Diff: signed, StateHash: root}))
+}
+
 func newFinishedRetryHost(t *testing.T) *host.Host {
+	t.Helper()
+	h, _, _ := newFinishedRetryHostWithSigners(t)
+	return h
+}
+
+func newFinishedRetryHostWithSigners(t *testing.T) (*host.Host, []*signing.Secp256k1Signer, *signing.Secp256k1Signer) {
+	t.Helper()
+	hosts, user, group, diffs := newFinishedRetryFixtureForEscrow(t, "escrow-1")
+	h := newRetryHostFromDiffs(t, hosts, user, group, diffs)
+	return h, hosts, user
+}
+
+func newFinishedRetryHostPair(t *testing.T) (*host.Host, *host.Host, []types.SlotAssignment, *signing.Secp256k1Signer) {
+	t.Helper()
+	hosts, user, group, diffs := newFinishedRetryFixtureForEscrow(t, "escrow-1")
+	return newRetryHostFromDiffs(t, hosts, user, group, diffs), newRetryHostFromDiffs(t, hosts, user, group, diffs), group, user
+}
+
+func newFinishedRetryFixtureForEscrow(t *testing.T, escrowID string) ([]*signing.Secp256k1Signer, *signing.Secp256k1Signer, []types.SlotAssignment, []types.Diff) {
 	t.Helper()
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	user := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup(hosts)
-	config := types.SessionConfig{
-		RefusalTimeout:   60,
-		ExecutionTimeout: 1200,
-		TokenPrice:       1,
-		VoteThreshold:    1,
-		ValidationRate:   10000,
-	}
-	verifier := signing.NewSecp256k1Verifier()
-	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100000))
-	require.NoError(t, err)
-
 	engine := stub.NewInferenceEngine()
-	h, err := host.NewHost(sm, hosts[0], engine, "escrow-1", group, nil)
-	require.NoError(t, err)
-
-	diff1 := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
-	_, err = h.HandleRequest(context.Background(), host.HostRequest{Diffs: []types.Diff{diff1}})
-	require.NoError(t, err)
-
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, 50, 1000, 2000)
+	diff1 := testutil.SignDiff(t, user, escrowID, 1, []*types.DevshardTx{testutil.StartTx(1)})
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, testutil.TestPromptHash[:], "llama", 100, 50, 1000, 2000)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
 	}}}
@@ -461,13 +1175,36 @@ func newFinishedRetryHost(t *testing.T) *host.Host {
 		InputTokens:  80,
 		OutputTokens: 40,
 		ExecutorSlot: 1,
-		EscrowId:     "escrow-1",
+		EscrowId:     escrowID,
 	}
 	finishMsg.ProposerSig = testutil.SignProposerTx(t, hosts[1], finishMsg)
 	finishTx := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: finishMsg}}
-	diff2 := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{confirmTx})
-	diff3 := testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{finishTx})
-	_, err = h.HandleRequest(context.Background(), host.HostRequest{Diffs: []types.Diff{diff2, diff3}})
+	diff2 := testutil.SignDiff(t, user, escrowID, 2, []*types.DevshardTx{confirmTx})
+	diff3 := testutil.SignDiff(t, user, escrowID, 3, []*types.DevshardTx{finishTx})
+	return hosts, user, group, []types.Diff{diff1, diff2, diff3}
+}
+
+func newRetryHostFromDiffs(t *testing.T, hosts []*signing.Secp256k1Signer, user *signing.Secp256k1Signer, group []types.SlotAssignment, diffs []types.Diff) *host.Host {
+	t.Helper()
+	config := retrySessionConfig()
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100000))
+	require.NoError(t, err)
+
+	engine := stub.NewInferenceEngine()
+	h, err := host.NewHost(sm, hosts[0], engine, "escrow-1", group, nil)
+	require.NoError(t, err)
+	_, err = h.HandleRequest(context.Background(), host.HostRequest{Diffs: diffs})
 	require.NoError(t, err)
 	return h
+}
+
+func retrySessionConfig() types.SessionConfig {
+	return types.SessionConfig{
+		RefusalTimeout:   60,
+		ExecutionTimeout: 1200,
+		TokenPrice:       1,
+		VoteThreshold:    1,
+		ValidationRate:   10000,
+	}
 }

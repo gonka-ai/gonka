@@ -42,7 +42,7 @@ const (
 )
 
 // ValidationRetryLoop scans for stale validation leases and re-runs validation for each
-// active in-memory session. A lease is stale when status = 'pending' and
+// active in-memory session. A lease is stale when status is pending/submitted and
 // claimed_at < now() - leaseTTL (default 30m). FOR UPDATE SKIP LOCKED in the
 // underlying query ensures concurrent instances each pick a different row.
 type ValidationRetryLoop struct {
@@ -168,8 +168,9 @@ func (r *ValidationRetryLoop) releaseOwnedLease(ctx context.Context, escrowID st
 
 // retryStaleValidation reconstructs a ValidateRequest from in-memory session state, runs
 // validation via the inner engine, submits the result to the host's mempool,
-// and marks the lease complete. Challenged inferences are released so the
-// hot path can publish MsgValidationVote.
+// and marks the lease submitted. Stale submitted leases remain retryable because
+// the mempool tx is not durable until it is applied as a diff. Challenged
+// inferences are released so the hot path can publish MsgValidationVote.
 func (r *ValidationRetryLoop) retryStaleValidation(ctx context.Context, escrowID string, inferenceID, epochID uint64) error {
 	acquiredAt := time.Now()
 	h, ok := r.manager.hostSnapshot(escrowID)
@@ -190,6 +191,22 @@ func (r *ValidationRetryLoop) retryStaleValidation(ctx context.Context, escrowID
 			"escrow", escrowID, "inference", inferenceID)
 		r.releaseOwnedLease(ctx, escrowID, inferenceID, epochID)
 		return nil
+	}
+
+	liveHost, isLiveHost := h.(*host.Host)
+	if isLiveHost {
+		if validationAlreadyAppliedByHost(liveHost, inferenceID) {
+			slog.Info("devshardd: validation retry: validation already applied, skipping",
+				"escrow", escrowID, "inference", inferenceID)
+			r.markLeaseResult(ctx, escrowID, inferenceID, epochID, storage.LeaseStatusSkipped)
+			return nil
+		}
+		if validationAlreadyInMempool(liveHost, inferenceID) {
+			slog.Info("devshardd: validation retry: validation already in mempool",
+				"escrow", escrowID, "inference", inferenceID)
+			r.markLeaseResult(ctx, escrowID, inferenceID, epochID, storage.LeaseStatusSubmitted)
+			return nil
+		}
 	}
 
 	result, err := r.inner.Validate(ctx, req)
@@ -215,12 +232,11 @@ func (r *ValidationRetryLoop) retryStaleValidation(ctx context.Context, escrowID
 		return nil
 	}
 
-	host, ok := h.(*host.Host)
-	if !ok {
+	if !isLiveHost {
 		r.releaseOwnedLease(ctx, escrowID, inferenceID, epochID)
 		return fmt.Errorf("submit to mempool: host snapshot is not *host.Host")
 	}
-	if err := submitValidationToMempool(host, req.InferenceID, result.Valid); err != nil {
+	if err := submitValidationToMempool(liveHost, req.InferenceID, result.Valid); err != nil {
 		r.releaseOwnedLease(ctx, escrowID, inferenceID, epochID)
 		return fmt.Errorf("submit to mempool: %w", err)
 	}
@@ -229,6 +245,36 @@ func (r *ValidationRetryLoop) retryStaleValidation(ctx context.Context, escrowID
 	slog.Info("devshardd: validation retry: validation submitted",
 		"escrow", escrowID, "inference", inferenceID, "valid", result.Valid)
 	return nil
+}
+
+func validationAlreadyAppliedByHost(h *host.Host, inferenceID uint64) bool {
+	st := h.SnapshotState()
+	rec, ok := st.Inferences[inferenceID]
+	if !ok {
+		return false
+	}
+	for slot := range h.SlotIDs() {
+		if rec.ValidatedBy.IsSet(slot) {
+			return true
+		}
+	}
+	return false
+}
+
+func validationAlreadyInMempool(h *host.Host, inferenceID uint64) bool {
+	for _, tx := range h.MempoolTxs() {
+		if v := tx.GetValidation(); v != nil && v.InferenceId == inferenceID {
+			if h.SlotIDs()[v.ValidatorSlot] {
+				return true
+			}
+		}
+		if v := tx.GetValidationVote(); v != nil && v.InferenceId == inferenceID {
+			if h.SlotIDs()[v.VoterSlot] {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // lookupValidateTarget reconstructs a ValidateRequest from the host's current
