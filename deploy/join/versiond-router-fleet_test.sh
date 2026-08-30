@@ -424,8 +424,16 @@ sed -i '/^VERSIOND_ROUTING_CATALOG_URL=$/d' "$tmpdir/config.env"
 cat >>"$tmpdir/config.env" <<'EOF'
 VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true
 EOF
+# A power loss after the maintenance drain leaves the exact old containers
+# stopped. A retry must restart that preserved baseline before capturing it and
+# applying the requested placement change.
 VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
-    "${fleet[@]}" maintenance-rollout >/dev/null
+    "${fleet[@]}" stop-all --maintenance >/dev/null
+VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
+    "${fleet[@]}" maintenance-rollout >"$tmpdir/maintenance-resume.out"
+grep -q 'Recovering the stopped pre-maintenance router fleet' \
+    "$tmpdir/maintenance-resume.out" || fail \
+    "maintenance retry did not recover its stopped source fleet"
 # Removing a route is a valid maintenance target. Only routes declared by the
 # candidate remain postconditions; the removed v5 route must not force rollback.
 sed -i 's/^VERSIOND_NON_HA_VERSIONS="v4 v5"$/VERSIOND_NON_HA_VERSIONS=v4/' \

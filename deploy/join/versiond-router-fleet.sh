@@ -1080,6 +1080,71 @@ repair_fleet_capacity() {
     done
 }
 
+recover_stopped_maintenance_source() {
+    local slot id state recovery_needed=false
+
+    for slot in "${slots[@]}"; do
+        id=$(slot_id "$slot") || fail "slot $slot has no unique existing container"
+        slot_ready "$slot" && continue
+        state=$($docker_bin inspect --format '{{.State.Status}}' "$id") || fail \
+            "router slot $slot disappeared during maintenance recovery"
+        case $state in
+            created | exited) recovery_needed=true ;;
+            *) fail "slot $slot is not healthy before maintenance (state $state)" ;;
+        esac
+    done
+
+    $recovery_needed || return 0
+    echo "Recovering the stopped pre-maintenance router fleet"
+    for slot in "${slots[@]}"; do
+        slot_ready "$slot" && continue
+        id=$(slot_id "$slot") || fail "slot $slot disappeared during maintenance recovery"
+        "$docker_bin" start "$id" >/dev/null || fail \
+            "cannot restart the preserved router slot $slot"
+    done
+    for slot in "${slots[@]}"; do
+        wait_slot_ready "$slot" || fail \
+            "preserved router slot $slot did not become healthy"
+        wait_preserved_slot_admission "$slot" || fail \
+            "preserved router slot $slot was not readmitted by the parent"
+    done
+}
+
+wait_preserved_slot_admission() {
+    local slot=$1 deadline address route routes missing state
+    parent_proxy_active || return 0
+    require_parent_diagnostic
+    address=$(slot_front_ip "$slot") || return 1
+    deadline=$((SECONDS + wait_timeout))
+    while ((SECONDS < deadline)); do
+        if ! repair_stale_parent_state "$slot"; then
+            sleep 1
+            continue
+        fi
+        missing=--coarse
+        if parent_route_admitted --coarse "$address"; then
+            missing=
+        else
+            state=$?
+            ((state == 3)) && missing=
+        fi
+        routes=$(slot_catalog_routes "$slot") || return 1
+        while [[ -z $missing ]] && IFS= read -r route; do
+            [[ -n $route ]] || continue
+            slot_route_ready "$slot" "$route" || continue
+            if parent_route_admitted "$route" "$address"; then
+                continue
+            else
+                state=$?
+            fi
+            ((state == 3)) || missing=$route
+        done <<<"$routes"
+        [[ -z $missing ]] && return 0
+        sleep 1
+    done
+    return 1
+}
+
 capture_maintenance_state() {
     local slot id image key contract first_contract='' route
     local -A routes=()
@@ -1524,6 +1589,7 @@ fleet_maintenance_rollout() {
         *) fail "maintenance-rollout requires VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true" ;;
     esac
     prepare_slot_networks
+    recover_stopped_maintenance_source
     pull_router_image
     image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
     [[ -n $(placement_version_for_image "$image") ]] || fail \
