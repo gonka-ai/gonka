@@ -121,6 +121,12 @@ func (q *verifierHostQueue) endInflight(addr string, rec inflightVerify) {
 	}
 }
 
+// snapshot reports who is holding addr's slots and how many rounds are still queued behind them.
+//
+// A round that calls this because its own wait expired is no longer counted: acquire drops its waiter
+// on the way out, so waiters means "others still queued", not queue depth including the caller. On the
+// line that reports a giving-up round that reads correctly — inflight=1 waiters=0 says one holder,
+// nobody else behind it, and me timing out.
 func (q *verifierHostQueue) snapshot(addr string) (inflight []inflightVerify, waiters int) {
 	q.mu.Lock()
 	defer q.mu.Unlock()

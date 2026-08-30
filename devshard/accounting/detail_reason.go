@@ -23,8 +23,7 @@ func normalizeDetailReason(reason string) string {
 		"escrow_state_root_diverged", "context_canceled", "timeout_diff_delivery_failed",
 		"timeout_not_applied", "host_served_probe", "poc_unavailable_host", "participant_throttled_no_send",
 		"participant_state_diverged_no_send", "participant_capability_no_send", "no_compatible_request_after_stale",
-		"verifier_version_unsupported", "verifier_escrow_missing", "verifier_inference_missing",
-		"verifier_unreachable", "queue_expired", "rpc_timeout", "vote_weight_short",
+		"verifier_queue_expired", "verifier_rpc_timeout",
 		DeliveryClientGone:
 		return reason
 	default:

@@ -55,6 +55,11 @@ func TestClassifyVoteError_NamesWhatTheVerifierAnsweredWith(t *testing.T) {
 			err:   fmt.Errorf("verify-timeout: %w", context.DeadlineExceeded),
 			class: VoteErrorRPCTimeout,
 		},
+		{
+			name:  "abandoned before the RPC left the gateway",
+			err:   fmt.Errorf("%w: %w", errVoteNotSent, context.DeadlineExceeded),
+			class: VoteErrorUnreachable,
+		},
 	} {
 		t.Run(testCase.name, func(t *testing.T) {
 			require.Equal(t, testCase.class, classifyVoteError(testCase.err))
@@ -62,11 +67,14 @@ func TestClassifyVoteError_NamesWhatTheVerifierAnsweredWith(t *testing.T) {
 	}
 }
 
+// The same deadline error means three different things depending on how far the round got, and only
+// the wrapping can tell them apart.
 func TestClassifyVoteError_QueueExpired(t *testing.T) {
-	queueWait := fmt.Errorf("%w: %w", errVerifierQueueExpired, context.DeadlineExceeded)
-	require.Equal(t, VoteErrorQueueExpired, classifyVoteError(queueWait))
+	require.Equal(t, VoteErrorQueueExpired,
+		classifyVoteError(fmt.Errorf("%w: %w", errVerifierQueueExpired, context.DeadlineExceeded)))
+	require.Equal(t, VoteErrorUnreachable,
+		classifyVoteError(fmt.Errorf("%w: %w", errVoteNotSent, context.DeadlineExceeded)))
 	require.Equal(t, VoteErrorRPCTimeout, classifyVoteError(context.DeadlineExceeded))
-	require.Equal(t, VoteErrorRPCTimeout, classifyVoteError(fmt.Errorf("verify-timeout: %w", context.DeadlineExceeded)))
 }
 
 func TestClassifyVoteError_LooksThroughWrapping(t *testing.T) {
