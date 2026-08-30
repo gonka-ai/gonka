@@ -94,9 +94,8 @@ backends through a local Unix Runtime API socket. The process has no shared
 routing database, leader, or peer protocol. It does not need Redis:
 
 - `proxy-policy-front` resolves to both private nginx policy slots;
-- `versiond-router` resolves to the router instances declared by the active
-  Compose topology. A later fleet overlay can supply a multi-address alias
-without changing this routing contract.
+- `versiond-router-fleet` resolves to the independently managed router slots on
+  the shared front network.
 
 Each policy slot exposes `/health` only on loopback and the isolated policy
 network. That endpoint is backed by the existing policy sidecar and resolves an
@@ -114,10 +113,8 @@ the selected address is not listening yet.
 
 ## Availability scope
 
-The nginx policy tier is replicated, and the private versiond distributor is
-ready for multiple independently managed routers. The current join overlay
-still declares one `versiond-router`; fleet management is a separate follow-up.
-The public `proxy-router` also remains one process on one host. Loss of that
+The nginx policy tier and private versiond-router fleet are process-redundant on
+one Docker host. The public `proxy-router` remains one process. Loss of that
 host, Docker daemon, public listener, or its network is therefore a host-level
 outage. Multi-host ingress belongs in a later layer above this one.
 
