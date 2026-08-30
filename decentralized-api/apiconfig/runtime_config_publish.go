@@ -92,6 +92,16 @@ func (cm *ConfigManager) ApplyRuntimeConfigBlockIfChanged(blockHeight int64, epo
 	content := cm.liveRuntimeConfigContent()
 
 	cm.runtimePublishMu.Lock()
+	if cm.runtimePublished.initialized && blockHeight < cm.runtimeParamsBlockHeight {
+		publishedHeight := cm.runtimeParamsBlockHeight
+		cm.runtimePublishMu.Unlock()
+		logging.Debug("runtime_config: publish skipped (stale block height)", types.Config,
+			"blockHeight", blockHeight,
+			"publishedHeight", publishedHeight,
+			"epochID", epochID,
+		)
+		return false
+	}
 	if cm.runtimePublished.initialized &&
 		cm.runtimePublished.epochID == epochID &&
 		cm.runtimePublished.content.equal(content) {
@@ -160,6 +170,10 @@ func copyRuntimeConfigContent(c runtimeConfigContent) runtimeConfigContent {
 
 // ResetRuntimePublishedState clears the last-published marker (tests only).
 func (cm *ConfigManager) ResetRuntimePublishedState() {
+	cm.mutex.Lock()
+	cm.devshardVersionsHeight = 0
+	cm.mutex.Unlock()
+
 	cm.runtimePublishMu.Lock() // writers: publish and test reset
 	defer cm.runtimePublishMu.Unlock()
 	cm.runtimePublished = runtimePublishedMarker{}
