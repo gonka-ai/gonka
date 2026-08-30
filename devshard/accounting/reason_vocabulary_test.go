@@ -13,7 +13,8 @@ func TestTimeoutReasonFromString_KeepsWhatItCanName(t *testing.T) {
 		TimeoutPhaseTransitionAborted, TimeoutLongResponseAfterContent, TimeoutStateRootDiverged,
 		TimeoutContextCanceled, TimeoutDiffDeliveryFailed, TimeoutNotApplied, TimeoutEscrowGone,
 		TimeoutVerifierVersionUnsupported, TimeoutVerifierEscrowMissing, TimeoutVerifierInferenceMissing,
-		TimeoutVerifierUnreachable, TimeoutVoteWeightShort, TimeoutHostServedProbe,
+		TimeoutVerifierUnreachable, TimeoutVerifierQueueExpired, TimeoutVerifierRPCTimeout,
+		TimeoutVoteWeightShort, TimeoutHostServedProbe,
 	} {
 		require.Equal(t, reason, TimeoutReasonFromString(TimeoutVoteCollectionFailed, string(reason)),
 			"a named reason must survive whatever outcome carried it")
@@ -53,6 +54,7 @@ func TestFailureOriginFromDetail_VerifierFailuresAreNotTheExecutorsFault(t *test
 	for _, detail := range []string{
 		"verifier_version_unsupported", "verifier_escrow_missing",
 		"verifier_inference_missing", "verifier_unreachable",
+		"queue_expired", "rpc_timeout",
 	} {
 		require.Equal(t, FailureTransportUnknown, FailureOriginFromDetail(detail), detail)
 	}
@@ -105,6 +107,9 @@ func TestBothVocabulariesNameTheSameReasons(t *testing.T) {
 	for _, reason := range []TimeoutReason{
 		TimeoutPhaseTransitionAborted, TimeoutLongResponseAfterContent, TimeoutStateRootDiverged,
 		TimeoutContextCanceled, TimeoutDiffDeliveryFailed, TimeoutNotApplied, TimeoutHostServedProbe,
+		TimeoutVerifierVersionUnsupported, TimeoutVerifierEscrowMissing, TimeoutVerifierInferenceMissing,
+		TimeoutVerifierUnreachable, TimeoutVerifierQueueExpired, TimeoutVerifierRPCTimeout,
+		TimeoutVoteWeightShort,
 	} {
 		require.Equal(t, string(reason), normalizeDetailReason(string(reason)),
 			"a reason the timeout vocabulary names must survive the detail vocabulary too")

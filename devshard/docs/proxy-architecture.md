@@ -273,7 +273,7 @@ It is responsible for:
 keep one bad executor from flooding the network with simultaneous verifier
 RPCs (M concurrent timeouts × N verifiers worth of outbound connections),
 every `Session` uses a **process-wide** per-verifier semaphore
-(`user.SharedVerifierQueue`, capacity `MaxConcurrentVerifierRPCs`, default `1`)
+(`user.SharedVerifierQueue`, capacity `MaxConcurrentVerifierRPCs`, default `10`)
 keyed by the verifier's validator address. The queue is shared by every
 `Session` in the process — one proxy running K escrows can't stack K
 simultaneous `VerifyTimeout` calls onto the same verifier just because the
