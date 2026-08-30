@@ -106,6 +106,12 @@ type devshardRuntime struct {
 	// pendingRaceCleanup counts background race cleanups (refund + loser-signature persistence) still in flight
 	pendingRaceCleanup atomic.Int64
 
+	// finalizing marks a runtime whose finalize request is in flight. It is set
+	// in the same g.mu critical section that observed the drain barrier as
+	// quiet, and admission reads it under that same lock, so no new inference
+	// can slip in between the quiescence check and the finalize handler run.
+	finalizing atomic.Bool
+
 	// settlementPending marks an escrow that has been deactivated and must
 	// be settled once its in-flight requests drain. settlementReason is
 	// written before the flag and read after it in the lock-free drain hook;
@@ -585,6 +591,9 @@ func (rt *devshardRuntime) retireClose(reason string) error {
 func (rt *devshardRuntime) acceptsNewInferences() (bool, string) {
 	if rt == nil || !rt.active.Load() {
 		return false, "inactive"
+	}
+	if rt.finalizing.Load() {
+		return false, "finalize_in_flight"
 	}
 	if rt.proxy == nil || rt.proxy.sm == nil {
 		return true, ""
@@ -1394,6 +1403,11 @@ func (g *Gateway) handleSingleOnly(w http.ResponseWriter, r *http.Request) {
 	g.mu.Unlock()
 	if len(runtimes) == 1 {
 		if r.URL.Path == "/v1/finalize" && r.Method == http.MethodPost {
+			if ok, reason := g.beginFinalizeGate(runtimes[0]); !ok {
+				http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s %s"}}`, runtimes[0].id, reason), http.StatusConflict)
+				return
+			}
+			defer g.endFinalizeGate(runtimes[0])
 			g.finalizeMu.Lock()
 			defer g.finalizeMu.Unlock()
 			log.Printf("gateway_finalize_lock_acquired escrow=%s path=%s", runtimes[0].id, r.URL.Path)
@@ -1596,7 +1610,12 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 			logRequestStage(ctx, "gateway_devshard_limiter_bypassed_during_poc", "escrow", devshardID, "input_tokens", inputTokens, "reason", currentPoCPhaseReason())
 		}
 
-		g.reserveRuntime(rt, inputTokens)
+		if ok, reason := g.reserveRuntimeIfAccepting(rt, inputTokens); !ok {
+			logRequestStage(ctx, "gateway_devshard_unavailable", "escrow", devshardID, "reason", reason)
+			g.recordGatewayRequestOutcome(limitModel, "runtime_unavailable", runtimeSkipReasonKey(reason))
+			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s is unavailable for new inferences: %s"}}`, devshardID, reason), http.StatusConflict)
+			return
+		}
 		defer g.releaseRuntime(rt, inputTokens)
 		logRequestStage(ctx, "gateway_devshard_runtime_selected", "escrow", devshardID, "input_tokens", inputTokens)
 
@@ -1610,10 +1629,11 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if innerPath == "/v1/finalize" && r.Method == http.MethodPost {
-		if rt.escrowHasBackgroundWork() {
-			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s has active requests"}}`, devshardID), http.StatusConflict)
+		if ok, reason := g.beginFinalizeGate(rt); !ok {
+			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s %s"}}`, devshardID, reason), http.StatusConflict)
 			return
 		}
+		defer g.endFinalizeGate(rt)
 		g.finalizeMu.Lock()
 		defer g.finalizeMu.Unlock()
 		log.Printf("gateway_finalize_lock_acquired escrow=%s path=%s", devshardID, r.URL.Path)
@@ -1742,6 +1762,36 @@ func (g *Gateway) serveInactiveDevshardMetadata(w http.ResponseWriter, r *http.R
 		})
 	}
 	return true
+}
+
+// beginFinalizeGate takes the drain-barrier check and the finalizing mark in a
+// single g.mu critical section -- the same lock admission holds across its own
+// gate check and reservation -- so no request can be admitted after finalize has
+// observed the runtime as quiet. It reports false plus a refusal reason when
+// another finalize is already in flight or background work has not drained; a
+// second finalize is refused rather than queued on finalizeMu, where it would
+// run after the first one reopened admission.
+func (g *Gateway) beginFinalizeGate(rt *devshardRuntime) (bool, string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if rt.finalizing.Load() {
+		return false, "already has a finalize in flight"
+	}
+	if rt.escrowHasBackgroundWork() {
+		return false, "has active requests"
+	}
+	rt.finalizing.Store(true)
+	return true, ""
+}
+
+// endFinalizeGate reopens admission. After a successful finalize the runtime is
+// protected by other means -- the /devshard/{id} route deactivates it
+// (markDevshardInactiveAfterFinalize), and on the single-runtime route the
+// settled session phase makes acceptsNewInferences refuse -- so clearing the
+// mark changes nothing there; every failure path -- non-2xx, or a panic in the
+// inner handler -- needs it so the runtime stays usable.
+func (g *Gateway) endFinalizeGate(rt *devshardRuntime) {
+	rt.finalizing.Store(false)
 }
 
 func (g *Gateway) markDevshardInactiveAfterFinalize(id string, rt *devshardRuntime) {
@@ -1961,6 +2011,20 @@ func (g *Gateway) runtimeLoad(rt *devshardRuntime, requestModel string) float64 
 		return rt.load(1.0)
 	}
 	return rt.load(g.capacity.EscrowWeightForModel(rt.id, firstNonEmpty(requestModel, rt.model)))
+}
+
+// reserveRuntimeIfAccepting re-runs the admission gate and reserves in one g.mu
+// critical section, mirroring reserveRuntimeForModel. The direct /devshard/{id}
+// chat route gates early, before parsing and limiter admission, so it must
+// re-check at reservation time: a finalize may have closed the gate in between.
+func (g *Gateway) reserveRuntimeIfAccepting(rt *devshardRuntime, inputTokens int64) (bool, string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if ok, reason := rt.acceptsNewInferences(); !ok {
+		return false, reason
+	}
+	g.reserveRuntimeLocked(rt, inputTokens)
+	return true, ""
 }
 
 func (g *Gateway) reserveRuntime(rt *devshardRuntime, inputTokens int64) {
