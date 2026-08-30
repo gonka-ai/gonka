@@ -1,9 +1,12 @@
 # Multi-versiond + sticky router overlay for deploy/join.
 #
 # Requires base docker-compose.yml (single versiond). Adds devshard-postgres,
-# a second versiond instance (versiond2), and versiond-router (nginx sticky
-# hash on escrow/session ID) in front of both. Sets proxy
-# VERSIOND_SERVICE_NAME=versiond-router.
+# a second versiond instance (versiond2), and the shared networks used by the
+# independently managed versiond-router fleet.
+#
+# Fresh installations only. This overlay uses !reset and requires Docker
+# Compose 2.24.4 or newer. Upgrade an existing host with the release updater so
+# policy workers cross the required drain and fresh-admission sequence.
 #
 # Cold-start order (the release updater performs the same phases automatically):
 #   ./versiond-router-fleet.sh prepare-networks
@@ -52,6 +55,9 @@ x-versiond: &versiond
     - DEVSHARD_STORAGE_MODE=postgres
   networks:
     default:
+      aliases:
+        - versiond-pool
+    versiond-router-back:
       aliases:
         - versiond-pool
   depends_on:
@@ -130,102 +136,19 @@ services:
       - ./devshards/bin:/opt/versiond/bin
       - ./devshards2/data:/opt/versiond/data
 
-  versiond-router:
-    container_name: versiond-router
-    image: ${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15}
-    # Each image owns its graceful-stop signal: the transitional nginx image
-    # uses SIGQUIT, while the HAProxy image declares SIGUSR1.
-    stop_grace_period: ${VERSIOND_ROUTER_STOP_GRACE_PERIOD:-10s}
-    environment:
-      # The HAProxy router discovers every replica through this shared DNS
-      # alias. Keep VERSIOND_HOSTS during the image transition because the
-      # currently pinned nginx router still requires the static list.
-      - VERSIOND_POOL_HOST=${VERSIOND_POOL_HOST:-versiond-pool}
-      - VERSIOND_HOSTS=${VERSIOND_HOSTS:-versiond versiond2}
-      - VERSIOND_PORT=8080
-      # This overlay always has multiple versiond replicas. Keep the HA storage
-      # guard active even while only one replica is currently ready.
-      - GONKA_HA=${GONKA_HA:-true}
-      # SQLite-bound pre-HA versions must stay on the host that owns their data dirs.
-      - VERSIOND_LEGACY_HOST=${VERSIOND_LEGACY_HOST:-versiond}
-      # Version path segments that pin to VERSIOND_LEGACY_HOST (whitespace and/or comma).
-      # All other versions sticky-hash across VERSIOND_HOSTS and get Devshard-Ha: true.
-      # Default lists known pre-HA paths; clear (empty) once every live version is Postgres HA.
-      - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}
-      # Bootstrap only the HA versions shipped with this deployment. Future
-      # names come from governance rather than being guessed in Compose.
-      - VERSIOND_VERSIONS=${VERSIOND_VERSIONS-v4 v5}
-      # Catalog activation is release-driven. The published 0.2.15 image is the
-      # legacy nginx router, so its safe default is empty. A release must supply
-      # both a catalog-aware VERSIOND_ROUTER_IMAGE and this URL.
-      - VERSIOND_ROUTING_CATALOG_URL=${VERSIOND_ROUTING_CATALOG_URL:-}
-      - VERSIOND_ROUTING_CATALOG_POLL_SECONDS=${VERSIOND_ROUTING_CATALOG_POLL_SECONDS:-5}
-      - VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=${VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS:-3}
-      - VERSIOND_ROUTING_CATALOG_MAX_BYTES=${VERSIOND_ROUTING_CATALOG_MAX_BYTES:-1048576}
-      - VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS=${VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS:-2}
-      - VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=${VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS:-86400}
-      # This overlay declares two versiond replicas; do not publish a newly
-      # approved route until both replicas report it ready.
-      - VERSIOND_ROUTING_ACTIVATION_MIN_READY=${VERSIOND_ROUTING_ACTIVATION_MIN_READY:-2}
-      # The source has no monotonic revision. Remove accepted routes only during
-      # an explicitly supervised maintenance run.
-      - VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=${VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS:-false}
-      - VERSIOND_ROUTER_VERSION_CAPACITY=${VERSIOND_ROUTER_VERSION_CAPACITY:-32}
-      - VERSIOND_ROUTER_ALLOW_COARSE_READINESS=${VERSIOND_ROUTER_ALLOW_COARSE_READINESS:-false}
-      - VERSIOND_ROUTER_ADMIN_PORT=${VERSIOND_ROUTER_ADMIN_PORT:-8404}
-      - VERSIOND_ROUTER_FRONT_BIND_HOST=${VERSIOND_ROUTER_FRONT_BIND_HOST:-versiond-router-ingress}
-      # The data/admin listener is isolated on proxy-policy-front, so forwarded
-      # identity from the policy tier is trusted instead of being replaced.
-      - VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS=${VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS:-true}
-      - HAPROXY_DNS_RESOLVER=${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}
-      # Internal-only exporter bind for the optional observability overlay.
-      - VERSIOND_ROUTER_METRICS_BIND_HOST=${VERSIOND_ROUTER_METRICS_BIND_HOST:-versiond-router-metrics}
-    networks:
-      default:
-        aliases:
-          - versiond-router-metrics
-      proxy-policy-front:
-        aliases:
-          - versiond-router-ingress
-    volumes:
-      - versiond-router-state:/var/lib/gonka-router
-      # The published nginx transition image runs this after its own renderer;
-      # catalog-aware HAProxy images have no stock nginx hook runner and ignore it.
-      - ../../versiond-router/legacy-public-tier-compat.sh:/docker-entrypoint.d/50-gonka-public-tier-compat.sh:ro
-    depends_on:
-      - versiond
-      - versiond2
-    healthcheck:
-      test:
-        - CMD-SHELL
-        - >-
-          if [ -x /usr/local/lib/router-runtime/catalog-reconciler ]; then
-            if [ -z "$$VERSIOND_ROUTING_CATALOG_URL" ]; then
-              echo 'catalog-capable versiond-router requires VERSIOND_ROUTING_CATALOG_URL' >&2;
-              exit 1;
-            fi;
-            wget -q -O - "http://127.0.0.1:$${VERSIOND_ROUTER_ADMIN_PORT}/livez";
-          else
-            if [ -n "$$VERSIOND_ROUTING_CATALOG_URL" ]; then
-              echo 'VERSIOND_ROUTING_CATALOG_URL requires a catalog-capable versiond-router image' >&2;
-              exit 1;
-            fi;
-            legacy_address=$$(cat /var/run/versiond-router-listen-address 2>/dev/null || echo 127.0.0.1);
-            wget -q -O - "http://$${legacy_address}:8080/healthz";
-          fi
-      interval: 5s
-      timeout: 3s
-      retries: 6
-      start_period: 10s
-    restart: always
-
   proxy-policy:
+    # Policy nginx can serve every non-devshard route while the HA versiond
+    # stack is still starting or its PostgreSQL dependency is unavailable.
+    depends_on:
+      versiond: !reset null
     environment:
       - VERSIOND_SERVICE_NAME=proxy-policy-ingress
       - VERSIOND_SERVICE_IS_ABSOLUTE=true
       - VERSIOND_PORT=18081
 
   proxy-policy2:
+    depends_on:
+      versiond: !reset null
     environment:
       - VERSIOND_SERVICE_NAME=proxy-policy-ingress
       - VERSIOND_SERVICE_IS_ABSOLUTE=true
@@ -233,7 +156,7 @@ services:
 
   proxy:
     environment:
-      - VERSIOND_ROUTER_POOL_HOST=versiond-router-ingress
+      - VERSIOND_ROUTER_POOL_HOST=${VERSIOND_ROUTER_POOL_HOST:-versiond-router-fleet}
       - VERSIOND_ROUTER_PORT=8080
       - VERSIOND_ROUTER_ADMIN_PORT=8404
       - VERSIOND_ROUTER_FLEET_CAPACITY=${VERSIOND_ROUTER_FLEET_CAPACITY:-16}
@@ -247,6 +170,22 @@ services:
       - VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=${VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS:-false}
       - PROXY_ROUTER_ACTIVATION_MIN_READY=${PROXY_ROUTER_ACTIVATION_MIN_READY:-2}
       - PROXY_ROUTER_VERSION_CAPACITY=${PROXY_ROUTER_VERSION_CAPACITY:-32}
+      - PROXY_ROUTER_CATALOG_BIND_HOST=versiond-routing-oracle
+      - PROXY_ROUTER_CATALOG_PORT=9100
+      - PROXY_ROUTER_CATALOG_UPSTREAM_HOST=api
+      - PROXY_ROUTER_CATALOG_UPSTREAM_PORT=9100
+    networks:
+      default: {}
+      proxy-policy-front: {}
+      versiond-router-front: {}
+      versiond-router-back:
+        aliases:
+          - versiond-routing-oracle
 
-volumes:
-  versiond-router-state:
+networks:
+  versiond-router-front:
+    name: ${VERSIOND_ROUTER_FRONT_NETWORK:-gonka-versiond-router-front}
+    external: true
+  versiond-router-back:
+    name: ${VERSIOND_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}
+    external: true

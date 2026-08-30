@@ -97,19 +97,36 @@ routing database, leader, or peer protocol. It does not need Redis:
 - `versiond-router-fleet` resolves to the independently managed router slots on
   the shared front network.
 
-Each policy slot exposes `/health` only on loopback and the isolated policy
-network. That endpoint is backed by the existing policy sidecar and resolves an
-alias scoped to the shared application network. Losing that interface or its
-Docker DNS view therefore removes only the affected worker from both public
-pools, while failures of an individual upstream application remain visible at
-their own route rather than collapsing the entire policy tier.
+Each policy slot exposes `/health` through its production HTTP and HTTPS
+listeners on the isolated policy network. The active check sends the same PROXY
+v2 preamble as production traffic, completes HTTP or TLS on that connection,
+and requires `/health` to return `200`. The endpoint is backed by the existing
+policy sidecar and resolves an alias scoped to the shared application network.
+Losing the data listener, PROXY support, that interface, or its Docker DNS view
+therefore removes only the affected worker from the corresponding public pool,
+while failures of an individual upstream application remain visible at their
+own route rather than collapsing the entire policy tier.
+
+Each policy container runs its own sidecar, and a crashed sidecar is restarted
+after five seconds. Readiness deliberately remains fail-closed during that
+restart: returning a fallback `200` would admit a worker whose application
+network has not been verified. A defect shared by the identical sidecar binaries
+can therefore withdraw both policy workers at once even while nginx itself is
+running; this is a correlated software failure of the policy deployment unit.
 
 `server-template` reserves router capacity and `PROXY_ROUTER_VERSION_CAPACITY`
 reserves version-backend capacity. Neither a new router address nor a new
-governance name requires a reload. Inner-router addresses become eligible only
-after successful readiness checks. Long-lived policy workers start as connect
-candidates immediately; TCP redispatch moves a connection to another worker if
-the selected address is not listening yet.
+governance name requires a reload. Fresh router and policy slots start fully
+down and become eligible only after their configured readiness checks succeed.
+
+HAProxy retains the health state of an occupied slot when Docker DNS changes
+its address. A policy-worker replacement therefore follows an explicit
+generation boundary: put the old address in runtime drain, confirm withdrawal
+from new selection, gracefully stop the worker, reset its health to `DOWN`,
+and return the empty slot to check-enabled `READY` state. After the replacement
+appears, its address must complete a new L7 `rise` before HAProxy admits it.
+The host updater owns this sequence. TCP redispatch moves a new connection to
+another admitted worker after the selected address stops accepting connections.
 
 ## Availability scope
 
@@ -120,9 +137,9 @@ outage. Multi-host ingress belongs in a later layer above this one.
 
 The public router and both `proxy-policy` workers are one Compose deployment
 unit. Updating or rolling back that unit applies its image, environment,
-network, capability, and service definitions together. A rollback restores the
-previous release's Compose model and recreates it with `--remove-orphans`, so
-workers that are not part of that model cannot remain active.
+network, capability, and service definitions together. The host updater restores
+the captured model by targeting these three services explicitly. Unrelated
+services and containers owned by other active overlays remain unchanged.
 
 ## Endpoints
 
@@ -186,6 +203,18 @@ availability.
 | `PROXY_ROUTER_CATALOG_UPSTREAM_PORT` | `9100` | DAPI catalog port |
 | `HAPROXY_DNS_RESOLVER` | `127.0.0.11:53` | numeric DNS nameserver used by HAProxy service discovery; Docker Compose uses the default, while another runtime may inject its cluster DNS IP |
 
+The prefixes identify which contract owns a setting:
+
+- `PROXY_ROUTER_*` configures this outer public distributor.
+- `VERSIOND_ROUTER_*` describes the inner router fleet consumed by this tier;
+  the same names configure the inner router deployment where applicable.
+- `VERSIOND_ROUTING_*` is the catalog projection contract shared by both tiers.
+
+Consequently, `PROXY_ROUTER_ACTIVATION_MIN_READY` is the number of inner routers
+the outer tier requires, while `VERSIOND_ROUTING_ACTIVATION_MIN_READY` is the
+number of versiond hosts each inner router requires. They are separate reserves,
+not aliases.
+
 `VERSIOND_NON_HA_VERSIONS` and the bootstrap `VERSIOND_VERSIONS` must match every
 inner router. Runtime additions come from the same catalog on both tiers and do
 not change escrow placement. Static names preserve the inner router's existing
@@ -231,6 +260,6 @@ make -C proxy-router test-routing
 
 The routing test uses real Docker networks, HAProxy, policy workers, route-aware
 router health, an unavailable router data port, and a legacy edge-api-router
-fixture. It verifies failover, proves that the proxy does not replay a
-non-idempotent POST in the tested connection-failure path, and ensures edge-api
-traffic does not enter a new HAProxy backend in this release.
+fixture. It verifies failover, a policy replacement that receives a new Docker
+IP, withdrawal before replacement admission, exactly-once POST execution in the
+tested connection-failure path, and the unchanged edge-api routing path.

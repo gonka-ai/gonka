@@ -19,16 +19,8 @@ scrape_configs:
       - url: http://api:9100/sd/devshardd
         refresh_interval: 15s
 
-  - job_name: proxy-router
-    params:
-      no-maint: [""]
-    static_configs:
-      - targets:
-          - proxy-router-metrics:8405
-
   - job_name: versiond-router
-    params:
-      no-maint: [""]
+    metrics_path: /metrics
     dns_sd_configs:
       - names:
           - versiond-router-metrics
