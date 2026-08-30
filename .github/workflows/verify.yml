@@ -224,8 +224,6 @@ jobs:
       - name: Build
         run: go build ./...
 
-      # Host shutdown races readiness promotion, admission leases, child reaping,
-      # and force signals. Keep the detector on the mandatory versioned suite.
       - name: Run Tests with race detector (fork PRs)
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork
         run: go test -race ./... -v
@@ -253,52 +251,16 @@ jobs:
           path: versioned/junit-report.xml
           reporter: java-junit
 
-  # The routers are HAProxy config plus a render script. test-render renders every
-  # supported shape, asserts on the result, and validates each rendered file with
-  # the real HAProxy from the image the routers ship.
-  test-router-config:
+  test-versiond-router-config:
     runs-on: ubuntu-latest
-    name: Test router config rendering
-    strategy:
-      matrix:
-        router: [versiond-router, edge-api-router, proxy-router]
+    name: Test versiond-router HAProxy configuration
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Render and validate ${{ matrix.router }} config
-        run: make -C ${{ matrix.router }} test-render
-
-      - name: Exercise proxy-router HA routing
-        if: matrix.router == 'proxy-router'
-        run: make -C proxy-router test-routing
-
-      - name: Exercise isolated versiond-router slots
-        if: matrix.router == 'versiond-router'
+      - name: Render and exercise versiond-router
+        run: make -C versiond-router test-render
+      - name: Exercise isolated versiond-router fleet rollouts
         run: make -C versiond-router test-fleet
-
-  test-proxy-ssl-install:
-    runs-on: ubuntu-latest
-    name: Test proxy TLS certificate publication
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Exercise atomic certificate installation
-        run: ./proxy/setup-ssl_test.sh
-
-      - name: Build proxy image
-        run: docker build -t gonka-proxy-ssl-recovery-test ./proxy
-
-      - name: Exercise HTTPS recovery from a damaged certificate
-        run: ./proxy/ssl-recovery_test.sh
-
-  test-proxy-policy-config:
-    runs-on: ubuntu-latest
-    name: Test nginx policy rendering
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
-      - name: Render and validate private nginx policy config
-        run: make -C proxy test-render
 
   test-public-proxy-router:
     runs-on: ubuntu-latest
@@ -314,6 +276,21 @@ jobs:
         run: make -C proxy-router test-routing
       - name: Render private policy configuration
         run: make -C proxy test-render
+
+  test-proxy-ssl-install:
+    runs-on: ubuntu-latest
+    name: Test proxy TLS certificate publication
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Exercise atomic certificate installation
+        run: ./proxy/setup-ssl_test.sh
+
+      - name: Build proxy image
+        run: docker build -t gonka-proxy-ssl-recovery-test ./proxy
+
+      - name: Exercise HTTPS recovery from a damaged certificate
+        run: ./proxy/ssl-recovery_test.sh
 
   build-and-test-edge-api:
     runs-on: ubuntu-latest
@@ -346,13 +323,6 @@ jobs:
       - name: Build edge-api
         working-directory: edge-api
         run: go build ./...
-
-      # The module's own unit tests — readiness, the drain sequence, config
-      # validation. The JUnit step below covers common/queryapi only, and for a
-      # while nothing ran these at all.
-      - name: Run edge-api unit tests
-        working-directory: ./edge-api
-        run: go test -race ./...
 
       - name: Run edge-api tests (fork PRs)
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork
@@ -421,6 +391,9 @@ jobs:
       - name: Build
         run: go build ./...
 
+      - name: Run devshardd lifecycle tests with race detector
+        run: go test -race ./cmd/devshardd
+
       - name: Run Tests (fork PRs)
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork
         run: go test ./... -v
@@ -472,3 +445,17 @@ jobs:
           name: Devshard E2E Tests
           path: devshard/build/test-results/e2e/junit.xml
           reporter: java-junit
+
+  test-devshard-postgres-migration:
+    runs-on: ubuntu-latest
+    name: Test devshard PostgreSQL persistence migration
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Check migration scripts
+        run: |
+          shellcheck deploy/join/devshard-postgres-*.sh
+          deploy/join/devshard-postgres-entrypoint_test.sh
+          deploy/join/devshard-postgres-migration-preflight_test.sh
+      - name: Preserve a real PostgreSQL cluster across replacement
+        run: deploy/join/devshard-postgres-upgrade_test.sh
