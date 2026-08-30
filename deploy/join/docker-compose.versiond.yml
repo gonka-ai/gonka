@@ -100,10 +100,11 @@ services:
     command: ["postgres"]
     healthcheck:
       test:
-        [
-          "CMD-SHELL",
-          "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}",
-        ]
+        - CMD-SHELL
+        - >-
+          PGPASSWORD="$${POSTGRES_PASSWORD}" psql -h 127.0.0.1
+          -U "$${POSTGRES_USER}" -d "$${POSTGRES_DB}"
+          -AtX -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null
       interval: 2s
       timeout: 3s
       retries: 30

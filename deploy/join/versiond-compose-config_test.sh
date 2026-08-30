@@ -35,8 +35,11 @@ jq -e '
     "http://api:9100/versions") and
   (.services.proxy.networks | has("versiond-router-front")) and
   (.services.proxy.networks | has("versiond-router-back")) and
-  (.services.versiond.networks["versiond-router-back"].aliases | index("versiond-pool")) and
-  (.networks["versiond-router-front"].external == true) and
+	(.services.versiond.networks["versiond-router-back"].aliases | index("versiond-pool")) and
+	(.services["devshard-postgres"].healthcheck.test[1] | contains("psql -h 127.0.0.1")) and
+	(.services["devshard-postgres"].healthcheck.test[1] | contains("SELECT 1")) and
+	(.services["devshard-postgres"].healthcheck.test[1] | contains("pg_isready") | not) and
+	(.networks["versiond-router-front"].external == true) and
   (.networks["versiond-router-back"].external == true)
 ' "$tmpdir/main.json" >/dev/null
 
