@@ -354,6 +354,21 @@ maintenance uses `stop-all --maintenance`, then `down --maintenance` after the
 main Compose project is down. Fleet resources are ownership-labelled, so
 cleanup does not cross into another fleet.
 
+A fresh installation has three ordered phases:
+
+```sh
+./versiond-router-fleet.sh prepare-networks
+docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d
+./versiond-router-fleet.sh apply
+```
+
+The first command creates the external front/back networks consumed by the main
+Compose project. The main project then creates its default metrics network;
+`apply` discovers that network and starts the independent slot projects. Set
+`VERSIOND_ROUTER_METRICS_NETWORK` explicitly when rendering `spec-hash` before
+the main project exists. The release updater owns this ordering for existing
+hosts and preserves any additional Compose overlays.
+
 If a host crash interrupts an operation after the parent entered runtime
 `DRAIN`, `status` reports incomplete parent admission. The next `up`, `apply`,
 `rollout`, or `start` repairs `DRAIN` entries that still point at a live fleet
@@ -365,6 +380,12 @@ Fleet slots preserve `X-Real-IP` and `X-Forwarded-Proto` from the policy tier.
 Their data listener is reachable only through the fleet-owned front network;
 the public/policy proxy is responsible for deriving those headers from the
 external connection before forwarding a request there.
+
+Do not stop or recreate slot projects with raw `docker compose` commands.
+`stop`, `start`, `rollout`, and `maintenance-rollout` provide the parent drain,
+fresh-health boundary, and long SSE drain budget. Before taking the main Compose
+project down, run `stop-all --maintenance`; after the main project is down, use
+`down --maintenance` to remove the slot projects and fleet-owned networks.
 
 ## Configuration
 
@@ -448,14 +469,14 @@ The Prometheus output includes two synthetic backends.
 intact. A pending version or source outage therefore makes only convergence
 red; corruption of an accepted map makes both signals red. Serving readiness is
 not proof that every desired future name is available, so a parent that routes
-by version must still use per-version readiness. Compose health is a startup
-liveness gate: a catalog-aware router uses admin `/livez`, while the
-transitional nginx image retains its compatible `/healthz` probe. It deliberately
-does not wait for version children to download and start, because the shared
-public proxy also serves APIs that do not depend on devshard routing. Use
-unqualified admin `/readyz` for the stricter data-plane signal; it requires at
-least one published per-version backend to have a ready child and does not use
-the coarse supervisor pool.
+by version must still use per-version readiness. The transitional singleton's
+Compose health is only a startup compatibility gate: a catalog-aware image uses
+admin `/livez`, while the nginx image retains its `/healthz` probe.
+Independently managed fleet slots intentionally use the stricter unqualified
+admin `/readyz`, because fleet reserve and rollout commands must count serving
+capacity rather than merely live processes. Consequently a complete
+versiond-pool outage also blocks fleet mutation until serving capacity returns;
+unrelated public APIs remain available through the policy tier.
 Catalog diagnostics never include the configured source URL, so credentials or
 signed query parameters are not copied into status output or router logs.
 Each router image owns its graceful-stop signal: the transitional nginx image
@@ -463,6 +484,17 @@ uses `SIGQUIT`, while the HAProxy image declares `SIGUSR1`. The shipped Compose
 overlay only bounds the drain with `VERSIOND_ROUTER_STOP_GRACE_PERIOD` (default
 `10s`) before Docker forces termination, so selecting one image cannot override
 the shutdown contract of the other.
+
+`VERSIOND_ROUTER_PULL_POLICY=always` is the release default and requires the
+registry to be reachable before a slot operation. During a registry incident,
+an operator may use `missing` only when the intended image or digest is already
+present locally; `never` is the fully offline option. Prefer immutable digests
+for either offline mode.
+
+Prometheus discovers slots through the shared `versiond-router-metrics` DNS
+alias. Alert on the expected target count as well as each target's `up` value:
+a Docker DNS failure or removed slot disappears from service discovery instead
+of producing an `up == 0` series for its old address.
 
 The shipped Compose files do not publish the admin or metrics listener on a host
 port. They can be reached by containers on the same internal network when their

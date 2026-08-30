@@ -8,7 +8,12 @@
 # Compose 2.24.4 or newer. Upgrade an existing host with the release updater so
 # policy workers cross the required drain and fresh-admission sequence.
 #
+# Cold-start order (the release updater performs the same phases automatically):
+#   ./versiond-router-fleet.sh prepare-networks
 #   docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d
+#   ./versiond-router-fleet.sh apply
+# Stop the fleet before taking the main Compose project down; active fleet slots
+# remain attached to the shared external networks by design.
 #
 # x-versiond anchor holds everything shared between versiond and versiond2;
 # only container_name and per-instance data volumes differ.
