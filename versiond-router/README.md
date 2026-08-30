@@ -354,6 +354,11 @@ maintenance uses `stop-all --maintenance`, then `down --maintenance` after the
 main Compose project is down. Fleet resources are ownership-labelled, so
 cleanup does not cross into another fleet.
 
+Fleet slots preserve `X-Real-IP` and `X-Forwarded-Proto` from the policy tier.
+Their data listener is reachable only through the fleet-owned front network;
+the public/policy proxy is responsible for deriving those headers from the
+external connection before forwarding a request there.
+
 ## Configuration
 
 | Variable | Default | Meaning |
