@@ -23,6 +23,7 @@ guard_old_compose=(docker compose --project-name "$guard_project" -f "$base")
 guard_new_compose=(docker compose --project-name "$guard_project" -f "$base" -f "$overlay")
 guard_recovery_compose=(docker compose --project-name "$guard_project" -f "$base" -f "$overlay" -f "$recovery_overlay")
 guard_old_volume=""
+guard_fresh_volume=""
 guard_replacement_volume=""
 
 cleanup() {
@@ -32,6 +33,9 @@ cleanup() {
         >/dev/null 2>&1 || true
     if [[ -n $guard_old_volume ]]; then
         docker volume rm "$guard_old_volume" >/dev/null 2>&1 || true
+    fi
+    if [[ -n $guard_fresh_volume ]]; then
+        docker volume rm "$guard_fresh_volume" >/dev/null 2>&1 || true
     fi
     if [[ -n $guard_replacement_volume ]]; then
         docker volume rm "$guard_replacement_volume" >/dev/null 2>&1 || true
@@ -69,7 +73,7 @@ seed_probe() {
     local _
     shift 2
     local -a compose=("$@")
-    local sql="CREATE TABLE IF NOT EXISTS $table (value text PRIMARY KEY); INSERT INTO $table VALUES ('$value') ON CONFLICT DO NOTHING;"
+    local sql="CREATE TABLE IF NOT EXISTS devshard_session_index (session_id text PRIMARY KEY); CREATE TABLE IF NOT EXISTS $table (value text PRIMARY KEY); INSERT INTO $table VALUES ('$value') ON CONFLICT DO NOTHING;"
 
     # pg_isready can succeed immediately before a transient server restart.
     # Confirm readiness with the idempotent write the fixture actually needs.
@@ -163,6 +167,23 @@ guard_old_volume=$(docker inspect "$guard_old_container" --format \
     '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}')
 [[ -n $guard_old_volume ]] || fail \
     "guard fixture did not create an anonymous v4 volume"
+"${guard_old_compose[@]}" down
+
+# A later v4 up creates another valid PostgreSQL cluster on a fresh anonymous
+# volume. PG_VERSION alone cannot identify it as the source of devshard data.
+"${guard_old_compose[@]}" up -d "$service"
+wait_for_postgres "${guard_old_compose[@]}"
+fresh_v4_container=$("${guard_old_compose[@]}" ps -q "$service")
+guard_fresh_volume=$(docker inspect "$fresh_v4_container" --format \
+    '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}')
+if "$preflight" --source-container "$fresh_v4_container" \
+    --target-dir "$GONKA_POSTGRES_TEST_DATA" \
+    >"$tmpdir/fresh-v4.stdout" 2>"$tmpdir/fresh-v4.stderr"; then
+    fail "fresh replacement anonymous volume passed migration preflight"
+fi
+grep -q 'fresh anonymous volume may have replaced the original one' \
+    "$tmpdir/fresh-v4.stderr" || fail \
+    "fresh replacement volume failure did not point to dangling-volume recovery"
 "${guard_old_compose[@]}" down
 
 "$preflight" --source-volume "$guard_old_volume" \

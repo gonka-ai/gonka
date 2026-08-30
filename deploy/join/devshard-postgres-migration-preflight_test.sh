@@ -21,6 +21,10 @@ printf '\n' >>"$DOCKER_LOG"
 
 case ${1:-} in
     inspect) exit 0 ;;
+    exec)
+        printf '%s\n' "${DEVSHARD_SCHEMA_STATE:-t}"
+        exit 0
+        ;;
     volume)
         [[ ${2:-} == inspect ]] || exit 1
         exit 0
@@ -45,6 +49,7 @@ run_preflight() {
     DOCKER_BIN="$tmpdir/docker" \
         DOCKER_LOG="$tmpdir/docker.log" \
         DOCKER_PROBE="$DOCKER_PROBE" \
+        DEVSHARD_SCHEMA_STATE="${DEVSHARD_SCHEMA_STATE:-t}" \
         FREE_KIB="$FREE_KIB" \
         PATH="$tmpdir:$PATH" \
         "$preflight" "$@"
@@ -64,6 +69,19 @@ grep -q -- '--volumes-from postgres-v4:ro' "$tmpdir/docker.log" || fail \
 grep -Fq -- "$target_mount" \
     "$tmpdir/docker.log" || fail \
     "target directory was not mounted for the container-source probe"
+grep -q 'exec postgres-v4 /bin/sh -ec' "$tmpdir/docker.log" || fail \
+    "live container source was not checked for a devshard schema"
+
+DEVSHARD_SCHEMA_STATE=f
+export DEVSHARD_SCHEMA_STATE
+if run_preflight --source-container postgres-v4 --target-dir "$tmpdir/target" \
+    >"$tmpdir/fresh-source.stdout" 2>"$tmpdir/fresh-source.stderr"; then
+    fail "fresh PostgreSQL source without a devshard schema passed preflight"
+fi
+unset DEVSHARD_SCHEMA_STATE
+grep -q 'fresh anonymous volume may have replaced the original one' \
+    "$tmpdir/fresh-source.stderr" || fail \
+    "fresh anonymous source failure did not explain dangling-volume recovery"
 
 if run_preflight --source-container postgres-v4 \
     --target-dir "$tmpdir/target,readonly" \

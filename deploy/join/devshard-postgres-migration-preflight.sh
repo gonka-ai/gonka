@@ -23,9 +23,9 @@ Usage:
   devshard-postgres-migration-preflight.sh \
     (--source-container ID | --source-volume NAME) --target-dir DIR
 
-Checks that the target filesystem has enough free space for an atomic copy of
-the v4 PostgreSQL cluster. Source and target are mounted read-only and are not
-modified.
+Checks that a live v4 source contains the devshard schema and that the target
+filesystem has enough free space for an atomic copy. Source and target are
+mounted read-only and are not modified.
 EOF
 }
 
@@ -134,6 +134,23 @@ case $probe_state in
     source) ;;
     *) fail "unexpected source probe output: $probe" ;;
 esac
+
+if [[ -n $source_container ]]; then
+    devshard_schema=$(
+        # The quoted program expands inside the PostgreSQL container.
+        # shellcheck disable=SC2016
+        "$docker_bin" exec "$source_container" /bin/sh -ec '
+            user=${POSTGRES_USER:-postgres}
+            database=${POSTGRES_DB:-$user}
+            PGPASSWORD=${POSTGRES_PASSWORD:-} psql \
+                -h 127.0.0.1 -U "$user" -d "$database" -AtX \
+                -v ON_ERROR_STOP=1 -c \
+                "SELECT to_regclass('"'"'public.devshard_session_index'"'"') IS NOT NULL"
+        '
+    ) || fail "cannot verify the devshard schema in source container $source_container"
+    [[ $devshard_schema == t ]] || fail \
+        "source container $source_container has PostgreSQL data but no devshard schema; a fresh anonymous volume may have replaced the original one (locate and recover the dangling v4 volume)"
+fi
 [[ $source_kib =~ ^[1-9][0-9]*$ ]] || fail \
     "invalid PostgreSQL source size: ${source_kib:-empty}"
 [[ $reclaimable_kib =~ ^[0-9]+$ ]] || fail \

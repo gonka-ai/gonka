@@ -168,6 +168,10 @@ if [[ ${1:-} == exec ]]; then
             /etc/gonka-upgrade-barrier)
                 barrier_remove=true
                 ;;
+			*"to_regclass('public.devshard_session_index')"*)
+				printf '%s\n' "${DEVSHARD_SCHEMA_STATE:-t}"
+				exit 0
+				;;
         esac
         case $arg in
             http://*) probe_url=$arg ;;
