@@ -510,14 +510,24 @@ mapfile -t stale_refs < <(awk -F, -v address="$selected_slot_ip" '
 ((${#stale_refs[@]} > 0)) || fail "test parent exposes no refs for slot $selected_slot"
 for ref in "${stale_refs[@]}"; do
     docker exec "gonka-router-fleet-proxy-$suffix" /bin/sh -ec \
-        "printf '%s\\n' 'set server $ref state drain' | socat stdio /var/run/haproxy/reconciler.sock" \
+        "printf '%s\\n' 'set server $ref state maint' | socat stdio /var/run/haproxy/reconciler.sock" \
         >/dev/null
 done
 if "${fleet[@]}" status >"$tmpdir/stale-drain-status.out" 2>&1; then
-    fail "fleet status accepted stale parent DRAIN state"
+    fail "fleet status accepted unavailable parent slots"
 fi
 VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true \
-    "${fleet[@]}" start "$selected_slot" >"$tmpdir/stale-drain-repair.out" 2>&1
+    "${fleet[@]}" start "$selected_slot" >"$tmpdir/stale-drain-repair.out" 2>&1 &
+repair_pid=$!
+sleep 2
+kill -0 "$repair_pid" 2>/dev/null || fail \
+    "fleet start stopped waiting before delayed DRAIN assignment"
+for ref in "${stale_refs[@]}"; do
+    docker exec "gonka-router-fleet-proxy-$suffix" /bin/sh -ec \
+        "printf '%s\\n' 'set server $ref state drain' | socat stdio /var/run/haproxy/reconciler.sock" \
+        >/dev/null
+done
+wait "$repair_pid" || fail "fleet start did not recover delayed parent DRAIN state"
 grep -q 'repairing stale parent DRAIN state' "$tmpdir/stale-drain-repair.out" || fail \
     "fleet start did not report stale parent DRAIN recovery"
 "${fleet[@]}" verify-admission v4 >/dev/null || fail \
