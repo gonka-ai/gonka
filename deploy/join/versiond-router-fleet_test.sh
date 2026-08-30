@@ -485,8 +485,8 @@ VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true \
 "${fleet[@]}" verify-admission v4 >/dev/null || fail \
     "maintenance rollout committed before parent admission converged"
 
-# A killed fleet operation can leave runtime-only DRAIN state in the parent.
-# The next converging start repairs only those stale entries and requires a
+# A killed fleet operation can leave runtime-only MAINT or DRAIN state in the
+# parent. The next converging start repairs those stale entries and requires a
 # fresh active-check rise before reporting admission.
 selected_slot=${slots[0]}
 selected_slot_id=$(docker ps -q \
@@ -525,18 +525,21 @@ if "${fleet[@]}" status >"$tmpdir/stale-drain-status.out" 2>&1; then
     fail "fleet status accepted unavailable parent slots"
 fi
 VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true \
-    "${fleet[@]}" start "$selected_slot" >"$tmpdir/stale-drain-repair.out" 2>&1 &
-repair_pid=$!
-sleep 2
-kill -0 "$repair_pid" 2>/dev/null || fail \
-    "fleet start stopped waiting before delayed DRAIN assignment"
+    "${fleet[@]}" start "$selected_slot" >"$tmpdir/stale-maint-repair.out" 2>&1 || \
+    fail "fleet start did not recover stale parent MAINT state"
+grep -q 'repairing stale parent withdrawal state' \
+    "$tmpdir/stale-maint-repair.out" || fail \
+    "fleet start did not report stale parent MAINT recovery"
 for ref in "${stale_refs[@]}"; do
     docker exec "gonka-router-fleet-proxy-$suffix" /bin/sh -ec \
         "printf '%s\\n' 'set server $ref state drain' | socat stdio /var/run/haproxy/reconciler.sock" \
         >/dev/null
 done
-wait "$repair_pid" || fail "fleet start did not recover delayed parent DRAIN state"
-grep -q 'repairing stale parent DRAIN state' "$tmpdir/stale-drain-repair.out" || fail \
+VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true \
+    "${fleet[@]}" start "$selected_slot" >"$tmpdir/stale-drain-repair.out" 2>&1 || \
+    fail "fleet start did not recover stale parent DRAIN state"
+grep -q 'repairing stale parent withdrawal state' \
+    "$tmpdir/stale-drain-repair.out" || fail \
     "fleet start did not report stale parent DRAIN recovery"
 "${fleet[@]}" verify-admission v4 >/dev/null || fail \
     "stale parent DRAIN state was not repaired"

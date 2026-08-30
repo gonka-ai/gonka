@@ -405,20 +405,20 @@ parent_server_refs() {
     ' <<<"$stats"
 }
 
-repair_stale_parent_drain() {
+repair_stale_parent_state() {
     local slot=$1 address refs_output status ref
     local -a refs=()
 
     parent_proxy_active || return 0
     address=$(slot_front_ip "$slot") || return 1
-    if refs_output=$(parent_server_refs "$address" '^DRAIN'); then
+    if refs_output=$(parent_server_refs "$address" '^(DRAIN|MAINT)'); then
         mapfile -t refs <<<"$refs_output"
     else
         status=$?
         ((status == 1)) && return 0
         return 1
     fi
-    warn "repairing stale parent DRAIN state for slot $slot; fresh L7 admission is required"
+    warn "repairing stale parent withdrawal state for slot $slot; fresh L7 admission is required"
     for ref in "${refs[@]}"; do
         parent_runtime_command "set server $ref health down" || return 1
         parent_runtime_command "set server $ref state ready" || return 1
@@ -576,7 +576,10 @@ wait_parent_admission() {
         # DNS may assign the replacement address to a drained server-template
         # slot after this wait has already started. Repair on every pass so the
         # same operation converges without requiring an operator retry.
-        repair_stale_parent_drain "$slot" || return 1
+        if ! repair_stale_parent_state "$slot"; then
+            sleep 1
+            continue
+        fi
         missing=
         for route in --coarse "${!expected_routes[@]}"; do
             if [[ $route != --coarse ]] && ! slot_route_ready "$slot" "$route"; then
