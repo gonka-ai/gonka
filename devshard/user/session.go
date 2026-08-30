@@ -30,18 +30,16 @@ import (
 var TimeoutBuffer = 5 * time.Second
 
 // MaxConcurrentVerifierRPCs caps how many simultaneous VerifyTimeout RPCs the
-// proxy may have open against the same verifier host. When many in-flight
-// nonces time out around the same time (e.g. one executor host stops
-// responding), CollectTimeoutVotes fans out one VerifyTimeout per verifier
-// per timeout. Without this cap, M concurrent timeouts × N verifiers can
-// exhaust the per-host connection budget on every verifier in the group.
+// proxy may have open against the same verifier host. CollectTimeoutVotes fans
+// out one VerifyTimeout per verifier per timed-out nonce; the cap is
+// process-wide via SharedVerifierQueue so K escrows cannot stack unbounded
+// POSTs onto one validator.
 //
-// The limit is per verifier (keyed by validator address) and is enforced
-// process-wide via SharedVerifierQueue so that different Sessions (one per
-// escrow / devshard runtime) can't collectively pile connections onto the same
-// verifier host. Different verifiers are still hit in parallel; only
-// per-verifier RPCs serialize.
-var MaxConcurrentVerifierRPCs = 1
+// Execution-timeout verify is a cheap FinishInference probe. Cap 1 made a
+// timeout wave wait 120s and drop votes that never left the gateway. 10 lets
+// concurrent rounds send; it is still a bound, not "one at a time".
+// Different verifiers are still hit in parallel.
+var MaxConcurrentVerifierRPCs = 10
 
 // VerifierQueueWaitTimeout bounds how long a VerifyTimeout goroutine may wait
 // for its verifier-host slot before giving up. When a verifier hangs, its
@@ -60,60 +58,14 @@ var MaxConcurrentVerifierRPCs = 1
 // remaining verifiers.
 var VerifierQueueWaitTimeout = 120 * time.Second
 
-// verifierHostQueue serializes outbound VerifyTimeout RPCs per verifier host.
-// Each verifier (keyed by validator address) gets a buffered channel acting
-// as a semaphore of capacity MaxConcurrentVerifierRPCs. Acquire is
-// ctx-aware so a cancelled timeout collection does not stay queued
-// forever.
-type verifierHostQueue struct {
-	mu    sync.Mutex
-	slots map[string]chan struct{}
-}
+// VerifyTimeoutSlowLog is the elapsed wall time after which a sent
+// VerifyTimeout is logged as timeout_vote_slow, whether it accepted,
+// rejected, or failed.
+var VerifyTimeoutSlowLog = 15 * time.Second
 
-func newVerifierHostQueue() *verifierHostQueue {
-	return &verifierHostQueue{slots: make(map[string]chan struct{})}
-}
-
-// SharedVerifierQueue is the process-wide verifier-host limiter. All Sessions
-// created with NewSession share it by default, so one proxy runtime cannot
-// open more than MaxConcurrentVerifierRPCs concurrent VerifyTimeout RPCs to a
-// single verifier across all of its escrows. Tests may inject a private
-// queue via WithVerifierQueue to keep assertions isolated.
-var SharedVerifierQueue = newVerifierHostQueue()
-
-func (q *verifierHostQueue) slot(addr string) chan struct{} {
-	q.mu.Lock()
-	defer q.mu.Unlock()
-	sem, ok := q.slots[addr]
-	if !ok {
-		capacity := MaxConcurrentVerifierRPCs
-		if capacity < 1 {
-			capacity = 1
-		}
-		sem = make(chan struct{}, capacity)
-		q.slots[addr] = sem
-	}
-	return sem
-}
-
-// acquire blocks until a slot is available for addr or ctx is cancelled.
-// Returns ctx.Err() if cancelled while waiting.
-func (q *verifierHostQueue) acquire(ctx context.Context, addr string) error {
-	sem := q.slot(addr)
-	select {
-	case sem <- struct{}{}:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
-}
-
-// release returns one slot to addr's semaphore. Must be called exactly once
-// after a successful acquire.
-func (q *verifierHostQueue) release(addr string) {
-	sem := q.slot(addr)
-	<-sem
-}
+// inflightSnapshotLimit caps how many occupying RPCs are spelled out on
+// timeout_vote_queue_expired. The count is still exact.
+const inflightSnapshotLimit = 8
 
 // nonceOutcome tracks protocol-relevant facts observed for a single inference nonce.
 type nonceOutcome struct {
@@ -2175,6 +2127,37 @@ func timeoutReasonLogLabel(reason types.TimeoutReason) string {
 	}
 }
 
+func isVoteRPCTimeout(err error) bool {
+	if err == nil || errors.Is(err, errVerifierQueueExpired) {
+		return false
+	}
+	return errors.Is(err, context.DeadlineExceeded)
+}
+
+func logVoteRPC(ctx context.Context, logFields func(string, ...any) []any, verifierAddr string, err error, accept bool, elapsed time.Duration) {
+	timedOut := isVoteRPCTimeout(err)
+	if timedOut {
+		logging.Stage(ctx, "timeout_vote_rpc_timeout",
+			logFields(verifierAddr, "elapsed_ms", elapsed.Milliseconds(), "error", err)...,
+		)
+	}
+	if elapsed <= VerifyTimeoutSlowLog {
+		return
+	}
+	outcome := "accept"
+	switch {
+	case timedOut:
+		outcome = "timeout"
+	case err != nil:
+		outcome = "error"
+	case !accept:
+		outcome = "reject"
+	}
+	logging.Stage(ctx, "timeout_vote_slow",
+		logFields(verifierAddr, "elapsed_ms", elapsed.Milliseconds(), "outcome", outcome)...,
+	)
+}
+
 // CollectTimeoutVotes contacts non-executor hosts to collect signed votes.
 // Returns votes for inclusion in MsgTimeoutInference.
 // Deduplicates verifiers by validator address to avoid duplicate votes
@@ -2268,14 +2251,18 @@ func (s *Session) collectTimeoutVotes(
 			err := s.verifierQueue.acquire(waitCtx, av.verifierAddr)
 			waitCancel()
 			if err != nil {
+				inflight, waiters := s.verifierQueue.snapshot(av.verifierAddr)
 				logging.Stage(ctx, "timeout_vote_queue_expired",
 					logFields(av.verifierAddr,
 						"wait_ms", time.Since(queueStart).Milliseconds(),
 						"wait_timeout_ms", VerifierQueueWaitTimeout.Milliseconds(),
 						"error", err,
+						"inflight", len(inflight),
+						"waiters", waiters,
+						"inflight_snapshot", formatInflightSnapshot(inflight, time.Now()),
 					)...,
 				)
-				results <- voteResult{err: err, verifierIdx: av.idx, verifierAddr: av.verifierAddr}
+				results <- voteResult{err: fmt.Errorf("%w: %w", errVerifierQueueExpired, err), verifierIdx: av.idx, verifierAddr: av.verifierAddr}
 				return
 			}
 			waitMs := time.Since(queueStart).Milliseconds()
@@ -2296,6 +2283,21 @@ func (s *Session) collectTimeoutVotes(
 				return
 			}
 
+			rec := inflightVerify{
+				Escrow: s.escrowID,
+				Nonce:  inferenceID,
+				Reason: timeoutReasonLogLabel(reason),
+				SentAt: time.Now(),
+			}
+			if id, ok := logging.RequestID(ctx); ok {
+				rec.RequestID = id
+			}
+			s.verifierQueue.beginInflight(av.verifierAddr, rec)
+			defer s.verifierQueue.endInflight(av.verifierAddr, rec)
+
+			logging.Stage(ctx, "timeout_vote_sent",
+				logFields(av.verifierAddr, "sent_at_ms", rec.SentAt.UnixMilli())...,
+			)
 			accept, sig, voterSlot, err := av.verifier.VerifyTimeout(ctx, inferenceID, reason, payload, diffs)
 			// The slot is held and a vote is idempotent, so an unanswered request is asked once more.
 			if transport.IsTransientWriteError(err) && ctx.Err() == nil {
@@ -2303,6 +2305,7 @@ func (s *Session) collectTimeoutVotes(
 					"inference_id", inferenceID, "verifier", av.verifierAddr, "error", err)
 				accept, sig, voterSlot, err = av.verifier.VerifyTimeout(ctx, inferenceID, reason, payload, diffs)
 			}
+			logVoteRPC(ctx, logFields, av.verifierAddr, err, accept, time.Since(rec.SentAt))
 			if err != nil {
 				results <- voteResult{err: err, verifierIdx: av.idx, verifierAddr: av.verifierAddr}
 				return
@@ -2403,18 +2406,21 @@ func (s *Session) collectTimeoutVotes(
 			break
 		}
 	}
+	tallyFields := []any{
+		"accept", len(votes),
+		"weight", accWeight,
+		"reject", rejects,
+		"invalid", invalid,
+		"errors", errors,
+		"threshold", voteThreshold,
+		"verifiers", expected,
+		"sufficient", accWeight > voteThreshold,
+	}
+	if classes := formatErrorClasses(errorClasses); classes != "" {
+		tallyFields = append(tallyFields, "error_classes", classes)
+	}
 	logging.Stage(ctx, "timeout_vote_tally",
-		logFields(
-			"",
-			"accept", len(votes),
-			"weight", accWeight,
-			"reject", rejects,
-			"invalid", invalid,
-			"errors", errors,
-			"threshold", voteThreshold,
-			"verifiers", expected,
-			"sufficient", accWeight > voteThreshold,
-		)...,
+		logFields("", tallyFields...)...,
 	)
 	logging.Debug("timeout vote collection",
 		"subsystem", "session", "inference_id", inferenceID,
