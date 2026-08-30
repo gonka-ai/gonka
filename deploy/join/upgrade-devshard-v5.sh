@@ -663,7 +663,7 @@ if [[ $interrupted_upgrade_loaded == true ]]; then
 	[[ $saved_fleet_spec_sha == "$fleet_spec_sha" ]] || fail \
 		"router fleet specification changed during active transaction $transaction_id; restore the saved fleet configuration before resuming"
 	[[ $saved_desired_fingerprint == "$desired_fingerprint" ]] || fail \
-		"active transaction $transaction_id targets a different immutable release state; restore the saved Compose inputs or explicitly abort it"
+		"active transaction $transaction_id targets a different immutable release state; restore the saved Compose inputs and rerun the transaction (the journal is retained because discarding partially applied state is unsafe)"
 	base_fingerprint=$saved_base_fingerprint
 else
 	base_fingerprint=$current_base_fingerprint
