@@ -166,12 +166,6 @@ func (cm *ConfigManager) GetTxBatchingConfig() TxBatchingConfig {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
 	cfg := cm.currentConfig.TxBatching
-	if cfg.FlushSize == 0 {
-		cfg.FlushSize = 50
-	}
-	if cfg.FlushTimeoutSeconds == 0 {
-		cfg.FlushTimeoutSeconds = 5
-	}
 	if cfg.ValidationV2FlushSize == 0 {
 		cfg.ValidationV2FlushSize = 10
 	}
@@ -575,6 +569,54 @@ func (cm *ConfigManager) SetNodes(nodes []InferenceNodeConfig) error {
 	cm.currentConfig.Nodes = nodes
 	logging.Info("Setting nodes", types.Config, "nodes", nodes)
 	return nil
+}
+
+type AppliedDeploymentState struct {
+	ModelID     string `json:"model_id"`
+	Fingerprint string `json:"fingerprint"`
+}
+
+const appliedDeploymentPrefix = "applied_model_deployment/current/"
+const legacyAppliedDeploymentPrefix = "applied_model_deployment/"
+
+func appliedDeploymentKey(nodeID string) string {
+	encodedNodeID := base64.RawURLEncoding.EncodeToString([]byte(nodeID))
+	return appliedDeploymentPrefix + encodedNodeID
+}
+
+func (cm *ConfigManager) SetAppliedDeployment(
+	ctx context.Context,
+	nodeID string,
+	deployment AppliedDeploymentState,
+) error {
+	if cm == nil || cm.sqlDb == nil {
+		return nil
+	}
+	return KVSetJSON(ctx, cm.sqlDb.GetDb(), appliedDeploymentKey(nodeID), deployment)
+}
+
+func (cm *ConfigManager) GetAppliedDeployment(ctx context.Context, nodeID string) (AppliedDeploymentState, bool, error) {
+	if cm == nil || cm.sqlDb == nil {
+		return AppliedDeploymentState{}, false, nil
+	}
+	var deployment AppliedDeploymentState
+	ok, err := KVGetJSON(ctx, cm.sqlDb.GetDb(), appliedDeploymentKey(nodeID), &deployment)
+	if err != nil || !ok {
+		return AppliedDeploymentState{}, ok, err
+	}
+	return deployment, true, nil
+}
+
+func (cm *ConfigManager) DeleteAppliedDeploymentsForNode(ctx context.Context, nodeID string) error {
+	if cm == nil || cm.sqlDb == nil {
+		return nil
+	}
+	db := cm.sqlDb.GetDb()
+	if err := KVDelete(ctx, db, appliedDeploymentKey(nodeID)); err != nil {
+		return err
+	}
+	encodedNodeID := base64.RawURLEncoding.EncodeToString([]byte(nodeID))
+	return KVDeletePrefix(ctx, db, legacyAppliedDeploymentPrefix+encodedNodeID+"/")
 }
 
 func (cm *ConfigManager) CreateWorkerKey() (string, error) {

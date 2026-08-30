@@ -35,8 +35,8 @@ func (t testFeeTx) GetMsgs() []sdk.Msg                    { return t.msgs }
 func (t testFeeTx) GetMsgsV2() ([]protov2.Message, error) { return nil, nil }
 func (t testFeeTx) GetFee() sdk.Coins                     { return t.fee }
 func (t testFeeTx) GetGas() uint64                        { return t.gas }
-func (t testFeeTx) FeePayer() []byte                       { return nil }
-func (t testFeeTx) FeeGranter() []byte                     { return nil }
+func (t testFeeTx) FeePayer() []byte                      { return nil }
+func (t testFeeTx) FeeGranter() []byte                    { return nil }
 
 // --- NetworkDutyFeeBypassDecorator tests ---
 
@@ -44,11 +44,6 @@ func TestNetworkDutyBypass_AllExemptMessages(t *testing.T) {
 	exemptMsgs := map[string]sdk.Msg{
 		"MsgSubmitPocBatch":                    &inferencetypes.MsgSubmitPocBatch{},
 		"MsgSubmitSeed":                        &inferencetypes.MsgSubmitSeed{},
-		"MsgValidation":                        &inferencetypes.MsgValidation{},
-		"MsgStartInference":                    &inferencetypes.MsgStartInference{},
-		"MsgFinishInference":                   &inferencetypes.MsgFinishInference{},
-		"MsgInvalidateInference":               &inferencetypes.MsgInvalidateInference{},
-		"MsgRevalidateInference":               &inferencetypes.MsgRevalidateInference{},
 		"MsgMLNodeWeightDistribution":          &inferencetypes.MsgMLNodeWeightDistribution{},
 		"MsgSubmitPocValidationsV2":            &inferencetypes.MsgSubmitPocValidationsV2{},
 		"MsgSubmitHardwareDiff":                &inferencetypes.MsgSubmitHardwareDiff{},
@@ -129,7 +124,7 @@ func TestNetworkDutyBypass_MixedMessages_NoBypass(t *testing.T) {
 	// Mix of exempt and non-exempt: bypass should NOT apply
 	tx := testFeeTx{
 		msgs: []sdk.Msg{
-			&inferencetypes.MsgValidation{},
+			&inferencetypes.MsgClaimRewards{},
 			&banktypes.MsgSend{}, // non-exempt
 		},
 		gas: 100_000,
@@ -152,7 +147,7 @@ func TestNetworkDutyBypass_GasCapEnforced(t *testing.T) {
 
 	// Gas exceeds cap: should reject
 	tx := testFeeTx{
-		msgs: []sdk.Msg{&inferencetypes.MsgValidation{}},
+		msgs: []sdk.Msg{&inferencetypes.MsgClaimRewards{}},
 		gas:  20_000_000, // exceeds 10M cap
 	}
 	ctx := newTestContext()
@@ -172,11 +167,6 @@ func TestIsExemptMessageType(t *testing.T) {
 	require.True(t, isExemptMessageType(&inferencetypes.MsgSubmitPocBatch{}))
 	require.True(t, isExemptMessageType(&inferencetypes.MsgSubmitSeed{}))
 	require.True(t, isExemptMessageType(&inferencetypes.MsgSubmitPocValidationsV2{}))
-	require.True(t, isExemptMessageType(&inferencetypes.MsgValidation{}))
-	require.True(t, isExemptMessageType(&inferencetypes.MsgStartInference{}))
-	require.True(t, isExemptMessageType(&inferencetypes.MsgFinishInference{}))
-	require.True(t, isExemptMessageType(&inferencetypes.MsgInvalidateInference{}))
-	require.True(t, isExemptMessageType(&inferencetypes.MsgRevalidateInference{}))
 	require.True(t, isExemptMessageType(&inferencetypes.MsgMLNodeWeightDistribution{}))
 	require.True(t, isExemptMessageType(&blstypes.MsgSubmitDealerPart{}))
 	require.True(t, isExemptMessageType(&blstypes.MsgSubmitVerificationVector{}))
@@ -188,8 +178,8 @@ func TestIsExemptMessageType(t *testing.T) {
 	require.True(t, isExemptMessageType(&inferencetypes.MsgSettleDevshardEscrow{}))
 
 	// Not exempt
-	require.False(t, isExemptMessageType(&blstypes.MsgRequestThresholdSignature{})) // open to anyone, no rate limit
-	require.False(t, isExemptMessageType(&inferencetypes.MsgPoCV2StoreCommit{}))    // intentional sybil-defense fee via chargePoCV2StoreCommitGas
+	require.False(t, isExemptMessageType(&blstypes.MsgRequestThresholdSignature{}))  // open to anyone, no rate limit
+	require.False(t, isExemptMessageType(&inferencetypes.MsgPoCV2StoreCommit{}))     // intentional sybil-defense fee via chargePoCV2StoreCommitGas
 	require.False(t, isExemptMessageType(&inferencetypes.MsgCreateDevshardEscrow{})) // user-driven, paid
 	require.False(t, isExemptMessageType(&inferencetypes.MsgSubmitNewParticipant{}))
 	require.False(t, isExemptMessageType(&banktypes.MsgSend{}))
@@ -242,7 +232,6 @@ func TestIsNetworkDuty_NonExecNonExempt(t *testing.T) {
 
 func TestIsNetworkDuty_ExemptDirectMessage(t *testing.T) {
 	// Direct exempt message (not wrapped in MsgExec)
-	require.True(t, isNetworkDuty(&inferencetypes.MsgValidation{}, nil))
 	require.True(t, isNetworkDuty(&blstypes.MsgSubmitDealerPart{}, nil))
 }
 

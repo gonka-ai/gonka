@@ -36,7 +36,9 @@ type e2eEnv struct {
 
 	images          e2eImages
 	hostURLs        []string
+	hostControlURLs []string
 	hostVolumeNames []string
+	hostEnv         map[string]string
 	usePostgres     bool
 }
 
@@ -61,6 +63,9 @@ type containerSpec struct {
 type e2eEnvOptions struct {
 	hostVolumeNames    []string
 	usePostgresStorage bool
+	hostEnv            map[string]string
+	hostEnvOverrides   map[int]map[string]string
+	mockChainEnv       map[string]string
 }
 
 func startHappyPathEnv(ctx context.Context, t *testing.T, images e2eImages) *e2eEnv {
@@ -92,6 +97,7 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		network:         network,
 		images:          images,
 		hostVolumeNames: opts.hostVolumeNames,
+		hostEnv:         opts.hostEnv,
 		usePostgres:     opts.usePostgresStorage,
 	}
 	if len(opts.hostVolumeNames) > 0 {
@@ -104,6 +110,7 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		image:   images.mockChain,
 		port:    "9090/tcp",
 		aliases: []string{mockChainAlias},
+		env:     opts.mockChainEnv,
 		waitLog: "mock-chain gRPC listening",
 	})
 
@@ -121,11 +128,12 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		tmpfs: map[string]string{
 			"/tmp/pgdata": "rw",
 		},
-		waitLog: "database system is ready to accept connections",
+		waitLog:           "database system is ready to accept connections",
 		waitLogOccurrence: 2,
 	})
 
 	env.hostURLs = make([]string, 3)
+	env.hostControlURLs = make([]string, len(env.hostURLs))
 	for i := range env.hostURLs {
 		env.hostURLs[i] = fmt.Sprintf("http://devshard-host-%d:8080", i)
 	}
@@ -133,7 +141,7 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		env.createPostgresHostDatabases(ctx, t, postgres)
 	}
 	for i := range env.hostURLs {
-		env.startHost(ctx, t, i)
+		env.hostControlURLs[i] = containerURL(ctx, t, env.startHostWithEnv(ctx, t, i, opts.hostEnvOverrides[i]), "8080/tcp")
 	}
 
 	devshardctl := env.startContainer(ctx, t, containerSpec{
@@ -142,24 +150,23 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		port:    "8080/tcp",
 		aliases: []string{devshardCtlName},
 		env: map[string]string{
-			"DEVSHARD_ESCROW_ID":       defaultEscrowID,
-			"DEVSHARD_CHAIN_GRPC":      mockChainAlias + ":9090",
-			"DEVSHARD_PUBLIC_API":      "http://" + mockChainAlias + ":9191",
-			"DEVSHARD_PARAMS_SOURCE":   "chain",
-			"DEVSHARD_PRIVATE_KEY":     testutil.EnvDefault("DEVSHARD_E2E_USER_PRIVATE_KEY", testutil.UserPrivateKey),
-			"DEVSHARD_ADMIN_API_KEY":   testutil.AdminAPIKey,
-			"DEVSHARD_STORAGE_PATH":    "/tmp/devshardctl",
-			"DEVSHARD_MODEL":           "stub-model",
-			"GATEWAY_MAX_TOKENS_CAP":   "4096",
+			"DEVSHARD_ESCROW_ID":     defaultEscrowID,
+			"DEVSHARD_CHAIN_GRPC":    mockChainAlias + ":9090",
+			"DEVSHARD_PUBLIC_API":    "http://" + mockChainAlias + ":9191",
+			"DEVSHARD_PARAMS_SOURCE": "chain",
+			"DEVSHARD_PRIVATE_KEY":   testutil.EnvDefault("DEVSHARD_E2E_USER_PRIVATE_KEY", testutil.UserPrivateKey),
+			"DEVSHARD_ADMIN_API_KEY": testutil.AdminAPIKey,
+			"DEVSHARD_STORAGE_PATH":  "/tmp/devshardctl",
+			"DEVSHARD_MODEL":         "stub-model",
+			"GATEWAY_MAX_TOKENS_CAP": "4096",
+			// Hosts are Docker DNS names that resolve to private IPs.
+			// Production leaves this unset so the dial-time SSRF guard stays on.
+			"DEVSHARD_ALLOW_PRIVATE_ADDRESSES": "true",
 		},
 		waitPath: "/v1/status",
 	})
 
-	host, err := devshardctl.Host(ctx)
-	require.NoError(t, err)
-	port, err := devshardctl.MappedPort(ctx, "8080/tcp")
-	require.NoError(t, err)
-	env.clientURL = "http://" + host + ":" + port.Port()
+	env.clientURL = containerURL(ctx, t, devshardctl, "8080/tcp")
 	testutil.DebugLogf(t, "devshardctl client URL: %s", env.clientURL)
 
 	require.NotNil(t, mockChain)
@@ -194,18 +201,22 @@ func (e *e2eEnv) createPostgresHostDatabases(ctx context.Context, t *testing.T, 
 // e2e/mock-chain-config.yaml so devshardctl (chain-backed) and hosts agree.
 func e2eHostSessionEnv() map[string]string {
 	return map[string]string{
-		"DEVSHARD_TOKEN_PRICE":                  "1",
-		"DEVSHARD_CREATE_DEVSHARD_FEE":          "10000",
-		"DEVSHARD_FEE_PER_NONCE":                "1",
-		"DEVSHARD_VALIDATION_RATE":              "6000",
-		"DEVSHARD_VOTE_THRESHOLD_FACTOR":        "50",
-		"DEVSHARD_INFERENCE_SEAL_GRACE_NONCES":  "3",
-		"DEVSHARD_INFERENCE_SEAL_GRACE_SECONDS": "30",
-		"DEVSHARD_AUTO_SEAL_EVERY_N_NONCES":     "100",
+		"DEVSHARD_TOKEN_PRICE":                  "7",
+		"DEVSHARD_CREATE_DEVSHARD_FEE":          "12345",
+		"DEVSHARD_FEE_PER_NONCE":                "19",
+		"DEVSHARD_VALIDATION_RATE":              "10000",
+		"DEVSHARD_VOTE_THRESHOLD_FACTOR":        "66",
+		"DEVSHARD_INFERENCE_SEAL_GRACE_NONCES":  "9",
+		"DEVSHARD_INFERENCE_SEAL_GRACE_SECONDS": "77",
+		"DEVSHARD_AUTO_SEAL_EVERY_N_NONCES":     "21",
 	}
 }
 
 func (e *e2eEnv) startHost(ctx context.Context, t *testing.T, index int) testcontainers.Container {
+	return e.startHostWithEnv(ctx, t, index, nil)
+}
+
+func (e *e2eEnv) startHostWithEnv(ctx context.Context, t *testing.T, index int, overrides map[string]string) testcontainers.Container {
 	t.Helper()
 	env := map[string]string{
 		"DEVSHARD_ESCROW_ID":         defaultEscrowID,
@@ -214,8 +225,16 @@ func (e *e2eEnv) startHost(ctx context.Context, t *testing.T, index int) testcon
 		"DEVSHARD_USER_PRIVATE_KEY":  testutil.UserPrivateKey,
 		"DEVSHARD_PEER_URLS":         strings.Join(e.hostURLs, ","),
 		"DEVSHARD_STUB_INFERENCE":    "1",
+		// Peer URLs are compose aliases on the test network (private IPs).
+		"DEVSHARD_ALLOW_PRIVATE_ADDRESSES": "true",
 	}
 	for k, v := range e2eHostSessionEnv() {
+		env[k] = v
+	}
+	for k, v := range e.hostEnv {
+		env[k] = v
+	}
+	for k, v := range overrides {
 		env[k] = v
 	}
 	var mounts []mount.Mount
@@ -251,7 +270,16 @@ func (e *e2eEnv) restartHost(ctx context.Context, t *testing.T, index int) {
 	name := hostName(index)
 	testutil.DebugLogf(t, "restarting %s", name)
 	e.stopHost(ctx, t, index)
-	e.startHost(ctx, t, index)
+	e.hostControlURLs[index] = containerURL(ctx, t, e.startHost(ctx, t, index), "8080/tcp")
+}
+
+func containerURL(ctx context.Context, t *testing.T, container testcontainers.Container, portName string) string {
+	t.Helper()
+	host, err := container.Host(ctx)
+	require.NoError(t, err)
+	port, err := container.MappedPort(ctx, nat.Port(portName))
+	require.NoError(t, err)
+	return "http://" + host + ":" + port.Port()
 }
 
 func (e *e2eEnv) stopHost(ctx context.Context, t *testing.T, index int) {

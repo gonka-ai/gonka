@@ -27,8 +27,8 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
+	"common/httpguard"
 	"common/logging"
-	"decentralized-api/internal/validation"
 	"decentralized-api/participant"
 	"encoding/json"
 	"fmt"
@@ -41,6 +41,25 @@ import (
 
 	"github.com/productscience/inference/x/inference/types"
 )
+
+// envAllowPrivateAddresses disables the dial-time SSRF guard on outbound dials to
+// participant-controlled URLs. Set true only in local dev / docker-compose / e2e,
+// where participants register docker-internal hostnames that resolve to private
+// IPs. Production leaves it unset (default false = private targets blocked).
+const envAllowPrivateAddresses = "DAPI_ALLOW_PRIVATE_ADDRESSES"
+
+// envBool parses a boolean env var. Unset or unparseable values return fallback.
+func envBool(key string, fallback bool) bool {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(raw)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
 
 // buildEarlyShareGuard constructs the DAPI-only early-share guard from config.
 // Returns nil (a valid disabled guard) when disabled or when the local sqlite
@@ -96,6 +115,16 @@ func main() {
 
 	if configManager.GetApiConfig().TestMode {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
+	}
+
+	// Wire the dial-time SSRF guard before anything can dial out. Guarded
+	// clients read the flag per dial, so this covers clients built later
+	// (notably poc.ProofClient, constructed per PoC validation round).
+	allowPrivateAddresses := envBool(envAllowPrivateAddresses, false)
+	httpguard.SetAllowPrivate(allowPrivateAddresses)
+	if allowPrivateAddresses {
+		slog.Warn("SSRF guard disabled: dials to private/internal addresses are allowed",
+			"env", envAllowPrivateAddresses)
 	}
 
 	natssrv := server.NewServer(configManager.GetNatsConfig())
@@ -209,7 +238,6 @@ func main() {
 		defer statsStore.Close()
 	}
 
-	validator := validation.NewInferenceValidator(nodeBroker, configManager, recorder, chainPhaseTracker)
 	blsManager := bls.NewBlsManager(*recorder)
 	if db := configManager.SqlDb().GetDb(); db != nil {
 		if err := blsManager.SetDealerOpeningsDB(db); err != nil {
@@ -222,7 +250,6 @@ func main() {
 		configManager,
 		offChainValidator,
 		nodeBroker,
-		validator,
 		*recorder,
 		chainPhaseTracker,
 		cancel,
@@ -284,12 +311,15 @@ func main() {
 
 	addr = fmt.Sprintf(":%v", configManager.GetApiConfig().AdminServerPort)
 	logging.Info("start admin server on addr", types.Server, "addr", addr)
-	adminServer := adminserver.NewServer(recorder, nodeBroker, configManager, validator, blockQueue, payloadStore)
+	adminServer := adminserver.NewServer(recorder, nodeBroker, configManager, blockQueue, payloadStore)
 	adminServer.Start(addr)
 
 	nmGrpcPort := configManager.GetApiConfig().NodeManagerGrpcPort
-	// port should be set explicitly in the config to start NodeManager GRPC server. 0 means we skip it
-	if nmGrpcPort != 0 {
+	if nmGrpcPort == 0 {
+		nmGrpcPort = 9400
+	}
+	// Negative ports explicitly disable the NodeManager gRPC server.
+	if nmGrpcPort > 0 {
 		nmGrpcServer := grpc.NewServer()
 		nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker, configManager, chainPhaseTracker,
 			nodemanager.WithHostEventRing(hostEventRing),

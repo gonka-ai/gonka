@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"common/chain"
+	"common/httpguard"
 	"devshard/bridge"
+	"devshard/internal/boolvalue"
 	"devshard/state"
 	"devshard/types"
 	"devshard/user"
@@ -115,7 +117,6 @@ const (
 type bootstrapOptions struct {
 	escrowID          string
 	privateKeyHex     string
-	chainGRPC         string
 	publicAPI         string
 	defaultModel      string
 	storagePath       string
@@ -127,8 +128,14 @@ type bootstrapOptions struct {
 var gatewayRuntimeBuilder = buildRuntime
 
 func main() {
+	initGatewaySlog()
 	ConfigurePoCRequestMode(os.Getenv("DEVSHARD_POC_REQUEST_MODE"))
 	ConfigureCapacityAwareLimits(os.Getenv("DEVSHARD_CAPACITY_AWARE_LIMITS"))
+	// Wire the dial-time SSRF guard before any outbound dial. Host URLs come
+	// from chain state and are participant-controlled; the gateway's own chain
+	// RPC/public-API clients are unguarded, so private self-hosted endpoints
+	// keep working. Default secure; dev/e2e opt out via env.
+	httpguard.SetAllowPrivate(readBoolEnv("DEVSHARD_ALLOW_PRIVATE_ADDRESSES", false))
 	flags := parseCLIFlags()
 	runtimeOpts := mustLoadRuntimeOptions(flags)
 	gatewayStore := mustOpenGatewayStore(runtimeOpts.baseStorageDir)
@@ -178,7 +185,6 @@ func mustLoadBootstrapOptions(flags cliFlags, baseStorageDir string) bootstrapOp
 		multiMode:      strings.TrimSpace(os.Getenv("DEVSHARDS_JSON")) != "",
 		escrowID:       firstNonEmpty(flags.escrowID, os.Getenv("DEVSHARD_ESCROW_ID")),
 		privateKeyHex:  firstNonEmpty(flags.privateKey, os.Getenv("DEVSHARD_PRIVATE_KEY")),
-		chainGRPC:      effectiveChainGRPC(flags, ""),
 		publicAPI:      envOverride(flags.publicAPI, os.Getenv("DEVSHARD_PUBLIC_API"), defaultPublicAPIURL),
 		defaultModel:   envOverride(flags.model, os.Getenv("DEVSHARD_MODEL"), defaultModelName),
 		storagePath:    firstNonEmpty(flags.storagePath, os.Getenv("DEVSHARD_STORAGE_PATH")),
@@ -357,20 +363,23 @@ func mustBootstrapGatewayState(gatewayStore *GatewayStore, opts bootstrapOptions
 	}
 }
 
-func resolveChainGRPCURL() string {
-	return firstNonEmpty(
-		os.Getenv("DEVSHARD_CHAIN_GRPC"),
-		os.Getenv("NODE_GRPC_URL"),
-		defaultChainGRPCURL,
-	)
-}
-
+// effectiveChainGRPC resolves the chain gRPC endpoint the gateway stores in its
+// settings. Only mustBuildGateway dials it; the other callers persist or repair
+// the setting, which is why the CometBFT RPC endpoint is resolved at the dial
+// site instead of being threaded through here.
 func effectiveChainGRPC(flags cliFlags, persisted string) string {
 	envVal := firstNonEmpty(os.Getenv("DEVSHARD_CHAIN_GRPC"), os.Getenv("NODE_GRPC_URL"))
 	if strings.TrimSpace(persisted) != "" && persisted != defaultChainGRPCURL {
 		return strings.TrimSpace(persisted)
 	}
 	return envOverride(flags.chainGRPC, envVal, defaultChainGRPCURL)
+}
+
+// effectiveChainRPC returns the explicitly configured CometBFT RPC endpoint for
+// the gateway's chain query fallback. Empty means unset, which lets
+// chain.NewWithQueryFallback derive it from the gRPC host.
+func effectiveChainRPC() string {
+	return strings.TrimSpace(firstNonEmpty(os.Getenv("DEVSHARD_CHAIN_RPC"), os.Getenv("NODE_RPC_URL")))
 }
 
 func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, baseStorageDir string, flags cliFlags) *Gateway {
@@ -380,9 +389,12 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 	RequestMaxTokensCap = gatewayState.Settings.RequestMaxTokensCap
 	applyGatewayTuningSettings(gatewayState.Settings)
 
-	chainClient, err := chain.New(gatewayState.Settings.ChainGRPC)
+	chainClient, err := chain.NewWithQueryFallback(gatewayState.Settings.ChainGRPC, effectiveChainRPC())
 	if err != nil {
 		log.Fatalf("dial chain gRPC %s: %v", gatewayState.Settings.ChainGRPC, err)
+	}
+	if err := initGatewayHeightSync(chainClient, cometRPCForHeightSync(gatewayState.Settings.ChainGRPC)); err != nil {
+		log.Fatalf("height sync oracle: %v", err)
 	}
 
 	perfStore, err := NewPerfStore(filepath.Join(baseStorageDir, "perf.db"))
@@ -501,12 +513,15 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 				continue
 			}
 			brokenLocalState := errors.Is(res.err, user.ErrLocalStateUnrecoverable)
-			if brokenLocalState || errors.Is(res.err, bridge.ErrEscrowNotFound) || errors.Is(res.err, errRuntimePrivateKeyMissing) {
+			if brokenLocalState || errors.Is(res.err, bridge.ErrEscrowNotFound) ||
+				errors.Is(res.err, bridge.ErrEscrowSettled) || errors.Is(res.err, errRuntimePrivateKeyMissing) {
 				reason := "runtime could not be loaded"
 				if brokenLocalState {
 					reason = "local state unrecoverable"
 				} else if errors.Is(res.err, bridge.ErrEscrowNotFound) {
 					reason = "escrow missing on chain"
+				} else if errors.Is(res.err, bridge.ErrEscrowSettled) {
+					reason = "escrow settled on chain"
 				} else if errors.Is(res.err, errRuntimePrivateKeyMissing) {
 					reason = "private key missing"
 				}
@@ -756,19 +771,16 @@ func readFloat64Env(name string, fallback float64) float64 {
 }
 
 func readBoolEnv(name string, fallback bool) bool {
-	raw := strings.TrimSpace(strings.ToLower(os.Getenv(name)))
+	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
 		return fallback
 	}
-	switch raw {
-	case "1", "true", "yes", "on":
-		return true
-	case "0", "false", "no", "off":
-		return false
-	default:
+	parsed, err := boolvalue.Parse(raw)
+	if err != nil {
 		log.Printf("invalid %s=%q, using %t", name, raw, fallback)
 		return fallback
 	}
+	return parsed
 }
 
 func buildSettlementJSON(p *state.SettlementPayload) (SettlementJSON, error) {

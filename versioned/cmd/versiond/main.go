@@ -256,6 +256,7 @@ type hostShutdownManager interface {
 	RequestChildrenDrain(context.Context) error
 	WaitChildrenIdle(context.Context) error
 	Shutdown(context.Context) error
+	ShutdownGrace() time.Duration
 	ForceStopChildren()
 }
 
@@ -278,18 +279,26 @@ func shutdownHost(
 	if forceRequested(force) {
 		cancelShutdown()
 	}
+	drainDeadline := deadline.Add(-mgr.ShutdownGrace())
+	drainCtx, cancelDrain := context.WithDeadline(shutdownCtx, drainDeadline)
 	stopForceWatch := cancelOnSignal(shutdownCtx, cancelShutdown, force)
-	stopEscalationWatch := watchShutdownEscalation(shutdownCtx, srv, mgr, hostLifecycle)
+	forceShutdown, stopEscalationWatch := watchShutdownEscalation(
+		shutdownCtx,
+		srv,
+		mgr,
+		hostLifecycle,
+	)
 	defer func() {
 		stopEscalationWatch()
 		stopForceWatch()
+		cancelDrain()
 		cancelShutdown()
 	}()
 
 	if err := waitForPollWorker(
-		shutdownCtx,
+		drainCtx,
 		pollDone,
-		pollWorkerUnwindBudget(time.Until(deadline)),
+		pollWorkerUnwindBudget(time.Until(drainDeadline)),
 	); err != nil {
 		// BeginHostDrain already prevents new generation commits and disables
 		// child restart. Teardown can therefore continue without trusting a
@@ -297,7 +306,7 @@ func shutdownHost(
 		switch {
 		case errors.Is(err, context.DeadlineExceeded):
 			slog.Warn(
-				"host shutdown budget exhausted before poll worker unwound; continuing teardown",
+				"host drain budget exhausted before poll worker unwound; continuing teardown",
 				"error", err,
 			)
 		case errors.Is(err, context.Canceled):
@@ -313,20 +322,21 @@ func shutdownHost(
 		}
 	}
 
-	if err := hostLifecycle.WaitIdle(shutdownCtx); err != nil {
+	if err := hostLifecycle.WaitIdle(drainCtx); err != nil {
 		slog.Warn("host proxy drain incomplete", "error", err, "inflight", hostLifecycle.Snapshot().Inflight)
 	}
-	if shutdownCtx.Err() == nil {
-		if err := mgr.RequestChildrenDrain(shutdownCtx); err != nil {
+	if drainCtx.Err() == nil {
+		if err := mgr.RequestChildrenDrain(drainCtx); err != nil {
 			slog.Warn("one or more child drain requests failed", "error", err)
 		}
-		if err := mgr.WaitChildrenIdle(shutdownCtx); err != nil {
+		if err := mgr.WaitChildrenIdle(drainCtx); err != nil {
 			slog.Warn("child drain incomplete", "error", err)
 		}
 	}
 
 	forced := shutdownCtx.Err() != nil
 	if forced {
+		forceShutdown()
 		if err := transitionHostToForcing(hostLifecycle); err != nil {
 			return err
 		}
@@ -342,6 +352,7 @@ func shutdownHost(
 	httpErr := <-httpDone
 	if shutdownCtx.Err() != nil {
 		forced = true
+		forceShutdown()
 		if err := transitionHostToForcing(hostLifecycle); err != nil {
 			return err
 		}
@@ -552,14 +563,11 @@ func watchShutdownEscalation(
 	srv hostHTTPServer,
 	mgr hostShutdownManager,
 	hostLifecycle *host.Controller,
-) func() {
+) (force func(), stop func()) {
 	done := make(chan struct{})
-	go func() {
-		select {
-		case <-ctx.Done():
-			if channelClosed(done) {
-				return
-			}
+	var forceOnce sync.Once
+	force = func() {
+		forceOnce.Do(func() {
 			slog.Warn(
 				"host shutdown escalation requested",
 				"reason", ctx.Err(),
@@ -567,13 +575,23 @@ func watchShutdownEscalation(
 			)
 			mgr.ForceStopChildren()
 			_ = srv.Close()
+		})
+	}
+	go func() {
+		select {
+		case <-ctx.Done():
+			if channelClosed(done) {
+				return
+			}
+			force()
 		case <-done:
 		}
 	}()
-	var once sync.Once
-	return func() {
-		once.Do(func() { close(done) })
+	var stopOnce sync.Once
+	stop = func() {
+		stopOnce.Do(func() { close(done) })
 	}
+	return force, stop
 }
 
 func channelClosed(done <-chan struct{}) bool {

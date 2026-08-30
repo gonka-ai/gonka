@@ -23,10 +23,13 @@
 
 global
     log stdout format raw local0 info
-    # Admin socket only; no TCP bind, so it cannot be published by accident.
-    stats socket /var/run/haproxy/haproxy.sock mode 660 level operator
-    # The catalog reconciler is the only writer. Keeping a distinct mode-600
-    # socket preserves the read-only contract of the diagnostic Runtime API.
+    # Local diagnostic socket only; no TCP bind, so it cannot be published by
+    # accident. HAProxy's minimum `user` command level still permits Runtime API
+    # map mutations, so filesystem/container access is the security boundary.
+    stats socket /var/run/haproxy/haproxy.sock mode 660 level user
+    # Keep normal diagnostics away from broader server-state commands. This is
+    # least privilege and accidental-misuse protection, not UID isolation: both
+    # sockets live inside the same unprivileged container.
     stats socket /var/run/haproxy/reconciler.sock mode 600 level admin
     stats timeout 30s
 
@@ -54,10 +57,9 @@ defaults
     # memory read in 3s is genuinely wedged.
     #
     # This value plus `inter` bounds how long the router can keep routing to a
-    # host that has begun announcing its drain. versiond's MinDrainAnnounce is
-    # derived from these two numbers, and its contract test reads this file:
-    # raising either without revisiting the floor fails
-    # versioned/internal/config TestMinDrainAnnounceCoversTheRouterDetectionWorstCase.
+    # host that has begun announcing its drain. Any graceful host lifecycle
+    # must hold its readiness change for at least that detection window; change
+    # both sides of that contract together.
     timeout check 3s
 
 resolvers docker
@@ -106,11 +108,11 @@ frontend versiond_in
 
     http-request set-var(txn.ver) var(txn.canonpath),field(2,/)
 
-    # The private parent distributor accepts only traffic returned by the nginx
-    # policy tier. Preserve its client-derived headers and provide conservative
-    # defaults only for direct private-network probes.
-    http-request set-header X-Forwarded-Proto http if !{ req.hdr(X-Forwarded-Proto) -m found }
-    http-request set-header X-Real-IP %[src] if !{ req.hdr(X-Real-IP) -m found }
+    # This router is directly reachable in the current deployment, so neither
+    # value is trusted from the client. A later trusted proxy tier may preserve
+    # its own sanitized values when it is introduced in the same topology.
+    http-request set-header X-Forwarded-Proto %[ssl_fc,iif(https,http)]
+    http-request set-header X-Real-IP %[src]
 
     # Reject an advertised oversize body before opening an upstream connection.
     # HAProxy streams rather than buffers bodies, so devshardd independently
@@ -125,6 +127,11 @@ frontend versiond_in
     acl versionless_request var(txn.canonpath) -m reg ^/(healthz|readyz|metrics)$|^/stats(/|$)|^/sessions/[^/]+/(diffs|mempool|signatures)$
 
     ${UNDECLARED_VERSION_GUARD}
+
+    # Versionless endpoints are part of versiond's own API namespace. Resolve
+    # them before consulting any version map so a governance name can never
+    # shadow health, metrics, stats, or session-observability routes.
+    use_backend versiond_ha_pool if versionless_request
 
     # Legacy pinning wins: the map yields that version's backend on the one host
     # that owns its SQLite data.
@@ -146,13 +153,31 @@ ${ADMIN_LOOPBACK_BIND}
     bind ${FRONT_BIND_ADDRESS}:${ADMIN_PORT}
     mode http
     http-request return status 200 content-type text/plain string "live\n" if { path /livez }
+    http-request set-var(txn.ready_ver) url_param(version),url_dec(0) if { path /readyz } { url_param(version) -m found }
+    # Pool backends use this internal variable to answer from their active-check
+    # state. The request must not be forwarded to a pre-v5 versiond, which has no
+    # /readyz handler even when its /<version>/healthz compatibility check passed.
+    http-request set-var(txn.router_admin_ready) str(1) if { path /readyz } { url_param(version) -m found }
 ${ROUTER_READY_RULES}
     ${DYNAMIC_READY_GUARD}
-    use_backend %[query,map_str(${READY_VERSIONS_MAP})] if { path /readyz } { query,map_str(${READY_VERSIONS_MAP}) -m found }
+    use_backend %[var(txn.ready_ver),map_str(${NON_HA_MAP})] if { path /readyz } { var(txn.ready_ver),map_str(${NON_HA_MAP}) -m found }
+    use_backend %[var(txn.ready_ver),map_str(${VERSIONS_MAP})] if { path /readyz } { var(txn.ready_ver),map_str(${VERSIONS_MAP}) -m found }
     default_backend router_admin_not_found
 
 backend router_admin_not_found
     http-request return status 404 content-type text/plain string "not found\n"
+
+# A synthetic no-traffic backend exports catalog convergence through HAProxy's
+# standard backend/server Prometheus metrics. The reconciler enables the server
+# only while the remote desired set and the accepted runtime projection agree.
+backend router_catalog_status
+    server catalog 127.0.0.1:1 ${CATALOG_STATUS_SERVER_STATE}
+
+# Serving safety is intentionally separate from desired-state convergence. An
+# unavailable catalog or a staged version must not hide a router whose durable
+# accepted routes are still represented exactly by its live maps.
+backend router_catalog_serving_status
+    server serving 127.0.0.1:1 ${CATALOG_SERVING_STATUS_SERVER_STATE}
 
 frontend metrics
     bind 127.0.0.1:8405

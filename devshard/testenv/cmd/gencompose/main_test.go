@@ -103,6 +103,33 @@ func TestAssignSlots_MultiThreeHostsHAPlusSolo(t *testing.T) {
 	require.Equal(t, "versiond-0 versiond-1", versiondHosts(cfg))
 }
 
+func TestAssignSlots_MultiFourHostsHAPlusTwoSolos(t *testing.T) {
+	cfg := &config.File{
+		Versiond:       config.VersiondCfg{Mode: config.VersiondModeMulti},
+		Escrow:         config.EscrowMeta{Slots: 3, SlotURL: "http://router:8080"},
+		VersiondRouter: config.VersiondRouterCfg{Host: "versiond-router"},
+		Hosts: []config.HostCfg{
+			{ID: "versiond-0", Address: "gonka1ha"},
+			{ID: "versiond-1", Address: "gonka1replica"},
+			{ID: "versiond-2", Address: "gonka1solo-a"},
+			{ID: "versiond-3", Address: "gonka1solo-b"},
+		},
+	}
+	assignSlots(cfg)
+	require.Equal(t, []int{0}, cfg.Hosts[0].SlotIDs)
+	require.Empty(t, cfg.Hosts[1].SlotIDs)
+	require.Equal(t, []int{1}, cfg.Hosts[2].SlotIDs)
+	require.Equal(t, []int{2}, cfg.Hosts[3].SlotIDs)
+
+	syncChainSeed(cfg)
+	require.Equal(t, []string{"gonka1ha", "gonka1solo-a", "gonka1solo-b"}, cfg.Escrows[0].Slots)
+	require.Len(t, cfg.Participants, 3)
+	require.Equal(t, "gonka1solo-a", cfg.Participants[1].Address)
+	require.Equal(t, "http://versiond-2:8080", cfg.Participants[1].InferenceURL)
+	require.Equal(t, "gonka1solo-b", cfg.Participants[2].Address)
+	require.Equal(t, "http://versiond-3:8080", cfg.Participants[2].InferenceURL)
+}
+
 func TestVersiondKeyName_MultiHAPairAndSolo(t *testing.T) {
 	cfg := &config.File{
 		Versiond: config.VersiondCfg{Mode: config.VersiondModeMulti},
@@ -266,12 +293,16 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Contains(t, text, "versiond-0:")
 	require.Contains(t, text, "versiond-1:")
 	require.Contains(t, text, "versiond-2:")
-	require.Contains(t, text, "versiond-router:")
+	require.Contains(t, text, `  versiond-router:
+    build:
+      context: ../..
+      dockerfile: versiond-router/Dockerfile`)
+	require.NotContains(t, text, "context: ../../versiond-router")
 	require.Contains(t, text, `VERSIOND_PORT: "8080"`)
 	require.Contains(t, text, `VERSIOND_LEGACY_HOST: "versiond-0"`)
 	require.Contains(t, text, `VERSIOND_NON_HA_VERSIONS: "v1"`)
-	require.NotContains(t, text, "versiond-router-state",
-		"the router keeps no durable state: membership is DNS, health is measured")
+	require.Contains(t, text, "versiond-router-state:/var/lib/gonka-router",
+		"a replacement router must retain its last-known-good catalog")
 	require.Equal(t, 3, strings.Count(text, "stop_grace_period: 30m"),
 		"only the three stateful versiond hosts need the long drain backstop")
 	require.Contains(t, text, "stop_grace_period: 10s",
@@ -287,14 +318,20 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.NotContains(t, text, "KEY_NAME: versiond-1")
 	require.Contains(t, text, "KEY_NAME: versiond-2")
 	require.Contains(t, text, `VERSIOND_POOL_HOST: "versiond-pool"`)
+	require.Contains(t, text, `VERSIOND_VERSIONS: ""`,
+		"catalog-enabled test stacks must exercise dynamic admission")
 	require.Contains(t, text, `VERSIOND_ROUTING_CATALOG_URL: "http://mock-dapi:9100/versions"`)
 	require.Contains(t, text, `VERSIOND_ROUTING_CATALOG_POLL_SECONDS: "1"`)
+	require.Contains(t, text, `VERSIOND_ROUTING_ACTIVATION_MIN_READY: "2"`)
 	require.Equal(t, 2, strings.Count(text, "- versiond-pool"),
 		"only the sticky pair should resolve through the router pool")
 	require.Equal(t, 2, strings.Count(text, "DEVSHARD_STORAGE_MODE: postgres"))
 	require.Contains(t, text, "DEVSHARD_STORAGE_MODE: sqlite")
 	require.Contains(t, text, "DEVSHARD_VALIDATION_LEASE_TTL")
 	require.Contains(t, text, "DEVSHARD_VALIDATION_RETRY_INTERVAL")
+	require.Contains(t, text, "DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE")
+	require.Contains(t, text, "DEVSHARD_TESTENV_PAYLOAD_HTTP_STATUS")
+	require.Contains(t, text, "DEVSHARD_TESTENV_PAYLOAD_FAULT_VALIDATOR")
 	require.Contains(t, text, "devshardctl:")
 	require.Contains(t, text, "DEVSHARD_PRIVATE_KEY")
 	require.Contains(t, text, "DEVSHARD_ESCROW_ID")
@@ -331,6 +368,7 @@ func TestWriteCompose_SingleMode_FilePayloadFallback(t *testing.T) {
 	require.NotContains(t, text, "devshard-postgres:")
 	require.NotContains(t, text, "DEVSHARD_STORAGE_MODE")
 	require.NotContains(t, text, "PGHOST:")
+	require.Contains(t, text, `VERSIOND_ROUTING_ACTIVATION_MIN_READY: "1"`)
 }
 
 func TestWriteCompose_EnvFile(t *testing.T) {

@@ -58,7 +58,7 @@ x-proxy-policy: &proxy-policy
 
 services:
   tmkms:
-    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.14
+    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.15
     container_name: tmkms
     restart: unless-stopped
     environment:
@@ -68,7 +68,7 @@ services:
 
   node:
     container_name: node
-    image: ghcr.io/product-science/inferenced:0.2.14
+    image: ghcr.io/product-science/inferenced:0.2.15
     command: ["sh", "./init-docker.sh"]
     volumes:
       - .inference:/root/.inference
@@ -107,7 +107,7 @@ services:
 
   api:
     container_name: api
-    image: ghcr.io/product-science/api:0.2.14
+    image: ghcr.io/product-science/api:0.2.15-post3
     volumes:
       - .inference:/root/.inference
       - .dapi:/root/.dapi
@@ -231,7 +231,7 @@ services:
 
   bridge:
     container_name: bridge
-    image: ghcr.io/product-science/bridge:0.2.14-post3@sha256:06f1c8750941cd31c6f46ff037e0b43f71a9ba5a5e4c6b81da8c4d6748af67b5
+    image: ghcr.io/product-science/bridge:0.2.15
     restart: unless-stopped
     environment:
       - GETH_DATA_DIR=/data/geth
@@ -331,7 +331,7 @@ services:
 
   proxy-ssl:
     container_name: proxy-ssl
-    image: ghcr.io/product-science/proxy-ssl:0.2.14
+    image: ghcr.io/product-science/proxy-ssl:0.2.15
     profiles:
       - ssl
     environment:

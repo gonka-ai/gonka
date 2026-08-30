@@ -19,6 +19,10 @@ import (
 
 const (
 	hostEvacuationShutdownBudget = 90 * time.Second
+	// The acceptance test compresses production's minute-scale shutdown
+	// contract. Keep the same phase ordering while leaving 70s for admission
+	// and child drain after the 5s announcement.
+	hostEvacuationChildShutdownGrace = 15 * time.Second
 	// Docker's SIGKILL backstop must sit outside versiond's own shutdown
 	// budget. The exit-code assertion below proves that this reserve was not
 	// consumed by a stuck process.
@@ -55,6 +59,10 @@ func TestVersiondHostEvacuation(t *testing.T) {
 		harness.PatchComposeEnvKey(t, stack.ComposePath, "VERSIOND_NON_HA_VERSIONS", `""`)
 		harness.PatchComposeEnvKey(t, stack.ComposePath, "VERSIOND_HOST_SHUTDOWN_BUDGET",
 			`"`+hostEvacuationShutdownBudget.String()+`"`)
+		harness.PatchComposeInsertEnvAfterAll(t, stack.ComposePath, "VERSIOND_HOST_SHUTDOWN_BUDGET",
+			`VERSIOND_DRAIN_KILL_GRACE: "`+hostEvacuationChildShutdownGrace.String()+`"`,
+			`DEVSHARD_SHUTDOWN_GRACE: "`+hostEvacuationChildShutdownGrace.String()+`"`,
+		)
 	})
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
@@ -66,7 +74,7 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	// Declared versions are routed and health-checked through their own pool, so
 	// that is the pool whose view of a host the test has to read.
 	version := env.cfg.Versiond.VersionName
-	pool := harness.VersionPoolBackend(version)
+	pool := harness.WaitRouterVersionBackend(t, env.stack, version, hostEvacuationObservationTimeout)
 	escrowID := harness.GetGatewayEscrowID(t, client, env.eps.GatewayHTTP)
 	harness.Step(t, "binding escrow %s through the owner chat path", escrowID)
 	harness.PostGatewayChatCompletion(t, client, env.eps.GatewayHTTP,
@@ -96,6 +104,12 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	}
 
 	harness.Step(t, "both hosts are in the router pool before evacuation")
+	// Observe the steady precondition instead of sampling it once while the
+	// router may still be reconciling DNS membership and active health checks.
+	for _, host := range env.hosts {
+		harness.WaitRouterPoolState(t, env.stack, env.cfg, pool, host,
+			harness.RouterSlotUp, hostEvacuationObservationTimeout)
+	}
 	require.ElementsMatch(t, env.hosts, harness.RouterServingHosts(t, env.stack, env.cfg, pool),
 		"pool: %s", harness.DescribeRouterPool(t, env.stack, env.cfg))
 
@@ -113,6 +127,7 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	// The harness publishes random host ports, and Docker picks a new one when
 	// the container comes back, so every endpoint has to be re-resolved.
 	env.eps = env.stack.Endpoints(t, env.cfg)
+	pool = harness.WaitRouterVersionBackend(t, env.stack, version, hostEvacuationObservationTimeout)
 	harness.WaitRouterPoolState(t, env.stack, env.cfg, pool, targetHost,
 		harness.RouterSlotUp, hostEvacuationObservationTimeout)
 	requireSessionAvailableOnHost(t, env, escrowID, targetHost,

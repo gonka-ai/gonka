@@ -216,6 +216,13 @@ plane: it cannot mutate a server slot and it persists no membership database.
 
 ## Context ownership
 
+All versiond duration settings use Go duration syntax and require an explicit
+unit, for example `30s`, `5m`, or `1h30m`. A legacy value such as
+`VERSIOND_POLL_INTERVAL=30` now fails startup instead of silently falling back;
+change it to `30s` before upgrading. Invalid and non-positive values fail
+closed, except `VERSIOND_DRAIN_ANNOUNCE=0s`, which is valid for a topology with
+no load balancer handoff.
+
 `versiond` uses separate cancellation domains:
 
 - poll context: oracle fetches, downloads, readiness waits, and reconcile;
@@ -230,11 +237,18 @@ unwinding, including during the announce window — an operator who wants to ski
 the wait can interrupt again. Poll unwind receives at most ten percent of the
 host budget, capped at five seconds. If a worker ignores cancellation, versiond
 logs the failure and continues teardown; the manager drain barrier already
-rejects new reconcile operations and disables child restart. Child process grace
-may impose a shorter phase-local limit, but no phase receives a fresh deadline
+rejects new reconcile operations and disables child restart. Within the same
+absolute deadline, versiond reserves a final tail equal to the child process
+grace. Admission and child-idle waits stop at the earlier drain deadline, leaving
+that tail for `SIGTERM` and HTTP shutdown. No phase receives a fresh deadline
 that can extend the host shutdown budget. On expiry, versiond forces remaining
 children and HTTP connections, then confirms child reap during the external
 runtime reserve.
+
+The startup contract requires
+`VERSIOND_DRAIN_ANNOUNCE + max(VERSIOND_DRAIN_KILL_GRACE, DEVSHARD_SHUTDOWN_GRACE) < VERSIOND_HOST_SHUTDOWN_BUDGET`.
+`versiond` validates this before starting, so a termination grace cannot silently
+consume the time reserved for admission and child drain.
 
 ## Health and readiness contracts
 
@@ -254,16 +268,33 @@ caller could abuse — it exposes strictly less than `/healthz` already does.
 
 - the host FSM advertises readiness (`serving`), and is accepting;
 - at least one child is running **and** its live readiness is current — a child
-  that lost its chain subscription is running but not serving. The monitor
-  normally withdraws the vouch within one probe interval (1s); a probe can take
-  up to its 2s timeout, and an answer no monitor has refreshed for 5s expires on
-  its own;
-- the manager has run every desired version at least once (`Converged`).
+  whose storage is unavailable is running but not serving. A reconnect of the
+  shared chain listener stays route-ready after initial startup because every
+  replica sees that dependency event together while admission remains open. The
+  monitor normally withdraws a failed vouch within one probe interval (1s); a
+  probe can take up to its 2s timeout, and an answer no monitor has refreshed
+  for 5s expires on its own;
+- the manager has run its complete desired set together at least once
+  (`Converged`).
 
 `Converged` latches. Once a versiond has run its full desired set, a later
 catalog expansion, download, or child restart does not retract it. Without the
 latch, adding a version could briefly un-converge every host at once and evict
 all existing pools — the failure mode readiness exists to prevent.
+
+The join Compose healthcheck intentionally probes this coarse `/readyz`
+contract. A fresh host that has not yet run its complete desired set therefore
+remains Docker `unhealthy`, even when some precise per-version routes are already
+available; HAProxy continues to evaluate those routes with
+`/readyz?version=<v>`.
+
+A fresh versiond that has never run the complete set remains unready on the
+coarse endpoint by design. That endpoint may receive an undeclared version and
+cannot safely claim readiness from unrelated children. Exact
+`/readyz?version=<v>` checks still admit every version the host can serve.
+Remembering versions that happened to run at different times would weaken the
+coarse contract: it could report ready even though the host never served the
+whole set at one time.
 
 `/readyz?version=<v>` is the question the balancer actually has, and it needs no
 convergence latch and no view of the desired set: either a running child serves
@@ -285,13 +316,12 @@ not a routing one.
 contract existing clients parse. Reconcile failures currently have no
 machine-readable exposure; a metric is where that belongs.
 
-A host that fails to install one version is handled by the per-version check
-above rather than by the host-level one: it drops out of that version's backend
-and keeps serving the rest. The same rule applies to versions pinned to the
-single legacy SQLite owner; each pin has an independent backend and readiness
-check. Gating the *host* on it instead would be the correlated failure again —
-the same archive fails on every host, so the whole pool would leave at once over
-a version most traffic does not even use.
+After initial convergence, a host that fails to install one version is handled
+by the per-version check above: it drops out of that version's pool and keeps
+serving the rest. The latched coarse endpoint also stays available. Gating that
+endpoint on every later reconcile would be the correlated failure again — the
+same archive fails on every host, so the whole pool would leave at once over a
+version most traffic does not even use.
 
 If a condition is ever found under which accepting traffic is genuinely unsafe,
 it belongs in its own typed condition rather than in the generic reconcile error.

@@ -54,6 +54,10 @@ services:
       - DEBUG=true
       - IS_TEST_NET=true
       - ENFORCED_MODEL_ID=disabled
+      # Participants register docker-internal hostnames that resolve to private
+      # IPs, so the dial-time SSRF guard must be off here. Production leaves this
+      # unset (default false = private targets blocked).
+      - DAPI_ALLOW_PRIVATE_ADDRESSES=true
       - DAPI_STATS_FILE_STORAGE_ENABLED=true
       # Empty PGHOST falls back to SQLite/file storage in dapi.
       - PGHOST=${PGHOST:-${KEY_NAME}-postgres}
@@ -77,6 +81,7 @@ services:
     environment:
       - EDGE_API_PORT=18080
       - CHAIN_GRPC_URL=${KEY_NAME}-node:9090
+      - CHAIN_RPC_URL=http://${KEY_NAME}-node:26657
       - EDGE_API_OTEL_ENABLED=${EDGE_API_OTEL_ENABLED:-false}
       - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
       - OTEL_HEADERS=${OTEL_HEADERS:-}

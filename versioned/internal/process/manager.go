@@ -27,11 +27,10 @@ import (
 )
 
 const (
-	childLoopbackHost            = "127.0.0.1"
-	maxChildPort                 = 65535
-	storageModePostgres          = "postgres"
-	defaultDevshardShutdownGrace = 10 * time.Minute
-	installedVersionRetain       = 3
+	childLoopbackHost      = "127.0.0.1"
+	maxChildPort           = 65535
+	storageModePostgres    = "postgres"
+	installedVersionRetain = 3
 )
 
 var (
@@ -169,6 +168,17 @@ func normalizeConfig(cfg config.Config) config.Config {
 	}
 	if cfg.DrainKillGrace <= 0 {
 		cfg.DrainKillGrace = config.DefaultDrainKillGrace
+	}
+	if cfg.ChildShutdownGrace <= 0 {
+		cfg.ChildShutdownGrace = cfg.DrainKillGrace
+		name := strings.ToLower(strings.TrimSpace(cfg.BinaryName))
+		if (name == "devshard" || name == "devshardd") &&
+			config.DefaultDevshardShutdownGrace > cfg.ChildShutdownGrace {
+			cfg.ChildShutdownGrace = config.DefaultDevshardShutdownGrace
+		}
+	}
+	if cfg.ChildShutdownGrace < cfg.DrainKillGrace {
+		cfg.ChildShutdownGrace = cfg.DrainKillGrace
 	}
 	return cfg
 }
@@ -920,7 +930,19 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 		return ErrHostDraining
 	}
 	m.mu.Unlock()
-	if !m.rollingOverlapAllowedContext(ctx, v.Name, old, newBinPath) {
+	preflight, err := preflightChildWithAdminProbeContext(
+		ctx,
+		newBinPath,
+		v.Name,
+		m.devshardAdminEligible(),
+	)
+	if err != nil {
+		m.mu.Lock()
+		delete(m.downloading, v.Name)
+		m.mu.Unlock()
+		return fmt.Errorf("preflight replacement version %s: %w", v.Name, err)
+	}
+	if !m.rollingOverlapAllowed(v.Name, old, preflight.storageMode) {
 		slog.Warn("rolling overlap disabled without shared storage; falling back to stop/start swap", "version", v.Name)
 		m.mu.Lock()
 		if m.hostDraining {
@@ -1458,6 +1480,13 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	return ctx.Err()
 }
 
+// ShutdownGrace is the SIGTERM-to-SIGKILL allowance needed by the slowest
+// child. The host shutdown coordinator reserves this tail before spending the
+// rest of its absolute budget on request and lifecycle drain.
+func (m *Manager) ShutdownGrace() time.Duration {
+	return m.childStopTimeout()
+}
+
 func (m *Manager) clearStoppedChildren() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -1547,7 +1576,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			"--data-dir", dataDir,
 			"--port", fmt.Sprintf("%d", c.port),
 		)
-		cmd.Env = childEnv(preflight.binaryLogVersion, adminAddr)
+		cmd.Env = childEnv(preflight.binaryLogVersion, adminAddr, preflight.haDeployment)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 
@@ -1703,10 +1732,11 @@ func (m *Manager) waitForRestartBackoff(ctx context.Context, c *child, backoff t
 // binaryLogVersion is normally the link-time build id from --print-binary-version
 // (e.g. 0.2.13-v2-r2). Legacy binaries without that flag use the governance
 // slot name (e.g. v2) instead.
-func childEnv(binaryLogVersion, adminAddr string) []string {
-	env := make([]string, 0, len(os.Environ())+2)
+func childEnv(binaryLogVersion, adminAddr string, haDeployment *bool) []string {
+	env := make([]string, 0, len(os.Environ())+3)
 	for _, entry := range os.Environ() {
-		if strings.HasPrefix(entry, "DEVSHARD_ADMIN_ADDR=") {
+		if strings.HasPrefix(entry, "DEVSHARD_ADMIN_ADDR=") ||
+			(haDeployment != nil && strings.HasPrefix(entry, envHADeployment+"=")) {
 			continue
 		}
 		env = append(env, entry)
@@ -1717,40 +1747,17 @@ func childEnv(binaryLogVersion, adminAddr string) []string {
 	if adminAddr != "" {
 		env = append(env, fmt.Sprintf("DEVSHARD_ADMIN_ADDR=%s", adminAddr))
 	}
+	if haDeployment != nil {
+		env = append(env, fmt.Sprintf("%s=%t", envHADeployment, *haDeployment))
+	}
 	return env
 }
 
 func (m *Manager) childStopTimeout() time.Duration {
-	timeout := m.cfg.DrainKillGrace
-	name := strings.ToLower(m.cfg.BinaryName)
-	if name != "devshard" && name != "devshardd" {
-		return timeout
-	}
-	shutdownGrace := parseDevshardShutdownGrace(os.Getenv("DEVSHARD_SHUTDOWN_GRACE"))
-	if shutdownGrace > timeout {
-		return shutdownGrace
-	}
-	return timeout
+	return m.cfg.ChildShutdownGrace
 }
 
-func parseDevshardShutdownGrace(raw string) time.Duration {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return defaultDevshardShutdownGrace
-	}
-	d, err := time.ParseDuration(raw)
-	if err != nil || d <= 0 {
-		return defaultDevshardShutdownGrace
-	}
-	return d
-}
-
-func (m *Manager) rollingOverlapAllowedContext(
-	ctx context.Context,
-	versionName string,
-	old *child,
-	newBinPath string,
-) bool {
+func (m *Manager) rollingOverlapAllowed(versionName string, old *child, newMode string) bool {
 	name := strings.ToLower(m.cfg.BinaryName)
 	if name != "devshard" && name != "devshardd" {
 		return true
@@ -1771,22 +1778,10 @@ func (m *Manager) rollingOverlapAllowedContext(
 		)
 		return false
 	}
-
-	newMode, err := readStorageModeContext(ctx, newBinPath)
-	if err != nil {
-		slog.Warn(
-			"rolling overlap disabled: cannot probe new devshard storage mode",
-			"version", versionName,
-			"bin", newBinPath,
-			"error", err,
-		)
-		return false
-	}
 	if newMode != storageModePostgres {
 		slog.Warn(
 			"rolling overlap disabled: new devshard storage mode is not postgres",
 			"version", versionName,
-			"bin", newBinPath,
 			"storage_mode", newMode,
 		)
 		return false

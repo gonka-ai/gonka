@@ -44,6 +44,13 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.DrainKillGrace != DefaultDrainKillGrace {
 		t.Errorf("DrainKillGrace = %v, want %v", cfg.DrainKillGrace, DefaultDrainKillGrace)
 	}
+	if cfg.ChildShutdownGrace != DefaultDevshardShutdownGrace {
+		t.Errorf(
+			"ChildShutdownGrace = %v, want %v",
+			cfg.ChildShutdownGrace,
+			DefaultDevshardShutdownGrace,
+		)
+	}
 	if cfg.HostShutdownBudget != DefaultHostShutdownBudget {
 		t.Errorf(
 			"HostShutdownBudget = %v, want %v",
@@ -98,6 +105,7 @@ func TestLoad_MalformedDurationsRefuseToBoot(t *testing.T) {
 		"VERSIOND_POLL_INTERVAL",
 		"VERSIOND_HOST_SHUTDOWN_BUDGET",
 		"VERSIOND_DRAIN_ANNOUNCE",
+		"DEVSHARD_SHUTDOWN_GRACE",
 	} {
 		t.Run(key, func(t *testing.T) {
 			t.Setenv("VERSIOND_ORACLE_URL", "http://oracle:8080/versions")
@@ -150,9 +158,93 @@ func TestLoad_DrainAnnounceBounds(t *testing.T) {
 	}
 
 	t.Setenv("VERSIOND_DRAIN_ANNOUNCE", "5s")
-	t.Setenv("VERSIOND_HOST_SHUTDOWN_BUDGET", "90s")
+	t.Setenv("VERSIOND_HOST_SHUTDOWN_BUDGET", "11m")
 	if _, err := Load(); err != nil {
 		t.Fatalf("valid announce/budget pair refused: %v", err)
+	}
+}
+
+func TestLoad_ShutdownBudgetReservesDrainBeforeChildGrace(t *testing.T) {
+	tests := []struct {
+		name          string
+		binary        string
+		drainGrace    string
+		devshardGrace string
+		announce      string
+		budget        string
+		wantGrace     time.Duration
+		wantErr       bool
+	}{
+		{
+			name:       "drain kill grace consumes the budget",
+			binary:     "devshardd",
+			drainGrace: "30m",
+			announce:   "5s",
+			budget:     "25m",
+			wantErr:    true,
+		},
+		{
+			name:          "devshard shutdown grace consumes the budget",
+			binary:        "devshardd",
+			devshardGrace: "30m",
+			announce:      "5s",
+			budget:        "25m",
+			wantErr:       true,
+		},
+		{
+			name:          "announce and grace exactly consume the budget",
+			binary:        "devshardd",
+			devshardGrace: "10m",
+			announce:      "5s",
+			budget:        "10m5s",
+			wantErr:       true,
+		},
+		{
+			name:          "devshard uses its larger shutdown grace",
+			binary:        "devshardd",
+			drainGrace:    "30s",
+			devshardGrace: "2m",
+			announce:      "5s",
+			budget:        "3m",
+			wantGrace:     2 * time.Minute,
+		},
+		{
+			name:          "non-devshard ignores devshard grace",
+			binary:        "testapp",
+			drainGrace:    "30s",
+			devshardGrace: "30m",
+			announce:      "0s",
+			budget:        "1m",
+			wantGrace:     30 * time.Second,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("VERSIOND_ORACLE_URL", "http://oracle:8080/versions")
+			t.Setenv("VERSIOND_BINARY_NAME", tt.binary)
+			t.Setenv("VERSIOND_DRAIN_KILL_GRACE", tt.drainGrace)
+			t.Setenv("DEVSHARD_SHUTDOWN_GRACE", tt.devshardGrace)
+			t.Setenv("VERSIOND_DRAIN_ANNOUNCE", tt.announce)
+			t.Setenv("VERSIOND_HOST_SHUTDOWN_BUDGET", tt.budget)
+
+			cfg, err := Load()
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("configuration consumed the whole host budget without an error")
+				}
+				if !strings.Contains(err.Error(), "effective child shutdown grace") {
+					t.Fatalf("error = %q, want effective grace explanation", err)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("valid shutdown budget refused: %v", err)
+			}
+			if cfg.ChildShutdownGrace != tt.wantGrace {
+				t.Fatalf("ChildShutdownGrace = %s, want %s", cfg.ChildShutdownGrace, tt.wantGrace)
+			}
+		})
 	}
 }
 

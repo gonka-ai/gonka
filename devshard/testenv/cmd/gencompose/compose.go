@@ -24,6 +24,9 @@ networks:
       config:
         - subnet: {{ .Network.Subnet }}
 
+volumes:
+  versiond-router-state:
+
 services:
 
   mock-chain:
@@ -140,8 +143,17 @@ services:
       KEY_NAME: {{ versiondKeyName $ . }}
       DEVSHARD_VALIDATION_LEASE_TTL: ${DEVSHARD_VALIDATION_LEASE_TTL:-30m}
       DEVSHARD_VALIDATION_RETRY_INTERVAL: ${DEVSHARD_VALIDATION_RETRY_INTERVAL:-5m}
+      DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE: ${DEVSHARD_VALIDATION_VOTE_FALSE_ON_FETCH_FAILURE:-true}
+      DEVSHARD_TESTENV_PAYLOAD_HTTP_STATUS: ${DEVSHARD_TESTENV_PAYLOAD_HTTP_STATUS:-}
+      DEVSHARD_TESTENV_PAYLOAD_FAULT_VALIDATOR: ${DEVSHARD_TESTENV_PAYLOAD_FAULT_VALIDATOR:-}
+      # Peers/executors here are compose service names resolving to private IPs,
+      # so the dial-time SSRF guard must be off. Production leaves this unset.
+      DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
+      # GONKA_HA is intentionally omitted from versiond in this fixture. The
+      # SQLite-to-HA scenario first boots children before enabling HA at the
+      # router, where Devshard-Ha exercises the request-time storage guard.
 {{ if and (eq $.Versiond.Mode "multi") (isHAReplica $ .) }}
       # HA pair shares Postgres (sticky single-writer + lease table).
       DEVSHARD_STORAGE_MODE: postgres
@@ -204,17 +216,20 @@ services:
       # future versions sticky-hash across the pool (Devshard-Ha header).
       VERSIOND_LEGACY_HOST: "{{ legacyVersiondHost . }}"
       VERSIOND_NON_HA_VERSIONS: "v1"
-      # Health-check this version on each host individually, so a host that
-      # cannot run it leaves that version's pool and keeps serving the rest.
-      VERSIOND_VERSIONS: "{{ $.Versiond.VersionName }}"
+      # Keep the current test version out of the static bootstrap floor: this
+      # stack is the end-to-end proof that governance can admit a dynamic slot.
+      VERSIOND_VERSIONS: ""
       VERSIOND_ROUTING_CATALOG_URL: "http://{{ $.MockDapi.Host }}:{{ $.MockDapi.HTTPPort }}/versions"
       VERSIOND_ROUTING_CATALOG_POLL_SECONDS: "1"
+      VERSIOND_ROUTING_ACTIVATION_MIN_READY: "{{ routingActivationMinReady . }}"
       # Only the router is told this deployment is HA. The versiond containers
       # are not, so scenarios that deliberately run the pool on sqlite still
       # boot and fail at request time on the storage guard instead.
       GONKA_HA: "{{ haDeployment . }}"
     ports:
       - "{{ .VersiondRouter.Port }}:8080"
+    volumes:
+      - versiond-router-state:/var/lib/gonka-router
     networks:
       testenv:
         ipv4_address: {{ .VersiondRouter.IP }}
@@ -248,6 +263,8 @@ services:
       DEVSHARD_PRIVATE_KEY: ${TESTENV_USER_PRIVATE_KEY}
       DEVSHARD_ADMIN_API_KEY: ${TESTENV_ADMIN_API_KEY}
       DEVSHARD_STORAGE_DIR: /var/lib/devshardctl
+      # Hosts are compose service names resolving to private IPs; see versiond.
+      DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
       GATEWAY_MAX_TOKENS_CAP: "4096"
     volumes:
       - ./data/devshardctl:/var/lib/devshardctl
@@ -274,15 +291,16 @@ services:
 
 func writeCompose(cfg *config.File, outPath string) error {
 	funcs := template.FuncMap{
-		"versionEnvSuffix":   versionEnvSuffix,
-		"versiondHosts":      versiondHosts,
-		"inVersiondPool":     inVersiondPool,
-		"haDeployment":       haDeployment,
-		"versiondKeyName":    versiondKeyName,
-		"isHAReplica":        isHAReplica,
-		"legacyVersiondHost": legacyVersiondHost,
-		"primaryEscrowID":    primaryEscrowID,
-		"primaryModelID":     primaryModelID,
+		"versionEnvSuffix":          versionEnvSuffix,
+		"versiondHosts":             versiondHosts,
+		"inVersiondPool":            inVersiondPool,
+		"haDeployment":              haDeployment,
+		"routingActivationMinReady": routingActivationMinReady,
+		"versiondKeyName":           versiondKeyName,
+		"isHAReplica":               isHAReplica,
+		"legacyVersiondHost":        legacyVersiondHost,
+		"primaryEscrowID":           primaryEscrowID,
+		"primaryModelID":            primaryModelID,
 	}
 	tmpl, err := template.New("compose").Funcs(funcs).Parse(composeTmpl)
 	if err != nil {
@@ -325,6 +343,15 @@ func haDeployment(cfg *config.File) string {
 		return "true"
 	}
 	return ""
+}
+
+// routingActivationMinReady keeps catalog admission possible in single mode
+// while requiring both members of the sticky HA pair in multi mode.
+func routingActivationMinReady(cfg *config.File) int {
+	if len(strings.Fields(versiondHosts(cfg))) > 1 {
+		return 2
+	}
+	return 1
 }
 
 // inVersiondPool reports whether the router should route sticky traffic to this

@@ -46,6 +46,7 @@ unknown modes fall back to exclusive stop/start.
 | **Rolling updates** | Same-name SHA swap: blue/green overlap + drain when both children report `postgres`; else stop/start. Private admin `/ready`, `/drain`, `/drain/status` |
 | **Validation** | Shared Postgres leases (`devshard_validation_leases`); SQLite leases are no-ops |
 | **Gateway transport** | Chain queries + escrow tx via gRPC; `--chain-rest` / `DEVSHARD_CHAIN_REST` removed |
+| **Query fallback** | edge-api / devshardd / gateway chain queries fall back to CometBFT RPC when gRPC is down, and probe back every 30 min; txs stay gRPC-only |
 | **Settle confirm** | Settle waits for DeliverTx (`GetTx`) after SYNC CheckTx — same pattern as create |
 | **Failover** | Router retries another HA peer on first upstream 502 / connect failure |
 | **HA diff/persist** | Idempotent identical `AppendDiff` (fork on conflict); lazy RAM reconcile from PG on nonce gap; persist-first so a failed write cannot leave memory ahead of Postgres |
@@ -79,6 +80,100 @@ unknown modes fall back to exclusive stop/start.
    `gonka-mainnet`).
 
 Join / testenv compose already seeds `DEVSHARD_CHAIN_GRPC` only.
+
+### edge-api / devshardd / gateway: chain query fallback to CometBFT RPC
+
+edge-api, devshardd and the devshardctl gateway still prefer direct chain gRPC
+(`:9090`), but their chain **queries** now fall back to CometBFT RPC (`:26657`)
+when gRPC is unreachable. This covers nodes with `:9090` not published, bound to
+`localhost`, or firewalled, which previously made every query fail. A node with
+gRPC fully disabled is covered for module queries only — see the limitation
+below.
+
+Only the gRPC endpoint is required. The RPC endpoint defaults to the same host on
+port `26657`, so an existing deployment gains the fallback without new settings:
+
+| Service | gRPC | CometBFT RPC |
+| --- | --- | --- |
+| edge-api | `CHAIN_GRPC_URL=node:9090` (required) | `CHAIN_RPC_URL` (default `http://<gRPC host>:26657`) |
+| devshardd | `NODE_GRPC_URL` (default `<NODE_HOST>:9090`) | `NODE_RPC_URL` (default `http://<NODE_HOST>:26657`) |
+| gateway | `DEVSHARD_CHAIN_GRPC` / `NODE_GRPC_URL` | `DEVSHARD_CHAIN_RPC` / `NODE_RPC_URL` (default `http://<gRPC host>:26657`) |
+
+edge-api still **exits at startup** if `CHAIN_GRPC_URL` is missing. It used to
+default that endpoint to `localhost:9090`, which turned a misconfigured stack
+into a stream of connection errors at query time. A derived `CHAIN_RPC_URL` is
+logged once at startup so an unexpected host is visible in the logs.
+
+How the switch works:
+
+1. Queries start on gRPC.
+2. A transport failure (gRPC `Unavailable`, closed connection) moves queries to
+   RPC and retries that same request there, so the caller sees no error.
+3. Queries stay on RPC for 30 minutes. Application errors never trigger a
+   switch, so a `NotFound` response does not cost a probe.
+4. After 30 minutes exactly one request is routed over gRPC as a probe. If gRPC
+   answers, it becomes primary again; if not, that request retries on RPC and
+   another 30 minutes starts.
+
+A probe that is canceled or times out proves nothing about gRPC, so it neither
+restores gRPC nor consumes the probe window: the next request probes again.
+
+The recovery probe means a node that enables gRPC later is picked up without
+restarting edge-api or devshardd.
+
+When a query fails on both transports the returned error names both causes, so a
+fully unreachable node does not look like a plain ABCI failure.
+
+Transactions are unaffected: devshardd's tx manager and the gateway keep using
+the direct gRPC connection, and gRPC streams have no RPC equivalent so they
+also stay direct. Broadcasting a transaction over the *query* connection is
+rejected outright rather than served: Cosmos's `client.Context` turns a
+`BroadcastTx` into a CometBFT broadcast instead of a query, and the fallback
+retries a failed request on the other transport — which for a broadcast means
+submitting the same signed transaction twice.
+
+#### Seeing that a service is on the fallback
+
+Both transports are instrumented the same way, so switching changes what the
+telemetry says rather than silencing it:
+
+| Signal | On gRPC | On CometBFT RPC |
+| --- | --- | --- |
+| `chain.grpc.query` spans | `chain.transport=grpc` | `chain.transport=comet-rpc` |
+| `chain.query.transport.active` gauge | `grpc`=1, `comet-rpc`=0 | `grpc`=0, `comet-rpc`=1 |
+| Logs | — | one warning on the switch, then one per failed 30-min probe |
+
+The gauge is the thing to alert on: `comet-rpc`=1 held for longer than a brief
+blip means the node's `:9090` has been unreachable that whole time. The
+per-probe warning is the same signal in the logs, so a service that has been
+degraded for a week no longer looks identical to one that never fell back. Both
+report from process start, so an absent `comet-rpc` series means healthy rather
+than unreported.
+
+#### Known limitation: CometBFT service queries
+
+RPC-mode queries run as ABCI queries against the node's gRPC query router.
+Module queries (inference, BLS, restrictions) are always registered there, so
+they work on any node. The CometBFT service queries (node info, blocks,
+validator sets, and the ABCI store queries behind epoch proofs) are registered
+only when the node has `grpc.enable` or `api.enable` set in `app.toml`, because
+the SDK gates `RegisterTendermintService` on those two flags.
+
+`grpc.enable` defaults to **true** and nothing in this repo turns it off, so
+every deployment we ship resolves these queries normally — including the cases
+this fallback targets, where gRPC is enabled but bound to `localhost` or not
+published. A node with **both** flags disabled is the exception: module queries
+would keep working while `/v1/versions`, `/v1/epochs/{epoch}/participants`,
+`/v1/debug/verify/{height}`, `POST /v1/verify-block`, and devshardd's startup
+chain-ID lookup returned `Unimplemented`.
+
+Closing that gap means serving those methods from CometBFT's own `/status`,
+`/block`, `/validators` and `/abci_query` endpoints, which are available
+regardless of `app.toml`. That is deliberately not done here: no node we operate
+is configured that way, and the change is not worth carrying untested against a
+real gRPC-disabled node. `common/chain.newRPCQueryConn` documents the same
+constraint, and `TestRPCQueryConn_CometServiceGoesThroughTheABCIRouter` pins the
+behaviour so the limitation is visible in the test suite rather than only here.
 
 ### Gateway status: `protocol_version` → `session_version`
 
@@ -297,6 +392,7 @@ docker compose -f docker-compose.yml -f docker-compose.edge-api-multi.yml up -d
     environment:
       - EDGE_API_PORT=18080
       - CHAIN_GRPC_URL=node:9090
+      - CHAIN_RPC_URL=http://node:26657
       - EDGE_API_OTEL_ENABLED=${EDGE_API_OTEL_ENABLED:-false}
       - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
       - OTEL_HEADERS=${OTEL_HEADERS:-}

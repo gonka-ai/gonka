@@ -65,6 +65,14 @@ grep -Fq -- "$target_mount" \
     "$tmpdir/docker.log" || fail \
     "target directory was not mounted for the container-source probe"
 
+if run_preflight --source-container postgres-v4 \
+    --target-dir "$tmpdir/target,readonly" \
+    >"$tmpdir/comma.stdout" 2>"$tmpdir/comma.stderr"; then
+    fail "target path with mount-option separator passed preflight"
+fi
+grep -q 'must not contain a comma' "$tmpdir/comma.stderr" || fail \
+    "unsafe target path failure was not explained"
+
 FREE_KIB=1099
 export FREE_KIB
 if run_preflight --source-container postgres-v4 --target-dir "$tmpdir/target" \

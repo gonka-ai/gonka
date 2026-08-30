@@ -2,10 +2,12 @@ services:
   devshard-postgres:
     environment:
       PGDATA: /var/lib/postgresql/gonka/data
-      DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT: "false"
+      DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT: ${GONKA_POSTGRES_TEST_ALLOW_EMPTY_INIT:-false}
     entrypoint: ["/usr/local/bin/gonka-postgres-entrypoint"]
     command: ["postgres"]
     volumes:
       - ${GONKA_POSTGRES_TEST_DATA:?}:/var/lib/postgresql/gonka
       - ${GONKA_POSTGRES_TEST_ENTRYPOINT:?}:/usr/local/bin/gonka-postgres-entrypoint:ro
       - ${GONKA_POSTGRES_TEST_EXISTING:?}:/var/lib/postgresql/gonka-existing-versiond:ro
+      - ${GONKA_POSTGRES_TEST_VERSIOND_DATA:?}:/var/lib/postgresql/gonka-versiond-data:ro
+      - ${GONKA_POSTGRES_TEST_VERSIOND2_DATA:?}:/var/lib/postgresql/gonka-versiond2-data:ro

@@ -5,21 +5,22 @@
 # render the last known-good routes before the catalog endpoint is reachable.
 set -eu
 
+script_dir=$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)
+# shellcheck disable=SC1090,SC1091
+. "$script_dir/version-contract"
+
 fail() {
     echo "catalog-cache: $*" >&2
     exit 1
 }
 
-validate_version() {
-	printf '%s\n' "$1" | LC_ALL=C grep -Eq '^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}$'
-}
-
 validate_names() {
     names=$1
-    duplicate=$(LC_ALL=C sort "$names" | uniq -d | sed -n '1p')
+    duplicate=$(router_first_duplicate "$names")
     [ -z "$duplicate" ] || fail "snapshot declares version '$duplicate' more than once"
     while IFS= read -r version; do
-        validate_version "$version" || fail "snapshot contains unroutable version '$version'"
+        router_version_is_valid "$version" || \
+            fail "snapshot contains unroutable version '$version'"
     done < "$names"
 }
 
@@ -32,17 +33,16 @@ read_cache() {
 
     tmp=$(mktemp)
     trap 'rm -f "$tmp"' EXIT
-    if ! jq -er '
-        select(
-            .schema == 1 or
-            (.schema == 2 and .initialized == true and
-             (.revision | type) == "number" and .revision >= 0 and
-             (.revision | floor) == .revision)
-        )
+    now=$(date +%s)
+    if ! jq -er --argjson now "$now" --argjson max_age "$max_age" '
+        select(.schema == 1)
         | select((.fetched_at_unix | type) == "number")
         | select(.fetched_at_unix >= 0 and (.fetched_at_unix | floor) == .fetched_at_unix)
+        | select(.fetched_at_unix <= 9007199254740991)
         | select((.versions | type) == "array")
-        | .fetched_at_unix, (.versions[] | select(type == "string"))
+        | (if .fetched_at_unix > $now or ($now - .fetched_at_unix) > $max_age
+           then "stale" else "fresh" end),
+          (.versions[] | select(type == "string"))
     ' "$cache" > "$tmp"; then
         fail "invalid snapshot $cache"
     fi
@@ -50,27 +50,23 @@ read_cache() {
     actual=$(( $(wc -l < "$tmp") - 1 ))
     [ "$actual" -eq "$expected" ] || fail "snapshot contains a non-string version name"
 
-    fetched_at=$(sed -n '1p' "$tmp")
+    freshness=$(sed -n '1p' "$tmp")
     sed '1d' "$tmp" > "$tmp.names"
     trap 'rm -f "$tmp" "$tmp.names"' EXIT
     validate_names "$tmp.names"
-    now=$(date +%s)
-    age=$((now - fetched_at))
-    [ "$age" -ge 0 ] || fail "snapshot timestamp is in the future"
-    if [ "$age" -gt "$max_age" ]; then
-        echo "catalog-cache: snapshot is stale (age ${age}s, maximum ${max_age}s)" >&2
+    LC_ALL=C sort -u "$tmp.names"
+    if [ "$freshness" != fresh ]; then
+        echo "catalog-cache: snapshot is stale (maximum age ${max_age}s)" >&2
+        rm -f "$tmp" "$tmp.names"
+        trap - EXIT
         exit 2
     fi
-    LC_ALL=C sort -u "$tmp.names"
     rm -f "$tmp" "$tmp.names"
     trap - EXIT
 }
 
 write_cache() {
-    names=$1 cache=$2 generation=$3
-    case "$generation" in
-        '' | *[!0-9]*) fail "GENERATION must be a non-negative integer" ;;
-    esac
+    names=$1 cache=$2
     [ -f "$names" ] || fail "names file does not exist: $names"
     validate_names "$names"
     directory=$(dirname -- "$cache")
@@ -78,10 +74,9 @@ write_cache() {
     tmp=$(mktemp "$directory/.catalog-cache.XXXXXX")
     trap 'rm -f "$tmp"' EXIT
     now=$(date +%s)
-    if ! jq -Rn --argjson now "$now" --argjson generation "$generation" '
+    if ! jq -Rn --argjson now "$now" '
         [inputs] | sort | unique
-        | {schema: 2, initialized: true, revision: $generation,
-           fetched_at_unix: $now, versions: .}
+        | {schema: 1, fetched_at_unix: $now, versions: .}
     ' < "$names" > "$tmp"; then
         fail "cannot encode snapshot"
     fi
@@ -92,38 +87,14 @@ write_cache() {
     trap - EXIT
 }
 
-migrate_cache() {
-    source=$1 destination=$2 max_age=$3
-    [ -f "$source" ] || fail "source cache does not exist: $source"
-    [ ! -e "$destination" ] || fail "destination cache already exists: $destination"
-
-    # Validate with the new reader before publishing. Preserve the original
-    # local generation and timestamp so migration cannot make stale data fresh.
-    read_cache "$source" "$max_age" >/dev/null
-    directory=$(dirname -- "$destination")
-    [ -d "$directory" ] || fail "cache directory does not exist: $directory"
-    tmp=$(mktemp "$directory/.catalog-cache-migrate.XXXXXX")
-    trap 'rm -f "$tmp"' EXIT
-    cat "$source" > "$tmp"
-    chmod 600 "$tmp"
-    sync "$tmp"
-    mv -f "$tmp" "$destination"
-    sync "$directory"
-    trap - EXIT
-}
-
 case ${1:-} in
     read)
         [ "$#" -eq 3 ] || fail "usage: catalog-cache read FILE MAX_AGE_SECONDS"
         read_cache "$2" "$3"
         ;;
     write)
-        [ "$#" -eq 4 ] || fail "usage: catalog-cache write NAMES_FILE CACHE_FILE REVISION"
-        write_cache "$2" "$3" "$4"
+        [ "$#" -eq 3 ] || fail "usage: catalog-cache write NAMES_FILE CACHE_FILE"
+        write_cache "$2" "$3"
         ;;
-    migrate)
-        [ "$#" -eq 4 ] || fail "usage: catalog-cache migrate SOURCE_FILE CACHE_FILE MAX_AGE_SECONDS"
-        migrate_cache "$2" "$3" "$4"
-        ;;
-    *) fail "usage: catalog-cache read FILE MAX_AGE_SECONDS | write NAMES_FILE CACHE_FILE REVISION | migrate SOURCE_FILE CACHE_FILE MAX_AGE_SECONDS" ;;
+    *) fail "usage: catalog-cache read FILE MAX_AGE_SECONDS | write NAMES_FILE CACHE_FILE" ;;
 esac

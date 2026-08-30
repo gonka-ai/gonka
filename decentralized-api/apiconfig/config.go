@@ -2,6 +2,7 @@ package apiconfig
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"decentralized-api/poc/earlyshare"
@@ -41,8 +42,6 @@ type NatsServerConfig struct {
 
 type TxBatchingConfig struct {
 	Disabled                        bool `koanf:"disabled" json:"disabled"`
-	FlushSize                       int  `koanf:"flush_size" json:"flush_size"`
-	FlushTimeoutSeconds             int  `koanf:"flush_timeout_seconds" json:"flush_timeout_seconds"`
 	ValidationV2FlushSize           int  `koanf:"validation_v2_flush_size" json:"validation_v2_flush_size"`
 	ValidationV2FlushTimeoutSeconds int  `koanf:"validation_v2_flush_timeout_seconds" json:"validation_v2_flush_timeout_seconds"`
 	PocCommitIntervalSeconds        int  `koanf:"poc_commit_interval_seconds" json:"poc_commit_interval_seconds"`
@@ -167,6 +166,28 @@ func ValidateInferenceNodeBasic(node InferenceNodeConfig) []string {
 	if len(node.Models) == 0 {
 		errors = append(errors, "at least one model must be specified")
 	}
+	for modelID, model := range node.Models {
+		if model.ModelOverride == nil {
+			continue
+		}
+		if strings.TrimSpace(model.ModelOverride.HfRepo) == "" {
+			errors = append(errors, fmt.Sprintf("model %s override hf_repo is required", modelID))
+		}
+		commit := model.ModelOverride.HfCommit
+		trimmedCommit := strings.TrimSpace(commit)
+		switch {
+		case trimmedCommit == "":
+			errors = append(errors, fmt.Sprintf("model %s override hf_commit is required", modelID))
+		case commit != trimmedCommit || !hfCommitPattern.MatchString(commit):
+			errors = append(errors, fmt.Sprintf("model %s override hf_commit must be a 40-character lowercase hexadecimal commit hash", modelID))
+		}
+		for _, arg := range model.Args {
+			key := strings.SplitN(arg, "=", 2)[0]
+			if reservedModelOverrideArgs[key] {
+				errors = append(errors, fmt.Sprintf("model %s override cannot use reserved argument %s", modelID, key))
+			}
+		}
+	}
 
 	return errors
 }
@@ -182,6 +203,10 @@ func (n InferenceNodeConfig) DeepCopy() InferenceNodeConfig {
 				modelCopy.Args = make([]string, len(v.Args))
 				copy(modelCopy.Args, v.Args)
 			}
+			if v.ModelOverride != nil {
+				overrideCopy := *v.ModelOverride
+				modelCopy.ModelOverride = &overrideCopy
+			}
 			result.Models[k] = modelCopy
 		}
 	}
@@ -195,7 +220,21 @@ func (n InferenceNodeConfig) DeepCopy() InferenceNodeConfig {
 }
 
 type ModelConfig struct {
-	Args []string `json:"args"`
+	Args          []string       `koanf:"args" json:"args"`
+	ModelOverride *ModelOverride `koanf:"model_override" json:"model_override,omitempty"`
+}
+
+type ModelOverride struct {
+	HfRepo   string `koanf:"hf_repo" json:"hf_repo"`
+	HfCommit string `koanf:"hf_commit" json:"hf_commit"`
+}
+
+var hfCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+var reservedModelOverrideArgs = map[string]bool{
+	"--model":             true,
+	"--revision":          true,
+	"--served-model-name": true,
 }
 
 type Hardware struct {
@@ -259,21 +298,21 @@ func (p PoCParamsCache) GetModelConfig(modelID string) (PoCModelConfigCache, boo
 type DevshardVersionsCache struct {
 	// Versions are approved devshard binaries (`name`, download URL, sha256)
 	// used by versiond/routing policy.
-	Versions                          []DevshardVersion `json:"versions"`
+	Versions []DevshardVersion `json:"versions"`
 	// DevshardRequestsEnabled is the live governance kill-switch for host-side
 	// completion/timeout request handling.
-	DevshardRequestsEnabled bool              `json:"devshard_requests_enabled"`
+	DevshardRequestsEnabled bool `json:"devshard_requests_enabled"`
 	// MaxNonce is the chain upper bound for session nonces.
-	MaxNonce                          uint32            `json:"max_nonce"`
+	MaxNonce uint32 `json:"max_nonce"`
 	// RefusalTimeout is the live refusal timeout used by runtime-config consumers (seconds).
-	RefusalTimeout                    int64             `json:"refusal_timeout"`
+	RefusalTimeout int64 `json:"refusal_timeout"`
 	// ExecutionTimeout is the live execution timeout used by runtime-config consumers (seconds).
-	ExecutionTimeout                  int64             `json:"execution_timeout"`
+	ExecutionTimeout int64 `json:"execution_timeout"`
 	// ValidationRate is the validation sampling rate in basis points (0..10000).
-	ValidationRate                    uint32            `json:"validation_rate"`
+	ValidationRate uint32 `json:"validation_rate"`
 	// VoteThresholdFactor is the vote threshold factor in percent (1..100),
 	// converted to slot threshold at bind time.
-	VoteThresholdFactor               uint32            `json:"vote_threshold_factor"`
+	VoteThresholdFactor uint32 `json:"vote_threshold_factor"`
 }
 
 // DevshardVersion describes a single approved devshard binary.

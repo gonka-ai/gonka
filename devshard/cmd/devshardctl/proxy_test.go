@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -582,9 +583,9 @@ func (c *blockingNonStreamingRecorderClient) MaxTokens() []uint64 {
 	return append([]uint64(nil), c.maxTokens...)
 }
 
-func (c *verifierClient) VerifyTimeout(_ context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff) (bool, []byte, uint32, error) {
+func (c *verifierClient) VerifyTimeout(_ context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff, _ host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
 	if !c.accept {
-		return false, nil, 0, nil
+		return false, nil, 0, nil, "", nil
 	}
 	voterSlot := c.group[c.slotIdx].SlotID
 	content := &types.TimeoutVoteContent{
@@ -595,13 +596,40 @@ func (c *verifierClient) VerifyTimeout(_ context.Context, inferenceID uint64, re
 	}
 	data, err := proto.Marshal(content)
 	if err != nil {
-		return false, nil, 0, err
+		return false, nil, 0, nil, "", err
 	}
 	sig, err := c.signer.Sign(data)
 	if err != nil {
-		return false, nil, 0, err
+		return false, nil, 0, nil, "", err
 	}
-	return true, sig, voterSlot, nil
+	return true, sig, voterSlot, nil, "", nil
+}
+
+func (c *verifierClient) VerifyErrorMiss(_ context.Context, inferenceID uint64, _ []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	if !c.accept {
+		return false, nil, 0, nil, "", nil
+	}
+	voterSlot := c.group[c.slotIdx].SlotID
+	var hash []byte
+	if len(artifacts.ResponsePayload) > 0 {
+		sum := sha256.Sum256(artifacts.ResponsePayload)
+		hash = sum[:]
+	}
+	content := &types.ErrorMissVoteContent{
+		EscrowId:     "escrow-proxy",
+		InferenceId:  inferenceID,
+		Accept:       true,
+		ResponseHash: hash,
+	}
+	data, err := proto.Marshal(content)
+	if err != nil {
+		return false, nil, 0, nil, "", err
+	}
+	sig, err := c.signer.Sign(data)
+	if err != nil {
+		return false, nil, 0, nil, "", err
+	}
+	return true, sig, voterSlot, nil, "", nil
 }
 
 type testProxyEnv struct {
@@ -1907,6 +1935,13 @@ func TestRunInference_SpeculativeFallsThroughMultipleDeadHosts(t *testing.T) {
 	var buf bytes.Buffer
 	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf, nil)
 	require.NoError(t, err)
+
+	// RunInference returns once the live host's stream settles. Dead hosts
+	// may still be finishing on the background finalizer, which is where
+	// RecordRequest runs. Wait for that record before asserting on it.
+	require.Eventually(t, func() bool {
+		return len(env.proxy.perf.RecentRequests()) >= 1
+	}, time.Second, 10*time.Millisecond, "background finalizer should have recorded the request")
 
 	requests := env.proxy.perf.RecentRequests()
 	require.NotEmpty(t, requests)

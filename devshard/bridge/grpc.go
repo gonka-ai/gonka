@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"common/chain"
+	devshardpkg "devshard"
 
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
@@ -31,8 +32,13 @@ func NewGRPCBridge(client *chain.Client) *GRPCBridge {
 	return &GRPCBridge{client: client}
 }
 
-// NewGRPCBridgeFromURL dials grpcURL and returns a bridge. Caller must not close
-// the underlying connection while the bridge is in use.
+// NewGRPCBridgeFromURL dials grpcURL and returns a bridge on direct gRPC only.
+// Caller must not close the underlying connection while the bridge is in use.
+//
+// Production wiring builds the bridge from the gateway's chain client
+// (NewGRPCBridge), so it inherits that client's CometBFT RPC query fallback.
+// This constructor exists for tests that want to exercise gRPC itself, where a
+// silent fallback would hide the failure under test.
 func NewGRPCBridgeFromURL(grpcURL string) (*GRPCBridge, error) {
 	client, err := chain.New(grpcURL)
 	if err != nil {
@@ -42,11 +48,7 @@ func NewGRPCBridgeFromURL(grpcURL string) (*GRPCBridge, error) {
 }
 
 func parseEscrowID(escrowID string) (uint64, error) {
-	id, err := strconv.ParseUint(escrowID, 10, 64)
-	if err != nil {
-		return 0, fmt.Errorf("invalid escrow id %q: %w", escrowID, err)
-	}
-	return id, nil
+	return devshardpkg.ParseEscrowID(escrowID)
 }
 
 func (b *GRPCBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
@@ -77,7 +79,7 @@ func (b *GRPCBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
 	copy(slots, e.Slots)
 
 	return &EscrowInfo{
-		EscrowID:                  escrowID,
+		EscrowID:                  strconv.FormatUint(id, 10),
 		Amount:                    e.Amount,
 		CreatorAddress:            e.Creator,
 		AppHash:                   appHash,
@@ -91,7 +93,10 @@ func (b *GRPCBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
 		AutoSealEveryNNonces:      e.AutoSealEveryNNonces,
 		ValidationRate:            e.ValidationRate,
 		VoteThresholdFactor:       e.VoteThresholdFactor,
+		RefusalTimeout:            e.RefusalTimeout,
+		ExecutionTimeout:          e.ExecutionTimeout,
 		EpochID:                   e.EpochIndex,
+		Settled:                   e.Settled,
 	}, nil
 }
 

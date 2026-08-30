@@ -1,39 +1,30 @@
 # Multi-versiond + sticky router overlay for deploy/join.
 #
-# Requires base docker-compose.yml (single versiond). Adds devshard-postgres and
-# a second versiond instance (versiond2), attaches both to the router backend
-# network, and sends policy-worker devshard traffic through proxy-router. The
-# independently managed versiond-router slots are not services in this model.
-#
-# Fresh installations only. This overlay uses !reset and requires Docker
-# Compose 2.24.4 or newer. Upgrade an existing host with the release updater so
-# policy workers cross the required drain and fresh-admission sequence.
+# Requires base docker-compose.yml (single versiond). Adds devshard-postgres,
+# a second versiond instance (versiond2), and versiond-router (nginx sticky
+# hash on escrow/session ID) in front of both. Sets proxy
+# VERSIOND_SERVICE_NAME=versiond-router.
 #
 #   docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d
-#
-# Every router discovers the pool from DNS: both versiond containers answer to the
-# versiond-pool alias, so adding or removing an instance needs no router config
-# and no reload. Health comes from active /readyz checks against each host, so a
-# versiond that is draining, still converging on a new version, or simply
-# stopped leaves the rotation on its own.
 #
 # x-versiond anchor holds everything shared between versiond and versiond2;
 # only container_name and per-instance data volumes differ.
 
 x-versiond: &versiond
-  image: >-
-    ${VERSIOND_IMAGE:-ghcr.io/product-science/versiond:0.2.15-devshard-v5}
+  image: ghcr.io/product-science/versiond:0.2.15
   environment:
     - VERSIOND_ORACLE_URL=http://api:9100/versions
     - VERSIOND_BINARY_NAME=devshardd
+    # This overlay can run multiple devshardd instances for one escrow. Make
+    # every HA-routed child fail closed unless it uses shared PostgreSQL storage.
+    - GONKA_HA=${GONKA_HA:-true}
+    # Keep supervisor preflight aligned with the router: these versions remain
+    # single-owner and do not require the HA storage contract.
+    - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}
     - VERSIOND_HOST_SHUTDOWN_BUDGET=${VERSIOND_HOST_SHUTDOWN_BUDGET:-25m}
-    # Keep serving after /readyz starts failing, so the router observes the
-    # failure before this host stops accepting work.
+    # Keep serving after /readyz starts failing so the active router check can
+    # withdraw this host before admission closes.
     - VERSIOND_DRAIN_ANNOUNCE=${VERSIOND_DRAIN_ANNOUNCE:-5s}
-    # Marks the deployment as HA for every devshardd child: the child refuses to
-    # boot on storage a sibling cannot see, and the router stamps the matching
-    # Devshard-Ha header. Not overridable — it describes this overlay.
-    - GONKA_HA=true
     - NODE_MANAGER_ADDR=api:${NODE_MANAGER_GRPC_PORT:-9400}
     - NODE_HOST=node
     - KEY_NAME=${KEY_NAME}
@@ -51,13 +42,8 @@ x-versiond: &versiond
     # Postgres-only payloads/sessions. Fail boot if PG is down; migrate local
     # SQLite sessions into Postgres once at startup (no file/sqlite fallback).
     - DEVSHARD_STORAGE_MODE=postgres
-  # One DNS name, one A record per running instance on the router-only backend
-  # network: this is the pool. Router slots run in independent Compose projects.
   networks:
     default:
-      aliases:
-        - versiond-pool
-    versiond-router-back:
       aliases:
         - versiond-pool
   depends_on:
@@ -65,41 +51,35 @@ x-versiond: &versiond
       condition: service_started
     devshard-postgres:
       condition: service_healthy
-  # Compose readiness is the same contract the router consumes. A successful
-  # `up --wait` therefore means this host has reconciled and can receive work,
-  # not merely that its PID exists. BusyBox is part of the Alpine versiond image.
+  # The pinned transition image predates /readyz. Fall back to its liveness
+  # endpoint only for an explicit 404; a lifecycle 503 must stay unhealthy.
   healthcheck:
     test:
-      [
-        "CMD",
-        "/bin/busybox",
-        "wget",
-        "-q",
-        "-O",
-        "/dev/null",
-        "http://127.0.0.1:8080/readyz",
-      ]
+      - CMD-SHELL
+      - >-
+        output=$$(/bin/busybox wget -S -O /dev/null
+        http://127.0.0.1:8080/readyz 2>&1);
+        status=$$?;
+        if [ "$$status" -eq 0 ]; then exit 0; fi;
+        case "$$output" in *"HTTP/"*" 404 "*) exec /bin/busybox wget -q
+        -O /dev/null http://127.0.0.1:8080/healthz ;; *) exit "$$status" ;; esac
     interval: 2s
     timeout: 3s
     retries: 3
-    # Slow binary downloads may legitimately keep a new host unready. A passing
-    # check still marks it healthy immediately during the start period.
     start_period: ${VERSIOND_HEALTH_START_PERIOD:-30m}
-  # Outer Docker backstop; keep it greater than the internal host budget.
   stop_grace_period: ${VERSIOND_STOP_GRACE_PERIOD:-30m}
   restart: always
 
 services:
   devshard-postgres:
     container_name: devshard-postgres
-    image: >-
-      ${DEVSHARD_POSTGRES_IMAGE:-postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777}
+    image: ${DEVSHARD_POSTGRES_IMAGE:-postgres:16-alpine}
     environment:
       POSTGRES_DB: ${DEVSHARD_POSTGRES_DB:-devshardd}
       POSTGRES_USER: ${DEVSHARD_POSTGRES_USER:-devshardd}
       POSTGRES_PASSWORD: ${DEVSHARD_POSTGRES_PASSWORD:?DEVSHARD_POSTGRES_PASSWORD is required}
-      # Keep the image-declared /var/lib/postgresql/data volume mounted as the
-      # v4 migration source. New and migrated clusters live on the stable bind.
+      # Keep the image-owned /var/lib/postgresql/data volume mounted as the v4
+      # migration source. The durable cluster lives in the bind below.
       PGDATA: /var/lib/postgresql/gonka/data
       DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT: ${DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT:-false}
     entrypoint: ["/usr/local/bin/gonka-postgres-entrypoint"]
@@ -113,31 +93,22 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
-      # A physical copy from an existing v4 cluster can take longer than normal
-      # database initialization. Successful checks still mark it healthy early.
       start_period: ${DEVSHARD_POSTGRES_START_PERIOD:-30m}
     volumes:
-      # The old image-owned anonymous volume remains at /var/lib/postgresql/data.
-      # Compose preserves it during an in-place `up`, and the entrypoint copies
-      # it atomically into this operator-visible bind on the first v5 start.
       - ${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}:/var/lib/postgresql/gonka:Z
-      - ./devshard-postgres-entrypoint.sh:/usr/local/bin/gonka-postgres-entrypoint:ro,Z
-      # Existing v4 installations always have downloaded versiond artifacts.
-      # This read-only evidence prevents an accidental `down` from turning a
-      # detached anonymous database volume into a silently empty new cluster.
+      - ./devshard-postgres-entrypoint.sh:/usr/local/bin/gonka-postgres-entrypoint:ro,z
+      # .pg-bound is definitive evidence that PostgreSQL still owns sessions.
+      # Downloaded artifacts alone leave an explicit first-HA-vs-lost-volume
+      # decision for the operator; both checks happen before empty init.
       - ./devshards/bin:/var/lib/postgresql/gonka-existing-versiond:ro,z
-    # Give the old v4 server time to checkpoint before the migration entrypoint
-    # copies its stopped data directory. WAL recovery still handles a hard stop.
+      - ./devshards/data:/var/lib/postgresql/gonka-versiond-data:ro,z
+      - ./devshards2/data:/var/lib/postgresql/gonka-versiond2-data:ro,z
     stop_grace_period: ${DEVSHARD_POSTGRES_STOP_GRACE_PERIOD:-5m}
     restart: always
 
   versiond:
     <<: *versiond
     container_name: versiond
-    # Persisted pool membership. Set to 0 in config.env before permanently
-    # decommissioning this host; a plain `stop` is only a temporary evacuation.
-    deploy:
-      replicas: ${VERSIOND_REPLICAS:-1}
     volumes:
       - .inference:/root/.inference:ro
       - ./devshards/bin:/opt/versiond/bin
@@ -146,63 +117,121 @@ services:
   versiond2:
     <<: *versiond
     container_name: versiond2
-    deploy:
-      replicas: ${VERSIOND2_REPLICAS:-1}
     volumes:
       - .inference:/root/.inference:ro
       - ./devshards/bin:/opt/versiond/bin
       - ./devshards2/data:/opt/versiond/data
 
-  proxy-policy:
-    # Policy nginx can serve every non-devshard route while the HA versiond
-    # stack is still starting or its PostgreSQL dependency is unavailable.
+  versiond-router:
+    container_name: versiond-router
+    image: ${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15}
+    # Each image owns its graceful-stop signal: the transitional nginx image
+    # uses SIGQUIT, while the HAProxy image declares SIGUSR1.
+    stop_grace_period: ${VERSIOND_ROUTER_STOP_GRACE_PERIOD:-10s}
+    environment:
+      # The HAProxy router discovers every replica through this shared DNS
+      # alias. Keep VERSIOND_HOSTS during the image transition because the
+      # currently pinned nginx router still requires the static list.
+      - VERSIOND_POOL_HOST=${VERSIOND_POOL_HOST:-versiond-pool}
+      - VERSIOND_HOSTS=${VERSIOND_HOSTS:-versiond versiond2}
+      - VERSIOND_PORT=8080
+      # This overlay always has multiple versiond replicas. Keep the HA storage
+      # guard active even while only one replica is currently ready.
+      - GONKA_HA=${GONKA_HA:-true}
+      # SQLite-bound pre-HA versions must stay on the host that owns their data dirs.
+      - VERSIOND_LEGACY_HOST=${VERSIOND_LEGACY_HOST:-versiond}
+      # Version path segments that pin to VERSIOND_LEGACY_HOST (whitespace and/or comma).
+      # All other versions sticky-hash across VERSIOND_HOSTS and get Devshard-Ha: true.
+      # Default lists known pre-HA paths; clear (empty) once every live version is Postgres HA.
+      - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}
+      # Bootstrap only the HA versions shipped with this deployment. Future
+      # names come from governance rather than being guessed in Compose.
+      - VERSIOND_VERSIONS=${VERSIOND_VERSIONS-v4 v5}
+      # Catalog activation is release-driven. The published 0.2.15 image is the
+      # legacy nginx router, so its safe default is empty. A release must supply
+      # both a catalog-aware VERSIOND_ROUTER_IMAGE and this URL.
+      - VERSIOND_ROUTING_CATALOG_URL=${VERSIOND_ROUTING_CATALOG_URL:-}
+      - VERSIOND_ROUTING_CATALOG_POLL_SECONDS=${VERSIOND_ROUTING_CATALOG_POLL_SECONDS:-5}
+      - VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=${VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS:-3}
+      - VERSIOND_ROUTING_CATALOG_MAX_BYTES=${VERSIOND_ROUTING_CATALOG_MAX_BYTES:-1048576}
+      - VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS=${VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS:-2}
+      - VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=${VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS:-86400}
+      # This overlay declares two versiond replicas; do not publish a newly
+      # approved route until both replicas report it ready.
+      - VERSIOND_ROUTING_ACTIVATION_MIN_READY=${VERSIOND_ROUTING_ACTIVATION_MIN_READY:-2}
+      # The source has no monotonic revision. Remove accepted routes only during
+      # an explicitly supervised maintenance run.
+      - VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=${VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS:-false}
+      - VERSIOND_ROUTER_VERSION_CAPACITY=${VERSIOND_ROUTER_VERSION_CAPACITY:-32}
+      - VERSIOND_ROUTER_ALLOW_COARSE_READINESS=${VERSIOND_ROUTER_ALLOW_COARSE_READINESS:-false}
+      - VERSIOND_ROUTER_ADMIN_PORT=${VERSIOND_ROUTER_ADMIN_PORT:-8404}
+      - VERSIOND_ROUTER_FRONT_BIND_HOST=${VERSIOND_ROUTER_FRONT_BIND_HOST:-}
+      - HAPROXY_DNS_RESOLVER=${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}
+      # Internal-only exporter bind for the optional observability overlay.
+      - VERSIOND_ROUTER_METRICS_BIND_HOST=${VERSIOND_ROUTER_METRICS_BIND_HOST:-versiond-router}
+    volumes:
+      - versiond-router-state:/var/lib/gonka-router
     depends_on:
-      versiond: !reset null
+      - versiond
+      - versiond2
+    healthcheck:
+      test:
+        - CMD-SHELL
+        - >-
+          if [ -x /usr/local/lib/router-runtime/catalog-reconciler ]; then
+            if [ -z "$$VERSIOND_ROUTING_CATALOG_URL" ]; then
+              echo 'catalog-capable versiond-router requires VERSIOND_ROUTING_CATALOG_URL' >&2;
+              exit 1;
+            fi;
+            wget -q -O - "http://127.0.0.1:$${VERSIOND_ROUTER_ADMIN_PORT}/livez";
+          else
+            if [ -n "$$VERSIOND_ROUTING_CATALOG_URL" ]; then
+              echo 'VERSIOND_ROUTING_CATALOG_URL requires a catalog-capable versiond-router image' >&2;
+              exit 1;
+            fi;
+            wget -q -O - 'http://127.0.0.1:8080/healthz';
+          fi
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+    restart: always
+
+  proxy-policy:
     environment:
       - VERSIOND_SERVICE_NAME=proxy-policy-ingress
       - VERSIOND_SERVICE_IS_ABSOLUTE=true
       - VERSIOND_PORT=18081
 
   proxy-policy2:
-    depends_on:
-      versiond: !reset null
     environment:
       - VERSIOND_SERVICE_NAME=proxy-policy-ingress
       - VERSIOND_SERVICE_IS_ABSOLUTE=true
       - VERSIOND_PORT=18081
 
   proxy:
+    depends_on:
+      versiond-router:
+        condition: service_healthy
+        # A router image/catalog mismatch must remain visible as unhealthy, but
+        # it must not block public APIs that do not use the devshard route.
+        required: false
     environment:
-      - VERSIOND_ROUTER_POOL_HOST=${VERSIOND_ROUTER_POOL_HOST:-versiond-router-fleet}
+      - VERSIOND_ROUTER_POOL_HOST=versiond-router
       - VERSIOND_ROUTER_PORT=8080
       - VERSIOND_ROUTER_ADMIN_PORT=8404
-      - VERSIOND_ROUTER_FLEET_CAPACITY=${VERSIOND_ROUTER_FLEET_CAPACITY:-16}
       - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}
       - VERSIOND_VERSIONS=${VERSIOND_VERSIONS-v4 v5}
-      - VERSIOND_ROUTING_CATALOG_URL=${VERSIOND_ROUTING_CATALOG_URL-http://api:9100/versions}
+      - VERSIOND_ROUTING_CATALOG_URL=${VERSIOND_ROUTING_CATALOG_URL:-}
       - VERSIOND_ROUTING_CATALOG_POLL_SECONDS=${VERSIOND_ROUTING_CATALOG_POLL_SECONDS:-5}
       - VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=${VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS:-3}
-      - VERSIOND_ROUTING_ACTIVATION_MIN_READY=${VERSIOND_ROUTING_ACTIVATION_MIN_READY:-2}
-      - VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=${VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS:-86400}
+      - VERSIOND_ROUTING_CATALOG_MAX_BYTES=${VERSIOND_ROUTING_CATALOG_MAX_BYTES:-1048576}
+      - VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS=${VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS:-2}
+      - VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=${VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS:-false}
+      # This Compose model has one inner router. A later fleet overlay raises
+      # this reserve independently of the two-versiond activation threshold.
+      - PROXY_ROUTER_ACTIVATION_MIN_READY=${PROXY_ROUTER_ACTIVATION_MIN_READY:-1}
       - PROXY_ROUTER_VERSION_CAPACITY=${PROXY_ROUTER_VERSION_CAPACITY:-32}
-      # The router-back network must not expose DAPI's mutating callback
-      # listener. The existing HAProxy publishes only GET /versions there.
-      - PROXY_ROUTER_CATALOG_BIND_HOST=versiond-routing-oracle
-      - PROXY_ROUTER_CATALOG_PORT=9100
-      - PROXY_ROUTER_CATALOG_UPSTREAM_HOST=api
-      - PROXY_ROUTER_CATALOG_UPSTREAM_PORT=9100
-    networks:
-      default: {}
-      proxy-policy-front: {}
-      versiond-router-front: {}
-      versiond-router-back:
-        aliases:
-          - versiond-routing-oracle
 
-networks:
-  versiond-router-front:
-    name: ${VERSIOND_ROUTER_FRONT_NETWORK:-gonka-versiond-router-front}
-    external: true
-  versiond-router-back:
-    name: ${VERSIOND_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}
-    external: true
+volumes:
+  versiond-router-state:

@@ -15,9 +15,12 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"common/httpguard"
+
 	devshardpkg "devshard"
 	"devshard/gossip"
 	"devshard/host"
+	"devshard/internal/boolvalue"
 	"devshard/observability"
 	"devshard/signing"
 	"devshard/state"
@@ -29,7 +32,7 @@ import (
 
 const (
 	defaultPort     = "8080"
-	defaultEscrowID = "escrow-1"
+	defaultEscrowID = "1"
 )
 
 func main() {
@@ -42,7 +45,18 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	srv, err := buildServer(ctx, cfg)
+	// Peer URLs are participant-controlled. Default secure; e2e/compose opt
+	// out via DEVSHARD_ALLOW_PRIVATE_ADDRESSES so Docker-internal gossip works.
+	allowPrivate, err := boolEnv("DEVSHARD_ALLOW_PRIVATE_ADDRESSES", false)
+	if err != nil {
+		log.Fatalf("DEVSHARD_ALLOW_PRIVATE_ADDRESSES: %v", err)
+	}
+	httpguard.SetAllowPrivate(allowPrivate)
+	if allowPrivate {
+		log.Printf("SSRF guard disabled: dials to private/internal addresses are allowed")
+	}
+
+	srv, gsp, err := buildServer(ctx, cfg)
 	if err != nil {
 		log.Fatalf("build server: %v", err)
 	}
@@ -52,7 +66,7 @@ func main() {
 	e.GET("/health", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
-	registerServer(e.Group(devshardpkg.DefaultRoutePrefix()), srv)
+	registerServer(e.Group(devshardpkg.DefaultRoutePrefix()), srv, gsp)
 
 	addr := ":" + *port
 	log.Printf("devshard-host listening on %s slot=%d address=%s route_prefix=%s",
@@ -64,7 +78,7 @@ func main() {
 
 // registerServer mounts the transport handlers the same way production
 // RegisterLazySessionRoutes does, for a single pre-bound e2e host session.
-func registerServer(g *echo.Group, srv *transport.Server) {
+func registerServer(g *echo.Group, srv *transport.Server, gsp *gossip.Gossip) {
 	g.Use(observability.EchoMiddleware())
 	g.Use(observability.RequestIDMiddleware)
 
@@ -76,28 +90,46 @@ func registerServer(g *echo.Group, srv *transport.Server) {
 	}
 
 	g.POST("/sessions/:id/chat/completions", withAuth(true, srv.HandleInference))
+	g.POST("/sessions/:id/height-sync", withAuth(false, srv.HandleHeightSync))
+	g.POST("/sessions/:id/heightsync/repair", withAuth(false, srv.HandleHeightSyncRepair))
 	g.POST("/sessions/:id/verify-timeout", withAuth(false, srv.HandleVerifyTimeout))
+	g.POST("/sessions/:id/verify-error-miss", withAuth(false, srv.HandleVerifyErrorMiss))
 	g.POST("/sessions/:id/challenge-receipt", withAuth(false, srv.HandleChallengeReceipt))
 	g.POST("/sessions/:id/gossip/nonce", withAuth(false, srv.HandleGossipNonce))
 	g.POST("/sessions/:id/gossip/txs", withAuth(false, srv.HandleGossipTxs))
 	g.GET("/sessions/:id/diffs", srv.HandleGetDiffs)
 	g.GET("/sessions/:id/mempool", srv.HandleGetMempool)
 	g.GET("/sessions/:id/signatures", srv.HandleGetSignatures)
+	g.GET("/debug/gossip", func(c echo.Context) error {
+		nonce, err := strconv.ParseUint(c.QueryParam("nonce"), 10, 64)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid 'nonce' parameter")
+		}
+		status, seen := gsp.NonceStatus(nonce)
+		return c.JSON(http.StatusOK, map[string]any{
+			"nonce":       nonce,
+			"seen":        seen,
+			"state_hash":  status.StateHash,
+			"state_sig":   status.StateSig,
+			"sender_slot": status.SlotID,
+		})
+	})
 }
 
 type hostConfig struct {
-	escrowID    string
-	hostIndex   int
-	signer      *signing.Secp256k1Signer
-	userSigner  *signing.Secp256k1Signer
-	userAddress string
-	group       []types.SlotAssignment
-	peerURLs    []string
-	dataDir     string
-	balance     uint64
-	epochID     uint64
-	tokenPrice  uint64
-	version     string
+	escrowID          string
+	hostIndex         int
+	signer            *signing.Secp256k1Signer
+	userSigner        *signing.Secp256k1Signer
+	userAddress       string
+	group             []types.SlotAssignment
+	peerURLs          []string
+	dataDir           string
+	balance           uint64
+	epochID           uint64
+	tokenPrice        uint64
+	version           string
+	stubExecutionHang bool
 }
 
 func loadConfig() (hostConfig, error) {
@@ -134,30 +166,35 @@ func loadConfig() (hostConfig, error) {
 	if len(peerURLs) != len(group) {
 		return hostConfig{}, fmt.Errorf("DEVSHARD_PEER_URLS count %d must match group size %d", len(peerURLs), len(group))
 	}
+	stubExecutionHang, err := boolEnv("DEVSHARD_STUB_EXECUTION_HANG", false)
+	if err != nil {
+		return hostConfig{}, err
+	}
 
 	return hostConfig{
-		escrowID:    envDefault("DEVSHARD_ESCROW_ID", defaultEscrowID),
-		hostIndex:   hostIndex,
-		signer:      hostSigner,
-		userSigner:  userSigner,
-		userAddress: userAddress,
-		group:       group,
-		peerURLs:    peerURLs,
-		dataDir:     envDefault("DEVSHARD_DATA_DIR", filepath.Join(os.TempDir(), "devshard-host")),
-		balance:     uintEnv("DEVSHARD_ESCROW_AMOUNT", 1_000_000),
-		epochID:     uintEnv("DEVSHARD_EPOCH_ID", 1),
-		tokenPrice:  uintEnv("DEVSHARD_TOKEN_PRICE", 1),
-		version:     envDefault("DEVSHARD_VERSION", types.EffectiveStateRootAndProtocolVersion),
+		escrowID:          envDefault("DEVSHARD_ESCROW_ID", defaultEscrowID),
+		hostIndex:         hostIndex,
+		signer:            hostSigner,
+		userSigner:        userSigner,
+		userAddress:       userAddress,
+		group:             group,
+		peerURLs:          peerURLs,
+		dataDir:           envDefault("DEVSHARD_DATA_DIR", filepath.Join(os.TempDir(), "devshard-host")),
+		balance:           uintEnv("DEVSHARD_ESCROW_AMOUNT", 1_000_000),
+		epochID:           uintEnv("DEVSHARD_EPOCH_ID", 1),
+		tokenPrice:        uintEnv("DEVSHARD_TOKEN_PRICE", 1),
+		version:           envDefault("DEVSHARD_VERSION", types.EffectiveStateRootAndProtocolVersion),
+		stubExecutionHang: stubExecutionHang,
 	}, nil
 }
 
-func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error) {
+func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, *gossip.Gossip, error) {
 	verifier := signing.NewSecp256k1Verifier()
 	sessionConfig := sessionConfigFromEnv(len(cfg.group))
 
 	store, err := storage.NewStorage(ctx, cfg.dataDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	sm, err := state.NewStateMachine(
@@ -172,7 +209,7 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error)
 	)
 	if err != nil {
 		_ = store.Close()
-		return nil, err
+		return nil, nil, err
 	}
 
 	if err := store.CreateSession(storage.CreateSessionParams{
@@ -184,16 +221,21 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error)
 		Group:          cfg.group,
 		InitialBalance: cfg.balance,
 	}); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := recoverHostState(store, sm, cfg.escrowID); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
+
+	inferenceEngine := stub.NewInferenceEngine()
+	// This E2E-only switch simulates an executor that acknowledged the work
+	// with a receipt but never completes model execution.
+	inferenceEngine.BlockUntilContextDone = cfg.stubExecutionHang
 
 	h, err := host.NewHost(
 		sm,
 		cfg.signer,
-		stub.NewInferenceEngine(),
+		inferenceEngine,
 		cfg.escrowID,
 		cfg.group,
 		nil,
@@ -203,13 +245,13 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error)
 		host.WithValidator(stub.NewValidationEngine()),
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	h.Start()
 
 	srv, err := transport.NewServer(h, store, verifier, cfg.userAddress)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	userPeers := make(map[int]*transport.HTTPClient, len(cfg.peerURLs))
@@ -221,9 +263,10 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error)
 		}
 	}
 	srv.SetPeerClients(userPeers)
-	srv.SetGossip(gossip.NewGossip(cfg.escrowID, uint32(cfg.hostIndex), gossipPeers, h.HostMempool(), gossip.WithSigAccumulator(h)))
+	gsp := gossip.NewGossip(cfg.escrowID, uint32(cfg.hostIndex), gossipPeers, h.HostMempool(), gossip.WithSigAccumulator(h))
+	srv.SetGossip(gsp)
 
-	return srv, nil
+	return srv, gsp, nil
 }
 
 func recoverHostState(store storage.Storage, sm *state.StateMachine, escrowID string) error {
@@ -280,6 +323,8 @@ func sessionConfigFromEnv(groupSize int) types.SessionConfig {
 		AutoSealEveryNNonces:      uint32(uintEnv("DEVSHARD_AUTO_SEAL_EVERY_N_NONCES", 0)),
 		ValidationRate:            uint32(uintEnv("DEVSHARD_VALIDATION_RATE", 0)),
 		VoteThresholdFactor:       uint32(uintEnv("DEVSHARD_VOTE_THRESHOLD_FACTOR", 0)),
+		RefusalTimeout:            int64(uintEnv("DEVSHARD_REFUSAL_TIMEOUT", 0)),
+		ExecutionTimeout:          int64(uintEnv("DEVSHARD_EXECUTION_TIMEOUT", 0)),
 	})
 }
 
@@ -327,6 +372,18 @@ func uintEnv(key string, fallback uint64) uint64 {
 		log.Fatalf("invalid %s: %v", key, err)
 	}
 	return value
+}
+
+func boolEnv(key string, fallback bool) (bool, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := boolvalue.Parse(raw)
+	if err != nil {
+		return false, fmt.Errorf("parse %s: %w", key, err)
+	}
+	return value, nil
 }
 
 func defaultHostPrivateKeys() []string {

@@ -13,23 +13,6 @@ import java.time.Duration
 class DevshardVersiondSessionTests : DevshardVersiondTestBase() {
 
     @Test
-    fun `create escrow and query devshard mempool via devshardd`() {
-        val (_, genesis) = initCluster(config = overrideConfig, reboot = true)
-        genesis.waitForNextEpoch()
-        waitForOverrideVersionedHealth(genesis)
-
-        logSection("Creating devshard escrow")
-        val escrowAmount = 7_000_000_000L
-        val txResponse = genesis.createDevshardEscrow(escrowAmount, modelId = devshardEscrowModel)
-        assertThat(txResponse.code).isEqualTo(0)
-
-        logSection("Query devshard mempool via versioned route -- triggers lazy session creation")
-        val mempool = genesis.api.getDevshardMempool(1)
-        assertThat(mempool.txs).isNotNull()
-        assertThat(mempool.txs).isEmpty()
-    }
-
-    @Test
     fun `create devshard escrow and query it`() {
         val (_, genesis) = initCluster(config = overrideConfig, reboot = true)
         genesis.waitForNextEpoch()
@@ -85,6 +68,11 @@ class DevshardVersiondSessionTests : DevshardVersiondTestBase() {
                 val response = genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "test prompt $i")
                 assertThat(response).isNotEmpty()
             }
+
+            // Owner chat bound the session, so obs GETs resolve it. Unbound escrows
+            // are 404 by design, which is why this cannot run on a fresh escrow.
+            logSection("Querying mempool via versioned obs route")
+            assertThat(genesis.api.getDevshardMempool(escrowId).txs).isNotNull()
 
             genesis.assertDevshardSettlement(
                 handle,

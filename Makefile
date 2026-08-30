@@ -16,6 +16,9 @@ DEVSHARD_BINARY_VERSION ?= dev-log
 DEVSHARD_PROTOCOL_VERSION ?= v2
 DEVSHARD_GATEWAY_IMAGE ?= ghcr.io/gonka-ai/devshard-gateway
 DEVSHARD_GATEWAY_TAGS ?=
+# Extra go build tags for devshardd. Must stay empty for releases: devshard_testenv
+# compiles in payload fault injection (see devshard/cmd/devshardd/session/payload_fault.go).
+DEVSHARD_BUILD_TAGS ?=
 
 print-devshard-version:
 	@echo $(DEVSHARD_VERSION)
@@ -195,6 +198,7 @@ devshardd-build:
 		--build-arg BLST_PORTABLE=$(BLST_PORTABLE) \
 		--build-arg DEVSHARD_VERSION=$(DEVSHARD_VERSION) \
 		--build-arg DEVSHARD_BINARY_VERSION=$(DEVSHARD_BINARY_VERSION) \
+		--build-arg DEVSHARD_BUILD_TAGS="$(DEVSHARD_BUILD_TAGS)" \
 		-f devshard/Dockerfile . \
 		-t devshardd-builder:latest -q >/dev/null
 	@CID=$$(docker create devshardd-builder:latest) && \
@@ -206,6 +210,7 @@ devshardd-build:
 
 devshardd-release:
 	@$(MAKE) devshardd-build \
+		DEVSHARD_BUILD_TAGS= \
 		DEVSHARD_VERSION=$(DEVSHARD_VERSION) \
 		DEVSHARD_BINARY_VERSION=$(DEVSHARD_BINARY_VERSION) \
 		DOCKER_PLATFORM=$(DEVSHARDD_RELEASE_DOCKER_PLATFORM) \

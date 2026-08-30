@@ -3,7 +3,10 @@ package completionapi
 import (
 	"encoding/json"
 	"errors"
-	"strings"
+
+	"common/logging"
+
+	"github.com/productscience/inference/x/inference/types"
 )
 
 type ResponseProcessor interface {
@@ -17,6 +20,7 @@ type ResponseProcessor interface {
 type ExecutorResponseProcessor struct {
 	inferenceId       string
 	jsonResponseBytes []byte
+	forwardedJSON     []byte
 	streamedResponse  []string
 }
 
@@ -29,50 +33,63 @@ func NewExecutorResponseProcessor(inferenceId string) *ExecutorResponseProcessor
 }
 
 func (rt *ExecutorResponseProcessor) ProcessJsonResponse(responseBytes []byte) ([]byte, error) {
-	updatedBodyBytes, err := addOrReplaceIdValue(responseBytes, rt.inferenceId)
+	stored, forwarded, err := rt.prepareBody(responseBytes)
 	if err != nil {
 		return nil, err
 	}
+	rt.jsonResponseBytes = stored
+	rt.forwardedJSON = forwarded
+	return forwarded, nil
+}
 
-	rt.jsonResponseBytes = updatedBodyBytes
-
-	return updatedBodyBytes, nil
+// GetForwardedJSONBytes is what the gateway was sent, which is not what was stored: a caller that
+// relays the body itself must not relay the slimmed copy.
+func (rt *ExecutorResponseProcessor) GetForwardedJSONBytes() []byte {
+	return rt.forwardedJSON
 }
 
 func (rt *ExecutorResponseProcessor) ProcessStreamedResponse(line string) (string, error) {
-	updatedLine, err := getUpdatedLine(line, rt.inferenceId)
-	rt.streamedResponse = append(rt.streamedResponse, updatedLine)
-	return updatedLine, err
-}
-
-func getUpdatedLine(line string, id string) (string, error) {
-	if !strings.HasPrefix(line, DataPrefix) {
+	body, isData := streamedLineBody(line)
+	if !isData {
+		rt.streamedResponse = append(rt.streamedResponse, line)
 		return line, nil
 	}
-
-	trimmed := strings.TrimSpace(strings.TrimPrefix(line, DataPrefix))
-	if strings.HasPrefix(trimmed, "[DONE]") {
-		return line, nil
-	}
-
-	updatedBodyBytes, err := addOrReplaceIdValue([]byte(trimmed), id)
+	stored, forwarded, err := rt.prepareBody([]byte(body))
 	if err != nil {
+		rt.streamedResponse = append(rt.streamedResponse, line)
 		return line, err
 	}
-
-	return DataPrefix + string(updatedBodyBytes), nil
+	rt.streamedResponse = append(rt.streamedResponse, DataPrefix+string(stored))
+	return DataPrefix + string(forwarded), nil
 }
 
-func addOrReplaceIdValue(bytes []byte, id string) ([]byte, error) {
-	var bodyMap map[string]interface{}
-	err := json.Unmarshal(bytes, &bodyMap)
+// prepareBody parses one chunk once and answers both readers of it. Only the stored copy loses the
+// logprob fields, because a client that asked for logprobs cannot recover what never reached the gateway.
+func (rt *ExecutorResponseProcessor) prepareBody(body []byte) (stored, forwarded []byte, err error) {
+	document, err := decodeJSONDocument(body)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-
-	bodyMap["id"] = id
-
-	return json.Marshal(bodyMap)
+	object, isObject := document.(map[string]any)
+	if !isObject {
+		return nil, nil, errors.New("ExecutorResponseProcessor: response body is not a JSON object")
+	}
+	object["id"] = rt.inferenceId
+	dropFields(document, fieldsNoValidatorReads)
+	if forwarded, err = json.Marshal(document); err != nil {
+		return nil, nil, err
+	}
+	// A chunk that will not slim is stored whole rather than failing the inference. It is worth a
+	// line either way: refusing means the host's own logprobs disagree with each other.
+	if err := compressLogprobsIn(document); err != nil {
+		logging.Warn("Storing the response whole: it did not compress", types.Inferences,
+			"inference_id", rt.inferenceId, "error", err)
+		return forwarded, forwarded, nil
+	}
+	if stored, err = json.Marshal(document); err != nil {
+		return nil, nil, err
+	}
+	return stored, forwarded, nil
 }
 
 func (rt *ExecutorResponseProcessor) GetResponseBytes() ([]byte, error) {

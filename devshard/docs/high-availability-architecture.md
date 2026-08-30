@@ -166,11 +166,17 @@ accepted them and are not moved during drain.
 poc-batches, restrictions, BLS, bridge addresses, verify-proof/block, debug
 helpers, versions).
 
-- **Transport:** chain **gRPC only** via `common/chain.Client`
-  (`CHAIN_GRPC_URL`, default `:9090`); a few routes use CometBFT gRPC
-  (`cmtservice`) and ABCI store queries. No Tendermint HTTP RPC.
+- **Transport:** chain gRPC via `common/chain.Client` (`CHAIN_GRPC_URL`, e.g.
+  `node:9090`, required at startup); a few routes use CometBFT gRPC
+  (`cmtservice`) and ABCI store queries. When gRPC is unreachable, queries fall
+  back to CometBFT RPC (`CHAIN_RPC_URL`, default `http://<gRPC host>:26657`) and
+  probe gRPC again every 30 minutes. Which transport is live shows up on the
+  `chain.query.transport.active` gauge and the `chain.transport` span attribute.
+  RPC-mode queries go over ABCI, so the CometBFT service routes need the node to
+  have `grpc.enable` or `api.enable` set — true by default, but see the
+  limitation in the v4 release notes.
 - **Stateless:** no DB, no keyring, no ML nodes, no broker. Each request is
-  served directly from chain gRPC. Dependencies are `common/chain`,
+  served directly from the chain. Dependencies are `common/chain`,
   `common/logging`, `common/utils`, `edge-api/observability`.
 - **Entry / wiring:** `edge-api/cmd/edge-api/main.go`,
   `edge-api/internal/server/server.go`, handlers under `edge-api/queryapi/`.
@@ -322,6 +328,21 @@ Operator signals (versiond / host logs and Prometheus):
 - `reconcile_fast_forward` — expected on failover onto a lagging replica.
 - `diff_persist_retry` / `devshard_diff_persist_retry_total` — transient Postgres blips.
 - `diff_fork_detected` / `devshard_diff_fork_detected_total` — **must stay 0** in healthy HA; non-zero means real divergence and needs alert investigation.
+- `postgres readiness lost` / `postgres readiness recovered` — the live database
+  failed or recovered across the two-probe readiness hysteresis. The devshardd
+  process stays alive; `/readyz` returns `503` while database readiness is lost.
+  With the default 5-second interval and 5-second probe deadline, a fully
+  blackholed database can take about 20 seconds after the last successful probe
+  to make `/readyz` return `503`. An upstream health checker adds its own polling
+  delay before it removes the replica from traffic.
+- `devshard_postgres_health_probe_total{result="success|database_error"}` —
+  outcomes from the dedicated PostgreSQL health connection. A single
+  `database_error` can be a transient connection reset and does not make the
+  service unready. Alert on `postgres readiness lost` or a sustained error
+  rate, not on one counter increment.
+- `devshard_postgres_pool_saturated` — whether all application-pool connections
+  were in use at the latest probe. Saturation is reported independently and does
+  not by itself make `/readyz` fail.
 - `proxy-router` and every `versiond-router` slot expose HAProxy's read-only
   Prometheus exporter on the internal Compose network. The shipped Prometheus
   uses a fixed parent target and DNS discovery for the slot fleet; no metrics

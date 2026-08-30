@@ -5,10 +5,13 @@ set -eu
 legacy_data=${GONKA_POSTGRES_LEGACY_DATA:-/var/lib/postgresql/data}
 persistent_root=${GONKA_POSTGRES_PERSISTENT_ROOT:-/var/lib/postgresql/gonka}
 existing_versiond=${GONKA_POSTGRES_EXISTING_VERSIOND:-/var/lib/postgresql/gonka-existing-versiond}
+versiond_data=${GONKA_POSTGRES_VERSIOND_DATA:-/var/lib/postgresql/gonka-versiond-data}
+versiond2_data=${GONKA_POSTGRES_VERSIOND2_DATA:-/var/lib/postgresql/gonka-versiond2-data}
 official_entrypoint=${GONKA_POSTGRES_OFFICIAL_ENTRYPOINT:-/usr/local/bin/docker-entrypoint.sh}
 target_data=${PGDATA:-$persistent_root/data}
 staging_data=$persistent_root/.migrating
-staging_complete=$staging_data/.gonka-copy-complete
+staging_complete=$persistent_root/.gonka-copy-complete
+expected_major=
 
 log() {
     printf '%s\n' "gonka-postgres-entrypoint: $*" >&2
@@ -33,8 +36,37 @@ cluster_exists() {
 validate_cluster() {
     cluster_version=$(cat "$1/PG_VERSION") ||
         die "cannot read $1/PG_VERSION"
-    case "$cluster_version" in
-        '' | *[!0-9]*) die "invalid PostgreSQL cluster version in $1" ;;
+    [ "$cluster_version" = "$expected_major" ] ||
+        die "PostgreSQL cluster in $1 uses major version ${cluster_version:-unknown}; expected $expected_major"
+}
+
+postgres_binding_marker() {
+    for storage_root in "$versiond_data" "$versiond2_data"; do
+        [ -d "$storage_root" ] || return 3
+        marker=$(find "$storage_root" -type f -name .pg-bound -print -quit) ||
+            return 2
+        if [ -n "$marker" ]; then
+            printf '%s\n' "$marker"
+            return 0
+        fi
+    done
+    return 1
+}
+
+detect_postgres_major() {
+    postgres_version=$(postgres --version 2>/dev/null) ||
+        die "cannot determine PostgreSQL server version"
+    case "$postgres_version" in
+        'postgres (PostgreSQL) '*)
+            postgres_version=${postgres_version#'postgres (PostgreSQL) '}
+            expected_major=${postgres_version%%.*}
+            ;;
+        *) die "cannot parse PostgreSQL server version: $postgres_version" ;;
+    esac
+    case "$expected_major" in
+        '' | *[!0-9]*)
+            die "invalid PostgreSQL server major version: $expected_major"
+            ;;
     esac
 }
 
@@ -64,6 +96,8 @@ publish_staging() {
     fi
     mv "$staging_data" "$target_data" ||
         die "cannot publish migrated PostgreSQL cluster"
+    rm -f "$staging_complete" ||
+        die "cannot remove PostgreSQL migration completion marker"
     sync
 }
 
@@ -73,10 +107,13 @@ case "$target_data" in
 esac
 [ "$legacy_data" != "$target_data" ] || die "legacy and persistent PGDATA are identical"
 [ -x "$official_entrypoint" ] || die "official PostgreSQL entrypoint is not executable"
+detect_postgres_major
 mkdir -p "$persistent_root"
 
 if cluster_exists "$target_data"; then
     validate_cluster "$target_data"
+    rm -f "$staging_complete" ||
+        die "cannot remove stale PostgreSQL migration completion marker"
 elif [ -e "$target_data" ] && directory_has_entries "$target_data"; then
     die "persistent PGDATA is non-empty but has no PG_VERSION: $target_data"
 elif cluster_exists "$staging_data" && [ -f "$staging_complete" ]; then
@@ -89,6 +126,8 @@ elif cluster_exists "$legacy_data"; then
     if [ -e "$staging_data" ]; then
         rm -rf "$staging_data" || die "cannot reset stale migration staging data"
     fi
+    rm -f "$staging_complete" ||
+        die "cannot reset stale migration completion marker"
     ensure_migration_space
     mkdir "$staging_data"
 
@@ -120,8 +159,21 @@ else
         *) die "DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT must be true or false" ;;
     esac
 
+    binding_marker=
+    if binding_marker=$(postgres_binding_marker); then
+        die "PostgreSQL-bound devshard data exists at $binding_marker but no PostgreSQL cluster is attached; restore the exact legacy volume and do not use DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT"
+    else
+        marker_status=$?
+        case "$marker_status" in
+            1) ;;
+            2) die "cannot inspect devshard data for PostgreSQL binding markers" ;;
+            3) die "required devshard data directories are not mounted; refusing empty PostgreSQL initialization" ;;
+            *) die "unexpected devshard binding-marker inspection status: $marker_status" ;;
+        esac
+    fi
+
     if directory_has_entries "$existing_versiond" && [ "$allow_empty" != true ]; then
-        die "existing versiond artifacts found but no PostgreSQL cluster is attached; refusing to initialize an empty database (restore the v4 volume or explicitly set DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT=true for a new HA database)"
+        die "existing versiond artifacts found but no PostgreSQL cluster or .pg-bound marker is attached; this is either first-time HA enablement or a detached drained database (restore the v4 volume, or set DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT=true once only for confirmed first-time HA enablement)"
     fi
     log "no existing PostgreSQL cluster found; initializing persistent PGDATA"
 fi

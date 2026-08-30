@@ -35,6 +35,63 @@ services:
 	require.NotContains(t, text, `GONKA_HA: "true"`)
 }
 
+func TestPatchComposeInsertEnvAfterAll(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+services:
+  versiond-0:
+    environment:
+      VERSIOND_ORACLE_URL: http://mock-dapi:9100/versions
+  versiond-1:
+    environment:
+      VERSIOND_ORACLE_URL: http://mock-dapi:9100/versions
+  devshardctl:
+    environment:
+      DEVSHARD_PUBLIC_API: http://mock-dapi:9100
+`), 0o644))
+
+	EnableHeightSyncCompose(t, path)
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	text := string(body)
+	require.Equal(t, 3, strings.Count(text, "DEVSHARD_CHAINORACLE_URL: http://mock-dapi:9100"))
+	require.Equal(t, 3, strings.Count(text, "DEVSHARD_LOG_LEVEL: debug"))
+}
+
+func TestEnableLegacyDapiCompose(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+services:
+  mock-dapi:
+    environment:
+      MOCK_DAPI_HTTP_ADDR: ":9100"
+      MOCK_DAPI_GRPC_ADDR: ":9400"
+`), 0o644))
+
+	EnableLegacyDapiCompose(t, path)
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `MOCK_DAPI_OMIT_BLOCK_ROUTES: "1"`)
+}
+
+func TestEnableHeightSyncPeerMatrixCompose(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+services:
+  devshardctl:
+    environment:
+      DEVSHARD_PUBLIC_API: http://mock-dapi:9100
+`), 0o644))
+
+	EnableHeightSyncPeerMatrixCompose(t, path)
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `DEVSHARD_GATEWAY_HEIGHTSYNC_PEER_MATRIX: "1"`)
+}
+
 // The same host is a separate server in every backend, with its own state, so
 // the parse has to keep them apart or a wait would settle on whichever backend
 // happened to be printed last.
@@ -53,6 +110,32 @@ func TestParseRouterPool(t *testing.T) {
 		{Backend: "versiond_pool_v2", Name: "versiond1", Address: "172.30.0.10", State: RouterSlotDown},
 		{Backend: "versiond_pool_v2", Name: "versiond2", Address: "172.30.0.11", State: RouterSlotDrain},
 	}, slots)
+}
+
+func TestParseRouterVersionBackend(t *testing.T) {
+	out := "# id (file) description\n" +
+		"0x1 v2 versiond_dynamic_1\n" +
+		"0x2 version=v2 versiond_dynamic_1\n" +
+		"0x3 v4 versiond_pool_v4\n"
+
+	backend, err := parseRouterVersionBackend(out, "v2")
+	require.NoError(t, err)
+	require.Equal(t, "versiond_dynamic_1", backend)
+
+	backend, err = parseRouterVersionBackend(out, "v4")
+	require.NoError(t, err)
+	require.Equal(t, "versiond_pool_v4", backend)
+
+	_, err = parseRouterVersionBackend(out, "v9")
+	require.ErrorContains(t, err, `version "v9" is not present`)
+}
+
+func TestParseRouterVersionBackendRejectsConflictingEntries(t *testing.T) {
+	_, err := parseRouterVersionBackend(
+		"0x1 v2 versiond_dynamic_1\n0x2 v2 versiond_dynamic_2\n",
+		"v2",
+	)
+	require.ErrorContains(t, err, `version "v2" maps to multiple backends`)
 }
 
 func TestPatchComposeServiceEnv(t *testing.T) {

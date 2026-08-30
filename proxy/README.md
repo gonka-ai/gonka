@@ -56,6 +56,9 @@ Key runtime environment variables:
 | `PROXY_SSL_PORT` | 8080 | Port for the cert issuer API |
 | `SSL_CERT_SOURCE` | ./secrets/nginx-ssl | Host path bind-mounted at `/etc/nginx/ssl` |
 | `PROXY_SSL_WAIT_SECONDS` | 60 | Max wait for `proxy-ssl` readiness during cert fetch |
+| `PROXY_SSL_RETRY_SECONDS` | 60 | Initial retry delay after issuer or HTTPS recovery failure; doubles up to the renewal interval |
+| `RENEW_INTERVAL_HOURS` | 24 | Interval between successful automatic renewal checks |
+| `RENEW_BEFORE_DAYS` | 30 | Renew the certificate when it expires within this many days |
 | `NODE_ID` | proxy | Node identifier included in cert requests to `proxy-ssl` |
 | `API_SERVICE_NAME` | api | Service name for API upstream |
 | `NODE_SERVICE_NAME` | node | Service name for chain node upstreams |
@@ -296,7 +299,17 @@ Avoid:
 - `NGINX_MODE=https`: listen on 443 with SSL; requires `CERT_ISSUER_DOMAIN` and a reachable `proxy-ssl` service to obtain certs if missing.
 - `NGINX_MODE=both`: listen on 80 and 443; same SSL requirements as `https`.
 
-When SSL is enabled and no certs are present under `/etc/nginx/ssl`, `entrypoint.sh` will call `setup-ssl.sh` to fetch a certificate via the `proxy-ssl` service.
+When SSL is enabled, `entrypoint.sh` validates the local certificate/key pair before rendering nginx configuration. A valid pair continues without contacting `proxy-ssl`. A missing, truncated, or mismatched pair is repaired through `setup-ssl.sh` before the first `nginx -t`, including in HTTPS-only mode.
+
+If the certificate marker is missing while `private.key` and `order.id` remain, startup first recovers the certificate from that order. A new order is created only when the saved order cannot recover the local key.
+
+If issuance fails at startup (for example, `proxy-ssl` is not reachable yet) and `NGINX_MODE=both`, the entrypoint temporarily serves HTTP only. A background worker keeps retrying with exponential backoff (starting at `PROXY_SSL_RETRY_SECONDS`, capped at the renewal interval) and, once a certificate is issued, re-renders the HTTPS configuration, validates it with `nginx -t`, and reloads nginx — port 443 comes back without a container restart. The same worker renews certificates issued through `proxy-ssl` (identified by a stored `order.id`) within `RENEW_BEFORE_DAYS` of expiry.
+
+Valid manually supplied certificate/key pairs without `order.id` remain under operator management and are not sent to `proxy-ssl`. An invalid manual pair cannot serve HTTPS, so startup treats it as an incomplete bundle, obtains a replacement from `proxy-ssl`, and stores the resulting `order.id` for automatic renewal.
+
+The worker also repairs legacy incomplete bundles. If HTTPS validation finds a truncated certificate or a certificate that does not match its private key, `setup-ssl.sh repair` first requests the certificate for the stored `order.id` and verifies that it belongs to the local key. It creates a new order only when the stored order cannot recover that key. After a valid pair is published, nginx is validated and reloaded automatically.
+
+`PROXY_SSL_RETRY_SECONDS` and `RENEW_INTERVAL_HOURS` must be positive integers. Invalid values stop the container during configuration validation instead of starting a busy retry loop.
 
 ### Setup Environment
 

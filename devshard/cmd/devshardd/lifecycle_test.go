@@ -70,6 +70,7 @@ func TestLifecyclePhaseTableProjections(t *testing.T) {
 			accepting: true,
 		},
 		lifecyclePhaseDisconnected: {
+			ready:     true,
 			accepting: true,
 		},
 		lifecyclePhaseDraining: {
@@ -102,7 +103,8 @@ func TestLifecycleTracksChainReconnect(t *testing.T) {
 
 	lifecycle.SetReady(false)
 	status := lifecycle.Status()
-	require.False(t, status.Ready)
+	require.True(t, status.Ready,
+		"a reconnect after initial readiness must not withdraw every replica")
 	require.False(t, status.Draining)
 
 	lifecycle.SetReady(true)

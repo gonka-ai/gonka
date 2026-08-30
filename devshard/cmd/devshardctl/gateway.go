@@ -22,10 +22,11 @@ import (
 	"sync/atomic"
 	"time"
 
-	devshardpkg "devshard"
 	"common/chain"
 	chaintx "common/chain/tx"
+	devshardpkg "devshard"
 	"devshard/bridge"
+	"devshard/heightsync"
 	"devshard/runtimeparams"
 	"devshard/storage"
 	"devshard/transport"
@@ -44,14 +45,17 @@ type RuntimeConfig struct {
 }
 
 type Gateway struct {
-	runtimes              map[string]*devshardRuntime
-	runtimeOrder          []*devshardRuntime
-	limiter               *GatewayLimiter
-	participantLimiter    *ParticipantRequestLimiter
-	phaseGate             *ChainPhaseGate
-	escrowChecker         *EscrowChecker
-	metrics               *DevshardMetrics
-	capacity              *CapacityState
+	runtimes           map[string]*devshardRuntime
+	runtimeOrder       []*devshardRuntime
+	limiter            *GatewayLimiter
+	participantLimiter *ParticipantRequestLimiter
+	phaseGate          *ChainPhaseGate
+	escrowChecker      *EscrowChecker
+	metrics            *DevshardMetrics
+	capacity           *CapacityState
+	// heightSyncCloser is a test double for closing/routing. Collect must never
+	// call it: arming_predicted is an early warning, not a close decision.
+	heightSyncCloser      func(escrowID, slot string)
 	settings              GatewaySettings
 	store                 *GatewayStore
 	perf                  *PerfTracker
@@ -110,6 +114,10 @@ type devshardRuntime struct {
 	retireReason  string
 
 	activeConfigured bool
+
+	// testHeightSyncView, when set, is the collector source for unit tests.
+	// Production is nil.
+	testHeightSyncView *heightsync.OperatorView
 }
 
 // escrowHasBackgroundWork reports whether foreground requests or background race cleanups are in flight; settle and store-close must wait until it is false.
@@ -280,20 +288,32 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: get escrow: %w", cfg.ID, err)
 	}
+	if escrow.Settled {
+		return nil, fmt.Errorf("runtime %s: %w", cfg.ID, bridge.ErrEscrowSettled)
+	}
 	model := resolveRuntimeModel(cfg.Model, escrow.ModelID, deps.defaultModel, cfg.ID)
 	routePrefix := resolveRuntimeRoutePrefix(cfg.RoutePrefix)
+	extraClient, err := extraClientConfigFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("runtime %s: height sync: %w", cfg.ID, err)
+	}
 	session, sm, err := user.NewHTTPSession(user.HTTPSessionConfig{
-		PrivateKeyHex:    keyHex,
-		EscrowID:         cfg.ID,
-		Bridge:           br,
-		StoragePath:      cfg.StoragePath,
-		RoutePrefix:      routePrefix,
-		RequestAdmission: sharedParticipantRequestLimiter,
-		Escrow:           escrow,
+		PrivateKeyHex:     keyHex,
+		EscrowID:          cfg.ID,
+		Bridge:            br,
+		StoragePath:       cfg.StoragePath,
+		RoutePrefix:       routePrefix,
+		RequestAdmission:  sharedParticipantRequestLimiter,
+		Escrow:            escrow,
+		ExtraClientConfig: extraClient,
+		Heartbeat:         heartbeatFromDeps(deps),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: create session: %w", cfg.ID, err)
 	}
+	// Quiet-session cadence (§10.3). Close() cancels the loop. Not started
+	// inside NewHTTPSession so in-process / E2E stacks keep nonce 1 for inference.
+	session.StartHeartbeatLoop()
 	if err := perf.BackfillLegacyEscrowSamples(cfg.ID, legacyPerfSourcePath(legacyStoragePath), session.HostParticipantKeyList()); err != nil {
 		log.Printf("runtime %s: backfill legacy perf samples: %v", cfg.ID, err)
 	}
@@ -329,16 +349,29 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	return rt, nil
 }
 
+func heartbeatFromDeps(deps runtimeBuildDeps) *heightsync.HeartbeatConfig {
+	if deps.params == nil {
+		return nil
+	}
+	hb := deps.params.SessionParams().Heartbeat
+	return &hb
+}
+
 func (g *Gateway) runtimeBuildDeps(perf *PerfTracker) runtimeBuildDeps {
 	return g.runtimeBuildDepsFromSettings(perf, g.settings)
 }
 
 func (g *Gateway) runtimeBuildDepsFromSettings(perf *PerfTracker, settings GatewaySettings) runtimeBuildDeps {
+	var params runtimeparams.Provider
+	if g != nil && g.runtimeParams != nil {
+		params = g.runtimeParams.BindProvider()
+	}
 	return runtimeBuildDeps{
 		bridge:       g.chainBridge(),
 		chainClient:  g.chainClient,
 		defaultModel: firstNonEmpty(settings.DefaultModel, g.settings.DefaultModel),
 		perf:         perf,
+		params:       params,
 	}
 }
 
@@ -1270,6 +1303,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("/v1/admin/suspicious-hosts", g.handleAdminSuspiciousHosts)
 	mux.HandleFunc("/v1/debug/rotation", g.handleDebugRotation)
 	mux.HandleFunc("/v1/debug/memstats", g.handleDebugMemStats)
+	mux.HandleFunc("/v1/debug/heightsync", g.handleDebugHeightSync)
 	// Runtime profiling, admin-gated (see isAdminPath). Mounted at the
 	// canonical /debug/pprof/ path so pprof.Index's sub-profile links resolve.
 	mux.HandleFunc("/debug/pprof/", pprof.Index)
@@ -1319,6 +1353,26 @@ func (g *Gateway) handleDebugMemStats(w http.ResponseWriter, r *http.Request) {
 		"num_gc":          m.NumGC,
 		"gc_cpu_fraction": m.GCCPUFraction,
 	})
+}
+
+// handleDebugHeightSync is the last-N cadence ring, sealed-height detail, and
+// peer_seen matrix. Admin-gated via /v1/debug/. Not a Prometheus series: the
+// payload is unbounded in label space and only ever read by a human or a citest.
+func (g *Gateway) handleDebugHeightSync(w http.ResponseWriter, r *http.Request) {
+	if !allowGetOrHead(w, r) {
+		return
+	}
+	g.mu.Lock()
+	runtimes := append([]*devshardRuntime(nil), g.runtimeOrder...)
+	g.mu.Unlock()
+	escrows := make([]heightsync.OperatorView, 0, len(runtimes))
+	for _, rt := range runtimes {
+		if rt == nil {
+			continue
+		}
+		escrows = append(escrows, rt.heightSyncView())
+	}
+	writeJSON(w, map[string]any{"escrows": escrows})
 }
 
 func (g *Gateway) handlePooledModels(w http.ResponseWriter, r *http.Request) {
@@ -2387,11 +2441,11 @@ func legacyPerfSourcePath(storagePath string) string {
 }
 
 type adminDevshardRequest struct {
-	ID              string `json:"id"`
-	PrivateKey      string `json:"private_key,omitempty"`
-	PrivateKeyEnv   string `json:"private_key_env,omitempty"`
-	Model           string `json:"model,omitempty"`
-	StoragePath     string `json:"storage_path,omitempty"`
+	ID            string `json:"id"`
+	PrivateKey    string `json:"private_key,omitempty"`
+	PrivateKeyEnv string `json:"private_key_env,omitempty"`
+	Model         string `json:"model,omitempty"`
+	StoragePath   string `json:"storage_path,omitempty"`
 	RoutePrefix   string `json:"route_prefix,omitempty"`
 }
 
@@ -2402,17 +2456,17 @@ type adminImportDevshardRequest struct {
 }
 
 type adminCreateEscrowRequest struct {
-	PrivateKey      string `json:"private_key,omitempty"`
-	PrivateKeyEnv   string `json:"private_key_env,omitempty"`
-	Amount          uint64 `json:"amount"`
-	ModelID         string `json:"model_id,omitempty"`
-	Register        *bool  `json:"register,omitempty"`
-	StoragePath     string `json:"storage_path,omitempty"`
-	RoutePrefix     string `json:"route_prefix,omitempty"`
-	ChainID         string `json:"chain_id,omitempty"`
-	FeeDenom        string `json:"fee_denom,omitempty"`
-	FeeAmount       uint64 `json:"fee_amount,omitempty"`
-	GasLimit        uint64 `json:"gas_limit,omitempty"`
+	PrivateKey    string `json:"private_key,omitempty"`
+	PrivateKeyEnv string `json:"private_key_env,omitempty"`
+	Amount        uint64 `json:"amount"`
+	ModelID       string `json:"model_id,omitempty"`
+	Register      *bool  `json:"register,omitempty"`
+	StoragePath   string `json:"storage_path,omitempty"`
+	RoutePrefix   string `json:"route_prefix,omitempty"`
+	ChainID       string `json:"chain_id,omitempty"`
+	FeeDenom      string `json:"fee_denom,omitempty"`
+	FeeAmount     uint64 `json:"fee_amount,omitempty"`
+	GasLimit      uint64 `json:"gas_limit,omitempty"`
 }
 
 type adminSettleEscrowRequest struct {
@@ -2534,6 +2588,7 @@ func (g *Gateway) handleAdminState(w http.ResponseWriter, r *http.Request) {
 	}
 	views := make([]adminDevshardView, 0, len(state.Devshards))
 	for _, devshard := range state.Devshards {
+		devshard.PrivateKeyHex = ""
 		view := adminDevshardView{GatewayDevshardState: devshard}
 		if snapshot, ok := runtimeByID[devshard.ID]; ok {
 			s := snapshot
@@ -3063,10 +3118,10 @@ func (g *Gateway) handleAdminEscrows(w http.ResponseWriter, r *http.Request) {
 
 	record := GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{
-			ID:              strconv.FormatUint(result.EscrowID, 10),
-			Model:           modelID,
-			StoragePath:     strings.TrimSpace(req.StoragePath),
-			RoutePrefix:   strings.TrimSpace(req.RoutePrefix),
+			ID:          strconv.FormatUint(result.EscrowID, 10),
+			Model:       modelID,
+			StoragePath: strings.TrimSpace(req.StoragePath),
+			RoutePrefix: strings.TrimSpace(req.RoutePrefix),
 		},
 		Active: true,
 	}
@@ -3376,11 +3431,11 @@ func (g *Gateway) handleAdminImportDevshard(w http.ResponseWriter, r *http.Reque
 
 	record := GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{
-			ID:              req.ID,
-			PrivateKeyHex:   strings.TrimSpace(req.PrivateKey),
-			PrivateKeyEnv:   strings.TrimSpace(req.PrivateKeyEnv),
-			Model:           strings.TrimSpace(req.Model),
-			StoragePath:     req.StoragePath,
+			ID:            req.ID,
+			PrivateKeyHex: strings.TrimSpace(req.PrivateKey),
+			PrivateKeyEnv: strings.TrimSpace(req.PrivateKeyEnv),
+			Model:         strings.TrimSpace(req.Model),
+			StoragePath:   req.StoragePath,
 			RoutePrefix:   strings.TrimSpace(req.RoutePrefix),
 		},
 		Active: active,
@@ -3940,10 +3995,10 @@ func (g *Gateway) attachEscrowChecker(rt *devshardRuntime) {
 	modelID := rt.model
 	if g.escrowChecker != nil {
 		rt.proxy.redundancy.onEscrowMissing = func() {
-			go g.escrowChecker.TriggerCheck(escrowID, func() {
-				g.deactivateDevshardByID(escrowID)
-				// Escrow no longer exists on chain -- nothing to settle.
-				g.retireRuntime(escrowID, "escrow confirmed missing on chain")
+			go g.escrowChecker.TriggerCheck(escrowID, func(reason string) {
+				g.deactivateDevshardByIDWithReason(escrowID, reason)
+				// Escrow is terminal on chain (missing or settled) -- nothing to settle.
+				g.retireRuntime(escrowID, reason)
 			})
 		}
 	}
@@ -4104,6 +4159,15 @@ func (g *Gateway) retireRotatedDevshard(ctx context.Context, id, reason string, 
 	}
 	log.Printf("escrow_rotation_settling escrow=%s reason=%q", id, reason)
 	if _, err := gatewaySettleDevshardOnChain(g, ctx, id, adminSettleEscrowRequest{}); err != nil {
+		// Already settled on chain: there is nothing left to broadcast, so
+		// retire instead of failing the rotation forever.
+		if errors.Is(err, bridge.ErrEscrowSettled) {
+			log.Printf("escrow_rotation_already_settled escrow=%s reason=%q", id, reason)
+			g.clearSettlementPending(id)
+			g.deactivateDevshardByIDWithReason(id, "escrow settled on chain")
+			g.retireRuntime(id, reason)
+			return true, nil
+		}
 		return false, err
 	}
 	g.retireRuntime(id, reason)
@@ -4225,6 +4289,18 @@ func (g *Gateway) scheduleAutoSettlement(id, reason string) {
 				g.retireRuntime(id, reason)
 				return
 			}
+			if errors.Is(err, bridge.ErrEscrowSettled) {
+				// Terminal: the chain already recorded settlement, so retrying
+				// can only fail. Clear the pending flag so restarts stop
+				// reconciling an escrow that is already done, and persist the
+				// deactivation so the stored row does not stay Active for an
+				// escrow the chain considers finished.
+				g.clearSettlementPending(id)
+				g.deactivateDevshardByIDWithReason(id, "escrow settled on chain")
+				log.Printf("auto_settle_already_settled escrow=%s reason=%s", id, reason)
+				g.retireRuntime(id, reason)
+				return
+			}
 			log.Printf("auto_settle_failed escrow=%s reason=%s attempt=%d/%d error=%v",
 				id, reason, attempt, autoSettlementMaxAttempts, err)
 			if attempt == autoSettlementMaxAttempts {
@@ -4265,6 +4341,9 @@ func finalizeRuntimeConfigs(runtimes []RuntimeConfig, defaultModel, baseStorageD
 		cfg.ID = strings.TrimSpace(cfg.ID)
 		if cfg.ID == "" {
 			return nil, fmt.Errorf("runtime config missing id")
+		}
+		if err := devshardpkg.ValidateEscrowID(cfg.ID); err != nil {
+			return nil, fmt.Errorf("runtime config: %w", err)
 		}
 		if _, ok := seen[cfg.ID]; ok {
 			return nil, fmt.Errorf("duplicate runtime id %s", cfg.ID)

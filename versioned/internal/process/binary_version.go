@@ -10,6 +10,7 @@ import (
 	"os/exec"
 	"strings"
 	"time"
+	"unicode"
 )
 
 const (
@@ -17,6 +18,8 @@ const (
 	printProtocolVersionFlag = "--print-protocol-version"
 	printAdminAPIVersionFlag = "--print-admin-api-version"
 	printStorageModeFlag     = "--print-storage-mode"
+	envHADeployment          = "GONKA_HA"
+	envNonHAVersions         = "VERSIOND_NON_HA_VERSIONS"
 )
 
 var (
@@ -32,6 +35,10 @@ type childPreflight struct {
 	binaryLogVersion  string
 	adminAPISupported bool
 	storageMode       string
+	// haDeployment overrides GONKA_HA for this child. It is nil for binaries
+	// other than devshard, false for legacy-pinned versions, and true for
+	// devshard versions that can be routed across the HA pool.
+	haDeployment *bool
 }
 
 // preflightChildWithAdminProbeContext verifies a downloaded binary when
@@ -82,7 +89,14 @@ func preflightChildWithAdminProbeContext(
 
 	adminSupported := false
 	storageMode := ""
+	var childHA *bool
 	if probeAdmin {
+		ha, err := childHADeployment(slotName)
+		if err != nil {
+			return childPreflight{}, err
+		}
+		childHA = &ha
+
 		if _, adminErr := readAdminAPIVersionContext(ctx, binPath); adminErr != nil {
 			if !errors.Is(adminErr, errVersionFlagUnsupported) {
 				return childPreflight{}, fmt.Errorf("read admin api version: %w", adminErr)
@@ -96,6 +110,12 @@ func preflightChildWithAdminProbeContext(
 			if !errors.Is(modeErr, errVersionFlagUnsupported) {
 				return childPreflight{}, fmt.Errorf("read storage mode: %w", modeErr)
 			}
+			if ha {
+				return childPreflight{}, fmt.Errorf(
+					"HA-routed devshard version %q must support %s: %w",
+					slotName, printStorageModeFlag, modeErr,
+				)
+			}
 			slog.Warn(
 				"--print-storage-mode unsupported, treating devshard storage mode as legacy",
 				"slot", slotName,
@@ -105,13 +125,52 @@ func preflightChildWithAdminProbeContext(
 		} else {
 			storageMode = mode
 		}
+		if ha && storageMode != storageModePostgres {
+			return childPreflight{}, fmt.Errorf(
+				"HA-routed devshard version %q requires storage mode %s (got %q)",
+				slotName, storageModePostgres, storageMode,
+			)
+		}
 	}
 
 	return childPreflight{
 		binaryLogVersion:  binaryLogVersion,
 		adminAPISupported: adminSupported,
 		storageMode:       storageMode,
+		haDeployment:      childHA,
 	}, nil
+}
+
+func childHADeployment(slotName string) (bool, error) {
+	ha, err := parseHADeployment(os.Getenv(envHADeployment))
+	if err != nil {
+		return false, fmt.Errorf("read HA deployment mode: %s: %w", envHADeployment, err)
+	}
+	if !ha {
+		return false, nil
+	}
+	for _, version := range strings.FieldsFunc(os.Getenv(envNonHAVersions), func(r rune) bool {
+		return r == ',' || r == ';' || unicode.IsSpace(r)
+	}) {
+		if version == slotName {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
+func parseHADeployment(raw string) (bool, error) {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "0", "f", "false", "no", "off":
+		return false, nil
+	case "1", "t", "true", "yes", "on":
+		return true, nil
+	default:
+		return false, fmt.Errorf(
+			"invalid boolean value %q; use empty/0/f/false/no/off for false or 1/t/true/yes/on for true",
+			raw,
+		)
+	}
 }
 
 // readEmbeddedVersionContext runs binPath with flag and returns trimmed stdout.

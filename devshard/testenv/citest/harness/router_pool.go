@@ -51,6 +51,12 @@ func routerPool(stack *Stack) ([]RouterSlot, error) {
 // harness is its primary consumer.
 const routerPoolStatusBin = "/usr/local/lib/versiond-router/pool-status"
 
+const routerVersionMapQuery = `
+map=${VERSIOND_ROUTER_VERSIONS_MAP:-/etc/haproxy/versions.map}
+sock=${HAPROXY_RECONCILER_SOCKET:-/var/run/haproxy/reconciler.sock}
+printf 'show map %s\n' "$map" | socat stdio "UNIX-CONNECT:$sock"
+`
+
 // parseRouterPool reads pool-status output: each backend followed by its
 // indented servers.
 func parseRouterPool(out string) []RouterSlot {
@@ -78,8 +84,47 @@ func parseRouterPool(out string) []RouterSlot {
 	return slots
 }
 
-// VersionPoolBackend is the backend a declared version is routed through.
-func VersionPoolBackend(version string) string { return "versiond_pool_" + version }
+// WaitRouterVersionBackend resolves the backend currently assigned to version
+// through HAProxy's runtime map. Static bootstrap versions use versiond_pool_*
+// names, while governance versions use versiond_dynamic_* slots, so callers
+// must not derive the backend name from the version itself.
+func WaitRouterVersionBackend(t *testing.T, stack *Stack, version string, timeout time.Duration) string {
+	t.Helper()
+	var backend string
+	var lastErr error
+	ok := AssertEventually(t, timeout, 250*time.Millisecond, func() bool {
+		backend, lastErr = routerVersionBackend(stack, version)
+		return lastErr == nil
+	})
+	require.True(t, ok, "router never mapped version %q to a backend: %v", version, lastErr)
+	return backend
+}
+
+func routerVersionBackend(stack *Stack, version string) (string, error) {
+	out, err := stack.ComposeExecOutput("versiond-router", "sh", "-c", routerVersionMapQuery)
+	if err != nil {
+		return "", fmt.Errorf("show versions map: %w: %s", err, out)
+	}
+	return parseRouterVersionBackend(out, version)
+}
+
+func parseRouterVersionBackend(out, version string) (string, error) {
+	backend := ""
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 || strings.HasPrefix(fields[0], "#") || fields[1] != version {
+			continue
+		}
+		if backend != "" && backend != fields[2] {
+			return "", fmt.Errorf("version %q maps to multiple backends: %q and %q", version, backend, fields[2])
+		}
+		backend = fields[2]
+	}
+	if backend == "" {
+		return "", fmt.Errorf("version %q is not present in the router versions map", version)
+	}
+	return backend, nil
+}
 
 // RouterPoolHostState maps each versiond host to the state the router sees in
 // one backend. Hosts the router cannot resolve at all are simply absent.

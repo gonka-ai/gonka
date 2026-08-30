@@ -38,6 +38,15 @@ message EscrowStateProto {
   map<uint32, string> warm_keys = 11;
   uint64 latest_nonce = 12;
   bytes sealed_acc = 13;
+  // Height-sync escrow commit (hashed into the state root). Tracker and floor
+  // are rebuilt from diffs 1..latest_nonce on restore, not persisted here.
+  uint64 height_sync_forced_start = 14;
+  uint64 height_sync_forced_end = 15;
+  uint64 height_sync_cadence_swallow_until = 16;
+  uint64 height_sync_swallow_fe = 17;
+  uint64 height_sync_turn_k = 18;
+  uint64 height_sync_turn_slots = 19;
+  string height_sync_turn_reason = 20;
 }
 
 // StateSnapshotProto matches the shared storage/recovery envelope. Hosts do not

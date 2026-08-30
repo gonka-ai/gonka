@@ -270,6 +270,16 @@ const openapiSpec = `{
         }
       }
     },
+    "/v1/debug/heightsync": {
+      "get": {
+        "summary": "Height-sync operator debug",
+        "description": "Admin endpoint. Last-N cadence triggers, sealed per-height anchor counts, and the peer_seen matrix. Not a Prometheus series.",
+        "security": [{ "AdminBearerAuth": [] }],
+        "responses": {
+          "200": { "description": "Per-escrow height-sync debug snapshot" }
+        }
+      }
+    },
     "/v1/debug/pending": {
       "get": {
         "summary": "Pending transactions",

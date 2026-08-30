@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"common/chain"
 	"devshard/bridge"
 	"devshard/user"
 )
@@ -29,6 +30,22 @@ func TestBootstrapEscrowRotationSettlementDefaultsDisabled(t *testing.T) {
 	require.NoError(t, os.Unsetenv("DEVSHARD_ESCROW_ROTATION_SETTLEMENT_ENABLED"))
 	opts := mustLoadBootstrapOptions(cliFlags{}, t.TempDir())
 	require.False(t, opts.bootstrapSettings.EscrowRotation.SettlementEnabled)
+}
+
+func TestReadBoolEnvUsesDevshardBooleanGrammar(t *testing.T) {
+	const key = "TEST_DEVSHARDCTL_BOOL"
+
+	t.Setenv(key, "t")
+	require.True(t, readBoolEnv(key, false))
+
+	t.Setenv(key, "off")
+	require.False(t, readBoolEnv(key, true))
+
+	t.Setenv(key, "")
+	require.True(t, readBoolEnv(key, true), "empty value must preserve the caller fallback")
+
+	t.Setenv(key, "invalid")
+	require.True(t, readBoolEnv(key, true), "invalid value must preserve the caller fallback")
 }
 
 func TestBuildGatewayRuntimesDeactivatesMissingEscrow(t *testing.T) {
@@ -477,6 +494,32 @@ func TestResolveMaxConcurrentRuntimeBuildsParsesOverride(t *testing.T) {
 			require.Equal(t, tc.want, resolveMaxConcurrentRuntimeBuilds())
 		})
 	}
+}
+
+func TestEffectiveChainRPCUnsetLeavesDerivationToCommonChain(t *testing.T) {
+	t.Setenv("DEVSHARD_CHAIN_RPC", "")
+	t.Setenv("NODE_RPC_URL", "")
+	require.Empty(t, effectiveChainRPC())
+}
+
+func TestEffectiveChainRPCPrefersEnv(t *testing.T) {
+	t.Setenv("NODE_RPC_URL", "http://from-node-env:26657")
+	require.Equal(t, "http://from-node-env:26657", effectiveChainRPC())
+
+	t.Setenv("DEVSHARD_CHAIN_RPC", "http://explicit:36657")
+	require.Equal(t, "http://explicit:36657", effectiveChainRPC())
+}
+
+func TestGatewayChainClientUsesQueryFallback(t *testing.T) {
+	t.Setenv("DEVSHARD_CHAIN_RPC", "")
+	t.Setenv("NODE_RPC_URL", "")
+
+	client, err := chain.NewWithQueryFallback("node:9090", effectiveChainRPC())
+	require.NoError(t, err)
+
+	// Queries must not run on the raw gRPC conn, or the gateway loses the
+	// fallback; txs must keep using it, or they could run over ABCI.
+	require.NotEqual(t, client.Conn(), client.QueryConn())
 }
 
 func TestRepairPersistedGatewayEndpointSettingsBackfillsBlankPublicAPI(t *testing.T) {

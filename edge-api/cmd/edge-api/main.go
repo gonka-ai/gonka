@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -76,7 +77,7 @@ func run() int {
 		_ = shutdownObs(ctx)
 	}()
 
-	chainClient, err := chain.New(cfg.ChainGRPCURL)
+	chainClient, err := chain.NewWithQueryFallback(cfg.ChainGRPCURL, cfg.ChainRPCURL)
 	if err != nil {
 		slog.Error("chain client", "error", err)
 		return 1
@@ -243,20 +244,34 @@ type config struct {
 	ChainRPCDerived bool
 }
 
-func loadConfig() config {
+// loadConfig requires CHAIN_GRPC_URL explicitly: defaulting it to localhost used
+// to hide misconfiguration behind connection errors at query time. The CometBFT
+// RPC endpoint is derived from that host when unset, so adding the query
+// fallback does not break a deployment that only sets the gRPC endpoint.
+func loadConfig() (config, error) {
 	port := defaultPort
 	if v := os.Getenv(envPort); v != "" {
 		p, err := strconv.Atoi(v)
 		if err != nil {
-			slog.Error("invalid port", "env", envPort, "value", v, "error", err)
-			os.Exit(1)
+			return config{}, fmt.Errorf("%s=%q: %w", envPort, v, err)
 		}
 		port = p
 	}
 
-	grpcURL := os.Getenv(envChainGRPCURL)
+	grpcURL := strings.TrimSpace(os.Getenv(envChainGRPCURL))
 	if grpcURL == "" {
-		grpcURL = defaultChainGRPC
+		return config{}, fmt.Errorf("%s is required (example: node:9090)", envChainGRPCURL)
+	}
+
+	rpcURL := strings.TrimSpace(os.Getenv(envChainRPCURL))
+	derived := false
+	if rpcURL == "" {
+		rpcURL = chain.RPCURLFromGRPCURL(grpcURL)
+		if rpcURL == "" {
+			return config{}, fmt.Errorf("%s is unset and cannot be derived from %s=%q",
+				envChainRPCURL, envChainGRPCURL, grpcURL)
+		}
+		derived = true
 	}
 
 	drainAnnounce, err := durationFromEnv(envDrainAnnounce, defaultDrainAnnounce)

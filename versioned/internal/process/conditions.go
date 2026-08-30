@@ -7,8 +7,8 @@ type Conditions struct {
 	Degraded    bool
 	// Serving means at least one running child whose live readiness is current.
 	// Available says a child process exists; Serving says it can take a request
-	// right now — a child that lost its chain subscription is running but not
-	// serving.
+	// right now. A child that is draining or whose storage became unavailable is
+	// running but not serving.
 	Serving bool
 	// Converged latches once the manager has run every desired version at least
 	// once. It never clears, so a later download or restart does not retract it.

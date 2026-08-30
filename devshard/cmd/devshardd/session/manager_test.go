@@ -1,27 +1,33 @@
 package session
 
 import (
+	"strconv"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"path/filepath"
 
 	"devshard/bridge"
+	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
 	"devshard/stub"
-	"devshard/internal/testutil"
 	"devshard/types"
 	"google.golang.org/protobuf/proto"
 )
 
 // mockBridge implements bridge.MainnetBridge for testing recovery.
 type mockBridge struct {
-	escrow *bridge.EscrowInfo
+	escrow       *bridge.EscrowInfo
+	getEscrowErr error
 }
 
 func (b *mockBridge) GetEscrow(_ string) (*bridge.EscrowInfo, error) {
+	if b.getEscrowErr != nil {
+		return nil, b.getEscrowErr
+	}
 	return b.escrow, nil
 }
 
@@ -45,6 +51,17 @@ func (b *mockBridge) SubmitDisputeState(_ string, _ []byte, _ uint64, _ map[uint
 }
 
 var _ bridge.MainnetBridge = (*mockBridge)(nil)
+
+// blockingBridge models a chain node that accepts the query and never answers.
+type blockingBridge struct {
+	mockBridge
+	release chan struct{}
+}
+
+func (b *blockingBridge) GetEscrow(id string) (*bridge.EscrowInfo, error) {
+	<-b.release
+	return b.mockBridge.GetEscrow(id)
+}
 
 func mustGenerateKey(t *testing.T) *signing.Secp256k1Signer {
 	t.Helper()
@@ -256,6 +273,183 @@ func TestCreateSession_BindsConfiguredVersion(t *testing.T) {
 	require.Equal(t, standaloneVersion, meta.Version)
 }
 
+func TestCreate_RejectsSettledEscrow(t *testing.T) {
+	store := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	group := makeGroup(hosts)
+	addresses := make([]string, len(group))
+	for i, s := range group {
+		addresses[i] = s.ValidatorAddress
+	}
+
+	br := &mockBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID:       "1",
+			Amount:         100000,
+			CreatorAddress: user.Address(),
+			Slots:          addresses,
+			Settled:        true,
+		},
+	}
+
+	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	_, err := mgr.getOrCreate("1", nil)
+	require.ErrorIs(t, err, bridge.ErrEscrowSettled)
+
+	_, err = store.GetSessionMeta("1")
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+
+	_, err = mgr.getOrCreate("1", nil)
+	require.ErrorIs(t, err, bridge.ErrEscrowSettled)
+}
+
+func TestHandleSettlementFinalized_NoLocalRow_BlocksColdBind(t *testing.T) {
+	store := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	group := makeGroup(hosts)
+	addresses := make([]string, len(group))
+	for i, s := range group {
+		addresses[i] = s.ValidatorAddress
+	}
+
+	br := &mockBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID:       "1",
+			Amount:         100000,
+			CreatorAddress: user.Address(),
+			Slots:          addresses,
+		},
+	}
+
+	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	require.NoError(t, mgr.HandleSettlementFinalized("1"))
+
+	_, err := mgr.getOrCreate("1", nil)
+	require.ErrorIs(t, err, bridge.ErrEscrowSettled)
+
+	_, err = store.GetSessionMeta("1")
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+}
+
+// TestStoreSessionIfAbsent_RejectsSettlementRacingCreate covers the interleaving
+// where settlement lands after create() read an open escrow but before the built
+// server is installed: the tombstone must survive, no session may go live, and
+// the row create() already wrote must not stay active for RecoverSessions.
+func TestStoreSessionIfAbsent_RejectsSettlementRacingCreate(t *testing.T) {
+	store := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	group := makeGroup(hosts)
+	addresses := make([]string, len(group))
+	for i, s := range group {
+		addresses[i] = s.ValidatorAddress
+	}
+
+	escrow := &bridge.EscrowInfo{
+		EscrowID:       "1",
+		EpochID:        7,
+		Amount:         100000,
+		CreatorAddress: user.Address(),
+		Slots:          addresses,
+	}
+	br := &mockBridge{escrow: escrow}
+	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+
+	require.NoError(t, mgr.HandleSettlementFinalized("1"))
+
+	srv, err := mgr.create("1", escrow)
+	require.NoError(t, err)
+
+	_, err = mgr.storeSessionIfAbsent("1", srv)
+	require.ErrorIs(t, err, bridge.ErrEscrowSettled)
+
+	_, ok := mgr.existingServer("1")
+	require.False(t, ok, "settled escrow must not get a live session")
+
+	meta, err := store.GetSessionMeta("1")
+	require.NoError(t, err)
+	require.NotEqual(t, "active", meta.Status, "racing row must not stay active")
+
+	active, err := store.ListActiveSessions()
+	require.NoError(t, err)
+	require.Empty(t, active)
+
+	_, err = mgr.getOrCreate("1", nil)
+	require.ErrorIs(t, err, bridge.ErrEscrowSettled, "tombstone must survive the rejected install")
+}
+
+func TestInstallSession_IgnoresTransientAndExpiredFailures(t *testing.T) {
+	store := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	group := makeGroup(hosts)
+	addresses := make([]string, len(group))
+	for i, s := range group {
+		addresses[i] = s.ValidatorAddress
+	}
+
+	escrow := &bridge.EscrowInfo{
+		EscrowID:       "1",
+		EpochID:        7,
+		Amount:         100000,
+		CreatorAddress: user.Address(),
+		Slots:          addresses,
+	}
+	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{escrow: escrow}, nil, nil)
+
+	now := time.Now()
+	mgr.rememberResolutionFailure("1", bridge.ErrChainUnavailable, now)
+
+	srv, err := mgr.create("1", escrow)
+	require.NoError(t, err)
+	installed, err := mgr.storeSessionIfAbsent("1", srv)
+	require.NoError(t, err, "a transient failure must not block install")
+	require.Equal(t, srv, installed)
+
+	mgr.EvictBefore(8)
+	mgr.rememberResolutionFailure("2", bridge.ErrEscrowSettled, now)
+	_, settled := mgr.installSession("2", srv, now.Add(permanentFailureTTL+time.Second))
+	require.False(t, settled, "an expired settled tombstone must not block install")
+}
+
+// Settlement events arrive for every escrow this host holds a slot in, each
+// parking a live 10-minute tombstone. Sweeping only drops expired entries, so
+// the map needs a hard cap or a settlement burst grows it without limit.
+func TestRememberResolutionFailure_BoundsMapUnderLiveTombstoneBurst(t *testing.T) {
+	store := newManagerTestStore(t)
+	mgr := NewHostManager(store, mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
+
+	now := time.Now()
+	for i := 0; i < maxResolutionFailures*3; i++ {
+		// Every entry is permanent and unexpired, so sweeping cannot help.
+		mgr.rememberResolutionFailure(strconv.Itoa(i), bridge.ErrEscrowSettled, now)
+	}
+
+	mgr.sessionsMutex.RLock()
+	size := len(mgr.resolutionFailures)
+	mgr.sessionsMutex.RUnlock()
+	require.LessOrEqual(t, size, maxResolutionFailures)
+
+	// Eviction is by nearest expiry, so the most recent tombstones survive and
+	// still block a bind.
+	last := strconv.Itoa(maxResolutionFailures*3 - 1)
+	require.ErrorIs(t, mgr.cachedResolutionFailure(last, now), bridge.ErrEscrowSettled)
+}
+
 func TestRecoverSessions_EmptyStore(t *testing.T) {
 	store := newManagerTestStore(t)
 	signer := mustGenerateKey(t)
@@ -298,11 +492,11 @@ func TestHandleSettlementFinalized_DoesNotResurrect(t *testing.T) {
 	require.False(t, ok, "settlement must drop the live session")
 
 	_, err := mgr.getOrCreate("1", nil)
-	require.ErrorIs(t, err, storage.ErrSessionNotActive)
+	require.ErrorIs(t, err, bridge.ErrEscrowSettled)
 
 	// Permanent negative cache: a second bind must not re-read/rebuild.
 	_, err = mgr.getOrCreate("1", nil)
-	require.ErrorIs(t, err, storage.ErrSessionNotActive)
+	require.ErrorIs(t, err, bridge.ErrEscrowSettled)
 	_, ok = mgr.existingServer("1")
 	require.False(t, ok, "settled session must stay out of the live map")
 }
@@ -318,6 +512,68 @@ func TestRecoverStoredSession_RejectsSettledStatus(t *testing.T) {
 	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
 	_, err := mgr.recoverStoredSession("1")
 	require.ErrorIs(t, err, storage.ErrSessionNotActive)
+}
+
+// RecoverSessions asks the chain before replaying a locally-active row. A missed
+// settlement event (or one that aged out of the dapi ring) leaves status
+// "active"; without this check the host would serve work it can never settle.
+func TestRecoverSessions_DoesNotReviveChainSettledEscrow(t *testing.T) {
+	store := newManagerTestStore(t)
+	_, _, hostSigner := createStoredSession(t, store, "1", 7, 1)
+
+	br := &mockBridge{escrow: &bridge.EscrowInfo{EscrowID: "1", Settled: true}}
+	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+
+	require.NoError(t, mgr.RecoverSessions())
+
+	_, live := mgr.existingServer("1")
+	require.False(t, live, "a chain-settled escrow must not become a live session")
+
+	meta, err := store.GetSessionMeta("1")
+	require.NoError(t, err)
+	require.Equal(t, "settled", meta.Status)
+
+	_, err = mgr.getOrCreate("1", nil)
+	require.ErrorIs(t, err, bridge.ErrEscrowSettled)
+}
+
+// GetEscrow takes no context and the gRPC bridges use context.Background(), so
+// a chain node that never answers must not hang startup.
+func TestRecoverSessions_HungChainDoesNotBlockStartup(t *testing.T) {
+	store := newManagerTestStore(t)
+	_, _, hostSigner := createStoredSession(t, store, "1", 7, 1)
+
+	release := make(chan struct{})
+	t.Cleanup(func() { close(release) })
+	br := &blockingBridge{mockBridge: mockBridge{escrow: &bridge.EscrowInfo{EscrowID: "1", Settled: true}}, release: release}
+	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+
+	done := make(chan error, 1)
+	go func() { done <- mgr.RecoverSessions() }()
+
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(recoveryEscrowCheckTimeout + 10*time.Second):
+		t.Fatal("RecoverSessions blocked on a hung chain query")
+	}
+
+	_, live := mgr.existingServer("1")
+	require.True(t, live, "a timed-out settled-check must fail open and recover the row")
+}
+
+// A chain blip at boot must not skip recovery of work this host already bound.
+func TestRecoverSessions_RecoversWhenChainUnreachable(t *testing.T) {
+	store := newManagerTestStore(t)
+	_, _, hostSigner := createStoredSession(t, store, "1", 7, 1)
+
+	br := &mockBridge{getEscrowErr: bridge.ErrChainUnavailable}
+	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+
+	require.NoError(t, mgr.RecoverSessions())
+
+	_, live := mgr.existingServer("1")
+	require.True(t, live, "transient GetEscrow failure must fail-open and recover the local row")
 }
 
 func TestRecoverSessions_StateRootMismatch(t *testing.T) {

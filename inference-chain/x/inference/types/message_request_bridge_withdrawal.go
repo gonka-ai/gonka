@@ -32,6 +32,12 @@ func (msg *MsgRequestBridgeWithdrawal) ValidateBasic() error {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid user address (%s)", err)
 	}
 
+	// Length cap before parsing: ValidateBasic runs pre-ante (unmetered),
+	// and NewIntFromString checks the 256-bit bound only after a full parse.
+	if len(msg.Amount) > MaxBridgeAmountDigits {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "amount exceeds %d digits", MaxBridgeAmountDigits)
+	}
+
 	// Validate amount is a positive integer
 	amountInt, ok := math.NewIntFromString(msg.Amount)
 	if !ok {

@@ -39,3 +39,29 @@ func TestGenesisState_Validate(t *testing.T) {
 		})
 	}
 }
+
+func TestGenesisStateValidateRejectsExtremeDecimalExponents(t *testing.T) {
+	t.Run("genesis-only params", func(t *testing.T) {
+		state := types.DefaultGenesis()
+		state.GenesisOnlyParams.GenesisGuardianMultiplier.Exponent = 19
+		require.ErrorIs(t, state.Validate(), types.ErrInvalidDecimalExponent)
+	})
+
+	t.Run("model list", func(t *testing.T) {
+		state := types.DefaultGenesis()
+		state.ModelList = []types.Model{{
+			ValidationThreshold: &types.Decimal{Value: 1, Exponent: 19},
+		}}
+		require.ErrorIs(t, state.Validate(), types.ErrInvalidDecimalExponent)
+	})
+
+	t.Run("participant state", func(t *testing.T) {
+		state := types.DefaultGenesis()
+		state.ParticipantList = []types.Participant{{
+			CurrentEpochStats: &types.CurrentEpochStats{
+				InvalidLLR: &types.Decimal{Value: 1, Exponent: 19},
+			},
+		}}
+		require.ErrorIs(t, state.Validate(), types.ErrInvalidDecimalExponent)
+	})
+}

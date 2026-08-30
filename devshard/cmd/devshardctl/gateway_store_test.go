@@ -64,6 +64,7 @@ func TestAdminAuthMiddlewareRequiresAdminKey(t *testing.T) {
 		"/v1/state",
 		"/devshard/12/v1/state",
 		"/v1/debug/state",
+		"/v1/debug/heightsync",
 		"/devshard/12/v1/debug/signatures/collect",
 	} {
 		handler := adminAuthMiddleware("adminkey", http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -394,8 +395,7 @@ func TestEscrowRotationPreparePromotesRegularEscrowsOnTempCreateFailure(t *testi
 
 // Rotation state must never stamp a hardcoded protocol constant (a guard
 // originally added when the gateway-v2 branches hardcoded ProtocolV2): the
-// protocol is derived from the gateway route prefix, and without a resolvable
-// route version the field stays empty (the pre-existing v1-default behavior).
+// protocol is derived from the gateway route prefix (strip a leading "v").
 func TestNewRotationDevshardStateDerivesProtocolFromRoutePrefix(t *testing.T) {
 	record := newRotationDevshardState(&CreateDevshardEscrowResult{EscrowID: 99}, EscrowRotationModelSettings{
 		ModelID:       "Qwen/Test",
@@ -405,7 +405,7 @@ func TestNewRotationDevshardStateDerivesProtocolFromRoutePrefix(t *testing.T) {
 	require.Equal(t, "99", record.ID)
 	require.Equal(t, "Qwen/Test", record.Model)
 	require.Equal(t, "DEVSHARD_PRIVATE_KEY", record.PrivateKeyEnv)
-	require.Empty(t, record.ProtocolVersion, "no route prefix version -> no protocol stamp")
+	require.Equal(t, "dev", record.ProtocolVersion, "unset route prefix uses build/dev version segment")
 	require.True(t, record.Active)
 	require.Equal(t, rotationRoleTemp, record.RotationRole)
 	require.EqualValues(t, 10, record.RotationEpoch)
@@ -416,6 +416,13 @@ func TestNewRotationDevshardStateDerivesProtocolFromRoutePrefix(t *testing.T) {
 		PrivateKeyEnv: "DEVSHARD_PRIVATE_KEY",
 	}, rotationRoleTemp, 10)
 	require.Equal(t, "3", record.ProtocolVersion, "protocol derived from route prefix, not hardcoded")
+
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v4")
+	record = newRotationDevshardState(&CreateDevshardEscrowResult{EscrowID: 101}, EscrowRotationModelSettings{
+		ModelID:       "Qwen/Test",
+		PrivateKeyEnv: "DEVSHARD_PRIVATE_KEY",
+	}, rotationRoleTemp, 10)
+	require.Equal(t, "4", record.ProtocolVersion)
 }
 
 func TestEscrowRotationFinishDoesNotSettleTempWhenRegularCreateFails(t *testing.T) {

@@ -2,6 +2,7 @@ package runtimeparams
 
 import (
 	devshardpkg "devshard"
+	"devshard/heightsync"
 	"devshard/runtimeconfig"
 )
 
@@ -21,6 +22,8 @@ type SessionParams struct {
 	RefusalTimeout   int64
 	ExecutionTimeout int64
 	MaxNonce         uint32
+	Heartbeat        heightsync.HeartbeatConfig
+	Repair           heightsync.RepairConfig
 }
 
 type snapshotProvider struct {
@@ -38,6 +41,8 @@ func (p snapshotProvider) SessionParams() SessionParams {
 		RefusalTimeout:   snap.RefusalTimeout,
 		ExecutionTimeout: snap.ExecutionTimeout,
 		MaxNonce:         snap.MaxNonce,
+		Heartbeat:        heightsync.HeartbeatConfigFromSnapshot(snap),
+		Repair:           heightsync.RepairConfigFromSnapshot(snap),
 	}
 }
 

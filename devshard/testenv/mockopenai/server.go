@@ -93,6 +93,9 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 	if f.Latency > 0 {
 		time.Sleep(f.Latency)
 	}
+	if f.StreamErrorEnvelope {
+		return s.streamErrorEnvelope(c)
+	}
 	if f.HTTPStatus >= 400 {
 		return c.JSON(f.HTTPStatus, map[string]string{"error": "mock-openai fault injection"})
 	}
@@ -245,6 +248,30 @@ func (s *Server) streamCompletion(
 		flusher.Flush()
 	}
 	_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	if flusher != nil {
+		flusher.Flush()
+	}
+	return nil
+}
+
+const engineCoreErrorEvent = `data: {"error":{"code":500,"message":"EngineCore encountered an issue. See stack trace (above) for the root cause.","param":null,"type":"InternalServerError"},"id":"chatcmpl-mockopenai"}`
+
+func (s *Server) streamErrorEnvelope(c echo.Context) error {
+	c.Response().Header().Set(echo.HeaderContentType, "text/event-stream")
+	c.Response().Header().Set("Cache-Control", "no-cache")
+	c.Response().Header().Set("Connection", "keep-alive")
+	c.Response().WriteHeader(http.StatusOK)
+	w := c.Response().Writer
+	flusher, _ := w.(http.Flusher)
+	if _, err := fmt.Fprintf(w, "%s\n\n", engineCoreErrorEvent); err != nil {
+		return err
+	}
+	if flusher != nil {
+		flusher.Flush()
+	}
+	if _, err := fmt.Fprint(w, "data: [DONE]\n\n"); err != nil {
+		return err
+	}
 	if flusher != nil {
 		flusher.Flush()
 	}

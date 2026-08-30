@@ -54,6 +54,11 @@ var lifecyclePhaseTable = map[lifecyclePhase]lifecyclePhaseSpec{
 		},
 	},
 	lifecyclePhaseDisconnected: {
+		// A chain reconnect is a correlated dependency event: every replica sees
+		// it at once. The child has completed initial startup and can still serve
+		// its existing shard state, so keep it in rotation while the listener
+		// reconnects. Storage readiness remains an independent /ready gate.
+		ready:     true,
 		accepting: true,
 		transitions: map[lifecycleEvent]lifecyclePhase{
 			lifecycleEventChainReady:        lifecyclePhaseServing,

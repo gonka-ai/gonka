@@ -21,6 +21,8 @@ message DevshardEscrow {
   uint32 auto_seal_every_n_nonces = 14;
   uint32 validation_rate = 15;
   uint32 vote_threshold_factor = 16;
+  int64 refusal_timeout = 17;
+  int64 execution_timeout = 18;
 }
 
 message DevshardHostEpochStats {

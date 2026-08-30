@@ -1,7 +1,6 @@
 # versiond-router
 
-HAProxy in front of N `versiond` instances. Production Compose runs several
-independent copies as a fleet behind `proxy-router`; every copy has two jobs:
+HAProxy in front of N `versiond` instances. It has two jobs:
 
 1. **Stickiness** — every request for one session lands on the same `versiond`,
    so the instance holding that session's hot state keeps serving it.
@@ -13,10 +12,6 @@ Membership comes from DNS, health from active checks, and protocol names from
 the existing governance `/versions` feed. The only persistent router state is a
 last-known-good catalog projection. Adding a host or approving a protocol name
 does not require a router reload.
-
-Fleet replicas do not coordinate or share mutable routing state. Given the same
-catalog, placement settings, DNS membership and health view, each independently
-builds the same address-keyed hash ring.
 
 ---
 
@@ -123,34 +118,94 @@ Every second HAProxy runs the complete sequence against each host.
 unavailable. In normal operation the router polls `VERSIOND_ROUTING_CATALOG_URL`,
 the same read-only `/versions` snapshot consumed by versiond.
 
+The current `/versions` response has no monotonic revision, block height, or
+source timestamp. The router can detect transport failures and invalid payloads,
+but it must treat every valid `200` snapshot as current. The cache's
+`fetched_at_unix` records when this router accepted the response; it does not
+prove governance freshness. Detecting a reachable endpoint that indefinitely
+serves an older valid snapshot requires a revision in the upstream contract.
+
+The join Compose file keeps that URL empty while its default image is the
+published legacy nginx router. Release automation activates this capability by
+supplying a published `VERSIOND_ROUTER_IMAGE` tag or digest together with the
+catalog URL; the Compose YAML does not name an image before it exists. Its
+healthcheck verifies the selected image's catalog capability instead of trusting
+those two values independently: a catalog-capable image without the URL, or the
+legacy image with the URL, remains unhealthy. The router is an optional startup
+dependency of the shared public proxy: the mismatch remains visible to Compose
+and causes `up --wait` to fail, but it does not prevent unrelated public APIs
+from starting.
+
 HAProxy cannot create backends at runtime, so the image pre-renders a bounded
 set of disabled `versiond_dynamic_<n>` backends. For every new valid name the
 reconciler assigns a slot, enables its per-version checks, waits until the
-configured ready reserve is present, then atomically publishes the request-map
-entry. A batch of names is published as one projection; partial activation is
-not exposed.
+configured ready reserve is present, then publishes the request-map entry.
+Admission is independent per version: an unavailable candidate remains staged
+without blocking another candidate that has reached its reserve.
+
+The current source has no monotonic revision, so normal reconciliation is
+additions-only. A snapshot that omits an accepted name leaves its route and
+cache entry intact and reports `withdrawal-pending`; the backend's active check
+still returns `503` once no versiond can serve it. Planned removal requires a
+supervised maintenance run with
+`VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=true`, after which the slot becomes
+reusable. A maintenance snapshot that adds and removes names is applied in two
+durable phases: ready additions are published independently, but omitted routes
+are retired only after every addition has spare capacity and has passed its
+ready reserve. If an addition cannot be staged, the old route and cache entry
+remain in place; slot capacity must therefore include the intended replacement
+overlap. A completely empty response remains fail-closed while accepted routes
+exist because versiond applies the same misconfiguration guard.
 
 Accepted projections are written atomically under `/var/lib/gonka-router`.
-After restart, a fresh last-known-good cache keeps already learned routes alive
-while governance is temporarily unavailable. Corrupt, stale, duplicate,
-backwards-revision, removal, and capacity-exhaustion inputs leave the last
-accepted map untouched and expose a degraded state through `catalog-status`.
+After restart, a validated last-known-good cache keeps already learned routes
+alive while governance is temporarily unavailable, regardless of its local age.
+The cache age threshold produces a stale diagnostic but never revokes an
+accepted route. A timestamp ahead of the local clock is likewise treated as
+stale, preserving routes across host clock rollback; the first successful fresh
+catalog observation normalizes that timestamp. Corrupt caches and
+malformed, empty, or capacity-exhaustion
+source inputs leave the last accepted routing map untouched and expose a
+degraded state through `catalog-status`.
+If only the supervised reconciler restarts while HAProxy remains live, a missing
+or corrupt cache is rebuilt from a consistent live projection before any repair
+is allowed to remove a route.
+Steady polls verify the complete accepted map/slot relationship in one pass and
+skip projection planning when the source has not changed. Slot activation and
+retirement send one Runtime API batch per backend, then verify the resulting
+HAProxy state; they do not open one socket per pre-rendered server.
+Catalog-enabled Compose deployments mount that directory from a named volume so
+container replacement does not discard the last-known-good projection.
+While a valid catalog addition is waiting for capacity or its ready reserve, the
+router refreshes only the accepted cache subset. This keeps existing routes
+restart-safe without making the pending name visible.
 
-Version names use the routing grammar
+The router cache preserves routing state, not the complete version artifact
+catalog. It therefore protects a router replacement while the existing versiond
+children keep running, but it cannot bootstrap those children after every
+versiond process has restarted. A full-stack start still requires the `/versions`
+source to become reachable; until then the restored router routes have no ready
+upstreams. Persisting and replaying the artifact catalog in the versiond
+supervisor is a separate recovery contract, outside this router.
+
+Names learned dynamically from the catalog use the routing grammar
 `[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}`. Names outside it are rejected before they
-can create a path/map mismatch. Removal is deliberately not automatic: deleting
-a serving route is a maintenance operation, while additions are safe to
-reconcile continuously.
+can create a path/map or Runtime API mismatch. Because the current governance
+contract accepts a wider set of basenames, one incompatible name is isolated rather than
+rejecting the whole snapshot: accepted routes remain, compatible additions can
+still converge, and `catalog-status` reports `contract-error`. The incompatible
+route itself remains
+unpublished and returns `503` until governance corrects its name.
+
+Static bootstrap and legacy lists keep the previous, wider path-segment contract,
+so an existing declaration such as `v1:beta` remains valid. Static names still
+reject `/`, `?`, `#`, `%`, whitespace, quotes, backslashes, `.` and `..`. A name
+outside the dynamic grammar must remain explicitly declared; it cannot later be
+adopted from the governance catalog without a compatible rename.
 
 Leaving both the bootstrap set and catalog URL empty selects coarse host-level
 routing. An HA deployment refuses that mode unless
 `VERSIOND_ROUTER_ALLOW_COARSE_READINESS=1` is explicit.
-
-Declared names are taken as governance wrote them. The one limit is that a name
-must be able to appear literally in a path segment: `/`, `?`, `#`, `%` and
-whitespace are refused at startup, because the request path would then not match
-the name at all. See [Configuration](#configuration) for how the three uses of a
-name are derived.
 
 For `/readyz?version=<v>`, a lifecycle-aware `versiond` answers `200` only while
 it accepts traffic and has a running child serving exactly that version. The
@@ -184,6 +239,11 @@ failed, the peer closed without answering, or an upstream proxy answered `502`.
 
 **`503` is never retried.** It is the answer a draining host and the HA storage
 guard give, and retrying it would hit the same condition on the next host.
+
+The coarse backend additionally retries `404` for idempotent versionless
+session-observability reads. After membership changes, that state may still be
+owned by another healthy host. Per-version backends treat `404` as authoritative
+and never retry it.
 
 **Non-idempotent requests are never replayed.** `disable-l7-retry` leaves
 connection-level redispatch in place for `POST`, but forbids re-sending a
@@ -231,11 +291,17 @@ when siblings are temporarily unavailable. The runtime server count is a
 fail-closed fallback for an accidentally scaled pool, not a substitute for the
 deployment declaration.
 
+The overlay also gives versiond the same `VERSIOND_NON_HA_VERSIONS` value as the
+router. Before starting a child, versiond requires the Postgres storage contract
+for every HA-routed version and refuses a legacy binary that cannot report its
+storage mode. For a version pinned to the single legacy owner, versiond passes
+`GONKA_HA=false` to that child to match the router backend that strips the HA
+marker.
+
 ## Looking at the pool
 
-`deploy/join/versiond-router-fleet.sh status` validates every expected slot and
-its admission through the active parent proxy. To inspect one slot's measured
-versiond pool, run its internal `pool-status` diagnostic; output looks like:
+The canonical runbook contains the full command for inspecting the pool. Its
+output looks like this:
 
 ```text
 versiond_pool_v4
@@ -251,10 +317,12 @@ versiond_ha_pool
 One host is a separate server in every applicable backend, with its own health,
 so the same host can be serving `v4` and out of `v5`. Pinned versions appear as
 internal `versiond_legacy_<v>` backends, although their response header remains
-`versiond_legacy`. This is the router's whole state, and it is read-only — a
-formatter over the HAProxy Runtime API
-(`/var/run/haproxy/haproxy.sock`), kept off PATH because it is an internal diagnostic
-whose output the acceptance-test harness parses, not an operator CLI.
+`versiond_legacy`. `pool-status` itself performs only `show` commands: it is a
+formatter over the HAProxy Runtime API (`/var/run/haproxy/haproxy.sock`), kept
+off PATH because it is an internal diagnostic whose output the acceptance-test
+harness parses, not an operator CLI. The raw socket is not a read-only security
+interface; HAProxy permits map mutations even at its minimum `user` command
+level.
 
 **There is no manual drain.** There was, and it was wrong: HAProxy identifies a
 server by its slot in a `server-template`, and slots are reused. A drained host
@@ -268,18 +336,6 @@ process serving long enough for the active check to observe that state. Legacy
 can only react after route health fails or the process leaves DNS. The graceful
 host lifecycle is intentionally delivered as a separate change.
 
-The router fleet itself is managed with `versiond-router-fleet.sh`. `apply`
-bootstraps missing slots and rolls changed ones while preserving
-`VERSIOND_ROUTER_MIN_READY`; `rollout` forces that rolling reconciliation;
-`maintenance-rollout` is required for placement-contract changes that cannot
-mix old and new rings. Before replacing a slot, the fleet drains every matching
-coarse and per-version server in the parent HAProxy and confirms withdrawal.
-After the old process stops, those servers are reset to health `DOWN`; the new
-address must complete a fresh L7 `rise` before it is admitted. Whole-node
-maintenance uses `stop-all --maintenance`, then `down --maintenance` after the
-main Compose project is down. Fleet resources are ownership-labelled, so
-cleanup does not cross into another fleet.
-
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -287,29 +343,29 @@ cleanup does not cross into another fleet.
 | `VERSIOND_POOL_HOST` | `versiond-pool` | DNS name resolving to every pool member |
 | `VERSIOND_PORT` | `8080` | upstream port |
 | `VERSIOND_LEGACY_HOST` | *(none)* | single host owning pre-HA SQLite data dirs. **Required** whenever `VERSIOND_NON_HA_VERSIONS` is non-empty — the router refuses to start otherwise, because the owner of one host's data cannot default to a name that resolves to the whole pool. Unused (and may be omitted) when no version is pinned |
-| `VERSIOND_NON_HA_VERSIONS` | *(empty)* | version path segments pinned to the legacy host, whitespace and/or comma separated |
-| `VERSIOND_VERSIONS` | *(empty)* | static bootstrap floor; governance additions are learned without changing it |
+| `VERSIOND_NON_HA_VERSIONS` | *(empty)* | static version path segments pinned to the legacy host, whitespace and/or comma separated; retains the wider path-safe startup grammar described above |
+| `VERSIOND_VERSIONS` | *(empty)* | static bootstrap floor using the wider path-safe startup grammar; compatible governance additions are learned without changing it |
 | `VERSIOND_ROUTING_CATALOG_URL` | *(empty)* | read-only governance `GET /versions` endpoint |
 | `VERSIOND_ROUTING_CATALOG_POLL_SECONDS` | `5` | catalog polling interval |
 | `VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS` | `3` | timeout for one catalog request |
-| `VERSIOND_ROUTING_ACTIVATION_MIN_READY` | `2` | ready upstreams required before publishing a new projection |
-| `VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS` | `86400` | maximum startup age of last-known-good catalog state |
+| `VERSIOND_ROUTING_CATALOG_MAX_BYTES` | `1048576` | maximum response body accepted from the catalog endpoint |
+| `VERSIOND_ROUTING_CATALOG_RUNTIME_TIMEOUT_SECONDS` | `2` | timeout for one HAProxy Runtime API exchange |
+| `VERSIOND_ROUTING_ACTIVATION_MIN_READY` | `1` | ready upstreams required before publishing a new projection. The two-replica HA Compose overlay explicitly sets `2` |
+| `VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS` | *(unset/false)* | allow an accepted dynamic route to be removed when omitted by a later snapshot. Keep disabled during normal operation; use only in a supervised maintenance window because the source has no monotonic revision |
+| `VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS` | `86400` | age after which startup reports the validated last-known-good catalog as stale; accepted routes are still restored |
 | `VERSIOND_ROUTER_VERSION_CAPACITY` | `32` | pre-rendered slots for names added after startup |
 | `VERSIOND_ROUTER_ALLOW_COARSE_READINESS` | *(unset)* | allow an HA deployment to run with no declared versions, accepting that a host with one unready version keeps receiving its traffic. Same boolean grammar |
-| `GONKA_HA` | *(unset)* | authoritative HA deployment latch; stamps `Devshard-Ha` even while only one pool member is usable. With it off, the router still stamps the header whenever more than one host is usable in the selected backend. Booleans share one grammar with devshardd: `1/true/yes` on, empty/`0/false/no` off, anything else refuses to start |
-| `VERSIOND_ROUTER_POOL_SLOTS` | `64` | maximum simultaneous pool members; the resolver accepts DNS payloads up to 8192 bytes so the default pool fits in one answer |
+| `GONKA_HA` | *(unset)* | authoritative HA deployment latch; stamps `Devshard-Ha` even while only one pool member is usable. With it off, the router still stamps the header whenever more than one host is usable in the selected backend. Booleans share one grammar with devshardd: `1/t/true/yes/on` on, empty/`0/f/false/no/off` off, anything else refuses to start |
+| `VERSIOND_ROUTER_ADMIN_PORT` | `8404` | internal liveness/readiness listener port; the shipped Compose healthcheck follows this value |
+| `VERSIOND_ROUTER_FRONT_BIND_HOST` | *(empty)* | optional container hostname whose IPv4 address receives the data and admin listeners. Empty binds both listeners on all container interfaces; a named interface keeps an additional loopback admin bind |
+| `VERSIOND_ROUTER_METRICS_BIND_HOST` | *(empty)* | optional container hostname whose IPv4 address receives a second metrics bind. Metrics always remain available on loopback; the join overlay sets `versiond-router` for its internal Prometheus scraper |
+| `HAPROXY_DNS_RESOLVER` | `127.0.0.11:53` | numeric DNS resolver address, with an optional port, used by HAProxy `server-template` slots |
+| `VERSIOND_ROUTER_POOL_SLOTS` | `64` | maximum simultaneous pool members; catalog mode supports up to `256`, keeping each atomic server-state Runtime API batch below HAProxy's default command buffer. The resolver accepts DNS payloads up to 8192 bytes so the default pool fits in one answer |
 | `VERSIOND_ROUTER_MAX_CONNECTIONS` | `4096` | frontend `maxconn` |
 | `VERSIOND_ROUTER_MAX_BODY_BYTES` | `10485760` | early 413 for an advertised `Content-Length` above this value. `devshardd` independently caps actual bytes at 10 MiB, including chunked bodies and direct-router traffic |
 | `VERSIOND_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | connect and header timeouts |
 | `VERSIOND_ROUTER_STREAM_IDLE_SECONDS` | `1200` | client/server idle timeout |
 | `VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS` | `86400` | upgraded/CONNECT idle timeout; independent of SSE |
-| `VERSIOND_ROUTER_ADMIN_PORT` | `8404` | private live/readiness listener consumed by the parent proxy and fleet checks |
-| `VERSIOND_ROUTER_FRONT_BIND_HOST` | *(all interfaces)* | per-slot front-network address used for data and admin listeners |
-| `VERSIOND_ROUTER_METRICS_BIND_HOST` | *(loopback)* | per-slot metrics-network address |
-| `VERSIOND_ROUTER_METRICS_NETWORK` | *(auto-detected)* | main Compose network used for Prometheus discovery |
-| `HAPROXY_DNS_RESOLVER` | `127.0.0.11:53` | numeric resolver; part of the fleet placement contract |
-| `VERSIOND_ROUTER_STOP_GRACE_PERIOD` | `10s` | routine Compose cleanup ceiling; fleet rollout supplies its own drain deadline |
-| `VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE` | `false` | explicit one-command acknowledgement for `maintenance-rollout` |
 
 The entrypoint validates every numeric setting, renders `haproxy.cfg` and
 `non_ha.map`, runs `haproxy -c` on the result, and only then execs HAProxy. A bad
@@ -329,27 +385,55 @@ key is the name exactly as governance wrote it, because it is matched against th
 path segment; the health-check query is percent-encoded, because `+` in a query
 decodes to a space and the check would ask about a version that does not exist;
 and the backend identifier gets a hash appended when the name is not already a
-valid one. A name that cannot appear literally in a path segment — one containing
-`/`, `?`, `#`, `%` or whitespace — is refused at startup, because the request path
-would then not match the name at all.
+valid one. A dynamic name outside the catalog grammar documented above is
+isolated before any runtime-map mutation; an unrepresentable static path segment
+is refused before the config is rendered.
 
 ## Observability
 
 | Endpoint | Where | Notes |
 | --- | --- | --- |
-| `/metrics` | loopback and the slot's internal metrics-network address | Prometheus exporter; no host port |
-| `/livez` | private admin port `8404` | router process and admin listener are alive |
-| `/readyz` | private admin port `8404` | coarse backend has capacity |
-| `/readyz?version=<v>` | private admin port `8404` | matching version backend has capacity |
-| Runtime API | `/var/run/haproxy/haproxy.sock` | admin socket, no TCP bind |
+| `/metrics` | `127.0.0.1:8405` inside the container | Prometheus exporter; the join HA overlay also binds it to the internal Compose network for DNS-based scraping, never to a host port |
+| Diagnostic Runtime API | `/var/run/haproxy/haproxy.sock` | local `level user` socket, no TCP bind; raw HAProxy map commands remain writable |
+| Reconciler Runtime API | `/var/run/haproxy/reconciler.sock` | local `level admin` socket used for catalog map and server-state changes |
+| Admin HTTP | port `8404` inside the container | liveness and readiness only; wildcard-bound by default or restricted to loopback plus `VERSIOND_ROUTER_FRONT_BIND_HOST`; never published on a host port by the shipped Compose files |
+| Catalog status | `/usr/local/lib/router-runtime/catalog-status --state` | current reconciler state, independent serving/convergence booleans, and pending activation/capacity counts; reports `stale` when updates stop |
+| Accepted-route readiness | `GET http://127.0.0.1:8404/readyz?component=serving` | `200` when the durable accepted set is represented exactly by the live maps; remains ready during source outages and while unrelated additions are staged |
+| Catalog readiness | `GET http://127.0.0.1:8404/readyz?component=catalog` | `200` only when the enabled catalog is fully reconciled; independent of data-plane readiness for accepted routes |
+| Version readiness | `GET http://127.0.0.1:8404/readyz?version=<v>` | resolves `<v>` through the live route map and reports the selected backend's active-check state; the request is not forwarded upstream |
 | `X-Upstream-Addr` | response header | which instance served the request |
 | `X-Versiond-Backend` | response header | HA backend name, or the stable `versiond_legacy` label for any pinned version |
 
-Neither the metrics endpoint nor the admin socket is reachable from outside the
-container, and the container runs as the unprivileged `haproxy` user from the
-base image — root is used only at build time to install `socat` and hand over
-the config and socket directories. Scrape metrics with a sidecar or
-`docker compose exec`.
+The Prometheus output includes two synthetic backends.
+`router_catalog_status` reports full desired-state convergence, while
+`router_catalog_serving_status` reports that the accepted LKG projection is
+intact. A pending version or source outage therefore makes only convergence
+red; corruption of an accepted map makes both signals red. Serving readiness is
+not proof that every desired future name is available, so a parent that routes
+by version must still use per-version readiness. Compose health is a startup
+liveness gate: a catalog-aware router uses admin `/livez`, while the
+transitional nginx image retains its compatible `/healthz` probe. It deliberately
+does not wait for version children to download and start, because the shared
+public proxy also serves APIs that do not depend on devshard routing. Use
+unqualified admin `/readyz` for the stricter data-plane signal; it requires at
+least one published per-version backend to have a ready child and does not use
+the coarse supervisor pool.
+Catalog diagnostics never include the configured source URL, so credentials or
+signed query parameters are not copied into status output or router logs.
+Each router image owns its graceful-stop signal: the transitional nginx image
+uses `SIGQUIT`, while the HAProxy image declares `SIGUSR1`. The shipped Compose
+overlay only bounds the drain with `VERSIOND_ROUTER_STOP_GRACE_PERIOD` (default
+`10s`) before Docker forces termination, so selecting one image cannot override
+the shutdown contract of the other.
+
+The shipped Compose files do not publish the admin or metrics listener on a host
+port. They can be reached by containers on the same internal network when their
+network bind is enabled; both Runtime API sockets remain filesystem-only. The
+container runs as the unprivileged `haproxy` user from the base image — root is
+used only at build time to install packages and hand over the config and socket
+directories. Processes with filesystem access inside the container share that
+trust boundary; the two socket levels reduce accidental privilege, not a hostile
+same-UID process.
 
 ## Tests
 
@@ -357,8 +441,6 @@ the config and socket directories. Scrape metrics with a sidecar or
 $ make test-render
 test-hash-ring: ok
 test-render: ok
-$ make test-fleet
-versiond-router-fleet_test: ok
 ```
 
 `test-render` renders the mixed (legacy pinning) and all-HA shapes, asserts on
@@ -378,11 +460,6 @@ escrow to reach the same address each time. Remove `hash-key addr` from the
 template and it fails, naming the sessions that moved.
 
 Both require Docker.
-
-`test-fleet` starts three slots as separate Compose projects and covers
-idempotent apply, ready-reserve enforcement, rolling replacement, placement
-maintenance with exact rollback, admission through the parent proxy, and
-ownership-bounded teardown of expected and orphan resources.
 
 ## Related docs
 

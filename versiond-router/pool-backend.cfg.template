@@ -18,6 +18,13 @@ backend ${BACKEND_NAME}
     balance hash var(txn.hashkey)
     hash-type consistent
 
+    # The admin frontend selects this backend through the live version map, then
+    # asks it to report the result of the same two-step active check that gates
+    # data traffic. Returning here preserves the pre-v5 /<version>/healthz
+    # fallback without forwarding /readyz to a supervisor that does not have it.
+    http-request return status 200 content-type text/plain string "ready\n" if { var(txn.router_admin_ready) -m found } { nbsrv(${BACKEND_NAME}) gt 0 }
+    http-request return status 503 content-type text/plain string "not ready\n" if { var(txn.router_admin_ready) -m found }
+
     option httpchk
     # v5 readiness is authoritative: 503 removes a starting or draining host.
     # A 404 identifies a pre-v5 versiond, whose route health is the only
@@ -36,7 +43,9 @@ backend ${BACKEND_NAME}
     # where a POST is written into a connection the peer is already closing.
     http-reuse safe
 
-    option redispatch 1
+    # Keep the first connection retry on the consistent-hash owner. If it still
+    # cannot connect, the final retry may use another healthy server.
+    option redispatch
     ${RETRY_ON}
     retries 2
     # Mirrors nginx's absent non_idempotent: connection-level redispatch for

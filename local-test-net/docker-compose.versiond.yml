@@ -42,6 +42,14 @@ x-versiond: &versiond
     KEYRING_BACKEND: ${KEYRING_BACKEND:-file}
     KEYRING_PASSWORD: ${KEYRING_PASSWORD:-}
     KEYRING_DIR: ${KEYRING_DIR:-/root/.inference}
+    # GONKA_HA is intentionally not inherited by this generic test fixture.
+    # It starts testapp by default, and devshard scenarios may exercise SQLite
+    # before adding the Postgres overlay; the router still marks HA requests.
+    # Local/dev only: peer hosts and executors register docker-internal
+    # hostnames that resolve to private IPs, so devshardd's dial-time SSRF
+    # guard must be disabled. Production leaves this unset (default false =
+    # private targets blocked). Inherited by the devshardd child process.
+    DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
     # devshardd child storage (overridden by docker-compose.devshard-postgres.yml).
     PGHOST: ${PGHOST:-}
     PGPORT: ${PGPORT:-5432}
@@ -81,12 +89,11 @@ services:
   versiond-router:
     image: ghcr.io/product-science/versiond-router:latest
     build:
-      context: ./versiond-router
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: versiond-router/Dockerfile
     container_name: ${KEY_NAME}-versiond-router
-    # Compose starts the replacement only after this container exits. Bound the
-    # soft stop so one long stream cannot leave the test stack without a router.
-    stop_signal: SIGUSR1
+    # The image owns its graceful-stop signal. Bound the wait so one long stream
+    # cannot leave the test stack without a router during replacement.
     stop_grace_period: ${VERSIOND_ROUTER_STOP_GRACE_PERIOD:-10s}
     environment:
       VERSIOND_POOL_HOST: ${VERSIOND_POOL_HOST:-${KEY_NAME}-versiond-pool}
