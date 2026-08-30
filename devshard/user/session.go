@@ -2789,7 +2789,7 @@ func timeoutReasonLogLabel(reason types.TimeoutReason) string {
 }
 
 func isVoteRPCTimeout(err error) bool {
-	if err == nil || errors.Is(err, errVerifierQueueExpired) {
+	if err == nil || errors.Is(err, errVerifierQueueExpired) || errors.Is(err, errVoteNotSent) {
 		return false
 	}
 	return errors.Is(err, context.DeadlineExceeded)
@@ -2948,7 +2948,7 @@ func (s *Session) collectTimeoutVotes(
 			// Skip the RPC so we neither waste the verifier's time nor
 			// the slot we just acquired.
 			if err := ctx.Err(); err != nil {
-				results <- voteResult{err: err, verifierIdx: av.idx, verifierAddr: av.verifierAddr}
+				results <- voteResult{err: fmt.Errorf("%w: %w", errVoteNotSent, err), verifierIdx: av.idx, verifierAddr: av.verifierAddr}
 				return
 			}
 
