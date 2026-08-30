@@ -6,15 +6,18 @@ walkthrough that shipped with `devshard-0.2.14-v4`. Storage, HA identity,
 validation leases, versionless obs, rolling update, and the sqlite →
 `Devshard-Ha` 503 → postgres migrate story in v4 **§1.7 / §2–§7** still apply.
 
-This note is what **changed for the 0.2.15 / v5 line** on the **HA join
-overlay** (`docker-compose.versiond.yml`): router health, how
-`VERSIOND_NON_HA_VERSIONS` must be set, catalog admission, and the citest that
-proves it.
+This note is what **changed for the 0.2.15 / v5 line**: the **HA join
+overlay** (`docker-compose.versiond.yml`) — router health, how
+`VERSIOND_NON_HA_VERSIONS` must be set, catalog admission, and the citest
+that proves it — and the v5 gateway height-sync follower
+(`DEVSHARD_GATEWAY_CHAIN_ORACLE`), which applies to every
+`devshardctl` whether or not the overlay is on.
 
 Related: [versiond-router/README.md](../../versiond-router/README.md),
 [release-0.2.14-v4.md](./release-0.2.14-v4.md),
 [rolling-update.md](./rolling-update.md),
-[testenv/docs/scenarios.md](../testenv/docs/scenarios.md).
+[testenv/docs/scenarios.md](../testenv/docs/scenarios.md),
+[HEIGHT_SYNC_PROTOCOL_PROPOSAL.md](./proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md) §6.
 
 ---
 
@@ -147,6 +150,57 @@ then start the gateway. Citest does this in
 
 ---
 
+## Gateway chain follower (`DEVSHARD_GATEWAY_CHAIN_ORACLE`)
+
+Applies to **every** v5 gateway (`devshardctl`), single-instance and HA.
+Normative text: [HEIGHT_SYNC_PROTOCOL_PROPOSAL.md](./proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md)
+§6 (architecture), §13 (courier producer), §18.5 (seed). Tests H105–H108
+in [height-sync-tests.md](./height-sync-tests.md) §7.8.
+
+The gateway is a height-sync **courier**. Outbound `(height, hash)` comes
+from **host-signed** Anchors (cold-start `POST /sessions/:id/height-sync`
+plus response legs). The gateway is never an originator. Disputes name a
+host; a gateway-minted pair would be blamed on the user.
+
+An optional follower may subscribe to mainnet headers **beside** that
+path for verification and logs. It is **off by default**.
+
+| | |
+| --- | --- |
+| Env | `DEVSHARD_GATEWAY_CHAIN_ORACLE` |
+| Enable | `true` / `1` / `on` (case-insensitive) |
+| Default | **off**. Unset, empty, `false` / `0` / `off`, and any other value leave the follower unbuilt: no Comet subscription, no local header `Latest()`. |
+| What it starts | Comet `NewBlock` tip cache + failover to `DEVSHARD_CHAINORACLE_URL` / direct RPC (the same stack hosts use) |
+| What it is for | Trust labels, delta logs, audit-ring `local_aligned`, historical header lookup |
+| What it is **not** | A source of outbound stamps, a substitute for the host seed, or a reason to skip chat/warmup gating |
+
+`DEVSHARD_CHAIN_RPC` / `NODE_RPC_URL` / `DEVSHARD_CHAINORACLE_URL` remain
+required to **submit txs** (and, on hosts, to follow the chain). Their
+presence does **not** turn this flag on and must not change the gateway
+scheduler: courier stays on host peer tips either way.
+
+When the flag is on, the follower **must not**:
+
+1. Feed outbound `Decide` — the gateway never mints an Anchor from its
+   own chain read (`OriginatorSenderID` is a host address).
+2. Make `ObservedHeightNow` true. Those APIs read host peer tips only.
+3. Skip, shorten, or satisfy the cold-start seed. A local `Latest()`
+   tip is not a host-signed Anchor and does not count toward seed
+   quorum. Chat still waits for host majority (or 503
+   `height_seed_incomplete` / `catalog_pending`).
+
+Default join compose and default citest compose **do not** set the
+flag. Height-sync citest that wants `TrustPeerAligned` / delta logs
+sets it explicitly.
+
+Related gate (not this flag): `DEVSHARD_REQUIRE_HEIGHT_SEED` defaults
+**on** in the gateway. `false` / `0` / `off` / `no` restores the
+degrade-to-unstamped-nonce-1 path. A roster where fewer than half the
+hosts implement the seed RPC is not a supported production deployment
+when the gate is on.
+
+---
+
 ## Testenv multi KEY_NAME (corrects v4 §1.1.1)
 
 v4 §1.1.1 says testenv multi mode uses `KEY_NAME=hosts[0]` on **every**
@@ -179,7 +233,9 @@ Join HA is unchanged: every replica of **one** participant still shares one
 
 ---
 
-## Operator checklist (v5 HA overlay)
+## Operator checklist
+
+### v5 HA overlay
 
 Skip this list for single-instance v5 (base `docker-compose.yml` only).
 
@@ -198,6 +254,14 @@ Skip this list for single-instance v5 (base `docker-compose.yml` only).
       when `GONKA_HA` / two hosts are up.
 - [ ] Do not recreate `versiond-router` under a live gateway unless you accept
       a persisted participant quarantine.
+
+### Gateway height-sync (all v5 deploys)
+
+- [ ] Leave `DEVSHARD_GATEWAY_CHAIN_ORACLE` **unset** unless you want
+      verification/audit logs from a local chain follower. `CHAIN_RPC` /
+      `NODE_RPC_URL` / `CHAINORACLE_URL` do not enable it.
+- [ ] If you do set it (`true` / `1` / `on`), confirm chat still waits for
+      host seed quorum — a warm local tip must not skip `height_seed`.
 
 ---
 

@@ -172,6 +172,11 @@ type HostCfg struct {
 	URL           string `yaml:"url"`
 	Port          int    `yaml:"port"`
 	IP            string `yaml:"ip"`
+	// KeyName is the Cosmos keyring entry (the on-chain identity) this
+	// container loads. Hosts sharing a KeyName are replicas of one identity,
+	// so identity count and router-pool membership follow this field rather
+	// than roster position. Empty keeps the 2-of-N default below.
+	KeyName string `yaml:"key_name"`
 }
 
 // UserCfg is the devshardctl operator identity.
@@ -441,15 +446,23 @@ func PrimaryModelID(c *File) string {
 }
 
 // VersiondKeyName is the Cosmos keyring entry each versiond child loads.
-// Multi/HA is 2-of-N: hosts[0] and hosts[1] share hosts[0]'s key (join-style).
-// Solo hosts (index ≥ 2) keep their own key. Single mode is per-host.
+// An explicit hosts[].key_name wins, so a roster can declare any number of
+// replicas per identity. Without it, multi/HA defaults to 2-of-N: hosts[0]
+// and hosts[1] share hosts[0]'s key (join-style), solo hosts (index ≥ 2)
+// keep their own key. Single mode is per-host.
 func VersiondKeyName(c *File, h HostCfg) string {
+	if name := strings.TrimSpace(h.KeyName); name != "" {
+		return name
+	}
 	if c != nil && c.Versiond.Mode == VersiondModeMulti && len(c.Hosts) > 0 {
 		for i, host := range c.Hosts {
 			if host.ID != h.ID {
 				continue
 			}
 			if i <= 1 {
+				if name := strings.TrimSpace(c.Hosts[0].KeyName); name != "" {
+					return name
+				}
 				return c.Hosts[0].ID
 			}
 			return h.ID
@@ -461,22 +474,90 @@ func VersiondKeyName(c *File, h HostCfg) string {
 	return ""
 }
 
-// onChainHostCount is the number of distinct validator identities. In multi
-// mode that is the number of distinct KEY_NAME groupings (hosts[0]+hosts[1]
-// share one key; index ≥ 2 are solos), not len(Hosts)-1 by position.
-func (c *File) onChainHostCount() int {
+// OnChainIdentityHosts returns the first host of every distinct KEY_NAME
+// group, in roster order. Later hosts sharing a KEY_NAME are replicas of an
+// identity already listed, not identities of their own.
+func OnChainIdentityHosts(c *File) []HostCfg {
 	if c == nil {
-		return 0
+		return nil
 	}
 	seen := make(map[string]struct{}, len(c.Hosts))
+	identities := make([]HostCfg, 0, len(c.Hosts))
 	for _, h := range c.Hosts {
 		name := VersiondKeyName(c, h)
 		if name == "" {
 			continue
 		}
+		if _, dup := seen[name]; dup {
+			continue
+		}
 		seen[name] = struct{}{}
+		identities = append(identities, h)
 	}
-	return len(seen)
+	return identities
+}
+
+// KeyNameReplicaCount is how many containers load h's KEY_NAME. More than one
+// means h is part of a replicated (HA) identity.
+func KeyNameReplicaCount(c *File, h HostCfg) int {
+	if c == nil {
+		return 0
+	}
+	name := VersiondKeyName(c, h)
+	if name == "" {
+		return 0
+	}
+	n := 0
+	for _, host := range c.Hosts {
+		if VersiondKeyName(c, host) == name {
+			n++
+		}
+	}
+	return n
+}
+
+// RouterPoolHostIDs is the sticky versiond-router pool: every replica of the
+// first replicated identity in the roster. A roster with no replicated
+// identity puts every host in the pool (single mode, all-solo multi).
+func RouterPoolHostIDs(c *File) []string {
+	if c == nil {
+		return nil
+	}
+	pooledKey := ""
+	if c.Versiond.Mode == VersiondModeMulti {
+		for _, h := range c.Hosts {
+			if KeyNameReplicaCount(c, h) > 1 {
+				pooledKey = VersiondKeyName(c, h)
+				break
+			}
+		}
+	}
+	ids := make([]string, 0, len(c.Hosts))
+	for _, h := range c.Hosts {
+		if pooledKey != "" && VersiondKeyName(c, h) != pooledKey {
+			continue
+		}
+		ids = append(ids, h.ID)
+	}
+	return ids
+}
+
+// IsRouterPooledHost reports whether h is reached through the sticky router
+// pool rather than a direct InferenceURL.
+func IsRouterPooledHost(c *File, h HostCfg) bool {
+	for _, id := range RouterPoolHostIDs(c) {
+		if id == h.ID {
+			return true
+		}
+	}
+	return false
+}
+
+// onChainHostCount is the number of distinct validator identities: one per
+// distinct KEY_NAME group (hosts sharing a key are replicas), not
+// len(Hosts)-1 by position.
+func (c *File) onChainHostCount() int {
+	return len(OnChainIdentityHosts(c))
 }
 
 // Validate enforces invariants gencompose and mock-chain rely on.

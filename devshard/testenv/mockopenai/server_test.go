@@ -361,3 +361,34 @@ func TestChatCompletions_FaultStreamErrorEnvelope(t *testing.T) {
 		require.True(t, ok, "mock-openai error envelope must be a terminal error body")
 	}
 }
+
+func TestLatencyAppliesToJSONNotStream(t *testing.T) {
+	srv := newTestServer(t)
+	defer srv.Close()
+
+	latency := 400
+	patch, err := json.Marshal(map[string]int{"latency_ms": latency})
+	require.NoError(t, err)
+	resp, err := http.Post(srv.URL+"/testenv/fault", "application/json", bytes.NewReader(patch))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	_ = resp.Body.Close()
+
+	streamBody := []byte(`{"model":"test-model","stream":true,"messages":[{"role":"user","content":"fast"}]}`)
+	start := time.Now()
+	resp, err = http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(streamBody))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	_, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	require.Less(t, time.Since(start), 200*time.Millisecond, "streaming inference must not sleep on Validate latency")
+
+	jsonBody := []byte(`{"model":"test-model","messages":[{"role":"user","content":"slow"}]}`)
+	start = time.Now()
+	resp, err = http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(jsonBody))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+	_, _ = io.ReadAll(resp.Body)
+	_ = resp.Body.Close()
+	require.GreaterOrEqual(t, time.Since(start), 350*time.Millisecond, "non-stream Validate must honor latency_ms")
+}

@@ -16,9 +16,11 @@ type catalogHealthzSource interface {
 }
 
 // WaitRouterCatalog polls GET /{version}/healthz on each HTTP client's host
-// base until one returns 200 or ctx is done. That is the versiond-router
-// catalog-admission signal. In-process clients have no catalog URL and
-// return immediately so unit tests keep sending heartbeats.
+// base until one returns 200 or ctx is done. That path is catalog admission
+// on the versiond-router, child health on versiond, and the matching probe
+// on e2e hosts. 503, 404, and dial errors keep waiting — root /healthz is
+// never consulted (router process-up is not this version). In-process
+// clients have no catalog URL and return immediately.
 func (s *Session) WaitRouterCatalog(ctx context.Context) error {
 	if s == nil {
 		return nil
@@ -31,7 +33,7 @@ func (s *Session) WaitRouterCatalog(ctx context.Context) error {
 		ctx = context.Background()
 	}
 	client := &http.Client{Timeout: 5 * time.Second}
-	if probeRouterCatalog(client, urls) {
+	if probeRouterCatalog(client, urls) == catalogProbeAdmitted {
 		return nil
 	}
 	logging.Debug("waiting for router catalog", "subsystem", "heightsync",
@@ -43,7 +45,7 @@ func (s *Session) WaitRouterCatalog(ctx context.Context) error {
 		case <-ctx.Done():
 			return ctx.Err()
 		case <-ticker.C:
-			if probeRouterCatalog(client, urls) {
+			if probeRouterCatalog(client, urls) == catalogProbeAdmitted {
 				logging.Debug("router catalog admitted", "subsystem", "heightsync",
 					"escrow", s.escrowID)
 				return nil
@@ -76,16 +78,33 @@ func (s *Session) catalogHealthzURLs() []string {
 	return urls
 }
 
-func probeRouterCatalog(client *http.Client, urls []string) bool {
+type catalogProbe int
+
+const (
+	catalogProbeWait catalogProbe = iota
+	catalogProbeAdmitted
+)
+
+// probeRouterCatalog classifies GET /{version}/healthz on the HTTP client bases.
+// 200 means this version is serving. Anything else keeps waiting.
+func probeRouterCatalog(client *http.Client, urls []string) catalogProbe {
+	if len(urls) == 0 {
+		return catalogProbeWait
+	}
 	for _, u := range urls {
-		resp, err := client.Get(u)
-		if err != nil {
-			continue
-		}
-		_ = resp.Body.Close()
-		if resp.StatusCode == http.StatusOK {
-			return true
+		code, err := httpStatus(client, u)
+		if err == nil && code == http.StatusOK {
+			return catalogProbeAdmitted
 		}
 	}
-	return false
+	return catalogProbeWait
+}
+
+func httpStatus(client *http.Client, rawURL string) (int, error) {
+	resp, err := client.Get(rawURL)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode, nil
 }

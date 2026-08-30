@@ -36,6 +36,7 @@ func TestHeightSyncAnchor_E2E_CourierBootstrap(t *testing.T) {
 	hostAIdx := hostIdxForNonce(1)
 	hostA := st.HostAddrs[hostAIdx]
 	require.Nil(t, peerTips.MaxFresh(time.Now(), peerTips.Freshness), "courier cache must start cold")
+	seedHTTPSession(t, st.Session)
 
 	_, err := st.Session.SendInference(ctx, params)
 	require.NoError(t, err)
@@ -99,6 +100,7 @@ func TestHeightSyncAnchor_E2E_PipelinedCourier(t *testing.T) {
 	params := defaultInferenceParams()
 
 	require.Nil(t, peerTips.MaxFresh(time.Now(), peerTips.Freshness))
+	seedHTTPSession(t, st.Session)
 
 	courierPipelinedSyncTurn(t, ctx, st, params, 1, 4)
 

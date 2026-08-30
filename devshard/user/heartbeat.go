@@ -27,7 +27,6 @@ func (s *Session) MaybeHeartbeat(ctx context.Context) error {
 	if s.sm != nil && s.sm.Phase() != types.PhaseActive {
 		return nil
 	}
-	s.ensureHeightSeed(ctx)
 	span, err := s.composeHeartbeatSpan()
 	if err != nil {
 		s.publishHeightSyncView()
@@ -46,6 +45,9 @@ func (s *Session) MaybeHeartbeat(ctx context.Context) error {
 func (s *Session) StartHeartbeatLoop() {
 	if s == nil {
 		return
+	}
+	if s.requireHeightSeed {
+		s.startHeightSeedLoop()
 	}
 	s.heartbeatLoopOnce.Do(func() {
 		ctx, cancel := context.WithCancel(context.Background())

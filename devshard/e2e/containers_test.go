@@ -164,6 +164,9 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		// Hosts are Docker DNS names that resolve to private IPs.
 		// Production leaves this unset so the dial-time SSRF guard stays on.
 		"DEVSHARD_ALLOW_PRIVATE_ADDRESSES": "true",
+		// E2E hosts have no versiond-router catalog and no chain-oracle tip, so
+		// POST /height-sync omits. Keep the production seed gate on in citest.
+		"DEVSHARD_REQUIRE_HEIGHT_SEED": "false",
 	}
 	for k, v := range opts.devshardctlEnvOverrides {
 		devshardctlEnv[k] = v
@@ -184,6 +187,7 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 	testutil.DebugLogf(t, "devshardctl client URL: %s", env.clientURL)
 	env.statsURL = containerURL(ctx, t, devshardctl, "9091/tcp")
 	testutil.DebugLogf(t, "devshardctl accounting stats URL: %s", env.statsURL)
+	testutil.WaitGatewayHeightSeedReady(t, env.clientURL, 3*time.Minute)
 
 	require.NotNil(t, mockChain)
 	require.NotNil(t, postgres)

@@ -96,6 +96,14 @@ func TestDecide_PeerTipOracleSource_WarmCachePreservesOriginator(t *testing.T) {
 	require.NotEmpty(t, got.OriginatorSenderID)
 }
 
+func TestAnchorScheduler_SourceKind(t *testing.T) {
+	peer := heightsync.MustNewAnchorScheduler(10, 1, heightsync.NewPeerTipOracleSource(&fakePeerTipCache{}, time.Minute))
+	require.Equal(t, "peer_tip_cache", peer.SourceKind())
+
+	local := heightsync.MustNewAnchorSchedulerFromOracle(10, 1, &fakeOracle{hdr: &blocks.Header{Height: 1, BlockHash: []byte{1}}})
+	require.Equal(t, "local_block_oracle", local.SourceKind())
+}
+
 func TestDecide_LocalOracleSource_OracleError(t *testing.T) {
 	or := &fakeOracle{err: errors.New("down")}
 	s := heightsync.MustNewAnchorScheduler(8, 4, heightsync.NewLocalOracleSource(or))

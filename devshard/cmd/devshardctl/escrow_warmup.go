@@ -42,6 +42,7 @@ type warmupDeps struct {
 	escrowID    string
 	model       string
 	waitCatalog func(context.Context) error
+	waitSeed    func(context.Context) error
 }
 
 func (d warmupDeps) observe(hostIdx int, reason string) {
@@ -181,6 +182,7 @@ func startEscrowWarmup(rt *devshardRuntime, recorder sendRecorder, metrics warmu
 		escrowID:    rt.id,
 		model:       rt.model,
 		waitCatalog: rt.session.WaitRouterCatalog,
+		waitSeed:    rt.session.WaitHeightSeedReady,
 	}
 	go warmUntilStopped(deps, rt.session.Nonce(), rt.stopped)
 }
@@ -198,6 +200,12 @@ func warmUntilStopped(deps warmupDeps, latestNonce uint64, stop <-chan struct{})
 	if deps.waitCatalog != nil {
 		if err := deps.waitCatalog(ctx); err != nil {
 			log.Printf("escrow_warmup_stopped_before_catalog escrow=%s error=%v", deps.escrowID, err)
+			return
+		}
+	}
+	if deps.waitSeed != nil {
+		if err := deps.waitSeed(ctx); err != nil {
+			log.Printf("escrow_warmup_stopped_before_height_seed escrow=%s error=%v", deps.escrowID, err)
 			return
 		}
 	}

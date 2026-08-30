@@ -97,7 +97,17 @@ func IsRetryableNonInference(err error) bool {
 	return IsTransientWriteError(err)
 }
 
+// IsHeightSyncSeedPath reports POST /sessions/:id/height-sync (the cold-start
+// seed). Distinct from /heightsync/repair. Seed failures are the gateway's
+// own liveness probe and must not feed the participant limiter.
+func IsHeightSyncSeedPath(path string) bool {
+	return strings.Contains(path, "/height-sync")
+}
+
 func shouldObserveUpstreamStatus(path string, statusCode int, _, _, routerError string) bool {
+	if IsHeightSyncSeedPath(path) {
+		return false
+	}
 	if SkipCatalogQuarantine(path, statusCode, routerError) {
 		return false
 	}

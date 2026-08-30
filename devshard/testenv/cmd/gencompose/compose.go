@@ -377,16 +377,9 @@ func versiondHosts(cfg *config.File) string {
 	if cfg == nil {
 		return ""
 	}
-	// Sticky HA pool is only the first two hosts. Solo participants (hosts[2+])
-	// are reached via direct InferenceURL, not through the router pool.
-	if cfg.Versiond.Mode == config.VersiondModeMulti && len(cfg.Hosts) >= 2 {
-		return cfg.Hosts[0].ID + " " + cfg.Hosts[1].ID
-	}
-	names := make([]string, len(cfg.Hosts))
-	for i, h := range cfg.Hosts {
-		names[i] = h.ID
-	}
-	return strings.Join(names, " ")
+	// Sticky HA pool is the replicas of one KEY_NAME. Solo participants are
+	// reached via direct InferenceURL, not through the router pool.
+	return strings.Join(config.RouterPoolHostIDs(cfg), " ")
 }
 
 // versiondKeyName is the Cosmos keyring entry each versiond child loads.
@@ -394,17 +387,13 @@ func versiondKeyName(cfg *config.File, h config.HostCfg) string {
 	return config.VersiondKeyName(cfg, h)
 }
 
-// isHAReplica reports whether h is in the sticky HA pair (hosts[0], hosts[1]).
+// isHAReplica reports whether h shares its KEY_NAME with another container,
+// i.e. it is one replica of a replicated identity.
 func isHAReplica(cfg *config.File, h config.HostCfg) bool {
 	if cfg == nil || cfg.Versiond.Mode != config.VersiondModeMulti {
 		return false
 	}
-	for i, host := range cfg.Hosts {
-		if host.ID == h.ID {
-			return i <= 1
-		}
-	}
-	return false
+	return config.KeyNameReplicaCount(cfg, h) > 1
 }
 
 // legacyVersiondHost is the versiond instance that owns pre-HA SQLite data dirs.

@@ -17,12 +17,14 @@ const HeaderDevshardError = "X-Devshard-Error"
 const HeaderDevshardRouterError = "X-Devshard-Router-Error"
 
 const (
-	DevshardErrorRequestsDisabled  = "requests_disabled"
-	DevshardErrorInitializing      = "initializing"
-	DevshardErrorNotImplemented    = "not_implemented"
-	DevshardErrorChainUnavailable  = "chain_unavailable"
-	DevshardErrorEscrowSettled     = "escrow_settled"
-	DevshardErrorUndeclaredVersion = "undeclared_version"
+	DevshardErrorRequestsDisabled     = "requests_disabled"
+	DevshardErrorInitializing         = "initializing"
+	DevshardErrorNotImplemented       = "not_implemented"
+	DevshardErrorChainUnavailable     = "chain_unavailable"
+	DevshardErrorEscrowSettled        = "escrow_settled"
+	DevshardErrorUndeclaredVersion    = "undeclared_version"
+	DevshardErrorHeightSeedIncomplete = "height_seed_incomplete"
+	DevshardErrorCatalogPending       = "catalog_pending"
 )
 
 // HTTPError returns an echo HTTP error and sets X-Devshard-Error when devshardCode is non-empty.

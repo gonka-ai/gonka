@@ -136,20 +136,21 @@ func (rt *devshardRuntime) escrowHasBackgroundWork() bool {
 }
 
 type runtimeStatus struct {
-	ID                   string `json:"id"`
-	Model                string `json:"model"`
-	Active               bool   `json:"active"`
-	Phase                string `json:"phase,omitempty"`
-	Nonce                uint64 `json:"nonce,omitempty"`
-	Balance              uint64 `json:"balance,omitempty"`
-	SessionVersion       string `json:"session_version,omitempty"`
-	ActiveRequests       int64  `json:"active_requests"`
-	PendingRaceCleanup   int64  `json:"pending_race_cleanup"`
-	ReservedTokens       int64  `json:"reserved_tokens"`
-	ChainPhase           string `json:"chain_phase,omitempty"`
-	ConfirmationPoCPhase string `json:"confirmation_poc_phase,omitempty"`
-	RequestsBlocked      bool   `json:"requests_blocked"`
-	BlockReason          string `json:"block_reason,omitempty"`
+	ID                   string                `json:"id"`
+	Model                string                `json:"model"`
+	Active               bool                  `json:"active"`
+	Phase                string                `json:"phase,omitempty"`
+	Nonce                uint64                `json:"nonce,omitempty"`
+	Balance              uint64                `json:"balance,omitempty"`
+	SessionVersion       string                `json:"session_version,omitempty"`
+	ActiveRequests       int64                 `json:"active_requests"`
+	PendingRaceCleanup   int64                 `json:"pending_race_cleanup"`
+	ReservedTokens       int64                 `json:"reserved_tokens"`
+	ChainPhase           string                `json:"chain_phase,omitempty"`
+	ConfirmationPoCPhase string                `json:"confirmation_poc_phase,omitempty"`
+	RequestsBlocked      bool                  `json:"requests_blocked"`
+	BlockReason          string                `json:"block_reason,omitempty"`
+	HeightSeed           user.HeightSeedStatus `json:"height_seed,omitempty"`
 }
 
 type gatewayCapacityStatus struct {
@@ -322,6 +323,7 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 		StoragePath:             cfg.StoragePath,
 		RoutePrefix:             routePrefix,
 		RequestAdmission:        sharedParticipantRequestLimiter,
+		RequireHeightSeed:       requireHeightSeedFromEnv(),
 		Escrow:                  escrow,
 		RefusalTimeoutSeconds:   timeoutOverrides.RefusalTimeoutSeconds,
 		ExecutionTimeoutSeconds: timeoutOverrides.ExecutionTimeoutSeconds,
@@ -695,6 +697,9 @@ func (rt *devshardRuntime) snapshot() runtimeStatus {
 		status.ConfirmationPoCPhase = snapshot.ConfirmationPoCPhase
 		status.RequestsBlocked = snapshot.RequestsBlocked
 		status.BlockReason = snapshot.BlockReason
+	}
+	if rt.proxy != nil && rt.proxy.session != nil {
+		status.HeightSeed = rt.proxy.session.HeightSeedStatus()
 	}
 	return status
 }
@@ -2238,6 +2243,10 @@ func writeModelListWithCapForModel(w http.ResponseWriter, modelIDs []string, cap
 }
 
 func gatewayStatusCodeForError(err error) int {
+	var seedErr *user.HeightSeedError
+	if errors.As(err, &seedErr) {
+		return http.StatusServiceUnavailable
+	}
 	var unsupportedModelErr *UnsupportedModelError
 	if errors.As(err, &unsupportedModelErr) {
 		return http.StatusBadRequest
@@ -2282,6 +2291,11 @@ func gatewayStatusCodeForError(err error) int {
 }
 
 func writeGatewayError(w http.ResponseWriter, err error) {
+	var seedErr *user.HeightSeedError
+	if errors.As(err, &seedErr) {
+		writeHeightSeedError(w, err)
+		return
+	}
 	if u := transport.UndeclaredVersionFromError(err); u != nil {
 		code := strings.TrimSpace(u.DevshardError)
 		if code == "" {

@@ -151,6 +151,7 @@ func TestHeightSyncAnchor_E2E_ResponseOriginSignatureInvalidDropped(t *testing.T
 		sec.SenderSignature[0] ^= 0xff
 	})
 
+	seedHTTPSession(t, st.Session)
 	beforeInvalid := heightsync.OriginSigInvalidTotal()
 	_, err := st.Session.SendInference(ctx, params)
 	require.NoError(t, err)

@@ -257,6 +257,28 @@ func TestObservedHeightNow_FreshTip(t *testing.T) {
 	require.Equal(t, uint64(99), h)
 }
 
+func TestObservedHeightNow_IgnoresLogOracle(t *testing.T) {
+	peerTips := NewHeightSyncPeerTips()
+	src := heightsync.NewPeerTipOracleSource(peerTips, peerTips.Freshness)
+	sched := heightsync.MustNewAnchorScheduler(8, 4, src)
+	or := &heightSyncTestOracle{hdr: &blocks.Header{
+		Height: 99, ChainID: "test-chain", BlockHash: []byte{0x01},
+	}}
+	cfg := DefaultClientConfig()
+	cfg.HeightSync = sched
+	cfg.HeightSyncPeerTips = peerTips
+	cfg.HeightSyncLogOracle = or
+	client := NewHTTPClient("http://example.invalid", "escrow-1", testutil.MustGenerateKey(t), cfg)
+
+	hdr, err := or.Latest(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, int64(99), hdr.Height)
+
+	h, ok := client.ObservedHeightNow()
+	require.False(t, ok)
+	require.Equal(t, uint64(0), h)
+}
+
 func TestObservedHeightNow_NoHeightSync(t *testing.T) {
 	client := NewHTTPClient("http://example.invalid", "escrow-1", testutil.MustGenerateKey(t))
 	h, ok := client.ObservedHeightNow()

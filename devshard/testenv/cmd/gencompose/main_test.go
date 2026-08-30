@@ -147,6 +147,59 @@ func TestVersiondKeyName_MultiHAPairAndSolo(t *testing.T) {
 	require.Equal(t, "versiond-1", versiondKeyName(cfg, cfg.Hosts[1]))
 }
 
+// R7: three replicas of one identity plus a solo. Slots, the router pool and
+// the participant roster all follow KEY_NAME, so the third replica does not
+// become a fourth identity the way an index-derived count would.
+func TestThreeReplicasOfOneIdentity(t *testing.T) {
+	cfg := &config.File{
+		Versiond: config.VersiondCfg{Mode: config.VersiondModeMulti},
+		Escrow:   config.EscrowMeta{Slots: 2, SlotURL: "http://router:8080"},
+		Hosts: []config.HostCfg{
+			{ID: "versiond-0", KeyName: "versiond-0", Address: "gonka1ha"},
+			{ID: "versiond-1", KeyName: "versiond-0", Address: "gonka1ha-r1"},
+			{ID: "versiond-2", KeyName: "versiond-0", Address: "gonka1ha-r2"},
+			{ID: "versiond-3", KeyName: "versiond-3", Address: "gonka1solo"},
+		},
+	}
+	assignSlots(cfg)
+	require.Equal(t, []int{0}, cfg.Hosts[0].SlotIDs)
+	require.Empty(t, cfg.Hosts[1].SlotIDs)
+	require.Empty(t, cfg.Hosts[2].SlotIDs, "a third replica owns no slots of its own")
+	require.Equal(t, []int{1}, cfg.Hosts[3].SlotIDs)
+
+	require.Equal(t, "versiond-0 versiond-1 versiond-2", versiondHosts(cfg))
+	require.True(t, isHAReplica(cfg, cfg.Hosts[2]))
+	require.False(t, isHAReplica(cfg, cfg.Hosts[3]))
+
+	syncChainSeed(cfg)
+	require.Len(t, cfg.Participants, 2)
+	require.Equal(t, "gonka1ha", cfg.Participants[0].Address)
+	require.Equal(t, "http://router:8080", cfg.Participants[0].InferenceURL)
+	require.Equal(t, "gonka1solo", cfg.Participants[1].Address)
+	require.Equal(t, "http://versiond-3:8080", cfg.Participants[1].InferenceURL)
+}
+
+// The generated config states its groupings: hosts[1] carries hosts[0]'s
+// resolved KEY_NAME rather than relying on its roster position.
+func TestStampKeyNames_MakesGroupingExplicit(t *testing.T) {
+	cfg := &config.File{
+		Versiond: config.VersiondCfg{Mode: config.VersiondModeMulti},
+		Hosts: []config.HostCfg{
+			{ID: "versiond-0"},
+			{ID: "versiond-1"},
+			{ID: "versiond-2"},
+		},
+	}
+	stampKeyNames(cfg)
+	require.Equal(t, "versiond-0", cfg.Hosts[0].KeyName)
+	require.Equal(t, "versiond-0", cfg.Hosts[1].KeyName)
+	require.Equal(t, "versiond-2", cfg.Hosts[2].KeyName)
+
+	// Stamping is idempotent: a second pass must not re-derive from position.
+	stampKeyNames(cfg)
+	require.Equal(t, "versiond-0", cfg.Hosts[1].KeyName)
+}
+
 func TestSyncChainSeed_FromHosts(t *testing.T) {
 	hostKey, err := signing.GenerateKey()
 	require.NoError(t, err)

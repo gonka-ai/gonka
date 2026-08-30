@@ -103,7 +103,7 @@ func TestHTTPClient_NonInferenceRetries503ThenObservesOnce(t *testing.T) {
 		RoutePrefix:    "/",
 	})
 
-	err := client.post(context.Background(), "/sessions/escrow-1/height-sync", 5*time.Second, struct{}{}, &struct {
+	err := client.post(context.Background(), "/sessions/escrow-1/diffs", 5*time.Second, struct{}{}, &struct {
 		OK bool `json:"ok"`
 	}{})
 	require.NoError(t, err)
@@ -165,7 +165,14 @@ func TestHTTPClient_NonInferenceDoesNotObserveCatalog503(t *testing.T) {
 	require.Empty(t, admission.observed, "router catalog 503 on seed must not be a participant fault")
 }
 
-func TestHTTPClient_NonInferenceObservesHostSpoofedUndeclaredHeader(t *testing.T) {
+func TestIsHeightSyncSeedPath(t *testing.T) {
+	require.True(t, IsHeightSyncSeedPath("/sessions/1/height-sync"))
+	require.True(t, IsHeightSyncSeedPath("http://host/devshard/v2/sessions/1/height-sync"))
+	require.False(t, IsHeightSyncSeedPath("/sessions/1/heightsync/repair"))
+	require.False(t, IsHeightSyncSeedPath("/sessions/1/chat/completions"))
+}
+
+func TestHTTPClient_SeedDoesNotObserveHostSpoofedUndeclaredHeader(t *testing.T) {
 	signer := testutil.MustGenerateKey(t)
 	admission := &stubAdmissionController{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -185,8 +192,8 @@ func TestHTTPClient_NonInferenceObservesHostSpoofedUndeclaredHeader(t *testing.T
 	defer cancel()
 	err := client.post(ctx, "/sessions/escrow-1/height-sync", 400*time.Millisecond, struct{}{}, nil)
 	require.Error(t, err)
-	require.NotEmpty(t, admission.observed,
-		"X-Devshard-Error on seed is host-spoofable and must be a participant fault")
+	require.Empty(t, admission.observed,
+		"seed 503s must not feed the participant limiter, including host-spoofed X-Devshard-Error")
 }
 
 func TestHTTPClient_InferenceObservesRouterUndeclaredHeader(t *testing.T) {
@@ -224,7 +231,7 @@ func TestHTTPClient_InferenceObservesRouterUndeclaredHeader(t *testing.T) {
 	require.NotEmpty(t, admission.observed, "chat 503s always quarantine, even with X-Devshard-Router-Error")
 }
 
-func TestHTTPClient_CatalogPhraseOn404IsObserved(t *testing.T) {
+func TestHTTPClient_SeedCatalogPhraseOn404IsNotObserved(t *testing.T) {
 	signer := testutil.MustGenerateKey(t)
 	admission := &stubAdmissionController{}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -241,7 +248,27 @@ func TestHTTPClient_CatalogPhraseOn404IsObserved(t *testing.T) {
 
 	err := client.post(context.Background(), "/sessions/escrow-1/height-sync", 400*time.Millisecond, struct{}{}, nil)
 	require.Error(t, err)
-	require.NotEmpty(t, admission.observed, "catalog phrase on a non-503 is a host fault")
+	require.Empty(t, admission.observed, "seed 404s must not feed the participant limiter")
+}
+
+func TestHTTPClient_ChatCatalogPhraseOn404IsObserved(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	admission := &stubAdmissionController{}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "version v2 is not present in the governance routing catalog", http.StatusNotFound)
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewHTTPClient(server.URL, "escrow-1", signer, ClientConfig{
+		QueryTimeout:   400 * time.Millisecond,
+		ParticipantKey: "shared-host",
+		Admission:      admission,
+		RoutePrefix:    "/",
+	})
+
+	err := client.post(context.Background(), "/sessions/escrow-1/chat/completions", 400*time.Millisecond, struct{}{}, nil)
+	require.Error(t, err)
+	require.NotEmpty(t, admission.observed, "catalog phrase on a non-503 chat response is a host fault")
 }
 
 func TestHTTPClient_Inference503IsNotRetried(t *testing.T) {

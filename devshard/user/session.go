@@ -37,18 +37,18 @@ var TimeoutBuffer = 5 * time.Second
 var ErrNilHostResponse = errors.New("nil host response")
 
 // MaxConcurrentVerifierRPCs caps how many simultaneous VerifyTimeout RPCs the
-// proxy may have open against the same verifier host. When many in-flight
-// nonces time out around the same time (e.g. one executor host stops
-// responding), CollectTimeoutVotes fans out one VerifyTimeout per verifier
-// per timeout. Without this cap, M concurrent timeouts × N verifiers can
-// exhaust the per-host connection budget on every verifier in the group.
+// proxy may have open against the same verifier host. CollectTimeoutVotes fans
+// out one VerifyTimeout per verifier per timed-out nonce; the cap is
+// process-wide via SharedVerifierQueue so K escrows cannot stack unbounded
+// POSTs onto one validator.
 //
-// The limit is per verifier (keyed by validator address) and is enforced
-// process-wide via SharedVerifierQueue so that different Sessions (one per
-// escrow / devshard runtime) can't collectively pile connections onto the same
-// verifier host. Different verifiers are still hit in parallel; only
-// per-verifier RPCs serialize.
-var MaxConcurrentVerifierRPCs = 1
+// Execution-timeout verify is a cheap FinishInference probe (local mempool,
+// then GET executor mempool). Cap 1 made a timeout wave wait 120s and drop
+// votes that never left the gateway while one hung GetMempool held the slot.
+// 32 lets concurrent rounds send; it is still a bound, not "one at a time".
+// Refused-timeout verify is heavier (ChallengeReceipt) and shares this cap.
+// Different verifiers are still hit in parallel.
+var MaxConcurrentVerifierRPCs = 32
 
 // VerifierQueueWaitTimeout bounds how long a VerifyTimeout goroutine may wait
 // for its verifier-host slot before giving up. When a verifier hangs, its
@@ -346,28 +346,22 @@ type Session struct {
 	heartbeatStop     context.CancelFunc
 	heartbeatDone     chan struct{}
 
-	// heightSeedDone is set after a successful seed, a terminal miss (404 /
-	// omit), or the retry deadline. heightSeedMu serializes the retry loop.
-	// heightSeedUntil pins that deadline on the first attempt so a caller with
-	// a shorter budget (the inference path) resumes it instead of ending it.
-	heightSeedMu     sync.Mutex
-	heightSeedDone   atomic.Bool
-	heightSeedMissed atomic.Bool
-	heightSeedUntil  atomic.Int64
-	// heightSeedOK is the set of unique-seeder slot indexes that have already
-	// returned an Anchor. Survives a resumed seed so we do not re-POST those
-	// slots while still short of quorum. Caller holds heightSeedMu.
-	heightSeedOK map[int]struct{}
-	// heightSeedRetryPending is the last round's retryable slots. nil means
-	// no prior round (resume from every unseeded slot). A 404/omit is kept
-	// out of this set so resume does not re-POST a terminal miss. Caller
-	// holds heightSeedMu.
-	heightSeedRetryPending map[int]struct{}
-	// heightSeedBackoff is the next sleep between seed rounds. Survives
-	// resume so a persistent 503 does not reset to heightSeedRetryInitial
-	// on every inline budget. Reset only on a successful seed. Caller holds
-	// heightSeedMu.
-	heightSeedBackoff time.Duration
+	// heightSeedMu serializes seed state. The session loop (gate on) retries
+	// forever after catalog admission; missed is not terminal.
+	heightSeedMu              sync.Mutex
+	heightSeedMissed          atomic.Bool
+	heightSeedPhase           atomic.Uint32
+	heightSeedCatalogAdmitted atomic.Bool
+	heightSeedGateUntil       atomic.Int64
+	heightSeedOK              map[int]struct{}
+	heightSeedLast            map[int]seedSlotRecord
+	heightSeedSlotCount       int
+	heightSeedWaiters         chan struct{}
+	requireHeightSeed         bool
+	heightSeedLoopOnce        sync.Once
+	heightSeedClosed          bool
+	heightSeedStop            context.CancelFunc
+	heightSeedDoneCh          chan struct{}
 
 	lastContact   []time.Time
 	lastPeerSeen  map[uint32][]byte
@@ -1160,7 +1154,6 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 	if chooser == nil {
 		return nil, fmt.Errorf("PrepareInferenceFn: chooser is nil")
 	}
-	s.ensureHeightSeedInline()
 	s.mu.Lock()
 	defer func() {
 		s.mu.Unlock()
@@ -1348,7 +1341,6 @@ func (s *Session) logStateRootMismatchUserDiagnostic(p *PreparedInference) {
 
 // SendInference composes diff, sends to correct host, processes response.
 func (s *Session) SendInference(ctx context.Context, params InferenceParams) (*host.HostResponse, error) {
-	s.ensureHeightSeed(ctx)
 	p, err := s.PrepareInference(params)
 	if err != nil {
 		return nil, err
@@ -1370,7 +1362,6 @@ func (s *Session) SendInference(ctx context.Context, params InferenceParams) (*h
 // sendDiffRound composes a diff, sends it to the next host, processes the response.
 // Returns non-nil only on compose or processResponse errors; dead hosts are silently skipped.
 func (s *Session) sendDiffRound(ctx context.Context, extraTxs []*types.DevshardTx) error {
-	s.ensureHeightSeed(ctx)
 	s.mu.Lock()
 	diff, hostIdx, err := s.composeDiffLocked(extraTxs)
 	if err != nil {
@@ -1426,7 +1417,6 @@ func (s *Session) sendCatchUp(ctx context.Context, hostIdx int) error {
 // there's no point sending later chunks if the host couldn't apply earlier ones.
 // Returns non-nil only on processResponse errors; dead hosts are silently skipped.
 func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostClient) error {
-	s.ensureHeightSeed(ctx)
 	s.mu.Lock()
 	nonce := s.nonce
 	catchUp := s.diffsForHost(hostIdx)
@@ -2778,6 +2768,7 @@ func shortAddress(addr string) string {
 // storage, if any. Safe to call multiple times.
 func (s *Session) Close() error {
 	s.StopHeartbeatLoop()
+	s.stopHeightSeedLoop()
 	s.stopHeightSyncFlush()
 	if s.store != nil {
 		return s.store.Close()

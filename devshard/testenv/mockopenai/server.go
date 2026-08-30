@@ -90,9 +90,6 @@ func (s *Server) handleFaultPatch(c echo.Context) error {
 
 func (s *Server) handleChatCompletions(c echo.Context) error {
 	f, streamGate := s.streamFaults()
-	if f.Latency > 0 {
-		time.Sleep(f.Latency)
-	}
 	if f.StreamErrorEnvelope {
 		return s.streamErrorEnvelope(c)
 	}
@@ -111,6 +108,13 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 	}
 	if req.Model == "" {
 		req.Model = "test-model"
+	}
+
+	// Latency stretches Validate (non-stream JSON). Streaming inference must
+	// still emit a first token immediately so gateway first-token timeout
+	// (1s floor) is not tripped while leases stay pending.
+	if f.Latency > 0 && !req.Stream {
+		time.Sleep(f.Latency)
 	}
 
 	text := completionText(body)

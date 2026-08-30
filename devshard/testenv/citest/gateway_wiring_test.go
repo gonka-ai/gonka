@@ -27,6 +27,7 @@ func TestGeneratedCompose_GatewayPhase7Wiring(t *testing.T) {
 	require.Contains(t, text, "NODE_RPC_URL: http://mock-chain:26657")
 	require.Contains(t, text, "DEVSHARD_PUBLIC_API: http://mock-dapi:9100")
 	require.NotContains(t, text, "DEVSHARD_CHAINORACLE_URL:")
+	require.NotContains(t, text, "DEVSHARD_GATEWAY_CHAIN_ORACLE:")
 	require.NotContains(t, text, "DEVSHARD_CHAIN_REST:")
 	require.NotContains(t, text, "DEVSHARD_TX_QUERY_REST:")
 	require.Contains(t, text, "args:")

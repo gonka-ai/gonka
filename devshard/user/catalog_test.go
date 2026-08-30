@@ -90,6 +90,50 @@ func TestHeartbeatLoop_WaitsForCatalogBeforeFirstTick(t *testing.T) {
 	}, 3*time.Second, 20*time.Millisecond, "heartbeat must start after catalog admission")
 }
 
+func TestWaitRouterCatalog_404IsNotAdmission(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/health", "/healthz":
+			w.WriteHeader(http.StatusOK)
+			return
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := transport.DefaultClientConfig()
+	cfg.RoutePrefix = "/devshard/v2"
+	client := transport.NewHTTPClient(srv.URL, "1", nil, cfg)
+	session := &Session{clients: []HostClient{client}, escrowID: "1"}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	require.ErrorIs(t, session.WaitRouterCatalog(ctx), context.DeadlineExceeded,
+		"root /health and /healthz must not count as /{version}/healthz")
+}
+
+func TestWaitRouterCatalog_Catalog503KeepsWaiting(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v2/healthz" {
+			http.Error(w, "undeclared", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(srv.Close)
+
+	cfg := transport.DefaultClientConfig()
+	cfg.RoutePrefix = "/devshard/v2"
+	client := transport.NewHTTPClient(srv.URL, "1", nil, cfg)
+	session := &Session{clients: []HostClient{client}, escrowID: "1"}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 80*time.Millisecond)
+	defer cancel()
+	require.ErrorIs(t, session.WaitRouterCatalog(ctx), context.DeadlineExceeded,
+		"router process /healthz must not count as catalog admission")
+}
+
 func TestWaitRouterCatalog_Canceled(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "undeclared", http.StatusServiceUnavailable)

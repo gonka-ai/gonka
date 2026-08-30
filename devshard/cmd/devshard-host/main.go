@@ -76,9 +76,7 @@ func main() {
 
 	e := echo.New()
 	e.HideBanner = true
-	e.GET("/health", func(c echo.Context) error {
-		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
-	})
+	registerLiveness(e, types.EffectiveStateRootAndProtocolVersion)
 	registerServer(e.Group(devshardpkg.DefaultRoutePrefix()), srv, gsp, stubInferenceHTTPStatus, stubInferenceHTTPMessage)
 
 	addr := ":" + *port
@@ -86,6 +84,20 @@ func main() {
 		addr, cfg.hostIndex, cfg.signer.Address(), devshardpkg.DefaultRoutePrefix())
 	if err := e.Start(addr); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
+	}
+}
+
+// registerLiveness mounts GET /{version}/healthz for the gateway catalog
+// wait (same public path as versiond / the versiond-router). GET /health
+// is the container start probe and is not catalog admission.
+func registerLiveness(e *echo.Echo, version string) {
+	ok := func(c echo.Context) error {
+		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
+	}
+	e.GET("/health", ok)
+	version = strings.Trim(strings.TrimSpace(version), "/")
+	if version != "" {
+		e.GET("/"+version+"/healthz", ok)
 	}
 }
 

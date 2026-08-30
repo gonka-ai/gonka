@@ -176,3 +176,22 @@ func TestOnlyThePayloadsRouteCompresses(t *testing.T) {
 		"the inference route passes bytes through untouched")
 	require.Empty(t, streamingRecorder.Header().Get("Content-Encoding"))
 }
+
+type countingBinder struct{ n *int }
+
+func (b countingBinder) BindOwnerChat(c echo.Context) (*transport.Server, error) {
+	*b.n++
+	return nil, ErrInitializing
+}
+
+func TestHeightSyncSeedUsesOwnerBind(t *testing.T) {
+	var n int
+	e := echo.New()
+	RegisterLazySessionRoutes(e.Group(""), payloadsOnlyResolver{resolves: "1"}, countingBinder{n: &n}, nil)
+
+	req := httptest.NewRequest(http.MethodPost, "/sessions/1/height-sync", strings.NewReader("{}"))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, 1, n, "seed RPC must bind like owner chat so a host without a session can answer")
+}

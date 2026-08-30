@@ -102,6 +102,32 @@ func TryPostGatewayChatCompletion(client *http.Client, gatewayURL, adminAPIKey s
 	return resp, nil
 }
 
+// PostGatewayChatCompletionEventually retries chat while hosts recover from a
+// full versiond restart (limiter may still report no live capacity).
+func PostGatewayChatCompletionEventually(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest, timeout time.Duration) ChatCompletionResponse {
+	t.Helper()
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
+	deadline := time.Now().Add(timeout)
+	var last error
+	for time.Now().Before(deadline) {
+		resp, err := TryPostGatewayChatCompletion(client, gatewayURL, adminAPIKey, req)
+		if err == nil {
+			return resp
+		}
+		last = err
+		msg := err.Error()
+		if !strings.Contains(msg, "no live host capacity") && !strings.Contains(msg, "503") {
+			require.NoError(t, err)
+		}
+		t.Logf("citest: waiting for live host capacity: %v", err)
+		time.Sleep(2 * time.Second)
+	}
+	require.NoError(t, last, "gateway chat did not recover after %s", timeout)
+	return ChatCompletionResponse{}
+}
+
 // PostGatewayChatCompletionStream posts stream=true and collects SSE until [DONE].
 func PostGatewayChatCompletionStream(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) (content string, sawDone bool) {
 	t.Helper()
@@ -327,6 +353,11 @@ func WaitGatewayChatReady(t *testing.T, client *http.Client, gatewayURL string, 
 			maybeLogWaitAttempt(t, "gateway chat runtime", attempts, lastDetail)
 			return false
 		}
+		if !gatewayStatusHeightSeedReady(status) {
+			lastDetail = fmt.Sprintf("height seed not ready in status: %v", status)
+			maybeLogWaitAttempt(t, "gateway height seed", attempts, lastDetail)
+			return false
+		}
 		return true
 	})
 	if !ok {
@@ -375,4 +406,44 @@ func gatewayStatusHasRuntime(status map[string]any) bool {
 		return true
 	}
 	return false
+}
+
+func gatewayStatusHeightSeedReady(status map[string]any) bool {
+	if status == nil {
+		return true
+	}
+	if !heightSeedValueReady(status["height_seed"]) {
+		return false
+	}
+	devshards, ok := status["devshards"].([]any)
+	if !ok {
+		return true
+	}
+	for _, raw := range devshards {
+		item, _ := raw.(map[string]any)
+		if item == nil {
+			continue
+		}
+		if !heightSeedValueReady(item["height_seed"]) {
+			return false
+		}
+	}
+	return true
+}
+
+func heightSeedValueReady(v any) bool {
+	if v == nil {
+		return true
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return true
+	}
+	state, _ := m["state"].(string)
+	switch state {
+	case "", "ok":
+		return true
+	default:
+		return false
+	}
 }

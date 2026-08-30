@@ -23,3 +23,19 @@ func TestGatewayStatusHasRuntime(t *testing.T) {
 	require.True(t, gatewayStatusHasRuntime(map[string]any{"runtimes": float64(1)}))
 	require.True(t, gatewayStatusHasRuntime(map[string]any{"devshards": []any{map[string]any{"id": "1"}}}))
 }
+
+func TestGatewayStatusHeightSeedReady(t *testing.T) {
+	require.True(t, gatewayStatusHeightSeedReady(nil))
+	require.True(t, gatewayStatusHeightSeedReady(map[string]any{}))
+	require.True(t, gatewayStatusHeightSeedReady(map[string]any{"height_seed": map[string]any{"state": "ok"}}))
+	require.False(t, gatewayStatusHeightSeedReady(map[string]any{"height_seed": map[string]any{"state": "pending"}}))
+	require.False(t, gatewayStatusHeightSeedReady(map[string]any{"height_seed": map[string]any{"state": "catalog_pending"}}))
+	require.False(t, gatewayStatusHeightSeedReady(map[string]any{"height_seed": map[string]any{"state": "missed"}}))
+	require.False(t, gatewayStatusHeightSeedReady(map[string]any{
+		"height_seed": map[string]any{"state": "ok"},
+		"devshards":   []any{map[string]any{"height_seed": map[string]any{"state": "pending"}}},
+	}))
+	require.True(t, gatewayStatusHeightSeedReady(map[string]any{
+		"devshards": []any{map[string]any{"height_seed": map[string]any{"state": "ok"}}},
+	}))
+}

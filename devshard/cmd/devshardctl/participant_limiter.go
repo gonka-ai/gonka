@@ -541,6 +541,9 @@ func (l *ParticipantRequestLimiter) ObserveResultWithBodyForModel(participantKey
 	if participantKey == "" || statusCode <= 0 {
 		return
 	}
+	if transport.IsHeightSyncSeedPath(path) {
+		return
+	}
 	if l.metrics != nil && statusCode >= http.StatusBadRequest {
 		l.metrics.RecordParticipantTransportError(participantKey, normalizeModelID(modelID), participantPathKind(path), statusCode)
 	}

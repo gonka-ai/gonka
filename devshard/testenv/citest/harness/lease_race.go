@@ -331,7 +331,8 @@ func PauseMockOpenAI(t *testing.T, client *http.Client, mockOpenAIURL string) {
 	PatchMockOpenAIFault(t, client, mockOpenAIURL, mockopenai.FaultPatch{HTTPStatus: &status})
 }
 
-// SlowMockOpenAI stretches Validate so leases stay pending longer.
+// SlowMockOpenAI stretches Validate (non-stream JSON) so leases stay pending.
+// Streaming inference is not delayed: the gateway first-token floor is 1s.
 func SlowMockOpenAI(t *testing.T, client *http.Client, mockOpenAIURL string, latencyMs int) {
 	t.Helper()
 	PatchMockOpenAIFault(t, client, mockOpenAIURL, mockopenai.FaultPatch{LatencyMs: &latencyMs})

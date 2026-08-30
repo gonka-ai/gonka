@@ -2345,20 +2345,20 @@ func TestParticipantRequestLimiterSkipsUndeclaredVersionHeader503(t *testing.T) 
 	require.Equal(t, 0, limiter.ExhaustedCount())
 }
 
-func TestParticipantRequestLimiterDoesNotSkipHostSpoofedUndeclaredHeaderOnSeed(t *testing.T) {
+func TestParticipantRequestLimiterDoesNotObserveHostSpoofedUndeclaredHeaderOnSeed(t *testing.T) {
 	limiter := NewParticipantRequestLimiter(2, 10)
 	limiter.ObserveResultWithBodyForModel("shared-host", "", "/sessions/1/height-sync",
 		http.StatusServiceUnavailable, "busy", transport.DevshardErrorUndeclaredVersion, "")
-	require.True(t, limiter.IsBlocked("shared-host"),
-		"X-Devshard-Error on seed must not skip quarantine; only X-Devshard-Router-Error does")
+	require.False(t, limiter.IsBlocked("shared-host"),
+		"seed path must never feed the limiter, including host-spoofed X-Devshard-Error")
 }
 
-func TestParticipantRequestLimiterDoesNotSkipCatalogBodyOnSeed(t *testing.T) {
+func TestParticipantRequestLimiterDoesNotObserveCatalogBodyOnSeed(t *testing.T) {
 	limiter := NewParticipantRequestLimiter(2, 10)
 	limiter.ObserveResultWithBody("shared-host", "/sessions/1/height-sync", http.StatusServiceUnavailable,
 		"version v2 is not present in the governance routing catalog")
-	require.True(t, limiter.IsBlocked("shared-host"),
-		"catalog body phrase on seed is host-spoofable and must not skip quarantine")
+	require.False(t, limiter.IsBlocked("shared-host"),
+		"seed path must never feed the limiter")
 }
 
 func TestParticipantRequestLimiterDoesNotSkipRouterHeaderOnChat(t *testing.T) {

@@ -27,6 +27,10 @@ type HTTPSessionConfig struct {
 	StreamCallback   func(nonce uint64, line string) // optional: receives raw SSE data lines during inference
 	RoutePrefix      string                          // HTTP path prefix used to reach hosts; default devshard.DefaultRoutePrefix()
 	RequestAdmission transport.RequestAdmissionController
+	// RequireHeightSeed fails closed on chat/warmup until half the roster
+	// returns a host-signed Anchor. Default false in this library; the
+	// gateway sets it from DEVSHARD_REQUIRE_HEIGHT_SEED (default true).
+	RequireHeightSeed bool
 	// ExtraClientConfig is merged into each transport.HTTPClient when non-nil.
 	// Used to attach courier-mode HeightSync (peer-tip cache; no local follower).
 	ExtraClientConfig *transport.ClientConfig
@@ -231,6 +235,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		}
 		enableWarmKeyResolver()
 		session.SetParticipantKeys(participantKeys)
+		session.SetRequireHeightSeed(cfg.RequireHeightSeed)
 		if cfg.ExtraClientConfig != nil && cfg.ExtraClientConfig.HeightSync != nil {
 			hs := cfg.ExtraClientConfig.HeightSync
 			session.SetHeightSyncCadence(hs.K(), hs.SlotsNum())
@@ -289,6 +294,9 @@ func httpSessionSMOpts(cfg HTTPSessionConfig, extra ...state.SMOption) []state.S
 func httpSessionOpts(cfg HTTPSessionConfig, extra ...SessionOption) []SessionOption {
 	if cfg.Heartbeat != nil {
 		extra = append(extra, WithHeartbeatConfig(*cfg.Heartbeat))
+	}
+	if cfg.RequireHeightSeed {
+		extra = append(extra, WithRequireHeightSeed(true))
 	}
 	return extra
 }
