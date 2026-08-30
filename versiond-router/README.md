@@ -386,6 +386,9 @@ Do not stop or recreate slot projects with raw `docker compose` commands.
 fresh-health boundary, and long SSE drain budget. Before taking the main Compose
 project down, run `stop-all --maintenance`; after the main project is down, use
 `down --maintenance` to remove the slot projects and fleet-owned networks.
+`status`, `verify-admission`, and `wait-version` are read-only and remain
+available while a mutating fleet or host-update operation holds the deployment
+lock.
 
 ## Configuration
 

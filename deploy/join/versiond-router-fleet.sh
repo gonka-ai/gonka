@@ -1556,8 +1556,6 @@ fleet_maintenance_rollout() {
     done
 }
 
-gonka_acquire_deployment_lock "$config_dir" || exit 1
-
 # The deployment transaction fingerprint does not inspect live route health or
 # catalog state. It is computable before any slot exists once the main topology
 # has supplied the metrics-network identity.
@@ -1566,6 +1564,15 @@ if [[ $command == spec-hash ]]; then
     fleet_spec_hash
     exit 0
 fi
+
+# Observability and acceptance gates never mutate fleet or parent state. Let
+# them run while a deployment owns the exclusive lock so an operator can watch
+# convergence. Every command that changes containers, networks, or Runtime API
+# state remains serialized.
+case $command in
+    status | verify-admission | wait-version) ;;
+    *) gonka_acquire_deployment_lock "$config_dir" || exit 1 ;;
+esac
 
 # Runtime-discovered versions are part of the safety reserve even though they
 # are intentionally absent from the host-managed bootstrap environment.

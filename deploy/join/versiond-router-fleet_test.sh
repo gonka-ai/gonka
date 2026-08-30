@@ -342,8 +342,9 @@ for slot in "${slots[@]}"; do
 done
 image=$updated_image
 
-# The default lock is tied to the deployment config, not to a caller's
-# per-user XDG runtime directory. A second user context must see the same lock.
+# Read-only diagnostics remain available while a deployment owns the lock.
+# Mutations still use the deployment-scoped lock regardless of a caller's
+# per-user XDG runtime directory.
 lock_file=$tmpdir/.gonka-deployment.lock
 lock_ready=$tmpdir/lock-ready
 lock_release=$tmpdir/lock-release
@@ -357,7 +358,13 @@ mkfifo "$lock_release"
 ) &
 lock_pid=$!
 while [[ ! -f $lock_ready ]]; do sleep 0.05; done
-if XDG_RUNTIME_DIR="$tmpdir/another-user" "${fleet[@]}" status \
+XDG_RUNTIME_DIR="$tmpdir/another-user" "${fleet[@]}" status \
+    >"$tmpdir/status-during-lock.out" 2>&1 || {
+    printf 'release\n' >"$lock_release"
+    wait "$lock_pid"
+    fail "read-only fleet status was blocked by an active deployment"
+}
+if XDG_RUNTIME_DIR="$tmpdir/another-user" "${fleet[@]}" prepare-networks \
     >"$tmpdir/lock.out" 2>&1; then
     printf 'release\n' >"$lock_release"
     wait "$lock_pid"
@@ -375,7 +382,7 @@ grep -q 'another deployment operation holds' "$tmpdir/lock.out" || fail \
     flock -n 9
     export GONKA_DEPLOYMENT_LOCK=$lock_file
     export GONKA_DEPLOYMENT_LOCK_HELD=$lock_file
-    "${fleet[@]}" status >/dev/null
+    "${fleet[@]}" prepare-networks >/dev/null
 ) || fail "an inherited deployment lock was not re-entrant"
 
 # Legacy pinning changes the escrow placement function. A mixed rolling fleet
