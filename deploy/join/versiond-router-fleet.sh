@@ -365,10 +365,11 @@ parent_diagnostic_available() {
 }
 
 parent_server_refs() {
-    local address=$1 parent=${PROXY_ROUTER_CONTAINER:-proxy} stats
+    local address=$1 status_pattern=${2:-'^(UP|DRAIN)'}
+    local parent=${PROXY_ROUTER_CONTAINER:-proxy} stats
     stats=$("$docker_bin" exec "$parent" /bin/sh -ec \
         "printf 'show stat\\n' | socat stdio /var/run/haproxy/haproxy.sock") || return 2
-    awk -F, -v address="$address" '
+    awk -F, -v address="$address" -v status_pattern="$status_pattern" '
         NR == 1 {
             for (i = 1; i <= NF; i++) {
                 name = $i
@@ -386,7 +387,7 @@ parent_server_refs() {
                     backend ~ /^versiond_routers_/) &&
                 (server_address == address ||
                     index(server_address, address ":") == 1) &&
-                $(column["status"]) ~ /^(UP|DRAIN)/) {
+                $(column["status"]) ~ status_pattern) {
                 print backend "/" $(column["svname"])
                 found = 1
             }
@@ -396,6 +397,26 @@ parent_server_refs() {
             exit found ? 0 : 1
         }
     ' <<<"$stats"
+}
+
+repair_stale_parent_drain() {
+    local slot=$1 address refs_output status ref
+    local -a refs=()
+
+    parent_proxy_active || return 0
+    address=$(slot_front_ip "$slot") || return 1
+    if refs_output=$(parent_server_refs "$address" '^DRAIN'); then
+        mapfile -t refs <<<"$refs_output"
+    else
+        status=$?
+        ((status == 1)) && return 0
+        return 1
+    fi
+    warn "repairing stale parent DRAIN state for slot $slot; fresh L7 admission is required"
+    for ref in "${refs[@]}"; do
+        parent_runtime_command "set server $ref health down" || return 1
+        parent_runtime_command "set server $ref state ready" || return 1
+    done
 }
 
 parent_address_withdrawal_state() {
@@ -543,6 +564,7 @@ wait_parent_admission() {
     local slot=$1 deadline route address state missing
     parent_proxy_active || return 0
     require_parent_diagnostic
+    repair_stale_parent_drain "$slot" || return 1
     address=$(slot_front_ip "$slot") || return 1
     deadline=$((SECONDS + wait_timeout))
     while ((SECONDS < deadline)); do

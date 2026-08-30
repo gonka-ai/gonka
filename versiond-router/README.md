@@ -354,6 +354,13 @@ maintenance uses `stop-all --maintenance`, then `down --maintenance` after the
 main Compose project is down. Fleet resources are ownership-labelled, so
 cleanup does not cross into another fleet.
 
+If a host crash interrupts an operation after the parent entered runtime
+`DRAIN`, `status` reports incomplete parent admission. The next `up`, `apply`,
+`rollout`, or `start` repairs `DRAIN` entries that still point at a live fleet
+slot: it resets their health to `DOWN`, returns them to `READY`, and waits for a
+fresh L7 rise. This avoids restarting the public proxy and never admits the
+replacement from inherited health state.
+
 Fleet slots preserve `X-Real-IP` and `X-Forwarded-Proto` from the policy tier.
 Their data listener is reachable only through the fleet-owned front network;
 the public/policy proxy is responsible for deriving those headers from the
