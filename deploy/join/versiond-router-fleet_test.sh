@@ -470,6 +470,52 @@ VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true \
 "${fleet[@]}" verify-admission v4 >/dev/null || fail \
     "maintenance rollout committed before parent admission converged"
 
+# A killed fleet operation can leave runtime-only DRAIN state in the parent.
+# The next converging start repairs only those stale entries and requires a
+# fresh active-check rise before reporting admission.
+selected_slot=${slots[0]}
+selected_slot_id=$(docker ps -q \
+    --filter label=ai.gonka.component=versiond-router \
+    --filter "label=ai.gonka.fleet=$fleet_id" \
+    --filter "label=ai.gonka.slot=$selected_slot")
+selected_slot_ip=$(docker inspect --format \
+    "{{with index .NetworkSettings.Networks \"$front\"}}{{.IPAddress}}{{end}}" \
+    "$selected_slot_id")
+parent_stats=$(docker exec "gonka-router-fleet-proxy-$suffix" /bin/sh -ec \
+    "printf 'show stat\\n' | socat stdio /var/run/haproxy/haproxy.sock")
+mapfile -t stale_refs < <(awk -F, -v address="$selected_slot_ip" '
+    NR == 1 {
+        for (i = 1; i <= NF; i++) {
+            name = $i
+            sub(/^#[[:space:]]*/, "", name)
+            column[name] = i
+        }
+        next
+    }
+    ($(column["pxname"]) == "versiond_router_coarse" ||
+            $(column["pxname"]) ~ /^versiond_routers_/) &&
+        ($(column["addr"]) == address ||
+            index($(column["addr"]), address ":") == 1) &&
+        $(column["status"]) ~ /^UP/ {
+        print $(column["pxname"]) "/" $(column["svname"])
+    }
+' <<<"$parent_stats")
+((${#stale_refs[@]} > 0)) || fail "test parent exposes no refs for slot $selected_slot"
+for ref in "${stale_refs[@]}"; do
+    docker exec "gonka-router-fleet-proxy-$suffix" /bin/sh -ec \
+        "printf '%s\\n' 'set server $ref state drain' | socat stdio /var/run/haproxy/reconciler.sock" \
+        >/dev/null
+done
+if "${fleet[@]}" status >"$tmpdir/stale-drain-status.out" 2>&1; then
+    fail "fleet status accepted stale parent DRAIN state"
+fi
+VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true \
+    "${fleet[@]}" start "$selected_slot" >"$tmpdir/stale-drain-repair.out" 2>&1
+grep -q 'repairing stale parent DRAIN state' "$tmpdir/stale-drain-repair.out" || fail \
+    "fleet start did not report stale parent DRAIN recovery"
+"${fleet[@]}" verify-admission v4 >/dev/null || fail \
+    "stale parent DRAIN state was not repaired"
+
 for slot in "${slots[@]}"; do
     id=$(docker ps -q \
         --filter label=ai.gonka.component=versiond-router \
@@ -587,6 +633,7 @@ for slot in "${slots[@]}"; do
         --filter "label=ai.gonka.slot=$slot")
 done
 printf 'VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true\n' >>"$tmpdir/config.env"
+printf 'VERSIOND_ROUTING_CATALOG_POLL_SECONDS=7\n' >>"$tmpdir/config.env"
 "${fleet[@]}" apply >/dev/null
 for slot in "${slots[@]}"; do
     current_id=$(docker ps -q \
