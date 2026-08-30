@@ -564,10 +564,13 @@ wait_parent_admission() {
     local slot=$1 deadline route address state missing
     parent_proxy_active || return 0
     require_parent_diagnostic
-    repair_stale_parent_drain "$slot" || return 1
     address=$(slot_front_ip "$slot") || return 1
     deadline=$((SECONDS + wait_timeout))
     while ((SECONDS < deadline)); do
+        # DNS may assign the replacement address to a drained server-template
+        # slot after this wait has already started. Repair on every pass so the
+        # same operation converges without requiring an operator retry.
+        repair_stale_parent_drain "$slot" || return 1
         missing=
         for route in --coarse "${!expected_routes[@]}"; do
             if [[ $route != --coarse ]] && ! slot_route_ready "$slot" "$route"; then
