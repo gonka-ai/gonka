@@ -346,6 +346,8 @@ image=$updated_image
 # Mutations still use the deployment-scoped lock regardless of a caller's
 # per-user XDG runtime directory.
 lock_file=$tmpdir/.gonka-deployment.lock
+[[ $(stat -c '%a' "$lock_file") == 600 ]] || fail \
+    "deployment lock is writable by another local user"
 lock_ready=$tmpdir/lock-ready
 lock_release=$tmpdir/lock-release
 chmod 0444 "$lock_file"
