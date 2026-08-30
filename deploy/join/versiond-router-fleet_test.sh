@@ -203,6 +203,15 @@ docker run -d --name "gonka-router-fleet-backend-$suffix" \
 bootstrap_status=$("${fleet[@]}" status)
 grep -q '^PARENT_ADMISSION not-applicable ' <<<"$bootstrap_status" || fail \
     "fleet status did not distinguish pre-cutover local health from parent admission"
+for slot in "${slots[@]}"; do
+    id=$(docker ps -q \
+        --filter label=ai.gonka.component=versiond-router \
+        --filter "label=ai.gonka.fleet=$fleet_id" \
+        --filter "label=ai.gonka.slot=$slot")
+    docker inspect --format '{{range .Config.Env}}{{println .}}{{end}}' "$id" | \
+        grep -qx 'VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS=true' || fail \
+        "slot $slot does not preserve identity from the isolated proxy tier"
+done
 
 # `apply` is also the recovery path. It restores absent and non-ready capacity
 # before considering any healthy slot for replacement.
