@@ -974,8 +974,12 @@ grep -q '^docker rm -f proxy$' "$tmpdir/missing-proxy-failure.log" || fail \
 grep -q 'gonka-rollback-model\..* up .*proxy$' \
 	"$tmpdir/day2-failure.log" || fail \
     "day-2 rollback did not restore its immutable Compose model"
-grep -q '^fleet verify-admission$' "$tmpdir/day2-failure.log" || fail \
-    "day-2 rollback did not verify parent admission"
+if grep -q '^fleet verify-admission$' "$tmpdir/day2-failure.log"; then
+	fail "day-2 ingress rollback depended on downstream fleet admission"
+fi
+jq -e '.transaction.ingress.state == "rolled_back"' \
+	"$tmpdir/.gonka-router-ha-transaction.json" >/dev/null || fail \
+	"day-2 ingress rollback retained an active journal"
 
 if run_cutover "$tmpdir/wrong-network.log" env WRONG_NETWORK_OWNERSHIP=true; then
     fail "cutover accepted an existing network owned by another Compose model"

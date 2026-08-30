@@ -29,7 +29,6 @@ declare -a compose=()
 policy_services=(proxy-policy2 proxy-policy)
 policy_contract_version=1
 catalog_cache_protocol_version=2
-recovery_context_only=false
 recovery_model_file=
 
 fail() {
@@ -228,7 +227,6 @@ initialize_recovery_context() {
 	chmod 600 "$recovery_model_file"
 	compose=("$docker_bin" compose --project-name "$GONKA_COMPOSE_PROJECT" \
 		--project-directory "$GONKA_COMPOSE_PROJECT_DIRECTORY" -f "$recovery_model_file")
-	recovery_context_only=true
 }
 
 current_outer_compose_sha() {
@@ -679,15 +677,11 @@ restore_public_proxy() {
 	rollback_compose '.transaction.ingress.rollback_models.proxy' \
 		up -d --no-deps --force-recreate --wait \
 		--wait-timeout "$cutover_timeout" proxy || return 1
-	if [[ $kind == current ]]; then
-		if [[ $versiond_mode == ha ]]; then
-			if $recovery_context_only; then
-				wait_component versiond || return 1
-			else
-				run_fleet verify-admission || return 1
-			fi
-		fi
-	fi
+	# The rollback boundary is the public ingress generation. Downstream
+	# versiond/PostgreSQL availability is reported separately and must not retain
+	# an ingress journal after the recorded proxy is healthy again.
+	[[ $kind == current ]] || return 0
+	container_generation_available proxy
 }
 
 cleanup_ingress_rollback_images() {
@@ -1057,18 +1051,6 @@ roll_policy_slots() {
 				"$service is healthy but was not admitted by the public proxy"
 		fi
 	done
-}
-
-wait_component() {
-    local component=$1 deadline=$((SECONDS + cutover_timeout))
-    while ((SECONDS < deadline)); do
-        if "$docker_bin" exec proxy /bin/busybox wget -q -T 3 -O /dev/null \
-            "http://127.0.0.1:8404/readyz?component=$component"; then
-            return 0
-        fi
-        sleep 1
-    done
-    return 1
 }
 
 run_fleet() {
