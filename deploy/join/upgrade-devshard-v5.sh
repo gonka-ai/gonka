@@ -1310,22 +1310,19 @@ handle_signal() {
     local signal=$1
     local status=$2
     local interrupted_pid
-    local watchdog_pid
 
     trap - HUP INT TERM
     warn "received $signal; aborting the active upgrade step"
     if [[ -n $foreground_pid ]]; then
         interrupted_pid=$foreground_pid
         kill -TERM "$interrupted_pid" 2>/dev/null || true
-        (
-            exec 9<&-
-            sleep 5
-            kill -KILL "$interrupted_pid" 2>/dev/null || true
-        ) &
-        watchdog_pid=$!
+        # The child owns compensation for the operation it is executing. Let it
+        # finish that rollback after the first signal; a second operator signal
+        # is the explicit force-stop request.
+        trap 'warn "received a second signal; force-stopping the active upgrade step"; kill -KILL "$interrupted_pid" 2>/dev/null || true' \
+            HUP INT TERM
         wait "$interrupted_pid" 2>/dev/null || true
-        kill -KILL "$watchdog_pid" 2>/dev/null || true
-        wait "$watchdog_pid" 2>/dev/null || true
+        trap - HUP INT TERM
         foreground_pid=
     fi
     exit "$status"
