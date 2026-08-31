@@ -329,7 +329,22 @@ if [[ ${1:-} == exec && ${2:-} == versiond-router && \
     ${5:-} == /usr/local/lib/router-runtime/catalog-status ]]; then
     # The migration singleton represents the pre-catalog image. The cutover
     # must retain its mixed-image fallback until that reversible path is gone.
+    [[ ${MIGRATION_CATALOG_DIAGNOSTIC:-false} == true ]] && exit 0
     exit 1
+fi
+
+if [[ ${1:-} == exec && ${2:-} == versiond-router && \
+    ${3:-} == /usr/local/lib/router-runtime/catalog-status ]]; then
+    if [[ ${MIGRATION_CATALOG_HANG:-false} == true ]]; then
+        sleep 300
+    fi
+    [[ ${MIGRATION_CATALOG_FAIL_MAP:-} != "${4:-}" ]] || exit 1
+    case ${4:-} in
+        /etc/haproxy/non_ha.map) printf 'v1\n' ;;
+        /etc/haproxy/versions.map) printf 'v4\n' ;;
+        *) exit 1 ;;
+    esac
+    exit 0
 fi
 
 if [[ $1 == exec && ($2 == versiond || $2 == versiond2) ]]; then
@@ -735,6 +750,26 @@ if INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
 fi
 ((SECONDS - runtime_timeout_started < 60)) || fail \
 	"hung HAProxy Runtime API call exceeded its external timeout"
+
+migration_runtime_timeout_started=$SECONDS
+if run_cutover "$tmpdir/migration-runtime-timeout.log" env \
+    ROUTER_HA_RUNTIME_TIMEOUT_SECONDS=1 \
+    MIGRATION_CATALOG_DIAGNOSTIC=true MIGRATION_CATALOG_HANG=true; then
+    fail "a hung migration-router catalog diagnostic was accepted"
+fi
+((SECONDS - migration_runtime_timeout_started < 60)) || fail \
+    "hung migration-router catalog diagnostic exceeded its external timeout"
+
+if run_cutover "$tmpdir/partial-migration-catalog.log" env \
+    ROUTER_HA_RUNTIME_TIMEOUT_SECONDS=1 \
+    MIGRATION_CATALOG_DIAGNOSTIC=true \
+    MIGRATION_CATALOG_FAIL_MAP=/etc/haproxy/versions.map; then
+    fail "a partial migration-router catalog was accepted"
+fi
+if grep -q 'docker rm -f versiond-router' \
+    "$tmpdir/partial-migration-catalog.log"; then
+    fail "partial migration-router catalog crossed the cutover commit point"
+fi
 
 if INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
     INITIAL_PROXY_COMPONENT=proxy-router \

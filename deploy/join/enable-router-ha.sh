@@ -134,7 +134,7 @@ initialize_base_tools() {
 	source "$script_dir/deployment-lock.sh"
 }
 
-runtime_exec() {
+bounded_container_exec() {
 	timeout --kill-after=1s "${runtime_timeout}s" "$docker_bin" exec "$@"
 }
 
@@ -820,7 +820,7 @@ verify_policy_contract() {
 
 policy_address_admission_state() {
 	local backend=$1 address=$2 stats
-	stats=$(runtime_exec proxy /bin/sh -ec \
+	stats=$(bounded_container_exec proxy /bin/sh -ec \
 		"printf 'show stat\\n' | socat stdio /var/run/haproxy/haproxy.sock") || return 2
 	awk -F, -v backend="$backend" -v address="$address" '
 		NR == 1 {
@@ -874,7 +874,7 @@ policy_address_withdrawn() {
 
 policy_server_ref() {
 	local backend=$1 address=$2 stats
-	stats=$(runtime_exec proxy /bin/sh -ec \
+	stats=$(bounded_container_exec proxy /bin/sh -ec \
 		"printf 'show stat\\n' | socat stdio /var/run/haproxy/haproxy.sock") || return 2
 	awk -F, -v backend="$backend" -v address="$address" '
 		NR == 1 {
@@ -903,7 +903,7 @@ policy_server_ref() {
 policy_runtime_command() {
 	local command=$1 response
 	[[ $command != *"'"* ]] || return 1
-	response=$(runtime_exec proxy /bin/sh -ec \
+	response=$(bounded_container_exec proxy /bin/sh -ec \
 		"printf '%s\\n' '$command' | socat stdio /var/run/haproxy/reconciler.sock") || return 1
 	[[ -z ${response//[[:space:]]/} ]]
 }
@@ -1110,7 +1110,7 @@ capture_migration_route_baseline() {
         [[ -n $route && -z ${seen[$route]-} ]] || continue
         seen[$route]=1
         encoded=$(urlencode "$route")
-        if "$docker_bin" exec versiond-router /bin/busybox wget -q -T 3 \
+        if bounded_container_exec versiond-router /bin/busybox wget -q -T 3 \
             -O /dev/null "http://127.0.0.1:8404/readyz?version=$encoded" \
             >/dev/null 2>&1; then
             migration_routes+=("$route")
@@ -1122,14 +1122,21 @@ capture_migration_route_baseline() {
 }
 
 migration_router_routes() {
-    local diagnostic=/usr/local/lib/router-runtime/catalog-status map
-    if "$docker_bin" exec versiond-router test -x "$diagnostic" \
+    local diagnostic=/usr/local/lib/router-runtime/catalog-status
+    local map output routes='' status
+    if bounded_container_exec versiond-router test -x "$diagnostic" \
         >/dev/null 2>&1; then
         for map in /etc/haproxy/non_ha.map /etc/haproxy/versions.map; do
-            "$docker_bin" exec versiond-router "$diagnostic" "$map"
+            output=$(bounded_container_exec versiond-router \
+                "$diagnostic" "$map") || return 1
+            [[ -z $output ]] || routes+="$output"$'\n'
         done
+        printf '%s' "$routes"
         return
+    else
+        status=$?
     fi
+    ((status == 1)) || return 1
 
     # Transitional images from before runtime catalog projection expose only
     # their startup environment.

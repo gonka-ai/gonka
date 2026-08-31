@@ -281,14 +281,16 @@ slot_route_ready() {
 }
 
 slot_catalog_routes() {
-    local id map status
+    local id map status output routes=
     id=$(slot_id "$1") || return 1
     if bounded_container_exec "$id" test -x \
         /usr/local/lib/router-runtime/catalog-status >/dev/null 2>&1; then
         for map in /etc/haproxy/non_ha.map /etc/haproxy/versions.map; do
-            bounded_container_exec "$id" \
-                /usr/local/lib/router-runtime/catalog-status "$map"
+            output=$(bounded_container_exec "$id" \
+                /usr/local/lib/router-runtime/catalog-status "$map") || return 1
+            [[ -z $output ]] || routes+="$output"$'\n'
         done
+        printf '%s' "$routes"
         return
     else
         status=$?
