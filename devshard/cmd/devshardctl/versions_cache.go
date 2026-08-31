@@ -104,7 +104,7 @@ func (c *VersionsCache) fetchOne(ctx context.Context, base string) map[string]bo
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		io.Copy(io.Discard, resp.Body)
+		io.Copy(io.Discard, io.LimitReader(resp.Body, maxVersionsResponseBytes))
 		return nil
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, maxVersionsResponseBytes+1))

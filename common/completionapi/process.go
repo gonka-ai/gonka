@@ -2,10 +2,13 @@ package completionapi
 
 import (
 	"bufio"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 )
+
+const maxJSONResponseBytes = 50 << 20
 
 // ProcessHTTPResponse reads an HTTP response body, detects SSE vs JSON from Content-Type,
 // and feeds the data through the given ResponseProcessor.
@@ -34,9 +37,12 @@ func processSSE(body io.Reader, processor ResponseProcessor) error {
 }
 
 func processJSON(body io.Reader, processor ResponseProcessor) error {
-	data, err := io.ReadAll(body)
+	data, err := io.ReadAll(io.LimitReader(body, maxJSONResponseBytes+1))
 	if err != nil {
 		return err
+	}
+	if len(data) > maxJSONResponseBytes {
+		return fmt.Errorf("response exceeds %d byte limit", maxJSONResponseBytes)
 	}
 	_, err = processor.ProcessJsonResponse(data)
 	return err

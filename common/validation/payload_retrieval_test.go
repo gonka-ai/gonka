@@ -1,7 +1,10 @@
 package validation
 
 import (
+	"bytes"
+	"compress/gzip"
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -153,4 +156,89 @@ func TestFetchPayloadsHTTP_NotFoundReturnsErrPayloadGone(t *testing.T) {
 	)
 	require.Error(t, err)
 	assert.ErrorIs(t, err, ErrPayloadGone)
+}
+
+func TestFetchPayloadsHTTP_OversizedResponseRejected(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.Header().Set("Content-Type", "application/json")
+		gz := gzip.NewWriter(w)
+		defer gz.Close()
+		gz.Write([]byte(`{"inference_id":"inf-1","executor_signature":"`))
+		chunk := bytes.Repeat([]byte("a"), 64<<10)
+		for written := 0; written <= maxPayloadResponseBytes; written += len(chunk) {
+			if _, err := gz.Write(chunk); err != nil {
+				return
+			}
+		}
+		gz.Write([]byte(`"}`))
+	}))
+	t.Cleanup(server.Close)
+
+	_, err := FetchPayloadsHTTP(
+		context.Background(),
+		server.Client(),
+		server.URL+"?inference_id=inf-1",
+		"gonka1validator",
+		1,
+		4,
+		"sig",
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "byte limit")
+}
+
+func TestFetchPayloadsHTTP_OversizedErrorBodyTruncated(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Encoding", "gzip")
+		w.WriteHeader(http.StatusInternalServerError)
+		gz := gzip.NewWriter(w)
+		defer gz.Close()
+		chunk := bytes.Repeat([]byte("b"), 64<<10)
+		for written := 0; written <= 8*maxPayloadErrorBytes; written += len(chunk) {
+			if _, err := gz.Write(chunk); err != nil {
+				return
+			}
+		}
+	}))
+	t.Cleanup(server.Close)
+
+	_, err := FetchPayloadsHTTP(
+		context.Background(),
+		server.Client(),
+		server.URL+"?inference_id=inf-1",
+		"gonka1validator",
+		1,
+		4,
+		"sig",
+	)
+	require.Error(t, err)
+	assert.Less(t, len(err.Error()), maxPayloadErrorBytes+1024)
+}
+
+func TestFetchPayloadsHTTP_ValidResponseDecodes(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(PayloadResponse{
+			InferenceId:       "inf-1",
+			PromptPayload:     []byte(`{"model":"test"}`),
+			ResponsePayload:   []byte(`{"choices":[]}`),
+			ExecutorSignature: "sig",
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	resp, err := FetchPayloadsHTTP(
+		context.Background(),
+		server.Client(),
+		server.URL+"?inference_id=inf-1",
+		"gonka1validator",
+		1,
+		4,
+		"sig",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "inf-1", resp.InferenceId)
+	assert.Equal(t, []byte(`{"model":"test"}`), resp.PromptPayload)
+	assert.Equal(t, "sig", resp.ExecutorSignature)
 }
