@@ -18,7 +18,7 @@ write_config() {
     local first_pool=${RENDERED_POOL_ONE:-4}
     local second_pool=${RENDERED_POOL_TWO:-$first_pool}
     cat >"$tmpdir/config.json" <<EOF
-{"name":"preflight-test","services":{"versiond":{"environment":{"DEVSHARD_STORAGE_MODE":"postgres","PGHOST":"$first_host","PGPORT":"5432","PGDATABASE":"devshardd","PGUSER":"user","PG_POOL_MAX_CONNS":"$first_pool"$first_extra}},"versiond2":{"environment":{"DEVSHARD_STORAGE_MODE":"postgres","PGHOST":"$second_host","PGPORT":"5432","PGDATABASE":"devshardd","PGUSER":"user","PG_POOL_MAX_CONNS":"$second_pool"$second_extra}}}}
+{"name":"preflight-test","services":{"versiond":{"environment":{"DEVSHARD_STORAGE_MODE":"postgres","PGHOST":"$first_host","PGPORT":"5432","PGDATABASE":"devshardd","PGUSER":"user","PGPASSWORD":"${RENDERED_PASSWORD_ONE:-secret}","PG_POOL_MAX_CONNS":"$first_pool"$first_extra}},"versiond2":{"environment":{"DEVSHARD_STORAGE_MODE":"postgres","PGHOST":"$second_host","PGPORT":"5432","PGDATABASE":"devshardd","PGUSER":"user","PGPASSWORD":"${RENDERED_PASSWORD_TWO:-${RENDERED_PASSWORD_ONE:-secret}}","PG_POOL_MAX_CONNS":"$second_pool"$second_extra}}}}
 EOF
 }
 
@@ -46,12 +46,16 @@ elif [[ $1 == inspect ]]; then
     [[ $container != container-2 ]] || runtime_host=$RUNTIME_HOST_TWO
     runtime_pool=$RUNTIME_POOL_ONE
     [[ $container != container-2 ]] || runtime_pool=$RUNTIME_POOL_TWO
+    runtime_password=$RUNTIME_PASSWORD_ONE
+    [[ $container != container-2 ]] || runtime_password=$RUNTIME_PASSWORD_TWO
     jq -cn \
         --arg host "$runtime_host" \
         --arg pool "$runtime_pool" \
+        --arg password "$runtime_password" \
         --arg extra "${RUNTIME_EXTRA:-}" '
         ["DEVSHARD_STORAGE_MODE=postgres", "PGHOST=" + $host, "PGPORT=5432",
-         "PGDATABASE=devshardd", "PGUSER=user", "PG_POOL_MAX_CONNS=" + $pool]
+         "PGDATABASE=devshardd", "PGUSER=user", "PGPASSWORD=" + $password,
+         "PG_POOL_MAX_CONNS=" + $pool]
         + (if $extra == "" then [] else [$extra] end)'
 elif [[ $1 == exec ]]; then
     container=$2
@@ -168,6 +172,8 @@ run_preflight() {
         RUNTIME_HOST_TWO="${RUNTIME_HOST_TWO:-pg}" \
         RUNTIME_POOL_ONE="${RUNTIME_POOL_ONE:-4}" \
         RUNTIME_POOL_TWO="${RUNTIME_POOL_TWO:-4}" \
+        RUNTIME_PASSWORD_ONE="${RUNTIME_PASSWORD_ONE:-secret}" \
+        RUNTIME_PASSWORD_TWO="${RUNTIME_PASSWORD_TWO:-secret}" \
         PROOF_POOL_ONE="${PROOF_POOL_ONE:-4}" \
         PROOF_POOL_TWO="${PROOF_POOL_TWO:-4}" \
         SERVER_MAX_ONE="${SERVER_MAX_ONE:-100}" \
@@ -298,6 +304,15 @@ fi
 unset RUNTIME_POOL_TWO
 grep -q "running versiond2 has PG_POOL_MAX_CONNS='8'" "$tmpdir/err" || fail \
     "runtime PostgreSQL pool-limit mismatch was not diagnosed"
+
+RUNTIME_PASSWORD_TWO=old-secret
+export RUNTIME_PASSWORD_TWO
+if run_preflight >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "a PostgreSQL credential change was accepted inside the HA upgrade"
+fi
+unset RUNTIME_PASSWORD_TWO
+grep -q 'rotate credentials separately before the HA upgrade' "$tmpdir/err" || fail \
+    "runtime PostgreSQL credential drift was not diagnosed"
 
 INSPECT_FAILURE_CONTAINER=container-1
 export INSPECT_FAILURE_CONTAINER

@@ -164,6 +164,11 @@ for index in 0 1; do
     actual=$(container_env "$runtime_environment" PG_POOL_MAX_CONNS) || actual=
     [[ $actual == "$pool_max_connections" ]] || fail \
         "running $service has PG_POOL_MAX_CONNS='$actual', rendered topology expects '$pool_max_connections'"
+    expected=$(jq -r --arg service "$service" \
+        '.services[$service].environment.PGPASSWORD // ""' <<<"$config")
+    actual=$(container_env "$runtime_environment" PGPASSWORD) || actual=
+    [[ $actual == "$expected" ]] || fail \
+        "running $service uses different PostgreSQL credentials than the rendered topology; rotate credentials separately before the HA upgrade"
 done
 
 versiond_http() {
