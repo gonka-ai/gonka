@@ -196,9 +196,13 @@ func TestContainerE2E_HeightSync_QuietEscrowHeartbeat(t *testing.T) {
 	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
 
-	logs := stack.WaitComposeLogsContain(t, 2*time.Minute, "heightsync: cadence", "devshardctl")
-	require.True(t, strings.Contains(logs, "heartbeat_opened") || strings.Contains(logs, "heartbeat span dispatched"),
-		"quiet escrow must open heartbeat turns; logs:\n%s", logs)
+	// Wait for the turn itself, not any cadence log. The loop ticks immediately
+	// and logs skipped_no_height before seed_ok (~50ms); the first real turn is
+	// due one Interval later (6s). "heightsync: cadence" matches the skip and
+	// used to sneak through when Interval was 3s and chat-ready already covered
+	// that wait. Stretching the timeout does not help: WaitComposeLogsContain
+	// returns on the first match.
+	logs := stack.WaitComposeLogsContain(t, 2*time.Minute, "heartbeat_opened", "devshardctl")
 	repair := strings.Count(logs, "repair request") + strings.Count(logs, "RepairProbe")
 	require.Zero(t, repair, "healthy quiet path must send zero repair probes")
 

@@ -535,7 +535,7 @@ func TestHeartbeat_OverlayShortensCadence(t *testing.T) {
 	now = now.Add(2 * time.Second)
 	require.NoError(t, session.MaybeHeartbeat(ctx))
 	require.Greater(t, countHeartbeats(session.Diffs()), turns,
-		"overlay Interval=2s opens the next turn before the compiled 3s")
+		"overlay Interval=2s opens the next turn before the compiled 6s")
 	require.NotNil(t, session.HeartbeatTurnTracker().Record(2))
 }
 

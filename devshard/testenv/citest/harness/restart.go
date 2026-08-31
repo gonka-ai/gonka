@@ -289,7 +289,7 @@ func RequireGatewaySessionAdvanced(t *testing.T, before, after GatewaySessionSna
 
 // RequireGatewaySessionStable asserts gateway session identity survived a
 // versiond restart. Height-sync heartbeats keep running on the gateway while a
-// replica drains (drain 5s > DefaultHeartbeatInterval 3s), so the producer
+// replica drains (drain 5s, DefaultHeartbeatInterval 6s), so the producer
 // cursor and durable tip may advance; they must not go backwards. Balance may
 // fall if those heartbeat nonces are charged, and may rise if a draining
 // replica's missing receipts are later timeout-refunded.
