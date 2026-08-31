@@ -1688,7 +1688,9 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			return
 		}
 
-		if !waitForChildServingReady(ctx, c, m.cfg.ReadyPath, m.cfg.ReadyTimeout) {
+		if !waitForChildServingReady(
+			ctx, c, m.cfg.ReadyPath, m.cfg.ReadyTimeout, proc.Done(),
+		) {
 			slog.Warn("child did not become ready in time", "version", c.version.Name, "port", c.port, "lifecycle_port", c.lifecyclePort(), "ready_path", m.cfg.ReadyPath)
 			proc.ForceStop()
 			_ = proc.Wait()
@@ -2027,12 +2029,19 @@ func (c *child) adminAddr() string {
 // waitForChildServingReady gates the Starting -> Running transition. Modern
 // devshardd children must be logically ready on their admin listener and also
 // serve health checks on the public listener that receives proxied traffic.
-func waitForChildServingReady(ctx context.Context, c *child, path string, timeout time.Duration) bool {
+func waitForChildServingReady(
+	ctx context.Context,
+	c *child,
+	path string,
+	timeout time.Duration,
+	processDone <-chan struct{},
+) bool {
 	adminPort := int(c.adminPort.Load())
 	if adminPort == 0 {
 		return waitForReadiness(
 			ctx,
 			timeout,
+			processDone,
 			func(probeCtx context.Context, client *http.Client) bool {
 				ready, viaLegacy := readyEndpointReady(probeCtx, client, c.port, path, true)
 				if viaLegacy {
@@ -2042,7 +2051,7 @@ func waitForChildServingReady(ctx context.Context, c *child, path string, timeou
 			},
 		)
 	}
-	return waitForReadiness(ctx, timeout, func(probeCtx context.Context, client *http.Client) bool {
+	return waitForReadiness(ctx, timeout, processDone, func(probeCtx context.Context, client *http.Client) bool {
 		ready, _ := readyEndpointReady(probeCtx, client, adminPort, path, false)
 		return ready && publicEndpointReady(probeCtx, client, c.port)
 	})
@@ -2051,6 +2060,7 @@ func waitForChildServingReady(ctx context.Context, c *child, path string, timeou
 func waitForReadiness(
 	ctx context.Context,
 	timeout time.Duration,
+	processDone <-chan struct{},
 	probe func(context.Context, *http.Client) bool,
 ) bool {
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -2063,6 +2073,9 @@ func waitForReadiness(
 		retry := time.NewTimer(100 * time.Millisecond)
 		select {
 		case <-probeCtx.Done():
+			retry.Stop()
+			return false
+		case <-processDone:
 			retry.Stop()
 			return false
 		case <-retry.C:
