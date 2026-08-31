@@ -14,6 +14,11 @@ docker compose --project-directory "$script_dir" \
     -f "$script_dir/docker-compose.yml" \
     -f "$script_dir/docker-compose.versiond.yml" \
     config --format json >"$tmpdir/main.json"
+VERSIOND_REPLICAS=1 VERSIOND2_REPLICAS=0 \
+    docker compose --project-directory "$script_dir" \
+    -f "$script_dir/docker-compose.yml" \
+    -f "$script_dir/docker-compose.versiond.yml" \
+    config --format json >"$tmpdir/main-evacuated.json"
 docker compose --project-directory "$script_dir" \
     --project-name gonka-versiond-router-test \
     -f "$script_dir/versiond-router-slot/docker-compose.yml" \
@@ -36,12 +41,19 @@ jq -e '
   (.services.proxy.networks | has("versiond-router-front")) and
   (.services.proxy.networks | has("versiond-router-back")) and
 	(.services.versiond.networks["versiond-router-back"].aliases | index("versiond-pool")) and
+	(.services.versiond.deploy.replicas == 1) and
+	(.services.versiond2.deploy.replicas == 1) and
 	(.services["devshard-postgres"].healthcheck.test[1] | contains("psql -h 127.0.0.1")) and
 	(.services["devshard-postgres"].healthcheck.test[1] | contains("SELECT 1")) and
 	(.services["devshard-postgres"].healthcheck.test[1] | contains("pg_isready") | not) and
 	(.networks["versiond-router-front"].external == true) and
   (.networks["versiond-router-back"].external == true)
 ' "$tmpdir/main.json" >/dev/null
+
+jq -e '
+  (.services.versiond.deploy.replicas == 1) and
+  (.services.versiond2.deploy.replicas == 0)
+' "$tmpdir/main-evacuated.json" >/dev/null
 
 jq -e '
   (.services.router.labels["ai.gonka.component"] == "versiond-router") and

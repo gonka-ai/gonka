@@ -126,6 +126,8 @@ services:
   versiond:
     <<: *versiond
     container_name: versiond
+    deploy:
+      replicas: ${VERSIOND_REPLICAS:-1}
     volumes:
       - .inference:/root/.inference:ro
       - ./devshards/bin:/opt/versiond/bin
@@ -134,6 +136,8 @@ services:
   versiond2:
     <<: *versiond
     container_name: versiond2
+    deploy:
+      replicas: ${VERSIOND2_REPLICAS:-1}
     volumes:
       - .inference:/root/.inference:ro
       - ./devshards/bin:/opt/versiond/bin
