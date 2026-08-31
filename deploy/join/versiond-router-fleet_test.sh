@@ -440,8 +440,27 @@ grep -q 'Recovering the stopped pre-maintenance router fleet' \
 # candidate remain postconditions; the removed v5 route must not force rollback.
 sed -i 's/^VERSIOND_NON_HA_VERSIONS="v4 v5"$/VERSIOND_NON_HA_VERSIONS=v4/' \
     "$tmpdir/config.env"
+# Simulate SIGKILL after the first candidate slot was created. The remaining
+# stopped slots still carry the old placement contract; retry must finish the
+# candidate fleet without readmitting that old contract.
 VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
-    "${fleet[@]}" maintenance-rollout >/dev/null
+    "${fleet[@]}" stop-all --maintenance >/dev/null
+(
+    set -a
+    # shellcheck disable=SC1091
+    source "$tmpdir/config.env"
+    set +a
+    VERSIOND_ROUTER_SLOT=0 VERSIOND_ROUTER_FLEET_ID="$fleet_id" \
+        docker compose --project-directory "$script_dir" \
+        --project-name "$prefix-0" \
+        -f "$script_dir/versiond-router-slot/docker-compose.yml" \
+        up -d --no-deps --force-recreate --wait router >/dev/null
+)
+VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
+    "${fleet[@]}" maintenance-rollout >"$tmpdir/maintenance-candidate-resume.out"
+grep -q 'Resuming interrupted maintenance toward the candidate placement contract' \
+    "$tmpdir/maintenance-candidate-resume.out" || fail \
+    "maintenance retry readmitted the old placement contract after candidate creation"
 for slot in "${slots[@]}"; do
     id=$(docker ps -q \
         --filter label=ai.gonka.component=versiond-router \

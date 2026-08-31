@@ -1124,6 +1124,52 @@ recover_stopped_maintenance_source() {
     done
 }
 
+resume_interrupted_maintenance_target() {
+    local slot id contract state candidate_contract candidate_count=0
+    local -a source_slots=()
+
+    candidate_contract=$(candidate_placement_contract)
+    for slot in "${slots[@]}"; do
+        id=$(slot_id "$slot") || fail "slot $slot has no unique existing container"
+        contract=$(running_placement_contract "$id") || fail \
+            "slot $slot does not expose its placement contract"
+        if [[ $contract == "$candidate_contract" ]]; then
+            ((candidate_count += 1))
+        else
+            source_slots+=("$slot")
+        fi
+    done
+
+    ((candidate_count > 0)) || return 1
+    echo "Resuming interrupted maintenance toward the candidate placement contract"
+
+    # Once any candidate exists, readmitting an old placement contract would
+    # recreate mixed escrow ownership. Keep every old slot withdrawn and finish
+    # the already-crossed maintenance transaction in the forward direction.
+    for slot in "${source_slots[@]}"; do
+        id=$(slot_id "$slot") || fail "slot $slot disappeared during maintenance recovery"
+        state=$($docker_bin inspect --format '{{.State.Status}}' "$id") || fail \
+            "router slot $slot disappeared during maintenance recovery"
+        case $state in
+            running | restarting | paused) stop_slot_generation "$slot" ;;
+            created | exited | dead) ;;
+            *) fail "slot $slot cannot resume maintenance from state '$state'" ;;
+        esac
+        start_slot "$slot"
+    done
+    for slot in "${slots[@]}"; do
+        wait_slot_ready "$slot" || fail \
+            "candidate router slot $slot did not become healthy"
+        wait_slot_routes "$slot"
+    done
+    select_candidate_route_view
+    for slot in "${slots[@]}"; do
+        wait_parent_admission "$slot"
+    done
+    fleet_status
+    return 0
+}
+
 wait_preserved_slot_admission() {
     local slot=$1 deadline address route routes missing state
     parent_proxy_active || return 0
@@ -1603,12 +1649,15 @@ fleet_maintenance_rollout() {
         *) fail "maintenance-rollout requires VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true" ;;
     esac
     prepare_slot_networks
-    recover_stopped_maintenance_source
     pull_router_image
     image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
     [[ -n $(placement_version_for_image "$image") ]] || fail \
         "candidate image has no placement protocol label"
     require_cache_compatible "$image"
+    if resume_interrupted_maintenance_target; then
+        return 0
+    fi
+    recover_stopped_maintenance_source
     capture_maintenance_state
     maintenance_active=true
     trap maintenance_rollback ERR INT TERM HUP
