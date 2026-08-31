@@ -129,6 +129,19 @@ func TestOwnerChat_BindsSession(t *testing.T) {
 	require.Equal(t, user.Address(), meta.CreatorAddr)
 }
 
+func TestHeightSyncSeed_BindsSession(t *testing.T) {
+	const escrowID = "9711"
+	mgr, store, user, _ := setupBindTestManager(t, escrowID)
+	e := echo.New()
+	mgr.Register(e.Group(""))
+
+	rec := signedPOST(t, e, user, "/sessions/"+escrowID+"/height-sync", escrowID, []byte("{}"))
+	meta, err := store.GetSessionMeta(escrowID)
+	require.NoError(t, err, "owner seed must CreateSession; http=%d body=%s", rec.Code, rec.Body.String())
+	require.Equal(t, testutil.RuntimeTestVersion, meta.Version)
+	require.Equal(t, user.Address(), meta.CreatorAddr)
+}
+
 func TestOwnerChat_SettledEscrow_DoesNotBindSession(t *testing.T) {
 	const escrowID = "9709"
 	mgr, store, user, _ := setupBindTestManager(t, escrowID)

@@ -25,7 +25,7 @@ later milestone.
 4. [In-process e2e — `devshard/testenv/scenarios`](#4-in-process-e2e--devshardtestenvscenarios)
 5. [Container e2e — `devshard/testenv/scenarios/container`](#5-container-e2e--devshardtestenvscenarioscontainer)
 6. [Planned: block-oracle sourcing and dapi compatibility (D1–D11)](#6-planned-block-oracle-sourcing-and-dapi-compatibility-d1d11)
-7. [Planned: log plane — heartbeat, stamps, peer sync, arming, gateway observability (H1–H104)](#7-planned-log-plane--heartbeat-stamps-peer-sync-arming-gateway-observability-h1h104)
+7. [Planned: log plane — heartbeat, stamps, peer sync, arming, gateway observability (H1–H108)](#7-planned-log-plane--heartbeat-stamps-peer-sync-arming-gateway-observability-h1h108)
 8. [Planned: Strong mode (LightBlock + VerifyCommit)](#8-planned-strong-mode-lightblock--verifycommit)
 9. [Coverage matrix per protocol section](#9-coverage-matrix-per-protocol-section)
 10. [Attack-scenario coverage](#10-attack-scenario-coverage)
@@ -301,7 +301,7 @@ down**, by failing over to the direct-chain adapter in the shape of
 
 ---
 
-## 7. Planned: log plane — heartbeat, stamps, peer sync, arming, gateway observability (H1–H104)
+## 7. Planned: log plane — heartbeat, stamps, peer sync, arming, gateway observability (H1–H108)
 
 Spec: [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md)
 §10–§12, §14 log-plane checks, §17 `(C-turn)`.
@@ -478,6 +478,21 @@ nothing on the wire (§12.2), so the gateway cannot observe it. H21 covers it
 host-side. H49's `arming_predicted` is the gateway's view of its **own** silence —
 an early warning on a different clock, not a mirror of any host's flag.
 
+### 7.8 Gateway chain follower (spec §6, attack 27)
+
+The gateway is a courier. `DEVSHARD_GATEWAY_CHAIN_ORACLE` (default
+**off**) may start a Comet/failover follower as `HeightSyncLogOracle`
+only. It MUST NOT feed `Decide`, skip the seed, or become an
+originator. See [`HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md)
+§6 and [`hung-seed-terminal-miss.md`](./proposals/hung-seed-terminal-miss.md).
+
+| ID | Test (planned name) | Package | What it will prove |
+| -- | ------------------- | ------- | ------------------ |
+| H105 | ✅ `TestGatewayChainOracle_DefaultOffDoesNotMint` | `cmd/devshardctl` | Flag unset, `DEVSHARD_CHAIN_RPC` set: scheduler source is `PeerTipOracleSource`; `HeightSyncLogOracle` is nil; no Comet feed; empty peer tips ⇒ `Decide` emits Omit, never a gateway-minted Anchor. |
+| H106 | ✅ `TestGatewayChainOracle_OnStillSeeds` + `TestSeed_WarmLogOracleDoesNotCountTowardQuorum` | `cmd/devshardctl` + `user` | Flag on + local `Latest()` succeeds + peer tips empty: `Decide` still Omits; `WaitHeightSeed` still waits / 503s; the local tip does not count toward `seeded`. |
+| H107 | ✅ `TestGatewayChainOracle_PreservesOriginator` + `TestSeed_CourierWorksWithWarmLogOracle` | `cmd/devshardctl` + `user` | Flag on + seed quorum: outbound Anchor keeps `OriginatorSenderID` from the host blob; `HeightSyncEvidenceFor(host, h)` returns that blob; no attestation is stored under a gateway identity. |
+| H108 | ✅ `TestGatewayChainOracle_FlagValues` | `cmd/devshardctl` | `true` / `1` / `on` enable the follower; unset / `false` / `0` / `off` and invalid values fail closed (follower off). |
+
 ---
 
 ## 8. Planned: Strong mode (LightBlock + VerifyCommit)
@@ -569,6 +584,7 @@ Files (planned): `heightsync_strong_e2e_test.go`. Suite prefix: `TestHeightSyncS
 | DEFERRED_FAIL attribution | E10 (exculpation API), H13e, H14 | S11 (Strong-grade evidence) |
 | `ObservedHeightNow` (cPoC C14) | `TestObservedHeightNow_*` | — |
 | Optional seed RPC | `TestHTTPClient_SeedHeightSync_RecordsOrigin`, `TestHandleHeightSync_*` | H34–H37 (E9 session-open seed, plan §8.5.1) ✅ |
+| §6 gateway chain follower (off protocol) | — | H105–H108; hung-seed gate tests in [`hung-seed-terminal-miss.md`](./proposals/hung-seed-terminal-miss.md) |
 | Audit ring | `TestAuditRing_*`, all e2e tests | — |
 | Stale / quiet oracle | Feed **unavailable**: `TestHeightSyncAnchor_E2E_HeightSyncFeedStopped_*`, E6. Feed **quiet** (cached tip): `TestAnchorScheduler_StaleFeedEmitsDegradedAnchorInSyncTurn`, `TestDecide_LogStaleSyncTurn`, container cadence | S10 |
 | §7 wire format — envelope is one plane only | `TestEnvelope_*`, `TestUnwrapInferenceRequestBody_*`, H96, H97 | — |
@@ -623,6 +639,7 @@ Files (planned): `heightsync_strong_e2e_test.go`. Suite prefix: `TestHeightSyncS
 | Splitting the floor by refusing a diff at admission (24e) | The floor folds applied diffs and nothing else, so an L5a refusal — which the same diff would not even face when it arrives by catch-up — cannot make two verifiers disagree about `F(m)` or about any later L0 verdict | ✅ H58 |
 | Pre-signing a future height (25) | `observed_block_hash` cannot be produced for an unmined block; L6 never confirms the pair | ✅ H13e |
 | Replay-time invalidation of an honest session (26) | Only pure-`Diff` checks may invalidate; L5a is admission-only and L4 is skipped without an envelope | ✅ H13a, H13c |
+| Gateway mints `(H, hash)` from its own chain read (27) | Courier scheduler (`PeerTipOracleSource`); `DEVSHARD_GATEWAY_CHAIN_ORACLE` default off and log-oracle only; seed still required so disputes name a host | ✅ H105, H106, H107, H108 |
 | dapi unavailable or too old to serve `/block/*` | Failover to the direct-chain adapter (hash-only); a missing or down dapi degrades capability and never fails a session | ⏳ D4, D5, D7, D10, D11 |
 
 ---

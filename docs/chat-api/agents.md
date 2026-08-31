@@ -44,9 +44,9 @@ Cause: `cache_key` / `prompt_cache_key` silently stripped. vLLM uses a different
 
 `allowed_token_ids`, `ignore_eos`, `use_beam_search`, `truncate_prompt_tokens`, `prompt_logprobs` are all rejected with HTTP 400 — see [troubleshooting](troubleshooting.md#reject-vllm-internals). For output control, use `response_format` or `structured_outputs` (on supported routes).
 
-### "Why does my `temperature: 0` + `n: 5` request return only one completion?"
+### "Why does my `n: 5` request return only one completion?"
 
-The gateway coerces `n` to `1` when `temperature == 0` because vLLM rejects `n > 1` at that temperature (greedy sampling produces identical completions anyway). See [troubleshooting](troubleshooting.md#coerce-n-when-temperature-zero).
+The gateway rewrites any present `n` to `1`. Reservation and settlement budget a single `MaxTokens` output, so multi-choice would undercharge. See [troubleshooting](troubleshooting.md#coerce-n-when-temperature-zero).
 
 ### "Why is `tool_choice: \"required\"` being treated as `\"auto\"`?"
 

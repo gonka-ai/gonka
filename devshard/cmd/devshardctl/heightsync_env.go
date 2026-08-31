@@ -17,21 +17,20 @@ import (
 	"devshard/chainoracle/blocks/failover"
 	"devshard/chainoracle/blocks/tipcache"
 	"devshard/heightsync"
-	"devshard/internal/boolvalue"
 	"devshard/transport"
 )
 
 const (
-	envChainOracleURL  = "DEVSHARD_CHAINORACLE_URL"
-	envHeightSync      = "DEVSHARD_HEIGHTSYNC"
-	envHeightSyncK     = "DEVSHARD_HEIGHTSYNC_K"
-	envHeightSyncSlots = "DEVSHARD_HEIGHTSYNC_SLOTS"
-	envHeightSyncProbe = "DEVSHARD_HEIGHTSYNC_PROBE_INTERVAL"
-	envLogLevel        = "DEVSHARD_LOG_LEVEL"
+	envChainOracleURL     = "DEVSHARD_CHAINORACLE_URL"
+	envHeightSyncK        = "DEVSHARD_HEIGHTSYNC_K"
+	envHeightSyncSlots    = "DEVSHARD_HEIGHTSYNC_SLOTS"
+	envHeightSyncProbe    = "DEVSHARD_HEIGHTSYNC_PROBE_INTERVAL"
+	envLogLevel           = "DEVSHARD_LOG_LEVEL"
+	envRequireHeightSeed  = "DEVSHARD_REQUIRE_HEIGHT_SEED"
+	envGatewayChainOracle = "DEVSHARD_GATEWAY_CHAIN_ORACLE"
 )
 
 type heightSyncProcessState struct {
-	sched  *heightsync.AnchorScheduler
 	oracle blocks.BlockOracle
 	closer func()
 }
@@ -85,11 +84,6 @@ func parseDurationEnv(name string) (time.Duration, error) {
 	return d, nil
 }
 
-func heightSyncFlag() bool {
-	enabled, err := boolvalue.Parse(os.Getenv(envHeightSync))
-	return err == nil && enabled
-}
-
 func cometRPCForHeightSync(grpcURL string) string {
 	if rpc := effectiveChainRPC(); rpc != "" {
 		return rpc
@@ -97,27 +91,28 @@ func cometRPCForHeightSync(grpcURL string) string {
 	return chain.RPCURLFromGRPCURL(grpcURL)
 }
 
-// initGatewayHeightSync wires the process-level scheduler after the chain
-// client exists so failover can use direct chain. cometRPC is the Comet
-// WebSocket endpoint (same NewBlock feed hosts use). Safe to call once.
+// initGatewayHeightSync starts the optional chain follower after the chain
+// client exists. No-op unless DEVSHARD_GATEWAY_CHAIN_ORACLE is on. The
+// protocol scheduler is always PeerTipOracleSource (extraClientConfigFromEnv).
 func initGatewayHeightSync(chainClient *chain.Client, cometRPC string) error {
+	if !gatewayChainOracleFromEnv() {
+		return nil
+	}
 	_, err := loadHeightSyncProcessState(chainClient, cometRPC)
 	return err
 }
 
 func loadHeightSyncProcessState(chainClient *chain.Client, cometRPC string) (*heightSyncProcessState, error) {
 	hsOnce.Do(func() {
-		url := strings.TrimSpace(os.Getenv(envChainOracleURL))
-		if url == "" && !heightSyncFlag() {
+		if !gatewayChainOracleFromEnv() {
 			return
 		}
-		k, err := parseUintEnv(envHeightSyncK)
-		if err != nil {
+		url := strings.TrimSpace(os.Getenv(envChainOracleURL))
+		if _, err := parseUintEnv(envHeightSyncK); err != nil {
 			hsErr = err
 			return
 		}
-		slots, err := parseUintEnv(envHeightSyncSlots)
-		if err != nil {
+		if _, err := parseUintEnv(envHeightSyncSlots); err != nil {
 			hsErr = err
 			return
 		}
@@ -143,8 +138,7 @@ func loadHeightSyncProcessState(chainClient *chain.Client, cometRPC string) (*he
 		if chainClient != nil || rpc != "" {
 			chainOracle = direct.NewFromChain(chainClient, rpc)
 		}
-		if lookup == nil && chainOracle == nil && rpc == "" {
-			hsErr = fmt.Errorf("%s set but no %s and no chain client", envHeightSync, envChainOracleURL)
+		if lookup == nil && chainOracle == nil {
 			return
 		}
 
@@ -166,28 +160,82 @@ func loadHeightSyncProcessState(chainClient *chain.Client, cometRPC string) (*he
 			}
 		}
 		oracle := failover.New(cache, hist, chainOracle)
-		sched, err := heightsync.NewAnchorSchedulerFromOracle(k, slots, oracle)
-		if err != nil {
-			closer()
-			hsErr = fmt.Errorf("height-sync scheduler: %w", err)
-			return
-		}
-		hsSt = &heightSyncProcessState{sched: sched, oracle: oracle, closer: closer}
-		slog.Info("height sync enabled", "oracle_url", url, "k", sched.K(), "slots", sched.SlotsNum(), "direct_chain", chainOracle != nil, "comet_rpc", rpc)
+		hsSt = &heightSyncProcessState{oracle: oracle, closer: closer}
+		slog.Info("height sync chain follower enabled",
+			"oracle_url", url, "direct_chain", chainOracle != nil, "comet_rpc", rpc)
 	})
 	return hsSt, hsErr
 }
 
-// extraClientConfigFromEnv returns a per-session ClientConfig when height-sync
-// is opted in. Peer-tip caches are not shared across escrows. Nil, nil when unset.
+func heightSyncCourierSourcesPresent() bool {
+	if strings.TrimSpace(os.Getenv(envChainOracleURL)) != "" {
+		return true
+	}
+	return effectiveChainRPC() != ""
+}
+
+// extraClientConfigFromEnv returns a per-session courier ClientConfig when a
+// dapi URL or chain RPC is available. The scheduler is always PeerTipOracleSource
+// over a fresh HeightSyncPeerTips. The optional chain follower is
+// HeightSyncLogOracle only (DEVSHARD_GATEWAY_CHAIN_ORACLE). Nil, nil when
+// neither source exists.
 func extraClientConfigFromEnv() (*transport.ClientConfig, error) {
-	st, err := loadHeightSyncProcessState(nil, effectiveChainRPC())
-	if err != nil || st == nil {
+	k, err := parseUintEnv(envHeightSyncK)
+	if err != nil {
 		return nil, err
 	}
-	return &transport.ClientConfig{
-		HeightSync:          st.sched,
-		HeightSyncLogOracle: st.oracle,
-		HeightSyncPeerTips:  transport.NewHeightSyncPeerTips(),
-	}, nil
+	slots, err := parseUintEnv(envHeightSyncSlots)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := parseDurationEnv(envHeightSyncProbe); err != nil {
+		return nil, err
+	}
+	if !heightSyncCourierSourcesPresent() {
+		return nil, nil
+	}
+	peerTips := transport.NewHeightSyncPeerTips()
+	sched, err := heightsync.NewAnchorScheduler(k, slots, heightsync.NewPeerTipOracleSource(peerTips, peerTips.Freshness))
+	if err != nil {
+		return nil, err
+	}
+	cfg := &transport.ClientConfig{
+		HeightSync:         sched,
+		HeightSyncPeerTips: peerTips,
+	}
+	if gatewayChainOracleFromEnv() {
+		st, err := loadHeightSyncProcessState(nil, effectiveChainRPC())
+		if err != nil {
+			return nil, err
+		}
+		if st != nil {
+			cfg.HeightSyncLogOracle = st.oracle
+		}
+	}
+	return cfg, nil
+}
+
+// requireHeightSeedFromEnv is the gateway fail-closed seed gate. Unset and
+// unrecognized values keep the gate on. Only 0/false/off/no disable it.
+func requireHeightSeedFromEnv() bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv(envRequireHeightSeed)))
+	switch raw {
+	case "0", "false", "off", "no":
+		return false
+	default:
+		return true
+	}
+}
+
+// gatewayChainOracleFromEnv is the optional verification follower. Only
+// true/1/on (case-insensitive) enable it. Unset, empty, false/0/off, and
+// any other value leave the follower unbuilt.
+func gatewayChainOracleFromEnv() bool {
+	raw := strings.ToLower(strings.TrimSpace(os.Getenv(envGatewayChainOracle)))
+	switch raw {
+	case "true", "1", "on":
+		return true
+	default:
+		return false
+	}
 }

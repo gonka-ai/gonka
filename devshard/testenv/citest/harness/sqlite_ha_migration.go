@@ -19,10 +19,12 @@ import (
 )
 
 // BootSQLiteHAMigrationStack boots the 2×versiond + Postgres stack patched for
-// §3.3 Phase 0–1: DEVSHARD_STORAGE_MODE=sqlite and a stack that does not call
-// itself HA, so the router does not stamp Devshard-Ha and the storage guard
-// stays quiet. versiond-1 is stopped, so it also leaves the router's pool and
-// SQLite sessions land on the legacy host volume.
+// §3.3 Phase 0–1: DEVSHARD_STORAGE_MODE=sqlite, GONKA_HA empty so the router
+// does not stamp Devshard-Ha, and VERSIOND_NON_HA_VERSIONS pinned to the running
+// VersionName (a real child — HAProxy L7-checks /{version}/healthz). versiond-1
+// is stopped so SQLite sessions land on the legacy host volume. The pin is
+// applied before Up so phase 0 does not recreate the router while the gateway
+// is seeding.
 func BootSQLiteHAMigrationStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()
 	stack := NewStack(t, prefix)
@@ -34,10 +36,25 @@ func BootSQLiteHAMigrationStack(t *testing.T, prefix string) (*Stack, *config.Fi
 
 	PatchVersiondStorageMode(t, stack.ComposePath, "sqlite")
 	PatchRouterHADeployment(t, stack.ComposePath, false)
+	require.NotEmpty(t, cfg.Versiond.VersionName)
+	PatchComposeEnvKey(t, stack.ComposePath, "VERSIOND_NON_HA_VERSIONS", fmt.Sprintf("%q", cfg.Versiond.VersionName))
 
 	stack.Up(t)
 	stack.StopService(t, cfg.Hosts[1].ID)
 	return stack, cfg, stack.Endpoints(t, cfg)
+}
+
+// RecreateRouterNonHAVersions sets VERSIOND_NON_HA_VERSIONS and force-recreates
+// versiond-router. Empty versions clears the pin. Host-published ports remap.
+func RecreateRouterNonHAVersions(t *testing.T, stack *Stack, cfg *config.File, versions string) Endpoints {
+	t.Helper()
+	value := `""`
+	if versions != "" {
+		value = fmt.Sprintf("%q", versions)
+	}
+	PatchComposeEnvKey(t, stack.ComposePath, "VERSIOND_NON_HA_VERSIONS", value)
+	stack.RecreateServices(t, "versiond-router")
+	return stack.Endpoints(t, cfg)
 }
 
 // RecreateServices force-recreates named services (picks up compose env changes).
@@ -52,7 +69,7 @@ func (s *Stack) RecreateServices(t *testing.T, services ...string) {
 	args = append(args, services...)
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = s.WorkDir
-	cmd.Env = append(os.Environ(), "COMPOSE_HTTP_TIMEOUT=300")
+	cmd.Env = s.composeEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		DumpComposeLogs(t, s, services...)
@@ -77,6 +94,7 @@ func (s *Stack) ComposeExecOutput(service string, cmdArgs ...string) (string, er
 	args = append(args, cmdArgs...)
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = s.WorkDir
+	cmd.Env = s.composeEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return string(out), fmt.Errorf("compose exec %s %v: %w\n%s", service, cmdArgs, err, out)
@@ -198,6 +216,45 @@ func RequirePostgresMatchesInventory(t *testing.T, stack *Stack, cfg *config.Fil
 		require.True(t, ok, "escrow %s missing from postgres session index %v", id, pg)
 		require.Equal(t, inv.EpochByID[id], epoch, "epoch mismatch for escrow %s", id)
 	}
+}
+
+// WaitRoutedStatus polls until GET returns an allowed status with
+// X-Versiond-Backend set. HAProxy catalog NOSRV is also 503 but has no routing
+// headers; this wait skips that empty 503.
+func WaitRoutedStatus(t *testing.T, client *http.Client, url string, timeout time.Duration, label string, allowed ...int) int {
+	t.Helper()
+	if client == nil {
+		client = HTTPClient()
+	}
+	want := make(map[int]struct{}, len(allowed))
+	for _, c := range allowed {
+		want[c] = struct{}{}
+	}
+	var last int
+	var lastBackend string
+	var lastErr string
+	ok := AssertEventually(t, timeout, time.Second, func() bool {
+		resp, err := client.Get(url)
+		if err != nil {
+			lastErr = err.Error()
+			return false
+		}
+		_ = resp.Body.Close()
+		last = resp.StatusCode
+		lastBackend = resp.Header.Get("X-Versiond-Backend")
+		if lastBackend == "" {
+			lastErr = fmt.Sprintf("HTTP %d (no X-Versiond-Backend)", last)
+			return false
+		}
+		_, hit := want[last]
+		if !hit {
+			lastErr = fmt.Sprintf("HTTP %d backend=%s", last, lastBackend)
+		}
+		return hit
+	})
+	require.True(t, ok, "%s: never reached statuses %v with routing headers from %s (last=%d backend=%q err=%s)",
+		label, allowed, url, last, lastBackend, lastErr)
+	return last
 }
 
 // WaitGETStatus polls until GET returns one of the allowed status codes.

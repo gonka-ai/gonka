@@ -108,7 +108,7 @@ func defaultPayload() *InferencePayload {
 		Prompt:      testutil.TestPrompt,
 		Model:       "llama",
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 		StartedAt:   1000,
 	}
 }
@@ -272,7 +272,7 @@ func TestHost_ExecutorReceipt(t *testing.T) {
 		PromptHash:  testutil.TestPromptHash[:],
 		Model:       "llama",
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 		StartedAt:   1000,
 		EscrowId:    "escrow-1",
 		ConfirmedAt: resp.ConfirmedAt,
@@ -696,7 +696,7 @@ func TestHost_PayloadMismatch_InputLengthWorkload(t *testing.T) {
 	h := newTestHost(t, 1, hosts, user, 10000, 10)
 
 	// Large prompt signed/reported with underreported input_length.
-	largePrompt := []byte(`{"model":"llama","messages":[{"role":"user","content":"A very large prompt / context goes here..."}],"max_tokens":50}`)
+	largePrompt := []byte(fmt.Sprintf(`{"model":"llama","messages":[{"role":"user","content":"A very large prompt / context goes here..."}],"max_tokens":%d}`, testutil.TestMaxTokens))
 	promptHash, err := devshard.CanonicalPromptHash(largePrompt)
 	require.NoError(t, err)
 	start := &types.MsgStartInference{
@@ -704,7 +704,7 @@ func TestHost_PayloadMismatch_InputLengthWorkload(t *testing.T) {
 		PromptHash:  promptHash,
 		Model:       "llama",
 		InputLength: 0,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 		StartedAt:   1000,
 	}
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
@@ -717,7 +717,7 @@ func TestHost_PayloadMismatch_InputLengthWorkload(t *testing.T) {
 			Prompt:      largePrompt,
 			Model:       "llama",
 			InputLength: 0,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	})
@@ -730,7 +730,7 @@ func TestHost_PayloadMismatch_MaxTokensWorkload(t *testing.T) {
 	user := testutil.MustGenerateKey(t)
 	h := newTestHost(t, 1, hosts, user, 10000, 10)
 
-	// Body asks for 1000 tokens while signed reserve only covers 1.
+	// Body asks for 1000 tokens while signed reserve only covers the floor.
 	prompt := []byte(`{"model":"llama","messages":[{"role":"user","content":"hi"}],"max_tokens":1000}`)
 	promptHash, err := devshard.CanonicalPromptHash(prompt)
 	require.NoError(t, err)
@@ -739,7 +739,7 @@ func TestHost_PayloadMismatch_MaxTokensWorkload(t *testing.T) {
 		PromptHash:  promptHash,
 		Model:       "llama",
 		InputLength: uint64(len(prompt)),
-		MaxTokens:   1,
+		MaxTokens:   testutil.TestMaxTokens,
 		StartedAt:   1000,
 	}
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
@@ -752,12 +752,35 @@ func TestHost_PayloadMismatch_MaxTokensWorkload(t *testing.T) {
 			Prompt:      prompt,
 			Model:       "llama",
 			InputLength: uint64(len(prompt)),
-			MaxTokens:   1,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	})
 	require.ErrorIs(t, err, types.ErrPayloadMismatch)
 	require.Contains(t, err.Error(), "max_tokens")
+}
+
+// An honest gateway floors max_tokens before signing the reservation, so a declared
+// max_tokens below the floor means a dishonest gateway under-reserved: escrow pays for
+// 1 token while the executor is forced to produce the floor. The executor must reject it.
+func TestVerifyPayloadWorkload_RejectsUnderReservedFloor(t *testing.T) {
+	underReserved := []byte(`{"model":"llama","messages":[{"role":"user","content":"hi"}],"max_tokens":1}`)
+	err := verifyPayloadWorkload(&InferencePayload{
+		Prompt:      underReserved,
+		Model:       "llama",
+		InputLength: uint64(len(underReserved)),
+		MaxTokens:   1,
+	})
+	require.ErrorIs(t, err, types.ErrPayloadMismatch)
+	require.Contains(t, err.Error(), "below floor")
+
+	atFloor := []byte(fmt.Sprintf(`{"model":"llama","messages":[{"role":"user","content":"hi"}],"max_tokens":%d}`, testutil.TestMaxTokens))
+	require.NoError(t, verifyPayloadWorkload(&InferencePayload{
+		Prompt:      atFloor,
+		Model:       "llama",
+		InputLength: uint64(len(atFloor)),
+		MaxTokens:   testutil.TestMaxTokens,
+	}))
 }
 
 func TestHost_StoresOwnSignature(t *testing.T) {
@@ -1587,7 +1610,7 @@ func TestWarmKey_HostFindsSlotByWarmKey(t *testing.T) {
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, 50, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
 	nonce++
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
@@ -1748,7 +1771,7 @@ func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
 	require.Empty(t, valEngine.getCalls(), "should not validate pending inference")
 
 	// Nonce 2: ConfirmStart (to transition from Pending to Started).
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, 50, 1000, 2000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 2000)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
 	}}}
@@ -1852,7 +1875,7 @@ func TestHost_ValidationQueueLimitsConcurrentWorkers(t *testing.T) {
 
 		confirmedAt := int64(2000 + i)
 		execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-queue", inferenceID,
-			testutil.TestPromptHash[:], "llama", 100, 50, 1000, confirmedAt)
+			testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, confirmedAt)
 		confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 			InferenceId: inferenceID,
 			ExecutorSig: execSig,
@@ -1995,7 +2018,7 @@ func TestAccumulateGossipSig_WarmKey(t *testing.T) {
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, 50, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
 	nonce++
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,

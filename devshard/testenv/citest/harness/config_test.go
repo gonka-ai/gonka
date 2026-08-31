@@ -10,6 +10,18 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestFirstSoloHostID_ThreeHostMulti(t *testing.T) {
+	cfg := &config.File{
+		Versiond: config.VersiondCfg{Mode: config.VersiondModeMulti},
+		Hosts: []config.HostCfg{
+			{ID: "versiond-0"},
+			{ID: "versiond-1"},
+			{ID: "versiond-2"},
+		},
+	}
+	require.Equal(t, "versiond-2", FirstSoloHostID(t, cfg))
+}
+
 func TestWriteStackConfig_TwoHostsMultiMode(t *testing.T) {
 	dir := t.TempDir()
 	WriteStackConfig(t, dir)

@@ -210,8 +210,13 @@ func TestContainerE2E_HeightSync_QuietEscrowHeartbeat(t *testing.T) {
 	})
 	require.NotContains(t, body, "devshard_gateway_heightsync_peer_seen{",
 		"peer matrix series stay off by default (H48)")
+	body = harness.WaitMetricsPredicate(t, client, metricsURL, 2*time.Minute, func(b string) bool {
+		return strings.Contains(b, "devshard_gateway_heightsync_peer_seen_count")
+	})
 	require.Contains(t, body, "devshard_gateway_heightsync_peer_seen_count",
 		"linear peer_seen_count remains on by default")
+	require.NotContains(t, body, "devshard_gateway_heightsync_peer_seen{",
+		"peer matrix series stay off by default (H48)")
 
 	// Anchor seal / empty-height counters become visible once the tip has
 	// moved past D_ack (H44/H45). Either a sealed last-block gauge or the
@@ -234,11 +239,16 @@ func TestContainerE2E_HeightSync_OneHostStopped(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, _, eps := harness.BootHeightSyncStack(t, "citest-hs-h27-*")
+	// H43 is one unreachable slot. The default 2-container stack is an HA pair
+	// of one identity: versiond-0 owns every slot and versiond-1 owns none, so
+	// stopping the replica still lets Q complete. HA pair + solo (3 containers,
+	// 2 slots) makes stopping the solo drop a real roster slot.
+	stack, cfg, eps := harness.BootHeightSyncHAPlusSoloStack(t, "citest-hs-h27-*")
+	solo := harness.FirstSoloHostID(t, cfg)
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1")
+			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", solo)
 		}
 	})
 	harness.WaitStackHealthy(t, stack, eps)
@@ -251,8 +261,8 @@ func TestContainerE2E_HeightSync_OneHostStopped(t *testing.T) {
 		return ok && v >= 1
 	})
 
-	harness.Step(t, "stop versiond-1 (one host down)")
-	stack.StopService(t, "versiond-1")
+	harness.Step(t, "stop "+solo+" (solo identity / one slot down)")
+	stack.StopService(t, solo)
 
 	var logs string
 	ok := harness.AssertEventually(t, 2*time.Minute, 2*time.Second, func() bool {
@@ -268,10 +278,16 @@ func TestContainerE2E_HeightSync_OneHostStopped(t *testing.T) {
 	require.NotContains(t, logs, "close_ready_armed=1",
 		"a live host still receiving heartbeats must not arm just because a peer is down")
 
-	// H43: the abandoned-turn counter must move, not just the log line.
+	// One unreachable slot must show up as a planned cadence disposition, not
+	// silent reopen. Compose mock-chain usually seals D_ack before TurnTimeout,
+	// so the producer SettleTurn path emits turn_settled_degraded (plan §8.12.3).
+	// turns_abandoned_total is the TurnTimeout path; unit H43 covers that in
+	// isolation. Either counter moving means the stuck turn was accounted for.
 	harness.WaitMetricsPredicate(t, client, metricsURL, 2*time.Minute, func(b string) bool {
-		v, ok := harness.MetricLineValue(b, "devshard_gateway_heightsync_turns_abandoned_total", nil)
-		return ok && v >= 1
+		abandoned, aok := harness.MetricLineValue(b, "devshard_gateway_heightsync_turns_abandoned_total", nil)
+		settled, sok := harness.MetricLineValue(b, "devshard_gateway_heightsync_cadence_events_total",
+			map[string]string{"event": "turn_settled_degraded"})
+		return (aok && abandoned >= 1) || (sok && settled >= 1)
 	})
 }
 
@@ -282,24 +298,29 @@ func TestContainerE2E_HeightSync_BusyEscrowDischarge(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps := harness.BootHeightSyncStack(t, "citest-hs-h42-*")
+	// Q stamp turnover needs two distinct SlotIDs. The default 2-container
+	// stack is one identity: versiond-0 owns both slots and heartbeat acks
+	// already take Q. HA pair + solo is two executors, matching unit H2.
+	stack, cfg, eps := harness.BootHeightSyncHAPlusSoloStack(t, "citest-hs-h42-*")
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1")
+			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1",
+				harness.FirstSoloHostID(t, cfg))
 		}
 	})
 	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
 
-	// Keep the escrow busy across several Interval windows so stamps, not
-	// quiet-session heartbeats, discharge the cadence.
-	for i := 0; i < 8; i++ {
-		postHeightSyncChat(t, cfg, eps, "citest height-sync busy discharge")
-		time.Sleep(500 * time.Millisecond)
-	}
-
 	metricsURL := eps.GatewayHTTP + "/metrics"
+	// Do not wait for heartbeat_opened: that spends the Interval on ack Q
+	// (plan H42 is substitution, heartbeat_opened stays zero in the unit).
+	// Two back-to-back chats address nonce%2 == both slots, like
+	// TestHeartbeat_BusySessionWithStampsEmitsNone, then the ticker's next
+	// due-check should see lastTurnoverFromStamp.
+	postHeightSyncChat(t, cfg, eps, "citest height-sync busy discharge slot-a")
+	postHeightSyncChat(t, cfg, eps, "citest height-sync busy discharge slot-b")
+
 	body := harness.WaitMetricsPredicate(t, client, metricsURL, 2*time.Minute, func(b string) bool {
 		v, ok := harness.MetricLineValue(b, "devshard_gateway_heightsync_cadence_events_total",
 			map[string]string{"event": "discharged_by_inference"})
@@ -404,14 +425,15 @@ func TestContainerE2E_HeightSync_SettleDropsSeries(t *testing.T) {
 	escrowID := harness.GetGatewayEscrowID(t, client, eps.GatewayHTTP)
 	metricsURL := eps.GatewayHTTP + "/metrics"
 	harness.WaitMetricsPredicate(t, client, metricsURL, 2*time.Minute, func(b string) bool {
-		return harness.AnyMetricHasLabel(b, "devshard_id", escrowID)
+		return harness.AnyHeightSyncMetricHasLabel(b, "devshard_id", escrowID)
 	})
 
 	harness.Step(t, "retire escrow %s via admin deactivate (same registry drop as settle)", escrowID)
 	harness.PostAdminDeactivateDevshard(t, client, eps.GatewayHTTP, admin, escrowID)
+	harness.WaitGatewayEscrowRetired(t, client, eps.GatewayHTTP, escrowID, 2*time.Minute)
 
 	harness.WaitMetricsPredicate(t, client, metricsURL, 2*time.Minute, func(b string) bool {
-		return !harness.AnyMetricHasLabel(b, "devshard_id", escrowID)
+		return !harness.AnyHeightSyncMetricHasLabel(b, "devshard_id", escrowID)
 	})
 }
 

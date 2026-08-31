@@ -31,6 +31,10 @@ func SendCompletionRaw(t *testing.T, client *http.Client, clientURL, content, be
 	return PostJSONRaw(t, client, clientURL+"/v1/chat/completions", ChatCompletionBody(content, false), bearerToken)
 }
 
+func SendCompletionRawE(client *http.Client, clientURL, content, bearerToken string) (RawResponse, error) {
+	return PostJSONRawE(client, clientURL+"/v1/chat/completions", ChatCompletionBody(content, false), bearerToken)
+}
+
 type StreamResponse struct {
 	ContentType string
 	Events      []string
@@ -80,6 +84,28 @@ func ChatCompletionBody(content string, stream bool) map[string]any {
 	if stream {
 		body["stream"] = true
 	}
+	return body
+}
+
+const ToolChoiceUnsupportedMessage = "tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"
+
+// The gateway classifies a state divergence off this wording, so a stub host has to reproduce it verbatim.
+const StateRootDivergenceMessage = "apply diff nonce 1: post_state_root does not match computed state root: diff 00, computed 11"
+
+func ToolCompletionBody(content string, stream bool) map[string]any {
+	body := ChatCompletionBody(content, stream)
+	body["tool_choice"] = "auto"
+	body["tools"] = []map[string]any{{
+		"type": "function",
+		"function": map[string]any{
+			"name":        "lookup_status",
+			"description": "Return a test status string.",
+			"parameters": map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			},
+		},
+	}}
 	return body
 }
 

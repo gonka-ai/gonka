@@ -273,7 +273,7 @@ func RecoverSession(
 
 	for _, rec := range records {
 		sm.InjectWarmKeys(rec.WarmKeyDelta)
-		root, applyErr := sm.ApplyLocal(rec.Nonce, rec.Txs)
+		root, applyErr := sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
 		if applyErr != nil {
 			if errors.Is(applyErr, types.ErrInvalidNonce) {
 				return nil, nil, fmt.Errorf("%w: replay nonce %d: %w",

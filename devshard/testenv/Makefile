@@ -71,7 +71,7 @@ dev-logs: ## Follow dev overlay logs.
 .PHONY: citest-images citest-stack citest-stack-build list-citest-targets
 .PHONY: citest-validation-lease-race citest-escrow-longpoll
 .PHONY: citest-versiond-rolling-update citest-versiond-host-evacuation citest-adversarial citest-payload-withholding
-.PHONY: citest-observability citest-grpc-transport citest-height-sync citest-height-sync-dapi-compat test-gateway-smoke
+.PHONY: citest-observability citest-grpc-transport citest-force-upstream-streaming citest-height-sync citest-height-sync-dapi-compat test-gateway-smoke
 
 # citest-images and citest-stack-build are build/helper rules, not standalone
 # suites, so they are excluded from the auto-discovered CI matrix.
@@ -112,11 +112,14 @@ citest-versiond-host-evacuation: citest-images ## Router-controlled versiond hos
 citest-adversarial: citest-images ## Phase 9 adversarial citest (TESTENV_CITEST=1).
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestA1_|TestA2_|TestA3_|TestA4_|TestA5_' -count=1 -v -timeout 30m
 
+citest-force-upstream-streaming: citest-images ## Force-upstream streaming + aggregate spill citest.
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestGatewayForcedStream|TestGatewayAggregateSpill|TestGatewayAggregateOversize' -count=1 -v -timeout 60m
+
 citest-grpc-transport: citest-images ## Phase 12b G1–G4 gRPC-only gateway citest (see docs/chain-transport-consolidation.md).
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestG1_|TestG2_|TestG3_' -count=1 -v -timeout 30m
 	cd .. && go test ./cmd/devshardctl/ -run TestG4_NoRESTChainClientsInGatewayProduction -count=1 -v
 
-citest-observability: citest-images ## Phase 10 O1 observability smoke (Jaeger spans + Loki logs + metrics).
+citest-observability: citest-images ## Phase 10 O1 (isolated overlay; host histogram scrape).
 	$(MAKE) build-devshardd
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run TestO1_ObservabilitySmoke -count=1 -v -timeout 30m
 

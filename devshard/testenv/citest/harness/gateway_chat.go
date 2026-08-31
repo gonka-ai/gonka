@@ -26,10 +26,19 @@ func GatewayChatClient() *http.Client {
 
 // ChatCompletionRequest is a minimal OpenAI chat payload for gateway citest.
 type ChatCompletionRequest struct {
-	Model     string        `json:"model"`
-	Messages  []ChatMessage `json:"messages"`
-	MaxTokens int           `json:"max_tokens,omitempty"`
-	Stream    bool          `json:"stream,omitempty"`
+	Model         string             `json:"model"`
+	Messages      []ChatMessage      `json:"messages"`
+	MaxTokens     int                `json:"max_tokens,omitempty"`
+	Stream        bool               `json:"stream,omitempty"`
+	StreamOptions *ChatStreamOptions `json:"stream_options,omitempty"`
+	Logprobs      bool               `json:"logprobs,omitempty"`
+	TopLogprobs   int                `json:"top_logprobs,omitempty"`
+	Seed          *int               `json:"seed,omitempty"`
+}
+
+// ChatStreamOptions is the OpenAI stream_options object.
+type ChatStreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 // ChatMessage is one chat message.
@@ -40,14 +49,25 @@ type ChatMessage struct {
 
 // ChatCompletionResponse is the non-stream OpenAI-shaped JSON body.
 type ChatCompletionResponse struct {
+	Object  string `json:"object"`
+	Model   string `json:"model"`
 	Choices []struct {
 		Message struct {
 			Content string `json:"content"`
 			Role    string `json:"role"`
 		} `json:"message"`
-		FinishReason string `json:"finish_reason"`
+		FinishReason string          `json:"finish_reason"`
+		Logprobs     json.RawMessage `json:"logprobs"`
 	} `json:"choices"`
-	Model string `json:"model"`
+	Usage map[string]any `json:"usage"`
+}
+
+// GatewayChatHTTPResult is the raw HTTP response from /v1/chat/completions.
+type GatewayChatHTTPResult struct {
+	Status      int
+	ContentType string
+	Body        []byte
+	Header      http.Header
 }
 
 // PostGatewayChatCompletion posts non-stream /v1/chat/completions and requires HTTP 200.
@@ -80,6 +100,32 @@ func TryPostGatewayChatCompletion(client *http.Client, gatewayURL, adminAPIKey s
 		return resp, fmt.Errorf("empty assistant content")
 	}
 	return resp, nil
+}
+
+// PostGatewayChatCompletionEventually retries chat while hosts recover from a
+// full versiond restart (limiter may still report no live capacity).
+func PostGatewayChatCompletionEventually(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest, timeout time.Duration) ChatCompletionResponse {
+	t.Helper()
+	if timeout <= 0 {
+		timeout = 2 * time.Minute
+	}
+	deadline := time.Now().Add(timeout)
+	var last error
+	for time.Now().Before(deadline) {
+		resp, err := TryPostGatewayChatCompletion(client, gatewayURL, adminAPIKey, req)
+		if err == nil {
+			return resp
+		}
+		last = err
+		msg := err.Error()
+		if !strings.Contains(msg, "no live host capacity") && !strings.Contains(msg, "503") {
+			require.NoError(t, err)
+		}
+		t.Logf("citest: waiting for live host capacity: %v", err)
+		time.Sleep(2 * time.Second)
+	}
+	require.NoError(t, last, "gateway chat did not recover after %s", timeout)
+	return ChatCompletionResponse{}
 }
 
 // PostGatewayChatCompletionStream posts stream=true and collects SSE until [DONE].
@@ -147,6 +193,96 @@ func PostGatewayChatCompletionStream(t *testing.T, client *http.Client, gatewayU
 	return content, sawDone
 }
 
+// PostGatewayChatHTTP posts /v1/chat/completions and returns status, headers, and body.
+// Unlike PostGatewayChatCompletion it does not require HTTP 200.
+func PostGatewayChatHTTP(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) GatewayChatHTTPResult {
+	t.Helper()
+	result, err := postGatewayChatHTTP(client, gatewayURL, adminAPIKey, req)
+	require.NoError(t, err)
+	return result
+}
+
+func postGatewayChatHTTP(client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) (GatewayChatHTTPResult, error) {
+	if client == nil {
+		client = GatewayChatClient()
+	}
+	data, err := json.Marshal(req)
+	if err != nil {
+		return GatewayChatHTTPResult{}, err
+	}
+	httpReq, err := http.NewRequest(http.MethodPost, gatewayURL+"/v1/chat/completions", bytes.NewReader(data))
+	if err != nil {
+		return GatewayChatHTTPResult{}, err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	if req.Stream {
+		httpReq.Header.Set("Accept", "text/event-stream")
+	}
+	if adminAPIKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+adminAPIKey)
+	}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return GatewayChatHTTPResult{}, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return GatewayChatHTTPResult{}, err
+	}
+	return GatewayChatHTTPResult{
+		Status:      resp.StatusCode,
+		ContentType: resp.Header.Get("Content-Type"),
+		Body:        body,
+		Header:      resp.Header.Clone(),
+	}, nil
+}
+
+// ParseSSEDataChunks returns JSON payloads from SSE data: lines (excluding [DONE]).
+func ParseSSEDataChunks(body []byte) ([]map[string]any, bool) {
+	var chunks []map[string]any
+	sawDone := false
+	scanner := bufio.NewScanner(bytes.NewReader(body))
+	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "data: [DONE]" {
+			sawDone = true
+			continue
+		}
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		payload := strings.TrimPrefix(line, "data: ")
+		var chunk map[string]any
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			continue
+		}
+		chunks = append(chunks, chunk)
+	}
+	return chunks, sawDone
+}
+
+// AssembleSSEContent concatenates delta.content from SSE chunks.
+func AssembleSSEContent(chunks []map[string]any) string {
+	var assembled strings.Builder
+	for _, chunk := range chunks {
+		choices, _ := chunk["choices"].([]any)
+		if len(choices) == 0 {
+			continue
+		}
+		choice, _ := choices[0].(map[string]any)
+		delta, _ := choice["delta"].(map[string]any)
+		if delta == nil {
+			continue
+		}
+		if s, ok := delta["content"].(string); ok {
+			assembled.WriteString(s)
+		}
+	}
+	return assembled.String()
+}
+
 // RequireMockOpenAIContent asserts assistant text came from mock-openai echo.
 func RequireMockOpenAIContent(t *testing.T, content string) {
 	t.Helper()
@@ -184,7 +320,12 @@ func postGatewayJSON(client *http.Client, url, adminAPIKey string, payload, dest
 	return json.Unmarshal(body, dest)
 }
 
-// WaitGatewayChatReady polls /v1/status until the gateway has a routable devshard runtime.
+// WaitGatewayChatReady waits for catalog admission first (when stack is
+// provided), then polls GET /v1/status until the gateway reports a runtime
+// (escrow_id, runtimes > 0, or a non-empty devshards list). Catalog must come
+// before treating the gateway as chat-ready: heartbeats and warmup POST
+// /chat/completions, and a 503 undeclared_version quarantines the host. It
+// does not POST /v1/chat/completions.
 func WaitGatewayChatReady(t *testing.T, client *http.Client, gatewayURL string, timeout time.Duration, stack ...*Stack) {
 	t.Helper()
 	if client == nil {
@@ -192,6 +333,9 @@ func WaitGatewayChatReady(t *testing.T, client *http.Client, gatewayURL string, 
 	}
 	if timeout == 0 {
 		timeout = 3 * time.Minute
+	}
+	if len(stack) > 0 && stack[0] != nil {
+		WaitRouterCatalogAdmitted(t, stack[0], timeout)
 	}
 	t.Logf("citest: waiting for gateway chat runtime → %s/v1/status", gatewayURL)
 	var attempts int
@@ -201,13 +345,20 @@ func WaitGatewayChatReady(t *testing.T, client *http.Client, gatewayURL string, 
 		var status map[string]any
 		if err := GetJSON(client, gatewayURL+"/v1/status", &status); err != nil {
 			lastDetail = err.Error()
+			maybeLogWaitAttempt(t, "gateway chat runtime", attempts, lastDetail)
 			return false
 		}
-		if gatewayStatusHasRuntime(status) {
-			return true
+		if !gatewayStatusHasRuntime(status) {
+			lastDetail = fmt.Sprintf("no active runtime in status: %v", status)
+			maybeLogWaitAttempt(t, "gateway chat runtime", attempts, lastDetail)
+			return false
 		}
-		lastDetail = fmt.Sprintf("no active runtime in status: %v", status)
-		return false
+		if !gatewayStatusHeightSeedReady(status) {
+			lastDetail = fmt.Sprintf("height seed not ready in status: %v", status)
+			maybeLogWaitAttempt(t, "gateway height seed", attempts, lastDetail)
+			return false
+		}
+		return true
 	})
 	if !ok {
 		if len(stack) > 0 && stack[0] != nil {
@@ -215,6 +366,30 @@ func WaitGatewayChatReady(t *testing.T, client *http.Client, gatewayURL string, 
 		}
 		t.Fatalf("citest: gateway chat runtime not ready after %d attempts: %s", attempts, lastDetail)
 	}
+}
+
+// WaitRouterCatalogAdmitted polls GET /{version}/healthz on the versiond router.
+// That is the catalog-admission signal; it is not an inference request.
+// Uses RouterHTTP so it works while the gateway is still down.
+func WaitRouterCatalogAdmitted(t *testing.T, stack *Stack, timeout time.Duration) {
+	t.Helper()
+	if stack == nil {
+		return
+	}
+	if timeout <= 0 {
+		timeout = 5 * time.Minute
+	}
+	cfg := stack.LoadConfig(t)
+	ver := strings.TrimSpace(cfg.Versiond.VersionName)
+	if ver == "" {
+		return
+	}
+	routerHTTP := stack.RouterHTTP(t)
+	WaitGETOK(t, HTTPClient(), routerCatalogHealthzURL(routerHTTP, ver), timeout, "devshardd health via router (catalog)", stack)
+}
+
+func routerCatalogHealthzURL(routerHTTP, version string) string {
+	return strings.TrimRight(routerHTTP, "/") + "/" + version + "/healthz"
 }
 
 func gatewayStatusHasRuntime(status map[string]any) bool {
@@ -231,4 +406,44 @@ func gatewayStatusHasRuntime(status map[string]any) bool {
 		return true
 	}
 	return false
+}
+
+func gatewayStatusHeightSeedReady(status map[string]any) bool {
+	if status == nil {
+		return true
+	}
+	if !heightSeedValueReady(status["height_seed"]) {
+		return false
+	}
+	devshards, ok := status["devshards"].([]any)
+	if !ok {
+		return true
+	}
+	for _, raw := range devshards {
+		item, _ := raw.(map[string]any)
+		if item == nil {
+			continue
+		}
+		if !heightSeedValueReady(item["height_seed"]) {
+			return false
+		}
+	}
+	return true
+}
+
+func heightSeedValueReady(v any) bool {
+	if v == nil {
+		return true
+	}
+	m, ok := v.(map[string]any)
+	if !ok {
+		return true
+	}
+	state, _ := m["state"].(string)
+	switch state {
+	case "", "ok":
+		return true
+	default:
+		return false
+	}
 }

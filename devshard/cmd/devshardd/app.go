@@ -308,6 +308,8 @@ func buildHostManager(
 	}
 	store.Start()
 
+	closers.Add(manager.CloseHosts)
+
 	validationRetry := session.NewValidationRetryLoop(store, validator, manager, phase, instanceAddr)
 	validationRetry.WithInterval(cfg.ValidationRetryInterval)
 	validationRetry.WithLeaseTTL(cfg.ValidationLeaseTTL)

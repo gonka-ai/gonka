@@ -121,8 +121,8 @@ func New(grpcURL string) (*Client, error) {
 // gRPC, move to RPC on transport failure, and move back once a probe every
 // DefaultRPCProbeInterval finds gRPC reachable again — no restart needed.
 //
-// Conn() still returns the direct gRPC connection, so transactions never run
-// over the fallback.
+// Conn() still returns the direct gRPC connection. Unordered gateway
+// transactions opt into one-shot fallback through UnorderedTxConn.
 func NewWithRPCFallback(grpcURL, rpcURL string) (*Client, error) {
 	conn, err := dialDirect(grpcURL)
 	if err != nil {
@@ -171,8 +171,8 @@ func NewFromConn(conn grpc.ClientConnInterface) *Client {
 	return &Client{conn: conn, queryConn: conn}
 }
 
-// Conn returns the direct gRPC connection. Transaction signing and broadcasting
-// use this so they never silently run over the query fallback.
+// Conn returns the direct gRPC connection for ordered transactions and callers
+// that must not use the query fallback.
 func (c *Client) Conn() grpc.ClientConnInterface { return c.conn }
 
 // QueryConn returns the connection queries run on. It equals Conn() unless the
@@ -183,6 +183,17 @@ func (c *Client) Conn() grpc.ClientConnInterface { return c.conn }
 // through it is rejected rather than silently retried across transports. Use
 // Conn() for transactions either way.
 func (c *Client) QueryConn() grpc.ClientConnInterface { return c.queryConn }
+
+// UnorderedTxConn returns a connection for gateway unordered transactions.
+// Read operations use QueryConn's gRPC-to-RPC fallback. BroadcastTx uses the
+// transport selected by those reads exactly once, preventing cross-transport
+// resubmission after an ambiguous broadcast error.
+func (c *Client) UnorderedTxConn() grpc.ClientConnInterface {
+	if fallback, ok := c.queryConn.(*fallbackConn); ok {
+		return &unorderedTxConn{fallback: fallback}
+	}
+	return c.conn
+}
 
 // InferenceQueryClient returns a query client for the inference module.
 func (c *Client) InferenceQueryClient() InferenceClient {

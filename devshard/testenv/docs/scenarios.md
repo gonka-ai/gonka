@@ -77,7 +77,7 @@ picked up automatically (no workflow edit). For a local sequential subset, use
 | **HA stale standby catch-up** | Sticky primary advances PG, stop it; stale standby catch-up without `23505` | `TestHAStaleStandbyCatchupIdempotent` |
 | **Legacy version pin** | Non-HA path → `VERSIOND_LEGACY_HOST`; HA path remains multi-upstream | `TestLegacyVersionPinnedToSingleHost` |
 | **SQLite to Postgres HA migration** | SQLite single-host, multi-host rejection, migration, HA recovery | `TestSQLiteToPostgresHAMigration` |
-| **Validation lease race** | Same-key HA lease exclusivity, pending stretch, stale reclaim | `TestValidationLeaseRaceCore`, `…PendingStretch`, `…StaleReclaim` |
+| **Validation lease race** | Same-key HA lease exclusivity, pending stretch, graceful-stop re-acquire | `TestValidationLeaseRaceCore`, `…PendingStretch`, `…StaleReclaim` |
 | **Payload withholding** | Executor `GET /payloads` 500 → Challenged/Invalidated; D7 off releases the lease | `TestPayloadWithholding_AllCallers500_Invalidates`, `…SelectiveValidator_Challenges`, `…D7Off_LeaseReleasedAndReacquired` |
 | **Versiond rolling update** | Postgres blue/green drain and hybrid fallback | `TestVersiondRollingUpdateSameVersionSHA`, `…HybridFallback` |
 | **Versiond host evacuation** | Router withdrawal, SSE completion, survivor recovery and readiness-gated rejoin | `TestVersiondHostEvacuation` |
@@ -180,7 +180,8 @@ while other versions sticky-hash across the `versiond-pool` members (and get
 
 **Pass criteria:** governance admission creates a working multi-host dynamic
 pool, then the explicit non-HA pin constrains that same route to one host.
-See `devshard/docs/pr-1366-deploy-test-plan.md` §3.2.
+See `devshard/docs/v5-deploy-test-plan.md` (v4 nginx dummy-`v1` probes in
+`v4-deploy-test-plan.md` §1.6 do not apply to HAProxy).
 
 ---
 
@@ -205,24 +206,30 @@ reuse the old route without satisfying admission again.
 
 ## SQLite → Devshard-Ha fail → Postgres migrate → HA
 
-**What we test:** full §3.3 walkthrough from
-`devshard/docs/pr-1366-deploy-test-plan.md` (Phases 0–4).
+**What we test:** sqlite → Devshard-Ha 503 → postgres migrate → HA (v4
+§1.7 intent; v5 pin/catalog procedure in
+`devshard/docs/v5-deploy-test-plan.md`).
 
 **How:**
 
-1. Boot 2×versiond + Postgres compose patched to `DEVSHARD_STORAGE_MODE=sqlite`
-   and `GONKA_HA=""`; stop `versiond-1`, removing it from the DNS pool.
-2. **Phase 0:** NON_HA `v1` → `versiond_legacy`; HA `VersionName` → its
-   `versiond_pool_*` without multi-host `Devshard-Ha` (healthz 200 on sqlite).
-3. **Phase 1:** Gateway chat ×3; inventory `{data}/versiond-0/<version>/_meta.db`
-   (`escrow_epoch`).
-4. **Phase 2:** Set `GONKA_HA=true`; recreate router; start
-   `versiond-1`. HA `/<version>/healthz` → **503**; gateway chat fails; NON_HA
-   still legacy-pinned.
+1. Boot 2×versiond + Postgres compose patched to `DEVSHARD_STORAGE_MODE=sqlite`,
+   `GONKA_HA=""`, and `VERSIOND_NON_HA_VERSIONS` set to the running `VersionName`
+   (a real child, same pattern as `TestLegacyVersionPinnedToSingleHost`); stop
+   `versiond-1`. Do not pin a fictional `v1` — HAProxy L7-checks `/{version}/healthz`.
+2. **Phase 0:** assert `/{VersionName}/healthz` 200 and session probes hit
+   `versiond_legacy` / `versiond-0`. Pin at boot so the router is not recreated
+   while the gateway is seeding.
+3. **Phase 1:** Gateway chat ×3 while still pinned; inventory
+   `{data}/versiond-0/<version>/_meta.db` (`escrow_epoch`).
+4. **Phase 2:** Stop the gateway (router recreates otherwise persist a participant
+   quarantine). Unpin `VersionName`, set `GONKA_HA=true`, start `versiond-1`,
+   recreate the router once. HA `/<version>/healthz` → **503** with routing headers
+   (not catalog NOSRV).
 5. **Phase 3:** Patch `DEVSHARD_STORAGE_MODE=postgres`; recreate both versiond.
    Assert `*.migrated.*`, `.pg-bound`, and Postgres `devshard_session_index`
    matches the SQLite inventory.
-6. **Phase 4:** Gateway chat OK; sticky fan-out across hosts; NON_HA unchanged.
+6. **Phase 4:** Recreate the router (DNS) while the gateway is still down; start
+   the gateway; chat OK; sticky fan-out across hosts.
 
 **Pass criteria:** Multi-host + sqlite is rejected; migrate preserves escrow
 index; HA + postgres serves. Test: `TestSQLiteToPostgresHAMigration`.
@@ -260,7 +267,9 @@ children.
 **Pass criteria:** In Postgres mode, no router-health interruption occurs during
 the swap; new traffic succeeds on the new child; the old stream completes; each
 versiond host is exercised in a pinned subtest and shows the expected
-`running(new sha)` + `draining(old sha)` overlap. In hybrid mode, both hosts
+`running(new sha)` + `draining(old sha)` overlap. In hybrid mode, the running
+version is pinned to `VERSIOND_NON_HA_VERSIONS` (legacy single-host pool, no
+`Devshard-Ha`) so catalog `/healthz` can admit; both versiond hosts still
 converge to the new sha without ever reporting an old draining child.
 
 Tests: `TestVersiondRollingUpdateSameVersionSHA` and
@@ -297,8 +306,8 @@ Test: `TestVersiondHostEvacuation`.
 **What we test:** join-style same-`KEY_NAME` HA replicas under
 `validation_rate=10000` do not double-validate. Postgres
 `devshard_validation_leases` uniqueness is the PASS/FAIL signal. Also covers
-pending stretch (slow ML) and stale reclaim (short TTL + pause ML + stop
-replica). Manual companion:
+pending stretch (slow ML) and graceful-stop reclaim (abort Validate, free the
+row, survivor catch-up re-acquires). Manual companion:
 [`../../docs/validation-lease-race-manual-test.md`](../../docs/validation-lease-race-manual-test.md).
 
 **Topology:** 3 versionds — `versiond-0`/`versiond-1` HA pair (same `KEY_NAME`),
@@ -314,14 +323,16 @@ never validated).
    and ≥5 lease rows (`TestValidationLeaseRaceCore`).
 3. **7a:** slow mock-openai; observe `pending ≥ 1`; restore ML; uniqueness PASS
    (`TestValidationLeaseRacePendingStretch`).
-4. **7b:** short `DEVSHARD_VALIDATION_LEASE_TTL`; slow then **pause ML (503)**;
-   stop one HA replica; wait TTL; restore ML; submitted grows; uniqueness PASS
+4. **7b:** slow ML so a lease stays pending; stop one HA replica (graceful
+   stop aborts Validate and **frees** the row); catch-up the survivor via
+   `/mempool`; restore ML; submitted grows by the pending count
    (`TestValidationLeaseRaceStaleReclaim`).
 
 **Manual scripts:** `scripts/lease-race-run.sh` (monitor + load + PASS/FAIL).
 
 **Pass criteria:** Monitor / citest report PASS (no duplicate lease keys);
-optional paths prove pending visibility and stale reclaim after ML pause.
+optional paths prove pending visibility and survivor re-acquire after a
+graceful stop frees the in-flight row.
 
 ---
 
@@ -466,8 +477,9 @@ stays up; restarted devshardd children recover from Postgres.
 2. Gateway chat #1 — assert session nonce advances (`RequireGatewaySessionAdvanced`).
 3. `docker compose stop` + `start` **one** versiond host (`harness.RestartService`);
    wait router + session `healthz` (`WaitVersiondSessionHealthy`).
-4. Assert session stable across restart — same escrow, nonce, balance, phase
-   (`RequireGatewaySessionStable`).
+4. Assert session identity survived restart — same escrow and phase; session /
+   latest nonce did not go backwards (`RequireGatewaySessionStable`). Height-sync
+   heartbeats may advance the producer cursor while a replica drains.
 5. Gateway chat #2 — assert nonce advances again.
 6. Restart **all** versiond hosts; wait healthy; assert stable again.
 7. Gateway chat #3 — final nonce advance.
@@ -484,7 +496,7 @@ persistence across the multi-host topology, not only mock-chain or gateway in-me
 |-------|---------|-----------|
 | gRPC transport | `make citest-grpc-transport` | G1–G4 ✅ ([`chain-transport-consolidation.md`](./chain-transport-consolidation.md)) |
 | Adversarial | `make citest-adversarial` | A1–A5 (fault injection on mock-openai / mock-chain) |
-| Observability | `make citest-observability` | O1 Jaeger + Loki + Prometheus smoke |
+| Observability | `make citest-observability` | O1 Jaeger + Loki + host histogram scrape (isolated overlay) |
 | Gateway smoke | `TESTENV_GATEWAY_SMOKE=1` | Phase 7 wiring without full citest tag |
 
 See [`README.md`](../README.md) for adversarial and observability detail.

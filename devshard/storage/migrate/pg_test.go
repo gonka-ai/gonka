@@ -6,15 +6,12 @@ import (
 	"fmt"
 	"os"
 	"testing"
-	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/stretchr/testify/require"
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
-	"github.com/testcontainers/testcontainers-go/wait"
 
 	"devshard/storage/migrate"
+	"devshard/storage/pgtest"
 )
 
 func testPGPool(t *testing.T) *pgxpool.Pool {
@@ -29,20 +26,7 @@ func testPGPool(t *testing.T) *pgxpool.Pool {
 		// Always use an isolated container. Do not honor shell PGHOST/PGPORT —
 		// a developer's local devshard DB leaves schema_migrations rows that
 		// break these unit tests.
-		container, err := postgres.Run(ctx,
-			"postgres:18.1-bookworm",
-			postgres.WithDatabase("testdb"),
-			postgres.WithUsername("testuser"),
-			postgres.WithPassword("testpass"),
-			testcontainers.WithWaitStrategy(
-				wait.ForAll(
-					wait.ForLog("database system is ready to accept connections").
-						WithOccurrence(2),
-					wait.ForListeningPort("5432/tcp"),
-				).WithStartupTimeout(60*time.Second),
-			),
-		)
-		require.NoError(t, err)
+		container := pgtest.MustStart(t, ctx)
 		t.Cleanup(func() { _ = container.Terminate(ctx) })
 
 		host, err := container.Host(ctx)

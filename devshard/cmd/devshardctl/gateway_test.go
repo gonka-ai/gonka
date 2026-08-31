@@ -20,6 +20,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 
+	"common/completionapi"
 	"devshard/bridge"
 	"devshard/internal/statetest"
 	"devshard/internal/testutil"
@@ -1063,24 +1064,14 @@ func TestGatewayHostRoutePrefixDefaultsToBuildVersion(t *testing.T) {
 	require.Error(t, validateGatewayHostRoutePrefix("/v1/devshard"))
 }
 
-func TestResolveGatewayRoutePrefixDefaultsToBuildVersion(t *testing.T) {
-	oldVersion := Version
-	t.Cleanup(func() { Version = oldVersion })
-	Version = "v2"
-
+func TestRuntimeRoutePrefixDefaultsToV5(t *testing.T) {
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "")
-	got, err := resolveGatewayRoutePrefix()
-	require.NoError(t, err)
-	require.Equal(t, "/devshard/v2", got)
+	require.Equal(t, "/devshard/v5", resolveRuntimeRoutePrefix(""))
+}
 
-	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/v1/devshard")
-	_, err = resolveGatewayRoutePrefix()
-	require.ErrorContains(t, err, "unsupported devshard route prefix")
-
-	t.Setenv("DEVSHARD_ROUTE_PREFIX", " /devshard/test ")
-	got, err = resolveGatewayRoutePrefix()
-	require.NoError(t, err)
-	require.Equal(t, "/devshard/test", got)
+func TestRuntimeRoutePrefixPreservesExplicitDev(t *testing.T) {
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/dev")
+	require.Equal(t, "/devshard/dev", resolveRuntimeRoutePrefix(""))
 }
 
 // TestEscrowCheckerUsesBridgeGetEscrow replaces the 0.2.14 REST-bridge path
@@ -1744,8 +1735,8 @@ func TestGatewayPooledChatRefreshesCapacityScaleBeforeAcquire(t *testing.T) {
 
 	g.handlePooledChat(rec, req)
 
-	require.Equal(t, http.StatusTooManyRequests, rec.Code)
-	require.Contains(t, rec.Body.String(), "too many concurrent requests")
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Contains(t, rec.Body.String(), "no live host capacity")
 	snap := g.limiter.Snapshot()
 	require.EqualValues(t, 2, snap.EffectiveMaxConcurrent)
 	require.EqualValues(t, 2, snap.InFlightRequests)
@@ -2336,6 +2327,56 @@ func TestParticipantRequestLimiterMarksParticipantExhaustedOn503(t *testing.T) {
 	require.Error(t, limiter.CanAcceptEscrow([]string{"shared-host"}))
 }
 
+func TestParticipantRequestLimiterSkipsUndeclaredVersionCatalog503(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(2, 10)
+	limiter.ObserveResultWithBodyForModel("shared-host", "", "/sessions/1/height-sync",
+		http.StatusServiceUnavailable, "version v2 is not present in the governance routing catalog", "",
+		transport.DevshardErrorUndeclaredVersion)
+	require.False(t, limiter.IsBlocked("shared-host"))
+	require.Equal(t, 0, limiter.ExhaustedCount())
+	require.NoError(t, limiter.AllowRequest("shared-host", "/sessions/1/chat/completions"))
+}
+
+func TestParticipantRequestLimiterSkipsUndeclaredVersionHeader503(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(2, 10)
+	limiter.ObserveResultWithBodyForModel("shared-host", "", "/sessions/1/height-sync",
+		http.StatusServiceUnavailable, "busy", "", transport.DevshardErrorUndeclaredVersion)
+	require.False(t, limiter.IsBlocked("shared-host"))
+	require.Equal(t, 0, limiter.ExhaustedCount())
+}
+
+func TestParticipantRequestLimiterDoesNotObserveHostSpoofedUndeclaredHeaderOnSeed(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(2, 10)
+	limiter.ObserveResultWithBodyForModel("shared-host", "", "/sessions/1/height-sync",
+		http.StatusServiceUnavailable, "busy", transport.DevshardErrorUndeclaredVersion, "")
+	require.False(t, limiter.IsBlocked("shared-host"),
+		"seed path must never feed the limiter, including host-spoofed X-Devshard-Error")
+}
+
+func TestParticipantRequestLimiterDoesNotObserveCatalogBodyOnSeed(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(2, 10)
+	limiter.ObserveResultWithBody("shared-host", "/sessions/1/height-sync", http.StatusServiceUnavailable,
+		"version v2 is not present in the governance routing catalog")
+	require.False(t, limiter.IsBlocked("shared-host"),
+		"seed path must never feed the limiter")
+}
+
+func TestParticipantRequestLimiterDoesNotSkipRouterHeaderOnChat(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(2, 10)
+	limiter.ObserveResultWithBodyForModel("shared-host", "", "/sessions/1/chat/completions",
+		http.StatusServiceUnavailable, "busy", "", transport.DevshardErrorUndeclaredVersion)
+	require.True(t, limiter.IsBlocked("shared-host"),
+		"chat 503s always quarantine, even with X-Devshard-Router-Error")
+}
+
+func TestParticipantRequestLimiterDoesNotSkipCatalogPhraseOn404(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(2, 10)
+	limiter.ObserveResultWithBody("shared-host", "/sessions/1/chat/completions", http.StatusNotFound,
+		"version v2 is not present in the governance routing catalog")
+	require.True(t, limiter.IsBlocked("shared-host"),
+		"catalog phrase on a non-503 must not grant quarantine immunity")
+}
+
 func TestParticipantRequestLimiterExpiresOnFullRecovery(t *testing.T) {
 	limiter := NewParticipantRequestLimiter(10, 10)
 	limiter.ObserveResult("shared-host", "/sessions/12/chat/completions", http.StatusServiceUnavailable)
@@ -2632,10 +2673,11 @@ func TestNormalizeChatRequestDefaultsAndCapsMaxTokens(t *testing.T) {
 	require.EqualValues(t, 3_072, req.MaxTokens)
 	require.Contains(t, string(body), `"max_tokens":3072`)
 
-	body, req, err = normalizeChatRequest([]byte(`{"max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`))
+	floor := completionapi.MinTokensFloor
+	body, req, err = normalizeChatRequest([]byte(fmt.Sprintf(`{"max_tokens":%d,"messages":[{"role":"user","content":"hello"}]}`, floor)))
 	require.NoError(t, err)
-	require.EqualValues(t, 64, req.MaxTokens)
-	require.Contains(t, string(body), `"max_tokens":64`)
+	require.EqualValues(t, floor, req.MaxTokens)
+	require.Contains(t, string(body), fmt.Sprintf(`"max_tokens":%d`, floor))
 	require.NotContains(t, string(body), `"max_completion_tokens"`)
 
 	body, req, err = normalizeChatRequest([]byte(`{"max_tokens":10001,"messages":[{"role":"user","content":"hello"}]}`))
@@ -2659,18 +2701,18 @@ func TestGatewayParseChatReservationUsesPerModelTokenLimits(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
 		strings.NewReader(`{"model":"Kimi/Test","max_tokens":4096,"messages":[{"role":"user","content":"hello"}]}`))
-	body, model, _, err := g.parseChatReservation(req, g.settings.DefaultModel)
+	body, parsed, _, err := g.parseChatReservation(req, g.settings.DefaultModel)
 
 	require.NoError(t, err)
-	require.Equal(t, "Kimi/Test", model)
+	require.Equal(t, "Kimi/Test", parsed.Model)
 	require.Contains(t, string(body), `"max_tokens":3584`)
 
 	req = httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
 		strings.NewReader(`{"model":"Kimi/Test","messages":[{"role":"user","content":"hello"}]}`))
-	body, model, _, err = g.parseChatReservation(req, g.settings.DefaultModel)
+	body, parsed, _, err = g.parseChatReservation(req, g.settings.DefaultModel)
 
 	require.NoError(t, err)
-	require.Equal(t, "Kimi/Test", model)
+	require.Equal(t, "Kimi/Test", parsed.Model)
 	require.Contains(t, string(body), `"max_tokens":2048`)
 }
 
@@ -2874,7 +2916,7 @@ func TestAdminSettingsUpdatesLimiterAndDefaultTokens(t *testing.T) {
 			Message: "please use http://.../v1/ base url",
 			NewURL:  "http://.../v1/chat/completions",
 		},
-	}, t.TempDir(), store, dialTestChainGRPC(t))
+	}, t.TempDir(), store, dialTestChainGRPC(t), nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/settings",
 		strings.NewReader(`{"chain_rest":"http://node:2317","public_api":"http://api:9900","default_model":"Qwen/Qwen3-235B-A22B-Instruct-2507-FP8","max_concurrent_requests":7,"max_input_tokens_in_flight":700,"default_request_max_tokens":3072,"request_max_tokens_cap":4096,"tx_gas_limit":700000,"model_limits":[{"model_id":"moonshotai/Kimi-K2.6","access_mode":"admin_only","access_message":"Kimi temporarily unavailable"}],"disabled":{"enabled":true,"message":"please use ... base url","new_url":"https://.../v1/chat/completions"},"participant_throttle":{"request_burst":42,"recovery_per_minute":7,"http_quarantine_ms":1100,"transport_failure_quarantine_ms":1200,"empty_stream_quarantine_ms":1300,"stalled_winner_quarantine_ms":1400,"empty_stream_threshold":2},"redundancy":{"receipt_timeout_ms":1500,"first_token_timeout_floor_ms":1600,"per_input_token_first_token_lag_ms":17,"inter_chunk_stall_timeout_ms":1800,"streaming_attempt_hard_timeout_ms":1810,"non_stream_response_floor_ms":1900,"non_stream_no_content_timeout_ms":2200,"non_stream_max_attempt_wait_ms":2600,"per_input_token_response_lag_ms":20,"secondary_wait_after_winner_ms":2100,"parallel_advantage_threshold":0.4,"unresponsive_threshold":0.8}}`))
@@ -2913,14 +2955,10 @@ func TestAdminSettingsUpdatesLimiterAndDefaultTokens(t *testing.T) {
 	require.EqualValues(t, 1500, state.Settings.Redundancy.ReceiptTimeoutMS)
 	require.EqualValues(t, 17, state.Settings.Redundancy.PerInputTokenFirstTokenLagMS)
 	require.EqualValues(t, 1810, state.Settings.Redundancy.StreamingAttemptHardTimeoutMS)
-	require.EqualValues(t, 2200, state.Settings.Redundancy.NonStreamNoContentTimeoutMS)
-	require.EqualValues(t, 2600, state.Settings.Redundancy.NonStreamMaxAttemptWaitMS)
 	require.Equal(t, 0.4, state.Settings.Redundancy.ParallelAdvantageThreshold)
 	require.Equal(t, 1500*time.Millisecond, ReceiptTimeout)
 	require.Equal(t, 17*time.Millisecond, PerInputTokenFirstTokenLag)
 	require.Equal(t, 1810*time.Millisecond, StreamingAttemptHardTimeout)
-	require.Equal(t, 2200*time.Millisecond, nonStreamingNoContentTimeout)
-	require.Equal(t, 2600*time.Millisecond, nonStreamingMaxAttemptWait)
 }
 
 func TestAdminSettingsRejectsInvalidTuning(t *testing.T) {
@@ -2947,7 +2985,7 @@ func TestAdminSettingsRejectsInvalidTuning(t *testing.T) {
 		DefaultRequestMaxTokens: 1000,
 		MaxConcurrentRequests:   2,
 		MaxInputTokensInFlight:  200,
-	}, t.TempDir(), store, dialTestChainGRPC(t))
+	}, t.TempDir(), store, dialTestChainGRPC(t), nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/settings",
 		strings.NewReader(`{"participant_throttle":{"empty_stream_threshold":0}}`))
@@ -2980,7 +3018,7 @@ func TestAdminSettingsUpdatesEscrowRotationSettlementEnabled(t *testing.T) {
 		DefaultRequestMaxTokens: 1000,
 		MaxConcurrentRequests:   2,
 		MaxInputTokensInFlight:  200,
-	}, t.TempDir(), store, dialTestChainGRPC(t))
+	}, t.TempDir(), store, dialTestChainGRPC(t), nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/settings",
 		strings.NewReader(`{"escrow_rotation":{"settlement_enabled":true}}`))
@@ -3138,6 +3176,39 @@ func TestGatewayStatusCodeForErrorMapsUpstream503To429(t *testing.T) {
 		Body:       "nginx limit",
 	})
 	require.Equal(t, http.StatusTooManyRequests, code)
+}
+
+func TestGatewayStatusCodeForErrorMapsUndeclaredVersionTo503(t *testing.T) {
+	code := gatewayStatusCodeForError(&transport.UpstreamStatusError{
+		Path:          "/sessions/12/chat/completions",
+		StatusCode:    http.StatusServiceUnavailable,
+		Body:          "version v2 is not present in the governance routing catalog",
+		DevshardError: transport.DevshardErrorUndeclaredVersion,
+	})
+	require.Equal(t, http.StatusServiceUnavailable, code)
+}
+
+func TestGatewayStatusCodeForErrorMapsZeroLiveWeightTo503(t *testing.T) {
+	require.Equal(t, http.StatusServiceUnavailable, gatewayStatusCodeForError(&LimiterRejection{
+		Kind: LimitedByZeroLiveWeight, Limit: 0,
+	}))
+	require.Equal(t, http.StatusServiceUnavailable, gatewayStatusCodeForError(&EscrowParticipantRateLimitError{}))
+	require.Equal(t, http.StatusTooManyRequests, gatewayStatusCodeForError(&LimiterRejection{
+		Kind: LimitedByConcurrentRequests, InFlight: 4, Limit: 4,
+	}))
+}
+
+func TestWriteGatewayErrorSetsUndeclaredVersionHeader(t *testing.T) {
+	rec := httptest.NewRecorder()
+	writeGatewayError(rec, &transport.UpstreamStatusError{
+		Path:          "/sessions/12/chat/completions",
+		StatusCode:    http.StatusServiceUnavailable,
+		Body:          "version v2 is not present in the governance routing catalog",
+		DevshardError: transport.DevshardErrorUndeclaredVersion,
+	})
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Equal(t, transport.DevshardErrorUndeclaredVersion, rec.Header().Get(transport.HeaderDevshardError))
+	require.Equal(t, transport.DevshardErrorUndeclaredVersion, rec.Header().Get(transport.HeaderDevshardRouterError))
 }
 
 func TestParticipantLimiterBypassedDuringRelaxedPoC(t *testing.T) {

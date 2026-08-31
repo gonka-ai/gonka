@@ -31,28 +31,86 @@ func errorMissPayload(t *testing.T) []byte {
 	return b
 }
 
-func startConfirmForErrorMiss(t *testing.T, session *Session, hosts []*signing.Secp256k1Signer, params InferenceParams) (nonce uint64, execIdx int) {
+func startPendingConfirmForErrorMiss(t *testing.T, session *Session, hosts []*signing.Secp256k1Signer, params InferenceParams) (nonce uint64, execIdx int) {
 	t.Helper()
-	ctx := context.Background()
 	prepared, err := session.PrepareInference(params)
 	require.NoError(t, err)
 	nonce = prepared.diff.Nonce
 	execIdx = int(nonce % uint64(len(session.clients)))
 
-	execSig := testutil.SignExecutorReceipt(t, hosts[execIdx], "escrow-1", nonce, testutil.TestPromptHash[:], "llama", 100, 50, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[execIdx], "escrow-1", nonce, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
 	confirm := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: nonce, ExecutorSig: execSig, ConfirmedAt: 1000,
 	}}}
 	session.mu.Lock()
 	session.addPendingTx(confirm)
-	session.mu.Unlock()
-	require.NoError(t, session.SendPendingDiff(ctx))
-	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[nonce].Status)
-
-	session.mu.Lock()
 	session.nonceStates[nonce].confirmedAt = 1000
 	session.mu.Unlock()
+	require.Equal(t, types.StatusPending, session.StateMachine().SnapshotState().Inferences[nonce].Status)
 	return nonce, execIdx
+}
+
+func startConfirmForErrorMiss(t *testing.T, session *Session, hosts []*signing.Secp256k1Signer, params InferenceParams) (nonce uint64, execIdx int) {
+	t.Helper()
+	nonce, execIdx = startPendingConfirmForErrorMiss(t, session, hosts, params)
+	require.NoError(t, session.SendPendingDiff(context.Background()))
+	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[nonce].Status)
+	return nonce, execIdx
+}
+
+// applyingErrorMissClient applies catch-up diffs then runs the real
+// VerifyErrorMiss checks (same sequence as HandleVerifyErrorMiss).
+type applyingErrorMissClient struct {
+	HostClient
+	host    *host.Host
+	signer  *signing.Secp256k1Signer
+	group   []types.SlotAssignment
+	slotIdx int
+}
+
+func (c *applyingErrorMissClient) VerifyTimeout(context.Context, uint64, types.TimeoutReason, *host.InferencePayload, []types.Diff, host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, nil, "unused", nil
+}
+
+func (c *applyingErrorMissClient) VerifyErrorMiss(_ context.Context, inferenceID uint64, diffs []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	if len(diffs) > 0 {
+		c.host.ApplyCatchUpDiffs(diffs)
+	}
+	st := c.host.SnapshotState()
+	accept, responseHash, rejectCause, err := host.VerifyErrorMiss(st, inferenceID, artifacts.FinishTx, artifacts.ResponsePayload, c.host.MempoolTxs(), c.host)
+	if err != nil {
+		return false, nil, 0, nil, "", err
+	}
+	if !accept {
+		return false, nil, 0, host.RecoveryTxsFor(c.host.MempoolTxs(), inferenceID), rejectCause, nil
+	}
+	content := &types.ErrorMissVoteContent{
+		EscrowId:     "escrow-1",
+		InferenceId:  inferenceID,
+		Accept:       true,
+		ResponseHash: responseHash,
+	}
+	data, err := proto.MarshalOptions{Deterministic: true}.Marshal(content)
+	if err != nil {
+		return false, nil, 0, nil, "", err
+	}
+	sig, err := c.signer.Sign(data)
+	if err != nil {
+		return false, nil, 0, nil, "", err
+	}
+	return true, sig, c.group[c.slotIdx].SlotID, nil, "", nil
+}
+
+func wrapApplyingErrorMissVerifiers(session *Session, hosts []*signing.Secp256k1Signer) {
+	for i, c := range session.clients {
+		session.clients[i] = &applyingErrorMissClient{
+			HostClient: c,
+			host:       c.(*InProcessClient).Host,
+			signer:     hosts[i],
+			group:      session.group,
+			slotIdx:    i,
+		}
+	}
 }
 
 func signedErrorFinishTx(t *testing.T, hosts []*signing.Secp256k1Signer, nonce uint64, execIdx int, payload []byte) (*types.DevshardTx, []byte) {
@@ -90,7 +148,7 @@ func TestHandleErrorMiss_SameDiffFinishAndMiss(t *testing.T) {
 	session, hosts, _ := setupSession(t, 3, 100000, 10)
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 	nonce, execIdx := startConfirmForErrorMiss(t, session, hosts, params)
 	payload := errorMissPayload(t)
@@ -132,11 +190,59 @@ func TestHandleErrorMiss_SameDiffFinishAndMiss(t *testing.T) {
 	require.NotNil(t, txs[1].GetErrorMiss(), "same-diff composition requires ErrorMiss after Finish")
 }
 
+func TestHandleErrorMiss_PublishesConfirmStartBeforeVotes(t *testing.T) {
+	session, hosts, _ := setupSession(t, 3, 100000, 10)
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	}
+	nonce, execIdx := startPendingConfirmForErrorMiss(t, session, hosts, params)
+	payload := errorMissPayload(t)
+	finishTx, finishBytes := signedErrorFinishTx(t, hosts, nonce, execIdx, payload)
+
+	session.mu.Lock()
+	session.addPendingTx(finishTx)
+	session.nonceStates[nonce].finished = true
+	session.mu.Unlock()
+
+	wrapApplyingErrorMissVerifiers(session, hosts)
+
+	result, err := session.HandleErrorMiss(context.Background(), nonce, finishBytes, payload)
+	require.ErrorIs(t, err, ErrInferenceMissed)
+	require.True(t, result.Accepted)
+	require.Equal(t, types.StatusTimedOut, session.StateMachine().SnapshotState().Inferences[nonce].Status)
+
+	var sawConfirmWithoutFinish, sawFinishWithMiss bool
+	for _, diff := range session.Diffs() {
+		var hasConfirm, hasFinish, hasMiss bool
+		for _, tx := range diff.Txs {
+			if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == nonce {
+				hasConfirm = true
+			}
+			if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == nonce {
+				hasFinish = true
+			}
+			if em := tx.GetErrorMiss(); em != nil && em.InferenceId == nonce {
+				hasMiss = true
+			}
+		}
+		if hasConfirm {
+			require.False(t, hasFinish, "receipt publish must hold the pinned Finish")
+			sawConfirmWithoutFinish = true
+		}
+		if hasFinish && hasMiss {
+			sawFinishWithMiss = true
+		}
+	}
+	require.True(t, sawConfirmWithoutFinish, "ConfirmStart must be committed before error-miss votes")
+	require.True(t, sawFinishWithMiss, "Finish and ErrorMiss must still share a later diff")
+}
+
 func TestPinPendingFinish_ConcurrentComposeLeavesFinish(t *testing.T) {
 	session, hosts, _ := setupSession(t, 3, 100000, 10)
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 	nonce, execIdx := startConfirmForErrorMiss(t, session, hosts, params)
 	payload := errorMissPayload(t)
@@ -162,7 +268,7 @@ func TestPinnedNonce_HoldsTimeoutUntilIncluded(t *testing.T) {
 	session, hosts, _ := setupSession(t, 3, 100000, 10)
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 	nonce, execIdx := startConfirmForErrorMiss(t, session, hosts, params)
 	payload := errorMissPayload(t)
@@ -191,7 +297,7 @@ func TestHandleErrorMiss_PinnedFinishSurvivesConcurrentCompose(t *testing.T) {
 	session, hosts, _ := setupSession(t, 3, 100000, 10)
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 	nonce, execIdx := startConfirmForErrorMiss(t, session, hosts, params)
 	payload := errorMissPayload(t)
@@ -264,7 +370,7 @@ func TestHandleErrorMiss_InsufficientVotesKeepsToday(t *testing.T) {
 	session, hosts, _ := setupSession(t, 3, 100000, 10)
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 	nonce, execIdx := startConfirmForErrorMiss(t, session, hosts, params)
 	payload := errorMissPayload(t)
@@ -297,7 +403,7 @@ func TestHandleErrorMiss_DoesNotEarlyReturnOnPendingFinish(t *testing.T) {
 	session, hosts, _ := setupSession(t, 3, 100000, 10)
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 	nonce, execIdx := startConfirmForErrorMiss(t, session, hosts, params)
 	payload := errorMissPayload(t)
@@ -318,7 +424,7 @@ func TestHandleErrorMiss_NotAppliedIfFinishMissing(t *testing.T) {
 	session, hosts, _ := setupSession(t, 3, 100000, 10)
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 	nonce, execIdx := startConfirmForErrorMiss(t, session, hosts, params)
 	payload := errorMissPayload(t)
@@ -347,7 +453,7 @@ func TestProcessResponse_TimedOutNonceDoesNotRefinish(t *testing.T) {
 	session, hosts, _ := setupSession(t, 3, 100000, 10)
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 	nonce, execIdx := startConfirmForErrorMiss(t, session, hosts, params)
 	payload := errorMissPayload(t)

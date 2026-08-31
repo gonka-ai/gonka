@@ -376,6 +376,36 @@ func TestRetryStaleValidation_ValidateError_Releases(t *testing.T) {
 	require.Equal(t, []string{"escrow-1/7/3/addr"}, leases.releaseCalls)
 }
 
+func TestRetryStaleValidation_Canceled_Releases(t *testing.T) {
+	leases := &stubStaleLeaseStore{}
+	inner := &stubEngine{
+		validateFn: func(_ context.Context, _ devshardpkg.ValidateRequest) (*devshardpkg.ValidateResult, error) {
+			return nil, context.Canceled
+		},
+	}
+	rl := newTestValidationRetryLoop(leases, inferenceSnap(7, types.StatusFinished), inner)
+
+	err := rl.retryStaleValidation(context.Background(), "escrow-1", 7, 3)
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, 1, inner.calls)
+	require.Empty(t, leases.setResultCalls)
+	require.Equal(t, []string{"escrow-1/7/3/addr"}, leases.releaseCalls,
+		"canceled Validate must free the row so a sibling can re-acquire")
+}
+
+func TestRetryStaleValidation_Canceled_SessionNotLoaded_Releases(t *testing.T) {
+	leases := &stubStaleLeaseStore{}
+	rl := newTestValidationRetryLoop(leases, nil, &stubEngine{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := rl.retryStaleValidation(ctx, "escrow-1", 7, 3)
+	require.ErrorContains(t, err, "not loaded")
+	require.Equal(t, []string{"escrow-1/7/3/addr"}, leases.releaseCalls,
+		"shutdown with no session must free a claimed row")
+	require.Empty(t, leases.setResultCalls)
+}
+
 func TestRetryStaleValidationsForEscrow_TransientErrorReleaseThenHotPathReacquireSubmits(t *testing.T) {
 	h := newFinishedRetryHost(t)
 	leases := storage.NewMemory()
@@ -1165,7 +1195,7 @@ func newFinishedRetryFixtureForEscrow(t *testing.T, escrowID string) ([]*signing
 	group := testutil.MakeGroup(hosts)
 	engine := stub.NewInferenceEngine()
 	diff1 := testutil.SignDiff(t, user, escrowID, 1, []*types.DevshardTx{testutil.StartTx(1)})
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, testutil.TestPromptHash[:], "llama", 100, 50, 1000, 2000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 2000)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
 	}}}

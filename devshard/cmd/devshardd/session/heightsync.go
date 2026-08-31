@@ -17,7 +17,6 @@ import (
 	"devshard/chainoracle/blocks/tipcache"
 	"devshard/heightsync"
 	"devshard/host"
-	"devshard/internal/boolvalue"
 	"devshard/transport"
 
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
@@ -25,15 +24,13 @@ import (
 
 const (
 	envChainOracleURL  = "DEVSHARD_CHAINORACLE_URL"
-	envHeightSync      = "DEVSHARD_HEIGHTSYNC"
 	envHeightSyncK     = "DEVSHARD_HEIGHTSYNC_K"
 	envHeightSyncSlots = "DEVSHARD_HEIGHTSYNC_SLOTS"
 	envHeightSyncProbe = "DEVSHARD_HEIGHTSYNC_PROBE_INTERVAL"
 )
 
-// SetHeightSyncFromEnv wires an optional height-sync oracle. Empty
-// DEVSHARD_CHAINORACLE_URL and unset DEVSHARD_HEIGHTSYNC is a no-op even when
-// chainClient is non-nil (compose always has NODE_GRPC_URL). Call before
+// SetHeightSyncFromEnv wires the height-sync oracle when a dapi URL or a
+// chain RPC/client is available. No-op only when neither exists. Call before
 // RecoverSessions so recovered sessions pick up WithHeightSync / WithChainOracle.
 //
 // Tip (Latest/Subscribe) is the Comet NewBlock cache. Direct chain is
@@ -46,9 +43,6 @@ func (m *HostManager) SetHeightSyncFromEnv(ctx context.Context, chainClient *cha
 		return nil
 	}
 	url := strings.TrimSpace(os.Getenv(envChainOracleURL))
-	if url == "" && !heightSyncFlag() {
-		return nil
-	}
 	k, err := parseUintEnv(envHeightSyncK)
 	if err != nil {
 		return err
@@ -75,7 +69,7 @@ func (m *HostManager) SetHeightSyncFromEnv(ctx context.Context, chainClient *cha
 		chainOracle = direct.NewFromChain(chainClient, chainRPCFromEnv())
 	}
 	if lookup == nil && chainOracle == nil {
-		return fmt.Errorf("%s set but no %s and no chain client", envHeightSync, envChainOracleURL)
+		return nil
 	}
 
 	cache := tipcache.New(0)
@@ -128,11 +122,6 @@ func (m *HostManager) CloseHeightSync() {
 	m.chainOracle = nil
 	m.heightSync = nil
 	m.heightSyncTip = nil
-}
-
-func heightSyncFlag() bool {
-	enabled, err := boolvalue.Parse(os.Getenv(envHeightSync))
-	return err == nil && enabled
 }
 
 func chainRPCFromEnv() string {

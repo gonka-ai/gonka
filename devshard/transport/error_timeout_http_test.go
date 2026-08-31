@@ -34,7 +34,7 @@ func applyStartedInference(t *testing.T, env *serverTestEnv, inferenceID uint64)
 	_, err := env.server.host.HandleRequest(ctx, host.HostRequest{Diffs: []types.Diff{start}})
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, env.hostSigner, "escrow-1", inferenceID, testutil.TestPromptHash[:], "llama", 100, 50, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, env.hostSigner, "escrow-1", inferenceID, testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 1000)
 	confirm := testutil.SignDiff(t, env.userSigner, "escrow-1", 2, []*types.DevshardTx{
 		{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 			InferenceId: inferenceID, ExecutorSig: execSig, ConfirmedAt: 1000,

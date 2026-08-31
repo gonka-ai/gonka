@@ -131,7 +131,7 @@ func TestSession_Validation_InvalidationConverges(t *testing.T) {
 		Model:       "llama",
 		Prompt:      testutil.TestPrompt,
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 	}
 	for i := 1; i <= numInferences; i++ {
 		params.StartedAt = int64(i) * 1000
@@ -259,7 +259,7 @@ func TestSession_FetchFailureVerdict_ChallengeThenInvalidate(t *testing.T) {
 		Model:       "llama",
 		Prompt:      testutil.TestPrompt,
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 	}
 	for i := 1; i <= numInferences; i++ {
 		params.StartedAt = int64(i) * 1000
@@ -385,7 +385,7 @@ func TestSession_Validation_MultiSlotValidatorCountedOnce(t *testing.T) {
 		Model:       "llama",
 		Prompt:      testutil.TestPrompt,
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 	}
 	for i := 1; i <= numInferences; i++ {
 		params.StartedAt = int64(i) * 1000

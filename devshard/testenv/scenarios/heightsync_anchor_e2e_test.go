@@ -36,7 +36,11 @@ import (
 )
 
 const hsAnchorE2EEscrowID = "9001"
-const hsE2ERoutePrefix = "/devshard/v2"
+
+// hsE2ERoutePrefix tracks RuntimeTestVersion so the user session (which binds
+// SM version from the route) and host SMs (EffectiveStateRootAndProtocolVersion)
+// compute the same state root.
+var hsE2ERoutePrefix = testutil.TestRoutePrefix()
 
 func registerHeightSyncServer(g *echo.Group, srv *transport.Server) {
 	withAuth := func(recordChatTerminal bool, handler echo.HandlerFunc) echo.HandlerFunc {
@@ -56,6 +60,14 @@ func registerHeightSyncServer(g *echo.Group, srv *transport.Server) {
 	g.GET("/sessions/:id/diffs", srv.HandleGetDiffs)
 	g.GET("/sessions/:id/mempool", srv.HandleGetMempool)
 	g.GET("/sessions/:id/signatures", srv.HandleGetSignatures)
+}
+
+// seedHTTPSession runs the session-open height-sync seed (spec §18.5). These
+// stacks skip gateway warmup, which is what waits for the seed before chat.
+func seedHTTPSession(t *testing.T, sess *user.Session) {
+	t.Helper()
+	require.NotNil(t, sess)
+	sess.SeedHeightSync(context.Background())
 }
 
 // scenarioBridge is a minimal MainnetBridge for wiring multi-host HTTP tests.
@@ -275,7 +287,7 @@ func defaultInferenceParams() user.InferenceParams {
 		Model:       "llama",
 		Prompt:      testutil.TestPrompt,
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 		StartedAt:   1000,
 	}
 }
@@ -594,6 +606,7 @@ func (st *oneHostRestartStack) newHTTPSession(t *testing.T) *user.Session {
 		ExtraClientConfig: &cc,
 	})
 	require.NoError(t, err)
+	seedHTTPSession(t, sess)
 	return sess
 }
 
@@ -1030,8 +1043,8 @@ func courierSyncTurnWithHeldResponses(t *testing.T, ctx context.Context, st *fou
 
 // courierPipelinedSyncTurn prepares every nonce in [from, through] first, then runs
 // SendOnly for all of them while each host holds its HTTP response until a single
-// release processes the whole wave. The session-open seed runs on the first
-// PrepareInference, so Decide in the wave sees a warm cache and Anchors.
+// release processes the whole wave. Callers run seedHTTPSession first so
+// Decide in the wave sees a warm cache and Anchors.
 func courierPipelinedSyncTurn(t *testing.T, ctx context.Context, st *fourHostStack, params user.InferenceParams, from, through uint64) {
 	t.Helper()
 	if !inferenceHoldsEnabled() {
@@ -2209,6 +2222,7 @@ func TestHeightSyncAnchor_E2E_CarriesHigherPeerTipAcrossHosts(t *testing.T) {
 	hostOracles[firstHostIdx] = staticOracleWith(101, x1Hash)
 	clientOracle := staticOracleWith(100, xHash)
 	st := setupFourHostHTTPHeightSyncWithOracles(t, hostOracles, clientOracle)
+	seedHTTPSession(t, st.Session)
 
 	for nonce := 1; nonce <= 4; nonce++ {
 		_, err := st.Session.SendInference(ctx, params)

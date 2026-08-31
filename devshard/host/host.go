@@ -151,6 +151,8 @@ type Host struct {
 	validationStartOnce   sync.Once
 	validationCloseOnce   sync.Once
 	validationClosed      bool
+	validationCtx         context.Context
+	validationCancel      context.CancelFunc
 
 	maxNonce devshard.MaxNonceProvider // nil = do not enforce
 
@@ -275,6 +277,9 @@ func (h *Host) Start() {
 		if h.validationClosed {
 			return
 		}
+		ctx, cancel := context.WithCancel(context.Background())
+		h.validationCtx = ctx
+		h.validationCancel = cancel
 		q := make(chan validateJob, defaultValidationQueueSize)
 		h.validationQueue = q
 		h.startValidationWorkers(q, defaultValidationWorkers)
@@ -288,6 +293,10 @@ func (h *Host) Close() {
 		h.validationLifecycleMu.Lock()
 		defer h.validationLifecycleMu.Unlock()
 		h.validationClosed = true
+		if h.validationCancel != nil {
+			h.validationCancel()
+			h.validationCancel = nil
+		}
 		if h.validationQueue != nil {
 			close(h.validationQueue)
 			h.validationQueue = nil
@@ -1200,9 +1209,37 @@ func (h *Host) startValidationWorkers(q <-chan validateJob, count int) {
 	for i := 0; i < count; i++ {
 		go func() {
 			for job := range q {
-				h.validateAsync(context.Background(), job)
+				h.validateAsync(h.validationJobContext(), job)
 			}
 		}()
+	}
+}
+
+func (h *Host) validationJobContext() context.Context {
+	h.validationLifecycleMu.RLock()
+	ctx := h.validationCtx
+	h.validationLifecycleMu.RUnlock()
+	if ctx == nil {
+		return context.Background()
+	}
+	return ctx
+}
+
+func (h *Host) validationIsClosed() bool {
+	h.validationLifecycleMu.RLock()
+	defer h.validationLifecycleMu.RUnlock()
+	return h.validationClosed
+}
+
+// EnqueueDueValidations offers collectValidationJobs work to the validation
+// queue. GET /mempool catch-up uses this so an HA survivor can re-acquire
+// after the owner Released on graceful stop, without waiting for a new chat.
+func (h *Host) EnqueueDueValidations() {
+	h.mu.Lock()
+	jobs := h.collectValidationJobs()
+	h.mu.Unlock()
+	for _, job := range jobs {
+		h.enqueueValidation(job)
 	}
 }
 
@@ -1290,8 +1327,10 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	})
 	if err != nil {
 		if !errors.Is(err, devshard.ErrValidationAlreadyLeased) {
-			h.stampValidationCooldown(job.inferenceID)
-			h.releaseValidationLease(ctx, job.inferenceID)
+			if !h.validationIsClosed() {
+				h.stampValidationCooldown(job.inferenceID)
+				h.releaseValidationLease(ctx, job.inferenceID)
+			}
 		}
 		// Payload already pruned on the executor: the validation window is
 		// effectively over for us. Drop silently -- no MsgValidation, no
@@ -1802,6 +1841,9 @@ func verifyPayloadWorkload(p *InferencePayload) error {
 	}
 	if bodyMaxTokens > p.MaxTokens {
 		return fmt.Errorf("%w: prompt max_tokens %d exceeds declared %d", types.ErrPayloadMismatch, bodyMaxTokens, p.MaxTokens)
+	}
+	if p.MaxTokens < completionapi.MinTokensFloor {
+		return fmt.Errorf("%w: declared max_tokens %d below floor %d", types.ErrPayloadMismatch, p.MaxTokens, completionapi.MinTokensFloor)
 	}
 	return nil
 }

@@ -27,7 +27,6 @@ func (s *Session) MaybeHeartbeat(ctx context.Context) error {
 	if s.sm != nil && s.sm.Phase() != types.PhaseActive {
 		return nil
 	}
-	s.ensureHeightSeed(ctx)
 	span, err := s.composeHeartbeatSpan()
 	if err != nil {
 		s.publishHeightSyncView()
@@ -39,12 +38,16 @@ func (s *Session) MaybeHeartbeat(ctx context.Context) error {
 	return err
 }
 
-// StartHeartbeatLoop runs MaybeHeartbeat immediately and then every Interval
-// until StopHeartbeatLoop or Close. Idempotent. A Close that races Start does
-// not leave a goroutine behind.
+// StartHeartbeatLoop waits for router catalog admission, then runs
+// MaybeHeartbeat immediately and every Interval until StopHeartbeatLoop
+// or Close. Idempotent. A Close that races Start does not leave a
+// goroutine behind. In-process clients have no catalog URL and skip the wait.
 func (s *Session) StartHeartbeatLoop() {
 	if s == nil {
 		return
+	}
+	if s.requireHeightSeed {
+		s.startHeightSeedLoop()
 	}
 	s.heartbeatLoopOnce.Do(func() {
 		ctx, cancel := context.WithCancel(context.Background())
@@ -90,6 +93,11 @@ func (s *Session) StopHeartbeatLoop() {
 }
 
 func (s *Session) runHeartbeatLoop(ctx context.Context, interval time.Duration) {
+	if err := s.WaitRouterCatalog(ctx); err != nil {
+		logging.Debug("heartbeat loop stopped before catalog", "subsystem", "heightsync",
+			"escrow", s.escrowID, "error", err)
+		return
+	}
 	if err := s.MaybeHeartbeat(ctx); err != nil {
 		logging.Debug("heartbeat loop tick failed", "subsystem", "heightsync",
 			"escrow", s.escrowID, "error", err)
@@ -281,10 +289,7 @@ func (s *Session) flushHeartbeatAckRounds(ctx context.Context) error {
 }
 
 func (s *Session) heartbeatForceTxLocked(nonce uint64) *types.DevshardTx {
-	slots := uint64(len(s.group))
-	if s.heightSyncSlots != 0 {
-		slots = s.heightSyncSlots
-	}
+	slots := s.heightSyncForceSlotsLocked()
 	k := s.heightSyncK
 	if k == 0 {
 		k = 10

@@ -34,7 +34,7 @@ Related docs:
 3. [High-level overview of protocol](#3-high-level-overview-of-protocol)
 4. [Goals](#4-goals)
 5. [Glossary](#5-glossary)
-6. [Architecture overview](#6-architecture-overview)
+6. [Architecture overview](#6-architecture-overview) (optional gateway follower is in this section)
 7. [Wire format](#7-wire-format)
 8. [Sync modes (Omit / Anchor / Strong)](#8-sync-modes-omit--anchor--strong)
 9. [Cadence (sync turns, `K`, `slots_num`, forced turns)](#9-cadence)
@@ -155,7 +155,9 @@ dispute surfaces for attribution.
    alignment and dispute evidence, not a multi-host confirmation tally.
 6. **Courier-only deployment** — users with no mainnet follower of
    their own can still carry signed host tips between hosts in the
-   round-robin so late hosts learn fresher tips.
+   round-robin so late hosts learn fresher tips. A gateway MAY
+   optionally follow mainnet for verification (§6); that follower is
+   not a protocol source and MUST NOT skip the host seed.
 7. **Liveness independent of inference load** — alignment must not stop
    when the session goes quiet. The heartbeat cadence is measured in
    mainnet blocks and is **mandatory**, so a quiet escrow keeps a fresh,
@@ -190,9 +192,9 @@ dispute surfaces for attribution.
 | **`F(m)`** | The reference height the log had established at nonces `< m`; the bar L0 holds every Diff-resident height to. Distinct from the freshness budget `F`. Raised only by **host-signed** first-party stamps; never exceeds the max reported host envelope `H` (§14). |
 | **`FloorIndex`** | The structure that answers `F(m)`: a per-signer high-water of attributed claims. Sequencer-composed stamps (`MsgHeartbeat`, `MsgStartInference`) do not raise it. Carries (`stamp = F`) do not raise it. A raise is a host-signed first-party envelope height (`MsgHeightAck`, confirm, finish). Unaided / jump bounds still apply. Never lowers. Retain window `DefaultFloorWindow` = 4096 *increases*. §14. |
 | **`Q`** | Reachability / floor corroboration threshold. Default `ceil(2/3 × N_hosts)`. Used for heartbeat turn completion and floor jumps beyond `W_conf` — **not** for envelope height confirmation (withdrawn §17). |
-| **Originator** | The host whose **own oracle** first observed `(H, hash)`. Identified by `OriginatorSenderID` on the wire. |
+| **Originator** | The host whose **own oracle** first observed `(H, hash)`. Identified by `OriginatorSenderID` on the wire. Never the user or the gateway. |
 | **Carrier** | Any sender that forwards a section it did not originate (typically the user). Identified by the session signature. |
-| **`local_aligned`** | The receiver's view of mainnet height (its own follower, or its peer-tip cache for courier users). |
+| **`local_aligned`** | The receiver's view of mainnet height (its own follower on a host, or its peer-tip cache on a courier user). A gateway's optional chain follower (§6) is **not** protocol `local_aligned`. |
 | **Local oracle readiness** | Whether this verifier's block oracle can evaluate height `h` (tip covers `h`, not stale). Consumed by cPoC instead of the withdrawn `IsStrictlyConfirmed` API. |
 | **Heartbeat turn** | A `slots_num`-wide turn opened by the **time** cadence `Interval` instead of the nonce cadence `K`; carries `MsgHeartbeat` and obliges every slot to answer `MsgHeightAck`. §10. |
 | **Turnover** | `Q` distinct **host-signed** height claims landing in the log — from `MsgHeightAck` or from executor stamps on ordinary inference traffic. A turnover is what discharges the heartbeat obligation; the user's own stamp does not, being self-signed. §10.3. |
@@ -262,9 +264,12 @@ Key invariants:
 
 - **Each host has its own mainnet follower** (`heightsyncd`/blockoracle);
   this is the canonical source of `local_aligned`.
-- **The user has no follower** (courier mode); it derives
-  `local_aligned` from the verified peer-tip cache populated by
-  signed host responses.
+- **The user is a courier.** Protocol `local_aligned` on the user side
+  is the verified peer-tip cache, populated by signed host responses
+  (seed + response legs). The user/gateway is never an originator:
+  disputes exist to find **which host** provided a wrong `(H, hash)`,
+  not whether the carrier invented one. A gateway process MAY follow
+  mainnet independently; that follower is off-protocol (below).
 - **`HeightSyncSection` is the only mainnet-related wire surface** on
   inference **envelopes**; the receiver pipeline is single-entry. Heights
   also appear inside `Diff` (log plane), but never as a second envelope
@@ -277,6 +282,54 @@ Key invariants:
   ack is missing from the log, ask that peer directly for a height
   (§11.3). The probe does not attribute the omission. No host can open a
   turn, and no host votes here (§12.2).
+
+### Optional gateway chain follower (verification only)
+
+The protocol source of every user-emitted `(H, hash)` is a **host**.
+The user carries, never originates. That is independent of whether the
+gateway process can read the chain.
+
+A gateway MAY subscribe to mainnet headers for its own use — trust
+labels, delta logs, audit-ring `local_aligned`, historical
+`LightBlock` lookup — behind one env var:
+
+| Parameter | Value |
+| --------- | ----- |
+| Env | `DEVSHARD_GATEWAY_CHAIN_ORACLE` |
+| Enable | `true` / `1` / `on` (case-insensitive) |
+| Default | **off** |
+| Mechanism | same stack as today's `loadHeightSyncProcessState`: Comet `NewBlock` tipcache + failover to `DEVSHARD_CHAINORACLE_URL` / direct RPC |
+| Wired as | `ClientConfig.HeightSyncLogOracle` only |
+
+Presence of `DEVSHARD_CHAIN_RPC` / `NODE_RPC_URL` /
+`DEVSHARD_CHAINORACLE_URL` (needed to submit txs and, on hosts, to
+follow) MUST NOT turn this on and MUST NOT change the scheduler
+source.
+
+When the flag is on, the follower MUST NOT:
+
+1. Feed `AnchorScheduler.Decide` — the gateway scheduler is always
+   `NewPeerTipOracleSource` over `HeightSyncPeerTips`.
+   `NewAnchorSchedulerFromOracle` / `NewLocalOracleSource` are
+   **host-side** constructors.
+2. Populate `OriginatorSenderID` (that field is a host address) or
+   emit a first-party Anchor.
+3. Make `ObservedHeightNow` / `ObservedStampNow` return true. Those
+   APIs read peer tips only.
+4. Raise `F(m)`. Sequencer-composed stamps never raise the floor
+   (§14); a gateway-read height is not even a sequencer stamp.
+5. Skip, shorten, or satisfy the cold-start seed (§18.5). A local
+   `Latest()` tip is not a host-signed Anchor and does not count
+   toward seed quorum. Inference stays gated on the seed even while
+   the follower is warm.
+
+Why (5) is load-bearing: a seeded Anchor is exculpation. The origin
+blob is what `HeightSyncEvidenceFor` returns so a later hash mismatch
+becomes `DISPUTE_ORIGINATOR` against the named host rather than
+`DISPUTE_CARRIER` against the user (attack model rows 1, 3, 27). A
+gateway-minted pair has no host signature, so the protocol has no
+honest party to blame but the carrier — which is the user, which is
+the wrong target by design.
 
 ---
 
@@ -1132,16 +1185,24 @@ basis. If the user stops contacting the dropped host, that host arms on
   the local oracle is unusable — `ORACLE_UNAVAILABLE` is an answer, and a
   transparent failure is worth more to the roster than silence.
 
-### Courier user (no own oracle)
+### Courier user (no protocol oracle)
+
+The user has no *protocol* oracle. A gateway MAY run the optional
+chain follower of §6; that does not change any rule in this section.
 
 - Maintain `HeightSyncPeerTips` keyed by `OriginatorSenderID`.
 - Verify host responses on ingest (`VerifyOrigin`); on failure, drop
   the tip and increment `origin_sig_invalid_total`.
-- On outbound **requests**: consult the scheduler; lazy carry only
-  when the cache has a tip not yet propagated to the recipient. Clear
-  field 8 (`sender_signature`) before sending.
-- Producer never sets `OriginatorSenderID = user_address`; that field
-  reflects the host that signed the cached blob.
+- On outbound **requests**: consult the scheduler; the source is
+  `PeerTipOracleSource`. Lazy carry only when the cache has a tip not
+  yet propagated to the recipient. Clear field 8 (`sender_signature`)
+  before sending. A warm `HeightSyncLogOracle` MUST NOT cause `Decide`
+  to emit a first-party Anchor.
+- Producer never sets `OriginatorSenderID = user_address` (nor any
+  gateway identity); that field reflects the host that signed the
+  cached blob.
+- Cold-start seed (§18.5) is the only way the cache becomes non-empty
+  before nonce 1. The optional follower does not fill it.
 - **Heartbeat obligation (§10.3).** Track `t_last` (last turnover).
   When `now − t_last > Interval`, open a heartbeat turn: dispatch
   `slots_num` consecutive nonces carrying `MsgHeartbeat`, **without
@@ -1988,7 +2049,7 @@ dispute packet may carry both halves:
 
 A mock dispute verifier returns `DISPUTE_ORIGINATOR` when both pass.
 
-### 18.5 Cold-start seed (optional)
+### 18.5 Cold-start seed (optional at the host; required for attribution)
 
 ```go
 // Server option:
@@ -2000,7 +2061,22 @@ func (c *transport.HTTPClient) SeedHeightSync(ctx context.Context) (uint64, bool
 Opt-in `POST /sessions/:id/height-sync`: the host returns a forced
 Anchor (originator-signed). The courier verifies + caches it before
 issuing the first inference — useful for short-lived sessions where
-the first inference is not in a sync turn.
+the first inference is not in a sync turn, and **required** as the
+attribution fill: the origin blob is what later disputes use to name
+the host that claimed `(H, hash)`.
+
+The seed RPC remains optional *for a host* (`WithHeightSyncSeedRPC(false)`
+→ 404, still correct, just unseedable). It is not optional *as a
+source* on a courier that intends to emit Anchors: a user-generated
+or gateway-read height is not a protocol height.
+
+A gateway that follows mainnet (`DEVSHARD_GATEWAY_CHAIN_ORACLE`, §6)
+MUST still wait for the seed. The local tip does not count toward
+quorum, does not stamp nonce 1, and does not satisfy a seed gate.
+Gateway fail-closed behaviour on sub-quorum (503 until ≥ half the
+roster returns an Anchor) is specified in
+[`hung-seed-terminal-miss.md`](hung-seed-terminal-miss.md); that
+product gate is consistent with this section, not an exception to it.
 
 ### 18.6 Force a sync turn
 
@@ -2068,6 +2144,7 @@ the test scenario that proves it (full catalog in
 | 24e | **Split the floor by refusing at the edge** — a party gets one verifier to refuse a diff at admission (L5a) so the two verifiers' floors, and therefore their L0 verdicts on every later diff, diverge | `F` folds applied diffs and nothing else: admission marks are local evidence and never enter the fold. Both verifiers hold the same floor and return the same verdicts, whichever path the diff arrived by | `TestHeightSyncFloor_AdmissionRefusalCannotSplitTheFloor` |
 | 25 | Pre-signing a **future** height to look fresher than it is | `observed_block_hash` for an unmined height cannot be produced; L6 never confirms the pair and eventually returns `DEFERRED_FAIL` | Planned: `TestLogPlane_FutureDatedStampDeferredFail` |
 | 26 | **Replay-time invalidation** — a party re-presents an old but honest session hoping a `D`-band or freshness rule rejects it, or an implementation that wrongly evaluates freshness at replay time | Only pure-`Diff` checks may invalidate (§14 tier table): L5a is admission-only, L4 is skipped without an envelope, so a historical session replays with identical verdicts regardless of when it is replayed | Planned: `TestLogPlane_HistoricalReplayNoInvalidation` |
+| 27 | Gateway mints `(H, hash)` from its own chain read (empty originator) and emits it as a request-leg Anchor | Forbidden: the user is a courier (§6, §13). Defence: scheduler is `PeerTipOracleSource`; `DEVSHARD_GATEWAY_CHAIN_ORACLE` (default off) wires a follower as `HeightSyncLogOracle` only; seed still required so `HeightSyncEvidenceFor` has a host blob. A mismatch on a gateway-minted pair would be `DISPUTE_CARRIER` against the user — the wrong party | Planned: H105–H108 (`TestGatewayChainOracle_*` in `cmd/devshardctl/heightsync_env_test.go` / seed tests). Catalog: [`height-sync-tests.md`](../height-sync-tests.md) §7.8 |
 
 **Out-of-scope adversaries:**
 
@@ -2110,6 +2187,8 @@ the test scenario that proves it (full catalog in
 | Floor retain window | `4096` increases | `FloorConfig.Window` (`DefaultFloorWindow`). One entry per *increase* of `F`, not per nonce; a query past the window returns `known = false` and L0 is skipped (§14) |
 | Heartbeat turn width | `slots_num` (same as every other turn) | derived from escrow group size |
 | `Q` for turn completion | `ceil(2/3 × slots)` — reachability only, not a height certificate (§17) | `TurnTracker` / `QuorumForRoster` |
+| Gateway chain follower | **off** | `DEVSHARD_GATEWAY_CHAIN_ORACLE` (`true` / `1` / `on`). Periodic Comet `NewBlock` + failover, wired as `HeightSyncLogOracle` only. Presence of `DEVSHARD_CHAIN_RPC` / `DEVSHARD_CHAINORACLE_URL` does **not** enable it (§6) |
+| Gateway scheduler source | `PeerTipOracleSource` | not configurable. `NewAnchorSchedulerFromOracle` is host-side only |
 
 ---
 
@@ -2129,6 +2208,7 @@ the test scenario that proves it (full catalog in
 | `observed_height` stamps on `MsgStartInference` / `MsgConfirmStart` / `MsgFinishInference` | 📋 | RECOMMENDED (§10.5). Optional migration step: without it the protocol is correct but emits more heartbeats. `MsgConfirmStart` additionally requires the `ExecutorReceiptContent` mirror (§10.5.1) or its height is not a host attestation. |
 | Derived record heights + moving timeouts / seal clock off wall time | 📋 | §10.5.2. Two-step by construction: carry the heights first, switch the decisions later under a version gate, since the seal clock folds into the state root. |
 | On-chain `MsgHeightSyncEvidence` + slashing tx | ⏸ | dispute / cPoC owns. |
+| Gateway chain follower opt-in (`DEVSHARD_GATEWAY_CHAIN_ORACLE`) | ✅ | Spec §6. Follower off by default (`true`/`1`/`on`). Wired as `HeightSyncLogOracle` only; scheduler always `PeerTipOracleSource`; seed still required. Tests H105–H108. |
 
 **Implementation ordering note.** §10 is a prerequisite for §11 and §12
 (both key on `turn_seq`), and the `DevshardTx` oneof field numbers must be
@@ -2145,7 +2225,8 @@ Development notes and unresolved design choices:
 1. §6 — architecture diagram. Build a mental model of the host
    producer (own oracle, signs response leg) and the courier user
    (peer-tip cache, request-leg carrier) feeding a single receiver
-   pipeline.
+   pipeline. The optional gateway chain follower in the same section
+   is verification-only and is not a protocol source.
 2. §8 — the three sync modes and the state diagram.
 3. §10.1–§10.3 — why the nonce cadence alone is insufficient and why the
    heartbeat is mandatory. Read this before §14 if you are here for the

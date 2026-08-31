@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -43,8 +45,13 @@ func TestValidation(t *testing.T) {
 		ResponseBytes: []byte{},
 	}
 
+	// Real captured inference/validation pair: identical distributions score a perfect match, and the
+	// P0-fixed positionDistance must reproduce that exactly on real logprobs (fix is dormant on finite data).
 	val := CompareLogits(inferenceResponse.Choices[0].Logprobs.Content, validationResponse.Choices[0].Logprobs.Content, baseResult)
-	t.Logf("Validation result: %v", val)
+	result, ok := val.(*SimilarityValidationResult)
+	require.True(t, ok, "expected a similarity result, got %T", val)
+	require.InDelta(t, 1.0, result.Value, 1e-9)
+	require.True(t, result.IsSuccessful())
 }
 
 func TestValidationQuant(t *testing.T) {
@@ -63,8 +70,15 @@ func TestValidationQuant(t *testing.T) {
 		ResponseBytes: []byte{},
 	}
 
+	// Real int4-executor vs fp8-validator pair: genuine cross-quantization logit divergence that still
+	// passes. This pins the metric's output on real diverging logprobs (regression anchor for positionDistance).
 	val := CompareLogits(inferenceResponse.Choices[0].Logprobs.Content, validationResponse.Choices[0].Logprobs.Content, baseResult)
-	t.Logf("Validation result: %v", val)
+	result, ok := val.(*SimilarityValidationResult)
+	require.True(t, ok, "expected a similarity result, got %T", val)
+	require.InDelta(t, 0.9668894246685018, result.Value, 1e-9)
+	// Passes the per-model threshold (0.90) but sits below the legacy 0.99 — real quantization divergence.
+	require.True(t, SimilarityPassesThreshold(result.Value, 0.90))
+	require.False(t, SimilarityPassesThreshold(result.Value, LegacySimilarityThreshold))
 }
 
 func TestCompareLogitsMatching(t *testing.T) {
