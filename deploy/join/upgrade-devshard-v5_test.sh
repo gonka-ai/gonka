@@ -276,7 +276,7 @@ if [[ ${1:-} == exec ]]; then
 fi
 
 if [[ ${1:-} == run ]]; then
-    printf 'source 1 0\n'
+    printf '%s\n' "${POSTGRES_MIGRATION_PROBE:-source 1 0 1000000000000000000}"
     exit 0
 fi
 
@@ -330,6 +330,10 @@ done
 service=${!#}
 for arg in "$@"; do
     if [[ $arg == ps ]]; then
+        if [[ $service == "${MISSING_COMPOSE_SERVICE-}" && \
+            ! -f $FAKE_STATE_DIR/running-$service ]]; then
+            exit 0
+        fi
         printf 'cid-%s\n' "$service"
         exit 0
     fi
@@ -455,6 +459,8 @@ run_upgrade() {
         RENDERED_ROUTER_FRONT_NETWORK="${RENDERED_ROUTER_FRONT_NETWORK-}" \
         RENDERED_ROUTER_BACK_NETWORK="${RENDERED_ROUTER_BACK_NETWORK-}" \
         INCOMPATIBLE_COMPOSE_CONTAINER="${INCOMPATIBLE_COMPOSE_CONTAINER-}" \
+        MISSING_COMPOSE_SERVICE="${MISSING_COMPOSE_SERVICE-}" \
+        POSTGRES_MIGRATION_PROBE="${POSTGRES_MIGRATION_PROBE-}" \
         "$script_dir/upgrade-devshard-v5.sh" \
         --versiond-mode "$versiond_mode" --edge-mode "$mode" \
         >"$tmpdir/stdout" 2>"$tmpdir/stderr"; then
@@ -491,6 +497,8 @@ run_auto_upgrade() {
         RENDERED_ROUTER_BACK_NETWORK="${RENDERED_ROUTER_BACK_NETWORK-}" \
         INCOMPATIBLE_COMPOSE_CONTAINER="${INCOMPATIBLE_COMPOSE_CONTAINER-}" \
         VERSIOND2_STORAGE_IDENTITY="${VERSIOND2_STORAGE_IDENTITY-}" \
+        MISSING_COMPOSE_SERVICE="${MISSING_COMPOSE_SERVICE-}" \
+        POSTGRES_MIGRATION_PROBE="${POSTGRES_MIGRATION_PROBE-}" \
         "$script_dir/upgrade-devshard-v5.sh" >"$stdout" 2>"$tmpdir/stderr"; then
         cat "$tmpdir/stderr" >&2
         fail "automatic topology upgrade failed"
@@ -675,9 +683,36 @@ if [[ ${INCOMPLETE_INGRESS_STATE:-false} != true ]]; then
     printf '%s\n' "$PROXY_POLICY_IMAGE" >"$FAKE_STATE_DIR/image-proxy-policy2"
 fi
 EOF
-chmod +x "$tmpdir/fleet" "$tmpdir/enable-router"
-printf 'export DEVSHARD_POSTGRES_DATA_DIR=%q\nexport UPGRADE_ENABLE_ROUTER_HA=true\nexport VERSIOND_ROUTER_FLEET_BIN=%q\nexport ROUTER_HA_ENABLE_BIN=%q\nexport DEVSHARD_V5_UPGRADE_MARKER=%q\nexport DEVSHARD_V5_VERSIOND_IMAGE=untrusted-config-image\n' \
+cat >"$tmpdir/postgres-deployment-preflight" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+printf 'postgres-deployment-preflight %s\n' "$*" >>"$DOCKER_LOG"
+mode=live
+expected=
+while (($#)); do
+    case $1 in
+        --compose-only) mode=compose; shift ;;
+        --expected-identity)
+            (($# >= 2)) && [[ -n $2 ]] || exit 2
+            expected=$2
+            shift 2
+            ;;
+        --)
+            shift
+            (($# > 0)) || exit 2
+            break
+            ;;
+        *) exit 2 ;;
+    esac
+done
+[[ ${POSTGRES_DEPLOYMENT_PREFLIGHT_FAIL_MODE:-} != "$mode" ]] || exit 1
+[[ -z $expected || $expected == "${POSTGRES_IDENTITY:-shared-database}" ]] || exit 1
+EOF
+chmod +x "$tmpdir/fleet" "$tmpdir/enable-router" \
+    "$tmpdir/postgres-deployment-preflight"
+printf 'export DEVSHARD_POSTGRES_DATA_DIR=%q\nexport UPGRADE_ENABLE_ROUTER_HA=true\nexport VERSIOND_ROUTER_FLEET_BIN=%q\nexport ROUTER_HA_ENABLE_BIN=%q\nexport DEVSHARD_V5_POSTGRES_PREFLIGHT_BIN=%q\nexport DEVSHARD_V5_UPGRADE_MARKER=%q\nexport DEVSHARD_V5_VERSIOND_IMAGE=untrusted-config-image\n' \
     "$tmpdir/postgres" "$tmpdir/fleet" "$tmpdir/enable-router" \
+    "$tmpdir/postgres-deployment-preflight" \
     "$tmpdir/upgrade-complete" >"$tmpdir/config.env"
 
 preflight_log=$tmpdir/preflight.log
@@ -1040,6 +1075,32 @@ grep -q 'versiond=ha, edge-api=single' "$tmpdir/ha.stdout" || fail \
 assert_contains "$tmpdir/ha.log" "docker-compose.versiond.yml"
 assert_not_contains "$tmpdir/ha.log" "docker-compose.edge-api-multi.yml"
 assert_contains "$tmpdir/ha.log" "--wait-timeout 2100 devshard-postgres"
+compose_gate_line=$(grep -n '^postgres-deployment-preflight --compose-only -- ' \
+    "$tmpdir/ha.log" | head -n1 | cut -d: -f1)
+first_mutation_line=$(grep -nE ' :: (tag |compose .* (pull|up) )' \
+    "$tmpdir/ha.log" | head -n1 | cut -d: -f1)
+[[ -n $compose_gate_line && -n $first_mutation_line && \
+    $compose_gate_line -lt $first_mutation_line ]] || fail \
+    "rendered PostgreSQL contract was not checked before the first mutation"
+live_gate_line=$(grep -n \
+    '^postgres-deployment-preflight --expected-identity shared-database -- ' \
+    "$tmpdir/ha.log" | head -n1 | cut -d: -f1)
+cleanup_line=$(grep -n ' :: image rm gonka-upgrade-rollback/' \
+    "$tmpdir/ha.log" | head -n1 | cut -d: -f1)
+[[ -n $live_gate_line && -n $cleanup_line && \
+    $live_gate_line -lt $cleanup_line ]] || fail \
+    "live PostgreSQL proof did not run before rollback baseline cleanup"
+
+MISSING_COMPOSE_SERVICE=devshard-postgres \
+POSTGRES_MIGRATION_PROBE='target-ready none 1000000000000000000 1000000000000000000' \
+    run_auto_upgrade \
+        "versiond versiond2 versiond-router edge-api" \
+        "$tmpdir/missing-postgres-container.log" \
+        "$tmpdir/missing-postgres-container.stdout"
+assert_not_contains "$tmpdir/missing-postgres-container.log" \
+    "--volumes-from cid-devshard-postgres:ro"
+assert_contains "$tmpdir/missing-postgres-container.log" \
+    "dst=/target\\,readonly"
 
 VERSIOND2_STORAGE_IDENTITY=another-database \
     run_upgrade single none "$tmpdir/postgres-identity.log"

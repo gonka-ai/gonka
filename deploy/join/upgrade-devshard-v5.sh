@@ -143,6 +143,7 @@ config_dir=$(cd -- "$(dirname -- "$config_env")" && pwd -P)
 docker_bin=${DOCKER_BIN:-docker}
 fleet_bin=${VERSIOND_ROUTER_FLEET_BIN:-$script_dir/versiond-router-fleet.sh}
 enable_router_bin=${ROUTER_HA_ENABLE_BIN:-$script_dir/enable-router-ha.sh}
+postgres_deployment_preflight_bin=${DEVSHARD_V5_POSTGRES_PREFLIGHT_BIN:-$script_dir/postgres-deployment-preflight.sh}
 upgrade_marker=${DEVSHARD_V5_UPGRADE_MARKER:-$config_dir/.gonka-devshard-v5-upgrade-complete}
 upgrade_journal=${DEVSHARD_V5_UPGRADE_JOURNAL:-$upgrade_marker.in-progress}
 [[ $(dirname -- "$upgrade_marker") == "$(dirname -- "$upgrade_journal")" ]] || fail \
@@ -294,6 +295,24 @@ verify_shared_postgres_identity() {
         return 1
     fi
     verified_postgres_identity=$first
+}
+
+run_postgres_deployment_preflight() {
+    local mode=$1
+    local -a args=()
+
+    [[ -x $postgres_deployment_preflight_bin ]] || fail \
+        "PostgreSQL deployment preflight is not executable: $postgres_deployment_preflight_bin"
+    case $mode in
+        compose) args+=(--compose-only) ;;
+        live)
+            [[ -z $verified_postgres_identity ]] || \
+                args+=(--expected-identity "$verified_postgres_identity")
+            ;;
+        *) fail "internal error: unknown PostgreSQL preflight mode $mode" ;;
+    esac
+    env DOCKER_BIN="$docker_bin" "$postgres_deployment_preflight_bin" \
+        "${args[@]}" -- "${GONKA_COMPOSE_COMMAND[@]:2}"
 }
 
 verify_release_ingress_state() {
@@ -692,15 +711,23 @@ fi
 
 postgres_container=
 postgres_target_dir=
+if [[ $versiond_mode == ha ]]; then
+    run_postgres_deployment_preflight compose
+fi
 if [[ $versiond_mode == ha && $GONKA_COMPOSE_POSTGRES_MODE == local ]]; then
     postgres_container=$("${compose[@]}" ps --all --quiet devshard-postgres)
-    [[ -n $postgres_container ]] || fail \
-        "cannot preflight PostgreSQL migration: the existing container is missing; use the detached-volume recovery procedure"
     postgres_target_dir=$GONKA_COMPOSE_POSTGRES_DATA_DIR
-    env DOCKER_BIN="$docker_bin" \
-        "$script_dir/devshard-postgres-migration-preflight.sh" \
-        --source-container "$postgres_container" \
-        --target-dir "$postgres_target_dir"
+    if [[ -n $postgres_container ]]; then
+        env DOCKER_BIN="$docker_bin" \
+            "$script_dir/devshard-postgres-migration-preflight.sh" \
+            --source-container "$postgres_container" \
+            --target-dir "$postgres_target_dir"
+    else
+        warn "devshard-postgres container is absent; verifying the published persistent PGDATA lineage"
+        env DOCKER_BIN="$docker_bin" \
+            "$script_dir/devshard-postgres-migration-preflight.sh" \
+            --target-dir "$postgres_target_dir"
+    fi
 fi
 if [[ $versiond_mode == ha ]]; then
 	gonka_compose_validate_ha_version_catalog "$docker_bin" versiond
@@ -1473,8 +1500,11 @@ fi
 
 verify_release_application_state || fail \
     "application state did not converge to $release_id"
+if [[ $versiond_mode == ha ]]; then
+    run_postgres_deployment_preflight live || fail \
+        "live PostgreSQL deployment proof failed while application rollback baselines are retained"
+fi
 write_upgrade_journal applications_verified
-cleanup_rollback_tags
 case ${UPGRADE_ENABLE_ROUTER_HA:-true} in
     true | 1 | yes)
 		verify_compose_model_unchanged
@@ -1502,4 +1532,5 @@ verify_router_fleet_spec
 write_upgrade_journal ingress_verified
 verify_compose_model_unchanged
 write_upgrade_marker
+cleanup_rollback_tags
 echo "Devshard v5 upgrade completed"
