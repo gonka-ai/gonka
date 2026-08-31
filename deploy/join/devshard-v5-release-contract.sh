@@ -121,6 +121,7 @@ deploy/join/deployment-lock.sh
 deploy/join/compose-topology.sh
 deploy/join/devshard-postgres-entrypoint.sh
 deploy/join/devshard-postgres-migration-preflight.sh
+deploy/join/postgres-deployment-preflight.sh
 deploy/join/legacy-router-upgrade-barrier.sh
 deploy/join/enable-router-ha.sh
 deploy/join/versiond-router-fleet.sh
