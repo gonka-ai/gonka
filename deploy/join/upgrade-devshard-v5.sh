@@ -753,9 +753,12 @@ if [[ $existing_proxy_component == proxy-router && -f $upgrade_marker && \
     fail "router HA is active, but commit marker $upgrade_marker belongs to another release"
 fi
 write_upgrade_journal prepared
-if [[ $existing_proxy_component == proxy-router ]]; then
+if [[ $existing_proxy_component == proxy-router || \
+    $committed_marker_loaded == true ]]; then
     if [[ ! -f $upgrade_marker ]]; then
-        warn "router HA is active without its commit marker; reconciling the complete release state"
+        warn "resuming the saved release transaction and reconciling the complete router HA state"
+    elif [[ $existing_proxy_component != proxy-router ]]; then
+        warn "the committed public proxy is absent; rebuilding it through the router HA recovery path"
     elif ! jq -e --arg fingerprint "$desired_fingerprint" \
 		'(.schema == 1 or .schema == 2) and .fingerprint == $fingerprint' \
         "$upgrade_marker" >/dev/null 2>&1; then
