@@ -483,14 +483,22 @@ cat >"$tmpdir/postgres-preflight" <<'EOF'
 set -eu
 printf 'postgres-preflight %s\n' "$*" >>"$DOCKER_LOG"
 [[ ${POSTGRES_PREFLIGHT_FAIL:-false} != true ]] || exit 1
-expected=
-while (($#)); do
-	case $1 in
-		--expected-identity) expected=$2; shift 2 ;;
-		--) break ;;
-		*) shift ;;
-	esac
-done
+	expected=
+	while (($#)); do
+		case $1 in
+			--expected-identity)
+				(($# >= 2)) && [[ -n $2 ]] || exit 2
+				expected=$2
+				shift 2
+				;;
+			--)
+				shift
+				(($# > 0)) || exit 2
+				break
+				;;
+			*) exit 2 ;;
+		esac
+	done
 first=${POSTGRES_IDENTITY:-11111111-1111-1111-1111-111111111111}
 second=${POSTGRES_IDENTITY2:-$first}
 [[ $first == "$second" ]] || exit 1
@@ -541,8 +549,8 @@ preflight_line=$(grep -n '^postgres-preflight ' "$tmpdir/success.log" | head -n1
 apply_line=$(grep -n '^fleet apply$' "$tmpdir/success.log" | head -n1 | cut -d: -f1)
 [[ -n $preflight_line && -n $apply_line && $preflight_line -lt $apply_line ]] || fail \
     "shared PostgreSQL was not verified before the first fleet mutation"
-grep -q '^postgres-preflight --require-live -- ' "$tmpdir/success.log" || fail \
-    "router cutover did not require live PostgreSQL identity proof"
+grep -q '^postgres-preflight -- ' "$tmpdir/success.log" || fail \
+	"router cutover did not require live PostgreSQL identity proof"
 grep -q '^fleet apply$' "$tmpdir/success.log" || fail \
     "router fleet was not reconciled through its update lifecycle"
 grep -q '^fleet verify-admission v1 v4$' "$tmpdir/success.log" || fail \

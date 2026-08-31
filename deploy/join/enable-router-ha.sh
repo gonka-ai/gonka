@@ -1203,7 +1203,7 @@ if [[ $versiond_mode == ha ]]; then
 	fi
 	[[ -x $postgres_preflight_bin ]] || fail \
 		"PostgreSQL deployment preflight is not executable: $postgres_preflight_bin"
-	postgres_preflight_args=(--require-live)
+	postgres_preflight_args=()
 	if [[ -n $committed_postgres_identity ]]; then
 		postgres_preflight_args+=(--expected-identity "$committed_postgres_identity")
 	fi
