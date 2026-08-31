@@ -407,6 +407,42 @@ func TestProcessGroupPublicKeyGeneratedEventParsing(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to parse epoch_id")
 }
 
+func TestPerformVerificationContinuesAfterDealerPanic(t *testing.T) {
+	blsManager := NewBlsManager(createMockCosmosClient())
+	commitment := make([]byte, 96)
+	commitment[0] = 0x01
+
+	result := &VerificationResult{
+		EpochID:   99,
+		SlotRange: [2]uint32{0, 0},
+	}
+	me := &types.BLSParticipantInfo{
+		Address:            "cosmos1testaddress",
+		SlotStartIndex:     0,
+		SlotEndIndex:       0,
+		Secp256K1PublicKey: []byte{0x02},
+	}
+	dealerParts := []*types.DealerPartStorage{
+		nil,
+		{
+			DealerAddress: "attacker",
+			Commitments:   [][]byte{commitment},
+			ParticipantShares: []*types.EncryptedSharesForParticipant{
+				{EncryptedShares: [][]byte{{0x04}}},
+			},
+		},
+		nil,
+	}
+
+	err := blsManager.performVerificationAndReconstruction(result, dealerParts, me, 0, 1)
+	assert.NoError(t, err)
+	assert.Len(t, result.DealerValidity, 3)
+	assert.False(t, result.DealerValidity[0])
+	assert.False(t, result.DealerValidity[1], "panicking dealer must be marked invalid, not abort verification")
+	assert.False(t, result.DealerValidity[2], "dealers after a panic must still be processed")
+	assert.Len(t, result.AggregatedShares, 1)
+}
+
 func TestRecomputeAggregatedSharesFromConsensusValidDealers(t *testing.T) {
 	blsManager := NewBlsManager(createMockCosmosClient())
 

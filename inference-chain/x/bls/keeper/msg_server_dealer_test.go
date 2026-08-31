@@ -74,9 +74,9 @@ func TestSubmitDealerPart_Success(t *testing.T) {
 			[]byte("commitment2"),
 		},
 		EncryptedSharesForParticipants: []types.EncryptedSharesForParticipant{
-			{EncryptedShares: [][]byte{[]byte("share1_for_dealer")}},
-			{EncryptedShares: [][]byte{[]byte("share1_for_p1")}},
-			{EncryptedShares: [][]byte{[]byte("share1_for_p2")}},
+			{EncryptedShares: [][]byte{dummyEncryptedShare(1)}},
+			{EncryptedShares: [][]byte{dummyEncryptedShare(2)}},
+			{EncryptedShares: [][]byte{dummyEncryptedShare(3)}},
 		},
 	}
 
@@ -338,6 +338,53 @@ func TestSubmitDealerPart_InvalidEncryptedSharesShape(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid encrypted shares for participant index 0")
 }
 
+func TestSubmitDealerPart_UndersizedCiphertextRejected(t *testing.T) {
+	k, ms, goCtx := setupMsgServerDealer(t)
+	ctx := sdk.UnwrapSDKContext(goCtx)
+
+	epochID := uint64(1)
+	dealerAddr := "dealer1"
+
+	epochBLSData := types.EpochBLSData{
+		EpochId:                   epochID,
+		ITotalSlots:               1,
+		TSlotsDegree:              1,
+		DkgPhase:                  types.DKGPhase_DKG_PHASE_DEALING,
+		DealingPhaseDeadlineBlock: ctx.BlockHeight() + 100,
+		Participants: []types.BLSParticipantInfo{
+			{
+				Address:            dealerAddr,
+				Secp256K1PublicKey: []byte("pubkey1"),
+				PercentageWeight:   math.LegacyNewDec(100),
+				SlotStartIndex:     0,
+				SlotEndIndex:       0,
+			},
+		},
+		DealerParts: []*types.DealerPartStorage{
+			{DealerAddress: "", Commitments: [][]byte{}, ParticipantShares: []*types.EncryptedSharesForParticipant{}},
+		},
+	}
+	k.SetEpochBLSData(ctx, epochBLSData)
+
+	short := make([]byte, 98)
+	short[0] = 0x04
+	msg := &types.MsgSubmitDealerPart{
+		Creator: dealerAddr,
+		EpochId: epochID,
+		Commitments: [][]byte{
+			[]byte("commitment1"),
+			[]byte("commitment2"),
+		},
+		EncryptedSharesForParticipants: []types.EncryptedSharesForParticipant{
+			{EncryptedShares: [][]byte{short}},
+		},
+	}
+
+	_, err := ms.SubmitDealerPart(goCtx, msg)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "below ECIES minimum")
+}
+
 func TestSubmitDealerPart_WrongCommitmentsLength(t *testing.T) {
 	k, ms, goCtx := setupMsgServerDealer(t)
 	ctx := sdk.UnwrapSDKContext(goCtx)
@@ -428,7 +475,7 @@ func TestSubmitDealerPart_EventEmission(t *testing.T) {
 			[]byte("commitment2"),
 		},
 		EncryptedSharesForParticipants: []types.EncryptedSharesForParticipant{
-			{EncryptedShares: [][]byte{[]byte("share1")}},
+			{EncryptedShares: [][]byte{dummyEncryptedShare(1)}},
 		},
 	}
 

@@ -187,125 +187,20 @@ func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *V
 	verificationResult.ComplaintEvidence = make(map[uint32]DealerComplaintEvidence)
 	initialDealerKeyIndex := bm.localKeyIndexFromParticipantSnapshot(myParticipant)
 
-	// First iterate over dealers
 	for dealerIndex, dealerPart := range dealerParts {
-		logging.Debug(verifierLogTag+"Processing dealer", inferenceTypes.BLS, "dealerIndex", dealerIndex)
-
-		// Check if dealer part exists
-		if dealerPart == nil {
-			logging.Debug(verifierLogTag+"Skipping empty dealer part", inferenceTypes.BLS, "dealerIndex", dealerIndex)
-			verificationResult.DealerShares[dealerIndex] = make([]fr.Element, 0) // Empty array
-			verificationResult.DealerValidity[dealerIndex] = false
-			continue
-		}
-
-		// Check if we have shares for our participant index
-		if myParticipantIndex >= len(dealerPart.ParticipantShares) {
-			logging.Warn(verifierLogTag+"No shares for our participant index", inferenceTypes.BLS,
-				"dealerIndex", dealerIndex,
-				"myParticipantIndex", myParticipantIndex)
-			verificationResult.DealerShares[dealerIndex] = make([]fr.Element, 0) // Empty array
-			verificationResult.DealerValidity[dealerIndex] = false
-			continue
-		}
-
-		participantShares := dealerPart.ParticipantShares[myParticipantIndex]
-		if participantShares == nil {
-			logging.Debug(verifierLogTag+"No shares from dealer", inferenceTypes.BLS,
-				"dealerIndex", dealerIndex)
-			verificationResult.DealerShares[dealerIndex] = make([]fr.Element, 0) // Empty array
-			verificationResult.DealerValidity[dealerIndex] = false
-			continue
-		}
-		if len(dealerPart.Commitments) != expectedCommitmentsCount {
-			logging.Warn(verifierLogTag+"Skipping dealer with invalid commitments count", inferenceTypes.BLS,
-				"dealerIndex", dealerIndex,
-				"expected_commitments", expectedCommitmentsCount,
-				"actual_commitments", len(dealerPart.Commitments))
-			verificationResult.DealerShares[dealerIndex] = make([]fr.Element, 0) // Empty array
-			verificationResult.DealerValidity[dealerIndex] = false
-			continue
-		}
-
-		// Initialize dealer shares array
-		dealerSlotShares := make([]fr.Element, numSlots)
-		allSlotsValid := true
-		dealerKeyIndex := initialDealerKeyIndex // Track which key index works for this dealer
-
-		// Iterate over all slots for this dealer
-		for slotOffset := 0; slotOffset < numSlots; slotOffset++ {
-			slotIndex := verificationResult.SlotRange[0] + uint32(slotOffset)
-
-			// Try to decrypt share for this slot (may have multiple ciphertexts due to warm keys)
-			decryptedShare, keyIndex, err := bm.decryptShareForSlot(participantShares.EncryptedShares, slotOffset, numSlots, dealerIndex, slotIndex, dealerKeyIndex)
-			if err != nil {
-				logging.Warn(verifierLogTag+"Failed to decrypt any ciphertext for slot", inferenceTypes.BLS,
-					"dealerIndex", dealerIndex,
-					"slotIndex", slotIndex,
-					"error", err)
-				if dealerKeyIndex >= 0 {
-					if ciphertextIndex, idxErr := bm.ciphertextIndexForSlotKey(participantShares.EncryptedShares, slotOffset, numSlots, dealerKeyIndex); idxErr == nil {
-						bm.appendComplaintEvidence(verificationResult, uint32(dealerIndex), slotIndex, ciphertextIndex)
-					}
-				} else {
-					// Without a resolved key index we cannot attribute a specific ciphertext reliably.
-					logging.Debug(verifierLogTag+"Skipping complaint evidence because local key index is unresolved", inferenceTypes.BLS,
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logging.Error(verifierLogTag+"Dealer processing panicked, marking invalid and continuing", inferenceTypes.BLS,
+						"epochID", verificationResult.EpochID,
 						"dealerIndex", dealerIndex,
-						"slotIndex", slotIndex)
+						"panic", r)
+					verificationResult.DealerShares[dealerIndex] = make([]fr.Element, 0)
+					verificationResult.DealerValidity[dealerIndex] = false
 				}
-				allSlotsValid = false
-				break
-			}
-
-			// Remember the key index that worked for this dealer
-			dealerKeyIndex = keyIndex
-
-			// Verify the share against dealer's commitments
-			isValid, err := bm.verifyShareAgainstCommitmentsBlst(decryptedShare, slotIndex, dealerPart.Commitments)
-			if err != nil {
-				logging.Warn(verifierLogTag+"Failed to verify share", inferenceTypes.BLS,
-					"dealerIndex", dealerIndex,
-					"slotIndex", slotIndex,
-					"error", err)
-				if ciphertextIndex, idxErr := bm.ciphertextIndexForSlotKey(participantShares.EncryptedShares, slotOffset, numSlots, keyIndex); idxErr == nil {
-					bm.appendComplaintEvidence(verificationResult, uint32(dealerIndex), slotIndex, ciphertextIndex)
-				}
-				allSlotsValid = false
-				break
-			}
-
-			if !isValid {
-				logging.Warn(verifierLogTag+"Share verification failed", inferenceTypes.BLS,
-					"dealerIndex", dealerIndex,
-					"slotIndex", slotIndex)
-				if ciphertextIndex, idxErr := bm.ciphertextIndexForSlotKey(participantShares.EncryptedShares, slotOffset, numSlots, keyIndex); idxErr == nil {
-					bm.appendComplaintEvidence(verificationResult, uint32(dealerIndex), slotIndex, ciphertextIndex)
-				}
-				allSlotsValid = false
-				break
-			}
-
-			// Store valid decrypted share
-			dealerSlotShares[slotOffset] = *decryptedShare
-
-			logging.Debug(verifierLogTag+"Successfully processed share", inferenceTypes.BLS,
-				"dealerIndex", dealerIndex,
-				"slotIndex", slotIndex)
-		}
-
-		// Store dealer results
-		if allSlotsValid {
-			verificationResult.DealerShares[dealerIndex] = dealerSlotShares
-			verificationResult.DealerValidity[dealerIndex] = true
-			logging.Debug(verifierLogTag+"Dealer validation successful", inferenceTypes.BLS,
-				"dealerIndex", dealerIndex,
-				"processedSlots", len(dealerSlotShares))
-		} else {
-			verificationResult.DealerShares[dealerIndex] = make([]fr.Element, 0) // Empty array
-			verificationResult.DealerValidity[dealerIndex] = false
-			logging.Debug(verifierLogTag+"Dealer validation failed", inferenceTypes.BLS,
-				"dealerIndex", dealerIndex)
-		}
+			}()
+			bm.processDealerPart(verificationResult, dealerPart, dealerIndex, myParticipantIndex, expectedCommitmentsCount, numSlots, initialDealerKeyIndex)
+		}()
 	}
 
 	// Now aggregate shares per slot
@@ -336,6 +231,117 @@ func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *V
 		"processedSlots", len(verificationResult.AggregatedShares))
 
 	return nil
+}
+
+func (bm *BlsManager) processDealerPart(verificationResult *VerificationResult, dealerPart *types.DealerPartStorage, dealerIndex, myParticipantIndex, expectedCommitmentsCount, numSlots, initialDealerKeyIndex int) {
+	logging.Debug(verifierLogTag+"Processing dealer", inferenceTypes.BLS, "dealerIndex", dealerIndex)
+
+	if dealerPart == nil {
+		logging.Debug(verifierLogTag+"Skipping empty dealer part", inferenceTypes.BLS, "dealerIndex", dealerIndex)
+		verificationResult.DealerShares[dealerIndex] = make([]fr.Element, 0)
+		verificationResult.DealerValidity[dealerIndex] = false
+		return
+	}
+
+	if myParticipantIndex >= len(dealerPart.ParticipantShares) {
+		logging.Warn(verifierLogTag+"No shares for our participant index", inferenceTypes.BLS,
+			"dealerIndex", dealerIndex,
+			"myParticipantIndex", myParticipantIndex)
+		verificationResult.DealerShares[dealerIndex] = make([]fr.Element, 0)
+		verificationResult.DealerValidity[dealerIndex] = false
+		return
+	}
+
+	participantShares := dealerPart.ParticipantShares[myParticipantIndex]
+	if participantShares == nil {
+		logging.Debug(verifierLogTag+"No shares from dealer", inferenceTypes.BLS,
+			"dealerIndex", dealerIndex)
+		verificationResult.DealerShares[dealerIndex] = make([]fr.Element, 0)
+		verificationResult.DealerValidity[dealerIndex] = false
+		return
+	}
+	if len(dealerPart.Commitments) != expectedCommitmentsCount {
+		logging.Warn(verifierLogTag+"Skipping dealer with invalid commitments count", inferenceTypes.BLS,
+			"dealerIndex", dealerIndex,
+			"expected_commitments", expectedCommitmentsCount,
+			"actual_commitments", len(dealerPart.Commitments))
+		verificationResult.DealerShares[dealerIndex] = make([]fr.Element, 0)
+		verificationResult.DealerValidity[dealerIndex] = false
+		return
+	}
+
+	dealerSlotShares := make([]fr.Element, numSlots)
+	allSlotsValid := true
+	dealerKeyIndex := initialDealerKeyIndex
+
+	for slotOffset := 0; slotOffset < numSlots; slotOffset++ {
+		slotIndex := verificationResult.SlotRange[0] + uint32(slotOffset)
+
+		decryptedShare, keyIndex, err := bm.decryptShareForSlot(participantShares.EncryptedShares, slotOffset, numSlots, dealerIndex, slotIndex, dealerKeyIndex)
+		if err != nil {
+			logging.Warn(verifierLogTag+"Failed to decrypt any ciphertext for slot", inferenceTypes.BLS,
+				"dealerIndex", dealerIndex,
+				"slotIndex", slotIndex,
+				"error", err)
+			if dealerKeyIndex >= 0 {
+				if ciphertextIndex, idxErr := bm.ciphertextIndexForSlotKey(participantShares.EncryptedShares, slotOffset, numSlots, dealerKeyIndex); idxErr == nil {
+					bm.appendComplaintEvidence(verificationResult, uint32(dealerIndex), slotIndex, ciphertextIndex)
+				}
+			} else {
+				logging.Debug(verifierLogTag+"Skipping complaint evidence because local key index is unresolved", inferenceTypes.BLS,
+					"dealerIndex", dealerIndex,
+					"slotIndex", slotIndex)
+			}
+			allSlotsValid = false
+			break
+		}
+
+		dealerKeyIndex = keyIndex
+
+		isValid, err := bm.verifyShareAgainstCommitmentsBlst(decryptedShare, slotIndex, dealerPart.Commitments)
+		if err != nil {
+			logging.Warn(verifierLogTag+"Failed to verify share", inferenceTypes.BLS,
+				"dealerIndex", dealerIndex,
+				"slotIndex", slotIndex,
+				"error", err)
+			if ciphertextIndex, idxErr := bm.ciphertextIndexForSlotKey(participantShares.EncryptedShares, slotOffset, numSlots, keyIndex); idxErr == nil {
+				bm.appendComplaintEvidence(verificationResult, uint32(dealerIndex), slotIndex, ciphertextIndex)
+			}
+			allSlotsValid = false
+			break
+		}
+
+		if !isValid {
+			logging.Warn(verifierLogTag+"Share verification failed", inferenceTypes.BLS,
+				"dealerIndex", dealerIndex,
+				"slotIndex", slotIndex)
+			if ciphertextIndex, idxErr := bm.ciphertextIndexForSlotKey(participantShares.EncryptedShares, slotOffset, numSlots, keyIndex); idxErr == nil {
+				bm.appendComplaintEvidence(verificationResult, uint32(dealerIndex), slotIndex, ciphertextIndex)
+			}
+			allSlotsValid = false
+			break
+		}
+
+		dealerSlotShares[slotOffset] = *decryptedShare
+
+		logging.Debug(verifierLogTag+"Successfully processed share", inferenceTypes.BLS,
+			"dealerIndex", dealerIndex,
+			"slotIndex", slotIndex)
+	}
+
+	if allSlotsValid {
+		verificationResult.DealerShares[dealerIndex] = dealerSlotShares
+		verificationResult.DealerValidity[dealerIndex] = true
+		logging.Debug(verifierLogTag+"Dealer validation successful", inferenceTypes.BLS,
+			"dealerIndex", dealerIndex,
+			"processedSlots", len(dealerSlotShares))
+		return
+	}
+
+	verificationResult.DealerShares[dealerIndex] = make([]fr.Element, 0)
+	verificationResult.DealerValidity[dealerIndex] = false
+	logging.Debug(verifierLogTag+"Dealer validation failed", inferenceTypes.BLS,
+		"dealerIndex", dealerIndex)
 }
 
 func (bm *BlsManager) localKeyIndexFromParticipantSnapshot(participant *types.BLSParticipantInfo) int {
