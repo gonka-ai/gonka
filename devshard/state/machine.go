@@ -113,6 +113,10 @@ type StateMachine struct {
 	turnTracker     *heightsync.TurnTracker
 	heightSyncFloor *heightsync.FloorIndex
 	heightSyncMarks *heightsync.MarkLog
+	// floorReady is true when heightSyncFloor is a consistent fold of
+	// diffs 1..LatestNonce (including genesis, where that range is empty).
+	// It is not AsOf's known flag: a pruned nonce is unknown on a ready floor.
+	floorReady bool
 
 	// obsDeferred, when non-nil, redirects observability writes made during a
 	// trial apply (ValidateDiff / PreviewLocalBestEffort) into a buffer instead
@@ -268,6 +272,7 @@ func NewStateMachine(
 	sm.turnTracker = heightsync.NewTurnTracker(uint64(len(groupCopy)), 0, sm.heartbeatCfg)
 	sm.heightSyncFloor = heightsync.NewFloorIndexWith(
 		heightsync.FloorConfigFor(len(groupCopy), sm.heartbeatCfg))
+	sm.floorReady = true
 
 	logging.Info("NewStateMachine", "subsystem", "state",
 		"escrow_id", escrowID,
@@ -495,6 +500,10 @@ func (sm *StateMachine) localBestEffortLocked(nonce uint64, txs []*types.Devshar
 		return nil, nil, types.ErrMultipleForceHeightSyncTurnMsgs
 	}
 
+	if !sm.floorReady {
+		return nil, nil, types.ErrFloorNotRestored
+	}
+
 	scope := sm.pushMarkScopeLocked()
 	defer scope.discard()
 
@@ -671,6 +680,10 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 	}
 	if countForceHeightSyncTurn(txs) > 1 {
 		return nil, types.ErrMultipleForceHeightSyncTurnMsgs
+	}
+
+	if !sm.floorReady {
+		return nil, types.ErrFloorNotRestored
 	}
 
 	scope := sm.pushMarkScopeLocked()
@@ -854,15 +867,27 @@ func (sm *StateMachine) ExportState() *types.EscrowState {
 }
 
 // RestoreState replaces the current escrow state with a deep copy from storage.
-func (sm *StateMachine) RestoreState(state *types.EscrowState) {
+// The height-sync floor is rebuilt from the journal, or from a snapshot blob
+// supplied via RestoreStateWithFloor when the journal cannot be replayed.
+func (sm *StateMachine) RestoreState(state *types.EscrowState) error {
+	return sm.RestoreStateWithFloor(state, nil)
+}
+
+// RestoreStateWithFloor is RestoreState with an optional snapshot floor.
+// The journal is preferred so the turn tracker is reconstructed. A non-nil
+// floor is installed when GetDiffs fails, which is the restore hole that
+// previously served an empty index and skipped L0. If LatestNonce > 0 and
+// neither source can reconstruct the fold, restore fails rather than splitting
+// the escrow.
+func (sm *StateMachine) RestoreStateWithFloor(state *types.EscrowState, floor *heightsync.FloorIndex) error {
 	if state == nil {
-		return
+		return nil
 	}
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.state = cloneEscrowState(state)
 	sm.rebuildCommittedEntriesLocked()
-	sm.rebuildHeightSyncLocked()
+	return sm.rebuildHeightSyncLocked(floor)
 }
 
 func cloneEscrowState(src *types.EscrowState) *types.EscrowState {

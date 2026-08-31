@@ -1053,6 +1053,7 @@ func (s *Session) maybeSaveSnapshotLocked() {
 	state := s.sm.ExportState()
 	committedEntries := s.sm.ExportCommittedEntries()
 	sealedNonces := s.sm.ExportSealedNonces()
+	heightSyncFloor := s.sm.ExportHeightSyncFloor()
 	cursor := make(map[int]uint64, len(s.hostSyncNonce))
 	for k, v := range s.hostSyncNonce {
 		cursor[k] = v
@@ -1063,7 +1064,7 @@ func (s *Session) maybeSaveSnapshotLocked() {
 
 	go func() {
 		defer s.snapshotInFlight.Store(false)
-		writeSnapshot(store, escrowID, nonce, state, cursor, committedEntries, sealedNonces)
+		writeSnapshot(store, escrowID, nonce, state, cursor, committedEntries, sealedNonces, heightSyncFloor)
 	}()
 }
 
@@ -1112,6 +1113,7 @@ func (s *Session) FlushSnapshot() error {
 	stateCopy := s.sm.ExportState()
 	committedEntries := s.sm.ExportCommittedEntries()
 	sealedNonces := s.sm.ExportSealedNonces()
+	heightSyncFloor := s.sm.ExportHeightSyncFloor()
 	cursor := make(map[int]uint64, len(s.hostSyncNonce))
 	for k, v := range s.hostSyncNonce {
 		cursor[k] = v
@@ -1121,7 +1123,7 @@ func (s *Session) FlushSnapshot() error {
 	escrowID := s.escrowID
 	s.mu.Unlock()
 
-	return writeSnapshotErr(store, escrowID, nonce, stateCopy, cursor, committedEntries, sealedNonces)
+	return writeSnapshotErr(store, escrowID, nonce, stateCopy, cursor, committedEntries, sealedNonces, heightSyncFloor)
 }
 
 // PrepareInference composes a diff, applies it locally, advances nonce,

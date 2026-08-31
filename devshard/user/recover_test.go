@@ -2289,3 +2289,34 @@ func TestRecoverSession_ReplaysADiffWrittenBeforeTheMinTokensFloor(t *testing.T)
 	require.NotNil(t, session)
 	require.Equal(t, types.StatusPending, recovered.SnapshotState().Inferences[1].Status)
 }
+
+func TestDecodeSnapshot_HeightSyncFloor(t *testing.T) {
+	blob, err := json.Marshal(sessionSnapshot{
+		State: &types.EscrowState{EscrowID: "escrow-1", LatestNonce: 3},
+		HeightSyncFloor: &types.FloorIndexProto{
+			Truncated: true,
+			Entries: []*types.FloorIndexEntryProto{{
+				Nonce:  3,
+				Height: 50,
+				Hash:   []byte{0xaa},
+				Author: 1,
+			}},
+		},
+	})
+	require.NoError(t, err)
+
+	st, _, _, _, floor, err := decodeSnapshot(blob)
+	require.NoError(t, err)
+	require.Equal(t, "escrow-1", st.EscrowID)
+	require.NotNil(t, floor)
+	require.True(t, floor.Truncated)
+	require.Equal(t, uint64(50), floor.Entries[0].Height)
+	require.Equal(t, []byte{0xaa}, floor.Entries[0].Hash)
+
+	legacy, err := json.Marshal(types.EscrowState{EscrowID: "escrow-2"})
+	require.NoError(t, err)
+	st2, _, _, _, floor2, err := decodeSnapshot(legacy)
+	require.NoError(t, err)
+	require.Equal(t, "escrow-2", st2.EscrowID)
+	require.Nil(t, floor2)
+}

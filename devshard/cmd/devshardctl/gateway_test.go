@@ -74,7 +74,7 @@ func gatewayTestRuntimeForLimits(t *testing.T, id string, balance, nonce uint64)
 	st := sm.ExportState()
 	st.Balance = balance
 	st.LatestNonce = nonce
-	sm.RestoreState(st)
+	require.NoError(t, sm.RestoreState(st))
 
 	return &devshardRuntime{
 		id:    id,

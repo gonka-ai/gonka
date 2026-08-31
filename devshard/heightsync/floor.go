@@ -368,7 +368,10 @@ func (f *FloorIndex) Len() int {
 	return len(f.entries)
 }
 
-// Clone returns a deep copy so trial-apply cannot leak into committed state.
+// Clone returns a copy so trial-apply cannot leak into committed state. It runs
+// on the apply hot path (snapshotMutable, several times per diff), so the hashes
+// are shared rather than copied: appendEntry and the claim insert each store a
+// fresh slice and nothing rewrites one in place afterwards.
 func (f *FloorIndex) Clone() *FloorIndex {
 	if f == nil {
 		return nil
@@ -383,6 +386,15 @@ func (f *FloorIndex) Clone() *FloorIndex {
 		cfg:       f.cfg,
 		truncated: f.truncated,
 	}
+}
+
+// ApplyConfig replaces the raise-rule parameters. Snapshot blobs omit cfg;
+// restore recomputes it from the roster.
+func (f *FloorIndex) ApplyConfig(cfg FloorConfig) {
+	if f == nil {
+		return
+	}
+	f.cfg = cfg.withDefaults()
 }
 
 // FloorAuthorLabel names a claim signer for marks and log lines.

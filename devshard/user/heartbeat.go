@@ -334,6 +334,9 @@ func (s *Session) hasPendingHeightAckLocked() bool {
 // both are better than the sequencer signing a height it has no reason to think
 // exists.
 func (s *Session) referenceStampLocked(nonce uint64) (uint64, []byte, bool) {
+	if !s.sm.HeightSyncFloorReady() {
+		return 0, nil, false
+	}
 	h, hash, ok := s.observedHeightLocked()
 	if !heightsync.StampPresent(hash) {
 		h, hash, ok = 0, nil, false

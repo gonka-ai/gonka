@@ -188,6 +188,9 @@ func (h *Host) buildHeightAckLocked(item heartbeatTarget, hdr *blocks.Header, hd
 // omitted stamp costs the roster one height claim, while a carried one puts a
 // pair no chain can reconcile under another signature.
 func (h *Host) referenceStamp(producingNonce, height uint64, hash []byte) (uint64, []byte) {
+	if !h.sm.HeightSyncFloorReady() {
+		return 0, nil
+	}
 	floor, floorHash, known := h.sm.HeightSyncFloorAsOf(producingNonce)
 	if !known || floor <= height || !heightsync.StampPresent(floorHash) {
 		return height, hash
