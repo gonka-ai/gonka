@@ -42,19 +42,15 @@ Group eligibility (`WThreshold`, `VMin`) and the non-initial group cap use the p
 
 ### The cap value (cPoC / model-coefficient aware)
 
-The cap for each participant is the confirmed **effective weight** they held in the previous epoch, computed identically to the settlement/reward path:
+The cap for each live participant is the confirmed **effective weight** they held in the previous epoch:
 
 ```
 cap = previousWeight * previousConfirmationWeight / previousRawConfirmationTotal
 ```
 
-where `previousConfirmationWeight` and `previousRawConfirmationTotal` are aggregated across the per-model subgroups using the same confirmation-weight scale coefficients used for rewards. This guarantees the cap reflects exactly what the participant *confirmed* last epoch, honoring model coefficients and cPoC adjustments. When no confirmation scales are configured, the cap degrades to the previous consensus weight itself.
+`previousConfirmationWeight` and `previousRawConfirmationTotal` aggregate all eligible real-node models into one participant-wide fraction using the configured model coefficients. Reward settlement and the next-epoch cap apply this fraction to the participant's root `Weight` through `types.EffectiveConfirmedWeight`. [Per-model confirmation](../multi-model-poc/per-model-punishment.md) is a draft and is not implemented. When no confirmation scales are configured, the cap defaults to the previous consensus weight.
 
-When a model has real validated weight but no trusted cPoC voting power (for example every host on that model is new and therefore has `CapWeight = 0`), that model is still recorded in `ConfirmationWeightScales` with `has_trusted_voting_power = false`. Reward settlement keeps that model's raw weight in the numerator. The next-epoch cap uses the same full-model denominator but contributes zero for the untrusted model, so confirmation of another model cannot be applied as a 100% ratio over the participant's full root `Weight`.
-
-This logic is centralized in shared helpers, `types.EffectiveConfirmedWeight` and `types.EffectiveWeightFromModels`, used by both the reward path and the cap.
-
-Only live members of the previous epoch provide a cap baseline. A participant removed from the root group during the previous epoch (for example by invalidation or deactivation) is treated as absent and must prove compute again before regaining trust weight.
+Only live members of the previous epoch provide a cap baseline. A participant removed from the root group during the previous epoch is treated as absent and must prove compute again before regaining trust weight.
 
 ### New / returning participants
 

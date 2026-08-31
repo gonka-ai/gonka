@@ -37,19 +37,11 @@ message EpochGroupData {
   Model model_snapshot = 17;
   int64 total_throughput = 18;
   repeated ConfirmationWeightScale confirmation_weight_scales = 19;
-  // When true, ConfirmationWeightScale.has_trusted_voting_power is meaningful,
-  // including the all-false case (every accounting model currently has zero
-  // trusted voting power). When false, legacy epochs treat every scale as trusted.
-  bool confirmation_accounting_separated = 20;
 }
 
 message ConfirmationWeightScale {
   string model_id = 1;
   Decimal weight_scale_factor = 2;
-  // has_trusted_voting_power is only consulted when the parent EpochGroupData
-  // has confirmation_accounting_separated = true. False means the model still
-  // belongs in the accounting denominator, but it has no trusted cPoC voters.
-  bool has_trusted_voting_power = 3;
 }
 
 message ValidationWeight {

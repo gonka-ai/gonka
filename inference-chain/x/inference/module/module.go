@@ -903,7 +903,6 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	}
 
 	upcomingEg.GroupData.ConfirmationWeightScales = confirmationWeightScales
-	upcomingEg.GroupData.ConfirmationAccountingSeparated = true
 	if err := am.keeper.SetDelegationRewardTransferSnapshot(ctx, types.DelegationRewardTransferSnapshot{
 		EpochIndex: upcomingEpoch.Index,
 		Transfers:  allRewardTransfers,
@@ -1027,18 +1026,18 @@ func (am AppModule) captureValidationSnapshot(ctx context.Context, blockHeight, 
 // path to exclude members removed mid-epoch.
 func (am AppModule) captureConfirmationValidationSnapshot(ctx context.Context, blockHeight, snapshotKey int64) {
 	baseState := am.getEffectiveValidationBaseState(ctx)
-	scales, accountingSeparated := am.currentConfirmationAccounting(ctx)
+	scales := am.currentConfirmationWeightScales(ctx)
 	am.writeValidationSnapshot(ctx, blockHeight, snapshotKey, "confirmation PoC",
-		withAccountingPlaceholderModels(baseState.existingModelVotingPowers, scales, accountingSeparated),
+		withAccountingPlaceholderModels(baseState.existingModelVotingPowers, scales),
 		baseState.totalWeight)
 }
 
-func (am AppModule) currentConfirmationAccounting(ctx context.Context) ([]*types.ConfirmationWeightScale, bool) {
+func (am AppModule) currentConfirmationWeightScales(ctx context.Context) []*types.ConfirmationWeightScale {
 	currentGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
 	if err != nil || currentGroup == nil || currentGroup.GroupData == nil {
-		return nil, false
+		return nil
 	}
-	return currentGroup.GroupData.ConfirmationWeightScales, currentGroup.GroupData.ConfirmationAccountingSeparated
+	return currentGroup.GroupData.ConfirmationWeightScales
 }
 
 // withAccountingPlaceholderModels keeps zero-voter accounting models visible on
@@ -1046,11 +1045,7 @@ func (am AppModule) currentConfirmationAccounting(ctx context.Context) ([]*types
 func withAccountingPlaceholderModels(
 	modelWeights []*types.ModelVotingPowers,
 	scales []*types.ConfirmationWeightScale,
-	accountingSeparated bool,
 ) []*types.ModelVotingPowers {
-	if !accountingSeparated {
-		return modelWeights
-	}
 	present := make(map[string]bool, len(modelWeights))
 	out := make([]*types.ModelVotingPowers, 0, len(modelWeights)+len(scales))
 	for _, mw := range modelWeights {
@@ -1319,10 +1314,7 @@ func (am AppModule) addEpochMembers(ctx context.Context, upcomingEg *epochgroup.
 	}
 	validationParams := params.ValidationParams
 	scales := upcomingEg.GroupData.ConfirmationWeightScales
-	coefficients := types.ConfirmationWeightCoefficientsTrusted(
-		scales,
-		upcomingEg.GroupData.ConfirmationAccountingSeparated,
-	)
+	coefficients := types.ConfirmationWeightCoefficients(scales)
 
 	for _, p := range activeParticipants {
 		reputation, err := am.calculateParticipantReputation(ctx, p, validationParams)

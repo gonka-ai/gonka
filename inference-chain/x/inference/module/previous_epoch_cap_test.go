@@ -89,6 +89,38 @@ func TestApplyPreviousConfirmedWeightCap_ClampsAndZeroes(t *testing.T) {
 	require.Equal(t, int64(300), weight[testutil.Executor], "real weight preserved for rewards")
 }
 
+func TestApplyPreviousConfirmedWeightCap_NoConfirmationEventKeepsFullBaseline(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	const prevEpoch = uint64(5)
+
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, prevEpoch))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:     prevEpoch,
+		SubGroupModels: []string{"model-a"},
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 100, ConfirmationWeight: 100},
+		},
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: prevEpoch,
+		ModelId:    "model-a",
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, MlNodes: []*types.MLNodeInfo{{PocWeight: 100}}},
+		},
+	})
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	result := mustApplyCap(t, am, ctx, []*types.ActiveParticipant{
+		{Index: testutil.Validator, Weight: 150},
+	})
+
+	require.Equal(t, int64(150), result[0].Weight)
+	require.Equal(t, int64(100), result[0].CapWeight)
+}
+
 func TestApplyPreviousConfirmedWeightCap_GuardianIsCapped(t *testing.T) {
 	k, ctx := newMinimalInferenceKeeper(t)
 
@@ -516,20 +548,19 @@ func TestGetEffectiveValidationBaseState_UsesTrustWeightsForTotal(t *testing.T) 
 	require.Equal(t, int64(120), base.weights[testutil.Validator2])
 }
 
-func TestApplyPreviousConfirmedWeightCap_UntrustedModelDoesNotInflateCap(t *testing.T) {
+func TestApplyPreviousConfirmedWeightCap_UsesFullModelDenominator(t *testing.T) {
 	k, ctx := newMinimalInferenceKeeper(t)
 
 	const prevEpoch = uint64(5)
 	require.NoError(t, k.SetEffectiveEpochIndex(ctx, prevEpoch))
 
 	k.SetEpochGroupData(ctx, types.EpochGroupData{
-		EpochIndex:                      prevEpoch,
-		ModelId:                         "",
-		SubGroupModels:                  []string{"model-a", "model-b"},
-		ConfirmationAccountingSeparated: true,
+		EpochIndex:     prevEpoch,
+		ModelId:        "",
+		SubGroupModels: []string{"model-a", "model-b"},
 		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
-			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1), HasTrustedVotingPower: true},
-			{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(1), HasTrustedVotingPower: false},
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)},
+			{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(1)},
 		},
 		ValidationWeights: []*types.ValidationWeight{
 			{MemberAddress: testutil.Validator, Weight: 100, ConfirmationWeight: 10},
@@ -554,23 +585,22 @@ func TestApplyPreviousConfirmedWeightCap_UntrustedModelDoesNotInflateCap(t *test
 	result := mustApplyCap(t, am, ctx, []*types.ActiveParticipant{
 		{Index: testutil.Validator, Weight: 100},
 	})
-	require.Equal(t, int64(10), result[0].CapWeight, "trusted-only confirmation must not be applied as 100% of root weight")
+	require.Equal(t, int64(10), result[0].CapWeight)
 	require.Equal(t, int64(100), result[0].Weight)
 }
 
-func TestApplyPreviousConfirmedWeightCap_UntrustedOnlyModelGetsZeroCap(t *testing.T) {
+func TestApplyPreviousConfirmedWeightCap_UnconfirmedModelGetsZeroCap(t *testing.T) {
 	k, ctx := newMinimalInferenceKeeper(t)
 
 	const prevEpoch = uint64(5)
 	require.NoError(t, k.SetEffectiveEpochIndex(ctx, prevEpoch))
 
 	k.SetEpochGroupData(ctx, types.EpochGroupData{
-		EpochIndex:                      prevEpoch,
-		ModelId:                         "",
-		SubGroupModels:                  []string{"model-b"},
-		ConfirmationAccountingSeparated: true,
+		EpochIndex:     prevEpoch,
+		ModelId:        "",
+		SubGroupModels: []string{"model-b"},
 		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
-			{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(1), HasTrustedVotingPower: false},
+			{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(1)},
 		},
 		ValidationWeights: []*types.ValidationWeight{
 			{MemberAddress: testutil.Validator, Weight: 100, ConfirmationWeight: 0},
@@ -592,7 +622,7 @@ func TestApplyPreviousConfirmedWeightCap_UntrustedOnlyModelGetsZeroCap(t *testin
 	require.Equal(t, int64(100), result[0].Weight)
 }
 
-func TestGetEffectiveValidationBaseState_OmitsEmptyVoterAccountingModels(t *testing.T) {
+func TestGetEffectiveValidationBaseState_OmitsEmptyVoterConfirmationModels(t *testing.T) {
 	k, ctx := newMinimalInferenceKeeper(t)
 	const epoch = uint64(9)
 	require.NoError(t, k.SetEffectiveEpochIndex(ctx, epoch))
@@ -604,14 +634,13 @@ func TestGetEffectiveValidationBaseState_OmitsEmptyVoterAccountingModels(t *test
 		},
 	}))
 	k.SetEpochGroupData(ctx, types.EpochGroupData{
-		EpochIndex:                      epoch,
-		ModelId:                         "",
-		EpochGroupId:                    77,
-		SubGroupModels:                  []string{"model-a"},
-		ConfirmationAccountingSeparated: true,
+		EpochIndex:     epoch,
+		ModelId:        "",
+		EpochGroupId:   77,
+		SubGroupModels: []string{"model-a"},
 		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
-			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1), HasTrustedVotingPower: true},
-			{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(1), HasTrustedVotingPower: false},
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)},
+			{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(1)},
 		},
 		ValidationWeights: []*types.ValidationWeight{
 			{MemberAddress: testutil.Validator, Weight: 100},
@@ -639,10 +668,9 @@ func TestGetEffectiveValidationBaseState_OmitsEmptyVoterAccountingModels(t *test
 	snapshotModels := withAccountingPlaceholderModels(
 		base.existingModelVotingPowers,
 		[]*types.ConfirmationWeightScale{
-			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1), HasTrustedVotingPower: true},
-			{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(1), HasTrustedVotingPower: false},
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)},
+			{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(1)},
 		},
-		true,
 	)
 	snapshotByModel := map[string]bool{}
 	for _, mvp := range snapshotModels {

@@ -104,17 +104,15 @@ func TestOnEndOfPoCValidationStage_ConcentrationCapsFinalTrustWeight(t *testing.
 	}
 
 	k.SetEpochGroupData(ctx, types.EpochGroupData{
-		EpochIndex:                      currentEpoch,
-		EpochGroupId:                    77,
-		PocStartBlockHeight:             100,
-		SubGroupModels:                  []string{modelID},
-		ValidationWeights:               rootWeights,
-		ConfirmationAccountingSeparated: true,
+		EpochIndex:          currentEpoch,
+		EpochGroupId:        77,
+		PocStartBlockHeight: 100,
+		SubGroupModels:      []string{modelID},
+		ValidationWeights:   rootWeights,
 		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
 			{
-				ModelId:               modelID,
-				WeightScaleFactor:     types.DecimalFromFloat(1),
-				HasTrustedVotingPower: true,
+				ModelId:           modelID,
+				WeightScaleFactor: types.DecimalFromFloat(1),
 			},
 		},
 	})

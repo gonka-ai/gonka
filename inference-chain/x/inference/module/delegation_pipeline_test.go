@@ -61,9 +61,10 @@ func setupEpochGroupDataFromAP(k keeper.Keeper, ctx sdk.Context, ap types.Active
 // Set excludedMembers to simulate mid-epoch removals (member in ValidationWeights
 // but absent from SDK group).
 type stubGroupKeeper struct {
-	keeper          keeper.Keeper
-	excludedMembers map[string]bool
-	membersErr      error
+	keeper                 keeper.Keeper
+	excludedMembers        map[string]bool
+	excludedMembersByGroup map[uint64]map[string]bool
+	membersErr             error
 }
 
 func (s *stubGroupKeeper) GroupMembers(ctx context.Context, req *group.QueryGroupMembersRequest) (*group.QueryGroupMembersResponse, error) {
@@ -89,7 +90,9 @@ func (s *stubGroupKeeper) findMembersForGroup(ctx sdk.Context, groupId uint64) [
 		}
 		var members []*group.GroupMember
 		for _, vw := range data.ValidationWeights {
-			if vw == nil || s.excludedMembers[vw.MemberAddress] {
+			if vw == nil ||
+				s.excludedMembers[vw.MemberAddress] ||
+				s.excludedMembersByGroup[groupId][vw.MemberAddress] {
 				continue
 			}
 			members = append(members, &group.GroupMember{
@@ -119,7 +122,20 @@ func (*stubGroupKeeper) CreateGroup(context.Context, *group.MsgCreateGroup) (*gr
 func (*stubGroupKeeper) CreateGroupWithPolicy(context.Context, *group.MsgCreateGroupWithPolicy) (*group.MsgCreateGroupWithPolicyResponse, error) {
 	return &group.MsgCreateGroupWithPolicyResponse{}, nil
 }
-func (*stubGroupKeeper) UpdateGroupMembers(context.Context, *group.MsgUpdateGroupMembers) (*group.MsgUpdateGroupMembersResponse, error) {
+func (s *stubGroupKeeper) UpdateGroupMembers(_ context.Context, req *group.MsgUpdateGroupMembers) (*group.MsgUpdateGroupMembersResponse, error) {
+	if s.excludedMembersByGroup == nil {
+		s.excludedMembersByGroup = make(map[uint64]map[string]bool)
+	}
+	if s.excludedMembersByGroup[req.GroupId] == nil {
+		s.excludedMembersByGroup[req.GroupId] = make(map[string]bool)
+	}
+	for _, update := range req.MemberUpdates {
+		if update.Weight == "0" {
+			s.excludedMembersByGroup[req.GroupId][update.Address] = true
+		} else {
+			delete(s.excludedMembersByGroup[req.GroupId], update.Address)
+		}
+	}
 	return &group.MsgUpdateGroupMembersResponse{}, nil
 }
 func (*stubGroupKeeper) UpdateGroupMetadata(context.Context, *group.MsgUpdateGroupMetadata) (*group.MsgUpdateGroupMetadataResponse, error) {
@@ -340,10 +356,9 @@ func TestBuildBootstrapDelegationSnapshot_EmptyVoterAccountingModelIsNotActive(t
 
 	root, found := k.GetEpochGroupData(ctx, 1, "")
 	require.True(t, found)
-	root.ConfirmationAccountingSeparated = true
 	root.ConfirmationWeightScales = []*types.ConfirmationWeightScale{
-		{ModelId: "active-model", WeightScaleFactor: types.DecimalFromFloat(1), HasTrustedVotingPower: true},
-		{ModelId: "new-model", WeightScaleFactor: types.DecimalFromFloat(1), HasTrustedVotingPower: false},
+		{ModelId: "active-model", WeightScaleFactor: types.DecimalFromFloat(1)},
+		{ModelId: "new-model", WeightScaleFactor: types.DecimalFromFloat(1)},
 	}
 	k.SetEpochGroupData(ctx, root)
 

@@ -15,23 +15,12 @@ func buildConfirmationWeightScales(
 	}
 
 	realModels := modelsWithRealNodes(activeParticipants, eligible)
-	trustedModels := modelsWithPositiveVotingPower(activeParticipants, eligible)
-
-	accounting := make(map[string]bool, len(realModels)+len(trustedModels))
-	for modelID := range realModels {
-		accounting[modelID] = true
-	}
-	for modelID := range trustedModels {
-		accounting[modelID] = true
-	}
-
-	scales := make([]*types.ConfirmationWeightScale, 0, len(accounting))
-	for _, modelID := range sortedKeys(accounting) {
+	scales := make([]*types.ConfirmationWeightScale, 0, len(realModels))
+	for _, modelID := range sortedKeys(realModels) {
 		config, _ := pocParams.GetModelConfig(modelID)
 		scales = append(scales, &types.ConfirmationWeightScale{
-			ModelId:               modelID,
-			WeightScaleFactor:     config.GetWeightScaleFactor().CloneOrOne(),
-			HasTrustedVotingPower: trustedModels[modelID],
+			ModelId:           modelID,
+			WeightScaleFactor: config.GetWeightScaleFactor().CloneOrOne(),
 		})
 	}
 	return scales
@@ -56,19 +45,4 @@ func modelsWithRealNodes(activeParticipants []*types.ActiveParticipant, eligible
 		}
 	}
 	return real
-}
-
-func modelsWithPositiveVotingPower(activeParticipants []*types.ActiveParticipant, eligible map[string]bool) map[string]bool {
-	trusted := make(map[string]bool)
-	for _, p := range activeParticipants {
-		if p == nil {
-			continue
-		}
-		for _, vp := range p.VotingPowers {
-			if vp != nil && vp.VotingPower > 0 && eligible[vp.ModelId] {
-				trusted[vp.ModelId] = true
-			}
-		}
-	}
-	return trusted
 }

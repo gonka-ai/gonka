@@ -816,13 +816,14 @@ func CalculateParticipantBitcoinRewardsWithTransfers(
 				"participant", participant.Address,
 				"fullWeight", fullWeight)
 		} else {
-			effectiveWeight = types.EffectiveWeightFromModels(
-				vw.Weight,
-				epochGroupData.ConfirmationWeightScales,
-				epochGroupData.ConfirmationAccountingSeparated,
+			rawConfirmationWeight := types.ConfirmationWeightOfModelNodes(
 				participantMLNodes[participant.Address],
+				epochGroupData.ConfirmationWeightScales,
+			)
+			effectiveWeight = types.EffectiveConfirmedWeight(
+				vw.Weight,
 				vw.ConfirmationWeight,
-				types.RewardWeightPolicy,
+				rawConfirmationWeight,
 			)
 		}
 		if effectiveWeight > int64(fullWeight) {

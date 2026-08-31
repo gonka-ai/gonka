@@ -8,7 +8,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-func TestBuildConfirmationWeightScales_IncludesUntrustedRealModels(t *testing.T) {
+func TestBuildConfirmationWeightScales_IncludesEligibleRealModels(t *testing.T) {
 	params := types.DefaultParams()
 	params.PocParams.Models = []*types.PoCModelConfig{
 		{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)},
@@ -17,7 +17,7 @@ func TestBuildConfirmationWeightScales_IncludesUntrustedRealModels(t *testing.T)
 
 	participants := []*types.ActiveParticipant{
 		{
-			Index:  "trusted-host",
+			Index:  "host-a",
 			Models: []string{"model-a"},
 			MlNodes: []*types.ModelMLNodes{
 				{MlNodes: []*types.MLNodeInfo{{PocWeight: 10}}},
@@ -27,7 +27,7 @@ func TestBuildConfirmationWeightScales_IncludesUntrustedRealModels(t *testing.T)
 			},
 		},
 		{
-			Index:  "new-host",
+			Index:  "host-b",
 			Models: []string{"model-b"},
 			MlNodes: []*types.ModelMLNodes{
 				{MlNodes: []*types.MLNodeInfo{{PocWeight: 90}}},
@@ -37,8 +37,8 @@ func TestBuildConfirmationWeightScales_IncludesUntrustedRealModels(t *testing.T)
 
 	scales := buildConfirmationWeightScales([]string{"model-a", "model-b"}, participants, params.PocParams)
 	require.Equal(t, []*types.ConfirmationWeightScale{
-		{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1), HasTrustedVotingPower: true},
-		{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(2), HasTrustedVotingPower: false},
+		{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)},
+		{ModelId: "model-b", WeightScaleFactor: types.DecimalFromFloat(2)},
 	}, scales)
 }
 
@@ -65,5 +65,4 @@ func TestBuildConfirmationWeightScales_OmitsIneligibleModels(t *testing.T) {
 	scales := buildConfirmationWeightScales([]string{"model-a"}, participants, params.PocParams)
 	require.Len(t, scales, 1)
 	require.Equal(t, "model-a", scales[0].ModelId)
-	require.True(t, scales[0].HasTrustedVotingPower)
 }

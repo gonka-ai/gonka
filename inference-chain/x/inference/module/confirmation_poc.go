@@ -406,10 +406,6 @@ func (am AppModule) evaluateConfirmation(
 		return nil
 	}
 	presentScales := confirmationScalesInSnapshot(scales, snapshot.ModelVotingPowers)
-	presentScales = types.FilterTrustedConfirmationScales(
-		presentScales,
-		epochGroupData.ConfirmationAccountingSeparated,
-	)
 	if len(presentScales) == 0 {
 		am.LogWarn("evaluateConfirmation: validation snapshot has no confirmation models, skipping event", types.PoC,
 			"epochIndex", event.EpochIndex,
