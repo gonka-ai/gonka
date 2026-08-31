@@ -127,6 +127,15 @@ type failingPGStorage struct {
 	liveCheckCalls int
 }
 
+type fatalStorage struct {
+	recordingStorage
+	fatal chan error
+}
+
+func (s *fatalStorage) FatalErrors() <-chan error {
+	return s.fatal
+}
+
 func (f *failingPGStorage) CreateSession(params CreateSessionParams) error {
 	f.lastMethod = "CreateSession"
 	return f.err
@@ -400,6 +409,26 @@ func TestHybridStorage_PromotionHookFiresAfterReconnectAndImmediatelyAfterPromot
 			return false
 		}
 	}, time.Second, 10*time.Millisecond)
+}
+
+func TestHybridStorage_ForwardsFatalErrorFromPromotedPostgres(t *testing.T) {
+	h := newDegradedSQLiteRouter(nil, t.TempDir(), ErrStoragePostgresUnavailable)
+	t.Cleanup(func() { _ = h.Close() })
+	lifetimeErrors := h.FatalErrors()
+	require.NotNil(t, lifetimeErrors)
+
+	pg := &fatalStorage{fatal: make(chan error, 1)}
+	require.NoError(t, h.promotePostgres(pg))
+	want := errors.New("postgres fence session lost")
+	pg.fatal <- want
+
+	select {
+	case got := <-lifetimeErrors:
+		require.ErrorIs(t, got, want)
+	case <-time.After(time.Second):
+		t.Fatal("fatal error from promoted PostgreSQL was not forwarded")
+	}
+	require.Equal(t, lifetimeErrors, h.FatalErrors(), "hybrid fatal channel must remain stable after promotion")
 }
 
 func TestHybridStorage_ClearsPGBoundAfterFailedPGCreateWhenProvablyEmpty(t *testing.T) {

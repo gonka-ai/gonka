@@ -452,8 +452,78 @@ down after boot.
 
 ## Operational Notes
 
-- Postgres env vars: `PGHOST`, `PGPORT`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`.
+- Postgres env vars: `PGHOST` (or `PGSERVICE`), `PGPORT`, `PGDATABASE`,
+  `PGUSER`, `PGPASSWORD`. The schema bootstrap uses the same pgx environment
+  selectors as the child storage path.
 - Postgres connect deadline at boot: `PG_CONNECT_TIMEOUT` default `2s`.
+- Postgres schema migration deadline: `PG_MIGRATION_TIMEOUT` default `2m`.
+  It includes time waiting for another devshard migrator to release the
+  database-scoped migration lock.
+- Application pool limit: `PG_POOL_MAX_CONNS`, default `4`, per running
+  PostgreSQL-backed devshard generation. The explicit default replaces pgx's
+  CPU-sized default so versiond replicas and overlapping generations cannot
+  each reserve a host-sized pool.
+- The session-fence check runs in its own loop every `5s` with a `30s` timeout.
+  A timeout invalidates that PostgreSQL session and triggers child replacement;
+  independent readiness probes retain their shorter `5s` budget and can remove
+  the child from traffic while the terminal fence decision is still pending.
+- Each PostgreSQL-backed child uses its application pool plus two dedicated
+  sessions: one for readiness and one for the advisory fence. Schema bootstrap
+  transiently opens a separate pool. External PostgreSQL capacity planning must
+  include every simultaneously running child generation on both versiond
+  replicas.
+- Migration bootstrap and all pending application steps are serialized by a
+  database-scoped advisory lock. Before starting children in an HA deployment,
+  versiond runs `devshardd --initialize-postgres-schema` through a current
+  downloaded artifact. Children that predate this command wait behind the
+  initialization barrier. Concurrent versiond replicas may run the initializer,
+  but the database lock serializes them. This gives fresh mixed-version installs
+  the same deterministic schema ordering as normal upgrades. Versiond first
+  classifies every desired binary; when the entire desired catalog predates the
+  initializer command, it preserves the legacy startup behavior instead of
+  waiting for a capability that is not present. Versions explicitly listed in
+  `VERSIOND_NON_HA_VERSIONS` retain single-host SQLite ownership and bypass this
+  PostgreSQL barrier.
+- `devshard_storage_identity.identity` is a durable database-lineage marker.
+  Copies restored from one backup retain the same marker, so equality alone is
+  not proof that two hosts currently share a database.
+- Each devshard process also holds a unique session-scoped PostgreSQL advisory
+  fence before serving. Every connection subsequently created by its application
+  pool must observe that fence in `pg_locks` and report a writable primary before
+  pgx admits it. Advisory locks are not WAL-replicated, so a promoted fork does
+  not inherit the fence. The fence session is monitored for the entire child
+  lifetime. Losing it withdraws readiness and force-closes devshardd listeners
+  so versiond can immediately replace the child and establish a fresh fence. A
+  DNS or load-balancer endpoint may expose multiple
+  addresses for one logical writer, but it cannot silently mix independent
+  writable branches within one child pool. The endpoint must preserve PostgreSQL
+  session semantics; transaction-pooling proxies such as PgBouncer in transaction
+  mode are unsupported because the advisory lock must stay bound to one backend
+  session. The dedicated fence session disables `idle_session_timeout`; its
+  lifetime is controlled by devshardd and the active fence check instead. This
+  terminal path resets in-flight requests rather than waiting for the normal
+  shutdown grace; the replacement then follows versiond's restart backoff,
+  capped at `60s`.
+- The PostgreSQL endpoint remains responsible for cluster-level writer fencing:
+  it must expose at most one writable primary for a logical database. The
+  advisory fence prevents one child pool from crossing branches, and the live
+  challenge detects divergent children when deployment preflight runs; neither
+  mechanism elects a PostgreSQL primary or replaces database-layer consensus.
+- HA deployment preflight obtains a stable generation snapshot from each
+  versiond replica. For every HA-routed child generation across those snapshots,
+  it writes a unique random nonce through that one child's application pool and
+  requires every other generation to read it. Each operation names its child
+  generation and carries the original snapshot token; transitional generations
+  and changed snapshots fail closed. Every operation also requires
+  `pg_is_in_recovery() = false`. This catches independent clones, read replicas,
+  cross-wired protocol versions, and configuration differences between a
+  supervisor and its children. A final snapshot read closes the transaction.
+  Deployment tooling serializes the exchange; concurrent challenges can cause
+  only a safe false negative because each write replaces the previous nonce.
+  It must wait for preparing, swapping, and draining generations to settle. On
+  the first rollout it must start a current artifact and initialize the schema
+  before requiring proof support from the fleet; legacy children do not expose
+  the proof API.
 - Live readiness uses one dedicated PostgreSQL connection outside the
   application pool. Two consecutive database failures make `/readyz` return
   `503` without terminating devshardd; two successful probes restore readiness.

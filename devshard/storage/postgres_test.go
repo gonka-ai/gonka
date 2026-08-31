@@ -85,6 +85,36 @@ func captureStorageLogs(t *testing.T) *bytes.Buffer {
 	return &buf
 }
 
+func TestConfigurePostgresPool(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		want    int32
+		wantErr bool
+	}{
+		{name: "default", want: defaultPostgresPoolMaxConns},
+		{name: "explicit", value: "12", want: 12},
+		{name: "trimmed", value: " 8 ", want: 8},
+		{name: "zero", value: "0", wantErr: true},
+		{name: "negative", value: "-1", wantErr: true},
+		{name: "not an integer", value: "many", wantErr: true},
+		{name: "overflow", value: "2147483648", wantErr: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("PG_POOL_MAX_CONNS", tt.value)
+			cfg := &pgxpool.Config{}
+			err := configurePostgresPool(cfg)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, tt.want, cfg.MaxConns)
+		})
+	}
+}
+
 func readStorageLogEntries(t *testing.T, buf *bytes.Buffer) []map[string]any {
 	t.Helper()
 	decoder := json.NewDecoder(bytes.NewReader(buf.Bytes()))
@@ -545,6 +575,70 @@ func TestPostgresHealthProbeBudgetCoversConnectionSetup(t *testing.T) {
 	require.GreaterOrEqual(t, postgresHealthTimeout, postgresConnectTimeout)
 }
 
+func TestPostgresFenceCheckHasIndependentBudget(t *testing.T) {
+	require.Greater(t, postgresFenceCheckTimeout, postgresHealthTimeout)
+	require.Equal(t, 30*time.Second, postgresFenceCheckTimeout)
+}
+
+func TestPostgresReadinessDoesNotWaitForFenceCheck(t *testing.T) {
+	healthChecks := make(chan struct{}, postgresHealthQuorum)
+	fenceStarted := make(chan struct{}, 1)
+	pg := &Postgres{
+		healthReady: true,
+		healthDone:  make(chan struct{}),
+		fatalErrors: make(chan error, 1),
+	}
+	pg.startPostgresMonitors(postgresMonitorConfig{
+		interval:      time.Millisecond,
+		healthTimeout: 10 * time.Millisecond,
+		fenceTimeout:  time.Second,
+		healthCheck: func(context.Context) error {
+			select {
+			case healthChecks <- struct{}{}:
+			default:
+			}
+			return errors.New("database unavailable")
+		},
+		healthClose: func(context.Context) error { return nil },
+		fenceCheck: func(ctx context.Context) error {
+			fenceStarted <- struct{}{}
+			<-ctx.Done()
+			return ctx.Err()
+		},
+		poolSaturated: func() bool { return false },
+	})
+	t.Cleanup(func() {
+		pg.mu.Lock()
+		cancel := pg.healthStop
+		pg.mu.Unlock()
+		cancel()
+		<-pg.healthDone
+	})
+
+	select {
+	case <-fenceStarted:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("fence monitor did not start")
+	}
+	for range postgresHealthQuorum {
+		select {
+		case <-healthChecks:
+		case <-time.After(100 * time.Millisecond):
+			t.Fatal("readiness probe was blocked by the in-flight fence check")
+		}
+	}
+	require.Eventually(t, func() bool {
+		pg.mu.RLock()
+		defer pg.mu.RUnlock()
+		return !pg.healthReady
+	}, 100*time.Millisecond, time.Millisecond)
+	select {
+	case err := <-pg.fatalErrors:
+		t.Fatalf("blocked fence check became terminal before its deadline: %v", err)
+	default:
+	}
+}
+
 func TestPostgresReadyTracksLiveDatabaseLoss(t *testing.T) {
 	container := startPostgresContainer(t)
 	t.Cleanup(func() { _ = container.Terminate(context.Background()) })
@@ -558,6 +652,33 @@ func TestPostgresReadyTracksLiveDatabaseLoss(t *testing.T) {
 	require.NoError(t, container.Stop(context.Background(), nil))
 	require.Eventually(t, func() bool { return !pg.Ready() },
 		30*time.Second, 100*time.Millisecond)
+}
+
+func TestPostgresFenceSessionLossIsTerminal(t *testing.T) {
+	container := startPostgresContainer(t)
+	t.Cleanup(func() { _ = container.Terminate(context.Background()) })
+
+	pg, err := NewPostgres(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = pg.Close() })
+	require.NoError(t, pg.WaitReady(context.Background()))
+
+	admin, err := pgx.Connect(context.Background(), "")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = admin.Close(context.Background()) })
+	pid := pg.connectionGuard.fenceConn.PgConn().PID()
+	var terminated bool
+	require.NoError(t, admin.QueryRow(context.Background(),
+		"SELECT pg_terminate_backend($1)", pid).Scan(&terminated))
+	require.True(t, terminated)
+
+	select {
+	case fatalErr := <-pg.FatalErrors():
+		require.ErrorContains(t, fatalErr, "postgres fence session lost")
+	case <-time.After(2*postgresHealthInterval + postgresHealthTimeout):
+		t.Fatal("postgres fence loss did not terminate the storage lifecycle")
+	}
+	require.False(t, pg.Ready())
 }
 
 func TestPostgres_NewPostgres_ConnectBudgetDoesNotIncludeIndex(t *testing.T) {

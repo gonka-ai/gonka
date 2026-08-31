@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,7 +38,8 @@ import (
 // serving; escrow-keyed methods also WaitReady so requests block until rebuild
 // finishes or fails.
 type Postgres struct {
-	pool *pgxpool.Pool
+	pool            *pgxpool.Pool
+	connectionGuard *postgresConnectionGuard
 
 	mu          sync.RWMutex
 	knownEpochs map[uint64]struct{}
@@ -53,6 +55,7 @@ type Postgres struct {
 	healthSaturated bool
 	healthStop      context.CancelFunc
 	healthDone      chan struct{}
+	fatalErrors     chan error
 }
 
 const (
@@ -79,6 +82,14 @@ const (
 	postgresHealthInterval = 5 * time.Second
 	postgresHealthTimeout  = postgresConnectTimeout
 	postgresHealthQuorum   = 2
+	// pgx otherwise scales the default pool to runtime.NumCPU. Versiond runs
+	// several devshard processes per host, so a CPU-sized pool per generation
+	// can exhaust PostgreSQL before application load reaches its own limits.
+	defaultPostgresPoolMaxConns int32 = 4
+	// A timed-out pgx query closes the session and therefore releases its
+	// advisory fence. Give this terminal check a wider budget than ordinary
+	// readiness probes so transient database stalls do not replace every child.
+	postgresFenceCheckTimeout = 30 * time.Second
 	// postgresIndexRepairBatchSize caps rows per DELETE/INSERT when repairing
 	// devshard_session_index so a large divergence does not hold one giant lock.
 	postgresIndexRepairBatchSize = 1000
@@ -198,103 +209,219 @@ func pgValidationLeasesPartition(epochID uint64) string {
 // idempotently. The escrow index is rebuilt asynchronously; use WaitReady
 // (bounded by PG_INDEX_TIMEOUT) before promote/boot paths that need ownership.
 func NewPostgres(ctx context.Context) (*Postgres, error) {
+	return newPostgres(ctx, postgresConnectTimeout, defaultPGMigrationTimeout)
+}
+
+func newPostgres(ctx context.Context, connectTimeout, migrationTimeout time.Duration) (*Postgres, error) {
 	cfg, err := pgxpool.ParseConfig("") // reads libpq env vars
 	if err != nil {
 		return nil, fmt.Errorf("parse postgres config: %w", err)
 	}
-	cfg.ConnConfig.ConnectTimeout = postgresConnectTimeout
+	if err := configurePostgresPool(cfg); err != nil {
+		return nil, err
+	}
+	cfg.ConnConfig.ConnectTimeout = connectTimeout
 	if cfg.ConnConfig.RuntimeParams == nil {
 		cfg.ConnConfig.RuntimeParams = make(map[string]string)
 	}
 	// Server-side per-query bounds applied to every pooled connection.
 	cfg.ConnConfig.RuntimeParams["statement_timeout"] = strconv.FormatInt(postgresStatementTimeout.Milliseconds(), 10)
 	cfg.ConnConfig.RuntimeParams["lock_timeout"] = strconv.FormatInt(postgresLockTimeout.Milliseconds(), 10)
+	connectionGuard, err := newPostgresConnectionGuard()
+	if err != nil {
+		return nil, err
+	}
+	connectionGuard.installValidator(cfg)
 	// Health owns one dedicated connection, leaving every configured pool slot
 	// available to application work and keeping MaxConns an application concern.
 	healthConfig := cfg.ConnConfig.Copy()
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	connectCtx, cancelConnect := context.WithTimeout(ctx, connectTimeout)
+	defer cancelConnect()
+	pool, err := pgxpool.NewWithConfig(connectCtx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect to postgres: %w", err)
 	}
-	if err := pool.Ping(ctx); err != nil {
+	if err := pool.Ping(connectCtx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
 
-	if err := MigratePostgres(ctx, pool); err != nil {
+	migrationCtx, cancelMigration := context.WithTimeout(ctx, migrationTimeout)
+	defer cancelMigration()
+	if err := MigratePostgres(migrationCtx, pool); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	if err := connectionGuard.arm(migrationCtx, pool, cfg.ConnConfig); err != nil {
 		pool.Close()
 		return nil, err
 	}
 
 	s := &Postgres{
-		pool:        pool,
-		knownEpochs: make(map[uint64]struct{}),
-		escrowIdx:   make(map[string]uint64),
-		readyCh:     make(chan struct{}),
-		healthReady: true,
-		healthDone:  make(chan struct{}),
+		pool:            pool,
+		connectionGuard: connectionGuard,
+		knownEpochs:     make(map[uint64]struct{}),
+		escrowIdx:       make(map[string]uint64),
+		readyCh:         make(chan struct{}),
+		healthReady:     true,
+		healthDone:      make(chan struct{}),
+		fatalErrors:     make(chan error, 1),
 	}
 	s.startHealthMonitor(healthConfig)
 	s.startIndexRebuild()
 	return s, nil
 }
 
+func configurePostgresPool(cfg *pgxpool.Config) error {
+	raw := strings.TrimSpace(os.Getenv("PG_POOL_MAX_CONNS"))
+	if raw == "" {
+		cfg.MaxConns = defaultPostgresPoolMaxConns
+		return nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil || value <= 0 {
+		return fmt.Errorf("PG_POOL_MAX_CONNS must be a positive integer, got %q", raw)
+	}
+	cfg.MaxConns = int32(value)
+	return nil
+}
+
 func (s *Postgres) startHealthMonitor(connConfig *pgx.ConnConfig) {
+	probe := newPostgresHealthProbe(connConfig)
+	s.startPostgresMonitors(postgresMonitorConfig{
+		interval:      postgresHealthInterval,
+		healthTimeout: postgresHealthTimeout,
+		fenceTimeout:  postgresFenceCheckTimeout,
+		healthCheck:   probe.check,
+		healthClose:   probe.close,
+		fenceCheck:    s.connectionGuard.check,
+		poolSaturated: func() bool { return postgresPoolIsSaturated(s.pool) },
+	})
+}
+
+type postgresMonitorConfig struct {
+	interval      time.Duration
+	healthTimeout time.Duration
+	fenceTimeout  time.Duration
+	healthCheck   func(context.Context) error
+	healthClose   func(context.Context) error
+	fenceCheck    func(context.Context) error
+	poolSaturated func() bool
+}
+
+func (s *Postgres) startPostgresMonitors(config postgresMonitorConfig) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.mu.Lock()
 	s.healthStop = cancel
 	s.mu.Unlock()
+
+	var monitors sync.WaitGroup
+	monitors.Add(2)
 	go func() {
-		defer close(s.healthDone)
-		probe := newPostgresHealthProbe(connConfig)
-		defer func() {
-			closeCtx, closeCancel := context.WithTimeout(context.Background(), postgresHealthTimeout)
-			defer closeCancel()
-			if err := probe.close(closeCtx); err != nil {
-				slog.Warn("devshard storage: close postgres health connection", "error", err)
-			}
-		}()
-		timer := time.NewTimer(postgresHealthInterval)
-		defer timer.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-timer.C:
-				probeCtx, probeCancel := context.WithTimeout(ctx, postgresHealthTimeout)
-				err := probe.check(probeCtx)
-				probeCancel()
-				if ctx.Err() != nil {
-					return
-				}
-				result := postgresHealthProbeSuccess
-				if err != nil {
-					result = postgresHealthProbeDatabaseError
-				}
-				saturated := postgresPoolIsSaturated(s.pool)
-				observability.ObservePostgresHealthProbe(err == nil, saturated)
-				previous, current := s.recordHealthProbe(result, saturated)
-				if previous.ready != current.ready {
-					if current.ready {
-						slog.Info("devshard storage: postgres readiness recovered")
-					} else {
-						slog.Warn("devshard storage: postgres readiness lost", "error", err)
-					}
-				}
-				if previous.saturated != current.saturated {
-					if current.saturated {
-						stat := s.pool.Stat()
-						slog.Warn("devshard storage: postgres application pool is saturated",
-							"acquired_connections", stat.AcquiredConns(),
-							"max_connections", stat.MaxConns())
-					} else {
-						slog.Info("devshard storage: postgres application pool saturation cleared")
-					}
-				}
-				timer.Reset(postgresHealthInterval)
-			}
+		defer monitors.Done()
+		s.runPostgresReadinessMonitor(ctx, config)
+	}()
+	go func() {
+		defer monitors.Done()
+		s.runPostgresFenceMonitor(ctx, cancel, config)
+	}()
+	go func() {
+		monitors.Wait()
+		close(s.healthDone)
+	}()
+}
+
+func (s *Postgres) runPostgresReadinessMonitor(ctx context.Context, config postgresMonitorConfig) {
+	defer func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), config.healthTimeout)
+		defer closeCancel()
+		if err := config.healthClose(closeCtx); err != nil {
+			slog.Warn("devshard storage: close postgres health connection", "error", err)
 		}
 	}()
+	timer := time.NewTimer(config.interval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+
+		probeCtx, probeCancel := context.WithTimeout(ctx, config.healthTimeout)
+		err := config.healthCheck(probeCtx)
+		probeCancel()
+		if ctx.Err() != nil {
+			return
+		}
+		result := postgresHealthProbeSuccess
+		if err != nil {
+			result = postgresHealthProbeDatabaseError
+		}
+		saturated := config.poolSaturated()
+		observability.ObservePostgresHealthProbe(err == nil, saturated)
+		previous, current := s.recordHealthProbe(result, saturated)
+		if previous.ready != current.ready {
+			if current.ready {
+				slog.Info("devshard storage: postgres readiness recovered")
+			} else {
+				slog.Warn("devshard storage: postgres readiness lost", "error", err)
+			}
+		}
+		if previous.saturated != current.saturated {
+			if current.saturated {
+				stat := s.pool.Stat()
+				slog.Warn("devshard storage: postgres application pool is saturated",
+					"acquired_connections", stat.AcquiredConns(),
+					"max_connections", stat.MaxConns())
+			} else {
+				slog.Info("devshard storage: postgres application pool saturation cleared")
+			}
+		}
+		timer.Reset(config.interval)
+	}
+}
+
+func (s *Postgres) runPostgresFenceMonitor(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	config postgresMonitorConfig,
+) {
+	timer := time.NewTimer(config.interval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+
+		fenceCtx, fenceCancel := context.WithTimeout(ctx, config.fenceTimeout)
+		err := config.fenceCheck(fenceCtx)
+		fenceCancel()
+		if err == nil {
+			timer.Reset(config.interval)
+			continue
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		s.mu.Lock()
+		s.healthReady = false
+		s.mu.Unlock()
+		fatalErr := fmt.Errorf("postgres fence session lost: %w", err)
+		slog.Error("devshard storage: postgres fence session lost; terminating process", "error", err)
+		s.fatalErrors <- fatalErr
+		cancel()
+		return
+	}
+}
+
+// FatalErrors reports storage failures that require replacing this process.
+// A lost session fence cannot be re-armed safely while old pool connections
+// may still exist, so versiond must start a fresh child generation.
+func (s *Postgres) FatalErrors() <-chan error {
+	return s.fatalErrors
 }
 
 func postgresPoolIsSaturated(pool *pgxpool.Pool) bool {
@@ -603,6 +730,9 @@ func (s *Postgres) Close() error {
 	if healthDone != nil {
 		<-healthDone
 	}
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), postgresOpTimeout)
+	defer cleanupCancel()
+	s.connectionGuard.close(cleanupCtx)
 	s.pool.Close()
 	return nil
 }

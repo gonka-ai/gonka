@@ -70,6 +70,16 @@ detect_postgres_major() {
     esac
 }
 
+validate_runtime_family() {
+    libc_version=$(ldd --version 2>&1 || :)
+    case "$libc_version" in
+        musl\ libc*) ;;
+        *)
+            die "the selected PostgreSQL image is not compatible with the existing devshard PGDATA; use the release image or migrate the cluster before changing image variants"
+            ;;
+    esac
+}
+
 ensure_migration_space() {
     source_kib=$(du -sk "$legacy_data" | awk '{ print $1 }') ||
         die "cannot measure PostgreSQL source cluster"
@@ -108,6 +118,7 @@ esac
 [ "$legacy_data" != "$target_data" ] || die "legacy and persistent PGDATA are identical"
 [ -x "$official_entrypoint" ] || die "official PostgreSQL entrypoint is not executable"
 detect_postgres_major
+validate_runtime_family
 mkdir -p "$persistent_root"
 
 if cluster_exists "$target_data"; then
