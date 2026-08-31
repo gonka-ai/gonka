@@ -54,6 +54,46 @@ func TestSSEChunkLogprobsDecodedOnRecordedAnswers(t *testing.T) {
 	}
 }
 
+// The validator rejects on the first token of either kind it cannot replay, so a numeric first token
+// hides nothing: later tokens and every alternative are judged too.
+func TestSSEChunkLogprobsDecodedJudgesEveryTokenAndAlternative(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		name        string
+		chunk       string
+		wantDecoded bool
+	}{
+		{
+			name:  "every token and alternative names an id",
+			chunk: `data: {"choices":[{"logprobs":{"content":[{"token":"758","top_logprobs":[{"token":"12"}]},{"token":"91","top_logprobs":[{"token":"7"}]}]}}]}` + "\n",
+		},
+		{
+			name:        "a later token names its text",
+			chunk:       `data: {"choices":[{"logprobs":{"content":[{"token":"758"},{"token":"The"}]}}]}` + "\n",
+			wantDecoded: true,
+		},
+		{
+			name:        "an alternative of the first token names its text",
+			chunk:       `data: {"choices":[{"logprobs":{"content":[{"token":"758","top_logprobs":[{"token":"12"},{"token":"The"}]}]}}]}` + "\n",
+			wantDecoded: true,
+		},
+	}
+
+	for _, testCase := range cases {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			decoded, found := sseChunkLogprobsDecoded([]byte(testCase.chunk))
+
+			if !found {
+				t.Fatalf("sseChunkLogprobsDecoded() found no token to judge in %s", testCase.chunk)
+			}
+			if decoded != testCase.wantDecoded {
+				t.Errorf("sseChunkLogprobsDecoded() decoded = %v, want %v", decoded, testCase.wantDecoded)
+			}
+		})
+	}
+}
+
 // Nothing to judge must stay nothing to judge: a chunk the detector cannot read leaves the attempt
 // unjudged rather than accusing the host on the strength of a parse failure.
 func TestSSEChunkLogprobsDecodedJudgesNothingWithoutATokenToRead(t *testing.T) {
