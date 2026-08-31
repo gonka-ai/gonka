@@ -18,12 +18,25 @@ import (
 // outbound inference request that carries a non-nil height-sync section (after the
 // optional config HeightSyncRequestMutateHook). Used by testenv devshardctl debug only.
 func (c *HTTPClient) SetOneShotHeightSyncRequestMutateHook(fn func(*heightsync.HeightSyncSection, uint64)) {
-	if c == nil {
+	if c == nil || c.oneShot == nil {
 		return
 	}
-	c.oneShotMu.Lock()
-	defer c.oneShotMu.Unlock()
-	c.oneShotHeightSyncMutate = fn
+	c.oneShot.mu.Lock()
+	defer c.oneShot.mu.Unlock()
+	c.oneShot.heightSyncMutate = fn
+}
+
+// takeOneShotHeightSyncMutate returns the pending hook and clears it, so the
+// hook runs once even across clones that share this state.
+func (c *HTTPClient) takeOneShotHeightSyncMutate() func(*heightsync.HeightSyncSection, uint64) {
+	if c == nil || c.oneShot == nil {
+		return nil
+	}
+	c.oneShot.mu.Lock()
+	defer c.oneShot.mu.Unlock()
+	fn := c.oneShot.heightSyncMutate
+	c.oneShot.heightSyncMutate = nil
+	return fn
 }
 
 func (c *HTTPClient) updateObservedPeerTip(hs *heightsync.HeightSyncSection) {
@@ -341,12 +354,7 @@ func (c *HTTPClient) wrapInferenceRequest(ctx context.Context, req host.HostRequ
 		if hook := c.config.HeightSyncRequestMutateHook; hook != nil {
 			hook(sec, req.Nonce)
 		}
-		c.oneShotMu.Lock()
-		fn := c.oneShotHeightSyncMutate
-		if fn != nil {
-			c.oneShotHeightSyncMutate = nil
-		}
-		c.oneShotMu.Unlock()
+		fn := c.takeOneShotHeightSyncMutate()
 		if fn != nil {
 			fn(sec, req.Nonce)
 		}

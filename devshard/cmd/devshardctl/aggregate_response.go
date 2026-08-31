@@ -72,8 +72,8 @@ func (s aggregateSlotSem) restore(max, cur int64) {
 }
 
 func (s aggregateSlotSem) tryAcquire() bool { return s.Slots.TryAcquire() }
-func (s aggregateSlotSem) release()          { s.Slots.Release() }
-func (s aggregateSlotSem) setMax(n int64)    { s.Slots.SetMax(n) }
+func (s aggregateSlotSem) release()         { s.Slots.Release() }
+func (s aggregateSlotSem) setMax(n int64)   { s.Slots.SetMax(n) }
 
 var (
 	aggregateConfigMu            sync.RWMutex
@@ -196,12 +196,12 @@ func setAggregateSpoolDir(dir string) {
 	}
 	// OpenAt: do not MkdirAll — tests point at missing paths to force degrade.
 	d, err := spool.OpenAt(spool.Config{
-		Path:         dir,
-		Prefix:       "agg-",
-		MaxFiles:     int64(aggregateMaxConcurrentSpools),
-		MaxFileBytes: aggregateMaxResponseBytes,
-		WriteBuffer:  aggregateSpoolWriteBufferBytes,
-		Files:        aggregateSpoolSem.Slots,
+		Path:           dir,
+		Prefix:         "agg-",
+		MaxFiles:       int64(aggregateMaxConcurrentSpools),
+		MaxFileBytes:   aggregateMaxResponseBytes,
+		WriteBuffer:    aggregateSpoolWriteBufferBytes,
+		Files:          aggregateSpoolSem.Slots,
 		AllowUnlimited: aggregateMaxConcurrentSpools < 1,
 	})
 	if err != nil {
@@ -282,16 +282,16 @@ func aggregateDegradedSlotCapacity() int {
 }
 
 // aggregateResponseBuffer accumulates the winner SSE body for handleAggregated.
-// It wraps spool.Buffer and keeps the field names tests assert on.
+// It wraps spool.Buffer, whose accessors are all mutex-guarded. A late winner
+// write can race handleNonStreaming's deferred Close, so this type keeps no
+// mirrored copy of the inner state: every read goes through inner.
 type aggregateResponseBuffer struct {
 	inner *spool.Buffer
 
 	maxMemory int64
-	maxBytes  int64
-	// spillDisabled / holdsDegradedSlot mirror the inner buffer for tests.
-	spillDisabled     bool
-	holdsDegradedSlot bool
-	degradeLogged     bool
+	// degradeOnce keeps the spill-degrade log and its counters to a single
+	// emission per buffer even when concurrent writers all observe the degrade.
+	degradeOnce sync.Once
 }
 
 func newAggregateResponseBuffer() *aggregateResponseBuffer {
@@ -331,17 +331,47 @@ func newAggregateResponseBuffer() *aggregateResponseBuffer {
 	return &aggregateResponseBuffer{
 		inner:     inner,
 		maxMemory: memLimit,
-		maxBytes:  maxBytes,
 	}
 }
 
-func (b *aggregateResponseBuffer) syncFromInner() {
+// maxBytes is the buffer's current ceiling: the disk limit once spilling is
+// possible, the memory limit otherwise.
+func (b *aggregateResponseBuffer) maxBytes() int64 {
 	if b == nil || b.inner == nil {
-		return
+		return 0
 	}
-	b.maxBytes = b.inner.DiskLimit()
-	b.spillDisabled = b.inner.SpillDisabled()
-	b.holdsDegradedSlot = b.inner.HoldsDegradedSlot()
+	return b.inner.DiskLimit()
+}
+
+func (b *aggregateResponseBuffer) spillDisabled() bool {
+	if b == nil || b.inner == nil {
+		return false
+	}
+	return b.inner.SpillDisabled()
+}
+
+func (b *aggregateResponseBuffer) holdsDegradedSlot() bool {
+	if b == nil || b.inner == nil {
+		return false
+	}
+	return b.inner.HoldsDegradedSlot()
+}
+
+func (b *aggregateResponseBuffer) logSpillDegrade() {
+	b.degradeOnce.Do(func() {
+		spillErr := b.inner.LastSpillErr()
+		aggregateSpillDegradeTotal.Add(1)
+		if errors.Is(spillErr, spool.ErrNoCapacity) {
+			aggregateSpoolCapDegradeTotal.Add(1)
+			log.Printf("aggregate_response: spool concurrency cap reached (max_concurrent_spools=%d)", currentAggregateMaxConcurrentSpools())
+		}
+		if b.holdsDegradedSlot() {
+			log.Printf("aggregate_response: spill failed (%v); degraded to RAM up to max_bytes=%d", spillErr, b.maxBytes())
+		} else {
+			aggregateDegradedRefusedTotal.Add(1)
+			log.Printf("aggregate_response: spill failed (%v); degraded-RAM budget exhausted, keeping max_bytes=%d", spillErr, b.maxBytes())
+		}
+	})
 }
 
 func (b *aggregateResponseBuffer) Write(p []byte) (int, error) {
@@ -349,28 +379,15 @@ func (b *aggregateResponseBuffer) Write(p []byte) (int, error) {
 		return 0, errors.New("aggregate response buffer is nil")
 	}
 	n, err := b.inner.Write(p)
-	b.syncFromInner()
-	if b.spillDisabled && !b.degradeLogged {
-		b.degradeLogged = true
-		spillErr := b.inner.LastSpillErr()
-		aggregateSpillDegradeTotal.Add(1)
-		if errors.Is(spillErr, spool.ErrNoCapacity) {
-			aggregateSpoolCapDegradeTotal.Add(1)
-			log.Printf("aggregate_response: spool concurrency cap reached (max_concurrent_spools=%d)", currentAggregateMaxConcurrentSpools())
-		}
-		if b.holdsDegradedSlot {
-			log.Printf("aggregate_response: spill failed (%v); degraded to RAM up to max_bytes=%d", spillErr, b.maxBytes)
-		} else {
-			aggregateDegradedRefusedTotal.Add(1)
-			log.Printf("aggregate_response: spill failed (%v); degraded-RAM budget exhausted, keeping max_bytes=%d", spillErr, b.maxBytes)
-		}
+	if b.spillDisabled() {
+		b.logSpillDegrade()
 	}
 	if err == nil {
 		return n, nil
 	}
 	if errors.Is(err, spool.ErrFileTooLarge) || errors.Is(err, ErrAggregateResponseTooLarge) {
-		wrapped := fmt.Errorf("%w: %d byte limit", ErrAggregateResponseTooLarge, b.maxBytes)
-		log.Printf("aggregate_response: write aborted n=%d max_bytes=%d err=%v", b.Len(), b.maxBytes, wrapped)
+		wrapped := fmt.Errorf("%w: %d byte limit", ErrAggregateResponseTooLarge, b.maxBytes())
+		log.Printf("aggregate_response: write aborted n=%d max_bytes=%d err=%v", b.Len(), b.maxBytes(), wrapped)
 		return n, wrapped
 	}
 	if errors.Is(err, spool.ErrClosed) {
@@ -378,7 +395,7 @@ func (b *aggregateResponseBuffer) Write(p []byte) (int, error) {
 	}
 	// Latched writeErr from a prior oversize: surface the domain sentinel.
 	if we := b.inner.WriteErr(); we != nil && (errors.Is(we, spool.ErrFileTooLarge) || errors.Is(we, ErrAggregateResponseTooLarge)) {
-		return n, fmt.Errorf("%w: %d byte limit", ErrAggregateResponseTooLarge, b.maxBytes)
+		return n, fmt.Errorf("%w: %d byte limit", ErrAggregateResponseTooLarge, b.maxBytes())
 	}
 	return n, err
 }
@@ -389,16 +406,16 @@ func (b *aggregateResponseBuffer) Bytes() ([]byte, error) {
 	}
 	got, err := b.inner.Bytes()
 	if errors.Is(err, spool.ErrFileTooLarge) {
-		return nil, fmt.Errorf("%w: %d byte limit", ErrAggregateResponseTooLarge, b.maxBytes)
+		return nil, fmt.Errorf("%w: %d byte limit", ErrAggregateResponseTooLarge, b.maxBytes())
 	}
 	if err != nil {
 		if we := b.inner.WriteErr(); we != nil && (errors.Is(we, spool.ErrFileTooLarge) || strings.Contains(we.Error(), "byte limit")) {
-			return nil, fmt.Errorf("%w: %d byte limit", ErrAggregateResponseTooLarge, b.maxBytes)
+			return nil, fmt.Errorf("%w: %d byte limit", ErrAggregateResponseTooLarge, b.maxBytes())
 		}
 		// Map latched oversize from a prior Write.
 		if we := b.inner.WriteErr(); we != nil {
 			if errors.Is(we, ErrAggregateResponseTooLarge) || errors.Is(we, spool.ErrFileTooLarge) {
-				return nil, fmt.Errorf("%w: %d byte limit", ErrAggregateResponseTooLarge, b.maxBytes)
+				return nil, fmt.Errorf("%w: %d byte limit", ErrAggregateResponseTooLarge, b.maxBytes())
 			}
 			return nil, we
 		}
@@ -414,7 +431,7 @@ func (b *aggregateResponseBuffer) OpenReader() (io.Reader, error) {
 	if err != nil {
 		if we := b.inner.WriteErr(); we != nil {
 			if errors.Is(we, spool.ErrFileTooLarge) || errors.Is(we, ErrAggregateResponseTooLarge) {
-				return nil, fmt.Errorf("%w: %d byte limit", ErrAggregateResponseTooLarge, b.maxBytes)
+				return nil, fmt.Errorf("%w: %d byte limit", ErrAggregateResponseTooLarge, b.maxBytes())
 			}
 			return nil, we
 		}
@@ -443,7 +460,5 @@ func (b *aggregateResponseBuffer) Close() error {
 	if b == nil || b.inner == nil {
 		return nil
 	}
-	err := b.inner.Close()
-	b.syncFromInner()
-	return err
+	return b.inner.Close()
 }

@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -283,8 +284,21 @@ type HTTPClient struct {
 	heightSyncPeerTips  *HeightSyncPeerTips
 	heightSyncVerifier  signing.Verifier
 
-	oneShotMu               sync.Mutex
-	oneShotHeightSyncMutate func(*heightsync.HeightSyncSection, uint64)
+	// oneShot is shared by every clone of this client so the hook fires exactly
+	// once across all of them, and so no clone copies the mutex guarding it.
+	oneShot *oneShotHooks
+
+	// admissionOff disables admission control without mutating config, which is
+	// read unsynchronized on every request. Disabling is monotonic and per
+	// client, so a flag is enough and clones start from the parent's value.
+	admissionOff atomic.Bool
+}
+
+// oneShotHooks holds hook state that must not be duplicated when a client is
+// cloned: a hook consumed through one clone is consumed for all of them.
+type oneShotHooks struct {
+	mu               sync.Mutex
+	heightSyncMutate func(*heightsync.HeightSyncSection, uint64)
 }
 
 // CatalogHealthzURL is GET /{version}/healthz at this client's host base
@@ -328,6 +342,7 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 		heightSync:          cfg.HeightSync,
 		heightSyncLogOracle: cfg.HeightSyncLogOracle,
 		heightSyncVerifier:  signing.NewSecp256k1Verifier(),
+		oneShot:             &oneShotHooks{},
 	}
 	if cfg.HeightSync != nil {
 		hc.heightSyncAudit = heightsync.NewAuditRing(0)
@@ -340,19 +355,56 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 	return hc
 }
 
+// cloneSharing returns a copy that shares this client's HTTP transport,
+// height-sync collaborators, and one-shot hook state. Fields are copied
+// explicitly rather than with *c because HTTPClient carries a mutex (via
+// oneShot) and an atomic that must not be copied by value.
+func (c *HTTPClient) cloneSharing() *HTTPClient {
+	cp := &HTTPClient{
+		baseURL:             c.baseURL,
+		routePrefix:         c.routePrefix,
+		escrowID:            c.escrowID,
+		signer:              c.signer,
+		http:                c.http,
+		config:              c.config,
+		heightSync:          c.heightSync,
+		heightSyncAudit:     c.heightSyncAudit,
+		heightSyncLogOracle: c.heightSyncLogOracle,
+		heightSyncPeerTips:  c.heightSyncPeerTips,
+		heightSyncVerifier:  c.heightSyncVerifier,
+		oneShot:             c.oneShot,
+	}
+	cp.admissionOff.Store(c.admissionOff.Load())
+	return cp
+}
+
 // WithoutAdmission returns a shallow copy of the client with admission control
 // disabled. Used by finalize/signature collection paths that must reach
 // quarantined hosts to complete settlement. Returns any so callers across
 // package boundaries can duck-type without importing the HostClient interface.
 func (c *HTTPClient) WithoutAdmission() any {
-	cp := *c
-	cp.config.Admission = nil
-	return &cp
+	if c == nil {
+		return (*HTTPClient)(nil)
+	}
+	cp := c.cloneSharing()
+	cp.admissionOff.Store(true)
+	return cp
 }
 
 // ClearAdmission disables admission control on this client in-place.
 func (c *HTTPClient) ClearAdmission() {
-	c.config.Admission = nil
+	if c == nil {
+		return
+	}
+	c.admissionOff.Store(true)
+}
+
+// admissionController is the active controller, or nil when admission is off.
+func (c *HTTPClient) admissionController() RequestAdmissionController {
+	if c == nil || c.admissionOff.Load() {
+		return nil
+	}
+	return c.config.Admission
 }
 
 func (c *HTTPClient) signatureHeader() string {
@@ -1163,32 +1215,36 @@ func (c *HTTPClient) getAttempt(ctx context.Context, url string, observe bool) (
 }
 
 func (c *HTTPClient) allowRequest(path string) error {
-	if c == nil || c.config.Admission == nil || strings.TrimSpace(c.config.ParticipantKey) == "" {
+	admission := c.admissionController()
+	if admission == nil || strings.TrimSpace(c.config.ParticipantKey) == "" {
 		return nil
 	}
-	return c.config.Admission.AllowRequest(c.config.ParticipantKey, path)
+	return admission.AllowRequest(c.config.ParticipantKey, path)
 }
 
 func (c *HTTPClient) observeResult(path string, statusCode int) {
-	if c == nil || c.config.Admission == nil || strings.TrimSpace(c.config.ParticipantKey) == "" {
+	admission := c.admissionController()
+	if admission == nil || strings.TrimSpace(c.config.ParticipantKey) == "" {
 		return
 	}
-	c.config.Admission.ObserveResult(c.config.ParticipantKey, path, statusCode)
+	admission.ObserveResult(c.config.ParticipantKey, path, statusCode)
 }
 
 func (c *HTTPClient) observeResultWithBody(path string, statusCode int, body, devshardError, routerError string) {
-	if c == nil || c.config.Admission == nil || strings.TrimSpace(c.config.ParticipantKey) == "" {
+	admission := c.admissionController()
+	if admission == nil || strings.TrimSpace(c.config.ParticipantKey) == "" {
 		return
 	}
-	if observer, ok := c.config.Admission.(requestAdmissionBodyObserver); ok {
+	if observer, ok := admission.(requestAdmissionBodyObserver); ok {
 		observer.ObserveResultWithBody(c.config.ParticipantKey, path, statusCode, body, devshardError, routerError)
 		return
 	}
-	c.config.Admission.ObserveResult(c.config.ParticipantKey, path, statusCode)
+	admission.ObserveResult(c.config.ParticipantKey, path, statusCode)
 }
 
 func (c *HTTPClient) observeTransportFailure(path string, err error) {
-	if c == nil || c.config.Admission == nil || strings.TrimSpace(c.config.ParticipantKey) == "" {
+	admission := c.admissionController()
+	if admission == nil || strings.TrimSpace(c.config.ParticipantKey) == "" {
 		return
 	}
 	// A cancelled request context is our own signal (client disconnect, race
@@ -1197,5 +1253,5 @@ func (c *HTTPClient) observeTransportFailure(path string, err error) {
 	if errors.Is(err, context.Canceled) {
 		return
 	}
-	c.config.Admission.ObserveTransportFailure(c.config.ParticipantKey, path, err)
+	admission.ObserveTransportFailure(c.config.ParticipantKey, path, err)
 }

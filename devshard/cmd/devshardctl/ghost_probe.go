@@ -95,8 +95,8 @@ func (e *Redundancy) answerWaitingBurn(prepared *user.PreparedInference, reason 
 		if !served {
 			// Each timeout waits out its own deadline and then talks to verifiers, so answering the
 			// queue inline would serialize the whole backlog ahead of the escrow's drain barrier.
-			e.goTrackedRaceCleanup(func() {
-				e.raiseGhostTimeout(ctx, nonce, burnedAt, payload, hostLabel, ghostThrottled)
+			e.goTrackedRaceCleanup(ctx, func(cleanupCtx context.Context) {
+				e.raiseGhostTimeout(cleanupCtx, nonce, burnedAt, payload, hostLabel, ghostThrottled)
 			})
 			return
 		}
@@ -134,10 +134,10 @@ func (e *Redundancy) sendThrottleProbe(prepared *user.PreparedInference, partici
 		})
 	}
 
-	e.goTrackedRaceCleanup(func() {
+	e.goTrackedRaceCleanup(context.Background(), func(cleanupCtx context.Context) {
 		served := false
 		defer func() { e.throttleProbes.release(participantKey, time.Now(), served) }()
-		ctx, _ := ensureRequestLogContext(context.Background())
+		ctx, _ := ensureRequestLogContext(cleanupCtx)
 		logInferenceStage(ctx, e.devshardID, nonce, "ghost_probe_sent", "host", hostLabel, "reason", reason)
 
 		sendCtx, cancelSend := context.WithTimeout(ctx, throttleProbeTimeout)

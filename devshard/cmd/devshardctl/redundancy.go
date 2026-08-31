@@ -615,6 +615,14 @@ type Redundancy struct {
 	onRaceCleanupStart func()
 	onRaceCleanupDone  func()
 
+	// Detached race cleanups outlive the request that spawned them, so they get
+	// their own cancellation root and are joined by Stop. Built lazily because
+	// Redundancy is also constructed as a struct literal.
+	raceCleanupWG     sync.WaitGroup
+	raceCleanupOnce   sync.Once
+	raceCleanupCtx    context.Context
+	raceCleanupCancel context.CancelFunc
+
 	suspiciousParticipant func(participantKey string) bool
 }
 
@@ -663,14 +671,18 @@ func NewRedundancyWithThrottle(session *user.Session, perf *PerfTracker, groupSi
 	return e
 }
 
-// Stop terminates the dispatcher goroutine. Production callers do not
-// invoke this (process lifetime). Tests should defer it for clean
-// teardown.
+// Stop terminates the dispatcher goroutine and joins any detached race
+// cleanups still settling. Production callers do not invoke this (process
+// lifetime). Tests should defer it for clean teardown: without the join, a
+// cleanup can still be calling into the session after the test returns.
 func (e *Redundancy) Stop() {
-	if e == nil || e.picker == nil {
+	if e == nil {
 		return
 	}
-	e.picker.stop()
+	if e.picker != nil {
+		e.picker.stop()
+	}
+	e.waitRaceCleanups()
 }
 
 func (e *Redundancy) Decide(primaryHostIdx int, inputTokens uint64) Decision {
@@ -2516,8 +2528,8 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 						"max_wait_ms", SecondaryWaitAfterWinner.Milliseconds(),
 						"decision", decision.Reason,
 					)
-					e.goTrackedRaceCleanup(func() {
-						e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, winner, raceFinishOptions{recordFailureSamples: true, clientGone: clientFlag})
+					e.goTrackedRaceCleanup(settleCtx, func(ctx context.Context) {
+						e.finishRaceWhenPendingDone(ctx, attempts, params, decision, winner, raceFinishOptions{recordFailureSamples: true, clientGone: clientFlag})
 					})
 					return nil
 				}
@@ -2604,8 +2616,8 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 					}
 					e.markPhaseTransitionAbort(inf)
 					e.recordWinnerTerminalFailureOnce(inf, params, w)
-					e.goTrackedRaceCleanup(func() {
-						e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, w, raceFinishOptions{
+					e.goTrackedRaceCleanup(settleCtx, func(ctx context.Context) {
+						e.finishRaceWhenPendingDone(ctx, attempts, params, decision, w, raceFinishOptions{
 							forceTreatAsFailure:  true,
 							recordFailureSamples: true,
 							clientGone:           clientFlag,
@@ -2735,8 +2747,8 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			}
 			pending := pendingInflights(attempts)
 			logRequestStage(settleCtx, "request_stream_canceled", "escrow", e.devshardID, "winner_nonce", winner, "pending", len(pending), "decision", decision.Reason, "error", streamCtx.Err())
-			e.goTrackedRaceCleanup(func() {
-				e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, winner, raceFinishOptions{clientGone: clientFlag})
+			e.goTrackedRaceCleanup(settleCtx, func(ctx context.Context) {
+				e.finishRaceWhenPendingDone(ctx, attempts, params, decision, winner, raceFinishOptions{clientGone: clientFlag})
 			})
 			return streamCtx.Err()
 		}
@@ -2830,8 +2842,8 @@ func (e *Redundancy) failClosedNoWinner(ctx context.Context, attempts []*infligh
 			inf.cancel()
 		}
 	}
-	e.goTrackedRaceCleanup(func() {
-		e.finishRaceWhenPendingDone(ctx, attempts, params, decision, 0, raceFinishOptions{
+	e.goTrackedRaceCleanup(ctx, func(cleanupCtx context.Context) {
+		e.finishRaceWhenPendingDone(cleanupCtx, attempts, params, decision, 0, raceFinishOptions{
 			forceTreatAsFailure:  true,
 			recordFailureSamples: true,
 			clientGone:           clientFlag,
@@ -2956,17 +2968,82 @@ type raceFinishOptions struct {
 	clientGone           *cancelFlag
 }
 
+// raceCleanupRoot is the cancellation root shared by every detached race
+// cleanup. Cancelled by Stop so settlement work cannot outlive the escrow.
+func (e *Redundancy) raceCleanupRoot() context.Context {
+	e.raceCleanupOnce.Do(func() {
+		e.raceCleanupCtx, e.raceCleanupCancel = context.WithCancel(context.Background())
+	})
+	return e.raceCleanupCtx
+}
+
 // goTrackedRaceCleanup runs a background race cleanup detached while keeping the drain barrier aware of it; onRaceCleanupStart fires synchronously so the winning handler can never see the runtime as quiet mid-cleanup.
-func (e *Redundancy) goTrackedRaceCleanup(fn func()) {
+//
+// The cleanup inherits parent's values (request id) but not its cancellation,
+// because the client going away must not abandon settlement. It is instead tied
+// to the escrow's own lifetime: Stop cancels the root and joins the goroutine,
+// so this work can no longer run against state the caller has already torn down.
+func (e *Redundancy) goTrackedRaceCleanup(parent context.Context, fn func(context.Context)) {
 	if e.onRaceCleanupStart != nil {
 		e.onRaceCleanupStart()
 	}
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithCancel(context.WithoutCancel(parent))
+	stopPropagate := context.AfterFunc(e.raceCleanupRoot(), cancel)
+	e.raceCleanupWG.Add(1)
 	go func() {
+		defer e.raceCleanupWG.Done()
+		defer cancel()
+		defer stopPropagate()
 		if e.onRaceCleanupDone != nil {
 			defer e.onRaceCleanupDone()
 		}
-		fn()
+		fn(ctx)
 	}()
+}
+
+// raceCleanupGrace is how long Stop lets detached cleanups finish on their own
+// before cancelling them. They are already bounded by SecondaryWaitAfterWinner,
+// so reaching the cancel means something is wedged.
+const raceCleanupGrace = 5 * time.Second
+
+// raceCleanupCancelGrace bounds the wait after cancelling. A cleanup blocked on
+// a host call that ignores its context cannot be joined, and teardown must not
+// hang on it, so the wait gives up and leaves the goroutine to unwind.
+const raceCleanupCancelGrace = 2 * time.Second
+
+// waitRaceCleanups joins the detached cleanups, cancelling them if they overrun
+// the grace period. Always returns within raceCleanupGrace+raceCleanupCancelGrace.
+func (e *Redundancy) waitRaceCleanups() {
+	done := make(chan struct{})
+	go func() {
+		e.raceCleanupWG.Wait()
+		close(done)
+	}()
+	timer := time.NewTimer(raceCleanupGrace)
+	defer stopTimer(timer)
+	select {
+	case <-done:
+		return
+	case <-timer.C:
+	}
+	if cancel := e.raceCleanupCancelFunc(); cancel != nil {
+		cancel()
+	}
+	cancelTimer := time.NewTimer(raceCleanupCancelGrace)
+	defer stopTimer(cancelTimer)
+	select {
+	case <-done:
+	case <-cancelTimer.C:
+		log.Printf("race_cleanup_join_timeout escrow=%s: cleanup still running after cancel", e.devshardID)
+	}
+}
+
+func (e *Redundancy) raceCleanupCancelFunc() context.CancelFunc {
+	e.raceCleanupRoot()
+	return e.raceCleanupCancel
 }
 
 func (e *Redundancy) isSuspiciousParticipant(participantKey string) bool {
@@ -4177,9 +4254,8 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 	})
 	if len(failed) > 0 {
 		if anySucceeded {
-			e.goTrackedRaceCleanup(func() {
-				bgCtx, _ := ensureRequestLogContext(context.Background())
-				bgCtx = logging.PropagateRequestID(bgCtx, ctx)
+			e.goTrackedRaceCleanup(ctx, func(cleanupCtx context.Context) {
+				bgCtx, _ := ensureRequestLogContext(cleanupCtx)
 				for _, inf := range failed {
 					func(inf *inflight) {
 						defer inf.releaseErrorStreamRetention()
@@ -4497,8 +4573,8 @@ func (e *Redundancy) raiseGhostAccountability(prepared *user.PreparedInference, 
 	burnedAt := time.Now()
 	hostLabel := e.session.HostLabel(prepared.HostIdx())
 	payload := prepared.Payload()
-	e.goTrackedRaceCleanup(func() {
-		ctx, _ := ensureRequestLogContext(context.Background())
+	e.goTrackedRaceCleanup(context.Background(), func(cleanupCtx context.Context) {
+		ctx, _ := ensureRequestLogContext(cleanupCtx)
 		e.raiseGhostTimeout(ctx, nonce, burnedAt, payload, hostLabel, kind)
 	})
 }
