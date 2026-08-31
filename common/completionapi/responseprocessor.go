@@ -22,13 +22,15 @@ type ExecutorResponseProcessor struct {
 	jsonResponseBytes []byte
 	forwardedJSON     []byte
 	streamedResponse  []string
+	forwardLogprobs   bool
 }
 
-func NewExecutorResponseProcessor(inferenceId string) *ExecutorResponseProcessor {
+func NewExecutorResponseProcessor(inferenceId string, forwardLogprobs bool) *ExecutorResponseProcessor {
 	return &ExecutorResponseProcessor{
 		inferenceId:       inferenceId,
 		jsonResponseBytes: nil,
 		streamedResponse:  nil,
+		forwardLogprobs:   forwardLogprobs,
 	}
 }
 
@@ -63,8 +65,8 @@ func (rt *ExecutorResponseProcessor) ProcessStreamedResponse(line string) (strin
 	return DataPrefix + string(forwarded), nil
 }
 
-// prepareBody parses one chunk once and answers both readers of it. Only the stored copy loses the
-// logprob fields, because a client that asked for logprobs cannot recover what never reached the gateway.
+// prepareBody parses one chunk once and answers both readers: only the forwarded copy can lose logprobs,
+// because the validator replays the stored one.
 func (rt *ExecutorResponseProcessor) prepareBody(body []byte) (stored, forwarded []byte, err error) {
 	document, err := decodeJSONDocument(body)
 	if err != nil {
@@ -76,18 +78,28 @@ func (rt *ExecutorResponseProcessor) prepareBody(body []byte) (stored, forwarded
 	}
 	object["id"] = rt.inferenceId
 	dropFields(document, fieldsNoValidatorReads)
-	if forwarded, err = json.Marshal(document); err != nil {
-		return nil, nil, err
+
+	// Only a caller that asked is owed the host's own positions, so only it pays for a copy.
+	if rt.forwardLogprobs {
+		if forwarded, err = json.Marshal(document); err != nil {
+			return nil, nil, err
+		}
 	}
-	// A chunk that will not slim is stored whole rather than failing the inference. It is worth a
-	// line either way: refusing means the host's own logprobs disagree with each other.
+
+	// A chunk that will not slim is stored as it arrived rather than failing the inference.
 	if err := compressLogprobsIn(document); err != nil {
 		logging.Warn("Storing the response whole: it did not compress", types.Inferences,
 			"inference_id", rt.inferenceId, "error", err)
-		return forwarded, forwarded, nil
 	}
 	if stored, err = json.Marshal(document); err != nil {
 		return nil, nil, err
+	}
+
+	if !rt.forwardLogprobs {
+		dropFields(document, fieldsOnlyAskingCallersSee)
+		if forwarded, err = json.Marshal(document); err != nil {
+			return nil, nil, err
+		}
 	}
 	return stored, forwarded, nil
 }

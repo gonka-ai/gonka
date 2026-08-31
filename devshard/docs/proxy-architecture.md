@@ -197,7 +197,7 @@ It is responsible for:
 - normalizing message shape and rejecting malformed conversations
 - enforcing conservative bounds on structured JSON fields (`tools`, `response_format`, `metadata`, `chat_template_kwargs`, etc.)
 - stripping or rejecting unsupported / unsafe vLLM parameters before hosts see them
-- forcing validation-related fields such as `logprobs`, `top_logprobs`, and `return_token_ids`
+- forcing validation-related fields such as `return_token_ids`, and capping `top_logprobs` at the width the host executes with
 - applying Kimi/thinking-specific compatibility rules
 
 The pipeline is intentionally outside `user.Session`. Request filtering is an HTTP/API compatibility concern, not protocol state.

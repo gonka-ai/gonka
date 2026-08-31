@@ -339,10 +339,7 @@ func (ctx *RequestFilterContext) SyncRequestView() error {
 	}
 	req.MaxTokens = ctx.Request.MaxTokens
 	req.MaxCompletionTokens = ctx.Request.MaxCompletionTokens
-	// Preserve the client's ORIGINAL logprobs intent. PostLimits force-sets
-	// logprobs=true / top_logprobs=<forced> in the document for validation, so
-	// re-reading them here would capture the forced values, not what the client
-	// asked. DecodeRequest already captured the original before PostLimits ran.
+	// PostLimits may cap top_logprobs, so re-reading it here would capture the capped width.
 	req.Logprobs = ctx.Request.Logprobs
 	req.TopLogprobs = ctx.Request.TopLogprobs
 	ctx.Request = req
@@ -373,12 +370,7 @@ func readChatRequestFields(doc *ChatRequestDocument, req *chatRequest) error {
 	if err := readUint64Field(doc, "n", &req.N); err != nil {
 		return err
 	}
-	// logprobs/top_logprobs: lenient capture of the client's original intent.
-	// Only an explicit boolean true (and a positive top_logprobs) counts as a
-	// request; any other shape is treated as "not requested" so we never reject a
-	// request the gateway previously accepted -- the PostLimits ForceLiteral
-	// rules overwrite both fields regardless of incoming type. Cf.
-	// clientResponseIntent and conditional response stripping.
+	// logprobs/top_logprobs: only an explicit true and a positive width count as a request.
 	if raw, ok := doc.Get("logprobs"); ok {
 		if b, isBool := raw.(bool); isBool {
 			req.Logprobs = b
@@ -581,9 +573,11 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 			newParameter("return_token_ids").
 				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.ForceLiteralParameter{Value: true}}),
 			newParameter("logprobs").
-				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.ForceLiteralParameter{Value: true}}),
+				withRule(RequestFilterStagePreValidation, mustBeBool),
+			// The cap keeps an absurd width off the wire; the host re-pins the same constant anyway.
 			newParameter("top_logprobs").
-				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.ForceLiteralParameter{Value: completionapi.ForcedTopLogprobs}}),
+				withRule(RequestFilterStagePreValidation, mustBeUint).
+				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.CapUintParameter{Max: completionapi.ForcedTopLogprobs}}),
 			newParameter("response_format").
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.ResponseFormatValidator{

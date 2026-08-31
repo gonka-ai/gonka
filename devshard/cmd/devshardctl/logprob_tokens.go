@@ -22,7 +22,8 @@ func isTokenID(token string) bool {
 // text cannot be replayed, so it votes the answer invalid and the host loses the reward.
 //
 // It decodes into completionapi.Response so the two logprob shapes -- chat `content` and completions
-// `tokens` -- are normalized the same way the validator normalizes them.
+// `tokens` -- are normalized the same way the validator normalizes them. A host forwards logprobs only to a
+// client that asked, so ordinary traffic leaves nothing here to judge.
 func sseChunkLogprobsDecoded(payload []byte) (decoded, found bool) {
 	if len(payload) == 0 || !bytes.Contains(payload, sseLogprobsKeyMarker) {
 		return false, false
