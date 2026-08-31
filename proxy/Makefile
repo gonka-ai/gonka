@@ -142,8 +142,8 @@ test-render: test-sidecar
 	touch "$$tmpdir/ssl-a.conf" "$$tmpdir/ssl-b.conf"; \
 	printf '%s\n' '#!/bin/sh' 'set -eu' \
 		'printf "%s\n" called >> /etc/nginx/ssl/setup.calls' \
-		'sleep 2' ': > /etc/nginx/ssl/cert.pem' \
-		': > /etc/nginx/ssl/private.key' > "$$tmpdir/setup-ssl.sh"; \
+		'sleep 2' \
+		'openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=example.test -keyout /etc/nginx/ssl/private.key -out /etc/nginx/ssl/cert.pem >/dev/null 2>&1' > "$$tmpdir/setup-ssl.sh"; \
 	chmod +x "$$tmpdir/setup-ssl.sh"; \
 	docker create --name "$$ssl_worker_a" \
 		-e NGINX_MODE=https -e CERT_ISSUER_DOMAIN=example.test \
