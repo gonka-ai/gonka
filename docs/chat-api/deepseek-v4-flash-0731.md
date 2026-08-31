@@ -53,9 +53,9 @@ That forwarding is what makes the top-level field sufficient. Unlike Kimi's `thi
 
 The levels are prompt prefixes, not sampling knobs: `REASONING_EFFORT_PROMPTS` maps each to a literal instruction block, injected once at message index 0 rather than per turn ([[vLLM-39]](references.md#vllm)). `low` maps to the empty string, so it adds no instruction at all.
 
-The gateway fills the field on this route (see [Gateway wiring](#gateway-wiring)), so the *absent* row above describes the engine's own fallback rather than anything a host receives from us.
+The gateway sends no level of its own (see [Gateway wiring](#gateway-wiring)), so the *absent* row above is what a host actually receives when the caller omits the field.
 
-**Sending `minimal`, `low` or `medium` asks for less reasoning than sending nothing.** Those three resolve to `low` and inject no instruction, while an omitted field arrives as `max`. A client porting an OpenAI request that habitually carries `reasoning_effort: "medium"` therefore lands two levels below what it would have got by omitting the field. `xhigh` is an alias of `high` — accepted because vLLM accepts it, but it buys nothing over `high` and is billed the same.
+**Sending `minimal`, `low` or `medium` asks for less reasoning than sending nothing.** Those three resolve to `low` and inject no instruction, while an omitted field falls back to `high`. A client porting an OpenAI request that habitually carries `reasoning_effort: "medium"` therefore lands below what it would have got by omitting the field. `xhigh` is an alias of `high` — accepted because vLLM accepts it, but it buys nothing over `high` and is billed the same.
 
 The tokenizer's final `else` branch renders any unrecognized string as `high` rather than erroring, so the enum check upstream is what stops a typo from selecting a level the caller did not ask for.
 
@@ -65,7 +65,7 @@ The tokenizer's final `else` branch renders any unrecognized string as `high` ra
 
 | Param | Universal | On DeepSeek-V4-Flash-0731 | Why |
 |-------|-----------|---------------------------|-----|
-| `reasoning_effort` | enum-validated then **stripped on every route** | **forward** — the only route that consumes it | [[vLLM-33]](references.md#vllm), [[vLLM-1]](references.md#vllm) |
+| `reasoning_effort` | enum-validated and **forwarded on every route** | **forward** — the only route that consumes it | [[vLLM-33]](references.md#vllm), [[vLLM-1]](references.md#vllm) |
 | `thinking` / `enable_thinking` | mirrored to `chat_template_kwargs` on Kimi; stripped on MiniMax | both read from `chat_template_kwargs`; default **on** when neither is present | [[vLLM-33]](references.md#vllm) |
 | `thinking_token_budget` | injected/clamped on Kimi; stripped on Qwen and MiniMax | no equivalent knob in this tokenizer — the effort level is the budget control | [[vLLM-33]](references.md#vllm) |
 
@@ -88,11 +88,13 @@ vLLM's canonical response field is `reasoning`; `reasoning_content` is the depre
 
 ## Gateway wiring
 
-`reasoning_effort` is enum-validated on every route and forwarded only here, via `ModelScopedParameterHandler{Models: []string{deepSeekV4Flash0731ModelID}}` in `defaultVLLMParameterCatalog`. The validator's allowed set is the vLLM wire enum including `max`. Nothing is mirrored into `chat_template_kwargs` — vLLM performs that merge itself, and doing it here would write the key twice.
+`reasoning_effort` is enum-validated and forwarded on every route; only this one's renderer reads it. The validator's allowed set is the vLLM wire enum including `max`. Nothing is mirrored into `chat_template_kwargs` — vLLM performs that merge itself, and doing it here would write the key twice.
 
-**A request that omits the field is sent as `max`.** The engine's own fallback is `high`, the level the reasoning-loop reports name as degrading, so the route defaults to the strongest prefix the encoder defines rather than inheriting that fallback. The default only fills a gap: any explicit level the caller sends survives untouched, including levels weaker than the default. Because the levels are prompt prefixes, the stronger default lengthens generated reasoning, and those tokens are billed through `usage.completion_tokens` like any others — a caller wanting the shorter behavior sends `high` explicitly.
+On the routes that ignore the level, forwarding is not free of effect: vLLM still derives `enable_thinking` from the field (the `build_chat_params` snippet above). Kimi's template reads `thinking`, not `enable_thinking`, and MiniMax honors neither ([[vLLM-25]](references.md#vllm)), so the derived kwarg lands unused on both — but it does reach a route where the gateway otherwise strips that variable.
 
-`reasoning: {"enabled": false}` is recorded as `reasoning_effort: "none"` rather than dropped. Dropping it would leave the request indistinguishable from one that never mentioned reasoning, which this default reads as permission to fill in — so a client disabling reasoning would have received maximum reasoning.
+**A request that omits the field is forwarded without one**, so the engine's own fallback of `high` applies. The route filled it with `max` until 2026-08-30, on the strength of a community report about reasoning loops (below); that default was removed because the level is the caller's to choose and the stronger prefix lengthens generated reasoning, which is billed through `usage.completion_tokens` like any other token. A caller wanting the old behaviour sends `max` explicitly.
+
+`reasoning: {"enabled": false}` is recorded as `reasoning_effort: "none"` rather than dropped: the caller asked for no thinking, and only the explicit level carries that intent to the encoder. Dropping it would leave the request indistinguishable from one that never mentioned reasoning, which now falls back to `high`.
 
 ## See also
 - [Troubleshooting](troubleshooting.md)

@@ -2286,6 +2286,9 @@ type escalationTrigger struct {
 	reason   string
 }
 
+// errWinnerIncomplete is the crowned nonce never closing on chain, told apart from a host's own error.
+var errWinnerIncomplete = errors.New("inference: winner inference incomplete")
+
 // winningInflightTerminalFailure reports whether the race winner's HTTP
 // attempt has finished in a state that must surface as a client error
 // (transport error, process failure, or chain protocol incomplete for the
@@ -2306,14 +2309,13 @@ func (e *Redundancy) winningInflightTerminalFailure(inf *inflight) (failed bool,
 		return true, err
 	}
 	nonceFinished := e.session.IsNonceFinished(inf.nonce)
-	ok := nonceFinished && !isEmptyStreamAttempt(inf)
-	if ok {
+	if nonceFinished && !isEmptyStreamAttempt(inf) {
 		return false, nil
 	}
 	if hostErr := hostApplicationErrorFromInflight(inf); hostErr != nil {
 		return true, hostErr
 	}
-	return true, fmt.Errorf("inference: winner inference incomplete (nonce_finished=%v)", nonceFinished)
+	return true, fmt.Errorf("%w (nonce_finished=%v)", errWinnerIncomplete, nonceFinished)
 }
 
 func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []*inflight, race *raceGroup, params user.InferenceParams, decision Decision, triedParticipants map[string]bool, clientFlag *cancelFlag) error {
@@ -2428,7 +2430,23 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			}
 			w := race.winnerNonce()
 			if w != 0 && inf != nil && inf.nonce == w {
-				if failed, err := e.winningInflightTerminalFailure(inf); failed {
+				failed, err := e.winningInflightTerminalFailure(inf)
+				// An unclosed nonce is a protocol fact for the timeout vote and the host's record, not a
+				// reason to take back an answer the caller already has.
+				if failed && errors.Is(err, errWinnerIncomplete) && deliveredWholeAnswer(inf) {
+					stopTimer(escalationTimer)
+					stopTimer(stallTimer)
+					stopTimer(winnerHardTimeoutTimer)
+					e.recordWinnerTerminalFailureOnce(inf, params, w)
+					// Settled as the failure it is: the caller keeps the answer, the host keeps the strike.
+					e.goTrackedRaceCleanup(func() {
+						e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, w,
+							raceFinishOptions{forceTreatAsFailure: true, recordFailureSamples: true, clientGone: clientFlag})
+					})
+					logRequestStage(settleCtx, "winner_served_without_finish", "escrow", e.devshardID, "winner_nonce", w)
+					return nil
+				}
+				if failed {
 					if escalationTimer != nil {
 						stopTimer(escalationTimer)
 					}
@@ -3187,6 +3205,23 @@ func attemptCountsAsSuccessfulForPerf(inf *inflight, session *user.Session) bool
 	return inf.resp != nil && inf.resp.ConfirmedAt > 0 && !isEmptyStreamAttempt(inf) && session != nil && session.IsNonceFinished(inf.nonce)
 }
 
+// deliveredWholeAnswer reports an attempt whose answer reached the caller intact: it returned, carried
+// content, and neither errored nor stalled. Only the protocol nonce may still be open.
+func deliveredWholeAnswer(inf *inflight) bool {
+	return inf != nil && !inf.probe && inf.err == nil && inf.resp != nil &&
+		!isFailedStreamAttempt(inf) && !inf.hasRecordedStall() && inf.contentChunks.Load() > 0
+}
+
+// attemptCounts reports an attempt the request can be settled on: the protocol nonce closed on a stream
+// that was not empty -- one that never streamed at all, like an in-process client, counts on the finish
+// alone -- or it is the winner whose whole answer already reached the caller.
+func (e *Redundancy) attemptCounts(inf *inflight, winnerNonce uint64) bool {
+	if e.session.IsNonceFinished(inf.nonce) && !isFailedStreamAttempt(inf) {
+		return true
+	}
+	return inf.nonce == winnerNonce && deliveredWholeAnswer(inf)
+}
+
 func isFailedStreamAttempt(inf *inflight) bool {
 	return isEmptyStreamAttempt(inf) || isErrorStreamAttempt(inf)
 }
@@ -3645,12 +3680,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 	for _, inf := range attempts {
 		finishedAt := time.Now()
 		inf.finishActiveStall(finishedAt)
-		nonceFinished := e.session.IsNonceFinished(inf.nonce)
-		// A successful attempt must finalise the protocol nonce AND must
-		// not be an empty stream (streamed bytes with no content). Attempts
-		// that never streamed at all (e.g. in-process clients) still count
-		// as successful purely on the protocol-level finish.
-		ok := nonceFinished && !isFailedStreamAttempt(inf)
+		ok := e.attemptCounts(inf, winnerNonce)
 		if !inf.probe {
 			anySucceeded = anySucceeded || ok
 		}

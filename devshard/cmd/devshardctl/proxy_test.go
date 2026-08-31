@@ -1247,17 +1247,28 @@ func TestRunInference_IncompleteWinnerAfterContentQuarantinesParticipant(t *test
 	participantKey := env.session.HostParticipantKey(0)
 
 	var first bytes.Buffer
-	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &first, nil)
-	requireIncompleteWinnerError(t, err)
+	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &first, nil))
 	require.Contains(t, first.String(), `"content":"x"`)
 	require.False(t, limiter.IsBlocked(participantKey))
 
 	var second bytes.Buffer
-	err = env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &second, nil)
-	requireIncompleteWinnerError(t, err)
+	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &second, nil))
 	require.Contains(t, second.String(), `"content":"x"`)
 	require.False(t, limiter.IsBlocked(participantKey))
-	require.True(t, limiter.IsShadowQuarantined(participantKey))
+	// The strike lands with the settlement, which now finishes after the answer is served.
+	require.Eventually(t, func() bool { return limiter.IsShadowQuarantined(participantKey) },
+		5*time.Second, 20*time.Millisecond, "the answer is served, the host still earns the strike")
+}
+
+// A winner that delivered a whole answer is served even though its nonce never closed; the timeout vote
+// and the host's record still see the open nonce.
+func TestRunInference_ServesADeliveredAnswerWhoseNonceNeverClosed(t *testing.T) {
+	env := setupTestProxyWithClients(t, []user.HostClient{streamContentWithoutFinishClient{}})
+	env.proxy.redundancy.participantLimiter = NewParticipantRequestLimiter(10, 10)
+
+	var served bytes.Buffer
+	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &served, nil))
+	require.Contains(t, served.String(), `"content":"x"`)
 }
 
 func requireIncompleteWinnerError(t *testing.T, err error) {
