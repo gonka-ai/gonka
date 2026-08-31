@@ -88,7 +88,14 @@ if [[ ${1:-} == inspect ]]; then
                 '{"80/tcp":[{"HostIp":"0.0.0.0","HostPort":$http}],
                   "443/tcp":[{"HostIp":"0.0.0.0","HostPort":$https}]}'
             ;;
-        '{{.Image}}') printf 'sha256:old-%s\n' "${4:-unknown}" ;;
+        '{{.Image}}')
+            service=${4#cid-}
+            if [[ -f $FAKE_STATE_DIR/image-$service ]]; then
+                cat "$FAKE_STATE_DIR/image-$service"
+            else
+                printf 'sha256:old-%s\n' "${4:-unknown}"
+            fi
+            ;;
         '{{.Config.Image}}|{{.State.Running}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')
             service=${4#cid-}
             image=old-$service
@@ -282,6 +289,10 @@ fi
 
 if [[ ${1:-} == cp || ${1:-} == tag || \
     (${1:-} == image && ${2:-} == rm) ]]; then
+    exit 0
+fi
+if [[ ${1:-} == image && ${2:-} == inspect && \
+    ${3:-} == gonka-upgrade-rollback/* ]]; then
     exit 0
 fi
 
@@ -588,6 +599,31 @@ run_interrupted_upgrade() {
         --versiond-mode ha --edge-mode single \
         >"$stdout" 2>"$stderr"; then
         fail "upgrade interrupted by $signal exited successfully"
+    fi
+}
+
+resume_interrupted_upgrade() {
+    local state_dir=$1 log=$2 stdout=$3 stderr=$4
+
+    : >"$log"
+    if ! DOCKER_BIN="$tmpdir/docker" \
+        DOCKER_LOG="$log" \
+        FAIL_SERVICE=none \
+        BLOCK_SERVICE=none \
+        BLOCK_SIGNAL=none \
+        EXISTING_CONTAINERS="proxy versiond versiond2 versiond-router devshard-postgres edge-api" \
+        FAKE_STATE_DIR="$state_dir" \
+        JOIN_DIR="$script_dir" \
+        GONKA_CONFIG_ENV="$tmpdir/config.env" \
+        UPGRADE_ROLLBACK_VERIFY_TIMEOUT=5 \
+        UPGRADE_ROLLBACK_VERIFY_INTERVAL=1 \
+        UPGRADE_ROLLBACK_STABILITY_CHECKS=1 \
+        UPGRADE_ROUTER_RELOAD_SETTLE=0 \
+        "$script_dir/upgrade-devshard-v5.sh" \
+        --versiond-mode ha --edge-mode single \
+        >"$stdout" 2>"$stderr"; then
+        cat "$stderr" >&2
+        fail "interrupted upgrade did not resume"
     fi
 }
 
@@ -1379,7 +1415,8 @@ jq -e '
     .images.postgres == "postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777" and
     .storage.postgres_identity == "shared-database" and
     .router_fleet.spec_sha256 ==
-        "0000000000000000000000000000000000000000000000000000000000000001"
+        "0000000000000000000000000000000000000000000000000000000000000001" and
+    (.transaction.application_rollback? == null)
 ' "$tmpdir/upgrade-complete" >/dev/null || fail \
     "verified cutover did not reconstruct the desired-state marker"
 assert_contains "$tmpdir/recovered-marker.log" \
@@ -1819,7 +1856,21 @@ for signal in HUP INT TERM; do
         cat "$tmpdir/interrupted-$signal_name.stderr" >&2
         fail "interrupted upgrade did not report $signal"
     }
+    jq -e '
+        .transaction.application_rollback.services.versiond2.image
+            | startswith("gonka-upgrade-rollback/versiond2:")
+    ' "$tmpdir/upgrade-complete.in-progress" >/dev/null || fail \
+        "interrupted upgrade did not preserve the original rollback image in its journal"
 done
+
+resume_interrupted_upgrade \
+    "$tmpdir/interrupted-term.log.state" \
+    "$tmpdir/interrupted-resume.log" \
+    "$tmpdir/interrupted-resume.stdout" \
+    "$tmpdir/interrupted-resume.stderr"
+assert_not_contains "$tmpdir/interrupted-resume.log" " :: tag "
+assert_contains "$tmpdir/interrupted-resume.stdout" \
+    "Reusing durable versiond2 rollback baseline"
 
 run_auto_upgrade \
     "versiond versiond2 versiond-router devshard-postgres edge-api edge-api2 edge-api3 edge-api-router" \

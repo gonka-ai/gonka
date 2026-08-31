@@ -812,6 +812,55 @@ declare -A rollback_images=()
 declare -A rollback_version_baselines=()
 declare -A rollback_service_was_running=()
 
+persist_application_rollback() {
+    local service=$1
+    local image=${rollback_images[$service]-}
+    local running=${rollback_service_was_running[$service]-false}
+    local baseline=${rollback_version_baselines[$service]-null}
+    local updated
+
+    updated=$(jq -c \
+        --arg service "$service" --arg image "$image" \
+        --argjson running "$running" --argjson baseline "$baseline" '
+        .transaction.application_rollback.services[$service] = {
+            image: $image,
+            was_running: $running,
+            version_baseline: $baseline
+        }
+    ' "$upgrade_journal") || fail \
+        "cannot persist the $service application rollback baseline"
+    atomic_write_upgrade_state "$upgrade_journal" "$updated"
+}
+
+load_application_rollback() {
+    local service=$1 record image running baseline
+
+    record=$(jq -cer --arg service "$service" '
+        .transaction.application_rollback.services[$service]
+        | select((.image | type == "string" and length > 0) and
+                 (.was_running | type == "boolean") and
+                 (.version_baseline == null or
+                  (.version_baseline | type == "array")))
+    ' "$upgrade_journal" 2>/dev/null) || return 1
+    image=$(jq -r '.image' <<<"$record")
+    "$docker_bin" image inspect "$image" >/dev/null 2>&1 || fail \
+        "saved rollback image $image for $service is unavailable; restore it before resuming"
+    running=$(jq -r '.was_running' <<<"$record")
+    baseline=$(jq -c '.version_baseline' <<<"$record")
+    rollback_images[$service]=$image
+    rollback_service_was_running[$service]=$running
+    [[ $baseline == null ]] || rollback_version_baselines[$service]=$baseline
+    echo "Reusing durable $service rollback baseline $image"
+}
+
+clear_application_rollback_metadata() {
+    local updated
+    updated=$(jq -c 'del(.transaction.application_rollback)' \
+        "$upgrade_journal") || fail \
+        "cannot clear committed application rollback metadata"
+    atomic_write_upgrade_state "$upgrade_journal" "$updated"
+}
+
 foreground_pid=
 active_service=
 active_failure_strategy=
@@ -1111,6 +1160,7 @@ capture_versiond_router_rollback_baseline() {
         "versiond-router cannot route every replica baseline version"
 
     rollback_version_baselines[versiond-router]=$versions
+    persist_application_rollback versiond-router
     display=$(jq -c '.' <<<"$versions")
     echo "Captured versiond-router route baseline: $display"
 }
@@ -1118,6 +1168,10 @@ capture_versiond_router_rollback_baseline() {
 capture_rollback_image() {
     local service=$1
     local container_id image_id rollback_image was_running
+
+    if load_application_rollback "$service"; then
+        return 0
+    fi
 
     container_id=$("${compose[@]}" ps --all --quiet "$service")
     if [[ -z $container_id ]]; then
@@ -1147,6 +1201,7 @@ capture_rollback_image() {
             fi
             ;;
     esac
+    persist_application_rollback "$service"
 }
 
 rollback_versiond_is_available() {
@@ -1528,6 +1583,7 @@ verify_release_ingress_state || fail \
 verify_router_fleet_spec
 write_upgrade_journal ingress_verified
 verify_compose_model_unchanged
+clear_application_rollback_metadata
 write_upgrade_marker
 cleanup_rollback_tags
 echo "Devshard v5 upgrade completed"
