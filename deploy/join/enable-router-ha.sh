@@ -467,11 +467,16 @@ arm_proxy_rollback() {
 
 capture_policy_rollback() {
 	local service id image image_ref rollback_tag first_image first_ref
-	local actual_hash expected_hash
+	local actual_hash expected_hash inventory
 	local -a ids=()
 
 	for service in "${policy_services[@]}"; do
-		mapfile -t ids < <("${compose[@]}" ps --all --quiet "$service")
+		inventory=$("${compose[@]}" ps --all --quiet "$service") || fail \
+			"cannot inventory existing $service containers for rollback"
+		ids=()
+		while IFS= read -r id; do
+			[[ -n $id ]] && ids+=("$id")
+		done <<<"$inventory"
 		policy_rollback_replicas[$service]=${#ids[@]}
 		policy_rollback_container_ids[$service]=$(printf '%s\n' "${ids[@]}" | \
 			jq -Rsc 'split("\n") | map(select(length > 0)) | sort')

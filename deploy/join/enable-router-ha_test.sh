@@ -224,8 +224,11 @@ if [[ ${1:-} == compose ]]; then
         fi
         exit 0
     fi
-    if [[ $action == ps ]]; then
-        if [[ -f $STATE_DIR/present-$service ]]; then
+	if [[ $action == ps ]]; then
+		if [[ $service == "${FAIL_COMPOSE_PS_SERVICE-}" ]]; then
+			exit 1
+		fi
+		if [[ -f $STATE_DIR/present-$service ]]; then
 			suffix=
 			[[ ! -f $STATE_DIR/generation-$service ]] || suffix=-new
             if [[ $service == proxy-policy && \
@@ -810,6 +813,18 @@ grep -q 'policy-image=gonka/router-ha-policy-rollback:proxy-policy-' \
 grep -q 'policy-image=gonka/router-ha-policy-rollback:proxy-policy2-' \
     "$tmpdir/policy-failure.log" || fail \
     "failed policy generation did not restore the captured reserve slot"
+
+if INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
+    INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/policy-inventory-failure.log" env \
+        FAIL_COMPOSE_PS_SERVICE=proxy-policy; then
+    fail "failed policy inventory was accepted as an empty rollback baseline"
+fi
+grep -q ' ps .*proxy-policy' "$tmpdir/policy-inventory-failure.log" || fail \
+    "policy inventory failure did not reach the expected Compose query"
+if grep -q 'docker rm .*proxy-policy' "$tmpdir/policy-inventory-failure.log"; then
+    fail "policy inventory failure removed an existing worker"
+fi
 
 if INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
     INITIAL_PROXY_COMPONENT=proxy-router \
