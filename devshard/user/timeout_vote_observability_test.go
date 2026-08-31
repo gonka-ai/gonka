@@ -61,26 +61,41 @@ type delayedTimeoutVerifier struct {
 	err   error
 }
 
-func (d *delayedTimeoutVerifier) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff) (bool, []byte, uint32, error) {
+func (d *delayedTimeoutVerifier) wait(ctx context.Context) error {
 	if d.delay > 0 {
 		select {
 		case <-time.After(d.delay):
 		case <-ctx.Done():
-			return false, nil, 0, ctx.Err()
+			return ctx.Err()
 		}
 	}
-	if d.err != nil {
-		return false, nil, 0, d.err
+	return d.err
+}
+
+func (d *delayedTimeoutVerifier) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	if err := d.wait(ctx); err != nil {
+		return false, nil, 0, nil, "", err
 	}
-	return d.inner.VerifyTimeout(ctx, inferenceID, reason, payload, diffs)
+	return d.inner.VerifyTimeout(ctx, inferenceID, reason, payload, diffs, artifacts)
+}
+
+func (d *delayedTimeoutVerifier) VerifyErrorMiss(ctx context.Context, inferenceID uint64, diffs []types.Diff, artifacts host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	if err := d.wait(ctx); err != nil {
+		return false, nil, 0, nil, "", err
+	}
+	return d.inner.VerifyErrorMiss(ctx, inferenceID, diffs, artifacts)
 }
 
 type errTimeoutVerifier struct {
 	err error
 }
 
-func (m *errTimeoutVerifier) VerifyTimeout(context.Context, uint64, types.TimeoutReason, *host.InferencePayload, []types.Diff) (bool, []byte, uint32, error) {
-	return false, nil, 0, m.err
+func (m *errTimeoutVerifier) VerifyTimeout(context.Context, uint64, types.TimeoutReason, *host.InferencePayload, []types.Diff, host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, nil, "", m.err
+}
+
+func (m *errTimeoutVerifier) VerifyErrorMiss(context.Context, uint64, []types.Diff, host.TimeoutArtifacts) (bool, []byte, uint32, []*types.DevshardTx, string, error) {
+	return false, nil, 0, nil, "", m.err
 }
 
 // awaitHolder releases a blocked collection and joins its goroutine during cleanup. Without the join
@@ -165,7 +180,7 @@ func TestQueueExpired_LogsInflightSnapshot(t *testing.T) {
 	holderDone := make(chan struct{})
 	go func() {
 		defer close(holderDone)
-		_, _ = session.CollectTimeoutVotes(holderCtx, nonce, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload, firstVerifiers, nil)
+		_, _, _, _ = session.CollectTimeoutVotes(holderCtx, nonce, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload, firstVerifiers, nil)
 	}()
 	// The holder must finish before the cleanups above restore the package globals it still reads,
 	// so this is registered after them: cleanups run last-registered-first.
@@ -190,7 +205,7 @@ func TestQueueExpired_LogsInflightSnapshot(t *testing.T) {
 
 	buf := captureStdLog(t)
 	waiterCtx, _ := logging.WithRequestID(ctx, "req-waiter")
-	votes, class, err := session.collectTimeoutVotes(waiterCtx, nonce, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload, waitingVerifiers, nil)
+	votes, _, _, class, err := session.collectTimeoutVotes(waiterCtx, nonce, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload, waitingVerifiers, nil)
 	require.NoError(t, err)
 	require.Empty(t, votes)
 	require.Zero(t, secondEntered.Load())
@@ -252,14 +267,14 @@ func TestTimeoutVoteSent_OnlyAfterAcquire(t *testing.T) {
 	holderDone := make(chan struct{})
 	go func() {
 		defer close(holderDone)
-		_, _ = session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload, firstVerifiers, nil)
+		_, _, _, _ = session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload, firstVerifiers, nil)
 	}()
 	awaitHolder(t, releaseFirst, holderDone)
 	require.Eventually(t, func() bool { return firstEntered.Load() == int32(len(session.group)-1) }, time.Second, 5*time.Millisecond)
 
 	buf := captureStdLog(t)
 	waiterCtx, _ := logging.WithRequestID(ctx, "req-waiter")
-	_, class, err := session.collectTimeoutVotes(waiterCtx, nonce, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload, waitingVerifiers, nil)
+	_, _, _, class, err := session.collectTimeoutVotes(waiterCtx, nonce, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload, waitingVerifiers, nil)
 	require.NoError(t, err)
 	require.Equal(t, VoteErrorQueueExpired, class)
 	logs := buf.forRequest("req-waiter")
@@ -299,7 +314,7 @@ func TestVerifyTimeout_SlowLog(t *testing.T) {
 
 	buf := captureStdLog(t)
 	slowCtx, _ := logging.WithRequestID(ctx, "req-slow")
-	votes, err := session.CollectTimeoutVotes(slowCtx, nonce, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload, verifiers, nil)
+	votes, _, _, err := session.CollectTimeoutVotes(slowCtx, nonce, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload, verifiers, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, votes)
 
@@ -333,7 +348,7 @@ func TestVerifyTimeout_RPCTimeoutLog(t *testing.T) {
 
 	buf := captureStdLog(t)
 	rpcCtx, _ := logging.WithRequestID(ctx, "req-rpc")
-	votes, class, err := session.collectTimeoutVotes(rpcCtx, nonce, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload, verifiers, nil)
+	votes, _, _, class, err := session.collectTimeoutVotes(rpcCtx, nonce, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, payload, verifiers, nil)
 	require.NoError(t, err)
 	require.Empty(t, votes)
 	require.Equal(t, VoteErrorRPCTimeout, class)
