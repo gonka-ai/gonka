@@ -81,6 +81,11 @@ func (d MsgExecAuthorizationDecorator) checkFeeExemptMsgExec(ctx sdk.Context, ex
 		if _, nested := inner.(*authz.MsgExec); nested {
 			return errNestedMsgExec
 		}
+		if v, ok := inner.(sdk.HasValidateBasic); ok {
+			if err := v.ValidateBasic(); err != nil {
+				return err
+			}
+		}
 		if err := d.checkInnerGrant(ctx, grantee, inner); err != nil {
 			return err
 		}

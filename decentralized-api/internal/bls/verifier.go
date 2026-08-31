@@ -188,19 +188,20 @@ func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *V
 	initialDealerKeyIndex := bm.localKeyIndexFromParticipantSnapshot(myParticipant)
 
 	for dealerIndex, dealerPart := range dealerParts {
+		var dealerPanic any
 		func() {
 			defer func() {
-				if r := recover(); r != nil {
-					logging.Error(verifierLogTag+"Dealer processing panicked, marking invalid and continuing", inferenceTypes.BLS,
-						"epochID", verificationResult.EpochID,
-						"dealerIndex", dealerIndex,
-						"panic", r)
-					verificationResult.DealerShares[dealerIndex] = make([]fr.Element, 0)
-					verificationResult.DealerValidity[dealerIndex] = false
-				}
+				dealerPanic = recover()
 			}()
 			bm.processDealerPart(verificationResult, dealerPart, dealerIndex, myParticipantIndex, expectedCommitmentsCount, numSlots, initialDealerKeyIndex)
 		}()
+		if dealerPanic != nil {
+			logging.Error(verifierLogTag+"Dealer processing panicked, aborting verification", inferenceTypes.BLS,
+				"epochID", verificationResult.EpochID,
+				"dealerIndex", dealerIndex,
+				"panic", dealerPanic)
+			return fmt.Errorf("dealer %d processing panicked: %v", dealerIndex, dealerPanic)
+		}
 	}
 
 	// Now aggregate shares per slot
@@ -233,7 +234,14 @@ func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *V
 	return nil
 }
 
+// processDealerPartHook is set by tests to inject a panic inside processDealerPart
+// (after DecryptBytes is no longer on the stack).
+var processDealerPartHook func(dealerIndex int)
+
 func (bm *BlsManager) processDealerPart(verificationResult *VerificationResult, dealerPart *types.DealerPartStorage, dealerIndex, myParticipantIndex, expectedCommitmentsCount, numSlots, initialDealerKeyIndex int) {
+	if processDealerPartHook != nil {
+		processDealerPartHook(dealerIndex)
+	}
 	logging.Debug(verifierLogTag+"Processing dealer", inferenceTypes.BLS, "dealerIndex", dealerIndex)
 
 	if dealerPart == nil {

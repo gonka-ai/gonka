@@ -336,14 +336,18 @@ func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {
 	return bytes, nil
 }
 
-func (icc *InferenceCosmosClient) DecryptBytes(ciphertext []byte) (plaintext []byte, err error) {
+func (icc *InferenceCosmosClient) DecryptBytes(ciphertext []byte) ([]byte, error) {
+	name := icc.apiAccount.SignerAccount.Name
+	kr := *icc.GetKeyring()
+	return decryptKeyring(kr, name, ciphertext)
+}
+
+func decryptKeyring(kr keyring.Keyring, name string, ciphertext []byte) (plaintext []byte, err error) {
 	defer func() {
 		if r := recover(); r != nil {
 			err = fmt.Errorf("ecies decrypt panic: %v", r)
 		}
 	}()
-	name := icc.apiAccount.SignerAccount.Name
-	kr := *icc.GetKeyring()
 	return kr.Decrypt(name, ciphertext, nil, nil)
 }
 

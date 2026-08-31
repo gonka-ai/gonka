@@ -10,6 +10,7 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/productscience/inference/x/bls/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // createMockCosmosClient creates a minimal mock cosmos client for testing
@@ -407,7 +408,14 @@ func TestProcessGroupPublicKeyGeneratedEventParsing(t *testing.T) {
 	assert.Contains(t, err.Error(), "failed to parse epoch_id")
 }
 
-func TestPerformVerificationContinuesAfterDealerPanic(t *testing.T) {
+func TestPerformVerificationAbortsAfterUnexpectedDealerPanic(t *testing.T) {
+	t.Cleanup(func() { processDealerPartHook = nil })
+	processDealerPartHook = func(dealerIndex int) {
+		if dealerIndex == 1 {
+			panic("injected dealer panic")
+		}
+	}
+
 	blsManager := NewBlsManager(createMockCosmosClient())
 	commitment := make([]byte, 96)
 	commitment[0] = 0x01
@@ -428,19 +436,23 @@ func TestPerformVerificationContinuesAfterDealerPanic(t *testing.T) {
 			DealerAddress: "attacker",
 			Commitments:   [][]byte{commitment},
 			ParticipantShares: []*types.EncryptedSharesForParticipant{
+				{EncryptedShares: [][]byte{make([]byte, 113)}},
+			},
+		},
+		{
+			DealerAddress: "later",
+			Commitments:   [][]byte{commitment, commitment},
+			ParticipantShares: []*types.EncryptedSharesForParticipant{
 				{EncryptedShares: [][]byte{{0x04}}},
 			},
 		},
-		nil,
 	}
 
 	err := blsManager.performVerificationAndReconstruction(result, dealerParts, me, 0, 1)
-	assert.NoError(t, err)
-	assert.Len(t, result.DealerValidity, 3)
-	assert.False(t, result.DealerValidity[0])
-	assert.False(t, result.DealerValidity[1], "panicking dealer must be marked invalid, not abort verification")
-	assert.False(t, result.DealerValidity[2], "dealers after a panic must still be processed")
-	assert.Len(t, result.AggregatedShares, 1)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "dealer 1 processing panicked")
+	assert.Empty(t, result.ComplaintEvidence, "unexpected panic must not invent complaint evidence")
+	assert.Nil(t, result.DealerShares[2], "verification must abort without processing later dealers")
 }
 
 func TestRecomputeAggregatedSharesFromConsensusValidDealers(t *testing.T) {
