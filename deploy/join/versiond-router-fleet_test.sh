@@ -952,6 +952,31 @@ VERSIOND_ROUTER_SLOT=0 \
 "${fleet[@]}" rollout >/dev/null
 "${fleet[@]}" status >/dev/null
 
+# Emergency commands must not query each slot's Runtime API before checking
+# their own maintenance acknowledgement. A wedged HAProxy must not prevent an
+# operator from removing the whole fleet.
+for slot in "${slots[@]}"; do
+    id=$(docker ps -q --filter "label=com.docker.compose.project=$prefix-$slot")
+    docker exec "$id" /bin/sh -ec \
+        'pids=$(pidof haproxy); test -n "$pids"; kill -STOP $pids'
+done
+started=$SECONDS
+if VERSIOND_ROUTER_RUNTIME_TIMEOUT_SECONDS=1 \
+    "${fleet[@]}" stop-all >"$tmpdir/wedged-emergency-stop.out" 2>&1; then
+    fail "unacknowledged emergency stop unexpectedly succeeded"
+fi
+emergency_elapsed=$((SECONDS - started))
+for slot in "${slots[@]}"; do
+    id=$(docker ps -q --filter "label=com.docker.compose.project=$prefix-$slot")
+    docker exec "$id" /bin/sh -ec \
+        'pids=$(pidof haproxy); test -n "$pids"; kill -CONT $pids'
+done
+((emergency_elapsed < 5)) || fail \
+    "emergency stop waited for a wedged Runtime API"
+grep -q 'stop-all requires the explicit --maintenance acknowledgement' \
+    "$tmpdir/wedged-emergency-stop.out" || fail \
+    "emergency stop did not reach its maintenance gate while Runtime APIs were wedged"
+
 # Another installation on the same Docker daemon has its own inventory even
 # when it uses the same slot names.
 docker run -d --name "gonka-router-fleet-foreign-$suffix" \

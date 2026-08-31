@@ -1371,9 +1371,12 @@ stop_slot() {
 }
 
 stop_fleet_containers() {
-    local id state pid failed=0
+    local id state pid failed=0 inventory
     local -a ids=() pids=()
-    mapfile -t ids < <(fleet_ids)
+    inventory=$(fleet_ids) || fail "cannot inventory router fleet containers"
+    while IFS= read -r id; do
+        [[ -n $id ]] && ids+=("$id")
+    done <<<"$inventory"
     if ((${#ids[@]} == 0)); then
         echo "No versiond-router fleet containers are present"
         return 0
@@ -1466,16 +1469,22 @@ require_networks_detached_from_main_stack() {
 }
 
 fleet_down() {
-    local network
+    local network id volume inventory
     local -a ids=() volumes=()
     collect_cleanup_networks
     require_networks_detached_from_main_stack
     stop_fleet_containers
-    mapfile -t ids < <(fleet_ids)
+    inventory=$(fleet_ids) || fail "cannot inventory router fleet containers for removal"
+    while IFS= read -r id; do
+        [[ -n $id ]] && ids+=("$id")
+    done <<<"$inventory"
     if ((${#ids[@]} > 0)); then
         "$docker_bin" rm "${ids[@]}" >/dev/null
     fi
-    mapfile -t volumes < <(fleet_volume_ids)
+    inventory=$(fleet_volume_ids) || fail "cannot inventory router fleet state volumes"
+    while IFS= read -r volume; do
+        [[ -n $volume ]] && volumes+=("$volume")
+    done <<<"$inventory"
     if ((${#volumes[@]} > 0)); then
         "$docker_bin" volume rm "${volumes[@]}" >/dev/null
     fi
@@ -1708,7 +1717,12 @@ esac
 
 # Runtime-discovered versions are part of the safety reserve even though they
 # are intentionally absent from the host-managed bootstrap environment.
-discover_expected_routes
+# Whole-fleet emergency removal needs no routing state and must still work when
+# every router Runtime API is wedged.
+case $command in
+    stop-all | down) ;;
+    *) discover_expected_routes ;;
+esac
 
 case $command in
     prepare-networks) prepare_networks ;;
