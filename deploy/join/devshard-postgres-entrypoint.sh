@@ -11,6 +11,7 @@ official_entrypoint=${GONKA_POSTGRES_OFFICIAL_ENTRYPOINT:-/usr/local/bin/docker-
 target_data=${PGDATA:-$persistent_root/data}
 staging_data=$persistent_root/.migrating
 staging_complete=$persistent_root/.gonka-copy-complete
+lineage_marker=$persistent_root/.migrated-from-v4
 expected_major=
 
 log() {
@@ -38,6 +39,43 @@ validate_cluster() {
         die "cannot read $1/PG_VERSION"
     [ "$cluster_version" = "$expected_major" ] ||
         die "PostgreSQL cluster in $1 uses major version ${cluster_version:-unknown}; expected $expected_major"
+}
+
+cluster_system_identifier() {
+    identifier=$(pg_controldata "$1" 2>/dev/null | awk -F: '
+        $1 ~ /^[[:space:]]*Database system identifier[[:space:]]*$/ {
+            sub(/^[[:space:]]+/, "", $2)
+            sub(/[[:space:]]+$/, "", $2)
+            print $2
+            exit
+        }
+    ') || die "cannot inspect PostgreSQL lineage in $1"
+    case "$identifier" in
+        '' | *[!0-9]*) die "invalid PostgreSQL system identifier in $1" ;;
+    esac
+    printf '%s\n' "$identifier"
+}
+
+validate_migration_lineage() {
+    cluster=$1
+    cluster_identifier=$(cluster_system_identifier "$cluster")
+
+    if [ -s "$lineage_marker" ]; then
+        recorded_identifier=$(cat "$lineage_marker") ||
+            die "cannot read PostgreSQL migration lineage marker"
+        [ "$recorded_identifier" = "$cluster_identifier" ] ||
+            die "persistent PostgreSQL cluster does not match its migration lineage marker"
+    fi
+    if cluster_exists "$legacy_data"; then
+        source_identifier=$(cluster_system_identifier "$legacy_data")
+        [ "$source_identifier" = "$cluster_identifier" ] ||
+            die "persistent PostgreSQL cluster does not originate from the attached legacy PGDATA"
+        if [ ! -s "$lineage_marker" ]; then
+            printf '%s\n' "$cluster_identifier" >"$lineage_marker" ||
+                die "cannot record PostgreSQL migration lineage"
+            sync
+        fi
+    fi
 }
 
 postgres_binding_marker() {
@@ -98,6 +136,7 @@ ensure_migration_space() {
 }
 
 publish_staging() {
+    source_identifier=$1
     if [ -e "$target_data" ]; then
         if directory_has_entries "$target_data"; then
             die "refusing to replace non-empty incomplete target $target_data"
@@ -106,8 +145,10 @@ publish_staging() {
     fi
     mv "$staging_data" "$target_data" ||
         die "cannot publish migrated PostgreSQL cluster"
-    rm -f "$staging_complete" ||
-        die "cannot remove PostgreSQL migration completion marker"
+    mv "$staging_complete" "$lineage_marker" ||
+        die "cannot publish PostgreSQL migration lineage marker"
+    [ "$(cat "$lineage_marker")" = "$source_identifier" ] ||
+        die "published PostgreSQL migration lineage changed unexpectedly"
     sync
 }
 
@@ -123,16 +164,25 @@ mkdir -p "$persistent_root"
 
 if cluster_exists "$target_data"; then
     validate_cluster "$target_data"
+    validate_migration_lineage "$target_data"
     rm -f "$staging_complete" ||
         die "cannot remove stale PostgreSQL migration completion marker"
 elif [ -e "$target_data" ] && directory_has_entries "$target_data"; then
     die "persistent PGDATA is non-empty but has no PG_VERSION: $target_data"
 elif cluster_exists "$staging_data" && [ -f "$staging_complete" ]; then
     validate_cluster "$staging_data"
+    [ -s "$staging_complete" ] ||
+        die "PostgreSQL migration completion marker has no source lineage"
+    source_identifier=$(cluster_system_identifier "$legacy_data")
+    [ "$(cat "$staging_complete")" = "$source_identifier" ] ||
+        die "PostgreSQL migration staging does not match the attached legacy PGDATA"
+    [ "$(cluster_system_identifier "$staging_data")" = "$source_identifier" ] ||
+        die "PostgreSQL migration staging has a different system identifier"
     log "finishing an interrupted atomic migration"
-    publish_staging
+    publish_staging "$source_identifier"
 elif cluster_exists "$legacy_data"; then
     validate_cluster "$legacy_data"
+    source_identifier=$(cluster_system_identifier "$legacy_data")
 
     if [ -e "$staging_data" ]; then
         rm -rf "$staging_data" || die "cannot reset stale migration staging data"
@@ -153,11 +203,10 @@ elif cluster_exists "$legacy_data"; then
     [ "$(cat "$legacy_data/PG_VERSION")" = "$(cat "$staging_data/PG_VERSION")" ] ||
         die "migrated PostgreSQL version does not match its source"
     sync
-    : >"$staging_complete"
+    printf '%s\n' "$source_identifier" >"$staging_complete" ||
+        die "cannot record PostgreSQL migration source lineage"
     sync
-    publish_staging
-    printf '%s\n' "$(cat "$target_data/PG_VERSION")" \
-        >"$persistent_root/.migrated-from-v4"
+    publish_staging "$source_identifier"
     log "v4 PostgreSQL migration completed"
 else
     if [ -e "$staging_data" ] && directory_has_entries "$staging_data"; then

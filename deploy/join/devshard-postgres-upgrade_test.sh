@@ -192,9 +192,16 @@ grep -q 'fresh anonymous volume may have replaced the original one' \
 # A completed staging copy is sufficient for a restart. The detached source
 # volume and host target must both be visible to the helper in this mode.
 restart_target="$tmpdir/recovery-restart"
-mkdir -p "$restart_target/.migrating"
-printf '16\n' >"$restart_target/.migrating/PG_VERSION"
-: >"$restart_target/.gonka-copy-complete"
+mkdir -p "$restart_target"
+docker run --rm --network none \
+    --mount "type=volume,src=$guard_old_volume,dst=/source,readonly" \
+    --mount "type=bind,src=$restart_target,dst=/target" \
+    --entrypoint /bin/sh postgres:16-alpine -ec "
+        cp -a /source /target/.migrating
+        pg_controldata /source | sed -n \
+            's/^[[:space:]]*Database system identifier:[[:space:]]*//p' \
+            > /target/.gonka-copy-complete
+    "
 restart_result=$("$preflight" --source-volume "$guard_old_volume" \
     --target-dir "$restart_target")
 grep -q 'staging is complete' <<<"$restart_result" || fail \

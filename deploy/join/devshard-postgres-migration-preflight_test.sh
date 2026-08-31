@@ -57,7 +57,7 @@ run_preflight() {
 
 : >"$tmpdir/docker.log"
 target_mount="type=bind\\,src=$tmpdir/target\\,dst=/target\\,readonly"
-DOCKER_PROBE='source 1000 0'
+DOCKER_PROBE='source 1000 0 1000000000000000000'
 FREE_KIB=1100
 export DOCKER_PROBE FREE_KIB
 run_preflight --source-container postgres-v4 --target-dir "$tmpdir/target" \
@@ -101,7 +101,7 @@ grep -q 'not enough free space' "$tmpdir/fail.stderr" || fail \
     "insufficient-space error was not explained"
 
 : >"$tmpdir/docker.log"
-DOCKER_PROBE='source 2000 0'
+DOCKER_PROBE='source 2000 0 1000000000000000000'
 FREE_KIB=2200
 export DOCKER_PROBE FREE_KIB
 run_preflight --source-volume postgres-v4-volume \
@@ -116,7 +116,7 @@ grep -Fq -- "$target_mount" \
     "$tmpdir/docker.log" || fail \
     "target directory was not mounted for the volume-source probe"
 
-DOCKER_PROBE='source 1000 200'
+DOCKER_PROBE='source 1000 200 1000000000000000000'
 FREE_KIB=900
 export DOCKER_PROBE FREE_KIB
 run_preflight --source-volume postgres-v4-volume \
@@ -133,7 +133,7 @@ if run_preflight --source-volume postgres-v4-volume \
     fail "insufficient effective space passed after staging accounting"
 fi
 
-DOCKER_PROBE='target-ready'
+DOCKER_PROBE='target-ready 1000000000000000000 1000000000000000000 1000000000000000000'
 FREE_KIB=0
 export DOCKER_PROBE FREE_KIB
 run_preflight --source-volume postgres-v4-volume --target-dir "$tmpdir/target" \
@@ -141,12 +141,37 @@ run_preflight --source-volume postgres-v4-volume --target-dir "$tmpdir/target" \
 grep -q 'no migration copy is required' "$tmpdir/target.stdout" || fail \
     "existing persistent PGDATA was not recognized"
 
-DOCKER_PROBE='staging-ready'
+DOCKER_PROBE='target-ready 1000000000000000000 1000000000000000000 none'
+export DOCKER_PROBE
+run_preflight --source-volume postgres-v4-volume --target-dir "$tmpdir/target" \
+    >"$tmpdir/published-before-marker.stdout"
+grep -q 'no migration copy is required' \
+    "$tmpdir/published-before-marker.stdout" || fail \
+    "published target was not recovered through its still-available source"
+
+DOCKER_PROBE='staging-ready 1000000000000000000 1000000000000000000 1000000000000000000'
 export DOCKER_PROBE
 run_preflight --source-volume postgres-v4-volume --target-dir "$tmpdir/target" \
     >"$tmpdir/staging.stdout"
 grep -q 'staging is complete' "$tmpdir/staging.stdout" || fail \
     "committed migration staging was not recognized"
+
+DOCKER_PROBE='target-ready 1000000000000000000 2000000000000000000 2000000000000000000'
+export DOCKER_PROBE
+if run_preflight --source-volume postgres-v4-volume \
+    --target-dir "$tmpdir/target" \
+    >"$tmpdir/foreign-target.stdout" 2>"$tmpdir/foreign-target.stderr"; then
+    fail "persistent target from another PostgreSQL source passed preflight"
+fi
+grep -q 'does not originate from the selected v4 source' \
+    "$tmpdir/foreign-target.stderr" || fail \
+    "foreign persistent target failure did not explain the lineage mismatch"
+
+DOCKER_PROBE='target-ready none 1000000000000000000 1000000000000000000'
+export DOCKER_PROBE
+run_preflight --target-dir "$tmpdir/target" >"$tmpdir/target-only.stdout"
+grep -q 'no migration copy is required' "$tmpdir/target-only.stdout" || fail \
+    "durably bound persistent target was not accepted without a legacy container"
 
 DOCKER_PROBE='source-missing'
 export DOCKER_PROBE

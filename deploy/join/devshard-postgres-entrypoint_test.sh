@@ -16,7 +16,16 @@ cat >"$tmpdir/bin/ldd" <<'EOF'
 printf '%s\n' 'musl libc (x86_64)' 'Version 1.2.6'
 exit 1
 EOF
-chmod +x "$tmpdir/bin/postgres" "$tmpdir/bin/ldd"
+cat >"$tmpdir/bin/pg_controldata" <<'EOF'
+#!/bin/sh
+identifier=1000000000000000000
+if [ -s "$1/.test-system-id" ]; then
+    identifier=$(cat "$1/.test-system-id")
+fi
+printf 'Database system identifier:            %s\n' "$identifier"
+EOF
+chmod +x "$tmpdir/bin/postgres" "$tmpdir/bin/ldd" \
+    "$tmpdir/bin/pg_controldata"
 test_path="$tmpdir/bin:$PATH"
 
 fail() {
@@ -60,6 +69,8 @@ run_entrypoint
     "legacy source was modified"
 [[ -f "$persistent/.migrated-from-v4" ]] || fail \
     "migration marker was not written"
+[[ $(<"$persistent/.migrated-from-v4") == 1000000000000000000 ]] || fail \
+    "migration marker does not record the PostgreSQL source lineage"
 [[ ! -e "$persistent/.migrating" ]] || fail \
     "staging directory remained after migration"
 [[ ! -e "$persistent/.gonka-copy-complete" ]] || fail \
@@ -103,6 +114,7 @@ printf 'legacy\n' > "$legacy/source"
 mkdir -p "$persistent/data"
 printf '16\n' > "$persistent/data/PG_VERSION"
 printf 'current\n' > "$persistent/data/source"
+printf '1000000000000000000\n' > "$persistent/.migrated-from-v4"
 touch "$persistent/.gonka-copy-complete"
 run_entrypoint
 [[ $(<"$persistent/data/source") == current ]] || fail \
@@ -111,13 +123,28 @@ run_entrypoint
     "stale migration completion marker survived an existing target"
 
 new_case resume-publish
+printf '16\n' > "$legacy/PG_VERSION"
 mkdir -p "$persistent/.migrating"
 printf '16\n' > "$persistent/.migrating/PG_VERSION"
 printf 'resumed\n' > "$persistent/.migrating/session-row"
-touch "$persistent/.gonka-copy-complete"
+printf '1000000000000000000\n' > "$persistent/.gonka-copy-complete"
 run_entrypoint
 [[ $(<"$persistent/data/session-row") == resumed ]] || fail \
     "complete staging data was not published"
+
+new_case reject-foreign-target
+printf '16\n' > "$legacy/PG_VERSION"
+printf '1000000000000000000\n' > "$legacy/.test-system-id"
+mkdir -p "$persistent/data"
+printf '16\n' > "$persistent/data/PG_VERSION"
+printf '2000000000000000000\n' > "$persistent/data/.test-system-id"
+printf '2000000000000000000\n' > "$persistent/.migrated-from-v4"
+if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+    fail "persistent PostgreSQL from another source was accepted"
+fi
+grep -q 'does not originate from the attached legacy PGDATA' \
+    "$case_dir/stderr" || fail \
+    "foreign persistent target failure did not explain the lineage mismatch"
 
 new_case recopy-partial-staging
 printf '16\n' > "$legacy/PG_VERSION"
