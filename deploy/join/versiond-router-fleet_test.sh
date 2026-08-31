@@ -479,6 +479,66 @@ docker exec "gonka-router-fleet-proxy-$suffix" /bin/busybox wget \
     >/dev/null \
     || fail "top HAProxy did not observe the router fleet"
 
+# A live container can retain a connectable Runtime API socket while HAProxy
+# itself is stuck. Every nested diagnostic must still return within the fleet's
+# configured control-plane deadline.
+parent="gonka-router-fleet-proxy-$suffix"
+docker exec "$parent" /bin/sh -ec \
+    'pids=$(pidof haproxy); test -n "$pids"; kill -STOP $pids'
+started=$SECONDS
+if VERSIOND_ROUTER_RUNTIME_TIMEOUT_SECONDS=1 \
+    VERSIOND_ROUTER_START_TIMEOUT_SECONDS=3 \
+    "${fleet[@]}" verify-admission v4 \
+    >"$tmpdir/stuck-parent-runtime.out" 2>&1; then
+    stuck_parent_status=0
+else
+    stuck_parent_status=$?
+fi
+parent_elapsed=$((SECONDS - started))
+docker exec "$parent" /bin/sh -ec \
+    'pids=$(pidof haproxy); test -n "$pids"; kill -CONT $pids'
+((stuck_parent_status != 0)) || fail \
+    "fleet admission accepted a stuck parent Runtime API"
+((parent_elapsed < 10)) || fail \
+    "fleet admission exceeded its deadline on a stuck parent Runtime API"
+grep -q 'admission verification timed out' \
+    "$tmpdir/stuck-parent-runtime.out" || fail \
+    "stuck parent Runtime API did not produce a bounded admission failure"
+"${fleet[@]}" verify-admission v4 >/dev/null || fail \
+    "parent admission did not recover after Runtime API resumed"
+
+selected_slot=${slots[0]}
+selected_slot_id=$(docker ps -q \
+    --filter label=ai.gonka.component=versiond-router \
+    --filter "label=ai.gonka.fleet=$fleet_id" \
+    --filter "label=ai.gonka.slot=$selected_slot")
+docker exec --user 0 "$selected_slot_id" mv \
+    /usr/local/lib/router-runtime/catalog-status \
+    /usr/local/lib/router-runtime/catalog-status.real
+docker exec --user 0 "$selected_slot_id" /bin/sh -ec \
+    'printf "#!/bin/sh\nsleep 300\n" > /usr/local/lib/router-runtime/catalog-status; chmod 755 /usr/local/lib/router-runtime/catalog-status'
+started=$SECONDS
+if VERSIOND_ROUTER_RUNTIME_TIMEOUT_SECONDS=1 \
+    timeout --kill-after=1s 10s "${fleet[@]}" status \
+    >"$tmpdir/stuck-slot-runtime.out" 2>&1; then
+    stuck_slot_status=0
+else
+    stuck_slot_status=$?
+fi
+slot_elapsed=$((SECONDS - started))
+docker exec --user 0 "$selected_slot_id" mv -f \
+    /usr/local/lib/router-runtime/catalog-status.real \
+    /usr/local/lib/router-runtime/catalog-status
+((stuck_slot_status != 0 && stuck_slot_status != 124)) || fail \
+    "fleet status was not bounded by its nested slot Runtime API timeout"
+((slot_elapsed < 10)) || fail \
+    "fleet status exceeded its deadline on a stuck slot Runtime API"
+grep -q 'cannot read the effective route catalog' \
+    "$tmpdir/stuck-slot-runtime.out" || fail \
+    "stuck slot Runtime API did not fail catalog discovery"
+"${fleet[@]}" verify-admission v4 >/dev/null || fail \
+    "slot admission did not recover after Runtime API resumed"
+
 # Maintenance replacement crosses its commit point only after the parent has
 # completed fresh L7 admission for every replacement slot.
 VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true \

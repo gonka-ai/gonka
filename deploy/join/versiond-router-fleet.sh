@@ -128,7 +128,7 @@ for value in "$drain_timeout" "$wait_timeout" "$version_wait_timeout" "$runtime_
     case $value in '' | *[!0-9]* | 0) fail "router timeouts must be positive integer seconds" ;; esac
 done
 
-runtime_exec() {
+bounded_container_exec() {
     timeout --kill-after=1s "${runtime_timeout}s" "$docker_bin" exec "$@"
 }
 
@@ -276,21 +276,24 @@ slot_route_ready() {
     id=$(slot_id "$slot") || return 1
     slot_ready "$slot" || return 1
     encoded=$(urlencode "$route")
-    "$docker_bin" exec "$id" /bin/busybox wget -q -O /dev/null \
+    bounded_container_exec "$id" /bin/busybox wget -q -O /dev/null \
         "http://127.0.0.1:8404/readyz?version=$encoded" 2>/dev/null
 }
 
 slot_catalog_routes() {
-    local id map
+    local id map status
     id=$(slot_id "$1") || return 1
-    if "$docker_bin" exec "$id" test -x \
+    if bounded_container_exec "$id" test -x \
         /usr/local/lib/router-runtime/catalog-status >/dev/null 2>&1; then
         for map in /etc/haproxy/non_ha.map /etc/haproxy/versions.map; do
-            "$docker_bin" exec "$id" \
+            bounded_container_exec "$id" \
                 /usr/local/lib/router-runtime/catalog-status "$map"
         done
         return
+    else
+        status=$?
     fi
+    ((status == 1)) || return 1
 
     # Mixed-image rollout fallback. Old images know only their container env.
     local legacy_versions ha_versions
@@ -366,14 +369,14 @@ parent_proxy_active() {
 parent_diagnostic_available() {
     local parent=${PROXY_ROUTER_CONTAINER:-proxy}
     parent_proxy_active || return 1
-    "$docker_bin" exec "$parent" test -x \
+    bounded_container_exec "$parent" test -x \
         /usr/local/lib/proxy-router/route-status >/dev/null 2>&1
 }
 
 parent_server_refs() {
     local address=$1 status_pattern=${2:-'^(UP|DRAIN)'}
     local parent=${PROXY_ROUTER_CONTAINER:-proxy} stats
-    stats=$(runtime_exec "$parent" /bin/sh -ec \
+    stats=$(bounded_container_exec "$parent" /bin/sh -ec \
         "printf 'show stat\\n' | socat stdio /var/run/haproxy/haproxy.sock") || return 2
     awk -F, -v address="$address" -v status_pattern="$status_pattern" '
         NR == 1 {
@@ -427,7 +430,7 @@ repair_stale_parent_state() {
 
 parent_address_withdrawal_state() {
     local address=$1 parent=${PROXY_ROUTER_CONTAINER:-proxy} stats
-    stats=$(runtime_exec "$parent" /bin/sh -ec \
+    stats=$(bounded_container_exec "$parent" /bin/sh -ec \
         "printf 'show stat\\n' | socat stdio /var/run/haproxy/haproxy.sock") || return 2
     awk -F, -v address="$address" '
         NR == 1 {
@@ -458,7 +461,7 @@ parent_address_withdrawal_state() {
 parent_runtime_command() {
     local command=$1 parent=${PROXY_ROUTER_CONTAINER:-proxy} response
     [[ $command != *"'"* ]] || return 1
-    response=$(runtime_exec "$parent" /bin/sh -ec \
+    response=$(bounded_container_exec "$parent" /bin/sh -ec \
         "printf '%s\\n' '$command' | socat stdio /var/run/haproxy/reconciler.sock") || return 1
     [[ -z ${response//[[:space:]]/} ]]
 }
@@ -534,7 +537,7 @@ require_parent_diagnostic() {
 
 parent_route_admitted() {
     local route=$1 address=$2 parent=${PROXY_ROUTER_CONTAINER:-proxy}
-    if "$docker_bin" exec "$parent" \
+    if bounded_container_exec "$parent" \
         /usr/local/lib/proxy-router/route-status "$route" "$address" \
         >/dev/null 2>&1; then
         return 0
