@@ -533,3 +533,29 @@ func TestModifyRequestBody_PinsTopLogprobs(t *testing.T) {
 		})
 	}
 }
+
+// The executor does not trust the broker that sent the request. A reservation budgets one max_tokens
+// output and validation compares only the first choice, so n>1 is generation nobody checks and nobody
+// is charged for: the broker would buy one completion and be served several.
+func TestModifyRequestBodyForcesASingleCompletion(t *testing.T) {
+	body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"n":5}`)
+
+	r, err := ModifyRequestBodyWithLogprobsMode(body, 7, "")
+	require.NoError(t, err)
+
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &m))
+	require.Equal(t, float64(1), m["n"], "a broker asking for five completions must be served one")
+}
+
+// A request that never asked for several is left as it was, so the executed body keeps carrying only
+// what the caller actually sent.
+func TestModifyRequestBodyLeavesAnUnaskedCompletionCountAlone(t *testing.T) {
+	r, err := ModifyRequestBodyWithLogprobsMode([]byte(jsonBody), 7, "")
+	require.NoError(t, err)
+
+	var m map[string]interface{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &m))
+	_, present := m["n"]
+	require.False(t, present, "n was added to a request that never carried it")
+}

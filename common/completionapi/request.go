@@ -46,6 +46,12 @@ func ModifyRequestBodyWithLogprobsMode(requestBytes []byte, defaultSeed int32, l
 	requestMap["top_logprobs"] = ForcedTopLogprobs
 
 	EnforceTokenBudgetFloor(requestMap)
+
+	// Only clamp when the caller asked: injecting n into a request that never
+	// carried it would change the body we sign for a broker that never set it.
+	if _, asked := requestMap["n"]; asked {
+		requestMap["n"] = 1
+	}
 	requestMap["skip_special_tokens"] = false
 	requestMap["return_token_ids"] = true
 	if _, ok := requestMap["seed"]; !ok {

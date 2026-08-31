@@ -3,6 +3,32 @@
 set -euo pipefail
 
 MODE=${1:-issue}
+SSL_DIR=${SSL_DIR:-/etc/nginx/ssl}
+CERT_FILE="$SSL_DIR/cert.pem"
+KEY_FILE="$SSL_DIR/private.key"
+ORDER_ID_FILE="$SSL_DIR/order.id"
+
+certificate_matches_key() {
+  local cert_file=$1 key_file=$2 cert_digest key_digest
+
+  [ -s "$cert_file" ] && [ -s "$key_file" ] || return 1
+  cert_digest=$(openssl x509 -in "$cert_file" -pubkey -noout 2>/dev/null \
+    | openssl pkey -pubin -outform DER 2>/dev/null \
+    | openssl dgst -sha256 2>/dev/null) || return 1
+  key_digest=$(openssl pkey -in "$key_file" -pubout -outform DER 2>/dev/null \
+    | openssl dgst -sha256 2>/dev/null) || return 1
+  [ -n "$cert_digest" ] && [ "$cert_digest" = "$key_digest" ]
+}
+
+mkdir -p "$SSL_DIR"
+rm -f "$SSL_DIR"/cert.pem.tmp.* \
+  "$SSL_DIR"/private.key.tmp.* \
+  "$SSL_DIR"/order.id.tmp.*
+
+if [ "$MODE" = repair ] && certificate_matches_key "$CERT_FILE" "$KEY_FILE"; then
+  echo "SSL certificate and private key are valid"
+  exit 0
+fi
 
 if [ -z "${CERT_ISSUER_DOMAIN:-}" ]; then
   echo "ERROR: CERT_ISSUER_DOMAIN is not set"
@@ -12,8 +38,6 @@ fi
 echo "Getting SSL certificate for proxy..."
 
 echo "setup-ssl.sh mode: $MODE"
-
-mkdir -p /etc/nginx/ssl
 
 # Resolve proxy-ssl host/port (respect KEY_NAME_PREFIX) and node_id
 PROXY_SSL_SERVICE_NAME=${PROXY_SSL_SERVICE_NAME:-proxy-ssl}
@@ -26,7 +50,7 @@ NODE_ID=${NODE_ID:-proxy}
 # Wait for proxy-ssl to become available (default 60s)
 MAX_WAIT=${PROXY_SSL_WAIT_SECONDS:-60}
 echo "Waiting for ${FINAL_PROXY_SSL_SERVICE}:${PROXY_SSL_PORT} to be ready (up to ${MAX_WAIT}s)..."
-for i in $(seq 1 ${MAX_WAIT}); do
+for i in $(seq 1 "$MAX_WAIT"); do
   if curl -sSf "${PROXY_SSL_BASE_URL}/health" > /dev/null 2>&1; then
     echo "Service \"proxy-ssl\" is reachable"
     break
@@ -41,7 +65,7 @@ done
 # Get JWT token (retry few times)
 TOKEN_RESPONSE=""
 for i in 1 2 3 4 5; do
-  TOKEN_RESPONSE=$(curl -sS -X POST ${PROXY_SSL_BASE_URL}/v1/tokens \
+  TOKEN_RESPONSE=$(curl -sS -X POST "${PROXY_SSL_BASE_URL}/v1/tokens" \
     -H "Content-Type: application/json" \
     -d "{\"node_id\":\"${NODE_ID}\",\"expires_in_days\":30}" || true)
   TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.token // empty' 2>/dev/null || true)
@@ -57,14 +81,47 @@ if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
   echo "$TOKEN_RESPONSE"
   exit 1
 fi
+
+publish_certificate() {
+  local source_file=$1
+
+  chmod 644 "$source_file" && mv -f "$source_file" "$CERT_FILE"
+}
+
+# Return 0 after recovery, 1 for a transient issuer failure, and 2 when the
+# stored order cannot recover the local key and a complete issuance is needed.
+recover_certificate_from_order() {
+  local order_id recovery_tmp http_status
+
+  [ -s "$ORDER_ID_FILE" ] && [ -s "$KEY_FILE" ] || return 2
+  order_id=$(cat "$ORDER_ID_FILE")
+  [ -n "$order_id" ] || return 2
+  recovery_tmp="${CERT_FILE}.tmp.$$"
+  http_status=$(curl -sS -o "$recovery_tmp" -w '%{http_code}' \
+    -X GET "${PROXY_SSL_BASE_URL}/v1/certs/orders/${order_id}/bundle" \
+    -H "Authorization: Bearer $TOKEN" || true)
+  if [ "$http_status" != 200 ]; then
+    rm -f "$recovery_tmp"
+    [ "$http_status" = 404 ] && return 2
+    return 1
+  fi
+  if ! chmod 644 "$recovery_tmp" \
+      || ! certificate_matches_key "$recovery_tmp" "$KEY_FILE"; then
+    rm -f "$recovery_tmp"
+    return 2
+  fi
+  mv -f "$recovery_tmp" "$CERT_FILE"
+  echo "Recovered SSL certificate for order $order_id"
+}
+
 # Helper: check if cert expires within N days using openssl -checkend
 will_expire_within_days() {
   local days="$1"
   local seconds=$(( days * 24 * 3600 ))
-  if [ ! -f "/etc/nginx/ssl/cert.pem" ]; then
+  if [ ! -f "$CERT_FILE" ]; then
     return 0
   fi
-  if openssl x509 -checkend "$seconds" -noout -in /etc/nginx/ssl/cert.pem > /dev/null 2>&1; then
+  if openssl x509 -checkend "$seconds" -noout -in "$CERT_FILE" > /dev/null 2>&1; then
     # returns 0 when cert will NOT expire within N seconds
     return 1
   else
@@ -73,8 +130,31 @@ will_expire_within_days() {
   fi
 }
 
-if [ "$MODE" = "renew" ] || [ "$MODE" = "renew-if-needed" ]; then
-  ORDER_ID_FILE="/etc/nginx/ssl/order.id"
+FALLBACK_TO_ISSUE=false
+if [ "$MODE" = repair ]; then
+  recovery_status=0
+  recover_certificate_from_order || recovery_status=$?
+  case "$recovery_status" in
+    0) exit 10 ;;
+    1) exit 1 ;;
+    2)
+      echo "WARNING: Stored TLS bundle cannot be recovered. Falling back to new issuance."
+      FALLBACK_TO_ISSUE=true
+      ;;
+  esac
+elif { [ "$MODE" = "renew" ] || [ "$MODE" = "renew-if-needed" ]; } \
+    && [ ! -f "$CERT_FILE" ]; then
+  recovery_status=0
+  recover_certificate_from_order || recovery_status=$?
+  case "$recovery_status" in
+    0) exit 10 ;;
+    1) exit 1 ;;
+    2)
+      echo "WARNING: Certificate marker is missing and the stored order cannot recover it. Falling back to new issuance."
+      FALLBACK_TO_ISSUE=true
+      ;;
+  esac
+elif [ "$MODE" = "renew" ] || [ "$MODE" = "renew-if-needed" ]; then
   if [ ! -f "$ORDER_ID_FILE" ]; then
     echo "ERROR: Cannot renew: missing $ORDER_ID_FILE"
     exit 1
@@ -95,8 +175,8 @@ if [ "$MODE" = "renew" ] || [ "$MODE" = "renew-if-needed" ]; then
     -H "Content-Type: application/json" || true)
 
   if [ "$HTTP_STATUS" = "404" ]; then
-    echo "WARNING: Order $ORDER_ID not found (404). Clearing stale order ID and falling back to new issuance."
-    rm "$ORDER_ID_FILE"
+    echo "WARNING: Order $ORDER_ID not found (404). Falling back to new issuance."
+    FALLBACK_TO_ISSUE=true
     # Fall through to the default "issue" logic below
   elif [ "$HTTP_STATUS" != "200" ]; then
     echo "ERROR: Failed to initiate renewal. HTTP status: $HTTP_STATUS"
@@ -108,14 +188,18 @@ if [ "$MODE" = "renew" ] || [ "$MODE" = "renew-if-needed" ]; then
       BUNDLE=$(curl -sS -X GET "${PROXY_SSL_BASE_URL}/v1/certs/orders/${ORDER_ID}/bundle" \
         -H "Authorization: Bearer $TOKEN" || true)
       if [ -n "$BUNDLE" ]; then
-        # Basic sanity: ensure it looks like PEM
-        if echo "$BUNDLE" | grep -q "BEGIN CERTIFICATE"; then
-          echo "$BUNDLE" > /etc/nginx/ssl/cert.pem
-          chmod 644 /etc/nginx/ssl/cert.pem
-          echo "Installed renewed certificate for order $ORDER_ID"
-          # exit code 10 indicates renewed
-          exit 10
+        CERT_TMP="${CERT_FILE}.tmp.$$"
+        if printf '%s\n' "$BUNDLE" > "$CERT_TMP" \
+            && certificate_matches_key "$CERT_TMP" "$KEY_FILE"; then
+          if publish_certificate "$CERT_TMP"; then
+            echo "Installed renewed certificate for order $ORDER_ID"
+            # exit code 10 indicates renewed
+            exit 10
+          fi
+          rm -f "$CERT_TMP"
+          exit 1
         fi
+        rm -f "$CERT_TMP"
       fi
       sleep 5
     done
@@ -123,15 +207,6 @@ if [ "$MODE" = "renew" ] || [ "$MODE" = "renew-if-needed" ]; then
     echo "ERROR: Timed out waiting for renewed certificate bundle"
     exit 1
   fi
-fi
-
-# Only proceed to issue logic if we are not in pure renewal mode, or if we fell through due to 404
-if [ "$MODE" = "renew" ] && [ -f "$ORDER_ID_FILE" ]; then 
-   # If we are here, it means we attempted renewal and it wasn't a 404 (which deletes the file), 
-   # but we didn't exit 10 (success) or exit 1 (failure) above? 
-   # Actually the logic above exits on success or failure unless 404.
-   # If 404, file is deleted, so condition -f "$ORDER_ID_FILE" fails, so we continue to issue logic.
-   exit 1
 fi
 
 # Default mode: issue (initial one-shot)
@@ -145,39 +220,52 @@ fi
 # Request certificate bundle (retry few times)
 RESPONSE=""
 for i in 1 2 3 4 5; do
-  RESPONSE=$(curl -sS -X POST ${PROXY_SSL_BASE_URL}/v1/certs/auto \
+  RESPONSE=$(curl -sS -X POST "${PROXY_SSL_BASE_URL}/v1/certs/auto" \
     -H "Authorization: Bearer $TOKEN" \
     -H "Content-Type: application/json" \
     -d "{\"node_id\":\"${NODE_ID}\",\"fqdns\":[\"${CERT_ISSUER_DOMAIN}\"]}" || true)
   CERT=$(echo "$RESPONSE" | jq -r '.certificate // empty' 2>/dev/null || true)
   KEY=$(echo "$RESPONSE" | jq -r '.private_key // empty' 2>/dev/null || true)
   ORDER_ID=$(echo "$RESPONSE" | jq -r '.order_id // empty' 2>/dev/null || true)
-  if [ -n "${CERT:-}" ] && [ -n "${KEY:-}" ] && [ "${CERT}" != "null" ] && [ "${KEY}" != "null" ]; then
+  if [ -n "${CERT:-}" ] && [ -n "${KEY:-}" ] && [ -n "${ORDER_ID:-}" ]; then
     break
   fi
   sleep 2
 done
 
-CERT=$(echo "$RESPONSE" | jq -r '.certificate // empty')
-KEY=$(echo "$RESPONSE" | jq -r '.private_key // empty')
-ORDER_ID=$(echo "$RESPONSE" | jq -r '.order_id // empty')
-
-if [ -z "$CERT" ] || [ -z "$KEY" ] || [ "$CERT" = "null" ] || [ "$KEY" = "null" ]; then
+if [ -z "$CERT" ] || [ -z "$KEY" ] || [ -z "$ORDER_ID" ]; then
   echo "ERROR: Failed to obtain certificate bundle from ${FINAL_PROXY_SSL_SERVICE}:${PROXY_SSL_PORT}"
   echo "$RESPONSE"
   exit 1
 fi
 
-echo "$CERT" > /etc/nginx/ssl/cert.pem
-echo "$KEY" > /etc/nginx/ssl/private.key
-if [ -n "$ORDER_ID" ] && [ "$ORDER_ID" != "null" ]; then
-  echo "$ORDER_ID" > /etc/nginx/ssl/order.id
+CERT_TMP="${CERT_FILE}.tmp.$$"
+KEY_TMP="${KEY_FILE}.tmp.$$"
+ORDER_ID_TMP="${ORDER_ID_FILE}.tmp.$$"
+if ! printf '%s\n' "$CERT" > "$CERT_TMP" || ! chmod 644 "$CERT_TMP" \
+    || ! (umask 077; printf '%s\n' "$ORDER_ID" > "$ORDER_ID_TMP" \
+      && printf '%s\n' "$KEY" > "$KEY_TMP"); then
+  rm -f "$CERT_TMP" "$KEY_TMP" "$ORDER_ID_TMP"
+  exit 1
+fi
+if ! certificate_matches_key "$CERT_TMP" "$KEY_TMP"; then
+  echo "ERROR: Issuer returned an invalid certificate/private-key pair"
+  rm -f "$CERT_TMP" "$KEY_TMP" "$ORDER_ID_TMP"
+  exit 1
+fi
+# cert.pem is the marker: key and order must be complete before it appears.
+if ! rm -f "$CERT_FILE" \
+    || ! mv -f "$ORDER_ID_TMP" "$ORDER_ID_FILE" \
+    || ! mv -f "$KEY_TMP" "$KEY_FILE" \
+    || ! mv -f "$CERT_TMP" "$CERT_FILE"; then
+  rm -f "$CERT_TMP" "$KEY_TMP" "$ORDER_ID_TMP" "$CERT_FILE"
+  exit 1
 fi
 
-chmod 644 /etc/nginx/ssl/cert.pem
-chmod 600 /etc/nginx/ssl/private.key
-chmod 600 /etc/nginx/ssl/order.id 2>/dev/null || true
-
 echo "SSL certificate obtained and installed for ${CERT_ISSUER_DOMAIN}"
+if [ "$FALLBACK_TO_ISSUE" = true ]; then
+  # The running nginx must reload because a fallback can replace the key too.
+  exit 10
+fi
 
 # Do not reload nginx here; entrypoint manages configuration and startup
