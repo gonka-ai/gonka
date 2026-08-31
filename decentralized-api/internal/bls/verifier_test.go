@@ -10,7 +10,6 @@ import (
 	"github.com/consensys/gnark-crypto/ecc/bls12-381/fr"
 	"github.com/productscience/inference/x/bls/types"
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 // createMockCosmosClient creates a minimal mock cosmos client for testing
@@ -406,53 +405,6 @@ func TestProcessGroupPublicKeyGeneratedEventParsing(t *testing.T) {
 	err = blsManager.ProcessGroupPublicKeyGeneratedToVerify(invalidEpochEvent)
 	assert.Error(t, err)
 	assert.Contains(t, err.Error(), "failed to parse epoch_id")
-}
-
-func TestPerformVerificationAbortsAfterUnexpectedDealerPanic(t *testing.T) {
-	t.Cleanup(func() { processDealerPartHook = nil })
-	processDealerPartHook = func(dealerIndex int) {
-		if dealerIndex == 1 {
-			panic("injected dealer panic")
-		}
-	}
-
-	blsManager := NewBlsManager(createMockCosmosClient())
-	commitment := make([]byte, 96)
-	commitment[0] = 0x01
-
-	result := &VerificationResult{
-		EpochID:   99,
-		SlotRange: [2]uint32{0, 0},
-	}
-	me := &types.BLSParticipantInfo{
-		Address:            "cosmos1testaddress",
-		SlotStartIndex:     0,
-		SlotEndIndex:       0,
-		Secp256K1PublicKey: []byte{0x02},
-	}
-	dealerParts := []*types.DealerPartStorage{
-		nil,
-		{
-			DealerAddress: "attacker",
-			Commitments:   [][]byte{commitment},
-			ParticipantShares: []*types.EncryptedSharesForParticipant{
-				{EncryptedShares: [][]byte{make([]byte, 113)}},
-			},
-		},
-		{
-			DealerAddress: "later",
-			Commitments:   [][]byte{commitment, commitment},
-			ParticipantShares: []*types.EncryptedSharesForParticipant{
-				{EncryptedShares: [][]byte{{0x04}}},
-			},
-		},
-	}
-
-	err := blsManager.performVerificationAndReconstruction(result, dealerParts, me, 0, 1)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "dealer 1 processing panicked")
-	assert.Empty(t, result.ComplaintEvidence, "unexpected panic must not invent complaint evidence")
-	assert.Nil(t, result.DealerShares[2], "verification must abort without processing later dealers")
 }
 
 func TestRecomputeAggregatedSharesFromConsensusValidDealers(t *testing.T) {

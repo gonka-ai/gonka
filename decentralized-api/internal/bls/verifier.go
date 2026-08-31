@@ -234,14 +234,7 @@ func (bm *BlsManager) performVerificationAndReconstruction(verificationResult *V
 	return nil
 }
 
-// processDealerPartHook is set by tests to inject a panic inside processDealerPart
-// (after DecryptBytes is no longer on the stack).
-var processDealerPartHook func(dealerIndex int)
-
 func (bm *BlsManager) processDealerPart(verificationResult *VerificationResult, dealerPart *types.DealerPartStorage, dealerIndex, myParticipantIndex, expectedCommitmentsCount, numSlots, initialDealerKeyIndex int) {
-	if processDealerPartHook != nil {
-		processDealerPartHook(dealerIndex)
-	}
 	logging.Debug(verifierLogTag+"Processing dealer", inferenceTypes.BLS, "dealerIndex", dealerIndex)
 
 	if dealerPart == nil {
