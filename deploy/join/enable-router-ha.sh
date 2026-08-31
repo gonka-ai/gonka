@@ -1224,6 +1224,31 @@ if [[ $versiond_mode == ha ]]; then
 	fi
 	gonka_compose_validate_ha_version_catalog "$docker_bin" versiond
 fi
+
+current_proxy_component=$(proxy_component)
+proxy_was_absent=false
+if ! container_exists proxy; then
+	proxy_was_absent=true
+	warn "public proxy is absent; rebuilding it from the resolved Compose topology"
+elif [[ $current_proxy_component != proxy-router ]]; then
+	[[ $versiond_mode != ha ]] || capture_migration_route_baseline
+fi
+
+if [[ $pull_policy != never ]]; then
+	"${compose[@]}" pull --policy "$pull_policy" \
+		proxy-policy2 proxy-policy proxy
+fi
+verify_policy_contract
+capture_policy_rollback
+if [[ $proxy_was_absent == true ]]; then
+	arm_proxy_rollback absent
+elif [[ $current_proxy_component == proxy-router ]]; then
+	arm_proxy_rollback current
+else
+	arm_proxy_rollback v4
+fi
+begin_ingress_transaction
+
 ensure_compose_network proxy-policy-front "$policy_network" "$compose_project"
 if [[ $versiond_mode == ha ]]; then
     # `apply` is the lifecycle bridge between the main Compose project and the
@@ -1251,30 +1276,6 @@ if container_exists proxy; then
             "$policy_network" proxy
     fi
 fi
-
-current_proxy_component=$(proxy_component)
-proxy_was_absent=false
-if ! container_exists proxy; then
-	proxy_was_absent=true
-	warn "public proxy is absent; rebuilding it from the resolved Compose topology"
-elif [[ $current_proxy_component != proxy-router ]]; then
-	[[ $versiond_mode != ha ]] || capture_migration_route_baseline
-fi
-
-if [[ $pull_policy != never ]]; then
-	"${compose[@]}" pull --policy "$pull_policy" \
-		proxy-policy2 proxy-policy proxy
-fi
-verify_policy_contract
-capture_policy_rollback
-if [[ $proxy_was_absent == true ]]; then
-	arm_proxy_rollback absent
-elif [[ $current_proxy_component == proxy-router ]]; then
-	arm_proxy_rollback current
-else
-	arm_proxy_rollback v4
-fi
-begin_ingress_transaction
 
 # The reserve slot is always reconciled first. The fixed service dependency
 # preserves the same order for an ordinary `docker compose up`.
