@@ -557,6 +557,32 @@ jq -e '.schema == 2 and
             (.source.required_routes | index("v5") != null)))' \
     "$maintenance_journal" >/dev/null || fail \
     "interrupted maintenance did not preserve immutable recovery evidence"
+
+assert_maintenance_fence() {
+    local label=$1 before after
+    shift
+    before=$(sha256sum "$maintenance_journal")
+    if "$@" >"$tmpdir/maintenance-fence-$label.out" 2>&1; then
+        fail "$label ignored the active maintenance journal"
+    fi
+    grep -q 'active maintenance journal blocks' \
+        "$tmpdir/maintenance-fence-$label.out" || fail \
+        "$label did not diagnose the active maintenance transaction"
+    after=$(sha256sum "$maintenance_journal")
+    [[ $after == "$before" ]] || fail \
+        "$label changed the active maintenance journal"
+}
+
+assert_maintenance_fence prepare-networks \
+    "${fleet[@]}" prepare-networks
+assert_maintenance_fence up "${fleet[@]}" up
+assert_maintenance_fence rollout "${fleet[@]}" rollout
+assert_maintenance_fence start "${fleet[@]}" start 0
+assert_maintenance_fence stop "${fleet[@]}" stop 0
+assert_maintenance_fence stop-all \
+    "${fleet[@]}" stop-all --maintenance
+assert_maintenance_fence down "${fleet[@]}" down --maintenance
+
 sed -i "s|^VERSIOND_ROUTER_IMAGE=.*|VERSIOND_ROUTER_IMAGE=$base_image|" \
     "$tmpdir/config.env"
 if VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \

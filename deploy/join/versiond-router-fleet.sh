@@ -2173,11 +2173,11 @@ fleet_maintenance_rollout() {
         1 | true | yes) ;;
         *) fail "maintenance-rollout requires VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true" ;;
     esac
-    prepare_slot_networks
     image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
     if recover_durable_maintenance "$image"; then
         [[ $maintenance_recovery_committed == true ]] && return 0
     fi
+    prepare_slot_networks
     # Journal recovery must run before live route discovery because source
     # slots may be stopped and candidates may be only partially created.
     discover_expected_routes
@@ -2244,13 +2244,27 @@ case $command in
     *) gonka_acquire_deployment_lock "$config_dir" || exit 1 ;;
 esac
 
+# A durable maintenance decision owns every slot until recovery either restores
+# the exact source boundary or finishes the committed candidate. Do not let a
+# different mutating command alter that evidence before the recovery path has
+# even inspected it.
+if [[ -f $maintenance_journal ]]; then
+    case $command in
+        apply | maintenance-rollout | status | verify-admission | wait-version | \
+            -h | --help | help) ;;
+        *) fail \
+            "active maintenance journal blocks '$command'; run apply or maintenance-rollout to recover it" \
+            ;;
+    esac
+fi
+
 # Runtime-discovered versions are part of the safety reserve even though they
 # are intentionally absent from the host-managed bootstrap environment.
 # Whole-fleet emergency removal needs no routing state and must still work when
 # every router Runtime API is wedged.
 case $command in
     stop-all | down) ;;
-    maintenance-rollout)
+    apply | maintenance-rollout)
         [[ -f $maintenance_journal ]] || discover_expected_routes
         ;;
     *) discover_expected_routes ;;
