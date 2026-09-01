@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -52,6 +53,7 @@ type Postgres struct {
 	healthReady     bool
 	healthFails     int
 	healthOKs       int
+	healthTerminal  bool
 	healthSaturated bool
 	healthStop      context.CancelFunc
 	healthDone      chan struct{}
@@ -309,6 +311,14 @@ type postgresMonitorConfig struct {
 	poolSaturated func() bool
 }
 
+func postgresMonitorDelay(interval time.Duration) time.Duration {
+	var entropy [1]byte
+	if _, err := rand.Read(entropy[:]); err != nil {
+		return interval
+	}
+	return interval * time.Duration(80+int(entropy[0])%41) / 100
+}
+
 func (s *Postgres) startPostgresMonitors(config postgresMonitorConfig) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.mu.Lock()
@@ -339,7 +349,7 @@ func (s *Postgres) runPostgresReadinessMonitor(ctx context.Context, config postg
 			slog.Warn("devshard storage: close postgres health connection", "error", err)
 		}
 	}()
-	timer := time.NewTimer(config.interval)
+	timer := time.NewTimer(postgresMonitorDelay(config.interval))
 	defer timer.Stop()
 	for {
 		select {
@@ -378,7 +388,7 @@ func (s *Postgres) runPostgresReadinessMonitor(ctx context.Context, config postg
 				slog.Info("devshard storage: postgres application pool saturation cleared")
 			}
 		}
-		timer.Reset(config.interval)
+		timer.Reset(postgresMonitorDelay(config.interval))
 	}
 }
 
@@ -387,7 +397,7 @@ func (s *Postgres) runPostgresFenceMonitor(
 	cancel context.CancelFunc,
 	config postgresMonitorConfig,
 ) {
-	timer := time.NewTimer(config.interval)
+	timer := time.NewTimer(postgresMonitorDelay(config.interval))
 	defer timer.Stop()
 	for {
 		select {
@@ -400,7 +410,7 @@ func (s *Postgres) runPostgresFenceMonitor(
 		err := config.fenceCheck(fenceCtx)
 		fenceCancel()
 		if err == nil {
-			timer.Reset(config.interval)
+			timer.Reset(postgresMonitorDelay(config.interval))
 			continue
 		}
 		if ctx.Err() != nil {
@@ -408,6 +418,7 @@ func (s *Postgres) runPostgresFenceMonitor(
 		}
 		s.mu.Lock()
 		s.healthReady = false
+		s.healthTerminal = true
 		s.mu.Unlock()
 		fatalErr := fmt.Errorf("postgres fence session lost: %w", err)
 		slog.Error("devshard storage: postgres fence session lost; terminating process", "error", err)
@@ -436,6 +447,10 @@ func (s *Postgres) recordHealthProbe(result postgresHealthProbeResult, saturated
 	s.healthSaturated = saturated
 	switch result {
 	case postgresHealthProbeSuccess:
+		if s.healthTerminal {
+			s.healthReady = false
+			break
+		}
 		s.healthFails = 0
 		if s.healthOKs < postgresHealthQuorum {
 			s.healthOKs++

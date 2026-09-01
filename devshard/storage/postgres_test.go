@@ -595,6 +595,19 @@ func TestPostgresFenceCheckHasIndependentBudget(t *testing.T) {
 	require.Equal(t, 30*time.Second, postgresFenceCheckTimeout)
 }
 
+func TestPostgresFenceLossCannotBeOverwrittenBySuccessfulProbe(t *testing.T) {
+	pg := &Postgres{healthReady: true}
+
+	pg.mu.Lock()
+	pg.healthReady = false
+	pg.healthTerminal = true
+	pg.mu.Unlock()
+	for range postgresHealthQuorum + 1 {
+		_, current := pg.recordHealthProbe(postgresHealthProbeSuccess, false)
+		require.False(t, current.ready)
+	}
+}
+
 func TestPostgresReadinessDoesNotWaitForFenceCheck(t *testing.T) {
 	healthChecks := make(chan struct{}, postgresHealthQuorum)
 	fenceStarted := make(chan struct{}, 1)

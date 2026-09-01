@@ -1915,6 +1915,11 @@ func (m *Manager) closeLegacyOnlyStorageInitLocked() {
 }
 
 func (m *Manager) waitForRestartBackoff(ctx context.Context, c *child, backoff time.Duration) bool {
+	var entropy [1]byte
+	if _, err := rand.Read(entropy[:]); err == nil {
+		// Spread replicas across an 80-120% window after a shared outage.
+		backoff = backoff * time.Duration(80+int(entropy[0])%41) / 100
+	}
 	timer := time.NewTimer(backoff)
 	defer timer.Stop()
 
