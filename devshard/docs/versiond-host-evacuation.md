@@ -10,106 +10,28 @@ updates remain a separate operation managed inside one live `versiond`
 
 ## The operator contract
 
-There are no host-evacuation commands. The lifecycle of a host is the lifecycle
-of its container. Run host commands from `deploy/join` with the complete HA
-Compose model. Router slots are deliberately outside that project and are
-managed by the fleet script:
-
-Before any command below, restore the complete ordered `COMPOSE_FILE` used by
-the installation, including external-PostgreSQL, observability, and operator
-overrides. Do not replace it with only the stock base and HA files.
+There are no evacuation commands. The lifecycle of a host is the lifecycle of
+its container:
 
 | Intent | Command | What makes it safe |
 | --- | --- | --- |
-| Evacuate / stop temporarily | `source ./config.env && docker compose stop versiond2` | versiond fails `/readyz` first, then stops accepting; the router removes it before it stops taking work |
-| Replace / restart | `source ./config.env && docker compose up -d --no-deps --wait --wait-timeout 2100 versiond2` | Compose waits for the same `/readyz` contract as the router; a failed reconcile returns an error instead of silently continuing |
-| Inspect router fleet | `source ./config.env && ./versiond-router-fleet.sh status` | rejects missing, duplicate, or orphan slot ownership |
-| Apply router image or route declarations | persist `config.env`, then run `./enable-router-ha.sh --versiond-mode ha --edge-mode auto` | its idempotent fleet `apply` bootstraps an absent fleet or replaces only changed slots one at a time, rolls back a failed slot, then refreshes the top route map |
-| Change legacy pins, placement pool, or coarse/per-version mode | prefix `VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true` to `./versiond-router-fleet.sh maintenance-rollout`, then refresh the top map | drains the complete old fleet before any new-placement router is visible; exact image+env rollback preserves the old live routes on failure |
+| Evacuate / stop | `docker compose stop versiond2` | versiond fails `/readyz` first, then stops accepting; the router removes it before it stops taking work |
+| Replace / restart | `docker compose up -d --no-deps --wait versiond2` | it rejoins the pool only once `/readyz` returns 200; `--wait` returns at the same moment |
+| Add a host | start another container on the pool alias, or add it to the endpoint file and run `./versiond-router-fleet.sh apply` | DNS gains an A record, or the routers roll onto the new list; a host is routed to only after its first successful check |
+| Decommission | persist `VERSIOND2_REPLICAS=0` in `config.env`, then `docker compose stop versiond2` and `docker compose rm -f versiond2` | a later full `up -d` does not recreate it; `restart: always` cannot bring it back |
+| Inspect what the routers believe | `./versiond-router-fleet.sh status` | read-only; the routers keep no other state |
 
 This works because the router derives everything it needs by observation:
-membership from DNS, health from active `/readyz` checks. Nothing has to be told
-about the change, so nothing can be told about it incorrectly.
+membership from DNS or the endpoint file, health from active `/readyz` checks.
+Nothing has to be told about the change beyond the membership list itself.
 
-### Whole-node maintenance
-
-The main Compose project consumes the router fleet's external networks but does
-not own its independent slot containers. A full node shutdown must therefore
-include the fleet lifecycle explicitly:
-
-```bash
-source ./config.env
-./versiond-router-fleet.sh stop-all --maintenance
-docker compose down
-./versiond-router-fleet.sh down --maintenance
-```
-
-Run `stop-all` first so accepted router streams receive the configured drain
-budget. Run `down` only after the main project has detached from the external
-networks; it fails before deleting anything when another container is still
-attached. It removes every container owned by the configured fleet ID, including
-orphan/duplicate slots, and its current or renamed owned networks. On the next
-start, run `prepare-networks` before the main `up -d`, then run
-`enable-router-ha.sh` after versiond is available.
-
-### Legacy owner cannot be evacuated
-
-`VERSIOND_LEGACY_HOST` owns the local SQLite data for every version in
-`VERSIOND_NON_HA_VERSIONS`. No other host can serve those sessions. **Do not stop
-or decommission that service while the list is non-empty.** With the shipped
-defaults this means `versiond` cannot be evacuated while `v1 v2 v3` are pinned;
-only `versiond2` is an eligible evacuation target.
-
-Before evacuating the owner, migrate every pinned version to shared Postgres,
-persist `export VERSIOND_NON_HA_VERSIONS=""` in `config.env`, schedule a
-devshard maintenance window, and run:
-
-```bash
-source ./config.env
-VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
-  ./versiond-router-fleet.sh maintenance-rollout
-./enable-router-ha.sh --versiond-mode ha --edge-mode auto
-```
-
-The maintenance command drains accepted streams before the all-router gap,
-then starts only the new placement generation. Verify that requests use a
-`versiond_pool_<v>` backend.
-Keep the empty export: deleting or unsetting it restores the safe `v1 v2 v3`
-default. Stopping the owner first is an outage, not failover.
-
-### Permanent membership changes
-
-`docker compose stop` is temporary. Both hosts use `restart: always`; Docker
-starts a manually stopped container again after the daemon restarts. Permanent
-membership is therefore stored in `config.env`, not in the current container
-state:
-
-```bash
-# Persist this line in config.env; do not only run it in the current shell.
-export VERSIOND2_REPLICAS=0
-```
-
-Then drain and remove the old container:
-
-```bash
-source ./config.env && \
-docker compose stop versiond2
-source ./config.env && \
-docker compose rm -f versiond2
-```
-
-The overlay applies `VERSIOND_REPLICAS` and `VERSIOND2_REPLICAS` as desired
-replica counts. A later full-model `up -d` therefore does not recreate a
-decommissioned service. To add it back as a new pool member, persist the
-corresponding value as `1`, then run the targeted `up -d --no-deps` command. To
-add a third distinct host, add a new service with its own data directory and the
-`versiond-pool` network alias to the deployment model before starting it.
-
-The HA overlay defines a Compose healthcheck against `/readyz`. Use `--wait` for
-every ordered replacement so the next host is not touched until the previous
-one has reconciled and can serve. `VERSIOND_HEALTH_START_PERIOD` defaults to
-`30m` for slow downloads; the runbook's `2100`-second wait adds five minutes for
-failure accounting and command completion.
+`docker compose stop` is temporary because both hosts use `restart: always`.
+Permanent membership lives in `config.env`: `VERSIOND_REPLICAS` and
+`VERSIOND2_REPLICAS` are the desired replica counts of the two shipped
+services (`1` or `0`). Never decommission `VERSIOND_LEGACY_HOST` while
+`VERSIOND_NON_HA_VERSIONS` is non-empty; those versions have SQLite state only
+on that host. Hosts on other machines are managed on those machines (see
+[release-0.2.15-v5.md](./release-0.2.15-v5.md#multi-host-versiond)).
 
 ## Safety invariants
 
@@ -138,18 +60,6 @@ failure accounting and command completion.
    having finished booting. Per-version pools are narrower on purpose — they
    route each version the host already serves — so a host mid-install takes
    traffic for what it has and nothing else.
-10. Router replacement preserves at least `VERSIOND_ROUTER_MIN_READY` peers for
-    the coarse pool and for every effective bootstrap or governance version that
-    currently has capacity.
-    Router slots are separate Compose projects, so a normal main-stack `up -d`
-    cannot replace the entire fleet. Fleet `up` and `start` preserve any existing
-    slot's image and configuration; `apply`/`rollout` compare the requested image
-    ID and Compose config hash, then replace only changed slots.
-11. The main Compose project consumes, but does not own, the fleet's front/back
-    networks. `versiond-router-fleet.sh prepare-networks` creates them with a
-    stable fleet identity. Whole-node teardown uses the explicit fleet `down`
-    after main-stack `down`, so independent `restart: always` slots and stale
-    fleet-owned networks cannot survive unnoticed.
 
 Earlier revisions promised that the last active upstream could not be drained
 away. Nothing enforces that now: stopping a container is a Docker operation and
@@ -211,8 +121,7 @@ hide the force path.
 passing checks (taking traffic), resolved and failing checks (not taking
 traffic), administratively drained, or unresolved. All four are derived, none
 are stored, and a router restart rebuilds the full picture within a couple of
-seconds. The fleet script is an external ordered rollout, not a routing control
-plane: it cannot mutate a server slot and it persists no membership database.
+seconds.
 
 ## Context ownership
 
@@ -258,7 +167,7 @@ Endpoints, all on the traffic listener (`:8080`):
 | --- | --- | --- |
 | `GET /healthz` | the legacy JSON array of per-version child state | operators, dashboards, existing clients |
 | `GET /readyz?version=<v>` | `200` when a running child serves `<v>` **and** still reports itself ready | the router's per-version health check |
-| `GET /readyz` | `200` when this host should receive new work at all | the router's coarse check for non-version paths |
+| `GET /readyz` | `200` when this host should receive new work at all | the router's check for non-version paths, and for every version when none is declared |
 
 `/readyz` is on the public listener on purpose. It is not a private admin
 control: it is the contract the load balancer reads, and there is nothing in it a
@@ -278,9 +187,9 @@ caller could abuse — it exposes strictly less than `/healthz` already does.
   (`Converged`).
 
 `Converged` latches. Once a versiond has run its full desired set, a later
-catalog expansion, download, or child restart does not retract it. Without the
-latch, adding a version could briefly un-converge every host at once and evict
-all existing pools — the failure mode readiness exists to prevent.
+download or child restart does not retract it. Without the latch, a routine
+same-name SHA bump would briefly un-converge every host at once and evict the
+entire pool — the failure mode readiness exists to prevent.
 
 The join Compose healthcheck intentionally probes this coarse `/readyz`
 contract. A fresh host that has not yet run its complete desired set therefore
@@ -329,26 +238,6 @@ it belongs in its own typed condition rather than in the generic reconcile error
 `GET /healthz` keeps the exact legacy JSON array for existing clients. Query
 parameters do not select a second schema.
 
-## Storage safety in an HA deployment
-
-Two independent guards apply in an HA deployment. `GONKA_HA` is the
-authoritative declaration; the router also detects more than one currently
-usable server in the selected backend as a fail-closed fallback when that
-declaration was omitted:
-
-1. **At startup**: `devshardd` refuses to boot if its storage is not fail-closed
-   Postgres. A child that could fork session state never starts.
-2. **At request time**: the router stamps `Devshard-Ha: true` on sticky-pool
-   traffic when `GONKA_HA` is set or more than one server is usable in the
-   selected per-version or coarse backend, and `devshardd` answers `503` if it
-   is serving that request from storage a sibling cannot see.
-
-The second guard exists because the first can be bypassed by a partial rollout:
-a host that was configured before the deployment became HA is already running.
-Each internal `versiond_legacy_<v>` backend strips the header, because a
-single-server backend has no sibling by construction. Responses retain the
-stable `X-Versiond-Backend: versiond_legacy` label.
-
 ## Failure policy
 
 | Situation | Behaviour |
@@ -387,4 +276,3 @@ restarted host rejoins the pool only after it reports ready.
 | [versiond-router/README.md](../../versiond-router/README.md) | Router routing, per-version health, and how to read the pool |
 | [rolling-update.md](./rolling-update.md) | Same-name SHA blue/green inside one versiond (Track A) |
 | [high-availability-architecture.md](./high-availability-architecture.md) | Where each component sits |
-| [release-0.2.15-v5.md](./release-0.2.15-v5.md) | Operator-facing release notes |

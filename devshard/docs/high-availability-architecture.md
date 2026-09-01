@@ -137,17 +137,14 @@ drop Linux capabilities and enable `no-new-privileges`. Strong process-to-proces
 isolation would require a separate sidecar or a narrow privileged broker and is
 not part of this deployment model.
 
-The two policy workers are fixed Compose slots rather than one scaled service.
-Before mutation, the updater asks the public HAProxy which slot is admitted. It
-reconciles the other slot first, waits for admission, and only then replaces the
-original reserve. If neither slot is admitted it stops before touching either.
-Both images declare immutable
-`ai.gonka.proxy-policy-contract=1`; the updater rejects a rolling change of this
-wire contract before replacing either slot. A failure restores each slot's
-captured image and original replica count. The same reserve-first dependency is
-present in the Compose model, so an ordinary `docker compose up` cannot replace
-both workers in parallel. Marking any backend unready affects only new
-selections; it does not move or close an established stream.
+The two policy workers are fixed Compose slots rather than one scaled service,
+and the Compose model orders them (`proxy-policy` depends on `proxy-policy2`),
+so an ordinary `docker compose up` replaces them one after the other and the
+public HAProxy keeps one admitted worker throughout. Both images declare
+`ai.gonka.proxy-policy-contract=1`; a wire-contract change would need a
+maintenance window rather than a rolling replacement. Marking any backend
+unready affects only new selections; it does not move or close an established
+stream.
 
 Both HAProxy layers retry connection failures, empty responses, and `502` only.
 They disable L7 replay for non-idempotent methods: once a POST may have reached
@@ -298,10 +295,28 @@ if the required live routes do not return.
 
 This is the **key capability**: versiond instances can run on **separate
 IPs/machines**, each supervising its own set of devshardd children per version,
-all behind the `versiond-router` fleet for sticky session affinity. The
-`deploy/join/docker-compose.versiond.yml` overlay attaches the hosts to the
-shared backend network; `deploy/join/versiond-router-fleet.sh` owns the router
-slots on independent Compose projects.
+all behind the `versiond-router` fleet for sticky session affinity.
+
+Pool membership has two sources. Inside one Docker host the
+`deploy/join/docker-compose.versiond.yml` overlay attaches every replica to the
+shared backend network under the `versiond-pool` alias, and the routers follow
+DNS. Across machines the operator lists the members explicitly in the file
+named by `VERSIOND_POOL_ENDPOINTS_FILE` (`{id, host, port}` entries, local
+replicas by container name, remote ones by private address); the file takes
+precedence over DNS, every router slot mounts it, and
+`deploy/join/versiond-router-fleet.sh apply` rolls the slots after an edit.
+Either way each router computes the same `hash-key addr` ring from the same
+membership, so escrow placement does not depend on which router answered.
+
+A remote versiond needs the network node's `/versions` feed (port 9100), chain
+gRPC and RPC, the node manager, and the shared PostgreSQL. The
+`docker-compose.private-endpoints.yml` overlay publishes them on the private
+interface of the network node; `docker-compose.versiond-remote.yml` runs the
+remote versiond against them with the same `KEY_NAME` and keyring. Remote
+hosts are updated one at a time by hand; the routers withdraw a host while it
+fails `/readyz`. Versions pinned in `VERSIOND_NON_HA_VERSIONS` stay on
+`VERSIOND_LEGACY_HOST` because their state is local SQLite. See
+[release-0.2.15-v5.md](./release-0.2.15-v5.md#multi-host-versiond).
 
 > **Multi-instance requires a shared Postgres** — see §4.
 
@@ -385,21 +400,16 @@ independent prerequisite. This keeps a child whose database connection was lost
 out of every per-version hash ring without making a single transient probe flap
 the whole pool.
 
-Before changing an HA Compose deployment, the updater also requires `versiond`
-and `versiond2` to resolve the same non-empty `(PGHOST, PGPORT, PGDATABASE,
-PGUSER)` tuple and refuses an implicit endpoint change from the running
-containers. After replacement it reads the durable database UUID through each
-supervisor and commits the update only when both UUIDs match. The tuple is the
-early deployment preflight; the UUID is proof against aliases that resolve to
-different databases. `DATABASE_URL` is rejected in HA because devshardd reads
-the libpq `PG*` environment; allowing both contracts could make supervisor
-lookups and child writes use different databases. `PGSERVICE`,
-`PGSERVICEFILE`, and `PGOPTIONS` are rejected for the same reason: a service
-file or session parameter such as `search_path` can override
-the tuple after it was verified. The updater checks these bypass variables in
-both the desired Compose model and already-running supervisors before replacing
-the first host. When the resolved host is external, the
-updater automatically applies the no-local-PostgreSQL overlay.
+Every versiond replica of one participant must point at the same PostgreSQL:
+the same `PGHOST`, `PGPORT`, `PGDATABASE` and `PGUSER`, with
+`DEVSHARD_STORAGE_MODE=postgres`. `deploy/join/update-devshard.sh --check`
+verifies this in the rendered Compose model before it changes anything. Use
+the libpq `PG*` variables rather than `DATABASE_URL`, `PGSERVICE` or
+`PGOPTIONS`, so the supervisor's session lookups and the children's writes
+cannot resolve different databases. A managed PostgreSQL is selected by
+overriding `PGHOST` on both replicas and adding
+`docker-compose.versiond-external-postgres.yml`, which keeps the bundled
+`devshard-postgres` out of the model.
 
 Therefore:
 
