@@ -190,7 +190,7 @@ dispute surfaces for attribution.
 | **`F`** | Originator freshness budget. Default `60 s`. |
 | **`W_conf`** | The span of heights treated as contemporaneous: the distance one signer may raise the log's floor `F(m)` unaided, and how far above its own tip a producer will carry that floor (§14). Default `max(256, ⌈F / block_time⌉)`. |
 | **`F(m)`** | The reference height the log had established at nonces `< m`; the bar L0 holds every Diff-resident height to. Distinct from the freshness budget `F`. Raised only by **host-signed** first-party stamps; never exceeds the max reported host envelope `H` (§14). |
-| **`FloorIndex`** | The structure that answers `F(m)`: a per-signer high-water of attributed claims. Sequencer-composed stamps (`MsgHeartbeat`, `MsgStartInference`) do not raise it. Carries (`stamp = F`) do not raise it. A raise is a host-signed first-party envelope height (`MsgHeightAck`, confirm, finish). Unaided / jump bounds still apply. Never lowers. Retain window `DefaultFloorWindow` = 4096 *increases*. §14. |
+| **`FloorIndex`** | The structure that answers `F(m)`: a per-signer high-water of attributed claims. Sequencer-composed stamps (`MsgHeartbeat`, `MsgStartInference`) do not raise it. Carries (`stamp = F`) do not raise it. A raise is a host-signed first-party envelope height (`MsgHeightAck`, confirm, finish). Unaided / jump bounds still apply. Never lowers on the hot path. **Phase F** adds garbage cleanup after L6 if a garbage pair became `F` (*Garbage cleanup after L6* in §14). Retain window `DefaultFloorWindow` = 4096 *increases*. §14. |
 | **`Q`** | Reachability / floor corroboration threshold. Default `ceil(2/3 × N_hosts)`. Used for heartbeat turn completion and floor jumps beyond `W_conf` — **not** for envelope height confirmation (withdrawn §17). |
 | **Originator** | The host whose **own oracle** first observed `(H, hash)`. Identified by `OriginatorSenderID` on the wire. Never the user or the gateway. |
 | **Carrier** | Any sender that forwards a section it did not originate (typically the user). Identified by the session signature. |
@@ -1319,7 +1319,7 @@ diff-ingest time:
 | L3 | Causality: `ref_nonce` names a `MsgHeartbeat` already in `Diff` with the same `turn_seq` | `INVALID(ack_causality)`, attributed to the appending user (cPoC C3′ shape) |
 | L4 | Envelope binding: the ack's Diff height/hash equal `max(anchor, F(m))` — the reference height the producer rule requires, given the first-party `anchor` in the response-leg section of that same exchange and the floor the receiver can compute. Heartbeat height binds to the request-leg section the same way (§10.4), and only when that section is the sequencer's own read: a carry-forward relays a peer's tip, so there is no first-party claim to contradict. A receiver with no floor view checks the half it can, `height >= anchor`. **Same-exchange check only** — see the tier table below | `DISPUTE_ORIGINATOR` (ack) / `DISPUTE_CARRIER` (heartbeat) **on sight** — a self-contradiction needs no oracle — recorded as a retained mark, never as diff invalidity |
 | L5a | Live `D` band at admission: `\|observed_height − local_aligned\| > D`. This is the **Strong hook**: the receiver cannot verify a reference height that far from its own follower, and Strong resolves it by having the claimant supply a `LightBlock` for the height it claimed | receiver MAY refuse the exchange and records a mark; with Strong, `INVALID(strong_required)` for that exchange; **never** a permanent diff verdict |
-| L6 | Oracle reconciliation of `(observed_height, observed_block_hash)` — identical to step 7 above, including the deferred-check queue | `DEFERRED_FAIL` / `DISPUTE_ORIGINATOR` |
+| L6 | Oracle reconciliation of `(observed_height, observed_block_hash)` — identical to step 7 above, including the deferred-check queue. **Attribution only:** a mismatch does **not** rewind `F`. Garbage cleanup of a pair that became the floor is Phase F (*Garbage cleanup after L6* below) | `DEFERRED_FAIL` / `DISPUTE_ORIGINATOR` |
 | L7 | Turn bookkeeping: update `SyncTurnRecord` (§10.7); if `sync_vector` says `ACKED(j, h, n)` and `Diff[n]` has no matching ack, that is user-attributable (§11.1). `MISSING` / `UNREACHABLE` / `REJECTED` with no ack is **inconclusive**. | `ACKED` vs log: user-attributable, no `INVALID` — the diff is already signed. Other gaps: no blame. |
 
 #### One height in the log, one at the edge
@@ -1481,7 +1481,7 @@ from the applied log alone:
 | ------ | -------- | --------- |
 | raise by `≤ W_conf` above the standing floor | any one **host** signer | ordinary advance from a response-leg tip. A sequencer heartbeat does not raise `F`; the first host ack/confirm/finish at that height does |
 | raise by more | `Q` distinct **host** signers holding that height | genuine jump (recovering oracle, mainnet bootstrap). Sequencer + one host is not `Q` |
-| lower | never | a floor that could fall would need L0 to accept stamps below it, i.e. the tolerance band this design exists to avoid. Reorgs resolve without it (below) |
+| lower | never on the hot path | a floor that could fall would need L0 to accept stamps below it, i.e. the tolerance band this design exists to avoid. Reorgs resolve without it (below). **Phase F** is the planned exception: after L6 (or Strong) confirms a garbage pair that **became** `F`, clean the floor without `INVALID`-ing the diff (*Garbage cleanup after L6* below) |
 
 Claims are **attributed**, and must be: without an identity, one signer
 echoing itself across five messages is indistinguishable from five parties
@@ -1644,6 +1644,27 @@ resolves in three steps, none of them a new session:
 A reorg deeper than `W_conf` takes the omission branch of the producer rule
 instead, exactly as a poisoned floor does.
 
+##### Garbage cleanup after L6 (Phase F)
+
+L6 is **attribution**, not floor repair. A later `DEFERRED_FAIL` /
+`DISPUTE_ORIGINATOR` names the host that established a garbage `(H, hash)`;
+carriers are not blamed (`Origin` / `carriedFrom`). **`F` is not unwound.**
+The bad pair stays the standing floor. Honest producers keep carrying it
+until `F − own_tip > W_conf`, then omit. Logical time stays dirty, or
+stalls once everyone omits.
+
+That is the correct rule **today**. L6's oracle is verifier-local, so an
+`INVALID` or a per-verifier rewind of `F` would split lagging oracles — the
+same reason L5a must not feed the floor. Slash of the originator, if any,
+does not restore the clock by itself.
+
+**Phase F / the dispute layer** MUST add garbage cleanup once L6 (or Strong)
+has detected a garbage pair that **became** `F`: rewind `F` to the last
+L6-confirmed host pair, or freeze unaided raises that have not been
+oracle-checked, without `INVALID`-ing the diff. Until that exists, "found
+and punished" is at most a later mark (and, with F, a slash). **`F` stays
+polluted.**
+
 ##### Binding the log value to the first-party one
 
 Making every Diff height a reference height does not make a host's oracle
@@ -1689,7 +1710,7 @@ log.
 | ---- | ------ | ------ | ------------------------- |
 | **Pure `Diff`, verdict** | L0, L0b, L1, L2, L3, L7 | log bytes, registered slot keys, group size | **yes** — the same answer for every verifier, forever |
 | **Same-exchange edge** | L4, L5a | the diff **and** the `HeightSyncSection` of one HTTP exchange | **no** — records a retained mark; L5a may refuse the exchange |
-| **Local oracle, deferrable** | L6 | the verifier's own follower, once it reaches `H` | only via `DEFERRED_FAIL`, monotone once `H` is final |
+| **Local oracle, deferrable** | L6 | the verifier's own follower, once it reaches `H` | only via `DEFERRED_FAIL`, monotone once `H` is final. Does **not** rewind `F`; floor garbage cleanup is Phase F |
 
 The mark-only tier is now empty, and that is the point of the previous
 section. Every check that was in it was replay-stable yet asked a question
@@ -2049,6 +2070,9 @@ dispute packet may carry both halves:
 
 A mock dispute verifier returns `DISPUTE_ORIGINATOR` when both pass.
 
+Blame and slash do **not** restore `F`. A garbage pair that became the floor
+stays `F` until Phase F garbage cleanup (§14).
+
 ### 18.5 Cold-start seed (optional at the host; required for attribution)
 
 ```go
@@ -2138,10 +2162,11 @@ the test scenario that proves it (full catalog in
 | 22 | User drip-feeds late acks to make a degraded turn look complete and reset the arming clock | `late` is a positional test — landing nonce against the turn deadline, both in the log — so it does not depend on comparing two height readings. Late acks never clear a turn's `degraded` mark (§10.6), arming keys on contact toward **this** host rather than on turn state, and since acks no longer confirm heights (§17) an admitted late ack buys nothing | Planned: `TestLateAck_DoesNotClearDegraded` |
 | 23 | **Sequencer rewrites a host's stamp on `MsgConfirmStart`**, attributing a height the executor never signed | `observed_height` / `observed_block_hash` are inside `ExecutorReceiptContent` and copied into the reconstructed content before recovery (§10.5.1), so any edit fails `executor_sig`. A deployment that stamps the tx without mirroring the content MUST NOT treat the height as a host attestation | Planned: `TestConfirmStart_TamperedObservedHeightFailsExecutorSig` |
 | 24 | Stamp regression — a signer writes a height below one already in the log, to widen a band or backdate a duration | L0 against `F(m)`, uniformly across every Diff-resident height, plus L0b within one executor; both pure functions of `Diff`, so every verifier reaches the same verdict | `TestLogPlane_RefStampBelowFloorRejected`, `TestLogPlane_PerInferenceHeightOrder` |
-| 24b | **Floor poisoning** — a party stamps an absurdly high reference height so no honest producer can ever clear the floor | Three invariants, Strong not required: **(1)** a first-party envelope `(H, hash)` cannot be a future height. **(2)** `F` never exceeds the max reported **host** envelope `H` — lifts do not raise; honest compose writes a host-signed raise as `stamp = response-leg envelope.H`. **(3)** sequencer-composed stamps (`MsgHeartbeat`, `MsgStartInference`) never raise `F` — replayable from the signer in `Diff`, so a malicious sequencer cannot gossip an unattested raise. `Q` is host-only. The diff still applies; L0 asks only `≥ F(m)` | `TestFloorIndex_LoneImplausibleClaimDoesNotMoveTheFloor`, `TestFloorIndex_QuorumAdmitsTheJumpOneSignerCannot`, `TestHeightSyncFloor_ImplausibleClaimIsMarkedAndIgnored`, `TestHost_HeartbeatAck_OmitsAStampWhenTheFloorIsOutOfReach`; planned: sequencer heartbeat `> F` does not raise `F` on apply or gossip; host raise with envelope `t < stamp` is not composed |
+| 24b | **Floor poisoning** — a party stamps an absurdly high reference height so no honest producer can ever clear the floor | Three invariants, Strong not required: **(1)** a first-party envelope `(H, hash)` cannot be a future height. **(2)** `F` never exceeds the max reported **host** envelope `H` — lifts do not raise; honest compose writes a host-signed raise as `stamp = response-leg envelope.H`. **(3)** sequencer-composed stamps (`MsgHeartbeat`, `MsgStartInference`) never raise `F` — replayable from the signer in `Diff`, so a malicious sequencer cannot gossip an unattested raise. `Q` is host-only. The diff still applies; L0 asks only `≥ F(m)`. A host-signed lie **inside** `W_conf` that does become `F` is **24f** | `TestFloorIndex_LoneImplausibleClaimDoesNotMoveTheFloor`, `TestFloorIndex_QuorumAdmitsTheJumpOneSignerCannot`, `TestHeightSyncFloor_ImplausibleClaimIsMarkedAndIgnored`, `TestHost_HeartbeatAck_OmitsAStampWhenTheFloorIsOutOfReach`; planned: sequencer heartbeat `> F` does not raise `F` on apply or gossip; host raise with envelope `t < stamp` is not composed |
 | 24c | **Divergence as a liveness weapon** — a lagging host is made to author invalid diffs, or to be excluded, purely for being behind | The producer rule is always satisfiable — `F(m)` is already in the log, and absence is legal — so a diverged host can serve honestly, and no log-plane verdict rests on how far behind it is (`sync_state` and the envelope anchors record the gap for monitoring). A verdict a lagging host cannot avoid would be a DoS against the escrow, not a defence | `TestHeightSyncDivergence_InferenceFlowNeverBlocked`, `TestHeightSyncDivergence_DeadOracleStillCarriesTime`, `TestHeightSync_E2E_WideDivergenceNeverBlocksInferences` |
 | 24d | **Reorg wedge** — the chain reorgs below `F`, so no party can produce a first-party height that clears the floor | `F` never falls, and it does not need to: producers carry it while the live branch is below it (diffs keep applying), L6 attributes the stale pair to the floor's author rather than to the carriers, and once the live branch passes `F` stamping is first-party again with no new session. A reorg deeper than `W_conf` takes the omission branch instead | `TestHeightSyncFloor_ReorgReturnsToTheLiveBranch`, `TestLogPlane_L6BlamesTheFloorsAuthorForACarriedPair` |
 | 24e | **Split the floor by refusing at the edge** — a party gets one verifier to refuse a diff at admission (L5a) so the two verifiers' floors, and therefore their L0 verdicts on every later diff, diverge | `F` folds applied diffs and nothing else: admission marks are local evidence and never enter the fold. Both verifiers hold the same floor and return the same verdicts, whichever path the diff arrived by | `TestHeightSyncFloor_AdmissionRefusalCannotSplitTheFloor` |
+| 24f | **Dirty floor after L6** — a host-signed garbage `(H, hash)` within `W_conf` becomes `F`; L6 later `DEFERRED_FAIL`s it | L6 names the originator and does **not** rewind `F` (lagging oracles must not split). Producers carry until `F − own_tip > W_conf`, then omit. Logical time stays dirty or stalls. **Phase F** MUST clean the floor after L6/Strong detection without `INVALID`-ing the diff (§14 *Garbage cleanup after L6*) | ⏳ H109. Slash, if any, does not restore the clock |
 | 25 | Pre-signing a **future** height to look fresher than it is | `observed_block_hash` for an unmined height cannot be produced; L6 never confirms the pair and eventually returns `DEFERRED_FAIL` | Planned: `TestLogPlane_FutureDatedStampDeferredFail` |
 | 26 | **Replay-time invalidation** — a party re-presents an old but honest session hoping a `D`-band or freshness rule rejects it, or an implementation that wrongly evaluates freshness at replay time | Only pure-`Diff` checks may invalidate (§14 tier table): L5a is admission-only, L4 is skipped without an envelope, so a historical session replays with identical verdicts regardless of when it is replayed | Planned: `TestLogPlane_HistoricalReplayNoInvalidation` |
 | 27 | Gateway mints `(H, hash)` from its own chain read (empty originator) and emits it as a request-leg Anchor | Forbidden: the user is a courier (§6, §13). Defence: scheduler is `PeerTipOracleSource`; `DEVSHARD_GATEWAY_CHAIN_ORACLE` (default off) wires a follower as `HeightSyncLogOracle` only; seed still required so `HeightSyncEvidenceFor` has a host blob. A mismatch on a gateway-minted pair would be `DISPUTE_CARRIER` against the user — the wrong party | Planned: H105–H108 (`TestGatewayChainOracle_*` in `cmd/devshardctl/heightsync_env_test.go` / seed tests). Catalog: [`height-sync-tests.md`](../height-sync-tests.md) §7.8 |
@@ -2208,6 +2233,7 @@ the test scenario that proves it (full catalog in
 | `observed_height` stamps on `MsgStartInference` / `MsgConfirmStart` / `MsgFinishInference` | 📋 | RECOMMENDED (§10.5). Optional migration step: without it the protocol is correct but emits more heartbeats. `MsgConfirmStart` additionally requires the `ExecutorReceiptContent` mirror (§10.5.1) or its height is not a host attestation. |
 | Derived record heights + moving timeouts / seal clock off wall time | 📋 | §10.5.2. Two-step by construction: carry the heights first, switch the decisions later under a version gate, since the seal clock folds into the state root. |
 | On-chain `MsgHeightSyncEvidence` + slashing tx | ⏸ | dispute / cPoC owns. |
+| Floor garbage cleanup after L6 | ⏸ | Phase F / dispute layer. L6 is attribution only; a garbage pair that became `F` stays `F` until cleanup (§14). Slash does not restore the clock. |
 | Gateway chain follower opt-in (`DEVSHARD_GATEWAY_CHAIN_ORACLE`) | ✅ | Spec §6. Follower off by default (`true`/`1`/`on`). Wired as `HeightSyncLogOracle` only; scheduler always `PeerTipOracleSource`; seed still required. Tests H105–H108. |
 
 **Implementation ordering note.** §10 is a prerequisite for §11 and §12

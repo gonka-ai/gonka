@@ -3,7 +3,8 @@
 **Spec:** [`proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md`](./proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md)  
 **Test catalog (from `devshard-testenv`):** [`height-sync-tests.md`](./height-sync-tests.md)  
 **Params:** [`height-sync-params.md`](./height-sync-params.md)  
-**Related:** [`proposals/CPOC_PROTOCOL.md`](./proposals/CPOC_PROTOCOL.md), [`proposals/FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`](./proposals/FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md), [`proposals/VALIDATION_PROTOCOL_PROPOSAL.md`](./proposals/VALIDATION_PROTOCOL_PROPOSAL.md)
+**Related:** [`proposals/CPOC_PROTOCOL.md`](./proposals/CPOC_PROTOCOL.md), [`proposals/FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md`](./proposals/FINALIZATION_COLLECTOR_PROTOCOL_PROPOSAL.md), [`proposals/VALIDATION_PROTOCOL_PROPOSAL.md`](./proposals/VALIDATION_PROTOCOL_PROPOSAL.md)  
+**PR #1584 review (P0–P4):** [`height-sync-pr-1584-review.md`](./height-sync-pr-1584-review.md)
 
 **Status:** Phases **A**–**D** landed on this branch (dapi HTTP mount lives in `decentralized-api` and is committed separately). Catalog §2–§4 pass (`go test ./heightsync/... ./transport/... ./testenv/scenarios/ -run HeightSync`; held-response tests need `-tags=dev`). Phase C is `citest-height-sync` against this mock-dapi chainoracle (no `heightsyncd`). Phase D unit tests are D1–D8, D10, D11 (D9 is Phase E). The oracle substrate (`devshard/chainoracle/blocks`) and the mock-dapi mount already exist.
 
@@ -14,14 +15,14 @@
 | **C** | ✅ | Container citest `citest-height-sync` against mock-dapi `/block/*` (optional `DEVSHARD_CHAINORACLE_URL`; default compose unchanged) |
 | **D** | ✅ | Hash-only Tendermint observer; direct-chain adapter; host failover (old dapi / dapi-down). Dapi `/block/*` mount is in `decentralized-api` (separate commit). |
 | **E** | ✅ | Log plane (heartbeat, sync vector/state, repair, close-ready). **E0–E9 landed** (§8.15). |
-| **F** | ⏳ | Strong / `light_block` / dispute adjudication |
+| **F** | ⏳ | Strong / `light_block` / dispute adjudication / **floor garbage cleanup after L6** |
 
 This plan delivers **the whole spec except the Strong path**, in six phases:
 
 1. **A–C** replay the transport plane that is already implemented and tested on `devshard-testenv` (Omit/Anchor, cadence, forced turns, courier carry, response-leg signatures), rewired onto `chainoracle/blocks`. Envelope `(C-quorum)` withdrawn.
 2. **D** mounts a **height+hash** oracle in production dapi and keeps v5 hosts working against an **unmodified older dapi**.
 3. **E** builds the **log plane** — §10 heartbeat turns, §11 `sync_vector` / `sync_state` / `peer_seen` / repair probe, §12 close-ready arming, §14 L1–L7 verifier checks. This is new code; nothing on `devshard-testenv` covers it.
-4. **F** is **only** the Strong path (`light_block`, `D`-band escalation, `(C-strong)`/`(C-hybrid)`), the dapi work that feeds it (commit signatures, IAVL `Prove()`), and the **dispute adjudication** that consumes Strong-grade evidence.
+4. **F** is **only** the Strong path (`light_block`, `D`-band escalation, `(C-strong)`/`(C-hybrid)`), the dapi work that feeds it (commit signatures, IAVL `Prove()`), the **dispute adjudication** that consumes Strong-grade evidence, and **floor garbage cleanup** after L6 detects a garbage pair that became `F` (spec §14).
 
 The split for disputes is: **marking lands in E, adjudication lands with F.** Phase E must *detect and record* every attributable event the spec names (`DISPUTE_ORIGINATOR` / `DISPUTE_CARRIER` on sight, `ACKED`-vs-log contradiction, false `SYNCED`) into the audit ring, metrics, and local evidence store. Turning those records into evidence packets, on-chain `MsgHeightSyncEvidence`, or slashing is Strong-phase work, because the canonical-pair half of the packet is a `LightBlock`.
 
@@ -715,7 +716,7 @@ Most checks run at **diff-ingest**: `state.StateMachine.ValidateDiff` calls `hei
 | L3 | Causality: `ref_nonce` names a `MsgHeartbeat` in `Diff` with the same `turn_seq` | `turn.go` | `INVALID(ack_causality)`, attributed to the appending user |
 | L4 | Envelope binding (§10.4 rules 1–2). Both legs use the producer rule, because in both the section is a first-party oracle read and the Diff height is a reference height: ack equals `max(anchor, F(ref_nonce + 1))`, heartbeat equals `max(section, F(m))` (§8.7.1). Skipped when the request section is a carry-forward; degrades to `>= section` where the caller holds no floor | **`inbound.go` transport edge**, not `ValidateDiff` | `DISPUTE_ORIGINATOR` / `DISPUTE_CARRIER` **on sight**, no oracle lookup; persisted as a mark because it cannot be recomputed later |
 | L5a | Live `D` band: `\|observed_height − local_aligned\| > D` at admission. This is the **Strong hook** — the claimant proves the height it claimed with a `LightBlock` | `inbound.go` | refuse the exchange + **mark**; never a permanent diff verdict |
-| L6 | Oracle reconciliation of `(observed_height, observed_block_hash)`, identical to §14 step 7 including the deferred queue. A pair identical to `F(m)` is a carry, so the mark's `Origin` names the signer that established the floor | reuse `inbound.go` reconciliation | `DEFERRED_FAIL` / `DISPUTE_ORIGINATOR` |
+| L6 | Oracle reconciliation of `(observed_height, observed_block_hash)`, identical to §14 step 7 including the deferred queue. A pair identical to `F(m)` is a carry, so the mark's `Origin` names the signer that established the floor. **Does not rewind `F`**; garbage cleanup of a pair that became the floor is Phase F (spec §14) | reuse `inbound.go` reconciliation | `DEFERRED_FAIL` / `DISPUTE_ORIGINATOR` |
 | L7 | Turn bookkeeping + `sync_vector` vs log | `turn.go`, `syncvector.go` | `ACKED` contradicted by the log ⇒ user-attributable **mark**, no `INVALID` (the diff is already signed). `MISSING` / `UNREACHABLE` / `REJECTED` with no ack ⇒ **no blame**. |
 
 #### Where each check can run — and why L4 cannot be replayed
@@ -726,7 +727,7 @@ A diff is presented at ingest, at catch-up, at recovery, and at audit, each time
 | ---- | ------ | ------ | --------------------------------- |
 | **Pure `Diff`, verdict** | L0, L0b, L1, L2, L3, L7 | log bytes + registered slot keys + group size | **yes** — same answer for every verifier, forever |
 | **Same-exchange edge** | L4, L5a | the diff **and** the `HeightSyncSection` of that one HTTP exchange | **no** — records a mark; L5a may refuse the exchange |
-| **Local oracle, deferrable** | L6 | the verifier's own follower, whenever it reaches `H` | only via `DEFERRED_FAIL`, which is monotone once `H` is final |
+| **Local oracle, deferrable** | L6 | the verifier's own follower, whenever it reaches `H` | only via `DEFERRED_FAIL`, which is monotone once `H` is final. Does **not** rewind `F`; floor garbage cleanup is Phase F |
 
 Replay stability is necessary for a verdict but not sufficient — a second, independent condition applies: the log must actually contain the answer. The **mark-only tier is now empty**, and deliberately so. It held L0c (own-tip monotonicity) and L5b (in-log `D` band); both were deterministic yet asked questions the log cannot settle, so both could only ever mark. A check that can never reach a verdict does not belong in the log plane, and the first-party readings it needed do not belong in `Diff` — they live in the envelope, where L4 and L5a evaluate them and §8.12's collectors aggregate them. §8.7.1 has the reasoning.
 
@@ -759,7 +760,7 @@ The two errors, and the fix for each:
 | ------ | ---- | --- |
 | Raise within `W_conf` | any single signer | The cadence puts a full turnover every `Interval` of wall clock, so an honest advance is orders of magnitude inside the window. This is the ordinary path: a quiet session's heartbeat still establishes its turn's reference height, exactly as before |
 | Raise beyond `W_conf` | the height `Q` distinct signers hold — `QuorumForRoster(slots_num)`, at least 2 | ceil(2/3 × slots) over host-signed log-resident claims so it stays replayable. Keeps a real jump — an oracle recovering from a stall, an escrow bootstrapping on mainnet heights — from being a liveness problem, while a party striking out alone moves nothing |
-| Fall | never | A falling floor needs L0 to accept stamps below it, which is the tolerance band this design rejects. Reorgs resolve without it (below) |
+| Fall | never on the hot path | A falling floor needs L0 to accept stamps below it, which is the tolerance band this design rejects. Reorgs resolve without it (below). Phase F garbage cleanup after L6 is the planned exception when a garbage pair became `F` (spec §14) |
 
 Claims are **attributed**, because without an identity one signer echoing itself across five messages is indistinguishable from five parties agreeing. Every carrier is named in the log itself: `slot_id` on an ack (L2 verifies the signature over it), `executor_slot` on a finish, the executor of record for a confirm, the sequencer for the legs it composes. Carries cannot launder a height through the quorum condition: a carry equals the standing floor, and the floor is already at or below the `Q`-th ranked claim, so echoing it can never lift that value. `state.floorClaimsLocked` builds the attributed claim list; `FloorIndex.Observe` returns the marks.
 
@@ -772,6 +773,8 @@ An uncorroborated claim no other party is within `W_conf` of is recorded as `FLO
 3. Once the live branch passes `F`, own tips exceed it again and stamping is first-party once more, on the live branch.
 
 A reorg deeper than `W_conf` — like a poisoned floor — takes the other branch of the producer rule instead: `HeartbeatConfig.FloorOutOfReach` has the producer omit rather than carry, so one bad height is never repeated under every honest signature.
+
+**Garbage cleanup after L6 is Phase F.** L6 is attribution, not floor repair. A `DEFERRED_FAIL` names the originator and does **not** rewind `F`; the bad pair stays the standing floor, and honest producers carry it until `F − own_tip > W_conf` then omit. That is required today — L6's oracle is verifier-local, so an `INVALID` or a per-verifier rewind would split lagging oracles. Slash does not restore the clock. Spec §14 *Garbage cleanup after L6*: after L6 or Strong detects a garbage `(H, hash)` that became `F`, rewind `F` to the last L6-confirmed host pair (or freeze unaided raises that have not been oracle-checked), without `INVALID`-ing the diff. H109.
 
 **The floor is a function of the applied log, and of nothing else.** `FloorIndex.Observe` is called from `state.observeHeightSyncLocked` and from nowhere else, which is a stated rule and not an accident of placement. An L5a refusal at the transport edge is a local admission decision about one exchange, and the same diff arriving by catch-up or gossip carries no envelope to refuse; if admission fed the floor, the verifier that refused and the verifier that ingested would hold different floors and reach different L0 verdicts on every later diff — an escrow split produced by a check documented as replay-identical. Snapshot restore must rebuild the floor for the same reason (step 6 of the review findings, now landed: `RestoreState` replays diffs `1..snapNonce` through `observeHeightSyncLocked`).
 
@@ -1127,6 +1130,7 @@ H39–H49 are gateway-package tests over a fabricated session plus a registry ga
 | H51 | A `late` ack landing after the floor rose past the height it carries | **accepted** — its basis is `F(ref_nonce + 1)`, so lateness costs nothing | L0, §8.7.1 |
 | H52 | Host with `ORACLE_UNAVAILABLE` echoes `F(m)` | ack counts toward turn completion; no envelope Anchor | §8.11, §11.2 |
 | H13e | Stamp whose `observed_block_hash` belongs to a different height (attempted future-dating) | `DEFERRED_FAIL` once the follower reaches `H`; pair never confirms | L6 |
+| H109 | After L6 `DEFERRED_FAIL` on a host-signed pair that became `F` | **Phase F:** floor is cleaned (rewind to last L6-confirmed host pair, or freeze unaided unchecked raises) without `INVALID`; until then `F` stays polluted | L6, attack 24f, spec §14 |
 | H28 | `MsgConfirmStart.observed_height` altered after the executor signed | `ErrInvalidExecutorSig` — proves the height is inside `ExecutorReceiptContent` | §8.2.1 trap |
 | H29 | `MsgFinishInference` with a stamp | `proposer_sig` covers it with no signing-code change; tampering fails `ErrInvalidProposerSig` | §8.2.1 |
 | H30 | `confirm.observed_height` below `start.observed_height` for one inference | **accepted** — cross-signer: the user's `start` carries the roster maximum, the executor's `confirm` carries its own view. `finish` below `confirm` (same executor) is still `INVALID(height_regression)` | L0b |
@@ -1167,7 +1171,7 @@ H39–H49 cover the gateway observability views and are listed with them in §8.
 
 ### 8.14 Explicitly not in Phase E
 
-Strong on the wire, `D`-band escalation, `(C-strong)`, `LightBlockFor`, evidence packets, on-chain dispute txs, cross-session equivocation, cPoC `MsgSkipProbe` / `CarrySkip` carriers (E only reserves oneof 12/13 for them), and finalization's vote/commit machinery.
+Strong on the wire, `D`-band escalation, `(C-strong)`, `LightBlockFor`, evidence packets, on-chain dispute txs, cross-session equivocation, cPoC `MsgSkipProbe` / `CarrySkip` carriers (E only reserves oneof 12/13 for them), finalization's vote/commit machinery, and **floor garbage cleanup after L6** (spec §14; H109).
 
 ### 8.15 Implementation steps (E0–E9)
 
@@ -1253,7 +1257,7 @@ The user `MaybeHeartbeat` flush round picks acks up from the host mempool. Open 
 | ---- | ------ | ------- |
 | Pure `Diff`, verdict | L0, L0b, L1, L2, L3, L7 | `INVALID` / user mark for `ACKED` vs log |
 | Edge only (`sec != nil`) | L4, L5a | **mark**, never `INVALID` |
-| Deferred | L6 | `DEFERRED_FAIL` when the follower reaches `H` |
+| Deferred | L6 | `DEFERRED_FAIL` when the follower reaches `H`. Does **not** rewind `F`; garbage cleanup is Phase F (H109) |
 
 Replay / catch-up / gossip pass `sec=nil` so L4/L5a do not run. Persist L4 blobs verbatim (request-leg: signed HTTP; response-leg: origin + field 8). `applyTx` for heartbeat/ack folds `TurnTracker` and stores `h_last` / `turn_seq` on escrow state (not hashed — reconstructible from Diff, so no protocol-version bump). Envelope `(C-quorum)` and `(C-turn)` are withdrawn; consumers use local oracle (§17).
 
@@ -1300,11 +1304,11 @@ Pure transport work — no proto change, no version bump, no verifier rule. Land
 
 **Tests:** H34–H38. **Landed.** H34 asserts the seeded height on nonce 1's `MsgHeartbeat`; `MsgStartInference` stamps are E7.
 
-Stay out of E: Strong / `light_block` / `Prove()`, evidence packets, on-chain dispute, cross-session equivocation, cPoC skip carriers, flipping timeouts onto heights, changing default compose.
+Stay out of E: Strong / `light_block` / `Prove()`, evidence packets, on-chain dispute, cross-session equivocation, cPoC skip carriers, flipping timeouts onto heights, changing default compose, floor garbage cleanup after L6.
 
 ---
 
-## 9. Phase F — Strong + dapi merkle proofs + dispute adjudication (last)
+## 9. Phase F — Strong + dapi merkle proofs + dispute adjudication + floor garbage cleanup (last)
 
 Do this only after A–E are green. Matching `devshard-testenv`, Strong stays ⏳ until then.
 
@@ -1327,6 +1331,7 @@ Dispute adjudication (deferred here because its canonical half is a Strong proof
 - Evidence packet = originator blob (`HeightSyncEvidenceFor`) + canonical pair (`LightBlockFor`)
 - Promote `heightsync/marks.go` records from E into packets
 - On-chain `MsgHeightSyncEvidence` + slashing, cross-session equivocation index
+- **Floor garbage cleanup after L6:** a `DEFERRED_FAIL` / Strong mismatch on a pair that became `F` must rewind or freeze the floor without `INVALID`-ing the diff (spec §14 *Garbage cleanup after L6*, attack 24f, H109). Slash of the originator does not restore the clock.
 
 Skip Strong entirely on a legacy hash-only oracle (empty commit) — degrade, never fake. Tests: catalog §8 S1–S12.
 
@@ -1419,7 +1424,7 @@ Blockers 1, 3 and 4 all resolve the same way: the section survives, and the achi
 13. ✅ **E6:** Close-ready arming + `CloseReadyView`; H21–H23.
 14. ✅ **E7:** inference-tx stamps; H2, H28–H31, H33. Record fields 18/19; unstamped `v2` roots unchanged.
 15. ✅ **E8:** Observability + container H26, H27.
-16. **Last:** Strong + dapi merkle `Prove()` + commit signatures + dispute adjudication (Phase F).
+16. **Last:** Strong + dapi merkle `Prove()` + commit signatures + dispute adjudication + **floor garbage cleanup after L6** (Phase F).
 
 ---
 
@@ -1429,7 +1434,7 @@ Blockers 1, 3 and 4 all resolve the same way: the section survives, and the achi
 - Finalization collector vote/commit QCs and the `USER_TIMEOUT` decision itself — E ships the evidence producer only
 - Replacing `GetBlockHash` call sites inside PoC validation — they stay on the existing RPC until they opt into `BlockOracle`
 - Moving `chainoracle` into `common/` (possible later; not required for dapi `replace devshard`)
-- Merkle `Prove()`, commit-quorum verification, Strong `light_block`, evidence packets, on-chain `MsgHeightSyncEvidence` — all Phase F or the dispute layer
+- Merkle `Prove()`, commit-quorum verification, Strong `light_block`, evidence packets, on-chain `MsgHeightSyncEvidence`, floor garbage cleanup after L6 — all Phase F or the dispute layer
 - Idle-escrow economics (a user heartbeating just inside `T_idle` forever) — named non-defence in spec §12.3
 
 ---
