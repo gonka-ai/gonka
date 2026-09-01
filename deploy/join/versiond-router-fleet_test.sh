@@ -949,7 +949,19 @@ VERSIOND_ROUTER_SLOT=0 \
         -f "$script_dir/versiond-router-slot/docker-compose.yml" \
         up -d --force-recreate --wait --wait-timeout 30 router >/dev/null
 
-"${fleet[@]}" rollout >/dev/null
+if ! "${fleet[@]}" rollout >"$tmpdir/route-reserve-reconcile.out" 2>&1; then
+    cat "$tmpdir/route-reserve-reconcile.out" >&2
+    for slot in "${slots[@]}"; do
+        id=$(docker ps -aq \
+            --filter label=ai.gonka.component=versiond-router \
+            --filter "label=ai.gonka.fleet=$fleet_id" \
+            --filter "label=ai.gonka.slot=$slot")
+        [[ -z $id ]] || docker inspect --format \
+            'slot={{index .Config.Labels "ai.gonka.slot"}} state={{.State.Status}} error={{.State.Error}} image={{.Config.Image}}' \
+            "$id" >&2
+    done
+    fail "fleet did not reconcile the route-reserve fixture"
+fi
 "${fleet[@]}" status >/dev/null
 
 # Emergency commands must not query each slot's Runtime API before checking
