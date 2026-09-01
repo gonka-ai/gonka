@@ -902,20 +902,25 @@ if [[ $versiond_mode == ha && $GONKA_COMPOSE_POSTGRES_MODE == local ]]; then
             --target-dir "$postgres_target_dir"
     fi
 fi
+existing_proxy_component=$(
+    "$docker_bin" inspect --format \
+        '{{index .Config.Labels "ai.gonka.component"}}' proxy 2>/dev/null || true
+)
 if [[ $preflight_only == true ]]; then
     if [[ $versiond_mode == ha ]]; then
         run_postgres_deployment_preflight runtime
 		gonka_compose_validate_ha_version_catalog "$docker_bin" versiond
 		verify_router_fleet_spec
+        if [[ $versiond2_enabled == false && \
+            $existing_proxy_component != proxy-router && \
+            $committed_marker_loaded != true ]]; then
+            fail "VERSIOND2_REPLICAS=0 is supported after the HA release is committed; restore it to 1 for the one-time v5 cutover"
+        fi
     fi
     echo "Devshard v5 release preflight passed"
     exit 0
 fi
 
-existing_proxy_component=$(
-    "$docker_bin" inspect --format \
-        '{{index .Config.Labels "ai.gonka.component"}}' proxy 2>/dev/null || true
-)
 if [[ $existing_proxy_component != proxy-router && \
 	$committed_marker_loaded != true && $interrupted_upgrade_loaded != true && \
     $maintenance_ack != true ]]; then

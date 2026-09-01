@@ -1035,6 +1035,26 @@ grep -q 'Devshard v5 release preflight passed' "$tmpdir/preflight.stdout" || {
     fail "release preflight did not report success"
 }
 
+: >"$preflight_log"
+if RENDERED_VERSIOND2_REPLICAS=0 \
+    DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$preflight_log" \
+    FAIL_SERVICE=none \
+    EXISTING_CONTAINERS="proxy versiond versiond2 versiond-router devshard-postgres edge-api" \
+    FAKE_STATE_DIR="$tmpdir/preflight-state" \
+    JOIN_DIR="$script_dir" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+        "$script_dir/upgrade-devshard-v5.sh" \
+        --versiond-mode ha --edge-mode single --preflight-only \
+        >"$tmpdir/preflight-replicas-zero.stdout" \
+        2>"$tmpdir/preflight-replicas-zero.stderr"; then
+    fail "release preflight accepted a replicas=0 first HA cutover"
+fi
+assert_no_compose_mutation "$preflight_log"
+grep -q 'restore it to 1 for the one-time v5 cutover' \
+    "$tmpdir/preflight-replicas-zero.stderr" || fail \
+    "release preflight did not diagnose the disabled second HA member"
+
 # The unsupported first cutover with the second member disabled must fail
 # before creating a durable transaction that blocks a corrected retry.
 RENDERED_VERSIOND2_REPLICAS=0 \
