@@ -24,7 +24,8 @@ declare -A legacy_env_defaults=(
     [VERSIOND_ROUTER_VERSION_CAPACITY]=32
     [HAPROXY_DNS_RESOLVER]=127.0.0.11:53
 )
-maintenance_required_routes=()
+maintenance_candidate_routes=()
+declare -A maintenance_source_routes=()
 maintenance_keys=(
     VERSIOND_POOL_HOST
     VERSIOND_ROUTER_BACK_NETWORK_NAME
@@ -1386,7 +1387,7 @@ wait_preserved_slot_admission() {
 
 capture_maintenance_state() {
     local slot id image key contract first_contract='' route route_inventory
-    local -A routes=()
+    local -A candidate_routes_seen=()
     for slot in "${slots[@]}"; do
         id=$(slot_id "$slot") || fail "slot $slot has no unique existing container"
         slot_ready "$slot" || fail "slot $slot is not healthy before maintenance"
@@ -1408,17 +1409,20 @@ capture_maintenance_state() {
             "cannot capture the route catalog for maintenance slot $slot"
         while read -r route; do
             [[ -n $route ]] || continue
+            if slot_route_ready "$slot" "$route"; then
+                maintenance_source_routes["$slot:$route"]=1
+            fi
             if [[ -n ${candidate_routes[$route]-} ]] || \
                 ! route_in_static_environment "$route" \
                     "${maintenance_env[$slot:VERSIOND_NON_HA_VERSIONS]}" \
                     "${maintenance_env[$slot:VERSIOND_VERSIONS]}"; then
-                routes[$route]=1
+                candidate_routes_seen[$route]=1
             fi
         done <<<"$route_inventory"
     done
-    for route in "${!routes[@]}"; do
+    for route in "${!candidate_routes_seen[@]}"; do
         if (( $(route_ready_count "$route") > 0 )); then
-            maintenance_required_routes+=("$route")
+            maintenance_candidate_routes+=("$route")
         fi
     done
 }
@@ -1426,7 +1430,7 @@ capture_maintenance_state() {
 write_maintenance_journal() {
     local candidate_ref=$1 candidate_id=$2 candidate_version=$3
     local slot key spec_sha contract slots_json='{}' env_json config_hash
-    local routes_json payload
+    local candidate_routes_json source_routes_json source_key route payload
     spec_sha=$(fleet_spec_hash) || fail \
         "cannot fingerprint the maintenance candidate configuration"
     contract=$(candidate_placement_contract)
@@ -1439,30 +1443,40 @@ write_maintenance_journal() {
         done
         config_hash=$(desired_slot_config_hash "$slot") || fail \
             "cannot fingerprint maintenance slot $slot"
+        source_routes_json='[]'
+        for source_key in "${!maintenance_source_routes[@]}"; do
+            [[ $source_key == "$slot:"* ]] || continue
+            route=${source_key#"$slot:"}
+            source_routes_json=$(jq -c --arg route "$route" \
+                '. + [$route] | unique | sort' <<<"$source_routes_json")
+        done
         slots_json=$(jq -c --arg slot "$slot" \
             --arg config_hash "$config_hash" \
             --arg rollback_image "${maintenance_images[$slot]}" \
-            --argjson environment "$env_json" '
+            --argjson environment "$env_json" \
+            --argjson source_routes "$source_routes_json" '
             . + {($slot): {
                 state: "source",
                 candidate_config_sha256: $config_hash,
                 source: {
                     rollback_image: $rollback_image,
-                    environment: $environment
+                    environment: $environment,
+                    required_routes: $source_routes
                 }
             }}
         ' <<<"$slots_json")
     done
-    routes_json=$(printf '%s\n' "${maintenance_required_routes[@]}" | \
+    candidate_routes_json=$(printf '%s\n' \
+        "${maintenance_candidate_routes[@]}" | \
         jq -Rsc 'split("\n") | map(select(length > 0)) | unique | sort')
     payload=$(jq -cn \
         --arg id "$operation_id" --arg fleet "$fleet_id" \
         --arg ref "$candidate_ref" --arg image_id "$candidate_id" \
         --arg version "$candidate_version" --arg spec_sha "$spec_sha" \
         --arg contract "$contract" --argjson slots "$slots_json" \
-        --argjson routes "$routes_json" '
+        --argjson candidate_routes "$candidate_routes_json" '
         {
-            schema: 1,
+            schema: 2,
             transaction: {
                 id: $id,
                 fleet_id: $fleet,
@@ -1472,10 +1486,10 @@ write_maintenance_journal() {
                     image_id: $image_id,
                     placement_version: $version,
                     spec_sha256: $spec_sha,
-                    placement_contract: $contract
+                    placement_contract: $contract,
+                    required_routes: $candidate_routes
                 },
                 slots: $slots,
-                required_routes: $routes,
                 updated_at_unix: (now | floor)
             }
         }
@@ -1512,7 +1526,7 @@ load_maintenance_journal() {
     local requested_ref=$1 saved_ref saved_fleet saved_spec current_spec
     local slot key config_hash saved_hash rollback_tag saved_decision
     jq -e '
-        .schema == 1 and
+        .schema == 2 and
         (.transaction.id | type == "string" and length > 0) and
         (.transaction.fleet_id | type == "string" and length > 0) and
         (.transaction.decision == "rollback" or
@@ -1531,9 +1545,12 @@ load_maintenance_journal() {
              .state == "candidate_starting" or .state == "candidate") and
             (.candidate_config_sha256 | test("^[0-9a-f]{64}$")) and
             (.source.rollback_image | type == "string" and length > 0) and
-            (.source.environment | type == "object")) and
-        (.transaction.required_routes | type == "array") and
-        all(.transaction.required_routes[];
+            (.source.environment | type == "object") and
+            (.source.required_routes | type == "array") and
+            all(.source.required_routes[];
+                type == "string" and length > 0)) and
+        (.transaction.candidate.required_routes | type == "array") and
+        all(.transaction.candidate.required_routes[];
             type == "string" and length > 0)
     ' "$maintenance_journal" >/dev/null || fail \
         "invalid maintenance journal $maintenance_journal"
@@ -1550,9 +1567,10 @@ load_maintenance_journal() {
         "cannot fingerprint the maintenance retry configuration"
     [[ $current_spec == "$saved_spec" ]] || fail \
         "maintenance configuration changed during the active transaction"
-    maintenance_required_routes=()
-    mapfile -t maintenance_required_routes < <(jq -r \
-        '.transaction.required_routes[]' "$maintenance_journal")
+    maintenance_candidate_routes=()
+    maintenance_source_routes=()
+    mapfile -t maintenance_candidate_routes < <(jq -r \
+        '.transaction.candidate.required_routes[]' "$maintenance_journal")
     for slot in "${slots[@]}"; do
         jq -e --arg slot "$slot" \
             '.transaction.slots[$slot] | type == "object"' \
@@ -1580,14 +1598,19 @@ load_maintenance_journal() {
                 "$maintenance_journal") || fail \
                 "maintenance journal lacks $key for slot $slot"
         done
+        while IFS= read -r route; do
+            maintenance_source_routes["$slot:$route"]=1
+        done < <(jq -r --arg slot "$slot" \
+            '.transaction.slots[$slot].source.required_routes[]' \
+            "$maintenance_journal")
     done
 }
 
-wait_required_routes_all() {
+wait_candidate_routes_all() {
     local deadline=$((SECONDS + wait_timeout)) slot route missing
     while ((SECONDS < deadline)); do
         missing=
-        for route in "${maintenance_required_routes[@]}"; do
+        for route in "${maintenance_candidate_routes[@]}"; do
             for slot in "${slots[@]}"; do
                 if ! slot_route_ready "$slot" "$route"; then
                     missing="$route on slot $slot"
@@ -1599,6 +1622,55 @@ wait_required_routes_all() {
         sleep 1
     done
     echo "versiond-router-fleet: fleet did not restore required route $missing within ${wait_timeout}s" >&2
+    return 1
+}
+
+wait_source_routes_all() {
+    local deadline=$((SECONDS + wait_timeout)) source_key slot route missing
+    while ((SECONDS < deadline)); do
+        missing=
+        for source_key in "${!maintenance_source_routes[@]}"; do
+            slot=${source_key%%:*}
+            route=${source_key#*:}
+            if ! slot_route_ready "$slot" "$route"; then
+                missing="$route on slot $slot"
+                break
+            fi
+        done
+        [[ -z $missing ]] && return 0
+        sleep 1
+    done
+    echo "versiond-router-fleet: source fleet did not restore route $missing within ${wait_timeout}s" >&2
+    return 1
+}
+
+wait_source_parent_admission() {
+    local slot=$1 deadline address source_key route missing
+    parent_proxy_active || return 0
+    require_parent_diagnostic
+    address=$(slot_front_ip "$slot") || return 1
+    deadline=$((SECONDS + wait_timeout))
+    while ((SECONDS < deadline)); do
+        if ! repair_stale_parent_state "$slot"; then
+            sleep 1
+            continue
+        fi
+        missing=--coarse
+        if parent_route_admitted --coarse "$address"; then
+            missing=
+        fi
+        for source_key in "${!maintenance_source_routes[@]}"; do
+            [[ -z $missing && $source_key == "$slot:"* ]] || continue
+            route=${source_key#"$slot:"}
+            parent_route_admitted "$route" "$address" || {
+                missing=$route
+                break
+            }
+        done
+        [[ -z $missing ]] && return 0
+        sleep 1
+    done
+    echo "versiond-router-fleet: parent did not readmit source slot $slot for route $missing within ${wait_timeout}s" >&2
     return 1
 }
 
@@ -1639,7 +1711,15 @@ restore_maintenance_source() {
             ok=false
         fi
     done
-    [[ $ok == true ]] && wait_required_routes_all
+    if [[ $ok == true ]] && ! wait_source_routes_all; then
+        ok=false
+    fi
+    if [[ $ok == true ]]; then
+        for slot in "${slots[@]}"; do
+            wait_source_parent_admission "$slot" || ok=false
+        done
+    fi
+    [[ $ok == true ]]
 }
 
 maintenance_rollback() {
@@ -2114,7 +2194,7 @@ fleet_maintenance_rollout() {
         start_slot "$slot"
         update_maintenance_slot_state "$slot" candidate
     done
-    wait_required_routes_all
+    wait_candidate_routes_all
 
     # Validate the candidate's complete live view before crossing the commit
     # point. This catches partial catalog convergence while exact rollback

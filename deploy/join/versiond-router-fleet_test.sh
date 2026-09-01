@@ -521,10 +521,13 @@ if [[ $candidate_recorded != true ]]; then
 fi
 kill -KILL -- "-$maintenance_pid"
 wait "$maintenance_pid" 2>/dev/null || true
-jq -e '.transaction.decision == "rollback" and
+jq -e '.schema == 2 and
+       .transaction.decision == "rollback" and
        (.transaction.candidate.image_id | length > 0) and
+       (.transaction.candidate.required_routes | index("v5") == null) and
        (all(.transaction.slots[];
-            (.candidate_config_sha256 | test("^[0-9a-f]{64}$"))))' \
+            (.candidate_config_sha256 | test("^[0-9a-f]{64}$")) and
+            (.source.required_routes | index("v5") != null)))' \
     "$maintenance_journal" >/dev/null || fail \
     "interrupted maintenance did not preserve immutable recovery evidence"
 sed -i "s|^VERSIOND_ROUTER_IMAGE=.*|VERSIOND_ROUTER_IMAGE=$base_image|" \
@@ -555,6 +558,9 @@ for slot in "${slots[@]}"; do
     docker exec "$id" /bin/busybox wget -q -O /dev/null \
         'http://127.0.0.1:8404/readyz?version=v4' || fail \
         "maintenance placement change lost v4 on slot $slot"
+    docker exec "$id" /bin/busybox wget -q -O /dev/null \
+        'http://127.0.0.1:8404/readyz?version=v5' || fail \
+        "maintenance rollback lost source-only v5 on slot $slot"
 done
 sed -i 's/^VERSIOND_NON_HA_VERSIONS=v4$/VERSIOND_NON_HA_VERSIONS=/' \
     "$tmpdir/config.env"
@@ -569,7 +575,7 @@ docker run -d --name "gonka-router-fleet-proxy-$suffix" \
     -e VERSIOND_NON_HA_VERSIONS= -e VERSIOND_VERSIONS=v4 \
     "$proxy_image" >/dev/null
 docker run -d --name "gonka-router-fleet-probe-$suffix" \
-    --network "$front" curlimages/curl:8.12.1 sleep 300 >/dev/null
+    --network "$front" curlimages/curl:8.12.1 sleep 900 >/dev/null
 docker network connect "$metrics" "gonka-router-fleet-probe-$suffix"
 probe=(docker exec "gonka-router-fleet-probe-$suffix" curl -fsS \
     --connect-timeout 2 --max-time 10)
@@ -643,6 +649,26 @@ grep -q 'cannot read the effective route catalog' \
     "stuck slot Runtime API did not fail catalog discovery"
 "${fleet[@]}" verify-admission v4 >/dev/null || fail \
     "slot admission did not recover after Runtime API resumed"
+
+# A failed maintenance candidate may release its rollback images only after
+# every restored source route has returned to the active public parent.
+sed -i "s|^VERSIOND_ROUTER_IMAGE=.*|VERSIOND_ROUTER_IMAGE=$bad_image|" \
+    "$tmpdir/config.env"
+if VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true \
+    VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
+    "${fleet[@]}" maintenance-rollout \
+    >"$tmpdir/maintenance-admission-rollback.out" 2>&1; then
+    fail "route-dead maintenance candidate unexpectedly committed"
+fi
+grep -q 'the exact previous router fleet was restored' \
+    "$tmpdir/maintenance-admission-rollback.out" || {
+    cat "$tmpdir/maintenance-admission-rollback.out" >&2
+    fail "maintenance rollback did not prove public source admission"
+}
+[[ ! -e $maintenance_journal ]] || fail \
+    "admitted source rollback retained its maintenance journal"
+sed -i "s|^VERSIOND_ROUTER_IMAGE=.*|VERSIOND_ROUTER_IMAGE=$image|" \
+    "$tmpdir/config.env"
 
 # Maintenance replacement crosses its commit point only after the parent has
 # completed fresh L7 admission for every replacement slot.
