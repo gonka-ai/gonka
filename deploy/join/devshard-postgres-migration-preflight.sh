@@ -11,6 +11,7 @@ helper_image=${POSTGRES_MIGRATION_HELPER_IMAGE:-$DEVSHARD_V5_POSTGRES_IMAGE}
 source_container=
 source_volume=
 target_dir=
+reset_stale_staging=false
 
 fail() {
     echo "devshard-postgres-migration-preflight: $*" >&2
@@ -22,6 +23,7 @@ usage() {
 Usage:
   devshard-postgres-migration-preflight.sh \
     [(--source-container ID | --source-volume NAME)] --target-dir DIR
+    [--reset-stale-staging]
 
 Checks that a live v4 source contains the devshard schema and that the target
 filesystem has enough free space for an atomic copy. A source-less check is
@@ -47,6 +49,10 @@ while [[ $# -gt 0 ]]; do
             [[ $# -ge 2 ]] || fail "--target-dir requires a value"
             target_dir=$2
             shift 2
+            ;;
+        --reset-stale-staging)
+            reset_stale_staging=true
+            shift
             ;;
         -h | --help)
             usage
@@ -172,6 +178,7 @@ read -r probe_state first second third fourth extra <<<"$probe"
 [[ -z ${extra:-} ]] || fail "unexpected source probe output: $probe"
 source_storage_key=
 source_is_active=false
+historical_target_marker=false
 case $probe_state in
     target-ready | staging-ready) probe_source_id=$first ;;
     source) probe_source_id=$third ;;
@@ -192,6 +199,11 @@ if [[ -n $source_container && $probe_state != source-missing ]]; then
         "source PostgreSQL container returned an invalid running state" ;; esac
     [[ $runtime_pgdata != /var/lib/postgresql/data || \
         $runtime_running != true ]] || source_is_active=true
+fi
+if [[ $probe_state == target-ready ]] && \
+    [[ $(awk 'NR == 1 { print $1 }' \
+        "$target_dir/.migrated-from-v4" 2>/dev/null || :) == 16 ]]; then
+    historical_target_marker=true
 fi
 
 write_schema_proof() {
@@ -238,10 +250,12 @@ if [[ -n $source_container && $probe_state != source-missing && \
     write_schema_proof "$probe_source_id" "$source_storage_key"
 elif [[ -n $source_container && $probe_state != source-missing && \
     $probe_source_id != none ]]; then
-    require_schema_proof "$probe_source_id" "$source_storage_key"
+    [[ $historical_target_marker == true ]] || \
+        require_schema_proof "$probe_source_id" "$source_storage_key"
 elif [[ -n $source_volume && $probe_state != source-missing && \
     $probe_source_id != none ]]; then
-    require_schema_proof "$probe_source_id" "$source_volume"
+    [[ $historical_target_marker == true ]] || \
+        require_schema_proof "$probe_source_id" "$source_volume"
 fi
 
 marker_value() {
@@ -262,25 +276,33 @@ validate_published_markers() {
         "persistent PostgreSQL target has no completed lineage marker"
 }
 
+write_source_snapshot() {
+    local fingerprint=$1 temporary
+    temporary=$(mktemp \
+        "$target_dir/.gonka-v4-source-wal.sha256.XXXXXX") || fail \
+        "cannot create PostgreSQL source snapshot marker"
+    printf '%s\n' "$fingerprint" >"$temporary"
+    chmod 600 "$temporary"
+    mv -f "$temporary" "$target_dir/.gonka-v4-source-wal.sha256"
+    sync -d "$target_dir" 2>/dev/null || sync
+}
+
 require_unchanged_source_snapshot() {
-    local fingerprint=$1 allow_legacy_upgrade=${2:-false}
-    local recorded legacy temporary
+    local fingerprint=$1 recovery=${2:-none} recorded
     [[ $fingerprint =~ ^[0-9a-f]{64}$ ]] || fail \
         "legacy PostgreSQL source returned an invalid WAL fingerprint"
     recorded=$(marker_value "$target_dir/.gonka-v4-source-wal.sha256")
-    if [[ $recorded == none && $allow_legacy_upgrade == true ]]; then
-        legacy=$(marker_value "$target_dir/.migrated-from-v4")
-        if [[ $legacy == 16 ]]; then
-            temporary=$(mktemp \
-                "$target_dir/.gonka-v4-source-wal.sha256.XXXXXX") || fail \
-                "cannot create PostgreSQL source snapshot marker"
-            printf '%s\n' "$fingerprint" >"$temporary"
-            chmod 600 "$temporary"
-            mv -f "$temporary" \
-                "$target_dir/.gonka-v4-source-wal.sha256"
-            sync -d "$target_dir" 2>/dev/null || sync
-            recorded=$fingerprint
-        fi
+    if [[ $recorded == none && $recovery == completed-staging ]]; then
+        write_source_snapshot "$fingerprint"
+        recorded=$fingerprint
+    elif [[ $recorded == none && $recovery == historical-target ]]; then
+        case ${DEVSHARD_POSTGRES_ACCEPT_LEGACY_TARGET:-false} in
+            1 | true | yes) ;;
+            *) fail \
+                "historical PostgreSQL marker 16 cannot prove whether the retained source or target is newer; select the target explicitly with DEVSHARD_POSTGRES_ACCEPT_LEGACY_TARGET=true, or restore the authoritative source" ;;
+        esac
+        write_source_snapshot "$fingerprint"
+        recorded=$fingerprint
     fi
     [[ $recorded != none ]] || fail \
         "persistent target and legacy source coexist without a durable source snapshot; refusing to guess which copy is newer"
@@ -300,7 +322,13 @@ case $probe_state in
             [[ $source_identifier == "$target_identifier" ]] || fail \
                 "persistent PostgreSQL target does not originate from the selected v4 source"
             validate_published_markers "$target_identifier"
-            require_unchanged_source_snapshot "$source_fingerprint" true
+            if [[ $(marker_value \
+                "$target_dir/.migrated-from-v4") == 16 ]]; then
+                require_unchanged_source_snapshot \
+                    "$source_fingerprint" historical-target
+            else
+                require_unchanged_source_snapshot "$source_fingerprint"
+            fi
         fi
         echo "PostgreSQL persistent PGDATA already exists; no migration copy is required"
         exit 0
@@ -319,9 +347,22 @@ case $probe_state in
         [[ $completion == "$source_identifier" || \
             ($completion == none && $legacy == 16) ]] || fail \
             "PostgreSQL migration completion marker conflicts with its source"
-        [[ $staging_fingerprint == "$source_fingerprint" ]] || fail \
-            "completed PostgreSQL staging changed independently of its source"
-        require_unchanged_source_snapshot "$source_fingerprint" true
+        recorded_snapshot=$(marker_value \
+            "$target_dir/.gonka-v4-source-wal.sha256")
+        if [[ $staging_fingerprint != "$source_fingerprint" || \
+            ($recorded_snapshot != none && \
+             $recorded_snapshot != "$source_fingerprint") ]]; then
+            if [[ $reset_stale_staging == true ]]; then
+                rm -f "$target_dir/.gonka-copy-complete" \
+                    "$target_dir/.gonka-v4-source-wal.sha256"
+                sync -d "$target_dir" 2>/dev/null || sync
+                echo "PostgreSQL source changed; stale staging will be recopied"
+                exit 0
+            fi
+            fail "completed PostgreSQL staging changed independently of its source"
+        fi
+        require_unchanged_source_snapshot \
+            "$source_fingerprint" completed-staging
         echo "PostgreSQL migration staging is complete; no new copy is required"
         exit 0
         ;;

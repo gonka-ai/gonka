@@ -1919,6 +1919,20 @@ if [[ $versiond_mode == ha && $GONKA_COMPOSE_POSTGRES_MODE == local ]]; then
     echo "Migrating and starting devshard-postgres"
     active_service=devshard-postgres
     active_failure_strategy=stop
+    if [[ -n $postgres_container && \
+        $($docker_bin inspect --format '{{.State.Running}}' \
+            "$postgres_container") == true ]]; then
+        run_interruptible "${compose[@]}" stop devshard-postgres
+        if ! env DOCKER_BIN="$docker_bin" \
+            "$script_dir/devshard-postgres-migration-preflight.sh" \
+            --source-container "$postgres_container" \
+            --target-dir "$postgres_target_dir" \
+            --reset-stale-staging; then
+            "${compose[@]}" start devshard-postgres >/dev/null 2>&1 || \
+                warn "could not restart legacy PostgreSQL after final migration proof failed"
+            fail "legacy PostgreSQL changed before shutdown and could not be prepared for a fresh migration copy"
+        fi
+    fi
     if ! run_interruptible "${compose[@]}" \
         up -d --no-deps --wait \
         --wait-timeout "$(service_startup_timeout devshard-postgres)" \

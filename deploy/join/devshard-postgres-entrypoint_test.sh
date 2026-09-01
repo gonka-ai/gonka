@@ -80,6 +80,7 @@ run_entrypoint() {
         GONKA_POSTGRES_OFFICIAL_ENTRYPOINT="${official_entrypoint:-/bin/true}" \
         PGDATA="$persistent/data" \
         DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT="${allow_empty:-false}" \
+        DEVSHARD_POSTGRES_ACCEPT_LEGACY_TARGET="${accept_legacy_target:-false}" \
         GONKA_POSTGRES_STARTUP_TIMEOUT_SECONDS="${startup_timeout:-1800}" \
         GONKA_POSTGRES_TERMINATION_GRACE_SECONDS="${termination_grace:-10}" \
         GONKA_POSTGRES_WATCHDOG_INTERVAL_SECONDS="${watchdog_interval:-5}" \
@@ -160,7 +161,14 @@ mkdir -p "$persistent/data"
 printf '16\n' >"$persistent/data/PG_VERSION"
 printf '16\n' >"$persistent/.migrated-from-v4"
 : >"$persistent/.gonka-copy-complete"
+if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+    fail "historical target with an ambiguous retained source was accepted"
+fi
+grep -q 'select the target explicitly' "$case_dir/stderr" || fail \
+    "historical target ambiguity was not diagnosed"
+accept_legacy_target=true
 run_entrypoint
+unset accept_legacy_target
 [[ $(<"$persistent/.migrated-from-v4") == 1000000000000000000 ]] || fail \
     "previous-revision major marker was not upgraded"
 [[ $(<"$persistent/.gonka-cluster-lineage") == 1000000000000000000 ]] || fail \

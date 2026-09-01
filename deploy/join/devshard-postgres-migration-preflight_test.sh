@@ -209,12 +209,16 @@ grep -q 'no migration copy is required' \
     "published target was not recovered through its still-available source"
 
 printf '1000000000000000000\n' >"$tmpdir/target/.gonka-copy-complete"
+rm -f "$tmpdir/target/.gonka-v4-source-wal.sha256"
 DOCKER_PROBE="staging-ready 1000000000000000000 1000000000000000000 $fingerprint $fingerprint"
 export DOCKER_PROBE
 run_preflight --source-volume postgres-v4-volume --target-dir "$tmpdir/target" \
     >"$tmpdir/staging.stdout"
 grep -q 'staging is complete' "$tmpdir/staging.stdout" || fail \
     "committed migration staging was not recognized"
+[[ $(<"$tmpdir/target/.gonka-v4-source-wal.sha256") == \
+    "$fingerprint" ]] || fail \
+    "completed staging did not recover its missing snapshot marker"
 
 DOCKER_PROBE="staging-ready 1000000000000000000 1000000000000000000 $fingerprint bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 export DOCKER_PROBE
@@ -227,6 +231,15 @@ fi
 grep -q 'staging changed independently' \
     "$tmpdir/stale-staging.stderr" || fail \
     "stale staging failure did not explain the data-loss risk"
+run_preflight --source-volume postgres-v4-volume \
+    --target-dir "$tmpdir/target" --reset-stale-staging \
+    >"$tmpdir/reset-staging.stdout"
+[[ ! -e $tmpdir/target/.gonka-copy-complete && \
+    ! -e $tmpdir/target/.gonka-v4-source-wal.sha256 ]] || fail \
+    "stale staging reset retained invalid completion evidence"
+printf '1000000000000000000\n' >"$tmpdir/target/.gonka-copy-complete"
+printf '%s\n' "$fingerprint" \
+    >"$tmpdir/target/.gonka-v4-source-wal.sha256"
 
 mkdir -p "$tmpdir/old-target"
 printf '16\n' >"$tmpdir/old-target/.migrated-from-v4"
@@ -234,8 +247,17 @@ printf '1000000000000000000 postgres-v4-volume\n' \
     >"$tmpdir/old-target/.gonka-v4-schema-proof"
 DOCKER_PROBE="target-ready 1000000000000000000 1000000000000000000 $fingerprint"
 export DOCKER_PROBE
+if run_preflight --source-volume postgres-v4-volume \
+    --target-dir "$tmpdir/old-target" \
+    >"$tmpdir/old-target.stdout" 2>"$tmpdir/old-target.stderr"; then
+    fail "historical target selected itself without operator acknowledgement"
+fi
+grep -q 'select the target explicitly' "$tmpdir/old-target.stderr" || fail \
+    "historical target ambiguity was not diagnosed"
+export DEVSHARD_POSTGRES_ACCEPT_LEGACY_TARGET=true
 run_preflight --source-volume postgres-v4-volume \
     --target-dir "$tmpdir/old-target" >"$tmpdir/old-target.stdout"
+unset DEVSHARD_POSTGRES_ACCEPT_LEGACY_TARGET
 [[ $(<"$tmpdir/old-target/.gonka-v4-source-wal.sha256") == \
     "$fingerprint" ]] || fail \
     "previous-revision target did not bind its retained source snapshot"

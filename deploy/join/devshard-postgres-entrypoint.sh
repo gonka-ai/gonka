@@ -119,6 +119,10 @@ validate_migration_lineage() {
         if [ ! -s "$source_fingerprint_marker" ]; then
             [ "$legacy_marker_is_old" = true ] ||
                 die "persistent PostgreSQL target has an attached legacy source but no durable source snapshot; refusing to guess which copy is newer"
+            case "${DEVSHARD_POSTGRES_ACCEPT_LEGACY_TARGET:-false}" in
+                1 | true | yes) ;;
+                *) die "historical PostgreSQL marker 16 cannot prove whether the retained source or target is newer; select the target explicitly with DEVSHARD_POSTGRES_ACCEPT_LEGACY_TARGET=true, or restore the authoritative source" ;;
+            esac
             printf '%s\n' "$current_fingerprint" \
                 >"$source_fingerprint_marker" ||
                 die "cannot upgrade PostgreSQL source snapshot marker"
@@ -408,15 +412,15 @@ elif cluster_exists "$legacy_data"; then
     validate_cluster "$staging_data"
     [ "$(cat "$legacy_data/PG_VERSION")" = "$(cat "$staging_data/PG_VERSION")" ] ||
         die "migrated PostgreSQL version does not match its source"
-    sync
-    printf '%s\n' "$source_identifier" >"$staging_complete" ||
-        die "cannot record PostgreSQL migration source lineage"
     source_fingerprint=$(cluster_wal_fingerprint "$legacy_data")
     staging_fingerprint=$(cluster_wal_fingerprint "$staging_data")
     [ "$source_fingerprint" = "$staging_fingerprint" ] ||
         die "PostgreSQL migration WAL fingerprint differs from its source"
     printf '%s\n' "$source_fingerprint" >"$source_fingerprint_marker" ||
         die "cannot record the migrated PostgreSQL source snapshot"
+    sync
+    printf '%s\n' "$source_identifier" >"$staging_complete" ||
+        die "cannot record PostgreSQL migration source lineage"
     sync
     publish_staging "$source_identifier"
     log "v4 PostgreSQL migration completed"
