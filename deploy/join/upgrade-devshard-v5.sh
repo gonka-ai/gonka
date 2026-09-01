@@ -433,7 +433,8 @@ write_upgrade_marker() {
 	[[ -f $upgrade_journal ]] || fail \
 		"active upgrade journal disappeared before commit"
     if [[ $versiond_mode == ha ]]; then
-        [[ -n $verified_postgres_identity ]] || verify_shared_postgres_identity
+		[[ -n $verified_postgres_identity ]] || fail \
+			"committed HA transaction lacks its verified PostgreSQL identity"
 		marker=$(jq -c --arg identity "$verified_postgres_identity" '
 			.storage = {postgres_identity: $identity}
 		' "$upgrade_journal") || fail "cannot finalize PostgreSQL identity"
@@ -448,6 +449,14 @@ write_upgrade_marker() {
 	directory=$(dirname -- "$upgrade_marker")
 	mv -f "$upgrade_journal" "$upgrade_marker"
 	sync -f "$directory"
+}
+
+clear_application_rollback_metadata() {
+    local updated
+    updated=$(jq -c 'del(.transaction.application_rollback)' \
+        "$upgrade_journal") || fail \
+        "cannot clear committed application rollback metadata"
+    atomic_write_upgrade_state "$upgrade_journal" "$updated"
 }
 
 upgrade_state_release() {
@@ -737,6 +746,53 @@ else
 	base_fingerprint=$current_base_fingerprint
 fi
 
+# Once the release commit decision is durable, neither application rollback nor
+# a live PostgreSQL dependency may prevent publishing the final marker. Finish
+# ingress cleanup from its journaled model, then commit the release state before
+# entering ordinary runtime preflight.
+if [[ $interrupted_upgrade_loaded == true ]] && jq -e '
+	.transaction.phase == "ingress_verified" and
+	.transaction.decision == "commit" and
+	(.transaction.ingress.state == "prepared" or
+	 .transaction.ingress.state == "committed")
+' "$upgrade_journal" >/dev/null 2>&1; then
+	[[ $preflight_only == false ]] || fail \
+		"a committed release transaction requires a normal run to finish its durable marker"
+	if ! jq -e '
+		.transaction.ingress.state == "committed" and
+		((.transaction.ingress.rollback_models? // null) == null)
+	' "$upgrade_journal" >/dev/null 2>&1; then
+		echo "Finishing committed ingress transaction before upgrade preflight"
+		ROUTER_HA_TRANSACTION_JOURNAL=$upgrade_journal \
+		ROUTER_HA_TRANSACTION_ID=$transaction_id \
+		"$enable_router_bin" --recover-only \
+			--versiond-mode "$versiond_mode" --edge-mode "$edge_mode" \
+			"${GONKA_COMPOSE_FORWARD_ARGS[@]}"
+	fi
+	jq -e '
+		.transaction.ingress.state == "committed" and
+		((.transaction.ingress.rollback_models? // null) == null)
+	' "$upgrade_journal" >/dev/null || fail \
+		"committed ingress transaction did not finish its durable cleanup"
+	if [[ $versiond_mode == ha ]]; then
+		[[ -n $verified_postgres_identity ]] || fail \
+			"committed HA transaction lacks its verified PostgreSQL identity"
+	fi
+	mapfile -t committed_rollback_images < <(jq -r \
+		'.transaction.application_rollback.services[]?.image // empty' \
+		"$upgrade_journal")
+	clear_application_rollback_metadata
+	write_upgrade_marker
+	for rollback_image in "${committed_rollback_images[@]}"; do
+		[[ -n $rollback_image ]] || continue
+		if ! "$docker_bin" image rm "$rollback_image" >/dev/null; then
+			warn "could not remove temporary image tag $rollback_image"
+		fi
+	done
+	echo "Completed the durably committed release transaction"
+	exit 0
+fi
+
 public_http_port=$(jq -er '
     [.services.proxy.ports[]?
      | select(.target == 80 and (.protocol // "tcp") == "tcp")
@@ -925,14 +981,6 @@ load_application_rollback() {
     else
         echo "Reusing durable $service rollback baseline $image"
     fi
-}
-
-clear_application_rollback_metadata() {
-    local updated
-    updated=$(jq -c 'del(.transaction.application_rollback)' \
-        "$upgrade_journal") || fail \
-        "cannot clear committed application rollback metadata"
-    atomic_write_upgrade_state "$upgrade_journal" "$updated"
 }
 
 write_upgrade_commit_decision() {

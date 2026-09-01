@@ -760,6 +760,8 @@ resume_interrupted_upgrade() {
         UPGRADE_ROLLBACK_VERIFY_INTERVAL=1 \
         UPGRADE_ROLLBACK_STABILITY_CHECKS=1 \
         UPGRADE_ROUTER_RELOAD_SETTLE=0 \
+        POSTGRES_DEPLOYMENT_PREFLIGHT_FAIL_MODE=\
+"${POSTGRES_DEPLOYMENT_PREFLIGHT_FAIL_MODE-}" \
         "$script_dir/upgrade-devshard-v5.sh" \
         --versiond-mode ha --edge-mode single \
         >"$stdout" 2>"$stderr"; then
@@ -1941,6 +1943,33 @@ if grep -q 'gonka-upgrade-rollback/.* up ' \
 fi
 grep -q 'release commit is durable; completing forward' "$tmpdir/stderr" || fail \
     "post-decision failure did not enter forward-only recovery"
+
+# A crash can leave the ingress decision committed before its rollback models
+# are redacted. Recovery must finish the marker without consulting PostgreSQL,
+# whose simultaneous outage cannot revoke an already durable release commit.
+journal_tmp=$(mktemp "$tmpdir/.committed-ingress.XXXXXX")
+jq '.transaction.ingress.state = "committed"' \
+	"$tmpdir/upgrade-complete.in-progress" >"$journal_tmp"
+mv "$journal_tmp" "$tmpdir/upgrade-complete.in-progress"
+POSTGRES_DEPLOYMENT_PREFLIGHT_FAIL_MODE=runtime \
+	resume_interrupted_upgrade \
+	"$tmpdir/commit-finalize-failure.log.state" \
+	"$tmpdir/commit-recovery.log" \
+	"$tmpdir/commit-recovery.stdout" \
+	"$tmpdir/commit-recovery.stderr"
+[[ -f $tmpdir/upgrade-complete && \
+	! -f $tmpdir/upgrade-complete.in-progress ]] || fail \
+	"committed ingress recovery did not finalize the release marker"
+jq -e '
+	.transaction.ingress.state == "committed" and
+	((.transaction.ingress.rollback_models? // null) == null) and
+	((.transaction.application_rollback? // null) == null)
+' "$tmpdir/upgrade-complete" >/dev/null || fail \
+	"committed ingress recovery retained rollback metadata"
+assert_contains "$tmpdir/commit-recovery.log" \
+	"enable-router --recover-only"
+assert_not_contains "$tmpdir/commit-recovery.log" \
+	"postgres-deployment-preflight"
 
 run_upgrade single devshard-postgres "$tmpdir/postgres-failure.log"
 assert_contains "$tmpdir/postgres-failure.log" " stop devshard-postgres"
