@@ -5,14 +5,21 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 
 	"common/chainoracle/blocks"
+	"common/httpguard"
 	blockclient "devshard/chainoracle/blocks/client"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestMain(m *testing.M) {
+	httpguard.SetAllowPrivate(true)
+	os.Exit(m.Run())
+}
 
 func TestLookup_AtDummyOn404(t *testing.T) {
 	ts := httptest.NewServer(http.NotFoundHandler())
@@ -47,4 +54,33 @@ func TestLookup_LatestUnsupported(t *testing.T) {
 	require.NoError(t, err)
 	_, err = l.Latest(context.Background())
 	require.Error(t, err)
+}
+
+func TestLookup_DefaultClientGuardsLoopback(t *testing.T) {
+	httpguard.SetAllowPrivate(false)
+	t.Cleanup(func() { httpguard.SetAllowPrivate(true) })
+
+	ts := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(ts.Close)
+	l, err := blockclient.NewLookup(blockclient.HTTPConfig{BaseURL: ts.URL})
+	require.NoError(t, err)
+	_, err = l.At(context.Background(), 1)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "ssrf guard")
+}
+
+func TestLookup_InjectedClientSkipsDefaultGuard(t *testing.T) {
+	httpguard.SetAllowPrivate(false)
+	t.Cleanup(func() { httpguard.SetAllowPrivate(true) })
+
+	ts := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(ts.Close)
+	l, err := blockclient.NewLookup(blockclient.HTTPConfig{
+		BaseURL:    ts.URL,
+		HTTPClient: ts.Client(),
+	})
+	require.NoError(t, err)
+	h, err := l.At(context.Background(), 11)
+	require.NoError(t, err)
+	require.True(t, blocks.IsDummyHeader(h))
 }

@@ -7,12 +7,14 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"common/chainoracle/blocks"
+	"common/httpguard"
 	"devshard/chainoracle/blocks/client"
 	"devshard/chainoracle/blocks/standalone"
 	"devshard/chainoracle/blocks/verifier"
@@ -20,6 +22,11 @@ import (
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestMain(m *testing.M) {
+	httpguard.SetAllowPrivate(true)
+	os.Exit(m.Run())
+}
 
 // ephemeralListener binds :0 and returns a listener + bound addr.
 func ephemeralListener(t *testing.T) net.Listener {
