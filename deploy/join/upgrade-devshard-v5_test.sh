@@ -2047,8 +2047,10 @@ EXEC_HEALTH_OVERRIDE=true \
     run_upgrade single versiond2 "$tmpdir/versiond2-exec-health.log"
 assert_not_contains "$tmpdir/versiond2-exec-health.log" \
     " :: create --name versiond2 --network none"
+assert_not_contains "$tmpdir/versiond2-exec-health.log" \
+    "--wait-timeout 2100 versiond2"
 grep -q 'exec-form healthcheck' "$tmpdir/stderr" || fail \
-    "inexact exec-form healthcheck rollback did not fail closed"
+    "inexact exec-form healthcheck was not rejected before replacement"
 
 ROLLBACK_EMPTY_VERSIOND_SERVICE=versiond2 \
 UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \

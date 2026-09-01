@@ -1306,6 +1306,28 @@ capture_versiond_router_rollback_baseline() {
     echo "Captured versiond-router route baseline: $display"
 }
 
+validate_rollback_runtime_model() {
+	local service=$1 image=$2 model=$3 health_kind saved_health image_health
+
+	if jq -e '.config.Healthcheck.Test? | length > 0' \
+		<<<"$model" >/dev/null; then
+		health_kind=$(jq -r '.config.Healthcheck.Test[0]' <<<"$model")
+		if [[ $health_kind == CMD ]]; then
+			saved_health=$(jq -Sc '.config.Healthcheck' <<<"$model")
+			image_health=$("$docker_bin" image inspect --format \
+				'{{json .Config.Healthcheck}}' "$image") || {
+				warn "cannot inspect the rollback image healthcheck for $service"
+				return 1
+			}
+			image_health=$(jq -Sc '.' <<<"${image_health:-null}") || return 1
+			[[ $saved_health == "$image_health" ]] || {
+				warn "$service has an exec-form healthcheck that Docker CLI cannot override exactly"
+				return 1
+			}
+		fi
+	fi
+}
+
 capture_rollback_image() {
     local service=$1
     local container_id image_id rollback_image was_running
@@ -1345,6 +1367,9 @@ capture_rollback_image() {
 			host_config: .HostConfig, mounts: (.Mounts // []),
 			networks: .NetworkSettings.Networks
 		}') || fail "cannot capture the exact runtime model for $service"
+	validate_rollback_runtime_model "$service" "$rollback_image" \
+		"${rollback_runtime_models[$service]}" || fail \
+		"the existing $service runtime cannot be restored exactly; normalize its healthcheck before upgrading"
     echo "Captured $service rollback image as $rollback_image"
     case $service in
         versiond | versiond2)
@@ -1495,11 +1520,12 @@ rollback_service() {
 
 restore_runtime_container() {
 	local service=$1 image=$2 model
-	local name value key restart health_cmd health_kind image_health saved_health
+	local name value key restart health_cmd health_kind
 	local network network_id current backup_name
 	local candidate_was_running=false backup_exists=false
 	local -a create_args=(create) command_args=() connect_args=() entrypoint_args=()
 	model=${rollback_runtime_models[$service]}
+	validate_rollback_runtime_model "$service" "$image" "$model" || return 1
 
 	jq -e '
 		type == "object" and
@@ -1595,15 +1621,9 @@ restore_runtime_container() {
 			create_args+=(--health-cmd "$health_cmd")
 			;;
 			CMD)
-			saved_health=$(jq -Sc '.config.Healthcheck' <<<"$model")
-			image_health=$("$docker_bin" image inspect --format \
-				'{{json .Config.Healthcheck}}' "$image") || return 1
-			image_health=$(jq -Sc '.' <<<"${image_health:-null}") || return 1
-			[[ $saved_health == "$image_health" ]] || {
-				warn "$service has an exec-form healthcheck that Docker CLI cannot override exactly"
-				return 1
-			}
-			;;
+				# Exact inheritance was verified before mutation and is checked
+				# again above for journals captured by an older process.
+				;;
 			*) warn "$service has an unsupported saved healthcheck kind"; return 1 ;;
 		esac
 		value=$(jq -r '.config.Healthcheck.Interval // 0' <<<"$model"); ((value == 0)) || create_args+=(--health-interval "${value}ns")
