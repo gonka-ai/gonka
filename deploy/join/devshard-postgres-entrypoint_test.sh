@@ -465,4 +465,64 @@ unset official_entrypoint termination_grace watchdog_interval watchdog_failures
 [[ -e $persistent/data/.test-term-complete ]] || fail \
     "watchdog interrupted the PostgreSQL graceful shutdown window"
 
+new_case preserve-watchdog-after-reload
+mkdir -p "$persistent/data/global" "$persistent/data/pg_wal"
+printf '16\n' >"$persistent/data/PG_VERSION"
+printf 'control\n' >"$persistent/data/global/pg_control"
+printf '1000000000000000000\n' >"$persistent/.gonka-cluster-lineage"
+cat >"$case_dir/official-entrypoint" <<'EOF'
+#!/bin/sh
+touch "$PGDATA/.test-final-process"
+trap 'touch "$PGDATA/.test-reloaded"' HUP
+trap 'exit 0' TERM
+while :; do sleep 1; done
+EOF
+chmod +x "$case_dir/official-entrypoint"
+official_entrypoint=$case_dir/official-entrypoint
+watchdog_interval=1
+watchdog_failures=1
+env \
+    PATH="$test_path" \
+    GONKA_POSTGRES_LEGACY_DATA="$legacy" \
+    GONKA_POSTGRES_PERSISTENT_ROOT="$persistent" \
+    GONKA_POSTGRES_EXISTING_VERSIOND="$existing" \
+    GONKA_POSTGRES_VERSIOND_DATA="$versiond_data" \
+    GONKA_POSTGRES_VERSIOND2_DATA="$versiond2_data" \
+    GONKA_POSTGRES_OFFICIAL_ENTRYPOINT="$official_entrypoint" \
+    PGDATA="$persistent/data" \
+    GONKA_POSTGRES_WATCHDOG_INTERVAL_SECONDS="$watchdog_interval" \
+    GONKA_POSTGRES_WATCHDOG_FAILURES="$watchdog_failures" \
+    "$entrypoint" postgres >"$case_dir/stdout" 2>"$case_dir/stderr" &
+supervisor=$!
+for _ in {1..50}; do
+    [[ -e $persistent/data/.test-final-process ]] && break
+    sleep 0.1
+done
+[[ -e $persistent/data/.test-final-process ]] || fail \
+    "reload test PostgreSQL process did not start"
+sleep 1
+kill -HUP "$supervisor"
+for _ in {1..50}; do
+    [[ -e $persistent/data/.test-reloaded ]] && break
+    sleep 0.1
+done
+[[ -e $persistent/data/.test-reloaded ]] || fail \
+    "supervisor did not forward PostgreSQL reload"
+kill -0 "$supervisor" 2>/dev/null || fail \
+    "PostgreSQL supervisor exited after reload"
+: >"$persistent/data/.test-probe-fail"
+for _ in {1..50}; do
+    kill -0 "$supervisor" 2>/dev/null || break
+    sleep 0.1
+done
+if kill -0 "$supervisor" 2>/dev/null; then
+    kill -TERM "$supervisor" 2>/dev/null || true
+    wait "$supervisor" 2>/dev/null || true
+    fail "PostgreSQL reload permanently disabled its watchdog"
+fi
+wait "$supervisor" || fail "watchdog recovery returned failure after reload"
+unset official_entrypoint watchdog_interval watchdog_failures
+grep -q 'failed 1 bounded SQL probes' "$case_dir/stderr" || fail \
+    "watchdog did not remain active after PostgreSQL reload"
+
 echo "devshard-postgres-entrypoint_test: ok"

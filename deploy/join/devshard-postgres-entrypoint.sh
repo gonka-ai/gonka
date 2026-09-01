@@ -234,6 +234,10 @@ handle_postgres_signal() {
     forward_signal "$signal"
 }
 
+handle_postgres_reload() {
+    forward_signal HUP
+}
+
 postgres_final_process_is_running() {
     executable=$(readlink "/proc/$postgres_child/exe" 2>/dev/null || :)
     [ "${executable##*/}" = postgres ]
@@ -288,7 +292,7 @@ run_official_supervised() {
     shutdown_requested=false
     trap 'handle_postgres_signal TERM' TERM
     trap 'handle_postgres_signal INT' INT
-    trap 'handle_postgres_signal HUP' HUP
+    trap 'handle_postgres_reload' HUP
 
     ready=false
     startup_deadline=$(( $(date +%s) + startup_timeout ))
