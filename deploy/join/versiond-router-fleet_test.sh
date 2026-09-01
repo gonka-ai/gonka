@@ -123,6 +123,30 @@ fleet_spec=$("${fleet[@]}" spec-hash)
 [[ $(VERSIOND_ROUTER_FLEET_ID="$fleet_id-other" "${fleet[@]}" spec-hash) != "$fleet_spec" ]] || fail \
     "fleet specification hash ignores fleet identity"
 
+# An explicit endpoint list is part of the specification: its content, not
+# only its path, must change the hash so `apply` rolls an edited pool. The
+# path is resolved from the directory of config.env.
+mkdir -p "$tmpdir/endpoints"
+printf '[{"id":"a","host":"10.20.0.11","port":8080}]\n' \
+    >"$tmpdir/endpoints/versiond-endpoints.json"
+endpoint_spec=$(VERSIOND_POOL_ENDPOINTS_FILE=./endpoints/versiond-endpoints.json \
+    "${fleet[@]}" spec-hash) || fail "endpoint file specification did not render"
+[[ $endpoint_spec != "$fleet_spec" ]] || fail \
+    "fleet specification hash ignores the endpoint file"
+printf '[{"id":"a","host":"10.20.0.11","port":8080},{"id":"b","host":"10.20.0.12"}]\n' \
+    >"$tmpdir/endpoints/versiond-endpoints.json"
+[[ $(VERSIOND_POOL_ENDPOINTS_FILE=./endpoints/versiond-endpoints.json \
+    "${fleet[@]}" spec-hash) != "$endpoint_spec" ]] || fail \
+    "fleet specification hash ignores edited endpoint content"
+printf '[{"id":"a","host":"10.20.0.11"},{"id":"a","host":"10.20.0.12"}]\n' \
+    >"$tmpdir/endpoints/duplicate.json"
+! VERSIOND_POOL_ENDPOINTS_FILE=./endpoints/duplicate.json \
+    "${fleet[@]}" spec-hash >/dev/null 2>&1 || fail \
+    "an endpoint file with duplicate ids was accepted"
+! VERSIOND_POOL_ENDPOINTS_FILE=./endpoints/missing.json \
+    "${fleet[@]}" spec-hash >/dev/null 2>&1 || fail \
+    "a missing endpoint file was accepted"
+
 docker network create --internal \
     --label com.docker.compose.network=default \
     --label com.docker.compose.project="gonka-router-fleet-main-$suffix" \

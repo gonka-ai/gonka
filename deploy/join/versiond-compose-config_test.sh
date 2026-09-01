@@ -25,6 +25,14 @@ VERSIOND_ROUTING_CATALOG_URL=http://catalog.example.test/versions \
     --project-name gonka-versiond-router-test \
     -f "$script_dir/versiond-router-slot/docker-compose.yml" \
     config --format json >"$tmpdir/slot-overrides.json"
+printf '[{"id":"a","host":"10.20.0.11"}]\n' >"$tmpdir/versiond-endpoints.json"
+VERSIOND_POOL_ENDPOINTS_HOST_FILE=$tmpdir/versiond-endpoints.json \
+VERSIOND_POOL_ENDPOINTS_SHA256=0123456789abcdef \
+    docker compose --project-directory "$script_dir" \
+    --project-name gonka-versiond-router-test \
+    -f "$script_dir/versiond-router-slot/docker-compose.yml" \
+    -f "$script_dir/versiond-router-slot/docker-compose.endpoints.yml" \
+    config --format json >"$tmpdir/slot-endpoints.json"
 
 jq -e '
   (.services | has("versiond-router") | not) and
@@ -60,6 +68,17 @@ jq -e '
   (.services.router.environment.VERSIOND_ROUTING_CATALOG_URL ==
     "http://catalog.example.test/versions")
 ' "$tmpdir/slot-overrides.json" >/dev/null
+
+jq -e --arg file "$tmpdir/versiond-endpoints.json" '
+  (.services.router.environment.VERSIOND_POOL_ENDPOINTS_FILE ==
+    "/etc/gonka/versiond-endpoints.json") and
+  (.services.router.environment.VERSIOND_POOL_ENDPOINTS_SHA256 == "0123456789abcdef") and
+  (.services.router.environment.VERSIOND_HOSTS == "") and
+  ([.services.router.volumes[]
+    | select(.target == "/etc/gonka/versiond-endpoints.json")]
+    | length == 1 and .[0].type == "bind" and .[0].source == $file and
+      .[0].read_only == true)
+' "$tmpdir/slot-endpoints.json" >/dev/null
 
 router_scrape=$(awk '
   /job_name: versiond-router/ { capture = 1 }

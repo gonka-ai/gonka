@@ -119,6 +119,34 @@ command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required"
 # shellcheck source=deploy/join/deployment-lock.sh
 source "$script_dir/deployment-lock.sh"
 
+# Explicit versiond endpoints for bare-metal multi-host pools. A relative path
+# in config.env is resolved from the directory of config.env. Every slot mounts
+# the file read-only and carries its SHA-256 in the container environment, so an
+# edited list changes the rendered slot contract and `apply` rolls the fleet.
+endpoints_overlay=$script_dir/versiond-router-slot/docker-compose.endpoints.yml
+endpoints_host_file=
+if [[ -n ${VERSIOND_POOL_ENDPOINTS_FILE:-} ]]; then
+    endpoints_host_file=$VERSIOND_POOL_ENDPOINTS_FILE
+    [[ $endpoints_host_file == /* ]] || \
+        endpoints_host_file=$config_dir/$endpoints_host_file
+    [[ -r $endpoints_host_file ]] || fail \
+        "VERSIOND_POOL_ENDPOINTS_FILE is not readable: $endpoints_host_file"
+    endpoints_host_file=$(cd -- "$(dirname -- "$endpoints_host_file")" && pwd -P)/$(basename -- "$endpoints_host_file")
+    jq -e '
+        type == "array" and length > 0 and
+        all(.[]; type == "object" and
+            (.id | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]*$")) and
+            (.host | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9.-]*$")) and
+            ((.port == null) or
+             (.port | type == "number" and . >= 1 and . <= 65535 and floor == .))) and
+        ([.[].id] | length == (unique | length))
+    ' "$endpoints_host_file" >/dev/null || fail \
+        "invalid versiond endpoint file $endpoints_host_file: expected a non-empty JSON array of {id, host, port} entries with unique ids"
+    export VERSIOND_POOL_ENDPOINTS_HOST_FILE=$endpoints_host_file
+    VERSIOND_POOL_ENDPOINTS_SHA256=$(sha256sum "$endpoints_host_file" | awk '{print $1}')
+    export VERSIOND_POOL_ENDPOINTS_SHA256
+fi
+
 case $min_ready in '' | *[!0-9]*) fail "VERSIOND_ROUTER_MIN_READY must be a non-negative integer" ;; esac
 case $pull_policy in always | missing | never) ;; *) fail "VERSIOND_ROUTER_PULL_POLICY must be always, missing, or never" ;; esac
 case $fleet_id in '' | *[!A-Za-z0-9._-]*) fail "invalid VERSIOND_ROUTER_FLEET_ID '$fleet_id'" ;; esac
@@ -184,12 +212,14 @@ candidate_placement_contract() {
 
 slot_compose() {
     local slot=$1
+    local -a slot_files=(-f "$slot_file")
     shift
     [[ -n ${VERSIOND_ROUTER_METRICS_NETWORK:-} ]] || resolve_metrics_network
+    [[ -z $endpoints_host_file ]] || slot_files+=(-f "$endpoints_overlay")
     VERSIOND_ROUTER_SLOT=$slot VERSIOND_ROUTER_FLEET_ID=$fleet_id "$docker_bin" compose \
         --project-directory "$script_dir" \
         --project-name "$project_prefix-$slot" \
-        -f "$slot_file" "$@"
+        "${slot_files[@]}" "$@"
 }
 
 fleet_spec_hash() {
@@ -201,6 +231,7 @@ fleet_spec_hash() {
         printf 'project_prefix=%s\n' "$project_prefix"
         printf 'min_ready=%s\n' "$min_ready"
         printf 'slot_manifest_sha256=%s\n' "$manifest_hash"
+        printf 'endpoints_sha256=%s\n' "${VERSIOND_POOL_ENDPOINTS_SHA256:-none}"
         for slot in "${slots[@]}"; do
             rendered=$(slot_compose "$slot" config --format json) || fail \
                 "cannot render fleet slot '$slot' for specification hashing"
