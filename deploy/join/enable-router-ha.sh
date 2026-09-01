@@ -353,15 +353,32 @@ proxy_component() {
 }
 
 proxy_env_value() {
-    local name=$1 line
+    local name=$1 line environment
 
+    environment=$("$docker_bin" inspect --format \
+        '{{range .Config.Env}}{{println .}}{{end}}' proxy) || return 2
     while IFS= read -r line; do
         case $line in
             "$name="*) printf '%s\n' "${line#*=}"; return 0 ;;
         esac
-    done < <("$docker_bin" inspect --format \
-        '{{range .Config.Env}}{{println .}}{{end}}' proxy)
+    done <<<"$environment"
     return 1
+}
+
+proxy_nginx_mode() {
+    local mode status
+    if mode=$(proxy_env_value NGINX_MODE); then
+        :
+    else
+        status=$?
+        ((status == 1)) || fail \
+            "cannot inspect proxy environment before policy drain"
+        mode=http
+    fi
+    case $mode in
+        http | https | both) printf '%s\n' "$mode" ;;
+        *) fail "proxy has unsupported NGINX_MODE='$mode'" ;;
+    esac
 }
 
 container_env_value() {
@@ -964,16 +981,16 @@ policy_address_admitted() {
 
 policy_backends() {
 	local mode
-	mode=$(proxy_env_value NGINX_MODE || true)
-	mode=${mode:-http}
+	mode=$(proxy_nginx_mode) || return 2
 	[[ $mode == https ]] || printf '%s\n' policy_http
 	[[ $mode == http ]] || printf '%s\n' policy_https
 }
 
 policy_address_withdrawn() {
-	local address=$1 backend status
+	local address=$1 backend status backend_inventory
 	local -a backends=()
-	mapfile -t backends < <(policy_backends)
+	backend_inventory=$(policy_backends) || return 2
+	mapfile -t backends <<<"$backend_inventory"
 	for backend in "${backends[@]}"; do
 		if policy_address_admission_state "$backend" "$address"; then
 			return 1
@@ -1077,7 +1094,7 @@ policy_service_needs_replacement() {
 }
 
 withdraw_policy_service() {
-	local service=$1 address backend ref address_inventory
+	local service=$1 address backend ref address_inventory backend_inventory
 	local -a addresses=() backends=() refs=()
 	address_inventory=$(policy_service_addresses "$service") || {
 		warn "cannot inventory $service addresses before drain"
@@ -1088,7 +1105,8 @@ withdraw_policy_service() {
 		"${compose[@]}" stop "$service"
 		return
 	fi
-	mapfile -t backends < <(policy_backends)
+	backend_inventory=$(policy_backends) || return 1
+	mapfile -t backends <<<"$backend_inventory"
 	for address in "${addresses[@]}"; do
 		for backend in "${backends[@]}"; do
 			ref=$(policy_server_ref "$backend" "$address") || {
@@ -1117,8 +1135,7 @@ withdraw_policy_service() {
 policy_service_admitted() {
 	local service=$1 mode id address
 	local -a ids=()
-	mode=$(proxy_env_value NGINX_MODE || true)
-	mode=${mode:-http}
+	mode=$(proxy_nginx_mode) || return 2
 	mapfile -t ids < <("${compose[@]}" ps --quiet "$service")
 	((${#ids[@]} > 0)) || return 1
 	for id in "${ids[@]}"; do

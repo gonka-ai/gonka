@@ -46,6 +46,12 @@ fi
 
 if [[ ${1:-} == inspect ]]; then
     if [[ ${2:-} == --format ]]; then
+			if [[ ${FAIL_PROXY_ENV_INSPECT:-false} == true && \
+				${3:-} == '{{range .Config.Env}}{{println .}}{{end}}' && \
+				${4:-} == proxy ]]; then
+				echo 'simulated proxy environment inspect failure' >&2
+				exit 1
+			fi
 			case ${3:-} in
 				'{{.State.Running}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')
 					service=
@@ -118,8 +124,11 @@ if [[ ${1:-} == inspect ]]; then
             '{{range .Config.Env}}{{println .}}{{end}}')
                 case ${4:-} in
                     proxy)
+                        if [[ ${OMIT_NGINX_MODE:-false} != true ]]; then
+                            printf '%s\n' \
+                                "NGINX_MODE=${FAKE_NGINX_MODE:-http}"
+                        fi
                         printf '%s\n' \
-                            "NGINX_MODE=${FAKE_NGINX_MODE:-http}" \
                             'PROXY_POLICY_POOL_SLOTS=7' \
                             'PROXY_ROUTER_PUBLIC_IDLE_SECONDS=86400' \
                             'HAPROXY_DNS_RESOLVER=127.0.0.11:53' \
@@ -704,6 +713,28 @@ for backend in policy_http policy_https; do
 		done
 	done
 done
+
+INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
+INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/missing-nginx-mode.log" env OMIT_NGINX_MODE=true
+grep -q '^runtime drain policy_http/proxy-policy2$' \
+    "$tmpdir/missing-nginx-mode.log" || fail \
+    "proven absence of legacy NGINX_MODE did not retain the http default"
+
+if INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
+    INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/nginx-mode-inspect-failure.log" env \
+        FAIL_PROXY_ENV_INSPECT=true \
+        2>"$tmpdir/nginx-mode-inspect-failure.stderr"; then
+    fail "proxy environment inspect failure was accepted as http mode"
+fi
+grep -q 'cannot inspect proxy environment before policy drain' \
+    "$tmpdir/nginx-mode-inspect-failure.stderr" || fail \
+    "proxy environment inspect failure was not diagnosed"
+if grep -Eq ' stop .*proxy-policy2?$' \
+    "$tmpdir/nginx-mode-inspect-failure.log"; then
+    fail "policy worker was stopped after NGINX_MODE inspect failed"
+fi
 
 INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
 INITIAL_POLICY_GENERATION=candidate \
