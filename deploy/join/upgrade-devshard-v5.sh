@@ -208,7 +208,11 @@ rollback_timeout_for_service() {
         printf '%s\n' "$rollback_verify_timeout_override"
         return 0
     fi
-    service_startup_timeout "$1"
+    case $1 in
+        devshard-postgres) printf '120\n' ;;
+        versiond | versiond2 | versiond-router) printf '60\n' ;;
+        *) printf '60\n' ;;
+    esac
 }
 case $rollback_stability_checks in
     '' | *[!0-9]* | 0)
@@ -305,6 +309,7 @@ run_postgres_deployment_preflight() {
         "PostgreSQL deployment preflight is not executable: $postgres_deployment_preflight_bin"
     case $mode in
         compose) args+=(--compose-only) ;;
+        runtime) args+=(--runtime-contract-only) ;;
         live)
             [[ -z $verified_postgres_identity ]] || \
                 args+=(--expected-identity "$verified_postgres_identity")
@@ -338,6 +343,7 @@ current_compose_config_sha() {
 
 router_fleet_spec_sha() {
 	GONKA_CONFIG_ENV=$config_env \
+	GONKA_COMPOSE_PROJECT=$GONKA_COMPOSE_PROJECT \
 	VERSIOND_ROUTER_FRONT_NETWORK=$GONKA_COMPOSE_ROUTER_FRONT_NETWORK \
 	VERSIOND_ROUTER_BACK_NETWORK=$GONKA_COMPOSE_ROUTER_BACK_NETWORK \
 	VERSIOND_ROUTER_METRICS_NETWORK=$GONKA_COMPOSE_DEFAULT_NETWORK \
@@ -588,7 +594,7 @@ fi
 # The ingress journal carries exact rollback models, so recovery does not wait
 # for the slow forward path to become healthy again.
 if [[ -f $upgrade_journal ]] && jq -e \
-	'.transaction.ingress.state == "active"' "$upgrade_journal" \
+	'.transaction.ingress.state == "active" or .transaction.ingress.state == "prepared"' "$upgrade_journal" \
 	>/dev/null 2>&1; then
 	[[ $preflight_only == false ]] || fail \
 		"an interrupted ingress transaction requires a normal run for automatic rollback; --preflight-only never mutates the deployment"
@@ -660,6 +666,7 @@ desired_fingerprint=$(
 desired_upgrade_marker=$(jq -c --arg fingerprint "$desired_fingerprint" \
     '. + {fingerprint: $fingerprint}' <<<"$desired_upgrade_state")
 verified_postgres_identity=
+verified_postgres_identity_committed=false
 if [[ $interrupted_upgrade_loaded == true ]]; then
 	verified_postgres_identity=$(jq -r \
 		'.transaction.postgres_identity // ""' "$upgrade_journal")
@@ -668,6 +675,7 @@ elif [[ -f $upgrade_marker ]] && jq -e 'type == "object"' \
 	verified_postgres_identity=$(jq -r \
 		'.storage.postgres_identity // ""' "$upgrade_marker")
 fi
+[[ -z $verified_postgres_identity ]] || verified_postgres_identity_committed=true
 current_base_fingerprint=none
 if [[ -f $upgrade_marker ]]; then
 	current_base_fingerprint=$(jq -er \
@@ -713,14 +721,30 @@ postgres_container=
 postgres_target_dir=
 if [[ $versiond_mode == ha ]]; then
     run_postgres_deployment_preflight compose
+    # Credential and endpoint drift must be rejected while every current
+    # generation and the original database are still untouched. In
+    # particular, Compose cannot rotate an already initialized POSTGRES_PASSWORD.
+    run_postgres_deployment_preflight runtime
 fi
 if [[ $versiond_mode == ha && $GONKA_COMPOSE_POSTGRES_MODE == local ]]; then
     postgres_container=$("${compose[@]}" ps --all --quiet devshard-postgres)
     postgres_target_dir=$GONKA_COMPOSE_POSTGRES_DATA_DIR
-    if [[ -n $postgres_container ]]; then
+    if [[ -n $postgres_container && \
+        $("$docker_bin" inspect --format '{{.State.Running}}' "$postgres_container") == true ]]; then
         env DOCKER_BIN="$docker_bin" \
             "$script_dir/devshard-postgres-migration-preflight.sh" \
             --source-container "$postgres_container" \
+            --target-dir "$postgres_target_dir"
+    elif [[ -n $postgres_container ]]; then
+        postgres_source_volume=$("$docker_bin" inspect --format \
+            '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}' \
+            "$postgres_container") || fail \
+            "cannot inspect stopped devshard-postgres storage"
+        [[ -n $postgres_source_volume ]] || fail \
+            "stopped devshard-postgres does not expose a named legacy volume; start it for a bounded live migration proof"
+        env DOCKER_BIN="$docker_bin" \
+            "$script_dir/devshard-postgres-migration-preflight.sh" \
+            --source-volume "$postgres_source_volume" \
             --target-dir "$postgres_target_dir"
     else
         warn "devshard-postgres container is absent; verifying the published persistent PGDATA lineage"
@@ -753,6 +777,7 @@ if [[ $existing_proxy_component == proxy-router && -f $upgrade_marker && \
     fail "router HA is active, but commit marker $upgrade_marker belongs to another release"
 fi
 write_upgrade_journal prepared
+day2_reconcile=false
 if [[ $existing_proxy_component == proxy-router || \
     $committed_marker_loaded == true ]]; then
     if [[ ! -f $upgrade_marker ]]; then
@@ -765,95 +790,102 @@ if [[ $existing_proxy_component == proxy-router || \
         warn "the committed release state differs from the requested state; reconciling it"
     fi
 
-    echo "The v5 router HA topology is active; converging every release service idempotently"
-    if [[ $versiond_mode == ha && $GONKA_COMPOSE_POSTGRES_MODE == local ]]; then
-        converge_release_service devshard-postgres
-    fi
-    if [[ $versiond_mode == ha ]]; then
-        for service in versiond2 versiond; do
-            converge_release_service "$service"
-        done
-    else
-        converge_release_service versiond
-    fi
-    verify_release_application_state || fail \
-        "application state did not converge to $release_id"
-    write_upgrade_journal applications_verified
-	verify_compose_model_unchanged
-	env \
-		ROUTER_HA_TRANSACTION_JOURNAL="$upgrade_journal" \
-		ROUTER_HA_TRANSACTION_ID="$transaction_id" \
-		ROUTER_HA_EXPECTED_COMPOSE_SHA256="$compose_config_sha" \
-		ROUTER_HA_EXPECTED_FLEET_SPEC_SHA256="$fleet_spec_expectation" \
-		"$enable_router_bin" \
-        --versiond-mode "$versiond_mode" --edge-mode "$edge_mode" \
-        "${GONKA_COMPOSE_FORWARD_ARGS[@]}"
-    verify_release_ingress_state || fail \
-        "ingress state did not converge to $release_id"
-	verify_router_fleet_spec
-    write_upgrade_journal ingress_verified
-	verify_compose_model_unchanged
-    write_upgrade_marker
-    echo "Devshard v5 release state is converged"
-    exit 0
+    day2_reconcile=true
 fi
 
 if [[ $versiond_mode == ha ]]; then
     GONKA_CONFIG_ENV=$config_env \
+    GONKA_COMPOSE_PROJECT=$GONKA_COMPOSE_PROJECT \
     VERSIOND_ROUTER_FRONT_NETWORK=$GONKA_COMPOSE_ROUTER_FRONT_NETWORK \
     VERSIOND_ROUTER_BACK_NETWORK=$GONKA_COMPOSE_ROUTER_BACK_NETWORK \
     VERSIOND_ROUTER_METRICS_NETWORK=$GONKA_COMPOSE_DEFAULT_NETWORK \
         "$fleet_bin" prepare-networks
 fi
 
-declare -A image_variables=(
-    [versiond]=VERSIOND_IMAGE
-    [versiond2]=VERSIOND_IMAGE
-    [versiond-router]=VERSIOND_ROUTER_IMAGE
-)
 declare -A rollback_images=()
 declare -A rollback_version_baselines=()
 declare -A rollback_service_was_running=()
+declare -A rollback_service_was_absent=()
+declare -A rollback_service_touched=()
+declare -A rollback_runtime_models=()
+declare -a rollback_touch_order=()
 
 persist_application_rollback() {
     local service=$1
     local image=${rollback_images[$service]-}
     local running=${rollback_service_was_running[$service]-false}
+    local absent=${rollback_service_was_absent[$service]-false}
+    local touched=${rollback_service_touched[$service]-false}
     local baseline=${rollback_version_baselines[$service]-null}
-    local updated
+    local runtime_model=${rollback_runtime_models[$service]-null}
+    local updated touch_order
+
+    touch_order=$(printf '%s\n' "${rollback_touch_order[@]}" | \
+        jq -Rsc 'split("\n") | map(select(length > 0))')
 
     updated=$(jq -c \
         --arg service "$service" --arg image "$image" \
-        --argjson running "$running" --argjson baseline "$baseline" '
+        --argjson running "$running" --argjson absent "$absent" \
+        --argjson touched "$touched" --argjson baseline "$baseline" \
+		--argjson runtime_model "$runtime_model" \
+        --argjson touch_order "$touch_order" '
         .transaction.application_rollback.services[$service] = {
             image: $image,
             was_running: $running,
-            version_baseline: $baseline
+            was_absent: $absent,
+            touched: $touched,
+			version_baseline: $baseline,
+			runtime_model: $runtime_model
         }
+        | .transaction.application_rollback.touch_order = $touch_order
     ' "$upgrade_journal") || fail \
         "cannot persist the $service application rollback baseline"
     atomic_write_upgrade_state "$upgrade_journal" "$updated"
 }
 
 load_application_rollback() {
-    local service=$1 record image running baseline
+    local service=$1 record image running absent touched baseline runtime_model
 
     record=$(jq -cer --arg service "$service" '
         .transaction.application_rollback.services[$service]
-        | select((.image | type == "string" and length > 0) and
+        | select((.image | type == "string") and
+                 ((.was_absent // false) | type == "boolean") and
+                 ((.touched // false) | type == "boolean") and
                  (.was_running | type == "boolean") and
                  (.version_baseline == null or
-                  (.version_baseline | type == "array")))
+                  (.version_baseline | type == "array")) and
+				 (.runtime_model == null or (.runtime_model | type == "object")) and
+                 ((.was_absent // false) or (.image | length > 0)))
     ' "$upgrade_journal" 2>/dev/null) || return 1
+    if ((${#rollback_touch_order[@]} == 0)); then
+        mapfile -t rollback_touch_order < <(jq -r \
+            '.transaction.application_rollback.touch_order[]? // empty' \
+            "$upgrade_journal")
+    fi
     image=$(jq -r '.image' <<<"$record")
-    "$docker_bin" image inspect "$image" >/dev/null 2>&1 || fail \
-        "saved rollback image $image for $service is unavailable; restore it before resuming"
+    absent=$(jq -r '.was_absent // false' <<<"$record")
+    touched=$(jq -r '.touched // false' <<<"$record")
+    if [[ $absent != true ]]; then
+        "$docker_bin" image inspect "$image" >/dev/null 2>&1 || fail \
+            "saved rollback image $image for $service is unavailable; restore it before resuming"
+    fi
     running=$(jq -r '.was_running' <<<"$record")
     baseline=$(jq -c '.version_baseline' <<<"$record")
+	runtime_model=$(jq -c '.runtime_model' <<<"$record")
     rollback_images[$service]=$image
     rollback_service_was_running[$service]=$running
+    rollback_service_was_absent[$service]=$absent
+    rollback_service_touched[$service]=$touched
+    if [[ $touched == true && " ${rollback_touch_order[*]} " != *" $service "* ]]; then
+        rollback_touch_order+=("$service")
+    fi
     [[ $baseline == null ]] || rollback_version_baselines[$service]=$baseline
-    echo "Reusing durable $service rollback baseline $image"
+	[[ $runtime_model == null ]] || rollback_runtime_models[$service]=$runtime_model
+    if [[ $absent == true ]]; then
+        echo "Reusing durable absent rollback baseline for $service"
+    else
+        echo "Reusing durable $service rollback baseline $image"
+    fi
 }
 
 clear_application_rollback_metadata() {
@@ -1178,7 +1210,12 @@ capture_rollback_image() {
 
     container_id=$("${compose[@]}" ps --all --quiet "$service")
     if [[ -z $container_id ]]; then
-        warn "$service has no existing container; rollback will stop a failed replacement"
+        warn "$service has no existing container; rollback will restore its absence"
+        rollback_images[$service]=
+        rollback_service_was_running[$service]=false
+        rollback_service_was_absent[$service]=true
+        rollback_service_touched[$service]=false
+        persist_application_rollback "$service"
         return 0
     fi
 
@@ -1194,6 +1231,14 @@ capture_rollback_image() {
         *) fail "cannot determine whether the current $service is running" ;;
     esac
     rollback_service_was_running[$service]=$was_running
+    rollback_service_was_absent[$service]=false
+    rollback_service_touched[$service]=false
+	rollback_runtime_models[$service]=$("$docker_bin" inspect "$container_id" | \
+		jq -ce '.[0] | {
+			name: (.Name | ltrimstr("/")), config: .Config,
+			host_config: .HostConfig, mounts: (.Mounts // []),
+			networks: .NetworkSettings.Networks
+		}') || fail "cannot capture the exact runtime model for $service"
     echo "Captured $service rollback image as $rollback_image"
     case $service in
         versiond | versiond2)
@@ -1261,6 +1306,12 @@ rollback_service_is_available() {
             rollback_versiond_is_available \
                 "$service" "$container_id" || return 1
             ;;
+        devshard-postgres)
+            [[ $("$docker_bin" inspect --format \
+                '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+                "$container_id") == healthy ]]
+            return
+            ;;
         *)
             return 1
             ;;
@@ -1303,42 +1354,135 @@ stop_failed_service() {
 rollback_service() {
     local service=$1
     local rollback_image=${rollback_images[$service]-}
-    local image_variable=${image_variables[$service]}
     local container_id
 
-    if [[ -z $rollback_image ]]; then
-        warn "$service has no captured image; stopping it instead"
-        stop_failed_service "$service"
-        return 1
-    fi
-
-    if [[ ${rollback_service_was_running[$service]-true} == false ]]; then
-        echo "Restoring stopped $service from $rollback_image" >&2
-        if env "$image_variable=$rollback_image" \
-            "${compose[@]}" up --no-start --no-deps --force-recreate \
-                "$service"; then
-            container_id=$("${compose[@]}" ps --all --quiet "$service")
-            if [[ -n $container_id && \
-                $("$docker_bin" inspect --format '{{.State.Running}}' \
-                    "$container_id") == false ]]; then
-                return 0
-            fi
-        fi
-        warn "could not restore the stopped state of $service"
-        stop_failed_service "$service" || true
-        return 1
-    fi
-
-    echo "Restoring $service from $rollback_image" >&2
-    if env "$image_variable=$rollback_image" \
-        "${compose[@]}" up -d --no-deps --force-recreate "$service" &&
-        wait_for_rollback_availability "$service"; then
+    if [[ ${rollback_service_was_absent[$service]-false} == true ]]; then
+        echo "Restoring absent $service baseline" >&2
+        "${compose[@]}" rm -f -s "$service" >/dev/null 2>&1 || {
+            warn "could not remove failed $service replacement"
+            return 1
+        }
         return 0
     fi
+    if [[ -z $rollback_image ]]; then
+        warn "$service has no captured image; refusing an inexact rollback"
+        return 1
+    fi
 
-    warn "rollback of $service did not become stably available; stopping it"
-    stop_failed_service "$service" || true
+    [[ -n ${rollback_runtime_models[$service]-} ]] || {
+		warn "$service has no exact saved runtime model"
+		return 1
+	}
+
+    echo "Restoring $service from $rollback_image" >&2
+	if restore_runtime_container "$service" "$rollback_image"; then
+		if [[ ${rollback_service_was_running[$service]-true} == false ]]; then
+			return 0
+		fi
+        if wait_for_rollback_availability "$service"; then
+            return 0
+        fi
+        container_id=$("${compose[@]}" ps --all --quiet "$service")
+        if [[ -n $container_id && \
+            $("$docker_bin" inspect --format '{{.State.Running}}' "$container_id") == true ]]; then
+            warn "restored $service is running but its external dependency is not yet available; leaving restart-policy recovery armed"
+            return 0
+        fi
+    fi
+
+    warn "rollback of $service could not be restored as a running container"
     return 1
+}
+
+restore_runtime_container() {
+	local service=$1 image=$2 model
+	local name value key restart health_cmd network network_id current
+	local -a create_args=(create) command_args=() connect_args=()
+	model=${rollback_runtime_models[$service]}
+
+	name=$(jq -er '.name' <<<"$model") || return 1
+	current=$("${compose[@]}" ps --all --quiet "$service") || return 1
+	[[ -z $current ]] || "$docker_bin" rm -f "$current" >/dev/null || return 1
+	create_args+=(--name "$name" --network none)
+	value=$(jq -r '.config.Hostname // ""' <<<"$model"); [[ -z $value ]] || create_args+=(--hostname "$value")
+	value=$(jq -r '.config.User // ""' <<<"$model"); [[ -z $value ]] || create_args+=(--user "$value")
+	value=$(jq -r '.config.WorkingDir // ""' <<<"$model"); [[ -z $value ]] || create_args+=(--workdir "$value")
+	value=$(jq -r '.config.StopSignal // ""' <<<"$model"); [[ -z $value ]] || create_args+=(--stop-signal "$value")
+	value=$(jq -r '.config.StopTimeout // .host_config.StopTimeout // 0' <<<"$model"); ((value == 0)) || create_args+=(--stop-timeout "$value")
+	value=$(jq -r '.config.Entrypoint // [] | length' <<<"$model")
+	((value <= 1)) || { warn "$service uses a multi-element entrypoint that Docker CLI cannot restore exactly"; return 1; }
+	if ((value == 1)); then
+		create_args+=(--entrypoint "$(jq -r '.config.Entrypoint[0]' <<<"$model")")
+	fi
+	while IFS= read -r value; do create_args+=(--env "$value"); done < <(jq -r '.config.Env[]?' <<<"$model")
+	while IFS=$'\t' read -r key value; do create_args+=(--label "$key=$value"); done < <(
+		jq -r '.config.Labels // {} | to_entries[] | [.key,.value] | @tsv' <<<"$model")
+	restart=$(jq -r '.host_config.RestartPolicy.Name // "no"' <<<"$model")
+	if [[ $restart == on-failure ]]; then
+		value=$(jq -r '.host_config.RestartPolicy.MaximumRetryCount // 0' <<<"$model")
+		((value == 0)) || restart="$restart:$value"
+	fi
+	create_args+=(--restart "$restart")
+	[[ $(jq -r '.host_config.ReadonlyRootfs // false' <<<"$model") == false ]] || create_args+=(--read-only)
+	[[ $(jq -r '.host_config.Privileged // false' <<<"$model") == false ]] || create_args+=(--privileged)
+	while IFS= read -r value; do create_args+=(--cap-add "$value"); done < <(jq -r '.host_config.CapAdd[]?' <<<"$model")
+	while IFS= read -r value; do create_args+=(--cap-drop "$value"); done < <(jq -r '.host_config.CapDrop[]?' <<<"$model")
+	while IFS= read -r value; do create_args+=(--security-opt "$value"); done < <(jq -r '.host_config.SecurityOpt[]?' <<<"$model")
+	while IFS= read -r value; do create_args+=(--mount "$value"); done < <(jq -r '
+		.host_config.Mounts[]? |
+		"type=" + .Type + ",src=" + .Source + ",dst=" + .Target +
+		(if .ReadOnly then ",readonly" else "" end) +
+		(if .BindOptions.Propagation? then ",bind-propagation=" + .BindOptions.Propagation else "" end)
+	' <<<"$model")
+	# HostConfig.Binds retains the original Compose source/destination/options
+	# form, including the named volume identity.
+	if ! jq -e '.host_config.Mounts | length > 0' <<<"$model" >/dev/null; then
+		while IFS= read -r value; do create_args+=(--volume "$value"); done < <(jq -r '.host_config.Binds[]?' <<<"$model")
+	fi
+	# Some Docker versions omit both HostConfig mount representations. The
+	# top-level inspect model still lets us restore the same named volume or
+	# bind source without falling back to the new Compose definition.
+	if ! jq -e '((.host_config.Mounts // []) | length > 0) or
+		((.host_config.Binds // []) | length > 0)' <<<"$model" >/dev/null; then
+		while IFS= read -r value; do create_args+=(--mount "$value"); done < <(jq -r '
+			.mounts[]? |
+			(if .Type == "tmpfs" then
+				"type=tmpfs,dst=" + .Destination
+			elif .Type == "volume" then
+				"type=volume,src=" + .Name + ",dst=" + .Destination
+			elif .Type == "bind" then
+				"type=bind,src=" + .Source + ",dst=" + .Destination
+			else error("unsupported rollback mount type: " + .Type)
+			end) +
+			(if .RW then "" else ",readonly" end) +
+			(if .Type == "bind" and (.Propagation // "") != "" then
+				",bind-propagation=" + .Propagation else "" end)
+		' <<<"$model")
+	fi
+	if jq -e '.config.Healthcheck.Test? | length > 0' <<<"$model" >/dev/null; then
+		health_cmd=$(jq -r '
+			.config.Healthcheck.Test as $test |
+			if $test[0] == "CMD-SHELL" then $test[1]
+			else ($test[1:] | map(@sh) | join(" ")) end
+		' <<<"$model")
+		create_args+=(--health-cmd "$health_cmd")
+		value=$(jq -r '.config.Healthcheck.Interval // 0' <<<"$model"); ((value == 0)) || create_args+=(--health-interval "${value}ns")
+		value=$(jq -r '.config.Healthcheck.Timeout // 0' <<<"$model"); ((value == 0)) || create_args+=(--health-timeout "${value}ns")
+		value=$(jq -r '.config.Healthcheck.StartPeriod // 0' <<<"$model"); ((value == 0)) || create_args+=(--health-start-period "${value}ns")
+		value=$(jq -r '.config.Healthcheck.Retries // 0' <<<"$model"); ((value == 0)) || create_args+=(--health-retries "$value")
+	fi
+	mapfile -t command_args < <(jq -r '.config.Cmd[]?' <<<"$model")
+	"$docker_bin" "${create_args[@]}" "$image" "${command_args[@]}" >/dev/null || return 1
+	while IFS= read -r network; do
+		connect_args=(network connect)
+		while IFS= read -r value; do [[ -z $value ]] || connect_args+=(--alias "$value"); done < <(
+			jq -r --arg network "$network" '.networks[$network].Aliases[]?' <<<"$model")
+		network_id=$(jq -r --arg network "$network" '.networks[$network].NetworkID // ""' <<<"$model")
+		[[ -z $network_id ]] || "$docker_bin" network inspect "$network_id" >/dev/null || return 1
+		connect_args+=("$network" "$name")
+		"$docker_bin" "${connect_args[@]}" >/dev/null || return 1
+	done < <(jq -r '.networks | keys[]' <<<"$model")
+	[[ ${rollback_service_was_running[$service]-true} == false ]] || "$docker_bin" start "$name" >/dev/null
 }
 
 compensate_active_service() {
@@ -1361,6 +1505,7 @@ compensate_active_service() {
     esac
     active_service=
     active_failure_strategy=
+    rollback_service_touched[$service]=false
     return "$status"
 }
 
@@ -1398,13 +1543,38 @@ handle_exit() {
     fi
 
     set +e
+	if [[ -f $upgrade_journal ]] && jq -e \
+		'.transaction.ingress.state == "active" or .transaction.ingress.state == "prepared"' \
+		"$upgrade_journal" >/dev/null 2>&1; then
+		warn "rolling back the ingress transaction before application dependencies"
+		if ! ROUTER_HA_TRANSACTION_JOURNAL=$upgrade_journal \
+			ROUTER_HA_TRANSACTION_ID=$transaction_id \
+			"$enable_router_bin" --recover-only; then
+			compensation_ok=false
+			warn "automatic ingress rollback failed; operator action is required"
+		fi
+	fi
     if [[ -n $active_service ]]; then
-        warn "compensating interrupted replacement of $active_service"
-        if ! compensate_active_service; then
-            compensation_ok=false
-            warn "automatic compensation failed; operator action is required"
-        fi
+		if [[ $active_failure_strategy == stop ]]; then
+			warn "stopping interrupted replacement of $active_service"
+			stop_failed_service "$active_service" || compensation_ok=false
+		fi
+		active_service=
+		active_failure_strategy=
     fi
+    local service
+	# Restore dependencies before their consumers. Application health is
+	# allowed to converge later when an external PostgreSQL endpoint is merely
+	# unavailable; restored containers are never manually stopped for that.
+	for service in devshard-postgres versiond2 versiond versiond-router; do
+        [[ ${rollback_service_touched[$service]-false} == true ]] || continue
+        warn "rolling back completed replacement of $service"
+        if ! rollback_service "$service"; then
+            compensation_ok=false
+            warn "automatic rollback of $service failed; operator action is required"
+        fi
+        rollback_service_touched[$service]=false
+    done
     if [[ $compensation_ok == false && \
         $interrupted_service == "$traffic_barrier_router" ]]; then
         restore_allowed=false
@@ -1434,7 +1604,16 @@ replace_service() {
         *) fail "internal error: unknown failure strategy $failure_strategy" ;;
     esac
 	verify_compose_model_unchanged
-    echo "Replacing $service"
+	if ! service_needs_replacement "$service"; then
+		echo "$service already matches the requested image and Compose contract"
+		return 0
+	fi
+	echo "Replacing $service"
+	if [[ ${rollback_service_touched[$service]-false} != true ]]; then
+		rollback_touch_order+=("$service")
+	fi
+	rollback_service_touched[$service]=true
+	persist_application_rollback "$service"
     active_service=$service
     active_failure_strategy=$failure_strategy
     if run_interruptible "${compose[@]}" \
@@ -1449,7 +1628,11 @@ replace_service() {
 			}
 			if [[ -n $verified_postgres_identity && \
 				$observed_identity != "$verified_postgres_identity" ]]; then
-				warn "$service uses PostgreSQL identity $observed_identity, expected $verified_postgres_identity"
+				if [[ $verified_postgres_identity_committed == true ]]; then
+					warn "PostgreSQL identity changed from committed $verified_postgres_identity to $observed_identity through $service"
+				else
+					warn "$service uses PostgreSQL identity $observed_identity, expected $verified_postgres_identity"
+				fi
 				return 1
 			fi
 			verified_postgres_identity=$observed_identity
@@ -1466,11 +1649,28 @@ replace_service() {
     return 1
 }
 
+service_needs_replacement() {
+	local service=$1 container desired_ref desired_image actual_image desired_hash actual_hash state
+	container=$("${compose[@]}" ps --all --quiet "$service") || return 0
+	[[ -n $container ]] || return 0
+	desired_ref=$(jq -er --arg service "$service" \
+		'.services[$service].image' <<<"$effective_compose_config") || return 0
+	desired_image=$("$docker_bin" image inspect --format '{{.Id}}' "$desired_ref" 2>/dev/null) || return 0
+	read -r actual_image actual_hash state < <("$docker_bin" inspect --format \
+		'{{.Image}} {{or (index .Config.Labels "com.docker.compose.config-hash") ""}} {{.State.Running}}/{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+		"$container") || return 0
+	desired_hash=$("${compose[@]}" config --hash "$service" | \
+		awk -v service="$service" '$1 == service {print $2; found=1} END {if (!found) exit 1}') || return 0
+	[[ $actual_image != "$desired_image" || $actual_hash != "$desired_hash" || \
+		$state != true/healthy ]]
+}
+
 cleanup_rollback_tags() {
     local service rollback_image
 
     for service in "${!rollback_images[@]}"; do
         rollback_image=${rollback_images[$service]}
+        [[ -n $rollback_image ]] || continue
         if ! "$docker_bin" image rm "$rollback_image" >/dev/null; then
             warn "could not remove temporary image tag $rollback_image"
         fi
@@ -1486,6 +1686,10 @@ services=(versiond)
 if [[ $versiond_mode == ha ]]; then
     services+=(versiond2 versiond-router)
 fi
+if [[ $day2_reconcile == true && $versiond_mode == ha && \
+    $GONKA_COMPOSE_POSTGRES_MODE == local ]]; then
+    services=(devshard-postgres "${services[@]}")
+fi
 for service in "${services[@]}"; do
     capture_rollback_image "$service"
 done
@@ -1496,7 +1700,63 @@ if [[ $versiond_mode == ha ]]; then
     [[ $GONKA_COMPOSE_POSTGRES_MODE != local ]] || \
         pull_services+=(devshard-postgres)
 fi
-run_interruptible "${compose[@]}" pull "${pull_services[@]}"
+missing_image_services=()
+for service in "${pull_services[@]}"; do
+	desired_ref=$(jq -er --arg service "$service" \
+		'.services[$service].image' <<<"$effective_compose_config") || fail \
+		"cannot resolve the desired image for $service"
+	"$docker_bin" image inspect "$desired_ref" >/dev/null 2>&1 || \
+		missing_image_services+=("$service")
+done
+if ((${#missing_image_services[@]} > 0)); then
+	run_interruptible "${compose[@]}" pull "${missing_image_services[@]}"
+fi
+
+if [[ $day2_reconcile == true ]]; then
+    echo "The v5 router HA topology is active; reconciling it transactionally"
+    if [[ $versiond_mode == ha && $GONKA_COMPOSE_POSTGRES_MODE == local ]]; then
+        replace_service devshard-postgres \
+            "$(service_startup_timeout devshard-postgres)" rollback
+    fi
+    if [[ $versiond_mode == ha ]]; then
+        replace_service versiond2 "$(service_startup_timeout versiond2)" rollback
+        replace_service versiond "$(service_startup_timeout versiond)" rollback
+    else
+        replace_service versiond "$(service_startup_timeout versiond)" rollback
+    fi
+    verify_release_application_state || fail \
+        "application state did not converge to $release_id"
+    if [[ $versiond_mode == ha ]]; then
+        run_postgres_deployment_preflight live || fail \
+            "live PostgreSQL deployment proof failed while application rollback baselines are retained"
+    fi
+    write_upgrade_journal applications_verified
+    verify_compose_model_unchanged
+    run_interruptible env \
+        ROUTER_HA_TRANSACTION_JOURNAL="$upgrade_journal" \
+        ROUTER_HA_TRANSACTION_ID="$transaction_id" \
+		ROUTER_HA_DEFER_COMMIT=true \
+        ROUTER_HA_EXPECTED_POSTGRES_IDENTITY="$verified_postgres_identity" \
+        ROUTER_HA_EXPECTED_COMPOSE_SHA256="$compose_config_sha" \
+        ROUTER_HA_EXPECTED_FLEET_SPEC_SHA256="$fleet_spec_expectation" \
+        "$enable_router_bin" \
+        --versiond-mode "$versiond_mode" --edge-mode "$edge_mode" \
+        "${GONKA_COMPOSE_FORWARD_ARGS[@]}"
+    verify_release_ingress_state || fail \
+        "ingress state did not converge to $release_id"
+    verify_router_fleet_spec
+    write_upgrade_journal ingress_verified
+    verify_compose_model_unchanged
+	run_interruptible env \
+		ROUTER_HA_TRANSACTION_JOURNAL="$upgrade_journal" \
+		ROUTER_HA_TRANSACTION_ID="$transaction_id" \
+		"$enable_router_bin" --finalize-transaction
+    clear_application_rollback_metadata
+    write_upgrade_marker
+    cleanup_rollback_tags
+    echo "Devshard v5 release state is converged"
+    exit 0
+fi
 
 if [[ $versiond_mode == ha && $GONKA_COMPOSE_POSTGRES_MODE == local ]]; then
 	verify_compose_model_unchanged
@@ -1566,6 +1826,8 @@ case ${UPGRADE_ENABLE_ROUTER_HA:-true} in
 		run_interruptible env \
 			ROUTER_HA_TRANSACTION_JOURNAL="$upgrade_journal" \
 			ROUTER_HA_TRANSACTION_ID="$transaction_id" \
+			ROUTER_HA_DEFER_COMMIT=true \
+			ROUTER_HA_EXPECTED_POSTGRES_IDENTITY="$verified_postgres_identity" \
 			ROUTER_HA_EXPECTED_COMPOSE_SHA256="$compose_config_sha" \
 			ROUTER_HA_EXPECTED_FLEET_SPEC_SHA256="$fleet_spec_expectation" \
 			"$enable_router_bin" \
@@ -1586,6 +1848,10 @@ verify_release_ingress_state || fail \
 verify_router_fleet_spec
 write_upgrade_journal ingress_verified
 verify_compose_model_unchanged
+run_interruptible env \
+	ROUTER_HA_TRANSACTION_JOURNAL="$upgrade_journal" \
+	ROUTER_HA_TRANSACTION_ID="$transaction_id" \
+	"$enable_router_bin" --finalize-transaction
 clear_application_rollback_metadata
 write_upgrade_marker
 cleanup_rollback_tags

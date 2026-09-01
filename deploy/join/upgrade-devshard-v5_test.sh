@@ -4,6 +4,7 @@ set -Eeuo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 tmpdir=$(mktemp -d)
+export FAKE_POSTGRES_DIR=$tmpdir/postgres
 if [[ ${KEEP_TEST_TMPDIR:-false} == true ]]; then
     echo "upgrade-devshard-v5_test tmpdir: $tmpdir" >&2
 else
@@ -47,7 +48,20 @@ if [[ ${1:-} == inspect ]]; then
     if [[ $# -eq 2 ]]; then
         container=${2#cid-}
         case " ${EXISTING_CONTAINERS-} " in
-            *" $container "*) exit 0 ;;
+			*" $container "*)
+				if [[ $2 == cid-* ]]; then
+					jq -cn --arg name "$container" --arg image "old-$container" \
+						'[{Name:("/" + $name),Config:{Image:$image,Hostname:$name,
+						Env:[],Labels:{"com.docker.compose.project":"gonka-test",
+						"com.docker.compose.service":$name},Cmd:[],Entrypoint:null,
+						Healthcheck:{Test:["CMD-SHELL","true"],Interval:1000000000,
+						Timeout:1000000000,Retries:1,StartPeriod:0}},
+						HostConfig:{RestartPolicy:{Name:"always",MaximumRetryCount:0},
+						ReadonlyRootfs:false,Privileged:false,Binds:[],Mounts:[]},
+						NetworkSettings:{Networks:{"gonka-test_default":{Aliases:[$name],NetworkID:"network-default"}}}}]'
+				fi
+				exit 0
+				;;
             *) exit 1 ;;
         esac
     fi
@@ -123,6 +137,23 @@ if [[ ${1:-} == inspect ]]; then
                 printf 'true\n'
             fi
             ;;
+        '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')
+            printf 'healthy\n'
+            ;;
+		'{{.Image}} {{or (index .Config.Labels "com.docker.compose.config-hash") ""}} {{.State.Running}}/{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')
+			service=${4#cid-}
+			image=sha256:old-$service
+			hash=old-hash-$service
+			if [[ ${ASSUME_RELEASE_STATE-} == true ]]; then
+				case $service in
+					versiond | versiond2) image=$VERSIOND_IMAGE ;;
+					versiond-router) image=$VERSIOND_ROUTER_IMAGE ;;
+					devshard-postgres) image=$DEVSHARD_POSTGRES_IMAGE ;;
+				esac
+				hash=hash-$service
+			fi
+			printf '%s %s true/healthy\n' "$image" "$hash"
+			;;
         '{{range .Config.Env}}{{println .}}{{end}}')
             case ${4:-} in
 				versiond | versiond2)
@@ -149,6 +180,23 @@ if [[ ${1:-} == inspect ]]; then
                 *) exit 1 ;;
             esac
             ;;
+		'{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}')
+			printf 'postgres-v4-volume\n'
+			;;
+		'{{json .Config.Env}}')
+			service=${4#cid-}
+			case $service in
+				devshard-postgres)
+					pgdata=/var/lib/postgresql/data
+					[[ ${ASSUME_RELEASE_STATE-} != true ]] || pgdata=/var/lib/postgresql/gonka/data
+					printf '["PGDATA=%s","POSTGRES_PASSWORD=secret"]\n' "$pgdata"
+					;;
+				versiond | versiond2)
+					printf '["PGHOST=devshard-postgres","PGPORT=5432","PGDATABASE=devshardd","PGUSER=devshardd","PGPASSWORD=secret"]\n'
+					;;
+				*) printf '[]\n' ;;
+			esac
+			;;
         *) exit 1 ;;
     esac
     exit 0
@@ -295,8 +343,55 @@ if [[ ${1:-} == image && ${2:-} == inspect && \
     ${3:-} == gonka-upgrade-rollback/* ]]; then
     exit 0
 fi
+if [[ ${1:-} == image && ${2:-} == inspect ]]; then
+	if [[ ${3:-} == --format && ${4:-} == '{{.Id}}' ]]; then
+		printf '%s\n' "${5:-}"
+	fi
+	exit 0
+fi
+if [[ ${1:-} == rm ]]; then
+	container=${!#}
+	service=${container#cid-}
+	rm -f "$FAKE_STATE_DIR/stopped-$service" "$FAKE_STATE_DIR/running-$service"
+	exit 0
+fi
+if [[ ${1:-} == create ]]; then
+	name=
+	image=
+	previous=
+	for arg in "$@"; do
+		[[ $previous != --name ]] || name=$arg
+		[[ $arg != gonka-upgrade-rollback/* ]] || image=$arg
+		previous=$arg
+	done
+	[[ -n $name ]] || exit 1
+	if [[ -n $image ]]; then
+		: >"$FAKE_STATE_DIR/rollback-$name"
+		printf '%s\n' "$image" >"$FAKE_STATE_DIR/image-$name"
+	fi
+	printf 'cid-%s\n' "$name"
+	exit 0
+fi
+if [[ ${1:-} == network ]]; then
+	exit 0
+fi
+if [[ ${1:-} == start ]]; then
+	service=${2#cid-}
+	rm -f "$FAKE_STATE_DIR/stopped-$service"
+	: >"$FAKE_STATE_DIR/running-$service"
+	exit 0
+fi
 
 [[ ${1:-} == compose ]] || exit 1
+
+previous=
+for arg in "$@"; do
+	if [[ $previous == --hash ]]; then
+		printf '%s hash-%s\n' "$arg" "$arg"
+		exit 0
+	fi
+	previous=$arg
+done
 
 for arg in "$@"; do
     if [[ $arg == config ]]; then
@@ -308,8 +403,11 @@ for arg in "$@"; do
 			--arg pgoptions "${RENDERED_PGOPTIONS:-}" \
 			--arg pgoptions2 "${RENDERED_PGOPTIONS2:-${RENDERED_PGOPTIONS:-}}" \
             --arg postgres_image "${DEVSHARD_POSTGRES_IMAGE-}" \
+			--arg versiond_image "${VERSIOND_IMAGE-}" \
+			--arg router_image "${VERSIOND_ROUTER_IMAGE-}" \
             --arg pg2db "${RENDERED_PGDATABASE2:-devshardd}" \
             --arg join "$JOIN_DIR" \
+			--arg postgres_dir "$FAKE_POSTGRES_DIR" \
             --arg proxy_http "${RENDERED_PROXY_HTTP_PORT:-8000}" \
             --arg proxy_https "${RENDERED_PROXY_HTTPS_PORT:-8443}" \
             --arg policy "${RENDERED_POLICY_NETWORK:-gonka-proxy-policy-front}" \
@@ -327,13 +425,16 @@ for arg in "$@"; do
                 ]},
                 "proxy-policy":{},
                 "proxy-policy2":{},
-				versiond:{container_name:"versiond",environment:{DATABASE_URL:$database_url,PGSERVICE:$pgservice,PGSERVICEFILE:$pgservicefile,PGOPTIONS:$pgoptions,PGHOST:$pg,PGDATABASE:"devshardd",PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
-				versiond2:{container_name:"versiond2",environment:{DATABASE_URL:$database_url,PGSERVICE:$pgservice,PGSERVICEFILE:$pgservicefile,PGOPTIONS:$pgoptions2,PGHOST:$pg,PGDATABASE:$pg2db,PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
-                "devshard-postgres":{container_name:"devshard-postgres",image:$postgres_image,volumes:[{type:"bind",source:($join + "/devshards/postgres"),target:"/var/lib/postgresql/gonka"}]},
+				versiond:{container_name:"versiond",image:$versiond_image,environment:{DATABASE_URL:$database_url,PGSERVICE:$pgservice,PGSERVICEFILE:$pgservicefile,PGOPTIONS:$pgoptions,PGHOST:$pg,PGDATABASE:"devshardd",PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
+				versiond2:{container_name:"versiond2",image:$versiond_image,environment:{DATABASE_URL:$database_url,PGSERVICE:$pgservice,PGSERVICEFILE:$pgservicefile,PGOPTIONS:$pgoptions2,PGHOST:$pg,PGDATABASE:$pg2db,PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
+				"versiond-router":{container_name:"versiond-router",image:$router_image},
+                "devshard-postgres":{container_name:"devshard-postgres",image:$postgres_image,volumes:[{type:"bind",source:$postgres_dir,target:"/var/lib/postgresql/gonka"}]},
                 "edge-api":{container_name:"edge-api"},
                 "edge-api2":{container_name:"edge-api2"},
                 "edge-api3":{container_name:"edge-api3"}
-            }}'
+            }}
+			| if $pg == "devshard-postgres" then .
+			  else del(.services["devshard-postgres"]) end'
         exit 0
     fi
 done
@@ -345,6 +446,11 @@ for arg in "$@"; do
             ! -f $FAKE_STATE_DIR/running-$service ]]; then
             exit 0
         fi
+		case " ${EXISTING_CONTAINERS-} " in
+			*" $service "*) ;;
+			*) [[ -f $FAKE_STATE_DIR/running-$service || \
+				-f $FAKE_STATE_DIR/image-$service ]] || exit 0 ;;
+		esac
         printf 'cid-%s\n' "$service"
         exit 0
     fi
@@ -672,14 +778,14 @@ line_number() {
     local file=$1
     local pattern=$2
 
-    grep -nF -- "$pattern" "$file" | head -n1 | cut -d: -f1
+    grep -nFm1 -- "$pattern" "$file" | cut -d: -f1
 }
 
 line_number_regex() {
     local file=$1
     local pattern=$2
 
-    grep -nE -- "$pattern" "$file" | head -n1 | cut -d: -f1
+    grep -nEm1 -- "$pattern" "$file" | cut -d: -f1
 }
 
 write_fake_docker
@@ -713,10 +819,25 @@ if [[ " $* " == *" --recover-only "* ]]; then
     mv "$tmp" "$ROUTER_HA_TRANSACTION_JOURNAL"
     exit 0
 fi
+if [[ " $* " == *" --finalize-transaction "* ]]; then
+    tmp=$(mktemp "$(dirname -- "$ROUTER_HA_TRANSACTION_JOURNAL")/.finalize.XXXXXX")
+    jq '.transaction.ingress.state = "committed" |
+        del(.transaction.ingress.rollback_models)' \
+        "$ROUTER_HA_TRANSACTION_JOURNAL" >"$tmp"
+    mv "$tmp" "$ROUTER_HA_TRANSACTION_JOURNAL"
+    exit 0
+fi
 printf '%s\n' "$PROXY_ROUTER_IMAGE" >"$FAKE_STATE_DIR/image-proxy"
 printf '%s\n' "$PROXY_POLICY_IMAGE" >"$FAKE_STATE_DIR/image-proxy-policy"
 if [[ ${INCOMPLETE_INGRESS_STATE:-false} != true ]]; then
     printf '%s\n' "$PROXY_POLICY_IMAGE" >"$FAKE_STATE_DIR/image-proxy-policy2"
+fi
+if [[ ${ROUTER_HA_DEFER_COMMIT:-false} == true ]]; then
+    tmp=$(mktemp "$(dirname -- "$ROUTER_HA_TRANSACTION_JOURNAL")/.prepare.XXXXXX")
+    jq '.transaction.ingress = {
+        state:"prepared", rollback_models:{policy:{},proxy:{}}, touched:[]}' \
+        "$ROUTER_HA_TRANSACTION_JOURNAL" >"$tmp"
+    mv "$tmp" "$ROUTER_HA_TRANSACTION_JOURNAL"
 fi
 EOF
 cat >"$tmpdir/postgres-deployment-preflight" <<'EOF'
@@ -728,6 +849,7 @@ expected=
 while (($#)); do
     case $1 in
         --compose-only) mode=compose; shift ;;
+        --runtime-contract-only) mode=runtime; shift ;;
         --expected-identity)
             (($# >= 2)) && [[ -n $2 ]] || exit 2
             expected=$2
@@ -1111,24 +1233,26 @@ grep -q 'versiond=ha, edge-api=single' "$tmpdir/ha.stdout" || fail \
 assert_contains "$tmpdir/ha.log" "docker-compose.versiond.yml"
 assert_not_contains "$tmpdir/ha.log" "docker-compose.edge-api-multi.yml"
 assert_contains "$tmpdir/ha.log" "--wait-timeout 2100 devshard-postgres"
-compose_gate_line=$(grep -n '^postgres-deployment-preflight --compose-only -- ' \
-    "$tmpdir/ha.log" | head -n1 | cut -d: -f1)
-first_mutation_line=$(grep -nE ' :: (tag |compose .* (pull|up) )' \
-    "$tmpdir/ha.log" | head -n1 | cut -d: -f1)
+compose_gate_line=$(grep -nm1 '^postgres-deployment-preflight --compose-only -- ' \
+    "$tmpdir/ha.log" | cut -d: -f1)
+first_mutation_line=$(grep -nEm1 ' :: (tag |compose .* (pull|up) )' \
+    "$tmpdir/ha.log" | cut -d: -f1)
 [[ -n $compose_gate_line && -n $first_mutation_line && \
     $compose_gate_line -lt $first_mutation_line ]] || fail \
     "rendered PostgreSQL contract was not checked before the first mutation"
-live_gate_line=$(grep -n \
+live_gate_line=$(grep -nm1 \
     '^postgres-deployment-preflight --expected-identity shared-database -- ' \
-    "$tmpdir/ha.log" | head -n1 | cut -d: -f1)
-cleanup_line=$(grep -n ' :: image rm gonka-upgrade-rollback/' \
-    "$tmpdir/ha.log" | head -n1 | cut -d: -f1)
+    "$tmpdir/ha.log" | cut -d: -f1)
+cleanup_line=$(grep -nm1 ' :: image rm gonka-upgrade-rollback/' \
+    "$tmpdir/ha.log" | cut -d: -f1)
 [[ -n $live_gate_line && -n $cleanup_line && \
     $live_gate_line -lt $cleanup_line ]] || fail \
     "live PostgreSQL proof did not run before rollback baseline cleanup"
 
+mkdir -p "$tmpdir/postgres"
+printf '1000000000000000000\n' >"$tmpdir/postgres/.gonka-cluster-lineage"
 MISSING_COMPOSE_SERVICE=devshard-postgres \
-POSTGRES_MIGRATION_PROBE='target-ready none 1000000000000000000 1000000000000000000' \
+POSTGRES_MIGRATION_PROBE='target-ready none 1000000000000000000 none' \
     run_auto_upgrade \
         "versiond versiond2 versiond-router edge-api" \
         "$tmpdir/missing-postgres-container.log" \
@@ -1465,10 +1589,11 @@ GONKA_CONFIG_ENV="$tmpdir/config.env" \
 recovery_line=$(line_number "$tmpdir/early-ingress.log" \
     "enable-router --recover-only")
 application_line=$(line_number_regex "$tmpdir/early-ingress.log" \
-    ' up .*--wait-timeout 2100 versiond2$')
-[[ -n $recovery_line && -n $application_line && \
-    $recovery_line -lt $application_line ]] || fail \
-    "active ingress transaction was recovered after application convergence"
+    ' up .*--wait-timeout 2100 versiond2$' || :)
+[[ -n $recovery_line ]] || fail \
+    "active ingress transaction was not recovered"
+[[ -z $application_line ]] || fail \
+    "converged day-2 applications were needlessly recreated after ingress recovery"
 
 # A process crash can happen during a day-2 transaction while the previous
 # committed marker still exists. The active journal must win, recover its HA
@@ -1600,11 +1725,11 @@ assert_contains "$tmpdir/active-with-marker.log" \
     "--compose-project-name gonka-test"
 assert_contains "$tmpdir/active-with-marker.log" \
     "--compose-file $script_dir/docker-compose.versiond.yml"
-assert_contains "$tmpdir/active-with-marker.log" \
+assert_not_contains "$tmpdir/active-with-marker.log" \
     "--wait-timeout 2100 devshard-postgres"
-assert_contains "$tmpdir/active-with-marker.log" \
+assert_not_contains "$tmpdir/active-with-marker.log" \
     "--wait-timeout 2100 versiond2"
-assert_contains "$tmpdir/active-with-marker.log" \
+assert_not_contains "$tmpdir/active-with-marker.log" \
     "--wait-timeout 2100 versiond"
 assert_edge_api_untouched "$tmpdir/active-with-marker.log"
 jq -e '.schema == 2 and (.compose.files | length > 0)' \
@@ -1711,20 +1836,20 @@ grep -q 'source volume and persistent target are preserved' \
 UPGRADE_ROLLBACK_VERIFY_TIMEOUT='' \
 UPGRADE_ROLLBACK_STABILITY_CHECKS=3 \
     run_upgrade single versiond2 "$tmpdir/versiond2.log"
-grep -q 'Verifying rollback of versiond2 for up to 2100s' \
+grep -q 'Verifying rollback of versiond2 for up to 60s' \
     "$tmpdir/stderr" || {
     cat "$tmpdir/stderr" >&2
-    fail "versiond rollback did not inherit the forward startup budget"
+    fail "versiond rollback did not use the bounded dependency-outage budget"
 }
 preflight_line=$(line_number "$tmpdir/versiond2.log" \
-    "--volumes-from cid-devshard-postgres:ro")
+    "dst=/target\\,readonly")
 postgres_up_line=$(line_number "$tmpdir/versiond2.log" \
     "--wait-timeout 2100 devshard-postgres")
 [[ -n $preflight_line && -n $postgres_up_line && \
     $preflight_line -lt $postgres_up_line ]] ||
     fail "PostgreSQL space preflight did not run before its first recreate"
 assert_contains "$tmpdir/versiond2.log" \
-    "VERSIOND_IMAGE=gonka-upgrade-rollback/versiond2:"
+    " :: create --name versiond2 --network none"
 rollback_probe_count=$(grep -Ec \
     'exec cid-versiond2 .*http://127.0.0.1:8080/v4/healthz' \
     "$tmpdir/versiond2.log")
@@ -1740,25 +1865,22 @@ fi
 ROLLBACK_PROBE_FAIL_SERVICE=versiond2 \
 UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \
     run_upgrade single versiond2 "$tmpdir/versiond2-unavailable.log"
-assert_contains "$tmpdir/versiond2-unavailable.log" " stop versiond2"
-grep -q 'did not become stably available' "$tmpdir/stderr" || {
-    cat "$tmpdir/stderr" >&2
-    fail "unavailable rollback did not report the failed verification"
-}
+assert_not_contains "$tmpdir/versiond2-unavailable.log" " stop versiond2"
 
 ROLLBACK_EMPTY_VERSIOND_SERVICE=versiond2 \
 UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \
     run_upgrade single versiond2 "$tmpdir/versiond2-empty.log"
-assert_contains "$tmpdir/versiond2-empty.log" " stop versiond2"
+assert_not_contains "$tmpdir/versiond2-empty.log" " stop versiond2"
 
 ROLLBACK_MISSING_VERSION_SERVICE=versiond \
 UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \
     run_upgrade single versiond "$tmpdir/versiond-partial.log" single
-assert_contains "$tmpdir/versiond-partial.log" " stop versiond"
-partial_v4_probe_count=$(grep -Fc \
-    'http://127.0.0.1:8080/v4/healthz' "$tmpdir/versiond-partial.log")
-[[ $partial_v4_probe_count -eq 1 ]] || fail \
-    "partial rollback unexpectedly restored the missing v4 baseline route"
+assert_not_contains "$tmpdir/versiond-partial.log" " stop versiond"
+awk '
+    / :: create --name versiond --network none/ { rollback = 1 }
+    rollback && /http:\/\/127\.0\.0\.1:8080\/v4\/healthz/ { exit 1 }
+' "$tmpdir/versiond-partial.log" || fail \
+    "partial rollback probed a route missing from the restored process"
 
 SPECIAL_VERSIOND_HEALTH_SERVICE=versiond \
     run_upgrade single versiond "$tmpdir/versiond-special-name.log" single
@@ -1774,7 +1896,7 @@ assert_not_contains "$tmpdir/versiond2-stopped.log" " start versiond2"
 assert_not_contains "$tmpdir/versiond2-stopped.log" \
     'exec cid-versiond2 /bin/busybox wget -q -T 3 -O - http://127.0.0.1:8080/healthz'
 assert_contains "$tmpdir/versiond2-stopped.log" \
-    "up --no-start --no-deps --force-recreate versiond2"
+    " :: create --name versiond2 --network none"
 
 run_upgrade single versiond "$tmpdir/versiond-production-rollback.log"
 assert_contains "$tmpdir/versiond-production-rollback.log" \
@@ -1785,6 +1907,8 @@ UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \
     run_upgrade single versiond \
         "$tmpdir/versiond-production-rollback-failure.log"
 assert_contains "$tmpdir/versiond-production-rollback-failure.log" \
+    " :: create --name versiond --network none"
+assert_not_contains "$tmpdir/versiond-production-rollback-failure.log" \
     " stop versiond"
 
 run_upgrade single versiond-router "$tmpdir/versiond-router.log"
@@ -1803,6 +1927,8 @@ UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \
     run_upgrade single versiond-router \
         "$tmpdir/versiond-router-missing-route.log"
 assert_contains "$tmpdir/versiond-router-missing-route.log" \
+    " :: create --name versiond-router --network none"
+assert_not_contains "$tmpdir/versiond-router-missing-route.log" \
     " stop versiond-router"
 
 PERSISTED_VERSIOND_BARRIER=true \
@@ -1825,14 +1951,14 @@ TARGET_ROUTER_MISSING_VERSION=v5 \
 VERSIOND2_UNIQUE_VERSION=true \
     run_upgrade single none "$tmpdir/versiond2-router-postcondition.log"
 assert_contains "$tmpdir/versiond2-router-postcondition.log" \
-    "up --no-start --no-deps --force-recreate versiond2"
+    " :: create --name versiond2 --network none"
 assert_not_contains "$tmpdir/versiond2-router-postcondition.log" \
     "--wait-timeout 60 versiond-router"
 
 run_postcondition_interrupted_upgrade \
     "$tmpdir/versiond2-postcondition-interrupt.log"
 assert_contains "$tmpdir/versiond2-postcondition-interrupt.log" \
-    "VERSIOND_IMAGE=gonka-upgrade-rollback/versiond2:"
+    " :: create --name versiond2 --network none"
 assert_not_contains "$tmpdir/versiond2-postcondition-interrupt.log" \
     "VERSIOND_HOSTS=versiond\\ versiond2"
 grep -q 'received TERM' "$tmpdir/versiond2-postcondition-interrupt.log.stderr" || {
@@ -1848,7 +1974,7 @@ for signal in HUP INT TERM; do
         "$tmpdir/interrupted-$signal_name.stdout" \
         "$tmpdir/interrupted-$signal_name.stderr"
     assert_contains "$tmpdir/interrupted-$signal_name.log" \
-        "VERSIOND_IMAGE=gonka-upgrade-rollback/versiond2:"
+        " :: create --name versiond2 --network none"
     assert_not_contains "$tmpdir/interrupted-$signal_name.log" \
         "VERSIOND_HOSTS=versiond\\ versiond2"
     grep -q "received $signal" \
