@@ -25,7 +25,7 @@ write_config() {
 '"POSTGRES_PASSWORD":"'"${RENDERED_POSTGRES_PASSWORD:-secret}"'"}}'
     fi
     cat >"$tmpdir/config.json" <<EOF
-{"name":"preflight-test","services":{"versiond":{"deploy":{"replicas":${VERSIOND_REPLICAS:-1}},"environment":{"DEVSHARD_STORAGE_MODE":"postgres","PGHOST":"$first_host","PGPORT":"5432","PGDATABASE":"devshardd","PGUSER":"user","PGPASSWORD":"${RENDERED_PASSWORD_ONE:-secret}","PG_POOL_MAX_CONNS":"$first_pool"$first_extra}},"versiond2":{"deploy":{"replicas":${VERSIOND2_REPLICAS:-1}},"environment":{"DEVSHARD_STORAGE_MODE":"postgres","PGHOST":"$second_host","PGPORT":"5432","PGDATABASE":"devshardd","PGUSER":"user","PGPASSWORD":"${RENDERED_PASSWORD_TWO:-${RENDERED_PASSWORD_ONE:-secret}}","PG_POOL_MAX_CONNS":"$second_pool"$second_extra}}$postgres_service}}
+{"name":"preflight-test","services":{"versiond":{"deploy":{"replicas":${VERSIOND_REPLICAS:-1}},"environment":{"DEVSHARD_STORAGE_MODE":"postgres","PGHOST":"$first_host","PGPORT":"${RENDERED_PORT_ONE:-5432}","PGDATABASE":"devshardd","PGUSER":"user","PGPASSWORD":"${RENDERED_PASSWORD_ONE:-secret}","PG_POOL_MAX_CONNS":"$first_pool"$first_extra}},"versiond2":{"deploy":{"replicas":${VERSIOND2_REPLICAS:-1}},"environment":{"DEVSHARD_STORAGE_MODE":"postgres","PGHOST":"$second_host","PGPORT":"${RENDERED_PORT_TWO:-${RENDERED_PORT_ONE:-5432}}","PGDATABASE":"devshardd","PGUSER":"user","PGPASSWORD":"${RENDERED_PASSWORD_TWO:-${RENDERED_PASSWORD_ONE:-secret}}","PG_POOL_MAX_CONNS":"$second_pool"$second_extra}}$postgres_service}}
 EOF
 }
 
@@ -44,6 +44,7 @@ elif [[ $1 == compose && " $* " == *" ps "* && " $* " == *" -q "* ]]; then
         both:devshard-postgres) printf 'postgres-container\n' ;;
         one:versiond) printf 'container-1\n' ;;
         one:devshard-postgres) printf 'postgres-container\n' ;;
+        postgres:devshard-postgres) printf 'postgres-container\n' ;;
     esac
 elif [[ $1 == inspect ]]; then
     container=${*: -1}
@@ -51,7 +52,10 @@ elif [[ $1 == inspect ]]; then
         echo 'simulated Docker daemon inspect failure' >&2
         exit 1
     }
-    if [[ $container == postgres-container ]]; then
+    if [[ ${2:-} == --format && ${3:-} == '{{.State.Running}}' && \
+        $container == postgres-container ]]; then
+        printf '%s\n' "${RUNTIME_POSTGRES_RUNNING:-true}"
+    elif [[ $container == postgres-container ]]; then
         jq -cn \
             --arg database "$RUNTIME_POSTGRES_DB" \
             --arg user "$RUNTIME_POSTGRES_USER" \
@@ -59,7 +63,7 @@ elif [[ $1 == inspect ]]; then
             ["POSTGRES_DB=" + $database, "POSTGRES_USER=" + $user,
              "POSTGRES_PASSWORD=" + $password]'
     else
-        runtime_host=pg
+        runtime_host=$RUNTIME_HOST_ONE
         [[ $container != container-2 ]] || runtime_host=$RUNTIME_HOST_TWO
         runtime_pool=$RUNTIME_POOL_ONE
         [[ $container != container-2 ]] || runtime_pool=$RUNTIME_POOL_TWO
@@ -78,6 +82,18 @@ elif [[ $1 == inspect ]]; then
     fi
 elif [[ $1 == exec ]]; then
     container=$2
+    if [[ $container == --env ]]; then
+        container=
+        for argument in "$@"; do
+            [[ $argument != postgres-container ]] || container=$argument
+        done
+    fi
+    if [[ $container == postgres-container ]]; then
+        [[ ${FRESH_PSQL_FAIL:-false} != true ]] || exit 1
+        printf '%s|%s|%s\n' "$RUNTIME_POSTGRES_DB" \
+            "$RUNTIME_POSTGRES_USER" "${RUNTIME_POSTGRES_PORT:-5432}"
+        exit 0
+    fi
     case $PROOF_API_MODE in
         ready) ;;
         404)
@@ -189,6 +205,7 @@ run_preflight() {
         IDENTITY_TWO="${IDENTITY_TWO:-db-1}" RUNTIME_EXTRA="${RUNTIME_EXTRA:-}" \
         DATABASE_ONE="${DATABASE_ONE:-shared}" DATABASE_TWO="${DATABASE_TWO:-shared}" \
         RUNTIME_HOST_TWO="${RUNTIME_HOST_TWO:-pg}" \
+        RUNTIME_HOST_ONE="${RUNTIME_HOST_ONE:-pg}" \
         RUNTIME_POOL_ONE="${RUNTIME_POOL_ONE-4}" \
         RUNTIME_POOL_TWO="${RUNTIME_POOL_TWO-4}" \
         RUNTIME_PASSWORD_ONE="${RUNTIME_PASSWORD_ONE:-secret}" \
@@ -196,6 +213,9 @@ run_preflight() {
         RUNTIME_POSTGRES_DB="${RUNTIME_POSTGRES_DB:-devshardd}" \
         RUNTIME_POSTGRES_USER="${RUNTIME_POSTGRES_USER:-user}" \
         RUNTIME_POSTGRES_PASSWORD="${RUNTIME_POSTGRES_PASSWORD:-secret}" \
+        RUNTIME_POSTGRES_PORT="${RUNTIME_POSTGRES_PORT:-5432}" \
+        RUNTIME_POSTGRES_RUNNING="${RUNTIME_POSTGRES_RUNNING:-true}" \
+        FRESH_PSQL_FAIL="${FRESH_PSQL_FAIL:-false}" \
         PROOF_POOL_ONE="${PROOF_POOL_ONE:-4}" \
         PROOF_POOL_TWO="${PROOF_POOL_TWO:-4}" \
         SERVER_MAX_ONE="${SERVER_MAX_ONE:-100}" \
@@ -354,6 +374,12 @@ if run_preflight >"$tmpdir/out" 2>"$tmpdir/err"; then
 fi
 grep -q 'connection budget is insufficient: 58 required' "$tmpdir/err" || fail \
     "CPU-sized v4 pool was not included in rolling overlap capacity"
+if run_preflight --runtime-contract-only \
+    >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "runtime preflight skipped a CPU-sized overlap budget failure"
+fi
+grep -q 'connection budget is insufficient: 58 required' "$tmpdir/err" || fail \
+    "runtime contract did not enforce the rolling overlap budget"
 SERVER_MAX_ONE=61
 SERVER_MAX_TWO=61
 run_preflight >"$tmpdir/cpu-sized-pool" || fail \
@@ -362,10 +388,37 @@ unset PROOF_POOL_ONE PROOF_POOL_TWO SERVER_MAX_ONE SERVER_MAX_TWO
 unset RUNTIME_POOL_ONE RUNTIME_POOL_TWO
 
 INCLUDE_POSTGRES=true
-export INCLUDE_POSTGRES
-write_config
+RUNTIME_HOST_ONE=devshard-postgres
+RUNTIME_HOST_TWO=devshard-postgres
+export INCLUDE_POSTGRES RUNTIME_HOST_ONE RUNTIME_HOST_TWO
+write_config '' '' devshard-postgres
 run_preflight --runtime-contract-only >"$tmpdir/local-contract" || fail \
     "matching bundled PostgreSQL identity and credentials were rejected"
+
+LIVE_MODE=postgres
+export LIVE_MODE
+run_preflight --runtime-contract-only >"$tmpdir/postgres-only-contract" || fail \
+    "fresh bundled login was not accepted as recovery evidence"
+FRESH_PSQL_FAIL=true
+export FRESH_PSQL_FAIL
+if run_preflight --runtime-contract-only >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "environment-only PostgreSQL credentials passed without a fresh login"
+fi
+unset FRESH_PSQL_FAIL LIVE_MODE
+grep -q 'cannot open a fresh bundled PostgreSQL session' "$tmpdir/err" || fail \
+    "failed bundled credential proof was not diagnosed"
+
+RENDERED_PORT_ONE=5433
+RENDERED_PORT_TWO=5433
+export RENDERED_PORT_ONE RENDERED_PORT_TWO
+write_config '' '' devshard-postgres
+if run_preflight --compose-only >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "a non-server bundled PostgreSQL port was accepted"
+fi
+unset RENDERED_PORT_ONE RENDERED_PORT_TWO
+grep -q 'PGPORT must be 5432' "$tmpdir/err" || fail \
+    "bundled PostgreSQL port mismatch was not diagnosed"
+write_config '' '' devshard-postgres
 
 RUNTIME_POSTGRES_USER=other-user
 export RUNTIME_POSTGRES_USER
@@ -378,11 +431,12 @@ grep -q "has POSTGRES_USER='other-user'" "$tmpdir/err" || fail \
 
 RENDERED_POSTGRES_PASSWORD=other-secret
 export RENDERED_POSTGRES_PASSWORD
-write_config
+write_config '' '' devshard-postgres
 if run_preflight --compose-only >"$tmpdir/out" 2>"$tmpdir/err"; then
     fail "bundled PostgreSQL password different from versiond was accepted"
 fi
 unset RENDERED_POSTGRES_PASSWORD INCLUDE_POSTGRES
+unset RUNTIME_HOST_ONE RUNTIME_HOST_TWO
 grep -q 'POSTGRES_PASSWORD must match versiond PGPASSWORD' "$tmpdir/err" || fail \
     "rendered bundled PostgreSQL password mismatch was not diagnosed"
 write_config

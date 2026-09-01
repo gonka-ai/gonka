@@ -131,6 +131,12 @@ is_positive_int32 "$pool_max_connections" || fail \
     "versiond services must use the same PG_POOL_MAX_CONNS"
 
 if jq -e '.services | has("devshard-postgres")' <<<"$config" >/dev/null; then
+    [[ $first == 5432 ]] || fail \
+        "versiond PGPORT must be 5432 for bundled devshard-postgres"
+    application_host=$(jq -r \
+        '.services.versiond.environment.PGHOST // ""' <<<"$config")
+    [[ $application_host == devshard-postgres ]] || fail \
+        "versiond PGHOST must be devshard-postgres for the bundled server"
     for mapping in \
         PGDATABASE:POSTGRES_DB \
         PGUSER:POSTGRES_USER \
@@ -210,14 +216,14 @@ for index in "${!containers[@]}"; do
         "running $service has PGPORT='$actual', rendered topology expects '$expected'"
     actual=$(container_env "$runtime_environment" PG_POOL_MAX_CONNS) || actual=
     if [[ -n $actual ]]; then
-        runtime_pool_is_explicit+=(true)
+        runtime_pool_is_explicit[index]=true
         [[ $actual == "$pool_max_connections" ]] || fail \
             "running $service has PG_POOL_MAX_CONNS='$actual', rendered topology expects '$pool_max_connections'"
     else
         # Supported v4 images used pgx's max(4, runtime.NumCPU()) default.
         # The live proof below reports that effective value. Do not replace
         # missing evidence with the v5 default and undercount overlap.
-        runtime_pool_is_explicit+=(false)
+        runtime_pool_is_explicit[index]=false
     fi
     expected=$(jq -r --arg service "$service" \
         '.services[$service].environment.PGPASSWORD // ""' <<<"$config")
@@ -225,6 +231,31 @@ for index in "${!containers[@]}"; do
     [[ $actual == "$expected" ]] || fail \
         "running $service uses different PostgreSQL credentials than the rendered topology; rotate credentials separately before the HA upgrade"
 done
+
+verify_bundled_postgres_login() {
+    local container=$1 database user password port state observed
+    state=$("$docker_bin" inspect --format '{{.State.Running}}' "$container") || \
+        fail "cannot inspect bundled PostgreSQL state"
+    [[ $state == true ]] || fail \
+        "bundled devshard-postgres must be running for a fresh credential proof"
+    database=$(jq -r \
+        '.services.versiond.environment.PGDATABASE' <<<"$config")
+    user=$(jq -r '.services.versiond.environment.PGUSER' <<<"$config")
+    password=$(jq -r \
+        '.services.versiond.environment.PGPASSWORD' <<<"$config")
+    port=$(jq -r \
+        '.services.versiond.environment.PGPORT // "5432"' <<<"$config")
+    observed=$(timeout --kill-after=2s 12s "$docker_bin" exec \
+        --env "PGCONNECT_TIMEOUT=5" \
+        --env "PGOPTIONS=-c statement_timeout=5000" \
+        --env "PGPASSWORD=$password" "$container" \
+        psql -h 127.0.0.1 -p "$port" -U "$user" -d "$database" \
+        -AtX -v ON_ERROR_STOP=1 -c \
+        "SELECT current_database() || '|' || current_user || '|' || inet_server_port()") || fail \
+        "rendered versiond credentials cannot open a fresh bundled PostgreSQL session"
+    [[ $observed == "$database|$user|$port" ]] || fail \
+        "fresh bundled PostgreSQL session returned unexpected endpoint identity '$observed'"
+}
 
 if [[ $runtime_contract_only == true ]]; then
 	postgres_container=
@@ -245,11 +276,18 @@ if [[ $runtime_contract_only == true ]]; then
             [[ -n $actual && $actual == "$expected" ]] || fail \
                 "running devshard-postgres has $key='$actual', rendered topology expects '$expected'; rotate database identity or credentials separately before the HA upgrade"
         done
+        verify_bundled_postgres_login "$postgres_container"
     fi
     [[ $runtime_contract_evidence == true ]] || fail \
         "Compose project '$project_name' has no existing PostgreSQL contract to compare; restore an application or bundled PostgreSQL container before recovery"
-    echo "postgres-deployment-preflight: runtime PostgreSQL contract matches the rendered topology for Compose project '$project_name'"
-    exit 0
+    runtime_application_evidence=false
+    for container in "${containers[@]}"; do
+        [[ -z $container ]] || runtime_application_evidence=true
+    done
+    if [[ $runtime_application_evidence == false ]]; then
+        echo "postgres-deployment-preflight: runtime PostgreSQL contract and fresh bundled login match the rendered topology for Compose project '$project_name'"
+        exit 0
+    fi
 fi
 
 versiond_http() {
@@ -331,7 +369,7 @@ validate_connection_budget() {
     local server_max='' server_reserved='' total_targets=0
     local current_target_connections=0 replacement_target_connections=0
 
-    for index in "${!proofs[@]}"; do
+    for index in "${proof_indices[@]}"; do
         proof=${proofs[index]}
         while IFS=$'\t' read -r generation target_pool target_server_max target_server_reserved; do
             if [[ ${runtime_pool_is_explicit[index]} == true ]]; then
@@ -408,9 +446,11 @@ new_challenge_nonce() {
 
 proofs=()
 snapshots=()
+proof_indices=()
 identity=
 for index in "${!containers[@]}"; do
     service=${active_services[index]}
+    [[ -n ${containers[index]} ]] || continue
     proof=$(read_storage_identity "$service" "${containers[index]}") || exit 1
     validate_storage_identity <<<"$proof" || fail \
         "$service returned an invalid PostgreSQL storage proof"
@@ -420,20 +460,28 @@ for index in "${!containers[@]}"; do
     elif [[ $observed_identity != "$identity" ]]; then
         fail "versiond replicas use different PostgreSQL database lineages"
     fi
-    proofs+=("$(jq -Sc . <<<"$proof")")
-    snapshots+=("$(jq -r '.snapshot' <<<"$proof")")
+    proofs[index]=$(jq -Sc . <<<"$proof")
+    snapshots[index]=$(jq -r '.snapshot' <<<"$proof")
+    proof_indices+=("$index")
 done
 
 [[ -z $expected_identity || $identity == "$expected_identity" ]] || fail \
     "live PostgreSQL identity changed from $expected_identity to $identity"
 validate_connection_budget
 
-anchor_container=${containers[0]}
-anchor_snapshot=${snapshots[0]}
-anchor_generation=$(jq -r '.targets[0].generation' <<<"${proofs[0]}")
+if [[ $runtime_contract_only == true ]]; then
+    echo "postgres-deployment-preflight: runtime PostgreSQL contract and connection budget match the rendered topology for Compose project '$project_name'"
+    exit 0
+fi
+
+anchor_index=${proof_indices[0]}
+anchor_container=${containers[anchor_index]}
+anchor_snapshot=${snapshots[anchor_index]}
+anchor_generation=$(jq -r '.targets[0].generation' \
+    <<<"${proofs[anchor_index]}")
 final_nonce=
 final_writer_generation=
-for writer_index in "${!containers[@]}"; do
+for writer_index in "${proof_indices[@]}"; do
     writer_service=${active_services[writer_index]}
     while IFS= read -r writer_generation; do
         nonce=$(new_challenge_nonce)
@@ -457,7 +505,7 @@ for writer_index in "${!containers[@]}"; do
     done < <(jq -r '.targets[].generation' <<<"${proofs[writer_index]}")
 done
 
-for reader_index in "${!containers[@]}"; do
+for reader_index in "${proof_indices[@]}"; do
     reader_service=${active_services[reader_index]}
     while IFS= read -r reader_generation; do
         response=$(run_storage_challenge \
@@ -470,7 +518,7 @@ for reader_index in "${!containers[@]}"; do
     done < <(jq -r '.targets[].generation' <<<"${proofs[reader_index]}")
 done
 
-for index in "${!containers[@]}"; do
+for index in "${proof_indices[@]}"; do
     service=${active_services[index]}
     final_proof=$(read_storage_identity "$service" "${containers[index]}") || exit 1
     [[ $(jq -Sc . <<<"$final_proof") == "${proofs[index]}" ]] || fail \
