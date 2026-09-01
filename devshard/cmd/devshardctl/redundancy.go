@@ -42,24 +42,6 @@ var (
 
 const toolChoiceUnsupportedMessage = "tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"
 
-// sseChunkHasContent reports whether the given bytes contain at least one SSE
-// data event carrying a non-empty payload that an OpenAI-compatible client can
-// surface. `content`, `reasoning`, `reasoning_content`, non-empty
-// `tool_calls`, and a stopped completion with generated tokens all qualify in
-// both streaming `delta` and non-streaming `message` shapes.
-//
-// Deliberately NOT treated as content (even though earlier versions did):
-//   - `choices[].text` — the legacy `/v1/completions` shape. The proxy's
-//     streaming path only serves `/v1/chat/completions`; a host emitting
-//     `text` here produces the same "1 chunk, 0 rendered tokens" failure.
-//
-// Role-only chunks, empty deltas, finish-only chunks, and `[DONE]` markers
-// continue to return false.
-func sseChunkHasContent(p []byte) bool {
-	_, ok := sseChunkContentSource(p)
-	return ok
-}
-
 var sseUsageKeyMarker = []byte(`"usage"`)
 
 // sseChunkUsageCompletionTokens reads usage.completion_tokens from an SSE
@@ -93,80 +75,6 @@ func sseChunkUsageCompletionTokens(p []byte) (int64, bool) {
 		}
 	}
 	return 0, false
-}
-
-// sseChunkContentSource is the classifying variant of sseChunkHasContent: when
-// content is present it returns a short label identifying the field that
-// carried it. The second return value is false when no accepted content was
-// found. Used for forensic logging so we can tell, after the fact, exactly
-// which field a short-content winner was emitting.
-func sseChunkContentSource(p []byte) (string, bool) {
-	if len(p) == 0 {
-		return "", false
-	}
-	for _, line := range bytes.Split(p, []byte("\n")) {
-		line = bytes.TrimRight(line, "\r")
-		if !bytes.HasPrefix(line, []byte("data:")) {
-			continue
-		}
-		payload := bytes.TrimSpace(line[len("data:"):])
-		if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
-			continue
-		}
-		var evt struct {
-			Choices []struct {
-				FinishReason string `json:"finish_reason"`
-				Delta        struct {
-					Content          string          `json:"content"`
-					Reasoning        string          `json:"reasoning"`
-					ReasoningContent string          `json:"reasoning_content"`
-					ToolCalls        json.RawMessage `json:"tool_calls"`
-				} `json:"delta"`
-				Message struct {
-					Content          string          `json:"content"`
-					Reasoning        string          `json:"reasoning"`
-					ReasoningContent string          `json:"reasoning_content"`
-					ToolCalls        json.RawMessage `json:"tool_calls"`
-				} `json:"message"`
-			} `json:"choices"`
-			Usage struct {
-				CompletionTokens int `json:"completion_tokens"`
-			} `json:"usage"`
-		}
-		if err := json.Unmarshal(payload, &evt); err != nil {
-			continue
-		}
-		for _, c := range evt.Choices {
-			if c.Delta.Content != "" {
-				return "delta.content", true
-			}
-			if c.Delta.Reasoning != "" {
-				return "delta.reasoning", true
-			}
-			if c.Delta.ReasoningContent != "" {
-				return "delta.reasoning_content", true
-			}
-			if hasJSONArrayElements(c.Delta.ToolCalls) {
-				return "delta.tool_calls", true
-			}
-			if c.Message.Content != "" {
-				return "message.content", true
-			}
-			if c.Message.Reasoning != "" {
-				return "message.reasoning", true
-			}
-			if c.Message.ReasoningContent != "" {
-				return "message.reasoning_content", true
-			}
-			if hasJSONArrayElements(c.Message.ToolCalls) {
-				return "message.tool_calls", true
-			}
-			if c.FinishReason == "stop" && evt.Usage.CompletionTokens > 0 {
-				return "message.empty_stop_completion_tokens", true
-			}
-		}
-	}
-	return "", false
 }
 
 // sseChunkErrorSource reports whether the bytes contain an OpenAI-style
@@ -598,7 +506,6 @@ type Redundancy struct {
 	stateBlockMu         sync.RWMutex
 	stateBlockedHosts    map[string]string    // escrow-local participant blocks for state divergence that survived a replay
 	stateRewoundAt       map[string]time.Time // when each participant's one catch-up replay was spent
-	throttleProbes       throttleProbeGate    // bounds the ghost probes sent to a throttled host
 
 	onRaceCleanupStart func()
 	onRaceCleanupDone  func()
@@ -887,26 +794,27 @@ type inflight struct {
 	receiptTimeNano atomic.Int64  // unix nano; 0 means not received
 	receiptCh       chan struct{} // closed when receipt arrives
 
-	tokenOnce        sync.Once
-	firstTokenNano   atomic.Int64 // unix nano; 0 means no chunk of any kind yet
-	firstTokenCh     chan struct{}
-	outputChunks     atomic.Int64
-	contentChunks    atomic.Int64
-	outputBytes      atomic.Int64
-	lastChunkAt      atomic.Int64
-	maxChunkGap      atomic.Int64
-	maxChunkGapAt    atomic.Int64
-	firstContentNano atomic.Int64
-	stallMu          sync.Mutex
-	stallActive      bool
-	stalls           []attemptStall
-	forwardedLog     sync.Once
-	suppressedLog    sync.Once
-	ctxCancelledLog  sync.Once
-	hardTimeoutLog   sync.Once
-	sampleOnce       sync.Once
-	processOnce      sync.Once
-	processErr       error
+	tokenOnce         sync.Once
+	firstTokenNano    atomic.Int64 // unix nano; 0 means no chunk of any kind yet
+	firstTokenCh      chan struct{}
+	outputChunks      atomic.Int64
+	contentChunks     atomic.Int64
+	outputBytes       atomic.Int64
+	lastChunkAt       atomic.Int64
+	maxChunkGap       atomic.Int64
+	maxChunkGapAt     atomic.Int64
+	firstContentNano  atomic.Int64
+	stallMu           sync.Mutex
+	stallActive       bool
+	stalls            []attemptStall
+	forwardedLog      sync.Once
+	suppressedLog     sync.Once
+	ctxCancelledLog   sync.Once
+	hardTimeoutLog    sync.Once
+	sampleOnce        sync.Once
+	limiterStrikeOnce sync.Once
+	processOnce       sync.Once
+	processErr        error
 
 	// pendingBuf holds bytes received before any content event was observed.
 	// Each attempt has at most one writer goroutine driving Write/Flush, so no
@@ -927,7 +835,6 @@ type inflight struct {
 
 	// A host emits one token format for the whole answer, so the first chunk carrying logprobs settles
 	// it and the rest are not parsed.
-	logprobsJudged  bool
 	logprobsDecoded bool
 
 	suspiciousWinnerDeferredLog sync.Once
@@ -1410,15 +1317,16 @@ func (rw *raceWriter) classifyParseable(parseable []byte) (hasContent, hasError 
 	if len(parseable) == 0 {
 		return false, false
 	}
-	if !rw.inf.logprobsDecoded {
-		if decoded, found := sseChunkLogprobsDecoded(parseable); found {
-			rw.inf.logprobsJudged, rw.inf.logprobsDecoded = true, decoded
-		}
+	// One pass answers both: a chunk carries a couple of tokens, so judging only the first would miss an
+	// answer that merely opens with a numeric one, and asking twice would decode the same event twice.
+	scan := scanSSEChunk(parseable)
+	if !rw.inf.logprobsDecoded && scan.LogprobsFound {
+		rw.inf.logprobsDecoded = scan.LogprobsDecoded
 	}
-	if src, ok := sseChunkContentSource(parseable); ok {
+	if scan.HasContent {
 		hasContent = true
 		if rw.inf.contentSource == "" {
-			rw.inf.contentSource = src
+			rw.inf.contentSource = scan.ContentSource
 		}
 	} else if details, ok := sseChunkErrorDetails(parseable); ok {
 		src := "error"
@@ -2438,10 +2346,11 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 					stopTimer(stallTimer)
 					stopTimer(winnerHardTimeoutTimer)
 					e.recordWinnerTerminalFailureOnce(inf, params, w)
-					// Settled as the failure it is: the caller keeps the answer, the host keeps the strike.
+					// Settled as the success the caller saw: the ledger records the answer it got, and the
+					// open nonce is carried to a vote by the settled path rather than by calling this a failure.
 					e.goTrackedRaceCleanup(func() {
 						e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, w,
-							raceFinishOptions{forceTreatAsFailure: true, recordFailureSamples: true, clientGone: clientFlag})
+							raceFinishOptions{clientGone: clientFlag})
 					})
 					logInferenceStage(settleCtx, inf.escrowID, inf.nonce, "winner_served_without_finish", "host", inf.hostID)
 					return nil
@@ -3617,10 +3526,12 @@ func (e *Redundancy) recordPostContentWinnerFailureOnce(inf *inflight, params us
 			e.metrics.ObserveRequestSample(e.devshardID, sample)
 		}
 	})
-	// Outside the once: the settle path records the same failing sample without ever telling the
-	// limiter, so leaving the strike under it makes quarantine depend on which writer got there first.
+	// Outside the sample's once: the settle path records the same failing sample without ever telling
+	// the limiter, so leaving the strike under it makes quarantine depend on which writer got there
+	// first. Its own once, entered only when the strike lands, keeps one stalled winner to one
+	// quarantine -- the call is reachable from both the race and the settle for a single request.
 	if e.participantLimiter != nil && e.perf.ParticipantFailureThresholdExceeded(participantKey) {
-		e.participantLimiter.ObserveStalledWinner(participantKey)
+		inf.limiterStrikeOnce.Do(func() { e.participantLimiter.ObserveStalledWinner(participantKey) })
 	}
 }
 
@@ -3732,6 +3643,10 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 		e.recordGatewayAttemptTerminal(inf, params, winnerNonce, ok, opts.clientGone)
 		if !ok {
 			e.recordWinnerTerminalFailureOnce(inf, params, winnerNonce)
+		}
+		// The list is what the protocol still owes a vote, not what the request failed on: a winner whose
+		// answer reached the caller can still leave its nonce open, and an open nonce is owed one either way.
+		if !ok || !e.session.IsNonceFinished(inf.nonce) {
 			failed = append(failed, inf)
 		}
 	}
@@ -4107,26 +4022,14 @@ func ghostProbeParams(model string) user.InferenceParams {
 
 // runGhostProbe spends a nonce the picker must consume but no user request should ride: the host is
 // doing PoC, the queue held nothing compatible past pickerStaleThreshold, or the host just refused.
-// A throttled burn buys a real chat probe; the rest only compose the MsgStart, which reaches the host
-// as catch-up on its next real dispatch. kind picks who answers for the burn -- see raiseGhostAccountability.
+// Nothing reaches the host here; the MsgStart travels as catch-up on its next real dispatch.
 func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostKind, reason string) {
 	if prepared == nil || e.session == nil {
 		return
 	}
 	participantKey := e.participantKeyForHost(prepared.HostIdx())
-	probed := kind == ghostThrottled && throttleProbeEnabled.Load() && participantKey != ""
-	verdict := throttleProbeUnserved
-	if probed {
-		verdict = e.throttleProbes.decide(participantKey, time.Now(), e.answerWaitingBurn(prepared, reason))
-		if verdict == throttleProbeSend {
-			e.sendThrottleProbe(prepared, participantKey, reason)
-			return
-		}
-	}
 	quarantineMode := e.quarantineModeForParticipant(participantKey)
-	// Only the unanswered case is booked with a timeout on the way; a served probe settles the burn.
-	timeoutPending := ghostTimeoutWillBeRaised(kind) && (!probed || verdict != throttleProbeServed)
-	e.accounting.Ghost(e.devshardID, prepared.Nonce(), reason, quarantineMode, timeoutPending)
+	e.accounting.Ghost(e.devshardID, prepared.Nonce(), reason, quarantineMode, false)
 	if e.metrics != nil {
 		e.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
 			ParticipantKey: participantKey,
@@ -4142,68 +4045,8 @@ func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostK
 		"host", e.session.HostLabel(prepared.HostIdx()),
 		"kind", int(kind),
 		"reason", reason,
-		"probe_verdict", int(verdict),
 		"poc_reason", currentPoCPhaseReason(),
 	)
-	if probed && verdict != throttleProbeUnserved {
-		return
-	}
-	e.raiseGhostAccountability(prepared, kind)
-}
-
-// ghostTimeoutWillBeRaised reports whether raiseGhostAccountability will act on this burn. The ledger
-// needs it at burn time: a nonce with no timeout coming must retire at once, and one with a timeout
-// coming must wait for it.
-func ghostTimeoutWillBeRaised(kind ghostKind) bool {
-	return ghostAccountabilityEnabled() && kind.accountable()
-}
-
-// raiseGhostAccountability makes the host answer for a nonce we declined to send it. The burned
-// nonce left a pending MsgStart, which is all a refusal timeout needs: verifiers challenge the
-// executor themselves, so a host that is alive and willing still clears itself by returning a
-// receipt, and we contact it no more than the silent path already did.
-//
-// Every accountable burn is answered for, but not every one raises its own timeout: a probe in flight
-// speaks for the burns of its window, and only its silence sends them here.
-func (e *Redundancy) raiseGhostAccountability(prepared *user.PreparedInference, kind ghostKind) {
-	if !ghostTimeoutWillBeRaised(kind) {
-		return
-	}
-	nonce := prepared.Nonce()
-	burnedAt := time.Now()
-	hostLabel := e.session.HostLabel(prepared.HostIdx())
-	payload := prepared.Payload()
-	e.goTrackedRaceCleanup(func() {
-		ctx, _ := ensureRequestLogContext(context.Background())
-		e.raiseGhostTimeout(ctx, nonce, burnedAt, payload, hostLabel, kind)
-	})
-}
-
-// raiseGhostTimeout is where the silent burn and the unserved probe both end, so a verifier sees the
-// same outcome either way and no new caller can charge past a disabled operator switch.
-func (e *Redundancy) raiseGhostTimeout(ctx context.Context, nonce uint64, burnedAt time.Time, payload *host.InferencePayload, hostLabel string, kind ghostKind) {
-	if !ghostTimeoutWillBeRaised(kind) {
-		return
-	}
-	logInferenceStage(ctx, e.devshardID, nonce, "ghost_timeout_started", "host", hostLabel, "kind", int(kind))
-	// HandleTimeout reports an applied timeout by returning an error, so the outcome decides what
-	// this was; branching on err logged every success as a failure.
-	result, err := e.session.HandleTimeout(ctx, nonce, burnedAt, payload)
-	// The chain counts a miss for an applied timeout whoever raised it, so the ledger records this
-	// one the same as any other; without it the cross-check compares against a population that
-	// excludes every burn by construction.
-	action, reason := gatewayTimeoutFailureAction(result, false)
-	if err == nil {
-		action, reason = "completed", "none"
-	}
-	e.accounting.TimeoutResult(e.devshardID, nonce, timeoutResultKind(result, nil), action, reason,
-		result.DetailReason, result.DetailReason)
-	if result.Applied {
-		logInferenceStage(ctx, e.devshardID, nonce, "ghost_timeout_applied", "host", hostLabel)
-		return
-	}
-	logInferenceStage(ctx, e.devshardID, nonce, "ghost_timeout_failed",
-		"host", hostLabel, "outcome", result.Outcome, "error", err)
 }
 
 // fireBalanceExhausted fires onBalanceExhausted at most once per Redundancy

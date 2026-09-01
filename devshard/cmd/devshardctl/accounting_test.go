@@ -223,7 +223,6 @@ func TestAccountingProductionPendingClassification(t *testing.T) {
 }
 
 func TestAccountingProductionGhostFact(t *testing.T) {
-	disableThrottleProbe(t)
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
 	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)

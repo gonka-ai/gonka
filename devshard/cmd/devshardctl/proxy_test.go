@@ -2124,3 +2124,38 @@ func TestAnErrorEventDoesNotEarnTheLongResponseExemption(t *testing.T) {
 	require.False(t, longResponseFailureExempt(erroring, env.session),
 		"one error event is not content, and holding the stream after it must not buy an exemption")
 }
+
+// The whole point of serving an answer whose nonce never closed: the caller keeps it, and the host still
+// answers for the open nonce. A winner that delivered is not a failed request, so the vote has to reach
+// it through the settled path rather than by calling the request a failure.
+func TestWinnerServedWithoutFinishKeepsTheAnswerAndStillVotes(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	params := defaultParams()
+	params.StartedAt = time.Now().Add(-10 * time.Second).Unix()
+	prepared, err := env.session.PrepareInference(params)
+	require.NoError(t, err)
+
+	inf := &inflight{
+		hostIdx:  prepared.HostIdx(),
+		hostID:   env.session.HostLabel(prepared.HostIdx()),
+		nonce:    prepared.Nonce(),
+		escrowID: "escrow-proxy",
+		sendTime: time.Now().Add(-10 * time.Second),
+		resp:     &host.HostResponse{Nonce: prepared.Nonce()},
+		done:     make(chan struct{}),
+	}
+	inf.setReceiptAt(time.Now().Add(-9 * time.Second))
+	inf.outputChunks.Store(4)
+	inf.contentChunks.Store(4)
+	close(inf.done)
+	require.True(t, deliveredWholeAnswer(inf), "precondition: the caller was served a whole answer")
+	require.False(t, env.session.IsNonceFinished(prepared.Nonce()), "precondition: the nonce never closed")
+
+	err = env.proxy.redundancy.finishRaceOutcome(context.Background(), []*inflight{inf}, params,
+		Decision{Reason: "test"}, prepared.Nonce(), raceFinishOptions{})
+
+	require.NoError(t, err, "the caller was served, so the request is not a failure")
+	require.Eventually(t, func() bool {
+		return env.sm.SnapshotState().Inferences[prepared.Nonce()].Status == types.StatusTimedOut
+	}, 10*time.Second, 25*time.Millisecond, "the open nonce never reached a timeout vote")
+}

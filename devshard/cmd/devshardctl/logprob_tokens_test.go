@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"context"
 	"os"
 	"path/filepath"
 	"strings"
@@ -143,5 +145,27 @@ func TestIsTokenIDAcceptsOnlyAnIndexIntoTheVocabulary(t *testing.T) {
 				t.Fatalf("isTokenID(%q) = %v, want %v", testCase.token, got, testCase.want)
 			}
 		})
+	}
+}
+
+// A streaming chunk carries only a couple of tokens, so the judgement cannot stop at the first one: an
+// answer that opens with a numeric token would otherwise mask every word that follows it.
+func TestRaceWriterJudgesLogprobsBeyondTheFirstChunk(t *testing.T) {
+	ctx := context.Background()
+	var sink bytes.Buffer
+	inf := &inflight{
+		hostID: "host-A", escrowID: "escrow-x", nonce: 1,
+		done: make(chan struct{}), receiptCh: make(chan struct{}), firstTokenCh: make(chan struct{}),
+	}
+	rw := &raceWriter{group: newRaceGroup(ctx, ctx, "escrow-x", &sink), nonce: 1, inf: inf}
+
+	rw.classifyParseable(sseEvent(t, "logprobs_token_ids.json"))
+	if inf.logprobsDecoded {
+		t.Fatal("a chunk naming every token by id must not read as decoded text")
+	}
+
+	rw.classifyParseable(sseEvent(t, "logprobs_decoded_text.json"))
+	if !inf.logprobsDecoded {
+		t.Fatal("a later chunk carrying decoded text went unjudged")
 	}
 }
