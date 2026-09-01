@@ -387,6 +387,31 @@ grep -q 'another deployment operation holds' "$tmpdir/lock.out" || fail \
     "${fleet[@]}" prepare-networks >/dev/null
 ) || fail "an inherited deployment lock was not re-entrant"
 
+# Without a journal, a missing maintenance slot proves only lost capacity. It
+# must not be classified as a candidate or cause the remaining healthy source
+# slots to drain.
+missing_maintenance_id=$(docker ps -q \
+    --filter label=ai.gonka.component=versiond-router \
+    --filter "label=ai.gonka.fleet=$fleet_id" \
+    --filter label=ai.gonka.slot=2)
+docker rm -f "$missing_maintenance_id" >/dev/null
+if VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
+    "${fleet[@]}" maintenance-rollout \
+    >"$tmpdir/maintenance-missing-without-journal.out" 2>&1; then
+    fail "missing slot was accepted as evidence of a maintenance candidate"
+fi
+grep -q 'has no unique existing container' \
+    "$tmpdir/maintenance-missing-without-journal.out" || fail \
+    "missing maintenance source slot was not diagnosed"
+for slot in 0 1; do
+    docker ps -q \
+        --filter label=ai.gonka.component=versiond-router \
+        --filter "label=ai.gonka.fleet=$fleet_id" \
+        --filter "label=ai.gonka.slot=$slot" | grep -q . || fail \
+        "maintenance inference stopped healthy source slot $slot"
+done
+"${fleet[@]}" apply >/dev/null
+
 # Legacy pinning changes the escrow placement function. A mixed rolling fleet
 # is invalid; the explicit maintenance path drains every old router before any
 # router with the new contract becomes visible.
@@ -440,27 +465,60 @@ grep -q 'Recovering the stopped pre-maintenance router fleet' \
 # candidate remain postconditions; the removed v5 route must not force rollback.
 sed -i 's/^VERSIOND_NON_HA_VERSIONS="v4 v5"$/VERSIOND_NON_HA_VERSIONS=v4/' \
     "$tmpdir/config.env"
-# Simulate SIGKILL after the first candidate slot was created. The remaining
-# stopped slots still carry the old placement contract; retry must finish the
-# candidate fleet without readmitting that old contract.
+# Kill a real maintenance transaction after its first candidate is durable.
+# Retry must use the saved target and source boundary instead of inferring
+# intent from missing containers or a mutable local tag.
+maintenance_journal="$tmpdir/.gonka-versiond-router-maintenance.json"
 VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
-    "${fleet[@]}" stop-all --maintenance >/dev/null
-(
-    set -a
-    # shellcheck disable=SC1091
-    source "$tmpdir/config.env"
-    set +a
-    VERSIOND_ROUTER_SLOT=0 VERSIOND_ROUTER_FLEET_ID="$fleet_id" \
-        docker compose --project-directory "$script_dir" \
-        --project-name "$prefix-0" \
-        -f "$script_dir/versiond-router-slot/docker-compose.yml" \
-        up -d --no-deps --force-recreate --wait router >/dev/null
-)
+    setsid "${fleet[@]}" maintenance-rollout \
+    >"$tmpdir/maintenance-candidate-crash.out" 2>&1 &
+maintenance_pid=$!
+candidate_recorded=false
+for _ in $(seq 600); do
+    if [[ -f $maintenance_journal ]] && jq -e '
+        [.transaction.slots[].state]
+        | any(. == "candidate_starting" or . == "candidate")
+    ' "$maintenance_journal" >/dev/null 2>&1; then
+        candidate_recorded=true
+        break
+    fi
+    kill -0 "$maintenance_pid" 2>/dev/null || break
+    sleep 0.1
+done
+if [[ $candidate_recorded != true ]]; then
+    wait "$maintenance_pid" || true
+    fail "maintenance candidate was not journaled before the test deadline"
+fi
+kill -KILL -- "-$maintenance_pid"
+wait "$maintenance_pid" 2>/dev/null || true
+jq -e '.transaction.decision == "rollback" and
+       (.transaction.candidate.image_id | length > 0) and
+       (all(.transaction.slots[];
+            (.candidate_config_sha256 | test("^[0-9a-f]{64}$"))))' \
+    "$maintenance_journal" >/dev/null || fail \
+    "interrupted maintenance did not preserve immutable recovery evidence"
+sed -i "s|^VERSIOND_ROUTER_IMAGE=.*|VERSIOND_ROUTER_IMAGE=$base_image|" \
+    "$tmpdir/config.env"
+if VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
+    "${fleet[@]}" maintenance-rollout \
+    >"$tmpdir/maintenance-changed-target.out" 2>&1; then
+    fail "maintenance retry accepted a target different from its journal"
+fi
+grep -q 'journal targets' "$tmpdir/maintenance-changed-target.out" || fail \
+    "changed maintenance retry target was not diagnosed"
+sed -i "s|^VERSIOND_ROUTER_IMAGE=.*|VERSIOND_ROUTER_IMAGE=$image|" \
+    "$tmpdir/config.env"
 VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
-    "${fleet[@]}" maintenance-rollout >"$tmpdir/maintenance-candidate-resume.out"
-grep -q 'Resuming interrupted maintenance toward the candidate placement contract' \
+    "${fleet[@]}" maintenance-rollout \
+    >"$tmpdir/maintenance-candidate-resume.out"
+grep -q 'Recovering durable router maintenance transaction' \
     "$tmpdir/maintenance-candidate-resume.out" || fail \
-    "maintenance retry readmitted the old placement contract after candidate creation"
+    "maintenance retry ignored its durable journal"
+grep -q 'Recovered the exact pre-maintenance router fleet' \
+    "$tmpdir/maintenance-candidate-resume.out" || fail \
+    "maintenance retry did not restore its recorded source boundary"
+[[ ! -e $maintenance_journal ]] || fail \
+    "completed maintenance retained its active journal"
 for slot in "${slots[@]}"; do
     id=$(docker ps -q \
         --filter label=ai.gonka.component=versiond-router \

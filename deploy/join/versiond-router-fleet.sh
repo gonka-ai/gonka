@@ -112,6 +112,8 @@ runtime_timeout=${VERSIOND_ROUTER_RUNTIME_TIMEOUT_SECONDS:-5}
 pull_policy=${VERSIOND_ROUTER_PULL_POLICY:-always}
 config_dir=$(cd -- "$(dirname -- "$config_env")" && pwd -P)
 operation_id="$(date +%s%N)-$$"
+maintenance_journal=${VERSIOND_ROUTER_MAINTENANCE_JOURNAL:-$config_dir/.gonka-versiond-router-maintenance.json}
+maintenance_recovery_committed=false
 
 command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
 command -v flock >/dev/null 2>&1 || fail "flock is required"
@@ -130,6 +132,26 @@ done
 
 bounded_container_exec() {
     timeout --kill-after=1s "${runtime_timeout}s" "$docker_bin" exec "$@"
+}
+
+atomic_write_maintenance_journal() {
+    local payload=$1 directory tmp
+    directory=$(dirname -- "$maintenance_journal")
+    mkdir -p "$directory"
+    tmp=$(mktemp "$directory/.gonka-router-maintenance.XXXXXX")
+    printf '%s\n' "$payload" >"$tmp"
+    chmod 600 "$tmp"
+    sync -f "$tmp"
+    mv -f "$tmp" "$maintenance_journal"
+    sync -f "$directory"
+}
+
+remove_maintenance_journal() {
+    local directory
+    [[ -f $maintenance_journal ]] || return 0
+    directory=$(dirname -- "$maintenance_journal")
+    rm -f "$maintenance_journal"
+    sync -f "$directory"
 }
 
 read -r -a slots <<<"$slot_list"
@@ -1379,6 +1401,166 @@ capture_maintenance_state() {
     done
 }
 
+write_maintenance_journal() {
+    local candidate_ref=$1 candidate_id=$2 candidate_version=$3
+    local slot key spec_sha contract slots_json='{}' env_json config_hash
+    local routes_json payload
+    spec_sha=$(fleet_spec_hash) || fail \
+        "cannot fingerprint the maintenance candidate configuration"
+    contract=$(candidate_placement_contract)
+    for slot in "${slots[@]}"; do
+        env_json='{}'
+        for key in "${maintenance_keys[@]}"; do
+            env_json=$(jq -c --arg key "$key" \
+                --arg value "${maintenance_env[$slot:$key]}" \
+                '. + {($key): $value}' <<<"$env_json")
+        done
+        config_hash=$(desired_slot_config_hash "$slot") || fail \
+            "cannot fingerprint maintenance slot $slot"
+        slots_json=$(jq -c --arg slot "$slot" \
+            --arg config_hash "$config_hash" \
+            --arg rollback_image "${maintenance_images[$slot]}" \
+            --argjson environment "$env_json" '
+            . + {($slot): {
+                state: "source",
+                candidate_config_sha256: $config_hash,
+                source: {
+                    rollback_image: $rollback_image,
+                    environment: $environment
+                }
+            }}
+        ' <<<"$slots_json")
+    done
+    routes_json=$(printf '%s\n' "${maintenance_required_routes[@]}" | \
+        jq -Rsc 'split("\n") | map(select(length > 0)) | unique | sort')
+    payload=$(jq -cn \
+        --arg id "$operation_id" --arg fleet "$fleet_id" \
+        --arg ref "$candidate_ref" --arg image_id "$candidate_id" \
+        --arg version "$candidate_version" --arg spec_sha "$spec_sha" \
+        --arg contract "$contract" --argjson slots "$slots_json" \
+        --argjson routes "$routes_json" '
+        {
+            schema: 1,
+            transaction: {
+                id: $id,
+                fleet_id: $fleet,
+                decision: "rollback",
+                candidate: {
+                    ref: $ref,
+                    image_id: $image_id,
+                    placement_version: $version,
+                    spec_sha256: $spec_sha,
+                    placement_contract: $contract
+                },
+                slots: $slots,
+                required_routes: $routes,
+                updated_at_unix: (now | floor)
+            }
+        }
+    ')
+    atomic_write_maintenance_journal "$payload"
+}
+
+update_maintenance_slot_state() {
+    local slot=$1 state=$2 updated
+    updated=$(jq -c --arg slot "$slot" --arg state "$state" '
+        if (.transaction.slots | has($slot)) then
+            .transaction.slots[$slot].state = $state
+            | .transaction.updated_at_unix = (now | floor)
+        else error("unknown maintenance slot") end
+    ' "$maintenance_journal") || fail \
+        "cannot persist maintenance state for slot $slot"
+    atomic_write_maintenance_journal "$updated"
+}
+
+commit_maintenance_journal() {
+    local updated
+    updated=$(jq -c '
+        if all(.transaction.slots[]; .state == "candidate") then
+            .transaction.decision = "commit"
+            | .transaction.commit_decided_at_unix = (now | floor)
+            | .transaction.updated_at_unix = (now | floor)
+        else error("not every maintenance slot is a candidate") end
+    ' "$maintenance_journal") || fail \
+        "cannot record the maintenance commit decision"
+    atomic_write_maintenance_journal "$updated"
+}
+
+load_maintenance_journal() {
+    local requested_ref=$1 saved_ref saved_fleet saved_spec current_spec
+    local slot key config_hash saved_hash rollback_tag saved_decision
+    jq -e '
+        .schema == 1 and
+        (.transaction.id | type == "string" and length > 0) and
+        (.transaction.fleet_id | type == "string" and length > 0) and
+        (.transaction.decision == "rollback" or
+         .transaction.decision == "commit") and
+        (.transaction.candidate.ref | type == "string" and length > 0) and
+        (.transaction.candidate.image_id | type == "string" and length > 0) and
+        (.transaction.candidate.placement_version | type == "string" and
+         length > 0) and
+        (.transaction.candidate.spec_sha256 | test("^[0-9a-f]{64}$")) and
+        (.transaction.candidate.placement_contract |
+         type == "string" and length > 0) and
+        (.transaction.slots | type == "object") and
+        all(.transaction.slots[];
+            (.state == "source" or .state == "source_stopping" or
+             .state == "source_stopped" or
+             .state == "candidate_starting" or .state == "candidate") and
+            (.candidate_config_sha256 | test("^[0-9a-f]{64}$")) and
+            (.source.rollback_image | type == "string" and length > 0) and
+            (.source.environment | type == "object")) and
+        (.transaction.required_routes | type == "array") and
+        all(.transaction.required_routes[];
+            type == "string" and length > 0)
+    ' "$maintenance_journal" >/dev/null || fail \
+        "invalid maintenance journal $maintenance_journal"
+    saved_fleet=$(jq -r '.transaction.fleet_id' "$maintenance_journal")
+    saved_decision=$(jq -r '.transaction.decision' "$maintenance_journal")
+    [[ $saved_fleet == "$fleet_id" ]] || fail \
+        "maintenance journal belongs to fleet $saved_fleet, not $fleet_id"
+    saved_ref=$(jq -r '.transaction.candidate.ref' "$maintenance_journal")
+    [[ $requested_ref == "$saved_ref" ]] || fail \
+        "maintenance retry targets $requested_ref, but the journal targets $saved_ref"
+    saved_spec=$(jq -r '.transaction.candidate.spec_sha256' \
+        "$maintenance_journal")
+    current_spec=$(fleet_spec_hash) || fail \
+        "cannot fingerprint the maintenance retry configuration"
+    [[ $current_spec == "$saved_spec" ]] || fail \
+        "maintenance configuration changed during the active transaction"
+    maintenance_required_routes=()
+    mapfile -t maintenance_required_routes < <(jq -r \
+        '.transaction.required_routes[]' "$maintenance_journal")
+    for slot in "${slots[@]}"; do
+        jq -e --arg slot "$slot" \
+            '.transaction.slots[$slot] | type == "object"' \
+            "$maintenance_journal" >/dev/null || fail \
+            "maintenance journal has no slot $slot"
+        config_hash=$(desired_slot_config_hash "$slot") || fail \
+            "cannot fingerprint maintenance slot $slot"
+        saved_hash=$(jq -r --arg slot "$slot" \
+            '.transaction.slots[$slot].candidate_config_sha256' \
+            "$maintenance_journal")
+        [[ $config_hash == "$saved_hash" ]] || fail \
+            "maintenance slot $slot configuration changed during retry"
+        rollback_tag=$(jq -r --arg slot "$slot" \
+            '.transaction.slots[$slot].source.rollback_image' \
+            "$maintenance_journal")
+        if [[ $saved_decision == rollback ]]; then
+            "$docker_bin" image inspect "$rollback_tag" >/dev/null 2>&1 || fail \
+                "maintenance rollback image is unavailable for slot $slot"
+        fi
+        maintenance_images[$slot]=$rollback_tag
+        for key in "${maintenance_keys[@]}"; do
+            maintenance_env[$slot:$key]=$(jq -er --arg slot "$slot" \
+                --arg key "$key" \
+                '.transaction.slots[$slot].source.environment[$key] | strings' \
+                "$maintenance_journal") || fail \
+                "maintenance journal lacks $key for slot $slot"
+        done
+    done
+}
+
 wait_required_routes_all() {
     local deadline=$((SECONDS + wait_timeout)) slot route missing
     while ((SECONDS < deadline)); do
@@ -1398,38 +1580,62 @@ wait_required_routes_all() {
     return 1
 }
 
+cleanup_maintenance_transaction() {
+    local slot
+    remove_maintenance_journal
+    for slot in "${slots[@]}"; do
+        [[ -z ${maintenance_images[$slot]-} ]] || \
+            "$docker_bin" image rm "${maintenance_images[$slot]}" \
+                >/dev/null 2>&1 || true
+    done
+}
+
+restore_maintenance_source() {
+    local slot ok=true
+    warn "draining maintenance candidates before restoring the exact previous fleet"
+    for slot in "${slots[@]}"; do
+        stop_slot_generation "$slot" >/dev/null 2>&1 || ok=false
+    done
+    for slot in "${slots[@]}"; do
+        if ! VERSIOND_ROUTER_IMAGE="${maintenance_images[$slot]}" \
+            VERSIOND_POOL_HOST="${maintenance_env[$slot:VERSIOND_POOL_HOST]}" \
+            VERSIOND_ROUTER_BACK_NETWORK="${maintenance_env[$slot:VERSIOND_ROUTER_BACK_NETWORK_NAME]}" \
+            VERSIOND_LEGACY_HOST="${maintenance_env[$slot:VERSIOND_LEGACY_HOST]}" \
+            VERSIOND_NON_HA_VERSIONS="${maintenance_env[$slot:VERSIOND_NON_HA_VERSIONS]}" \
+            VERSIOND_VERSIONS="${maintenance_env[$slot:VERSIOND_VERSIONS]}" \
+            VERSIOND_ROUTER_ALLOW_COARSE_READINESS="${maintenance_env[$slot:VERSIOND_ROUTER_ALLOW_COARSE_READINESS]}" \
+            VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS="${maintenance_env[$slot:VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS]}" \
+            VERSIOND_ROUTING_CATALOG_URL="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_URL]}" \
+            VERSIOND_ROUTING_CATALOG_POLL_SECONDS="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_POLL_SECONDS]}" \
+            VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS]}" \
+            VERSIOND_ROUTING_ACTIVATION_MIN_READY="${maintenance_env[$slot:VERSIOND_ROUTING_ACTIVATION_MIN_READY]}" \
+            VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS]}" \
+            VERSIOND_ROUTER_VERSION_CAPACITY="${maintenance_env[$slot:VERSIOND_ROUTER_VERSION_CAPACITY]}" \
+            HAPROXY_DNS_RESOLVER="${maintenance_env[$slot:HAPROXY_DNS_RESOLVER]}" \
+            slot_compose "$slot" up -d --wait \
+                --wait-timeout "$wait_timeout" router; then
+            ok=false
+        fi
+    done
+    [[ $ok == true ]] && wait_required_routes_all
+}
+
 maintenance_rollback() {
-    local status=$? slot ok=true
+    local status=$? decision candidate_ref
     ((status != 0)) || status=1
     trap - ERR INT TERM HUP
     if [[ $maintenance_active == true ]]; then
-        warn "maintenance rollout failed; draining candidates before restoring the exact previous fleet"
-        for slot in "${slots[@]}"; do
-            stop_slot_generation "$slot" >/dev/null 2>&1 || ok=false
-        done
-        for slot in "${slots[@]}"; do
-            if ! VERSIOND_ROUTER_IMAGE="${maintenance_images[$slot]}" \
-                VERSIOND_POOL_HOST="${maintenance_env[$slot:VERSIOND_POOL_HOST]}" \
-                VERSIOND_ROUTER_BACK_NETWORK="${maintenance_env[$slot:VERSIOND_ROUTER_BACK_NETWORK_NAME]}" \
-                VERSIOND_LEGACY_HOST="${maintenance_env[$slot:VERSIOND_LEGACY_HOST]}" \
-                VERSIOND_NON_HA_VERSIONS="${maintenance_env[$slot:VERSIOND_NON_HA_VERSIONS]}" \
-                VERSIOND_VERSIONS="${maintenance_env[$slot:VERSIOND_VERSIONS]}" \
-                VERSIOND_ROUTER_ALLOW_COARSE_READINESS="${maintenance_env[$slot:VERSIOND_ROUTER_ALLOW_COARSE_READINESS]}" \
-                VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS="${maintenance_env[$slot:VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS]}" \
-                VERSIOND_ROUTING_CATALOG_URL="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_URL]}" \
-                VERSIOND_ROUTING_CATALOG_POLL_SECONDS="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_POLL_SECONDS]}" \
-                VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS]}" \
-                VERSIOND_ROUTING_ACTIVATION_MIN_READY="${maintenance_env[$slot:VERSIOND_ROUTING_ACTIVATION_MIN_READY]}" \
-                VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS]}" \
-                VERSIOND_ROUTER_VERSION_CAPACITY="${maintenance_env[$slot:VERSIOND_ROUTER_VERSION_CAPACITY]}" \
-                HAPROXY_DNS_RESOLVER="${maintenance_env[$slot:HAPROXY_DNS_RESOLVER]}" \
-                slot_compose "$slot" up -d --wait \
-                    --wait-timeout "$wait_timeout" router; then
-                ok=false
-            fi
-        done
-        if [[ $ok == true ]] && wait_required_routes_all; then
-            warn "the exact previous router fleet was restored; maintenance remains uncommitted"
+        decision=$(jq -r '.transaction.decision // empty' \
+            "$maintenance_journal" 2>/dev/null || :)
+        if [[ $decision == commit ]]; then
+            candidate_ref=$(jq -r '.transaction.candidate.ref' \
+                "$maintenance_journal")
+            maintenance_active=false
+            recover_durable_maintenance "$candidate_ref"
+            warn "the maintenance decision was committed; completed the candidate fleet"
+        elif restore_maintenance_source; then
+            warn "the exact previous router fleet was restored"
+            cleanup_maintenance_transaction
         else
             warn "automatic fleet rollback failed; keep the maintenance rollback images and restore ingress manually"
         fi
@@ -1798,8 +2004,40 @@ fleet_rollout() {
     fleet_status
 }
 
+recover_durable_maintenance() {
+    local image=$1 decision candidate_id candidate_version resume_status
+    [[ -f $maintenance_journal ]] || return 1
+    echo "Recovering durable router maintenance transaction"
+    load_maintenance_journal "$image"
+    decision=$(jq -r '.transaction.decision' "$maintenance_journal")
+    if [[ $decision == rollback ]]; then
+        restore_maintenance_source || fail \
+            "durable maintenance rollback could not restore the source fleet"
+        cleanup_maintenance_transaction
+        echo "Recovered the exact pre-maintenance router fleet"
+        return 1
+    fi
+
+    candidate_id=$(jq -r '.transaction.candidate.image_id' \
+        "$maintenance_journal")
+    candidate_version=$(jq -r '.transaction.candidate.placement_version' \
+        "$maintenance_journal")
+    "$docker_bin" image inspect "$candidate_id" >/dev/null 2>&1 || fail \
+        "committed maintenance candidate image $candidate_id is unavailable"
+    "$docker_bin" tag "$candidate_id" "$image" || fail \
+        "cannot restore the committed candidate image reference"
+    resume_status=0
+    resume_interrupted_maintenance_target \
+        "$candidate_id" "$candidate_version" || resume_status=$?
+    ((resume_status == 0)) || fail \
+        "cannot finish the durably committed maintenance candidate"
+    cleanup_maintenance_transaction
+    maintenance_recovery_committed=true
+    return 0
+}
+
 fleet_maintenance_rollout() {
-    local slot image image_id image_version discovered discovery_status resume_status
+    local slot image image_id image_version
     local ack=${VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE:-false}
     case $ack in
         1 | true | yes) ;;
@@ -1807,35 +2045,16 @@ fleet_maintenance_rollout() {
     esac
     prepare_slot_networks
     image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
-    # Recovery is deliberately registry-independent. If a prior attempt
-    # already created an exact candidate, finish it from the local image. If it
-    # only stopped the old fleet, restore that fleet before a best-effort pull.
-    if image_id=$($docker_bin image inspect --format '{{.Id}}' "$image" 2>/dev/null); then
-        image_version=$(placement_version_for_image "$image")
-        [[ -n $image_version ]] || fail \
-            "candidate image has no placement protocol label"
-		require_cache_compatible "$image"
-		resume_status=0
-		resume_interrupted_maintenance_target "$image_id" "$image_version" || resume_status=$?
-		case $resume_status in 0) return 0 ;; 1) ;; *) fail "cannot recover the partial candidate fleet" ;; esac
-	else
-		discovery_status=0
-		discovered=$(discover_local_maintenance_candidate "$image") || discovery_status=$?
-		case $discovery_status in
-			0) ;;
-			3) discovered= ;;
-			*) fail "cannot classify local containers after losing the candidate image reference" ;;
-		esac
-		if [[ -n $discovered ]]; then
-			read -r image_id image_version <<<"$discovered"
-		warn "restored the lost candidate image reference from an exact partial container"
-		require_cache_compatible "$image"
-			resume_status=0
-			resume_interrupted_maintenance_target "$image_id" "$image_version" || resume_status=$?
-			case $resume_status in 0) return 0 ;; 1) ;; *) fail "cannot recover the partial local candidate fleet" ;; esac
-		fi
+    if recover_durable_maintenance "$image"; then
+        [[ $maintenance_recovery_committed == true ]] && return 0
     fi
+    # Journal recovery must run before live route discovery because source
+    # slots may be stopped and candidates may be only partially created.
+    discover_expected_routes
     recover_stopped_maintenance_source
+    # A new maintenance transaction must honor pull=always even when the
+    # mutable reference already exists locally. Only a journaled retry may use
+    # its saved immutable image ID without contacting the registry.
     pull_router_image
     image_id=$($docker_bin image inspect --format '{{.Id}}' "$image") || fail \
         "candidate router image is not available: $image"
@@ -1843,20 +2062,22 @@ fleet_maintenance_rollout() {
     [[ -n $image_version ]] || fail \
         "candidate image has no placement protocol label"
     require_cache_compatible "$image"
-	resume_status=0
-	resume_interrupted_maintenance_target "$image_id" "$image_version" || resume_status=$?
-	case $resume_status in 0) return 0 ;; 1) ;; *) fail "cannot recover maintenance after candidate pull" ;; esac
     capture_maintenance_state
+    write_maintenance_journal "$image" "$image_id" "$image_version"
     maintenance_active=true
     trap maintenance_rollback ERR INT TERM HUP
 
     echo "Draining the complete old router fleet for an atomic placement change"
     for slot in "${slots[@]}"; do
+        update_maintenance_slot_state "$slot" source_stopping
         stop_slot_generation "$slot"
+        update_maintenance_slot_state "$slot" source_stopped
     done
     for slot in "${slots[@]}"; do
         echo "Starting maintenance replacement for slot $slot"
+        update_maintenance_slot_state "$slot" candidate_starting
         start_slot "$slot"
+        update_maintenance_slot_state "$slot" candidate
     done
     wait_required_routes_all
 
@@ -1869,11 +2090,10 @@ fleet_maintenance_rollout() {
     done
     fleet_status
 
+    commit_maintenance_journal
     maintenance_active=false
     trap - ERR INT TERM HUP
-    for slot in "${slots[@]}"; do
-        "$docker_bin" image rm "${maintenance_images[$slot]}" >/dev/null 2>&1 || true
-    done
+    cleanup_maintenance_transaction
 }
 
 # The deployment transaction fingerprint does not inspect live route health or
@@ -1900,6 +2120,9 @@ esac
 # every router Runtime API is wedged.
 case $command in
     stop-all | down) ;;
+    maintenance-rollout)
+        [[ -f $maintenance_journal ]] || discover_expected_routes
+        ;;
     *) discover_expected_routes ;;
 esac
 
