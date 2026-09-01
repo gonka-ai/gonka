@@ -1439,6 +1439,7 @@ rollback_service() {
 restore_runtime_container() {
 	local service=$1 image=$2 model
 	local name value key restart health_cmd network network_id current backup_name
+	local candidate_was_running=false backup_exists=false
 	local -a create_args=(create) command_args=() connect_args=() entrypoint_args=()
 	model=${rollback_runtime_models[$service]}
 
@@ -1489,19 +1490,22 @@ restore_runtime_container() {
 	# HostConfig.Binds it includes image-declared anonymous volumes alongside
 	# Compose bind mounts, so every old destination is restored exactly once.
 	if jq -e '(.mounts // []) | length > 0' <<<"$model" >/dev/null; then
+		while IFS= read -r value; do create_args+=(--volume "$value"); done < <(jq -r '
+			.mounts[]? | select(.Type == "bind") |
+			.Source + ":" + .Destination + ":" +
+			(if (.Mode // "") != "" then .Mode
+			 elif .RW then "rw" else "ro" end)
+		' <<<"$model")
 		while IFS= read -r value; do create_args+=(--mount "$value"); done < <(jq -r '
 			.mounts[]? |
 			(if .Type == "tmpfs" then
 				"type=tmpfs,dst=" + .Destination
 			elif .Type == "volume" then
 				"type=volume,src=" + .Name + ",dst=" + .Destination
-			elif .Type == "bind" then
-				"type=bind,src=" + .Source + ",dst=" + .Destination
+			elif .Type == "bind" then empty
 			else error("unsupported rollback mount type: " + .Type)
 			end) +
-			(if .RW then "" else ",readonly" end) +
-			(if .Type == "bind" and (.Propagation // "") != "" then
-				",bind-propagation=" + .Propagation else "" end)
+			(if .RW then "" else ",readonly" end)
 		' <<<"$model")
 	else
 		# Compatibility with journals written before top-level mounts were saved.
@@ -1537,15 +1541,33 @@ restore_runtime_container() {
 		[[ -z $network_id ]] || "$docker_bin" network inspect "$network_id" \
 			>/dev/null || return 1
 	done < <(jq -r '.networks[].NetworkID // empty' <<<"$model")
-	current=$("${compose[@]}" ps --all --quiet "$service") || return 1
-	backup_name=
-	if [[ -n $current ]]; then
-		backup_name="$name.gonka-displaced-$operation_id"
-		"$docker_bin" rename "$current" "$backup_name" >/dev/null || return 1
+	backup_name="$name.gonka-displaced-$transaction_id"
+	if "$docker_bin" inspect "$backup_name" >/dev/null 2>&1; then
+		backup_exists=true
+		candidate_was_running=true
+	else
+		current=$("${compose[@]}" ps --all --quiet "$service") || return 1
+		if [[ -n $current ]]; then
+			candidate_was_running=$("$docker_bin" inspect --format \
+				'{{.State.Running}}' "$current") || return 1
+			case $candidate_was_running in true | false) ;; *) return 1 ;; esac
+			if [[ $candidate_was_running == true ]]; then
+				"$docker_bin" stop "$current" >/dev/null || return 1
+			fi
+			"$docker_bin" rename "$current" "$backup_name" >/dev/null || {
+				[[ $candidate_was_running != true ]] || \
+					"$docker_bin" start "$current" >/dev/null 2>&1 || true
+				return 1
+			}
+			backup_exists=true
+		fi
 	fi
 	if ! "$docker_bin" "${create_args[@]}" "$image" "${command_args[@]}" >/dev/null; then
-		[[ -z $backup_name ]] || "$docker_bin" rename "$backup_name" "$name" \
-			>/dev/null || true
+		if [[ $backup_exists == true ]]; then
+			"$docker_bin" rename "$backup_name" "$name" >/dev/null 2>&1 || true
+			[[ $candidate_was_running != true ]] || \
+				"$docker_bin" start "$name" >/dev/null 2>&1 || true
+		fi
 		return 1
 	fi
 	while IFS= read -r network; do
@@ -1556,19 +1578,25 @@ restore_runtime_container() {
 		connect_args+=("$network" "$name")
 		if ! "$docker_bin" "${connect_args[@]}" >/dev/null; then
 			"$docker_bin" rm -f "$name" >/dev/null 2>&1 || true
-			[[ -z $backup_name ]] || "$docker_bin" rename "$backup_name" "$name" \
-				>/dev/null || true
+			if [[ $backup_exists == true ]]; then
+				"$docker_bin" rename "$backup_name" "$name" >/dev/null 2>&1 || true
+				[[ $candidate_was_running != true ]] || \
+					"$docker_bin" start "$name" >/dev/null 2>&1 || true
+			fi
 			return 1
 		fi
 	done < <(jq -r '.networks | keys[]' <<<"$model")
 	if [[ ${rollback_service_was_running[$service]-true} != false ]] && \
 		! "$docker_bin" start "$name" >/dev/null; then
 		"$docker_bin" rm -f "$name" >/dev/null 2>&1 || true
-		[[ -z $backup_name ]] || "$docker_bin" rename "$backup_name" "$name" \
-			>/dev/null || true
+		if [[ $backup_exists == true ]]; then
+			"$docker_bin" rename "$backup_name" "$name" >/dev/null 2>&1 || true
+			[[ $candidate_was_running != true ]] || \
+				"$docker_bin" start "$name" >/dev/null 2>&1 || true
+		fi
 		return 1
 	fi
-	[[ -z $backup_name ]] || "$docker_bin" rm -f "$backup_name" >/dev/null || \
+	[[ $backup_exists != true ]] || "$docker_bin" rm -f "$backup_name" >/dev/null || \
 		warn "could not remove displaced failed container $backup_name"
 }
 

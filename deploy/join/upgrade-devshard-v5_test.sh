@@ -64,8 +64,8 @@ if [[ ${1:-} == inspect ]]; then
 						Mounts:[]},
 						Mounts:(if $name == "devshard-postgres" then [
 						{Type:"volume",Name:"postgres-v4-volume",Source:"/docker/volumes/postgres-v4-volume/_data",Destination:"/var/lib/postgresql/data",RW:true,Propagation:""},
-						{Type:"bind",Name:"",Source:"/srv/gonka/postgres",Destination:"/var/lib/postgresql/gonka",RW:true,Propagation:"rprivate"}]
-						else [] end),
+						{Type:"bind",Name:"",Source:"/srv/gonka/postgres",Destination:"/var/lib/postgresql/gonka",Mode:"Z",RW:true,Propagation:"rprivate"}]
+						else [{Type:"bind",Name:"",Source:"/srv/gonka/state",Destination:"/var/lib/gonka",Mode:"Z",RW:true,Propagation:"rprivate"}] end),
 						NetworkSettings:{Networks:{"gonka-test_default":{Aliases:[$name],NetworkID:"network-default"}}}}]'
 				fi
 				exit 0
@@ -364,6 +364,13 @@ if [[ ${1:-} == rm ]]; then
 	exit 0
 fi
 if [[ ${1:-} == rename ]]; then
+	exit 0
+fi
+if [[ ${1:-} == stop ]]; then
+	service=${!#}
+	service=${service#cid-}
+	rm -f "$FAKE_STATE_DIR/running-$service"
+	: >"$FAKE_STATE_DIR/stopped-$service"
 	exit 0
 fi
 if [[ ${1:-} == create ]]; then
@@ -1914,6 +1921,13 @@ postgres_up_line=$(line_number "$tmpdir/versiond2.log" \
     fail "PostgreSQL space preflight did not run before its first recreate"
 assert_contains "$tmpdir/versiond2.log" \
     " :: create --name versiond2 --network none"
+stop_candidate_line=$(line_number "$tmpdir/versiond2.log" \
+    " :: stop cid-versiond2")
+create_rollback_line=$(line_number "$tmpdir/versiond2.log" \
+    " :: create --name versiond2 --network none")
+[[ -n $stop_candidate_line && -n $create_rollback_line && \
+    $stop_candidate_line -lt $create_rollback_line ]] || fail \
+    "rollback started its baseline before stopping the failed candidate"
 assert_contains "$tmpdir/versiond2.log" "--entrypoint tini"
 assert_contains "$tmpdir/versiond2.log" \
     "gonka-upgrade-rollback/versiond2:"
@@ -1965,6 +1979,9 @@ assert_not_contains "$tmpdir/versiond2-stopped.log" \
     'exec cid-versiond2 /bin/busybox wget -q -T 3 -O - http://127.0.0.1:8080/healthz'
 assert_contains "$tmpdir/versiond2-stopped.log" \
     " :: create --name versiond2 --network none"
+
+assert_contains "$tmpdir/versiond2.log" \
+    "--volume /srv/gonka/state:/var/lib/gonka:Z"
 
 run_upgrade single versiond "$tmpdir/versiond-production-rollback.log"
 assert_contains "$tmpdir/versiond-production-rollback.log" \
