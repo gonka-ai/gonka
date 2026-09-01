@@ -39,7 +39,12 @@ esac
 EOF
 cat >"$tmpdir/bin/psql" <<'EOF'
 #!/bin/sh
-[ -s "$PGDATA/PG_VERSION" ] && [ ! -e "$PGDATA/.test-probe-fail" ]
+[ -s "$PGDATA/PG_VERSION" ] && [ ! -e "$PGDATA/.test-probe-fail" ] || exit 1
+if [ -e "$PGDATA/.test-delay-ready" ] && \
+    [ ! -e "$PGDATA/.test-ready-probe" ]; then
+    touch "$PGDATA/.test-ready-probe"
+    sleep 2
+fi
 EOF
 chmod +x "$tmpdir/bin/postgres" "$tmpdir/bin/ldd" \
     "$tmpdir/bin/pg_controldata" "$tmpdir/bin/readlink" "$tmpdir/bin/psql"
@@ -435,6 +440,61 @@ unset official_entrypoint startup_timeout termination_grace
 (( elapsed < 8 )) || fail "PostgreSQL startup timeout was not bounded"
 grep -q 'did not complete startup within 1s' "$case_dir/stderr" || fail \
     "PostgreSQL startup timeout was not diagnosed"
+
+new_case skip-watchdog-after-startup-signal
+cat >"$case_dir/official-entrypoint" <<'EOF'
+#!/bin/sh
+mkdir -p "$PGDATA/global" "$PGDATA/pg_wal"
+printf '16\n' >"$PGDATA/PG_VERSION"
+printf 'control\n' >"$PGDATA/global/pg_control"
+touch "$PGDATA/.test-delay-ready" "$PGDATA/.test-final-process"
+trap '
+    touch "$PGDATA/.test-term-started"
+    sleep 3
+    touch "$PGDATA/.test-term-complete"
+    exit 0
+' TERM
+touch "$PGDATA/.test-trap-ready"
+while :; do sleep 1; done
+EOF
+chmod +x "$case_dir/official-entrypoint"
+official_entrypoint=$case_dir/official-entrypoint
+allow_empty=true
+termination_grace=1
+watchdog_interval=1
+watchdog_failures=1
+env \
+    PATH="$test_path" \
+    GONKA_POSTGRES_LEGACY_DATA="$legacy" \
+    GONKA_POSTGRES_PERSISTENT_ROOT="$persistent" \
+    GONKA_POSTGRES_EXISTING_VERSIOND="$existing" \
+    GONKA_POSTGRES_VERSIOND_DATA="$versiond_data" \
+    GONKA_POSTGRES_VERSIOND2_DATA="$versiond2_data" \
+    GONKA_POSTGRES_OFFICIAL_ENTRYPOINT="$official_entrypoint" \
+    PGDATA="$persistent/data" \
+    DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT="$allow_empty" \
+    GONKA_POSTGRES_TERMINATION_GRACE_SECONDS="$termination_grace" \
+    GONKA_POSTGRES_WATCHDOG_INTERVAL_SECONDS="$watchdog_interval" \
+    GONKA_POSTGRES_WATCHDOG_FAILURES="$watchdog_failures" \
+    "$entrypoint" postgres >"$case_dir/stdout" 2>"$case_dir/stderr" &
+supervisor=$!
+for _ in {1..50}; do
+    [[ -e $persistent/data/.test-ready-probe && \
+       -e $persistent/data/.test-trap-ready ]] && break
+    sleep 0.1
+done
+[[ -e $persistent/data/.test-ready-probe && \
+   -e $persistent/data/.test-trap-ready ]] || fail \
+    "PostgreSQL readiness probe did not reach the signal window"
+touch "$persistent/data/.test-probe-fail"
+kill -TERM "$supervisor"
+wait "$supervisor" || true
+unset official_entrypoint allow_empty termination_grace watchdog_interval \
+    watchdog_failures
+[[ -e $persistent/data/.test-term-started ]] || fail \
+    "supervisor did not forward the startup-window shutdown request"
+[[ -e $persistent/data/.test-term-complete ]] || fail \
+    "watchdog started after a shutdown request during PostgreSQL readiness"
 
 new_case preserve-graceful-shutdown
 mkdir -p "$persistent/data/global" "$persistent/data/pg_wal"

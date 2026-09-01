@@ -357,7 +357,7 @@ run_official_supervised() {
         fi
         sleep 1
     done
-    if [ "$ready" = true ]; then
+    if [ "$ready" = true ] && [ "$shutdown_requested" = false ]; then
         if [ "$record_lineage" = true ]; then
             validate_cluster "$target_data"
             identifier=$(cluster_system_identifier "$target_data")
@@ -365,8 +365,13 @@ run_official_supervised() {
                 die "cannot record initialized PostgreSQL cluster lineage"
             sync
         fi
+    fi
+    if [ "$ready" = true ] && [ "$shutdown_requested" = false ]; then
         postgres_watchdog &
         watchdog_child=$!
+        if [ "$shutdown_requested" = true ]; then
+            kill "$watchdog_child" 2>/dev/null || true
+        fi
     fi
 
     status=0
