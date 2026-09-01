@@ -711,7 +711,7 @@ Most checks run at **diff-ingest**: `state.StateMachine.ValidateDiff` calls `hei
 | - | ----- | ---- | ------- |
 | L0 | **Reference-height monotonicity**: a height produced while handling nonce `m` is `≥ F(m)` = the reference height the log had established below `m`. Scope is **every** Diff-resident height — inference legs, heartbeat and ack alike; `m` comes from `inference_id`, `ref_nonce + 1`, or the landing nonce (§8.7.1). How far `F` may move on one signer's word is bounded: `W_conf` unaided, further only with `Q` distinct signers holding the height (§8.7.1) | `logplane.go`, `floor.go` | `INVALID(height_regression)`, attributed to the stamp's signer; an uncorroborated out-of-band claim is `FLOOR_OUT_OF_BAND` **mark** only |
 | L0b | **Same-executor causal order**: `confirm ≤ finish` on `observed_height` for one `inference_id`. `start` is user-signed, so pairs involving it are cross-signer and are not compared (§8.7.1) | `logplane.go` | `INVALID(height_regression)`, attributed to the executor |
-| L1 | Framing: `slots_num` = group size, `8·len(peer_seen) ≥ slots_num`, `turn_seq` monotonic per escrow | `logplane.go` | `INVALID(bad_framing)` |
+| L1 | Framing: `slots_num` = group size, `8·len(peer_seen) ≥ slots_num`, `turn_seq` stay-or-next (`prevTurn == 0 → seq == 1`, else `prevTurn ≤ seq ≤ prevTurn + 1`) | `logplane.go` | `INVALID(bad_framing)` |
 | L2 | `host_sig` verifies over `HeightAckContent` for `slot_id`'s registered key | `ack_signing.go` | `INVALID(ack_sig_invalid)` — blocks a user fabricating acks |
 | L3 | Causality: `ref_nonce` names a `MsgHeartbeat` in `Diff` with the same `turn_seq` | `turn.go` | `INVALID(ack_causality)`, attributed to the appending user |
 | L4 | Envelope binding (§10.4 rules 1–2). Both legs use the producer rule, because in both the section is a first-party oracle read and the Diff height is a reference height: ack equals `max(anchor, F(ref_nonce + 1))`, heartbeat equals `max(section, F(m))` (§8.7.1). Skipped when the request section is a carry-forward; degrades to `>= section` where the caller holds no floor | **`inbound.go` transport edge**, not `ValidateDiff` | `DISPUTE_ORIGINATOR` / `DISPUTE_CARRIER` **on sight**, no oracle lookup; persisted as a mark because it cannot be recomputed later |
@@ -1263,7 +1263,7 @@ Replay / catch-up / gossip pass `sec=nil` so L4/L5a do not run. Persist L4 blobs
 
 L0's basis is the per-nonce floor `F(m)` from `floor.go`, not a scalar high-water mark, and its scope is **every** Diff-resident height — the log has one height semantics, and first-party readings live in the envelope instead. §8.7.1 has the reasoning and the bugs that shape drove. L0b keeps only the same-executor `confirm ≤ finish` pair.
 
-**Tests:** H9, H10, H11, H12, H13, H13a–h, H14, H15, H16, H30, H32. **Landed.** Two independent verifiers, same `Diff` → byte-identical records.
+**Tests:** H9, H10, H11, H12, H13, H13a–h, H14, H15, H16, H30, H32, H110. **Landed.** Two independent verifiers, same `Diff` → byte-identical records.
 
 #### E5 — Repair probe (no blame) ✅
 

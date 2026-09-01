@@ -198,9 +198,22 @@ func checkL1(nonce uint64, hbs []heartbeatRef, acks []ackRef, st LogPlaneState) 
 		if hb.TurnSeq == 0 {
 			return fmt.Errorf("%w: turn_seq 0", ErrBadFraming)
 		}
-		if prevTurn > 0 && hb.TurnSeq < prevTurn {
-			return fmt.Errorf("%w: turn_seq %d < %d", ErrBadFraming, hb.TurnSeq, prevTurn)
+		// Stay-or-next matches honest compose: first heartbeat of the escrow
+		// is 1; a span repeats prevTurn; a new turn is prevTurn+1. A jump
+		// (e.g. 1<<60) would prune the retain window and empty L7/repair.
+		// prevTurn walks inside this diff so a batched consecutive pair is
+		// still stay-or-next and a skip is not.
+		if prevTurn == 0 {
+			if hb.TurnSeq != 1 {
+				return fmt.Errorf("%w: turn_seq %d, want 1", ErrBadFraming, hb.TurnSeq)
+			}
+		} else {
+			max := addSat(prevTurn, 1)
+			if hb.TurnSeq < prevTurn || hb.TurnSeq > max {
+				return fmt.Errorf("%w: turn_seq %d not in [%d, %d]", ErrBadFraming, hb.TurnSeq, prevTurn, max)
+			}
 		}
+		prevTurn = hb.TurnSeq
 		if hb.SlotsNum != st.SlotsNum {
 			return fmt.Errorf("%w: slots_num %d != group %d", ErrBadFraming, hb.SlotsNum, st.SlotsNum)
 		}

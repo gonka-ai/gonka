@@ -192,6 +192,71 @@ func TestLogPlane_TwoHeartbeatsInDiffAckOfFirstAccepted(t *testing.T) {
 	require.NoError(t, res.Err, "L3 must accept an ack of the first heartbeat's nonce")
 }
 
+func TestLogPlane_TurnSeqStayOrNext(t *testing.T) {
+	hash := []byte{0xaa}
+
+	t.Run("first_must_be_one", func(t *testing.T) {
+		st, _ := baseState(t, 3)
+		for _, seq := range []uint64{2, 1 << 60} {
+			res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+				Nonce: 1,
+				Txs:   []*types.DevshardTx{hbTx(seq, 50, 3, hash, nil)},
+			}, st)
+			require.ErrorIs(t, res.Err, heightsync.ErrBadFraming, "seq=%d", seq)
+			require.Equal(t, "bad_framing", res.Reason)
+		}
+		require.Zero(t, st.Tracker.MaxTurnSeq())
+	})
+
+	t.Run("jump_rejected", func(t *testing.T) {
+		st, _ := baseState(t, 3)
+		st.Tracker.Observe(1, []*types.DevshardTx{hbTx(1, 50, 3, hash, nil)}, 50)
+		require.NotNil(t, st.Tracker.Record(1))
+
+		for _, seq := range []uint64{3, 1 << 60} {
+			res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+				Nonce: 2,
+				Txs:   []*types.DevshardTx{hbTx(seq, 50, 3, hash, nil)},
+			}, st)
+			require.ErrorIs(t, res.Err, heightsync.ErrBadFraming, "seq=%d", seq)
+			require.Equal(t, "bad_framing", res.Reason)
+		}
+		require.Equal(t, uint64(1), st.Tracker.MaxTurnSeq())
+		require.NotNil(t, st.Tracker.Record(1), "rejected jump must not prune turn 1")
+
+		res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+			Nonce: 2,
+			Txs:   []*types.DevshardTx{hbTx(2, 50, 3, hash, nil)},
+		}, st)
+		require.NoError(t, res.Err)
+		st.Tracker.Observe(2, []*types.DevshardTx{hbTx(2, 50, 3, hash, nil)}, 50)
+		require.NotNil(t, st.Tracker.Record(1))
+	})
+
+	t.Run("span_repeats", func(t *testing.T) {
+		st, _ := baseState(t, 3)
+		st.Tracker.Observe(1, []*types.DevshardTx{hbTx(1, 50, 3, hash, nil)}, 50)
+		res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+			Nonce: 2,
+			Txs:   []*types.DevshardTx{hbTx(1, 50, 3, hash, nil)},
+		}, st)
+		require.NoError(t, res.Err)
+	})
+
+	t.Run("ack_jump_is_l3", func(t *testing.T) {
+		st, signers := baseState(t, 3)
+		st.Tracker.Observe(1, []*types.DevshardTx{hbTx(1, 50, 3, hash, nil)}, 50)
+		ack := signedAck(t, signers[0], 1<<60, 99, 0, 50, hash, types.SyncState_SYNCED)
+		res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+			Nonce: 2,
+			Txs:   []*types.DevshardTx{signedAckTx(ack)},
+		}, st)
+		require.ErrorIs(t, res.Err, heightsync.ErrAckCausality)
+		require.Equal(t, uint64(1), st.Tracker.MaxTurnSeq())
+		require.NotNil(t, st.Tracker.Record(1))
+	})
+}
+
 func TestLogPlane_LateAckAfterTurnPruneAccepted(t *testing.T) {
 	st, signers := baseState(t, 3)
 	const n = heightsync.DefaultTurnRetain + 5
@@ -587,7 +652,7 @@ func TestSyncVector_AckedContradictsLog(t *testing.T) {
 	}}
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 1,
-		Txs:   []*types.DevshardTx{hbTx(2, 50, 3, hash, vec)},
+		Txs:   []*types.DevshardTx{hbTx(1, 50, 3, hash, vec)},
 	}, st)
 	require.NoError(t, res.Err)
 	require.True(t, hasMark(res.Marks, heightsync.MarkVectorContradiction))
@@ -601,7 +666,7 @@ func TestRepairProbe_HeightNoBlame(t *testing.T) {
 	}}
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 1,
-		Txs:   []*types.DevshardTx{hbTx(2, 50, 3, hash, vec)},
+		Txs:   []*types.DevshardTx{hbTx(1, 50, 3, hash, vec)},
 	}, st)
 	require.NoError(t, res.Err)
 	require.False(t, hasMark(res.Marks, heightsync.MarkVectorContradiction))

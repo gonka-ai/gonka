@@ -147,6 +147,7 @@ Slow-running tests check `testing.Short()` and skip under `-short`.
 | ✅ `TestClassifyInbound_ZeroTimestampCarryForwardIsStale` | `inbound_test.go` | H67: a carry-forward with a zero originator timestamp is `INVALID(stale_origin)`. |
 | ✅ `TestLogPlane_AckWithoutVerifierRejected` / `_HeartbeatWithoutVerifierOK` | `logplane_test.go` | H70: L2 fails closed when acks are present and the verifier is nil; heartbeat-only diffs still pass. |
 | ✅ `TestLogPlane_OversizedFieldsRejected` | `logplane_test.go` | H71: oversized `peer_seen`, `sync_vector`, and `observed_block_hash` are `INVALID(bad_framing)`. |
+| ✅ `TestLogPlane_TurnSeqStayOrNext` | `logplane_test.go` | H110: `turn_seq` is stay-or-next. First heartbeat must be `1`; a span may repeat `prevTurn`; `prevTurn+2` and `1<<60` are `INVALID(bad_framing)` and do not prune turn 1. A huge ack without a matching heartbeat is still L3. |
 | ✅ `TestMissingAcksDue_RequiresWindowClosed` | `repair_budget_test.go` | A repair probe is due only once the whole turnover budget has passed, not one block after `h_req`. |
 | ✅ `TestHeartbeat_HashOnlyOracle_TurnCompletes` | `syncstate_test.go` | D9: hash-only oracle (empty Commit) reaches `complete`; `Prove` is not called. |
 | ✅ `TestEvaluateSyncStateFromHeader_DoesNotCallLatest` | `syncstate_test.go` | Ack stamp reuses the already-fetched header (same read as the response-leg Anchor). |
@@ -339,7 +340,7 @@ produces **marks**, adjudication lands with Strong.
 | H79 | ✅ `TestLogPlane_LateAckAfterTurnPruneAccepted` | `heightsync` | After the turn record is pruned, L3 still accepts an ack whose heartbeat nonce is in `heartbeatAt`. |
 | H80 | ✅ `TestCheckDiffLogPlane_LongOpenSessionBounded` | `heightsync` | `AdvanceHeight` over a long open-turn session stays O(`retain`); log-plane check succeeds. |
 | H82 | ✅ `TestHeartbeat_SettleTurnDoesNotFireWhileSMTurnOpen` | `user` | A live oracle past `D_ack` does not `SettleTurn` while the SM still holds the same turn `TurnOpen`; `MaxTurnSeq` stays 1. |
-| H83 | ✅ `TestApplyLocalBestEffort_LogPlaneInvalidFailsBeforeNonce` | `state` | Compose of an L0-invalid stamp, L1-bad framing, or L2-bad ack fails; nonce is not consumed. A mixed set drops the invalid ack and keeps the heartbeat. |
+| H83 | ✅ `TestApplyLocalBestEffort_LogPlaneInvalidFailsBeforeNonce` | `state` | Compose of an L0-invalid stamp, L1-bad framing (including `turn_seq` `1<<60`), or L2-bad ack fails; nonce is not consumed. A mixed set drops the invalid ack and keeps the heartbeat. |
 | H84 | ✅ `TestApplyLocalBestEffort_LateAckAfterTurnPruneComposesAndApplies` | `state` | After turn prune, a late ack whose heartbeat is still in `heartbeatAt` composes and applies on a host that replayed the same log. |
 | H85 | ✅ `TestMarkLog_CapacityDropsOldest` | `heightsync` | A mark log of capacity N retains the newest N after N+1 appends. |
 | H86 | ✅ `TestValidateDiff_FailedApplyTxDoesNotLeakMarks` + `_MarksFlushOnlyOnCommit` | `state` | `ValidateDiff` of a log-plane-OK diff that then fails `applyTx` leaves marks unchanged; a successful trial flushes only on `CommitValidated`. |
@@ -376,6 +377,7 @@ may defer.
 | H10 | ✅ `TestLogPlane_FabricatedAckRejected` | `heightsync` | User-fabricated ack ⇒ `INVALID(ack_sig_invalid)` (L2). |
 | H70 | ✅ `TestLogPlane_AckWithoutVerifierRejected` + `_HeartbeatWithoutVerifierOK` | `heightsync` | Acks with a nil verifier ⇒ `INVALID(ack_sig_invalid)`; heartbeat-only diffs still pass. |
 | H71 | ✅ `TestLogPlane_OversizedFieldsRejected` | `heightsync` | Oversized `peer_seen`, `sync_vector`, or `observed_block_hash` ⇒ `INVALID(bad_framing)` (L1 maxima). |
+| H110 | ✅ `TestLogPlane_TurnSeqStayOrNext` + `TestApplyLocalBestEffort_LogPlaneInvalidFailsBeforeNonce/L1_jump` | `heightsync`, `state` | `turn_seq` stay-or-next (L1): first heartbeat is `1`; span may repeat; `prevTurn+2` and `1<<60` are `INVALID(bad_framing)` and do not prune turn 1. A huge ack without a heartbeat is still L3. Apply of `1<<60` after turn 1 does not consume the nonce. |
 | H11 | ✅ `TestLogPlane_AckCausalityRejected` | `heightsync` | Unknown or mismatched `turn_seq` / `ref_nonce` ⇒ `INVALID(ack_causality)` (L3). |
 | H12 | ✅ `TestHeightAck_EnvelopeBindingMismatch` | `transport` | Ack height ≠ `max(own response-leg Anchor, F(m))` ⇒ `DISPUTE_ORIGINATOR` on sight, mark written, no oracle lookup (L4). |
 | H12a | ✅ `TestLogPlane_AckLiftDoesNotTripEnvelopeBinding` | `heightsync` | The honest path of L4's asymmetry: an ack at the floor with a lower Anchor beside it draws **no** mark, because that is the producer rule; one block above both the anchor and the floor still marks. Reverting this leg to strict equality would mark every lagging host and leave every other L4 test passing. |
@@ -601,7 +603,7 @@ Files (planned): `heightsync_strong_e2e_test.go`. Suite prefix: `TestHeightSyncS
 | §11.2 `sync_state` + `peer_seen` | H24 (unit + live host), `TestHost_HeartbeatAck_OwnSlotIntoMempool`, H14, H17 | — |
 | §11.3–§11.4 repair probe + budgets | H16 (no-blame negative), H17, H18, H19, H20, H68, H69, H81, H93–H95 | — |
 | §12 close-ready arming | H21, H22, H23 | — |
-| §14 log-plane checks L0–L7 | H9–H16, H12a, H13a–i, H30, H50–H53, H70, H71, H79, H80, H83, H84 | — |
+| §14 log-plane checks L0–L7 | H9–H16, H12a, H13a–i, H30, H50–H53, H70, H71, H79, H80, H83, H84, H110 | — |
 | §14 floor raise rule, reorg recovery, applied-log-only fold | H54, H55, H56, H57, H58 | — |
 | §14 evaluation tiers (what may invalidate) | H13a, H13b, H13c | — |
 | §15 signature layers + mark retention | E10 (exculpation), H32, H85, H86, H87 | — |

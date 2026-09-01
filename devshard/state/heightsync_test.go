@@ -155,6 +155,27 @@ func TestApplyLocalBestEffort_LogPlaneInvalidFailsBeforeNonce(t *testing.T) {
 		require.Equal(t, uint64(0), sm.LatestNonce())
 	})
 
+	t.Run("L1_jump", func(t *testing.T) {
+		sm, _ := newTestSM(t, hosts, 100000)
+		_, _, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{{
+			Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+				TurnSeq: 1, ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
+			}},
+		}})
+		require.NoError(t, err)
+
+		_, applied, err := sm.ApplyLocalBestEffort(2, []*types.DevshardTx{{
+			Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+				TurnSeq: 1 << 60, ObservedHeight: 50, ObservedBlockHash: hash, SlotsNum: 3,
+			}},
+		}})
+		require.ErrorIs(t, err, heightsync.ErrBadFraming)
+		require.Nil(t, applied)
+		require.Equal(t, uint64(1), sm.LatestNonce())
+		require.Equal(t, uint64(1), sm.HeightSyncLatestTurnSeq())
+		require.NotNil(t, sm.HeightSyncTurnRecord(1))
+	})
+
 	t.Run("L2", func(t *testing.T) {
 		sm, _ := newTestSM(t, hosts, 100000)
 		_, _, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{{
