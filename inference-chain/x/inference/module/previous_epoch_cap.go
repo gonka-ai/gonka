@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"fmt"
+	"maps"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	stakingkeeper "github.com/cosmos/cosmos-sdk/x/staking/keeper"
@@ -19,11 +20,8 @@ import (
 // CapWeight = 0, so a newly-appeared or returning participant must prove their
 // compute for a full epoch before it counts toward consensus.
 //
-// Weight itself is left untouched: it remains the real weight used for rewards,
-// cPoC confirmation and the next-epoch cap baseline. CapWeight defaults to Weight
-// for every participant and is only lowered for capped/new participants; this
-// invariant matters because governance, BLS and voting-power now read CapWeight,
-// so it must always be populated.
+// Weight itself is left untouched: it remains the real weight used for rewards
+// and cPoC confirmation. CapWeight defaults to Weight and is lowered by P_N.
 //
 // The cap value matches the settlement/reward "effective weight"
 // (see keeper.calculateBitcoinRewards): weight * confirmed / rawConfirmationTotal,
@@ -289,6 +287,26 @@ type previousConfirmedWeights struct {
 	epochIndex  uint64
 	weights     map[string]int64
 	totalWeight int64
+}
+
+func zeroFailedMissRateWeights(previous *previousConfirmedWeights, failed map[string]struct{}) *previousConfirmedWeights {
+	if previous == nil || len(failed) == 0 {
+		return previous
+	}
+
+	weights := maps.Clone(previous.weights)
+	totalWeight := previous.totalWeight
+	for address := range failed {
+		if weight, found := weights[address]; found {
+			weights[address] = 0
+			totalWeight -= weight
+		}
+	}
+	return &previousConfirmedWeights{
+		epochIndex:  previous.epochIndex,
+		weights:     weights,
+		totalWeight: totalWeight,
+	}
 }
 
 func (am AppModule) getPreviousConfirmedWeights(ctx context.Context) (*previousConfirmedWeights, error) {

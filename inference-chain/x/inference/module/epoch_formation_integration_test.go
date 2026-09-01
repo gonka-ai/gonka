@@ -153,6 +153,42 @@ func TestOnEndOfPoCValidationStage_ConcentrationCapsFinalTrustWeight(t *testing.
 	}, trustWeights)
 }
 
+func TestMissRateResetFallbackPolicy(t *testing.T) {
+	k, ctx, _ := newMinimalInferenceKeeperWithStub(t)
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	previous := &previousConfirmedWeights{
+		epochIndex:  1,
+		weights:     map[string]int64{"alice": 40, "bob": 60},
+		totalWeight: 100,
+	}
+	reset := zeroFailedMissRateWeights(previous, map[string]struct{}{"alice": {}})
+
+	normal := am.applyPreviousConfirmedWeightCap(ctx, []*types.ActiveParticipant{
+		{Index: "alice", Weight: 40},
+		{Index: "bob", Weight: 60},
+	}, reset)
+	require.False(t, am.applyZeroTrustFallback(ctx, 2, normal))
+	require.Equal(t, int64(0), normal[0].CapWeight)
+	require.Equal(t, int64(60), normal[1].CapWeight)
+
+	fallback := am.applyPreviousConfirmedWeightCap(ctx, []*types.ActiveParticipant{
+		{Index: "alice", Weight: 40},
+	}, previous)
+	require.Equal(t, int64(40), fallback[0].CapWeight)
+
+	allReset := zeroFailedMissRateWeights(previous, map[string]struct{}{
+		"alice": {},
+		"bob":   {},
+	})
+	recovered := am.applyPreviousConfirmedWeightCap(ctx, []*types.ActiveParticipant{
+		{Index: "alice", Weight: 40},
+		{Index: "bob", Weight: 60},
+	}, allReset)
+	require.True(t, am.applyZeroTrustFallback(ctx, 2, recovered))
+	require.Equal(t, int64(40), recovered[0].CapWeight)
+	require.Equal(t, int64(60), recovered[1].CapWeight)
+}
+
 type formationAccountKeeper struct {
 	accounts map[string]sdk.AccountI
 }

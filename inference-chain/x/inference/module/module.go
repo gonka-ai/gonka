@@ -762,8 +762,9 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	}
 
 	// Settle before collateral AdvanceEpoch so slashing can reach maturing unbonding entries.
-	err := am.keeper.SettleAccounts(ctx, effectiveEpoch.Index, previousEpochIndex)
+	failedMissRate, err := am.keeper.SettleAccounts(ctx, effectiveEpoch.Index, previousEpochIndex)
 	if err != nil {
+		failedMissRate = nil
 		am.LogError("onEndOfPoCValidationStage: Unable to settle accounts", types.Settle, "error", err.Error())
 		sdkCtx := sdk.UnwrapSDKContext(ctx)
 		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
@@ -832,7 +833,11 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		return fmt.Errorf("load previous confirmed weights: %w", err)
 	}
 
-	pipeline := am.runWeightPipeline(ctx, activeParticipants, params, *upcomingEpoch, previous)
+	pipelinePrevious := previous
+	if !usedFallback {
+		pipelinePrevious = zeroFailedMissRateWeights(previous, failedMissRate)
+	}
+	pipeline := am.runWeightPipeline(ctx, activeParticipants, params, *upcomingEpoch, pipelinePrevious)
 	fallbackReason := ""
 	if usedFallback {
 		fallbackReason = "no_fresh_poc_node"
@@ -847,7 +852,8 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		if len(activeParticipants) == 0 {
 			return fmt.Errorf("no eligible fallback participants for upcoming epoch %d", upcomingEpoch.Index)
 		}
-		pipeline = am.runWeightPipeline(ctx, activeParticipants, params, *upcomingEpoch, previous)
+		pipelinePrevious = previous
+		pipeline = am.runWeightPipeline(ctx, activeParticipants, params, *upcomingEpoch, pipelinePrevious)
 		if !hasPositiveWeight(pipeline.participants) {
 			return fmt.Errorf("epoch %d fallback participants have no positive final weight", upcomingEpoch.Index)
 		}
@@ -865,7 +871,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	// toward consensus. Weight itself stays the real weight used for rewards and
 	// cPoC confirmation. Must run before computeAndSetVotingPowers so voting
 	// powers are derived from the capped weight.
-	activeParticipants = am.applyPreviousConfirmedWeightCap(ctx, activeParticipants, previous)
+	activeParticipants = am.applyPreviousConfirmedWeightCap(ctx, activeParticipants, pipelinePrevious)
 	am.applyZeroTrustFallback(ctx, upcomingEpoch.Index, activeParticipants)
 	am.applyTrustPowerCapping(ctx, activeParticipants)
 

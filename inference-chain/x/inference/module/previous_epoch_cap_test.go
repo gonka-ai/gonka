@@ -254,6 +254,26 @@ func TestApplyPreviousConfirmedWeightCap_GroupMembersError(t *testing.T) {
 	require.ErrorContains(t, err, "load live previous-epoch members")
 }
 
+func TestZeroFailedMissRateWeights(t *testing.T) {
+	previous := &previousConfirmedWeights{
+		epochIndex:  5,
+		weights:     map[string]int64{"alice": 40, "bob": 60},
+		totalWeight: 100,
+	}
+
+	result := zeroFailedMissRateWeights(previous, map[string]struct{}{
+		"alice":   {},
+		"unknown": {},
+	})
+
+	require.Equal(t, map[string]int64{"alice": 0, "bob": 60}, result.weights)
+	require.Equal(t, int64(60), result.totalWeight)
+	require.Equal(t, map[string]int64{"alice": 40, "bob": 60}, previous.weights)
+	require.Equal(t, int64(100), previous.totalWeight)
+	require.Same(t, previous, zeroFailedMissRateWeights(previous, nil))
+	require.Nil(t, zeroFailedMissRateWeights(nil, map[string]struct{}{"alice": {}}))
+}
+
 func TestResolveTrustWeights_AppliedAllZeroDoesNotFallBack(t *testing.T) {
 	participants := []*types.ActiveParticipant{
 		{Index: testutil.Validator, Weight: 100, CapWeight: 0},

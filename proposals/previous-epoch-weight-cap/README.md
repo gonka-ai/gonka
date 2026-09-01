@@ -27,7 +27,6 @@ We keep the existing `Weight` field as the **real** weight and add a new `CapWei
 - **`Weight`** — the real, fully-adjusted weight (after penalties, collateral, and the universal 30% concentration cap). It remains the single source of truth for:
   - **Rewards** (settlement uses `Weight * confirmed / rawConfirmationTotal`).
   - **cPoC confirmation** (checking whether a participant confirmed its claimed weight).
-  - **The cap baseline** for the *next* epoch (what a participant proved this epoch).
   - Root `ValidationWeight.Weight`, unit-of-compute pricing, and weighted random selection.
 
 - **`CapWeight`** — the trust weight, equal to `Weight` by default but capped at the participant's previous-epoch confirmed weight (and `0` for participants absent last epoch). It is the value used by:
@@ -36,9 +35,11 @@ We keep the existing `Weight` field as the **real** weight and add a new `CapWei
   - **cPoC validation voting power** (per-model voting powers).
   - **`getEffectiveValidationBaseState`** (snapshot participant weights and the total-weight denominator).
 
-Keeping `Weight` real (rather than capping it and adding an "uncapped" field for rewards) is deliberate: `Weight` is read in many places that require the *real* value — rewards, cPoC confirmation, and the cap baseline itself. Capping `Weight` would have silently corrupted all of those. Adding `CapWeight` as the new, explicitly-routed value keeps every existing reader of `Weight` correct and requires no upgrade fallback for the reward/settlement path.
+Keeping `Weight` real (rather than capping it and adding an "uncapped" field for rewards) is deliberate: rewards and cPoC confirmation require the real value. Adding `CapWeight` as the new, explicitly-routed value keeps those readers correct and requires no upgrade fallback for the reward/settlement path.
 
 Group eligibility (`WThreshold`, `VMin`) and the non-initial group cap use the previous epoch's confirmed effective weight `P_N`, not the `CapWeight` active during that epoch. This is symmetric with the trust-weight definition itself: the same `P_N` measurement is used for next-epoch eligibility and bounds the upcoming trust weight as `CapWeight_(N+1) = min(Weight_(N+1), P_N)`. Confirmed growth therefore counts after one epoch, while unconfirmed weight cannot affect eligibility or expand a group cap. Bootstrap pre-eligibility at the deploy window (including reachability) stays on the active `CapWeight`, matching the validation voting powers it predicts.
+
+A participant that fails settlement's `MissedStatTest` uses `P_N = 0` on the fresh-PoC path. A skipped test or test error leaves `P_N` unchanged. `INVALID` and `INACTIVE` participants are already excluded as non-live members.
 
 ### The cap value (cPoC / model-coefficient aware)
 
@@ -58,7 +59,7 @@ A participant that was **not present** in the previous epoch has no confirmed we
 
 - It earns rewards normally on its real `Weight`.
 - A non-guardian has **zero** governance power (dropped from the validator set), **zero** BLS share, and **zero** cPoC validation voting power for this first epoch. A configured guardian can receive temporary governance and BLS protection while guardian protection is enabled and the network is immature.
-- Next epoch, its real `Weight` from this epoch becomes its cap baseline, so it can then take on trust weight up to what it just proved.
+- Next epoch, its confirmed weight becomes its cap baseline unless it failed `MissedStatTest`.
 
 ### Genesis guardians
 
@@ -88,9 +89,9 @@ PoC validation snapshots use trust weight for both the per-model voting powers a
 
 | Consumer | Weight used | Behavior |
 | --- | --- | --- |
-| Rewards / settlement | `Weight` (real) | Unchanged — full reward on proven weight |
+| Rewards / settlement | `Weight` (real) | Base reward uses real weight; confirmation and miss-rate checks can reduce it |
 | cPoC confirmation | `Weight` (real) | Unchanged |
-| Next-epoch cap baseline | `Weight` (real) | Unchanged |
+| Next-epoch cap baseline | `P_N` | Zero after a failed `MissedStatTest` |
 | Unit-of-compute pricing | `Weight` (real) | Unchanged |
 | Weighted random selection | `Weight` (real) | Unchanged |
 | Group eligibility / group caps | Previous confirmed effective weight (`P_N`) | Same baseline as the upcoming trust cap |
@@ -103,6 +104,7 @@ PoC validation snapshots use trust weight for both the per-model voting powers a
 
 - **Genesis / bootstrap**: If there is no effective epoch yet, capping is skipped and `CapWeight` defaults to `Weight`, so the initial validator set is never zeroed.
 - **Preserved-only result**: If no fresh PoC node survives model seating, preserved nodes do not suppress the existing epoch fallback. The next epoch carries all still-valid current validators rather than advancing only the preserved sample.
+- **Failed `MissedStatTest`**: Epoch-N fallback uses the original `P_N`. It still halts with zero final `Weight`, all-zero `CapWeight` recovery is unchanged.
 - **All-zero trust vector**: If previous-epoch capping leaves every `CapWeight` at zero while real `Weight` remains positive, epoch formation fails open by restoring every positive `CapWeight` from `Weight` before voting powers, persistence, BLS, or governance consume it. This deliberately bypasses the cooling rule only when retaining zero trust would make the epoch unable to validate or rotate.
 - **Missing previous epoch group data or live membership**: Epoch formation fails closed rather than treating historical `ValidationWeights` as live. A membership-read failure must not restore stale trust.
 - **Upgrade transition**: An epoch formed *before* this change has no `CapWeight` populated (all zero) and `cap_weight_applied` unset. Both the governance cap and the shared trust-weight resolver detect that state and fall back to real `Weight`. Post-upgrade epochs persist `cap_weight_applied`; any global zero-trust recovery is materialized directly in `CapWeight` by the explicit epoch fallback rather than inferred from zero-valued fields.
@@ -134,7 +136,7 @@ Wiring:
 - `inference-chain/x/inference/module/delegation_pipeline.go` — group eligibility and caps via previous confirmed effective weight; voting powers via `CapWeight`.
 - `inference-chain/x/inference/module/genesis_guardian_enhancement.go` — BLS guardian slot reservation via `CapWeight`.
 - `inference-chain/x/inference/module/model_assignment.go` — preserved-node allocation thresholds use trust-weight totals to match validation voting units.
-- `inference-chain/x/inference/keeper/bitcoin_rewards.go` — refactored to use the shared `EffectiveConfirmedWeight` helper (behavior-identical).
+- `inference-chain/x/inference/keeper/bitcoin_rewards.go` — shared confirmation formula and exact `MissedStatTest` result.
 
 ## Testing
 

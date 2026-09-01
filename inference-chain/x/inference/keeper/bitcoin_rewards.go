@@ -15,9 +15,10 @@ import (
 // BitcoinResult represents the result of Bitcoin-style reward calculation
 // Similar to SubsidyResult but adapted for fixed epoch rewards
 type BitcoinResult struct {
-	Amount       int64  // Total epoch reward amount minted
-	EpochNumber  uint64 // Current epoch number for tracking
-	DecayApplied bool   // Whether decay was applied this epoch
+	Amount         int64  // Total epoch reward amount minted
+	EpochNumber    uint64 // Current epoch number for tracking
+	DecayApplied   bool   // Whether decay was applied this epoch
+	FailedMissRate map[string]struct{}
 	// GovernanceAmount is the portion of Amount that is NOT distributed to participants
 	// (e.g. due to downtime punishment or integer division truncation) and should be
 	// transferred to the governance module account by the caller.
@@ -883,8 +884,9 @@ func CalculateParticipantBitcoinRewardsWithTransfers(
 	// 4. Check and punish for downtime
 	logger.Info("Bitcoin Rewards: Checking downtime for participants", "participants", len(participants))
 	p0, skipPunishment := getDynamicP0(participants, validationParams, currentEpoch, logger)
+	var failedMissRate map[string]struct{}
 	if !skipPunishment {
-		CheckAndPunishForDowntimeForParticipants(participants, participantWeights, p0, logger)
+		failedMissRate = CheckAndPunishForDowntimeForParticipants(participants, participantWeights, p0, logger)
 	} else {
 		logger.Info("Bitcoin Rewards: Skipping downtime punishment (outage circuit breaker)", "epoch", currentEpoch)
 	}
@@ -988,6 +990,7 @@ func CalculateParticipantBitcoinRewardsWithTransfers(
 		Amount:           int64(fixedEpochReward),
 		EpochNumber:      currentEpoch,
 		DecayApplied:     epochsSinceGenesis > 0, // Decay applied if past genesis epoch
+		FailedMissRate:   failedMissRate,
 		GovernanceAmount: int64(remainder),
 	}
 
