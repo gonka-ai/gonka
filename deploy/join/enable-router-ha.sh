@@ -112,8 +112,38 @@ case $edge_mode in auto | single | multi) ;; *) fail "invalid edge-api mode" ;; 
 config_dir=$(cd -- "$(dirname -- "$config_env")" && pwd -P)
 transaction_journal=${ROUTER_HA_TRANSACTION_JOURNAL:-$config_dir/.gonka-router-ha-transaction.json}
 
+docker_container_inspect() {
+    local error_file status=0 error
+    error_file=$(mktemp "${TMPDIR:-/tmp}/gonka-docker-inspect.XXXXXX") || \
+        fail "cannot create Docker inspection diagnostic"
+    if timeout --kill-after=1s "${runtime_timeout}s" \
+        "$docker_bin" inspect "$@" 2>"$error_file"; then
+        rm -f "$error_file"
+        return 0
+    else
+        status=$?
+    fi
+    error=$(tr '\n' ' ' <"$error_file")
+    rm -f "$error_file"
+    case $error in
+        *"No such object:"* | *"No such container:"*) return 1 ;;
+    esac
+    if ((status == 124 || status == 137)); then
+        echo "enable-router-ha: Docker inspection timed out" >&2
+    else
+        echo "enable-router-ha: Docker inspection failed: ${error:-status $status}" >&2
+    fi
+    return 2
+}
+
 container_exists() {
-    "$docker_bin" inspect "$1" >/dev/null 2>&1
+    local status=0
+    docker_container_inspect "$1" >/dev/null || status=$?
+    case $status in
+        0) return 0 ;;
+        1) return 1 ;;
+        *) fail "cannot determine whether Docker container $1 exists" ;;
+    esac
 }
 
 container_generation_available() {
@@ -349,7 +379,18 @@ record_ingress_touch() {
 }
 
 proxy_component() {
-    "$docker_bin" inspect --format '{{index .Config.Labels "ai.gonka.component"}}' proxy 2>/dev/null || true
+    docker_container_inspect --format \
+        '{{index .Config.Labels "ai.gonka.component"}}' proxy
+}
+
+proxy_is_router() {
+    local component status=0
+    component=$(proxy_component) || status=$?
+    case $status in
+        0) [[ $component == proxy-router ]] ;;
+        1) return 1 ;;
+        *) fail "cannot determine the public proxy generation" ;;
+    esac
 }
 
 proxy_env_value() {
@@ -731,7 +772,7 @@ restore_policy_slot() {
 				fi
 			done < <(jq -r '.[]' <<<"$expected_ids")
 			if $generation_available; then
-				[[ $(proxy_component) != proxy-router ]] || \
+				! proxy_is_router || \
 					policy_service_admitted "$service" || generation_available=false
 			fi
 			$generation_available && return 0
@@ -748,7 +789,7 @@ restore_policy_slot() {
 		fi
 		return 0
 	fi
-	if [[ $(proxy_component) == proxy-router ]] && \
+	if proxy_is_router && \
 		! withdraw_policy_service "$service"; then
 		warn "could not withdraw the failed $service generation before rollback"
 		return 1
@@ -760,7 +801,7 @@ restore_policy_slot() {
 		warn "rollback Compose model could not recreate $service"
 		return 1
 	fi
-	if [[ $(proxy_component) == proxy-router ]]; then
+	if proxy_is_router; then
 		if ! wait_policy_admission "$service"; then
 			warn "restored $service was not admitted by the public proxy"
 			return 1
@@ -958,7 +999,7 @@ verify_policy_contract() {
 		"$proxy_image") || fail "cannot read proxy-router cache protocol"
 	[[ $proxy_cache_protocol == "$catalog_cache_protocol_version" ]] || fail \
 		"candidate proxy-router cache protocol '${proxy_cache_protocol:-missing}' does not match required '$catalog_cache_protocol_version'"
-	if [[ $(proxy_component) == proxy-router ]]; then
+	if proxy_is_router; then
 		current_contract=$("$docker_bin" inspect --format \
 			'{{index .Config.Labels "ai.gonka.proxy-policy-contract"}}' proxy)
 		[[ $current_contract == "$policy_contract" ]] || fail \
@@ -1183,7 +1224,7 @@ wait_policy_admission() {
 roll_policy_slots() {
 	local service
 	local -a rollout=("${policy_services[@]}")
-	if [[ $(proxy_component) == proxy-router ]]; then
+	if proxy_is_router; then
 		if policy_service_admitted proxy-policy; then
 			rollout=(proxy-policy2 proxy-policy)
 		elif policy_service_admitted proxy-policy2; then
@@ -1194,7 +1235,7 @@ roll_policy_slots() {
 	fi
 	for service in "${rollout[@]}"; do
 		if ! policy_service_needs_replacement "$service"; then
-			if [[ $(proxy_component) == proxy-router ]]; then
+			if proxy_is_router; then
 				wait_policy_admission "$service" || fail \
 					"unchanged $service is not admitted by the public proxy"
 			fi
@@ -1202,13 +1243,13 @@ roll_policy_slots() {
 		fi
 	verify_ingress_model_unchanged
 		record_ingress_touch "policy:$service"
-		if [[ $(proxy_component) == proxy-router ]]; then
+		if proxy_is_router; then
 			withdraw_policy_service "$service" || fail \
 				"$service did not leave admission before replacement"
 		fi
 		"${compose[@]}" up -d --no-deps --wait \
 			--wait-timeout "$cutover_timeout" "$service"
-		if [[ $(proxy_component) == proxy-router ]]; then
+		if proxy_is_router; then
 			wait_policy_admission "$service" || fail \
 				"$service is healthy but was not admitted by the public proxy"
 		fi
@@ -1406,12 +1447,17 @@ if [[ $versiond_mode == ha ]]; then
 	gonka_compose_validate_ha_version_catalog "$docker_bin" versiond
 fi
 
-current_proxy_component=$(proxy_component)
 proxy_was_absent=false
-if ! container_exists proxy; then
+if container_exists proxy; then
+	current_proxy_component=$(proxy_component) || fail \
+		"cannot inspect the public proxy generation"
+else
+	current_proxy_component=
 	proxy_was_absent=true
 	warn "public proxy is absent; rebuilding it from the resolved Compose topology"
-elif [[ $current_proxy_component != proxy-router ]]; then
+fi
+if [[ $proxy_was_absent == false && \
+	$current_proxy_component != proxy-router ]]; then
 	[[ $versiond_mode != ha ]] || capture_migration_route_baseline
 fi
 

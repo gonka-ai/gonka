@@ -45,7 +45,23 @@ if [[ ${1:-} == image && ${2:-} == inspect ]]; then
 fi
 
 if [[ ${1:-} == inspect ]]; then
+    inspect_target=${!#}
+    if [[ ${FAIL_CONTAINER_INSPECT-} == "$inspect_target" ]]; then
+        echo 'simulated Docker daemon inspection failure' >&2
+        exit 1
+    fi
+    if [[ $inspect_target == proxy && ${PROXY_EXISTS:-true} != true && \
+        ! -f $STATE_DIR/generation-proxy && \
+        ! -f $STATE_DIR/present-proxy ]]; then
+        echo 'Error: No such object: proxy' >&2
+        exit 1
+    fi
     if [[ ${2:-} == --format ]]; then
+			if [[ ${FAIL_PROXY_COMPONENT_INSPECT:-false} == true && \
+				${3:-} == *ai.gonka.component* && ${4:-} == proxy ]]; then
+				echo 'simulated proxy component inspection failure' >&2
+				exit 1
+			fi
 			if [[ ${FAIL_PROXY_ENV_INSPECT:-false} == true && \
 				${3:-} == '{{range .Config.Env}}{{println .}}{{end}}' && \
 				${4:-} == proxy ]]; then
@@ -158,7 +174,9 @@ if [[ ${1:-} == inspect ]]; then
     fi
     case ${2:-} in
         proxy)
-			[[ ${PROXY_EXISTS:-true} == true || -f $STATE_DIR/generation-proxy ]]
+			[[ ${PROXY_EXISTS:-true} == true || \
+				-f $STATE_DIR/generation-proxy || \
+				-f $STATE_DIR/present-proxy ]]
             ;;
         versiond | versiond2 | devshard-postgres | versiond-router | \
         edge-api | edge-api2 | edge-api3 | edge-api-router)
@@ -323,6 +341,7 @@ if [[ ${1:-} == compose ]]; then
 				printf 'proxy-router\n' >"$STATE_DIR/current"
 			fi
 			rm -f "$STATE_DIR/generation-proxy"
+			: >"$STATE_DIR/present-proxy"
 			exit 0
 		fi
 		if [[ ${KILL_PROXY_BEFORE_MUTATION:-false} == true ]]; then
@@ -352,6 +371,7 @@ if [[ ${1:-} == compose ]]; then
         fi
         printf 'proxy-router\n' >"$STATE_DIR/current"
 		: >"$STATE_DIR/generation-proxy"
+		: >"$STATE_DIR/present-proxy"
     fi
     exit 0
 fi
@@ -476,7 +496,8 @@ fi
 case ${1:-} in
     exec | tag) exit 0 ;;
 	rm)
-		[[ ${3:-} != proxy ]] || rm -f "$STATE_DIR/generation-proxy"
+		[[ ${3:-} != proxy ]] || rm -f \
+			"$STATE_DIR/generation-proxy" "$STATE_DIR/present-proxy"
 		exit 0
 		;;
     image) exit 0 ;;
@@ -554,6 +575,7 @@ run_cutover() {
     rm -f "$tmpdir/fleet-spec-drift"
 	rm -f "$tmpdir"/present-proxy-policy*
 	rm -f "$tmpdir"/generation-proxy*
+	rm -f "$tmpdir"/present-proxy
 	rm -f "$tmpdir"/stopped-proxy-policy*
 	rm -f "$tmpdir"/drained-policy_* "$tmpdir"/health-down-policy_*
     if [[ -n ${INITIAL_PROXY_COMPONENT:-} ]]; then
@@ -736,6 +758,39 @@ if grep -Eq ' stop .*proxy-policy2?$' \
     fail "policy worker was stopped after NGINX_MODE inspect failed"
 fi
 
+control_plane_journal=$tmpdir/control-plane-ingress.json
+if INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/container-inspect-failure.log" env \
+        ROUTER_HA_TRANSACTION_JOURNAL="$control_plane_journal" \
+        FAIL_CONTAINER_INSPECT=proxy \
+        2>"$tmpdir/container-inspect-failure.stderr"; then
+    fail "Docker control-plane failure was treated as an absent proxy"
+fi
+grep -q 'cannot determine whether Docker container proxy exists' \
+    "$tmpdir/container-inspect-failure.stderr" || fail \
+    "Docker container inspection failure was not diagnosed"
+[[ ! -e $control_plane_journal ]] || fail \
+    "container inspection failure created an absent-proxy journal"
+if grep -q '^fleet apply$' "$tmpdir/container-inspect-failure.log"; then
+    fail "container inspection failure reached fleet mutation"
+fi
+
+if INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/component-inspect-failure.log" env \
+        ROUTER_HA_TRANSACTION_JOURNAL="$control_plane_journal" \
+        FAIL_PROXY_COMPONENT_INSPECT=true \
+        2>"$tmpdir/component-inspect-failure.stderr"; then
+    fail "proxy component inspection failure was treated as absence"
+fi
+grep -q 'cannot inspect the public proxy generation' \
+    "$tmpdir/component-inspect-failure.stderr" || fail \
+    "proxy component inspection failure was not diagnosed"
+[[ ! -e $control_plane_journal ]] || fail \
+    "component inspection failure created an absent-proxy journal"
+if grep -q '^fleet apply$' "$tmpdir/component-inspect-failure.log"; then
+    fail "component inspection failure reached fleet mutation"
+fi
+
 INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
 INITIAL_POLICY_GENERATION=candidate \
 INITIAL_PROXY_COMPONENT=proxy-router \
@@ -904,6 +959,27 @@ INITIAL_PROXY_COMPONENT=proxy-router \
 jq -e '.transaction.ingress.state == "prepared"' \
     "$prepared_journal" >/dev/null || fail \
     "deferred ingress transaction was not prepared"
+inspect_recovery_journal=$tmpdir/inspect-recovery-ingress.json
+cp "$prepared_journal" "$inspect_recovery_journal"
+if env DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$tmpdir/inspect-recovery.log" \
+    STATE_DIR="$tmpdir" \
+    JOIN_DIR="$script_dir" \
+    FAIL_CONTAINER_INSPECT=proxy \
+    ROUTER_HA_TRANSACTION_JOURNAL="$inspect_recovery_journal" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/enable-router-ha.sh" --recover-only \
+    >"$tmpdir/inspect-recovery.stdout" \
+    2>"$tmpdir/inspect-recovery.stderr"; then
+    fail "rollback discarded a Docker inspection failure"
+fi
+grep -q 'cannot determine whether Docker container proxy exists' \
+    "$tmpdir/inspect-recovery.stderr" || fail \
+    "rollback Docker inspection failure was not diagnosed"
+jq -e '.transaction.ingress.state == "prepared" and
+       (.transaction.ingress.rollback_models | type == "object")' \
+    "$inspect_recovery_journal" >/dev/null || fail \
+    "rollback inspection failure discarded recovery evidence"
 : >"$tmpdir/prepared-recovery.log"
 env DOCKER_BIN="$tmpdir/docker" \
     DOCKER_LOG="$tmpdir/prepared-recovery.log" \
