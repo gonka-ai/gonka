@@ -182,10 +182,10 @@ func TestRepairDueAll_IncludesDegradedOlderTurn(t *testing.T) {
 	}}, 500)
 	past := 500 + cfg.AckDeadlineBlocks + 1
 	tr.Observe(3, []*types.DevshardTx{{
-		Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+		Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 			InferenceId: 3, ObservedHeight: past, ObservedBlockHash: hash,
 		}},
-	}}, 0)
+	}}, past)
 	tr.Observe(4, []*types.DevshardTx{{
 		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
 			TurnSeq: 2, ObservedHeight: 500, ObservedBlockHash: hash, SlotsNum: 2,

@@ -64,7 +64,7 @@ type TurnTracker struct {
 	retain          uint64
 	turns           map[uint64]*SyncTurnRecord
 	heartbeatAt     map[uint64]uint64 // nonce → turn_seq (L3)
-	stampHeight     uint64            // max inference-tx stamp; discharges h_last
+	stampHeight     uint64            // max host-signed confirm/finish stamp; discharges h_last
 	maxTurnSeq      uint64
 	lastCompleted   uint64 // max CompletedAtHeight; survives prune
 	lastCompleteSeq uint64
@@ -132,7 +132,7 @@ func (t *TurnTracker) Observe(diffNonce uint64, txs []*types.DevshardTx, hNow ui
 		if hb := tx.GetHeartbeat(); hb != nil {
 			t.observeHeartbeat(diffNonce, hb)
 		}
-		if h, ok := inferenceTxStamp(tx); ok && h > t.stampHeight {
+		if h, ok := executorInferenceStamp(tx); ok && h > t.stampHeight {
 			t.stampHeight = h
 		}
 	}
@@ -150,10 +150,10 @@ func (t *TurnTracker) Observe(diffNonce uint64, txs []*types.DevshardTx, hNow ui
 	t.AdvanceHeight(hNow)
 }
 
-func inferenceTxStamp(tx *types.DevshardTx) (uint64, bool) {
-	if start := tx.GetStartInference(); start != nil {
-		return inferenceStamp(start)
-	}
+// executorInferenceStamp is a host-signed inference stamp that may discharge
+// h_last on a busy escrow. MsgStartInference is user-signed and is not a
+// round-trip, so it must not ratchet the turn clock (same split as F).
+func executorInferenceStamp(tx *types.DevshardTx) (uint64, bool) {
 	if conf := tx.GetConfirmStart(); conf != nil {
 		return inferenceStamp(conf)
 	}

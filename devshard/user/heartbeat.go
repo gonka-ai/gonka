@@ -321,18 +321,10 @@ func (s *Session) hasPendingHeightAckLocked() bool {
 }
 
 // referenceStampLocked is the producer side of L0 for the sequencer: a
-// Diff-resident height is max(own view, F(nonce)), or absent. It is never below
-// F(nonce), so an honest sequencer cannot author a regression.
-//
-// This covers MsgStartInference and MsgHeartbeat alike — every height in Diff is
-// a reference height (spec §14), and the sequencer is a carrier on both.
-//
-// A floor beyond W_conf of the sequencer's own view is declined rather than
-// carried, which leaves the caller with the same situation as an unusable oracle:
-// the start leg goes out unstamped and the heartbeat is skipped. Both are states
-// the protocol already handles — hosts arm close-ready when stamps stop — and
-// both are better than the sequencer signing a height it has no reason to think
-// exists.
+// Diff-resident height is max(own view, F(nonce)), or absent, and never below
+// F(nonce). A courier tip farther above F than W_conf is carried as F — the
+// user is not a height source, and ingest rejects heartbeat/start above
+// F+W_conf.
 func (s *Session) referenceStampLocked(nonce uint64) (uint64, []byte, bool) {
 	if !s.sm.HeightSyncFloorReady() {
 		return 0, nil, false
@@ -348,6 +340,11 @@ func (s *Session) referenceStampLocked(nonce uint64) (uint64, []byte, bool) {
 				"escrow", s.escrowID, "nonce", nonce, "floor", floor, "own_tip", h)
 			return 0, nil, false
 		}
+		return floor, floorHash, true
+	}
+	if known && heightsync.StampPresent(floorHash) && s.heartbeatCfg.TipBeyondFloorWindow(floor, h) {
+		logging.Warn("height stamp carried: own tip beyond F+W_conf", "subsystem", "heightsync",
+			"escrow", s.escrowID, "nonce", nonce, "floor", floor, "own_tip", h)
 		return floor, floorHash, true
 	}
 	return h, hash, ok

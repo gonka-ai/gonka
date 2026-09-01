@@ -156,6 +156,16 @@ func (c HeartbeatConfig) FloorOutOfReach(floor, ownTip uint64) bool {
 	return floor-ownTip > c.withDefaults().WindowBlocks
 }
 
+// TipBeyondFloorWindow reports whether ownTip is farther above F than W_conf.
+// Sequencer compose then carries F instead of writing the tip: the user is not
+// a height source, and L0 rejects heartbeat/start stamps above F+W_conf.
+func (c HeartbeatConfig) TipBeyondFloorWindow(floor, ownTip uint64) bool {
+	if floor == 0 || ownTip <= floor {
+		return false
+	}
+	return ownTip > addSat(floor, c.withDefaults().WindowBlocks)
+}
+
 // RepairConfig budgets host→host repair probes (spec §11.4) on both the
 // prober and the responder. MaxProbesPerWindow 0 means "use slots_num at
 // the call site" (`R_max`).

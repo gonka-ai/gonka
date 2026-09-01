@@ -358,6 +358,39 @@ func TestHeartbeat_LiveHostsQuorumCompletes(t *testing.T) {
 	require.True(t, session.HeartbeatTurnTracker().CompletedAtOrAbove(100))
 }
 
+func TestHeartbeat_TipBeyondFloorWindowCarriesFloor(t *testing.T) {
+	var height uint64 = 80
+	now := time.Unix(1000, 0).UTC()
+	oracles := make([]blocks.BlockOracle, 3)
+	for i := range oracles {
+		oracles[i] = &sessionOracle{hash: []byte{0xaa}}
+		oracles[i].(*sessionOracle).height.Store(80)
+	}
+	session := setupHeartbeatSessionWithOracles(t, &height, oracles,
+		WithHeartbeatClock(func() time.Time { return now }))
+	require.NoError(t, session.MaybeHeartbeat(context.Background()))
+	floor, _, known := session.StateMachine().HeightSyncFloorAsOf(session.Nonce() + 1)
+	require.True(t, known)
+	require.Equal(t, uint64(80), floor)
+
+	w := heightsync.DefaultHeartbeatConfig().WindowBlocks
+	height = 80 + w + 1
+	now = now.Add(heightsync.DefaultHeartbeatConfig().Interval + time.Second)
+	require.NoError(t, session.MaybeHeartbeat(context.Background()))
+
+	var hb *types.MsgHeartbeat
+	for _, d := range session.Diffs() {
+		for _, tx := range d.Txs {
+			if inner := tx.GetHeartbeat(); inner != nil && inner.TurnSeq == 2 {
+				hb = inner
+			}
+		}
+	}
+	require.NotNil(t, hb)
+	require.Equal(t, uint64(80), hb.ObservedHeight,
+		"a courier tip farther above F than W_conf is carried as F, not written")
+}
+
 // TestHeartbeat_UnavailableAcksCompleteTurnButNeverConfirm separates the two
 // jobs an ack used to do at once. A roster of blind hosts completes the turn:
 // they are reachable and applying the log. They do not seed F — sequencer

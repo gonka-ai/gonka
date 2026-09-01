@@ -26,6 +26,14 @@ func TestHeartbeatConfig_Defaults(t *testing.T) {
 		"one lost turnover must never arm a host")
 }
 
+func TestHeartbeatConfig_TipBeyondFloorWindow(t *testing.T) {
+	cfg := heightsync.DefaultHeartbeatConfig()
+	require.False(t, cfg.TipBeyondFloorWindow(0, 1<<40), "no floor: no cap")
+	require.False(t, cfg.TipBeyondFloorWindow(80, 80))
+	require.False(t, cfg.TipBeyondFloorWindow(80, 80+cfg.WindowBlocks))
+	require.True(t, cfg.TipBeyondFloorWindow(80, 80+cfg.WindowBlocks+1))
+}
+
 // TestHeartbeatConfig_AckWindowFollowsTheSchedule: D_ack is not a shipped
 // constant but the millisecond schedule expressed in the only unit the log can
 // check (proposal §20). The old constant of one block was shorter than the

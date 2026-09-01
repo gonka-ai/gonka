@@ -1071,7 +1071,7 @@ func TestRecoverSession_OpenTurnRepairProbeStateIsVolatile(t *testing.T) {
 
 	cfg := heightsync.DefaultHeartbeatConfig()
 	timeoutHeight := uint64(100) + cfg.AckDeadlineBlocks + 1
-	appendHeartbeatDiff(t, store, recSM, user, 2, 2, timeoutHeight)
+	appendHeartbeatAndHostAckDiff(t, store, recSM, user, hosts[0], 2, 2, timeoutHeight)
 	rec = recSM.HeightSyncTurnRecord(1)
 	require.NotNil(t, rec)
 	require.Equal(t, heightsync.TurnDegraded, rec.State)
@@ -1310,6 +1310,46 @@ func setSessionOraclesHeight(oracles []*sessionOracle, height uint64) {
 	for _, oracle := range oracles {
 		oracle.height.Store(int64(height))
 	}
+}
+
+// appendHeartbeatAndHostAckDiff opens an unstamped heartbeat turn (HReq=0, so
+// it is not repair-due) and lands a host-signed ack at ackHeight so hNow can
+// close a prior turn's D_ack window.
+func appendHeartbeatAndHostAckDiff(
+	t *testing.T,
+	store storage.Storage,
+	sm *state.StateMachine,
+	user *signing.Secp256k1Signer,
+	hostSigner *signing.Secp256k1Signer,
+	nonce, turnSeq, ackHeight uint64,
+) types.Diff {
+	t.Helper()
+	ack := &types.MsgHeightAck{
+		TurnSeq:           turnSeq,
+		RefNonce:          nonce,
+		SlotId:            0,
+		ObservedHeight:    ackHeight,
+		ObservedBlockHash: []byte{0xaa},
+		SyncState:         types.SyncState_SYNCED,
+		PeerSeen:          []byte{0xff},
+	}
+	require.NoError(t, heightsync.SignAck(hostSigner, ack))
+	txs := []*types.DevshardTx{
+		{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			TurnSeq:  turnSeq,
+			SlotsNum: uint64(len(sm.SnapshotState().Group)),
+			Reason:   "quiet_session",
+		}}},
+		{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}},
+	}
+	root, applied, err := sm.ApplyLocalBestEffort(nonce, txs)
+	require.NoError(t, err)
+	require.Len(t, applied, 2)
+	diff := testutil.SignDiffWithRoot(t, user, "escrow-1", nonce, applied, root)
+	if store != nil {
+		require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{Diff: diff, StateHash: root}))
+	}
+	return diff
 }
 
 func appendHeartbeatDiff(

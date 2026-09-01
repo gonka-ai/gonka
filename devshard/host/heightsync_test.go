@@ -349,7 +349,9 @@ func TestHost_HeartbeatAck_OmitsAStampWhenTheFloorIsOutOfReach(t *testing.T) {
 	h := newAckTestHost(t, 0, hosts, user, WithChainOracle(or)) // executor(3) = 0
 
 	// A peer host-ack walks the floor up one window at a time, which is the only
-	// way a single host signer may raise it, leaving F(4) = 512 against a host at 1.
+	// way a single host signer may raise it, leaving F = 512 against a host at 1.
+	// Sequencer heartbeats stay at F+W_conf (not 3W): L0 rejects user stamps
+	// farther above the floor than that.
 	const slots = uint64(3)
 	top := []byte{0xaa}
 	w := heightsync.DefaultConfirmWindowBlocks
@@ -360,7 +362,7 @@ func TestHost_HeartbeatAck_OmitsAStampWhenTheFloorIsOutOfReach(t *testing.T) {
 	})
 	d3 := testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{
 		signedAckTx(t, hosts[1], 2, 2, 1, 2*w, top),
-		stampedHeartbeatDiff(t, user, 3, 3, 3*w, slots, top).Txs[0],
+		stampedHeartbeatDiff(t, user, 3, 3, 2*w, slots, top).Txs[0],
 	})
 	resp, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{d1, d2, d3}})
 	require.NoError(t, err)

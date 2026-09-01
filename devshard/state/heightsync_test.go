@@ -69,7 +69,25 @@ func TestHeightSyncMissingAcksReportsDegradedTurnThroughSMAPI(t *testing.T) {
 	require.Empty(t, sm.HeightSyncMissingAcks(1), "missing slots are gated until the ack window closes")
 
 	afterDeadline := uint64(500) + heightsync.DefaultHeartbeatConfig().AckDeadlineBlocks + 1
-	appendHeartbeat(uint64(len(hosts))+1, 2, afterDeadline)
+	// User stamps do not close ack windows. A host-signed confirm is the
+	// production clock (stampHeight / LogResidentHeight) that advances hNow.
+	nonce := uint64(len(hosts)) + 1
+	exec := hosts[nonce%uint64(len(hosts))]
+	sig := testutil.SignExecutorReceipt(t, exec, "escrow-1", nonce, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000,
+		testutil.ReceiptStamp{Height: afterDeadline, Hash: hash})
+	_, applied, err := sm.ApplyLocalBestEffort(nonce, []*types.DevshardTx{
+		txStart(&types.MsgStartInference{
+			InferenceId: nonce, PromptHash: []byte("prompt"), Model: "llama",
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+			ObservedHeight: 500, ObservedBlockHash: hash,
+		}),
+		txConfirm(&types.MsgConfirmStart{
+			InferenceId: nonce, ExecutorSig: sig, ConfirmedAt: 1000,
+			ObservedHeight: afterDeadline, ObservedBlockHash: hash,
+		}),
+	})
+	require.NoError(t, err)
+	require.Len(t, applied, 2)
 
 	rec = sm.HeightSyncTurnRecord(1)
 	require.NotNil(t, rec)

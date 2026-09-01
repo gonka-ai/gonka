@@ -743,6 +743,26 @@ func repairTimingHeartbeatDiff(t *testing.T, signer signing.Signer, nonce, turnS
 	}})
 }
 
+// repairTimingWindowClosedDiff opens an unstamped turn 2 (HReq=0, not
+// repair-due) and lands a host-signed ack at ackHeight so hNow closes turn 1.
+func repairTimingWindowClosedDiff(t *testing.T, user, hostSigner signing.Signer, nonce, ackHeight uint64) types.Diff {
+	t.Helper()
+	ack := &types.MsgHeightAck{
+		TurnSeq: 2, RefNonce: nonce, SlotId: 0,
+		ObservedHeight: ackHeight, ObservedBlockHash: []byte{0xaa},
+		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
+	}
+	require.NoError(t, heightsync.SignAck(hostSigner, ack))
+	return testutil.SignDiff(t, user, "9003", nonce, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			TurnSeq:  2,
+			SlotsNum: 4,
+			Reason:   string(heightsync.ReasonQuietSession),
+		}}},
+		{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}},
+	})
+}
+
 // syncHostsFromSession applies the user's signed diff chain to every host so
 // round-robin SendInference stays consistent with gossip-less multi-host tests
 // (see protocol/http_test.go catch-up patterns).
@@ -1813,7 +1833,8 @@ func TestHeightSyncAnchor_E2E_MultiHostRepairProbeTimingAndBudget(t *testing.T) 
 	}
 	st.applyDiffsToHosts(t, span...)
 	cfg := heightsync.DefaultHeartbeatConfig()
-	st.applyDiffsToHosts(t, repairTimingHeartbeatDiff(t, st.user, uint64(len(st.hosts))+1, 2, 500+cfg.AckDeadlineBlocks+1))
+	st.applyDiffsToHosts(t, repairTimingWindowClosedDiff(t, st.user, st.hosts[0],
+		uint64(len(st.hosts))+1, 500+cfg.AckDeadlineBlocks+1))
 
 	prober := st.hostObjs[0]
 	rec := prober.HeightSyncTurnRecord(1)

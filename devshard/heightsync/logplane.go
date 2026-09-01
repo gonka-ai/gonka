@@ -15,9 +15,14 @@ import (
 
 var (
 	ErrHeightRegression = errors.New("INVALID(height_regression)")
-	ErrBadFraming       = errors.New("INVALID(bad_framing)")
-	ErrAckSigInvalid    = errors.New("INVALID(ack_sig_invalid)")
-	ErrAckCausality     = errors.New("INVALID(ack_causality)")
+	// ErrHeightUnbacked is a sequencer-composed stamp farther above F(m) than
+	// W_conf. The user is not a height source; honest compose carries at most
+	// max(own_tip, F) inside that window. Host stamps are not this check —
+	// unaided / Q already bound how far they may move F.
+	ErrHeightUnbacked = errors.New("INVALID(height_unbacked)")
+	ErrBadFraming     = errors.New("INVALID(bad_framing)")
+	ErrAckSigInvalid  = errors.New("INVALID(ack_sig_invalid)")
+	ErrAckCausality   = errors.New("INVALID(ack_causality)")
 	// ErrStrongRequired belongs to the transport plane only, where refusing an
 	// exchange is a local admission decision (L5a). The log plane has no
 	// counterpart: divergence between followers is monitoring, permanently, so
@@ -115,6 +120,9 @@ func CheckDiffLogPlane(ctx context.Context, in LogPlaneInput, st LogPlaneState) 
 		return out.invalid(err, "ack_causality")
 	}
 	if err := checkL0(in.Nonce, in.Txs, st); err != nil {
+		if errors.Is(err, ErrHeightUnbacked) {
+			return out.invalid(err, "height_unbacked")
+		}
 		return out.invalid(err, "height_regression")
 	}
 	if err := checkL0b(in.Nonce, in.Txs, st); err != nil {
@@ -285,18 +293,18 @@ func checkL3(hbs []heartbeatRef, acks []ackRef, st LogPlaneState) error {
 }
 
 // checkL0 enforces reference-height monotonicity against the floor the stamp's
-// *producer* could have known.
+// *producer* could have known, and caps sequencer-composed stamps at F(m)+W_conf.
 //
 // Scope is every Diff-resident height, heartbeats and acks included: the log has
 // one height semantics, not two (spec §14). Basis is F(producing nonce), not
 // F(landing nonce) — see RefProducingNonce for how each message type names it.
 //
-// An honest producer can always satisfy this — it stamps max(own_tip, F(m)) or
-// omits the stamp entirely — so a violation is real misbehaviour and INVALID
-// carries no false positives. Both branches stay available however the floor
-// moved, because the floor only ever rises to a height the log already holds:
-// how far it may rise on one signer's word is FloorIndex's business, not this
-// check's.
+// An honest producer can always satisfy the lower bound — it stamps
+// max(own_tip, F(m)) or omits — so a violation is real misbehaviour and INVALID
+// carries no false positives. Sequencer stamps (heartbeat / start) are user
+// claims, not a height source: above F(m)+W_conf they cannot be a carry of a
+// plausible tip and are INVALID(height_unbacked). Host stamps are not capped
+// here; unaided / Q already bound how far they may move F.
 func checkL0(nonce uint64, txs []*types.DevshardTx, st LogPlaneState) error {
 	if st.Floor == nil {
 		return nil
@@ -329,6 +337,22 @@ func checkL0(nonce uint64, txs []*types.DevshardTx, st LogPlaneState) error {
 				LogFieldProducingNonce, m,
 			)
 			return err
+		}
+		if SequencerComposed(tx) {
+			w := st.Cfg.withDefaults().WindowBlocks
+			max := addSat(floor, w)
+			if h > max {
+				err := fmt.Errorf("%w: %s height %d > floor %d + W_conf %d as of nonce %d",
+					ErrHeightUnbacked, refLegName(tx), h, floor, w, m)
+				logLogPlane(nonce, 0, "L0", "INVALID", err.Error(),
+					"escrow", st.EscrowID,
+					LogFieldLeg, refLegName(tx),
+					LogFieldHeight, h,
+					LogFieldFloor, floor,
+					LogFieldProducingNonce, m,
+				)
+				return err
+			}
 		}
 	}
 	return nil

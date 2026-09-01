@@ -101,17 +101,21 @@ func (p *repairPair) applyHeartbeatSpan(t *testing.T) {
 	}
 }
 
-// applyWindowClosedStamp lands a Diff-resident height past D_ack so the
-// tracker clock — not the local oracle — closes the turn's ack window.
+// applyWindowClosedStamp lands a host-signed height past D_ack so the
+// tracker clock — not the local oracle or a user heartbeat — closes the
+// turn's ack window.
 func (p *repairPair) applyWindowClosedStamp(t *testing.T) {
 	t.Helper()
 	past := uint64(pastAckWindow())
-	d3 := testutil.SignDiff(t, p.user, "escrow-1", 3, []*types.DevshardTx{{
-		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-			TurnSeq: 1, ObservedHeight: past, ObservedBlockHash: []byte{0xaa}, SlotsNum: 2,
-			Reason: string(heightsync.ReasonQuietSession),
-		}},
-	}})
+	ack := &types.MsgHeightAck{
+		TurnSeq: 1, RefNonce: 1, SlotId: 0,
+		ObservedHeight: past, ObservedBlockHash: []byte{0xaa},
+		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
+	}
+	require.NoError(t, heightsync.SignAck(p.hosts[0], ack))
+	d3 := testutil.SignDiff(t, p.user, "escrow-1", 3, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}},
+	})
 	ctx := context.Background()
 	for _, h := range p.hostObjs {
 		_, err := h.HandleRequest(ctx, host.HostRequest{Diffs: []types.Diff{d3}})

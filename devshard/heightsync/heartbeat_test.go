@@ -397,11 +397,36 @@ func TestTurnTracker_InferenceStampAdvancesHLast(t *testing.T) {
 	tr := heightsync.NewTurnTracker(3, 0, heightsync.DefaultHeartbeatConfig())
 	hash := []byte{0xaa}
 	tr.Observe(1, []*types.DevshardTx{{
-		Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+		Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 			InferenceId: 1, ObservedHeight: 100, ObservedBlockHash: hash,
 		}},
 	}}, 100)
 	require.Equal(t, uint64(100), tr.LastCompletedHeight())
+}
+
+func TestTurnTracker_UserStampDoesNotDegradeOpenTurn(t *testing.T) {
+	// P1: a user heartbeat/start at 1<<40 must not close an honest turn via
+	// windowClosed. hNow / stampHeight follow host-signed stamps only.
+	tr := heightsync.NewTurnTracker(4, 3, heightsync.DefaultHeartbeatConfig())
+	tr.Observe(10, []*types.DevshardTx{heartbeatTx(1, 500, 4)}, 500)
+	require.Equal(t, heightsync.TurnOpen, tr.Record(1).State)
+
+	poison := uint64(1 << 40)
+	hash := []byte{0xde}
+	start := &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
+		InferenceId: 11, ObservedHeight: poison, ObservedBlockHash: hash,
+	}}}
+	hNow := heightsync.LogResidentHeight([]*types.DevshardTx{start}, tr.LastCompletedHeight())
+	tr.Observe(11, []*types.DevshardTx{start}, hNow)
+	require.Equal(t, heightsync.TurnOpen, tr.Record(1).State,
+		"a user start must not degrade an open turn")
+	require.Zero(t, tr.LastCompletedHeight())
+
+	hb := heartbeatTx(2, poison, 4)
+	hNow = heightsync.LogResidentHeight([]*types.DevshardTx{hb}, tr.LastCompletedHeight())
+	tr.Observe(12, []*types.DevshardTx{hb}, hNow)
+	require.Equal(t, heightsync.TurnOpen, tr.Record(1).State,
+		"a user heartbeat must not degrade a prior turn through hNow")
 }
 
 func TestHeartbeat_ExecutorClaimsDischargeCadence(t *testing.T) {

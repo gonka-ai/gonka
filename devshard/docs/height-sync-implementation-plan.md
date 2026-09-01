@@ -959,7 +959,7 @@ Consequences to carry forward:
 | `heightsync_heartbeat_turns_total` | counter | `reason`, `outcome{complete,degraded}` |
 | `heightsync_heartbeat_skipped_total` | counter | `cause{real_traffic,no_height}` |
 | `heightsync_ack_total` | counter | `sync_state`, `late` |
-| `heightsync_ack_rejected_total` | counter | `reason{ack_sig_invalid,ack_causality,bad_framing,height_regression}` |
+| `heightsync_ack_rejected_total` | counter | `reason{ack_sig_invalid,ack_causality,bad_framing,height_regression,height_unbacked}` |
 | `heightsync_stale_stamp_total` | counter | `tier{l5a_admission}` — expected to be non-zero on a lagging peer, and always a mark rather than a rejected diff. The in-log tier is gone with L5b (§8.7.1) |
 | `heightsync_turn_state` | gauge | `state` |
 | `heightsync_repair_probes_total` | counter | `outcome{height,unreachable,skipped_ack_landed,budget_exhausted}` |
@@ -1120,6 +1120,7 @@ H39–H49 are gateway-package tests over a fabricated session plus a registry ga
 | H13b | Heartbeat with a section for slot A, none for slot B (lazy carry, `last_propagated`) | A runs L4, B skips it; both accept the diff | §8.7, §16 |
 | H13c | Replay of a session whose stamps are far below the verifier's current tip | **no** `INVALID` — L5a is the only `D`-band check and it does not run off-line | §8.7 |
 | H13d | Reference height below `F(m)` for its producing nonce `m` | `INVALID(height_regression)`, same verdict on every verifier | L0 |
+| H13h | Sequencer heartbeat/start above `F(m)+W_conf`; user stamp must not close turns | `INVALID(height_unbacked)`; turn clock ignores start/heartbeat | L0, turn tracker |
 | H13f | Heartbeat or ack carrying a height below `F(m)` | `INVALID(height_regression)` — the producer held the log and could have lifted to the floor. Its real tip belongs in the Anchor and `sync_state` | L0, §8.7.1 |
 | H13g | `MsgConfirmStart` produced at nonce `m` landing after another party raised the floor above its height | **accepted** — the basis is `F(m)`, not the landing floor | L0, §8.7.1 |
 | H13h | Lagging host acks by lifting to `F(ref_nonce + 1)` and labels itself `CATCHING_UP` | **accepted**, no mark — logical time is shared, divergence is reported in the label | L0, §8.7.1 |

@@ -277,6 +277,51 @@ func TestLogPlane_AckBelowFloorRejectedAndLiftAccepted(t *testing.T) {
 	require.ErrorIs(t, res.Err, heightsync.ErrHeightRegression)
 }
 
+func TestLogPlane_SequencerStampAboveFloorWindowRejected(t *testing.T) {
+	st, signers := baseState(t, 3)
+	hash := []byte{0xaa}
+	seedFloor(st.Floor, 1, 80, hash)
+	w := st.Cfg.WindowBlocks
+	over := 80 + w + 1
+
+	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 2,
+		Txs:   []*types.DevshardTx{hbTx(1, over, 3, hash, nil)},
+	}, st)
+	require.ErrorIs(t, res.Err, heightsync.ErrHeightUnbacked)
+	require.Equal(t, "height_unbacked", res.Reason)
+
+	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 2,
+		Txs:   []*types.DevshardTx{startTxAt(2, over, hash)},
+	}, st)
+	require.ErrorIs(t, res.Err, heightsync.ErrHeightUnbacked)
+
+	atCap := 80 + w
+	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 2,
+		Txs:   []*types.DevshardTx{hbTx(1, atCap, 3, hash, nil)},
+	}, st)
+	require.NoError(t, res.Err, "F+W_conf is still a plausible carry")
+
+	// Host stamps are not this cap: unaided / Q bound F, not L0.
+	st.Tracker.Observe(2, []*types.DevshardTx{hbTx(1, 80, 3, hash, nil)}, 80)
+	ack := signedAck(t, signers[0], 1, 2, 0, over, hash, types.SyncState_SYNCED)
+	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 3,
+		Txs:   []*types.DevshardTx{signedAckTx(ack)},
+	}, st)
+	require.NoError(t, res.Err)
+
+	empty := heightsync.NewFloorIndex()
+	st.Floor = empty
+	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 1,
+		Txs:   []*types.DevshardTx{hbTx(1, 1<<40, 3, hash, nil)},
+	}, st)
+	require.NoError(t, res.Err, "no floor yet: the turn clock, not L0, ignores the user number")
+}
+
 func TestLogPlane_AckJudgedAgainstRefNonceFloor(t *testing.T) {
 	// The ack half of the producing-nonce rule, and what makes bringing acks
 	// under L0 safe at all. The ack answers the heartbeat at nonce 2, where the
