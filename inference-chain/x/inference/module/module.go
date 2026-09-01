@@ -648,6 +648,96 @@ func getNextEpochIndex(prevEpoch types.Epoch) uint64 {
 	return prevEpoch.Index + 1
 }
 
+type weightPipelineResult struct {
+	participants       []*types.ActiveParticipant
+	participationState *epochParticipationState
+	groupSummaries     []GroupSummary
+	consensusWeights   map[string]int64
+	penaltyAccumulator *PenaltyAccumulator
+	penalties          []*types.DelegationRewardPenalty
+	rewardTransfers    []*types.DelegationRewardTransfer
+	beforeCollateral   map[string]int64
+	collateralErr      error
+}
+
+func hasPositiveWeight(participants []*types.ActiveParticipant) bool {
+	for _, participant := range participants {
+		if participant != nil && participant.Weight > 0 {
+			return true
+		}
+	}
+	return false
+}
+
+func (am AppModule) runWeightPipeline(
+	ctx context.Context,
+	participants []*types.ActiveParticipant,
+	params types.Params,
+	upcomingEpoch types.Epoch,
+	previous *previousConfirmedWeights,
+) weightPipelineResult {
+	participation := am.prepareEpochParticipationState(
+		ctx,
+		participants,
+		params,
+		upcomingEpoch.PocStartBlockHeight,
+		previous,
+	)
+	consensusWeights, groupSummaries := participation.calculator.ComputeConsensusWeights(participation.eligibleModels)
+	for _, participant := range participants {
+		participant.Weight = consensusWeights[participant.Index]
+	}
+
+	adjParams := am.delegationAdjustmentParams(params)
+	penaltyStartEpochByModel := modelPenaltyStartEpochs(params.PocParams)
+	acc := NewPenaltyAccumulator(participants)
+	AccumulateDelegationPenalties(
+		acc,
+		participation.calculator,
+		participation.eligibleModels,
+		participation.participationByModel,
+		adjParams,
+		upcomingEpoch.Index,
+		penaltyStartEpochByModel,
+	)
+	AccumulateBootstrapPenalties(
+		acc,
+		participation.bootstrapPenaltyByModel,
+		participation.eligibleModels,
+		adjParams,
+		upcomingEpoch.Index,
+		penaltyStartEpochByModel,
+	)
+	rewardTransfers := BuildDelegationRewardTransfers(
+		participation.calculator,
+		participation.eligibleModels,
+		participation.participationByModel,
+		adjParams,
+		upcomingEpoch.Index,
+		penaltyStartEpochByModel,
+	)
+
+	beforeCollateral := make(map[string]int64, len(participants))
+	for _, participant := range participants {
+		beforeCollateral[participant.Index] = participant.Weight
+	}
+
+	collateralErr := am.keeper.AdjustWeightsByCollateral(ctx, participants)
+	participants = am.applyEpochPowerCapping(ctx, participants)
+
+	return weightPipelineResult{
+		participants:       participants,
+		participationState: participation,
+		groupSummaries:     groupSummaries,
+		consensusWeights:   consensusWeights,
+		penaltyAccumulator: acc,
+		penalties:          acc.RewardPenalties(),
+		rewardTransfers:    rewardTransfers.Records(),
+		beforeCollateral:   beforeCollateral,
+		collateralErr:      collateralErr,
+	}
+}
+
 // onEndOfPoCValidationStage handles all epoch formation logic at the end of PoC validation.
 // This stage is responsible for:
 // - Account settling from the previous epoch
@@ -721,39 +811,14 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	// validators (or, last-ditch, keeps that carry even if hardware would
 	// filter it). See seatAndGuardParticipants in epoch_fallback.go.
 	computed := am.computeNewWeights(ctx, *upcomingEpoch)
-	activeParticipants := am.seatAndGuardParticipants(
+	activeParticipants, usedFallback := am.seatAndGuardParticipants(
 		ctx,
 		*upcomingEpoch,
 		computed.participants,
 		computed.freshNodeIDs,
 	)
 	if len(activeParticipants) == 0 {
-		// Safety mechanism: a PoC round where nobody passed validation must not
-		// produce an empty epoch. An empty epoch group can never validate anyone
-		// in later rounds (voting powers derive from it), permanently stalling
-		// the network. Re-seat the current epoch's still-valid validators
-		// instead; see epoch_fallback.go for the carry-over rules.
-		am.LogError("onEndOfPoCValidationStage: no validated participants for upcoming epoch; falling back to current epoch validators", types.PoC,
-			"upcomingEpoch.Index", upcomingEpoch.Index)
-		activeParticipants = am.fallbackActiveParticipantsFromCurrentEpoch(ctx, *upcomingEpoch)
-		if len(activeParticipants) == 0 {
-			am.LogError("onEndOfPoCValidationStage: fallback produced no participants; aborting epoch formation", types.PoC,
-				"upcomingEpoch.Index", upcomingEpoch.Index)
-			sdkCtx := sdk.UnwrapSDKContext(ctx)
-			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-				"epoch_error",
-				sdk.NewAttribute("stage", "empty_epoch_fallback"),
-				sdk.NewAttribute("epoch", fmt.Sprintf("%d", upcomingEpoch.Index)),
-				sdk.NewAttribute("error_category", "epoch_formation"),
-			))
-			return nil
-		}
-		sdkCtx := sdk.UnwrapSDKContext(ctx)
-		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-			"empty_epoch_fallback_applied",
-			sdk.NewAttribute("epoch", fmt.Sprintf("%d", upcomingEpoch.Index)),
-			sdk.NewAttribute("participants", fmt.Sprintf("%d", len(activeParticipants))),
-		))
+		return fmt.Errorf("no eligible participants for upcoming epoch %d", upcomingEpoch.Index)
 	}
 
 	params, err := am.keeper.GetParams(ctx)
@@ -762,75 +827,35 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		return nil
 	}
 
-	participationState, err := am.prepareEpochParticipationState(
-		ctx,
-		activeParticipants,
-		params,
-		upcomingEpoch.PocStartBlockHeight,
-	)
+	previous, err := am.getPreviousConfirmedWeights(ctx)
 	if err != nil {
-		return fmt.Errorf("prepare epoch participation state: %w", err)
+		return fmt.Errorf("load previous confirmed weights: %w", err)
 	}
 
-	// Compute consensus weights with caps applied and write to participants
-	consensusWeights, groupSummaries := participationState.calculator.ComputeConsensusWeights(participationState.eligibleModels)
-	for _, p := range activeParticipants {
-		p.Weight = consensusWeights[p.Index]
+	pipeline := am.runWeightPipeline(ctx, activeParticipants, params, *upcomingEpoch, previous)
+	fallbackReason := ""
+	if usedFallback {
+		fallbackReason = "no_fresh_poc_node"
 	}
 
-	// Delegation and bootstrap penalties are accumulated additively across all
-	// models and applied once, capped at 1.0.
-	adjParams := am.delegationAdjustmentParams(params)
-	penaltyStartEpochByModel := modelPenaltyStartEpochs(params.PocParams)
-	acc := NewPenaltyAccumulator(activeParticipants)
-	AccumulateDelegationPenalties(
-		acc,
-		participationState.calculator,
-		participationState.eligibleModels,
-		participationState.participationByModel,
-		adjParams,
-		upcomingEpoch.Index,
-		penaltyStartEpochByModel,
-	)
-	AccumulateBootstrapPenalties(
-		acc,
-		participationState.bootstrapPenaltyByModel,
-		participationState.eligibleModels,
-		adjParams,
-		upcomingEpoch.Index,
-		penaltyStartEpochByModel,
-	)
-	penalties := acc.RewardPenalties()
-	rewardTransfers := BuildDelegationRewardTransfers(
-		participationState.calculator,
-		participationState.eligibleModels,
-		participationState.participationByModel,
-		adjParams,
-		upcomingEpoch.Index,
-		penaltyStartEpochByModel,
-	)
-	allRewardTransfers := rewardTransfers.Records()
+	if !hasPositiveWeight(pipeline.participants) {
+		if usedFallback {
+			return fmt.Errorf("epoch %d fallback participants have no positive final weight", upcomingEpoch.Index)
+		}
 
-	beforeCollateral := make(map[string]int64, len(activeParticipants))
-	for _, p := range activeParticipants {
-		beforeCollateral[p.Index] = p.Weight
+		activeParticipants, _ = am.seatAndGuardParticipants(ctx, *upcomingEpoch, nil, nil)
+		if len(activeParticipants) == 0 {
+			return fmt.Errorf("no eligible fallback participants for upcoming epoch %d", upcomingEpoch.Index)
+		}
+		pipeline = am.runWeightPipeline(ctx, activeParticipants, params, *upcomingEpoch, previous)
+		if !hasPositiveWeight(pipeline.participants) {
+			return fmt.Errorf("epoch %d fallback participants have no positive final weight", upcomingEpoch.Index)
+		}
+		fallbackReason = "zero_final_weight"
 	}
 
-	// Adjust weights based on collateral after the grace period. This modifies the weights in-place.
-	if err := am.keeper.AdjustWeightsByCollateral(ctx, activeParticipants); err != nil {
-		am.LogError("onSetNewValidatorsStage: failed to adjust weights by collateral", types.Tokenomics, "error", err)
-		// Depending on chain policy, we might want to halt on error. For now, we log and continue,
-		// which means participants will proceed with their unadjusted PotentialWeight.
-		sdkCtx := sdk.UnwrapSDKContext(ctx)
-		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-			"epoch_error",
-			sdk.NewAttribute("stage", "adjust_weights_by_collateral"),
-			sdk.NewAttribute("error_category", "cross_module"),
-		))
-	}
-
-	// Apply universal power capping to epoch powers
-	activeParticipants = am.applyEpochPowerCapping(ctx, activeParticipants)
+	activeParticipants = pipeline.participants
+	participationState := pipeline.participationState
 
 	// Compute each participant's CapWeight from the (now fully-adjusted) real
 	// Weight: the trust weight used for governance voting, BLS signing and cPoC
@@ -840,10 +865,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	// toward consensus. Weight itself stays the real weight used for rewards and
 	// cPoC confirmation. Must run before computeAndSetVotingPowers so voting
 	// powers are derived from the capped weight.
-	activeParticipants, err = am.applyPreviousConfirmedWeightCap(ctx, activeParticipants)
-	if err != nil {
-		return fmt.Errorf("apply previous-epoch trust cap: %w", err)
-	}
+	activeParticipants = am.applyPreviousConfirmedWeightCap(ctx, activeParticipants, previous)
 	am.applyZeroTrustFallback(ctx, upcomingEpoch.Index, activeParticipants)
 	am.applyTrustPowerCapping(ctx, activeParticipants)
 
@@ -863,10 +885,10 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		params.PocParams,
 	)
 
-	emitWeightPipelineLogs(am, upcomingEpoch.Index, groupSummaries,
+	emitWeightPipelineLogs(am, upcomingEpoch.Index, pipeline.groupSummaries,
 		participationState.eligibleModels, activeParticipants,
 		participationState.participationByModel,
-		consensusWeights, beforeCollateral, acc)
+		pipeline.consensusWeights, pipeline.beforeCollateral, pipeline.penaltyAccumulator)
 
 	am.LogInfo("onEndOfPoCValidationStage: computed new weights", types.Stages,
 		"upcomingEpoch.Index", upcomingEpoch.Index,
@@ -905,8 +927,8 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	upcomingEg.GroupData.ConfirmationWeightScales = confirmationWeightScales
 	if err := am.keeper.SetDelegationRewardTransferSnapshot(ctx, types.DelegationRewardTransferSnapshot{
 		EpochIndex: upcomingEpoch.Index,
-		Transfers:  allRewardTransfers,
-		Penalties:  penalties,
+		Transfers:  pipeline.rewardTransfers,
+		Penalties:  pipeline.penalties,
 	}); err != nil {
 		am.LogError("onEndOfPoCValidationStage: failed to store delegation reward transfer snapshot", types.PoC, "error", err)
 		return nil
@@ -917,6 +939,23 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 
 	// Call BLS module to initiate key generation for the new epoch
 	am.InitiateBLSKeyGeneration(ctx, upcomingEpoch.Index, activeParticipants)
+
+	if fallbackReason != "" {
+		sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
+			"empty_epoch_fallback_applied",
+			sdk.NewAttribute("epoch", fmt.Sprintf("%d", upcomingEpoch.Index)),
+			sdk.NewAttribute("participants", fmt.Sprintf("%d", len(activeParticipants))),
+			sdk.NewAttribute("reason", fallbackReason),
+		))
+	}
+	if pipeline.collateralErr != nil {
+		am.LogError("onEndOfPoCValidationStage: failed to adjust weights by collateral", types.Tokenomics, "error", pipeline.collateralErr)
+		sdk.UnwrapSDKContext(ctx).EventManager().EmitEvent(sdk.NewEvent(
+			"epoch_error",
+			sdk.NewAttribute("stage", "adjust_weights_by_collateral"),
+			sdk.NewAttribute("error_category", "cross_module"),
+		))
+	}
 
 	// Cleanup: delete consumed PoCRefusal and PoCDirectIntent entries
 	if err := am.keeper.DeleteAllPoCRefusals(ctx); err != nil {

@@ -64,10 +64,16 @@ type stubGroupKeeper struct {
 	keeper                 keeper.Keeper
 	excludedMembers        map[string]bool
 	excludedMembersByGroup map[uint64]map[string]bool
+	memberReadsByGroup     map[uint64]int
+	memberUpdatesByGroup   map[uint64]int
 	membersErr             error
 }
 
 func (s *stubGroupKeeper) GroupMembers(ctx context.Context, req *group.QueryGroupMembersRequest) (*group.QueryGroupMembersResponse, error) {
+	if s.memberReadsByGroup == nil {
+		s.memberReadsByGroup = make(map[uint64]int)
+	}
+	s.memberReadsByGroup[req.GroupId]++
 	if s.membersErr != nil {
 		return nil, s.membersErr
 	}
@@ -126,6 +132,10 @@ func (s *stubGroupKeeper) UpdateGroupMembers(_ context.Context, req *group.MsgUp
 	if s.excludedMembersByGroup == nil {
 		s.excludedMembersByGroup = make(map[uint64]map[string]bool)
 	}
+	if s.memberUpdatesByGroup == nil {
+		s.memberUpdatesByGroup = make(map[uint64]int)
+	}
+	s.memberUpdatesByGroup[req.GroupId]++
 	if s.excludedMembersByGroup[req.GroupId] == nil {
 		s.excludedMembersByGroup[req.GroupId] = make(map[string]bool)
 	}
@@ -1150,20 +1160,22 @@ func TestBuildDelegationWeightCalculator_UsesPreviousConfirmedWeights(t *testing
 		},
 	}
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	dwc, err := am.buildDelegationWeightCalculator(
+	previous, err := am.getPreviousConfirmedWeights(ctx)
+	require.NoError(t, err)
+	dwc := am.buildDelegationWeightCalculator(
 		ctx,
 		upcoming,
 		map[string]sdkmath.LegacyDec{"model-a": sdkmath.LegacyOneDec()},
 		params,
+		previous,
 	)
-	require.NoError(t, err)
 
 	require.Equal(t, int64(100), dwc.ConsensusWeights[testutil.Validator])
 	require.Equal(t, int64(20), dwc.ConsensusWeights[testutil.Validator2])
 	require.Equal(t, int64(120), dwc.TotalNetworkWeight)
 }
 
-func TestPrepareEpochParticipationState_PropagatesPreviousWeightError(t *testing.T) {
+func TestGetPreviousConfirmedWeights_PropagatesGroupReadError(t *testing.T) {
 	k, ctx, groupStub := newMinimalInferenceKeeperWithStub(t)
 
 	const epoch = uint64(5)
@@ -1177,16 +1189,8 @@ func TestPrepareEpochParticipationState_PropagatesPreviousWeightError(t *testing
 	})
 	groupStub.membersErr = strconv.ErrSyntax
 
-	params, err := k.GetParams(ctx)
-	require.NoError(t, err)
-
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	_, err = am.prepareEpochParticipationState(
-		ctx,
-		[]*types.ActiveParticipant{{Index: testutil.Validator, Weight: 100}},
-		params,
-		100,
-	)
+	_, err := am.getPreviousConfirmedWeights(ctx)
 	require.ErrorContains(t, err, "load live previous-epoch members")
 }
 
@@ -1244,8 +1248,15 @@ func TestBuildDelegationWeightCalculator_UsesValidationSnapshotForNextEpochVotin
 	}
 
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	dwc, err := am.buildDelegationWeightCalculator(ctx, activeParticipants, map[string]sdkmath.LegacyDec{"model-a": sdkmath.LegacyOneDec()}, params)
+	previous, err := am.getPreviousConfirmedWeights(ctx)
 	require.NoError(t, err)
+	dwc := am.buildDelegationWeightCalculator(
+		ctx,
+		activeParticipants,
+		map[string]sdkmath.LegacyDec{"model-a": sdkmath.LegacyOneDec()},
+		params,
+		previous,
+	)
 	modes := dwc.ResolveGroupParticipation("model-a")
 	require.Equal(t, ModeDelegate, modes[testutil.Validator])
 	require.Equal(t, ModeNone, modes[testutil.Executor2])

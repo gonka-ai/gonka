@@ -39,7 +39,8 @@ import (
 func (am AppModule) applyPreviousConfirmedWeightCap(
 	ctx context.Context,
 	activeParticipants []*types.ActiveParticipant,
-) ([]*types.ActiveParticipant, error) {
+	previous *previousConfirmedWeights,
+) []*types.ActiveParticipant {
 	// Default CapWeight to the real weight for everyone. Consumers read CapWeight,
 	// so it must be populated even on the skip/bootstrap paths below.
 	for _, p := range activeParticipants {
@@ -48,15 +49,11 @@ func (am AppModule) applyPreviousConfirmedWeightCap(
 		}
 	}
 
-	previous, err := am.getPreviousConfirmedWeights(ctx)
-	if err != nil {
-		return nil, err
-	}
 	if previous == nil {
 		// No previous epoch (genesis bootstrap): leave CapWeight == Weight,
 		// otherwise the entire initial validator set would be zeroed.
 		am.LogInfo("Previous-epoch weight cap skipped: no effective epoch yet", types.PoC)
-		return activeParticipants, nil
+		return activeParticipants
 	}
 	prevEpochIndex := previous.epochIndex
 	capByAddress := previous.weights
@@ -97,7 +94,7 @@ func (am AppModule) applyPreviousConfirmedWeightCap(
 		"newParticipantsZeroed", newParticipantsZeroed,
 		"existingParticipantsClamped", existingParticipantsClamped)
 
-	return activeParticipants, nil
+	return activeParticipants
 }
 
 // applyTrustPowerCapping applies the universal concentration policy to the final

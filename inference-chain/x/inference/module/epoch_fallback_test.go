@@ -283,22 +283,14 @@ func TestSeatAndGuard_AllAssignmentsFilteredFallsBackToCurrentEpoch(t *testing.T
 		freshParticipantWithHardware(t, k, ctx, testutil.Executor2, "n1", "model-a", "model-b", 100),
 	}
 
-	result := am.seatAndGuardParticipants(ctx, upcomingEpoch, fresh, participantNodeIDs(fresh))
+	result, usedFallback := am.seatAndGuardParticipants(ctx, upcomingEpoch, fresh, participantNodeIDs(fresh))
 
 	require.Len(t, result, 1)
+	require.True(t, usedFallback)
 	require.Equal(t, carried, result[0].Index, "fallback must re-seat the current epoch validator")
 	require.Equal(t, []string{"model-a"}, result[0].Models)
 	require.Equal(t, int64(70), seatedRawWeight(result[0]))
 	require.Nil(t, findByIndex(result, testutil.Executor2), "zero-seated fresh participant must not survive")
-
-	events := ctx.EventManager().Events()
-	var applied bool
-	for _, e := range events {
-		if e.Type == "empty_epoch_fallback_applied" {
-			applied = true
-		}
-	}
-	require.True(t, applied, "fallback-applied event must be emitted")
 }
 
 // Mixed outcome: participants that keep seated weight survive, zero-seated ones
@@ -315,9 +307,10 @@ func TestSeatAndGuard_MixedRemovesZeroSeatedKeepsOthers(t *testing.T) {
 	zeroed := freshParticipantWithHardware(t, k, ctx, testutil.Executor2, "z1", "model-a", "model-b", 50)
 	fresh := []*types.ActiveParticipant{survivor, zeroed}
 
-	result := am.seatAndGuardParticipants(ctx, upcomingEpoch, fresh, participantNodeIDs(fresh))
+	result, usedFallback := am.seatAndGuardParticipants(ctx, upcomingEpoch, fresh, participantNodeIDs(fresh))
 
 	require.Len(t, result, 1)
+	require.False(t, usedFallback)
 	require.Equal(t, testutil.Executor, result[0].Index)
 	require.Equal(t, int64(100), seatedRawWeight(result[0]))
 
@@ -337,9 +330,10 @@ func TestSeatAndGuard_EmptyComputeFallsBack(t *testing.T) {
 	carried := testutil.Executor
 	setupCarryableCurrentEpoch(t, k, ctx, carried, "model-a", 40)
 
-	result := am.seatAndGuardParticipants(ctx, upcomingEpoch, nil, nil)
+	result, usedFallback := am.seatAndGuardParticipants(ctx, upcomingEpoch, nil, nil)
 
 	require.Len(t, result, 1)
+	require.True(t, usedFallback)
 	require.Equal(t, carried, result[0].Index)
 	require.Equal(t, int64(40), seatedRawWeight(result[0]))
 }
@@ -368,21 +362,13 @@ func TestSeatAndGuard_FallbackHardwareZeroedKeepsCarriedTeam(t *testing.T) {
 		freshParticipantWithHardware(t, k, ctx, testutil.Executor2, "n1", "model-a", "model-b", 100),
 	}
 
-	result := am.seatAndGuardParticipants(ctx, upcomingEpoch, fresh, participantNodeIDs(fresh))
+	result, usedFallback := am.seatAndGuardParticipants(ctx, upcomingEpoch, fresh, participantNodeIDs(fresh))
 
 	require.Len(t, result, 1)
+	require.True(t, usedFallback)
 	require.Equal(t, carried, result[0].Index)
 	require.Equal(t, []string{"model-a"}, result[0].Models)
 	require.Equal(t, int64(70), seatedRawWeight(result[0]))
-
-	var applied bool
-	for _, e := range ctx.EventManager().Events() {
-		require.NotEqual(t, "epoch_error", e.Type, "last-ditch carry must not abort")
-		if e.Type == "empty_epoch_fallback_applied" {
-			applied = true
-		}
-	}
-	require.True(t, applied, "fallback-applied event must be emitted")
 }
 
 func TestSeatAndGuard_PreservedOnlyFallsBackToCurrentEpoch(t *testing.T) {
@@ -401,9 +387,10 @@ func TestSeatAndGuard_PreservedOnlyFallsBackToCurrentEpoch(t *testing.T) {
 		}},
 	}}
 
-	result := am.seatAndGuardParticipants(ctx, upcomingEpoch, preservedOnly, nil)
+	result, usedFallback := am.seatAndGuardParticipants(ctx, upcomingEpoch, preservedOnly, nil)
 
 	require.Len(t, result, 1)
+	require.True(t, usedFallback)
 	require.Equal(t, carried, result[0].Index)
 	require.Nil(t, findByIndex(result, testutil.Executor2), "preserved-only subset must not bypass epoch fallback")
 }
@@ -438,7 +425,7 @@ func TestSeatAndGuard_FreshFilteredPreservedSurvivesFallsBack(t *testing.T) {
 	)
 	computed := []*types.ActiveParticipant{preserved, fresh}
 
-	result := am.seatAndGuardParticipants(
+	result, usedFallback := am.seatAndGuardParticipants(
 		ctx,
 		upcomingEpoch,
 		computed,
@@ -446,6 +433,7 @@ func TestSeatAndGuard_FreshFilteredPreservedSurvivesFallsBack(t *testing.T) {
 	)
 
 	require.Len(t, result, 1)
+	require.True(t, usedFallback)
 	require.Equal(t, carried, result[0].Index)
 	require.Nil(t, findByIndex(result, testutil.Executor2), "surviving preserved node must not mask filtered fresh PoC")
 	require.Nil(t, findByIndex(result, testutil.Validator))

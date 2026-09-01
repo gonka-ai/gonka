@@ -23,9 +23,9 @@ func valOperOf(t *testing.T, accBech32 string) string {
 
 func mustApplyCap(t *testing.T, am AppModule, ctx sdk.Context, participants []*types.ActiveParticipant) []*types.ActiveParticipant {
 	t.Helper()
-	result, err := am.applyPreviousConfirmedWeightCap(ctx, participants)
+	previous, err := am.getPreviousConfirmedWeights(ctx)
 	require.NoError(t, err)
-	return result
+	return am.applyPreviousConfirmedWeightCap(ctx, participants, previous)
 }
 
 func TestApplyPreviousConfirmedWeightCap_ClampsAndZeroes(t *testing.T) {
@@ -228,9 +228,7 @@ func TestApplyPreviousConfirmedWeightCap_MissingPrevGroupErrors(t *testing.T) {
 	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 7))
 
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	_, err := am.applyPreviousConfirmedWeightCap(ctx, []*types.ActiveParticipant{
-		{Index: testutil.Executor, Weight: 300},
-	})
+	_, err := am.getPreviousConfirmedWeights(ctx)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "load live previous-epoch members")
 }
@@ -251,9 +249,7 @@ func TestApplyPreviousConfirmedWeightCap_GroupMembersError(t *testing.T) {
 	})
 
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	_, err := am.applyPreviousConfirmedWeightCap(ctx, []*types.ActiveParticipant{
-		{Index: testutil.Validator, Weight: 100},
-	})
+	_, err := am.getPreviousConfirmedWeights(ctx)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "load live previous-epoch members")
 }
@@ -511,9 +507,7 @@ func TestApplyPreviousConfirmedWeightCap_EpochMismatch(t *testing.T) {
 	}))
 
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	_, err := am.applyPreviousConfirmedWeightCap(ctx, []*types.ActiveParticipant{
-		{Index: testutil.Validator, Weight: 100},
-	})
+	_, err := am.getPreviousConfirmedWeights(ctx)
 	require.Error(t, err)
 	require.ErrorContains(t, err, "previous-confirmed-weight epoch mismatch")
 }

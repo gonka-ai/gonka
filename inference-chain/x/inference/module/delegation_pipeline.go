@@ -35,18 +35,13 @@ func (am AppModule) buildDelegationWeightCalculator(
 	activeParticipants []*types.ActiveParticipant,
 	coefficients map[string]mathsdk.LegacyDec,
 	params types.Params,
-) (*DelegationWeightCalculator, error) {
+	previous *previousConfirmedWeights,
+) *DelegationWeightCalculator {
 	nextEpochDelegations, nextEpochRefusals, found := am.loadRegularDelegationSnapshotState(ctx)
 	if !found {
 		am.LogError("regular delegation snapshot not found", types.PoC, "context", "onEndOfPoCValidationStage")
 		nextEpochDelegations = map[string]map[string]string{}
 		nextEpochRefusals = map[string]map[string]bool{}
-	}
-	// Eligibility and group caps use the same previous confirmed weight that
-	// bounds the upcoming trust weight.
-	previous, err := am.getPreviousConfirmedWeights(ctx)
-	if err != nil {
-		return nil, err
 	}
 	consensusWeights := map[string]int64{}
 	totalWeight := int64(0)
@@ -70,7 +65,7 @@ func (am AppModule) buildDelegationWeightCalculator(
 		Delegations:                nextEpochDelegations,
 		Refusals:                   nextEpochRefusals,
 		Params:                     buildWeightParams(params),
-	}, nil
+	}
 }
 
 type epochParticipationState struct {
@@ -96,12 +91,10 @@ func (am AppModule) prepareEpochParticipationState(
 	activeParticipants []*types.ActiveParticipant,
 	params types.Params,
 	pocStageStartHeight int64,
-) (*epochParticipationState, error) {
+	previous *previousConfirmedWeights,
+) *epochParticipationState {
 	coefficients := modelCoefficients(params.PocParams)
-	calculator, err := am.buildDelegationWeightCalculator(ctx, activeParticipants, coefficients, params)
-	if err != nil {
-		return nil, err
-	}
+	calculator := am.buildDelegationWeightCalculator(ctx, activeParticipants, coefficients, params, previous)
 	eligibleModels := calculator.EligibleGroups()
 	participationByModel := buildParticipationByModel(calculator, eligibleModels)
 
@@ -114,7 +107,7 @@ func (am AppModule) prepareEpochParticipationState(
 
 	bootstrapInputs, found := am.loadBootstrapPenaltyInputs(ctx)
 	if !found {
-		return state, nil
+		return state
 	}
 
 	bootstrapPenaltyByModel, err := am.resolveBootstrapPenaltyModes(
@@ -125,11 +118,11 @@ func (am AppModule) prepareEpochParticipationState(
 	)
 	if err != nil {
 		am.LogError("failed to resolve bootstrap penalty modes; skipping bootstrap penalties", types.PoC, "error", err)
-		return state, nil
+		return state
 	}
 	state.bootstrapPenaltyByModel = bootstrapPenaltyByModel
 
-	return state, nil
+	return state
 }
 
 // buildGroupData constructs GroupData from activeParticipants after model assignment.

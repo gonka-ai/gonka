@@ -19,6 +19,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	authztypes "github.com/cosmos/cosmos-sdk/x/authz"
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"github.com/stretchr/testify/require"
 
@@ -55,6 +56,16 @@ func (noopCollateralKeeper) Slash(
 	mathsdk.Int,
 ) (sdk.Coin, error) {
 	return sdk.Coin{}, nil
+}
+
+type noopAuthzKeeper struct{}
+
+func (noopAuthzKeeper) GranterGrants(context.Context, *authztypes.QueryGranterGrantsRequest) (*authztypes.QueryGranterGrantsResponse, error) {
+	return &authztypes.QueryGranterGrantsResponse{}, nil
+}
+
+func (noopAuthzKeeper) Grants(context.Context, *authztypes.QueryGrantsRequest) (*authztypes.QueryGrantsResponse, error) {
+	return &authztypes.QueryGrantsResponse{}, nil
 }
 
 func TestPoCWeightCalculator_PocValidated_RejectsWhenVotingPowersMissing(t *testing.T) {
@@ -1211,9 +1222,17 @@ func newMinimalInferenceKeeper(t *testing.T) (keeper.Keeper, sdk.Context) {
 }
 
 func newMinimalInferenceKeeperWithStub(t *testing.T) (keeper.Keeper, sdk.Context, *stubGroupKeeper) {
+	return newMinimalInferenceKeeperWithCollateral(t, noopCollateralKeeper{})
+}
+
+func newMinimalInferenceKeeperWithCollateral(
+	t *testing.T,
+	collateralKeeper types.CollateralKeeper,
+) (keeper.Keeper, sdk.Context, *stubGroupKeeper) {
 	t.Helper()
 
 	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	sdk.GetConfig().SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
 
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 	transientStoreKey := storetypes.NewTransientStoreKey(types.TransientStoreKey)
@@ -1250,9 +1269,9 @@ func newMinimalInferenceKeeperWithStub(t *testing.T) (keeper.Keeper, sdk.Context
 		nil,
 		nil,
 		blsKeeper,
-		noopCollateralKeeper{},
+		collateralKeeper,
 		nil,
-		nil,
+		noopAuthzKeeper{},
 		func() wasmkeeper.Keeper { return wasmkeeper.Keeper{} },
 		nil,
 	)
