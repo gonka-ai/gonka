@@ -263,19 +263,22 @@ fleet_volume_ids() {
 }
 
 slot_id() {
-    local slot=$1
-    local ids count
-    ids=$(slot_ids "$slot")
+    local slot=$1 ids count
+    ids=$(slot_ids "$slot") || return 3
     count=$(wc -w <<<"$ids")
-    ((count == 1)) || return 1
+    ((count > 0)) || return 1
+    ((count == 1)) || return 2
     printf '%s\n' "$ids"
 }
 
 slot_ready() {
-    local id state health
-    id=$(slot_id "$1") || return 1
-    read -r state health < <("$docker_bin" inspect --format \
-        '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$id")
+    local id state health details status=0
+    id=$(slot_id "$1") || status=$?
+    ((status == 0)) || return "$status"
+    details=$("$docker_bin" inspect --format \
+        '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+        "$id") || return 2
+    read -r state health <<<"$details"
     [[ $state == running && $health == healthy ]]
 }
 
@@ -295,13 +298,33 @@ urlencode() {
     printf '%s\n' "$output"
 }
 
-slot_route_ready() {
-    local slot=$1 route=$2 id encoded
-    id=$(slot_id "$slot") || return 1
-    slot_ready "$slot" || return 1
+container_route_ready() {
+    local id=$1 route=$2 encoded result
     encoded=$(urlencode "$route")
-    bounded_container_exec "$id" /bin/busybox wget -q -O /dev/null \
-        "http://127.0.0.1:8404/readyz?version=$encoded" 2>/dev/null
+    # A launched shell always reports whether wget reached a ready endpoint.
+    # Failure to launch or complete docker exec remains a distinct diagnostic
+    # error instead of looking like an ordinary 503/not-yet-ready response.
+    result=$(bounded_container_exec "$id" /bin/sh -c '
+        if /bin/busybox wget -q -O /dev/null "$1" 2>/dev/null; then
+            printf ready
+        else
+            printf not-ready
+        fi
+    ' sh "http://127.0.0.1:8404/readyz?version=$encoded") || return 2
+    case $result in
+        ready) return 0 ;;
+        not-ready) return 1 ;;
+        *) return 2 ;;
+    esac
+}
+
+slot_route_ready() {
+    local slot=$1 route=$2 id status=0
+    id=$(slot_id "$slot") || status=$?
+    ((status == 0)) || return "$status"
+    slot_ready "$slot" || status=$?
+    ((status == 0)) || return "$status"
+    container_route_ready "$id" "$route"
 }
 
 slot_catalog_routes() {
@@ -343,9 +366,15 @@ slot_route_declared() {
 }
 
 discover_expected_routes() {
-    local slot route routes id state
+    local slot route routes id state status
     for slot in "${slots[@]}"; do
-        id=$(slot_id "$slot") || continue
+        status=0
+        id=$(slot_id "$slot") || status=$?
+        ((status != 1)) || continue
+        ((status != 2)) || fail \
+            "duplicate containers claim router slot '$slot'"
+        ((status == 0)) || fail \
+            "cannot inventory router slot $slot while routes are collected"
         state=$("$docker_bin" inspect --format '{{.State.Status}}' "$id") || fail \
             "router slot $slot disappeared while its route catalog was collected"
         # Recovery commands must be able to start an existing stopped slot or
@@ -360,7 +389,13 @@ discover_expected_routes() {
             # A removed governance version remains in the monotonic runtime map
             # until replacement. Protect routes that still carry traffic, not
             # stale declarations whose children have already drained.
-            slot_route_ready "$slot" "$route" && expected_routes[$route]=1
+            status=0
+            container_route_ready "$id" "$route" || status=$?
+            if ((status == 0)); then
+                expected_routes[$route]=1
+            elif ((status != 1)); then
+                fail "cannot diagnose route $route readiness on slot $slot"
+            fi
         done <<<"$routes"
     done
     return 0
@@ -397,10 +432,16 @@ slot_front_ip() {
 
 parent_proxy_active() {
     local parent=${PROXY_ROUTER_CONTAINER:-proxy} component
-    component=$("$docker_bin" inspect --format \
+    if component=$("$docker_bin" inspect --format \
         '{{or (index .Config.Labels "ai.gonka.component") ""}}' \
-        "$parent" 2>/dev/null) || return 1
-    [[ $component == proxy-router ]]
+        "$parent" 2>&1); then
+        [[ $component == proxy-router ]]
+        return
+    fi
+    case ${component,,} in
+        *"no such object:"* | *"no such container:"*) return 1 ;;
+    esac
+    fail "cannot inspect parent proxy $parent: $component"
 }
 
 parent_diagnostic_available() {
@@ -643,7 +684,7 @@ wait_parent_admission() {
 
 declare -A admission_required_routes=()
 collect_required_admission_routes() {
-    local route
+    local route ready
 
     admission_required_routes=()
     for route in "$@"; do
@@ -656,7 +697,9 @@ collect_required_admission_routes() {
     # inactive declarations remain optional because VERSIOND_VERSIONS may list
     # protocol versions ahead of governance activation.
     for route in "${!expected_routes[@]}"; do
-        if (( $(route_ready_count "$route") > 0 )); then
+        ready=$(route_ready_count "$route") || fail \
+            "cannot diagnose readiness for route $route"
+        if ((ready > 0)); then
             admission_required_routes[$route]=1
         fi
     done
@@ -734,7 +777,8 @@ wait_version() {
             fi
         done
         if [[ -z $missing ]]; then
-            ready=$(route_ready_count "$route")
+            ready=$(route_ready_count "$route") || fail \
+                "cannot diagnose readiness for route $route"
             if ((ready < min_ready)); then
                 missing="only $ready router slots can serve version $route; need $min_ready"
             fi
@@ -763,34 +807,47 @@ wait_version() {
 }
 
 ready_count_except() {
-    local excluded=${1:-}
-    local slot count=0
+    local excluded=${1:-} slot status count=0
     for slot in "${slots[@]}"; do
         [[ $slot == "$excluded" ]] && continue
-        slot_ready "$slot" && ((count += 1))
+        status=0
+        slot_ready "$slot" || status=$?
+        if ((status == 0)); then
+            ((count += 1))
+        elif ((status != 1)); then
+            return 2
+        fi
     done
     printf '%s\n' "$count"
 }
 
 route_ready_count() {
-    local route=$1 excluded=${2:-}
-    local slot count=0
+    local route=$1 excluded=${2:-} slot status count=0
     for slot in "${slots[@]}"; do
         [[ $slot == "$excluded" ]] && continue
-        slot_route_ready "$slot" "$route" && ((count += 1))
+        status=0
+        slot_route_ready "$slot" "$route" || status=$?
+        if ((status == 0)); then
+            ((count += 1))
+        elif ((status != 1)); then
+            return 2
+        fi
     done
     printf '%s\n' "$count"
 }
 
 require_ready_reserve() {
     local excluded=$1 route total reserve parent_reserve
-    reserve=$(ready_count_except "$excluded")
+    reserve=$(ready_count_except "$excluded") || fail \
+        "cannot diagnose the ready reserve before stopping slot $excluded"
     ((reserve >= min_ready)) || fail \
         "refusing to stop slot $excluded: only $reserve other routers are ready, need $min_ready"
     for route in "${!expected_routes[@]}"; do
-        total=$(route_ready_count "$route")
+        total=$(route_ready_count "$route") || fail \
+            "cannot diagnose readiness for route $route"
         ((total > 0)) || continue
-        reserve=$(route_ready_count "$route" "$excluded")
+        reserve=$(route_ready_count "$route" "$excluded") || fail \
+            "cannot diagnose the route $route reserve"
         ((reserve >= min_ready)) || fail \
             "refusing to stop slot $excluded: version $route has only $reserve other ready routers, need $min_ready"
     done
@@ -800,7 +857,8 @@ require_ready_reserve() {
     [[ $parent_reserve == unknown ]] || ((parent_reserve >= min_ready)) || fail \
         "refusing to stop slot $excluded: parent proxy admits only $parent_reserve other coarse routers, need $min_ready"
     for route in "${!expected_routes[@]}"; do
-        total=$(route_ready_count "$route")
+        total=$(route_ready_count "$route") || fail \
+            "cannot diagnose readiness for route $route"
         ((total > 0)) || continue
         parent_reserve=$(parent_admitted_count "$route" "$excluded")
         [[ $parent_reserve == unknown ]] && continue
@@ -811,7 +869,7 @@ require_ready_reserve() {
 
 wait_slot_routes() {
     local slot=$1 deadline=$((SECONDS + wait_timeout))
-    local route missing reason
+    local route missing reason reserve
     while ((SECONDS < deadline)); do
         missing=
         reason=
@@ -821,7 +879,9 @@ wait_slot_routes() {
                 reason="does not declare"
                 break
             fi
-            if (( $(route_ready_count "$route" "$slot") > 0 )) && \
+            reserve=$(route_ready_count "$route" "$slot") || fail \
+                "cannot diagnose the route $route reserve"
+            if ((reserve > 0)) && \
                 ! slot_route_ready "$slot" "$route"; then
                 missing=$route
                 reason="did not converge"
@@ -836,11 +896,13 @@ wait_slot_routes() {
 }
 
 wait_rollback_routes() {
-    local slot=$1 deadline=$((SECONDS + wait_timeout)) route missing
+    local slot=$1 deadline=$((SECONDS + wait_timeout)) route missing reserve
     while ((SECONDS < deadline)); do
         missing=
         for route in "${!rollback_routes[@]}"; do
-            if (( $(route_ready_count "$route" "$slot") > 0 )) && \
+            reserve=$(route_ready_count "$route" "$slot") || fail \
+                "cannot diagnose the rollback reserve for route $route"
+            if ((reserve > 0)) && \
                 ! slot_route_ready "$slot" "$route"; then
                 missing=$route
                 break
@@ -1400,6 +1462,7 @@ wait_preserved_slot_admission() {
 
 capture_maintenance_state() {
     local slot id image key contract first_contract='' route route_inventory
+    local ready route_status
     local -A candidate_routes_seen=()
     for slot in "${slots[@]}"; do
         id=$(slot_id "$slot") || fail "slot $slot has no unique existing container"
@@ -1422,8 +1485,12 @@ capture_maintenance_state() {
             "cannot capture the route catalog for maintenance slot $slot"
         while read -r route; do
             [[ -n $route ]] || continue
-            if slot_route_ready "$slot" "$route"; then
+            route_status=0
+            slot_route_ready "$slot" "$route" || route_status=$?
+            if ((route_status == 0)); then
                 maintenance_source_routes["$slot:$route"]=1
+            elif ((route_status != 1)); then
+                fail "cannot diagnose source route $route on slot $slot"
             fi
             if [[ -n ${candidate_routes[$route]-} ]] || \
                 ! route_in_static_environment "$route" \
@@ -1434,7 +1501,9 @@ capture_maintenance_state() {
         done <<<"$route_inventory"
     done
     for route in "${!candidate_routes_seen[@]}"; do
-        if (( $(route_ready_count "$route") > 0 )); then
+        ready=$(route_ready_count "$route") || fail \
+            "cannot diagnose maintenance candidate route $route"
+        if ((ready > 0)); then
             maintenance_candidate_routes+=("$route")
         fi
     done

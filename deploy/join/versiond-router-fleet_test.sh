@@ -110,6 +110,22 @@ VERSIOND_NON_HA_VERSIONS=
 VERSIOND_VERSIONS=v4
 EOF
 fleet=(env GONKA_CONFIG_ENV="$tmpdir/config.env" "$script_dir/versiond-router-fleet.sh")
+real_docker=$(command -v docker)
+cat >"$tmpdir/docker-fault" <<EOF
+#!/usr/bin/env bash
+set -Eeuo pipefail
+if [[ \${DOCKER_FAULT_MODE:-} == parent-inspect && \${1:-} == inspect &&
+      \${*: -1} == \${DOCKER_FAULT_PARENT:?} ]]; then
+    echo 'simulated Docker control-plane failure' >&2
+    exit 125
+fi
+if [[ \${DOCKER_FAULT_MODE:-} == route-exec && " \$* " == *'readyz?version='* ]]; then
+    echo 'simulated docker exec failure' >&2
+    exit 125
+fi
+exec "$real_docker" "\$@"
+EOF
+chmod +x "$tmpdir/docker-fault"
 
 fleet_spec=$("${fleet[@]}" spec-hash)
 [[ $fleet_spec =~ ^[0-9a-f]{64}$ ]] || fail \
@@ -203,6 +219,28 @@ docker run -d --name "gonka-router-fleet-backend-$suffix" \
 bootstrap_status=$("${fleet[@]}" status)
 grep -q '^PARENT_ADMISSION not-applicable ' <<<"$bootstrap_status" || fail \
     "fleet status did not distinguish pre-cutover local health from parent admission"
+if DOCKER_BIN="$tmpdir/docker-fault" DOCKER_FAULT_MODE=parent-inspect \
+    DOCKER_FAULT_PARENT="gonka-router-fleet-proxy-$suffix" \
+    "${fleet[@]}" status >"$tmpdir/parent-inspect-failure.out" 2>&1; then
+    fail "fleet status treated a parent Docker failure as not-applicable"
+fi
+grep -q 'cannot inspect parent proxy' "$tmpdir/parent-inspect-failure.out" || fail \
+    "fleet status did not diagnose the parent Docker failure"
+router_ids_before=$(docker ps -aq \
+    --filter label=ai.gonka.component=versiond-router \
+    --filter "label=ai.gonka.fleet=$fleet_id" | sort)
+if DOCKER_BIN="$tmpdir/docker-fault" DOCKER_FAULT_MODE=route-exec \
+    "${fleet[@]}" rollout >"$tmpdir/route-diagnostic-failure.out" 2>&1; then
+    fail "fleet rollout omitted routes after docker exec failed"
+fi
+grep -q 'cannot diagnose route v4 readiness' \
+    "$tmpdir/route-diagnostic-failure.out" || fail \
+    "fleet rollout did not diagnose the route readiness failure"
+router_ids_after=$(docker ps -aq \
+    --filter label=ai.gonka.component=versiond-router \
+    --filter "label=ai.gonka.fleet=$fleet_id" | sort)
+[[ $router_ids_after == "$router_ids_before" ]] || fail \
+    "route diagnostic failure mutated the router fleet"
 for slot in "${slots[@]}"; do
     id=$(docker ps -q \
         --filter label=ai.gonka.component=versiond-router \
