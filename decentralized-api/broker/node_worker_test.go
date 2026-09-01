@@ -716,6 +716,14 @@ func TestNodeWorkGroup_RemoveWorkerDoesNotBlockOnInFlightHTTP(t *testing.T) {
 	gotOther, otherExists := group.GetWorker("other")
 	assert.True(t, otherExists)
 	assert.Equal(t, otherWorker, gotOther)
+
+	accepted := hungWorker.Submit(context.Background(), &TestCommand{
+		ExecuteFn: func(ctx context.Context, w *NodeWorker) NodeResult {
+			t.Error("command must not start after RemoveWorker returns")
+			return NodeResult{Succeeded: true}
+		},
+	})
+	assert.False(t, accepted, "Submit must be rejected as soon as RemoveWorker returns")
 }
 
 func TestNodeWorker_CheckClientVersionAlive(t *testing.T) {

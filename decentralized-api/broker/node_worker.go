@@ -147,15 +147,22 @@ func (w *NodeWorker) submit(ctx context.Context, cmd NodeWorkerCommand, generati
 	}
 }
 
-// Shutdown stops the worker. The in-flight command may still run until its
-// context is cancelled; queued commands are dropped. Safe to call twice.
-func (w *NodeWorker) Shutdown() {
+// signalShutdown marks the worker as stopping and wakes the run loop.
+// It does not wait for in-flight HTTP. Safe to call twice.
+func (w *NodeWorker) signalShutdown() {
 	w.shutdownOnce.Do(func() {
 		w.mu.Lock()
 		w.stopping = true
 		w.mu.Unlock()
 		close(w.shutdown)
 	})
+}
+
+// Shutdown stops the worker and waits for in-flight work to finish.
+// The in-flight command may still run until its context is cancelled;
+// queued commands are dropped. Safe to call twice.
+func (w *NodeWorker) Shutdown() {
+	w.signalShutdown()
 	w.wg.Wait()
 }
 
@@ -232,6 +239,9 @@ func (g *NodeWorkGroup) RemoveWorker(nodeId string) {
 	g.mu.Unlock()
 
 	if exists {
+		// Reject new submits and drop the queue before returning. Wait for
+		// in-flight HTTP in the background so the broker command loop cannot stall.
+		worker.signalShutdown()
 		go worker.Shutdown()
 	}
 }
