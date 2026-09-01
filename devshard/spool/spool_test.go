@@ -174,6 +174,51 @@ func TestSlots_SetMaxKeepsInFlight(t *testing.T) {
 	require.True(t, s.TryAcquire())
 }
 
+func TestSlots_UnlimitedSetMaxKeepsInFlight(t *testing.T) {
+	s := NewSlots(0)
+	require.True(t, s.TryAcquire())
+	require.True(t, s.TryAcquire())
+	max, cur := s.Stats()
+	require.Equal(t, int64(0), max)
+	require.Equal(t, int64(2), cur, "unlimited still tracks holders")
+
+	s.SetMax(1)
+	require.False(t, s.TryAcquire(), "in-flight unlimited holders count against the new cap")
+
+	s.Release()
+	max, cur = s.Stats()
+	require.Equal(t, int64(1), max)
+	require.Equal(t, int64(1), cur)
+	require.False(t, s.TryAcquire(), "one remaining holder still occupies the cap")
+
+	s.Release()
+	require.True(t, s.TryAcquire())
+	require.False(t, s.TryAcquire())
+	s.Release()
+}
+
+func TestCreate_UnlimitedTracksFilesOpen(t *testing.T) {
+	d, err := Open(Config{
+		Path: t.TempDir(), Prefix: "u-", MaxFiles: 0, MaxFileBytes: 1 << 20, AllowUnlimited: true,
+	})
+	require.NoError(t, err)
+	f1, err := d.Create()
+	require.NoError(t, err)
+	defer func() { _ = f1.Close() }()
+	require.Equal(t, int64(1), d.Stats().FilesOpen)
+
+	snap := d.Snapshot()
+	require.NoError(t, d.Reconfigure(Config{
+		Path: snap.Path, Prefix: snap.Prefix, MaxFiles: 1, MaxFileBytes: snap.MaxFileBytes,
+	}))
+	_, err = d.Create()
+	require.ErrorIs(t, err, ErrNoCapacity)
+	require.NoError(t, f1.Close())
+	f2, err := d.Create()
+	require.NoError(t, err)
+	require.NoError(t, f2.Close())
+}
+
 func TestBuffer_SpillAndRoundTrip(t *testing.T) {
 	d, err := Open(Config{Path: t.TempDir(), Prefix: "buf-", MaxFiles: 4, MaxFileBytes: 1 << 20, WriteBuffer: 64 << 10})
 	require.NoError(t, err)

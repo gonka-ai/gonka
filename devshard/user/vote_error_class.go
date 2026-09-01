@@ -53,7 +53,8 @@ func classifyVoteError(err error) string {
 
 func classifyUpstreamStatus(upstream *transport.UpstreamStatusError) string {
 	switch {
-	case upstream.StatusCode == http.StatusNotFound && strings.Contains(upstream.Body, "version"):
+	case upstream.StatusCode == http.StatusNotFound && strings.Contains(upstream.Body, "version"),
+		upstream.StatusCode == http.StatusConflict && strings.Contains(upstream.Body, "session version"):
 		return VoteErrorVersionUnsupported
 	case strings.Contains(upstream.Body, "escrow not found"):
 		return VoteErrorEscrowMissing

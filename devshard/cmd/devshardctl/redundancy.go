@@ -1455,7 +1455,7 @@ func (rw *raceWriter) classifyParseable(parseable []byte) (hasContent, hasError 
 	if len(parseable) == 0 {
 		return false, false
 	}
-	if !rw.inf.logprobsJudged {
+	if !rw.inf.logprobsDecoded {
 		if decoded, found := sseChunkLogprobsDecoded(parseable); found {
 			rw.inf.logprobsJudged, rw.inf.logprobsDecoded = true, decoded
 		}
@@ -2621,11 +2621,11 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 					stopTimer(winnerHardTimeoutTimer)
 					e.recordWinnerTerminalFailureOnce(inf, params, w)
 					// Settled as the failure it is: the caller keeps the answer, the host keeps the strike.
-					e.goTrackedRaceCleanup(func() {
-						e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, w,
+					e.goTrackedRaceCleanup(settleCtx, func(ctx context.Context) {
+						e.finishRaceWhenPendingDone(ctx, attempts, params, decision, w,
 							raceFinishOptions{forceTreatAsFailure: true, recordFailureSamples: true, clientGone: clientFlag})
 					})
-					logRequestStage(settleCtx, "winner_served_without_finish", "escrow", e.devshardID, "winner_nonce", w)
+					logInferenceStage(settleCtx, inf.escrowID, inf.nonce, "winner_served_without_finish", "host", inf.hostID)
 					return nil
 				}
 				if failed {
@@ -4039,8 +4039,8 @@ func (e *Redundancy) recordPostContentWinnerFailureOnce(inf *inflight, params us
 	if e.longResponseFailureExempt(inf) {
 		return
 	}
+	participantKey := e.participantKeyForHost(inf.hostIdx)
 	inf.sampleOnce.Do(func() {
-		participantKey := e.participantKeyForHost(inf.hostIdx)
 		sample := RequestSample{
 			HostIdx:        inf.hostIdx,
 			ParticipantKey: participantKey,
@@ -4056,13 +4056,15 @@ func (e *Redundancy) recordPostContentWinnerFailureOnce(inf *inflight, params us
 			sample.TotalTime = time.Since(inf.sendTime)
 		}
 		e.perf.Record(sample)
-		if e.participantLimiter != nil && e.perf.ParticipantFailureThresholdExceeded(participantKey) {
-			e.participantLimiter.ObserveStalledWinner(participantKey)
-		}
 		if e.metrics != nil {
 			e.metrics.ObserveRequestSample(e.devshardID, sample)
 		}
 	})
+	// Outside the once: the settle path records the same failing sample without ever telling the
+	// limiter, so leaving the strike under it makes quarantine depend on which writer got there first.
+	if e.participantLimiter != nil && e.perf.ParticipantFailureThresholdExceeded(participantKey) {
+		e.participantLimiter.ObserveStalledWinner(participantKey)
+	}
 }
 
 func (e *Redundancy) recordWinnerTerminalFailureOnce(inf *inflight, params user.InferenceParams, winnerNonce uint64) {
@@ -4186,6 +4188,11 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 	captureEmptyStreamAttemptRequest(ctx, e.devshardID, params, attempts, winnerNonce)
 	captureShortContentAttemptRequest(ctx, e.devshardID, params, attempts, winnerNonce)
 	effectiveSuccess := anySucceeded && !opts.forceTreatAsFailure
+	// The caller keeps the answer, but a winner whose nonce never closed is still a fault on the host's
+	// record. Judged here rather than in the doneCh branch, which does not always reach it first.
+	if winner := inflightByNonce(attempts, winnerNonce); deliveredWholeAnswer(winner) && !e.session.IsNonceFinished(winnerNonce) {
+		e.recordWinnerTerminalFailureOnce(winner, params, winnerNonce)
+	}
 	if !effectiveSuccess {
 		if opts.recordFailureSamples {
 			e.recordStartedAttemptSamples(attempts, params, false)
@@ -4223,6 +4230,10 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 						"host", inf.hostID, "reason", "nonce_already_finished")
 					e.recordGatewayTimeoutAction(inf, params, kind, "skipped", "nonce_already_finished")
 					return
+				}
+				// Only knowable here: at the end of the stream the finish is merely late, not missing.
+				if deliveredWholeAnswer(inf) {
+					logInferenceWarn(ctx, inf.escrowID, inf.nonce, "served_without_finish", "host", inf.hostID)
 				}
 				if e.longResponseFailureExempt(inf) {
 					logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_skipped",
