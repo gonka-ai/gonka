@@ -252,7 +252,10 @@ service_instances_match_release() {
 verify_release_application_state() {
     service_instances_match_release versiond "$DEVSHARD_V5_VERSIOND_IMAGE" || return 1
     if [[ $versiond_mode == ha ]]; then
-        service_instances_match_release versiond2 "$DEVSHARD_V5_VERSIOND_IMAGE" || return 1
+        if [[ $versiond2_enabled == true ]]; then
+            service_instances_match_release versiond2 \
+                "$DEVSHARD_V5_VERSIOND_IMAGE" || return 1
+        fi
         verify_shared_postgres_identity || return 1
         if [[ $GONKA_COMPOSE_POSTGRES_MODE == local ]]; then
             service_instances_match_release devshard-postgres \
@@ -277,13 +280,15 @@ verify_shared_postgres_identity() {
         warn "cannot read the database identity through versiond"
         return 1
     }
-    second=$(versiond_storage_identity versiond2) || {
-        warn "cannot read the database identity through versiond2"
-        return 1
-    }
-    if [[ $first != "$second" ]]; then
-        warn "versiond replicas use different PostgreSQL databases ($first != $second)"
-        return 1
+    if [[ $versiond2_enabled == true ]]; then
+        second=$(versiond_storage_identity versiond2) || {
+            warn "cannot read the database identity through versiond2"
+            return 1
+        }
+        if [[ $first != "$second" ]]; then
+            warn "versiond replicas use different PostgreSQL databases ($first != $second)"
+            return 1
+        fi
     fi
     if [[ -f $upgrade_journal ]] && jq -e 'type == "object"' \
 		"$upgrade_journal" >/dev/null 2>&1; then
@@ -609,6 +614,17 @@ fi
 devshard_v5_report_compose_files "$script_dir" "${GONKA_COMPOSE_FILES[@]}"
 devshard_v5_verify_capacity "$config_dir" "$strict_capacity"
 effective_compose_config=$("${GONKA_COMPOSE_COMMAND[@]}" config --format json)
+versiond2_enabled=false
+if [[ $versiond_mode == ha ]]; then
+    versiond2_replicas=$(jq -r \
+        '.services.versiond2.deploy.replicas // 1' \
+        <<<"$effective_compose_config")
+    case $versiond2_replicas in
+        0) ;;
+        1) versiond2_enabled=true ;;
+        *) fail "effective Compose model must run zero or one versiond2 replica" ;;
+    esac
+fi
 compose_config_sha=$(
     jq -Sc . <<<"$effective_compose_config" | sha256sum | awk '{print $1}'
 )
@@ -791,6 +807,11 @@ if [[ $existing_proxy_component == proxy-router || \
     fi
 
     day2_reconcile=true
+fi
+
+if [[ $versiond_mode == ha && $versiond2_enabled == false && \
+    $day2_reconcile == false ]]; then
+    fail "VERSIOND2_REPLICAS=0 is supported after the HA release is committed; restore it to 1 for the one-time v5 cutover"
 fi
 
 if [[ $versiond_mode == ha ]]; then
@@ -1729,7 +1750,8 @@ trap 'handle_exit $?' EXIT
 
 services=(versiond)
 if [[ $versiond_mode == ha ]]; then
-    services+=(versiond2 versiond-router)
+    [[ $versiond2_enabled == false ]] || services+=(versiond2)
+    services+=(versiond-router)
 fi
 if [[ $day2_reconcile == true && $versiond_mode == ha && \
     $GONKA_COMPOSE_POSTGRES_MODE == local ]]; then
@@ -1741,7 +1763,8 @@ done
 
 pull_services=(versiond)
 if [[ $versiond_mode == ha ]]; then
-    pull_services+=(versiond2 versiond-router)
+    [[ $versiond2_enabled == false ]] || pull_services+=(versiond2)
+    pull_services+=(versiond-router)
     [[ $GONKA_COMPOSE_POSTGRES_MODE != local ]] || \
         pull_services+=(devshard-postgres)
 fi
@@ -1764,7 +1787,10 @@ if [[ $day2_reconcile == true ]]; then
             "$(service_startup_timeout devshard-postgres)" rollback
     fi
     if [[ $versiond_mode == ha ]]; then
-        replace_service versiond2 "$(service_startup_timeout versiond2)" rollback
+        if [[ $versiond2_enabled == true ]]; then
+            replace_service versiond2 \
+                "$(service_startup_timeout versiond2)" rollback
+        fi
         replace_service versiond "$(service_startup_timeout versiond)" rollback
     else
         replace_service versiond "$(service_startup_timeout versiond)" rollback

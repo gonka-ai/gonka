@@ -416,6 +416,8 @@ for arg in "$@"; do
             --arg postgres_image "${DEVSHARD_POSTGRES_IMAGE-}" \
 			--arg versiond_image "${VERSIOND_IMAGE-}" \
 			--arg router_image "${VERSIOND_ROUTER_IMAGE-}" \
+            --argjson versiond2_replicas \
+                "${RENDERED_VERSIOND2_REPLICAS:-1}" \
             --arg pg2db "${RENDERED_PGDATABASE2:-devshardd}" \
             --arg join "$JOIN_DIR" \
 			--arg postgres_dir "$FAKE_POSTGRES_DIR" \
@@ -437,7 +439,7 @@ for arg in "$@"; do
                 "proxy-policy":{},
                 "proxy-policy2":{},
 				versiond:{container_name:"versiond",image:$versiond_image,environment:{DATABASE_URL:$database_url,PGSERVICE:$pgservice,PGSERVICEFILE:$pgservicefile,PGOPTIONS:$pgoptions,PGHOST:$pg,PGDATABASE:"devshardd",PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
-				versiond2:{container_name:"versiond2",image:$versiond_image,environment:{DATABASE_URL:$database_url,PGSERVICE:$pgservice,PGSERVICEFILE:$pgservicefile,PGOPTIONS:$pgoptions2,PGHOST:$pg,PGDATABASE:$pg2db,PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
+				versiond2:{container_name:"versiond2",image:$versiond_image,deploy:{replicas:$versiond2_replicas},environment:{DATABASE_URL:$database_url,PGSERVICE:$pgservice,PGSERVICEFILE:$pgservicefile,PGOPTIONS:$pgoptions2,PGHOST:$pg,PGDATABASE:$pg2db,PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
 				"versiond-router":{container_name:"versiond-router",image:$router_image},
                 "devshard-postgres":{container_name:"devshard-postgres",image:$postgres_image,volumes:[{type:"bind",source:$postgres_dir,target:"/var/lib/postgresql/gonka"}]},
                 "edge-api":{container_name:"edge-api"},
@@ -1564,6 +1566,33 @@ grep -q '^enable-router-fleet 00000000000000000000000000000000000000000000000000
     "outer upgrade did not bind ingress to its router fleet specification"
 grep -q 'release state is converged' "$tmpdir/recovered-marker.stdout" || fail \
     "marker recovery was not reported"
+
+# A permanently decommissioned second member remains part of the Compose
+# model with replicas=0. Day-2 reconciliation must neither recreate it nor
+# require it as a PostgreSQL identity witness.
+cp "$tmpdir/upgrade-complete" "$tmpdir/enabled-versiond2-marker"
+mkdir -p "$tmpdir/decommissioned-versiond2.state"
+ASSUME_RELEASE_STATE=true \
+RENDERED_VERSIOND2_REPLICAS=0 \
+DOCKER_BIN="$tmpdir/docker" \
+DOCKER_LOG="$tmpdir/decommissioned-versiond2.log" \
+EXISTING_PROXY_COMPONENT=proxy-router \
+EXISTING_CONTAINERS="versiond devshard-postgres edge-api proxy proxy-policy" \
+FAKE_STATE_DIR="$tmpdir/decommissioned-versiond2.state" \
+JOIN_DIR="$script_dir" \
+GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/upgrade-devshard-v5.sh" \
+    --versiond-mode ha --edge-mode single \
+    >"$tmpdir/decommissioned-versiond2.stdout" \
+    2>"$tmpdir/decommissioned-versiond2.stderr"
+assert_not_contains "$tmpdir/decommissioned-versiond2.log" \
+    "--wait-timeout 2100 versiond2"
+assert_not_contains "$tmpdir/decommissioned-versiond2.log" \
+    " pull versiond2"
+grep -q 'release state is converged' \
+    "$tmpdir/decommissioned-versiond2.stdout" || fail \
+    "day-2 reconciliation failed after permanent versiond2 decommission"
+mv "$tmpdir/enabled-versiond2-marker" "$tmpdir/upgrade-complete"
 
 # Recovery of an already active ingress transaction must precede upgrade
 # preflight and every slow application `up --wait`; otherwise a missing public

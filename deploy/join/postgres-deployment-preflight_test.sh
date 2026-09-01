@@ -17,8 +17,15 @@ write_config() {
     local first_host=${3:-pg} second_host=${4:-${3:-pg}}
     local first_pool=${RENDERED_POOL_ONE:-4}
     local second_pool=${RENDERED_POOL_TWO:-$first_pool}
+    local postgres_service=
+    if [[ ${INCLUDE_POSTGRES:-false} == true ]]; then
+        postgres_service=',"devshard-postgres":{"environment":{'\
+'"POSTGRES_DB":"'"${RENDERED_POSTGRES_DB:-devshardd}"'",'\
+'"POSTGRES_USER":"'"${RENDERED_POSTGRES_USER:-user}"'",'\
+'"POSTGRES_PASSWORD":"'"${RENDERED_POSTGRES_PASSWORD:-secret}"'"}}'
+    fi
     cat >"$tmpdir/config.json" <<EOF
-{"name":"preflight-test","services":{"versiond":{"environment":{"DEVSHARD_STORAGE_MODE":"postgres","PGHOST":"$first_host","PGPORT":"5432","PGDATABASE":"devshardd","PGUSER":"user","PGPASSWORD":"${RENDERED_PASSWORD_ONE:-secret}","PG_POOL_MAX_CONNS":"$first_pool"$first_extra}},"versiond2":{"environment":{"DEVSHARD_STORAGE_MODE":"postgres","PGHOST":"$second_host","PGPORT":"5432","PGDATABASE":"devshardd","PGUSER":"user","PGPASSWORD":"${RENDERED_PASSWORD_TWO:-${RENDERED_PASSWORD_ONE:-secret}}","PG_POOL_MAX_CONNS":"$second_pool"$second_extra}}}}
+{"name":"preflight-test","services":{"versiond":{"deploy":{"replicas":${VERSIOND_REPLICAS:-1}},"environment":{"DEVSHARD_STORAGE_MODE":"postgres","PGHOST":"$first_host","PGPORT":"5432","PGDATABASE":"devshardd","PGUSER":"user","PGPASSWORD":"${RENDERED_PASSWORD_ONE:-secret}","PG_POOL_MAX_CONNS":"$first_pool"$first_extra}},"versiond2":{"deploy":{"replicas":${VERSIOND2_REPLICAS:-1}},"environment":{"DEVSHARD_STORAGE_MODE":"postgres","PGHOST":"$second_host","PGPORT":"5432","PGDATABASE":"devshardd","PGUSER":"user","PGPASSWORD":"${RENDERED_PASSWORD_TWO:-${RENDERED_PASSWORD_ONE:-secret}}","PG_POOL_MAX_CONNS":"$second_pool"$second_extra}}$postgres_service}}
 EOF
 }
 
@@ -34,7 +41,9 @@ elif [[ $1 == compose && " $* " == *" ps "* && " $* " == *" -q "* ]]; then
     case $LIVE_MODE:$service in
         both:versiond) printf 'container-1\n' ;;
         both:versiond2) printf 'container-2\n' ;;
+        both:devshard-postgres) printf 'postgres-container\n' ;;
         one:versiond) printf 'container-1\n' ;;
+        one:devshard-postgres) printf 'postgres-container\n' ;;
     esac
 elif [[ $1 == inspect ]]; then
     container=${*: -1}
@@ -42,21 +51,31 @@ elif [[ $1 == inspect ]]; then
         echo 'simulated Docker daemon inspect failure' >&2
         exit 1
     }
-    runtime_host=pg
-    [[ $container != container-2 ]] || runtime_host=$RUNTIME_HOST_TWO
-    runtime_pool=$RUNTIME_POOL_ONE
-    [[ $container != container-2 ]] || runtime_pool=$RUNTIME_POOL_TWO
-    runtime_password=$RUNTIME_PASSWORD_ONE
-    [[ $container != container-2 ]] || runtime_password=$RUNTIME_PASSWORD_TWO
-    jq -cn \
-        --arg host "$runtime_host" \
-        --arg pool "$runtime_pool" \
-        --arg password "$runtime_password" \
-        --arg extra "${RUNTIME_EXTRA:-}" '
-        ["DEVSHARD_STORAGE_MODE=postgres", "PGHOST=" + $host, "PGPORT=5432",
-         "PGDATABASE=devshardd", "PGUSER=user", "PGPASSWORD=" + $password,
-         "PG_POOL_MAX_CONNS=" + $pool]
-        + (if $extra == "" then [] else [$extra] end)'
+    if [[ $container == postgres-container ]]; then
+        jq -cn \
+            --arg database "$RUNTIME_POSTGRES_DB" \
+            --arg user "$RUNTIME_POSTGRES_USER" \
+            --arg password "$RUNTIME_POSTGRES_PASSWORD" '
+            ["POSTGRES_DB=" + $database, "POSTGRES_USER=" + $user,
+             "POSTGRES_PASSWORD=" + $password]'
+    else
+        runtime_host=pg
+        [[ $container != container-2 ]] || runtime_host=$RUNTIME_HOST_TWO
+        runtime_pool=$RUNTIME_POOL_ONE
+        [[ $container != container-2 ]] || runtime_pool=$RUNTIME_POOL_TWO
+        runtime_password=$RUNTIME_PASSWORD_ONE
+        [[ $container != container-2 ]] || runtime_password=$RUNTIME_PASSWORD_TWO
+        jq -cn \
+            --arg host "$runtime_host" \
+            --arg pool "$runtime_pool" \
+            --arg password "$runtime_password" \
+            --arg extra "${RUNTIME_EXTRA:-}" '
+            ["DEVSHARD_STORAGE_MODE=postgres", "PGHOST=" + $host,
+             "PGPORT=5432", "PGDATABASE=devshardd", "PGUSER=user",
+             "PGPASSWORD=" + $password]
+            + (if $pool == "" then [] else ["PG_POOL_MAX_CONNS=" + $pool] end)
+            + (if $extra == "" then [] else [$extra] end)'
+    fi
 elif [[ $1 == exec ]]; then
     container=$2
     case $PROOF_API_MODE in
@@ -174,6 +193,9 @@ run_preflight() {
         RUNTIME_POOL_TWO="${RUNTIME_POOL_TWO-4}" \
         RUNTIME_PASSWORD_ONE="${RUNTIME_PASSWORD_ONE:-secret}" \
         RUNTIME_PASSWORD_TWO="${RUNTIME_PASSWORD_TWO:-secret}" \
+        RUNTIME_POSTGRES_DB="${RUNTIME_POSTGRES_DB:-devshardd}" \
+        RUNTIME_POSTGRES_USER="${RUNTIME_POSTGRES_USER:-user}" \
+        RUNTIME_POSTGRES_PASSWORD="${RUNTIME_POSTGRES_PASSWORD:-secret}" \
         PROOF_POOL_ONE="${PROOF_POOL_ONE:-4}" \
         PROOF_POOL_TWO="${PROOF_POOL_TWO:-4}" \
         SERVER_MAX_ONE="${SERVER_MAX_ONE:-100}" \
@@ -253,6 +275,17 @@ grep -q 'must use the same PG_POOL_MAX_CONNS' "$tmpdir/err" || fail \
     "rendered PostgreSQL pool-limit mismatch was not diagnosed"
 write_config
 
+RENDERED_PASSWORD_TWO=other-secret
+export RENDERED_PASSWORD_TWO
+write_config
+if run_preflight --compose-only >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "different rendered PostgreSQL passwords were accepted"
+fi
+unset RENDERED_PASSWORD_TWO
+grep -q 'same non-empty PGPASSWORD' "$tmpdir/err" || fail \
+    "rendered PostgreSQL password mismatch was not diagnosed"
+write_config
+
 if run_preflight --expected-identity other-database \
     >"$tmpdir/out" 2>"$tmpdir/err"; then
     fail "an unexpected live database lineage was accepted"
@@ -310,7 +343,49 @@ RUNTIME_POOL_TWO=
 export RUNTIME_POOL_ONE RUNTIME_POOL_TWO
 run_preflight --runtime-contract-only >"$tmpdir/out" 2>"$tmpdir/err" || fail \
     "v4 replicas without PG_POOL_MAX_CONNS were rejected"
+
+PROOF_POOL_ONE=16
+PROOF_POOL_TWO=16
+SERVER_MAX_ONE=60
+SERVER_MAX_TWO=60
+export PROOF_POOL_ONE PROOF_POOL_TWO SERVER_MAX_ONE SERVER_MAX_TWO
+if run_preflight >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "a CPU-sized v4 pool was undercounted as the v5 default"
+fi
+grep -q 'connection budget is insufficient: 58 required' "$tmpdir/err" || fail \
+    "CPU-sized v4 pool was not included in rolling overlap capacity"
+SERVER_MAX_ONE=61
+SERVER_MAX_TWO=61
+run_preflight >"$tmpdir/cpu-sized-pool" || fail \
+    "exact capacity for CPU-sized v4 pools was rejected"
+unset PROOF_POOL_ONE PROOF_POOL_TWO SERVER_MAX_ONE SERVER_MAX_TWO
 unset RUNTIME_POOL_ONE RUNTIME_POOL_TWO
+
+INCLUDE_POSTGRES=true
+export INCLUDE_POSTGRES
+write_config
+run_preflight --runtime-contract-only >"$tmpdir/local-contract" || fail \
+    "matching bundled PostgreSQL identity and credentials were rejected"
+
+RUNTIME_POSTGRES_USER=other-user
+export RUNTIME_POSTGRES_USER
+if run_preflight --runtime-contract-only >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "runtime POSTGRES_USER drift was accepted"
+fi
+unset RUNTIME_POSTGRES_USER
+grep -q "has POSTGRES_USER='other-user'" "$tmpdir/err" || fail \
+    "runtime PostgreSQL user drift was not diagnosed"
+
+RENDERED_POSTGRES_PASSWORD=other-secret
+export RENDERED_POSTGRES_PASSWORD
+write_config
+if run_preflight --compose-only >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "bundled PostgreSQL password different from versiond was accepted"
+fi
+unset RENDERED_POSTGRES_PASSWORD INCLUDE_POSTGRES
+grep -q 'POSTGRES_PASSWORD must match versiond PGPASSWORD' "$tmpdir/err" || fail \
+    "rendered bundled PostgreSQL password mismatch was not diagnosed"
+write_config
 
 RUNTIME_PASSWORD_TWO=old-secret
 export RUNTIME_PASSWORD_TWO
@@ -447,7 +522,7 @@ if run_preflight >"$tmpdir/out" 2>"$tmpdir/err"; then
     fail "preflight passed with only one versiond replica"
 fi
 unset LIVE_MODE
-grep -q 'has only one running versiond replica' "$tmpdir/err" || fail \
+grep -q 'has no running versiond2 replica' "$tmpdir/err" || fail \
     "partial-replica failure was not diagnosed"
 
 write_config
@@ -460,14 +535,18 @@ grep -q 'Compose topology has no versiond2 service' "$tmpdir/err" || fail \
     "missing versiond2 service was not diagnosed"
 
 write_config
-jq '.services.versiond2.deploy.replicas = 0' "$tmpdir/config.json" \
-    >"$tmpdir/config-with-disabled-versiond2.json"
-mv "$tmpdir/config-with-disabled-versiond2.json" "$tmpdir/config.json"
-if run_preflight --compose-only >"$tmpdir/out" 2>"$tmpdir/err"; then
-    fail "Compose topology with VERSIOND2_REPLICAS=0 was accepted"
-fi
-grep -q 'must run exactly one versiond2 replica' "$tmpdir/err" || fail \
-    "disabled versiond2 replica was not diagnosed before mutation"
+VERSIOND2_REPLICAS=0
+export VERSIOND2_REPLICAS
+write_config
+run_preflight --compose-only >"$tmpdir/decommissioned-compose" || fail \
+    "documented VERSIOND2_REPLICAS=0 topology was rejected"
+run_preflight >"$tmpdir/decommissioned-live" || fail \
+    "live proof rejected a permanently decommissioned versiond2"
+[[ $(grep -c ' write ' "$tmpdir/challenge.log") -eq 1 ]] || fail \
+    "decommissioned versiond2 was included as a challenge writer"
+[[ $(grep -c ' read ' "$tmpdir/challenge.log") -eq 2 ]] || fail \
+    "single-member storage challenge did not complete"
+unset VERSIOND2_REPLICAS
 
 real_docker_bin=${REAL_DOCKER_BIN:-docker}
 command -v "$real_docker_bin" >/dev/null 2>&1 || fail \
