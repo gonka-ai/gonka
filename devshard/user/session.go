@@ -287,11 +287,10 @@ type Session struct {
 	heightSyncK     uint64
 	heightSyncSlots uint64
 
-	heartbeatCfg     heightsync.HeartbeatConfig
-	heartbeat        *heightsync.Heartbeat
-	turnTracker      *heightsync.TurnTracker
-	observedHeight   func() (height uint64, hash []byte, ok bool)
-	heartbeatTurnSeq uint64 // producer counter; RecoverSession restores from SM MaxTurnSeq
+	heartbeatCfg   heightsync.HeartbeatConfig
+	heartbeat      *heightsync.Heartbeat
+	turnTracker    *heightsync.TurnTracker
+	observedHeight func() (height uint64, hash []byte, ok bool)
 	// heartbeatFlushLeft is the number of ack-carrying rounds still owed to the
 	// open turn. The heartbeat cadence is wall clock, so the producer does not
 	// wait for a block tick to collect acks.
@@ -1760,7 +1759,7 @@ func devshardTxKey(tx *types.DevshardTx) string {
 		if inner.HeightAck == nil {
 			return ""
 		}
-		return fmt.Sprintf("height_ack:%d:%d", inner.HeightAck.TurnSeq, inner.HeightAck.SlotId)
+		return fmt.Sprintf("height_ack:%d:%d", inner.HeightAck.RefNonce, inner.HeightAck.SlotId)
 	default:
 		return ""
 	}

@@ -417,7 +417,7 @@ func TestPendingTxDedupKeys_HostProposedIdentity(t *testing.T) {
 		{
 			name: "height_ack",
 			tx: &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{
-				HeightAck: &types.MsgHeightAck{TurnSeq: 5, SlotId: 2},
+				HeightAck: &types.MsgHeightAck{RefNonce: 5, SlotId: 2},
 			}},
 			key: "height_ack:5:2",
 		},
@@ -451,19 +451,19 @@ func TestPendingTxDedupKeys_HostProposedIdentity(t *testing.T) {
 	}
 
 	session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{
-		HeightAck: &types.MsgHeightAck{TurnSeq: 5, SlotId: 3},
+		HeightAck: &types.MsgHeightAck{RefNonce: 5, SlotId: 3},
 	}})
 	session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{
-		HeightAck: &types.MsgHeightAck{TurnSeq: 6, SlotId: 2},
+		HeightAck: &types.MsgHeightAck{RefNonce: 6, SlotId: 2},
 	}})
 	require.Len(t, session.PendingTxs(), 2,
-		"height ack dedup identity is turn_seq plus slot")
+		"height ack dedup identity is ref_nonce plus slot")
 
 	unkeyedStart := &types.DevshardTx{Tx: &types.DevshardTx_StartInference{
 		StartInference: &types.MsgStartInference{InferenceId: 7},
 	}}
 	unkeyedHeartbeat := &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{
-		Heartbeat: &types.MsgHeartbeat{TurnSeq: 5, SlotsNum: 3},
+		Heartbeat: &types.MsgHeartbeat{SlotsNum: 3},
 	}}
 	require.Empty(t, devshardTxKey(unkeyedStart))
 	require.Empty(t, devshardTxKey(unkeyedHeartbeat))
@@ -489,7 +489,7 @@ func TestHostMayProposeTx(t *testing.T) {
 		FinalizeRound: &types.MsgFinalizeRound{},
 	}}))
 	require.False(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{
-		Heartbeat: &types.MsgHeartbeat{TurnSeq: 1},
+		Heartbeat: &types.MsgHeartbeat{},
 	}}))
 	require.False(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_ForceHeightSyncTurn{
 		ForceHeightSyncTurn: &types.MsgForceHeightSyncTurn{TriggerNonce: 1},
@@ -512,7 +512,7 @@ func TestHostMayProposeTx(t *testing.T) {
 		ValidationVote: &types.MsgValidationVote{InferenceId: 1, VoterSlot: 2},
 	}}))
 	require.True(t, hostMayProposeTx(&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{
-		HeightAck: &types.MsgHeightAck{TurnSeq: 1, SlotId: 0},
+		HeightAck: &types.MsgHeightAck{RefNonce: 1, SlotId: 0},
 	}}))
 }
 
@@ -548,7 +548,7 @@ func TestProcessResponse_DropsUserProposedMempoolTxs(t *testing.T) {
 		FinalizeRound: &types.MsgFinalizeRound{},
 	}}
 	honestAck := &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{
-		HeightAck: &types.MsgHeightAck{TurnSeq: 1, SlotId: 0},
+		HeightAck: &types.MsgHeightAck{RefNonce: 1, SlotId: 0},
 	}}
 
 	err = session.ProcessResponse(0, &host.HostResponse{
@@ -825,7 +825,7 @@ func TestProcessResponse_DropsHostTxForUnknownInference(t *testing.T) {
 				InferenceId: unknownID, VoterSlot: 0,
 			}}},
 			// Slot-scoped txs carry no inference id and must be unaffected.
-			{Tx: &types.DevshardTx_HeightAck{HeightAck: &types.MsgHeightAck{TurnSeq: 1, SlotId: 0}}},
+			{Tx: &types.DevshardTx_HeightAck{HeightAck: &types.MsgHeightAck{RefNonce: 1, SlotId: 0}}},
 		},
 	}, nonce))
 
@@ -1007,10 +1007,10 @@ func findPendingFinalize(txs []*types.DevshardTx) *types.MsgFinalizeRound {
 	return nil
 }
 
-func findPendingHeightAck(txs []*types.DevshardTx, turnSeq uint64, slotID uint32) *types.MsgHeightAck {
+func findPendingHeightAck(txs []*types.DevshardTx, refNonce uint64, slotID uint32) *types.MsgHeightAck {
 	for _, tx := range txs {
 		ack := tx.GetHeightAck()
-		if ack != nil && ack.TurnSeq == turnSeq && ack.SlotId == slotID {
+		if ack != nil && ack.RefNonce == refNonce && ack.SlotId == slotID {
 			return ack
 		}
 	}

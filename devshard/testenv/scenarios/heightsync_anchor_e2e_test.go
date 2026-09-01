@@ -734,7 +734,6 @@ func repairTimingHeartbeatDiff(t *testing.T, signer signing.Signer, nonce, turnS
 	t.Helper()
 	return testutil.SignDiff(t, signer, "9003", nonce, []*types.DevshardTx{{
 		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-			TurnSeq:           turnSeq,
 			ObservedHeight:    height,
 			ObservedBlockHash: []byte{0xaa},
 			SlotsNum:          4,
@@ -748,14 +747,13 @@ func repairTimingHeartbeatDiff(t *testing.T, signer signing.Signer, nonce, turnS
 func repairTimingWindowClosedDiff(t *testing.T, user, hostSigner signing.Signer, nonce, ackHeight uint64) types.Diff {
 	t.Helper()
 	ack := &types.MsgHeightAck{
-		TurnSeq: 2, RefNonce: nonce, SlotId: 0,
+		RefNonce: nonce, SlotId: 0,
 		ObservedHeight: ackHeight, ObservedBlockHash: []byte{0xaa},
 		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
 	}
 	require.NoError(t, heightsync.SignAck(hostSigner, ack))
 	return testutil.SignDiff(t, user, "9003", nonce, []*types.DevshardTx{
 		{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-			TurnSeq:  2,
 			SlotsNum: 4,
 			Reason:   string(heightsync.ReasonQuietSession),
 		}}},
@@ -1727,7 +1725,6 @@ func TestHeightSyncAnchor_E2E_HTTPRestartDurableHeightAckDedupBeforeNextHeartbea
 	ackDiffs := st.Session.Diffs()
 	acks := heightAcksInScenarioDiffs(ackDiffs)
 	require.Len(t, acks, 1)
-	require.Equal(t, uint64(1), acks[0].TurnSeq)
 	require.Equal(t, uint32(0), acks[0].SlotId)
 	require.Equal(t, uint64(2), st.Session.Nonce())
 
@@ -1753,13 +1750,14 @@ func TestHeightSyncAnchor_E2E_HTTPRestartDurableHeightAckDedupBeforeNextHeartbea
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
 	var oldTurnAcks []*types.MsgHeightAck
 	var newTurnAcks []*types.MsgHeightAck
+	// ref_nonce names the turn now. The pre-restart ack answers the heartbeat at
+	// acks[0].RefNonce; anything answering a later nonce belongs to the fresh turn.
 	for _, ack := range heightAcksInScenarioDiffs(recovered.Diffs()) {
-		switch ack.TurnSeq {
-		case 1:
+		if ack.RefNonce == acks[0].RefNonce {
 			oldTurnAcks = append(oldTurnAcks, ack)
-		case 2:
-			newTurnAcks = append(newTurnAcks, ack)
+			continue
 		}
+		newTurnAcks = append(newTurnAcks, ack)
 	}
 	require.Empty(t, oldTurnAcks, "next heartbeat must not re-flush the old durable ack")
 	require.Len(t, newTurnAcks, 1, "fresh heartbeat may carry its own new ack")

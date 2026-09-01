@@ -84,13 +84,13 @@ func (p *repairPair) applyHeartbeatSpan(t *testing.T) {
 	hash := []byte{0xaa}
 	d1 := testutil.SignDiff(t, p.user, "escrow-1", 1, []*types.DevshardTx{{
 		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-			TurnSeq: 1, ObservedHeight: 500, ObservedBlockHash: hash, SlotsNum: 2,
+			ObservedHeight: 500, ObservedBlockHash: hash, SlotsNum: 2,
 			Reason: string(heightsync.ReasonQuietSession),
 		}},
 	}})
 	d2 := testutil.SignDiff(t, p.user, "escrow-1", 2, []*types.DevshardTx{{
 		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-			TurnSeq: 1, ObservedHeight: 500, ObservedBlockHash: hash, SlotsNum: 2,
+			ObservedHeight: 500, ObservedBlockHash: hash, SlotsNum: 2,
 			Reason: string(heightsync.ReasonQuietSession),
 		}},
 	}})
@@ -108,7 +108,7 @@ func (p *repairPair) applyWindowClosedStamp(t *testing.T) {
 	t.Helper()
 	past := uint64(pastAckWindow())
 	ack := &types.MsgHeightAck{
-		TurnSeq: 1, RefNonce: 1, SlotId: 0,
+		RefNonce: 1, SlotId: 0,
 		ObservedHeight: past, ObservedBlockHash: []byte{0xaa},
 		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
 	}
@@ -239,7 +239,7 @@ func TestRepairProbe_OracleAheadDoesNotDegradeOpenTurn(t *testing.T) {
 
 func TestHandleHeightSyncRepair_RejectsUser(t *testing.T) {
 	p := setupRepairPair(t)
-	req := heightsync.RepairRequest{TurnSeq: 1, RequesterSlot: 0}
+	req := heightsync.RepairRequest{TurnStart: 1, RequesterSlot: 0}
 	body, err := json.Marshal(req)
 	require.NoError(t, err)
 
@@ -260,7 +260,7 @@ func TestHandleHeightSyncRepair_RejectsUser(t *testing.T) {
 func TestHandleHeightSyncRepair_RejectsUnsignedDomain(t *testing.T) {
 	p := setupRepairPair(t)
 	req := &heightsync.RepairRequest{
-		TurnSeq: 1, RefNonce: 1, RequesterSlot: 0,
+		TurnStart: 1, RefNonce: 1, RequesterSlot: 0,
 		ObservedHeight: 500, ObservedBlockHash: []byte{0xaa},
 	}
 	body, err := json.Marshal(req)
@@ -301,7 +301,7 @@ func (p *repairPair) postSignedRepair(t *testing.T, from, to int, req *heightsyn
 func TestHandleHeightSyncRepair_UnknownTurnSkipsOracle(t *testing.T) {
 	p := setupRepairPair(t)
 	req := &heightsync.RepairRequest{
-		TurnSeq: 1, RefNonce: 1, RequesterSlot: 0,
+		TurnStart: 1, RefNonce: 1, RequesterSlot: 0,
 		ObservedHeight: 500, ObservedBlockHash: []byte{0xaa},
 	}
 	rec := p.postSignedRepair(t, 0, 1, req)
@@ -317,7 +317,7 @@ func TestHandleHeightSyncRepair_FloodBoundsOracleReads(t *testing.T) {
 	before := p.oracles[1].LatestCalls()
 
 	req := &heightsync.RepairRequest{
-		TurnSeq: 1, RefNonce: 1, RequesterSlot: 0,
+		TurnStart: 1, RefNonce: 1, RequesterSlot: 0,
 		ObservedHeight: 500, ObservedBlockHash: []byte{0xaa},
 	}
 	first := p.postSignedRepair(t, 0, 1, req)
@@ -339,13 +339,13 @@ func TestRepairProbe_DegradedOlderTurnStillProbed(t *testing.T) {
 	hash := []byte{0xaa}
 	d4 := testutil.SignDiff(t, p.user, "escrow-1", 4, []*types.DevshardTx{{
 		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-			TurnSeq: 2, ObservedHeight: 500, ObservedBlockHash: hash, SlotsNum: 2,
+			ObservedHeight: 500, ObservedBlockHash: hash, SlotsNum: 2,
 			Reason: string(heightsync.ReasonQuietSession),
 		}},
 	}})
 	d5 := testutil.SignDiff(t, p.user, "escrow-1", 5, []*types.DevshardTx{{
 		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-			TurnSeq: 2, ObservedHeight: 500, ObservedBlockHash: hash, SlotsNum: 2,
+			ObservedHeight: 500, ObservedBlockHash: hash, SlotsNum: 2,
 			Reason: string(heightsync.ReasonQuietSession),
 		}},
 	}})
@@ -358,7 +358,7 @@ func TestRepairProbe_DegradedOlderTurnStillProbed(t *testing.T) {
 	p.setOracle(0, pastAckWindow(), []byte{0xaa})
 	var probed []uint64
 	p.hostObjs[0].SetRepairProbe(func(_ context.Context, _ uint32, req *heightsync.RepairRequest) (*heightsync.RepairResponse, error) {
-		probed = append(probed, req.TurnSeq)
+		probed = append(probed, req.TurnStart)
 		return &heightsync.RepairResponse{
 			Outcome:           heightsync.RepairOutcomeHeight,
 			ObservedHeight:    510,

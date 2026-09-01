@@ -37,7 +37,7 @@ const (
 type AttributableMark struct {
 	Kind      MarkKind
 	Slot      uint32
-	TurnSeq   uint64
+	TurnStart uint64 // turn identity: span-start nonce
 	Nonce     uint64
 	Blob      []byte
 	Sig       []byte

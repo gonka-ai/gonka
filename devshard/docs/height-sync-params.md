@@ -278,7 +278,7 @@ plane (Phases A–D) and the log plane reuses them.
 
 A **sync vector** (`MsgHeartbeat.sync_vector`) is not a config knob. It is a
 per-slot status array the user signs: one `SyncVectorEntry` per host, reporting
-turn `turn_seq − 1` (`ACKED` / `MISSING` / `UNREACHABLE` / `REJECTED`). See
+the preceding turn (`ACKED` / `MISSING` / `UNREACHABLE` / `REJECTED`). See
 `devshard/heightsync/syncvector.go`. The log is authoritative; the vector is
 early visibility. The only attributable lie is `ACKED` when `Diff` has no such
 ack.

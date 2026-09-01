@@ -34,7 +34,6 @@ func heartbeatDiff(t *testing.T, user signing.Signer, nonce, turnSeq, height, sl
 	t.Helper()
 	return testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{
 		{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-			TurnSeq:        turnSeq,
 			ObservedHeight: height,
 			SlotsNum:       slots,
 			Reason:         string(heightsync.ReasonQuietSession),
@@ -52,7 +51,6 @@ func stampedHeartbeatDiff(t *testing.T, user signing.Signer, nonce, turnSeq, hei
 func signedAckTx(t *testing.T, signer *signing.Secp256k1Signer, turn, ref uint64, slot uint32, height uint64, hash []byte) *types.DevshardTx {
 	t.Helper()
 	ack := &types.MsgHeightAck{
-		TurnSeq:           turn,
 		RefNonce:          ref,
 		SlotId:            slot,
 		ObservedHeight:    height,
@@ -96,7 +94,6 @@ func TestHost_HeartbeatAck_OwnSlotIntoMempool(t *testing.T) {
 	acks := mempoolHeightAcks(resp.Mempool)
 	require.Len(t, acks, 1)
 	ack := acks[0]
-	require.Equal(t, uint64(1), ack.TurnSeq)
 	require.Equal(t, uint64(3), ack.RefNonce)
 	require.Equal(t, uint32(0), ack.SlotId)
 	require.Equal(t, uint64(100), ack.ObservedHeight)

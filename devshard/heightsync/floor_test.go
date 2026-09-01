@@ -224,7 +224,7 @@ func TestFloorIndex_BootstrapSeedsFromCorroborationNotFromTheFirstStamp(t *testi
 func TestRefStamp_CoversEveryDiffResidentHeight(t *testing.T) {
 	hash := []byte{0xaa}
 
-	h, gotHash, ok := heightsync.RefStamp(hbTx(1, 50, 3, hash, nil))
+	h, gotHash, ok := heightsync.RefStamp(hbTx(50, 3, hash, nil))
 	require.True(t, ok, "a heartbeat height is a reference height")
 	require.Equal(t, uint64(50), h)
 	require.Equal(t, hash, gotHash)
@@ -251,7 +251,7 @@ func TestRefProducingNonce_PerMessageBasis(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, uint64(9), m)
 
-	m, ok = heightsync.RefProducingNonce(9, hbTx(9, 50, 3, hash, nil))
+	m, ok = heightsync.RefProducingNonce(9, hbTx(50, 3, hash, nil))
 	require.True(t, ok)
 	require.Equal(t, uint64(9), m)
 

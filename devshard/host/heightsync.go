@@ -163,7 +163,6 @@ func (h *Host) buildHeightAckLocked(item heartbeatTarget, hdr *blocks.Header, hd
 	}
 	refH, refHash := h.referenceStamp(item.nonce+1, height, hash)
 	return &types.MsgHeightAck{
-		TurnSeq:           item.hb.TurnSeq,
 		RefNonce:          item.nonce,
 		SlotId:            item.slot,
 		ObservedHeight:    refH,

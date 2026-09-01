@@ -31,5 +31,5 @@ const (
 	LogFieldCacheReady          = "cache_ready"
 	LogFieldVerifiedOrigins     = "verified_origins"
 	LogFieldEvent               = "event"
-	LogFieldTurnSeq             = "turn_seq"
+	LogFieldTurnStart           = "turn_start"
 )

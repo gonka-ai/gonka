@@ -54,7 +54,7 @@ func TestHeightSyncFloor_ImplausibleClaimIsMarkedAndIgnored(t *testing.T) {
 	}
 	good, poison := []byte{0x02, 0x50}, []byte{0xff, 0xff}
 
-	require.NoError(t, apply(1, divHeartbeatTx(1, 250, good)))
+	require.NoError(t, apply(1, divHeartbeatTx(250, good)))
 	require.NoError(t, apply(2,
 		divAckTx(t, hosts[1], 1, 1, 1, 250, good, types.SyncState_SYNCED),
 	), "a host ack inside W_conf of an empty floor seeds F")
@@ -74,7 +74,7 @@ func TestHeightSyncFloor_ImplausibleClaimIsMarkedAndIgnored(t *testing.T) {
 	require.Equal(t, uint64(3), marks[0].Nonce)
 
 	// Liveness: the escrow neither halts nor loses its ability to advance.
-	require.NoError(t, apply(4, divHeartbeatTx(2, 260, good)))
+	require.NoError(t, apply(4, divHeartbeatTx(260, good)))
 	floor, _, _ = sm.HeightSyncFloorAsOf(5)
 	require.Equal(t, uint64(250), floor, "a sequencer heartbeat still does not raise F")
 	require.NoError(t, apply(5, divAckTx(t, hosts[1], 2, 4, 1, 260, good, types.SyncState_SYNCED)))
@@ -111,7 +111,7 @@ func TestHeightSyncFloor_ReorgReturnsToTheLiveBranch(t *testing.T) {
 	dead, live := []byte{0xde, 0xad}, []byte{0x11, 0xfe}
 
 	// Turn 1 on the branch that is about to be orphaned.
-	require.NoError(t, apply(1, divHeartbeatTx(1, 250, dead)))
+	require.NoError(t, apply(1, divHeartbeatTx(250, dead)))
 	acks := make([]*types.DevshardTx, 0, len(hosts))
 	for i := range hosts {
 		acks = append(acks, divAckTx(t, hosts[i], 1, 1, uint32(i), 250, dead, types.SyncState_SYNCED))
@@ -125,7 +125,7 @@ func TestHeightSyncFloor_ReorgReturnsToTheLiveBranch(t *testing.T) {
 	// branch, so no party has a first-party height that clears the floor. Each
 	// carries F instead, and the escrow keeps applying diffs — the property that
 	// matters, since a halt here would need an out-of-band restart.
-	require.NoError(t, apply(3, divHeartbeatTx(2, 250, dead)))
+	require.NoError(t, apply(3, divHeartbeatTx(250, dead)))
 	acks = acks[:0]
 	for i := range hosts {
 		acks = append(acks, divAckTx(t, hosts[i], 2, 3, uint32(i), 250, dead, types.SyncState_CATCHING_UP))
@@ -136,7 +136,7 @@ func TestHeightSyncFloor_ReorgReturnsToTheLiveBranch(t *testing.T) {
 
 	// Recovery: the live branch passes the floor, so honest stamps are their own
 	// again and the floor moves onto it.
-	require.NoError(t, apply(5, divHeartbeatTx(3, 260, live)))
+	require.NoError(t, apply(5, divHeartbeatTx(260, live)))
 	acks = acks[:0]
 	for i := range hosts {
 		acks = append(acks, divAckTx(t, hosts[i], 3, 5, uint32(i), 260, live, types.SyncState_SYNCED))
@@ -168,7 +168,7 @@ func TestHeightSyncFloor_AdmissionRefusalCannotSplitTheFloor(t *testing.T) {
 	replay := newFloorTestSM(t, hosts, user) // saw the same bytes by catch-up
 
 	good := []byte{0x02, 0x50}
-	hb := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{divHeartbeatTx(1, 250, good)})
+	hb := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{divHeartbeatTx(250, good)})
 	ackTxs := make([]*types.DevshardTx, 0, len(hosts))
 	for i := range hosts {
 		ackTxs = append(ackTxs, divAckTx(t, hosts[i], 1, 1, uint32(i), 250, good, types.SyncState_SYNCED))
@@ -210,7 +210,7 @@ func TestHeightSyncFloor_AdmissionRefusalCannotSplitTheFloor(t *testing.T) {
 	// The consequence that matters: identical verdicts from here on, including on
 	// the stamp L0 is there to refuse.
 	low := testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{
-		divHeartbeatTx(2, 5, []byte{0x00, 0x05}),
+		divHeartbeatTx(5, []byte{0x00, 0x05}),
 	})
 	_, edgeErr := edge.ApplyDiff(low)
 	_, replayErr := replay.ApplyDiff(low)
@@ -232,7 +232,7 @@ func TestHeightSyncFloor_SequencerHeartbeatDoesNotRaise(t *testing.T) {
 
 	for _, sm := range []*StateMachine{applySM, gossipSM} {
 		_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
-			divHeartbeatTx(1, 100, hash),
+			divHeartbeatTx(100, hash),
 		}))
 		require.NoError(t, err)
 		_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{
@@ -240,7 +240,7 @@ func TestHeightSyncFloor_SequencerHeartbeatDoesNotRaise(t *testing.T) {
 		}))
 		require.NoError(t, err)
 		_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{
-			divHeartbeatTx(2, 180, hash),
+			divHeartbeatTx(180, hash),
 		}))
 		require.NoError(t, err)
 		_, err = sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{

@@ -406,8 +406,10 @@ func restoreAppliedTxKeys(sess *Session, records []types.DiffRecord) {
 	}
 }
 
-// restoreHeartbeatProducer continues turn_seq from the reconstructed log
-// (spec §10.4). The session tracker is a clone of the SM's so compose can
+// restoreHeartbeatProducer restores the producer from the reconstructed log
+// (spec §10.4). There is no counter to carry over: a turn is named by the nonce
+// its span opens at, so the next span's identity follows from the restored
+// nonce. The session tracker is a clone of the SM's so compose can
 // report turn N's sync_vector without sharing the SM mutex. Wall-clock
 // lastTurnover is not persisted: a recovered quiet session is due immediately
 // rather than waiting out Interval from a lost t_last. An in-flight turn
@@ -418,7 +420,6 @@ func restoreHeartbeatProducer(sess *Session, sm *state.StateMachine) {
 	}
 	sess.mu.Lock()
 	defer sess.mu.Unlock()
-	sess.heartbeatTurnSeq = sm.HeightSyncLatestTurnSeq()
 	if clone := sm.HeightSyncCloneTurnTracker(); clone != nil {
 		sess.turnTracker = clone
 	}

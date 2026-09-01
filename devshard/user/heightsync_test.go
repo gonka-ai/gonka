@@ -221,7 +221,7 @@ func TestHeartbeat_QuietSessionOpensTurn(t *testing.T) {
 
 	rec := session.HeartbeatTurnTracker().Record(1)
 	require.NotNil(t, rec)
-	require.Equal(t, uint64(1), rec.TurnSeq)
+	require.Equal(t, uint64(1), rec.TurnStart)
 	require.Equal(t, uint64(100), rec.HReq)
 }
 
@@ -266,7 +266,6 @@ func TestHeartbeat_SpanDispatchAddressesEverySlot(t *testing.T) {
 			require.Nil(t, tx.GetHeightAck(), "span must not wait for acks")
 		}
 		require.NotNil(t, hb, "diff %d missing MsgHeartbeat", d.Nonce)
-		require.Equal(t, uint64(1), hb.TurnSeq)
 		require.Equal(t, uint64(slots), hb.SlotsNum)
 		seen[uint32(d.Nonce%slots)]++
 	}
@@ -302,7 +301,8 @@ func TestHeartbeat_AckInclusionAndSyncVectorPrevTurn(t *testing.T) {
 	require.Len(t, acks, slots, "flush round must include one host ack per slot")
 	seen := map[uint32]types.SyncState{}
 	for _, ack := range acks {
-		require.Equal(t, uint64(1), ack.TurnSeq)
+		require.LessOrEqual(t, ack.RefNonce, uint64(slots),
+			"each ack answers the heartbeat of its own slot inside the span")
 		require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, ack.SyncState)
 		require.Equal(t, uint64(0), ack.ObservedHeight,
 			"a blind host with an empty floor omits a height claim: sequencer heartbeats do not seed F")
@@ -319,14 +319,18 @@ func TestHeartbeat_AckInclusionAndSyncVectorPrevTurn(t *testing.T) {
 	now = now.Add(heightsync.DefaultHeartbeatConfig().Interval + time.Second)
 	require.NoError(t, session.MaybeHeartbeat(ctx))
 
+	// The second turn is the newest one in the log; heartbeats no longer name a
+	// turn, so the latest diff carrying one is the selector.
 	var hb *types.MsgHeartbeat
+	var hbNonce uint64
 	for _, d := range session.Diffs() {
 		for _, tx := range d.Txs {
-			if inner := tx.GetHeartbeat(); inner != nil && inner.TurnSeq == 2 {
-				hb = inner
+			if inner := tx.GetHeartbeat(); inner != nil && d.Nonce >= hbNonce {
+				hb, hbNonce = inner, d.Nonce
 			}
 		}
 	}
+	require.Greater(t, hbNonce, uint64(1), "second turn's heartbeat lands after the first")
 	require.NotNil(t, hb)
 	require.Len(t, hb.SyncVector, 3)
 	require.Equal(t, types.AckStatus_ACKED, hb.SyncVector[0].Status)
@@ -379,14 +383,16 @@ func TestHeartbeat_TipBeyondFloorWindowCarriesFloor(t *testing.T) {
 	require.NoError(t, session.MaybeHeartbeat(context.Background()))
 
 	var hb *types.MsgHeartbeat
+	var hbNonce uint64
 	for _, d := range session.Diffs() {
 		for _, tx := range d.Txs {
-			if inner := tx.GetHeartbeat(); inner != nil && inner.TurnSeq == 2 {
-				hb = inner
+			if inner := tx.GetHeartbeat(); inner != nil && d.Nonce >= hbNonce {
+				hb, hbNonce = inner, d.Nonce
 			}
 		}
 	}
 	require.NotNil(t, hb)
+	require.Greater(t, hbNonce, uint64(1), "the second turn's heartbeat lands after the first")
 	require.Equal(t, uint64(80), hb.ObservedHeight,
 		"a courier tip farther above F than W_conf is carried as F, not written")
 }
@@ -538,7 +544,7 @@ func TestHeartbeat_QuietSessionWaitsOutIntervalBetweenTurns(t *testing.T) {
 	require.NoError(t, session.MaybeHeartbeat(ctx))
 	require.Greater(t, countHeartbeats(session.Diffs()), turns,
 		"Interval elapsed at an unchanged height still opens a turn")
-	require.NotNil(t, session.HeartbeatTurnTracker().Record(2))
+	require.NotNil(t, session.HeartbeatTurnTracker().Latest())
 }
 
 func TestHeartbeat_OverlayShortensCadence(t *testing.T) {
@@ -569,7 +575,7 @@ func TestHeartbeat_OverlayShortensCadence(t *testing.T) {
 	require.NoError(t, session.MaybeHeartbeat(ctx))
 	require.Greater(t, countHeartbeats(session.Diffs()), turns,
 		"overlay Interval=2s opens the next turn before the compiled 6s")
-	require.NotNil(t, session.HeartbeatTurnTracker().Record(2))
+	require.NotNil(t, session.HeartbeatTurnTracker().Latest())
 }
 
 func countHeartbeats(diffs []types.Diff) int {
@@ -615,7 +621,7 @@ func TestHeartbeat_LoopOpensQuietTurnWithoutCaller(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond, "loop must open a turn without the test calling MaybeHeartbeat")
 
 	require.GreaterOrEqual(t, countHeartbeats(session.Diffs()), 3)
-	require.Equal(t, uint64(1), session.StateMachine().HeightSyncLatestTurnSeq())
+	require.Equal(t, uint64(1), session.StateMachine().HeightSyncLatestTurnStart())
 }
 
 func TestHeartbeat_SpanDispatchConcurrentAndContinuesOnError(t *testing.T) {
@@ -702,15 +708,15 @@ func TestHeartbeat_SettleTurnDoesNotFireWhileSMTurnOpen(t *testing.T) {
 	require.NotNil(t, smRec)
 	require.Equal(t, heightsync.TurnOpen, sessRec.State)
 	require.Equal(t, heightsync.TurnOpen, smRec.State)
-	require.Equal(t, uint64(1), session.HeartbeatTurnTracker().MaxTurnSeq())
+	require.Equal(t, uint64(1), session.HeartbeatTurnTracker().LatestTurnStart())
 
 	height = 100 + heightsync.DefaultHeartbeatConfig().AckDeadlineBlocks + 1
 	require.NoError(t, session.MaybeHeartbeat(context.Background()))
 
 	require.Equal(t, heightsync.TurnOpen, session.HeartbeatTurnTracker().Record(1).State)
 	require.Equal(t, heightsync.TurnOpen, session.StateMachine().HeightSyncTurnRecord(1).State)
-	require.Equal(t, uint64(1), session.HeartbeatTurnTracker().MaxTurnSeq())
-	require.Equal(t, uint64(1), session.StateMachine().HeightSyncLatestTurnSeq())
+	require.Equal(t, uint64(1), session.HeartbeatTurnTracker().LatestTurnStart())
+	require.Equal(t, uint64(1), session.StateMachine().HeightSyncLatestTurnStart())
 }
 
 type spanProbeClient struct {

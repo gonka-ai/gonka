@@ -236,7 +236,6 @@ func TestHeightSync_RestoreFloorBlobSkipsJournal(t *testing.T) {
 
 func snapHeartbeat(turn, height, slots uint64, hash []byte) *types.DevshardTx {
 	return &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-		TurnSeq:           turn,
 		ObservedHeight:    height,
 		ObservedBlockHash: append([]byte(nil), hash...),
 		SlotsNum:          slots,
@@ -247,7 +246,6 @@ func snapHeartbeat(turn, height, slots uint64, hash []byte) *types.DevshardTx {
 func snapAck(t *testing.T, signer *signing.Secp256k1Signer, turn, ref uint64, slot uint32, height uint64, hash []byte) *types.DevshardTx {
 	t.Helper()
 	ack := &types.MsgHeightAck{
-		TurnSeq:           turn,
 		RefNonce:          ref,
 		SlotId:            slot,
 		ObservedHeight:    height,

@@ -38,9 +38,15 @@ type AckRecord struct {
 }
 
 // SyncTurnRecord is the per-turn view every honest verifier computes from Diff.
+//
+// TurnStart is the turn's identity: the nonce of the first heartbeat in its
+// span. Nothing on the wire names a turn — the sequencer used to pick a
+// turn_seq, which let it name a turn 2^60 ahead and prune the retain window.
+// The span-start nonce is assigned by the log instead, and is monotone and
+// bounded for free.
 type SyncTurnRecord struct {
-	TurnSeq           uint64
-	RequestSpan       [2]uint64 // [t, t+slots_num-1]
+	TurnStart         uint64
+	RequestSpan       [2]uint64 // [TurnStart, TurnStart+slots_num-1]
 	HReq              uint64
 	Acks              map[uint32]AckRecord
 	State             TurnState
@@ -58,16 +64,16 @@ const DefaultTurnRetain uint64 = 64
 // TurnTracker folds heartbeat + ack txs into SyncTurnRecords. Q is the turn
 // reachability threshold (ceil(2/3 × slots)); it is not a height certificate.
 type TurnTracker struct {
-	slotsNum        uint64
-	quorum          int
-	ackDeadline     uint64
-	retain          uint64
-	turns           map[uint64]*SyncTurnRecord
-	heartbeatAt     map[uint64]uint64 // nonce → turn_seq (L3)
-	stampHeight     uint64            // max host-signed confirm/finish stamp; discharges h_last
-	maxTurnSeq      uint64
-	lastCompleted   uint64 // max CompletedAtHeight; survives prune
-	lastCompleteSeq uint64
+	slotsNum          uint64
+	quorum            int
+	ackDeadline       uint64
+	retain            uint64
+	turns             map[uint64]*SyncTurnRecord
+	heartbeatAt       map[uint64]uint64 // heartbeat nonce → turn start (L3)
+	stampHeight       uint64            // max host-signed confirm/finish stamp; discharges h_last
+	latestTurnStart   uint64
+	lastCompleted     uint64 // max CompletedAtHeight; survives prune
+	lastCompleteStart uint64
 }
 
 // NewTurnTracker constructs an empty tracker. quorum ≤ 0 uses QuorumForRoster(slotsNum).
@@ -103,21 +109,22 @@ func (t *TurnTracker) SlotsNum() uint64 {
 	return t.slotsNum
 }
 
-// ArmingContext returns the highest complete turn_seq and degraded turn ids.
+// ArmingContext returns the newest complete turn's start nonce and the start
+// nonces of degraded turns.
 func (t *TurnTracker) ArmingContext() (lastComplete uint64, degraded []uint64) {
 	if t == nil {
 		return 0, nil
 	}
-	for seq, rec := range t.turns {
+	for start, rec := range t.turns {
 		if rec == nil {
 			continue
 		}
 		if rec.State == TurnDegraded {
-			degraded = append(degraded, seq)
+			degraded = append(degraded, start)
 		}
 	}
 	slices.Sort(degraded)
-	return t.lastCompleteSeq, degraded
+	return t.lastCompleteStart, degraded
 }
 
 // Observe ingests one diff's txs at chain height hNow.
@@ -163,36 +170,50 @@ func executorInferenceStamp(tx *types.DevshardTx) (uint64, bool) {
 	return 0, false
 }
 
+// turnStartFor names the turn a heartbeat at nonce belongs to.
+//
+// A span is slots_num consecutive nonces, and applyCore only admits
+// LatestNonce+1, so the chain has no gaps: a span's heartbeats always land as a
+// prefix beginning at the span start. A heartbeat inside the newest turn's span
+// therefore joins it, and anything past that span opens a turn of its own. No
+// wire field is consulted, so there is nothing for the sequencer to inflate.
+func (t *TurnTracker) turnStartFor(nonce uint64) uint64 {
+	rec := t.turns[t.latestTurnStart]
+	if rec != nil && nonce >= rec.RequestSpan[0] && nonce <= rec.RequestSpan[1] {
+		return rec.RequestSpan[0]
+	}
+	return nonce
+}
+
 func (t *TurnTracker) observeHeartbeat(nonce uint64, hb *types.MsgHeartbeat) {
 	if t.heartbeatAt == nil {
 		t.heartbeatAt = make(map[uint64]uint64)
 	}
-	t.heartbeatAt[nonce] = hb.TurnSeq
-	t.noteTurnSeq(hb.TurnSeq)
-	rec := t.turns[hb.TurnSeq]
+	start := t.turnStartFor(nonce)
+	t.heartbeatAt[nonce] = start
+	if start > t.latestTurnStart {
+		t.latestTurnStart = start
+	}
+	rec := t.turns[start]
 	if rec == nil {
 		slots := hb.SlotsNum
 		if slots == 0 {
 			slots = t.slotsNum
 		}
 		rec = &SyncTurnRecord{
-			TurnSeq:     hb.TurnSeq,
-			RequestSpan: [2]uint64{nonce, nonce + slots - 1},
+			TurnStart:   start,
+			RequestSpan: [2]uint64{start, start + slots - 1},
 			HReq:        heartbeatRequestHeight(hb),
 			Acks:        make(map[uint32]AckRecord),
 			State:       TurnOpen,
 			Reason:      hb.Reason,
 		}
-		t.turns[hb.TurnSeq] = rec
+		t.turns[start] = rec
 		SetTurnState("open")
 		return
 	}
 	if rec.Reason == "" && hb.Reason != "" {
 		rec.Reason = hb.Reason
-	}
-	if nonce < rec.RequestSpan[0] {
-		span := rec.RequestSpan[1] - rec.RequestSpan[0]
-		rec.RequestSpan = [2]uint64{nonce, nonce + span}
 	}
 	if h := heartbeatRequestHeight(hb); h != 0 && (rec.HReq == 0 || h < rec.HReq) {
 		rec.HReq = h
@@ -213,17 +234,21 @@ func heartbeatRequestHeight(hb *types.MsgHeartbeat) uint64 {
 	return hb.ObservedHeight
 }
 
+// observeAck folds a host ack into the turn its ref_nonce names.
+//
+// An ack no longer carries a turn id, so there is no id to disagree with the
+// log: the turn is heartbeatAt[ref_nonce]. L3 rejects an ack whose ref_nonce has
+// no heartbeat, so an unresolved ref_nonce here means the turn record was
+// pruned. That is dropped rather than resurrected — the old code minted a fresh
+// record at the ack's claimed seq, which prune then removed again.
 func (t *TurnTracker) observeAck(nonce uint64, ack *types.MsgHeightAck) {
-	t.noteTurnSeq(ack.TurnSeq)
-	rec := t.turns[ack.TurnSeq]
+	start, ok := t.heartbeatAt[ack.RefNonce]
+	if !ok {
+		return
+	}
+	rec := t.turns[start]
 	if rec == nil {
-		rec = &SyncTurnRecord{
-			TurnSeq: ack.TurnSeq,
-			Acks:    make(map[uint32]AckRecord),
-			State:   TurnOpen,
-		}
-		t.turns[ack.TurnSeq] = rec
-		SetTurnState("open")
+		return
 	}
 	// Lateness is stamp-based, and the stamp is the host's: an ack carries the
 	// height its author read when it composed the answer, which is the one
@@ -261,28 +286,24 @@ func (t *TurnTracker) AdvanceHeight(hNow uint64) {
 	t.prune()
 }
 
-func (t *TurnTracker) noteTurnSeq(seq uint64) {
-	if seq > t.maxTurnSeq {
-		t.maxTurnSeq = seq
-	}
-}
-
+// prune keeps the newest DefaultTurnRetain turns. Turn ids are span-start
+// nonces, so "newest" is by id and the retained set is the tail of the sorted
+// keys. A cutoff arithmetic on the id would be wrong here: nonces are not one
+// apart per turn the way turn_seq was.
 func (t *TurnTracker) prune() {
 	if t.retain == 0 {
 		t.retain = DefaultTurnRetain
 	}
-	var cutoff uint64
-	if t.maxTurnSeq > t.retain {
-		cutoff = t.maxTurnSeq - t.retain
+	if uint64(len(t.turns)) <= t.retain {
+		return
 	}
-	for seq, rec := range t.turns {
-		if rec == nil {
-			continue
-		}
-		if seq >= cutoff {
-			continue
-		}
-		delete(t.turns, seq)
+	starts := make([]uint64, 0, len(t.turns))
+	for start := range t.turns {
+		starts = append(starts, start)
+	}
+	slices.Sort(starts)
+	for _, start := range starts[:uint64(len(starts))-t.retain] {
+		delete(t.turns, start)
 	}
 	// heartbeatAt is the L3 source of truth: ref_nonce names a heartbeat that
 	// was in Diff, not a turn record still in RAM. Do not drop entries whose
@@ -349,8 +370,8 @@ func (t *TurnTracker) recompute(rec *SyncTurnRecord, hNow uint64) {
 		if hNow > t.lastCompleted {
 			t.lastCompleted = hNow
 		}
-		if rec.TurnSeq > t.lastCompleteSeq {
-			t.lastCompleteSeq = rec.TurnSeq
+		if rec.TurnStart > t.lastCompleteStart {
+			t.lastCompleteStart = rec.TurnStart
 		}
 		IncHeartbeatTurn(rec.Reason, "complete")
 		SetTurnState("complete")
@@ -364,45 +385,70 @@ func (t *TurnTracker) recompute(rec *SyncTurnRecord, hNow uint64) {
 	}
 }
 
-// Record returns a copy of the turn, or nil.
-func (t *TurnTracker) Record(turnSeq uint64) *SyncTurnRecord {
+// Record returns a copy of the turn starting at turnStart, or nil.
+func (t *TurnTracker) Record(turnStart uint64) *SyncTurnRecord {
 	if t == nil {
 		return nil
 	}
-	rec := t.turns[turnSeq]
+	rec := t.turns[turnStart]
 	if rec == nil {
 		return nil
 	}
 	return cloneTurn(rec)
 }
 
-// Latest is the highest turn_seq observed.
+// Latest is the newest turn observed.
 func (t *TurnTracker) Latest() *SyncTurnRecord {
-	if t == nil || t.maxTurnSeq == 0 {
+	if t == nil || t.latestTurnStart == 0 {
 		return nil
 	}
-	rec := t.turns[t.maxTurnSeq]
+	rec := t.turns[t.latestTurnStart]
 	if rec == nil {
 		return nil
 	}
 	return cloneTurn(rec)
 }
 
-// HeartbeatTurn reports the turn_seq of the MsgHeartbeat at nonce, if any.
+// HeartbeatTurn reports the turn start of the MsgHeartbeat at nonce, if any.
 func (t *TurnTracker) HeartbeatTurn(nonce uint64) (uint64, bool) {
 	if t == nil {
 		return 0, false
 	}
-	seq, ok := t.heartbeatAt[nonce]
-	return seq, ok
+	start, ok := t.heartbeatAt[nonce]
+	return start, ok
 }
 
-// MaxTurnSeq is the highest turn_seq observed (heartbeats or acks).
-func (t *TurnTracker) MaxTurnSeq() uint64 {
+// TurnStartFor names the turn a heartbeat landing at nonce would belong to,
+// against what the tracker has already folded. The log plane needs this before
+// Observe runs, so the rule lives in one place.
+func (t *TurnTracker) TurnStartFor(nonce uint64) uint64 {
+	if t == nil {
+		return nonce
+	}
+	return t.turnStartFor(nonce)
+}
+
+// TurnBefore is the newest retained turn starting before start, or 0.
+// Turn ids are nonces, so a predecessor is a search rather than start-1.
+func (t *TurnTracker) TurnBefore(start uint64) uint64 {
 	if t == nil {
 		return 0
 	}
-	return t.maxTurnSeq
+	var prev uint64
+	for s := range t.turns {
+		if s < start && s > prev {
+			prev = s
+		}
+	}
+	return prev
+}
+
+// LatestTurnStart is the span-start nonce of the newest turn observed.
+func (t *TurnTracker) LatestTurnStart() uint64 {
+	if t == nil {
+		return 0
+	}
+	return t.latestTurnStart
 }
 
 // TurnCount is the number of turn records currently retained.
@@ -413,7 +459,7 @@ func (t *TurnTracker) TurnCount() int {
 	return len(t.turns)
 }
 
-// HeartbeatAtCount is the number of nonce→turn_seq mappings currently retained.
+// HeartbeatAtCount is the number of nonce→turn-start mappings currently retained.
 func (t *TurnTracker) HeartbeatAtCount() int {
 	if t == nil {
 		return 0
@@ -427,16 +473,16 @@ func (t *TurnTracker) Clone() *TurnTracker {
 		return nil
 	}
 	cp := &TurnTracker{
-		slotsNum:        t.slotsNum,
-		quorum:          t.quorum,
-		ackDeadline:     t.ackDeadline,
-		retain:          t.retain,
-		turns:           make(map[uint64]*SyncTurnRecord, len(t.turns)),
-		heartbeatAt:     make(map[uint64]uint64, len(t.heartbeatAt)),
-		stampHeight:     t.stampHeight,
-		maxTurnSeq:      t.maxTurnSeq,
-		lastCompleted:   t.lastCompleted,
-		lastCompleteSeq: t.lastCompleteSeq,
+		slotsNum:          t.slotsNum,
+		quorum:            t.quorum,
+		ackDeadline:       t.ackDeadline,
+		retain:            t.retain,
+		turns:             make(map[uint64]*SyncTurnRecord, len(t.turns)),
+		heartbeatAt:       make(map[uint64]uint64, len(t.heartbeatAt)),
+		stampHeight:       t.stampHeight,
+		latestTurnStart:   t.latestTurnStart,
+		lastCompleted:     t.lastCompleted,
+		lastCompleteStart: t.lastCompleteStart,
 	}
 	for k, v := range t.turns {
 		cp.turns[k] = cloneTurn(v)
@@ -447,18 +493,18 @@ func (t *TurnTracker) Clone() *TurnTracker {
 	return cp
 }
 
-// SeedCompleted restores h_last and the latest turn_seq from a snapshot when
+// SeedCompleted restores h_last and the latest turn start from a snapshot when
 // the journal cannot be replayed. Observe still ratchets both forward.
-func (t *TurnTracker) SeedCompleted(lastCompleted, maxTurnSeq uint64) {
+func (t *TurnTracker) SeedCompleted(lastCompleted, latestTurnStart uint64) {
 	if t == nil {
 		return
 	}
 	if lastCompleted > t.lastCompleted {
 		t.lastCompleted = lastCompleted
 	}
-	if maxTurnSeq > t.maxTurnSeq {
-		t.maxTurnSeq = maxTurnSeq
-		t.lastCompleteSeq = maxTurnSeq
+	if latestTurnStart > t.latestTurnStart {
+		t.latestTurnStart = latestTurnStart
+		t.lastCompleteStart = latestTurnStart
 	}
 }
 
@@ -474,13 +520,13 @@ func (t *TurnTracker) LastCompletedHeight() uint64 {
 	return h
 }
 
-// MissingAcks returns slots with no ack for turnSeq. The repair trigger is
-// MissingAcksDue, which also requires the ack window to have closed.
-func (t *TurnTracker) MissingAcks(turnSeq uint64) []uint32 {
+// MissingAcks returns slots with no ack for the turn at turnStart. The repair
+// trigger is MissingAcksDue, which also requires the ack window to have closed.
+func (t *TurnTracker) MissingAcks(turnStart uint64) []uint32 {
 	if t == nil {
 		return nil
 	}
-	rec := t.turns[turnSeq]
+	rec := t.turns[turnStart]
 	if rec == nil {
 		return nil
 	}
@@ -497,24 +543,25 @@ func (t *TurnTracker) MissingAcks(turnSeq uint64) []uint32 {
 // (hNow > h_req + D_ack, or the turn already degraded from a log-resident
 // stamp). Repair probes use this, not MissingAcks. hNow must itself be
 // log-derived (h_last / Diff stamps), never a live oracle tip.
-func (t *TurnTracker) MissingAcksDue(turnSeq, hNow uint64) []uint32 {
+func (t *TurnTracker) MissingAcksDue(turnStart, hNow uint64) []uint32 {
 	if t == nil {
 		return nil
 	}
-	rec := t.turns[turnSeq]
+	rec := t.turns[turnStart]
 	if rec == nil || rec.HReq == 0 {
 		return nil
 	}
 	if rec.State != TurnDegraded && !t.windowClosed(rec, hNow) {
 		return nil
 	}
-	return t.MissingAcks(turnSeq)
+	return t.MissingAcks(turnStart)
 }
 
 // RepairDue is one retained turn whose ack window has closed with missing slots.
+// TurnStart is both the turn's identity and its span start; they were separate
+// fields only while a turn had a wire-assigned id.
 type RepairDue struct {
-	TurnSeq   uint64
-	SpanStart uint64
+	TurnStart uint64
 	Missing   []uint32
 }
 
@@ -525,23 +572,18 @@ func (t *TurnTracker) RepairDueAll() []RepairDue {
 		return nil
 	}
 	hNow := t.LastCompletedHeight()
-	seqs := make([]uint64, 0, len(t.turns))
-	for seq := range t.turns {
-		seqs = append(seqs, seq)
+	starts := make([]uint64, 0, len(t.turns))
+	for start := range t.turns {
+		starts = append(starts, start)
 	}
-	slices.Sort(seqs)
+	slices.Sort(starts)
 	var out []RepairDue
-	for _, seq := range seqs {
-		rec := t.turns[seq]
-		missing := t.MissingAcksDue(seq, hNow)
+	for _, start := range starts {
+		missing := t.MissingAcksDue(start, hNow)
 		if len(missing) == 0 {
 			continue
 		}
-		spanStart := uint64(0)
-		if rec != nil {
-			spanStart = rec.RequestSpan[0]
-		}
-		out = append(out, RepairDue{TurnSeq: seq, SpanStart: spanStart, Missing: missing})
+		out = append(out, RepairDue{TurnStart: start, Missing: missing})
 	}
 	return out
 }

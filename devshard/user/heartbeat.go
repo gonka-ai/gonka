@@ -187,11 +187,11 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 	if rec := s.turnTracker.Latest(); rec != nil && rec.State != heightsync.TurnOpen {
 		if rec.State == heightsync.TurnDegraded && s.heartbeat.TurnOpen() {
 			s.heartbeat.RecordCadence(heightsync.CadenceEvent{
-				At:      now,
-				Event:   heightsync.CadenceTurnSettledDegraded,
-				TurnSeq: rec.TurnSeq,
-				HRef:    rec.HReq,
-				Outcome: rec.State.String(),
+				At:        now,
+				Event:     heightsync.CadenceTurnSettledDegraded,
+				TurnStart: rec.TurnStart,
+				HRef:      rec.HReq,
+				Outcome:   rec.State.String(),
 			})
 		}
 		s.heartbeat.SettleTurn()
@@ -204,11 +204,18 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 	}
 
 	slots := uint64(len(s.group))
-	prevSeq := s.heartbeatTurnSeq
-	s.heartbeatTurnSeq++
-	prev := s.turnTracker.Record(prevSeq)
+	// The turn's identity is the nonce its first heartbeat lands at, so the
+	// producer reports it rather than choosing it. There is no counter to keep in
+	// step with the log: a span that never lands leaves nothing behind, and the
+	// next attempt is named by wherever it lands instead.
+	spanStart := s.nonce + 1
+	prev := s.turnTracker.Latest()
+	var prevStart uint64
+	if prev != nil {
+		prevStart = prev.TurnStart
+	}
 	vector := heightsync.ComposeSyncVector(uint32(slots), prev)
-	spanTxs := s.heartbeat.SpanTxs(s.heartbeatTurnSeq, hNow, hash, slots, reason, vector)
+	spanTxs := s.heartbeat.SpanTxs(hNow, hash, slots, reason, vector)
 	if len(spanTxs) == 0 {
 		return nil, nil
 	}
@@ -232,27 +239,27 @@ func (s *Session) composeHeartbeatSpan() ([]composedDiff, error) {
 	abandoned := s.heartbeat.OpenTurn(now)
 	if abandoned {
 		s.heartbeat.RecordCadence(heightsync.CadenceEvent{
-			At:      now,
-			Event:   heightsync.CadenceTurnAbandoned,
-			TurnSeq: prevSeq,
-			HRef:    hNow,
-			Reason:  string(reason),
+			At:        now,
+			Event:     heightsync.CadenceTurnAbandoned,
+			TurnStart: prevStart,
+			HRef:      hNow,
+			Reason:    string(reason),
 		})
 	}
 	s.heartbeat.RecordCadence(heightsync.CadenceEvent{
-		At:      now,
-		Event:   heightsync.CadenceHeartbeatOpened,
-		TurnSeq: s.heartbeatTurnSeq,
-		HRef:    hNow,
-		Span:    len(out),
-		Reason:  string(reason),
+		At:        now,
+		Event:     heightsync.CadenceHeartbeatOpened,
+		TurnStart: spanStart,
+		HRef:      hNow,
+		Span:      len(out),
+		Reason:    string(reason),
 	})
 	if s.anchors != nil {
 		s.anchors.Record(hNow, heightsync.AnchorKindHeartbeat)
 		s.anchors.ObserveTip(hNow)
 	}
 	logging.Info("heartbeat span dispatched", "subsystem", "heightsync",
-		"escrow", s.escrowID, "turn_seq", s.heartbeatTurnSeq,
+		"escrow", s.escrowID, "turn_start", spanStart,
 		"height", hNow, "span", len(out), "reason", string(reason))
 	return out, nil
 }
