@@ -149,6 +149,7 @@ upgrade_journal=${DEVSHARD_V5_UPGRADE_JOURNAL:-$upgrade_marker.in-progress}
 [[ $(dirname -- "$upgrade_marker") == "$(dirname -- "$upgrade_journal")" ]] || fail \
 	"upgrade marker and journal must share one directory for atomic commit"
 transaction_id=$operation_id
+process_operation_id=$operation_id
 base_fingerprint=none
 saved_desired_fingerprint=
 saved_compose_config_sha=
@@ -404,6 +405,15 @@ write_upgrade_journal() {
 		  else .transaction.postgres_identity = $postgres_identity end
 	' <<<"$desired_upgrade_marker") || fail "cannot encode upgrade journal"
 	atomic_write_upgrade_state "$upgrade_journal" "$journal"
+}
+
+upgrade_journal_is_pristine() {
+    [[ -f $upgrade_journal ]] && jq -e '
+        .transaction.phase == "prepared" and
+        .transaction.decision == "rollback" and
+        ((.transaction.application_rollback.services? // {}) | length == 0) and
+        ((.transaction.ingress? // null) == null)
+    ' "$upgrade_journal" >/dev/null 2>&1
 }
 
 atomic_write_upgrade_state() {
@@ -700,6 +710,19 @@ if [[ -f $upgrade_marker ]]; then
 		'.fingerprint | strings | select(length == 64)' \
 		"$upgrade_marker" 2>/dev/null || printf 'none\n')
 fi
+if [[ $interrupted_upgrade_loaded == true ]] && \
+    upgrade_journal_is_pristine && \
+    [[ $saved_base_fingerprint != "$current_base_fingerprint" || \
+       $saved_compose_config_sha != "$compose_config_sha" || \
+       $saved_fleet_spec_sha != "$fleet_spec_sha" || \
+       $saved_desired_fingerprint != "$desired_fingerprint" ]]; then
+    warn "discarding a pristine prepared journal before applying changed inputs"
+    rm -f "$upgrade_journal"
+    sync -f "$(dirname -- "$upgrade_journal")"
+    interrupted_upgrade_loaded=false
+    transaction_id=$process_operation_id
+    operation_id=$process_operation_id
+fi
 if [[ $interrupted_upgrade_loaded == true ]]; then
 	[[ $saved_base_fingerprint == "$current_base_fingerprint" ]] || fail \
 		"active transaction $transaction_id was based on $saved_base_fingerprint, but committed base is now $current_base_fingerprint; explicit recovery is required"
@@ -794,7 +817,6 @@ if [[ $existing_proxy_component == proxy-router && -f $upgrade_marker && \
     $(upgrade_marker_release) != "$release_id" ]]; then
     fail "router HA is active, but commit marker $upgrade_marker belongs to another release"
 fi
-write_upgrade_journal prepared
 day2_reconcile=false
 if [[ $existing_proxy_component == proxy-router || \
     $committed_marker_loaded == true ]]; then
@@ -813,8 +835,15 @@ fi
 
 if [[ $versiond_mode == ha && $versiond2_enabled == false && \
     $day2_reconcile == false ]]; then
+    if [[ $interrupted_upgrade_loaded == true ]] && \
+        upgrade_journal_is_pristine; then
+        warn "removing the unsupported pristine replicas=0 cutover journal"
+        rm -f "$upgrade_journal"
+        sync -f "$(dirname -- "$upgrade_journal")"
+    fi
     fail "VERSIOND2_REPLICAS=0 is supported after the HA release is committed; restore it to 1 for the one-time v5 cutover"
 fi
+write_upgrade_journal prepared
 
 if [[ $versiond_mode == ha ]]; then
     GONKA_CONFIG_ENV=$config_env \

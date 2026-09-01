@@ -592,6 +592,7 @@ run_upgrade() {
         RUNTIME_COMPOSE_WORKDIR="${RUNTIME_COMPOSE_WORKDIR-}" \
         RUNTIME_PGHOST="${RUNTIME_PGHOST-}" \
         RENDERED_PGHOST="${RENDERED_PGHOST-}" \
+        RENDERED_VERSIOND2_REPLICAS="${RENDERED_VERSIOND2_REPLICAS:-1}" \
         RENDERED_POLICY_NETWORK="${RENDERED_POLICY_NETWORK-}" \
         RENDERED_ROUTER_FRONT_NETWORK="${RENDERED_ROUTER_FRONT_NETWORK-}" \
         RENDERED_ROUTER_BACK_NETWORK="${RENDERED_ROUTER_BACK_NETWORK-}" \
@@ -926,6 +927,15 @@ grep -q 'Devshard v5 release preflight passed' "$tmpdir/preflight.stdout" || {
     cat "$tmpdir/preflight.stdout" >&2
     fail "release preflight did not report success"
 }
+
+# The unsupported first cutover with the second member disabled must fail
+# before creating a durable transaction that blocks a corrected retry.
+RENDERED_VERSIOND2_REPLICAS=0 \
+    run_upgrade single none "$tmpdir/first-cutover-replicas-zero.log"
+[[ ! -e $tmpdir/upgrade-complete.in-progress ]] || fail \
+    "replicas=0 first cutover left a blocking prepared journal"
+assert_no_compose_mutation "$tmpdir/first-cutover-replicas-zero.log"
+assert_not_contains "$tmpdir/first-cutover-replicas-zero.log" " :: tag "
 
 if VERSION_CATALOG_JSON='{"versions":[{"name":"v4:hotfix"}]}' \
     DOCKER_BIN="$tmpdir/docker" \
