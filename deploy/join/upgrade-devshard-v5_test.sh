@@ -51,22 +51,34 @@ if [[ ${1:-} == inspect ]]; then
 			*" $container "*)
 				if [[ $2 == cid-* ]]; then
 					jq -cn --arg name "$container" --arg image "old-$container" \
+						--argjson exec_health "${EXEC_HEALTH_OVERRIDE:-false}" \
 						'[{Name:("/" + $name),Config:{Image:$image,Hostname:$name,
+						MacAddress:"02:42:ac:1e:00:2a",
 						Env:[],Labels:{"com.docker.compose.project":"gonka-test",
 						"com.docker.compose.service":$name},Cmd:["versiond"],
 						Entrypoint:["tini","--"],
-						Healthcheck:{Test:["CMD-SHELL","true"],Interval:1000000000,
-						Timeout:1000000000,Retries:1,StartPeriod:0}},
+						Healthcheck:{Test:(if $exec_health then
+						["CMD","/usr/local/bin/check","ready"] else
+						["CMD-SHELL","true"] end),Interval:1000000000,
+						Timeout:1000000000,Retries:1,StartPeriod:0,
+						StartInterval:500000000}},
 						HostConfig:{RestartPolicy:{Name:"always",MaximumRetryCount:0},
 						ReadonlyRootfs:false,Privileged:false,
+						Tmpfs:{"/run":"rw,noexec,size=65536k"},
 						Binds:(if $name == "devshard-postgres" then
 						["/srv/gonka/postgres:/var/lib/postgresql/gonka:rw"] else [] end),
 						Mounts:[]},
 						Mounts:(if $name == "devshard-postgres" then [
 						{Type:"volume",Name:"postgres-v4-volume",Source:"/docker/volumes/postgres-v4-volume/_data",Destination:"/var/lib/postgresql/data",RW:true,Propagation:""},
 						{Type:"bind",Name:"",Source:"/srv/gonka/postgres",Destination:"/var/lib/postgresql/gonka",Mode:"Z",RW:true,Propagation:"rprivate"}]
-						else [{Type:"bind",Name:"",Source:"/srv/gonka/state",Destination:"/var/lib/gonka",Mode:"Z",RW:true,Propagation:"rprivate"}] end),
-						NetworkSettings:{Networks:{"gonka-test_default":{Aliases:[$name],NetworkID:"network-default"}}}}]'
+						else [{Type:"bind",Name:"",Source:"/srv/gonka/state",Destination:"/var/lib/gonka",Mode:"Z",RW:true,Propagation:"rprivate"},
+						{Type:"tmpfs",Name:"",Source:"",Destination:"/run",Mode:"",RW:true,Propagation:""}] end),
+						NetworkSettings:{Networks:{"gonka-test_default":{
+						Aliases:[$name],NetworkID:"network-default",
+						IPAMConfig:{IPv4Address:"172.30.0.42",IPv6Address:"",
+						LinkLocalIPs:["169.254.10.1"]},
+						DriverOpts:{test:"preserved"},Links:["versiond:legacy"],
+						GwPriority:10}}}}]'
 				fi
 				exit 0
 				;;
@@ -580,6 +592,7 @@ run_upgrade() {
         ROLLBACK_PROBE_FAIL_SERVICE="${ROLLBACK_PROBE_FAIL_SERVICE-}" \
         ROLLBACK_ROUTER_PROBE_FAIL_SERVICE="${ROLLBACK_ROUTER_PROBE_FAIL_SERVICE-}" \
         SPECIAL_VERSIOND_HEALTH_SERVICE="${SPECIAL_VERSIOND_HEALTH_SERVICE-}" \
+        EXEC_HEALTH_OVERRIDE="${EXEC_HEALTH_OVERRIDE:-false}" \
         STOPPED_VERSIOND_SERVICE="${STOPPED_VERSIOND_SERVICE-}" \
         TARGET_ROUTER_MISSING_VERSION="${TARGET_ROUTER_MISSING_VERSION-}" \
         VERSIOND2_UNIQUE_VERSION="${VERSIOND2_UNIQUE_VERSION-}" \
@@ -1967,6 +1980,17 @@ assert_contains "$tmpdir/versiond2.log" "--entrypoint tini"
 assert_contains "$tmpdir/versiond2.log" \
     "gonka-upgrade-rollback/versiond2:"
 assert_contains "$tmpdir/versiond2.log" " -- versiond"
+assert_contains "$tmpdir/versiond2.log" \
+    "--mac-address 02:42:ac:1e:00:2a"
+assert_contains "$tmpdir/versiond2.log" \
+    "--tmpfs /run:rw\,noexec\,size=65536k"
+assert_contains "$tmpdir/versiond2.log" \
+    "--health-start-interval 500000000ns"
+assert_contains "$tmpdir/versiond2.log" "--ip 172.30.0.42"
+assert_contains "$tmpdir/versiond2.log" "--link-local-ip 169.254.10.1"
+assert_contains "$tmpdir/versiond2.log" "--driver-opt test=preserved"
+assert_contains "$tmpdir/versiond2.log" "--link versiond:legacy"
+assert_contains "$tmpdir/versiond2.log" "--gw-priority 10"
 rollback_probe_count=$(grep -Ec \
     'exec cid-versiond2 .*http://127.0.0.1:8080/v4/healthz' \
     "$tmpdir/versiond2.log")
@@ -1989,6 +2013,13 @@ jq -e '
     "running but unavailable rollback was marked successfully restored"
 grep -q 'automatic rollback of versiond2 failed' "$tmpdir/stderr" || fail \
     "unavailable rollback did not retain an operator-visible failure"
+
+EXEC_HEALTH_OVERRIDE=true \
+    run_upgrade single versiond2 "$tmpdir/versiond2-exec-health.log"
+assert_not_contains "$tmpdir/versiond2-exec-health.log" \
+    " :: create --name versiond2 --network none"
+grep -q 'exec-form healthcheck' "$tmpdir/stderr" || fail \
+    "inexact exec-form healthcheck rollback did not fail closed"
 
 ROLLBACK_EMPTY_VERSIOND_SERVICE=versiond2 \
 UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \

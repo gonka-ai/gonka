@@ -1447,7 +1447,8 @@ rollback_service() {
 
 restore_runtime_container() {
 	local service=$1 image=$2 model
-	local name value key restart health_cmd network network_id current backup_name
+	local name value key restart health_cmd health_kind image_health saved_health
+	local network network_id current backup_name
 	local candidate_was_running=false backup_exists=false
 	local -a create_args=(create) command_args=() connect_args=() entrypoint_args=()
 	model=${rollback_runtime_models[$service]}
@@ -1474,6 +1475,7 @@ restore_runtime_container() {
 	value=$(jq -r '.config.WorkingDir // ""' <<<"$model"); [[ -z $value ]] || create_args+=(--workdir "$value")
 	value=$(jq -r '.config.StopSignal // ""' <<<"$model"); [[ -z $value ]] || create_args+=(--stop-signal "$value")
 	value=$(jq -r '.config.StopTimeout // .host_config.StopTimeout // 0' <<<"$model"); ((value == 0)) || create_args+=(--stop-timeout "$value")
+	value=$(jq -r '.config.MacAddress // ""' <<<"$model"); [[ -z $value ]] || create_args+=(--mac-address "$value")
 	mapfile -t entrypoint_args < <(jq -r '.config.Entrypoint[]?' <<<"$model")
 	if ((${#entrypoint_args[@]} > 0)); then
 		create_args+=(--entrypoint "${entrypoint_args[0]}")
@@ -1507,14 +1509,19 @@ restore_runtime_container() {
 		' <<<"$model")
 		while IFS= read -r value; do create_args+=(--mount "$value"); done < <(jq -r '
 			.mounts[]? |
-			(if .Type == "tmpfs" then
-				"type=tmpfs,dst=" + .Destination
-			elif .Type == "volume" then
+			(if .Type == "volume" then
 				"type=volume,src=" + .Name + ",dst=" + .Destination
-			elif .Type == "bind" then empty
+			elif .Type == "bind" or .Type == "tmpfs" then empty
 			else error("unsupported rollback mount type: " + .Type)
 			end) +
 			(if .RW then "" else ",readonly" end)
+		' <<<"$model")
+		while IFS= read -r value; do create_args+=(--tmpfs "$value"); done < <(jq -r '
+			. as $model | $model.mounts[]? | select(.Type == "tmpfs") |
+			.Destination as $destination |
+			$destination +
+			(if ($model.host_config.Tmpfs[$destination] // "") == "" then ""
+			 else ":" + $model.host_config.Tmpfs[$destination] end)
 		' <<<"$model")
 	else
 		# Compatibility with journals written before top-level mounts were saved.
@@ -1532,15 +1539,29 @@ restore_runtime_container() {
 		fi
 	fi
 	if jq -e '.config.Healthcheck.Test? | length > 0' <<<"$model" >/dev/null; then
-		health_cmd=$(jq -r '
-			.config.Healthcheck.Test as $test |
-			if $test[0] == "CMD-SHELL" then $test[1]
-			else ($test[1:] | map(@sh) | join(" ")) end
-		' <<<"$model")
-		create_args+=(--health-cmd "$health_cmd")
+		health_kind=$(jq -r '.config.Healthcheck.Test[0]' <<<"$model")
+		case $health_kind in
+			NONE) create_args+=(--no-healthcheck) ;;
+			CMD-SHELL)
+			health_cmd=$(jq -r '.config.Healthcheck.Test[1]' <<<"$model")
+			create_args+=(--health-cmd "$health_cmd")
+			;;
+			CMD)
+			saved_health=$(jq -Sc '.config.Healthcheck' <<<"$model")
+			image_health=$("$docker_bin" image inspect --format \
+				'{{json .Config.Healthcheck}}' "$image") || return 1
+			image_health=$(jq -Sc '.' <<<"${image_health:-null}") || return 1
+			[[ $saved_health == "$image_health" ]] || {
+				warn "$service has an exec-form healthcheck that Docker CLI cannot override exactly"
+				return 1
+			}
+			;;
+			*) warn "$service has an unsupported saved healthcheck kind"; return 1 ;;
+		esac
 		value=$(jq -r '.config.Healthcheck.Interval // 0' <<<"$model"); ((value == 0)) || create_args+=(--health-interval "${value}ns")
 		value=$(jq -r '.config.Healthcheck.Timeout // 0' <<<"$model"); ((value == 0)) || create_args+=(--health-timeout "${value}ns")
 		value=$(jq -r '.config.Healthcheck.StartPeriod // 0' <<<"$model"); ((value == 0)) || create_args+=(--health-start-period "${value}ns")
+		value=$(jq -r '.config.Healthcheck.StartInterval // 0' <<<"$model"); ((value == 0)) || create_args+=(--health-start-interval "${value}ns")
 		value=$(jq -r '.config.Healthcheck.Retries // 0' <<<"$model"); ((value == 0)) || create_args+=(--health-retries "$value")
 	fi
 	while IFS= read -r value; do command_args+=("$value"); done < <(
@@ -1583,6 +1604,29 @@ restore_runtime_container() {
 		connect_args=(network connect)
 		while IFS= read -r value; do [[ -z $value ]] || connect_args+=(--alias "$value"); done < <(
 			jq -r --arg network "$network" '.networks[$network].Aliases[]?' <<<"$model")
+		value=$(jq -r --arg network "$network" \
+			'.networks[$network].IPAMConfig.IPv4Address // ""' <<<"$model")
+		[[ -z $value ]] || connect_args+=(--ip "$value")
+		value=$(jq -r --arg network "$network" \
+			'.networks[$network].IPAMConfig.IPv6Address // ""' <<<"$model")
+		[[ -z $value ]] || connect_args+=(--ip6 "$value")
+		while IFS= read -r value; do
+			[[ -z $value ]] || connect_args+=(--link-local-ip "$value")
+		done < <(jq -r --arg network "$network" \
+			'.networks[$network].IPAMConfig.LinkLocalIPs[]?' <<<"$model")
+		while IFS=$'\t' read -r key value; do
+			connect_args+=(--driver-opt "$key=$value")
+		done < <(jq -r --arg network "$network" '
+			.networks[$network].DriverOpts // {} |
+			to_entries[] | [.key, .value] | @tsv
+		' <<<"$model")
+		while IFS= read -r value; do
+			[[ -z $value ]] || connect_args+=(--link "$value")
+		done < <(jq -r --arg network "$network" \
+			'.networks[$network].Links[]?' <<<"$model")
+		value=$(jq -r --arg network "$network" \
+			'.networks[$network].GwPriority // 0' <<<"$model")
+		((value == 0)) || connect_args+=(--gw-priority "$value")
 		network_id=$(jq -r --arg network "$network" '.networks[$network].NetworkID // ""' <<<"$model")
 		connect_args+=("$network" "$name")
 		if ! "$docker_bin" "${connect_args[@]}" >/dev/null; then
