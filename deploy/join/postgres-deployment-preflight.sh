@@ -265,8 +265,58 @@ verify_bundled_postgres_login() {
         "fresh bundled PostgreSQL session returned invalid reserved connections"
 }
 
+verify_external_postgres_login() {
+    local container=$1 database user password host port client_image observed
+    local default_client_image
+    host=$(jq -r '.services.versiond.environment.PGHOST' <<<"$config")
+    port=$(jq -r \
+        '.services.versiond.environment.PGPORT // "5432"' <<<"$config")
+    database=$(jq -r \
+        '.services.versiond.environment.PGDATABASE' <<<"$config")
+    user=$(jq -r '.services.versiond.environment.PGUSER' <<<"$config")
+    password=$(jq -r \
+        '.services.versiond.environment.PGPASSWORD' <<<"$config")
+    default_client_image=postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777
+    client_image=${DEVSHARD_POSTGRES_CLIENT_IMAGE:-}
+    [[ -n $client_image ]] || \
+        client_image=${DEVSHARD_POSTGRES_IMAGE:-$default_client_image}
+    observed=$(timeout --kill-after=2s 12s "$docker_bin" run --rm \
+        --network "container:$container" \
+        --env "PGCONNECT_TIMEOUT=5" \
+        --env "PGOPTIONS=-c statement_timeout=5000" \
+        --env "PGPASSWORD=$password" \
+        --entrypoint psql "$client_image" \
+        -h "$host" -p "$port" -U "$user" -d "$database" \
+        -AtX -v ON_ERROR_STOP=1 -c \
+        "SELECT current_database() || '|' || current_user || '|' || inet_server_port() || '|' || current_setting('max_connections') || '|' || (current_setting('superuser_reserved_connections')::integer + COALESCE(current_setting('reserved_connections', true), '0')::integer)") || fail \
+        "rendered versiond credentials cannot open a fresh external PostgreSQL session"
+    IFS='|' read -r observed_database observed_user observed_port \
+        fresh_server_max fresh_server_reserved <<<"$observed"
+    [[ $observed_database == "$database" && $observed_user == "$user" && \
+        $observed_port == "$port" ]] || fail \
+        "fresh external PostgreSQL session returned unexpected endpoint identity '$observed'"
+    is_positive_int32 "$fresh_server_max" || fail \
+        "fresh external PostgreSQL session returned invalid max_connections"
+    [[ $fresh_server_reserved =~ ^[0-9]+$ && \
+        $fresh_server_reserved -lt $fresh_server_max ]] || fail \
+        "fresh external PostgreSQL session returned invalid reserved connections"
+}
+
 fresh_server_max=
 fresh_server_reserved=
+if ! jq -e '.services | has("devshard-postgres")' \
+    <<<"$config" >/dev/null; then
+    fresh_login_container=
+    for container in "${containers[@]}"; do
+        if [[ -n $container ]]; then
+            fresh_login_container=$container
+            break
+        fi
+    done
+    [[ -n $fresh_login_container ]] || fail \
+        "external PostgreSQL requires a running versiond network namespace for a fresh credential proof"
+    verify_external_postgres_login "$fresh_login_container"
+fi
 if [[ $runtime_contract_only == true ]]; then
 	postgres_container=
 	if jq -e '.services | has("devshard-postgres")' <<<"$config" >/dev/null; then
@@ -414,6 +464,11 @@ validate_connection_budget() {
         supervisors * per_supervisor
     ))
     local available=$((server_max - server_reserved))
+    if [[ -n $fresh_server_max ]] && \
+        { [[ $server_max != "$fresh_server_max" ]] || \
+          [[ $server_reserved != "$fresh_server_reserved" ]]; }; then
+        fail "fresh PostgreSQL login and application storage proof report different server capacity"
+    fi
     ((required <= available)) || fail \
         "PostgreSQL connection budget is insufficient: $required required for $total_targets current generations and their concurrently draining predecessors, readiness/fence sessions, versiond lookup, and schema initialization; $available non-reserved connections available"
 }

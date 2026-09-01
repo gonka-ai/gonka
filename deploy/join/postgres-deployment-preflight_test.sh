@@ -80,6 +80,11 @@ elif [[ $1 == inspect ]]; then
             + (if $pool == "" then [] else ["PG_POOL_MAX_CONNS=" + $pool] end)
             + (if $extra == "" then [] else [$extra] end)'
     fi
+elif [[ $1 == run ]]; then
+    [[ ${FRESH_EXTERNAL_PSQL_FAIL:-false} != true ]] || exit 1
+    printf 'devshardd|user|%s|%s|%s\n' \
+        "${RUNTIME_POSTGRES_PORT:-5432}" \
+        "${SERVER_MAX_ONE:-100}" "${SERVER_RESERVED_ONE:-3}"
 elif [[ $1 == exec ]]; then
     container=$2
     if [[ $container == --env ]]; then
@@ -228,6 +233,7 @@ run_preflight() {
         RUNTIME_POSTGRES_RUNNING="${RUNTIME_POSTGRES_RUNNING:-true}" \
         RUNTIME_CPU_COUNT="${RUNTIME_CPU_COUNT:-4}" \
         FRESH_PSQL_FAIL="${FRESH_PSQL_FAIL:-false}" \
+        FRESH_EXTERNAL_PSQL_FAIL="${FRESH_EXTERNAL_PSQL_FAIL:-false}" \
         PROOF_POOL_ONE="${PROOF_POOL_ONE:-4}" \
         PROOF_POOL_TWO="${PROOF_POOL_TWO:-4}" \
         SERVER_MAX_ONE="${SERVER_MAX_ONE:-100}" \
@@ -438,6 +444,24 @@ unset FRESH_PSQL_FAIL LIVE_MODE
 grep -q 'cannot open a fresh bundled PostgreSQL session' "$tmpdir/err" || fail \
     "failed bundled credential proof was not diagnosed"
 
+unset INCLUDE_POSTGRES RUNTIME_HOST_ONE RUNTIME_HOST_TWO
+write_config
+FRESH_EXTERNAL_PSQL_FAIL=true
+export FRESH_EXTERNAL_PSQL_FAIL
+if run_preflight --runtime-contract-only >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "stale external PostgreSQL credentials passed without a fresh login"
+fi
+unset FRESH_EXTERNAL_PSQL_FAIL
+grep -q 'cannot open a fresh external PostgreSQL session' "$tmpdir/err" || fail \
+    "failed external credential proof was not diagnosed"
+grep -q 'run --rm --network container:container-1' \
+    "$tmpdir/docker.log" || fail \
+    "external credential proof did not use the application network namespace"
+
+INCLUDE_POSTGRES=true
+RUNTIME_HOST_ONE=devshard-postgres
+RUNTIME_HOST_TWO=devshard-postgres
+export INCLUDE_POSTGRES RUNTIME_HOST_ONE RUNTIME_HOST_TWO
 RENDERED_PORT_ONE=5433
 RENDERED_PORT_TWO=5433
 export RENDERED_PORT_ONE RENDERED_PORT_TWO
