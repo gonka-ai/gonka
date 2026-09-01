@@ -39,7 +39,7 @@ esac
 EOF
 cat >"$tmpdir/bin/psql" <<'EOF'
 #!/bin/sh
-[ -s "$PGDATA/PG_VERSION" ]
+[ -s "$PGDATA/PG_VERSION" ] && [ ! -e "$PGDATA/.test-probe-fail" ]
 EOF
 chmod +x "$tmpdir/bin/postgres" "$tmpdir/bin/ldd" \
     "$tmpdir/bin/pg_controldata" "$tmpdir/bin/readlink" "$tmpdir/bin/psql"
@@ -80,6 +80,10 @@ run_entrypoint() {
         GONKA_POSTGRES_OFFICIAL_ENTRYPOINT="${official_entrypoint:-/bin/true}" \
         PGDATA="$persistent/data" \
         DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT="${allow_empty:-false}" \
+        GONKA_POSTGRES_STARTUP_TIMEOUT_SECONDS="${startup_timeout:-1800}" \
+        GONKA_POSTGRES_TERMINATION_GRACE_SECONDS="${termination_grace:-10}" \
+        GONKA_POSTGRES_WATCHDOG_INTERVAL_SECONDS="${watchdog_interval:-5}" \
+        GONKA_POSTGRES_WATCHDOG_FAILURES="${watchdog_failures:-12}" \
         "$entrypoint" postgres
 }
 
@@ -361,5 +365,92 @@ chmod +x "$case_dir/bin/postgres"
 entrypoint_path="$case_dir/bin:$test_path"
 run_entrypoint
 unset entrypoint_path
+
+new_case reject-incomplete-wal-fingerprint
+printf '16\n' >"$legacy/PG_VERSION"
+mkdir -p "$case_dir/bin"
+cat >"$case_dir/bin/sha256sum" <<'EOF'
+#!/bin/sh
+case ${1:-} in
+    pg_wal/*) exit 1 ;;
+    *) exec /usr/bin/sha256sum "$@" ;;
+esac
+EOF
+chmod +x "$case_dir/bin/sha256sum"
+entrypoint_path="$case_dir/bin:$test_path"
+if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+    fail "migration accepted an incomplete WAL fingerprint"
+fi
+unset entrypoint_path
+grep -q 'cannot fingerprint PostgreSQL WAL state' "$case_dir/stderr" || fail \
+    "WAL fingerprint read failure was not diagnosed"
+
+new_case terminate-stuck-startup
+cat >"$case_dir/official-entrypoint" <<'EOF'
+#!/bin/sh
+trap '' TERM
+exec sleep 30
+EOF
+chmod +x "$case_dir/official-entrypoint"
+official_entrypoint=$case_dir/official-entrypoint
+startup_timeout=1
+termination_grace=1
+SECONDS=0
+if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+    fail "PostgreSQL startup hang returned success"
+fi
+elapsed=$SECONDS
+unset official_entrypoint startup_timeout termination_grace
+(( elapsed < 8 )) || fail "PostgreSQL startup timeout was not bounded"
+grep -q 'did not complete startup within 1s' "$case_dir/stderr" || fail \
+    "PostgreSQL startup timeout was not diagnosed"
+
+new_case preserve-graceful-shutdown
+mkdir -p "$persistent/data/global" "$persistent/data/pg_wal"
+printf '16\n' >"$persistent/data/PG_VERSION"
+printf 'control\n' >"$persistent/data/global/pg_control"
+printf '1000000000000000000\n' >"$persistent/.gonka-cluster-lineage"
+cat >"$case_dir/official-entrypoint" <<'EOF'
+#!/bin/sh
+touch "$PGDATA/.test-final-process"
+trap '
+    touch "$PGDATA/.test-probe-fail"
+    sleep 3
+    touch "$PGDATA/.test-term-complete"
+    exit 0
+' TERM
+while :; do sleep 1; done
+EOF
+chmod +x "$case_dir/official-entrypoint"
+official_entrypoint=$case_dir/official-entrypoint
+termination_grace=1
+watchdog_interval=1
+watchdog_failures=1
+env \
+    PATH="$test_path" \
+    GONKA_POSTGRES_LEGACY_DATA="$legacy" \
+    GONKA_POSTGRES_PERSISTENT_ROOT="$persistent" \
+    GONKA_POSTGRES_EXISTING_VERSIOND="$existing" \
+    GONKA_POSTGRES_VERSIOND_DATA="$versiond_data" \
+    GONKA_POSTGRES_VERSIOND2_DATA="$versiond2_data" \
+    GONKA_POSTGRES_OFFICIAL_ENTRYPOINT="$official_entrypoint" \
+    PGDATA="$persistent/data" \
+    GONKA_POSTGRES_TERMINATION_GRACE_SECONDS="$termination_grace" \
+    GONKA_POSTGRES_WATCHDOG_INTERVAL_SECONDS="$watchdog_interval" \
+    GONKA_POSTGRES_WATCHDOG_FAILURES="$watchdog_failures" \
+    "$entrypoint" postgres >"$case_dir/stdout" 2>"$case_dir/stderr" &
+supervisor=$!
+for _ in {1..50}; do
+    [[ -e $persistent/data/.test-final-process ]] && break
+    sleep 0.1
+done
+[[ -e $persistent/data/.test-final-process ]] || fail \
+    "PostgreSQL test process did not reach its final process"
+sleep 1
+kill -TERM "$supervisor"
+wait "$supervisor" || fail "graceful PostgreSQL shutdown returned failure"
+unset official_entrypoint termination_grace watchdog_interval watchdog_failures
+[[ -e $persistent/data/.test-term-complete ]] || fail \
+    "watchdog interrupted the PostgreSQL graceful shutdown window"
 
 echo "devshard-postgres-entrypoint_test: ok"

@@ -84,12 +84,18 @@ cluster_id() {
     '
 }
 wal_fingerprint() {
-    (
-        cd "$1"
-        find global/pg_control pg_wal -type f -print | LC_ALL=C sort |
-            while IFS= read -r file; do sha256sum "$file"; done |
-            sha256sum | awk '{ print $1 }'
-    )
+    cluster=$1
+    unsorted=$(mktemp)
+    files=$(mktemp)
+    hashes=$(mktemp)
+    cd "$cluster"
+    find global/pg_control pg_wal -type f -print >"$unsorted"
+    LC_ALL=C sort "$unsorted" >"$files"
+    while IFS= read -r file; do
+        sha256sum "$file" >>"$hashes"
+    done <"$files"
+    sha256sum "$hashes" | awk '{ print $1 }'
+    rm -f "$unsorted" "$files" "$hashes"
 }
 source_id=none
 source_fingerprint=none
@@ -120,10 +126,13 @@ fi
 PROBE
 )
 
+# Commas below are part of Docker's tmpfs specification.
+# shellcheck disable=SC2054
 probe_args=(
     run --rm
     --network none
     --read-only
+    --tmpfs /tmp:rw,noexec,nosuid,size=16m
     --security-opt no-new-privileges
     # Inspect an existing Compose :Z bind without relabeling it away from the
     # running PostgreSQL container.
@@ -134,19 +143,25 @@ probe_args=(
 if [[ -n $source_container ]]; then
     "$docker_bin" inspect "$source_container" >/dev/null ||
         fail "source container does not exist: $source_container"
-    probe=$("$docker_bin" "${probe_args[@]}" \
+    probe=$(timeout -k 5 \
+        "${POSTGRES_MIGRATION_PROBE_TIMEOUT_SECONDS:-300}s" \
+        "$docker_bin" "${probe_args[@]}" \
         --volumes-from "$source_container:ro" \
         --entrypoint /bin/sh "$helper_image" \
         -ec "$probe_script" sh /var/lib/postgresql/data /target)
 elif [[ -n $source_volume ]]; then
     "$docker_bin" volume inspect "$source_volume" >/dev/null ||
         fail "source volume does not exist: $source_volume"
-    probe=$("$docker_bin" "${probe_args[@]}" \
+    probe=$(timeout -k 5 \
+        "${POSTGRES_MIGRATION_PROBE_TIMEOUT_SECONDS:-300}s" \
+        "$docker_bin" "${probe_args[@]}" \
         --mount "type=volume,src=$source_volume,dst=/source,readonly" \
         --entrypoint /bin/sh "$helper_image" \
         -ec "$probe_script" sh /source /target)
 else
-    probe=$("$docker_bin" "${probe_args[@]}" \
+    probe=$(timeout -k 5 \
+        "${POSTGRES_MIGRATION_PROBE_TIMEOUT_SECONDS:-300}s" \
+        "$docker_bin" "${probe_args[@]}" \
         --entrypoint /bin/sh "$helper_image" \
         -ec "$probe_script" sh /missing-source /target)
 fi
@@ -219,9 +234,11 @@ if [[ -n $source_container && $probe_state != source-missing && \
     [[ $devshard_schema == t ]] || fail \
         "source container $source_container has PostgreSQL data but no devshard schema; a fresh anonymous volume may have replaced the original one (locate and recover the dangling v4 volume)"
     write_schema_proof "$probe_source_id" "$source_storage_key"
-elif [[ -n $source_container && $probe_state != source-missing ]]; then
+elif [[ -n $source_container && $probe_state != source-missing && \
+    $probe_source_id != none ]]; then
     require_schema_proof "$probe_source_id" "$source_storage_key"
-elif [[ -n $source_volume && $probe_state != source-missing ]]; then
+elif [[ -n $source_volume && $probe_state != source-missing && \
+    $probe_source_id != none ]]; then
     require_schema_proof "$probe_source_id" "$source_volume"
 fi
 

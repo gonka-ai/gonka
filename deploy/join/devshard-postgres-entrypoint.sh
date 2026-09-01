@@ -62,12 +62,25 @@ cluster_wal_fingerprint() {
     cluster=$1
 	[ -f "$cluster/global/pg_control" ] && [ -d "$cluster/pg_wal" ] ||
 		die "PostgreSQL cluster in $cluster has no control/WAL state to fingerprint"
+    # The single-quoted program is evaluated by the child shell.
+    # shellcheck disable=SC2016
     fingerprint=$(
-        cd "$cluster" &&
-            find global/pg_control pg_wal -type f -print | LC_ALL=C sort |
-            while IFS= read -r file; do
-                sha256sum "$file"
-            done | sha256sum | awk '{ print $1 }'
+        timeout -k 5 \
+            "${GONKA_POSTGRES_FINGERPRINT_TIMEOUT_SECONDS:-300}s" \
+            /bin/sh -ec '
+                cluster=$1
+                unsorted=$(mktemp)
+                files=$(mktemp)
+                hashes=$(mktemp)
+                trap '\''rm -f "$unsorted" "$files" "$hashes"'\'' EXIT
+                cd "$cluster"
+                find global/pg_control pg_wal -type f -print >"$unsorted"
+                LC_ALL=C sort "$unsorted" >"$files"
+                while IFS= read -r file; do
+                    sha256sum "$file" >>"$hashes"
+                done <"$files"
+                sha256sum "$hashes" | awk '\''{ print $1 }'\''
+            ' sh "$cluster"
     ) || die "cannot fingerprint PostgreSQL WAL state in $cluster"
     case "$fingerprint" in
         '' | *[!0-9a-f]*) die "invalid PostgreSQL WAL fingerprint in $cluster" ;;
@@ -200,6 +213,15 @@ forward_signal() {
         kill -"$signal" "$postgres_child" 2>/dev/null || true
 }
 
+handle_postgres_signal() {
+    signal=$1
+    shutdown_requested=true
+    if [ -n "${watchdog_child:-}" ]; then
+        kill "$watchdog_child" 2>/dev/null || true
+    fi
+    forward_signal "$signal"
+}
+
 postgres_final_process_is_running() {
     executable=$(readlink "/proc/$postgres_child/exe" 2>/dev/null || :)
     [ "${executable##*/}" = postgres ]
@@ -232,7 +254,7 @@ postgres_watchdog() {
             if [ "$failures" -ge "${GONKA_POSTGRES_WATCHDOG_FAILURES:-12}" ]; then
                 log "PostgreSQL failed $failures bounded SQL probes; terminating the server for restart-policy recovery"
                 kill -TERM "$postgres_child" 2>/dev/null || true
-                sleep 10
+                sleep "${GONKA_POSTGRES_TERMINATION_GRACE_SECONDS:-10}"
                 kill -KILL "$postgres_child" 2>/dev/null || true
                 return
             fi
@@ -243,16 +265,32 @@ postgres_watchdog() {
 run_official_supervised() {
     record_lineage=${1:-false}
     shift
+    startup_timeout=${GONKA_POSTGRES_STARTUP_TIMEOUT_SECONDS:-1800}
+    termination_grace=${GONKA_POSTGRES_TERMINATION_GRACE_SECONDS:-10}
+    case "$startup_timeout:$termination_grace" in
+        *[!0-9:]* | 0:* | *:0) die \
+            "PostgreSQL supervisor timeouts must be positive integer seconds" ;;
+    esac
     "$official_entrypoint" "$@" &
     postgres_child=$!
-    trap 'forward_signal TERM' TERM
-    trap 'forward_signal INT' INT
-    trap 'forward_signal HUP' HUP
+    shutdown_requested=false
+    trap 'handle_postgres_signal TERM' TERM
+    trap 'handle_postgres_signal INT' INT
+    trap 'handle_postgres_signal HUP' HUP
 
     ready=false
+    startup_deadline=$(( $(date +%s) + startup_timeout ))
     while kill -0 "$postgres_child" 2>/dev/null; do
         if postgres_final_process_is_running && postgres_sql_probe; then
             ready=true
+            break
+        fi
+        if [ "$shutdown_requested" = false ] && \
+            [ "$(date +%s)" -ge "$startup_deadline" ]; then
+            log "PostgreSQL did not complete startup within ${startup_timeout}s; terminating it for restart-policy recovery"
+            kill -TERM "$postgres_child" 2>/dev/null || true
+            sleep "$termination_grace"
+            kill -KILL "$postgres_child" 2>/dev/null || true
             break
         fi
         sleep 1
@@ -277,10 +315,10 @@ run_official_supervised() {
             break
         fi
     done
-    if [ -n "${watchdog_child:-}" ]; then
+    if [ -n "${watchdog_child:-}" ] && [ "$shutdown_requested" = false ]; then
         kill "$watchdog_child" 2>/dev/null || true
-        wait "$watchdog_child" 2>/dev/null || true
     fi
+    [ -z "${watchdog_child:-}" ] || wait "$watchdog_child" 2>/dev/null || true
     trap - TERM INT HUP
     return "$status"
 }

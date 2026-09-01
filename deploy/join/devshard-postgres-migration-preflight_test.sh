@@ -83,6 +83,25 @@ grep -q 'exec postgres-v4 /bin/sh -ec' "$tmpdir/docker.log" || fail \
     "live container source was not checked for a devshard schema"
 
 : >"$tmpdir/docker.log"
+DOCKER_PROBE="target-ready none 1000000000000000000 none"
+# This is serialized Docker inspect output, not shell syntax.
+# shellcheck disable=SC2089
+POSTGRES_RUNTIME_ENV='["PGDATA=/var/lib/postgresql/gonka/data"]'
+printf '1000000000000000000\n' >"$tmpdir/target/.gonka-cluster-lineage"
+# shellcheck disable=SC2090
+export DOCKER_PROBE POSTGRES_RUNTIME_ENV
+run_preflight --source-container postgres-v5 --target-dir "$tmpdir/target" \
+    >"$tmpdir/v5-day2.stdout"
+unset POSTGRES_RUNTIME_ENV
+grep -q 'no migration copy is required' "$tmpdir/v5-day2.stdout" || fail \
+    "existing v5 PGDATA with an empty legacy volume failed day-2 preflight"
+if grep -q 'exec postgres-v5 /bin/sh -ec' "$tmpdir/docker.log"; then
+    fail "day-2 v5 container was queried as a live legacy schema source"
+fi
+DOCKER_PROBE="source 1000 0 1000000000000000000 $fingerprint"
+export DOCKER_PROBE
+
+: >"$tmpdir/docker.log"
 POSTGRES_RUNTIME_RUNNING=false
 export POSTGRES_RUNTIME_RUNNING
 run_preflight --source-container postgres-v4 --target-dir "$tmpdir/target" \
