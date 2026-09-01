@@ -46,7 +46,10 @@ func handleAt(oracle blocks.BlockOracle) echo.HandlerFunc {
 		}
 		h, err := oracle.At(c.Request().Context(), height)
 		if err != nil {
-			return echo.NewHTTPError(http.StatusNotFound, err.Error())
+			if errors.Is(err, blocks.ErrHeaderNotFound) {
+				return echo.NewHTTPError(http.StatusNotFound, err.Error())
+			}
+			return echo.NewHTTPError(http.StatusBadGateway, err.Error())
 		}
 		return writeJSON(c, h)
 	}
@@ -67,7 +70,10 @@ func handleProve(oracle blocks.BlockOracle) echo.HandlerFunc {
 			if errors.Is(err, blocks.ErrProveNotImplemented) {
 				return echo.NewHTTPError(http.StatusNotImplemented, err.Error())
 			}
-			return echo.NewHTTPError(http.StatusNotFound, err.Error())
+			if errors.Is(err, blocks.ErrHeaderNotFound) {
+				return echo.NewHTTPError(http.StatusNotFound, err.Error())
+			}
+			return echo.NewHTTPError(http.StatusBadGateway, err.Error())
 		}
 		return writeJSON(c, p)
 	}

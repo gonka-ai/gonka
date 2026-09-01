@@ -2,6 +2,7 @@ package chainphase
 
 import (
 	"sync"
+	"time"
 
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -22,8 +23,10 @@ type ChainPhaseTracker struct {
 }
 
 type BlockInfo struct {
-	Height int64
-	Hash   string
+	Height  int64
+	Hash    string
+	Time    time.Time
+	ChainID string
 }
 
 // Update caches the latest Epoch information from the network.
@@ -86,4 +89,3 @@ func (t *ChainPhaseTracker) UpdateEpochParams(params types.EpochParams) {
 
 	t.currentEpochParams = &params
 }
-

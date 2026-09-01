@@ -99,7 +99,9 @@ func TestParseNewBlockInfo(t *testing.T) {
 	testData := map[string]interface{}{
 		"block": map[string]interface{}{
 			"header": map[string]interface{}{
-				"height": "12345",
+				"height":   "12345",
+				"chain_id": "gonka-test",
+				"time":     "2024-01-02T03:04:05Z",
 			},
 		},
 		"block_id": map[string]interface{}{
@@ -125,4 +127,6 @@ func TestParseNewBlockInfo(t *testing.T) {
 	assert.NoError(t, err)
 	assert.Equal(t, int64(12345), blockInfo.Height)
 	assert.Equal(t, "ABCDEF123456", blockInfo.Hash)
+	assert.Equal(t, "gonka-test", blockInfo.ChainID)
+	assert.Equal(t, time.Date(2024, 1, 2, 3, 4, 5, 0, time.UTC), blockInfo.Time.UTC())
 }

@@ -16,6 +16,8 @@ import (
 	"net/url"
 	"time"
 
+	"common/chainoracle/blocks"
+
 	echoMiddleware "github.com/labstack/echo/v4/middleware"
 
 	"github.com/labstack/echo/v4"
@@ -43,6 +45,7 @@ type Server struct {
 	authzCache          *authzcache.AuthzCache
 	httpClient          *http.Client
 	statsStorage        statsstorage.StatsStorage
+	chainOracle         blocks.BlockOracle
 }
 
 // ServerOption configures optional Server dependencies.

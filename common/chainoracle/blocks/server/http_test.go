@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -70,4 +71,46 @@ func TestServer_NoLiveTipRoutes(t *testing.T) {
 		resp.Body.Close()
 		require.Equal(t, http.StatusBadRequest, resp.StatusCode, path)
 	}
+}
+
+type atErrOracle struct {
+	err error
+}
+
+func (atErrOracle) Latest(context.Context) (*blocks.Header, error) {
+	return nil, errors.New("unused")
+}
+func (o atErrOracle) At(context.Context, int64) (*blocks.Header, error) {
+	return nil, o.err
+}
+func (atErrOracle) Prove(context.Context, string, int64) (*blocks.Proof, error) {
+	return nil, blocks.ErrProveNotImplemented
+}
+func (atErrOracle) Subscribe(context.Context, int64) (<-chan *blocks.Header, error) {
+	ch := make(chan *blocks.Header)
+	close(ch)
+	return ch, nil
+}
+
+func TestServer_AtNotFoundVsBadGateway(t *testing.T) {
+	t.Run("not found", func(t *testing.T) {
+		e := echo.New()
+		server.Mount(e.Group(""), atErrOracle{err: blocks.ErrHeaderNotFound})
+		ts := httptest.NewServer(e)
+		t.Cleanup(ts.Close)
+		resp, err := http.Get(ts.URL + "/block/3")
+		require.NoError(t, err)
+		resp.Body.Close()
+		require.Equal(t, http.StatusNotFound, resp.StatusCode)
+	})
+	t.Run("transport", func(t *testing.T) {
+		e := echo.New()
+		server.Mount(e.Group(""), atErrOracle{err: errors.New("i/o timeout")})
+		ts := httptest.NewServer(e)
+		t.Cleanup(ts.Close)
+		resp, err := http.Get(ts.URL + "/block/3")
+		require.NoError(t, err)
+		resp.Body.Close()
+		require.Equal(t, http.StatusBadGateway, resp.StatusCode)
+	})
 }
