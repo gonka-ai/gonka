@@ -309,6 +309,33 @@ pull_line=$(grep -n 'compose .* pull ' \
 [[ -n $start_line && -n $pull_line && $start_line -lt $pull_line ]] || fail \
     "fleet contacted the registry before lifting preserved local capacity"
 
+docker stop "$preserved_id" >/dev/null
+: >"$tmpdir/registry-outage.log"
+if DOCKER_BIN="$tmpdir/docker-registry-outage" \
+    REGISTRY_OUTAGE_LOG="$tmpdir/registry-outage.log" \
+    "${fleet[@]}" up >"$tmpdir/up-registry-outage.out" 2>&1; then
+    fail "fleet up ignored the simulated registry outage"
+fi
+[[ $(docker ps -q --filter "id=$preserved_id") == "$preserved_id" ]] || fail \
+    "fleet up contacted the registry before local recovery"
+start_line=$(grep -n "start $preserved_id" \
+    "$tmpdir/registry-outage.log" | head -n1 | cut -d: -f1)
+pull_line=$(grep -n 'compose .* pull ' \
+    "$tmpdir/registry-outage.log" | head -n1 | cut -d: -f1)
+[[ -n $start_line && -n $pull_line && $start_line -lt $pull_line ]] || fail \
+    "fleet up pulled before restarting preserved capacity"
+
+docker stop "$preserved_id" >/dev/null
+: >"$tmpdir/registry-outage.log"
+DOCKER_BIN="$tmpdir/docker-registry-outage" \
+REGISTRY_OUTAGE_LOG="$tmpdir/registry-outage.log" \
+    "${fleet[@]}" start 2 >"$tmpdir/start-registry-outage.out"
+[[ $(docker ps -q --filter "id=$preserved_id") == "$preserved_id" ]] || fail \
+    "explicit start did not recover the preserved local slot"
+if grep -q 'compose .* pull ' "$tmpdir/registry-outage.log"; then
+    fail "explicit start contacted the registry after local recovery"
+fi
+
 # A protocol bump uses a distinct cache file and is rolled out without an
 # operator migration. The previous file remains available to the captured
 # rollback image.

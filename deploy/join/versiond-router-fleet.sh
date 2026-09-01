@@ -1186,24 +1186,31 @@ validate_inventory_structure() {
 
 }
 
+restart_preserved_stopped_slot() {
+    local slot=$1 id state
+    id=$(slot_id "$slot") || return 1
+    slot_ready "$slot" && return 1
+    state=$($docker_bin inspect --format '{{.State.Status}}' "$id") || fail \
+        "router slot $slot disappeared during local recovery"
+    case $state in
+        created | exited)
+            echo "Restarting preserved versiond-router slot $slot before registry access"
+            "$docker_bin" start "$id" >/dev/null || fail \
+                "cannot restart preserved router slot $slot"
+            wait_slot_ready "$slot" || fail \
+                "preserved router slot $slot did not become healthy"
+            wait_slot_routes "$slot"
+            wait_parent_admission "$slot"
+            return 0
+            ;;
+    esac
+    return 1
+}
+
 repair_preserved_stopped_capacity() {
-    local slot id state
+    local slot
     for slot in "${slots[@]}"; do
-        id=$(slot_id "$slot") || continue
-        slot_ready "$slot" && continue
-        state=$($docker_bin inspect --format '{{.State.Status}}' "$id") || fail \
-            "router slot $slot disappeared during local recovery"
-        case $state in
-            created | exited)
-                echo "Restarting preserved versiond-router slot $slot before registry access"
-                "$docker_bin" start "$id" >/dev/null || fail \
-                    "cannot restart preserved router slot $slot"
-                wait_slot_ready "$slot" || fail \
-                    "preserved router slot $slot did not become healthy"
-                wait_slot_routes "$slot"
-                wait_parent_admission "$slot"
-                ;;
-        esac
+        restart_preserved_stopped_slot "$slot" || true
     done
 }
 
@@ -2019,6 +2026,8 @@ fleet_status() {
 fleet_up() {
     local slot
     prepare_slot_networks
+    validate_inventory_structure
+    repair_preserved_stopped_capacity
     pull_router_image
     candidate_image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
     require_placement_compatible "$candidate_image"
@@ -2274,6 +2283,10 @@ case $command in
         [[ $# == 2 ]] || fail "start requires exactly one SLOT"
         target_slot=$2
         prepare_slot_networks
+        validate_inventory_structure
+        if restart_preserved_stopped_slot "$target_slot"; then
+            exit 0
+        fi
         pull_router_image
         candidate_image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
         require_placement_compatible "$candidate_image"
