@@ -114,6 +114,7 @@ config_dir=$(cd -- "$(dirname -- "$config_env")" && pwd -P)
 operation_id="$(date +%s%N)-$$"
 maintenance_journal=${VERSIOND_ROUTER_MAINTENANCE_JOURNAL:-$config_dir/.gonka-versiond-router-maintenance.json}
 maintenance_recovery_committed=false
+maintenance_recovery_rolled_back=false
 
 command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
 command -v flock >/dev/null 2>&1 || fail "flock is required"
@@ -1951,7 +1952,18 @@ fleet_up() {
 }
 
 fleet_apply() {
+    local image recovery_status=0
     local -a ids=()
+    image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
+    if [[ -f $maintenance_journal ]]; then
+        recover_durable_maintenance "$image" || recovery_status=$?
+        if [[ $maintenance_recovery_committed == true ||
+              $maintenance_recovery_rolled_back == true ]]; then
+            fleet_status
+            return 0
+        fi
+        return "$recovery_status"
+    fi
     inventory=$(fleet_ids) || fail "cannot inventory the router fleet"
 	[[ -z $inventory ]] || mapfile -t ids <<<"$inventory"
     if ((${#ids[@]} == 0)); then
@@ -2036,6 +2048,7 @@ recover_durable_maintenance() {
         restore_maintenance_source || fail \
             "durable maintenance rollback could not restore the source fleet"
         cleanup_maintenance_transaction
+        maintenance_recovery_rolled_back=true
         echo "Recovered the exact pre-maintenance router fleet"
         return 1
     fi

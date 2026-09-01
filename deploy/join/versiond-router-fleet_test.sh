@@ -538,15 +538,13 @@ grep -q 'journal targets' "$tmpdir/maintenance-changed-target.out" || fail \
     "changed maintenance retry target was not diagnosed"
 sed -i "s|^VERSIOND_ROUTER_IMAGE=.*|VERSIOND_ROUTER_IMAGE=$image|" \
     "$tmpdir/config.env"
-VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
-    "${fleet[@]}" maintenance-rollout \
-    >"$tmpdir/maintenance-candidate-resume.out"
+"${fleet[@]}" apply >"$tmpdir/maintenance-candidate-resume.out"
 grep -q 'Recovering durable router maintenance transaction' \
     "$tmpdir/maintenance-candidate-resume.out" || fail \
-    "maintenance retry ignored its durable journal"
+    "ordinary fleet apply ignored the durable maintenance journal"
 grep -q 'Recovered the exact pre-maintenance router fleet' \
     "$tmpdir/maintenance-candidate-resume.out" || fail \
-    "maintenance retry did not restore its recorded source boundary"
+    "ordinary fleet apply did not restore the recorded source boundary"
 [[ ! -e $maintenance_journal ]] || fail \
     "completed maintenance retained its active journal"
 for slot in "${slots[@]}"; do
