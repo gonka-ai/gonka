@@ -111,8 +111,19 @@ if [ -s "$1/PG_VERSION" ]; then
 fi
 if [ -s "$2/data/PG_VERSION" ]; then
     target_id=$(cluster_id "$2/data")
-    printf 'target-ready %s %s %s\n' \
-        "$source_id" "$target_id" "$source_fingerprint"
+    commit_id=none
+    commit_fingerprint=none
+    if [ -s "$2/data/.gonka-migration-commit" ]; then
+        read -r commit_id commit_fingerprint commit_extra \
+            <"$2/data/.gonka-migration-commit"
+        [ -z "${commit_extra:-}" ] || {
+            printf 'invalid-commit\n'
+            exit
+        }
+    fi
+    printf 'target-ready %s %s %s %s %s\n' \
+        "$source_id" "$target_id" "$source_fingerprint" \
+        "$commit_id" "$commit_fingerprint"
 elif [ -s "$2/.migrating/PG_VERSION" ] &&
     [ -f "$2/.gonka-copy-complete" ]; then
     staging_id=$(cluster_id "$2/.migrating")
@@ -174,7 +185,7 @@ else
         -ec "$probe_script" sh /missing-source /target)
 fi
 
-read -r probe_state first second third fourth extra <<<"$probe"
+read -r probe_state first second third fourth fifth extra <<<"$probe"
 [[ -z ${extra:-} ]] || fail "unexpected source probe output: $probe"
 source_storage_key=
 source_is_active=false
@@ -298,13 +309,9 @@ write_lineage_marker() {
 
 recover_atomic_publish_markers() {
     local target_identifier=$1 source_identifier=$2 source_fingerprint=$3
-    local commit_marker commit_identifier commit_fingerprint extra_field
-    commit_marker=$target_dir/data/.gonka-migration-commit
-    [[ -s $commit_marker ]] || return 0
-    read -r commit_identifier commit_fingerprint extra_field \
-        <"$commit_marker" || fail \
-        "cannot read atomic PostgreSQL migration commit"
-    [[ -z ${extra_field:-} && $commit_identifier =~ ^[0-9]+$ && \
+    local commit_identifier=${4:-none} commit_fingerprint=${5:-none}
+    [[ $commit_identifier != none || $commit_fingerprint != none ]] || return 0
+    [[ $commit_identifier =~ ^[0-9]+$ && \
         $commit_fingerprint =~ ^[0-9a-f]{64}$ ]] || fail \
         "atomic PostgreSQL migration commit is invalid"
     [[ $commit_identifier == "$target_identifier" ]] || fail \
@@ -350,10 +357,13 @@ case $probe_state in
         source_identifier=$first
         target_identifier=$second
         source_fingerprint=${third:-none}
+        commit_identifier=${fourth:-none}
+        commit_fingerprint=${fifth:-none}
         [[ $target_identifier =~ ^[0-9]+$ ]] || fail \
             "persistent PostgreSQL target has an invalid system identifier"
         recover_atomic_publish_markers "$target_identifier" \
-            "$source_identifier" "$source_fingerprint"
+            "$source_identifier" "$source_fingerprint" \
+            "$commit_identifier" "$commit_fingerprint"
         if [[ $source_identifier == none ]]; then
             validate_published_markers "$target_identifier"
         else

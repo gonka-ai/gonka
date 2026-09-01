@@ -216,6 +216,8 @@ printf '1000000000000000000 %s\n' "$fingerprint" \
     >"$atomic_target/data/.gonka-migration-commit"
 printf '1000000000000000000\n' \
     >"$atomic_target/.gonka-copy-complete"
+DOCKER_PROBE="target-ready 1000000000000000000 1000000000000000000 $fingerprint 1000000000000000000 $fingerprint"
+export DOCKER_PROBE
 run_preflight --source-volume postgres-v4-volume \
     --target-dir "$atomic_target" >"$tmpdir/atomic-target.stdout"
 [[ $(<"$atomic_target/.migrated-from-v4") == 1000000000000000000 && \

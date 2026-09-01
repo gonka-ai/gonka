@@ -150,7 +150,7 @@ write_atomic_marker() {
     temporary=$path.tmp.$$
     printf '%s\n' "$value" >"$temporary" ||
         die "cannot write PostgreSQL marker $path"
-    chmod 600 "$temporary" || die "cannot secure PostgreSQL marker $path"
+    chmod 644 "$temporary" || die "cannot secure PostgreSQL marker $path"
     mv -f "$temporary" "$path" || die "cannot publish PostgreSQL marker $path"
 }
 
