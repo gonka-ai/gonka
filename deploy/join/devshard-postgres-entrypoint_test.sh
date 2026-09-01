@@ -24,8 +24,25 @@ if [ -s "$1/.test-system-id" ]; then
 fi
 printf 'Database system identifier:            %s\n' "$identifier"
 EOF
+cat >"$tmpdir/bin/readlink" <<'EOF'
+#!/bin/sh
+case "$1" in
+    /proc/*/exe)
+        if [ -f "$PGDATA/.test-final-process" ]; then
+            printf '%s\n' /usr/local/bin/postgres
+        else
+            printf '%s\n' /bin/sh
+        fi
+        ;;
+    *) /usr/bin/readlink "$@" ;;
+esac
+EOF
+cat >"$tmpdir/bin/psql" <<'EOF'
+#!/bin/sh
+[ -s "$PGDATA/PG_VERSION" ]
+EOF
 chmod +x "$tmpdir/bin/postgres" "$tmpdir/bin/ldd" \
-    "$tmpdir/bin/pg_controldata"
+    "$tmpdir/bin/pg_controldata" "$tmpdir/bin/readlink" "$tmpdir/bin/psql"
 test_path="$tmpdir/bin:$PATH"
 
 fail() {
@@ -42,6 +59,14 @@ new_case() {
     versiond2_data="$case_dir/versiond2-data"
     mkdir -p "$legacy" "$persistent" "$existing" \
         "$versiond_data" "$versiond2_data"
+	mkdir -p "$legacy/global" "$legacy/pg_wal"
+	printf 'control\n' >"$legacy/global/pg_control"
+	printf 'wal\n' >"$legacy/pg_wal/000000010000000000000001"
+}
+
+source_fingerprint() {
+	(cd "$legacy" && find global/pg_control pg_wal -type f -print | LC_ALL=C sort |
+		while IFS= read -r file; do sha256sum "$file"; done | sha256sum | awk '{print $1}')
 }
 
 run_entrypoint() {
@@ -52,7 +77,7 @@ run_entrypoint() {
         GONKA_POSTGRES_EXISTING_VERSIOND="$existing" \
         GONKA_POSTGRES_VERSIOND_DATA="$versiond_data" \
         GONKA_POSTGRES_VERSIOND2_DATA="$versiond2_data" \
-        GONKA_POSTGRES_OFFICIAL_ENTRYPOINT=/bin/true \
+        GONKA_POSTGRES_OFFICIAL_ENTRYPOINT="${official_entrypoint:-/bin/true}" \
         PGDATA="$persistent/data" \
         DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT="${allow_empty:-false}" \
         "$entrypoint" postgres
@@ -71,6 +96,8 @@ run_entrypoint
     "migration marker was not written"
 [[ $(<"$persistent/.migrated-from-v4") == 1000000000000000000 ]] || fail \
     "migration marker does not record the PostgreSQL source lineage"
+[[ $(<"$persistent/.gonka-cluster-lineage") == 1000000000000000000 ]] || fail \
+    "migration did not record the common PostgreSQL lineage marker"
 [[ ! -e "$persistent/.migrating" ]] || fail \
     "staging directory remained after migration"
 [[ ! -e "$persistent/.gonka-copy-complete" ]] || fail \
@@ -115,6 +142,7 @@ mkdir -p "$persistent/data"
 printf '16\n' > "$persistent/data/PG_VERSION"
 printf 'current\n' > "$persistent/data/source"
 printf '1000000000000000000\n' > "$persistent/.migrated-from-v4"
+source_fingerprint >"$persistent/.gonka-v4-source-wal.sha256"
 touch "$persistent/.gonka-copy-complete"
 run_entrypoint
 [[ $(<"$persistent/data/source") == current ]] || fail \
@@ -122,11 +150,25 @@ run_entrypoint
 [[ ! -e "$persistent/.gonka-copy-complete" ]] || fail \
     "stale migration completion marker survived an existing target"
 
+new_case previous-revision-markers
+mkdir -p "$persistent/data"
+printf '16\n' >"$persistent/data/PG_VERSION"
+printf '16\n' >"$persistent/.migrated-from-v4"
+: >"$persistent/.gonka-copy-complete"
+run_entrypoint
+[[ $(<"$persistent/.migrated-from-v4") == 1000000000000000000 ]] || fail \
+    "previous-revision major marker was not upgraded"
+[[ $(<"$persistent/.gonka-cluster-lineage") == 1000000000000000000 ]] || fail \
+    "previous-revision target did not receive a common lineage marker"
+
 new_case resume-publish
 printf '16\n' > "$legacy/PG_VERSION"
 mkdir -p "$persistent/.migrating"
 printf '16\n' > "$persistent/.migrating/PG_VERSION"
 printf 'resumed\n' > "$persistent/.migrating/session-row"
+mkdir -p "$persistent/.migrating/global" "$persistent/.migrating/pg_wal"
+cp "$legacy/global/pg_control" "$persistent/.migrating/global/pg_control"
+cp "$legacy/pg_wal/000000010000000000000001" "$persistent/.migrating/pg_wal/"
 printf '1000000000000000000\n' > "$persistent/.gonka-copy-complete"
 run_entrypoint
 [[ $(<"$persistent/data/session-row") == resumed ]] || fail \
@@ -219,6 +261,45 @@ allow_empty=true
 run_entrypoint
 unset allow_empty
 
+new_case initialized-empty-lineage
+cat >"$case_dir/official-entrypoint" <<'EOF'
+#!/bin/sh
+mkdir -p "$PGDATA"
+printf '16\n' >"$PGDATA/PG_VERSION"
+mkdir -p "$PGDATA/global" "$PGDATA/pg_wal"
+printf 'control\n' >"$PGDATA/global/pg_control"
+touch "$PGDATA/.test-final-process"
+sleep 2
+EOF
+chmod +x "$case_dir/official-entrypoint"
+official_entrypoint=$case_dir/official-entrypoint
+allow_empty=true
+run_entrypoint
+unset allow_empty official_entrypoint
+[[ $(<"$persistent/.gonka-cluster-lineage") == 1000000000000000000 ]] || fail \
+    "empty initialization did not receive a durable lineage marker"
+
+new_case reject-interrupted-empty-init
+cat >"$case_dir/official-entrypoint" <<'EOF'
+#!/bin/sh
+mkdir -p "$PGDATA/global" "$PGDATA/pg_wal"
+printf '16\n' >"$PGDATA/PG_VERSION"
+printf 'partial\n' >"$PGDATA/global/pg_control"
+exit 1
+EOF
+chmod +x "$case_dir/official-entrypoint"
+official_entrypoint=$case_dir/official-entrypoint
+allow_empty=true
+if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+    fail "failed empty initialization returned success"
+fi
+unset allow_empty official_entrypoint
+if run_entrypoint >"$case_dir/retry.stdout" 2>"$case_dir/retry.stderr"; then
+    fail "partially initialized cluster was trusted on retry"
+fi
+grep -q 'initialization may have been interrupted' "$case_dir/retry.stderr" || fail \
+    "interrupted initialization was not diagnosed"
+
 new_case fresh
 run_entrypoint
 
@@ -271,6 +352,7 @@ grep -q 'not compatible with the existing devshard PGDATA' \
 new_case follow-image-major
 mkdir -p "$persistent/data" "$case_dir/bin"
 printf '17\n' > "$persistent/data/PG_VERSION"
+printf '1000000000000000000\n' >"$persistent/.gonka-cluster-lineage"
 cat >"$case_dir/bin/postgres" <<'EOF'
 #!/bin/sh
 printf '%s\n' 'postgres (PostgreSQL) 17.5'

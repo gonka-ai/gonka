@@ -12,6 +12,8 @@ target_data=${PGDATA:-$persistent_root/data}
 staging_data=$persistent_root/.migrating
 staging_complete=$persistent_root/.gonka-copy-complete
 lineage_marker=$persistent_root/.migrated-from-v4
+cluster_marker=$persistent_root/.gonka-cluster-lineage
+source_fingerprint_marker=$persistent_root/.gonka-v4-source-wal.sha256
 expected_major=
 
 log() {
@@ -56,26 +58,64 @@ cluster_system_identifier() {
     printf '%s\n' "$identifier"
 }
 
+cluster_wal_fingerprint() {
+    cluster=$1
+	[ -f "$cluster/global/pg_control" ] && [ -d "$cluster/pg_wal" ] ||
+		die "PostgreSQL cluster in $cluster has no control/WAL state to fingerprint"
+    fingerprint=$(
+        cd "$cluster" &&
+            find global/pg_control pg_wal -type f -print | LC_ALL=C sort |
+            while IFS= read -r file; do
+                sha256sum "$file"
+            done | sha256sum | awk '{ print $1 }'
+    ) || die "cannot fingerprint PostgreSQL WAL state in $cluster"
+    case "$fingerprint" in
+        '' | *[!0-9a-f]*) die "invalid PostgreSQL WAL fingerprint in $cluster" ;;
+    esac
+    [ "${#fingerprint}" -eq 64 ] ||
+        die "invalid PostgreSQL WAL fingerprint length in $cluster"
+    printf '%s\n' "$fingerprint"
+}
+
 validate_migration_lineage() {
     cluster=$1
     cluster_identifier=$(cluster_system_identifier "$cluster")
 
+    if [ -s "$cluster_marker" ]; then
+        recorded_identifier=$(awk 'NR == 1 { print $1 }' "$cluster_marker") ||
+            die "cannot read PostgreSQL cluster lineage marker"
+        [ "$recorded_identifier" = "$cluster_identifier" ] ||
+            die "persistent PostgreSQL cluster does not match its durable lineage marker"
+    fi
     if [ -s "$lineage_marker" ]; then
         recorded_identifier=$(cat "$lineage_marker") ||
             die "cannot read PostgreSQL migration lineage marker"
-        [ "$recorded_identifier" = "$cluster_identifier" ] ||
+        if [ "$recorded_identifier" != "$cluster_identifier" ] &&
+            [ "$recorded_identifier" != "$expected_major" ]; then
             die "persistent PostgreSQL cluster does not match its migration lineage marker"
+        fi
     fi
     if cluster_exists "$legacy_data"; then
         source_identifier=$(cluster_system_identifier "$legacy_data")
         [ "$source_identifier" = "$cluster_identifier" ] ||
             die "persistent PostgreSQL cluster does not originate from the attached legacy PGDATA"
-        if [ ! -s "$lineage_marker" ]; then
-            printf '%s\n' "$cluster_identifier" >"$lineage_marker" ||
-                die "cannot record PostgreSQL migration lineage"
-            sync
-        fi
+        [ -s "$source_fingerprint_marker" ] ||
+            die "persistent PostgreSQL target has an attached legacy source but no durable source snapshot; refusing to guess which copy is newer"
+        recorded_fingerprint=$(awk 'NR == 1 { print $1 }' \
+            "$source_fingerprint_marker") ||
+            die "cannot read PostgreSQL source snapshot marker"
+        current_fingerprint=$(cluster_wal_fingerprint "$legacy_data")
+        [ "$recorded_fingerprint" = "$current_fingerprint" ] ||
+            die "attached legacy PostgreSQL source changed after migration; refusing to start a potentially stale target"
     fi
+    # Upgrade both the short-lived marker format from the previous updater
+    # revision (which contained only "16") and targets published before the
+    # common marker existed.
+    printf '%s\n' "$cluster_identifier" >"$lineage_marker" ||
+        die "cannot record PostgreSQL migration lineage"
+    printf '%s\n' "$cluster_identifier" >"$cluster_marker" ||
+        die "cannot record PostgreSQL cluster lineage"
+    sync
 }
 
 postgres_binding_marker() {
@@ -149,7 +189,100 @@ publish_staging() {
         die "cannot publish PostgreSQL migration lineage marker"
     [ "$(cat "$lineage_marker")" = "$source_identifier" ] ||
         die "published PostgreSQL migration lineage changed unexpectedly"
+    printf '%s\n' "$source_identifier" >"$cluster_marker" ||
+        die "cannot publish PostgreSQL cluster lineage marker"
     sync
+}
+
+forward_signal() {
+    signal=$1
+    [ -z "${postgres_child:-}" ] ||
+        kill -"$signal" "$postgres_child" 2>/dev/null || true
+}
+
+postgres_final_process_is_running() {
+    executable=$(readlink "/proc/$postgres_child/exe" 2>/dev/null || :)
+    [ "${executable##*/}" = postgres ]
+}
+
+postgres_child_is_running() {
+    kill -0 "$postgres_child" 2>/dev/null || return 1
+    process_state=$(awk '{ print $3 }' "/proc/$postgres_child/stat" 2>/dev/null || :)
+    [ "$process_state" != Z ]
+}
+
+postgres_sql_probe() {
+    user=${POSTGRES_USER:-postgres}
+    database=${POSTGRES_DB:-$user}
+    timeout -s KILL 5 env PGCONNECT_TIMEOUT=3 \
+        PGOPTIONS='-c statement_timeout=3000' \
+        PGPASSWORD="${POSTGRES_PASSWORD:-}" psql \
+        -h 127.0.0.1 -U "$user" -d "$database" -AtX \
+        -v ON_ERROR_STOP=1 -c 'SELECT 1' >/dev/null 2>&1
+}
+
+postgres_watchdog() {
+    failures=0
+    while postgres_child_is_running; do
+        sleep "${GONKA_POSTGRES_WATCHDOG_INTERVAL_SECONDS:-5}"
+        if postgres_sql_probe; then
+            failures=0
+        else
+            failures=$((failures + 1))
+            if [ "$failures" -ge "${GONKA_POSTGRES_WATCHDOG_FAILURES:-12}" ]; then
+                log "PostgreSQL failed $failures bounded SQL probes; terminating the server for restart-policy recovery"
+                kill -TERM "$postgres_child" 2>/dev/null || true
+                sleep 10
+                kill -KILL "$postgres_child" 2>/dev/null || true
+                return
+            fi
+        fi
+    done
+}
+
+run_official_supervised() {
+    record_lineage=${1:-false}
+    shift
+    "$official_entrypoint" "$@" &
+    postgres_child=$!
+    trap 'forward_signal TERM' TERM
+    trap 'forward_signal INT' INT
+    trap 'forward_signal HUP' HUP
+
+    ready=false
+    while kill -0 "$postgres_child" 2>/dev/null; do
+        if postgres_final_process_is_running && postgres_sql_probe; then
+            ready=true
+            break
+        fi
+        sleep 1
+    done
+    if [ "$ready" = true ]; then
+        if [ "$record_lineage" = true ]; then
+            validate_cluster "$target_data"
+            identifier=$(cluster_system_identifier "$target_data")
+            printf '%s\n' "$identifier" >"$cluster_marker" ||
+                die "cannot record initialized PostgreSQL cluster lineage"
+            sync
+        fi
+        postgres_watchdog &
+        watchdog_child=$!
+    fi
+
+    status=0
+    while :; do
+        if wait "$postgres_child"; then candidate_status=0; else candidate_status=$?; fi
+        if ! postgres_child_is_running; then
+            status=$candidate_status
+            break
+        fi
+    done
+    if [ -n "${watchdog_child:-}" ]; then
+        kill "$watchdog_child" 2>/dev/null || true
+        wait "$watchdog_child" 2>/dev/null || true
+    fi
+    trap - TERM INT HUP
+    return "$status"
 }
 
 case "$target_data" in
@@ -164,6 +297,10 @@ mkdir -p "$persistent_root"
 
 if cluster_exists "$target_data"; then
     validate_cluster "$target_data"
+    if [ ! -s "$cluster_marker" ] && [ ! -s "$lineage_marker" ] &&
+        ! cluster_exists "$legacy_data"; then
+        die "persistent PGDATA has no completed lineage marker; initialization may have been interrupted"
+    fi
     validate_migration_lineage "$target_data"
     rm -f "$staging_complete" ||
         die "cannot remove stale PostgreSQL migration completion marker"
@@ -171,13 +308,36 @@ elif [ -e "$target_data" ] && directory_has_entries "$target_data"; then
     die "persistent PGDATA is non-empty but has no PG_VERSION: $target_data"
 elif cluster_exists "$staging_data" && [ -f "$staging_complete" ]; then
     validate_cluster "$staging_data"
+    source_identifier=$(cluster_system_identifier "$legacy_data")
+	if [ -s "$cluster_marker" ]; then
+		[ "$(awk 'NR == 1 { print $1 }' "$cluster_marker")" = "$source_identifier" ] ||
+			die "PostgreSQL staging conflicts with the common lineage marker"
+	fi
+	if [ -s "$lineage_marker" ]; then
+		recorded_identifier=$(awk 'NR == 1 { print $1 }' "$lineage_marker")
+		[ "$recorded_identifier" = "$source_identifier" ] ||
+			[ "$recorded_identifier" = "$expected_major" ] ||
+			die "PostgreSQL staging conflicts with the historical migration marker"
+	fi
+    if [ ! -s "$staging_complete" ] && [ -s "$lineage_marker" ] &&
+        [ "$(cat "$lineage_marker")" = "$expected_major" ]; then
+        # Compatibility with the first updater revision: the copy-complete
+        # file was empty and .migrated-from-v4 contained the major version.
+        printf '%s\n' "$source_identifier" >"$staging_complete" ||
+            die "cannot upgrade PostgreSQL staging lineage marker"
+    fi
     [ -s "$staging_complete" ] ||
         die "PostgreSQL migration completion marker has no source lineage"
-    source_identifier=$(cluster_system_identifier "$legacy_data")
     [ "$(cat "$staging_complete")" = "$source_identifier" ] ||
         die "PostgreSQL migration staging does not match the attached legacy PGDATA"
     [ "$(cluster_system_identifier "$staging_data")" = "$source_identifier" ] ||
         die "PostgreSQL migration staging has a different system identifier"
+    source_fingerprint=$(cluster_wal_fingerprint "$legacy_data")
+    staging_fingerprint=$(cluster_wal_fingerprint "$staging_data")
+    [ "$source_fingerprint" = "$staging_fingerprint" ] ||
+        die "completed PostgreSQL staging changed independently of its source"
+    printf '%s\n' "$source_fingerprint" >"$source_fingerprint_marker" ||
+        die "cannot record the migrated PostgreSQL source snapshot"
     log "finishing an interrupted atomic migration"
     publish_staging "$source_identifier"
 elif cluster_exists "$legacy_data"; then
@@ -205,6 +365,12 @@ elif cluster_exists "$legacy_data"; then
     sync
     printf '%s\n' "$source_identifier" >"$staging_complete" ||
         die "cannot record PostgreSQL migration source lineage"
+    source_fingerprint=$(cluster_wal_fingerprint "$legacy_data")
+    staging_fingerprint=$(cluster_wal_fingerprint "$staging_data")
+    [ "$source_fingerprint" = "$staging_fingerprint" ] ||
+        die "PostgreSQL migration WAL fingerprint differs from its source"
+    printf '%s\n' "$source_fingerprint" >"$source_fingerprint_marker" ||
+        die "cannot record the migrated PostgreSQL source snapshot"
     sync
     publish_staging "$source_identifier"
     log "v4 PostgreSQL migration completed"
@@ -236,6 +402,8 @@ else
         die "existing versiond artifacts found but no PostgreSQL cluster or .pg-bound marker is attached; this is either first-time HA enablement or a detached drained database (restore the v4 volume, or set DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT=true once only for confirmed first-time HA enablement)"
     fi
     log "no existing PostgreSQL cluster found; initializing persistent PGDATA"
+    run_official_supervised true "$@"
+    exit $?
 fi
 
-exec "$official_entrypoint" "$@"
+run_official_supervised false "$@"

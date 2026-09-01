@@ -167,6 +167,14 @@ guard_old_volume=$(docker inspect "$guard_old_container" --format \
     '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}')
 [[ -n $guard_old_volume ]] || fail \
     "guard fixture did not create an anonymous v4 volume"
+# Record the exact volume and schema while the historical source is still
+# running. Offline recovery is allowed only from this durable live proof.
+"$preflight" --source-container "$guard_old_container" \
+    --target-dir "$GONKA_POSTGRES_TEST_DATA" >/dev/null
+restart_target="$tmpdir/recovery-restart"
+mkdir -p "$restart_target"
+"$preflight" --source-container "$guard_old_container" \
+    --target-dir "$restart_target" >/dev/null
 "${guard_old_compose[@]}" down
 
 # A later v4 up creates another valid PostgreSQL cluster on a fresh anonymous
@@ -191,8 +199,6 @@ grep -q 'fresh anonymous volume may have replaced the original one' \
 
 # A completed staging copy is sufficient for a restart. The detached source
 # volume and host target must both be visible to the helper in this mode.
-restart_target="$tmpdir/recovery-restart"
-mkdir -p "$restart_target"
 docker run --rm --network none \
     --mount "type=volume,src=$guard_old_volume,dst=/source,readonly" \
     --mount "type=bind,src=$restart_target,dst=/target" \

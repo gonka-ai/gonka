@@ -45,6 +45,7 @@ jq -e '
 	(.services.versiond2.deploy.replicas == 1) and
 	(.services["devshard-postgres"].healthcheck.test[1] | contains("psql -h 127.0.0.1")) and
 	(.services["devshard-postgres"].healthcheck.test[1] | contains("SELECT 1")) and
+	(.services["devshard-postgres"].healthcheck.test[1] | contains("kill -TERM 1") | not) and
 	(.services["devshard-postgres"].healthcheck.test[1] | contains("pg_isready") | not) and
 	(.networks["versiond-router-front"].external == true) and
   (.networks["versiond-router-back"].external == true)
