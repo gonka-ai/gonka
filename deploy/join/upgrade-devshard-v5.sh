@@ -1308,6 +1308,93 @@ capture_versiond_router_rollback_baseline() {
 
 validate_rollback_runtime_model() {
 	local service=$1 image=$2 model=$3 health_kind saved_health image_health
+	local unsupported
+
+	unsupported=$(jq -r '
+		[
+			(if ((.host_config.ExtraHosts // []) | length) > 0 then
+				"HostConfig.ExtraHosts" else empty end),
+			(if ((.host_config.Dns // []) | length) > 0 then
+				"HostConfig.Dns" else empty end),
+			(if ((.host_config.DnsOptions // []) | length) > 0 then
+				"HostConfig.DnsOptions" else empty end),
+			(if ((.host_config.DnsSearch // []) | length) > 0 then
+				"HostConfig.DnsSearch" else empty end),
+			(if ((.host_config.PortBindings // {}) | length) > 0 then
+				"HostConfig.PortBindings" else empty end),
+			(if ((.host_config.Ulimits // []) | length) > 0 then
+				"HostConfig.Ulimits" else empty end),
+			(if ((.host_config.Sysctls // {}) | length) > 0 then
+				"HostConfig.Sysctls" else empty end),
+			(if ((.host_config.Devices // []) | length) > 0 then
+				"HostConfig.Devices" else empty end),
+			(if ((.host_config.DeviceRequests // []) | length) > 0 then
+				"HostConfig.DeviceRequests" else empty end),
+			(if ((.host_config.DeviceCgroupRules // []) | length) > 0 then
+				"HostConfig.DeviceCgroupRules" else empty end),
+			(if ((.host_config.GroupAdd // []) | length) > 0 then
+				"HostConfig.GroupAdd" else empty end),
+			(if ((.host_config.VolumesFrom // []) | length) > 0 then
+				"HostConfig.VolumesFrom" else empty end),
+			(if ((.host_config.StorageOpt // {}) | length) > 0 then
+				"HostConfig.StorageOpt" else empty end),
+			(if (.host_config.AutoRemove // false) then
+				"HostConfig.AutoRemove" else empty end),
+			(if (.host_config.PublishAllPorts // false) then
+				"HostConfig.PublishAllPorts" else empty end),
+			(if (.host_config.Init // false) then
+				"HostConfig.Init" else empty end),
+			(if ((.host_config.Memory // 0) != 0) then
+				"HostConfig.Memory" else empty end),
+			(if ((.host_config.MemoryReservation // 0) != 0) then
+				"HostConfig.MemoryReservation" else empty end),
+			(if ((.host_config.MemorySwap // 0) != 0) then
+				"HostConfig.MemorySwap" else empty end),
+			(if ((.host_config.MemorySwappiness // -1) != -1) then
+				"HostConfig.MemorySwappiness" else empty end),
+			(if (.host_config.OomKillDisable // false) then
+				"HostConfig.OomKillDisable" else empty end),
+			(if ((.host_config.OomScoreAdj // 0) != 0) then
+				"HostConfig.OomScoreAdj" else empty end),
+			(if ((.host_config.NanoCpus // 0) != 0) then
+				"HostConfig.NanoCpus" else empty end),
+			(if ((.host_config.CpuShares // 0) != 0) then
+				"HostConfig.CpuShares" else empty end),
+			(if ((.host_config.CpuPeriod // 0) != 0) then
+				"HostConfig.CpuPeriod" else empty end),
+			(if ((.host_config.CpuQuota // 0) != 0) then
+				"HostConfig.CpuQuota" else empty end),
+			(if ((.host_config.CpuRealtimePeriod // 0) != 0) then
+				"HostConfig.CpuRealtimePeriod" else empty end),
+			(if ((.host_config.CpuRealtimeRuntime // 0) != 0) then
+				"HostConfig.CpuRealtimeRuntime" else empty end),
+			(if ((.host_config.CpusetCpus // "") != "") then
+				"HostConfig.CpusetCpus" else empty end),
+			(if ((.host_config.CpusetMems // "") != "") then
+				"HostConfig.CpusetMems" else empty end),
+			(if ((.host_config.PidsLimit // 0) != 0) then
+				"HostConfig.PidsLimit" else empty end),
+			(if ((.host_config.BlkioWeight // 0) != 0) then
+				"HostConfig.BlkioWeight" else empty end),
+			(if ((.host_config.BlkioWeightDevice // []) | length) > 0 then
+				"HostConfig.BlkioWeightDevice" else empty end),
+			(if ((.host_config.BlkioDeviceReadBps // []) | length) > 0 then
+				"HostConfig.BlkioDeviceReadBps" else empty end),
+			(if ((.host_config.BlkioDeviceWriteBps // []) | length) > 0 then
+				"HostConfig.BlkioDeviceWriteBps" else empty end),
+			(if ((.host_config.BlkioDeviceReadIOps // []) | length) > 0 then
+				"HostConfig.BlkioDeviceReadIOps" else empty end),
+			(if ((.host_config.BlkioDeviceWriteIOps // []) | length) > 0 then
+				"HostConfig.BlkioDeviceWriteIOps" else empty end),
+			(.networks | to_entries[] |
+				select((.value.MacAddress // "") != "") |
+				"NetworkSettings.Networks[" + (.key | @json) + "].MacAddress")
+		] | unique | join(", ")
+	' <<<"$model") || return 1
+	if [[ -n $unsupported ]]; then
+		warn "$service uses unsupported exact-rollback fields: $unsupported"
+		return 1
+	fi
 
 	if jq -e '.config.Healthcheck.Test? | length > 0' \
 		<<<"$model" >/dev/null; then
@@ -1349,27 +1436,27 @@ capture_rollback_image() {
 
     image_id=$("$docker_bin" inspect --format '{{.Image}}' "$container_id")
     [[ -n $image_id ]] || fail "cannot determine the current image for $service"
-    rollback_image="gonka-upgrade-rollback/$service:$operation_id"
-    "$docker_bin" tag "$image_id" "$rollback_image"
-    rollback_images[$service]=$rollback_image
     was_running=$("$docker_bin" inspect --format '{{.State.Running}}' \
         "$container_id")
     case $was_running in
         true | false) ;;
         *) fail "cannot determine whether the current $service is running" ;;
     esac
-    rollback_service_was_running[$service]=$was_running
-    rollback_service_was_absent[$service]=false
-    rollback_service_touched[$service]=false
 	rollback_runtime_models[$service]=$("$docker_bin" inspect "$container_id" | \
 		jq -ce '.[0] | {
 			name: (.Name | ltrimstr("/")), config: .Config,
 			host_config: .HostConfig, mounts: (.Mounts // []),
 			networks: .NetworkSettings.Networks
 		}') || fail "cannot capture the exact runtime model for $service"
-	validate_rollback_runtime_model "$service" "$rollback_image" \
+	validate_rollback_runtime_model "$service" "$image_id" \
 		"${rollback_runtime_models[$service]}" || fail \
-		"the existing $service runtime cannot be restored exactly; normalize its healthcheck before upgrading"
+		"the existing $service runtime cannot be restored exactly; normalize its runtime options before upgrading"
+    rollback_image="gonka-upgrade-rollback/$service:$operation_id"
+    "$docker_bin" tag "$image_id" "$rollback_image"
+    rollback_images[$service]=$rollback_image
+    rollback_service_was_running[$service]=$was_running
+    rollback_service_was_absent[$service]=false
+    rollback_service_touched[$service]=false
     echo "Captured $service rollback image as $rollback_image"
     case $service in
         versiond | versiond2)

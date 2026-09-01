@@ -64,6 +64,7 @@ if [[ ${1:-} == inspect ]]; then
 				if [[ $2 == cid-* ]]; then
 					jq -cn --arg name "$container" --arg image "old-$container" \
 						--argjson exec_health "${EXEC_HEALTH_OVERRIDE:-false}" \
+						--argjson custom_runtime "${CUSTOM_RUNTIME_OVERRIDE:-false}" \
 						'[{Name:("/" + $name),Config:{Image:$image,Hostname:$name,
 						MacAddress:"02:42:ac:1e:00:2a",
 						Env:[],Labels:{"com.docker.compose.project":"gonka-test",
@@ -76,6 +77,19 @@ if [[ ${1:-} == inspect ]]; then
 						StartInterval:500000000}},
 						HostConfig:{RestartPolicy:{Name:"always",MaximumRetryCount:0},
 						ReadonlyRootfs:false,Privileged:false,
+						ExtraHosts:(if $custom_runtime then ["database:192.0.2.10"] else [] end),
+						Dns:(if $custom_runtime then ["192.0.2.53"] else [] end),
+						PortBindings:(if $custom_runtime then
+						{"8080/tcp":[{HostIp:"127.0.0.1",HostPort:"18080"}]}
+						else {} end),
+						Ulimits:(if $custom_runtime then
+						[{Name:"nofile",Soft:4096,Hard:8192}] else [] end),
+						Sysctls:(if $custom_runtime then
+						{"net.core.somaxconn":"1024"} else {} end),
+						Devices:(if $custom_runtime then
+						[{PathOnHost:"/dev/null",PathInContainer:"/dev/test",
+						CgroupPermissions:"r"}] else [] end),
+						Memory:(if $custom_runtime then 536870912 else 0 end),
 						Tmpfs:{"/run":"rw,noexec,size=65536k"},
 						Binds:(if $name == "devshard-postgres" then
 						["/srv/gonka/postgres:/var/lib/postgresql/gonka:rw"] else [] end),
@@ -87,6 +101,8 @@ if [[ ${1:-} == inspect ]]; then
 						{Type:"tmpfs",Name:"",Source:"",Destination:"/run",Mode:"",RW:true,Propagation:""}] end),
 						NetworkSettings:{Networks:{"gonka-test_default":{
 						Aliases:[$name],NetworkID:"network-default",
+						MacAddress:(if $custom_runtime then
+						"02:42:ac:1e:00:7f" else "" end),
 						IPAMConfig:{IPv4Address:"172.30.0.42",IPv6Address:"",
 						LinkLocalIPs:["169.254.10.1"]},
 						DriverOpts:{test:"preserved"},Links:["versiond:legacy"],
@@ -639,6 +655,7 @@ run_upgrade() {
         ROLLBACK_ROUTER_PROBE_FAIL_SERVICE="${ROLLBACK_ROUTER_PROBE_FAIL_SERVICE-}" \
         SPECIAL_VERSIOND_HEALTH_SERVICE="${SPECIAL_VERSIOND_HEALTH_SERVICE-}" \
         EXEC_HEALTH_OVERRIDE="${EXEC_HEALTH_OVERRIDE:-false}" \
+        CUSTOM_RUNTIME_OVERRIDE="${CUSTOM_RUNTIME_OVERRIDE:-false}" \
         STOPPED_VERSIOND_SERVICE="${STOPPED_VERSIOND_SERVICE-}" \
         TARGET_ROUTER_MISSING_VERSION="${TARGET_ROUTER_MISSING_VERSION-}" \
         VERSIOND2_UNIQUE_VERSION="${VERSIOND2_UNIQUE_VERSION-}" \
@@ -2131,6 +2148,19 @@ assert_not_contains "$tmpdir/versiond2-exec-health.log" \
     "--wait-timeout 2100 versiond2"
 grep -q 'exec-form healthcheck' "$tmpdir/stderr" || fail \
     "inexact exec-form healthcheck was not rejected before replacement"
+
+CUSTOM_RUNTIME_OVERRIDE=true \
+    run_upgrade single versiond2 "$tmpdir/versiond2-custom-runtime.log"
+assert_no_compose_mutation "$tmpdir/versiond2-custom-runtime.log"
+assert_not_contains "$tmpdir/versiond2-custom-runtime.log" " :: tag "
+assert_not_contains "$tmpdir/versiond2-custom-runtime.log" \
+    " :: create --name versiond2 --network none"
+grep -q 'unsupported exact-rollback fields:.*HostConfig.ExtraHosts' \
+    "$tmpdir/stderr" || fail \
+    "custom runtime model was not rejected before replacement"
+grep -q 'NetworkSettings.Networks\["gonka-test_default"\].MacAddress' \
+    "$tmpdir/stderr" || fail \
+    "per-network MAC was not identified as inexact rollback state"
 
 ROLLBACK_EMPTY_VERSIOND_SERVICE=versiond2 \
 UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \
