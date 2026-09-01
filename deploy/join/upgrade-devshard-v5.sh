@@ -1396,23 +1396,38 @@ rollback_service() {
 
 restore_runtime_container() {
 	local service=$1 image=$2 model
-	local name value key restart health_cmd network network_id current
-	local -a create_args=(create) command_args=() connect_args=()
+	local name value key restart health_cmd network network_id current backup_name
+	local -a create_args=(create) command_args=() connect_args=() entrypoint_args=()
 	model=${rollback_runtime_models[$service]}
 
+	jq -e '
+		type == "object" and
+		(.name | type == "string" and length > 0) and
+		(.config | type == "object") and
+		(.host_config | type == "object") and
+		(.networks | type == "object") and
+		((.config.Entrypoint == null) or
+			(.config.Entrypoint | type == "array" and all(.[]; type == "string"))) and
+		((.config.Cmd == null) or
+			(.config.Cmd | type == "array" and all(.[]; type == "string"))) and
+		((.mounts // []) | type == "array")
+	' <<<"$model" >/dev/null || {
+		warn "$service has an invalid saved runtime model"
+		return 1
+	}
 	name=$(jq -er '.name' <<<"$model") || return 1
-	current=$("${compose[@]}" ps --all --quiet "$service") || return 1
-	[[ -z $current ]] || "$docker_bin" rm -f "$current" >/dev/null || return 1
 	create_args+=(--name "$name" --network none)
 	value=$(jq -r '.config.Hostname // ""' <<<"$model"); [[ -z $value ]] || create_args+=(--hostname "$value")
 	value=$(jq -r '.config.User // ""' <<<"$model"); [[ -z $value ]] || create_args+=(--user "$value")
 	value=$(jq -r '.config.WorkingDir // ""' <<<"$model"); [[ -z $value ]] || create_args+=(--workdir "$value")
 	value=$(jq -r '.config.StopSignal // ""' <<<"$model"); [[ -z $value ]] || create_args+=(--stop-signal "$value")
 	value=$(jq -r '.config.StopTimeout // .host_config.StopTimeout // 0' <<<"$model"); ((value == 0)) || create_args+=(--stop-timeout "$value")
-	value=$(jq -r '.config.Entrypoint // [] | length' <<<"$model")
-	((value <= 1)) || { warn "$service uses a multi-element entrypoint that Docker CLI cannot restore exactly"; return 1; }
-	if ((value == 1)); then
-		create_args+=(--entrypoint "$(jq -r '.config.Entrypoint[0]' <<<"$model")")
+	mapfile -t entrypoint_args < <(jq -r '.config.Entrypoint[]?' <<<"$model")
+	if ((${#entrypoint_args[@]} > 0)); then
+		create_args+=(--entrypoint "${entrypoint_args[0]}")
+		if ((${#entrypoint_args[@]} > 1)); then
+			command_args+=("${entrypoint_args[@]:1}")
+		fi
 	fi
 	while IFS= read -r value; do create_args+=(--env "$value"); done < <(jq -r '.config.Env[]?' <<<"$model")
 	while IFS=$'\t' read -r key value; do create_args+=(--label "$key=$value"); done < <(
@@ -1428,22 +1443,10 @@ restore_runtime_container() {
 	while IFS= read -r value; do create_args+=(--cap-add "$value"); done < <(jq -r '.host_config.CapAdd[]?' <<<"$model")
 	while IFS= read -r value; do create_args+=(--cap-drop "$value"); done < <(jq -r '.host_config.CapDrop[]?' <<<"$model")
 	while IFS= read -r value; do create_args+=(--security-opt "$value"); done < <(jq -r '.host_config.SecurityOpt[]?' <<<"$model")
-	while IFS= read -r value; do create_args+=(--mount "$value"); done < <(jq -r '
-		.host_config.Mounts[]? |
-		"type=" + .Type + ",src=" + .Source + ",dst=" + .Target +
-		(if .ReadOnly then ",readonly" else "" end) +
-		(if .BindOptions.Propagation? then ",bind-propagation=" + .BindOptions.Propagation else "" end)
-	' <<<"$model")
-	# HostConfig.Binds retains the original Compose source/destination/options
-	# form, including the named volume identity.
-	if ! jq -e '.host_config.Mounts | length > 0' <<<"$model" >/dev/null; then
-		while IFS= read -r value; do create_args+=(--volume "$value"); done < <(jq -r '.host_config.Binds[]?' <<<"$model")
-	fi
-	# Some Docker versions omit both HostConfig mount representations. The
-	# top-level inspect model still lets us restore the same named volume or
-	# bind source without falling back to the new Compose definition.
-	if ! jq -e '((.host_config.Mounts // []) | length > 0) or
-		((.host_config.Binds // []) | length > 0)' <<<"$model" >/dev/null; then
+	# Top-level .Mounts is Docker's effective attachment inventory. Unlike
+	# HostConfig.Binds it includes image-declared anonymous volumes alongside
+	# Compose bind mounts, so every old destination is restored exactly once.
+	if jq -e '(.mounts // []) | length > 0' <<<"$model" >/dev/null; then
 		while IFS= read -r value; do create_args+=(--mount "$value"); done < <(jq -r '
 			.mounts[]? |
 			(if .Type == "tmpfs" then
@@ -1458,6 +1461,20 @@ restore_runtime_container() {
 			(if .Type == "bind" and (.Propagation // "") != "" then
 				",bind-propagation=" + .Propagation else "" end)
 		' <<<"$model")
+	else
+		# Compatibility with journals written before top-level mounts were saved.
+		while IFS= read -r value; do create_args+=(--mount "$value"); done < <(jq -r '
+			.host_config.Mounts[]? |
+			"type=" + .Type + ",src=" + .Source + ",dst=" + .Target +
+			(if .ReadOnly then ",readonly" else "" end) +
+			(if .BindOptions.Propagation? then
+				",bind-propagation=" + .BindOptions.Propagation else "" end)
+		' <<<"$model")
+		if ! jq -e '(.host_config.Mounts // []) | length > 0' \
+			<<<"$model" >/dev/null; then
+			while IFS= read -r value; do create_args+=(--volume "$value"); done < <(
+				jq -r '.host_config.Binds[]?' <<<"$model")
+		fi
 	fi
 	if jq -e '.config.Healthcheck.Test? | length > 0' <<<"$model" >/dev/null; then
 		health_cmd=$(jq -r '
@@ -1471,18 +1488,46 @@ restore_runtime_container() {
 		value=$(jq -r '.config.Healthcheck.StartPeriod // 0' <<<"$model"); ((value == 0)) || create_args+=(--health-start-period "${value}ns")
 		value=$(jq -r '.config.Healthcheck.Retries // 0' <<<"$model"); ((value == 0)) || create_args+=(--health-retries "$value")
 	fi
-	mapfile -t command_args < <(jq -r '.config.Cmd[]?' <<<"$model")
-	"$docker_bin" "${create_args[@]}" "$image" "${command_args[@]}" >/dev/null || return 1
+	while IFS= read -r value; do command_args+=("$value"); done < <(
+		jq -r '.config.Cmd[]?' <<<"$model")
+	# Validate every referenced network before replacing the failed candidate.
+	while IFS= read -r network_id; do
+		[[ -z $network_id ]] || "$docker_bin" network inspect "$network_id" \
+			>/dev/null || return 1
+	done < <(jq -r '.networks[].NetworkID // empty' <<<"$model")
+	current=$("${compose[@]}" ps --all --quiet "$service") || return 1
+	backup_name=
+	if [[ -n $current ]]; then
+		backup_name="$name.gonka-displaced-$operation_id"
+		"$docker_bin" rename "$current" "$backup_name" >/dev/null || return 1
+	fi
+	if ! "$docker_bin" "${create_args[@]}" "$image" "${command_args[@]}" >/dev/null; then
+		[[ -z $backup_name ]] || "$docker_bin" rename "$backup_name" "$name" \
+			>/dev/null || true
+		return 1
+	fi
 	while IFS= read -r network; do
 		connect_args=(network connect)
 		while IFS= read -r value; do [[ -z $value ]] || connect_args+=(--alias "$value"); done < <(
 			jq -r --arg network "$network" '.networks[$network].Aliases[]?' <<<"$model")
 		network_id=$(jq -r --arg network "$network" '.networks[$network].NetworkID // ""' <<<"$model")
-		[[ -z $network_id ]] || "$docker_bin" network inspect "$network_id" >/dev/null || return 1
 		connect_args+=("$network" "$name")
-		"$docker_bin" "${connect_args[@]}" >/dev/null || return 1
+		if ! "$docker_bin" "${connect_args[@]}" >/dev/null; then
+			"$docker_bin" rm -f "$name" >/dev/null 2>&1 || true
+			[[ -z $backup_name ]] || "$docker_bin" rename "$backup_name" "$name" \
+				>/dev/null || true
+			return 1
+		fi
 	done < <(jq -r '.networks | keys[]' <<<"$model")
-	[[ ${rollback_service_was_running[$service]-true} == false ]] || "$docker_bin" start "$name" >/dev/null
+	if [[ ${rollback_service_was_running[$service]-true} != false ]] && \
+		! "$docker_bin" start "$name" >/dev/null; then
+		"$docker_bin" rm -f "$name" >/dev/null 2>&1 || true
+		[[ -z $backup_name ]] || "$docker_bin" rename "$backup_name" "$name" \
+			>/dev/null || true
+		return 1
+	fi
+	[[ -z $backup_name ]] || "$docker_bin" rm -f "$backup_name" >/dev/null || \
+		warn "could not remove displaced failed container $backup_name"
 }
 
 compensate_active_service() {

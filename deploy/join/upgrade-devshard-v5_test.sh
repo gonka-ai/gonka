@@ -53,11 +53,19 @@ if [[ ${1:-} == inspect ]]; then
 					jq -cn --arg name "$container" --arg image "old-$container" \
 						'[{Name:("/" + $name),Config:{Image:$image,Hostname:$name,
 						Env:[],Labels:{"com.docker.compose.project":"gonka-test",
-						"com.docker.compose.service":$name},Cmd:[],Entrypoint:null,
+						"com.docker.compose.service":$name},Cmd:["versiond"],
+						Entrypoint:["tini","--"],
 						Healthcheck:{Test:["CMD-SHELL","true"],Interval:1000000000,
 						Timeout:1000000000,Retries:1,StartPeriod:0}},
 						HostConfig:{RestartPolicy:{Name:"always",MaximumRetryCount:0},
-						ReadonlyRootfs:false,Privileged:false,Binds:[],Mounts:[]},
+						ReadonlyRootfs:false,Privileged:false,
+						Binds:(if $name == "devshard-postgres" then
+						["/srv/gonka/postgres:/var/lib/postgresql/gonka:rw"] else [] end),
+						Mounts:[]},
+						Mounts:(if $name == "devshard-postgres" then [
+						{Type:"volume",Name:"postgres-v4-volume",Source:"/docker/volumes/postgres-v4-volume/_data",Destination:"/var/lib/postgresql/data",RW:true,Propagation:""},
+						{Type:"bind",Name:"",Source:"/srv/gonka/postgres",Destination:"/var/lib/postgresql/gonka",RW:true,Propagation:"rprivate"}]
+						else [] end),
 						NetworkSettings:{Networks:{"gonka-test_default":{Aliases:[$name],NetworkID:"network-default"}}}}]'
 				fi
 				exit 0
@@ -353,6 +361,9 @@ if [[ ${1:-} == rm ]]; then
 	container=${!#}
 	service=${container#cid-}
 	rm -f "$FAKE_STATE_DIR/stopped-$service" "$FAKE_STATE_DIR/running-$service"
+	exit 0
+fi
+if [[ ${1:-} == rename ]]; then
 	exit 0
 fi
 if [[ ${1:-} == create ]]; then
@@ -1850,6 +1861,10 @@ postgres_up_line=$(line_number "$tmpdir/versiond2.log" \
     fail "PostgreSQL space preflight did not run before its first recreate"
 assert_contains "$tmpdir/versiond2.log" \
     " :: create --name versiond2 --network none"
+assert_contains "$tmpdir/versiond2.log" "--entrypoint tini"
+assert_contains "$tmpdir/versiond2.log" \
+    "gonka-upgrade-rollback/versiond2:"
+assert_contains "$tmpdir/versiond2.log" " -- versiond"
 rollback_probe_count=$(grep -Ec \
     'exec cid-versiond2 .*http://127.0.0.1:8080/v4/healthz' \
     "$tmpdir/versiond2.log")
