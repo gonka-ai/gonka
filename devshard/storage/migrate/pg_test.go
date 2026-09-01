@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"sync"
 	"testing"
 	"time"
 
@@ -19,10 +18,6 @@ import (
 )
 
 func testPGPool(t *testing.T) *pgxpool.Pool {
-	return testPGPoolWithRuntimeParams(t, nil)
-}
-
-func testPGPoolWithRuntimeParams(t *testing.T, runtimeParams map[string]string) *pgxpool.Pool {
 	t.Helper()
 	if testing.Short() {
 		t.Skip("skipping postgres migration tests in -short mode (requires Docker)")
@@ -35,7 +30,7 @@ func testPGPoolWithRuntimeParams(t *testing.T, runtimeParams map[string]string) 
 		// a developer's local devshard DB leaves schema_migrations rows that
 		// break these unit tests.
 		container, err := postgres.Run(ctx,
-			"postgres:16-bookworm",
+			"postgres:18.1-bookworm",
 			postgres.WithDatabase("testdb"),
 			postgres.WithUsername("testuser"),
 			postgres.WithPassword("testpass"),
@@ -58,12 +53,7 @@ func testPGPoolWithRuntimeParams(t *testing.T, runtimeParams map[string]string) 
 		dsn = fmt.Sprintf("postgres://testuser:testpass@%s:%s/testdb?sslmode=disable", host, port.Port())
 	}
 
-	cfg, err := pgxpool.ParseConfig(dsn)
-	require.NoError(t, err)
-	for key, value := range runtimeParams {
-		cfg.ConnConfig.RuntimeParams[key] = value
-	}
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	pool, err := pgxpool.New(ctx, dsn)
 	require.NoError(t, err)
 	require.NoError(t, pool.Ping(ctx))
 	t.Cleanup(pool.Close)
@@ -90,50 +80,6 @@ func TestApplyPG_Idempotent(t *testing.T) {
 	require.True(t, exists)
 }
 
-func TestApplyPG_ConcurrentCallersSerialize(t *testing.T) {
-	ctx := context.Background()
-	pool := testPGPoolWithRuntimeParams(t, map[string]string{
-		"lock_timeout":      "50",
-		"statement_timeout": "50",
-	})
-
-	steps := []migrate.Step{
-		{
-			ID:   1,
-			Name: "concurrent_create",
-			Statements: []string{
-				`SELECT pg_sleep(0.2)`,
-				`CREATE TABLE concurrent_migration_probe (id INT PRIMARY KEY)`,
-			},
-		},
-	}
-
-	start := make(chan struct{})
-	errs := make(chan error, 2)
-	var wg sync.WaitGroup
-	for range 2 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			<-start
-			errs <- migrate.ApplyPG(ctx, pool, steps)
-		}()
-	}
-	close(start)
-	wg.Wait()
-	close(errs)
-
-	for err := range errs {
-		require.NoError(t, err)
-	}
-	n, err := migrate.AppliedPG(ctx, pool)
-	require.NoError(t, err)
-	require.Equal(t, 1, n)
-	exists, err := migrate.TableExistsPG(ctx, pool, "concurrent_migration_probe")
-	require.NoError(t, err)
-	require.True(t, exists)
-}
-
 func TestApplyPG_RejectsOutOfOrderIDs(t *testing.T) {
 	ctx := context.Background()
 	pool := testPGPool(t)
@@ -144,33 +90,6 @@ func TestApplyPG_RejectsOutOfOrderIDs(t *testing.T) {
 	err := migrate.ApplyPG(ctx, pool, steps)
 	require.Error(t, err)
 	require.True(t, errors.Is(err, migrate.ErrOutOfOrder))
-}
-
-func TestApplyPG_AppliesMissingStepBelowHigherID(t *testing.T) {
-	ctx := context.Background()
-	pool := testPGPool(t)
-	step13 := migrate.Step{
-		ID:         13,
-		Name:       "prototype_successor",
-		Statements: []string{`CREATE TABLE migration_step_13 (id INT PRIMARY KEY)`},
-	}
-
-	require.NoError(t, migrate.ApplyPG(ctx, pool, []migrate.Step{step13}))
-	require.NoError(t, migrate.ApplyPG(ctx, pool, []migrate.Step{
-		{
-			ID:         12,
-			Name:       "late_reserved_step",
-			Statements: []string{`CREATE TABLE migration_step_12 (id INT PRIMARY KEY)`},
-		},
-		step13,
-	}))
-
-	n, err := migrate.AppliedPG(ctx, pool)
-	require.NoError(t, err)
-	require.Equal(t, 2, n)
-	exists, err := migrate.TableExistsPG(ctx, pool, "migration_step_12")
-	require.NoError(t, err)
-	require.True(t, exists)
 }
 
 func TestApplyPG_StepWithoutIFNotExists(t *testing.T) {

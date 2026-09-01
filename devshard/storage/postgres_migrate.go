@@ -3,7 +3,6 @@ package storage
 import (
 	"context"
 	"fmt"
-	"strconv"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
@@ -11,10 +10,7 @@ import (
 )
 
 // postgresMigrationSteps is the ordered forward-only schema for devshard Postgres parents.
-// ApplyPG executes all pending steps in one transaction, so statements that
-// require running outside a transaction (for example CREATE INDEX CONCURRENTLY)
-// need a separate migration primitive. Per-epoch partitions are created lazily
-// via ensurePartition only.
+// Per-epoch partitions are created lazily via ensurePartition only.
 var postgresMigrationSteps = []migrate.Step{
 	{
 		ID:   1,
@@ -185,31 +181,6 @@ CREATE TABLE IF NOT EXISTS devshard_escrow_cache (
 			`CREATE INDEX IF NOT EXISTS devshard_escrow_cache_by_epoch ON devshard_escrow_cache(epoch_id)`,
 		},
 	},
-	{
-		// Migration 12 was used by an unreleased HA prototype. Keep the next ID
-		// stable so databases created by that prototype can converge safely.
-		ID:   13,
-		Name: "devshard_storage_identity",
-		Statements: []string{`
-CREATE TABLE IF NOT EXISTS devshard_storage_identity (
-    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
-    identity  UUID    NOT NULL
-)`, `
-INSERT INTO devshard_storage_identity (singleton, identity)
-VALUES (
-    TRUE,
-    gen_random_uuid()
-)
-		ON CONFLICT (singleton) DO NOTHING`},
-	},
-	{
-		ID:   14,
-		Name: "devshard_storage_challenge",
-		Statements: []string{`
-ALTER TABLE devshard_storage_identity
-    ADD COLUMN IF NOT EXISTS challenge UUID,
-	    ADD COLUMN IF NOT EXISTS challenged_at TIMESTAMPTZ`},
-	},
 }
 
 // MigratePostgres applies all pending devshard Postgres parent-table migrations.
@@ -218,44 +189,6 @@ func MigratePostgres(ctx context.Context, pool *pgxpool.Pool) error {
 		return fmt.Errorf("devshard postgres migrate: %w", err)
 	}
 	return nil
-}
-
-// InitializePostgresSchema applies the current schema without starting a
-// devshard server. Versiond uses this as the lock-aware initialization stage
-// before it permits legacy children to start against a fresh shared database.
-func InitializePostgresSchema(ctx context.Context) error {
-	cfg, err := pgxpool.ParseConfig("")
-	if err != nil {
-		return fmt.Errorf("parse postgres config: %w", err)
-	}
-	if err := configurePostgresPool(cfg); err != nil {
-		return err
-	}
-	connectTimeout := pgConnectTimeout()
-	cfg.ConnConfig.ConnectTimeout = connectTimeout
-	if cfg.ConnConfig.RuntimeParams == nil {
-		cfg.ConnConfig.RuntimeParams = make(map[string]string)
-	}
-	cfg.ConnConfig.RuntimeParams["statement_timeout"] = strconv.FormatInt(postgresStatementTimeout.Milliseconds(), 10)
-	cfg.ConnConfig.RuntimeParams["lock_timeout"] = strconv.FormatInt(postgresLockTimeout.Milliseconds(), 10)
-
-	connectCtx, cancelConnect := context.WithTimeout(ctx, connectTimeout)
-	pool, err := pgxpool.NewWithConfig(connectCtx, cfg)
-	if err == nil {
-		err = pool.Ping(connectCtx)
-	}
-	cancelConnect()
-	if err != nil {
-		if pool != nil {
-			pool.Close()
-		}
-		return fmt.Errorf("connect to postgres for schema initialization: %w", err)
-	}
-	defer pool.Close()
-
-	migrationCtx, cancelMigration := context.WithTimeout(ctx, pgMigrationTimeout())
-	defer cancelMigration()
-	return MigratePostgres(migrationCtx, pool)
 }
 
 // PostgresMigrationSteps returns a copy of registered Postgres migration steps (for tests).

@@ -43,9 +43,10 @@ allowed binaries. Each entry carries:
 sha256 is the real identity. The URL is only a download hint. If two proposals
 point at different mirrors but the same hash, operators do not restart
 anything. If the name stays the same but the hash changes, versiond downloads
-the new binary first and then rolls to it: on Postgres, blue/green overlap and
-drain; otherwise exclusive stop/start. See [rolling-update.md](./rolling-update.md)
-for the child lifecycle mechanics.
+the new binary first and then **rolls** to it: on Postgres, blue/green overlap
++ drain (new traffic on the new SHA while the old child finishes in-flight
+work); otherwise exclusive stop/start. See
+[rolling-update.md](./rolling-update.md).
 
 Versiond re-hashes cached binaries on startup so a tampered file on disk is
 detected before any traffic is routed to it.
@@ -117,10 +118,12 @@ Two strings, same governance slot:
 | Protocol name (`approved_versions.name`) | `v4` | Routing `/devshard/v4/`, session bind, state-root / settlement tag |
 | Binary build id | `0.2.14-v4-r2` | Link-time build stamp: logs, `--print-binary-version`, versiond `/healthz`, and `GET …/stats/shards` `binary_version` |
 
-Protocol name is what binds sessions and settlements. Binary build id identifies
-the exact running build in logs and diagnostics. The distinct build id is useful
-for observing a same-name rolling update, detecting packaging mistakes, and
-distinguishing local overrides.
+Protocol name is what binds sessions and settlements. Binary build id is what
+distinguishes two artifacts that share the same protocol name (same-name SHA
+roll). Clients can poll stats during a roll and watch `binary_version` drift
+while `protocol_version` stays fixed — see
+[v4-deploy-test-plan.md](./v4-deploy-test-plan.md) §7.0.1 and
+[`scripts/poll-binary-version.sh`](../testenv/scripts/poll-binary-version.sh).
 
 | Build / runtime | Mechanism |
 |-----------------|-----------|

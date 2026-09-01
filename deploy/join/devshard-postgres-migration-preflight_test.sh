@@ -20,18 +20,7 @@ printf '%q ' "$@" >>"$DOCKER_LOG"
 printf '\n' >>"$DOCKER_LOG"
 
 case ${1:-} in
-    inspect)
-        case "$*" in
-            *'{{json .Config.Env}}'*) printf '%s\n' "${POSTGRES_RUNTIME_ENV:-[\"PGDATA=/var/lib/postgresql/data\"]}" ;;
-            *'{{.State.Running}}'*) printf '%s\n' "${POSTGRES_RUNTIME_RUNNING:-true}" ;;
-            *'.Destination "/var/lib/postgresql/data"'*) printf '%s\n' postgres-v4-volume ;;
-        esac
-        exit 0
-        ;;
-    exec)
-        printf '%s\n' "${DEVSHARD_SCHEMA_STATE:-t}"
-        exit 0
-        ;;
+    inspect) exit 0 ;;
     volume)
         [[ ${2:-} == inspect ]] || exit 1
         exit 0
@@ -56,9 +45,6 @@ run_preflight() {
     DOCKER_BIN="$tmpdir/docker" \
         DOCKER_LOG="$tmpdir/docker.log" \
         DOCKER_PROBE="$DOCKER_PROBE" \
-        DEVSHARD_SCHEMA_STATE="${DEVSHARD_SCHEMA_STATE:-t}" \
-        POSTGRES_RUNTIME_ENV="${POSTGRES_RUNTIME_ENV:-[\"PGDATA=/var/lib/postgresql/data\"]}" \
-        POSTGRES_RUNTIME_RUNNING="${POSTGRES_RUNTIME_RUNNING:-true}" \
         FREE_KIB="$FREE_KIB" \
         PATH="$tmpdir:$PATH" \
         "$preflight" "$@"
@@ -66,8 +52,7 @@ run_preflight() {
 
 : >"$tmpdir/docker.log"
 target_mount="type=bind\\,src=$tmpdir/target\\,dst=/target\\,readonly"
-fingerprint=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
-DOCKER_PROBE="source 1000 0 1000000000000000000 $fingerprint"
+DOCKER_PROBE='source 1000 0'
 FREE_KIB=1100
 export DOCKER_PROBE FREE_KIB
 run_preflight --source-container postgres-v4 --target-dir "$tmpdir/target" \
@@ -79,48 +64,6 @@ grep -q -- '--volumes-from postgres-v4:ro' "$tmpdir/docker.log" || fail \
 grep -Fq -- "$target_mount" \
     "$tmpdir/docker.log" || fail \
     "target directory was not mounted for the container-source probe"
-grep -q 'exec postgres-v4 /bin/sh -ec' "$tmpdir/docker.log" || fail \
-    "live container source was not checked for a devshard schema"
-
-: >"$tmpdir/docker.log"
-DOCKER_PROBE="target-ready none 1000000000000000000 none"
-# This is serialized Docker inspect output, not shell syntax.
-# shellcheck disable=SC2089
-POSTGRES_RUNTIME_ENV='["PGDATA=/var/lib/postgresql/gonka/data"]'
-printf '1000000000000000000\n' >"$tmpdir/target/.gonka-cluster-lineage"
-# shellcheck disable=SC2090
-export DOCKER_PROBE POSTGRES_RUNTIME_ENV
-run_preflight --source-container postgres-v5 --target-dir "$tmpdir/target" \
-    >"$tmpdir/v5-day2.stdout"
-unset POSTGRES_RUNTIME_ENV
-grep -q 'no migration copy is required' "$tmpdir/v5-day2.stdout" || fail \
-    "existing v5 PGDATA with an empty legacy volume failed day-2 preflight"
-if grep -q 'exec postgres-v5 /bin/sh -ec' "$tmpdir/docker.log"; then
-    fail "day-2 v5 container was queried as a live legacy schema source"
-fi
-DOCKER_PROBE="source 1000 0 1000000000000000000 $fingerprint"
-export DOCKER_PROBE
-
-: >"$tmpdir/docker.log"
-POSTGRES_RUNTIME_RUNNING=false
-export POSTGRES_RUNTIME_RUNNING
-run_preflight --source-container postgres-v4 --target-dir "$tmpdir/target" \
-    >/dev/null
-unset POSTGRES_RUNTIME_RUNNING
-if grep -q 'exec postgres-v4 /bin/sh -ec' "$tmpdir/docker.log"; then
-    fail "stopped source container was treated as a live schema endpoint"
-fi
-
-DEVSHARD_SCHEMA_STATE=f
-export DEVSHARD_SCHEMA_STATE
-if run_preflight --source-container postgres-v4 --target-dir "$tmpdir/target" \
-    >"$tmpdir/fresh-source.stdout" 2>"$tmpdir/fresh-source.stderr"; then
-    fail "fresh PostgreSQL source without a devshard schema passed preflight"
-fi
-unset DEVSHARD_SCHEMA_STATE
-grep -q 'fresh anonymous volume may have replaced the original one' \
-    "$tmpdir/fresh-source.stderr" || fail \
-    "fresh anonymous source failure did not explain dangling-volume recovery"
 
 if run_preflight --source-container postgres-v4 \
     --target-dir "$tmpdir/target,readonly" \
@@ -140,7 +83,7 @@ grep -q 'not enough free space' "$tmpdir/fail.stderr" || fail \
     "insufficient-space error was not explained"
 
 : >"$tmpdir/docker.log"
-DOCKER_PROBE="source 2000 0 1000000000000000000 $fingerprint"
+DOCKER_PROBE='source 2000 0'
 FREE_KIB=2200
 export DOCKER_PROBE FREE_KIB
 run_preflight --source-volume postgres-v4-volume \
@@ -155,7 +98,7 @@ grep -Fq -- "$target_mount" \
     "$tmpdir/docker.log" || fail \
     "target directory was not mounted for the volume-source probe"
 
-DOCKER_PROBE="source 1000 200 1000000000000000000 $fingerprint"
+DOCKER_PROBE='source 1000 200'
 FREE_KIB=900
 export DOCKER_PROBE FREE_KIB
 run_preflight --source-volume postgres-v4-volume \
@@ -172,9 +115,7 @@ if run_preflight --source-volume postgres-v4-volume \
     fail "insufficient effective space passed after staging accounting"
 fi
 
-printf '1000000000000000000\n' >"$tmpdir/target/.gonka-cluster-lineage"
-printf '%s\n' "$fingerprint" >"$tmpdir/target/.gonka-v4-source-wal.sha256"
-DOCKER_PROBE="target-ready 1000000000000000000 1000000000000000000 $fingerprint"
+DOCKER_PROBE='target-ready'
 FREE_KIB=0
 export DOCKER_PROBE FREE_KIB
 run_preflight --source-volume postgres-v4-volume --target-dir "$tmpdir/target" \
@@ -182,121 +123,12 @@ run_preflight --source-volume postgres-v4-volume --target-dir "$tmpdir/target" \
 grep -q 'no migration copy is required' "$tmpdir/target.stdout" || fail \
     "existing persistent PGDATA was not recognized"
 
-DOCKER_PROBE='target-ready 1000000000000000000 1000000000000000000 bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb'
-export DOCKER_PROBE
-if run_preflight --source-volume postgres-v4-volume --target-dir "$tmpdir/target" \
-    >"$tmpdir/stale.stdout" 2>"$tmpdir/stale.stderr"; then
-    fail "target older than its rollback volume passed preflight"
-fi
-grep -q 'source changed after migration' "$tmpdir/stale.stderr" || fail \
-    "stale target failure did not explain the data-loss risk"
-
-DOCKER_PROBE="source 1000 0 1000000000000000000 $fingerprint"
-export DOCKER_PROBE
-if run_preflight --source-volume unproved-volume --target-dir "$tmpdir/target" \
-    >"$tmpdir/no-schema.stdout" 2>"$tmpdir/no-schema.stderr"; then
-    fail "offline volume without devshard schema evidence passed preflight"
-fi
-grep -q 'no prior live schema proof\|does not match its durable live schema proof' "$tmpdir/no-schema.stderr" || fail \
-    "unsafe offline volume failure did not explain the schema guard"
-
-DOCKER_PROBE="target-ready 1000000000000000000 1000000000000000000 $fingerprint"
-export DOCKER_PROBE
-run_preflight --source-volume postgres-v4-volume --target-dir "$tmpdir/target" \
-    >"$tmpdir/published-before-marker.stdout"
-grep -q 'no migration copy is required' \
-    "$tmpdir/published-before-marker.stdout" || fail \
-    "published target was not recovered through its still-available source"
-
-atomic_target=$tmpdir/atomic-target
-mkdir -p "$atomic_target/data"
-cp "$tmpdir/target/.gonka-v4-schema-proof" \
-    "$atomic_target/.gonka-v4-schema-proof"
-printf '1000000000000000000 %s\n' "$fingerprint" \
-    >"$atomic_target/data/.gonka-migration-commit"
-printf '1000000000000000000\n' \
-    >"$atomic_target/.gonka-copy-complete"
-DOCKER_PROBE="target-ready 1000000000000000000 1000000000000000000 $fingerprint 1000000000000000000 $fingerprint"
-export DOCKER_PROBE
-run_preflight --source-volume postgres-v4-volume \
-    --target-dir "$atomic_target" >"$tmpdir/atomic-target.stdout"
-[[ $(<"$atomic_target/.migrated-from-v4") == 1000000000000000000 && \
-    $(<"$atomic_target/.gonka-cluster-lineage") == 1000000000000000000 && \
-    $(<"$atomic_target/.gonka-v4-source-wal.sha256") == "$fingerprint" ]] || fail \
-    "preflight did not recover markers after the atomic PGDATA rename"
-[[ ! -e $atomic_target/.gonka-copy-complete ]] || fail \
-    "preflight retained the recovered staging completion marker"
-
-printf '1000000000000000000\n' >"$tmpdir/target/.gonka-copy-complete"
-rm -f "$tmpdir/target/.gonka-v4-source-wal.sha256"
-DOCKER_PROBE="staging-ready 1000000000000000000 1000000000000000000 $fingerprint $fingerprint"
+DOCKER_PROBE='staging-ready'
 export DOCKER_PROBE
 run_preflight --source-volume postgres-v4-volume --target-dir "$tmpdir/target" \
     >"$tmpdir/staging.stdout"
 grep -q 'staging is complete' "$tmpdir/staging.stdout" || fail \
     "committed migration staging was not recognized"
-[[ $(<"$tmpdir/target/.gonka-v4-source-wal.sha256") == \
-    "$fingerprint" ]] || fail \
-    "completed staging did not recover its missing snapshot marker"
-
-DOCKER_PROBE="staging-ready 1000000000000000000 1000000000000000000 $fingerprint bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
-export DOCKER_PROBE
-if run_preflight --source-volume postgres-v4-volume \
-    --target-dir "$tmpdir/target" \
-    >"$tmpdir/stale-staging.stdout" \
-    2>"$tmpdir/stale-staging.stderr"; then
-    fail "staging older than its source passed preflight"
-fi
-grep -q 'staging changed independently' \
-    "$tmpdir/stale-staging.stderr" || fail \
-    "stale staging failure did not explain the data-loss risk"
-run_preflight --source-volume postgres-v4-volume \
-    --target-dir "$tmpdir/target" --reset-stale-staging \
-    >"$tmpdir/reset-staging.stdout"
-[[ ! -e $tmpdir/target/.gonka-copy-complete && \
-    ! -e $tmpdir/target/.gonka-v4-source-wal.sha256 ]] || fail \
-    "stale staging reset retained invalid completion evidence"
-printf '1000000000000000000\n' >"$tmpdir/target/.gonka-copy-complete"
-printf '%s\n' "$fingerprint" \
-    >"$tmpdir/target/.gonka-v4-source-wal.sha256"
-
-mkdir -p "$tmpdir/old-target"
-printf '16\n' >"$tmpdir/old-target/.migrated-from-v4"
-printf '1000000000000000000 postgres-v4-volume\n' \
-    >"$tmpdir/old-target/.gonka-v4-schema-proof"
-DOCKER_PROBE="target-ready 1000000000000000000 1000000000000000000 $fingerprint"
-export DOCKER_PROBE
-if run_preflight --source-volume postgres-v4-volume \
-    --target-dir "$tmpdir/old-target" \
-    >"$tmpdir/old-target.stdout" 2>"$tmpdir/old-target.stderr"; then
-    fail "historical target selected itself without operator acknowledgement"
-fi
-grep -q 'select the target explicitly' "$tmpdir/old-target.stderr" || fail \
-    "historical target ambiguity was not diagnosed"
-export DEVSHARD_POSTGRES_ACCEPT_LEGACY_TARGET=true
-run_preflight --source-volume postgres-v4-volume \
-    --target-dir "$tmpdir/old-target" >"$tmpdir/old-target.stdout"
-unset DEVSHARD_POSTGRES_ACCEPT_LEGACY_TARGET
-[[ $(<"$tmpdir/old-target/.gonka-v4-source-wal.sha256") == \
-    "$fingerprint" ]] || fail \
-    "previous-revision target did not bind its retained source snapshot"
-
-DOCKER_PROBE="target-ready 1000000000000000000 2000000000000000000 $fingerprint"
-export DOCKER_PROBE
-if run_preflight --source-volume postgres-v4-volume \
-    --target-dir "$tmpdir/target" \
-    >"$tmpdir/foreign-target.stdout" 2>"$tmpdir/foreign-target.stderr"; then
-    fail "persistent target from another PostgreSQL source passed preflight"
-fi
-grep -q 'does not originate from the selected v4 source' \
-    "$tmpdir/foreign-target.stderr" || fail \
-    "foreign persistent target failure did not explain the lineage mismatch"
-
-DOCKER_PROBE='target-ready none 1000000000000000000 none'
-export DOCKER_PROBE
-run_preflight --target-dir "$tmpdir/target" >"$tmpdir/target-only.stdout"
-grep -q 'no migration copy is required' "$tmpdir/target-only.stdout" || fail \
-    "durably bound persistent target was not accepted without a legacy container"
 
 DOCKER_PROBE='source-missing'
 export DOCKER_PROBE

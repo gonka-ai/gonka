@@ -2,7 +2,6 @@ package process
 
 import (
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -45,19 +44,15 @@ type child struct {
 	archiveSHA256 string
 	binaryVersion string
 	storageMode   string
-	// haDeployment is populated by binary preflight. Nil means the generation
-	// has not yet established whether it belongs to the HA PostgreSQL set.
-	haDeployment    *bool
-	proofGeneration uint64
-	binPath         string
-	port            int
-	adminPort       atomic.Int64
-	stop            context.CancelFunc
-	forceStopCh     chan struct{}
-	forceStopOnce   sync.Once
-	done            chan struct{} // closed when runChild exits
-	ready           chan struct{} // closed after readiness succeeds
-	readyOnce       sync.Once
+	binPath       string
+	port          int
+	adminPort     atomic.Int64
+	stop          context.CancelFunc
+	forceStopCh   chan struct{}
+	forceStopOnce sync.Once
+	done          chan struct{} // closed when runChild exits
+	ready         chan struct{} // closed after readiness succeeds
+	readyOnce     sync.Once
 	// serving is this generation's own live readiness, refreshed by a monitor
 	// started when it begins running. It is per generation on purpose: a probe
 	// answered by a child that has since been swapped out must not decide
@@ -110,50 +105,40 @@ func (c *child) Done() <-chan struct{} {
 }
 
 type Manager struct {
-	cfg                 config.Config
-	processes           map[string]*child
-	draining            map[string][]*child
-	children            map[*child]struct{}
-	downloading         map[string]struct{}
-	allocatedPorts      map[int]struct{}
-	reservedPorts       map[int]struct{}
-	operations          map[uint64]controlOperation
-	nextOperationID     uint64
-	nextProofGeneration uint64
-	proofEpoch          string
-	storageInitDone     chan struct{}
-	storageInitOnce     sync.Once
-	storageInitExpected map[storageInitCandidate]struct{}
-	storageInitLegacy   map[storageInitCandidate]struct{}
-	conditions          Conditions
-	everConverged       bool
-	available           chan struct{}
-	childCtx            context.Context
-	cancelChildren      context.CancelFunc
-	hostDraining        bool
-	mu                  sync.Mutex
-	routes              atomic.Value // proxy.RouteTable
+	cfg             config.Config
+	processes       map[string]*child
+	draining        map[string][]*child
+	children        map[*child]struct{}
+	downloading     map[string]struct{}
+	allocatedPorts  map[int]struct{}
+	reservedPorts   map[int]struct{}
+	operations      map[uint64]controlOperation
+	nextOperationID uint64
+	conditions      Conditions
+	everConverged   bool
+	available       chan struct{}
+	childCtx        context.Context
+	cancelChildren  context.CancelFunc
+	hostDraining    bool
+	mu              sync.Mutex
+	routes          atomic.Value // proxy.RouteTable
 }
 
 func NewManager(cfg config.Config) *Manager {
 	cfg = normalizeConfig(cfg)
 	childCtx, cancelChildren := context.WithCancel(context.Background())
 	m := &Manager{
-		cfg:                 cfg,
-		processes:           make(map[string]*child),
-		draining:            make(map[string][]*child),
-		children:            make(map[*child]struct{}),
-		downloading:         make(map[string]struct{}),
-		allocatedPorts:      make(map[int]struct{}),
-		reservedPorts:       reservedChildPorts(),
-		operations:          make(map[uint64]controlOperation),
-		childCtx:            childCtx,
-		cancelChildren:      cancelChildren,
-		available:           make(chan struct{}, 1),
-		proofEpoch:          rand.Text(),
-		storageInitDone:     make(chan struct{}),
-		storageInitExpected: make(map[storageInitCandidate]struct{}),
-		storageInitLegacy:   make(map[storageInitCandidate]struct{}),
+		cfg:            cfg,
+		processes:      make(map[string]*child),
+		draining:       make(map[string][]*child),
+		children:       make(map[*child]struct{}),
+		downloading:    make(map[string]struct{}),
+		allocatedPorts: make(map[int]struct{}),
+		reservedPorts:  reservedChildPorts(),
+		operations:     make(map[uint64]controlOperation),
+		childCtx:       childCtx,
+		cancelChildren: cancelChildren,
+		available:      make(chan struct{}, 1),
 	}
 	m.routes.Store(proxy.RouteTable{})
 	return m
@@ -423,7 +408,6 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 		"force_versions", m.cfg.ForceVersions,
 		"desired_versions", versionNamesMap(desiredSet),
 	)
-	m.configureStorageInitCandidates(m.resolveStorageInitCandidates(desiredSet))
 
 	// Phase A (lock): snapshot state, identify overrides.
 	m.mu.Lock()
@@ -454,7 +438,7 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 				version:        v,
 				overrideSrc:    overrideSrc,
 				binPath:        binPath,
-				blockedByDrain: isDraining,
+				blockedByDrain: !isRunning && isDraining,
 			})
 			continue
 		}
@@ -510,10 +494,6 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 		if snap.isRunning {
 			matches, metadata, diskBinaryHash, stateErr := installedVersionMatches(filepath.Dir(snap.child.binPath), snap.child.binPath, desiredHash)
 			if stateErr == nil && matches {
-				continue
-			}
-			if snap.isDraining {
-				slog.Info("version replacement deferred while previous child is draining", "version", snap.version.Name)
 				continue
 			}
 			logInstalledVersionMismatch(
@@ -572,16 +552,11 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 		m.downloading[a.version.Name] = struct{}{}
 		scheduledDownloads = append(scheduledDownloads, a)
 	}
-	scheduledSwaps := make([]versionAction, 0, len(toSwap))
 	for _, a := range toSwap {
 		if _, already := m.downloading[a.version.Name]; already {
 			continue
 		}
-		if current, running := m.processes[a.version.Name]; !running || current != a.child || m.versionStartBlockedLocked(a.version.Name) {
-			continue
-		}
 		m.downloading[a.version.Name] = struct{}{}
-		scheduledSwaps = append(scheduledSwaps, a)
 	}
 
 	var toStop []*child
@@ -595,7 +570,7 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 		}
 	}
 
-	changed := len(scheduledDownloads) > 0 || len(scheduledSwaps) > 0 || len(toStop) > 0 || started > 0
+	changed := len(scheduledDownloads) > 0 || len(toSwap) > 0 || len(toStop) > 0 || started > 0
 	if changed {
 		m.rebuildRoutes()
 	}
@@ -622,7 +597,7 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 
 	// Download first, then overlap generations where their storage permits it;
 	// otherwise the stop/start path withdraws the old route before stopping it.
-	for _, a := range scheduledSwaps {
+	for _, a := range toSwap {
 		if err := m.downloadAndSwap(ctx, a.version, a.sha256, a.child); err != nil {
 			slog.Error("swap failed, keeping old version", "version", a.version.Name, "error", err)
 			actionErrs = append(actionErrs, fmt.Errorf("swap %s: %w", a.version.Name, err))
@@ -640,9 +615,8 @@ type versionAction struct {
 	child   *child // non-nil for swap actions
 }
 
-// versionStartBlockedLocked reports whether a predecessor with the same version
-// name is still draining. Besides protecting the version's data directory, this
-// bounds each version to one current generation and one predecessor.
+// versionStartBlockedLocked reports whether a retired generation with the same
+// version name still owns the version's data directory.
 func (m *Manager) versionStartBlockedLocked(name string) bool {
 	return len(m.draining[name]) > 0
 }
@@ -699,11 +673,6 @@ func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overr
 		if m.hostDraining {
 			m.mu.Unlock()
 			return ErrHostDraining
-		}
-		if m.versionStartBlockedLocked(v.Name) {
-			m.mu.Unlock()
-			slog.Info("override replacement deferred while previous child is draining", "version", v.Name)
-			return nil
 		}
 		proxyDrained, retired := m.retireChildForStopStartLocked(existing)
 		m.mu.Unlock()
@@ -939,9 +908,8 @@ func (m *Manager) downloadAndStart(ctx context.Context, v oracle.Version, sha st
 }
 
 // downloadAndSwap downloads the new binary. Shared-storage generations overlap:
-// the replacement starts on a fresh port before the route swap, with at most one
-// predecessor per version. Other storage modes withdraw and drain the old route
-// before a stop/start replacement.
+// the replacement starts on a fresh port before the route swap. Other storage
+// modes withdraw and drain the old route before a stop/start replacement.
 func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha string, old *child) error {
 	dlErr := m.downloadBinary(ctx, v, sha)
 	if dlErr != nil || ctx.Err() != nil {
@@ -960,17 +928,6 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 		delete(m.downloading, v.Name)
 		m.mu.Unlock()
 		return ErrHostDraining
-	}
-	if current, running := m.processes[v.Name]; !running || current != old {
-		delete(m.downloading, v.Name)
-		m.mu.Unlock()
-		return fmt.Errorf("current child changed before replacement start")
-	}
-	if m.versionStartBlockedLocked(v.Name) {
-		delete(m.downloading, v.Name)
-		m.mu.Unlock()
-		slog.Info("version replacement deferred while previous child is draining", "version", v.Name)
-		return nil
 	}
 	m.mu.Unlock()
 	preflight, err := preflightChildWithAdminProbeContext(
@@ -1035,17 +992,6 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 		delete(m.downloading, v.Name)
 		m.mu.Unlock()
 		return ErrHostDraining
-	}
-	if current, running := m.processes[v.Name]; !running || current != old {
-		delete(m.downloading, v.Name)
-		m.mu.Unlock()
-		return fmt.Errorf("current child changed before replacement start")
-	}
-	if m.versionStartBlockedLocked(v.Name) {
-		delete(m.downloading, v.Name)
-		m.mu.Unlock()
-		slog.Info("version replacement deferred while previous child is draining", "version", v.Name)
-		return nil
 	}
 	newChild, startErr := m.newChild(ctx, v, sha, newBinPath, false)
 	if startErr != nil {
@@ -1599,22 +1545,9 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		m.mu.Unlock()
 		return
 	}
-	if err := m.ensurePostgresSchemaInitialized(ctx, c, preflight); err != nil {
-		slog.Error("postgres schema initialization barrier failed", "version", c.version.Name, "error", err)
-		m.mu.Lock()
-		transitionGenerationFailureLocked(c)
-		m.mu.Unlock()
-		return
-	}
 	m.mu.Lock()
 	c.binaryVersion = preflight.binaryLogVersion
 	c.storageMode = preflight.storageMode
-	if preflight.haDeployment != nil {
-		ha := *preflight.haDeployment
-		c.haDeployment = &ha
-	} else {
-		c.haDeployment = nil
-	}
 	if preflight.adminAPISupported && c.adminPort.Load() == 0 {
 		adminPort, portErr := m.assignPort()
 		if portErr != nil {
@@ -1688,9 +1621,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			return
 		}
 
-		if !waitForChildServingReady(
-			ctx, c, m.cfg.ReadyPath, m.cfg.ReadyTimeout, proc.Done(),
-		) {
+		if !waitForChildServingReady(ctx, c, m.cfg.ReadyPath, m.cfg.ReadyTimeout) {
 			slog.Warn("child did not become ready in time", "version", c.version.Name, "port", c.port, "lifecycle_port", c.lifecyclePort(), "ready_path", m.cfg.ReadyPath)
 			proc.ForceStop()
 			_ = proc.Wait()
@@ -1722,8 +1653,6 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		c.servingAt.Store(time.Now().UnixNano())
 
 		m.mu.Lock()
-		m.nextProofGeneration++
-		c.proofGeneration = m.nextProofGeneration
 		transitionGenerationLocked(c, statusRunning)
 		c.proxyTarget = proxy.NewTarget(fmt.Sprintf("localhost:%d", c.port))
 		c.readyOnce.Do(func() { close(c.ready) })
@@ -1783,143 +1712,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 	}
 }
 
-func (m *Manager) ensurePostgresSchemaInitialized(ctx context.Context, c *child, preflight childPreflight) error {
-	if !m.devshardAdminEligible() || !postgresChildStorageConfigured() {
-		return nil
-	}
-	// Explicitly pinned versions retain their single-host SQLite ownership and
-	// must remain available while the shared PostgreSQL tier is unavailable.
-	if preflight.haDeployment != nil && !*preflight.haDeployment {
-		return nil
-	}
-	ha, err := parseHADeployment(os.Getenv(envHADeployment))
-	if err != nil {
-		return fmt.Errorf("read HA deployment mode: %w", err)
-	}
-	if !ha {
-		return nil
-	}
-	select {
-	case <-m.storageInitDone:
-		return nil
-	default:
-	}
-
-	supported, err := initializePostgresSchemaContext(
-		ctx,
-		c.binPath,
-		childEnv(preflight.binaryLogVersion, "", preflight.haDeployment),
-	)
-	if err != nil {
-		return err
-	}
-	if supported {
-		m.storageInitOnce.Do(func() { close(m.storageInitDone) })
-		return nil
-	}
-	candidate := storageInitCandidate{version: c.version.Name, artifact: c.archiveSHA256}
-	m.noteLegacyStorageInitializer(candidate)
-
-	slog.Info("legacy child waiting for lock-aware PostgreSQL schema initialization",
-		"version", c.version.Name, "artifact", c.archiveSHA256)
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-m.storageInitDone:
-		return nil
-	}
-}
-
-func postgresChildStorageConfigured() bool {
-	return strings.TrimSpace(os.Getenv("PGHOST")) != "" ||
-		strings.TrimSpace(os.Getenv("PGSERVICE")) != ""
-}
-
-type storageInitCandidate struct {
-	version  string
-	artifact string
-}
-
-func (m *Manager) resolveStorageInitCandidates(desired map[string]oracle.Version) map[storageInitCandidate]struct{} {
-	select {
-	case <-m.storageInitDone:
-		return nil
-	default:
-	}
-	expected := make(map[storageInitCandidate]struct{}, len(desired))
-	for name, version := range desired {
-		ha, err := childHADeployment(name)
-		if err == nil && !ha {
-			continue
-		}
-		artifact := ""
-		if overrideSrc, override := m.cfg.Overrides[name]; override {
-			if hash, err := download.HashFile(overrideSrc); err == nil {
-				artifact = "override:" + hash
-			} else {
-				// Keep an unresolved override distinct from every runnable artifact.
-				// Its normal reconcile path will report the underlying file error.
-				artifact = "unresolved-override:" + overrideSrc
-			}
-		} else if hash, err := version.ResolvedSHA256(); err == nil {
-			artifact = hash
-		} else {
-			// Invalid catalog entries cannot start, but must not let reports from
-			// an older artifact close the initialization barrier.
-			artifact = "unresolved-catalog:" + version.SHA256 + "\x00" + version.Binary
-		}
-		expected[storageInitCandidate{version: name, artifact: artifact}] = struct{}{}
-	}
-	return expected
-}
-
-func (m *Manager) configureStorageInitCandidates(expected map[storageInitCandidate]struct{}) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	select {
-	case <-m.storageInitDone:
-		return
-	default:
-	}
-	legacy := make(map[storageInitCandidate]struct{}, len(m.storageInitLegacy))
-	for candidate := range m.storageInitLegacy {
-		if _, ok := expected[candidate]; ok {
-			legacy[candidate] = struct{}{}
-		}
-	}
-	m.storageInitExpected = expected
-	m.storageInitLegacy = legacy
-	if len(expected) == 0 {
-		m.storageInitOnce.Do(func() { close(m.storageInitDone) })
-		return
-	}
-	m.closeLegacyOnlyStorageInitLocked()
-}
-
-func (m *Manager) noteLegacyStorageInitializer(candidate storageInitCandidate) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, expected := m.storageInitExpected[candidate]; !expected {
-		return
-	}
-	m.storageInitLegacy[candidate] = struct{}{}
-	m.closeLegacyOnlyStorageInitLocked()
-}
-
-func (m *Manager) closeLegacyOnlyStorageInitLocked() {
-	if len(m.storageInitExpected) == 0 || len(m.storageInitLegacy) != len(m.storageInitExpected) {
-		return
-	}
-	slog.Info("desired devshard catalog has no lock-aware PostgreSQL initializer; preserving legacy startup")
-	m.storageInitOnce.Do(func() { close(m.storageInitDone) })
-}
-
 func (m *Manager) waitForRestartBackoff(ctx context.Context, c *child, backoff time.Duration) bool {
-	var entropy [1]byte
-	if _, err := rand.Read(entropy[:]); err == nil {
-		// Spread replicas across an 80-120% window after a shared outage.
-		backoff = backoff * time.Duration(80+int(entropy[0])%41) / 100
-	}
 	timer := time.NewTimer(backoff)
 	defer timer.Stop()
 
@@ -2034,19 +1827,12 @@ func (c *child) adminAddr() string {
 // waitForChildServingReady gates the Starting -> Running transition. Modern
 // devshardd children must be logically ready on their admin listener and also
 // serve health checks on the public listener that receives proxied traffic.
-func waitForChildServingReady(
-	ctx context.Context,
-	c *child,
-	path string,
-	timeout time.Duration,
-	processDone <-chan struct{},
-) bool {
+func waitForChildServingReady(ctx context.Context, c *child, path string, timeout time.Duration) bool {
 	adminPort := int(c.adminPort.Load())
 	if adminPort == 0 {
 		return waitForReadiness(
 			ctx,
 			timeout,
-			processDone,
 			func(probeCtx context.Context, client *http.Client) bool {
 				ready, viaLegacy := readyEndpointReady(probeCtx, client, c.port, path, true)
 				if viaLegacy {
@@ -2056,7 +1842,7 @@ func waitForChildServingReady(
 			},
 		)
 	}
-	return waitForReadiness(ctx, timeout, processDone, func(probeCtx context.Context, client *http.Client) bool {
+	return waitForReadiness(ctx, timeout, func(probeCtx context.Context, client *http.Client) bool {
 		ready, _ := readyEndpointReady(probeCtx, client, adminPort, path, false)
 		return ready && publicEndpointReady(probeCtx, client, c.port)
 	})
@@ -2065,7 +1851,6 @@ func waitForChildServingReady(
 func waitForReadiness(
 	ctx context.Context,
 	timeout time.Duration,
-	processDone <-chan struct{},
 	probe func(context.Context, *http.Client) bool,
 ) bool {
 	probeCtx, cancel := context.WithTimeout(ctx, timeout)
@@ -2078,9 +1863,6 @@ func waitForReadiness(
 		retry := time.NewTimer(100 * time.Millisecond)
 		select {
 		case <-probeCtx.Done():
-			retry.Stop()
-			return false
-		case <-processDone:
 			retry.Stop()
 			return false
 		case <-retry.C:

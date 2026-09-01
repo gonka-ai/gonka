@@ -2,10 +2,8 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
 	"net"
 	"net/http"
@@ -74,7 +72,7 @@ func run(ctx context.Context) error {
 	listenAddr := config.ListenAddr()
 	srv := &http.Server{
 		Addr:    listenAddr,
-		Handler: publicHandler(mgr, hostLifecycle, mgr, proxyOpts...),
+		Handler: publicHandler(mgr, hostLifecycle, proxyOpts...),
 	}
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
@@ -445,108 +443,16 @@ func readinessHandler(mgr *process.Manager, hostLifecycle *host.Controller) http
 func publicHandler(
 	mgr *process.Manager,
 	hostLifecycle *host.Controller,
-	storage storageVerifier,
 	proxyOpts ...proxy.HandlerOption,
 ) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", health.Handler(mgr.Status))
 	mux.HandleFunc("/readyz", readinessHandler(mgr, hostLifecycle))
-	mux.HandleFunc("/internal/storage-identity", storageIdentityHandler(storage))
-	mux.HandleFunc("/internal/storage-challenge", storageChallengeHandler(storage))
 	mux.Handle(
 		"/",
 		hostLifecycle.Admission(proxy.Handler(mgr.RouteTable(), proxyOpts...)),
 	)
 	return mux
-}
-
-type storageIdentityReader interface {
-	StorageIdentity(context.Context) (process.StorageProof, error)
-}
-
-type storageChallengeRunner interface {
-	StorageChallenge(context.Context, string, string, string, string) (process.StorageProof, error)
-}
-
-type storageVerifier interface {
-	storageIdentityReader
-	storageChallengeRunner
-}
-
-func storageIdentityHandler(reader storageIdentityReader) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil || !net.ParseIP(host).IsLoopback() {
-			http.NotFound(w, r)
-			return
-		}
-		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", http.MethodGet)
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if reader == nil {
-			http.Error(w, "postgres storage identity unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		proof, err := reader.StorageIdentity(r.Context())
-		if err != nil {
-			slog.Warn("versiond storage identity unavailable", "error", err)
-			http.Error(w, "postgres storage identity unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(proof)
-	}
-}
-
-type storageChallengeRequest struct {
-	Operation  string `json:"operation"`
-	Nonce      string `json:"nonce"`
-	Snapshot   string `json:"snapshot"`
-	Generation string `json:"generation"`
-}
-
-func storageChallengeHandler(runner storageChallengeRunner) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		host, _, err := net.SplitHostPort(r.RemoteAddr)
-		if err != nil || !net.ParseIP(host).IsLoopback() {
-			http.NotFound(w, r)
-			return
-		}
-		if r.Method != http.MethodPost {
-			w.Header().Set("Allow", http.MethodPost)
-			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-			return
-		}
-		if runner == nil {
-			http.Error(w, "postgres storage challenge unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		var request storageChallengeRequest
-		decoder := json.NewDecoder(io.LimitReader(r.Body, 4096))
-		decoder.DisallowUnknownFields()
-		if err := decoder.Decode(&request); err != nil ||
-			(request.Operation != "write" && request.Operation != "read") ||
-			request.Nonce == "" || request.Snapshot == "" || request.Generation == "" {
-			http.Error(w, "invalid storage challenge", http.StatusBadRequest)
-			return
-		}
-		proof, err := runner.StorageChallenge(
-			r.Context(),
-			request.Snapshot,
-			request.Generation,
-			request.Operation,
-			request.Nonce,
-		)
-		if err != nil {
-			slog.Warn("versiond storage challenge failed", "operation", request.Operation, "error", err)
-			http.Error(w, "postgres storage challenge unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(proof)
-	}
 }
 
 // versiondReady answers the load balancer's question — may this host take new

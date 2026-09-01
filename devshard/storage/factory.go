@@ -13,7 +13,6 @@ import (
 
 const (
 	defaultPGConnectTimeout    = 2 * time.Second
-	defaultPGMigrationTimeout  = 2 * time.Minute
 	defaultPGIndexTimeout      = 30 * time.Second
 	defaultPGReconnectInterval = 5 * time.Second
 )
@@ -212,7 +211,9 @@ func openSQLiteDrain(storeDir string) (Storage, bool, error) {
 }
 
 func openPostgresWithTimeout(ctx context.Context) (Storage, error) {
-	return newPostgres(ctx, pgConnectTimeout(), pgMigrationTimeout())
+	connectCtx, cancel := context.WithTimeout(ctx, pgConnectTimeout())
+	defer cancel()
+	return NewPostgres(connectCtx)
 }
 
 // openPostgresReady connects under PG_CONNECT_TIMEOUT then WaitReady under
@@ -260,14 +261,6 @@ func pgIndexTimeout() time.Duration {
 		return defaultPGIndexTimeout
 	}
 	return indexTimeout
-}
-
-func pgMigrationTimeout() time.Duration {
-	timeout, err := time.ParseDuration(os.Getenv("PG_MIGRATION_TIMEOUT"))
-	if err != nil || timeout <= 0 {
-		return defaultPGMigrationTimeout
-	}
-	return timeout
 }
 
 func pgReconnectInterval() time.Duration {

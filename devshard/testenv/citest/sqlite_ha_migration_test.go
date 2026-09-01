@@ -93,7 +93,7 @@ func TestSQLiteToPostgresHAMigration(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, status)
 
 	// Confirm router still HA-pools the version and NON_HA stays pinned.
-	// (Probe via GET that may be 503; HAProxy still emits routing headers.)
+	// (Probe via GET that may be 503 — nginx still emits routing headers.)
 	requireHAPoolBackend(t, client, haHealth)
 	nonHAURL := harness.RouterSessionURL(eps.RouterHTTP, nonHAVersion, "sqlite-migration-phase2-nonha", "/healthz")
 	require.Equal(t, migrationLegacyBackend, harness.RequireResponseHeader(t, client, nonHAURL, migrationBackendHeader))

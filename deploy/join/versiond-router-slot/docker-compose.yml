@@ -5,6 +5,9 @@ services:
     environment:
       - VERSIOND_ROUTER_SLOT=${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}
       - VERSIOND_POOL_HOST=${VERSIOND_POOL_HOST:-versiond-pool}
+      # Legacy static host list from pre-HAProxy installations. Empty means DNS
+      # discovery; docker-compose.endpoints.yml takes precedence over both.
+      - VERSIOND_HOSTS=${VERSIOND_HOSTS:-}
       - VERSIOND_ROUTER_BACK_NETWORK_NAME=${VERSIOND_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}
       - VERSIOND_ROUTER_METRICS_NETWORK_NAME=${VERSIOND_ROUTER_METRICS_NETWORK:?VERSIOND_ROUTER_METRICS_NETWORK is required}
       - VERSIOND_ROUTER_FRONT_BIND_HOST=versiond-router-${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}-front

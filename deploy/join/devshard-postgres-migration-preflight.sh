@@ -2,16 +2,11 @@
 
 set -Eeuo pipefail
 
-script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
-# shellcheck source=deploy/join/devshard-v5-release.env
-# shellcheck disable=SC1091 # Runtime path is anchored to this script.
-source "$script_dir/devshard-v5-release.env"
 docker_bin=${DOCKER_BIN:-docker}
-helper_image=${POSTGRES_MIGRATION_HELPER_IMAGE:-$DEVSHARD_V5_POSTGRES_IMAGE}
+helper_image=${POSTGRES_MIGRATION_HELPER_IMAGE:-${DEVSHARD_POSTGRES_IMAGE:-postgres:16-alpine}}
 source_container=
 source_volume=
 target_dir=
-reset_stale_staging=false
 
 fail() {
     echo "devshard-postgres-migration-preflight: $*" >&2
@@ -22,14 +17,11 @@ usage() {
     cat >&2 <<'EOF'
 Usage:
   devshard-postgres-migration-preflight.sh \
-    [(--source-container ID | --source-volume NAME)] --target-dir DIR
-    [--reset-stale-staging]
+    (--source-container ID | --source-volume NAME) --target-dir DIR
 
-Checks that a live v4 source contains the devshard schema and that the target
-filesystem has enough free space for an atomic copy. A source-less check is
-accepted only for an already published target bound to a durable lineage
-marker. The first live schema proof records the exact source volume so a later
-stopped-container recovery does not guess from PostgreSQL heap bytes.
+Checks that the target filesystem has enough free space for an atomic copy of
+the v4 PostgreSQL cluster. Source and target are mounted read-only and are not
+modified.
 EOF
 }
 
@@ -50,10 +42,6 @@ while [[ $# -gt 0 ]]; do
             target_dir=$2
             shift 2
             ;;
-        --reset-stale-staging)
-            reset_stale_staging=true
-            shift
-            ;;
         -h | --help)
             usage
             exit 0
@@ -71,87 +59,37 @@ done
 if [[ -n $source_container && -n $source_volume ]]; then
     fail "use either --source-container or --source-volume, not both"
 fi
+if [[ -z $source_container && -z $source_volume ]]; then
+    fail "one source option is required"
+fi
 command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
-command -v timeout >/dev/null 2>&1 || fail "timeout is required"
-command -v jq >/dev/null 2>&1 || fail "jq is required"
 
 mkdir -p "$target_dir"
 target_dir=$(cd -- "$target_dir" && pwd -P)
 
 probe_script=$(cat <<'PROBE'
-cluster_id() {
-    pg_controldata "$1" | awk -F: '
-        $1 ~ /^[[:space:]]*Database system identifier[[:space:]]*$/ {
-            sub(/^[[:space:]]+/, "", $2)
-            sub(/[[:space:]]+$/, "", $2)
-            print $2
-            exit
-        }
-    '
-}
-wal_fingerprint() {
-    cluster=$1
-    unsorted=$(mktemp)
-    files=$(mktemp)
-    hashes=$(mktemp)
-    cd "$cluster"
-    find global/pg_control pg_wal -type f -print >"$unsorted"
-    LC_ALL=C sort "$unsorted" >"$files"
-    while IFS= read -r file; do
-        sha256sum "$file" >>"$hashes"
-    done <"$files"
-    sha256sum "$hashes" | awk '{ print $1 }'
-    rm -f "$unsorted" "$files" "$hashes"
-}
-source_id=none
-source_fingerprint=none
-if [ -s "$1/PG_VERSION" ]; then
-    source_id=$(cluster_id "$1")
-    source_fingerprint=$(wal_fingerprint "$1")
-fi
 if [ -s "$2/data/PG_VERSION" ]; then
-    target_id=$(cluster_id "$2/data")
-    commit_id=none
-    commit_fingerprint=none
-    if [ -s "$2/data/.gonka-migration-commit" ]; then
-        read -r commit_id commit_fingerprint commit_extra \
-            <"$2/data/.gonka-migration-commit"
-        [ -z "${commit_extra:-}" ] || {
-            printf 'invalid-commit\n'
-            exit
-        }
-    fi
-    printf 'target-ready %s %s %s %s %s\n' \
-        "$source_id" "$target_id" "$source_fingerprint" \
-        "$commit_id" "$commit_fingerprint"
+    printf 'target-ready\n'
 elif [ -s "$2/.migrating/PG_VERSION" ] &&
     [ -f "$2/.gonka-copy-complete" ]; then
-    staging_id=$(cluster_id "$2/.migrating")
-    staging_fingerprint=$(wal_fingerprint "$2/.migrating")
-    printf 'staging-ready %s %s %s %s\n' \
-        "$source_id" "$staging_id" "$source_fingerprint" \
-        "$staging_fingerprint"
+    printf 'staging-ready\n'
 elif [ -s "$1/PG_VERSION" ]; then
     source_kib=$(du -sk "$1" | cut -f1)
     reclaimable_kib=0
     if [ -d "$2/.migrating" ]; then
         reclaimable_kib=$(du -sk "$2/.migrating" | cut -f1)
     fi
-    printf 'source %s %s %s %s\n' \
-        "$source_kib" "$reclaimable_kib" "$source_id" "$source_fingerprint"
+    printf 'source %s %s\n' "$source_kib" "$reclaimable_kib"
 else
     printf 'source-missing\n'
 fi
 PROBE
 )
 
-# Commas below are part of Docker's tmpfs specification.
-# shellcheck disable=SC2054
 probe_args=(
     run --rm
     --network none
     --read-only
-    --tmpfs /tmp:rw,noexec,nosuid,size=16m
     --security-opt no-new-privileges
     # Inspect an existing Compose :Z bind without relabeling it away from the
     # running PostgreSQL container.
@@ -162,272 +100,36 @@ probe_args=(
 if [[ -n $source_container ]]; then
     "$docker_bin" inspect "$source_container" >/dev/null ||
         fail "source container does not exist: $source_container"
-    probe=$(timeout -k 5 \
-        "${POSTGRES_MIGRATION_PROBE_TIMEOUT_SECONDS:-300}s" \
-        "$docker_bin" "${probe_args[@]}" \
+    probe=$("$docker_bin" "${probe_args[@]}" \
         --volumes-from "$source_container:ro" \
         --entrypoint /bin/sh "$helper_image" \
         -ec "$probe_script" sh /var/lib/postgresql/data /target)
-elif [[ -n $source_volume ]]; then
+else
     "$docker_bin" volume inspect "$source_volume" >/dev/null ||
         fail "source volume does not exist: $source_volume"
-    probe=$(timeout -k 5 \
-        "${POSTGRES_MIGRATION_PROBE_TIMEOUT_SECONDS:-300}s" \
-        "$docker_bin" "${probe_args[@]}" \
+    probe=$("$docker_bin" "${probe_args[@]}" \
         --mount "type=volume,src=$source_volume,dst=/source,readonly" \
         --entrypoint /bin/sh "$helper_image" \
         -ec "$probe_script" sh /source /target)
-else
-    probe=$(timeout -k 5 \
-        "${POSTGRES_MIGRATION_PROBE_TIMEOUT_SECONDS:-300}s" \
-        "$docker_bin" "${probe_args[@]}" \
-        --entrypoint /bin/sh "$helper_image" \
-        -ec "$probe_script" sh /missing-source /target)
 fi
 
-read -r probe_state first second third fourth fifth extra <<<"$probe"
+read -r probe_state source_kib reclaimable_kib extra <<<"$probe"
 [[ -z ${extra:-} ]] || fail "unexpected source probe output: $probe"
-source_storage_key=
-source_is_active=false
-historical_target_marker=false
-case $probe_state in
-    target-ready | staging-ready) probe_source_id=$first ;;
-    source) probe_source_id=$third ;;
-    *) probe_source_id=none ;;
-esac
-if [[ -n $source_container && $probe_state != source-missing ]]; then
-    source_storage_key=$("$docker_bin" inspect --format \
-        '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}' \
-        "$source_container") || fail "cannot inspect source PostgreSQL volume"
-    runtime_environment=$("$docker_bin" inspect --format '{{json .Config.Env}}' \
-        "$source_container") || fail "cannot inspect source PostgreSQL environment"
-    runtime_pgdata=$(jq -r \
-        '[.[] | select(startswith("PGDATA=")) | ltrimstr("PGDATA=")] | last // "/var/lib/postgresql/data"' \
-        <<<"$runtime_environment") || fail "cannot parse source PostgreSQL environment"
-    runtime_running=$("$docker_bin" inspect --format '{{.State.Running}}' \
-        "$source_container") || fail "cannot inspect source PostgreSQL state"
-    case $runtime_running in true | false) ;; *) fail \
-        "source PostgreSQL container returned an invalid running state" ;; esac
-    [[ $runtime_pgdata != /var/lib/postgresql/data || \
-        $runtime_running != true ]] || source_is_active=true
-fi
-if [[ $probe_state == target-ready ]] && \
-    [[ $(awk 'NR == 1 { print $1 }' \
-        "$target_dir/.migrated-from-v4" 2>/dev/null || :) == 16 ]]; then
-    historical_target_marker=true
-fi
-
-write_schema_proof() {
-    local identifier=$1 storage=$2 temporary
-    [[ -n $storage ]] || fail \
-        "legacy PostgreSQL source is not a named volume; keep its container running for the migration proof"
-    temporary=$(mktemp "$target_dir/.gonka-v4-schema-proof.XXXXXX") || fail \
-        "cannot create PostgreSQL schema proof"
-    printf '%s %s\n' "$identifier" "$storage" >"$temporary"
-    chmod 600 "$temporary"
-    mv -f "$temporary" "$target_dir/.gonka-v4-schema-proof"
-    sync -d "$target_dir" 2>/dev/null || sync
-}
-
-require_schema_proof() {
-    local identifier=$1 storage=$2 proof_id proof_storage extra_field
-    [[ -s $target_dir/.gonka-v4-schema-proof ]] || fail \
-        "offline legacy PostgreSQL source has no prior live schema proof; start the exact v4 container and rerun preflight"
-    read -r proof_id proof_storage extra_field <"$target_dir/.gonka-v4-schema-proof"
-    [[ -z ${extra_field:-} && $proof_id == "$identifier" && \
-        $proof_storage == "$storage" ]] || fail \
-        "offline legacy PostgreSQL source does not match its durable live schema proof"
-}
-
-if [[ -n $source_container && $probe_state != source-missing && \
-    $source_is_active == true ]]; then
-    [[ $probe_state != target-ready ]] || fail \
-        "both the persistent target and an active legacy PostgreSQL source exist; their write histories may have diverged, so select and restore the authoritative copy explicitly"
-    devshard_schema=$(
-        # The quoted program expands inside the PostgreSQL container.
-        # shellcheck disable=SC2016
-        timeout --kill-after=2s 12s "$docker_bin" exec "$source_container" /bin/sh -ec '
-            user=${POSTGRES_USER:-postgres}
-            database=${POSTGRES_DB:-$user}
-            PGCONNECT_TIMEOUT=5 PGOPTIONS="-c statement_timeout=5000" \
-            PGPASSWORD=${POSTGRES_PASSWORD:-} psql \
-                -h 127.0.0.1 -U "$user" -d "$database" -AtX \
-                -v ON_ERROR_STOP=1 -c \
-                "SELECT to_regclass('"'"'public.devshard_session_index'"'"') IS NOT NULL"
-        '
-    ) || fail "cannot verify the devshard schema in source container $source_container"
-    [[ $devshard_schema == t ]] || fail \
-        "source container $source_container has PostgreSQL data but no devshard schema; a fresh anonymous volume may have replaced the original one (locate and recover the dangling v4 volume)"
-    write_schema_proof "$probe_source_id" "$source_storage_key"
-elif [[ -n $source_container && $probe_state != source-missing && \
-    $probe_source_id != none ]]; then
-    [[ $historical_target_marker == true ]] || \
-        require_schema_proof "$probe_source_id" "$source_storage_key"
-elif [[ -n $source_volume && $probe_state != source-missing && \
-    $probe_source_id != none ]]; then
-    [[ $historical_target_marker == true ]] || \
-        require_schema_proof "$probe_source_id" "$source_volume"
-fi
-
-marker_value() {
-    local path=$1 value
-    value=$(awk 'NR == 1 { print $1 }' "$path" 2>/dev/null || :)
-    printf '%s\n' "${value:-none}"
-}
-
-validate_published_markers() {
-    local identifier=$1 common legacy
-    common=$(marker_value "$target_dir/.gonka-cluster-lineage")
-    legacy=$(marker_value "$target_dir/.migrated-from-v4")
-    [[ $common == none || $common == "$identifier" ]] || fail \
-        "persistent PostgreSQL common lineage marker conflicts with PGDATA"
-    [[ $legacy == none || $legacy == 16 || $legacy == "$identifier" ]] || fail \
-        "persistent PostgreSQL migration marker conflicts with PGDATA"
-    [[ $common != none || $legacy != none ]] || fail \
-        "persistent PostgreSQL target has no completed lineage marker"
-}
-
-write_source_snapshot() {
-    local fingerprint=$1 temporary
-    temporary=$(mktemp \
-        "$target_dir/.gonka-v4-source-wal.sha256.XXXXXX") || fail \
-        "cannot create PostgreSQL source snapshot marker"
-    printf '%s\n' "$fingerprint" >"$temporary"
-    chmod 600 "$temporary"
-    mv -f "$temporary" "$target_dir/.gonka-v4-source-wal.sha256"
-    sync -d "$target_dir" 2>/dev/null || sync
-}
-
-write_lineage_marker() {
-    local path=$1 value=$2 temporary
-    temporary=$(mktemp "$target_dir/.gonka-lineage.XXXXXX") || fail \
-        "cannot create PostgreSQL lineage marker"
-    printf '%s\n' "$value" >"$temporary"
-    chmod 600 "$temporary"
-    mv -f "$temporary" "$path"
-}
-
-recover_atomic_publish_markers() {
-    local target_identifier=$1 source_identifier=$2 source_fingerprint=$3
-    local commit_identifier=${4:-none} commit_fingerprint=${5:-none}
-    [[ $commit_identifier != none || $commit_fingerprint != none ]] || return 0
-    [[ $commit_identifier =~ ^[0-9]+$ && \
-        $commit_fingerprint =~ ^[0-9a-f]{64}$ ]] || fail \
-        "atomic PostgreSQL migration commit is invalid"
-    [[ $commit_identifier == "$target_identifier" ]] || fail \
-        "atomic PostgreSQL migration commit does not match PGDATA"
-    if [[ $source_identifier != none ]]; then
-        [[ $source_identifier == "$commit_identifier" && \
-            $source_fingerprint == "$commit_fingerprint" ]] || fail \
-            "atomic PostgreSQL migration commit does not match its source"
-    fi
-    write_lineage_marker "$target_dir/.migrated-from-v4" \
-        "$commit_identifier"
-    write_lineage_marker "$target_dir/.gonka-cluster-lineage" \
-        "$commit_identifier"
-    write_source_snapshot "$commit_fingerprint"
-    rm -f "$target_dir/.gonka-copy-complete"
-    sync -d "$target_dir" 2>/dev/null || sync
-}
-
-require_unchanged_source_snapshot() {
-    local fingerprint=$1 recovery=${2:-none} recorded
-    [[ $fingerprint =~ ^[0-9a-f]{64}$ ]] || fail \
-        "legacy PostgreSQL source returned an invalid WAL fingerprint"
-    recorded=$(marker_value "$target_dir/.gonka-v4-source-wal.sha256")
-    if [[ $recorded == none && $recovery == completed-staging ]]; then
-        write_source_snapshot "$fingerprint"
-        recorded=$fingerprint
-    elif [[ $recorded == none && $recovery == historical-target ]]; then
-        case ${DEVSHARD_POSTGRES_ACCEPT_LEGACY_TARGET:-false} in
-            1 | true | yes) ;;
-            *) fail \
-                "historical PostgreSQL marker 16 cannot prove whether the retained source or target is newer; select the target explicitly with DEVSHARD_POSTGRES_ACCEPT_LEGACY_TARGET=true, or restore the authoritative source" ;;
-        esac
-        write_source_snapshot "$fingerprint"
-        recorded=$fingerprint
-    fi
-    [[ $recorded != none ]] || fail \
-        "persistent target and legacy source coexist without a durable source snapshot; refusing to guess which copy is newer"
-    [[ $recorded == "$fingerprint" ]] || fail \
-        "legacy PostgreSQL source changed after migration; refusing to use the potentially stale persistent target"
-}
 case $probe_state in
     target-ready)
-        source_identifier=$first
-        target_identifier=$second
-        source_fingerprint=${third:-none}
-        commit_identifier=${fourth:-none}
-        commit_fingerprint=${fifth:-none}
-        [[ $target_identifier =~ ^[0-9]+$ ]] || fail \
-            "persistent PostgreSQL target has an invalid system identifier"
-        recover_atomic_publish_markers "$target_identifier" \
-            "$source_identifier" "$source_fingerprint" \
-            "$commit_identifier" "$commit_fingerprint"
-        if [[ $source_identifier == none ]]; then
-            validate_published_markers "$target_identifier"
-        else
-            [[ $source_identifier == "$target_identifier" ]] || fail \
-                "persistent PostgreSQL target does not originate from the selected v4 source"
-            validate_published_markers "$target_identifier"
-            if [[ $(marker_value \
-                "$target_dir/.migrated-from-v4") == 16 ]]; then
-                require_unchanged_source_snapshot \
-                    "$source_fingerprint" historical-target
-            else
-                require_unchanged_source_snapshot "$source_fingerprint"
-            fi
-        fi
         echo "PostgreSQL persistent PGDATA already exists; no migration copy is required"
         exit 0
         ;;
     staging-ready)
-        source_identifier=$first
-        staging_identifier=$second
-        source_fingerprint=${third:-none}
-        staging_fingerprint=${fourth:-none}
-        [[ $source_identifier =~ ^[0-9]+$ ]] || fail \
-            "completed PostgreSQL staging requires its selected v4 source"
-        [[ $staging_identifier == "$source_identifier" ]] || fail \
-            "PostgreSQL migration staging does not match the selected v4 source"
-        completion=$(marker_value "$target_dir/.gonka-copy-complete")
-        legacy=$(marker_value "$target_dir/.migrated-from-v4")
-        [[ $completion == "$source_identifier" || \
-            ($completion == none && $legacy == 16) ]] || fail \
-            "PostgreSQL migration completion marker conflicts with its source"
-        recorded_snapshot=$(marker_value \
-            "$target_dir/.gonka-v4-source-wal.sha256")
-        if [[ $staging_fingerprint != "$source_fingerprint" || \
-            ($recorded_snapshot != none && \
-             $recorded_snapshot != "$source_fingerprint") ]]; then
-            if [[ $reset_stale_staging == true ]]; then
-                rm -f "$target_dir/.gonka-copy-complete" \
-                    "$target_dir/.gonka-v4-source-wal.sha256"
-                sync -d "$target_dir" 2>/dev/null || sync
-                echo "PostgreSQL source changed; stale staging will be recopied"
-                exit 0
-            fi
-            fail "completed PostgreSQL staging changed independently of its source"
-        fi
-        require_unchanged_source_snapshot \
-            "$source_fingerprint" completed-staging
         echo "PostgreSQL migration staging is complete; no new copy is required"
         exit 0
         ;;
     source-missing)
         fail "the selected v4 source has no PostgreSQL PG_VERSION"
         ;;
-    source)
-        source_kib=$first
-        reclaimable_kib=$second
-        source_identifier=$third
-        source_fingerprint=${fourth:-none}
-        [[ $source_identifier =~ ^[0-9]+$ ]] || fail \
-            "invalid PostgreSQL source system identifier"
-        ;;
+    source) ;;
     *) fail "unexpected source probe output: $probe" ;;
 esac
-
 [[ $source_kib =~ ^[1-9][0-9]*$ ]] || fail \
     "invalid PostgreSQL source size: ${source_kib:-empty}"
 [[ $reclaimable_kib =~ ^[0-9]+$ ]] || fail \

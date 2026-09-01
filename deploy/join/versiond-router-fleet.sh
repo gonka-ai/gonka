@@ -24,8 +24,7 @@ declare -A legacy_env_defaults=(
     [VERSIOND_ROUTER_VERSION_CAPACITY]=32
     [HAPROXY_DNS_RESOLVER]=127.0.0.11:53
 )
-maintenance_candidate_routes=()
-declare -A maintenance_source_routes=()
+maintenance_required_routes=()
 maintenance_keys=(
     VERSIOND_POOL_HOST
     VERSIOND_ROUTER_BACK_NETWORK_NAME
@@ -109,52 +108,51 @@ min_ready=${VERSIOND_ROUTER_MIN_READY:-2}
 drain_timeout=${VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS:-1800}
 wait_timeout=${VERSIOND_ROUTER_START_TIMEOUT_SECONDS:-60}
 version_wait_timeout=${VERSIOND_ROUTING_ACTIVATION_TIMEOUT_SECONDS:-2100}
-runtime_timeout=${VERSIOND_ROUTER_RUNTIME_TIMEOUT_SECONDS:-5}
 pull_policy=${VERSIOND_ROUTER_PULL_POLICY:-always}
 config_dir=$(cd -- "$(dirname -- "$config_env")" && pwd -P)
 operation_id="$(date +%s%N)-$$"
-maintenance_journal=${VERSIOND_ROUTER_MAINTENANCE_JOURNAL:-$config_dir/.gonka-versiond-router-maintenance.json}
-maintenance_recovery_committed=false
-maintenance_recovery_rolled_back=false
 
 command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
 command -v flock >/dev/null 2>&1 || fail "flock is required"
 command -v jq >/dev/null 2>&1 || fail "jq is required"
 command -v sha256sum >/dev/null 2>&1 || fail "sha256sum is required"
-command -v timeout >/dev/null 2>&1 || fail "timeout is required"
 # shellcheck source=deploy/join/deployment-lock.sh
 source "$script_dir/deployment-lock.sh"
+
+# Explicit versiond endpoints for bare-metal multi-host pools. A relative path
+# in config.env is resolved from the directory of config.env. Every slot mounts
+# the file read-only and carries its SHA-256 in the container environment, so an
+# edited list changes the rendered slot contract and `apply` rolls the fleet.
+endpoints_overlay=$script_dir/versiond-router-slot/docker-compose.endpoints.yml
+endpoints_host_file=
+if [[ -n ${VERSIOND_POOL_ENDPOINTS_FILE:-} ]]; then
+    endpoints_host_file=$VERSIOND_POOL_ENDPOINTS_FILE
+    [[ $endpoints_host_file == /* ]] || \
+        endpoints_host_file=$config_dir/$endpoints_host_file
+    [[ -r $endpoints_host_file ]] || fail \
+        "VERSIOND_POOL_ENDPOINTS_FILE is not readable: $endpoints_host_file"
+    endpoints_host_file=$(cd -- "$(dirname -- "$endpoints_host_file")" && pwd -P)/$(basename -- "$endpoints_host_file")
+    jq -e '
+        type == "array" and length > 0 and
+        all(.[]; type == "object" and
+            (.id | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9._-]*$")) and
+            (.host | type == "string" and test("^[A-Za-z0-9][A-Za-z0-9.-]*$")) and
+            ((.port == null) or
+             (.port | type == "number" and . >= 1 and . <= 65535 and floor == .))) and
+        ([.[].id] | length == (unique | length))
+    ' "$endpoints_host_file" >/dev/null || fail \
+        "invalid versiond endpoint file $endpoints_host_file: expected a non-empty JSON array of {id, host, port} entries with unique ids"
+    export VERSIOND_POOL_ENDPOINTS_HOST_FILE=$endpoints_host_file
+    VERSIOND_POOL_ENDPOINTS_SHA256=$(sha256sum "$endpoints_host_file" | awk '{print $1}')
+    export VERSIOND_POOL_ENDPOINTS_SHA256
+fi
 
 case $min_ready in '' | *[!0-9]*) fail "VERSIOND_ROUTER_MIN_READY must be a non-negative integer" ;; esac
 case $pull_policy in always | missing | never) ;; *) fail "VERSIOND_ROUTER_PULL_POLICY must be always, missing, or never" ;; esac
 case $fleet_id in '' | *[!A-Za-z0-9._-]*) fail "invalid VERSIOND_ROUTER_FLEET_ID '$fleet_id'" ;; esac
-for value in "$drain_timeout" "$wait_timeout" "$version_wait_timeout" "$runtime_timeout"; do
+for value in "$drain_timeout" "$wait_timeout" "$version_wait_timeout"; do
     case $value in '' | *[!0-9]* | 0) fail "router timeouts must be positive integer seconds" ;; esac
 done
-
-bounded_container_exec() {
-    timeout --kill-after=1s "${runtime_timeout}s" "$docker_bin" exec "$@"
-}
-
-atomic_write_maintenance_journal() {
-    local payload=$1 directory tmp
-    directory=$(dirname -- "$maintenance_journal")
-    mkdir -p "$directory"
-    tmp=$(mktemp "$directory/.gonka-router-maintenance.XXXXXX")
-    printf '%s\n' "$payload" >"$tmp"
-    chmod 600 "$tmp"
-    sync -f "$tmp"
-    mv -f "$tmp" "$maintenance_journal"
-    sync -f "$directory"
-}
-
-remove_maintenance_journal() {
-    local directory
-    [[ -f $maintenance_journal ]] || return 0
-    directory=$(dirname -- "$maintenance_journal")
-    rm -f "$maintenance_journal"
-    sync -f "$directory"
-}
 
 read -r -a slots <<<"$slot_list"
 ((${#slots[@]} >= 2)) || fail "at least two router slots are required"
@@ -214,12 +212,14 @@ candidate_placement_contract() {
 
 slot_compose() {
     local slot=$1
+    local -a slot_files=(-f "$slot_file")
     shift
     [[ -n ${VERSIOND_ROUTER_METRICS_NETWORK:-} ]] || resolve_metrics_network
+    [[ -z $endpoints_host_file ]] || slot_files+=(-f "$endpoints_overlay")
     VERSIOND_ROUTER_SLOT=$slot VERSIOND_ROUTER_FLEET_ID=$fleet_id "$docker_bin" compose \
         --project-directory "$script_dir" \
         --project-name "$project_prefix-$slot" \
-        -f "$slot_file" "$@"
+        "${slot_files[@]}" "$@"
 }
 
 fleet_spec_hash() {
@@ -231,6 +231,7 @@ fleet_spec_hash() {
         printf 'project_prefix=%s\n' "$project_prefix"
         printf 'min_ready=%s\n' "$min_ready"
         printf 'slot_manifest_sha256=%s\n' "$manifest_hash"
+        printf 'endpoints_sha256=%s\n' "${VERSIOND_POOL_ENDPOINTS_SHA256:-none}"
         for slot in "${slots[@]}"; do
             rendered=$(slot_compose "$slot" config --format json) || fail \
                 "cannot render fleet slot '$slot' for specification hashing"
@@ -263,22 +264,19 @@ fleet_volume_ids() {
 }
 
 slot_id() {
-    local slot=$1 ids count
-    ids=$(slot_ids "$slot") || return 3
+    local slot=$1
+    local ids count
+    ids=$(slot_ids "$slot")
     count=$(wc -w <<<"$ids")
-    ((count > 0)) || return 1
-    ((count == 1)) || return 2
+    ((count == 1)) || return 1
     printf '%s\n' "$ids"
 }
 
 slot_ready() {
-    local id state health details status=0
-    id=$(slot_id "$1") || status=$?
-    ((status == 0)) || return "$status"
-    details=$("$docker_bin" inspect --format \
-        '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
-        "$id") || return 2
-    read -r state health <<<"$details"
+    local id state health
+    id=$(slot_id "$1") || return 1
+    read -r state health < <("$docker_bin" inspect --format \
+        '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$id")
     [[ $state == running && $health == healthy ]]
 }
 
@@ -298,55 +296,25 @@ urlencode() {
     printf '%s\n' "$output"
 }
 
-container_route_ready() {
-    local id=$1 route=$2 encoded result
-    encoded=$(urlencode "$route")
-    # A launched shell always reports whether wget reached a ready endpoint.
-    # Failure to launch or complete docker exec remains a distinct diagnostic
-    # error instead of looking like an ordinary 503/not-yet-ready response.
-    # shellcheck disable=SC2016 # The inner shell expands its positional URL.
-    result=$(bounded_container_exec "$id" /bin/sh -c '
-        if /bin/busybox wget -q -O /dev/null "$1" 2>/dev/null; then
-            printf ready
-        else
-            printf not-ready
-        fi
-    ' sh "http://127.0.0.1:8404/readyz?version=$encoded") || return 2
-    case $result in
-        ready) return 0 ;;
-        not-ready) return 1 ;;
-        *) return 2 ;;
-    esac
-}
-
 slot_route_ready() {
-    local slot=$1 route=$2 id status=0
-    id=$(slot_id "$slot") || status=$?
-    ((status == 0)) || return "$status"
-    slot_ready "$slot" || status=$?
-    ((status == 0)) || return "$status"
-    container_route_ready "$id" "$route"
+    local slot=$1 route=$2 id encoded
+    id=$(slot_id "$slot") || return 1
+    slot_ready "$slot" || return 1
+    encoded=$(urlencode "$route")
+    "$docker_bin" exec "$id" /bin/busybox wget -q -O /dev/null \
+        "http://127.0.0.1:8404/readyz?version=$encoded" 2>/dev/null
 }
 
 slot_catalog_routes() {
-	local id map output capability
-	local routes=''
+    local id map
     id=$(slot_id "$1") || return 1
-	# The quoted program expands inside the router container.
-	# shellcheck disable=SC2016
-    capability=$(bounded_container_exec "$id" /bin/sh -ec \
-        'test -x "$1" && printf present || printf absent' sh \
-        /usr/local/lib/router-runtime/catalog-status) || return 1
-    if [[ $capability == present ]]; then
+    if "$docker_bin" exec "$id" test -x \
+        /usr/local/lib/router-runtime/catalog-status >/dev/null 2>&1; then
         for map in /etc/haproxy/non_ha.map /etc/haproxy/versions.map; do
-            output=$(bounded_container_exec "$id" \
-                /usr/local/lib/router-runtime/catalog-status "$map") || return 1
-            [[ -z $output ]] || routes+="$output"$'\n'
+            "$docker_bin" exec "$id" \
+                /usr/local/lib/router-runtime/catalog-status "$map"
         done
-        printf '%s' "$routes"
         return
-    elif [[ $capability != absent ]]; then
-        return 1
     fi
 
     # Mixed-image rollout fallback. Old images know only their container env.
@@ -367,22 +335,9 @@ slot_route_declared() {
 }
 
 discover_expected_routes() {
-    local slot route routes id state status
+    local slot route routes
     for slot in "${slots[@]}"; do
-        status=0
-        id=$(slot_id "$slot") || status=$?
-        ((status != 1)) || continue
-        ((status != 2)) || fail \
-            "duplicate containers claim router slot '$slot'"
-        ((status == 0)) || fail \
-            "cannot inventory router slot $slot while routes are collected"
-        state=$("$docker_bin" inspect --format '{{.State.Status}}' "$id") || fail \
-            "router slot $slot disappeared while its route catalog was collected"
-        # Recovery commands must be able to start an existing stopped slot or
-        # replace a dead one. Such a container has no live Runtime API, so it
-        # contributes no currently served routes. A diagnostic failure from a
-        # running slot remains fatal and cannot silently reduce the reserve.
-        [[ $state == running ]] || continue
+        slot_id "$slot" >/dev/null 2>&1 || continue
         routes=$(slot_catalog_routes "$slot") || fail \
             "cannot read the effective route catalog from slot $slot"
         while IFS= read -r route; do
@@ -390,13 +345,7 @@ discover_expected_routes() {
             # A removed governance version remains in the monotonic runtime map
             # until replacement. Protect routes that still carry traffic, not
             # stale declarations whose children have already drained.
-            status=0
-            container_route_ready "$id" "$route" || status=$?
-            if ((status == 0)); then
-                expected_routes[$route]=1
-            elif ((status != 1)); then
-                fail "cannot diagnose route $route readiness on slot $slot"
-            fi
+            slot_route_ready "$slot" "$route" && expected_routes[$route]=1
         done <<<"$routes"
     done
     return 0
@@ -433,29 +382,23 @@ slot_front_ip() {
 
 parent_proxy_active() {
     local parent=${PROXY_ROUTER_CONTAINER:-proxy} component
-    if component=$("$docker_bin" inspect --format \
+    component=$("$docker_bin" inspect --format \
         '{{or (index .Config.Labels "ai.gonka.component") ""}}' \
-        "$parent" 2>&1); then
-        [[ $component == proxy-router ]]
-        return
-    fi
-    case ${component,,} in
-        *"no such object:"* | *"no such container:"*) return 1 ;;
-    esac
-    fail "cannot inspect parent proxy $parent: $component"
+        "$parent" 2>/dev/null) || return 1
+    [[ $component == proxy-router ]]
 }
 
 parent_diagnostic_available() {
     local parent=${PROXY_ROUTER_CONTAINER:-proxy}
     parent_proxy_active || return 1
-    bounded_container_exec "$parent" test -x \
+    "$docker_bin" exec "$parent" test -x \
         /usr/local/lib/proxy-router/route-status >/dev/null 2>&1
 }
 
 parent_server_refs() {
     local address=$1 status_pattern=${2:-'^(UP|DRAIN)'}
     local parent=${PROXY_ROUTER_CONTAINER:-proxy} stats
-    stats=$(bounded_container_exec "$parent" /bin/sh -ec \
+    stats=$("$docker_bin" exec "$parent" /bin/sh -ec \
         "printf 'show stat\\n' | socat stdio /var/run/haproxy/haproxy.sock") || return 2
     awk -F, -v address="$address" -v status_pattern="$status_pattern" '
         NR == 1 {
@@ -487,20 +430,20 @@ parent_server_refs() {
     ' <<<"$stats"
 }
 
-repair_stale_parent_state() {
+repair_stale_parent_drain() {
     local slot=$1 address refs_output status ref
     local -a refs=()
 
     parent_proxy_active || return 0
     address=$(slot_front_ip "$slot") || return 1
-    if refs_output=$(parent_server_refs "$address" '^(DRAIN|MAINT)'); then
+    if refs_output=$(parent_server_refs "$address" '^DRAIN'); then
         mapfile -t refs <<<"$refs_output"
     else
         status=$?
         ((status == 1)) && return 0
         return 1
     fi
-    warn "repairing stale parent withdrawal state for slot $slot; fresh L7 admission is required"
+    warn "repairing stale parent DRAIN state for slot $slot; fresh L7 admission is required"
     for ref in "${refs[@]}"; do
         parent_runtime_command "set server $ref health down" || return 1
         parent_runtime_command "set server $ref state ready" || return 1
@@ -509,7 +452,7 @@ repair_stale_parent_state() {
 
 parent_address_withdrawal_state() {
     local address=$1 parent=${PROXY_ROUTER_CONTAINER:-proxy} stats
-    stats=$(bounded_container_exec "$parent" /bin/sh -ec \
+    stats=$("$docker_bin" exec "$parent" /bin/sh -ec \
         "printf 'show stat\\n' | socat stdio /var/run/haproxy/haproxy.sock") || return 2
     awk -F, -v address="$address" '
         NR == 1 {
@@ -540,7 +483,7 @@ parent_address_withdrawal_state() {
 parent_runtime_command() {
     local command=$1 parent=${PROXY_ROUTER_CONTAINER:-proxy} response
     [[ $command != *"'"* ]] || return 1
-    response=$(bounded_container_exec "$parent" /bin/sh -ec \
+    response=$("$docker_bin" exec "$parent" /bin/sh -ec \
         "printf '%s\\n' '$command' | socat stdio /var/run/haproxy/reconciler.sock") || return 1
     [[ -z ${response//[[:space:]]/} ]]
 }
@@ -616,7 +559,7 @@ require_parent_diagnostic() {
 
 parent_route_admitted() {
     local route=$1 address=$2 parent=${PROXY_ROUTER_CONTAINER:-proxy}
-    if bounded_container_exec "$parent" \
+    if "$docker_bin" exec "$parent" \
         /usr/local/lib/proxy-router/route-status "$route" "$address" \
         >/dev/null 2>&1; then
         return 0
@@ -658,10 +601,7 @@ wait_parent_admission() {
         # DNS may assign the replacement address to a drained server-template
         # slot after this wait has already started. Repair on every pass so the
         # same operation converges without requiring an operator retry.
-        if ! repair_stale_parent_state "$slot"; then
-            sleep 1
-            continue
-        fi
+        repair_stale_parent_drain "$slot" || return 1
         missing=
         for route in --coarse "${!expected_routes[@]}"; do
             if [[ $route != --coarse ]] && ! slot_route_ready "$slot" "$route"; then
@@ -685,7 +625,7 @@ wait_parent_admission() {
 
 declare -A admission_required_routes=()
 collect_required_admission_routes() {
-    local route ready
+    local route
 
     admission_required_routes=()
     for route in "$@"; do
@@ -698,9 +638,7 @@ collect_required_admission_routes() {
     # inactive declarations remain optional because VERSIOND_VERSIONS may list
     # protocol versions ahead of governance activation.
     for route in "${!expected_routes[@]}"; do
-        ready=$(route_ready_count "$route") || fail \
-            "cannot diagnose readiness for route $route"
-        if ((ready > 0)); then
+        if (( $(route_ready_count "$route") > 0 )); then
             admission_required_routes[$route]=1
         fi
     done
@@ -778,8 +716,7 @@ wait_version() {
             fi
         done
         if [[ -z $missing ]]; then
-            ready=$(route_ready_count "$route") || fail \
-                "cannot diagnose readiness for route $route"
+            ready=$(route_ready_count "$route")
             if ((ready < min_ready)); then
                 missing="only $ready router slots can serve version $route; need $min_ready"
             fi
@@ -808,47 +745,34 @@ wait_version() {
 }
 
 ready_count_except() {
-    local excluded=${1:-} slot status count=0
+    local excluded=${1:-}
+    local slot count=0
     for slot in "${slots[@]}"; do
         [[ $slot == "$excluded" ]] && continue
-        status=0
-        slot_ready "$slot" || status=$?
-        if ((status == 0)); then
-            ((count += 1))
-        elif ((status != 1)); then
-            return 2
-        fi
+        slot_ready "$slot" && ((count += 1))
     done
     printf '%s\n' "$count"
 }
 
 route_ready_count() {
-    local route=$1 excluded=${2:-} slot status count=0
+    local route=$1 excluded=${2:-}
+    local slot count=0
     for slot in "${slots[@]}"; do
         [[ $slot == "$excluded" ]] && continue
-        status=0
-        slot_route_ready "$slot" "$route" || status=$?
-        if ((status == 0)); then
-            ((count += 1))
-        elif ((status != 1)); then
-            return 2
-        fi
+        slot_route_ready "$slot" "$route" && ((count += 1))
     done
     printf '%s\n' "$count"
 }
 
 require_ready_reserve() {
     local excluded=$1 route total reserve parent_reserve
-    reserve=$(ready_count_except "$excluded") || fail \
-        "cannot diagnose the ready reserve before stopping slot $excluded"
+    reserve=$(ready_count_except "$excluded")
     ((reserve >= min_ready)) || fail \
         "refusing to stop slot $excluded: only $reserve other routers are ready, need $min_ready"
     for route in "${!expected_routes[@]}"; do
-        total=$(route_ready_count "$route") || fail \
-            "cannot diagnose readiness for route $route"
+        total=$(route_ready_count "$route")
         ((total > 0)) || continue
-        reserve=$(route_ready_count "$route" "$excluded") || fail \
-            "cannot diagnose the route $route reserve"
+        reserve=$(route_ready_count "$route" "$excluded")
         ((reserve >= min_ready)) || fail \
             "refusing to stop slot $excluded: version $route has only $reserve other ready routers, need $min_ready"
     done
@@ -858,8 +782,7 @@ require_ready_reserve() {
     [[ $parent_reserve == unknown ]] || ((parent_reserve >= min_ready)) || fail \
         "refusing to stop slot $excluded: parent proxy admits only $parent_reserve other coarse routers, need $min_ready"
     for route in "${!expected_routes[@]}"; do
-        total=$(route_ready_count "$route") || fail \
-            "cannot diagnose readiness for route $route"
+        total=$(route_ready_count "$route")
         ((total > 0)) || continue
         parent_reserve=$(parent_admitted_count "$route" "$excluded")
         [[ $parent_reserve == unknown ]] && continue
@@ -870,7 +793,7 @@ require_ready_reserve() {
 
 wait_slot_routes() {
     local slot=$1 deadline=$((SECONDS + wait_timeout))
-    local route missing reason reserve
+    local route missing reason
     while ((SECONDS < deadline)); do
         missing=
         reason=
@@ -880,9 +803,7 @@ wait_slot_routes() {
                 reason="does not declare"
                 break
             fi
-            reserve=$(route_ready_count "$route" "$slot") || fail \
-                "cannot diagnose the route $route reserve"
-            if ((reserve > 0)) && \
+            if (( $(route_ready_count "$route" "$slot") > 0 )) && \
                 ! slot_route_ready "$slot" "$route"; then
                 missing=$route
                 reason="did not converge"
@@ -897,13 +818,11 @@ wait_slot_routes() {
 }
 
 wait_rollback_routes() {
-    local slot=$1 deadline=$((SECONDS + wait_timeout)) route missing reserve
+    local slot=$1 deadline=$((SECONDS + wait_timeout)) route missing
     while ((SECONDS < deadline)); do
         missing=
         for route in "${!rollback_routes[@]}"; do
-            reserve=$(route_ready_count "$route" "$slot") || fail \
-                "cannot diagnose the rollback reserve for route $route"
-            if ((reserve > 0)) && \
+            if (( $(route_ready_count "$route" "$slot") > 0 )) && \
                 ! slot_route_ready "$slot" "$route"; then
                 missing=$route
                 break
@@ -927,22 +846,14 @@ wait_slot_ready() {
 }
 
 ensure_network() {
-    local role=$1 network=$2 legacy_key=$3 ownership expected_project
+    local role=$1 network=$2 legacy_key=$3 ownership
     if "$docker_bin" network inspect "$network" >/dev/null 2>&1; then
         ownership=$("$docker_bin" network inspect --format \
-            '{{or (index .Labels "ai.gonka.component") ""}}|{{or (index .Labels "ai.gonka.fleet") ""}}|{{or (index .Labels "ai.gonka.network-role") ""}}|{{or (index .Labels "com.docker.compose.network") ""}}|{{or (index .Labels "com.docker.compose.project") ""}}' \
+            '{{or (index .Labels "ai.gonka.component") ""}}|{{or (index .Labels "ai.gonka.fleet") ""}}|{{or (index .Labels "ai.gonka.network-role") ""}}|{{or (index .Labels "com.docker.compose.network") ""}}' \
             "$network")
         case $ownership in
-            "versiond-router-network|$fleet_id|$role||"*) return 0 ;;
-            "|||$legacy_key|"*)
-                expected_project=${GONKA_COMPOSE_PROJECT:-${COMPOSE_PROJECT_NAME:-}}
-                [[ -n $expected_project ]] || fail \
-                    "cannot validate legacy network $network without the parent Compose project identity"
-                ownership=$($docker_bin network inspect --format \
-                    '{{or (index .Labels "com.docker.compose.project") ""}}' \
-                    "$network") || fail "cannot inspect legacy network $network"
-                [[ $ownership == "$expected_project" ]] || fail \
-                    "legacy network $network belongs to Compose project '${ownership:-unknown}', expected '$expected_project'"
+            "versiond-router-network|$fleet_id|$role|"*) return 0 ;;
+            "|||$legacy_key")
                 warn "adopting legacy Compose network $network as an external fleet resource"
                 return 0
                 ;;
@@ -993,84 +904,6 @@ slot_needs_replacement() {
         "$id") || return 2
     desired_hash=$(desired_slot_config_hash "$slot") || return 2
     [[ $running_image != "$candidate_image_id" || $running_hash != "$desired_hash" ]]
-}
-
-slot_matches_maintenance_candidate() {
-    local slot=$1 candidate_image_id=$2 candidate_version=$3
-    local id state running_image running_version running_hash desired_hash
-    local running_contract candidate_contract
-
-    id=${4:-}
-    [[ -n $id ]] || id=$(slot_id "$slot") || return 2
-    read -r state running_image running_hash < <("$docker_bin" inspect --format \
-        '{{.State.Status}} {{.Image}} {{or (index .Config.Labels "com.docker.compose.config-hash") ""}}' \
-        "$id") || return 2
-    case $state in
-        running | restarting | paused | created | exited | dead) ;;
-        *) return 2 ;;
-    esac
-    running_version=$(placement_version_for_image "$running_image") || return 2
-    desired_hash=$(desired_slot_config_hash "$slot") || return 2
-    running_contract=$(running_placement_contract "$id") || return 2
-    candidate_contract=$(candidate_placement_contract)
-    [[ $running_image == "$candidate_image_id" && \
-        $running_version == "$candidate_version" && \
-        -n $running_hash && $running_hash == "$desired_hash" && \
-        $running_contract == "$candidate_contract" ]]
-}
-
-normalize_maintenance_duplicates() {
-    local candidate_image_id=$1 candidate_version=$2 slot id match_status keep=
-    local ids
-    for slot in "${slots[@]}"; do
-        ids=$(slot_ids "$slot") || return 1
-        (($(wc -w <<<"$ids") > 1)) || continue
-        keep=
-        while IFS= read -r id; do
-            [[ -n $id ]] || continue
-            match_status=0
-            slot_matches_maintenance_candidate "$slot" "$candidate_image_id" \
-                "$candidate_version" "$id" || match_status=$?
-            if ((match_status == 0)) && [[ -z $keep ]]; then
-                keep=$id
-            fi
-        done <<<"$ids"
-        [[ -n $keep ]] || fail \
-            "duplicate source containers claim slot $slot; exact automatic recovery is ambiguous"
-        while IFS= read -r id; do
-            [[ -z $id || $id == "$keep" ]] && continue
-            "$docker_bin" rm -f "$id" >/dev/null || return 1
-        done <<<"$ids"
-        warn "removed duplicate pre-candidate container(s) for maintenance slot $slot"
-    done
-}
-
-discover_local_maintenance_candidate() {
-    local desired_ref=$1 slot id image hash desired_hash contract candidate_contract ids
-	local found_image='' found_version='' version
-    candidate_contract=$(candidate_placement_contract)
-    for slot in "${slots[@]}"; do
-        desired_hash=$(desired_slot_config_hash "$slot") || return 1
-		ids=$(slot_ids "$slot") || return 2
-        while IFS= read -r id; do
-            [[ -n $id ]] || continue
-            read -r image hash < <("$docker_bin" inspect --format \
-                '{{.Image}} {{or (index .Config.Labels "com.docker.compose.config-hash") ""}}' \
-                "$id") || return 1
-            [[ $hash == "$desired_hash" ]] || continue
-            contract=$(running_placement_contract "$id") || continue
-            [[ $contract == "$candidate_contract" ]] || continue
-            version=$(placement_version_for_image "$image") || return 1
-            [[ -n $version ]] || continue
-            [[ -z $found_image || $found_image == "$image" ]] || fail \
-                "multiple local candidate images exist during maintenance recovery"
-            found_image=$image
-            found_version=$version
-        done <<<"$ids"
-    done
-    [[ -n $found_image ]] || return 3
-    "$docker_bin" tag "$found_image" "$desired_ref" || return 1
-    printf '%s %s\n' "$found_image" "$found_version"
 }
 
 placement_version_for_image() {
@@ -1231,10 +1064,9 @@ require_placement_compatible() {
 }
 
 validate_inventory_structure() {
-    local id slot inventory
+    local id slot
     local -A seen=()
 
-    inventory=$(fleet_ids) || fail "cannot inventory router fleet containers"
     while IFS= read -r id; do
         [[ -n $id ]] || continue
         slot=$($docker_bin inspect --format \
@@ -1245,38 +1077,8 @@ validate_inventory_structure() {
         [[ -z ${seen[$slot]-} ]] || fail \
             "duplicate containers claim router slot '$slot'"
         seen[$slot]=$id
-    done <<<"$inventory"
+    done < <(fleet_ids)
 
-}
-
-restart_preserved_stopped_slot() {
-    local slot=$1 id state
-    id=$(slot_id "$slot") || return 1
-    slot_ready "$slot" && return 1
-    state=$($docker_bin inspect --format '{{.State.Status}}' "$id") || fail \
-        "router slot $slot disappeared during local recovery"
-    case $state in
-        created | exited)
-            echo "Restarting preserved versiond-router slot $slot before registry access"
-            "$docker_bin" start "$id" >/dev/null || fail \
-                "cannot restart preserved router slot $slot"
-            wait_slot_ready "$slot" || fail \
-                "preserved router slot $slot did not become healthy"
-            wait_slot_routes "$slot" || fail \
-                "preserved router slot $slot did not restore its routes"
-            wait_parent_admission "$slot" || fail \
-                "preserved router slot $slot was not readmitted by the parent"
-            return 0
-            ;;
-    esac
-    return 1
-}
-
-repair_preserved_stopped_capacity() {
-    local slot
-    for slot in "${slots[@]}"; do
-        restart_preserved_stopped_slot "$slot" || true
-    done
 }
 
 repair_fleet_capacity() {
@@ -1309,162 +1111,9 @@ repair_fleet_capacity() {
     done
 }
 
-recover_stopped_maintenance_source() {
-    local slot id state recovery_needed=false
-
-    for slot in "${slots[@]}"; do
-        id=$(slot_id "$slot") || fail "slot $slot has no unique existing container"
-        slot_ready "$slot" && continue
-        state=$($docker_bin inspect --format '{{.State.Status}}' "$id") || fail \
-            "router slot $slot disappeared during maintenance recovery"
-        case $state in
-            created | exited) recovery_needed=true ;;
-            *) fail "slot $slot is not healthy before maintenance (state $state)" ;;
-        esac
-    done
-
-    $recovery_needed || return 0
-    echo "Recovering the stopped pre-maintenance router fleet"
-    for slot in "${slots[@]}"; do
-        slot_ready "$slot" && continue
-        id=$(slot_id "$slot") || fail "slot $slot disappeared during maintenance recovery"
-        "$docker_bin" start "$id" >/dev/null || fail \
-            "cannot restart the preserved router slot $slot"
-    done
-    for slot in "${slots[@]}"; do
-        wait_slot_ready "$slot" || fail \
-            "preserved router slot $slot did not become healthy"
-        wait_preserved_slot_admission "$slot" || fail \
-            "preserved router slot $slot was not readmitted by the parent"
-    done
-}
-
-resume_interrupted_maintenance_target() {
-    local candidate_image_id=$1 candidate_version=$2
-    local slot id state match_status candidate_count=0
-    local -a source_slots=()
-    local -a candidate_slots=()
-	local -a missing_slots=()
-
-	normalize_maintenance_duplicates "$candidate_image_id" "$candidate_version" || return 2
-
-    for slot in "${slots[@]}"; do
-        if ! id=$(slot_id "$slot"); then
-			missing_slots+=("$slot")
-			continue
-		fi
-        match_status=0
-        slot_matches_maintenance_candidate \
-            "$slot" "$candidate_image_id" "$candidate_version" || match_status=$?
-        if ((match_status == 0)); then
-            ((candidate_count += 1))
-            candidate_slots+=("$slot")
-        elif ((match_status == 1)); then
-            source_slots+=("$slot")
-        else
-            fail "cannot classify router slot $slot during maintenance recovery"
-        fi
-    done
-
-    ((candidate_count > 0 || ${#missing_slots[@]} > 0)) || return 1
-	for slot in "${missing_slots[@]}"; do candidate_slots+=("$slot"); done
-    echo "Resuming interrupted maintenance toward the candidate placement contract"
-
-    # Once any candidate exists, readmitting an old placement contract would
-    # recreate mixed escrow ownership. Keep every old slot withdrawn and finish
-    # the already-crossed maintenance transaction in the forward direction.
-    for slot in "${source_slots[@]}"; do
-        id=$(slot_id "$slot") || fail "slot $slot disappeared during maintenance recovery"
-        state=$($docker_bin inspect --format '{{.State.Status}}' "$id") || fail \
-            "router slot $slot disappeared during maintenance recovery"
-        case $state in
-            running | restarting | paused) stop_slot_generation "$slot" ;;
-            created | exited | dead) ;;
-            *) fail "slot $slot cannot resume maintenance from state '$state'" ;;
-        esac
-        start_slot "$slot"
-    done
-    for slot in "${candidate_slots[@]}"; do
-		if ! id=$(slot_id "$slot"); then
-			echo "Recreating missing candidate router slot $slot"
-			start_slot "$slot"
-			continue
-		fi
-        state=$($docker_bin inspect --format '{{.State.Status}}' "$id") || fail \
-            "candidate slot $slot disappeared during maintenance recovery"
-        case $state in
-            running | restarting)
-				if ! slot_ready "$slot"; then
-					stop_slot_generation "$slot" || true
-					slot_compose "$slot" up -d --force-recreate --wait \
-						--wait-timeout "$wait_timeout" router
-				fi
-				;;
-            created | exited) "$docker_bin" start "$id" >/dev/null || fail \
-                "cannot restart candidate router slot $slot" ;;
-            paused | dead)
-                slot_compose "$slot" up -d --force-recreate --wait \
-                    --wait-timeout "$wait_timeout" router
-                ;;
-            *) fail "candidate slot $slot cannot resume from state '$state'" ;;
-        esac
-    done
-    for slot in "${slots[@]}"; do
-        wait_slot_ready "$slot" || fail \
-            "candidate router slot $slot did not become healthy"
-        wait_slot_routes "$slot" || fail \
-            "candidate router slot $slot did not restore its routes"
-    done
-    select_candidate_route_view || fail \
-        "cannot select the committed candidate route view"
-    for slot in "${slots[@]}"; do
-        wait_parent_admission "$slot" || fail \
-            "candidate router slot $slot was not readmitted by the parent"
-    done
-    fleet_status || fail \
-        "committed candidate fleet failed its final status check"
-    return 0
-}
-
-wait_preserved_slot_admission() {
-    local slot=$1 deadline address route routes missing state
-    parent_proxy_active || return 0
-    require_parent_diagnostic
-    address=$(slot_front_ip "$slot") || return 1
-    deadline=$((SECONDS + wait_timeout))
-    while ((SECONDS < deadline)); do
-        if ! repair_stale_parent_state "$slot"; then
-            sleep 1
-            continue
-        fi
-        missing=--coarse
-        if parent_route_admitted --coarse "$address"; then
-            missing=
-        else
-            state=$?
-            ((state == 3)) && missing=
-        fi
-        routes=$(slot_catalog_routes "$slot") || return 1
-        while [[ -z $missing ]] && IFS= read -r route; do
-            [[ -n $route ]] || continue
-            slot_route_ready "$slot" "$route" || continue
-            if parent_route_admitted "$route" "$address"; then
-                continue
-            else
-                state=$?
-            fi
-            ((state == 3)) || missing=$route
-        done <<<"$routes"
-        [[ -z $missing ]] && return 0
-        sleep 1
-    done
-    return 1
-}
-
 capture_maintenance_state() {
-    local slot id image key contract first_contract='' route route_inventory
-    local ready route_status
-    local -A candidate_routes_seen=()
+    local slot id image key contract first_contract='' route
+    local -A routes=()
     for slot in "${slots[@]}"; do
         id=$(slot_id "$slot") || fail "slot $slot has no unique existing container"
         slot_ready "$slot" || fail "slot $slot is not healthy before maintenance"
@@ -1482,218 +1131,28 @@ capture_maintenance_state() {
             maintenance_env["$slot:$key"]=$(container_env_value_or_legacy_default "$id" "$key") || fail \
                 "slot $slot is missing environment $key"
         done
-        route_inventory=$(slot_catalog_routes "$slot") || fail \
-            "cannot capture the route catalog for maintenance slot $slot"
         while read -r route; do
             [[ -n $route ]] || continue
-            route_status=0
-            slot_route_ready "$slot" "$route" || route_status=$?
-            if ((route_status == 0)); then
-                maintenance_source_routes["$slot:$route"]=1
-            elif ((route_status != 1)); then
-                fail "cannot diagnose source route $route on slot $slot"
-            fi
             if [[ -n ${candidate_routes[$route]-} ]] || \
                 ! route_in_static_environment "$route" \
                     "${maintenance_env[$slot:VERSIOND_NON_HA_VERSIONS]}" \
                     "${maintenance_env[$slot:VERSIOND_VERSIONS]}"; then
-                candidate_routes_seen[$route]=1
+                routes[$route]=1
             fi
-        done <<<"$route_inventory"
+        done < <(slot_catalog_routes "$slot")
     done
-    for route in "${!candidate_routes_seen[@]}"; do
-        ready=$(route_ready_count "$route") || fail \
-            "cannot diagnose maintenance candidate route $route"
-        if ((ready > 0)); then
-            maintenance_candidate_routes+=("$route")
+    for route in "${!routes[@]}"; do
+        if (( $(route_ready_count "$route") > 0 )); then
+            maintenance_required_routes+=("$route")
         fi
     done
 }
 
-write_maintenance_journal() {
-    local candidate_ref=$1 candidate_id=$2 candidate_version=$3
-    local slot key spec_sha contract slots_json='{}' env_json config_hash
-    local candidate_routes_json source_routes_json source_key route payload
-    spec_sha=$(fleet_spec_hash) || fail \
-        "cannot fingerprint the maintenance candidate configuration"
-    contract=$(candidate_placement_contract)
-    for slot in "${slots[@]}"; do
-        env_json='{}'
-        for key in "${maintenance_keys[@]}"; do
-            env_json=$(jq -c --arg key "$key" \
-                --arg value "${maintenance_env[$slot:$key]}" \
-                '. + {($key): $value}' <<<"$env_json")
-        done
-        config_hash=$(desired_slot_config_hash "$slot") || fail \
-            "cannot fingerprint maintenance slot $slot"
-        source_routes_json='[]'
-        for source_key in "${!maintenance_source_routes[@]}"; do
-            [[ $source_key == "$slot:"* ]] || continue
-            route=${source_key#"$slot:"}
-            source_routes_json=$(jq -c --arg route "$route" \
-                '. + [$route] | unique | sort' <<<"$source_routes_json")
-        done
-        slots_json=$(jq -c --arg slot "$slot" \
-            --arg config_hash "$config_hash" \
-            --arg rollback_image "${maintenance_images[$slot]}" \
-            --argjson environment "$env_json" \
-            --argjson source_routes "$source_routes_json" '
-            . + {($slot): {
-                state: "source",
-                candidate_config_sha256: $config_hash,
-                source: {
-                    rollback_image: $rollback_image,
-                    environment: $environment,
-                    required_routes: $source_routes
-                }
-            }}
-        ' <<<"$slots_json")
-    done
-    candidate_routes_json=$(printf '%s\n' \
-        "${maintenance_candidate_routes[@]}" | \
-        jq -Rsc 'split("\n") | map(select(length > 0)) | unique | sort')
-    payload=$(jq -cn \
-        --arg id "$operation_id" --arg fleet "$fleet_id" \
-        --arg ref "$candidate_ref" --arg image_id "$candidate_id" \
-        --arg version "$candidate_version" --arg spec_sha "$spec_sha" \
-        --arg contract "$contract" --argjson slots "$slots_json" \
-        --argjson candidate_routes "$candidate_routes_json" '
-        {
-            schema: 2,
-            transaction: {
-                id: $id,
-                fleet_id: $fleet,
-                decision: "rollback",
-                candidate: {
-                    ref: $ref,
-                    image_id: $image_id,
-                    placement_version: $version,
-                    spec_sha256: $spec_sha,
-                    placement_contract: $contract,
-                    required_routes: $candidate_routes
-                },
-                slots: $slots,
-                updated_at_unix: (now | floor)
-            }
-        }
-    ')
-    atomic_write_maintenance_journal "$payload"
-}
-
-update_maintenance_slot_state() {
-    local slot=$1 state=$2 updated
-    updated=$(jq -c --arg slot "$slot" --arg state "$state" '
-        if (.transaction.slots | has($slot)) then
-            .transaction.slots[$slot].state = $state
-            | .transaction.updated_at_unix = (now | floor)
-        else error("unknown maintenance slot") end
-    ' "$maintenance_journal") || fail \
-        "cannot persist maintenance state for slot $slot"
-    atomic_write_maintenance_journal "$updated"
-}
-
-commit_maintenance_journal() {
-    local updated
-    updated=$(jq -c '
-        if all(.transaction.slots[]; .state == "candidate") then
-            .transaction.decision = "commit"
-            | .transaction.commit_decided_at_unix = (now | floor)
-            | .transaction.updated_at_unix = (now | floor)
-        else error("not every maintenance slot is a candidate") end
-    ' "$maintenance_journal") || fail \
-        "cannot record the maintenance commit decision"
-    atomic_write_maintenance_journal "$updated"
-}
-
-load_maintenance_journal() {
-    local requested_ref=$1 saved_ref saved_fleet saved_spec current_spec
-    local slot key config_hash saved_hash rollback_tag saved_decision
-    jq -e '
-        .schema == 2 and
-        (.transaction.id | type == "string" and length > 0) and
-        (.transaction.fleet_id | type == "string" and length > 0) and
-        (.transaction.decision == "rollback" or
-         .transaction.decision == "commit") and
-        (.transaction.candidate.ref | type == "string" and length > 0) and
-        (.transaction.candidate.image_id | type == "string" and length > 0) and
-        (.transaction.candidate.placement_version | type == "string" and
-         length > 0) and
-        (.transaction.candidate.spec_sha256 | test("^[0-9a-f]{64}$")) and
-        (.transaction.candidate.placement_contract |
-         type == "string" and length > 0) and
-        (.transaction.slots | type == "object") and
-        all(.transaction.slots[];
-            (.state == "source" or .state == "source_stopping" or
-             .state == "source_stopped" or
-             .state == "candidate_starting" or .state == "candidate") and
-            (.candidate_config_sha256 | test("^[0-9a-f]{64}$")) and
-            (.source.rollback_image | type == "string" and length > 0) and
-            (.source.environment | type == "object") and
-            (.source.required_routes | type == "array") and
-            all(.source.required_routes[];
-                type == "string" and length > 0)) and
-        (.transaction.candidate.required_routes | type == "array") and
-        all(.transaction.candidate.required_routes[];
-            type == "string" and length > 0)
-    ' "$maintenance_journal" >/dev/null || fail \
-        "invalid maintenance journal $maintenance_journal"
-    saved_fleet=$(jq -r '.transaction.fleet_id' "$maintenance_journal")
-    saved_decision=$(jq -r '.transaction.decision' "$maintenance_journal")
-    [[ $saved_fleet == "$fleet_id" ]] || fail \
-        "maintenance journal belongs to fleet $saved_fleet, not $fleet_id"
-    saved_ref=$(jq -r '.transaction.candidate.ref' "$maintenance_journal")
-    [[ $requested_ref == "$saved_ref" ]] || fail \
-        "maintenance retry targets $requested_ref, but the journal targets $saved_ref"
-    saved_spec=$(jq -r '.transaction.candidate.spec_sha256' \
-        "$maintenance_journal")
-    current_spec=$(fleet_spec_hash) || fail \
-        "cannot fingerprint the maintenance retry configuration"
-    [[ $current_spec == "$saved_spec" ]] || fail \
-        "maintenance configuration changed during the active transaction"
-    maintenance_candidate_routes=()
-    maintenance_source_routes=()
-    mapfile -t maintenance_candidate_routes < <(jq -r \
-        '.transaction.candidate.required_routes[]' "$maintenance_journal")
-    for slot in "${slots[@]}"; do
-        jq -e --arg slot "$slot" \
-            '.transaction.slots[$slot] | type == "object"' \
-            "$maintenance_journal" >/dev/null || fail \
-            "maintenance journal has no slot $slot"
-        config_hash=$(desired_slot_config_hash "$slot") || fail \
-            "cannot fingerprint maintenance slot $slot"
-        saved_hash=$(jq -r --arg slot "$slot" \
-            '.transaction.slots[$slot].candidate_config_sha256' \
-            "$maintenance_journal")
-        [[ $config_hash == "$saved_hash" ]] || fail \
-            "maintenance slot $slot configuration changed during retry"
-        rollback_tag=$(jq -r --arg slot "$slot" \
-            '.transaction.slots[$slot].source.rollback_image' \
-            "$maintenance_journal")
-        if [[ $saved_decision == rollback ]]; then
-            "$docker_bin" image inspect "$rollback_tag" >/dev/null 2>&1 || fail \
-                "maintenance rollback image is unavailable for slot $slot"
-        fi
-        maintenance_images[$slot]=$rollback_tag
-        for key in "${maintenance_keys[@]}"; do
-            maintenance_env[$slot:$key]=$(jq -er --arg slot "$slot" \
-                --arg key "$key" \
-                '.transaction.slots[$slot].source.environment[$key] | strings' \
-                "$maintenance_journal") || fail \
-                "maintenance journal lacks $key for slot $slot"
-        done
-        while IFS= read -r route; do
-            maintenance_source_routes["$slot:$route"]=1
-        done < <(jq -r --arg slot "$slot" \
-            '.transaction.slots[$slot].source.required_routes[]' \
-            "$maintenance_journal")
-    done
-}
-
-wait_candidate_routes_all() {
+wait_required_routes_all() {
     local deadline=$((SECONDS + wait_timeout)) slot route missing
     while ((SECONDS < deadline)); do
         missing=
-        for route in "${maintenance_candidate_routes[@]}"; do
+        for route in "${maintenance_required_routes[@]}"; do
             for slot in "${slots[@]}"; do
                 if ! slot_route_ready "$slot" "$route"; then
                     missing="$route on slot $slot"
@@ -1708,119 +1167,38 @@ wait_candidate_routes_all() {
     return 1
 }
 
-wait_source_routes_all() {
-    local deadline=$((SECONDS + wait_timeout)) source_key slot route missing
-    while ((SECONDS < deadline)); do
-        missing=
-        for source_key in "${!maintenance_source_routes[@]}"; do
-            slot=${source_key%%:*}
-            route=${source_key#*:}
-            if ! slot_route_ready "$slot" "$route"; then
-                missing="$route on slot $slot"
-                break
-            fi
-        done
-        [[ -z $missing ]] && return 0
-        sleep 1
-    done
-    echo "versiond-router-fleet: source fleet did not restore route $missing within ${wait_timeout}s" >&2
-    return 1
-}
-
-wait_source_parent_admission() {
-    local slot=$1 deadline address source_key route missing
-    parent_proxy_active || return 0
-    require_parent_diagnostic
-    address=$(slot_front_ip "$slot") || return 1
-    deadline=$((SECONDS + wait_timeout))
-    while ((SECONDS < deadline)); do
-        if ! repair_stale_parent_state "$slot"; then
-            sleep 1
-            continue
-        fi
-        missing=--coarse
-        if parent_route_admitted --coarse "$address"; then
-            missing=
-        fi
-        for source_key in "${!maintenance_source_routes[@]}"; do
-            [[ -z $missing && $source_key == "$slot:"* ]] || continue
-            route=${source_key#"$slot:"}
-            parent_route_admitted "$route" "$address" || {
-                missing=$route
-                break
-            }
-        done
-        [[ -z $missing ]] && return 0
-        sleep 1
-    done
-    echo "versiond-router-fleet: parent did not readmit source slot $slot for route $missing within ${wait_timeout}s" >&2
-    return 1
-}
-
-cleanup_maintenance_transaction() {
-    local slot
-    remove_maintenance_journal
-    for slot in "${slots[@]}"; do
-        [[ -z ${maintenance_images[$slot]-} ]] || \
-            "$docker_bin" image rm "${maintenance_images[$slot]}" \
-                >/dev/null 2>&1 || true
-    done
-}
-
-restore_maintenance_source() {
-    local slot ok=true
-    warn "draining maintenance candidates before restoring the exact previous fleet"
-    for slot in "${slots[@]}"; do
-        stop_slot_generation "$slot" >/dev/null 2>&1 || ok=false
-    done
-    for slot in "${slots[@]}"; do
-        if ! VERSIOND_ROUTER_IMAGE="${maintenance_images[$slot]}" \
-            VERSIOND_POOL_HOST="${maintenance_env[$slot:VERSIOND_POOL_HOST]}" \
-            VERSIOND_ROUTER_BACK_NETWORK="${maintenance_env[$slot:VERSIOND_ROUTER_BACK_NETWORK_NAME]}" \
-            VERSIOND_LEGACY_HOST="${maintenance_env[$slot:VERSIOND_LEGACY_HOST]}" \
-            VERSIOND_NON_HA_VERSIONS="${maintenance_env[$slot:VERSIOND_NON_HA_VERSIONS]}" \
-            VERSIOND_VERSIONS="${maintenance_env[$slot:VERSIOND_VERSIONS]}" \
-            VERSIOND_ROUTER_ALLOW_COARSE_READINESS="${maintenance_env[$slot:VERSIOND_ROUTER_ALLOW_COARSE_READINESS]}" \
-            VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS="${maintenance_env[$slot:VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS]}" \
-            VERSIOND_ROUTING_CATALOG_URL="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_URL]}" \
-            VERSIOND_ROUTING_CATALOG_POLL_SECONDS="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_POLL_SECONDS]}" \
-            VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS]}" \
-            VERSIOND_ROUTING_ACTIVATION_MIN_READY="${maintenance_env[$slot:VERSIOND_ROUTING_ACTIVATION_MIN_READY]}" \
-            VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS]}" \
-            VERSIOND_ROUTER_VERSION_CAPACITY="${maintenance_env[$slot:VERSIOND_ROUTER_VERSION_CAPACITY]}" \
-            HAPROXY_DNS_RESOLVER="${maintenance_env[$slot:HAPROXY_DNS_RESOLVER]}" \
-            slot_compose "$slot" up -d --wait \
-                --wait-timeout "$wait_timeout" router; then
-            ok=false
-        fi
-    done
-    if [[ $ok == true ]] && ! wait_source_routes_all; then
-        ok=false
-    fi
-    if [[ $ok == true ]]; then
-        for slot in "${slots[@]}"; do
-            wait_source_parent_admission "$slot" || ok=false
-        done
-    fi
-    [[ $ok == true ]]
-}
-
 maintenance_rollback() {
-    local status=$? decision candidate_ref
+    local status=$? slot ok=true
     ((status != 0)) || status=1
     trap - ERR INT TERM HUP
     if [[ $maintenance_active == true ]]; then
-        decision=$(jq -r '.transaction.decision // empty' \
-            "$maintenance_journal" 2>/dev/null || :)
-        if [[ $decision == commit ]]; then
-            candidate_ref=$(jq -r '.transaction.candidate.ref' \
-                "$maintenance_journal")
-            maintenance_active=false
-            recover_durable_maintenance "$candidate_ref"
-            warn "the maintenance decision was committed; completed the candidate fleet"
-        elif restore_maintenance_source; then
-            warn "the exact previous router fleet was restored"
-            cleanup_maintenance_transaction
+        warn "maintenance rollout failed; draining candidates before restoring the exact previous fleet"
+        for slot in "${slots[@]}"; do
+            stop_slot_generation "$slot" >/dev/null 2>&1 || ok=false
+        done
+        for slot in "${slots[@]}"; do
+            if ! VERSIOND_ROUTER_IMAGE="${maintenance_images[$slot]}" \
+                VERSIOND_POOL_HOST="${maintenance_env[$slot:VERSIOND_POOL_HOST]}" \
+                VERSIOND_ROUTER_BACK_NETWORK="${maintenance_env[$slot:VERSIOND_ROUTER_BACK_NETWORK_NAME]}" \
+                VERSIOND_LEGACY_HOST="${maintenance_env[$slot:VERSIOND_LEGACY_HOST]}" \
+                VERSIOND_NON_HA_VERSIONS="${maintenance_env[$slot:VERSIOND_NON_HA_VERSIONS]}" \
+                VERSIOND_VERSIONS="${maintenance_env[$slot:VERSIOND_VERSIONS]}" \
+                VERSIOND_ROUTER_ALLOW_COARSE_READINESS="${maintenance_env[$slot:VERSIOND_ROUTER_ALLOW_COARSE_READINESS]}" \
+                VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS="${maintenance_env[$slot:VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS]}" \
+                VERSIOND_ROUTING_CATALOG_URL="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_URL]}" \
+                VERSIOND_ROUTING_CATALOG_POLL_SECONDS="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_POLL_SECONDS]}" \
+                VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS]}" \
+                VERSIOND_ROUTING_ACTIVATION_MIN_READY="${maintenance_env[$slot:VERSIOND_ROUTING_ACTIVATION_MIN_READY]}" \
+                VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS]}" \
+                VERSIOND_ROUTER_VERSION_CAPACITY="${maintenance_env[$slot:VERSIOND_ROUTER_VERSION_CAPACITY]}" \
+                HAPROXY_DNS_RESOLVER="${maintenance_env[$slot:HAPROXY_DNS_RESOLVER]}" \
+                slot_compose "$slot" up -d --wait \
+                    --wait-timeout "$wait_timeout" router; then
+                ok=false
+            fi
+        done
+        if [[ $ok == true ]] && wait_required_routes_all; then
+            warn "the exact previous router fleet was restored; maintenance remains uncommitted"
         else
             warn "automatic fleet rollback failed; keep the maintenance rollback images and restore ingress manually"
         fi
@@ -1899,12 +1277,9 @@ stop_slot() {
 }
 
 stop_fleet_containers() {
-    local id state pid failed=0 inventory
+    local id state pid failed=0
     local -a ids=() pids=()
-    inventory=$(fleet_ids) || fail "cannot inventory router fleet containers"
-    while IFS= read -r id; do
-        [[ -n $id ]] && ids+=("$id")
-    done <<<"$inventory"
+    mapfile -t ids < <(fleet_ids)
     if ((${#ids[@]} == 0)); then
         echo "No versiond-router fleet containers are present"
         return 0
@@ -1940,20 +1315,17 @@ add_cleanup_network() {
         [[ $existing != "$network" ]] || return 0
     done
     ownership=$($docker_bin network inspect --format \
-        '{{or (index .Labels "ai.gonka.component") ""}}|{{or (index .Labels "ai.gonka.fleet") ""}}|{{or (index .Labels "ai.gonka.network-role") ""}}|{{or (index .Labels "com.docker.compose.network") ""}}|{{or (index .Labels "com.docker.compose.project") ""}}' \
+        '{{or (index .Labels "ai.gonka.component") ""}}|{{or (index .Labels "ai.gonka.fleet") ""}}|{{or (index .Labels "ai.gonka.network-role") ""}}|{{or (index .Labels "com.docker.compose.network") ""}}' \
         "$network")
     case $ownership in
         "versiond-router-network|$fleet_id|"*)
-            if [[ -n $role && $ownership != "versiond-router-network|$fleet_id|$role||"* ]]; then
+            if [[ -n $role && $ownership != "versiond-router-network|$fleet_id|$role|"* ]]; then
                 fail "network $network has unexpected ownership '$ownership'"
             fi
             ;;
-        "|||$legacy_key|"*)
+        "|||$legacy_key")
             [[ -n $role && -n $legacy_key ]] || fail \
                 "network $network has legacy ownership outside the current fleet topology"
-            expected_project=${GONKA_COMPOSE_PROJECT:-${COMPOSE_PROJECT_NAME:-}}
-            [[ -n $expected_project && $ownership == "|||$legacy_key|$expected_project" ]] || fail \
-                "legacy network $network has unexpected ownership '$ownership'"
             ;;
         *) fail "network $network has unexpected ownership '$ownership'" ;;
     esac
@@ -1961,7 +1333,7 @@ add_cleanup_network() {
 }
 
 collect_cleanup_networks() {
-    local network_id network inventory
+    local network_id network
     cleanup_networks=()
     add_cleanup_network \
         "${VERSIOND_ROUTER_FRONT_NETWORK:-gonka-versiond-router-front}" \
@@ -1969,57 +1341,47 @@ collect_cleanup_networks() {
     add_cleanup_network \
         "${VERSIOND_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}" \
         back versiond-router-back
-    inventory=$("$docker_bin" network ls -q \
-        --filter label=ai.gonka.component=versiond-router-network \
-        --filter "label=ai.gonka.fleet=$fleet_id") || fail \
-        "cannot inventory router fleet networks"
     while IFS= read -r network_id; do
         [[ -n $network_id ]] || continue
         network=$($docker_bin network inspect --format '{{.Name}}' "$network_id") || fail \
             "fleet network $network_id disappeared while cleanup was prepared"
         add_cleanup_network "$network"
-    done <<<"$inventory"
+    done < <("$docker_bin" network ls -q \
+        --filter label=ai.gonka.component=versiond-router-network \
+        --filter "label=ai.gonka.fleet=$fleet_id")
 }
 
 require_networks_detached_from_main_stack() {
-    local id network attachment name inventory attachments
+    local id network attachment name
     local -A fleet_containers=()
-    inventory=$(fleet_ids) || fail "cannot inventory router fleet containers"
     while IFS= read -r id; do
         [[ -n $id ]] && fleet_containers[$id]=1
-    done <<<"$inventory"
+    done < <(fleet_ids)
     for network in "${cleanup_networks[@]}"; do
         # Docker's Go template variables are literals for the Docker CLI.
         # shellcheck disable=SC2016
-        attachments=$("$docker_bin" network inspect --format \
-            '{{range $id, $container := .Containers}}{{println $id}}{{end}}' \
-            "$network") || fail "cannot inspect attachments for network $network"
         while IFS= read -r attachment; do
             [[ -n $attachment ]] || continue
             [[ -n ${fleet_containers[$attachment]-} ]] && continue
             name=$($docker_bin inspect --format '{{.Name}}' "$attachment" 2>/dev/null || printf '%s' "$attachment")
             fail "network $network is still attached to non-fleet container ${name#/}; run the main Compose down before fleet down"
-        done <<<"$attachments"
+        done < <("$docker_bin" network inspect --format \
+            '{{range $id, $container := .Containers}}{{println $id}}{{end}}' \
+            "$network")
     done
 }
 
 fleet_down() {
-    local network id volume inventory
+    local network
     local -a ids=() volumes=()
     collect_cleanup_networks
     require_networks_detached_from_main_stack
     stop_fleet_containers
-    inventory=$(fleet_ids) || fail "cannot inventory router fleet containers for removal"
-    while IFS= read -r id; do
-        [[ -n $id ]] && ids+=("$id")
-    done <<<"$inventory"
+    mapfile -t ids < <(fleet_ids)
     if ((${#ids[@]} > 0)); then
         "$docker_bin" rm "${ids[@]}" >/dev/null
     fi
-    inventory=$(fleet_volume_ids) || fail "cannot inventory router fleet state volumes"
-    while IFS= read -r volume; do
-        [[ -n $volume ]] && volumes+=("$volume")
-    done <<<"$inventory"
+    mapfile -t volumes < <(fleet_volume_ids)
     if ((${#volumes[@]} > 0)); then
         "$docker_bin" volume rm "${volumes[@]}" >/dev/null
     fi
@@ -2102,8 +1464,6 @@ fleet_status() {
 fleet_up() {
     local slot
     prepare_slot_networks
-    validate_inventory_structure
-    repair_preserved_stopped_capacity
     pull_router_image
     candidate_image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
     require_placement_compatible "$candidate_image"
@@ -2117,20 +1477,8 @@ fleet_up() {
 }
 
 fleet_apply() {
-    local image recovery_status=0
     local -a ids=()
-    image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
-    if [[ -f $maintenance_journal ]]; then
-        recover_durable_maintenance "$image" || recovery_status=$?
-        if [[ $maintenance_recovery_committed == true ||
-              $maintenance_recovery_rolled_back == true ]]; then
-            fleet_status
-            return 0
-        fi
-        return "$recovery_status"
-    fi
-    inventory=$(fleet_ids) || fail "cannot inventory the router fleet"
-	[[ -z $inventory ]] || mapfile -t ids <<<"$inventory"
+    mapfile -t ids < <(fleet_ids)
     if ((${#ids[@]} == 0)); then
         echo "Bootstrapping absent versiond-router fleet"
         fleet_up
@@ -2142,7 +1490,6 @@ fleet_apply() {
     # before the first mutation.
     validate_inventory_structure
     prepare_slot_networks
-    repair_preserved_stopped_capacity
     pull_router_image
     candidate_image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
     require_placement_compatible "$candidate_image"
@@ -2151,7 +1498,7 @@ fleet_apply() {
 }
 
 fleet_rollout() {
-    local slot id old_image rollback_tag key route candidate_image_id replacement_status route_inventory
+    local slot id old_image rollback_tag key route candidate_image_id replacement_status
     prepare_slot_networks
     pull_router_image
     candidate_image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
@@ -2181,11 +1528,9 @@ fleet_rollout() {
             rollback_env[$key]=$(container_env_value_or_legacy_default "$id" "$key") || fail \
                 "slot $slot is missing environment $key"
         done
-        route_inventory=$(slot_catalog_routes "$slot") || fail \
-            "cannot capture rollback routes for slot $slot"
         while IFS= read -r route; do
             [[ -n $route ]] && rollback_routes[$route]=1
-        done <<<"$route_inventory"
+        done < <(slot_catalog_routes "$slot")
         current_slot=$slot
         rollback_image=$rollback_tag
         echo "Draining versiond-router slot $slot"
@@ -2203,83 +1548,31 @@ fleet_rollout() {
     fleet_status
 }
 
-recover_durable_maintenance() {
-    local image=$1 decision candidate_id candidate_version resume_status
-    [[ -f $maintenance_journal ]] || return 1
-    echo "Recovering durable router maintenance transaction"
-    load_maintenance_journal "$image"
-    decision=$(jq -r '.transaction.decision' "$maintenance_journal")
-    if [[ $decision == rollback ]]; then
-        restore_maintenance_source || fail \
-            "durable maintenance rollback could not restore the source fleet"
-        cleanup_maintenance_transaction
-        maintenance_recovery_rolled_back=true
-        echo "Recovered the exact pre-maintenance router fleet"
-        return 1
-    fi
-
-    candidate_id=$(jq -r '.transaction.candidate.image_id' \
-        "$maintenance_journal")
-    candidate_version=$(jq -r '.transaction.candidate.placement_version' \
-        "$maintenance_journal")
-    "$docker_bin" image inspect "$candidate_id" >/dev/null 2>&1 || fail \
-        "committed maintenance candidate image $candidate_id is unavailable"
-    "$docker_bin" tag "$candidate_id" "$image" || fail \
-        "cannot restore the committed candidate image reference"
-    resume_status=0
-    resume_interrupted_maintenance_target \
-        "$candidate_id" "$candidate_version" || resume_status=$?
-    ((resume_status == 0)) || fail \
-        "cannot finish the durably committed maintenance candidate"
-    cleanup_maintenance_transaction
-    maintenance_recovery_committed=true
-    return 0
-}
-
 fleet_maintenance_rollout() {
-    local slot image image_id image_version
-    local ack=${VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE:-false}
+    local slot image ack=${VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE:-false}
     case $ack in
         1 | true | yes) ;;
         *) fail "maintenance-rollout requires VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true" ;;
     esac
-    image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
-    if recover_durable_maintenance "$image"; then
-        [[ $maintenance_recovery_committed == true ]] && return 0
-    fi
     prepare_slot_networks
-    # Journal recovery must run before live route discovery because source
-    # slots may be stopped and candidates may be only partially created.
-    discover_expected_routes
-    recover_stopped_maintenance_source
-    # A new maintenance transaction must honor pull=always even when the
-    # mutable reference already exists locally. Only a journaled retry may use
-    # its saved immutable image ID without contacting the registry.
     pull_router_image
-    image_id=$($docker_bin image inspect --format '{{.Id}}' "$image") || fail \
-        "candidate router image is not available: $image"
-    image_version=$(placement_version_for_image "$image")
-    [[ -n $image_version ]] || fail \
+    image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
+    [[ -n $(placement_version_for_image "$image") ]] || fail \
         "candidate image has no placement protocol label"
     require_cache_compatible "$image"
     capture_maintenance_state
-    write_maintenance_journal "$image" "$image_id" "$image_version"
     maintenance_active=true
     trap maintenance_rollback ERR INT TERM HUP
 
     echo "Draining the complete old router fleet for an atomic placement change"
     for slot in "${slots[@]}"; do
-        update_maintenance_slot_state "$slot" source_stopping
         stop_slot_generation "$slot"
-        update_maintenance_slot_state "$slot" source_stopped
     done
     for slot in "${slots[@]}"; do
         echo "Starting maintenance replacement for slot $slot"
-        update_maintenance_slot_state "$slot" candidate_starting
         start_slot "$slot"
-        update_maintenance_slot_state "$slot" candidate
     done
-    wait_candidate_routes_all
+    wait_required_routes_all
 
     # Validate the candidate's complete live view before crossing the commit
     # point. This catches partial catalog convergence while exact rollback
@@ -2290,10 +1583,11 @@ fleet_maintenance_rollout() {
     done
     fleet_status
 
-    commit_maintenance_journal
     maintenance_active=false
     trap - ERR INT TERM HUP
-    cleanup_maintenance_transaction
+    for slot in "${slots[@]}"; do
+        "$docker_bin" image rm "${maintenance_images[$slot]}" >/dev/null 2>&1 || true
+    done
 }
 
 # The deployment transaction fingerprint does not inspect live route health or
@@ -2314,31 +1608,9 @@ case $command in
     *) gonka_acquire_deployment_lock "$config_dir" || exit 1 ;;
 esac
 
-# A durable maintenance decision owns every slot until recovery either restores
-# the exact source boundary or finishes the committed candidate. Do not let a
-# different mutating command alter that evidence before the recovery path has
-# even inspected it.
-if [[ -f $maintenance_journal ]]; then
-    case $command in
-        apply | maintenance-rollout | status | verify-admission | wait-version | \
-            -h | --help | help) ;;
-        *) fail \
-            "active maintenance journal blocks '$command'; run apply or maintenance-rollout to recover it" \
-            ;;
-    esac
-fi
-
 # Runtime-discovered versions are part of the safety reserve even though they
 # are intentionally absent from the host-managed bootstrap environment.
-# Whole-fleet emergency removal needs no routing state and must still work when
-# every router Runtime API is wedged.
-case $command in
-    stop-all | down) ;;
-    apply | maintenance-rollout)
-        [[ -f $maintenance_journal ]] || discover_expected_routes
-        ;;
-    *) discover_expected_routes ;;
-esac
+discover_expected_routes
 
 case $command in
     prepare-networks) prepare_networks ;;
@@ -2373,10 +1645,6 @@ case $command in
         [[ $# == 2 ]] || fail "start requires exactly one SLOT"
         target_slot=$2
         prepare_slot_networks
-        validate_inventory_structure
-        if restart_preserved_stopped_slot "$target_slot"; then
-            exit 0
-        fi
         pull_router_image
         candidate_image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
         require_placement_compatible "$candidate_image"

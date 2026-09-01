@@ -5,8 +5,19 @@
 # Env:
 #   VERSIOND_POOL_HOST        DNS name resolving to every versiond in the HA
 #                             pool (compose network alias). Default versiond-pool.
+#   VERSIOND_POOL_ENDPOINTS_FILE
+#                             optional JSON array of {"id","host","port"}
+#                             entries. When set, pool membership is this
+#                             explicit list (bare-metal multi-host) instead of
+#                             DNS discovery. Hosts may be IPv4 addresses or
+#                             names; a name is re-resolved through the Docker
+#                             resolver. Port defaults to VERSIOND_PORT.
+#   VERSIOND_HOSTS            legacy whitespace/comma list of hosts (optionally
+#                             host:port). Recognised only when no endpoint file
+#                             is set; it renders the same explicit server list.
 #   VERSIOND_PORT             upstream port (default 8080)
-#   VERSIOND_LEGACY_HOST      single host owning pre-HA SQLite data dirs
+#   VERSIOND_LEGACY_HOST      single host owning pre-HA SQLite data dirs. With an
+#                             endpoint file this may also be an endpoint id.
 #   VERSIOND_NON_HA_VERSIONS  version path segments pinned to the legacy host
 #                             (whitespace and/or comma separated). Empty = every
 #                             version uses the HA pool.
@@ -73,6 +84,135 @@ CATALOG_CACHE_BIN="${ROUTING_CATALOG_CACHE_BIN:-/usr/local/lib/router-runtime/ca
 FRONT_BIND_HOST="${VERSIOND_ROUTER_FRONT_BIND_HOST:-}"
 METRICS_BIND_HOST="${VERSIOND_ROUTER_METRICS_BIND_HOST:-}"
 DNS_RESOLVER="${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}"
+
+die() {
+    echo "versiond-router: $*" >&2
+    exit 1
+}
+
+# Pool membership. Precedence: an explicit endpoint file, then the legacy
+# VERSIOND_HOSTS list, then DNS discovery through VERSIOND_POOL_HOST. Both
+# explicit forms are normalised into one "id US host US port" line per member,
+# where US is the ASCII unit separator so that no field can be misread.
+US=$(printf '\037')
+POOL_ENDPOINTS=$(mktemp)
+trap 'rm -f "$POOL_ENDPOINTS"' EXIT
+POOL_MODE=dns
+if [ -n "${VERSIOND_POOL_ENDPOINTS_FILE:-}" ]; then
+    [ -r "$VERSIOND_POOL_ENDPOINTS_FILE" ] || \
+        die "VERSIOND_POOL_ENDPOINTS_FILE '$VERSIOND_POOL_ENDPOINTS_FILE' is not readable"
+    jq -r --arg port "$PORT" --arg us "$US" '
+        if type != "array" or length == 0 then
+            error("endpoint file must be a non-empty JSON array")
+        else . end
+        | .[]
+        | if type != "object" then error("every endpoint must be an object") else . end
+        | [(.id // ""), (.host // ""), ((.port // $port) | tostring)]
+        | join($us)
+    ' "$VERSIOND_POOL_ENDPOINTS_FILE" > "$POOL_ENDPOINTS" || \
+        die "cannot parse VERSIOND_POOL_ENDPOINTS_FILE '$VERSIOND_POOL_ENDPOINTS_FILE'"
+    POOL_MODE=endpoints
+elif [ -n "${VERSIOND_HOSTS:-}" ]; then
+    echo "versiond-router: VERSIOND_HOSTS is a legacy setting; prefer VERSIOND_POOL_ENDPOINTS_FILE" >&2
+    printf '%s\n' "$VERSIOND_HOSTS" | tr ',;[:space:]' '\n' | sed '/^$/d' | \
+        while IFS= read -r legacy_entry; do
+            case "$legacy_entry" in
+                *:*) printf '%s%s%s%s%s\n' "${legacy_entry%%:*}" "$US" \
+                    "${legacy_entry%%:*}" "$US" "${legacy_entry##*:}" ;;
+                *) printf '%s%s%s%s%s\n' "$legacy_entry" "$US" "$legacy_entry" \
+                    "$US" "$PORT" ;;
+            esac
+        done > "$POOL_ENDPOINTS"
+    POOL_MODE=endpoints
+fi
+if [ "$POOL_MODE" = endpoints ]; then
+    [ -s "$POOL_ENDPOINTS" ] || die "the versiond endpoint list is empty"
+    endpoint_index=0
+    endpoint_seen_ids=
+    while IFS="$US" read -r endpoint_id endpoint_host endpoint_port; do
+        endpoint_index=$((endpoint_index + 1))
+        case "$endpoint_id" in
+            '' | *[!A-Za-z0-9._-]*)
+                die "endpoint $endpoint_index has an invalid id '$endpoint_id'; use [A-Za-z0-9][A-Za-z0-9._-]*" ;;
+        esac
+        case "$endpoint_id" in
+            [A-Za-z0-9]*) ;;
+            *) die "endpoint id '$endpoint_id' must start with a letter or digit" ;;
+        esac
+        case " $endpoint_seen_ids " in
+            *" $endpoint_id "*) die "endpoint id '$endpoint_id' is declared twice" ;;
+        esac
+        endpoint_seen_ids="$endpoint_seen_ids $endpoint_id"
+        # IPv4 literals and DNS names share one grammar; IPv6 is not supported
+        # because the same value is also spliced into an HAProxy server line.
+        case "$endpoint_host" in
+            '' | *[!A-Za-z0-9.-]*)
+                die "endpoint '$endpoint_id' has an invalid host '$endpoint_host'" ;;
+        esac
+        case "$endpoint_port" in
+            '' | *[!0-9]*) die "endpoint '$endpoint_id' has an invalid port '$endpoint_port'" ;;
+        esac
+        if [ "$endpoint_port" -lt 1 ] || [ "$endpoint_port" -gt 65535 ]; then
+            die "endpoint '$endpoint_id' has an out-of-range port '$endpoint_port'"
+        fi
+    done < "$POOL_ENDPOINTS"
+    # Explicit members are the whole capacity: the catalog reconciler addresses
+    # servers versiond1..versiondN, and an unlisted host cannot join.
+    SLOTS=$endpoint_index
+    echo "versiond-router: pool membership is the explicit list of $SLOTS endpoint(s)" >&2
+fi
+
+# The endpoint line whose id is $1, or failure when the id is unknown.
+endpoint_by_id() {
+    awk -F "$US" -v id="$1" '$1 == id { print; found = 1; exit } END { exit !found }' \
+        "$POOL_ENDPOINTS"
+}
+
+# A name keeps re-resolving through the Docker resolver so a recreated
+# container with a new address rejoins; an IPv4 literal needs no resolver.
+server_resolver_options() {
+    case "$1" in
+        *[!0-9.]*) printf ' resolvers docker init-addr none' ;;
+        *) printf '' ;;
+    esac
+}
+
+# The server lines of one backend. $1 is the backend kind (pool or legacy),
+# $2 the DNS pool name or legacy host, $3 the slot count for DNS templates,
+# $4 the initial server state.
+pool_server_lines() {
+    psl_kind=$1
+    psl_host=$2
+    psl_slots=$3
+    psl_state=$4
+    psl_common='check inter 1s fall 1 rise 2 init-state fully-down hash-key addr'
+    if [ "$POOL_MODE" = dns ]; then
+        printf '    server-template versiond %s %s:%s %s resolvers docker init-addr none %s\n' \
+            "$psl_slots" "$psl_host" "$PORT" "$psl_common" "$psl_state"
+        return 0
+    fi
+    if [ "$psl_kind" = legacy ]; then
+        # A legacy owner named by endpoint id takes that entry's host and port.
+        # Any other name keeps the previous single-host DNS contract.
+        if psl_entry=$(endpoint_by_id "$psl_host"); then
+            psl_ehost=$(printf '%s' "$psl_entry" | cut -d "$US" -f2)
+            psl_eport=$(printf '%s' "$psl_entry" | cut -d "$US" -f3)
+            printf '    server versiond1 %s:%s %s%s %s\n' "$psl_ehost" "$psl_eport" \
+                "$psl_common" "$(server_resolver_options "$psl_ehost")" "$psl_state"
+        else
+            printf '    server-template versiond 1 %s:%s %s resolvers docker init-addr none %s\n' \
+                "$psl_host" "$PORT" "$psl_common" "$psl_state"
+        fi
+        return 0
+    fi
+    psl_index=0
+    while IFS="$US" read -r _ psl_ehost psl_eport; do
+        psl_index=$((psl_index + 1))
+        printf '    server versiond%s %s:%s %s%s %s\n' "$psl_index" "$psl_ehost" \
+            "$psl_eport" "$psl_common" "$(server_resolver_options "$psl_ehost")" \
+            "$psl_state"
+    done < "$POOL_ENDPOINTS"
+}
 
 resolve_local_ipv4() {
     host=$1
@@ -257,18 +397,22 @@ backend_name() {
 # their hashing, retry, and path-rewrite policies cannot drift apart.
 DEFAULT_RETRY_ON='retry-on conn-failure empty-response 502'
 VERSIONLESS_RETRY_ON="$DEFAULT_RETRY_ON 404"
+# $1 backend name, $2 readiness check, $3 route check, $4 DNS pool name or
+# legacy host, $5 DNS slot count, $6 HA header rule, $7 response backend label,
+# $8 initial server state, $9 retry policy, $10 backend kind (pool or legacy).
 render_backend() {
+    pool_server_lines "${10}" "$4" "$5" "$8" > "$POOL_SERVERS_FILE"
     sed \
         -e "s|\${BACKEND_NAME}|$1|g" \
         -e "s|\${READY_CHECK_SEND}|$2|g" \
         -e "s|\${ROUTE_CHECK_SEND}|$3|g" \
-        -e "s|\${BACKEND_HOST}|$4|g" \
-        -e "s|\${VERSIOND_PORT}|$PORT|g" \
-        -e "s|\${BACKEND_SLOTS}|$5|g" \
         -e "s|\${REQUEST_HA_HEADER}|$6|g" \
         -e "s|\${RESPONSE_BACKEND}|$7|g" \
         -e "s|\${RETRY_ON}|$9|g" \
-        -e "s|\${SERVER_STATE}|$8|g" \
+        -e "/\${POOL_SERVERS}/{
+            r $POOL_SERVERS_FILE
+            d
+        }" \
         "$POOL_TEMPLATE"
 }
 
@@ -280,7 +424,8 @@ STATIC_VERSIONS_FILE="$(mktemp)"
 LEGACY_VERSIONS_FILE="$(mktemp)"
 CACHED_VERSIONS_FILE="$(mktemp)"
 CACHED_DYNAMIC_VERSIONS_FILE="$(mktemp)"
-trap 'rm -f "$POOL_BACKENDS_FILE" "$STATIC_VERSIONS_FILE" "$LEGACY_VERSIONS_FILE" "$CACHED_VERSIONS_FILE" "$CACHED_DYNAMIC_VERSIONS_FILE"' EXIT
+POOL_SERVERS_FILE="$(mktemp)"
+trap 'rm -f "$POOL_BACKENDS_FILE" "$STATIC_VERSIONS_FILE" "$LEGACY_VERSIONS_FILE" "$CACHED_VERSIONS_FILE" "$CACHED_DYNAMIC_VERSIONS_FILE" "$POOL_SERVERS_FILE" "$POOL_ENDPOINTS"' EXIT
 
 printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;[:space:]' '\n' > "$STATIC_VERSIONS_FILE"
 printf '%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" | tr ',;[:space:]' '\n' > "$LEGACY_VERSIONS_FILE"
@@ -305,7 +450,7 @@ render_backend versiond_ha_pool \
     'http-check send meth GET uri /readyz' \
     'http-check send meth GET uri /healthz' \
     "$POOL_HOST" "$SLOTS" "$(ha_header_for versiond_ha_pool)" \
-    versiond_ha_pool '' "$VERSIONLESS_RETRY_ON" > "$POOL_BACKENDS_FILE"
+    versiond_ha_pool '' "$VERSIONLESS_RETRY_ON" pool > "$POOL_BACKENDS_FILE"
 declare_ha_version() {
     version=$1
     [ -n "$version" ] || return 0
@@ -337,7 +482,7 @@ declare_ha_version() {
         "http-check send meth GET uri /readyz?version=$encoded_version" \
         "http-check send meth GET uri /$encoded_version/healthz" \
         "$POOL_HOST" "$SLOTS" "$(ha_header_for "$backend")" "$backend" '' \
-        "$DEFAULT_RETRY_ON" \
+        "$DEFAULT_RETRY_ON" pool \
         >> "$POOL_BACKENDS_FILE"
 }
 
@@ -387,7 +532,7 @@ while [ "$index" -le "$VERSION_CAPACITY" ]; do
         "http-check send meth GET uri-lf /readyz?version=%[be_name,map($SLOT_MAP)]" \
         "http-check send meth GET uri-lf /%[be_name,map($SLOT_MAP)]/healthz" \
         "$POOL_HOST" "$SLOTS" "$(ha_header_for "$backend")" "$backend" "$server_state" \
-        "$DEFAULT_RETRY_ON" \
+        "$DEFAULT_RETRY_ON" pool \
         >> "$POOL_BACKENDS_FILE"
     index=$((index + 1))
 done
@@ -414,7 +559,7 @@ while IFS= read -r version; do
         "http-check send meth GET uri /readyz?version=$encoded_version" \
         "http-check send meth GET uri /$encoded_version/healthz" \
         "$LEGACY_HOST" 1 'http-request del-header Devshard-Ha' \
-        versiond_legacy '' "$DEFAULT_RETRY_ON" \
+        versiond_legacy '' "$DEFAULT_RETRY_ON" legacy \
         >> "$POOL_BACKENDS_FILE"
 done < "$LEGACY_VERSIONS_FILE"
 

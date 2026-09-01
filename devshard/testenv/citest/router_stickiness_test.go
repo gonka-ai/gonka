@@ -12,7 +12,7 @@ import (
 
 const stickyUpstreamHeader = "X-Upstream-Addr"
 
-// TestRouterStickiness asserts HAProxy consistent-hash routes the same session id
+// TestRouterStickiness asserts nginx consistent-hash routes the same session id
 // to the same versiond upstream across retries, and that two backends are reachable.
 func TestRouterStickiness(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")

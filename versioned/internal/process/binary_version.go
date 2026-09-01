@@ -18,7 +18,6 @@ const (
 	printProtocolVersionFlag = "--print-protocol-version"
 	printAdminAPIVersionFlag = "--print-admin-api-version"
 	printStorageModeFlag     = "--print-storage-mode"
-	initializePostgresFlag   = "--initialize-postgres-schema"
 	envHADeployment          = "GONKA_HA"
 	envNonHAVersions         = "VERSIOND_NON_HA_VERSIONS"
 )
@@ -236,28 +235,4 @@ func readAdminAPIVersionContext(ctx context.Context, binPath string) (string, er
 
 func readStorageModeContext(ctx context.Context, binPath string) (string, error) {
 	return readEmbeddedVersionContext(ctx, binPath, printStorageModeFlag)
-}
-
-func initializePostgresSchemaContext(ctx context.Context, binPath string, env []string) (bool, error) {
-	cmd := exec.CommandContext(ctx, binPath, initializePostgresFlag)
-	cmd.Env = env
-	cmd.WaitDelay = time.Second
-	var output bytes.Buffer
-	cmd.Stdout = &output
-	cmd.Stderr = &output
-	err := cmd.Run()
-	if err == nil {
-		return true, nil
-	}
-	message := strings.TrimSpace(output.String())
-	if isUnsupportedVersionFlagError(err, message) {
-		return false, nil
-	}
-	if ctx.Err() != nil {
-		return true, fmt.Errorf("initialize postgres schema with %s: %w", binPath, ctx.Err())
-	}
-	if message != "" {
-		return true, fmt.Errorf("initialize postgres schema with %s: %w: %s", binPath, err, message)
-	}
-	return true, fmt.Errorf("initialize postgres schema with %s: %w", binPath, err)
 }

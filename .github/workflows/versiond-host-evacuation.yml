@@ -10,12 +10,6 @@ on:
     paths:
       - 'versioned/**'
       - 'versiond-router/**'
-      - 'proxy-router/**'
-      - 'proxy/**'
-      - 'deploy/join/docker-compose.yml'
-      - 'deploy/join/docker-compose.versiond.yml'
-      - 'deploy/join/versiond-router-slot/**'
-      - 'deploy/join/versiond-router-fleet.sh'
       - 'common/storage/**'
       # devshardd and the devshardctl gateway span packages across the module;
       # storage recovery, routing, state and transport changes all affect this

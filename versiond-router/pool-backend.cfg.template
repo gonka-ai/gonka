@@ -69,4 +69,8 @@ backend ${BACKEND_NAME}
     # init-state fully-down: a freshly resolved address is not assumed healthy.
     # Without it a host entering DNS is selectable before its first check has
     # run, which is a window straight onto a versiond that is still starting.
-    server-template versiond ${BACKEND_SLOTS} ${BACKEND_HOST}:${VERSIOND_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr ${SERVER_STATE}
+    #
+    # The entrypoint renders either one server-template over the DNS pool name
+    # or one explicit `server` line per entry of VERSIOND_POOL_ENDPOINTS_FILE.
+    # Both forms carry the same check, init-state and hash-key options.
+${POOL_SERVERS}
