@@ -44,9 +44,21 @@ jq -e '
   (.services.proxy.networks | has("versiond-router-front")) and
   (.services.proxy.networks | has("versiond-router-back")) and
   (.services.versiond.networks["versiond-router-back"].aliases | index("versiond-pool")) and
+  (.services.versiond.deploy.replicas == 1) and
+  (.services.versiond2.deploy.replicas == 1) and
   (.networks["versiond-router-front"].external == true) and
   (.networks["versiond-router-back"].external == true)
 ' "$tmpdir/main.json" >/dev/null
+
+VERSIOND_REPLICAS=1 VERSIOND2_REPLICAS=0 \
+    docker compose --project-directory "$script_dir" \
+    -f "$script_dir/docker-compose.yml" \
+    -f "$script_dir/docker-compose.versiond.yml" \
+    config --format json >"$tmpdir/main-evacuated.json"
+jq -e '
+  (.services.versiond.deploy.replicas == 1) and
+  (.services.versiond2.deploy.replicas == 0)
+' "$tmpdir/main-evacuated.json" >/dev/null
 
 jq -e '
   (.services.router.labels["ai.gonka.component"] == "versiond-router") and

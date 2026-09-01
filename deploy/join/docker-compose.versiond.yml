@@ -4,11 +4,9 @@
 # a second versiond instance (versiond2), and the shared networks used by the
 # independently managed versiond-router fleet.
 #
-# Fresh installations only. This overlay uses !reset and requires Docker
-# Compose 2.24.4 or newer. Upgrade an existing host with the release updater so
-# policy workers cross the required drain and fresh-admission sequence.
+# This overlay uses !reset and requires Docker Compose 2.24.4 or newer.
 #
-# Cold-start order (the release updater performs the same phases automatically):
+# Cold-start order (update-devshard.sh runs the same steps on an existing host):
 #   ./versiond-router-fleet.sh prepare-networks
 #   docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d
 #   ./versiond-router-fleet.sh apply
