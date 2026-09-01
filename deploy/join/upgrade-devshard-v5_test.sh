@@ -755,6 +755,31 @@ resume_interrupted_upgrade() {
     fi
 }
 
+recover_interrupted_rollback() {
+    local state_dir=$1 log=$2 stdout=$3 stderr=$4
+
+    : >"$log"
+    if DOCKER_BIN="$tmpdir/docker" \
+        DOCKER_LOG="$log" \
+        FAIL_SERVICE=none \
+        BLOCK_SERVICE=none \
+        BLOCK_SIGNAL=none \
+        EXISTING_CONTAINERS="proxy versiond versiond2 versiond-router devshard-postgres edge-api" \
+        FAKE_STATE_DIR="$state_dir" \
+        JOIN_DIR="$script_dir" \
+        GONKA_CONFIG_ENV="$tmpdir/config.env" \
+        UPGRADE_ROLLBACK_VERIFY_TIMEOUT=5 \
+        UPGRADE_ROLLBACK_VERIFY_INTERVAL=1 \
+        UPGRADE_ROLLBACK_STABILITY_CHECKS=1 \
+        UPGRADE_ROUTER_RELOAD_SETTLE=0 \
+        "$script_dir/upgrade-devshard-v5.sh" \
+        --versiond-mode ha --edge-mode single \
+        >"$stdout" 2>"$stderr"; then
+        fail "interrupted rollback recovery continued into deployment"
+    fi
+}
+
+
 assert_contains() {
     local file=$1
     local pattern=$2
@@ -2083,6 +2108,33 @@ for signal in HUP INT TERM; do
     ' "$tmpdir/upgrade-complete.in-progress" >/dev/null || fail \
         "interrupted upgrade did not preserve the original rollback image in its journal"
 done
+
+# Model a SIGKILL after the touched bit became durable but before the EXIT trap
+# could restore versiond2. Recovery must rollback before any live proof that
+# depends on the interrupted application generation.
+jq '.transaction.application_rollback.services.versiond2.touched = true' \
+    "$tmpdir/upgrade-complete.in-progress" \
+    >"$tmpdir/interrupted-kill-journal"
+mv "$tmpdir/interrupted-kill-journal" \
+    "$tmpdir/upgrade-complete.in-progress"
+recover_interrupted_rollback \
+    "$tmpdir/interrupted-term.log.state" \
+    "$tmpdir/interrupted-recovery.log" \
+    "$tmpdir/interrupted-recovery.stdout" \
+    "$tmpdir/interrupted-recovery.stderr"
+assert_contains "$tmpdir/interrupted-recovery.log" \
+    " :: create --name versiond2 --network none"
+assert_not_contains "$tmpdir/interrupted-recovery.log" \
+    "postgres-deployment-preflight --runtime-contract-only"
+grep -q 'recovering durable application rollback' \
+    "$tmpdir/interrupted-recovery.stderr" || {
+    cat "$tmpdir/interrupted-recovery.stderr" >&2
+    fail "interrupted recovery did not report its rollback-only pass"
+}
+jq -e '
+    .transaction.application_rollback.services.versiond2.touched == false
+' "$tmpdir/upgrade-complete.in-progress" >/dev/null || fail \
+    "successful interrupted rollback was not persisted"
 
 resume_interrupted_upgrade \
     "$tmpdir/interrupted-term.log.state" \

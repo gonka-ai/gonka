@@ -762,10 +762,6 @@ postgres_container=
 postgres_target_dir=
 if [[ $versiond_mode == ha ]]; then
     run_postgres_deployment_preflight compose
-    # Credential and endpoint drift must be rejected while every current
-    # generation and the original database are still untouched. In
-    # particular, Compose cannot rotate an already initialized POSTGRES_PASSWORD.
-    run_postgres_deployment_preflight runtime
 fi
 if [[ $versiond_mode == ha && $GONKA_COMPOSE_POSTGRES_MODE == local ]]; then
     postgres_container=$("${compose[@]}" ps --all --quiet devshard-postgres)
@@ -794,13 +790,13 @@ if [[ $versiond_mode == ha && $GONKA_COMPOSE_POSTGRES_MODE == local ]]; then
             --target-dir "$postgres_target_dir"
     fi
 fi
-if [[ $versiond_mode == ha ]]; then
-	gonka_compose_validate_ha_version_catalog "$docker_bin" versiond
-	verify_router_fleet_spec
-fi
-
-echo "Devshard v5 release preflight passed"
 if [[ $preflight_only == true ]]; then
+    if [[ $versiond_mode == ha ]]; then
+        run_postgres_deployment_preflight runtime
+		gonka_compose_validate_ha_version_catalog "$docker_bin" versiond
+		verify_router_fleet_spec
+    fi
+    echo "Devshard v5 release preflight passed"
     exit 0
 fi
 
@@ -844,15 +840,6 @@ if [[ $versiond_mode == ha && $versiond2_enabled == false && \
     fail "VERSIOND2_REPLICAS=0 is supported after the HA release is committed; restore it to 1 for the one-time v5 cutover"
 fi
 write_upgrade_journal prepared
-
-if [[ $versiond_mode == ha ]]; then
-    GONKA_CONFIG_ENV=$config_env \
-    GONKA_COMPOSE_PROJECT=$GONKA_COMPOSE_PROJECT \
-    VERSIOND_ROUTER_FRONT_NETWORK=$GONKA_COMPOSE_ROUTER_FRONT_NETWORK \
-    VERSIOND_ROUTER_BACK_NETWORK=$GONKA_COMPOSE_ROUTER_BACK_NETWORK \
-    VERSIOND_ROUTER_METRICS_NETWORK=$GONKA_COMPOSE_DEFAULT_NETWORK \
-        "$fleet_bin" prepare-networks
-fi
 
 declare -A rollback_images=()
 declare -A rollback_version_baselines=()
@@ -1748,11 +1735,13 @@ handle_exit() {
 	for service in devshard-postgres versiond2 versiond versiond-router; do
         [[ ${rollback_service_touched[$service]-false} == true ]] || continue
         warn "rolling back completed replacement of $service"
-        if ! rollback_service "$service"; then
+        if rollback_service "$service"; then
+            rollback_service_touched[$service]=false
+            persist_application_rollback "$service" || compensation_ok=false
+        else
             compensation_ok=false
             warn "automatic rollback of $service failed; operator action is required"
         fi
-        rollback_service_touched[$service]=false
     done
     if [[ $compensation_ok == false && \
         $interrupted_service == "$traffic_barrier_router" ]]; then
@@ -1873,6 +1862,28 @@ fi
 for service in "${services[@]}"; do
     capture_rollback_image "$service"
 done
+
+if [[ $interrupted_upgrade_loaded == true ]] && jq -e '
+    .transaction.decision == "rollback" and
+    any(.transaction.application_rollback.services[]?; .touched == true)
+' "$upgrade_journal" >/dev/null 2>&1; then
+    fail "recovering durable application rollback before live deployment preflight"
+fi
+
+if [[ $versiond_mode == ha ]]; then
+    # Credential, endpoint, and overlap drift must be rejected while every
+    # current generation remains untouched. Interrupted rollback is handled
+    # above because a missing candidate cannot satisfy this live proof.
+    run_postgres_deployment_preflight runtime
+	gonka_compose_validate_ha_version_catalog "$docker_bin" versiond
+	verify_router_fleet_spec
+    GONKA_CONFIG_ENV=$config_env \
+    GONKA_COMPOSE_PROJECT=$GONKA_COMPOSE_PROJECT \
+    VERSIOND_ROUTER_FRONT_NETWORK=$GONKA_COMPOSE_ROUTER_FRONT_NETWORK \
+    VERSIOND_ROUTER_BACK_NETWORK=$GONKA_COMPOSE_ROUTER_BACK_NETWORK \
+    VERSIOND_ROUTER_METRICS_NETWORK=$GONKA_COMPOSE_DEFAULT_NETWORK \
+        "$fleet_bin" prepare-networks
+fi
 
 pull_services=(versiond)
 if [[ $versiond_mode == ha ]]; then
