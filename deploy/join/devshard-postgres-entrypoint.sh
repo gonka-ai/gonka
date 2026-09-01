@@ -14,6 +14,7 @@ staging_complete=$persistent_root/.gonka-copy-complete
 lineage_marker=$persistent_root/.migrated-from-v4
 cluster_marker=$persistent_root/.gonka-cluster-lineage
 source_fingerprint_marker=$persistent_root/.gonka-v4-source-wal.sha256
+migration_commit_name=.gonka-migration-commit
 expected_major=
 
 log() {
@@ -143,6 +144,52 @@ validate_migration_lineage() {
     sync
 }
 
+write_atomic_marker() {
+    path=$1
+    value=$2
+    temporary=$path.tmp.$$
+    printf '%s\n' "$value" >"$temporary" ||
+        die "cannot write PostgreSQL marker $path"
+    chmod 600 "$temporary" || die "cannot secure PostgreSQL marker $path"
+    mv -f "$temporary" "$path" || die "cannot publish PostgreSQL marker $path"
+}
+
+recover_published_migration() {
+    commit_marker=$target_data/$migration_commit_name
+    [ -s "$commit_marker" ] || return 0
+    read -r committed_identifier committed_fingerprint extra_field \
+        <"$commit_marker" || die "cannot read atomic PostgreSQL migration commit"
+    [ -z "${extra_field:-}" ] ||
+        die "atomic PostgreSQL migration commit has unexpected fields"
+    case "$committed_identifier" in
+        '' | *[!0-9]*) die "atomic PostgreSQL migration commit has invalid lineage" ;;
+    esac
+    case "$committed_fingerprint" in
+        *[!0-9a-f]* | '')
+            die "atomic PostgreSQL migration commit has invalid source snapshot"
+            ;;
+    esac
+    [ "${#committed_fingerprint}" -eq 64 ] ||
+        die "atomic PostgreSQL migration commit has invalid source snapshot"
+    [ "$(cluster_system_identifier "$target_data")" = \
+        "$committed_identifier" ] ||
+        die "atomic PostgreSQL migration commit does not match PGDATA"
+    if cluster_exists "$legacy_data"; then
+        [ "$(cluster_system_identifier "$legacy_data")" = \
+            "$committed_identifier" ] ||
+            die "atomic PostgreSQL migration commit does not match its source"
+        [ "$(cluster_wal_fingerprint "$legacy_data")" = \
+            "$committed_fingerprint" ] ||
+            die "legacy PostgreSQL source changed after atomic publication"
+    fi
+    write_atomic_marker "$lineage_marker" "$committed_identifier"
+    write_atomic_marker "$cluster_marker" "$committed_identifier"
+    write_atomic_marker "$source_fingerprint_marker" "$committed_fingerprint"
+    rm -f "$staging_complete" ||
+        die "cannot remove recovered PostgreSQL migration completion marker"
+    sync
+}
+
 postgres_binding_marker() {
     for storage_root in "$versiond_data" "$versiond2_data"; do
         [ -d "$storage_root" ] || return 3
@@ -202,6 +249,7 @@ ensure_migration_space() {
 
 publish_staging() {
     source_identifier=$1
+    source_fingerprint=$2
     if [ -e "$target_data" ]; then
         if directory_has_entries "$target_data"; then
             die "refusing to replace non-empty incomplete target $target_data"
@@ -210,13 +258,11 @@ publish_staging() {
     fi
     mv "$staging_data" "$target_data" ||
         die "cannot publish migrated PostgreSQL cluster"
-    mv "$staging_complete" "$lineage_marker" ||
-        die "cannot publish PostgreSQL migration lineage marker"
+    recover_published_migration
     [ "$(cat "$lineage_marker")" = "$source_identifier" ] ||
         die "published PostgreSQL migration lineage changed unexpectedly"
-    printf '%s\n' "$source_identifier" >"$cluster_marker" ||
-        die "cannot publish PostgreSQL cluster lineage marker"
-    sync
+    [ "$(cat "$source_fingerprint_marker")" = "$source_fingerprint" ] ||
+        die "published PostgreSQL source snapshot changed unexpectedly"
 }
 
 forward_signal() {
@@ -351,6 +397,7 @@ mkdir -p "$persistent_root"
 
 if cluster_exists "$target_data"; then
     validate_cluster "$target_data"
+    recover_published_migration
     if [ ! -s "$cluster_marker" ] && [ ! -s "$lineage_marker" ] &&
         ! cluster_exists "$legacy_data"; then
         die "persistent PGDATA has no completed lineage marker; initialization may have been interrupted"
@@ -392,8 +439,10 @@ elif cluster_exists "$staging_data" && [ -f "$staging_complete" ]; then
         die "completed PostgreSQL staging changed independently of its source"
     printf '%s\n' "$source_fingerprint" >"$source_fingerprint_marker" ||
         die "cannot record the migrated PostgreSQL source snapshot"
+    write_atomic_marker "$staging_data/$migration_commit_name" \
+        "$source_identifier $source_fingerprint"
     log "finishing an interrupted atomic migration"
-    publish_staging "$source_identifier"
+    publish_staging "$source_identifier" "$source_fingerprint"
 elif cluster_exists "$legacy_data"; then
     validate_cluster "$legacy_data"
     source_identifier=$(cluster_system_identifier "$legacy_data")
@@ -423,10 +472,12 @@ elif cluster_exists "$legacy_data"; then
     printf '%s\n' "$source_fingerprint" >"$source_fingerprint_marker" ||
         die "cannot record the migrated PostgreSQL source snapshot"
     sync
+    write_atomic_marker "$staging_data/$migration_commit_name" \
+        "$source_identifier $source_fingerprint"
     printf '%s\n' "$source_identifier" >"$staging_complete" ||
         die "cannot record PostgreSQL migration source lineage"
     sync
-    publish_staging "$source_identifier"
+    publish_staging "$source_identifier" "$source_fingerprint"
     log "v4 PostgreSQL migration completed"
 else
     if [ -e "$staging_data" ] && directory_has_entries "$staging_data"; then

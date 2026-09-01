@@ -287,6 +287,42 @@ write_source_snapshot() {
     sync -d "$target_dir" 2>/dev/null || sync
 }
 
+write_lineage_marker() {
+    local path=$1 value=$2 temporary
+    temporary=$(mktemp "$target_dir/.gonka-lineage.XXXXXX") || fail \
+        "cannot create PostgreSQL lineage marker"
+    printf '%s\n' "$value" >"$temporary"
+    chmod 600 "$temporary"
+    mv -f "$temporary" "$path"
+}
+
+recover_atomic_publish_markers() {
+    local target_identifier=$1 source_identifier=$2 source_fingerprint=$3
+    local commit_marker commit_identifier commit_fingerprint extra_field
+    commit_marker=$target_dir/data/.gonka-migration-commit
+    [[ -s $commit_marker ]] || return 0
+    read -r commit_identifier commit_fingerprint extra_field \
+        <"$commit_marker" || fail \
+        "cannot read atomic PostgreSQL migration commit"
+    [[ -z ${extra_field:-} && $commit_identifier =~ ^[0-9]+$ && \
+        $commit_fingerprint =~ ^[0-9a-f]{64}$ ]] || fail \
+        "atomic PostgreSQL migration commit is invalid"
+    [[ $commit_identifier == "$target_identifier" ]] || fail \
+        "atomic PostgreSQL migration commit does not match PGDATA"
+    if [[ $source_identifier != none ]]; then
+        [[ $source_identifier == "$commit_identifier" && \
+            $source_fingerprint == "$commit_fingerprint" ]] || fail \
+            "atomic PostgreSQL migration commit does not match its source"
+    fi
+    write_lineage_marker "$target_dir/.migrated-from-v4" \
+        "$commit_identifier"
+    write_lineage_marker "$target_dir/.gonka-cluster-lineage" \
+        "$commit_identifier"
+    write_source_snapshot "$commit_fingerprint"
+    rm -f "$target_dir/.gonka-copy-complete"
+    sync -d "$target_dir" 2>/dev/null || sync
+}
+
 require_unchanged_source_snapshot() {
     local fingerprint=$1 recovery=${2:-none} recorded
     [[ $fingerprint =~ ^[0-9a-f]{64}$ ]] || fail \
@@ -316,6 +352,8 @@ case $probe_state in
         source_fingerprint=${third:-none}
         [[ $target_identifier =~ ^[0-9]+$ ]] || fail \
             "persistent PostgreSQL target has an invalid system identifier"
+        recover_atomic_publish_markers "$target_identifier" \
+            "$source_identifier" "$source_fingerprint"
         if [[ $source_identifier == none ]]; then
             validate_published_markers "$target_identifier"
         else

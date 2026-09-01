@@ -208,6 +208,23 @@ grep -q 'no migration copy is required' \
     "$tmpdir/published-before-marker.stdout" || fail \
     "published target was not recovered through its still-available source"
 
+atomic_target=$tmpdir/atomic-target
+mkdir -p "$atomic_target/data"
+cp "$tmpdir/target/.gonka-v4-schema-proof" \
+    "$atomic_target/.gonka-v4-schema-proof"
+printf '1000000000000000000 %s\n' "$fingerprint" \
+    >"$atomic_target/data/.gonka-migration-commit"
+printf '1000000000000000000\n' \
+    >"$atomic_target/.gonka-copy-complete"
+run_preflight --source-volume postgres-v4-volume \
+    --target-dir "$atomic_target" >"$tmpdir/atomic-target.stdout"
+[[ $(<"$atomic_target/.migrated-from-v4") == 1000000000000000000 && \
+    $(<"$atomic_target/.gonka-cluster-lineage") == 1000000000000000000 && \
+    $(<"$atomic_target/.gonka-v4-source-wal.sha256") == "$fingerprint" ]] || fail \
+    "preflight did not recover markers after the atomic PGDATA rename"
+[[ ! -e $atomic_target/.gonka-copy-complete ]] || fail \
+    "preflight retained the recovered staging completion marker"
+
 printf '1000000000000000000\n' >"$tmpdir/target/.gonka-copy-complete"
 rm -f "$tmpdir/target/.gonka-v4-source-wal.sha256"
 DOCKER_PROBE="staging-ready 1000000000000000000 1000000000000000000 $fingerprint $fingerprint"

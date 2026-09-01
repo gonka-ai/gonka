@@ -190,6 +190,25 @@ run_entrypoint
 [[ $(<"$persistent/data/session-row") == resumed ]] || fail \
     "complete staging data was not published"
 
+new_case recover-renamed-target
+printf '16\n' >"$legacy/PG_VERSION"
+mkdir -p "$persistent/data/global" "$persistent/data/pg_wal"
+printf '16\n' >"$persistent/data/PG_VERSION"
+cp "$legacy/global/pg_control" "$persistent/data/global/pg_control"
+cp "$legacy/pg_wal/000000010000000000000001" \
+    "$persistent/data/pg_wal/"
+fingerprint=$(source_fingerprint)
+printf '1000000000000000000 %s\n' "$fingerprint" \
+    >"$persistent/data/.gonka-migration-commit"
+printf '1000000000000000000\n' >"$persistent/.gonka-copy-complete"
+run_entrypoint
+[[ $(<"$persistent/.migrated-from-v4") == 1000000000000000000 && \
+    $(<"$persistent/.gonka-cluster-lineage") == 1000000000000000000 && \
+    $(<"$persistent/.gonka-v4-source-wal.sha256") == "$fingerprint" ]] || fail \
+    "atomically renamed PGDATA did not recover its external markers"
+[[ ! -e $persistent/.gonka-copy-complete ]] || fail \
+    "recovered atomic publication retained its staging marker"
+
 new_case reject-foreign-target
 printf '16\n' > "$legacy/PG_VERSION"
 printf '1000000000000000000\n' > "$legacy/.test-system-id"
