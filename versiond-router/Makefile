@@ -1,6 +1,6 @@
 .PHONY: all build-docker release test-render test-compose-contract test-fleet
 .PHONY: test-catalog-cache test-hash-ring test-version-routing test-local-compose
-.PHONY: test-join-versiond-healthcheck test-pool-status
+.PHONY: test-join-versiond-healthcheck test-pool-status test-endpoints-render
 
 # Renders both the mixed (legacy pinning) and the all-HA shapes, asserts on the
 # result, then runs the real HAProxy from the production image over each one.
@@ -48,6 +48,11 @@ test-fleet:
 
 test-pool-status:
 	@./pool-status_test.sh
+
+# Explicit endpoint lists, the legacy VERSIOND_HOSTS form, and DNS discovery
+# must all render valid pools; the real image validates each shape.
+test-endpoints-render:
+	@HAPROXY_IMAGE=$(HAPROXY_IMAGE) ./endpoints-render_test.sh
 
 # The join deployment temporarily supports both the pinned pre-/readyz image
 # and the replacement built from this release. A 404 means the endpoint does
@@ -1450,7 +1455,7 @@ test-version-routing:
 		|| fail "catalog reconciliation did not recover after clock rollback"; \
 	echo "test-version-routing: ok"
 
-test-render: test-local-compose test-compose-contract test-join-versiond-healthcheck test-catalog-cache test-pool-status test-hash-ring test-version-routing
+test-render: test-local-compose test-compose-contract test-join-versiond-healthcheck test-catalog-cache test-pool-status test-endpoints-render test-hash-ring test-version-routing
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \

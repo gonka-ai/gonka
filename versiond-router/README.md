@@ -85,6 +85,49 @@ seconds; stop one and its slot empties.
 pool at once. Unused slots cost nothing; they exist because HAProxy allocates
 server slots at startup.
 
+## Membership: explicit endpoint list
+
+DNS discovery only sees containers that share a Docker network with the
+router. Bare-metal deployments that run `versiond` on other machines list the
+members explicitly in a JSON file and point `VERSIOND_POOL_ENDPOINTS_FILE` at
+it:
+
+```json
+[
+  { "id": "versiond",   "host": "versiond",   "port": 8080 },
+  { "id": "versiond-b", "host": "10.20.0.12", "port": 8080 },
+  { "id": "versiond-c", "host": "10.20.0.13", "port": 18080 }
+]
+```
+
+- `id` names the member (`[A-Za-z0-9][A-Za-z0-9._-]*`, unique).
+- `host` is an IPv4 address or a DNS name. A name keeps re-resolving through the
+  Docker resolver, so a local container listed by its container name rejoins
+  after it is recreated with a new address. IPv6 literals are not supported.
+- `port` defaults to `VERSIOND_PORT`.
+
+When the file is set it replaces DNS discovery for every HA backend: each entry
+becomes one `server versiond<n>` line with the same active checks,
+`init-state fully-down`, and `hash-key addr` as the DNS template, so every
+router computes the same ring from the same list. The catalog reconciler
+addresses `versiond1..versiondN`, so the list is also the pool capacity: an
+unlisted host cannot join, and `VERSIOND_ROUTING_ACTIVATION_MIN_READY` must not
+exceed the number of entries.
+
+`VERSIOND_LEGACY_HOST` may name an entry by `id`; the legacy backends then use
+that entry's host and port. Any other value keeps the single-host DNS contract.
+
+The pre-HAProxy `VERSIOND_HOSTS` list (whitespace or comma separated, entries
+optionally `host:port`) is still accepted and renders the same explicit list.
+It is ignored when an endpoint file is set. Prefer the file for new
+deployments.
+
+In `deploy/join`, set `VERSIOND_POOL_ENDPOINTS_FILE` in `config.env` (a relative
+path is resolved from the directory of `config.env`) and run
+`./versiond-router-fleet.sh apply`; the fleet mounts the file into every slot,
+includes its SHA-256 in the slot contract, and rolls the slots one at a time
+after an edit.
+
 ## Health: one question per version
 
 A pool-wide "are you healthy" cannot say that a host is missing *one* of several
@@ -395,7 +438,9 @@ lock.
 | Variable | Default | Meaning |
 | --- | --- | --- |
 | `VERSIOND_POOL_HOST` | `versiond-pool` | DNS name resolving to every pool member |
-| `VERSIOND_PORT` | `8080` | upstream port |
+| `VERSIOND_POOL_ENDPOINTS_FILE` | *(empty)* | JSON array of `{id, host, port}` members; replaces DNS discovery when set (see [Membership: explicit endpoint list](#membership-explicit-endpoint-list)) |
+| `VERSIOND_HOSTS` | *(empty)* | legacy whitespace/comma host list, entries optionally `host:port`; used only when no endpoint file is set |
+| `VERSIOND_PORT` | `8080` | upstream port and the default endpoint port |
 | `VERSIOND_LEGACY_HOST` | *(none)* | single host owning pre-HA SQLite data dirs. **Required** whenever `VERSIOND_NON_HA_VERSIONS` is non-empty — the router refuses to start otherwise, because the owner of one host's data cannot default to a name that resolves to the whole pool. Unused (and may be omitted) when no version is pinned |
 | `VERSIOND_NON_HA_VERSIONS` | *(empty)* | static version path segments pinned to the legacy host, whitespace and/or comma separated; retains the wider path-safe startup grammar described above |
 | `VERSIOND_VERSIONS` | *(empty)* | static bootstrap floor using the wider path-safe startup grammar; compatible governance additions are learned without changing it |
