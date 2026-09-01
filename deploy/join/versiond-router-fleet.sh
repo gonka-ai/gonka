@@ -1184,6 +1184,27 @@ validate_inventory_structure() {
 
 }
 
+repair_preserved_stopped_capacity() {
+    local slot id state
+    for slot in "${slots[@]}"; do
+        id=$(slot_id "$slot") || continue
+        slot_ready "$slot" && continue
+        state=$($docker_bin inspect --format '{{.State.Status}}' "$id") || fail \
+            "router slot $slot disappeared during local recovery"
+        case $state in
+            created | exited)
+                echo "Restarting preserved versiond-router slot $slot before registry access"
+                "$docker_bin" start "$id" >/dev/null || fail \
+                    "cannot restart preserved router slot $slot"
+                wait_slot_ready "$slot" || fail \
+                    "preserved router slot $slot did not become healthy"
+                wait_slot_routes "$slot"
+                wait_parent_admission "$slot"
+                ;;
+        esac
+    done
+}
+
 repair_fleet_capacity() {
     local slot id state
     for slot in "${slots[@]}"; do
@@ -1944,6 +1965,7 @@ fleet_apply() {
     # before the first mutation.
     validate_inventory_structure
     prepare_slot_networks
+    repair_preserved_stopped_capacity
     pull_router_image
     candidate_image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
     require_placement_compatible "$candidate_image"

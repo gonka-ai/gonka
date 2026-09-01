@@ -279,6 +279,36 @@ for slot in "${slots[@]}"; do
         "idempotent fleet apply recreated unchanged slot $slot"
 done
 
+# Capacity repair is local-first. A stopped saved container must be restarted
+# even when the later registry refresh fails.
+preserved_id=${initial_ids[2]}
+docker stop "$preserved_id" >/dev/null
+cat >"$tmpdir/docker-registry-outage" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf '%q ' "$@" >>"$REGISTRY_OUTAGE_LOG"
+printf '\n' >>"$REGISTRY_OUTAGE_LOG"
+if [[ ${1:-} == compose && " $* " == *" pull "* ]]; then
+    exit 1
+fi
+exec docker "$@"
+EOF
+chmod +x "$tmpdir/docker-registry-outage"
+: >"$tmpdir/registry-outage.log"
+if DOCKER_BIN="$tmpdir/docker-registry-outage" \
+    REGISTRY_OUTAGE_LOG="$tmpdir/registry-outage.log" \
+    "${fleet[@]}" apply >"$tmpdir/registry-outage.out" 2>&1; then
+    fail "simulated registry outage unexpectedly succeeded"
+fi
+[[ $(docker ps -q --filter "id=$preserved_id") == "$preserved_id" ]] || fail \
+    "registry outage prevented local recovery of a preserved router"
+start_line=$(grep -n "start $preserved_id" \
+    "$tmpdir/registry-outage.log" | head -n1 | cut -d: -f1)
+pull_line=$(grep -n 'compose .* pull ' \
+    "$tmpdir/registry-outage.log" | head -n1 | cut -d: -f1)
+[[ -n $start_line && -n $pull_line && $start_line -lt $pull_line ]] || fail \
+    "fleet contacted the registry before lifting preserved local capacity"
+
 # A protocol bump uses a distinct cache file and is rolled out without an
 # operator migration. The previous file remains available to the captured
 # rollback image.
