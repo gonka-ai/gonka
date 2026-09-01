@@ -139,6 +139,9 @@ if [[ ${1:-} == inspect ]]; then
                     versiond | versiond2)
                         printf 'PGHOST=devshard-postgres\nPGDATABASE=devshardd\nPGUSER=devshardd\nVERSIOND_ORACLE_URL=http://api:9100/versions\n'
                         ;;
+                    versiond-router)
+                        printf 'VERSIOND_NON_HA_VERSIONS=v1\nVERSIOND_VERSIONS=v4\n'
+                        ;;
                 esac
                 ;;
         esac
@@ -157,6 +160,12 @@ if [[ ${1:-} == inspect ]]; then
 fi
 
 if [[ ${1:-} == network ]]; then
+	if [[ ${2:-} == ls ]]; then
+		if [[ ${MISSING_NETWORKS:-false} != true || -f $STATE_DIR/network-gonka-proxy-policy-front ]]; then
+			printf 'network-policy\n'
+		fi
+		exit 0
+	fi
     if [[ ${2:-} == inspect ]]; then
         if [[ ${3:-} == --format ]]; then
             name=${5:-unknown}
@@ -176,6 +185,17 @@ if [[ ${1:-} == network ]]; then
     if [[ ${2:-} == create ]]; then
         name=${!#}
         : >"$STATE_DIR/network-$name"
+    fi
+    exit 0
+fi
+
+if [[ ${1:-} == exec && ${2:-} == versiond-router && \
+    ${3:-} == /bin/sh && ${4:-} == -ec && \
+    ${7:-} == /usr/local/lib/router-runtime/catalog-status ]]; then
+    if [[ ${MIGRATION_CATALOG_DIAGNOSTIC:-false} == true ]]; then
+        printf 'present'
+    else
+        printf 'absent'
     fi
     exit 0
 fi
@@ -584,7 +604,7 @@ jq -e '
     .transaction.ingress.fleet_spec_sha256 ==
         "0000000000000000000000000000000000000000000000000000000000000001" and
     .transaction.ingress.touched ==
-        ["policy:proxy-policy2", "policy:proxy-policy", "proxy"] and
+        ["network:policy", "policy:proxy-policy2", "policy:proxy-policy", "proxy"] and
     .transaction.ingress.policies["proxy-policy"].container_ids == [] and
     .transaction.ingress.policies["proxy-policy2"].container_ids == [] and
     .transaction.ingress.proxy.container_id == "cid-proxy"
@@ -848,7 +868,7 @@ crash_status=$?
 set -e
 [[ $crash_status -ne 0 ]] || fail "SIGKILL during policy mutation returned success"
 jq -e '.transaction.ingress.state == "active" and
-       .transaction.ingress.touched == ["policy:proxy-policy2"]' \
+       .transaction.ingress.touched == ["network:policy", "policy:proxy-policy2"]' \
     "$tmpdir/.gonka-router-ha-transaction.json" >/dev/null || fail \
     "SIGKILL did not leave a replayable touched-resource journal"
 cp "$tmpdir/config.env" "$tmpdir/config.env.saved"

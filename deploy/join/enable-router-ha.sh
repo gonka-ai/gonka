@@ -7,6 +7,7 @@ config_env=${GONKA_CONFIG_ENV:-$script_dir/config.env}
 versiond_mode=auto
 edge_mode=auto
 recover_only=false
+finalize_only=false
 compose_project_name=
 compose_project_directory=
 rollback_pending=false
@@ -92,6 +93,10 @@ while (($# > 0)); do
             recover_only=true
             shift
             ;;
+		--finalize-transaction)
+			finalize_only=true
+			shift
+			;;
         -h | --help)
             usage
             exit 0
@@ -102,6 +107,8 @@ done
 
 case $versiond_mode in auto | single | ha) ;; *) fail "invalid versiond mode" ;; esac
 case $edge_mode in auto | single | multi) ;; *) fail "invalid edge-api mode" ;; esac
+[[ $recover_only == false || $finalize_only == false ]] || fail \
+	"--recover-only and --finalize-transaction are mutually exclusive"
 config_dir=$(cd -- "$(dirname -- "$config_env")" && pwd -P)
 transaction_journal=${ROUTER_HA_TRANSACTION_JOURNAL:-$config_dir/.gonka-router-ha-transaction.json}
 
@@ -214,10 +221,11 @@ initialize_forward_context() {
 
 initialize_recovery_context() {
 	[[ -f $transaction_journal ]] || return 0
-	[[ $(jq -r '.transaction.ingress.state // ""' "$transaction_journal") == active ]] || return 0
+	state=$(jq -r '.transaction.ingress.state // ""' "$transaction_journal")
+	[[ $state == active || $state == prepared ]] || return 0
 	jq -e '.transaction.ingress.recovery | type == "object"' \
 		"$transaction_journal" >/dev/null || fail \
-		"active ingress journal lacks self-contained recovery context; repair config.env and rerun recovery with the originating release"
+		"recoverable ingress journal lacks self-contained recovery context; repair config.env and rerun recovery with the originating release"
 	GONKA_COMPOSE_PROJECT=$(jq -er '.transaction.ingress.recovery.compose_project' \
 		"$transaction_journal")
 	GONKA_COMPOSE_PROJECT_DIRECTORY=$(jq -er \
@@ -267,6 +275,16 @@ ensure_compose_network() {
         --label "com.docker.compose.network=$key" \
         --label "com.docker.compose.project=$project" \
         "$name" >/dev/null
+}
+
+validate_compose_network_if_present() {
+    local key=$1 name=$2 project=$3 ownership
+    "$docker_bin" network inspect "$name" >/dev/null 2>&1 || return 0
+    ownership=$("$docker_bin" network inspect --format \
+        '{{or (index .Labels "com.docker.compose.network") ""}}|{{or (index .Labels "com.docker.compose.project") ""}}' \
+        "$name") || fail "cannot inspect network $name"
+    [[ $ownership == "$key|$project" ]] || fail \
+        "network $name exists with ownership '$ownership', expected '$key|$project'"
 }
 container_config_hash() {
 	"$docker_bin" inspect --format \
@@ -325,7 +343,8 @@ update_ingress_record() {
 record_ingress_touch() {
 	local resource=$1 filter
 	filter=$(jq -rn --arg resource "$resource" '
-		".transaction.ingress.touched += [" + ($resource | @json) + "]"')
+		"if (.transaction.ingress.touched | index(" + ($resource | @json) + ")) == null then " +
+		".transaction.ingress.touched += [" + ($resource | @json) + "] else . end"')
 	update_ingress_record "$filter"
 }
 
@@ -342,6 +361,17 @@ proxy_env_value() {
         esac
     done < <("$docker_bin" inspect --format \
         '{{range .Config.Env}}{{println .}}{{end}}' proxy)
+    return 1
+}
+
+container_env_value() {
+    local container=$1 name=$2 line
+    while IFS= read -r line; do
+        case $line in
+            "$name="*) printf '%s\n' "${line#*=}"; return 0 ;;
+        esac
+    done < <("$docker_bin" inspect --format \
+        '{{range .Config.Env}}{{println .}}{{end}}' "$container")
     return 1
 }
 
@@ -515,6 +545,7 @@ capture_policy_rollback() {
 begin_ingress_transaction() {
 	local current_model policy_model proxy_model=null policies='{}' proxy
 	local service replicas image image_ref config_hash container_ids desired_sha
+	local network_existed=false proxy_attached=false proxy_aliases='[]'
 	current_model=$("${compose[@]}" --profile '*' config --format json) || fail \
 		"cannot render the immutable ingress transaction model"
 	policy_model=$current_model
@@ -554,6 +585,24 @@ begin_ingress_transaction() {
 		*) fail "internal error: invalid proxy rollback kind $rollback_kind" ;;
 	esac
 	desired_sha=$(printf '%s' "$current_model" | sha256sum | awk '{print $1}')
+	policy_network_ids=$("$docker_bin" network ls -q \
+		--filter "name=^${policy_network}$") || fail \
+		"cannot inventory the policy network"
+	if [[ -n $policy_network_ids ]]; then
+		"$docker_bin" network inspect "$policy_network" >/dev/null || fail \
+			"cannot inspect existing policy network $policy_network"
+		network_existed=true
+	fi
+	if container_exists proxy; then
+		proxy_aliases=$("$docker_bin" inspect --format \
+			"{{with index .NetworkSettings.Networks \"$policy_network\"}}{{json .Aliases}}{{end}}" \
+			proxy) || fail "cannot inspect proxy policy-network aliases"
+		if [[ -n $proxy_aliases && $proxy_aliases != null ]]; then
+			proxy_attached=true
+		else
+			proxy_aliases='[]'
+		fi
+	fi
 	write_ingress_record "$(jq -cn \
 		--arg id "$transaction_id" --arg desired_sha "$desired_sha" \
 		--arg fleet_spec_sha "$fleet_spec_sha" \
@@ -565,6 +614,9 @@ begin_ingress_transaction() {
 		--argjson policies "$policies" --argjson proxy "$proxy" \
 		--argjson policy_model "$policy_model" \
 		--argjson proxy_model "$proxy_model" \
+		--argjson network_existed "$network_existed" \
+		--argjson proxy_attached "$proxy_attached" \
+		--argjson proxy_aliases "$proxy_aliases" \
 		'{schema: 1, id: $id, state: "active", desired_compose_sha256: $desired_sha,
 		  fleet_spec_sha256: $fleet_spec_sha,
 		  touched: [], policies: $policies, proxy: $proxy,
@@ -572,10 +624,42 @@ begin_ingress_transaction() {
 		    compose_project_directory: $compose_project_directory,
 		    versiond_mode: $versiond_mode, edge_mode: $edge_mode,
 		    policy_network: $policy_network, cutover_timeout: $cutover_timeout},
+		  topology: {policy_network_existed: $network_existed,
+		    proxy_attached: $proxy_attached, proxy_aliases: $proxy_aliases},
 		  rollback_models: {policy: $policy_model, proxy: $proxy_model}}')"
 	rollback_pending=true
 	policy_rollback_pending=true
 	install_rollback_traps
+}
+
+restore_policy_network_topology() {
+	local existed attached current_attached=false alias current_address
+	local -a connect_args=()
+	existed=$(jq -r '.transaction.ingress.topology.policy_network_existed' \
+		"$transaction_journal") || return 1
+	attached=$(jq -r '.transaction.ingress.topology.proxy_attached' \
+		"$transaction_journal") || return 1
+	if container_exists proxy; then
+		current_address=$("$docker_bin" inspect --format \
+			"{{with index .NetworkSettings.Networks \"$policy_network\"}}{{.IPAddress}}{{end}}" \
+			proxy) || return 1
+		[[ -z $current_address ]] || current_attached=true
+	fi
+	if [[ $current_attached == true ]]; then
+		"$docker_bin" network disconnect "$policy_network" proxy || return 1
+	fi
+	if [[ $attached == true ]]; then
+		while IFS= read -r alias; do
+			[[ -n $alias ]] && connect_args+=(--alias "$alias")
+		done < <(jq -r '.transaction.ingress.topology.proxy_aliases[]' \
+			"$transaction_journal")
+		"$docker_bin" network connect "${connect_args[@]}" \
+			"$policy_network" proxy || return 1
+	elif [[ $existed == false ]] && \
+		"$docker_bin" network inspect "$policy_network" >/dev/null 2>&1; then
+		"$docker_bin" network rm "$policy_network" >/dev/null || return 1
+	fi
+	return 0
 }
 
 verify_ingress_model_unchanged() {
@@ -725,6 +809,12 @@ rollback_ingress_transaction() {
 		"$transaction_journal")
 	for resource in "${touched[@]}"; do
 		case $resource in
+			network:policy)
+				if ! restore_policy_network_topology; then
+					warn "could not restore the recorded policy network attachment"
+					restored=false
+				fi
+				;;
 			proxy)
 				if ! restore_public_proxy; then
 					warn "could not restore the recorded public proxy generation"
@@ -756,6 +846,7 @@ recover_interrupted_ingress() {
 		elif (.transaction.ingress | type) != "object" then
 			error("ingress journal is not an object")
 		elif (.transaction.ingress.state == "active" or
+		      .transaction.ingress.state == "prepared" or
 		      .transaction.ingress.state == "committed" or
 		      .transaction.ingress.state == "rolled_back") then
 			.transaction.ingress.state
@@ -764,7 +855,7 @@ recover_interrupted_ingress() {
 	' "$transaction_journal") || fail \
 		"invalid ingress transaction journal $transaction_journal; journal retained"
 	case $state in
-		active)
+		active | prepared)
 			warn "recovering interrupted ingress transaction from $transaction_journal"
 			rollback_ingress_transaction || fail \
 				"interrupted ingress rollback failed; journal retained at $transaction_journal"
@@ -781,11 +872,28 @@ recover_interrupted_ingress() {
 }
 
 commit_ingress_transaction() {
-	update_ingress_record \
-		'.transaction.ingress.state = "committed" | .transaction.ingress.completed_at_unix = (now | floor)'
+	if [[ ${ROUTER_HA_DEFER_COMMIT:-false} == true ]]; then
+		update_ingress_record \
+			'.transaction.ingress.state = "prepared" | .transaction.ingress.prepared_at_unix = (now | floor)'
+	else
+		update_ingress_record \
+			'.transaction.ingress.state = "committed" | .transaction.ingress.completed_at_unix = (now | floor)'
+	fi
 	rollback_pending=false
 	policy_rollback_pending=false
 	trap - EXIT INT TERM HUP
+	[[ ${ROUTER_HA_DEFER_COMMIT:-false} == true ]] && return 0
+	cleanup_ingress_rollback_images
+	redact_ingress_rollback_models
+}
+
+finalize_ingress_transaction() {
+	[[ -f $transaction_journal ]] || fail \
+		"ingress transaction journal does not exist: $transaction_journal"
+	[[ $(jq -r '.transaction.ingress.state // ""' "$transaction_journal") == prepared ]] || fail \
+		"ingress transaction is not prepared for outer commit"
+	update_ingress_record \
+		'.transaction.ingress.state = "committed" | .transaction.ingress.completed_at_unix = (now | floor)'
 	cleanup_ingress_rollback_images
 	redact_ingress_rollback_models
 }
@@ -922,9 +1030,10 @@ ready_policy_refs() {
 }
 
 policy_service_addresses() {
-	local service=$1 id address
+	local service=$1 id address inventory
 	local -a ids=()
-	mapfile -t ids < <("${compose[@]}" ps --all --quiet "$service")
+	inventory=$("${compose[@]}" ps --all --quiet "$service") || return 1
+	[[ -z $inventory ]] || mapfile -t ids <<<"$inventory"
 	for id in "${ids[@]}"; do
 		address=$("$docker_bin" inspect --format \
 			"{{with index .NetworkSettings.Networks \"$policy_network\"}}{{.IPAddress}}{{end}}" \
@@ -968,9 +1077,13 @@ policy_service_needs_replacement() {
 }
 
 withdraw_policy_service() {
-	local service=$1 address backend ref
+	local service=$1 address backend ref address_inventory
 	local -a addresses=() backends=() refs=()
-	mapfile -t addresses < <(policy_service_addresses "$service")
+	address_inventory=$(policy_service_addresses "$service") || {
+		warn "cannot inventory $service addresses before drain"
+		return 1
+	}
+	[[ -z $address_inventory ]] || mapfile -t addresses <<<"$address_inventory"
 	if ((${#addresses[@]} == 0)); then
 		"${compose[@]}" stop "$service"
 		return
@@ -1069,6 +1182,7 @@ roll_policy_slots() {
 
 run_fleet() {
     GONKA_CONFIG_ENV=$config_env \
+    GONKA_COMPOSE_PROJECT=$GONKA_COMPOSE_PROJECT \
     VERSIOND_ROUTER_FRONT_NETWORK=$GONKA_COMPOSE_ROUTER_FRONT_NETWORK \
     VERSIOND_ROUTER_BACK_NETWORK=$GONKA_COMPOSE_ROUTER_BACK_NETWORK \
     VERSIOND_ROUTER_METRICS_NETWORK=$GONKA_COMPOSE_DEFAULT_NETWORK \
@@ -1105,22 +1219,34 @@ urlencode() {
 }
 
 capture_migration_route_baseline() {
-    local route encoded
+    local route encoded probe_status routes probe_output http_status
     local -A seen=()
 
     container_exists versiond-router || fail \
         "the transitional versiond-router is missing; refusing a cutover whose v4 rollback would have no upstream"
     migration_routes=()
+    routes=$(migration_router_routes) || fail \
+        "cannot read the transitional versiond-router route inventory"
     while IFS= read -r route; do
         [[ -n $route && -z ${seen[$route]-} ]] || continue
         seen[$route]=1
         encoded=$(urlencode "$route")
-        if bounded_container_exec versiond-router /bin/busybox wget -q -T 3 \
-            -O /dev/null "http://127.0.0.1:8404/readyz?version=$encoded" \
-            >/dev/null 2>&1; then
+        probe_status=0
+        probe_output=$(bounded_container_exec versiond-router /bin/busybox \
+            wget -q -S -T 3 -O /dev/null \
+            "http://127.0.0.1:8404/readyz?version=$encoded" 2>&1) || \
+            probe_status=$?
+        http_status=$(sed -nE \
+            's/.*HTTP\/[0-9.]+[[:space:]]+([0-9]{3}).*/\1/p' \
+            <<<"$probe_output" | tail -n 1)
+        if ((probe_status == 0)) && [[ -z $http_status || $http_status == 200 ]]; then
             migration_routes+=("$route")
+        elif [[ $http_status == 404 || $http_status == 503 ]]; then
+            warn "ignoring stale migration route '$route' (HTTP $http_status)"
+        else
+            fail "cannot classify readiness of declared migration route '$route' (probe status $probe_status${http_status:+, HTTP $http_status})"
         fi
-    done < <(migration_router_routes)
+    done <<<"$routes"
     ((${#migration_routes[@]} > 0)) || fail \
         "the transitional versiond-router serves none of the declared routes; refusing to commit an unverified fleet"
     echo "Captured migration route baseline: ${migration_routes[*]}"
@@ -1129,8 +1255,11 @@ capture_migration_route_baseline() {
 migration_router_routes() {
     local diagnostic=/usr/local/lib/router-runtime/catalog-status
     local map output routes='' status
-    if bounded_container_exec versiond-router test -x "$diagnostic" \
-        >/dev/null 2>&1; then
+	# The quoted program expands inside the router container.
+	# shellcheck disable=SC2016
+    capability=$(bounded_container_exec versiond-router /bin/sh -ec \
+		'test -x "$1" && printf present || printf absent' sh "$diagnostic") || return 1
+    if [[ $capability == present ]]; then
         for map in /etc/haproxy/non_ha.map /etc/haproxy/versions.map; do
             output=$(bounded_container_exec versiond-router \
                 "$diagnostic" "$map") || return 1
@@ -1138,16 +1267,18 @@ migration_router_routes() {
         done
         printf '%s' "$routes"
         return
-    else
-        status=$?
+    elif [[ $capability != absent ]]; then
+		return 1
     fi
-    ((status == 1)) || return 1
 
     # Transitional images from before runtime catalog projection expose only
     # their startup environment.
+    local legacy_versions ha_versions
+    legacy_versions=$(container_env_value versiond-router VERSIOND_NON_HA_VERSIONS) || return 1
+    ha_versions=$(container_env_value versiond-router VERSIOND_VERSIONS) || return 1
     printf '%s\n%s\n' \
-        "${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}" \
-        "${VERSIOND_VERSIONS-v4 v5}" \
+        "$legacy_versions" \
+        "$ha_versions" \
         | tr ',;' '  ' | tr -s ' ' '\n'
 }
 
@@ -1189,6 +1320,14 @@ if [[ $recover_only == true ]]; then
 	exit 0
 fi
 
+if [[ $finalize_only == true ]]; then
+	initialize_base_tools
+	gonka_acquire_deployment_lock "$config_dir" || exit 1
+	finalize_ingress_transaction
+	echo "Ingress transaction committed by the owning release transaction"
+	exit 0
+fi
+
 initialize_forward_context
 compose_project=$GONKA_COMPOSE_PROJECT
 policy_network=$GONKA_COMPOSE_POLICY_NETWORK
@@ -1200,8 +1339,15 @@ verify_outer_compose_generation
 fleet_spec_sha=none
 if [[ $versiond_mode == ha ]]; then
 	committed_postgres_identity=
+	if [[ -n ${ROUTER_HA_EXPECTED_POSTGRES_IDENTITY:-} ]]; then
+		committed_postgres_identity=$ROUTER_HA_EXPECTED_POSTGRES_IDENTITY
+	elif [[ -f $transaction_journal ]] && jq -e 'type == "object"' \
+		"$transaction_journal" >/dev/null 2>&1; then
+		committed_postgres_identity=$(jq -r \
+			'.transaction.postgres_identity // ""' "$transaction_journal")
+	fi
 	upgrade_marker=${DEVSHARD_V5_UPGRADE_MARKER:-$config_dir/.gonka-devshard-v5-upgrade-complete}
-	if [[ -f $upgrade_marker ]] && jq -e 'type == "object"' \
+	if [[ -z $committed_postgres_identity && -f $upgrade_marker ]] && jq -e 'type == "object"' \
 		"$upgrade_marker" >/dev/null 2>&1; then
 		committed_postgres_identity=$(jq -r \
 			'.storage.postgres_identity // ""' "$upgrade_marker")
@@ -1235,8 +1381,27 @@ elif [[ $current_proxy_component != proxy-router ]]; then
 fi
 
 if [[ $pull_policy != never ]]; then
-	"${compose[@]}" pull --policy "$pull_policy" \
-		proxy-policy2 proxy-policy proxy
+	skip_ingress_pull=false
+	if [[ $proxy_was_absent == true ]]; then
+		skip_ingress_pull=true
+		ingress_config=$("${compose[@]}" config --format json) || fail \
+			"cannot render ingress images for local recovery"
+		for service in proxy-policy2 proxy-policy proxy; do
+			image_ref=$(jq -er --arg service "$service" \
+				'.services[$service].image' <<<"$ingress_config") || fail \
+				"cannot resolve $service image"
+			if ! "$docker_bin" image inspect "$image_ref" >/dev/null 2>&1; then
+				skip_ingress_pull=false
+				break
+			fi
+		done
+	fi
+	if [[ $skip_ingress_pull == false ]]; then
+		"${compose[@]}" pull --policy "$pull_policy" \
+			proxy-policy2 proxy-policy proxy
+	else
+		echo "All committed ingress images are local; repairing the absent proxy without registry access"
+	fi
 fi
 verify_policy_contract
 capture_policy_rollback
@@ -1247,9 +1412,8 @@ elif [[ $current_proxy_component == proxy-router ]]; then
 else
 	arm_proxy_rollback v4
 fi
-begin_ingress_transaction
-
-ensure_compose_network proxy-policy-front "$policy_network" "$compose_project"
+validate_compose_network_if_present \
+    proxy-policy-front "$policy_network" "$compose_project"
 if [[ $versiond_mode == ha ]]; then
     # `apply` is the lifecycle bridge between the main Compose project and the
     # independent router projects. It bootstraps an absent fleet, but on an
@@ -1259,6 +1423,13 @@ if [[ $versiond_mode == ha ]]; then
 	verify_fleet_spec_unchanged
 	verify_outer_compose_generation
 fi
+begin_ingress_transaction
+
+if [[ $(jq -r '.transaction.ingress.topology.policy_network_existed' \
+	"$transaction_journal") == false ]]; then
+	record_ingress_touch network:policy
+fi
+ensure_compose_network proxy-policy-front "$policy_network" "$compose_project"
 
 # During the one-time cutover the old public nginx still owns the `proxy`
 # container name. Attach it to the private policy network before starting the
@@ -1269,6 +1440,7 @@ if container_exists proxy; then
         "{{with index .NetworkSettings.Networks \"$policy_network\"}}{{range .Aliases}}{{println .}}{{end}}{{end}}" \
         proxy)
     if ! grep -Fxq proxy-policy-ingress <<<"$policy_aliases"; then
+		record_ingress_touch network:policy
         if [[ -n $policy_aliases ]]; then
             "$docker_bin" network disconnect "$policy_network" proxy
         fi
