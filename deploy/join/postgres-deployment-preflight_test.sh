@@ -90,29 +90,15 @@ elif [[ $1 == exec ]]; then
     fi
     if [[ $container == postgres-container ]]; then
         [[ ${FRESH_PSQL_FAIL:-false} != true ]] || exit 1
-        printf '%s|%s|%s\n' "$RUNTIME_POSTGRES_DB" \
-            "$RUNTIME_POSTGRES_USER" "${RUNTIME_POSTGRES_PORT:-5432}"
+        printf '%s|%s|%s|%s|%s\n' "$RUNTIME_POSTGRES_DB" \
+            "$RUNTIME_POSTGRES_USER" "${RUNTIME_POSTGRES_PORT:-5432}" \
+            "${SERVER_MAX_ONE:-100}" "${SERVER_RESERVED_ONE:-3}"
         exit 0
     fi
-    case $PROOF_API_MODE in
-        ready) ;;
-        404)
-            echo '  HTTP/1.1 404 Not Found' >&2
-            echo 'wget: server returned error: HTTP/1.1 404 Not Found' >&2
-            exit 8
-            ;;
-        503)
-            printf '{"error":"no stable HA children"}\n'
-            echo '  HTTP/1.1 503 Service Unavailable' >&2
-            echo 'wget: server returned error: HTTP/1.1 503 Service Unavailable' >&2
-            exit 8
-            ;;
-        timeout)
-            echo 'wget: download timed out' >&2
-            exit 1
-            ;;
-        *) exit 1 ;;
-    esac
+    if [[ ${*: -1} == nproc ]]; then
+        printf '%s\n' "${RUNTIME_CPU_COUNT:-4}"
+        exit 0
+    fi
     if [[ $container == container-1 ]]; then
         identity=$IDENTITY_ONE
         snapshot=snapshot-1
@@ -131,7 +117,32 @@ elif [[ $1 == exec ]]; then
         server_reserved_connections=$SERVER_RESERVED_TWO
     fi
     endpoint=${*: -1}
+    if [[ $endpoint == */internal/storage-* ]]; then
+        case $PROOF_API_MODE in
+            ready) ;;
+            404)
+                echo '  HTTP/1.1 404 Not Found' >&2
+                echo 'wget: server returned error: HTTP/1.1 404 Not Found' >&2
+                exit 8
+                ;;
+            503)
+                printf '{"error":"no stable HA children"}\n'
+                echo '  HTTP/1.1 503 Service Unavailable' >&2
+                echo 'wget: server returned error: HTTP/1.1 503 Service Unavailable' >&2
+                exit 8
+                ;;
+            timeout)
+                echo 'wget: download timed out' >&2
+                exit 1
+                ;;
+            *) exit 1 ;;
+        esac
+    fi
     case $endpoint in
+        */healthz)
+            printf '[{"name":"v3","status":"running"},'\
+'{"name":"v4","status":"running"}]\n'
+            ;;
         */internal/storage-identity)
             if [[ $SNAPSHOT_DRIFT == true && -f $CHALLENGE_STATE_DIR/challenged ]]; then
                 snapshot=$snapshot-drift
@@ -215,6 +226,7 @@ run_preflight() {
         RUNTIME_POSTGRES_PASSWORD="${RUNTIME_POSTGRES_PASSWORD:-secret}" \
         RUNTIME_POSTGRES_PORT="${RUNTIME_POSTGRES_PORT:-5432}" \
         RUNTIME_POSTGRES_RUNNING="${RUNTIME_POSTGRES_RUNNING:-true}" \
+        RUNTIME_CPU_COUNT="${RUNTIME_CPU_COUNT:-4}" \
         FRESH_PSQL_FAIL="${FRESH_PSQL_FAIL:-false}" \
         PROOF_POOL_ONE="${PROOF_POOL_ONE:-4}" \
         PROOF_POOL_TWO="${PROOF_POOL_TWO:-4}" \
@@ -363,6 +375,24 @@ RUNTIME_POOL_TWO=
 export RUNTIME_POOL_ONE RUNTIME_POOL_TWO
 run_preflight --runtime-contract-only >"$tmpdir/out" 2>"$tmpdir/err" || fail \
     "v4 replicas without PG_POOL_MAX_CONNS were rejected"
+
+INCLUDE_POSTGRES=true
+RUNTIME_HOST_ONE=devshard-postgres
+RUNTIME_HOST_TWO=devshard-postgres
+PROOF_API_MODE=404
+export INCLUDE_POSTGRES RUNTIME_HOST_ONE RUNTIME_HOST_TWO PROOF_API_MODE
+write_config '' '' devshard-postgres
+run_preflight --runtime-contract-only \
+    >"$tmpdir/legacy-runtime" 2>"$tmpdir/legacy-runtime-err" || fail \
+    "official v4 runtime without the storage-proof API was rejected"
+grep -q 'supported legacy runtime contract' \
+    "$tmpdir/legacy-runtime-err" || fail \
+    "legacy storage-proof fallback was not reported"
+grep -q 'exec container-1 /bin/busybox nproc' \
+    "$tmpdir/docker.log" || fail \
+    "legacy pool capacity was not derived from the running container"
+unset INCLUDE_POSTGRES RUNTIME_HOST_ONE RUNTIME_HOST_TWO PROOF_API_MODE
+write_config
 
 PROOF_POOL_ONE=16
 PROOF_POOL_TWO=16

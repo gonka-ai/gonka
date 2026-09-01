@@ -251,12 +251,22 @@ verify_bundled_postgres_login() {
         --env "PGPASSWORD=$password" "$container" \
         psql -h 127.0.0.1 -p "$port" -U "$user" -d "$database" \
         -AtX -v ON_ERROR_STOP=1 -c \
-        "SELECT current_database() || '|' || current_user || '|' || inet_server_port()") || fail \
+        "SELECT current_database() || '|' || current_user || '|' || inet_server_port() || '|' || current_setting('max_connections') || '|' || (current_setting('superuser_reserved_connections')::integer + COALESCE(current_setting('reserved_connections', true), '0')::integer)") || fail \
         "rendered versiond credentials cannot open a fresh bundled PostgreSQL session"
-    [[ $observed == "$database|$user|$port" ]] || fail \
+    IFS='|' read -r observed_database observed_user observed_port \
+        fresh_server_max fresh_server_reserved <<<"$observed"
+    [[ $observed_database == "$database" && $observed_user == "$user" && \
+        $observed_port == "$port" ]] || fail \
         "fresh bundled PostgreSQL session returned unexpected endpoint identity '$observed'"
+    is_positive_int32 "$fresh_server_max" || fail \
+        "fresh bundled PostgreSQL session returned invalid max_connections"
+    [[ $fresh_server_reserved =~ ^[0-9]+$ && \
+        $fresh_server_reserved -lt $fresh_server_max ]] || fail \
+        "fresh bundled PostgreSQL session returned invalid reserved connections"
 }
 
+fresh_server_max=
+fresh_server_reserved=
 if [[ $runtime_contract_only == true ]]; then
 	postgres_container=
 	if jq -e '.services | has("devshard-postgres")' <<<"$config" >/dev/null; then
@@ -324,6 +334,7 @@ versiond_http() {
     case $status in
         404)
             echo "postgres-deployment-preflight: $service $description returned HTTP 404; the running versiond image does not expose the live storage-proof API" >&2
+			return 44
             ;;
         503)
             echo "postgres-deployment-preflight: $service $description is not ready (HTTP 503); inspect 'docker logs $container' for HA child and PostgreSQL state${details:+; details: $details}" >&2
@@ -444,6 +455,50 @@ new_challenge_nonce() {
     printf '%s\n' "$nonce"
 }
 
+legacy_runtime_storage_proof() {
+    local service=$1 container=$2 health cpu_count pool
+
+    [[ -n $fresh_server_max && -n $fresh_server_reserved ]] || fail \
+        "legacy versiond storage proof requires a fresh PostgreSQL capacity query"
+    health=$(versiond_http "$service" "$container" \
+        "legacy generation inventory" GET /healthz) || return 1
+    jq -e '
+        type == "array" and length > 0 and
+        all(.[];
+            (.name | type == "string" and length > 0) and
+            .status == "running") and
+        ([.[].name] | length == (unique | length))
+    ' >/dev/null <<<"$health" || fail \
+        "$service returned an invalid legacy generation inventory"
+    cpu_count=$("$docker_bin" exec "$container" /bin/busybox nproc) || fail \
+        "cannot determine the effective legacy PostgreSQL pool size for $service"
+    is_positive_int32 "$cpu_count" || fail \
+        "$service returned an invalid online CPU count '$cpu_count'"
+    pool=$cpu_count
+    ((pool >= 4)) || pool=4
+    jq -cn \
+        --arg identity legacy-uncommitted \
+        --arg snapshot "legacy-$service" \
+        --arg service "$service" \
+        --argjson health "$health" \
+        --argjson pool "$pool" \
+        --argjson server_max "$fresh_server_max" \
+        --argjson server_reserved "$fresh_server_reserved" '
+        {
+            identity: $identity,
+            children: ($health | length),
+            snapshot: $snapshot,
+            targets: [$health[] | {
+                generation: ($service + "/" + .name),
+                version: .name,
+                pool_max_connections: $pool,
+                server_max_connections: $server_max,
+                server_reserved_connections: $server_reserved
+            }]
+        }
+    '
+}
+
 proofs=()
 snapshots=()
 proof_indices=()
@@ -451,7 +506,19 @@ identity=
 for index in "${!containers[@]}"; do
     service=${active_services[index]}
     [[ -n ${containers[index]} ]] || continue
-    proof=$(read_storage_identity "$service" "${containers[index]}") || exit 1
+    proof_status=0
+    proof=$(read_storage_identity \
+        "$service" "${containers[index]}") || proof_status=$?
+    if ((proof_status == 44)) && [[ $runtime_contract_only == true && \
+        ${runtime_pool_is_explicit[index]} == false ]]; then
+        warn_message="$service uses the supported legacy runtime contract; "
+        warn_message+="deriving its pool and generation budget without the v5 storage API"
+        echo "postgres-deployment-preflight: warning: $warn_message" >&2
+        proof=$(legacy_runtime_storage_proof \
+            "$service" "${containers[index]}") || exit 1
+    elif ((proof_status != 0)); then
+        exit "$proof_status"
+    fi
     validate_storage_identity <<<"$proof" || fail \
         "$service returned an invalid PostgreSQL storage proof"
     observed_identity=$(jq -r '.identity' <<<"$proof")
