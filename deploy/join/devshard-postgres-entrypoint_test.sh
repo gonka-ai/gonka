@@ -155,6 +155,7 @@ run_entrypoint
     "stale migration completion marker survived an existing target"
 
 new_case previous-revision-markers
+printf '16\n' >"$legacy/PG_VERSION"
 mkdir -p "$persistent/data"
 printf '16\n' >"$persistent/data/PG_VERSION"
 printf '16\n' >"$persistent/.migrated-from-v4"
@@ -164,6 +165,9 @@ run_entrypoint
     "previous-revision major marker was not upgraded"
 [[ $(<"$persistent/.gonka-cluster-lineage") == 1000000000000000000 ]] || fail \
     "previous-revision target did not receive a common lineage marker"
+[[ $(<"$persistent/.gonka-v4-source-wal.sha256") == \
+    "$(source_fingerprint)" ]] || fail \
+    "previous-revision target did not bind its retained source snapshot"
 
 new_case resume-publish
 printf '16\n' > "$legacy/PG_VERSION"

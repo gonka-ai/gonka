@@ -93,6 +93,7 @@ cluster_wal_fingerprint() {
 validate_migration_lineage() {
     cluster=$1
     cluster_identifier=$(cluster_system_identifier "$cluster")
+    legacy_marker_is_old=false
 
     if [ -s "$cluster_marker" ]; then
         recorded_identifier=$(awk 'NR == 1 { print $1 }' "$cluster_marker") ||
@@ -107,17 +108,24 @@ validate_migration_lineage() {
             [ "$recorded_identifier" != "$expected_major" ]; then
             die "persistent PostgreSQL cluster does not match its migration lineage marker"
         fi
+        [ "$recorded_identifier" != "$expected_major" ] ||
+            legacy_marker_is_old=true
     fi
     if cluster_exists "$legacy_data"; then
         source_identifier=$(cluster_system_identifier "$legacy_data")
         [ "$source_identifier" = "$cluster_identifier" ] ||
             die "persistent PostgreSQL cluster does not originate from the attached legacy PGDATA"
-        [ -s "$source_fingerprint_marker" ] ||
-            die "persistent PostgreSQL target has an attached legacy source but no durable source snapshot; refusing to guess which copy is newer"
+        current_fingerprint=$(cluster_wal_fingerprint "$legacy_data")
+        if [ ! -s "$source_fingerprint_marker" ]; then
+            [ "$legacy_marker_is_old" = true ] ||
+                die "persistent PostgreSQL target has an attached legacy source but no durable source snapshot; refusing to guess which copy is newer"
+            printf '%s\n' "$current_fingerprint" \
+                >"$source_fingerprint_marker" ||
+                die "cannot upgrade PostgreSQL source snapshot marker"
+        fi
         recorded_fingerprint=$(awk 'NR == 1 { print $1 }' \
             "$source_fingerprint_marker") ||
             die "cannot read PostgreSQL source snapshot marker"
-        current_fingerprint=$(cluster_wal_fingerprint "$legacy_data")
         [ "$recorded_fingerprint" = "$current_fingerprint" ] ||
             die "attached legacy PostgreSQL source changed after migration; refusing to start a potentially stale target"
     fi

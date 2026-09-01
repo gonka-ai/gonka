@@ -110,8 +110,10 @@ if [ -s "$2/data/PG_VERSION" ]; then
 elif [ -s "$2/.migrating/PG_VERSION" ] &&
     [ -f "$2/.gonka-copy-complete" ]; then
     staging_id=$(cluster_id "$2/.migrating")
-    printf 'staging-ready %s %s %s\n' \
-        "$source_id" "$staging_id" "$source_fingerprint"
+    staging_fingerprint=$(wal_fingerprint "$2/.migrating")
+    printf 'staging-ready %s %s %s %s\n' \
+        "$source_id" "$staging_id" "$source_fingerprint" \
+        "$staging_fingerprint"
 elif [ -s "$1/PG_VERSION" ]; then
     source_kib=$(du -sk "$1" | cut -f1)
     reclaimable_kib=0
@@ -261,8 +263,25 @@ validate_published_markers() {
 }
 
 require_unchanged_source_snapshot() {
-    local fingerprint=$1 recorded
+    local fingerprint=$1 allow_legacy_upgrade=${2:-false}
+    local recorded legacy temporary
+    [[ $fingerprint =~ ^[0-9a-f]{64}$ ]] || fail \
+        "legacy PostgreSQL source returned an invalid WAL fingerprint"
     recorded=$(marker_value "$target_dir/.gonka-v4-source-wal.sha256")
+    if [[ $recorded == none && $allow_legacy_upgrade == true ]]; then
+        legacy=$(marker_value "$target_dir/.migrated-from-v4")
+        if [[ $legacy == 16 ]]; then
+            temporary=$(mktemp \
+                "$target_dir/.gonka-v4-source-wal.sha256.XXXXXX") || fail \
+                "cannot create PostgreSQL source snapshot marker"
+            printf '%s\n' "$fingerprint" >"$temporary"
+            chmod 600 "$temporary"
+            mv -f "$temporary" \
+                "$target_dir/.gonka-v4-source-wal.sha256"
+            sync -d "$target_dir" 2>/dev/null || sync
+            recorded=$fingerprint
+        fi
+    fi
     [[ $recorded != none ]] || fail \
         "persistent target and legacy source coexist without a durable source snapshot; refusing to guess which copy is newer"
     [[ $recorded == "$fingerprint" ]] || fail \
@@ -281,7 +300,7 @@ case $probe_state in
             [[ $source_identifier == "$target_identifier" ]] || fail \
                 "persistent PostgreSQL target does not originate from the selected v4 source"
             validate_published_markers "$target_identifier"
-            require_unchanged_source_snapshot "$source_fingerprint"
+            require_unchanged_source_snapshot "$source_fingerprint" true
         fi
         echo "PostgreSQL persistent PGDATA already exists; no migration copy is required"
         exit 0
@@ -290,6 +309,7 @@ case $probe_state in
         source_identifier=$first
         staging_identifier=$second
         source_fingerprint=${third:-none}
+        staging_fingerprint=${fourth:-none}
         [[ $source_identifier =~ ^[0-9]+$ ]] || fail \
             "completed PostgreSQL staging requires its selected v4 source"
         [[ $staging_identifier == "$source_identifier" ]] || fail \
@@ -299,6 +319,9 @@ case $probe_state in
         [[ $completion == "$source_identifier" || \
             ($completion == none && $legacy == 16) ]] || fail \
             "PostgreSQL migration completion marker conflicts with its source"
+        [[ $staging_fingerprint == "$source_fingerprint" ]] || fail \
+            "completed PostgreSQL staging changed independently of its source"
+        require_unchanged_source_snapshot "$source_fingerprint" true
         echo "PostgreSQL migration staging is complete; no new copy is required"
         exit 0
         ;;

@@ -209,12 +209,36 @@ grep -q 'no migration copy is required' \
     "published target was not recovered through its still-available source"
 
 printf '1000000000000000000\n' >"$tmpdir/target/.gonka-copy-complete"
-DOCKER_PROBE="staging-ready 1000000000000000000 1000000000000000000 $fingerprint"
+DOCKER_PROBE="staging-ready 1000000000000000000 1000000000000000000 $fingerprint $fingerprint"
 export DOCKER_PROBE
 run_preflight --source-volume postgres-v4-volume --target-dir "$tmpdir/target" \
     >"$tmpdir/staging.stdout"
 grep -q 'staging is complete' "$tmpdir/staging.stdout" || fail \
     "committed migration staging was not recognized"
+
+DOCKER_PROBE="staging-ready 1000000000000000000 1000000000000000000 $fingerprint bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+export DOCKER_PROBE
+if run_preflight --source-volume postgres-v4-volume \
+    --target-dir "$tmpdir/target" \
+    >"$tmpdir/stale-staging.stdout" \
+    2>"$tmpdir/stale-staging.stderr"; then
+    fail "staging older than its source passed preflight"
+fi
+grep -q 'staging changed independently' \
+    "$tmpdir/stale-staging.stderr" || fail \
+    "stale staging failure did not explain the data-loss risk"
+
+mkdir -p "$tmpdir/old-target"
+printf '16\n' >"$tmpdir/old-target/.migrated-from-v4"
+printf '1000000000000000000 postgres-v4-volume\n' \
+    >"$tmpdir/old-target/.gonka-v4-schema-proof"
+DOCKER_PROBE="target-ready 1000000000000000000 1000000000000000000 $fingerprint"
+export DOCKER_PROBE
+run_preflight --source-volume postgres-v4-volume \
+    --target-dir "$tmpdir/old-target" >"$tmpdir/old-target.stdout"
+[[ $(<"$tmpdir/old-target/.gonka-v4-source-wal.sha256") == \
+    "$fingerprint" ]] || fail \
+    "previous-revision target did not bind its retained source snapshot"
 
 DOCKER_PROBE="target-ready 1000000000000000000 2000000000000000000 $fingerprint"
 export DOCKER_PROBE
