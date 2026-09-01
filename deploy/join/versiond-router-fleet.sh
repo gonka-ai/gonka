@@ -1199,8 +1199,10 @@ restart_preserved_stopped_slot() {
                 "cannot restart preserved router slot $slot"
             wait_slot_ready "$slot" || fail \
                 "preserved router slot $slot did not become healthy"
-            wait_slot_routes "$slot"
-            wait_parent_admission "$slot"
+            wait_slot_routes "$slot" || fail \
+                "preserved router slot $slot did not restore its routes"
+            wait_parent_admission "$slot" || fail \
+                "preserved router slot $slot was not readmitted by the parent"
             return 0
             ;;
     esac
@@ -1347,13 +1349,17 @@ resume_interrupted_maintenance_target() {
     for slot in "${slots[@]}"; do
         wait_slot_ready "$slot" || fail \
             "candidate router slot $slot did not become healthy"
-        wait_slot_routes "$slot"
+        wait_slot_routes "$slot" || fail \
+            "candidate router slot $slot did not restore its routes"
     done
-    select_candidate_route_view
+    select_candidate_route_view || fail \
+        "cannot select the committed candidate route view"
     for slot in "${slots[@]}"; do
-        wait_parent_admission "$slot"
+        wait_parent_admission "$slot" || fail \
+            "candidate router slot $slot was not readmitted by the parent"
     done
-    fleet_status
+    fleet_status || fail \
+        "committed candidate fleet failed its final status check"
     return 0
 }
 
