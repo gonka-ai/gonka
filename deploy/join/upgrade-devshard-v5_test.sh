@@ -46,7 +46,19 @@ fi
 
 if [[ ${1:-} == inspect ]]; then
     if [[ $# -eq 2 ]]; then
-        container=${2#cid-}
+		requested=${2#cid-}
+		container=${requested%%.gonka-displaced-*}
+		if [[ $requested == *.gonka-displaced-* ]]; then
+			if [[ ! -f $FAKE_STATE_DIR/backup-$container ]] && \
+				{ [[ ! -f $FAKE_STATE_DIR/image-$container ]] || \
+				  [[ $(<"$FAKE_STATE_DIR/image-$container") != \
+					gonka-upgrade-rollback/* ]]; }; then
+				exit 1
+			fi
+			printf '[]\n'
+			exit 0
+		fi
+		[[ ! -f $FAKE_STATE_DIR/original-missing-$container ]] || exit 1
         case " ${EXISTING_CONTAINERS-} " in
 			*" $container "*)
 				if [[ $2 == cid-* ]]; then
@@ -123,7 +135,8 @@ if [[ ${1:-} == inspect ]]; then
                   "443/tcp":[{"HostIp":"0.0.0.0","HostPort":$https}]}'
             ;;
         '{{.Image}}')
-            service=${4#cid-}
+			service=${4#cid-}
+			service=${service%%.gonka-displaced-*}
             if [[ -f $FAKE_STATE_DIR/image-$service ]]; then
                 cat "$FAKE_STATE_DIR/image-$service"
             else
@@ -149,6 +162,7 @@ if [[ ${1:-} == inspect ]]; then
             ;;
         '{{.State.Running}}')
             service=${4#cid-}
+			service=${service%%.gonka-displaced-*}
             if [[ $service == "${STOPPED_VERSIOND_SERVICE-}" && \
                 ! -f $FAKE_STATE_DIR/running-$service ]] || \
                 [[ -f $FAKE_STATE_DIR/stopped-$service ]]; then
@@ -157,6 +171,15 @@ if [[ ${1:-} == inspect ]]; then
                 printf 'true\n'
             fi
             ;;
+		'{{json .NetworkSettings.Networks}}')
+			service=${4#cid-}
+			service=${service%%.gonka-displaced-*}
+			if [[ -f $FAKE_STATE_DIR/backup-disconnected-$service ]]; then
+				printf '{}\n'
+			else
+				printf '{"gonka-test_default":{"NetworkID":"network-default"}}\n'
+			fi
+			;;
         '{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')
             printf 'healthy\n'
             ;;
@@ -371,16 +394,32 @@ if [[ ${1:-} == image && ${2:-} == inspect ]]; then
 fi
 if [[ ${1:-} == rm ]]; then
 	container=${!#}
-	service=${container#cid-}
+	requested=${container#cid-}
+	service=${requested%%.gonka-displaced-*}
+	if [[ $requested == *.gonka-displaced-* ]]; then
+		[[ ${FAIL_DISPLACED_REMOVE_SERVICE-} != "$service" ]] || exit 1
+		rm -f "$FAKE_STATE_DIR/backup-$service" \
+			"$FAKE_STATE_DIR/backup-disconnected-$service"
+		exit 0
+	fi
 	rm -f "$FAKE_STATE_DIR/stopped-$service" "$FAKE_STATE_DIR/running-$service"
+	: >"$FAKE_STATE_DIR/original-missing-$service"
 	exit 0
 fi
 if [[ ${1:-} == rename ]]; then
+	old=${2#cid-}
+	new=$3
+	service=${old%%.gonka-displaced-*}
+	if [[ $new == *.gonka-displaced-* ]]; then
+		: >"$FAKE_STATE_DIR/backup-$service"
+		: >"$FAKE_STATE_DIR/original-missing-$service"
+	fi
 	exit 0
 fi
 if [[ ${1:-} == stop ]]; then
 	service=${!#}
 	service=${service#cid-}
+	service=${service%%.gonka-displaced-*}
 	rm -f "$FAKE_STATE_DIR/running-$service"
 	: >"$FAKE_STATE_DIR/stopped-$service"
 	exit 0
@@ -395,6 +434,7 @@ if [[ ${1:-} == create ]]; then
 		previous=$arg
 	done
 	[[ -n $name ]] || exit 1
+	rm -f "$FAKE_STATE_DIR/original-missing-$name"
 	if [[ -n $image ]]; then
 		: >"$FAKE_STATE_DIR/rollback-$name"
 		printf '%s\n' "$image" >"$FAKE_STATE_DIR/image-$name"
@@ -403,10 +443,16 @@ if [[ ${1:-} == create ]]; then
 	exit 0
 fi
 if [[ ${1:-} == network ]]; then
+	if [[ ${2:-} == disconnect ]]; then
+		requested=${!#}
+		service=${requested%%.gonka-displaced-*}
+		: >"$FAKE_STATE_DIR/backup-disconnected-$service"
+	fi
 	exit 0
 fi
 if [[ ${1:-} == start ]]; then
 	service=${2#cid-}
+	service=${service%%.gonka-displaced-*}
 	rm -f "$FAKE_STATE_DIR/stopped-$service"
 	: >"$FAKE_STATE_DIR/running-$service"
 	exit 0
@@ -613,6 +659,8 @@ run_upgrade() {
         MISSING_COMPOSE_SERVICE="${MISSING_COMPOSE_SERVICE-}" \
         POSTGRES_MIGRATION_PROBE="${POSTGRES_MIGRATION_PROBE-}" \
         FAIL_INGRESS_FINALIZE="${FAIL_INGRESS_FINALIZE:-false}" \
+        FAIL_DISPLACED_REMOVE_SERVICE=\
+"${FAIL_DISPLACED_REMOVE_SERVICE-}" \
         "$script_dir/upgrade-devshard-v5.sh" \
         --versiond-mode "$versiond_mode" --edge-mode "$mode" \
         >"$tmpdir/stdout" 2>"$tmpdir/stderr"; then
@@ -762,6 +810,8 @@ resume_interrupted_upgrade() {
         UPGRADE_ROUTER_RELOAD_SETTLE=0 \
         POSTGRES_DEPLOYMENT_PREFLIGHT_FAIL_MODE=\
 "${POSTGRES_DEPLOYMENT_PREFLIGHT_FAIL_MODE-}" \
+        FAIL_DISPLACED_REMOVE_SERVICE=\
+"${FAIL_DISPLACED_REMOVE_SERVICE-}" \
         "$script_dir/upgrade-devshard-v5.sh" \
         --versiond-mode ha --edge-mode single \
         >"$stdout" 2>"$stderr"; then
@@ -1999,12 +2049,17 @@ postgres_up_line=$(line_number "$tmpdir/versiond2.log" \
 assert_contains "$tmpdir/versiond2.log" \
     " :: create --name versiond2 --network none"
 stop_candidate_line=$(line_number "$tmpdir/versiond2.log" \
-    " :: stop cid-versiond2")
+    " :: stop versiond2")
 create_rollback_line=$(line_number "$tmpdir/versiond2.log" \
     " :: create --name versiond2 --network none")
+disconnect_backup_line=$(line_number_regex "$tmpdir/versiond2.log" \
+    ' :: network disconnect -f gonka-test_default versiond2\.gonka-displaced-')
 [[ -n $stop_candidate_line && -n $create_rollback_line && \
     $stop_candidate_line -lt $create_rollback_line ]] || fail \
     "rollback started its baseline before stopping the failed candidate"
+[[ -n $disconnect_backup_line && \
+    $disconnect_backup_line -lt $create_rollback_line ]] || fail \
+    "rollback reused a static IP before disconnecting the failed candidate"
 assert_contains "$tmpdir/versiond2.log" "--entrypoint tini"
 assert_contains "$tmpdir/versiond2.log" \
     "gonka-upgrade-rollback/versiond2:"
@@ -2032,10 +2087,35 @@ if grep -E -- '--wait-timeout 2100 versiond$' "$tmpdir/versiond2.log" >/dev/null
     fail "versiond was replaced after versiond2 failed"
 fi
 
+FAIL_DISPLACED_REMOVE_SERVICE=versiond2 \
+    run_upgrade single versiond2 "$tmpdir/displaced-retry.log"
+jq -e '
+    .transaction.application_rollback.services.versiond2.touched == true
+' "$tmpdir/upgrade-complete.in-progress" >/dev/null || fail \
+    "incomplete displaced-container cleanup discarded durable recovery state"
+[[ -f $tmpdir/displaced-retry.log.state/backup-versiond2 ]] || fail \
+    "failed displaced-container cleanup did not retain its backup"
+recover_interrupted_rollback \
+    "$tmpdir/displaced-retry.log.state" \
+    "$tmpdir/displaced-recovery.log" \
+    "$tmpdir/displaced-recovery.stdout" \
+    "$tmpdir/displaced-recovery.stderr"
+remove_partial_line=$(line_number "$tmpdir/displaced-recovery.log" \
+    " :: rm -f versiond2")
+recreate_partial_line=$(line_number "$tmpdir/displaced-recovery.log" \
+    " :: create --name versiond2 --network none")
+[[ -n $remove_partial_line && -n $recreate_partial_line && \
+    $remove_partial_line -lt $recreate_partial_line ]] || fail \
+    "retry did not classify and rebuild the partially restored baseline"
+[[ ! -e $tmpdir/displaced-retry.log.state/backup-versiond2 ]] || fail \
+    "retry retained the displaced candidate after exact restoration"
+
 ROLLBACK_PROBE_FAIL_SERVICE=versiond2 \
 UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \
     run_upgrade single versiond2 "$tmpdir/versiond2-unavailable.log"
-assert_not_contains "$tmpdir/versiond2-unavailable.log" " stop versiond2"
+[[ $(grep -Fc ' :: stop versiond2' \
+    "$tmpdir/versiond2-unavailable.log") -eq 1 ]] || fail \
+    "unavailable rollback was stopped after its failed availability proof"
 jq -e '
     .transaction.application_rollback.services.versiond2.touched == true
 ' "$tmpdir/upgrade-complete.in-progress" >/dev/null || fail \
@@ -2055,12 +2135,16 @@ grep -q 'exec-form healthcheck' "$tmpdir/stderr" || fail \
 ROLLBACK_EMPTY_VERSIOND_SERVICE=versiond2 \
 UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \
     run_upgrade single versiond2 "$tmpdir/versiond2-empty.log"
-assert_not_contains "$tmpdir/versiond2-empty.log" " stop versiond2"
+[[ $(grep -Fc ' :: stop versiond2' \
+    "$tmpdir/versiond2-empty.log") -eq 1 ]] || fail \
+    "empty rollback was stopped after its failed generation proof"
 
 ROLLBACK_MISSING_VERSION_SERVICE=versiond \
 UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \
     run_upgrade single versiond "$tmpdir/versiond-partial.log" single
-assert_not_contains "$tmpdir/versiond-partial.log" " stop versiond"
+[[ $(grep -Ec ' :: stop versiond$' \
+    "$tmpdir/versiond-partial.log") -eq 1 ]] || fail \
+    "partial rollback was stopped after its failed generation proof"
 awk '
     / :: create --name versiond --network none/ { rollback = 1 }
     rollback && /http:\/\/127\.0\.0\.1:8080\/v4\/healthz/ { exit 1 }
@@ -2073,7 +2157,9 @@ assert_contains "$tmpdir/versiond-special-name.log" \
     'http://127.0.0.1:8080/v4%2Bhotfix/healthz'
 assert_contains "$tmpdir/versiond-special-name.log" \
     'http://127.0.0.1:8080/v4%7Dx/healthz'
-assert_not_contains "$tmpdir/versiond-special-name.log" " stop versiond"
+[[ $(grep -Ec ' :: stop versiond$' \
+    "$tmpdir/versiond-special-name.log") -eq 1 ]] || fail \
+    "special-name rollback was stopped after restoration"
 
 STOPPED_VERSIOND_SERVICE=versiond2 \
     run_upgrade single versiond2 "$tmpdir/versiond2-stopped.log"
@@ -2096,8 +2182,9 @@ UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \
         "$tmpdir/versiond-production-rollback-failure.log"
 assert_contains "$tmpdir/versiond-production-rollback-failure.log" \
     " :: create --name versiond --network none"
-assert_not_contains "$tmpdir/versiond-production-rollback-failure.log" \
-    " stop versiond"
+[[ $(grep -Ec ' :: stop versiond$' \
+    "$tmpdir/versiond-production-rollback-failure.log") -eq 1 ]] || fail \
+    "production rollback was stopped after its failed route proof"
 
 run_upgrade single versiond-router "$tmpdir/versiond-router.log"
 assert_contains "$tmpdir/versiond-router.log" \
@@ -2116,8 +2203,9 @@ UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \
         "$tmpdir/versiond-router-missing-route.log"
 assert_contains "$tmpdir/versiond-router-missing-route.log" \
     " :: create --name versiond-router --network none"
-assert_not_contains "$tmpdir/versiond-router-missing-route.log" \
-    " stop versiond-router"
+[[ $(grep -Ec ' :: stop versiond-router$' \
+    "$tmpdir/versiond-router-missing-route.log") -eq 1 ]] || fail \
+    "router rollback was stopped after its failed route proof"
 
 PERSISTED_VERSIOND_BARRIER=true \
 VERSIOND2_UNIQUE_VERSION=true \

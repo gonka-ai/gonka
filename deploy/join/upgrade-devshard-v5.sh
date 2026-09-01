@@ -1520,9 +1520,9 @@ rollback_service() {
 
 restore_runtime_container() {
 	local service=$1 image=$2 model
-	local name value key restart health_cmd health_kind
-	local network network_id current backup_name
-	local candidate_was_running=false backup_exists=false
+	local name value key restart health_cmd health_kind expected_image current_image
+	local network network_id current backup_name backup_networks
+	local backup_exists=false current_exists=false
 	local -a create_args=(create) command_args=() connect_args=() entrypoint_args=()
 	model=${rollback_runtime_models[$service]}
 	validate_rollback_runtime_model "$service" "$image" "$model" || return 1
@@ -1640,34 +1640,58 @@ restore_runtime_container() {
 			>/dev/null || return 1
 	done < <(jq -r '.networks[].NetworkID // empty' <<<"$model")
 	backup_name="$name.gonka-displaced-$transaction_id"
+	expected_image=$("$docker_bin" image inspect --format '{{.Id}}' "$image") || \
+		return 1
 	if "$docker_bin" inspect "$backup_name" >/dev/null 2>&1; then
 		backup_exists=true
-		candidate_was_running=true
-	else
-		current=$("${compose[@]}" ps --all --quiet "$service") || return 1
-		if [[ -n $current ]]; then
-			candidate_was_running=$("$docker_bin" inspect --format \
-				'{{.State.Running}}' "$current") || return 1
-			case $candidate_was_running in true | false) ;; *) return 1 ;; esac
-			if [[ $candidate_was_running == true ]]; then
-				"$docker_bin" stop "$current" >/dev/null || return 1
-			fi
-			"$docker_bin" rename "$current" "$backup_name" >/dev/null || {
-				[[ $candidate_was_running != true ]] || \
-					"$docker_bin" start "$current" >/dev/null 2>&1 || true
+	fi
+	if "$docker_bin" inspect "$name" >/dev/null 2>&1; then
+		current_exists=true
+		current_image=$("$docker_bin" inspect --format '{{.Image}}' "$name") || \
+			return 1
+		if [[ $backup_exists == true ]]; then
+			[[ $current_image == "$expected_image" ]] || {
+				warn "$service rollback found both the displaced candidate and an unrelated container under the original name"
 				return 1
 			}
-			backup_exists=true
+			# A previous process reached create or start but died before removing
+			# the displaced candidate. Rebuild the baseline deterministically.
+			"$docker_bin" rm -f "$name" >/dev/null || return 1
+			current_exists=false
+		elif [[ $current_image == "$expected_image" ]]; then
+			# The final backup removal was durable; the exact baseline already
+			# owns its original name and networks.
+			return 0
 		fi
 	fi
-	if ! "$docker_bin" "${create_args[@]}" "$image" "${command_args[@]}" >/dev/null; then
-		if [[ $backup_exists == true ]]; then
-			"$docker_bin" rename "$backup_name" "$name" >/dev/null 2>&1 || true
-			[[ $candidate_was_running != true ]] || \
-				"$docker_bin" start "$name" >/dev/null 2>&1 || true
-		fi
+	if [[ $backup_exists == false ]]; then
+		[[ $current_exists == true ]] || {
+			warn "$service rollback has neither its candidate nor displaced backup"
+			return 1
+		}
+		current=$name
+		value=$("$docker_bin" inspect --format '{{.State.Running}}' "$current") || \
+			return 1
+		case $value in true | false) ;; *) return 1 ;; esac
+		[[ $value != true ]] || "$docker_bin" stop "$current" >/dev/null || \
+			return 1
+		"$docker_bin" rename "$current" "$backup_name" >/dev/null || return 1
+		backup_exists=true
+	fi
+	value=$("$docker_bin" inspect --format '{{.State.Running}}' \
+		"$backup_name") || return 1
+	case $value in true | false) ;; *) return 1 ;; esac
+	[[ $value != true ]] || "$docker_bin" stop "$backup_name" >/dev/null || \
 		return 1
-	fi
+	backup_networks=$("$docker_bin" inspect --format \
+		'{{json .NetworkSettings.Networks}}' "$backup_name") || return 1
+	jq -e 'type == "object"' <<<"$backup_networks" >/dev/null || return 1
+	while IFS= read -r network; do
+		"$docker_bin" network disconnect -f "$network" "$backup_name" \
+			>/dev/null || return 1
+	done < <(jq -r 'keys[]' <<<"$backup_networks")
+	"$docker_bin" "${create_args[@]}" "$image" "${command_args[@]}" \
+		>/dev/null || return 1
 	while IFS= read -r network; do
 		connect_args=(network connect)
 		while IFS= read -r value; do [[ -z $value ]] || connect_args+=(--alias "$value"); done < <(
@@ -1699,26 +1723,19 @@ restore_runtime_container() {
 		connect_args+=("$network" "$name")
 		if ! "$docker_bin" "${connect_args[@]}" >/dev/null; then
 			"$docker_bin" rm -f "$name" >/dev/null 2>&1 || true
-			if [[ $backup_exists == true ]]; then
-				"$docker_bin" rename "$backup_name" "$name" >/dev/null 2>&1 || true
-				[[ $candidate_was_running != true ]] || \
-					"$docker_bin" start "$name" >/dev/null 2>&1 || true
-			fi
 			return 1
 		fi
 	done < <(jq -r '.networks | keys[]' <<<"$model")
 	if [[ ${rollback_service_was_running[$service]-true} != false ]] && \
 		! "$docker_bin" start "$name" >/dev/null; then
 		"$docker_bin" rm -f "$name" >/dev/null 2>&1 || true
-		if [[ $backup_exists == true ]]; then
-			"$docker_bin" rename "$backup_name" "$name" >/dev/null 2>&1 || true
-			[[ $candidate_was_running != true ]] || \
-				"$docker_bin" start "$name" >/dev/null 2>&1 || true
-		fi
 		return 1
 	fi
-	[[ $backup_exists != true ]] || "$docker_bin" rm -f "$backup_name" >/dev/null || \
+	if [[ $backup_exists == true ]] && \
+		! "$docker_bin" rm -f "$backup_name" >/dev/null; then
 		warn "could not remove displaced failed container $backup_name"
+		return 1
+	fi
 }
 
 compensate_active_service() {
