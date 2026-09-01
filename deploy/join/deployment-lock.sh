@@ -17,7 +17,7 @@ gonka_acquire_deployment_lock() {
     fi
 
     if [[ ! -e $GONKA_DEPLOYMENT_LOCK ]]; then
-        (umask 000; : >"$GONKA_DEPLOYMENT_LOCK") || {
+        (umask 077; : >"$GONKA_DEPLOYMENT_LOCK") || {
             echo "deployment-lock: cannot create $GONKA_DEPLOYMENT_LOCK" >&2
             return 1
         }
