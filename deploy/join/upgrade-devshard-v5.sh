@@ -171,7 +171,6 @@ if [[ $maintenance_ack == false ]]; then
     esac
 fi
 devshard_v5_verify_dependencies "$docker_bin"
-devshard_v5_verify_release_source "$script_dir"
 # shellcheck disable=SC1091 # Runtime path is anchored to this script.
 source "$script_dir/compose-topology.sh"
 # shellcheck source=deploy/join/deployment-lock.sh
@@ -502,8 +501,12 @@ restore_saved_topology() {
             "invalid interrupted-upgrade journal $upgrade_journal"
         state_release=$(upgrade_state_release "$upgrade_journal") || fail \
             "cannot read release identity from $upgrade_journal"
-        [[ $state_release == "$release_id" ]] || fail \
-            "unfinished upgrade journal $upgrade_journal belongs to $state_release, not $release_id"
+        if [[ $state_release != "$release_id" ]] && ! jq -e '
+            .transaction.phase == "ingress_verified" and
+            .transaction.decision == "commit"
+        ' "$upgrade_journal" >/dev/null 2>&1; then
+            fail "unfinished upgrade journal $upgrade_journal belongs to $state_release, not $release_id"
+        fi
         state_file=$upgrade_journal
         interrupted_upgrade_loaded=true
 		transaction_id=$(jq -er '.transaction.id' "$state_file")
@@ -555,6 +558,59 @@ restore_saved_topology() {
 committed_marker_loaded=false
 interrupted_upgrade_loaded=false
 restore_saved_topology
+
+# A durable commit decision is self-contained in the journal. Finish it before
+# inspecting the current release checkout or rendering saved Compose files:
+# either may have changed while the host was down, but neither can revoke a
+# decision made after application and ingress verification.
+if [[ $interrupted_upgrade_loaded == true ]] && jq -e '
+    .transaction.phase == "ingress_verified" and
+    .transaction.decision == "commit" and
+    (.transaction.ingress.state == "prepared" or
+     .transaction.ingress.state == "committed")
+' "$upgrade_journal" >/dev/null 2>&1; then
+    [[ $preflight_only == false ]] || fail \
+        "a committed release transaction requires a normal run to finish its durable marker"
+    versiond_mode=$(jq -er '.topology.versiond' "$upgrade_journal")
+    edge_mode=$(jq -er '.topology.edge_api' "$upgrade_journal")
+    transaction_id=$(jq -er '.transaction.id' "$upgrade_journal")
+    operation_id=$transaction_id
+    if ! jq -e '
+        .transaction.ingress.state == "committed" and
+        ((.transaction.ingress.rollback_models? // null) == null)
+    ' "$upgrade_journal" >/dev/null 2>&1; then
+        echo "Finishing committed ingress transaction from its durable journal"
+        ROUTER_HA_TRANSACTION_JOURNAL=$upgrade_journal \
+        ROUTER_HA_TRANSACTION_ID=$transaction_id \
+            "$enable_router_bin" --recover-only
+    fi
+    jq -e '
+        .transaction.ingress.state == "committed" and
+        ((.transaction.ingress.rollback_models? // null) == null)
+    ' "$upgrade_journal" >/dev/null || fail \
+        "committed ingress transaction did not finish its durable cleanup"
+    verified_postgres_identity=$(jq -r \
+        '.transaction.postgres_identity // ""' "$upgrade_journal")
+    if [[ $versiond_mode == ha ]]; then
+        [[ -n $verified_postgres_identity ]] || fail \
+            "committed HA transaction lacks its verified PostgreSQL identity"
+    fi
+    mapfile -t committed_rollback_images < <(jq -r \
+        '.transaction.application_rollback.services[]?.image // empty' \
+        "$upgrade_journal")
+    clear_application_rollback_metadata
+    write_upgrade_marker
+    for rollback_image in "${committed_rollback_images[@]}"; do
+        [[ -n $rollback_image ]] || continue
+        if ! "$docker_bin" image rm "$rollback_image" >/dev/null; then
+            warn "could not remove temporary image tag $rollback_image"
+        fi
+    done
+    echo "Completed the durably committed release transaction"
+    exit 0
+fi
+
+devshard_v5_verify_release_source "$script_dir"
 
 if [[ $versiond_mode == auto ]]; then
     if container_exists devshard-postgres ||

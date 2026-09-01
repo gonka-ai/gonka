@@ -2015,7 +2015,9 @@ grep -q 'release commit is durable; completing forward' "$tmpdir/stderr" || fail
 # are redacted. Recovery must finish the marker without consulting PostgreSQL,
 # whose simultaneous outage cannot revoke an already durable release commit.
 journal_tmp=$(mktemp "$tmpdir/.committed-ingress.XXXXXX")
-jq '.transaction.ingress.state = "committed"' \
+jq '.release_id = "superseded-release-package" |
+    .compose.files = ["/removed/operator-override.yml"] |
+    .transaction.ingress.state = "committed"' \
 	"$tmpdir/upgrade-complete.in-progress" >"$journal_tmp"
 mv "$journal_tmp" "$tmpdir/upgrade-complete.in-progress"
 POSTGRES_DEPLOYMENT_PREFLIGHT_FAIL_MODE=runtime \
@@ -2037,6 +2039,11 @@ assert_contains "$tmpdir/commit-recovery.log" \
 	"enable-router --recover-only"
 assert_not_contains "$tmpdir/commit-recovery.log" \
 	"postgres-deployment-preflight"
+assert_not_contains "$tmpdir/commit-recovery.log" \
+    "compose --project-name gonka-test"
+jq -e '.release_id == "superseded-release-package"' \
+    "$tmpdir/upgrade-complete" >/dev/null || fail \
+    "forward-only recovery replaced the journaled release identity"
 
 run_upgrade single devshard-postgres "$tmpdir/postgres-failure.log"
 assert_contains "$tmpdir/postgres-failure.log" " stop devshard-postgres"
