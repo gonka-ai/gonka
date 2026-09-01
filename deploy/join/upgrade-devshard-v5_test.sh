@@ -1983,6 +1983,12 @@ ROLLBACK_PROBE_FAIL_SERVICE=versiond2 \
 UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \
     run_upgrade single versiond2 "$tmpdir/versiond2-unavailable.log"
 assert_not_contains "$tmpdir/versiond2-unavailable.log" " stop versiond2"
+jq -e '
+    .transaction.application_rollback.services.versiond2.touched == true
+' "$tmpdir/upgrade-complete.in-progress" >/dev/null || fail \
+    "running but unavailable rollback was marked successfully restored"
+grep -q 'automatic rollback of versiond2 failed' "$tmpdir/stderr" || fail \
+    "unavailable rollback did not retain an operator-visible failure"
 
 ROLLBACK_EMPTY_VERSIOND_SERVICE=versiond2 \
 UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \

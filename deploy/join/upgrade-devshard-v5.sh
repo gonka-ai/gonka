@@ -1412,7 +1412,6 @@ stop_failed_service() {
 rollback_service() {
     local service=$1
     local rollback_image=${rollback_images[$service]-}
-    local container_id
 
     if [[ ${rollback_service_was_absent[$service]-false} == true ]]; then
         echo "Restoring absent $service baseline" >&2
@@ -1438,12 +1437,6 @@ rollback_service() {
 			return 0
 		fi
         if wait_for_rollback_availability "$service"; then
-            return 0
-        fi
-        container_id=$("${compose[@]}" ps --all --quiet "$service")
-        if [[ -n $container_id && \
-            $("$docker_bin" inspect --format '{{.State.Running}}' "$container_id") == true ]]; then
-            warn "restored $service is running but its external dependency is not yet available; leaving restart-policy recovery armed"
             return 0
         fi
     fi
