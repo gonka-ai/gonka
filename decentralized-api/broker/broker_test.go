@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/chainphase"
 	"decentralized-api/mlnodeclient"
@@ -949,6 +950,82 @@ func TestNodeRemoval(t *testing.T) {
 	if <-availableNode != nil {
 		t.Fatalf("expected nil, got node")
 	}
+}
+
+func TestRemoveNodeDoesNotBlockStartPocCommand(t *testing.T) {
+	broker := NewTestBroker()
+	mockBridge := broker.chainBridge.(*MockBrokerChainBridge)
+	mockBridge.On("GetBlockHash", mock.Anything).Return("hash", nil).Maybe()
+	mockBridge.On("GetParams").Return(&types.QueryParamsResponse{Params: types.Params{}}, nil).Maybe()
+
+	hung := createTestNode("hung-node")
+	live := createTestNode("live-node")
+	hung.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+	live.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+
+	broker.mu.Lock()
+	broker.nodes["hung-node"] = hung
+	broker.nodes["live-node"] = live
+	broker.mu.Unlock()
+
+	hungWorker := NewNodeWorkerWithClient("hung-node", hung, mlnodeclient.NewMockClient(), broker)
+	broker.nodeWorkGroup.AddWorker("hung-node", hungWorker)
+
+	started := make(chan struct{})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	require.True(t, hungWorker.Submit(ctx, &TestCommand{
+		ExecuteFn: func(ctx context.Context, w *NodeWorker) NodeResult {
+			close(started)
+			<-ctx.Done()
+			return NodeResult{Succeeded: false, Error: ctx.Err().Error()}
+		},
+	}))
+	<-started
+
+	broker.phaseTracker.Update(
+		chainphase.BlockInfo{Height: 105, Hash: "hash-poc"},
+		&types.Epoch{Index: 1, PocStartBlockHeight: 100},
+		&types.EpochParams{
+			EpochLength:           100,
+			EpochMultiplier:       1,
+			PocStageDuration:      20,
+			PocExchangeDuration:   1,
+			PocValidationDelay:    2,
+			PocValidationDuration: 10,
+		},
+		true,
+		nil,
+	)
+	require.Equal(t, types.PoCGeneratePhase, broker.phaseTracker.GetCurrentEpochState().CurrentPhase)
+
+	removeResp := make(chan bool, 2)
+	start := time.Now()
+	queueMessage(t, broker, RemoveNode{NodeId: "hung-node", Response: removeResp})
+
+	select {
+	case removed := <-removeResp:
+		require.True(t, removed)
+	case <-time.After(2 * time.Second):
+		t.Fatal("RemoveNode blocked the broker command loop while a worker HTTP call was in flight")
+	}
+	require.Less(t, time.Since(start), time.Second, "RemoveNode must return without waiting for worker HTTP")
+
+	startPoc := NewStartPocCommand()
+	queueMessage(t, broker, startPoc)
+	select {
+	case <-startPoc.Response:
+	case <-time.After(2 * time.Second):
+		t.Fatal("StartPocCommand did not execute; it was likely stuck behind RemoveNode")
+	}
+
+	require.Equal(t, types.HardwareNodeStatus_POC, live.State.IntendedStatus)
+	require.Equal(t, PocStatusGenerating, live.State.PocIntendedStatus)
+
+	broker.mu.RLock()
+	_, hungStillRegistered := broker.nodes["hung-node"]
+	broker.mu.RUnlock()
+	require.False(t, hungStillRegistered)
 }
 
 func TestModelMismatch(t *testing.T) {

@@ -304,17 +304,32 @@ func (r RemoveNode) GetResponseChannelCapacity() int {
 }
 
 func (command RemoveNode) Execute(b *Broker) {
-	// Remove the worker first (it will wait for pending jobs)
-	b.nodeWorkGroup.RemoveWorker(command.NodeId)
+	// Unregister immediately and never wait on processCommands. Worker HTTP
+	// (inference/up, stop, PoC) can take up to the ML-node client timeout
+	// (15 minutes). Waiting here stalls StartPocCommand for every node.
+	var cancel func()
+	existed := false
 
 	b.mu.Lock()
-	defer b.mu.Unlock()
+	if node, ok := b.nodes[command.NodeId]; ok {
+		existed = true
+		cancel = node.State.cancelInFlightTask
+		node.State.cancelInFlightTask = nil
+		node.State.ReconcileInfo = nil
+		delete(b.nodes, command.NodeId)
+	}
+	b.mu.Unlock()
 
-	if _, ok := b.nodes[command.NodeId]; !ok {
+	if cancel != nil {
+		cancel()
+	}
+
+	b.nodeWorkGroup.RemoveWorker(command.NodeId)
+
+	if !existed {
 		command.Response <- false
 		return
 	}
-	delete(b.nodes, command.NodeId)
 	if b.configManager != nil {
 		if err := b.configManager.DeleteAppliedDeploymentsForNode(context.Background(), command.NodeId); err != nil {
 			logging.Warn("Failed to delete applied deployments for removed node", types.Config,

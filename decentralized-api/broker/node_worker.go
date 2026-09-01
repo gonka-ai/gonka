@@ -23,6 +23,9 @@ type NodeWorker struct {
 	broker            *Broker
 	commands          chan commandWithContext
 	shutdown          chan struct{}
+	shutdownOnce      sync.Once
+	mu                sync.Mutex
+	stopping          bool
 	wg                sync.WaitGroup
 	availableVersions map[string]bool
 	versionsMu        sync.Mutex
@@ -65,32 +68,58 @@ func (w *NodeWorker) run() {
 	for {
 		select {
 		case item := <-w.commands:
-			result := item.cmd.Execute(item.ctx, w)
-			result.DeploymentGeneration = item.generation
-
-			// Queue a command back to the broker to update the state
-			updateCmd := NewUpdateNodeResultCommand(w.nodeId, result)
-			if err := w.broker.QueueMessage(updateCmd); err != nil {
-				logging.Error("Failed to queue node result update command", types.Nodes,
-					"node_id", w.nodeId, "error", err)
-			}
-			// We don't wait for the response from updateCmd, the worker's job is done.
-			w.wg.Done()
-		case <-w.shutdown:
-			// Drain remaining commands before shutting down
-			close(w.commands)
-			for item := range w.commands {
-				result := item.cmd.Execute(item.ctx, w)
-				result.DeploymentGeneration = item.generation
-				updateCmd := NewUpdateNodeResultCommand(w.nodeId, result)
-				if err := w.broker.QueueMessage(updateCmd); err != nil {
-					logging.Error("Failed to queue node result update command during shutdown", types.Nodes,
-						"node_id", w.nodeId, "error", err)
-				}
+			if w.isStopping() {
+				// select can pick a queued command even after shutdown is signaled.
+				// Drop it instead of starting another ML-node HTTP call.
 				w.wg.Done()
+				dropped := 1 + w.dropQueuedCommands()
+				w.logDropped(dropped)
+				return
 			}
+			w.execute(item)
+		case <-w.shutdown:
+			dropped := w.dropQueuedCommands()
+			w.logDropped(dropped)
 			return
 		}
+	}
+}
+
+func (w *NodeWorker) execute(item commandWithContext) {
+	result := item.cmd.Execute(item.ctx, w)
+	result.DeploymentGeneration = item.generation
+
+	updateCmd := NewUpdateNodeResultCommand(w.nodeId, result)
+	if err := w.broker.QueueMessage(updateCmd); err != nil {
+		logging.Error("Failed to queue node result update command", types.Nodes,
+			"node_id", w.nodeId, "error", err)
+	}
+	w.wg.Done()
+}
+
+func (w *NodeWorker) isStopping() bool {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.stopping
+}
+
+func (w *NodeWorker) dropQueuedCommands() int {
+	dropped := 0
+	for {
+		select {
+		case <-w.commands:
+			dropped++
+			w.wg.Done()
+		default:
+			return dropped
+		}
+	}
+}
+
+func (w *NodeWorker) logDropped(dropped int) {
+	if dropped > 0 {
+		logging.Info("Dropped queued worker commands on shutdown", types.Nodes,
+			"node_id", w.nodeId, "dropped", dropped)
 	}
 }
 
@@ -100,20 +129,30 @@ func (w *NodeWorker) Submit(ctx context.Context, cmd NodeWorkerCommand) bool {
 }
 
 func (w *NodeWorker) submit(ctx context.Context, cmd NodeWorkerCommand, generation uint64) bool {
-	w.wg.Add(1)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.stopping {
+		return false
+	}
 	select {
 	case w.commands <- commandWithContext{cmd: cmd, ctx: ctx, generation: generation}:
+		w.wg.Add(1)
 		return true
 	default:
-		w.wg.Done()
 		return false
 	}
 }
 
-// Shutdown gracefully stops the worker
+// Shutdown stops the worker. The in-flight command may still run until its
+// context is cancelled; queued commands are dropped. Safe to call twice.
 func (w *NodeWorker) Shutdown() {
-	close(w.shutdown)
-	w.wg.Wait() // Wait for all pending commands to complete
+	w.shutdownOnce.Do(func() {
+		w.mu.Lock()
+		w.stopping = true
+		w.mu.Unlock()
+		close(w.shutdown)
+	})
+	w.wg.Wait()
 }
 
 func (w *NodeWorker) RefreshClientImmediate(oldVersion, newVersion string) {
@@ -178,14 +217,18 @@ func (g *NodeWorkGroup) AddWorker(nodeId string, worker *NodeWorker) {
 	g.workers[nodeId] = worker
 }
 
-// RemoveWorker removes and shuts down a worker
+// RemoveWorker unregisters the worker immediately and shuts it down in the
+// background. Must not wait: callers run on the shared broker command loop.
 func (g *NodeWorkGroup) RemoveWorker(nodeId string) {
 	g.mu.Lock()
-	defer g.mu.Unlock()
-
-	if worker, exists := g.workers[nodeId]; exists {
-		worker.Shutdown()
+	worker, exists := g.workers[nodeId]
+	if exists {
 		delete(g.workers, nodeId)
+	}
+	g.mu.Unlock()
+
+	if exists {
+		go worker.Shutdown()
 	}
 }
 

@@ -172,35 +172,87 @@ func TestNodeWorker_QueueFull(t *testing.T) {
 	assert.Equal(t, 15, slowCmdFailed, "Should fail exactly 15 commands (beyond queue size)")
 }
 
-func TestNodeWorker_GracefulShutdown(t *testing.T) {
+func TestNodeWorker_ShutdownDropsQueuedCommands(t *testing.T) {
 	broker := NewTestBroker2(10)
 	node := createTestNode("test-node-1")
 	mockClient := mlnodeclient.NewMockClient()
 	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient, broker)
 
-	// Submit commands that will execute during shutdown
-	var executedCount int32
-	for i := 0; i < 5; i++ {
+	started := make(chan struct{})
+	inFlight := &TestCommand{
+		ExecuteFn: func(ctx context.Context, worker *NodeWorker) NodeResult {
+			close(started)
+			time.Sleep(30 * time.Millisecond)
+			return NodeResult{Succeeded: true}
+		},
+	}
+	require.True(t, worker.Submit(context.Background(), inFlight))
+	<-started
+
+	var queuedExecuted int32
+	for i := 0; i < 4; i++ {
 		cmd := &TestCommand{
 			ExecuteFn: func(ctx context.Context, worker *NodeWorker) NodeResult {
-				atomic.AddInt32(&executedCount, 1)
-				time.Sleep(10 * time.Millisecond)
+				atomic.AddInt32(&queuedExecuted, 1)
 				return NodeResult{Succeeded: true}
 			},
 		}
-		worker.Submit(context.Background(), cmd)
+		require.True(t, worker.Submit(context.Background(), cmd))
 	}
 
-	// Give first command time to start
-	time.Sleep(5 * time.Millisecond)
+	done := make(chan struct{})
+	go func() {
+		worker.Shutdown()
+		close(done)
+	}()
 
-	// Shutdown should wait for all commands
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Shutdown blocked on queued worker commands")
+	}
+
+	assert.Equal(t, int32(0), atomic.LoadInt32(&queuedExecuted),
+		"queued commands must be dropped, not executed, on shutdown")
+}
+
+func TestNodeWorker_SubmitRejectedAfterShutdown(t *testing.T) {
+	broker := NewTestBroker2(4)
+	node := createTestNode("test-node-1")
+	worker := NewNodeWorkerWithClient("test-node-1", node, mlnodeclient.NewMockClient(), broker)
+
 	worker.Shutdown()
 
-	assert.Equal(t, int32(5), atomic.LoadInt32(&executedCount),
-		"All queued commands should execute before shutdown completes")
+	accepted := worker.Submit(context.Background(), &TestCommand{
+		ExecuteFn: func(ctx context.Context, worker *NodeWorker) NodeResult {
+			t.Error("command must not execute after shutdown")
+			return NodeResult{Succeeded: true}
+		},
+	})
+	assert.False(t, accepted, "Submit after shutdown must be rejected")
+}
 
-	assert.Len(t, broker.highPriorityCommands, 5, "Should have 5 results in broker channel")
+func TestNodeWorker_ShutdownDropsCommandWhenSelectPicksWork(t *testing.T) {
+	broker := NewTestBroker2(16)
+	node := createTestNode("test-node-1")
+	worker := NewNodeWorkerWithClient("test-node-1", node, mlnodeclient.NewMockClient(), broker)
+
+	var executed int32
+	for i := 0; i < 10; i++ {
+		cmd := &TestCommand{
+			ExecuteFn: func(ctx context.Context, worker *NodeWorker) NodeResult {
+				atomic.AddInt32(&executed, 1)
+				time.Sleep(20 * time.Millisecond)
+				return NodeResult{Succeeded: true}
+			},
+		}
+		require.True(t, worker.Submit(context.Background(), cmd))
+	}
+
+	worker.Shutdown()
+
+	assert.LessOrEqual(t, atomic.LoadInt32(&executed), int32(1),
+		"at most the in-flight command may run; queued work must be dropped after shutdown")
 }
 
 func TestNodeWorker_Cancellation(t *testing.T) {
@@ -622,6 +674,46 @@ func TestNodeWorkGroup_AddRemoveWorkers(t *testing.T) {
 
 	_, exists1 = group.GetWorker("node-1")
 	assert.False(t, exists1, "Worker 1 should not exist after removal")
+}
+
+func TestNodeWorkGroup_RemoveWorkerDoesNotBlockOnInFlightHTTP(t *testing.T) {
+	group := NewNodeWorkGroup()
+	broker := NewTestBroker2(4)
+
+	hung := createTestNode("hung")
+	other := createTestNode("other")
+	hungWorker := NewNodeWorkerWithClient("hung", hung, mlnodeclient.NewMockClient(), broker)
+	otherWorker := NewNodeWorkerWithClient("other", other, mlnodeclient.NewMockClient(), broker)
+	group.AddWorker("hung", hungWorker)
+	group.AddWorker("other", otherWorker)
+
+	started := make(chan struct{})
+	require.True(t, hungWorker.Submit(context.Background(), &TestCommand{
+		ExecuteFn: func(ctx context.Context, w *NodeWorker) NodeResult {
+			close(started)
+			time.Sleep(300 * time.Millisecond)
+			return NodeResult{Succeeded: true}
+		},
+	}))
+	<-started
+
+	removed := make(chan struct{})
+	go func() {
+		group.RemoveWorker("hung")
+		close(removed)
+	}()
+
+	select {
+	case <-removed:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("RemoveWorker blocked while a worker command was in flight")
+	}
+
+	_, hungExists := group.GetWorker("hung")
+	assert.False(t, hungExists)
+	gotOther, otherExists := group.GetWorker("other")
+	assert.True(t, otherExists)
+	assert.Equal(t, otherWorker, gotOther)
 }
 
 func TestNodeWorker_CheckClientVersionAlive(t *testing.T) {
