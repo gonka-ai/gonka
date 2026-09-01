@@ -304,6 +304,7 @@ container_route_ready() {
     # A launched shell always reports whether wget reached a ready endpoint.
     # Failure to launch or complete docker exec remains a distinct diagnostic
     # error instead of looking like an ordinary 503/not-yet-ready response.
+    # shellcheck disable=SC2016 # The inner shell expands its positional URL.
     result=$(bounded_container_exec "$id" /bin/sh -c '
         if /bin/busybox wget -q -O /dev/null "$1" 2>/dev/null; then
             printf ready
