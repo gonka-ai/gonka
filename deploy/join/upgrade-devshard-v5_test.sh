@@ -591,6 +591,7 @@ run_upgrade() {
         INCOMPATIBLE_COMPOSE_CONTAINER="${INCOMPATIBLE_COMPOSE_CONTAINER-}" \
         MISSING_COMPOSE_SERVICE="${MISSING_COMPOSE_SERVICE-}" \
         POSTGRES_MIGRATION_PROBE="${POSTGRES_MIGRATION_PROBE-}" \
+        FAIL_INGRESS_FINALIZE="${FAIL_INGRESS_FINALIZE:-false}" \
         "$script_dir/upgrade-devshard-v5.sh" \
         --versiond-mode "$versiond_mode" --edge-mode "$mode" \
         >"$tmpdir/stdout" 2>"$tmpdir/stderr"; then
@@ -826,13 +827,19 @@ printf 'enable-router-fleet %s\n' \
     "${ROUTER_HA_EXPECTED_FLEET_SPEC_SHA256-}" >>"$DOCKER_LOG"
 if [[ " $* " == *" --recover-only "* ]]; then
     tmp=$(mktemp "$(dirname -- "$ROUTER_HA_TRANSACTION_JOURNAL")/.recover.XXXXXX")
-    jq '.transaction.ingress.state = "rolled_back" |
+    jq 'if .transaction.decision == "commit" then
+            .transaction.ingress.state = "committed"
+        else .transaction.ingress.state = "rolled_back"
+        end |
         del(.transaction.ingress.rollback_models)' \
         "$ROUTER_HA_TRANSACTION_JOURNAL" >"$tmp"
     mv "$tmp" "$ROUTER_HA_TRANSACTION_JOURNAL"
     exit 0
 fi
 if [[ " $* " == *" --finalize-transaction "* ]]; then
+	[[ $(jq -r '.transaction.decision // ""' \
+		"$ROUTER_HA_TRANSACTION_JOURNAL") == commit ]] || exit 1
+	[[ ${FAIL_INGRESS_FINALIZE:-false} != true ]] || exit 1
     tmp=$(mktemp "$(dirname -- "$ROUTER_HA_TRANSACTION_JOURNAL")/.finalize.XXXXXX")
     jq '.transaction.ingress.state = "committed" |
         del(.transaction.ingress.rollback_models)' \
@@ -1862,6 +1869,23 @@ assert_contains "$tmpdir/marker-missing-proxy.log" \
 	"enable-router --versiond-mode ha --edge-mode single"
 grep -q 'public proxy is absent' "$tmpdir/marker-missing-proxy.stderr" || fail \
 	"missing proxy recovery was not reported"
+
+FAIL_INGRESS_FINALIZE=true \
+    run_upgrade single none "$tmpdir/commit-finalize-failure.log"
+jq -e '.transaction.phase == "ingress_verified" and
+       .transaction.decision == "commit" and
+       .transaction.ingress.state == "prepared" and
+       (.transaction.application_rollback.services | length > 0)' \
+    "$tmpdir/upgrade-complete.in-progress" >/dev/null || fail \
+    "failed finalization did not retain the durable forward-only decision"
+assert_not_contains "$tmpdir/commit-finalize-failure.log" \
+    "enable-router --recover-only"
+if grep -q 'gonka-upgrade-rollback/.* up ' \
+    "$tmpdir/commit-finalize-failure.log"; then
+    fail "application rollback ran after the durable commit decision"
+fi
+grep -q 'release commit is durable; completing forward' "$tmpdir/stderr" || fail \
+    "post-decision failure did not enter forward-only recovery"
 
 run_upgrade single devshard-postgres "$tmpdir/postgres-failure.log"
 assert_contains "$tmpdir/postgres-failure.log" " stop devshard-postgres"

@@ -818,10 +818,11 @@ redact_ingress_rollback_models() {
 }
 
 rollback_ingress_transaction() {
-	local resource restored=true
+	local resource restored=true state
 	local -a touched=()
 	[[ -f $transaction_journal ]] || return 0
-	[[ $(jq -r '.transaction.ingress.state // ""' "$transaction_journal") == active ]] || return 0
+	state=$(jq -r '.transaction.ingress.state // ""' "$transaction_journal")
+	[[ $state == active || $state == prepared ]] || return 0
 	mapfile -t touched < <(jq -r '.transaction.ingress.touched | reverse[]' \
 		"$transaction_journal")
 	for resource in "${touched[@]}"; do
@@ -856,7 +857,7 @@ rollback_ingress_transaction() {
 
 recover_interrupted_ingress() {
 	[[ -f $transaction_journal ]] || return 0
-	local state
+	local state decision
 	state=$(jq -er '
 		if type != "object" then error("journal is not an object")
 		elif (.transaction.ingress? // null) == null then "none"
@@ -871,11 +872,25 @@ recover_interrupted_ingress() {
 		end
 	' "$transaction_journal") || fail \
 		"invalid ingress transaction journal $transaction_journal; journal retained"
+	decision=$(jq -r '.transaction.decision // "rollback"' \
+		"$transaction_journal") || fail \
+		"cannot read the owning transaction decision"
+	case $decision in
+		rollback | commit) ;;
+		*) fail "invalid owning transaction decision '$decision'" ;;
+	esac
 	case $state in
 		active | prepared)
-			warn "recovering interrupted ingress transaction from $transaction_journal"
-			rollback_ingress_transaction || fail \
-				"interrupted ingress rollback failed; journal retained at $transaction_journal"
+			if [[ $decision == commit ]]; then
+				[[ $state == prepared ]] || fail \
+					"owning transaction committed before ingress was prepared"
+				warn "finishing committed ingress transaction from $transaction_journal"
+				finalize_ingress_transaction
+			else
+				warn "recovering interrupted ingress transaction from $transaction_journal"
+				rollback_ingress_transaction || fail \
+					"interrupted ingress rollback failed; journal retained at $transaction_journal"
+			fi
 			;;
 		committed | rolled_back)
 			cleanup_ingress_rollback_images
@@ -907,6 +922,9 @@ commit_ingress_transaction() {
 finalize_ingress_transaction() {
 	[[ -f $transaction_journal ]] || fail \
 		"ingress transaction journal does not exist: $transaction_journal"
+	[[ $(jq -r '.transaction.decision // ""' \
+		"$transaction_journal") == commit ]] || fail \
+		"owning release transaction has no durable commit decision"
 	[[ $(jq -r '.transaction.ingress.state // ""' "$transaction_journal") == prepared ]] || fail \
 		"ingress transaction is not prepared for outer commit"
 	update_ingress_record \

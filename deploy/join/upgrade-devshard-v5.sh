@@ -399,6 +399,7 @@ write_upgrade_journal() {
 			fleet_spec_sha256: $fleet_spec_sha,
 			updated_at_unix: (now | floor)
 		})}
+		| .transaction.decision = (.transaction.decision // "rollback")
 		| if $postgres_identity == "" then .
 		  else .transaction.postgres_identity = $postgres_identity end
 	' <<<"$desired_upgrade_marker") || fail "cannot encode upgrade journal"
@@ -430,6 +431,7 @@ write_upgrade_marker() {
     fi
 	jq -e '
 		.transaction.phase == "ingress_verified" and
+		.transaction.decision == "commit" and
 		((.transaction.ingress.rollback_models? // null) == null)
 	' "$upgrade_journal" >/dev/null || fail \
 		"upgrade journal is not safe to commit"
@@ -914,6 +916,25 @@ clear_application_rollback_metadata() {
     updated=$(jq -c 'del(.transaction.application_rollback)' \
         "$upgrade_journal") || fail \
         "cannot clear committed application rollback metadata"
+    atomic_write_upgrade_state "$upgrade_journal" "$updated"
+}
+
+write_upgrade_commit_decision() {
+    local updated
+    updated=$(jq -c '
+        if .transaction.phase != "ingress_verified" then
+            error("applications and ingress are not verified")
+        elif .transaction.ingress.state != "prepared" then
+            error("ingress is not prepared")
+        elif .transaction.decision != "rollback" and
+             .transaction.decision != "commit" then
+            error("invalid transaction decision")
+        else
+            .transaction.decision = "commit"
+            | .transaction.commit_decided_at_unix = (now | floor)
+        end
+    ' "$upgrade_journal") || fail \
+        "cannot record the unified release commit decision"
     atomic_write_upgrade_state "$upgrade_journal" "$updated"
 }
 
@@ -1609,6 +1630,41 @@ handle_exit() {
     fi
 
     set +e
+	decision_source=
+	if [[ -f $upgrade_journal ]]; then
+		decision_source=$upgrade_journal
+	elif [[ -f $upgrade_marker ]]; then
+		decision_source=$upgrade_marker
+	fi
+	if [[ -n $decision_source ]] && jq -e --arg id "$transaction_id" \
+		'.transaction.id == $id and .transaction.decision == "commit"' \
+		"$decision_source" >/dev/null 2>&1; then
+		warn "release commit is durable; completing forward without application rollback"
+		if [[ $decision_source == "$upgrade_journal" ]]; then
+			ingress_state=$(jq -r '.transaction.ingress.state // ""' \
+				"$upgrade_journal")
+			if [[ $ingress_state == prepared ]]; then
+				ROUTER_HA_TRANSACTION_JOURNAL=$upgrade_journal \
+				ROUTER_HA_TRANSACTION_ID=$transaction_id \
+					"$enable_router_bin" --finalize-transaction || \
+					warn "committed ingress finalization remains pending"
+			elif [[ $ingress_state != committed ]]; then
+				warn "committed transaction has invalid ingress state '$ingress_state'"
+				exit "$status"
+			fi
+			if [[ $(jq -r '.transaction.ingress.state // ""' \
+				"$upgrade_journal") == committed ]]; then
+				if clear_application_rollback_metadata; then
+					write_upgrade_marker || \
+						warn "committed release marker finalization remains pending"
+				else
+					warn "committed application metadata cleanup remains pending"
+				fi
+			fi
+		fi
+		[[ -f $upgrade_journal ]] || cleanup_rollback_tags
+		exit "$status"
+	fi
 	if [[ -f $upgrade_journal ]] && jq -e \
 		'.transaction.ingress.state == "active" or .transaction.ingress.state == "prepared"' \
 		"$upgrade_journal" >/dev/null 2>&1; then
@@ -1818,6 +1874,7 @@ if [[ $day2_reconcile == true ]]; then
     verify_router_fleet_spec
     write_upgrade_journal ingress_verified
     verify_compose_model_unchanged
+	write_upgrade_commit_decision
 	run_interruptible env \
 		ROUTER_HA_TRANSACTION_JOURNAL="$upgrade_journal" \
 		ROUTER_HA_TRANSACTION_ID="$transaction_id" \
@@ -1919,6 +1976,7 @@ verify_release_ingress_state || fail \
 verify_router_fleet_spec
 write_upgrade_journal ingress_verified
 verify_compose_model_unchanged
+write_upgrade_commit_decision
 run_interruptible env \
 	ROUTER_HA_TRANSACTION_JOURNAL="$upgrade_journal" \
 	ROUTER_HA_TRANSACTION_ID="$transaction_id" \

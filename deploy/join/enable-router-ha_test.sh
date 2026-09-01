@@ -891,6 +891,63 @@ if grep -q 'policy-image=gonka/router-ha-policy-rollback:proxy-policy-' \
     fail "rollback replaced the untouched active policy slot"
 fi
 
+# A deferred ingress transaction is still reversible until its owner records
+# one durable decision. Recovery must restore the prepared generation rather
+# than reporting success without touching it.
+prepared_journal="$tmpdir/prepared-ingress.json"
+INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
+INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/prepared-ingress.log" env \
+        ROUTER_HA_TRANSACTION_JOURNAL="$prepared_journal" \
+        ROUTER_HA_TRANSACTION_ID=test-prepared-ingress \
+        ROUTER_HA_DEFER_COMMIT=true
+jq -e '.transaction.ingress.state == "prepared"' \
+    "$prepared_journal" >/dev/null || fail \
+    "deferred ingress transaction was not prepared"
+: >"$tmpdir/prepared-recovery.log"
+env DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$tmpdir/prepared-recovery.log" \
+    STATE_DIR="$tmpdir" \
+    JOIN_DIR="$script_dir" \
+    ROUTER_HA_TRANSACTION_JOURNAL="$prepared_journal" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/enable-router-ha.sh" --recover-only
+jq -e '.transaction.ingress.state == "rolled_back" and
+       (.transaction.ingress.rollback_models? // null) == null' \
+    "$prepared_journal" >/dev/null || fail \
+    "prepared ingress recovery did not restore and redact its generation"
+grep -q 'gonka-rollback-model\..* up .*proxy' \
+    "$tmpdir/prepared-recovery.log" || fail \
+    "prepared ingress recovery was a successful no-op"
+
+# The same prepared state becomes forward-only once the owner commits. A
+# recover-only process must finalize it without invoking any rollback model.
+committed_journal="$tmpdir/committed-ingress.json"
+INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
+INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/committed-ingress.log" env \
+        ROUTER_HA_TRANSACTION_JOURNAL="$committed_journal" \
+        ROUTER_HA_TRANSACTION_ID=test-committed-ingress \
+        ROUTER_HA_DEFER_COMMIT=true
+jq '.transaction.decision = "commit"' "$committed_journal" \
+    >"$tmpdir/committed-ingress.decision"
+mv "$tmpdir/committed-ingress.decision" "$committed_journal"
+: >"$tmpdir/committed-recovery.log"
+env DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$tmpdir/committed-recovery.log" \
+    STATE_DIR="$tmpdir" \
+    JOIN_DIR="$script_dir" \
+    ROUTER_HA_TRANSACTION_JOURNAL="$committed_journal" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/enable-router-ha.sh" --recover-only
+jq -e '.transaction.ingress.state == "committed" and
+       (.transaction.ingress.rollback_models? // null) == null' \
+    "$committed_journal" >/dev/null || fail \
+    "durably committed ingress did not finish forward"
+if grep -q 'gonka-rollback-model' "$tmpdir/committed-recovery.log"; then
+    fail "durably committed ingress used a rollback model"
+fi
+
 set +e
 INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
 INITIAL_PROXY_COMPONENT=proxy-router \
