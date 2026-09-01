@@ -127,6 +127,7 @@ type Broker struct {
 	nodes                map[string]*NodeWithState
 	mu                   sync.RWMutex
 	curMaxNodesNum       atomic.Uint64
+	nextRegistrationSeq  atomic.Uint64
 	chainBridge          BrokerChainBridge
 	nodeWorkGroup        *NodeWorkGroup
 	phaseTracker         *chainphase.ChainPhaseTracker
@@ -143,8 +144,9 @@ type Broker struct {
 }
 
 type lockEntry struct {
-	nodeID    string
-	createdAt time.Time
+	nodeID          string
+	registrationSeq uint64
+	createdAt       time.Time
 }
 
 // GetParticipantAddress returns the current participant's address if available.
@@ -177,6 +179,7 @@ type Node struct {
 	MaxConcurrent    int                  `json:"max_concurrent"`
 	NodeNum          uint64               `json:"node_num"`
 	Hardware         []apiconfig.Hardware `json:"hardware"`
+	RegistrationSeq  uint64               `json:"registration_seq,omitempty"`
 }
 
 func (n *Node) InferenceUrl() string {
@@ -234,6 +237,9 @@ type NodeState struct {
 	// DeploymentGeneration increments for each dispatched reconciliation so
 	// late results from a cancelled attempt cannot be applied to a newer one.
 	DeploymentGeneration uint64 `json:"deployment_generation,omitempty"`
+	// RegistrationSeq is assigned once at RegisterNode. It does not
+	// reset across reconciles; re-registering the same id gets a new value.
+	RegistrationSeq uint64 `json:"registration_seq,omitempty"`
 
 	// Epoch data for this node, keyed by model_id.
 	// We currently expect one item in each map.
@@ -490,8 +496,14 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 	if leastBusyNode == nil {
 		command.Response <- nil
 	} else {
-		command.Response <- &leastBusyNode.Node
+		command.Response <- nodeWithLease(leastBusyNode)
 	}
+}
+
+func nodeWithLease(nws *NodeWithState) *Node {
+	n := nws.Node
+	n.RegistrationSeq = nws.State.RegistrationSeq
+	return &n
 }
 
 func (b *Broker) getLeastBusyNode(command LockAvailableNode) *NodeWithState {
@@ -577,8 +589,20 @@ func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, currentE
 func (b *Broker) releaseNode(command ReleaseNode) {
 	b.mu.Lock()
 	node, ok := b.nodes[command.NodeId]
+	released := false
 	if ok {
-		node.State.LockCount--
+		if node.State.RegistrationSeq != command.RegistrationSeq {
+			logging.Info("Ignoring release for node. registration seq mismatch", types.Nodes,
+				"node_id", command.NodeId,
+				"release_registration_seq", command.RegistrationSeq,
+				"current_registration_seq", node.State.RegistrationSeq)
+		} else if node.State.LockCount <= 0 {
+			logging.Info("Ignoring release for node. lock count already 0", types.Nodes,
+				"node_id", command.NodeId)
+		} else {
+			node.State.LockCount--
+			released = true
+		}
 	}
 	b.mu.Unlock()
 
@@ -589,8 +613,10 @@ func (b *Broker) releaseNode(command ReleaseNode) {
 	if !command.Outcome.IsSuccess() {
 		logging.Error("Node failed", types.Nodes, "node_id", command.NodeId, "reason", command.Outcome.GetMessage())
 	}
-	logging.Debug("Released node", types.Nodes, "node_id", command.NodeId)
-	command.Response <- true
+	if released {
+		logging.Debug("Released node", types.Nodes, "node_id", command.NodeId)
+	}
+	command.Response <- released
 }
 
 var ErrNoNodesAvailable = errors.New("no nodes available for inference")
@@ -617,9 +643,10 @@ func LockNode[T any](
 
 	defer func() {
 		queueError := b.QueueMessage(ReleaseNode{
-			NodeId:   node.Id,
-			Outcome:  InferenceSuccess{},
-			Response: make(chan bool, 2),
+			NodeId:          node.Id,
+			RegistrationSeq: node.RegistrationSeq,
+			Outcome:         InferenceSuccess{},
+			Response:        make(chan bool, 2),
 		})
 
 		if queueError != nil {
@@ -1392,6 +1419,7 @@ func nodeStatusQueryWorker(broker *Broker) {
 				nodeResp.State.PoCValidationInference != queryStatusResult.PoCValidationInference {
 				statusUpdates = append(statusUpdates, StatusUpdate{
 					NodeId:                 nodeResp.Node.Id,
+					RegistrationSeq:        nodeResp.State.RegistrationSeq,
 					PrevStatus:             queryStatusResult.PrevStatus,
 					NewStatus:              queryStatusResult.CurrentStatus,
 					Timestamp:              timestamp,

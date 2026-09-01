@@ -91,6 +91,7 @@ func TestNodeWorker_BasicOperation(t *testing.T) {
 func TestNodeWorker_StampsDeploymentGenerationOnResult(t *testing.T) {
 	broker := NewTestBroker2(1)
 	node := createTestNode("test-node-1")
+	node.State.RegistrationSeq = 9
 	mockClient := mlnodeclient.NewMockClient()
 	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient, broker)
 	defer worker.Shutdown()
@@ -107,6 +108,7 @@ func TestNodeWorker_StampsDeploymentGenerationOnResult(t *testing.T) {
 		updateCmd, ok := receivedCmd.(UpdateNodeResultCommand)
 		require.True(t, ok)
 		require.Equal(t, uint64(7), updateCmd.Result.DeploymentGeneration)
+		require.Equal(t, uint64(9), updateCmd.Result.RegistrationSeq)
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("timed out waiting for broker to receive command")
 	}

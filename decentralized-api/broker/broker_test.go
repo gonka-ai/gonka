@@ -889,10 +889,11 @@ func registerNodeAndSetInferenceStatus(t *testing.T, broker *Broker, node apicon
 	setStatusCommand := NewSetNodesActualStatusCommand(
 		[]StatusUpdate{
 			{
-				NodeId:     node.Id,
-				PrevStatus: types.HardwareNodeStatus_UNKNOWN,
-				NewStatus:  types.HardwareNodeStatus_INFERENCE,
-				Timestamp:  time.Now(),
+				NodeId:          node.Id,
+				RegistrationSeq: nodeRegistrationSeq(t, broker, node.Id),
+				PrevStatus:      types.HardwareNodeStatus_UNKNOWN,
+				NewStatus:       types.HardwareNodeStatus_INFERENCE,
+				Timestamp:       time.Now(),
 			},
 		},
 	)
@@ -1028,6 +1029,51 @@ func TestRemoveNodeDoesNotBlockStartPocCommand(t *testing.T) {
 	require.False(t, hungStillRegistered)
 }
 
+func TestRemoveNodeCancelsInFlightWorker(t *testing.T) {
+	broker := NewTestBroker()
+
+	hung := createTestNode("hung-node")
+	ctx, cancel := context.WithCancel(context.Background())
+	hung.State.cancelInFlightTask = cancel
+
+	broker.mu.Lock()
+	broker.nodes["hung-node"] = hung
+	broker.mu.Unlock()
+
+	hungWorker := NewNodeWorkerWithClient("hung-node", hung, mlnodeclient.NewMockClient(), broker)
+	broker.nodeWorkGroup.AddWorker("hung-node", hungWorker)
+
+	started := make(chan struct{})
+	finished := make(chan error, 1)
+	require.True(t, hungWorker.Submit(ctx, &TestCommand{
+		ExecuteFn: func(ctx context.Context, w *NodeWorker) NodeResult {
+			close(started)
+			<-ctx.Done()
+			finished <- ctx.Err()
+			return NodeResult{Succeeded: false, Error: ctx.Err().Error()}
+		},
+	}))
+	<-started
+
+	removeResp := make(chan bool, 2)
+	queueMessage(t, broker, RemoveNode{NodeId: "hung-node", Response: removeResp})
+	select {
+	case removed := <-removeResp:
+		require.True(t, removed)
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatal("RemoveNode blocked the broker command loop")
+	}
+
+	select {
+	case err := <-finished:
+		require.ErrorIs(t, err, context.Canceled)
+	case <-time.After(2 * time.Second):
+		cancel()
+		t.Fatal("RemoveNode did not cancel the in-flight worker command")
+	}
+}
+
 func TestModelMismatch(t *testing.T) {
 	broker := NewTestBroker()
 	node := apiconfig.InferenceNodeConfig{
@@ -1119,6 +1165,32 @@ func queueMessage(t *testing.T, broker *Broker, command Command) {
 	}
 }
 
+func nodeRegistrationSeq(t *testing.T, broker *Broker, nodeId string) uint64 {
+	t.Helper()
+	nodes, err := broker.GetNodes()
+	require.NoError(t, err)
+	for _, n := range nodes {
+		if n.Node.Id == nodeId {
+			return n.State.RegistrationSeq
+		}
+	}
+	t.Fatalf("node %s not found", nodeId)
+	return 0
+}
+
+func nodeLockCount(t *testing.T, broker *Broker, nodeId string) int {
+	t.Helper()
+	nodes, err := broker.GetNodes()
+	require.NoError(t, err)
+	for _, n := range nodes {
+		if n.Node.Id == nodeId {
+			return n.State.LockCount
+		}
+	}
+	t.Fatalf("node %s not found", nodeId)
+	return 0
+}
+
 func TestReleaseNode(t *testing.T) {
 	broker := NewTestBroker()
 	node := apiconfig.InferenceNodeConfig{
@@ -1137,12 +1209,88 @@ func TestReleaseNode(t *testing.T) {
 	require.NotNil(t, runningNode)
 	require.Equal(t, node.Id, runningNode.Id)
 	release := make(chan bool, 2)
-	queueMessage(t, broker, ReleaseNode{node.Id, InferenceSuccess{}, release})
+	queueMessage(t, broker, ReleaseNode{
+		NodeId:          runningNode.Id,
+		RegistrationSeq: runningNode.RegistrationSeq,
+		Outcome:         InferenceSuccess{},
+		Response:        release,
+	})
 
 	b := <-release
 	require.True(t, b, "expected release response to be true")
 	queueMessage(t, broker, LockAvailableNode{Model: "model1", Response: availableNode})
 	require.NotNil(t, <-availableNode, "expected node1, got nil")
+}
+
+func TestReleaseNode_RejectsStaleRegistrationSeq(t *testing.T) {
+	broker := NewTestBroker()
+	node := apiconfig.InferenceNodeConfig{
+		Host:          "localhost",
+		InferencePort: 8080,
+		PoCPort:       5000,
+		Models:        map[string]apiconfig.ModelConfig{"model1": {Args: make([]string, 0)}},
+		Id:            "node1",
+		MaxConcurrent: 1,
+	}
+	registerNodeAndSetInferenceStatus(t, broker, node)
+
+	availableNode := make(chan *Node, 2)
+	queueMessage(t, broker, LockAvailableNode{Model: "model1", Response: availableNode})
+	oldLease := <-availableNode
+	require.NotNil(t, oldLease)
+	oldSeq := oldLease.RegistrationSeq
+	require.NotZero(t, oldSeq)
+
+	remove := make(chan bool, 2)
+	queueMessage(t, broker, RemoveNode{NodeId: node.Id, Response: remove})
+	require.True(t, <-remove)
+
+	registerNodeAndSetInferenceStatus(t, broker, node)
+	require.Equal(t, 0, nodeLockCount(t, broker, node.Id))
+
+	release := make(chan bool, 2)
+	queueMessage(t, broker, ReleaseNode{
+		NodeId:          node.Id,
+		RegistrationSeq: oldSeq,
+		Outcome:         InferenceSuccess{},
+		Response:        release,
+	})
+	require.False(t, <-release)
+	require.Equal(t, 0, nodeLockCount(t, broker, node.Id))
+
+	queueMessage(t, broker, LockAvailableNode{Model: "model1", Response: availableNode})
+	require.NotNil(t, <-availableNode)
+	queueMessage(t, broker, LockAvailableNode{Model: "model1", Response: availableNode})
+	require.Nil(t, <-availableNode, "stale release must not open an extra admission slot")
+}
+
+func TestReleaseNode_DoesNotDecrementBelowZero(t *testing.T) {
+	broker := NewTestBroker()
+	node := apiconfig.InferenceNodeConfig{
+		Host:          "localhost",
+		InferencePort: 8080,
+		PoCPort:       5000,
+		Models:        map[string]apiconfig.ModelConfig{"model1": {Args: make([]string, 0)}},
+		Id:            "node1",
+		MaxConcurrent: 1,
+	}
+	registerNodeAndSetInferenceStatus(t, broker, node)
+
+	release := make(chan bool, 2)
+	queueMessage(t, broker, ReleaseNode{
+		NodeId:          node.Id,
+		RegistrationSeq: nodeRegistrationSeq(t, broker, node.Id),
+		Outcome:         InferenceSuccess{},
+		Response:        release,
+	})
+	require.False(t, <-release)
+	require.Equal(t, 0, nodeLockCount(t, broker, node.Id))
+
+	availableNode := make(chan *Node, 2)
+	queueMessage(t, broker, LockAvailableNode{Model: "model1", Response: availableNode})
+	require.NotNil(t, <-availableNode)
+	queueMessage(t, broker, LockAvailableNode{Model: "model1", Response: availableNode})
+	require.Nil(t, <-availableNode, "lock count must not go negative")
 }
 
 func TestRoundTripSegment(t *testing.T) {
@@ -2384,4 +2532,30 @@ func TestSetNodesActualStatusCommand_MlNodeVersion(t *testing.T) {
 	<-cmd.Response
 
 	assert.Equal(t, "v3.0.0", node.State.MlNodeVersion)
+}
+
+func TestSetNodesActualStatusCommand_RejectsStaleRegistrationSeq(t *testing.T) {
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	node.State.RegistrationSeq = 2
+	node.State.StatusTimestamp = time.Now().Add(-time.Minute)
+
+	broker := &Broker{
+		nodes: map[string]*NodeWithState{
+			"node-1": node,
+		},
+	}
+
+	cmd := NewSetNodesActualStatusCommand([]StatusUpdate{
+		{
+			NodeId:          "node-1",
+			RegistrationSeq: 1,
+			PrevStatus:      types.HardwareNodeStatus_INFERENCE,
+			NewStatus:       types.HardwareNodeStatus_FAILED,
+			Timestamp:       time.Now(),
+		},
+	})
+	cmd.Execute(broker)
+	<-cmd.Response
+
+	assert.Equal(t, types.HardwareNodeStatus_INFERENCE, node.State.CurrentStatus)
 }

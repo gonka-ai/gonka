@@ -147,8 +147,9 @@ func (c RegisterNode) Execute(b *Broker) {
 				Enabled: true,
 				Epoch:   currentEpoch,
 			},
-			EpochModels:  make(map[string]types.Model),
-			EpochMLNodes: make(map[string]types.MLNodeInfo),
+			EpochModels:     make(map[string]types.Model),
+			EpochMLNodes:    make(map[string]types.MLNodeInfo),
+			RegistrationSeq: b.nextRegistrationSeq.Add(1),
 		},
 	}
 
@@ -299,6 +300,8 @@ type RemoveNode struct {
 	Response chan bool
 }
 
+const appliedDeploymentDeleteTimeout = time.Second
+
 func (r RemoveNode) GetResponseChannelCapacity() int {
 	return cap(r.Response)
 }
@@ -331,7 +334,10 @@ func (command RemoveNode) Execute(b *Broker) {
 		return
 	}
 	if b.configManager != nil {
-		if err := b.configManager.DeleteAppliedDeploymentsForNode(context.Background(), command.NodeId); err != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), appliedDeploymentDeleteTimeout)
+		err := b.configManager.DeleteAppliedDeploymentsForNode(ctx, command.NodeId)
+		cancel()
+		if err != nil {
 			logging.Warn("Failed to delete applied deployments for removed node", types.Config,
 				"node_id", command.NodeId, "error", err)
 		}

@@ -107,12 +107,48 @@ func TestUpdateNodeResultCommand_RejectsStaleDeploymentGeneration(t *testing.T) 
 	require.False(t, found)
 }
 
+func TestUpdateNodeResultCommand_RejectsStaleRegistrationSeq(t *testing.T) {
+	manager := testDeploymentConfigManager(t)
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+	node.State.RegistrationSeq = 2
+	node.State.DeploymentGeneration = 1
+	node.State.ReconcileInfo = &ReconcileInfo{
+		Status:     types.HardwareNodeStatus_INFERENCE,
+		PocStatus:  PocStatusIdle,
+		Generation: 1,
+	}
+	b := NewTestBroker()
+	b.configManager = manager
+	b.nodes[node.Node.Id] = node
+
+	command := NewUpdateNodeResultCommand(node.Node.Id, NodeResult{
+		Succeeded:            false,
+		FinalStatus:          types.HardwareNodeStatus_FAILED,
+		OriginalTarget:       types.HardwareNodeStatus_INFERENCE,
+		FinalPocStatus:       PocStatusIdle,
+		OriginalPocTarget:    PocStatusIdle,
+		Error:                "old worker timeout",
+		DeploymentGeneration: 1,
+		RegistrationSeq:      1,
+	})
+	command.Execute(b)
+
+	require.Equal(t, types.HardwareNodeStatus_INFERENCE, node.State.CurrentStatus)
+	require.NotNil(t, node.State.ReconcileInfo)
+	require.Equal(t, uint64(1), node.State.ReconcileInfo.Generation)
+	_, found, err := manager.GetAppliedDeployment(context.Background(), node.Node.Id)
+	require.NoError(t, err)
+	require.False(t, found)
+}
+
 func TestUpdateNodeResultCommand_AcceptsMatchingDeploymentGeneration(t *testing.T) {
 	manager := testDeploymentConfigManager(t)
 	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
 	node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
 	node.State.DeploymentUpdatePending = true
 	node.State.DeploymentGeneration = 2
+	node.State.RegistrationSeq = 2
 	node.State.ReconcileInfo = &ReconcileInfo{
 		Status:     types.HardwareNodeStatus_INFERENCE,
 		PocStatus:  PocStatusIdle,
@@ -132,6 +168,7 @@ func TestUpdateNodeResultCommand_AcceptsMatchingDeploymentGeneration(t *testing.
 		DeploymentModelID:     "model-b",
 		DeploymentFingerprint: "fingerprint-b",
 		DeploymentGeneration:  2,
+		RegistrationSeq:       2,
 	})
 	command.Execute(b)
 

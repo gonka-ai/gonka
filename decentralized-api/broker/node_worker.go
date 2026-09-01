@@ -27,6 +27,7 @@ type NodeWorker struct {
 	mu                sync.Mutex
 	stopping          bool
 	wg                sync.WaitGroup
+	registrationSeq   uint64
 	availableVersions map[string]bool
 	versionsMu        sync.Mutex
 }
@@ -51,6 +52,7 @@ func newNodeWorker(nodeId string, node *NodeWithState, broker *Broker, getClient
 		commands:          make(chan commandWithContext, 10),
 		availableVersions: make(map[string]bool),
 		shutdown:          make(chan struct{}),
+		registrationSeq:   node.State.RegistrationSeq,
 	}
 	if getClientFn != nil {
 		worker.getClientFn = getClientFn
@@ -88,6 +90,7 @@ func (w *NodeWorker) run() {
 func (w *NodeWorker) execute(item commandWithContext) {
 	result := item.cmd.Execute(item.ctx, w)
 	result.DeploymentGeneration = item.generation
+	result.RegistrationSeq = w.registrationSeq
 
 	updateCmd := NewUpdateNodeResultCommand(w.nodeId, result)
 	if err := w.broker.QueueMessage(updateCmd); err != nil {
@@ -134,11 +137,12 @@ func (w *NodeWorker) submit(ctx context.Context, cmd NodeWorkerCommand, generati
 	if w.stopping {
 		return false
 	}
+	w.wg.Add(1)
 	select {
 	case w.commands <- commandWithContext{cmd: cmd, ctx: ctx, generation: generation}:
-		w.wg.Add(1)
 		return true
 	default:
+		w.wg.Done()
 		return false
 	}
 }
