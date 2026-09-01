@@ -5,6 +5,7 @@ set -Eeuo pipefail
 docker_bin=${DOCKER_BIN:-docker}
 expected_identity=
 compose_only=false
+runtime_contract_only=false
 compose_args=()
 forbidden_libpq=(DATABASE_URL PGHOSTADDR PGSERVICE PGSERVICEFILE PGOPTIONS)
 versiond_lookup_pool_max_connections=4
@@ -17,7 +18,7 @@ fail() {
 
 usage() {
     cat >&2 <<'EOF'
-Usage: postgres-deployment-preflight.sh [--expected-identity UUID] [--compose-only] -- COMPOSE_ARGS...
+Usage: postgres-deployment-preflight.sh [--expected-identity UUID] [--compose-only|--runtime-contract-only] -- COMPOSE_ARGS...
 
 Example:
   postgres-deployment-preflight.sh -- \
@@ -26,7 +27,9 @@ Example:
 The default mode requires both versiond replicas and connects every stable HA
 devshard generation to one live PostgreSQL proof anchor. --compose-only checks
 only the rendered target topology and cannot be combined with
---expected-identity.
+--expected-identity. --runtime-contract-only also compares the rendered
+libpq contract with every existing replica, but does not require PostgreSQL or
+the replica HTTP endpoints to be live.
 EOF
 }
 
@@ -40,6 +43,10 @@ while (($#)); do
             ;;
         --compose-only)
             compose_only=true
+            shift
+            ;;
+        --runtime-contract-only)
+            runtime_contract_only=true
             shift
             ;;
         --)
@@ -61,6 +68,10 @@ done
 ((${#compose_args[@]} > 0)) || fail "Compose arguments are required after --"
 [[ $compose_only == false || -z $expected_identity ]] || fail \
     "--expected-identity requires the live PostgreSQL proof"
+[[ $runtime_contract_only == false || -z $expected_identity ]] || fail \
+    "--expected-identity requires the live PostgreSQL proof"
+[[ $compose_only == false || $runtime_contract_only == false ]] || fail \
+    "use either --compose-only or --runtime-contract-only, not both"
 command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
 command -v jq >/dev/null 2>&1 || fail "jq is required"
 
@@ -77,6 +88,10 @@ project_name=$(jq -er '.name | strings | select(length > 0)' <<<"$config") || fa
 for service in versiond versiond2; do
     jq -e --arg service "$service" '.services | has($service)' \
         >/dev/null <<<"$config" || fail "Compose topology has no $service service"
+    replicas=$(jq -r --arg service "$service" \
+        '.services[$service].deploy.replicas // 1' <<<"$config")
+    [[ $replicas == 1 ]] || fail \
+        "Compose topology must run exactly one $service replica (deploy.replicas=$replicas)"
     mode=$(jq -r --arg service "$service" \
         '.services[$service].environment.DEVSHARD_STORAGE_MODE // ""' <<<"$config")
     [[ $mode == postgres ]] || fail "$service must use DEVSHARD_STORAGE_MODE=postgres"
@@ -122,15 +137,19 @@ container_env() {
 }
 
 containers=()
+runtime_contract_evidence=false
 for service in versiond versiond2; do
-    container=$("${compose[@]}" ps -q "$service") || fail "cannot inspect $service"
+    ps_args=(ps -q "$service")
+    [[ $runtime_contract_only == false ]] || ps_args=(ps --all -q "$service")
+    container=$("${compose[@]}" "${ps_args[@]}") || fail "cannot inspect $service"
     containers+=("$container")
 done
-if [[ -z ${containers[0]} && -z ${containers[1]} ]]; then
+if [[ $runtime_contract_only == false && -z ${containers[0]} && -z ${containers[1]} ]]; then
     fail "Compose project '$project_name' has no running versiond replicas;" \
         "use the deployment's exact project arguments or select --compose-only explicitly"
 fi
-[[ -n ${containers[0]} && -n ${containers[1]} ]] || fail \
+[[ $runtime_contract_only == true || \
+    (-n ${containers[0]} && -n ${containers[1]}) ]] || fail \
     "Compose project '$project_name' has only one running versiond replica;" \
     "cannot prove shared PostgreSQL storage"
 
@@ -138,6 +157,8 @@ for index in 0 1; do
     service=versiond
     ((index == 0)) || service=versiond2
     container=${containers[index]}
+    [[ -n $container ]] || continue
+    runtime_contract_evidence=true
     runtime_environment=$("$docker_bin" inspect --format \
         '{{json .Config.Env}}' "$container") || fail \
         "cannot inspect runtime environment for $service container $container"
@@ -162,6 +183,10 @@ for index in 0 1; do
     [[ $actual == "$expected" ]] || fail \
         "running $service has PGPORT='$actual', rendered topology expects '$expected'"
     actual=$(container_env "$runtime_environment" PG_POOL_MAX_CONNS) || actual=
+    # v4 did not publish this tuning variable. Its effective lookup-pool
+    # contract is the v5 default, so absence is compatible during the one-time
+    # upgrade; an explicit conflicting value is still rejected.
+    [[ -n $actual ]] || actual=$versiond_lookup_pool_max_connections
     [[ $actual == "$pool_max_connections" ]] || fail \
         "running $service has PG_POOL_MAX_CONNS='$actual', rendered topology expects '$pool_max_connections'"
     expected=$(jq -r --arg service "$service" \
@@ -170,6 +195,30 @@ for index in 0 1; do
     [[ $actual == "$expected" ]] || fail \
         "running $service uses different PostgreSQL credentials than the rendered topology; rotate credentials separately before the HA upgrade"
 done
+
+if [[ $runtime_contract_only == true ]]; then
+	postgres_container=
+	if jq -e '.services | has("devshard-postgres")' <<<"$config" >/dev/null; then
+        postgres_container=$("${compose[@]}" ps --all -q devshard-postgres) ||
+            fail "cannot inspect devshard-postgres"
+	fi
+    if [[ -n $postgres_container ]]; then
+        runtime_contract_evidence=true
+        postgres_environment=$("$docker_bin" inspect --format \
+            '{{json .Config.Env}}' "$postgres_container") || fail \
+            "cannot inspect runtime environment for devshard-postgres container $postgres_container"
+        actual=$(container_env "$postgres_environment" POSTGRES_PASSWORD) || actual=
+        expected=$(jq -r \
+            '.services["devshard-postgres"].environment.POSTGRES_PASSWORD // ""' \
+            <<<"$config")
+        [[ -n $actual && $actual == "$expected" ]] || fail \
+            "running devshard-postgres uses a different POSTGRES_PASSWORD than the rendered topology; rotate the database role separately before the HA upgrade"
+    fi
+    [[ $runtime_contract_evidence == true ]] || fail \
+        "Compose project '$project_name' has no existing PostgreSQL contract to compare; restore an application or bundled PostgreSQL container before recovery"
+    echo "postgres-deployment-preflight: runtime PostgreSQL contract matches the rendered topology for Compose project '$project_name'"
+    exit 0
+fi
 
 versiond_http() {
     local service=$1 container=$2 description=$3 method=$4 path=$5 payload=${6:-}

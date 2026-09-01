@@ -29,7 +29,7 @@ printf '%q ' "$@" >>"$DOCKER_LOG"
 printf '\n' >>"$DOCKER_LOG"
 if [[ $1 == compose && ${*: -3} == "config --format json" ]]; then
     cat "$CONFIG_JSON"
-elif [[ $1 == compose && ${*: -3:1} == ps && ${*: -2:1} == -q ]]; then
+elif [[ $1 == compose && " $* " == *" ps "* && " $* " == *" -q "* ]]; then
     service=${*: -1}
     case $LIVE_MODE:$service in
         both:versiond) printf 'container-1\n' ;;
@@ -170,8 +170,8 @@ run_preflight() {
         IDENTITY_TWO="${IDENTITY_TWO:-db-1}" RUNTIME_EXTRA="${RUNTIME_EXTRA:-}" \
         DATABASE_ONE="${DATABASE_ONE:-shared}" DATABASE_TWO="${DATABASE_TWO:-shared}" \
         RUNTIME_HOST_TWO="${RUNTIME_HOST_TWO:-pg}" \
-        RUNTIME_POOL_ONE="${RUNTIME_POOL_ONE:-4}" \
-        RUNTIME_POOL_TWO="${RUNTIME_POOL_TWO:-4}" \
+        RUNTIME_POOL_ONE="${RUNTIME_POOL_ONE-4}" \
+        RUNTIME_POOL_TWO="${RUNTIME_POOL_TWO-4}" \
         RUNTIME_PASSWORD_ONE="${RUNTIME_PASSWORD_ONE:-secret}" \
         RUNTIME_PASSWORD_TWO="${RUNTIME_PASSWORD_TWO:-secret}" \
         PROOF_POOL_ONE="${PROOF_POOL_ONE:-4}" \
@@ -304,6 +304,13 @@ fi
 unset RUNTIME_POOL_TWO
 grep -q "running versiond2 has PG_POOL_MAX_CONNS='8'" "$tmpdir/err" || fail \
     "runtime PostgreSQL pool-limit mismatch was not diagnosed"
+
+RUNTIME_POOL_ONE=
+RUNTIME_POOL_TWO=
+export RUNTIME_POOL_ONE RUNTIME_POOL_TWO
+run_preflight --runtime-contract-only >"$tmpdir/out" 2>"$tmpdir/err" || fail \
+    "v4 replicas without PG_POOL_MAX_CONNS were rejected"
+unset RUNTIME_POOL_ONE RUNTIME_POOL_TWO
 
 RUNTIME_PASSWORD_TWO=old-secret
 export RUNTIME_PASSWORD_TWO
@@ -451,6 +458,16 @@ if run_preflight --compose-only >"$tmpdir/out" 2>"$tmpdir/err"; then
 fi
 grep -q 'Compose topology has no versiond2 service' "$tmpdir/err" || fail \
     "missing versiond2 service was not diagnosed"
+
+write_config
+jq '.services.versiond2.deploy.replicas = 0' "$tmpdir/config.json" \
+    >"$tmpdir/config-with-disabled-versiond2.json"
+mv "$tmpdir/config-with-disabled-versiond2.json" "$tmpdir/config.json"
+if run_preflight --compose-only >"$tmpdir/out" 2>"$tmpdir/err"; then
+    fail "Compose topology with VERSIOND2_REPLICAS=0 was accepted"
+fi
+grep -q 'must run exactly one versiond2 replica' "$tmpdir/err" || fail \
+    "disabled versiond2 replica was not diagnosed before mutation"
 
 real_docker_bin=${REAL_DOCKER_BIN:-docker}
 command -v "$real_docker_bin" >/dev/null 2>&1 || fail \
