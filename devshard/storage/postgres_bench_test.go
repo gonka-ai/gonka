@@ -184,6 +184,29 @@ func BenchmarkPostgresSealedInferenceIndex_BatchedInsert(b *testing.B) {
 	}
 }
 
+// The post-wipe load: COPY, no per-row conflict probe. This is the path the
+// full-replay rebuild takes, and the only reason the upsert form above still
+// exists is gap fill, where rows may already be present.
+func BenchmarkPostgresSealedInferenceIndex_BulkInsert(b *testing.B) {
+	db := benchPostgres(b)
+	for _, n := range []int{2_000, 20_000} {
+		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
+			rows := benchSealedRows(n, true)
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				b.StopTimer()
+				if err := db.DeleteSealedInferences("escrow-1"); err != nil {
+					b.Fatal(err)
+				}
+				b.StartTimer()
+				if err := db.BulkInsertSealedInferences("escrow-1", rows); err != nil {
+					b.Fatal(err)
+				}
+			}
+		})
+	}
+}
+
 func BenchmarkPostgresValidationObsDrain_PerID(b *testing.B) {
 	db := benchPostgres(b)
 	for _, n := range []int{2_000, 20_000} {

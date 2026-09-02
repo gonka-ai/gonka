@@ -110,6 +110,9 @@ func (s *legacyOnlyStorage) LoadSnapshot(escrowID string) (uint64, []byte, error
 func (s *legacyOnlyStorage) InsertSealedInference(escrowID string, row InferenceRow) error {
 	return s.inner.InsertSealedInference(escrowID, row)
 }
+func (s *legacyOnlyStorage) BulkInsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	return s.inner.BulkInsertSealedInferences(escrowID, rows)
+}
 func (s *legacyOnlyStorage) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
 	return s.inner.InsertSealedInferences(escrowID, rows)
 }
