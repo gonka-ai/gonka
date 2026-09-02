@@ -386,7 +386,8 @@ compose_v5=(docker compose --project-name "$project" --project-directory "$join"
 # up through Compose.
 container_of() {
     local id
-    id=$("${compose_v5[@]}" ps -aq "$1") && [[ -n $id ]] || fail "no container for service $1"
+    id=$("${compose_v5[@]}" ps -aq "$1") || fail "cannot list service $1"
+    [[ -n $id ]] || fail "no container for service $1"
     printf '%s\n' "${id%%$'\n'*}"
 }
 
