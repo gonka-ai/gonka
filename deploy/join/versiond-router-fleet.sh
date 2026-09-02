@@ -435,16 +435,16 @@ slot_lookup_failed() {
 }
 
 slot_running() {
-    local id state
-    id=$(slot_id "$1") || { slot_lookup_failed $? "${slot:-${1:-}}"; return 1; }
+    local slot=$1 id state
+    id=$(slot_id "$1") || { slot_lookup_failed $? "${slot-}"; return 1; }
     state=$("$docker_bin" inspect --format '{{.State.Status}}' "$id") || fail \
         "cannot inspect router slot $1"
     [[ $state == running ]]
 }
 
 slot_ready() {
-    local id state health details
-    id=$(slot_id "$1") || { slot_lookup_failed $? "${slot:-${1:-}}"; return 1; }
+    local slot=$1 id state health details
+    id=$(slot_id "$1") || { slot_lookup_failed $? "${slot-}"; return 1; }
     details=$("$docker_bin" inspect --format \
         '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$id") || fail \
         "cannot inspect router slot $1"
@@ -469,8 +469,8 @@ urlencode() {
 }
 
 slot_route_ready() {
-    local slot=$1 route=$2 id encoded
-    id=$(slot_id "$slot") || { slot_lookup_failed $? "${slot:-${1:-}}"; return 1; }
+    local slot=$1 slot=$1 route=$2 id encoded
+    id=$(slot_id "$slot") || { slot_lookup_failed $? "${slot-}"; return 1; }
     slot_ready "$slot" || return 1
     encoded=$(urlencode "$route")
     docker_exec "$id" /bin/busybox wget -q -O /dev/null \
@@ -478,8 +478,8 @@ slot_route_ready() {
 }
 
 slot_catalog_routes() {
-    local id map
-    id=$(slot_id "$1") || { slot_lookup_failed $? "${slot:-${1:-}}"; return 1; }
+    local slot=$1 id map
+    id=$(slot_id "$1") || { slot_lookup_failed $? "${slot-}"; return 1; }
     if docker_exec "$id" test -x \
         /usr/local/lib/router-runtime/catalog-status >/dev/null 2>&1; then
         for map in /etc/haproxy/non_ha.map /etc/haproxy/versions.map; do
@@ -519,7 +519,7 @@ discover_expected_routes() {
         # Discovery runs before every command; a slot with stray containers
         # is reported by the command itself, not here.
         ((lookup != 3)) || slot_lookup_failed 3 "$slot"
-        ((lookup == 0)) && [[ $slot_current_state == running ]] || continue
+        [[ $lookup == 0 && $slot_current_state == running ]] || continue
         id=$slot_current
         routes=$(slot_catalog_routes "$slot") || fail \
             "cannot read the effective route catalog from slot $slot"
@@ -567,8 +567,8 @@ select_candidate_route_view() {
 }
 
 slot_front_ip() {
-    local id
-    id=$(slot_id "$1") || { slot_lookup_failed $? "${slot:-${1:-}}"; return 1; }
+    local slot=$1 id
+    id=$(slot_id "$1") || { slot_lookup_failed $? "${slot-}"; return 1; }
     container_front_ip "$id"
 }
 
@@ -775,7 +775,7 @@ stop_generation() {
 
 stop_slot_generation() {
     local slot=$1 id
-    id=$(slot_id "$slot") || { slot_lookup_failed $? "${slot:-${1:-}}"; return 1; }
+    id=$(slot_id "$slot") || { slot_lookup_failed $? "${slot-}"; return 1; }
     stop_generation "$slot" "$id"
 }
 
@@ -1027,7 +1027,7 @@ converge_interrupted_slot() {
             "the restored generation of slot $slot does not serve its routes"
         wait_parent_admission "$slot"
     fi
-    slot_generations "$slot" || slot_lookup_failed $? "${slot:-${1:-}}"
+    slot_generations "$slot" || slot_lookup_failed $? "${slot-}"
 }
 
 require_parent_diagnostic() {
@@ -1275,7 +1275,7 @@ require_static_routes_served() {
         lookup=0
         slot_generations "$slot" 2>/dev/null || lookup=$?
         slot_lookup_failed "$lookup" "$slot"
-        ((lookup == 0)) && [[ $slot_current_state == running ]] || continue
+        [[ $lookup == 0 && $slot_current_state == running ]] || continue
         id=$slot_current
         declared=$(container_env_value "$id" VERSIOND_VERSIONS) || continue
         for version in $(normalize_versions "$declared" | tr ',' ' '); do
@@ -1495,7 +1495,7 @@ resolve_candidate() {
 
 slot_needs_replacement() {
     local slot=$1 id status=0
-    id=$(slot_id "$slot") || { slot_lookup_failed $? "${slot:-${1:-}}"; return 2; }
+    id=$(slot_id "$slot") || { slot_lookup_failed $? "${slot-}"; return 2; }
     generation_matches_candidate "$id" "$slot" || status=$?
     ((status != 2)) || return 2
     ((status == 1))
@@ -1528,7 +1528,7 @@ resolve_metrics_network() {
 
     if [[ -z $resolved ]]; then
         for slot in "${slots[@]}"; do
-            id=$(slot_id "$slot") || { slot_lookup_failed $? "${slot:-${1:-}}"; continue; }
+            id=$(slot_id "$slot") || { slot_lookup_failed $? "${slot-}"; continue; }
             recorded=$(container_env_value \
                 "$id" VERSIOND_ROUTER_METRICS_NETWORK_NAME) || continue
             [[ -z $resolved || $resolved == "$recorded" ]] || fail \
@@ -1606,7 +1606,7 @@ require_cache_compatible() {
     [[ $candidate_protocol =~ ^[0-9]+$ ]] || fail \
         "candidate image has no numeric catalog cache protocol label"
     for slot in "${slots[@]}"; do
-        id=$(slot_id "$slot") || { slot_lookup_failed $? "${slot:-${1:-}}"; continue; }
+        id=$(slot_id "$slot") || { slot_lookup_failed $? "${slot-}"; continue; }
         running_image=$($docker_bin inspect --format '{{.Image}}' "$id")
         running_protocol=$(cache_protocol_for_image "$running_image")
         [[ $running_protocol =~ ^[0-9]+$ ]] || fail \
@@ -1649,7 +1649,7 @@ require_placement_compatible() {
     require_cache_compatible "$candidate"
     candidate_contract=$(candidate_placement_contract)
     for slot in "${slots[@]}"; do
-        id=$(slot_id "$slot") || { slot_lookup_failed $? "${slot:-${1:-}}"; continue; }
+        id=$(slot_id "$slot") || { slot_lookup_failed $? "${slot-}"; continue; }
         running_image=$($docker_bin inspect --format '{{.Image}}' "$id")
         running_version=$(placement_version_for_image "$running_image")
         [[ $running_version == "$candidate_version" ]] || fail \
@@ -1821,7 +1821,7 @@ maintenance_rollback() {
     if [[ $maintenance_active == true ]]; then
         warn "maintenance rollout failed; draining candidates before restoring the exact previous fleet"
         for slot in "${maintenance_pending[@]}" "${maintenance_kept[@]}"; do
-            slot_generations "$slot" || { slot_lookup_failed $? "${slot:-${1:-}}"; continue; }
+            slot_generations "$slot" || { slot_lookup_failed $? "${slot-}"; continue; }
             [[ -n ${maintenance_restore[$slot]-} ]] || continue
             # The candidate is the newest container unless the previous
             # generation is still the only one (the candidate never started).
@@ -1849,7 +1849,7 @@ rollback_current() {
     trap - ERR INT TERM HUP
     if [[ -n $current_slot && -n $rollback_generation ]]; then
         warn "restoring the previous generation of slot $current_slot"
-        slot_generations "$current_slot" || slot_lookup_failed $? "${slot:-${1:-}}"
+        slot_generations "$current_slot" || slot_lookup_failed $? "${slot-}"
         local candidate=
         [[ $slot_current == "$rollback_generation" ]] || candidate=$slot_current
         if restore_generation "$current_slot" "$candidate" "$rollback_generation" && \
@@ -2228,7 +2228,7 @@ fleet_maintenance_rollout() {
 
     echo "Draining the previous router generation for an atomic placement change"
     for slot in "${maintenance_pending[@]}"; do
-        slot_generations "$slot" || { slot_lookup_failed $? "${slot:-${1:-}}"; continue; }
+        slot_generations "$slot" || { slot_lookup_failed $? "${slot-}"; continue; }
         [[ $slot_current_state == running ]] && stop_generation "$slot" "$slot_current"
         # An unproven candidate of an interrupted run is removed; its previous
         # generation stays as the rollback record.
