@@ -231,13 +231,15 @@ database than the tuple everybody else agreed on. Keep the same ordered
 `-f` list, or `COMPOSE_FILE`, for every later command.
 
 Size the server's `max_connections` for at least
-`2 * N * (P + 2) + R * 5` non-reserved connections, where `N` is the number of
-HA devshard children a replica runs (one per HA version), `R` the number of
-versiond replicas and `P` the `DEVSHARD_POSTGRES_POOL_MAX_CONNS` pool limit
-(default 4). The doubled child term covers the draining predecessor a version
-may keep during a rolling binary update; the per-replica term is versiond's
+`R * (2 * N * (P + 2) + 5)` non-reserved connections, where `R` is the number
+of versiond replicas, `N` the number of HA devshard children each replica runs
+(one per HA version) and `P` the `DEVSHARD_POSTGRES_POOL_MAX_CONNS` pool limit
+(default 4). Every replica runs its own children, so the child term counts per
+replica; the doubled child term covers the draining predecessor a version may
+keep during a rolling binary update; the per-replica term is versiond's
 session-lookup pool plus one schema-initializer session. With two replicas,
-three HA versions and the default pool that is 46 connections.
+three HA versions and the default pool that is 82 connections; three replicas
+need 123.
 
 ## Day-2 operations
 

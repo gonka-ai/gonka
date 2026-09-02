@@ -35,6 +35,7 @@ for var in VERSIOND_IMAGE DEVSHARD_POSTGRES_IMAGE PROXY_ROUTER_IMAGE PROXY_POLIC
 done
 case "$1 ${2:-} ${3:-}" in
     "network inspect "*) exit 0 ;;
+    "network connect "*) exit 0 ;;
     "run --rm "*)
         case " $* " in
             *"SELECT challenge"*)
@@ -98,6 +99,12 @@ if [[ $1 == inspect ]]; then
             printf '%s\n' "${!override:-${FAKE_CONFIG_FILES}}"
             ;;
         *com.docker.compose.project\"*) printf 'gonka\n' ;;
+        *NetworkSettings.Networks*)
+            case " ${FAKE_ON_BACK_NETWORK:-} " in
+                *" $name "*) printf '{"join_default":{},"gonka-versiond-router-back":{}}\n' ;;
+                *) printf '{"join_default":{}}\n' ;;
+            esac
+            ;;
     esac
     exit 0
 fi
@@ -164,10 +171,12 @@ cat >"$tmpdir/ha.json" <<'EOF'
 {"name":"gonka","services":{
   "versiond":{"image":"ghcr.io/example/versiond:new","environment":{
     "GONKA_HA":"true","PGHOST":"devshard-postgres","PGDATABASE":"devshardd","PGUSER":"devshardd",
-    "DEVSHARD_STORAGE_MODE":"postgres"}},
+    "DEVSHARD_STORAGE_MODE":"postgres"},
+    "networks":{"default":{},"versiond-router-back":{"aliases":["versiond-pool"]}}},
   "versiond2":{"image":"ghcr.io/example/versiond:new","deploy":{"replicas":1},"environment":{
     "GONKA_HA":"true","PGHOST":"devshard-postgres","PGDATABASE":"devshardd","PGUSER":"devshardd",
-    "DEVSHARD_STORAGE_MODE":"postgres"}},
+    "DEVSHARD_STORAGE_MODE":"postgres"},
+    "networks":{"default":{},"versiond-router-back":{"aliases":["versiond-pool"]}}},
   "devshard-postgres":{"image":"postgres@sha256:abc","environment":{},
     "volumes":[{"type":"bind","source":"/srv/gonka/postgres","target":"/var/lib/postgresql/gonka"}]},
   "proxy":{"image":"ghcr.io/example/proxy-router:new","environment":{}},
@@ -201,7 +210,7 @@ run_update() {
 }
 
 mutations() {
-    grep -E '^compose .*(pull|up|rm|stop) |^rm -f|^fleet (prepare-networks|apply|verify-admission)' "$tmpdir/log" | \
+    grep -E '^compose .*(pull|up|rm|stop) |^rm -f|^network connect |^fleet (prepare-networks|apply|verify-admission)' "$tmpdir/log" | \
         sed -E 's/ --project-directory [^ ]+//; s/ -f [^ ]+\.yml//g; s/ --project-name [^ ]+//'
 }
 
@@ -209,6 +218,7 @@ mutations() {
 UPDATE_ARGS=()
 run_update env FAKE_CONTAINERS="" || fail "single update failed: $(cat "$tmpdir/err")"
 expected='compose pull versiond proxy proxy-policy proxy-policy2
+compose up -d --no-deps proxy
 compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy2
 compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy
 compose up -d --no-deps --wait --wait-timeout 2100 proxy
@@ -227,7 +237,10 @@ run_update env \
 expected='compose pull versiond versiond2 proxy proxy-policy proxy-policy2 devshard-postgres
 compose up -d --no-deps --wait --wait-timeout 2100 devshard-postgres
 fleet prepare-networks
+network connect --alias versiond-pool gonka-versiond-router-back cid-versiond
+network connect --alias versiond-pool gonka-versiond-router-back cid-versiond2
 fleet apply
+compose up -d --no-deps proxy
 compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy2
 compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy
 compose up -d --no-deps --wait --wait-timeout 2100 proxy
@@ -257,7 +270,11 @@ run_update env FAKE_CONTAINERS="versiond versiond2 versiond3 devshard-postgres" 
 expected='compose pull versiond versiond3 proxy proxy-policy proxy-policy2 devshard-postgres
 compose up -d --no-deps --wait --wait-timeout 2100 devshard-postgres
 fleet prepare-networks
+network connect --alias versiond-pool gonka-versiond-router-back cid-versiond
+network connect --alias versiond-pool gonka-versiond-router-back cid-versiond2
+network connect --alias versiond-pool gonka-versiond-router-back cid-versiond3
 fleet apply
+compose up -d --no-deps proxy
 compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy2
 compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy
 compose up -d --no-deps --wait --wait-timeout 2100 proxy

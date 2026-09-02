@@ -103,11 +103,11 @@ compose_core=${compose_core%%[-+]*}
 
 # One deployment, one operator at a time. The fleet script takes the same lock
 # and inherits it from this process, so its steps below run under this hold.
-if [[ $check_only == false ]]; then
-    # shellcheck source=deploy/join/deployment-lock.sh
-    source "$script_dir/deployment-lock.sh"
-    gonka_acquire_deployment_lock "$config_dir" || exit 1
-fi
+# --check writes a storage challenge too, so it takes the lock as well; two
+# concurrent checks would otherwise overwrite each other's nonce.
+# shellcheck source=deploy/join/deployment-lock.sh
+source "$script_dir/deployment-lock.sh"
+gonka_acquire_deployment_lock "$config_dir" || exit 1
 
 # --- what to run and how ----------------------------------------------------
 
@@ -166,6 +166,9 @@ label_source=
 declare -A label_files=()
 for candidate in "${candidates[@]}"; do
     container_exists "$candidate" || continue
+    # Router fleet slots share this directory but are their own Compose
+    # projects; their file list must not compete with the main model's.
+    [[ $(container_label "$candidate" ai.gonka.component) != versiond-router ]] || continue
     [[ -n $label_source ]] || label_source=$candidate
     files=$(container_label "$candidate" com.docker.compose.project.config_files)
     [[ -z $files ]] || label_files[$candidate]=$files
@@ -378,16 +381,20 @@ running_versiond_container() {
 # the JSON; returns 1 for a pre-v5 image (404); any other failure stops the
 # run, because an unavailable proof on a v5 replica is not "unsupported".
 versiond_storage_proof() {
-    local id=$1 output
-    if output=$("$docker_bin" exec "$id" /bin/busybox wget -qO- -S -T 5 \
-        http://127.0.0.1:8080/internal/storage-identity 2>&1); then
-        printf '%s\n' "$output"
+    local id=$1 body errors
+    errors=$(mktemp)
+    if body=$("$docker_bin" exec "$id" /bin/busybox wget -qO- -T 5 \
+        http://127.0.0.1:8080/internal/storage-identity 2>"$errors"); then
+        rm -f "$errors"
+        printf '%s\n' "$body"
         return 0
     fi
-    case $output in
+    body=$(tr '\n' ' ' <"$errors"); rm -f "$errors"
+    case $body in
         *"HTTP/"*" 404 "*) return 1 ;;
     esac
-    fail "cannot read the storage lineage through container $id: ${output//$'\n'/ }"
+    echo "update-devshard: cannot read the storage lineage through container $id: $body" >&2
+    return 3
 }
 
 if [[ $topology == ha && ${UPDATE_SKIP_POSTGRES_PROBE:-false} != true ]]; then
@@ -419,20 +426,24 @@ if [[ $topology == ha && ${UPDATE_SKIP_POSTGRES_PROBE:-false} != true ]]; then
         # show it; a clone with the same identity would not.
         running_identity=
         proof_source=
-        proof_container=
-        proof_json=
+        proof_containers=()
+        proof_documents=()
         for service in "${versiond_services[@]}"; do
             id=$("${compose[@]}" ps --quiet "$service") || fail "cannot list $service"
             [[ -n $id ]] || continue
             id=${id%%$'\n'*}
-            proof=$(versiond_storage_proof "$id") || continue
+            proof_status=0
+            proof=$(versiond_storage_proof "$id") || proof_status=$?
+            ((proof_status != 1)) || continue   # pre-v5 image, no proof API
+            ((proof_status == 0)) || fail \
+                "$service did not answer its storage proof; a v5 replica whose proof is unavailable is not \"unsupported\""
             identity=$(jq -er '.identity | strings | select(length > 0)' <<<"$proof") || fail \
                 "$service returned a storage proof without an identity"
+            proof_containers+=("$service=$id")
+            proof_documents+=("$proof")
             if [[ -z $running_identity ]]; then
                 running_identity=$identity
                 proof_source=$service
-                proof_container=$id
-                proof_json=$proof
             elif [[ $identity != "$running_identity" ]]; then
                 fail "$proof_source and $service run on different PostgreSQL lineages ($running_identity vs $identity); the pool is already split, repair it before updating"
             fi
@@ -443,23 +454,30 @@ if [[ $topology == ha && ${UPDATE_SKIP_POSTGRES_PROBE:-false} != true ]]; then
             [[ -z $target_identity ]] || target_description="lineage $target_identity"
             [[ $target_identity == "$running_identity" ]] || fail \
                 "the running replicas use PostgreSQL lineage $running_identity but the model names a database with $target_description; a rolling replacement would split the pool between two histories. Fix PGHOST, or set UPDATE_ACCEPT_DATABASE_CHANGE=true only for an intended move to a restored copy"
-            snapshot=$(jq -r '.snapshot // ""' <<<"$proof_json")
-            generation=$(jq -r '.targets[0].generation // ""' <<<"$proof_json")
-            if [[ -n $snapshot && -n $generation ]]; then
-                nonce=$(cat /proc/sys/kernel/random/uuid)
-                request=$(jq -cn --arg n "$nonce" --arg s "$snapshot" --arg g "$generation" \
-                    '{operation:"write", nonce:$n, snapshot:$s, generation:$g}')
-                "$docker_bin" exec "$proof_container" /bin/busybox wget -qO- -T 5 \
-                    --header 'Content-Type: application/json' --post-data "$request" \
-                    http://127.0.0.1:8080/internal/storage-challenge >/dev/null 2>&1 || fail \
-                    "$proof_source could not write a storage challenge through its PostgreSQL pool; inspect 'docker compose logs $proof_source'"
-                observed=$(postgres_probe 'SELECT challenge::text FROM devshard_storage_identity WHERE singleton' 2>/dev/null || true)
-                [[ $observed == "$nonce" ]] || fail \
-                    "the database the model names did not receive the challenge $proof_source just wrote; it is a copy of the running database, not the same one. Fix PGHOST, or set UPDATE_ACCEPT_DATABASE_CHANGE=true only for an intended move"
-                echo "PostgreSQL: database lineage $running_identity unchanged; $proof_source wrote a challenge the model's database shows"
-            else
-                echo "PostgreSQL: database lineage $running_identity unchanged"
-            fi
+            # Every running replica writes through every generation it runs;
+            # the model's database must show each nonce. A replica or a child
+            # generation on a clone with the same identity would not.
+            challenged=0
+            for index in "${!proof_containers[@]}"; do
+                service=${proof_containers[index]%%=*}
+                id=${proof_containers[index]#*=}
+                snapshot=$(jq -r '.snapshot // ""' <<<"${proof_documents[index]}")
+                while IFS= read -r generation; do
+                    [[ -n $snapshot && -n $generation ]] || continue
+                    nonce=$(cat /proc/sys/kernel/random/uuid)
+                    request=$(jq -cn --arg n "$nonce" --arg s "$snapshot" --arg g "$generation" \
+                        '{operation:"write", nonce:$n, snapshot:$s, generation:$g}')
+                    "$docker_bin" exec "$id" /bin/busybox wget -qO- -T 5 \
+                        --header 'Content-Type: application/json' --post-data "$request" \
+                        http://127.0.0.1:8080/internal/storage-challenge >/dev/null 2>&1 || fail \
+                        "$service (generation $generation) could not write a storage challenge through its PostgreSQL pool; inspect 'docker compose logs $service'"
+                    observed=$(postgres_probe 'SELECT challenge::text FROM devshard_storage_identity WHERE singleton' 2>/dev/null || true)
+                    [[ $observed == "$nonce" ]] || fail \
+                        "the database the model names did not receive the challenge $service (generation $generation) just wrote; that generation runs on a copy of the running database, not on it. Fix PGHOST, or set UPDATE_ACCEPT_DATABASE_CHANGE=true only for an intended move"
+                    ((challenged += 1))
+                done < <(jq -r '.targets[]?.generation // empty' <<<"${proof_documents[index]}")
+            done
+            echo "PostgreSQL: database lineage $running_identity unchanged; $challenged generation(s) wrote a challenge the model's database shows"
         fi
     fi
 fi
@@ -468,7 +486,8 @@ if [[ $postgres_mode == local ]]; then
     # A v4 installation keeps its cluster on the image's anonymous volume. The
     # v5 entrypoint copies it into the bind directory on first start; check the
     # copy fits before stopping anything. Fresh installs have no container yet.
-    postgres_container=$("${compose[@]}" ps --all --quiet devshard-postgres 2>/dev/null || true)
+    postgres_container=$("${compose[@]}" ps --all --quiet devshard-postgres) || fail \
+        "cannot list devshard-postgres"
     postgres_target=$(jq -r '
         [.services["devshard-postgres"].volumes[]?
          | select(.target == "/var/lib/postgresql/gonka" and .type == "bind")]
@@ -535,21 +554,30 @@ desired_image_id() {
 # <IMAGE_VAR>=gonka-previous/<service>. If the replacement never becomes
 # healthy, the previous image is put back with the same command and the run
 # stops; the host keeps serving.
-up() {
-    local service=$1 previous_tag current health variable
+# The gonka-previous/<service> tag always names the last image that was
+# serving: a candidate that never became healthy must not overwrite it, and a
+# configuration-only change still refreshes it from the healthy container it
+# replaces.
+remember_previous() {
+    local service=$1 previous_tag current health
     previous_tag=gonka-previous/$service
-    # The tag always names the last image that was serving: a candidate that
-    # never became healthy must not overwrite it, and a configuration-only
-    # change still refreshes it from the healthy container it replaces.
-    current=$(current_image "$service" 2>/dev/null || true)
-    if [[ -n $current ]]; then
-        health=$(container_health "$service")
-        if [[ $health == healthy ]]; then
-            run "$docker_bin" tag "$current" "$previous_tag"
-        elif ! "$docker_bin" image inspect "$previous_tag" >/dev/null 2>&1; then
-            run "$docker_bin" tag "$current" "$previous_tag"
-        fi
+    current=
+    if [[ -n $("${compose[@]}" ps --all --quiet "$service") ]]; then
+        current=$(current_image "$service") || fail "cannot read the current image of $service"
     fi
+    [[ -n $current ]] || return 0
+    health=$(container_health "$service") || fail "cannot read the health of $service"
+    if [[ $health == healthy ]]; then
+        run "$docker_bin" tag "$current" "$previous_tag"
+    elif ! "$docker_bin" image inspect "$previous_tag" >/dev/null 2>&1; then
+        run "$docker_bin" tag "$current" "$previous_tag"
+    fi
+}
+
+up() {
+    local service=$1 previous_tag variable
+    previous_tag=gonka-previous/$service
+    remember_previous "$service"
     if run "${compose[@]}" up -d --no-deps --wait --wait-timeout "$wait_timeout" "$service"; then
         return 0
     fi
@@ -586,14 +614,30 @@ if [[ $topology == ha ]] && has_service "$legacy_owner" && [[ $(replicas "$legac
 fi
 
 pull_services=()
+missing_images=()
 for service in "${active_versiond[@]}" proxy proxy-policy proxy-policy2 devshard-postgres; do
     [[ $service != devshard-postgres || $postgres_mode == local ]] || continue
-    # Only images that are not on this host yet: a rerun after a failure works
-    # without the registry.
+    pull_services+=("$service")
     "$docker_bin" image inspect "$(jq -r --arg s "$service" '.services[$s].image' <<<"$rendered")" >/dev/null 2>&1 || \
-        pull_services+=("$service")
+        missing_images+=("$service")
 done
-((${#pull_services[@]} == 0)) || run "${compose[@]}" pull "${pull_services[@]}"
+# Refresh every image when the registry answers; when it does not, a rerun
+# after a failure still works as long as every image is already on the host.
+if ! run "${compose[@]}" pull "${pull_services[@]}"; then
+    ((${#missing_images[@]} == 0)) || fail \
+        "cannot pull the images of ${missing_images[*]} and they are not on this host"
+    echo "update-devshard: the registry is unreachable; continuing with the cached images" >&2
+fi
+router_image=$(VERSIOND_ROUTER_SLOT=0 VERSIOND_ROUTER_METRICS_NETWORK=unused "$docker_bin" compose \
+    --project-directory "$script_dir" -f "$script_dir/versiond-router-slot/docker-compose.yml" \
+    config --format json 2>/dev/null | jq -r '.services.router.image // ""') || router_image=
+if [[ $topology == ha && -n $router_image ]]; then
+    if ! run "$docker_bin" pull "$router_image"; then
+        "$docker_bin" image inspect "$router_image" >/dev/null 2>&1 || fail \
+            "cannot pull the router image $router_image and it is not on this host"
+        echo "update-devshard: continuing with the cached router image" >&2
+    fi
+fi
 
 if [[ $postgres_mode == local ]]; then
     echo "Step: shared PostgreSQL"
@@ -604,10 +648,37 @@ if [[ $topology == ha ]]; then
     echo "Step: versiond-router fleet"
     [[ -x $fleet_bin ]] || fail "missing $fleet_bin"
     run env GONKA_CONFIG_ENV="$config_env" "$fleet_bin" prepare-networks
-    run env GONKA_CONFIG_ENV="$config_env" "$fleet_bin" apply
+    # First cutover: replicas that predate the router back network are not on
+    # it, and the new routers would see no upstream at all. Attach every
+    # running replica under the pool aliases the model gives versiond; the
+    # replacement container joins through the model itself.
+    back_network=$(jq -r '.networks["versiond-router-back"].name // ""' <<<"$rendered")
+    [[ -n $back_network ]] || fail "the model names no versiond-router-back network"
+    mapfile -t pool_aliases < <(jq -r '.services.versiond.networks["versiond-router-back"].aliases[]?' <<<"$rendered")
+    ((${#pool_aliases[@]} > 0)) || fail "the model gives versiond no alias on $back_network"
+    alias_arguments=()
+    for pool_alias in "${pool_aliases[@]}"; do alias_arguments+=(--alias "$pool_alias"); done
+    for service in "${versiond_services[@]}"; do
+        id=$("${compose[@]}" ps --quiet "$service") || fail "cannot list $service"
+        [[ -n $id ]] || continue
+        id=${id%%$'\n'*}
+        attached=$("$docker_bin" inspect --format '{{json .NetworkSettings.Networks}}' "$id") || fail \
+            "cannot read the networks of $service"
+        jq -e --arg network "$back_network" 'has($network)' <<<"$attached" >/dev/null && continue
+        run "$docker_bin" network connect "${alias_arguments[@]}" "$back_network" "$id"
+    done
+    # The image was refreshed above; the fleet may not depend on the registry.
+    run env GONKA_CONFIG_ENV="$config_env" VERSIOND_ROUTER_PULL_POLICY=missing "$fleet_bin" apply
 fi
 
-echo "Step: private policy workers one at a time, then the public proxy"
+echo "Step: public proxy listener, then the private policy workers one at a time"
+# The policy workers resolve proxy-policy-ingress, an alias only the new
+# public proxy publishes, and give up after 30 seconds. Start the new proxy
+# first without waiting for its health (it needs a policy worker for that),
+# keep the previous proxy image under its tag, then bring the workers up and
+# finally wait for the proxy itself.
+remember_previous proxy
+run "${compose[@]}" up -d --no-deps proxy
 up proxy-policy2
 up proxy-policy
 up proxy
@@ -640,7 +711,8 @@ done
 # `restart: always` cannot bring it back into the pool.
 for service in "${versiond_services[@]}"; do
     [[ $(replicas "$service") == 0 ]] || continue
-    [[ -n $("${compose[@]}" ps --all --quiet "$service" 2>/dev/null || true) ]] || continue
+    existing=$("${compose[@]}" ps --all --quiet "$service") || fail "cannot list $service"
+    [[ -n $existing ]] || continue
     echo "Step: decommissioning $service (replicas: 0)"
     run "${compose[@]}" stop "$service"
     run "${compose[@]}" rm -f "$service"
