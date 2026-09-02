@@ -303,6 +303,68 @@ func runSealedInferenceLifecycle(t *testing.T, store Storage) {
 	require.Empty(t, ids)
 }
 
+// runSealedInferenceBatchInsert pins the set-at-a-time upsert against the
+// row-at-a-time form it replaced: every column round-trips, an existing row is
+// overwritten, and an id repeated inside one batch keeps the last value.
+func runSealedInferenceBatchInsert(t *testing.T, store Storage) {
+	t.Helper()
+
+	require.NoError(t, store.CreateSession(defaultParams()))
+
+	rich := InferenceRow{
+		InferenceID:        7,
+		SealedNonce:        11,
+		ObsPresent:         true,
+		SealedStatus:       3,
+		SealedExecutorSlot: 2,
+		SealedVotesValid:   4,
+		SealedVotesInvalid: 1,
+		SealedValidatedBy:  []byte{0x0f, 0xf0},
+		SealedModel:        "llama",
+		SealedPromptHash:   []byte("prompt"),
+		SealedResponseHash: []byte("response"),
+		SealedInputLength:  100,
+		SealedMaxTokens:    50,
+		SealedInputTokens:  10,
+		SealedOutputTokens: 20,
+		SealedReservedCost: 150,
+		SealedActualCost:   30,
+		SealedStartedAt:    1000,
+		SealedConfirmedAt:  2000,
+	}
+	bare := InferenceRow{InferenceID: 8, SealedNonce: 12}
+	require.NoError(t, store.InsertSealedInference("escrow-1", InferenceRow{InferenceID: 8, SealedNonce: 1}))
+
+	// Inference 9 appears twice in the same batch; the later row must win.
+	first := InferenceRow{InferenceID: 9, SealedNonce: 13}
+	last := InferenceRow{InferenceID: 9, SealedNonce: 14, ObsPresent: true, SealedModel: "mistral"}
+
+	require.NoError(t, store.InsertSealedInferences("escrow-1", []InferenceRow{rich, bare, first, last}))
+
+	got, ok, err := store.GetSealedInference("escrow-1", 7)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, rich, got, "every sealed column must survive the batch insert")
+
+	got, ok, err = store.GetSealedInference("escrow-1", 8)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, uint64(12), got.SealedNonce, "the batch upsert must overwrite an existing row")
+	require.False(t, got.ObsPresent)
+
+	got, ok, err = store.GetSealedInference("escrow-1", 9)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, uint64(14), got.SealedNonce)
+	require.Equal(t, "mistral", got.SealedModel)
+
+	ids, err := store.SealedInferenceIDs("escrow-1")
+	require.NoError(t, err)
+	require.Equal(t, map[uint64]uint64{7: 11, 8: 12, 9: 14}, ids)
+
+	require.NoError(t, store.InsertSealedInferences("escrow-1", nil))
+}
+
 // runValidationObsBatchDrain pins the batch drain against the per-id form it
 // replaced in the rebuild: same sealed totals, live rows gone, ids with nothing
 // live tolerated, and accumulate onto an existing sealed row.

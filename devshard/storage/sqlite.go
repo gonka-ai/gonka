@@ -944,13 +944,12 @@ const sqliteInsertSealedInferenceSQL = `INSERT INTO sealed_inferences (
 			sealed_started_at = excluded.sealed_started_at,
 			sealed_confirmed_at = excluded.sealed_confirmed_at`
 
-func sqliteExecInsertSealedInference(exec sqliteExec, escrowID string, row InferenceRow) error {
+func sqliteSealedInferenceArgs(escrowID string, row InferenceRow) []any {
 	obsPresent := 0
 	if row.ObsPresent {
 		obsPresent = 1
 	}
-	_, err := exec.Exec(
-		sqliteInsertSealedInferenceSQL,
+	return []any{
 		escrowID, row.InferenceID, row.SealedNonce,
 		obsPresent, row.SealedStatus, row.SealedExecutorSlot,
 		row.SealedVotesValid, row.SealedVotesInvalid, row.SealedValidatedBy,
@@ -959,8 +958,11 @@ func sqliteExecInsertSealedInference(exec sqliteExec, escrowID string, row Infer
 		row.SealedInputTokens, row.SealedOutputTokens,
 		row.SealedReservedCost, row.SealedActualCost,
 		row.SealedStartedAt, row.SealedConfirmedAt,
-	)
-	if err != nil {
+	}
+}
+
+func sqliteExecInsertSealedInference(exec sqliteExec, escrowID string, row InferenceRow) error {
+	if _, err := exec.Exec(sqliteInsertSealedInferenceSQL, sqliteSealedInferenceArgs(escrowID, row)...); err != nil {
 		return fmt.Errorf("insert sealed inference: %w", err)
 	}
 	return nil
@@ -974,6 +976,9 @@ func (s *SQLite) InsertSealedInference(escrowID string, row InferenceRow) error 
 	return sqliteExecInsertSealedInference(p.writeDB, escrowID, row)
 }
 
+// InsertSealedInferences prepares the upsert once per chunk instead of letting
+// database/sql re-prepare it for every row, which is most of the per-row cost
+// on a rebuild that writes the whole seal set.
 func (s *SQLite) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
 	if len(rows) == 0 {
 		return nil
@@ -987,19 +992,36 @@ func (s *SQLite) InsertSealedInferences(escrowID string, rows []InferenceRow) er
 		if end > len(rows) {
 			end = len(rows)
 		}
-		tx, err := p.writeDB.Begin()
-		if err != nil {
-			return fmt.Errorf("insert sealed inferences begin: %w", err)
+		if err := sqliteInsertSealedInferenceChunk(p.writeDB, escrowID, rows[start:end]); err != nil {
+			return err
 		}
-		for i := start; i < end; i++ {
-			if err := sqliteExecInsertSealedInference(tx, escrowID, rows[i]); err != nil {
-				_ = tx.Rollback()
-				return err
-			}
+	}
+	return nil
+}
+
+func sqliteInsertSealedInferenceChunk(db *sql.DB, escrowID string, rows []InferenceRow) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("insert sealed inferences begin: %w", err)
+	}
+	stmt, err := tx.Prepare(sqliteInsertSealedInferenceSQL)
+	if err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("insert sealed inferences prepare: %w", err)
+	}
+	for _, row := range rows {
+		if _, err := stmt.Exec(sqliteSealedInferenceArgs(escrowID, row)...); err != nil {
+			_ = stmt.Close()
+			_ = tx.Rollback()
+			return fmt.Errorf("insert sealed inference: %w", err)
 		}
-		if err := tx.Commit(); err != nil {
-			return fmt.Errorf("insert sealed inferences commit: %w", err)
-		}
+	}
+	if err := stmt.Close(); err != nil {
+		_ = tx.Rollback()
+		return fmt.Errorf("insert sealed inferences close: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("insert sealed inferences commit: %w", err)
 	}
 	return nil
 }
