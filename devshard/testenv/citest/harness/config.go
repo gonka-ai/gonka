@@ -16,6 +16,8 @@ import (
 type MultiConfigOpts struct {
 	Hosts          int
 	EscrowSlots    int
+	MaxNonce       uint32
+	EscrowAmount   uint64
 	ValidationRate uint32 // 0 = default; else params + seed escrow snapshot
 }
 
@@ -61,6 +63,14 @@ func WriteMultiConfig(t *testing.T, dir string, opts MultiConfigOpts) {
 
 	paramsRate := ""
 	escrowRate := ""
+	paramsMaxNonce := ""
+	escrowAmount := ""
+	if opts.MaxNonce > 0 {
+		paramsMaxNonce = fmt.Sprintf("\n  max_nonce: %d", opts.MaxNonce)
+	}
+	if opts.EscrowAmount > 0 {
+		escrowAmount = fmt.Sprintf("\n    amount: %d", opts.EscrowAmount)
+	}
 	if opts.ValidationRate > 0 {
 		paramsRate = fmt.Sprintf("\n  validation_rate: %d", opts.ValidationRate)
 		escrowRate = fmt.Sprintf("\n    validation_rate: %d", opts.ValidationRate)
@@ -78,7 +88,7 @@ epoch:
   poc_start_block_height: 100
   epoch_length: 400
 params:
-  devshard_requests_enabled: true%s
+  devshard_requests_enabled: true%s%s
 mock_chain:
   grpc_port: %d
   rpc_port: %d
@@ -110,12 +120,12 @@ warm_grantee:
   private_key_hex: TODO
 escrows:
   - id: 1
-    model_id: test-model%s
+    model_id: test-model%s%s
 grantees:
   - granter_address: ""
     message_type_url: /inference.inference.MsgStartInference
     grantees: [""]
-`, paramsRate, chainGRPC, chainRPC, chainTestenv, dapiGRPC, dapiHTTP, openAIHTTP, routerPort, gatewayPort, opts.EscrowSlots, hosts.String(), escrowRate)
+`, paramsMaxNonce, paramsRate, chainGRPC, chainRPC, chainTestenv, dapiGRPC, dapiHTTP, openAIHTTP, routerPort, gatewayPort, opts.EscrowSlots, hosts.String(), escrowAmount, escrowRate)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(skeleton), 0o644))
 }
 
