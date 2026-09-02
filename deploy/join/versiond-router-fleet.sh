@@ -811,7 +811,18 @@ require_slot_routes_now() {
         return 1
     }
     for route in "${!required_routes[@]}" "${!protected_routes[@]}"; do
-        grep -qx -- "$route" <<<"$declared" || continue
+        if ! grep -qx -- "$route" <<<"$declared"; then
+            # A route that vanished from the candidate's catalog since its
+            # route gate is a failure, unless removals are allowed and the
+            # catalog itself removed it.
+            if [[ -z ${required_routes[$route]-} ]]; then
+                case ${VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS:-false} in
+                    1 | true | yes) continue ;;
+                esac
+            fi
+            echo "versiond-router-fleet: refusing to commit slot $slot: route $route vanished from its catalog before the previous generation was removed" >&2
+            return 1
+        fi
         slot_route_ready "$slot" "$route" || {
             echo "versiond-router-fleet: refusing to commit slot $slot: route $route stopped being served before the previous generation was removed" >&2
             return 1
@@ -873,6 +884,11 @@ roll_forward_committed() {
     # cleanup would remove records it may still need.
     [[ $committed_spec == "$(fleet_spec_hash)" ]] || fail \
         "a committed maintenance cleanup is pending for specification $committed_spec (image $committed_image) and the configuration has changed since; restore that configuration and rerun apply to finish the cleanup first"
+    # The specification names the image by its reference; a mutable tag may
+    # have moved since the commit. The committed image ID is what the
+    # cleanup must finish with, also checked before anything is removed.
+    [[ $committed_image == "$candidate_image_id" ]] || fail \
+        "a committed maintenance cleanup is pending for image $committed_image but $candidate_image now resolves to $candidate_image_id (the tag moved); pin the committed image (VERSIOND_ROUTER_IMAGE=<repository>@<digest> of $committed_image) and rerun apply to finish the cleanup first"
     echo "Finishing the committed maintenance rollout"
     for slot in "${slots[@]}"; do
         lookup=0
