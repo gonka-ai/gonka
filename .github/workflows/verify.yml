@@ -263,8 +263,23 @@ jobs:
         run: make -C versiond-router test-fleet
       - name: Check the join update script
         run: |
-          shellcheck deploy/join/deployment-lock.sh deploy/join/update-devshard.sh deploy/join/update-devshard_test.sh
+          shellcheck deploy/join/deployment-lock.sh deploy/join/update-devshard.sh deploy/join/update-devshard_test.sh \
+            deploy/join/update-devshard-regression_test.sh deploy/join/compose-contract_test.sh \
+            deploy/join/update-devshard-e2e_test.sh
           deploy/join/update-devshard_test.sh
+      - name: Gate the updater failure scenarios
+        run: deploy/join/update-devshard-regression_test.sh --gate
+      - name: Check that every host a service resolves is published on a shared network
+        run: deploy/join/compose-contract_test.sh
+
+  test-devshard-host-cutover:
+    runs-on: ubuntu-latest
+    name: Test the v4 to v5 host cutover end to end
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Run the real updater against a pre-v5 deployment
+        run: deploy/join/update-devshard-e2e_test.sh
 
   test-public-proxy-router:
     runs-on: ubuntu-latest
@@ -476,5 +491,7 @@ jobs:
           shellcheck deploy/join/devshard-postgres-*.sh
           deploy/join/devshard-postgres-entrypoint_test.sh
           deploy/join/devshard-postgres-migration-preflight_test.sh
+      - name: Gate the PostgreSQL provenance scenarios
+        run: deploy/join/devshard-postgres-provenance_acceptance_test.sh --gate
       - name: Preserve a real PostgreSQL cluster across replacement
         run: deploy/join/devshard-postgres-upgrade_test.sh
