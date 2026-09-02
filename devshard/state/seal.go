@@ -604,37 +604,69 @@ func (sm *StateMachine) RebuildSealedInferenceIndex() error {
 	return err
 }
 
+// SealedNonceCount returns the size of the seal set. Callers that only need the
+// count must not use ExportSealedNonces, which clones the whole map.
+func (sm *StateMachine) SealedNonceCount() int {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return len(sm.sealedNonces)
+}
+
 // FillSealedInferenceIndexGaps inserts a bare index row for each sealed id that
 // has no stored row and is not live. It never deletes and never overwrites an
 // existing row (rich or bare).
+//
+// The seal set is snapshotted under the lock and the storage work runs without
+// it: listing every stored id and inserting the gaps would otherwise hold the
+// state machine for the length of the batch. An id sealed after the snapshot
+// writes its own row on the live path, so it is not a gap this pass has to see.
 func (sm *StateMachine) FillSealedInferenceIndexGaps() (int, error) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
+	sm.mu.RLock()
+	store := sm.inferenceStore
+	escrowID := sm.state.EscrowID
+	sealedNonces := maps.Clone(sm.sealedNonces)
+	live := make(map[uint64]struct{}, len(sm.state.Inferences))
+	for id := range sm.state.Inferences {
+		live[id] = struct{}{}
+	}
+	sm.mu.RUnlock()
 
-	existing, err := sm.inferenceStore.SealedInferenceIDs(sm.state.EscrowID)
+	existing, err := store.SealedInferenceIDs(escrowID)
 	if err != nil {
 		return 0, err
 	}
-	ids := make([]uint64, 0, len(sm.sealedNonces))
-	for id := range sm.sealedNonces {
+	ids := make([]uint64, 0, len(sealedNonces))
+	for id := range sealedNonces {
 		ids = append(ids, id)
 	}
 	slices.Sort(ids)
-	rows := make([]storage.InferenceRow, 0)
-	for _, id := range ids {
-		if _, live := sm.state.Inferences[id]; live {
-			continue
+
+	// Count first so the row slice is allocated exactly once. The common case
+	// is zero gaps over a seal set in the millions, where growing a slice of
+	// InferenceRow by doubling would copy hundreds of MB for nothing.
+	missing := 0
+	isGap := func(id uint64) bool {
+		if _, isLive := live[id]; isLive {
+			return false
 		}
-		if _, ok := existing[id]; ok {
-			continue
-		}
-		nonce, ok := sm.sealedNonces[id]
-		if !ok {
-			nonce = sm.state.LatestNonce
-		}
-		rows = append(rows, storage.InferenceRow{InferenceID: id, SealedNonce: nonce})
+		_, stored := existing[id]
+		return !stored
 	}
-	if err := sm.inferenceStore.InsertSealedInferences(sm.state.EscrowID, rows); err != nil {
+	for _, id := range ids {
+		if isGap(id) {
+			missing++
+		}
+	}
+	if missing == 0 {
+		return 0, nil
+	}
+	rows := make([]storage.InferenceRow, 0, missing)
+	for _, id := range ids {
+		if isGap(id) {
+			rows = append(rows, storage.InferenceRow{InferenceID: id, SealedNonce: sealedNonces[id]})
+		}
+	}
+	if err := store.InsertSealedInferences(escrowID, rows); err != nil {
 		return 0, err
 	}
 	return len(rows), nil
@@ -650,14 +682,23 @@ func (sm *StateMachine) RebuildSealedInferenceIndexFromDiffs(store storage.Stora
 	}
 
 	sm.mu.RLock()
-	folded := sm.foldInferenceRecordsFromDiffsLocked(records)
 	escrowID := sm.state.EscrowID
+	group := append([]types.SlotAssignment(nil), sm.state.Group...)
+	price := sm.state.Config.TokenPrice
+	threshold := sm.state.Config.VoteThreshold
 	sealedNonces := maps.Clone(sm.sealedNonces)
 	live := make(map[uint64]*types.InferenceRecord, len(sm.state.Inferences))
 	for id, rec := range sm.state.Inferences {
 		live[id] = cloneInferenceRecord(rec)
 	}
 	sm.mu.RUnlock()
+
+	// Fold outside the lock. This walks the whole journal, and ApplyDiff takes
+	// the write lock, so holding the read lock here would stall the apply path
+	// of an already-published session for the length of the replay. The fold
+	// needs only the group and config captured above plus the slot lookup maps,
+	// which are immutable after construction.
+	folded := sm.foldInferenceRecordsFromDiffs(group, price, threshold, records)
 
 	if err := store.DeleteSealedInferences(escrowID); err != nil {
 		return err
@@ -691,14 +732,15 @@ func (sm *StateMachine) RebuildSealedInferenceIndexFromDiffs(store storage.Stora
 	return store.InsertSealedInferences(escrowID, rows)
 }
 
-func (sm *StateMachine) foldInferenceRecordsFromDiffsLocked(records []types.DiffRecord) map[uint64]*types.InferenceRecord {
+// foldInferenceRecordsFromDiffs replays the journal into inference records.
+// group, price and threshold are passed in so the caller can release sm.mu
+// before the walk; everything else it reads is immutable after construction.
+func (sm *StateMachine) foldInferenceRecordsFromDiffs(group []types.SlotAssignment, price uint64, threshold uint32, records []types.DiffRecord) map[uint64]*types.InferenceRecord {
 	out := make(map[uint64]*types.InferenceRecord)
-	if len(sm.state.Group) == 0 {
+	if len(group) == 0 {
 		return out
 	}
-	price := sm.state.Config.TokenPrice
-	threshold := sm.state.Config.VoteThreshold
-	groupLen := uint64(len(sm.state.Group))
+	groupLen := uint64(len(group))
 	for _, rec := range records {
 		for _, tx := range rec.Txs {
 			switch inner := tx.GetTx().(type) {
@@ -716,7 +758,7 @@ func (sm *StateMachine) foldInferenceRecordsFromDiffsLocked(records []types.Diff
 				}
 				out[msg.InferenceId] = &types.InferenceRecord{
 					Status:       types.StatusPending,
-					ExecutorSlot: sm.state.Group[msg.InferenceId%groupLen].SlotID,
+					ExecutorSlot: group[msg.InferenceId%groupLen].SlotID,
 					Model:        msg.Model,
 					PromptHash:   append([]byte(nil), msg.PromptHash...),
 					InputLength:  msg.InputLength,
