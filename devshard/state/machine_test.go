@@ -2327,6 +2327,36 @@ func TestFinalizeDeadlineDrainsLiveIntoSealedAcc(t *testing.T) {
 	require.NotEqual(t, zero[:], final.SealedAcc, "sealed_acc must change after draining live records")
 }
 
+func TestFinalizeDrain_ObservabilityFailureDoesNotBlockSettlement(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	store := &failingObsInsertStore{
+		Memory: testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000),
+	}
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, store)
+	require.NoError(t, err)
+
+	applyStartConfirmFinish(t, sm, user, hosts, 1)
+	nonce := sm.LatestNonce() + 1
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txFinalize()})
+	_, err = sm.ApplyDiff(diff)
+	require.NoError(t, err)
+
+	state := sm.SnapshotState()
+	for nonce = state.LatestNonce + 1; nonce <= state.FinalizeNonce+uint64(len(hosts)); nonce++ {
+		diff = testutil.SignDiff(t, user, "escrow-1", nonce, nil)
+		_, err = sm.ApplyDiff(diff)
+		require.NoError(t, err)
+	}
+	require.Equal(t, types.PhaseSettlement, sm.Phase())
+	require.Empty(t, sm.SnapshotState().Inferences)
+}
+
 // TestV2_FinalizeDrainDeterministicOrder verifies that two state machines
 // applying the same finalize-deadline sequence end with identical sealed_acc
 // values, even if their internal map iteration order differed. This is the

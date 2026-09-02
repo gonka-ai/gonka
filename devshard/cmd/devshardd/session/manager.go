@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -67,9 +69,10 @@ type HostManager struct {
 }
 
 const (
-	resolutionFailureTTL  = 30 * time.Second
-	permanentFailureTTL   = 10 * time.Minute
-	maxResolutionFailures = 1024
+	recoverSessionsConcurrency = 8
+	resolutionFailureTTL       = 30 * time.Second
+	permanentFailureTTL        = 10 * time.Minute
+	maxResolutionFailures      = 1024
 )
 
 type resolutionFailure struct {
@@ -423,23 +426,65 @@ func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*trans
 // injecting warm key deltas from the stored DiffRecords. Call this on startup
 // after constructing the HostManager.
 func (m *HostManager) RecoverSessions() error {
-	escrowIDs, err := m.store.ListActiveSessions()
+	startedAt := time.Now()
+	activeSessions, err := m.store.ListActiveSessions()
 	if err != nil {
 		return fmt.Errorf("list active sessions: %w", err)
 	}
-
-	for _, active := range escrowIDs {
-		if _, err := m.recoverAndStoreSession(active.EscrowID); err != nil {
-			if errors.Is(err, storage.ErrSessionVersionConflict) {
-				logging.Info("skipping devshard session with foreign version", inferenceTypes.System,
-					"escrow_id", active.EscrowID, "error", err)
-				continue
-			}
-			logging.Error("skipping corrupt session", inferenceTypes.System,
-				"escrow_id", active.EscrowID, "error", err)
-		}
+	if len(activeSessions) == 0 {
+		logging.Info("completed devshard session recovery", inferenceTypes.System,
+			"session_count", 0, "worker_count", 0, "recovered_count", 0,
+			"failed_count", 0, "version_skipped_count", 0, "duration", time.Since(startedAt))
+		return nil
 	}
 
+	workers := min(recoverSessionsConcurrency, len(activeSessions))
+	logging.Info("starting devshard session recovery", inferenceTypes.System,
+		"session_count", len(activeSessions), "worker_count", workers)
+
+	jobs := make(chan storage.ActiveSession)
+	var waitGroup sync.WaitGroup
+	var recoveredCount atomic.Int64
+	var failedCount atomic.Int64
+	var versionSkippedCount atomic.Int64
+	for range workers {
+		waitGroup.Add(1)
+		go func() {
+			defer waitGroup.Done()
+			for active := range jobs {
+				sessionStartedAt := time.Now()
+				if _, err := m.recoverAndStoreSession(active.EscrowID); err != nil {
+					if errors.Is(err, storage.ErrSessionVersionConflict) {
+						versionSkippedCount.Add(1)
+						logging.Info("skipping devshard session with foreign version", inferenceTypes.System,
+							"escrow_id", active.EscrowID, "epoch_id", active.EpochID,
+							"host_version", m.boundVersion, "duration", time.Since(sessionStartedAt),
+							"error", err)
+						continue
+					}
+					failedCount.Add(1)
+					logging.Error("failed to recover devshard session", inferenceTypes.System,
+						"escrow_id", active.EscrowID, "epoch_id", active.EpochID,
+						"duration", time.Since(sessionStartedAt), "error", err)
+					continue
+				}
+				recoveredCount.Add(1)
+				logging.Info("recovered devshard session", inferenceTypes.System,
+					"escrow_id", active.EscrowID, "epoch_id", active.EpochID,
+					"duration", time.Since(sessionStartedAt))
+			}
+		}()
+	}
+	for _, active := range activeSessions {
+		jobs <- active
+	}
+	close(jobs)
+	waitGroup.Wait()
+
+	logging.Info("completed devshard session recovery", inferenceTypes.System,
+		"session_count", len(activeSessions), "worker_count", workers,
+		"recovered_count", recoveredCount.Load(), "failed_count", failedCount.Load(),
+		"version_skipped_count", versionSkippedCount.Load(), "duration", time.Since(startedAt))
 	return nil
 }
 
@@ -479,20 +524,56 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 	if recoveredVersion == "" {
 		recoveredVersion = m.boundVersion
 	}
-	sm, err := state.NewStateMachine(
-		escrowID, meta.Config, meta.Group, meta.InitialBalance,
-		meta.CreatorAddr, m.verifier, m.store,
-		state.WithWarmKeyResolver(m.bridge.VerifyWarmKey),
-		state.WithVersion(recoveredVersion),
-	)
-	if err != nil {
-		return nil, fmt.Errorf("create state machine: %w", err)
+
+	var sm *state.StateMachine
+	replayFrom := uint64(1)
+	snapshotRestored := false
+	if meta.LatestNonce > 0 {
+		snapshotNonce, snapshotData, snapshotErr := m.store.LoadSnapshot(escrowID)
+		switch {
+		case snapshotErr == nil && snapshotNonce > 0 && snapshotNonce <= meta.LatestNonce:
+			snapshotMachine, restoreErr := m.restoreSnapshotStateMachine(
+				escrowID,
+				recoveredVersion,
+				meta,
+				snapshotNonce,
+				snapshotData,
+			)
+			if restoreErr != nil {
+				logging.Error("invalid devshard snapshot, replaying full history", inferenceTypes.System,
+					"escrow_id", escrowID, "snapshot_nonce", snapshotNonce, "error", restoreErr)
+			} else {
+				sm = snapshotMachine
+				replayFrom = snapshotNonce + 1
+				snapshotRestored = true
+				logging.Info("restored devshard snapshot", inferenceTypes.System,
+					"escrow_id", escrowID, "snapshot_nonce", snapshotNonce, "latest_nonce", meta.LatestNonce)
+			}
+		case snapshotErr != nil && !errors.Is(snapshotErr, storage.ErrSnapshotNotFound):
+			logging.Error("failed to load devshard snapshot, replaying full history", inferenceTypes.System,
+				"escrow_id", escrowID, "error", snapshotErr)
+		case snapshotErr == nil && snapshotNonce > meta.LatestNonce:
+			logging.Warn("ignored devshard snapshot ahead of session, replaying full history", inferenceTypes.System,
+				"escrow_id", escrowID, "snapshot_nonce", snapshotNonce, "latest_nonce", meta.LatestNonce)
+		}
+	}
+	if sm == nil {
+		sm, err = m.newRecoveryStateMachine(escrowID, recoveredVersion, meta)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	if meta.LatestNonce > 0 {
-		records, err := m.store.GetDiffs(escrowID, 1, meta.LatestNonce)
+		var records []types.DiffRecord
+		if replayFrom <= meta.LatestNonce {
+			records, err = m.store.GetDiffs(escrowID, replayFrom, meta.LatestNonce)
+		}
 		if err != nil {
 			return nil, fmt.Errorf("get diffs: %w", err)
+		}
+		if err := validateRecoveryDiffRange(records, replayFrom, meta.LatestNonce); err != nil {
+			return nil, err
 		}
 
 		for _, rec := range records {
@@ -501,21 +582,22 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 			if applyErr != nil {
 				return nil, fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
 			}
-			if len(rec.StateHash) > 0 && len(root) > 0 {
-				if !bytes.Equal(root, rec.StateHash) {
-					return nil, fmt.Errorf("state root mismatch at nonce %d", rec.Nonce)
-				}
+			expectedRoot := recoveryDiffRoot(rec)
+			if len(expectedRoot) > 0 && !bytes.Equal(root, expectedRoot) {
+				return nil, fmt.Errorf("state root mismatch at nonce %d", rec.Nonce)
 			}
 		}
 
-		if err := storage.RebuildValidationObsFromDiffs(
-			m.store,
-			escrowID,
-			records,
-			storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
-		); err != nil {
-			return nil, fmt.Errorf("rebuild validation obs: %w", err)
+		if replayFrom == 1 || uint64(len(records)) >= host.SnapshotInterval {
+			if err := saveHostSnapshot(m.store, sm, escrowID, meta.LatestNonce); err != nil {
+				logging.Error("failed to save devshard recovery snapshot", inferenceTypes.System,
+					"escrow_id", escrowID, "nonce", meta.LatestNonce, "error", err)
+			}
 		}
+		logging.Info("recovered devshard state", inferenceTypes.System,
+			"escrow_id", escrowID, "snapshot_restored", snapshotRestored,
+			"replay_from", replayFrom, "replayed_diffs", len(records),
+			"latest_nonce", meta.LatestNonce)
 	}
 
 	h, err := host.NewHost(sm, m.signer, m.engine, escrowID, meta.Group, nil, m.hostOpts(meta.EpochID)...)
@@ -533,6 +615,134 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 	}
 
 	return srv, nil
+}
+
+func (m *HostManager) newRecoveryStateMachine(
+	escrowID string,
+	recoveredVersion string,
+	meta *storage.SessionMeta,
+) (*state.StateMachine, error) {
+	machine, err := state.NewStateMachine(
+		escrowID, meta.Config, meta.Group, meta.InitialBalance,
+		meta.CreatorAddr, m.verifier, m.store,
+		state.WithWarmKeyResolver(m.bridge.VerifyWarmKey),
+		state.WithVersion(recoveredVersion),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("create state machine: %w", err)
+	}
+	return machine, nil
+}
+
+func (m *HostManager) restoreSnapshotStateMachine(
+	escrowID string,
+	recoveredVersion string,
+	meta *storage.SessionMeta,
+	snapshotNonce uint64,
+	snapshotData []byte,
+) (*state.StateMachine, error) {
+	snapshotState, committedEntries, sealedNonces, err :=
+		host.UnmarshalStateSnapshotWithCommitted(snapshotData)
+	if err != nil {
+		return nil, fmt.Errorf("decode snapshot: %w", err)
+	}
+	if snapshotState.EscrowID != escrowID {
+		return nil, fmt.Errorf("snapshot escrow %q does not match %q", snapshotState.EscrowID, escrowID)
+	}
+	if snapshotState.LatestNonce != snapshotNonce {
+		return nil, fmt.Errorf("snapshot state nonce %d does not match stored nonce %d",
+			snapshotState.LatestNonce, snapshotNonce)
+	}
+	if snapshotState.StateRootAndProtocolVersion != types.NormalizeVersion(recoveredVersion) {
+		return nil, fmt.Errorf("snapshot version %q does not match %q",
+			snapshotState.StateRootAndProtocolVersion, types.NormalizeVersion(recoveredVersion))
+	}
+	if !reflect.DeepEqual(snapshotState.Config, meta.Config) {
+		return nil, fmt.Errorf("snapshot config does not match session metadata")
+	}
+	if !reflect.DeepEqual(snapshotState.Group, meta.Group) {
+		return nil, fmt.Errorf("snapshot group does not match session metadata")
+	}
+	for id := range committedEntries {
+		if _, live := snapshotState.Inferences[id]; !live {
+			return nil, fmt.Errorf("snapshot committed entry %d is not live", id)
+		}
+	}
+	for id, sealNonce := range sealedNonces {
+		if _, live := snapshotState.Inferences[id]; live {
+			return nil, fmt.Errorf("snapshot inference %d is both live and sealed", id)
+		}
+		if id == 0 || id > sealNonce || sealNonce > snapshotNonce {
+			return nil, fmt.Errorf("snapshot inference %d has invalid seal nonce %d", id, sealNonce)
+		}
+	}
+
+	boundary, err := m.store.GetDiffs(escrowID, snapshotNonce, snapshotNonce)
+	if err != nil {
+		return nil, fmt.Errorf("read snapshot boundary: %w", err)
+	}
+	if len(boundary) != 1 || boundary[0].Nonce != snapshotNonce {
+		return nil, fmt.Errorf("snapshot boundary nonce %d is missing", snapshotNonce)
+	}
+	expectedRoot := recoveryDiffRoot(boundary[0])
+
+	machine, err := m.newRecoveryStateMachine(escrowID, recoveredVersion, meta)
+	if err != nil {
+		return nil, err
+	}
+	machine.RestoreState(snapshotState)
+	machine.RestoreCommittedEntries(committedEntries)
+	machine.RestoreSealedNonces(sealedNonces)
+	root, err := machine.ComputeStateRoot()
+	if err != nil {
+		return nil, fmt.Errorf("compute snapshot state root: %w", err)
+	}
+	if len(expectedRoot) == 0 {
+		logging.Warn("restoring devshard snapshot without a boundary state root",
+			"escrow_id", escrowID, "snapshot_nonce", snapshotNonce)
+	} else if !bytes.Equal(root, expectedRoot) {
+		return nil, fmt.Errorf("snapshot state root mismatch at nonce %d", snapshotNonce)
+	}
+	return machine, nil
+}
+
+func validateRecoveryDiffRange(records []types.DiffRecord, fromNonce, toNonce uint64) error {
+	if fromNonce > toNonce {
+		return nil
+	}
+	expected := fromNonce
+	for _, record := range records {
+		if record.Nonce != expected {
+			return fmt.Errorf("recovery diff range missing nonce %d", expected)
+		}
+		expected++
+	}
+	if expected <= toNonce {
+		return fmt.Errorf("recovery diff range missing trailing nonces %d..%d", expected, toNonce)
+	}
+	return nil
+}
+
+func recoveryDiffRoot(record types.DiffRecord) []byte {
+	if len(record.StateHash) > 0 {
+		return record.StateHash
+	}
+	return record.PostStateRoot
+}
+
+func saveHostSnapshot(store storage.Storage, sm *state.StateMachine, escrowID string, nonce uint64) error {
+	snapshot, err := host.MarshalStateSnapshotWithCommitted(
+		sm.ExportState(),
+		sm.ExportCommittedEntries(),
+		sm.ExportSealedNonces(),
+	)
+	if err != nil {
+		return fmt.Errorf("marshal snapshot: %w", err)
+	}
+	if err := store.SaveSnapshot(escrowID, nonce, snapshot); err != nil {
+		return fmt.Errorf("save snapshot: %w", err)
+	}
+	return nil
 }
 
 // Register mounts devshard session routes on the given echo group.

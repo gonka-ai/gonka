@@ -239,7 +239,12 @@ func (sm *StateMachine) drainLiveIntoSealedAccLocked(sealNonce uint64) error {
 		sm.sealedNonces[id] = sealNonce
 		delete(sm.committedEntries, id)
 		if err := sm.upsertInferenceObsLocked(id, sealNonce, rec); err != nil {
-			return fmt.Errorf("persist sealed inference %d during drain: %w", id, err)
+			logging.Warn("failed to persist sealed inference obs during settlement drain",
+				"subsystem", "state",
+				"escrow_id", sm.state.EscrowID,
+				"inference_id", id,
+				"error", err,
+			)
 		}
 		delete(sm.state.Inferences, id)
 	}
@@ -434,6 +439,7 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 		return nil, StateClockWindow{}, nil
 	}
 
+	collectDiagnostics := !sm.replayingPersisted
 	var candidates []autoSealCandidate
 	var eligible []uint64
 	for id, rec := range sm.state.Inferences {
@@ -447,14 +453,18 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 		}
 		candidate.NonceGateOK = sealNonce >= id+sealGraceNonces
 		if !candidate.NonceGateOK {
-			candidates = append(candidates, candidate)
+			if collectDiagnostics {
+				candidates = append(candidates, candidate)
+			}
 			continue
 		}
 		if terminalAutoSealStatus(rec.Status) {
 			candidate.ClockGateSkipped = true
 			candidate.ClockGateOK = true
 			candidate.Eligible = true
-			candidates = append(candidates, candidate)
+			if collectDiagnostics {
+				candidates = append(candidates, candidate)
+			}
 			eligible = append(eligible, id)
 			continue
 		}
@@ -462,24 +472,30 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 		candidate.GraceRemaining = remaining
 		candidate.ClockGateOK = remaining <= 0
 		candidate.Eligible = candidate.ClockGateOK
-		candidates = append(candidates, candidate)
+		if collectDiagnostics {
+			candidates = append(candidates, candidate)
+		}
 		if !candidate.ClockGateOK {
 			continue
 		}
 		eligible = append(eligible, id)
 	}
-	slices.SortFunc(candidates, func(a, b autoSealCandidate) int {
-		switch {
-		case a.ID < b.ID:
-			return -1
-		case a.ID > b.ID:
-			return 1
-		default:
-			return 0
-		}
-	})
+	if collectDiagnostics {
+		slices.SortFunc(candidates, func(a, b autoSealCandidate) int {
+			switch {
+			case a.ID < b.ID:
+				return -1
+			case a.ID > b.ID:
+				return 1
+			default:
+				return 0
+			}
+		})
+	}
 	if len(eligible) == 0 {
-		sm.logAutoSealDiagnosticLocked(side, sealNonce, clockWin, sealGraceNonces, graceSeconds, stateClock, candidates, nil)
+		if collectDiagnostics {
+			sm.logAutoSealDiagnosticLocked(side, sealNonce, clockWin, sealGraceNonces, graceSeconds, stateClock, candidates, nil)
+		}
 		return nil, clockWin, nil
 	}
 	slices.Sort(eligible)
@@ -509,7 +525,9 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 		delete(sm.state.Inferences, id)
 	}
 	sm.state.SealedAcc = append([]byte(nil), cur[:]...)
-	sm.logAutoSealDiagnosticLocked(side, sealNonce, clockWin, sealGraceNonces, graceSeconds, stateClock, candidates, eligible)
+	if collectDiagnostics {
+		sm.logAutoSealDiagnosticLocked(side, sealNonce, clockWin, sealGraceNonces, graceSeconds, stateClock, candidates, eligible)
+	}
 	return eligible, clockWin, nil
 }
 

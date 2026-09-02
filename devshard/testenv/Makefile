@@ -66,6 +66,7 @@ dev-logs: ## Follow dev overlay logs.
 .PHONY: citest-images citest-stack citest-stack-build list-citest-targets
 .PHONY: citest-validation-lease-race citest-escrow-longpoll
 .PHONY: citest-versiond-rolling-update citest-adversarial
+.PHONY: citest-v4-snapshot-recovery
 .PHONY: citest-observability citest-grpc-transport citest-force-upstream-streaming test-gateway-smoke
 
 # citest-images and citest-stack-build are build/helper rules, not standalone
@@ -96,6 +97,10 @@ citest-escrow-longpoll: citest-images ## Escrow long-poll warm; first inference 
 
 citest-versiond-rolling-update: citest-images ## Same-version versiond rolling update and fallback.
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestVersiondRollingUpdate' -count=1 -v -timeout 30m
+
+citest-v4-snapshot-recovery: citest-images ## SQLite v4 snapshot recovery and routing continuity.
+	$(MAKE) build-devshardd
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestV4SyncRecoveryUsesSnapshotBeforeServing$$' -count=1 -v -timeout 30m
 
 citest-adversarial: citest-images ## Phase 9 adversarial citest (TESTENV_CITEST=1).
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestA1_|TestA2_|TestA3_|TestA4_' -count=1 -v -timeout 30m

@@ -261,6 +261,16 @@ func (s *Stack) ComposeLogsTail(tail int, services ...string) (string, error) {
 	return string(out), err
 }
 
+// ComposeLogsSince returns Docker Compose logs emitted at or after the given time.
+func (s *Stack) ComposeLogsSince(since time.Time, services ...string) (string, error) {
+	args := append(append([]string{"compose"}, s.composeFileArgs()...), "logs", "--no-color", "--since", since.UTC().Format(time.RFC3339Nano))
+	args = append(args, services...)
+	cmd := exec.Command("docker", args...)
+	cmd.Dir = s.WorkDir
+	out, err := cmd.CombinedOutput()
+	return string(out), err
+}
+
 // RequireServicesRunning asserts docker compose reports each service as running.
 func (s *Stack) RequireServicesRunning(t *testing.T, services ...string) {
 	t.Helper()
