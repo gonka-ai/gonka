@@ -68,6 +68,11 @@ type HostManager struct {
 	recoveryGate     recoveryGate
 	recoveryComplete atomic.Bool
 
+	// obsGate is the same value as store, kept typed so obs rebuilds can run
+	// against the wrapped store while the live writes queue.
+	obsGate     *storage.ObsRepairGate
+	obsRepairWG sync.WaitGroup
+
 	statsMu            sync.Mutex
 	statsShardsCache   *statsShardsResponse
 	statsShardsCached  time.Time
@@ -257,10 +262,14 @@ func NewHostManager(
 		slog.Warn("devshardd: payload fault injection active; testenv build only",
 			"http_status", faultStatus, "only_validator", faultAddr)
 	}
+	// Everything downstream (hosts, state machines, transport) writes through
+	// the gate, which is a pass-through until a rebuild claims an escrow.
+	gate := storage.NewObsRepairGate(store)
 	return &HostManager{
 		sessions:           make(map[string]*transport.Server),
 		resolutionFailures: make(map[string]resolutionFailure),
-		store:              store,
+		store:              gate,
+		obsGate:            gate,
 		signer:             signer,
 		verifier:           signing.NewSecp256k1Verifier(),
 		engine:             engine,
@@ -473,7 +482,7 @@ func (m *HostManager) getOrCreate(escrowID string, escrow *bridge.EscrowInfo) (*
 		}
 
 		// Prefer recovering an already-bound session over CreateSession.
-		srv, err := func() (*transport.Server, error) {
+		srv, obsRepair, err := func() (*transport.Server, *obsRepairJob, error) {
 			m.recoveryGate.begin(escrowID)
 			defer m.recoveryGate.end()
 			return m.recoverStoredSession(escrowID)
@@ -483,6 +492,7 @@ func (m *HostManager) getOrCreate(escrowID string, escrow *bridge.EscrowInfo) (*
 			if storeErr != nil {
 				return nil, storeErr
 			}
+			m.startObsRepair(escrowID, obsRepair)
 			return installed, nil
 		}
 		if !errors.Is(err, storage.ErrSessionNotFound) {
@@ -897,7 +907,7 @@ func (m *HostManager) recoverAndStoreSession(escrowID string) (*transport.Server
 		if srv, ok := m.existingServer(escrowID); ok {
 			return srv, nil
 		}
-		srv, err := m.recoverStoredSession(escrowID)
+		srv, obsRepair, err := m.recoverStoredSession(escrowID)
 		if err != nil {
 			return nil, err
 		}
@@ -905,6 +915,7 @@ func (m *HostManager) recoverAndStoreSession(escrowID string) (*transport.Server
 		if storeErr != nil {
 			return nil, storeErr
 		}
+		m.startObsRepair(escrowID, obsRepair)
 		return installed, nil
 	})
 	if err != nil {
@@ -916,19 +927,21 @@ func (m *HostManager) recoverAndStoreSession(escrowID string) (*transport.Server
 // recoverStoredSession rebuilds a single session from storage. A host snapshot
 // at nonce N skips replaying diffs 1..N; only N+1..latest are applied. Decode
 // or load failures fall back to a full journal replay (v3 HostManager behavior).
-func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, error) {
+// A non-nil obsRepairJob means the caller should hand it to startObsRepair once
+// the session is published.
+func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server, obsRepair *obsRepairJob, err error) {
 	if err := devshardpkg.ValidateEscrowID(escrowID); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	meta, err := m.store.GetSessionMeta(escrowID)
 	if err != nil {
-		return nil, fmt.Errorf("get session meta: %w", err)
+		return nil, nil, fmt.Errorf("get session meta: %w", err)
 	}
 	if meta.Status != "active" {
-		return nil, fmt.Errorf("%w: escrow %s status %q", storage.ErrSessionNotActive, escrowID, meta.Status)
+		return nil, nil, fmt.Errorf("%w: escrow %s status %q", storage.ErrSessionNotActive, escrowID, meta.Status)
 	}
 	if meta.Version != "" && meta.Version != m.boundVersion {
-		return nil, fmt.Errorf("%w: stored %s, host %s", storage.ErrSessionVersionConflict, meta.Version, m.boundVersion)
+		return nil, nil, fmt.Errorf("%w: stored %s, host %s", storage.ErrSessionVersionConflict, meta.Version, m.boundVersion)
 	}
 	recoveredVersion := meta.Version
 	if recoveredVersion == "" {
@@ -943,7 +956,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 	}
 	sm, err := newStateMachine()
 	if err != nil {
-		return nil, fmt.Errorf("create state machine: %w", err)
+		return nil, nil, fmt.Errorf("create state machine: %w", err)
 	}
 
 	replayFrom := uint64(1)
@@ -964,7 +977,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 					logging.Error("devshard snapshot failed root check, replaying full history", inferenceTypes.System,
 						"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", verifyErr)
 					if sm, err = newStateMachine(); err != nil {
-						return nil, fmt.Errorf("recreate state machine after snapshot reject: %w", err)
+						return nil, nil, fmt.Errorf("recreate state machine after snapshot reject: %w", err)
 					}
 				} else {
 					replayFrom = snapNonce + 1
@@ -981,17 +994,17 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 		if replayFrom <= meta.LatestNonce {
 			records, err = m.store.GetDiffs(escrowID, replayFrom, meta.LatestNonce)
 			if err != nil {
-				return nil, fmt.Errorf("get diffs: %w", err)
+				return nil, nil, fmt.Errorf("get diffs: %w", err)
 			}
 			for _, rec := range records {
 				sm.InjectWarmKeys(rec.WarmKeyDelta)
 				root, applyErr := sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
 				if applyErr != nil {
-					return nil, fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
+					return nil, nil, fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
 				}
 				if len(rec.StateHash) > 0 && len(root) > 0 {
 					if !bytes.Equal(root, rec.StateHash) {
-						return nil, fmt.Errorf("state root mismatch at nonce %d", rec.Nonce)
+						return nil, nil, fmt.Errorf("state root mismatch at nonce %d", rec.Nonce)
 					}
 				}
 			}
@@ -999,20 +1012,22 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 
 		// Validation obs is written by the live apply path and is durable, so a
 		// restart already has the rows for every nonce a snapshot covers.
-		// Rebuild only when replaying the whole journal, where ApplyLocal
+		// Only a full journal replay needs a rebuild, because ApplyLocal
 		// records no obs and the clear-then-replay is the self-heal for
 		// batches the live path dropped under backpressure. Re-recording a
-		// range incrementally is not an option: the drain removes the live row
-		// that RecordValidationsAppliedOnce dedups against, so a tail replayed
+		// partial range is not an option: the drain removes the live row that
+		// RecordValidationsAppliedOnce dedups against, so a tail replayed
 		// twice would double count.
+		//
+		// Hand it to the gate instead of running it here: it is the expensive
+		// half of recovery (a write transaction per historical seal) and it
+		// would otherwise keep the caller of a cold bind waiting. Reuse the
+		// journal already in hand, whose last nonce the seal set matches;
+		// seals landing later reach the rebuild through the gate queue.
 		if replayFrom == 1 {
-			if err := storage.RebuildValidationObsFromDiffs(
-				m.store,
-				escrowID,
-				records,
-				storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
-			); err != nil {
-				return nil, fmt.Errorf("rebuild validation obs: %w", err)
+			obsRepair = &obsRepairJob{
+				records: records,
+				sealed:  storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
 			}
 		}
 
@@ -1025,21 +1040,21 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 	}
 
 	if err := sm.RebuildSealedInferenceIndex(); err != nil {
-		return nil, fmt.Errorf("rebuild sealed inference index: %w", err)
+		return nil, nil, fmt.Errorf("rebuild sealed inference index: %w", err)
 	}
 
 	h, err := host.NewHost(sm, m.signer, m.engine, escrowID, meta.Group, nil, m.hostOpts(meta.EpochID)...)
 	if err != nil {
-		return nil, fmt.Errorf("create host: %w", err)
+		return nil, nil, fmt.Errorf("create host: %w", err)
 	}
 
 	srv, err := transport.NewServer(h, m.store, m.verifier, meta.CreatorAddr, m.transportServerOpts()...)
 	if err != nil {
 		h.Close()
-		return nil, fmt.Errorf("create server: %w", err)
+		return nil, nil, fmt.Errorf("create server: %w", err)
 	}
 
-	return srv, nil
+	return srv, obsRepair, nil
 }
 
 // Register mounts devshard session routes on the given echo group.
@@ -1379,6 +1394,49 @@ func verifySnapshotRoot(store storage.Storage, sm *state.StateMachine, escrowID 
 		return fmt.Errorf("restored root %x does not match journal root %x at nonce %d", got, want, snapNonce)
 	}
 	return nil
+}
+
+// obsRepairJob carries the inputs for a deferred validation-obs rebuild: the
+// journal the recovery already read, and the seal set as of that journal's last
+// nonce. Anything the live path writes while the rebuild runs is queued by the
+// gate and applied after it, so the two never overlap.
+type obsRepairJob struct {
+	records []types.DiffRecord
+	sealed  []uint64
+}
+
+// startObsRepair rebuilds validation obs for a freshly published session in the
+// background. The gate queues the session's obs writes for the duration, so the
+// rebuild gets the exclusive access it needs without holding up the apply path.
+// Failures leave the counters stale, which is why nothing outside the stats API
+// may depend on them.
+func (m *HostManager) startObsRepair(escrowID string, job *obsRepairJob) {
+	if job == nil || m.obsGate == nil {
+		return
+	}
+	m.obsRepairWG.Add(1)
+	go func() {
+		defer m.obsRepairWG.Done()
+		startedAt := time.Now()
+		err := m.obsGate.RepairValidationObs(escrowID, func(inner storage.Storage) error {
+			return storage.RebuildValidationObsFromDiffs(inner, escrowID, job.records, job.sealed)
+		})
+		if err != nil {
+			logging.Warn("background validation obs rebuild failed", inferenceTypes.System,
+				"escrow_id", escrowID, "duration", time.Since(startedAt), "error", err)
+			return
+		}
+		logging.Info("rebuilt validation obs", inferenceTypes.System,
+			"escrow_id", escrowID, "diffs", len(job.records),
+			"sealed_inferences", len(job.sealed), "duration", time.Since(startedAt))
+	}()
+}
+
+// WaitObsRepairs blocks until background obs rebuilds finish. Shutdown must
+// call it: a rebuild interrupted after its clear leaves the counters empty, and
+// recovery will not retry once a snapshot exists.
+func (m *HostManager) WaitObsRepairs() {
+	m.obsRepairWG.Wait()
 }
 
 func saveHostSnapshot(store storage.Storage, sm *state.StateMachine, escrowID string, nonce uint64) error {
