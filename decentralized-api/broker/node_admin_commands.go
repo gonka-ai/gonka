@@ -180,7 +180,6 @@ func (c RegisterNode) Execute(b *Broker) {
 	worker := NewNodeWorker(c.Node.Id, nodeWithState, b)
 	if !b.nodeWorkGroup.AddWorker(c.Node.Id, worker) {
 		worker.signalShutdown()
-		go worker.Shutdown()
 		b.mu.Unlock()
 		logging.Error("RegisterNode. Worker already exists for id with no node entry", types.Nodes, "node_id", c.Node.Id)
 		c.Response <- NodeCommandResponse{Node: nil, Error: fmt.Errorf("%w: %s", ErrNodeAlreadyExists, c.Node.Id)}

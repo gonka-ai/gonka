@@ -465,20 +465,43 @@ type InvalidCommandError struct {
 }
 
 func (b *Broker) QueueMessage(command Command) error {
+	queue, err := b.commandQueue(command)
+	if err != nil {
+		return err
+	}
+	queue <- command
+	return nil
+}
+
+var errWorkerStopping = errors.New("worker stopping")
+
+func (b *Broker) commandQueue(command Command) (chan Command, error) {
 	// Check validity of command. Primarily check all `Response` channels to make sure they
 	// support buffering, or else we could end up blocking the broker.
 	if command.GetResponseChannelCapacity() == 0 {
 		logging.Error("Message queued with unbuffered channel", types.Nodes, "command", reflect.TypeOf(command).String())
-		return errors.New("response channel must support buffering")
+		return nil, errors.New("response channel must support buffering")
 	}
 
 	switch command.(type) {
 	case StartPocCommand, InitValidateCommand, InferenceUpAllCommand, UpdateNodeResultCommand, SetNodesActualStatusCommand, SetNodeAdminStateCommand, RegisterNode, RemoveNode, SyncNodesCommand:
-		b.highPriorityCommands <- command
+		return b.highPriorityCommands, nil
 	default:
-		b.lowPriorityCommands <- command
+		return b.lowPriorityCommands, nil
 	}
-	return nil
+}
+
+func (b *Broker) queueMessageUntil(command Command, stop <-chan struct{}) error {
+	queue, err := b.commandQueue(command)
+	if err != nil {
+		return err
+	}
+	select {
+	case queue <- command:
+		return nil
+	case <-stop:
+		return errWorkerStopping
+	}
 }
 
 func (b *Broker) NewNodeClient(node *Node) mlnodeclient.MLNodeClient {

@@ -4,6 +4,7 @@ import (
 	"common/logging"
 	"context"
 	"decentralized-api/mlnodeclient"
+	"errors"
 	"sync"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -23,6 +24,7 @@ type NodeWorker struct {
 	broker            *Broker
 	commands          chan commandWithContext
 	shutdown          chan struct{}
+	done              chan struct{}
 	shutdownOnce      sync.Once
 	mu                sync.Mutex
 	stopping          bool
@@ -52,6 +54,7 @@ func newNodeWorker(nodeId string, node *NodeWithState, broker *Broker, getClient
 		commands:          make(chan commandWithContext, 10),
 		availableVersions: make(map[string]bool),
 		shutdown:          make(chan struct{}),
+		done:              make(chan struct{}),
 		registrationSeq:   node.State.RegistrationSeq,
 	}
 	if getClientFn != nil {
@@ -67,6 +70,7 @@ func newNodeWorker(nodeId string, node *NodeWithState, broker *Broker, getClient
 
 // run is the main event loop for the worker
 func (w *NodeWorker) run() {
+	defer close(w.done)
 	for {
 		select {
 		case item := <-w.commands:
@@ -86,16 +90,20 @@ func (w *NodeWorker) run() {
 }
 
 func (w *NodeWorker) execute(item commandWithContext) {
+	defer w.wg.Done()
+
 	result := item.cmd.Execute(item.ctx, w)
 	result.DeploymentGeneration = item.generation
 	result.RegistrationSeq = w.registrationSeq
 
-	updateCmd := NewUpdateNodeResultCommand(w.nodeId, result)
-	if err := w.broker.QueueMessage(updateCmd); err != nil {
+	err := w.broker.queueMessageUntil(
+		NewUpdateNodeResultCommand(w.nodeId, result),
+		w.shutdown,
+	)
+	if err != nil && !errors.Is(err, errWorkerStopping) {
 		logging.Error("Failed to queue node result update command", types.Nodes,
 			"node_id", w.nodeId, "error", err)
 	}
-	w.wg.Done()
 }
 
 func (w *NodeWorker) isStopping() bool {
@@ -165,6 +173,7 @@ func (w *NodeWorker) signalShutdown() {
 func (w *NodeWorker) Shutdown() {
 	w.signalShutdown()
 	w.wg.Wait()
+	<-w.done
 }
 
 func (w *NodeWorker) RefreshClientImmediate(oldVersion, newVersion string) {
@@ -234,8 +243,8 @@ func (g *NodeWorkGroup) AddWorker(nodeId string, worker *NodeWorker) bool {
 	return true
 }
 
-// RemoveWorker unregisters the worker immediately and shuts it down in the
-// background. Must not wait: callers run on the shared broker command loop.
+// RemoveWorker unregisters the worker immediately and signals shutdown.
+// Must not wait: callers run on the shared broker command loop.
 func (g *NodeWorkGroup) RemoveWorker(nodeId string) {
 	g.mu.Lock()
 	worker, exists := g.workers[nodeId]
@@ -245,10 +254,9 @@ func (g *NodeWorkGroup) RemoveWorker(nodeId string) {
 	g.mu.Unlock()
 
 	if exists {
-		// Reject submits and drain the queue before returning. Wait for
-		// in-flight HTTP in the background so the broker command loop cannot stall.
+		// Reject submits and drain the queue before returning. The run loop
+		// exits on its own; do not wait on in-flight HTTP here.
 		worker.signalShutdown()
-		go worker.Shutdown()
 	}
 }
 

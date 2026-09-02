@@ -956,6 +956,52 @@ func TestNodeRemoval(t *testing.T) {
 	}
 }
 
+func TestRemoveNode_UnknownID(t *testing.T) {
+	broker := NewTestBroker()
+
+	resp := make(chan bool, 2)
+	queueMessage(t, broker, RemoveNode{NodeId: "missing", Response: resp})
+	select {
+	case existed := <-resp:
+		require.False(t, existed)
+	case <-time.After(2 * time.Second):
+		t.Fatal("RemoveNode did not return for an unknown id")
+	}
+
+	nodes, err := broker.GetNodes()
+	require.NoError(t, err)
+	require.Empty(t, nodes)
+}
+
+func TestRemoveNode_NilCancelInFlightTask(t *testing.T) {
+	broker := NewTestBroker()
+	cmd := NewRegisterNodeCommand(testRegisterNodeConfig("node1", "localhost", 8080, 5000))
+	require.NoError(t, broker.QueueMessage(cmd))
+	resp := <-cmd.Response
+	require.NoError(t, resp.Error)
+
+	broker.mu.RLock()
+	nws := broker.nodes["node1"]
+	require.NotNil(t, nws)
+	require.Nil(t, nws.State.cancelInFlightTask)
+	broker.mu.RUnlock()
+
+	removeResp := make(chan bool, 2)
+	queueMessage(t, broker, RemoveNode{NodeId: "node1", Response: removeResp})
+	select {
+	case existed := <-removeResp:
+		require.True(t, existed)
+	case <-time.After(2 * time.Second):
+		t.Fatal("RemoveNode did not return when cancelInFlightTask was nil")
+	}
+
+	nodes, err := broker.GetNodes()
+	require.NoError(t, err)
+	require.Empty(t, nodes)
+	_, exists := broker.nodeWorkGroup.GetWorker("node1")
+	require.False(t, exists)
+}
+
 func TestRemoveNodeDoesNotBlockStartPocCommand(t *testing.T) {
 	broker := NewTestBroker()
 	mockBridge := broker.chainBridge.(*MockBrokerChainBridge)

@@ -764,7 +764,7 @@ func TestRemoveWorkerDoesNotBlockWhenResultQueueIsFull(t *testing.T) {
 	node := createTestNode("n1")
 	node.State.RegistrationSeq = 1
 	worker := NewNodeWorkerWithClient("n1", node, mlnodeclient.NewMockClient(), broker)
-	group.AddWorker("n1", worker)
+	require.True(t, group.AddWorker("n1", worker))
 
 	executeDone := make(chan struct{})
 	require.True(t, worker.Submit(context.Background(), &TestCommand{
@@ -774,7 +774,6 @@ func TestRemoveWorkerDoesNotBlockWhenResultQueueIsFull(t *testing.T) {
 		},
 	}))
 	<-executeDone
-	time.Sleep(30 * time.Millisecond)
 
 	var queuedRan atomic.Bool
 	require.True(t, worker.Submit(context.Background(), &TestCommand{
@@ -797,35 +796,47 @@ func TestRemoveWorkerDoesNotBlockWhenResultQueueIsFull(t *testing.T) {
 
 	_, exists := group.GetWorker("n1")
 	require.False(t, exists)
-	require.False(t, queuedRan.Load(), "queued worker commands must be dropped")
 
 	select {
-	case <-broker.highPriorityCommands:
+	case <-worker.done:
 	case <-time.After(time.Second):
-		t.Fatal("timed out draining the filler command")
+		t.Fatal("worker did not terminate after RemoveWorker")
 	}
+
+	require.False(t, queuedRan.Load(), "queued worker commands must be dropped")
 
 	select {
 	case cmd := <-broker.highPriorityCommands:
 		update, ok := cmd.(UpdateNodeResultCommand)
 		require.True(t, ok)
-		require.Equal(t, "n1", update.NodeId)
-		require.Equal(t, uint64(1), update.Result.RegistrationSeq)
-
-		replacement := createTestNodeWithStatus("n1", types.HardwareNodeStatus_INFERENCE)
-		replacement.State.RegistrationSeq = 2
-		replacement.State.ReconcileInfo = &ReconcileInfo{
-			Status:     types.HardwareNodeStatus_INFERENCE,
-			PocStatus:  PocStatusIdle,
-			Generation: 1,
-		}
-		broker.nodes["n1"] = replacement
-		update.Execute(broker)
-		require.Equal(t, types.HardwareNodeStatus_INFERENCE, replacement.State.CurrentStatus)
-		require.NotNil(t, replacement.State.ReconcileInfo)
-	case <-time.After(time.Second):
-		t.Fatal("late result was not delivered after the filler was drained")
+		require.Equal(t, "filler", update.NodeId)
+	default:
+		t.Fatal("broker queue should still hold the filler command")
 	}
+
+	select {
+	case cmd := <-broker.highPriorityCommands:
+		t.Fatalf("late node result was delivered after filler was drained: %T", cmd)
+	default:
+	}
+}
+
+func TestNodeWorker_ShutdownIdempotent(t *testing.T) {
+	broker := NewTestBroker2(1)
+	node := createTestNode("n1")
+	worker := NewNodeWorkerWithClient("n1", node, mlnodeclient.NewMockClient(), broker)
+
+	worker.signalShutdown()
+	worker.signalShutdown()
+	worker.Shutdown()
+	worker.Shutdown()
+
+	require.False(t, worker.Submit(context.Background(), &TestCommand{
+		ExecuteFn: func(ctx context.Context, w *NodeWorker) NodeResult {
+			t.Error("command must not execute after shutdown")
+			return NodeResult{Succeeded: true}
+		},
+	}))
 }
 
 func TestNodeWorker_CheckClientVersionAlive(t *testing.T) {
