@@ -46,6 +46,8 @@ scenarios=(
     RT-REBOOT-BEFORE-STOP
     RT-SIGKILL-DURING-COMMIT-CLEANUP
     RT-DEAD-CANDIDATE-AT-COMMIT
+    RT-COMMIT-CLEANUP-CONFIG-CHANGE
+    RT-DOWN-CLEARS-COMMIT-MARKER
     RT-NONHA-OWNER-DOWN
 )
 
@@ -286,9 +288,13 @@ model_docker() {
             set_container_field "$id" state exited
             ;;
         rm)
-            local id=${*: -1}
-            container_exists "$id" || return 1
-            rm -f "$model/containers/$id"
+            local id status=0
+            for id in "$@"; do
+                [[ $id != -* ]] || continue
+                container_exists "$id" || { status=1; continue; }
+                rm -f "$model/containers/$id"
+            done
+            return "$status"
             ;;
         image)
             [[ ${1:-} == inspect ]] || return 0
@@ -328,11 +334,15 @@ model_docker() {
                     done
                     [[ -f $model/volumes/$name ]] || { echo "Error response from daemon: get $name: no such volume" >&2; return 1; }
                     case $format in
+                        *spec-hash*)
+                            printf '%s %s\n' "$(sed -n 's/^ai.gonka.spec-hash=//p' "$model/volumes/$name")" \
+                                "$(sed -n 's/^ai.gonka.candidate-image=//p' "$model/volumes/$name")"
+                            ;;
                         *candidate-image*) sed -n 's/^ai.gonka.candidate-image=//p' "$model/volumes/$name" ;;
                         *) printf '%s\n' "$name" ;;
                     esac
                     ;;
-                rm) rm -f "$model/volumes/${*: -1}" ;;
+                rm) for name in "$@"; do rm -f "$model/volumes/$name"; done ;;
                 ls) ;;
             esac
             ;;
@@ -365,7 +375,10 @@ model_compose() {
     shift 3
     case $verb in
         config)
-            [[ ${1:-} == --hash ]] && printf 'router %s\n' "$(<"$model/desired-hash")"
+            case ${1:-} in
+                --hash) printf 'router %s\n' "$(<"$model/desired-hash")" ;;
+                --format) printf '{"desired":"%s","pool":"%s"}\n' "$(<"$model/desired-hash")" "${VERSIOND_POOL_HOST:-versiond-pool}" ;;
+            esac
             ;;
         pull)
             [[ ! -f $model/registry-down ]] || { echo "simulated registry outage" >&2; return 1; }
@@ -904,6 +917,61 @@ scenario_dead_candidate_at_commit() {
     fi
 }
 
+# A maintenance rollout killed after its commit point, with the previous
+# generation of slot 0 already removed and the others still there.
+seed_killed_commit_cleanup() {
+    seed_previous_fleet "env.VERSIOND_POOL_HOST=old-pool"
+    eval "$(declare -f remove_previous_generation | sed '1s/remove_previous_generation/real_remove_previous_generation/')"
+    remove_previous_generation() {
+        real_remove_previous_generation "$@" || return $?
+        exit 137
+    }
+    run_capture fleet_maintenance_rollout
+    unset -f remove_previous_generation
+    eval "$(declare -f real_remove_previous_generation | sed '1s/real_remove_previous_generation/remove_previous_generation/')"
+}
+
+scenario_commit_cleanup_config_change() {
+    EXTRA_CONFIG='VERSIOND_POOL_HOST=new-pool' load_fleet_functions || return $?
+    seed_killed_commit_cleanup
+    # The configuration changes with the same image before the retry.
+    VERSIOND_POOL_HOST=other-pool
+    run_capture fleet_apply
+    local refused_rc=$LAST_RC refused_ok=true
+    container_exists prev-1 && container_exists prev-2 || refused_ok=false
+    [[ -f $model/volumes/gonka-versiond-router-commit-test-fleet ]] || refused_ok=false
+    grep -q 'configuration has changed since' "$tmpdir/capture.out" || refused_ok=false
+    # With the committed configuration back, the cleanup finishes.
+    VERSIOND_POOL_HOST=new-pool
+    run_capture fleet_apply
+    local slot ok=true
+    for slot in 0 1 2; do
+        [[ $(count_containers "$slot") == 1 && $(container_field "$(serving_id "$slot")" env.VERSIOND_POOL_HOST) == new-pool ]] || ok=false
+    done
+    if ((refused_rc != 0 && LAST_RC == 0)) && [[ $refused_ok == true && $ok == true && ! -f $model/volumes/gonka-versiond-router-commit-test-fleet ]]; then
+        invariant_holds 'a changed configuration is refused before any record is removed; the committed configuration finishes the cleanup'
+    else
+        invariant_violated "refused rc=$refused_rc (records kept=$refused_ok), retry rc=$LAST_RC, slots ok=$ok, marker=$([[ -f $model/volumes/gonka-versiond-router-commit-test-fleet ]] && echo present || echo absent)"
+    fi
+}
+
+scenario_down_clears_commit_marker() {
+    EXTRA_CONFIG='VERSIOND_POOL_HOST=new-pool' load_fleet_functions || return $?
+    seed_killed_commit_cleanup
+    collect_cleanup_networks() { cleanup_networks=(); }
+    require_networks_detached_from_main_stack() { :; }
+    run_capture fleet_down
+    local down_rc=$LAST_RC
+    # A new image is bootstrapped on the torn-down host.
+    printf 'sha256:candidate2\n' >"$model/images/registry.invalid|router:candidate"
+    run_capture fleet_apply
+    if ((down_rc == 0 && LAST_RC == 0)) && [[ $(count_containers) == 3 && ! -f $model/volumes/gonka-versiond-router-commit-test-fleet ]]; then
+        invariant_holds 'down --maintenance removes a pending commit marker; a new image bootstraps cleanly afterwards'
+    else
+        invariant_violated "down rc=$down_rc, apply rc=$LAST_RC, containers=$(count_containers), marker=$([[ -f $model/volumes/gonka-versiond-router-commit-test-fleet ]] && echo present || echo absent)"
+    fi
+}
+
 scenario_nonha_owner_down() {
     EXTRA_CONFIG='VERSIOND_NON_HA_VERSIONS=v1' load_fleet_functions || return $?
     seed_previous_fleet "routes=v1 v4" "env.VERSIOND_NON_HA_VERSIONS=v1"
@@ -945,6 +1013,8 @@ run_internal() {
         RT-REBOOT-BEFORE-STOP) scenario_reboot_before_stop ;;
         RT-SIGKILL-DURING-COMMIT-CLEANUP) scenario_sigkill_during_commit_cleanup ;;
         RT-DEAD-CANDIDATE-AT-COMMIT) scenario_dead_candidate_at_commit ;;
+        RT-COMMIT-CLEANUP-CONFIG-CHANGE) scenario_commit_cleanup_config_change ;;
+        RT-DOWN-CLEARS-COMMIT-MARKER) scenario_down_clears_commit_marker ;;
         RT-NONHA-OWNER-DOWN) scenario_nonha_owner_down ;;
         *) echo "HARNESS_ERROR: unknown scenario $scenario" >&2; return 2 ;;
     esac
