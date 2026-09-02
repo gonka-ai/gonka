@@ -277,9 +277,19 @@ fresh_compose=(env "GONKA_POSTGRES_TEST_DATA=$fresh_data" \
     docker compose --project-name "$project-fresh" -f "$base" -f "$overlay")
 "${fresh_compose[@]}" up -d "$service"
 wait_for_postgres "${fresh_compose[@]}"
-"${fresh_compose[@]}" exec -T "$service" \
-    test -f /var/lib/postgresql/gonka/data/.gonka-init-complete || fail \
-    "fresh initialization did not record its completion marker inside PGDATA"
+# pg_isready answers as soon as the official entrypoint's temporary server is
+# up, which is before the initdb hooks have run; the marker follows shortly.
+fresh_marked=false
+for _ in {1..60}; do
+    if "${fresh_compose[@]}" exec -T "$service" \
+        test -f /var/lib/postgresql/gonka/data/.gonka-init-complete 2>/dev/null; then
+        fresh_marked=true
+        break
+    fi
+    sleep 1
+done
+[[ $fresh_marked == true ]] || fail \
+    "fresh initialization did not record its completion marker inside PGDATA: $("${fresh_compose[@]}" logs --no-color "$service" 2>&1 | tail -20)"
 "${fresh_compose[@]}" up -d --force-recreate "$service"
 wait_for_postgres "${fresh_compose[@]}"
 fresh_logs=$("${fresh_compose[@]}" logs --no-color "$service" 2>&1)
