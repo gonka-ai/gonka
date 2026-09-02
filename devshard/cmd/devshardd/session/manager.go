@@ -497,7 +497,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 
 		for _, rec := range records {
 			sm.InjectWarmKeys(rec.WarmKeyDelta)
-			root, applyErr := sm.ApplyLocal(rec.Nonce, rec.Txs)
+			root, applyErr := sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
 			if applyErr != nil {
 				return nil, fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
 			}

@@ -15,7 +15,9 @@ import (
 	"time"
 
 	"common/chain"
+	"devshard/accounting"
 	"devshard/bridge"
+	"devshard/logging"
 	"devshard/state"
 	"devshard/types"
 	"devshard/user"
@@ -126,6 +128,7 @@ type bootstrapOptions struct {
 var gatewayRuntimeBuilder = buildRuntime
 
 func main() {
+	logging.ConfigureFormat(os.Getenv("DEVSHARD_LOG_FORMAT"))
 	ConfigurePoCRequestMode(os.Getenv("DEVSHARD_POC_REQUEST_MODE"))
 	ConfigureCapacityAwareLimits(os.Getenv("DEVSHARD_CAPACITY_AWARE_LIMITS"))
 	flags := parseCLIFlags()
@@ -151,7 +154,22 @@ func main() {
 	mustLoadParticipantThrottleState(gatewayStore)
 
 	gateway := mustBuildGateway(gatewayStore, gatewayState, runtimeOpts.baseStorageDir, flags)
-	defer gateway.Close()
+	defer func() {
+		if err := gateway.Close(); err != nil {
+			log.Printf("close gateway: %v", err)
+		}
+	}()
+	statsServer, err := startAccountingServer(gateway)
+	if err != nil {
+		log.Printf("start accounting server: %v", err)
+	}
+	if statsServer != nil {
+		defer func() {
+			if err := statsServer.Close(); err != nil {
+				log.Printf("close accounting server: %v", err)
+			}
+		}()
+	}
 
 	handler := buildGatewayHandler(gateway, runtimeOpts)
 	serveGateway(handler, runtimeOpts.port, len(gateway.runtimeOrder))
@@ -169,6 +187,7 @@ func mustLoadRuntimeOptions(flags cliFlags) runtimeOptions {
 	}
 	configureRequestCaptureStore(opts.baseStorageDir)
 	configureClassifyCapsFromEnv()
+	configureAggregateResponseFromEnv(opts.baseStorageDir)
 	return opts
 }
 
@@ -320,8 +339,9 @@ func mustRepairPersistedGatewayEndpointSettings(gatewayStore *GatewayStore, gate
 		settings.ChainGRPC = effectiveChainGRPC(flags, "")
 		changed = true
 	}
-	if strings.TrimSpace(settings.PublicAPI) == "" {
-		settings.PublicAPI = envOverride(flags.publicAPI, os.Getenv("DEVSHARD_PUBLIC_API"), defaultPublicAPIURL)
+	resolvedPublicAPI := effectivePublicAPI(flags, settings.PublicAPI)
+	if settings.PublicAPI != resolvedPublicAPI {
+		settings.PublicAPI = resolvedPublicAPI
 		changed = true
 	}
 	if !changed {
@@ -374,9 +394,27 @@ func effectiveChainRPC() string {
 	return strings.TrimSpace(firstNonEmpty(os.Getenv("DEVSHARD_CHAIN_RPC"), os.Getenv("NODE_RPC_URL")))
 }
 
+func effectivePublicAPI(flags cliFlags, persisted string) string {
+	envVal := os.Getenv("DEVSHARD_PUBLIC_API")
+	if strings.TrimSpace(envVal) == "none" || strings.TrimSpace(envVal) == "disabled" {
+		return strings.TrimSpace(envVal)
+	}
+	if strings.TrimSpace(persisted) != "" {
+		return strings.TrimSpace(persisted)
+	}
+	if strings.TrimSpace(envVal) != "" {
+		return strings.TrimSpace(envVal)
+	}
+	if flags.publicAPI != defaultPublicAPIURL {
+		return flags.publicAPI
+	}
+	return defaultPublicAPIURL
+}
+
 func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, baseStorageDir string, flags cliFlags) *Gateway {
 	gatewayState.Settings = gatewayState.Settings.WithTuningDefaults()
 	gatewayState.Settings.ChainGRPC = effectiveChainGRPC(flags, gatewayState.Settings.ChainGRPC)
+	gatewayState.Settings.PublicAPI = effectivePublicAPI(flags, gatewayState.Settings.PublicAPI)
 	DefaultRequestMaxTokens = gatewayState.Settings.DefaultRequestMaxTokens
 	RequestMaxTokensCap = gatewayState.Settings.RequestMaxTokensCap
 	applyGatewayTuningSettings(gatewayState.Settings)
@@ -403,6 +441,7 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 		perfStore.Close()
 		log.Fatalf("create runtimes: %v", err)
 	}
+	accountingTracker := openAccountingTracker(baseStorageDir)
 	limiter := NewGatewayLimiter(
 		gatewayState.Settings.MaxConcurrentRequests,
 		gatewayState.Settings.MaxInputTokensInFlight,
@@ -412,7 +451,13 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 		gatewayState.Settings.MaxInputTokensInFlight,
 		gatewayState.Settings.ModelLimits,
 	)
-	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, chainClient, perf)
+	recorder := accounting.NewRecorder(accountingTracker, currentPoCPhaseReason)
+	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, chainClient, perf, recorder)
+	if accountingTracker != nil {
+		if err := gateway.metrics.RegisterCollector(accounting.NewCollector(accountingTracker, accountingCurrentEpoch(gateway))); err != nil {
+			log.Printf("register accounting metrics: %v (accounting metrics disabled)", err)
+		}
+	}
 	recordStartupSkippedEscrows(gateway.metrics, startupSkipped)
 	gateway.perfStore = perfStore
 	gateway.runtimeParams = runtimeParams

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -15,6 +17,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"devshard/user"
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
@@ -804,6 +808,51 @@ func TestGatewayModelsEndpointRejectsUnsupportedMethod(t *testing.T) {
 	require.Equal(t, "GET, HEAD", rec.Header().Get("Allow"))
 }
 
+func TestAdminStateRedactsPrivateKey(t *testing.T) {
+	const privateKey = "super-secret-private-key"
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	require.NoError(t, store.Initialize(GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}, []GatewayDevshardState{
+		{
+			RuntimeConfig: RuntimeConfig{
+				ID:            "12",
+				PrivateKeyHex: privateKey,
+				PrivateKeyEnv: "DEVSHARD_PRIVATE_KEY",
+				Model:         "Qwen/Test",
+			},
+			Active: true,
+		},
+	}))
+
+	g := NewGateway(nil, NewGatewayLimiter(0, 0), "Qwen/Test")
+	g.store = store
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/admin/state", nil)
+	rec := httptest.NewRecorder()
+	g.handleAdminState(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotContains(t, rec.Body.String(), privateKey)
+
+	var body struct {
+		Devshards []map[string]any `json:"devshards"`
+	}
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Len(t, body.Devshards, 1)
+	require.NotContains(t, body.Devshards[0], "private_key")
+	require.Equal(t, "DEVSHARD_PRIVATE_KEY", body.Devshards[0]["private_key_env"])
+}
+
 func TestAdminDeactivateDevshardAllowsActiveRequestsAndStopsNewChat(t *testing.T) {
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
@@ -1018,24 +1067,14 @@ func TestGatewayHostRoutePrefixDefaultsToBuildVersion(t *testing.T) {
 	require.Error(t, validateGatewayHostRoutePrefix("/v1/devshard"))
 }
 
-func TestResolveGatewayRoutePrefixDefaultsToBuildVersion(t *testing.T) {
-	oldVersion := Version
-	t.Cleanup(func() { Version = oldVersion })
-	Version = "v2"
-
+func TestRuntimeRoutePrefixDefaultsToV4(t *testing.T) {
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "")
-	got, err := resolveGatewayRoutePrefix()
-	require.NoError(t, err)
-	require.Equal(t, "/devshard/v2", got)
+	require.Equal(t, "/devshard/v4", resolveRuntimeRoutePrefix(""))
+}
 
-	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/v1/devshard")
-	_, err = resolveGatewayRoutePrefix()
-	require.ErrorContains(t, err, "unsupported devshard route prefix")
-
-	t.Setenv("DEVSHARD_ROUTE_PREFIX", " /devshard/test ")
-	got, err = resolveGatewayRoutePrefix()
-	require.NoError(t, err)
-	require.Equal(t, "/devshard/test", got)
+func TestRuntimeRoutePrefixPreservesExplicitDev(t *testing.T) {
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/dev")
+	require.Equal(t, "/devshard/dev", resolveRuntimeRoutePrefix(""))
 }
 
 // TestEscrowCheckerUsesBridgeGetEscrow replaces the 0.2.14 REST-bridge path
@@ -2614,18 +2653,18 @@ func TestGatewayParseChatReservationUsesPerModelTokenLimits(t *testing.T) {
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
 		strings.NewReader(`{"model":"Kimi/Test","max_tokens":4096,"messages":[{"role":"user","content":"hello"}]}`))
-	body, model, _, err := g.parseChatReservation(req, g.settings.DefaultModel)
+	body, parsed, _, err := g.parseChatReservation(req, g.settings.DefaultModel)
 
 	require.NoError(t, err)
-	require.Equal(t, "Kimi/Test", model)
+	require.Equal(t, "Kimi/Test", parsed.Model)
 	require.Contains(t, string(body), `"max_tokens":3584`)
 
 	req = httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
 		strings.NewReader(`{"model":"Kimi/Test","messages":[{"role":"user","content":"hello"}]}`))
-	body, model, _, err = g.parseChatReservation(req, g.settings.DefaultModel)
+	body, parsed, _, err = g.parseChatReservation(req, g.settings.DefaultModel)
 
 	require.NoError(t, err)
-	require.Equal(t, "Kimi/Test", model)
+	require.Equal(t, "Kimi/Test", parsed.Model)
 	require.Contains(t, string(body), `"max_tokens":2048`)
 }
 
@@ -2829,7 +2868,7 @@ func TestAdminSettingsUpdatesLimiterAndDefaultTokens(t *testing.T) {
 			Message: "please use http://.../v1/ base url",
 			NewURL:  "http://.../v1/chat/completions",
 		},
-	}, t.TempDir(), store, dialTestChainGRPC(t))
+	}, t.TempDir(), store, dialTestChainGRPC(t), nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/settings",
 		strings.NewReader(`{"chain_rest":"http://node:2317","public_api":"http://api:9900","default_model":"Qwen/Qwen3-235B-A22B-Instruct-2507-FP8","max_concurrent_requests":7,"max_input_tokens_in_flight":700,"default_request_max_tokens":3072,"request_max_tokens_cap":4096,"tx_gas_limit":700000,"model_limits":[{"model_id":"moonshotai/Kimi-K2.6","access_mode":"admin_only","access_message":"Kimi temporarily unavailable"}],"disabled":{"enabled":true,"message":"please use ... base url","new_url":"https://.../v1/chat/completions"},"participant_throttle":{"request_burst":42,"recovery_per_minute":7,"http_quarantine_ms":1100,"transport_failure_quarantine_ms":1200,"empty_stream_quarantine_ms":1300,"stalled_winner_quarantine_ms":1400,"empty_stream_threshold":2},"redundancy":{"receipt_timeout_ms":1500,"first_token_timeout_floor_ms":1600,"per_input_token_first_token_lag_ms":17,"inter_chunk_stall_timeout_ms":1800,"streaming_attempt_hard_timeout_ms":1810,"non_stream_response_floor_ms":1900,"non_stream_no_content_timeout_ms":2200,"non_stream_max_attempt_wait_ms":2600,"per_input_token_response_lag_ms":20,"secondary_wait_after_winner_ms":2100,"parallel_advantage_threshold":0.4,"unresponsive_threshold":0.8}}`))
@@ -2868,14 +2907,10 @@ func TestAdminSettingsUpdatesLimiterAndDefaultTokens(t *testing.T) {
 	require.EqualValues(t, 1500, state.Settings.Redundancy.ReceiptTimeoutMS)
 	require.EqualValues(t, 17, state.Settings.Redundancy.PerInputTokenFirstTokenLagMS)
 	require.EqualValues(t, 1810, state.Settings.Redundancy.StreamingAttemptHardTimeoutMS)
-	require.EqualValues(t, 2200, state.Settings.Redundancy.NonStreamNoContentTimeoutMS)
-	require.EqualValues(t, 2600, state.Settings.Redundancy.NonStreamMaxAttemptWaitMS)
 	require.Equal(t, 0.4, state.Settings.Redundancy.ParallelAdvantageThreshold)
 	require.Equal(t, 1500*time.Millisecond, ReceiptTimeout)
 	require.Equal(t, 17*time.Millisecond, PerInputTokenFirstTokenLag)
 	require.Equal(t, 1810*time.Millisecond, StreamingAttemptHardTimeout)
-	require.Equal(t, 2200*time.Millisecond, nonStreamingNoContentTimeout)
-	require.Equal(t, 2600*time.Millisecond, nonStreamingMaxAttemptWait)
 }
 
 func TestAdminSettingsRejectsInvalidTuning(t *testing.T) {
@@ -2902,7 +2937,7 @@ func TestAdminSettingsRejectsInvalidTuning(t *testing.T) {
 		DefaultRequestMaxTokens: 1000,
 		MaxConcurrentRequests:   2,
 		MaxInputTokensInFlight:  200,
-	}, t.TempDir(), store, dialTestChainGRPC(t))
+	}, t.TempDir(), store, dialTestChainGRPC(t), nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/settings",
 		strings.NewReader(`{"participant_throttle":{"empty_stream_threshold":0}}`))
@@ -2935,7 +2970,7 @@ func TestAdminSettingsUpdatesEscrowRotationSettlementEnabled(t *testing.T) {
 		DefaultRequestMaxTokens: 1000,
 		MaxConcurrentRequests:   2,
 		MaxInputTokensInFlight:  200,
-	}, t.TempDir(), store, dialTestChainGRPC(t))
+	}, t.TempDir(), store, dialTestChainGRPC(t), nil, nil)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/admin/settings",
 		strings.NewReader(`{"escrow_rotation":{"settlement_enabled":true}}`))
@@ -3191,4 +3226,30 @@ func metricLabelsMatch(metric *dto.Metric, want map[string]string) bool {
 		}
 	}
 	return true
+}
+
+// One stalled winner is one event. The strike sits outside the sample's once-guard so the settle path
+// cannot skip it, which leaves the call reachable twice per request -- once from the race and once from
+// the settle -- and each application slides the quarantine window forward.
+func TestStalledWinnerStrikeAppliesOncePerAttempt(t *testing.T) {
+	perf := NewPerfTracker(nil)
+	for range 2 {
+		perf.Record(RequestSample{ParticipantKey: "host:0", Responsive: false, SendTime: time.Now()})
+	}
+	require.True(t, perf.ParticipantFailureThresholdExceeded("host:0"), "precondition: the participant is past the failure threshold")
+
+	redundancy := &Redundancy{perf: perf, participantLimiter: NewParticipantRequestLimiter(10, 10)}
+	inf := &inflight{hostID: "host-A", escrowID: "escrow-x", nonce: 1}
+	inf.contentChunks.Store(1)
+
+	var logs bytes.Buffer
+	log.SetOutput(&logs)
+	t.Cleanup(func() { log.SetOutput(os.Stderr) })
+
+	redundancy.recordPostContentWinnerFailureOnce(inf, user.InferenceParams{Model: "m"})
+	redundancy.recordPostContentWinnerFailureOnce(inf, user.InferenceParams{Model: "m"})
+
+	if applied := strings.Count(logs.String(), "participant_limit_stalled_winner_quarantine"); applied != 1 {
+		t.Fatalf("stalled-winner quarantine applied %d times for one attempt, want 1", applied)
+	}
 }

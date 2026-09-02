@@ -35,11 +35,11 @@ func driveSealInferenceToFinished(t *testing.T, sm *StateMachine, escrowID strin
 	t.Helper()
 
 	_, err := sm.ApplyLocal(1, []*types.DevshardTx{txStart(&types.MsgStartInference{
-		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})})
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, []byte("prompt"), "llama", 100, 50, 1000, 2000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 2000)
 	_, err = sm.ApplyLocal(2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
 		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
 	})})
@@ -91,7 +91,7 @@ func TestSealInference_PreservesRootAndBlocksDuplicateID(t *testing.T) {
 	require.False(t, hasCommitted, "v2 seal drops committed entry for sealed id")
 
 	err = sm.applyStartInference(&types.MsgStartInference{
-		InferenceId: 1, PromptHash: []byte("other"), Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 3000,
+		InferenceId: 1, PromptHash: []byte("other"), Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 3000,
 	})
 	require.ErrorIs(t, err, types.ErrDuplicateInferenceID)
 }
@@ -243,15 +243,15 @@ func TestAutoSealStateClock_SkipsUnconfirmedInTailWindow(t *testing.T) {
 	sm, _, _, _ := newSealTestSM(t, "escrow-clock", hosts, false)
 
 	_, err := sm.ApplyLocal(1, []*types.DevshardTx{txStart(&types.MsgStartInference{
-		InferenceId: 1, PromptHash: []byte("pending"), Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InferenceId: 1, PromptHash: []byte("pending"), Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})})
 	require.NoError(t, err)
 
 	_, err = sm.ApplyLocal(2, []*types.DevshardTx{txStart(&types.MsgStartInference{
-		InferenceId: 2, PromptHash: []byte("confirmed"), Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InferenceId: 2, PromptHash: []byte("confirmed"), Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})})
 	require.NoError(t, err)
-	execSig := testutil.SignExecutorReceipt(t, hosts[2], "escrow-clock", 2, []byte("confirmed"), "llama", 100, 50, 1000, 5000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[2], "escrow-clock", 2, []byte("confirmed"), "llama", 100, testutil.TestMaxTokens, 1000, 5000)
 	_, err = sm.ApplyLocal(3, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
 		InferenceId: 2, ExecutorSig: execSig, ConfirmedAt: 5000,
 	})})

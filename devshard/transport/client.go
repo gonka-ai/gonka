@@ -14,6 +14,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	json "github.com/goccy/go-json"
@@ -60,6 +61,16 @@ func transportAddress(baseURL string) string {
 	return strings.TrimSpace(baseURL)
 }
 
+// DefaultMaxSSEEventBytes is the hard default cap for a single SSE line/event
+// read by the gateway transport client (1 MiB). Matches the historical
+// bufio.Scanner ceiling and the gateway raceWriter classify attempt cap.
+const DefaultMaxSSEEventBytes = 1 << 20
+
+// sseReaderBufferSize is the bufio.Reader size used by parseSSEResponse.
+// Oversize aborts after at most DefaultMaxSSEEventBytes + this much unread
+// data in the reader buffer (not the full attacker payload).
+const sseReaderBufferSize = 64 << 10
+
 // ClientConfig holds per-endpoint timeout settings.
 type ClientConfig struct {
 	InferenceTimeout time.Duration                   // /chat/completions, default 20m
@@ -68,6 +79,10 @@ type ClientConfig struct {
 	QueryTimeout     time.Duration                   // diffs, mempool GETs, default 30s
 	StreamCallback   func(nonce uint64, line string) // if set, receives raw SSE data lines during inference
 	RoutePrefix      string                          // path prefix for all session routes; default /devshard/<version>
+	// MaxSSEEventBytes caps a single SSE line (including the trailing newline).
+	// Zero means DefaultMaxSSEEventBytes. Oversize lines abort with
+	// ErrSSEEventTooLarge; they are never silently truncated.
+	MaxSSEEventBytes int
 	// ParticipantKey is the canonical participant identifier passed to
 	// the admission controller for both AllowRequest and ObserveResult.
 	// Callers MUST use the participant's gonka validator address
@@ -108,6 +123,48 @@ type requestAdmissionBodyObserver interface {
 // distinguish from a normal end-of-response.
 var ErrSSEStreamTruncated = errors.New("sse stream ended without [DONE] or devshard_receipt")
 
+// ErrSSEEventTooLarge is returned when an SSE line exceeds the configured
+// MaxSSEEventBytes before a newline arrives. The oversize payload is discarded;
+// callers should treat this as a transport failure and escalate to another host.
+var ErrSSEEventTooLarge = errors.New("sse event exceeds size limit")
+
+// MaxJSONResponseBytes bounds the legacy non-stream JSON inference body. It
+// matches the gateway's own per-request wire-body ceiling, so a body above it
+// could not be served downstream anyway.
+const MaxJSONResponseBytes = 16 << 20
+
+// ErrResponseBodyTooLarge is returned when a non-stream response body exceeds
+// MaxJSONResponseBytes.
+var ErrResponseBodyTooLarge = errors.New("response body exceeds size limit")
+
+// readBoundedResponseBody reads at most max bytes, failing rather than
+// truncating when the peer keeps writing past the limit.
+func readBoundedResponseBody(body io.Reader, max int64) ([]byte, error) {
+	if body == nil {
+		return nil, nil
+	}
+	read, err := io.ReadAll(io.LimitReader(body, max+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(read)) > max {
+		return nil, fmt.Errorf("%w: %d byte limit", ErrResponseBodyTooLarge, max)
+	}
+	return read, nil
+}
+
+// maxErrorBodyBytes bounds the body kept from a failed response. It reaches an error string, a
+// metric label and a log line, none of which a host's error page should be free to size.
+const maxErrorBodyBytes = 64 << 10
+
+func readErrorBody(body io.Reader) string {
+	if body == nil {
+		return ""
+	}
+	read, _ := io.ReadAll(io.LimitReader(body, maxErrorBodyBytes))
+	return string(read)
+}
+
 type UpstreamStatusError struct {
 	Path       string
 	StatusCode int
@@ -133,6 +190,31 @@ func IsUpstreamEscrowNotFound(err error) bool {
 	}
 	return ue.StatusCode == http.StatusInternalServerError &&
 		strings.Contains(ue.Body, "escrow not found")
+}
+
+// IsSessionNotFound returns true if err is an UpstreamStatusError from a host that does not hold the
+// escrow at all, as opposed to holding it and disagreeing about a nonce.
+func IsSessionNotFound(err error) bool {
+	var ue *UpstreamStatusError
+	if !errors.As(err, &ue) {
+		return false
+	}
+	return ue.StatusCode == http.StatusNotFound && strings.Contains(ue.Body, "session not found")
+}
+
+// IsTransientWriteError reports a failure the peer never answered, whether or not it saw the request.
+func IsTransientWriteError(err error) bool {
+	if err == nil {
+		return false
+	}
+	var status *UpstreamStatusError
+	if errors.As(err, &status) {
+		return false
+	}
+	return errors.Is(err, net.ErrClosed) ||
+		errors.Is(err, syscall.EPIPE) ||
+		errors.Is(err, syscall.ECONNRESET) ||
+		errors.Is(err, syscall.ECONNREFUSED)
 }
 
 func DefaultClientConfig() ClientConfig {
@@ -229,7 +311,7 @@ func (c *HTTPClient) get(ctx context.Context, path string, timeout time.Duration
 }
 
 // Send implements user.HostClient.
-func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
 	timeout := c.config.InferenceTimeout
 	if req.Payload == nil {
 		// Finalize/catch-up sends only exchange protocol state, so a dead host
@@ -268,8 +350,10 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 		return result, err
 	}
 
-	// Backward compat: JSON response.
-	respBody, err := io.ReadAll(resp.Body)
+	// Backward compat: JSON response. Bounded too, otherwise the SSE event cap is
+	// bypassable by a host that answers the same request with a non-stream
+	// content type and then never stops writing.
+	respBody, err := readBoundedResponseBody(resp.Body, MaxJSONResponseBytes)
 	if err != nil {
 		return nil, err
 	}
@@ -283,29 +367,39 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 // parseSSEResponse reads an SSE stream and extracts protocol receipt/meta events.
 // Non-protocol data lines are forwarded to stream if configured.
 //
-// Uses bufio.Reader (not bufio.Scanner) for two reasons:
-//  1. bufio.Scanner imposes a hard token-size cap (we previously raised it to 1MB);
-//     a single oversized SSE line -- e.g. a large devshard_meta with a base64 mempool,
-//     or a non-streaming server inlining a giant JSON on one line -- would trip
-//     bufio.ErrTooLong and silently truncate. ReadBytes is bounded only by memory.
-//  2. We need to distinguish a clean EOF that arrives *after* a terminator
-//     ([DONE] or devshard_receipt) from a clean EOF that arrives *before* one.
-//     bufio.Scanner squashes io.EOF into a nil error, so the caller cannot tell
-//     a successful completion from a peer / middlebox closing the body early.
-func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
-	br := bufio.NewReaderSize(r, 64<<10)
+// Uses bufio.Reader (not bufio.Scanner) so a clean EOF that arrives *after* a
+// terminator ([DONE] or devshard_receipt) can be told apart from a clean EOF
+// that arrives *before* one: bufio.Scanner squashes io.EOF into a nil error, so
+// the caller could not distinguish a successful completion from a peer /
+// middlebox closing the body early.
+//
+// Line size is hard-capped by MaxSSEEventBytes (default 1 MiB). A malicious
+// executor can otherwise open `data: ` and stream bytes without ever sending a
+// newline; the old unbounded ReadBytes('\n') grew the returned slice for the
+// whole inference deadline. Oversize aborts with ErrSSEEventTooLarge instead of
+// growing unbounded or silently truncating the way Scanner would (truncating
+// would mis-parse protocol events).
+func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
+	br := bufio.NewReaderSize(r, sseReaderBufferSize)
+	maxLine := c.maxSSEEventBytes()
 	var result host.HostResponse
 	var writeErrLogged bool
 	var unexpectedLineLogged bool
 	var sawTerminator bool // true once we observe [DONE] or a devshard_receipt event
 
 	for {
-		raw, readErr := br.ReadBytes('\n')
+		raw, readErr := readBoundedSSELine(br, maxLine)
 		if len(raw) > 0 {
 			line := string(bytes.TrimRight(raw, "\r\n"))
 			c.handleSSELine(line, stream, receiptHandler, &result, &writeErrLogged, &unexpectedLineLogged, &sawTerminator)
 		}
 		if readErr != nil {
+			if errors.Is(readErr, ErrSSEEventTooLarge) {
+				// Returning aborts Send, whose deferred Close cancels the body so
+				// the host cannot keep streaming into a discarded buffer.
+				logging.Warn("sse_event_too_large", "subsystem", "transport", "escrow", c.escrowID, "limit_bytes", maxLine)
+				return &result, readErr
+			}
 			if readErr == io.EOF {
 				// A cancelled context (client disconnect, race resolved, drain)
 				// can surface as a clean EOF once the peer closes the body after
@@ -327,13 +421,54 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 	}
 }
 
+func (c *HTTPClient) maxSSEEventBytes() int {
+	if c != nil && c.config.MaxSSEEventBytes > 0 {
+		return c.config.MaxSSEEventBytes
+	}
+	return DefaultMaxSSEEventBytes
+}
+
+// readBoundedSSELine reads up to and including the next '\n', aborting as soon
+// as the accumulated line would exceed max bytes. On oversize it returns
+// ErrSSEEventTooLarge and drops the partial buffer rather than retaining it.
+func readBoundedSSELine(br *bufio.Reader, max int) ([]byte, error) {
+	if max <= 0 {
+		max = DefaultMaxSSEEventBytes
+	}
+	var buf []byte
+	for {
+		// ReadSlice returns a view into the reader's own buffer, valid only until
+		// the next read, so every fragment is copied out before looping.
+		fragment, err := br.ReadSlice('\n')
+		if len(fragment) > 0 {
+			if len(buf)+len(fragment) > max {
+				return nil, fmt.Errorf("%w: %d byte limit", ErrSSEEventTooLarge, max)
+			}
+			buf = append(buf, fragment...)
+		}
+		switch {
+		case err == nil:
+			return buf, nil
+		case errors.Is(err, bufio.ErrBufferFull):
+			continue
+		case errors.Is(err, io.EOF):
+			if len(buf) == 0 {
+				return nil, io.EOF
+			}
+			return buf, io.EOF
+		default:
+			return nil, err
+		}
+	}
+}
+
 // handleSSELine processes a single SSE line (terminator already stripped).
 // Mutates result / flags in place; never returns an error -- read errors are
 // the caller's job to detect via the underlying reader.
 func (c *HTTPClient) handleSSELine(
 	line string,
 	stream io.Writer,
-	receiptHandler func(),
+	receiptHandler func(*host.HostResponse),
 	result *host.HostResponse,
 	writeErrLogged, unexpectedLineLogged, sawTerminator *bool,
 ) {
@@ -403,7 +538,7 @@ func (c *HTTPClient) handleSSELine(
 			result.ConfirmedAt = receipt.ConfirmedAt
 		}
 		if receiptHandler != nil {
-			receiptHandler()
+			receiptHandler(result)
 		}
 		return
 	}
@@ -634,13 +769,13 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readErrorBody(resp.Body)
 		resp.Body.Close()
-		c.observeResultWithBody(path, resp.StatusCode, string(respBody))
+		c.observeResultWithBody(path, resp.StatusCode, respBody)
 		return nil, &UpstreamStatusError{
 			Path:       path,
 			StatusCode: resp.StatusCode,
-			Body:       string(respBody),
+			Body:       respBody,
 		}
 	}
 	c.observeResult(path, resp.StatusCode)
@@ -677,12 +812,12 @@ func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		c.observeResultWithBody(url, resp.StatusCode, string(respBody))
+		respBody := readErrorBody(resp.Body)
+		c.observeResultWithBody(url, resp.StatusCode, respBody)
 		return nil, &UpstreamStatusError{
 			Path:       url,
 			StatusCode: resp.StatusCode,
-			Body:       string(respBody),
+			Body:       respBody,
 		}
 	}
 	c.observeResult(url, resp.StatusCode)

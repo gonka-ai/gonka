@@ -30,15 +30,16 @@ const contextKeySender = "devshard_sender"
 
 // Server wraps a host.Host and exposes it over HTTP via Echo.
 type Server struct {
-	host        *host.Host
-	store       storage.Storage
-	gossip      *gossip.Gossip // nil until gossip is wired
-	verifier    signing.Verifier
-	userAddr    string               // session user address, allowed alongside group members
-	peerClients map[int]*HTTPClient  // slot index -> client, for timeout verification
-	rateLimit   *rateLimiter         // nil = no limiting
-	maxBodySize int64                // max request body bytes, 0 = no limit
-	bridge      bridge.MainnetBridge // optional, for warm key verification
+	host         *host.Host
+	store        storage.Storage
+	gossip       *gossip.Gossip // nil until gossip is wired
+	verifier     signing.Verifier
+	userAddr     string               // session user address, allowed alongside group members
+	peerClients  map[int]*HTTPClient  // slot index -> client, for timeout verification
+	rateLimit    *rateLimiter         // nil = no limiting
+	maxBodySize  int64                // max request body bytes, 0 = no limit
+	bridge       bridge.MainnetBridge // optional, for warm key verification
+	receiptDelay time.Duration        // optional test hook before receipt SSE write
 }
 
 // ServerOption configures the Server.
@@ -73,6 +74,12 @@ func WithBridge(b bridge.MainnetBridge) ServerOption {
 	return func(s *Server) { s.bridge = b }
 }
 
+// WithReceiptDelay delays the initial receipt SSE event. It is intended for
+// integration tests that need to observe pre-receipt gateway timeout paths.
+func WithReceiptDelay(delay time.Duration) ServerOption {
+	return func(s *Server) { s.receiptDelay = delay }
+}
+
 // NewServer creates an HTTP server wrapping the given host.
 // userAddr is the session user's address -- allowed alongside group members.
 func NewServer(
@@ -99,7 +106,6 @@ func (s *Server) Host() *host.Host { return s.host }
 
 // SetGossip attaches a gossip instance for nonce/tx propagation.
 func (s *Server) SetGossip(g *gossip.Gossip) { s.gossip = g }
-
 
 // writeJSON serializes v with goccy/go-json, bypassing Echo's default serializer.
 // TODO: set a custom echo.JSONSerializer using goccy/go-json on all Echo instances
@@ -355,6 +361,18 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 		Nonce:       resp.Nonce,
 		Receipt:     resp.Receipt,
 		ConfirmedAt: resp.ConfirmedAt,
+	}
+	if s.receiptDelay > 0 {
+		timer := time.NewTimer(s.receiptDelay)
+		select {
+		case <-c.Request().Context().Done():
+			timer.Stop()
+			if resp.ExecutionJob != nil {
+				s.host.ReleaseExecution(resp.InferenceID)
+			}
+			return nil
+		case <-timer.C:
+		}
 	}
 	receiptWrapper := map[string]interface{}{"devshard_receipt": receiptEvent}
 	if werr := writeSSEEvent(w, receiptWrapper); werr != nil {

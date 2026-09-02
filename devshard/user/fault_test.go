@@ -28,7 +28,7 @@ type KillableClient struct {
 	killed atomic.Bool
 }
 
-func (c *KillableClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+func (c *KillableClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
 	if c.killed.Load() {
 		return nil, fmt.Errorf("host killed")
 	}

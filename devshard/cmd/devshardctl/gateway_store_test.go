@@ -130,13 +130,11 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 			PerInputTokenFirstTokenLagMS:  17,
 			InterChunkStallTimeoutMS:      1800,
 			StreamingAttemptHardTimeoutMS: 1810,
-			NonStreamResponseFloorMS:      1900,
-			NonStreamNoContentTimeoutMS:   2200,
-			NonStreamMaxAttemptWaitMS:     2600,
 			PerInputTokenResponseLagMS:    20,
 			SecondaryWaitAfterWinnerMS:    2100,
 			ParallelAdvantageThreshold:    0.4,
 			UnresponsiveThreshold:         0.8,
+			ForceUpstreamStreaming:        boolPtr(false),
 		},
 		EscrowRotation: EscrowRotationSettings{
 			Enabled:           true,
@@ -171,9 +169,9 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 	require.EqualValues(t, 1500, state.Settings.Redundancy.ReceiptTimeoutMS)
 	require.EqualValues(t, 17, state.Settings.Redundancy.PerInputTokenFirstTokenLagMS)
 	require.EqualValues(t, 1810, state.Settings.Redundancy.StreamingAttemptHardTimeoutMS)
-	require.EqualValues(t, 2200, state.Settings.Redundancy.NonStreamNoContentTimeoutMS)
-	require.EqualValues(t, 2600, state.Settings.Redundancy.NonStreamMaxAttemptWaitMS)
 	require.Equal(t, 0.4, state.Settings.Redundancy.ParallelAdvantageThreshold)
+	require.NotNil(t, state.Settings.Redundancy.ForceUpstreamStreaming)
+	require.False(t, *state.Settings.Redundancy.ForceUpstreamStreaming)
 	require.True(t, state.Settings.EscrowRotation.Enabled)
 	require.True(t, state.Settings.EscrowRotation.SettlementEnabled)
 	require.EqualValues(t, 123, state.Settings.EscrowRotation.PrePoCBlocks)
@@ -184,6 +182,51 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 		Amount:        555,
 		PrivateKeyEnv: "KIMI_ROTATION_KEY",
 	}}, state.Settings.EscrowRotation.Models)
+}
+
+func TestGatewayStorePersistsForceUpstreamStreaming(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	settings := GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}
+	require.NoError(t, store.Initialize(settings, nil))
+	state, ok, err := store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotNil(t, state.Settings.Redundancy.ForceUpstreamStreaming)
+	require.True(t, *state.Settings.Redundancy.ForceUpstreamStreaming)
+
+	state.Settings.Redundancy.ForceUpstreamStreaming = boolPtr(false)
+	require.NoError(t, store.UpdateSettings(state.Settings))
+	reloaded, ok, err := store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotNil(t, reloaded.Settings.Redundancy.ForceUpstreamStreaming)
+	require.False(t, *reloaded.Settings.Redundancy.ForceUpstreamStreaming)
+}
+
+func TestGatewaySettingsWithTuningDefaultsFillsNilForceUpstreamStreaming(t *testing.T) {
+	settings := GatewaySettings{
+		Redundancy: RedundancySettings{ReceiptTimeoutMS: 1500},
+	}.WithTuningDefaults()
+	require.NotNil(t, settings.Redundancy.ForceUpstreamStreaming)
+	require.True(t, *settings.Redundancy.ForceUpstreamStreaming)
+
+	off := GatewaySettings{
+		Redundancy: RedundancySettings{ForceUpstreamStreaming: boolPtr(false)},
+	}.WithTuningDefaults()
+	require.NotNil(t, off.Redundancy.ForceUpstreamStreaming)
+	require.False(t, *off.Redundancy.ForceUpstreamStreaming)
 }
 
 func TestGatewayStoreLoadsLegacyModelAccessIntoModelLimits(t *testing.T) {
@@ -392,32 +435,6 @@ func TestEscrowRotationPreparePromotesRegularEscrowsOnTempCreateFailure(t *testi
 	require.Equal(t, rotationRoleRegular, byID["13"].RotationRole)
 }
 
-// Rotation state must never stamp a hardcoded protocol constant (a guard
-// originally added when the gateway-v2 branches hardcoded ProtocolV2): the
-// protocol is derived from the gateway route prefix, and without a resolvable
-// route version the field stays empty (the pre-existing v1-default behavior).
-func TestNewRotationDevshardStateDerivesProtocolFromRoutePrefix(t *testing.T) {
-	record := newRotationDevshardState(&CreateDevshardEscrowResult{EscrowID: 99}, EscrowRotationModelSettings{
-		ModelID:       "Qwen/Test",
-		PrivateKeyEnv: "DEVSHARD_PRIVATE_KEY",
-	}, rotationRoleTemp, 10)
-
-	require.Equal(t, "99", record.ID)
-	require.Equal(t, "Qwen/Test", record.Model)
-	require.Equal(t, "DEVSHARD_PRIVATE_KEY", record.PrivateKeyEnv)
-	require.Empty(t, record.ProtocolVersion, "no route prefix version -> no protocol stamp")
-	require.True(t, record.Active)
-	require.Equal(t, rotationRoleTemp, record.RotationRole)
-	require.EqualValues(t, 10, record.RotationEpoch)
-
-	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v3")
-	record = newRotationDevshardState(&CreateDevshardEscrowResult{EscrowID: 100}, EscrowRotationModelSettings{
-		ModelID:       "Qwen/Test",
-		PrivateKeyEnv: "DEVSHARD_PRIVATE_KEY",
-	}, rotationRoleTemp, 10)
-	require.Equal(t, "3", record.ProtocolVersion, "protocol derived from route prefix, not hardcoded")
-}
-
 func TestEscrowRotationFinishDoesNotSettleTempWhenRegularCreateFails(t *testing.T) {
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
@@ -473,27 +490,6 @@ func TestEscrowRotationFinishDoesNotSettleTempWhenRegularCreateFails(t *testing.
 
 	require.Equal(t, 1, createAttempts)
 	require.Equal(t, 0, settleAttempts)
-}
-
-func TestNewRotationDevshardStateDoesNotForceRoutePrefix(t *testing.T) {
-	record := newRotationDevshardState(&CreateDevshardEscrowResult{EscrowID: 99}, EscrowRotationModelSettings{
-		ModelID:       "Qwen/Test",
-		PrivateKeyEnv: "DEVSHARD_PRIVATE_KEY",
-	}, rotationRoleTemp, 10)
-
-	require.Equal(t, "99", record.ID)
-	require.Equal(t, "Qwen/Test", record.Model)
-	require.Equal(t, "DEVSHARD_PRIVATE_KEY", record.PrivateKeyEnv)
-	require.Empty(t, record.RoutePrefix)
-	require.True(t, record.Active)
-	require.Equal(t, rotationRoleTemp, record.RotationRole)
-	require.EqualValues(t, 10, record.RotationEpoch)
-}
-
-// TestNewRotationDevshardStateDoesNotForceProtocolVersion is the 0.2.14 name;
-// protocol_version was replaced by route_prefix.
-func TestNewRotationDevshardStateDoesNotForceProtocolVersion(t *testing.T) {
-	TestNewRotationDevshardStateDoesNotForceRoutePrefix(t)
 }
 
 func TestEscrowRotationSkipsCreateWhenModelAbsentFromNetwork(t *testing.T) {

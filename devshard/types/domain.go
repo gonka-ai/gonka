@@ -9,7 +9,7 @@ import (
 // link-time stamp is set (plain `go test` / local builds). Release binaries set
 // the protocol name via `make devshardd-build DEVSHARD_VERSION=<name>` — same
 // as approved_versions.name. See devshard/docs/upgrade.md.
-const DevshardStateRootAndProtocolVersion = "v2"
+const DevshardStateRootAndProtocolVersion = "v4"
 
 // DefaultStateRootVersion is the tag used when no explicit bind version is provided.
 const DefaultStateRootVersion = DevshardStateRootAndProtocolVersion
@@ -78,16 +78,22 @@ type HostStats struct {
 type ProtocolVersion string
 
 const (
-	ProtocolV1 ProtocolVersion = "1"
-	ProtocolV2 ProtocolVersion = "2"
-	ProtocolV3 ProtocolVersion = "3"
+	ProtocolV1             ProtocolVersion = "1"
+	ProtocolV2             ProtocolVersion = "2"
+	ProtocolV3             ProtocolVersion = "3"
+	ProtocolV4             ProtocolVersion = "4"
+	DefaultProtocolVersion                 = ProtocolV4
 )
 
 // ParseProtocolVersion parses a string into a ProtocolVersion.
-// Empty string defaults to ProtocolV1.
+// Empty string defaults to DefaultProtocolVersion.
 func ParseProtocolVersion(s string) (ProtocolVersion, error) {
 	switch strings.TrimSpace(s) {
-	case "", string(ProtocolV1), "v1":
+	case "":
+		return DefaultProtocolVersion, nil
+	case string(ProtocolV4), "v4":
+		return ProtocolV4, nil
+	case string(ProtocolV1), "v1":
 		return ProtocolV1, nil
 	case string(ProtocolV2), "v2":
 		return ProtocolV2, nil

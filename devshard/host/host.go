@@ -1552,5 +1552,8 @@ func verifyPayloadWorkload(p *InferencePayload) error {
 	if bodyMaxTokens > p.MaxTokens {
 		return fmt.Errorf("%w: prompt max_tokens %d exceeds declared %d", types.ErrPayloadMismatch, bodyMaxTokens, p.MaxTokens)
 	}
+	if p.MaxTokens < completionapi.MinTokensFloor {
+		return fmt.Errorf("%w: declared max_tokens %d below floor %d", types.ErrPayloadMismatch, p.MaxTokens, completionapi.MinTokensFloor)
+	}
 	return nil
 }

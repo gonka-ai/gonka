@@ -11,19 +11,31 @@ Users point any OpenAI client at `localhost:8080` and make chat completion reque
 
 ## Configuration
 
-All settings can be passed as flags or environment variables. Flags take precedence over env vars.
+All settings can be passed as flags or environment variables. Flags take precedence over env vars. Join-stack deploy template:
+`deploy/join/config.devshard.env.template`.
+
+### Chain and phase endpoints
+
+| Env var | Default | Role |
+| ------ | ------ | ------ |
+| `DEVSHARD_CHAIN_GRPC` | `localhost:9090` | Chain gRPC URL for queries and unordered create/settle transactions |
+| `DEVSHARD_CHAIN_RPC` (Optional) | `http://localhost:26657` | CometBFT RPC URL used as a fallback when gRPC is unreachable |
+| `DEVSHARD_PUBLIC_API` (Optional) | `http://localhost:9000` | Public API URL for epoch/PoC phase and participants (cached). Set to `none` or `disabled` to query the chain directly |
+| `DEVSHARD_PARAMS_SOURCE` (Optional) | `adaptive` | Set to `chain` to poll runtime params from the blockchain; otherwise, queries the `api` container (NodeManager gRPC port `:9400`) with chain fallback |
+
+### Other settings
 
 | Flag | Env var | Required | Default | Description |
 | ------ | ------ | ------ | ------ | ------ |
 | `--private-key` | `DEVSHARD_PRIVATE_KEY` | yes | - | Hex-encoded secp256k1 private key |
 | `--escrow-id` | `DEVSHARD_ESCROW_ID` | yes | - | On-chain escrow ID |
-| `--chain-rest` | `DEVSHARD_CHAIN_REST` | no | `http://localhost:1317` | Chain REST API URL |
+| `--chain-grpc` | `DEVSHARD_CHAIN_GRPC` | no | `localhost:9090` | See above |
 | `--model` | `DEVSHARD_MODEL` | no | `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8` | Default model (used when request omits `model`) |
 | `--port` | `DEVSHARD_PORT` | no | `8080` | Listen port |
 | `--storage-path` | `DEVSHARD_STORAGE_PATH` | no | `~/.cache/gonka/devshard-<escrow-id>.db` | SQLite path for crash recovery |
 | - | `DEVSHARD_API_KEYS` | no | - | Comma-separated public API bearer keys |
 | - | `DEVSHARD_ADMIN_API_KEY` | no | - | Admin bearer key for finalize and `/v1/admin/*` endpoints |
-| - | `DEVSHARD_CHAIN_ID` | no | `gonka-mainnet` | Chain ID for signing escrow create/settle txs. Known values: `gonka-mainnet` (production), `gonka-testnet` (devnet/testnet), `gonka-test` (testenv mock-chain). |
+| - | `DEVSHARD_CHAIN_ID` | no | `gonka-mainnet` | Chain ID for signing escrow create/settle txs (`gonka-mainnet`, `gonka-testnet`, `gonka-test`) |
 | - | `DEVSHARD_TX_FEE_AMOUNT` | no | `1000000` | Fee amount for admin-created escrow transactions |
 | - | `DEVSHARD_TX_FEE_DENOM` | no | `ngonka` | Fee denom for admin-created escrow transactions |
 | - | `DEVSHARD_TX_GAS_LIMIT` | no | `500000` | Fallback gas limit for admin-created escrow and settlement transactions |
@@ -43,7 +55,7 @@ All settings can be passed as flags or environment variables. Flags take precede
 devshardctl \
   --private-key "deadbeef..." \
   --escrow-id 42 \
-  --chain-rest "http://localhost:1317"
+  --chain-grpc "localhost:9090"
 
 # In another terminal:
 curl -X POST http://localhost:8080/v1/chat/completions \
@@ -56,7 +68,7 @@ Or using environment variables:
 ```bash
 export DEVSHARD_PRIVATE_KEY="deadbeef..."
 export DEVSHARD_ESCROW_ID="42"
-export DEVSHARD_CHAIN_REST="http://localhost:1317"
+export DEVSHARD_CHAIN_GRPC="localhost:9090"
 
 devshardctl
 ```
@@ -218,8 +230,8 @@ continue to reflect effective gateway capacity.
 ### POST /v1/admin/escrows
 
 Admin endpoint. Creates a new on-chain devshard escrow by signing
-`MsgCreateDevshardEscrow` locally and broadcasting the signed transaction to
-`DEVSHARD_CHAIN_REST` via `/cosmos/tx/v1beta1/txs`. By default, the returned
+`MsgCreateDevshardEscrow` locally and broadcasting over chain gRPC, with
+CometBFT RPC fallback when gRPC is unreachable. By default, the returned
 escrow ID is also registered as an active local gateway runtime.
 
 ```bash
@@ -257,7 +269,7 @@ automatic quarantine row; an empty list means legacy/global state.
 
 Admin endpoint. Locally deactivates the devshard, finalizes it if it is not
 already in settlement phase, signs `MsgSettleDevshardEscrow`, and broadcasts the
-signed transaction to `DEVSHARD_CHAIN_REST`.
+signed transaction over chain gRPC (CometBFT RPC fallback).
 
 ```bash
 curl -X POST http://localhost:8080/v1/admin/devshards/42/settle \
@@ -279,14 +291,14 @@ Automatic rotation uses two roles:
   PoC/epoch transition.
 
 When `escrow_rotation.enabled` is true, the gateway watches the chain phase
-snapshot from `DEVSHARD_PUBLIC_API` and also replaces escrows that approach the
-low-balance or high-nonce limits. When it is false, both epoch rotation and
-depletion replacement are disabled.
+snapshot (public API when configured, otherwise chain gRPC/RPC) and also
+replaces escrows that approach the low-balance or high-nonce limits. When it is
+false, both epoch rotation and depletion replacement are disabled.
 
 1. During inference phase, when the chain is within `pre_poc_blocks` of PoC,
    the gateway ensures `temp_count` temp escrows exist for the current epoch.
 2. It then locally deactivates active non-temp escrows, finalizes them, and
-   settles them on-chain through `DEVSHARD_CHAIN_REST`.
+   settles them on-chain through chain gRPC (CometBFT RPC fallback).
 3. After the next epoch leaves PoC, it ensures `target_count` regular escrows
    exist for the new epoch.
 4. It then deactivates, finalizes, and settles the previous epoch's temp
@@ -380,6 +392,17 @@ The `api_key` is required by the SDK. It is ignored for models with
 `access_mode: "open"` and must match one of `DEVSHARD_API_KEYS` for models with
 `access_mode: "api_key"`. Models with `access_mode: "admin_only"` require
 `DEVSHARD_ADMIN_API_KEY`.
+
+### Standalone deployment
+
+Gateway beside a read-only full node (no edge-api / dapi):
+
+```bash
+export DEVSHARD_PUBLIC_API=none          # phase checks via chain
+export DEVSHARD_PARAMS_SOURCE=chain      # runtime params via chain
+export DEVSHARD_CHAIN_GRPC=node:9090
+# export DEVSHARD_CHAIN_RPC=http://node:26657   # optional; derived if omitted
+```
 
 ## Finalization and settlement
 
