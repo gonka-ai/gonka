@@ -23,6 +23,7 @@ import (
 const (
 	snapshotRecoveryWarnThreshold = 30 * time.Second
 	snapshotRecoveryFailThreshold = 60 * time.Second
+	corruptSnapshotHex            = "6e6f742d612d70726f746f2d736e617073686f74" // "not-a-proto-snapshot"
 )
 
 // TestVersiondSnapshotRecoveryUsesSnapshotAfterRestart verifies the production
@@ -142,6 +143,87 @@ func TestVersiondSnapshotRecoveryUsesSnapshotAfterRestart(t *testing.T) {
 		summaryArtifactWritten = true
 		validateSnapshotRecoveryArtifacts(t, artifactDir, summary)
 	}
+}
+
+// TestVersiondSnapshotRecoveryCorruptSnapshotFallsBack verifies a corrupt
+// persisted snapshot does not strand a production versiond host: recovery logs
+// the rejected snapshot, replays the journal from nonce 1, repairs the snapshot,
+// and the session remains usable.
+func TestVersiondSnapshotRecoveryCorruptSnapshotFallsBack(t *testing.T) {
+	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
+	harness.RequireDocker(t)
+
+	stack := harness.NewStack(t, "citest-versiond-corrupt-snapshot-*")
+	harness.RequireLinuxDevshardd(t, stack.TestenvDir)
+	harness.WriteMultiConfig(t, stack.WorkDir, harness.MultiConfigOpts{
+		Hosts:        2,
+		EscrowSlots:  2,
+		MaxNonce:     uint32(host.SnapshotInterval * 3),
+		EscrowAmount: config.DefaultEscrowAmount * 100,
+	})
+	stack.RunGencompose(t)
+	cfg := stack.LoadConfig(t)
+	require.Len(t, cfg.Hosts, 2, "expected 2 versiond hosts")
+	stack.Up(t)
+	eps := stack.Endpoints(t, cfg)
+
+	client := harness.HTTPClient()
+	chatClient := harness.GatewayChatClient()
+	adminKey := harness.TestenvAdminAPIKey
+	t.Cleanup(func() {
+		if t.Failed() {
+			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", "versiond-router", "devshard-postgres")
+		}
+	})
+
+	harness.WaitStackHealthy(t, stack, eps)
+	harness.WaitGatewayChatReady(t, chatClient, eps.GatewayHTTP, 3*time.Minute, stack)
+	harness.WaitGETOK(t, client, eps.RouterHTTP+"/"+cfg.Versiond.VersionName+"/healthz", 5*time.Minute, "devshardd health via router", stack)
+
+	model := config.PrimaryModelID(cfg)
+	snap0 := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey)
+	require.NotEmpty(t, snap0.EscrowID)
+
+	targetNonce := nextSnapshotNonce(snap0.LatestNonce)
+	harness.Step(t, "advance gateway session %s to snapshot nonce %d", snap0.EscrowID, targetNonce)
+	snapAtSnapshot := advanceGatewaySessionToNonce(t, chatClient, client, eps.GatewayHTTP, adminKey, model, targetNonce)
+	require.Equal(t, snap0.EscrowID, snapAtSnapshot.EscrowID, "escrow id changed while advancing to snapshot")
+	snapshotNonce := waitPostgresSnapshotNonce(t, stack, cfg, snapAtSnapshot.EscrowID, targetNonce, 3*time.Minute)
+	require.GreaterOrEqual(t, snapshotNonce, targetNonce)
+
+	corruptPostgresSnapshot(t, stack, cfg, snapAtSnapshot.EscrowID)
+
+	hostIDs := harness.VersiondHostIDs(cfg)
+	recoveryHost := hostIDs[0]
+	harness.Step(t, "restart %s and demand-load session %s with corrupt snapshot", recoveryHost, snapAtSnapshot.EscrowID)
+	recoveryStartedAt := time.Now()
+	harness.RestartService(t, stack, recoveryHost)
+	elapsed := waitVersiondHostSessionMempool(t, stack, recoveryHost, snapAtSnapshot.EscrowID, 3*time.Minute)
+	harness.Step(t, "%s corrupt snapshot fallback finished in %s (direct load %s)", recoveryHost, time.Since(recoveryStartedAt), elapsed)
+	require.LessOrEqual(t, time.Since(recoveryStartedAt), snapshotRecoveryFailThreshold,
+		"corrupt snapshot fallback exceeded threshold")
+
+	logs, err := stack.ComposeLogsTail(5000, recoveryHost)
+	require.NoError(t, err)
+	require.Contains(t, logs, "failed to decode devshard snapshot, replaying full history")
+	require.Contains(t, logs, "escrow_id="+snapAtSnapshot.EscrowID)
+	require.NotContains(t, logs, "restored devshard snapshot")
+	requirePostgresSnapshotRepaired(t, stack, cfg, snapAtSnapshot.EscrowID)
+
+	snapAfterFallback := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey)
+	harness.RequireGatewaySessionStable(t, snapAtSnapshot, snapAfterFallback)
+
+	harness.Step(t, "continue gateway chat after corrupt snapshot fallback")
+	resp := harness.PostGatewayChatCompletion(t, chatClient, eps.GatewayHTTP, adminKey, harness.ChatCompletionRequest{
+		Model: model,
+		Messages: []harness.ChatMessage{
+			{Role: "user", Content: "citest versiond corrupt snapshot fallback after restart"},
+		},
+		MaxTokens: 4,
+	})
+	harness.RequireMockOpenAIContent(t, resp.Choices[0].Message.Content)
+	snapAfterChat := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey)
+	harness.RequireGatewaySessionAdvanced(t, snapAfterFallback, snapAfterChat)
 }
 
 type snapshotRecoverySummary struct {
@@ -301,6 +383,30 @@ func postgresSnapshotNonce(stack *harness.Stack, cfg *config.File, escrowID stri
 		return 0, raw, fmt.Errorf("parse snapshot nonce %q: %w", raw, err)
 	}
 	return nonce, raw, nil
+}
+
+func corruptPostgresSnapshot(t *testing.T, stack *harness.Stack, cfg *config.File, escrowID string) {
+	t.Helper()
+	user, db, pass := postgresCreds(cfg)
+	query := fmt.Sprintf("UPDATE devshard_snapshots SET state_data = decode('%s', 'hex') WHERE escrow_id = '%s'",
+		corruptSnapshotHex, strings.ReplaceAll(escrowID, "'", "''"))
+	raw := stack.ComposeExec(t, "devshard-postgres",
+		"env", "PGPASSWORD="+pass,
+		"psql", "-U", user, "-d", db, "-At", "-c", query)
+	require.Contains(t, raw, "UPDATE 1")
+	harness.Step(t, "corrupted postgres snapshot for escrow %s", escrowID)
+}
+
+func requirePostgresSnapshotRepaired(t *testing.T, stack *harness.Stack, cfg *config.File, escrowID string) {
+	t.Helper()
+	user, db, pass := postgresCreds(cfg)
+	query := fmt.Sprintf("SELECT encode(state_data, 'hex') FROM devshard_snapshots WHERE escrow_id = '%s'",
+		strings.ReplaceAll(escrowID, "'", "''"))
+	raw := stack.ComposeExec(t, "devshard-postgres",
+		"env", "PGPASSWORD="+pass,
+		"psql", "-U", user, "-d", db, "-At", "-c", query)
+	require.NotEqual(t, corruptSnapshotHex, strings.TrimSpace(raw), "corrupt snapshot was not repaired")
+	harness.Step(t, "postgres snapshot for escrow %s was repaired after full replay fallback", escrowID)
 }
 
 func postgresCreds(cfg *config.File) (user, db, pass string) {
