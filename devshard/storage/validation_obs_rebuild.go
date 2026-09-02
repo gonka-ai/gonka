@@ -36,6 +36,11 @@ func ValidationObsEntriesFromTxs(txs []*types.DevshardTx) []ValidationObsEntry {
 // from the canonical diff journal. It clears live and sealed obs tables, replays
 // validation txs from records in nonce order, then drains live rows for each
 // sealed inference id. Idempotent w.r.t. diff content.
+//
+// Only the clear makes this safe to re-run: the drain deletes the live row
+// that RecordValidationsAppliedOnce dedups against, so replaying a range on top
+// of already-drained rows would count those validations a second time. Callers
+// must pass the whole journal, never a partial range.
 func RebuildValidationObsFromDiffs(store Storage, escrowID string, records []types.DiffRecord, sealedInferenceIDs []uint64) error {
 	if store == nil {
 		return fmt.Errorf("validation obs rebuild: nil store")

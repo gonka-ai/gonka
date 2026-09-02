@@ -997,20 +997,23 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 			}
 		}
 
-		obsRecords := records
-		if replayFrom > 1 {
-			obsRecords, err = m.store.GetDiffs(escrowID, 1, meta.LatestNonce)
-			if err != nil {
-				return nil, fmt.Errorf("get diffs for validation obs rebuild: %w", err)
+		// Validation obs is written by the live apply path and is durable, so a
+		// restart already has the rows for every nonce a snapshot covers.
+		// Rebuild only when replaying the whole journal, where ApplyLocal
+		// records no obs and the clear-then-replay is the self-heal for
+		// batches the live path dropped under backpressure. Re-recording a
+		// range incrementally is not an option: the drain removes the live row
+		// that RecordValidationsAppliedOnce dedups against, so a tail replayed
+		// twice would double count.
+		if replayFrom == 1 {
+			if err := storage.RebuildValidationObsFromDiffs(
+				m.store,
+				escrowID,
+				records,
+				storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
+			); err != nil {
+				return nil, fmt.Errorf("rebuild validation obs: %w", err)
 			}
-		}
-		if err := storage.RebuildValidationObsFromDiffs(
-			m.store,
-			escrowID,
-			obsRecords,
-			storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
-		); err != nil {
-			return nil, fmt.Errorf("rebuild validation obs: %w", err)
 		}
 
 		if replayFrom == 1 || uint64(len(records)) >= host.SnapshotInterval {
