@@ -213,6 +213,12 @@ if [[ $topology == ha ]]; then
             [[ $a == "$b" ]] || fail \
                 "$first and $service disagree on $key ('$a' vs '$b'); every replica must share one PostgreSQL"
         done
+        # These libpq settings can send the supervisor's lookups or a child's
+        # writes to a database other than the one named by PGHOST/PGDATABASE.
+        for key in DATABASE_URL PGSERVICE PGSERVICEFILE PGOPTIONS; do
+            [[ -z $(service_env "$service" "$key") ]] || fail \
+                "$service sets $key; HA replicas must use only PGHOST, PGPORT, PGDATABASE, PGUSER and PGPASSWORD so every process reaches the same database"
+        done
     done
     [[ $(service_env "$first" DEVSHARD_STORAGE_MODE) == postgres ]] || fail \
         "HA versiond must run with DEVSHARD_STORAGE_MODE=postgres"

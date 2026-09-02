@@ -233,6 +233,14 @@ if run_update env FAKE_CONTAINERS="versiond devshard-postgres" \
 fi
 grep -q 'versiond2 disagree on PGDATABASE' "$tmpdir/err" || fail "PG drift message: $(cat "$tmpdir/err")"
 
+jq '.services.versiond2.environment.PGSERVICE = "other"' "$tmpdir/ha.json" >"$tmpdir/ha-libpq.json"
+if run_update env FAKE_CONTAINERS="versiond devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
+    FAKE_RENDERED_HA="$tmpdir/ha-libpq.json"; then
+    fail "a libpq override that can redirect one replica was accepted"
+fi
+grep -q 'versiond2 sets PGSERVICE' "$tmpdir/err" || fail "libpq override message: $(cat "$tmpdir/err")"
+
 UPDATE_ARGS=(--check --topology ha)
 if run_update env FAKE_CONTAINERS="" COMPOSE_FILE=docker-compose.yml; then
     fail "HA without the versiond overlay was accepted"

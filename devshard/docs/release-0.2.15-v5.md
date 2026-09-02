@@ -20,6 +20,10 @@ Router: [versiond-router/README.md](../../versiond-router/README.md).
   versiond hosts through DNS or an explicit endpoint file, check
   `GET /readyz?version=<v>` on every host, and learn protocol names from the
   governance `/versions` feed. A new approved version needs no host-side edit.
+- **versiond keeps at most one draining predecessor per version.** A second
+  same-name SHA change that arrives while the previous generation is still
+  draining is deferred and retried, so rapid catalog updates cannot stack
+  generations and exhaust the shared PostgreSQL connections (#1702).
 - **versiond has graceful shutdown and `/readyz`.** Both the single-versiond
   stack and the HA overlay use a Compose healthcheck on `/readyz`, so
   `docker compose up --wait` returns only when versiond can serve.
@@ -132,8 +136,21 @@ docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d --wait
 
 For managed PostgreSQL, add `docker-compose.versiond-external-postgres.yml` and
 an operator override that sets the same `PGHOST`, `PGPORT`, `PGDATABASE`,
-`PGUSER` and `PGPASSWORD` on every versiond service. Keep the same ordered
+`PGUSER` and `PGPASSWORD` on every versiond service. Use only those variables:
+`update-devshard.sh --check` rejects `DATABASE_URL`, `PGSERVICE`,
+`PGSERVICEFILE` and `PGOPTIONS` on HA replicas, because a service file or a
+session option such as `search_path` can send one process to a different
+database than the tuple everybody else agreed on. Keep the same ordered
 `-f` list, or `COMPOSE_FILE`, for every later command.
+
+Size the server's `max_connections` for at least
+`2 * N * (P + 2) + R * 5` non-reserved connections, where `N` is the number of
+HA devshard children a replica runs (one per HA version), `R` the number of
+versiond replicas and `P` the `DEVSHARD_POSTGRES_POOL_MAX_CONNS` pool limit
+(default 4). The doubled child term covers the draining predecessor a version
+may keep during a rolling binary update; the per-replica term is versiond's
+session-lookup pool plus one schema-initializer session. With two replicas,
+three HA versions and the default pool that is 46 connections.
 
 ## Day-2 operations
 
