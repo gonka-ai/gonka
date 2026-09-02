@@ -9,12 +9,18 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
+
+	"devshard/cmd/devshardd/session"
 )
+
+func recoveryDone() session.RecoveryProgress {
+	return session.RecoveryProgress{Complete: true}
+}
 
 func TestLifecycleReadyAndDrainStatus(t *testing.T) {
 	lifecycle := newLifecycleState()
 	e := buildServer(lifecycle)
-	admin := buildAdminServer(lifecycle, func() bool { return true }, func() bool { return true })
+	admin := buildAdminServer(lifecycle, func() bool { return true }, recoveryDone)
 	e.GET("/work", func(c echo.Context) error {
 		time.Sleep(20 * time.Millisecond)
 		return c.String(http.StatusOK, "done")
@@ -62,7 +68,7 @@ func TestLifecycleDrainRejectsNewWork(t *testing.T) {
 	lifecycle := newLifecycleState()
 	lifecycle.SetReady(true)
 	e := buildServer(lifecycle)
-	admin := buildAdminServer(lifecycle, func() bool { return true }, func() bool { return true })
+	admin := buildAdminServer(lifecycle, func() bool { return true }, recoveryDone)
 	e.GET("/work", func(c echo.Context) error {
 		return c.String(http.StatusOK, "done")
 	})
@@ -95,7 +101,7 @@ func TestReadyReflectsStorageReadiness(t *testing.T) {
 	lifecycle := newLifecycleState()
 	lifecycle.SetReady(true)
 	storageReady := false
-	admin := buildAdminServer(lifecycle, func() bool { return storageReady }, func() bool { return true })
+	admin := buildAdminServer(lifecycle, func() bool { return storageReady }, recoveryDone)
 
 	rec := httptest.NewRecorder()
 	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
@@ -112,7 +118,7 @@ func TestReadyReflectsStorageReadiness(t *testing.T) {
 func TestAdminExposesPprofNotPublic(t *testing.T) {
 	lifecycle := newLifecycleState()
 	e := buildServer(lifecycle)
-	admin := buildAdminServer(lifecycle, func() bool { return true }, func() bool { return true })
+	admin := buildAdminServer(lifecycle, func() bool { return true }, recoveryDone)
 
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil))
@@ -129,24 +135,38 @@ func TestAdminExposesPprofNotPublic(t *testing.T) {
 	require.NotEmpty(t, rec.Body.Bytes())
 }
 
-// Session recovery runs in the background so the listener binds immediately;
-// /ready must stay 503 until the backlog drains so traffic is not routed to a
-// host that would recover every requested session on demand.
+// Status 200 means the process can serve. recovery_complete in the body is the
+// warm signal a version cutover waits on; draining and unready storage still 503.
 func TestReadyReflectsSessionRecoveryProgress(t *testing.T) {
 	lifecycle := newLifecycleState()
 	lifecycle.SetReady(true)
-	recovered := false
-	admin := buildAdminServer(lifecycle, func() bool { return true }, func() bool { return recovered })
+	progress := session.RecoveryProgress{
+		Total: 10, Recovered: 3, Failed: 1, VersionSkipped: 2, Pending: 4,
+	}
+	admin := buildAdminServer(lifecycle, func() bool { return true }, func() session.RecoveryProgress {
+		return progress
+	})
 
 	rec := httptest.NewRecorder()
 	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
-	require.Equal(t, http.StatusServiceUnavailable, rec.Code,
-		"chain-ready but session recovery still draining must report 503")
-	require.Contains(t, rec.Body.String(), "\"recovery_complete\":false")
+	require.Equal(t, http.StatusOK, rec.Code,
+		"chain-ready process must serve while session recovery is still draining")
+	require.Contains(t, rec.Body.String(), `"recovery_complete":false`)
+	require.Contains(t, rec.Body.String(), `"sessions_total":10`)
+	require.Contains(t, rec.Body.String(), `"sessions_recovered":3`)
+	require.Contains(t, rec.Body.String(), `"sessions_failed":1`)
+	require.Contains(t, rec.Body.String(), `"sessions_version_skipped":2`)
+	require.Contains(t, rec.Body.String(), `"sessions_pending":4`)
 
-	recovered = true
+	progress = session.RecoveryProgress{Complete: true, Total: 10, Recovered: 7, Failed: 1, VersionSkipped: 2}
 	rec = httptest.NewRecorder()
 	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), "\"recovery_complete\":true")
+	require.Contains(t, rec.Body.String(), `"recovery_complete":true`)
+	require.Contains(t, rec.Body.String(), `"sessions_pending":0`)
+
+	lifecycle.StartDrain()
+	rec = httptest.NewRecorder()
+	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code, "draining must still report 503")
 }

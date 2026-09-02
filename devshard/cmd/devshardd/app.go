@@ -98,7 +98,7 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 	e := buildServer(lifecycle)
 	var admin *echo.Echo
 	if cfg.AdminAddr != "" {
-		admin = buildAdminServer(lifecycle, manager.StorageReady, manager.RecoveryComplete)
+		admin = buildAdminServer(lifecycle, manager.StorageReady, manager.RecoveryProgressSnapshot)
 	}
 	manager.Register(e.Group(""))
 	chainRuntime.chainEvents.OnReady(lifecycle.SetReady)
