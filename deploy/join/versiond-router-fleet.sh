@@ -124,7 +124,6 @@ wait_timeout=${VERSIOND_ROUTER_START_TIMEOUT_SECONDS:-60}
 version_wait_timeout=${VERSIOND_ROUTING_ACTIVATION_TIMEOUT_SECONDS:-2100}
 pull_policy=${VERSIOND_ROUTER_PULL_POLICY:-always}
 config_dir=$(cd -- "$(dirname -- "$config_env")" && pwd -P)
-operation_id="$(date +%s%N)-$$"
 
 command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
 command -v flock >/dev/null 2>&1 || fail "flock is required"
@@ -180,6 +179,9 @@ done
 
 declare -A candidate_routes=()
 declare -A expected_routes=()
+previous_image_tag() {
+    printf 'gonka/versiond-router-previous:%s-%s\n' "$fleet_id" "$1"
+}
 while read -r route; do
     [[ -n $route ]] || continue
     candidate_routes[$route]=1
@@ -193,6 +195,32 @@ normalize_versions() {
     printf '%s\n' "$1" | tr ',;' '  ' | tr -s ' ' '\n' | \
         sed '/^$/d' | LC_ALL=C sort -u | paste -sd, -
 }
+
+# Versions the candidate configuration declares (bootstrap floor and pinned
+# legacy versions). They are required: no rollout, bootstrap or maintenance
+# may finish while one of them has zero ready routers, and a replacement slot
+# must serve each of them again before it counts as converged.
+# The HA versions this deployment declares must be served by every candidate
+# slot before it counts as ready, and by a ready router before a slot that
+# already serves them is stopped; a fleet that serves none of them has lost
+# its pool or its PostgreSQL, and rolling it would only hide that. A version
+# the configuration adds is served by no running router yet by definition: it
+# is the candidate's job, not a reason to refuse the rollout that introduces
+# it. Pinned non-HA versions are owned by one host that may be down on
+# purpose, so they are tracked as expected routes only.
+declare -A required_routes=()
+# Routes that had a ready router when the run started. Losing every ready
+# router for one of them mid-run is an outage, not a route to stop caring
+# about; a merely declared route that nothing serves yet is the candidate's
+# obligation instead.
+declare -A protected_routes=()
+for version in $(normalize_versions "${VERSIOND_VERSIONS-v4 v5}" | tr ',' ' '); do
+    required_routes[$version]=1
+done
+case ${VERSIOND_ROUTER_ALLOW_UNSERVED_STATIC_ROUTES:-false} in
+    1 | true | yes) required_routes=() ;;
+esac
+
 
 placement_contract() {
     local pool_host=$1 back_network=$2 legacy_host=$3 legacy_versions=$4
@@ -389,7 +417,9 @@ discover_expected_routes() {
             # A removed governance version remains in the monotonic runtime map
             # until replacement. Protect routes that still carry traffic, not
             # stale declarations whose children have already drained.
-            slot_route_ready "$slot" "$route" && expected_routes[$route]=1
+            slot_route_ready "$slot" "$route" || continue
+            expected_routes[$route]=1
+            protected_routes[$route]=1
         done <<<"$routes"
     done
     return 0
@@ -841,11 +871,12 @@ require_static_routes_served() {
     for version in "${!served[@]}"; do
         count=$(route_ready_count "$version")
         ((count > 0)) || fail \
-            "version $version is declared by the running routers but served by none of them; the versiond pool or its PostgreSQL is down, refusing to roll the routers (VERSIOND_ROUTER_ALLOW_UNSERVED_STATIC_ROUTES=true overrides)"
+            "version $version is declared but served by no ready router; the versiond pool or its PostgreSQL is down, refusing to roll the routers (VERSIOND_ROUTER_ALLOW_UNSERVED_STATIC_ROUTES=true overrides)"
         # Once declared and served, the version stays in the protected set for
         # the whole run: a replacement slot must serve it again and the reserve
         # check keeps counting it, even if the pool loses it mid-rollout.
         expected_routes[$version]=1
+        protected_routes[$version]=1
     done
 }
 
@@ -856,7 +887,15 @@ require_ready_reserve() {
         "refusing to stop slot $excluded: only $reserve other routers are ready, need $min_ready"
     for route in "${!expected_routes[@]}"; do
         total=$(route_ready_count "$route")
-        ((total > 0)) || continue
+        if ((total == 0)); then
+            # A route that was served when the run started and lost every
+            # ready router since is an outage in the pool or its PostgreSQL.
+            # A route the configuration only declares is served by the
+            # candidate first.
+            [[ -z ${protected_routes[$route]-} ]] || fail \
+                "refusing to stop slot $excluded: version $route is served by no ready router; the versiond pool or its PostgreSQL is down"
+            continue
+        fi
         reserve=$(route_ready_count "$route" "$excluded")
         ((reserve >= min_ready)) || fail \
             "refusing to stop slot $excluded: version $route has only $reserve other ready routers, need $min_ready"
@@ -882,17 +921,21 @@ wait_slot_routes() {
     while ((SECONDS < deadline)); do
         missing=
         reason=
-        for route in "${!expected_routes[@]}"; do
+        for route in "${!expected_routes[@]}" "${!required_routes[@]}"; do
             if ! slot_route_declared "$slot" "$route"; then
                 missing=$route
                 reason="does not declare"
                 break
             fi
-            if (( $(route_ready_count "$route" "$slot") > 0 )) && \
-                ! slot_route_ready "$slot" "$route"; then
-                missing=$route
-                reason="did not converge"
-                break
+            # A required route must be served by this slot no matter what its
+            # peers do; another route must converge once a peer serves it.
+            if [[ -n ${required_routes[$route]-} ]] || \
+                (( $(route_ready_count "$route" "$slot") > 0 )); then
+                if ! slot_route_ready "$slot" "$route"; then
+                    missing=$route
+                    reason="did not converge"
+                    break
+                fi
             fi
         done
         [[ -z $missing ]] && return 0
@@ -968,8 +1011,16 @@ prepare_slot_networks() {
 }
 
 pull_router_image() {
-    [[ $pull_policy == never ]] || \
-        slot_compose "${slots[0]}" pull --policy "$pull_policy" router
+    local image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
+    [[ $pull_policy != never ]] || return 0
+    if slot_compose "${slots[0]}" pull --policy "$pull_policy" router; then
+        return 0
+    fi
+    # The registry is unreachable. Recovery from cached images must still
+    # work; only a missing candidate image is fatal.
+    "$docker_bin" image inspect "$image" >/dev/null 2>&1 || fail \
+        "cannot pull $image and it is not cached locally"
+    warn "cannot reach the registry; continuing with the cached $image"
 }
 
 desired_slot_config_hash() {
@@ -1184,17 +1235,28 @@ repair_fleet_capacity() {
                 "router slot $slot disappeared during recovery"
             echo "Recovering non-ready versiond-router slot $slot (state $state)"
             case $state in
-                running | restarting | paused)
-                    # This slot is already outside the ready reserve, but it may
-                    # still own accepted SSE responses. Drain it without
-                    # consuming any healthy peer.
-                    stop_slot_generation "$slot"
+                created | exited)
+                    # An interrupted run left this generation stopped. Start it
+                    # as it is: the rollout below replaces it under its trap.
+                    slot_compose "$slot" start router >/dev/null
+                    wait_slot_ready "$slot"
                     ;;
-                created | exited | dead) ;;
+                running | restarting | paused | dead)
+                    # A candidate that never became ready, or a dead container.
+                    # Put the last serving image back when it is known, so the
+                    # reserve is restored before the rollout tries again.
+                    [[ $state == dead ]] || stop_slot_generation "$slot"
+                    if "$docker_bin" image inspect "$(previous_image_tag "$slot")" >/dev/null 2>&1; then
+                        VERSIOND_ROUTER_IMAGE=$(previous_image_tag "$slot") \
+                            slot_compose "$slot" up -d --force-recreate --wait \
+                                --wait-timeout "$wait_timeout" router
+                    else
+                        slot_compose "$slot" up -d --force-recreate --wait \
+                            --wait-timeout "$wait_timeout" router
+                    fi
+                    ;;
                 *) fail "slot $slot cannot be recovered from container state '$state'" ;;
             esac
-            slot_compose "$slot" up -d --force-recreate --wait \
-                --wait-timeout "$wait_timeout" router
         fi
         wait_slot_routes "$slot"
         wait_parent_admission "$slot"
@@ -1250,7 +1312,7 @@ capture_maintenance_state() {
         else
             warn "slot $slot is stopped on the previous contract; its exact generation is captured for rollback"
         fi
-        maintenance_images[$slot]="gonka/versiond-router-previous:$slot"
+        maintenance_images[$slot]=$(previous_image_tag "$slot")
         if [[ $state == running ]] || \
             ! "$docker_bin" image inspect "${maintenance_images[$slot]}" >/dev/null 2>&1; then
             "$docker_bin" tag "$image" "${maintenance_images[$slot]}" || fail \
@@ -1272,8 +1334,11 @@ capture_maintenance_state() {
             fi
         done < <(slot_catalog_routes "$slot")
     done
+    for route in "${!required_routes[@]}"; do
+        routes[$route]=1
+    done
     for route in "${!routes[@]}"; do
-        if (( $(route_ready_count "$route") > 0 )); then
+        if [[ -n ${required_routes[$route]-} ]] || (( $(route_ready_count "$route") > 0 )); then
             maintenance_required_routes+=("$route")
         fi
     done
@@ -1298,12 +1363,39 @@ wait_required_routes_all() {
     return 1
 }
 
+# The value the current configuration would give a slot for one maintenance
+# key, for slots whose previous environment was not captured by this run.
+candidate_env_value() {
+    case $1 in
+        VERSIOND_POOL_HOST) printf '%s\n' "${VERSIOND_POOL_HOST:-versiond-pool}" ;;
+        VERSIOND_ROUTER_BACK_NETWORK_NAME) printf '%s\n' "${VERSIOND_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}" ;;
+        VERSIOND_LEGACY_HOST) printf '%s\n' "${VERSIOND_LEGACY_HOST:-versiond}" ;;
+        VERSIOND_NON_HA_VERSIONS) printf '%s\n' "${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}" ;;
+        VERSIOND_VERSIONS) printf '%s\n' "${VERSIOND_VERSIONS-v4 v5}" ;;
+        VERSIOND_ROUTING_CATALOG_URL) printf '%s\n' "${VERSIOND_ROUTING_CATALOG_URL-http://versiond-routing-oracle:9100/versions}" ;;
+        *) printf '%s\n' "${!1:-${legacy_env_defaults[$1]-}}" ;;
+    esac
+}
+
 maintenance_rollback() {
-    local status=$? slot ok=true
+    local status=$? slot ok=true key
     ((status != 0)) || status=1
     trap - ERR INT TERM HUP
     if [[ $maintenance_active == true ]]; then
         warn "maintenance rollout failed; draining candidates before restoring the exact previous fleet"
+        # Slots finished by an earlier interrupted run carry their previous
+        # image under the durable tag; restore them with the current
+        # environment so the fleet does not stay mixed.
+        for slot in "${slots[@]}"; do
+            [[ " ${maintenance_pending[*]} " == *" $slot "* ]] && continue
+            "$docker_bin" image inspect "$(previous_image_tag "$slot")" >/dev/null 2>&1 || continue
+            maintenance_images[$slot]=$(previous_image_tag "$slot")
+            for key in "${maintenance_keys[@]}"; do
+                [[ -n ${maintenance_env[$slot:$key]+x} ]] || \
+                    maintenance_env["$slot:$key"]=$(candidate_env_value "$key")
+            done
+            maintenance_pending+=("$slot")
+        done
         for slot in "${maintenance_pending[@]}"; do
             ! slot_running "$slot" || stop_slot_generation "$slot" >/dev/null 2>&1 || ok=false
         done
@@ -1609,6 +1701,7 @@ fleet_up() {
         wait_slot_routes "$slot"
         wait_parent_admission "$slot"
     done
+    require_static_routes_served
     fleet_status
 }
 
@@ -1661,7 +1754,7 @@ fleet_rollout() {
         # The last generation that was serving is kept under a stable tag in
         # Docker's image store, so a rerun after a killed rollout can still put
         # it back; a slot that is not healthy does not overwrite it.
-        rollback_tag="gonka/versiond-router-previous:$slot"
+        rollback_tag=$(previous_image_tag "$slot")
         if slot_ready "$slot"; then
             old_image=$($docker_bin inspect --format '{{.Image}}' "$id") || fail \
                 "cannot inspect router slot $slot"
