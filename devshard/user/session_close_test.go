@@ -54,6 +54,9 @@ func (s *closeCountingStore) RecordValidationsAppliedOnce(string, []storage.Vali
 	return nil
 }
 func (s *closeCountingStore) DrainInferenceValidationObs(string, uint64) error { return nil }
+func (s *closeCountingStore) DrainInferenceValidationObsBatch(string, []uint64) error {
+	return nil
+}
 func (s *closeCountingStore) GetValidationObservability(string) ([]storage.SlotValidationObs, error) {
 	return nil, nil
 }

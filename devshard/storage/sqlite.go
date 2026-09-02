@@ -1184,6 +1184,63 @@ func (s *SQLite) DrainInferenceValidationObs(escrowID string, inferenceID uint64
 	return tx.Commit()
 }
 
+func (s *SQLite) DrainInferenceValidationObsBatch(escrowID string, inferenceIDs []uint64) error {
+	if len(inferenceIDs) == 0 {
+		return nil
+	}
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return err
+	}
+	for start := 0; start < len(inferenceIDs); start += validationObsRebuildChunk {
+		end := start + validationObsRebuildChunk
+		if end > len(inferenceIDs) {
+			end = len(inferenceIDs)
+		}
+		chunk := inferenceIDs[start:end]
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")
+		args := make([]any, 0, len(chunk)+1)
+		args = append(args, escrowID)
+		for _, id := range chunk {
+			args = append(args, id)
+		}
+
+		tx, err := p.writeDB.Begin()
+		if err != nil {
+			return fmt.Errorf("drain inference validation obs begin: %w", err)
+		}
+		// Move and delete set-at-a-time. Live rows are unique per
+		// (escrow, inference, slot), so no source row conflicts with another
+		// row of the same statement and the accumulate is per target row,
+		// exactly as in the single-id form.
+		if _, err := tx.Exec(
+			`INSERT INTO sealed_validation_obs (escrow_id, inference_id, slot_id, required_validations, completed_validations)
+			 SELECT escrow_id, inference_id, slot_id, required_validations, completed_validations
+			   FROM inference_validation_obs
+			  WHERE escrow_id = ? AND inference_id IN (`+placeholders+`)
+			 ON CONFLICT(escrow_id, inference_id, slot_id) DO UPDATE SET
+			   required_validations = sealed_validation_obs.required_validations + excluded.required_validations,
+			   completed_validations = sealed_validation_obs.completed_validations + excluded.completed_validations`,
+			args...,
+		); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("drain inference validation obs insert: %w", err)
+		}
+		if _, err := tx.Exec(
+			`DELETE FROM inference_validation_obs
+			  WHERE escrow_id = ? AND inference_id IN (`+placeholders+`)`,
+			args...,
+		); err != nil {
+			_ = tx.Rollback()
+			return fmt.Errorf("drain inference validation obs delete: %w", err)
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("drain inference validation obs commit: %w", err)
+		}
+	}
+	return nil
+}
+
 func (s *SQLite) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {
 	p, _, err := s.poolFor(escrowID)
 	if err != nil {

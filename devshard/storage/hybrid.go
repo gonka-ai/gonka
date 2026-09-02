@@ -682,6 +682,14 @@ func (h *HybridStorage) DrainInferenceValidationObs(escrowID string, inferenceID
 	return b.DrainInferenceValidationObs(escrowID, inferenceID)
 }
 
+func (h *HybridStorage) DrainInferenceValidationObsBatch(escrowID string, inferenceIDs []uint64) error {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return err
+	}
+	return b.DrainInferenceValidationObsBatch(escrowID, inferenceIDs)
+}
+
 func (h *HybridStorage) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {
 	b, err := h.routed(escrowID)
 	if err != nil {

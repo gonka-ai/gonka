@@ -48,6 +48,7 @@ type obsOp struct {
 	entries     []ValidationObsEntry
 	drainID     uint64
 	drain       bool
+	drainBatch  []uint64
 	sealedRow   *InferenceRow
 	sealedBatch []InferenceRow
 }
@@ -87,6 +88,17 @@ func (g *ObsRepairGate) DrainInferenceValidationObs(escrowID string, inferenceID
 		return nil
 	}
 	return g.Storage.DrainInferenceValidationObs(escrowID, inferenceID)
+}
+
+func (g *ObsRepairGate) DrainInferenceValidationObsBatch(escrowID string, inferenceIDs []uint64) error {
+	if len(inferenceIDs) == 0 {
+		return nil
+	}
+	if q := g.queueFor(escrowID); q != nil {
+		q.push(obsOp{drainBatch: append([]uint64(nil), inferenceIDs...)})
+		return nil
+	}
+	return g.Storage.DrainInferenceValidationObsBatch(escrowID, inferenceIDs)
 }
 
 func cloneInferenceRow(row InferenceRow) InferenceRow {
@@ -233,6 +245,8 @@ func (g *ObsRepairGate) applyOps(escrowID string, ops []obsOp) error {
 		switch {
 		case op.drain:
 			err = g.Storage.DrainInferenceValidationObs(escrowID, op.drainID)
+		case len(op.drainBatch) > 0:
+			err = g.Storage.DrainInferenceValidationObsBatch(escrowID, op.drainBatch)
 		case op.sealedRow != nil:
 			err = g.Storage.InsertSealedInference(escrowID, *op.sealedRow)
 		case len(op.sealedBatch) > 0:

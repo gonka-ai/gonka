@@ -234,8 +234,8 @@ From `devshard/`. `-run '^$'` skips unit tests (including Docker Postgres):
 
 ```
 GOMODCACHE="$HOME/go/pkg/mod" GOCACHE="$HOME/Library/Caches/go-build" \
-  go test -run '^$' -bench 'BenchmarkSealedInference|BenchmarkFillSealed' -benchmem -benchtime=1x \
-  ./storage/ ./state/
+  go test -run '^$' -bench 'BenchmarkSealedInference|BenchmarkFillSealed|BenchmarkValidationObs' \
+  -benchmem -benchtime=1x ./storage/ ./state/
 ```
 
 Use `-count=3` locally when you want variance; CI should stay at `-benchtime=1x` and n≤20k.
@@ -246,7 +246,9 @@ Use `-count=3` locally when you want variance; CI should stay at `-benchtime=1x`
 | `BenchmarkFillSealedInferenceIndexGaps_NoGaps` | Snapshot restart with durable rows | `inserted=0`; ~8ms at 20k, matching the list |
 | `BenchmarkFillSealedInferenceIndexGaps_AllMissing` | Cold index (still no delete) | Batched inserts only; ~425ms at 20k SQLite |
 | `BenchmarkSealedInferenceIndex_UnbatchedInsert` | Pre-fix recovery (1 Exec/id) | Baseline; ~780ms at 20k SQLite |
-| `BenchmarkSealedInferenceIndex_BatchedInsert` | Full-replay repair after 1–3 | Same 20k in 500-row txs; ~430ms SQLite. Postgres win is RTT (1.5M statements → ~3k), not this local ratio. |
+| `BenchmarkSealedInferenceIndex_BatchedInsert` | Full-replay repair after 1–3 | Same 20k in 500-row txs; ~430ms SQLite. Postgres win is commits, not round trips — see [Residual performance risks](#residual-performance-risks). |
+| `BenchmarkValidationObsDrain_PerID` / `_Batched` | The other half of the same repair | ~841ms vs ~66ms at 20k; the batched form is what the rebuild calls |
+| `BenchmarkValidationObsRecord_PerDiff` / `_Chunked` | Journal replay into obs | ~325ms vs ~52ms at 20k |
 
 Do not run production 1.5M in CI. Linearize from 20k:
 
@@ -284,29 +286,34 @@ Found reviewing the Steps 1–5 code. None of these are regressions against the
 pre-fix behaviour; they are the costs that survived it, ordered by impact.
 Measured on SQLite, Apple M4 Max, n=20k, `-benchtime=1x`.
 
-1. **The full-replay repair is dominated by the obs half, not the sealed index.**
-   `RebuildValidationObsFromDiffs` does one `RecordValidationsAppliedOnce` per
-   journal record (~299ms/20k) and one `DrainInferenceValidationObs` per sealed
-   id (~813ms/20k, each its own begin/select/insert/delete/commit). The batched
-   sealed-index insert this plan added is ~431ms/20k, about 28% of the ~1.5s
-   window. Extrapolated to 1.5M the repair is ~2min per escrow. Batching the
-   drain by id range is the next real win.
-2. **Postgres inserts still cost one round trip per row.** `InsertSealedInferences`
+1. **Postgres inserts still cost one round trip per row.** `InsertSealedInferences`
    chunks commits, not statements. `AppendDiffs` already uses `pgx.CopyFrom` for
    the journal; pipelining here would turn 1.5M round trips into ~3k. SQLite
    likewise re-parses the insert per row instead of preparing once per chunk,
-   which is most of why batched is only ~1.7× unbatched locally.
-3. **Whole-set materialisation.** Both rebuilds build the full `[]InferenceRow`
+   which is most of why batched is only ~1.7× unbatched locally. With the obs
+   half batched (below), this insert is now the dominant term in a full-replay
+   repair: ~431ms of the ~549ms 20k window.
+2. **Whole-set materialisation.** Both rebuilds build the full `[]InferenceRow`
    before writing (`InferenceRow` is ~200B plus three byte slices), and the
    from-diffs fold holds a `*InferenceRecord` per inference in the journal. At
    1.5M that is hundreds of MB of transient heap during recovery. Streaming by
    chunk would cap it.
-4. **`ObsRepairGate.queueFor` takes one process-wide mutex on every obs write.**
+3. **`ObsRepairGate.queueFor` takes one process-wide mutex on every obs write.**
    It runs on the live seal path for every escrow even when no repair is in
    flight, so all escrows serialize on it. An `atomic` fast path or `RWMutex`
    would remove that.
 
-Fixed while reviewing: the from-diffs fold and the gap fill both used to hold
+Fixed while reviewing: **the full-replay repair was dominated by the obs half,
+not the sealed index.** `RebuildValidationObsFromDiffs` did one
+`RecordValidationsAppliedOnce` per journal record and one
+`DrainInferenceValidationObs` per sealed id, the latter its own
+begin/select/insert/delete/commit. At 20k that was ~841ms of drain and ~325ms
+of record against ~431ms for the sealed insert this plan added. The drain is
+now a chunked set-at-a-time move (`DrainInferenceValidationObsBatch`, ~66ms,
+12.8×) and the records accumulate into 500-entry writes (~52ms, 6.3×), which
+takes the whole repair from ~1.6s to ~0.55s per 20k.
+
+Also fixed: the from-diffs fold and the gap fill both used to hold
 `sm.mu` across the journal walk and all of their storage I/O, which stalled
 `ApplyDiff` on a published session; both now snapshot what they need and work
 outside the lock. The gap fill counts its gaps before allocating, so the

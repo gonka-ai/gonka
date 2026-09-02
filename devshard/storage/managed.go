@@ -264,6 +264,10 @@ func (m *ManagedStorage) DrainInferenceValidationObs(escrowID string, inferenceI
 	return m.inner.DrainInferenceValidationObs(escrowID, inferenceID)
 }
 
+func (m *ManagedStorage) DrainInferenceValidationObsBatch(escrowID string, inferenceIDs []uint64) error {
+	return m.inner.DrainInferenceValidationObsBatch(escrowID, inferenceIDs)
+}
+
 func (m *ManagedStorage) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {
 	return m.inner.GetValidationObservability(escrowID)
 }
