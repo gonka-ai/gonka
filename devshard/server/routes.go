@@ -36,8 +36,10 @@ type PayloadHandler interface {
 }
 
 // RegisterLazySessionRoutes mounts the standard devshard HTTP surface on g.
-// Observability and host protocol routes resolve existing sessions only.
-// Only owner chat may bind a new session (via OwnerChatBinder).
+// Observability and most host protocol routes resolve existing sessions only.
+// Owner chat and the height-sync seed RPC may bind a new session (via
+// OwnerChatBinder): seed runs at session-open, before any inference, so it
+// cannot wait for chat to create the host session.
 func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder OwnerChatBinder, payloadHandler PayloadHandler) {
 	g.Use(observability.EchoMiddleware())
 	g.Use(observability.RequestIDMiddleware)
@@ -45,7 +47,7 @@ func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder O
 
 	g.POST("/sessions/:id/chat/completions", withOwnerChat(binder, true,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleInference }))
-	g.POST("/sessions/:id/height-sync", withSessionAuth(resolver, false,
+	g.POST("/sessions/:id/height-sync", withOwnerChat(binder, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleHeightSync }))
 	g.POST("/sessions/:id/heightsync/repair", withSessionAuth(resolver, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleHeightSyncRepair }))
@@ -216,6 +218,8 @@ func routeLabel(c echo.Context) string {
 		return "challenge_receipt"
 	case strings.Contains(path, "gossip"):
 		return "gossip"
+	case strings.Contains(path, "/height-sync"):
+		return "height_sync"
 	default:
 		return "other"
 	}

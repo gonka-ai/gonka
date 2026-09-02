@@ -212,10 +212,12 @@ services:
     environment:
       VERSIOND_POOL_HOST: "versiond-pool"
       VERSIOND_PORT: "8080"
-      # Pin only explicitly non-HA paths to the SQLite host; VersionName and all
-      # future versions sticky-hash across the pool (Devshard-Ha header).
+      # Pin only versions that actually have a child. A fictional v1 makes
+      # HAProxy L7-check /v1/healthz (must be 200) and marks the backend NOSRV.
+      # Tests that need a SQLite pin set this to VersionName (see
+      # TestLegacyVersionPinnedToSingleHost).
       VERSIOND_LEGACY_HOST: "{{ legacyVersiondHost . }}"
-      VERSIOND_NON_HA_VERSIONS: "v1"
+      VERSIOND_NON_HA_VERSIONS: ""
       # Keep the current test version out of the static bootstrap floor: this
       # stack is the end-to-end proof that governance can admit a dynamic slot.
       VERSIOND_VERSIONS: ""
@@ -255,6 +257,8 @@ services:
     environment:
       DEVSHARD_PORT: "{{ .Devshardctl.Port }}"
       DEVSHARD_CHAIN_GRPC: {{ .MockChain.Host }}:{{ .MockChain.GRPCPort }}
+      DEVSHARD_CHAIN_RPC: http://{{ .MockChain.Host }}:{{ .MockChain.RPCPort }}
+      NODE_RPC_URL: http://{{ .MockChain.Host }}:{{ .MockChain.RPCPort }}
       DEVSHARD_NODE_MANAGER_ADDR: {{ .MockDapi.Host }}:{{ .MockDapi.GRPCPort }}
       DEVSHARD_CHAIN_ID: "{{ .ChainID }}"
       DEVSHARD_PUBLIC_API: http://{{ .MockDapi.Host }}:{{ .MockDapi.HTTPPort }}
@@ -373,50 +377,23 @@ func versiondHosts(cfg *config.File) string {
 	if cfg == nil {
 		return ""
 	}
-	// Sticky HA pool is only the first two hosts. Solo participants (hosts[2+])
-	// are reached via direct InferenceURL, not through the router pool.
-	if cfg.Versiond.Mode == config.VersiondModeMulti && len(cfg.Hosts) >= 2 {
-		return cfg.Hosts[0].ID + " " + cfg.Hosts[1].ID
-	}
-	names := make([]string, len(cfg.Hosts))
-	for i, h := range cfg.Hosts {
-		names[i] = h.ID
-	}
-	return strings.Join(names, " ")
+	// Sticky HA pool is the replicas of one KEY_NAME. Solo participants are
+	// reached via direct InferenceURL, not through the router pool.
+	return strings.Join(config.RouterPoolHostIDs(cfg), " ")
 }
 
 // versiondKeyName is the Cosmos keyring entry each versiond child loads.
-// Multi/HA: hosts[0] and hosts[1] share hosts[0]'s key (join-style). Solo
-// hosts (index ≥ 2) keep their own key. Single mode is per-host.
 func versiondKeyName(cfg *config.File, h config.HostCfg) string {
-	if cfg != nil && cfg.Versiond.Mode == config.VersiondModeMulti && len(cfg.Hosts) > 0 {
-		for i, host := range cfg.Hosts {
-			if host.ID != h.ID {
-				continue
-			}
-			if i <= 1 {
-				return cfg.Hosts[0].ID
-			}
-			return h.ID
-		}
-	}
-	if h.ID != "" {
-		return h.ID
-	}
-	return ""
+	return config.VersiondKeyName(cfg, h)
 }
 
-// isHAReplica reports whether h is in the sticky HA pair (hosts[0], hosts[1]).
+// isHAReplica reports whether h shares its KEY_NAME with another container,
+// i.e. it is one replica of a replicated identity.
 func isHAReplica(cfg *config.File, h config.HostCfg) bool {
 	if cfg == nil || cfg.Versiond.Mode != config.VersiondModeMulti {
 		return false
 	}
-	for i, host := range cfg.Hosts {
-		if host.ID == h.ID {
-			return i <= 1
-		}
-	}
-	return false
+	return config.KeyNameReplicaCount(cfg, h) > 1
 }
 
 // legacyVersiondHost is the versiond instance that owns pre-HA SQLite data dirs.

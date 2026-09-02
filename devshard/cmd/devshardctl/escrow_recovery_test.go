@@ -134,7 +134,8 @@ func TestCreateRotationEscrowIntentFirstThenPersistAndClear(t *testing.T) {
 	_, err := g.createRotationEscrow(context.Background(), settings, model, rotationRoleTemp, 10)
 	require.NoError(t, err)
 
-	require.Contains(t, devshardIDs(t, store), "777", "escrow persisted")
+	record := devshardIDs(t, store)["777"]
+	require.Equal(t, "5", record.ProtocolVersion, "replacement escrow uses the default protocol")
 	commitments, err := store.LoadCommitments()
 	require.NoError(t, err)
 	assert.Empty(t, commitments, "commitment cleared after persist")
@@ -169,20 +170,58 @@ func TestCreateRotationEscrowCarriesProtocolVersionFromV4RoutePrefix(t *testing.
 	assert.Equal(t, "4", record.ProtocolVersion, "v4 route prefix stamps protocol 4, not empty")
 }
 
-// A leading "v" is stripped after taking the major (v2.1.0 -> v2 -> "2").
-func TestRotationEscrowProtocolVersionRouteMapping(t *testing.T) {
-	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/mainnet-canary")
-	assert.Equal(t, "mainnet-canary", rotationEscrowProtocolVersion())
+// Named versiond runtimes stamp as-is; semver-like versions map by major after
+// stripping a leading v (v4.1r5 -> 4). This is the gateway-DB protocol_version,
+// not the settlement StateRootAndProtocolVersion tag.
+func TestEscrowProtocolVersionRouteMapping(t *testing.T) {
+	for _, testCase := range []struct {
+		routePrefix     string
+		protocolVersion string
+	}{
+		{"/devshard/mainnet-canary", "mainnet-canary"},
+		{"/devshard/v3", "3"},
+		{"/devshard/v2.1.0", "2"},
+		{"/devshard/3", "3"},
+		{"/devshard/v4", "4"},
+		{"/devshard/4", "4"},
+		{"/devshard/v4.1r5", "4"},
+		{"/devshard/v5", "5"},
+		{"/devshard/5", "5"},
+	} {
+		t.Run(testCase.routePrefix, func(t *testing.T) {
+			assert.Equal(t, testCase.protocolVersion, escrowProtocolVersionFor(testCase.routePrefix))
+		})
+	}
+}
+
+// The prefix an escrow was born on is stored, not re-resolved: a host binds the escrow to the first
+// version that reaches it and refuses every other one forever.
+func TestRotationEscrowPinsRoutePrefixAgainstAGatewayThatMovesOn(t *testing.T) {
+	g, store, settings := newRecoveryGateway(t)
+	stubCreateOnChain(t, "TXPIN", 555)
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v3")
-	assert.Equal(t, "3", rotationEscrowProtocolVersion())
+	model := normalizedEscrowRotationModels(settings)[0]
+
+	_, err := g.createRotationEscrow(context.Background(), settings, model, rotationRoleTemp, 10)
+	require.NoError(t, err)
+
+	record := devshardIDs(t, store)["555"]
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v4")
-	assert.Equal(t, "4", rotationEscrowProtocolVersion())
-	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v4.1r5")
-	assert.Equal(t, "4", rotationEscrowProtocolVersion())
-	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v2.1.0")
-	assert.Equal(t, "2", rotationEscrowProtocolVersion())
-	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/3")
-	assert.Equal(t, "3", rotationEscrowProtocolVersion())
+	assert.Equal(t, "/devshard/v3", record.RoutePrefix)
+	assert.Equal(t, "/devshard/v3", resolveRuntimeRoutePrefix(record.RoutePrefix))
+	assert.Equal(t, "3", record.ProtocolVersion)
+}
+
+func TestCommitmentRoutePrefixKeepsTheVersionTheEscrowWasMintedUnder(t *testing.T) {
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/mainnet-canary")
+	assert.Equal(t, "/devshard/v4", commitmentRoutePrefix(GatewayEscrowCommitment{ProtocolVersion: "4"}),
+		"a numeric protocol does not ride the live named-runtime prefix")
+	assert.Equal(t, "/devshard/mainnet-canary", commitmentRoutePrefix(GatewayEscrowCommitment{ProtocolVersion: "mainnet-canary"}),
+		"a named runtime commitment keeps the live named prefix")
+	assert.Equal(t, "/devshard/v3", commitmentRoutePrefix(GatewayEscrowCommitment{ProtocolVersion: "3"}),
+		"a gateway that moved versions mid-recovery follows the commitment")
+	assert.Equal(t, "/devshard/mainnet-canary", commitmentRoutePrefix(GatewayEscrowCommitment{}),
+		"a commitment predating the field follows the live prefix")
 }
 
 func TestReconcileCommitmentsCarriesProtocolVersion(t *testing.T) {

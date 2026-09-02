@@ -91,13 +91,50 @@ func TestMarshalStateSnapshotProtoRoundTrip(t *testing.T) {
 	committed := map[uint64][]byte{1: []byte("entry-one")}
 	sealed := map[uint64]uint64{1: 11}
 
-	data, err := MarshalStateSnapshotProto(state, committed, sealed)
+	data, err := MarshalStateSnapshotProto(state, committed, sealed, nil)
 	require.NoError(t, err)
 
-	roundTripState, roundTripCommitted, roundTripSealed, err := UnmarshalStateSnapshotProto(data)
+	roundTripState, roundTripCommitted, roundTripSealed, roundTripFloor, err := UnmarshalStateSnapshotProto(data)
 	require.NoError(t, err)
 	require.Equal(t, state.EscrowID, roundTripState.EscrowID)
 	require.Equal(t, state.LatestNonce, roundTripState.LatestNonce)
 	require.Equal(t, committed, roundTripCommitted)
 	require.Equal(t, sealed, roundTripSealed)
+	require.Nil(t, roundTripFloor)
+}
+
+func TestMarshalStateSnapshotProtoRoundTripFloor(t *testing.T) {
+	state := &EscrowState{
+		EscrowID:                    "escrow-1",
+		StateRootAndProtocolVersion: "v2",
+		LatestNonce:                 42,
+		Inferences:                  map[uint64]*InferenceRecord{},
+		HostStats:                   map[uint32]*HostStats{0: {}},
+		WarmKeys:                    map[uint32]string{0: "warm-0"},
+	}
+	floor := &FloorIndexProto{
+		Truncated: true,
+		Entries: []*FloorIndexEntryProto{{
+			Nonce:  3,
+			Height: 50,
+			Hash:   []byte{0xaa},
+			Author: 1,
+		}},
+		Claims: []*FloorSignerClaimProto{{
+			Signer: 1,
+			Height: 50,
+			Hash:   []byte{0xaa},
+		}},
+	}
+
+	data, err := MarshalStateSnapshotProto(state, nil, nil, floor)
+	require.NoError(t, err)
+
+	_, _, _, roundTripFloor, err := UnmarshalStateSnapshotProto(data)
+	require.NoError(t, err)
+	require.NotNil(t, roundTripFloor)
+	require.True(t, roundTripFloor.Truncated)
+	require.Equal(t, floor.Entries[0].Height, roundTripFloor.Entries[0].Height)
+	require.Equal(t, floor.Entries[0].Hash, roundTripFloor.Entries[0].Hash)
+	require.Equal(t, floor.Claims[0].Signer, roundTripFloor.Claims[0].Signer)
 }

@@ -33,14 +33,19 @@ import (
 
 const sessionEpochRetain = 3
 
+type chainEventsRunner interface {
+	Start(context.Context) error
+}
+
 type devshardApp struct {
-	server        *echo.Echo
-	adminServer   *echo.Echo
+	server        appHTTPServer
+	adminServer   appHTTPServer
 	adminAddr     string
-	chainEvents   *chainEventBridge
+	chainEvents   chainEventsRunner
 	port          int
 	lifecycle     *lifecycleState
 	shutdownGrace time.Duration
+	storageErrors <-chan error
 	close         func()
 }
 
@@ -126,19 +131,24 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 	e := buildServer(lifecycle)
 	var admin *echo.Echo
 	if cfg.AdminAddr != "" {
-		admin = buildAdminServer(lifecycle, manager.StorageReady)
+		admin = buildAdminServer(lifecycle, manager.StorageReady, manager.StorageProof)
 	}
 	manager.Register(e.Group(""))
 	chainRuntime.chainEvents.OnReady(lifecycle.SetReady)
+	var adminServer appHTTPServer
+	if admin != nil {
+		adminServer = admin
+	}
 
 	return &devshardApp{
 		server:        e,
-		adminServer:   admin,
+		adminServer:   adminServer,
 		adminAddr:     cfg.AdminAddr,
 		chainEvents:   chainRuntime.chainEvents,
 		port:          cfg.Port,
 		lifecycle:     lifecycle,
 		shutdownGrace: cfg.ShutdownGrace,
+		storageErrors: manager.StorageFatalErrors(),
 		close:         closers.Close,
 	}, nil
 }
@@ -308,6 +318,8 @@ func buildHostManager(
 	}
 	store.Start()
 
+	closers.Add(manager.CloseHosts)
+
 	validationRetry := session.NewValidationRetryLoop(store, validator, manager, phase, instanceAddr)
 	validationRetry.WithInterval(cfg.ValidationRetryInterval)
 	validationRetry.WithLeaseTTL(cfg.ValidationLeaseTTL)
@@ -404,6 +416,12 @@ func logCleanupError(msg string, err error) {
 	slog.Warn(msg, "error", err)
 }
 
+type appHTTPServer interface {
+	Start(string) error
+	Close() error
+	Shutdown(context.Context) error
+}
+
 func (a *devshardApp) Run(ctx context.Context) error {
 	defer a.close()
 
@@ -421,7 +439,7 @@ func (a *devshardApp) Run(ctx context.Context) error {
 		err  error
 	}
 	errCh := make(chan serverError, 2)
-	startServer := func(name string, server *echo.Echo, addr string) {
+	startServer := func(name string, server appHTTPServer, addr string) {
 		go func() {
 			slog.Info("listening", "server", name, "addr", addr)
 			if err := server.Start(addr); err != nil && err != http.ErrServerClosed {
@@ -436,6 +454,7 @@ func (a *devshardApp) Run(ctx context.Context) error {
 
 	var runErr error
 	chainEventsStopped := false
+	forceShutdown := false
 	select {
 	case <-ctx.Done():
 		slog.Info("shutdown requested")
@@ -448,10 +467,21 @@ func (a *devshardApp) Run(ctx context.Context) error {
 		} else {
 			runErr = fmt.Errorf("chain events listener stopped")
 		}
+	case err := <-a.storageErrors:
+		runErr = fmt.Errorf("terminal storage failure: %w", err)
+		forceShutdown = true
 	}
 
 	a.lifecycle.StartDrain()
 	cancel()
+	if forceShutdown {
+		_ = a.server.Close()
+		if a.adminServer != nil {
+			_ = a.adminServer.Close()
+		}
+		slog.Warn("devshardd stopped after terminal storage failure")
+		return runErr
+	}
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), a.shutdownGrace)
 	defer shutdownCancel()

@@ -2,8 +2,10 @@ package transport
 
 import (
 	"context"
+	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -77,7 +79,7 @@ func TestHTTPClient_Send_HeightSync_ProtobufRequestAndAudit(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	}, nil, nil)
@@ -156,12 +158,14 @@ func TestHTTPClient_Send_CourierLazyAnchorMarksPropagated(t *testing.T) {
 	require.True(t, peerTips.ShouldPropagateTo(ts.URL, 51))
 
 	ctx := context.Background()
-	plain := NewHTTPClient(ts.URL, "escrow-1", userSigner)
+	plainCfg := DefaultClientConfig()
+	plainCfg.RoutePrefix = testRoutePrefix
+	plain := NewHTTPClient(ts.URL, "escrow-1", userSigner, plainCfg)
 	payload := &host.InferencePayload{
 		Prompt:      testutil.TestPrompt,
 		Model:       "llama",
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 		StartedAt:   1000,
 	}
 	for n := uint64(1); n <= 4; n++ {
@@ -253,6 +257,28 @@ func TestObservedHeightNow_FreshTip(t *testing.T) {
 	require.Equal(t, uint64(99), h)
 }
 
+func TestObservedHeightNow_IgnoresLogOracle(t *testing.T) {
+	peerTips := NewHeightSyncPeerTips()
+	src := heightsync.NewPeerTipOracleSource(peerTips, peerTips.Freshness)
+	sched := heightsync.MustNewAnchorScheduler(8, 4, src)
+	or := &heightSyncTestOracle{hdr: &blocks.Header{
+		Height: 99, ChainID: "test-chain", BlockHash: []byte{0x01},
+	}}
+	cfg := DefaultClientConfig()
+	cfg.HeightSync = sched
+	cfg.HeightSyncPeerTips = peerTips
+	cfg.HeightSyncLogOracle = or
+	client := NewHTTPClient("http://example.invalid", "escrow-1", testutil.MustGenerateKey(t), cfg)
+
+	hdr, err := or.Latest(context.Background())
+	require.NoError(t, err)
+	require.Equal(t, int64(99), hdr.Height)
+
+	h, ok := client.ObservedHeightNow()
+	require.False(t, ok)
+	require.Equal(t, uint64(0), h)
+}
+
 func TestObservedHeightNow_NoHeightSync(t *testing.T) {
 	client := NewHTTPClient("http://example.invalid", "escrow-1", testutil.MustGenerateKey(t))
 	h, ok := client.ObservedHeightNow()
@@ -309,6 +335,60 @@ func TestHTTPClient_SeedHeightSync_RecordsOrigin(t *testing.T) {
 	obsH, ok := client.ObservedHeightNow()
 	require.True(t, ok)
 	require.Equal(t, uint64(55), obsH)
+}
+
+func TestHTTPClient_SeedHeightSync_DoesNotRetry503(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	var hits atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hits.Add(1)
+		http.Error(w, "version v2 is not present in the governance routing catalog", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+
+	client := NewHTTPClient(server.URL, "escrow-1", signer, ClientConfig{
+		QueryTimeout:       5 * time.Second,
+		RoutePrefix:        "/",
+		HeightSyncPeerTips: NewHeightSyncPeerTips(),
+	})
+	ok, err := client.SeedHeightSync(context.Background())
+	require.Error(t, err)
+	require.False(t, ok)
+	require.Equal(t, int32(1), hits.Load(),
+		"SeedHeightSync must not nest doPostRaw's 5s 429/503 retry")
+}
+
+func TestHTTPClient_SeedHeightSync_UsesHeightSeedTimeout(t *testing.T) {
+	signer := testutil.MustGenerateKey(t)
+	release := make(chan struct{})
+	started := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(started)
+		select {
+		case <-release:
+		case <-r.Context().Done():
+		}
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(func() { close(release) })
+
+	client := NewHTTPClient(server.URL, "escrow-1", signer, ClientConfig{
+		QueryTimeout:       30 * time.Second,
+		HeightSeedTimeout:  50 * time.Millisecond,
+		RoutePrefix:        "/",
+		HeightSyncPeerTips: NewHeightSyncPeerTips(),
+	})
+	start := time.Now()
+	ok, err := client.SeedHeightSync(context.Background())
+	require.Error(t, err)
+	require.False(t, ok)
+	require.Less(t, time.Since(start), 5*time.Second,
+		"a hung seed POST must not wait out QueryTimeout")
+	select {
+	case <-started:
+	default:
+		t.Fatal("seed POST never reached the handler")
+	}
 }
 
 func TestClient_ResponseAnchor_VerifiesOriginSignature(t *testing.T) {

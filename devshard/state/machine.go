@@ -10,6 +10,7 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	"common/completionapi"
 	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/signing"
@@ -97,6 +98,8 @@ type StateMachine struct {
 	// validation lives in committedEntries (and on disk in the snapshot).
 	sealedNonces   map[uint64]uint64
 	inferenceStore storage.Storage
+	// replayingPersisted is written only under mu, by ApplyLocalPersisted.
+	replayingPersisted bool
 
 	// Lookup maps derived from group at construction time.
 	slotToAddress      map[uint32]string
@@ -110,6 +113,10 @@ type StateMachine struct {
 	turnTracker     *heightsync.TurnTracker
 	heightSyncFloor *heightsync.FloorIndex
 	heightSyncMarks *heightsync.MarkLog
+	// floorReady is true when heightSyncFloor is a consistent fold of
+	// diffs 1..LatestNonce (including genesis, where that range is empty).
+	// It is not AsOf's known flag: a pruned nonce is unknown on a ready floor.
+	floorReady bool
 
 	// obsDeferred, when non-nil, redirects observability writes made during a
 	// trial apply (ValidateDiff / PreviewLocalBestEffort) into a buffer instead
@@ -265,6 +272,7 @@ func NewStateMachine(
 	sm.turnTracker = heightsync.NewTurnTracker(uint64(len(groupCopy)), 0, sm.heartbeatCfg)
 	sm.heightSyncFloor = heightsync.NewFloorIndexWith(
 		heightsync.FloorConfigFor(len(groupCopy), sm.heartbeatCfg))
+	sm.floorReady = true
 
 	logging.Info("NewStateMachine", "subsystem", "state",
 		"escrow_id", escrowID,
@@ -347,6 +355,16 @@ func (sm *StateMachine) verifyDiffUserSig(diff types.Diff) error {
 func (sm *StateMachine) ApplyLocal(nonce uint64, txs []*types.DevshardTx) ([]byte, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
+	return sm.applyCore(nonce, txs, nil, "user")
+}
+
+// ApplyLocalPersisted replays a diff this node already accepted and persisted. It is the only path that
+// relaxes policy, and it relaxes it only for checks that guard the creation of new work.
+func (sm *StateMachine) ApplyLocalPersisted(nonce uint64, txs []*types.DevshardTx) ([]byte, error) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.replayingPersisted = true
+	defer func() { sm.replayingPersisted = false }()
 	return sm.applyCore(nonce, txs, nil, "user")
 }
 
@@ -436,6 +454,18 @@ func (sm *StateMachine) flushDeferredObsLocked(writes []deferredObsWrite) {
 	}
 }
 
+// logDroppedTx reports what best-effort composition discarded. A dropped ConfirmStart is queued once
+// per inference and leaves it pending forever, so it warns; mempool txs are gossiped repeatedly and
+// stale ones are ordinary, so they stay at debug.
+func logDroppedTx(nonce uint64, tx *types.DevshardTx, err error) {
+	if confirm := tx.GetConfirmStart(); confirm != nil {
+		logging.Warn("dropped confirm start", "subsystem", "state",
+			"nonce", nonce, "inference_id", confirm.InferenceId, "error", err)
+		return
+	}
+	logging.Debug("dropped tx", "subsystem", "state", "nonce", nonce, "error", err)
+}
+
 // localBestEffortLocked implements ApplyLocalBestEffort and the trial-apply core
 // of PreviewLocalBestEffort. It applies txs one by one (skipping non-mandatory
 // failures and log-plane-invalid height-sync txs) and, on success, leaves the
@@ -468,6 +498,10 @@ func (sm *StateMachine) localBestEffortLocked(nonce uint64, txs []*types.Devshar
 	}
 	if countForceHeightSyncTurn(txs) > 1 {
 		return nil, nil, types.ErrMultipleForceHeightSyncTurnMsgs
+	}
+
+	if !sm.floorReady {
+		return nil, nil, types.ErrFloorNotRestored
 	}
 
 	scope := sm.pushMarkScopeLocked()
@@ -504,6 +538,7 @@ func (sm *StateMachine) localBestEffortLocked(nonce uint64, txs []*types.Devshar
 				sm.restoreMutable(snap)
 				return nil, nil, fmt.Errorf("mandatory start inference: %w", err)
 			}
+			logDroppedTx(nonce, tx, err)
 			continue
 		}
 		applied = append(applied, tx)
@@ -645,6 +680,10 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 	}
 	if countForceHeightSyncTurn(txs) > 1 {
 		return nil, types.ErrMultipleForceHeightSyncTurnMsgs
+	}
+
+	if !sm.floorReady {
+		return nil, types.ErrFloorNotRestored
 	}
 
 	scope := sm.pushMarkScopeLocked()
@@ -807,6 +846,19 @@ func (sm *StateMachine) SnapshotStateNoInferences() types.EscrowState {
 	return s
 }
 
+// HostStatsFor returns one slot's tallies. Use it instead of
+// SnapshotStateNoInferences, which copies every slot plus the group and warm-key
+// maps, when a caller needs a single slot on a hot path.
+func (sm *StateMachine) HostStatsFor(slot uint32) (types.HostStats, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	stats, ok := sm.state.HostStats[slot]
+	if !ok || stats == nil {
+		return types.HostStats{}, false
+	}
+	return *stats, true
+}
+
 // ExportState returns a deep-copied pointer form used by recovery snapshots.
 func (sm *StateMachine) ExportState() *types.EscrowState {
 	sm.mu.RLock()
@@ -815,15 +867,27 @@ func (sm *StateMachine) ExportState() *types.EscrowState {
 }
 
 // RestoreState replaces the current escrow state with a deep copy from storage.
-func (sm *StateMachine) RestoreState(state *types.EscrowState) {
+// The height-sync floor is rebuilt from the journal, or from a snapshot blob
+// supplied via RestoreStateWithFloor when the journal cannot be replayed.
+func (sm *StateMachine) RestoreState(state *types.EscrowState) error {
+	return sm.RestoreStateWithFloor(state, nil)
+}
+
+// RestoreStateWithFloor is RestoreState with an optional snapshot floor.
+// The journal is preferred so the turn tracker is reconstructed. A non-nil
+// floor is installed when GetDiffs fails, which is the restore hole that
+// previously served an empty index and skipped L0. If LatestNonce > 0 and
+// neither source can reconstruct the fold, restore fails rather than splitting
+// the escrow.
+func (sm *StateMachine) RestoreStateWithFloor(state *types.EscrowState, floor *heightsync.FloorIndex) error {
 	if state == nil {
-		return
+		return nil
 	}
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.state = cloneEscrowState(state)
 	sm.rebuildCommittedEntriesLocked()
-	sm.rebuildHeightSyncLocked()
+	return sm.rebuildHeightSyncLocked(floor)
 }
 
 func cloneEscrowState(src *types.EscrowState) *types.EscrowState {
@@ -1069,6 +1133,12 @@ func (sm *StateMachine) applyTx(tx *types.DevshardTx, diffNonce uint64) error {
 func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error {
 	if sm.state.Phase != types.PhaseActive {
 		return types.ErrSessionFinalizing
+	}
+
+	// A sub-floor reservation is refused by the executor's payload check, so the inference would sit
+	// pending until seal. Rejecting here keeps it out of state and off the balance.
+	if !sm.replayingPersisted && msg.MaxTokens < completionapi.MinTokensFloor {
+		return fmt.Errorf("%w: max_tokens %d, floor %d", types.ErrMaxTokensBelowFloor, msg.MaxTokens, completionapi.MinTokensFloor)
 	}
 
 	// Duplicate inference ID guard.

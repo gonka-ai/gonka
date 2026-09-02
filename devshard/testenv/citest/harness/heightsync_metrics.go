@@ -88,11 +88,27 @@ func MetricHasLabel(body, metric, label, value string) bool {
 	return re.MatchString(body)
 }
 
+const heightSyncMetricPrefix = "devshard_gateway_heightsync_"
+
 // AnyMetricHasLabel reports whether any series in the exposition carries label=value.
 func AnyMetricHasLabel(body, label, value string) bool {
+	return metricBodyHasLabel(body, "", label, value)
+}
+
+// AnyHeightSyncMetricHasLabel is H47's compose scrape: only the §8.12 height-sync
+// family. Picker/receipt CounterVecs keep process-lifetime series and are not
+// part of retireRuntime's ConstMetric drop.
+func AnyHeightSyncMetricHasLabel(body, label, value string) bool {
+	return metricBodyHasLabel(body, heightSyncMetricPrefix, label, value)
+}
+
+func metricBodyHasLabel(body, namePrefix, label, value string) bool {
 	needle := fmt.Sprintf(`%s="%s"`, label, value)
 	for _, line := range strings.Split(body, "\n") {
 		if strings.HasPrefix(line, "#") || line == "" {
+			continue
+		}
+		if namePrefix != "" && !strings.HasPrefix(line, namePrefix) {
 			continue
 		}
 		if strings.Contains(line, needle) {

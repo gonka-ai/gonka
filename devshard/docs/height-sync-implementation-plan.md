@@ -288,12 +288,11 @@ Pass bar: catalog §4 all ✅ (`go test ./heightsync/... ./transport/... ./teste
 
 Do **not** revive `testenv/cmd/heightsyncd` or `Dockerfile.height-sync`. This branch's mock-dapi already is the producer.
 
-Height-sync is **opt-in** on production binaries. Unset env keeps today's host and gateway behaviour:
+Height-sync is **on** whenever a chain RPC/client or `DEVSHARD_CHAINORACLE_URL` is present:
 
 | Env | Default | Effect |
 | --- | ------- | ------ |
-| `DEVSHARD_CHAINORACLE_URL` | unset | no oracle, no envelope sections |
-| `DEVSHARD_HEIGHTSYNC` | unset | `1`/`true` enables chain-only height-sync without a dapi URL |
+| `DEVSHARD_CHAINORACLE_URL` | unset | unary GET `/block/:height` (and `/prove`); chain RPC still seeds the scheduler |
 | `DEVSHARD_HEIGHTSYNC_K` | `10` | cadence spacing |
 | `DEVSHARD_HEIGHTSYNC_SLOTS` | `1` | sync-turn width |
 | `DEVSHARD_HEIGHTSYNC_PROBE_INTERVAL` | `30m` | re-probe dapi after a transport miss (`chain.DefaultRPCProbeInterval`) |
@@ -1171,7 +1170,7 @@ Strong on the wire, `D`-band escalation, `(C-strong)`, `LightBlockFor`, evidence
 
 ### 8.15 Implementation steps (E0–E9)
 
-Reuse A–D as-is: `ObservedHeightNow()`, `MsgForceHeightSyncTurn`, the hash-only `BlockOracle` (dapi or failover), and `citest-height-sync`. Do not import CometBFT into `heightsync`. Stay opt-in (`DEVSHARD_CHAINORACLE_URL` / `DEVSHARD_HEIGHTSYNC`); default compose stays off. Flip catalog §7 ⏳ → ✅ as each `H*` lands.
+Reuse A–D as-is: `ObservedHeightNow()`, `MsgForceHeightSyncTurn`, the hash-only `BlockOracle` (dapi or failover), and `citest-height-sync`. Do not import CometBFT into `heightsync`. Height-sync is on whenever chain RPC or `DEVSHARD_CHAINORACLE_URL` is present. Flip catalog §7 ⏳ → ✅ as each `H*` lands.
 
 | Step | Status | What |
 | ---- | ------ | ---- |
@@ -1406,7 +1405,7 @@ Blockers 1, 3 and 4 all resolve the same way: the section survives, and the achi
 2. Merge transport/host/user/state seams; proto gen.
 3. Unit tests green (`./heightsync/...`, `./transport/...`).
 4. In-process e2e green (catalog §4).
-5. ✅ `citest-height-sync` A–C on mock-dapi chainoracle (no `heightsyncd`; env-gated on host/gateway).
+5. ✅ `citest-height-sync` A–C on mock-dapi chainoracle (no `heightsyncd`; on whenever chain RPC or `DEVSHARD_CHAINORACLE_URL` is present).
 6. Dapi height+hash mount + hash-only Tendermint observer; D1–D8. **No** `Prove()`, **no** commit-quorum.
 7. Direct-chain fallback: old dapi (D4, D7) **and** dapi-down at runtime (D10, D11). Reuse `chain.NewWithQueryFallback`.
 8. ✅ **E0:** Agree the oneof registry (10/11 here, 12/13 cPoC); land protos + `HeartbeatConfig` params; H25 (§8.2, §8.4, §8.15).

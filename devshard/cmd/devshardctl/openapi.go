@@ -93,7 +93,7 @@ const openapiSpec = `{
     "/v1/status": {
       "get": {
         "summary": "Session status",
-        "description": "Returns escrow ID, current nonce, phase, and balance.",
+        "description": "Returns escrow ID, current nonce, phase, and balance when a runtime is resident. With zero runtimes the body stays HTTP 200 and uses phase=not_found (no empty escrow_id).",
         "responses": {
           "200": {
             "description": "Status",
@@ -104,8 +104,12 @@ const openapiSpec = `{
                   "properties": {
                     "escrow_id": { "type": "string" },
                     "nonce": { "type": "integer" },
-                    "phase": { "type": "string", "enum": ["active", "finalizing", "settlement"] },
-                    "balance": { "type": "integer" }
+                    "phase": { "type": "string", "enum": ["active", "finalizing", "settlement", "not_found"] },
+                    "balance": { "type": "integer" },
+                    "error": {
+                      "type": "object",
+                      "description": "Set when phase is not_found (no resident runtime). HTTP status stays 200 so process healthchecks still pass."
+                    }
                   }
                 }
               }

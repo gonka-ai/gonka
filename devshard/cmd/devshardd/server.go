@@ -1,6 +1,9 @@
 package main
 
 import (
+	"context"
+	"encoding/json"
+	"log/slog"
 	"net/http"
 
 	"github.com/labstack/echo/v4"
@@ -8,6 +11,7 @@ import (
 
 	"devshard/heightsync"
 	"devshard/observability"
+	"devshard/storage"
 )
 
 // buildServer creates the Echo instance for devshardd session traffic only.
@@ -30,7 +34,13 @@ func buildServer(lifecycle *lifecycleState) *echo.Echo {
 	return e
 }
 
-func buildAdminServer(lifecycle *lifecycleState, storageReady func() bool) *echo.Echo {
+type storageProofFunc func(context.Context, storage.ProofOperation, string) (storage.StorageProof, error)
+
+func buildAdminServer(
+	lifecycle *lifecycleState,
+	storageReady func() bool,
+	storageProof storageProofFunc,
+) *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
@@ -51,8 +61,43 @@ func buildAdminServer(lifecycle *lifecycleState, storageReady func() bool) *echo
 	e.GET("/drain/status", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, lifecycle.Status())
 	})
+	e.GET("/storage/identity", func(c echo.Context) error {
+		return runStorageProof(c, storageProof, storage.ProofIdentity, "")
+	})
+	e.POST("/storage/challenge", func(c echo.Context) error {
+		var request struct {
+			Operation storage.ProofOperation `json:"operation"`
+			Nonce     string                 `json:"nonce"`
+		}
+		decoder := json.NewDecoder(c.Request().Body)
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&request); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid storage challenge")
+		}
+		if request.Operation != storage.ProofWriteChallenge && request.Operation != storage.ProofReadChallenge {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid storage challenge operation")
+		}
+		return runStorageProof(c, storageProof, request.Operation, request.Nonce)
+	})
 
 	return e
+}
+
+func runStorageProof(
+	c echo.Context,
+	proof storageProofFunc,
+	operation storage.ProofOperation,
+	nonce string,
+) error {
+	if proof == nil {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "postgres storage proof unavailable")
+	}
+	result, err := proof(c.Request().Context(), operation, nonce)
+	if err != nil {
+		slog.Warn("devshard storage proof failed", "operation", operation, "error", err)
+		return echo.NewHTTPError(http.StatusServiceUnavailable, "postgres storage proof unavailable")
+	}
+	return c.JSON(http.StatusOK, result)
 }
 
 // readyStatus augments drainStatus with storage readiness for the /ready probe.

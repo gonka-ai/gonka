@@ -40,15 +40,16 @@ const (
 
 // Server wraps a host.Host and exposes it over HTTP via Echo.
 type Server struct {
-	host        *host.Host
-	store       storage.Storage
-	gossip      *gossip.Gossip // nil until gossip is wired
-	verifier    signing.Verifier
-	userAddr    string               // session user address, allowed alongside group members
-	peerClients map[int]*HTTPClient  // slot index -> client, for timeout verification
-	rateLimit   *rateLimiter         // nil = no limiting
-	maxBodySize int64                // max request body bytes, 0 = no limit
-	bridge      bridge.MainnetBridge // optional, for warm key verification
+	host         *host.Host
+	store        storage.Storage
+	gossip       *gossip.Gossip // nil until gossip is wired
+	verifier     signing.Verifier
+	userAddr     string               // session user address, allowed alongside group members
+	peerClients  map[int]*HTTPClient  // slot index -> client, for timeout verification
+	rateLimit    *rateLimiter         // nil = no limiting
+	maxBodySize  int64                // max request body bytes, 0 = no limit
+	bridge       bridge.MainnetBridge // optional, for warm key verification
+	receiptDelay time.Duration        // optional test hook before receipt SSE write
 
 	heightSync          *heightsync.AnchorScheduler
 	heightSyncLogOracle blocks.BlockOracle
@@ -102,6 +103,12 @@ func WithServerPeerClients(peers map[int]*HTTPClient) ServerOption {
 // WithBridge sets the bridge for warm key verification in transport auth.
 func WithBridge(b bridge.MainnetBridge) ServerOption {
 	return func(s *Server) { s.bridge = b }
+}
+
+// WithReceiptDelay delays the initial receipt SSE event. It is intended for
+// integration tests that need to observe pre-receipt gateway timeout paths.
+func WithReceiptDelay(delay time.Duration) ServerOption {
+	return func(s *Server) { s.receiptDelay = delay }
 }
 
 // NewServer creates an HTTP server wrapping the given host.
@@ -425,6 +432,18 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 		ConfirmedAt:       resp.ConfirmedAt,
 		ObservedHeight:    resp.ObservedHeight,
 		ObservedBlockHash: resp.ObservedBlockHash,
+	}
+	if s.receiptDelay > 0 {
+		timer := time.NewTimer(s.receiptDelay)
+		select {
+		case <-c.Request().Context().Done():
+			timer.Stop()
+			if resp.ExecutionJob != nil {
+				s.host.ReleaseExecution(resp.InferenceID)
+			}
+			return nil
+		case <-timer.C:
+		}
 	}
 	receiptWrapper := map[string]interface{}{"devshard_receipt": receiptEvent}
 	if s.heightSync != nil {
@@ -1022,6 +1041,14 @@ func (s *Server) HandleGetDiffs(c echo.Context) (err error) {
 func (s *Server) HandleGetMempool(c echo.Context) (err error) {
 	op, finish := startHandlerSpan(c, "get_mempool")
 	defer finish(&err)
+
+	if catchErr := s.host.CatchUpFromStore(c.Request().Context()); catchErr != nil {
+		logging.Debug("get_mempool catch-up from store failed",
+			"subsystem", "transport",
+			"escrow_id", s.host.EscrowID(),
+			"error", catchErr)
+	}
+	s.host.EnqueueDueValidations()
 
 	txs := s.host.MempoolTxs()
 	observability.Request.SetMempoolSize(op, len(txs))

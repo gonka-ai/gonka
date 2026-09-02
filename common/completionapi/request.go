@@ -11,11 +11,14 @@ import (
 	"common/logging"
 )
 
+// ForcedTopLogprobs is the top_logprobs the validator forces; must equal the devshard gateway's TopLogprobsForcedValue so executor and validator widths are comparable (H1 #3853145).
+const ForcedTopLogprobs = 5
+
 type ModifiedRequest struct {
-	NewBody                  []byte
-	OriginalLogprobsValue    *bool
-	OriginalTopLogprobsValue *int
+	NewBody []byte
 }
+
+const MinTokensFloor = 64
 
 func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest, error) {
 	return ModifyRequestBodyWithLogprobsMode(requestBytes, defaultSeed, "")
@@ -39,15 +42,13 @@ func ModifyRequestBodyWithLogprobsMode(requestBytes []byte, defaultSeed int32, l
 		requestMap["logprobs"] = true
 	}
 
-	originalTopLogprobsValue := getOriginalTopLogprobs(requestMap)
-	if originalTopLogprobsValue == nil || *originalTopLogprobsValue < 5 {
-		requestMap["top_logprobs"] = 5
-	}
+	// Pin top_logprobs to the protocol constant on both the original and the validation request; a larger client-supplied value must not pass through.
+	requestMap["top_logprobs"] = ForcedTopLogprobs
 
-	maxTokens := getMaxTokens(requestMap)
+	EnforceTokenBudgetFloor(requestMap)
 
-	requestMap["max_tokens"] = maxTokens
-	requestMap["max_completion_tokens"] = maxTokens
+	// Only clamp when the caller asked: injecting n into a request that never
+	// carried it would change the body we sign for a broker that never set it.
 	if _, asked := requestMap["n"]; asked {
 		requestMap["n"] = 1
 	}
@@ -84,9 +85,7 @@ func ModifyRequestBodyWithLogprobsMode(requestBytes []byte, defaultSeed int32, l
 	}
 
 	return &ModifiedRequest{
-		NewBody:                  modifiedRequestBytes,
-		OriginalLogprobsValue:    originalLogprobsValue,
-		OriginalTopLogprobsValue: originalTopLogprobsValue,
+		NewBody: modifiedRequestBytes,
 	}, nil
 }
 
@@ -160,6 +159,33 @@ func validateMessageContents(requestMap map[string]interface{}) error {
 	return nil
 }
 
+func EnforceTokenBudgetFloor(requestMap map[string]interface{}) {
+	maxTokens := max(getMaxTokens(requestMap), MinTokensFloor)
+	minTokens := min(max(getMinTokens(requestMap), MinTokensFloor), maxTokens)
+
+	requestMap["min_tokens"] = minTokens
+	requestMap["max_tokens"] = maxTokens
+	requestMap["max_completion_tokens"] = maxTokens
+
+	// Unsupported: min_tokens>0 makes vLLM mask stop-token logits, so an out-of-vocab id CUDA-asserts the node; the floor is always on, so drop stop_token_ids.
+	delete(requestMap, "stop_token_ids")
+}
+
+func getMinTokens(requestMap map[string]interface{}) int {
+	minTokensValue, ok := requestMap["min_tokens"]
+	if !ok {
+		return 0
+	}
+	switch value := minTokensValue.(type) {
+	case float64:
+		return int(value)
+	case int:
+		return value
+	default:
+		return 0
+	}
+}
+
 func getMaxTokens(requestMap map[string]interface{}) int {
 	if maxTokensValue, ok := requestMap["max_tokens"]; ok {
 		if maxTokensFloat, ok := maxTokensValue.(float64); ok {
@@ -191,6 +217,11 @@ func EffectiveMaxTokens(requestBytes []byte) (uint64, error) {
 	return uint64(getMaxTokens(requestMap)), nil
 }
 
+// MinTokensOf returns the min_tokens the request carries (0 if unset).
+func MinTokensOf(requestMap map[string]interface{}) int {
+	return getMinTokens(requestMap)
+}
+
 func getOriginalLogprobs(requestMap map[string]interface{}) *bool {
 	logprobsValue, ok := requestMap["logprobs"]
 	if !ok {
@@ -209,33 +240,4 @@ func getOriginalLogprobs(requestMap map[string]interface{}) *bool {
 	log.Printf("Original request logprobs = %v", logprobsValue)
 	trueValue := true
 	return &trueValue
-}
-
-func getOriginalTopLogprobs(requestMap map[string]interface{}) *int {
-	topLogprobsValue, ok := requestMap["top_logprobs"]
-	if !ok {
-		return nil
-	}
-
-	if topLogprobsValue == nil {
-		return nil
-	}
-
-	if topLogprobsValueInt, ok := topLogprobsValue.(int); ok {
-		return &topLogprobsValueInt
-	}
-
-	if topLogprobsValueBool, ok := topLogprobsValue.(bool); ok {
-		if topLogprobsValueBool {
-			one := 1
-			return &one
-		} else {
-			zero := 0
-			return &zero
-		}
-	}
-
-	// Discard any non-integer value
-	log.Printf("Original request top_logprobs = %v", topLogprobsValue)
-	return nil
 }

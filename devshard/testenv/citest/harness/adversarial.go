@@ -37,7 +37,8 @@ func BootAdversarialStack(t *testing.T, prefix string) (*Stack, *config.File, En
 	return stack, cfg, eps
 }
 
-// BootErrorMissAdversarialStack boots a 3-host stack for error-finish-miss votes.
+// BootErrorMissAdversarialStack boots HA + two solos so error-finish-miss
+// votes from two non-executor identities exceed VoteThreshold.
 func BootErrorMissAdversarialStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()
 	stack, cfg, eps := BootErrorMissStack(t, prefix)
@@ -209,14 +210,75 @@ func GetGatewayEscrowID(t *testing.T, client *http.Client, gatewayURL string) st
 	}
 	var status map[string]any
 	require.NoError(t, GetJSON(client, gatewayURL+"/v1/status", &status))
-	id, ok := status["escrow_id"].(string)
-	if !ok || id == "" {
-		if n, ok := status["escrow_id"].(float64); ok && n > 0 {
-			return fmt.Sprintf("%.0f", n)
-		}
+	id, ok := statusEscrowID(status)
+	if !ok {
 		t.Fatalf("gateway /v1/status missing escrow_id: %v", status)
 	}
 	return id
+}
+
+// WaitGatewayEscrowRetired polls GET /v1/status until escrowID is no longer
+// the resident runtime (missing escrow_id, typically phase=not_found, or a
+// different id after rotation). Height-sync series drop only after retireRuntime
+// removes the runtime from the registry.
+func WaitGatewayEscrowRetired(t *testing.T, client *http.Client, gatewayURL, escrowID string, timeout time.Duration) {
+	t.Helper()
+	if client == nil {
+		client = HTTPClient()
+	}
+	if timeout == 0 {
+		timeout = 2 * time.Minute
+	}
+	require.NotEmpty(t, escrowID)
+	ok := AssertEventually(t, timeout, 500*time.Millisecond, func() bool {
+		var status map[string]any
+		if err := GetJSON(client, gatewayURL+"/v1/status", &status); err != nil {
+			return false
+		}
+		id, present := statusEscrowID(status)
+		return !present || id != escrowID
+	})
+	require.True(t, ok, "escrow %s still resident on /v1/status after %s", escrowID, timeout)
+}
+
+// RequireGatewayEscrowNotRotated asserts /v1/status did not pick up a new
+// escrow after previousEscrowID died. A retired last runtime leaves no
+// escrow_id and reports phase=not_found; that is deactivation, not rotation.
+// Polls briefly so retire-after-drain can land as not_found; a still-resident
+// runtime with the same id also passes.
+func RequireGatewayEscrowNotRotated(t *testing.T, client *http.Client, gatewayURL, previousEscrowID string) {
+	t.Helper()
+	if client == nil {
+		client = HTTPClient()
+	}
+	deadline := time.Now().Add(30 * time.Second)
+	var last map[string]any
+	for {
+		require.NoError(t, GetJSON(client, gatewayURL+"/v1/status", &last))
+		id, ok := statusEscrowID(last)
+		if ok {
+			require.Equal(t, previousEscrowID, id, "gateway silently rotated to a new escrow after stale settlement")
+			if time.Now().After(deadline) {
+				t.Logf("gateway still resident with escrow %s after settle (not rotated)", id)
+				return
+			}
+			time.Sleep(500 * time.Millisecond)
+			continue
+		}
+		phase, _ := last["phase"].(string)
+		require.Equal(t, "not_found", phase, "retired /v1/status must name the absence (phase=not_found), got %v", last)
+		return
+	}
+}
+
+func statusEscrowID(status map[string]any) (string, bool) {
+	if id, ok := status["escrow_id"].(string); ok && id != "" {
+		return id, true
+	}
+	if n, ok := status["escrow_id"].(float64); ok && n > 0 {
+		return fmt.Sprintf("%.0f", n), true
+	}
+	return "", false
 }
 
 // PatchAdversarialFastTimeouts lowers refusal/execution timeouts so gateway adversarial paths fail quickly.

@@ -36,6 +36,7 @@ func TestHeightSync_E2E_WideDivergenceNeverBlocksInferences(t *testing.T) {
 		hostOracles[i] = staticOracleWith(h, []byte{0xd0, byte(i), byte(h & 0xff)})
 	}
 	st, _ := setupFourHostHTTPHeightSyncCourier(t, hostOracles)
+	seedHTTPSession(t, st.Session)
 	params := defaultInferenceParams()
 
 	// Twelve nonces: two full sync turns (1–4, 8–11) with the omit window

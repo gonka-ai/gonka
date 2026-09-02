@@ -25,17 +25,18 @@ func BootStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	return stack, cfg, stack.Endpoints(t, cfg)
 }
 
-// BootErrorMissStack is a three-host stack. Three hosts are required so the
-// two non-executor verifiers can exceed VoteThreshold (factor 50 → threshold 1;
-// the executor cannot vote).
+// BootErrorMissStack is HA pair + two solos (4 containers, 3 escrow slots).
+// Three distinct identities are required so two non-executor verifiers can
+// exceed VoteThreshold (need weight > 1). A 3-container stack is only two
+// identities (HA+solo), so the solo cannot vote a miss against the HA.
 func BootErrorMissStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()
 	stack := NewStack(t, prefix)
 	RequireLinuxDevshardd(t, stack.TestenvDir)
-	WriteMultiConfig(t, stack.WorkDir, MultiConfigOpts{Hosts: 3, EscrowSlots: 3})
+	WriteMultiConfig(t, stack.WorkDir, MultiConfigOpts{Hosts: 4, EscrowSlots: 3})
 	stack.RunGencompose(t)
 	cfg := stack.LoadConfig(t)
-	requireThreeVersiondHosts(t, cfg)
+	requireFourVersiondHosts(t, cfg)
 	stack.Up(t)
 	return stack, cfg, stack.Endpoints(t, cfg)
 }
@@ -67,6 +68,43 @@ func BootHeightSyncStack(t *testing.T, prefix string) (*Stack, *config.File, End
 	requireTwoVersiondHosts(t, cfg)
 	stack.Up(t)
 	return stack, cfg, stack.Endpoints(t, cfg)
+}
+
+// BootHeightSyncHAPlusSoloStack is height-sync with an HA pair plus one solo
+// identity (3 containers, 2 escrow slots). Stopping the solo unreachs a slot;
+// stopping versiond-1 only takes down a replica that owns none.
+func BootHeightSyncHAPlusSoloStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteMultiConfig(t, stack.WorkDir, MultiConfigOpts{Hosts: 3, EscrowSlots: 2})
+	stack.RunGencompose(t)
+	EnableHeightSyncCompose(t, stack.ComposePath)
+	cfg := stack.LoadConfig(t)
+	requireThreeVersiondHosts(t, cfg)
+	require.Len(t, config.OnChainIdentityHosts(cfg), 2, "HA pair + solo is two identities")
+	require.Empty(t, cfg.Hosts[1].SlotIDs, "versiond-1 is the HA replica and must own no slots")
+	require.NotEmpty(t, cfg.Hosts[2].SlotIDs, "the solo must own a slot so stopping it is H43")
+	stack.Up(t)
+	return stack, cfg, stack.Endpoints(t, cfg)
+}
+
+// FirstSoloHostID is the compose service of the first on-chain identity that
+// does not share hosts[0]'s KEY_NAME. On the default 3-host multi roster that
+// is versiond-2.
+func FirstSoloHostID(t *testing.T, cfg *config.File) string {
+	t.Helper()
+	require.NotNil(t, cfg)
+	require.NotEmpty(t, cfg.Hosts)
+	haKey := config.VersiondKeyName(cfg, cfg.Hosts[0])
+	for _, h := range config.OnChainIdentityHosts(cfg) {
+		if config.VersiondKeyName(cfg, h) != haKey {
+			require.NotEmpty(t, h.ID)
+			return h.ID
+		}
+	}
+	t.Fatal("expected a solo identity besides the HA pair")
+	return ""
 }
 
 // BootHeightSyncLegacyDapiStack is BootHeightSyncStack with mock-dapi omitting
@@ -110,11 +148,17 @@ func BootObservabilityStack(t *testing.T, prefix string) (*Stack, *config.File, 
 	stack.RunGencompose(t)
 	cfg := stack.LoadConfig(t)
 	requireTwoVersiondHosts(t, cfg)
+	started := time.Now()
 	stack.UpWithObservability(t, cfg)
-	return stack, cfg, stack.Endpoints(t, cfg), DefaultObservabilityEndpoints()
+	obs := stack.ObservabilityHostEndpoints(t)
+	obs.StartedAt = started
+	return stack, cfg, stack.Endpoints(t, cfg), obs
 }
 
-// WaitStackHealthy polls the chain, dapi, router, and gateway boundaries.
+// WaitStackHealthy polls the chain, dapi, router catalog, and gateway boundaries.
+// Catalog admission (GET /{version}/healthz) is required before treating the
+// gateway as ready: a process-up router /healthz is not enough, and a gateway
+// that is already heartbeating into an undeclared version quarantines hosts.
 func WaitStackHealthy(t *testing.T, stack *Stack, eps Endpoints) {
 	t.Helper()
 	client := HTTPClient()
@@ -124,6 +168,7 @@ func WaitStackHealthy(t *testing.T, stack *Stack, eps Endpoints) {
 	WaitGETOK(t, client, eps.MockDapiHTTP+"/healthz", poll, "mock-dapi healthz")
 	WaitGETOK(t, client, eps.MockDapiHTTP+"/v1/epochs/latest", 30*time.Second, "mock-dapi epochs/latest", stack)
 	WaitGETOK(t, client, eps.RouterHTTP+"/healthz", poll, "versiond-router healthz", stack)
+	WaitRouterCatalogAdmitted(t, stack, poll)
 	WaitGETOK(t, client, eps.GatewayHTTP+"/v1/status", poll, "gateway /v1/status", stack)
 }
 

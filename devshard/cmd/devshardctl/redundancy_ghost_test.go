@@ -25,21 +25,21 @@ func prepareForGhost(t *testing.T, session *user.Session, model string) *user.Pr
 	return prepared
 }
 
-// TestRunGhostProbe_AllKindsAreSilent is the regression guard for the
+// TestRunGhostProbe_UnprobedKindsAreSilent is the regression guard for the
 // uniform-silent-probe contract. No matter what kind the picker
 // produces, runGhostProbe must NOT contact the host. The MsgStart for
 // the burned nonce stays in s.diffs and will catch-up on the host's
 // next real dispatch; here we only verify the dispatcher's no-Send
 // invariant, which is what protects the host from probe load during
 // PoC, exclude-stale, and 503-recovery windows alike.
-func TestRunGhostProbe_AllKindsAreSilent(t *testing.T) {
+func TestRunGhostProbe_UnprobedKindsAreSilent(t *testing.T) {
 	cases := []struct {
 		name string
 		kind ghostKind
 	}{
 		{"poc", ghostPoC},
 		{"exclude", ghostExclude},
-		{"throttled", ghostThrottled},
+		{"capability", ghostStateDiverged},
 	}
 	for _, tc := range cases {
 		tc := tc
@@ -94,13 +94,12 @@ func TestRunGhostProbe_KeepsMsgStartInDiffs(t *testing.T) {
 		"PrepareInferenceFn must have advanced past the burned nonce")
 }
 
-// TestRunGhostProbe_NoVoteFromThisNode is a structural guard: ghost
-// probes never create an *inflight, so HandleTimeout (the only path
-// this node uses to post a timeout vote) cannot run for a burned
-// nonce. We assert this indirectly by confirming the dispatcher
-// returns synchronously -- if it ever spawns work that could trigger
-// a vote, the test will need an explicit synchronization point.
-func TestRunGhostProbe_NoVoteFromThisNode(t *testing.T) {
+// TestRunGhostProbe_DoesNotBlockThePicker guards the dispatcher's cost,
+// not its silence: the picker calls it inline for every burned nonce, so
+// it must never wait on settlement. Accountability timeouts (see
+// ghost_accountability_test.go) run detached and are gated behind their
+// own flag; whether one was raised, this call still returns at once.
+func TestRunGhostProbe_DoesNotBlockThePicker(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
 
@@ -110,9 +109,6 @@ func TestRunGhostProbe_NoVoteFromThisNode(t *testing.T) {
 	env.proxy.redundancy.runGhostProbe(prepared, ghostExclude, ghostExclude.reason())
 	elapsed := time.Since(start)
 
-	// Synchronous return is the structural guarantee that no
-	// background settlement (vote, retry, anything) can race in
-	// later. 50ms is generous; in practice this is microseconds.
 	require.Less(t, elapsed, 50*time.Millisecond,
-		"runGhostProbe must return synchronously (no background goroutines)")
+		"runGhostProbe must return without waiting on settlement")
 }

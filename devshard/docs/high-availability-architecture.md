@@ -448,7 +448,8 @@ an idempotency contract is outside this HA routing change.
 > instance selects Postgres. SQLite is for single-instance / local-dev / tests
 > only. This rule is also stated in
 > [release-0.2.14-v4.md](./release-0.2.14-v4.md) and
-> [rolling-update.md](./rolling-update.md).
+> [rolling-update.md](./rolling-update.md). Router / NON_HA pin changes for
+> 0.2.15 are in [v5-deploy-test-plan.md](./v5-deploy-test-plan.md).
 
 Compose: `local-test-net/docker-compose.devshard-postgres.yml`,
 `deploy/join/docker-compose.versiond.yml` bring up one shared `devshard-postgres`

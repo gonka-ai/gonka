@@ -76,7 +76,7 @@ type HostManager struct {
 	payloadFaultStatus int
 	payloadFaultAddr   string
 
-	// Optional height-sync (DEVSHARD_CHAINORACLE_URL). Nil when unset.
+	// Height-sync scheduler (chain RPC or DEVSHARD_CHAINORACLE_URL). Nil when neither is available.
 	chainOracle      blocks.BlockOracle
 	heightSync       *heightsync.AnchorScheduler
 	heightSyncCloser func()
@@ -161,6 +161,29 @@ func (m *HostManager) StorageReady() bool {
 	return true
 }
 
+// StorageFatalErrors reports storage failures that require replacing this
+// devshardd process rather than waiting for readiness recovery.
+func (m *HostManager) StorageFatalErrors() <-chan error {
+	if reporter, ok := m.store.(interface{ FatalErrors() <-chan error }); ok {
+		return reporter.FatalErrors()
+	}
+	return nil
+}
+
+// StorageProof uses the same storage object as inference and session traffic.
+// Deployment checks therefore cannot accidentally validate a separate pool.
+func (m *HostManager) StorageProof(
+	ctx context.Context,
+	operation storage.ProofOperation,
+	nonce string,
+) (storage.StorageProof, error) {
+	provider, ok := m.store.(storage.ProofProvider)
+	if !ok {
+		return storage.StorageProof{}, errors.New("postgres storage proof is unavailable")
+	}
+	return provider.StorageProof(ctx, operation, nonce)
+}
+
 // SetMaxNonceProvider enforces chain max_nonce on every host.
 func (m *HostManager) SetMaxNonceProvider(p devshardpkg.MaxNonceProvider) {
 	m.maxNonce = p
@@ -178,8 +201,10 @@ func (m *HostManager) SetBinaryVersion(v string) {
 	m.binaryVersion = strings.TrimSpace(v)
 }
 
-// Close stops all live session hosts and releases storage resources.
-func (m *HostManager) Close() error {
+// CloseHosts cancels in-flight validation workers without closing storage.
+// Shutdown must do this before closing the ML client or store so Validate
+// aborts, then Release frees the Postgres row for the sibling to re-acquire.
+func (m *HostManager) CloseHosts() {
 	m.sessionsMutex.Lock()
 	sessions := make(map[string]*transport.Server, len(m.sessions))
 	for escrowID, srv := range m.sessions {
@@ -192,6 +217,11 @@ func (m *HostManager) Close() error {
 		srv.Host().Close()
 		observability.DeleteEscrowMetrics(escrowID)
 	}
+}
+
+// Close stops all live session hosts and releases storage resources.
+func (m *HostManager) Close() error {
+	m.CloseHosts()
 	m.CloseHeightSync()
 	return m.store.Close()
 }
@@ -677,7 +707,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 
 		for _, rec := range records {
 			sm.InjectWarmKeys(rec.WarmKeyDelta)
-			root, applyErr := sm.ApplyLocal(rec.Nonce, rec.Txs)
+			root, applyErr := sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
 			if applyErr != nil {
 				return nil, fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
 			}

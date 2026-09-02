@@ -90,7 +90,6 @@ func createStoredSessionWithVersion(t *testing.T, store storage.Storage, escrowI
 	}))
 
 	sm, err := state.NewStateMachine(escrowID, config, group, 100000000, user.Address(), verifier, store,
-		state.WithStateRootAndProtocolVersion(types.EffectiveStateRootAndProtocolVersion),
 		state.WithVersion(version),
 	)
 	require.NoError(t, err)

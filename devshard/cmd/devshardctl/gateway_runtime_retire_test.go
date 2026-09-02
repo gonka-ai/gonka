@@ -2,8 +2,11 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
@@ -41,6 +44,29 @@ func TestRetireRuntimeRemovesRuntimeFromRegistry(t *testing.T) {
 
 	// Idempotent: retiring an already-gone runtime is a no-op, not a panic.
 	require.False(t, g.retireRuntime("12", "test"))
+}
+
+func TestPooledStatusAfterLastRuntimeRetiredIsNotFound(t *testing.T) {
+	rt := &devshardRuntime{id: "12"}
+	rt.active.Store(true)
+	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "m")
+	require.True(t, g.retireRuntime("12", "escrow confirmed settled on chain"))
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
+	rec := httptest.NewRecorder()
+	g.handlePooledStatus(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, "gateway", body["mode"])
+	require.Equal(t, float64(0), body["runtimes"])
+	require.Equal(t, "not_found", body["phase"])
+	require.NotContains(t, body, "escrow_id")
+	errObj, ok := body["error"].(map[string]any)
+	require.True(t, ok, "retired status must include error: %v", body)
+	require.Equal(t, "not_found", errObj["type"])
+	require.Equal(t, "no active escrow", errObj["message"])
 }
 
 // TestRetireRuntimeDefersWhileRequestsInFlight guards against closing a SQLite

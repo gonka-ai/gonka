@@ -33,13 +33,15 @@ type e2eEnv struct {
 	network     testcontainers.Network
 	containers  []namedContainer
 	clientURL   string
+	statsURL    string
 
-	images          e2eImages
-	hostURLs        []string
-	hostControlURLs []string
-	hostVolumeNames []string
-	hostEnv         map[string]string
-	usePostgres     bool
+	images           e2eImages
+	hostURLs         []string
+	hostControlURLs  []string
+	hostVolumeNames  []string
+	hostEnv          map[string]string
+	hostEnvOverrides map[int]map[string]string
+	usePostgres      bool
 }
 
 type namedContainer struct {
@@ -51,6 +53,7 @@ type containerSpec struct {
 	name              string
 	image             string
 	port              string
+	extraPorts        []string
 	aliases           []string
 	env               map[string]string
 	tmpfs             map[string]string
@@ -61,11 +64,12 @@ type containerSpec struct {
 }
 
 type e2eEnvOptions struct {
-	hostVolumeNames    []string
-	usePostgresStorage bool
-	hostEnv            map[string]string
-	hostEnvOverrides   map[int]map[string]string
-	mockChainEnv       map[string]string
+	hostVolumeNames         []string
+	usePostgresStorage      bool
+	hostEnv                 map[string]string
+	hostEnvOverrides        map[int]map[string]string
+	mockChainEnv            map[string]string
+	devshardctlEnvOverrides map[string]string
 }
 
 func startHappyPathEnv(ctx context.Context, t *testing.T, images e2eImages) *e2eEnv {
@@ -93,12 +97,13 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 	t.Cleanup(func() { _ = network.Remove(context.Background()) })
 
 	env := &e2eEnv{
-		networkName:     networkName,
-		network:         network,
-		images:          images,
-		hostVolumeNames: opts.hostVolumeNames,
-		hostEnv:         opts.hostEnv,
-		usePostgres:     opts.usePostgresStorage,
+		networkName:      networkName,
+		network:          network,
+		images:           images,
+		hostVolumeNames:  opts.hostVolumeNames,
+		hostEnv:          opts.hostEnv,
+		hostEnvOverrides: opts.hostEnvOverrides,
+		usePostgres:      opts.usePostgresStorage,
 	}
 	if len(opts.hostVolumeNames) > 0 {
 		t.Cleanup(func() { removeDockerVolumes(context.Background(), t, opts.hostVolumeNames) })
@@ -144,30 +149,45 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		env.hostControlURLs[i] = containerURL(ctx, t, env.startHostWithEnv(ctx, t, i, opts.hostEnvOverrides[i]), "8080/tcp")
 	}
 
+	devshardctlEnv := map[string]string{
+		"DEVSHARD_E2E":           "1",
+		"DEVSHARD_ESCROW_ID":     defaultEscrowID,
+		"DEVSHARD_CHAIN_GRPC":    mockChainAlias + ":9090",
+		"DEVSHARD_PUBLIC_API":    "http://" + mockChainAlias + ":9191",
+		"DEVSHARD_PARAMS_SOURCE": "chain",
+		"DEVSHARD_PRIVATE_KEY":   testutil.EnvDefault("DEVSHARD_E2E_USER_PRIVATE_KEY", testutil.UserPrivateKey),
+		"DEVSHARD_ADMIN_API_KEY": testutil.AdminAPIKey,
+		"DEVSHARD_STORAGE_PATH":  "/tmp/devshardctl",
+		"DEVSHARD_MODEL":         "stub-model",
+		"GATEWAY_MAX_TOKENS_CAP": "4096",
+		"DEVSHARD_STATS_PORT":    "9091",
+		// Hosts are Docker DNS names that resolve to private IPs.
+		// Production leaves this unset so the dial-time SSRF guard stays on.
+		"DEVSHARD_ALLOW_PRIVATE_ADDRESSES": "true",
+		// E2E hosts have no versiond-router catalog and no chain-oracle tip, so
+		// POST /height-sync omits. Keep the production seed gate on in citest.
+		"DEVSHARD_REQUIRE_HEIGHT_SEED": "false",
+	}
+	for k, v := range opts.devshardctlEnvOverrides {
+		devshardctlEnv[k] = v
+	}
 	devshardctl := env.startContainer(ctx, t, containerSpec{
-		name:    devshardCtlName,
-		image:   images.devshardctl,
-		port:    "8080/tcp",
-		aliases: []string{devshardCtlName},
-		env: map[string]string{
-			"DEVSHARD_ESCROW_ID":     defaultEscrowID,
-			"DEVSHARD_CHAIN_GRPC":    mockChainAlias + ":9090",
-			"DEVSHARD_PUBLIC_API":    "http://" + mockChainAlias + ":9191",
-			"DEVSHARD_PARAMS_SOURCE": "chain",
-			"DEVSHARD_PRIVATE_KEY":   testutil.EnvDefault("DEVSHARD_E2E_USER_PRIVATE_KEY", testutil.UserPrivateKey),
-			"DEVSHARD_ADMIN_API_KEY": testutil.AdminAPIKey,
-			"DEVSHARD_STORAGE_PATH":  "/tmp/devshardctl",
-			"DEVSHARD_MODEL":         "stub-model",
-			"GATEWAY_MAX_TOKENS_CAP": "4096",
-			// Hosts are Docker DNS names that resolve to private IPs.
-			// Production leaves this unset so the dial-time SSRF guard stays on.
-			"DEVSHARD_ALLOW_PRIVATE_ADDRESSES": "true",
+		name:  devshardCtlName,
+		image: images.devshardctl,
+		port:  "8080/tcp",
+		extraPorts: []string{
+			"9091/tcp",
 		},
+		aliases:  []string{devshardCtlName},
+		env:      devshardctlEnv,
 		waitPath: "/v1/status",
 	})
 
 	env.clientURL = containerURL(ctx, t, devshardctl, "8080/tcp")
 	testutil.DebugLogf(t, "devshardctl client URL: %s", env.clientURL)
+	env.statsURL = containerURL(ctx, t, devshardctl, "9091/tcp")
+	testutil.DebugLogf(t, "devshardctl accounting stats URL: %s", env.statsURL)
+	testutil.WaitGatewayHeightSeedReady(t, env.clientURL, 3*time.Minute)
 
 	require.NotNil(t, mockChain)
 	require.NotNil(t, postgres)
@@ -224,6 +244,7 @@ func (e *e2eEnv) startHostWithEnv(ctx context.Context, t *testing.T, index int, 
 		"DEVSHARD_HOST_PRIVATE_KEYS": strings.Join(testutil.HostPrivateKeys, ","),
 		"DEVSHARD_USER_PRIVATE_KEY":  testutil.UserPrivateKey,
 		"DEVSHARD_PEER_URLS":         strings.Join(e.hostURLs, ","),
+		"DEVSHARD_E2E":               "1",
 		"DEVSHARD_STUB_INFERENCE":    "1",
 		// Peer URLs are compose aliases on the test network (private IPs).
 		"DEVSHARD_ALLOW_PRIVATE_ADDRESSES": "true",
@@ -232,6 +253,9 @@ func (e *e2eEnv) startHostWithEnv(ctx context.Context, t *testing.T, index int, 
 		env[k] = v
 	}
 	for k, v := range e.hostEnv {
+		env[k] = v
+	}
+	for k, v := range e.hostEnvOverrides[index] {
 		env[k] = v
 	}
 	for k, v := range overrides {
@@ -308,6 +332,7 @@ func (e *e2eEnv) startContainer(ctx context.Context, t *testing.T, spec containe
 	t.Helper()
 	testutil.DebugLogf(t, "starting container %s image=%s aliases=%s port=%s waitPath=%s waitLog=%q",
 		spec.name, spec.image, strings.Join(spec.aliases, ","), spec.port, spec.waitPath, spec.waitLog)
+	exposedPorts := append([]string{spec.port}, spec.extraPorts...)
 
 	var waitStrategy wait.Strategy
 	if spec.waitLog != "" {
@@ -328,7 +353,7 @@ func (e *e2eEnv) startContainer(ctx context.Context, t *testing.T, spec containe
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image:          spec.image,
 			Env:            spec.env,
-			ExposedPorts:   []string{spec.port},
+			ExposedPorts:   exposedPorts,
 			Networks:       []string{e.networkName},
 			NetworkAliases: map[string][]string{e.networkName: spec.aliases},
 			Tmpfs:          spec.tmpfs,

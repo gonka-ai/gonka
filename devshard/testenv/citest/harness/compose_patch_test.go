@@ -42,20 +42,20 @@ func TestPatchComposeInsertEnvAfterAll(t *testing.T) {
 services:
   versiond-0:
     environment:
-      VERSIOND_ORACLE_URL: http://mock-dapi:9100/versions
+      VERSIOND_ORACLE_URL: http://mock-dapi:12345/versions
   versiond-1:
     environment:
-      VERSIOND_ORACLE_URL: http://mock-dapi:9100/versions
+      VERSIOND_ORACLE_URL: http://mock-dapi:12345/versions
   devshardctl:
     environment:
-      DEVSHARD_PUBLIC_API: http://mock-dapi:9100
+      DEVSHARD_PUBLIC_API: http://mock-dapi:12345
 `), 0o644))
 
 	EnableHeightSyncCompose(t, path)
 	body, err := os.ReadFile(path)
 	require.NoError(t, err)
 	text := string(body)
-	require.Equal(t, 3, strings.Count(text, "DEVSHARD_CHAINORACLE_URL: http://mock-dapi:9100"))
+	require.Equal(t, 3, strings.Count(text, "DEVSHARD_CHAINORACLE_URL: http://mock-dapi:12345"))
 	require.Equal(t, 3, strings.Count(text, "DEVSHARD_LOG_LEVEL: debug"))
 }
 

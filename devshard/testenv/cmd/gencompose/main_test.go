@@ -77,6 +77,27 @@ func TestAssignSlots_MultiTwoHostsHAOwnsAllSlots(t *testing.T) {
 	require.Equal(t, "gonka1ha", cfg.Participants[0].Address)
 }
 
+func TestAssignSlots_MultiThreeHostsTwoSlotsHAPlusSolo(t *testing.T) {
+	cfg := &config.File{
+		Versiond:       config.VersiondCfg{Mode: config.VersiondModeMulti},
+		Escrow:         config.EscrowMeta{Slots: 2, SlotURL: "http://router:8080"},
+		VersiondRouter: config.VersiondRouterCfg{Host: "versiond-router"},
+		Hosts: []config.HostCfg{
+			{ID: "versiond-0", Address: "gonka1ha"},
+			{ID: "versiond-1", Address: "gonka1replica"},
+			{ID: "versiond-2", Address: "gonka1solo"},
+		},
+	}
+	assignSlots(cfg)
+	require.Equal(t, []int{0}, cfg.Hosts[0].SlotIDs)
+	require.Empty(t, cfg.Hosts[1].SlotIDs, "HA replica owns no slots")
+	require.Equal(t, []int{1}, cfg.Hosts[2].SlotIDs)
+
+	syncChainSeed(cfg)
+	require.Equal(t, []string{"gonka1ha", "gonka1solo"}, cfg.Escrows[0].Slots)
+	require.Len(t, cfg.Participants, 2)
+}
+
 func TestAssignSlots_MultiThreeHostsHAPlusSolo(t *testing.T) {
 	cfg := &config.File{
 		Versiond:       config.VersiondCfg{Mode: config.VersiondModeMulti},
@@ -145,6 +166,59 @@ func TestVersiondKeyName_MultiHAPairAndSolo(t *testing.T) {
 
 	cfg.Versiond.Mode = config.VersiondModeSingle
 	require.Equal(t, "versiond-1", versiondKeyName(cfg, cfg.Hosts[1]))
+}
+
+// R7: three replicas of one identity plus a solo. Slots, the router pool and
+// the participant roster all follow KEY_NAME, so the third replica does not
+// become a fourth identity the way an index-derived count would.
+func TestThreeReplicasOfOneIdentity(t *testing.T) {
+	cfg := &config.File{
+		Versiond: config.VersiondCfg{Mode: config.VersiondModeMulti},
+		Escrow:   config.EscrowMeta{Slots: 2, SlotURL: "http://router:8080"},
+		Hosts: []config.HostCfg{
+			{ID: "versiond-0", KeyName: "versiond-0", Address: "gonka1ha"},
+			{ID: "versiond-1", KeyName: "versiond-0", Address: "gonka1ha-r1"},
+			{ID: "versiond-2", KeyName: "versiond-0", Address: "gonka1ha-r2"},
+			{ID: "versiond-3", KeyName: "versiond-3", Address: "gonka1solo"},
+		},
+	}
+	assignSlots(cfg)
+	require.Equal(t, []int{0}, cfg.Hosts[0].SlotIDs)
+	require.Empty(t, cfg.Hosts[1].SlotIDs)
+	require.Empty(t, cfg.Hosts[2].SlotIDs, "a third replica owns no slots of its own")
+	require.Equal(t, []int{1}, cfg.Hosts[3].SlotIDs)
+
+	require.Equal(t, "versiond-0 versiond-1 versiond-2", versiondHosts(cfg))
+	require.True(t, isHAReplica(cfg, cfg.Hosts[2]))
+	require.False(t, isHAReplica(cfg, cfg.Hosts[3]))
+
+	syncChainSeed(cfg)
+	require.Len(t, cfg.Participants, 2)
+	require.Equal(t, "gonka1ha", cfg.Participants[0].Address)
+	require.Equal(t, "http://router:8080", cfg.Participants[0].InferenceURL)
+	require.Equal(t, "gonka1solo", cfg.Participants[1].Address)
+	require.Equal(t, "http://versiond-3:8080", cfg.Participants[1].InferenceURL)
+}
+
+// The generated config states its groupings: hosts[1] carries hosts[0]'s
+// resolved KEY_NAME rather than relying on its roster position.
+func TestStampKeyNames_MakesGroupingExplicit(t *testing.T) {
+	cfg := &config.File{
+		Versiond: config.VersiondCfg{Mode: config.VersiondModeMulti},
+		Hosts: []config.HostCfg{
+			{ID: "versiond-0"},
+			{ID: "versiond-1"},
+			{ID: "versiond-2"},
+		},
+	}
+	stampKeyNames(cfg)
+	require.Equal(t, "versiond-0", cfg.Hosts[0].KeyName)
+	require.Equal(t, "versiond-0", cfg.Hosts[1].KeyName)
+	require.Equal(t, "versiond-2", cfg.Hosts[2].KeyName)
+
+	// Stamping is idempotent: a second pass must not re-derive from position.
+	stampKeyNames(cfg)
+	require.Equal(t, "versiond-0", cfg.Hosts[1].KeyName)
 }
 
 func TestSyncChainSeed_FromHosts(t *testing.T) {
@@ -300,7 +374,7 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.NotContains(t, text, "context: ../../versiond-router")
 	require.Contains(t, text, `VERSIOND_PORT: "8080"`)
 	require.Contains(t, text, `VERSIOND_LEGACY_HOST: "versiond-0"`)
-	require.Contains(t, text, `VERSIOND_NON_HA_VERSIONS: "v1"`)
+	require.Contains(t, text, `VERSIOND_NON_HA_VERSIONS: ""`)
 	require.Contains(t, text, "versiond-router-state:/var/lib/gonka-router",
 		"a replacement router must retain its last-known-good catalog")
 	require.Equal(t, 3, strings.Count(text, "stop_grace_period: 30m"),
@@ -337,6 +411,8 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Contains(t, text, "DEVSHARD_ESCROW_ID")
 	require.Contains(t, text, "DEVSHARD_PUBLIC_API")
 	require.Contains(t, text, "DEVSHARD_CHAIN_GRPC")
+	require.Contains(t, text, "DEVSHARD_CHAIN_RPC")
+	require.Contains(t, text, "NODE_RPC_URL")
 	require.Contains(t, text, "DEVSHARD_NODE_MANAGER_ADDR")
 	require.NotContains(t, text, "DEVSHARD_TX_QUERY_REST")
 	require.NotContains(t, text, "DEVSHARD_CHAIN_REST:")

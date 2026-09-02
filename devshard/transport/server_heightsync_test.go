@@ -42,7 +42,7 @@ func TestServer_Inference_HeightSync_OutboundAnchor(t *testing.T) {
 	ir := InferenceRequest{
 		Diffs:   []DiffJSON{dj},
 		Nonce:   1,
-		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000},
+		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000},
 	}
 	body, err := json.Marshal(ir)
 	require.NoError(t, err)
@@ -162,7 +162,7 @@ func TestServer_Inference_HeightSync_ForceAnchor_OnInferenceRequest(t *testing.T
 	sched := heightsync.MustNewAnchorSchedulerFromOracle(10, 1, or)
 	env := setupServerEnv(t, WithHeightSync(sched, or))
 
-	payload := &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000}
+	payload := &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
 
 	diff1 := testutil.SignDiff(t, env.userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
 	dj1, err := DiffToJSON(diff1)
@@ -290,7 +290,7 @@ func TestServer_Inference_HeightSync_UntrustedReconcileMismatchWarns(t *testing.
 	ir := InferenceRequest{
 		Diffs:   []DiffJSON{dj},
 		Nonce:   1,
-		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000},
+		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000},
 	}
 	peerHash := hex.EncodeToString(bytes.Repeat([]byte{0xbb}, 32))
 	hs := &heightsync.HeightSyncSection{
@@ -363,7 +363,7 @@ func TestServer_Inference_HeightSync_UntrustedReconcileMatchNoWarn(t *testing.T)
 	ir := InferenceRequest{
 		Diffs:   []DiffJSON{dj},
 		Nonce:   1,
-		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000},
+		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000},
 	}
 	peerHash := hex.EncodeToString(matchHash)
 	hs := &heightsync.HeightSyncSection{
@@ -427,7 +427,7 @@ func TestServer_Inference_HeightSync_ForcedTurn_HostAnchorsEvenIfRequestOmits(t 
 	sched := heightsync.MustNewAnchorSchedulerFromOracle(10, 1, or)
 	env := setupServerEnv(t, WithHeightSync(sched, or))
 
-	payload := &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000}
+	payload := &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000}
 
 	diff1 := testutil.SignDiff(t, env.userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
 	dj1, err := DiffToJSON(diff1)
@@ -524,7 +524,7 @@ func postProtobufInference(t *testing.T, env *serverTestEnv, nonce uint64, hs *h
 	ir := InferenceRequest{
 		Diffs:   []DiffJSON{dj},
 		Nonce:   nonce,
-		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000},
+		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000},
 	}
 	var body []byte
 	if hs != nil {
@@ -738,7 +738,7 @@ func postHeartbeatProtobuf(t *testing.T, env *serverTestEnv, nonce uint64, heigh
 	ir := InferenceRequest{
 		Diffs:   []DiffJSON{dj},
 		Nonce:   nonce,
-		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000},
+		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000},
 	}
 	body, err := MarshalWrappedInferenceRequest(CurrentInferenceEnvelopeSchemaVersion, hs, ir)
 	require.NoError(t, err)

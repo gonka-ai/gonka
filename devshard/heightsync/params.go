@@ -13,7 +13,7 @@ const (
 	// turnover must land at least this often. Wall clock, not blocks — mainnet
 	// height is the *result* of a turnover, so no party can schedule the next
 	// one from a height it has not learned yet.
-	DefaultHeartbeatInterval = 3 * time.Second
+	DefaultHeartbeatInterval = 6 * time.Second
 	// DefaultTurnTimeoutMultiple sets TurnTimeout = 2 * Interval.
 	//
 	// Patience equal to the interval leaves a turn none: the span is dispatched
@@ -164,8 +164,8 @@ type RepairConfig struct {
 	MaxProbesPerWindow int
 }
 
-// DefaultHeartbeatConfig returns the shipped defaults: 3s interval, 6s turn
-// timeout, 12s idle, 1s blocks, and the D_ack those imply.
+// DefaultHeartbeatConfig returns the shipped defaults: 6s interval, 12s turn
+// timeout, 24s idle, 1s blocks, and the D_ack those imply.
 func DefaultHeartbeatConfig() HeartbeatConfig {
 	return HeartbeatConfig{}.withDefaults()
 }

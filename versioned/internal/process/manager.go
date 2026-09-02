@@ -2,6 +2,7 @@ package process
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -44,15 +45,19 @@ type child struct {
 	archiveSHA256 string
 	binaryVersion string
 	storageMode   string
-	binPath       string
-	port          int
-	adminPort     atomic.Int64
-	stop          context.CancelFunc
-	forceStopCh   chan struct{}
-	forceStopOnce sync.Once
-	done          chan struct{} // closed when runChild exits
-	ready         chan struct{} // closed after readiness succeeds
-	readyOnce     sync.Once
+	// haDeployment is populated by binary preflight. Nil means the generation
+	// has not yet established whether it belongs to the HA PostgreSQL set.
+	haDeployment    *bool
+	proofGeneration uint64
+	binPath         string
+	port            int
+	adminPort       atomic.Int64
+	stop            context.CancelFunc
+	forceStopCh     chan struct{}
+	forceStopOnce   sync.Once
+	done            chan struct{} // closed when runChild exits
+	ready           chan struct{} // closed after readiness succeeds
+	readyOnce       sync.Once
 	// serving is this generation's own live readiness, refreshed by a monitor
 	// started when it begins running. It is per generation on purpose: a probe
 	// answered by a child that has since been swapped out must not decide
@@ -105,40 +110,50 @@ func (c *child) Done() <-chan struct{} {
 }
 
 type Manager struct {
-	cfg             config.Config
-	processes       map[string]*child
-	draining        map[string][]*child
-	children        map[*child]struct{}
-	downloading     map[string]struct{}
-	allocatedPorts  map[int]struct{}
-	reservedPorts   map[int]struct{}
-	operations      map[uint64]controlOperation
-	nextOperationID uint64
-	conditions      Conditions
-	everConverged   bool
-	available       chan struct{}
-	childCtx        context.Context
-	cancelChildren  context.CancelFunc
-	hostDraining    bool
-	mu              sync.Mutex
-	routes          atomic.Value // proxy.RouteTable
+	cfg                 config.Config
+	processes           map[string]*child
+	draining            map[string][]*child
+	children            map[*child]struct{}
+	downloading         map[string]struct{}
+	allocatedPorts      map[int]struct{}
+	reservedPorts       map[int]struct{}
+	operations          map[uint64]controlOperation
+	nextOperationID     uint64
+	nextProofGeneration uint64
+	proofEpoch          string
+	storageInitDone     chan struct{}
+	storageInitOnce     sync.Once
+	storageInitExpected map[storageInitCandidate]struct{}
+	storageInitLegacy   map[storageInitCandidate]struct{}
+	conditions          Conditions
+	everConverged       bool
+	available           chan struct{}
+	childCtx            context.Context
+	cancelChildren      context.CancelFunc
+	hostDraining        bool
+	mu                  sync.Mutex
+	routes              atomic.Value // proxy.RouteTable
 }
 
 func NewManager(cfg config.Config) *Manager {
 	cfg = normalizeConfig(cfg)
 	childCtx, cancelChildren := context.WithCancel(context.Background())
 	m := &Manager{
-		cfg:            cfg,
-		processes:      make(map[string]*child),
-		draining:       make(map[string][]*child),
-		children:       make(map[*child]struct{}),
-		downloading:    make(map[string]struct{}),
-		allocatedPorts: make(map[int]struct{}),
-		reservedPorts:  reservedChildPorts(),
-		operations:     make(map[uint64]controlOperation),
-		childCtx:       childCtx,
-		cancelChildren: cancelChildren,
-		available:      make(chan struct{}, 1),
+		cfg:                 cfg,
+		processes:           make(map[string]*child),
+		draining:            make(map[string][]*child),
+		children:            make(map[*child]struct{}),
+		downloading:         make(map[string]struct{}),
+		allocatedPorts:      make(map[int]struct{}),
+		reservedPorts:       reservedChildPorts(),
+		operations:          make(map[uint64]controlOperation),
+		childCtx:            childCtx,
+		cancelChildren:      cancelChildren,
+		available:           make(chan struct{}, 1),
+		proofEpoch:          rand.Text(),
+		storageInitDone:     make(chan struct{}),
+		storageInitExpected: make(map[storageInitCandidate]struct{}),
+		storageInitLegacy:   make(map[storageInitCandidate]struct{}),
 	}
 	m.routes.Store(proxy.RouteTable{})
 	return m
@@ -408,6 +423,7 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 		"force_versions", m.cfg.ForceVersions,
 		"desired_versions", versionNamesMap(desiredSet),
 	)
+	m.configureStorageInitCandidates(m.resolveStorageInitCandidates(desiredSet))
 
 	// Phase A (lock): snapshot state, identify overrides.
 	m.mu.Lock()
@@ -1545,9 +1561,22 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		m.mu.Unlock()
 		return
 	}
+	if err := m.ensurePostgresSchemaInitialized(ctx, c, preflight); err != nil {
+		slog.Error("postgres schema initialization barrier failed", "version", c.version.Name, "error", err)
+		m.mu.Lock()
+		transitionGenerationFailureLocked(c)
+		m.mu.Unlock()
+		return
+	}
 	m.mu.Lock()
 	c.binaryVersion = preflight.binaryLogVersion
 	c.storageMode = preflight.storageMode
+	if preflight.haDeployment != nil {
+		ha := *preflight.haDeployment
+		c.haDeployment = &ha
+	} else {
+		c.haDeployment = nil
+	}
 	if preflight.adminAPISupported && c.adminPort.Load() == 0 {
 		adminPort, portErr := m.assignPort()
 		if portErr != nil {
@@ -1653,6 +1682,8 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		c.servingAt.Store(time.Now().UnixNano())
 
 		m.mu.Lock()
+		m.nextProofGeneration++
+		c.proofGeneration = m.nextProofGeneration
 		transitionGenerationLocked(c, statusRunning)
 		c.proxyTarget = proxy.NewTarget(fmt.Sprintf("localhost:%d", c.port))
 		c.readyOnce.Do(func() { close(c.ready) })
@@ -1710,6 +1741,137 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			backoff = 60 * time.Second
 		}
 	}
+}
+
+func (m *Manager) ensurePostgresSchemaInitialized(ctx context.Context, c *child, preflight childPreflight) error {
+	if !m.devshardAdminEligible() || !postgresChildStorageConfigured() {
+		return nil
+	}
+	// Explicitly pinned versions retain their single-host SQLite ownership and
+	// must remain available while the shared PostgreSQL tier is unavailable.
+	if preflight.haDeployment != nil && !*preflight.haDeployment {
+		return nil
+	}
+	ha, err := parseHADeployment(os.Getenv(envHADeployment))
+	if err != nil {
+		return fmt.Errorf("read HA deployment mode: %w", err)
+	}
+	if !ha {
+		return nil
+	}
+	select {
+	case <-m.storageInitDone:
+		return nil
+	default:
+	}
+
+	supported, err := initializePostgresSchemaContext(
+		ctx,
+		c.binPath,
+		childEnv(preflight.binaryLogVersion, "", preflight.haDeployment),
+	)
+	if err != nil {
+		return err
+	}
+	if supported {
+		m.storageInitOnce.Do(func() { close(m.storageInitDone) })
+		return nil
+	}
+	candidate := storageInitCandidate{version: c.version.Name, artifact: c.archiveSHA256}
+	m.noteLegacyStorageInitializer(candidate)
+
+	slog.Info("legacy child waiting for lock-aware PostgreSQL schema initialization",
+		"version", c.version.Name, "artifact", c.archiveSHA256)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-m.storageInitDone:
+		return nil
+	}
+}
+
+func postgresChildStorageConfigured() bool {
+	return strings.TrimSpace(os.Getenv("PGHOST")) != "" ||
+		strings.TrimSpace(os.Getenv("PGSERVICE")) != ""
+}
+
+type storageInitCandidate struct {
+	version  string
+	artifact string
+}
+
+func (m *Manager) resolveStorageInitCandidates(desired map[string]oracle.Version) map[storageInitCandidate]struct{} {
+	select {
+	case <-m.storageInitDone:
+		return nil
+	default:
+	}
+	expected := make(map[storageInitCandidate]struct{}, len(desired))
+	for name, version := range desired {
+		ha, err := childHADeployment(name)
+		if err == nil && !ha {
+			continue
+		}
+		artifact := ""
+		if overrideSrc, override := m.cfg.Overrides[name]; override {
+			if hash, err := download.HashFile(overrideSrc); err == nil {
+				artifact = "override:" + hash
+			} else {
+				// Keep an unresolved override distinct from every runnable artifact.
+				// Its normal reconcile path will report the underlying file error.
+				artifact = "unresolved-override:" + overrideSrc
+			}
+		} else if hash, err := version.ResolvedSHA256(); err == nil {
+			artifact = hash
+		} else {
+			// Invalid catalog entries cannot start, but must not let reports from
+			// an older artifact close the initialization barrier.
+			artifact = "unresolved-catalog:" + version.SHA256 + "\x00" + version.Binary
+		}
+		expected[storageInitCandidate{version: name, artifact: artifact}] = struct{}{}
+	}
+	return expected
+}
+
+func (m *Manager) configureStorageInitCandidates(expected map[storageInitCandidate]struct{}) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	select {
+	case <-m.storageInitDone:
+		return
+	default:
+	}
+	legacy := make(map[storageInitCandidate]struct{}, len(m.storageInitLegacy))
+	for candidate := range m.storageInitLegacy {
+		if _, ok := expected[candidate]; ok {
+			legacy[candidate] = struct{}{}
+		}
+	}
+	m.storageInitExpected = expected
+	m.storageInitLegacy = legacy
+	if len(expected) == 0 {
+		m.storageInitOnce.Do(func() { close(m.storageInitDone) })
+		return
+	}
+	m.closeLegacyOnlyStorageInitLocked()
+}
+
+func (m *Manager) noteLegacyStorageInitializer(candidate storageInitCandidate) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, expected := m.storageInitExpected[candidate]; !expected {
+		return
+	}
+	m.storageInitLegacy[candidate] = struct{}{}
+	m.closeLegacyOnlyStorageInitLocked()
+}
+
+func (m *Manager) closeLegacyOnlyStorageInitLocked() {
+	if len(m.storageInitExpected) == 0 || len(m.storageInitLegacy) != len(m.storageInitExpected) {
+		return
+	}
+	slog.Info("desired devshard catalog has no lock-aware PostgreSQL initializer; preserving legacy startup")
+	m.storageInitOnce.Do(func() { close(m.storageInitDone) })
 }
 
 func (m *Manager) waitForRestartBackoff(ctx context.Context, c *child, backoff time.Duration) bool {
