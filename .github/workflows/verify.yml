@@ -272,7 +272,10 @@ jobs:
             deploy/join/update-devshard-e2e_test.sh
           deploy/join/update-devshard_test.sh
       - name: Gate the updater failure scenarios
-        run: deploy/join/update-devshard-regression_test.sh --gate
+        run: |
+          # UPD-PROOF-HEADERS exercises the real BusyBox wget; the harness never pulls.
+          docker pull -q busybox:1.36
+          deploy/join/update-devshard-regression_test.sh --gate
       - name: Check that every host a service resolves is published on a shared network
         run: deploy/join/compose-contract_test.sh
 
