@@ -1660,6 +1660,66 @@ esac
 	}
 }
 
+func TestReconcile_RunningVersionWaitsForDrainingPredecessorBeforeNextSHA(t *testing.T) {
+	dir := t.TempDir()
+	zipData, archiveHash := zipBinary(t, "testapp", []byte("replacement binary"))
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write(zipData)
+	}))
+	defer srv.Close()
+
+	m := NewManager(config.Config{
+		BinDir:     filepath.Join(dir, "bin"),
+		DataDir:    filepath.Join(dir, "data"),
+		BinaryName: "testapp",
+		BasePort:   5000,
+	})
+	current := &child{
+		version:       oracle.Version{Name: "v1"},
+		archiveSHA256: sha256Hex([]byte("current archive")),
+		binPath:       filepath.Join(dir, "missing-current-binary"),
+		port:          9001,
+		status:        statusRunning,
+		restart:       true,
+	}
+	predecessor := &child{
+		version:       oracle.Version{Name: "v1"},
+		archiveSHA256: sha256Hex([]byte("predecessor archive")),
+		port:          9000,
+		status:        statusDraining,
+	}
+	m.processes["v1"] = current
+	m.draining["v1"] = []*child{predecessor}
+
+	err := m.Reconcile(context.Background(), []oracle.Version{{
+		Name:   "v1",
+		Binary: srv.URL,
+		SHA256: archiveHash,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("download requests while predecessor drains = %d, want 0", got)
+	}
+	m.mu.Lock()
+	gotCurrent := m.processes["v1"]
+	draining := len(m.draining["v1"])
+	_, downloading := m.downloading["v1"]
+	m.mu.Unlock()
+	if gotCurrent != current {
+		t.Fatal("running generation changed while its predecessor was draining")
+	}
+	if draining != 1 {
+		t.Fatalf("draining generations = %d, want 1", draining)
+	}
+	if downloading {
+		t.Fatal("replacement was scheduled while its predecessor was draining")
+	}
+}
+
 func TestDownloadAndStart_DoesNotOverlapDrainingChild(t *testing.T) {
 	dir := t.TempDir()
 	zipData, archiveHash := zipBinary(t, "testapp", []byte("test binary"))
@@ -2625,6 +2685,65 @@ esac
 	routes := m.RouteTable().Load().(proxy.RouteTable)
 	if routes["v1"].Address() != "localhost:9001" {
 		t.Fatalf("route = %q, want old child route", routes["v1"].Address())
+	}
+}
+
+func TestDownloadAndSwap_DrainingPredecessorDefersReplacementStart(t *testing.T) {
+	dir := t.TempDir()
+	zipData, archiveHash := zipBinary(t, "testapp", []byte("replacement binary"))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write(zipData)
+	}))
+	defer srv.Close()
+
+	m := NewManager(config.Config{
+		BinDir:     filepath.Join(dir, "bin"),
+		DataDir:    filepath.Join(dir, "data"),
+		BinaryName: "testapp",
+		BasePort:   6200,
+	})
+	current := &child{
+		version:       oracle.Version{Name: "v1"},
+		archiveSHA256: sha256Hex([]byte("current archive")),
+		port:          9001,
+		status:        statusRunning,
+		restart:       true,
+	}
+	predecessor := &child{
+		version:       oracle.Version{Name: "v1"},
+		archiveSHA256: sha256Hex([]byte("predecessor archive")),
+		port:          9000,
+		status:        statusDraining,
+	}
+	m.processes["v1"] = current
+	m.draining["v1"] = []*child{predecessor}
+	m.downloading["v1"] = struct{}{}
+
+	err := m.downloadAndSwap(context.Background(), oracle.Version{
+		Name:   "v1",
+		Binary: srv.URL,
+		SHA256: archiveHash,
+	}, archiveHash, current)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	gotCurrent := m.processes["v1"]
+	draining := len(m.draining["v1"])
+	children := len(m.children)
+	_, downloading := m.downloading["v1"]
+	m.mu.Unlock()
+	if gotCurrent != current {
+		t.Fatal("running generation changed while its predecessor was draining")
+	}
+	if draining != 1 {
+		t.Fatalf("draining generations = %d, want 1", draining)
+	}
+	if children != 0 {
+		t.Fatalf("replacement children started = %d, want 0", children)
+	}
+	if downloading {
+		t.Fatal("download marker was not cleared after replacement deferral")
 	}
 }
 
