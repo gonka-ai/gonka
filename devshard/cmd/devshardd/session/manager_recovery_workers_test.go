@@ -61,9 +61,9 @@ func TestRecoverSessions_UsesEightWorkers(t *testing.T) {
 	for i, slot := range group {
 		addresses[i] = slot.ValidatorAddress
 	}
-	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{
+	mgr := waitObsRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{
 		escrow: &bridge.EscrowInfo{EscrowID: "1", Amount: 100000, CreatorAddress: user.Address(), Slots: addresses},
-	}, nil, nil)
+	}, nil, nil))
 
 	done := make(chan error, 1)
 	go func() { done <- mgr.RecoverSessions() }()
@@ -120,9 +120,9 @@ func TestRecoverSessions_CapsWorkersToSessionCount(t *testing.T) {
 	for i, slot := range group {
 		addresses[i] = slot.ValidatorAddress
 	}
-	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{
+	mgr := waitObsRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{
 		escrow: &bridge.EscrowInfo{EscrowID: "1", Amount: 100000, CreatorAddress: user.Address(), Slots: addresses},
-	}, nil, nil)
+	}, nil, nil))
 
 	done := make(chan error, 1)
 	go func() { done <- mgr.RecoverSessions() }()

@@ -106,7 +106,7 @@ func recoverTestManager(t *testing.T, store storage.Storage, hostSigner *signing
 			Slots:          addresses,
 		},
 	}
-	return NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	return waitObsRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 }
 
 func saveSnapshotThrough(t *testing.T, store storage.Storage, through uint64) {
@@ -361,6 +361,13 @@ func TestRecoverSessions_FullReplayRebuildsValidationObsInBackground(t *testing.
 
 	store := &obsCallStore{Storage: inner, release: make(chan struct{})}
 	mgr := recoverTestManager(t, store, hostSigner, user, group)
+	t.Cleanup(func() {
+		select {
+		case <-store.release:
+		default:
+			close(store.release)
+		}
+	})
 
 	// The rebuild is pinned inside ClearValidationObs, so recovery can only
 	// return if it no longer waits for it.

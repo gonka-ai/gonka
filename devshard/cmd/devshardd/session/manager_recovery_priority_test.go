@@ -40,10 +40,10 @@ func seedRecoveryManager(t *testing.T, store storage.Storage, count int) *HostMa
 	for i, slot := range group {
 		addresses[i] = slot.ValidatorAddress
 	}
-	return NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil,
+	return waitObsRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil,
 		testutil.RuntimeTestVersion, &mockBridge{
 			escrow: &bridge.EscrowInfo{EscrowID: "1", Amount: 100000, CreatorAddress: user.Address(), Slots: addresses},
-		}, nil, nil)
+		}, nil, nil))
 }
 
 func (m *HostManager) loadedSessionCount() int {
