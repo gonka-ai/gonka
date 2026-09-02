@@ -40,7 +40,7 @@ func seedRecoveryManager(t *testing.T, store storage.Storage, count int) *HostMa
 	for i, slot := range group {
 		addresses[i] = slot.ValidatorAddress
 	}
-	return waitObsRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil,
+	return waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil,
 		testutil.RuntimeTestVersion, &mockBridge{
 			escrow: &bridge.EscrowInfo{EscrowID: "1", Amount: 100000, CreatorAddress: user.Address(), Slots: addresses},
 		}, nil, nil))

@@ -41,21 +41,21 @@ type snapshotData struct {
 }
 
 type sessionData struct {
-	escrowID      string
-	epochID       uint64
-	version       string
-	creatorAddr   string
-	config        types.SessionConfig
-	group         []types.SlotAssignment
-	balance       uint64
-	diffs         []types.DiffRecord
-	nonceToIndex  map[uint64]int
-	lastFinalized uint64
-	status        string // "active", "settled"
-	snapshot      *snapshotData
-	inferences              map[uint64]InferenceRow
-	inferenceValidationObs  map[uint64]map[uint32]SlotValidationObs
-	sealedValidationObs     map[uint64]map[uint32]SlotValidationObs
+	escrowID               string
+	epochID                uint64
+	version                string
+	creatorAddr            string
+	config                 types.SessionConfig
+	group                  []types.SlotAssignment
+	balance                uint64
+	diffs                  []types.DiffRecord
+	nonceToIndex           map[uint64]int
+	lastFinalized          uint64
+	status                 string // "active", "settled"
+	snapshot               *snapshotData
+	inferences             map[uint64]InferenceRow
+	inferenceValidationObs map[uint64]map[uint32]SlotValidationObs
+	sealedValidationObs    map[uint64]map[uint32]SlotValidationObs
 }
 
 // Memory is an in-memory storage implementation for testing.
@@ -95,15 +95,15 @@ func (m *Memory) CreateSession(params CreateSessionParams) error {
 	}
 
 	m.sessions[params.EscrowID] = &sessionData{
-		escrowID:     params.EscrowID,
-		epochID:      params.EpochID,
-		version:      requestedVersion,
-		creatorAddr:  params.CreatorAddr,
-		config:       params.Config,
-		group:        copyGroup(params.Group),
-		balance:      params.InitialBalance,
-		nonceToIndex: make(map[uint64]int),
-		status:       "active",
+		escrowID:               params.EscrowID,
+		epochID:                params.EpochID,
+		version:                requestedVersion,
+		creatorAddr:            params.CreatorAddr,
+		config:                 params.Config,
+		group:                  copyGroup(params.Group),
+		balance:                params.InitialBalance,
+		nonceToIndex:           make(map[uint64]int),
+		status:                 "active",
 		inferences:             make(map[uint64]InferenceRow),
 		inferenceValidationObs: make(map[uint64]map[uint32]SlotValidationObs),
 		sealedValidationObs:    make(map[uint64]map[uint32]SlotValidationObs),
@@ -304,6 +304,13 @@ func (m *Memory) LoadSnapshot(escrowID string) (uint64, []byte, error) {
 }
 
 func (m *Memory) InsertSealedInference(escrowID string, row InferenceRow) error {
+	return m.InsertSealedInferences(escrowID, []InferenceRow{row})
+}
+
+func (m *Memory) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -311,7 +318,9 @@ func (m *Memory) InsertSealedInference(escrowID string, row InferenceRow) error 
 	if !ok {
 		return fmt.Errorf("session %s not found", escrowID)
 	}
-	s.inferences[row.InferenceID] = row
+	for _, row := range rows {
+		s.inferences[row.InferenceID] = row
+	}
 	return nil
 }
 
@@ -340,6 +349,21 @@ func (m *Memory) DeleteSealedInferences(escrowID string) error {
 	}
 	s.inferences = make(map[uint64]InferenceRow)
 	return nil
+}
+
+func (m *Memory) SealedInferenceIDs(escrowID string) (map[uint64]uint64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return nil, fmt.Errorf("session %s not found", escrowID)
+	}
+	out := make(map[uint64]uint64, len(s.inferences))
+	for id, row := range s.inferences {
+		out[id] = row.SealedNonce
+	}
+	return out, nil
 }
 
 func (m *Memory) ClearValidationObs(escrowID string) error {

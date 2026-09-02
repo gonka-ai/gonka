@@ -1227,15 +1227,7 @@ func (s *Postgres) LoadSnapshot(escrowID string) (uint64, []byte, error) {
 	return nonce, data, nil
 }
 
-func (s *Postgres) InsertSealedInference(escrowID string, row InferenceRow) error {
-	epochID, err := s.lookupEpoch(escrowID)
-	if err != nil {
-		return err
-	}
-	ctx, cancel := s.opCtx()
-	defer cancel()
-	_, err = s.pool.Exec(ctx,
-		`INSERT INTO devshard_sealed_inferences (
+const postgresInsertSealedInferenceSQL = `INSERT INTO devshard_sealed_inferences (
 			epoch_id, escrow_id, inference_id, sealed_nonce,
 			obs_present, sealed_status, sealed_executor_slot,
 			sealed_votes_valid, sealed_votes_invalid, sealed_validated_by,
@@ -1263,7 +1255,14 @@ func (s *Postgres) InsertSealedInference(escrowID string, row InferenceRow) erro
 			sealed_reserved_cost = EXCLUDED.sealed_reserved_cost,
 			sealed_actual_cost = EXCLUDED.sealed_actual_cost,
 			sealed_started_at = EXCLUDED.sealed_started_at,
-			sealed_confirmed_at = EXCLUDED.sealed_confirmed_at`,
+			sealed_confirmed_at = EXCLUDED.sealed_confirmed_at`
+
+type postgresExecer interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+}
+
+func postgresExecInsertSealedInference(ctx context.Context, exec postgresExecer, epochID uint64, escrowID string, row InferenceRow) error {
+	_, err := exec.Exec(ctx, postgresInsertSealedInferenceSQL,
 		epochID, escrowID, row.InferenceID, row.SealedNonce, row.ObsPresent,
 		row.SealedStatus, row.SealedExecutorSlot,
 		row.SealedVotesValid, row.SealedVotesInvalid, row.SealedValidatedBy,
@@ -1275,6 +1274,51 @@ func (s *Postgres) InsertSealedInference(escrowID string, row InferenceRow) erro
 	)
 	if err != nil {
 		return fmt.Errorf("insert sealed inference: %w", err)
+	}
+	return nil
+}
+
+func (s *Postgres) InsertSealedInference(escrowID string, row InferenceRow) error {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	return postgresExecInsertSealedInference(ctx, s.pool, epochID, escrowID, row)
+}
+
+func (s *Postgres) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return err
+	}
+	for start := 0; start < len(rows); start += sealedInferenceInsertChunk {
+		end := start + sealedInferenceInsertChunk
+		if end > len(rows) {
+			end = len(rows)
+		}
+		ctx, cancel := s.opCtx()
+		tx, err := s.pool.Begin(ctx)
+		if err != nil {
+			cancel()
+			return fmt.Errorf("insert sealed inferences begin: %w", err)
+		}
+		for i := start; i < end; i++ {
+			if err := postgresExecInsertSealedInference(ctx, tx, epochID, escrowID, rows[i]); err != nil {
+				_ = tx.Rollback(ctx)
+				cancel()
+				return err
+			}
+		}
+		if err := tx.Commit(ctx); err != nil {
+			cancel()
+			return fmt.Errorf("insert sealed inferences commit: %w", err)
+		}
+		cancel()
 	}
 	return nil
 }
@@ -1330,6 +1374,36 @@ func (s *Postgres) DeleteSealedInferences(escrowID string) error {
 		return fmt.Errorf("delete sealed inferences: %w", err)
 	}
 	return nil
+}
+
+func (s *Postgres) SealedInferenceIDs(escrowID string) (map[uint64]uint64, error) {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	rows, err := s.pool.Query(ctx,
+		`SELECT inference_id, sealed_nonce FROM devshard_sealed_inferences
+		  WHERE epoch_id = $1 AND escrow_id = $2`,
+		epochID, escrowID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list sealed inference ids: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[uint64]uint64)
+	for rows.Next() {
+		var id, nonce uint64
+		if err := rows.Scan(&id, &nonce); err != nil {
+			return nil, fmt.Errorf("scan sealed inference id: %w", err)
+		}
+		out[id] = nonce
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (s *Postgres) ClearValidationObs(escrowID string) error {

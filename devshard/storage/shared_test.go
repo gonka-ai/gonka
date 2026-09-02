@@ -281,10 +281,26 @@ func runSealedInferenceLifecycle(t *testing.T, store Storage) {
 	require.True(t, ok)
 	require.Equal(t, uint32(5), got.SealedStatus)
 
+	ids, err := store.SealedInferenceIDs("escrow-1")
+	require.NoError(t, err)
+	require.Equal(t, map[uint64]uint64{1: 42}, ids)
+
+	rich := testInferenceRow(2)
+	rich.ObsPresent = true
+	rich.SealedModel = "llama"
+	require.NoError(t, store.InsertSealedInferences("escrow-1", []InferenceRow{rich}))
+	ids, err = store.SealedInferenceIDs("escrow-1")
+	require.NoError(t, err)
+	require.Equal(t, uint64(42), ids[1])
+	require.Equal(t, uint64(42), ids[2], "bare and rich rows both appear so gap fill can skip existing rows")
+
 	require.NoError(t, store.DeleteSealedInferences("escrow-1"))
 	_, ok, err = store.GetSealedInference("escrow-1", 1)
 	require.NoError(t, err)
 	require.False(t, ok)
+	ids, err = store.SealedInferenceIDs("escrow-1")
+	require.NoError(t, err)
+	require.Empty(t, ids)
 }
 
 func runAddSignature(t *testing.T, store Storage) {

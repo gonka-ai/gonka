@@ -43,11 +43,13 @@ type obsQueue struct {
 	dropped int
 }
 
-// obsOp is a queued obs write. Exactly one of the two forms is set.
+// obsOp is a queued obs write. Exactly one of the forms is set.
 type obsOp struct {
-	entries []ValidationObsEntry
-	drainID uint64
-	drain   bool
+	entries     []ValidationObsEntry
+	drainID     uint64
+	drain       bool
+	sealedRow   *InferenceRow
+	sealedBatch []InferenceRow
 }
 
 func NewObsRepairGate(inner Storage) *ObsRepairGate {
@@ -85,6 +87,44 @@ func (g *ObsRepairGate) DrainInferenceValidationObs(escrowID string, inferenceID
 		return nil
 	}
 	return g.Storage.DrainInferenceValidationObs(escrowID, inferenceID)
+}
+
+func cloneInferenceRow(row InferenceRow) InferenceRow {
+	out := row
+	if len(row.SealedValidatedBy) > 0 {
+		out.SealedValidatedBy = append([]byte(nil), row.SealedValidatedBy...)
+	}
+	if len(row.SealedPromptHash) > 0 {
+		out.SealedPromptHash = append([]byte(nil), row.SealedPromptHash...)
+	}
+	if len(row.SealedResponseHash) > 0 {
+		out.SealedResponseHash = append([]byte(nil), row.SealedResponseHash...)
+	}
+	return out
+}
+
+func (g *ObsRepairGate) InsertSealedInference(escrowID string, row InferenceRow) error {
+	if q := g.queueFor(escrowID); q != nil {
+		cloned := cloneInferenceRow(row)
+		q.push(obsOp{sealedRow: &cloned})
+		return nil
+	}
+	return g.Storage.InsertSealedInference(escrowID, row)
+}
+
+func (g *ObsRepairGate) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	if q := g.queueFor(escrowID); q != nil {
+		cloned := make([]InferenceRow, len(rows))
+		for i := range rows {
+			cloned[i] = cloneInferenceRow(rows[i])
+		}
+		q.push(obsOp{sealedBatch: cloned})
+		return nil
+	}
+	return g.Storage.InsertSealedInferences(escrowID, rows)
 }
 
 // queueFor returns the active queue for an escrow, or nil to write through.
@@ -190,9 +230,14 @@ func (g *ObsRepairGate) applyOps(escrowID string, ops []obsOp) error {
 	var firstErr error
 	for _, op := range ops {
 		var err error
-		if op.drain {
+		switch {
+		case op.drain:
 			err = g.Storage.DrainInferenceValidationObs(escrowID, op.drainID)
-		} else {
+		case op.sealedRow != nil:
+			err = g.Storage.InsertSealedInference(escrowID, *op.sealedRow)
+		case len(op.sealedBatch) > 0:
+			err = g.Storage.InsertSealedInferences(escrowID, op.sealedBatch)
+		default:
 			err = g.Storage.RecordValidationsAppliedOnce(escrowID, op.entries)
 		}
 		if err != nil && firstErr == nil {

@@ -815,7 +815,18 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 			obsRepair = &obsRepairJob{
 				records: records,
 				sealed:  storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
+				sm:      sm,
 			}
+		} else {
+			fillStarted := time.Now()
+			inserted, fillErr := sm.FillSealedInferenceIndexGaps()
+			if fillErr != nil {
+				return nil, nil, fmt.Errorf("fill sealed inference index: %w", fillErr)
+			}
+			logging.Info("filled sealed inference index gaps", inferenceTypes.System,
+				"escrow_id", escrowID, "inserted", inserted,
+				"sealed_ids", len(sm.ExportSealedNonces()),
+				"duration", time.Since(fillStarted))
 		}
 
 		if replayFrom == 1 || uint64(len(records)) >= host.SnapshotInterval {
@@ -824,10 +835,6 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 					"escrow_id", escrowID, "nonce", meta.LatestNonce, "error", saveErr)
 			}
 		}
-	}
-
-	if err := sm.RebuildSealedInferenceIndex(); err != nil {
-		return nil, nil, fmt.Errorf("rebuild sealed inference index: %w", err)
 	}
 
 	h, err := host.NewHost(sm, m.signer, m.engine, escrowID, meta.Group, nil, m.hostOpts(meta.EpochID)...)
@@ -1179,13 +1186,14 @@ func verifySnapshotRoot(store storage.Storage, sm *state.StateMachine, escrowID 
 type obsRepairJob struct {
 	records []types.DiffRecord
 	sealed  []uint64
+	sm      *state.StateMachine
 }
 
-// startObsRepair rebuilds validation obs for a freshly published session in the
-// background. The gate queues the session's obs writes for the duration, so the
-// rebuild gets the exclusive access it needs without holding up the apply path.
-// Failures leave the counters stale, which is why nothing outside the stats API
-// may depend on them.
+// startObsRepair rebuilds validation obs and the sealed-inference index for a
+// freshly published full-replay session in the background. The gate queues the
+// session's obs writes for the duration, so the rebuild gets exclusive access
+// without holding up the apply path. Failures leave the counters stale, which
+// is why nothing outside the stats API may depend on them.
 func (m *HostManager) startObsRepair(escrowID string, job *obsRepairJob) {
 	if job == nil || m.obsGate == nil {
 		return
@@ -1195,7 +1203,13 @@ func (m *HostManager) startObsRepair(escrowID string, job *obsRepairJob) {
 		defer m.obsRepairWG.Done()
 		startedAt := time.Now()
 		err := m.obsGate.RepairValidationObs(escrowID, func(inner storage.Storage) error {
-			return storage.RebuildValidationObsFromDiffs(inner, escrowID, job.records, job.sealed)
+			if err := storage.RebuildValidationObsFromDiffs(inner, escrowID, job.records, job.sealed); err != nil {
+				return err
+			}
+			if job.sm == nil {
+				return nil
+			}
+			return job.sm.RebuildSealedInferenceIndexFromDiffs(inner, job.records)
 		})
 		if err != nil {
 			logging.Warn("background validation obs rebuild failed", inferenceTypes.System,
@@ -1208,10 +1222,11 @@ func (m *HostManager) startObsRepair(escrowID string, job *obsRepairJob) {
 	}()
 }
 
-// WaitObsRepairs blocks until background obs rebuilds finish. Shutdown must
-// call it: a rebuild interrupted after its clear leaves the counters empty, and
-// recovery will not retry once a snapshot exists.
-func (m *HostManager) WaitObsRepairs() {
+// WaitRecoveryRepairs blocks until background recovery rebuilds finish
+// (validation obs and the sealed-inference index). Shutdown must call it: a
+// rebuild interrupted after its clear leaves those rows empty, and recovery
+// will not retry once a snapshot exists.
+func (m *HostManager) WaitRecoveryRepairs() {
 	m.obsRepairWG.Wait()
 }
 
