@@ -316,7 +316,7 @@ func TestRecoverStoredSession_RejectsSettledStatus(t *testing.T) {
 	require.NoError(t, store.MarkSettled("1"))
 
 	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
-	_, err := mgr.recoverStoredSession("1")
+	_, _, err := mgr.recoverStoredSession("1")
 	require.ErrorIs(t, err, storage.ErrSessionNotActive)
 }
 
