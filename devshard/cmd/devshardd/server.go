@@ -26,7 +26,7 @@ func buildServer(lifecycle *lifecycleState) *echo.Echo {
 	return e
 }
 
-func buildAdminServer(lifecycle *lifecycleState, storageReady func() bool) *echo.Echo {
+func buildAdminServer(lifecycle *lifecycleState, storageReady, recoveryComplete func() bool) *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
@@ -35,10 +35,11 @@ func buildAdminServer(lifecycle *lifecycleState, storageReady func() bool) *echo
 	e.GET("/ready", func(c echo.Context) error {
 		status := lifecycle.Status()
 		storeReady := storageReady == nil || storageReady()
-		if !status.Ready || status.Draining || !storeReady {
-			return c.JSON(http.StatusServiceUnavailable, readyResponse(status, storeReady))
+		recovered := recoveryComplete == nil || recoveryComplete()
+		if !status.Ready || status.Draining || !storeReady || !recovered {
+			return c.JSON(http.StatusServiceUnavailable, readyResponse(status, storeReady, recovered))
 		}
-		return c.JSON(http.StatusOK, readyResponse(status, storeReady))
+		return c.JSON(http.StatusOK, readyResponse(status, storeReady, recovered))
 	})
 	e.POST("/drain", func(c echo.Context) error {
 		lifecycle.StartDrain()
@@ -51,12 +52,14 @@ func buildAdminServer(lifecycle *lifecycleState, storageReady func() bool) *echo
 	return e
 }
 
-// readyStatus augments drainStatus with storage readiness for the /ready probe.
+// readyStatus augments drainStatus with storage readiness and session recovery
+// progress for the /ready probe.
 type readyStatus struct {
 	drainStatus
-	StorageReady bool `json:"storage_ready"`
+	StorageReady     bool `json:"storage_ready"`
+	RecoveryComplete bool `json:"recovery_complete"`
 }
 
-func readyResponse(status drainStatus, storeReady bool) readyStatus {
-	return readyStatus{drainStatus: status, StorageReady: storeReady}
+func readyResponse(status drainStatus, storeReady, recovered bool) readyStatus {
+	return readyStatus{drainStatus: status, StorageReady: storeReady, RecoveryComplete: recovered}
 }
