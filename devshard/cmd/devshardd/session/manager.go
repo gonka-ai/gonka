@@ -825,7 +825,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 			}
 			logging.Info("filled sealed inference index gaps", inferenceTypes.System,
 				"escrow_id", escrowID, "inserted", inserted,
-				"sealed_ids", len(sm.ExportSealedNonces()),
+				"sealed_ids", sm.SealedNonceCount(),
 				"duration", time.Since(fillStarted))
 		}
 
