@@ -681,6 +681,17 @@ func (h *HybridStorage) InsertSealedInference(escrowID string, row InferenceRow)
 	return b.InsertSealedInference(escrowID, row)
 }
 
+func (h *HybridStorage) BulkInsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return err
+	}
+	return b.BulkInsertSealedInferences(escrowID, rows)
+}
+
 func (h *HybridStorage) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
 	if len(rows) == 0 {
 		return nil

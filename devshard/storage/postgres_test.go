@@ -177,6 +177,9 @@ func TestPostgres_SealedInferenceLifecycle(t *testing.T) {
 func TestPostgres_SealedInferenceBatchInsert(t *testing.T) {
 	runSealedInferenceBatchInsert(t, newTestPostgres(t))
 }
+func TestPostgres_SealedInferenceBulkInsert(t *testing.T) {
+	runSealedInferenceBulkInsert(t, newTestPostgres(t))
+}
 func TestPostgres_ValidationObsBatchDrain(t *testing.T) {
 	runValidationObsBatchDrain(t, newTestPostgres(t))
 }

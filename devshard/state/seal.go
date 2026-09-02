@@ -753,7 +753,10 @@ func (sm *StateMachine) RebuildSealedInferenceIndexFromDiffs(store storage.Stora
 	for _, id := range liveIDs {
 		rows = append(rows, inferenceObsRow(id, 0, live[id]))
 	}
-	return store.InsertSealedInferences(escrowID, rows)
+	// The wipe above emptied the escrow, so this is a load into empty space
+	// rather than an upsert. On Postgres that is the difference between COPY
+	// and a per-row conflict probe.
+	return store.BulkInsertSealedInferences(escrowID, rows)
 }
 
 // foldInferenceRecordsFromDiffs replays the journal into inference records.

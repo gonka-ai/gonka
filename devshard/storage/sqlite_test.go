@@ -132,6 +132,10 @@ func TestSQLite_SealedInferenceBatchInsert(t *testing.T) {
 	runSealedInferenceBatchInsert(t, newTestSQLite(t))
 }
 
+func TestSQLite_SealedInferenceBulkInsert(t *testing.T) {
+	runSealedInferenceBulkInsert(t, newTestSQLite(t))
+}
+
 func TestSQLite_ValidationObsBatchDrain(t *testing.T) {
 	runValidationObsBatchDrain(t, newTestSQLite(t))
 }

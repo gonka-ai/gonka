@@ -93,6 +93,9 @@ const (
 	// postgresIndexRepairBatchSize caps rows per DELETE/INSERT when repairing
 	// devshard_session_index so a large divergence does not hold one giant lock.
 	postgresIndexRepairBatchSize = 1000
+	// pgUniqueViolation is SQLSTATE 23505, returned when COPY hits a row the
+	// caller expected not to exist.
+	pgUniqueViolation = "23505"
 )
 
 type postgresHealthProbeResult string
@@ -1665,6 +1668,79 @@ func (s *Postgres) InsertSealedInferences(escrowID string, rows []InferenceRow) 
 	return nil
 }
 
+var postgresSealedInferenceColumns = []string{
+	"epoch_id", "escrow_id", "inference_id", "sealed_nonce",
+	"obs_present", "sealed_status", "sealed_executor_slot",
+	"sealed_votes_valid", "sealed_votes_invalid", "sealed_validated_by",
+	"sealed_model", "sealed_prompt_hash", "sealed_response_hash",
+	"sealed_input_length", "sealed_max_tokens",
+	"sealed_input_tokens", "sealed_output_tokens",
+	"sealed_reserved_cost", "sealed_actual_cost",
+	"sealed_started_at", "sealed_confirmed_at",
+}
+
+// BulkInsertSealedInferences loads rows with COPY. What is left of the upsert
+// path's cost is the per-row conflict probe, not the protocol, so dropping the
+// probe is worth about 3x — enough to make Postgres the faster backend here.
+// A collision means the caller's range was not empty after all; that chunk
+// falls back to the upsert rather than failing the rebuild.
+func (s *Postgres) BulkInsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return err
+	}
+	for start := 0; start < len(rows); start += sealedInferenceCopyChunk {
+		end := start + sealedInferenceCopyChunk
+		if end > len(rows) {
+			end = len(rows)
+		}
+		chunk := rows[start:end]
+		if err := s.copySealedInferenceChunk(epochID, escrowID, chunk); err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
+				if err := s.InsertSealedInferences(escrowID, chunk); err != nil {
+					return err
+				}
+				continue
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Postgres) copySealedInferenceChunk(epochID uint64, escrowID string, rows []InferenceRow) error {
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	if err := s.ensurePartition(ctx, epochID); err != nil {
+		return err
+	}
+	_, err := s.pool.CopyFrom(ctx,
+		pgx.Identifier{pgInferencesParent},
+		postgresSealedInferenceColumns,
+		pgx.CopyFromSlice(len(rows), func(i int) ([]any, error) {
+			r := rows[i]
+			return []any{
+				int64(epochID), escrowID, int64(r.InferenceID), int64(r.SealedNonce),
+				r.ObsPresent, int32(r.SealedStatus), int32(r.SealedExecutorSlot),
+				int32(r.SealedVotesValid), int32(r.SealedVotesInvalid), r.SealedValidatedBy,
+				r.SealedModel, r.SealedPromptHash, r.SealedResponseHash,
+				int64(r.SealedInputLength), int64(r.SealedMaxTokens),
+				int64(r.SealedInputTokens), int64(r.SealedOutputTokens),
+				int64(r.SealedReservedCost), int64(r.SealedActualCost),
+				r.SealedStartedAt, r.SealedConfirmedAt,
+			}, nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("copy sealed inferences: %w", err)
+	}
+	return nil
+}
+
 func (s *Postgres) insertSealedInferenceChunk(epochID uint64, escrowID string, rows []InferenceRow) error {
 	// ON CONFLICT DO UPDATE cannot touch the same row twice in one statement,
 	// so collapse ids repeated inside the chunk to the last value, which is
@@ -1963,39 +2039,35 @@ func (s *Postgres) DrainInferenceValidationObsBatch(escrowID string, inferenceID
 // rows are unique per (epoch, escrow, inference, slot), so no source row
 // conflicts with another row of the same statement and the accumulate applies
 // per target row, exactly as in the single-id form.
+//
+// The move is one data-modifying CTE rather than an explicit transaction around
+// an INSERT and a DELETE: same atomicity, but one round trip per chunk instead
+// of four, which is what the cost is made of once the rows are batched.
 func (s *Postgres) drainValidationObsChunk(epochID uint64, escrowID string, ids []int64) error {
 	ctx, cancel := s.opCtx()
 	defer cancel()
 	if err := s.ensurePartition(ctx, epochID); err != nil {
 		return err
 	}
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return fmt.Errorf("drain inference validation obs begin: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	if _, err := tx.Exec(ctx,
-		`INSERT INTO devshard_sealed_validation_obs (epoch_id, escrow_id, inference_id, slot_id, required_validations, completed_validations)
-		 SELECT epoch_id, escrow_id, inference_id, slot_id, required_validations, completed_validations
-		   FROM devshard_inference_validation_obs
-		  WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = ANY($3::bigint[])
+	if _, err := s.pool.Exec(ctx,
+		`WITH moved AS (
+		   DELETE FROM devshard_inference_validation_obs
+		    WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = ANY($3::bigint[])
+		   RETURNING epoch_id, escrow_id, inference_id, slot_id,
+		             required_validations, completed_validations
+		 )
+		 INSERT INTO devshard_sealed_validation_obs (
+		   epoch_id, escrow_id, inference_id, slot_id,
+		   required_validations, completed_validations)
+		 SELECT epoch_id, escrow_id, inference_id, slot_id,
+		        required_validations, completed_validations
+		   FROM moved
 		 ON CONFLICT (epoch_id, escrow_id, inference_id, slot_id) DO UPDATE SET
 		   required_validations = devshard_sealed_validation_obs.required_validations + EXCLUDED.required_validations,
 		   completed_validations = devshard_sealed_validation_obs.completed_validations + EXCLUDED.completed_validations`,
 		epochID, escrowID, ids,
 	); err != nil {
-		return fmt.Errorf("drain inference validation obs insert: %w", err)
-	}
-	if _, err := tx.Exec(ctx,
-		`DELETE FROM devshard_inference_validation_obs
-		  WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = ANY($3::bigint[])`,
-		epochID, escrowID, ids,
-	); err != nil {
-		return fmt.Errorf("drain inference validation obs delete: %w", err)
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return fmt.Errorf("drain inference validation obs commit: %w", err)
+		return fmt.Errorf("drain inference validation obs: %w", err)
 	}
 	return nil
 }

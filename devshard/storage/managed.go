@@ -231,6 +231,10 @@ func (m *ManagedStorage) InsertSealedInferences(escrowID string, rows []Inferenc
 	return m.inner.InsertSealedInferences(escrowID, rows)
 }
 
+func (m *ManagedStorage) BulkInsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	return m.inner.BulkInsertSealedInferences(escrowID, rows)
+}
+
 func (m *ManagedStorage) GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error) {
 	return m.inner.GetSealedInference(escrowID, inferenceID)
 }

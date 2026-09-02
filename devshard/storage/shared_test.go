@@ -365,6 +365,43 @@ func runSealedInferenceBatchInsert(t *testing.T, store Storage) {
 	require.NoError(t, store.InsertSealedInferences("escrow-1", nil))
 }
 
+// runSealedInferenceBulkInsert pins the post-wipe load path: it must be
+// indistinguishable from the upsert to callers, including when its "no rows
+// exist yet" precondition turns out to be false, since Postgres reaches that
+// case only through a COPY error and a retry.
+func runSealedInferenceBulkInsert(t *testing.T, store Storage) {
+	t.Helper()
+
+	require.NoError(t, store.CreateSession(defaultParams()))
+	require.NoError(t, store.BulkInsertSealedInferences("escrow-1", nil))
+
+	rich := testInferenceRow(7)
+	rich.ObsPresent = true
+	rich.SealedModel = "llama"
+	rich.SealedValidatedBy = []byte{0x0f, 0xf0}
+	bare := InferenceRow{InferenceID: 8, SealedNonce: 12}
+	require.NoError(t, store.BulkInsertSealedInferences("escrow-1", []InferenceRow{rich, bare}))
+
+	got, ok, err := store.GetSealedInference("escrow-1", 7)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, rich, got, "every sealed column must survive the bulk load")
+
+	ids, err := store.SealedInferenceIDs("escrow-1")
+	require.NoError(t, err)
+	require.Equal(t, map[uint64]uint64{7: rich.SealedNonce, 8: 12}, ids)
+
+	// Precondition violated: the rows are already there. The load must still
+	// end with the new values rather than failing the rebuild.
+	rich.SealedNonce = 99
+	rich.SealedModel = "mistral"
+	require.NoError(t, store.BulkInsertSealedInferences("escrow-1", []InferenceRow{rich}))
+	got, ok, err = store.GetSealedInference("escrow-1", 7)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, rich, got)
+}
+
 // runValidationObsBatchDrain pins the batch drain against the per-id form it
 // replaced in the rebuild: same sealed totals, live rows gone, ids with nothing
 // live tolerated, and accumulate onto an existing sealed row.

@@ -999,6 +999,13 @@ func (s *SQLite) InsertSealedInferences(escrowID string, rows []InferenceRow) er
 	return nil
 }
 
+// BulkInsertSealedInferences has no separate bulk path on SQLite: writes are
+// in-process, so the upsert's conflict probe is a b-tree lookup rather than a
+// round trip and the prepared chunk insert is already the fast path.
+func (s *SQLite) BulkInsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	return s.InsertSealedInferences(escrowID, rows)
+}
+
 func sqliteInsertSealedInferenceChunk(db *sql.DB, escrowID string, rows []InferenceRow) error {
 	tx, err := db.Begin()
 	if err != nil {

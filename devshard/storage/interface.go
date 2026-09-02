@@ -82,6 +82,13 @@ type Storage interface {
 	// InsertSealedInferences upserts many sealed-inference rows in chunked
 	// transactions. An empty slice is a no-op.
 	InsertSealedInferences(escrowID string, rows []InferenceRow) error
+	// BulkInsertSealedInferences loads rows that are expected not to exist yet,
+	// as after DeleteSealedInferences. Backends may take a bulk path that has
+	// no per-row conflict probe (Postgres uses COPY), which is the difference
+	// between minutes and seconds on a full-replay rebuild. Rows that do
+	// collide still land as an upsert, so the result matches
+	// InsertSealedInferences either way; only the speed differs.
+	BulkInsertSealedInferences(escrowID string, rows []InferenceRow) error
 	GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error)
 	DeleteSealedInferences(escrowID string) error
 	// SealedInferenceIDs returns inferenceID → sealedNonce for every sealed-

@@ -307,6 +307,10 @@ func (m *Memory) InsertSealedInference(escrowID string, row InferenceRow) error 
 	return m.InsertSealedInferences(escrowID, []InferenceRow{row})
 }
 
+func (m *Memory) BulkInsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	return m.InsertSealedInferences(escrowID, rows)
+}
+
 func (m *Memory) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
 	if len(rows) == 0 {
 		return nil

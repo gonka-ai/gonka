@@ -124,6 +124,19 @@ func (g *ObsRepairGate) InsertSealedInference(escrowID string, row InferenceRow)
 	return g.Storage.InsertSealedInference(escrowID, row)
 }
 
+// BulkInsertSealedInferences queues as an ordinary upsert batch during a
+// repair: the bulk path's "these rows do not exist yet" precondition cannot
+// survive being deferred past the rebuild that is writing the same rows.
+func (g *ObsRepairGate) BulkInsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	if q := g.queueFor(escrowID); q != nil {
+		return g.InsertSealedInferences(escrowID, rows)
+	}
+	return g.Storage.BulkInsertSealedInferences(escrowID, rows)
+}
+
 func (g *ObsRepairGate) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
 	if len(rows) == 0 {
 		return nil

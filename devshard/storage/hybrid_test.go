@@ -72,6 +72,10 @@ func (r *recordingStorage) InsertSealedInferences(escrowID string, rows []Infere
 	r.lastMethod = "InsertSealedInferences"
 	return nil
 }
+func (r *recordingStorage) BulkInsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	r.lastMethod = "BulkInsertSealedInferences"
+	return nil
+}
 func (r *recordingStorage) GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error) {
 	r.lastMethod = "GetSealedInference"
 	return InferenceRow{}, false, nil
@@ -298,6 +302,9 @@ func TestHybridStorage_forwardsStorageMethods(t *testing.T) {
 
 	require.NoError(t, h.InsertSealedInferences("e", []InferenceRow{{}}))
 	require.Equal(t, "InsertSealedInferences", rec.lastMethod)
+
+	require.NoError(t, h.BulkInsertSealedInferences("e", []InferenceRow{{}}))
+	require.Equal(t, "BulkInsertSealedInferences", rec.lastMethod)
 
 	_, _, err = h.GetSealedInference("e", 1)
 	require.NoError(t, err)

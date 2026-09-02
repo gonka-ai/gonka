@@ -43,6 +43,9 @@ func (s *closeCountingStore) InsertSealedInference(string, storage.InferenceRow)
 func (s *closeCountingStore) InsertSealedInferences(string, []storage.InferenceRow) error {
 	return nil
 }
+func (s *closeCountingStore) BulkInsertSealedInferences(string, []storage.InferenceRow) error {
+	return nil
+}
 func (s *closeCountingStore) GetSealedInference(string, uint64) (storage.InferenceRow, bool, error) {
 	return storage.InferenceRow{}, false, nil
 }
