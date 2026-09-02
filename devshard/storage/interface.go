@@ -100,6 +100,11 @@ type Storage interface {
 	RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error
 	// DrainInferenceValidationObs moves live counters for an inference into sealed storage (called on seal).
 	DrainInferenceValidationObs(escrowID string, inferenceID uint64) error
+	// DrainInferenceValidationObsBatch is the many-ids form, used when recovery
+	// drains the whole seal set. The single-id form is one transaction per
+	// inference, which dominates a full-replay repair. Backends chunk
+	// internally; the result is the same as draining each id in turn.
+	DrainInferenceValidationObsBatch(escrowID string, inferenceIDs []uint64) error
 	// GetValidationObservability returns live + sealed validation counters aggregated by slot.
 	GetValidationObservability(escrowID string) ([]SlotValidationObs, error)
 	// PutEscrowCache stores chain-fetched escrow metadata for later lazy bind.

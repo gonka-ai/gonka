@@ -303,6 +303,49 @@ func runSealedInferenceLifecycle(t *testing.T, store Storage) {
 	require.Empty(t, ids)
 }
 
+// runValidationObsBatchDrain pins the batch drain against the per-id form it
+// replaced in the rebuild: same sealed totals, live rows gone, ids with nothing
+// live tolerated, and accumulate onto an existing sealed row.
+func runValidationObsBatchDrain(t *testing.T, store Storage) {
+	t.Helper()
+
+	require.NoError(t, store.CreateSession(defaultParams()))
+
+	for _, id := range []uint64{1, 2, 3} {
+		require.NoError(t, store.RecordValidationsAppliedOnce("escrow-1", []ValidationObsEntry{
+			{InferenceID: id, SlotID: 0},
+			{InferenceID: id, SlotID: 1},
+		}))
+	}
+	// Inference 2 drains twice, so its sealed row is accumulated onto rather
+	// than inserted; ids 4 and 5 have no live rows at all.
+	require.NoError(t, store.DrainInferenceValidationObs("escrow-1", 2))
+	require.NoError(t, store.RecordValidationsAppliedOnce("escrow-1", []ValidationObsEntry{
+		{InferenceID: 2, SlotID: 0},
+	}))
+
+	require.NoError(t, store.DrainInferenceValidationObsBatch("escrow-1", []uint64{1, 2, 3, 4, 5}))
+
+	rows, err := store.GetValidationObservability("escrow-1")
+	require.NoError(t, err)
+	bySlot := make(map[uint32]SlotValidationObs, len(rows))
+	for _, r := range rows {
+		bySlot[r.SlotID] = r
+	}
+	require.Equal(t, uint32(4), bySlot[0].CompletedValidations, "slot 0 drained 3 inferences plus the re-recorded one")
+	require.Equal(t, uint32(4), bySlot[0].RequiredValidations)
+	require.Equal(t, uint32(3), bySlot[1].CompletedValidations)
+	require.Equal(t, uint32(3), bySlot[1].RequiredValidations)
+
+	// A second batch drain is a no-op: the live rows are already gone.
+	require.NoError(t, store.DrainInferenceValidationObsBatch("escrow-1", []uint64{1, 2, 3}))
+	again, err := store.GetValidationObservability("escrow-1")
+	require.NoError(t, err)
+	require.Equal(t, rows, again)
+
+	require.NoError(t, store.DrainInferenceValidationObsBatch("escrow-1", nil))
+}
+
 func runAddSignature(t *testing.T, store Storage) {
 	t.Helper()
 

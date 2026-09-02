@@ -1832,6 +1832,71 @@ func (s *Postgres) DrainInferenceValidationObs(escrowID string, inferenceID uint
 	return tx.Commit(ctx)
 }
 
+func (s *Postgres) DrainInferenceValidationObsBatch(escrowID string, inferenceIDs []uint64) error {
+	if len(inferenceIDs) == 0 {
+		return nil
+	}
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return err
+	}
+	for start := 0; start < len(inferenceIDs); start += validationObsRebuildChunk {
+		end := start + validationObsRebuildChunk
+		if end > len(inferenceIDs) {
+			end = len(inferenceIDs)
+		}
+		ids := make([]int64, 0, end-start)
+		for _, id := range inferenceIDs[start:end] {
+			ids = append(ids, int64(id))
+		}
+		if err := s.drainValidationObsChunk(epochID, escrowID, ids); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// drainValidationObsChunk moves and deletes one id chunk set-at-a-time. Live
+// rows are unique per (epoch, escrow, inference, slot), so no source row
+// conflicts with another row of the same statement and the accumulate applies
+// per target row, exactly as in the single-id form.
+func (s *Postgres) drainValidationObsChunk(epochID uint64, escrowID string, ids []int64) error {
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	if err := s.ensurePartition(ctx, epochID); err != nil {
+		return err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("drain inference validation obs begin: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	if _, err := tx.Exec(ctx,
+		`INSERT INTO devshard_sealed_validation_obs (epoch_id, escrow_id, inference_id, slot_id, required_validations, completed_validations)
+		 SELECT epoch_id, escrow_id, inference_id, slot_id, required_validations, completed_validations
+		   FROM devshard_inference_validation_obs
+		  WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = ANY($3::bigint[])
+		 ON CONFLICT (epoch_id, escrow_id, inference_id, slot_id) DO UPDATE SET
+		   required_validations = devshard_sealed_validation_obs.required_validations + EXCLUDED.required_validations,
+		   completed_validations = devshard_sealed_validation_obs.completed_validations + EXCLUDED.completed_validations`,
+		epochID, escrowID, ids,
+	); err != nil {
+		return fmt.Errorf("drain inference validation obs insert: %w", err)
+	}
+	if _, err := tx.Exec(ctx,
+		`DELETE FROM devshard_inference_validation_obs
+		  WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = ANY($3::bigint[])`,
+		epochID, escrowID, ids,
+	); err != nil {
+		return fmt.Errorf("drain inference validation obs delete: %w", err)
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("drain inference validation obs commit: %w", err)
+	}
+	return nil
+}
+
 func (s *Postgres) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {
 	epochID, err := s.lookupEpoch(escrowID)
 	if err != nil {

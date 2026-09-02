@@ -93,6 +93,10 @@ func (r *recordingStorage) RecordValidationsAppliedOnce(escrowID string, entries
 	r.lastMethod = "RecordValidationsAppliedOnce"
 	return nil
 }
+func (r *recordingStorage) DrainInferenceValidationObsBatch(escrowID string, inferenceIDs []uint64) error {
+	r.lastMethod = "DrainInferenceValidationObsBatch"
+	return nil
+}
 func (r *recordingStorage) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {
 	r.lastMethod = "DrainInferenceValidationObs"
 	return nil

@@ -32,6 +32,12 @@ func ValidationObsEntriesFromTxs(txs []*types.DevshardTx) []ValidationObsEntry {
 	return entries
 }
 
+// validationObsRebuildChunk bounds entries per record write and ids per drain
+// transaction during a rebuild. Same rationale as sealedInferenceInsertChunk:
+// keep each commit inside the Postgres statement timeout without paying a
+// round trip per journal record or a transaction per inference.
+const validationObsRebuildChunk = 500
+
 // RebuildValidationObsFromDiffs rebuilds validation observability for an escrow
 // from the canonical diff journal. It clears live and sealed obs tables, replays
 // validation txs from records in nonce order, then drains live rows for each
@@ -48,21 +54,40 @@ func RebuildValidationObsFromDiffs(store Storage, escrowID string, records []typ
 	if err := store.ClearValidationObs(escrowID); err != nil {
 		return fmt.Errorf("validation obs rebuild: clear: %w", err)
 	}
+	// Accumulate across records instead of writing once per nonce: the write is
+	// ON CONFLICT DO NOTHING keyed on (inference_id, slot_id), so merging
+	// records is indistinguishable from applying them one at a time.
+	pending := make([]ValidationObsEntry, 0, validationObsRebuildChunk)
+	flush := func() error {
+		if len(pending) == 0 {
+			return nil
+		}
+		if err := store.RecordValidationsAppliedOnce(escrowID, pending); err != nil {
+			return fmt.Errorf("validation obs rebuild: record: %w", err)
+		}
+		pending = pending[:0]
+		return nil
+	}
 	for _, rec := range records {
 		entries := ValidationObsEntriesFromTxs(rec.Txs)
 		if len(entries) == 0 {
 			continue
 		}
-		if err := store.RecordValidationsAppliedOnce(escrowID, entries); err != nil {
-			return fmt.Errorf("validation obs rebuild: record nonce %d: %w", rec.Nonce, err)
+		pending = append(pending, entries...)
+		if len(pending) >= validationObsRebuildChunk {
+			if err := flush(); err != nil {
+				return err
+			}
 		}
 	}
+	if err := flush(); err != nil {
+		return err
+	}
+
 	ids := append([]uint64(nil), sealedInferenceIDs...)
 	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
-	for _, inferenceID := range ids {
-		if err := store.DrainInferenceValidationObs(escrowID, inferenceID); err != nil {
-			return fmt.Errorf("validation obs rebuild: drain inference %d: %w", inferenceID, err)
-		}
+	if err := store.DrainInferenceValidationObsBatch(escrowID, ids); err != nil {
+		return fmt.Errorf("validation obs rebuild: drain: %w", err)
 	}
 	return nil
 }

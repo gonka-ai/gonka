@@ -128,6 +128,9 @@ func (s *legacyOnlyStorage) ClearValidationObs(escrowID string) error {
 func (s *legacyOnlyStorage) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
 	return s.inner.RecordValidationsAppliedOnce(escrowID, entries)
 }
+func (s *legacyOnlyStorage) DrainInferenceValidationObsBatch(escrowID string, inferenceIDs []uint64) error {
+	return s.inner.DrainInferenceValidationObsBatch(escrowID, inferenceIDs)
+}
 func (s *legacyOnlyStorage) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {
 	return s.inner.DrainInferenceValidationObs(escrowID, inferenceID)
 }
