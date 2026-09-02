@@ -419,9 +419,10 @@ func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*trans
 }
 
 // RecoverSessions rebuilds in-memory sessions from the shared store.
-// For each active session, it replays all diffs through a fresh StateMachine,
-// injecting warm key deltas from the stored DiffRecords. Call this on startup
-// after constructing the HostManager.
+// For each active session it restores a host snapshot when one exists, then
+// replays only the post-snapshot diffs through a fresh StateMachine (injecting
+// warm key deltas from the stored DiffRecords). Call this on startup after
+// constructing the HostManager.
 func (m *HostManager) RecoverSessions() error {
 	escrowIDs, err := m.store.ListActiveSessions()
 	if err != nil {
@@ -463,7 +464,9 @@ func (m *HostManager) recoverAndStoreSession(escrowID string) (*transport.Server
 	return v.(*transport.Server), nil
 }
 
-// recoverStoredSession replays a single session from storage.
+// recoverStoredSession rebuilds a single session from storage. A host snapshot
+// at nonce N skips replaying diffs 1..N; only N+1..latest are applied. Decode
+// or load failures fall back to a full journal replay (v3 HostManager behavior).
 func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, error) {
 	meta, err := m.store.GetSessionMeta(escrowID)
 	if err != nil {
@@ -489,33 +492,73 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 		return nil, fmt.Errorf("create state machine: %w", err)
 	}
 
+	replayFrom := uint64(1)
 	if meta.LatestNonce > 0 {
-		records, err := m.store.GetDiffs(escrowID, 1, meta.LatestNonce)
-		if err != nil {
-			return nil, fmt.Errorf("get diffs: %w", err)
+		snapNonce, snapData, snapErr := m.store.LoadSnapshot(escrowID)
+		if snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce {
+			snapState, committedEntries, sealedNonces, decodeErr := host.UnmarshalStateSnapshotWithCommitted(snapData)
+			if decodeErr != nil {
+				logging.Error("failed to decode devshard snapshot, replaying full history", inferenceTypes.System,
+					"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", decodeErr)
+			} else {
+				sm.RestoreState(snapState)
+				sm.RestoreCommittedEntries(committedEntries)
+				sm.RestoreSealedNonces(sealedNonces)
+				replayFrom = snapNonce + 1
+				logging.Info("restored devshard snapshot", inferenceTypes.System,
+					"escrow_id", escrowID, "snapshot_nonce", snapNonce, "latest_nonce", meta.LatestNonce)
+			}
+		} else if snapErr != nil && !errors.Is(snapErr, storage.ErrSnapshotNotFound) {
+			logging.Error("failed to load devshard snapshot, replaying full history", inferenceTypes.System,
+				"escrow_id", escrowID, "error", snapErr)
 		}
 
-		for _, rec := range records {
-			sm.InjectWarmKeys(rec.WarmKeyDelta)
-			root, applyErr := sm.ApplyLocal(rec.Nonce, rec.Txs)
-			if applyErr != nil {
-				return nil, fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
+		var records []types.DiffRecord
+		if replayFrom <= meta.LatestNonce {
+			records, err = m.store.GetDiffs(escrowID, replayFrom, meta.LatestNonce)
+			if err != nil {
+				return nil, fmt.Errorf("get diffs: %w", err)
 			}
-			if len(rec.StateHash) > 0 && len(root) > 0 {
-				if !bytes.Equal(root, rec.StateHash) {
-					return nil, fmt.Errorf("state root mismatch at nonce %d", rec.Nonce)
+			for _, rec := range records {
+				sm.InjectWarmKeys(rec.WarmKeyDelta)
+				root, applyErr := sm.ApplyLocal(rec.Nonce, rec.Txs)
+				if applyErr != nil {
+					return nil, fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
+				}
+				if len(rec.StateHash) > 0 && len(root) > 0 {
+					if !bytes.Equal(root, rec.StateHash) {
+						return nil, fmt.Errorf("state root mismatch at nonce %d", rec.Nonce)
+					}
 				}
 			}
 		}
 
+		obsRecords := records
+		if replayFrom > 1 {
+			obsRecords, err = m.store.GetDiffs(escrowID, 1, meta.LatestNonce)
+			if err != nil {
+				return nil, fmt.Errorf("get diffs for validation obs rebuild: %w", err)
+			}
+		}
 		if err := storage.RebuildValidationObsFromDiffs(
 			m.store,
 			escrowID,
-			records,
+			obsRecords,
 			storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
 		); err != nil {
 			return nil, fmt.Errorf("rebuild validation obs: %w", err)
 		}
+
+		if replayFrom == 1 || uint64(len(records)) >= host.SnapshotInterval {
+			if saveErr := saveHostSnapshot(m.store, sm, escrowID, meta.LatestNonce); saveErr != nil {
+				logging.Error("failed to save devshard recovery snapshot", inferenceTypes.System,
+					"escrow_id", escrowID, "nonce", meta.LatestNonce, "error", saveErr)
+			}
+		}
+	}
+
+	if err := sm.RebuildSealedInferenceIndex(); err != nil {
+		return nil, fmt.Errorf("rebuild sealed inference index: %w", err)
 	}
 
 	h, err := host.NewHost(sm, m.signer, m.engine, escrowID, meta.Group, nil, m.hostOpts(meta.EpochID)...)
@@ -833,6 +876,17 @@ func (m *HostManager) existingServer(escrowID string) (*transport.Server, bool) 
 	defer m.sessionsMutex.RUnlock()
 	srv, ok := m.sessions[escrowID]
 	return srv, ok
+}
+
+func saveHostSnapshot(store storage.Storage, sm *state.StateMachine, escrowID string, nonce uint64) error {
+	data, err := host.MarshalStateSnapshotWithCommitted(sm.ExportState(), sm.ExportCommittedEntries(), sm.ExportSealedNonces())
+	if err != nil {
+		return fmt.Errorf("marshal snapshot: %w", err)
+	}
+	if err := store.SaveSnapshot(escrowID, nonce, data); err != nil {
+		return fmt.Errorf("save snapshot: %w", err)
+	}
+	return nil
 }
 
 func (m *HostManager) hostOpts(epochID uint64) []host.HostOption {
