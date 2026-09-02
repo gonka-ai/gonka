@@ -795,14 +795,11 @@ create_generation() {
     slot_compose "$slot" "$(new_generation)" up -d --wait --wait-timeout "$wait_timeout" router
 }
 
-# Removes the stopped previous generation of a slot: the replacement is
-# proven and there is nothing left to put back.
-commit_slot() {
+# The last look at a candidate before its previous generation is removed. A
+# plain failure status rather than fail: the caller's ERR trap must run and
+# put the previous generation back.
+require_slot_routes_now() {
     local slot=$1 route
-    # The pool or its PostgreSQL may have gone away between the route gate
-    # and this point; after the removal there is no exact copy to restore.
-    # A plain failure status rather than fail: the caller's ERR trap must
-    # run and put the previous generation back.
     for route in "${!required_routes[@]}" "${!protected_routes[@]}"; do
         slot_route_declared "$slot" "$route" || continue
         slot_route_ready "$slot" "$route" || {
@@ -810,12 +807,30 @@ commit_slot() {
             return 1
         }
     done
+}
+
+# Removes the stopped previous generation of a slot without any further
+# check: the cleanup half of a commit, safe to retry.
+remove_previous_generation() {
+    local slot=$1
     slot_generations "$slot" || { slot_lookup_failed $? "$slot"; return 1; }
     [[ -n $slot_previous ]] || return 0
-    [[ $slot_previous_state != running ]] || fail \
-        "cannot commit slot $slot: its previous generation is running"
-    "$docker_bin" rm "$slot_previous" >/dev/null || fail \
-        "cannot remove the previous generation of slot $slot"
+    [[ $slot_previous_state != running ]] || {
+        echo "versiond-router-fleet: cannot remove the previous generation of slot $slot: it is running" >&2
+        return 1
+    }
+    "$docker_bin" rm "$slot_previous" >/dev/null || {
+        echo "versiond-router-fleet: cannot remove the previous generation of slot $slot" >&2
+        return 1
+    }
+}
+
+# Removes the stopped previous generation of a slot: the replacement is
+# proven and there is nothing left to put back.
+commit_slot() {
+    local slot=$1
+    require_slot_routes_now "$slot" || return 1
+    remove_previous_generation "$slot"
 }
 
 # Puts a stopped generation back: the candidate (if any) is drained and
@@ -2069,12 +2084,22 @@ fleet_maintenance_rollout() {
     operation_in_flight=true
     fleet_status
     operation_in_flight=false
+    # Every check happens while every previous generation still exists;
+    # the last one looks at each candidate once more.
     for slot in "${maintenance_pending[@]}" "${maintenance_kept[@]}"; do
-        commit_slot "$slot"
+        require_slot_routes_now "$slot"
     done
 
+    # Commit point. From here nothing is rolled back: removing the previous
+    # generations is cleanup that a rerun of apply finishes if it stops
+    # halfway, and a slot never loses its serving candidate to a failure in
+    # another slot's cleanup.
     maintenance_active=false
     trap - ERR INT TERM HUP
+    for slot in "${maintenance_pending[@]}" "${maintenance_kept[@]}"; do
+        remove_previous_generation "$slot" || \
+            warn "the previous generation of slot $slot is still there; rerun apply to finish the cleanup"
+    done
 }
 
 # The deployment transaction fingerprint does not inspect live route health or

@@ -42,6 +42,7 @@ scenarios=(
     RT-CATALOG-ROUTE-LOST-BY-CANDIDATE
     RT-PREVIOUS-NO-AUTORESTART
     RT-PG-DROP-BEFORE-COMMIT
+    RT-PG-DROP-DURING-MAINTENANCE-COMMIT
     RT-NONHA-OWNER-DOWN
 )
 
@@ -759,6 +760,28 @@ scenario_pg_drop_before_commit() {
     fi
 }
 
+scenario_pg_drop_during_maintenance_commit() {
+    EXTRA_CONFIG='VERSIOND_POOL_HOST=new-pool' load_fleet_functions || return $?
+    seed_previous_fleet "env.VERSIOND_POOL_HOST=old-pool"
+    # The pool loses v4 right after the first previous generation was
+    # removed: past the commit point, nothing may be rolled back.
+    eval "$(declare -f remove_previous_generation | sed '1s/remove_previous_generation/real_remove_previous_generation/')"
+    remove_previous_generation() {
+        real_remove_previous_generation "$@" || return $?
+        : >"$model/pool-serves"
+    }
+    run_capture fleet_maintenance_rollout
+    local slot ok=true
+    for slot in 0 1 2; do
+        [[ $(count_containers "$slot") == 1 && $(serving_id "$slot") == gen-$slot-* ]] || ok=false
+    done
+    if ((LAST_RC == 0)) && [[ $ok == true ]]; then
+        invariant_holds 'an outage during the commit cleanup neither rolled back nor emptied a slot; every slot keeps its serving candidate'
+    else
+        invariant_violated "maintenance rc=$LAST_RC, slots: $(for slot in 0 1 2; do printf '%s=%s ' "$slot" "$(list_containers test-fleet "$slot" | paste -sd, -)"; done)"
+    fi
+}
+
 scenario_nonha_owner_down() {
     EXTRA_CONFIG='VERSIOND_NON_HA_VERSIONS=v1' load_fleet_functions || return $?
     seed_previous_fleet "routes=v1 v4" "env.VERSIOND_NON_HA_VERSIONS=v1"
@@ -796,6 +819,7 @@ run_internal() {
         RT-CATALOG-ROUTE-LOST-BY-CANDIDATE) scenario_catalog_route_lost_by_candidate ;;
         RT-PREVIOUS-NO-AUTORESTART) scenario_previous_no_autorestart ;;
         RT-PG-DROP-BEFORE-COMMIT) scenario_pg_drop_before_commit ;;
+        RT-PG-DROP-DURING-MAINTENANCE-COMMIT) scenario_pg_drop_during_maintenance_commit ;;
         RT-NONHA-OWNER-DOWN) scenario_nonha_owner_down ;;
         *) echo "HARNESS_ERROR: unknown scenario $scenario" >&2; return 2 ;;
     esac
