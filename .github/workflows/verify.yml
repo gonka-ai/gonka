@@ -263,7 +263,7 @@ jobs:
         run: make -C versiond-router test-fleet
       - name: Check the join update script
         run: |
-          shellcheck deploy/join/update-devshard.sh deploy/join/update-devshard_test.sh
+          shellcheck deploy/join/deployment-lock.sh deploy/join/update-devshard.sh deploy/join/update-devshard_test.sh
           deploy/join/update-devshard_test.sh
 
   test-public-proxy-router:

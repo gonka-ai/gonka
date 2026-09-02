@@ -268,7 +268,7 @@ production needs a managed PostgreSQL with synchronous durability.
 
 ## Validation
 
-- `shellcheck deploy/join/update-devshard.sh deploy/join/update-devshard_test.sh`
+- `shellcheck deploy/join/deployment-lock.sh deploy/join/update-devshard.sh deploy/join/update-devshard_test.sh`
 - `deploy/join/update-devshard_test.sh` (command sequence for both topologies)
 - `deploy/join/versiond-compose-config_test.sh` (Compose contract, endpoint overlay)
 - `make -C versiond-router test-render` (includes the endpoint list rendering)
