@@ -1043,7 +1043,7 @@ func (h *Host) enqueueValidation(job validateJob) {
 	case q <- job:
 		h.validationLifecycleMu.RUnlock()
 		observability.IncValidation(observability.StageValidationPicked, observability.MetricStatusQueued)
-		observability.SetValidationQueueDepth(h.escrowID, len(h.validationQueue))
+		observability.SetValidationQueueDepth(h.escrowID, len(q))
 	default:
 		h.validationLifecycleMu.RUnlock()
 		h.mu.Lock()
@@ -1090,8 +1090,11 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		h.mu.Lock()
 		delete(h.validating, job.inferenceID)
 		h.mu.Unlock()
-		if h.validationQueue != nil {
-			observability.SetValidationQueueDepth(h.escrowID, len(h.validationQueue))
+		h.validationLifecycleMu.RLock()
+		queue := h.validationQueue
+		h.validationLifecycleMu.RUnlock()
+		if queue != nil {
+			observability.SetValidationQueueDepth(h.escrowID, len(queue))
 		}
 	}()
 
