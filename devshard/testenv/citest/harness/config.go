@@ -16,6 +16,7 @@ import (
 type MultiConfigOpts struct {
 	Hosts          int
 	EscrowSlots    int
+	MaxNonce       uint32 // 0 = default; else params.max_nonce
 	EscrowAmount   uint64 // 0 = default; else the seed escrow's balance (gencompose default: 1_000_000)
 	ValidationRate uint32 // 0 = default; else params + seed escrow snapshot
 	MLNodes        int    // 0 = default (1); >1 boots a multi mock-openai pool
@@ -89,6 +90,9 @@ func WriteMultiConfig(t *testing.T, dir string, opts MultiConfigOpts) {
 	}
 	if opts.EscrowAmount > 0 {
 		escrowAmount = fmt.Sprintf("\n    amount: %d", opts.EscrowAmount)
+	}
+	if opts.MaxNonce > 0 {
+		paramsExtra += fmt.Sprintf("\n  max_nonce: %d", opts.MaxNonce)
 	}
 	if opts.RefusalTimeout > 0 {
 		paramsExtra += fmt.Sprintf("\n  refusal_timeout: %d", opts.RefusalTimeout)
