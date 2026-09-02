@@ -61,7 +61,7 @@ func TestRecoverSessions_UsesEightWorkers(t *testing.T) {
 	for i, slot := range group {
 		addresses[i] = slot.ValidatorAddress
 	}
-	mgr := waitObsRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{
 		escrow: &bridge.EscrowInfo{EscrowID: "1", Amount: 100000, CreatorAddress: user.Address(), Slots: addresses},
 	}, nil, nil))
 
@@ -120,7 +120,7 @@ func TestRecoverSessions_CapsWorkersToSessionCount(t *testing.T) {
 	for i, slot := range group {
 		addresses[i] = slot.ValidatorAddress
 	}
-	mgr := waitObsRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{
 		escrow: &bridge.EscrowInfo{EscrowID: "1", Amount: 100000, CreatorAddress: user.Address(), Slots: addresses},
 	}, nil, nil))
 

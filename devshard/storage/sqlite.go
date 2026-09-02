@@ -910,17 +910,11 @@ func (s *SQLite) LoadSnapshot(escrowID string) (uint64, []byte, error) {
 	return nonce, data, nil
 }
 
-func (s *SQLite) InsertSealedInference(escrowID string, row InferenceRow) error {
-	p, _, err := s.poolFor(escrowID)
-	if err != nil {
-		return err
-	}
-	obsPresent := 0
-	if row.ObsPresent {
-		obsPresent = 1
-	}
-	_, err = p.writeDB.Exec(
-		`INSERT INTO sealed_inferences (
+type sqliteExec interface {
+	Exec(query string, args ...any) (sql.Result, error)
+}
+
+const sqliteInsertSealedInferenceSQL = `INSERT INTO sealed_inferences (
 			escrow_id, inference_id, sealed_nonce,
 			obs_present, sealed_status, sealed_executor_slot,
 			sealed_votes_valid, sealed_votes_invalid, sealed_validated_by,
@@ -948,7 +942,15 @@ func (s *SQLite) InsertSealedInference(escrowID string, row InferenceRow) error 
 			sealed_reserved_cost = excluded.sealed_reserved_cost,
 			sealed_actual_cost = excluded.sealed_actual_cost,
 			sealed_started_at = excluded.sealed_started_at,
-			sealed_confirmed_at = excluded.sealed_confirmed_at`,
+			sealed_confirmed_at = excluded.sealed_confirmed_at`
+
+func sqliteExecInsertSealedInference(exec sqliteExec, escrowID string, row InferenceRow) error {
+	obsPresent := 0
+	if row.ObsPresent {
+		obsPresent = 1
+	}
+	_, err := exec.Exec(
+		sqliteInsertSealedInferenceSQL,
 		escrowID, row.InferenceID, row.SealedNonce,
 		obsPresent, row.SealedStatus, row.SealedExecutorSlot,
 		row.SealedVotesValid, row.SealedVotesInvalid, row.SealedValidatedBy,
@@ -960,6 +962,44 @@ func (s *SQLite) InsertSealedInference(escrowID string, row InferenceRow) error 
 	)
 	if err != nil {
 		return fmt.Errorf("insert sealed inference: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLite) InsertSealedInference(escrowID string, row InferenceRow) error {
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return err
+	}
+	return sqliteExecInsertSealedInference(p.writeDB, escrowID, row)
+}
+
+func (s *SQLite) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return err
+	}
+	for start := 0; start < len(rows); start += sealedInferenceInsertChunk {
+		end := start + sealedInferenceInsertChunk
+		if end > len(rows) {
+			end = len(rows)
+		}
+		tx, err := p.writeDB.Begin()
+		if err != nil {
+			return fmt.Errorf("insert sealed inferences begin: %w", err)
+		}
+		for i := start; i < end; i++ {
+			if err := sqliteExecInsertSealedInference(tx, escrowID, rows[i]); err != nil {
+				_ = tx.Rollback()
+				return err
+			}
+		}
+		if err := tx.Commit(); err != nil {
+			return fmt.Errorf("insert sealed inferences commit: %w", err)
+		}
 	}
 	return nil
 }
@@ -1010,6 +1050,33 @@ func (s *SQLite) DeleteSealedInferences(escrowID string) error {
 		return fmt.Errorf("delete sealed inferences: %w", err)
 	}
 	return nil
+}
+
+func (s *SQLite) SealedInferenceIDs(escrowID string) (map[uint64]uint64, error) {
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := p.readDB.Query(
+		`SELECT inference_id, sealed_nonce FROM sealed_inferences WHERE escrow_id = ?`,
+		escrowID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list sealed inference ids: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[uint64]uint64)
+	for rows.Next() {
+		var id, nonce uint64
+		if err := rows.Scan(&id, &nonce); err != nil {
+			return nil, fmt.Errorf("scan sealed inference id: %w", err)
+		}
+		out[id] = nonce
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (s *SQLite) ClearValidationObs(escrowID string) error {
@@ -1080,7 +1147,7 @@ func (s *SQLite) DrainInferenceValidationObs(escrowID string, inferenceID uint64
 		return fmt.Errorf("drain inference validation obs select: %w", err)
 	}
 	type row struct {
-		slotID               uint32
+		slotID              uint32
 		required, completed uint32
 	}
 	var live []row

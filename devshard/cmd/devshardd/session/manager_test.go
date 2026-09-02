@@ -119,11 +119,11 @@ func newManagerTestStore(t *testing.T) *storage.SQLite {
 	return db
 }
 
-// waitObsRepairsOnCleanup keeps a full-replay recovery from racing t.TempDir:
+// waitRecoveryRepairsOnCleanup keeps a full-replay recovery from racing t.TempDir:
 // startObsRepair still holds the SQLite WAL after RecoverSessions returns.
-func waitObsRepairsOnCleanup(t *testing.T, mgr *HostManager) *HostManager {
+func waitRecoveryRepairsOnCleanup(t *testing.T, mgr *HostManager) *HostManager {
 	t.Helper()
-	t.Cleanup(mgr.WaitObsRepairs)
+	t.Cleanup(mgr.WaitRecoveryRepairs)
 	return mgr
 }
 
@@ -230,7 +230,7 @@ func TestRecoverSessions_HappyPath(t *testing.T) {
 		},
 	}
 
-	mgr := waitObsRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 	err := mgr.RecoverSessions()
 	require.NoError(t, err)
 
@@ -275,7 +275,7 @@ func TestRecoverSessions_Nonce0(t *testing.T) {
 		},
 	}
 
-	mgr := waitObsRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 	err := mgr.RecoverSessions()
 	require.NoError(t, err)
 
@@ -314,7 +314,7 @@ func TestCreateSession_BindsConfiguredVersion(t *testing.T) {
 	}
 
 	const standaloneVersion = "v0.2.11"
-	mgr := waitObsRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, standaloneVersion, br, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, standaloneVersion, br, nil, nil))
 	_, err := mgr.getOrCreate("1", nil)
 	require.NoError(t, err)
 
@@ -505,7 +505,7 @@ func TestRecoverSessions_EmptyStore(t *testing.T) {
 	signer := mustGenerateKey(t)
 	br := &mockBridge{}
 
-	mgr := waitObsRepairsOnCleanup(t, NewHostManager(store, signer, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, signer, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 	err := mgr.RecoverSessions()
 	require.NoError(t, err)
 
@@ -532,7 +532,7 @@ func TestHandleSettlementFinalized_DoesNotResurrect(t *testing.T) {
 			Slots:          addresses,
 		},
 	}
-	mgr := waitObsRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 	require.NoError(t, mgr.RecoverSessions())
 	_, ok := mgr.existingServer("1")
 	require.True(t, ok, "precondition: session live after recover")
@@ -559,7 +559,7 @@ func TestRecoverStoredSession_RejectsSettledStatus(t *testing.T) {
 	_, _, hostSigner := createStoredSession(t, store, "1", 7, 1)
 	require.NoError(t, store.MarkSettled("1"))
 
-	mgr := waitObsRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil))
 	_, _, err := mgr.recoverStoredSession("1")
 	require.ErrorIs(t, err, storage.ErrSessionNotActive)
 }
@@ -677,7 +677,7 @@ func TestRecoverSessions_StateRootMismatch(t *testing.T) {
 		},
 	}
 
-	mgr := waitObsRepairsOnCleanup(t, NewHostManager(store, mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 	err = mgr.RecoverSessions()
 	require.NoError(t, err)
 

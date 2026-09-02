@@ -68,6 +68,10 @@ func (r *recordingStorage) InsertSealedInference(escrowID string, row InferenceR
 	r.lastMethod = "InsertSealedInference"
 	return nil
 }
+func (r *recordingStorage) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	r.lastMethod = "InsertSealedInferences"
+	return nil
+}
 func (r *recordingStorage) GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error) {
 	r.lastMethod = "GetSealedInference"
 	return InferenceRow{}, false, nil
@@ -75,6 +79,10 @@ func (r *recordingStorage) GetSealedInference(escrowID string, inferenceID uint6
 func (r *recordingStorage) DeleteSealedInferences(escrowID string) error {
 	r.lastMethod = "DeleteSealedInferences"
 	return nil
+}
+func (r *recordingStorage) SealedInferenceIDs(escrowID string) (map[uint64]uint64, error) {
+	r.lastMethod = "SealedInferenceIDs"
+	return nil, nil
 }
 func (r *recordingStorage) ClearValidationObs(escrowID string) error {
 	r.lastMethod = "ClearValidationObs"
@@ -284,9 +292,16 @@ func TestHybridStorage_forwardsStorageMethods(t *testing.T) {
 	require.NoError(t, h.InsertSealedInference("e", InferenceRow{}))
 	require.Equal(t, "InsertSealedInference", rec.lastMethod)
 
+	require.NoError(t, h.InsertSealedInferences("e", []InferenceRow{{}}))
+	require.Equal(t, "InsertSealedInferences", rec.lastMethod)
+
 	_, _, err = h.GetSealedInference("e", 1)
 	require.NoError(t, err)
 	require.Equal(t, "GetSealedInference", rec.lastMethod)
+
+	_, err = h.SealedInferenceIDs("e")
+	require.NoError(t, err)
+	require.Equal(t, "SealedInferenceIDs", rec.lastMethod)
 
 	require.NoError(t, h.DeleteSealedInferences("e"))
 	require.Equal(t, "DeleteSealedInferences", rec.lastMethod)

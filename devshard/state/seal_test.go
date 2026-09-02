@@ -373,3 +373,149 @@ func startConfirmAt(t *testing.T, sm *StateMachine, hosts []*signing.Secp256k1Si
 	})})
 	require.NoError(t, err)
 }
+
+func finishedInferenceDiffs(escrowID string) []types.DiffRecord {
+	return []types.DiffRecord{
+		{Diff: types.Diff{Nonce: 1, Txs: []*types.DevshardTx{txStart(&types.MsgStartInference{
+			InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		})}}},
+		{Diff: types.Diff{Nonce: 2, Txs: []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
+			InferenceId: 1, ConfirmedAt: 2000,
+		})}}},
+		{Diff: types.Diff{Nonce: 3, Txs: []*types.DevshardTx{txFinish(&types.MsgFinishInference{
+			InferenceId: 1, ResponseHash: []byte("response"), InputTokens: 10, OutputTokens: 20,
+			ExecutorSlot: 1, EscrowId: escrowID,
+		})}}},
+	}
+}
+
+func TestFillSealedInferenceIndexGaps_PreservesRichRow(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	sm, store, _, _ := newSealTestSM(t, "escrow-gap-rich", hosts, true)
+	driveSealInferenceToFinished(t, sm, "escrow-gap-rich", hosts)
+	require.NoError(t, sm.SealInference(1))
+
+	before, ok, err := store.GetSealedInference("escrow-gap-rich", 1)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, before.ObsPresent)
+
+	inserted, err := sm.FillSealedInferenceIndexGaps()
+	require.NoError(t, err)
+	require.Zero(t, inserted)
+
+	after, ok, err := store.GetSealedInference("escrow-gap-rich", 1)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, before, after)
+}
+
+func TestFillSealedInferenceIndexGaps_InsertsBareForMissing(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	sm, store, _, _ := newSealTestSM(t, "escrow-gap-bare", hosts, true)
+	driveSealInferenceToFinished(t, sm, "escrow-gap-bare", hosts)
+	require.NoError(t, sm.SealInference(1))
+
+	before, ok, err := store.GetSealedInference("escrow-gap-bare", 1)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NoError(t, store.DeleteSealedInferences("escrow-gap-bare"))
+
+	inserted, err := sm.FillSealedInferenceIndexGaps()
+	require.NoError(t, err)
+	require.Equal(t, 1, inserted)
+
+	row, ok, err := store.GetSealedInference("escrow-gap-bare", 1)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.False(t, row.ObsPresent)
+	require.Equal(t, before.SealedNonce, row.SealedNonce)
+}
+
+func TestFillSealedInferenceIndexGaps_SkipsLive(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	sm, store, _, _ := newSealTestSM(t, "escrow-gap-live", hosts, true)
+	driveSealInferenceToFinished(t, sm, "escrow-gap-live", hosts)
+
+	inserted, err := sm.FillSealedInferenceIndexGaps()
+	require.NoError(t, err)
+	require.Zero(t, inserted)
+	_, ok, err := store.GetSealedInference("escrow-gap-live", 1)
+	require.NoError(t, err)
+	require.False(t, ok)
+}
+
+func TestFillSealedInferenceIndexGaps_Idempotent(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	sm, store, _, _ := newSealTestSM(t, "escrow-gap-idem", hosts, true)
+	driveSealInferenceToFinished(t, sm, "escrow-gap-idem", hosts)
+	require.NoError(t, sm.SealInference(1))
+	require.NoError(t, store.DeleteSealedInferences("escrow-gap-idem"))
+
+	inserted, err := sm.FillSealedInferenceIndexGaps()
+	require.NoError(t, err)
+	require.Equal(t, 1, inserted)
+	inserted, err = sm.FillSealedInferenceIndexGaps()
+	require.NoError(t, err)
+	require.Zero(t, inserted)
+}
+
+func TestRebuildSealedInferenceIndexFromDiffs_RestoresRichAndDropsStale(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	escrowID := "escrow-from-diffs"
+	sm, store, _, _ := newSealTestSM(t, escrowID, hosts, true)
+	driveSealInferenceToFinished(t, sm, escrowID, hosts)
+	live, ok := sm.GetInference(1)
+	require.True(t, ok)
+	require.NoError(t, sm.SealInference(1))
+
+	require.NoError(t, store.InsertSealedInference(escrowID, storage.InferenceRow{
+		InferenceID: 99, SealedNonce: 1, ObsPresent: true, SealedModel: "stale",
+	}))
+
+	require.NoError(t, sm.RebuildSealedInferenceIndexFromDiffs(store, finishedInferenceDiffs(escrowID)))
+
+	row, ok, err := store.GetSealedInference(escrowID, 1)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, row.ObsPresent)
+	require.Equal(t, live.Model, row.SealedModel)
+	require.Equal(t, live.ActualCost, row.SealedActualCost)
+	require.Equal(t, live.InputTokens, row.SealedInputTokens)
+	require.Equal(t, live.OutputTokens, row.SealedOutputTokens)
+	require.Equal(t, uint32(live.Status), row.SealedStatus)
+
+	_, ok, err = store.GetSealedInference(escrowID, 99)
+	require.NoError(t, err)
+	require.False(t, ok, "ids absent from replayed history must be dropped")
+}

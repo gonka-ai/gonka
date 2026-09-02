@@ -79,8 +79,16 @@ type Storage interface {
 	// InsertSealedInference upserts the per-inference observability snapshot
 	// (insert or update on conflict).
 	InsertSealedInference(escrowID string, row InferenceRow) error
+	// InsertSealedInferences upserts many sealed-inference rows in chunked
+	// transactions. An empty slice is a no-op.
+	InsertSealedInferences(escrowID string, rows []InferenceRow) error
 	GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error)
 	DeleteSealedInferences(escrowID string) error
+	// SealedInferenceIDs returns inferenceID → sealedNonce for every sealed-
+	// inference row, including ObsPresent=false (bare index) rows. Gap fill
+	// skips these so a restart after the wipe-rebuild bug does not rewrite
+	// existing rows.
+	SealedInferenceIDs(escrowID string) (map[uint64]uint64, error)
 	// ClearValidationObs removes all live and sealed validation observability
 	// rows for an escrow. Used when rebuilding obs from the diff journal.
 	ClearValidationObs(escrowID string) error
@@ -185,8 +193,8 @@ type ActiveSession struct {
 // state root) for GET /v1/state after RAM prune. Late MsgValidation on
 // sealed ids still returns ErrInferenceSealed and does not read this snapshot.
 type InferenceRow struct {
-	InferenceID uint64
-	SealedNonce uint64
+	InferenceID        uint64
+	SealedNonce        uint64
 	ObsPresent         bool
 	SealedStatus       uint32
 	SealedExecutorSlot uint32
