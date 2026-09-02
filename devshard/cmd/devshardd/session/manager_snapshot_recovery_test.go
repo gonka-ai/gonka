@@ -42,6 +42,26 @@ func (s *recordingStore) ranges() []diffRange {
 	return out
 }
 
+// obsCallStore counts the destructive obs rebuild entry point.
+type obsCallStore struct {
+	storage.Storage
+	mu     sync.Mutex
+	clears int
+}
+
+func (s *obsCallStore) ClearValidationObs(escrowID string) error {
+	s.mu.Lock()
+	s.clears++
+	s.mu.Unlock()
+	return s.Storage.ClearValidationObs(escrowID)
+}
+
+func (s *obsCallStore) clearCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.clears
+}
+
 type loadSnapshotErrStore struct {
 	storage.Storage
 	err error
@@ -163,8 +183,7 @@ func TestRecoverSessions_RestoresSnapshotAndReplaysOnlyTail(t *testing.T) {
 
 	require.Equal(t, []diffRange{
 		{7, 7},  // root check against the journal at the snapshot nonce
-		{8, 10}, // apply path fetches only post-snapshot diffs
-		{1, 10}, // obs rebuild still reads the journal
+		{8, 10}, // the tail is the only range read: obs tops up from it too
 	}, store.ranges())
 }
 
@@ -179,8 +198,8 @@ func TestRecoverSessions_SnapshotCurrentSkipsDiffApply(t *testing.T) {
 
 	got := recoveredHostState(t, mgr)
 	require.Equal(t, uint64(10), got.LatestNonce)
-	require.Equal(t, []diffRange{{10, 10}, {1, 10}}, store.ranges(),
-		"current snapshot applies nothing; only the root check and obs rebuild read diffs")
+	require.Equal(t, []diffRange{{10, 10}}, store.ranges(),
+		"a current snapshot reads one diff for the root check and nothing else")
 }
 
 func TestRecoverSessions_NoSnapshotReplaysFromOne(t *testing.T) {
@@ -302,6 +321,36 @@ func TestRecoverSessions_RejectedSnapshotDoesNotPoisonReplay(t *testing.T) {
 	require.Equal(t, want.LatestNonce, got.LatestNonce)
 	require.Equal(t, want.Balance, got.Balance)
 	require.Equal(t, want.SealedAcc, got.SealedAcc)
+}
+
+// Validation obs rows are written by the live apply path and are durable, so
+// the history a snapshot covers is already recorded. Clearing and rebuilding it
+// would delete good rows, re-read the whole journal, and pay a write
+// transaction per historical seal to rewrite what was already there.
+func TestRecoverSessions_SnapshotPathLeavesValidationObsAlone(t *testing.T) {
+	inner := newManagerTestStore(t)
+	group, user, hostSigner := populateStore(t, inner, 10)
+	saveSnapshotThrough(t, inner, 7)
+
+	store := &obsCallStore{Storage: inner}
+	mgr := recoverTestManager(t, store, hostSigner, user, group)
+	require.NoError(t, mgr.RecoverSessions())
+
+	require.Zero(t, store.clearCalls(), "a restored snapshot must not clear durable obs rows")
+}
+
+// Replaying the whole journal is the one case that must rebuild: ApplyLocal
+// records no obs, and the clear-then-replay is what repairs batches the live
+// path dropped under backpressure.
+func TestRecoverSessions_FullReplayRebuildsValidationObs(t *testing.T) {
+	inner := newManagerTestStore(t)
+	group, user, hostSigner := populateStore(t, inner, 10)
+
+	store := &obsCallStore{Storage: inner}
+	mgr := recoverTestManager(t, store, hostSigner, user, group)
+	require.NoError(t, mgr.RecoverSessions())
+
+	require.Equal(t, 1, store.clearCalls(), "full replay must rebuild obs from the journal")
 }
 
 func TestRecoverSessions_SnapshotMatchesFullReplayWithLiveInferences(t *testing.T) {
