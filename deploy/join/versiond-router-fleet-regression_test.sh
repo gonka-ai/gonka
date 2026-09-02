@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2016,SC2034,SC2154,SC2329
+# shellcheck disable=SC2016,SC2034,SC2154,SC2329,SC2317,SC2119,SC2120,SC2015
 
 # Focused executable reproducers for router-fleet failure windows found during
 # the HA updater review. The scenarios execute the orchestration functions of
