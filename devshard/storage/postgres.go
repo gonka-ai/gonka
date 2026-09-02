@@ -1288,6 +1288,54 @@ func (s *Postgres) InsertSealedInference(escrowID string, row InferenceRow) erro
 	return postgresExecInsertSealedInference(ctx, s.pool, epochID, escrowID, row)
 }
 
+const postgresInsertSealedInferencesSQL = `INSERT INTO devshard_sealed_inferences (
+			epoch_id, escrow_id, inference_id, sealed_nonce,
+			obs_present, sealed_status, sealed_executor_slot,
+			sealed_votes_valid, sealed_votes_invalid, sealed_validated_by,
+			sealed_model, sealed_prompt_hash, sealed_response_hash,
+			sealed_input_length, sealed_max_tokens,
+			sealed_input_tokens, sealed_output_tokens,
+			sealed_reserved_cost, sealed_actual_cost,
+			sealed_started_at, sealed_confirmed_at
+		)
+		SELECT $1, $2, t.* FROM unnest(
+			$3::bigint[], $4::bigint[], $5::boolean[], $6::int[], $7::int[],
+			$8::int[], $9::int[], $10::bytea[], $11::text[], $12::bytea[],
+			$13::bytea[], $14::bigint[], $15::bigint[], $16::bigint[],
+			$17::bigint[], $18::bigint[], $19::bigint[], $20::bigint[],
+			$21::bigint[]
+		) AS t(
+			inference_id, sealed_nonce, obs_present, sealed_status,
+			sealed_executor_slot, sealed_votes_valid, sealed_votes_invalid,
+			sealed_validated_by, sealed_model, sealed_prompt_hash,
+			sealed_response_hash, sealed_input_length, sealed_max_tokens,
+			sealed_input_tokens, sealed_output_tokens, sealed_reserved_cost,
+			sealed_actual_cost, sealed_started_at, sealed_confirmed_at
+		)
+		ON CONFLICT (epoch_id, escrow_id, inference_id) DO UPDATE SET
+			sealed_nonce = EXCLUDED.sealed_nonce,
+			obs_present = EXCLUDED.obs_present,
+			sealed_status = EXCLUDED.sealed_status,
+			sealed_executor_slot = EXCLUDED.sealed_executor_slot,
+			sealed_votes_valid = EXCLUDED.sealed_votes_valid,
+			sealed_votes_invalid = EXCLUDED.sealed_votes_invalid,
+			sealed_validated_by = EXCLUDED.sealed_validated_by,
+			sealed_model = EXCLUDED.sealed_model,
+			sealed_prompt_hash = EXCLUDED.sealed_prompt_hash,
+			sealed_response_hash = EXCLUDED.sealed_response_hash,
+			sealed_input_length = EXCLUDED.sealed_input_length,
+			sealed_max_tokens = EXCLUDED.sealed_max_tokens,
+			sealed_input_tokens = EXCLUDED.sealed_input_tokens,
+			sealed_output_tokens = EXCLUDED.sealed_output_tokens,
+			sealed_reserved_cost = EXCLUDED.sealed_reserved_cost,
+			sealed_actual_cost = EXCLUDED.sealed_actual_cost,
+			sealed_started_at = EXCLUDED.sealed_started_at,
+			sealed_confirmed_at = EXCLUDED.sealed_confirmed_at`
+
+// InsertSealedInferences upserts a chunk per statement instead of a statement
+// per row. Chunking the transaction alone still cost a round trip per
+// inference, which is what made a 1.5M-row rebuild a network problem rather
+// than a write problem.
 func (s *Postgres) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
 	if len(rows) == 0 {
 		return nil
@@ -1301,24 +1349,79 @@ func (s *Postgres) InsertSealedInferences(escrowID string, rows []InferenceRow) 
 		if end > len(rows) {
 			end = len(rows)
 		}
-		ctx, cancel := s.opCtx()
-		tx, err := s.pool.Begin(ctx)
-		if err != nil {
-			cancel()
-			return fmt.Errorf("insert sealed inferences begin: %w", err)
+		if err := s.insertSealedInferenceChunk(epochID, escrowID, rows[start:end]); err != nil {
+			return err
 		}
-		for i := start; i < end; i++ {
-			if err := postgresExecInsertSealedInference(ctx, tx, epochID, escrowID, rows[i]); err != nil {
-				_ = tx.Rollback(ctx)
-				cancel()
-				return err
-			}
+	}
+	return nil
+}
+
+func (s *Postgres) insertSealedInferenceChunk(epochID uint64, escrowID string, rows []InferenceRow) error {
+	// ON CONFLICT DO UPDATE cannot touch the same row twice in one statement,
+	// so collapse ids repeated inside the chunk to the last value, which is
+	// what the row-at-a-time form produced.
+	deduped := make([]InferenceRow, 0, len(rows))
+	at := make(map[uint64]int, len(rows))
+	for _, row := range rows {
+		if i, seen := at[row.InferenceID]; seen {
+			deduped[i] = row
+			continue
 		}
-		if err := tx.Commit(ctx); err != nil {
-			cancel()
-			return fmt.Errorf("insert sealed inferences commit: %w", err)
-		}
-		cancel()
+		at[row.InferenceID] = len(deduped)
+		deduped = append(deduped, row)
+	}
+
+	n := len(deduped)
+	inferenceIDs := make([]int64, n)
+	sealedNonces := make([]int64, n)
+	obsPresent := make([]bool, n)
+	statuses := make([]int32, n)
+	executorSlots := make([]int32, n)
+	votesValid := make([]int32, n)
+	votesInvalid := make([]int32, n)
+	validatedBy := make([][]byte, n)
+	models := make([]string, n)
+	promptHashes := make([][]byte, n)
+	responseHashes := make([][]byte, n)
+	inputLengths := make([]int64, n)
+	maxTokens := make([]int64, n)
+	inputTokens := make([]int64, n)
+	outputTokens := make([]int64, n)
+	reservedCosts := make([]int64, n)
+	actualCosts := make([]int64, n)
+	startedAt := make([]int64, n)
+	confirmedAt := make([]int64, n)
+	for i, row := range deduped {
+		inferenceIDs[i] = int64(row.InferenceID)
+		sealedNonces[i] = int64(row.SealedNonce)
+		obsPresent[i] = row.ObsPresent
+		statuses[i] = int32(row.SealedStatus)
+		executorSlots[i] = int32(row.SealedExecutorSlot)
+		votesValid[i] = int32(row.SealedVotesValid)
+		votesInvalid[i] = int32(row.SealedVotesInvalid)
+		validatedBy[i] = row.SealedValidatedBy
+		models[i] = row.SealedModel
+		promptHashes[i] = row.SealedPromptHash
+		responseHashes[i] = row.SealedResponseHash
+		inputLengths[i] = int64(row.SealedInputLength)
+		maxTokens[i] = int64(row.SealedMaxTokens)
+		inputTokens[i] = int64(row.SealedInputTokens)
+		outputTokens[i] = int64(row.SealedOutputTokens)
+		reservedCosts[i] = int64(row.SealedReservedCost)
+		actualCosts[i] = int64(row.SealedActualCost)
+		startedAt[i] = row.SealedStartedAt
+		confirmedAt[i] = row.SealedConfirmedAt
+	}
+
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	if _, err := s.pool.Exec(ctx, postgresInsertSealedInferencesSQL,
+		epochID, escrowID, inferenceIDs, sealedNonces, obsPresent, statuses,
+		executorSlots, votesValid, votesInvalid, validatedBy, models,
+		promptHashes, responseHashes, inputLengths, maxTokens, inputTokens,
+		outputTokens, reservedCosts, actualCosts, startedAt, confirmedAt,
+	); err != nil {
+		return fmt.Errorf("insert sealed inferences: %w", err)
 	}
 	return nil
 }
