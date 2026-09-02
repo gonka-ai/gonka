@@ -51,6 +51,13 @@ fail() {
     exit 1
 }
 
+# Every exec into a router is bounded: a wedged Runtime API socket or a hung
+# container must not hold the deployment lock forever.
+docker_exec() {
+    timeout --kill-after=5s "${VERSIOND_ROUTER_EXEC_TIMEOUT_SECONDS:-30}" \
+        "$docker_bin" exec "$@"
+}
+
 warn() {
     echo "versiond-router-fleet: warning: $*" >&2
 }
@@ -338,17 +345,17 @@ slot_route_ready() {
     id=$(slot_id "$slot") || { slot_lookup_failed $?; return 1; }
     slot_ready "$slot" || return 1
     encoded=$(urlencode "$route")
-    "$docker_bin" exec "$id" /bin/busybox wget -q -O /dev/null \
+    docker_exec "$id" /bin/busybox wget -q -O /dev/null \
         "http://127.0.0.1:8404/readyz?version=$encoded" 2>/dev/null
 }
 
 slot_catalog_routes() {
     local id map
     id=$(slot_id "$1") || { slot_lookup_failed $?; return 1; }
-    if "$docker_bin" exec "$id" test -x \
+    if docker_exec "$id" test -x \
         /usr/local/lib/router-runtime/catalog-status >/dev/null 2>&1; then
         for map in /etc/haproxy/non_ha.map /etc/haproxy/versions.map; do
-            "$docker_bin" exec "$id" \
+            docker_exec "$id" \
                 /usr/local/lib/router-runtime/catalog-status "$map"
         done
         return
@@ -436,14 +443,14 @@ parent_proxy_active() {
 parent_diagnostic_available() {
     local parent=${PROXY_ROUTER_CONTAINER:-proxy}
     parent_proxy_active || return 1
-    "$docker_bin" exec "$parent" test -x \
+    docker_exec "$parent" test -x \
         /usr/local/lib/proxy-router/route-status >/dev/null 2>&1
 }
 
 parent_server_refs() {
     local address=$1 status_pattern=${2:-'^(UP|DRAIN)'}
     local parent=${PROXY_ROUTER_CONTAINER:-proxy} stats
-    stats=$("$docker_bin" exec "$parent" /bin/sh -ec \
+    stats=$(docker_exec "$parent" /bin/sh -ec \
         "printf 'show stat\\n' | socat stdio /var/run/haproxy/haproxy.sock") || return 2
     awk -F, -v address="$address" -v status_pattern="$status_pattern" '
         NR == 1 {
@@ -497,7 +504,7 @@ repair_stale_parent_drain() {
 
 parent_address_withdrawal_state() {
     local address=$1 parent=${PROXY_ROUTER_CONTAINER:-proxy} stats
-    stats=$("$docker_bin" exec "$parent" /bin/sh -ec \
+    stats=$(docker_exec "$parent" /bin/sh -ec \
         "printf 'show stat\\n' | socat stdio /var/run/haproxy/haproxy.sock") || return 2
     awk -F, -v address="$address" '
         NR == 1 {
@@ -528,7 +535,7 @@ parent_address_withdrawal_state() {
 parent_runtime_command() {
     local command=$1 parent=${PROXY_ROUTER_CONTAINER:-proxy} response
     [[ $command != *"'"* ]] || return 1
-    response=$("$docker_bin" exec "$parent" /bin/sh -ec \
+    response=$(docker_exec "$parent" /bin/sh -ec \
         "printf '%s\\n' '$command' | socat stdio /var/run/haproxy/reconciler.sock") || return 1
     [[ -z ${response//[[:space:]]/} ]]
 }
@@ -604,7 +611,7 @@ require_parent_diagnostic() {
 
 parent_route_admitted() {
     local route=$1 address=$2 parent=${PROXY_ROUTER_CONTAINER:-proxy}
-    if "$docker_bin" exec "$parent" \
+    if docker_exec "$parent" \
         /usr/local/lib/proxy-router/route-status "$route" "$address" \
         >/dev/null 2>&1; then
         return 0
@@ -814,7 +821,7 @@ route_ready_count() {
 # set, so a rollout during a PostgreSQL or versiond outage could otherwise
 # finish without ever proving that the routes came back.
 require_static_routes_served() {
-    local slot id declared version count
+    local slot id declared version count key
     local -A served=()
     case ${VERSIOND_ROUTER_ALLOW_UNSERVED_STATIC_ROUTES:-false} in
         1 | true | yes) return 0 ;;
@@ -824,15 +831,21 @@ require_static_routes_served() {
     for slot in "${slots[@]}"; do
         slot_running "$slot" || continue
         id=$(slot_id "$slot") || { slot_lookup_failed $?; continue; }
-        declared=$(container_env_value "$id" VERSIOND_VERSIONS) || continue
-        for version in $(normalize_versions "$declared" | tr ',' ' '); do
-            served[$version]=1
+        for key in VERSIOND_VERSIONS VERSIOND_NON_HA_VERSIONS; do
+            declared=$(container_env_value "$id" "$key") || continue
+            for version in $(normalize_versions "$declared" | tr ',' ' '); do
+                served[$version]=1
+            done
         done
     done
     for version in "${!served[@]}"; do
         count=$(route_ready_count "$version")
         ((count > 0)) || fail \
             "version $version is declared by the running routers but served by none of them; the versiond pool or its PostgreSQL is down, refusing to roll the routers (VERSIOND_ROUTER_ALLOW_UNSERVED_STATIC_ROUTES=true overrides)"
+        # Once declared and served, the version stays in the protected set for
+        # the whole run: a replacement slot must serve it again and the reserve
+        # check keeps counting it, even if the pool loses it mid-rollout.
+        expected_routes[$version]=1
     done
 }
 
@@ -1237,9 +1250,12 @@ capture_maintenance_state() {
         else
             warn "slot $slot is stopped on the previous contract; its exact generation is captured for rollback"
         fi
-        maintenance_images[$slot]="gonka/versiond-router-maintenance-rollback:$operation_id-$slot"
-        "$docker_bin" tag "$image" "${maintenance_images[$slot]}" || fail \
-            "cannot keep the rollback image of slot $slot"
+        maintenance_images[$slot]="gonka/versiond-router-previous:$slot"
+        if [[ $state == running ]] || \
+            ! "$docker_bin" image inspect "${maintenance_images[$slot]}" >/dev/null 2>&1; then
+            "$docker_bin" tag "$image" "${maintenance_images[$slot]}" || fail \
+                "cannot keep the rollback image of slot $slot"
+        fi
         for key in "${maintenance_keys[@]}"; do
             maintenance_env["$slot:$key"]=$(container_env_value_or_legacy_default "$id" "$key") || fail \
                 "slot $slot is missing environment $key"
@@ -1640,10 +1656,23 @@ fleet_rollout() {
         fi
         ((replacement_status == 0)) || fail \
             "cannot compare the running and requested contracts for slot $slot"
+        require_static_routes_served
         require_ready_reserve "$slot"
-        old_image=$($docker_bin inspect --format '{{.Image}}' "$id")
-        rollback_tag="gonka/versiond-router-rollback:$operation_id-$slot"
-        "$docker_bin" tag "$old_image" "$rollback_tag"
+        # The last generation that was serving is kept under a stable tag in
+        # Docker's image store, so a rerun after a killed rollout can still put
+        # it back; a slot that is not healthy does not overwrite it.
+        rollback_tag="gonka/versiond-router-previous:$slot"
+        if slot_ready "$slot"; then
+            old_image=$($docker_bin inspect --format '{{.Image}}' "$id") || fail \
+                "cannot inspect router slot $slot"
+            "$docker_bin" tag "$old_image" "$rollback_tag" || fail \
+                "cannot keep the previous image of slot $slot"
+        elif ! "$docker_bin" image inspect "$rollback_tag" >/dev/null 2>&1; then
+            old_image=$($docker_bin inspect --format '{{.Image}}' "$id") || fail \
+                "cannot inspect router slot $slot"
+            "$docker_bin" tag "$old_image" "$rollback_tag" || fail \
+                "cannot keep the previous image of slot $slot"
+        fi
         rollback_env=()
         rollback_routes=()
         for key in "${maintenance_keys[@]}"; do
@@ -1664,7 +1693,6 @@ fleet_rollout() {
         wait_parent_admission "$slot"
         current_slot=
         rollback_image=
-        "$docker_bin" image rm "$rollback_tag" >/dev/null 2>&1 || true
     done
     trap - ERR INT TERM HUP
     fleet_status
@@ -1716,9 +1744,6 @@ fleet_maintenance_rollout() {
 
     maintenance_active=false
     trap - ERR INT TERM HUP
-    for slot in "${!maintenance_images[@]}"; do
-        "$docker_bin" image rm "${maintenance_images[$slot]}" >/dev/null 2>&1 || true
-    done
 }
 
 # The deployment transaction fingerprint does not inspect live route health or
