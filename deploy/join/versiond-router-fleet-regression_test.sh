@@ -48,6 +48,8 @@ scenarios=(
     RT-DEAD-CANDIDATE-AT-COMMIT
     RT-COMMIT-CLEANUP-CONFIG-CHANGE
     RT-DOWN-CLEARS-COMMIT-MARKER
+    RT-ROUTE-VANISHED-AT-COMMIT
+    RT-COMMIT-CLEANUP-TAG-MOVED
     RT-NONHA-OWNER-DOWN
 )
 
@@ -972,6 +974,55 @@ scenario_down_clears_commit_marker() {
     fi
 }
 
+scenario_route_vanished_at_commit() {
+    load_fleet_functions || return $?
+    printf 'v9\n' >"$model/catalog"
+    printf 'v4\nv9\n' >"$model/pool-serves"
+    seed_previous_fleet "routes=v4 v9"
+    discover_expected_routes
+    # Protected catalog route v9 disappears from the candidate's catalog
+    # after its route gate; removals are not allowed.
+    eval "$(declare -f wait_slot_routes | sed '1s/wait_slot_routes/real_wait_slot_routes/')"
+    wait_slot_routes() {
+        local candidate
+        real_wait_slot_routes "$@" || return $?
+        if [[ $1 == 0 ]]; then
+            candidate=$(serving_id 0)
+            set_container_field "$candidate" routes v4
+        fi
+        return 0
+    }
+    run_capture fleet_rollout
+    if ((LAST_RC != 0)) && container_exists prev-0 && [[ $(serving_id 0) == prev-0 && $(count_containers 0) == 1 ]]; then
+        invariant_holds 'a protected route that vanished before the commit was not skipped; the previous generation serves again'
+    else
+        invariant_violated "rollout rc=$LAST_RC, prev-0 exists=$(container_exists prev-0 && echo yes || echo no), slot 0 serving=$(serving_id 0 | paste -sd, -)"
+    fi
+}
+
+scenario_commit_cleanup_tag_moved() {
+    EXTRA_CONFIG='VERSIOND_POOL_HOST=new-pool' load_fleet_functions || return $?
+    seed_killed_commit_cleanup
+    # The same tag resolves to another image before the retry.
+    printf 'sha256:candidate2\n' >"$model/images/registry.invalid|router:candidate"
+    run_capture fleet_apply
+    local refused_rc=$LAST_RC refused_ok=true
+    container_exists prev-1 && container_exists prev-2 || refused_ok=false
+    [[ -f $model/volumes/gonka-versiond-router-commit-test-fleet ]] || refused_ok=false
+    grep -q 'the tag moved' "$tmpdir/capture.out" || refused_ok=false
+    printf 'sha256:candidate\n' >"$model/images/registry.invalid|router:candidate"
+    run_capture fleet_apply
+    local slot ok=true
+    for slot in 0 1 2; do
+        [[ $(count_containers "$slot") == 1 && $(container_field "$(serving_id "$slot")" image) == sha256:candidate ]] || ok=false
+    done
+    if ((refused_rc != 0 && LAST_RC == 0)) && [[ $refused_ok == true && $ok == true && ! -f $model/volumes/gonka-versiond-router-commit-test-fleet ]]; then
+        invariant_holds 'a moved tag is refused before any record is removed; the committed image finishes the cleanup'
+    else
+        invariant_violated "refused rc=$refused_rc (records kept=$refused_ok), retry rc=$LAST_RC, slots ok=$ok"
+    fi
+}
+
 scenario_nonha_owner_down() {
     EXTRA_CONFIG='VERSIOND_NON_HA_VERSIONS=v1' load_fleet_functions || return $?
     seed_previous_fleet "routes=v1 v4" "env.VERSIOND_NON_HA_VERSIONS=v1"
@@ -1015,6 +1066,8 @@ run_internal() {
         RT-DEAD-CANDIDATE-AT-COMMIT) scenario_dead_candidate_at_commit ;;
         RT-COMMIT-CLEANUP-CONFIG-CHANGE) scenario_commit_cleanup_config_change ;;
         RT-DOWN-CLEARS-COMMIT-MARKER) scenario_down_clears_commit_marker ;;
+        RT-ROUTE-VANISHED-AT-COMMIT) scenario_route_vanished_at_commit ;;
+        RT-COMMIT-CLEANUP-TAG-MOVED) scenario_commit_cleanup_tag_moved ;;
         RT-NONHA-OWNER-DOWN) scenario_nonha_owner_down ;;
         *) echo "HARNESS_ERROR: unknown scenario $scenario" >&2; return 2 ;;
     esac
