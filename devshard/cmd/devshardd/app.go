@@ -311,6 +311,9 @@ func buildHostManager(
 	// in the background instead: /ready stays false until the backlog drains,
 	// and any session requested before its turn is recovered on demand.
 	closers.Add(manager.StartRecovery(ctx))
+	// A validation-obs rebuild interrupted after its clear leaves the counters
+	// empty, and recovery will not retry once a snapshot exists.
+	closers.Add(manager.WaitObsRepairs)
 
 	retryLoop := session.NewRetryLoop(store, validator, manager, phase, instanceAddr)
 	retryLoop.WithInterval(cfg.ValidationRetryInterval)

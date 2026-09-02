@@ -4,6 +4,7 @@ import (
 	"errors"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -42,17 +43,27 @@ func (s *recordingStore) ranges() []diffRange {
 	return out
 }
 
-// obsCallStore counts the destructive obs rebuild entry point.
+// obsCallStore counts the destructive obs rebuild entry point, and can hold it
+// open so a test can observe recovery finishing without it.
 type obsCallStore struct {
 	storage.Storage
-	mu     sync.Mutex
-	clears int
+	mu      sync.Mutex
+	clears  int
+	entered chan struct{}
+	release chan struct{}
 }
 
 func (s *obsCallStore) ClearValidationObs(escrowID string) error {
 	s.mu.Lock()
 	s.clears++
 	s.mu.Unlock()
+	if s.entered != nil {
+		close(s.entered)
+		s.entered = nil
+	}
+	if s.release != nil {
+		<-s.release
+	}
 	return s.Storage.ClearValidationObs(escrowID)
 }
 
@@ -335,22 +346,37 @@ func TestRecoverSessions_SnapshotPathLeavesValidationObsAlone(t *testing.T) {
 	store := &obsCallStore{Storage: inner}
 	mgr := recoverTestManager(t, store, hostSigner, user, group)
 	require.NoError(t, mgr.RecoverSessions())
+	mgr.WaitObsRepairs()
 
 	require.Zero(t, store.clearCalls(), "a restored snapshot must not clear durable obs rows")
 }
 
 // Replaying the whole journal is the one case that must rebuild: ApplyLocal
 // records no obs, and the clear-then-replay is what repairs batches the live
-// path dropped under backpressure.
-func TestRecoverSessions_FullReplayRebuildsValidationObs(t *testing.T) {
+// path dropped under backpressure. The rebuild runs in the background, so it
+// must not have touched obs by the time recovery returns.
+func TestRecoverSessions_FullReplayRebuildsValidationObsInBackground(t *testing.T) {
 	inner := newManagerTestStore(t)
 	group, user, hostSigner := populateStore(t, inner, 10)
 
-	store := &obsCallStore{Storage: inner}
+	store := &obsCallStore{Storage: inner, release: make(chan struct{})}
 	mgr := recoverTestManager(t, store, hostSigner, user, group)
-	require.NoError(t, mgr.RecoverSessions())
 
-	require.Equal(t, 1, store.clearCalls(), "full replay must rebuild obs from the journal")
+	// The rebuild is pinned inside ClearValidationObs, so recovery can only
+	// return if it no longer waits for it.
+	done := make(chan error, 1)
+	go func() { done <- mgr.RecoverSessions() }()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("recovery blocked on the background obs rebuild")
+	}
+	require.Equal(t, 1, mgr.loadedSessionCount(), "the session must be published before the rebuild finishes")
+
+	close(store.release)
+	mgr.WaitObsRepairs()
+	require.Equal(t, 1, store.clearCalls(), "the background rebuild must still run")
 }
 
 func TestRecoverSessions_SnapshotMatchesFullReplayWithLiveInferences(t *testing.T) {
