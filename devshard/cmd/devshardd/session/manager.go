@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -67,9 +68,10 @@ type HostManager struct {
 }
 
 const (
-	resolutionFailureTTL  = 30 * time.Second
-	permanentFailureTTL   = 10 * time.Minute
-	maxResolutionFailures = 1024
+	recoverSessionsConcurrency = 8
+	resolutionFailureTTL       = 30 * time.Second
+	permanentFailureTTL        = 10 * time.Minute
+	maxResolutionFailures      = 1024
 )
 
 type resolutionFailure struct {
@@ -421,26 +423,74 @@ func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*trans
 // RecoverSessions rebuilds in-memory sessions from the shared store.
 // For each active session it restores a host snapshot when one exists, then
 // replays only the post-snapshot diffs through a fresh StateMachine (injecting
-// warm key deltas from the stored DiffRecords). Call this on startup after
+// warm key deltas from the stored DiffRecords). Recovery runs up to
+// recoverSessionsConcurrency workers in parallel. Call this on startup after
 // constructing the HostManager.
 func (m *HostManager) RecoverSessions() error {
-	escrowIDs, err := m.store.ListActiveSessions()
+	startedAt := time.Now()
+	active, err := m.store.ListActiveSessions()
 	if err != nil {
 		return fmt.Errorf("list active sessions: %w", err)
 	}
-
-	for _, active := range escrowIDs {
-		if _, err := m.recoverAndStoreSession(active.EscrowID); err != nil {
-			if errors.Is(err, storage.ErrSessionVersionConflict) {
-				logging.Info("skipping devshard session with foreign version", inferenceTypes.System,
-					"escrow_id", active.EscrowID, "error", err)
-				continue
-			}
-			logging.Error("skipping corrupt session", inferenceTypes.System,
-				"escrow_id", active.EscrowID, "error", err)
-		}
+	if len(active) == 0 {
+		logging.Info("completed devshard session recovery", inferenceTypes.System,
+			"session_count", 0, "worker_count", 0, "recovered_count", 0, "failed_count", 0,
+			"version_skipped_count", 0, "duration", time.Since(startedAt))
+		return nil
 	}
 
+	workers := recoverSessionsConcurrency
+	if len(active) < workers {
+		workers = len(active)
+	}
+	logging.Info("starting devshard session recovery", inferenceTypes.System,
+		"session_count", len(active), "worker_count", workers)
+
+	jobs := make(chan storage.ActiveSession)
+	var wg sync.WaitGroup
+	var recoveredCount atomic.Int64
+	var failedCount atomic.Int64
+	var versionSkippedCount atomic.Int64
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for sess := range jobs {
+				sessionStartedAt := time.Now()
+				if _, err := m.recoverAndStoreSession(sess.EscrowID); err != nil {
+					if errors.Is(err, storage.ErrSessionVersionConflict) {
+						versionSkippedCount.Add(1)
+						logging.Info("skipping devshard session with foreign version", inferenceTypes.System,
+							"escrow_id", sess.EscrowID, "epoch_id", sess.EpochID,
+							"host_version", m.boundVersion,
+							"duration", time.Since(sessionStartedAt), "error", err)
+						continue
+					}
+					failedCount.Add(1)
+					logging.Error("skipping corrupt session", inferenceTypes.System,
+						"escrow_id", sess.EscrowID, "epoch_id", sess.EpochID,
+						"duration", time.Since(sessionStartedAt), "error", err)
+					continue
+				}
+				recoveredCount.Add(1)
+				logging.Info("recovered devshard session", inferenceTypes.System,
+					"escrow_id", sess.EscrowID, "epoch_id", sess.EpochID,
+					"duration", time.Since(sessionStartedAt))
+			}
+		}()
+	}
+	for _, sess := range active {
+		jobs <- sess
+	}
+	close(jobs)
+	wg.Wait()
+
+	logging.Info("completed devshard session recovery", inferenceTypes.System,
+		"session_count", len(active), "worker_count", workers,
+		"recovered_count", recoveredCount.Load(),
+		"failed_count", failedCount.Load(),
+		"version_skipped_count", versionSkippedCount.Load(),
+		"duration", time.Since(startedAt))
 	return nil
 }
 
