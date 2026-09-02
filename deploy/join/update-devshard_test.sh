@@ -96,10 +96,10 @@ EOF
 cat >"$tmpdir/ha.json" <<'EOF'
 {"services":{
   "versiond":{"image":"ghcr.io/example/versiond:new","environment":{
-    "PGHOST":"devshard-postgres","PGDATABASE":"devshardd","PGUSER":"devshardd",
+    "GONKA_HA":"true","PGHOST":"devshard-postgres","PGDATABASE":"devshardd","PGUSER":"devshardd",
     "DEVSHARD_STORAGE_MODE":"postgres"}},
   "versiond2":{"image":"ghcr.io/example/versiond:new","deploy":{"replicas":1},"environment":{
-    "PGHOST":"devshard-postgres","PGDATABASE":"devshardd","PGUSER":"devshardd",
+    "GONKA_HA":"true","PGHOST":"devshard-postgres","PGDATABASE":"devshardd","PGUSER":"devshardd",
     "DEVSHARD_STORAGE_MODE":"postgres"}},
   "devshard-postgres":{"image":"postgres@sha256:abc","environment":{},
     "volumes":[{"type":"bind","source":"/srv/gonka/postgres","target":"/var/lib/postgresql/gonka"}]},
@@ -236,6 +236,16 @@ grep -q 'versiond2 disagree on PGDATABASE' "$tmpdir/err" || fail "PG drift messa
 UPDATE_ARGS=(--check --topology ha)
 if run_update env FAKE_CONTAINERS="" COMPOSE_FILE=docker-compose.yml; then
     fail "HA without the versiond overlay was accepted"
+fi
+grep -q 'does not declare GONKA_HA=true' "$tmpdir/err" || fail "HA declaration message: $(cat "$tmpdir/err")"
+
+# A model that declares HA but lost the router networks is rejected.
+jq 'del(.networks)' "$tmpdir/ha.json" >"$tmpdir/ha-no-net.json"
+UPDATE_ARGS=(--check)
+if run_update env FAKE_CONTAINERS="versiond devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
+    FAKE_RENDERED_HA="$tmpdir/ha-no-net.json"; then
+    fail "HA model without router networks was accepted"
 fi
 grep -q 'needs docker-compose.versiond.yml' "$tmpdir/err" || fail "HA overlay message: $(cat "$tmpdir/err")"
 

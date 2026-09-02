@@ -49,8 +49,8 @@ config.env is read from this directory (or GONKA_CONFIG_ENV).
 
   --check      detect the topology and run the preflight; change nothing
   --dry-run    print every command without running it
-  --topology   override detection (auto: HA when devshard-postgres exists or
-               the HA overlay docker-compose.versiond.yml is in use)
+  --topology   override detection (auto: HA when the versiond service
+               declares GONKA_HA=true, which the HA overlay sets)
 
 Compose files come from COMPOSE_FILE when set, otherwise from the labels of
 the running versiond container, otherwise from the stock files.
@@ -157,6 +157,20 @@ has_ha_model() {
     jq -e '.networks["versiond-router-back"] != null' <<<"$rendered" >/dev/null
 }
 
+# GONKA_HA is the deployment's HA declaration: versiond passes it to its
+# children, devshardd refuses to boot with it unless storage is fail-closed
+# PostgreSQL, and the routers stamp Devshard-Ha from it. The HA overlay sets it
+# on every versiond service. Same boolean grammar as the Go side.
+ha_declared() {
+    local value
+    value=$(jq -r --arg s "$1" '.services[$s].environment.GONKA_HA // ""' <<<"$rendered")
+    case ${value,,} in
+        1 | t | true | yes | on) return 0 ;;
+        '' | 0 | f | false | no | off) return 1 ;;
+        *) fail "$1 has GONKA_HA='$value'; use true or false" ;;
+    esac
+}
+
 # Every local versiond replica: versiond, versiond2, versiond3, ... in that
 # order. The first one is the legacy owner of pinned SQLite versions.
 mapfile -t versiond_services < <(
@@ -164,13 +178,17 @@ mapfile -t versiond_services < <(
 ((${#versiond_services[@]} > 0)) || fail "the Compose model has no versiond service"
 
 if [[ $topology == auto ]]; then
-    if container_exists devshard-postgres || has_ha_model; then
+    if ha_declared "${versiond_services[0]}"; then
         topology=ha
     else
         topology=single
     fi
 fi
 if [[ $topology == ha ]]; then
+    for service in "${versiond_services[@]}"; do
+        ha_declared "$service" || fail \
+            "$service does not declare GONKA_HA=true; every replica of an HA deployment must"
+    done
     has_ha_model || fail \
         "HA topology needs docker-compose.versiond.yml in the Compose file list"
 fi

@@ -64,9 +64,10 @@ the full command sequence without running it.
 Compose files are taken from `COMPOSE_FILE` when it is set, otherwise from the
 labels of the running `versiond` container (so operator overlays such as
 observability files stay in the model), otherwise the stock files are used.
-The topology is HA when `devshard-postgres` exists or
-`docker-compose.versiond.yml` is in the file list; a single-versiond host stays
-single. The script handles every local `versiond`, `versiond2`, `versiond3`, …
+The topology is HA when the `versiond` service declares `GONKA_HA=true`,
+which the HA overlay sets on every replica (the same declaration versiond
+passes to its children and the routers turn into the `Devshard-Ha` header); a
+single-versiond host stays single. The script handles every local `versiond`, `versiond2`, `versiond3`, …
 service it finds in the model and never adds a replica by itself; services
 whose replica count is `0` are skipped.
 
