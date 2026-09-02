@@ -1,6 +1,7 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +14,7 @@ import (
 	"devshard/observability"
 	"devshard/storage"
 	"devshard/transport"
+	"devshard/types"
 )
 
 func testEchoContext(t *testing.T) echo.Context {
@@ -105,4 +107,71 @@ func TestSessionHTTPErrorDefault(t *testing.T) {
 	httpErr, ok := sessionHTTPError(c, fmt.Errorf("boom")).(*echo.HTTPError)
 	require.True(t, ok)
 	require.Equal(t, http.StatusInternalServerError, httpErr.Code)
+}
+
+type fakeStaleReloader struct {
+	reloads     int
+	remembered  int
+	next        *transport.Server
+	reloadErr   error
+}
+
+func (f *fakeStaleReloader) ReloadStaleSession(string, *transport.Server) (*transport.Server, error) {
+	f.reloads++
+	return f.next, f.reloadErr
+}
+
+func (f *fakeStaleReloader) RememberStaleNonce(string) { f.remembered++ }
+
+func staleRetryContext(t *testing.T) echo.Context {
+	t.Helper()
+	c := testEchoContext(t)
+	c.SetParamNames("id")
+	c.SetParamValues("escrow-1")
+	return c
+}
+
+func TestRetryIfStale_ReloadsAndSucceeds(t *testing.T) {
+	stale, next := &transport.Server{}, &transport.Server{}
+	f := &fakeStaleReloader{next: next}
+	var saw *transport.Server
+	err := retryIfStale(staleRetryContext(t), f, stale, fmt.Errorf("wrap: %w", types.ErrInvalidNonce), func(s *transport.Server) error {
+		saw = s
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, f.reloads)
+	require.Equal(t, next, saw)
+	require.Zero(t, f.remembered)
+}
+
+func TestRetryIfStale_RemembersBogusNonce(t *testing.T) {
+	stale, next := &transport.Server{}, &transport.Server{}
+	f := &fakeStaleReloader{next: next}
+	err := retryIfStale(staleRetryContext(t), f, stale, fmt.Errorf("wrap: %w", types.ErrInvalidNonce), func(*transport.Server) error {
+		return fmt.Errorf("still: %w", types.ErrInvalidNonce)
+	})
+	require.ErrorIs(t, err, types.ErrInvalidNonce)
+	require.Equal(t, 1, f.reloads)
+	require.Equal(t, 1, f.remembered)
+}
+
+func TestRetryIfStale_IgnoresOtherErrors(t *testing.T) {
+	f := &fakeStaleReloader{next: &transport.Server{}}
+	orig := errors.New("not a nonce")
+	err := retryIfStale(staleRetryContext(t), f, &transport.Server{}, orig, func(*transport.Server) error {
+		t.Fatal("retry must not run for other errors")
+		return nil
+	})
+	require.Equal(t, orig, err)
+	require.Zero(t, f.reloads)
+}
+
+func TestRetryIfStale_SkipsWithoutReloader(t *testing.T) {
+	orig := fmt.Errorf("wrap: %w", types.ErrInvalidNonce)
+	err := retryIfStale(staleRetryContext(t), struct{}{}, &transport.Server{}, orig, func(*transport.Server) error {
+		t.Fatal("retry must not run without a reloader")
+		return nil
+	})
+	require.Equal(t, orig, err)
 }

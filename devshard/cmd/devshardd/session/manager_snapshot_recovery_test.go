@@ -524,10 +524,7 @@ func TestRecoverSessions_FullReplayRebuildsSealedIndexInBackground(t *testing.T)
 	require.Equal(t, "llama", row.SealedModel)
 }
 
-// Step 4 keeps recovery_complete on the backlog drain. A full-replay child
-// can be "complete" while WaitRecoveryRepairs is still blocked on the wipe.
-// Step 8 is the one that must wait on the waiter.
-func TestStartRecovery_CompleteBeforeSealedIndexRepair(t *testing.T) {
+func TestStartRecovery_CompleteAfterSealedIndexRepair(t *testing.T) {
 	inner := newManagerTestStore(t)
 	group, user, hostSigner := populateFinishedAndSeal(t, inner)
 
@@ -544,14 +541,23 @@ func TestStartRecovery_CompleteBeforeSealedIndexRepair(t *testing.T) {
 
 	wait := mgr.StartRecovery(context.Background())
 	wait()
-	require.True(t, mgr.RecoveryComplete(), "recovery_complete follows the backlog until step 8")
-	require.Equal(t, 1, mgr.loadedSessionCount())
+	require.Equal(t, 1, mgr.loadedSessionCount(), "the session is published before the rebuild finishes")
+	progress := mgr.RecoveryProgressSnapshot()
+	require.False(t, progress.Complete, "recovery_complete waits for the sealed-index rebuild, not just the backlog")
+	require.Equal(t, int64(1), progress.Total)
+	require.Equal(t, int64(1), progress.Recovered)
+	require.Greater(t, progress.Pending, int64(0))
 
 	select {
 	case <-entered:
 	case <-time.After(5 * time.Second):
 		t.Fatal("sealed-index rebuild never started")
 	}
+	close(store.release)
+	mgr.WaitRecoveryRepairs()
+	progress = mgr.RecoveryProgressSnapshot()
+	require.True(t, progress.Complete)
+	require.Zero(t, progress.Pending)
 }
 
 func TestRecoverSessions_RejectedSnapshotRebuildsSealedIndex(t *testing.T) {
