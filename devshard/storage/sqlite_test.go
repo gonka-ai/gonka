@@ -128,6 +128,10 @@ func TestSQLite_SealedInferenceLifecycle(t *testing.T) {
 	runSealedInferenceLifecycle(t, newTestSQLite(t))
 }
 
+func TestSQLite_ValidationObsBatchDrain(t *testing.T) {
+	runValidationObsBatchDrain(t, newTestSQLite(t))
+}
+
 func TestSQLite_AddSignature(t *testing.T) {
 	runAddSignature(t, newTestSQLite(t))
 }
