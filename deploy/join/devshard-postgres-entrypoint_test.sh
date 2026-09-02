@@ -23,9 +23,11 @@ if [ -e "$1/.controldata-fail" ]; then
     exit 1
 fi
 identifier=7000000000000000001
+checkpoint=0/100
 [ ! -f "$1/.fake-system-identifier" ] || identifier=$(cat "$1/.fake-system-identifier")
-printf 'pg_control version number:            1300\n'
+[ ! -f "$1/.fake-checkpoint" ] || checkpoint=$(cat "$1/.fake-checkpoint")
 printf 'Database system identifier:           %s\n' "$identifier"
+printf 'Latest checkpoint location:           %s\n' "$checkpoint"
 EOF
 chmod +x "$tmpdir/bin/postgres" "$tmpdir/bin/ldd" "$tmpdir/bin/pg_controldata"
 test_path="$tmpdir/bin:$PATH"
@@ -71,7 +73,7 @@ run_entrypoint
     "legacy data was not copied"
 [[ $(<"$legacy/session-row") == preserved ]] || fail \
     "legacy source was modified"
-[[ -f "$persistent/.migrated-from-v4" ]] || fail \
+[[ -f "$persistent/data/.migrated-from-v4" ]] || fail \
     "migration marker was not written"
 [[ ! -e "$persistent/.migrating" ]] || fail \
     "staging directory remained after migration"
@@ -255,9 +257,31 @@ mkdir -p "$persistent/.migrating"
 printf '16\n' > "$persistent/.migrating/PG_VERSION"
 : > "$persistent/.gonka-copy-complete"
 run_entrypoint
-[[ -f "$persistent/.migrated-from-v4" ]] || fail \
+[[ -f "$persistent/data/.migrated-from-v4" ]] || fail \
     "a resumed migration did not record the v4 migration marker"
 run_entrypoint || fail "the resumed cluster was refused on the next start"
+
+new_case reject-copy-behind-source
+printf '16\n' > "$legacy/PG_VERSION"
+mkdir -p "$persistent/data"
+printf '16\n' > "$persistent/data/PG_VERSION"
+printf '0/300\n' > "$legacy/.fake-checkpoint"
+printf '0/200\n' > "$persistent/data/.fake-checkpoint"
+if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+    fail "a persistent copy that fell behind its v4 source was accepted"
+fi
+grep -q 'advanced past the persistent copy' "$case_dir/stderr" || fail \
+    "copy-behind-source was not diagnosed: $(cat "$case_dir/stderr")"
+
+new_case reject-stale-sibling-marker
+mkdir -p "$persistent/data"
+printf '16\n' > "$persistent/data/PG_VERSION"
+printf '16\n' > "$persistent/.migrated-from-v4"
+if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+    fail "a marker outside PGDATA vouched for a replaced cluster"
+fi
+grep -q 'no completion marker' "$case_dir/stderr" || fail \
+    "stale sibling marker was not diagnosed: $(cat "$case_dir/stderr")"
 
 new_case reject-partial-target
 mkdir -p "$persistent/data"
