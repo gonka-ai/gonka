@@ -25,6 +25,9 @@ declare -A legacy_env_defaults=(
     [HAPROXY_DNS_RESOLVER]=127.0.0.11:53
 )
 maintenance_required_routes=()
+maintenance_pending=()
+inventory_ids=()
+inventory_listing=
 maintenance_keys=(
     VERSIOND_POOL_HOST
     VERSIOND_ROUTER_BACK_NETWORK_NAME
@@ -257,6 +260,15 @@ fleet_ids() {
         --filter "label=ai.gonka.fleet=$fleet_id"
 }
 
+# Every fleet container ID, or a hard failure when Docker cannot answer. A
+# failed listing must never read as an empty fleet: that would bootstrap new
+# slots next to the existing ones or skip the drain and admission gates.
+fleet_inventory() {
+    inventory_listing=$(fleet_ids) || fail "cannot inventory the router fleet"
+    inventory_ids=()
+    [[ -z $inventory_listing ]] || mapfile -t inventory_ids <<<"$inventory_listing"
+}
+
 fleet_volume_ids() {
     "$docker_bin" volume ls -q \
         --filter label=ai.gonka.component=versiond-router-state \
@@ -270,6 +282,12 @@ slot_id() {
     count=$(wc -w <<<"$ids")
     ((count == 1)) || return 1
     printf '%s\n' "$ids"
+}
+
+slot_running() {
+    local id
+    id=$(slot_id "$1") || return 1
+    [[ $("$docker_bin" inspect --format '{{.State.Status}}' "$id") == running ]]
 }
 
 slot_ready() {
@@ -382,9 +400,17 @@ slot_front_ip() {
 
 parent_proxy_active() {
     local parent=${PROXY_ROUTER_CONTAINER:-proxy} component
-    component=$("$docker_bin" inspect --format \
+    # An absent parent is a real topology (the legacy nginx cutover has not
+    # happened). A Docker error is not: treating it as absence would skip the
+    # drain and admission gates, so it stops the command instead.
+    if ! component=$("$docker_bin" inspect --format \
         '{{or (index .Config.Labels "ai.gonka.component") ""}}' \
-        "$parent" 2>/dev/null) || return 1
+        "$parent" 2>&1); then
+        case ${component,,} in
+            *"no such object"* | *"no such container"*) return 1 ;;
+        esac
+        fail "cannot inspect the parent proxy $parent: $component"
+    fi
     [[ $component == proxy-router ]]
 }
 
@@ -1067,6 +1093,7 @@ validate_inventory_structure() {
     local id slot
     local -A seen=()
 
+    fleet_inventory
     while IFS= read -r id; do
         [[ -n $id ]] || continue
         slot=$($docker_bin inspect --format \
@@ -1077,7 +1104,7 @@ validate_inventory_structure() {
         [[ -z ${seen[$slot]-} ]] || fail \
             "duplicate containers claim router slot '$slot'"
         seen[$slot]=$id
-    done < <(fleet_ids)
+    done <<<"$inventory_listing"
 
 }
 
@@ -1111,18 +1138,47 @@ repair_fleet_capacity() {
     done
 }
 
+# Classifies every slot against the candidate placement contract so a
+# maintenance rollout can be rerun after a hard interruption (SIGKILL, OOM,
+# reboot) without a journal: slots already running the candidate contract are
+# done, slots on the previous contract are captured for exact rollback and
+# replaced, slots left stopped or absent are simply started. Returns 1 when
+# nothing is pending.
 capture_maintenance_state() {
-    local slot id image key contract first_contract='' route
+    local slot id image key contract candidate previous_contract='' route state
     local -A routes=()
+    candidate=$(candidate_placement_contract)
+    maintenance_pending=()
     for slot in "${slots[@]}"; do
-        id=$(slot_id "$slot") || fail "slot $slot has no unique existing container"
-        slot_ready "$slot" || fail "slot $slot is not healthy before maintenance"
+        if ! id=$(slot_id "$slot"); then
+            [[ -z $(slot_ids "$slot") ]] || fail \
+                "duplicate containers claim router slot '$slot'"
+            warn "slot $slot has no container; it will be started on the candidate contract"
+            maintenance_pending+=("$slot")
+            continue
+        fi
+        state=$("$docker_bin" inspect --format '{{.State.Status}}' "$id") || fail \
+            "cannot inspect router slot $slot"
         contract=$(running_placement_contract "$id") || fail \
             "slot $slot does not expose its placement contract"
-        if [[ -z $first_contract ]]; then
-            first_contract=$contract
-        elif [[ $contract != "$first_contract" ]]; then
-            fail "fleet already has divergent placement contracts; refusing automated maintenance"
+        if [[ $contract == "$candidate" ]]; then
+            if [[ $state == running ]] && slot_ready "$slot"; then
+                echo "Slot $slot already runs the candidate placement contract"
+                continue
+            fi
+            warn "slot $slot carries the candidate contract but is not serving; it will be replaced"
+            maintenance_pending+=("$slot")
+            continue
+        fi
+        if [[ -z $previous_contract ]]; then
+            previous_contract=$contract
+        elif [[ $contract != "$previous_contract" ]]; then
+            fail "fleet has more than one previous placement contract; refusing automated maintenance"
+        fi
+        if [[ $state == running ]]; then
+            slot_ready "$slot" || fail "slot $slot is not healthy before maintenance"
+        else
+            warn "slot $slot is stopped on the previous contract; its exact generation is captured for rollback"
         fi
         image=$($docker_bin inspect --format '{{.Image}}' "$id")
         maintenance_images[$slot]="gonka/versiond-router-maintenance-rollback:$operation_id-$slot"
@@ -1131,6 +1187,8 @@ capture_maintenance_state() {
             maintenance_env["$slot:$key"]=$(container_env_value_or_legacy_default "$id" "$key") || fail \
                 "slot $slot is missing environment $key"
         done
+        maintenance_pending+=("$slot")
+        [[ $state == running ]] || continue
         while read -r route; do
             [[ -n $route ]] || continue
             if [[ -n ${candidate_routes[$route]-} ]] || \
@@ -1146,6 +1204,7 @@ capture_maintenance_state() {
             maintenance_required_routes+=("$route")
         fi
     done
+    ((${#maintenance_pending[@]} > 0))
 }
 
 wait_required_routes_all() {
@@ -1173,10 +1232,12 @@ maintenance_rollback() {
     trap - ERR INT TERM HUP
     if [[ $maintenance_active == true ]]; then
         warn "maintenance rollout failed; draining candidates before restoring the exact previous fleet"
-        for slot in "${slots[@]}"; do
-            stop_slot_generation "$slot" >/dev/null 2>&1 || ok=false
+        for slot in "${maintenance_pending[@]}"; do
+            ! slot_running "$slot" || stop_slot_generation "$slot" >/dev/null 2>&1 || ok=false
         done
-        for slot in "${slots[@]}"; do
+        for slot in "${maintenance_pending[@]}"; do
+            # A slot that had no previous generation stays stopped.
+            [[ -n ${maintenance_images[$slot]-} ]] || continue
             if ! VERSIOND_ROUTER_IMAGE="${maintenance_images[$slot]}" \
                 VERSIOND_POOL_HOST="${maintenance_env[$slot:VERSIOND_POOL_HOST]}" \
                 VERSIOND_ROUTER_BACK_NETWORK="${maintenance_env[$slot:VERSIOND_ROUTER_BACK_NETWORK_NAME]}" \
@@ -1279,7 +1340,8 @@ stop_slot() {
 stop_fleet_containers() {
     local id state pid failed=0
     local -a ids=() pids=()
-    mapfile -t ids < <(fleet_ids)
+    fleet_inventory
+    ids=("${inventory_ids[@]}")
     if ((${#ids[@]} == 0)); then
         echo "No versiond-router fleet containers are present"
         return 0
@@ -1354,9 +1416,10 @@ collect_cleanup_networks() {
 require_networks_detached_from_main_stack() {
     local id network attachment name
     local -A fleet_containers=()
+    fleet_inventory
     while IFS= read -r id; do
         [[ -n $id ]] && fleet_containers[$id]=1
-    done < <(fleet_ids)
+    done <<<"$inventory_listing"
     for network in "${cleanup_networks[@]}"; do
         # Docker's Go template variables are literals for the Docker CLI.
         # shellcheck disable=SC2016
@@ -1377,7 +1440,8 @@ fleet_down() {
     collect_cleanup_networks
     require_networks_detached_from_main_stack
     stop_fleet_containers
-    mapfile -t ids < <(fleet_ids)
+    fleet_inventory
+    ids=("${inventory_ids[@]}")
     if ((${#ids[@]} > 0)); then
         "$docker_bin" rm "${ids[@]}" >/dev/null
     fi
@@ -1478,7 +1542,8 @@ fleet_up() {
 
 fleet_apply() {
     local -a ids=()
-    mapfile -t ids < <(fleet_ids)
+    fleet_inventory
+    ids=("${inventory_ids[@]}")
     if ((${#ids[@]} == 0)); then
         echo "Bootstrapping absent versiond-router fleet"
         fleet_up
@@ -1560,15 +1625,20 @@ fleet_maintenance_rollout() {
     [[ -n $(placement_version_for_image "$image") ]] || fail \
         "candidate image has no placement protocol label"
     require_cache_compatible "$image"
-    capture_maintenance_state
+    if ! capture_maintenance_state; then
+        echo "Every slot already runs the candidate placement contract"
+        fleet_status
+        return 0
+    fi
     maintenance_active=true
     trap maintenance_rollback ERR INT TERM HUP
 
-    echo "Draining the complete old router fleet for an atomic placement change"
-    for slot in "${slots[@]}"; do
+    echo "Draining the previous router generation for an atomic placement change"
+    for slot in "${maintenance_pending[@]}"; do
+        slot_running "$slot" || continue
         stop_slot_generation "$slot"
     done
-    for slot in "${slots[@]}"; do
+    for slot in "${maintenance_pending[@]}"; do
         echo "Starting maintenance replacement for slot $slot"
         start_slot "$slot"
     done
@@ -1585,7 +1655,7 @@ fleet_maintenance_rollout() {
 
     maintenance_active=false
     trap - ERR INT TERM HUP
-    for slot in "${slots[@]}"; do
+    for slot in "${!maintenance_images[@]}"; do
         "$docker_bin" image rm "${maintenance_images[$slot]}" >/dev/null 2>&1 || true
     done
 }
