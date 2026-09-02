@@ -2,19 +2,18 @@
 # shellcheck disable=SC2016,SC2034,SC2154,SC2329
 
 # Focused executable reproducers for router-fleet failure windows found during
-# the HA updater review.  The tests execute the orchestration functions from
-# versiond-router-fleet.sh with a deterministic in-memory Docker model, so they
-# do not need a daemon and finish in seconds.
+# the HA updater review. The scenarios execute the orchestration functions of
+# versiond-router-fleet.sh against an in-memory Docker model: containers,
+# generations, images and the versiond pool's readiness are files, the
+# `docker` command is a shell function over them, and only HAProxy internals
+# (route readiness, the runtime catalog, parent admission) are replaced at
+# the function seam. No daemon is needed and a run finishes in seconds.
 #
-# These regressions intentionally have two modes:
+# Two modes:
 #
-#   --repro  succeeds only while the current bug is reproduced;
-#   --gate   asserts the desired invariant and is intentionally RED until the
-#            corresponding production fix lands.
-#
-# Do not add --gate to CI while any listed scenario is still open.  Once a bug
-# is fixed, invert its CI use by running that scenario through --gate; --repro
-# will then fail and make stale reproducer expectations visible.
+#   --repro  succeeds only while the known unsafe outcome is reproduced;
+#   --gate   asserts the desired invariant. Only --gate counts for acceptance
+#            and only --gate runs in CI.
 
 set -Eeuo pipefail
 
@@ -27,9 +26,21 @@ scenarios=(
     RT-PG-DROP-AFTER-GATE
     RT-MAINT-GATE-RACE
     RT-SIGKILL-RETRY-PREVIOUS
+    RT-CRASH-EXITED-CANDIDATE
     RT-MAINT-RETRY-EXACT
-    RT-ROLLBACK-TAG-ISOLATION
+    RT-MAINT-RETRY-EXACT-ENV
+    RT-MAINT-UNHEALTHY-CANDIDATE
+    RT-ROLLBACK-RECORD-ISOLATION
+    RT-ROLLBACK-RECORD-PROVENANCE
     RT-OFFLINE-RETRY-CACHED
+    RT-CATALOG-DROP-AFTER-RESERVE
+    RT-CATALOG-ZERO-READY-AT-START
+    RT-STATUS-STATIC-ZERO-READY
+    RT-ENDPOINT-MEMBERSHIP-ATOMIC
+    RT-STATIC-HA-REMOVAL
+    RT-DYNAMIC-CATALOG-REMOVAL
+    RT-CATALOG-ROUTE-LOST-BY-CANDIDATE
+    RT-NONHA-OWNER-DOWN
 )
 
 usage() {
@@ -40,7 +51,7 @@ Usage:
   versiond-router-fleet-regression_test.sh --gate  [SCENARIO ...]
 
 --repro is green only when the known unsafe outcome is observed.
---gate asserts the acceptance invariant and is expected to be red until fixed.
+--gate asserts the acceptance invariant; it is the only mode that counts.
 EOF
 }
 
@@ -53,6 +64,7 @@ is_scenario() {
 }
 
 tmpdir=
+model=
 LAST_RC=0
 
 cleanup_internal() {
@@ -60,12 +72,14 @@ cleanup_internal() {
 }
 
 # versiond-router-fleet.sh is an executable script rather than a sourceable
-# library.  For these focused tests, copy only its declarations/functions and
-# execute those exact functions.  The sentinel is deliberately checked so a
-# refactor cannot silently turn this into a test of a partial or empty file.
+# library. Copy its declarations and functions and execute those exact
+# functions. The sentinel is checked so a refactor cannot silently turn this
+# into a test of a partial or empty file.
 load_fleet_functions() {
     tmpdir=$(mktemp -d)
     trap cleanup_internal EXIT
+    model=$tmpdir/model
+    mkdir -p "$model/containers" "$model/images"
 
     local library=$tmpdir/versiond-router-fleet.lib.sh
     local config=$tmpdir/config.env
@@ -104,17 +118,257 @@ VERSIOND_VERSIONS=v4
 VERSIOND_ROUTING_CATALOG_URL=
 PROXY_ROUTER_CONTAINER=test-parent
 EOF
+    [[ -z ${EXTRA_CONFIG:-} ]] || printf '%s\n' "$EXTRA_CONFIG" >>"$config"
 
-    # command -v in the production preamble accepts shell functions.  Each
-    # scenario replaces this placeholder with its own stateful Docker model.
-    fake_docker() { return 0; }
+    # The model's knobs: what the versiond pool serves right now, what the
+    # shared catalog cache holds, how a fresh candidate comes up.
+    printf 'v4\n' >"$model/pool-serves"
+    : >"$model/catalog"
+    printf 'healthy\n' >"$model/candidate-health"
+    printf 'sha256:candidate\n' >"$model/images/registry.invalid|router:candidate"
+    printf '0\n' >"$model/sequence"
+    printf 'desired-hash\n' >"$model/desired-hash"
+    : >"$model/log"
+
+    # command -v in the production preamble accepts shell functions.
+    fake_docker() { model_docker "$@"; }
     export VERSIOND_ROUTER_TEST_SCRIPT_DIR=$script_dir
     export GONKA_CONFIG_ENV=$config
     # shellcheck disable=SC1090
     source "$library"
+    install_model_seams
 }
 
-# Run a production orchestration function with its own errexit context.  A
+# --- the in-memory Docker model ---------------------------------------------
+
+next_sequence() {
+    local sequence
+    sequence=$(<"$model/sequence")
+    ((sequence += 1))
+    printf '%s\n' "$sequence" >"$model/sequence"
+    printf '%s\n' "$sequence"
+}
+
+# add_container NAME fleet=F slot=S state=running image=ID hash=H health=healthy
+#               routes="v4 v9" env.KEY=VALUE ...
+add_container() {
+    local name=$1 field sequence
+    shift
+    sequence=$(next_sequence)
+    {
+        printf 'id=%s\n' "$name"
+        printf 'created=2026-01-01T00:00:%09dZ\n' "$sequence"
+        printf 'fleet=test-fleet\nslot=0\nstate=running\nimage=sha256:previous\n'
+        printf 'hash=previous-hash\nhealth=healthy\nroutes=v4\ngeneration=g%s\n' "$sequence"
+        printf 'env.VERSIOND_VERSIONS=v4\nenv.VERSIOND_NON_HA_VERSIONS=\n'
+        printf 'env.VERSIOND_POOL_HOST=versiond-pool\nenv.VERSIOND_ROUTER_BACK_NETWORK_NAME=test-back\n'
+        printf 'env.VERSIOND_LEGACY_HOST=versiond\nenv.VERSIOND_ROUTING_CATALOG_URL=\n'
+        printf 'env.VERSIOND_ROUTER_ALLOW_COARSE_READINESS=false\nenv.HAPROXY_DNS_RESOLVER=127.0.0.11:53\n'
+        for field in "$@"; do printf '%s\n' "$field"; done
+    } >"$model/containers/$name"
+}
+
+container_field() {
+    local id=$1 key=$2
+    [[ -f $model/containers/$id ]] || return 1
+    sed -n "s/^${key//./\\.}=//p" "$model/containers/$id" | tail -n 1
+}
+
+set_container_field() {
+    local id=$1 key=$2 value=$3
+    printf '%s=%s\n' "$key" "$value" >>"$model/containers/$id"
+}
+
+container_exists() {
+    [[ -f $model/containers/$1 ]]
+}
+
+list_containers() {
+    local fleet=$1 slot=${2:-} id
+    for id in "$model"/containers/*; do
+        [[ -f $id ]] || continue
+        id=${id##*/}
+        [[ $(container_field "$id" fleet) == "$fleet" ]] || continue
+        [[ -z $slot || $(container_field "$id" slot) == "$slot" ]] || continue
+        printf '%s\n' "$id"
+    done
+}
+
+model_inspect() {
+    local format=$1 id=$2 key value
+    container_exists "$id" || {
+        if [[ $id == test-parent && -f $model/parent ]]; then
+            case $format in
+                *ai.gonka.component*) printf 'proxy-router\n' ;;
+                *) printf '\n' ;;
+            esac
+            return 0
+        fi
+        echo "Error response from daemon: No such object: $id" >&2
+        return 1
+    }
+    case $format in
+        '{{.Created}} {{.Id}} {{.State.Status}}')
+            printf '%s %s %s\n' "$(container_field "$id" created)" "$id" "$(container_field "$id" state)"
+            ;;
+        '{{.State.Status}}') container_field "$id" state ;;
+        '{{.Image}}') container_field "$id" image ;;
+        *config-hash*) container_field "$id" hash ;;
+        *ai.gonka.slot*) container_field "$id" slot ;;
+        *ai.gonka.component*) printf 'versiond-router\n' ;;
+        *'.Config.Env'*)
+            # The last assignment of a key wins, as in the container files.
+            sed -n 's/^env\.//p' "$model/containers/$id" | \
+                awk -F= '{ value[$1] = $0; if (!($1 in order)) order[$1] = ++n } END { for (key in value) line[order[key]] = value[key]; for (i = 1; i <= n; i++) print line[i] }'
+            ;;
+        *'.State.Status}} {{if .State.Health}}'*'{{.Config.Image}}')
+            printf '%s %s %s\n' "$(container_field "$id" state)" "$(container_field "$id" health)" \
+                "$(container_field "$id" image)"
+            ;;
+        *'.State.Status}} {{if .State.Health}}'*)
+            printf '%s %s\n' "$(container_field "$id" state)" "$(container_field "$id" health)"
+            ;;
+        *NetworkSettings.Networks*) printf '10.0.0.%s\n' "$(( 10 + $(container_field "$id" slot) ))" ;;
+        *) printf '\n' ;;
+    esac
+}
+
+model_docker() {
+    printf '%s\n' "$*" >>"$model/log"
+    local command=${1:-}
+    shift || true
+    case $command in
+        ps)
+            local fleet='' slot='' arg
+            for arg in "$@"; do
+                case $arg in
+                    label=ai.gonka.fleet=*) fleet=${arg#label=ai.gonka.fleet=} ;;
+                    label=ai.gonka.slot=*) slot=${arg#label=ai.gonka.slot=} ;;
+                esac
+            done
+            list_containers "$fleet" "$slot"
+            ;;
+        inspect)
+            local format='' ids=() status=0
+            while (($# > 0)); do
+                case $1 in
+                    --format) format=$2; shift 2 ;;
+                    --type) shift 2 ;;
+                    *) ids+=("$1"); shift ;;
+                esac
+            done
+            for id in "${ids[@]}"; do
+                model_inspect "$format" "$id" || status=1
+            done
+            return "$status"
+            ;;
+        start)
+            container_exists "$1" || return 1
+            set_container_field "$1" state running
+            local health
+            health=$(container_field "$1" start_health)
+            set_container_field "$1" health "${health:-healthy}"
+            ;;
+        stop)
+            local id=${*: -1}
+            container_exists "$id" || return 1
+            set_container_field "$id" state exited
+            ;;
+        rm)
+            local id=${*: -1}
+            container_exists "$id" || return 1
+            rm -f "$model/containers/$id"
+            ;;
+        image)
+            [[ ${1:-} == inspect ]] || return 0
+            shift
+            local format='' reference
+            while (($# > 0)); do
+                case $1 in
+                    --format) format=$2; shift 2 ;;
+                    *) reference=$1; shift ;;
+                esac
+            done
+            [[ -f "$model/images/${reference//\//|}" ]] || {
+                echo "Error: No such image: $reference" >&2
+                return 1
+            }
+            [[ -z $format ]] || cat "$model/images/${reference//\//|}"
+            ;;
+        network | volume) return 0 ;;
+        *) return 0 ;;
+    esac
+}
+
+# Compose is the one thing the model does not run: `up` records a generation
+# on the candidate specification (image, configuration hash, environment from
+# the current configuration, routes from the static declaration plus the
+# shared catalog cache, health from the model's knob).
+model_compose() {
+    local slot=$1 generation=$2 verb=$3 name
+    shift 3
+    case $verb in
+        config)
+            [[ ${1:-} == --hash ]] && printf 'router %s\n' "$(<"$model/desired-hash")"
+            ;;
+        pull)
+            [[ ! -f $model/registry-down ]] || { echo "simulated registry outage" >&2; return 1; }
+            ;;
+        up)
+            name="gen-$slot-$generation"
+            add_container "$name" "slot=$slot" "generation=$generation" \
+                "image=$(<"$model/images/registry.invalid|router:candidate")" \
+                "hash=$(<"$model/desired-hash")" \
+                "health=$(<"$model/candidate-health")" \
+                "routes=$(candidate_declared_routes)" \
+                "env.VERSIOND_VERSIONS=${VERSIOND_VERSIONS-v4 v5}" \
+                "env.VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}" \
+                "env.VERSIOND_POOL_HOST=${VERSIOND_POOL_HOST:-versiond-pool}" \
+                "env.VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=${VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS:-false}" \
+                "env.VERSIOND_POOL_ENDPOINTS_SHA256=${VERSIOND_POOL_ENDPOINTS_SHA256:-}"
+            [[ $(<"$model/candidate-health") == healthy ]] || return 1
+            ;;
+    esac
+}
+
+candidate_declared_routes() {
+    {
+        printf '%s\n' "${VERSIOND_VERSIONS-v4 v5}" "${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}" | tr ',;' '  ' | tr -s ' ' '\n'
+        cat "$model/catalog"
+    } | sed '/^$/d' | LC_ALL=C sort -u | paste -sd' ' -
+}
+
+# HAProxy internals replaced at the function seam: a route is ready on a
+# generation when the generation runs healthy, declares the route and the
+# versiond pool serves it.
+install_model_seams() {
+    slot_compose() { model_compose "$@"; }
+    slot_route_ready() {
+        local slot=$1 route=$2 id
+        id=$(slot_id "$slot" 2>/dev/null) || return 1
+        [[ $(container_field "$id" state) == running && $(container_field "$id" health) == healthy ]] || return 1
+        [[ " $(container_field "$id" routes) " == *" $route "* ]] || return 1
+        [[ " $(tr '\n' ' ' <"$model/pool-serves") " == *" $route "* ]]
+    }
+    slot_catalog_routes() {
+        local id
+        id=$(slot_id "$1") || return 1
+        container_field "$id" routes | tr ' ' '\n'
+    }
+    prepare_slot_networks() { :; }
+    resolve_metrics_network() { :; }
+    parent_proxy_active() { [[ -f $model/parent ]]; }
+    parent_diagnostic_available() { [[ -f $model/parent ]]; }
+    parent_route_admitted() { return 0; }
+    prepare_parent_slot_stop() { parent_drained_refs=(); }
+    reset_parent_slot_health() { :; }
+    repair_stale_parent_drain() { :; }
+    placement_version_for_image() { printf '2\n'; }
+    cache_protocol_for_image() { printf '1\n'; }
+    sleep() { :; }
+}
+
+# Run a production orchestration function with its own errexit context. A
 # production `fail` exits only this subshell, leaving the scenario able to
 # decide whether that rejection satisfies the desired invariant.
 run_capture() {
@@ -122,7 +376,7 @@ run_capture() {
     (
         set -Eeuo pipefail
         "$@"
-    )
+    ) >"$tmpdir/capture.out" 2>&1
     LAST_RC=$?
     set -e
 }
@@ -134,480 +388,344 @@ invariant_holds() {
 
 invariant_violated() {
     echo "INVARIANT_VIOLATED: $*" >&2
+    [[ ! -s $tmpdir/capture.out ]] || sed 's/^/  | /' "$tmpdir/capture.out" >&2
     return 1
 }
 
-mock_no_parent() {
-    return 1
+# A fleet of three serving generations on the previous image.
+seed_previous_fleet() {
+    local slot
+    for slot in 0 1 2; do
+        add_container "prev-$slot" "slot=$slot" "$@"
+    done
 }
 
-mock_slot_id() {
-    printf 'slot-%s\n' "$1"
+serving_id() {
+    local slot=$1 id
+    for id in $(list_containers test-fleet "$slot"); do
+        [[ $(container_field "$id" state) == running ]] && printf '%s\n' "$id"
+    done
 }
 
-mock_static_env() {
-    local _id=$1 key=$2
-    case $key in
-        VERSIOND_VERSIONS) printf 'v4\n' ;;
-        VERSIOND_NON_HA_VERSIONS) printf '\n' ;;
-        *) printf 'test-value\n' ;;
-    esac
+count_containers() {
+    list_containers test-fleet "${1:-}" | wc -l
 }
 
-mock_env_with_defaults() {
-    mock_static_env "$@"
-}
-
-mock_catalog_v4() {
-    printf 'v4\n'
-}
-
-# Docker surface used by fleet_status and the rollout image/tag operations.
-# Route readiness remains in the shell mocks, independently of coarse health.
-mock_rollout_docker() {
-    local format target slot
-    case ${1:-} in
-        image)
-            [[ ${2:-} == inspect ]] || return 0
-            if [[ ${3:-} == --format ]]; then
-                printf 'sha256:candidate\n'
-            fi
-            return 0
-            ;;
-        tag) return 0 ;;
-        ps)
-            printf 'slot-0\nslot-1\nslot-2\n'
-            return 0
-            ;;
-        inspect)
-            [[ ${2:-} == --format ]] || return 0
-            format=$3
-            target=$4
-            if [[ $target == test-parent ]]; then
-                echo 'Error: No such object: test-parent' >&2
-                return 1
-            fi
-            slot=${target##*-}
-            case $format in
-                *ai.gonka.slot*) printf '%s\n' "$slot" ;;
-                *'.State.Status}} {{if .State.Health}'*)
-                    printf 'running healthy registry.invalid/router:candidate\n'
-                    ;;
-                *'.State.Status}}'*) printf 'running\n' ;;
-                *'.Image}}'*) printf 'sha256:previous-%s\n' "$slot" ;;
-                *) printf '\n' ;;
-            esac
-            return 0
-            ;;
-        *) return 0 ;;
-    esac
-}
+# --- scenarios ---------------------------------------------------------------
 
 scenario_bootstrap_zero_ready() {
     load_fleet_functions || return $?
-
-    fleet_inventory() { inventory_listing=; inventory_ids=(); }
-    prepare_slot_networks() { :; }
-    pull_router_image() { :; }
-    require_placement_compatible() { :; }
-    start_existing_or_create_slot() { :; }
-    slot_route_declared() { [[ $2 == v4 ]]; }
-    route_ready_count() { printf '0\n'; }
-    slot_route_ready() { return 1; }
-    wait_parent_admission() { :; }
-    fleet_status() { :; }
-
+    : >"$model/pool-serves"
     run_capture fleet_apply
     if ((LAST_RC != 0)); then
-        invariant_holds \
-            'an absent fleet rejected the declared HA route because it had zero ready backends'
+        invariant_holds 'an absent fleet was not bootstrapped while declared route v4 had zero ready upstreams'
     else
-        invariant_violated \
-            'absent-fleet apply returned 0 after creating routers while static route v4 had zero ready backends'
+        invariant_violated 'absent-fleet apply returned 0 while static route v4 had zero ready upstreams'
     fi
 }
 
 scenario_pg_drop_after_gate() {
     load_fleet_functions || return $?
-
-    local pg_state=$tmpdir/pg-state
-    local gate_count=$tmpdir/gate-count
-    printf 'up\n' >"$pg_state"
-    printf '0\n' >"$gate_count"
-
-    # Keep the real precondition body, then inject the outage immediately after
-    # the final pre-stop gate for the only slot that needs replacement.
-    eval "$(declare -f require_static_routes_served | \
-        sed '1s/require_static_routes_served/real_require_static_routes_served/')"
-    require_static_routes_served() {
-        real_require_static_routes_served
-        local count
-        count=$(<"$gate_count")
-        ((count += 1))
-        printf '%s\n' "$count" >"$gate_count"
-        if ((count == 2)); then
-            printf 'down\n' >"$pg_state"
-        fi
+    seed_previous_fleet
+    # The pool loses v4 right after the last pre-stop gate of the first slot.
+    eval "$(declare -f require_ready_reserve | sed '1s/require_ready_reserve/real_require_ready_reserve/')"
+    require_ready_reserve() {
+        real_require_ready_reserve "$@"
+        : >"$model/pool-serves"
     }
-
-    fake_docker() { mock_rollout_docker "$@"; }
-    slot_id() { mock_slot_id "$@"; }
-    slot_ready() { return 0; }
-    slot_running() { return 0; }
-    slot_route_ready() { [[ $(<"$pg_state") == up ]]; }
-    slot_catalog_routes() { mock_catalog_v4; }
-    container_env_value() { mock_static_env "$@"; }
-    container_env_value_or_legacy_default() { mock_env_with_defaults "$@"; }
-    parent_proxy_active() { mock_no_parent; }
-    prepare_slot_networks() { :; }
-    pull_router_image() { :; }
-    require_placement_compatible() { :; }
-    slot_needs_replacement() { [[ $1 == 2 ]]; }
-    stop_slot_generation() { :; }
-    start_slot() { :; }
-    wait_parent_admission() { :; }
-
     run_capture fleet_rollout
-    if ((LAST_RC != 0)); then
-        invariant_holds \
-            'rollout failed closed when PostgreSQL-backed v4 disappeared after the last pre-stop gate'
+    if ((LAST_RC != 0)) && [[ $(serving_id 0) == prev-0 && $(count_containers 0) == 1 ]]; then
+        invariant_holds 'rollout failed closed when v4 disappeared after the gate, and the previous generation of the slot serves again'
     else
-        invariant_violated \
-            'rollout returned 0 after v4 dropped to zero ready routers between its final gate and replacement'
+        invariant_violated "rollout rc=$LAST_RC, slot 0 serving=$(serving_id 0 | paste -sd, -), containers=$(count_containers 0)"
     fi
 }
 
 scenario_maintenance_gate_race() {
     load_fleet_functions || return $?
-
-    local pg_state=$tmpdir/pg-state
-    printf 'up\n' >"$pg_state"
-
-    eval "$(declare -f require_static_routes_served | \
-        sed '1s/require_static_routes_served/real_require_static_routes_served/')"
+    seed_previous_fleet "env.VERSIOND_POOL_HOST=old-pool"
+    EXTRA=1
+    eval "$(declare -f require_static_routes_served | sed '1s/require_static_routes_served/real_require_static_routes_served/')"
     require_static_routes_served() {
         real_require_static_routes_served
-        # The maintenance snapshot starts after this function returns.
-        printf 'down\n' >"$pg_state"
+        : >"$model/pool-serves"
     }
-
-    fake_docker() { mock_rollout_docker "$@"; }
-    slot_id() { mock_slot_id "$@"; }
-    slot_ready() { return 0; }
-    slot_running() { return 0; }
-    slot_route_ready() { [[ $(<"$pg_state") == up ]]; }
-    slot_catalog_routes() { mock_catalog_v4; }
-    container_env_value() { mock_static_env "$@"; }
-    container_env_value_or_legacy_default() { mock_env_with_defaults "$@"; }
-    candidate_placement_contract() { printf 'candidate-contract\n'; }
-    running_placement_contract() { printf 'previous-contract\n'; }
-    placement_version_for_image() { printf '2\n'; }
-    require_cache_compatible() { :; }
-    parent_proxy_active() { mock_no_parent; }
-    prepare_slot_networks() { :; }
-    pull_router_image() { :; }
-    stop_slot_generation() { :; }
-    start_slot() { :; }
-    wait_parent_admission() { :; }
-
     run_capture fleet_maintenance_rollout
-    if ((LAST_RC != 0)); then
-        invariant_holds \
-            'maintenance rollout rejected a route that disappeared between the gate and route snapshot'
+    local slot ok=true
+    for slot in 0 1 2; do
+        [[ $(serving_id "$slot") == "prev-$slot" && $(count_containers "$slot") == 1 ]] || ok=false
+    done
+    if ((LAST_RC != 0)) && [[ $ok == true ]]; then
+        invariant_holds 'maintenance failed when v4 vanished after the gate and every previous generation serves again'
     else
-        invariant_violated \
-            'maintenance rollout returned 0 because a zero-ready v4 route fell out of maintenance_required_routes'
+        invariant_violated "maintenance rc=$LAST_RC, fleet restored=$ok"
     fi
 }
 
 scenario_sigkill_retry_previous() {
     load_fleet_functions || return $?
-
-    SIGKILL_STATE_FILE=$tmpdir/slot-2.state
-    SIGKILL_GENERATION_FILE=$tmpdir/slot-2.generation
-    printf 'exited\n' >"$SIGKILL_STATE_FILE"
-    printf 'previous\n' >"$SIGKILL_GENERATION_FILE"
-
-    fake_docker() {
-        local format=${3:-} target=${4:-}
-        case ${1:-} in
-            image) return 0 ;;
-            tag) return 0 ;;
-            start)
-                printf 'running\n' >"$SIGKILL_STATE_FILE"
-                return 0
-                ;;
-            inspect)
-                if [[ $format == *'.State.Status}}'* ]]; then
-                    if [[ $target == slot-2 ]]; then cat "$SIGKILL_STATE_FILE"; else printf 'running\n'; fi
-                elif [[ $format == *'.Image}}'* ]]; then
-                    if [[ $target == slot-2 ]]; then cat "$SIGKILL_GENERATION_FILE"; else printf 'previous\n'; fi
-                fi
-                return 0
-                ;;
-            *) return 0 ;;
-        esac
-    }
-    fleet_inventory() {
-        inventory_listing=$'slot-0\nslot-1\nslot-2'
-        inventory_ids=(slot-0 slot-1 slot-2)
-    }
-    validate_inventory_structure() { :; }
-    prepare_slot_networks() { :; }
-    pull_router_image() { :; }
-    require_placement_compatible() { :; }
-    slot_id() { mock_slot_id "$@"; }
-    slot_ready() {
-        [[ $1 != 2 ]] || [[ $(<"$SIGKILL_STATE_FILE") == running ]]
-    }
-    slot_compose() {
-        local slot=$1
-        shift
-        if [[ " $* " == *' start '* ]]; then
-            printf 'running\n' >"$SIGKILL_STATE_FILE"
-            return 0
-        fi
-        if [[ " $* " == *' up '* ]]; then
-            case ${VERSIOND_ROUTER_IMAGE:-} in
-                *previous*) printf 'previous\n' >"$SIGKILL_GENERATION_FILE" ;;
-                *) printf 'candidate\n' >"$SIGKILL_GENERATION_FILE" ;;
-            esac
-            printf 'running\n' >"$SIGKILL_STATE_FILE"
-        fi
-    }
-    wait_slot_routes() { :; }
-    wait_parent_admission() { :; }
-    fleet_rollout() { :; }
-
+    seed_previous_fleet
+    # Killed right after slot 2 was stopped: no candidate exists yet. The
+    # candidate image never becomes healthy.
+    set_container_field prev-2 state exited
+    printf 'unhealthy\n' >"$model/candidate-health"
     run_capture fleet_apply
-    if [[ $(<"$SIGKILL_GENERATION_FILE") == previous ]]; then
-        invariant_holds \
-            'retry recovered the interrupted slot from its durable previous generation before candidate convergence'
+    if ((LAST_RC != 0)) && [[ $(serving_id 2) == prev-2 && $(count_containers 2) == 1 ]]; then
+        invariant_holds 'retry started the stopped previous generation, tried the candidate under its trap and put the previous generation back'
     else
-        invariant_violated \
-            'retry force-recreated the interrupted non-ready slot with the candidate and ignored its durable previous tag'
+        invariant_violated "apply rc=$LAST_RC, slot 2 serving=$(serving_id 2 | paste -sd, -), containers=$(count_containers 2)"
     fi
+}
+
+scenario_crash_exited_candidate() {
+    load_fleet_functions || return $?
+    seed_previous_fleet
+    # Killed after the candidate of slot 2 was created and exited: the
+    # candidate is unhealthy by nature, the previous generation is stopped.
+    set_container_field prev-2 state exited
+    add_container cand-2 slot=2 state=exited image=sha256:candidate hash=desired-hash health=unhealthy start_health=unhealthy
+    printf 'unhealthy\n' >"$model/candidate-health"
+    run_capture fleet_apply
+    if ((LAST_RC != 0)) && [[ $(serving_id 2) == prev-2 && $(count_containers 2) == 1 ]]; then
+        invariant_holds 'retry removed the exited candidate and restored the previous generation instead of restarting the candidate'
+    else
+        invariant_violated "apply rc=$LAST_RC, slot 2 serving=$(serving_id 2 | paste -sd, -), containers=$(count_containers 2)"
+    fi
+}
+
+# An interrupted maintenance replaced slot 0 (candidate serving, previous
+# stopped next to it) and left slots 1 and 2 on the previous generation.
+seed_interrupted_maintenance() {
+    add_container prev-0 slot=0 state=exited "env.VERSIOND_POOL_HOST=old-pool"
+    add_container prev-1 slot=1 "env.VERSIOND_POOL_HOST=old-pool"
+    add_container prev-2 slot=2 "env.VERSIOND_POOL_HOST=old-pool"
+    add_container cand-0 slot=0 image=sha256:candidate hash=desired-hash "env.VERSIOND_POOL_HOST=new-pool"
 }
 
 scenario_maintenance_retry_exact() {
     load_fleet_functions || return $?
-
-    local slot
+    seed_interrupted_maintenance
+    # The retry's candidates never become healthy.
+    printf 'unhealthy\n' >"$model/candidate-health"
+    run_capture fleet_maintenance_rollout
+    local slot ok=true
     for slot in 0 1 2; do
-        printf 'running\n' >"$tmpdir/slot-$slot.state"
-        if [[ $slot == 0 ]]; then
-            printf 'candidate\n' >"$tmpdir/slot-$slot.generation"
-            printf 'candidate-contract\n' >"$tmpdir/slot-$slot.contract"
-        else
-            printf 'previous\n' >"$tmpdir/slot-$slot.generation"
-            printf 'previous-contract\n' >"$tmpdir/slot-$slot.contract"
-        fi
+        [[ $(serving_id "$slot") == "prev-$slot" && $(count_containers "$slot") == 1 ]] || ok=false
     done
-
-    declare -gA fake_tags=()
-    # The durable tag is scoped by fleet id (see RT-ROLLBACK-TAG-ISOLATION).
-    fake_tags[gonka/versiond-router-previous:test-fleet-0]=previous
-    fake_docker() {
-        local format=${3:-} target=${4:-} slot
-        case ${1:-} in
-            image)
-                [[ ${2:-} == inspect ]] || return 0
-                target=${4:-${3:-}}
-                if [[ ${3:-} == --format ]]; then
-                    [[ $target == registry.invalid/router:candidate ]] && \
-                        printf 'candidate\n' || printf '%s\n' "${fake_tags[$target]:-previous}"
-                else
-                    [[ -n ${fake_tags[$target]-} ]]
-                fi
-                ;;
-            tag)
-                fake_tags[$3]=$2
-                ;;
-            inspect)
-                slot=${target##*-}
-                case $format in
-                    *'.State.Status}}'*) cat "$tmpdir/slot-$slot.state" ;;
-                    *'.Image}}'*) cat "$tmpdir/slot-$slot.generation" ;;
-                esac
-                ;;
-            *) return 0 ;;
-        esac
-    }
-    slot_id() { mock_slot_id "$@"; }
-    slot_running() { [[ $(<"$tmpdir/slot-$1.state") == running ]]; }
-    slot_ready() { slot_running "$1"; }
-    slot_route_ready() { slot_ready "$1"; }
-    route_ready_count() {
-        local _route=$1 excluded=${2:-} count=0 item
-        for item in 0 1 2; do
-            [[ $item == "$excluded" ]] && continue
-            slot_route_ready "$item" v4 && ((count += 1))
-        done
-        printf '%s\n' "$count"
-    }
-    slot_catalog_routes() { mock_catalog_v4; }
-    candidate_placement_contract() { printf 'candidate-contract\n'; }
-    running_placement_contract() { cat "$tmpdir/slot-${1##*-}.contract"; }
-    container_env_value_or_legacy_default() { mock_env_with_defaults "$@"; }
-    stop_slot_generation() {
-        printf 'exited\n' >"$tmpdir/slot-$1.state"
-    }
-    slot_compose() {
-        local slot=$1
-        shift
-        if [[ " $* " == *' up '* ]]; then
-            case ${VERSIOND_ROUTER_IMAGE:-} in
-                *previous*)
-                    printf 'previous\n' >"$tmpdir/slot-$slot.generation"
-                    printf 'previous-contract\n' >"$tmpdir/slot-$slot.contract"
-                    ;;
-                *)
-                    printf 'candidate\n' >"$tmpdir/slot-$slot.generation"
-                    printf 'candidate-contract\n' >"$tmpdir/slot-$slot.contract"
-                    ;;
-            esac
-            printf 'running\n' >"$tmpdir/slot-$slot.state"
-        fi
-    }
-
-    maintenance_candidate_image_id=candidate
-    capture_maintenance_state
-    maintenance_active=true
-    for slot in "${maintenance_pending[@]}"; do
-        stop_slot_generation "$slot"
-        start_slot "$slot"
-    done
-
-    # Trigger the real rollback path.  It exits by design, so keep all modeled
-    # container state in files visible after the subshell exits.
-    set +e
-    (
-        set +e
-        (exit 99)
-        maintenance_rollback
-    )
-    set -e
-
-    local all_previous=true
-    for slot in 0 1 2; do
-        [[ $(<"$tmpdir/slot-$slot.generation") == previous ]] || all_previous=false
-    done
-    if [[ $all_previous == true ]]; then
-        invariant_holds \
-            'maintenance retry failure restored every slot, including candidate-complete slots from the interrupted run'
+    if ((LAST_RC != 0)) && [[ $ok == true ]]; then
+        invariant_holds 'maintenance retry failure restored every slot, including the one the interrupted run had replaced'
     else
-        invariant_violated \
-            'maintenance retry rollback restored only this run pending slots and left the previously completed slot on candidate'
+        invariant_violated "maintenance rc=$LAST_RC, exact previous fleet restored=$ok: $(list_containers test-fleet | paste -sd, -)"
     fi
 }
 
-scenario_tag_isolation() {
+scenario_maintenance_retry_exact_env() {
     load_fleet_functions || return $?
-
-    declare -gA fake_tags=()
-    fake_docker() {
-        local format=${3:-} target=${4:-} owner slot image
-        case ${1:-} in
-            image)
-                [[ ${2:-} == inspect ]] || return 0
-                target=${4:-${3:-}}
-                [[ -n ${fake_tags[$target]-} ]]
-                ;;
-            tag)
-                fake_tags[$3]=$2
-                ;;
-            inspect)
-                owner=${target%%-id-*}
-                slot=${target##*-}
-                image="sha256:previous-$owner-$slot"
-                case $format in
-                    *'.State.Status}}'*) printf 'running\n' ;;
-                    *'.Image}}'*) printf '%s\n' "$image" ;;
-                esac
-                ;;
-            *) return 0 ;;
-        esac
-    }
-    slot_id() { printf '%s-id-%s\n' "$fleet_id" "$1"; }
-    slot_ready() { return 0; }
-    slot_catalog_routes() { mock_catalog_v4; }
-    route_ready_count() { printf '3\n'; }
-    running_placement_contract() { printf 'previous-contract\n'; }
-    candidate_placement_contract() { printf 'candidate-contract\n'; }
-    container_env_value_or_legacy_default() { mock_env_with_defaults "$@"; }
-
-    fleet_id=fleet-A
-    maintenance_candidate_image_id=sha256:candidate-A
-    maintenance_images=()
-    maintenance_required_routes=()
-    capture_maintenance_state
-    local tag_a=${maintenance_images[0]}
-    local image_a=${fake_tags[$tag_a]-}
-
-    fleet_id=fleet-B
-    maintenance_candidate_image_id=sha256:candidate-B
-    maintenance_images=()
-    maintenance_env=()
-    maintenance_required_routes=()
-    capture_maintenance_state
-    local tag_b=${maintenance_images[0]}
-
-    if [[ $tag_a != "$tag_b" && ${fake_tags[$tag_a]-} == "$image_a" ]]; then
-        invariant_holds \
-            'two fleet IDs retain distinct rollback references for the same slot name'
+    seed_interrupted_maintenance
+    printf 'unhealthy\n' >"$model/candidate-health"
+    run_capture fleet_maintenance_rollout
+    local slot ok=true
+    for slot in 0 1 2; do
+        [[ $(container_field "$(serving_id "$slot")" env.VERSIOND_POOL_HOST) == old-pool ]] || ok=false
+    done
+    if ((LAST_RC != 0)) && [[ $ok == true ]]; then
+        invariant_holds 'every restored generation carries its own previous environment, not the candidate configuration'
     else
-        invariant_violated \
-            "fleet-B reused '$tag_b' and overwrote fleet-A rollback reference '$tag_a'"
+        invariant_violated "maintenance rc=$LAST_RC, restored environments: $(for slot in 0 1 2; do container_field "$(serving_id "$slot")" env.VERSIOND_POOL_HOST; done | paste -sd, -)"
+    fi
+}
+
+scenario_maintenance_unhealthy_candidate() {
+    load_fleet_functions || return $?
+    # An interrupted maintenance left slot 1 with an unhealthy candidate on
+    # the candidate specification and its previous generation stopped.
+    add_container prev-0 slot=0 "env.VERSIOND_POOL_HOST=old-pool"
+    add_container prev-1 slot=1 state=exited "env.VERSIOND_POOL_HOST=old-pool"
+    add_container prev-2 slot=2 "env.VERSIOND_POOL_HOST=old-pool"
+    add_container cand-1 slot=1 image=sha256:candidate hash=desired-hash health=unhealthy "env.VERSIOND_POOL_HOST=new-pool"
+    printf 'unhealthy\n' >"$model/candidate-health"
+    run_capture fleet_maintenance_rollout
+    if ((LAST_RC != 0)) && [[ $(serving_id 1) == prev-1 && $(count_containers 1) == 1 ]] && ! container_exists cand-1; then
+        invariant_holds 'the unhealthy candidate was removed and its previous generation put back when the retry failed'
+    else
+        invariant_violated "maintenance rc=$LAST_RC, slot 1 serving=$(serving_id 1 | paste -sd, -), containers=$(list_containers test-fleet 1 | paste -sd, -)"
+    fi
+}
+
+scenario_rollback_record_isolation() {
+    load_fleet_functions || return $?
+    seed_previous_fleet
+    # Another fleet on the same daemon uses the same slot numbers.
+    add_container other-0 slot=0 fleet=other-fleet
+    add_container other-1 slot=1 fleet=other-fleet
+    printf 'unhealthy\n' >"$model/candidate-health"
+    run_capture fleet_rollout
+    if ((LAST_RC != 0)) && [[ $(container_field other-0 state) == running && $(container_field other-1 state) == running ]] && \
+        [[ $(list_containers other-fleet | wc -l) == 2 && $(serving_id 0) == prev-0 ]]; then
+        invariant_holds 'a failed rollout touched only the containers of its own fleet'
+    else
+        invariant_violated "rollout rc=$LAST_RC, other fleet: $(list_containers other-fleet | paste -sd, -)"
+    fi
+}
+
+scenario_rollback_record_provenance() {
+    load_fleet_functions || return $?
+    seed_previous_fleet
+    # Slot 1: a healthy generation on the candidate specification serves,
+    # with a stale stopped generation from an older operation next to it.
+    set_container_field prev-1 state exited
+    add_container serving-1 slot=1 image=sha256:candidate hash=desired-hash
+    run_capture fleet_apply
+    if ((LAST_RC == 0)) && [[ $(serving_id 1) == serving-1 && $(count_containers 1) == 1 ]] && ! container_exists prev-1; then
+        invariant_holds 'a serving candidate was committed; the stale record was removed, not restored over it'
+    else
+        invariant_violated "apply rc=$LAST_RC, slot 1 serving=$(serving_id 1 | paste -sd, -), containers=$(list_containers test-fleet 1 | paste -sd, -)"
     fi
 }
 
 scenario_offline_retry_cached() {
     load_fleet_functions || return $?
-
-    OFFLINE_STATE_FILE=$tmpdir/slot-2.state
-    printf 'exited\n' >"$OFFLINE_STATE_FILE"
     pull_policy=always
-
-    fake_docker() {
-        local format=${3:-} target=${4:-}
-        if [[ ${1:-} == inspect && $format == *'.State.Status}}'* ]]; then
-            if [[ $target == slot-2 ]]; then cat "$OFFLINE_STATE_FILE"; else printf 'running\n'; fi
-        fi
-        return 0
-    }
-    fleet_inventory() {
-        inventory_listing=$'slot-0\nslot-1\nslot-2'
-        inventory_ids=(slot-0 slot-1 slot-2)
-    }
-    validate_inventory_structure() { :; }
-    prepare_slot_networks() { :; }
-    slot_id() { mock_slot_id "$@"; }
-    slot_ready() {
-        [[ $1 != 2 ]] || [[ $(<"$OFFLINE_STATE_FILE") == running ]]
-    }
-    slot_compose() {
-        local slot=$1
-        shift
-        if [[ " $* " == *' pull '* ]]; then
-            echo 'simulated registry outage' >&2
-            return 1
-        fi
-        if [[ " $* " == *' up '* || " $* " == *' start '* ]]; then
-            printf 'running\n' >"$OFFLINE_STATE_FILE"
-        fi
-    }
-    require_placement_compatible() { :; }
-    wait_slot_routes() { :; }
-    wait_parent_admission() { :; }
-    fleet_rollout() { :; }
-
+    seed_previous_fleet image=sha256:candidate hash=desired-hash
+    set_container_field prev-2 state exited
+    : >"$model/registry-down"
     run_capture fleet_apply
-    if ((LAST_RC == 0)) && [[ $(<"$OFFLINE_STATE_FILE") == running ]]; then
-        invariant_holds \
-            'registry outage did not block recovery because the required candidate/previous images were cached'
+    if ((LAST_RC == 0)) && [[ $(serving_id 2) == prev-2 ]]; then
+        invariant_holds 'a registry outage did not block recovery because the candidate image was cached'
     else
-        invariant_violated \
-            'pull-policy always contacted the unavailable registry before repairing the interrupted fleet from cached images'
+        invariant_violated "apply rc=$LAST_RC with the registry down and the candidate cached"
+    fi
+}
+
+scenario_catalog_drop_after_reserve() {
+    load_fleet_functions || return $?
+    printf 'v9\n' >"$model/catalog"
+    printf 'v4\nv9\n' >"$model/pool-serves"
+    seed_previous_fleet "routes=v4 v9"
+    discover_expected_routes
+    # The pool loses catalog route v9 after the reserve check; the candidate
+    # declares it from the shared cache but cannot serve it.
+    eval "$(declare -f require_ready_reserve | sed '1s/require_ready_reserve/real_require_ready_reserve/')"
+    require_ready_reserve() {
+        real_require_ready_reserve "$@"
+        printf 'v4\n' >"$model/pool-serves"
+    }
+    run_capture fleet_rollout
+    if ((LAST_RC != 0)) && [[ $(serving_id 0) == prev-0 && $(count_containers 0) == 1 ]]; then
+        invariant_holds 'a candidate that could not serve protected catalog route v9 was rejected and the previous generation restored'
+    else
+        invariant_violated "rollout rc=$LAST_RC, slot 0 serving=$(serving_id 0 | paste -sd, -)"
+    fi
+}
+
+scenario_catalog_zero_ready_at_start() {
+    load_fleet_functions || return $?
+    : >"$model/parent"
+    seed_previous_fleet "routes=v4 v9"
+    discover_expected_routes
+    run_capture fleet_status
+    local status_rc=$LAST_RC
+    grep -q 'ROUTE v9 .*catalog .*ready 0/3' "$tmpdir/capture.out" || status_rc=0
+    run_capture verify_parent_fleet_admission
+    if ((status_rc != 0 && LAST_RC != 0)); then
+        invariant_holds 'a catalog route every slot declares but nobody serves is reported by status and fails admission'
+    else
+        invariant_violated "status rc=$status_rc, admission rc=$LAST_RC for catalog route v9 with zero ready routers"
+    fi
+}
+
+scenario_status_static_zero_ready() {
+    EXTRA_CONFIG='VERSIOND_VERSIONS="v4 v5"' load_fleet_functions || return $?
+    : >"$model/parent"
+    seed_previous_fleet "routes=v4 v5" "env.VERSIOND_VERSIONS=v4 v5"
+    discover_expected_routes
+    run_capture fleet_status
+    if ((LAST_RC != 0)) && grep -q 'required version v5 is served by no ready router' "$tmpdir/capture.out"; then
+        invariant_holds 'status is red while required static HA route v5 has zero ready routers'
+    else
+        invariant_violated "status rc=$LAST_RC with v5 required and unserved"
+    fi
+}
+
+scenario_endpoint_membership_atomic() {
+    local endpoints
+    endpoints=$(mktemp)
+    printf '[{"id":"a","host":"10.0.0.1"},{"id":"b","host":"10.0.0.2"}]\n' >"$endpoints"
+    EXTRA_CONFIG="VERSIOND_POOL_ENDPOINTS_FILE=$endpoints" load_fleet_functions || return $?
+    rm -f "$endpoints"
+    seed_previous_fleet "env.VERSIOND_POOL_ENDPOINTS_SHA256=0000000000000000000000000000000000000000000000000000000000000000"
+    run_capture fleet_rollout
+    if ((LAST_RC != 0)) && grep -q 'use maintenance-rollout' "$tmpdir/capture.out" && [[ $(count_containers) == 3 ]]; then
+        invariant_holds 'a pool membership change is refused as a rolling replacement and routed through maintenance'
+    else
+        invariant_violated "rollout rc=$LAST_RC on a membership change: $(tail -n 3 "$tmpdir/capture.out" | paste -sd' ' -)"
+    fi
+}
+
+scenario_static_ha_removal() {
+    load_fleet_functions || return $?
+    printf 'v4\nv5\n' >"$model/pool-serves"
+    seed_previous_fleet "routes=v4 v5" "env.VERSIOND_VERSIONS=v4 v5"
+    discover_expected_routes
+    run_capture fleet_rollout
+    local slot ok=true
+    for slot in 0 1 2; do
+        [[ $(container_field "$(serving_id "$slot")" env.VERSIOND_VERSIONS) == v4 && $(count_containers "$slot") == 1 ]] || ok=false
+    done
+    if ((LAST_RC == 0)) && [[ $ok == true ]]; then
+        invariant_holds 'withdrawing v5 from the static declaration rolled the fleet; the withdrawn route did not block its own removal'
+    else
+        invariant_violated "rollout rc=$LAST_RC, fleet on v4 only=$ok"
+    fi
+}
+
+scenario_dynamic_catalog_removal() {
+    EXTRA_CONFIG='VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=true' load_fleet_functions || return $?
+    printf 'v4\nv9\n' >"$model/pool-serves"
+    seed_previous_fleet "routes=v4 v9"
+    # The catalog removed v9; the candidates' shared cache no longer lists it.
+    : >"$model/catalog"
+    discover_expected_routes
+    run_capture fleet_rollout
+    local slot ok=true
+    for slot in 0 1 2; do
+        [[ $(container_field "$(serving_id "$slot")" env.VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS) == true ]] || ok=false
+        [[ " $(container_field "$(serving_id "$slot")" routes) " != *" v9 "* ]] || ok=false
+    done
+    if ((LAST_RC == 0)) && [[ $ok == true ]]; then
+        invariant_holds 'a catalog route removed with removals allowed is not demanded of the candidates, which carry the removal policy'
+    else
+        invariant_violated "rollout rc=$LAST_RC, candidates without v9 and with the policy=$ok"
+    fi
+}
+
+scenario_catalog_route_lost_by_candidate() {
+    load_fleet_functions || return $?
+    printf 'v4\nv9\n' >"$model/pool-serves"
+    seed_previous_fleet "routes=v4 v9"
+    # Removals are not allowed, yet the candidate comes up without v9: its
+    # cache is gone. It must not be admitted.
+    : >"$model/catalog"
+    discover_expected_routes
+    run_capture fleet_rollout
+    if ((LAST_RC != 0)) && [[ $(serving_id 0) == prev-0 && $(count_containers 0) == 1 ]]; then
+        invariant_holds 'a candidate that silently lost protected catalog route v9 was rejected and the previous generation restored'
+    else
+        invariant_violated "rollout rc=$LAST_RC, slot 0 serving=$(serving_id 0 | paste -sd, -)"
+    fi
+}
+
+scenario_nonha_owner_down() {
+    EXTRA_CONFIG='VERSIOND_NON_HA_VERSIONS=v1' load_fleet_functions || return $?
+    seed_previous_fleet "routes=v1 v4" "env.VERSIOND_NON_HA_VERSIONS=v1"
+    discover_expected_routes
+    run_capture require_static_routes_served
+    local gate_rc=$LAST_RC
+    run_capture fleet_rollout
+    if ((gate_rc == 0 && LAST_RC == 0)) && [[ -z ${required_routes[v1]-} ]]; then
+        invariant_holds 'a pinned non-HA version whose owner is down neither blocks the gate nor the rollout'
+    else
+        invariant_violated "gate rc=$gate_rc, rollout rc=$LAST_RC while pinned v1 has no ready router"
     fi
 }
 
@@ -618,9 +736,21 @@ run_internal() {
         RT-PG-DROP-AFTER-GATE) scenario_pg_drop_after_gate ;;
         RT-MAINT-GATE-RACE) scenario_maintenance_gate_race ;;
         RT-SIGKILL-RETRY-PREVIOUS) scenario_sigkill_retry_previous ;;
+        RT-CRASH-EXITED-CANDIDATE) scenario_crash_exited_candidate ;;
         RT-MAINT-RETRY-EXACT) scenario_maintenance_retry_exact ;;
-        RT-ROLLBACK-TAG-ISOLATION) scenario_tag_isolation ;;
+        RT-MAINT-RETRY-EXACT-ENV) scenario_maintenance_retry_exact_env ;;
+        RT-MAINT-UNHEALTHY-CANDIDATE) scenario_maintenance_unhealthy_candidate ;;
+        RT-ROLLBACK-RECORD-ISOLATION) scenario_rollback_record_isolation ;;
+        RT-ROLLBACK-RECORD-PROVENANCE) scenario_rollback_record_provenance ;;
         RT-OFFLINE-RETRY-CACHED) scenario_offline_retry_cached ;;
+        RT-CATALOG-DROP-AFTER-RESERVE) scenario_catalog_drop_after_reserve ;;
+        RT-CATALOG-ZERO-READY-AT-START) scenario_catalog_zero_ready_at_start ;;
+        RT-STATUS-STATIC-ZERO-READY) scenario_status_static_zero_ready ;;
+        RT-ENDPOINT-MEMBERSHIP-ATOMIC) scenario_endpoint_membership_atomic ;;
+        RT-STATIC-HA-REMOVAL) scenario_static_ha_removal ;;
+        RT-DYNAMIC-CATALOG-REMOVAL) scenario_dynamic_catalog_removal ;;
+        RT-CATALOG-ROUTE-LOST-BY-CANDIDATE) scenario_catalog_route_lost_by_candidate ;;
+        RT-NONHA-OWNER-DOWN) scenario_nonha_owner_down ;;
         *) echo "HARNESS_ERROR: unknown scenario $scenario" >&2; return 2 ;;
     esac
 }

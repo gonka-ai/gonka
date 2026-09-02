@@ -28,11 +28,18 @@ services:
       - VERSIOND_ROUTING_ACTIVATION_MIN_READY=${VERSIOND_ROUTING_ACTIVATION_MIN_READY:-2}
       - VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=${VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS:-86400}
       - VERSIOND_ROUTER_VERSION_CAPACITY=${VERSIOND_ROUTER_VERSION_CAPACITY:-32}
+      - VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=${VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS:-false}
       - HAPROXY_DNS_RESOLVER=${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}
     labels:
       ai.gonka.component: versiond-router
       ai.gonka.fleet: ${VERSIOND_ROUTER_FLEET_ID:-gonka-versiond-router}
       ai.gonka.slot: ${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}
+      # Every generation of a slot is its own Compose project
+      # (<prefix>-<slot>-<generation>); the fleet keeps the previous generation
+      # as a stopped container until the replacement is committed and tells
+      # generations apart by creation time. The generation is deliberately not
+      # a label: the service configuration, and so its Compose hash, is the
+      # same for every generation of a slot.
     networks:
       front:
         aliases:
@@ -85,7 +92,8 @@ networks:
 
 volumes:
   router-state:
-    labels:
-      ai.gonka.component: versiond-router-state
-      ai.gonka.fleet: ${VERSIOND_ROUTER_FLEET_ID:-gonka-versiond-router}
-      ai.gonka.slot: ${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}
+    # Shared by every generation of the slot, under the name Compose gave it
+    # before generations existed, so a replacement keeps the catalog cache.
+    # versiond-router-fleet.sh creates it with the fleet labels.
+    name: ${VERSIOND_ROUTER_STATE_VOLUME:-${VERSIOND_ROUTER_PROJECT_PREFIX:-gonka-versiond-router}-${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}_router-state}
+    external: true

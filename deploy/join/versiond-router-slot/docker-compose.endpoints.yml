@@ -1,14 +1,14 @@
 # Explicit versiond pool membership for one router slot.
 #
 # versiond-router-fleet.sh adds this file to every slot's Compose command when
-# config.env sets VERSIOND_POOL_ENDPOINTS_FILE. It mounts the operator's
-# endpoint list read-only and records its SHA-256 in the container environment,
-# so an edited list changes the rendered slot contract and `apply` rolls the
-# fleet one slot at a time. Do not pass this file by hand.
+# config.env sets VERSIOND_POOL_ENDPOINTS_FILE. The list is handed over as an
+# environment value with its SHA-256, so a generation carries its own
+# membership: an edited file changes nothing until the fleet is rolled, and a
+# restored generation keeps the list it was created with. Membership is part
+# of the placement contract, so a change goes through maintenance-rollout.
+# Do not pass this file by hand.
 services:
   router:
     environment:
-      - VERSIOND_POOL_ENDPOINTS_FILE=/etc/gonka/versiond-endpoints.json
+      - VERSIOND_POOL_ENDPOINTS=${VERSIOND_POOL_ENDPOINTS:?set by versiond-router-fleet.sh}
       - VERSIOND_POOL_ENDPOINTS_SHA256=${VERSIOND_POOL_ENDPOINTS_SHA256:?set by versiond-router-fleet.sh}
-    volumes:
-      - ${VERSIOND_POOL_ENDPOINTS_HOST_FILE:?set by versiond-router-fleet.sh}:/etc/gonka/versiond-endpoints.json:ro,z

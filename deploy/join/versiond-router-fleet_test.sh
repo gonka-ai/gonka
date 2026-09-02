@@ -19,18 +19,12 @@ tmpdir=$(mktemp -d)
 slots=(0 1 2)
 
 cleanup() {
-    local slot
-    for slot in "${slots[@]}"; do
-        VERSIOND_ROUTER_SLOT=$slot \
-            VERSIOND_ROUTER_FRONT_NETWORK=$front \
-            VERSIOND_ROUTER_BACK_NETWORK=$back \
-            VERSIOND_ROUTER_METRICS_NETWORK=$metrics \
-            VERSIOND_ROUTER_IMAGE=$image \
-            docker compose --project-directory "$script_dir" \
-                --project-name "$prefix-$slot" \
-                -f "$script_dir/versiond-router-slot/docker-compose.yml" \
-                down --timeout 1 --remove-orphans -v >/dev/null 2>&1 || true
-    done
+    # Every generation of every slot carries the fleet label; the shared
+    # state volumes carry it too.
+    docker ps -aq --filter label=ai.gonka.component=versiond-router \
+        --filter "label=ai.gonka.fleet=$fleet_id" | xargs -r docker rm -f >/dev/null 2>&1 || true
+    docker volume ls -q --filter label=ai.gonka.component=versiond-router-state \
+        --filter "label=ai.gonka.fleet=$fleet_id" | xargs -r docker volume rm >/dev/null 2>&1 || true
     docker rm -f gonka-router-fleet-backend-$suffix \
         gonka-router-fleet-proxy-$suffix \
         gonka-router-fleet-probe-$suffix \
@@ -41,10 +35,6 @@ cleanup() {
         -f "$tmpdir/main.yml" down --timeout 1 >/dev/null 2>&1 || true
     docker network rm "$front" "$back" "$metrics" \
         "gonka-versiond-router-orphan-$suffix" >/dev/null 2>&1 || true
-    # The durable previous-image tags are scoped to this fleet and would
-    # otherwise accumulate on the daemon, one set per run.
-    docker image ls --format '{{.Repository}}:{{.Tag}}' gonka/versiond-router-previous 2>/dev/null | \
-        grep -F ":$fleet_id-" | xargs -r docker image rm >/dev/null 2>&1 || true
     docker image rm "$base_image" "$updated_image" "$bad_image" \
         "$incompatible_cache_image" "$proxy_image" >/dev/null 2>&1 || true
     rm -rf "$tmpdir"
@@ -308,8 +298,8 @@ for slot in "${slots[@]}"; do
 done
 
 # A protocol bump uses a distinct cache file and is rolled out without an
-# operator migration. The previous file remains available to the captured
-# rollback image.
+# operator migration. The previous file remains available to the previous
+# generation kept for rollback.
 sed -i "s|^VERSIOND_ROUTER_IMAGE=.*|VERSIOND_ROUTER_IMAGE=$image|" \
     "$tmpdir/config.env"
 "${fleet[@]}" rollout >/dev/null
@@ -847,6 +837,11 @@ sed -i 's/^VERSIOND_ROUTER_START_TIMEOUT_SECONDS=10$/VERSIOND_ROUTER_START_TIMEO
 
 # A coarse-healthy router can still lack one version. Generic reserve alone
 # would allow the only safe peer for that route to stop.
+# Every generation is its own project now: the drifted fixture must replace
+# the fleet's slot 0 rather than stand next to it as a second generation.
+docker ps -aq --filter label=ai.gonka.component=versiond-router \
+    --filter "label=ai.gonka.fleet=$fleet_id" --filter label=ai.gonka.slot=0 | \
+    xargs -r docker rm -f >/dev/null
 VERSIOND_ROUTER_SLOT=0 \
     VERSIOND_ROUTER_FLEET_ID=$fleet_id \
     VERSIOND_ROUTER_FRONT_NETWORK=$front \
@@ -857,8 +852,9 @@ VERSIOND_ROUTER_SLOT=0 \
     VERSIOND_VERSIONS='' \
     VERSIOND_ROUTING_CATALOG_URL='' \
     VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true \
+    VERSIOND_ROUTER_STATE_VOLUME="$prefix-0_router-state" \
     docker compose --project-directory "$script_dir" \
-        --project-name "$prefix-0" \
+        --project-name "$prefix-0-manual" \
         -f "$script_dir/versiond-router-slot/docker-compose.yml" \
         up -d --force-recreate --wait --wait-timeout 30 router >/dev/null
 if "${fleet[@]}" stop 1 >"$tmpdir/route-reserve.out" 2>&1; then
@@ -880,8 +876,9 @@ VERSIOND_ROUTER_SLOT=0 \
     VERSIOND_NON_HA_VERSIONS='' \
     VERSIOND_VERSIONS=v4 \
     VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true \
+    VERSIOND_ROUTER_STATE_VOLUME="$prefix-0_router-state" \
     docker compose --project-directory "$script_dir" \
-        --project-name "$prefix-0" \
+        --project-name "$prefix-0-manual" \
         -f "$script_dir/versiond-router-slot/docker-compose.yml" \
         up -d --force-recreate --wait --wait-timeout 30 router >/dev/null
 
