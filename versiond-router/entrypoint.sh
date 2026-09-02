@@ -168,49 +168,46 @@ endpoint_by_id() {
         "$POOL_ENDPOINTS"
 }
 
-# A name keeps re-resolving through the Docker resolver so a recreated
-# container with a new address rejoins; an IPv4 literal needs no resolver.
-server_resolver_options() {
+# The server options come from the template's server-template line, so the
+# explicit and DNS forms cannot drift apart and versiond's drain-announcement
+# test keeps reading them from one place. $1 is the host, $2 the state.
+explicit_server_options() {
+    eso_options=$(sed -n \
+        's/^[[:space:]]*server-template versiond [^ ]* [^ ]* \(.*\)$/\1/p' \
+        "$POOL_TEMPLATE" | head -n 1)
+    [ -n "$eso_options" ] || die "pool template has no server-template line"
     case "$1" in
-        *[!0-9.]*) printf ' resolvers docker init-addr none' ;;
-        *) printf '' ;;
+        *[!0-9.]*) ;;
+        # An IPv4 literal is not resolved; a name keeps re-resolving through
+        # the Docker resolver so a recreated container rejoins.
+        *) eso_options=$(printf '%s' "$eso_options" | \
+            sed 's/ resolvers docker init-addr none//') ;;
     esac
+    printf '%s' "$eso_options" | sed "s/\${SERVER_STATE}/$2/"
 }
 
-# The server lines of one backend. $1 is the backend kind (pool or legacy),
-# $2 the DNS pool name or legacy host, $3 the slot count for DNS templates,
-# $4 the initial server state.
-pool_server_lines() {
-    psl_kind=$1
-    psl_host=$2
-    psl_slots=$3
-    psl_state=$4
-    psl_common='check inter 1s fall 1 rise 2 init-state fully-down hash-key addr'
-    if [ "$POOL_MODE" = dns ]; then
-        printf '    server-template versiond %s %s:%s %s resolvers docker init-addr none %s\n' \
-            "$psl_slots" "$psl_host" "$PORT" "$psl_common" "$psl_state"
-        return 0
-    fi
-    if [ "$psl_kind" = legacy ]; then
+# Explicit server lines for one backend, replacing the template's
+# server-template line. $1 is the backend kind (pool or legacy), $2 the legacy
+# host, $3 the initial server state.
+explicit_server_lines() {
+    esl_kind=$1
+    esl_host=$2
+    esl_state=$3
+    if [ "$esl_kind" = legacy ]; then
         # A legacy owner named by endpoint id takes that entry's host and port.
-        # Any other name keeps the previous single-host DNS contract.
-        if psl_entry=$(endpoint_by_id "$psl_host"); then
-            psl_ehost=$(printf '%s' "$psl_entry" | cut -d "$US" -f2)
-            psl_eport=$(printf '%s' "$psl_entry" | cut -d "$US" -f3)
-            printf '    server versiond1 %s:%s %s%s %s\n' "$psl_ehost" "$psl_eport" \
-                "$psl_common" "$(server_resolver_options "$psl_ehost")" "$psl_state"
-        else
-            printf '    server-template versiond 1 %s:%s %s resolvers docker init-addr none %s\n' \
-                "$psl_host" "$PORT" "$psl_common" "$psl_state"
+        if esl_entry=$(endpoint_by_id "$esl_host"); then
+            esl_ehost=$(printf '%s' "$esl_entry" | cut -d "$US" -f2)
+            esl_eport=$(printf '%s' "$esl_entry" | cut -d "$US" -f3)
+            printf '    server versiond1 %s:%s %s\n' "$esl_ehost" "$esl_eport" \
+                "$(explicit_server_options "$esl_ehost" "$esl_state")"
         fi
         return 0
     fi
-    psl_index=0
-    while IFS="$US" read -r _ psl_ehost psl_eport; do
-        psl_index=$((psl_index + 1))
-        printf '    server versiond%s %s:%s %s%s %s\n' "$psl_index" "$psl_ehost" \
-            "$psl_eport" "$psl_common" "$(server_resolver_options "$psl_ehost")" \
-            "$psl_state"
+    esl_index=0
+    while IFS="$US" read -r _ esl_ehost esl_eport; do
+        esl_index=$((esl_index + 1))
+        printf '    server versiond%s %s:%s %s\n' "$esl_index" "$esl_ehost" \
+            "$esl_eport" "$(explicit_server_options "$esl_ehost" "$esl_state")"
     done < "$POOL_ENDPOINTS"
 }
 
@@ -400,19 +397,34 @@ VERSIONLESS_RETRY_ON="$DEFAULT_RETRY_ON 404"
 # $1 backend name, $2 readiness check, $3 route check, $4 DNS pool name or
 # legacy host, $5 DNS slot count, $6 HA header rule, $7 response backend label,
 # $8 initial server state, $9 retry policy, $10 backend kind (pool or legacy).
+#
+# With an explicit endpoint list the template's server-template line is
+# replaced by explicit servers, except for a legacy owner that is not an
+# endpoint id: that keeps the single-host DNS template.
 render_backend() {
-    pool_server_lines "${10}" "$4" "$5" "$8" > "$POOL_SERVERS_FILE"
+    : > "$POOL_SERVERS_FILE"
+    if [ "$POOL_MODE" = endpoints ]; then
+        explicit_server_lines "${10}" "$4" "$8" > "$POOL_SERVERS_FILE"
+    fi
+    if [ -s "$POOL_SERVERS_FILE" ]; then
+        rb_servers="/^[[:space:]]*server-template versiond /{
+            r $POOL_SERVERS_FILE
+            d
+        }"
+    else
+        rb_servers="s|\\\${BACKEND_HOST}|$4|g"
+    fi
     sed \
         -e "s|\${BACKEND_NAME}|$1|g" \
         -e "s|\${READY_CHECK_SEND}|$2|g" \
         -e "s|\${ROUTE_CHECK_SEND}|$3|g" \
+        -e "s|\${VERSIOND_PORT}|$PORT|g" \
+        -e "s|\${BACKEND_SLOTS}|$5|g" \
         -e "s|\${REQUEST_HA_HEADER}|$6|g" \
         -e "s|\${RESPONSE_BACKEND}|$7|g" \
         -e "s|\${RETRY_ON}|$9|g" \
-        -e "/\${POOL_SERVERS}/{
-            r $POOL_SERVERS_FILE
-            d
-        }" \
+        -e "s|\${SERVER_STATE}|$8|g" \
+        -e "$rb_servers" \
         "$POOL_TEMPLATE"
 }
 
