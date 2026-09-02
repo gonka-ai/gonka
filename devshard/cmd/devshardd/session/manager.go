@@ -115,16 +115,24 @@ type resolutionFailure struct {
 	expiresAt time.Time
 }
 
-// recoveryGate lets a session requested by a live caller jump ahead of the
-// background recovery backlog. Background workers check in before each session
-// and park while any on-demand load is in flight, so a request waits at most
-// for the sessions already being recovered rather than for the whole backlog.
+// recoveryGate lets sessions a live caller asked for jump ahead of the cold
+// recovery backlog. Every escrow that reaches getOrCreate is remembered for the
+// rest of the recovery window, which does two things: the queue hands those
+// escrows out first, and a worker already recovering one of them keeps running
+// instead of parking, since that work is exactly what the caller is waiting on.
+// Only workers about to pick up a cold session park while a request is
+// in flight, so a request waits at most for the cold sessions already running.
 type recoveryGate struct {
-	mu      sync.Mutex
-	cond    *sync.Cond
-	pending int
-	stopped bool
+	mu        sync.Mutex
+	cond      *sync.Cond
+	inFlight  int
+	requested map[string]struct{}
+	stopped   bool
 }
+
+// maxRequestedRecoveryEscrows bounds the demand set. Past the cap ordering
+// degrades to list order rather than growing memory without limit.
+const maxRequestedRecoveryEscrows = 4096
 
 // condLocked lazily builds the cond so a zero-value HostManager still works.
 func (g *recoveryGate) condLocked() *sync.Cond {
@@ -134,29 +142,56 @@ func (g *recoveryGate) condLocked() *sync.Cond {
 	return g.cond
 }
 
-func (g *recoveryGate) begin() {
+// begin marks an escrow as demanded and records an in-flight on-demand load.
+// The broadcast lets a worker parked on this escrow notice it is now
+// prioritized and resume instead of waiting for the request to finish.
+func (g *recoveryGate) begin(escrowID string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.condLocked()
-	g.pending++
+	if g.requested == nil {
+		g.requested = make(map[string]struct{})
+	}
+	if len(g.requested) < maxRequestedRecoveryEscrows {
+		g.requested[escrowID] = struct{}{}
+	}
+	g.inFlight++
+	g.condLocked().Broadcast()
 }
 
+// end releases one on-demand load. The escrow stays in the demand set so a
+// later backlog pass still treats it as warm.
 func (g *recoveryGate) end() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	if g.pending > 0 {
-		g.pending--
+	if g.inFlight > 0 {
+		g.inFlight--
 	}
-	if g.pending == 0 {
+	if g.inFlight == 0 {
 		g.condLocked().Broadcast()
 	}
 }
 
-// waitTurn blocks a background worker while on-demand loads hold the gate.
-func (g *recoveryGate) waitTurn() {
+// isRequested reports whether a live caller has asked for this escrow.
+func (g *recoveryGate) isRequested(escrowID string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	for g.pending > 0 && !g.stopped {
+	_, ok := g.requested[escrowID]
+	return ok
+}
+
+// waitTurn parks a background worker that is about to recover a cold session
+// while on-demand loads are in flight. Workers assigned an already-demanded
+// escrow are never parked: pausing them would only delay the caller.
+func (g *recoveryGate) waitTurn(escrowID string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for !g.stopped {
+		if _, prioritized := g.requested[escrowID]; prioritized {
+			return
+		}
+		if g.inFlight == 0 {
+			return
+		}
 		g.condLocked().Wait()
 	}
 }
@@ -167,6 +202,43 @@ func (g *recoveryGate) stop() {
 	defer g.mu.Unlock()
 	g.stopped = true
 	g.condLocked().Broadcast()
+}
+
+// recoveryQueue hands backlog sessions to the recovery workers, preferring
+// escrows a live caller has already asked for. Requests that arrive mid
+// recovery reorder whatever is left, so demand keeps overtaking cold sessions
+// instead of being fixed at startup.
+type recoveryQueue struct {
+	mu         sync.Mutex
+	pending    []storage.ActiveSession
+	prioritize func(escrowID string) bool
+}
+
+// next returns the highest-priority remaining session, or false when drained.
+func (q *recoveryQueue) next() (storage.ActiveSession, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.pending) == 0 {
+		return storage.ActiveSession{}, false
+	}
+	idx := 0
+	if q.prioritize != nil {
+		for i, sess := range q.pending {
+			if q.prioritize(sess.EscrowID) {
+				idx = i
+				break
+			}
+		}
+	}
+	sess := q.pending[idx]
+	q.pending = append(q.pending[:idx], q.pending[idx+1:]...)
+	return sess, true
+}
+
+func (q *recoveryQueue) remaining() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return len(q.pending)
 }
 
 func NewHostManager(
@@ -298,7 +370,7 @@ func (m *HostManager) SessionServerExisting(escrowID string) (*transport.Server,
 	if srv, ok := m.existingServer(escrowID); ok {
 		return srv, nil
 	}
-	m.recoveryGate.begin()
+	m.recoveryGate.begin(escrowID)
 	defer m.recoveryGate.end()
 	srv, err := m.recoverAndStoreSession(escrowID)
 	if err != nil {
@@ -402,7 +474,7 @@ func (m *HostManager) getOrCreate(escrowID string, escrow *bridge.EscrowInfo) (*
 
 		// Prefer recovering an already-bound session over CreateSession.
 		srv, err := func() (*transport.Server, error) {
-			m.recoveryGate.begin()
+			m.recoveryGate.begin(escrowID)
 			defer m.recoveryGate.end()
 			return m.recoverStoredSession(escrowID)
 		}()
@@ -731,25 +803,36 @@ func (m *HostManager) RecoverSessionsContext(ctx context.Context) error {
 	logging.Info("starting devshard session recovery", inferenceTypes.System,
 		"session_count", len(active), "worker_count", workers)
 
-	jobs := make(chan storage.ActiveSession)
+	queue := &recoveryQueue{
+		pending:    append([]storage.ActiveSession(nil), active...),
+		prioritize: m.recoveryGate.isRequested,
+	}
 	var wg sync.WaitGroup
 	var recoveredCount atomic.Int64
 	var failedCount atomic.Int64
 	var versionSkippedCount atomic.Int64
 	var cancelledCount atomic.Int64
+	var prioritizedCount atomic.Int64
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			for sess := range jobs {
-				// Keep draining on cancel so the feeder cannot block on a
-				// channel no worker is reading any more.
+			for {
+				sess, ok := queue.next()
+				if !ok {
+					return
+				}
 				if ctx.Err() != nil {
 					cancelledCount.Add(1)
 					continue
 				}
-				// Park while a live request is loading its own session.
-				m.recoveryGate.waitTurn()
+				// A session a caller already asked for runs immediately; a
+				// cold one yields until no request is in flight.
+				if m.recoveryGate.isRequested(sess.EscrowID) {
+					prioritizedCount.Add(1)
+				} else {
+					m.recoveryGate.waitTurn(sess.EscrowID)
+				}
 				sessionStartedAt := time.Now()
 				if _, err := m.recoverAndStoreSession(sess.EscrowID); err != nil {
 					if errors.Is(err, storage.ErrSessionVersionConflict) {
@@ -773,10 +856,6 @@ func (m *HostManager) RecoverSessionsContext(ctx context.Context) error {
 			}
 		}()
 	}
-	for _, sess := range active {
-		jobs <- sess
-	}
-	close(jobs)
 	wg.Wait()
 
 	logging.Info("completed devshard session recovery", inferenceTypes.System,
@@ -785,6 +864,7 @@ func (m *HostManager) RecoverSessionsContext(ctx context.Context) error {
 		"failed_count", failedCount.Load(),
 		"version_skipped_count", versionSkippedCount.Load(),
 		"cancelled_count", cancelledCount.Load(),
+		"prioritized_count", prioritizedCount.Load(),
 		"duration", time.Since(startedAt))
 	return nil
 }
