@@ -870,14 +870,42 @@ commit_marker_record() {
 # The marker carries the complete specification that was committed, so a
 # retry can tell a changed configuration apart before it touches anything.
 commit_marker_create() {
-    local spec
+    local spec slot
+    local -a labels=()
     spec=$(fleet_spec_hash --without-image)
+    # The Compose configuration hash of every slot as committed: it names
+    # the image by reference, so a cleanup finished with the committed
+    # digest pinned compares against this record, not against a rendering.
+    for slot in "${slots[@]}"; do
+        [[ -n ${desired_hashes[$slot]-} ]] || desired_hashes[$slot]=$(desired_slot_config_hash "$slot")
+        labels+=(--label "ai.gonka.slot-hash-$slot=${desired_hashes[$slot]}")
+    done
     "$docker_bin" volume create \
         --label ai.gonka.component=versiond-router-commit \
         --label "ai.gonka.fleet=$fleet_id" \
         --label "ai.gonka.spec-hash=$spec" \
         --label "ai.gonka.candidate-image=$candidate_image_id" \
+        "${labels[@]}" \
         "$(commit_marker_name)" >/dev/null || fail "cannot record the commit point"
+}
+
+commit_marker_slot_hash() {
+    "$docker_bin" volume inspect --format "{{index .Labels \"ai.gonka.slot-hash-$1\"}}" \
+        "$(commit_marker_name)" 2>/dev/null
+}
+
+# Does a container run the committed candidate of its slot? The image by
+# ID; the configuration either as committed or as rendered now, which
+# differ only in the image reference once the specification matched.
+generation_matches_committed() {
+    local id=$1 slot=$2 image hash committed_hash
+    [[ -n ${desired_hashes[$slot]-} ]] || desired_hashes[$slot]=$(desired_slot_config_hash "$slot")
+    committed_hash=$(commit_marker_slot_hash "$slot") || committed_hash=
+    image=$("$docker_bin" inspect --format '{{.Image}}' "$id") || return 2
+    hash=$("$docker_bin" inspect --format \
+        '{{or (index .Config.Labels "com.docker.compose.config-hash") ""}}' "$id") || return 2
+    [[ $image == "$candidate_image_id" ]] || return 1
+    [[ $hash == "${desired_hashes[$slot]}" || ( -n $committed_hash && $hash == "$committed_hash" ) ]]
 }
 
 commit_marker_remove() {
@@ -908,12 +936,13 @@ roll_forward_committed() {
         if ((lookup == 1)); then
             start_slot "$slot"
         else
+            # Checked before the record of the slot is removed.
+            if ! generation_matches_committed "$slot_current" "$slot"; then
+                fail "slot $slot does not run the committed candidate; finish the committed cleanup with the committed configuration before changing it"
+            fi
             if [[ -n $slot_previous ]]; then
                 "$docker_bin" rm -f "$slot_previous" >/dev/null || fail \
                     "cannot remove the previous generation of slot $slot"
-            fi
-            if ! generation_matches_candidate "$slot_current" "$slot"; then
-                fail "slot $slot does not run the committed candidate; finish the committed cleanup with the committed configuration before changing it"
             fi
             if ! slot_ready "$slot"; then
                 echo "Recreating the committed candidate of slot $slot (state $slot_current_state)"

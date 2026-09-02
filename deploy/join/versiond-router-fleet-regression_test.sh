@@ -336,14 +336,16 @@ model_docker() {
                         esac
                     done
                     [[ -f $model/volumes/$name ]] || { echo "Error response from daemon: get $name: no such volume" >&2; return 1; }
-                    case $format in
-                        *spec-hash*)
-                            printf '%s %s\n' "$(sed -n 's/^ai.gonka.spec-hash=//p' "$model/volumes/$name")" \
-                                "$(sed -n 's/^ai.gonka.candidate-image=//p' "$model/volumes/$name")"
-                            ;;
-                        *candidate-image*) sed -n 's/^ai.gonka.candidate-image=//p' "$model/volumes/$name" ;;
-                        *) printf '%s\n' "$name" ;;
-                    esac
+                    if [[ $format == *ai.gonka.* ]]; then
+                        local key keys=() values=()
+                        mapfile -t keys < <(grep -o 'ai\.gonka\.[A-Za-z0-9.-]*' <<<"$format")
+                        for key in "${keys[@]}"; do
+                            values+=("$(sed -n "s/^${key//./\\.}=//p" "$model/volumes/$name")")
+                        done
+                        printf '%s\n' "${values[*]}"
+                    else
+                        printf '%s\n' "$name"
+                    fi
                     ;;
                 rm) for name in "$@"; do rm -f "$model/volumes/$name"; done ;;
                 ls) ;;
@@ -379,7 +381,7 @@ model_compose() {
     case $verb in
         config)
             case ${1:-} in
-                --hash) printf 'router %s\n' "$(<"$model/desired-hash")" ;;
+                --hash) printf 'router %s\n' "$(model_desired_hash)" ;;
                 --format) printf '{"services":{"router":{"image":"%s"}},"desired":"%s","pool":"%s"}\n' "${VERSIOND_ROUTER_IMAGE:-}" "$(<"$model/desired-hash")" "${VERSIOND_POOL_HOST:-versiond-pool}" ;;
             esac
             ;;
@@ -389,8 +391,8 @@ model_compose() {
         up)
             name="gen-$slot-$generation"
             add_container "$name" "slot=$slot" "generation=$generation" \
-                "image=$(<"$model/images/registry.invalid|router:candidate")" \
-                "hash=$(<"$model/desired-hash")" \
+                "image=$(<"$model/images/${VERSIOND_ROUTER_IMAGE//\//|}")" \
+                "hash=$(model_desired_hash)" \
                 "health=$(<"$model/candidate-health")" \
                 "routes=$(candidate_declared_routes)" \
                 "env.VERSIOND_VERSIONS=${VERSIOND_VERSIONS-v4 v5}" \
@@ -401,6 +403,11 @@ model_compose() {
             [[ $(<"$model/candidate-health") == healthy ]] || return 1
             ;;
     esac
+}
+
+# Compose's configuration hash covers the image reference.
+model_desired_hash() {
+    printf '%s@%s\n' "$(<"$model/desired-hash")" "${VERSIOND_ROUTER_IMAGE:-}"
 }
 
 candidate_declared_routes() {
@@ -558,7 +565,7 @@ scenario_crash_exited_candidate() {
     # Killed after the candidate of slot 2 was created and exited: the
     # candidate is unhealthy by nature, the previous generation is stopped.
     set_container_field prev-2 state exited
-    add_container cand-2 slot=2 state=exited image=sha256:candidate hash=desired-hash health=unhealthy start_health=unhealthy
+    add_container cand-2 slot=2 state=exited image=sha256:candidate hash=desired-hash@registry.invalid/router:candidate health=unhealthy start_health=unhealthy
     printf 'unhealthy\n' >"$model/candidate-health"
     run_capture fleet_apply
     if ((LAST_RC != 0)) && [[ $(serving_id 2) == prev-2 && $(count_containers 2) == 1 ]]; then
@@ -574,7 +581,7 @@ seed_interrupted_maintenance() {
     add_container prev-0 slot=0 state=exited "env.VERSIOND_POOL_HOST=old-pool"
     add_container prev-1 slot=1 "env.VERSIOND_POOL_HOST=old-pool"
     add_container prev-2 slot=2 "env.VERSIOND_POOL_HOST=old-pool"
-    add_container cand-0 slot=0 image=sha256:candidate hash=desired-hash "env.VERSIOND_POOL_HOST=new-pool"
+    add_container cand-0 slot=0 image=sha256:candidate hash=desired-hash@registry.invalid/router:candidate "env.VERSIOND_POOL_HOST=new-pool"
 }
 
 scenario_maintenance_retry_exact() {
@@ -617,7 +624,7 @@ scenario_maintenance_unhealthy_candidate() {
     add_container prev-0 slot=0 "env.VERSIOND_POOL_HOST=old-pool"
     add_container prev-1 slot=1 state=exited "env.VERSIOND_POOL_HOST=old-pool"
     add_container prev-2 slot=2 "env.VERSIOND_POOL_HOST=old-pool"
-    add_container cand-1 slot=1 image=sha256:candidate hash=desired-hash health=unhealthy "env.VERSIOND_POOL_HOST=new-pool"
+    add_container cand-1 slot=1 image=sha256:candidate hash=desired-hash@registry.invalid/router:candidate health=unhealthy "env.VERSIOND_POOL_HOST=new-pool"
     printf 'unhealthy\n' >"$model/candidate-health"
     run_capture fleet_maintenance_rollout
     if ((LAST_RC != 0)) && [[ $(serving_id 1) == prev-1 && $(count_containers 1) == 1 ]] && ! container_exists cand-1; then
@@ -649,7 +656,7 @@ scenario_rollback_record_provenance() {
     # Slot 1: a healthy generation on the candidate specification serves,
     # with a stale stopped generation from an older operation next to it.
     set_container_field prev-1 state exited
-    add_container serving-1 slot=1 image=sha256:candidate hash=desired-hash
+    add_container serving-1 slot=1 image=sha256:candidate hash=desired-hash@registry.invalid/router:candidate
     run_capture fleet_apply
     if ((LAST_RC == 0)) && [[ $(serving_id 1) == serving-1 && $(count_containers 1) == 1 ]] && ! container_exists prev-1; then
         invariant_holds 'a serving candidate was committed; the stale record was removed, not restored over it'
@@ -661,7 +668,7 @@ scenario_rollback_record_provenance() {
 scenario_offline_retry_cached() {
     load_fleet_functions || return $?
     pull_policy=always
-    seed_previous_fleet image=sha256:candidate hash=desired-hash
+    seed_previous_fleet image=sha256:candidate hash=desired-hash@registry.invalid/router:candidate
     set_container_field prev-2 state exited
     : >"$model/registry-down"
     run_capture fleet_apply
