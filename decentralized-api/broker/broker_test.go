@@ -2559,3 +2559,62 @@ func TestSetNodesActualStatusCommand_RejectsStaleRegistrationSeq(t *testing.T) {
 
 	assert.Equal(t, types.HardwareNodeStatus_INFERENCE, node.State.CurrentStatus)
 }
+
+func TestSameRegistration(t *testing.T) {
+	require.False(t, sameRegistration(nil, 1))
+
+	node := createTestNode("n1")
+	node.State.RegistrationSeq = 2
+	require.False(t, sameRegistration(node, 1))
+	require.True(t, sameRegistration(node, 2))
+}
+
+func TestClearReconcileIfSeq_IgnoresReplacement(t *testing.T) {
+	node := createTestNode("n1")
+	node.State.RegistrationSeq = 2
+	node.State.ReconcileInfo = &ReconcileInfo{Status: types.HardwareNodeStatus_INFERENCE}
+	node.State.cancelInFlightTask = func() {}
+	b := &Broker{nodes: map[string]*NodeWithState{"n1": node}}
+
+	b.clearReconcileIfSeq("n1", 1)
+	require.NotNil(t, node.State.ReconcileInfo)
+	require.NotNil(t, node.State.cancelInFlightTask)
+
+	b.clearReconcileIfSeq("n1", 2)
+	require.Nil(t, node.State.ReconcileInfo)
+	require.Nil(t, node.State.cancelInFlightTask)
+}
+
+func TestReconcile_DispatchesWhenRegistrationSeqMatches(t *testing.T) {
+	phaseTracker := &chainphase.ChainPhaseTracker{}
+	phaseTracker.Update(
+		chainphase.BlockInfo{Height: 1, Hash: "hash-1"},
+		&types.Epoch{Index: 100, PocStartBlockHeight: 100},
+		&types.EpochParams{},
+		true,
+		nil,
+	)
+	b := &Broker{
+		nodes:                make(map[string]*NodeWithState),
+		nodeWorkGroup:        NewNodeWorkGroup(),
+		phaseTracker:         phaseTracker,
+		highPriorityCommands: make(chan Command, 8),
+		lowPriorityCommands:  make(chan Command, 8),
+		configManager:        &apiconfig.ConfigManager{},
+		mlNodeClientFactory:  mlnodeclient.NewMockClientFactory(),
+	}
+
+	node := createTestNodeWithStatus("n1", types.HardwareNodeStatus_UNKNOWN)
+	node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+	node.State.RegistrationSeq = 1
+	mock := mlnodeclient.NewMockClient()
+	worker := NewNodeWorkerWithClient("n1", node, mock, b)
+	defer worker.Shutdown()
+	b.nodes["n1"] = node
+	b.nodeWorkGroup.AddWorker("n1", worker)
+
+	b.reconcile(*phaseTracker.GetCurrentEpochState())
+
+	require.NotNil(t, node.State.ReconcileInfo)
+	require.Equal(t, uint64(1), node.State.DeploymentGeneration)
+}

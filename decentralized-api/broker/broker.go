@@ -1011,28 +1011,30 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 	blockHeight := epochState.CurrentBlock.Height
 
 	// Phase 1: Cancel outdated tasks
-	nodesToCancel := make(map[string]func())
+	type capturedCancel struct {
+		fn  func()
+		seq uint64
+	}
+	nodesToCancel := make(map[string]capturedCancel)
 	b.mu.RLock()
 	for id, node := range b.nodes {
 		if node.State.ReconcileInfo != nil &&
 			(node.State.ReconcileInfo.Status != node.State.IntendedStatus ||
 				node.State.ReconcileInfo.PocStatus != node.State.PocIntendedStatus) {
 			if node.State.cancelInFlightTask != nil {
-				nodesToCancel[id] = node.State.cancelInFlightTask
+				nodesToCancel[id] = capturedCancel{
+					fn:  node.State.cancelInFlightTask,
+					seq: node.State.RegistrationSeq,
+				}
 			}
 		}
 	}
 	b.mu.RUnlock()
 
-	for id, cancel := range nodesToCancel {
+	for id, captured := range nodesToCancel {
 		logging.Info("Cancelling outdated task for node", types.Nodes, "node_id", id, "blockHeight", blockHeight)
-		cancel()
-		b.mu.Lock()
-		if node, ok := b.nodes[id]; ok {
-			node.State.ReconcileInfo = nil
-			node.State.cancelInFlightTask = nil
-		}
-		b.mu.Unlock()
+		captured.fn()
+		b.clearReconcileIfSeq(id, captured.seq)
 	}
 
 	nodesToDispatch := make(map[string]*NodeWithState)
@@ -1057,10 +1059,12 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 	currentPoCParams, pocParamsErr := b.prefetchPocParams(epochState, nodesToDispatch, blockHeight)
 
 	for id, node := range nodesToDispatch {
+		capturedSeq := node.State.RegistrationSeq
 		// Re-check conditions under write lock to prevent races
 		b.mu.Lock()
 		currentNode, ok := b.nodes[id]
 		if !ok ||
+			!sameRegistration(currentNode, capturedSeq) ||
 			(currentNode.State.IntendedStatus == currentNode.State.CurrentStatus &&
 				(currentNode.State.CurrentStatus != types.HardwareNodeStatus_POC || currentNode.State.PocIntendedStatus == currentNode.State.PocCurrentStatus) &&
 				!deploymentUpdateReady(currentNode, time.Now())) ||
@@ -1080,29 +1084,27 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 			Generation: generation,
 		}
 		currentNode.State.cancelInFlightTask = cancel
+		stateForCmd := currentNode.State
+		modelsForCmd := currentNode.Node.Models
 
 		worker, exists := b.nodeWorkGroup.GetWorker(id)
 		b.mu.Unlock()
 
 		if !exists {
 			logging.Error("Worker not found for reconciliation", types.Nodes, "node_id", id, "blockHeight", blockHeight)
-			cancel() // Cancel context if worker doesn't exist
-			b.mu.Lock()
-			if nodeToClean, ok := b.nodes[id]; ok {
-				nodeToClean.State.ReconcileInfo = nil
-				nodeToClean.State.cancelInFlightTask = nil
-			}
-			b.mu.Unlock()
+			cancel()
+			b.clearReconcileIfSeq(id, capturedSeq)
 			continue
 		}
 
 		// TODO: we should make reindexing as some indexes might be skipped
 		totalNumNodes := b.curMaxNodesNum.Load() + 1
-		// Create and dispatch the command
+		// Create and dispatch the command from the node that passed the seq check,
+		// not the pre-recheck snapshot (that snapshot can be a deleted registration).
 		cmd := b.getCommandForState(
 			id,
-			&node.State,
-			node.Node.Models,
+			&stateForCmd,
+			modelsForCmd,
 			currentPoCParams,
 			pocParamsErr,
 			int(totalNumNodes),
@@ -1110,28 +1112,31 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 		)
 		if cmd != nil {
 			logging.Info("Dispatching reconciliation command", types.Nodes,
-				"node_id", id, "target_status", node.State.IntendedStatus, "target_poc_status", node.State.PocIntendedStatus, "blockHeight", blockHeight)
+				"node_id", id, "target_status", stateForCmd.IntendedStatus, "target_poc_status", stateForCmd.PocIntendedStatus, "blockHeight", blockHeight)
 			if !worker.submit(ctx, cmd, generation) {
 				logging.Error("Failed to submit reconciliation command", types.Nodes, "node_id", id, "blockHeight", blockHeight)
 				cancel()
-				b.mu.Lock()
-				if nodeToClean, ok := b.nodes[id]; ok {
-					nodeToClean.State.ReconcileInfo = nil
-					nodeToClean.State.cancelInFlightTask = nil
-				}
-				b.mu.Unlock()
+				b.clearReconcileIfSeq(id, capturedSeq)
 			}
 		} else {
 			logging.Info("No valid command for reconciliation, cleaning up", types.Nodes, "node_id", id)
 			cancel()
-			b.mu.Lock()
-			if nodeToClean, ok := b.nodes[id]; ok {
-				nodeToClean.State.ReconcileInfo = nil
-				nodeToClean.State.cancelInFlightTask = nil
-			}
-			b.mu.Unlock()
+			b.clearReconcileIfSeq(id, capturedSeq)
 		}
 	}
+}
+
+func (b *Broker) clearReconcileIfSeq(nodeId string, seq uint64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if node, ok := b.nodes[nodeId]; ok && sameRegistration(node, seq) {
+		node.State.ReconcileInfo = nil
+		node.State.cancelInFlightTask = nil
+	}
+}
+
+func sameRegistration(node *NodeWithState, seq uint64) bool {
+	return node != nil && node.State.RegistrationSeq == seq
 }
 
 func deploymentUpdateReady(node *NodeWithState, now time.Time) bool {
