@@ -43,6 +43,9 @@ scenarios=(
     RT-PREVIOUS-NO-AUTORESTART
     RT-PG-DROP-BEFORE-COMMIT
     RT-PG-DROP-DURING-MAINTENANCE-COMMIT
+    RT-REBOOT-BEFORE-STOP
+    RT-SIGKILL-DURING-COMMIT-CLEANUP
+    RT-DEAD-CANDIDATE-AT-COMMIT
     RT-NONHA-OWNER-DOWN
 )
 
@@ -82,7 +85,7 @@ load_fleet_functions() {
     tmpdir=$(mktemp -d)
     trap cleanup_internal EXIT
     model=$tmpdir/model
-    mkdir -p "$model/containers" "$model/images"
+    mkdir -p "$model/containers" "$model/images" "$model/volumes"
 
     local library=$tmpdir/versiond-router-fleet.lib.sh
     local config=$tmpdir/config.env
@@ -303,9 +306,54 @@ model_docker() {
             }
             [[ -z $format ]] || cat "$model/images/${reference//\//|}"
             ;;
-        network | volume) return 0 ;;
+        volume)
+            local verb=${1:-} name format='' labels=() arg
+            shift || true
+            case $verb in
+                create)
+                    while (($# > 0)); do
+                        case $1 in
+                            --label) labels+=("$2"); shift 2 ;;
+                            *) name=$1; shift ;;
+                        esac
+                    done
+                    printf '%s\n' "${labels[@]}" >"$model/volumes/$name"
+                    ;;
+                inspect)
+                    while (($# > 0)); do
+                        case $1 in
+                            --format) format=$2; shift 2 ;;
+                            *) name=$1; shift ;;
+                        esac
+                    done
+                    [[ -f $model/volumes/$name ]] || { echo "Error response from daemon: get $name: no such volume" >&2; return 1; }
+                    case $format in
+                        *candidate-image*) sed -n 's/^ai.gonka.candidate-image=//p' "$model/volumes/$name" ;;
+                        *) printf '%s\n' "$name" ;;
+                    esac
+                    ;;
+                rm) rm -f "$model/volumes/${*: -1}" ;;
+                ls) ;;
+            esac
+            ;;
+        network) return 0 ;;
         *) return 0 ;;
     esac
+}
+
+# A Docker daemon restart: running containers come back when their policy
+# is always or unless-stopped, stopped ones only with always.
+model_reboot() {
+    local id policy state
+    for id in $(list_containers test-fleet) $(list_containers other-fleet); do
+        policy=$(container_field "$id" restart)
+        state=$(container_field "$id" state)
+        case "$state/${policy:-always}" in
+            running/always | running/unless-stopped) ;;
+            running/*) set_container_field "$id" state exited ;;
+            */always) set_container_field "$id" state running ;;
+        esac
+    done
 }
 
 # Compose is the one thing the model does not run: `up` records a generation
@@ -408,11 +456,14 @@ seed_previous_fleet() {
     done
 }
 
+# Helpers used from hooks inside a traced run must never fail: a non-zero
+# status there would fire the production ERR trap in the wrong place.
 serving_id() {
     local slot=$1 id
     for id in $(list_containers test-fleet "$slot"); do
-        [[ $(container_field "$id" state) == running ]] && printf '%s\n' "$id"
+        [[ $(container_field "$id" state) != running ]] || printf '%s\n' "$id"
     done
+    return 0
 }
 
 count_containers() {
@@ -735,8 +786,8 @@ scenario_previous_no_autorestart() {
     }
     printf 'unhealthy\n' >"$model/candidate-health"
     run_capture fleet_rollout
-    if ((LAST_RC != 0)) && [[ $(<"$model/restart-while-kept") == no && $(container_field prev-0 restart) == always && $(serving_id 0) == prev-0 ]]; then
-        invariant_holds 'the kept previous generation cannot restart on its own, and gets its policy back when restored'
+    if ((LAST_RC != 0)) && [[ $(<"$model/restart-while-kept") == unless-stopped && $(container_field prev-0 restart) == always && $(serving_id 0) == prev-0 ]]; then
+        invariant_holds 'the kept previous generation is unless-stopped while kept (a reboot before the stop brings it back, after the stop leaves it), and always again when restored'
     else
         invariant_violated "rollout rc=$LAST_RC, restart while kept=$(<"$model/restart-while-kept"), after restore=$(container_field prev-0 restart)"
     fi
@@ -782,6 +833,77 @@ scenario_pg_drop_during_maintenance_commit() {
     fi
 }
 
+scenario_reboot_before_stop() {
+    load_fleet_functions || return $?
+    seed_previous_fleet
+    # The daemon restarts after the policy change and before the stop; the
+    # fleet process dies with it.
+    eval "$(declare -f model_docker | sed '1s/model_docker/real_model_docker/')"
+    model_docker() {
+        if [[ ${1:-} == stop && ! -f $model/rebooted ]]; then
+            : >"$model/rebooted"
+            model_reboot
+            exit 137
+        fi
+        real_model_docker "$@"
+    }
+    run_capture fleet_rollout
+    if [[ $(container_field prev-0 state) == running && $(count_containers 0) == 1 ]]; then
+        invariant_holds 'a daemon restart between the policy change and the stop brings the only generation of the slot back'
+    else
+        invariant_violated "after the reboot slot 0 is $(container_field prev-0 state) with restart=$(container_field prev-0 restart)"
+    fi
+}
+
+scenario_sigkill_during_commit_cleanup() {
+    EXTRA_CONFIG='VERSIOND_POOL_HOST=new-pool' load_fleet_functions || return $?
+    seed_previous_fleet "env.VERSIOND_POOL_HOST=old-pool"
+    # Killed after the first previous generation was removed; on the retry
+    # the candidate of slot 1 is dead and the pool has lost v4.
+    eval "$(declare -f remove_previous_generation | sed '1s/remove_previous_generation/real_remove_previous_generation/')"
+    remove_previous_generation() {
+        real_remove_previous_generation "$@" || return $?
+        exit 137
+    }
+    run_capture fleet_maintenance_rollout
+    local killed_rc=$LAST_RC
+    unset -f remove_previous_generation
+    eval "$(declare -f real_remove_previous_generation | sed '1s/real_remove_previous_generation/remove_previous_generation/')"
+    set_container_field "$(serving_id 1)" health unhealthy
+    run_capture fleet_apply
+    local slot ok=true
+    for slot in 0 1 2; do
+        [[ $(count_containers "$slot") == 1 && $(container_field "$(serving_id "$slot")" env.VERSIOND_POOL_HOST) == new-pool ]] || ok=false
+    done
+    if ((killed_rc != 0 && LAST_RC == 0)) && [[ $ok == true && ! -f $model/volumes/gonka-versiond-router-commit-test-fleet ]]; then
+        invariant_holds 'the retry rolled every slot forward to the committed placement and removed the marker; nothing went back to the old contract'
+    else
+        invariant_violated "killed rc=$killed_rc, retry rc=$LAST_RC, slots: $(for slot in 0 1 2; do printf '%s=%s/%s ' "$slot" "$(serving_id "$slot" | paste -sd, -)" "$(container_field "$(serving_id "$slot")" env.VERSIOND_POOL_HOST)"; done), marker=$([[ -f $model/volumes/gonka-versiond-router-commit-test-fleet ]] && echo present || echo absent)"
+    fi
+}
+
+scenario_dead_candidate_at_commit() {
+    load_fleet_functions || return $?
+    seed_previous_fleet
+    # The candidate of slot 0 dies after its route gate, before the commit.
+    eval "$(declare -f wait_slot_routes | sed '1s/wait_slot_routes/real_wait_slot_routes/')"
+    wait_slot_routes() {
+        local candidate
+        real_wait_slot_routes "$@" || return $?
+        if [[ $1 == 0 ]]; then
+            candidate=$(serving_id 0)
+            set_container_field "$candidate" health unhealthy
+        fi
+        return 0
+    }
+    run_capture fleet_rollout
+    if ((LAST_RC != 0)) && [[ $(serving_id 0) == prev-0 && $(count_containers 0) == 1 ]]; then
+        invariant_holds 'a candidate that died before the commit was not committed; the previous generation serves again'
+    else
+        invariant_violated "rollout rc=$LAST_RC, slot 0 serving=$(serving_id 0 | paste -sd, -), containers=$(count_containers 0)"
+    fi
+}
+
 scenario_nonha_owner_down() {
     EXTRA_CONFIG='VERSIOND_NON_HA_VERSIONS=v1' load_fleet_functions || return $?
     seed_previous_fleet "routes=v1 v4" "env.VERSIOND_NON_HA_VERSIONS=v1"
@@ -820,6 +942,9 @@ run_internal() {
         RT-PREVIOUS-NO-AUTORESTART) scenario_previous_no_autorestart ;;
         RT-PG-DROP-BEFORE-COMMIT) scenario_pg_drop_before_commit ;;
         RT-PG-DROP-DURING-MAINTENANCE-COMMIT) scenario_pg_drop_during_maintenance_commit ;;
+        RT-REBOOT-BEFORE-STOP) scenario_reboot_before_stop ;;
+        RT-SIGKILL-DURING-COMMIT-CLEANUP) scenario_sigkill_during_commit_cleanup ;;
+        RT-DEAD-CANDIDATE-AT-COMMIT) scenario_dead_candidate_at_commit ;;
         RT-NONHA-OWNER-DOWN) scenario_nonha_owner_down ;;
         *) echo "HARNESS_ERROR: unknown scenario $scenario" >&2; return 2 ;;
     esac

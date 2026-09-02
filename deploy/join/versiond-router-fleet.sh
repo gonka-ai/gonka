@@ -493,9 +493,10 @@ slot_catalog_routes() {
         tr ',;' '  ' | tr -s ' ' '\n' | sed '/^$/d'
 }
 
+# 0 declared, 1 not declared, 2 the catalog could not be read.
 slot_route_declared() {
-    local slot=$1 route=$2 configured
-    configured=$(slot_catalog_routes "$slot") || return 1
+    local slot=$1 route=$2 configured declared
+    configured=$(slot_catalog_routes "$slot") || return 2
     while IFS= read -r declared; do
         [[ $declared != "$route" ]] || return 0
     done <<<"$configured"
@@ -751,14 +752,15 @@ reset_parent_slot_health() {
 }
 
 # Drains one container out of the parent proxy and stops it; it stays in
-# Docker as the record of what served. Its restart policy is switched off
-# first: with `always`, a Docker daemon restart would start the kept
-# generation next to its replacement, two routers under the same aliases
-# on the same volume. restore_generation switches it back on.
+# Docker as the record of what served. Its restart policy becomes
+# unless-stopped first: a daemon restart before the stop still brings it
+# back (nothing else serves the slot yet), a daemon restart after the stop
+# leaves it stopped next to its replacement. restore_generation switches
+# `always` back on.
 stop_generation() {
     local slot=$1 id=$2 status=0
     prepare_parent_slot_stop "$slot" "$id" || return 1
-    "$docker_bin" update --restart=no "$id" >/dev/null || {
+    "$docker_bin" update --restart=unless-stopped "$id" >/dev/null || {
         reset_parent_slot_health || true
         return 1
     }
@@ -799,14 +801,93 @@ create_generation() {
 # plain failure status rather than fail: the caller's ERR trap must run and
 # put the previous generation back.
 require_slot_routes_now() {
-    local slot=$1 route
+    local slot=$1 route declared
+    slot_ready "$slot" || {
+        echo "versiond-router-fleet: refusing to commit slot $slot: its candidate is not healthy" >&2
+        return 1
+    }
+    declared=$(slot_catalog_routes "$slot") || {
+        echo "versiond-router-fleet: refusing to commit slot $slot: cannot read its route catalog" >&2
+        return 1
+    }
     for route in "${!required_routes[@]}" "${!protected_routes[@]}"; do
-        slot_route_declared "$slot" "$route" || continue
+        grep -qx -- "$route" <<<"$declared" || continue
         slot_route_ready "$slot" "$route" || {
             echo "versiond-router-fleet: refusing to commit slot $slot: route $route stopped being served before the previous generation was removed" >&2
             return 1
         }
     done
+}
+
+# The commit marker of a maintenance rollout: one volume, created in a
+# single Docker operation once every check passed, removed once every
+# previous generation is gone. While it exists the fleet may only roll
+# forward: a rerun finishes the cleanup and never restores a previous
+# generation, so an interruption halfway cannot leave a mixed placement.
+commit_marker_name() {
+    printf 'gonka-versiond-router-commit-%s\n' "$fleet_id"
+}
+
+commit_marker_image() {
+    local output
+    if output=$("$docker_bin" volume inspect --format '{{index .Labels "ai.gonka.candidate-image"}}' \
+        "$(commit_marker_name)" 2>&1); then
+        printf '%s\n' "$output"
+        return 0
+    fi
+    case ${output,,} in
+        *"no such volume"*) return 1 ;;
+    esac
+    fail "cannot inspect the commit marker $(commit_marker_name): $output"
+}
+
+commit_marker_create() {
+    "$docker_bin" volume create \
+        --label ai.gonka.component=versiond-router-commit \
+        --label "ai.gonka.fleet=$fleet_id" \
+        --label "ai.gonka.candidate-image=$candidate_image_id" \
+        "$(commit_marker_name)" >/dev/null || fail "cannot record the commit point"
+}
+
+commit_marker_remove() {
+    "$docker_bin" volume rm "$(commit_marker_name)" >/dev/null || \
+        warn "cannot remove the commit marker $(commit_marker_name); rerun apply"
+}
+
+# Finishes a committed maintenance rollout: every previous generation is
+# removed, a candidate that does not serve is recreated on the committed
+# candidate image, nothing is restored.
+roll_forward_committed() {
+    local committed slot lookup
+    committed=$(commit_marker_image) || return 0
+    [[ $committed == "$candidate_image_id" ]] || fail \
+        "a committed maintenance cleanup is pending for image $committed; finish it with that VERSIOND_ROUTER_IMAGE before changing it"
+    echo "Finishing the committed maintenance rollout"
+    for slot in "${slots[@]}"; do
+        lookup=0
+        slot_generations "$slot" || lookup=$?
+        slot_lookup_failed "$lookup" "$slot"
+        if ((lookup == 1)); then
+            start_slot "$slot"
+        else
+            if [[ -n $slot_previous ]]; then
+                "$docker_bin" rm -f "$slot_previous" >/dev/null || fail \
+                    "cannot remove the previous generation of slot $slot"
+            fi
+            if ! generation_matches_candidate "$slot_current" "$slot"; then
+                fail "slot $slot does not run the committed candidate; finish the committed cleanup with the committed configuration before changing it"
+            fi
+            if ! slot_ready "$slot"; then
+                echo "Recreating the committed candidate of slot $slot (state $slot_current_state)"
+                [[ $slot_current_state != running ]] || stop_generation "$slot" "$slot_current"
+                "$docker_bin" rm -f "$slot_current" >/dev/null
+                start_slot "$slot"
+            fi
+        fi
+        wait_slot_routes "$slot"
+        wait_parent_admission "$slot"
+    done
+    commit_marker_remove
 }
 
 # Removes the stopped previous generation of a slot without any further
@@ -1190,12 +1271,20 @@ require_ready_reserve() {
 # has lost its cache, which is a failure.
 wait_slot_routes() {
     local slot=$1 deadline=$((SECONDS + wait_timeout))
-    local route missing reason
+    local route missing reason declared_status
     while ((SECONDS < deadline)); do
         missing=
         reason=
         for route in "${!expected_routes[@]}" "${!required_routes[@]}" "${!protected_routes[@]}"; do
-            if ! slot_route_declared "$slot" "$route"; then
+            declared_status=0
+            slot_route_declared "$slot" "$route" || declared_status=$?
+            if ((declared_status == 2)); then
+                # An unreadable catalog is not "not declared": keep waiting.
+                missing=$route
+                reason="cannot show its catalog for"
+                break
+            fi
+            if ((declared_status == 1)); then
                 # A candidate must at least declare what its own configuration
                 # lists (HA and pinned versions alike): a generation without
                 # them is broken, not converging.
@@ -1862,9 +1951,13 @@ fleet_down() {
 }
 
 fleet_status() {
-    local slot lookup route count kind
+    local slot lookup route count kind committed
     local bad=0
     printf '%-16s %-12s %-10s %s\n' SLOT STATE HEALTH IMAGE
+    if committed=$(commit_marker_image); then
+        warn "a maintenance rollout to image $committed is committed but its cleanup did not finish; run apply"
+        bad=1
+    fi
     fleet_inventory
     while read -r id; do
         [[ -n $id ]] || continue
@@ -1988,6 +2081,7 @@ fleet_apply() {
     prepare_slot_networks
     pull_router_image
     resolve_candidate
+    roll_forward_committed
     require_placement_compatible "$candidate_image"
     repair_fleet_capacity
     fleet_rollout
@@ -1998,6 +2092,7 @@ fleet_rollout() {
     prepare_slot_networks
     pull_router_image
     resolve_candidate
+    roll_forward_committed
     require_placement_compatible "$candidate_image"
     require_static_routes_served
     trap rollback_current ERR INT TERM HUP
@@ -2051,6 +2146,7 @@ fleet_maintenance_rollout() {
     [[ -n $(placement_version_for_image "$candidate_image") ]] || fail \
         "candidate image has no placement protocol label"
     require_cache_compatible "$candidate_image"
+    roll_forward_committed
     require_static_routes_served
     capture_maintenance_state
     if ((${#maintenance_pending[@]} == 0 && ${#maintenance_kept[@]} == 0)); then
@@ -2090,16 +2186,18 @@ fleet_maintenance_rollout() {
         require_slot_routes_now "$slot"
     done
 
-    # Commit point. From here nothing is rolled back: removing the previous
-    # generations is cleanup that a rerun of apply finishes if it stops
-    # halfway, and a slot never loses its serving candidate to a failure in
-    # another slot's cleanup.
+    # Commit point: one Docker operation. From here nothing is rolled back;
+    # removing the previous generations is cleanup that a rerun finishes
+    # (roll_forward_committed) if it stops halfway, and a slot never loses
+    # its serving candidate to a failure in another slot's cleanup.
+    commit_marker_create
     maintenance_active=false
     trap - ERR INT TERM HUP
     for slot in "${maintenance_pending[@]}" "${maintenance_kept[@]}"; do
         remove_previous_generation "$slot" || \
             warn "the previous generation of slot $slot is still there; rerun apply to finish the cleanup"
     done
+    commit_marker_remove
 }
 
 # The deployment transaction fingerprint does not inspect live route health or
