@@ -96,6 +96,26 @@ func saveSnapshotThrough(t *testing.T, store storage.Storage, through uint64) {
 	require.NoError(t, saveHostSnapshot(store, sm, "1", through))
 }
 
+// saveMismatchedSnapshot writes a decodable snapshot whose state is only
+// advanced to stateThrough while claiming to be at claimNonce, i.e. a blob that
+// decodes cleanly but does not reproduce the journal's root at its own nonce.
+func saveMismatchedSnapshot(t *testing.T, store storage.Storage, stateThrough, claimNonce uint64) {
+	t.Helper()
+	meta, err := store.GetSessionMeta("1")
+	require.NoError(t, err)
+	sm, err := state.NewStateMachine("1", meta.Config, meta.Group, meta.InitialBalance,
+		meta.CreatorAddr, signing.NewSecp256k1Verifier(), store,
+		state.WithVersion(testutil.RuntimeTestVersion))
+	require.NoError(t, err)
+	records, err := store.GetDiffs("1", 1, stateThrough)
+	require.NoError(t, err)
+	for _, rec := range records {
+		_, err := sm.ApplyLocal(rec.Nonce, rec.Txs)
+		require.NoError(t, err)
+	}
+	require.NoError(t, saveHostSnapshot(store, sm, "1", claimNonce))
+}
+
 func recoveredHostState(t *testing.T, mgr *HostManager) types.EscrowState {
 	t.Helper()
 	mgr.sessionsMutex.RLock()
@@ -141,10 +161,11 @@ func TestRecoverSessions_RestoresSnapshotAndReplaysOnlyTail(t *testing.T) {
 	require.Equal(t, want.Balance, got.Balance)
 	require.Equal(t, want.Phase, got.Phase)
 
-	calls := store.ranges()
-	require.NotEmpty(t, calls)
-	require.Equal(t, diffRange{8, 10}, calls[0], "apply path must fetch only post-snapshot diffs")
-	require.Equal(t, diffRange{1, 10}, calls[1], "obs rebuild still reads the journal")
+	require.Equal(t, []diffRange{
+		{7, 7},  // root check against the journal at the snapshot nonce
+		{8, 10}, // apply path fetches only post-snapshot diffs
+		{1, 10}, // obs rebuild still reads the journal
+	}, store.ranges())
 }
 
 func TestRecoverSessions_SnapshotCurrentSkipsDiffApply(t *testing.T) {
@@ -158,7 +179,8 @@ func TestRecoverSessions_SnapshotCurrentSkipsDiffApply(t *testing.T) {
 
 	got := recoveredHostState(t, mgr)
 	require.Equal(t, uint64(10), got.LatestNonce)
-	require.Equal(t, []diffRange{{1, 10}}, store.ranges(), "current snapshot applies nothing; obs still rebuilds from the journal")
+	require.Equal(t, []diffRange{{10, 10}, {1, 10}}, store.ranges(),
+		"current snapshot applies nothing; only the root check and obs rebuild read diffs")
 }
 
 func TestRecoverSessions_NoSnapshotReplaysFromOne(t *testing.T) {
@@ -240,6 +262,46 @@ func TestRecoverSessions_EmptySnapshotBlobReplaysFromOne(t *testing.T) {
 	require.NoError(t, mgr.RecoverSessions())
 	require.Equal(t, uint64(3), recoveredHostState(t, mgr).LatestNonce)
 	require.Equal(t, []diffRange{{1, 3}}, store.ranges())
+}
+
+// A snapshot is not self-authenticating and the store can be shared between
+// hosts, so a blob that does not reproduce the journal's root at its own nonce
+// must be discarded rather than trusted for nonces 1..N.
+func TestRecoverSessions_SnapshotRootMismatchReplaysFromOne(t *testing.T) {
+	inner := newManagerTestStore(t)
+	group, user, hostSigner := populateStore(t, inner, 10)
+	saveMismatchedSnapshot(t, inner, 5, 7)
+
+	store := &recordingStore{Storage: inner}
+	mgr := recoverTestManager(t, store, hostSigner, user, group)
+	require.NoError(t, mgr.RecoverSessions())
+
+	require.Equal(t, []diffRange{{7, 7}, {1, 10}}, store.ranges(),
+		"a rejected snapshot must fall back to a full replay")
+
+	got := recoveredHostState(t, mgr)
+	want := fullReplayState(t, inner)
+	require.Equal(t, want.LatestNonce, got.LatestNonce)
+	require.Equal(t, want.Balance, got.Balance)
+	require.Equal(t, want.Phase, got.Phase)
+	require.Equal(t, len(want.Inferences), len(got.Inferences))
+}
+
+// The rejected snapshot's partial state must not leak into the replay: a state
+// machine that was already restored is thrown away, not replayed on top of.
+func TestRecoverSessions_RejectedSnapshotDoesNotPoisonReplay(t *testing.T) {
+	inner := newManagerTestStore(t)
+	group, user, hostSigner := populateStore(t, inner, 8)
+	saveMismatchedSnapshot(t, inner, 3, 6)
+
+	mgr := recoverTestManager(t, inner, hostSigner, user, group)
+	require.NoError(t, mgr.RecoverSessions())
+
+	got := recoveredHostState(t, mgr)
+	want := fullReplayState(t, inner)
+	require.Equal(t, want.LatestNonce, got.LatestNonce)
+	require.Equal(t, want.Balance, got.Balance)
+	require.Equal(t, want.SealedAcc, got.SealedAcc)
 }
 
 func TestRecoverSessions_SnapshotMatchesFullReplayWithLiveInferences(t *testing.T) {
