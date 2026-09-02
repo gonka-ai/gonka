@@ -751,10 +751,17 @@ reset_parent_slot_health() {
 }
 
 # Drains one container out of the parent proxy and stops it; it stays in
-# Docker as the record of what served.
+# Docker as the record of what served. Its restart policy is switched off
+# first: with `always`, a Docker daemon restart would start the kept
+# generation next to its replacement, two routers under the same aliases
+# on the same volume. restore_generation switches it back on.
 stop_generation() {
     local slot=$1 id=$2 status=0
     prepare_parent_slot_stop "$slot" "$id" || return 1
+    "$docker_bin" update --restart=no "$id" >/dev/null || {
+        reset_parent_slot_health || true
+        return 1
+    }
     "$docker_bin" stop --time "$drain_timeout" "$id" >/dev/null || status=$?
     reset_parent_slot_health || return 1
     return "$status"
@@ -791,8 +798,19 @@ create_generation() {
 # Removes the stopped previous generation of a slot: the replacement is
 # proven and there is nothing left to put back.
 commit_slot() {
-    local slot=$1
-    slot_generations "$slot" || { slot_lookup_failed $? "${slot:-${1:-}}"; return 1; }
+    local slot=$1 route
+    # The pool or its PostgreSQL may have gone away between the route gate
+    # and this point; after the removal there is no exact copy to restore.
+    # A plain failure status rather than fail: the caller's ERR trap must
+    # run and put the previous generation back.
+    for route in "${!required_routes[@]}" "${!protected_routes[@]}"; do
+        slot_route_declared "$slot" "$route" || continue
+        slot_route_ready "$slot" "$route" || {
+            echo "versiond-router-fleet: refusing to commit slot $slot: route $route stopped being served before the previous generation was removed" >&2
+            return 1
+        }
+    done
+    slot_generations "$slot" || { slot_lookup_failed $? "$slot"; return 1; }
     [[ -n $slot_previous ]] || return 0
     [[ $slot_previous_state != running ]] || fail \
         "cannot commit slot $slot: its previous generation is running"
@@ -809,6 +827,7 @@ restore_generation() {
         [[ $state != running ]] || stop_generation "$slot" "$candidate" || return 1
         "$docker_bin" rm -f "$candidate" >/dev/null || return 1
     fi
+    "$docker_bin" update --restart=always "$previous" >/dev/null || return 1
     "$docker_bin" start "$previous" >/dev/null || return 1
     wait_slot_ready "$slot" || return 1
     repair_stale_parent_drain "$slot" || return 1
@@ -900,8 +919,17 @@ wait_parent_admission() {
         # same operation converges without requiring an operator retry.
         repair_stale_parent_drain "$slot" || return 1
         missing=
-        for route in --coarse "${!expected_routes[@]}"; do
+        for route in --coarse "${!expected_routes[@]}" "${!required_routes[@]}" "${!protected_routes[@]}"; do
             if [[ $route != --coarse ]] && ! slot_route_ready "$slot" "$route"; then
+                # A required or protected route that stopped being served
+                # while admission was awaited is an outage, not a route to
+                # skip; the wait times out and the trap puts the previous
+                # generation back.
+                if [[ -n ${required_routes[$route]-} || -n ${protected_routes[$route]-} ]] && \
+                    slot_route_declared "$slot" "$route"; then
+                    missing=$route
+                    break
+                fi
                 continue
             fi
             if parent_route_admitted "$route" "$address"; then
@@ -1510,6 +1538,7 @@ repair_fleet_capacity() {
                     # The only generation of the slot, stopped by an
                     # interrupted run before its replacement existed. Start
                     # it as it is; the rollout replaces it under its trap.
+                    "$docker_bin" update --restart=always "$slot_current" >/dev/null
                     "$docker_bin" start "$slot_current" >/dev/null
                     wait_slot_ready "$slot"
                     wait_restored_routes "$slot"
@@ -1684,6 +1713,7 @@ start_existing_or_create_slot() {
         created | exited)
             # A stopped generation is started as it is: only rollout may
             # replace an existing slot.
+            "$docker_bin" update --restart=always "$slot_current" >/dev/null
             "$docker_bin" start "$slot_current" >/dev/null
             ;;
         *) fail "slot $slot cannot be started from container state '$slot_current_state'" ;;
