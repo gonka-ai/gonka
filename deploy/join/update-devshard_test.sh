@@ -35,7 +35,16 @@ for var in VERSIOND_IMAGE DEVSHARD_POSTGRES_IMAGE PROXY_ROUTER_IMAGE PROXY_POLIC
 done
 case "$1 ${2:-} ${3:-}" in
     "network inspect "*) exit 0 ;;
-    "run --rm "*) printf 'f\n'; exit 0 ;;
+    "run --rm "*)
+        case " $* " in
+            *"pg_is_in_recovery"*) printf 'f\n' ;;
+            *"devshard_storage_identity"*) printf '%s\n' "${FAKE_TARGET_IDENTITY:-db-1}" ;;
+        esac
+        exit 0
+        ;;
+    "exec "*) printf '{"identity":"%s"}\n' "${FAKE_RUNNING_IDENTITY:-db-1}"; exit 0 ;;
+    "tag "*) exit 0 ;;
+    "image inspect "*) printf 'id-%s\n' "${*: -1}"; exit 0 ;;
     "info  ") exit 0 ;;
     "compose version --short") printf '%s\n' "${FAKE_COMPOSE_VERSION:-2.30.0}"; exit 0 ;;
 esac
@@ -52,12 +61,15 @@ if [[ $1 == inspect ]]; then
     name=${1#cid-}
     case " ${FAKE_CONTAINERS:-} " in
         *" $name "*) ;;
-        *) exit 1 ;;
+        *) echo "Error response from daemon: No such object: $name" >&2; exit 1 ;;
     esac
     case $format in
         *.Image}}*) printf 'old-%s\n' "${name#cid-}" ;;
         *working_dir*) printf '%s\n' "${FAKE_WORKING_DIR}" ;;
-        *config_files*) printf '%s\n' "${FAKE_CONFIG_FILES}" ;;
+        *config_files*)
+            override=FAKE_CONFIG_FILES_${name//-/_}
+            printf '%s\n' "${!override:-${FAKE_CONFIG_FILES}}"
+            ;;
         *com.docker.compose.project\"*) printf 'gonka\n' ;;
     esac
     exit 0
@@ -226,12 +238,58 @@ if run_update env FAKE_CONTAINERS="versiond proxy" FAKE_CONFIG_FILES="docker-com
     FAKE_FAIL_UP=versiond; then
     fail "an unhealthy replacement was reported as success"
 fi
-grep -q 'versiond was restored to its previous image' "$tmpdir/err" || \
+grep -q 'versiond runs its previous image again' "$tmpdir/err" || \
     fail "rollback message: $(cat "$tmpdir/err")"
 [[ $(grep -c 'up -d --no-deps --wait --wait-timeout 2100 versiond$' "$tmpdir/log") -eq 2 ]] || \
     fail "the previous image was not put back: $(grep versiond "$tmpdir/log")"
-grep -q '^env VERSIOND_IMAGE=old-versiond$' "$tmpdir/log" || \
-    fail "rollback did not use the previous image id"
+grep -q '^tag old-versiond gonka-previous/versiond$' "$tmpdir/log" || \
+    fail "the previous image was not kept under a durable tag"
+grep -q '^env VERSIOND_IMAGE=gonka-previous/versiond$' "$tmpdir/log" || \
+    fail "rollback did not use the durable previous tag"
+
+# A model that points at another database than the running replicas is refused.
+UPDATE_ARGS=(--check)
+if run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
+    FAKE_RUNNING_IDENTITY=db-1 FAKE_TARGET_IDENTITY=db-2; then
+    fail "a database lineage change was accepted"
+fi
+grep -q 'running replicas use database lineage db-1 but the Compose model points at db-2' "$tmpdir/err" || \
+    fail "lineage message: $(cat "$tmpdir/err")"
+UPDATE_ARGS=(--check)
+run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
+    FAKE_RUNNING_IDENTITY=db-1 FAKE_TARGET_IDENTITY=db-1 || fail "same lineage refused: $(cat "$tmpdir/err")"
+grep -q 'database lineage db-1 unchanged' "$tmpdir/out" || fail "lineage was not confirmed"
+
+# The legacy owner of pinned versions cannot be decommissioned.
+jq '.services.versiond.deploy.replicas = 0
+  | .services.versiond.environment.VERSIOND_NON_HA_VERSIONS = "v1 v2 v3"' \
+    "$tmpdir/ha.json" >"$tmpdir/ha-no-owner.json"
+UPDATE_ARGS=()
+if run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
+    FAKE_RENDERED_HA="$tmpdir/ha-no-owner.json"; then
+    fail "decommissioning the legacy owner was accepted"
+fi
+grep -q 'versiond is VERSIOND_LEGACY_HOST and still owns the pinned versions' "$tmpdir/err" || \
+    fail "legacy owner message: $(cat "$tmpdir/err")"
+
+# The longest Compose file list recorded by any container wins when the others
+# are ordered subsets of it (a replica added later carries the extra overlay).
+UPDATE_ARGS=(--check)
+run_update env FAKE_CONTAINERS="versiond versiond2 versiond3 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
+    FAKE_CONFIG_FILES_versiond3="docker-compose.yml,docker-compose.versiond.yml,docker-compose.versiond3.yml" \
+    FAKE_RENDERED_HA="$tmpdir/ha3.json" || fail "superset file list failed: $(cat "$tmpdir/err")"
+grep -q 'docker-compose.versiond3.yml' "$tmpdir/out" || fail "the newer replica's overlay was dropped"
+UPDATE_ARGS=(--check)
+if run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
+    FAKE_CONFIG_FILES_versiond2="docker-compose.yml,docker-compose.observability.yml"; then
+    fail "conflicting Compose file lists were accepted"
+fi
+grep -q 'record different Compose file lists' "$tmpdir/err" || fail "file list conflict message: $(cat "$tmpdir/err")"
 
 # The deployment is recognised through any of its containers when versiond
 # itself is missing after an interrupted run.

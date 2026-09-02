@@ -102,27 +102,57 @@ v4 cluster copy fits. A wrong `DEVSHARD_POSTGRES_PASSWORD`, a read-only
 replica or an unreachable managed host therefore stops the run while the
 previous release is still fully serving.
 
-Each step replaces one service and waits for its healthcheck. If the
-replacement never becomes healthy, the script puts the previous image of
-that service back with the same `up`, prints the failing service, and stops.
-The host keeps serving: services replaced earlier run the new release, the
-failed one and everything after it run the previous release. That mixed state
-is the same one a rolling update passes through by design (routers and
-replicas are replaced one at a time and both releases serve side by side).
-Inspect `docker compose logs <service>`, fix the cause, and run the script
-again; Compose skips every service that already matches.
+It also checks that the model points at the database the running replicas
+already use: it reads the storage lineage through a running versiond
+(`/internal/storage-identity`) and compares it with the identity stored in
+the database the model names. A `PGHOST` that now points at another working
+database is refused, because a rolling replacement would otherwise leave old
+replicas writing to one history and new replicas to another. Set
+`UPDATE_ACCEPT_DATABASE_CHANGE=true` only for an intended migration to a
+restored copy.
+
+Each step replaces one service and waits for its healthcheck. Before the
+replacement, the image the service ran is kept under the Docker tag
+`gonka-previous/<service>`; that tag lives in Docker's image store, so it
+survives a killed run and can be used by hand
+(`VERSIOND_IMAGE=gonka-previous/versiond docker compose up -d versiond`).
+If the replacement never becomes healthy, the script puts that image back
+with the same `up`, prints the failing service, and stops. The host keeps
+serving: services replaced earlier run the new release, the failed one and
+everything after it run the previous release. That mixed state is the same
+one a rolling update passes through by design (routers and replicas are
+replaced one at a time and both releases serve side by side). Inspect
+`docker compose logs <service>`, fix the cause, and run the script again;
+Compose skips every service that already matches.
+
+Putting an image back cannot undo a changed service definition. The one
+place where the v5 model changes a service beyond its image is the first
+public proxy cutover (nginx to HAProxy): if the new `proxy` never becomes
+healthy, the previous nginx image will not pass the HAProxy healthcheck
+either, and the script says so. The way back is the previous release's
+Compose files: `git checkout <previous release> -- deploy/join` and
+`docker compose up -d proxy`. Every later update of the same model rolls
+back by image alone.
 
 If the script itself is killed, nothing is left half-done inside a step:
 Compose either recreated the service or it did not. Rerunning resumes from
 the first service that still differs from the model; the deployment is
 recognised through any of its containers, so a missing `versiond` after an
-interrupted replacement does not turn an HA host into a single one.
+interrupted replacement does not turn an HA host into a single one, and a
+replica added later with its own overlay is picked up from the longest
+recorded file list.
 
 Two things the script does not undo. The v4 PostgreSQL volume copy is safe
 to repeat but never reversed automatically (see [Rolling back](#rolling-back)).
 And a router fleet update runs inside `versiond-router-fleet.sh apply`, which
 restores a slot's previous image itself when its replacement does not pass
-admission.
+admission, and refuses to start while a bootstrap version has no ready
+router at all (a PostgreSQL or versiond outage), so an outage cannot be
+rolled over silently.
+
+`--check` and `--dry-run` change no service. They do run the PostgreSQL
+probe from a helper container (which may pull the pinned PostgreSQL image)
+and the migration space probe (which may create the empty target directory).
 
 Maintenance notes for the first v5 run on an HA host:
 
@@ -205,6 +235,21 @@ Every replica joins the `versiond-pool` alias, so the routers find it without
 configuration; the DNS pool holds up to 64 members
 (`VERSIOND_ROUTER_POOL_SLOTS`). Keep `VERSIOND_ROUTING_ACTIVATION_MIN_READY`
 at or below the number of replicas you run.
+
+`versiond-router-fleet.sh maintenance-rollout` (placement changes: legacy
+pins, pool name, coarse mode) is an acknowledged outage window. If it is
+interrupted, run it again: slots already on the new placement are kept, the
+rest are replaced. Its automatic rollback covers the slots the current run
+captured; slots finished by an earlier interrupted run stay on the new
+placement. The endpoint list is not part of that snapshot: a rolled-back
+router runs the previous image with the current list, because the list is
+the operator's desired membership, not a generation of the router.
+
+Bundled PostgreSQL: a crashed postmaster is restarted by Docker
+(`restart: always`); a hung one is reported unhealthy and needs an operator
+(`docker compose restart devshard-postgres`). Runtime recovery inside
+devshardd (fence budget, reconnect backoff, readiness of the write path) is
+tracked separately from this deployment tooling.
 
 The router slots are not part of the main Compose project. Before a full
 `docker compose down`, run `./versiond-router-fleet.sh stop-all --maintenance`;

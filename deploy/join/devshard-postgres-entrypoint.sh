@@ -8,9 +8,12 @@ existing_versiond=${GONKA_POSTGRES_EXISTING_VERSIOND:-/var/lib/postgresql/gonka-
 versiond_data=${GONKA_POSTGRES_VERSIOND_DATA:-/var/lib/postgresql/gonka-versiond-data}
 versiond2_data=${GONKA_POSTGRES_VERSIOND2_DATA:-/var/lib/postgresql/gonka-versiond2-data}
 official_entrypoint=${GONKA_POSTGRES_OFFICIAL_ENTRYPOINT:-/usr/local/bin/docker-entrypoint.sh}
+initdb_dir=${GONKA_POSTGRES_INITDB_DIR:-/docker-entrypoint-initdb.d}
 target_data=${PGDATA:-$persistent_root/data}
 staging_data=$persistent_root/.migrating
 staging_complete=$persistent_root/.gonka-copy-complete
+init_complete=$persistent_root/.gonka-init-complete
+migrated_marker=$persistent_root/.migrated-from-v4
 expected_major=
 
 log() {
@@ -31,6 +34,12 @@ directory_has_entries() {
 
 cluster_exists() {
     [ -s "$1/PG_VERSION" ]
+}
+
+# The identifier initdb stamps on a cluster; a copy keeps it, another cluster
+# never shares it.
+cluster_system_identifier() {
+    pg_controldata "$1" 2>/dev/null | sed -n 's/^Database system identifier:[[:space:]]*//p'
 }
 
 validate_cluster() {
@@ -136,6 +145,20 @@ mkdir -p "$persistent_root"
 
 if cluster_exists "$target_data"; then
     validate_cluster "$target_data"
+    if cluster_exists "$legacy_data"; then
+        # Both a persistent cluster and the v4 volume are attached. The
+        # persistent one wins only if it is the copy of that volume; a foreign
+        # PG16 cluster in DEVSHARD_POSTGRES_DATA_DIR must not silently replace
+        # the devshard history.
+        target_identifier=$(cluster_system_identifier "$target_data")
+        legacy_identifier=$(cluster_system_identifier "$legacy_data")
+        if [ -n "$target_identifier" ] && [ -n "$legacy_identifier" ] &&
+            [ "$target_identifier" != "$legacy_identifier" ]; then
+            die "persistent PGDATA $target_data is a different cluster (system identifier $target_identifier) than the attached v4 volume ($legacy_identifier); point DEVSHARD_POSTGRES_DATA_DIR at the migrated copy or detach the wrong volume"
+        fi
+    elif [ ! -f "$migrated_marker" ] && [ ! -f "$init_complete" ]; then
+        die "persistent PGDATA $target_data has no completion marker: its initialization or migration did not finish; remove it to initialize again, or restore it from a backup"
+    fi
     rm -f "$staging_complete" ||
         die "cannot remove stale PostgreSQL migration completion marker"
 elif [ -e "$target_data" ] && directory_has_entries "$target_data"; then
@@ -170,7 +193,7 @@ elif cluster_exists "$legacy_data"; then
     sync
     publish_staging
     printf '%s\n' "$(cat "$target_data/PG_VERSION")" \
-        >"$persistent_root/.migrated-from-v4"
+        >"$migrated_marker"
     log "v4 PostgreSQL migration completed"
 else
     if [ -e "$staging_data" ] && directory_has_entries "$staging_data"; then
@@ -199,6 +222,15 @@ else
     if directory_has_entries "$existing_versiond" && [ "$allow_empty" != true ]; then
         die "existing versiond artifacts found but no PostgreSQL cluster or .pg-bound marker is attached; this is either first-time HA enablement or a detached drained database (restore the v4 volume, or set DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT=true once only for confirmed first-time HA enablement)"
     fi
+    # initdb, the role and the database are created by the official entrypoint
+    # before it runs the init scripts; the last script records completion so
+    # a cluster left half-initialised by a crash is refused on the next start.
+    [ -d "$initdb_dir" ] || mkdir -p "$initdb_dir" ||
+        die "cannot create $initdb_dir for the initialization completion hook"
+    printf '%s\n' '#!/bin/sh' 'set -eu' ": >\"$init_complete\"" 'sync' \
+        >"$initdb_dir/zz-gonka-init-complete.sh" ||
+        die "cannot install the initialization completion hook"
+    chmod 755 "$initdb_dir/zz-gonka-init-complete.sh"
     log "no existing PostgreSQL cluster found; initializing persistent PGDATA"
 fi
 
