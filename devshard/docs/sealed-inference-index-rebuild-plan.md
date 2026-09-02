@@ -126,7 +126,9 @@ which is unexported and SQLite-only.
    fill rewrite 1.5M existing rows. The caller skips any id already present,
    which is how it tells “already indexed” from “missing”.
    Also add `InsertSealedInferences` so gap fill and from-diffs batch writes
-   in chunked transactions instead of one round trip per id.
+   in chunked transactions instead of one round trip per id, and
+   `BulkInsertSealedInferences` for the from-diffs load, which follows a wipe
+   and so needs no conflict handling at all.
 2. Implement on `SQLite`, `Postgres`, `Memory`, `HybridStorage`, `ManagedStorage`.
    `ObsRepairGate` queues sealed-inference inserts while a repair is in
    progress (reads still pass through).
@@ -255,49 +257,63 @@ Use `-count=3` locally when you want variance; CI should stay at `-benchtime=1x`
 | `BenchmarkFillSealedInferenceIndexGaps_NoGaps` | Snapshot restart with durable rows | `inserted=0`; ~8ms at 20k, matching the list |
 | `BenchmarkFillSealedInferenceIndexGaps_AllMissing` | Cold index (still no delete) | Batched inserts only; ~425ms at 20k SQLite before the prepared-statement fix |
 | `BenchmarkSealedInferenceIndex_UnbatchedInsert` | Pre-fix recovery (1 Exec/id) | Baseline; ~650ms at 20k SQLite |
-| `BenchmarkSealedInferenceIndex_BatchedInsert` | Full-replay repair | Same 20k in 500-row txs, upsert prepared once per chunk; ~50ms SQLite. Postgres writes one `unnest` statement per chunk. |
-| `BenchmarkValidationObsDrain_PerID` / `_Batched` | The other half of the same repair | ~841ms vs ~66ms at 20k; the batched form is what the rebuild calls |
-| `BenchmarkValidationObsRecord_PerDiff` / `_Chunked` | Journal replay into obs | ~325ms vs ~52ms at 20k |
+| `BenchmarkSealedInferenceIndex_BatchedInsert` | Gap fill's inserts, where rows may exist | Same 20k in 500-row txs, upsert prepared once per chunk; ~49ms SQLite, ~99ms Postgres (one `unnest` statement per chunk) |
+| `BenchmarkPostgresSealedInferenceIndex_BulkInsert` | Full-replay repair's load after the wipe | `COPY`, no per-row conflict probe; ~30ms at 20k, ~3× the upsert. SQLite has no separate path and reuses the batched insert. |
+| `BenchmarkValidationObsDrain_PerID` / `_Batched` | The other half of the same repair | ~846ms vs ~65ms at 20k; the batched form is what the rebuild calls |
+| `BenchmarkValidationObsRecord_PerDiff` / `_Chunked` | Journal replay into obs | ~320ms vs ~51ms at 20k |
 | `BenchmarkPostgres*` | All of the above on Postgres | See [Postgres vs SQLite](#postgres-vs-sqlite) |
 | `BenchmarkPostgresSealedInferenceIndex_ChunkedTxPerRow` | The insert between steps 1–3 and the batching fix | ~3058ms at 20k, i.e. no better than unbatched: on Postgres the cost was round trips, not commits |
 
 ### Postgres vs SQLite
 
-Both at n=20k, Apple M4 Max, `-benchtime=1x`. Postgres is a `postgres:18.1`
-container reached over the Docker bridge, so its round trip is closer to a
-same-host TCP hop than to a production network: the per-row rows below are
-optimistic, and a real deployment separates them further.
+Both at n=20k, Apple M4 Max, `-benchtime=1x -count=3` (median). Postgres is a
+`postgres:18.1` container reached over the Docker bridge, so its round trip is
+closer to a same-host TCP hop than to a production network: the per-row rows
+below are optimistic, and a real deployment separates them further.
 
 | Per repair, 20k rows | SQLite | Postgres | PG / SQLite |
 | --- | --- | --- | --- |
-| `SealedInferenceIDs` (the snapshot path's only I/O) | ~8ms | ~4ms | 0.5× |
-| Insert, one statement per row, no tx | ~646ms | ~3006ms | 4.7× |
-| Insert, chunked tx, still one statement per row | ~431ms | ~3058ms | 7.1× |
-| Insert, one `unnest` / prepared upsert per chunk | ~50ms | ~91ms | 1.8× |
-| Drain, one transaction per id | ~841ms | ~13658ms | 16× |
-| Drain, chunked set-at-a-time | ~66ms | ~81ms | 1.2× |
-| Record, one write per journal record | ~325ms | ~3064ms | 9.4× |
-| Record, 500-entry chunks | ~52ms | ~54ms | 1.0× |
+| `SealedInferenceIDs` (the snapshot path's only I/O) | ~7ms | ~4ms | 0.6× |
+| Insert, one statement per row, no tx | ~637ms | ~3095ms | 4.9× |
+| Insert, chunked tx, still one statement per row | ~431ms | ~2962ms | 6.9× |
+| Insert, one `unnest` / prepared upsert per chunk | ~49ms | ~99ms | 2.0× |
+| Load into empty space (`COPY` on Postgres) | ~49ms | ~30ms | 0.6× |
+| Drain, one transaction per id | ~846ms | ~14023ms | 16.6× |
+| Drain, chunked set-at-a-time | ~65ms | ~58ms | 0.9× |
+| Record, one write per journal record | ~320ms | ~2951ms | 9.2× |
+| Record, 500-entry chunks | ~51ms | ~57ms | 1.1× |
 
-Two things fall out of this.
+Three things fall out of this.
 
-**Chunking the transaction bought Postgres nothing.** 3006ms unbatched against
-3058ms in 500-row transactions is a wash, while the same change on SQLite cut
+**Chunking the transaction bought Postgres nothing.** 3095ms unbatched against
+2962ms in 500-row transactions is a wash, while the same change on SQLite cut
 the insert by a third. SQLite pays per commit, so grouping commits helps;
 Postgres pays per round trip, so grouping commits while still sending a
 statement per row helps not at all. The per-row cost lands where you would
-expect from that: ~150µs per insert, and ~683µs per drain, which is about five
+expect from that: ~155µs per insert, and ~700µs per drain, which is about five
 round trips for the drain's begin/select/insert/delete/commit.
 
-**The batched forms put the two backends within ~1.4× of each other**, where the
-per-row forms had Postgres 5–16× behind. Reads were never the problem — the
-snapshot gap fill's only query is *faster* on Postgres.
+**What is left of the batched cost is not the protocol.** A bare round trip to
+this container measures ~163µs and a chunk carries 500 rows, so the ~99ms
+upsert is not 40 statements of network time — it is the per-row conflict probe.
+Dropping it where the caller has just wiped the escrow (`COPY`, no `ON
+CONFLICT` possible) gives ~30ms, and the same reasoning applied to the drain's
+`INSERT`+`DELETE` pair — one data-modifying CTE instead of a transaction around
+two statements — gives ~58ms from ~81ms. Sweeping the chunk size found nothing
+past ~500 rows, and `synchronous_commit = off` changed neither, which is the
+same conclusion from the other direction: the remaining time is server-side row
+work.
+
+**Postgres is now the faster backend for the full-replay repair**, at ~145ms
+per 20k against SQLite's ~165ms, where the per-row forms had it 5–17× behind.
+Reads were never the problem — the snapshot gap fill's only query is faster on
+Postgres too.
 
 Do not run production 1.5M in CI. Linearize from 20k:
 
-- Snapshot path: list 20k ≈ 8ms SQLite / ≈ 4ms Postgres → 1.5M ≈ 0.6s / 0.3s of reads and **zero writes**.
-- Pre-fix full replay: ≈ 1.8s per 20k SQLite → 1.5M ≈ 2.3min. Postgres ≈ 19.7s per 20k → 1.5M ≈ **25min**, on top of a full wipe.
-- Full replay now: ≈ 0.17s per 20k SQLite → 1.5M ≈ 13s. Postgres ≈ 0.23s per 20k → 1.5M ≈ 17s, **off the publish path**.
+- Snapshot path: list 20k ≈ 7ms SQLite / ≈ 4ms Postgres → 1.5M ≈ 0.5s / 0.3s of reads and **zero writes**.
+- Pre-fix full replay: ≈ 1.8s per 20k SQLite → 1.5M ≈ 2.3min. Postgres ≈ 20.1s per 20k → 1.5M ≈ **25min**, on top of a full wipe.
+- Full replay now: ≈ 0.165s per 20k SQLite → 1.5M ≈ 12s. Postgres ≈ 0.145s per 20k → 1.5M ≈ 11s, **off the publish path**.
 
 The headline win is still snapshot writes going from O(sealed) to 0. Measure that with logs and `pg_stat_statements`, not with `/ready`.
 
@@ -321,7 +337,7 @@ On a host with the snapshot removed (full replay):
 
 ### Storage counters
 
-Postgres: `pg_stat_statements` for `INSERT INTO devshard_sealed_inferences` — snapshot restart should show **no calls** for recovered escrows, and full replay ~`ceil(sealed/500)` calls, since a chunk is now one `unnest` statement rather than 500 round trips. SQLite: WAL bytes during recovery; snapshot restart should not grow WAL by O(sealed).
+Postgres: `pg_stat_statements` for `INSERT INTO devshard_sealed_inferences` — snapshot restart should show **no calls** for recovered escrows, and gap fill ~`ceil(gaps/500)` calls, since a chunk is now one `unnest` statement rather than 500 round trips. Full replay does not appear there at all: it loads with `COPY`, ~`ceil(sealed/50000)` of them, visible as `COPY` in `pg_stat_activity` rather than as an insert. SQLite: WAL bytes during recovery; snapshot restart should not grow WAL by O(sealed).
 
 ## Residual performance risks
 
@@ -343,23 +359,37 @@ Fixed while reviewing: **chunking the transaction was not the same as batching
 the write.** `InsertSealedInferences` still issued a statement per row inside
 each chunk, so Postgres paid a round trip per inference and SQLite re-parsed
 the upsert 1.5M times. On Postgres the chunked transaction measured no better
-than no batching at all (~3058ms vs ~3006ms at 20k). Postgres now writes one
-`unnest` statement per chunk (~91ms) and SQLite prepares the upsert once per
-chunk (~431ms → ~50ms), and `pg_stat_statements` shows `ceil(sealed/500)` calls
+than no batching at all (~2962ms vs ~3095ms at 20k). Postgres now writes one
+`unnest` statement per chunk (~99ms) and SQLite prepares the upsert once per
+chunk (~431ms → ~49ms), and `pg_stat_statements` shows `ceil(sealed/500)` calls
 rather than `sealed`.
+
+Also fixed: **the batched Postgres writes were still paying for conflict
+handling neither rebuild needs.** The full-replay path deletes the escrow's
+rows and then loads them back, so its inserts can never conflict, but it went
+through the same `unnest` upsert as gap fill. `BulkInsertSealedInferences`
+loads with `COPY` instead (~99ms → ~30ms at 20k), falling back to the upsert if
+a row does collide, so a wrong precondition costs speed rather than the
+rebuild. The batch drain likewise wrapped an `INSERT` and a `DELETE` in an
+explicit transaction — four round trips per chunk — and is now one
+data-modifying CTE with the same atomicity (~81ms → ~58ms). Together these put
+the full-replay repair at ~145ms per 20k on Postgres against ~165ms on SQLite,
+i.e. Postgres is no longer the slower backend for it. SQLite keeps one path:
+its conflict probe is a b-tree lookup in-process, not a round trip, so
+`BulkInsertSealedInferences` there is the batched upsert.
 
 Also fixed: **the full-replay repair was dominated by the obs half,
 not the sealed index.** `RebuildValidationObsFromDiffs` did one
 `RecordValidationsAppliedOnce` per journal record and one
 `DrainInferenceValidationObs` per sealed id, the latter its own
-begin/select/insert/delete/commit. At 20k that was ~841ms of drain and ~325ms
+begin/select/insert/delete/commit. At 20k that was ~846ms of drain and ~320ms
 of record against ~431ms for the sealed insert this plan added. The drain is
-now a chunked set-at-a-time move (`DrainInferenceValidationObsBatch`, ~66ms,
-12.8×) and the records accumulate into 500-entry writes (~52ms, 6.3×). On
-Postgres the same two changes are worth far more — the drain was ~13.7s at 20k,
-five round trips per inference — and with the insert fix above the whole repair
-goes from ~1.8s to ~0.17s per 20k on SQLite and from ~19.7s to ~0.23s on
-Postgres.
+now a chunked set-at-a-time move (`DrainInferenceValidationObsBatch`, ~65ms,
+13×) and the records accumulate into 500-entry writes (~51ms, 6.3×). On
+Postgres the same two changes are worth far more — the drain was ~14s at 20k,
+five round trips per inference — and with the insert fixes above the whole
+repair goes from ~1.8s to ~0.165s per 20k on SQLite and from ~20.1s to ~0.145s
+on Postgres.
 
 Also fixed: the from-diffs fold and the gap fill both used to hold
 `sm.mu` across the journal walk and all of their storage I/O, which stalled

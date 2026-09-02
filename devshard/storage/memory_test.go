@@ -46,6 +46,10 @@ func TestMemory_SealedInferenceBatchInsert(t *testing.T) {
 	runSealedInferenceBatchInsert(t, NewMemory())
 }
 
+func TestMemory_SealedInferenceBulkInsert(t *testing.T) {
+	runSealedInferenceBulkInsert(t, NewMemory())
+}
+
 func TestMemory_ValidationObsBatchDrain(t *testing.T) {
 	runValidationObsBatchDrain(t, NewMemory())
 }
