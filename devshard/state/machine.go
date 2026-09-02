@@ -581,7 +581,8 @@ func (sm *StateMachine) localBestEffortLocked(nonce uint64, txs []*types.Devshar
 
 	// Deterministically seal inferences whose grace gates have cleared, before
 	// the root is computed, so the user's signed post_state_root commits to the
-	// same seal the host will fold. Reads only state (nonce + ConfirmedAt clock).
+	// same seal the host will fold. Reads only state (nonce + ConfirmedAt clock,
+	// with Finished requiring InferenceSealGraceSeconds + ExecutionTimeout).
 	if sm.state.Phase == types.PhaseActive && shouldAutoSealAtNonce(sm.autoSealIntervalLocked(), nonce) {
 		if _, _, err := sm.autoSealLocked("user", nonce); err != nil {
 			sm.restoreMutable(snap)
@@ -744,7 +745,9 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 	// 6b. Deterministically seal inferences whose grace gates have cleared,
 	// folding them into SealedAcc before the root is computed so the seal is
 	// part of post_state_root. The decision reads only state (nonce + the
-	// ConfirmedAt-derived state clock), so user, host and replay all agree.
+	// ConfirmedAt-derived state clock, with Finished requiring
+	// InferenceSealGraceSeconds + ExecutionTimeout), so user, host and replay
+	// all agree.
 	var sealClockWin StateClockWindow
 	if sm.state.Phase == types.PhaseActive && shouldAutoSealAtNonce(sm.autoSealIntervalLocked(), nonce) {
 		var err error

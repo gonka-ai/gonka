@@ -3,9 +3,11 @@ package types
 const (
 	defaultInferenceSealGraceMultiplier = 1 // for tests
 	minInferenceSealGraceNonces         = 20
-	// DefaultInferenceSealGraceSeconds is the wall-clock grace before sealing
-	// stale-finished inferences. Must match inference-chain
-	// DefaultDevshardInferenceSealGraceSeconds (3600 = 1 hour).
+	// DefaultInferenceSealGraceSeconds is the extra state-clock grace after
+	// ExecutionTimeout before sealing stale-finished inferences.
+	// The Finished clock gate is
+	// stateClock - ConfirmedAt >= InferenceSealGraceSeconds + ExecutionTimeout.
+	// Must match inference-chain DefaultDevshardInferenceSealGraceSeconds (3600 = 1 hour).
 	DefaultInferenceSealGraceSeconds = 3600
 	// DefaultAutoSealEveryNNonces is how often auto-seal runs during Active phase.
 	// Must match inference-chain DefaultDevshardAutoSealEveryNNonces.

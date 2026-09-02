@@ -20,8 +20,9 @@ const (
 	// obsTestInferenceSealGraceNonces is the nonce gate used by obs tests: an
 	// inference id may be sealed only once nonce >= id + this.
 	obsTestInferenceSealGraceNonces = 2
-	// obsTestInferenceSealGraceSeconds is the clock gate: an inference may be sealed
-	// only once stateClock - ConfirmedAt >= this many "seconds".
+	// obsTestInferenceSealGraceSeconds is the extra clock-gate grace after
+	// ExecutionTimeout: an inference may be sealed only once
+	// stateClock - ConfirmedAt >= this many seconds + ExecutionTimeout.
 	obsTestInferenceSealGraceSeconds = 5
 )
 

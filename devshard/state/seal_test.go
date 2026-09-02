@@ -294,3 +294,82 @@ func TestExportAllInferenceRecords_IncludesSealedFromDB(t *testing.T) {
 	require.True(t, row.ObsPresent)
 	require.Equal(t, uint32(types.StatusFinished), row.SealedStatus)
 }
+
+func TestFinishedClockRequiredSeconds(t *testing.T) {
+	require.Equal(t, int64(3600), FinishedClockRequiredSeconds(3600, 0))
+	require.Equal(t, int64(3700), FinishedClockRequiredSeconds(3600, 100))
+	require.Equal(t, int64(5), FinishedClockRequiredSeconds(5, -10))
+	require.Equal(t, int64(100), FinishedClockRequiredSeconds(-1, 100))
+}
+
+func TestAutoSeal_FinishedClockGateIncludesExecutionTimeout(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	const (
+		graceSeconds     = 5
+		executionTimeout = 100
+		confirmedAt      = int64(1000)
+	)
+	config := types.NormalizeSessionConfig(types.SessionConfig{
+		RefusalTimeout:            60,
+		ExecutionTimeout:          executionTimeout,
+		TokenPrice:                1,
+		VoteThreshold:             1,
+		ValidationRate:            0,
+		InferenceSealGraceNonces:  2,
+		InferenceSealGraceSeconds: graceSeconds,
+		AutoSealEveryNNonces:      1,
+	}, len(group))
+	verifier := signing.NewSecp256k1Verifier()
+	escrowID := "escrow-clock-timeout"
+	sm, err := NewStateMachine(escrowID, config, group, 1_000_000, user.Address(), verifier,
+		testutil.MustMemoryStore(t, escrowID, user.Address(), config, group, 1_000_000))
+	require.NoError(t, err)
+
+	_, err = sm.ApplyLocal(1, []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	})})
+	require.NoError(t, err)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, confirmedAt)
+	_, err = sm.ApplyLocal(2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
+		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: confirmedAt,
+	})})
+	require.NoError(t, err)
+	finish := &types.MsgFinishInference{
+		InferenceId: 1, ResponseHash: []byte("response"), InputTokens: 10, OutputTokens: 20, ExecutorSlot: 1, EscrowId: escrowID,
+	}
+	finish.ProposerSig = testutil.SignProposerTx(t, hosts[1], finish)
+	_, err = sm.ApplyLocal(3, []*types.DevshardTx{txFinish(finish)})
+	require.NoError(t, err)
+	require.Equal(t, types.StatusFinished, sm.SnapshotState().Inferences[1].Status)
+
+	oldGraceClock := confirmedAt + graceSeconds + 1
+	startConfirmAt(t, sm, hosts, escrowID, 4, 4, oldGraceClock)
+	_, live := sm.SnapshotState().Inferences[1]
+	require.True(t, live, "must not seal when only InferenceSealGraceSeconds has elapsed")
+
+	required := FinishedClockRequiredSeconds(graceSeconds, executionTimeout)
+	startConfirmAt(t, sm, hosts, escrowID, 6, 6, confirmedAt+required+1)
+	_, live = sm.SnapshotState().Inferences[1]
+	require.False(t, live, "must seal after grace + execution timeout")
+	require.Contains(t, sm.ExportSealedNonces(), uint64(1))
+}
+
+func startConfirmAt(t *testing.T, sm *StateMachine, hosts []*signing.Secp256k1Signer, escrowID string, id, startNonce uint64, confirmedAt int64) {
+	t.Helper()
+	slot := uint32(id % uint64(len(hosts)))
+	_, err := sm.ApplyLocal(startNonce, []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: id, PromptHash: []byte("prompt"), Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	})})
+	require.NoError(t, err)
+	execSig := testutil.SignExecutorReceipt(t, hosts[slot], escrowID, id, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, confirmedAt)
+	_, err = sm.ApplyLocal(startNonce+1, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
+		InferenceId: id, ExecutorSig: execSig, ConfirmedAt: confirmedAt,
+	})})
+	require.NoError(t, err)
+}
