@@ -238,6 +238,15 @@ GOMODCACHE="$HOME/go/pkg/mod" GOCACHE="$HOME/Library/Caches/go-build" \
   -benchmem -benchtime=1x ./storage/ ./state/
 ```
 
+The `BenchmarkPostgres*` set is the same shapes against a testcontainers
+Postgres, so it needs Docker and is not covered by the command above:
+
+```
+GOMODCACHE="$HOME/go/pkg/mod" GOCACHE="$HOME/Library/Caches/go-build" \
+  go test -run '^$' -bench 'BenchmarkPostgres' -benchmem -benchtime=1x \
+  -timeout 30m ./storage/
+```
+
 Use `-count=3` locally when you want variance; CI should stay at `-benchtime=1x` and n≤20k.
 
 | Bench | What it stands in for | Healthy result |
@@ -249,12 +258,46 @@ Use `-count=3` locally when you want variance; CI should stay at `-benchtime=1x`
 | `BenchmarkSealedInferenceIndex_BatchedInsert` | Full-replay repair | Same 20k in 500-row txs, upsert prepared once per chunk; ~50ms SQLite. Postgres writes one `unnest` statement per chunk. |
 | `BenchmarkValidationObsDrain_PerID` / `_Batched` | The other half of the same repair | ~841ms vs ~66ms at 20k; the batched form is what the rebuild calls |
 | `BenchmarkValidationObsRecord_PerDiff` / `_Chunked` | Journal replay into obs | ~325ms vs ~52ms at 20k |
+| `BenchmarkPostgres*` | All of the above on Postgres | See [Postgres vs SQLite](#postgres-vs-sqlite) |
+| `BenchmarkPostgresSealedInferenceIndex_ChunkedTxPerRow` | The insert between steps 1–3 and the batching fix | ~3058ms at 20k, i.e. no better than unbatched: on Postgres the cost was round trips, not commits |
+
+### Postgres vs SQLite
+
+Both at n=20k, Apple M4 Max, `-benchtime=1x`. Postgres is a `postgres:18.1`
+container reached over the Docker bridge, so its round trip is closer to a
+same-host TCP hop than to a production network: the per-row rows below are
+optimistic, and a real deployment separates them further.
+
+| Per repair, 20k rows | SQLite | Postgres | PG / SQLite |
+| --- | --- | --- | --- |
+| `SealedInferenceIDs` (the snapshot path's only I/O) | ~8ms | ~4ms | 0.5× |
+| Insert, one statement per row, no tx | ~646ms | ~3006ms | 4.7× |
+| Insert, chunked tx, still one statement per row | ~431ms | ~3058ms | 7.1× |
+| Insert, one `unnest` / prepared upsert per chunk | ~50ms | ~91ms | 1.8× |
+| Drain, one transaction per id | ~841ms | ~13658ms | 16× |
+| Drain, chunked set-at-a-time | ~66ms | ~81ms | 1.2× |
+| Record, one write per journal record | ~325ms | ~3064ms | 9.4× |
+| Record, 500-entry chunks | ~52ms | ~54ms | 1.0× |
+
+Two things fall out of this.
+
+**Chunking the transaction bought Postgres nothing.** 3006ms unbatched against
+3058ms in 500-row transactions is a wash, while the same change on SQLite cut
+the insert by a third. SQLite pays per commit, so grouping commits helps;
+Postgres pays per round trip, so grouping commits while still sending a
+statement per row helps not at all. The per-row cost lands where you would
+expect from that: ~150µs per insert, and ~683µs per drain, which is about five
+round trips for the drain's begin/select/insert/delete/commit.
+
+**The batched forms put the two backends within ~1.4× of each other**, where the
+per-row forms had Postgres 5–16× behind. Reads were never the problem — the
+snapshot gap fill's only query is *faster* on Postgres.
 
 Do not run production 1.5M in CI. Linearize from 20k:
 
-- Snapshot path: list 20k ≈ 8ms → 1.5M ≈ 0.6s of reads and **zero writes**.
-- Pre-fix full replay: 841ms drain + 325ms record + 780ms unbatched insert ≈ 1.95s per 20k → 1.5M ≈ 2.4min, on top of a full wipe.
-- Full replay now: 66ms + 52ms + 50ms ≈ 0.17s per 20k → 1.5M ≈ 13s of SQLite writes, **off the publish path**.
+- Snapshot path: list 20k ≈ 8ms SQLite / ≈ 4ms Postgres → 1.5M ≈ 0.6s / 0.3s of reads and **zero writes**.
+- Pre-fix full replay: ≈ 1.8s per 20k SQLite → 1.5M ≈ 2.3min. Postgres ≈ 19.7s per 20k → 1.5M ≈ **25min**, on top of a full wipe.
+- Full replay now: ≈ 0.17s per 20k SQLite → 1.5M ≈ 13s. Postgres ≈ 0.23s per 20k → 1.5M ≈ 17s, **off the publish path**.
 
 The headline win is still snapshot writes going from O(sealed) to 0. Measure that with logs and `pg_stat_statements`, not with `/ready`.
 
@@ -299,9 +342,10 @@ Measured on SQLite, Apple M4 Max, n=20k, `-benchtime=1x`.
 Fixed while reviewing: **chunking the transaction was not the same as batching
 the write.** `InsertSealedInferences` still issued a statement per row inside
 each chunk, so Postgres paid a round trip per inference and SQLite re-parsed
-the upsert 1.5M times. Postgres now writes one `unnest` statement per chunk and
-SQLite prepares the upsert once per chunk, which takes the 20k insert from
-~431ms to ~50ms and makes `pg_stat_statements` show `ceil(sealed/500)` calls
+the upsert 1.5M times. On Postgres the chunked transaction measured no better
+than no batching at all (~3058ms vs ~3006ms at 20k). Postgres now writes one
+`unnest` statement per chunk (~91ms) and SQLite prepares the upsert once per
+chunk (~431ms → ~50ms), and `pg_stat_statements` shows `ceil(sealed/500)` calls
 rather than `sealed`.
 
 Also fixed: **the full-replay repair was dominated by the obs half,
@@ -311,8 +355,11 @@ not the sealed index.** `RebuildValidationObsFromDiffs` did one
 begin/select/insert/delete/commit. At 20k that was ~841ms of drain and ~325ms
 of record against ~431ms for the sealed insert this plan added. The drain is
 now a chunked set-at-a-time move (`DrainInferenceValidationObsBatch`, ~66ms,
-12.8×) and the records accumulate into 500-entry writes (~52ms, 6.3×). With the
-insert fix above, the whole repair goes from ~1.95s to ~0.17s per 20k.
+12.8×) and the records accumulate into 500-entry writes (~52ms, 6.3×). On
+Postgres the same two changes are worth far more — the drain was ~13.7s at 20k,
+five round trips per inference — and with the insert fix above the whole repair
+goes from ~1.8s to ~0.17s per 20k on SQLite and from ~19.7s to ~0.23s on
+Postgres.
 
 Also fixed: the from-diffs fold and the gap fill both used to hold
 `sm.mu` across the journal walk and all of their storage I/O, which stalled
