@@ -356,7 +356,7 @@ func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.Stat
 	}
 	restoreHeartbeatProducer(sess, sm)
 	if sess.store == nil {
-		restorePendingTxKeys(sess, nil)
+		restoreAppliedTxKeys(sess, nil)
 		return sess, sm, nil
 	}
 	meta, err := sess.store.GetSessionMeta(sess.escrowID)
@@ -370,7 +370,7 @@ func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.Stat
 			return nil, nil, fmt.Errorf("get diffs for validation obs rebuild: %w", err)
 		}
 	}
-	restorePendingTxKeys(sess, records)
+	restoreAppliedTxKeys(sess, records)
 	if err := storage.RebuildValidationObsFromDiffs(
 		sess.store,
 		sess.escrowID,
@@ -382,7 +382,9 @@ func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.Stat
 	return sess, sm, nil
 }
 
-func restorePendingTxKeys(sess *Session, records []types.DiffRecord) {
+// restoreAppliedTxKeys re-seeds the applied-key set from the reconstructed diff
+// log so a host mempool copy of an already-included tx is not re-queued.
+func restoreAppliedTxKeys(sess *Session, records []types.DiffRecord) {
 	if sess == nil {
 		return
 	}
@@ -391,14 +393,14 @@ func restorePendingTxKeys(sess *Session, records []types.DiffRecord) {
 	for _, diff := range sess.diffs {
 		for _, tx := range diff.Txs {
 			if key := devshardTxKey(tx); key != "" {
-				sess.pendingTxKeys[key] = struct{}{}
+				sess.appliedTxKeys[key] = struct{}{}
 			}
 		}
 	}
 	for _, rec := range records {
 		for _, tx := range rec.Diff.Txs {
 			if key := devshardTxKey(tx); key != "" {
-				sess.pendingTxKeys[key] = struct{}{}
+				sess.appliedTxKeys[key] = struct{}{}
 			}
 		}
 	}

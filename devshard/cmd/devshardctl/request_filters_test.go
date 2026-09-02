@@ -2624,9 +2624,9 @@ func TestNormalizeChatRequestExtraBodyEmptyObjectJustDrops(t *testing.T) {
 	require.NotContains(t, raw, "extra_body")
 }
 
-// vLLM derives enable_thinking from this field, so forwarding it to a route that only
-// declares that variable would flip thinking while the effort level itself goes nowhere.
-func TestNormalizeChatRequestStripsReasoningEffortOffTheReasoningRoute(t *testing.T) {
+// The field reaches every route: only DeepSeek's renderer reads it, but a caller asking for a level is
+// not second-guessed on the routes that ignore it.
+func TestNormalizeChatRequestForwardsReasoningEffortOnEveryRoute(t *testing.T) {
 	cases := []struct{ name, body string }{
 		{name: "high", body: `{"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"high"}`},
 		{name: "none", body: `{"messages":[{"role":"user","content":"hi"}],"reasoning_effort":"none"}`},
@@ -2640,7 +2640,7 @@ func TestNormalizeChatRequestStripsReasoningEffortOffTheReasoningRoute(t *testin
 				require.NoError(t, err)
 				var raw map[string]any
 				require.NoError(t, json.Unmarshal(out, &raw))
-				require.NotContains(t, raw, "reasoning_effort")
+				require.Equal(t, tc.name, raw["reasoning_effort"])
 			})
 		}
 	}
@@ -2662,17 +2662,17 @@ func TestNormalizeChatRequestForwardsReasoningEffortToDeepSeek(t *testing.T) {
 	}
 }
 
-// An omitted field renders as "high", which is the level reported to degrade into repetition over
-// long tool-calling sessions, so the route defaults to the strongest prefix instead of the encoder's.
-func TestNormalizeChatRequestDefaultsDeepSeekReasoningEffortToMax(t *testing.T) {
+// The route sends no reasoning_effort of its own: an omitted field is the caller's choice to make, and
+// the encoder's own default applies upstream.
+func TestNormalizeChatRequestSendsNoDeepSeekReasoningEffortOfItsOwn(t *testing.T) {
 	out, _, err := normalizeChatRequestForModel([]byte(`{"messages":[{"role":"user","content":"hi"}]}`), deepSeekV4Flash0731ModelID)
 	require.NoError(t, err)
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(out, &raw))
-	require.Equal(t, "max", raw["reasoning_effort"])
+	require.NotContains(t, raw, "reasoning_effort")
 }
 
-// The default fills a gap; it must never overrule a level the caller picked, including a weaker one.
+// What the caller picked is passed through untouched, at every level.
 func TestNormalizeChatRequestKeepsAnExplicitDeepSeekReasoningEffort(t *testing.T) {
 	for _, effort := range []string{"none", "minimal", "low", "medium", "high", "xhigh"} {
 		t.Run(effort, func(t *testing.T) {
@@ -2732,7 +2732,7 @@ func TestNormalizeChatRequestTranslatesReasoningObjectToEffort(t *testing.T) {
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(out, &raw))
 	require.NotContains(t, raw, "reasoning", "wrapper removed — inner max_tokens/exclude dropped with it")
-	require.NotContains(t, raw, "reasoning_effort", "lifted then stripped — non-reasoning routes")
+	require.Equal(t, "high", raw["reasoning_effort"], "the lifted level travels like one the caller sent")
 	require.NotContains(t, raw, "exclude")
 }
 
@@ -2743,7 +2743,7 @@ func TestNormalizeChatRequestReasoningEnabledFalseOverridesEffort(t *testing.T) 
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(out, &raw))
 	require.NotContains(t, raw, "reasoning")
-	require.NotContains(t, raw, "reasoning_effort")
+	require.Equal(t, "none", raw["reasoning_effort"], "enabled:false outranks the effort beside it")
 }
 
 func TestNormalizeChatRequestReasoningInvalidEffortRejected(t *testing.T) {

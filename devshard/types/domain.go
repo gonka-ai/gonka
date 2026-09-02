@@ -122,6 +122,8 @@ type SessionConfig struct {
 	VoteThreshold             uint32
 	ValidationRate            uint32 // basis points (10000 = 100%, 1000 = 10%)
 	InferenceSealGraceNonces  uint32
+	// InferenceSealGraceSeconds is extra state-clock time after ExecutionTimeout
+	// before a still-Finished inference may auto-seal.
 	InferenceSealGraceSeconds uint32
 	AutoSealEveryNNonces      uint32
 }

@@ -35,6 +35,20 @@ func shouldAutoSealAtNonce(interval uint64, nonce uint64) bool {
 	return nonce%interval == 0
 }
 
+// FinishedClockRequiredSeconds is the Finished (Trigger C) clock-gate
+// threshold: stateClock - ConfirmedAt must be at least this many seconds.
+// ExecutionTimeout is the session inference timeout anchored at ConfirmStart;
+// adding it leaves InferenceSealGraceSeconds after the latest legal Finish.
+func FinishedClockRequiredSeconds(graceSeconds, executionTimeout int64) int64 {
+	if graceSeconds < 0 {
+		graceSeconds = 0
+	}
+	if executionTimeout < 0 {
+		executionTimeout = 0
+	}
+	return graceSeconds + executionTimeout
+}
+
 // AutoSealEveryNNonces returns the compiled default auto-seal sweep interval.
 func AutoSealEveryNNonces() uint64 {
 	return uint64(types.DefaultAutoSealEveryNNonces)
@@ -379,6 +393,7 @@ func (sm *StateMachine) logAutoSealDiagnosticLocked(
 	if err != nil {
 		candidatesJSON = []byte(fmt.Sprintf("marshal error: %v", err))
 	}
+	executionTimeout := sm.state.Config.ExecutionTimeout
 	args := []any{
 		"subsystem", side,
 		"diagnostic", "auto_seal",
@@ -387,6 +402,8 @@ func (sm *StateMachine) logAutoSealDiagnosticLocked(
 		"latest_nonce", sm.state.LatestNonce,
 		"inference_seal_grace_nonces", sealGraceNonces,
 		"inference_seal_grace_seconds", graceSeconds,
+		"execution_timeout", executionTimeout,
+		"finished_clock_required_seconds", FinishedClockRequiredSeconds(graceSeconds, executionTimeout),
 		"state_clock_confirmed_at", stateClock,
 		"candidates", string(candidatesJSON),
 		"sealed_ids", sealed,
@@ -411,7 +428,12 @@ func (sm *StateMachine) logAutoSealDiagnosticLocked(
 //
 // Per live, seal-eligible inference:
 //   - nonce gate (always):  sealNonce >= id + InferenceSealGraceNonces   (id == start nonce)
-//   - clock gate (Finished only): stateClock - ConfirmedAt >= InferenceSealGraceSeconds
+//   - clock gate (Finished only): stateClock - ConfirmedAt >=
+//     InferenceSealGraceSeconds + ExecutionTimeout
+//
+// ConfirmedAt is written at ConfirmStart, so ExecutionTimeout is added to
+// keep a full grace window after the latest legal Finish. Mixed binaries
+// that disagree on this sum diverge on SealedAcc / post_state_root.
 //
 // Terminal statuses (Validated/Invalidated/TimedOut) skip the clock gate and
 // seal as soon as the nonce gate clears on the diff that made them terminal.
@@ -426,6 +448,8 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 	}
 	sealGraceNonces := uint64(sm.state.Config.InferenceSealGraceNonces)
 	graceSeconds := int64(sm.state.Config.InferenceSealGraceSeconds)
+	executionTimeout := sm.state.Config.ExecutionTimeout
+	requiredClockSeconds := FinishedClockRequiredSeconds(graceSeconds, executionTimeout)
 	clockWin := sm.stateClockLocked()
 	stateClock := clockWin.Clock
 
@@ -458,7 +482,7 @@ func (sm *StateMachine) autoSealLocked(side string, sealNonce uint64) ([]uint64,
 			eligible = append(eligible, id)
 			continue
 		}
-		remaining := graceSeconds - (stateClock - rec.ConfirmedAt)
+		remaining := requiredClockSeconds - (stateClock - rec.ConfirmedAt)
 		candidate.GraceRemaining = remaining
 		candidate.ClockGateOK = remaining <= 0
 		candidate.Eligible = candidate.ClockGateOK

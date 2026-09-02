@@ -96,6 +96,18 @@ func TestNormalizeDeliveryReason_KeepsWhatADeliveryCanBe(t *testing.T) {
 	require.Empty(t, normalizeDeliveryReason("  "))
 }
 
+// Every reason gatewayAttemptFailureReason can produce has to survive both vocabularies; a bound the
+// gateway enforced is a concrete host fault, and collapsing it to unknown loses the per-host report.
+func TestNormalizeReasons_KeepEveryBoundedResponseFailure(t *testing.T) {
+	for _, reason := range []string{
+		"sse_event_too_large", "response_body_too_large",
+		"aggregate_response_too_large", "aggregate_fold_too_large",
+	} {
+		require.Equal(t, reason, normalizeDetailReason(reason))
+		require.Equal(t, reason, normalizeDeliveryReason(reason))
+	}
+}
+
 // The burn split is only visible in the ledger if the delivery vocabulary admits it.
 func TestNormalizeDetailReason_AdmitsTheModelBurn(t *testing.T) {
 	require.Equal(t, "model_burn_empty", normalizeDetailReason("model_burn_empty"))

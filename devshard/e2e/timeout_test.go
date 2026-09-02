@@ -113,7 +113,7 @@ func TestE2E_TimeoutProtocolEndToEnd(t *testing.T) {
 //     votes.
 //  4. Assert the timeout transaction is persisted and the executor receives a
 //     missed-host count.
-//  5. Restart slot 1, continue the session, and finalize successfully.
+//  5. Restart slot 1 without the hang env, continue the session, and finalize.
 func TestE2E_ExecutionTimeoutProtocolEndToEnd(t *testing.T) {
 	requireE2EEnabled(t)
 
@@ -189,6 +189,9 @@ func TestE2E_ExecutionTimeoutProtocolEndToEnd(t *testing.T) {
 		"execution timeout should mark the stalled executor as missed")
 
 	restoreSecondaryWait()
+	// restartHost rebuilds from hostEnvOverrides; keep the hang off so recovery
+	// completions finish instead of stacking started-without-Finish inferences.
+	delete(env.hostEnvOverrides[executorSlot], "DEVSHARD_STUB_EXECUTION_HANG")
 	env.restartHost(ctx, t, executorSlot)
 	testutil.PostJSON(t, client, env.clientURL+"/v1/debug/sync-hosts", map[string]any{})
 	continued := testutil.SendCompletionRaw(t, client, env.clientURL, "execution timeout continued", testutil.AdminAPIKey)
