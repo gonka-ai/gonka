@@ -222,11 +222,16 @@ func NewNodeWorkGroup() *NodeWorkGroup {
 	}
 }
 
-// AddWorker adds a new worker to the group
-func (g *NodeWorkGroup) AddWorker(nodeId string, worker *NodeWorker) {
+// AddWorker registers worker only when nodeId has no worker.
+// It does not shut down or replace an existing worker.
+func (g *NodeWorkGroup) AddWorker(nodeId string, worker *NodeWorker) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	if _, exists := g.workers[nodeId]; exists {
+		return false
+	}
 	g.workers[nodeId] = worker
+	return true
 }
 
 // RemoveWorker unregisters the worker immediately and shuts it down in the

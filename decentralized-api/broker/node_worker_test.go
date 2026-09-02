@@ -685,6 +685,25 @@ func TestNodeWorkGroup_AddRemoveWorkers(t *testing.T) {
 	assert.False(t, exists1, "Worker 1 should not exist after removal")
 }
 
+func TestNodeWorkGroup_AddWorkerDoesNotReplace(t *testing.T) {
+	group := NewNodeWorkGroup()
+	broker := NewTestBroker2(1)
+
+	node := createTestNode("node-1")
+	original := NewNodeWorkerWithClient("node-1", node, mlnodeclient.NewMockClient(), broker)
+	replacement := NewNodeWorkerWithClient("node-1", node, mlnodeclient.NewMockClient(), broker)
+	defer original.Shutdown()
+	defer replacement.Shutdown()
+
+	require.True(t, group.AddWorker("node-1", original))
+	require.False(t, group.AddWorker("node-1", replacement))
+
+	got, exists := group.GetWorker("node-1")
+	require.True(t, exists)
+	require.Same(t, original, got)
+	require.Len(t, group.workers, 1)
+}
+
 func TestNodeWorkGroup_RemoveWorkerDoesNotBlockOnInFlightHTTP(t *testing.T) {
 	group := NewNodeWorkGroup()
 	broker := NewTestBroker2(4)

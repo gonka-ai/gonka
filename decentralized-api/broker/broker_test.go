@@ -6,7 +6,9 @@ import (
 	"decentralized-api/chainphase"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
+	"errors"
 	"fmt"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -2702,4 +2704,123 @@ func TestReconcile_DispatchesWhenRegistrationSeqMatches(t *testing.T) {
 
 	require.NotNil(t, node.State.ReconcileInfo)
 	require.Equal(t, uint64(1), node.State.DeploymentGeneration)
+}
+
+func testRegisterNodeConfig(id, host string, inferencePort, pocPort int) apiconfig.InferenceNodeConfig {
+	return apiconfig.InferenceNodeConfig{
+		Id:               id,
+		Host:             host,
+		InferencePort:    inferencePort,
+		PoCPort:          pocPort,
+		InferenceSegment: "/api",
+		PoCSegment:       "/api",
+		MaxConcurrent:    5,
+		Models:           map[string]apiconfig.ModelConfig{"model1": {}},
+	}
+}
+
+func TestRegisterNode_RejectsDuplicateID(t *testing.T) {
+	b := NewTestBroker()
+	original := testRegisterNodeConfig("node1", "localhost", 8080, 5000)
+	cmd := NewRegisterNodeCommand(original)
+	require.NoError(t, b.QueueMessage(cmd))
+	resp := <-cmd.Response
+	require.NoError(t, resp.Error)
+	require.NotNil(t, resp.Node)
+
+	originalWorker, ok := b.nodeWorkGroup.GetWorker("node1")
+	require.True(t, ok)
+	seq := nodeRegistrationSeq(t, b, "node1")
+	nodeNum := b.curMaxNodesNum.Load()
+	require.Equal(t, uint64(1), seq)
+	require.Equal(t, uint64(1), nodeNum)
+
+	retry := testRegisterNodeConfig("node1", "127.0.0.1", 9090, 5050)
+	cmd2 := NewRegisterNodeCommand(retry)
+	require.NoError(t, b.QueueMessage(cmd2))
+	resp2 := <-cmd2.Response
+	require.Error(t, resp2.Error)
+	require.True(t, errors.Is(resp2.Error, ErrNodeAlreadyExists))
+	require.Nil(t, resp2.Node)
+
+	nodes, err := b.GetNodes()
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+	require.Equal(t, "localhost", nodes[0].Node.Host)
+	require.Equal(t, 8080, nodes[0].Node.InferencePort)
+	require.Equal(t, seq, nodes[0].State.RegistrationSeq)
+	require.Equal(t, nodeNum, b.curMaxNodesNum.Load())
+	require.Equal(t, seq, b.nextRegistrationSeq.Load())
+
+	worker, ok := b.nodeWorkGroup.GetWorker("node1")
+	require.True(t, ok)
+	require.Same(t, originalWorker, worker)
+	require.Len(t, b.nodeWorkGroup.workers, 1)
+}
+
+func TestRegisterNode_ConcurrentDuplicateID(t *testing.T) {
+	b := NewTestBroker()
+	cfgs := []apiconfig.InferenceNodeConfig{
+		testRegisterNodeConfig("node1", "localhost", 8080, 5000),
+		testRegisterNodeConfig("node1", "127.0.0.1", 9090, 5050),
+	}
+
+	var wg sync.WaitGroup
+	results := make([]NodeCommandResponse, len(cfgs))
+	wg.Add(len(cfgs))
+	for i, cfg := range cfgs {
+		go func(i int, cfg apiconfig.InferenceNodeConfig) {
+			defer wg.Done()
+			cmd := NewRegisterNodeCommand(cfg)
+			if err := b.QueueMessage(cmd); err != nil {
+				results[i] = NodeCommandResponse{Error: err}
+				return
+			}
+			results[i] = <-cmd.Response
+		}(i, cfg)
+	}
+	wg.Wait()
+
+	successes := 0
+	for _, resp := range results {
+		if resp.Error == nil {
+			successes++
+			require.NotNil(t, resp.Node)
+			continue
+		}
+		require.True(t, errors.Is(resp.Error, ErrNodeAlreadyExists), "unexpected error: %v", resp.Error)
+	}
+	require.Equal(t, 1, successes)
+
+	nodes, err := b.GetNodes()
+	require.NoError(t, err)
+	require.Len(t, nodes, 1)
+	require.Len(t, b.nodeWorkGroup.workers, 1)
+	require.Equal(t, uint64(1), b.curMaxNodesNum.Load())
+	require.Equal(t, uint64(1), b.nextRegistrationSeq.Load())
+}
+
+func TestRegisterNode_DoesNotIncrementCountersWhenWorkerExists(t *testing.T) {
+	b := NewTestBroker()
+	orphan := createTestNode("node1")
+	orphan.Node.Host = "other-host"
+	orphan.Node.InferencePort = 1
+	orphan.Node.PoCPort = 2
+	worker := NewNodeWorkerWithClient("node1", orphan, mlnodeclient.NewMockClient(), b)
+	defer worker.Shutdown()
+	require.True(t, b.nodeWorkGroup.AddWorker("node1", worker))
+
+	cmd := NewRegisterNodeCommand(testRegisterNodeConfig("node1", "localhost", 8080, 5000))
+	require.NoError(t, b.QueueMessage(cmd))
+	resp := <-cmd.Response
+	require.Error(t, resp.Error)
+	require.True(t, errors.Is(resp.Error, ErrNodeAlreadyExists))
+	require.Equal(t, uint64(0), b.curMaxNodesNum.Load())
+	require.Equal(t, uint64(0), b.nextRegistrationSeq.Load())
+	got, ok := b.nodeWorkGroup.GetWorker("node1")
+	require.True(t, ok)
+	require.Same(t, worker, got)
+	nodes, err := b.GetNodes()
+	require.NoError(t, err)
+	require.Empty(t, nodes)
 }

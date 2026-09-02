@@ -4,12 +4,15 @@ import (
 	"common/logging"
 	"context"
 	"decentralized-api/apiconfig"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
 )
+
+var ErrNodeAlreadyExists = errors.New("node already exists")
 
 // validateInferenceNode validates an InferenceNodeConfig and returns an error if invalid.
 // The error message describes what is wrong with the node configuration.
@@ -18,11 +21,21 @@ import (
 func (b *Broker) validateInferenceNode(node apiconfig.InferenceNodeConfig, excludeNodeId string) error {
 	errors := apiconfig.ValidateInferenceNodeBasic(node)
 
-	// Check for duplicate host+port combinations
 	b.mu.RLock()
-	defer b.mu.RUnlock()
+	dupes := b.duplicateEndpointErrorsLocked(node, excludeNodeId)
+	b.mu.RUnlock()
+	errors = append(errors, dupes...)
 
-	// Check inference port uniqueness
+	if len(errors) > 0 {
+		return fmt.Errorf("validation failed: %s", strings.Join(errors, "; "))
+	}
+
+	return nil
+}
+
+// duplicateEndpointErrorsLocked reports host+port collisions. Caller must hold b.mu.
+func (b *Broker) duplicateEndpointErrorsLocked(node apiconfig.InferenceNodeConfig, excludeNodeId string) []string {
+	var errors []string
 	for id, existingNode := range b.nodes {
 		if excludeNodeId != "" && id == excludeNodeId {
 			continue
@@ -32,8 +45,6 @@ func (b *Broker) validateInferenceNode(node apiconfig.InferenceNodeConfig, exclu
 			break
 		}
 	}
-
-	// Check PoC port uniqueness
 	for id, existingNode := range b.nodes {
 		if excludeNodeId != "" && id == excludeNodeId {
 			continue
@@ -43,12 +54,7 @@ func (b *Broker) validateInferenceNode(node apiconfig.InferenceNodeConfig, exclu
 			break
 		}
 	}
-
-	if len(errors) > 0 {
-		return fmt.Errorf("validation failed: %s", strings.Join(errors, "; "))
-	}
-
-	return nil
+	return errors
 }
 
 type RegisterNode struct {
@@ -68,8 +74,9 @@ func (r RegisterNode) GetResponseChannelCapacity() int {
 }
 
 func (c RegisterNode) Execute(b *Broker) {
-	// Validate node configuration
-	if err := b.validateInferenceNode(c.Node, ""); err != nil {
+	// Exclude this id so a retry of an existing node fails as already-exists,
+	// not as a host+port collision against itself.
+	if err := b.validateInferenceNode(c.Node, c.Node.Id); err != nil {
 		logging.Error("RegisterNode. Node validation failed", types.Nodes, "node_id", c.Node.Id, "error", err)
 		c.Response <- NodeCommandResponse{Node: nil, Error: err}
 		return
@@ -101,25 +108,9 @@ func (c RegisterNode) Execute(b *Broker) {
 		return
 	}
 
-	b.curMaxNodesNum.Add(1)
-	curNum := b.curMaxNodesNum.Load()
-
 	models := make(map[string]ModelArgs)
 	for model, config := range c.Node.Models {
 		models[model] = modelArgsFromConfig(config)
-	}
-
-	node := Node{
-		Host:             c.Node.Host,
-		InferenceSegment: c.Node.InferenceSegment,
-		InferencePort:    c.Node.InferencePort,
-		PoCSegment:       c.Node.PoCSegment,
-		PoCPort:          c.Node.PoCPort,
-		Models:           models,
-		Id:               c.Node.Id,
-		MaxConcurrent:    c.Node.MaxConcurrent,
-		NodeNum:          curNum,
-		Hardware:         c.Node.Hardware,
 	}
 
 	var currentEpoch uint64
@@ -132,8 +123,42 @@ func (c RegisterNode) Execute(b *Broker) {
 		}
 	}
 
+	b.mu.Lock()
+	if _, exists := b.nodes[c.Node.Id]; exists {
+		b.mu.Unlock()
+		logging.Error("RegisterNode. Node already exists", types.Nodes, "node_id", c.Node.Id)
+		c.Response <- NodeCommandResponse{Node: nil, Error: fmt.Errorf("%w: %s", ErrNodeAlreadyExists, c.Node.Id)}
+		return
+	}
+	if _, exists := b.nodeWorkGroup.GetWorker(c.Node.Id); exists {
+		b.mu.Unlock()
+		logging.Error("RegisterNode. Worker already exists for id with no node entry", types.Nodes, "node_id", c.Node.Id)
+		c.Response <- NodeCommandResponse{Node: nil, Error: fmt.Errorf("%w: %s", ErrNodeAlreadyExists, c.Node.Id)}
+		return
+	}
+	if dupes := b.duplicateEndpointErrorsLocked(c.Node, ""); len(dupes) > 0 {
+		b.mu.Unlock()
+		err := fmt.Errorf("validation failed: %s", strings.Join(dupes, "; "))
+		logging.Error("RegisterNode. Node validation failed", types.Nodes, "node_id", c.Node.Id, "error", err)
+		c.Response <- NodeCommandResponse{Node: nil, Error: err}
+		return
+	}
+
+	nodeNum := b.curMaxNodesNum.Add(1)
+	registrationSeq := b.nextRegistrationSeq.Add(1)
 	nodeWithState := &NodeWithState{
-		Node: node,
+		Node: Node{
+			Host:             c.Node.Host,
+			InferenceSegment: c.Node.InferenceSegment,
+			InferencePort:    c.Node.InferencePort,
+			PoCSegment:       c.Node.PoCSegment,
+			PoCPort:          c.Node.PoCPort,
+			Models:           models,
+			Id:               c.Node.Id,
+			MaxConcurrent:    c.Node.MaxConcurrent,
+			NodeNum:          nodeNum,
+			Hardware:         c.Node.Hardware,
+		},
 		State: NodeState{
 			IntendedStatus:    types.HardwareNodeStatus_UNKNOWN,
 			CurrentStatus:     types.HardwareNodeStatus_UNKNOWN,
@@ -149,19 +174,20 @@ func (c RegisterNode) Execute(b *Broker) {
 			},
 			EpochModels:     make(map[string]types.Model),
 			EpochMLNodes:    make(map[string]types.MLNodeInfo),
-			RegistrationSeq: b.nextRegistrationSeq.Add(1),
+			RegistrationSeq: registrationSeq,
 		},
 	}
-
-	func() {
-		b.mu.Lock()
-		defer b.mu.Unlock()
-		b.nodes[c.Node.Id] = nodeWithState
-
-		// Create and register a worker for this node
-		worker := NewNodeWorker(c.Node.Id, nodeWithState, b)
-		b.nodeWorkGroup.AddWorker(c.Node.Id, worker)
-	}()
+	worker := NewNodeWorker(c.Node.Id, nodeWithState, b)
+	if !b.nodeWorkGroup.AddWorker(c.Node.Id, worker) {
+		worker.signalShutdown()
+		go worker.Shutdown()
+		b.mu.Unlock()
+		logging.Error("RegisterNode. Worker already exists for id with no node entry", types.Nodes, "node_id", c.Node.Id)
+		c.Response <- NodeCommandResponse{Node: nil, Error: fmt.Errorf("%w: %s", ErrNodeAlreadyExists, c.Node.Id)}
+		return
+	}
+	b.nodes[c.Node.Id] = nodeWithState
+	b.mu.Unlock()
 
 	// Populate epoch data for the newly registered node
 	if err := b.PopulateSingleNodeEpochData(c.Node.Id); err != nil {
