@@ -65,6 +65,9 @@ type HostManager struct {
 	params             runtimeparams.Provider
 	maxBodySize        int64
 
+	recoveryGate     recoveryGate
+	recoveryComplete atomic.Bool
+
 	statsMu            sync.Mutex
 	statsShardsCache   *statsShardsResponse
 	statsShardsCached  time.Time
@@ -110,6 +113,60 @@ const (
 type resolutionFailure struct {
 	err       error
 	expiresAt time.Time
+}
+
+// recoveryGate lets a session requested by a live caller jump ahead of the
+// background recovery backlog. Background workers check in before each session
+// and park while any on-demand load is in flight, so a request waits at most
+// for the sessions already being recovered rather than for the whole backlog.
+type recoveryGate struct {
+	mu      sync.Mutex
+	cond    *sync.Cond
+	pending int
+	stopped bool
+}
+
+// condLocked lazily builds the cond so a zero-value HostManager still works.
+func (g *recoveryGate) condLocked() *sync.Cond {
+	if g.cond == nil {
+		g.cond = sync.NewCond(&g.mu)
+	}
+	return g.cond
+}
+
+func (g *recoveryGate) begin() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.condLocked()
+	g.pending++
+}
+
+func (g *recoveryGate) end() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.pending > 0 {
+		g.pending--
+	}
+	if g.pending == 0 {
+		g.condLocked().Broadcast()
+	}
+}
+
+// waitTurn blocks a background worker while on-demand loads hold the gate.
+func (g *recoveryGate) waitTurn() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for g.pending > 0 && !g.stopped {
+		g.condLocked().Wait()
+	}
+}
+
+// stop releases parked workers so shutdown cannot block behind the gate.
+func (g *recoveryGate) stop() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.stopped = true
+	g.condLocked().Broadcast()
 }
 
 func NewHostManager(
@@ -241,6 +298,8 @@ func (m *HostManager) SessionServerExisting(escrowID string) (*transport.Server,
 	if srv, ok := m.existingServer(escrowID); ok {
 		return srv, nil
 	}
+	m.recoveryGate.begin()
+	defer m.recoveryGate.end()
 	srv, err := m.recoverAndStoreSession(escrowID)
 	if err != nil {
 		return nil, err
@@ -342,7 +401,11 @@ func (m *HostManager) getOrCreate(escrowID string, escrow *bridge.EscrowInfo) (*
 		}
 
 		// Prefer recovering an already-bound session over CreateSession.
-		srv, err := m.recoverStoredSession(escrowID)
+		srv, err := func() (*transport.Server, error) {
+			m.recoveryGate.begin()
+			defer m.recoveryGate.end()
+			return m.recoverStoredSession(escrowID)
+		}()
 		if err == nil {
 			installed, storeErr := m.storeSessionIfAbsent(escrowID, srv)
 			if storeErr != nil {
@@ -577,6 +640,38 @@ func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*trans
 // StateMachine. Recovery runs up to recoverSessionsConcurrency workers in
 // parallel. Call this on startup after constructing the HostManager.
 func (m *HostManager) RecoverSessions() error {
+	return m.RecoverSessionsContext(context.Background())
+}
+
+// StartRecovery runs recovery in the background so the HTTP listener can bind
+// immediately instead of waiting out the backlog; sessions that are requested
+// before their turn are recovered on demand by getOrCreate. RecoveryComplete
+// gates /ready. The returned func waits for the backlog to drain and is safe to
+// call after ctx is cancelled.
+func (m *HostManager) StartRecovery(ctx context.Context) func() {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer m.recoveryComplete.Store(true)
+		if err := m.RecoverSessionsContext(ctx); err != nil {
+			logging.Error("devshard session recovery failed", inferenceTypes.System, "error", err)
+		}
+	}()
+	return func() {
+		m.recoveryGate.stop()
+		<-done
+	}
+}
+
+// RecoveryComplete reports whether background recovery has finished. It is true
+// once the backlog drains, including when recovery was cancelled or failed.
+func (m *HostManager) RecoveryComplete() bool {
+	return m.recoveryComplete.Load()
+}
+
+// RecoverSessionsContext is RecoverSessions with cancellation: a cancelled ctx
+// stops the workers between sessions and leaves the rest to lazy recovery.
+func (m *HostManager) RecoverSessionsContext(ctx context.Context) error {
 	startedAt := time.Now()
 	active, err := m.store.ListActiveSessions()
 	if err != nil {
@@ -625,7 +720,7 @@ func (m *HostManager) RecoverSessions() error {
 	if len(active) == 0 {
 		logging.Info("completed devshard session recovery", inferenceTypes.System,
 			"session_count", 0, "worker_count", 0, "recovered_count", 0, "failed_count", 0,
-			"version_skipped_count", 0, "duration", time.Since(startedAt))
+			"version_skipped_count", 0, "cancelled_count", 0, "duration", time.Since(startedAt))
 		return nil
 	}
 
@@ -641,11 +736,20 @@ func (m *HostManager) RecoverSessions() error {
 	var recoveredCount atomic.Int64
 	var failedCount atomic.Int64
 	var versionSkippedCount atomic.Int64
+	var cancelledCount atomic.Int64
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
 			for sess := range jobs {
+				// Keep draining on cancel so the feeder cannot block on a
+				// channel no worker is reading any more.
+				if ctx.Err() != nil {
+					cancelledCount.Add(1)
+					continue
+				}
+				// Park while a live request is loading its own session.
+				m.recoveryGate.waitTurn()
 				sessionStartedAt := time.Now()
 				if _, err := m.recoverAndStoreSession(sess.EscrowID); err != nil {
 					if errors.Is(err, storage.ErrSessionVersionConflict) {
@@ -680,6 +784,7 @@ func (m *HostManager) RecoverSessions() error {
 		"recovered_count", recoveredCount.Load(),
 		"failed_count", failedCount.Load(),
 		"version_skipped_count", versionSkippedCount.Load(),
+		"cancelled_count", cancelledCount.Load(),
 		"duration", time.Since(startedAt))
 	return nil
 }
@@ -749,11 +854,14 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 	if recoveredVersion == "" {
 		recoveredVersion = m.boundVersion
 	}
-	sm, err := state.NewStateMachine(
-		escrowID, meta.Config, meta.Group, meta.InitialBalance,
-		meta.CreatorAddr, m.verifier, m.store,
-		m.sessionSMOpts(state.WithWarmKeyResolver(m.bridge.VerifyWarmKey), state.WithVersion(recoveredVersion))...,
-	)
+	newStateMachine := func() (*state.StateMachine, error) {
+		return state.NewStateMachine(
+			escrowID, meta.Config, meta.Group, meta.InitialBalance,
+			meta.CreatorAddr, m.verifier, m.store,
+			m.sessionSMOpts(state.WithWarmKeyResolver(m.bridge.VerifyWarmKey), state.WithVersion(recoveredVersion))...,
+		)
+	}
+	sm, err := newStateMachine()
 	if err != nil {
 		return nil, fmt.Errorf("create state machine: %w", err)
 	}
@@ -770,9 +878,19 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 				sm.RestoreState(snapState)
 				sm.RestoreCommittedEntries(committedEntries)
 				sm.RestoreSealedNonces(sealedNonces)
-				replayFrom = snapNonce + 1
-				logging.Info("restored devshard snapshot", inferenceTypes.System,
-					"escrow_id", escrowID, "snapshot_nonce", snapNonce, "latest_nonce", meta.LatestNonce)
+				if verifyErr := verifySnapshotRoot(m.store, sm, escrowID, snapNonce); verifyErr != nil {
+					// Restore already mutated sm, so the rejected state has to
+					// be thrown away rather than replayed on top of.
+					logging.Error("devshard snapshot failed root check, replaying full history", inferenceTypes.System,
+						"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", verifyErr)
+					if sm, err = newStateMachine(); err != nil {
+						return nil, fmt.Errorf("recreate state machine after snapshot reject: %w", err)
+					}
+				} else {
+					replayFrom = snapNonce + 1
+					logging.Info("restored devshard snapshot", inferenceTypes.System,
+						"escrow_id", escrowID, "snapshot_nonce", snapNonce, "latest_nonce", meta.LatestNonce)
+				}
 			}
 		} else if snapErr != nil && !errors.Is(snapErr, storage.ErrSnapshotNotFound) {
 			logging.Error("failed to load devshard snapshot, replaying full history", inferenceTypes.System,
@@ -1153,6 +1271,31 @@ func (m *HostManager) hostSnapshot(escrowID string) (hostSnap, bool) {
 		return nil, false
 	}
 	return srv.Host(), true
+}
+
+// verifySnapshotRoot checks a restored snapshot against the state root the
+// journal recorded at the snapshot nonce. Diff replay verifies every nonce this
+// way; without it the snapshot path would trust the blob outright, which
+// matters because the store can be shared between hosts and a snapshot is not
+// self-authenticating. Journals pruned past the snapshot, and records written
+// before state_hash existed, carry no root and cannot be checked.
+func verifySnapshotRoot(store storage.Storage, sm *state.StateMachine, escrowID string, snapNonce uint64) error {
+	records, err := store.GetDiffs(escrowID, snapNonce, snapNonce)
+	if err != nil {
+		return fmt.Errorf("load diff at snapshot nonce: %w", err)
+	}
+	if len(records) == 0 || len(records[0].StateHash) == 0 {
+		return nil
+	}
+	want := records[0].StateHash
+	got, err := sm.ComputeStateRoot()
+	if err != nil {
+		return fmt.Errorf("compute restored state root: %w", err)
+	}
+	if !bytes.Equal(got, want) {
+		return fmt.Errorf("restored root %x does not match journal root %x at nonce %d", got, want, snapNonce)
+	}
+	return nil
 }
 
 func saveHostSnapshot(store storage.Storage, sm *state.StateMachine, escrowID string, nonce uint64) error {

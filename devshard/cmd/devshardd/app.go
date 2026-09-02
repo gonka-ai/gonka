@@ -131,7 +131,7 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 	e := buildServer(lifecycle)
 	var admin *echo.Echo
 	if cfg.AdminAddr != "" {
-		admin = buildAdminServer(lifecycle, manager.StorageReady, manager.StorageProof)
+		admin = buildAdminServer(lifecycle, manager.StorageReady, manager.StorageProof, manager.RecoveryComplete)
 	}
 	manager.Register(e.Group(""))
 	chainRuntime.chainEvents.OnReady(lifecycle.SetReady)
@@ -313,12 +313,15 @@ func buildHostManager(
 
 	startHostEventsWarm(ctx, cfg, chainBridge, mlClient, store, manager.HandleSettlementFinalized, closers)
 
-	if err := manager.RecoverSessions(); err != nil {
-		slog.Warn("recover sessions failed", "error", err)
-	}
 	store.Start()
 
 	closers.Add(manager.CloseHosts)
+
+	// Recovery used to run inline here, so a host with a large backlog kept the
+	// listener closed and answered 502 until every session was rebuilt. Run it
+	// in the background instead: /ready stays false until the backlog drains,
+	// and any session requested before its turn is recovered on demand.
+	closers.Add(manager.StartRecovery(ctx))
 
 	validationRetry := session.NewValidationRetryLoop(store, validator, manager, phase, instanceAddr)
 	validationRetry.WithInterval(cfg.ValidationRetryInterval)

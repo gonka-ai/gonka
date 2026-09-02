@@ -16,7 +16,7 @@ func TestAdminStorageProofEndpoints(t *testing.T) {
 	proof := func(_ context.Context, operation storage.ProofOperation, nonce string) (storage.StorageProof, error) {
 		return storage.StorageProof{Identity: "database-1", Found: operation == storage.ProofWriteChallenge && nonce != ""}, nil
 	}
-	admin := buildAdminServer(newLifecycleState(), func() bool { return true }, proof)
+	admin := buildAdminServer(newLifecycleState(), func() bool { return true }, proof, func() bool { return true })
 
 	identity := httptest.NewRecorder()
 	admin.ServeHTTP(identity, httptest.NewRequest(http.MethodGet, "/storage/identity", nil))
