@@ -141,6 +141,7 @@ type Broker struct {
 	configManager        *apiconfig.ConfigManager
 	lockMap              map[string]lockEntry
 	lockMapMu            sync.Mutex
+	afterSnapshot        func()
 }
 
 type lockEntry struct {
@@ -1055,6 +1056,10 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 		}
 	}
 	b.mu.RUnlock()
+
+	if b.afterSnapshot != nil {
+		b.afterSnapshot()
+	}
 
 	currentPoCParams, pocParamsErr := b.prefetchPocParams(epochState, nodesToDispatch, blockHeight)
 

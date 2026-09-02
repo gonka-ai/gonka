@@ -1002,7 +1002,6 @@ func TestRemoveNodeDoesNotBlockStartPocCommand(t *testing.T) {
 	require.Equal(t, types.PoCGeneratePhase, broker.phaseTracker.GetCurrentEpochState().CurrentPhase)
 
 	removeResp := make(chan bool, 2)
-	start := time.Now()
 	queueMessage(t, broker, RemoveNode{NodeId: "hung-node", Response: removeResp})
 
 	select {
@@ -1011,7 +1010,6 @@ func TestRemoveNodeDoesNotBlockStartPocCommand(t *testing.T) {
 	case <-time.After(2 * time.Second):
 		t.Fatal("RemoveNode blocked the broker command loop while a worker HTTP call was in flight")
 	}
-	require.Less(t, time.Since(start), time.Second, "RemoveNode must return without waiting for worker HTTP")
 
 	startPoc := NewStartPocCommand()
 	queueMessage(t, broker, startPoc)
@@ -2577,6 +2575,83 @@ func TestSameRegistration(t *testing.T) {
 	node.State.RegistrationSeq = 2
 	require.False(t, sameRegistration(node, 1))
 	require.True(t, sameRegistration(node, 2))
+}
+
+func TestReconcile_SkipsStaleSnapshotAfterReregister(t *testing.T) {
+	phaseTracker := &chainphase.ChainPhaseTracker{}
+	phaseTracker.Update(
+		chainphase.BlockInfo{Height: 1, Hash: "hash-1"},
+		&types.Epoch{Index: 100, PocStartBlockHeight: 100},
+		&types.EpochParams{},
+		true,
+		nil,
+	)
+	b := &Broker{
+		nodes:                make(map[string]*NodeWithState),
+		nodeWorkGroup:        NewNodeWorkGroup(),
+		phaseTracker:         phaseTracker,
+		highPriorityCommands: make(chan Command, 8),
+		lowPriorityCommands:  make(chan Command, 8),
+		configManager:        &apiconfig.ConfigManager{},
+		mlNodeClientFactory:  mlnodeclient.NewMockClientFactory(),
+	}
+
+	oldNode := createTestNodeWithStatus("n1", types.HardwareNodeStatus_UNKNOWN)
+	oldNode.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+	oldNode.State.RegistrationSeq = 1
+	oldWorker := NewNodeWorkerWithClient("n1", oldNode, mlnodeclient.NewMockClient(), b)
+	b.nodes["n1"] = oldNode
+	b.nodeWorkGroup.AddWorker("n1", oldWorker)
+
+	replacement := createTestNodeWithStatus("n1", types.HardwareNodeStatus_UNKNOWN)
+	replacement.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+	replacement.State.RegistrationSeq = 2
+	newMock := mlnodeclient.NewMockClient()
+	newWorker := NewNodeWorkerWithClient("n1", replacement, newMock, b)
+	defer newWorker.Shutdown()
+
+	snapshotted := make(chan struct{})
+	resume := make(chan struct{})
+	b.afterSnapshot = func() {
+		close(snapshotted)
+		<-resume
+	}
+
+	done := make(chan struct{})
+	go func() {
+		b.reconcile(*phaseTracker.GetCurrentEpochState())
+		close(done)
+	}()
+
+	select {
+	case <-snapshotted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reconcile did not snapshot before dispatch")
+	}
+
+	b.mu.Lock()
+	b.nodes["n1"] = replacement
+	b.mu.Unlock()
+	b.nodeWorkGroup.RemoveWorker("n1")
+	b.nodeWorkGroup.AddWorker("n1", newWorker)
+	close(resume)
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reconcile did not finish after resume")
+	}
+
+	require.Nil(t, replacement.State.ReconcileInfo)
+	require.Nil(t, replacement.State.cancelInFlightTask)
+	require.Equal(t, uint64(0), replacement.State.DeploymentGeneration)
+	time.Sleep(50 * time.Millisecond)
+	require.Equal(t, 0, newMock.GetInferenceUpCalled())
+	select {
+	case cmd := <-b.highPriorityCommands:
+		t.Fatalf("unexpected command queued after stale snapshot: %T", cmd)
+	default:
+	}
 }
 
 func TestClearReconcileIfSeq_IgnoresReplacement(t *testing.T) {

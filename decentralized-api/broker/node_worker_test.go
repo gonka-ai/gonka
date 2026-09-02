@@ -154,7 +154,7 @@ func TestNodeWorker_QueueFull(t *testing.T) {
 	// Fill the queue with slow commands
 	slowCmdSubmitted := 0
 	slowCmdFailed := 0
-	for i := 0; i < 25; i++ { // Queue size is 10, but we submit 10
+	for i := 0; i < 25; i++ {
 		cmd := &TestCommand{
 			ExecuteFn: func(ctx context.Context, worker *NodeWorker) NodeResult {
 				time.Sleep(100 * time.Millisecond)
@@ -169,9 +169,11 @@ func TestNodeWorker_QueueFull(t *testing.T) {
 		}
 	}
 
-	// Only 10 should succeed
-	assert.Equal(t, 10, slowCmdSubmitted, "Should submit exactly 10 commands (queue size)")
-	assert.Equal(t, 15, slowCmdFailed, "Should fail exactly 15 commands (beyond queue size)")
+	// Queue size is 10. The run loop may already be executing one command,
+	// so 10 queued plus 1 in flight can all succeed.
+	assert.GreaterOrEqual(t, slowCmdSubmitted, 10)
+	assert.LessOrEqual(t, slowCmdSubmitted, 11)
+	assert.Equal(t, 25, slowCmdSubmitted+slowCmdFailed)
 }
 
 func TestNodeWorker_ShutdownDropsQueuedCommands(t *testing.T) {
