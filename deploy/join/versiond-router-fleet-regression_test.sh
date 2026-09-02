@@ -40,6 +40,8 @@ scenarios=(
     RT-STATIC-HA-REMOVAL
     RT-DYNAMIC-CATALOG-REMOVAL
     RT-CATALOG-ROUTE-LOST-BY-CANDIDATE
+    RT-PREVIOUS-NO-AUTORESTART
+    RT-PG-DROP-BEFORE-COMMIT
     RT-NONHA-OWNER-DOWN
 )
 
@@ -261,6 +263,11 @@ model_docker() {
                 model_inspect "$format" "$id" || status=1
             done
             return "$status"
+            ;;
+        update)
+            local policy=${1#--restart=} target=${*: -1}
+            container_exists "$target" || return 1
+            set_container_field "$target" restart "$policy"
             ;;
         start)
             container_exists "$1" || return 1
@@ -715,6 +722,43 @@ scenario_catalog_route_lost_by_candidate() {
     fi
 }
 
+scenario_previous_no_autorestart() {
+    load_fleet_functions || return $?
+    seed_previous_fleet restart=always
+    # Observe the kept generation right after it was stopped: a daemon
+    # restart must not start it next to its replacement.
+    eval "$(declare -f create_generation | sed '1s/create_generation/real_create_generation/')"
+    create_generation() {
+        container_field prev-0 restart >"$model/restart-while-kept"
+        real_create_generation "$@"
+    }
+    printf 'unhealthy\n' >"$model/candidate-health"
+    run_capture fleet_rollout
+    if ((LAST_RC != 0)) && [[ $(<"$model/restart-while-kept") == no && $(container_field prev-0 restart) == always && $(serving_id 0) == prev-0 ]]; then
+        invariant_holds 'the kept previous generation cannot restart on its own, and gets its policy back when restored'
+    else
+        invariant_violated "rollout rc=$LAST_RC, restart while kept=$(<"$model/restart-while-kept"), after restore=$(container_field prev-0 restart)"
+    fi
+}
+
+scenario_pg_drop_before_commit() {
+    load_fleet_functions || return $?
+    seed_previous_fleet
+    # The pool loses v4 after the candidate of slot 0 passed its route gate
+    # and before the previous generation would be removed.
+    eval "$(declare -f wait_slot_routes | sed '1s/wait_slot_routes/real_wait_slot_routes/')"
+    wait_slot_routes() {
+        real_wait_slot_routes "$@" || return $?
+        [[ $1 != 0 ]] || : >"$model/pool-serves"
+    }
+    run_capture fleet_rollout
+    if ((LAST_RC != 0)) && container_exists prev-0 && [[ $(serving_id 0) == prev-0 && $(count_containers 0) == 1 ]]; then
+        invariant_holds 'v4 vanishing between the route gate and the commit did not cost the exact previous generation'
+    else
+        invariant_violated "rollout rc=$LAST_RC, prev-0 exists=$(container_exists prev-0 && echo yes || echo no), slot 0 serving=$(serving_id 0 | paste -sd, -)"
+    fi
+}
+
 scenario_nonha_owner_down() {
     EXTRA_CONFIG='VERSIOND_NON_HA_VERSIONS=v1' load_fleet_functions || return $?
     seed_previous_fleet "routes=v1 v4" "env.VERSIOND_NON_HA_VERSIONS=v1"
@@ -750,6 +794,8 @@ run_internal() {
         RT-STATIC-HA-REMOVAL) scenario_static_ha_removal ;;
         RT-DYNAMIC-CATALOG-REMOVAL) scenario_dynamic_catalog_removal ;;
         RT-CATALOG-ROUTE-LOST-BY-CANDIDATE) scenario_catalog_route_lost_by_candidate ;;
+        RT-PREVIOUS-NO-AUTORESTART) scenario_previous_no_autorestart ;;
+        RT-PG-DROP-BEFORE-COMMIT) scenario_pg_drop_before_commit ;;
         RT-NONHA-OWNER-DOWN) scenario_nonha_owner_down ;;
         *) echo "HARNESS_ERROR: unknown scenario $scenario" >&2; return 2 ;;
     esac
