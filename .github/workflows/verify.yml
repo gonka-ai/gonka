@@ -261,6 +261,10 @@ jobs:
         run: make -C versiond-router test-render
       - name: Exercise isolated versiond-router fleet rollouts
         run: make -C versiond-router test-fleet
+      - name: Gate router fleet failure scenarios
+        run: |
+          shellcheck -x deploy/join/versiond-router-fleet.sh deploy/join/versiond-router-fleet-regression_test.sh
+          deploy/join/versiond-router-fleet-regression_test.sh --gate
       - name: Check the join update script
         run: |
           shellcheck deploy/join/deployment-lock.sh deploy/join/update-devshard.sh deploy/join/update-devshard_test.sh \

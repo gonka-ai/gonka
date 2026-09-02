@@ -41,6 +41,10 @@ cleanup() {
         -f "$tmpdir/main.yml" down --timeout 1 >/dev/null 2>&1 || true
     docker network rm "$front" "$back" "$metrics" \
         "gonka-versiond-router-orphan-$suffix" >/dev/null 2>&1 || true
+    # The durable previous-image tags are scoped to this fleet and would
+    # otherwise accumulate on the daemon, one set per run.
+    docker image ls --format '{{.Repository}}:{{.Tag}}' gonka/versiond-router-previous 2>/dev/null | \
+        grep -F ":$fleet_id-" | xargs -r docker image rm >/dev/null 2>&1 || true
     docker image rm "$base_image" "$updated_image" "$bad_image" \
         "$incompatible_cache_image" "$proxy_image" >/dev/null 2>&1 || true
     rm -rf "$tmpdir"
