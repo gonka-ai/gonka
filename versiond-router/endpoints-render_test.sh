@@ -43,6 +43,18 @@ cat >"$tmpdir/endpoints.json" <<'EOF'
 ]
 EOF
 
+# The inline list renders exactly like the file (the fleet hands membership
+# over as an environment value so a generation carries its own list).
+render inline \
+    VERSIOND_POOL_ENDPOINTS="$(jq -c . "$tmpdir/endpoints.json")" \
+    VERSIOND_ROUTER_VERSION_CAPACITY=2 2>"$tmpdir/inline.err"
+grep -q 'explicit list of 3 endpoint(s)' "$tmpdir/inline.err" || \
+    fail "inline endpoint list was not recognised: $(cat "$tmpdir/inline.err")"
+[[ $(pool_servers inline) == "$(render endpoints-again \
+    VERSIOND_POOL_ENDPOINTS_FILE="$tmpdir/endpoints.json" \
+    VERSIOND_ROUTER_VERSION_CAPACITY=2 2>/dev/null; pool_servers endpoints-again)" ]] || \
+    fail "inline and file endpoint lists render differently"
+
 # Explicit endpoints: one server per entry, names versiond1..N for the catalog
 # reconciler, the default port applied, IPv4 literals without a resolver, and
 # the legacy owner selected by endpoint id.

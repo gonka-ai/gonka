@@ -12,6 +12,10 @@
 #                             DNS discovery. Hosts may be IPv4 addresses or
 #                             names; a name is re-resolved through the Docker
 #                             resolver. Port defaults to VERSIOND_PORT.
+#   VERSIOND_POOL_ENDPOINTS   the same JSON array inline. The router fleet
+#                             passes membership this way so that a container
+#                             carries its own list; takes precedence over the
+#                             file.
 #   VERSIOND_HOSTS            legacy whitespace/comma list of hosts (optionally
 #                             host:port). Recognised only when no endpoint file
 #                             is set; it renders the same explicit server list.
@@ -98,6 +102,12 @@ US=$(printf '\037')
 POOL_ENDPOINTS=$(mktemp)
 trap 'rm -f "$POOL_ENDPOINTS"' EXIT
 POOL_MODE=dns
+if [ -n "${VERSIOND_POOL_ENDPOINTS:-}" ]; then
+    POOL_ENDPOINTS_INLINE=$(mktemp)
+    trap 'rm -f "$POOL_ENDPOINTS" "$POOL_ENDPOINTS_INLINE"' EXIT
+    printf '%s\n' "$VERSIOND_POOL_ENDPOINTS" > "$POOL_ENDPOINTS_INLINE"
+    VERSIOND_POOL_ENDPOINTS_FILE=$POOL_ENDPOINTS_INLINE
+fi
 if [ -n "${VERSIOND_POOL_ENDPOINTS_FILE:-}" ]; then
     [ -r "$VERSIOND_POOL_ENDPOINTS_FILE" ] || \
         die "VERSIOND_POOL_ENDPOINTS_FILE '$VERSIOND_POOL_ENDPOINTS_FILE' is not readable"
@@ -680,10 +690,10 @@ fi
 # answer can name the fix, rather than as a 404 from whichever host the hash
 # happened to pick.
 if [ -n "$CATALOG_URL" ]; then
-    UNDECLARED_GUARD="http-request return status 503 hdr X-Devshard-Error undeclared_version hdr X-Devshard-Router-Error undeclared_version content-type \"text/plain\" lf-string \"version %[var(txn.ver)] is not present in the governance routing catalog\" if { var(txn.ver) -m reg . } !versionless_request !{ var(txn.ver),map_str($MAP) -m found } !{ var(txn.ver),map_str($VERSIONS_MAP) -m found }"
+    UNDECLARED_GUARD="http-request return status 503 content-type \"text/plain\" lf-string \"version %[var(txn.ver)] is not present in the governance routing catalog\" if { var(txn.ver) -m reg . } !versionless_request !{ var(txn.ver),map_str($MAP) -m found } !{ var(txn.ver),map_str($VERSIONS_MAP) -m found }"
     DYNAMIC_READY_GUARD="http-request return status 503 content-type \"text/plain\" string \"version-is-not-declared-or-ready\" if { path /readyz } { url_param(version) -m found } !{ var(txn.ready_ver),map_str($MAP) -m found } !{ var(txn.ready_ver),map_str($VERSIONS_MAP) -m found }"
 elif [ -s "$VERSIONS_MAP" ]; then
-    UNDECLARED_GUARD="http-request return status 503 hdr X-Devshard-Error undeclared_version hdr X-Devshard-Router-Error undeclared_version content-type \"text/plain\" lf-string \"version %[var(txn.ver)] is not declared in VERSIOND_VERSIONS on this router\" if { var(txn.ver) -m reg . } !versionless_request !{ var(txn.ver),map_str($MAP) -m found } !{ var(txn.ver),map_str($VERSIONS_MAP) -m found }"
+    UNDECLARED_GUARD="http-request return status 503 content-type \"text/plain\" lf-string \"version %[var(txn.ver)] is not declared in VERSIOND_VERSIONS on this router\" if { var(txn.ver) -m reg . } !versionless_request !{ var(txn.ver),map_str($MAP) -m found } !{ var(txn.ver),map_str($VERSIONS_MAP) -m found }"
     DYNAMIC_READY_GUARD="http-request return status 503 content-type \"text/plain\" string \"version-is-not-declared-or-ready\" if { path /readyz } { url_param(version) -m found } !{ var(txn.ready_ver),map_str($MAP) -m found } !{ var(txn.ready_ver),map_str($VERSIONS_MAP) -m found }"
 else
     UNDECLARED_GUARD="# No versions declared: every version uses the host-level pool."
