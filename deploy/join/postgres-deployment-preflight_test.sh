@@ -34,6 +34,9 @@ elif [[ $1 == compose && ${*: -3:1} == ps && ${*: -2:1} == -q ]]; then
     case $LIVE_MODE:$service in
         both:versiond) printf 'container-1\n' ;;
         both:versiond2) printf 'container-2\n' ;;
+        three:versiond) printf 'container-1\n' ;;
+        three:versiond2) printf 'container-2\n' ;;
+        three:versiond3) printf 'container-3\n' ;;
         one:versiond) printf 'container-1\n' ;;
     esac
 elif [[ $1 == inspect ]]; then
@@ -425,7 +428,7 @@ if run_preflight >"$tmpdir/out" 2>"$tmpdir/err"; then
     fail "preflight passed with only one versiond replica"
 fi
 unset LIVE_MODE
-grep -q 'has only one running versiond replica' "$tmpdir/err" || fail \
+grep -q 'has only 1 of 2 versiond replicas running' "$tmpdir/err" || fail \
     "partial-replica failure was not diagnosed"
 
 write_config
@@ -434,8 +437,20 @@ mv "$tmpdir/config-without-versiond2.json" "$tmpdir/config.json"
 if run_preflight --compose-only >"$tmpdir/out" 2>"$tmpdir/err"; then
     fail "Compose topology without versiond2 was accepted"
 fi
-grep -q 'Compose topology has no versiond2 service' "$tmpdir/err" || fail \
+grep -q 'needs at least two versiond services' "$tmpdir/err" || fail \
     "missing versiond2 service was not diagnosed"
+
+# Three local replicas: every service is discovered, checked, and challenged.
+write_config
+jq '.services.versiond3 = .services.versiond2' "$tmpdir/config.json" >"$tmpdir/config-three.json"
+mv "$tmpdir/config-three.json" "$tmpdir/config.json"
+LIVE_MODE=three run_preflight >"$tmpdir/out" 2>"$tmpdir/err" || \
+    fail "three-replica preflight failed: $(cat "$tmpdir/err")"
+unset LIVE_MODE
+grep -q '^container-3 write ' "$tmpdir/challenge.log" || fail \
+    "the third replica was not challenged"
+[[ $(<"$tmpdir/out") == db-1 ]] || fail \
+    "three-replica preflight did not print the shared identity"
 
 real_docker_bin=${REAL_DOCKER_BIN:-docker}
 command -v "$real_docker_bin" >/dev/null 2>&1 || fail \

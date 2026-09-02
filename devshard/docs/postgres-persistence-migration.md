@@ -68,7 +68,8 @@ live check. Do not omit the expected identity to accept an unexpected database;
 an intentional replacement belongs to a new recovery transaction after the old
 database has been restored or its loss has been explicitly accepted.
 
-The live mode requires both versiond replicas and at least one stable HA child.
+The live mode requires every versiond replica in the model (at least two) to
+be running and at least one stable HA child.
 It verifies the shared lineage UUID and connects every generation's writer and
 reader to one anchor generation with short-lived challenges. This linear proof
 detects an independent database while reducing the time in which a child restart
