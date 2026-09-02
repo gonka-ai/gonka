@@ -828,9 +828,12 @@ commit_marker_name() {
     printf 'gonka-versiond-router-commit-%s\n' "$fleet_id"
 }
 
-commit_marker_image() {
+# Prints "spec-hash image" of the committed rollout; returns 1 when no
+# commit is pending.
+commit_marker_record() {
     local output
-    if output=$("$docker_bin" volume inspect --format '{{index .Labels "ai.gonka.candidate-image"}}' \
+    if output=$("$docker_bin" volume inspect \
+        --format '{{index .Labels "ai.gonka.spec-hash"}} {{index .Labels "ai.gonka.candidate-image"}}' \
         "$(commit_marker_name)" 2>&1); then
         printf '%s\n' "$output"
         return 0
@@ -841,10 +844,15 @@ commit_marker_image() {
     fail "cannot inspect the commit marker $(commit_marker_name): $output"
 }
 
+# The marker carries the complete specification that was committed, so a
+# retry can tell a changed configuration apart before it touches anything.
 commit_marker_create() {
+    local spec
+    spec=$(fleet_spec_hash)
     "$docker_bin" volume create \
         --label ai.gonka.component=versiond-router-commit \
         --label "ai.gonka.fleet=$fleet_id" \
+        --label "ai.gonka.spec-hash=$spec" \
         --label "ai.gonka.candidate-image=$candidate_image_id" \
         "$(commit_marker_name)" >/dev/null || fail "cannot record the commit point"
 }
@@ -858,10 +866,13 @@ commit_marker_remove() {
 # removed, a candidate that does not serve is recreated on the committed
 # candidate image, nothing is restored.
 roll_forward_committed() {
-    local committed slot lookup
-    committed=$(commit_marker_image) || return 0
-    [[ $committed == "$candidate_image_id" ]] || fail \
-        "a committed maintenance cleanup is pending for image $committed; finish it with that VERSIOND_ROUTER_IMAGE before changing it"
+    local record committed_spec committed_image slot lookup
+    record=$(commit_marker_record) || return 0
+    read -r committed_spec committed_image <<<"$record"
+    # Checked before anything is removed: with another configuration the
+    # cleanup would remove records it may still need.
+    [[ $committed_spec == "$(fleet_spec_hash)" ]] || fail \
+        "a committed maintenance cleanup is pending for specification $committed_spec (image $committed_image) and the configuration has changed since; restore that configuration and rerun apply to finish the cleanup first"
     echo "Finishing the committed maintenance rollout"
     for slot in "${slots[@]}"; do
         lookup=0
@@ -1944,6 +1955,8 @@ fleet_down() {
     if ((${#volumes[@]} > 0)); then
         "$docker_bin" volume rm "${volumes[@]}" >/dev/null
     fi
+    # A pending commit belongs to the fleet that is being removed.
+    ! commit_marker_record >/dev/null || commit_marker_remove
     for network in "${cleanup_networks[@]}"; do
         echo "Removing versiond-router fleet network $network"
         "$docker_bin" network rm "$network" >/dev/null
@@ -1954,8 +1967,8 @@ fleet_status() {
     local slot lookup route count kind committed
     local bad=0
     printf '%-16s %-12s %-10s %s\n' SLOT STATE HEALTH IMAGE
-    if committed=$(commit_marker_image); then
-        warn "a maintenance rollout to image $committed is committed but its cleanup did not finish; run apply"
+    if committed=$(commit_marker_record); then
+        warn "a maintenance rollout (image ${committed#* }) is committed but its cleanup did not finish; run apply"
         bad=1
     fi
     fleet_inventory
