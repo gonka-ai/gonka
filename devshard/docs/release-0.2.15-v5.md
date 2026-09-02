@@ -82,7 +82,7 @@ What the script runs, in order:
 | `docker compose pull` of the devshard services | yes | yes |
 | `up -d --no-deps --wait devshard-postgres` (entrypoint migrates v4 data) | | local PostgreSQL only |
 | `versiond-router-fleet.sh prepare-networks` and `apply` | | yes |
-| `up -d --no-deps --wait proxy-policy2 proxy-policy`, then `proxy` | yes | yes |
+| `up -d --no-deps --wait proxy-policy2`, then `proxy-policy`, then `proxy`; in HA the fleet's `verify-admission` then proves the new public proxy admits every router slot and live route before anything else changes | yes | yes |
 | `docker rm -f versiond-router` (the old nginx singleton) | | if present |
 | `up -d --no-deps --wait` of each replica, last one first, `versiond` last | `versiond` only | yes |
 
@@ -103,19 +103,37 @@ replica or an unreachable managed host therefore stops the run while the
 previous release is still fully serving.
 
 It also checks that the model points at the database the running replicas
-already use: it reads the storage lineage through a running versiond
-(`/internal/storage-identity`) and compares it with the identity stored in
-the database the model names. A `PGHOST` that now points at another working
-database is refused, because a rolling replacement would otherwise leave old
-replicas writing to one history and new replicas to another. Set
+already use. Every running local replica reports its storage lineage through
+`/internal/storage-identity`; they must agree, and the database the model
+names must carry the same lineage. Because a physical copy keeps the
+lineage, one replica then writes a random challenge through its own
+PostgreSQL pool and the model's database must show it: a clone would not.
+A `PGHOST` that now points at another working database, or at a copy, is
+refused, because a rolling replacement would otherwise leave old replicas
+writing to one history and new replicas to another. Set
 `UPDATE_ACCEPT_DATABASE_CHANGE=true` only for an intended migration to a
-restored copy.
+restored copy, and only with every replica stopped first. Replicas on other
+machines are not part of this check; their `config.env` is copied from the
+network node, and a wrong `PGHOST` there is caught by the same check the
+next time the network node is updated.
+
+The write probe opens PostgreSQL with the model's credentials from a helper
+container that borrows a running versiond's volumes, so a CA or client
+certificate named by `PGSSL*` resolves; it creates and drops a temporary
+table, so a read-only primary, revoked write rights or a full disk stop the
+run. A bundled PostgreSQL that exists but is stopped is not a fresh install:
+start it first. `UPDATE_SKIP_POSTGRES_PROBE=true` disables all of this and
+is meant for a host that cannot reach the database at all.
 
 Each step replaces one service and waits for its healthcheck. Before the
-replacement, the image the service ran is kept under the Docker tag
-`gonka-previous/<service>`; that tag lives in Docker's image store, so it
-survives a killed run and can be used by hand
+replacement, the image of the *healthy* container it replaces is kept under
+the Docker tag `gonka-previous/<service>`, so the tag always names the last
+image that was serving: a candidate that never became healthy does not
+overwrite it, and a configuration-only update refreshes it. The tag lives in
+Docker's image store, so it survives a killed run and can be used by hand
 (`VERSIOND_IMAGE=gonka-previous/versiond docker compose up -d versiond`).
+Images already on the host are not pulled again, so a rerun after a failure
+does not depend on the registry.
 If the replacement never becomes healthy, the script puts that image back
 with the same `up`, prints the failing service, and stops. The host keeps
 serving: services replaced earlier run the new release, the failed one and
@@ -149,6 +167,12 @@ restores a slot's previous image itself when its replacement does not pass
 admission, and refuses to start while a bootstrap version has no ready
 router at all (a PostgreSQL or versiond outage), so an outage cannot be
 rolled over silently.
+
+A fresh bundled PostgreSQL records `.gonka-init-complete` inside `PGDATA`
+through an initdb hook, and a migrated cluster records `.migrated-from-v4`
+next to it before the copy is published; a persistent cluster without either
+marker, or whose `pg_controldata` system identifier differs from an attached
+v4 volume, is refused rather than started on the wrong history.
 
 `--check` and `--dry-run` change no service. They do run the PostgreSQL
 probe from a helper container (which may pull the pinned PostgreSQL image)

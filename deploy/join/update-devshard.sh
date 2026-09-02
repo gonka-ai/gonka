@@ -151,9 +151,20 @@ project_name=
 # was added (a third replica, observability) only the containers recreated
 # since carry the full list, so take the longest list that contains every
 # other one in order; anything else is ambiguous and needs COMPOSE_FILE.
+# Every container Compose started from this directory, whatever its name, so a
+# replica added later as versiond5 or versiond12 counts as much as versiond.
+# The fixed names cover a daemon that does not carry the working_dir label.
+deployment_containers=$("$docker_bin" ps -a --format '{{.Names}}' \
+    --filter "label=com.docker.compose.project.working_dir=$script_dir") || fail \
+    "cannot list the containers of this deployment"
+candidates=(versiond devshard-postgres proxy proxy-policy2 proxy-policy api node)
+while IFS= read -r candidate; do
+    [[ -n $candidate ]] || continue
+    [[ " ${candidates[*]} " == *" $candidate "* ]] || candidates+=("$candidate")
+done <<<"$deployment_containers"
 label_source=
 declare -A label_files=()
-for candidate in versiond versiond2 versiond3 versiond4 devshard-postgres proxy proxy-policy2 proxy-policy api node; do
+for candidate in "${candidates[@]}"; do
     container_exists "$candidate" || continue
     [[ -n $label_source ]] || label_source=$candidate
     files=$(container_label "$candidate" com.docker.compose.project.config_files)
@@ -268,7 +279,8 @@ if [[ $topology == ha ]]; then
     has_ha_model || fail \
         "HA topology needs docker-compose.versiond.yml in the Compose file list"
 else
-    for candidate in devshard-postgres versiond2 versiond3 versiond4; do
+    for candidate in "${candidates[@]}"; do
+        [[ $candidate == devshard-postgres || $candidate =~ ^versiond[0-9]+$ ]] || continue
         ! container_exists "$candidate" || fail \
             "container $candidate exists but the Compose model is a single-versiond one; set COMPOSE_FILE to the HA file list instead of updating a partial model"
     done
@@ -328,68 +340,126 @@ postgres_helper_image=$(jq -r '.services["devshard-postgres"].image // ""' <<<"$
 # previous release is still fully running. psql runs from the PostgreSQL image
 # on the deployment network with the same PG* settings as versiond.
 postgres_probe() {
-    local sql=$1 first=${versiond_services[0]} network key value
-    local -a env_args=()
-    for key in PGHOST PGPORT PGDATABASE PGUSER PGPASSWORD PGSSLMODE PGTARGETSESSIONATTRS; do
+    local sql=$1 first=${versiond_services[0]} network key value lender
+    local -a args=()
+    for key in PGHOST PGPORT PGDATABASE PGUSER PGPASSWORD PGSSLMODE PGSSLROOTCERT \
+        PGSSLCERT PGSSLKEY PGTARGETSESSIONATTRS; do
         value=$(service_env "$first" "$key")
-        [[ -z $value ]] || env_args+=(-e "$key=$value")
+        [[ -z $value ]] || args+=(-e "$key=$value")
     done
     network=$(jq -r '.networks.default.name // ""' <<<"$rendered")
     if [[ -z $network ]] || ! "$docker_bin" network inspect "$network" >/dev/null 2>&1; then
         network=host
     fi
-    # Bounded: a black-holed endpoint must not hold the deployment lock forever.
+    # A running versiond lends its volumes read-only, so a CA or client
+    # certificate named by PGSSL* resolves to the same path in the helper.
+    lender=$(running_versiond_container || true)
+    [[ -z $lender ]] || args+=(--volumes-from "$lender:ro")
     timeout "${UPDATE_POSTGRES_PROBE_SECONDS:-60}" \
-        "$docker_bin" run --rm --network "$network" "${env_args[@]}" "$postgres_helper_image" \
-        psql -w -Atc "$sql"
+        "$docker_bin" run --rm --network "$network" "${args[@]}" "$postgres_helper_image" \
+        psql -q -w -v ON_ERROR_STOP=1 -Atc "$sql"
+}
+
+running_versiond_container() {
+    local service id
+    for service in "${versiond_services[@]}"; do
+        id=$("${compose[@]}" ps --quiet "$service") || fail "cannot list $service"
+        [[ -n $id ]] || continue
+        printf '%s\n' "${id%%$'\n'*}"
+        return 0
+    done
+    return 1
 }
 
 # The database lineage the running replicas use, read through the first one
 # that answers. A pre-v5 versiond has no such endpoint; that is the first
 # cutover and there is nothing to compare yet.
-running_storage_identity() {
-    local service id identity
-    for service in "${versiond_services[@]}"; do
-        id=$("${compose[@]}" ps --quiet "$service" 2>/dev/null | head -n 1) || continue
-        [[ -n $id ]] || continue
-        identity=$("$docker_bin" exec "$id" /bin/busybox wget -qO- -T 5 \
-            http://127.0.0.1:8080/internal/storage-identity 2>/dev/null | jq -r '.identity // empty' 2>/dev/null) || continue
-        if [[ -n $identity ]]; then
-            printf '%s\n' "$identity"
-            return 0
-        fi
-    done
-    return 1
+# Reads a versiond's storage proof through its loopback-only endpoint. Prints
+# the JSON; returns 1 for a pre-v5 image (404); any other failure stops the
+# run, because an unavailable proof on a v5 replica is not "unsupported".
+versiond_storage_proof() {
+    local id=$1 output
+    if output=$("$docker_bin" exec "$id" /bin/busybox wget -qO- -S -T 5 \
+        http://127.0.0.1:8080/internal/storage-identity 2>&1); then
+        printf '%s\n' "$output"
+        return 0
+    fi
+    case $output in
+        *"HTTP/"*" 404 "*) return 1 ;;
+    esac
+    fail "cannot read the storage lineage through container $id: ${output//$'\n'/ }"
 }
 
 if [[ $topology == ha && ${UPDATE_SKIP_POSTGRES_PROBE:-false} != true ]]; then
     probe_needed=true
     if [[ $postgres_mode == local ]]; then
-        # Nothing to probe on a fresh install; an existing cluster must open.
-        [[ -n $("${compose[@]}" ps --quiet devshard-postgres 2>/dev/null || true) ]] || probe_needed=false
-    fi
-    sslmode=$(service_env "${versiond_services[0]}" PGSSLMODE)
-    if [[ $probe_needed == true && ($sslmode == verify-ca || $sslmode == verify-full) && \
-        -n $(service_env "${versiond_services[0]}" PGSSLROOTCERT) ]]; then
-        echo "PostgreSQL: PGSSLMODE=$sslmode needs the CA file inside versiond; the helper cannot verify it, skipping the credential probe" >&2
-        probe_needed=false
+        postgres_any=$("${compose[@]}" ps --all --quiet devshard-postgres) || fail \
+            "cannot list devshard-postgres"
+        postgres_up=$("${compose[@]}" ps --quiet devshard-postgres) || fail \
+            "cannot list devshard-postgres"
+        if [[ -z $postgres_any ]]; then
+            probe_needed=false   # fresh install: nothing to open yet
+        elif [[ -z $postgres_up ]]; then
+            fail "devshard-postgres exists but is not running; start it (docker compose start devshard-postgres) so the update can verify the database before changing anything"
+        fi
     fi
     if [[ $probe_needed == true ]]; then
         echo "PostgreSQL: checking that the configured credentials open a writable primary"
-        recovery=$(postgres_probe 'select pg_is_in_recovery()') || fail \
-            "cannot open PostgreSQL with the PG* settings of ${versiond_services[0]} (host $(service_env "${versiond_services[0]}" PGHOST)); fix config.env or the database before updating. Set UPDATE_SKIP_POSTGRES_PROBE=true only if the probe cannot run from this host"
+        # A temporary table exercises the write path (read-only primary,
+        # revoked DML, full disk); the transaction is rolled back.
+        recovery=$(postgres_probe 'BEGIN; CREATE TEMP TABLE gonka_update_probe (x int); INSERT INTO gonka_update_probe VALUES (1); SELECT pg_is_in_recovery(); ROLLBACK;') || fail \
+            "cannot open PostgreSQL for writing with the PG* settings of ${versiond_services[0]} (host $(service_env "${versiond_services[0]}" PGHOST)); fix config.env or the database before updating. Set UPDATE_SKIP_POSTGRES_PROBE=true only if the probe cannot run from this host"
         [[ $recovery == f ]] || fail \
             "PostgreSQL at $(service_env "${versiond_services[0]}" PGHOST) is in recovery (a read-only replica); HA versiond needs the writable primary"
-        # The model must point at the database the running replicas already
-        # use. Pointing new replicas at another working database would split
-        # the pool between two histories while the old replicas still serve.
-        if running_identity=$(running_storage_identity); then
-            target_identity=$(postgres_probe \
-                'select identity::text from devshard_storage_identity where singleton' 2>/dev/null || true)
-            if [[ $target_identity != "$running_identity" && ${UPDATE_ACCEPT_DATABASE_CHANGE:-false} != true ]]; then
-                fail "the running replicas use database lineage $running_identity but the Compose model points at ${target_identity:-a database without the devshard schema}; that would split the pool between two databases. Restore the previous PG* settings, or set UPDATE_ACCEPT_DATABASE_CHANGE=true if the change is intended"
+
+        # Lineage continuity: every running local replica must report the same
+        # database, and that database must be the one the model names. The
+        # identity alone cannot tell a physical clone apart, so the replica also
+        # writes a nonce through its own pool and the model's database must
+        # show it; a clone with the same identity would not.
+        running_identity=
+        proof_source=
+        proof_container=
+        proof_json=
+        for service in "${versiond_services[@]}"; do
+            id=$("${compose[@]}" ps --quiet "$service") || fail "cannot list $service"
+            [[ -n $id ]] || continue
+            id=${id%%$'\n'*}
+            proof=$(versiond_storage_proof "$id") || continue
+            identity=$(jq -er '.identity | strings | select(length > 0)' <<<"$proof") || fail \
+                "$service returned a storage proof without an identity"
+            if [[ -z $running_identity ]]; then
+                running_identity=$identity
+                proof_source=$service
+                proof_container=$id
+                proof_json=$proof
+            elif [[ $identity != "$running_identity" ]]; then
+                fail "$proof_source and $service run on different PostgreSQL lineages ($running_identity vs $identity); the pool is already split, repair it before updating"
             fi
-            echo "PostgreSQL: database lineage $running_identity unchanged"
+        done
+        if [[ -n $running_identity && ${UPDATE_ACCEPT_DATABASE_CHANGE:-false} != true ]]; then
+            target_identity=$(postgres_probe 'SELECT identity::text FROM devshard_storage_identity WHERE singleton' 2>/dev/null || true)
+            target_description="no devshard schema"
+            [[ -z $target_identity ]] || target_description="lineage $target_identity"
+            [[ $target_identity == "$running_identity" ]] || fail \
+                "the running replicas use PostgreSQL lineage $running_identity but the model names a database with $target_description; a rolling replacement would split the pool between two histories. Fix PGHOST, or set UPDATE_ACCEPT_DATABASE_CHANGE=true only for an intended move to a restored copy"
+            snapshot=$(jq -r '.snapshot // ""' <<<"$proof_json")
+            generation=$(jq -r '.targets[0].generation // ""' <<<"$proof_json")
+            if [[ -n $snapshot && -n $generation ]]; then
+                nonce=$(cat /proc/sys/kernel/random/uuid)
+                request=$(jq -cn --arg n "$nonce" --arg s "$snapshot" --arg g "$generation" \
+                    '{operation:"write", nonce:$n, snapshot:$s, generation:$g}')
+                "$docker_bin" exec "$proof_container" /bin/busybox wget -qO- -T 5 \
+                    --header 'Content-Type: application/json' --post-data "$request" \
+                    http://127.0.0.1:8080/internal/storage-challenge >/dev/null 2>&1 || fail \
+                    "$proof_source could not write a storage challenge through its PostgreSQL pool; inspect 'docker compose logs $proof_source'"
+                observed=$(postgres_probe 'SELECT challenge::text FROM devshard_storage_identity WHERE singleton' 2>/dev/null || true)
+                [[ $observed == "$nonce" ]] || fail \
+                    "the database the model names did not receive the challenge $proof_source just wrote; it is a copy of the running database, not the same one. Fix PGHOST, or set UPDATE_ACCEPT_DATABASE_CHANGE=true only for an intended move"
+                echo "PostgreSQL: database lineage $running_identity unchanged; $proof_source wrote a challenge the model's database shows"
+            else
+                echo "PostgreSQL: database lineage $running_identity unchanged"
+            fi
         fi
     fi
 fi
@@ -437,6 +507,13 @@ image_variable() {
     esac
 }
 
+container_health() {
+    local id
+    id=$("${compose[@]}" ps --all --quiet "$1" 2>/dev/null | head -n 1) || return 1
+    [[ -n $id ]] || return 1
+    "$docker_bin" inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' "$id"
+}
+
 current_image() {
     local id
     id=$("${compose[@]}" ps --all --quiet "$1" 2>/dev/null | head -n 1) || return 1
@@ -459,29 +536,32 @@ desired_image_id() {
 # healthy, the previous image is put back with the same command and the run
 # stops; the host keeps serving.
 up() {
-    local service=$1 current desired previous variable
+    local service=$1 previous_tag current health variable
     previous_tag=gonka-previous/$service
+    # The tag always names the last image that was serving: a candidate that
+    # never became healthy must not overwrite it, and a configuration-only
+    # change still refreshes it from the healthy container it replaces.
     current=$(current_image "$service" 2>/dev/null || true)
-    desired=$(desired_image_id "$service" || true)
-    if [[ -n $current && $current != "$desired" ]]; then
-        run "$docker_bin" tag "$current" "$previous_tag"
+    if [[ -n $current ]]; then
+        health=$(container_health "$service")
+        if [[ $health == healthy ]]; then
+            run "$docker_bin" tag "$current" "$previous_tag"
+        elif ! "$docker_bin" image inspect "$previous_tag" >/dev/null 2>&1; then
+            run "$docker_bin" tag "$current" "$previous_tag"
+        fi
     fi
     if run "${compose[@]}" up -d --no-deps --wait --wait-timeout "$wait_timeout" "$service"; then
         return 0
     fi
     variable=$(image_variable "$service")
-    if "$docker_bin" image inspect "$previous_tag" >/dev/null 2>&1; then
-        previous=$previous_tag
-    else
-        previous=$current
-    fi
-    if [[ $dry_run == false && -n $previous && -n $variable ]]; then
-        echo "update-devshard: $service did not become healthy; putting its previous image back ($previous)" >&2
-        if run env "$variable=$previous" "${compose[@]}" up -d --no-deps --wait \
+    if [[ $dry_run == false && -n $variable ]] && \
+        "$docker_bin" image inspect "$previous_tag" >/dev/null 2>&1; then
+        echo "update-devshard: $service did not become healthy; putting back its previous image ($previous_tag)" >&2
+        if run env "$variable=$previous_tag" "${compose[@]}" up -d --no-deps --wait \
             --wait-timeout "$wait_timeout" "$service"; then
-            fail "$service runs its previous image again and the update stopped here; inspect 'docker compose logs $service', fix the cause and rerun"
+            fail "$service was put back on its previous image and the update stopped here; inspect 'docker compose logs $service', fix the cause and rerun"
         fi
-        fail "$service could not be put back on its previous image under the current Compose model either (an image alone cannot undo a changed service definition, such as the nginx-to-HAProxy proxy cutover); restore the previous release's deploy/join files and run 'docker compose up -d $service', or inspect 'docker compose logs $service'"
+        fail "$service could not be put back either: its service definition changed beyond the image (the first nginx-to-HAProxy proxy cutover is the known case). Restore the previous release's Compose files (git checkout <previous release> -- deploy/join) and run 'docker compose up -d $service'"
     fi
     fail "$service did not become healthy; the update stopped here ('docker compose logs $service')"
 }
@@ -505,9 +585,15 @@ if [[ $topology == ha ]] && has_service "$legacy_owner" && [[ $(replicas "$legac
         "$legacy_owner is VERSIOND_LEGACY_HOST and still owns the pinned versions '$pinned'; it cannot be set to 0 replicas while VERSIOND_NON_HA_VERSIONS is non-empty"
 fi
 
-pull_services=("${active_versiond[@]}" proxy proxy-policy proxy-policy2)
-[[ $postgres_mode != local ]] || pull_services+=(devshard-postgres)
-run "${compose[@]}" pull "${pull_services[@]}"
+pull_services=()
+for service in "${active_versiond[@]}" proxy proxy-policy proxy-policy2 devshard-postgres; do
+    [[ $service != devshard-postgres || $postgres_mode == local ]] || continue
+    # Only images that are not on this host yet: a rerun after a failure works
+    # without the registry.
+    "$docker_bin" image inspect "$(jq -r --arg s "$service" '.services[$s].image' <<<"$rendered")" >/dev/null 2>&1 || \
+        pull_services+=("$service")
+done
+((${#pull_services[@]} == 0)) || run "${compose[@]}" pull "${pull_services[@]}"
 
 if [[ $postgres_mode == local ]]; then
     echo "Step: shared PostgreSQL"
@@ -525,6 +611,12 @@ echo "Step: private policy workers one at a time, then the public proxy"
 up proxy-policy2
 up proxy-policy
 up proxy
+if [[ $topology == ha ]]; then
+    # The proxy healthcheck covers its policy workers only. Before the legacy
+    # router is removed and versiond is replaced, the new public proxy must
+    # admit every router slot and every live route end to end.
+    run env GONKA_CONFIG_ENV="$config_env" "$fleet_bin" verify-admission
+fi
 
 if container_exists versiond-router; then
     # The pre-v5 overlay ran one nginx versiond-router service. The fleet slots

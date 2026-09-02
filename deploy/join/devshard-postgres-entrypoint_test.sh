@@ -18,6 +18,10 @@ exit 1
 EOF
 cat >"$tmpdir/bin/pg_controldata" <<'EOF'
 #!/bin/sh
+if [ -e "$1/.controldata-fail" ]; then
+    echo 'pg_controldata: could not open file' >&2
+    exit 1
+fi
 identifier=7000000000000000001
 [ ! -f "$1/.fake-system-identifier" ] || identifier=$(cat "$1/.fake-system-identifier")
 printf 'pg_control version number:            1300\n'
@@ -205,7 +209,7 @@ new_case fresh
 run_entrypoint
 [[ -x "$initdb_dir/zz-gonka-init-complete.sh" ]] || fail \
     "fresh initialization did not install the completion hook"
-grep -q "$persistent/.gonka-init-complete" "$initdb_dir/zz-gonka-init-complete.sh" || fail \
+grep -q "$persistent/data/.gonka-init-complete" "$initdb_dir/zz-gonka-init-complete.sh" || fail \
     "the completion hook does not record completion under the persistent root"
 
 new_case reject-unfinished-target
@@ -220,7 +224,7 @@ grep -q 'has no completion marker' "$case_dir/stderr" || fail \
 new_case accept-completed-target
 mkdir -p "$persistent/data"
 printf '16\n' > "$persistent/data/PG_VERSION"
-: > "$persistent/.gonka-init-complete"
+: > "$persistent/data/.gonka-init-complete"
 run_entrypoint
 
 new_case reject-foreign-target
@@ -234,6 +238,26 @@ if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
 fi
 grep -q 'is a different cluster' "$case_dir/stderr" || fail \
     "foreign-target failure was not diagnosed"
+
+new_case reject-unreadable-controldata
+printf '16\n' > "$legacy/PG_VERSION"
+mkdir -p "$persistent/data"
+printf '16\n' > "$persistent/data/PG_VERSION"
+: > "$persistent/data/.controldata-fail"
+if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+    fail "an unreadable pg_controldata was treated as matching"
+fi
+grep -q 'cannot read pg_controldata' "$case_dir/stderr" || fail \
+    "controldata failure was not diagnosed: $(cat "$case_dir/stderr")"
+
+new_case resume-publish-marks-migration
+mkdir -p "$persistent/.migrating"
+printf '16\n' > "$persistent/.migrating/PG_VERSION"
+: > "$persistent/.gonka-copy-complete"
+run_entrypoint
+[[ -f "$persistent/.migrated-from-v4" ]] || fail \
+    "a resumed migration did not record the v4 migration marker"
+run_entrypoint || fail "the resumed cluster was refused on the next start"
 
 new_case reject-partial-target
 mkdir -p "$persistent/data"
@@ -284,7 +308,7 @@ grep -q 'not compatible with the existing devshard PGDATA' \
 new_case follow-image-major
 mkdir -p "$persistent/data" "$case_dir/bin"
 printf '17\n' > "$persistent/data/PG_VERSION"
-: > "$persistent/.gonka-init-complete"
+: > "$persistent/data/.gonka-init-complete"
 cat >"$case_dir/bin/postgres" <<'EOF'
 #!/bin/sh
 printf '%s\n' 'postgres (PostgreSQL) 17.5'

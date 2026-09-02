@@ -37,14 +37,40 @@ case "$1 ${2:-} ${3:-}" in
     "network inspect "*) exit 0 ;;
     "run --rm "*)
         case " $* " in
+            *"SELECT challenge"*)
+                [[ -f $FAKE_STATE/nonce && ${FAKE_TARGET_IS_CLONE:-false} != true ]] && cat "$FAKE_STATE/nonce"
+                ;;
+            *"SELECT identity"*) printf '%s\n' "${FAKE_TARGET_IDENTITY:-db-1}" ;;
             *"pg_is_in_recovery"*) printf 'f\n' ;;
-            *"devshard_storage_identity"*) printf '%s\n' "${FAKE_TARGET_IDENTITY:-db-1}" ;;
         esac
         exit 0
         ;;
-    "exec "*) printf '{"identity":"%s"}\n' "${FAKE_RUNNING_IDENTITY:-db-1}"; exit 0 ;;
+    "exec "*)
+        case " $* " in
+            *storage-challenge*)
+                payload=
+                for ((i = 1; i <= $#; i++)); do
+                    [[ ${!i} == --post-data ]] && { j=$((i + 1)); payload=${!j}; }
+                done
+                printf '%s' "$payload" | jq -r .nonce >"$FAKE_STATE/nonce"
+                printf '{"identity":"%s","found":true}\n' "${FAKE_RUNNING_IDENTITY:-db-1}"
+                ;;
+            *) printf '{"identity":"%s","snapshot":"snap-1","targets":[{"generation":"gen-1"}]}\n' "${FAKE_RUNNING_IDENTITY:-db-1}" ;;
+        esac
+        exit 0
+        ;;
     "tag "*) exit 0 ;;
-    "image inspect "*) printf 'id-%s\n' "${*: -1}"; exit 0 ;;
+    "ps -a "*)
+        for name in ${FAKE_CONTAINERS:-}; do printf '%s\n' "$name"; done
+        exit 0
+        ;;
+    "image inspect "*)
+        case " ${FAKE_MISSING_IMAGES:-} " in
+            *" ${*: -1} "*) exit 1 ;;
+        esac
+        printf 'id-%s\n' "${*: -1}"
+        exit 0
+        ;;
     "info  ") exit 0 ;;
     "compose version --short") printf '%s\n' "${FAKE_COMPOSE_VERSION:-2.30.0}"; exit 0 ;;
 esac
@@ -65,6 +91,7 @@ if [[ $1 == inspect ]]; then
     esac
     case $format in
         *.Image}}*) printf 'old-%s\n' "${name#cid-}" ;;
+        *Health*) printf '%s\n' "${FAKE_HEALTH:-healthy}" ;;
         *working_dir*) printf '%s\n' "${FAKE_WORKING_DIR}" ;;
         *config_files*)
             override=FAKE_CONFIG_FILES_${name//-/_}
@@ -83,8 +110,16 @@ if [[ $1 == compose ]]; then
             esac
             exit 0
             ;;
-        *" ps --all --quiet "* | *" ps --quiet "*)
+        *" ps --all --quiet "*)
             service=${*: -1}
+            case " ${FAKE_CONTAINERS:-} " in
+                *" $service "*) printf 'cid-%s\n' "$service" ;;
+            esac
+            exit 0
+            ;;
+        *" ps --quiet "*)
+            service=${*: -1}
+            case " ${FAKE_STOPPED:-} " in *" $service "*) exit 0 ;; esac
             case " ${FAKE_CONTAINERS:-} " in
                 *" $service "*) printf 'cid-%s\n' "$service" ;;
             esac
@@ -149,8 +184,11 @@ EOF
 
 run_update() {
     : >"$tmpdir/log"
+    rm -rf "$tmpdir/state"; mkdir -p "$tmpdir/state"
     env PATH="$tmpdir:$PATH" \
         FAKE_LOG="$tmpdir/log" \
+        FAKE_STATE="$tmpdir/state" \
+        FAKE_MISSING_IMAGES="${FAKE_MISSING_IMAGES:-ghcr.io/example/versiond:new ghcr.io/example/proxy-router:new ghcr.io/example/proxy:new postgres@sha256:abc}" \
         FAKE_WORKING_DIR="$script_dir" \
         FAKE_RENDERED_SINGLE="$tmpdir/single.json" \
         FAKE_RENDERED_HA="$tmpdir/ha.json" \
@@ -163,7 +201,7 @@ run_update() {
 }
 
 mutations() {
-    grep -E '^compose .*(pull|up|rm|stop) |^rm -f|^fleet (prepare-networks|apply)' "$tmpdir/log" | \
+    grep -E '^compose .*(pull|up|rm|stop) |^rm -f|^fleet (prepare-networks|apply|verify-admission)' "$tmpdir/log" | \
         sed -E 's/ --project-directory [^ ]+//; s/ -f [^ ]+\.yml//g; s/ --project-name [^ ]+//'
 }
 
@@ -193,6 +231,7 @@ fleet apply
 compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy2
 compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy
 compose up -d --no-deps --wait --wait-timeout 2100 proxy
+fleet verify-admission
 rm -f versiond-router
 compose up -d --no-deps --wait --wait-timeout 2100 versiond2
 compose up -d --no-deps --wait --wait-timeout 2100 versiond'
@@ -200,7 +239,7 @@ compose up -d --no-deps --wait --wait-timeout 2100 versiond'
 $(mutations)"
 grep -q 'preflight --source-container cid-devshard-postgres --target-dir /srv/gonka/postgres' "$tmpdir/log" || \
     fail "PostgreSQL migration space was not checked"
-grep -q "^run --rm --network .* psql -w -Atc select pg_is_in_recovery()" "$tmpdir/log" || \
+grep -q "^run --rm --network .* psql -q -w -v ON_ERROR_STOP=1 -Atc .*pg_is_in_recovery()" "$tmpdir/log" || \
     fail "PostgreSQL was not probed before the first mutation"
 [[ $(grep -n 'psql' "$tmpdir/log" | head -1 | cut -d: -f1) -lt $(grep -n '^compose .* pull ' "$tmpdir/log" | head -1 | cut -d: -f1) ]] || \
     fail "PostgreSQL probe must run before the pull"
@@ -222,6 +261,7 @@ fleet apply
 compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy2
 compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy
 compose up -d --no-deps --wait --wait-timeout 2100 proxy
+fleet verify-admission
 compose up -d --no-deps --wait --wait-timeout 2100 versiond3
 compose up -d --no-deps --wait --wait-timeout 2100 versiond
 compose stop versiond2
@@ -238,7 +278,7 @@ if run_update env FAKE_CONTAINERS="versiond proxy" FAKE_CONFIG_FILES="docker-com
     FAKE_FAIL_UP=versiond; then
     fail "an unhealthy replacement was reported as success"
 fi
-grep -q 'versiond runs its previous image again' "$tmpdir/err" || \
+grep -q 'put back on its previous image' "$tmpdir/err" || \
     fail "rollback message: $(cat "$tmpdir/err")"
 [[ $(grep -c 'up -d --no-deps --wait --wait-timeout 2100 versiond$' "$tmpdir/log") -eq 2 ]] || \
     fail "the previous image was not put back: $(grep versiond "$tmpdir/log")"
@@ -247,6 +287,43 @@ grep -q '^tag old-versiond gonka-previous/versiond$' "$tmpdir/log" || \
 grep -q '^env VERSIOND_IMAGE=gonka-previous/versiond$' "$tmpdir/log" || \
     fail "rollback did not use the durable previous tag"
 
+# An unhealthy candidate never overwrites the previous tag.
+UPDATE_ARGS=(--dry-run)
+run_update env FAKE_CONTAINERS="versiond proxy" FAKE_CONFIG_FILES="docker-compose.yml" FAKE_HEALTH=unhealthy || \
+    fail "dry run with an unhealthy container failed: $(cat "$tmpdir/err")"
+! grep -q '^+ docker tag old-versiond gonka-previous/versiond' "$tmpdir/out" || \
+    fail "an unhealthy container overwrote the previous tag"
+
+# A physical clone with the same identity is caught by the write challenge.
+UPDATE_ARGS=(--check)
+if run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" FAKE_TARGET_IS_CLONE=true; then
+    fail "a clone with the same identity was accepted"
+fi
+grep -q 'did not receive the challenge' "$tmpdir/err" || fail "clone message: $(cat "$tmpdir/err")"
+run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" || \
+    fail "same-database check failed: $(cat "$tmpdir/err")"
+grep -q 'storage-challenge' "$tmpdir/log" || fail "no write challenge was issued"
+grep -q 'CREATE TEMP TABLE' "$tmpdir/log" || fail "the probe did not exercise the write path"
+
+# A stopped local PostgreSQL is not a fresh install.
+UPDATE_ARGS=(--check)
+if run_update env FAKE_CONTAINERS="versiond devshard-postgres" FAKE_STOPPED="devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml"; then
+    fail "a stopped PostgreSQL was treated as absent"
+fi
+grep -q 'exists but is not running' "$tmpdir/err" || fail "stopped PostgreSQL message: $(cat "$tmpdir/err")"
+
+# A replica named outside any fixed list is still found through the labels.
+UPDATE_ARGS=(--check)
+run_update env FAKE_CONTAINERS="versiond12 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
+    FAKE_CONFIG_FILES_versiond12="docker-compose.yml,docker-compose.versiond.yml,docker-compose.versiond3.yml" || \
+    fail "discovery through versiond12 failed: $(cat "$tmpdir/err")"
+grep -q 'docker-compose.versiond3.yml' "$tmpdir/out" || \
+    fail "the file list recorded by versiond12 was not used: $(grep -A4 'Compose files' "$tmpdir/out")"
+
 # A model that points at another database than the running replicas is refused.
 UPDATE_ARGS=(--check)
 if run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
@@ -254,7 +331,7 @@ if run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
     FAKE_RUNNING_IDENTITY=db-1 FAKE_TARGET_IDENTITY=db-2; then
     fail "a database lineage change was accepted"
 fi
-grep -q 'running replicas use database lineage db-1 but the Compose model points at db-2' "$tmpdir/err" || \
+grep -q 'split the pool between two histories' "$tmpdir/err" || \
     fail "lineage message: $(cat "$tmpdir/err")"
 UPDATE_ARGS=(--check)
 run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
@@ -297,7 +374,7 @@ UPDATE_ARGS=(--check)
 run_update env FAKE_CONTAINERS="versiond2 devshard-postgres proxy" \
     FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" || \
     fail "discovery through versiond2 failed: $(cat "$tmpdir/err")"
-grep -q 'running versiond2 container' "$tmpdir/out" || fail "labels were not read from versiond2"
+grep -q 'Compose files (running .* container)' "$tmpdir/out" || fail "labels were not read from a running container"
 grep -q 'Topology: ha' "$tmpdir/out" || fail "HA topology lost without the versiond container"
 
 # HA containers next to a single-versiond model are refused.

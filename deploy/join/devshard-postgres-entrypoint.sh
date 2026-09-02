@@ -12,7 +12,9 @@ initdb_dir=${GONKA_POSTGRES_INITDB_DIR:-/docker-entrypoint-initdb.d}
 target_data=${PGDATA:-$persistent_root/data}
 staging_data=$persistent_root/.migrating
 staging_complete=$persistent_root/.gonka-copy-complete
-init_complete=$persistent_root/.gonka-init-complete
+# Lives inside PGDATA: the initdb hook that writes it runs as the postgres
+# user, which owns PGDATA but not the bind-mount root around it.
+init_complete=$target_data/.gonka-init-complete
 migrated_marker=$persistent_root/.migrated-from-v4
 expected_major=
 
@@ -39,7 +41,12 @@ cluster_exists() {
 # The identifier initdb stamps on a cluster; a copy keeps it, another cluster
 # never shares it.
 cluster_system_identifier() {
-    pg_controldata "$1" 2>/dev/null | sed -n 's/^Database system identifier:[[:space:]]*//p'
+    csi_output=$(pg_controldata "$1") ||
+        die "cannot read pg_controldata for $1"
+    csi_id=$(printf '%s\n' "$csi_output" |
+        sed -n 's/^Database system identifier:[[:space:]]*//p' | head -n 1)
+    [ -n "$csi_id" ] || die "pg_controldata for $1 reports no system identifier"
+    printf '%s\n' "$csi_id"
 }
 
 validate_cluster() {
@@ -150,12 +157,12 @@ if cluster_exists "$target_data"; then
         # persistent one wins only if it is the copy of that volume; a foreign
         # PG16 cluster in DEVSHARD_POSTGRES_DATA_DIR must not silently replace
         # the devshard history.
-        target_identifier=$(cluster_system_identifier "$target_data")
-        legacy_identifier=$(cluster_system_identifier "$legacy_data")
-        if [ -n "$target_identifier" ] && [ -n "$legacy_identifier" ] &&
-            [ "$target_identifier" != "$legacy_identifier" ]; then
-            die "persistent PGDATA $target_data is a different cluster (system identifier $target_identifier) than the attached v4 volume ($legacy_identifier); point DEVSHARD_POSTGRES_DATA_DIR at the migrated copy or detach the wrong volume"
-        fi
+        target_identifier=$(cluster_system_identifier "$target_data") ||
+            die "cannot verify the persistent PostgreSQL cluster identity"
+        legacy_identifier=$(cluster_system_identifier "$legacy_data") ||
+            die "cannot verify the attached v4 PostgreSQL cluster identity"
+        [ "$target_identifier" = "$legacy_identifier" ] ||
+            die "persistent PGDATA $target_data is a different cluster (system identifier $target_identifier) than the attached v4 volume ($legacy_identifier); refusing to start on the wrong history. Point DEVSHARD_POSTGRES_DATA_DIR at the migrated copy or detach the wrong volume"
     elif [ ! -f "$migrated_marker" ] && [ ! -f "$init_complete" ]; then
         die "persistent PGDATA $target_data has no completion marker: its initialization or migration did not finish; remove it to initialize again, or restore it from a backup"
     fi
@@ -166,6 +173,8 @@ elif [ -e "$target_data" ] && directory_has_entries "$target_data"; then
 elif cluster_exists "$staging_data" && [ -f "$staging_complete" ]; then
     validate_cluster "$staging_data"
     log "finishing an interrupted atomic migration"
+    printf '%s\n' "$(cat "$staging_data/PG_VERSION")" >"$migrated_marker" ||
+        die "cannot record the v4 migration marker"
     publish_staging
 elif cluster_exists "$legacy_data"; then
     validate_cluster "$legacy_data"
@@ -191,9 +200,9 @@ elif cluster_exists "$legacy_data"; then
     sync
     : >"$staging_complete"
     sync
+    printf '%s\n' "$(cat "$staging_data/PG_VERSION")" >"$migrated_marker" ||
+        die "cannot record the v4 migration marker"
     publish_staging
-    printf '%s\n' "$(cat "$target_data/PG_VERSION")" \
-        >"$migrated_marker"
     log "v4 PostgreSQL migration completed"
 else
     if [ -e "$staging_data" ] && directory_has_entries "$staging_data"; then
