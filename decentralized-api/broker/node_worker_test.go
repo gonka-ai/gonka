@@ -201,6 +201,10 @@ func TestNodeWorker_ShutdownDropsQueuedCommands(t *testing.T) {
 		}
 		require.True(t, worker.Submit(context.Background(), cmd))
 	}
+	require.NotZero(t, len(worker.commands))
+
+	worker.signalShutdown()
+	require.Equal(t, 0, len(worker.commands), "queued commands must be drained before in-flight HTTP returns")
 
 	done := make(chan struct{})
 	go func() {

@@ -7,6 +7,7 @@ import (
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
 	"fmt"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -1055,6 +1056,14 @@ func TestRemoveNodeCancelsInFlightWorker(t *testing.T) {
 	}))
 	<-started
 
+	var queuedRan atomic.Bool
+	require.True(t, hungWorker.Submit(ctx, &TestCommand{
+		ExecuteFn: func(ctx context.Context, w *NodeWorker) NodeResult {
+			queuedRan.Store(true)
+			return NodeResult{Succeeded: true}
+		},
+	}))
+
 	removeResp := make(chan bool, 2)
 	queueMessage(t, broker, RemoveNode{NodeId: "hung-node", Response: removeResp})
 	select {
@@ -1072,6 +1081,7 @@ func TestRemoveNodeCancelsInFlightWorker(t *testing.T) {
 		cancel()
 		t.Fatal("RemoveNode did not cancel the in-flight worker command")
 	}
+	require.False(t, queuedRan.Load(), "queued worker command must not start after RemoveNode")
 }
 
 func TestModelMismatch(t *testing.T) {

@@ -74,14 +74,12 @@ func (w *NodeWorker) run() {
 				// select can pick a queued command even after shutdown is signaled.
 				// Drop it instead of starting another ML-node HTTP call.
 				w.wg.Done()
-				dropped := 1 + w.dropQueuedCommands()
-				w.logDropped(dropped)
+				w.logDropped(1 + w.dropQueuedCommands())
 				return
 			}
 			w.execute(item)
 		case <-w.shutdown:
-			dropped := w.dropQueuedCommands()
-			w.logDropped(dropped)
+			w.logDropped(w.dropQueuedCommands())
 			return
 		}
 	}
@@ -155,6 +153,9 @@ func (w *NodeWorker) signalShutdown() {
 		w.stopping = true
 		w.mu.Unlock()
 		close(w.shutdown)
+		// Drain now. The run loop cannot do this while it is blocked in
+		// Execute (up to the 15-minute ML-node timeout).
+		w.logDropped(w.dropQueuedCommands())
 	})
 }
 
@@ -239,7 +240,7 @@ func (g *NodeWorkGroup) RemoveWorker(nodeId string) {
 	g.mu.Unlock()
 
 	if exists {
-		// Reject new submits and drop the queue before returning. Wait for
+		// Reject submits and drain the queue before returning. Wait for
 		// in-flight HTTP in the background so the broker command loop cannot stall.
 		worker.signalShutdown()
 		go worker.Shutdown()

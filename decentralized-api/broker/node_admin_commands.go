@@ -323,11 +323,13 @@ func (command RemoveNode) Execute(b *Broker) {
 	}
 	b.mu.Unlock()
 
+	// Stop the worker before cancelling in-flight HTTP. Cancel can make
+	// Execute return immediately; if the run loop is not stopping yet it
+	// will start the next queued command (another 15-minute call).
+	b.nodeWorkGroup.RemoveWorker(command.NodeId)
 	if cancel != nil {
 		cancel()
 	}
-
-	b.nodeWorkGroup.RemoveWorker(command.NodeId)
 
 	if !existed {
 		command.Response <- false
