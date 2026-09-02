@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -84,9 +85,10 @@ type HostManager struct {
 }
 
 const (
-	resolutionFailureTTL  = 30 * time.Second
-	permanentFailureTTL   = 10 * time.Minute
-	maxResolutionFailures = 1024
+	recoverSessionsConcurrency = 8
+	resolutionFailureTTL       = 30 * time.Second
+	permanentFailureTTL        = 10 * time.Minute
+	maxResolutionFailures      = 1024
 	// resolutionFailureLowWater is the size the tombstone map is trimmed to
 	// once it exceeds maxResolutionFailures. Trimming below the cap amortises
 	// the eviction sort over many inserts; trimming exactly to the cap would
@@ -572,23 +574,24 @@ func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*trans
 // GetEscrow failures fail-open so a chain blip at boot does not drop work
 // this host already bound. Remaining sessions restore a host snapshot when
 // one exists, then replay only the post-snapshot diffs through a fresh
-// StateMachine (injecting warm key deltas from the stored DiffRecords).
-// Call this on startup after constructing the HostManager.
+// StateMachine. Recovery runs up to recoverSessionsConcurrency workers in
+// parallel. Call this on startup after constructing the HostManager.
 func (m *HostManager) RecoverSessions() error {
-	escrowIDs, err := m.store.ListActiveSessions()
+	startedAt := time.Now()
+	active, err := m.store.ListActiveSessions()
 	if err != nil {
 		return fmt.Errorf("list active sessions: %w", err)
 	}
 
 	checkDeadline := time.Now().Add(recoveryEscrowCheckBudget)
-
-	for _, active := range escrowIDs {
-		if err := devshardpkg.ValidateEscrowID(active.EscrowID); err != nil {
+	filtered := active[:0]
+	for _, sess := range active {
+		if err := devshardpkg.ValidateEscrowID(sess.EscrowID); err != nil {
 			logging.Error("retiring devshard session with non-canonical escrow id", inferenceTypes.System,
-				"escrow_id", active.EscrowID, "error", err)
-			if markErr := m.store.MarkSettled(active.EscrowID); markErr != nil {
+				"escrow_id", sess.EscrowID, "error", err)
+			if markErr := m.store.MarkSettled(sess.EscrowID); markErr != nil {
 				logging.Error("failed to retire non-canonical devshard session", inferenceTypes.System,
-					"escrow_id", active.EscrowID, "error", markErr)
+					"escrow_id", sess.EscrowID, "error", markErr)
 			}
 			continue
 		}
@@ -605,27 +608,79 @@ func (m *HostManager) RecoverSessions() error {
 		// and serve unpayable work until the following restart. Durable state is
 		// the only way to make the decision stick, and a node that lies about
 		// Settled is already outside the trust model create() relies on.
-		if m.chainReportsSettled(active.EscrowID, checkDeadline) {
-			if err := m.HandleSettlementFinalized(active.EscrowID); err != nil {
+		if m.chainReportsSettled(sess.EscrowID, checkDeadline) {
+			if err := m.HandleSettlementFinalized(sess.EscrowID); err != nil {
 				logging.Error("failed to finalize chain-settled escrow during recovery", inferenceTypes.System,
-					"escrow_id", active.EscrowID, "error", err)
+					"escrow_id", sess.EscrowID, "error", err)
 			} else {
 				logging.Info("skipping recovery of chain-settled escrow", inferenceTypes.System,
-					"escrow_id", active.EscrowID)
+					"escrow_id", sess.EscrowID)
 			}
 			continue
 		}
-		if _, err := m.recoverAndStoreSession(active.EscrowID); err != nil {
-			if errors.Is(err, storage.ErrSessionVersionConflict) {
-				logging.Info("skipping devshard session with foreign version", inferenceTypes.System,
-					"escrow_id", active.EscrowID, "error", err)
-				continue
-			}
-			logging.Error("skipping corrupt session", inferenceTypes.System,
-				"escrow_id", active.EscrowID, "error", err)
-		}
+		filtered = append(filtered, sess)
+	}
+	active = filtered
+
+	if len(active) == 0 {
+		logging.Info("completed devshard session recovery", inferenceTypes.System,
+			"session_count", 0, "worker_count", 0, "recovered_count", 0, "failed_count", 0,
+			"version_skipped_count", 0, "duration", time.Since(startedAt))
+		return nil
 	}
 
+	workers := recoverSessionsConcurrency
+	if len(active) < workers {
+		workers = len(active)
+	}
+	logging.Info("starting devshard session recovery", inferenceTypes.System,
+		"session_count", len(active), "worker_count", workers)
+
+	jobs := make(chan storage.ActiveSession)
+	var wg sync.WaitGroup
+	var recoveredCount atomic.Int64
+	var failedCount atomic.Int64
+	var versionSkippedCount atomic.Int64
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for sess := range jobs {
+				sessionStartedAt := time.Now()
+				if _, err := m.recoverAndStoreSession(sess.EscrowID); err != nil {
+					if errors.Is(err, storage.ErrSessionVersionConflict) {
+						versionSkippedCount.Add(1)
+						logging.Info("skipping devshard session with foreign version", inferenceTypes.System,
+							"escrow_id", sess.EscrowID, "epoch_id", sess.EpochID,
+							"host_version", m.boundVersion,
+							"duration", time.Since(sessionStartedAt), "error", err)
+						continue
+					}
+					failedCount.Add(1)
+					logging.Error("skipping corrupt session", inferenceTypes.System,
+						"escrow_id", sess.EscrowID, "epoch_id", sess.EpochID,
+						"duration", time.Since(sessionStartedAt), "error", err)
+					continue
+				}
+				recoveredCount.Add(1)
+				logging.Info("recovered devshard session", inferenceTypes.System,
+					"escrow_id", sess.EscrowID, "epoch_id", sess.EpochID,
+					"duration", time.Since(sessionStartedAt))
+			}
+		}()
+	}
+	for _, sess := range active {
+		jobs <- sess
+	}
+	close(jobs)
+	wg.Wait()
+
+	logging.Info("completed devshard session recovery", inferenceTypes.System,
+		"session_count", len(active), "worker_count", workers,
+		"recovered_count", recoveredCount.Load(),
+		"failed_count", failedCount.Load(),
+		"version_skipped_count", versionSkippedCount.Load(),
+		"duration", time.Since(startedAt))
 	return nil
 }
 
