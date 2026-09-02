@@ -212,8 +212,8 @@ Tests in `manager_snapshot_recovery_test.go`:
 - Full-replay path (unit): the session is published before the wipe, and after
   `WaitRecoveryRepairs` the rows are rich
   (`TestRecoverSessions_FullReplayRebuildsSealedIndexInBackground`).
-- `recovery_complete` still follows the backlog, not the waiter
-  (`TestStartRecovery_CompleteBeforeSealedIndexRepair`). Step 8 flips that.
+- `recovery_complete` waits for the backlog **and** `WaitRecoveryRepairs`
+  (`TestStartRecovery_CompleteAfterSealedIndexRepair`).
 - Operator restart with a long journal and a current snapshot: sealed-inference
   stats are identical before and after, and the recovery log reports
   `filled sealed inference index gaps inserted=0` (or a handful) with a
@@ -438,6 +438,10 @@ Tests: `/ready` is 200 while `recoveryComplete()` is still false; 503 while
 draining or storage is unready; body still has `recovery_complete: false` until
 the waiter from Step 4/8 flips.
 
+Implemented: `cmd/devshardd/server.go` keys 503 on chain/storage/drain only;
+`TestReadyReflectsSessionRecoveryProgress` pins 200-during-recovery plus the
+counter fields.
+
 ### Step 7 — evict and re-recover on `types.ErrInvalidNonce`
 
 Companion child item 3. Required on the same commit as Step 6: a published
@@ -525,6 +529,8 @@ code until then.
 5. **Step 9** on v5 versiond, which is useless until this child ships the
    field and the eviction.
 6. **Step 10** docs, once the probe and overlap wait match the new contract.
+
+Steps 1–8 are on this branch. Step 9 is v5 versiond; Step 10 follows it.
 
 ## Out of scope
 
