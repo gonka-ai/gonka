@@ -469,7 +469,7 @@ urlencode() {
 }
 
 slot_route_ready() {
-    local slot=$1 slot=$1 route=$2 id encoded
+    local slot=$1 route=$2 id encoded
     id=$(slot_id "$slot") || { slot_lookup_failed $? "${slot-}"; return 1; }
     slot_ready "$slot" || return 1
     encoded=$(urlencode "$route")
@@ -889,6 +889,14 @@ commit_marker_create() {
         "$(commit_marker_name)" >/dev/null || fail "cannot record the commit point"
 }
 
+# The reference an operator can pin an image by: its registry digest when
+# the image was pulled, otherwise its local ID.
+image_pull_reference() {
+    local digest
+    digest=$("$docker_bin" image inspect --format '{{range .RepoDigests}}{{println .}}{{end}}' "$1" 2>/dev/null | head -n 1)
+    printf '%s\n' "${digest:-$1}"
+}
+
 commit_marker_slot_hash() {
     "$docker_bin" volume inspect --format "{{index .Labels \"ai.gonka.slot-hash-$1\"}}" \
         "$(commit_marker_name)" 2>/dev/null
@@ -925,7 +933,7 @@ roll_forward_committed() {
     # The image is compared by ID, so a mutable tag that moved is refused,
     # and pinning the committed digest satisfies both checks.
     [[ $committed_image == "$candidate_image_id" ]] || fail \
-        "a committed maintenance cleanup is pending for image $committed_image but $candidate_image now resolves to $candidate_image_id (the tag moved); pin the committed image (VERSIOND_ROUTER_IMAGE=<repository>@<digest> of $committed_image) and rerun apply to finish the cleanup first"
+        "a committed maintenance cleanup is pending for image $committed_image but $candidate_image now resolves to $candidate_image_id (the tag moved); pin the committed image (VERSIOND_ROUTER_IMAGE=$(image_pull_reference "$committed_image")) and rerun apply to finish the cleanup first"
     [[ $committed_spec == "$(fleet_spec_hash --without-image)" ]] || fail \
         "a committed maintenance cleanup is pending for specification $committed_spec (image $committed_image) and the configuration has changed since; restore that configuration and rerun apply to finish the cleanup first"
     echo "Finishing the committed maintenance rollout"
