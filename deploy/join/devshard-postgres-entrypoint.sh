@@ -40,8 +40,21 @@ validate_cluster() {
         die "PostgreSQL cluster in $1 uses major version ${cluster_version:-unknown}; expected $expected_major"
 }
 
+# Every mounted replica data directory: the two shipped ones plus any
+# gonka-versiond<N>-data mount an extra replica overlay adds.
+versiond_data_roots() {
+    printf '%s\n' "$versiond_data" "$versiond2_data"
+    for extra in "$(dirname "$versiond_data")"/gonka-versiond*-data; do
+        [ -d "$extra" ] || continue
+        case "$extra" in
+            "$versiond_data" | "$versiond2_data") ;;
+            *) printf '%s\n' "$extra" ;;
+        esac
+    done
+}
+
 postgres_binding_marker() {
-    for storage_root in "$versiond_data" "$versiond2_data"; do
+    for storage_root in $(versiond_data_roots); do
         [ -d "$storage_root" ] || return 3
         marker=$(find "$storage_root" -type f -name .pg-bound -print -quit) ||
             return 2

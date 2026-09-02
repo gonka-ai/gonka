@@ -21,6 +21,15 @@
 # The single-versiond topology performs steps 3 and 5 only. Any number of
 # local versiond services (versiond, versiond2, versiond3, ...) is handled;
 # the shipped overlay defines two, docker-compose.versiond3.yml adds a third.
+#
+# Failure model: every step is one service behind a healthcheck. When a
+# replaced service does not become healthy, its previous image is put back
+# with the same `up` and the script stops; the deployment keeps serving the
+# previous release of that service and the new release of the services
+# replaced before it, which the HA design tolerates (routers and replicas roll
+# one at a time by design). Fix the cause and rerun; Compose skips the services
+# that already match. The whole run holds the deployment lock shared with
+# versiond-router-fleet.sh, so two operators cannot interleave.
 
 set -Eeuo pipefail
 
@@ -79,6 +88,7 @@ set -a
 # shellcheck disable=SC1090
 source "$config_env"
 set +a
+config_dir=$(cd -- "$(dirname -- "$config_env")" && pwd -P)
 
 for tool in "$docker_bin" jq; do
     command -v "$tool" >/dev/null 2>&1 || fail "$tool is required"
@@ -90,6 +100,14 @@ compose_core=${compose_version#v}
 compose_core=${compose_core%%[-+]*}
 [[ $(printf '%s\n%s\n' "$min_compose_version" "$compose_core" | sort -V | head -n1) == "$min_compose_version" ]] || \
     fail "Docker Compose $min_compose_version or newer is required; found $compose_version"
+
+# One deployment, one operator at a time. The fleet script takes the same lock
+# and inherits it from this process, so its steps below run under this hold.
+if [[ $check_only == false ]]; then
+    # shellcheck source=deploy/join/deployment-lock.sh
+    source "$script_dir/deployment-lock.sh"
+    gonka_acquire_deployment_lock "$config_dir" || exit 1
+fi
 
 # --- what to run and how ----------------------------------------------------
 
@@ -115,24 +133,35 @@ container_label() {
 compose=("$docker_bin" compose --project-directory "$script_dir")
 compose_files=()
 project_name=
+# Any container of the deployment carries the Compose labels. Do not depend on
+# `versiond` alone: an interrupted run may have removed it while versiond2,
+# PostgreSQL or the proxy still run, and those must not be mistaken for a fresh
+# single-versiond host.
+label_source=
+for candidate in versiond versiond2 versiond3 versiond4 devshard-postgres proxy proxy-policy2 proxy-policy api node; do
+    if container_exists "$candidate"; then
+        label_source=$candidate
+        break
+    fi
+done
 if [[ -n ${COMPOSE_FILE:-} ]]; then
     separator=${COMPOSE_PATH_SEPARATOR:-:}
     IFS=$separator read -r -a compose_files <<<"$COMPOSE_FILE"
     files_source=COMPOSE_FILE
-elif container_exists versiond; then
-    working_dir=$(container_label versiond com.docker.compose.project.working_dir)
+elif [[ -n $label_source ]]; then
+    working_dir=$(container_label "$label_source" com.docker.compose.project.working_dir)
     [[ -n $working_dir ]] || fail \
-        "the running versiond container was not started by Docker Compose; set COMPOSE_FILE to the files of this deployment"
+        "the running $label_source container was not started by Docker Compose; set COMPOSE_FILE to the files of this deployment"
     [[ $(cd -- "$working_dir" 2>/dev/null && pwd -P) == "$script_dir" ]] || fail \
         "the running deployment lives in $working_dir, not in $script_dir; run the checkout that deployment uses or set COMPOSE_FILE"
-    IFS=, read -r -a compose_files <<<"$(container_label versiond com.docker.compose.project.config_files)"
-    project_name=$(container_label versiond com.docker.compose.project)
-    files_source='running versiond container'
+    IFS=, read -r -a compose_files <<<"$(container_label "$label_source" com.docker.compose.project.config_files)"
+    files_source="running $label_source container"
 else
     compose_files=(docker-compose.yml)
     [[ $topology != ha ]] || compose_files+=(docker-compose.versiond.yml)
-    files_source='stock files (no running versiond)'
+    files_source='stock files (no running deployment)'
 fi
+[[ -z $label_source ]] || project_name=$(container_label "$label_source" com.docker.compose.project)
 ((${#compose_files[@]} > 0)) || fail "no Compose files"
 for index in "${!compose_files[@]}"; do
     file=${compose_files[$index]}
@@ -146,6 +175,8 @@ done
 echo "Compose files ($files_source):"
 printf '  %s\n' "${compose_files[@]}"
 rendered=$("${compose[@]}" config --format json) || fail "the Compose model does not render; fix the files above first"
+[[ -n $project_name ]] || project_name=$(jq -r '.name // ""' <<<"$rendered")
+[[ -n $project_name ]] || fail "cannot determine the Compose project name"
 
 # --- topology ---------------------------------------------------------------
 
@@ -191,6 +222,11 @@ if [[ $topology == ha ]]; then
     done
     has_ha_model || fail \
         "HA topology needs docker-compose.versiond.yml in the Compose file list"
+else
+    for candidate in devshard-postgres versiond2 versiond3 versiond4; do
+        ! container_exists "$candidate" || fail \
+            "container $candidate exists but the Compose model is a single-versiond one; set COMPOSE_FILE to the HA file list instead of updating a partial model"
+    done
 fi
 if ! has_service proxy-policy || ! has_service proxy-policy2; then
     fail "the Compose model predates this release; refresh the checkout"
@@ -207,7 +243,8 @@ postgres_mode=none
 if [[ $topology == ha ]]; then
     first=${versiond_services[0]}
     for service in "${versiond_services[@]}"; do
-        for key in PGHOST PGPORT PGDATABASE PGUSER DEVSHARD_STORAGE_MODE; do
+        for key in PGHOST PGPORT PGDATABASE PGUSER PGPASSWORD PGSSLMODE PGSSLROOTCERT \
+            PGTARGETSESSIONATTRS DEVSHARD_STORAGE_MODE; do
             a=$(service_env "$first" "$key")
             b=$(service_env "$service" "$key")
             [[ $a == "$b" ]] || fail \
@@ -233,6 +270,45 @@ if [[ $topology == ha ]]; then
     fi
 fi
 
+postgres_helper_image=$(jq -r '.services["devshard-postgres"].image // ""' <<<"$rendered")
+[[ -n $postgres_helper_image ]] || postgres_helper_image=postgres:16-alpine
+
+# Proves, before anything is replaced, that the credentials in the model open
+# the database and that it is a writable primary. This is what catches a
+# changed DEVSHARD_POSTGRES_PASSWORD (the existing cluster keeps the old role
+# password), a read-only replica, or an unreachable managed host, while the
+# previous release is still fully running. psql runs from the PostgreSQL image
+# on the deployment network with the same PG* settings as versiond.
+postgres_probe() {
+    local first=${versiond_services[0]} network key value
+    local -a env_args=()
+    for key in PGHOST PGPORT PGDATABASE PGUSER PGPASSWORD PGSSLMODE PGTARGETSESSIONATTRS; do
+        value=$(service_env "$first" "$key")
+        [[ -z $value ]] || env_args+=(-e "$key=$value")
+    done
+    network=$(jq -r '.networks.default.name // ""' <<<"$rendered")
+    if [[ -z $network ]] || ! "$docker_bin" network inspect "$network" >/dev/null 2>&1; then
+        network=host
+    fi
+    "$docker_bin" run --rm --network "$network" "${env_args[@]}" "$postgres_helper_image" \
+        psql -w -Atc 'select pg_is_in_recovery()'
+}
+
+if [[ $topology == ha && ${UPDATE_SKIP_POSTGRES_PROBE:-false} != true ]]; then
+    probe_needed=true
+    if [[ $postgres_mode == local ]]; then
+        # Nothing to probe on a fresh install; an existing cluster must open.
+        [[ -n $("${compose[@]}" ps --quiet devshard-postgres 2>/dev/null || true) ]] || probe_needed=false
+    fi
+    if [[ $probe_needed == true ]]; then
+        echo "PostgreSQL: checking that the configured credentials open a writable primary"
+        recovery=$(postgres_probe) || fail \
+            "cannot open PostgreSQL with the PG* settings of ${versiond_services[0]} (host $(service_env "${versiond_services[0]}" PGHOST)); fix config.env or the database before updating. Set UPDATE_SKIP_POSTGRES_PROBE=true only if the probe cannot run from this host"
+        [[ $recovery == f ]] || fail \
+            "PostgreSQL at $(service_env "${versiond_services[0]}" PGHOST) is in recovery (a read-only replica); HA versiond needs the writable primary"
+    fi
+fi
+
 if [[ $postgres_mode == local ]]; then
     # A v4 installation keeps its cluster on the image's anonymous volume. The
     # v5 entrypoint copies it into the bind directory on first start; check the
@@ -248,7 +324,8 @@ if [[ $postgres_mode == local ]]; then
         [[ -x $migration_preflight_bin ]] || fail \
             "missing $migration_preflight_bin"
         echo "PostgreSQL: checking the migration copy fits in $postgres_target"
-        DOCKER_BIN=$docker_bin "$migration_preflight_bin" \
+        DOCKER_BIN=$docker_bin POSTGRES_MIGRATION_HELPER_IMAGE=$postgres_helper_image \
+            "$migration_preflight_bin" \
             --source-container "$postgres_container" --target-dir "$postgres_target"
     fi
 fi
@@ -266,8 +343,41 @@ fi
 
 # --- update -----------------------------------------------------------------
 
+image_variable() {
+    case $1 in
+        versiond*) printf 'VERSIOND_IMAGE\n' ;;
+        devshard-postgres) printf 'DEVSHARD_POSTGRES_IMAGE\n' ;;
+        proxy) printf 'PROXY_ROUTER_IMAGE\n' ;;
+        proxy-policy*) printf 'PROXY_POLICY_IMAGE\n' ;;
+    esac
+}
+
+current_image() {
+    local id
+    id=$("${compose[@]}" ps --all --quiet "$1" 2>/dev/null | head -n 1) || return 1
+    [[ -n $id ]] || return 1
+    "$docker_bin" inspect --format '{{.Image}}' "$id"
+}
+
+# Replace one service and wait for its healthcheck. If it does not become
+# healthy, put the previous image back with the same command and stop: the
+# host keeps serving, and the failure is visible in `docker compose logs`.
 up() {
-    run "${compose[@]}" up -d --no-deps --wait --wait-timeout "$wait_timeout" "$@"
+    local service=$1 previous variable
+    previous=$(current_image "$service" 2>/dev/null || true)
+    if run "${compose[@]}" up -d --no-deps --wait --wait-timeout "$wait_timeout" "$service"; then
+        return 0
+    fi
+    variable=$(image_variable "$service")
+    if [[ $dry_run == false && -n $previous && -n $variable ]]; then
+        echo "update-devshard: $service did not become healthy; restoring its previous image $previous" >&2
+        if run env "$variable=$previous" "${compose[@]}" up -d --no-deps --wait \
+            --wait-timeout "$wait_timeout" "$service"; then
+            fail "$service was restored to its previous image and the update stopped here; inspect 'docker compose logs $service', fix the cause and rerun"
+        fi
+        fail "$service could not be restored either; it is left for inspection ('docker compose logs $service')"
+    fi
+    fail "$service did not become healthy; the update stopped here ('docker compose logs $service')"
 }
 
 replicas() {
@@ -297,16 +407,16 @@ if [[ $topology == ha ]]; then
     run env GONKA_CONFIG_ENV="$config_env" "$fleet_bin" apply
 fi
 
-echo "Step: private policy workers, then the public proxy"
-up proxy-policy2 proxy-policy
+echo "Step: private policy workers one at a time, then the public proxy"
+up proxy-policy2
+up proxy-policy
 up proxy
 
 if container_exists versiond-router; then
     # The pre-v5 overlay ran one nginx versiond-router service. The fleet slots
     # carry their own names, so a container called versiond-router in this
     # project is that legacy singleton.
-    if [[ -n $project_name && $(container_label versiond-router com.docker.compose.project) == "$project_name" ]] || \
-        [[ -z $project_name ]]; then
+    if [[ $(container_label versiond-router com.docker.compose.project) == "$project_name" ]]; then
         echo "Step: removing the legacy versiond-router singleton"
         run "$docker_bin" rm -f versiond-router
     else
@@ -319,6 +429,15 @@ echo "Step: versiond replicas (${active_versiond[*]})"
 # other replicas already run the new release behind the routers.
 for ((i = ${#active_versiond[@]} - 1; i >= 0; i--)); do
     up "${active_versiond[i]}"
+done
+# A replica whose desired count is 0 is decommissioned: stop and remove it so
+# `restart: always` cannot bring it back into the pool.
+for service in "${versiond_services[@]}"; do
+    [[ $(replicas "$service") == 0 ]] || continue
+    [[ -n $("${compose[@]}" ps --all --quiet "$service" 2>/dev/null || true) ]] || continue
+    echo "Step: decommissioning $service (replicas: 0)"
+    run "${compose[@]}" stop "$service"
+    run "${compose[@]}" rm -f "$service"
 done
 
 echo "Update finished"

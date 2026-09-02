@@ -87,9 +87,42 @@ What the script runs, in order:
 | `up -d --no-deps --wait` of each replica, last one first, `versiond` last | `versiond` only | yes |
 
 Every `up` uses `--wait`, so the next step starts only after the replaced
-service passes its healthcheck. The script stops at the first failure and
-prints the failing command; fix the cause and run it again. Rerunning is safe:
-Compose leaves services whose image and configuration did not change alone.
+service passes its healthcheck.
+
+### What happens on failure
+
+The script holds the deployment lock for the whole run (the same lock as
+`versiond-router-fleet.sh`), so a second operator or a manual fleet command
+cannot interleave with it.
+
+Before the first change it renders the model, checks that every replica names
+the same PostgreSQL, opens that PostgreSQL with the configured credentials
+from a helper container and requires a writable primary, and checks that the
+v4 cluster copy fits. A wrong `DEVSHARD_POSTGRES_PASSWORD`, a read-only
+replica or an unreachable managed host therefore stops the run while the
+previous release is still fully serving.
+
+Each step replaces one service and waits for its healthcheck. If the
+replacement never becomes healthy, the script puts the previous image of
+that service back with the same `up`, prints the failing service, and stops.
+The host keeps serving: services replaced earlier run the new release, the
+failed one and everything after it run the previous release. That mixed state
+is the same one a rolling update passes through by design (routers and
+replicas are replaced one at a time and both releases serve side by side).
+Inspect `docker compose logs <service>`, fix the cause, and run the script
+again; Compose skips every service that already matches.
+
+If the script itself is killed, nothing is left half-done inside a step:
+Compose either recreated the service or it did not. Rerunning resumes from
+the first service that still differs from the model; the deployment is
+recognised through any of its containers, so a missing `versiond` after an
+interrupted replacement does not turn an HA host into a single one.
+
+Two things the script does not undo. The v4 PostgreSQL volume copy is safe
+to repeat but never reversed automatically (see [Rolling back](#rolling-back)).
+And a router fleet update runs inside `versiond-router-fleet.sh apply`, which
+restores a slot's previous image itself when its replacement does not pass
+admission.
 
 Maintenance notes for the first v5 run on an HA host:
 
@@ -224,7 +257,12 @@ Versions in `VERSIOND_NON_HA_VERSIONS` stay on `VERSIOND_LEGACY_HOST` (the
 network node's `versiond` by default) because their state is local SQLite.
 
 The endpoint file wins over DNS. A pre-HAProxy `VERSIOND_HOSTS` value in
-`config.env` is still honoured by the fleet, but prefer the file. The shared
+`config.env` is still honoured by the fleet, but prefer the file. Editing the
+list rolls the router slots one at a time, so for the duration of that
+rollout (seconds per slot) routers can hold different member lists, exactly as
+they do while a container joins or leaves the DNS pool. An escrow that lands
+on another versiond during that window recovers its state from the shared
+PostgreSQL; that is the HA design, not an error. The shared
 PostgreSQL remains a single host-local process in this layout; multi-host
 production needs a managed PostgreSQL with synchronous durability.
 

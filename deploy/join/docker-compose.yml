@@ -190,20 +190,20 @@ services:
       - ./devshards/data:/opt/versiond/data
     depends_on:
       - api
-    # The topology-aware release driver uses this contract in base-only
-    # installations too. Running is not enough: versiond must reconcile its
-    # desired children before the old image can be discarded.
+    # `docker compose up --wait` and update-devshard.sh gate on this: running is
+    # not enough, versiond must have reconciled its children. A pre-v5 image has
+    # no /readyz and answers 404; fall back to its liveness endpoint only then,
+    # so the previous image still passes when update-devshard.sh puts it back.
     healthcheck:
       test:
-        [
-          "CMD",
-          "/bin/busybox",
-          "wget",
-          "-q",
-          "-O",
-          "/dev/null",
-          "http://127.0.0.1:8080/readyz",
-        ]
+        - CMD-SHELL
+        - >-
+          output=$$(/bin/busybox wget -S -O /dev/null
+          http://127.0.0.1:8080/readyz 2>&1);
+          status=$$?;
+          if [ "$$status" -eq 0 ]; then exit 0; fi;
+          case "$$output" in *"HTTP/"*" 404 "*) exec /bin/busybox wget -q
+          -O /dev/null http://127.0.0.1:8080/healthz ;; *) exit "$$status" ;; esac
       interval: 2s
       timeout: 3s
       retries: 3
@@ -239,8 +239,9 @@ services:
     depends_on:
       - api
 
-  # Two fixed slots make ordinary Compose updates dependency-ordered and let the
-  # release driver roll back one worker without replacing the healthy reserve.
+  # Two fixed slots. update-devshard.sh replaces them one at a time behind the
+  # public HAProxy's checks, so one worker keeps serving while the other is
+  # recreated; a plain `docker compose up` of both at once has no such reserve.
   # Both retain the established TLS, CORS, rate-limit, rewrite and on-chain
   # routing contract. The public HAProxy sends PROXY v2 so they see the client IP.
   proxy-policy2:

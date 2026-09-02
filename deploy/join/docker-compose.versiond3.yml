@@ -17,3 +17,9 @@ services:
       replicas: ${VERSIOND3_REPLICAS:-1}
     volumes:
       - ./devshards3/data:/opt/versiond/data
+
+  # The bundled PostgreSQL refuses to initialise an empty cluster while any
+  # local replica still holds a .pg-bound marker. Let it see this replica too.
+  devshard-postgres:
+    volumes:
+      - ./devshards3/data:/var/lib/postgresql/gonka-versiond3-data:ro,z
