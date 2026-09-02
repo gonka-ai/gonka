@@ -135,7 +135,8 @@ func sseChunkContentSource(p []byte) (string, bool) {
 }
 
 // sseChunkLogprobsDecoded reports whether a chunk names any logprob token by its decoded text instead
-// of its id, and whether any token was found to judge at all.
+// of its id, and whether any token was found to judge at all. A host forwards logprobs only to a client
+// that asked, so ordinary traffic leaves nothing here to judge.
 func sseChunkLogprobsDecoded(p []byte) (decoded, found bool) {
 	scan := scanSSEChunk(p)
 	return scan.LogprobsDecoded, scan.LogprobsFound

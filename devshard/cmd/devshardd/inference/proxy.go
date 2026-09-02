@@ -6,7 +6,6 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"common/completionapi"
@@ -49,7 +48,7 @@ func proxyResponse(
 	}
 
 	contentType := resp.Header.Get("Content-Type")
-	if strings.HasPrefix(contentType, "text/event-stream") {
+	if completionapi.IsEventStream(resp) {
 		logging.Debug("Proxying text/event-stream response", types.Inferences, "status_code", resp.StatusCode, "content_type", contentType, "inference_id", inferenceId)
 		proxyTextStreamResponse(resp, w, responseProcessor, inferenceId)
 	} else {

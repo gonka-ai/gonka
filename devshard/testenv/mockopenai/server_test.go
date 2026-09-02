@@ -75,7 +75,7 @@ func TestChatCompletions_StreamCompletionAPI(t *testing.T) {
 	_ = resp.Body.Close()
 	require.NotEmpty(t, lines)
 
-	proc := completionapi.NewExecutorResponseProcessor("inference-test")
+	proc := completionapi.NewExecutorResponseProcessor("inference-test", true)
 	var streamed []string
 	for _, line := range lines {
 		updated, err := proc.ProcessStreamedResponse(line)
@@ -160,7 +160,7 @@ func TestChatCompletions_StreamLogprobTokensAreNumericIDs(t *testing.T) {
 	require.NoError(t, sc.Err())
 	_ = resp.Body.Close()
 
-	proc := completionapi.NewExecutorResponseProcessor("inference-stream-lp")
+	proc := completionapi.NewExecutorResponseProcessor("inference-stream-lp", true)
 	for _, line := range lines {
 		_, err := proc.ProcessStreamedResponse(line)
 		require.NoError(t, err)
