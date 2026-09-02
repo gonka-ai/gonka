@@ -308,8 +308,12 @@ new_generation() {
     printf '%s\n' "${id:0:12}"
 }
 
+# fleet_spec_hash [--without-image]: the canonical specification. The
+# commit marker stores the variant without the image reference next to the
+# image ID, so a mutable tag pinned to its digest still matches.
 fleet_spec_hash() {
-    local slot rendered config_hash manifest_hash index=0
+    local slot rendered config_hash manifest_hash index=0 filter=.
+    [[ ${1:-} != --without-image ]] || filter='del(.services.router.image)'
     manifest_hash=$(sha256sum "$slot_file" | awk '{print $1}')
     {
         printf 'schema=1\n'
@@ -321,7 +325,7 @@ fleet_spec_hash() {
         for slot in "${slots[@]}"; do
             rendered=$(slot_compose "$slot" render config --format json) || fail \
                 "cannot render fleet slot '$slot' for specification hashing"
-            config_hash=$(jq -Sc . <<<"$rendered" | sha256sum | awk '{print $1}')
+            config_hash=$(jq -Sc "$filter" <<<"$rendered" | sha256sum | awk '{print $1}')
             printf 'slot.%06d.name=%s\n' "$index" "$slot"
             printf 'slot.%06d.config_sha256=%s\n' "$index" "$config_hash"
             ((index += 1))
@@ -817,7 +821,15 @@ require_slot_routes_now() {
             # catalog itself removed it.
             if [[ -z ${required_routes[$route]-} ]]; then
                 case ${VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS:-false} in
-                    1 | true | yes) continue ;;
+                    1 | true | yes)
+                        # The removal took effect: the route stops being
+                        # protected for the rest of the run, so the next
+                        # slot's reserve check does not stop a rollout whose
+                        # first slot is already committed.
+                        warn "catalog route $route was removed; slot $slot no longer declares it"
+                        unset "protected_routes[$route]" "expected_routes[$route]"
+                        continue
+                        ;;
                 esac
             fi
             echo "versiond-router-fleet: refusing to commit slot $slot: route $route vanished from its catalog before the previous generation was removed" >&2
@@ -859,7 +871,7 @@ commit_marker_record() {
 # retry can tell a changed configuration apart before it touches anything.
 commit_marker_create() {
     local spec
-    spec=$(fleet_spec_hash)
+    spec=$(fleet_spec_hash --without-image)
     "$docker_bin" volume create \
         --label ai.gonka.component=versiond-router-commit \
         --label "ai.gonka.fleet=$fleet_id" \
@@ -880,15 +892,14 @@ roll_forward_committed() {
     local record committed_spec committed_image slot lookup
     record=$(commit_marker_record) || return 0
     read -r committed_spec committed_image <<<"$record"
-    # Checked before anything is removed: with another configuration the
-    # cleanup would remove records it may still need.
-    [[ $committed_spec == "$(fleet_spec_hash)" ]] || fail \
-        "a committed maintenance cleanup is pending for specification $committed_spec (image $committed_image) and the configuration has changed since; restore that configuration and rerun apply to finish the cleanup first"
-    # The specification names the image by its reference; a mutable tag may
-    # have moved since the commit. The committed image ID is what the
-    # cleanup must finish with, also checked before anything is removed.
+    # Both checked before anything is removed: with another configuration
+    # or another image the cleanup would remove records it may still need.
+    # The image is compared by ID, so a mutable tag that moved is refused,
+    # and pinning the committed digest satisfies both checks.
     [[ $committed_image == "$candidate_image_id" ]] || fail \
         "a committed maintenance cleanup is pending for image $committed_image but $candidate_image now resolves to $candidate_image_id (the tag moved); pin the committed image (VERSIOND_ROUTER_IMAGE=<repository>@<digest> of $committed_image) and rerun apply to finish the cleanup first"
+    [[ $committed_spec == "$(fleet_spec_hash --without-image)" ]] || fail \
+        "a committed maintenance cleanup is pending for specification $committed_spec (image $committed_image) and the configuration has changed since; restore that configuration and rerun apply to finish the cleanup first"
     echo "Finishing the committed maintenance rollout"
     for slot in "${slots[@]}"; do
         lookup=0

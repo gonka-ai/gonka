@@ -50,6 +50,7 @@ scenarios=(
     RT-DOWN-CLEARS-COMMIT-MARKER
     RT-ROUTE-VANISHED-AT-COMMIT
     RT-COMMIT-CLEANUP-TAG-MOVED
+    RT-ROUTE-REMOVED-AT-COMMIT-ALLOWED
     RT-NONHA-OWNER-DOWN
 )
 
@@ -379,7 +380,7 @@ model_compose() {
         config)
             case ${1:-} in
                 --hash) printf 'router %s\n' "$(<"$model/desired-hash")" ;;
-                --format) printf '{"desired":"%s","pool":"%s"}\n' "$(<"$model/desired-hash")" "${VERSIOND_POOL_HOST:-versiond-pool}" ;;
+                --format) printf '{"services":{"router":{"image":"%s"}},"desired":"%s","pool":"%s"}\n' "${VERSIOND_ROUTER_IMAGE:-}" "$(<"$model/desired-hash")" "${VERSIOND_POOL_HOST:-versiond-pool}" ;;
             esac
             ;;
         pull)
@@ -1010,16 +1011,49 @@ scenario_commit_cleanup_tag_moved() {
     container_exists prev-1 && container_exists prev-2 || refused_ok=false
     [[ -f $model/volumes/gonka-versiond-router-commit-test-fleet ]] || refused_ok=false
     grep -q 'the tag moved' "$tmpdir/capture.out" || refused_ok=false
-    printf 'sha256:candidate\n' >"$model/images/registry.invalid|router:candidate"
+    # The operator pins the committed digest, as the message says.
+    printf 'sha256:candidate\n' >"$model/images/registry.invalid|router@sha256:pinned"
+    VERSIOND_ROUTER_IMAGE=registry.invalid/router@sha256:pinned
     run_capture fleet_apply
     local slot ok=true
     for slot in 0 1 2; do
         [[ $(count_containers "$slot") == 1 && $(container_field "$(serving_id "$slot")" image) == sha256:candidate ]] || ok=false
     done
     if ((refused_rc != 0 && LAST_RC == 0)) && [[ $refused_ok == true && $ok == true && ! -f $model/volumes/gonka-versiond-router-commit-test-fleet ]]; then
-        invariant_holds 'a moved tag is refused before any record is removed; the committed image finishes the cleanup'
+        invariant_holds 'a moved tag is refused before any record is removed; the committed digest, pinned, finishes the cleanup'
     else
         invariant_violated "refused rc=$refused_rc (records kept=$refused_ok), retry rc=$LAST_RC, slots ok=$ok"
+    fi
+}
+
+scenario_route_removed_at_commit_allowed() {
+    EXTRA_CONFIG='VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS=true' load_fleet_functions || return $?
+    printf 'v9\n' >"$model/catalog"
+    printf 'v4\nv9\n' >"$model/pool-serves"
+    seed_previous_fleet "routes=v4 v9"
+    discover_expected_routes
+    # The catalog removes v9 after the route gate of slot 0; removals are
+    # allowed, so the rollout must carry on through the other slots.
+    eval "$(declare -f wait_slot_routes | sed '1s/wait_slot_routes/real_wait_slot_routes/')"
+    wait_slot_routes() {
+        local candidate
+        real_wait_slot_routes "$@" || return $?
+        if [[ $1 == 0 ]]; then
+            candidate=$(serving_id 0)
+            set_container_field "$candidate" routes v4
+            : >"$model/catalog"
+        fi
+        return 0
+    }
+    run_capture fleet_rollout
+    local slot ok=true
+    for slot in 0 1 2; do
+        [[ $(count_containers "$slot") == 1 && $(serving_id "$slot") == gen-$slot-* ]] || ok=false
+    done
+    if ((LAST_RC == 0)) && [[ $ok == true ]]; then
+        invariant_holds 'a catalog removal taking effect at the first commit does not stop the rollout at the next slot'
+    else
+        invariant_violated "rollout rc=$LAST_RC, slots: $(for slot in 0 1 2; do printf '%s=%s ' "$slot" "$(list_containers test-fleet "$slot" | paste -sd, -)"; done)"
     fi
 }
 
@@ -1068,6 +1102,7 @@ run_internal() {
         RT-DOWN-CLEARS-COMMIT-MARKER) scenario_down_clears_commit_marker ;;
         RT-ROUTE-VANISHED-AT-COMMIT) scenario_route_vanished_at_commit ;;
         RT-COMMIT-CLEANUP-TAG-MOVED) scenario_commit_cleanup_tag_moved ;;
+        RT-ROUTE-REMOVED-AT-COMMIT-ALLOWED) scenario_route_removed_at_commit_allowed ;;
         RT-NONHA-OWNER-DOWN) scenario_nonha_owner_down ;;
         *) echo "HARNESS_ERROR: unknown scenario $scenario" >&2; return 2 ;;
     esac
