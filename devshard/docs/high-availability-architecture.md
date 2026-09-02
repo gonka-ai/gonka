@@ -407,7 +407,7 @@ verifies this in the rendered Compose model before it changes anything. Use
 the libpq `PG*` variables rather than `DATABASE_URL`, `PGSERVICE` or
 `PGOPTIONS`, so the supervisor's session lookups and the children's writes
 cannot resolve different databases. A managed PostgreSQL is selected by
-overriding `PGHOST` on both replicas and adding
+overriding `PGHOST` on every replica and adding
 `docker-compose.versiond-external-postgres.yml`, which keeps the bundled
 `devshard-postgres` out of the model.
 

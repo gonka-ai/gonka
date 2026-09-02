@@ -15,9 +15,12 @@
 #   2. versiond-router fleet      (HAProxy routers also serve pre-v5 versiond)
 #   3. private policy nginx, then the public proxy (the one connection cut)
 #   4. the legacy versiond-router singleton is removed
-#   5. versiond2, then versiond   (each behind active router checks, --wait)
+#   5. every other versiond replica, then versiond (the legacy owner), each
+#      behind active router checks with --wait
 #
-# The single-versiond topology performs steps 3 and 5 only.
+# The single-versiond topology performs steps 3 and 5 only. Any number of
+# local versiond services (versiond, versiond2, versiond3, ...) is handled;
+# the shipped overlay defines two, docker-compose.versiond3.yml adds a third.
 
 set -Eeuo pipefail
 
@@ -46,8 +49,8 @@ config.env is read from this directory (or GONKA_CONFIG_ENV).
 
   --check      detect the topology and run the preflight; change nothing
   --dry-run    print every command without running it
-  --topology   override detection (auto: HA when devshard-postgres or
-               versiond2 exists, or docker-compose.versiond.yml is in use)
+  --topology   override detection (auto: HA when devshard-postgres exists or
+               the HA overlay docker-compose.versiond.yml is in use)
 
 Compose files come from COMPOSE_FILE when set, otherwise from the labels of
 the running versiond container, otherwise from the stock files.
@@ -150,21 +153,31 @@ has_service() {
     jq -e --arg s "$1" '.services | has($s)' <<<"$rendered" >/dev/null
 }
 
+has_ha_model() {
+    jq -e '.networks["versiond-router-back"] != null' <<<"$rendered" >/dev/null
+}
+
+# Every local versiond replica: versiond, versiond2, versiond3, ... in that
+# order. The first one is the legacy owner of pinned SQLite versions.
+mapfile -t versiond_services < <(
+    jq -r '.services | keys[] | select(test("^versiond[0-9]*$"))' <<<"$rendered" | sort -V)
+((${#versiond_services[@]} > 0)) || fail "the Compose model has no versiond service"
+
 if [[ $topology == auto ]]; then
-    if container_exists devshard-postgres || container_exists versiond2 || has_service versiond2; then
+    if container_exists devshard-postgres || has_ha_model; then
         topology=ha
     else
         topology=single
     fi
 fi
 if [[ $topology == ha ]]; then
-    has_service versiond2 || fail \
+    has_ha_model || fail \
         "HA topology needs docker-compose.versiond.yml in the Compose file list"
-    if ! has_service proxy-policy || ! has_service proxy-policy2; then
-        fail "the Compose model predates this release; refresh the checkout"
-    fi
 fi
-echo "Topology: $topology"
+if ! has_service proxy-policy || ! has_service proxy-policy2; then
+    fail "the Compose model predates this release; refresh the checkout"
+fi
+echo "Topology: $topology (${versiond_services[*]})"
 
 # --- preflight --------------------------------------------------------------
 
@@ -174,22 +187,25 @@ service_env() {
 
 postgres_mode=none
 if [[ $topology == ha ]]; then
-    for key in PGHOST PGPORT PGDATABASE PGUSER DEVSHARD_STORAGE_MODE; do
-        a=$(service_env versiond "$key")
-        b=$(service_env versiond2 "$key")
-        [[ $a == "$b" ]] || fail \
-            "versiond and versiond2 disagree on $key ('$a' vs '$b'); both replicas must share one PostgreSQL"
+    first=${versiond_services[0]}
+    for service in "${versiond_services[@]}"; do
+        for key in PGHOST PGPORT PGDATABASE PGUSER DEVSHARD_STORAGE_MODE; do
+            a=$(service_env "$first" "$key")
+            b=$(service_env "$service" "$key")
+            [[ $a == "$b" ]] || fail \
+                "$first and $service disagree on $key ('$a' vs '$b'); every replica must share one PostgreSQL"
+        done
     done
-    [[ $(service_env versiond DEVSHARD_STORAGE_MODE) == postgres ]] || fail \
+    [[ $(service_env "$first" DEVSHARD_STORAGE_MODE) == postgres ]] || fail \
         "HA versiond must run with DEVSHARD_STORAGE_MODE=postgres"
-    [[ -n $(service_env versiond PGHOST) ]] || fail "HA versiond has no PGHOST"
-    if [[ $(service_env versiond PGHOST) == devshard-postgres ]]; then
+    [[ -n $(service_env "$first" PGHOST) ]] || fail "HA versiond has no PGHOST"
+    if [[ $(service_env "$first" PGHOST) == devshard-postgres ]]; then
         has_service devshard-postgres || fail \
             "PGHOST=devshard-postgres but the service is not in the Compose model"
         postgres_mode=local
     else
         postgres_mode=external
-        echo "PostgreSQL: external host $(service_env versiond PGHOST); the bundled devshard-postgres is not touched"
+        echo "PostgreSQL: external host $(service_env "$first" PGHOST); the bundled devshard-postgres is not touched"
     fi
 fi
 
@@ -214,7 +230,7 @@ if [[ $postgres_mode == local ]]; then
 fi
 
 echo "Images after the update:"
-for service in versiond versiond2 devshard-postgres proxy-policy proxy; do
+for service in "${versiond_services[@]}" devshard-postgres proxy-policy proxy; do
     has_service "$service" || continue
     printf '  %-18s %s\n' "$service" "$(jq -r --arg s "$service" '.services[$s].image' <<<"$rendered")"
 done
@@ -234,11 +250,15 @@ replicas() {
     jq -r --arg s "$1" '.services[$s].deploy.replicas // 1' <<<"$rendered"
 }
 
-pull_services=(versiond proxy proxy-policy proxy-policy2)
-if [[ $topology == ha ]]; then
-    [[ $(replicas versiond2) == 0 ]] || pull_services+=(versiond2)
-    [[ $postgres_mode != local ]] || pull_services+=(devshard-postgres)
-fi
+# Replicas whose desired count is 0 are decommissioned and left alone.
+active_versiond=()
+for service in "${versiond_services[@]}"; do
+    [[ $(replicas "$service") == 0 ]] || active_versiond+=("$service")
+done
+((${#active_versiond[@]} > 0)) || fail "every versiond service has 0 replicas"
+
+pull_services=("${active_versiond[@]}" proxy proxy-policy proxy-policy2)
+[[ $postgres_mode != local ]] || pull_services+=(devshard-postgres)
 run "${compose[@]}" pull "${pull_services[@]}"
 
 if [[ $postgres_mode == local ]]; then
@@ -270,11 +290,12 @@ if container_exists versiond-router; then
     fi
 fi
 
-echo "Step: versiond"
-if [[ $topology == ha && $(replicas versiond2) != 0 ]]; then
-    up versiond2
-fi
-up versiond
+echo "Step: versiond replicas (${active_versiond[*]})"
+# Last replica first, the legacy owner last: while it is being replaced, the
+# other replicas already run the new release behind the routers.
+for ((i = ${#active_versiond[@]} - 1; i >= 0; i--)); do
+    up "${active_versiond[i]}"
+done
 
 echo "Update finished"
 run "${compose[@]}" ps

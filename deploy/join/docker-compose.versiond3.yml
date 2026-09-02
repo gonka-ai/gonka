@@ -1,0 +1,19 @@
+# A third local versiond replica. Add this file after docker-compose.versiond.yml
+# in every Compose command (or in COMPOSE_FILE); update-devshard.sh and the
+# routers pick it up like versiond2. The service inherits everything from the
+# shipped versiond2 definition and differs only in its name, its data
+# directory and its replica count.
+#
+# For a fourth replica copy this file, replace every "3" with "4", and give it
+# ./devshards4/data. HA versions keep their state in the shared PostgreSQL; the
+# per-replica directory only holds downloaded artifacts and pinned SQLite data.
+services:
+  versiond3:
+    extends:
+      file: docker-compose.versiond.yml
+      service: versiond2
+    container_name: versiond3
+    deploy:
+      replicas: ${VERSIOND3_REPLICAS:-1}
+    volumes:
+      - ./devshards3/data:/opt/versiond/data

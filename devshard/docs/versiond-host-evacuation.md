@@ -17,7 +17,7 @@ its container:
 | --- | --- | --- |
 | Evacuate / stop | `docker compose stop versiond2` | versiond fails `/readyz` first, then stops accepting; the router removes it before it stops taking work |
 | Replace / restart | `docker compose up -d --no-deps --wait versiond2` | it rejoins the pool only once `/readyz` returns 200; `--wait` returns at the same moment |
-| Add a host | start another container on the pool alias, or add it to the endpoint file and run `./versiond-router-fleet.sh apply` | DNS gains an A record, or the routers roll onto the new list; a host is routed to only after its first successful check |
+| Add a host | add `docker-compose.versiond3.yml` (or a copy of it) to the model and `up` the new service, or list a remote host in the endpoint file and run `./versiond-router-fleet.sh apply` | DNS gains an A record, or the routers roll onto the new list; a host is routed to only after its first successful check |
 | Decommission | persist `VERSIOND2_REPLICAS=0` in `config.env`, then `docker compose stop versiond2` and `docker compose rm -f versiond2` | a later full `up -d` does not recreate it; `restart: always` cannot bring it back |
 | Inspect what the routers believe | `./versiond-router-fleet.sh status` | read-only; the routers keep no other state |
 
@@ -27,8 +27,9 @@ Nothing has to be told about the change beyond the membership list itself.
 
 `docker compose stop` is temporary because both hosts use `restart: always`.
 Permanent membership lives in `config.env`: `VERSIOND_REPLICAS` and
-`VERSIOND2_REPLICAS` are the desired replica counts of the two shipped
-services (`1` or `0`). Never decommission `VERSIOND_LEGACY_HOST` while
+`VERSIOND2_REPLICAS` (and `VERSIOND3_REPLICAS` for an added replica) are the
+desired replica counts of the local services (`1` or `0`); the examples above
+use `versiond2` but apply to any replica. Never decommission `VERSIOND_LEGACY_HOST` while
 `VERSIOND_NON_HA_VERSIONS` is non-empty; those versions have SQLite state only
 on that host. Hosts on other machines are managed on those machines (see
 [release-0.2.15-v5.md](./release-0.2.15-v5.md#multi-host-versiond)).

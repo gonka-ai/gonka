@@ -64,9 +64,11 @@ the full command sequence without running it.
 Compose files are taken from `COMPOSE_FILE` when it is set, otherwise from the
 labels of the running `versiond` container (so operator overlays such as
 observability files stay in the model), otherwise the stock files are used.
-The topology is HA when `devshard-postgres` or `versiond2` exists or
+The topology is HA when `devshard-postgres` exists or
 `docker-compose.versiond.yml` is in the file list; a single-versiond host stays
-single. The script never adds a second versiond.
+single. The script handles every local `versiond`, `versiond2`, `versiond3`, …
+service it finds in the model and never adds a replica by itself; services
+whose replica count is `0` are skipped.
 
 What the script runs, in order:
 
@@ -77,7 +79,7 @@ What the script runs, in order:
 | `versiond-router-fleet.sh prepare-networks` and `apply` | | yes |
 | `up -d --no-deps --wait proxy-policy2 proxy-policy`, then `proxy` | yes | yes |
 | `docker rm -f versiond-router` (the old nginx singleton) | | if present |
-| `up -d --no-deps --wait versiond2`, then `versiond` | `versiond` only | yes |
+| `up -d --no-deps --wait` of each replica, last one first, `versiond` last | `versiond` only | yes |
 
 Every `up` uses `--wait`, so the next step starts only after the replaced
 service passes its healthcheck. The script stops at the first failure and
@@ -129,7 +131,7 @@ docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d --wait
 
 For managed PostgreSQL, add `docker-compose.versiond-external-postgres.yml` and
 an operator override that sets the same `PGHOST`, `PGPORT`, `PGDATABASE`,
-`PGUSER` and `PGPASSWORD` on `versiond` and `versiond2`. Keep the same ordered
+`PGUSER` and `PGPASSWORD` on every versiond service. Keep the same ordered
 `-f` list, or `COMPOSE_FILE`, for every later command.
 
 ## Day-2 operations
@@ -140,9 +142,18 @@ an operator override that sets the same `PGHOST`, `PGPORT`, `PGDATABASE`,
 | Take `versiond2` out temporarily | `docker compose stop versiond2` |
 | Put it back | `docker compose up -d --no-deps --wait versiond2` |
 | Decommission `versiond2` | set `VERSIOND2_REPLICAS=0` in `config.env`, then `stop` and `rm` it |
+| Add a third local replica | add `docker-compose.versiond3.yml` to the file list, `docker compose up -d --no-deps --wait versiond3` |
 | Roll the router image or settings | edit `config.env`, then `./versiond-router-fleet.sh apply` |
 | Inspect the fleet | `./versiond-router-fleet.sh status` |
 | Wait for a newly approved version on this host | `./versiond-router-fleet.sh wait-version v9` |
+
+The number of local replicas is not fixed. `docker-compose.versiond3.yml`
+defines `versiond3` by extending the shipped `versiond2` service with its own
+data directory and `VERSIOND3_REPLICAS`; copy it for `versiond4` and beyond.
+Every replica joins the `versiond-pool` alias, so the routers find it without
+configuration; the DNS pool holds up to 64 members
+(`VERSIOND_ROUTER_POOL_SLOTS`). Keep `VERSIOND_ROUTING_ACTIVATION_MIN_READY`
+at or below the number of replicas you run.
 
 The router slots are not part of the main Compose project. Before a full
 `docker compose down`, run `./versiond-router-fleet.sh stop-all --maintenance`;

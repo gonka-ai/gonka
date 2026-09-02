@@ -60,6 +60,21 @@ jq -e '
   (.services.versiond2.deploy.replicas == 0)
 ' "$tmpdir/main-evacuated.json" >/dev/null
 
+VERSIOND3_REPLICAS=1 \
+    docker compose --project-directory "$script_dir" \
+    -f "$script_dir/docker-compose.yml" \
+    -f "$script_dir/docker-compose.versiond.yml" \
+    -f "$script_dir/docker-compose.versiond3.yml" \
+    config --format json >"$tmpdir/main-three.json"
+jq -e --arg data "$script_dir/devshards3/data" '
+  (.services.versiond3.container_name == "versiond3") and
+  (.services.versiond3.deploy.replicas == 1) and
+  (.services.versiond3.environment.PGHOST == "devshard-postgres") and
+  (.services.versiond3.networks["versiond-router-back"].aliases | index("versiond-pool")) and
+  ([.services.versiond3.volumes[] | select(.target == "/opt/versiond/data")]
+    | length == 1 and .[0].source == $data)
+' "$tmpdir/main-three.json" >/dev/null
+
 jq -e '
   (.services.router.labels["ai.gonka.component"] == "versiond-router") and
   (.services.router.environment.VERSIOND_POOL_HOST == "versiond-pool") and

@@ -22,6 +22,7 @@ cp "$source_dir/update-devshard.sh" "$script_dir/"
 : >"$script_dir/docker-compose.yml"
 : >"$script_dir/docker-compose.versiond.yml"
 : >"$script_dir/docker-compose.observability.yml"
+: >"$script_dir/docker-compose.versiond3.yml"
 
 # The fake docker answers the read-only queries the script makes and logs
 # everything else. Scenario knobs come from the environment.
@@ -105,8 +106,11 @@ cat >"$tmpdir/ha.json" <<'EOF'
   "proxy":{"image":"ghcr.io/example/proxy-router:new","environment":{}},
   "proxy-policy":{"image":"ghcr.io/example/proxy:new","environment":{}},
   "proxy-policy2":{"image":"ghcr.io/example/proxy:new","environment":{}}
-}}
+},"networks":{"versiond-router-back":{"name":"gonka-versiond-router-back"}}}
 EOF
+jq '.services.versiond2.deploy.replicas = 0
+  | .services.versiond3 = (.services.versiond2 | .deploy.replicas = 1)' \
+    "$tmpdir/ha.json" >"$tmpdir/ha3.json"
 cat >"$tmpdir/config.env" <<'EOF'
 export KEY_NAME=test
 EOF
@@ -149,7 +153,7 @@ run_update env \
     FAKE_CONTAINERS="versiond versiond2 devshard-postgres versiond-router proxy" \
     FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml,docker-compose.observability.yml" \
     FAKE_POSTGRES_CONTAINER=pg-old || fail "HA update failed: $(cat "$tmpdir/err")"
-expected='compose pull versiond proxy proxy-policy proxy-policy2 versiond2 devshard-postgres
+expected='compose pull versiond versiond2 proxy proxy-policy proxy-policy2 devshard-postgres
 compose up -d --no-deps --wait --wait-timeout 2100 devshard-postgres
 fleet prepare-networks
 fleet apply
@@ -166,6 +170,25 @@ grep -q -- '--project-name gonka' "$tmpdir/log" || fail "project name from label
 grep -c 'docker-compose.observability.yml' "$tmpdir/log" >/dev/null || \
     fail "operator overlays from labels were dropped"
 grep -q 'fleet status' "$tmpdir/log" || fail "fleet status was not printed"
+
+# Any number of local replicas: a decommissioned versiond2 (0 replicas) is
+# skipped, versiond3 is updated before the legacy owner.
+UPDATE_ARGS=()
+run_update env FAKE_CONTAINERS="versiond versiond3 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml,docker-compose.versiond3.yml" \
+    FAKE_RENDERED_HA="$tmpdir/ha3.json" || fail "three-replica update failed: $(cat "$tmpdir/err")"
+expected='compose pull versiond versiond3 proxy proxy-policy proxy-policy2 devshard-postgres
+compose up -d --no-deps --wait --wait-timeout 2100 devshard-postgres
+fleet prepare-networks
+fleet apply
+compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy2 proxy-policy
+compose up -d --no-deps --wait --wait-timeout 2100 proxy
+compose up -d --no-deps --wait --wait-timeout 2100 versiond3
+compose up -d --no-deps --wait --wait-timeout 2100 versiond'
+[[ $(mutations) == "$expected" ]] || fail "three-replica sequence:
+$(mutations)"
+grep -q 'Topology: ha (versiond versiond2 versiond3)' "$tmpdir/out" || \
+    fail "replica discovery: $(grep Topology "$tmpdir/out")"
 
 # --check runs the preflight and changes nothing.
 UPDATE_ARGS=(--check)
@@ -208,7 +231,7 @@ if run_update env FAKE_CONTAINERS="versiond devshard-postgres" \
     FAKE_RENDERED_HA="$tmpdir/ha-drift.json"; then
     fail "replicas pointing at different databases were accepted"
 fi
-grep -q 'disagree on PGDATABASE' "$tmpdir/err" || fail "PG drift message: $(cat "$tmpdir/err")"
+grep -q 'versiond2 disagree on PGDATABASE' "$tmpdir/err" || fail "PG drift message: $(cat "$tmpdir/err")"
 
 UPDATE_ARGS=(--check --topology ha)
 if run_update env FAKE_CONTAINERS="" COMPOSE_FILE=docker-compose.yml; then

@@ -2,7 +2,9 @@
 #
 # Requires base docker-compose.yml (single versiond). Adds devshard-postgres,
 # a second versiond instance (versiond2), and the shared networks used by the
-# independently managed versiond-router fleet.
+# independently managed versiond-router fleet. More local replicas are added
+# with docker-compose.versiond3.yml (and copies of it); replicas on other
+# machines with docker-compose.versiond-remote.yml.
 #
 # This overlay uses !reset and requires Docker Compose 2.24.4 or newer.
 #
