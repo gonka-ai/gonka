@@ -44,8 +44,8 @@ func (h *Host) recordValidationObsFromAppliedDiff(txs []*types.DevshardTx) {
 		// Backpressure: too many async obs writes already in flight (a slow or
 		// stalled store). Drop this batch rather than writing synchronously under
 		// h.mu, which would re-serialize the hot path onto a slow store.
-		// Observability is best-effort: recovery rebuilds from the diff journal.
-		logging.Warn("validation obs async cap reached; dropping batch (best-effort, recovery rebuilds from diffs)",
+		// Host startup does not guarantee recovery of dropped observability records.
+		logging.Warn("validation obs async cap reached; dropping batch",
 			"subsystem", "host",
 			"escrow_id", escrowID,
 			"in_flight_cap", validationObsInFlightCap,

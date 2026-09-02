@@ -134,7 +134,8 @@ type ValidationObsEntry struct {
 // SlotValidationObs holds per-slot validation counters for observability APIs only.
 // Live rows are recorded when hosts apply signed diffs (RecordValidationsAppliedOnce)
 // and move to sealed storage on inference seal (DrainInferenceValidationObs).
-// Recovery rebuilds both tables from the diff journal (RebuildValidationObsFromDiffs).
+// RebuildValidationObsFromDiffs can rebuild both tables explicitly; normal host
+// startup does not call it.
 // Counters are not part of settlement host_stats.
 type SlotValidationObs struct {
 	SlotID               uint32
@@ -181,8 +182,8 @@ type ActiveSession struct {
 // state root) for GET /v1/state after RAM prune. Late MsgValidation on
 // sealed ids still returns ErrInferenceSealed and does not read this snapshot.
 type InferenceRow struct {
-	InferenceID uint64
-	SealedNonce uint64
+	InferenceID        uint64
+	SealedNonce        uint64
 	ObsPresent         bool
 	SealedStatus       uint32
 	SealedExecutorSlot uint32

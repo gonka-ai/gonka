@@ -112,9 +112,8 @@ type StateMachine struct {
 }
 
 // deferredObsWrite is a single observability-store write captured during a
-// trial apply and replayed at commit time. All obs writes are observability
-// only (never part of post_state_root) and best-effort on replay: recovery
-// rebuilds obs from the diff journal.
+// trial apply and replayed at commit time. These writes are best-effort and
+// never part of post_state_root; host startup does not guarantee their recovery.
 type deferredObsWrite struct {
 	id    uint64
 	row   storage.InferenceRow
@@ -381,13 +380,14 @@ func (sm *StateMachine) CommitValidated(vd *ValidatedDiff) bool {
 }
 
 // flushDeferredObsLocked replays observability writes buffered during a trial
-// apply. Best-effort: obs is never part of post_state_root and recovery
-// rebuilds it from the diff journal, so a storage blip here must not fail the
-// commit. Caller must hold sm.mu.
+// apply. Best-effort: obs is never part of post_state_root, so a storage blip
+// here must not fail the commit. Host startup does not guarantee recovery of a
+// failed write.
+// Caller must hold sm.mu.
 func (sm *StateMachine) flushDeferredObsLocked(writes []deferredObsWrite) {
 	for _, w := range writes {
 		if err := sm.inferenceStore.InsertSealedInference(sm.state.EscrowID, w.row); err != nil {
-			logging.Warn("failed to persist deferred inference obs; continuing (best-effort, recovery rebuilds from diffs)",
+			logging.Warn("failed to persist deferred inference obs; continuing",
 				"subsystem", "state",
 				"escrow_id", sm.state.EscrowID,
 				"inference_id", w.id,
@@ -1149,7 +1149,7 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 			rec.Status = types.StatusChallenged
 			// Obs row is not part of post_state_root; a storage blip must not fail
 			// the tx (ApplyLocalBestEffort would drop it but keep the mutation).
-			// Recovery rebuilds obs from the diff journal; see autoSealLocked.
+			// Host startup does not guarantee recovery of the failed observability write.
 			sm.persistLiveInferenceObsBestEffortLocked(msg.InferenceId, rec)
 			logging.Debug("inference finished -> challenged", "subsystem", "state",
 				"inference_id", msg.InferenceId,

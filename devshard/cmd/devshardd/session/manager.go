@@ -698,7 +698,7 @@ func (m *HostManager) restoreSnapshotStateMachine(
 		return nil, fmt.Errorf("compute snapshot state root: %w", err)
 	}
 	if len(expectedRoot) == 0 {
-		logging.Warn("restoring devshard snapshot without a boundary state root",
+		logging.Warn("restoring devshard snapshot without a boundary state root", inferenceTypes.System,
 			"escrow_id", escrowID, "snapshot_nonce", snapshotNonce)
 	} else if !bytes.Equal(root, expectedRoot) {
 		return nil, fmt.Errorf("snapshot state root mismatch at nonce %d", snapshotNonce)

@@ -644,10 +644,11 @@ func (sm *StateMachine) persistLiveInferenceObsLocked(id uint64, rec *types.Infe
 
 // persistLiveInferenceObsBestEffortLocked upserts live inference obs for
 // observability only. Storage errors are logged and never fail the tx caller,
-// matching the auto-seal contract (recovery rebuilds from the diff journal).
+// matching the auto-seal contract. Host startup does not guarantee recovery of a
+// failed write.
 func (sm *StateMachine) persistLiveInferenceObsBestEffortLocked(id uint64, rec *types.InferenceRecord) {
 	if err := sm.persistLiveInferenceObsLocked(id, rec); err != nil {
-		logging.Warn("failed to persist live inference obs; continuing (best-effort, recovery rebuilds from diffs)",
+		logging.Warn("failed to persist live inference obs; continuing",
 			"subsystem", "state",
 			"escrow_id", sm.state.EscrowID,
 			"inference_id", id,
