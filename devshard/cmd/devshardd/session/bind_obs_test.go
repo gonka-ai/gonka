@@ -42,7 +42,7 @@ func setupBindTestManager(t *testing.T, escrowID string) (*HostManager, *storage
 			TokenPrice:     1,
 		},
 	}
-	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 	return mgr, store, user, hosts[0]
 }
 
@@ -162,7 +162,7 @@ func TestOwnerChat_FirstBindSingleGetEscrow(t *testing.T) {
 		},
 	}
 	br := &countingGetEscrowBridge{MainnetBridge: inner}
-	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 
 	e := echo.New()
 	mgr.Register(e.Group(""))
@@ -222,7 +222,7 @@ func TestGetOrCreate_RecoversBeforeCreate(t *testing.T) {
 			Slots:          addresses,
 		},
 	}
-	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 
 	srv, err := mgr.getOrCreate("1", nil)
 	require.NoError(t, err)

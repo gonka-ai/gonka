@@ -113,7 +113,7 @@ func TestStatsShardsListsNonPrunedActiveWithoutDetails(t *testing.T) {
 	createStoredSession(t, base, "escrow-old", 6, 0)
 
 	counting := &countingListStore{Storage: currentEpochStore{Storage: base, epoch: 7}}
-	mgr := waitObsRepairsOnCleanup(t, NewHostManager(counting, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(counting, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil))
 	mgr.SetBinaryVersion("0.2.14-v4-r2")
 
 	rec := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards")
@@ -160,7 +160,7 @@ func TestStatsShardsSkipsForeignVersionSessions(t *testing.T) {
 	createStoredSessionWithVersion(t, base, "escrow-v2", 7, "foreign", 0)
 
 	store := currentEpochStore{Storage: base, epoch: 7}
-	mgr := waitObsRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil))
 
 	rec := requestStats(t, mgr, "/v1/devshard", "/stats/shards")
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
@@ -179,7 +179,7 @@ func TestStatsShardsSkipsSessionsWithUnreadableMeta(t *testing.T) {
 		escrowID:  "escrow-bad-meta",
 		metaError: storage.ErrSessionNotFound,
 	}
-	mgr := waitObsRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil))
 
 	rec := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards")
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
@@ -204,7 +204,7 @@ func TestStatsShardDetailReturnsStatsOnly(t *testing.T) {
 			Slots:          addresses,
 		},
 	}
-	mgr := waitObsRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 	mgr.SetBinaryVersion("0.2.14-v4")
 	require.NoError(t, mgr.RecoverSessions())
 
@@ -276,7 +276,7 @@ func TestStatsShardDetailServesPriorEpochSession(t *testing.T) {
 			Slots:          addresses,
 		},
 	}
-	mgr := waitObsRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 	require.NoError(t, mgr.RecoverSessions())
 
 	rec := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/escrow-prior")
@@ -298,7 +298,7 @@ func TestStatsShardDetailSkipsForeignVersionSession(t *testing.T) {
 	_, _, hostSigner := createStoredSessionWithVersion(t, base, "escrow-v2", 7, "foreign", 0)
 
 	store := currentEpochStore{Storage: base, epoch: 7}
-	mgr := waitObsRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil))
 
 	rec := requestStats(t, mgr, "/v1/devshard", "/stats/shards/escrow-v2")
 	require.Equal(t, http.StatusNotFound, rec.Code, "body: %s", rec.Body.String())
@@ -342,7 +342,7 @@ func TestStatsShardDetailResolvesO1WithoutListScan(t *testing.T) {
 			Slots:          addresses,
 		},
 	}
-	mgr := waitObsRepairsOnCleanup(t, NewHostManager(counting, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(counting, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 	require.NoError(t, mgr.RecoverSessions())
 	counting.metaCalls.Store(0)
 	counting.listCalls.Store(0)
@@ -357,7 +357,7 @@ func TestStatsShardDetailNegativeCacheSkipsStoreOnRepeatMiss(t *testing.T) {
 	base := newManagerTestStore(t)
 	_, _, hostSigner := createStoredSession(t, base, "escrow-other", 7, 0)
 	counting := &countingMetaStore{Storage: currentEpochStore{Storage: base, epoch: 7}}
-	mgr := waitObsRepairsOnCleanup(t, NewHostManager(counting, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(counting, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil))
 
 	rec1 := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/missing-escrow")
 	require.Equal(t, http.StatusNotFound, rec1.Code, "body: %s", rec1.Body.String())
@@ -374,7 +374,7 @@ func TestStatsShardDetailNegativeCacheForVersionMismatch(t *testing.T) {
 	base := newManagerTestStore(t)
 	_, _, hostSigner := createStoredSessionWithVersion(t, base, "escrow-foreign", 7, "foreign", 0)
 	counting := &countingMetaStore{Storage: currentEpochStore{Storage: base, epoch: 7}}
-	mgr := waitObsRepairsOnCleanup(t, NewHostManager(counting, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(counting, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil))
 
 	rec1 := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/escrow-foreign")
 	require.Equal(t, http.StatusNotFound, rec1.Code)
@@ -392,7 +392,7 @@ func TestStatsShardDetailSkipsSettledSession(t *testing.T) {
 	require.NoError(t, base.MarkSettled("escrow-settled"))
 
 	counting := &countingMetaStore{Storage: currentEpochStore{Storage: base, epoch: 7}}
-	mgr := waitObsRepairsOnCleanup(t, NewHostManager(counting, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil))
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(counting, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil))
 
 	rec1 := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/escrow-settled")
 	require.Equal(t, http.StatusNotFound, rec1.Code, "body: %s", rec1.Body.String())

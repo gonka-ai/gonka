@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"errors"
 	"sync"
 	"testing"
@@ -73,6 +74,85 @@ func (s *obsCallStore) clearCalls() int {
 	return s.clears
 }
 
+type sealedDeleteStore struct {
+	storage.Storage
+	mu      sync.Mutex
+	deletes int
+	entered chan struct{}
+	release chan struct{}
+}
+
+func (s *sealedDeleteStore) DeleteSealedInferences(escrowID string) error {
+	s.mu.Lock()
+	s.deletes++
+	entered := s.entered
+	s.entered = nil
+	s.mu.Unlock()
+	if entered != nil {
+		close(entered)
+	}
+	if s.release != nil {
+		<-s.release
+	}
+	return s.Storage.DeleteSealedInferences(escrowID)
+}
+
+func (s *sealedDeleteStore) deleteCalls() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.deletes
+}
+
+func populateFinishedAndSeal(t *testing.T, store storage.Storage) ([]types.SlotAssignment, *signing.Secp256k1Signer, *signing.Secp256k1Signer) {
+	t.Helper()
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	group := makeGroup(hosts)
+	config := defaultConfig(3)
+	verifier := signing.NewSecp256k1Verifier()
+
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       "1",
+		EpochID:        7,
+		Version:        testutil.RuntimeTestVersion,
+		CreatorAddr:    user.Address(),
+		Config:         config,
+		Group:          group,
+		InitialBalance: 100000,
+	}))
+
+	sm, err := state.NewStateMachine("1", config, group, 100000, user.Address(), verifier, store,
+		state.WithVersion(testutil.RuntimeTestVersion))
+	require.NoError(t, err)
+
+	apply := func(nonce uint64, txs []*types.DevshardTx) {
+		t.Helper()
+		root, err := sm.ApplyLocal(nonce, txs)
+		require.NoError(t, err)
+		diff := signDiffWithRoot(t, user, "1", nonce, txs, root)
+		require.NoError(t, store.AppendDiff("1", types.DiffRecord{Diff: diff, StateHash: root}))
+	}
+
+	start := startTx(1)
+	apply(1, []*types.DevshardTx{start})
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "1", 1, start.GetStartInference().GetPromptHash(),
+		"llama", 100, 50, 1000, 2000)
+	apply(2, []*types.DevshardTx{&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+	}}}})
+	finish := &types.MsgFinishInference{
+		InferenceId: 1, ResponseHash: []byte("response"), InputTokens: 10, OutputTokens: 20,
+		ExecutorSlot: 1, EscrowId: "1",
+	}
+	finish.ProposerSig = testutil.SignProposerTx(t, hosts[1], finish)
+	apply(3, []*types.DevshardTx{&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: finish}}})
+	require.NoError(t, sm.SealInference(1))
+	return group, user, hosts[0]
+}
+
 type loadSnapshotErrStore struct {
 	storage.Storage
 	err error
@@ -106,7 +186,7 @@ func recoverTestManager(t *testing.T, store storage.Storage, hostSigner *signing
 			Slots:          addresses,
 		},
 	}
-	return waitObsRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
+	return waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 }
 
 func saveSnapshotThrough(t *testing.T, store storage.Storage, through uint64) {
@@ -346,7 +426,7 @@ func TestRecoverSessions_SnapshotPathLeavesValidationObsAlone(t *testing.T) {
 	store := &obsCallStore{Storage: inner}
 	mgr := recoverTestManager(t, store, hostSigner, user, group)
 	require.NoError(t, mgr.RecoverSessions())
-	mgr.WaitObsRepairs()
+	mgr.WaitRecoveryRepairs()
 
 	require.Zero(t, store.clearCalls(), "a restored snapshot must not clear durable obs rows")
 }
@@ -382,8 +462,108 @@ func TestRecoverSessions_FullReplayRebuildsValidationObsInBackground(t *testing.
 	require.Equal(t, 1, mgr.loadedSessionCount(), "the session must be published before the rebuild finishes")
 
 	close(store.release)
-	mgr.WaitObsRepairs()
+	mgr.WaitRecoveryRepairs()
 	require.Equal(t, 1, store.clearCalls(), "the background rebuild must still run")
+}
+
+func TestRecoverSessions_SnapshotPathLeavesSealedInferenceRows(t *testing.T) {
+	inner := newManagerTestStore(t)
+	group, user, hostSigner := populateStore(t, inner, 10)
+	saveSnapshotThrough(t, inner, 7)
+
+	planted := storage.InferenceRow{
+		InferenceID: 99, SealedNonce: 7, ObsPresent: true,
+		SealedModel: "llama", SealedInputTokens: 10, SealedOutputTokens: 20,
+	}
+	require.NoError(t, inner.InsertSealedInference("1", planted))
+
+	store := &sealedDeleteStore{Storage: inner}
+	mgr := recoverTestManager(t, store, hostSigner, user, group)
+	require.NoError(t, mgr.RecoverSessions())
+	mgr.WaitRecoveryRepairs()
+
+	require.Zero(t, store.deleteCalls(), "a restored snapshot must not wipe sealed-inference rows")
+	after, ok, err := inner.GetSealedInference("1", 99)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, planted, after)
+}
+
+func TestRecoverSessions_FullReplayRebuildsSealedIndexInBackground(t *testing.T) {
+	inner := newManagerTestStore(t)
+	group, user, hostSigner := populateFinishedAndSeal(t, inner)
+
+	store := &sealedDeleteStore{Storage: inner, release: make(chan struct{})}
+	mgr := recoverTestManager(t, store, hostSigner, user, group)
+	t.Cleanup(func() {
+		select {
+		case <-store.release:
+		default:
+			close(store.release)
+		}
+	})
+
+	done := make(chan error, 1)
+	go func() { done <- mgr.RecoverSessions() }()
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("recovery blocked on the background sealed-index rebuild")
+	}
+	require.Equal(t, 1, mgr.loadedSessionCount(), "the session must be published before the rebuild finishes")
+
+	close(store.release)
+	mgr.WaitRecoveryRepairs()
+	require.Equal(t, 1, store.deleteCalls(), "the background rebuild must still run")
+
+	row, ok, err := inner.GetSealedInference("1", 1)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, row.ObsPresent, "full-replay from-diffs must restore rich rows")
+	require.Equal(t, "llama", row.SealedModel)
+}
+
+// Step 4 keeps recovery_complete on the backlog drain. A full-replay child
+// can be "complete" while WaitRecoveryRepairs is still blocked on the wipe.
+// Step 8 is the one that must wait on the waiter.
+func TestStartRecovery_CompleteBeforeSealedIndexRepair(t *testing.T) {
+	inner := newManagerTestStore(t)
+	group, user, hostSigner := populateFinishedAndSeal(t, inner)
+
+	entered := make(chan struct{})
+	store := &sealedDeleteStore{Storage: inner, entered: entered, release: make(chan struct{})}
+	mgr := recoverTestManager(t, store, hostSigner, user, group)
+	t.Cleanup(func() {
+		select {
+		case <-store.release:
+		default:
+			close(store.release)
+		}
+	})
+
+	wait := mgr.StartRecovery(context.Background())
+	wait()
+	require.True(t, mgr.RecoveryComplete(), "recovery_complete follows the backlog until step 8")
+	require.Equal(t, 1, mgr.loadedSessionCount())
+
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("sealed-index rebuild never started")
+	}
+}
+
+func TestRecoverSessions_RejectedSnapshotRebuildsSealedIndex(t *testing.T) {
+	inner := newManagerTestStore(t)
+	group, user, hostSigner := populateStore(t, inner, 10)
+	saveMismatchedSnapshot(t, inner, 5, 7)
+
+	store := &sealedDeleteStore{Storage: inner}
+	mgr := recoverTestManager(t, store, hostSigner, user, group)
+	require.NoError(t, mgr.RecoverSessions())
+	mgr.WaitRecoveryRepairs()
+	require.Equal(t, 1, store.deleteCalls(), "a rejected snapshot must take the full-replay sealed rebuild")
 }
 
 func TestRecoverSessions_SnapshotMatchesFullReplayWithLiveInferences(t *testing.T) {

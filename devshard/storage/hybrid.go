@@ -631,6 +631,17 @@ func (h *HybridStorage) InsertSealedInference(escrowID string, row InferenceRow)
 	return b.InsertSealedInference(escrowID, row)
 }
 
+func (h *HybridStorage) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return err
+	}
+	return b.InsertSealedInferences(escrowID, rows)
+}
+
 func (h *HybridStorage) GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error) {
 	b, err := h.routed(escrowID)
 	if err != nil {
@@ -645,6 +656,14 @@ func (h *HybridStorage) DeleteSealedInferences(escrowID string) error {
 		return err
 	}
 	return b.DeleteSealedInferences(escrowID)
+}
+
+func (h *HybridStorage) SealedInferenceIDs(escrowID string) (map[uint64]uint64, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	return b.SealedInferenceIDs(escrowID)
 }
 
 func (h *HybridStorage) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
@@ -760,7 +779,6 @@ func (h *HybridStorage) pruneBefore(cutoff uint64) error {
 	h.maybeClearPGBound("range_prune", "cutoff", cutoff)
 	return nil
 }
-
 
 func (h *HybridStorage) ClearValidationObs(escrowID string) error {
 	b, err := h.routed(escrowID)
