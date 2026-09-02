@@ -6,7 +6,9 @@
 # with docker-compose.versiond3.yml (and copies of it); replicas on other
 # machines with docker-compose.versiond-remote.yml.
 #
-# This overlay uses !reset and requires Docker Compose 2.24.4 or newer.
+# Fresh installations only: an existing host is moved to this model by the
+# release updater, update-devshard.sh. The overlay uses !reset and requires
+# Docker Compose 2.24.4 or newer.
 #
 # Cold-start order (update-devshard.sh runs the same steps on an existing host):
 #   ./versiond-router-fleet.sh prepare-networks

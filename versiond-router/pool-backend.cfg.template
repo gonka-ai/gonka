@@ -70,7 +70,9 @@ backend ${BACKEND_NAME}
     # Without it a host entering DNS is selectable before its first check has
     # run, which is a window straight onto a versiond that is still starting.
     #
-    # The entrypoint renders either one server-template over the DNS pool name
-    # or one explicit `server` line per entry of VERSIOND_POOL_ENDPOINTS_FILE.
-    # Both forms carry the same check, init-state and hash-key options.
-${POOL_SERVERS}
+    # This line is the single source of the server options. With DNS discovery
+    # it is rendered as is; with an explicit endpoint list the entrypoint
+    # replaces it by one `server` line per member carrying the same options
+    # (minus the resolver for IPv4 literals). versiond's drain announcement is
+    # sized from the `inter`, `fall` and `timeout check` values found here.
+    server-template versiond ${BACKEND_SLOTS} ${BACKEND_HOST}:${VERSIOND_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr ${SERVER_STATE}
