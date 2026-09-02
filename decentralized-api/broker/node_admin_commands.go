@@ -342,6 +342,7 @@ func (command RemoveNode) Execute(b *Broker) {
 		if err != nil {
 			logging.Warn("Failed to delete applied deployments for removed node", types.Config,
 				"node_id", command.NodeId, "error", err)
+			b.noteStaleApplied(command.NodeId)
 		}
 	}
 	logging.Debug("Removed node", types.Nodes, "node_id", command.NodeId)

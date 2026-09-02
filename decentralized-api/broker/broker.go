@@ -142,6 +142,7 @@ type Broker struct {
 	lockMap              map[string]lockEntry
 	lockMapMu            sync.Mutex
 	afterSnapshot        func()
+	staleApplied         map[string]struct{}
 }
 
 type lockEntry struct {

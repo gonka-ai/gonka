@@ -237,6 +237,38 @@ func TestRefreshDeploymentUpdatePendingFromApplied(t *testing.T) {
 	require.False(t, node.State.DeploymentUpdatePending)
 }
 
+func TestRefreshDoesNotTrustStaleAppliedRow(t *testing.T) {
+	manager := testDeploymentConfigManager(t)
+
+	const modelID = "MiniMaxAI/MiniMax-M2.7"
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	node.Node.Models = map[string]ModelArgs{modelID: {}}
+	node.State.EpochModels[modelID] = types.Model{Id: modelID}
+	node.State.EpochMLNodes[modelID] = types.MLNodeInfo{NodeId: node.Node.Id}
+	b := &Broker{
+		nodes:         map[string]*NodeWithState{node.Node.Id: node},
+		configManager: manager,
+	}
+
+	deployment := b.ResolveModelDeployment(node.State.EpochModels[modelID], node.Node.Models[modelID])
+	require.NoError(t, manager.SetAppliedDeployment(
+		context.Background(), node.Node.Id, apiconfig.AppliedDeploymentState{
+			ModelID:     modelID,
+			Fingerprint: deployment.Fingerprint(),
+		},
+	))
+	b.refreshDeploymentUpdatePendingFromApplied(node.Node.Id)
+	require.False(t, node.State.DeploymentUpdatePending)
+
+	b.noteStaleApplied(node.Node.Id)
+	b.refreshDeploymentUpdatePendingFromApplied(node.Node.Id)
+	require.True(t, node.State.DeploymentUpdatePending)
+	require.False(t, b.hasStaleApplied(node.Node.Id))
+	_, found, err := manager.GetAppliedDeployment(context.Background(), node.Node.Id)
+	require.NoError(t, err)
+	require.False(t, found)
+}
+
 func TestRefreshLeavesDefaultDeploymentAloneWhenUnrecorded(t *testing.T) {
 	manager := testDeploymentConfigManager(t)
 
