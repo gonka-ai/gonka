@@ -26,6 +26,7 @@ declare -A legacy_env_defaults=(
 )
 maintenance_required_routes=()
 maintenance_pending=()
+maintenance_candidate_image_id=
 inventory_ids=()
 inventory_listing=
 maintenance_keys=(
@@ -66,6 +67,9 @@ Commands:
   rollout            Replace slots one at a time, preserving the ready reserve.
   maintenance-rollout
                      Drain the old fleet before a placement-contract change.
+                     Rerun it after an interruption: slots already on the new
+                     contract are kept, the rest are replaced. Rollback covers
+                     the slots captured by the current run only.
   verify-admission [ROUTE ...]
                      Require every slot, and every listed live route, to be
                      admitted by the active parent proxy.
@@ -275,26 +279,41 @@ fleet_volume_ids() {
         --filter "label=ai.gonka.fleet=$fleet_id"
 }
 
+# Prints the slot's container ID. Returns 1 for an absent slot, 2 for duplicate
+# containers, 3 when Docker could not answer. Callers pass a non-zero status to
+# slot_lookup_failed so that a Docker failure never reads as an absent slot.
 slot_id() {
     local slot=$1
     local ids count
-    ids=$(slot_ids "$slot")
+    ids=$(slot_ids "$slot") || {
+        echo "versiond-router-fleet: cannot list router slot $slot" >&2
+        return 3
+    }
     count=$(wc -w <<<"$ids")
-    ((count == 1)) || return 1
+    ((count != 0)) || return 1
+    ((count == 1)) || return 2
     printf '%s\n' "$ids"
 }
 
+slot_lookup_failed() {
+    ((${1:-0} != 3)) || fail "Docker did not answer a router slot query; refusing to guess the fleet state"
+}
+
 slot_running() {
-    local id
-    id=$(slot_id "$1") || return 1
-    [[ $("$docker_bin" inspect --format '{{.State.Status}}' "$id") == running ]]
+    local id state
+    id=$(slot_id "$1") || { slot_lookup_failed $?; return 1; }
+    state=$("$docker_bin" inspect --format '{{.State.Status}}' "$id") || fail \
+        "cannot inspect router slot $1"
+    [[ $state == running ]]
 }
 
 slot_ready() {
-    local id state health
-    id=$(slot_id "$1") || return 1
-    read -r state health < <("$docker_bin" inspect --format \
-        '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$id")
+    local id state health details
+    id=$(slot_id "$1") || { slot_lookup_failed $?; return 1; }
+    details=$("$docker_bin" inspect --format \
+        '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' "$id") || fail \
+        "cannot inspect router slot $1"
+    read -r state health <<<"$details"
     [[ $state == running && $health == healthy ]]
 }
 
@@ -316,7 +335,7 @@ urlencode() {
 
 slot_route_ready() {
     local slot=$1 route=$2 id encoded
-    id=$(slot_id "$slot") || return 1
+    id=$(slot_id "$slot") || { slot_lookup_failed $?; return 1; }
     slot_ready "$slot" || return 1
     encoded=$(urlencode "$route")
     "$docker_bin" exec "$id" /bin/busybox wget -q -O /dev/null \
@@ -325,7 +344,7 @@ slot_route_ready() {
 
 slot_catalog_routes() {
     local id map
-    id=$(slot_id "$1") || return 1
+    id=$(slot_id "$1") || { slot_lookup_failed $?; return 1; }
     if "$docker_bin" exec "$id" test -x \
         /usr/local/lib/router-runtime/catalog-status >/dev/null 2>&1; then
         for map in /etc/haproxy/non_ha.map /etc/haproxy/versions.map; do
@@ -355,7 +374,7 @@ slot_route_declared() {
 discover_expected_routes() {
     local slot route routes
     for slot in "${slots[@]}"; do
-        slot_id "$slot" >/dev/null 2>&1 || continue
+        slot_id "$slot" >/dev/null 2>&1 || { slot_lookup_failed $?; continue; }
         routes=$(slot_catalog_routes "$slot") || fail \
             "cannot read the effective route catalog from slot $slot"
         while IFS= read -r route; do
@@ -391,7 +410,7 @@ select_candidate_route_view() {
 
 slot_front_ip() {
     local id network
-    id=$(slot_id "$1") || return 1
+    id=$(slot_id "$1") || { slot_lookup_failed $?; return 1; }
     network=${VERSIOND_ROUTER_FRONT_NETWORK:-gonka-versiond-router-front}
     "$docker_bin" inspect --format \
         "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
@@ -790,6 +809,33 @@ route_ready_count() {
     printf '%s\n' "$count"
 }
 
+# Every bootstrap version must be served by at least one router slot before a
+# rollout starts. A route with zero ready backends drops out of the protected
+# set, so a rollout during a PostgreSQL or versiond outage could otherwise
+# finish without ever proving that the routes came back.
+require_static_routes_served() {
+    local slot id declared version count
+    local -A served=()
+    case ${VERSIOND_ROUTER_ALLOW_UNSERVED_STATIC_ROUTES:-false} in
+        1 | true | yes) return 0 ;;
+    esac
+    # Only versions the running fleet already declares: a version the candidate
+    # adds is not served yet by definition.
+    for slot in "${slots[@]}"; do
+        slot_running "$slot" || continue
+        id=$(slot_id "$slot") || { slot_lookup_failed $?; continue; }
+        declared=$(container_env_value "$id" VERSIOND_VERSIONS) || continue
+        for version in $(normalize_versions "$declared" | tr ',' ' '); do
+            served[$version]=1
+        done
+    done
+    for version in "${!served[@]}"; do
+        count=$(route_ready_count "$version")
+        ((count > 0)) || fail \
+            "version $version is declared by the running routers but served by none of them; the versiond pool or its PostgreSQL is down, refusing to roll the routers (VERSIOND_ROUTER_ALLOW_UNSERVED_STATIC_ROUTES=true overrides)"
+    done
+}
+
 require_ready_reserve() {
     local excluded=$1 route total reserve parent_reserve
     reserve=$(ready_count_except "$excluded")
@@ -923,7 +969,7 @@ desired_slot_config_hash() {
 
 slot_needs_replacement() {
     local slot=$1 candidate_image_id=$2 id running_image running_hash desired_hash
-    id=$(slot_id "$slot") || return 2
+    id=$(slot_id "$slot") || { slot_lookup_failed $?; return 2; }
     running_image=$($docker_bin inspect --format '{{.Image}}' "$id") || return 2
     running_hash=$($docker_bin inspect --format \
         '{{or (index .Config.Labels "com.docker.compose.config-hash") ""}}' \
@@ -959,7 +1005,7 @@ resolve_metrics_network() {
 
     if [[ -z $resolved ]]; then
         for slot in "${slots[@]}"; do
-            id=$(slot_id "$slot") || continue
+            id=$(slot_id "$slot") || { slot_lookup_failed $?; continue; }
             recorded=$(container_env_value \
                 "$id" VERSIOND_ROUTER_METRICS_NETWORK_NAME) || continue
             [[ -z $resolved || $resolved == "$recorded" ]] || fail \
@@ -1037,7 +1083,7 @@ require_cache_compatible() {
     [[ $candidate_protocol =~ ^[0-9]+$ ]] || fail \
         "candidate image has no numeric catalog cache protocol label"
     for slot in "${slots[@]}"; do
-        id=$(slot_id "$slot") || continue
+        id=$(slot_id "$slot") || { slot_lookup_failed $?; continue; }
         running_image=$($docker_bin inspect --format '{{.Image}}' "$id")
         running_protocol=$(cache_protocol_for_image "$running_image")
         [[ $running_protocol =~ ^[0-9]+$ ]] || fail \
@@ -1077,7 +1123,7 @@ require_placement_compatible() {
     require_cache_compatible "$candidate"
     candidate_contract=$(candidate_placement_contract)
     for slot in "${slots[@]}"; do
-        id=$(slot_id "$slot") || continue
+        id=$(slot_id "$slot") || { slot_lookup_failed $?; continue; }
         running_image=$($docker_bin inspect --format '{{.Image}}' "$id")
         running_version=$(placement_version_for_image "$running_image")
         [[ $running_version == "$candidate_version" ]] || fail \
@@ -1109,9 +1155,13 @@ validate_inventory_structure() {
 }
 
 repair_fleet_capacity() {
-    local slot id state
+    local slot id state lookup
     for slot in "${slots[@]}"; do
-        if ! id=$(slot_id "$slot"); then
+        lookup=0
+        id=$(slot_id "$slot") || lookup=$?
+        if ((lookup != 0)); then
+            slot_lookup_failed "$lookup"
+            ((lookup == 1)) || fail "duplicate containers claim router slot '$slot'"
             echo "Recovering absent versiond-router slot $slot"
             start_slot "$slot"
         elif slot_ready "$slot"; then
@@ -1145,23 +1195,30 @@ repair_fleet_capacity() {
 # replaced, slots left stopped or absent are simply started. Returns 1 when
 # nothing is pending.
 capture_maintenance_state() {
-    local slot id image key contract candidate previous_contract='' route state
+    local slot id image key contract candidate previous_contract='' route state lookup
     local -A routes=()
     candidate=$(candidate_placement_contract)
     maintenance_pending=()
     for slot in "${slots[@]}"; do
-        if ! id=$(slot_id "$slot"); then
-            [[ -z $(slot_ids "$slot") ]] || fail \
-                "duplicate containers claim router slot '$slot'"
+        lookup=0
+        id=$(slot_id "$slot") || lookup=$?
+        if ((lookup != 0)); then
+            slot_lookup_failed "$lookup"
+            ((lookup == 1)) || fail "duplicate containers claim router slot '$slot'"
             warn "slot $slot has no container; it will be started on the candidate contract"
             maintenance_pending+=("$slot")
             continue
         fi
         state=$("$docker_bin" inspect --format '{{.State.Status}}' "$id") || fail \
             "cannot inspect router slot $slot"
+        image=$("$docker_bin" inspect --format '{{.Image}}' "$id") || fail \
+            "cannot inspect router slot $slot"
         contract=$(running_placement_contract "$id") || fail \
             "slot $slot does not expose its placement contract"
-        if [[ $contract == "$candidate" ]]; then
+        # Done means the candidate contract on the candidate image: an image or
+        # placement-protocol change with an unchanged environment must still
+        # replace the slot.
+        if [[ $contract == "$candidate" && $image == "$maintenance_candidate_image_id" ]]; then
             if [[ $state == running ]] && slot_ready "$slot"; then
                 echo "Slot $slot already runs the candidate placement contract"
                 continue
@@ -1180,9 +1237,9 @@ capture_maintenance_state() {
         else
             warn "slot $slot is stopped on the previous contract; its exact generation is captured for rollback"
         fi
-        image=$($docker_bin inspect --format '{{.Image}}' "$id")
         maintenance_images[$slot]="gonka/versiond-router-maintenance-rollback:$operation_id-$slot"
-        "$docker_bin" tag "$image" "${maintenance_images[$slot]}"
+        "$docker_bin" tag "$image" "${maintenance_images[$slot]}" || fail \
+            "cannot keep the rollback image of slot $slot"
         for key in "${maintenance_keys[@]}"; do
             maintenance_env["$slot:$key"]=$(container_env_value_or_legacy_default "$id" "$key") || fail \
                 "slot $slot is missing environment $key"
@@ -1204,7 +1261,6 @@ capture_maintenance_state() {
             maintenance_required_routes+=("$route")
         fi
     done
-    ((${#maintenance_pending[@]} > 0))
 }
 
 wait_required_routes_all() {
@@ -1498,7 +1554,7 @@ fleet_status() {
             bad=1
             continue
         fi
-        slot_id "$seen_slot" >/dev/null || continue
+        slot_id "$seen_slot" >/dev/null || { slot_lookup_failed $?; continue; }
         for route in "${!expected_routes[@]}"; do
             if ! slot_route_declared "$seen_slot" "$route"; then
                 warn "slot $seen_slot does not declare expected route $route; run rollout"
@@ -1570,6 +1626,7 @@ fleet_rollout() {
     candidate_image_id=$($docker_bin image inspect --format '{{.Id}}' "$candidate_image") || fail \
         "candidate router image is not available: $candidate_image"
     require_placement_compatible "$candidate_image"
+    require_static_routes_served
     trap rollback_current ERR INT TERM HUP
     for slot in "${slots[@]}"; do
         id=$(slot_id "$slot") || fail "slot $slot has no unique existing container"
@@ -1625,7 +1682,11 @@ fleet_maintenance_rollout() {
     [[ -n $(placement_version_for_image "$image") ]] || fail \
         "candidate image has no placement protocol label"
     require_cache_compatible "$image"
-    if ! capture_maintenance_state; then
+    maintenance_candidate_image_id=$($docker_bin image inspect --format '{{.Id}}' "$image") || fail \
+        "candidate router image is not available: $image"
+    require_static_routes_served
+    capture_maintenance_state
+    if ((${#maintenance_pending[@]} == 0)); then
         echo "Every slot already runs the candidate placement contract"
         fleet_status
         return 0
