@@ -105,13 +105,18 @@ func bodyPastTheSizeGate(t *testing.T) string {
 func TestDecodeDocumentWithoutUnreadFieldsLeavesTheArrayUndecoded(t *testing.T) {
 	body := []byte(bodyPastTheSizeGate(t))
 
-	allocations := testing.AllocsPerRun(20, func() {
+	skipped := testing.AllocsPerRun(20, func() {
 		if _, err := decodeDocumentWithoutUnreadFields(body); err != nil {
 			t.Error(err)
 		}
 	})
+	decoded := testing.AllocsPerRun(20, func() {
+		if _, err := decodeJSONDocument(body); err != nil {
+			t.Error(err)
+		}
+	})
 
-	require.Less(t, allocations, float64(500), "the prompt's 1000 ids were decoded one by one")
+	require.Less(t, skipped, decoded/4, "the prompt's ids were decoded one by one: %v vs %v", skipped, decoded)
 }
 
 // Each unread field on its own, in each place a host can put it, and then all of them at once.

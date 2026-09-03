@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"time"
 
@@ -62,6 +61,7 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Buffer(make([]byte, 0, defaultScannerBufferSize), completionapi.MaxSSELineBytes)
+	clientGone := false
 	for scanner.Scan() {
 		line := scanner.Text()
 
@@ -82,16 +82,15 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 
 		logging.Debug("Chunk to proxy", types.Inferences, "inference_id", inferenceId, "line", lineToProxy)
 
-		_, err := fmt.Fprintln(w, lineToProxy)
-		if err != nil {
-			if opErr, ok := err.(*net.OpError); ok {
-				logging.Warn("Stream cancelled during streaming", types.Inferences, "inferenceId", inferenceId, "error", opErr)
-				resp.Body.Close()
-				return opErr
-			}
-			logging.Error("Error while streaming response", types.Inferences, "inferenceId", inferenceId, "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return err
+		if clientGone {
+			continue
+		}
+		// The caller leaving does not undo the work: the rest of the stream is still read, stored and committed.
+		if _, err := fmt.Fprintln(w, lineToProxy); err != nil {
+			logging.Warn("The caller stopped reading, finishing the inference without it", types.Inferences,
+				"inferenceId", inferenceId, "error", err)
+			clientGone = true
+			continue
 		}
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()

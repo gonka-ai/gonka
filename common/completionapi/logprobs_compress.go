@@ -77,7 +77,7 @@ func decodeDocumentWithoutUnreadFields(payload []byte) (any, error) {
 	for key, value := range fields {
 		decoded, err := decodeJSONDocument(value)
 		if err != nil {
-			return nil, err
+			return decodeJSONDocument(payload)
 		}
 		document[key] = decoded
 	}
