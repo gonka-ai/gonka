@@ -468,10 +468,20 @@ func applySimulateHeadroom(v uint64, multiplier float64) uint64 {
 // when Simulate returned 0; a working sim is never raised back to the
 // static HardwareDiff floor.
 //
-
+// Default pad is 1.5× (original HardwareRelabelTests bar). Hosts can set
+// 1.2 via DAPI_CHAIN_NODE__TX_GAS_MULTIPLIER after
 // CountTXSimulateGasDecorator and UnorderedNonceSimGasDecorator meter the
 // Finalize-only KV that Simulate used to skip. If those wrappers go away
-// without the same metering in wasmd/SDK.
+// without the same metering in wasmd/SDK, 1.2 OOGs again (38_627 sim vs
+// 48_212 deliver) — fix the chain; do not treat 1.5 as a substitute for
+// the missing KV.
 func gasWantedFromSimulate(static, simulated uint64, multiplier float64) uint64 {
-	return applySimulateHeadroom(simulated, multiplier)
+	if simulated == 0 {
+		return static
+	}
+	withHeadroom := applySimulateHeadroom(simulated, multiplier)
+	if withHeadroom > BatchGasLimit {
+		return BatchGasLimit
+	}
+	return withHeadroom
 }
