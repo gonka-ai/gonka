@@ -62,7 +62,9 @@ start NEW child on a NEW port            ← old keeps serving
         │
         ▼
 wait NEW admin /ready == 200 and public /healthz == 2xx
-        │                               (VERSIOND_READY_TIMEOUT; abort keeps old)
+        │                               (VERSIOND_READY_TIMEOUT; initializing
+        │                                may extend to VERSIOND_READY_MAX_WAIT;
+        │                                abort keeps old)
         ▼
 atomic route swap → NEW Target           ← retire OLD Target
         │
@@ -211,12 +213,26 @@ Admin-capable children also allocate a second loopback admin port.
 `waitForChildServingReady` replaces TCP-only accept:
 
 - **Admin-capable:** admin `VERSIOND_READY_PATH` must return `200` **and**
-  public `/healthz` must return `2xx`, within `VERSIOND_READY_TIMEOUT`.
+  public `/healthz` must return `2xx`. The probe always waits at least
+  `VERSIOND_READY_TIMEOUT`. After that the wait extends up to
+  `VERSIOND_READY_MAX_WAIT` when:
+  - `/ready` is reachable and the body reports initializing (`ready: false`
+    and/or `storage_ready: false`, not draining), or
+  - `/ready` is absent (`404`/`405`/`501`) — older v3/v4 binaries never
+    registered the route (Echo's default for a missing path is `404`), so
+    there is no body to inspect and the original growing window applies.
+  An unreachable or draining endpoint fails at the short window so a hung
+  child is restarted promptly.
 - **Legacy (no admin API):** readiness probe on the public port with the
   documented `/ready` → `/healthz` → TCP fallback for the default path only.
+  A public `404` on `/ready` still uses that fallback; if fallback is not
+  ready either, the same growing window applies.
 
-Failure aborts the swap: new child is stopped; old keeps serving; next reconcile
-retries.
+The same gate is used for crash-restarts (`restart=true`) and for the
+rolling-swap path (`restart=false`). Failure aborts the swap: new child is
+stopped; old keeps serving; next reconcile retries. A child that later
+reaches `running` resets the short window so a post-crash hang is detected
+in `VERSIOND_READY_TIMEOUT` again.
 
 #### d) `downloadAndSwap` (blue/green + drain)
 
@@ -275,7 +291,8 @@ children but still waits for reap.
 | Env var | Default | Meaning |
 |---|---|---|
 | `VERSIOND_READY_PATH` | `/ready` | Admin readiness path; public `/healthz` must also pass for admin children |
-| `VERSIOND_READY_TIMEOUT` | `60s` | Max wait for incoming child before aborting swap |
+| `VERSIOND_READY_TIMEOUT` | `60s` | Initial readiness window; unreachable/hung children fail here on restart and on swap |
+| `VERSIOND_READY_MAX_WAIT` | `32m` | Cap while `/ready` reports initializing, or is absent (`404`) on older binaries; used on both the restart path and the rolling-swap path |
 | `VERSIOND_DRAIN_PATH` | `/drain` | POST path to put old child into drain mode |
 | `VERSIOND_DRAIN_STATUS_PATH` | `/drain/status` | Poll path for lifecycle inflight |
 | `VERSIOND_DRAIN_TIMEOUT` | `15m` | Shared deadline for proxy leases + child inflight before SIGTERM |
