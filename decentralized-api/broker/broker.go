@@ -129,17 +129,27 @@ type Broker struct {
 	curMaxNodesNum       atomic.Uint64
 	chainBridge          BrokerChainBridge
 	nodeWorkGroup        *NodeWorkGroup
-	phaseTracker         *chainphase.ChainPhaseTracker
-	participantInfo      participant.CurrenParticipantInfo
-	callbackUrl          string
-	mlNodeClientFactory  mlnodeclient.ClientFactory
-	reconcileTrigger     chan struct{}
-	lastEpochIndex       uint64
-	lastEpochPhase       types.EpochPhase
-	statusQueryTrigger   chan statusQuerySignal
-	configManager        *apiconfig.ConfigManager
-	lockMap              map[string]lockEntry
-	lockMapMu            sync.Mutex
+
+	// stop is closed by Stop() to shut down the background workers. The
+	// production process runs one broker for its lifetime, but programmatic
+	// callers (selfcheck, tests) construct and discard brokers, and leaked
+	// workers keep querying MLnodes and the chain after their broker is gone.
+	stop     chan struct{}
+	stopOnce sync.Once
+	// commandLoopDone is closed by processCommands once it has observed stop and
+	// torn down the per-node workers, so Stop can wait for that to finish.
+	commandLoopDone     chan struct{}
+	phaseTracker        *chainphase.ChainPhaseTracker
+	participantInfo     participant.CurrenParticipantInfo
+	callbackUrl         string
+	mlNodeClientFactory mlnodeclient.ClientFactory
+	reconcileTrigger    chan struct{}
+	lastEpochIndex      uint64
+	lastEpochPhase      types.EpochPhase
+	statusQueryTrigger  chan statusQuerySignal
+	configManager       *apiconfig.ConfigManager
+	lockMap             map[string]lockEntry
+	lockMapMu           sync.Mutex
 }
 
 type lockEntry struct {
@@ -341,6 +351,8 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 		statusQueryTrigger:   make(chan statusQuerySignal, 1),
 		configManager:        configManager,
 		lockMap:              make(map[string]lockEntry),
+		stop:                 make(chan struct{}),
+		commandLoopDone:      make(chan struct{}),
 	}
 
 	// Initialize NodeWorkGroup
@@ -353,6 +365,23 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 	go nodeStatusQueryWorker(broker)
 	go broker.reconcilerLoop()
 	return broker
+}
+
+// Stop shuts down the broker's background workers. Idempotent and safe to call
+// from any goroutine.
+//
+// Contract after Stop: QueueMessage returns ErrBrokerStopped rather than
+// accepting a command nobody will execute, and GetNodes returns that error
+// instead of blocking. Commands already queued are not drained, so a caller that
+// needs a command's result must await it before stopping. On return the
+// per-node workers have been shut down, so a throwaway broker (selfcheck, tests)
+// leaves no goroutines still querying MLnodes or the chain.
+//
+// Must not be called from the command loop itself: Stop waits for that loop to
+// finish tearing down the workers, which cannot happen while it is blocked here.
+func (b *Broker) Stop() {
+	b.stopOnce.Do(func() { close(b.stop) })
+	<-b.commandLoopDone
 }
 
 type statusQuerySignal struct {
@@ -392,15 +421,22 @@ func (b *Broker) LoadNodeToBroker(node *apiconfig.InferenceNodeConfig) chan Node
 func nodeSyncWorker(broker *Broker) {
 	ticker := time.NewTicker(60 * time.Second)
 	defer ticker.Stop()
-	for range ticker.C {
-		logging.Debug("Syncing nodes", types.Nodes)
-		if err := broker.QueueMessage(NewSyncNodesCommand()); err != nil {
-			logging.Error("Error syncing nodes", types.Nodes, "error", err)
+	for {
+		select {
+		case <-broker.stop:
+			return
+		case <-ticker.C:
+			logging.Debug("Syncing nodes", types.Nodes)
+			if err := broker.QueueMessage(NewSyncNodesCommand()); err != nil {
+				logging.Error("Error syncing nodes", types.Nodes, "error", err)
+			}
 		}
 	}
 }
 
 func (b *Broker) processCommands() {
+	// Signal Stop only after the per-node workers are torn down below.
+	defer close(b.commandLoopDone)
 	for {
 		select {
 		case command := <-b.highPriorityCommands:
@@ -411,6 +447,14 @@ func (b *Broker) processCommands() {
 				b.executeCommand(command)
 			case command := <-b.lowPriorityCommands:
 				b.executeCommand(command)
+			case <-b.stop:
+				// Shut down the per-node workers here, on the sole goroutine that
+				// submits to them, so teardown can never race a Submit into a
+				// closed channel. stop is already closed, so a draining worker's
+				// final QueueMessage returns ErrBrokerStopped instead of blocking
+				// on a queue this loop will no longer drain.
+				b.nodeWorkGroup.ShutdownAll()
+				return
 			}
 		}
 	}
@@ -456,12 +500,28 @@ type InvalidCommandError struct {
 	Message string
 }
 
+// ErrBrokerStopped is returned by QueueMessage after Stop() has been called.
+// Without it a queued command would be accepted (the channels are buffered) and
+// then never answered, so any caller awaiting a response — GetNodes, for
+// instance — would block forever with no error and no timeout.
+var ErrBrokerStopped = errors.New("broker is stopped")
+
 func (b *Broker) QueueMessage(command Command) error {
 	// Check validity of command. Primarily check all `Response` channels to make sure they
 	// support buffering, or else we could end up blocking the broker.
 	if command.GetResponseChannelCapacity() == 0 {
 		logging.Error("Message queued with unbuffered channel", types.Nodes, "command", reflect.TypeOf(command).String())
 		return errors.New("response channel must support buffering")
+	}
+
+	// Refuse once the command loop is gone. This is checked before the send
+	// rather than selected against b.stop alongside it, because the buffered
+	// channels would otherwise accept the command and leave the caller waiting
+	// on a response nobody will produce.
+	select {
+	case <-b.stop:
+		return ErrBrokerStopped
+	default:
 	}
 
 	switch command.(type) {
@@ -637,7 +697,15 @@ func (b *Broker) GetNodes() ([]NodeResponse, error) {
 	if err != nil {
 		return nil, err
 	}
-	nodes := <-command.Response
+	// Also select on b.stop: QueueMessage's check closes the common case, but a
+	// Stop() landing between that check and the command loop picking the command
+	// up would otherwise leave this receive waiting forever.
+	var nodes []NodeResponse
+	select {
+	case nodes = <-command.Response:
+	case <-b.stop:
+		return nil, ErrBrokerStopped
+	}
 
 	if nodes == nil {
 		return nil, errors.New("Error getting nodes")
@@ -854,6 +922,8 @@ func (b *Broker) reconcilerLoop() {
 
 	for {
 		select {
+		case <-b.stop:
+			return
 		case <-b.reconcileTrigger:
 			b.reconcileIfSynced("Reconciliation triggered manually")
 		case <-ticker.C:
@@ -1335,6 +1405,8 @@ func nodeStatusQueryWorker(broker *Broker) {
 	for {
 		bypassDebounce := false
 		select {
+		case <-broker.stop:
+			return
 		case <-ticker.C:
 			logging.Debug("nodeStatusQueryWorker triggered by ticker", types.Nodes)
 		case sig := <-broker.statusQueryTrigger:
