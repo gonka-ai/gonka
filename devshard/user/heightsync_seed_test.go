@@ -136,10 +136,17 @@ func setupSeedSession(t *testing.T, seedRPC []bool, opts ...SessionOption) *seed
 	return &seedEnv{session: session, peerTips: peerTips, slots: slots}
 }
 
-func TestSeed_SessionOpenStampsNonceOne(t *testing.T) {
-	// Cold-start seed primes ObservedHeightNow before the first outbound, so
-	// nonce 1's MsgHeartbeat carries the seeded height (spec §18.5).
-	// StartInference stamps are a later nonce and are not on this bump.
+// TestSeed_PrimesTheEnvelopeNotTheLog is where §18.5 (session-open seed) meets
+// §10.3.1 (a user stamp is F or absent).
+//
+// The seed is a real host-signed reading, and it does its job: the client can
+// anchor its request envelopes from the first exchange, which is what admission
+// and sync_state need. What it cannot do is put that height in Diff. A verifier
+// reading the log sees only the number; the Anchor that justified it never
+// entered the log, so a seeded stamp and an invented one are indistinguishable
+// there — and that is exactly the P1 hole. So the log waits for a host-signed
+// stamp of its own, and until then the cadence stays disarmed.
+func TestSeed_PrimesTheEnvelopeNotTheLog(t *testing.T) {
 	env := setupSeedSession(t, []bool{true, true, true})
 	ctx := context.Background()
 
@@ -156,20 +163,36 @@ func TestSeed_SessionOpenStampsNonceOne(t *testing.T) {
 	require.Empty(t, env.session.Diffs())
 
 	require.NoError(t, env.session.MaybeHeartbeat(ctx))
-	diffs := env.session.Diffs()
-	require.NotEmpty(t, diffs)
-	require.Equal(t, uint64(1), diffs[0].Nonce)
+	require.Empty(t, env.session.Diffs(),
+		"a seeded height is not F: it may ride the envelope, never the log")
+	require.Equal(t, 1, env.session.HeartbeatSkippedNoHeight())
+
+	// One inference, and the executor's own stamp sets F. Now the log has a
+	// height the verifier can attribute, and the heartbeat carries that.
+	_, err := env.session.SendInference(ctx, InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
+	})
+	require.NoError(t, err)
+	require.NoError(t, env.session.SendPendingDiff(ctx))
+	base := env.session.Nonce()
+
+	require.NoError(t, env.session.MaybeHeartbeat(ctx))
 	var hb *types.MsgHeartbeat
-	for _, tx := range diffs[0].Txs {
-		if inner := tx.GetHeartbeat(); inner != nil {
-			hb = inner
+	for _, d := range env.session.Diffs() {
+		if d.Nonce <= base {
+			continue
 		}
-		require.Nil(t, tx.GetStartInference(), "first outbound after seed is not an inference")
+		for _, tx := range d.Txs {
+			if inner := tx.GetHeartbeat(); inner != nil && hb == nil {
+				hb = inner
+			}
+		}
 	}
-	require.NotNil(t, hb)
+	require.NotNil(t, hb, "the first host stamp arms the cadence")
 	require.Equal(t, uint64(55), hb.ObservedHeight)
-	require.True(t, heightsync.StampPresent(hb.ObservedBlockHash), "seeded hash must ride the first heartbeat")
-	require.Equal(t, 0, env.session.HeartbeatSkippedNoHeight())
+	require.True(t, heightsync.StampPresent(hb.ObservedBlockHash),
+		"the floor's hash rides the heartbeat, so the stamp is checkable against the log")
 }
 
 func TestSeed_FanOutSurvivesDeadSlot(t *testing.T) {
@@ -229,7 +252,10 @@ func TestSeed_TotalMissDegradesNeverFails(t *testing.T) {
 }
 
 func TestSeed_DoesNotAdvanceHLastOrConsumeNonce(t *testing.T) {
-	// Seed is a transport read. Heartbeat obligation stays armed.
+	// Seed is a transport read: it proves nothing about the log, so it neither
+	// completes a turn nor discharges the obligation. The turn it owes simply
+	// cannot open yet, because there is no F to stamp — the obligation stays
+	// armed and the skip is counted rather than silently forgotten.
 	env := setupSeedSession(t, []bool{true, true, true})
 	env.session.SeedHeightSync(context.Background())
 
@@ -239,8 +265,10 @@ func TestSeed_DoesNotAdvanceHLastOrConsumeNonce(t *testing.T) {
 	require.False(t, env.session.HeartbeatTurnTracker().CompletedAtOrAbove(55))
 
 	require.NoError(t, env.session.MaybeHeartbeat(context.Background()))
-	require.NotEmpty(t, env.session.Diffs(), "seeded session that never worked still owes a turn within K_hb")
-	require.Equal(t, uint64(1), env.session.Diffs()[0].Nonce)
+	require.Empty(t, env.session.Diffs(), "a seeded height is not F and does not enter the log")
+	require.Equal(t, 1, env.session.HeartbeatSkippedNoHeight(),
+		"seeded session that never worked still owes a turn; it just has nothing to stamp yet")
+	require.Zero(t, env.session.HeartbeatTurnovers())
 }
 
 func TestSeed_DeclinedSlotsAreReprobed(t *testing.T) {

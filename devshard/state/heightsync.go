@@ -223,11 +223,9 @@ func (sm *StateMachine) observeHeightSyncLocked(nonce uint64, txs []*types.Devsh
 	// envelope to refuse. Letting admission feed the floor would give two honest
 	// verifiers different floors and therefore different L0 verdicts for every
 	// later diff — an escrow split. Floor updates therefore run only on apply.
-	if marks := sm.heightSyncFloor.Observe(nonce, sm.floorClaimsLocked(txs)); len(marks) > 0 {
-		sm.recordMarksLocked(marks)
-	}
+	sm.heightSyncFloor.Observe(nonce, sm.floorClaimsLocked(txs))
 	sm.state.HeightSyncLastCompletedHeight = sm.turnTracker.LastCompletedHeight()
-	sm.state.HeightSyncLatestTurnSeq = sm.turnTracker.MaxTurnSeq()
+	sm.state.HeightSyncLatestTurnStart = sm.turnTracker.LatestTurnStart()
 }
 
 // rebuildHeightSyncLocked reconstructs the turn tracker and floor.
@@ -239,10 +237,10 @@ func (sm *StateMachine) observeHeightSyncLocked(nonce uint64, txs []*types.Devsh
 // that rebuilt.
 func (sm *StateMachine) rebuildHeightSyncLocked(snapFloor *heightsync.FloorIndex) error {
 	savedLast := sm.state.HeightSyncLastCompletedHeight
-	savedSeq := sm.state.HeightSyncLatestTurnSeq
+	savedStart := sm.state.HeightSyncLatestTurnStart
 	slots := uint64(len(sm.state.Group))
 	tracker := heightsync.NewTurnTracker(slots, 0, sm.heartbeatCfg)
-	cfg := heightsync.FloorConfigFor(len(sm.state.Group), sm.heartbeatCfg)
+	cfg := heightsync.FloorConfig{}
 	emptyFloor := heightsync.NewFloorIndexWith(cfg)
 
 	install := func(floor *heightsync.FloorIndex, ready bool) {
@@ -250,7 +248,7 @@ func (sm *StateMachine) rebuildHeightSyncLocked(snapFloor *heightsync.FloorIndex
 		sm.heightSyncFloor = floor
 		sm.floorReady = ready
 		sm.state.HeightSyncLastCompletedHeight = savedLast
-		sm.state.HeightSyncLatestTurnSeq = savedSeq
+		sm.state.HeightSyncLatestTurnStart = savedStart
 	}
 
 	if sm.state.LatestNonce == 0 {
@@ -278,7 +276,7 @@ func (sm *StateMachine) rebuildHeightSyncLocked(snapFloor *heightsync.FloorIndex
 		if snapFloor == nil {
 			logging.Warn("heightsync: snapshot restore could not load diffs",
 				"escrow_id", sm.state.EscrowID, "error", err)
-			tracker.SeedCompleted(savedLast, savedSeq)
+			tracker.SeedCompleted(savedLast, savedStart)
 			install(emptyFloor, false)
 			return fmt.Errorf("%w: %v", types.ErrFloorNotRestored, err)
 		}
@@ -289,7 +287,7 @@ func (sm *StateMachine) rebuildHeightSyncLocked(snapFloor *heightsync.FloorIndex
 		return fmt.Errorf("%w: no inference store", types.ErrFloorNotRestored)
 	}
 
-	tracker.SeedCompleted(savedLast, savedSeq)
+	tracker.SeedCompleted(savedLast, savedStart)
 	cloned := snapFloor.Clone()
 	cloned.ApplyConfig(cfg)
 	install(cloned, true)
@@ -330,12 +328,13 @@ func (sm *StateMachine) floorClaimsLocked(txs []*types.DevshardTx) []heightsync.
 	return claims
 }
 
-// HeightSyncLatestTurnSeq is the highest turn_seq folded from Diff. RecoverSession
+// HeightSyncLatestTurnStart is the span-start nonce of the newest turn folded from
+// Diff. RecoverSession
 // restores the producer counter from this; it is derived and not hashed.
-func (sm *StateMachine) HeightSyncLatestTurnSeq() uint64 {
+func (sm *StateMachine) HeightSyncLatestTurnStart() uint64 {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
-	return sm.state.HeightSyncLatestTurnSeq
+	return sm.state.HeightSyncLatestTurnStart
 }
 
 // HeightSyncCloneTurnTracker returns a copy of the log-folded tracker so a
@@ -373,23 +372,23 @@ func (sm *StateMachine) HeightSyncArmingContext() (lastComplete uint64, degraded
 
 // HeightSyncMissingAcks is MissingAcksDue under the SM lock (stagger re-check),
 // keyed on h_last rather than a live oracle height.
-func (sm *StateMachine) HeightSyncMissingAcks(turnSeq uint64) []uint32 {
+func (sm *StateMachine) HeightSyncMissingAcks(turnStart uint64) []uint32 {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	if sm.turnTracker == nil {
 		return nil
 	}
-	return sm.turnTracker.MissingAcksDue(turnSeq, sm.turnTracker.LastCompletedHeight())
+	return sm.turnTracker.MissingAcksDue(turnStart, sm.turnTracker.LastCompletedHeight())
 }
 
 // HeightSyncTurnRecord is a copy of the verifier-computed turn, or nil.
-func (sm *StateMachine) HeightSyncTurnRecord(turnSeq uint64) *heightsync.SyncTurnRecord {
+func (sm *StateMachine) HeightSyncTurnRecord(turnStart uint64) *heightsync.SyncTurnRecord {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	if sm.turnTracker == nil {
 		return nil
 	}
-	return sm.turnTracker.Record(turnSeq)
+	return sm.turnTracker.Record(turnStart)
 }
 
 // HeightSyncMarks returns a copy of marks recorded on successful applyCore.

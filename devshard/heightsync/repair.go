@@ -35,7 +35,7 @@ var (
 
 // RepairRequest is the JSON body of POST .../heightsync/repair.
 type RepairRequest struct {
-	TurnSeq           uint64 `json:"turn_seq"`
+	TurnStart         uint64 `json:"turn_start"`
 	RefNonce          uint64 `json:"ref_nonce"`
 	RequesterSlot     uint32 `json:"requester_slot"`
 	ObservedHeight    uint64 `json:"observed_height"`
@@ -63,7 +63,7 @@ func CanonicalRepairRequestBytes(r *RepairRequest) ([]byte, error) {
 		return nil, ErrRepairEmpty
 	}
 	var body []byte
-	body = appendVarintField(body, 1, r.TurnSeq)
+	body = appendVarintField(body, 1, r.TurnStart)
 	body = appendVarintField(body, 2, r.RefNonce)
 	body = appendVarintField(body, 3, uint64(r.RequesterSlot))
 	body = appendVarintField(body, 4, r.ObservedHeight)

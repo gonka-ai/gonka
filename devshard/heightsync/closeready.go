@@ -15,12 +15,12 @@ type CloseReadyView interface {
 // UserTimeoutEvidence is retained silence toward this host. DegradedTurns
 // are context, not fraud.
 type UserTimeoutEvidence struct {
-	Slot                uint32
-	LastSignalHeight    uint64
-	ArmedAtHeight       uint64
-	LastUserHeightClaim uint64
-	LastCompleteTurnSeq uint64
-	DegradedTurns       []uint64
+	Slot                  uint32
+	LastSignalHeight      uint64
+	ArmedAtHeight         uint64
+	LastUserHeightClaim   uint64
+	LastCompleteTurnStart uint64
+	DegradedTurns         []uint64
 
 	// SilentFor is the measured silence that armed this host, and LastSignalAt
 	// its start. Arming is a local decision on a local clock, so these are
@@ -53,13 +53,13 @@ type CloseReady struct {
 	slot uint32
 	now  func() time.Time
 
-	contacted           bool
-	lastSignalAt        time.Time
-	lastSignalHeight    uint64
-	lastKnownHeight     uint64
-	lastUserHeightClaim uint64
-	lastCompleteTurnSeq uint64
-	degradedTurns       []uint64
+	contacted             bool
+	lastSignalAt          time.Time
+	lastSignalHeight      uint64
+	lastKnownHeight       uint64
+	lastUserHeightClaim   uint64
+	lastCompleteTurnStart uint64
+	degradedTurns         []uint64
 
 	armed         bool
 	armedAt       time.Time
@@ -120,13 +120,13 @@ func (c *CloseReady) NoteContact(hNow, userClaim uint64) {
 }
 
 // SetTurnContext copies turn-tracker facts into TimeoutEvidence.
-func (c *CloseReady) SetTurnContext(lastCompleteTurnSeq uint64, degraded []uint64) {
+func (c *CloseReady) SetTurnContext(lastCompleteTurnStart uint64, degraded []uint64) {
 	if c == nil {
 		return
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	c.lastCompleteTurnSeq = lastCompleteTurnSeq
+	c.lastCompleteTurnStart = lastCompleteTurnStart
 	c.degradedTurns = append([]uint64(nil), degraded...)
 }
 
@@ -221,15 +221,15 @@ func (c *CloseReady) TimeoutEvidence() UserTimeoutEvidence {
 		silent = end.Sub(c.lastSignalAt)
 	}
 	return UserTimeoutEvidence{
-		Slot:                c.slot,
-		LastSignalHeight:    c.lastSignalHeight,
-		ArmedAtHeight:       c.armedAtHeight,
-		LastUserHeightClaim: c.lastUserHeightClaim,
-		LastCompleteTurnSeq: c.lastCompleteTurnSeq,
-		DegradedTurns:       append([]uint64(nil), c.degradedTurns...),
-		LastSignalAt:        c.lastSignalAt,
-		ArmedAt:             c.armedAt,
-		SilentFor:           silent,
+		Slot:                  c.slot,
+		LastSignalHeight:      c.lastSignalHeight,
+		ArmedAtHeight:         c.armedAtHeight,
+		LastUserHeightClaim:   c.lastUserHeightClaim,
+		LastCompleteTurnStart: c.lastCompleteTurnStart,
+		DegradedTurns:         append([]uint64(nil), c.degradedTurns...),
+		LastSignalAt:          c.lastSignalAt,
+		ArmedAt:               c.armedAt,
+		SilentFor:             silent,
 	}
 }
 

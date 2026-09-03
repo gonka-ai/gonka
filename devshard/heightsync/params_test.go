@@ -107,7 +107,6 @@ func TestHeartbeatConfig_FromSnapshotZeroUsesDefaults(t *testing.T) {
 		"D_ack is log-pure: a snapshot must not change Late flags")
 	require.Equal(t, compiled.BlockTime, overlay.Config.BlockTime, "BlockTimeMs is ignored")
 	require.Equal(t, compiled.DeltaBlocks, overlay.Config.DeltaBlocks)
-	require.Equal(t, compiled.WindowBlocks, overlay.Config.WindowBlocks)
 	require.NoError(t, overlay.Config.Validate(heightsync.DefaultOriginatorFreshness))
 
 	explicit := heightsync.HeartbeatConfigFromSnapshot(commrc.Snapshot{
@@ -154,13 +153,22 @@ func TestDevshardTx_HeartbeatFieldNumbers(t *testing.T) {
 	reserved := md.ReservedRanges()
 	require.True(t, reserved.Has(12) && reserved.Has(13), "oneof numbers 12 and 13 must be reserved for cPoC")
 
-	hb := &types.MsgHeartbeat{TurnSeq: 1, ObservedHeight: 9, SlotsNum: 4, Reason: "quiet_session"}
-	ack := &types.MsgHeightAck{TurnSeq: 1, RefNonce: 10, SlotId: 2, ObservedHeight: 9, SyncState: types.SyncState_SYNCED}
+	hb := &types.MsgHeartbeat{ObservedHeight: 9, SlotsNum: 4, Reason: "quiet_session"}
+	ack := &types.MsgHeightAck{RefNonce: 10, SlotId: 2, ObservedHeight: 9, SyncState: types.SyncState_SYNCED}
 	raw, err := proto.Marshal(&types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: hb}})
 	require.NoError(t, err)
 	var decoded types.DevshardTx
 	require.NoError(t, proto.Unmarshal(raw, &decoded))
-	require.Equal(t, hb.TurnSeq, decoded.GetHeartbeat().GetTurnSeq())
+	require.Equal(t, hb.ObservedHeight, decoded.GetHeartbeat().GetObservedHeight())
+
+	// A turn is named by its span-start nonce, so neither message carries a turn
+	// id. Field 1 stays reserved on both so a sequencer-chosen one cannot return.
+	for _, name := range []string{"MsgHeartbeat", "MsgHeightAck"} {
+		msg := md.ParentFile().Messages().ByName(protoreflect.Name(name))
+		require.NotNil(t, msg, name)
+		require.Nil(t, msg.Fields().ByNumber(1), "%s field 1 must stay unused", name)
+		require.True(t, msg.ReservedRanges().Has(1), "%s field 1 must be reserved", name)
+	}
 
 	raw, err = proto.Marshal(&types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}})
 	require.NoError(t, err)

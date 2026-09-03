@@ -20,10 +20,13 @@ const (
 	MarkVectorContradiction MarkKind = "vector_contradiction"
 	MarkDeferredFail        MarkKind = "deferred_fail"
 	MarkAdmissionDelta      MarkKind = "l5a_admission"
-	// MarkFloorOutOfBand names a signer whose reference height no other party
-	// is within W_conf of. The floor does not follow such a claim, so this is
-	// how the attempt stays on the record instead of being a silent clamp.
-	MarkFloorOutOfBand MarkKind = "floor_out_of_band"
+	// MarkHeightUnbacked names a user-signed stamp (MsgHeartbeat /
+	// MsgStartInference) above F(m). The user holds no protocol oracle, so its
+	// only truthful stamp is the floor a host seeded; anything higher is a number
+	// it invented, and rule 3 keeps it out of F. L0 records it here and logs it at
+	// error level rather than rejecting the diff (§14 L0, §10.3.1). Turning this
+	// into a dispute signal is §18 work, not a verdict this plane can reach.
+	MarkHeightUnbacked MarkKind = "height_unbacked"
 )
 
 // AttributableMark is an append-only evidence record: kind, slot, turn_seq,
@@ -37,7 +40,7 @@ const (
 type AttributableMark struct {
 	Kind      MarkKind
 	Slot      uint32
-	TurnSeq   uint64
+	TurnStart uint64 // turn identity: span-start nonce
 	Nonce     uint64
 	Blob      []byte
 	Sig       []byte

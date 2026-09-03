@@ -224,6 +224,12 @@ func TestRecoverSession_EmptySession(t *testing.T) {
 	require.Equal(t, uint64(0), session.Nonce())
 }
 
+// setupRecoverableHeartbeatSession is the durable-store heartbeat fixture, and
+// like its in-memory counterpart it arrives with F already seeded: §10.3.1 gives
+// the cadence nothing to stamp until a host-signed stamp has landed, so a
+// recovery test that starts at nonce 0 would have no turns to recover. The
+// bootstrap inference occupies the first nonces, which is why these tests name
+// turns through turnStarts/nthTurn rather than counting from 1.
 func setupRecoverableHeartbeatSession(
 	t *testing.T,
 	store storage.Storage,
@@ -231,47 +237,9 @@ func setupRecoverableHeartbeatSession(
 	now *time.Time,
 ) (*Session, []types.SlotAssignment, []*signing.Secp256k1Signer, *signing.Secp256k1Signer) {
 	t.Helper()
-	const numHosts = 3
-	hosts := make([]*signing.Secp256k1Signer, numHosts)
-	for i := range hosts {
-		hosts[i] = testutil.MustGenerateKey(t)
-	}
-	user := testutil.MustGenerateKey(t)
-	group := testutil.MakeGroup(hosts)
-	config := testutil.DefaultConfig(numHosts)
-	verifier := signing.NewSecp256k1Verifier()
-
-	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
-		EscrowID:       "escrow-1",
-		Version:        testutil.RuntimeTestVersion,
-		CreatorAddr:    user.Address(),
-		Config:         config,
-		Group:          group,
-		InitialBalance: 100000,
-	}))
-
-	clients := make([]HostClient, numHosts)
-	for i := range hosts {
-		sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
-		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(100))
-		require.NoError(t, err)
-		clients[i] = &InProcessClient{Host: h}
-	}
-
-	userSM := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
-	session, err := NewSession(userSM, user, "escrow-1", group, clients, verifier,
-		WithStorage(store),
-		WithHeightSyncCadence(10, uint64(numHosts)),
-		WithObservedHeight(func() (uint64, []byte, bool) {
-			h := *height
-			if h == 0 {
-				return 0, nil, false
-			}
-			return h, []byte{0xaa}, true
-		}),
-		WithHeartbeatClock(func() time.Time { return *now }),
-	)
-	require.NoError(t, err)
+	session, group, hosts, user := setupRecoverableHeartbeatSessionWithOracles(
+		t, store, height, now, newSessionOracles(3, *height, []byte{0xaa}))
+	seedFloorByInference(t, session)
 	return session, group, hosts, user
 }
 
@@ -410,10 +378,68 @@ func recoverHeartbeatSession(
 	return session
 }
 
-func heartbeatTxForTurn(diffs []types.Diff, turnSeq uint64) *types.MsgHeartbeat {
+// heartbeatTxForTurn finds the heartbeat that opens the turn at turnStart. A
+// turn is named by the nonce its first heartbeat lands at, so that nonce is the
+// selector — nothing on the heartbeat itself names the turn.
+// turnStarts lists the identity of each turn in diffs — the nonce its span
+// opened at — oldest first.
+//
+// Turns are not numbered on the wire, so a test names one by the nonce the log
+// assigned it. The starts cannot be computed as 1, 1+slots, 1+2*slots: ack flush
+// rounds consume nonces between spans, so the gaps are not uniform.
+func turnStarts(diffs []types.Diff, slots uint64) []uint64 {
+	var starts []uint64
+	var openEnd uint64
 	for _, d := range diffs {
+		hasHB := false
 		for _, tx := range d.Txs {
-			if inner := tx.GetHeartbeat(); inner != nil && inner.TurnSeq == turnSeq {
+			if tx.GetHeartbeat() != nil {
+				hasHB = true
+				break
+			}
+		}
+		if !hasHB {
+			continue
+		}
+		if len(starts) > 0 && d.Nonce <= openEnd {
+			continue // joins the span already open
+		}
+		starts = append(starts, d.Nonce)
+		openEnd = d.Nonce + slots - 1
+	}
+	return starts
+}
+
+// nthTurn is the identity of the ordinal-th turn (1-based) in diffs, or 0 when
+// the log does not have that many turns. Zero is deliberate: callers asserting a
+// turn was never opened look it up the same way, and no turn is ever named 0.
+func nthTurn(diffs []types.Diff, slots, ordinal uint64) uint64 {
+	starts := turnStarts(diffs, slots)
+	if ordinal == 0 || ordinal > uint64(len(starts)) {
+		return 0
+	}
+	return starts[ordinal-1]
+}
+
+// lastTurn is the identity of the newest turn in diffs, or 0 if there is none.
+func lastTurn(diffs []types.Diff, slots uint64) uint64 {
+	starts := turnStarts(diffs, slots)
+	if len(starts) == 0 {
+		return 0
+	}
+	return starts[len(starts)-1]
+}
+
+func heartbeatTxForTurn(diffs []types.Diff, turnStart uint64) *types.MsgHeartbeat {
+	if turnStart == 0 {
+		return nil // no such turn; see nthTurn
+	}
+	for _, d := range diffs {
+		if d.Nonce != turnStart {
+			continue
+		}
+		for _, tx := range d.Txs {
+			if inner := tx.GetHeartbeat(); inner != nil {
 				return inner
 			}
 		}
@@ -421,7 +447,7 @@ func heartbeatTxForTurn(diffs []types.Diff, turnSeq uint64) *types.MsgHeartbeat 
 	return nil
 }
 
-func TestRecoverSession_HeartbeatContinuesTurnSeq(t *testing.T) {
+func TestRecoverSession_HeartbeatContinuesTurnStart(t *testing.T) {
 	store := newTestStore(t)
 	var height uint64 = 100
 	now := time.Unix(1000, 0).UTC()
@@ -431,28 +457,34 @@ func TestRecoverSession_HeartbeatContinuesTurnSeq(t *testing.T) {
 
 	for turn := uint64(1); turn <= 3; turn++ {
 		require.NoError(t, session.MaybeHeartbeat(ctx), "turn %d", turn)
-		rec := session.HeartbeatTurnTracker().Record(turn)
+		rec := session.HeartbeatTurnTracker().Latest()
 		require.NotNil(t, rec, "turn %d", turn)
 		require.Equal(t, heightsync.TurnComplete, rec.State, "turn %d", turn)
 		if turn < 3 {
 			now = now.Add(interval + time.Second)
 		}
 	}
-	require.Equal(t, uint64(3), session.StateMachine().HeightSyncLatestTurnSeq())
+	thirdTurn := lastTurn(session.Diffs(), 3)
+	require.Equal(t, thirdTurn, session.StateMachine().HeightSyncLatestTurnStart())
 	require.NoError(t, session.FlushSnapshot())
 	require.NoError(t, session.Close())
 
 	recovered := recoverHeartbeatSession(t, store, group, hosts, user, &height)
 	t.Cleanup(func() { _ = recovered.Close() })
 
-	require.Equal(t, uint64(3), recovered.StateMachine().HeightSyncLatestTurnSeq())
-	prev := recovered.HeartbeatTurnTracker().Record(3)
+	require.Equal(t, thirdTurn, recovered.StateMachine().HeightSyncLatestTurnStart(),
+		"recovery restores the turn identity the log assigned")
+	prev := recovered.HeartbeatTurnTracker().Latest()
 	require.NotNil(t, prev, "recovered producer must hold turn 3 before composing turn 4")
 	require.Equal(t, heightsync.TurnComplete, prev.State)
 
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	hb := heartbeatTxForTurn(recovered.Diffs(), 4)
-	require.NotNil(t, hb, "next heartbeat after recover must be turn_seq=4")
+	// recovered.Diffs() starts empty, so the turn just composed is the only one
+	// in it — the fourth of the session, and the first of this diff list.
+	hb := heartbeatTxForTurn(recovered.Diffs(), lastTurn(recovered.Diffs(), 3))
+	require.NotNil(t, hb, "recovery must compose a fresh turn")
+	require.Greater(t, lastTurn(recovered.Diffs(), 3), thirdTurn,
+		"the new turn opens after the span the third turn owned")
 	require.Len(t, hb.SyncVector, 3)
 	for i, ent := range hb.SyncVector {
 		require.Equal(t, types.AckStatus_ACKED, ent.Status, "slot %d", i)
@@ -465,6 +497,8 @@ func TestRecoverSession_HeartbeatPendingAckLossDoesNotDuplicateTurnOrStall(t *te
 	now := time.Unix(1000, 0).UTC()
 	session, group, hosts, user := setupRecoverableHeartbeatSession(t, store, &height, &now)
 	ctx := context.Background()
+	base := session.Nonce()
+	firstTurn := base + 1
 
 	span, err := session.composeHeartbeatSpan()
 	require.NoError(t, err)
@@ -472,9 +506,9 @@ func TestRecoverSession_HeartbeatPendingAckLossDoesNotDuplicateTurnOrStall(t *te
 	session.dispatchHeartbeatSpan(ctx, span)
 	require.Len(t, heightAcksInTxs(session.PendingTxs()), 3,
 		"host acks exist only in the recovered-away pending mempool before flush")
-	require.Equal(t, uint64(3), session.Nonce())
-	require.Equal(t, uint64(1), session.StateMachine().HeightSyncLatestTurnSeq())
-	require.Equal(t, heightsync.TurnOpen, session.HeartbeatTurnTracker().Record(1).State)
+	require.Equal(t, base+3, session.Nonce())
+	require.Equal(t, firstTurn, session.StateMachine().HeightSyncLatestTurnStart())
+	require.Equal(t, heightsync.TurnOpen, session.HeartbeatTurnTracker().Record(firstTurn).State)
 	require.NoError(t, session.Close())
 
 	recovered, _, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(),
@@ -488,27 +522,27 @@ func TestRecoverSession_HeartbeatPendingAckLossDoesNotDuplicateTurnOrStall(t *te
 	recovered.clock = func() time.Time { return recoveredAt }
 
 	require.Empty(t, recovered.PendingTxs(), "pending height acks are process-local and disappear on restart")
-	require.Equal(t, uint64(3), recovered.Nonce())
-	require.Equal(t, uint64(1), recovered.StateMachine().HeightSyncLatestTurnSeq())
-	require.Equal(t, heightsync.TurnOpen, recovered.HeartbeatTurnTracker().Record(1).State)
+	require.Equal(t, base+3, recovered.Nonce())
+	require.Equal(t, firstTurn, recovered.StateMachine().HeightSyncLatestTurnStart())
+	require.Equal(t, heightsync.TurnOpen, recovered.HeartbeatTurnTracker().Record(firstTurn).State)
 
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	require.Equal(t, uint64(3), recovered.Nonce(),
+	require.Equal(t, base+3, recovered.Nonce(),
 		"the recovered in-flight turn must suppress an immediate duplicate turn")
-	require.Len(t, heartbeatsForTurn(recovered.Diffs(), 1), 3)
-	require.Empty(t, heartbeatsForTurn(recovered.Diffs(), 2))
+	require.Len(t, heartbeatsForTurn(recovered.Diffs(), firstTurn, 3), 3)
+	require.Empty(t, heartbeatsForTurn(recovered.Diffs(), nthTurn(recovered.Diffs(), 3, 2), 3))
 
 	height = 101
 	recoveredAt = recoveredAt.Add(recovered.heartbeat.Config().TurnTimeout + time.Second)
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	require.GreaterOrEqual(t, recovered.Nonce(), uint64(6),
+	require.GreaterOrEqual(t, recovered.Nonce(), base+6,
 		"lost pre-flush acks must not permanently stall the heartbeat producer")
-	require.Len(t, heartbeatsForTurn(recovered.Diffs(), 1), 3,
-		"recovery must not replay or duplicate the abandoned turn_seq=1 span")
-	require.Len(t, heartbeatsForTurn(recovered.Diffs(), 2), 3,
-		"after TurnTimeout the producer may abandon the lost-ack turn and open turn_seq=2")
-	require.NotNil(t, recovered.HeartbeatTurnTracker().Record(2))
-	require.Equal(t, uint64(2), recovered.StateMachine().HeightSyncLatestTurnSeq())
+	require.Len(t, heartbeatsForTurn(recovered.Diffs(), firstTurn, 3), 3,
+		"recovery must not replay or duplicate the abandoned first span")
+	require.Len(t, heartbeatsForTurn(recovered.Diffs(), nthTurn(recovered.Diffs(), 3, 2), 3), 3,
+		"after TurnTimeout the producer may abandon the lost-ack turn and open the next one")
+	require.NotNil(t, recovered.HeartbeatTurnTracker().Latest())
+	require.Equal(t, lastTurn(recovered.Diffs(), 3), recovered.StateMachine().HeightSyncLatestTurnStart())
 }
 
 func TestRecoverSession_HeartbeatPartialPendingAckLossDoesNotStall(t *testing.T) {
@@ -517,6 +551,8 @@ func TestRecoverSession_HeartbeatPartialPendingAckLossDoesNotStall(t *testing.T)
 	now := time.Unix(1000, 0).UTC()
 	session, group, hosts, user := setupRecoverableHeartbeatSession(t, store, &height, &now)
 	ctx := context.Background()
+	base := session.Nonce()
+	firstTurn := base + 1
 
 	span, err := session.composeHeartbeatSpan()
 	require.NoError(t, err)
@@ -537,19 +573,19 @@ func TestRecoverSession_HeartbeatPartialPendingAckLossDoesNotStall(t *testing.T)
 	recovered.clock = func() time.Time { return recoveredAt }
 
 	require.Empty(t, recovered.PendingTxs())
-	require.Equal(t, uint64(3), recovered.Nonce())
-	require.Equal(t, uint64(1), recovered.StateMachine().HeightSyncLatestTurnSeq())
-	require.Equal(t, heightsync.TurnOpen, recovered.HeartbeatTurnTracker().Record(1).State)
+	require.Equal(t, base+3, recovered.Nonce())
+	require.Equal(t, firstTurn, recovered.StateMachine().HeightSyncLatestTurnStart())
+	require.Equal(t, heightsync.TurnOpen, recovered.HeartbeatTurnTracker().Record(firstTurn).State)
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	require.Equal(t, uint64(3), recovered.Nonce(), "open turn suppresses immediate duplicate span")
-	require.Empty(t, heartbeatsForTurn(recovered.Diffs(), 2))
+	require.Equal(t, base+3, recovered.Nonce(), "open turn suppresses immediate duplicate span")
+	require.Empty(t, heartbeatsForTurn(recovered.Diffs(), nthTurn(recovered.Diffs(), 3, 2), 3))
 
 	height = 101
 	recoveredAt = recoveredAt.Add(recovered.heartbeat.Config().TurnTimeout + time.Second)
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	require.Len(t, heartbeatsForTurn(recovered.Diffs(), 1), 3)
-	require.Len(t, heartbeatsForTurn(recovered.Diffs(), 2), 3)
-	require.Equal(t, uint64(2), recovered.StateMachine().HeightSyncLatestTurnSeq())
+	require.Len(t, heartbeatsForTurn(recovered.Diffs(), firstTurn, 3), 3)
+	require.Len(t, heartbeatsForTurn(recovered.Diffs(), nthTurn(recovered.Diffs(), 3, 2), 3), 3)
+	require.Equal(t, lastTurn(recovered.Diffs(), 3), recovered.StateMachine().HeightSyncLatestTurnStart())
 }
 
 func TestRecoverSession_HeartbeatPartialAckDurableLossReportsSyncVector(t *testing.T) {
@@ -558,6 +594,8 @@ func TestRecoverSession_HeartbeatPartialAckDurableLossReportsSyncVector(t *testi
 	now := time.Unix(1000, 0).UTC()
 	session, group, hosts, user := setupRecoverableHeartbeatSession(t, store, &height, &now)
 	ctx := context.Background()
+	base := session.Nonce()
+	firstTurn := base + 1
 
 	span, err := session.composeHeartbeatSpan()
 	require.NoError(t, err)
@@ -570,7 +608,7 @@ func TestRecoverSession_HeartbeatPartialAckDurableLossReportsSyncVector(t *testi
 	require.NoError(t, err)
 	require.Len(t, heightAcksInDiffs([]types.Diff{ackDiff}), 1,
 		"one ack reached durable diff before the remaining volatile acks were lost")
-	rec := session.HeartbeatTurnTracker().Record(1)
+	rec := session.HeartbeatTurnTracker().Record(firstTurn)
 	require.NotNil(t, rec)
 	require.Equal(t, heightsync.TurnOpen, rec.State)
 	require.NoError(t, session.Close())
@@ -585,15 +623,15 @@ func TestRecoverSession_HeartbeatPartialAckDurableLossReportsSyncVector(t *testi
 	recoveredAt := time.Now().Add(recovered.heartbeat.Config().TurnTimeout + time.Second)
 	recovered.clock = func() time.Time { return recoveredAt }
 
-	require.Equal(t, uint64(4), recovered.Nonce())
-	rec = recovered.HeartbeatTurnTracker().Record(1)
+	require.Equal(t, base+4, recovered.Nonce())
+	rec = recovered.HeartbeatTurnTracker().Record(firstTurn)
 	require.NotNil(t, rec)
 	require.Equal(t, heightsync.TurnOpen, rec.State)
 	require.Len(t, rec.Acks, 1)
 
 	height = 101
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	hb := heartbeatTxForTurn(recovered.Diffs(), 2)
+	hb := heartbeatTxForTurn(recovered.Diffs(), nthTurn(recovered.Diffs(), 3, 2))
 	require.NotNil(t, hb)
 	require.Len(t, hb.SyncVector, 3)
 	statuses := syncVectorStatuses(hb.SyncVector)
@@ -632,7 +670,7 @@ func TestRecoverSession_HeartbeatLateOldAckDoesNotCreditNewTurn(t *testing.T) {
 
 	height = 101
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	rec2Before := recovered.HeartbeatTurnTracker().Record(2)
+	rec2Before := recovered.HeartbeatTurnTracker().Latest()
 	require.NotNil(t, rec2Before)
 	require.NotEmpty(t, rec2Before.Acks)
 	rec2AcksBefore := ackNoncesBySlot(rec2Before)
@@ -648,9 +686,9 @@ func TestRecoverSession_HeartbeatLateOldAckDoesNotCreditNewTurn(t *testing.T) {
 	require.Empty(t, heightAcksInTxs(recovered.PendingTxs()),
 		"the late old ack was already recovered through catch-up and must not be queued again")
 	require.Equal(t, nonceAfterTurn2, recovered.Nonce())
-	rec2After := recovered.HeartbeatTurnTracker().Record(2)
+	rec2After := recovered.HeartbeatTurnTracker().Latest()
 	require.Equal(t, rec2AcksBefore, ackNoncesBySlot(rec2After),
-		"a late turn_seq=1 ack must not count as an ack for turn_seq=2")
+		"a late ack for the first turn must not count as an ack for the second")
 	rootAfter, err := recovered.StateMachine().ComputeStateRoot()
 	require.NoError(t, err)
 	require.Equal(t, rootBefore, rootAfter, "duplicate old ack must not change state root")
@@ -666,6 +704,8 @@ func TestRecoverSession_HeartbeatAckFlushPersistedBeforeHostCatchup(t *testing.T
 	now := time.Unix(1000, 0).UTC()
 	session, group, hosts, user := setupRecoverableHeartbeatSession(t, store, &height, &now)
 	ctx := context.Background()
+	base := session.Nonce()
+	firstTurn := base + 1
 
 	span, err := session.composeHeartbeatSpan()
 	require.NoError(t, err)
@@ -676,16 +716,16 @@ func TestRecoverSession_HeartbeatAckFlushPersistedBeforeHostCatchup(t *testing.T
 	ackDiff, ackHostIdx, err := session.composeDiffLocked(nil)
 	session.mu.Unlock()
 	require.NoError(t, err)
-	require.Equal(t, uint64(4), ackDiff.Nonce)
+	require.Equal(t, base+4, ackDiff.Nonce)
 	require.Len(t, heightAcksInDiffs([]types.Diff{ackDiff}), 3)
-	require.Equal(t, heightsync.TurnComplete, session.HeartbeatTurnTracker().Record(1).State)
+	require.Equal(t, heightsync.TurnComplete, session.HeartbeatTurnTracker().Record(firstTurn).State)
 	require.Less(t, session.hostSyncNonce[ackHostIdx], ackDiff.Nonce,
 		"the ack-flush diff is durable before the target host receives it")
 	require.NoError(t, session.Close())
 
 	recoveryClients := recoveryHeartbeatClients(t, group, hosts, user)
 	targetHost := recoveryClients[ackHostIdx].(*InProcessClient).Host
-	require.Equal(t, uint64(0), targetHost.LatestNonce(),
+	require.Zero(t, targetHost.LatestNonce(),
 		"fresh recovered host has not received the persisted ack-flush diff yet")
 
 	recovered, _, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(),
@@ -696,10 +736,10 @@ func TestRecoverSession_HeartbeatAckFlushPersistedBeforeHostCatchup(t *testing.T
 	recovered.SetHeightSyncCadence(10, uint64(len(hosts)))
 	recovered.SetObservedHeight(func() (uint64, []byte, bool) { return height, []byte{0xaa}, true })
 
-	require.Equal(t, uint64(4), recovered.Nonce())
+	require.Equal(t, base+4, recovered.Nonce())
 	require.Less(t, recovered.hostSyncNonce[ackHostIdx], ackDiff.Nonce,
 		"recovered cursor may still be behind the latest durable nonce")
-	require.Equal(t, heightsync.TurnComplete, recovered.HeartbeatTurnTracker().Record(1).State)
+	require.Equal(t, heightsync.TurnComplete, recovered.HeartbeatTurnTracker().Record(firstTurn).State)
 	rootBefore, err := recovered.StateMachine().ComputeStateRoot()
 	require.NoError(t, err)
 	diffCountBefore := len(recovered.Diffs())
@@ -707,7 +747,7 @@ func TestRecoverSession_HeartbeatAckFlushPersistedBeforeHostCatchup(t *testing.T
 	require.Equal(t, ackDiff.Nonce, recovered.hostSyncNonce[ackHostIdx])
 	require.Equal(t, ackDiff.Nonce, targetHost.LatestNonce(),
 		"catch-up must apply the persisted ack-flush diff to the lagging host")
-	require.Equal(t, uint64(4), recovered.Nonce(), "catch-up must not compose a duplicate ack-flush diff")
+	require.Equal(t, base+4, recovered.Nonce(), "catch-up must not compose a duplicate ack-flush diff")
 	require.Len(t, recovered.Diffs(), diffCountBefore, "catch-up replays existing diffs only")
 	rootAfter, err := recovered.StateMachine().ComputeStateRoot()
 	require.NoError(t, err)
@@ -715,12 +755,21 @@ func TestRecoverSession_HeartbeatAckFlushPersistedBeforeHostCatchup(t *testing.T
 	require.Empty(t, recovered.PendingTxs())
 }
 
-func TestRecoverSession_HeartbeatNoHeightWhileOpenDoesNotDuplicateThenRecovers(t *testing.T) {
+// A recovered producer whose courier view is blank still keeps the cadence, and
+// what it stamps is the floor.
+//
+// This used to be a "no observed height" test: the producer read its own view,
+// so losing that view stalled the turn. Since §10.3.1 the view is not a source
+// for the log at all — F is, and F is a fold of diffs, so recovery rebuilds it
+// from the store. A restarted sequencer that cannot reach any follower therefore
+// has nothing missing: it heartbeats on time, carrying a height its peers signed.
+func TestRecoverSession_BlindCourierStillHeartbeatsCarryingTheFloor(t *testing.T) {
 	store := newTestStore(t)
 	var height uint64 = 100
 	now := time.Unix(1000, 0).UTC()
 	session, group, hosts, user := setupRecoverableHeartbeatSession(t, store, &height, &now)
 	ctx := context.Background()
+	base := session.Nonce()
 
 	span, err := session.composeHeartbeatSpan()
 	require.NoError(t, err)
@@ -735,27 +784,30 @@ func TestRecoverSession_HeartbeatNoHeightWhileOpenDoesNotDuplicateThenRecovers(t
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
 	recovered.SetHeightSyncCadence(10, uint64(len(hosts)))
-	var recoveredHeight uint64
-	recovered.SetObservedHeight(func() (uint64, []byte, bool) {
-		if recoveredHeight == 0 {
-			return 0, nil, false
-		}
-		return recoveredHeight, []byte{0xaa}, true
-	})
-	recoveredAt := time.Now().Add(recovered.heartbeat.Config().TurnTimeout + time.Second)
+	recovered.SetObservedHeight(func() (uint64, []byte, bool) { return 0, nil, false })
+	recoveredAt := time.Now()
 	recovered.clock = func() time.Time { return recoveredAt }
 
-	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	require.Equal(t, uint64(3), recovered.Nonce(),
-		"without an observed height recovery must not invent a duplicate turn")
-	require.Empty(t, heartbeatsForTurn(recovered.Diffs(), 2))
-	require.Equal(t, 1, recovered.HeartbeatSkippedNoHeight())
+	floor, _, known := recovered.StateMachine().HeightSyncFloorAsOf(recovered.Nonce() + 1)
+	require.True(t, known, "the floor is a fold of the log and survives the restart")
+	require.Equal(t, uint64(100), floor)
 
-	recoveredHeight = 101
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	require.Len(t, heartbeatsForTurn(recovered.Diffs(), 2), 3,
-		"once height returns after timeout, the producer opens the next turn")
-	require.Equal(t, uint64(2), recovered.StateMachine().HeightSyncLatestTurnSeq())
+	require.Equal(t, base+3, recovered.Nonce(),
+		"the recovered in-flight turn still suppresses an immediate duplicate")
+	require.Empty(t, heartbeatsForTurn(recovered.Diffs(), nthTurn(recovered.Diffs(), 3, 2), 3))
+
+	recoveredAt = recoveredAt.Add(recovered.heartbeat.Config().TurnTimeout + time.Second)
+	require.NoError(t, recovered.MaybeHeartbeat(ctx))
+	secondTurn := nthTurn(recovered.Diffs(), 3, 2)
+	require.Len(t, heartbeatsForTurn(recovered.Diffs(), secondTurn, 3), 3,
+		"after TurnTimeout the next turn opens, blank courier view or not")
+	hb := heartbeatTxForTurn(recovered.Diffs(), secondTurn)
+	require.NotNil(t, hb)
+	require.Equal(t, uint64(100), hb.ObservedHeight, "the stamp is F, which no local view can move")
+	require.Zero(t, recovered.HeartbeatSkippedNoHeight(),
+		"a missing courier tip is not a missing height: F is what the cadence needs")
+	require.Equal(t, lastTurn(recovered.Diffs(), 3), recovered.StateMachine().HeightSyncLatestTurnStart())
 }
 
 func TestRecoverSession_SeedBeforeFirstDurableDiffStaysVolatile(t *testing.T) {
@@ -772,7 +824,7 @@ func TestRecoverSession_SeedBeforeFirstDurableDiffStaysVolatile(t *testing.T) {
 	}
 	require.Equal(t, uint64(0), session.Nonce())
 	require.Empty(t, session.Diffs())
-	require.Equal(t, uint64(0), session.StateMachine().HeightSyncLatestTurnSeq())
+	require.Equal(t, uint64(0), session.StateMachine().HeightSyncLatestTurnStart())
 	require.Equal(t, uint64(0), session.HeartbeatTurnTracker().LastCompletedHeight())
 	require.NoError(t, session.Close())
 
@@ -785,19 +837,22 @@ func TestRecoverSession_SeedBeforeFirstDurableDiffStaysVolatile(t *testing.T) {
 
 	require.Equal(t, uint64(0), recovered.Nonce())
 	require.Empty(t, recovered.Diffs())
-	require.Equal(t, uint64(0), recovered.StateMachine().HeightSyncLatestTurnSeq())
+	require.Equal(t, uint64(0), recovered.StateMachine().HeightSyncLatestTurnStart())
 	require.Equal(t, uint64(0), recovered.HeartbeatTurnTracker().LastCompletedHeight())
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
 	require.Equal(t, uint64(0), recovered.Nonce(), "recovery must not promote a pre-diff seed into durable height")
 	require.Equal(t, 1, recovered.HeartbeatSkippedNoHeight())
 
+	// Handing the producer a courier tip changes nothing, and that is the point.
+	// The seed was volatile and the log is empty, so there is no F; §10.3.1 leaves
+	// the producer with nothing it is allowed to stamp, and no turn opens. A
+	// restart cannot launder an off-log reading into logical time.
 	recovered.SetObservedHeight(func() (uint64, []byte, bool) { return 55, []byte{0xaa}, true })
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	hb := heartbeatTxForTurn(recovered.Diffs(), 1)
-	require.NotNil(t, hb, "the first durable heartbeat after seeded recovery must still be turn_seq=1")
-	require.Equal(t, uint64(55), hb.ObservedHeight)
-	require.Nil(t, heartbeatTxForTurn(recovered.Diffs(), 2))
-	require.Equal(t, uint64(1), recovered.StateMachine().HeightSyncLatestTurnSeq())
+	require.Equal(t, uint64(0), recovered.Nonce())
+	require.Empty(t, recovered.Diffs())
+	require.Equal(t, 2, recovered.HeartbeatSkippedNoHeight())
+	require.Equal(t, uint64(0), recovered.StateMachine().HeightSyncLatestTurnStart())
 }
 
 func TestRecoverSession_ChangedHeartbeatConfigAffectsFutureCadenceOnly(t *testing.T) {
@@ -807,10 +862,12 @@ func TestRecoverSession_ChangedHeartbeatConfigAffectsFutureCadenceOnly(t *testin
 	originalOracles := newSessionOracles(3, height, []byte{0xaa})
 	session, group, hosts, user := setupRecoverableHeartbeatSessionWithOracles(t, store, &height, &now, originalOracles)
 	ctx := context.Background()
+	seedFloorByInference(t, session)
+	firstTurn := session.Nonce() + 1
 
 	require.NoError(t, session.MaybeHeartbeat(ctx))
-	require.NotNil(t, heartbeatTxForTurn(session.Diffs(), 1))
-	require.Equal(t, heightsync.TurnComplete, session.HeartbeatTurnTracker().Record(1).State)
+	require.NotNil(t, heartbeatTxForTurn(session.Diffs(), firstTurn))
+	require.Equal(t, heightsync.TurnComplete, session.HeartbeatTurnTracker().Record(firstTurn).State)
 	rootBefore, err := session.StateMachine().ComputeStateRoot()
 	require.NoError(t, err)
 	require.NoError(t, session.Close())
@@ -842,19 +899,19 @@ func TestRecoverSession_ChangedHeartbeatConfigAffectsFutureCadenceOnly(t *testin
 	height = 101
 	setSessionOraclesHeight(recoveredOracles, height)
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	require.NotNil(t, heartbeatTxForTurn(recovered.Diffs(), 2))
-	require.Equal(t, heightsync.TurnComplete, recovered.HeartbeatTurnTracker().Record(2).State)
+	require.NotNil(t, heartbeatTxForTurn(recovered.Diffs(), nthTurn(recovered.Diffs(), 3, 2)))
+	require.Equal(t, heightsync.TurnComplete, recovered.HeartbeatTurnTracker().Latest().State)
 
 	now = now.Add(shortCfg.Interval - time.Millisecond)
 	height = 102
 	setSessionOraclesHeight(recoveredOracles, height)
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	require.Nil(t, heartbeatTxForTurn(recovered.Diffs(), 3),
+	require.Nil(t, heartbeatTxForTurn(recovered.Diffs(), nthTurn(recovered.Diffs(), 3, 3)),
 		"future producer decisions should still honor the recovered overlay interval")
 
 	now = now.Add(2 * time.Millisecond)
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
-	require.NotNil(t, heartbeatTxForTurn(recovered.Diffs(), 3),
+	require.NotNil(t, heartbeatTxForTurn(recovered.Diffs(), nthTurn(recovered.Diffs(), 3, 3)),
 		"after the recovered overlay interval elapses, the next turn should open")
 }
 
@@ -864,6 +921,7 @@ func TestRecoverSession_HostRestartLosesLocalHeartbeatAckMempool(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	session, group, hosts, user := setupRecoverableHeartbeatSession(t, store, &height, &now)
 	ctx := context.Background()
+	firstTurn := session.Nonce() + 1
 
 	span, err := session.composeHeartbeatSpan()
 	require.NoError(t, err)
@@ -871,20 +929,20 @@ func TestRecoverSession_HostRestartLosesLocalHeartbeatAckMempool(t *testing.T) {
 	targetHostIdx := span[0].hostIdx
 	targetClient := &dropHeightAckTurnClient{
 		HostClient: session.clients[targetHostIdx],
-		turnSeq:    1,
+		refNonce:   firstTurn,
 		slotID:     uint32(targetHostIdx),
 	}
 	session.clients[targetHostIdx] = targetClient
 
 	session.dispatchHeartbeatSpan(ctx, span)
 	require.True(t, targetClient.Dropped(),
-		"target host generated its turn-1 ack, but it was lost with the local host mempool")
+		"target host generated its ack for the first turn, but it was lost with the local host mempool")
 	require.Len(t, heightAcksInTxs(session.PendingTxs()), len(hosts)-1)
 
 	require.NoError(t, session.flushHeartbeatAckRounds(ctx))
 	require.Empty(t, session.PendingTxs())
-	require.Len(t, heightAcksForTurn(session.Diffs(), 1), len(hosts)-1)
-	rec1 := session.HeartbeatTurnTracker().Record(1)
+	require.Len(t, heightAcksForTurn(session.Diffs(), firstTurn, 3), len(hosts)-1)
+	rec1 := session.HeartbeatTurnTracker().Record(firstTurn)
 	require.NotNil(t, rec1)
 	require.Equal(t, heightsync.TurnComplete, rec1.State,
 		"the lost host-local ack should not keep quorum-complete turns stuck")
@@ -893,7 +951,7 @@ func TestRecoverSession_HostRestartLosesLocalHeartbeatAckMempool(t *testing.T) {
 	freshTarget := recoveryHeartbeatClients(t, group, hosts, user)[targetHostIdx]
 	restartedTarget := &dropHeightAckTurnClient{
 		HostClient: freshTarget,
-		turnSeq:    1,
+		refNonce:   firstTurn,
 		slotID:     uint32(targetHostIdx),
 	}
 	session.clients[targetHostIdx] = restartedTarget
@@ -910,7 +968,7 @@ func TestRecoverSession_HostRestartLosesLocalHeartbeatAckMempool(t *testing.T) {
 	height = 101
 	now = now.Add(session.heartbeat.Config().TurnTimeout + time.Second)
 	require.NoError(t, session.MaybeHeartbeat(ctx))
-	hb2 := heartbeatTxForTurn(session.Diffs(), 2)
+	hb2 := heartbeatTxForTurn(session.Diffs(), nthTurn(session.Diffs(), 3, 2))
 	require.NotNil(t, hb2)
 	statuses := syncVectorStatuses(hb2.SyncVector)
 	require.Equal(t, types.AckStatus_MISSING, statuses[targetHostIdx],
@@ -921,11 +979,11 @@ func TestRecoverSession_HostRestartLosesLocalHeartbeatAckMempool(t *testing.T) {
 		}
 		require.Equal(t, types.AckStatus_ACKED, statuses[slot], "slot %d", slot)
 	}
-	require.Len(t, heartbeatsForTurn(session.Diffs(), 1), len(hosts))
-	require.Len(t, heartbeatsForTurn(session.Diffs(), 2), len(hosts))
-	require.Empty(t, heartbeatsForTurn(session.Diffs(), 3))
-	require.Equal(t, uint64(2), session.StateMachine().HeightSyncLatestTurnSeq())
-	require.Equal(t, heightsync.TurnComplete, session.HeartbeatTurnTracker().Record(2).State)
+	require.Len(t, heartbeatsForTurn(session.Diffs(), firstTurn, 3), len(hosts))
+	require.Len(t, heartbeatsForTurn(session.Diffs(), nthTurn(session.Diffs(), 3, 2), 3), len(hosts))
+	require.Empty(t, heartbeatsForTurn(session.Diffs(), nthTurn(session.Diffs(), 3, 3), 3))
+	require.Equal(t, lastTurn(session.Diffs(), 3), session.StateMachine().HeightSyncLatestTurnStart())
+	require.Equal(t, heightsync.TurnComplete, session.HeartbeatTurnTracker().Latest().State)
 	require.Empty(t, session.PendingTxs())
 }
 
@@ -951,11 +1009,12 @@ func TestRecoverSession_LateAckAfterTurnPruneComposesAndApplies(t *testing.T) {
 	}))
 
 	sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
-	finalNonce := heightsync.DefaultTurnRetain + 5
+	// Each turn owns numHosts consecutive nonces, so clearing the retain window
+	// takes that many diffs per turn.
+	finalNonce := (heightsync.DefaultTurnRetain + 5) * numHosts
 	for nonce := uint64(1); nonce <= finalNonce; nonce++ {
 		txs := []*types.DevshardTx{{
 			Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-				TurnSeq:  nonce,
 				SlotsNum: numHosts,
 				Reason:   "quiet_session",
 			}},
@@ -980,13 +1039,14 @@ func TestRecoverSession_LateAckAfterTurnPruneComposesAndApplies(t *testing.T) {
 	t.Cleanup(func() { _ = recovered.Close() })
 	require.Equal(t, finalNonce, recovered.Nonce())
 	recTracker := recovered.HeartbeatTurnTracker()
+	latestBefore := recTracker.LatestTurnStart()
+	require.NotZero(t, latestBefore)
 	require.Nil(t, recTracker.Record(1), "snapshot/recover should keep turn 1 pruned")
 	seq, ok = recTracker.HeartbeatTurn(1)
 	require.True(t, ok, "recovered heartbeatAt should still admit late acks for pruned turns")
 	require.Equal(t, uint64(1), seq)
 
 	ack := &types.MsgHeightAck{
-		TurnSeq:           1,
 		RefNonce:          1,
 		SlotId:            0,
 		ObservedHeight:    50,
@@ -1011,15 +1071,15 @@ func TestRecoverSession_LateAckAfterTurnPruneComposesAndApplies(t *testing.T) {
 	require.Len(t, heightAcksInDiffs([]types.Diff{lateAckDiff}), 1)
 	require.Equal(t, finalNonce+1, recovered.Nonce())
 	require.Empty(t, recovered.PendingTxs())
-	require.Len(t, heightAcksForTurn(recovered.Diffs(), 1), 1)
+	require.Len(t, heightAcksForTurn(recovered.Diffs(), 1, 3), 1)
 	recTracker = recovered.HeartbeatTurnTracker()
 	require.Nil(t, recTracker.Record(1), "late ack must not unprune or pin an old turn record")
 	seq, ok = recTracker.HeartbeatTurn(1)
 	require.True(t, ok)
 	require.Equal(t, uint64(1), seq)
-	require.Equal(t, finalNonce, recTracker.MaxTurnSeq(),
-		"late ack for a pruned old turn must not rewind or advance max turn_seq")
-	require.Equal(t, finalNonce, recovered.StateMachine().HeightSyncLatestTurnSeq())
+	require.Equal(t, latestBefore, recTracker.LatestTurnStart(),
+		"late ack for a pruned old turn must not rewind or advance the newest turn")
+	require.Equal(t, latestBefore, recovered.StateMachine().HeightSyncLatestTurnStart())
 }
 
 func TestRecoverSession_OpenTurnRepairProbeStateIsVolatile(t *testing.T) {
@@ -1071,11 +1131,14 @@ func TestRecoverSession_OpenTurnRepairProbeStateIsVolatile(t *testing.T) {
 
 	cfg := heightsync.DefaultHeartbeatConfig()
 	timeoutHeight := uint64(100) + cfg.AckDeadlineBlocks + 1
-	appendHeartbeatDiff(t, store, recSM, user, 2, 2, timeoutHeight)
+	appendHeartbeatAndHostAckDiff(t, store, recSM, user, hosts[0], 2, timeoutHeight)
 	rec = recSM.HeightSyncTurnRecord(1)
 	require.NotNil(t, rec)
 	require.Equal(t, heightsync.TurnDegraded, rec.State)
-	require.ElementsMatch(t, []uint32{0, 1, 2}, recSM.HeightSyncMissingAcks(1))
+	// The heartbeat landed at nonce 2, inside the span turn 1 owns, so it joined
+	// that turn and its ack credits slot 0 there rather than opening a turn of
+	// its own. Slots 1 and 2 are the ones still owed.
+	require.ElementsMatch(t, []uint32{1, 2}, recSM.HeightSyncMissingAcks(1))
 	require.NotEmpty(t, recSM.HeightSyncRepairDue())
 
 	recoveredHost, err := host.NewHost(recSM, hosts[0], stub.NewInferenceEngine(), "escrow-1", group, nil,
@@ -1088,7 +1151,7 @@ func TestRecoverSession_OpenTurnRepairProbeStateIsVolatile(t *testing.T) {
 
 	var probes atomic.Int64
 	recoveredHost.SetRepairProbe(func(ctx context.Context, targetSlot uint32, req *heightsync.RepairRequest) (*heightsync.RepairResponse, error) {
-		require.Equal(t, uint64(1), req.TurnSeq)
+		require.Equal(t, uint64(1), req.TurnStart)
 		require.NotEqual(t, uint32(0), targetSlot, "host must not probe its own missing slot")
 		probes.Add(1)
 		return nil, context.DeadlineExceeded
@@ -1131,7 +1194,6 @@ func TestRecoverSession_ReplayWithoutEnvelopeAfterEdgeMarkIsDeterministic(t *tes
 	ackTxs := make([]*types.DevshardTx, 0, len(hosts))
 	for slot := range hosts {
 		ack := &types.MsgHeightAck{
-			TurnSeq:           1,
 			RefNonce:          1,
 			SlotId:            uint32(slot),
 			ObservedHeight:    250,
@@ -1188,22 +1250,39 @@ func TestRecoverSession_ReplayWithoutEnvelopeAfterEdgeMarkIsDeterministic(t *tes
 	require.Equal(t, recSM.HeightSyncMarks(), offlineSM.HeightSyncMarks())
 }
 
-func TestRecoverSession_HeartbeatEmptyStartsAtTurnOne(t *testing.T) {
+// A recovered empty log has no turns behind it and, under §10.3.1, none ahead of
+// it either until a host stamp arrives: F does not exist, so the producer has no
+// height it is allowed to write. Once one inference seeds F the first turn opens,
+// named by the nonce its span lands at.
+func TestRecoverSession_EmptyLogWaitsForTheFirstHostStamp(t *testing.T) {
 	store := newTestStore(t)
 	var height uint64 = 100
 	now := time.Unix(1000, 0).UTC()
-	session, group, hosts, user := setupRecoverableHeartbeatSession(t, store, &height, &now)
+	session, group, hosts, user := setupRecoverableHeartbeatSessionWithOracles(
+		t, store, &height, &now, newSessionOracles(3, height, []byte{0xaa}))
 	require.Equal(t, uint64(0), session.Nonce())
 	require.NoError(t, session.Close())
 
-	recovered := recoverHeartbeatSession(t, store, group, hosts, user, &height)
+	recovered, _, err := RecoverSession(store, user, signing.NewSecp256k1Verifier(),
+		"escrow-1", testutil.RuntimeTestVersion, group,
+		recoveryHeartbeatClientsWithOracles(t, group, hosts, user,
+			newSessionOracles(len(hosts), height, []byte{0xaa})))
+	require.NoError(t, err)
 	t.Cleanup(func() { _ = recovered.Close() })
-	require.Equal(t, uint64(0), recovered.StateMachine().HeightSyncLatestTurnSeq())
+	recovered.SetHeightSyncCadence(10, uint64(len(hosts)))
+	recovered.SetObservedHeight(func() (uint64, []byte, bool) { return height, []byte{0xaa}, true })
+	require.Equal(t, uint64(0), recovered.StateMachine().HeightSyncLatestTurnStart())
 
-	require.NoError(t, recovered.MaybeHeartbeat(context.Background()))
-	hb := heartbeatTxForTurn(recovered.Diffs(), 1)
-	require.NotNil(t, hb)
-	require.Nil(t, heartbeatTxForTurn(recovered.Diffs(), 2))
+	ctx := context.Background()
+	require.NoError(t, recovered.MaybeHeartbeat(ctx))
+	require.Empty(t, recovered.Diffs(), "no floor to stamp: the cadence cannot open a turn yet")
+	require.Equal(t, 1, recovered.HeartbeatSkippedNoHeight())
+
+	seedFloorByInference(t, recovered)
+	firstTurn := recovered.Nonce() + 1
+	require.NoError(t, recovered.MaybeHeartbeat(ctx))
+	require.NotNil(t, heartbeatTxForTurn(recovered.Diffs(), firstTurn))
+	require.Nil(t, heartbeatTxForTurn(recovered.Diffs(), nthTurn(recovered.Diffs(), 3, 2)))
 }
 
 func recoveryHeartbeatClients(
@@ -1258,9 +1337,9 @@ type seededInProcessClient struct {
 
 type dropHeightAckTurnClient struct {
 	HostClient
-	dropped atomic.Bool
-	turnSeq uint64
-	slotID  uint32
+	dropped  atomic.Bool
+	refNonce uint64
+	slotID   uint32
 }
 
 func (c *dropHeightAckTurnClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
@@ -1271,7 +1350,7 @@ func (c *dropHeightAckTurnClient) Send(ctx context.Context, req host.HostRequest
 	filtered := resp.Mempool[:0]
 	for _, tx := range resp.Mempool {
 		ack := tx.GetHeightAck()
-		if ack != nil && ack.TurnSeq == c.turnSeq && ack.SlotId == c.slotID {
+		if ack != nil && ack.RefNonce == c.refNonce && ack.SlotId == c.slotID {
 			c.dropped.Store(true)
 			continue
 		}
@@ -1312,6 +1391,44 @@ func setSessionOraclesHeight(oracles []*sessionOracle, height uint64) {
 	}
 }
 
+// appendHeartbeatAndHostAckDiff opens an unstamped heartbeat turn (HReq=0, so
+// it is not repair-due) and lands a host-signed ack at ackHeight so hNow can
+// close a prior turn's D_ack window.
+func appendHeartbeatAndHostAckDiff(
+	t *testing.T,
+	store storage.Storage,
+	sm *state.StateMachine,
+	user *signing.Secp256k1Signer,
+	hostSigner *signing.Secp256k1Signer,
+	nonce, ackHeight uint64,
+) types.Diff {
+	t.Helper()
+	ack := &types.MsgHeightAck{
+		RefNonce:          nonce,
+		SlotId:            0,
+		ObservedHeight:    ackHeight,
+		ObservedBlockHash: []byte{0xaa},
+		SyncState:         types.SyncState_SYNCED,
+		PeerSeen:          []byte{0xff},
+	}
+	require.NoError(t, heightsync.SignAck(hostSigner, ack))
+	txs := []*types.DevshardTx{
+		{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			SlotsNum: uint64(len(sm.SnapshotState().Group)),
+			Reason:   "quiet_session",
+		}}},
+		{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}},
+	}
+	root, applied, err := sm.ApplyLocalBestEffort(nonce, txs)
+	require.NoError(t, err)
+	require.Len(t, applied, 2)
+	diff := testutil.SignDiffWithRoot(t, user, "escrow-1", nonce, applied, root)
+	if store != nil {
+		require.NoError(t, store.AppendDiff("escrow-1", types.DiffRecord{Diff: diff, StateHash: root}))
+	}
+	return diff
+}
+
 func appendHeartbeatDiff(
 	t *testing.T,
 	store storage.Storage,
@@ -1324,7 +1441,6 @@ func appendHeartbeatDiff(
 	t.Helper()
 	txs := []*types.DevshardTx{{
 		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-			TurnSeq:           turnSeq,
 			ObservedHeight:    height,
 			ObservedBlockHash: []byte{0xaa},
 			SlotsNum:          uint64(len(sm.SnapshotState().Group)),
@@ -1351,11 +1467,19 @@ func heightAcksInTxs(txs []*types.DevshardTx) []*types.MsgHeightAck {
 	return out
 }
 
-func heartbeatsForTurn(diffs []types.Diff, turnSeq uint64) []*types.MsgHeartbeat {
+// heartbeatsForTurn collects the heartbeats of the turn whose span starts at
+// turnStart, i.e. those landing in [turnStart, turnStart+slots).
+func heartbeatsForTurn(diffs []types.Diff, turnStart, slots uint64) []*types.MsgHeartbeat {
+	if turnStart == 0 {
+		return nil // no such turn; see nthTurn
+	}
 	var out []*types.MsgHeartbeat
 	for _, d := range diffs {
+		if d.Nonce < turnStart || d.Nonce >= turnStart+slots {
+			continue
+		}
 		for _, tx := range d.Txs {
-			if hb := tx.GetHeartbeat(); hb != nil && hb.TurnSeq == turnSeq {
+			if hb := tx.GetHeartbeat(); hb != nil {
 				out = append(out, hb)
 			}
 		}
@@ -1363,11 +1487,15 @@ func heartbeatsForTurn(diffs []types.Diff, turnSeq uint64) []*types.MsgHeartbeat
 	return out
 }
 
-func heightAcksForTurn(diffs []types.Diff, turnSeq uint64) []*types.MsgHeightAck {
+// heightAcksForTurn collects the acks answering the turn whose span starts at
+// turnStart. An ack names its turn through ref_nonce, which is a nonce inside
+// that span.
+func heightAcksForTurn(diffs []types.Diff, turnStart, slots uint64) []*types.MsgHeightAck {
 	var out []*types.MsgHeightAck
 	for _, d := range diffs {
 		for _, tx := range d.Txs {
-			if ack := tx.GetHeightAck(); ack != nil && ack.TurnSeq == turnSeq {
+			if ack := tx.GetHeightAck(); ack != nil &&
+				ack.RefNonce >= turnStart && ack.RefNonce < turnStart+slots {
 				out = append(out, ack)
 			}
 		}
@@ -1631,6 +1759,7 @@ func TestRecoverSession_SnapshotOnly_RestoresPendingTxDedupKeys(t *testing.T) {
 	now := time.Unix(1000, 0).UTC()
 	session, group, hosts, user := setupRecoverableHeartbeatSession(t, store, &height, &now)
 	ctx := context.Background()
+	base := session.Nonce()
 
 	span, err := session.composeHeartbeatSpan()
 	require.NoError(t, err)
@@ -1644,7 +1773,7 @@ func TestRecoverSession_SnapshotOnly_RestoresPendingTxDedupKeys(t *testing.T) {
 	}
 	session.mu.Unlock()
 	require.NoError(t, err)
-	require.Equal(t, uint64(4), ackDiff.Nonce)
+	require.Equal(t, base+4, ackDiff.Nonce)
 	acks := heightAcksInDiffs([]types.Diff{ackDiff})
 	require.Len(t, acks, 3)
 	require.NoError(t, session.FlushSnapshot())

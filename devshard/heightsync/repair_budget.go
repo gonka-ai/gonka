@@ -2,6 +2,7 @@ package heightsync
 
 import (
 	"context"
+	"slices"
 	"sync"
 	"time"
 )
@@ -142,9 +143,9 @@ func ProbeStagger(vSlot, j, slotsNum uint32, d time.Duration) time.Duration {
 	return time.Duration(diff) * d
 }
 
-// Begin decides whether to wait-then-probe slot j of turnSeq.
+// Begin decides whether to wait-then-probe slot j of turnStart.
 // Armed stops the whole prober: callers should not continue the loop.
-func (b *RepairBudget) Begin(turnSeq uint64, slot uint32, armed bool) (delay time.Duration, skip RepairSkip) {
+func (b *RepairBudget) Begin(turnStart uint64, slot uint32, armed bool) (delay time.Duration, skip RepairSkip) {
 	if b == nil {
 		return 0, RepairSkipBudget
 	}
@@ -158,7 +159,7 @@ func (b *RepairBudget) Begin(turnSeq uint64, slot uint32, armed bool) (delay tim
 		b.counts[string(RepairSkipOwnSlot)]++
 		return 0, RepairSkipOwnSlot
 	}
-	key := turnSlot{turn: turnSeq, slot: slot}
+	key := turnSlot{turn: turnStart, slot: slot}
 	if _, ok := b.probed[key]; ok {
 		b.counts[string(RepairSkipProbed)]++
 		return 0, RepairSkipProbed
@@ -173,7 +174,7 @@ func (b *RepairBudget) Begin(turnSeq uint64, slot uint32, armed bool) (delay tim
 		IncRepairProbe(string(RepairSkipBudget))
 		return 0, RepairSkipBudget
 	}
-	b.pruneLocked(turnSeq)
+	b.pruneLocked()
 	return ProbeStagger(b.vSlot, slot, b.slotsNum, b.cfg.Stagger), RepairSkipNone
 }
 
@@ -218,14 +219,14 @@ func (b *RepairBudget) Sleep(ctx context.Context, delay time.Duration) error {
 
 // AfterWait re-checks ack-in-Diff after the stagger. A landed ack spends no
 // unicast and still consumes the (turn, slot) probe slot so we do not retry.
-func (b *RepairBudget) AfterWait(turnSeq uint64, slot uint32, ackLanded bool) RepairSkip {
+func (b *RepairBudget) AfterWait(turnStart uint64, slot uint32, ackLanded bool) RepairSkip {
 	if b == nil {
 		return RepairSkipBudget
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
 	if ackLanded {
-		b.probed[turnSlot{turn: turnSeq, slot: slot}] = struct{}{}
+		b.probed[turnSlot{turn: turnStart, slot: slot}] = struct{}{}
 		b.counts[string(RepairSkipAckLanded)]++
 		IncRepairProbe(string(RepairSkipAckLanded))
 		return RepairSkipAckLanded
@@ -235,17 +236,17 @@ func (b *RepairBudget) AfterWait(turnSeq uint64, slot uint32, ackLanded bool) Re
 
 // Record stores a unicast outcome. HEIGHT / UNREACHABLE consume R_max.
 // UNREACHABLE starts exponential backoff for slot j.
-func (b *RepairBudget) Record(turnSeq uint64, slot uint32, outcome string) {
+func (b *RepairBudget) Record(turnStart uint64, slot uint32, outcome string) {
 	if b == nil {
 		return
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.probed[turnSlot{turn: turnSeq, slot: slot}] = struct{}{}
+	b.probed[turnSlot{turn: turnStart, slot: slot}] = struct{}{}
 	b.probesInWindow++
 	b.counts[outcome]++
 	IncRepairProbe(outcome)
-	b.pruneLocked(turnSeq)
+	b.pruneLocked()
 	if outcome != RepairOutcomeUnreachable {
 		return
 	}
@@ -269,26 +270,41 @@ func (b *RepairBudget) rollWindowLocked() {
 	}
 }
 
-// Prune drops (turn, slot) entries older than DefaultTurnRetain behind maxTurnSeq.
-func (b *RepairBudget) Prune(maxTurnSeq uint64) {
+// retainedTurnCutoff is the oldest turn id to keep so that at most
+// DefaultTurnRetain distinct turns survive.
+//
+// Turn ids are span-start nonces, so retention has to count turns instead of
+// subtracting from the newest id. Nonces advance by a whole span (and by any
+// interleaved traffic) per turn, so "newest - 64" would have kept a handful of
+// turns rather than 64.
+func retainedTurnCutoff(turns map[turnSlot]struct{}) uint64 {
+	seen := make(map[uint64]struct{}, len(turns))
+	for k := range turns {
+		seen[k.turn] = struct{}{}
+	}
+	if uint64(len(seen)) <= DefaultTurnRetain {
+		return 0
+	}
+	starts := make([]uint64, 0, len(seen))
+	for start := range seen {
+		starts = append(starts, start)
+	}
+	slices.Sort(starts)
+	return starts[uint64(len(starts))-DefaultTurnRetain]
+}
+
+// Prune keeps (turn, slot) entries for the newest DefaultTurnRetain turns.
+func (b *RepairBudget) Prune() {
 	if b == nil {
 		return
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.pruneLocked(maxTurnSeq)
+	b.pruneLocked()
 }
 
-func (b *RepairBudget) pruneLocked(maxTurnSeq uint64) {
-	for k := range b.probed {
-		if k.turn > maxTurnSeq {
-			maxTurnSeq = k.turn
-		}
-	}
-	var cutoff uint64
-	if maxTurnSeq > DefaultTurnRetain {
-		cutoff = maxTurnSeq - DefaultTurnRetain
-	}
+func (b *RepairBudget) pruneLocked() {
+	cutoff := retainedTurnCutoff(b.probed)
 	for k := range b.probed {
 		if k.turn < cutoff {
 			delete(b.probed, k)
@@ -369,13 +385,13 @@ func (b *RepairResponderBudget) Count(outcome string) int {
 // Allow reports whether this (turn, requester) may spend an oracle read.
 // Unknown-turn rejection is the caller's job and must happen first so a
 // flood of invented turn_seqs never reaches here.
-func (b *RepairResponderBudget) Allow(turnSeq uint64, requesterSlot uint32) bool {
+func (b *RepairResponderBudget) Allow(turnStart uint64, requesterSlot uint32) bool {
 	if b == nil {
 		return true
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	key := turnSlot{turn: turnSeq, slot: requesterSlot}
+	key := turnSlot{turn: turnStart, slot: requesterSlot}
 	if _, ok := b.served[key]; ok {
 		b.counts[string(RepairSkipProbed)]++
 		return false
@@ -388,7 +404,7 @@ func (b *RepairResponderBudget) Allow(turnSeq uint64, requesterSlot uint32) bool
 	b.served[key] = struct{}{}
 	b.responsesInWindow++
 	b.counts[RepairOutcomeHeight]++
-	b.pruneLocked(turnSeq)
+	b.pruneLocked()
 	return true
 }
 
@@ -400,16 +416,8 @@ func (b *RepairResponderBudget) rollWindowLocked() {
 	}
 }
 
-func (b *RepairResponderBudget) pruneLocked(maxTurnSeq uint64) {
-	for k := range b.served {
-		if k.turn > maxTurnSeq {
-			maxTurnSeq = k.turn
-		}
-	}
-	var cutoff uint64
-	if maxTurnSeq > DefaultTurnRetain {
-		cutoff = maxTurnSeq - DefaultTurnRetain
-	}
+func (b *RepairResponderBudget) pruneLocked() {
+	cutoff := retainedTurnCutoff(b.served)
 	for k := range b.served {
 		if k.turn < cutoff {
 			delete(b.served, k)
