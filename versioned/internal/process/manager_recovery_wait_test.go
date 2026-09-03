@@ -230,6 +230,56 @@ func TestWaitForChildRecoveryComplete_LegacyChildSkipsWait(t *testing.T) {
 	}
 }
 
+// Test 7b: an unset RecoveryTimeout must normalize to 30m, not stay zero.
+//
+// This guards a quiet, high-blast-radius failure. waitForChildRecoveryComplete
+// builds its poll window with context.WithTimeout(ctx, timeout); a zero timeout
+// is already expired, so the first select would return ErrRecoveryTimeout and
+// downloadAndSwap would abort *every* overlap swap while the old child kept
+// serving. Rolling updates would silently stop applying with only a warn log.
+// Nothing else pins the normalizeConfig default, so assert both the config
+// value and the end-to-end effect (a warm child is still published).
+func TestRecoveryTimeoutDefaultsWhenUnset(t *testing.T) {
+	m := NewManager(config.Config{BinaryName: "devshardd", BasePort: 5000, ReadyPath: "/ready"})
+	if m.cfg.RecoveryTimeout != 30*time.Minute {
+		t.Fatalf("unset RecoveryTimeout = %v, want 30m (zero would abort every overlap swap)",
+			m.cfg.RecoveryTimeout)
+	}
+
+	srv := &readyBodyServer{}
+	srv.field.Store(fieldTrue)
+	adminPort, shutdown := startLocalHTTPServer(t, srv.handler())
+	defer shutdown()
+
+	newChild := &child{version: oracle.Version{Name: "v4"}}
+	newChild.adminPort.Store(int64(adminPort))
+	old := &child{version: oracle.Version{Name: "v4"}, status: statusRunning, done: make(chan struct{})}
+	if err := m.waitForChildRecoveryComplete(context.Background(), newChild, old, m.cfg.RecoveryTimeout); err != nil {
+		t.Fatalf("warm child must publish under the defaulted timeout, got %v", err)
+	}
+}
+
+// Test 7c: the stop/start (non-overlap) branch never reaches the warm wait.
+//
+// Plan Step 9 gates the wait to the overlap branch: with no healthy old
+// generation to keep serving, waiting is just an outage. Today that holds
+// structurally — downloadAndSwap returns inside the !rollingOverlapAllowed
+// branch before the wait — so pin the predicate that carries it. A devshardd
+// child whose storage is not postgres-only must not be overlap-eligible, which
+// is what routes it to stop/start and past the warm wait.
+func TestRollingOverlapDisallowedKeepsWarmWaitOutOfStopStart(t *testing.T) {
+	m := newRecoveryWaitManager(t, 30*time.Minute)
+	if m.rollingOverlapAllowed("v4", &child{storageMode: "hybrid"}, "postgres") {
+		t.Fatal("hybrid old child must not be overlap-eligible; stop/start must skip the warm wait")
+	}
+	if m.rollingOverlapAllowed("v4", &child{storageMode: "postgres"}, "hybrid") {
+		t.Fatal("hybrid new binary must not be overlap-eligible; stop/start must skip the warm wait")
+	}
+	if !m.rollingOverlapAllowed("v4", &child{storageMode: "postgres"}, "postgres") {
+		t.Fatal("postgres-only pair must stay overlap-eligible so the warm wait still runs")
+	}
+}
+
 // Test 8 (versiond item 6): the readiness monitor never consults the body.
 // A 503 with a body that says recovery_complete:true must still flip serving
 // to false — the monitor keys on status code alone. If recovery ever gated

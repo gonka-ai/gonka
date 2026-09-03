@@ -170,7 +170,11 @@ The warm cutover is pinned at three layers:
   old-child death; aborts on `hostDraining`, context cancel, and
   `VERSIOND_RECOVERY_TIMEOUT` (old keeps serving). A pin test asserts
   `watchChildReadiness` never reads the body, so recovery never evicts the host
-  from the HAProxy pool.
+  from the HAProxy pool. Two guard tests cover the quiet failure modes: an
+  unset `RecoveryTimeout` must normalize to 30m (a zero value would make
+  `context.WithTimeout` expire instantly and abort *every* overlap swap), and a
+  non-postgres pair must stay overlap-ineligible so the stop/start branch never
+  reaches the wait.
 - **Integration — testenv boot tests**
   (`devshard/testenv/citest/versiond_warm_cutover_test.go`,
   `make citest-versiond-warm-cutover`): `TestVersiondWarmCutoverBoot` pins the
