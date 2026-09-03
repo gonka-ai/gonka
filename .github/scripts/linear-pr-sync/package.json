@@ -1,0 +1,14 @@
+{
+  "name": "linear-pr-sync",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Syncs GitHub pull requests into Linear issues (parent + review sub-issues) with milestone/close automation.",
+  "main": "sync.mjs",
+  "scripts": {
+    "start": "node sync.mjs"
+  },
+  "dependencies": {
+    "@linear/sdk": "^88.0.0"
+  }
+}
