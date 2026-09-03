@@ -152,3 +152,36 @@ a new SHA). Because the warm wait bail-outs handle a mixed estate:
 
 So v5 can roll out incrementally without coordinating a simultaneous
 `versiond` + `devshardd` upgrade.
+
+---
+
+## Test coverage
+
+The warm cutover is pinned at three layers:
+
+- **Unit — `devshardd` body shape** (`devshard/cmd/devshardd/lifecycle_test.go`):
+  `/ready` returns 200 while recovery is still draining and flips the body's
+  `recovery_complete` to `true` only after `WaitRecoveryRepairs` returns;
+  draining stays 503.
+- **Unit — `versiond` wait + bail-outs**
+  (`versioned/internal/process/manager_recovery_wait_test.go`): the overlap
+  wait returns on `recovery_complete: true`; skips on an absent field (pre-v5
+  child) and on a legacy child with no admin listener; publishes immediately on
+  old-child death; aborts on `hostDraining`, context cancel, and
+  `VERSIOND_RECOVERY_TIMEOUT` (old keeps serving). A pin test asserts
+  `watchChildReadiness` never reads the body, so recovery never evicts the host
+  from the HAProxy pool.
+- **Integration — testenv boot tests**
+  (`devshard/testenv/citest/versiond_warm_cutover_test.go`,
+  `make citest-versiond-warm-cutover`): `TestVersiondWarmCutoverBoot` pins the
+  status-vs-body split end to end — the public `/healthz` is 200 with
+  `VERSIOND_RECOVERY_TIMEOUT` configured and a chat round-trip serves after
+  boot. `TestVersiondWarmCutoverOverlapWaitsThenServes` pins the swap half — a
+  SHA flip produces the `running(new)` + `draining(old)` overlap (which only
+  appears after the warm wait returns), new traffic serves, and the old child
+  retires. The admin `/ready` body is loopback inside the versiond container on
+  a dynamic port, so the body field and bail-outs are unit-pinned; the testenv
+  suite pins the end-to-end effect (the wait returns, the swap completes). See
+  [`testenv/docs/scenarios.md`](../testenv/docs/scenarios.md) §"Versiond warm
+  cutover".
+

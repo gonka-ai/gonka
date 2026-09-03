@@ -109,6 +109,9 @@ citest-versiond-rolling-update: citest-images ## Same-version versiond rolling u
 citest-versiond-host-evacuation: citest-images ## Router-controlled versiond host evacuation and replacement.
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestVersiondHostEvacuation$$' -count=1 -v -timeout 30m
 
+citest-versiond-warm-cutover: citest-images ## v5 warm-cutover boot + overlap swap (recovery_complete gate).
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestVersiondWarmCutover' -count=1 -v -timeout 30m
+
 citest-adversarial: citest-images ## Phase 9 adversarial citest (TESTENV_CITEST=1).
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestA1_|TestA2_|TestA3_|TestA4_|TestA5_' -count=1 -v -timeout 30m
 

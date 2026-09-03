@@ -457,7 +457,13 @@ Part 2 (K8s) maps the same host-evacuation semantics onto Service endpoints +
 - **testenv:** `TestVersiondRollingUpdateSameVersionSHA` (Postgres overlap + SSE
   continuity) and `TestVersiondRollingUpdateHybridFallback` (no overlap).
   Target: `make -C devshard/testenv citest-versiond-rolling-update` (see
-  [testenv/docs/scenarios.md](../testenv/docs/scenarios.md)).
+  [testenv/docs/scenarios.md](../testenv/docs/scenarios.md)). The v5 warm-cutover
+  contract (status-vs-body split at boot + overlap swap waits for
+  `recovery_complete`) is pinned by `TestVersiondWarmCutoverBoot` and
+  `TestVersiondWarmCutoverOverlapWaitsThenServes`; target
+  `make -C devshard/testenv citest-versiond-warm-cutover` (see
+  [testenv/docs/scenarios.md](../testenv/docs/scenarios.md) §"Versiond warm
+  cutover").
 - **testermint:** `VersiondTests` same-version binary update drains old requests
   and keeps serving.
 - **devshardd:** lifecycle tests for `/ready`, `/drain` / `/drain/status`, and
