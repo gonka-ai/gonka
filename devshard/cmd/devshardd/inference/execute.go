@@ -85,7 +85,9 @@ func processExecutionHTTPResponse(
 	isSSE := strings.HasPrefix(contentType, "text/event-stream")
 
 	if req.ResponseWriter != nil && isSSE {
-		proxyResponse(resp, req.ResponseWriter, true, processor, inferenceID)
+		if err := proxyResponse(resp, req.ResponseWriter, true, processor, inferenceID); err != nil {
+			return nil, fmt.Errorf("relay response: %w", err)
+		}
 	} else {
 		if err := completionapi.ProcessHTTPResponse(resp, processor); err != nil {
 			return nil, fmt.Errorf("process response: %w", err)
