@@ -176,10 +176,11 @@ The warm cutover is pinned at three layers:
   `make citest-versiond-warm-cutover`): `TestVersiondWarmCutoverBoot` pins the
   status-vs-body split end to end — the public `/healthz` is 200 with
   `VERSIOND_RECOVERY_TIMEOUT` configured and a chat round-trip serves after
-  boot. `TestVersiondWarmCutoverOverlapWaitsThenServes` pins the swap half — a
-  SHA flip produces the `running(new)` + `draining(old)` overlap (which only
-  appears after the warm wait returns), new traffic serves, and the old child
-  retires. The admin `/ready` body is loopback inside the versiond container on
+  boot.   `TestVersiondWarmCutoverOverlapWaitsThenServes` pins the swap half — a
+  SHA flip drives the new sha to `running` on the target host (which only
+  happens after the warm wait returns and `downloadAndSwap` publishes; a
+  timed-out wait would abort the swap and the new sha would never run), new
+  traffic serves, and the old child retires. The admin `/ready` body is loopback inside the versiond container on
   a dynamic port, so the body field and bail-outs are unit-pinned; the testenv
   suite pins the end-to-end effect (the wait returns, the swap completes). See
   [`testenv/docs/scenarios.md`](../testenv/docs/scenarios.md) §"Versiond warm

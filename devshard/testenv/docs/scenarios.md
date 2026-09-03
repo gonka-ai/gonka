@@ -314,17 +314,28 @@ focused test rather than a large streaming one.
 1. Boot the same warm-cutover stack; stop the non-target host so new sessions
    pin to the target.
 2. `POST /testenv/versions` with the same version name and a new archive sha.
-3. Poll the pinned versiond host `/healthz`; require the moment where the new
-   sha is `running` and the old sha is `draining` simultaneously. This pair
-   only appears after `waitForChildRecoveryComplete` returns and versiond moves
-   the old child to draining — a deadlocked warm wait would never produce it.
+3. Poll the pinned versiond host `/healthz` until the new sha reaches
+   `running` (3m window, well past the 30s `VERSIOND_RECOVERY_TIMEOUT`). The
+   new sha only becomes `running` after `waitForChildRecoveryComplete` returns
+   and `downloadAndSwap` publishes the new child — a broken or deadlocked warm
+   wait would abort the swap (`ErrRecoveryTimeout`) and the old child would
+   keep serving, so the new sha would never appear and the 3m poll would fail.
 4. Send a new gateway chat and require success on the new child.
 5. Require the old sha to be fully retired (no lingering `draining` child).
 
+The test does **not** assert the timing-sensitive `running(new)` +
+`draining(old)` overlap pair: with no in-flight stream the old child drains and
+is removed in milliseconds, so a 100 ms poll can miss the simultaneous window.
+Asserting the new sha reaches `running` is the load-bearing check — it is
+exactly what a timed-out warm wait would prevent. (The rolling-update suite
+keeps the old child draining with a long stream and asserts the overlap pair
+there.)
+
 **Pass criteria:** Public `/healthz` is 200 with `VERSIOND_RECOVERY_TIMEOUT`
 configured; both hosts report the booted child `running`; a chat round-trip
-succeeds after boot; the sha flip produces the `running(new)` + `draining(old)`
-overlap; new traffic serves after the swap; the old child retires.
+succeeds after boot; the sha flip drives the new sha to `running` (warm wait
+returned, swap published); new traffic serves after the swap; the old child
+retires.
 
 **Scope and limits:** the admin `/ready` listener is loopback inside the
 versiond container on a dynamic port and is not reachable from the test host, so

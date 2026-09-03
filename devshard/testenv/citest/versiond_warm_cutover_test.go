@@ -68,10 +68,16 @@ func TestVersiondWarmCutoverBoot(t *testing.T) {
 // warm-cutover contract: in the blue/green overlap branch, versiond waits for
 // the new child's recovery_complete before publishing it. With the testenv's
 // empty journal the wait returns in milliseconds, so this test cannot observe
-// the wait duration — but it pins the load-bearing invariant: the wait returns
-// and the swap completes. A regression that deadlocked the wait (never saw
-// recovery_complete: true, or never polled the admin /ready body) would hang
-// the overlap swap and time out here. This is the end-to-end companion to the
+// the wait duration. Instead of asserting the timing-sensitive
+// running(new)+draining(old) overlap pair (which needs an artificial in-flight
+// stream to keep the old child draining long enough to sample), it asserts the
+// load-bearing invariant directly: the new sha reaches `running` on the target
+// host, which only happens after waitForChildRecoveryComplete returns and
+// downloadAndSwap publishes the new child. A broken or deadlocked warm wait
+// would abort the swap (ErrRecoveryTimeout) and the old child would keep
+// serving — the new sha would never appear as `running`, failing the 3m poll
+// (well past the 30s VERSIOND_RECOVERY_TIMEOUT). New traffic then serves on the
+// new child and the old sha retires. This is the end-to-end companion to the
 // unit tests in manager_recovery_wait_test.go, which cover the bail-outs.
 func TestVersiondWarmCutoverOverlapWaitsThenServes(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
@@ -84,6 +90,11 @@ func TestVersiondWarmCutoverOverlapWaitsThenServes(t *testing.T) {
 			harness.PatchComposeEnvKey(t, stack.ComposePath, "VERSIOND_NON_HA_VERSIONS", `""`)
 		})
 	client := harness.GatewayChatClient()
+	t.Cleanup(func() {
+		if t.Failed() {
+			harness.DumpComposeLogs(t, env.stack, "versiond-0", "versiond-1", "versiond-router")
+		}
+	})
 
 	// Pin every new session to one host so the overlap is observable there.
 	targetHost := env.hosts[0]
@@ -100,13 +111,28 @@ func TestVersiondWarmCutoverOverlapWaitsThenServes(t *testing.T) {
 
 	harness.Step(t, "publishing new archive sha through mock-dapi /versions")
 	harness.PatchTestenvVersions(t, client, env.eps.MockDapiHTTP, []cosrv.Version{env.newVersion})
-	// The overlap assertion is the load-bearing check: it requires both the
-	// old sha draining and the new sha running simultaneously, which only
-	// happens after waitForChildRecoveryComplete returns and versiond moves
-	// the old child to draining. A deadlocked warm wait would never produce
-	// the running-new + draining-old pair.
-	requireVersiondRollingOverlap(t, env.stack, []string{targetHost}, env.cfg.Versiond.VersionName,
-		env.oldVersion.SHA256, env.newVersion.SHA256)
+
+	// Load-bearing warm-cutover check: the new sha reaches `running` on the
+	// target host. This only happens after waitForChildRecoveryComplete returns
+	// and downloadAndSwap publishes the new child. A broken or deadlocked warm
+	// wait would abort the swap (ErrRecoveryTimeout) and the old child would
+	// keep serving — the new sha would never appear as `running`. The 3m window
+	// is well past the 30s VERSIOND_RECOVERY_TIMEOUT, so a timeout-aborted swap
+	// fails this assertion rather than the test hanging on the poll.
+	versionName := env.cfg.Versiond.VersionName
+	newSHA := env.newVersion.SHA256
+	oldSHA := env.oldVersion.SHA256
+	swapped := harness.AssertEventually(t, 3*time.Minute, 200*time.Millisecond, func() bool {
+		entries, err := harness.TryVersiondHealth(env.stack, targetHost)
+		if err != nil {
+			return false
+		}
+		return harness.HasVersiondHealthEntry(entries, versionName, "running", newSHA)
+	})
+	require.True(t, swapped,
+		"new sha %s never reached running on %s (warm wait may have aborted the swap); "+
+			"see versiond-0 logs for \"warm cutover\" / \"warm-cutover wait timed out\"",
+		newSHA, targetHost)
 
 	harness.Step(t, "new traffic succeeds after the warm-cutover swap")
 	after := harness.PostGatewayChatCompletion(t, client, env.eps.GatewayHTTP, harness.TestenvAdminAPIKey,
@@ -121,5 +147,5 @@ func TestVersiondWarmCutoverOverlapWaitsThenServes(t *testing.T) {
 	harness.RequireMockOpenAIContent(t, after.Choices[0].Message.Content)
 
 	harness.Step(t, "old sha is fully retired (no lingering draining child)")
-	requireNoOldDraining(t, env.stack, []string{targetHost}, env.cfg.Versiond.VersionName, env.oldVersion.SHA256)
+	requireNoOldDraining(t, env.stack, []string{targetHost}, versionName, oldSHA)
 }
