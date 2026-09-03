@@ -4,10 +4,10 @@ import (
 	"net/http"
 	"sync"
 
-	"devshard/observability"
-
 	"github.com/labstack/echo/v4"
 	"golang.org/x/time/rate"
+
+	"devshard/observability"
 )
 
 // RateLimitConfig controls per-sender request rate limiting.

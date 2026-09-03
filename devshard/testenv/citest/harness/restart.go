@@ -9,9 +9,9 @@ import (
 	"testing"
 	"time"
 
-	"devshard/testenv/config"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/testenv/config"
 )
 
 // GatewaySessionSnapshot captures gateway-visible session state for restart citest.

@@ -5,6 +5,7 @@ import (
 
 	"common/chain"
 	commrc "common/runtimeconfig"
+
 	"devshard/runtimeconfig"
 )
 

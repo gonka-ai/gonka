@@ -7,17 +7,17 @@ import (
 
 	"common/chain"
 	chaintx "common/chain/tx"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
 	"devshard/signing"
 	"devshard/testenv/mockchain/grpcface"
 	"devshard/testenv/mockchain/rpcface"
 	"devshard/testenv/mockchain/seed"
 	"devshard/testenv/mockchain/store"
 	"devshard/testenv/mockchain/txledger"
-
-	inferencetypes "github.com/productscience/inference/x/inference/types"
-	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 func TestGRPCChainTxClient_CreateDevshardEscrow_MockChain(t *testing.T) {

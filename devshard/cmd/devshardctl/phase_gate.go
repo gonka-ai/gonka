@@ -15,9 +15,8 @@ import (
 	"time"
 
 	"common/chain"
-
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
-	"github.com/golang/protobuf/proto"
+	"github.com/cosmos/gogoproto/proto"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc"
 )
@@ -50,7 +49,7 @@ type ChainPhaseSnapshot struct {
 	ConfirmationPoCPhase string    `json:"confirmation_poc_phase,omitempty"`
 	RequestsBlocked      bool      `json:"requests_blocked"`
 	BlockReason          string    `json:"block_reason,omitempty"`
-	LastUpdatedAt        time.Time `json:"last_updated_at,omitempty"`
+	LastUpdatedAt        time.Time `json:"last_updated_at"`
 	LastError            string    `json:"last_error,omitempty"`
 
 	pocStartBlockHeight          int64
@@ -61,7 +60,6 @@ type ChainPhaseSnapshot struct {
 type ChainPhaseGate struct {
 	endpoint                      string
 	participantsEndpoint          string
-	preservedSnapshotEndpoint     string
 	client                        *http.Client
 	pollInterval                  time.Duration
 	defaultMaxSpeculativeAttempts int
@@ -144,11 +142,6 @@ type chainMLNodeInfo struct {
 	NodeID             string     `json:"node_id"`
 	TimeslotAllocation []bool     `json:"timeslot_allocation"`
 	PoCWeight          jsonUint64 `json:"poc_weight,omitempty"`
-}
-
-type chainPreservedNodesSnapshotResponse struct {
-	Snapshot *chainPreservedNodesSnapshot `json:"snapshot,omitempty"`
-	Found    bool                         `json:"found"`
 }
 
 type chainPreservedNodesSnapshot struct {
@@ -443,8 +436,7 @@ func (g *ChainPhaseGate) refresh() {
 
 			isValidation := rawPoCValidationState(snapshot.EpochPhase, snapshot.ConfirmationPoCPhase)
 			if active && relaxedPoCModeEnabled() && isValidation && g.versions != nil {
-				preserved, preservedByModel, curWeights, curWeightsByModel :=
-					mergePreservedWithValidationCapable(state, g.versions.IsNodeValidationCapable)
+				preserved, preservedByModel, curWeights, curWeightsByModel := mergePreservedWithValidationCapable(state, g.versions.IsNodeValidationCapable)
 				if capacityState != nil {
 					capacityState.SetHostWeightViews(curWeights, state.fullWeights, curWeightsByModel, state.fullWeightsByModel)
 					capacityState.SetPoCPreserved(preserved)
@@ -498,7 +490,7 @@ func (g *ChainPhaseGate) fetchEpochInfo() (*chainEpochInfoResponse, error) {
 	}
 	payload, chainErr := g.fetchEpochInfoFromChain()
 	if chainErr != nil {
-		return nil, fmt.Errorf("public API: %v; chain fallback: %w", apiErr, chainErr)
+		return nil, fmt.Errorf("public API: %w; chain fallback: %w", apiErr, chainErr)
 	}
 	return payload, nil
 }
@@ -570,7 +562,7 @@ func (g *ChainPhaseGate) fetchEpochInfoFromChain() (*chainEpochInfoResponse, err
 	return payload, nil
 }
 
-// participantNode holds the per-node data for one ML node belonging to a participant
+// participantNode holds the per-node data for one ML node belonging to a participant.
 type participantNode struct {
 	model  string
 	nodeID string
@@ -615,7 +607,7 @@ func (g *ChainPhaseGate) fetchParticipantsState(pocActive bool, expectedSnapshot
 		var chainErr error
 		payload, chainErr = g.fetchParticipantsFromChain()
 		if chainErr != nil {
-			return nil, fmt.Errorf("public API: %v; chain fallback: %w", apiErr, chainErr)
+			return nil, fmt.Errorf("public API: %w; chain fallback: %w", apiErr, chainErr)
 		}
 	}
 
@@ -710,7 +702,7 @@ func activeParticipantsPayload(active *inferencetypes.ActiveParticipants) *chain
 					}
 					convertedNode := chainMLNodeInfo{
 						NodeID:             node.NodeId,
-						TimeslotAllocation: append([]bool(nil), node.TimeslotAllocation...),
+						TimeslotAllocation: append([]bool(nil), node.TimeslotAllocation...), //nolint:staticcheck // read for wire compatibility, exactly as the deprecation note describes.
 					}
 					if node.PocWeight > 0 {
 						convertedNode.PoCWeight = jsonUint64(node.PocWeight)
@@ -734,12 +726,13 @@ func (g *ChainPhaseGate) participantsStateFromPayload(payload *chainCurrentParti
 	preservation := preservationModeLegacy
 	if pocActive {
 		snapshot, status, err := g.fetchPreservedSnapshotState(expectedSnapshotAnchor)
-		if err != nil {
+		switch {
+		case err != nil:
 			log.Printf("chain phase gate: preserved snapshot poll failed error=%v", err)
-		} else if status == preservedSnapshotCurrent {
+		case status == preservedSnapshotCurrent:
 			preservedSnapshot = snapshot
 			preservation = preservationModeSnapshot
-		} else if status == preservedSnapshotMissingCurrent && allowAllWhenSnapshotMissing {
+		case status == preservedSnapshotMissingCurrent && allowAllWhenSnapshotMissing:
 			preservation = preservationModeAll
 		}
 	}
@@ -820,15 +813,6 @@ func (g *ChainPhaseGate) participantsStateFromPayload(payload *chainCurrentParti
 		sort.Strings(state.preservedByModel[model])
 	}
 	return state, nil
-}
-
-func (g *ChainPhaseGate) preservedSnapshotURL() string {
-	if g == nil {
-		return ""
-	}
-	g.mu.RLock()
-	defer g.mu.RUnlock()
-	return g.preservedSnapshotEndpoint
 }
 
 func (g *ChainPhaseGate) fetchPreservedSnapshotState(expectedAnchor int64) (*preservedSnapshotState, preservedSnapshotStatus, error) {
@@ -1455,7 +1439,7 @@ func parseFlexibleUint64(data []byte) (uint64, error) {
 	return 0, fmt.Errorf("unsupported uint64 value %s", string(data))
 }
 
-// participantNodes extracts the flat list of (model, nodeID, weight)
+// participantNodes extracts the flat list of (model, nodeID, weight).
 func participantNodes(participant chainActiveParticipant) []participantNode {
 	var nodes []participantNode
 	for i, rawModel := range participant.Models {

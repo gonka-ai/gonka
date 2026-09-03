@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"slices"
 	"sort"
 	"strings"
@@ -159,9 +160,9 @@ type InProcessClient struct {
 // don't accidentally mirror the exact attack pattern the proxy's content
 // detector is designed to reject.
 func writeInProcessStreamingChunk(stream io.Writer) {
-	fmt.Fprintf(stream, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n")
-	fmt.Fprintf(stream, "data: {\"choices\":[{\"delta\":{\"content\":\"stub\"}}]}\n\n")
-	fmt.Fprintf(stream, "data: [DONE]\n\n")
+	_, _ = fmt.Fprintf(stream, "data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n")
+	_, _ = fmt.Fprintf(stream, "data: {\"choices\":[{\"delta\":{\"content\":\"stub\"}}]}\n\n")
+	_, _ = fmt.Fprintf(stream, "data: [DONE]\n\n")
 }
 
 func (c *InProcessClient) Send(ctx context.Context, req host.HostRequest, stream io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
@@ -241,9 +242,9 @@ type Session struct {
 	participantKeys []string
 	clients         []HostClient
 	nonce           uint64
-	diffs           []types.Diff                 // append-only log
-	hostSyncNonce   map[int]uint64               // hostIdx -> last nonce sent
-	pendingTxs      []*types.DevshardTx          // from host mempools, for next diff
+	diffs           []types.Diff        // append-only log
+	hostSyncNonce   map[int]uint64      // hostIdx -> last nonce sent
+	pendingTxs      []*types.DevshardTx // from host mempools, for next diff
 	// pendingTxKeys dedups the current pendingTxs slice by tx_type:id. It is
 	// rebuilt from what compose retained, so a tx that failed to apply frees
 	// its key again -- otherwise the first host to propose a bogus tx would
@@ -278,11 +279,6 @@ type Session struct {
 	signatureCollectMaxRetries  int
 	signatureCollectBaseDelay   time.Duration
 	signatureCollectHostTimeout time.Duration
-
-	// finalizeClients mirrors s.clients with admission control stripped.
-	// Built lazily on first CollectSignatures call so finalize catch-up
-	// can reach quarantined hosts.
-	finalizeClients []HostClient
 
 	heightSyncK     uint64
 	heightSyncSlots uint64
@@ -483,7 +479,7 @@ func NewSession(
 		nonceStates:     make(map[uint64]*nonceOutcome),
 		verifierQueue:   SharedVerifierQueue,
 		diffObserver:    func(types.Diff) {},
-		//TODO: check if we should move it from Session
+		// TODO: check if we should move it from Session
 		signatureCollectMaxRetries:  3,
 		signatureCollectBaseDelay:   2 * time.Second,
 		signatureCollectHostTimeout: 30 * time.Second,
@@ -1065,23 +1061,21 @@ func (s *Session) maybeSaveSnapshotLocked() {
 		return
 	}
 
-	// Deep-copy state and cursor under the session lock; release before
+	// Deep-copy exportedState and cursor under the session lock; release before
 	// any disk IO. ExportState takes its own SM RLock for the deep copy.
-	state := s.sm.ExportState()
+	exportedState := s.sm.ExportState()
 	committedEntries := s.sm.ExportCommittedEntries()
 	sealedNonces := s.sm.ExportSealedNonces()
 	heightSyncFloor := s.sm.ExportHeightSyncFloor()
 	cursor := make(map[int]uint64, len(s.hostSyncNonce))
-	for k, v := range s.hostSyncNonce {
-		cursor[k] = v
-	}
+	maps.Copy(cursor, s.hostSyncNonce)
 	nonce := s.nonce
 	store := s.store
 	escrowID := s.escrowID
 
 	go func() {
 		defer s.snapshotInFlight.Store(false)
-		writeSnapshot(store, escrowID, nonce, state, cursor, committedEntries, sealedNonces, heightSyncFloor)
+		writeSnapshot(store, escrowID, nonce, exportedState, cursor, committedEntries, sealedNonces, heightSyncFloor)
 	}()
 }
 
@@ -1109,7 +1103,7 @@ func (s *Session) FlushSnapshot() error {
 	// async writer is still busy after the wait we proceed anyway (SQLite
 	// serializes the writes, and retire runs after drain so this is rare).
 	acquired := false
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		if s.snapshotInFlight.CompareAndSwap(false, true) {
 			acquired = true
 			break
@@ -1132,9 +1126,7 @@ func (s *Session) FlushSnapshot() error {
 	sealedNonces := s.sm.ExportSealedNonces()
 	heightSyncFloor := s.sm.ExportHeightSyncFloor()
 	cursor := make(map[int]uint64, len(s.hostSyncNonce))
-	for k, v := range s.hostSyncNonce {
-		cursor[k] = v
-	}
+	maps.Copy(cursor, s.hostSyncNonce)
 	nonce := s.nonce
 	store := s.store
 	escrowID := s.escrowID
@@ -1212,10 +1204,7 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 	txsForDiff := []*types.DevshardTx{startTx}
 	if params.ForceHeightSyncAnchor && s.heightSyncK != 0 {
 		slots := s.heightSyncForceSlotsLocked()
-		k := s.heightSyncK
-		if k < slots {
-			k = slots
-		}
+		k := max(s.heightSyncK, slots)
 		if !s.sm.HeightSyncForcedTurnActive(nonce) {
 			forceTx := &types.DevshardTx{Tx: &types.DevshardTx_ForceHeightSyncTurn{
 				ForceHeightSyncTurn: &types.MsgForceHeightSyncTurn{
@@ -1454,10 +1443,7 @@ func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostC
 			return nil
 		}
 
-		end := chunkIdx + catchUpChunkSize
-		if end > len(catchUp) {
-			end = len(catchUp)
-		}
+		end := min(chunkIdx+catchUpChunkSize, len(catchUp))
 		chunk := catchUp[chunkIdx:end]
 		chunkNonce := chunk[len(chunk)-1].Nonce
 		chunkNum := chunkIdx/catchUpChunkSize + 1
@@ -1533,7 +1519,7 @@ func (s *Session) uniquePhysicalHosts() []physicalHost {
 	n := len(s.group)
 	seen := make(map[string]bool)
 	hosts := make([]physicalHost, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		addr := s.group[i].ValidatorAddress
 		if seen[addr] {
 			continue
@@ -1587,13 +1573,13 @@ func (s *Session) SyncHosts(ctx context.Context) error {
 
 	var failures []error
 	const syncCycles = 2
-	for cycle := 0; cycle < syncCycles; cycle++ {
+	for cycle := range syncCycles {
 		for _, h := range hosts {
 			if err := s.sendCatchUp(ctx, h.idx); err != nil {
 				failures = append(failures, fmt.Errorf("cycle %d host %d: %w", cycle+1, h.idx, err))
 			}
 		}
-		for i := 0; i < len(s.group); i++ {
+		for range len(s.group) {
 			s.mu.Lock()
 			hasPending := len(s.pendingTxs) > 0
 			s.mu.Unlock()
@@ -1672,7 +1658,7 @@ func (s *Session) Finalize(ctx context.Context) error {
 	// Phase A: N diffs collecting remaining txs. First carries MsgFinalizeRound.
 	logging.Info("finalize phase A: collecting reveals", "subsystem", "finalize", "escrow", s.escrowID,
 		"rounds", n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		var extra []*types.DevshardTx
 		if i == 0 {
 			extra = []*types.DevshardTx{finalizeTx}
@@ -2111,7 +2097,7 @@ func (s *Session) verifyStateSignature(nonce uint64, postRoot, signature []byte,
 	}
 	recovered, err := s.verifier.RecoverAddress(sigData, signature)
 	if err != nil {
-		return fmt.Errorf("%w: %v", types.ErrInvalidStateSig, err)
+		return fmt.Errorf("%w: %w", types.ErrInvalidStateSig, err)
 	}
 	if recovered != expectedAddr && !s.sm.CheckWarmKey(recovered, expectedAddr) {
 		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidStateSig, expectedAddr, recovered)
@@ -2131,7 +2117,7 @@ func (s *Session) verifyTimeoutVote(inferenceID uint64, reason types.TimeoutReas
 	}
 	recovered, err := s.verifier.RecoverAddress(voteData, vote.Signature)
 	if err != nil {
-		return fmt.Errorf("%w: %v", types.ErrInvalidVoteSig, err)
+		return fmt.Errorf("%w: %w", types.ErrInvalidVoteSig, err)
 	}
 	if recovered != expectedAddr &&
 		s.sm.WarmKeys()[vote.VoterSlot] != recovered &&
@@ -2241,7 +2227,7 @@ func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, 
 	}
 	seen := make(map[string]bool)
 	var hosts []hostEntry
-	for i := 0; i < n; i++ {
+	for i := range n {
 		addr := s.group[i].ValidatorAddress
 		if seen[addr] {
 			continue
@@ -2294,10 +2280,7 @@ func (s *Session) CollectSignatures(ctx context.Context, nonce uint64) (weight, 
 				}
 
 				if attempt > 0 {
-					delay := s.signatureCollectBaseDelay * time.Duration(1<<(attempt-1))
-					if delay > 30*time.Second {
-						delay = 30 * time.Second
-					}
+					delay := min(s.signatureCollectBaseDelay*time.Duration(1<<(attempt-1)), 30*time.Second)
 					logging.Info("collect signature retry", "subsystem", "finalize", "escrow", s.escrowID,
 						"nonce", nonce, "host", h.idx, "attempt", attempt, "delay", delay.String())
 					select {
@@ -2417,7 +2400,7 @@ func (s *Session) signatureStatusLocked() (entries []SignatureStatusEntry, highe
 	for n := range s.signatures {
 		nonces = append(nonces, n)
 	}
-	sort.Slice(nonces, func(i, j int) bool { return nonces[i] < nonces[j] })
+	slices.Sort(nonces)
 
 	nonceWeight := make(map[uint64]uint32, len(addrMaxNonce))
 	for addr, maxN := range addrMaxNonce {
@@ -2426,8 +2409,8 @@ func (s *Session) signatureStatusLocked() (entries []SignatureStatusEntry, highe
 
 	entries = make([]SignatureStatusEntry, len(nonces))
 	var cumWeight uint32
-	for i := len(nonces) - 1; i >= 0; i-- {
-		n := nonces[i]
+	for i, v := range slices.Backward(nonces) {
+		n := v
 		cumWeight += nonceWeight[n]
 		entries[i] = SignatureStatusEntry{
 			Nonce:     n,
@@ -2504,7 +2487,7 @@ func (s *Session) sendPendingDiff(ctx context.Context, extraTxs []*types.Devshar
 
 	finalizeClients := s.getFinalizeClients()
 	var lastErr error
-	for offset := 0; offset < len(finalizeClients); offset++ {
+	for offset := range finalizeClients {
 		candidateIdx := (hostIdx + offset) % len(finalizeClients)
 
 		s.mu.Lock()
@@ -2673,7 +2656,8 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 	s.mu.Unlock()
 
 	logFields := func(extra ...any) []any {
-		base := []any{"escrow", s.escrowID, "nonce", nonce, "host", hostID}
+		base := make([]any, 0, 6+len(extra))
+		base = append(base, "escrow", s.escrowID, "nonce", nonce, "host", hostID)
 		return append(base, extra...)
 	}
 
@@ -2846,7 +2830,8 @@ func (s *Session) HandleErrorMiss(ctx context.Context, nonce uint64, finishTx, r
 
 	result := TimeoutResult{Reason: "error"}
 	logFields := func(extra ...any) []any {
-		base := []any{"escrow", s.escrowID, "nonce", nonce, "host", hostID}
+		base := make([]any, 0, 6+len(extra))
+		base = append(base, "escrow", s.escrowID, "nonce", nonce, "host", hostID)
 		return append(base, extra...)
 	}
 
@@ -3187,12 +3172,12 @@ func (s *Session) collectTimeoutVotes(
 
 	voteThreshold := s.sm.VoteThreshold()
 	var accWeight uint32
-	var errors, rejects, invalid int
+	var errorCount, rejects, invalid int
 	errorClasses := make(map[string]int)
-	for i := 0; i < expected; i++ {
+	for range expected {
 		res := <-results
 		if res.err != nil {
-			errors++
+			errorCount++
 			errorClasses[classifyVoteError(res.err)]++
 			logging.Stage(ctx, "timeout_vote_result",
 				logFields(
@@ -3282,7 +3267,7 @@ func (s *Session) collectTimeoutVotes(
 		"weight", accWeight,
 		"reject", rejects,
 		"invalid", invalid,
-		"errors", errors,
+		"errors", errorCount,
 		"threshold", voteThreshold,
 		"verifiers", expected,
 		"sufficient", accWeight > voteThreshold,
@@ -3296,7 +3281,7 @@ func (s *Session) collectTimeoutVotes(
 	logging.Debug("timeout vote collection",
 		"subsystem", "session", "inference_id", inferenceID,
 		"accept", len(votes), "weight", accWeight,
-		"reject", rejects, "invalid", invalid, "errors", errors,
+		"reject", rejects, "invalid", invalid, "errors", errorCount,
 		"threshold", voteThreshold, "verifiers", expected)
 
 	return votes, recovery, rejectCauses, dominantVoteError(errorClasses), nil
@@ -3394,11 +3379,11 @@ func (s *Session) CollectErrorMissVotes(
 	expected := len(deduped)
 	voteThreshold := s.sm.VoteThreshold()
 	var accWeight uint32
-	var errors, rejects int
-	for i := 0; i < expected; i++ {
+	var errorCount, rejects int
+	for range expected {
 		res := <-results
 		if res.err != nil {
-			errors++
+			errorCount++
 			logging.Stage(ctx, "timeout_vote_result", logFields(res.verifierAddr, "accept", false, "error", res.err)...)
 			continue
 		}
@@ -3431,7 +3416,7 @@ func (s *Session) CollectErrorMissVotes(
 	}
 
 	logging.Stage(ctx, "timeout_votes_collected",
-		logFields("", "accept", len(votes), "weight", accWeight, "reject", rejects, "errors", errors, "threshold", voteThreshold, "verifiers", expected, "sufficient", accWeight > voteThreshold)...,
+		logFields("", "accept", len(votes), "weight", accWeight, "reject", rejects, "errors", errorCount, "threshold", voteThreshold, "verifiers", expected, "sufficient", accWeight > voteThreshold)...,
 	)
 	return votes, recovery, rejectCauses, nil
 }

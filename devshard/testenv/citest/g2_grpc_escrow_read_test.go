@@ -7,10 +7,10 @@ import (
 	"time"
 
 	"common/chain"
+	"github.com/stretchr/testify/require"
+
 	"devshard/bridge"
 	"devshard/testenv/citest/harness"
-
-	"github.com/stretchr/testify/require"
 )
 
 // TestG2_GatewayEscrowReadGRPC verifies escrow reads via bridge.GRPCBridge (no LCD).

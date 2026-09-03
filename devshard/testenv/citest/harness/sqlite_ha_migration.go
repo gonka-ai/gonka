@@ -12,10 +12,10 @@ import (
 	"testing"
 	"time"
 
-	"devshard/testenv/config"
-
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
+
+	"devshard/testenv/config"
 )
 
 // BootSQLiteHAMigrationStack boots the 2×versiond + Postgres stack patched for
@@ -190,7 +190,7 @@ func (s *Stack) PostgresSessionIndex(t *testing.T, cfg *config.File) map[string]
 		"-c", "SELECT escrow_id, epoch_id FROM devshard_session_index ORDER BY escrow_id")
 
 	got := make(map[string]int64)
-	for _, line := range strings.Split(strings.TrimSpace(out), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue

@@ -3,6 +3,7 @@ package user
 import (
 	"context"
 	"fmt"
+	"slices"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -155,7 +156,7 @@ func TestSession_Validation_InvalidationConverges(t *testing.T) {
 		require.False(t, time.Now().After(deadline), "validate goroutines did not drain")
 	}
 	time.Sleep(100 * time.Millisecond)
-	for i := 0; i < 2*numHosts; i++ {
+	for range 2 * numHosts {
 		require.NoError(t, session.SendPendingDiff(ctx))
 	}
 
@@ -212,7 +213,7 @@ func TestSession_FetchFailureVerdict_ChallengeThenInvalidate(t *testing.T) {
 	grace := uint64(numInferences + 100)
 
 	hosts := make([]*signing.Secp256k1Signer, numHosts)
-	for i := 0; i < numHosts; i++ {
+	for i := range numHosts {
 		hosts[i] = testutil.MustSignerFromHex(t, validationTestHostKeys[i])
 	}
 	user := testutil.MustSignerFromHex(t, validationTestUserKey)
@@ -281,7 +282,7 @@ func TestSession_FetchFailureVerdict_ChallengeThenInvalidate(t *testing.T) {
 		require.False(t, time.Now().After(deadline), "validate goroutines did not drain")
 	}
 	time.Sleep(100 * time.Millisecond)
-	for i := 0; i < 2*numHosts; i++ {
+	for range 2 * numHosts {
 		require.NoError(t, session.SendPendingDiff(ctx))
 	}
 
@@ -407,7 +408,7 @@ func TestSession_Validation_MultiSlotValidatorCountedOnce(t *testing.T) {
 		require.False(t, time.Now().After(deadline), "validate goroutines did not drain")
 	}
 	time.Sleep(100 * time.Millisecond)
-	for i := 0; i < 2*len(hosts); i++ {
+	for range 2 * len(hosts) {
 		require.NoError(t, session.SendPendingDiff(ctx))
 	}
 
@@ -419,13 +420,7 @@ func TestSession_Validation_MultiSlotValidatorCountedOnce(t *testing.T) {
 	megaParticipations := 0
 	invalidated := 0
 	for _, rec := range allRecords {
-		participated := false
-		for _, slot := range megaSlots {
-			if rec.ValidatedBy.IsSet(slot) {
-				participated = true
-				break
-			}
-		}
+		participated := slices.ContainsFunc(megaSlots, rec.ValidatedBy.IsSet)
 		if participated {
 			megaParticipations++
 		}

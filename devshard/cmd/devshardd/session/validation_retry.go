@@ -7,9 +7,9 @@ import (
 	"log/slog"
 	"time"
 
+	"common/chain"
 	"google.golang.org/protobuf/proto"
 
-	"common/chain"
 	devshardpkg "devshard"
 	"devshard/host"
 	"devshard/storage"
@@ -24,10 +24,10 @@ type sessionManager interface {
 
 // staleLeaseStore abstracts storage.LeaseStore for testing.
 type staleLeaseStore interface {
-	AcquireOneStale(ctx context.Context, escrowId, instanceAddr string, ttl time.Duration) (uint64, uint64, error)
-	SetResult(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, instanceAddr string) error
-	OwnsPendingLease(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) (bool, error)
-	Release(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) error
+	AcquireOneStale(ctx context.Context, escrowID, instanceAddr string, ttl time.Duration) (uint64, uint64, error)
+	SetResult(ctx context.Context, escrowID string, inferenceID, epochID uint64, status storage.LeaseStatus, instanceAddr string) error
+	OwnsPendingLease(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) (bool, error)
+	Release(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) error
 }
 
 // hostSnap abstracts *host.Host state reads for testing.

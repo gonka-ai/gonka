@@ -2,14 +2,15 @@ package adminface
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"time"
 
+	"github.com/labstack/echo/v4"
+
 	"devshard/testenv/gatewayphase"
 	"devshard/testenv/mockchain/store"
-
-	"github.com/labstack/echo/v4"
 )
 
 // Server serves mock-chain admin /testenv/* routes.
@@ -44,7 +45,7 @@ func (s *Server) Serve(ctx context.Context, addr string) error {
 		defer cancel()
 		_ = s.echo.Shutdown(shCtx)
 	}()
-	if err := s.echo.Start(addr); err != nil && err != http.ErrServerClosed {
+	if err := s.echo.Start(addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return ctx.Err()

@@ -3,9 +3,9 @@ package config_test
 import (
 	"testing"
 
-	"devshard/testenv/config"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/testenv/config"
 )
 
 func TestApplyDefaults(t *testing.T) {
@@ -31,7 +31,7 @@ func TestValidate_VersiondModePostgresRules(t *testing.T) {
 			{ID: "versiond-0", Address: "gonka1a", PrivateKeyHex: "aa"},
 			{ID: "versiond-1", Address: "gonka1b", PrivateKeyHex: "bb"},
 		},
-		User:   config.UserCfg{Address: "gonka1u", PrivateKeyHex: "cc"},
+		User:     config.UserCfg{Address: "gonka1u", PrivateKeyHex: "cc"},
 		Postgres: config.PostgresCfg{Enabled: false},
 	}
 	cfg.ApplyDefaults()

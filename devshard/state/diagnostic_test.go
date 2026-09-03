@@ -46,9 +46,9 @@ func TestIsPostStateRootMismatchError_WrappedHTTPMessage(t *testing.T) {
 
 func requireWrappedErr(t *testing.T, msg string) error {
 	t.Helper()
-	return &wrappedTestErr{msg: msg}
+	return &wrappedTestError{msg: msg}
 }
 
-type wrappedTestErr struct{ msg string }
+type wrappedTestError struct{ msg string }
 
-func (e *wrappedTestErr) Error() string { return e.msg }
+func (e *wrappedTestError) Error() string { return e.msg }

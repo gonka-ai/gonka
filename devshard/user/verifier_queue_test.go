@@ -56,7 +56,7 @@ func TestVerifierHostQueue_SnapshotShowsBeginInflight(t *testing.T) {
 func TestFormatInflightSnapshot_OldestFirstCappedAtEight(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
 	recs := make([]inflightVerify, 0, 10)
-	for i := 0; i < 10; i++ {
+	for i := range 10 {
 		recs = append(recs, inflightVerify{
 			RequestID: "req",
 			Escrow:    "e",

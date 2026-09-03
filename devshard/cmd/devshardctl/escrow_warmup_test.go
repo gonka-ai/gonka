@@ -13,9 +13,9 @@ import (
 	"time"
 
 	"common/completionapi"
-	"devshard/user"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/user"
 )
 
 type fakeProbeSender struct {
@@ -299,7 +299,7 @@ func TestWarmupIsWiredOnlyToEscrowCreation(t *testing.T) {
 		body, readErr := os.ReadFile(source)
 		require.NoError(t, readErr)
 		enclosing := ""
-		for _, line := range strings.Split(string(body), "\n") {
+		for line := range strings.SplitSeq(string(body), "\n") {
 			if strings.HasPrefix(line, "func ") {
 				enclosing = line
 			}

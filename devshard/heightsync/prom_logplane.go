@@ -1,6 +1,7 @@
 package heightsync
 
 import (
+	"errors"
 	"sync"
 	"sync/atomic"
 
@@ -106,7 +107,8 @@ func RegisterLogPlaneMetrics(reg prometheus.Registerer) error {
 		marksCounter,
 	} {
 		if err := reg.Register(c); err != nil {
-			if _, ok := err.(prometheus.AlreadyRegisteredError); ok {
+			var alreadyRegisteredError prometheus.AlreadyRegisteredError
+			if errors.As(err, &alreadyRegisteredError) {
 				continue
 			}
 			return err

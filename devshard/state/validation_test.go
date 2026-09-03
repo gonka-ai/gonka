@@ -108,7 +108,7 @@ func penalizeRequiredFromScaledTerms(contributions []struct{ v, d uint64 }) uint
 func TestPenalizePerInferenceMatchesLegacyFloatReference(t *testing.T) {
 	// Single-inference cases: integer fixed-point path matches legacy float + Ceil.
 	for d := uint64(1); d <= 64; d++ {
-		for v := uint64(0); v <= 64; v++ {
+		for v := range uint64(65) {
 			cs := []struct{ v, d uint64 }{{v: v, d: d}}
 			leg := legacyPenalizeRequiredFloat(cs)
 			got := penalizeRequiredFromScaledTerms(cs)

@@ -8,7 +8,6 @@ import (
 
 	"common/chainoracle/blocks"
 	blockserver "common/chainoracle/blocks/server"
-
 	"github.com/labstack/echo/v4"
 )
 

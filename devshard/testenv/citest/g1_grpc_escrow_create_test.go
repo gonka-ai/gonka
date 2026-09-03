@@ -9,12 +9,12 @@ import (
 
 	"common/chain"
 	chaintx "common/chain/tx"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
+	"github.com/stretchr/testify/require"
+
 	"devshard/signing"
 	"devshard/testenv/citest/harness"
 	"devshard/testenv/config"
-
-	inferencetypes "github.com/productscience/inference/x/inference/types"
-	"github.com/stretchr/testify/require"
 )
 
 // TestG1_GatewayEscrowCreateGRPC creates a devshard escrow via common/chain/tx gRPC

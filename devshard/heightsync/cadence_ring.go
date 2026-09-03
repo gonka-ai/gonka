@@ -101,7 +101,7 @@ func (r *cadenceRing) snapshot() (events []CadenceEvent, last time.Time) {
 		return nil, r.last
 	}
 	events = make([]CadenceEvent, 0, r.size)
-	for i := 0; i < r.size; i++ {
+	for i := range r.size {
 		idx := (r.start + i) % len(r.buf)
 		events = append(events, r.buf[idx])
 	}

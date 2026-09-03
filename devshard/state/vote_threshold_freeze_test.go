@@ -68,11 +68,11 @@ func TestVoteThreshold_StableAcrossValidationAndTimeout(t *testing.T) {
 	require.Equal(t, voteThreshold, sm.VoteThreshold())
 
 	// Four accept timeout votes: weight 4 is not > threshold 4.
-	votes := make([]*types.TimeoutVote, 4)
-	for i := uint32(0); i < 4; i++ {
+	votes := make([]*types.TimeoutVote, 0, 5)
+	for i := range uint32(4) {
 		v := testutil.SignTimeoutVote(t, hosts[i], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
 		v.VoterSlot = i
-		votes[i] = v
+		votes = append(votes, v)
 	}
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
 		InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Votes: votes,
@@ -114,10 +114,10 @@ func TestNewStateMachine_LegacyZeroFeePerNonceUsesCompiledDefault(t *testing.T) 
 func TestVoteThreshold_ConfigFieldNotUsedOutsideStatePackage(t *testing.T) {
 	root := repoRoot(t)
 	allowSubstrings := []string{
-		string(filepath.Join("devshard", "state")),
-		string(filepath.Join("devshard", "types", "config.go")),
-		string(filepath.Join("devshard", "bridge", "config.go")),
-		string(filepath.Join("devshard", "cmd", "devshardctl", "proxy.go")),
+		filepath.Join("devshard", "state"),
+		filepath.Join("devshard", "types", "config.go"),
+		filepath.Join("devshard", "bridge", "config.go"),
+		filepath.Join("devshard", "cmd", "devshardctl", "proxy.go"),
 	}
 	var violations []string
 	scanRoots := []string{

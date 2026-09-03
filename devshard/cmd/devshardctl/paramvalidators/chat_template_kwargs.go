@@ -77,11 +77,7 @@ func (v ChatTemplateKwargsValidator) Validate(vctx ValidatorContext) error {
 			return fmt.Errorf("%w: %q", ErrChatTemplateKwargsForbiddenKey, key)
 		}
 	}
-	bounds := ObjectBounds{
-		MaxDepth: v.MaxDepth,
-		MaxSize:  v.MaxSize,
-		MaxNodes: v.MaxNodes,
-	}
+	bounds := ObjectBounds(v)
 	if err := bounds.Walk(obj); err != nil {
 		return fmt.Errorf("chat_template_kwargs: %w", err)
 	}

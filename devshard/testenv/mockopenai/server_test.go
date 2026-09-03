@@ -15,9 +15,9 @@ import (
 
 	"common/completionapi"
 	"common/validation"
-	"devshard/testenv/mockopenai"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/testenv/mockopenai"
 )
 
 func newTestServer(t *testing.T) *httptest.Server {
@@ -31,7 +31,7 @@ func TestChatCompletions_JSONDeterministic(t *testing.T) {
 
 	body := []byte(`{"model":"test-model","messages":[{"role":"user","content":"hello"}]}`)
 	var firstContent string
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		resp, err := http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
 		require.NoError(t, err)
 		require.Equal(t, http.StatusOK, resp.StatusCode)
@@ -76,11 +76,9 @@ func TestChatCompletions_StreamCompletionAPI(t *testing.T) {
 	require.NotEmpty(t, lines)
 
 	proc := completionapi.NewExecutorResponseProcessor("inference-test", true)
-	var streamed []string
 	for _, line := range lines {
-		updated, err := proc.ProcessStreamedResponse(line)
+		_, err := proc.ProcessStreamedResponse(line)
 		require.NoError(t, err)
-		streamed = append(streamed, updated)
 	}
 	cr, err := proc.GetResponse()
 	require.NoError(t, err)
@@ -273,7 +271,7 @@ func TestChatCompletions_StreamPauseCanBeRearmed(t *testing.T) {
 		_ = resp.Body.Close()
 	}
 
-	firstResp, firstDone := startPausedStream()
+	firstResp, firstDone := startPausedStream() //nolint:bodyclose // startPausedStream closes the body before it returns.
 	assertPaused(firstDone)
 	release()
 	waitReleased(firstResp, firstDone)
@@ -287,7 +285,7 @@ func TestChatCompletions_StreamPauseCanBeRearmed(t *testing.T) {
 	_ = patch.Body.Close()
 	require.Equal(t, http.StatusOK, patch.StatusCode)
 
-	secondResp, secondDone := startPausedStream()
+	secondResp, secondDone := startPausedStream() //nolint:bodyclose // startPausedStream closes the body before it returns.
 	assertPaused(secondDone)
 	release()
 	waitReleased(secondResp, secondDone)

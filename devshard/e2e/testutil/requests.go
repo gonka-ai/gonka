@@ -68,7 +68,7 @@ func SendStreamingCompletion(t *testing.T, client *http.Client, clientURL, conte
 
 func SendCompletions(t *testing.T, client *http.Client, clientURL, contentPrefix string, count int) {
 	t.Helper()
-	for i := 0; i < count; i++ {
+	for i := range count {
 		SendCompletion(t, client, clientURL, fmt.Sprintf("%s %d", contentPrefix, i+1))
 	}
 }

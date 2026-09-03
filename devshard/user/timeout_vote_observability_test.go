@@ -39,7 +39,7 @@ func (l *stageLog) forRequest(requestID string) string {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	var kept []string
-	for _, line := range strings.Split(l.buf.String(), "\n") {
+	for line := range strings.SplitSeq(l.buf.String(), "\n") {
 		if strings.Contains(line, "request="+requestID+" ") {
 			kept = append(kept, line)
 		}

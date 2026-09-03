@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"os/signal"
@@ -14,6 +15,12 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatalf("mock-dapi: %v", err)
+	}
+}
+
+func run() error {
 	cfg := mockdapi.DefaultConfig()
 	cfg.GRPCAddr = envOr("MOCK_DAPI_GRPC_ADDR", ":9400")
 	cfg.HTTPAddr = envOr("MOCK_DAPI_HTTP_ADDR", ":9100")
@@ -43,14 +50,15 @@ func main() {
 
 	svc, err := mockdapi.New(ctx, cfg)
 	if err != nil {
-		log.Fatalf("mock-dapi: %v", err)
+		return err
 	}
 
 	log.Printf("mock-dapi gRPC on %s HTTP on %s chain=%s ml=%s",
 		cfg.GRPCAddr, cfg.HTTPAddr, cfg.ChainGRPCAddr, cfg.MLEndpoint)
-	if err := svc.Run(ctx); err != nil && err != context.Canceled {
-		log.Fatalf("mock-dapi: %v", err)
+	if err := svc.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		return err
 	}
+	return nil
 }
 
 func envOr(key, def string) string {

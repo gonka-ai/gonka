@@ -14,6 +14,10 @@ import (
 	"common/chainoracle/blocks"
 	"common/nodemanager/gen"
 	commonruntimeconfig "common/runtimeconfig"
+	"github.com/labstack/echo/v4"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
 	"devshard/chainoracle/blocks/observer"
 	"devshard/chainoracle/params"
 	cosrv "devshard/chainoracle/server"
@@ -21,10 +25,6 @@ import (
 	"devshard/testenv/gatewayphase"
 	"devshard/testenv/mockchain/adminface"
 	"devshard/testenv/mockchain/fetcher"
-
-	"github.com/labstack/echo/v4"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 // Service runs mock-dapi gRPC + HTTP (chainoracle + /testenv fault proxy).

@@ -5,7 +5,7 @@ import (
 	"hash/fnv"
 	"log"
 	"math"
-	"sort"
+	"slices"
 	"sync"
 	"time"
 )
@@ -54,7 +54,7 @@ func (s RequestSample) ReceiptMs() float64 {
 	return float64(s.ReceiptTime.Sub(s.SendTime).Milliseconds())
 }
 
-// CTTFL = (firstTokenTime - receiptTime) / inputTokens
+// CTTFL = (firstTokenTime - receiptTime) / inputTokens.
 func (s RequestSample) CTTFL() float64 {
 	if s.FirstToken.IsZero() || s.ReceiptTime.IsZero() || s.InputTokens == 0 {
 		return 0
@@ -108,7 +108,7 @@ func (r *hostRing) all() []RequestSample {
 		return nil
 	}
 	out := make([]RequestSample, r.count)
-	for i := 0; i < r.count; i++ {
+	for i := range r.count {
 		idx := (r.pos - r.count + i + len(r.samples)) % len(r.samples)
 		out[i] = r.samples[idx]
 	}
@@ -247,7 +247,7 @@ func (r *requestRing) all() []RequestRecord {
 		return nil
 	}
 	result := make([]RequestRecord, r.count)
-	for i := 0; i < r.count; i++ {
+	for i := range r.count {
 		idx := (r.pos - r.count + i + requestLogSize) % requestLogSize
 		result[i] = r.records[idx]
 	}
@@ -587,6 +587,7 @@ func (t *PerfTracker) ToolUnsupported() map[string]bool {
 	}
 	return result
 }
+
 func (t *PerfTracker) PairwiseSummaries() []PairwiseSummary {
 	if t == nil || t.pairwise == nil {
 		return nil
@@ -655,7 +656,7 @@ func (r *firstTokenBucketRing) all() []time.Duration {
 		return nil
 	}
 	out := make([]time.Duration, r.count)
-	for i := 0; i < r.count; i++ {
+	for i := range r.count {
 		idx := (r.pos - r.count + i + len(r.samples)) % len(r.samples)
 		out[i] = r.samples[idx]
 	}
@@ -713,11 +714,8 @@ func percentileDuration(values []time.Duration, q float64) time.Duration {
 		return 0
 	}
 	sorted := append([]time.Duration(nil), values...)
-	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-	idx := int(math.Ceil(q*float64(len(sorted)))) - 1
-	if idx < 0 {
-		idx = 0
-	}
+	slices.Sort(sorted)
+	idx := max(int(math.Ceil(q*float64(len(sorted))))-1, 0)
 	if idx >= len(sorted) {
 		idx = len(sorted) - 1
 	}

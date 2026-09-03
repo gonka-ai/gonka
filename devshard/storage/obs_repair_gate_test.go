@@ -154,7 +154,7 @@ func TestObsRepairGate_QueueOverflowIsReported(t *testing.T) {
 	gate := newGateTestStore(t)
 
 	err := gate.RepairValidationObs("escrow-1", func(Storage) error {
-		for i := 0; i < maxQueuedObsOps+5; i++ {
+		for i := range maxQueuedObsOps + 5 {
 			require.NoError(t, gate.DrainInferenceValidationObs("escrow-1", uint64(i)))
 		}
 		return nil
@@ -185,7 +185,7 @@ func TestObsRepairGate_ConcurrentWritersDuringRepair(t *testing.T) {
 	const writers = 8
 	var wg sync.WaitGroup
 	err := gate.RepairValidationObs("escrow-1", func(inner Storage) error {
-		for i := 0; i < writers; i++ {
+		for i := range writers {
 			wg.Add(1)
 			go func(slot uint32) {
 				defer wg.Done()
@@ -198,7 +198,7 @@ func TestObsRepairGate_ConcurrentWritersDuringRepair(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	for slot := uint32(0); slot < writers; slot++ {
+	for slot := range uint32(writers) {
 		require.Equal(t, uint32(1), gateObsForSlot(t, gate, slot).CompletedValidations,
 			"write from slot %d lost", slot)
 	}

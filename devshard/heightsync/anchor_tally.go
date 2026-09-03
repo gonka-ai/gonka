@@ -1,6 +1,9 @@
 package heightsync
 
-import "sync"
+import (
+	"maps"
+	"sync"
+)
 
 const (
 	AnchorKindCadence   = "cadence"
@@ -78,10 +81,7 @@ func NewAnchorTally(dAck uint64, retain int) *AnchorTally {
 // window small on its own; this only has to stop unbounded growth while the
 // tally has no tip to refuse claims against.
 func (t *AnchorTally) maxOpenLocked() int {
-	n := t.retain * openBucketsPerRetain
-	if n < minOpenBuckets {
-		n = minOpenBuckets
-	}
+	n := max(t.retain*openBucketsPerRetain, minOpenBuckets)
 	return n
 }
 
@@ -340,7 +340,7 @@ func (a *histAcc) observe(v float64) {
 	}
 }
 
-func (a histAcc) snapshot() HistogramSnapshot {
+func (a *histAcc) snapshot() HistogramSnapshot {
 	out := HistogramSnapshot{
 		Count:   a.count,
 		Sum:     a.sum,
@@ -367,9 +367,7 @@ func (t *AnchorTally) Snapshot() (last *SealedAnchorCounts, debug []SealedHeight
 	for i := range debug {
 		if debug[i].ByKind != nil {
 			cp := make(map[string]int, len(debug[i].ByKind))
-			for k, v := range debug[i].ByKind {
-				cp[k] = v
-			}
+			maps.Copy(cp, debug[i].ByKind)
 			debug[i].ByKind = cp
 		}
 	}
@@ -380,9 +378,7 @@ func (t *AnchorTally) Snapshot() (last *SealedAnchorCounts, debug []SealedHeight
 			ByKind:    map[string]int{},
 			Turnovers: s.Turnovers,
 		}
-		for k, v := range s.ByKind {
-			last.ByKind[k] = v
-		}
+		maps.Copy(last.ByKind, s.ByKind)
 	}
 	return last, debug, t.without, t.late, t.future, t.anchors.snapshot(), t.turns.snapshot()
 }

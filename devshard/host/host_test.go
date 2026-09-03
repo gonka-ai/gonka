@@ -1794,7 +1794,7 @@ func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
 	finishTx := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: finishMsg}}
 	diff3 := testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{finishTx})
 
-	resp, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff2, diff3}})
+	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff2, diff3}})
 	require.NoError(t, err)
 
 	// Give async validation goroutine time to complete.
@@ -1820,7 +1820,7 @@ func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
 
 	// Next HandleRequest should return mempool with validation.
 	diff4 := testutil.SignDiff(t, user, "escrow-1", 4, nil)
-	resp, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff4}})
+	resp, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff4}})
 	require.NoError(t, err)
 
 	var foundValidation bool
@@ -1866,7 +1866,7 @@ func TestHost_ValidationQueueLimitsConcurrentWorkers(t *testing.T) {
 
 	var diffs []types.Diff
 	nonce := uint64(1)
-	for i := 0; i < totalJobs; i++ {
+	for i := range totalJobs {
 		inferenceID := nonce // 1, 4, 7... all execute on slot 1 for a 3-host group.
 		diffs = append(diffs, testutil.SignDiff(t, user, "escrow-queue", nonce, []*types.DevshardTx{
 			testutil.StartTx(inferenceID),
@@ -1910,7 +1910,7 @@ func TestHost_ValidationQueueLimitsConcurrentWorkers(t *testing.T) {
 	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: diffs})
 	require.NoError(t, err)
 
-	for i := 0; i < defaultValidationWorkers; i++ {
+	for i := range defaultValidationWorkers {
 		select {
 		case <-validator.started:
 		case <-time.After(2 * time.Second):

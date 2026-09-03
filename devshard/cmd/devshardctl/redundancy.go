@@ -17,14 +17,14 @@ import (
 	"sync/atomic"
 	"time"
 
+	"common/completionapi"
+
 	"devshard/accounting"
 	"devshard/host"
 	"devshard/logging"
 	"devshard/transport"
 	"devshard/types"
 	"devshard/user"
-
-	"common/completionapi"
 )
 
 // errEmptyStream marks an attempt that completed successfully at the transport
@@ -65,7 +65,7 @@ func sseChunkUsageCompletionTokens(p []byte) (int64, bool) {
 	if len(p) == 0 || !bytes.Contains(p, sseUsageKeyMarker) {
 		return 0, false
 	}
-	for _, line := range bytes.Split(p, []byte("\n")) {
+	for line := range bytes.SplitSeq(p, []byte("\n")) {
 		line = bytes.TrimRight(line, "\r")
 		if !bytes.HasPrefix(line, []byte("data:")) {
 			continue
@@ -177,7 +177,7 @@ func sseChunkErrorPayload(p []byte) (sseErrorDetails, []byte, bool) {
 	if len(p) == 0 {
 		return sseErrorDetails{}, nil, false
 	}
-	for _, line := range bytes.Split(p, []byte("\n")) {
+	for line := range bytes.SplitSeq(p, []byte("\n")) {
 		line = bytes.TrimRight(line, "\r")
 		if !bytes.HasPrefix(line, []byte("data:")) {
 			continue
@@ -270,10 +270,6 @@ func hostFailureLogFields(inf *inflight, session nonceFinishedChecker) []any {
 		)
 	}
 	return append(fields, "error", inf.err)
-}
-
-func requestBodySampleForLog(params user.InferenceParams) (string, bool) {
-	return bodySampleForLog(params.Prompt, emptyStreamBodySampleLimit)
 }
 
 func requestFlagsForLog(params user.InferenceParams) string {
@@ -383,10 +379,12 @@ func forceUpstreamStreamingFromSettings(settings RedundancySettings) bool {
 	return *settings.ForceUpstreamStreaming
 }
 
-var forceUpstreamStreaming atomic.Bool
+var forceUpstreamStreaming = newForceUpstreamStreaming()
 
-func init() {
-	forceUpstreamStreaming.Store(true)
+func newForceUpstreamStreaming() *atomic.Bool {
+	flag := &atomic.Bool{}
+	flag.Store(true)
+	return flag
 }
 
 // ForceUpstreamStreamingEnabled reports the process-wide always-stream-upstream flag.
@@ -1626,11 +1624,12 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 
 	if firstOutputChunk {
 		route := "loser"
-		if isWinner {
+		switch {
+		case isWinner:
 			route = "winner"
-		} else if rw.inf.probe {
+		case rw.inf.probe:
 			route = "probe"
-		} else if winnerNonce == 0 {
+		case winnerNonce == 0:
 			route = "pending"
 		}
 		logInferenceStage(rw.group.logCtx, rw.inf.escrowID, rw.nonce, "first_token", "host", rw.inf.hostID, "route", route, "winner_nonce", winnerNonce)
@@ -1763,7 +1762,7 @@ func ssePayloadDataLines(p []byte) []string {
 		return nil
 	}
 	var lines []string
-	for _, raw := range bytes.Split(p, []byte("\n")) {
+	for raw := range bytes.SplitSeq(p, []byte("\n")) {
 		line := strings.TrimRight(string(raw), "\r")
 		if !strings.HasPrefix(line, "data: ") {
 			continue
@@ -2243,10 +2242,7 @@ func defaultFirstTokenFallbackDelay(inputTokens uint64) time.Duration {
 	if seconds < 0 {
 		seconds = 0
 	}
-	delay := time.Duration(seconds * float64(time.Second))
-	if delay < FirstTokenTimeoutCap {
-		delay = FirstTokenTimeoutCap
-	}
+	delay := max(time.Duration(seconds*float64(time.Second)), FirstTokenTimeoutCap)
 	return delay
 }
 
@@ -2451,10 +2447,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 		var escalationTimer *time.Timer
 		var escalationC <-chan time.Time
 		if shouldArmEscalationTimer(hasTrigger, winner, len(attempts), maxAttempts, trigger.stage) {
-			wait := time.Until(trigger.deadline)
-			if wait < 0 {
-				wait = 0
-			}
+			wait := max(time.Until(trigger.deadline), 0)
 			escalationTimer = time.NewTimer(wait)
 			escalationC = escalationTimer.C
 		} else if hasTrigger && winner == 0 {
@@ -2470,10 +2463,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 		var stallTimer *time.Timer
 		var stallC <-chan time.Time
 		if inf, deadline, ok := nextInterChunkStallTrigger(attempts); ok {
-			wait := time.Until(deadline)
-			if wait < 0 {
-				wait = 0
-			}
+			wait := max(time.Until(deadline), 0)
 			stallInf = inf
 			stallTimer = time.NewTimer(wait)
 			stallC = stallTimer.C
@@ -2483,10 +2473,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 		if winner != 0 {
 			if winning := inflightByNonce(attempts, winner); winning != nil {
 				if deadline, ok := winnerHardTimeoutDeadline(winning); ok {
-					wait := time.Until(deadline)
-					if wait < 0 {
-						wait = 0
-					}
+					wait := max(time.Until(deadline), 0)
 					winnerHardTimeoutTimer = time.NewTimer(wait)
 					winnerHardTimeoutC = winnerHardTimeoutTimer.C
 				}
@@ -2918,16 +2905,14 @@ func (e *Redundancy) goTrackedRaceCleanup(parent context.Context, fn func(contex
 	}
 	ctx, cancel := context.WithCancel(context.WithoutCancel(parent))
 	stopPropagate := context.AfterFunc(e.raceCleanupRoot(), cancel)
-	e.raceCleanupWG.Add(1)
-	go func() {
-		defer e.raceCleanupWG.Done()
+	e.raceCleanupWG.Go(func() {
 		defer cancel()
 		defer stopPropagate()
 		if e.onRaceCleanupDone != nil {
 			defer e.onRaceCleanupDone()
 		}
 		fn(ctx)
-	}()
+	})
 }
 
 // raceCleanupGrace is how long Stop lets detached cleanups finish on their own
@@ -3276,94 +3261,6 @@ func (e *Redundancy) finishRaceWhenPendingDone(ctx context.Context, attempts []*
 	}
 }
 
-func (e *Redundancy) finishStalledWinnerAfterClientTimeout(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, winnerNonce uint64) {
-	bgCtx, _ := ensureRequestLogContext(context.Background())
-	bgCtx = logging.PropagateRequestID(bgCtx, ctx)
-
-	winner := inflightByNonce(attempts, winnerNonce)
-	abandonedWinner := e.waitForClientTimedOutAttempts(bgCtx, winnerNonce, attempts)
-	if abandonedWinner {
-		e.recordStalledWinnerFailureOnce(winner, params)
-		if err := e.finishRaceOutcome(bgCtx, attempts, params, decision, winnerNonce, raceFinishOptions{
-			forceTreatAsFailure: true,
-		}); err != nil {
-			logRequestStage(bgCtx, "background_stalled_winner_finalize_failed", "escrow", e.devshardID, "error", err)
-		}
-		return
-	}
-
-	if winner != nil && winner.err == nil && inflightFinished(winner) {
-		logInferenceStage(bgCtx, winner.escrowID, winner.nonce, "winner_completed_after_client_timeout",
-			"host", winner.hostID,
-			"output_chunks", winner.outputChunks.Load(),
-			"content_chunks", winner.contentChunks.Load(),
-			"output_bytes", winner.outputBytes.Load(),
-		)
-	}
-	if err := e.finishRaceOutcome(bgCtx, attempts, params, decision, winnerNonce, raceFinishOptions{
-		recordFailureSamples: true,
-	}); err != nil {
-		logRequestStage(bgCtx, "background_stalled_winner_finalize_failed", "escrow", e.devshardID, "error", err)
-	}
-}
-
-func (e *Redundancy) waitForClientTimedOutAttempts(ctx context.Context, winnerNonce uint64, attempts []*inflight) bool {
-	pending := pendingInflights(attempts)
-	if len(pending) == 0 {
-		return false
-	}
-
-	timer := time.NewTimer(SecondaryWaitAfterWinner)
-	defer stopTimer(timer)
-
-	naturalDone := make(chan *inflight, len(pending))
-	for _, inf := range pending {
-		inf := inf
-		go func() {
-			<-inf.done
-			naturalDone <- inf
-		}()
-	}
-
-	abandonedWinner := false
-	remaining := len(pending)
-	for remaining > 0 {
-		select {
-		case <-naturalDone:
-			remaining--
-		case <-timer.C:
-			still := pendingInflights(attempts)
-			logRequestStage(ctx, "client_timeout_wait_abandoned",
-				"escrow", e.devshardID,
-				"winner_nonce", winnerNonce,
-				"pending", len(still),
-				"wait_ms", SecondaryWaitAfterWinner.Milliseconds(),
-			)
-			for _, inf := range still {
-				reason := "client_timeout_grace_expired"
-				stage := "speculative_attempt_canceled"
-				if inf.nonce == winnerNonce {
-					stage = "stalled_winner_canceled_after_client_timeout"
-					abandonedWinner = true
-				}
-				logInferenceStage(ctx, inf.escrowID, inf.nonce, stage,
-					"host", inf.hostID,
-					"reason", reason,
-				)
-				if inf.cancel != nil {
-					inf.cancel()
-				}
-			}
-			for remaining > 0 {
-				<-naturalDone
-				remaining--
-			}
-			return abandonedWinner
-		}
-	}
-	return false
-}
-
 // waitForPendingLosers waits for all not-yet-done attempts to close their done
 // channel, giving them at most SecondaryWaitAfterWinner to finish naturally.
 // Anything still running at the deadline has its per-attempt context cancelled
@@ -3381,7 +3278,6 @@ func (e *Redundancy) waitForPendingLosers(ctx context.Context, winnerNonce uint6
 
 	naturalDone := make(chan *inflight, len(pending))
 	for _, inf := range pending {
-		inf := inf
 		go func() {
 			<-inf.done
 			naturalDone <- inf
@@ -3860,22 +3756,6 @@ func isRetriableCapabilityErrorMessage(msg string) bool {
 
 func isToolChoiceCapabilityError(msg string) bool {
 	return strings.Contains(msg, toolChoiceUnsupportedMessage)
-}
-func requestRequiresTools(params user.InferenceParams) bool {
-	var raw map[string]any
-	if err := json.Unmarshal(params.Prompt, &raw); err != nil {
-		return false
-	}
-	if tools, ok := raw["tools"].([]any); ok && len(tools) > 0 {
-		return true
-	}
-	if choice, ok := raw["tool_choice"]; ok && choice != nil {
-		if s, ok := choice.(string); ok && strings.EqualFold(s, "none") {
-			return false
-		}
-		return true
-	}
-	return false
 }
 
 // parseContextLengthLimit extracts the maximum context length from an error
@@ -4427,11 +4307,8 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 		// A finished nonce means the host applied our diffs, so the next disagreement is a new incident.
 		e.clearSpentStateReplay(participantKey, inf.sendTime)
 	}
-	if e.participantLimiter != nil {
-		switch {
-		case responsive:
-			e.participantLimiter.ObserveSuccessfulInferenceForModel(participantKey, e.model)
-		}
+	if e.participantLimiter != nil && responsive {
+		e.participantLimiter.ObserveSuccessfulInferenceForModel(participantKey, e.model)
 	}
 	if e.metrics != nil {
 		e.metrics.ObserveRequestSample(e.devshardID, sample)

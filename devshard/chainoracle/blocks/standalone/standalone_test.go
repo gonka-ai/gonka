@@ -15,12 +15,12 @@ import (
 
 	"common/chainoracle/blocks"
 	"common/httpguard"
+	"github.com/stretchr/testify/require"
+
 	"devshard/chainoracle/blocks/client"
 	"devshard/chainoracle/blocks/standalone"
 	"devshard/chainoracle/blocks/verifier"
 	"devshard/signing"
-
-	"github.com/stretchr/testify/require"
 )
 
 func TestMain(m *testing.M) {
@@ -43,7 +43,7 @@ func genValidators(t *testing.T, n int) ([]standalone.Validator, []verifier.Vali
 	t.Helper()
 	svs := make([]standalone.Validator, 0, n)
 	vvs := make([]verifier.Validator, 0, n)
-	for i := 0; i < n; i++ {
+	for range n {
 		s, err := signing.GenerateKey()
 		require.NoError(t, err)
 		addr, err := blocks.AddressBytes(s.PublicKeyBytes())
@@ -90,13 +90,11 @@ func runInBackground(t *testing.T, svc *standalone.Service) context.CancelFunc {
 	ctx, cancel := context.WithCancel(context.Background())
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		if err := svc.Run(ctx); err != nil {
 			t.Errorf("standalone.Run: %v", err)
 		}
-	}()
+	})
 
 	t.Cleanup(func() {
 		cancel()
@@ -143,7 +141,6 @@ func TestNew_RejectsInvalidConfig(t *testing.T) {
 		{"no listener or addr", func(c *standalone.Config) { c.Addr = ""; c.Listener = nil }, "Listener or Addr"},
 	}
 	for _, tc := range cases {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			cfg := standalone.Config{
 				ChainID:    "gonka-testenv-1",
@@ -164,7 +161,7 @@ func TestService_Healthz(t *testing.T) {
 	svc, base, _ := newService(t)
 	runInBackground(t, svc)
 
-	resp, body := httpGet(t, base+"/healthz")
+	resp, body := httpGet(t, base+"/healthz") //nolint:bodyclose // the helper closes the body before it returns.
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, "ok", strings.TrimSpace(string(body)))
 }
@@ -195,7 +192,7 @@ func waitForHeight(t *testing.T, base string, height int64) *blocks.Header {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		resp, body := httpGet(t, fmt.Sprintf("%s/block/%d", base, height))
+		resp, body := httpGet(t, fmt.Sprintf("%s/block/%d", base, height)) //nolint:bodyclose // the helper closes the body before it returns.
 		if resp.StatusCode == http.StatusOK {
 			var h blocks.Header
 			require.NoError(t, json.Unmarshal(body, &h))
@@ -214,7 +211,7 @@ func TestService_LookupAtVerifiedHeaders(t *testing.T) {
 	svc, base, vs := newService(t)
 	runInBackground(t, svc)
 	_ = waitForHeight(t, base, 1)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := svc.Observer().AdvanceOne()
 		require.NoError(t, err)
 	}
@@ -268,7 +265,7 @@ func TestService_RejectsUnknownHeight(t *testing.T) {
 	svc, base, _ := newService(t)
 	runInBackground(t, svc)
 
-	resp, _ := httpGet(t, base+"/block/999")
+	resp, _ := httpGet(t, base+"/block/999") //nolint:bodyclose // the helper closes the body before it returns.
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 

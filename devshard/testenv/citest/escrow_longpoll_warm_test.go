@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"devshard/testenv/citest/harness"
 	"devshard/testenv/config"
-
-	"github.com/stretchr/testify/require"
 )
 
 // TestEscrowLongPollWarmWithoutInferenceNode encodes v4-deploy-test-plan §6.1–§6.3.

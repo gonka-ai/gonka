@@ -27,3 +27,5 @@ jobs:
         with:
           version: v2.6
           working-directory: inference-chain
+          # The module otherwise resolves the repository-wide config; this job only guards panic/Must.
+          args: --config .golangci.dont-panic.yml

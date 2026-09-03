@@ -12,9 +12,9 @@ import (
 // HostStats + Fees + RestHash + VersionHash + phase byte.
 // The state root itself is not included in the payload.
 type SettlementPayload struct {
-	EscrowID string
+	EscrowID                    string
 	StateRootAndProtocolVersion string
-	Nonce    uint64
+	Nonce                       uint64
 	// Fees is the cumulative amount deducted from escrow balance as protocol fees.
 	Fees       uint64
 	RestHash   []byte
@@ -33,11 +33,11 @@ func BuildSettlement(escrowID string, st types.EscrowState, signatures map[uint3
 	return &SettlementPayload{
 		EscrowID:                    escrowID,
 		StateRootAndProtocolVersion: st.StateRootAndProtocolVersion,
-		Nonce:      nonce,
-		Fees:       st.Fees,
-		RestHash:   restHash,
-		HostStats:  st.HostStats,
-		Signatures: signatures,
+		Nonce:                       nonce,
+		Fees:                        st.Fees,
+		RestHash:                    restHash,
+		HostStats:                   st.HostStats,
+		Signatures:                  signatures,
 	}, nil
 }
 

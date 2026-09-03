@@ -1,6 +1,8 @@
 package main
 
 import (
+	"maps"
+
 	"devshard/cmd/devshardctl/messagevalidators"
 )
 
@@ -89,12 +91,8 @@ func (p ChatMessageProcessor) resolveRoles(routedModel string) map[string]Messag
 		return p.defaultRoles
 	}
 	merged := make(map[string]MessageRolePolicy, len(p.defaultRoles))
-	for k, v := range p.defaultRoles {
-		merged[k] = v
-	}
-	for k, v := range overrides {
-		merged[k] = v
-	}
+	maps.Copy(merged, p.defaultRoles)
+	maps.Copy(merged, overrides)
 	return merged
 }
 
@@ -215,8 +213,4 @@ func (p ChatMessageProcessor) validateRoleSpecific(message map[string]any, i int
 		}
 	}
 	return nil
-}
-
-func validateOpenAICompatChatMessages(request map[string]any) error {
-	return defaultMessageProcessor.ValidateDocument(&ChatRequestDocument{raw: request}, "")
 }

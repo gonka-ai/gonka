@@ -2,6 +2,7 @@ package main
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -24,7 +25,7 @@ type RequestAccountingRecord struct {
 	EscrowID            string                     `json:"escrow_id"`
 	Model               string                     `json:"model,omitempty"`
 	StartedAt           time.Time                  `json:"started_at"`
-	CompletedAt         time.Time                  `json:"completed_at,omitempty"`
+	CompletedAt         time.Time                  `json:"completed_at"`
 	Outcome             string                     `json:"outcome"`
 	Decision            string                     `json:"decision,omitempty"`
 	WinnerNonce         uint64                     `json:"winner_nonce,omitempty"`
@@ -323,7 +324,7 @@ func (s *PerfStore) findAccountingRequestDirect(requestID, escrowID string) (Req
 		requestID,
 		escrowID,
 	).Scan(&rec.RequestID, &rec.EscrowID, &rec.Model, &startedAt, &completedAt, &rec.Outcome, &rec.Decision, &rec.WinnerNonce)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return RequestAccountingRecord{}, false, nil
 	}
 	if err != nil {

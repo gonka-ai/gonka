@@ -144,7 +144,7 @@ func (r *obsTestRig) awaitTerminalSeal(inferenceID uint64, nonce uint64) uint64 
 		return nonce
 	}
 	after := r.host.LatestNonce()
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		nonce = r.advanceToNextAutoSealNonce(after)
 		if row, ok, err := r.store.GetSealedInference(r.escrowID, inferenceID); err == nil && ok && row.SealedNonce != 0 {
 			return nonce

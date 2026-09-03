@@ -1,6 +1,7 @@
 package heightsync
 
 import (
+	"maps"
 	"slices"
 
 	"devshard/types"
@@ -487,9 +488,7 @@ func (t *TurnTracker) Clone() *TurnTracker {
 	for k, v := range t.turns {
 		cp.turns[k] = cloneTurn(v)
 	}
-	for k, v := range t.heartbeatAt {
-		cp.heartbeatAt[k] = v
-	}
+	maps.Copy(cp.heartbeatAt, t.heartbeatAt)
 	return cp
 }
 
@@ -531,7 +530,7 @@ func (t *TurnTracker) MissingAcks(turnStart uint64) []uint32 {
 		return nil
 	}
 	missing := make([]uint32, 0)
-	for slot := uint32(0); slot < uint32(t.slotsNum); slot++ {
+	for slot := range uint32(t.slotsNum) {
 		if _, ok := rec.Acks[slot]; !ok {
 			missing = append(missing, slot)
 		}
@@ -595,7 +594,7 @@ func HeartbeatNonceForSlot(spanStart uint64, slot, slotsNum uint32) uint64 {
 		return spanStart
 	}
 	n := uint64(slotsNum)
-	for i := uint64(0); i < n; i++ {
+	for i := range n {
 		nonce := spanStart + i
 		if SlotForNonce(nonce, n) == slot {
 			return nonce

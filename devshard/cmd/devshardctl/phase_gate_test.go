@@ -5,11 +5,12 @@ import (
 	"log"
 	"net/http"
 	"net/http/httptest"
+	"slices"
 	"strings"
 	"testing"
 
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
-	"github.com/golang/protobuf/proto"
+	"github.com/cosmos/gogoproto/proto"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 )
@@ -550,7 +551,7 @@ func TestChainPhaseGateUsesPreservedSnapshotDuringPoC(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []string{"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"}, state.preserved)
 	require.Equal(t, map[string][]string{
-		"Model/A": []string{"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"},
+		"Model/A": {"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1"},
 	}, state.preservedByModel)
 	require.Equal(t, []string{"gonka1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2"}, state.excluded)
 	require.Equal(t, map[string]float64{
@@ -1066,10 +1067,5 @@ func TestParticipantValidationInferenceWeights(t *testing.T) {
 }
 
 func contains(ss []string, s string) bool {
-	for _, v := range ss {
-		if v == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(ss, s)
 }

@@ -150,7 +150,7 @@ func withMetaDrain(parent context.Context, flag *cancelFlag) (context.Context, c
 // writeStreamReset writes a stream_reset SSE event to signal the client
 // that the connection was lost and the response will be replayed from scratch.
 func writeStreamReset(w io.Writer) {
-	fmt.Fprintf(w, "data: {\"devshard_stream_reset\":true}\n\n")
+	_, _ = fmt.Fprintf(w, "data: {\"devshard_stream_reset\":true}\n\n")
 	if f, ok := w.(http.Flusher); ok {
 		f.Flush()
 	}
@@ -347,7 +347,8 @@ func (d *deferredWriter) Write(p []byte) (int, error) {
 }
 
 func (d *deferredWriter) Flush() {
-	d.flush("mid_stream")
+	// Flush has no error to return; flush records and logs the failure itself.
+	_ = d.flush("mid_stream")
 }
 
 // flush performs the Flush, records any error, and emits a single
@@ -507,7 +508,7 @@ func writeGatewayJSONError(w http.ResponseWriter, statusCode int, message string
 func writeJSONPayload(w http.ResponseWriter, statusCode int, payload []byte) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(statusCode)
-	w.Write(payload)
+	_, _ = w.Write(payload)
 }
 
 func jsonErrorPayloadDetails(payload []byte) (sseErrorDetails, bool) {
@@ -660,7 +661,7 @@ func (p *Proxy) writeSettlement(w http.ResponseWriter) {
 	}
 
 	w.Header().Set("Content-Type", "application/json")
-	w.Write(data)
+	_, _ = w.Write(data)
 }
 
 func (p *Proxy) handleFinalize(w http.ResponseWriter, r *http.Request) {
@@ -694,7 +695,7 @@ type statusResponse struct {
 	ConfirmationPoCPhase string                `json:"confirmation_poc_phase,omitempty"`
 	RequestsBlocked      bool                  `json:"requests_blocked"`
 	BlockReason          string                `json:"block_reason,omitempty"`
-	HeightSeed           user.HeightSeedStatus `json:"height_seed,omitempty"`
+	HeightSeed           user.HeightSeedStatus `json:"height_seed"`
 	Config               statusSessionConfig   `json:"config"`
 }
 
@@ -721,7 +722,7 @@ func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	enc.Encode(v)
+	_ = enc.Encode(v)
 }
 
 func (p *Proxy) handleDebugPending(w http.ResponseWriter, r *http.Request) {

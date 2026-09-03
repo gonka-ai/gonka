@@ -11,6 +11,7 @@ import (
 	"unicode/utf8"
 
 	"common/completionapi"
+
 	"devshard"
 )
 
@@ -179,10 +180,7 @@ func (p ChatRequestPipeline) applyOutputTokenLimits(ctx *RequestFilterContext) {
 }
 
 func (p ChatRequestPipeline) applyTokenBudgetFloor(ctx *RequestFilterContext) {
-	maxTokens := ctx.Request.MaxTokens
-	if maxTokens < completionapi.MinTokensFloor {
-		maxTokens = completionapi.MinTokensFloor
-	}
+	maxTokens := max(ctx.Request.MaxTokens, completionapi.MinTokensFloor)
 	if _, ok := ctx.Document.Get("max_tokens"); ok {
 		ctx.Document.Set("max_tokens", maxTokens)
 	}

@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"devshard/testenv/config"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/testenv/config"
 )
 
 // Router pool states as reported by the router's pool-status diagnostic.
@@ -62,7 +62,7 @@ printf 'show map %s\n' "$map" | socat stdio "UNIX-CONNECT:$sock"
 func parseRouterPool(out string) []RouterSlot {
 	var slots []RouterSlot
 	backend := ""
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		if line == "" {
 			continue
 		}
@@ -110,7 +110,7 @@ func routerVersionBackend(stack *Stack, version string) (string, error) {
 
 func parseRouterVersionBackend(out, version string) (string, error) {
 	backend := ""
-	for _, line := range strings.Split(out, "\n") {
+	for line := range strings.SplitSeq(out, "\n") {
 		fields := strings.Fields(line)
 		if len(fields) < 3 || strings.HasPrefix(fields[0], "#") || fields[1] != version {
 			continue

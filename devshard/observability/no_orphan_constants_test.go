@@ -50,7 +50,7 @@ func findRepoRootForOrphanScan(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
 	}
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		if _, err := os.Stat(filepath.Join(dir, "devshard")); err == nil {
 			return dir
 		}
@@ -80,7 +80,7 @@ func collectReasonAndWhereDecls(t *testing.T, root string) map[string]struct{} {
 		}
 		f, perr := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
 		if perr != nil {
-			return nil // skip non-parseable
+			return nil //nolint:nilerr // files that will not parse are skipped.
 		}
 		for _, decl := range f.Decls {
 			gd, ok := decl.(*ast.GenDecl)

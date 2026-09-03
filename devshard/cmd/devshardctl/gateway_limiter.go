@@ -13,16 +13,16 @@ const (
 	LimitedByZeroLiveWeight     = "zero_live_weight"
 )
 
-// LimiterRejection carries what was already in flight and the cap it met, so a rejection says how
+// LimiterRejectionError carries what was already in flight and the cap it met, so a rejection says how
 // full the gateway was rather than only that it was full.
-type LimiterRejection struct {
+type LimiterRejectionError struct {
 	Model    string
 	Kind     string
 	InFlight int64
 	Limit    int64
 }
 
-func (e *LimiterRejection) Error() string {
+func (e *LimiterRejectionError) Error() string {
 	if e.Kind == LimitedByInputTokens {
 		return fmt.Sprintf("rate limit exceeded: too many input tokens in flight (%d/%d)", e.InFlight, e.Limit)
 	}
@@ -255,13 +255,7 @@ func scaleClampLimit(base int64, scale float64) int64 {
 		// 0 means "unlimited" in the existing API. Preserve it.
 		return base
 	}
-	scaled := int64(float64(base)*scale + 0.5)
-	if scaled < 0 {
-		scaled = 0
-	}
-	if scaled > base {
-		scaled = base
-	}
+	scaled := min(max(int64(float64(base)*scale+0.5), 0), base)
 	return scaled
 }
 
@@ -303,7 +297,7 @@ func (l *GatewayLimiter) acquireLocked(model string, inputTokens int64, capacity
 	effectiveMaxInputTokens := scaleClampLimit(limits.maxInputTokens, capacity.ScaleFactor)
 	concurrentLimited := limits.maxConcurrent > 0 || dynamicConcurrencyEnabled(capacity)
 	if concurrentLimited && effectiveMaxConcurrent <= 0 {
-		return &LimiterRejection{
+		return &LimiterRejectionError{
 			Model:    model,
 			Kind:     LimitedByZeroLiveWeight,
 			InFlight: counter.inFlightRequests,
@@ -311,7 +305,7 @@ func (l *GatewayLimiter) acquireLocked(model string, inputTokens int64, capacity
 		}
 	}
 	if concurrentLimited && counter.inFlightRequests+1 > effectiveMaxConcurrent {
-		return &LimiterRejection{
+		return &LimiterRejectionError{
 			Model:    model,
 			Kind:     LimitedByConcurrentRequests,
 			InFlight: counter.inFlightRequests,
@@ -319,7 +313,7 @@ func (l *GatewayLimiter) acquireLocked(model string, inputTokens int64, capacity
 		}
 	}
 	if limits.maxInputTokens > 0 && counter.inFlightInputToks+inputTokens > effectiveMaxInputTokens {
-		return &LimiterRejection{
+		return &LimiterRejectionError{
 			Model:    model,
 			Kind:     LimitedByInputTokens,
 			InFlight: counter.inFlightInputToks,
@@ -338,10 +332,7 @@ func (l *GatewayLimiter) acquireLocked(model string, inputTokens int64, capacity
 func (l *GatewayLimiter) concurrentLimitsForCapacityLocked(model string, limits limiterModelLimits, capacity LimiterModelCapacity) (effective, baseline int64) {
 	if dynamicConcurrencyEnabled(capacity) {
 		baseline = weightConcurrencyLimit(capacity.BaselineWeight, capacity.MaxConcurrentPer10000Weight)
-		effective = weightConcurrencyLimit(capacity.CurrentWeight, capacity.MaxConcurrentPer10000Weight)
-		if effective > baseline {
-			effective = baseline
-		}
+		effective = min(weightConcurrencyLimit(capacity.CurrentWeight, capacity.MaxConcurrentPer10000Weight), baseline)
 		return effective, baseline
 	}
 	baseline = limits.maxConcurrent

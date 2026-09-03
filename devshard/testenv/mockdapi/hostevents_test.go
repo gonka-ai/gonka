@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"common/nodemanager/gen"
-
 	"github.com/stretchr/testify/require"
 )
 

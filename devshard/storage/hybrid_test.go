@@ -20,74 +20,92 @@ func (r *recordingStorage) CreateSession(params CreateSessionParams) error {
 	r.lastMethod = "CreateSession"
 	return nil
 }
+
 func (r *recordingStorage) MarkSettled(escrowID string) error {
 	r.lastMethod = "MarkSettled"
 	return nil
 }
+
 func (r *recordingStorage) ListActiveSessions() ([]ActiveSession, error) {
 	r.lastMethod = "ListActiveSessions"
 	return r.activeSessions, nil
 }
+
 func (r *recordingStorage) AppendDiff(escrowID string, rec types.DiffRecord) error {
 	r.lastMethod = "AppendDiff"
 	return nil
 }
+
 func (r *recordingStorage) GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.DiffRecord, error) {
 	r.lastMethod = "GetDiffs"
 	return nil, nil
 }
+
 func (r *recordingStorage) AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error {
 	r.lastMethod = "AddSignature"
 	return nil
 }
+
 func (r *recordingStorage) GetSignatures(escrowID string, nonce uint64) (map[uint32][]byte, error) {
 	r.lastMethod = "GetSignatures"
 	return nil, nil
 }
+
 func (r *recordingStorage) GetSessionMeta(escrowID string) (*SessionMeta, error) {
 	r.lastMethod = "GetSessionMeta"
 	return nil, ErrSessionNotFound
 }
+
 func (r *recordingStorage) MarkFinalized(escrowID string, nonce uint64) error {
 	r.lastMethod = "MarkFinalized"
 	return nil
 }
+
 func (r *recordingStorage) LastFinalized(escrowID string) (uint64, error) {
 	r.lastMethod = "LastFinalized"
 	return 0, nil
 }
+
 func (r *recordingStorage) SaveSnapshot(escrowID string, nonce uint64, data []byte) error {
 	r.lastMethod = "SaveSnapshot"
 	return nil
 }
+
 func (r *recordingStorage) LoadSnapshot(escrowID string) (uint64, []byte, error) {
 	r.lastMethod = "LoadSnapshot"
 	return 0, nil, ErrSnapshotNotFound
 }
+
 func (r *recordingStorage) InsertSealedInference(escrowID string, row InferenceRow) error {
 	r.lastMethod = "InsertSealedInference"
 	return nil
 }
+
 func (r *recordingStorage) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
 	r.lastMethod = "InsertSealedInferences"
 	return nil
 }
+
 func (r *recordingStorage) BulkInsertSealedInferences(escrowID string, rows []InferenceRow) error {
 	r.lastMethod = "BulkInsertSealedInferences"
 	return nil
 }
+
 func (r *recordingStorage) GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error) {
 	r.lastMethod = "GetSealedInference"
 	return InferenceRow{}, false, nil
 }
+
 func (r *recordingStorage) DeleteSealedInferences(escrowID string) error {
 	r.lastMethod = "DeleteSealedInferences"
 	return nil
 }
+
 func (r *recordingStorage) SealedInferenceIDs(escrowID string) (map[uint64]uint64, error) {
 	r.lastMethod = "SealedInferenceIDs"
 	return nil, nil
 }
+
 func (r *recordingStorage) ClearValidationObs(escrowID string) error {
 	r.lastMethod = "ClearValidationObs"
 	return nil
@@ -97,38 +115,47 @@ func (r *recordingStorage) RecordValidationsAppliedOnce(escrowID string, entries
 	r.lastMethod = "RecordValidationsAppliedOnce"
 	return nil
 }
+
 func (r *recordingStorage) DrainInferenceValidationObsBatch(escrowID string, inferenceIDs []uint64) error {
 	r.lastMethod = "DrainInferenceValidationObsBatch"
 	return nil
 }
+
 func (r *recordingStorage) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {
 	r.lastMethod = "DrainInferenceValidationObs"
 	return nil
 }
+
 func (r *recordingStorage) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {
 	r.lastMethod = "GetValidationObservability"
 	return nil, nil
 }
+
 func (r *recordingStorage) PutEscrowCache(info EscrowCacheInfo) error {
 	r.lastMethod = "PutEscrowCache"
 	return nil
 }
+
 func (r *recordingStorage) GetEscrowCache(escrowID string) (*EscrowCacheInfo, error) {
 	r.lastMethod = "GetEscrowCache"
 	return nil, ErrEscrowCacheNotFound
 }
+
 func (r *recordingStorage) DeleteEscrowCache(escrowID string) error {
 	r.lastMethod = "DeleteEscrowCache"
 	return nil
 }
+
 func (r *recordingStorage) PruneEpoch(epochID uint64) error {
 	r.lastMethod = "PruneEpoch"
 	return nil
 }
+
 func (r *recordingStorage) pruneBefore(cutoff uint64) error {
 	r.lastMethod = "pruneBefore"
 	return nil
 }
+
 func (r *recordingStorage) Close() error {
 	r.lastMethod = "Close"
 	return nil
@@ -330,8 +357,7 @@ func TestHybridStorage_forwardsStorageMethods(t *testing.T) {
 func TestHybridStorage_ReconnectPromotesDegradedRouter(t *testing.T) {
 	sqlite := &owningRecordingStorage{owned: map[string]struct{}{"sqlite-owned": {}}}
 	h := newDegradedSQLiteRouter(sqlite, t.TempDir(), ErrStoragePostgresUnavailable)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	pg := &recordingStorage{}
 	attempts := 0
@@ -373,8 +399,7 @@ func (r *readyGateStorage) WaitReady(ctx context.Context) error {
 func TestHybridStorage_ReconnectWaitsForIndexReadyBeforePromote(t *testing.T) {
 	sqlite := &owningRecordingStorage{owned: map[string]struct{}{"sqlite-owned": {}}}
 	h := newDegradedSQLiteRouter(sqlite, t.TempDir(), ErrStoragePostgresUnavailable)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	pg := &readyGateStorage{readyCh: make(chan struct{})}
 	h.startPostgresReconnect(ctx, func(context.Context) (Storage, error) {
@@ -407,8 +432,7 @@ func TestHybridStorage_PromoteClosesIncomingBackendWhenAlreadyPromoted(t *testin
 
 func TestHybridStorage_PromotionHookFiresAfterReconnectAndImmediatelyAfterPromotion(t *testing.T) {
 	h := newDegradedSQLiteRouter(nil, t.TempDir(), ErrStoragePostgresUnavailable)
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	first := make(chan struct{}, 1)
 	h.OnPostgresPromoted(func() { first <- struct{}{} })

@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"devshard/testenv/citest/harness"
 	"devshard/testenv/config"
 	"devshard/testenv/mockopenai"
-
-	"github.com/stretchr/testify/require"
 )
 
 const (

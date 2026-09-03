@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"maps"
+	"slices"
 
 	"devshard/heightsync"
 	"devshard/signing"
@@ -100,7 +102,7 @@ func minHostSyncNonce(cursor map[int]uint64, groupSize int) uint64 {
 	}
 	var minNonce uint64
 	sawAny := false
-	for h := 0; h < groupSize; h++ {
+	for h := range groupSize {
 		v, ok := cursor[h]
 		if !ok {
 			return 0
@@ -152,7 +154,7 @@ func RecoverSession(
 		return nil, nil, fmt.Errorf("session version required for escrow %s", escrowID)
 	}
 
-	stateOpts := append(smOpts, state.WithVersion(recoveredVersion))
+	stateOpts := append(slices.Clone(smOpts), state.WithVersion(recoveredVersion))
 
 	sm, err := state.NewStateMachine(
 		escrowID, meta.Config, meta.Group, meta.InitialBalance,
@@ -214,9 +216,7 @@ func RecoverSession(
 	}
 
 	// Restore the per-host catch-up cursor.
-	for h, n := range snapshotCursor {
-		sess.hostSyncNonce[h] = n
-	}
+	maps.Copy(sess.hostSyncNonce, snapshotCursor)
 
 	// Backfill sess.diffs with pre-snapshot diffs that some host may still
 	// need. sess.diffs must contain a contiguous range covering every
@@ -342,9 +342,7 @@ func restoreSignaturesFromStore(sess *Session, store storage.Storage, escrowID s
 	if _, ok := sess.signatures[nonce]; !ok {
 		sess.signatures[nonce] = make(map[uint32][]byte)
 	}
-	for slotID, sig := range sigs {
-		sess.signatures[nonce][slotID] = sig
-	}
+	maps.Copy(sess.signatures[nonce], sigs)
 	log.Printf("recover_session escrow=%s signatures_restored nonce=%d slots=%d", escrowID, nonce, len(sigs))
 	return nil
 }
@@ -397,7 +395,7 @@ func restoreAppliedTxKeys(sess *Session, records []types.DiffRecord) {
 		}
 	}
 	for _, rec := range records {
-		for _, tx := range rec.Diff.Txs {
+		for _, tx := range rec.Txs {
 			if key := devshardTxKey(tx); key != "" {
 				sess.appliedTxKeys[key] = struct{}{}
 			}
@@ -438,9 +436,7 @@ func restoreHeartbeatProducer(sess *Session, sm *state.StateMachine) {
 // mutate hostSyncNonce after this returns.
 func saveSnapshot(store storage.Storage, sm *state.StateMachine, escrowID string, nonce uint64, hostSyncNonce map[int]uint64) {
 	cursor := make(map[int]uint64, len(hostSyncNonce))
-	for k, v := range hostSyncNonce {
-		cursor[k] = v
-	}
+	maps.Copy(cursor, hostSyncNonce)
 	writeSnapshot(store, escrowID, nonce, sm.ExportState(), cursor, sm.ExportCommittedEntries(), sm.ExportSealedNonces(), sm.ExportHeightSyncFloor())
 }
 
@@ -449,15 +445,15 @@ func saveSnapshot(store storage.Storage, sm *state.StateMachine, escrowID string
 // only the JSON marshal + storage write and can run without any session
 // or state-machine locks held -- this is what enables async background
 // snapshots from the runtime hot path).
-func writeSnapshot(store storage.Storage, escrowID string, nonce uint64, state *types.EscrowState, cursor map[int]uint64, committedEntries map[uint64][]byte, sealedNonces map[uint64]uint64, heightSyncFloor *types.FloorIndexProto) {
-	_ = writeSnapshotErr(store, escrowID, nonce, state, cursor, committedEntries, sealedNonces, heightSyncFloor)
+func writeSnapshot(store storage.Storage, escrowID string, nonce uint64, escrowState *types.EscrowState, cursor map[int]uint64, committedEntries map[uint64][]byte, sealedNonces map[uint64]uint64, heightSyncFloor *types.FloorIndexProto) {
+	_ = writeSnapshotErr(store, escrowID, nonce, escrowState, cursor, committedEntries, sealedNonces, heightSyncFloor)
 }
 
 // writeSnapshotErr is writeSnapshot with an error return, for synchronous
 // callers (e.g. Session.FlushSnapshot on retire) that want to know whether the
 // snapshot landed. It logs on failure exactly like writeSnapshot.
-func writeSnapshotErr(store storage.Storage, escrowID string, nonce uint64, state *types.EscrowState, cursor map[int]uint64, committedEntries map[uint64][]byte, sealedNonces map[uint64]uint64, heightSyncFloor *types.FloorIndexProto) error {
-	blob := sessionSnapshot{State: state, HostSyncNonce: cursor, CommittedEntries: committedEntries, SealedNonces: sealedNonces, HeightSyncFloor: heightSyncFloor}
+func writeSnapshotErr(store storage.Storage, escrowID string, nonce uint64, escrowState *types.EscrowState, cursor map[int]uint64, committedEntries map[uint64][]byte, sealedNonces map[uint64]uint64, heightSyncFloor *types.FloorIndexProto) error {
+	blob := sessionSnapshot{State: escrowState, HostSyncNonce: cursor, CommittedEntries: committedEntries, SealedNonces: sealedNonces, HeightSyncFloor: heightSyncFloor}
 	data, err := json.Marshal(blob)
 	if err != nil {
 		log.Printf("recover_session escrow=%s snapshot_marshal_failed=%v", escrowID, err)

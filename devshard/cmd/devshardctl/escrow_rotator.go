@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"common/chain"
+
 	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/types"
@@ -470,10 +471,7 @@ func (g *Gateway) recordRotationCreateFailure(modelID, role string) {
 		g.rotationBreakers[key] = breaker
 	}
 	breaker.consecutiveFailures++
-	cooldown := 1 << (breaker.consecutiveFailures - 1)
-	if cooldown > rotationBreakerMaxCooldownTicks {
-		cooldown = rotationBreakerMaxCooldownTicks
-	}
+	cooldown := min(1<<(breaker.consecutiveFailures-1), rotationBreakerMaxCooldownTicks)
 	breaker.cooldownTicks = cooldown
 }
 
@@ -498,7 +496,7 @@ func (g *Gateway) currentBlockHeight() uint64 {
 // withDBRetry retries a DB write with backoff to ride out a transient lock.
 func withDBRetry(ctx context.Context, fn func() error) error {
 	var err error
-	for attempt := 0; attempt < escrowWriteRetries; attempt++ {
+	for attempt := range escrowWriteRetries {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
@@ -647,7 +645,7 @@ func (g *Gateway) settleTerminalErr(id string, cause error) error {
 	if err != nil || info == nil || !info.Settled {
 		return cause
 	}
-	return fmt.Errorf("%w: escrow %s: %v", bridge.ErrEscrowSettled, id, cause)
+	return fmt.Errorf("%w: escrow %s: %w", bridge.ErrEscrowSettled, id, cause)
 }
 
 func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req adminSettleEscrowRequest) (*SettleDevshardEscrowResult, error) {

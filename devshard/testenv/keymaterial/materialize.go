@@ -6,14 +6,14 @@ import (
 	"path/filepath"
 	"strings"
 
-	"devshard/signing"
-	"devshard/testenv/config"
-
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	cryptocodec "github.com/cosmos/cosmos-sdk/crypto/codec"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"golang.org/x/crypto/bcrypt"
+
+	"devshard/signing"
+	"devshard/testenv/config"
 )
 
 const (
@@ -100,7 +100,7 @@ func writeKeyHash(baseDir string, hash []byte) error {
 func passphraseReader(password string) *strings.Reader {
 	var b strings.Builder
 	line := password + "\n"
-	for i := 0; i < passphraseRepeats; i++ {
+	for range passphraseRepeats {
 		b.WriteString(line)
 	}
 	return strings.NewReader(b.String())

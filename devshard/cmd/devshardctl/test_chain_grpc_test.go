@@ -4,12 +4,12 @@ import (
 	"testing"
 
 	"common/chain"
-	"devshard/testenv/mockchain/grpcface"
-	"devshard/testenv/mockchain/seed"
-
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+
+	"devshard/testenv/mockchain/grpcface"
+	"devshard/testenv/mockchain/seed"
 )
 
 func dialTestChainGRPC(t *testing.T) *chain.Client {

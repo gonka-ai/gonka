@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"common/chainoracle/blocks"
-	"devshard/heightsync"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/heightsync"
 )
 
 type fakePeerTipCache struct {

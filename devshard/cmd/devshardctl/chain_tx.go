@@ -6,11 +6,10 @@ import (
 	"os"
 	"strings"
 
-	devshardpkg "devshard"
-
 	chaintx "common/chain/tx"
-
 	"google.golang.org/grpc"
+
+	devshardpkg "devshard"
 )
 
 // CreateDevshardEscrowResult is returned after a successful on-chain create tx.
@@ -83,7 +82,7 @@ func settleParamsFromJSON(settlement SettlementJSON) (chaintx.SettleParams, erro
 	hostStats := make([]chaintx.HostStats, 0, len(settlement.HostStats))
 	for _, hs := range settlement.HostStats {
 		hostStats = append(hostStats, chaintx.HostStats{
-			SlotID:               uint32(hs.SlotID),
+			SlotID:               hs.SlotID,
 			Missed:               int32(hs.Missed),
 			Invalid:              int32(hs.Invalid),
 			Cost:                 hs.Cost,
@@ -97,7 +96,7 @@ func settleParamsFromJSON(settlement SettlementJSON) (chaintx.SettleParams, erro
 		if err != nil {
 			return chaintx.SettleParams{}, err
 		}
-		sigs = append(sigs, chaintx.SlotSignature{SlotID: uint32(sig.SlotID), Signature: sigBytes})
+		sigs = append(sigs, chaintx.SlotSignature{SlotID: sig.SlotID, Signature: sigBytes})
 	}
 	return chaintx.SettleParams{
 		EscrowID:                    escrowID,

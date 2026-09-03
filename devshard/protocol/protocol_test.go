@@ -86,7 +86,7 @@ func defaultParams() user.InferenceParams {
 // the session queue by pipelined SendInference before asserting on live state.
 func drainSessionPending(t *testing.T, ctx context.Context, session *user.Session) {
 	t.Helper()
-	for attempt := 0; attempt < 30; attempt++ {
+	for range 30 {
 		if len(session.PendingTxs()) == 0 {
 			return
 		}
@@ -102,7 +102,7 @@ func TestProtocol_HappyPath_15Inferences(t *testing.T) {
 	ctx := context.Background()
 	params := defaultParams()
 
-	for i := 0; i < 15; i++ {
+	for i := range 15 {
 		result, err := env.session.SendInference(ctx, params)
 		require.NoError(t, err, "inference %d", i+1)
 		require.NotNil(t, result)
@@ -140,7 +140,7 @@ func TestProtocol_HappyPath_15Inferences(t *testing.T) {
 		require.Equal(t, expectedExecutor, rec.ExecutorSlot, "inference %d executor", id)
 		executorCounts[rec.ExecutorSlot]++
 	}
-	for slot := uint32(0); slot < 5; slot++ {
+	for slot := range uint32(5) {
 		require.Equal(t, 3, executorCounts[slot], "slot %d should execute 3 inferences", slot)
 	}
 
@@ -166,7 +166,7 @@ func TestProtocol_ReceiptPipelining(t *testing.T) {
 	params := defaultParams()
 
 	// Send 3 inferences.
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := env.session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
@@ -337,7 +337,7 @@ func TestProtocol_ExecutorAssignment(t *testing.T) {
 	ctx := context.Background()
 	params := defaultParams()
 
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		resp, err := env.session.SendInference(ctx, params)
 		require.NoError(t, err)
 
@@ -361,7 +361,7 @@ func TestProtocol_StateSignatureContent(t *testing.T) {
 	params := defaultParams()
 	verifier := signing.NewSecp256k1Verifier()
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := env.session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
@@ -402,7 +402,7 @@ func TestProtocol_StateConvergence(t *testing.T) {
 	ctx := context.Background()
 	params := defaultParams()
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		_, err := env.session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
@@ -482,7 +482,7 @@ func TestProtocol_Timeout_UserSide(t *testing.T) {
 	})
 
 	// Apply timeout to host 2.
-	resp, err = hosts[2].HandleRequest(ctx, host.HostRequest{Diffs: []types.Diff{diff1, diff2}, Nonce: 2})
+	_, err = hosts[2].HandleRequest(ctx, host.HostRequest{Diffs: []types.Diff{diff1, diff2}, Nonce: 2})
 	require.NoError(t, err)
 
 	// Verify via a fresh state machine.
@@ -504,7 +504,7 @@ func TestProtocol_Finalize_AllInferencesFinished(t *testing.T) {
 	ctx := context.Background()
 	params := defaultParams()
 
-	for i := 0; i < 15; i++ {
+	for range 15 {
 		_, err := env.session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
@@ -608,7 +608,7 @@ func TestProtocol_Finalize_SignaturesFromAllHosts(t *testing.T) {
 	ctx := context.Background()
 	params := defaultParams()
 
-	for i := 0; i < 15; i++ {
+	for range 15 {
 		_, err := env.session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
@@ -634,7 +634,7 @@ func TestProtocol_Finalize_ExactDiffCount(t *testing.T) {
 	ctx := context.Background()
 	params := defaultParams()
 
-	for i := 0; i < numInferences; i++ {
+	for range numInferences {
 		_, err := env.session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
@@ -653,7 +653,7 @@ func TestProtocol_SignatureThreshold(t *testing.T) {
 	ctx := context.Background()
 	params := defaultParams()
 
-	for i := 0; i < 15; i++ {
+	for range 15 {
 		_, err := env.session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
@@ -671,7 +671,7 @@ func TestProtocol_Finalize_DeadlineOnly(t *testing.T) {
 	ctx := context.Background()
 	params := defaultParams()
 
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		_, err := env.session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
@@ -692,7 +692,7 @@ func TestProtocol_Settlement_EndToEnd(t *testing.T) {
 	ctx := context.Background()
 	params := defaultParams()
 
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		_, err := env.session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}

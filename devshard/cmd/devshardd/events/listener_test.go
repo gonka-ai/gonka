@@ -12,9 +12,9 @@ import (
 
 func TestParseNewBlockEvent_HashAndTime(t *testing.T) {
 	block := cmttypes.MakeBlock(12, nil, nil, nil)
-	block.Header.ChainID = "gonka-test"
-	block.Header.Time = time.Unix(1_700_000_000, 0).UTC()
-	block.Header.ValidatorsHash = bytes.Repeat([]byte{0xab}, 32)
+	block.ChainID = "gonka-test"
+	block.Time = time.Unix(1_700_000_000, 0).UTC()
+	block.ValidatorsHash = bytes.Repeat([]byte{0xab}, 32)
 	want := block.Header.Hash().Bytes()
 	ev, ok := parseNewBlockEvent(ctypes.ResultEvent{
 		Data: cmttypes.EventDataNewBlock{
@@ -25,7 +25,7 @@ func TestParseNewBlockEvent_HashAndTime(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, int64(12), ev.BlockHeight)
 	require.Equal(t, "gonka-test", ev.ChainID)
-	require.Equal(t, block.Header.Time, ev.Time)
+	require.Equal(t, block.Time, ev.Time)
 	require.Equal(t, want, ev.BlockHash)
 	require.False(t, ev.Time.IsZero())
 	require.NotEmpty(t, ev.BlockHash)

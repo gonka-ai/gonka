@@ -235,7 +235,7 @@ func TestSanitizeFloatMapParameter_DropsNonFinite(t *testing.T) {
 
 func TestSanitizeFloatMapParameter_RejectsOversizeMap(t *testing.T) {
 	doc := map[string]any{"m": map[string]any{}}
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		doc["m"].(map[string]any)[string(rune('a'+i))] = 1.0
 	}
 	h := SanitizeFloatMapParameter{MaxEntries: 3}

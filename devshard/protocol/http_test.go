@@ -4,16 +4,16 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"testing"
 	"time"
 
+	"common/httpguard"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
-
-	"common/httpguard"
 
 	"devshard/gossip"
 	"devshard/host"
@@ -241,7 +241,7 @@ func TestHTTP_HappyPath(t *testing.T) {
 	ctx := context.Background()
 	params := defaultParams()
 
-	for i := 0; i < 15; i++ {
+	for i := range 15 {
 		result, err := env.session.SendInference(ctx, params)
 		require.NoError(t, err, "inference %d", i+1)
 		require.NotNil(t, result)
@@ -275,9 +275,7 @@ func TestHTTP_HappyPath(t *testing.T) {
 		if err != nil {
 			continue
 		}
-		for slotID, sig := range sigs {
-			merged[slotID] = sig
-		}
+		maps.Copy(merged, sigs)
 	}
 	require.NotEmpty(t, merged, "should have signatures at settlement nonce %d", settlementNonce)
 }
@@ -831,7 +829,7 @@ func TestHTTP_StateRecovery(t *testing.T) {
 	params := defaultParams()
 
 	// Send 3 inferences.
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := env.session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
@@ -877,7 +875,7 @@ func TestHTTP_Finalize(t *testing.T) {
 	ctx := context.Background()
 	params := defaultParams()
 
-	for i := 0; i < 15; i++ {
+	for range 15 {
 		_, err := env.session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
@@ -903,7 +901,7 @@ func TestHTTP_Finalize(t *testing.T) {
 			signedSlots[slotID] = true
 		}
 	}
-	for i := uint32(0); i < 5; i++ {
+	for i := range uint32(5) {
 		require.True(t, signedSlots[i], "slot %d should have signed", i)
 	}
 }
@@ -949,7 +947,7 @@ func TestHTTP_SignatureAccumulation(t *testing.T) {
 	params := defaultParams()
 
 	// Send 5 inferences. Each goes to a different host (round-robin).
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		_, err := env.session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
@@ -972,7 +970,7 @@ func TestHTTP_GossipRecovery(t *testing.T) {
 	params := defaultParams()
 
 	// Send 3 inferences normally.
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := env.session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
@@ -1027,7 +1025,7 @@ func TestHTTP_HostDown_FullFlow(t *testing.T) {
 	params := defaultParams()
 
 	// Send 3 inferences.
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := env.session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
@@ -1036,11 +1034,8 @@ func TestHTTP_HostDown_FullFlow(t *testing.T) {
 	env.httpServers[3].Close()
 
 	// Send more inferences. Nonces that target host 3 will fail.
-	failCount := 0
-	for i := 0; i < 10; i++ {
-		_, err := env.session.SendInference(ctx, params)
-		if err != nil {
-			failCount++
+	for range 10 {
+		if _, err := env.session.SendInference(ctx, params); err != nil {
 			break // stop on first failure
 		}
 	}

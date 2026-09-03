@@ -13,14 +13,14 @@ import (
 
 	mlnodeclient "common/nodemanager"
 	nmgen "common/nodemanager/gen"
-	"devshard/observability"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+
+	"devshard/observability"
 )
 
 type engineMockNM struct {
@@ -100,9 +100,7 @@ func TestDoWithLockedNode_GRPCSuccessObserves(t *testing.T) {
 	eng := newTestEngine(ml, mgr, nil)
 
 	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "42",
-		func(endpoint string) (*http.Response, error) {
-			return http.Get(endpoint)
-		})
+		http.Get)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	_, _ = io.Copy(io.Discard, resp.Body)
@@ -146,9 +144,7 @@ func TestDoWithLockedNode_UnavailableFallsBack(t *testing.T) {
 	eng := newTestEngine(ml, mgr, nil)
 
 	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
-		func(endpoint string) (*http.Response, error) {
-			return http.Get(endpoint)
-		})
+		http.Get)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	_, _ = io.Copy(io.Discard, resp.Body)
@@ -184,10 +180,8 @@ func TestDoWithLockedNode_ResourceExhaustedDoesNotFallback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	resp, err := eng.doWithLockedNode(ctx, observability.PathExecute, "model-a", "",
-		func(endpoint string) (*http.Response, error) {
-			return http.Get(endpoint)
-		})
+	resp, err := eng.doWithLockedNode(ctx, observability.PathExecute, "model-a", "", //nolint:bodyclose // the call fails, so there is no body to close.
+		http.Get)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 	assert.Equal(t, int32(0), mlHits.Load(), "must not fall back to cached node")
@@ -222,9 +216,7 @@ func TestDoWithLockedNode_FallbackRotatesOn5xx(t *testing.T) {
 	eng := newTestEngine(ml, mgr, nil)
 
 	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
-		func(endpoint string) (*http.Response, error) {
-			return http.Get(endpoint)
-		})
+		http.Get)
 	require.NoError(t, err)
 	require.NotNil(t, resp)
 	_, _ = io.Copy(io.Discard, resp.Body)
@@ -244,10 +236,8 @@ func TestDoWithLockedNode_FallbackEmptyCacheFails(t *testing.T) {
 	mgr := mlnodeclient.NewManager(time.Hour)
 	eng := newTestEngine(ml, mgr, nil)
 
-	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
-		func(endpoint string) (*http.Response, error) {
-			return http.Get(endpoint)
-		})
+	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", //nolint:bodyclose // the call fails, so there is no body to close.
+		http.Get)
 	require.Error(t, err)
 	assert.Nil(t, resp)
 	assert.Contains(t, err.Error(), "no cached nodes")
@@ -307,20 +297,16 @@ func TestFallback_RespectsLocalInFlight(t *testing.T) {
 	var wg sync.WaitGroup
 	errCh := make(chan error, workers)
 	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
-				func(endpoint string) (*http.Response, error) {
-					return http.Get(endpoint)
-				})
+				http.Get)
 			if err != nil {
 				errCh <- err
 				return
 			}
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
-		}()
+		})
 	}
 	wg.Wait()
 	close(errCh)
@@ -371,20 +357,16 @@ func TestFallback_NoCapacityUnbounded(t *testing.T) {
 	var wg sync.WaitGroup
 	errCh := make(chan error, workers)
 	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
-				func(endpoint string) (*http.Response, error) {
-					return http.Get(endpoint)
-				})
+				http.Get)
 			if err != nil {
 				errCh <- err
 				return
 			}
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
-		}()
+		})
 	}
 
 	select {
@@ -452,20 +434,16 @@ func TestFallback_UnknownNodeBounded(t *testing.T) {
 	var wg sync.WaitGroup
 	errCh := make(chan error, workers)
 	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
-				func(endpoint string) (*http.Response, error) {
-					return http.Get(endpoint)
-				})
+				http.Get)
 			if err != nil {
 				errCh <- err
 				return
 			}
 			_, _ = io.Copy(io.Discard, resp.Body)
 			_ = resp.Body.Close()
-		}()
+		})
 	}
 	wg.Wait()
 	close(errCh)
@@ -474,4 +452,3 @@ func TestFallback_UnknownNodeBounded(t *testing.T) {
 	}
 	assert.Equal(t, int32(1), maxInFlight.Load(), "capacity-unknown node must be bounded, not unbounded")
 }
-

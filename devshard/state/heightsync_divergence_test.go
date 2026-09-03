@@ -36,7 +36,8 @@ func divHeartbeatTx(height uint64, hash []byte) *types.DevshardTx {
 }
 
 func divAckTx(t *testing.T, signer *signing.Secp256k1Signer, turnSeq, refNonce uint64, slot uint32,
-	height uint64, hash []byte, st types.SyncState) *types.DevshardTx {
+	height uint64, hash []byte, st types.SyncState,
+) *types.DevshardTx {
 	t.Helper()
 	ack := &types.MsgHeightAck{
 		RefNonce:          refNonce,

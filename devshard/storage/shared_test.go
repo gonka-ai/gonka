@@ -48,7 +48,7 @@ func paramsForEpoch(escrowID string, epochID uint64) CreateSessionParams {
 	return p
 }
 
-func runCreateSession_GetSessionMeta(t *testing.T, store Storage) {
+func runCreateSessionGetSessionMeta(t *testing.T, store Storage) {
 	t.Helper()
 
 	err := store.CreateSession(defaultParams())
@@ -68,7 +68,7 @@ func runCreateSession_GetSessionMeta(t *testing.T, store Storage) {
 	require.Equal(t, "active", meta.Status)
 }
 
-func runCreateSession_Idempotent(t *testing.T, store Storage) {
+func runCreateSessionIdempotent(t *testing.T, store Storage) {
 	t.Helper()
 
 	err := store.CreateSession(defaultParams())
@@ -87,7 +87,7 @@ func runCreateSession_Idempotent(t *testing.T, store Storage) {
 	require.Equal(t, uint64(1000), meta.InitialBalance)
 }
 
-func runCreateSession_ConflictingEpoch(t *testing.T, store Storage) {
+func runCreateSessionConflictingEpoch(t *testing.T, store Storage) {
 	t.Helper()
 
 	require.NoError(t, store.CreateSession(defaultParams()))
@@ -99,7 +99,7 @@ func runCreateSession_ConflictingEpoch(t *testing.T, store Storage) {
 	require.Equal(t, uint64(7), meta.EpochID)
 }
 
-func runCreateSession_ConflictingVersion(t *testing.T, store Storage) {
+func runCreateSessionConflictingVersion(t *testing.T, store Storage) {
 	t.Helper()
 
 	require.NoError(t, store.CreateSession(defaultParams()))
@@ -113,9 +113,9 @@ func runCreateSession_ConflictingVersion(t *testing.T, store Storage) {
 	require.Equal(t, storageTestVersion, meta.Version)
 }
 
-// runCreateSession_EmptyVersionRejected pins the storage-boundary contract:
+// runCreateSessionEmptyVersionRejected pins the storage-boundary contract:
 // CreateSession must reject an empty Version tag.
-func runCreateSession_EmptyVersionRejected(t *testing.T, store Storage) {
+func runCreateSessionEmptyVersionRejected(t *testing.T, store Storage) {
 	t.Helper()
 
 	p := defaultParams()
@@ -124,7 +124,7 @@ func runCreateSession_EmptyVersionRejected(t *testing.T, store Storage) {
 	require.ErrorIs(t, err, ErrSessionVersionRequired)
 }
 
-func runAppendDiff_GetDiffs(t *testing.T, store Storage) {
+func runAppendDiffGetDiffs(t *testing.T, store Storage) {
 	t.Helper()
 
 	err := store.CreateSession(defaultParams())
@@ -186,7 +186,7 @@ func runGetSignatures(t *testing.T, store Storage) {
 	require.Len(t, sigs2, 2)
 }
 
-func runMarkFinalized_LastFinalized(t *testing.T, store Storage) {
+func runMarkFinalizedLastFinalized(t *testing.T, store Storage) {
 	t.Helper()
 
 	err := store.CreateSession(defaultParams())
@@ -558,10 +558,10 @@ func runListActiveSessions(t *testing.T, store Storage) {
 	}
 }
 
-// runPruneEpoch_RemovesOnlyTarget verifies the core promise of partitioned
+// runPruneEpochRemovesOnlyTarget verifies the core promise of partitioned
 // storage: prune deletes every session in the target epoch and leaves all
 // other epochs byte-for-byte intact.
-func runPruneEpoch_RemovesOnlyTarget(t *testing.T, store Storage) {
+func runPruneEpochRemovesOnlyTarget(t *testing.T, store Storage) {
 	t.Helper()
 
 	// Two sessions in epoch 7, one in epoch 8, one in epoch 9.
@@ -619,9 +619,9 @@ func runPruneEpoch_RemovesOnlyTarget(t *testing.T, store Storage) {
 	require.Equal(t, []string{"e8", "e9"}, ids)
 }
 
-// runPruneEpoch_Idempotent: pruning the same epoch twice, or pruning an epoch
+// runPruneEpochIdempotent: pruning the same epoch twice, or pruning an epoch
 // with no sessions, must not error.
-func runPruneEpoch_Idempotent(t *testing.T, store Storage) {
+func runPruneEpochIdempotent(t *testing.T, store Storage) {
 	t.Helper()
 
 	require.NoError(t, store.CreateSession(paramsForEpoch("e7", 7)))
@@ -640,10 +640,10 @@ func runPruneEpoch_Idempotent(t *testing.T, store Storage) {
 	require.Empty(t, active)
 }
 
-// runPruneEpoch_WriteAfter: after pruning an epoch, new sessions in that same
+// runPruneEpochWriteAfter: after pruning an epoch, new sessions in that same
 // epoch number must be writable again. Verifies the partition was fully torn
 // down (no leftover unique-key collisions or partition state).
-func runPruneEpoch_WriteAfter(t *testing.T, store Storage) {
+func runPruneEpochWriteAfter(t *testing.T, store Storage) {
 	t.Helper()
 
 	require.NoError(t, store.CreateSession(paramsForEpoch("alpha", 7)))

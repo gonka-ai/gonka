@@ -219,13 +219,13 @@ func (h *HybridStorage) forwardFatalErrors(backend Storage) {
 	if !ok {
 		return
 	}
-	errors := reporter.FatalErrors()
-	if errors == nil {
+	fatalErrors := reporter.FatalErrors()
+	if fatalErrors == nil {
 		return
 	}
 	go func() {
 		select {
-		case err := <-errors:
+		case err := <-fatalErrors:
 			if err != nil {
 				h.fatalOnce.Do(func() {
 					select {
@@ -944,5 +944,7 @@ func (h *HybridStorage) Close() error {
 	return firstErr
 }
 
-var _ Storage = (*HybridStorage)(nil)
-var _ LeaseStore = (*HybridStorage)(nil)
+var (
+	_ Storage    = (*HybridStorage)(nil)
+	_ LeaseStore = (*HybridStorage)(nil)
+)

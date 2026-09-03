@@ -39,7 +39,7 @@ func blockHandler(st *store.Store, heightPtr *int64) (*ctypes.ResultBlock, error
 			height, latest)
 	}
 	block := cmttypes.MakeBlock(height, nil, nil, nil)
-	block.Header.ChainID = st.GetChainID()
+	block.ChainID = st.GetChainID()
 	return &ctypes.ResultBlock{
 		BlockID: cmttypes.BlockID{Hash: block.Hash()},
 		Block:   block,

@@ -145,64 +145,83 @@ func requireStorageLogEntry(t *testing.T, entries []map[string]any, msg string) 
 // must also pass against real Postgres. Catches schema drift between backends.
 
 func TestPostgres_CreateSession_GetSessionMeta(t *testing.T) {
-	runCreateSession_GetSessionMeta(t, newTestPostgres(t))
+	runCreateSessionGetSessionMeta(t, newTestPostgres(t))
 }
+
 func TestPostgres_CreateSession_Idempotent(t *testing.T) {
-	runCreateSession_Idempotent(t, newTestPostgres(t))
+	runCreateSessionIdempotent(t, newTestPostgres(t))
 }
+
 func TestPostgres_CreateSession_ConflictingEpoch(t *testing.T) {
-	runCreateSession_ConflictingEpoch(t, newTestPostgres(t))
+	runCreateSessionConflictingEpoch(t, newTestPostgres(t))
 }
+
 func TestPostgres_CreateSession_ConflictingVersion(t *testing.T) {
-	runCreateSession_ConflictingVersion(t, newTestPostgres(t))
+	runCreateSessionConflictingVersion(t, newTestPostgres(t))
 }
+
 func TestPostgres_CreateSession_EmptyVersionRejected(t *testing.T) {
-	runCreateSession_EmptyVersionRejected(t, newTestPostgres(t))
+	runCreateSessionEmptyVersionRejected(t, newTestPostgres(t))
 }
+
 func TestPostgres_AppendDiff_GetDiffs(t *testing.T) {
-	runAppendDiff_GetDiffs(t, newTestPostgres(t))
+	runAppendDiffGetDiffs(t, newTestPostgres(t))
 }
+
 func TestPostgres_GetSignatures(t *testing.T) {
 	runGetSignatures(t, newTestPostgres(t))
 }
+
 func TestPostgres_MarkFinalized_LastFinalized(t *testing.T) {
-	runMarkFinalized_LastFinalized(t, newTestPostgres(t))
+	runMarkFinalizedLastFinalized(t, newTestPostgres(t))
 }
+
 func TestPostgres_SaveLoadSnapshot(t *testing.T) {
 	runSaveLoadSnapshot(t, newTestPostgres(t))
 }
+
 func TestPostgres_SealedInferenceLifecycle(t *testing.T) {
 	runSealedInferenceLifecycle(t, newTestPostgres(t))
 }
+
 func TestPostgres_SealedInferenceBatchInsert(t *testing.T) {
 	runSealedInferenceBatchInsert(t, newTestPostgres(t))
 }
+
 func TestPostgres_SealedInferenceBulkInsert(t *testing.T) {
 	runSealedInferenceBulkInsert(t, newTestPostgres(t))
 }
+
 func TestPostgres_ValidationObsBatchDrain(t *testing.T) {
 	runValidationObsBatchDrain(t, newTestPostgres(t))
 }
+
 func TestPostgres_AddSignature(t *testing.T) {
 	runAddSignature(t, newTestPostgres(t))
 }
+
 func TestPostgres_WarmKeyDelta(t *testing.T) {
 	runWarmKeyDelta(t, newTestPostgres(t))
 }
+
 func TestPostgres_MarkSettled(t *testing.T) {
 	runMarkSettled(t, newTestPostgres(t))
 }
+
 func TestPostgres_ListActiveSessions(t *testing.T) {
 	runListActiveSessions(t, newTestPostgres(t))
 }
+
 func TestPostgres_PruneEpoch_RemovesOnlyTarget(t *testing.T) {
-	runPruneEpoch_RemovesOnlyTarget(t, newTestPostgres(t))
+	runPruneEpochRemovesOnlyTarget(t, newTestPostgres(t))
 }
+
 func TestPostgres_PruneEpoch_Idempotent(t *testing.T) {
-	runPruneEpoch_Idempotent(t, newTestPostgres(t))
+	runPruneEpochIdempotent(t, newTestPostgres(t))
 }
+
 func TestPostgres_PruneEpoch_WriteAfter(t *testing.T) {
-	runPruneEpoch_WriteAfter(t, newTestPostgres(t))
+	runPruneEpochWriteAfter(t, newTestPostgres(t))
 }
 
 // TestPostgres_PartitionTablesPhysicallyDropped is the assertion specific to
@@ -404,7 +423,7 @@ func TestForEachEscrowEpochBatch_ChunksBy1000(t *testing.T) {
 	const n = postgresIndexRepairBatchSize + 3
 	escrows := make([]string, n)
 	epochs := make([]int64, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		escrows[i] = "e"
 		epochs[i] = int64(i)
 	}
@@ -562,7 +581,7 @@ func TestPostgresHealthProbePingAfterReconnectWithdraws(t *testing.T) {
 	})
 	pg := &Postgres{healthReady: true}
 
-	for i := 0; i < postgresHealthQuorum; i++ {
+	for i := range postgresHealthQuorum {
 		probeCtx, cancel := context.WithTimeout(context.Background(), postgresHealthTimeout)
 		probeErr := probe.check(probeCtx)
 		cancel()

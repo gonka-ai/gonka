@@ -7,6 +7,7 @@ import (
 	"net/http"
 
 	"common/completionapi"
+
 	devshardpkg "devshard"
 	"devshard/observability"
 )
@@ -107,7 +108,7 @@ func processExecutionHTTPResponse(
 		if relayed == nil {
 			return nil, fmt.Errorf("relay response: the processor produced no forwarded body")
 		}
-		fmt.Fprintf(req.ResponseWriter, "data: %s\n\ndata: [DONE]\n\n", relayed)
+		_, _ = fmt.Fprintf(req.ResponseWriter, "data: %s\n\ndata: [DONE]\n\n", relayed)
 		if f, ok := req.ResponseWriter.(http.Flusher); ok {
 			f.Flush()
 		}

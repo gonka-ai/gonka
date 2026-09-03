@@ -5,11 +5,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"devshard/testenv/config"
-	"devshard/testenv/mockchain/seed"
-
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
+
+	"devshard/testenv/config"
+	"devshard/testenv/mockchain/seed"
 )
 
 func TestLoadDefaults(t *testing.T) {

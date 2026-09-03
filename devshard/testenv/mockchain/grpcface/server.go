@@ -2,13 +2,14 @@ package grpcface
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net"
 
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
-	inferencetypes "github.com/productscience/inference/x/inference/types"
-	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc"
 
 	"devshard/testenv/mockchain/rpcface"
@@ -70,7 +71,7 @@ func Serve(ctx context.Context, addr string, deps Deps) error {
 		srv.GracefulStop()
 		return ctx.Err()
 	case err := <-errCh:
-		if err == grpc.ErrServerStopped {
+		if errors.Is(err, grpc.ErrServerStopped) {
 			return nil
 		}
 		return err

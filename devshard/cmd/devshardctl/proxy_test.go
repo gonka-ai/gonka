@@ -366,7 +366,7 @@ func TestDeferredWriterRewritesCompletionPayloadToStreamingChunks(t *testing.T) 
 	require.NoError(t, err)
 
 	var events []map[string]any
-	for _, line := range strings.Split(rec.Body.String(), "\n") {
+	for line := range strings.SplitSeq(rec.Body.String(), "\n") {
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
@@ -629,15 +629,6 @@ func setStreamingAttemptHardTimeout(t *testing.T, d time.Duration) {
 	t.Cleanup(func() { restoreRedundancyTimingSettings(prev) })
 }
 
-func setSecondaryWaitAfterWinner(t *testing.T, d time.Duration) {
-	t.Helper()
-	saved := SecondaryWaitAfterWinner
-	SecondaryWaitAfterWinner = d
-	t.Cleanup(func() {
-		SecondaryWaitAfterWinner = saved
-	})
-}
-
 func setupTestProxy(t *testing.T, numHosts int, engines []devshard.InferenceEngine, verifierAccept bool) *testProxyEnv {
 	t.Helper()
 	return setupTestProxyWithBalance(t, numHosts, engines, verifierAccept, 1_000_000)
@@ -818,18 +809,6 @@ func (streamContentWithoutFinishClient) Send(ctx context.Context, req host.HostR
 	}
 	if stream != nil {
 		_, _ = io.WriteString(stream, `data: {"choices":[{"delta":{"content":"x"}}]}`+"\n\n")
-	}
-	return &host.HostResponse{
-		Nonce:       req.Nonce,
-		ConfirmedAt: time.Now().Unix(),
-	}, nil
-}
-
-type emptyStartedClient struct{}
-
-func (emptyStartedClient) Send(_ context.Context, req host.HostRequest, _ io.Writer, receiptHandler func(*host.HostResponse)) (*host.HostResponse, error) {
-	if receiptHandler != nil {
-		receiptHandler(&host.HostResponse{})
 	}
 	return &host.HostResponse{
 		Nonce:       req.Nonce,
@@ -1150,7 +1129,7 @@ func TestLongResponseAfterContentSkipsParticipantFailureAccounting(t *testing.T)
 	env.proxy.redundancy.participantLimiter = limiter
 	participantKey := env.session.HostParticipantKey(0)
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		inf := &inflight{
 			hostIdx:  0,
 			nonce:    uint64(i + 1),
@@ -1194,7 +1173,7 @@ func TestErrorStreamSkipsParticipantFailureAccounting(t *testing.T) {
 	env.proxy.redundancy.participantLimiter = limiter
 	participantKey := env.session.HostParticipantKey(0)
 
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		inf := &inflight{
 			hostIdx:     0,
 			nonce:       uint64(i + 1),
@@ -1299,15 +1278,6 @@ func TestRunInference_ServesADeliveredAnswerWhoseNonceNeverClosed(t *testing.T) 
 	require.Contains(t, served.String(), `"content":"x"`)
 }
 
-func requireIncompleteWinnerError(t *testing.T, err error) {
-	t.Helper()
-	require.Error(t, err)
-	require.True(t,
-		strings.Contains(err.Error(), "winner inference incomplete") ||
-			strings.Contains(err.Error(), "no non-probe attempt finished"),
-		"unexpected incomplete winner error: %v", err)
-}
-
 func requireStalledWinnerTimeoutError(t *testing.T, err error) {
 	t.Helper()
 	require.Error(t, err)
@@ -1322,7 +1292,7 @@ func TestRecoveredEmptyStreamsRecordPerfWithoutQuarantine(t *testing.T) {
 	limiter := NewParticipantRequestLimiter(10, 10)
 	env.proxy.redundancy.participantLimiter = limiter
 
-	for i := 0; i < emptyStreamQuarantineThreshold; i++ {
+	for i := range emptyStreamQuarantineThreshold {
 		inf := &inflight{
 			hostIdx:  0,
 			nonce:    uint64(i + 1),
@@ -1348,7 +1318,7 @@ func TestRecordStartedAttemptSamplesDoesNotCountEmptyStreamWhenRequestFailed(t *
 	limiter := NewParticipantRequestLimiter(10, 10)
 	env.proxy.redundancy.participantLimiter = limiter
 
-	for i := 0; i < emptyStreamQuarantineThreshold; i++ {
+	for i := range emptyStreamQuarantineThreshold {
 		inf := &inflight{
 			hostIdx:  0,
 			nonce:    uint64(i + 1),
@@ -1373,7 +1343,7 @@ func TestRecordStartedAttemptSamplesDoesNotCountEmptyStreamDuringRelaxedPoC(t *t
 	limiter := NewParticipantRequestLimiter(10, 10)
 	env.proxy.redundancy.participantLimiter = limiter
 
-	for i := 0; i < emptyStreamQuarantineThreshold; i++ {
+	for i := range emptyStreamQuarantineThreshold {
 		inf := &inflight{
 			hostIdx:  0,
 			nonce:    uint64(i + 1),
@@ -1650,7 +1620,7 @@ func TestRunInference_RelaxedPoCSilentlyBurnsNonceForUnresponsiveHost(t *testing
 	// Preserve only host 0. Host 1 is PoC-required: real requests
 	// must skip it, AND in the new uniform-silent-probe regime the
 	// picker must NOT send any probe traffic to it either.
-	setPoCPreservedParticipantsByModel(map[string][]string{"llama": []string{env.session.HostParticipantKey(0)}})
+	setPoCPreservedParticipantsByModel(map[string][]string{"llama": {env.session.HostParticipantKey(0)}})
 
 	var buf bytes.Buffer
 	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf, nil)
@@ -1686,7 +1656,7 @@ func TestRunInference_RelaxedPoCImmediatelyEscalatesProbeChainToPreservedHost(t 
 	// Preserve only host 0 so nonces 1 and 2 are silently burned past
 	// the PoC-required hosts and the real request lands on host 0
 	// when nonce 3 binds to it.
-	setPoCPreservedParticipantsByModel(map[string][]string{"llama": []string{env.session.HostParticipantKey(0)}})
+	setPoCPreservedParticipantsByModel(map[string][]string{"llama": {env.session.HostParticipantKey(0)}})
 
 	var buf bytes.Buffer
 	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf, nil)
@@ -1724,7 +1694,7 @@ func TestRunInference_RelaxedPoCProbeOnlyRequestsFailAndSkipPerfRecording(t *tes
 	})
 
 	// Empty preserved set means every host is treated as a probe.
-	setPoCPreservedParticipantsByModel(map[string][]string{"llama": []string{}})
+	setPoCPreservedParticipantsByModel(map[string][]string{"llama": {}})
 
 	// New design: real requests are NEVER dispatched to PoC-required
 	// hosts. With every host PoC-required, the picker's exhaustion
@@ -1910,7 +1880,7 @@ func TestWaitForInflightDoneUntilTimesOut(t *testing.T) {
 
 func TestDecision_UnresponsiveHost(t *testing.T) {
 	perf := NewPerfTracker(nil)
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		perf.Record(RequestSample{HostIdx: 0, Responsive: false})
 	}
 
@@ -1932,7 +1902,7 @@ func TestDecision_FasterSecondary(t *testing.T) {
 	withRedundancySpeedPolicyForProxyTest(t, RedundancySpeedPolicyLegacy)
 
 	perf := NewPerfTracker(nil)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		perf.Record(RequestSample{
 			HostIdx:     0,
 			Responsive:  true,
@@ -2147,7 +2117,7 @@ func seedFirstTokenFallbackDelay(t *testing.T, perf *PerfTracker, model string, 
 			Winner:       true,
 		}},
 	}
-	for i := 0; i < firstTokenBucketSampleSize; i++ {
+	for range firstTokenBucketSampleSize {
 		perf.RecordRequest(rec)
 	}
 }

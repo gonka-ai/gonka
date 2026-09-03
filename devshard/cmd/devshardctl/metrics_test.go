@@ -100,7 +100,7 @@ func TestStartupSkippedEscrowMetric(t *testing.T) {
 
 func TestGatewayMetricsCollectorIncludesParticipantQuarantineState(t *testing.T) {
 	limiter := NewParticipantRequestLimiter(10, 10)
-	for i := 0; i < emptyStreamQuarantineThreshold; i++ {
+	for range emptyStreamQuarantineThreshold {
 		limiter.ObserveEmptyStreamForModel("participant-1", "Qwen/Test")
 	}
 
@@ -123,7 +123,7 @@ func TestGatewayMetricsCollectorIncludesParticipantQuarantineState(t *testing.T)
 
 func TestGatewayMetricsCollectorDedupesParticipantQuarantineState(t *testing.T) {
 	limiter := NewParticipantRequestLimiter(10, 10)
-	for i := 0; i < emptyStreamQuarantineThreshold; i++ {
+	for range emptyStreamQuarantineThreshold {
 		limiter.ObserveEmptyStreamForModel("participant-1", "Qwen/Test")
 	}
 
@@ -198,7 +198,7 @@ func TestParticipantLimiterRecordsQuarantineTransitions(t *testing.T) {
 	limiter.SetMetrics(m)
 
 	limiter.ObserveResultWithBodyForModel("participant-1", "Qwen/Test", "/sessions/12/chat/completions", http.StatusServiceUnavailable, "", "", "")
-	for i := 0; i < emptyStreamQuarantineThreshold; i++ {
+	for range emptyStreamQuarantineThreshold {
 		limiter.ObserveEmptyStreamForModel("participant-2", "Qwen/Test")
 	}
 

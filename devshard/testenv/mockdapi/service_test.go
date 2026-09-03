@@ -11,15 +11,15 @@ import (
 	"time"
 
 	"common/nodemanager/gen"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
 	cosrv "devshard/chainoracle/server"
 	"devshard/testenv/mockchain/adminface"
 	"devshard/testenv/mockchain/grpcface"
 	"devshard/testenv/mockchain/seed"
 	"devshard/testenv/mockdapi"
-
-	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 type testBed struct {

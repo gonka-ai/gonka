@@ -62,10 +62,7 @@ func postgresInsertSealedChunkedPerRow(b *testing.B, s *Postgres, escrowID strin
 		b.Fatal(err)
 	}
 	for start := 0; start < len(rows); start += sealedInferenceInsertChunk {
-		end := start + sealedInferenceInsertChunk
-		if end > len(rows) {
-			end = len(rows)
-		}
+		end := min(start+sealedInferenceInsertChunk, len(rows))
 		ctx, cancel := s.opCtx()
 		tx, err := s.pool.Begin(ctx)
 		if err != nil {
@@ -98,7 +95,7 @@ func BenchmarkPostgresSealedInferenceIDs(b *testing.B) {
 				b.Fatal(err)
 			}
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				ids, err := db.SealedInferenceIDs("escrow-1")
 				if err != nil {
 					b.Fatal(err)
@@ -118,7 +115,7 @@ func BenchmarkPostgresSealedInferenceIndex_UnbatchedInsert(b *testing.B) {
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
 			rows := benchSealedRows(n, false)
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				b.StopTimer()
 				if err := db.DeleteSealedInferences("escrow-1"); err != nil {
 					b.Fatal(err)
@@ -141,7 +138,7 @@ func BenchmarkPostgresSealedInferenceIndex_ChunkedTxPerRow(b *testing.B) {
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
 			rows := benchSealedRows(n, true)
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				b.StopTimer()
 				if err := db.DeleteSealedInferences("escrow-1"); err != nil {
 					b.Fatal(err)
@@ -160,7 +157,7 @@ func BenchmarkPostgresSealedInferenceIndex_BatchedInsert(b *testing.B) {
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
 			rows := benchSealedRows(n, true)
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				b.StopTimer()
 				if err := db.DeleteSealedInferences("escrow-1"); err != nil {
 					b.Fatal(err)
@@ -183,7 +180,7 @@ func BenchmarkPostgresSealedInferenceIndex_BulkInsert(b *testing.B) {
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
 			rows := benchSealedRows(n, true)
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				b.StopTimer()
 				if err := db.DeleteSealedInferences("escrow-1"); err != nil {
 					b.Fatal(err)
@@ -203,7 +200,7 @@ func BenchmarkPostgresValidationObsDrain_PerID(b *testing.B) {
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
 			ids := benchSealedIDs(n)
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				b.StopTimer()
 				if err := db.ClearValidationObs("escrow-1"); err != nil {
 					b.Fatal(err)
@@ -228,7 +225,7 @@ func BenchmarkPostgresValidationObsDrain_Batched(b *testing.B) {
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
 			ids := benchSealedIDs(n)
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				b.StopTimer()
 				if err := db.ClearValidationObs("escrow-1"); err != nil {
 					b.Fatal(err)
@@ -250,13 +247,13 @@ func BenchmarkPostgresValidationObsRecord_PerDiff(b *testing.B) {
 	for _, n := range []int{2_000, 20_000} {
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				b.StopTimer()
 				if err := db.ClearValidationObs("escrow-1"); err != nil {
 					b.Fatal(err)
 				}
 				b.StartTimer()
-				for j := 0; j < n; j++ {
+				for j := range n {
 					if err := db.RecordValidationsAppliedOnce("escrow-1", []ValidationObsEntry{
 						{InferenceID: uint64(j + 1), SlotID: 1},
 					}); err != nil {
@@ -274,17 +271,14 @@ func BenchmarkPostgresValidationObsRecord_Chunked(b *testing.B) {
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
 			entries := benchObsEntries(n)
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				b.StopTimer()
 				if err := db.ClearValidationObs("escrow-1"); err != nil {
 					b.Fatal(err)
 				}
 				b.StartTimer()
 				for start := 0; start < n; start += validationObsRebuildChunk {
-					end := start + validationObsRebuildChunk
-					if end > n {
-						end = n
-					}
+					end := min(start+validationObsRebuildChunk, n)
 					if err := db.RecordValidationsAppliedOnce("escrow-1", entries[start:end]); err != nil {
 						b.Fatal(err)
 					}

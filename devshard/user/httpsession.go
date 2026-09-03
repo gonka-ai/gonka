@@ -162,7 +162,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	config = types.NormalizeSessionConfig(config, len(group))
 
 	storagePath := resolveHTTPSessionStoragePath(cfg.EscrowID, cfg.StoragePath)
-	if err := os.MkdirAll(filepath.Dir(storagePath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(storagePath), 0o755); err != nil {
 		return nil, nil, fmt.Errorf("create storage dir: %w", err)
 	}
 	sqlStore, err := storage.NewSQLite(storagePath)

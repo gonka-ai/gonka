@@ -5,9 +5,9 @@ import (
 	"crypto/sha256"
 	"testing"
 
+	"common/chainoracle/blocks"
 	"github.com/stretchr/testify/require"
 
-	"common/chainoracle/blocks"
 	"devshard/heightsync"
 	"devshard/internal/testutil"
 	"devshard/logging"
@@ -56,7 +56,7 @@ func testGroup(t *testing.T, n int) ([]*signing.Secp256k1Signer, map[uint32]stri
 	t.Helper()
 	signers := make([]*signing.Secp256k1Signer, n)
 	keys := make(map[uint32]string, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		signers[i] = testutil.MustGenerateKey(t)
 		keys[uint32(i)] = signers[i].Address()
 	}
@@ -790,7 +790,7 @@ func BenchmarkCheckDiffLogPlane_LongSession(b *testing.B) {
 	for i := uint64(1); i <= n; i++ {
 		h := 100 + i
 		txs := []*types.DevshardTx{hbTx(h, 3, hash, nil)}
-		for s := uint32(0); s < 2; s++ {
+		for s := range uint32(2) {
 			txs = append(txs, signedAckTx(signedAck(&testing.T{}, signers[s], i, s, h, hash, types.SyncState_SYNCED)))
 		}
 		st.Tracker.Observe(i, txs, h)
@@ -801,7 +801,7 @@ func BenchmarkCheckDiffLogPlane_LongSession(b *testing.B) {
 	hb := hbTx(100+n+1, 3, hash, nil)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		_ = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 			Nonce: n + 1,
 			Txs:   []*types.DevshardTx{hb},

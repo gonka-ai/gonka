@@ -11,7 +11,7 @@ import (
 	"devshard/types"
 )
 
-func runAppendDiff_IdempotentReplay(t *testing.T, store Storage) {
+func runAppendDiffIdempotentReplay(t *testing.T, store Storage) {
 	t.Helper()
 	require.NoError(t, store.CreateSession(defaultParams()))
 
@@ -30,7 +30,7 @@ func runAppendDiff_IdempotentReplay(t *testing.T, store Storage) {
 	require.Equal(t, uint64(1), meta.LatestNonce)
 }
 
-func runAppendDiff_ForkConflict(t *testing.T, store Storage) {
+func runAppendDiffForkConflict(t *testing.T, store Storage) {
 	t.Helper()
 	require.NoError(t, store.CreateSession(defaultParams()))
 	require.NoError(t, store.AppendDiff("escrow-1", makeDiffRecord(1)))
@@ -52,7 +52,7 @@ func runAppendDiff_ForkConflict(t *testing.T, store Storage) {
 	require.Equal(t, []byte{1}, diffs[0].StateHash, "original row must stay intact")
 }
 
-func runAppendDiff_MonotonicUnchanged(t *testing.T, store Storage) {
+func runAppendDiffMonotonicUnchanged(t *testing.T, store Storage) {
 	t.Helper()
 	require.NoError(t, store.CreateSession(defaultParams()))
 	require.NoError(t, store.AppendDiff("escrow-1", makeDiffRecord(1)))
@@ -68,39 +68,39 @@ func runAppendDiff_MonotonicUnchanged(t *testing.T, store Storage) {
 }
 
 func TestMemory_AppendDiff_IdempotentReplay(t *testing.T) {
-	runAppendDiff_IdempotentReplay(t, NewMemory())
+	runAppendDiffIdempotentReplay(t, NewMemory())
 }
 
 func TestMemory_AppendDiff_ForkConflict(t *testing.T) {
-	runAppendDiff_ForkConflict(t, NewMemory())
+	runAppendDiffForkConflict(t, NewMemory())
 }
 
 func TestMemory_AppendDiff_MonotonicUnchanged(t *testing.T) {
-	runAppendDiff_MonotonicUnchanged(t, NewMemory())
+	runAppendDiffMonotonicUnchanged(t, NewMemory())
 }
 
 func TestSQLite_AppendDiff_IdempotentReplay(t *testing.T) {
-	runAppendDiff_IdempotentReplay(t, newTestSQLite(t))
+	runAppendDiffIdempotentReplay(t, newTestSQLite(t))
 }
 
 func TestSQLite_AppendDiff_ForkConflict(t *testing.T) {
-	runAppendDiff_ForkConflict(t, newTestSQLite(t))
+	runAppendDiffForkConflict(t, newTestSQLite(t))
 }
 
 func TestSQLite_AppendDiff_MonotonicUnchanged(t *testing.T) {
-	runAppendDiff_MonotonicUnchanged(t, newTestSQLite(t))
+	runAppendDiffMonotonicUnchanged(t, newTestSQLite(t))
 }
 
 func TestPostgres_AppendDiff_IdempotentReplay(t *testing.T) {
-	runAppendDiff_IdempotentReplay(t, newTestPostgres(t))
+	runAppendDiffIdempotentReplay(t, newTestPostgres(t))
 }
 
 func TestPostgres_AppendDiff_ForkConflict(t *testing.T) {
-	runAppendDiff_ForkConflict(t, newTestPostgres(t))
+	runAppendDiffForkConflict(t, newTestPostgres(t))
 }
 
 func TestPostgres_AppendDiff_MonotonicUnchanged(t *testing.T) {
-	runAppendDiff_MonotonicUnchanged(t, newTestPostgres(t))
+	runAppendDiffMonotonicUnchanged(t, newTestPostgres(t))
 }
 
 // Ensure makeDiffRecord warm-key / txs empty paths still fork on UserSig.

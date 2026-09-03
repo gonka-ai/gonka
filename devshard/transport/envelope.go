@@ -160,7 +160,7 @@ func UnwrapInferenceResponseBody(raw []byte) (UnwrappedInferenceResponse, error)
 }
 
 func isLikelyJSONObject(raw []byte) bool {
-	for i := 0; i < len(raw); i++ {
+	for i := range raw {
 		switch raw[i] {
 		case ' ', '\t', '\n', '\r':
 			continue
@@ -176,7 +176,7 @@ func isLikelyJSONObject(raw []byte) bool {
 func rejectDeprecatedJSONEnvelopeKeys(raw []byte) error {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &top); err != nil {
-		return nil
+		return nil //nolint:nilerr // a body that is not JSON cannot be a deprecated JSON envelope.
 	}
 	if _, ok := top["message"]; ok {
 		return fmt.Errorf("deprecated JSON inference envelope (top-level \"message\") is not supported; use protobuf InferenceRequestEnvelope / InferenceResponseEnvelope")
@@ -210,8 +210,7 @@ func heightSyncFromProto(hs *types.InferenceHeightSyncSection) *heightsync.Heigh
 		return nil
 	}
 	proof := ""
-	switch hs.GetProofType() {
-	case types.InferenceHeightSyncProofType_INFERENCE_HEIGHT_SYNC_PROOF_TYPE_HEIGHT_ANCHOR_V1:
+	if hs.GetProofType() == types.InferenceHeightSyncProofType_INFERENCE_HEIGHT_SYNC_PROOF_TYPE_HEIGHT_ANCHOR_V1 {
 		proof = heightsync.AnchorProofType
 	}
 	dir := "request"

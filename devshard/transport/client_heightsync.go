@@ -6,9 +6,9 @@ import (
 	"strings"
 	"time"
 
+	"common/chainoracle/blocks"
 	json "github.com/goccy/go-json"
 
-	"common/chainoracle/blocks"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"

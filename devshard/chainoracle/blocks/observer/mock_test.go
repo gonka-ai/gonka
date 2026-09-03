@@ -7,11 +7,11 @@ import (
 	"time"
 
 	"common/chainoracle/blocks"
+	"github.com/stretchr/testify/require"
+
 	"devshard/chainoracle/blocks/observer"
 	"devshard/chainoracle/blocks/verifier"
 	"devshard/signing"
-
-	"github.com/stretchr/testify/require"
 )
 
 // genValidators builds n signers and their 20-byte addresses; used as
@@ -20,7 +20,7 @@ func genValidators(t *testing.T, n int) ([]observer.MockValidator, []verifier.Va
 	t.Helper()
 	mocks := make([]observer.MockValidator, 0, n)
 	verifiers := make([]verifier.Validator, 0, n)
-	for i := 0; i < n; i++ {
+	for range n {
 		s, err := signing.GenerateKey()
 		require.NoError(t, err)
 		addr, err := blocks.AddressBytes(s.PublicKeyBytes())
@@ -54,7 +54,7 @@ func TestMockObserver_MonotonicHeight(t *testing.T) {
 	m, v := newMockForTest(t, 42)
 
 	var last int64
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		h, err := m.AdvanceOne()
 		require.NoError(t, err)
 		require.Greater(t, h.Height, last)
@@ -92,7 +92,7 @@ func TestMockObserver_DeterministicForSameSeed(t *testing.T) {
 	b, err := observer.NewMock(cfg)
 	require.NoError(t, err)
 
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		ha, err := a.AdvanceOne()
 		require.NoError(t, err)
 		hb, err := b.AdvanceOne()
@@ -119,7 +119,7 @@ func TestMockObserver_MultiValidator_QuorumFloor(t *testing.T) {
 
 	seenFull := false
 	seenPartial := false
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		h, err := m.AdvanceOne()
 		require.NoError(t, err)
 		require.NoError(t, v.Verify(h, h.Height-1))
@@ -152,8 +152,7 @@ func TestMockObserver_Subscribe_FanOut(t *testing.T) {
 	_, err := m.AdvanceOne()
 	require.NoError(t, err)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	ch1, err := m.Subscribe(ctx, 1)
 	require.NoError(t, err)
@@ -174,7 +173,7 @@ func TestMockObserver_Subscribe_FanOut(t *testing.T) {
 	require.Equal(t, int64(1), r1.Height)
 	require.Equal(t, int64(1), r2.Height)
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := m.AdvanceOne()
 		require.NoError(t, err)
 	}
@@ -192,13 +191,12 @@ func TestMockObserver_Subscribe_FanOut(t *testing.T) {
 // when more headers exist than the channel buffer.
 func TestMockObserver_Subscribe_DropSlowCatchUp(t *testing.T) {
 	m, _ := newMockForTest(t, 1)
-	for i := 0; i < 16+5; i++ {
+	for range 16 + 5 {
 		_, err := m.AdvanceOne()
 		require.NoError(t, err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	ch, err := m.Subscribe(ctx, 1)
 	require.NoError(t, err)
@@ -227,13 +225,12 @@ func TestMockObserver_Subscribe_DropSlowCatchUp(t *testing.T) {
 // (no live/fanout interleaving with replay).
 func TestMockObserver_Subscribe_CatchUpThenLiveMonotonic(t *testing.T) {
 	m, _ := newMockForTest(t, 3)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		_, err := m.AdvanceOne()
 		require.NoError(t, err)
 	}
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	ch, err := m.Subscribe(ctx, 1)
 	require.NoError(t, err)
@@ -241,7 +238,7 @@ func TestMockObserver_Subscribe_CatchUpThenLiveMonotonic(t *testing.T) {
 	advDone := make(chan struct{})
 	go func() {
 		defer close(advDone)
-		for i := 0; i < 10; i++ {
+		for range 10 {
 			_, err := m.AdvanceOne()
 			require.NoError(t, err)
 		}
@@ -266,7 +263,7 @@ func TestMockObserver_Subscribe_CatchUpThenLiveMonotonic(t *testing.T) {
 
 func TestMockObserver_At_ReturnsHistory(t *testing.T) {
 	m, _ := newMockForTest(t, 11)
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := m.AdvanceOne()
 		require.NoError(t, err)
 	}
@@ -351,7 +348,7 @@ func TestMockObserver_PowerWeighted_HeavyAlwaysSigns(t *testing.T) {
 	verifiers := []verifier.Validator{
 		{Address: append([]byte(nil), heavyAddr...), Power: 5},
 	}
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		s, err := signing.GenerateKey()
 		require.NoError(t, err)
 		addr, err := blocks.AddressBytes(s.PublicKeyBytes())
@@ -372,7 +369,7 @@ func TestMockObserver_PowerWeighted_HeavyAlwaysSigns(t *testing.T) {
 	require.NoError(t, err)
 	v := verifier.New(vs)
 
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		h, err := m.AdvanceOne()
 		require.NoError(t, err)
 
@@ -415,8 +412,8 @@ func TestMockObserver_SignerRotation(t *testing.T) {
 
 	// Count how many blocks each validator is absent from.
 	absences := make([]int, len(mocks))
-	const blocks = 500
-	for i := 0; i < blocks; i++ {
+	const blockCount = 500
+	for range blockCount {
 		h, err := m.AdvanceOne()
 		require.NoError(t, err)
 		present := make(map[string]struct{}, len(h.Commit.Signatures))
@@ -433,7 +430,7 @@ func TestMockObserver_SignerRotation(t *testing.T) {
 	// the drop set is stuck on a fixed subset.
 	for j, count := range absences {
 		require.Greater(t, count, 0,
-			"validator %d never dropped across %d blocks — rotation stuck", j, blocks)
+			"validator %d never dropped across %d blocks — rotation stuck", j, blockCount)
 	}
 }
 
@@ -455,7 +452,7 @@ func TestMockObserver_SingleValidator_FullSign(t *testing.T) {
 		require.NoError(t, err)
 		v := verifier.New(vs)
 
-		for i := 0; i < 20; i++ {
+		for range 20 {
 			h, err := m.AdvanceOne()
 			require.NoError(t, err)
 			require.Equal(t, n, len(h.Commit.Signatures),

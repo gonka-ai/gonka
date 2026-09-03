@@ -20,10 +20,7 @@ const (
 // Phase 1 uses a nonce gate of 10 * groupSize with a floor of 20 so small
 // groups still leave enough room for post-terminal traffic before sealing.
 func DefaultInferenceSealGraceNonces(groupSize int) uint32 {
-	grace := groupSize * defaultInferenceSealGraceMultiplier
-	if grace < minInferenceSealGraceNonces {
-		grace = minInferenceSealGraceNonces
-	}
+	grace := max(groupSize*defaultInferenceSealGraceMultiplier, minInferenceSealGraceNonces)
 	return uint32(grace)
 }
 
@@ -63,16 +60,16 @@ func DefaultSessionConfig(groupSize int) SessionConfig {
 // at create. Every field is "zero means use the compiled default" so callers can
 // populate only what the chain returned.
 type EscrowSessionFields struct {
-	TokenPrice                  uint64
-	CreateDevshardFee           uint64
-	FeePerNonce                 uint64
-	InferenceSealGraceNonces    uint32
-	InferenceSealGraceSeconds   uint32
-	AutoSealEveryNNonces        uint32
-	ValidationRate              uint32
-	VoteThresholdFactor         uint32 // percent; 0 == legacy groupSize/2
-	RefusalTimeout              int64
-	ExecutionTimeout            int64
+	TokenPrice                uint64
+	CreateDevshardFee         uint64
+	FeePerNonce               uint64
+	InferenceSealGraceNonces  uint32
+	InferenceSealGraceSeconds uint32
+	AutoSealEveryNNonces      uint32
+	ValidationRate            uint32
+	VoteThresholdFactor       uint32 // percent; 0 == legacy groupSize/2
+	RefusalTimeout            int64
+	ExecutionTimeout          int64
 }
 
 // ComputeVoteThreshold derives the slot-majority vote threshold from group

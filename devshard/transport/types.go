@@ -77,7 +77,7 @@ type VerifyTimeoutResponse struct {
 	Accept      bool     `json:"accept"`
 	Signature   []byte   `json:"signature,omitempty"` // signed TimeoutVoteContent
 	VoterSlot   uint32   `json:"voter_slot"`
-	Mempool     [][]byte `json:"mempool,omitempty"`      // recovery txs on reject; each: proto bytes of DevshardTx
+	Mempool     [][]byte `json:"mempool,omitempty"` // recovery txs on reject; each: proto bytes of DevshardTx
 	RejectCause string   `json:"reject_cause,omitempty"`
 }
 

@@ -80,14 +80,14 @@ var airConfigSpecs = []airConfigSpec{
 }
 
 type airCfg struct {
-	root        string
-	tmpDir      string
-	buildCmd    string
-	buildBin    string
-	delay       int
-	killDelay   string
-	stopOnError string
-	includeExts []string
+	root         string
+	tmpDir       string
+	buildCmd     string
+	buildBin     string
+	delay        int
+	killDelay    string
+	stopOnError  string
+	includeExts  []string
 	exclDirCount int
 }
 
@@ -125,7 +125,7 @@ func parseAirConfig(t *testing.T, body string) airCfg {
 		}
 	}
 	if m := reIncludeExt.FindStringSubmatch(body); m != nil {
-		for _, tok := range strings.Split(m[1], ",") {
+		for tok := range strings.SplitSeq(m[1], ",") {
 			tok = strings.Trim(strings.TrimSpace(tok), `"`)
 			if tok != "" {
 				c.includeExts = append(c.includeExts, tok)
@@ -133,7 +133,7 @@ func parseAirConfig(t *testing.T, body string) airCfg {
 		}
 	}
 	if m := reExcludeDir.FindStringSubmatch(body); m != nil {
-		for _, tok := range strings.Split(m[1], ",") {
+		for tok := range strings.SplitSeq(m[1], ",") {
 			tok = strings.Trim(strings.TrimSpace(tok), `"`)
 			if tok != "" {
 				c.exclDirCount++
@@ -184,7 +184,6 @@ func readAirConfig(t *testing.T, name string) string {
 func TestDevOverlay_AirConfigsReferenceRealPackages(t *testing.T) {
 	root := devshardRootFromTestenv(t)
 	for _, spec := range airConfigSpecs {
-		spec := spec
 		t.Run(spec.file, func(t *testing.T) {
 			mainGo := filepath.Join(root, spec.packageDir, "main.go")
 			if _, err := os.Stat(mainGo); err != nil {
@@ -196,7 +195,6 @@ func TestDevOverlay_AirConfigsReferenceRealPackages(t *testing.T) {
 
 func TestDevOverlay_AirConfigsStaticContract(t *testing.T) {
 	for _, spec := range airConfigSpecs {
-		spec := spec
 		t.Run(spec.file, func(t *testing.T) {
 			cfg := parseAirConfig(t, readAirConfig(t, spec.file))
 			if cfg.root != spec.wantRoot {

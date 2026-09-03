@@ -442,14 +442,14 @@ func TestVerifyFinishProposerSig_ConcurrentWithApplyDiff(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 40; i++ {
+		for range 40 {
 			_ = sm.VerifyFinishProposerSig(finish)
 			_ = sm.SnapshotState()
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 8; i++ {
+		for range 8 {
 			nonce := sm.LatestNonce() + 1
 			diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txStart(&types.MsgStartInference{
 				InferenceId: nonce, PromptHash: []byte("prompt"), Model: "llama",

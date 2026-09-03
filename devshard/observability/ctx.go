@@ -11,15 +11,17 @@ import (
 
 const RequestIDHeader = "X-Request-Id"
 
-type Stage string
-type Where string
-type Reason string
-type Terminal string
-type Level string
-type Path string
-type MetricStatus string
-type MetricPhase string
-type TokenKind string
+type (
+	Stage        string
+	Where        string
+	Reason       string
+	Terminal     string
+	Level        string
+	Path         string
+	MetricStatus string
+	MetricPhase  string
+	TokenKind    string
+)
 
 const (
 	LevelInfo  Level = "info"
@@ -181,10 +183,13 @@ type runtimeInfo struct {
 	mode    string
 }
 
-var currentRuntime atomic.Value
+var currentRuntime = newRuntimeValue()
 
-func init() {
-	currentRuntime.Store(runtimeInfo{})
+// atomic.Value has no usable zero for Load, so the first Store happens here.
+func newRuntimeValue() *atomic.Value {
+	value := &atomic.Value{}
+	value.Store(runtimeInfo{})
+	return value
 }
 
 func SetRuntime(binary, version, mode string) {

@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"devshard/bridge"
 	"devshard/storage"
 	"devshard/types"
-
-	"github.com/stretchr/testify/require"
 )
 
 func TestNewHTTPSessionRequiresRoutePrefix(t *testing.T) {

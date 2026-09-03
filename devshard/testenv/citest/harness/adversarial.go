@@ -14,16 +14,16 @@ import (
 	"time"
 
 	"common/chain"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
 	"devshard/signing"
 	"devshard/testenv/config"
 	"devshard/testenv/mockchain/adminface"
 	"devshard/testenv/mockopenai"
 	"devshard/transport"
-
-	inferencetypes "github.com/productscience/inference/x/inference/types"
-	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 // BootAdversarialStack boots the standard stack and waits for gateway chat readiness.
@@ -374,17 +374,17 @@ func PostGatewayChatExpectStatus(t *testing.T, client *http.Client, gatewayURL, 
 	require.Equal(t, wantStatus, resp.StatusCode, "POST /v1/chat/completions: %s", string(body))
 }
 
-func postGatewayChatHTTPStatus(client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) (status int, transportErr error, body string) {
+func postGatewayChatHTTPStatus(client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) (status int, body string, transportErr error) {
 	if client == nil {
 		client = &http.Client{Timeout: 2 * time.Minute}
 	}
 	data, err := json.Marshal(req)
 	if err != nil {
-		return 0, err, ""
+		return 0, "", err
 	}
 	httpReq, err := http.NewRequest(http.MethodPost, gatewayURL+"/v1/chat/completions", bytes.NewReader(data))
 	if err != nil {
-		return 0, err, ""
+		return 0, "", err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	if adminAPIKey != "" {
@@ -392,17 +392,17 @@ func postGatewayChatHTTPStatus(client *http.Client, gatewayURL, adminAPIKey stri
 	}
 	resp, err := client.Do(httpReq)
 	if err != nil {
-		return 0, err, ""
+		return 0, "", err
 	}
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
-	return resp.StatusCode, nil, string(raw)
+	return resp.StatusCode, string(raw), nil
 }
 
 // PostGatewayChatExpectFailure posts non-stream chat and requires HTTP status >= 400 or transport timeout.
 func PostGatewayChatExpectFailure(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) int {
 	t.Helper()
-	status, transportErr, body := postGatewayChatHTTPStatus(client, gatewayURL, adminAPIKey, req)
+	status, body, transportErr := postGatewayChatHTTPStatus(client, gatewayURL, adminAPIKey, req)
 	if transportErr != nil {
 		t.Logf("citest: gateway chat failed with transport error: %v", transportErr)
 		return 0
@@ -418,7 +418,7 @@ func PostGatewayChatExpectFailure(t *testing.T, client *http.Client, gatewayURL,
 // Unlike PostGatewayChatExpectFailure, a transport timeout is a test failure.
 func PostGatewayChatFailure(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) (int, string) {
 	t.Helper()
-	status, transportErr, body := postGatewayChatHTTPStatus(client, gatewayURL, adminAPIKey, req)
+	status, body, transportErr := postGatewayChatHTTPStatus(client, gatewayURL, adminAPIKey, req)
 	require.NoError(t, transportErr, "gateway chat transport error")
 	require.GreaterOrEqual(t, status, 400, "expected gateway error body, got %d: %s", status, body)
 	return status, body
@@ -438,7 +438,7 @@ func WaitGatewayChatExpectFailure(t *testing.T, client *http.Client, gatewayURL,
 	ok := AssertEventually(t, wait, 2*time.Second, func() bool {
 		attempt++
 		var transportErr error
-		status, transportErr, lastBody = postGatewayChatHTTPStatus(client, gatewayURL, adminAPIKey, uniquifyChatRequest(req, attempt))
+		status, lastBody, transportErr = postGatewayChatHTTPStatus(client, gatewayURL, adminAPIKey, uniquifyChatRequest(req, attempt))
 		if transportErr != nil {
 			lastBody = transportErr.Error()
 			return true

@@ -278,7 +278,7 @@ func (sm *StateMachine) rebuildHeightSyncLocked(snapFloor *heightsync.FloorIndex
 				"escrow_id", sm.state.EscrowID, "error", err)
 			tracker.SeedCompleted(savedLast, savedStart)
 			install(emptyFloor, false)
-			return fmt.Errorf("%w: %v", types.ErrFloorNotRestored, err)
+			return fmt.Errorf("%w: %w", types.ErrFloorNotRestored, err)
 		}
 		logging.Warn("heightsync: snapshot restore could not load diffs; using snapshot floor",
 			"escrow_id", sm.state.EscrowID, "error", err)

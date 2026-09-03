@@ -24,10 +24,10 @@ func TestClassifyMLNodeHTTP(t *testing.T) {
 		{"transport error without ctx cancel", nil, transport, nil, ReasonTransportErr},
 		{"transport error with ctx cancel", nil, transport, context.DeadlineExceeded, ReasonTimeout},
 		{"nil resp without postErr is transport", nil, nil, nil, ReasonTransportErr},
-		{"5xx", &http.Response{StatusCode: 503}, nil, nil, ReasonHTTP5xx},
-		{"4xx", &http.Response{StatusCode: 422}, nil, nil, ReasonHTTP4xx},
-		{"2xx", &http.Response{StatusCode: 200}, nil, nil, ReasonOK},
-		{"3xx classified as ok", &http.Response{StatusCode: 304}, nil, nil, ReasonOK},
+		{"5xx", &http.Response{StatusCode: http.StatusServiceUnavailable}, nil, nil, ReasonHTTP5xx},
+		{"4xx", &http.Response{StatusCode: http.StatusUnprocessableEntity}, nil, nil, ReasonHTTP4xx},
+		{"2xx", &http.Response{StatusCode: http.StatusOK}, nil, nil, ReasonOK},
+		{"3xx classified as ok", &http.Response{StatusCode: http.StatusNotModified}, nil, nil, ReasonOK},
 	}
 
 	for _, tc := range tests {

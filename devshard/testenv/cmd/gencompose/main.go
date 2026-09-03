@@ -220,13 +220,13 @@ func assignSlots(cfg *config.File) {
 		if len(identities) == 0 {
 			return
 		}
-		for slot := 0; slot < cfg.Escrow.Slots; slot++ {
+		for slot := range cfg.Escrow.Slots {
 			idx := identities[slot%len(identities)]
 			cfg.Hosts[idx].SlotIDs = append(cfg.Hosts[idx].SlotIDs, slot)
 		}
 		return
 	}
-	for slot := 0; slot < cfg.Escrow.Slots; slot++ {
+	for slot := range cfg.Escrow.Slots {
 		idx := slot % n
 		cfg.Hosts[idx].SlotIDs = append(cfg.Hosts[idx].SlotIDs, slot)
 	}

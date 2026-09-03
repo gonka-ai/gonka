@@ -360,7 +360,7 @@ func TestAggregateSSEStream_NoLogprobClientLowerAllocs(t *testing.T) {
 		`{"token":"a","logprob":-0.1},{"token":"b","logprob":-0.2},{"token":"c","logprob":-0.3},` +
 		`{"token":"d","logprob":-0.4},{"token":"e","logprob":-0.5}]}`
 	var chunks []string
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		chunks = append(chunks, `{"id":"c","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"x"},"logprobs":{"content":[`+entry+`]},"finish_reason":null}]}`)
 	}
 	chunks = append(chunks, `{"id":"c","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`)
@@ -455,6 +455,7 @@ func TestIsHostErrorPayload_ByteGate(t *testing.T) {
 	require.False(t, isHostErrorPayload([]byte(`{"choices":[{"delta":{"content":"error: hi"}}]}`)))
 	// Quoted marker: a chunk that merely talks about errors must not reach the
 	// error-shaped unmarshal at all.
+	//nolint:gocritic // haystack then needle is the right order for bytes.Contains.
 	require.False(t, bytes.Contains([]byte(`{"delta":{"content":"handle the error case"}}`), sseErrorKeyMarker))
 }
 
@@ -484,7 +485,7 @@ func TestAggregateSSEStream_ChoiceIndexFanoutBounded(t *testing.T) {
 func TestAggregateSSEStream_ToolCallFanoutBounded(t *testing.T) {
 	before := aggregateDroppedToolCallFanoutTotal.Load()
 	var tcs []string
-	for i := 0; i < aggregateMaxToolCallsPerChoice+40; i++ {
+	for i := range aggregateMaxToolCallsPerChoice + 40 {
 		tcs = append(tcs, fmt.Sprintf(`{"index":%d,"id":"c%d","type":"function","function":{"name":"f%d","arguments":"{}"}}`, i, i, i))
 	}
 	payload := fmt.Sprintf(
@@ -505,12 +506,12 @@ func TestAggregateSSEStream_ExtrasFanoutBounded(t *testing.T) {
 	// Top-level: flood non-reserved keys past the cap; reserved id/model/created
 	// must still land.
 	topExtras := make([]string, 0, aggregateMaxExtrasKeys+30)
-	for i := 0; i < aggregateMaxExtrasKeys+30; i++ {
+	for i := range aggregateMaxExtrasKeys + 30 {
 		topExtras = append(topExtras, fmt.Sprintf(`"x_extra_%d":%d`, i, i))
 	}
 	// Choice extras: unknown keys on the choice object (not delta/message).
 	choiceExtras := make([]string, 0, aggregateMaxExtrasKeys+20)
-	for i := 0; i < aggregateMaxExtrasKeys+20; i++ {
+	for i := range aggregateMaxExtrasKeys + 20 {
 		choiceExtras = append(choiceExtras, fmt.Sprintf(`"c_extra_%d":%d`, i, i))
 	}
 	payload := fmt.Sprintf(
@@ -674,7 +675,7 @@ func TestAggregateSSEStream_FoldRAMBudgetRejectsHugeLogprobs(t *testing.T) {
 	// Each entry is ~200 bytes; many chunks exceed the fold RAM budget.
 	entry := `{"token":"xxxxxxxx","logprob":-0.1,"top_logprobs":[{"token":"xxxxxxxx","logprob":-0.1},{"token":"yyyyyyyy","logprob":-1.0}]}`
 	var chunks []string
-	for i := 0; i < 80; i++ {
+	for range 80 {
 		chunks = append(chunks, `{"id":"c","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"x"},"logprobs":{"content":[`+entry+`]},"finish_reason":null}]}`)
 	}
 	chunks = append(chunks, `{"id":"c","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`)
@@ -696,7 +697,7 @@ func TestAggregateSSEStream_LogprobsSpillUnderDiskBudget(t *testing.T) {
 
 	entry := `{"token":"tok","logprob":-0.1,"top_logprobs":[{"token":"tok","logprob":-0.1}]}`
 	var chunks []string
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		chunks = append(chunks, `{"id":"c","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"x"},"logprobs":{"content":[`+entry+`]},"finish_reason":null}]}`)
 	}
 	chunks = append(chunks, `{"id":"c","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`)
@@ -717,7 +718,7 @@ func TestAggregateSSEStream_LogprobsSpillUnderDiskBudget(t *testing.T) {
 func TestAggregateSSEStream_LogprobsExtrasKeyCap(t *testing.T) {
 	prev := aggregateDroppedExtrasFanoutTotal.Load()
 	extras := make([]string, 0, aggregateMaxExtrasKeys+20)
-	for i := 0; i < aggregateMaxExtrasKeys+20; i++ {
+	for i := range aggregateMaxExtrasKeys + 20 {
 		extras = append(extras, fmt.Sprintf(`"lp_extra_%d":%d`, i, i))
 	}
 	payload := `{"id":"c","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"x"},"logprobs":{"content":[{"token":"x","logprob":-0.1}],` +
@@ -889,7 +890,7 @@ func TestAggregateSSEStream_LogprobsDiskBudgetIsPerRequest(t *testing.T) {
 	// 200 across both choices does not.
 	entry := `{"token":"tok","logprob":-0.1}`
 	var chunks []string
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		for _, idx := range []int{0, 1} {
 			chunks = append(chunks, fmt.Sprintf(
 				`{"id":"c","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":%d,"delta":{},"logprobs":{"content":[%s]}}]}`,

@@ -8,9 +8,9 @@ import (
 	"slices"
 	"sync"
 
+	"common/completionapi"
 	"google.golang.org/protobuf/proto"
 
-	"common/completionapi"
 	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/signing"
@@ -341,7 +341,7 @@ func (sm *StateMachine) verifyDiffUserSig(diff types.Diff) error {
 	}
 	recovered, err := sm.verifier.RecoverAddress(data, diff.UserSig)
 	if err != nil {
-		return fmt.Errorf("%w: %v", types.ErrInvalidUserSig, err)
+		return fmt.Errorf("%w: %w", types.ErrInvalidUserSig, err)
 	}
 	if recovered != sm.userAddress {
 		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidUserSig, sm.userAddress, recovered)
@@ -1234,7 +1234,7 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 
 	recovered, err := sm.verifier.RecoverAddress(receiptData, msg.ExecutorSig)
 	if err != nil {
-		return fmt.Errorf("%w: %v", types.ErrInvalidExecutorSig, err)
+		return fmt.Errorf("%w: %w", types.ErrInvalidExecutorSig, err)
 	}
 
 	expectedAddr := sm.slotToAddress[rec.ExecutorSlot]
@@ -1539,7 +1539,7 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 
 		recovered, err := sm.verifier.RecoverAddress(voteData, vote.Signature)
 		if err != nil {
-			return fmt.Errorf("%w: vote from slot %d: %v", types.ErrInvalidVoteSig, vote.VoterSlot, err)
+			return fmt.Errorf("%w: vote from slot %d: %w", types.ErrInvalidVoteSig, vote.VoterSlot, err)
 		}
 
 		if recovered != voterAddr {
@@ -1608,7 +1608,7 @@ func (sm *StateMachine) applyErrorMiss(msg *types.MsgErrorMiss) error {
 		}
 		recovered, err := sm.verifier.RecoverAddress(voteData, vote.Signature)
 		if err != nil {
-			return fmt.Errorf("%w: vote from slot %d: %v", types.ErrInvalidVoteSig, vote.VoterSlot, err)
+			return fmt.Errorf("%w: vote from slot %d: %w", types.ErrInvalidVoteSig, vote.VoterSlot, err)
 		}
 		if recovered != voterAddr {
 			if !sm.ResolveWarmKey(vote.VoterSlot, recovered, voterAddr) {
@@ -1774,7 +1774,7 @@ func (sm *StateMachine) recoveredProposerAddress(msg *types.MsgFinishInference) 
 	}
 	recovered, err := sm.verifier.RecoverAddress(data, msg.ProposerSig)
 	if err != nil {
-		return "", fmt.Errorf("%w: %v", types.ErrInvalidProposerSig, err)
+		return "", fmt.Errorf("%w: %w", types.ErrInvalidProposerSig, err)
 	}
 	return recovered, nil
 }
@@ -1803,7 +1803,7 @@ func (sm *StateMachine) verifyProposerSig(msgWithoutSig proto.Message, sig []byt
 
 	recovered, err := sm.verifier.RecoverAddress(data, sig)
 	if err != nil {
-		return fmt.Errorf("%w: %v", types.ErrInvalidProposerSig, err)
+		return fmt.Errorf("%w: %w", types.ErrInvalidProposerSig, err)
 	}
 
 	if recovered != expectedAddress {

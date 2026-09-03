@@ -6,14 +6,15 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"sort"
+	"maps"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
 
-	"devshard/types"
-
 	_ "modernc.org/sqlite"
+
+	"devshard/types"
 )
 
 type Store struct {
@@ -84,7 +85,7 @@ func (s *Store) Load(ctx context.Context, t *Tracker) error {
 	for metaRows.Next() {
 		var key, value string
 		if err := metaRows.Scan(&key, &value); err != nil {
-			metaRows.Close()
+			metaRows.Close() //nolint:sqlclosecheck // must close before the next statement on this SQLite connection.
 			return err
 		}
 		switch key {
@@ -157,9 +158,7 @@ func (s *Store) Load(ctx context.Context, t *Tracker) error {
 		if escrow.TimedOutBySlot == nil {
 			escrow.TimedOutBySlot = make(map[uint32]uint64)
 		}
-		for slot, stats := range blob.HostStats {
-			escrow.HostStats[slot] = stats
-		}
+		maps.Copy(escrow.HostStats, blob.HostStats)
 		for _, counter := range blob.Counters {
 			if counter.Count > 0 {
 				escrow.Counters[counter.Key] += counter.Count
@@ -237,9 +236,7 @@ func (t *Tracker) snapshot(retention uint64) storeSnapshot {
 			InvalidNonces:   sortedNonces(escrow.InvalidNonce),
 			Events:          append([]ProtocolEvent(nil), escrow.Events...),
 		}
-		for slot, stats := range escrow.HostStats {
-			blob.HostStats[slot] = stats
-		}
+		maps.Copy(blob.HostStats, escrow.HostStats)
 		for _, key := range sortedCounterKeys(escrow.Counters) {
 			blob.Counters = append(blob.Counters, counterBlob{Key: key, Count: escrow.Counters[key]})
 		}
@@ -279,9 +276,7 @@ func (t *Tracker) pruneLocked(retention uint64) {
 
 func copyUint32Map(in map[uint32]uint64) map[uint32]uint64 {
 	out := make(map[uint32]uint64, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
+	maps.Copy(out, in)
 	return out
 }
 
@@ -293,7 +288,7 @@ func sortedNonces(in map[uint64]struct{}) []uint64 {
 	for nonce := range in {
 		out = append(out, nonce)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	slices.Sort(out)
 	return out
 }
 

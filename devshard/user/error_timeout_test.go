@@ -10,10 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"common/completionapi"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
-
-	"common/completionapi"
 
 	"devshard/host"
 	"devshard/internal/testutil"
@@ -495,7 +494,7 @@ func TestFinishTxFor_ConcurrentWithSendPendingDiff(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 10)
 	ctx := context.Background()
 	const n = 8
-	for i := 0; i < n; i++ {
+	for i := range n {
 		session.mu.Lock()
 		session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: uint64(200 + i)}}})
 		session.mu.Unlock()
@@ -505,13 +504,13 @@ func TestFinishTxFor_ConcurrentWithSendPendingDiff(t *testing.T) {
 	wg.Add(2)
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 200; i++ {
+		for i := range 200 {
 			_ = session.FinishTxFor(uint64(200 + i%n))
 		}
 	}()
 	go func() {
 		defer wg.Done()
-		for i := 0; i < 40; i++ {
+		for i := range 40 {
 			session.mu.Lock()
 			session.addPendingTx(&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: &types.MsgFinishInference{InferenceId: uint64(300 + i)}}})
 			session.mu.Unlock()

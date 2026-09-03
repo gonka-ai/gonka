@@ -16,6 +16,7 @@ import (
 
 	"common/chainoracle/blocks"
 	"common/httpguard"
+
 	"devshard/chainoracle/blocks/verifier"
 )
 

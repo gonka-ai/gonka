@@ -3,6 +3,7 @@ package mockopenai
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -126,10 +127,7 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 
 func (s *Server) jsonCompletion(c echo.Context, req ChatRequest, text string, body []byte) error {
 	promptTok := promptTokenEstimate(body)
-	completionTok := len(text) / 4
-	if completionTok < 1 {
-		completionTok = 1
-	}
+	completionTok := max(len(text)/4, 1)
 	choice := map[string]any{
 		"index": 0,
 		"message": map[string]any{
@@ -241,10 +239,7 @@ func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, 
 		return err
 	}
 	promptTok := promptTokenEstimate(body)
-	completionTok := len(text) / 4
-	if completionTok < 1 {
-		completionTok = 1
-	}
+	completionTok := max(len(text)/4, 1)
 	usageChunk := map[string]any{
 		"id": id, "object": "chat.completion.chunk", "created": created, "model": model,
 		"choices": []map[string]any{{"index": 0, "delta": map[string]any{}, "finish_reason": "stop"}},
@@ -327,7 +322,7 @@ func (s *Server) Serve(ctx context.Context, addr string) error {
 		defer cancel()
 		_ = s.echo.Shutdown(shCtx)
 	}()
-	if err := s.echo.Start(addr); err != nil && err != http.ErrServerClosed {
+	if err := s.echo.Start(addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return ctx.Err()

@@ -5,9 +5,9 @@ import (
 	"path/filepath"
 	"testing"
 
-	"devshard/testenv/config"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/testenv/config"
 )
 
 func TestFirstSoloHostID_ThreeHostMulti(t *testing.T) {

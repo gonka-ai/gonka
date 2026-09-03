@@ -38,9 +38,9 @@ func (e *InferenceEngine) Execute(ctx context.Context, req devshard.ExecuteReque
 	if req.ResponseWriter != nil {
 		// Write mock SSE events to the response writer.
 		if rw, ok := req.ResponseWriter.(http.Flusher); ok {
-			fmt.Fprintf(req.ResponseWriter, "data: %s\n\n", e.ResponseBody)
+			_, _ = fmt.Fprintf(req.ResponseWriter, "data: %s\n\n", e.ResponseBody)
 			rw.Flush()
-			fmt.Fprintf(req.ResponseWriter, "data: [DONE]\n\n")
+			_, _ = fmt.Fprintf(req.ResponseWriter, "data: [DONE]\n\n")
 			rw.Flush()
 		}
 	}

@@ -14,10 +14,10 @@ import (
 	"testing"
 	"time"
 
+	"common/chainoracle/blocks"
 	json "github.com/goccy/go-json"
 	"github.com/stretchr/testify/require"
 
-	"common/chainoracle/blocks"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/internal/testutil"
@@ -52,8 +52,8 @@ func TestServer_Inference_HeightSync_OutboundAnchor(t *testing.T) {
 
 	var hs heightsync.HeightSyncSection
 	foundHS := false
-	lines := strings.Split(rec.Body.String(), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(rec.Body.String(), "\n")
+	for line := range lines {
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
@@ -96,8 +96,8 @@ func TestServer_Inference_HeightSync_OutboundAnchor(t *testing.T) {
 }
 
 func sseFirstReceiptHasHeightSync(body string) bool {
-	lines := strings.Split(body, "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(body, "\n")
+	for line := range lines {
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}

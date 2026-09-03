@@ -20,7 +20,7 @@ func benchSQLite(b *testing.B) *SQLite {
 
 func benchSealedRows(n int, obsPresent bool) []InferenceRow {
 	rows := make([]InferenceRow, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		rows[i] = InferenceRow{
 			InferenceID:        uint64(i + 1),
 			SealedNonce:        uint64(i + 1),
@@ -42,7 +42,7 @@ func BenchmarkSealedInferenceIDs(b *testing.B) {
 				b.Fatal(err)
 			}
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				ids, err := db.SealedInferenceIDs("escrow-1")
 				if err != nil {
 					b.Fatal(err)
@@ -62,7 +62,7 @@ func BenchmarkSealedInferenceIndex_UnbatchedInsert(b *testing.B) {
 			db := benchSQLite(b)
 			rows := benchSealedRows(n, false)
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				b.StopTimer()
 				if err := db.DeleteSealedInferences("escrow-1"); err != nil {
 					b.Fatal(err)
@@ -85,7 +85,7 @@ func BenchmarkSealedInferenceIndex_BatchedInsert(b *testing.B) {
 			db := benchSQLite(b)
 			rows := benchSealedRows(n, true)
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				b.StopTimer()
 				if err := db.DeleteSealedInferences("escrow-1"); err != nil {
 					b.Fatal(err)

@@ -20,7 +20,7 @@ func TestAnchorTally_SealsAfterDAckAndCountsEmpty(t *testing.T) {
 	require.Zero(t, without)
 
 	tal.ObserveTip(12)
-	last, debug, without, _, _, anchors, _ := tal.Snapshot()
+	last, _, without, _, _, anchors, _ := tal.Snapshot()
 	require.NotNil(t, last)
 	require.Equal(t, uint64(10), last.Height)
 	require.Equal(t, 2, last.ByKind[heightsync.AnchorKindResponse])
@@ -108,7 +108,7 @@ func TestCadenceRing_RealTrafficCounterEveryDueCheck(t *testing.T) {
 	require.True(t, hb.NoteStamp(1, t0))
 
 	var recorded int
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		at := t0.Add(time.Second + time.Duration(i)*time.Millisecond)
 		due, _ := hb.Due(at, 50)
 		require.False(t, due)

@@ -190,7 +190,7 @@ func TestFullSession_HappyPath(t *testing.T) {
 	// slot 3: IDs 3, 8, 13  -> 3 inferences
 	// slot 4: IDs 4, 9, 14  -> 3 inferences
 	actualCostPerInference := uint64(120) // (80+40)*1
-	for slot := uint32(0); slot < numHosts; slot++ {
+	for slot := range uint32(numHosts) {
 		hs := state.HostStats[slot]
 		require.Equal(t, uint64(3)*actualCostPerInference, hs.Cost,
 			"slot %d cost", slot)

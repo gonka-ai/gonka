@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"common/chainoracle/blocks"
 	"github.com/stretchr/testify/require"
 
-	"common/chainoracle/blocks"
 	"devshard/heightsync"
 	"devshard/types"
 )
@@ -32,13 +32,16 @@ func (o *evalOracle) Latest(context.Context) (*blocks.Header, error) {
 	h.BlockHash = append([]byte(nil), o.hdr.BlockHash...)
 	return &h, nil
 }
+
 func (o *evalOracle) At(ctx context.Context, _ int64) (*blocks.Header, error) {
 	return o.Latest(ctx)
 }
+
 func (o *evalOracle) Prove(context.Context, string, int64) (*blocks.Proof, error) {
 	o.proveCalled = true
 	return nil, blocks.ErrProveNotImplemented
 }
+
 func (o *evalOracle) Subscribe(context.Context, int64) (<-chan *blocks.Header, error) {
 	ch := make(chan *blocks.Header)
 	close(ch)

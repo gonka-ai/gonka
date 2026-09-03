@@ -7,7 +7,6 @@ import (
 
 	abci "github.com/cometbft/cometbft/abci/types"
 	cmttypes "github.com/cometbft/cometbft/types"
-
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
@@ -47,12 +46,12 @@ func txResult(height int64, events ...abci.Event) cmttypes.EventDataTx {
 
 func newBlockEvent(chainID string, height int64) cmttypes.EventDataNewBlock {
 	block := cmttypes.MakeBlock(height, nil, nil, nil)
-	block.Header.ChainID = chainID
-	if len(block.Header.ValidatorsHash) == 0 {
-		block.Header.ValidatorsHash = bytes.Repeat([]byte{1}, 32)
+	block.ChainID = chainID
+	if len(block.ValidatorsHash) == 0 {
+		block.ValidatorsHash = bytes.Repeat([]byte{1}, 32)
 	}
-	if len(block.Header.NextValidatorsHash) == 0 {
-		block.Header.NextValidatorsHash = append([]byte(nil), block.Header.ValidatorsHash...)
+	if len(block.NextValidatorsHash) == 0 {
+		block.NextValidatorsHash = append([]byte(nil), block.ValidatorsHash...)
 	}
 	return cmttypes.EventDataNewBlock{
 		Block:   block,

@@ -106,14 +106,6 @@ func normalizeModelIDs(modelIDs []string) []string {
 	return out
 }
 
-func splitModelIDs(modelIDs string) []string {
-	modelIDs = strings.TrimSpace(modelIDs)
-	if modelIDs == "" {
-		return nil
-	}
-	return normalizeModelIDs(strings.Split(modelIDs, ","))
-}
-
 func modelIDSet(modelIDs []string) map[string]struct{} {
 	modelIDs = normalizeModelIDs(modelIDs)
 	if len(modelIDs) == 0 {
@@ -154,39 +146,6 @@ var sharedParticipantRequestLimiter = NewParticipantRequestLimiter(
 	defaultParticipantRequestBurst,
 	defaultParticipantRequestRecoveryPerMinute,
 )
-
-type modelScopedParticipantAdmission struct {
-	limiter *ParticipantRequestLimiter
-	modelID string
-}
-
-func (a modelScopedParticipantAdmission) AllowRequest(participantKey, path string) error {
-	if a.limiter == nil {
-		return nil
-	}
-	return a.limiter.AllowRequestForModel(participantKey, a.modelID, path)
-}
-
-func (a modelScopedParticipantAdmission) ObserveResult(participantKey, path string, statusCode int) {
-	if a.limiter == nil {
-		return
-	}
-	a.limiter.ObserveResultForModel(participantKey, a.modelID, path, statusCode)
-}
-
-func (a modelScopedParticipantAdmission) ObserveResultWithBody(participantKey, path string, statusCode int, body, devshardError, routerError string) {
-	if a.limiter == nil {
-		return
-	}
-	a.limiter.ObserveResultWithBodyForModel(participantKey, a.modelID, path, statusCode, body, devshardError, routerError)
-}
-
-func (a modelScopedParticipantAdmission) ObserveTransportFailure(participantKey, path string, err error) {
-	if a.limiter == nil {
-		return
-	}
-	a.limiter.ObserveTransportFailureForModel(participantKey, a.modelID, path, err)
-}
 
 func DefaultParticipantThrottleSettings() ParticipantThrottleSettings {
 	return ParticipantThrottleSettings{
@@ -336,10 +295,7 @@ func (l *ParticipantRequestLimiter) applySettingsLocked(settings ParticipantThro
 	l.transportFailureQuarantine = time.Duration(settings.TransportFailureQuarantineMS) * time.Millisecond
 	l.emptyStreamQuarantine = time.Duration(settings.EmptyStreamQuarantineMS) * time.Millisecond
 	l.stalledWinnerQuarantine = time.Duration(settings.StalledWinnerQuarantineMS) * time.Millisecond
-	l.failureStrikeThreshold = settings.EmptyStreamQuarantineThreshold
-	if settings.EOFTransportFailureThreshold < l.failureStrikeThreshold {
-		l.failureStrikeThreshold = settings.EOFTransportFailureThreshold
-	}
+	l.failureStrikeThreshold = min(settings.EOFTransportFailureThreshold, settings.EmptyStreamQuarantineThreshold)
 	for _, state := range l.participants {
 		if state.tokens > l.burst {
 			state.tokens = l.burst
@@ -384,7 +340,6 @@ func (l *ParticipantRequestLimiter) LoadStateWithQuarantine(key string, modelIDs
 			failureStrikes = participantStrikesAfterQuarantine
 		}
 		tokens = l.burst
-		quarantineFromDB = time.Time{}
 		status = participantStatusTransport
 		log.Printf("participant_limit_stale_on_load participant_key=%s", key)
 	}
@@ -416,10 +371,7 @@ func (l *ParticipantRequestLimiter) LoadStateWithQuarantine(key string, modelIDs
 	if (status == http.StatusTooManyRequests || status == http.StatusServiceUnavailable) && tokens < l.burst {
 		remain := l.burst - tokens
 		if l.recoveryPerSecond > 0 {
-			toFull := time.Duration(remain / l.recoveryPerSecond * float64(time.Second))
-			if toFull > l.httpThrottleQuarantine {
-				toFull = l.httpThrottleQuarantine
-			}
+			toFull := min(time.Duration(remain/l.recoveryPerSecond*float64(time.Second)), l.httpThrottleQuarantine)
 			st.quarantineUntil = now.Add(toFull)
 			st.quarantineMode = participantQuarantineProbe
 		}

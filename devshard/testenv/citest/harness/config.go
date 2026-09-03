@@ -79,8 +79,8 @@ func WriteMultiConfig(t *testing.T, dir string, opts MultiConfigOpts) {
 	}
 
 	var hosts strings.Builder
-	for i := 0; i < opts.Hosts; i++ {
-		hosts.WriteString(fmt.Sprintf("  - id: versiond-%d\n    private_key_hex: TODO\n", i))
+	for i := range opts.Hosts {
+		fmt.Fprintf(&hosts, "  - id: versiond-%d\n    private_key_hex: TODO\n", i)
 	}
 
 	skeleton := fmt.Sprintf(`chain_id: gonka-test

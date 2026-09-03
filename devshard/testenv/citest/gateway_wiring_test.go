@@ -4,9 +4,9 @@ import (
 	"os"
 	"testing"
 
-	"devshard/testenv/citest/harness"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/testenv/citest/harness"
 )
 
 func TestGeneratedCompose_GatewayPhase7Wiring(t *testing.T) {

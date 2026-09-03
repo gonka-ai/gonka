@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"devshard/testenv/mockchain/rpcface"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/testenv/mockchain/rpcface"
 )
 
 func TestIntervalForHeight_DeterministicJitter(t *testing.T) {

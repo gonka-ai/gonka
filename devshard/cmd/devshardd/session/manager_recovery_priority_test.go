@@ -285,7 +285,7 @@ func TestRecoveryGate_IdleGateDoesNotBlock(t *testing.T) {
 
 func TestRecoveryGate_RequestedSetIsBounded(t *testing.T) {
 	var gate recoveryGate
-	for i := 0; i < maxRequestedRecoveryEscrows+10; i++ {
+	for i := range maxRequestedRecoveryEscrows + 10 {
 		gate.begin(strconv.Itoa(i))
 		gate.end()
 	}

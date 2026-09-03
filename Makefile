@@ -1,4 +1,4 @@
-.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release versiond-router-release edge-api edge-api-release edge-api-router-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build devshardd-release devshard-gateway-release print-devshard-version print-devshard-protocol-version versiond-build-docker versiond-router-build-docker edge-api-build-docker edge-api-router-build-docker testapp-server-build-docker
+.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release versiond-router-release edge-api edge-api-release edge-api-router-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build devshardd-release devshard-gateway-release print-devshard-version print-devshard-protocol-version versiond-build-docker versiond-router-build-docker edge-api-build-docker edge-api-router-build-docker testapp-server-build-docker lint lint-fix lint-all
 
 # For binary release: default linux/amd64 before local Docker defaults.
 DEVSHARDD_RELEASE_DOCKER_PLATFORM := $(if $(DOCKER_PLATFORM),$(DOCKER_PLATFORM),linux/amd64)
@@ -6,6 +6,11 @@ DEVSHARDD_RELEASE_DOCKER_GOOS := $(if $(DOCKER_GOOS),$(DOCKER_GOOS),linux)
 DEVSHARDD_RELEASE_DOCKER_GOARCH := $(if $(DOCKER_GOARCH),$(DOCKER_GOARCH),$(if $(filter linux/arm64,$(DEVSHARDD_RELEASE_DOCKER_PLATFORM)),arm64,amd64))
 
 include scripts/blst-portable.mk
+
+# Modules whose lint must stay green, widened as each one is cleaned up. See docs/linting.md.
+LINT_MODULES ?= devshard
+# Every Go module in the repository: golangci-lint analyses one module per run, so the lint targets walk them.
+GO_MODULES := common inference-chain decentralized-api devshard versioned edge-api proxy-ssl test-net-cloud/devshard-testing test-net-cloud/gonka-client-testing
 
 VERSION ?= $(shell git describe --always)
 # devshardd protocol name (approved_versions.name); Testermint VERSIOND_FORCE uses build/devshard-version.
@@ -309,3 +314,24 @@ build-for-upgrade-tests:
 	@make -C inference-chain build-for-upgrade TESTS=1 PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
 	@make -C decentralized-api build-for-upgrade TESTS=1 PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
 	@make -C edge-api build-for-upgrade PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
+
+lint:
+	@for module in $(LINT_MODULES); do \
+		echo "==> $$module"; \
+		(cd $$module && golangci-lint run ./...) || exit 1; \
+	done
+
+# The fix pass can orphan an import or leave one it needs behind; `fmt` runs goimports after it to
+# settle that, which `run` cannot do because its own verdict on grouping is excluded in favour of gci.
+lint-fix:
+	@for module in $(LINT_MODULES); do \
+		echo "==> $$module"; \
+		(cd $$module && golangci-lint run --fix --issues-exit-code 0 ./... && golangci-lint fmt ./...) || exit 1; \
+	done
+
+# Every module, including the ones not yet clean: the backlog behind LINT_MODULES.
+lint-all:
+	@for module in $(GO_MODULES); do \
+		echo "==> $$module"; \
+		(cd $$module && golangci-lint run --issues-exit-code 0 ./...); \
+	done

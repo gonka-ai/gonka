@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
 	"os/signal"
@@ -14,6 +15,12 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatalf("mock-openai: %v", err)
+	}
+}
+
+func run() error {
 	cfg := mockopenai.DefaultConfig()
 	cfg.Addr = envOr("MOCK_OPENAI_ADDR", ":8088")
 	cfg.Faults = faultsFromEnv()
@@ -23,9 +30,10 @@ func main() {
 
 	srv := mockopenai.NewServer(cfg)
 	log.Printf("mock-openai on %s", cfg.Addr)
-	if err := srv.Serve(ctx, cfg.Addr); err != nil && err != context.Canceled {
-		log.Fatalf("mock-openai: %v", err)
+	if err := srv.Serve(ctx, cfg.Addr); err != nil && !errors.Is(err, context.Canceled) {
+		return err
 	}
+	return nil
 }
 
 func envOr(key, def string) string {

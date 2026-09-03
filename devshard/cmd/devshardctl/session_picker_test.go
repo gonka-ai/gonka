@@ -21,7 +21,7 @@ import (
 // check the exact branch that fired.
 type fakeGhost struct {
 	mu      sync.Mutex
-	count   int32
+	count   atomic.Int32
 	reasons []string
 	kinds   []ghostKind
 	hosts   []int
@@ -31,7 +31,7 @@ type fakeGhost struct {
 func (g *fakeGhost) dispatch(prepared *user.PreparedInference, kind ghostKind, reason string) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	atomic.AddInt32(&g.count, 1)
+	g.count.Add(1)
 	g.reasons = append(g.reasons, reason)
 	g.kinds = append(g.kinds, kind)
 	g.hosts = append(g.hosts, prepared.HostIdx())
@@ -50,7 +50,7 @@ func (g *fakeGhost) kindCount(want ghostKind) int {
 	return n
 }
 
-func (g *fakeGhost) total() int { return int(atomic.LoadInt32(&g.count)) }
+func (g *fakeGhost) total() int { return int(g.count.Load()) }
 
 // pickerEnv builds a 3-host real Session and a sessionPicker bound to
 // a fakeGhost dispatcher. Tests submit pickerRequests directly and
@@ -738,14 +738,12 @@ func TestPicker_ConcurrentSubmissionsAreSerialized(t *testing.T) {
 	const N = 32
 	reqs := make([]*pickerRequest, N)
 	var wg sync.WaitGroup
-	for i := 0; i < N; i++ {
-		i := i
+	for i := range N {
+
 		reqs[i] = defaultPickerRequest()
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			p.submit(reqs[i])
-		}()
+		})
 	}
 	wg.Wait()
 

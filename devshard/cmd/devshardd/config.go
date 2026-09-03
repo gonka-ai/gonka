@@ -10,9 +10,6 @@ import (
 	"sync"
 	"time"
 
-	"devshard/cmd/devshardd/session"
-	"devshard/internal/boolvalue"
-
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	cryptocodec "github.com/cosmos/cosmos-sdk/crypto/codec"
@@ -21,6 +18,9 @@ import (
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/app"
+
+	"devshard/cmd/devshardd/session"
+	"devshard/internal/boolvalue"
 )
 
 var sdkConfigOnce sync.Once
@@ -52,8 +52,8 @@ type runtimeConfig struct {
 // for devshardd. Inlined from decentralized-api/apiconfig to remove that
 // dependency.
 type ChainNodeConfig struct {
-	ChainRpcUrl         string // Tendermint RPC URL (e.g. http://node:26657)
-	ChainGrpcUrl        string // gRPC URL for chain.Client (e.g. node:9090)
+	ChainRPCURL         string // Tendermint RPC URL (e.g. http://node:26657)
+	ChainGRPCURL        string // gRPC URL for chain.Client (e.g. node:9090)
 	ChainID             string // chain-id for tx signing (e.g. gonka-mainnet)
 	SignerKeyName       string
 	KeyringBackend      string
@@ -62,17 +62,17 @@ type ChainNodeConfig struct {
 	AccountPubKeyBase64 string // base64-encoded cold account pubkey; falls back to signer pubkey if empty
 }
 
-// ApiAccount holds the account and signer keys for devshardd.
+// APIAccount holds the account and signer keys for devshardd.
 // Inlined from decentralized-api/apiconfig to remove that dependency.
 // Only the fields and methods actually used by devshardd are included.
-type ApiAccount struct {
+type APIAccount struct {
 	AccountKey    cryptotypes.PubKey
 	SignerRecord  *keyring.Record
 	AddressPrefix string
 }
 
 // AccountAddressBech32 returns the bech32-encoded account address.
-func (a *ApiAccount) AccountAddressBech32() (string, error) {
+func (a *APIAccount) AccountAddressBech32() (string, error) {
 	addr, err := sdk.Bech32ifyAddressBytes(a.AddressPrefix, a.AccountKey.Address())
 	if err != nil {
 		return "", fmt.Errorf("failed to Bech32-encode address: %w", err)
@@ -81,7 +81,7 @@ func (a *ApiAccount) AccountAddressBech32() (string, error) {
 }
 
 // SignerAddressBech32 returns the bech32-encoded signer address.
-func (a *ApiAccount) SignerAddressBech32() (string, error) {
+func (a *APIAccount) SignerAddressBech32() (string, error) {
 	pubKey, err := a.SignerRecord.GetPubKey()
 	if err != nil {
 		return "", fmt.Errorf("failed to get signer public key: %w", err)
@@ -197,8 +197,8 @@ func loadNodeConfigFromEnv() ChainNodeConfig {
 		chainRPC = "http://" + nodeHost + ":26657"
 	}
 	return ChainNodeConfig{
-		ChainRpcUrl:         chainRPC,
-		ChainGrpcUrl:        envOr("NODE_GRPC_URL", nodeHost+":9090"),
+		ChainRPCURL:         chainRPC,
+		ChainGRPCURL:        envOr("NODE_GRPC_URL", nodeHost+":9090"),
 		ChainID:             envOr("CHAIN_ID", ""),
 		KeyringBackend:      envOr("KEYRING_BACKEND", "file"),
 		KeyringDir:          envOr("KEYRING_DIR", "/root/.inference"),
@@ -208,36 +208,36 @@ func loadNodeConfigFromEnv() ChainNodeConfig {
 	}
 }
 
-// buildApiAccount constructs an ApiAccount for devshardd using the same split
+// buildAPIAccount constructs an APIAccount for devshardd using the same split
 // identity model as dapi:
 //   - ACCOUNT_PUBKEY is the cold participant account recorded on chain
 //   - KEY_NAME selects the signing key used by the process (warm key on joins)
 //
 // If ACCOUNT_PUBKEY is unset we fall back to the signer pubkey. That keeps the
 // genesis test path working, where signer and account are the same key.
-func buildApiAccount(kr keyring.Keyring, nodeConfig ChainNodeConfig) (ApiAccount, error) {
+func buildAPIAccount(kr keyring.Keyring, nodeConfig ChainNodeConfig) (APIAccount, error) {
 	if nodeConfig.SignerKeyName == "" {
-		return ApiAccount{}, fmt.Errorf("KEY_NAME is required")
+		return APIAccount{}, fmt.Errorf("KEY_NAME is required")
 	}
 	record, err := kr.Key(nodeConfig.SignerKeyName)
 	if err != nil {
-		return ApiAccount{}, fmt.Errorf("get signer %q: %w", nodeConfig.SignerKeyName, err)
+		return APIAccount{}, fmt.Errorf("get signer %q: %w", nodeConfig.SignerKeyName, err)
 	}
 	signerPubKey, err := record.GetPubKey()
 	if err != nil {
-		return ApiAccount{}, fmt.Errorf("signer pubkey: %w", err)
+		return APIAccount{}, fmt.Errorf("signer pubkey: %w", err)
 	}
 
 	accountKey := signerPubKey
 	if nodeConfig.AccountPubKeyBase64 != "" {
 		pubKeyBytes, decodeErr := base64.StdEncoding.DecodeString(nodeConfig.AccountPubKeyBase64)
 		if decodeErr != nil {
-			return ApiAccount{}, fmt.Errorf("decode ACCOUNT_PUBKEY: %w", decodeErr)
+			return APIAccount{}, fmt.Errorf("decode ACCOUNT_PUBKEY: %w", decodeErr)
 		}
 		accountKey = &secp256k1.PubKey{Key: pubKeyBytes}
 	}
 
-	return ApiAccount{
+	return APIAccount{
 		AccountKey:    accountKey,
 		SignerRecord:  record,
 		AddressPrefix: "gonka",

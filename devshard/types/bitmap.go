@@ -22,7 +22,7 @@ func (b *Bitmap128) Set(bit uint32) {
 
 // IsSet returns true if the bit at position bit is set.
 // Returns false if bit >= MaxGroupSize.
-func (b Bitmap128) IsSet(bit uint32) bool {
+func (b *Bitmap128) IsSet(bit uint32) bool {
 	if bit >= MaxGroupSize {
 		return false
 	}
@@ -30,7 +30,7 @@ func (b Bitmap128) IsSet(bit uint32) bool {
 }
 
 // Bytes returns the bitmap as a 16-byte little-endian slice.
-func (b Bitmap128) Bytes() []byte {
+func (b *Bitmap128) Bytes() []byte {
 	buf := make([]byte, 16)
 	binary.LittleEndian.PutUint64(buf[:8], b[0])
 	binary.LittleEndian.PutUint64(buf[8:], b[1])
@@ -38,9 +38,9 @@ func (b Bitmap128) Bytes() []byte {
 }
 
 // SetBits returns the sorted positions of all set bits.
-func (b Bitmap128) SetBits() []uint32 {
+func (b *Bitmap128) SetBits() []uint32 {
 	var out []uint32
-	for w := 0; w < 2; w++ {
+	for w := range 2 {
 		word := b[w]
 		base := uint32(w * 64)
 		for word != 0 {

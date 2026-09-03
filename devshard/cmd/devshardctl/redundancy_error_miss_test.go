@@ -9,9 +9,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	"common/completionapi"
+	"github.com/stretchr/testify/require"
 
 	"devshard/host"
 	"devshard/types"
@@ -204,7 +203,7 @@ func TestRaceWriter_ErrorStreamCappedAndTruncated(t *testing.T) {
 
 	_, err := rw.Write([]byte(auditErrLine + "\n\n"))
 	require.NoError(t, err)
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		_, err = rw.Write([]byte(`data: {"choices":[{"delta":{}}]}` + "\n\n"))
 		require.NoError(t, err)
 	}
@@ -386,7 +385,7 @@ func TestTimeoutActionForHandleResult(t *testing.T) {
 	require.Equal(t, "timeout_collection_error", reason, "vote/network failure must not look like reconstruction drift")
 
 	truncated := &inflight{errorStreamTruncated: true}
-	action, reason = timeoutActionForHandleResult(errors.New("insufficient votes"), true, truncated)
+	_, reason = timeoutActionForHandleResult(errors.New("insufficient votes"), true, truncated)
 	require.Equal(t, "timeout_collection_error", reason)
 
 	action, reason = timeoutActionForHandleResult(errors.New("collect timeout votes"), false, complete)

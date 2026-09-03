@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"devshard/testenv/citest/harness"
 	"devshard/testenv/config"
-
-	"github.com/stretchr/testify/require"
 )
 
 // TestValidationLeaseRaceCore drives chat load under HA + 100% validation_rate,

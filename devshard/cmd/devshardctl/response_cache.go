@@ -99,9 +99,9 @@ func (c *chatResponseCache) sweepExpiredLocked(now time.Time) {
 // The body is already normalized, so it no longer records what the client asked for: the intent must key too.
 func chatCacheKey(model string, body []byte, intent clientResponseIntent) string {
 	h := sha256.New()
-	io.WriteString(h, strings.TrimSpace(model))
+	_, _ = io.WriteString(h, strings.TrimSpace(model))
 	h.Write([]byte{0})
-	fmt.Fprintf(h, "%t|%t|%t", intent.keepLogprobs, intent.keepTopLogprobs, intent.keepUsage)
+	_, _ = fmt.Fprintf(h, "%t|%t|%t", intent.keepLogprobs, intent.keepTopLogprobs, intent.keepUsage)
 	h.Write([]byte{0})
 	h.Write(body)
 	return hex.EncodeToString(h.Sum(nil))
@@ -182,13 +182,14 @@ func serveCachedChatResponse(w http.ResponseWriter, r *http.Request, entry cache
 		w.Header().Set("X-Request-Id", rid)
 	}
 	w.Header().Set("X-Devshard-ID", entry.EscrowID)
-	if entry.Stream {
+	switch {
+	case entry.Stream:
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
-	} else if entry.ContentType != "" {
+	case entry.ContentType != "":
 		w.Header().Set("Content-Type", entry.ContentType)
-	} else {
+	default:
 		w.Header().Set("Content-Type", "application/json")
 	}
 	statusCode := entry.StatusCode

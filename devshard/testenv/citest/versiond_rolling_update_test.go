@@ -12,12 +12,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	cosrv "devshard/chainoracle/server"
 	"devshard/testenv/citest/harness"
 	"devshard/testenv/config"
 	"devshard/testenv/mockopenai"
-
-	"github.com/stretchr/testify/require"
 )
 
 type versiondRollingTestStack struct {

@@ -103,9 +103,9 @@ func TestCanonicalizeJSON_PreservesArrayOrder(t *testing.T) {
 	result, err := CanonicalizeJSON(data)
 	require.NoError(t, err)
 
-	var parsed map[string]interface{}
+	var parsed map[string]any
 	require.NoError(t, json.Unmarshal(result, &parsed))
-	arr := parsed["arr"].([]interface{})
+	arr := parsed["arr"].([]any)
 	require.Equal(t, float64(3), arr[0])
 	require.Equal(t, float64(1), arr[1])
 	require.Equal(t, float64(2), arr[2])

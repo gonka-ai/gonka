@@ -30,6 +30,7 @@ func (s *closeCountingStore) AddSignature(string, uint64, uint32, []byte) error 
 func (s *closeCountingStore) GetSignatures(string, uint64) (map[uint32][]byte, error) {
 	return nil, nil
 }
+
 func (s *closeCountingStore) GetSessionMeta(string) (*storage.SessionMeta, error) {
 	return nil, storage.ErrSessionNotFound
 }
@@ -43,9 +44,11 @@ func (s *closeCountingStore) InsertSealedInference(string, storage.InferenceRow)
 func (s *closeCountingStore) InsertSealedInferences(string, []storage.InferenceRow) error {
 	return nil
 }
+
 func (s *closeCountingStore) BulkInsertSealedInferences(string, []storage.InferenceRow) error {
 	return nil
 }
+
 func (s *closeCountingStore) GetSealedInference(string, uint64) (storage.InferenceRow, bool, error) {
 	return storage.InferenceRow{}, false, nil
 }
@@ -53,6 +56,7 @@ func (s *closeCountingStore) DeleteSealedInferences(string) error { return nil }
 func (s *closeCountingStore) SealedInferenceIDs(string) (map[uint64]uint64, error) {
 	return nil, nil
 }
+
 func (s *closeCountingStore) RecordValidationsAppliedOnce(string, []storage.ValidationObsEntry) error {
 	return nil
 }
@@ -60,6 +64,7 @@ func (s *closeCountingStore) DrainInferenceValidationObs(string, uint64) error {
 func (s *closeCountingStore) DrainInferenceValidationObsBatch(string, []uint64) error {
 	return nil
 }
+
 func (s *closeCountingStore) GetValidationObservability(string) ([]storage.SlotValidationObs, error) {
 	return nil, nil
 }

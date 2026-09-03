@@ -70,7 +70,7 @@ func (b SchemaBounds) CheckSize(schema map[string]any) error {
 	}
 	size, err := jsonMarshaledSize(schema)
 	if err != nil {
-		return fmt.Errorf("cannot be serialized: %v", err)
+		return fmt.Errorf("cannot be serialized: %w", err)
 	}
 	if size > b.MaxSize {
 		return fmt.Errorf("%w: limit %d bytes", ErrSchemaSize, b.MaxSize)
@@ -161,7 +161,7 @@ func (b ObjectBounds) CheckSize(obj map[string]any) error {
 	}
 	size, err := jsonMarshaledSize(obj)
 	if err != nil {
-		return fmt.Errorf("cannot be serialized: %v", err)
+		return fmt.Errorf("cannot be serialized: %w", err)
 	}
 	if size > b.MaxSize {
 		return fmt.Errorf("%w: limit %d bytes", ErrSchemaSize, b.MaxSize)
@@ -265,7 +265,7 @@ func (b SchemaBounds) validateSchemaPatternField(obj map[string]any) error {
 		return fmt.Errorf("%w: length %d exceeds limit %d", ErrSchemaPattern, len(s), b.MaxPatternLen)
 	}
 	if _, err := regexp.Compile(s); err != nil {
-		return fmt.Errorf("%w: %v", ErrSchemaPattern, err)
+		return fmt.Errorf("%w: %w", ErrSchemaPattern, err)
 	}
 	return nil
 }

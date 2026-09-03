@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"common/chainoracle/blocks"
+	"github.com/stretchr/testify/require"
+
 	"devshard/internal/testutil"
 	"devshard/stub"
-
-	"github.com/stretchr/testify/require"
 )
 
 func unsetHeightSyncSources(t *testing.T) {

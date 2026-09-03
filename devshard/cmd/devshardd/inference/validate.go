@@ -14,7 +14,6 @@ import (
 	"time"
 
 	commonvalidation "common/validation"
-
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/cmd/inferenced/cmd"
 	"github.com/productscience/inference/x/inference/calculations"

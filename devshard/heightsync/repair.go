@@ -168,7 +168,7 @@ func VerifyRepairResponse(verifier signing.Verifier, r *RepairResponse, slotKey 
 func verifyRepairSig(verifier signing.Verifier, blob, sig []byte, slotKey string) error {
 	recovered, err := verifier.RecoverAddress(blob, sig)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrRepairVerify, err)
+		return fmt.Errorf("%w: %w", ErrRepairVerify, err)
 	}
 	if recovered != slotKey {
 		return fmt.Errorf("%w: signer %q != slot key %q", ErrRepairVerify, recovered, slotKey)

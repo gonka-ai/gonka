@@ -13,11 +13,11 @@ import (
 
 	"common/chainoracle/blocks"
 	"common/httpguard"
+	"github.com/stretchr/testify/require"
+
 	blockclient "devshard/chainoracle/blocks/client"
 	"devshard/chainoracle/blocks/failover"
 	"devshard/chainoracle/blocks/tipcache"
-
-	"github.com/stretchr/testify/require"
 )
 
 func TestMain(m *testing.M) {
@@ -43,12 +43,15 @@ func (r *recOracle) Latest(context.Context) (*blocks.Header, error) {
 	cp.BlockHash = append([]byte(nil), r.hdr.BlockHash...)
 	return &cp, nil
 }
+
 func (r *recOracle) At(ctx context.Context, height int64) (*blocks.Header, error) {
 	return r.Latest(ctx)
 }
+
 func (r *recOracle) Prove(context.Context, string, int64) (*blocks.Proof, error) {
 	return nil, blocks.ErrProveNotImplemented
 }
+
 func (r *recOracle) Subscribe(context.Context, int64) (<-chan *blocks.Header, error) {
 	ch := make(chan *blocks.Header)
 	close(ch)

@@ -1,6 +1,7 @@
 package hostevents
 
 import (
+	"maps"
 	"sync"
 	"time"
 
@@ -51,8 +52,6 @@ func (l *LoadMap) Snapshot() (byEscrow map[uint64]float64, deliveredAt time.Time
 		return map[uint64]float64{}, l.deliveredAt
 	}
 	out := make(map[uint64]float64, len(l.byEscrow))
-	for id, rate := range l.byEscrow {
-		out[id] = rate
-	}
+	maps.Copy(out, l.byEscrow)
 	return out, l.deliveredAt
 }

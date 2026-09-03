@@ -2,7 +2,6 @@ package tx
 
 import (
 	chaintx "common/chain/tx"
-
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"google.golang.org/grpc"
 )

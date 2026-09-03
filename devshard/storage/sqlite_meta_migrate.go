@@ -31,7 +31,8 @@ CREATE TABLE IF NOT EXISTS escrow_epoch (
 	{
 		ID:   4,
 		Name: "escrow_cache",
-		Statements: []string{`
+		Statements: []string{
+			`
 CREATE TABLE IF NOT EXISTS escrow_cache (
     escrow_id   TEXT PRIMARY KEY,
     epoch_id    INTEGER NOT NULL,

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"common/chainoracle/blocks"
+
 	"devshard/heightsync"
 	"devshard/logging"
 	"devshard/types"

@@ -16,6 +16,7 @@ import (
 
 	"common/chain"
 	"common/httpguard"
+
 	"devshard/accounting"
 	"devshard/bridge"
 	"devshard/internal/boolvalue"
@@ -25,8 +26,10 @@ import (
 	"devshard/user"
 )
 
-type adminAuthContextKey struct{}
-type adminAPIKeySuffixContextKey struct{}
+type (
+	adminAuthContextKey         struct{}
+	adminAPIKeySuffixContextKey struct{}
+)
 
 const (
 	defaultChainGRPCURL            = "localhost:9090"
@@ -561,13 +564,14 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 			if brokenLocalState || errors.Is(res.err, bridge.ErrEscrowNotFound) ||
 				errors.Is(res.err, bridge.ErrEscrowSettled) || errors.Is(res.err, errRuntimePrivateKeyMissing) {
 				reason := "runtime could not be loaded"
-				if brokenLocalState {
+				switch {
+				case brokenLocalState:
 					reason = "local state unrecoverable"
-				} else if errors.Is(res.err, bridge.ErrEscrowNotFound) {
+				case errors.Is(res.err, bridge.ErrEscrowNotFound):
 					reason = "escrow missing on chain"
-				} else if errors.Is(res.err, bridge.ErrEscrowSettled) {
+				case errors.Is(res.err, bridge.ErrEscrowSettled):
 					reason = "escrow settled on chain"
-				} else if errors.Is(res.err, errRuntimePrivateKeyMissing) {
+				case errors.Is(res.err, errRuntimePrivateKeyMissing):
 					reason = "private key missing"
 				}
 				log.Printf("devshard %s %s, marking inactive and skipping runtime: %v", cfg.ID, reason, res.err)
@@ -659,19 +663,8 @@ func markDevshardInactive(gatewayState *GatewayState, id string) {
 	}
 }
 
-func closeRuntimes(runtimes []*devshardRuntime) {
-	for _, rt := range runtimes {
-		if rt == nil {
-			continue
-		}
-		if err := rt.close(); err != nil {
-			log.Printf("close devshard %s: %v", rt.id, err)
-		}
-	}
-}
-
 func buildGatewayHandler(gateway *Gateway, opts runtimeOptions) http.Handler {
-	var handler http.Handler = gateway.Handler()
+	handler := gateway.Handler()
 	if gateway != nil {
 		gateway.mu.Lock()
 		gateway.apiKeys = opts.apiKeys
@@ -715,20 +708,13 @@ func envOverride(flagValue, envValue, defaultValue string) string {
 
 func parseAPIKeys(raw string) map[string]struct{} {
 	keys := make(map[string]struct{})
-	for _, k := range strings.Split(raw, ",") {
+	for k := range strings.SplitSeq(raw, ",") {
 		k = strings.TrimSpace(k)
 		if k != "" {
 			keys[k] = struct{}{}
 		}
 	}
 	return keys
-}
-
-func isAuthExemptPath(path string) bool {
-	return path == "/metrics" ||
-		path == "/v1/status" ||
-		strings.HasSuffix(path, "/v1/status") ||
-		isAdminPath(path)
 }
 
 func isAdminPath(path string) bool {
@@ -766,7 +752,7 @@ func adminAuthMiddleware(adminKey string, next http.Handler) http.Handler {
 		if !adminAuthenticated {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusUnauthorized)
-			fmt.Fprint(w, `{"error":{"message":"Invalid admin API key.","type":"invalid_request_error","code":"invalid_api_key"}}`)
+			_, _ = fmt.Fprint(w, `{"error":{"message":"Invalid admin API key.","type":"invalid_request_error","code":"invalid_api_key"}}`)
 			return
 		}
 		next.ServeHTTP(w, r)

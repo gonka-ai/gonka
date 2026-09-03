@@ -4,12 +4,12 @@ import (
 	"testing"
 
 	"common/chain"
-	"devshard/cmd/devshardd/tx"
-
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"github.com/stretchr/testify/require"
+
+	"devshard/cmd/devshardd/tx"
 )
 
 func TestNew_ValidKeyring(t *testing.T) {

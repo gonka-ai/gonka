@@ -168,7 +168,7 @@ func TestUnwrapInferenceResponseBody_LegacyWholeBodyJSON_OmitsHeightSync(t *test
 }
 
 func startsWithJSONObject(b []byte) bool {
-	for i := 0; i < len(b); i++ {
+	for i := range b {
 		switch b[i] {
 		case ' ', '\t', '\n', '\r':
 			continue

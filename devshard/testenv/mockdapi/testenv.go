@@ -5,10 +5,10 @@ import (
 	"net/http"
 
 	"common/nodemanager/gen"
+	"github.com/labstack/echo/v4"
+
 	cosrv "devshard/chainoracle/server"
 	"devshard/testenv/mockchain/adminface"
-
-	"github.com/labstack/echo/v4"
 )
 
 // EscrowCreatedRequest triggers a mock host-events escrow-created event so the

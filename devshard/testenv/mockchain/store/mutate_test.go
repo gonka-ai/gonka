@@ -3,10 +3,10 @@ package store_test
 import (
 	"testing"
 
-	"devshard/testenv/mockchain/store"
-
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
+
+	"devshard/testenv/mockchain/store"
 )
 
 func TestPatchDevshardEscrowParams_PublishesAtChainTip(t *testing.T) {

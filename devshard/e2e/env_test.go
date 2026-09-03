@@ -5,10 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/stretchr/testify/require"
-
 	"devshard/e2e/testutil"
-	"devshard/signing"
 )
 
 const (
@@ -24,13 +21,6 @@ type e2eImages struct {
 	host        string
 	devshardctl string
 	postgres    string
-}
-
-func signerAddress(t *testing.T, privateKey string) string {
-	t.Helper()
-	signer, err := signing.SignerFromHex(privateKey)
-	require.NoError(t, err)
-	return signer.Address()
 }
 
 func requireE2EEnabled(t *testing.T) {

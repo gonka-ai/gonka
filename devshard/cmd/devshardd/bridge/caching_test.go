@@ -5,10 +5,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"devshard/bridge"
 	"devshard/storage"
-
-	"github.com/stretchr/testify/require"
 )
 
 type fakeBridge struct {

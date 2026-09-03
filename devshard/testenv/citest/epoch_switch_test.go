@@ -8,9 +8,9 @@ import (
 	"time"
 
 	"common/nodemanager/gen"
-	"devshard/testenv/citest/harness"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/testenv/citest/harness"
 )
 
 // TestEpochSwitch verifies POST /testenv/epoch advance fast-forwards mock-chain to the

@@ -5,9 +5,9 @@ import (
 	"time"
 
 	"common/chainoracle/blocks"
-	"devshard/heightsync"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/heightsync"
 )
 
 func TestNonceInSyncTurn_K8Slots4(t *testing.T) {

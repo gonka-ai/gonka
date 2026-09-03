@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"devshard/testenv/citest/harness"
 	"devshard/testenv/config"
-
-	"github.com/stretchr/testify/require"
 )
 
 // TestA3_StaleEscrow verifies POST /testenv/escrow marks the active escrow settled on mock-chain

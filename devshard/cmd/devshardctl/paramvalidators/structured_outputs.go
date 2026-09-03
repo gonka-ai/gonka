@@ -215,7 +215,7 @@ func (v StructuredOutputsValidator) validateRegexString(value any, shapeErr, len
 		return fmt.Errorf("%w: %d > %d", lenErr, len(s), v.MaxPatternLen)
 	}
 	if _, err := regexp.Compile(s); err != nil {
-		return fmt.Errorf("%w: %v", compileErr, err)
+		return fmt.Errorf("%w: %w", compileErr, err)
 	}
 	return nil
 }
@@ -291,7 +291,7 @@ func (v StructuredOutputsValidator) validateStructuralTag(value any) error {
 	}
 	encoded, err := json.Marshal(obj)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrStructuredOutputsStructuralTagShape, err)
+		return fmt.Errorf("%w: %w", ErrStructuredOutputsStructuralTagShape, err)
 	}
 	if len(encoded) > v.MaxStructuralTagLen {
 		return fmt.Errorf("%w: %d > %d", ErrStructuredOutputsStructuralTagLength, len(encoded), v.MaxStructuralTagLen)

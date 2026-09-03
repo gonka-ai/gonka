@@ -224,7 +224,7 @@ func (l *MarkLog) All() []AttributableMark {
 		return nil
 	}
 	out := make([]AttributableMark, 0, l.size)
-	for i := 0; i < l.size; i++ {
+	for i := range l.size {
 		idx := (l.start + i) % len(l.buf)
 		out = append(out, copyMark(l.buf[idx]))
 	}
@@ -238,7 +238,7 @@ func (l *MarkLog) HasKind(kind MarkKind) bool {
 	}
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	for i := 0; i < l.size; i++ {
+	for i := range l.size {
 		idx := (l.start + i) % len(l.buf)
 		if l.buf[idx].Kind == kind {
 			return true

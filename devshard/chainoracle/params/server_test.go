@@ -8,12 +8,12 @@ import (
 
 	"common/nodemanager/gen"
 	commonruntimeconfig "common/runtimeconfig"
-	"devshard/chainoracle/params"
-
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/test/bufconn"
+
+	"devshard/chainoracle/params"
 )
 
 const bufSize = 1 << 20
@@ -25,7 +25,7 @@ func startGRPC(t *testing.T, srv *params.Server) (*grpc.ClientConn, func()) {
 	gen.RegisterNodeManagerServer(gs, srv)
 	go func() { _ = gs.Serve(lis) }()
 	dial := func(context.Context, string) (net.Conn, error) { return lis.Dial() }
-	conn, err := grpc.DialContext(context.Background(), "bufnet",
+	conn, err := grpc.NewClient("passthrough:///bufnet",
 		grpc.WithContextDialer(dial),
 		grpc.WithTransportCredentials(insecure.NewCredentials()),
 	)

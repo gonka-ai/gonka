@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"devshard/testenv/config"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/testenv/config"
 )
 
 // BootStack renders the 2×versiond citest config, starts compose, and returns handles.

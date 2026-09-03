@@ -46,7 +46,7 @@ func TestHeartbeat_RepeatedSlotClaimsAreNotAQuorum(t *testing.T) {
 	hb.SetRoster(4, 3)
 	t0 := time.Unix(1_700_000_000, 0)
 	hb.OpenTurn(t0)
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		require.False(t, hb.NoteClaim(1, t0), "one chatty slot is not a turnover")
 	}
 	require.Zero(t, hb.Turnovers())

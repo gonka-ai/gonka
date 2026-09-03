@@ -137,7 +137,8 @@ CREATE TABLE IF NOT EXISTS devshard_slot_validation_obs (
 	{
 		ID:   9,
 		Name: "devshard_inference_validation_obs_parent",
-		Statements: []string{`
+		Statements: []string{
+			`
 CREATE TABLE IF NOT EXISTS devshard_inference_validation_obs (
     epoch_id               BIGINT NOT NULL,
     escrow_id              TEXT NOT NULL,
@@ -155,7 +156,8 @@ CREATE TABLE IF NOT EXISTS devshard_inference_validation_obs (
     required_validations   INTEGER NOT NULL DEFAULT 0,
     completed_validations  INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (epoch_id, escrow_id, inference_id, slot_id)
-) PARTITION BY RANGE (epoch_id)`},
+) PARTITION BY RANGE (epoch_id)`,
+		},
 	},
 	{
 		ID:   10,
@@ -175,7 +177,8 @@ CREATE TABLE IF NOT EXISTS devshard_validation_leases (
 	{
 		ID:   11,
 		Name: "devshard_escrow_cache",
-		Statements: []string{`
+		Statements: []string{
+			`
 CREATE TABLE IF NOT EXISTS devshard_escrow_cache (
     escrow_id   TEXT   PRIMARY KEY,
     epoch_id    BIGINT NOT NULL,

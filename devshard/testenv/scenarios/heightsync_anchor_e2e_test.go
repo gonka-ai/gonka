@@ -16,11 +16,11 @@ import (
 	"testing"
 	"time"
 
+	"common/chainoracle/blocks"
 	"github.com/labstack/echo/v4"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 
-	"common/chainoracle/blocks"
 	"devshard/bridge"
 	"devshard/heightsync"
 	"devshard/host"
@@ -84,6 +84,7 @@ func (m *scenarioBridge) GetHostInfo(addr string) (*bridge.HostInfo, error) {
 	}
 	return info, nil
 }
+
 func (m *scenarioBridge) GetValidationThreshold(uint64, string) (*bridge.Decimal, error) {
 	return nil, bridge.ErrNotImplemented
 }
@@ -750,7 +751,7 @@ func repairTimingHeartbeatDiff(t *testing.T, signer signing.Signer, nonce, turnS
 
 // repairTimingWindowClosedDiff opens an unstamped turn 2 (HReq=0, not
 // repair-due) and lands a host-signed ack at ackHeight so hNow closes turn 1.
-func repairTimingWindowClosedDiff(t *testing.T, user, hostSigner signing.Signer, nonce, ackHeight uint64) types.Diff {
+func repairTimingWindowClosedDiff(t *testing.T, userSigner, hostSigner signing.Signer, nonce, ackHeight uint64) types.Diff {
 	t.Helper()
 	ack := &types.MsgHeightAck{
 		RefNonce: nonce, SlotId: 0,
@@ -758,7 +759,7 @@ func repairTimingWindowClosedDiff(t *testing.T, user, hostSigner signing.Signer,
 		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
 	}
 	require.NoError(t, heightsync.SignAck(hostSigner, ack))
-	return testutil.SignDiff(t, user, "9003", nonce, []*types.DevshardTx{
+	return testutil.SignDiff(t, userSigner, "9003", nonce, []*types.DevshardTx{
 		{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
 			SlotsNum: 4,
 			Reason:   string(heightsync.ReasonQuietSession),
@@ -923,70 +924,6 @@ func peerTipsFromSession(t *testing.T, sess *user.Session) *transport.HeightSync
 	}
 	require.NotNil(t, shared)
 	return shared
-}
-
-// recordCourierPeerTip seeds the courier cache with a verified-shaped blob so
-// MaxFresh/Carry accept the entry under the production RequireVerifiedBlob default.
-func recordCourierPeerTip(peerTips *transport.HeightSyncPeerTips, sec *heightsync.HeightSyncSection) {
-	peerTips.RecordOriginWithBlob(sec, []byte("e2e-seed-blob"), []byte{1})
-}
-
-// seedCourierPeerTipsFromHostOracles seeds the courier cache from each host's oracle tip
-// (deterministic setup for e2e after the initial sync turn completes).
-func seedCourierPeerTipsFromHostOracles(t *testing.T, st *fourHostStack, hostOracles []*staticOracle, peerTips *transport.HeightSyncPeerTips) {
-	t.Helper()
-	require.Len(t, hostOracles, len(st.HostAddrs))
-	now := time.Now().UnixMilli()
-	for i, or := range hostOracles {
-		require.NotNil(t, or.hdr, "host oracle %d", i)
-		recordCourierPeerTip(peerTips, &heightsync.HeightSyncSection{
-			ChainID:               "gonka-testenv-1",
-			ProofType:             heightsync.AnchorProofType,
-			MainnetHeight:         or.hdr.Height,
-			MainnetBlockHashHex:   hex.EncodeToString(or.hdr.BlockHash),
-			OriginatorSenderID:    st.HostAddrs[i],
-			OriginatorTimestampMs: now,
-		})
-	}
-}
-
-// warmCourierPeerTipsFromResponses copies host response anchors from user audit rings
-// into the courier peer-tip cache when SSE ingest recorded them under the host base URL.
-func warmCourierPeerTipsFromResponses(t *testing.T, st *fourHostStack, peerTips *transport.HeightSyncPeerTips) {
-	t.Helper()
-	urlToHost := make(map[string]string, len(st.httpSrvs))
-	for i, ts := range st.httpSrvs {
-		urlToHost[ts.URL] = st.HostAddrs[i]
-	}
-	for _, cl := range st.Session.Clients() {
-		hc, ok := cl.(*transport.HTTPClient)
-		if !ok {
-			continue
-		}
-		ar := hc.HeightSyncAuditRing()
-		if ar == nil {
-			continue
-		}
-		for _, peerID := range ar.ListPeers() {
-			hostAddr, ok := urlToHost[peerID]
-			if !ok {
-				continue // user-outbound bucket uses peer_id = user address
-			}
-			for _, a := range ar.List(peerID) {
-				if a.Direction != "response" || a.MainnetHeight <= 0 || len(a.MainnetBlockHash) == 0 {
-					continue
-				}
-				recordCourierPeerTip(peerTips, &heightsync.HeightSyncSection{
-					ChainID:               "gonka-testenv-1",
-					ProofType:             heightsync.AnchorProofType,
-					MainnetHeight:         a.MainnetHeight,
-					MainnetBlockHashHex:   hex.EncodeToString(a.MainnetBlockHash),
-					OriginatorSenderID:    hostAddr,
-					OriginatorTimestampMs: time.Now().UnixMilli(),
-				})
-			}
-		}
-	}
 }
 
 func ensureHeightSyncPromMetrics(t *testing.T) {
@@ -2535,11 +2472,11 @@ func TestHeightSyncAnchor_E2E_LazyCarryForwardOutsideSyncTurn(t *testing.T) {
 		staticOracleWith(100, base.hdr.BlockHash),
 		staticOracleWith(tipHeight, tipHash),
 	}
-	st, peerTips := setupFourHostHTTPHeightSyncCourier(t, hostOracles)
+	st, _ := setupFourHostHTTPHeightSyncCourier(t, hostOracles)
 	params := defaultInferenceParams()
 
 	courierSyncTurnWithHeldResponses(t, ctx, st, params, 4)
-	peerTips = peerTipsFromSession(t, st.Session)
+	peerTips := peerTipsFromSession(t, st.Session)
 	tip := peerTips.MaxFresh(time.Now(), peerTips.Freshness)
 	require.NotNil(t, tip)
 	require.Equal(t, tipHeight, tip.MainnetHeight)

@@ -3,6 +3,7 @@ package harness
 import (
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"testing"
 
@@ -95,8 +96,8 @@ func PatchComposeInsertEnvAfterAll(t *testing.T, composePath, afterKey string, l
 	re := regexp.MustCompile(`(?m)^(\s*)` + regexp.QuoteMeta(afterKey) + `:\s*.*$`)
 	locs := re.FindAllIndex(body, -1)
 	require.NotEmpty(t, locs, "compose %s: env key %q not found", composePath, afterKey)
-	for i := len(locs) - 1; i >= 0; i-- {
-		loc := locs[i]
+	for _, v := range slices.Backward(locs) {
+		loc := v
 		lineEnd := loc[1]
 		if lineEnd < len(body) && body[lineEnd] == '\n' {
 			lineEnd++

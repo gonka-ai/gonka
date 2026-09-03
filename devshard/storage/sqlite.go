@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -14,10 +15,9 @@ import (
 	"time"
 
 	"google.golang.org/protobuf/proto"
+	_ "modernc.org/sqlite"
 
 	"devshard/types"
-
-	_ "modernc.org/sqlite"
 )
 
 // SQLite implements Storage with one DB file per epoch under a base directory,
@@ -57,9 +57,11 @@ type epochPool struct {
 	readDB  *sql.DB
 }
 
-const epochFilePrefix = "epoch_"
-const epochFileSuffix = ".db"
-const metaDBFile = "_meta.db"
+const (
+	epochFilePrefix = "epoch_"
+	epochFileSuffix = ".db"
+	metaDBFile      = "_meta.db"
+)
 
 var epochFileRegex = regexp.MustCompile(`^epoch_(\d+)\.db$`)
 
@@ -513,7 +515,7 @@ func (s *SQLite) findSessionEpoch(escrowID string) (uint64, bool, error) {
 		}
 		var exists int
 		err = p.readDB.QueryRow(`SELECT 1 FROM sessions WHERE escrow_id = ?`, escrowID).Scan(&exists)
-		if err == sql.ErrNoRows {
+		if errors.Is(err, sql.ErrNoRows) {
 			continue
 		}
 		if err != nil {
@@ -561,7 +563,7 @@ func (s *SQLite) ListActiveSessions() ([]ActiveSession, error) {
 	for rows.Next() {
 		var e uint64
 		if err := rows.Scan(&e); err != nil {
-			rows.Close()
+			rows.Close() //nolint:sqlclosecheck // must close before the next statement on this SQLite connection.
 			return nil, err
 		}
 		epochs = append(epochs, e)
@@ -584,7 +586,7 @@ func (s *SQLite) ListActiveSessions() ([]ActiveSession, error) {
 		for sessRows.Next() {
 			var id string
 			if err := sessRows.Scan(&id); err != nil {
-				sessRows.Close()
+				sessRows.Close() //nolint:sqlclosecheck // must close before the next statement on this SQLite connection.
 				return nil, err
 			}
 			result = append(result, ActiveSession{EscrowID: id, EpochID: epochID})
@@ -988,10 +990,7 @@ func (s *SQLite) InsertSealedInferences(escrowID string, rows []InferenceRow) er
 		return err
 	}
 	for start := 0; start < len(rows); start += sealedInferenceInsertChunk {
-		end := start + sealedInferenceInsertChunk
-		if end > len(rows) {
-			end = len(rows)
-		}
+		end := min(start+sealedInferenceInsertChunk, len(rows))
 		if err := sqliteInsertSealedInferenceChunk(p.writeDB, escrowID, rows[start:end]); err != nil {
 			return err
 		}
@@ -1018,7 +1017,7 @@ func sqliteInsertSealedInferenceChunk(db *sql.DB, escrowID string, rows []Infere
 	}
 	for _, row := range rows {
 		if _, err := stmt.Exec(sqliteSealedInferenceArgs(escrowID, row)...); err != nil {
-			_ = stmt.Close()
+			_ = stmt.Close() //nolint:sqlclosecheck // must close before the next statement on this SQLite connection.
 			_ = tx.Rollback()
 			return fmt.Errorf("insert sealed inference: %w", err)
 		}
@@ -1133,22 +1132,20 @@ func (s *SQLite) RecordValidationsAppliedOnce(escrowID string, entries []Validat
 		return err
 	}
 	for start := 0; start < len(entries); start += sqliteValidationObsBatchChunk {
-		end := start + sqliteValidationObsBatchChunk
-		if end > len(entries) {
-			end = len(entries)
-		}
+		end := min(start+sqliteValidationObsBatchChunk, len(entries))
 		chunk := entries[start:end]
-		query := `INSERT INTO inference_validation_obs (escrow_id, inference_id, slot_id, required_validations, completed_validations) VALUES `
+		var query strings.Builder
+		query.WriteString(`INSERT INTO inference_validation_obs (escrow_id, inference_id, slot_id, required_validations, completed_validations) VALUES `)
 		args := make([]any, 0, len(chunk)*3)
 		for i, e := range chunk {
 			if i > 0 {
-				query += ", "
+				query.WriteString(", ")
 			}
-			query += "(?, ?, ?, 1, 1)"
+			query.WriteString("(?, ?, ?, 1, 1)")
 			args = append(args, escrowID, e.InferenceID, e.SlotID)
 		}
-		query += " ON CONFLICT(escrow_id, inference_id, slot_id) DO NOTHING"
-		if _, err := p.writeDB.Exec(query, args...); err != nil {
+		query.WriteString(" ON CONFLICT(escrow_id, inference_id, slot_id) DO NOTHING")
+		if _, err := p.writeDB.Exec(query.String(), args...); err != nil {
 			return fmt.Errorf("record validations applied once: %w", err)
 		}
 	}
@@ -1183,7 +1180,7 @@ func (s *SQLite) DrainInferenceValidationObs(escrowID string, inferenceID uint64
 	for rows.Next() {
 		var r row
 		if err := rows.Scan(&r.slotID, &r.required, &r.completed); err != nil {
-			rows.Close()
+			rows.Close() //nolint:sqlclosecheck // must close before the next statement on this SQLite connection.
 			return err
 		}
 		live = append(live, r)
@@ -1222,10 +1219,7 @@ func (s *SQLite) DrainInferenceValidationObsBatch(escrowID string, inferenceIDs 
 		return err
 	}
 	for start := 0; start < len(inferenceIDs); start += validationObsRebuildChunk {
-		end := start + validationObsRebuildChunk
-		if end > len(inferenceIDs) {
-			end = len(inferenceIDs)
-		}
+		end := min(start+validationObsRebuildChunk, len(inferenceIDs))
 		chunk := inferenceIDs[start:end]
 		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(chunk)), ",")
 		args := make([]any, 0, len(chunk)+1)

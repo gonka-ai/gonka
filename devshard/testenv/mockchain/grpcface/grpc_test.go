@@ -7,17 +7,17 @@ import (
 	"testing"
 
 	"common/chain"
-	"devshard/testenv/mockchain/adminface"
-	"devshard/testenv/mockchain/fetcher"
-	"devshard/testenv/mockchain/grpcface"
-	"devshard/testenv/mockchain/seed"
-	"devshard/testenv/mockchain/store"
-
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+
+	"devshard/testenv/mockchain/adminface"
+	"devshard/testenv/mockchain/fetcher"
+	"devshard/testenv/mockchain/grpcface"
+	"devshard/testenv/mockchain/seed"
+	"devshard/testenv/mockchain/store"
 )
 
 func startTestServer(t *testing.T, st *store.Store) *chain.Client {

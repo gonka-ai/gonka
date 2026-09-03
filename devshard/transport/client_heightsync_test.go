@@ -9,10 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"common/chainoracle/blocks"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
-	"common/chainoracle/blocks"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/internal/testutil"

@@ -622,7 +622,7 @@ func repoRootFromCwd(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()
 	require.NoError(t, err)
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		if _, err := os.Stat(filepath.Join(dir, "deploy", "join", "observability")); err == nil {
 			return dir
 		}
@@ -681,8 +681,8 @@ func metricRegistered(metric string, registered map[string]struct{}) bool {
 		return true
 	}
 	for _, suffix := range []string{"_bucket", "_sum", "_count"} {
-		if strings.HasSuffix(metric, suffix) {
-			if _, ok := registered[strings.TrimSuffix(metric, suffix)]; ok {
+		if before, ok := strings.CutSuffix(metric, suffix); ok {
+			if _, ok := registered[before]; ok {
 				return true
 			}
 		}

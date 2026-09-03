@@ -7,10 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"devshard/testenv/citest/harness"
 	"devshard/testenv/config"
-
-	"github.com/stretchr/testify/require"
 )
 
 // TestGatewayAggregateSpillRoundTrip forces the aggregate body buffer to spill

@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"devshard/testenv/config"
 	"devshard/testenv/mockchain/adminface"
 	"devshard/testenv/mockopenai"
-
-	"github.com/stretchr/testify/require"
 )
 
 // LeaseSnapshot is a point-in-time view of devshard_validation_leases.
@@ -93,7 +93,7 @@ func (s *Stack) TryPostgresLeaseSnapshot(cfg *config.File) (LeaseSnapshot, error
 		return LeaseSnapshot{}, err
 	}
 	var rows []LeaseRow
-	for _, line := range strings.Split(strings.TrimSpace(rowsRaw), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(rowsRaw), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue
@@ -291,7 +291,7 @@ func DriveLeaseRaceLoad(t *testing.T, client *http.Client, gatewayURL, model str
 		client = GatewayChatClient()
 	}
 	adminKey := TestenvAdminAPIKey
-	for i := 0; i < nonStream; i++ {
+	for i := range nonStream {
 		req := ChatCompletionRequest{
 			Model: model,
 			Messages: []ChatMessage{
@@ -302,7 +302,7 @@ func DriveLeaseRaceLoad(t *testing.T, client *http.Client, gatewayURL, model str
 		resp := PostGatewayChatCompletion(t, client, gatewayURL, adminKey, req)
 		RequireMockOpenAIContent(t, resp.Choices[0].Message.Content)
 	}
-	for i := 0; i < stream; i++ {
+	for i := range stream {
 		req := ChatCompletionRequest{
 			Model: model,
 			Messages: []ChatMessage{

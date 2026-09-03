@@ -5,11 +5,11 @@ import (
 	"testing"
 	"time"
 
-	"devshard/types"
-
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
+
+	"devshard/types"
 )
 
 // Every case drives the real tracker and reads Query, because a finding derived from a hand-built

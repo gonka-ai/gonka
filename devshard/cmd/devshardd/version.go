@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"common/storage/mode"
+
 	"devshard/storage"
 )
 
@@ -22,7 +23,7 @@ func maybeInitializePostgres(ctx context.Context, args []string, stderr io.Write
 		return 0, false
 	}
 	if err := storage.InitializePostgresSchema(ctx); err != nil {
-		fmt.Fprintln(stderr, err)
+		_, _ = fmt.Fprintln(stderr, err)
 		return 1, true
 	}
 	return 0, true
@@ -34,21 +35,21 @@ func maybePrintVersion(args []string, stdout, stderr io.Writer) (int, bool) {
 	}
 	switch args[0] {
 	case printBinaryVersionFlag:
-		fmt.Fprintln(stdout, BinaryVersion)
+		_, _ = fmt.Fprintln(stdout, BinaryVersion)
 		return 0, true
 	case printProtocolVersionFlag:
-		fmt.Fprintln(stdout, Version)
+		_, _ = fmt.Fprintln(stdout, Version)
 		return 0, true
 	case printAdminAPIVersionFlag:
-		fmt.Fprintln(stdout, "1")
+		_, _ = fmt.Fprintln(stdout, "1")
 		return 0, true
 	case printStorageModeFlag:
 		storageMode, err := mode.Resolve()
 		if err != nil {
-			fmt.Fprintln(stderr, err)
+			_, _ = fmt.Fprintln(stderr, err)
 			return 1, true
 		}
-		fmt.Fprintln(stdout, storageMode)
+		_, _ = fmt.Fprintln(stdout, storageMode)
 		return 0, true
 	default:
 		return 0, false

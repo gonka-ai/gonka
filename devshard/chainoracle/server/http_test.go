@@ -10,12 +10,12 @@ import (
 
 	"common/chainoracle/blocks"
 	blockserver "common/chainoracle/blocks/server"
+	"github.com/labstack/echo/v4"
+	"github.com/stretchr/testify/require"
+
 	"devshard/chainoracle/blocks/observer"
 	"devshard/chainoracle/server"
 	"devshard/signing"
-
-	"github.com/labstack/echo/v4"
-	"github.com/stretchr/testify/require"
 )
 
 func newMockOracle(t *testing.T) *observer.Mock {

@@ -52,10 +52,7 @@ func (q *verifierHostQueue) state(addr string) *verifierSlotState {
 	defer q.mu.Unlock()
 	st, ok := q.slots[addr]
 	if !ok {
-		capacity := MaxConcurrentVerifierRPCs
-		if capacity < 1 {
-			capacity = 1
-		}
+		capacity := max(MaxConcurrentVerifierRPCs, 1)
 		st = &verifierSlotState{sem: make(chan struct{}, capacity)}
 		q.slots[addr] = st
 	}
@@ -151,10 +148,7 @@ func formatInflightSnapshot(inflight []inflightVerify, now time.Time) string {
 	}
 	parts := make([]string, 0, len(sorted))
 	for _, rec := range sorted {
-		ageMs := now.Sub(rec.SentAt).Milliseconds()
-		if ageMs < 0 {
-			ageMs = 0
-		}
+		ageMs := max(now.Sub(rec.SentAt).Milliseconds(), 0)
 		var b strings.Builder
 		if rec.RequestID != "" {
 			fmt.Fprintf(&b, "request=%s ", rec.RequestID)

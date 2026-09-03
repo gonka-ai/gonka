@@ -658,7 +658,7 @@ func TestParseSSE_RealisticLogprobChunkStaysWellUnderTheCap(t *testing.T) {
 	// shape the gateway asks for; lock in that it has ample headroom under the
 	// cap so the DoS guard never fires on legitimate traffic.
 	var top []string
-	for i := 0; i < 5; i++ {
+	for i := range 5 {
 		top = append(top, fmt.Sprintf(`{"token":"candidate_%d","logprob":-%d.2345678901234,"bytes":[99,97,110,100,105,100,97,116,101]}`, i, i+1))
 	}
 	chunk := fmt.Sprintf(`data: {"id":"chatcmpl-%s","object":"chat.completion.chunk","created":1730000000,"model":"Qwen/Qwen3-235B-A22B-Instruct-2507-FP8","choices":[{"index":0,"delta":{"content":"candidate_0"},"logprobs":{"content":[{"token":"candidate_0","logprob":-0.1234567890123,"bytes":[99,97,110,100,105,100,97,116,101],"top_logprobs":[%s]}]},"finish_reason":null,"token_ids":[151644,872,198,3838,374]}]}`+"\n",

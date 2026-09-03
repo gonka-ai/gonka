@@ -4,10 +4,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"devshard/internal/testutil"
 	"devshard/types"
-
-	"github.com/stretchr/testify/require"
 )
 
 func warmupParams() InferenceParams {
@@ -27,7 +27,7 @@ func TestCatchUpAllHostsTeachesHostsTheGatewayNeverDispatchedTo(t *testing.T) {
 
 	session.mu.Lock()
 	behind := 0
-	for slot := 0; slot < len(session.group); slot++ {
+	for slot := range len(session.group) {
 		if session.hostSyncNonce[slot] == 0 {
 			behind++
 		}
@@ -39,7 +39,7 @@ func TestCatchUpAllHostsTeachesHostsTheGatewayNeverDispatchedTo(t *testing.T) {
 
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	for slot := 0; slot < len(session.group); slot++ {
+	for slot := range len(session.group) {
 		require.Equal(t, uint64(1), session.hostSyncNonce[slot],
 			"slot %d must hold the escrow, or it answers a timeout vote with session not found", slot)
 	}

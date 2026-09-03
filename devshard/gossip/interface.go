@@ -39,4 +39,3 @@ type SigAccumulator interface {
 type MempoolSink interface {
 	AddTx(tx *types.DevshardTx)
 }
-

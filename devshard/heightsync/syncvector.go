@@ -17,7 +17,7 @@ func ComposeSyncVector(slotsNum uint32, prev *SyncTurnRecord) []*types.SyncVecto
 		slotsNum = 1
 	}
 	out := make([]*types.SyncVectorEntry, 0, slotsNum)
-	for slot := uint32(0); slot < slotsNum; slot++ {
+	for slot := range slotsNum {
 		ent := &types.SyncVectorEntry{SlotId: slot, Status: types.AckStatus_MISSING}
 		if prev != nil {
 			if ack, ok := prev.Acks[slot]; ok {

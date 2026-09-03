@@ -1,10 +1,11 @@
 package main
 
 import (
-	"devshard/bridge"
 	"errors"
 	"log"
 	"sync"
+
+	"devshard/bridge"
 )
 
 // EscrowChecker verifies escrow existence against the chain when a host

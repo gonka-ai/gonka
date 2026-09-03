@@ -205,7 +205,7 @@ func PeerSeenBit(bits []byte, slot uint32) bool {
 // PeerSeenPopcount is the number of set bits in the first slotsNum slots.
 func PeerSeenPopcount(bits []byte, slotsNum uint32) int {
 	n := 0
-	for s := uint32(0); s < slotsNum; s++ {
+	for s := range slotsNum {
 		if PeerSeenBit(bits, s) {
 			n++
 		}

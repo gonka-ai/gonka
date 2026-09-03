@@ -6,9 +6,9 @@ import (
 	"time"
 
 	"common/chainoracle/blocks"
-	"devshard/chainoracle/blocks/tipcache"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/chainoracle/blocks/tipcache"
 )
 
 func TestCache_ObserveLatestAndSubscribe(t *testing.T) {
@@ -18,8 +18,7 @@ func TestCache_ObserveLatestAndSubscribe(t *testing.T) {
 	require.True(t, c.Stale())
 
 	hdr := blocks.HashOnlyHeader(5, time.Unix(10, 0).UTC(), "gonka", []byte{0xaa})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	ch, err := c.Subscribe(ctx, 1)
 	require.NoError(t, err)
 
@@ -112,9 +111,11 @@ func (s *static) Latest(context.Context) (*blocks.Header, error) { return s.hdr,
 func (s *static) At(context.Context, int64) (*blocks.Header, error) {
 	return s.hdr, nil
 }
+
 func (s *static) Prove(context.Context, string, int64) (*blocks.Proof, error) {
 	return nil, blocks.ErrProveNotImplemented
 }
+
 func (s *static) Subscribe(context.Context, int64) (<-chan *blocks.Header, error) {
 	ch := make(chan *blocks.Header)
 	close(ch)

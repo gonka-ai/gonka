@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
-	"devshard/types"
-
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
+
+	"devshard/types"
 )
 
 var accountingTestNow = time.Unix(1_700_000_000, 0).UTC()
@@ -38,7 +38,7 @@ func TestTrackerCountsAndCrossChecks(t *testing.T) {
 
 	records := tr.Query(QueryFilter{EpochIndex: 7})
 	require.Len(t, records, 2)
-	var dispositions = make(map[Disposition]uint64)
+	dispositions := make(map[Disposition]uint64)
 	var applied, missed, errors uint64
 	for _, record := range records {
 		for d, count := range record.Dispositions {
@@ -1279,10 +1279,8 @@ func TestQueriesRunAlongsideCommittedDiffs(t *testing.T) {
 		}
 	}()
 	readers := sync.WaitGroup{}
-	for i := 0; i < 4; i++ {
-		readers.Add(1)
-		go func() {
-			defer readers.Done()
+	for range 4 {
+		readers.Go(func() {
 			for {
 				select {
 				case <-done:
@@ -1292,7 +1290,7 @@ func TestQueriesRunAlongsideCommittedDiffs(t *testing.T) {
 					tr.Epochs(QueryFilter{})
 				}
 			}
-		}()
+		})
 	}
 	<-done
 	readers.Wait()

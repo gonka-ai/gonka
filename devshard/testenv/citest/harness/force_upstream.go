@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"devshard/testenv/config"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/testenv/config"
 )
 
 // BootStackWithAggregateByteLimits boots the standard 2×versiond stack after

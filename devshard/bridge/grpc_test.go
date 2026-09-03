@@ -4,16 +4,16 @@ import (
 	"testing"
 
 	"common/chain"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+	"google.golang.org/grpc"
+	"google.golang.org/grpc/credentials/insecure"
+
 	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/testenv/mockchain/grpcface"
 	"devshard/testenv/mockchain/seed"
 	"devshard/testenv/mockchain/store"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
 )
 
 func startGRPCBridge(t *testing.T) *bridge.GRPCBridge {

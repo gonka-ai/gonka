@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"common/chain"
 	"github.com/stretchr/testify/require"
 
-	"common/chain"
 	"devshard/bridge"
 	"devshard/user"
 )
@@ -413,7 +413,7 @@ func TestBuildGatewayRuntimesHonorsConcurrencyEnvOverride(t *testing.T) {
 
 func activeDevshardStates(n int) []GatewayDevshardState {
 	states := make([]GatewayDevshardState, 0, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		states = append(states, GatewayDevshardState{
 			RuntimeConfig: RuntimeConfig{ID: fmt.Sprintf("%d", i+1), PrivateKeyHex: "secret", Model: "Qwen/Test"},
 			Active:        true,

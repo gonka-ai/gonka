@@ -10,9 +10,9 @@ import (
 	"testing"
 	"time"
 
-	"devshard/testenv/mockopenai"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/testenv/mockopenai"
 )
 
 func withForceUpstreamStreaming(t *testing.T, on bool) {
@@ -162,7 +162,7 @@ func TestMockOpenAI_ReceivesStreamingWhenClientAskedNonStream(t *testing.T) {
 
 func TestNormalizeChatRequest_ForceUpstreamStreamingNeverStreamWithoutUsage(t *testing.T) {
 	withForceUpstreamStreaming(t, true)
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		body, _, err := normalizeUpstreamChatRequest([]byte(`{
 			"messages":[{"role":"user","content":"hi"}],
 			"stream":false
@@ -204,9 +204,7 @@ func TestNormalizeChatRequest_ForceUpstreamStreamingRaceToggle(t *testing.T) {
 
 	var wg sync.WaitGroup
 	stop := make(chan struct{})
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		for {
 			select {
 			case <-stop:
@@ -216,9 +214,9 @@ func TestNormalizeChatRequest_ForceUpstreamStreamingRaceToggle(t *testing.T) {
 				setForceUpstreamStreaming(false)
 			}
 		}
-	}()
+	})
 
-	for i := 0; i < 200; i++ {
+	for i := range 200 {
 		body, _, err := normalizeUpstreamChatRequest([]byte(`{
 			"messages":[{"role":"user","content":"hi"}],
 			"stream":false

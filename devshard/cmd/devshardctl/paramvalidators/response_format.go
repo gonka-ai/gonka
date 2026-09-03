@@ -41,8 +41,10 @@ var responseFormatNameRegex = regexp.MustCompile(`^[A-Za-z0-9_.-]+$`)
 // forbiddenSchemaKeys and branchSchemaKeys are walked once per node. Defining them at package
 // scope keeps the slice headers off the per-call allocation path (the literal-in-range form
 // allocates a fresh backing array on every walkSchema invocation).
-var forbiddenSchemaKeys = []string{"$ref", "$defs", "definitions"}
-var branchSchemaKeys = []string{"anyOf", "oneOf", "allOf"}
+var (
+	forbiddenSchemaKeys = []string{"$ref", "$defs", "definitions"}
+	branchSchemaKeys    = []string{"anyOf", "oneOf", "allOf"}
+)
 
 // responseFormatDataKeys lists JSON-Schema keywords whose values are *literal data*, not
 // child schemas. They must NOT be recursed into; an attacker could otherwise put a deeply

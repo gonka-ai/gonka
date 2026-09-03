@@ -31,7 +31,7 @@ func GetMetricsBody(t *testing.T, client *http.Client, metricsURL string) string
 // MetricLineValue finds the first exposition sample whose name matches metric
 // and whose label set contains every required label. Returns false when absent.
 func MetricLineValue(body, metric string, labels map[string]string) (float64, bool) {
-	for _, line := range strings.Split(body, "\n") {
+	for line := range strings.SplitSeq(body, "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
@@ -104,7 +104,7 @@ func AnyHeightSyncMetricHasLabel(body, label, value string) bool {
 
 func metricBodyHasLabel(body, namePrefix, label, value string) bool {
 	needle := fmt.Sprintf(`%s="%s"`, label, value)
-	for _, line := range strings.Split(body, "\n") {
+	for line := range strings.SplitSeq(body, "\n") {
 		if strings.HasPrefix(line, "#") || line == "" {
 			continue
 		}

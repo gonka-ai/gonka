@@ -2,7 +2,7 @@ package storage
 
 import (
 	"fmt"
-	"sort"
+	"slices"
 
 	"devshard/types"
 )
@@ -85,7 +85,7 @@ func RebuildValidationObsFromDiffs(store Storage, escrowID string, records []typ
 	}
 
 	ids := append([]uint64(nil), sealedInferenceIDs...)
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	if err := store.DrainInferenceValidationObsBatch(escrowID, ids); err != nil {
 		return fmt.Errorf("validation obs rebuild: drain: %w", err)
 	}
@@ -101,6 +101,6 @@ func SealedInferenceIDsSorted(sealedNonces map[uint64]uint64) []uint64 {
 	for id := range sealedNonces {
 		out = append(out, id)
 	}
-	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	slices.Sort(out)
 	return out
 }

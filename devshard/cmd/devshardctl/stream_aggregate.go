@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"sync/atomic"
@@ -257,8 +259,8 @@ func payloadsFromEventsEnvelope(raw []byte) ([][]byte, bool) {
 			continue
 		}
 		data := line
-		if strings.HasPrefix(line, "data:") {
-			data = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		if after, ok := strings.CutPrefix(line, "data:"); ok {
+			data = strings.TrimSpace(after)
 		}
 		if data == "" || data == "[DONE]" {
 			continue
@@ -671,7 +673,7 @@ func hasTerminalFinishReason(choices map[int]*aggChoice) bool {
 func (f *completionFolder) accumulateChoiceLogprobs(ac *aggChoice, lpRaw json.RawMessage) error {
 	content, extras, err := parseLogprobsContentRaw(lpRaw)
 	if err != nil {
-		return nil // ignore malformed logprobs object
+		return nil //nolint:nilerr // malformed logprobs are dropped, not an error for the caller.
 	}
 	// The store charges the shared budget itself: RAM while it fits, spool
 	// bytes once it does not.
@@ -719,12 +721,7 @@ func (f *completionFolder) accumulateChoiceLogprobs(ac *aggChoice, lpRaw json.Ra
 }
 
 func isStrippedKey(k string, strip []string) bool {
-	for _, s := range strip {
-		if k == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strip, k)
 }
 
 // foldReservedTopKeys always fit under the extras cap so a hostile flood of
@@ -984,9 +981,7 @@ func (f *completionFolder) mergeToolCallMap(ac *aggChoice, tc map[string]any) er
 
 func buildChoice(ac *aggChoice) (map[string]any, error) {
 	msg := map[string]any{}
-	for k, v := range ac.msg {
-		msg[k] = v
-	}
+	maps.Copy(msg, ac.msg)
 	for k, b := range ac.text {
 		if b != nil && b.Len() > 0 {
 			msg[k] = b.String()
@@ -1068,16 +1063,12 @@ func buildToolCallsMap(ac *aggChoice) []any {
 	for _, idx := range ac.toolOrder {
 		tc := ac.toolCalls[idx]
 		item := map[string]any{}
-		for k, v := range tc.fields {
-			item[k] = v
-		}
+		maps.Copy(item, tc.fields)
 		if _, ok := item["type"]; !ok || item["type"] == "" {
 			item["type"] = "function"
 		}
 		fn := map[string]any{}
-		for k, v := range tc.fn {
-			fn[k] = v
-		}
+		maps.Copy(fn, tc.fn)
 		if _, ok := fn["name"]; !ok {
 			fn["name"] = ""
 		}

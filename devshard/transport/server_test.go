@@ -203,8 +203,8 @@ func TestServer_Inference_ValidAuth(t *testing.T) {
 	// Parse SSE events.
 	var receipt DevshardReceiptEvent
 	var meta DevshardMetaEvent
-	lines := strings.Split(rec.Body.String(), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(rec.Body.String(), "\n")
+	for line := range lines {
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
@@ -475,8 +475,8 @@ func TestServer_StreamingInference(t *testing.T) {
 
 	// Parse all SSE events.
 	var hasReceipt, hasMeta, hasInferenceData bool
-	lines := strings.Split(rec.Body.String(), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(rec.Body.String(), "\n")
+	for line := range lines {
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
@@ -713,8 +713,8 @@ func TestServer_NonExecutor_SSE(t *testing.T) {
 	// Parse events: should have receipt but no inference data (not executor).
 	var receipt DevshardReceiptEvent
 	var hasInferenceData bool
-	lines := strings.Split(rec.Body.String(), "\n")
-	for _, line := range lines {
+	lines := strings.SplitSeq(rec.Body.String(), "\n")
+	for line := range lines {
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}

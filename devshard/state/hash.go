@@ -1,7 +1,6 @@
 package state
 
 import (
-	"cmp"
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
@@ -191,7 +190,7 @@ func computeWarmKeysHash(warmKeys map[uint32]string) []byte {
 	for id := range warmKeys {
 		slotIDs = append(slotIDs, id)
 	}
-	slices.SortFunc(slotIDs, func(a, b uint32) int { return cmp.Compare(a, b) })
+	slices.Sort(slotIDs)
 
 	h := sha256.New()
 	buf := make([]byte, 4)
@@ -213,7 +212,7 @@ func computeHostStatsHash(hostStats map[uint32]*types.HostStats) ([]byte, error)
 	for id := range hostStats {
 		slotIDs = append(slotIDs, id)
 	}
-	slices.SortFunc(slotIDs, func(a, b uint32) int { return cmp.Compare(a, b) })
+	slices.Sort(slotIDs)
 
 	entries := make([]*types.HostStatsProto, 0, len(slotIDs))
 	for _, id := range slotIDs {
@@ -327,7 +326,7 @@ func computeInferencesHashFromEntries(entries map[uint64][]byte) []byte {
 	for id := range entries {
 		ids = append(ids, id)
 	}
-	slices.SortFunc(ids, func(a, b uint64) int { return cmp.Compare(a, b) })
+	slices.Sort(ids)
 
 	buf := make([]byte, 0, len(entries)*64)
 	for _, id := range ids {

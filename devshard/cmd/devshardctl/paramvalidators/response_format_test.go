@@ -164,7 +164,7 @@ func nestedKeywordSchema(keyword string, depth int) string {
 func manyPropertiesSchema(count int) string {
 	var b strings.Builder
 	b.WriteString(`{"properties":{`)
-	for i := 0; i < count; i++ {
+	for i := range count {
 		if i > 0 {
 			b.WriteByte(',')
 		}
@@ -182,11 +182,11 @@ func manyPropertiesSchema(count int) string {
 // chainDepth + 1 (leaves are one step deeper than the chain).
 func coBoundarySchema(chainDepth, leafProps int) string {
 	var b strings.Builder
-	for i := 0; i < chainDepth-1; i++ {
+	for range chainDepth - 1 {
 		b.WriteString(`{"type":"object","properties":{"a":`)
 	}
 	b.WriteString(`{"type":"object","properties":{`)
-	for i := 0; i < leafProps; i++ {
+	for i := range leafProps {
 		if i > 0 {
 			b.WriteByte(',')
 		}
@@ -195,7 +195,7 @@ func coBoundarySchema(chainDepth, leafProps int) string {
 		b.WriteString(`":{}`)
 	}
 	b.WriteString(`}}`)
-	for i := 0; i < chainDepth-1; i++ {
+	for range chainDepth - 1 {
 		b.WriteString(`}}`)
 	}
 	return b.String()
@@ -232,7 +232,7 @@ func schemaOfMarshalledSize(tb testing.TB, want int) string {
 func bigEnumSchema(n int) string {
 	var b strings.Builder
 	b.WriteString(`{"enum":[`)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		if i > 0 {
 			b.WriteByte(',')
 		}

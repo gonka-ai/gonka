@@ -36,7 +36,7 @@ func Mount(g *echo.Group, cfg Config) {
 			"block_height": fmt.Sprintf("%d", cfg.BlockHeight),
 			"phase":        "Inference",
 			"latest_epoch": map[string]any{
-				"index":                   fmt.Sprintf("%d", cfg.EpochIndex),
+				"index":                  fmt.Sprintf("%d", cfg.EpochIndex),
 				"poc_start_block_height": fmt.Sprintf("%d", cfg.PoCStartBlockHeight),
 			},
 			"epoch_stages": map[string]any{

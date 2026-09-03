@@ -104,7 +104,7 @@ func TestDominantVoteError_BreaksTiesTheSameWayEveryTime(t *testing.T) {
 	tied := map[string]int{VoteErrorVersionUnsupported: 3, VoteErrorUnreachable: 3, VoteErrorEscrowMissing: 3}
 
 	first := dominantVoteError(tied)
-	for i := 0; i < 50; i++ {
+	for range 50 {
 		require.Equal(t, first, dominantVoteError(tied))
 	}
 	require.Equal(t, VoteErrorEscrowMissing, first, "alphabetical, so the choice is readable")

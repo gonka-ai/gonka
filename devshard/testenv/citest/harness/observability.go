@@ -15,9 +15,9 @@ import (
 	"testing"
 	"time"
 
-	"devshard/testenv/config"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/testenv/config"
 )
 
 // ObservabilityEndpoints are host-published URLs for the testenv observability overlay.
@@ -306,8 +306,8 @@ func RequireDevsharddMetricSample(t *testing.T, stack *Stack, cfg *config.File, 
 		metric, last, version)
 }
 
-func httpReady(client *http.Client, url string) bool {
-	resp, err := client.Get(url)
+func httpReady(client *http.Client, endpoint string) bool {
+	resp, err := client.Get(endpoint)
 	if err != nil {
 		return false
 	}

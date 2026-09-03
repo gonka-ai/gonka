@@ -13,7 +13,7 @@ import (
 func parseSSEChunks(t *testing.T, raw string) []map[string]any {
 	t.Helper()
 	var events []map[string]any
-	for _, line := range strings.Split(raw, "\n") {
+	for line := range strings.SplitSeq(raw, "\n") {
 		if !strings.HasPrefix(line, "data: ") {
 			continue
 		}
