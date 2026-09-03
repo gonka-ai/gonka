@@ -391,10 +391,10 @@ func (x *EscrowStateProto) GetHeightSyncTurnReason() string {
 	return ""
 }
 
-// FloorIndexProto is the derived height-sync floor (entries + per-signer
-// claims). It is not hashed into the state root. Entries are ordered by nonce
-// and hold a running maximum height; a reader that cannot confirm that must
-// discard the blob rather than answer F(m) from it.
+// FloorIndexProto is the derived height-sync floor. It is not hashed into the
+// state root. Entries are ordered by nonce and hold a running maximum height; a
+// reader that cannot confirm that must discard the blob rather than answer F(m)
+// from it.
 type FloorIndexEntryProto struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Nonce         uint64                 `protobuf:"varint,1,opt,name=nonce,proto3" json:"nonce,omitempty"`
@@ -463,78 +463,17 @@ func (x *FloorIndexEntryProto) GetAuthor() uint32 {
 	return 0
 }
 
-type FloorSignerClaimProto struct {
-	state         protoimpl.MessageState `protogen:"open.v1"`
-	Signer        uint32                 `protobuf:"varint,1,opt,name=signer,proto3" json:"signer,omitempty"`
-	Height        uint64                 `protobuf:"varint,2,opt,name=height,proto3" json:"height,omitempty"`
-	Hash          []byte                 `protobuf:"bytes,3,opt,name=hash,proto3" json:"hash,omitempty"`
-	unknownFields protoimpl.UnknownFields
-	sizeCache     protoimpl.SizeCache
-}
-
-func (x *FloorSignerClaimProto) Reset() {
-	*x = FloorSignerClaimProto{}
-	mi := &file_devshard_v1_snapshot_proto_msgTypes[4]
-	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-	ms.StoreMessageInfo(mi)
-}
-
-func (x *FloorSignerClaimProto) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*FloorSignerClaimProto) ProtoMessage() {}
-
-func (x *FloorSignerClaimProto) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_snapshot_proto_msgTypes[4]
-	if x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-// Deprecated: Use FloorSignerClaimProto.ProtoReflect.Descriptor instead.
-func (*FloorSignerClaimProto) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_snapshot_proto_rawDescGZIP(), []int{4}
-}
-
-func (x *FloorSignerClaimProto) GetSigner() uint32 {
-	if x != nil {
-		return x.Signer
-	}
-	return 0
-}
-
-func (x *FloorSignerClaimProto) GetHeight() uint64 {
-	if x != nil {
-		return x.Height
-	}
-	return 0
-}
-
-func (x *FloorSignerClaimProto) GetHash() []byte {
-	if x != nil {
-		return x.Hash
-	}
-	return nil
-}
-
 type FloorIndexProto struct {
-	state         protoimpl.MessageState   `protogen:"open.v1"`
-	Entries       []*FloorIndexEntryProto  `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
-	Claims        []*FloorSignerClaimProto `protobuf:"bytes,2,rep,name=claims,proto3" json:"claims,omitempty"`
-	Truncated     bool                     `protobuf:"varint,3,opt,name=truncated,proto3" json:"truncated,omitempty"`
+	state         protoimpl.MessageState  `protogen:"open.v1"`
+	Entries       []*FloorIndexEntryProto `protobuf:"bytes,1,rep,name=entries,proto3" json:"entries,omitempty"`
+	Truncated     bool                    `protobuf:"varint,3,opt,name=truncated,proto3" json:"truncated,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *FloorIndexProto) Reset() {
 	*x = FloorIndexProto{}
-	mi := &file_devshard_v1_snapshot_proto_msgTypes[5]
+	mi := &file_devshard_v1_snapshot_proto_msgTypes[4]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -546,7 +485,7 @@ func (x *FloorIndexProto) String() string {
 func (*FloorIndexProto) ProtoMessage() {}
 
 func (x *FloorIndexProto) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_snapshot_proto_msgTypes[5]
+	mi := &file_devshard_v1_snapshot_proto_msgTypes[4]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -559,19 +498,12 @@ func (x *FloorIndexProto) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FloorIndexProto.ProtoReflect.Descriptor instead.
 func (*FloorIndexProto) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_snapshot_proto_rawDescGZIP(), []int{5}
+	return file_devshard_v1_snapshot_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *FloorIndexProto) GetEntries() []*FloorIndexEntryProto {
 	if x != nil {
 		return x.Entries
-	}
-	return nil
-}
-
-func (x *FloorIndexProto) GetClaims() []*FloorSignerClaimProto {
-	if x != nil {
-		return x.Claims
 	}
 	return nil
 }
@@ -599,7 +531,7 @@ type StateSnapshotProto struct {
 
 func (x *StateSnapshotProto) Reset() {
 	*x = StateSnapshotProto{}
-	mi := &file_devshard_v1_snapshot_proto_msgTypes[6]
+	mi := &file_devshard_v1_snapshot_proto_msgTypes[5]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -611,7 +543,7 @@ func (x *StateSnapshotProto) String() string {
 func (*StateSnapshotProto) ProtoMessage() {}
 
 func (x *StateSnapshotProto) ProtoReflect() protoreflect.Message {
-	mi := &file_devshard_v1_snapshot_proto_msgTypes[6]
+	mi := &file_devshard_v1_snapshot_proto_msgTypes[5]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -624,7 +556,7 @@ func (x *StateSnapshotProto) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use StateSnapshotProto.ProtoReflect.Descriptor instead.
 func (*StateSnapshotProto) Descriptor() ([]byte, []int) {
-	return file_devshard_v1_snapshot_proto_rawDescGZIP(), []int{6}
+	return file_devshard_v1_snapshot_proto_rawDescGZIP(), []int{5}
 }
 
 func (x *StateSnapshotProto) GetState() *EscrowStateProto {
@@ -722,15 +654,10 @@ const file_devshard_v1_snapshot_proto_rawDesc = "" +
 	"\x05nonce\x18\x01 \x01(\x04R\x05nonce\x12\x16\n" +
 	"\x06height\x18\x02 \x01(\x04R\x06height\x12\x12\n" +
 	"\x04hash\x18\x03 \x01(\fR\x04hash\x12\x16\n" +
-	"\x06author\x18\x04 \x01(\rR\x06author\"[\n" +
-	"\x15FloorSignerClaimProto\x12\x16\n" +
-	"\x06signer\x18\x01 \x01(\rR\x06signer\x12\x16\n" +
-	"\x06height\x18\x02 \x01(\x04R\x06height\x12\x12\n" +
-	"\x04hash\x18\x03 \x01(\fR\x04hash\"\xa8\x01\n" +
+	"\x06author\x18\x04 \x01(\rR\x06author\"r\n" +
 	"\x0fFloorIndexProto\x12;\n" +
-	"\aentries\x18\x01 \x03(\v2!.devshard.v1.FloorIndexEntryProtoR\aentries\x12:\n" +
-	"\x06claims\x18\x02 \x03(\v2\".devshard.v1.FloorSignerClaimProtoR\x06claims\x12\x1c\n" +
-	"\ttruncated\x18\x03 \x01(\bR\ttruncated\"\xf3\x04\n" +
+	"\aentries\x18\x01 \x03(\v2!.devshard.v1.FloorIndexEntryProtoR\aentries\x12\x1c\n" +
+	"\ttruncated\x18\x03 \x01(\bR\ttruncatedJ\x04\b\x02\x10\x03\"\xf3\x04\n" +
 	"\x12StateSnapshotProto\x123\n" +
 	"\x05state\x18\x01 \x01(\v2\x1d.devshard.v1.EscrowStateProtoR\x05state\x12b\n" +
 	"\x11committed_entries\x18\x02 \x03(\v25.devshard.v1.StateSnapshotProto.CommittedEntriesEntryR\x10committedEntries\x12V\n" +
@@ -759,44 +686,42 @@ func file_devshard_v1_snapshot_proto_rawDescGZIP() []byte {
 	return file_devshard_v1_snapshot_proto_rawDescData
 }
 
-var file_devshard_v1_snapshot_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_devshard_v1_snapshot_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_devshard_v1_snapshot_proto_goTypes = []any{
-	(*SessionConfigProto)(nil),    // 0: devshard.v1.SessionConfigProto
-	(*SlotAssignmentProto)(nil),   // 1: devshard.v1.SlotAssignmentProto
-	(*EscrowStateProto)(nil),      // 2: devshard.v1.EscrowStateProto
-	(*FloorIndexEntryProto)(nil),  // 3: devshard.v1.FloorIndexEntryProto
-	(*FloorSignerClaimProto)(nil), // 4: devshard.v1.FloorSignerClaimProto
-	(*FloorIndexProto)(nil),       // 5: devshard.v1.FloorIndexProto
-	(*StateSnapshotProto)(nil),    // 6: devshard.v1.StateSnapshotProto
-	nil,                           // 7: devshard.v1.EscrowStateProto.InferencesEntry
-	nil,                           // 8: devshard.v1.EscrowStateProto.HostStatsEntry
-	nil,                           // 9: devshard.v1.EscrowStateProto.WarmKeysEntry
-	nil,                           // 10: devshard.v1.StateSnapshotProto.CommittedEntriesEntry
-	nil,                           // 11: devshard.v1.StateSnapshotProto.SealedNoncesEntry
-	nil,                           // 12: devshard.v1.StateSnapshotProto.HostSyncNonceEntry
-	(*InferenceRecordProto)(nil),  // 13: devshard.v1.InferenceRecordProto
-	(*HostStatsProto)(nil),        // 14: devshard.v1.HostStatsProto
+	(*SessionConfigProto)(nil),   // 0: devshard.v1.SessionConfigProto
+	(*SlotAssignmentProto)(nil),  // 1: devshard.v1.SlotAssignmentProto
+	(*EscrowStateProto)(nil),     // 2: devshard.v1.EscrowStateProto
+	(*FloorIndexEntryProto)(nil), // 3: devshard.v1.FloorIndexEntryProto
+	(*FloorIndexProto)(nil),      // 4: devshard.v1.FloorIndexProto
+	(*StateSnapshotProto)(nil),   // 5: devshard.v1.StateSnapshotProto
+	nil,                          // 6: devshard.v1.EscrowStateProto.InferencesEntry
+	nil,                          // 7: devshard.v1.EscrowStateProto.HostStatsEntry
+	nil,                          // 8: devshard.v1.EscrowStateProto.WarmKeysEntry
+	nil,                          // 9: devshard.v1.StateSnapshotProto.CommittedEntriesEntry
+	nil,                          // 10: devshard.v1.StateSnapshotProto.SealedNoncesEntry
+	nil,                          // 11: devshard.v1.StateSnapshotProto.HostSyncNonceEntry
+	(*InferenceRecordProto)(nil), // 12: devshard.v1.InferenceRecordProto
+	(*HostStatsProto)(nil),       // 13: devshard.v1.HostStatsProto
 }
 var file_devshard_v1_snapshot_proto_depIdxs = []int32{
 	0,  // 0: devshard.v1.EscrowStateProto.config:type_name -> devshard.v1.SessionConfigProto
 	1,  // 1: devshard.v1.EscrowStateProto.group:type_name -> devshard.v1.SlotAssignmentProto
-	7,  // 2: devshard.v1.EscrowStateProto.inferences:type_name -> devshard.v1.EscrowStateProto.InferencesEntry
-	8,  // 3: devshard.v1.EscrowStateProto.host_stats:type_name -> devshard.v1.EscrowStateProto.HostStatsEntry
-	9,  // 4: devshard.v1.EscrowStateProto.warm_keys:type_name -> devshard.v1.EscrowStateProto.WarmKeysEntry
+	6,  // 2: devshard.v1.EscrowStateProto.inferences:type_name -> devshard.v1.EscrowStateProto.InferencesEntry
+	7,  // 3: devshard.v1.EscrowStateProto.host_stats:type_name -> devshard.v1.EscrowStateProto.HostStatsEntry
+	8,  // 4: devshard.v1.EscrowStateProto.warm_keys:type_name -> devshard.v1.EscrowStateProto.WarmKeysEntry
 	3,  // 5: devshard.v1.FloorIndexProto.entries:type_name -> devshard.v1.FloorIndexEntryProto
-	4,  // 6: devshard.v1.FloorIndexProto.claims:type_name -> devshard.v1.FloorSignerClaimProto
-	2,  // 7: devshard.v1.StateSnapshotProto.state:type_name -> devshard.v1.EscrowStateProto
-	10, // 8: devshard.v1.StateSnapshotProto.committed_entries:type_name -> devshard.v1.StateSnapshotProto.CommittedEntriesEntry
-	11, // 9: devshard.v1.StateSnapshotProto.sealed_nonces:type_name -> devshard.v1.StateSnapshotProto.SealedNoncesEntry
-	12, // 10: devshard.v1.StateSnapshotProto.host_sync_nonce:type_name -> devshard.v1.StateSnapshotProto.HostSyncNonceEntry
-	5,  // 11: devshard.v1.StateSnapshotProto.height_sync_floor:type_name -> devshard.v1.FloorIndexProto
-	13, // 12: devshard.v1.EscrowStateProto.InferencesEntry.value:type_name -> devshard.v1.InferenceRecordProto
-	14, // 13: devshard.v1.EscrowStateProto.HostStatsEntry.value:type_name -> devshard.v1.HostStatsProto
-	14, // [14:14] is the sub-list for method output_type
-	14, // [14:14] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	2,  // 6: devshard.v1.StateSnapshotProto.state:type_name -> devshard.v1.EscrowStateProto
+	9,  // 7: devshard.v1.StateSnapshotProto.committed_entries:type_name -> devshard.v1.StateSnapshotProto.CommittedEntriesEntry
+	10, // 8: devshard.v1.StateSnapshotProto.sealed_nonces:type_name -> devshard.v1.StateSnapshotProto.SealedNoncesEntry
+	11, // 9: devshard.v1.StateSnapshotProto.host_sync_nonce:type_name -> devshard.v1.StateSnapshotProto.HostSyncNonceEntry
+	4,  // 10: devshard.v1.StateSnapshotProto.height_sync_floor:type_name -> devshard.v1.FloorIndexProto
+	12, // 11: devshard.v1.EscrowStateProto.InferencesEntry.value:type_name -> devshard.v1.InferenceRecordProto
+	13, // 12: devshard.v1.EscrowStateProto.HostStatsEntry.value:type_name -> devshard.v1.HostStatsProto
+	13, // [13:13] is the sub-list for method output_type
+	13, // [13:13] is the sub-list for method input_type
+	13, // [13:13] is the sub-list for extension type_name
+	13, // [13:13] is the sub-list for extension extendee
+	0,  // [0:13] is the sub-list for field type_name
 }
 
 func init() { file_devshard_v1_snapshot_proto_init() }
@@ -811,7 +736,7 @@ func file_devshard_v1_snapshot_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_devshard_v1_snapshot_proto_rawDesc), len(file_devshard_v1_snapshot_proto_rawDesc)),
 			NumEnums:      0,
-			NumMessages:   13,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

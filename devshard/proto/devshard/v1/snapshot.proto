@@ -51,10 +51,10 @@ message EscrowStateProto {
   string height_sync_turn_reason = 20;
 }
 
-// FloorIndexProto is the derived height-sync floor (entries + per-signer
-// claims). It is not hashed into the state root. Entries are ordered by nonce
-// and hold a running maximum height; a reader that cannot confirm that must
-// discard the blob rather than answer F(m) from it.
+// FloorIndexProto is the derived height-sync floor. It is not hashed into the
+// state root. Entries are ordered by nonce and hold a running maximum height; a
+// reader that cannot confirm that must discard the blob rather than answer F(m)
+// from it.
 message FloorIndexEntryProto {
   uint64 nonce = 1;
   uint64 height = 2;
@@ -62,15 +62,11 @@ message FloorIndexEntryProto {
   uint32 author = 4;
 }
 
-message FloorSignerClaimProto {
-  uint32 signer = 1;
-  uint64 height = 2;
-  bytes hash = 3;
-}
-
 message FloorIndexProto {
   repeated FloorIndexEntryProto entries = 1;
-  repeated FloorSignerClaimProto claims = 2;
+  // 2 was per-signer high-water claims. Only the withdrawn W_conf/Q raise rule
+  // read them; the floor is now the high-water of host-signed claims alone.
+  reserved 2;
   bool truncated = 3;
 }
 

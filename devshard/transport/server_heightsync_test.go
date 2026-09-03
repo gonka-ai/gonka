@@ -726,7 +726,6 @@ func TestServer_RequestLeg_DoesNotVerifyOriginSig(t *testing.T) {
 func postHeartbeatProtobuf(t *testing.T, env *serverTestEnv, nonce uint64, height uint64, hash []byte, hs *heightsync.HeightSyncSection) *httptest.ResponseRecorder {
 	t.Helper()
 	hb := &types.DevshardTx{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-		TurnSeq:           1,
 		ObservedHeight:    height,
 		ObservedBlockHash: hash,
 		SlotsNum:          1,

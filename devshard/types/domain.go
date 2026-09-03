@@ -157,7 +157,7 @@ type EscrowState struct {
 	// HeightSyncLastCompletedHeight is h_last (complete turns only). Derived from
 	// Diff replay; not hashed into the state root (tracker is reconstructible).
 	HeightSyncLastCompletedHeight uint64
-	HeightSyncLatestTurnSeq       uint64
+	HeightSyncLatestTurnStart     uint64
 
 	// SealedAcc is the Phase 1 incremental accumulator over sealed inference
 	// commitments (32 bytes). Updated on each SealInference and settlement drain.

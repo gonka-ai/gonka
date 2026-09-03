@@ -34,14 +34,6 @@ const (
 
 	DefaultSyncDeltaBlocks uint64 = 2 // D; Strong escalation is spec §8
 
-	// DefaultConfirmWindowBlocks is W_conf: the span of heights the protocol
-	// treats as contemporaneous. It bounds which attestations may enter the
-	// confirmation index, how far one signer may raise the log's floor
-	// unaided, and how far above its own tip a producer will carry a floor.
-	// All three ask the same question — "is this height a plausible neighbour
-	// of the one I hold?" — so they share one constant.
-	DefaultConfirmWindowBlocks uint64 = 256
-
 	// DefaultBlockTime is the assumed mainnet block interval, and the only
 	// deployment fact in this file.
 	//
@@ -89,7 +81,6 @@ type HeartbeatConfig struct {
 
 	AckDeadlineBlocks uint64 // D_ack; ack window after h_req, derived from the schedule
 	DeltaBlocks       uint64 // D; reported as CATCHING_UP until Strong lands
-	WindowBlocks      uint64 // W_conf; plausible neighbourhood of a height
 }
 
 // TurnoverBudget is the producer's own worst case for one turnover: Interval to
@@ -135,27 +126,6 @@ func AckDeadlineBlocksFor(budget, blockTime time.Duration) uint64 {
 	return blocks
 }
 
-// FloorOutOfReach reports whether a floor sits too far above a producer's own
-// tip to carry honestly.
-//
-// The producer rule offers two branches, max(own_tip, F(m)) or omit, and this
-// picks between them: within W_conf the gap is ordinary lag and carrying the
-// floor is a truthful statement about shared logical time, but beyond it no
-// plausible chain advance explains the distance, so the floor is either poisoned
-// or on a branch this producer will never see. Omitting says so without
-// propagating the height, which is the difference between one bad claim and a
-// roster of honest parties repeating it.
-//
-// A producer with no reading of its own (ownTip 0, ORACLE_UNAVAILABLE) has
-// nothing to judge plausibility against, so the escape does not apply: it
-// carries, which is what keeps a blind host inside the cadence.
-func (c HeartbeatConfig) FloorOutOfReach(floor, ownTip uint64) bool {
-	if ownTip == 0 || floor <= ownTip {
-		return false
-	}
-	return floor-ownTip > c.withDefaults().WindowBlocks
-}
-
 // RepairConfig budgets host→host repair probes (spec §11.4) on both the
 // prober and the responder. MaxProbesPerWindow 0 means "use slots_num at
 // the call site" (`R_max`).
@@ -197,9 +167,6 @@ func (c HeartbeatConfig) withDefaults() HeartbeatConfig {
 	}
 	if c.DeltaBlocks == 0 {
 		c.DeltaBlocks = DefaultSyncDeltaBlocks
-	}
-	if c.WindowBlocks == 0 {
-		c.WindowBlocks = DefaultConfirmWindowBlocks
 	}
 	return c
 }
@@ -272,7 +239,7 @@ func LastOverlayClampReason() string {
 // snapshot onto compiled defaults. Zero on the wire always means "keep the
 // default", never "disable".
 //
-// Evaluation knobs (AckDeadlineBlocks, DeltaBlocks, WindowBlocks, BlockTime)
+// Evaluation knobs (AckDeadlineBlocks, DeltaBlocks, BlockTime)
 // stay compiled. They feed SyncTurnRecord and L0, so two hosts on different
 // long-poll snapshots must not compute different Late flags or floors for the
 // same log. Scheduling knobs (Interval, TurnTimeout, IdleTimeout) are
@@ -291,7 +258,6 @@ func OverlayHeartbeatConfig(snap commrc.Snapshot) OverlayResult {
 	cfg := HeartbeatConfig{
 		AckDeadlineBlocks: compiled.AckDeadlineBlocks,
 		DeltaBlocks:       compiled.DeltaBlocks,
-		WindowBlocks:      compiled.WindowBlocks,
 		BlockTime:         compiled.BlockTime,
 	}
 	if ms := snap.HeightSync.IntervalMs; ms > 0 {

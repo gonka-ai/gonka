@@ -120,11 +120,6 @@ func TestMarshalStateSnapshotProtoRoundTripFloor(t *testing.T) {
 			Hash:   []byte{0xaa},
 			Author: 1,
 		}},
-		Claims: []*FloorSignerClaimProto{{
-			Signer: 1,
-			Height: 50,
-			Hash:   []byte{0xaa},
-		}},
 	}
 
 	data, err := MarshalStateSnapshotProto(state, nil, nil, floor)
@@ -136,5 +131,5 @@ func TestMarshalStateSnapshotProtoRoundTripFloor(t *testing.T) {
 	require.True(t, roundTripFloor.Truncated)
 	require.Equal(t, floor.Entries[0].Height, roundTripFloor.Entries[0].Height)
 	require.Equal(t, floor.Entries[0].Hash, roundTripFloor.Entries[0].Hash)
-	require.Equal(t, floor.Claims[0].Signer, roundTripFloor.Claims[0].Signer)
+	require.Equal(t, floor.Entries[0].Author, roundTripFloor.Entries[0].Author)
 }

@@ -55,9 +55,12 @@ func TestWaitRouterCatalog_WaitsUntil200(t *testing.T) {
 
 func TestHeartbeatLoop_WaitsForCatalogBeforeFirstTick(t *testing.T) {
 	var height uint64 = 100
-	session := setupHeartbeatSessionWithOracles(t, &height, nil,
+	session := setupBlindHeartbeatSession(t, &height,
 		WithHeartbeatConfig(heightsync.HeartbeatConfig{Interval: 40 * time.Millisecond}))
 	t.Cleanup(func() { _ = session.Close() })
+	// The fixture's bootstrap inference already moved the log, so "did not tick"
+	// is measured from there rather than from nonce 0.
+	base := session.Nonce()
 
 	var ready atomic.Bool
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -82,11 +85,11 @@ func TestHeartbeatLoop_WaitsForCatalogBeforeFirstTick(t *testing.T) {
 
 	session.StartHeartbeatLoop()
 	time.Sleep(150 * time.Millisecond)
-	require.Zero(t, session.Nonce(), "heartbeat must not tick before catalog admission")
+	require.Equal(t, base, session.Nonce(), "heartbeat must not tick before catalog admission")
 
 	ready.Store(true)
 	require.Eventually(t, func() bool {
-		return session.Nonce() >= 1
+		return session.Nonce() > base
 	}, 3*time.Second, 20*time.Millisecond, "heartbeat must start after catalog admission")
 }
 

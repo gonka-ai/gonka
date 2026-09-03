@@ -270,8 +270,7 @@ func NewStateMachine(
 		o(sm)
 	}
 	sm.turnTracker = heightsync.NewTurnTracker(uint64(len(groupCopy)), 0, sm.heartbeatCfg)
-	sm.heightSyncFloor = heightsync.NewFloorIndexWith(
-		heightsync.FloorConfigFor(len(groupCopy), sm.heartbeatCfg))
+	sm.heightSyncFloor = heightsync.NewFloorIndex()
 	sm.floorReady = true
 
 	logging.Info("NewStateMachine", "subsystem", "state",
@@ -989,7 +988,7 @@ type mutableSnapshot struct {
 	HeightSyncTurnSlots           uint64
 	HeightSyncTurnReason          string
 	HeightSyncLastCompletedHeight uint64
-	HeightSyncLatestTurnSeq       uint64
+	HeightSyncLatestTurnStart     uint64
 	turnTracker                   *heightsync.TurnTracker
 	heightSyncFloor               *heightsync.FloorIndex
 }
@@ -1029,7 +1028,7 @@ func (sm *StateMachine) snapshotMutable() mutableSnapshot {
 		HeightSyncTurnSlots:           sm.state.HeightSyncTurnSlots,
 		HeightSyncTurnReason:          sm.state.HeightSyncTurnReason,
 		HeightSyncLastCompletedHeight: sm.state.HeightSyncLastCompletedHeight,
-		HeightSyncLatestTurnSeq:       sm.state.HeightSyncLatestTurnSeq,
+		HeightSyncLatestTurnStart:     sm.state.HeightSyncLatestTurnStart,
 		turnTracker:                   sm.turnTracker.Clone(),
 		heightSyncFloor:               sm.heightSyncFloor.Clone(),
 	}
@@ -1055,7 +1054,7 @@ func (sm *StateMachine) restoreMutable(snap mutableSnapshot) {
 	sm.state.HeightSyncTurnSlots = snap.HeightSyncTurnSlots
 	sm.state.HeightSyncTurnReason = snap.HeightSyncTurnReason
 	sm.state.HeightSyncLastCompletedHeight = snap.HeightSyncLastCompletedHeight
-	sm.state.HeightSyncLatestTurnSeq = snap.HeightSyncLatestTurnSeq
+	sm.state.HeightSyncLatestTurnStart = snap.HeightSyncLatestTurnStart
 	sm.turnTracker = snap.turnTracker
 	sm.heightSyncFloor = snap.heightSyncFloor
 }

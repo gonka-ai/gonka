@@ -13,24 +13,38 @@ import (
 	"devshard/types"
 )
 
-func TestTurnTracker_AckFirstSetsOpen(t *testing.T) {
+// TestTurnTracker_OrphanAckIgnored covers the ack whose ref_nonce names no
+// heartbeat the tracker has folded.
+//
+// An ack used to name its own turn, so one arriving alone minted a record at
+// whatever turn it claimed. The turn now comes from ref_nonce, and an
+// unresolvable ref_nonce is dropped instead: L3 rejects such an ack at the log
+// plane, so the only way to reach the tracker with one is a turn record that has
+// already been pruned, which is not worth resurrecting.
+func TestTurnTracker_OrphanAckIgnored(t *testing.T) {
 	reg := prometheus.NewRegistry()
 	require.NoError(t, heightsync.RegisterLogPlaneMetrics(reg))
 
 	tr := heightsync.NewTurnTracker(4, 3, heightsync.DefaultHeartbeatConfig())
-	tr.Observe(14, []*types.DevshardTx{{
+	orphan := []*types.DevshardTx{{
 		Tx: &types.DevshardTx_HeightAck{HeightAck: &types.MsgHeightAck{
-			TurnSeq:        7,
 			RefNonce:       10,
 			SlotId:         0,
 			ObservedHeight: 500,
 			SyncState:      types.SyncState_SYNCED,
 		}},
-	}}, 500)
+	}}
+	tr.Observe(14, orphan, 500)
+	require.Zero(t, tr.TurnCount(), "an ack alone must not mint a turn")
+	require.Zero(t, tr.LatestTurnStart())
 
-	rec := tr.Record(7)
+	// With the heartbeat folded, the same ack resolves to the turn it opened.
+	tr.Observe(10, []*types.DevshardTx{heartbeatTx(500, 4)}, 500)
+	tr.Observe(14, orphan, 500)
+	rec := tr.Record(10)
 	require.NotNil(t, rec)
 	require.Equal(t, heightsync.TurnOpen, rec.State)
+	require.Len(t, rec.Acks, 1)
 
 	families, err := reg.Gather()
 	require.NoError(t, err)
@@ -68,7 +82,7 @@ func TestOperatorView_DurationsMarshalAsMilliseconds(t *testing.T) {
 		}},
 		CadenceEvents: []heightsync.CadenceEvent{{
 			Event:              heightsync.CadenceHeartbeatOpened,
-			TurnSeq:            1,
+			TurnStart:          1,
 			DurationToTurnover: 5 * time.Second,
 		}},
 	}

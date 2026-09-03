@@ -16,12 +16,6 @@ const DefaultFloorWindow = 4096
 // the range is free for the one party that owns no slot.
 const SequencerSigner = ^uint32(0)
 
-// MinFloorQuorum is the default corroboration when FloorConfig.Quorum is left
-// unset (NewFloorIndex). FloorConfigFor instead uses host-only Q:
-// ceil(2/3 × slots_num), clamped to [1, slots_num], so a one-slot escrow can
-// still seed F and SequencerSigner is never padded in to make a fake second vote.
-const MinFloorQuorum = 2
-
 // FloorClaim is one Diff-resident reference height together with the identity
 // that signed it.
 //
@@ -36,43 +30,15 @@ type FloorClaim struct {
 	Hash   []byte
 }
 
-// FloorConfig tunes how the floor may move.
+// FloorConfig tunes how much of the floor is retained. It carries no raise
+// bound: see FloorIndex for why the distance a host-signed claim may move F is
+// not the log plane's question.
 type FloorConfig struct {
-	// Quorum is how many distinct *host* signers must hold a height before the
-	// floor may jump further than WindowBlocks in one step. Zero means
-	// MinFloorQuorum; FloorConfigFor sets a host-only value in [1, slots_num].
-	Quorum int
-	// WindowBlocks is W_conf: how far one signer may raise the floor unaided.
-	WindowBlocks uint64
 	// Window bounds retained entries (DefaultFloorWindow when zero).
 	Window int
 }
 
-// FloorConfigFor derives the raise rule from an escrow's host roster. Quorum is
-// ceil(2/3 × slots_num) over host-signed log-resident claims — SequencerSigner
-// never fills a seat — so a jump nobody else can vouch for does not become the
-// escrow's logical time.
-func FloorConfigFor(slotsNum int, cfg HeartbeatConfig) FloorConfig {
-	q := QuorumForRoster(slotsNum)
-	if q < 1 {
-		q = 1
-	}
-	if slotsNum > 0 && q > slotsNum {
-		q = slotsNum
-	}
-	return FloorConfig{
-		Quorum:       q,
-		WindowBlocks: cfg.withDefaults().WindowBlocks,
-	}
-}
-
 func (c FloorConfig) withDefaults() FloorConfig {
-	if c.Quorum <= 0 {
-		c.Quorum = MinFloorQuorum
-	}
-	if c.WindowBlocks == 0 {
-		c.WindowBlocks = DefaultConfirmWindowBlocks
-	}
 	if c.Window == 0 {
 		c.Window = DefaultFloorWindow
 	}
@@ -96,11 +62,6 @@ type FloorPoint struct {
 	Nonce  uint64
 }
 
-type floorSignerClaim struct {
-	height uint64
-	hash   []byte
-}
-
 // FloorIndex answers F(m): the reference height the log had established at
 // nonces strictly below m.
 //
@@ -110,181 +71,95 @@ type floorSignerClaim struct {
 // to it is always available, which is what makes L0 an exact check with no
 // tolerance band.
 //
-// How far the floor may move in one step is bounded (proposal §14), with
-// sequencer stamps excluded (rule 3):
+// The floor is the high-water mark of *host-signed* claims, and nothing more:
 //
-//   - Within W_conf of the standing floor a single *host* signer may raise it.
-//     That is the ordinary path — a cadence of one turnover every Interval keeps
-//     honest advances far inside the window — so a host ack or confirm at the
-//     live tip establishes the turn's reference height. MsgHeartbeat and
-//     MsgStartInference never do: they are user-signed carries at most.
-//   - Beyond W_conf the floor moves only to a height Quorum distinct *host*
-//     signers hold. SequencerSigner does not count toward Q, so sequencer + one
-//     host cannot jump 1<<40. A lone host claim of 1<<40 leaves the floor where
-//     it was instead of putting it past anything any chain will reach.
-//   - Nothing lowers it. A reorg is followed by producers declining to carry a
-//     floor beyond reach (HeartbeatConfig.FloorOutOfReach) and resuming once the
-//     live branch passes it, which needs no backward motion and keeps L0 exact.
+//   - Any host-signed first-party stamp at a height above the standing floor
+//     raises it, however far above. A host ack, confirm or finish at the live
+//     tip establishes the turn's reference height. MsgHeartbeat and
+//     MsgStartInference never do: they are user-signed carries of F at most
+//     (rule 3), so SequencerSigner is skipped here.
+//   - Nothing lowers it. A reorg leaves the floor where it was and producers
+//     carry it until the live branch passes it, which needs no backward motion
+//     and keeps L0 exact.
 //
-// Both bounds are functions of the applied log alone — no clock, no oracle, no
+// There is deliberately no cap on the distance of a raise, and no corroboration
+// quorum. Both existed once (W_conf unaided / Q) and were wrong in the same way:
+// they made the floor's own bound the protection against a fabricated height,
+// which the floor cannot be. A height enters the log only through an exchange
+// whose envelope was admitted, and admission is where implausibility is caught —
+// `|H − local_aligned| > D` demands Strong proof of the *sender* (§8/§15), so no
+// party can put a height in the future without producing a chain artifact for it
+// (until Strong lands, L5a marks the same condition). Capping the floor instead
+// bought nothing and broke the case it was supposed to cover: one participant
+// stamping H=1 into a fresh escrow pinned F at 1, and every honest host at the
+// real tip was then more than W_conf away and could never move it — a poisoned
+// floor no honest party could repair.
+//
+// The rule is a function of the applied log alone — no clock, no oracle, no
 // admission decision — so every verifier computes the same floor and therefore
 // the same L0 verdicts.
 //
 // Entries are appended in nonce order and hold a running maximum, so AsOf is a
 // binary search and the structure is cheap to clone for trial-apply.
 type FloorIndex struct {
-	entries []floorEntry
-	// claims is the per-signer high-water claim. Bounded by the roster, and the
-	// only state the raise rule needs beyond the entries themselves.
-	claims    map[uint32]floorSignerClaim
+	entries   []floorEntry
 	cfg       FloorConfig
 	truncated bool
 }
 
-// NewFloorIndex constructs an empty index with the default raise rule.
+// NewFloorIndex constructs an empty index with the default retention.
 func NewFloorIndex() *FloorIndex {
 	return NewFloorIndexWith(FloorConfig{})
 }
 
-// NewFloorIndexWith constructs an empty index with an explicit raise rule.
+// NewFloorIndexWith constructs an empty index with explicit retention.
 func NewFloorIndexWith(cfg FloorConfig) *FloorIndex {
-	return &FloorIndex{
-		claims: make(map[uint32]floorSignerClaim),
-		cfg:    cfg.withDefaults(),
-	}
+	return &FloorIndex{cfg: cfg.withDefaults()}
 }
 
-// Observe folds one diff's reference-height claims into the index and returns
-// the marks the raise rule produced. Claims are attributed, so a signer that
-// strikes out on its own is named at the moment of the damage rather than after
-// a forensic replay.
+// Observe folds one diff's reference-height claims into the index. Claims are
+// attributed, so the entry names the signer that established the height and L6
+// can keep blame with it rather than with the parties that carried it.
 //
 // A zero height or absent hash is not a claim and is ignored (spec §14).
-func (f *FloorIndex) Observe(diffNonce uint64, claims []FloorClaim) []AttributableMark {
+func (f *FloorIndex) Observe(diffNonce uint64, claims []FloorClaim) {
 	if f == nil || len(claims) == 0 {
-		return nil
+		return
 	}
 	f.cfg = f.cfg.withDefaults()
-	if f.claims == nil {
-		f.claims = make(map[uint32]floorSignerClaim)
-	}
 
 	present := make([]FloorClaim, 0, len(claims))
 	for _, c := range claims {
 		if c.Height == 0 || !StampPresent(c.Hash) {
 			continue
 		}
+		if c.Signer == SequencerSigner {
+			continue // rule 3: user-signed stamps never raise F
+		}
 		present = append(present, c)
 	}
 	if len(present) == 0 {
-		return nil
+		return
 	}
+	// Sorted so that two claims tying at the same height always attribute to the
+	// same signer, whatever order they sat in the diff.
 	sort.Slice(present, func(i, j int) bool {
 		if present[i].Signer != present[j].Signer {
 			return present[i].Signer < present[j].Signer
 		}
 		return present[i].Height < present[j].Height
 	})
-	for _, c := range present {
-		if c.Signer == SequencerSigner {
-			continue // rule 3: user-signed stamps never raise and never vote
-		}
-		if held := f.claims[c.Signer]; c.Height > held.height {
-			f.claims[c.Signer] = floorSignerClaim{
-				height: c.Height,
-				hash:   append([]byte(nil), c.Hash...),
-			}
-		}
-	}
 
 	cur, _, _ := f.tip()
 	best := floorEntry{nonce: diffNonce, height: cur}
-	unaided := addSat(cur, f.cfg.WindowBlocks)
 	for _, c := range present {
-		if c.Signer == SequencerSigner {
-			continue
-		}
-		if c.Height <= unaided && c.Height > best.height {
+		if c.Height > best.height {
 			best = floorEntry{nonce: diffNonce, height: c.Height, hash: c.Hash, author: c.Signer}
 		}
-	}
-	if corr, ok := f.corroborated(); ok && corr.height > best.height {
-		best = floorEntry{nonce: diffNonce, height: corr.height, hash: corr.hash, author: corr.author}
 	}
 	if best.height > cur {
 		f.appendEntry(best)
 	}
-	return f.outOfBandMarks(diffNonce, present)
-}
-
-// outOfBandMarks names a signer whose claim is nowhere near any other party's.
-//
-// The test is deliberately not "beyond the raise bound": an escrow bootstrapping
-// on mainnet heights, or one whose whole roster follows a chain that jumped, has
-// every honest claim far above a floor that has not caught up yet, and marking
-// those would bury the signal. What is anomalous is a height no peer is within
-// W_conf of — a party alone on a limb. The first claimant of a genuine jump is
-// briefly in that position too, so this is evidence, not a verdict.
-func (f *FloorIndex) outOfBandMarks(diffNonce uint64, present []FloorClaim) []AttributableMark {
-	cur, _, _ := f.tip()
-	if cur == 0 {
-		return nil // no logical time yet: nothing to be out of band with
-	}
-	var marks []AttributableMark
-	for _, c := range present {
-		peer := f.peerMax(c.Signer)
-		if peer == 0 || c.Height <= addSat(peer, f.cfg.WindowBlocks) {
-			continue
-		}
-		marks = append(marks, AttributableMark{
-			Kind:  MarkFloorOutOfBand,
-			Slot:  markSlot(c.Signer),
-			Nonce: diffNonce,
-			Detail: fmt.Sprintf("%s claimed height %d; nearest other signer is at %d, floor %d, W_conf %d",
-				FloorAuthorLabel(c.Signer), c.Height, peer, cur, f.cfg.WindowBlocks),
-		})
-	}
-	return marks
-}
-
-// corroborated is the highest height Quorum distinct signers hold, with the
-// claim of the signer that completes it.
-//
-// Carried claims cannot launder a poisoned height through this. A carry equals
-// the standing floor, and the floor is already at or below the Quorum-th
-// ranked value, so echoing it can never lift that value.
-func (f *FloorIndex) corroborated() (floorEntry, bool) {
-	ranked := make([]floorEntry, 0, len(f.claims))
-	for signer, held := range f.claims {
-		if signer == SequencerSigner {
-			continue
-		}
-		ranked = append(ranked, floorEntry{height: held.height, hash: held.hash, author: signer})
-	}
-	if len(ranked) < f.cfg.Quorum {
-		return floorEntry{}, false
-	}
-	sort.Slice(ranked, func(i, j int) bool {
-		if ranked[i].height != ranked[j].height {
-			return ranked[i].height > ranked[j].height
-		}
-		return ranked[i].author < ranked[j].author
-	})
-	q := ranked[f.cfg.Quorum-1]
-	return q, q.height > 0
-}
-
-func (f *FloorIndex) peerMax(signer uint32) uint64 {
-	var best uint64
-	for other, held := range f.claims {
-		if other == signer {
-			continue
-		}
-		if held.height > best {
-			best = held.height
-		}
-	}
-	return best
 }
 
 func (f *FloorIndex) tip() (uint64, []byte, uint32) {
@@ -370,26 +245,20 @@ func (f *FloorIndex) Len() int {
 
 // Clone returns a copy so trial-apply cannot leak into committed state. It runs
 // on the apply hot path (snapshotMutable, several times per diff), so the hashes
-// are shared rather than copied: appendEntry and the claim insert each store a
-// fresh slice and nothing rewrites one in place afterwards.
+// are shared rather than copied: appendEntry stores a fresh slice and nothing
+// rewrites one in place afterwards.
 func (f *FloorIndex) Clone() *FloorIndex {
 	if f == nil {
 		return nil
 	}
-	claims := make(map[uint32]floorSignerClaim, len(f.claims))
-	for signer, held := range f.claims {
-		claims[signer] = held
-	}
 	return &FloorIndex{
 		entries:   append([]floorEntry(nil), f.entries...),
-		claims:    claims,
 		cfg:       f.cfg,
 		truncated: f.truncated,
 	}
 }
 
-// ApplyConfig replaces the raise-rule parameters. Snapshot blobs omit cfg;
-// restore recomputes it from the roster.
+// ApplyConfig replaces the retention bound. Snapshot blobs omit cfg.
 func (f *FloorIndex) ApplyConfig(cfg FloorConfig) {
 	if f == nil {
 		return
@@ -403,15 +272,6 @@ func FloorAuthorLabel(signer uint32) string {
 		return "sequencer"
 	}
 	return fmt.Sprintf("slot %d", signer)
-}
-
-// markSlot keeps the sequencer out of the slot field, which is slot-indexed
-// everywhere else; FloorAuthorLabel carries the identity in Detail instead.
-func markSlot(signer uint32) uint32 {
-	if signer == SequencerSigner {
-		return 0
-	}
-	return signer
 }
 
 func addSat(a, b uint64) uint64 {
