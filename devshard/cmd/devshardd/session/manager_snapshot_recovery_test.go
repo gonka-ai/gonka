@@ -139,7 +139,7 @@ func populateFinishedAndSeal(t *testing.T, store storage.Storage) ([]types.SlotA
 	start := startTx(1)
 	apply(1, []*types.DevshardTx{start})
 	execSig := testutil.SignExecutorReceipt(t, hosts[1], "1", 1, start.GetStartInference().GetPromptHash(),
-		"llama", 100, 50, 1000, 2000)
+		"llama", 100, testutil.TestMaxTokens, 1000, 2000)
 	apply(2, []*types.DevshardTx{&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
 	}}}})
@@ -273,8 +273,9 @@ func TestRecoverSessions_RestoresSnapshotAndReplaysOnlyTail(t *testing.T) {
 	require.Equal(t, want.Phase, got.Phase)
 
 	require.Equal(t, []diffRange{
+		{1, 7},  // RestoreStateWithFloor rebuilds the height-sync floor from the journal
 		{7, 7},  // root check against the journal at the snapshot nonce
-		{8, 10}, // the tail is the only range read: obs tops up from it too
+		{8, 10}, // the tail is the only range applied: obs tops up from it too
 	}, store.ranges())
 }
 
@@ -289,8 +290,8 @@ func TestRecoverSessions_SnapshotCurrentSkipsDiffApply(t *testing.T) {
 
 	got := recoveredHostState(t, mgr)
 	require.Equal(t, uint64(10), got.LatestNonce)
-	require.Equal(t, []diffRange{{10, 10}}, store.ranges(),
-		"a current snapshot reads one diff for the root check and nothing else")
+	require.Equal(t, []diffRange{{1, 10}, {10, 10}}, store.ranges(),
+		"a current snapshot rebuilds the height-sync floor from the journal, then reads one diff for the root check")
 }
 
 func TestRecoverSessions_NoSnapshotReplaysFromOne(t *testing.T) {
@@ -318,7 +319,7 @@ func TestRecoverSessions_SavesSnapshotAfterFullReplay(t *testing.T) {
 	nonce, data, err := store.LoadSnapshot("1")
 	require.NoError(t, err)
 	require.Equal(t, uint64(10), nonce)
-	state, committed, sealed, err := host.UnmarshalStateSnapshotWithCommitted(data)
+	state, committed, sealed, _, err := host.UnmarshalStateSnapshotWithCommitted(data)
 	require.NoError(t, err)
 	require.Equal(t, uint64(10), state.LatestNonce)
 	require.NotNil(t, committed)
@@ -386,7 +387,7 @@ func TestRecoverSessions_SnapshotRootMismatchReplaysFromOne(t *testing.T) {
 	mgr := recoverTestManager(t, store, hostSigner, user, group)
 	require.NoError(t, mgr.RecoverSessions())
 
-	require.Equal(t, []diffRange{{7, 7}, {1, 10}}, store.ranges(),
+	require.Equal(t, []diffRange{{1, 5}, {7, 7}, {1, 10}}, store.ranges(),
 		"a rejected snapshot must fall back to a full replay")
 
 	got := recoveredHostState(t, mgr)

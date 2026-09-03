@@ -202,8 +202,8 @@ func TestRecoverSessions_ReplaysADiffWrittenBeforeTheMaxTokensFloor(t *testing.T
 		EscrowID: "1", Amount: 100000, CreatorAddress: user.Address(), Slots: addresses,
 	}}
 
-	manager := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(),
-		nil, testutil.RuntimeTestVersion, bridgeStub, nil, nil)
+	manager := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(),
+		nil, testutil.RuntimeTestVersion, bridgeStub, nil, nil))
 	require.NoError(t, manager.RecoverSessions())
 
 	manager.sessionsMutex.RLock()

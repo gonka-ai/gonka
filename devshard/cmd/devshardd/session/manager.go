@@ -1075,26 +1075,40 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 	if meta.LatestNonce > 0 {
 		snapNonce, snapData, snapErr := m.store.LoadSnapshot(escrowID)
 		if snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce {
-			snapState, committedEntries, sealedNonces, decodeErr := host.UnmarshalStateSnapshotWithCommitted(snapData)
+			snapState, committedEntries, sealedNonces, floorProto, decodeErr := host.UnmarshalStateSnapshotWithCommitted(snapData)
 			if decodeErr != nil {
 				logging.Error("failed to decode devshard snapshot, replaying full history", inferenceTypes.System,
 					"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", decodeErr)
 			} else {
-				sm.RestoreState(snapState)
-				sm.RestoreCommittedEntries(committedEntries)
-				sm.RestoreSealedNonces(sealedNonces)
-				if verifyErr := verifySnapshotRoot(m.store, sm, escrowID, snapNonce); verifyErr != nil {
-					// Restore already mutated sm, so the rejected state has to
-					// be thrown away rather than replayed on top of.
-					logging.Error("devshard snapshot failed root check, replaying full history", inferenceTypes.System,
-						"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", verifyErr)
+				floor, floorErr := heightsync.FloorIndexFromProto(
+					heightsync.FloorConfigFor(len(snapState.Group), sm.HeartbeatConfig()), floorProto)
+				if floorErr != nil {
+					logging.Error("devshard snapshot floor blob rejected, rebuilding from diffs", inferenceTypes.System,
+						"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", floorErr)
+					floor = nil
+				}
+				if restoreErr := sm.RestoreStateWithFloor(snapState, floor); restoreErr != nil {
+					logging.Error("failed to restore snapshot state, replaying full history", inferenceTypes.System,
+						"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", restoreErr)
 					if sm, err = newStateMachine(); err != nil {
-						return nil, nil, fmt.Errorf("recreate state machine after snapshot reject: %w", err)
+						return nil, nil, fmt.Errorf("recreate state machine after snapshot restore failure: %w", err)
 					}
 				} else {
-					replayFrom = snapNonce + 1
-					logging.Info("restored devshard snapshot", inferenceTypes.System,
-						"escrow_id", escrowID, "snapshot_nonce", snapNonce, "latest_nonce", meta.LatestNonce)
+					sm.RestoreCommittedEntries(committedEntries)
+					sm.RestoreSealedNonces(sealedNonces)
+					if verifyErr := verifySnapshotRoot(m.store, sm, escrowID, snapNonce); verifyErr != nil {
+						// Restore already mutated sm, so the rejected state has to
+						// be thrown away rather than replayed on top of.
+						logging.Error("devshard snapshot failed root check, replaying full history", inferenceTypes.System,
+							"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", verifyErr)
+						if sm, err = newStateMachine(); err != nil {
+							return nil, nil, fmt.Errorf("recreate state machine after snapshot reject: %w", err)
+						}
+					} else {
+						replayFrom = snapNonce + 1
+						logging.Info("restored devshard snapshot", inferenceTypes.System,
+							"escrow_id", escrowID, "snapshot_nonce", snapNonce, "latest_nonce", meta.LatestNonce)
+					}
 				}
 			}
 		} else if snapErr != nil && !errors.Is(snapErr, storage.ErrSnapshotNotFound) {
@@ -1573,7 +1587,7 @@ func (m *HostManager) WaitRecoveryRepairs() {
 }
 
 func saveHostSnapshot(store storage.Storage, sm *state.StateMachine, escrowID string, nonce uint64) error {
-	data, err := host.MarshalStateSnapshotWithCommitted(sm.ExportState(), sm.ExportCommittedEntries(), sm.ExportSealedNonces())
+	data, err := host.MarshalStateSnapshotWithCommitted(sm.ExportState(), sm.ExportCommittedEntries(), sm.ExportSealedNonces(), sm.ExportHeightSyncFloor())
 	if err != nil {
 		return fmt.Errorf("marshal snapshot: %w", err)
 	}

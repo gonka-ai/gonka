@@ -5,8 +5,7 @@ import (
 	"fmt"
 	"testing"
 
-	"github.com/testcontainers/testcontainers-go"
-	"github.com/testcontainers/testcontainers-go/modules/postgres"
+	"devshard/storage/pgtest"
 )
 
 // benchPostgres starts one container for the whole benchmark function and
@@ -22,16 +21,7 @@ func benchPostgres(b *testing.B) *Postgres {
 		b.Skip("skipping postgres benchmarks in -short mode (requires Docker)")
 	}
 	ctx := context.Background()
-	container, err := postgres.Run(ctx,
-		"postgres:18.1-bookworm",
-		postgres.WithDatabase("testdb"),
-		postgres.WithUsername("testuser"),
-		postgres.WithPassword("testpass"),
-		testcontainers.WithWaitStrategy(postgresContainerWaitStrategy()),
-	)
-	if err != nil {
-		b.Fatal(err)
-	}
+	container := pgtest.MustStart(b, ctx)
 	b.Cleanup(func() { _ = container.Terminate(context.Background()) })
 
 	host, err := container.Host(ctx)
