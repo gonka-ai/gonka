@@ -212,6 +212,20 @@ func (g *recoveryGate) isRequested(escrowID string) bool {
 	return ok
 }
 
+// firstRemainingRequested is the demand lookup for recoveryQueue: O(demand),
+// not O(backlog). Which demanded escrow is chosen is unspecified; any remaining
+// demanded ID beats cold list order.
+func (g *recoveryGate) firstRemainingRequested(remaining map[string]storage.ActiveSession) (string, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for id := range g.requested {
+		if _, ok := remaining[id]; ok {
+			return id, true
+		}
+	}
+	return "", false
+}
+
 // waitTurn parks a background worker that is about to recover a cold session
 // while on-demand loads are in flight. Workers assigned an already-demanded
 // escrow are never parked: pausing them would only delay the caller.
@@ -241,37 +255,65 @@ func (g *recoveryGate) stop() {
 // escrows a live caller has already asked for. Requests that arrive mid
 // recovery reorder whatever is left, so demand keeps overtaking cold sessions
 // instead of being fixed at startup.
+//
+// Remaining sessions are indexed by ID once at construction. next() walks the
+// (bounded) demand set and looks those IDs up, rather than scanning the
+// backlog to ask whether each row is demanded.
 type recoveryQueue struct {
-	mu         sync.Mutex
-	pending    []storage.ActiveSession
-	prioritize func(escrowID string) bool
+	mu       sync.Mutex
+	byID     map[string]storage.ActiveSession
+	order    []string
+	cold     int
+	demanded func(remaining map[string]storage.ActiveSession) (string, bool)
+}
+
+func newRecoveryQueue(sessions []storage.ActiveSession, demanded func(map[string]storage.ActiveSession) (string, bool)) *recoveryQueue {
+	byID := make(map[string]storage.ActiveSession, len(sessions))
+	order := make([]string, len(sessions))
+	for i, s := range sessions {
+		byID[s.EscrowID] = s
+		order[i] = s.EscrowID
+	}
+	return &recoveryQueue{byID: byID, order: order, demanded: demanded}
+}
+
+func (q *recoveryQueue) takeLocked(id string) (storage.ActiveSession, bool) {
+	sess, ok := q.byID[id]
+	if !ok {
+		return storage.ActiveSession{}, false
+	}
+	delete(q.byID, id)
+	return sess, true
 }
 
 // next returns the highest-priority remaining session, or false when drained.
 func (q *recoveryQueue) next() (storage.ActiveSession, bool) {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	if len(q.pending) == 0 {
+	if len(q.byID) == 0 {
 		return storage.ActiveSession{}, false
 	}
-	idx := 0
-	if q.prioritize != nil {
-		for i, sess := range q.pending {
-			if q.prioritize(sess.EscrowID) {
-				idx = i
-				break
+	if q.demanded != nil {
+		if id, ok := q.demanded(q.byID); ok {
+			if sess, taken := q.takeLocked(id); taken {
+				return sess, true
 			}
 		}
 	}
-	sess := q.pending[idx]
-	q.pending = append(q.pending[:idx], q.pending[idx+1:]...)
-	return sess, true
+	for q.cold < len(q.order) {
+		id := q.order[q.cold]
+		q.cold++
+		if sess, ok := q.takeLocked(id); ok {
+			return sess, true
+		}
+	}
+	return storage.ActiveSession{}, false
 }
 
 func (q *recoveryQueue) remaining() int {
 	q.mu.Lock()
 	defer q.mu.Unlock()
-	return len(q.pending)
+	return len(q.byID)
 }
 
 func NewHostManager(
@@ -925,10 +967,7 @@ func (m *HostManager) RecoverSessionsContext(ctx context.Context) error {
 	logging.Info("starting devshard session recovery", inferenceTypes.System,
 		"session_count", len(active), "worker_count", workers)
 
-	queue := &recoveryQueue{
-		pending:    append([]storage.ActiveSession(nil), active...),
-		prioritize: m.recoveryGate.isRequested,
-	}
+	queue := newRecoveryQueue(active, m.recoveryGate.firstRemainingRequested)
 	var wg sync.WaitGroup
 	var prioritizedCount atomic.Int64
 	for i := 0; i < workers; i++ {

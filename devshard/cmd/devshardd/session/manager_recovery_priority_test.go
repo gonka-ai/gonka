@@ -76,20 +76,27 @@ func waitFor(t *testing.T, what string, cond func() bool) {
 }
 
 func TestRecoveryQueue_HandsOutRequestedSessionsFirst(t *testing.T) {
-	requested := map[string]bool{"4": true}
-	q := &recoveryQueue{
-		pending: []storage.ActiveSession{
+	requested := map[string]struct{}{"4": {}}
+	q := newRecoveryQueue(
+		[]storage.ActiveSession{
 			{EscrowID: "1"}, {EscrowID: "2"}, {EscrowID: "3"}, {EscrowID: "4"}, {EscrowID: "5"},
 		},
-		prioritize: func(id string) bool { return requested[id] },
-	}
+		func(remaining map[string]storage.ActiveSession) (string, bool) {
+			for id := range requested {
+				if _, ok := remaining[id]; ok {
+					return id, true
+				}
+			}
+			return "", false
+		},
+	)
 
 	sess, ok := q.next()
 	require.True(t, ok)
 	require.Equal(t, "4", sess.EscrowID, "a demanded escrow must be handed out before cold ones")
 
 	// A request arriving mid-recovery reorders whatever is left.
-	requested["3"] = true
+	requested["3"] = struct{}{}
 	sess, ok = q.next()
 	require.True(t, ok)
 	require.Equal(t, "3", sess.EscrowID, "demand arriving mid-drain must overtake the remaining backlog")
@@ -107,7 +114,7 @@ func TestRecoveryQueue_HandsOutRequestedSessionsFirst(t *testing.T) {
 }
 
 func TestRecoveryQueue_DrainsWithoutPrioritizer(t *testing.T) {
-	q := &recoveryQueue{pending: []storage.ActiveSession{{EscrowID: "1"}, {EscrowID: "2"}}}
+	q := newRecoveryQueue([]storage.ActiveSession{{EscrowID: "1"}, {EscrowID: "2"}}, nil)
 	first, ok := q.next()
 	require.True(t, ok)
 	require.Equal(t, "1", first.EscrowID)
@@ -116,6 +123,23 @@ func TestRecoveryQueue_DrainsWithoutPrioritizer(t *testing.T) {
 	require.Equal(t, "2", second.EscrowID)
 	_, ok = q.next()
 	require.False(t, ok)
+}
+
+func TestRecoveryQueue_DemandLookupUsesRemainingIndex(t *testing.T) {
+	var gate recoveryGate
+	const n = 64
+	sessions := make([]storage.ActiveSession, n)
+	for i := range sessions {
+		sessions[i] = storage.ActiveSession{EscrowID: strconv.Itoa(i + 1)}
+	}
+	q := newRecoveryQueue(sessions, gate.firstRemainingRequested)
+
+	gate.begin(strconv.Itoa(n))
+	defer gate.end()
+
+	sess, ok := q.next()
+	require.True(t, ok)
+	require.Equal(t, strconv.Itoa(n), sess.EscrowID, "demand is an ID lookup in the remaining map, not a scan of backlog prefix")
 }
 
 func TestRecoveryGate_ParksColdWorkerUntilOnDemandDone(t *testing.T) {
