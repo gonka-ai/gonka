@@ -23,6 +23,8 @@ type NodeWorker struct {
 	broker            *Broker
 	commands          chan commandWithContext
 	shutdown          chan struct{}
+	closed            bool
+	closedMu          sync.Mutex
 	wg                sync.WaitGroup
 	availableVersions map[string]bool
 	versionsMu        sync.Mutex
@@ -99,7 +101,16 @@ func (w *NodeWorker) Submit(ctx context.Context, cmd NodeWorkerCommand) bool {
 	return w.submit(ctx, cmd, 0)
 }
 
+// submit performs the actual channel send. Holding closedMu across the send
+// ensures no submission can race with the commands channel being closed
+// during shutdown (send on a closed channel panics). The send is
+// non-blocking, so the lock is never held for long.
 func (w *NodeWorker) submit(ctx context.Context, cmd NodeWorkerCommand, generation uint64) bool {
+	w.closedMu.Lock()
+	defer w.closedMu.Unlock()
+	if w.closed {
+		return false
+	}
 	w.wg.Add(1)
 	select {
 	case w.commands <- commandWithContext{cmd: cmd, ctx: ctx, generation: generation}:
@@ -110,8 +121,16 @@ func (w *NodeWorker) submit(ctx context.Context, cmd NodeWorkerCommand, generati
 	}
 }
 
-// Shutdown gracefully stops the worker
+// Shutdown gracefully stops the worker. Safe to call more than once; only
+// the first call closes the channel and waits.
 func (w *NodeWorker) Shutdown() {
+	w.closedMu.Lock()
+	if w.closed {
+		w.closedMu.Unlock()
+		return
+	}
+	w.closed = true
+	w.closedMu.Unlock()
 	close(w.shutdown)
 	w.wg.Wait() // Wait for all pending commands to complete
 }

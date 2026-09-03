@@ -149,10 +149,10 @@ func TestNodeWorker_QueueFull(t *testing.T) {
 	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient, broker)
 	defer worker.Shutdown()
 
-	// Fill the queue with slow commands
+	// Fill the queue with slow commands. Queue size is 10; we submit 25.
 	slowCmdSubmitted := 0
 	slowCmdFailed := 0
-	for i := 0; i < 25; i++ { // Queue size is 10, but we submit 10
+	for i := 0; i < 25; i++ {
 		cmd := &TestCommand{
 			ExecuteFn: func(ctx context.Context, worker *NodeWorker) NodeResult {
 				time.Sleep(100 * time.Millisecond)
@@ -167,9 +167,13 @@ func TestNodeWorker_QueueFull(t *testing.T) {
 		}
 	}
 
-	// Only 10 should succeed
-	assert.Equal(t, 10, slowCmdSubmitted, "Should submit exactly 10 commands (queue size)")
-	assert.Equal(t, 15, slowCmdFailed, "Should fail exactly 15 commands (beyond queue size)")
+	// The channel starts empty and only the worker drains it, so the first
+	// queue-size submissions always succeed. Draining concurrently frees slots
+	// mid-loop, so more than queue-size may succeed -- the counts are bounded,
+	// not exact.
+	assert.GreaterOrEqual(t, slowCmdSubmitted, 10, "Queue-size submissions must always succeed")
+	assert.LessOrEqual(t, slowCmdFailed, 15, "At most the commands beyond queue size may fail")
+	assert.Equal(t, 25, slowCmdSubmitted+slowCmdFailed, "Every submission should either succeed or fail")
 }
 
 func TestNodeWorker_GracefulShutdown(t *testing.T) {
@@ -690,4 +694,57 @@ func (c *TestCommand) Execute(ctx context.Context, worker *NodeWorker) NodeResul
 		return c.ExecuteFn(ctx, worker)
 	}
 	return NodeResult{Succeeded: true}
+}
+
+func TestNodeWorker_SubmitAfterShutdown(t *testing.T) {
+	broker := NewTestBroker2(10)
+	node := createTestNode("test-node-1")
+	mockClient := mlnodeclient.NewMockClient()
+	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient, broker)
+
+	worker.Shutdown()
+
+	// Shutdown() sets closed=true before returning, so Submit is deterministically
+	// false here with no timing window to wait for.
+	cmd := &TestCommand{}
+	success := worker.Submit(context.Background(), cmd)
+	assert.False(t, success, "Submit after Shutdown should be rejected, not panic")
+}
+
+func TestNodeWorker_ConcurrentSubmitAndShutdown(t *testing.T) {
+	// Mirrors the production race: reconcile (a separate goroutine) submits to a
+	// worker while RemoveNode shuts it down. Must never panic.
+	for i := 0; i < 50; i++ {
+		broker := NewTestBroker2(200)
+		node := createTestNode("test-node-1")
+		worker := NewNodeWorkerWithClient("test-node-1", node, mlnodeclient.NewMockClient(), broker)
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for j := 0; j < 100; j++ {
+				worker.Submit(context.Background(), &TestCommand{})
+			}
+		}()
+		worker.Shutdown()
+		<-done
+	}
+}
+
+func TestNodeWorker_ShutdownIdempotent(t *testing.T) {
+	broker := NewTestBroker2(10)
+	node := createTestNode("test-node-1")
+	mockClient := mlnodeclient.NewMockClient()
+	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient, broker)
+
+	worker.Shutdown()
+
+	// A second call must not panic on close of an already-closed shutdown channel.
+	assert.NotPanics(t, func() {
+		worker.Shutdown()
+	}, "Calling Shutdown twice should not panic")
+
+	cmd := &TestCommand{}
+	success := worker.Submit(context.Background(), cmd)
+	assert.False(t, success, "Submit after double Shutdown should be rejected, not panic")
 }
