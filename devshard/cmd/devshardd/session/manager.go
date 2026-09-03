@@ -1120,7 +1120,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 					"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", decodeErr)
 			} else {
 				floor, floorErr := heightsync.FloorIndexFromProto(
-					heightsync.FloorConfigFor(len(snapState.Group), sm.HeartbeatConfig()), floorProto)
+					heightsync.FloorConfig{}, floorProto)
 				if floorErr != nil {
 					logging.Error("devshard snapshot floor blob rejected, rebuilding from diffs", inferenceTypes.System,
 						"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", floorErr)
