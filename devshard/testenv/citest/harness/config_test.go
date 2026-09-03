@@ -47,6 +47,21 @@ func TestWriteMultiConfig_CustomValidationRate(t *testing.T) {
 	require.Equal(t, uint32(7500), cfg.Escrows[0].ValidationRate)
 }
 
+func TestWriteMultiConfig_CustomNonceAndAmount(t *testing.T) {
+	dir := t.TempDir()
+	WriteMultiConfig(t, dir, MultiConfigOpts{
+		Hosts:        2,
+		EscrowSlots:  2,
+		MaxNonce:     1500,
+		EscrowAmount: 100_000_000,
+	})
+
+	cfg, err := config.Load(filepath.Join(dir, "config.yaml"))
+	require.NoError(t, err)
+	require.Equal(t, uint32(1500), cfg.Params.MaxNonce)
+	require.Equal(t, uint64(100_000_000), cfg.Escrows[0].Amount)
+}
+
 func TestWriteStackConfig_GencomposeProducesTwoVersiondServices(t *testing.T) {
 	if os.Getenv("TESTENV_HARNESS_GENCOMPOSE") != "1" {
 		t.Skip("set TESTENV_HARNESS_GENCOMPOSE=1 to run gencompose harness test")
