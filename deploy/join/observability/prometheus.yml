@@ -23,10 +23,16 @@ scrape_configs:
     metrics_path: /metrics
     dns_sd_configs:
       - names:
-          - versiond-router
+          - versiond-router-metrics
         type: A
         port: 8405
         refresh_interval: 15s
+
+  - job_name: proxy-router
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - proxy-router-metrics:8405
 
   - job_name: gonka-node
     static_configs:

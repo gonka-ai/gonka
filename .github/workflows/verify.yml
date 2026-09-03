@@ -259,6 +259,49 @@ jobs:
         uses: actions/checkout@v4
       - name: Render and exercise versiond-router
         run: make -C versiond-router test-render
+      - name: Exercise isolated versiond-router fleet rollouts
+        run: make -C versiond-router test-fleet
+      - name: Gate router fleet failure scenarios
+        run: |
+          shellcheck -x deploy/join/versiond-router-fleet.sh deploy/join/versiond-router-fleet-regression_test.sh
+          deploy/join/versiond-router-fleet-regression_test.sh --gate
+      - name: Check the join update script
+        run: |
+          shellcheck deploy/join/deployment-lock.sh deploy/join/update-devshard.sh deploy/join/update-devshard_test.sh \
+            deploy/join/update-devshard-regression_test.sh deploy/join/compose-contract_test.sh \
+            deploy/join/update-devshard-e2e_test.sh
+          deploy/join/update-devshard_test.sh
+      - name: Gate the updater failure scenarios
+        run: |
+          # UPD-PROOF-HEADERS exercises the real BusyBox wget; the harness never pulls.
+          docker pull -q busybox:1.36
+          deploy/join/update-devshard-regression_test.sh --gate
+      - name: Check that every host a service resolves is published on a shared network
+        run: deploy/join/compose-contract_test.sh
+
+  test-devshard-host-cutover:
+    runs-on: ubuntu-latest
+    name: Test the v4 to v5 host cutover end to end
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Run the real updater against a pre-v5 deployment
+        run: deploy/join/update-devshard-e2e_test.sh
+
+  test-public-proxy-router:
+    runs-on: ubuntu-latest
+    name: Test public HAProxy and private nginx policy
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Render public proxy configuration
+        run: make -C proxy-router test-render
+      - name: Render join Compose routing topologies
+        run: make -C proxy-router test-compose
+      - name: Exercise route-aware failover
+        run: make -C proxy-router test-routing
+      - name: Render private policy configuration
+        run: make -C proxy test-render
 
   test-proxy-ssl-install:
     runs-on: ubuntu-latest
@@ -455,5 +498,7 @@ jobs:
           shellcheck deploy/join/devshard-postgres-*.sh
           deploy/join/devshard-postgres-entrypoint_test.sh
           deploy/join/devshard-postgres-migration-preflight_test.sh
+      - name: Gate the PostgreSQL provenance scenarios
+        run: deploy/join/devshard-postgres-provenance_acceptance_test.sh --gate
       - name: Preserve a real PostgreSQL cluster across replacement
         run: deploy/join/devshard-postgres-upgrade_test.sh

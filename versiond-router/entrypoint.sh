@@ -5,8 +5,23 @@
 # Env:
 #   VERSIOND_POOL_HOST        DNS name resolving to every versiond in the HA
 #                             pool (compose network alias). Default versiond-pool.
+#   VERSIOND_POOL_ENDPOINTS_FILE
+#                             optional JSON array of {"id","host","port"}
+#                             entries. When set, pool membership is this
+#                             explicit list (bare-metal multi-host) instead of
+#                             DNS discovery. Hosts may be IPv4 addresses or
+#                             names; a name is re-resolved through the Docker
+#                             resolver. Port defaults to VERSIOND_PORT.
+#   VERSIOND_POOL_ENDPOINTS   the same JSON array inline. The router fleet
+#                             passes membership this way so that a container
+#                             carries its own list; takes precedence over the
+#                             file.
+#   VERSIOND_HOSTS            legacy whitespace/comma list of hosts (optionally
+#                             host:port). Recognised only when no endpoint file
+#                             is set; it renders the same explicit server list.
 #   VERSIOND_PORT             upstream port (default 8080)
-#   VERSIOND_LEGACY_HOST      single host owning pre-HA SQLite data dirs
+#   VERSIOND_LEGACY_HOST      single host owning pre-HA SQLite data dirs. With an
+#                             endpoint file this may also be an endpoint id.
 #   VERSIOND_NON_HA_VERSIONS  version path segments pinned to the legacy host
 #                             (whitespace and/or comma separated). Empty = every
 #                             version uses the HA pool.
@@ -74,12 +89,158 @@ FRONT_BIND_HOST="${VERSIOND_ROUTER_FRONT_BIND_HOST:-}"
 METRICS_BIND_HOST="${VERSIOND_ROUTER_METRICS_BIND_HOST:-}"
 DNS_RESOLVER="${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}"
 
-resolve_ipv4() {
-    getent ahostsv4 "$1" | awk 'NR == 1 { print $1 }'
+die() {
+    echo "versiond-router: $*" >&2
+    exit 1
+}
+
+# Pool membership. Precedence: an explicit endpoint file, then the legacy
+# VERSIOND_HOSTS list, then DNS discovery through VERSIOND_POOL_HOST. Both
+# explicit forms are normalised into one "id US host US port" line per member,
+# where US is the ASCII unit separator so that no field can be misread.
+US=$(printf '\037')
+POOL_ENDPOINTS=$(mktemp)
+trap 'rm -f "$POOL_ENDPOINTS"' EXIT
+POOL_MODE=dns
+if [ -n "${VERSIOND_POOL_ENDPOINTS:-}" ]; then
+    POOL_ENDPOINTS_INLINE=$(mktemp)
+    trap 'rm -f "$POOL_ENDPOINTS" "$POOL_ENDPOINTS_INLINE"' EXIT
+    printf '%s\n' "$VERSIOND_POOL_ENDPOINTS" > "$POOL_ENDPOINTS_INLINE"
+    VERSIOND_POOL_ENDPOINTS_FILE=$POOL_ENDPOINTS_INLINE
+fi
+if [ -n "${VERSIOND_POOL_ENDPOINTS_FILE:-}" ]; then
+    [ -r "$VERSIOND_POOL_ENDPOINTS_FILE" ] || \
+        die "VERSIOND_POOL_ENDPOINTS_FILE '$VERSIOND_POOL_ENDPOINTS_FILE' is not readable"
+    jq -r --arg port "$PORT" --arg us "$US" '
+        if type != "array" or length == 0 then
+            error("endpoint file must be a non-empty JSON array")
+        else . end
+        | .[]
+        | if type != "object" then error("every endpoint must be an object") else . end
+        | [(.id // ""), (.host // ""), ((.port // $port) | tostring)]
+        | join($us)
+    ' "$VERSIOND_POOL_ENDPOINTS_FILE" > "$POOL_ENDPOINTS" || \
+        die "cannot parse VERSIOND_POOL_ENDPOINTS_FILE '$VERSIOND_POOL_ENDPOINTS_FILE'"
+    POOL_MODE=endpoints
+elif [ -n "${VERSIOND_HOSTS:-}" ]; then
+    echo "versiond-router: VERSIOND_HOSTS is a legacy setting; prefer VERSIOND_POOL_ENDPOINTS_FILE" >&2
+    printf '%s\n' "$VERSIOND_HOSTS" | tr ',;[:space:]' '\n' | sed '/^$/d' | \
+        while IFS= read -r legacy_entry; do
+            case "$legacy_entry" in
+                *:*) printf '%s%s%s%s%s\n' "${legacy_entry%%:*}" "$US" \
+                    "${legacy_entry%%:*}" "$US" "${legacy_entry##*:}" ;;
+                *) printf '%s%s%s%s%s\n' "$legacy_entry" "$US" "$legacy_entry" \
+                    "$US" "$PORT" ;;
+            esac
+        done > "$POOL_ENDPOINTS"
+    POOL_MODE=endpoints
+fi
+if [ "$POOL_MODE" = endpoints ]; then
+    [ -s "$POOL_ENDPOINTS" ] || die "the versiond endpoint list is empty"
+    endpoint_index=0
+    endpoint_seen_ids=
+    while IFS="$US" read -r endpoint_id endpoint_host endpoint_port; do
+        endpoint_index=$((endpoint_index + 1))
+        case "$endpoint_id" in
+            '' | *[!A-Za-z0-9._-]*)
+                die "endpoint $endpoint_index has an invalid id '$endpoint_id'; use [A-Za-z0-9][A-Za-z0-9._-]*" ;;
+        esac
+        case "$endpoint_id" in
+            [A-Za-z0-9]*) ;;
+            *) die "endpoint id '$endpoint_id' must start with a letter or digit" ;;
+        esac
+        case " $endpoint_seen_ids " in
+            *" $endpoint_id "*) die "endpoint id '$endpoint_id' is declared twice" ;;
+        esac
+        endpoint_seen_ids="$endpoint_seen_ids $endpoint_id"
+        # IPv4 literals and DNS names share one grammar; IPv6 is not supported
+        # because the same value is also spliced into an HAProxy server line.
+        case "$endpoint_host" in
+            '' | *[!A-Za-z0-9.-]*)
+                die "endpoint '$endpoint_id' has an invalid host '$endpoint_host'" ;;
+        esac
+        case "$endpoint_port" in
+            '' | *[!0-9]*) die "endpoint '$endpoint_id' has an invalid port '$endpoint_port'" ;;
+        esac
+        if [ "$endpoint_port" -lt 1 ] || [ "$endpoint_port" -gt 65535 ]; then
+            die "endpoint '$endpoint_id' has an out-of-range port '$endpoint_port'"
+        fi
+    done < "$POOL_ENDPOINTS"
+    # Explicit members are the whole capacity: the catalog reconciler addresses
+    # servers versiond1..versiondN, and an unlisted host cannot join.
+    SLOTS=$endpoint_index
+    echo "versiond-router: pool membership is the explicit list of $SLOTS endpoint(s)" >&2
+fi
+
+# The endpoint line whose id is $1, or failure when the id is unknown.
+endpoint_by_id() {
+    awk -F "$US" -v id="$1" '$1 == id { print; found = 1; exit } END { exit !found }' \
+        "$POOL_ENDPOINTS"
+}
+
+# The server options come from the template's server-template line, so the
+# explicit and DNS forms cannot drift apart and versiond's drain-announcement
+# test keeps reading them from one place. $1 is the host, $2 the state.
+explicit_server_options() {
+    eso_options=$(sed -n \
+        's/^[[:space:]]*server-template versiond [^ ]* [^ ]* \(.*\)$/\1/p' \
+        "$POOL_TEMPLATE" | head -n 1)
+    [ -n "$eso_options" ] || die "pool template has no server-template line"
+    case "$1" in
+        *[!0-9.]*) ;;
+        # An IPv4 literal is not resolved; a name keeps re-resolving through
+        # the Docker resolver so a recreated container rejoins.
+        *) eso_options=$(printf '%s' "$eso_options" | \
+            sed 's/ resolvers docker init-addr none//') ;;
+    esac
+    printf '%s' "$eso_options" | sed "s/\${SERVER_STATE}/$2/"
+}
+
+# Explicit server lines for one backend, replacing the template's
+# server-template line. $1 is the backend kind (pool or legacy), $2 the legacy
+# host, $3 the initial server state.
+explicit_server_lines() {
+    esl_kind=$1
+    esl_host=$2
+    esl_state=$3
+    if [ "$esl_kind" = legacy ]; then
+        # A legacy owner named by endpoint id takes that entry's host and port.
+        if esl_entry=$(endpoint_by_id "$esl_host"); then
+            esl_ehost=$(printf '%s' "$esl_entry" | cut -d "$US" -f2)
+            esl_eport=$(printf '%s' "$esl_entry" | cut -d "$US" -f3)
+            printf '    server versiond1 %s:%s %s\n' "$esl_ehost" "$esl_eport" \
+                "$(explicit_server_options "$esl_ehost" "$esl_state")"
+        fi
+        return 0
+    fi
+    esl_index=0
+    while IFS="$US" read -r _ esl_ehost esl_eport; do
+        esl_index=$((esl_index + 1))
+        printf '    server versiond%s %s:%s %s\n' "$esl_index" "$esl_ehost" \
+            "$esl_eport" "$(explicit_server_options "$esl_ehost" "$esl_state")"
+    done < "$POOL_ENDPOINTS"
+}
+
+resolve_local_ipv4() {
+    host=$1
+    for candidate in $(getent ahostsv4 "$host" | awk '!seen[$1]++ { print $1 }'); do
+        if ip -o -4 addr show | awk -v candidate="$candidate" '
+            {
+                address = $4
+                sub(/\/.*/, "", address)
+                if (address == candidate) found = 1
+            }
+            END { exit !found }
+        '; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
 }
 
 if [ -n "$FRONT_BIND_HOST" ]; then
-    FRONT_BIND_ADDRESS=$(resolve_ipv4 "$FRONT_BIND_HOST")
+    FRONT_BIND_ADDRESS=$(resolve_local_ipv4 "$FRONT_BIND_HOST")
     case "$FRONT_BIND_ADDRESS" in
         '' | *[!0-9.]*)
             echo "versiond-router: cannot resolve front bind host '$FRONT_BIND_HOST' to IPv4" >&2
@@ -93,7 +254,7 @@ else
 fi
 
 if [ -n "$METRICS_BIND_HOST" ]; then
-    METRICS_BIND_ADDRESS=$(resolve_ipv4 "$METRICS_BIND_HOST")
+    METRICS_BIND_ADDRESS=$(resolve_local_ipv4 "$METRICS_BIND_HOST")
     case "$METRICS_BIND_ADDRESS" in
         '' | *[!0-9.]*)
             echo "versiond-router: cannot resolve metrics bind host '$METRICS_BIND_HOST' to IPv4" >&2
@@ -129,6 +290,15 @@ HA_DEPLOYMENT=$(bool_env GONKA_HA)
 ALLOW_COARSE_READINESS=$(bool_env VERSIOND_ROUTER_ALLOW_COARSE_READINESS)
 CATALOG_ALLOW_REMOVALS=$(bool_env VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS)
 RENDER_ONLY=$(bool_env VERSIOND_ROUTER_RENDER_ONLY)
+TRUST_FORWARDED_HEADERS=$(bool_env VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS)
+
+if [ -n "$TRUST_FORWARDED_HEADERS" ]; then
+    FORWARDED_PROTO_RULE='# Preserve X-Forwarded-Proto from the isolated trusted ingress.'
+    REAL_IP_RULE='# Preserve X-Real-IP from the isolated trusted ingress.'
+else
+    FORWARDED_PROTO_RULE='http-request set-header X-Forwarded-Proto %[ssl_fc,iif(https,http)]'
+    REAL_IP_RULE='http-request set-header X-Real-IP %[src]'
+fi
 
 # Hostnames are substituted into the config by sed, and sed is not inert to
 # them: '&' expands to the matched placeholder and '|' terminates the
@@ -234,18 +404,37 @@ backend_name() {
 # their hashing, retry, and path-rewrite policies cannot drift apart.
 DEFAULT_RETRY_ON='retry-on conn-failure empty-response 502'
 VERSIONLESS_RETRY_ON="$DEFAULT_RETRY_ON 404"
+# $1 backend name, $2 readiness check, $3 route check, $4 DNS pool name or
+# legacy host, $5 DNS slot count, $6 HA header rule, $7 response backend label,
+# $8 initial server state, $9 retry policy, $10 backend kind (pool or legacy).
+#
+# With an explicit endpoint list the template's server-template line is
+# replaced by explicit servers, except for a legacy owner that is not an
+# endpoint id: that keeps the single-host DNS template.
 render_backend() {
+    : > "$POOL_SERVERS_FILE"
+    if [ "$POOL_MODE" = endpoints ]; then
+        explicit_server_lines "${10}" "$4" "$8" > "$POOL_SERVERS_FILE"
+    fi
+    if [ -s "$POOL_SERVERS_FILE" ]; then
+        rb_servers="/^[[:space:]]*server-template versiond /{
+            r $POOL_SERVERS_FILE
+            d
+        }"
+    else
+        rb_servers="s|\\\${BACKEND_HOST}|$4|g"
+    fi
     sed \
         -e "s|\${BACKEND_NAME}|$1|g" \
         -e "s|\${READY_CHECK_SEND}|$2|g" \
         -e "s|\${ROUTE_CHECK_SEND}|$3|g" \
-        -e "s|\${BACKEND_HOST}|$4|g" \
         -e "s|\${VERSIOND_PORT}|$PORT|g" \
         -e "s|\${BACKEND_SLOTS}|$5|g" \
         -e "s|\${REQUEST_HA_HEADER}|$6|g" \
         -e "s|\${RESPONSE_BACKEND}|$7|g" \
         -e "s|\${RETRY_ON}|$9|g" \
         -e "s|\${SERVER_STATE}|$8|g" \
+        -e "$rb_servers" \
         "$POOL_TEMPLATE"
 }
 
@@ -257,7 +446,8 @@ STATIC_VERSIONS_FILE="$(mktemp)"
 LEGACY_VERSIONS_FILE="$(mktemp)"
 CACHED_VERSIONS_FILE="$(mktemp)"
 CACHED_DYNAMIC_VERSIONS_FILE="$(mktemp)"
-trap 'rm -f "$POOL_BACKENDS_FILE" "$STATIC_VERSIONS_FILE" "$LEGACY_VERSIONS_FILE" "$CACHED_VERSIONS_FILE" "$CACHED_DYNAMIC_VERSIONS_FILE"' EXIT
+POOL_SERVERS_FILE="$(mktemp)"
+trap 'rm -f "$POOL_BACKENDS_FILE" "$STATIC_VERSIONS_FILE" "$LEGACY_VERSIONS_FILE" "$CACHED_VERSIONS_FILE" "$CACHED_DYNAMIC_VERSIONS_FILE" "$POOL_SERVERS_FILE" "$POOL_ENDPOINTS"' EXIT
 
 printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;[:space:]' '\n' > "$STATIC_VERSIONS_FILE"
 printf '%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" | tr ',;[:space:]' '\n' > "$LEGACY_VERSIONS_FILE"
@@ -282,7 +472,7 @@ render_backend versiond_ha_pool \
     'http-check send meth GET uri /readyz' \
     'http-check send meth GET uri /healthz' \
     "$POOL_HOST" "$SLOTS" "$(ha_header_for versiond_ha_pool)" \
-    versiond_ha_pool '' "$VERSIONLESS_RETRY_ON" > "$POOL_BACKENDS_FILE"
+    versiond_ha_pool '' "$VERSIONLESS_RETRY_ON" pool > "$POOL_BACKENDS_FILE"
 declare_ha_version() {
     version=$1
     [ -n "$version" ] || return 0
@@ -314,7 +504,7 @@ declare_ha_version() {
         "http-check send meth GET uri /readyz?version=$encoded_version" \
         "http-check send meth GET uri /$encoded_version/healthz" \
         "$POOL_HOST" "$SLOTS" "$(ha_header_for "$backend")" "$backend" '' \
-        "$DEFAULT_RETRY_ON" \
+        "$DEFAULT_RETRY_ON" pool \
         >> "$POOL_BACKENDS_FILE"
 }
 
@@ -338,9 +528,9 @@ while IFS= read -r version; do
 done < "$CACHED_VERSIONS_FILE"
 cached_dynamic_count=$(wc -l < "$CACHED_DYNAMIC_VERSIONS_FILE")
 if [ "$cached_dynamic_count" -gt "$VERSION_CAPACITY" ]; then
-    echo "versiond-router: accepted catalog cache needs $cached_dynamic_count dynamic slots," >&2
-    echo "  but VERSIOND_ROUTER_VERSION_CAPACITY is $VERSION_CAPACITY" >&2
-    exit 1
+    echo "versiond-router: preserving $cached_dynamic_count cached dynamic routes" >&2
+    echo "  above configured minimum capacity $VERSION_CAPACITY" >&2
+    VERSION_CAPACITY=$cached_dynamic_count
 fi
 
 # Reserve inert backends for governance names that appear after this container
@@ -364,7 +554,7 @@ while [ "$index" -le "$VERSION_CAPACITY" ]; do
         "http-check send meth GET uri-lf /readyz?version=%[be_name,map($SLOT_MAP)]" \
         "http-check send meth GET uri-lf /%[be_name,map($SLOT_MAP)]/healthz" \
         "$POOL_HOST" "$SLOTS" "$(ha_header_for "$backend")" "$backend" "$server_state" \
-        "$DEFAULT_RETRY_ON" \
+        "$DEFAULT_RETRY_ON" pool \
         >> "$POOL_BACKENDS_FILE"
     index=$((index + 1))
 done
@@ -391,7 +581,7 @@ while IFS= read -r version; do
         "http-check send meth GET uri /readyz?version=$encoded_version" \
         "http-check send meth GET uri /$encoded_version/healthz" \
         "$LEGACY_HOST" 1 'http-request del-header Devshard-Ha' \
-        versiond_legacy '' "$DEFAULT_RETRY_ON" \
+        versiond_legacy '' "$DEFAULT_RETRY_ON" legacy \
         >> "$POOL_BACKENDS_FILE"
 done < "$LEGACY_VERSIONS_FILE"
 
@@ -500,10 +690,10 @@ fi
 # answer can name the fix, rather than as a 404 from whichever host the hash
 # happened to pick.
 if [ -n "$CATALOG_URL" ]; then
-    UNDECLARED_GUARD="http-request return status 503 hdr X-Devshard-Error undeclared_version hdr X-Devshard-Router-Error undeclared_version content-type \"text/plain\" lf-string \"version %[var(txn.ver)] is not present in the governance routing catalog\" if { var(txn.ver) -m reg . } !versionless_request !{ var(txn.ver),map_str($MAP) -m found } !{ var(txn.ver),map_str($VERSIONS_MAP) -m found }"
+    UNDECLARED_GUARD="http-request return status 503 content-type \"text/plain\" lf-string \"version %[var(txn.ver)] is not present in the governance routing catalog\" if { var(txn.ver) -m reg . } !versionless_request !{ var(txn.ver),map_str($MAP) -m found } !{ var(txn.ver),map_str($VERSIONS_MAP) -m found }"
     DYNAMIC_READY_GUARD="http-request return status 503 content-type \"text/plain\" string \"version-is-not-declared-or-ready\" if { path /readyz } { url_param(version) -m found } !{ var(txn.ready_ver),map_str($MAP) -m found } !{ var(txn.ready_ver),map_str($VERSIONS_MAP) -m found }"
 elif [ -s "$VERSIONS_MAP" ]; then
-    UNDECLARED_GUARD="http-request return status 503 hdr X-Devshard-Error undeclared_version hdr X-Devshard-Router-Error undeclared_version content-type \"text/plain\" lf-string \"version %[var(txn.ver)] is not declared in VERSIOND_VERSIONS on this router\" if { var(txn.ver) -m reg . } !versionless_request !{ var(txn.ver),map_str($MAP) -m found } !{ var(txn.ver),map_str($VERSIONS_MAP) -m found }"
+    UNDECLARED_GUARD="http-request return status 503 content-type \"text/plain\" lf-string \"version %[var(txn.ver)] is not declared in VERSIOND_VERSIONS on this router\" if { var(txn.ver) -m reg . } !versionless_request !{ var(txn.ver),map_str($MAP) -m found } !{ var(txn.ver),map_str($VERSIONS_MAP) -m found }"
     DYNAMIC_READY_GUARD="http-request return status 503 content-type \"text/plain\" string \"version-is-not-declared-or-ready\" if { path /readyz } { url_param(version) -m found } !{ var(txn.ready_ver),map_str($MAP) -m found } !{ var(txn.ready_ver),map_str($VERSIONS_MAP) -m found }"
 else
     UNDECLARED_GUARD="# No versions declared: every version uses the host-level pool."
@@ -531,6 +721,8 @@ sed \
     -e "s|\${STREAM_IDLE_SECONDS}|$STREAM_IDLE|g" \
     -e "s|\${TUNNEL_TIMEOUT_SECONDS}|$TUNNEL_TIMEOUT|g" \
     -e "s|\${DNS_RESOLVER}|$DNS_RESOLVER|g" \
+    -e "s|\${FORWARDED_PROTO_RULE}|$FORWARDED_PROTO_RULE|g" \
+    -e "s|\${REAL_IP_RULE}|$REAL_IP_RULE|g" \
     -e "/\${ROUTER_READY_RULES}/{
         r $READY_RULES
         d

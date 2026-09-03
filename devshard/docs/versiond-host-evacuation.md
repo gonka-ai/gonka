@@ -16,14 +16,23 @@ its container:
 | Intent | Command | What makes it safe |
 | --- | --- | --- |
 | Evacuate / stop | `docker compose stop versiond2` | versiond fails `/readyz` first, then stops accepting; the router removes it before it stops taking work |
-| Replace / restart | `docker compose up -d versiond2` | it rejoins the pool only once `/readyz` returns 200 |
-| Add a host | start another container on the pool alias | DNS gains an A record; the router finds it within seconds |
-| Decommission | remove the service from the desired deployment and remove its container | DNS loses the record permanently; `restart: always` cannot bring it back |
-| Inspect what the router believes | `docker compose exec versiond-router /usr/local/lib/versiond-router/pool-status` | read-only; the router keeps no other state |
+| Replace / restart | `docker compose up -d --no-deps --wait versiond2` | it rejoins the pool only once `/readyz` returns 200; `--wait` returns at the same moment |
+| Add a host | add `docker-compose.versiond3.yml` (or a copy of it) to the model and `up` the new service, or list a remote host in the endpoint file and run `./versiond-router-fleet.sh apply` | DNS gains an A record, or the routers roll onto the new list; a host is routed to only after its first successful check |
+| Decommission | persist `VERSIOND2_REPLICAS=0` in `config.env`, then `docker compose stop versiond2` and `docker compose rm -f versiond2` | a later full `up -d` does not recreate it; `restart: always` cannot bring it back |
+| Inspect what the routers believe | `./versiond-router-fleet.sh status` | read-only; the routers keep no other state |
 
 This works because the router derives everything it needs by observation:
-membership from DNS, health from active `/readyz` checks. Nothing has to be told
-about the change, so nothing can be told about it incorrectly.
+membership from DNS or the endpoint file, health from active `/readyz` checks.
+Nothing has to be told about the change beyond the membership list itself.
+
+`docker compose stop` is temporary because both hosts use `restart: always`.
+Permanent membership lives in `config.env`: `VERSIOND_REPLICAS` and
+`VERSIOND2_REPLICAS` (and `VERSIOND3_REPLICAS` for an added replica) are the
+desired replica counts of the local services (`1` or `0`); the examples above
+use `versiond2` but apply to any replica. Never decommission `VERSIOND_LEGACY_HOST` while
+`VERSIOND_NON_HA_VERSIONS` is non-empty; those versions have SQLite state only
+on that host. Hosts on other machines are managed on those machines (see
+[release-0.2.15-v5.md](./release-0.2.15-v5.md#multi-host-versiond)).
 
 ## Safety invariants
 

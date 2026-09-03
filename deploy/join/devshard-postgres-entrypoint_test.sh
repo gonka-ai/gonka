@@ -16,7 +16,20 @@ cat >"$tmpdir/bin/ldd" <<'EOF'
 printf '%s\n' 'musl libc (x86_64)' 'Version 1.2.6'
 exit 1
 EOF
-chmod +x "$tmpdir/bin/postgres" "$tmpdir/bin/ldd"
+cat >"$tmpdir/bin/pg_controldata" <<'EOF'
+#!/bin/sh
+if [ -e "$1/.controldata-fail" ]; then
+    echo 'pg_controldata: could not open file' >&2
+    exit 1
+fi
+identifier=7000000000000000001
+checkpoint=0/100
+[ ! -f "$1/.fake-system-identifier" ] || identifier=$(cat "$1/.fake-system-identifier")
+[ ! -f "$1/.fake-checkpoint" ] || checkpoint=$(cat "$1/.fake-checkpoint")
+printf 'Database system identifier:           %s\n' "$identifier"
+printf 'Latest checkpoint location:           %s\n' "$checkpoint"
+EOF
+chmod +x "$tmpdir/bin/postgres" "$tmpdir/bin/ldd" "$tmpdir/bin/pg_controldata"
 test_path="$tmpdir/bin:$PATH"
 
 fail() {
@@ -31,8 +44,9 @@ new_case() {
     existing="$case_dir/existing"
     versiond_data="$case_dir/versiond-data"
     versiond2_data="$case_dir/versiond2-data"
+    initdb_dir="$case_dir/initdb"
     mkdir -p "$legacy" "$persistent" "$existing" \
-        "$versiond_data" "$versiond2_data"
+        "$versiond_data" "$versiond2_data" "$initdb_dir"
 }
 
 run_entrypoint() {
@@ -44,6 +58,7 @@ run_entrypoint() {
         GONKA_POSTGRES_VERSIOND_DATA="$versiond_data" \
         GONKA_POSTGRES_VERSIOND2_DATA="$versiond2_data" \
         GONKA_POSTGRES_OFFICIAL_ENTRYPOINT=/bin/true \
+        GONKA_POSTGRES_INITDB_DIR="$initdb_dir" \
         PGDATA="$persistent/data" \
         DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT="${allow_empty:-false}" \
         "$entrypoint" postgres
@@ -58,7 +73,7 @@ run_entrypoint
     "legacy data was not copied"
 [[ $(<"$legacy/session-row") == preserved ]] || fail \
     "legacy source was modified"
-[[ -f "$persistent/.migrated-from-v4" ]] || fail \
+[[ -f "$persistent/data/.migrated-from-v4" ]] || fail \
     "migration marker was not written"
 [[ ! -e "$persistent/.migrating" ]] || fail \
     "staging directory remained after migration"
@@ -194,6 +209,79 @@ unset allow_empty
 
 new_case fresh
 run_entrypoint
+[[ -x "$initdb_dir/zz-gonka-init-complete.sh" ]] || fail \
+    "fresh initialization did not install the completion hook"
+grep -q "$persistent/data/.gonka-init-complete" "$initdb_dir/zz-gonka-init-complete.sh" || fail \
+    "the completion hook does not record completion under the persistent root"
+
+new_case reject-unfinished-target
+mkdir -p "$persistent/data"
+printf '16\n' > "$persistent/data/PG_VERSION"
+if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+    fail "a persistent cluster without a completion marker was accepted"
+fi
+grep -q 'has no completion marker' "$case_dir/stderr" || fail \
+    "unfinished-target failure was not diagnosed"
+
+new_case accept-completed-target
+mkdir -p "$persistent/data"
+printf '16\n' > "$persistent/data/PG_VERSION"
+: > "$persistent/data/.gonka-init-complete"
+run_entrypoint
+
+new_case reject-foreign-target
+printf '16\n' > "$legacy/PG_VERSION"
+printf '1\n' > "$legacy/.fake-system-identifier"
+mkdir -p "$persistent/data"
+printf '16\n' > "$persistent/data/PG_VERSION"
+printf '2\n' > "$persistent/data/.fake-system-identifier"
+if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+    fail "a foreign persistent cluster next to the v4 volume was accepted"
+fi
+grep -q 'is a different cluster' "$case_dir/stderr" || fail \
+    "foreign-target failure was not diagnosed"
+
+new_case reject-unreadable-controldata
+printf '16\n' > "$legacy/PG_VERSION"
+mkdir -p "$persistent/data"
+printf '16\n' > "$persistent/data/PG_VERSION"
+: > "$persistent/data/.controldata-fail"
+if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+    fail "an unreadable pg_controldata was treated as matching"
+fi
+grep -q 'cannot read pg_controldata' "$case_dir/stderr" || fail \
+    "controldata failure was not diagnosed: $(cat "$case_dir/stderr")"
+
+new_case resume-publish-marks-migration
+mkdir -p "$persistent/.migrating"
+printf '16\n' > "$persistent/.migrating/PG_VERSION"
+: > "$persistent/.gonka-copy-complete"
+run_entrypoint
+[[ -f "$persistent/data/.migrated-from-v4" ]] || fail \
+    "a resumed migration did not record the v4 migration marker"
+run_entrypoint || fail "the resumed cluster was refused on the next start"
+
+new_case reject-copy-behind-source
+printf '16\n' > "$legacy/PG_VERSION"
+mkdir -p "$persistent/data"
+printf '16\n' > "$persistent/data/PG_VERSION"
+printf '0/300\n' > "$legacy/.fake-checkpoint"
+printf '0/200\n' > "$persistent/data/.fake-checkpoint"
+if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+    fail "a persistent copy that fell behind its v4 source was accepted"
+fi
+grep -q 'advanced past the persistent copy' "$case_dir/stderr" || fail \
+    "copy-behind-source was not diagnosed: $(cat "$case_dir/stderr")"
+
+new_case reject-stale-sibling-marker
+mkdir -p "$persistent/data"
+printf '16\n' > "$persistent/data/PG_VERSION"
+printf '16\n' > "$persistent/.migrated-from-v4"
+if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+    fail "a marker outside PGDATA vouched for a replaced cluster"
+fi
+grep -q 'no completion marker' "$case_dir/stderr" || fail \
+    "stale sibling marker was not diagnosed: $(cat "$case_dir/stderr")"
 
 new_case reject-partial-target
 mkdir -p "$persistent/data"
@@ -244,6 +332,7 @@ grep -q 'not compatible with the existing devshard PGDATA' \
 new_case follow-image-major
 mkdir -p "$persistent/data" "$case_dir/bin"
 printf '17\n' > "$persistent/data/PG_VERSION"
+: > "$persistent/data/.gonka-init-complete"
 cat >"$case_dir/bin/postgres" <<'EOF'
 #!/bin/sh
 printf '%s\n' 'postgres (PostgreSQL) 17.5'

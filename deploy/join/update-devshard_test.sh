@@ -1,0 +1,472 @@
+#!/usr/bin/env bash
+
+# Records the command sequence update-devshard.sh runs against a fake docker
+# for the single and HA topologies, and checks its refusals.
+
+set -Eeuo pipefail
+
+source_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+
+fail() {
+    echo "update-devshard_test: $*" >&2
+    exit 1
+}
+
+# The script resolves Compose files next to itself, so run a copy from a
+# directory that holds placeholder files; the fake docker never reads them.
+script_dir=$tmpdir/join
+mkdir -p "$script_dir"
+cp "$source_dir/update-devshard.sh" "$source_dir/deployment-lock.sh" "$script_dir/"
+: >"$script_dir/docker-compose.yml"
+: >"$script_dir/docker-compose.versiond.yml"
+: >"$script_dir/docker-compose.observability.yml"
+: >"$script_dir/docker-compose.versiond3.yml"
+
+# The fake docker answers the read-only queries the script makes and logs
+# everything else. Scenario knobs come from the environment.
+cat >"$tmpdir/docker" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+printf '%s\n' "$*" >>"$FAKE_LOG"
+for var in VERSIOND_IMAGE DEVSHARD_POSTGRES_IMAGE PROXY_ROUTER_IMAGE PROXY_POLICY_IMAGE; do
+    [[ -z ${!var:-} ]] || printf 'env %s=%s\n' "$var" "${!var}" >>"$FAKE_LOG"
+done
+case "$1 ${2:-} ${3:-}" in
+    "network inspect "*) exit 0 ;;
+    "network connect "*) exit 0 ;;
+    "run --rm "*)
+        case " $* " in
+            *"SELECT challenge"*)
+                [[ -f $FAKE_STATE/nonce && ${FAKE_TARGET_IS_CLONE:-false} != true ]] && cat "$FAKE_STATE/nonce"
+                ;;
+            *"SELECT identity"*) printf '%s\n' "${FAKE_TARGET_IDENTITY:-db-1}" ;;
+            *"pg_is_in_recovery"*) printf 'f\n' ;;
+        esac
+        exit 0
+        ;;
+    "exec "*)
+        case " $* " in
+            *storage-challenge*)
+                payload=
+                for ((i = 1; i <= $#; i++)); do
+                    [[ ${!i} == --post-data ]] && { j=$((i + 1)); payload=${!j}; }
+                done
+                printf '%s' "$payload" | jq -r .nonce >"$FAKE_STATE/nonce"
+                printf '{"identity":"%s","found":true}\n' "${FAKE_RUNNING_IDENTITY:-db-1}"
+                ;;
+            *) printf '{"identity":"%s","snapshot":"snap-1","targets":[{"generation":"gen-1"}]}\n' "${FAKE_RUNNING_IDENTITY:-db-1}" ;;
+        esac
+        exit 0
+        ;;
+    "tag "*) exit 0 ;;
+    "ps -a "*)
+        for name in ${FAKE_CONTAINERS:-}; do printf '%s\n' "$name"; done
+        exit 0
+        ;;
+    "image inspect "*)
+        case " ${FAKE_MISSING_IMAGES:-} " in
+            *" ${*: -1} "*) exit 1 ;;
+        esac
+        printf 'id-%s\n' "${*: -1}"
+        exit 0
+        ;;
+    "info  ") exit 0 ;;
+    "compose version --short") printf '%s\n' "${FAKE_COMPOSE_VERSION:-2.30.0}"; exit 0 ;;
+esac
+if [[ $1 == inspect ]]; then
+    shift
+    format=
+    while (($# > 1)); do
+        case $1 in
+            --format) format=$2; shift 2 ;;
+            --type) shift 2 ;;
+            *) shift ;;
+        esac
+    done
+    name=${1#cid-}
+    case " ${FAKE_CONTAINERS:-} " in
+        *" $name "*) ;;
+        *) echo "Error response from daemon: No such object: $name" >&2; exit 1 ;;
+    esac
+    case $format in
+        *.Image}}*) printf 'old-%s\n' "${name#cid-}" ;;
+        *Health*) printf '%s\n' "${FAKE_HEALTH:-healthy}" ;;
+        *working_dir*) printf '%s\n' "${FAKE_WORKING_DIR}" ;;
+        *config_files*)
+            override=FAKE_CONFIG_FILES_${name//-/_}
+            printf '%s\n' "${!override:-${FAKE_CONFIG_FILES}}"
+            ;;
+        *com.docker.compose.project\"*) printf 'gonka\n' ;;
+        *NetworkSettings.Networks*)
+            case " ${FAKE_ON_BACK_NETWORK:-} " in
+                *" $name "*) printf '{"join_default":{},"gonka-versiond-router-back":{}}\n' ;;
+                *) printf '{"join_default":{}}\n' ;;
+            esac
+            ;;
+    esac
+    exit 0
+fi
+if [[ $1 == compose ]]; then
+    case " $* " in
+        *" config --format json "*)
+            case " $* " in
+                *"docker-compose.versiond.yml"*) cat "$FAKE_RENDERED_HA" ;;
+                *) cat "$FAKE_RENDERED_SINGLE" ;;
+            esac
+            exit 0
+            ;;
+        *" ps --all --quiet "*)
+            service=${*: -1}
+            case " ${FAKE_CONTAINERS:-} " in
+                *" $service "*) printf 'cid-%s\n' "$service" ;;
+            esac
+            exit 0
+            ;;
+        *" ps --quiet "*)
+            service=${*: -1}
+            case " ${FAKE_STOPPED:-} " in *" $service "*) exit 0 ;; esac
+            case " ${FAKE_CONTAINERS:-} " in
+                *" $service "*) printf 'cid-%s\n' "$service" ;;
+            esac
+            exit 0
+            ;;
+        *" up -d "*)
+            service=${*: -1}
+            if [[ $service == "${FAKE_FAIL_UP:-}" ]]; then
+                for var in VERSIOND_IMAGE DEVSHARD_POSTGRES_IMAGE PROXY_ROUTER_IMAGE PROXY_POLICY_IMAGE; do
+                    [[ -z ${!var:-} ]] || exit 0
+                done
+                echo "simulated unhealthy $service" >&2
+                exit 1
+            fi
+            exit 0
+            ;;
+    esac
+fi
+exit 0
+EOF
+chmod +x "$tmpdir/docker"
+
+cat >"$tmpdir/fleet.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'fleet %s\n' "$*" >>"$FAKE_LOG"
+EOF
+cat >"$tmpdir/preflight.sh" <<'EOF'
+#!/usr/bin/env bash
+printf 'preflight %s\n' "$*" >>"$FAKE_LOG"
+EOF
+chmod +x "$tmpdir/fleet.sh" "$tmpdir/preflight.sh"
+
+cat >"$tmpdir/single.json" <<'EOF'
+{"name":"gonka","services":{
+  "versiond":{"image":"ghcr.io/example/versiond:new","environment":{}},
+  "proxy":{"image":"ghcr.io/example/proxy-router:new","environment":{}},
+  "proxy-policy":{"image":"ghcr.io/example/proxy:new","environment":{}},
+  "proxy-policy2":{"image":"ghcr.io/example/proxy:new","environment":{}}
+}}
+EOF
+cat >"$tmpdir/ha.json" <<'EOF'
+{"name":"gonka","services":{
+  "versiond":{"image":"ghcr.io/example/versiond:new","environment":{
+    "GONKA_HA":"true","PGHOST":"devshard-postgres","PGDATABASE":"devshardd","PGUSER":"devshardd",
+    "DEVSHARD_STORAGE_MODE":"postgres"},
+    "networks":{"default":{},"versiond-router-back":{"aliases":["versiond-pool"]}}},
+  "versiond2":{"image":"ghcr.io/example/versiond:new","deploy":{"replicas":1},"environment":{
+    "GONKA_HA":"true","PGHOST":"devshard-postgres","PGDATABASE":"devshardd","PGUSER":"devshardd",
+    "DEVSHARD_STORAGE_MODE":"postgres"},
+    "networks":{"default":{},"versiond-router-back":{"aliases":["versiond-pool"]}}},
+  "devshard-postgres":{"image":"postgres@sha256:abc","environment":{},
+    "volumes":[{"type":"bind","source":"/srv/gonka/postgres","target":"/var/lib/postgresql/gonka"}]},
+  "proxy":{"image":"ghcr.io/example/proxy-router:new","environment":{}},
+  "proxy-policy":{"image":"ghcr.io/example/proxy:new","environment":{}},
+  "proxy-policy2":{"image":"ghcr.io/example/proxy:new","environment":{}}
+},"networks":{"versiond-router-back":{"name":"gonka-versiond-router-back"}}}
+EOF
+jq '.services.versiond2.deploy.replicas = 0
+  | .services.versiond3 = (.services.versiond2 | .deploy.replicas = 1)' \
+    "$tmpdir/ha.json" >"$tmpdir/ha3.json"
+cat >"$tmpdir/config.env" <<'EOF'
+export KEY_NAME=test
+EOF
+
+run_update() {
+    : >"$tmpdir/log"
+    rm -rf "$tmpdir/state"; mkdir -p "$tmpdir/state"
+    env PATH="$tmpdir:$PATH" \
+        FAKE_LOG="$tmpdir/log" \
+        FAKE_STATE="$tmpdir/state" \
+        FAKE_MISSING_IMAGES="${FAKE_MISSING_IMAGES:-ghcr.io/example/versiond:new ghcr.io/example/proxy-router:new ghcr.io/example/proxy:new postgres@sha256:abc}" \
+        FAKE_WORKING_DIR="$script_dir" \
+        FAKE_RENDERED_SINGLE="$tmpdir/single.json" \
+        FAKE_RENDERED_HA="$tmpdir/ha.json" \
+        GONKA_CONFIG_ENV="$tmpdir/config.env" \
+        DOCKER_BIN=docker \
+        VERSIOND_ROUTER_FLEET_BIN="$tmpdir/fleet.sh" \
+        DEVSHARD_POSTGRES_MIGRATION_PREFLIGHT_BIN="$tmpdir/preflight.sh" \
+        "$@" "$script_dir/update-devshard.sh" "${UPDATE_ARGS[@]}" \
+        >"$tmpdir/out" 2>"$tmpdir/err"
+}
+
+mutations() {
+    grep -E '^compose .*(pull|up|rm|stop) |^rm -f|^network connect |^fleet (prepare-networks|apply|verify-admission)' "$tmpdir/log" | \
+        sed -E 's/ --project-directory [^ ]+//; s/ -f [^ ]+\.yml//g; s/ --project-name [^ ]+//'
+}
+
+# Single topology, stock files, no running deployment.
+UPDATE_ARGS=()
+run_update env FAKE_CONTAINERS="" || fail "single update failed: $(cat "$tmpdir/err")"
+expected='compose pull versiond proxy proxy-policy proxy-policy2
+compose up -d --no-deps proxy
+compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy2
+compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy
+compose up -d --no-deps --wait --wait-timeout 2100 proxy
+compose up -d --no-deps --wait --wait-timeout 2100 versiond'
+[[ $(mutations) == "$expected" ]] || fail "single sequence:
+$(mutations)"
+grep -q 'Topology: single' "$tmpdir/out" || fail "single topology not reported"
+
+# HA topology discovered from the running versiond's Compose labels, with a
+# v4 PostgreSQL container and the legacy nginx router still present.
+UPDATE_ARGS=()
+run_update env \
+    FAKE_CONTAINERS="versiond versiond2 devshard-postgres versiond-router proxy" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml,docker-compose.observability.yml" \
+    || fail "HA update failed: $(cat "$tmpdir/err")"
+expected='compose pull versiond versiond2 proxy proxy-policy proxy-policy2 devshard-postgres
+compose up -d --no-deps --wait --wait-timeout 2100 devshard-postgres
+fleet prepare-networks
+network connect --alias versiond-pool gonka-versiond-router-back cid-versiond
+network connect --alias versiond-pool gonka-versiond-router-back cid-versiond2
+fleet apply
+compose up -d --no-deps proxy
+compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy2
+compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy
+compose up -d --no-deps --wait --wait-timeout 2100 proxy
+fleet verify-admission
+rm -f versiond-router
+compose up -d --no-deps --wait --wait-timeout 2100 versiond2
+compose up -d --no-deps --wait --wait-timeout 2100 versiond'
+[[ $(mutations) == "$expected" ]] || fail "HA sequence:
+$(mutations)"
+grep -q 'preflight --source-container cid-devshard-postgres --target-dir /srv/gonka/postgres' "$tmpdir/log" || \
+    fail "PostgreSQL migration space was not checked"
+grep -q "^run --rm --network .* psql -q -w -v ON_ERROR_STOP=1 -Atc .*pg_is_in_recovery()" "$tmpdir/log" || \
+    fail "PostgreSQL was not probed before the first mutation"
+[[ $(grep -n 'psql' "$tmpdir/log" | head -1 | cut -d: -f1) -lt $(grep -n '^compose .* pull ' "$tmpdir/log" | head -1 | cut -d: -f1) ]] || \
+    fail "PostgreSQL probe must run before the pull"
+grep -q -- '--project-name gonka' "$tmpdir/log" || fail "project name from labels was not used"
+grep -c 'docker-compose.observability.yml' "$tmpdir/log" >/dev/null || \
+    fail "operator overlays from labels were dropped"
+grep -q 'fleet status' "$tmpdir/log" || fail "fleet status was not printed"
+
+# Any number of local replicas: a decommissioned versiond2 (0 replicas) is
+# skipped, versiond3 is updated before the legacy owner.
+UPDATE_ARGS=()
+run_update env FAKE_CONTAINERS="versiond versiond2 versiond3 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml,docker-compose.versiond3.yml" \
+    FAKE_RENDERED_HA="$tmpdir/ha3.json" || fail "three-replica update failed: $(cat "$tmpdir/err")"
+expected='compose pull versiond versiond3 proxy proxy-policy proxy-policy2 devshard-postgres
+compose up -d --no-deps --wait --wait-timeout 2100 devshard-postgres
+fleet prepare-networks
+network connect --alias versiond-pool gonka-versiond-router-back cid-versiond
+network connect --alias versiond-pool gonka-versiond-router-back cid-versiond2
+network connect --alias versiond-pool gonka-versiond-router-back cid-versiond3
+fleet apply
+compose up -d --no-deps proxy
+compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy2
+compose up -d --no-deps --wait --wait-timeout 2100 proxy-policy
+compose up -d --no-deps --wait --wait-timeout 2100 proxy
+fleet verify-admission
+compose up -d --no-deps --wait --wait-timeout 2100 versiond3
+compose up -d --no-deps --wait --wait-timeout 2100 versiond
+compose stop versiond2
+compose rm -f versiond2'
+[[ $(mutations) == "$expected" ]] || fail "three-replica sequence:
+$(mutations)"
+grep -q 'Topology: ha (versiond versiond2 versiond3)' "$tmpdir/out" || \
+    fail "replica discovery: $(grep Topology "$tmpdir/out")"
+
+# A replaced service that never becomes healthy is put back on its previous
+# image and the run stops there.
+UPDATE_ARGS=()
+if run_update env FAKE_CONTAINERS="versiond proxy" FAKE_CONFIG_FILES="docker-compose.yml" \
+    FAKE_FAIL_UP=versiond; then
+    fail "an unhealthy replacement was reported as success"
+fi
+grep -q 'put back on its previous image' "$tmpdir/err" || \
+    fail "rollback message: $(cat "$tmpdir/err")"
+[[ $(grep -c 'up -d --no-deps --wait --wait-timeout 2100 versiond$' "$tmpdir/log") -eq 2 ]] || \
+    fail "the previous image was not put back: $(grep versiond "$tmpdir/log")"
+grep -q '^tag old-versiond gonka-previous/versiond$' "$tmpdir/log" || \
+    fail "the previous image was not kept under a durable tag"
+grep -q '^env VERSIOND_IMAGE=gonka-previous/versiond$' "$tmpdir/log" || \
+    fail "rollback did not use the durable previous tag"
+
+# An unhealthy candidate never overwrites the previous tag.
+UPDATE_ARGS=(--dry-run)
+run_update env FAKE_CONTAINERS="versiond proxy" FAKE_CONFIG_FILES="docker-compose.yml" FAKE_HEALTH=unhealthy || \
+    fail "dry run with an unhealthy container failed: $(cat "$tmpdir/err")"
+! grep -q '^+ docker tag old-versiond gonka-previous/versiond' "$tmpdir/out" || \
+    fail "an unhealthy container overwrote the previous tag"
+
+# A physical clone with the same identity is caught by the write challenge.
+UPDATE_ARGS=(--check)
+if run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" FAKE_TARGET_IS_CLONE=true; then
+    fail "a clone with the same identity was accepted"
+fi
+grep -q 'did not receive the challenge' "$tmpdir/err" || fail "clone message: $(cat "$tmpdir/err")"
+run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" || \
+    fail "same-database check failed: $(cat "$tmpdir/err")"
+grep -q 'storage-challenge' "$tmpdir/log" || fail "no write challenge was issued"
+grep -q 'CREATE TEMP TABLE' "$tmpdir/log" || fail "the probe did not exercise the write path"
+
+# A stopped local PostgreSQL is not a fresh install.
+UPDATE_ARGS=(--check)
+if run_update env FAKE_CONTAINERS="versiond devshard-postgres" FAKE_STOPPED="devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml"; then
+    fail "a stopped PostgreSQL was treated as absent"
+fi
+grep -q 'exists but is not running' "$tmpdir/err" || fail "stopped PostgreSQL message: $(cat "$tmpdir/err")"
+
+# A replica named outside any fixed list is still found through the labels.
+UPDATE_ARGS=(--check)
+run_update env FAKE_CONTAINERS="versiond12 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
+    FAKE_CONFIG_FILES_versiond12="docker-compose.yml,docker-compose.versiond.yml,docker-compose.versiond3.yml" || \
+    fail "discovery through versiond12 failed: $(cat "$tmpdir/err")"
+grep -q 'docker-compose.versiond3.yml' "$tmpdir/out" || \
+    fail "the file list recorded by versiond12 was not used: $(grep -A4 'Compose files' "$tmpdir/out")"
+
+# A model that points at another database than the running replicas is refused.
+UPDATE_ARGS=(--check)
+if run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
+    FAKE_RUNNING_IDENTITY=db-1 FAKE_TARGET_IDENTITY=db-2; then
+    fail "a database lineage change was accepted"
+fi
+grep -q 'split the pool between two histories' "$tmpdir/err" || \
+    fail "lineage message: $(cat "$tmpdir/err")"
+UPDATE_ARGS=(--check)
+run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
+    FAKE_RUNNING_IDENTITY=db-1 FAKE_TARGET_IDENTITY=db-1 || fail "same lineage refused: $(cat "$tmpdir/err")"
+grep -q 'database lineage db-1 unchanged' "$tmpdir/out" || fail "lineage was not confirmed"
+
+# The legacy owner of pinned versions cannot be decommissioned.
+jq '.services.versiond.deploy.replicas = 0
+  | .services.versiond.environment.VERSIOND_NON_HA_VERSIONS = "v1 v2 v3"' \
+    "$tmpdir/ha.json" >"$tmpdir/ha-no-owner.json"
+UPDATE_ARGS=()
+if run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
+    FAKE_RENDERED_HA="$tmpdir/ha-no-owner.json"; then
+    fail "decommissioning the legacy owner was accepted"
+fi
+grep -q 'versiond is VERSIOND_LEGACY_HOST and still owns the pinned versions' "$tmpdir/err" || \
+    fail "legacy owner message: $(cat "$tmpdir/err")"
+
+# The longest Compose file list recorded by any container wins when the others
+# are ordered subsets of it (a replica added later carries the extra overlay).
+UPDATE_ARGS=(--check)
+run_update env FAKE_CONTAINERS="versiond versiond2 versiond3 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
+    FAKE_CONFIG_FILES_versiond3="docker-compose.yml,docker-compose.versiond.yml,docker-compose.versiond3.yml" \
+    FAKE_RENDERED_HA="$tmpdir/ha3.json" || fail "superset file list failed: $(cat "$tmpdir/err")"
+grep -q 'docker-compose.versiond3.yml' "$tmpdir/out" || fail "the newer replica's overlay was dropped"
+UPDATE_ARGS=(--check)
+if run_update env FAKE_CONTAINERS="versiond versiond2 devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
+    FAKE_CONFIG_FILES_versiond2="docker-compose.yml,docker-compose.observability.yml"; then
+    fail "conflicting Compose file lists were accepted"
+fi
+grep -q 'record different Compose file lists' "$tmpdir/err" || fail "file list conflict message: $(cat "$tmpdir/err")"
+
+# The deployment is recognised through any of its containers when versiond
+# itself is missing after an interrupted run.
+UPDATE_ARGS=(--check)
+run_update env FAKE_CONTAINERS="versiond2 devshard-postgres proxy" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" || \
+    fail "discovery through versiond2 failed: $(cat "$tmpdir/err")"
+grep -q 'Compose files (running .* container)' "$tmpdir/out" || fail "labels were not read from a running container"
+grep -q 'Topology: ha' "$tmpdir/out" || fail "HA topology lost without the versiond container"
+
+# HA containers next to a single-versiond model are refused.
+UPDATE_ARGS=(--check)
+if run_update env FAKE_CONTAINERS="versiond devshard-postgres" FAKE_CONFIG_FILES="docker-compose.yml"; then
+    fail "a single model was accepted next to HA containers"
+fi
+grep -q 'container devshard-postgres exists but the Compose model is a single-versiond one' "$tmpdir/err" || \
+    fail "partial-model message: $(cat "$tmpdir/err")"
+
+# --check runs the preflight and changes nothing.
+UPDATE_ARGS=(--check)
+run_update env FAKE_CONTAINERS="versiond devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
+    || fail "--check failed: $(cat "$tmpdir/err")"
+[[ -z $(mutations) ]] || fail "--check mutated the deployment: $(mutations)"
+grep -q 'Preflight passed' "$tmpdir/out" || fail "--check did not report success"
+
+# --dry-run prints the sequence without running docker for it.
+UPDATE_ARGS=(--dry-run)
+run_update env FAKE_CONTAINERS="" || fail "--dry-run failed: $(cat "$tmpdir/err")"
+[[ -z $(mutations) ]] || fail "--dry-run mutated the deployment"
+grep -q '^+ docker compose .* up -d --no-deps --wait --wait-timeout 2100 versiond$' "$tmpdir/out" || \
+    fail "--dry-run did not print the versiond step"
+
+# COMPOSE_FILE wins over container labels.
+UPDATE_ARGS=(--dry-run)
+run_update env FAKE_CONTAINERS="versiond" FAKE_CONFIG_FILES="docker-compose.yml" \
+    COMPOSE_FILE="docker-compose.yml:docker-compose.versiond.yml" || \
+    fail "COMPOSE_FILE run failed: $(cat "$tmpdir/err")"
+grep -q 'Topology: ha' "$tmpdir/out" || fail "COMPOSE_FILE overlay did not select HA"
+
+# Refusals.
+UPDATE_ARGS=(--check)
+if run_update env FAKE_CONTAINERS="versiond" FAKE_CONFIG_FILES="docker-compose.yml" \
+    FAKE_WORKING_DIR=/elsewhere; then
+    fail "a deployment from another directory was accepted"
+fi
+grep -q 'lives in /elsewhere' "$tmpdir/err" || fail "wrong-directory message: $(cat "$tmpdir/err")"
+
+if run_update env FAKE_CONTAINERS="" FAKE_COMPOSE_VERSION=2.20.0; then
+    fail "an old Docker Compose was accepted"
+fi
+grep -q '2.24.4 or newer' "$tmpdir/err" || fail "compose version message: $(cat "$tmpdir/err")"
+
+jq '.services.versiond2.environment.PGDATABASE = "other"' "$tmpdir/ha.json" >"$tmpdir/ha-drift.json"
+if run_update env FAKE_CONTAINERS="versiond devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
+    FAKE_RENDERED_HA="$tmpdir/ha-drift.json"; then
+    fail "replicas pointing at different databases were accepted"
+fi
+grep -q 'versiond2 disagree on PGDATABASE' "$tmpdir/err" || fail "PG drift message: $(cat "$tmpdir/err")"
+
+jq '.services.versiond2.environment.PGSERVICE = "other"' "$tmpdir/ha.json" >"$tmpdir/ha-libpq.json"
+if run_update env FAKE_CONTAINERS="versiond devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
+    FAKE_RENDERED_HA="$tmpdir/ha-libpq.json"; then
+    fail "a libpq override that can redirect one replica was accepted"
+fi
+grep -q 'versiond2 sets PGSERVICE' "$tmpdir/err" || fail "libpq override message: $(cat "$tmpdir/err")"
+
+UPDATE_ARGS=(--check --topology ha)
+if run_update env FAKE_CONTAINERS="" COMPOSE_FILE=docker-compose.yml; then
+    fail "HA without the versiond overlay was accepted"
+fi
+grep -q 'does not declare GONKA_HA=true' "$tmpdir/err" || fail "HA declaration message: $(cat "$tmpdir/err")"
+
+# A model that declares HA but lost the router networks is rejected.
+jq 'del(.networks)' "$tmpdir/ha.json" >"$tmpdir/ha-no-net.json"
+UPDATE_ARGS=(--check)
+if run_update env FAKE_CONTAINERS="versiond devshard-postgres" \
+    FAKE_CONFIG_FILES="docker-compose.yml,docker-compose.versiond.yml" \
+    FAKE_RENDERED_HA="$tmpdir/ha-no-net.json"; then
+    fail "HA model without router networks was accepted"
+fi
+grep -q 'needs docker-compose.versiond.yml' "$tmpdir/err" || fail "HA overlay message: $(cat "$tmpdir/err")"
+
+echo "update-devshard_test: ok"

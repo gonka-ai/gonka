@@ -123,6 +123,7 @@ http {
     server {
         ${LISTEN_HTTP}
         ${LISTEN_HTTPS}
+        ${LISTEN_HEALTH}
         server_name ${SERVER_NAME};
         ${SSL_CONFIG}
 
@@ -149,8 +150,7 @@ http {
         # Health check endpoint
         location = /health {
             access_log off;
-            return 200 "healthy\n";
-            add_header Content-Type text/plain;
+            proxy_pass http://127.0.0.1:8082/readyz;
         }
 
         # Blocked Routes (Security First)

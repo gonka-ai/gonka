@@ -8,9 +8,13 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o sidecar main.go
 # Final Stage
 FROM nginx:1.28-alpine3.21
 
+LABEL ai.gonka.component="proxy-policy" \
+      ai.gonka.proxy-policy-contract="1"
+
 # Install curl, gettext (for envsubst), jq, bash and openssl (for setup-ssl.sh),
-# and apache2-utils (htpasswd for observability UI basic auth).
-RUN apk add --no-cache curl gettext jq bash apache2-utils openssl
+# apache2-utils (htpasswd for observability UI basic auth), and util-linux-misc
+# (flock serializing shared-volume TLS setup across policy workers).
+RUN apk add --no-cache curl gettext jq bash apache2-utils openssl util-linux-misc
 
 # Copy sidecar binary
 COPY --from=builder /app/sidecar /usr/local/bin/sidecar
@@ -28,7 +32,7 @@ RUN chmod +x /entrypoint.sh /setup-ssl.sh
 RUN mkdir -p /var/log/nginx /etc/nginx/ssl
 
 # Expose ports
-EXPOSE 80 443
+EXPOSE 80 443 8081
 
 # Use custom entrypoint
 ENTRYPOINT ["/entrypoint.sh"]
