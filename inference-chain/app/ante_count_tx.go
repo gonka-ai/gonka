@@ -14,16 +14,14 @@ import (
 // CountTXSimulateGasDecorator exists because wasmd CountTXDecorator returns
 // before the TXCounterPrefix Get+Set when simulate=true, so Simulate gas_used
 // omits KV that FinalizeBlock still pays. DAPI sets gasWanted from Simulate;
-// that hole OOGd small HardwareDiff at 1.2× (HardwareRelabelTests: 38_627 sim
-// vs 48_212 deliver).
-//
+// that hole OOGd small HardwareDiff.
+
 // Simulate: same Get+Set on BaseApp's discarded cache, without WithTXCounter
 // so CosmWasm env.transaction stays unset. CheckTx/Finalize: wasmd unchanged.
 //
 // Remove when wasmd meters that KV during Simulate and still does not assign
 // env.transaction. Replace this with wasmkeeper.NewCountTXDecorator in
-// NewAnteHandler. Confirm HardwareRelabelTests still passes at 1.2×
-// (gasWantedFromSimulate).
+// NewAnteHandler.
 type CountTXSimulateGasDecorator struct {
 	inner sdk.AnteDecorator
 	store corestoretypes.KVStoreService

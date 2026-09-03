@@ -506,10 +506,24 @@ func TestIsHardwareDiffOnly(t *testing.T) {
 }
 
 func TestGasWantedFromSimulate(t *testing.T) {
-	require.Equal(t, uint64(500_000), gasWantedFromSimulate(500_000, 0), "zero sim keeps static")
-	require.Equal(t, uint64(120_000), gasWantedFromSimulate(500_000, 100_000), "working sim is 1.2×, not raised to static")
-	require.Equal(t, uint64(1_200_000), gasWantedFromSimulate(500_000, 1_000_000), "sim×1.2")
-	require.Equal(t, uint64(BatchGasLimit), gasWantedFromSimulate(500_000, BatchGasLimit), "cap at BatchGasLimit")
+	require.Equal(t, uint64(500_000), gasWantedFromSimulate(500_000, 0, 0), "zero sim keeps static")
+	require.Equal(t, uint64(150_000), gasWantedFromSimulate(500_000, 100_000, 0), "unset multiplier is 1.5×, not raised to static")
+	require.Equal(t, uint64(150_000), gasWantedFromSimulate(500_000, 100_000, 1.5), "explicit 1.5×")
+	require.Equal(t, uint64(120_000), gasWantedFromSimulate(500_000, 100_000, 1.2), "host can set 1.2×")
+	require.Equal(t, uint64(150_000), gasWantedFromSimulate(500_000, 100_000, 0.9), "≤1 falls back to 1.5×")
+	require.Equal(t, uint64(150_000), gasWantedFromSimulate(500_000, 100_000, 15), "typo 15 falls back to 1.5×")
+	require.Equal(t, uint64(1_500_000), gasWantedFromSimulate(500_000, 1_000_000, 0), "sim×1.5 default")
+	require.Equal(t, uint64(1_200_000), gasWantedFromSimulate(500_000, 1_000_000, 1.2), "sim×1.2 override")
+	require.Equal(t, uint64(BatchGasLimit), gasWantedFromSimulate(500_000, BatchGasLimit, 0), "cap at BatchGasLimit")
+}
+
+func TestApplySimulateHeadroom(t *testing.T) {
+	require.Equal(t, uint64(0), applySimulateHeadroom(0, 1.5))
+	require.Equal(t, uint64(150), applySimulateHeadroom(100, 0), "zero config is default 1.5")
+	require.Equal(t, uint64(150), applySimulateHeadroom(100, 1.5))
+	require.Equal(t, uint64(120), applySimulateHeadroom(100, 1.2))
+	require.Equal(t, uint64(200), applySimulateHeadroom(100, 2.0))
+	require.Equal(t, uint64(150), applySimulateHeadroom(100, 1.0), "1.0 would under-size; use 1.5")
 }
 
 func TestStoreCommitIntrinsicFromSim(t *testing.T) {
@@ -547,15 +561,20 @@ func TestEstimateStoreCommitGas_MeasuredIntrinsicUsesRawExtraAndHeadroom(t *test
 			PaddedBase:        600_000,
 		},
 	}
-	// first of stage: extra = 500k + 200*100; wanted = 1.2 × (105k + extra)
+	// first of stage: extra = 500k + 200*100; wanted = 1.5 × (105k + extra)
 	first := uint64(105_000 + 500_000 + 200*100)
-	require.Equal(t, first+first/5, estimateMsgGasHinted(msg, hints))
+	require.Equal(t, first+first/2, estimateMsgGasHinted(msg, hints))
 
 	incremental := hints
 	incremental.StoreCommit.Prev = map[string]uint32{"m1": 199}
 	inc := uint64(105_000 + 100)
-	require.Equal(t, inc+inc/5, estimateMsgGasHinted(msg, incremental),
+	require.Equal(t, inc+inc/2, estimateMsgGasHinted(msg, incremental),
 		"incremental uses raw rate, not padded 150")
+
+	tight := hints
+	tight.TxGasMultiplier = 1.2
+	require.Equal(t, first+first/5, estimateMsgGasHinted(msg, tight),
+		"host 1.2× override applies to measured StoreCommit")
 }
 
 func TestEstimateBatchGas_MeasuredIntrinsicSkipsOverhead(t *testing.T) {

@@ -236,10 +236,10 @@ func hardwareDiffCount(ep *types.EpochParams) uint64 {
 }
 
 func budgetHeadroom(v uint64) uint64 {
-	if v > ^uint64(0)-v/5 {
+	if v > ^uint64(0)-v/2 {
 		return ^uint64(0)
 	}
-	return v + v/5
+	return v + v/2
 }
 
 func epochFeeBudgetNgonka(fp *types.FeeParams, ep *types.EpochParams, cp *types.ConfirmationPoCParams, count uint64) math.Int {
@@ -250,8 +250,8 @@ func epochFeeBudgetNgonka(fp *types.FeeParams, ep *types.EpochParams, cp *types.
 	base, rate := storeCommitRates(fp)
 	stages := 1 + maxConfirmationPocs(ep, cp)
 	nCommits := commitHeightsPerStage(ep)
-	// DAPI pays (intrinsic + extra)×1.2 per StoreCommit. Deltas sum to count;
-	// period base once per stage.
+	// DAPI default is (intrinsic + extra)×1.5 per StoreCommit. Hosts who set
+	// 1.2 over-reserve slightly. Deltas sum to count; period base once per stage.
 	perStageExtra := base + rate*count
 	intrinsicPad := budgetHeadroom(budgetStoreCommitIntrinsic)
 	commitGas := stages * (budgetHeadroom(perStageExtra) + nCommits*intrinsicPad)

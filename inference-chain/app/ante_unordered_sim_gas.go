@@ -17,8 +17,7 @@ type unorderedNonceAdder interface {
 // SigVerificationDecorator.verifyUnorderedNonce returns before
 // TryAddUnorderedNonce in ExecModeSimulate (duplicate timeout must not fail
 // gas estimation). Finalize still does the Has+Set. Same Simulate-versus-
-// Finalize hole as CountTXSimulateGasDecorator; together they let
-// HardwareRelabelTests pass at 1.2× (38_627 sim vs 48_212 deliver).
+// Finalize hole as CountTXSimulateGasDecorator;
 //
 // Simulate-only: TryAdd on the discarded cache, ignore "already used timeout".
 // CheckTx/Finalize: SDK still owns the real insert.
@@ -26,8 +25,7 @@ type unorderedNonceAdder interface {
 // Remove when gonka-ai/cosmos-sdk meters TryAdd during Simulate and still
 // ignores duplicate errors. Delete this type and its NewAnteHandler entry.
 // Do not substitute WithUnorderedTxGasCost(2240) — that charge already runs
-// on both paths and does not replace the KV. Confirm HardwareRelabelTests
-// still passes at 1.2× and Simulate of an already-used timeout still succeeds.
+// on both paths and does not replace the KV.
 type UnorderedNonceSimGasDecorator struct {
 	ak unorderedNonceAdder
 }

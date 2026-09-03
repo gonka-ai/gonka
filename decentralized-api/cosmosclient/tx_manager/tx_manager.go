@@ -122,6 +122,7 @@ type manager struct {
 	blockTimeTracker  *blockTimeTracker
 	getHeightFunc     func() int64
 	minGasPriceNgonka int64
+	txGasMultiplier   float64
 	feeTree           *FeeTreeCache
 }
 
@@ -133,6 +134,7 @@ func StartTxManager(
 	natsConnection *nats.Conn,
 	address string,
 	minGasPriceNgonka int64,
+	txGasMultiplier float64,
 	getHeight func() int64) (*manager, error) {
 	js, err := natsConnection.JetStream()
 	if err != nil {
@@ -162,6 +164,7 @@ func StartTxManager(
 		natsJetStream:     js,
 		getHeightFunc:     getHeight,
 		minGasPriceNgonka: minGasPriceNgonka,
+		txGasMultiplier:   apiconfig.ResolveTxGasMultiplier(txGasMultiplier),
 		feeTree:           newFeeTreeCache(),
 		blockTimeTracker: &blockTimeTracker{
 			maxBlockTimeout: 10 * time.Second,
@@ -871,6 +874,15 @@ func (m *manager) StoreCommitRawLeaf() (rate, base uint64, loaded bool) {
 	return m.feeTree.RawStoreCommitLeaf()
 }
 
+func (m *manager) gasHints() GasHints {
+	var h GasHints
+	if m.feeTree != nil {
+		h = m.feeTree.hints()
+	}
+	h.TxGasMultiplier = m.txGasMultiplier
+	return h
+}
+
 func (m *manager) BroadcastMessages(id string, msgs ...sdk.Msg) (*sdk.TxResponse, time.Time, error) {
 	return m.broadcastMessagesAtAttempt(id, 0, msgs)
 }
@@ -915,7 +927,7 @@ func (m *manager) broadcastMessagesAtAttemptWithOpts(id string, attempt int, msg
 		return nil, time.Time{}, err
 	}
 	// gasWanted is sized from the inner messages, not the authz wrapper.
-	gasWanted := estimateBatchGas(msgs, attempt, m.feeTree.hints())
+	gasWanted := estimateBatchGas(msgs, attempt, m.gasHints())
 	price := m.minGasPriceNgonka
 	if m.feeTree != nil {
 		if p := m.feeTree.PriceForMsgs(msgs); p > price {
@@ -928,9 +940,10 @@ func (m *manager) broadcastMessagesAtAttemptWithOpts(id string, attempt int, msg
 			logging.Warn("HardwareDiff simulate failed; using static gas estimate",
 				types.Messages, "tx_id", id, "error", err, "gasWanted", gasWanted)
 		} else {
-			gasWanted = gasWantedFromSimulate(gasWanted, used)
+			gasWanted = gasWantedFromSimulate(gasWanted, used, m.txGasMultiplier)
 			logging.Debug("HardwareDiff gas from simulate", types.Messages,
-				"tx_id", id, "simulated", used, "gasWanted", gasWanted)
+				"tx_id", id, "simulated", used, "gasWanted", gasWanted,
+				"tx_gas_multiplier", m.txGasMultiplier)
 		}
 	}
 	txBytes, timestamp, err := m.getSignedBytes(id, unsignedTx, factory, gasWanted, msgs, opts.TimeoutHeight)
@@ -1229,7 +1242,8 @@ func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory
 	// estimateBatchGas (see gas_estimate.go) instead of a constant, so
 	// routine txs aren't billed at the worst-case PoC commit ceiling.
 	// HardwareDiff additionally simulates on attempt 0; a working sim is
-	// padded 1.2× and is not raised back to the static 550k floor.
+	// padded by txGasMultiplier (default 1.5×) and is not raised
+	// back to the static 550k floor.
 	// StoreCommit sizes from the once-per-stage dummy Simulate cached on
 	// the fee tree (fallback: static formula).
 	price := m.minGasPriceNgonka

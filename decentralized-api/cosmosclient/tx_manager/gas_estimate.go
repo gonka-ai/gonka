@@ -1,6 +1,8 @@
 package tx_manager
 
 import (
+	"decentralized-api/apiconfig"
+
 	"cosmossdk.io/math"
 	"github.com/cosmos/cosmos-sdk/client"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -101,9 +103,10 @@ const (
 // GasHints is the estimator snapshot from FeeTreeCache.
 // StoreCommit and HardwareDiff fields are only read by those estimators.
 type GasHints struct {
-	FeeTreeLoaded bool
-	StoreCommit   StoreCommitGas
-	HardwareDiff  HardwareDiffGas
+	FeeTreeLoaded   bool
+	StoreCommit     StoreCommitGas
+	HardwareDiff    HardwareDiffGas
+	TxGasMultiplier float64
 }
 
 // StoreCommitGas is split by estimator path.
@@ -288,7 +291,7 @@ func estimateStoreCommitGas(m *inferencetypes.MsgPoCV2StoreCommit, hints GasHint
 	sc := hints.StoreCommit
 	if useMeasuredStoreCommitGas(m, hints) {
 		extra := storeCommitSurcharge(m, sc.ChainRate, sc.ChainBase, sc.Prev)
-		return applySimulateHeadroom(saturatingAdd(sc.MeasuredIntrinsic, extra))
+		return applySimulateHeadroom(saturatingAdd(sc.MeasuredIntrinsic, extra), hints.TxGasMultiplier)
 	}
 	extra := storeCommitSurcharge(m, hints.storeCommitStaticRate(), hints.storeCommitStaticBase(), sc.Prev)
 	if hints.FeeTreeLoaded {
@@ -436,27 +439,39 @@ func batchUsesMeasuredStoreCommitGas(msgs []sdk.Msg, hints GasHints) bool {
 	return true
 }
 
-// applySimulateHeadroom is 1.2× with saturating arithmetic.
-func applySimulateHeadroom(v uint64) uint64 {
-	return saturatingAdd(v, v/5)
+// applySimulateHeadroom pads Simulate gas_used. Unset/invalid multiplier
+// is 1.5× (v + v/2). A host override of 1.2 is v + v/5. Other values use
+// thousandths so we stay in integer arithmetic.
+func applySimulateHeadroom(v uint64, multiplier float64) uint64 {
+	m := apiconfig.ResolveTxGasMultiplier(multiplier)
+	if v == 0 {
+		return 0
+	}
+	if m == apiconfig.DefaultTxGasMultiplier {
+		return saturatingAdd(v, v/2)
+	}
+	if m == 1.2 {
+		return saturatingAdd(v, v/5)
+	}
+	num := uint64(m*1000 + 0.5)
+	if num < 1000 {
+		return saturatingAdd(v, v/2)
+	}
+	prod := saturatingMul(v, num)
+	if prod == ^uint64(0) {
+		return prod
+	}
+	return (prod + 999) / 1000
 }
 
-// gasWantedFromSimulate pads a successful Simulate with 1.2×. static is
-// used only when Simulate returned 0; a working sim is never raised back
-// to the static HardwareDiff floor.
+// gasWantedFromSimulate pads a successful Simulate. static is used only
+// when Simulate returned 0; a working sim is never raised back to the
+// static HardwareDiff floor.
 //
-// 1.2× is enough only while CountTXSimulateGasDecorator and
-// UnorderedNonceSimGasDecorator meter the Finalize-only KV that Simulate
-// used to skip. If those wrappers are removed without the same metering in
-// wasmd/SDK, HardwareRelabelTests OOGs again (38_627 sim vs 48_212 deliver)
-// — fix the chain, do not restore 1.5×.
-func gasWantedFromSimulate(static, simulated uint64) uint64 {
-	if simulated == 0 {
-		return static
-	}
-	withHeadroom := applySimulateHeadroom(simulated)
-	if withHeadroom > BatchGasLimit {
-		return BatchGasLimit
-	}
-	return withHeadroom
+
+// CountTXSimulateGasDecorator and UnorderedNonceSimGasDecorator meter the
+// Finalize-only KV that Simulate used to skip. If those wrappers go away
+// without the same metering in wasmd/SDK.
+func gasWantedFromSimulate(static, simulated uint64, multiplier float64) uint64 {
+	return applySimulateHeadroom(simulated, multiplier)
 }
