@@ -323,3 +323,15 @@ func (k Keeper) GetMaintenanceParams(ctx context.Context) *types.MaintenancePara
 	}
 	return p.MaintenanceParams
 }
+
+func (k Keeper) GetTrainingParams(ctx context.Context) *types.TrainingParams {
+	p, err := k.GetParams(ctx)
+	if err != nil {
+		k.LogError("Unable to get Params in GetTrainingParams", types.System, "error", err)
+		return types.DefaultTrainingParams()
+	}
+	if p.TrainingParams == nil {
+		return types.DefaultTrainingParams()
+	}
+	return p.TrainingParams
+}

@@ -37,6 +37,7 @@ import "inference/inference/maintenance.proto";
 import "inference/inference/preserved_nodes_snapshot.proto";
 import "inference/inference/poc_delegation.proto";
 import "inference/inference/claim_recipient.proto";
+import "inference/inference/trainshard.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -488,6 +489,18 @@ service Query {
   // Lists the scheduled per-epoch claim recipient overrides for a participant.
   rpc ListClaimRecipients (QueryListClaimRecipientsRequest) returns (QueryListClaimRecipientsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/list_claim_recipients/{participant}";
+  }
+
+  rpc Trainshard (QueryGetTrainshardRequest) returns (QueryGetTrainshardResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/trainshard/{trainshard_id}";
+  }
+
+  rpc ActiveTrainshards (QueryActiveTrainshardsRequest) returns (QueryActiveTrainshardsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/active_trainshards";
+  }
+
+  rpc TrainshardProposal (QueryGetTrainshardProposalRequest) returns (QueryGetTrainshardProposalResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/trainshard_proposal/{proposal_id}";
   }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
@@ -1312,4 +1325,28 @@ message QueryListClaimRecipientsRequest {
 
 message QueryListClaimRecipientsResponse {
   repeated ClaimRecipientEntry entries = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryGetTrainshardRequest {
+  uint64 trainshard_id = 1;
+}
+
+message QueryGetTrainshardResponse {
+  Trainshard trainshard = 1;
+  bool found = 2;
+}
+
+message QueryActiveTrainshardsRequest {}
+
+message QueryActiveTrainshardsResponse {
+  repeated Trainshard trainshards = 1;
+}
+
+message QueryGetTrainshardProposalRequest {
+  uint64 proposal_id = 1;
+}
+
+message QueryGetTrainshardProposalResponse {
+  TrainshardProposal proposal = 1;
+  bool found = 2;
 }

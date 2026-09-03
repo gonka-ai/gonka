@@ -451,6 +451,8 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		am.LogError("Error during pruning", types.Pruning, "error", err.Error())
 	}
 
+	am.keeper.ProcessTrainshardEndBlock(ctx)
+
 	partialUpgrades := am.keeper.GetAllPartialUpgrade(ctx)
 	for _, pu := range partialUpgrades {
 		if pu.Height == uint64(blockHeight) {
@@ -1020,6 +1022,10 @@ func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effecti
 		liveMemberSet[m.Member.Address] = true
 	}
 
+	height := sdk.UnwrapSDKContext(ctx).BlockHeight()
+	reservedByModelHost, reservedByHost := am.keeper.CollectEpochReservedWeightTotalsAtHeight(ctx, epochIndex, height, keeper.ReservationScopeShield)
+	rawPocByHost := am.keeper.CollectEpochRawPocWeights(ctx, epochIndex)
+
 	rootGroupData := currentGroup.GroupData
 	consensusWeights := make(map[string]int64, len(rootGroupData.ValidationWeights))
 	totalWeight := int64(0)
@@ -1028,11 +1034,12 @@ func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effecti
 		if vw == nil || !liveMemberSet[vw.MemberAddress] {
 			continue
 		}
-		consensusWeights[vw.MemberAddress] = vw.Weight
-		totalWeight += vw.Weight
+		weight := keeper.FreeShareOfWeight(vw.Weight, reservedByHost[vw.MemberAddress], rawPocByHost[vw.MemberAddress])
+		consensusWeights[vw.MemberAddress] = weight
+		totalWeight += weight
 		participants = append(participants, &types.ActiveParticipant{
 			Index:  vw.MemberAddress,
-			Weight: vw.Weight,
+			Weight: weight,
 		})
 	}
 
@@ -1054,11 +1061,13 @@ func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effecti
 			if vw == nil || !liveSubSet[vw.MemberAddress] {
 				continue
 			}
-			if vw.VotingPower > 0 {
+			// a subgroup weight is the host's raw PoC sum for the model
+			votingPower := keeper.FreeShareOfWeight(vw.VotingPower, reservedByModelHost[modelID][vw.MemberAddress], vw.Weight)
+			if votingPower > 0 {
 				if modelVPMap[modelID] == nil {
 					modelVPMap[modelID] = make(map[string]int64)
 				}
-				modelVPMap[modelID][vw.MemberAddress] = vw.VotingPower
+				modelVPMap[modelID][vw.MemberAddress] = votingPower
 			}
 		}
 	}

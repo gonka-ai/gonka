@@ -126,6 +126,29 @@ func TestPoCWeightCalculator_PocValidated_SlotSamplingAcceptsWhenGroupControlsEn
 	require.True(t, ok)
 }
 
+func TestPoCWeightCalculator_PocValidated_AcceptsWhenNetworkWeightZeroedByReservations(t *testing.T) {
+	key := types.PoCParticipantModelKey{
+		ParticipantAddress: testutil.Executor,
+		ModelID:            "model-a",
+	}
+	wc := &PoCWeightCalculator{
+		ModelVotingPowers: map[string]map[string]int64{
+			"model-a": {testutil.Validator: 40},
+		},
+		TotalNetworkWeight: 0,
+		ValidationSlots:    128,
+		AppHash:            "test-hash",
+		Logger:             noopLogger{},
+	}
+
+	ok := wc.pocValidated([]types.PoCValidationV2{{
+		ValidatorParticipantAddress: testutil.Validator,
+		ValidatedWeight:             1,
+	}}, key)
+
+	require.True(t, ok)
+}
+
 func TestPoCWeightCalculator_PocValidated_SlotSamplingUsesConfiguredVoteThreshold(t *testing.T) {
 	key := types.PoCParticipantModelKey{
 		ParticipantAddress: testutil.Executor,

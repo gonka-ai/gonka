@@ -47,3 +47,7 @@ type RequiredCollateralProvider interface {
 type MaintenanceChecker interface {
 	IsParticipantInActiveMaintenance(ctx context.Context, participant sdk.AccAddress) bool
 }
+
+type TrainReservationChecker interface {
+	HasActiveTrainReservation(ctx context.Context, participant string) bool
+}

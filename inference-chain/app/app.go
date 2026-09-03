@@ -289,6 +289,7 @@ func New(
 
 	app.CollateralKeeper.SetRequiredCollateralProvider(app.InferenceKeeper)
 	app.CollateralKeeper.SetMaintenanceChecker(&app.InferenceKeeper)
+	app.CollateralKeeper.SetTrainReservationChecker(&app.InferenceKeeper)
 
 	// Wire maintenance-aware liveness exemption into slashing keeper.
 	// The adapter bridges inference keeper's AccAddress-based maintenance state

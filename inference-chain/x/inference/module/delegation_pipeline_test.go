@@ -1069,6 +1069,57 @@ func TestGetEffectiveValidationBaseState_ExcludesRemovedMembers(t *testing.T) {
 	stub.excludedMembers = nil
 }
 
+func TestGetEffectiveValidationBaseState_ReservedWeightRemovedAsShare(t *testing.T) {
+	k, ctx, _ := newMinimalInferenceKeeperWithStub(t)
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId: 1,
+		Participants: []*types.ActiveParticipant{{
+			Index:  testutil.Executor,
+			Weight: 50,
+			Models: []string{"model-a"},
+			MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{
+				{NodeId: "node-a", PocWeight: 100},
+				{NodeId: "node-b", PocWeight: 100},
+			}}},
+		}},
+	}))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:        1,
+		ModelId:           "",
+		EpochGroupId:      1,
+		SubGroupModels:    []string{"model-a"},
+		ValidationWeights: []*types.ValidationWeight{{MemberAddress: testutil.Executor, Weight: 50}},
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:        1,
+		ModelId:           "model-a",
+		EpochGroupId:      2,
+		ValidationWeights: []*types.ValidationWeight{{MemberAddress: testutil.Executor, Weight: 200, VotingPower: 50}},
+	})
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 1))
+	require.NoError(t, k.Trainshards.Set(ctx, 1, types.Trainshard{
+		TrainshardId: 1,
+		Status:       types.TrainshardStatus_TRAINSHARD_STATUS_ACTIVE,
+		Nodes: []*types.TrainshardReservedNode{{
+			Participant: testutil.Executor,
+			NodeId:      "node-a",
+			ModelId:     "model-a",
+			PocWeight:   100,
+			Status:      types.TrainshardNodeStatus_TRAINSHARD_NODE_STATUS_ACTIVE,
+		}},
+	}))
+
+	state := am.getEffectiveValidationBaseState(ctx)
+
+	require.Equal(t, int64(25), state.weights[testutil.Executor])
+	require.Equal(t, int64(25), state.totalWeight)
+	require.Len(t, state.existingModelVotingPowers, 1)
+	vps := types.VotingPowerSliceToMap(state.existingModelVotingPowers[0].VotingPowers)
+	require.Equal(t, int64(25), vps[testutil.Executor])
+}
+
 // --- Voting power cap tests ---
 
 // nopCapLogger satisfies votingPowerCapLogger without touching any real logger.
@@ -1194,4 +1245,3 @@ func TestCapPerModelVotingPowers_SingleHostNoOp(t *testing.T) {
 	capPerModelVotingPowers(vp, capPct, "model-test", nopCapLogger{})
 	require.Equal(t, int64(1000), vp["solo"])
 }
-
