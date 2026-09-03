@@ -304,6 +304,17 @@ func (m *Memory) LoadSnapshot(escrowID string) (uint64, []byte, error) {
 }
 
 func (m *Memory) InsertSealedInference(escrowID string, row InferenceRow) error {
+	return m.InsertSealedInferences(escrowID, []InferenceRow{row})
+}
+
+func (m *Memory) BulkInsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	return m.InsertSealedInferences(escrowID, rows)
+}
+
+func (m *Memory) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -311,7 +322,9 @@ func (m *Memory) InsertSealedInference(escrowID string, row InferenceRow) error 
 	if !ok {
 		return fmt.Errorf("session %s not found", escrowID)
 	}
-	s.inferences[row.InferenceID] = row
+	for _, row := range rows {
+		s.inferences[row.InferenceID] = row
+	}
 	return nil
 }
 
@@ -340,6 +353,21 @@ func (m *Memory) DeleteSealedInferences(escrowID string) error {
 	}
 	s.inferences = make(map[uint64]InferenceRow)
 	return nil
+}
+
+func (m *Memory) SealedInferenceIDs(escrowID string) (map[uint64]uint64, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return nil, fmt.Errorf("session %s not found", escrowID)
+	}
+	out := make(map[uint64]uint64, len(s.inferences))
+	for id, row := range s.inferences {
+		out[id] = row.SealedNonce
+	}
+	return out, nil
 }
 
 func (m *Memory) ClearValidationObs(escrowID string) error {
@@ -430,9 +458,31 @@ func (m *Memory) DrainInferenceValidationObs(escrowID string, inferenceID uint64
 	if !ok {
 		return fmt.Errorf("session %s not found", escrowID)
 	}
+	m.drainInferenceValidationObsLocked(s, inferenceID)
+	return nil
+}
+
+func (m *Memory) DrainInferenceValidationObsBatch(escrowID string, inferenceIDs []uint64) error {
+	if len(inferenceIDs) == 0 {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return fmt.Errorf("session %s not found", escrowID)
+	}
+	for _, id := range inferenceIDs {
+		m.drainInferenceValidationObsLocked(s, id)
+	}
+	return nil
+}
+
+func (m *Memory) drainInferenceValidationObsLocked(s *sessionData, inferenceID uint64) {
 	bySlot := s.inferenceValidationObs[inferenceID]
 	if len(bySlot) == 0 {
-		return nil
+		return
 	}
 	if s.sealedValidationObs == nil {
 		s.sealedValidationObs = make(map[uint64]map[uint32]SlotValidationObs)
@@ -450,7 +500,6 @@ func (m *Memory) DrainInferenceValidationObs(escrowID string, inferenceID uint64
 		sealed[slotID] = cur
 	}
 	delete(s.inferenceValidationObs, inferenceID)
-	return nil
 }
 
 func (m *Memory) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {

@@ -14,6 +14,7 @@ import (
 	"devshard/observability"
 	"devshard/storage"
 	"devshard/transport"
+	"devshard/types"
 )
 
 // ErrInitializing means devshard storage is not ready to serve session state yet.
@@ -33,6 +34,13 @@ type OwnerChatBinder interface {
 // PayloadHandler serves GET /sessions/:id/payloads for a resolved session.
 type PayloadHandler interface {
 	HandlePayloads(c echo.Context, srv *transport.Server) error
+}
+
+// StaleSessionReloader evicts an in-memory session that fell behind the shared
+// store and recovers it again. HostManager implements this; tests may not.
+type StaleSessionReloader interface {
+	ReloadStaleSession(escrowID string, stale *transport.Server) (*transport.Server, error)
+	RememberStaleNonce(escrowID string)
 }
 
 // RegisterLazySessionRoutes mounts the standard devshard HTTP surface on g.
@@ -110,7 +118,9 @@ func withSession(
 			return sessionHTTPError(c, err)
 		}
 		observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
-		return pick(srv)(c)
+		return retryIfStale(c, resolver, srv, pick(srv)(c), func(next *transport.Server) error {
+			return pick(next)(c)
+		})
 	}
 }
 
@@ -128,7 +138,10 @@ func withSessionAuth(
 		observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
 		handler := pick(srv)
 		wrapped := srv.RateLimitMiddleware(recordChatTerminal)(handler)
-		return srv.AuthMiddleware(wrapped)(c)
+		return retryIfStale(c, resolver, srv, srv.AuthMiddleware(wrapped)(c), func(next *transport.Server) error {
+			h := pick(next)
+			return next.AuthMiddleware(next.RateLimitMiddleware(recordChatTerminal)(h))(c)
+		})
 	}
 }
 
@@ -145,7 +158,9 @@ func withOwnerChat(
 		}
 		observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
 		handler := pick(srv)
-		return srv.RateLimitMiddleware(recordChatTerminal)(handler)(c)
+		return retryIfStale(c, binder, srv, srv.RateLimitMiddleware(recordChatTerminal)(handler)(c), func(next *transport.Server) error {
+			return next.RateLimitMiddleware(recordChatTerminal)(pick(next))(c)
+		})
 	}
 }
 
@@ -246,4 +261,30 @@ func sessionHTTPError(c echo.Context, err error) error {
 		return echo.NewHTTPError(http.StatusConflict, err.Error())
 	}
 	return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+}
+
+func isInvalidNonce(err error) bool {
+	return err != nil && errors.Is(err, types.ErrInvalidNonce)
+}
+
+// retryIfStale reloads a session that failed apply with ErrInvalidNonce and
+// retries the handler once. A second mismatch is treated as a bad client nonce
+// and negative-cached rather than spinning reload.
+func retryIfStale(c echo.Context, source any, stale *transport.Server, err error, retry func(*transport.Server) error) error {
+	if !isInvalidNonce(err) {
+		return err
+	}
+	reloader, ok := source.(StaleSessionReloader)
+	if !ok {
+		return err
+	}
+	next, reloadErr := reloader.ReloadStaleSession(c.Param("id"), stale)
+	if reloadErr != nil {
+		return err
+	}
+	err = retry(next)
+	if isInvalidNonce(err) {
+		reloader.RememberStaleNonce(c.Param("id"))
+	}
+	return err
 }

@@ -38,6 +38,7 @@ var (
 	fallbackDivisor          *prometheus.GaugeVec
 	postgresHealthProbeTotal *prometheus.CounterVec
 	postgresPoolSaturated    prometheus.Gauge
+	sessionRecovery          *prometheus.GaugeVec
 
 	// HA diff/persist consistency (see docs/proposals/ha-diff-persist-consistency.md).
 	diffPersistRetryTotal     *prometheus.CounterVec
@@ -161,6 +162,10 @@ func initRegistry() {
 		Name: "devshard_postgres_pool_saturated",
 		Help: "Whether all PostgreSQL application-pool connections were in use at the latest health probe.",
 	})
+	sessionRecovery = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "devshardd_session_recovery",
+		Help: "Devshardd session recovery progress: total, recovered, failed, version_skipped, pending, complete.",
+	}, []string{"kind"})
 
 	diffPersistRetryTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
 		Name: "devshard_diff_persist_retry_total",
@@ -199,6 +204,7 @@ func initRegistry() {
 		fallbackDivisor,
 		postgresHealthProbeTotal,
 		postgresPoolSaturated,
+		sessionRecovery,
 		diffPersistRetryTotal,
 		diffForkDetectedTotal,
 		reconcileFastForwardTotal,
@@ -231,6 +237,20 @@ func IncInflight(stage Stage) func() {
 func SetLifecycleInflight(n int64) {
 	ensureMetrics()
 	lifecycleInflight.Set(float64(n))
+}
+
+func SetSessionRecovery(total, recovered, failed, versionSkipped, pending int64, complete bool) {
+	ensureMetrics()
+	sessionRecovery.WithLabelValues("total").Set(float64(total))
+	sessionRecovery.WithLabelValues("recovered").Set(float64(recovered))
+	sessionRecovery.WithLabelValues("failed").Set(float64(failed))
+	sessionRecovery.WithLabelValues("version_skipped").Set(float64(versionSkipped))
+	sessionRecovery.WithLabelValues("pending").Set(float64(pending))
+	completeVal := 0.0
+	if complete {
+		completeVal = 1
+	}
+	sessionRecovery.WithLabelValues("complete").Set(completeVal)
 }
 
 func IncTerminal(terminal Terminal, reason Reason) {

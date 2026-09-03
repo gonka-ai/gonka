@@ -263,6 +263,36 @@ Skip this list for single-instance v5 (base `docker-compose.yml` only).
 - [ ] If you do set it (`true` / `1` / `on`), confirm chat still waits for
       host seed quorum — a warm local tip must not skip `height_seed`.
 
+### Warm cutover (all v5 deploys with a Postgres HA pair)
+
+The v5 headline change: an overlap swap publishes the new child only after its
+recovery backlog has drained. Full mechanics in
+[rolling-update.md](./rolling-update.md) §1.3–§1.5; release notes in
+[release-0.2.15-v5.md](./release-0.2.15-v5.md).
+
+- [ ] `VERSIOND_RECOVERY_TIMEOUT` is either unset (defaults to `30m`) or set
+      longer than a full recovery of your longest journal. It is **not** the
+      60s `VERSIOND_READY_TIMEOUT` — reusing that value would abort every
+      overlap swap.
+- [ ] Admin `/ready` returns **200 within seconds of boot**, before recovery
+      finishes. A 503-until-recovered child is a pre-v5 binary: the swap will
+      cut over cold (safe, but not warm).
+- [ ] `curl -s <admin>/ready | jq .recovery_complete` is `false` during
+      recovery and `true` once drained. Absent field ⇒ pre-v5 child.
+- [ ] `sessions_pending` in the same body (and the Prometheus gauge) trends to
+      zero. It counts the recovery queue **plus** in-flight sealed-index /
+      validation-obs repairs, so it can stay non-zero briefly after the
+      backlog drains.
+- [ ] During a same-name SHA swap, `versiond` logs
+      `warm cutover: new child recovery complete` **before**
+      `swapped child route; old child draining`. If you instead see
+      `warm-cutover wait timed out; old child keeps serving`, the old child is
+      still serving (no outage) — raise `VERSIOND_RECOVERY_TIMEOUT` and let the
+      next reconcile retry.
+- [ ] A solo restart (single host, no healthy old generation) publishes on
+      status 200 alone and does **not** wait. Confirm the host rejoins the pool
+      without waiting out its backlog.
+
 ---
 
 ## Automated tests (what moved vs v4 §1.6)
@@ -287,6 +317,29 @@ cd devshard/testenv && TESTENV_CITEST=1 go test -tags=testenvci ./citest/ \
 | 2 | Recreate router with `VERSIOND_NON_HA_VERSIONS=<VersionName>` | `/{version}/healthz` 200 |
 | 3 | Session probes | Every response: `X-Versiond-Backend: versiond_legacy`, upstream = `versiond-0` |
 | 4 | Stop non-legacy versiond; repeat probes | Still pinned to the same legacy upstream |
+
+### `TestVersiondWarmCutover*` — the v5 warm-cutover gate
+
+Covers the "Warm cutover" checklist above end to end, so the manual `/ready`
+body poll is a confirmation rather than the only proof.
+
+```bash
+make -C devshard/testenv build-devshardd
+make -C devshard/testenv citest-versiond-warm-cutover
+```
+
+| Test | Expect |
+| --- | --- |
+| `TestVersiondWarmCutoverBoot` | Public `/healthz` 200 with `VERSIOND_RECOVERY_TIMEOUT` set; both hosts report the child `running`; a chat round-trip serves — i.e. boot is admitted on status alone, not gated on recovery |
+| `TestVersiondWarmCutoverOverlapWaitsThenServes` | A same-name SHA flip drives the new SHA to `running` (only reachable after the warm wait returns; a timed-out wait aborts the swap), new traffic serves, old child retires |
+
+Bail-outs (absent field, old-child death, `hostDraining`, ctx cancel, timeout)
+and the "monitor never reads the body" pin are unit-level in
+`versioned/internal/process/manager_recovery_wait_test.go` — the admin `/ready`
+listener is container-loopback on a dynamic port, so it is not reachable from a
+citest process. Scenario write-up:
+[`testenv/docs/scenarios.md`](../testenv/docs/scenarios.md) §"Versiond warm
+cutover".
 
 ### `TestSQLiteToPostgresHAMigration` — v4 §1.7 on a real child
 
