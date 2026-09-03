@@ -12,7 +12,7 @@ import (
 
 func TestIncMarks_UnknownMapsToUnknown(t *testing.T) {
 	require.Equal(t, "dispute_originator", markKindLabel(string(MarkDisputeOriginator)))
-	require.Equal(t, "floor_out_of_band", markKindLabel(string(MarkFloorOutOfBand)))
+	require.Equal(t, "height_unbacked", markKindLabel(string(MarkHeightUnbacked)))
 	require.Equal(t, "unknown", markKindLabel("not-a-kind"))
 	require.Equal(t, "unknown", markKindLabel(""))
 

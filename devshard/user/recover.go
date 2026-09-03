@@ -190,8 +190,7 @@ func RecoverSession(
 			// A rejected blob degrades to a journal replay; if that cannot run
 			// either, RestoreStateWithFloor fails closed rather than serving
 			// L0 from a floor we could not verify.
-			floor, floorErr := heightsync.FloorIndexFromProto(
-				heightsync.FloorConfigFor(len(snapState.Group), sm.HeartbeatConfig()), floorProto)
+			floor, floorErr := heightsync.FloorIndexFromProto(heightsync.FloorConfig{}, floorProto)
 			if floorErr != nil {
 				log.Printf("recover_session escrow=%s snapshot_nonce=%d floor_blob_rejected=%v (rebuilding from diffs)",
 					escrowID, snapNonce, floorErr)

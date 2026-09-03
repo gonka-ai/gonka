@@ -270,8 +270,7 @@ func NewStateMachine(
 		o(sm)
 	}
 	sm.turnTracker = heightsync.NewTurnTracker(uint64(len(groupCopy)), 0, sm.heartbeatCfg)
-	sm.heightSyncFloor = heightsync.NewFloorIndexWith(
-		heightsync.FloorConfigFor(len(groupCopy), sm.heartbeatCfg))
+	sm.heightSyncFloor = heightsync.NewFloorIndex()
 	sm.floorReady = true
 
 	logging.Info("NewStateMachine", "subsystem", "state",

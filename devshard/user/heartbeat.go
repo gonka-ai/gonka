@@ -327,34 +327,28 @@ func (s *Session) hasPendingHeightAckLocked() bool {
 	return false
 }
 
-// referenceStampLocked is the producer side of L0 for the sequencer: a
-// Diff-resident height is max(own view, F(nonce)), or absent, and never below
-// F(nonce). A courier tip farther above F than W_conf is carried as F — the
-// user is not a height source, and ingest rejects heartbeat/start above
-// F+W_conf.
+// referenceStampLocked is the producer side of L0 for the sequencer: a user
+// Diff-resident height is **exactly F(nonce)**, or absent.
+//
+// The user is not a height source (spec §10.3.1). Its own courier tip is a
+// collection of peer claims it did not read from any chain itself, so writing it
+// into Diff would put a user-chosen integer where the log keeps logical time —
+// the whole of P1. It stays where it belongs: on the request-leg envelope, where
+// the receiving host judges it against its own follower (|Δ| > D) and can demand
+// proof.
+//
+// Absent is the only other branch, and it is what a session before its first
+// inference gets: F does not exist yet, so there is nothing truthful to stamp and
+// no heartbeat may open. The first host-signed stamp seeds F and starts the clock.
 func (s *Session) referenceStampLocked(nonce uint64) (uint64, []byte, bool) {
 	if !s.sm.HeightSyncFloorReady() {
 		return 0, nil, false
 	}
-	h, hash, ok := s.observedHeightLocked()
-	if !heightsync.StampPresent(hash) {
-		h, hash, ok = 0, nil, false
-	}
 	floor, floorHash, known := s.sm.HeightSyncFloorAsOf(nonce)
-	if known && floor > h && heightsync.StampPresent(floorHash) {
-		if s.heartbeatCfg.FloorOutOfReach(floor, h) {
-			logging.Warn("height stamp omitted: floor out of reach", "subsystem", "heightsync",
-				"escrow", s.escrowID, "nonce", nonce, "floor", floor, "own_tip", h)
-			return 0, nil, false
-		}
-		return floor, floorHash, true
+	if !known || floor == 0 || !heightsync.StampPresent(floorHash) {
+		return 0, nil, false
 	}
-	if known && heightsync.StampPresent(floorHash) && s.heartbeatCfg.TipBeyondFloorWindow(floor, h) {
-		logging.Warn("height stamp carried: own tip beyond F+W_conf", "subsystem", "heightsync",
-			"escrow", s.escrowID, "nonce", nonce, "floor", floor, "own_tip", h)
-		return floor, floorHash, true
-	}
-	return h, hash, ok
+	return floor, floorHash, true
 }
 
 func (s *Session) observedHeightLocked() (uint64, []byte, bool) {

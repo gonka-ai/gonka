@@ -190,7 +190,7 @@ func IncAck(syncState string, late bool) {
 // re-checked by the trial loop, by replay, and by catch-up.
 func ObserveLogPlaneReject(reason string) {
 	switch reason {
-	case "ack_sig_invalid", "ack_causality", "bad_framing", "height_regression", "height_unbacked":
+	case "ack_sig_invalid", "ack_causality", "bad_framing", "height_regression":
 		IncAckRejected(reason)
 	}
 }
@@ -310,7 +310,7 @@ func IncMarks(kind string) {
 func markKindLabel(kind string) string {
 	switch MarkKind(kind) {
 	case MarkDisputeOriginator, MarkDisputeCarrier, MarkVectorContradiction,
-		MarkDeferredFail, MarkAdmissionDelta, MarkFloorOutOfBand:
+		MarkDeferredFail, MarkAdmissionDelta, MarkHeightUnbacked:
 		return kind
 	case "":
 		return "unknown"

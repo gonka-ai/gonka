@@ -26,7 +26,7 @@ func TestFloorIndexFromProtoEmptyIsValidFold(t *testing.T) {
 }
 
 func TestFloorIndexProtoRoundTrip(t *testing.T) {
-	cfg := FloorConfigFor(3, DefaultHeartbeatConfig())
+	cfg := FloorConfig{}
 	f := NewFloorIndexWith(cfg)
 	hash := []byte{0xaa, 0xbb}
 	f.Observe(1, []FloorClaim{{Signer: 0, Height: 50, Hash: hash}})
@@ -34,8 +34,7 @@ func TestFloorIndexProtoRoundTrip(t *testing.T) {
 
 	p := f.ToProto()
 	require.NotNil(t, p)
-	require.Len(t, p.Entries, 1)
-	require.Len(t, p.Claims, 2)
+	require.Len(t, p.Entries, 1, "the second claim carries the floor, so it adds no entry")
 	require.False(t, p.Truncated)
 
 	got, err := FloorIndexFromProto(cfg, p)
@@ -61,8 +60,7 @@ func TestFloorIndexProtoRoundTrip(t *testing.T) {
 // the retention window, so the validator has to accept a real truncated suffix
 // rather than only the two-entry shapes the other tests build.
 func TestFloorIndexProtoLongFoldRoundTrip(t *testing.T) {
-	cfg := FloorConfigFor(3, DefaultHeartbeatConfig())
-	cfg.Window = 8
+	cfg := FloorConfig{Window: 8}
 	f := NewFloorIndexWith(cfg)
 	for i := uint64(1); i <= 40; i++ {
 		h := i * 2
@@ -126,14 +124,6 @@ func TestFloorIndexFromProtoRejectsUnfoldableBlobs(t *testing.T) {
 			{Nonce: 5, Height: 10},
 		}},
 		"nil entry": {Entries: []*types.FloorIndexEntryProto{nil}},
-		"nil claim": {Claims: []*types.FloorSignerClaimProto{nil}},
-		"claim without stamp": {Claims: []*types.FloorSignerClaimProto{
-			{Signer: 0, Height: 10},
-		}},
-		"repeated signer": {Claims: []*types.FloorSignerClaimProto{
-			{Signer: 0, Height: 10, Hash: []byte{0x01}},
-			{Signer: 0, Height: 20, Hash: []byte{0x02}},
-		}},
 	}
 
 	for name, p := range cases {

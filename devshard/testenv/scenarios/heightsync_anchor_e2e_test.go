@@ -220,6 +220,11 @@ type oneHostRestartStack struct {
 	Bridge        *scenarioBridge
 	StoragePath   string
 	httpSrv       *httptest.Server
+	// Heartbeat overlays the session's cadence, so a test that needs a
+	// heartbeat after an inference (which discharges the cadence, H2) can wait
+	// out the interval instead of the compiled default. Survives newHTTPSession
+	// so a recovered session keeps the same schedule.
+	Heartbeat *heightsync.HeartbeatConfig
 }
 
 type repairTimingStack struct {
@@ -604,6 +609,7 @@ func (st *oneHostRestartStack) newHTTPSession(t *testing.T) *user.Session {
 		RoutePrefix:       hsE2ERoutePrefix,
 		StoragePath:       st.StoragePath,
 		ExtraClientConfig: &cc,
+		Heartbeat:         st.Heartbeat,
 	})
 	require.NoError(t, err)
 	seedHTTPSession(t, sess)
@@ -1721,12 +1727,26 @@ func TestHeightSyncAnchor_E2E_HTTPRestartDurableHeightAckDedupBeforeNextHeartbea
 	ctx := context.Background()
 	st := setupOneHostHTTPHeightSyncRestartStack(t)
 
+	// One inference first: the heartbeat's observed_height is always F, and only
+	// a host stamp can seed F (§10.3.1), so a session that has never inferred
+	// has nothing to heartbeat with. That inference also discharges the cadence
+	// (H2), hence the short interval to wait out rather than a compiled default.
+	require.NoError(t, st.Session.Close())
+	st.Heartbeat = &heightsync.HeartbeatConfig{Interval: 20 * time.Millisecond}
+	st.Session = st.newHTTPSession(t)
+
+	_, err := st.Session.SendInference(ctx, defaultInferenceParams())
+	require.NoError(t, err)
+	require.NoError(t, st.Session.SendPendingDiff(ctx),
+		"the executor's stamp only sets F once its diff is applied")
+	time.Sleep(40 * time.Millisecond)
+
 	require.NoError(t, st.Session.MaybeHeartbeat(ctx))
 	ackDiffs := st.Session.Diffs()
 	acks := heightAcksInScenarioDiffs(ackDiffs)
 	require.Len(t, acks, 1)
 	require.Equal(t, uint32(0), acks[0].SlotId)
-	require.Equal(t, uint64(2), st.Session.Nonce())
+	afterHeartbeat := st.Session.Nonce()
 
 	require.NoError(t, st.Session.FlushSnapshot())
 	require.NoError(t, st.Session.Close())
@@ -1734,7 +1754,7 @@ func TestHeightSyncAnchor_E2E_HTTPRestartDurableHeightAckDedupBeforeNextHeartbea
 
 	recovered := st.newHTTPSession(t)
 	st.Session = recovered
-	require.Equal(t, uint64(2), recovered.Nonce())
+	require.Equal(t, afterHeartbeat, recovered.Nonce())
 	require.Empty(t, recovered.Diffs(),
 		"all hosts are caught up, so recovery should restore dedup keys from durable records without replay diffs")
 

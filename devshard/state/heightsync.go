@@ -223,9 +223,7 @@ func (sm *StateMachine) observeHeightSyncLocked(nonce uint64, txs []*types.Devsh
 	// envelope to refuse. Letting admission feed the floor would give two honest
 	// verifiers different floors and therefore different L0 verdicts for every
 	// later diff — an escrow split. Floor updates therefore run only on apply.
-	if marks := sm.heightSyncFloor.Observe(nonce, sm.floorClaimsLocked(txs)); len(marks) > 0 {
-		sm.recordMarksLocked(marks)
-	}
+	sm.heightSyncFloor.Observe(nonce, sm.floorClaimsLocked(txs))
 	sm.state.HeightSyncLastCompletedHeight = sm.turnTracker.LastCompletedHeight()
 	sm.state.HeightSyncLatestTurnStart = sm.turnTracker.LatestTurnStart()
 }
@@ -242,7 +240,7 @@ func (sm *StateMachine) rebuildHeightSyncLocked(snapFloor *heightsync.FloorIndex
 	savedStart := sm.state.HeightSyncLatestTurnStart
 	slots := uint64(len(sm.state.Group))
 	tracker := heightsync.NewTurnTracker(slots, 0, sm.heartbeatCfg)
-	cfg := heightsync.FloorConfigFor(len(sm.state.Group), sm.heartbeatCfg)
+	cfg := heightsync.FloorConfig{}
 	emptyFloor := heightsync.NewFloorIndexWith(cfg)
 
 	install := func(floor *heightsync.FloorIndex, ready bool) {

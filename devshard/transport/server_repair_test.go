@@ -336,16 +336,20 @@ func TestRepairProbe_DegradedOlderTurnStillProbed(t *testing.T) {
 	p.applyHeartbeatSpan(t)
 	p.applyWindowClosedStamp(t)
 
+	// Turn 2's span stamps F, which the window-closing ack has already moved to
+	// pastAckWindow(): a user stamp is exactly the floor (§10.3.1), and repeating
+	// turn 1's 500 would now be an L0 regression below it.
 	hash := []byte{0xaa}
+	floor := uint64(pastAckWindow())
 	d4 := testutil.SignDiff(t, p.user, "escrow-1", 4, []*types.DevshardTx{{
 		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-			ObservedHeight: 500, ObservedBlockHash: hash, SlotsNum: 2,
+			ObservedHeight: floor, ObservedBlockHash: hash, SlotsNum: 2,
 			Reason: string(heightsync.ReasonQuietSession),
 		}},
 	}})
 	d5 := testutil.SignDiff(t, p.user, "escrow-1", 5, []*types.DevshardTx{{
 		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-			ObservedHeight: 500, ObservedBlockHash: hash, SlotsNum: 2,
+			ObservedHeight: floor, ObservedBlockHash: hash, SlotsNum: 2,
 			Reason: string(heightsync.ReasonQuietSession),
 		}},
 	}})

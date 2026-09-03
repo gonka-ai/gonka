@@ -68,8 +68,7 @@ func TestHeightSync_SnapshotRestoreAgreesOnRootAndFloor(t *testing.T) {
 	require.NotNil(t, floorProto)
 
 	restored := newSM()
-	floor, err := heightsync.FloorIndexFromProto(
-		heightsync.FloorConfigFor(len(group), restored.HeartbeatConfig()), floorProto)
+	floor, err := heightsync.FloorIndexFromProto(heightsync.FloorConfig{}, floorProto)
 	require.NoError(t, err)
 	require.NoError(t, restored.RestoreStateWithFloor(restoredState, floor))
 	require.True(t, restored.HeightSyncFloorReady())
@@ -205,10 +204,7 @@ func TestHeightSync_RestoreFloorBlobSkipsJournal(t *testing.T) {
 	apply(3, snapAck(t, hosts[1], 1, 1, 1, 50, hash))
 
 	st := live.ExportState()
-	floor, err := heightsync.FloorIndexFromProto(
-		heightsync.FloorConfigFor(len(group), live.HeartbeatConfig()),
-		live.ExportHeightSyncFloor(),
-	)
+	floor, err := heightsync.FloorIndexFromProto(heightsync.FloorConfig{}, live.ExportHeightSyncFloor())
 	require.NoError(t, err)
 
 	failStore := &failGetDiffsStore{Memory: testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000)}

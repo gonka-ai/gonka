@@ -15,14 +15,9 @@ import (
 
 var (
 	ErrHeightRegression = errors.New("INVALID(height_regression)")
-	// ErrHeightUnbacked is a sequencer-composed stamp farther above F(m) than
-	// W_conf. The user is not a height source; honest compose carries at most
-	// max(own_tip, F) inside that window. Host stamps are not this check —
-	// unaided / Q already bound how far they may move F.
-	ErrHeightUnbacked = errors.New("INVALID(height_unbacked)")
-	ErrBadFraming     = errors.New("INVALID(bad_framing)")
-	ErrAckSigInvalid  = errors.New("INVALID(ack_sig_invalid)")
-	ErrAckCausality   = errors.New("INVALID(ack_causality)")
+	ErrBadFraming       = errors.New("INVALID(bad_framing)")
+	ErrAckSigInvalid    = errors.New("INVALID(ack_sig_invalid)")
+	ErrAckCausality     = errors.New("INVALID(ack_causality)")
 	// ErrStrongRequired belongs to the transport plane only, where refusing an
 	// exchange is a local admission decision (L5a). The log plane has no
 	// counterpart: divergence between followers is monitoring, permanently, so
@@ -119,10 +114,7 @@ func CheckDiffLogPlane(ctx context.Context, in LogPlaneInput, st LogPlaneState) 
 		logLogPlane(in.Nonce, 0, "L3", "INVALID", err.Error(), "escrow", st.EscrowID)
 		return out.invalid(err, "ack_causality")
 	}
-	if err := checkL0(in.Nonce, in.Txs, st); err != nil {
-		if errors.Is(err, ErrHeightUnbacked) {
-			return out.invalid(err, "height_unbacked")
-		}
+	if err := checkL0(in.Nonce, in.Txs, st, &out); err != nil {
 		return out.invalid(err, "height_regression")
 	}
 	if err := checkL0b(in.Nonce, in.Txs, st); err != nil {
@@ -290,7 +282,8 @@ func checkL3(hbs []heartbeatRef, acks []ackRef, st LogPlaneState) error {
 }
 
 // checkL0 enforces reference-height monotonicity against the floor the stamp's
-// *producer* could have known, and caps sequencer-composed stamps at F(m)+W_conf.
+// *producer* could have known, and pins sequencer-composed stamps to F(m)
+// exactly.
 //
 // Scope is every Diff-resident height, heartbeats and acks included: the log has
 // one height semantics, not two (spec §14). Basis is F(producing nonce), not
@@ -298,11 +291,20 @@ func checkL3(hbs []heartbeatRef, acks []ackRef, st LogPlaneState) error {
 //
 // An honest producer can always satisfy the lower bound — it stamps
 // max(own_tip, F(m)) or omits — so a violation is real misbehaviour and INVALID
-// carries no false positives. Sequencer stamps (heartbeat / start) are user
-// claims, not a height source: above F(m)+W_conf they cannot be a carry of a
-// plausible tip and are INVALID(height_unbacked). Host stamps are not capped
-// here; unaided / Q already bound how far they may move F.
-func checkL0(nonce uint64, txs []*types.DevshardTx, st LogPlaneState) error {
+// carries no false positives.
+//
+// The upper bound applies to sequencer stamps only (heartbeat / start). The user
+// holds no protocol oracle, so its only truthful stamp is the floor a host
+// already seeded (§10.3.1): anything above F(m) is a number it made up.
+// Recording it is a MARK, not an INVALID — rejecting the diff would let one
+// stale replica's lower floor stall an escrow, and the claim is inert anyway
+// (rule 3 keeps it out of F, and the turn clock reads host stamps only). The
+// error-level log line is today's whole signal; §18 turns it into a dispute.
+//
+// Host stamps have no upper bound here. A host's first-party reading is what
+// establishes logical time, and a fabricated one is caught where it enters —
+// envelope admission demands Strong proof past |Δ| > D (§8/§15).
+func checkL0(nonce uint64, txs []*types.DevshardTx, st LogPlaneState, out *LogPlaneResult) error {
 	if st.Floor == nil {
 		return nil
 	}
@@ -335,21 +337,22 @@ func checkL0(nonce uint64, txs []*types.DevshardTx, st LogPlaneState) error {
 			)
 			return err
 		}
-		if SequencerComposed(tx) {
-			w := st.Cfg.withDefaults().WindowBlocks
-			max := addSat(floor, w)
-			if h > max {
-				err := fmt.Errorf("%w: %s height %d > floor %d + W_conf %d as of nonce %d",
-					ErrHeightUnbacked, refLegName(tx), h, floor, w, m)
-				logLogPlane(nonce, 0, "L0", "INVALID", err.Error(),
-					"escrow", st.EscrowID,
-					LogFieldLeg, refLegName(tx),
-					LogFieldHeight, h,
-					LogFieldFloor, floor,
-					LogFieldProducingNonce, m,
-				)
-				return err
-			}
+		if SequencerComposed(tx) && h > floor {
+			detail := fmt.Sprintf("%s height %d > floor %d as of nonce %d",
+				refLegName(tx), h, floor, m)
+			out.mark(AttributableMark{
+				Kind:   MarkHeightUnbacked,
+				Nonce:  nonce,
+				Detail: detail,
+			})
+			logLogPlaneMisbehaviour(nonce, 0, "L0", string(MarkHeightUnbacked),
+				"escrow", st.EscrowID,
+				LogFieldDetail, detail,
+				LogFieldLeg, refLegName(tx),
+				LogFieldHeight, h,
+				LogFieldFloor, floor,
+				LogFieldProducingNonce, m,
+			)
 		}
 	}
 	return nil
@@ -775,6 +778,29 @@ func absU64(a, b uint64) uint64 {
 }
 
 func logLogPlane(nonce uint64, slot uint32, check, verdict, reason string, extra ...any) {
+	kvs := logPlaneFields(nonce, slot, check, verdict, reason, extra...)
+	switch verdict {
+	case "INVALID":
+		// L0–L3 reject the whole diff and do not consume the nonce. A
+		// producer that keeps sending the same payload will loop on this
+		// line until it lifts to F(m) or omits.
+		logging.Error("heightsync: logplane", kvs...)
+	default:
+		logging.Debug("heightsync: logplane", kvs...)
+	}
+}
+
+// logLogPlaneMisbehaviour is a MARK that names authored misbehaviour rather than
+// a divergence to watch, so it goes out at error level. Ordinary marks are debug:
+// they are recorded for later aggregation and most of them (L5a, L6) fire on
+// honest lag. This one cannot — the producer had the log in front of it — and
+// until the dispute path lands (§18) the log line is the entire signal.
+func logLogPlaneMisbehaviour(nonce uint64, slot uint32, check, reason string, extra ...any) {
+	logging.Error("heightsync: logplane",
+		logPlaneFields(nonce, slot, check, "MARK", reason, extra...)...)
+}
+
+func logPlaneFields(nonce uint64, slot uint32, check, verdict, reason string, extra ...any) []any {
 	kvs := []any{
 		LogFieldSubsystem, "heightsync",
 		LogFieldNonce, nonce,
@@ -787,14 +813,5 @@ func logLogPlane(nonce uint64, slot uint32, check, verdict, reason string, extra
 	if reason != "" {
 		kvs = append(kvs, LogFieldReason, reason)
 	}
-	kvs = append(kvs, extra...)
-	switch verdict {
-	case "INVALID":
-		// L0–L3 reject the whole diff and do not consume the nonce. A
-		// producer that keeps sending the same payload will loop on this
-		// line until it lifts to F(m) or omits.
-		logging.Error("heightsync: logplane", kvs...)
-	default:
-		logging.Debug("heightsync: logplane", kvs...)
-	}
+	return append(kvs, extra...)
 }

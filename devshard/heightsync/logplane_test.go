@@ -10,6 +10,7 @@ import (
 	"common/chainoracle/blocks"
 	"devshard/heightsync"
 	"devshard/internal/testutil"
+	"devshard/logging"
 	"devshard/signing"
 	"devshard/types"
 )
@@ -105,9 +106,9 @@ func baseState(t *testing.T, n int) (heightsync.LogPlaneState, []*signing.Secp25
 	}, signers
 }
 
-// seedFloor puts one *host* signer's claim into the floor. Heights in these
-// fixtures are inside W_conf of the standing floor, which is the unaided path.
-// Sequencer heartbeats do not establish F (spec §14 rule 3).
+// seedFloor puts one *host* signer's claim into the floor. Sequencer heartbeats
+// do not establish F (spec §14 rule 3), so fixtures that need a floor must go
+// through a host claim.
 func seedFloor(f *heightsync.FloorIndex, nonce, height uint64, hash []byte) {
 	f.Observe(nonce, []heightsync.FloorClaim{{Signer: 0, Height: height, Hash: hash}})
 }
@@ -339,49 +340,139 @@ func TestLogPlane_AckBelowFloorRejectedAndLiftAccepted(t *testing.T) {
 	require.ErrorIs(t, res.Err, heightsync.ErrHeightRegression)
 }
 
-func TestLogPlane_SequencerStampAboveFloorWindowRejected(t *testing.T) {
+// TestLogPlane_SequencerStampAboveFloorIsMarkedNotRejected pins §10.3.1 on the
+// receiving verifier: a user-signed stamp above F(m) is a height the user could
+// not have read, so it is recorded and logged — and the diff still applies.
+//
+// A MARK and not an INVALID for two reasons. The claim is already inert: rule 3
+// keeps it out of F and the turn clock reads host stamps only, so rejecting the
+// diff buys no protection the log does not already have. And the cost of getting
+// it wrong is asymmetric — one verifier lagging on the floor would refuse a diff
+// the rest accept, which is an escrow split over a claim that changes nothing.
+// The dispute signal this deserves is §18 work.
+func TestLogPlane_SequencerStampAboveFloorIsMarkedNotRejected(t *testing.T) {
 	st, signers := baseState(t, 3)
 	hash := []byte{0xaa}
 	seedFloor(st.Floor, 1, 80, hash)
-	w := st.Cfg.WindowBlocks
-	over := 80 + w + 1
 
 	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 2,
-		Txs:   []*types.DevshardTx{hbTx(over, 3, hash, nil)},
+		Txs:   []*types.DevshardTx{hbTx(81, 3, hash, nil)},
 	}, st)
-	require.ErrorIs(t, res.Err, heightsync.ErrHeightUnbacked)
-	require.Equal(t, "height_unbacked", res.Reason)
+	require.NoError(t, res.Err, "one block above F is not a reason to refuse the diff")
+	require.Len(t, res.Marks, 1)
+	require.Equal(t, heightsync.MarkHeightUnbacked, res.Marks[0].Kind)
+	require.Equal(t, uint64(2), res.Marks[0].Nonce)
+	require.Contains(t, res.Marks[0].Detail, "heartbeat height 81 > floor 80")
 
 	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 2,
-		Txs:   []*types.DevshardTx{startTxAt(2, over, hash)},
+		Txs:   []*types.DevshardTx{startTxAt(2, 1<<40, hash)},
 	}, st)
-	require.ErrorIs(t, res.Err, heightsync.ErrHeightUnbacked)
+	require.NoError(t, res.Err)
+	require.Len(t, res.Marks, 1, "start is user-signed too, and 1<<40 is still just a number")
+	require.Equal(t, heightsync.MarkHeightUnbacked, res.Marks[0].Kind)
 
-	atCap := 80 + w
 	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 2,
-		Txs:   []*types.DevshardTx{hbTx(atCap, 3, hash, nil)},
+		Txs:   []*types.DevshardTx{hbTx(80, 3, hash, nil)},
 	}, st)
-	require.NoError(t, res.Err, "F+W_conf is still a plausible carry")
+	require.NoError(t, res.Err)
+	require.Empty(t, res.Marks, "carrying F exactly is the only stamp a user owes")
 
-	// Host stamps are not this cap: unaided / Q bound F, not L0.
+	// Host stamps have no upper bound here: a host's own reading is what
+	// establishes logical time, and admission (|Δ| > D, Strong) is where a
+	// fabricated one is caught.
 	st.Tracker.Observe(2, []*types.DevshardTx{hbTx(80, 3, hash, nil)}, 80)
-	ack := signedAck(t, signers[0], 2, 0, over, hash, types.SyncState_SYNCED)
+	ack := signedAck(t, signers[0], 2, 0, 1<<40, hash, types.SyncState_SYNCED)
 	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 3,
 		Txs:   []*types.DevshardTx{signedAckTx(ack)},
 	}, st)
 	require.NoError(t, res.Err)
+	require.Empty(t, res.Marks)
 
-	empty := heightsync.NewFloorIndex()
-	st.Floor = empty
+	st.Floor = heightsync.NewFloorIndex()
 	res = heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
 		Nonce: 1,
 		Txs:   []*types.DevshardTx{hbTx(1<<40, 3, hash, nil)},
 	}, st)
-	require.NoError(t, res.Err, "no floor yet: the turn clock, not L0, ignores the user number")
+	require.NoError(t, res.Err)
+	require.Empty(t, res.Marks,
+		"no floor yet: there is nothing to compare against, and the producer rule stops the stamp being composed at all")
+}
+
+// TestLogPlane_UnbackedStampIsLoggedAtErrorLevel: until disputes land (§18) the
+// log line is the entire signal an operator gets, so it must not be a debug line
+// among the ordinary marks. Marks that fire on honest lag (L5a, L6) stay at debug;
+// this one cannot fire on honest lag, because the producer had the log in front of
+// it and F is in the log.
+func TestLogPlane_UnbackedStampIsLoggedAtErrorLevel(t *testing.T) {
+	capLog := &levelCaptureLogger{}
+	logging.SetLogger(capLog)
+	t.Cleanup(func() { logging.SetLogger(discardLogger{}) })
+
+	st, _ := baseState(t, 3)
+	hash := []byte{0xaa}
+	seedFloor(st.Floor, 1, 80, hash)
+
+	res := heightsync.CheckDiffLogPlane(context.Background(), heightsync.LogPlaneInput{
+		Nonce: 2,
+		Txs:   []*types.DevshardTx{hbTx(500, 3, hash, nil)},
+	}, st)
+	require.NoError(t, res.Err)
+	require.Len(t, res.Marks, 1)
+
+	require.Len(t, capLog.errors, 1, "exactly one error line, naming the check and the reason")
+	line := capLog.errors[0]
+	require.Equal(t, "heightsync: logplane", line.msg)
+	require.Equal(t, "L0", line.kv["check"])
+	require.Equal(t, "MARK", line.kv["verdict"], "the diff is not rejected")
+	require.Equal(t, "height_unbacked", line.kv["reason"])
+	require.Equal(t, uint64(500), line.kv["height"])
+	require.Equal(t, uint64(80), line.kv["floor"])
+	require.Equal(t, "heartbeat", line.kv["leg"])
+	require.Equal(t, uint64(2), line.kv["nonce"])
+}
+
+type logLine struct {
+	msg string
+	kv  map[string]any
+}
+
+type discardLogger struct{}
+
+func (discardLogger) Info(string, ...any)  {}
+func (discardLogger) Debug(string, ...any) {}
+func (discardLogger) Warn(string, ...any)  {}
+func (discardLogger) Error(string, ...any) {}
+
+type levelCaptureLogger struct {
+	errors []logLine
+	warns  []logLine
+}
+
+func (l *levelCaptureLogger) Info(string, ...any)  {}
+func (l *levelCaptureLogger) Debug(string, ...any) {}
+
+func (l *levelCaptureLogger) Warn(msg string, kv ...any) {
+	l.warns = append(l.warns, logLine{msg: msg, kv: pairs(kv)})
+}
+
+func (l *levelCaptureLogger) Error(msg string, kv ...any) {
+	l.errors = append(l.errors, logLine{msg: msg, kv: pairs(kv)})
+}
+
+func pairs(kv []any) map[string]any {
+	out := make(map[string]any, len(kv)/2)
+	for i := 0; i+1 < len(kv); i += 2 {
+		key, ok := kv[i].(string)
+		if !ok {
+			continue
+		}
+		out[key] = kv[i+1]
+	}
+	return out
 }
 
 func TestLogPlane_AckJudgedAgainstRefNonceFloor(t *testing.T) {

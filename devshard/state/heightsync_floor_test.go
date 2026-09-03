@@ -36,53 +36,73 @@ func fourHosts(t *testing.T) []*signing.Secp256k1Signer {
 	}
 }
 
-// TestHeightSyncFloor_ImplausibleClaimIsMarkedAndIgnored checks the consensus
-// path for the unaided raise bound (proposal §14): a lone host claim above
-// W_conf is marked and does not become the escrow's floor.
+// TestHeightSyncFloor_HostClaimSetsLogicalTimeAtAnyDistance is the consensus path
+// for the raise rule after W_conf and Q were withdrawn (proposal §14).
 //
-// The claim is valid — it is above the floor, and L0 asks nothing else of it — so
-// the diff applies and the escrow keeps serving. What it does not do is become
-// the escrow's logical time: uncorroborated, it moves the floor nowhere, so the
-// next honest party is not facing a bar no chain will reach for a century, and
-// the attempt is on the record against the slot that signed it.
-func TestHeightSyncFloor_ImplausibleClaimIsMarkedAndIgnored(t *testing.T) {
+// A host-signed claim above the floor becomes the escrow's logical time, however
+// far above it sits, and no mark is recorded for the distance alone. Bounding it
+// was an attempt to make the floor the defence against a fabricated height, and
+// the floor cannot be that: it only ever sees heights that already reached the
+// log through an admitted envelope, which is where |Δ| > D demands proof of the
+// party that claimed it (§8/§15, L5a today). What the bound did accomplish was
+// pinning the escrow's clock wherever the first stamp landed — the poison case
+// below.
+func TestHeightSyncFloor_HostClaimSetsLogicalTimeAtAnyDistance(t *testing.T) {
 	hosts := fourHosts(t)
 	sm, user := newTestSM(t, hosts, 1_000_000)
 	apply := func(nonce uint64, txs ...*types.DevshardTx) error {
 		_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, txs))
 		return err
 	}
-	good, poison := []byte{0x02, 0x50}, []byte{0xff, 0xff}
+	good, far := []byte{0x02, 0x50}, []byte{0xff, 0xff}
 
-	require.NoError(t, apply(1, divHeartbeatTx(250, good)))
+	require.NoError(t, apply(1, divHeartbeatTx(0, nil)))
 	require.NoError(t, apply(2,
 		divAckTx(t, hosts[1], 1, 1, 1, 250, good, types.SyncState_SYNCED),
-	), "a host ack inside W_conf of an empty floor seeds F")
+	), "the first host ack seeds F")
 	require.NoError(t, apply(3,
-		divAckTx(t, hosts[0], 1, 1, 0, math.MaxUint64/2, poison, types.SyncState_SYNCED),
-	), "a height above the floor is valid; L0 has no plausibility to check")
+		divAckTx(t, hosts[0], 1, 1, 0, math.MaxUint64/2, far, types.SyncState_SYNCED),
+	))
 
 	floor, hash, known := sm.HeightSyncFloorAsOf(4)
 	require.True(t, known)
-	require.Equal(t, uint64(250), floor, "one signer cannot make its own claim the escrow's logical time")
-	require.Equal(t, good, hash)
+	require.Equal(t, uint64(math.MaxUint64/2), floor)
+	require.Equal(t, far, hash)
+	require.Empty(t, sm.HeightSyncMarks(),
+		"distance is not evidence on this plane; the envelope that carried it is where it is judged")
 
-	marks := sm.HeightSyncMarks()
-	require.Len(t, marks, 1)
-	require.Equal(t, heightsync.MarkFloorOutOfBand, marks[0].Kind)
-	require.Equal(t, uint32(0), marks[0].Slot, "named at the moment of the damage, not by later forensics")
-	require.Equal(t, uint64(3), marks[0].Nonce)
+	require.Equal(t, types.PhaseActive, sm.SnapshotState().Phase)
+}
 
-	// Liveness: the escrow neither halts nor loses its ability to advance.
-	require.NoError(t, apply(4, divHeartbeatTx(260, good)))
-	floor, _, _ = sm.HeightSyncFloorAsOf(5)
-	require.Equal(t, uint64(250), floor, "a sequencer heartbeat still does not raise F")
-	require.NoError(t, apply(5, divAckTx(t, hosts[1], 2, 4, 1, 260, good, types.SyncState_SYNCED)))
-	floor, _, _ = sm.HeightSyncFloorAsOf(6)
-	require.Equal(t, uint64(260), floor, "the next honest host stamp still moves the floor")
+// TestHeightSyncFloor_PoisonedLowFloorIsRepairedByAnHonestHost is the case that
+// retired the raise bound.
+//
+// One participant stamps H=1 into a fresh escrow — a real height with an honest
+// hash, just ancient. F becomes 1. Under the old rule every honest host at the
+// live tip was then more than W_conf above the floor and could not raise it, and
+// nothing lowers a floor, so a single message pinned the escrow's logical time at
+// 1 for the rest of the session: every later stamp had to be a lie or an omission,
+// and no party could repair it. Now the next honest host stamp simply moves it.
+func TestHeightSyncFloor_PoisonedLowFloorIsRepairedByAnHonestHost(t *testing.T) {
+	hosts := fourHosts(t)
+	sm, user := newTestSM(t, hosts, 1_000_000)
+	apply := func(nonce uint64, txs ...*types.DevshardTx) error {
+		_, err := sm.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", nonce, txs))
+		return err
+	}
+	genesis, live := []byte{0x00, 0x01}, []byte{0x27, 0x10}
 
-	require.NoError(t, apply(6, divStartTx(6, 260, good)))
-	require.NoError(t, apply(7, divConfirmTx(t, hosts[2], 6, 260, good)))
+	require.NoError(t, apply(1, divHeartbeatTx(0, nil)))
+	require.NoError(t, apply(2, divAckTx(t, hosts[0], 1, 1, 0, 1, genesis, types.SyncState_SYNCED)))
+	floor, _, _ := sm.HeightSyncFloorAsOf(3)
+	require.Equal(t, uint64(1), floor)
+
+	require.NoError(t, apply(3, divHeartbeatTx(1, genesis)), "the user carries F while it is wrong")
+	require.NoError(t, apply(4, divAckTx(t, hosts[1], 2, 3, 1, 10_000, live, types.SyncState_SYNCED)))
+
+	floor, hash, _ := sm.HeightSyncFloorAsOf(5)
+	require.Equal(t, uint64(10_000), floor, "one honest host repairs the escrow's clock, alone")
+	require.Equal(t, live, hash)
 	require.Equal(t, types.PhaseActive, sm.SnapshotState().Phase)
 }
 
@@ -98,9 +118,10 @@ func TestHeightSyncFloor_ImplausibleClaimIsMarkedAndIgnored(t *testing.T) {
 // again and stamping is first-party once more, on the live branch, without the
 // escrow needing a new session.
 //
-// The other branch is a reorg deeper than W_conf, where carrying stops:
-// HeartbeatConfig.FloorOutOfReach has producers omit instead, covered in
-// host.TestHost_HeartbeatAck_OmitsAStampWhenTheFloorIsOutOfReach.
+// Depth does not change any of this. A reorg past what used to be W_conf is the
+// same story with a bigger number: carrying is still the honest answer, still
+// attributable to the floor's author, and never an omission —
+// host.TestHost_HeartbeatAck_CarriesAFloorFarAboveOwnTip.
 func TestHeightSyncFloor_ReorgReturnsToTheLiveBranch(t *testing.T) {
 	hosts := fourHosts(t)
 	sm, user := newTestSM(t, hosts, 1_000_000)
@@ -134,9 +155,11 @@ func TestHeightSyncFloor_ReorgReturnsToTheLiveBranch(t *testing.T) {
 	require.Empty(t, sm.HeightSyncMarks(),
 		"following a reorg is not misbehaviour; the stale pair is settled by L6 against its author")
 
-	// Recovery: the live branch passes the floor, so honest stamps are their own
-	// again and the floor moves onto it.
-	require.NoError(t, apply(5, divHeartbeatTx(260, live)))
+	// Recovery: the live branch passes the floor, so honest host stamps are their
+	// own again and the floor moves onto it. The user still carries F — it is
+	// never a height source (§10.3.1) — so the turn opens at the stale pair and
+	// the acks answering it move the escrow onto the live branch.
+	require.NoError(t, apply(5, divHeartbeatTx(250, dead)))
 	acks = acks[:0]
 	for i := range hosts {
 		acks = append(acks, divAckTx(t, hosts[i], 3, 5, uint32(i), 260, live, types.SyncState_SYNCED))
@@ -221,8 +244,10 @@ func TestHeightSyncFloor_AdmissionRefusalCannotSplitTheFloor(t *testing.T) {
 
 // TestHeightSyncFloor_SequencerHeartbeatDoesNotRaise is spec §14 on the
 // consensus path: a user-signed heartbeat (and start) above F does not move the
-// floor on
-// apply or on a second machine that ingested the same bytes with no envelope.
+// floor on apply or on a second machine that ingested the same bytes with no
+// envelope — and, since §10.3.1, is marked height_unbacked for having claimed a
+// height at all. Both machines record it: the check reads F from the log, so it
+// does not matter which path the diff arrived by.
 func TestHeightSyncFloor_SequencerHeartbeatDoesNotRaise(t *testing.T) {
 	hosts := fourHosts(t)
 	user := testutil.MustGenerateKey(t)
@@ -253,6 +278,14 @@ func TestHeightSyncFloor_SequencerHeartbeatDoesNotRaise(t *testing.T) {
 		floor, _, known := sm.HeightSyncFloorAsOf(5)
 		require.True(t, known)
 		require.Equal(t, uint64(100), floor, "heartbeat and start above F must not raise")
+
+		marks := sm.HeightSyncMarks()
+		require.Len(t, marks, 2, "the heartbeat and the start each invented a height")
+		for _, m := range marks {
+			require.Equal(t, heightsync.MarkHeightUnbacked, m.Kind)
+		}
+		require.Equal(t, uint64(3), marks[0].Nonce)
+		require.Equal(t, uint64(4), marks[1].Nonce)
 	}
 
 	_, err := applySM.ApplyDiff(testutil.SignDiff(t, user, "escrow-1", 5, []*types.DevshardTx{
