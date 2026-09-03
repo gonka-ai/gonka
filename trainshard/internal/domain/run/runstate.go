@@ -1,0 +1,89 @@
+package run
+
+import (
+	"context"
+	"fmt"
+	"time"
+
+	"trainshard/internal/domain/shared"
+	"trainshard/internal/domain/shared/vo"
+)
+
+// Reserve starts the patience clock and wipes a previous shard, and reports whether anything
+// changed; the clock is stamped once, so a node under the same shard keeps running out of time
+func (s *RunState) Reserve(shardID vo.ShardID, at time.Time) bool {
+	if s.Shard == shardID && !s.ReservedAt.IsZero() {
+		return false
+	}
+	if s.Shard != shardID {
+		*s = RunState{}
+	}
+	s.Shard, s.ReservedAt = shardID, at
+	return true
+}
+
+func RecordReservation(ctx context.Context, runs RunStore, node vo.NodeRef, shardID vo.ShardID, at time.Time) error {
+	return runs.Update(ctx, node, func(state *RunState) { state.Reserve(shardID, at) })
+}
+
+// RecordDeploy counts the deploy in: the container carries the revision it was built for, so
+// the same image with new parameters, or a rerun of one that already finished, is still a new
+// container rather than a command that quietly changes nothing
+func RecordDeploy(ctx context.Context, runs RunStore, node vo.NodeRef, shardID vo.ShardID, spec RunSpec) error {
+	return runs.Update(ctx, node, func(state *RunState) {
+		state.Shard, state.Spec, state.Start = shardID, spec, false
+		state.Revision++
+		state.Fault, state.FaultAt = nil, time.Time{}
+	})
+}
+
+func RecordStart(ctx context.Context, runs RunStore, node vo.NodeRef) error {
+	return runs.Update(ctx, node, func(state *RunState) { state.Start = true })
+}
+
+func RecordStop(ctx context.Context, runs RunStore, node vo.NodeRef, grace time.Duration) error {
+	return runs.Update(ctx, node, func(state *RunState) { state.Start, state.StopGrace = false, grace })
+}
+
+func RecordImage(ctx context.Context, runs RunStore, node vo.NodeRef, image vo.ImageDigest, at time.Time) error {
+	return runs.Update(ctx, node, func(state *RunState) {
+		state.Images = append(state.Images, ImageRun{Image: image, At: at})
+	})
+}
+
+func RecordFault(ctx context.Context, runs RunStore, node vo.NodeRef, action Action, cause error, at time.Time) error {
+	failure := fmt.Errorf("%s: %w", action.Kind, cause)
+
+	change := func(state *RunState) {
+		if state.Fault == nil {
+			state.FaultAt = at
+		}
+		state.Fault = shared.NewFault(failure)
+	}
+	if err := runs.Update(ctx, node, change); err != nil {
+		return fmt.Errorf("%w (recording it also failed: %v)", failure, err)
+	}
+	return failure
+}
+
+func ClearFault(ctx context.Context, runs RunStore, node vo.NodeRef) error {
+	return runs.Update(ctx, node, func(state *RunState) { state.Fault, state.FaultAt = nil, time.Time{} })
+}
+
+// TrackPreparedness stamps when a reserved node stopped being ready and clears it once it is ready
+// again, so the wait before it is handed back is timed the way a fault is. A node the chain no
+// longer holds is on its way out and is not timed at all
+func TrackPreparedness(ctx context.Context, runs RunStore, node vo.NodeRef, state *RunState, d Desired, o Observed, at time.Time) error {
+	was := state.UnpreparedAt
+	switch {
+	case !d.Reserved || Prepared(d, o):
+		state.UnpreparedAt = time.Time{}
+	case was.IsZero():
+		state.UnpreparedAt = at
+	}
+	if state.UnpreparedAt.Equal(was) {
+		return nil
+	}
+	mark := state.UnpreparedAt
+	return runs.Update(ctx, node, func(s *RunState) { s.UnpreparedAt = mark })
+}
