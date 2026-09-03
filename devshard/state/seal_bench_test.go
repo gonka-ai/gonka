@@ -56,7 +56,7 @@ func benchFillSM(b *testing.B, store storage.Storage, escrowID string) *StateMac
 func benchSealedNonces(n int) (map[uint64]uint64, []storage.InferenceRow) {
 	nonces := make(map[uint64]uint64, n)
 	rows := make([]storage.InferenceRow, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		id := uint64(i + 1)
 		nonces[id] = id
 		rows[i] = storage.InferenceRow{
@@ -77,7 +77,7 @@ func BenchmarkFillSealedInferenceIndexGaps_NoGaps(b *testing.B) {
 			}
 			sm.RestoreSealedNonces(nonces)
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				inserted, err := sm.FillSealedInferenceIndexGaps()
 				if err != nil {
 					b.Fatal(err)
@@ -98,7 +98,7 @@ func BenchmarkFillSealedInferenceIndexGaps_AllMissing(b *testing.B) {
 			nonces, _ := benchSealedNonces(n)
 			sm.RestoreSealedNonces(nonces)
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				b.StopTimer()
 				if err := store.DeleteSealedInferences("bench-fill-miss"); err != nil {
 					b.Fatal(err)

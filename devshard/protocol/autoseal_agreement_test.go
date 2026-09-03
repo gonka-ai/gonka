@@ -16,33 +16,33 @@ import (
 )
 
 const (
-	autoSealTestInferenceSealGraceNonces     = 2
-	autoSealTestInferenceSealGraceSeconds   = 5
-	autoSealTestBaseConfirmedAt     = 10_000
-	autoSealAgreementNumHosts       = 16
-	autoSealAgreementPipelinedCount = 80
+	autoSealTestInferenceSealGraceNonces  = 2
+	autoSealTestInferenceSealGraceSeconds = 5
+	autoSealTestBaseConfirmedAt           = 10_000
+	autoSealAgreementNumHosts             = 16
+	autoSealAgreementPipelinedCount       = 80
 )
 
 type autoSealEnv struct {
-	session   *user.Session
-	hosts     []*host.Host
-	hostSMs   []*state.StateMachine
-	userSM    *state.StateMachine
-	user      *signing.Secp256k1Signer
+	session     *user.Session
+	hosts       []*host.Host
+	hostSMs     []*state.StateMachine
+	userSM      *state.StateMachine
+	user        *signing.Secp256k1Signer
 	hostSigners []*signing.Secp256k1Signer
-	group     []types.SlotAssignment
-	escrowID  string
+	group       []types.SlotAssignment
+	escrowID    string
 }
 
 func autoSealTestConfig(numHosts int) types.SessionConfig {
 	return types.NormalizeSessionConfig(types.SessionConfig{
-		RefusalTimeout:             60,
-		ExecutionTimeout:           1200,
-		TokenPrice:                 1,
-		VoteThreshold:              uint32(numHosts) / 2,
-		ValidationRate:             0,
-		FeePerNonce:                0,
-		InferenceSealGraceNonces:            autoSealTestInferenceSealGraceNonces,
+		RefusalTimeout:            60,
+		ExecutionTimeout:          1200,
+		TokenPrice:                1,
+		VoteThreshold:             uint32(numHosts) / 2,
+		ValidationRate:            0,
+		FeePerNonce:               0,
+		InferenceSealGraceNonces:  autoSealTestInferenceSealGraceNonces,
 		InferenceSealGraceSeconds: autoSealTestInferenceSealGraceSeconds,
 	}, numHosts)
 }
@@ -204,7 +204,7 @@ func (env *autoSealEnv) advanceClockPastGrace(t *testing.T, startNonce, inferenc
 	cfg := env.userSM.Config()
 	required := state.FinishedClockRequiredSeconds(int64(cfg.InferenceSealGraceSeconds), cfg.ExecutionTimeout)
 	targetConfirmedAt := autoSealTestBaseConfirmedAt + int64(inferenceID) + required + 1
-	for bump := 0; bump < window+5; bump++ {
+	for bump := range window + 5 {
 		startNonce = env.bumpClock(t, startNonce, targetConfirmedAt+int64(bump))
 		if _, live := env.userSM.SnapshotState().Inferences[inferenceID]; !live {
 			return startNonce
@@ -246,7 +246,7 @@ func TestProtocol_UserHost_SessionAutoSealAgreement_Sequential(t *testing.T) {
 	ctx := context.Background()
 	params := defaultParams()
 
-	for i := 0; i < autoSealAgreementPipelinedCount; i++ {
+	for i := range autoSealAgreementPipelinedCount {
 		prepared, err := env.session.PrepareInference(params)
 		require.NoError(t, err, "prepare inference %d", i+1)
 
@@ -274,7 +274,7 @@ func TestProtocol_UserHost_SessionAutoSealAgreement_Pipelined(t *testing.T) {
 	params := defaultParams()
 
 	const pairs = autoSealAgreementPipelinedCount / 2
-	for i := 0; i < pairs; i++ {
+	for i := range pairs {
 		first, err := env.session.PrepareInference(params)
 		require.NoError(t, err, "prepare first inference pair %d", i+1)
 

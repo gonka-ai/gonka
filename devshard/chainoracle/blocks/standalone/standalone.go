@@ -22,9 +22,9 @@ import (
 	"net/http"
 	"time"
 
+	"common/chainoracle/blocks/server"
 	"github.com/labstack/echo/v4"
 
-	"common/chainoracle/blocks/server"
 	"devshard/chainoracle/blocks/observer"
 	"devshard/signing"
 )
@@ -208,7 +208,6 @@ func (s *Service) Run(ctx context.Context) error {
 			s.shutdownHTTP()
 			if !gotHTTP {
 				<-httpErr
-				gotHTTP = true
 			}
 			return fmt.Errorf("standalone: observer: %w", err)
 		}
@@ -218,7 +217,6 @@ func (s *Service) Run(ctx context.Context) error {
 			s.shutdownHTTP()
 			if !gotObs {
 				<-obsErr
-				gotObs = true
 			}
 			return fmt.Errorf("standalone: http: %w", err)
 		}
@@ -229,11 +227,9 @@ func (s *Service) Run(ctx context.Context) error {
 
 	if !gotObs {
 		obsFirst = <-obsErr
-		gotObs = true
 	}
 	if !gotHTTP {
 		httpE := <-httpErr
-		gotHTTP = true
 		if httpE != nil {
 			if obsFirst != nil && !errors.Is(obsFirst, context.Canceled) && !errors.Is(obsFirst, context.DeadlineExceeded) {
 				return fmt.Errorf("standalone: observer: %w", obsFirst)

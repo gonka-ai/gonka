@@ -8,10 +8,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"devshard/testenv/mockchain/adminface"
 	"devshard/testenv/mockchain/seed"
-
-	"github.com/stretchr/testify/require"
 )
 
 func TestAdminface_ParamsAndEpoch(t *testing.T) {

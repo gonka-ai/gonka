@@ -244,7 +244,7 @@ func (r *pairwiseRing) ordered() []PairwiseComparison {
 		return out
 	}
 	out := make([]PairwiseComparison, 0, len(r.comparisons))
-	for i := 0; i < len(r.comparisons); i++ {
+	for i := range len(r.comparisons) {
 		idx := (r.pos + i) % len(r.comparisons)
 		out = append(out, r.comparisons[idx])
 	}
@@ -324,7 +324,7 @@ func (t *PairwiseTracker) EstimateRatio(model string, inputTokens uint64, a, b s
 	confidence := 1.0
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	for i := 0; i < len(path)-1; i++ {
+	for i := range len(path) - 1 {
 		key := pairwiseKey{model: model, a: path[i], b: path[i+1], bucket: bucket}
 		ring := t.pairs[key]
 		if ring == nil || len(ring.comparisons) == 0 {
@@ -432,10 +432,7 @@ func (t *PairwiseTracker) SpeedupCutoffForParticipants(model string, inputTokens
 	if p <= 0 || p >= 1 {
 		p = 0.90
 	}
-	idx := int(math.Ceil(p*float64(len(speedups)))) - 1
-	if idx < 0 {
-		idx = 0
-	}
+	idx := max(int(math.Ceil(p*float64(len(speedups))))-1, 0)
 	if idx >= len(speedups) {
 		idx = len(speedups) - 1
 	}

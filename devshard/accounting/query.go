@@ -1,6 +1,8 @@
 package accounting
 
 import (
+	"maps"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -111,12 +113,8 @@ func (e *escrowState) view(id string) escrowView {
 		liveRequests:    make(map[string]struct{}, len(e.LiveRequests)),
 		events:          append([]ProtocolEvent(nil), e.Events...),
 	}
-	for key, count := range e.Counters {
-		out.counters[key] = count
-	}
-	for slot, stats := range e.HostStats {
-		out.hostStats[slot] = stats
-	}
+	maps.Copy(out.counters, e.Counters)
+	maps.Copy(out.hostStats, e.HostStats)
 	for _, state := range e.Live {
 		out.live = append(out.live, *state)
 	}
@@ -335,9 +333,8 @@ func buildSlotRecord(escrow *escrowView, slot uint32, now time.Time) SlotRecord 
 	}
 	// Differences are taken per slot of one escrow. Summing the two sides first
 	// would let a surplus in one escrow hide a shortfall in another.
-	record.CrossCheckError =
-		absDiff(record.TimeoutOutcomes[TimeoutApplied], record.ProtocolMisses) +
-			absDiff(record.RecordedInvalid, record.ProtocolInvalid)
+	record.CrossCheckError = absDiff(record.TimeoutOutcomes[TimeoutApplied], record.ProtocolMisses) +
+		absDiff(record.RecordedInvalid, record.ProtocolInvalid)
 	return record
 }
 
@@ -362,7 +359,7 @@ func (t *Tracker) Epochs(filter QueryFilter) []EpochSummary {
 	for epoch := range epochs {
 		ids = append(ids, epoch)
 	}
-	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	slices.Sort(ids)
 	out := make([]EpochSummary, 0, len(ids))
 	for _, epoch := range ids {
 		records := t.Query(QueryFilter{
@@ -413,7 +410,7 @@ func (t *Tracker) Epochs(filter QueryFilter) []EpochSummary {
 func stringSet(values []string) map[string]struct{} {
 	out := make(map[string]struct{})
 	for _, value := range values {
-		for _, item := range strings.Split(value, ",") {
+		for item := range strings.SplitSeq(value, ",") {
 			item = strings.TrimSpace(item)
 			if item != "" {
 				out[item] = struct{}{}

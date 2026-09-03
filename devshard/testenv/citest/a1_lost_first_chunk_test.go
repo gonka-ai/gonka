@@ -6,11 +6,11 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"devshard/testenv/citest/harness"
 	"devshard/testenv/config"
 	"devshard/testenv/mockopenai"
-
-	"github.com/stretchr/testify/require"
 )
 
 // TestA1_LostFirstChunk verifies streaming chat survives mock-openai dropping the first SSE chunk.

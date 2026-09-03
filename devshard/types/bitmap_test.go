@@ -23,7 +23,7 @@ func TestBitmap128_SetIsSet(t *testing.T) {
 
 func TestBitmap128_ZeroValue(t *testing.T) {
 	var b Bitmap128
-	for i := uint32(0); i < MaxGroupSize; i++ {
+	for i := range uint32(MaxGroupSize) {
 		if b.IsSet(i) {
 			t.Fatalf("bit %d set on zero value", i)
 		}

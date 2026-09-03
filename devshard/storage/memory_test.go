@@ -3,27 +3,27 @@ package storage
 import "testing"
 
 func TestMemory_CreateSession_GetSessionMeta(t *testing.T) {
-	runCreateSession_GetSessionMeta(t, NewMemory())
+	runCreateSessionGetSessionMeta(t, NewMemory())
 }
 
 func TestMemory_CreateSession_Idempotent(t *testing.T) {
-	runCreateSession_Idempotent(t, NewMemory())
+	runCreateSessionIdempotent(t, NewMemory())
 }
 
 func TestMemory_CreateSession_ConflictingEpoch(t *testing.T) {
-	runCreateSession_ConflictingEpoch(t, NewMemory())
+	runCreateSessionConflictingEpoch(t, NewMemory())
 }
 
 func TestMemory_CreateSession_ConflictingVersion(t *testing.T) {
-	runCreateSession_ConflictingVersion(t, NewMemory())
+	runCreateSessionConflictingVersion(t, NewMemory())
 }
 
 func TestMemory_CreateSession_EmptyVersionRejected(t *testing.T) {
-	runCreateSession_EmptyVersionRejected(t, NewMemory())
+	runCreateSessionEmptyVersionRejected(t, NewMemory())
 }
 
 func TestMemory_AppendDiff_GetDiffs(t *testing.T) {
-	runAppendDiff_GetDiffs(t, NewMemory())
+	runAppendDiffGetDiffs(t, NewMemory())
 }
 
 func TestMemory_GetSignatures(t *testing.T) {
@@ -31,7 +31,7 @@ func TestMemory_GetSignatures(t *testing.T) {
 }
 
 func TestMemory_MarkFinalized_LastFinalized(t *testing.T) {
-	runMarkFinalized_LastFinalized(t, NewMemory())
+	runMarkFinalizedLastFinalized(t, NewMemory())
 }
 
 func TestMemory_SaveLoadSnapshot(t *testing.T) {
@@ -71,18 +71,18 @@ func TestMemory_ListActiveSessions(t *testing.T) {
 }
 
 func TestMemory_PruneEpoch_RemovesOnlyTarget(t *testing.T) {
-	runPruneEpoch_RemovesOnlyTarget(t, NewMemory())
+	runPruneEpochRemovesOnlyTarget(t, NewMemory())
 }
 
 func TestMemory_PruneEpoch_Idempotent(t *testing.T) {
-	runPruneEpoch_Idempotent(t, NewMemory())
+	runPruneEpochIdempotent(t, NewMemory())
 }
 
 func TestMemory_PruneEpoch_WriteAfter(t *testing.T) {
-	runPruneEpoch_WriteAfter(t, NewMemory())
+	runPruneEpochWriteAfter(t, NewMemory())
 }
 
 func TestMemory_DuplicateNonce_IdenticalReplayOK(t *testing.T) {
 	// Identical same-nonce replay is idempotent (HA); see AppendDiff docs.
-	runAppendDiff_IdempotentReplay(t, NewMemory())
+	runAppendDiffIdempotentReplay(t, NewMemory())
 }

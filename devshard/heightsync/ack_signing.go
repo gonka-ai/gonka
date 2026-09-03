@@ -70,7 +70,7 @@ func VerifyAck(verifier signing.Verifier, ack *types.MsgHeightAck, slotKey strin
 	}
 	recovered, err := verifier.RecoverAddress(blob, ack.HostSig)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrAckVerify, err)
+		return fmt.Errorf("%w: %w", ErrAckVerify, err)
 	}
 	if recovered != slotKey {
 		return fmt.Errorf("%w: signer %q != slot key %q", ErrAckVerify, recovered, slotKey)

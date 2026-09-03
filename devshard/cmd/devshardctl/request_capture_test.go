@@ -11,10 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"devshard/host"
 	"devshard/user"
-
-	"github.com/stretchr/testify/require"
 )
 
 func TestPrepareChatRequestBodyCapturesFilterRejectedRequest(t *testing.T) {
@@ -56,7 +56,7 @@ func TestCaptureAllAttemptsFailedRequestWritesSeparateFile(t *testing.T) {
 		InputLength: 81,
 		MaxTokens:   256,
 		StartedAt:   time.Now().Unix(),
-	}, errTestAllAttemptsFailed{})
+	}, testAllAttemptsFailedError{})
 
 	record := requireSingleCapturedRequest(t, captureDir, "all_attempts_failed")
 	require.Equal(t, requestID, record.RequestID)
@@ -208,8 +208,8 @@ func requireSingleCapturedRequest(t *testing.T, captureDir, kind string) capture
 	return record
 }
 
-type errTestAllAttemptsFailed struct{}
+type testAllAttemptsFailedError struct{}
 
-func (errTestAllAttemptsFailed) Error() string {
+func (testAllAttemptsFailedError) Error() string {
 	return "all attempts failed"
 }

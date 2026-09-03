@@ -2,15 +2,7 @@ package inference
 
 import (
 	"bytes"
-	"common/chain"
-	"common/completionapi"
-	commonvalidation "common/validation"
 	"context"
-	devshardpkg "devshard"
-	"devshard/bridge"
-	"devshard/logging"
-	"devshard/observability"
-	"devshard/storage"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -19,15 +11,24 @@ import (
 	"sync"
 	"time"
 
+	"common/chain"
+	"common/completionapi"
+	commonvalidation "common/validation"
 	"github.com/productscience/inference/x/inference/types"
+
+	devshardpkg "devshard"
+	"devshard/bridge"
+	"devshard/logging"
+	"devshard/observability"
+	"devshard/storage"
 )
 
 // leaseOps is satisfied by storage.LeaseStore; extracted as interface for testing.
 type leaseOps interface {
-	Acquire(ctx context.Context, escrowId string, inferenceId uint64, epochId uint64, instanceAddr string) (bool, error)
-	SetResult(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, instanceAddr string) error
-	OwnsPendingLease(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) (bool, error)
-	Release(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) error
+	Acquire(ctx context.Context, escrowID string, inferenceID uint64, epochID uint64, instanceAddr string) (bool, error)
+	SetResult(ctx context.Context, escrowID string, inferenceID, epochID uint64, status storage.LeaseStatus, instanceAddr string) error
+	OwnsPendingLease(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) (bool, error)
+	Release(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) error
 }
 
 type acquireKey struct {
@@ -96,11 +97,11 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		if errors.Is(err, commonvalidation.ErrPayloadGone) {
 			logging.Info("devshard validation skipped: payload pruned on executor",
 				types.Validation,
-				"inferenceId", inferenceID,
+				"inferenceID", inferenceID,
 				"executor", req.ExecutorAddress,
 				"epoch", epochID,
 			)
-			return nil, fmt.Errorf("%w: %v", devshardpkg.ErrValidationSkipped, err)
+			return nil, fmt.Errorf("%w: %w", devshardpkg.ErrValidationSkipped, err)
 		}
 		return nil, observability.Classify(observability.ReasonPayloadFetchErr, observability.WhereRuntimeValidate, fmt.Errorf("fetch payloads from executor: %w", err))
 	}
@@ -365,7 +366,7 @@ func (c *LeaseValidator) MarkValidationSubmitted(ctx context.Context, escrowID s
 	err = c.leases.SetResult(ctx, escrowID, inferenceID, rec.epochID, storage.LeaseStatusSubmitted, c.instanceAddr)
 	c.forgetAcquire(escrowID, inferenceID)
 	if errors.Is(err, storage.ErrLeaseNotOwned) {
-		return fmt.Errorf("%w: %v", devshardpkg.ErrValidationLeaseAbandoned, err)
+		return fmt.Errorf("%w: %w", devshardpkg.ErrValidationLeaseAbandoned, err)
 	}
 	return err
 }
@@ -410,5 +411,7 @@ func (c *LeaseValidator) ensureLeaseStillValid(ctx context.Context, escrowID str
 	return rec, nil
 }
 
-var _ devshardpkg.ValidationEngine = (*LeaseValidator)(nil)
-var _ devshardpkg.ValidationCompletionRecorder = (*LeaseValidator)(nil)
+var (
+	_ devshardpkg.ValidationEngine             = (*LeaseValidator)(nil)
+	_ devshardpkg.ValidationCompletionRecorder = (*LeaseValidator)(nil)
+)

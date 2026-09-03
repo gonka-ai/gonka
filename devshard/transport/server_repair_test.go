@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"common/chainoracle/blocks"
 	json "github.com/goccy/go-json"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
-	"common/chainoracle/blocks"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/internal/testutil"
@@ -46,7 +46,7 @@ func setupRepairPair(t *testing.T) *repairPair {
 	verifier := signing.NewSecp256k1Verifier()
 
 	pair := &repairPair{user: user, hosts: hostSigners, oracles: make([]*heightSyncTestOracle, 2)}
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		or := &heightSyncTestOracle{hdr: &blocks.Header{
 			Height: 500, ChainID: "c", BlockHash: []byte{0xaa, byte(i)},
 		}}
@@ -323,7 +323,7 @@ func TestHandleHeightSyncRepair_FloodBoundsOracleReads(t *testing.T) {
 	first := p.postSignedRepair(t, 0, 1, req)
 	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
 
-	for i := 0; i < 19; i++ {
+	for range 19 {
 		rec := p.postSignedRepair(t, 0, 1, req)
 		require.Equal(t, http.StatusTooManyRequests, rec.Code)
 	}

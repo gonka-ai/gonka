@@ -483,10 +483,7 @@ func (s *Session) runHeightSeedUntil(ctx context.Context, forever bool) {
 			)
 		}
 
-		sleep := delay
-		if sleep > heightSeedRetryMax {
-			sleep = heightSeedRetryMax
-		}
+		sleep := min(delay, heightSeedRetryMax)
 		timer := time.NewTimer(sleep)
 		select {
 		case <-ctx.Done():

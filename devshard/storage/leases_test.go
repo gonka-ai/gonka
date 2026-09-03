@@ -30,13 +30,11 @@ func TestMemoryLease_Acquire_ConcurrentSingleWinner(t *testing.T) {
 	var wg sync.WaitGroup
 	wins := make(chan bool, workers)
 	for range workers {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			won, err := store.Acquire(ctx, "escrow-1", 1, 10, "instance")
 			require.NoError(t, err)
 			wins <- won
-		}()
+		})
 	}
 	wg.Wait()
 	close(wins)

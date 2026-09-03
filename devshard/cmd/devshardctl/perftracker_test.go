@@ -46,7 +46,7 @@ func TestParticipantFailureThreshold(t *testing.T) {
 	now := time.Now()
 	key := "participant-threshold"
 
-	for i := 0; i < 99; i++ {
+	for range 99 {
 		perf.Record(RequestSample{HostIdx: 0, ParticipantKey: key, Responsive: true, SendTime: now})
 	}
 	perf.Record(RequestSample{HostIdx: 0, ParticipantKey: key, Responsive: false, SendTime: now})
@@ -90,7 +90,7 @@ func TestPerfTrackerFirstTokenFallbackUsesP95AfterFullBucket(t *testing.T) {
 
 func TestPerfTrackerFirstTokenFallbackBucketsByModelAndInputSize(t *testing.T) {
 	perf := NewPerfTracker(nil)
-	for i := 0; i < 100; i++ {
+	for range 100 {
 		perf.RecordRequest(RequestRecord{
 			Model:       "Qwen/Test",
 			InputTokens: 20_000,

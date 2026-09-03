@@ -41,7 +41,7 @@ func TestMarksCountedOnRetentionNotEvaluation(t *testing.T) {
 	// The compose trial loop re-checks a growing prefix once per tx, so the
 	// same mark is produced many times for one diff.
 	var res LogPlaneResult
-	for i := 0; i < 5; i++ {
+	for range 5 {
 		res.mark(AttributableMark{Kind: MarkVectorContradiction})
 		res.mark(AttributableMark{Kind: MarkAdmissionDelta})
 	}
@@ -68,7 +68,7 @@ func TestObserveLogPlaneReject_CountsOnlyActedOnVerdicts(t *testing.T) {
 
 	before := counterVecValue(t, c, "ack_sig_invalid")
 	var res LogPlaneResult
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		res = res.invalid(ErrAckSigInvalid, "ack_sig_invalid")
 	}
 	require.Equal(t, before, counterVecValue(t, c, "ack_sig_invalid"),

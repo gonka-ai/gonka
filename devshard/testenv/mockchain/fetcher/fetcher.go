@@ -6,6 +6,7 @@ import (
 
 	"common/chain"
 	commrc "common/runtimeconfig"
+
 	"devshard/testenv/mockchain/adminface"
 )
 

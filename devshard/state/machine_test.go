@@ -970,7 +970,7 @@ func TestApplyDiff_FullLifecycle(t *testing.T) {
 			// Vote valid to reach Validated. Skip executor and challenger (already in ValidatedBy).
 			var voteTxs []*types.DevshardTx
 			votedCount := 0
-			for slot := uint32(0); slot < uint32(len(hosts)); slot++ {
+			for slot := range uint32(len(hosts)) {
 				if slot == uint32(executorSlotIdx) || slot == validatorSlot {
 					continue
 				}
@@ -1000,7 +1000,7 @@ func TestApplyDiff_FullLifecycle(t *testing.T) {
 
 			var voteTxs []*types.DevshardTx
 			votedCount := 0
-			for slot := uint32(0); slot < uint32(len(hosts)); slot++ {
+			for slot := range uint32(len(hosts)) {
 				if slot == uint32(executorSlotIdx) || slot == validatorSlot {
 					continue
 				}
@@ -1158,9 +1158,9 @@ func TestSnapshotState_DeepCopy(t *testing.T) {
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	// Get state and mutate the copy.
+	// Get state and mutate the copy. The writes are the point: nothing here may reach the machine.
 	stateCopy := sm.SnapshotState()
-	stateCopy.Balance = 999999
+	stateCopy.Balance = 999999 //nolint:govet
 	stateCopy.Inferences[1].Status = types.StatusTimedOut
 	stateCopy.Inferences[1].PromptHash[0] = 0xFF
 	stateCopy.HostStats[0].Cost = 999
@@ -1221,7 +1221,7 @@ func TestApplyDiff_FinishInference_WrongProposer(t *testing.T) {
 	sm, user := newTestSM(t, hosts, 10000)
 
 	// Start + confirm. Executor for inference 1 is slot 1 (hosts[1]).
-	applyStartConfirmFinish_Setup(t, sm, user, hosts, 1)
+	applyStartConfirmFinishSetup(t, sm, user, hosts, 1)
 
 	// Sign finish with hosts[0] (in group, but not the executor).
 	finishMsg := &types.MsgFinishInference{
@@ -1333,12 +1333,8 @@ func TestApplyDiff_CostOverflow_StartInference(t *testing.T) {
 	_, err := sm.ApplyDiff(diff)
 	require.ErrorIs(t, err, types.ErrCostOverflow)
 
-	// Multiplication overflows: large input * price.
-	diff = testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
-		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
-		InputLength: math.MaxUint64 / 2, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
-	})})
-	// With TokenPrice=1, the mul won't overflow. Use a custom SM with higher price.
+	// Multiplication overflows: large input * price. With TokenPrice=1 the mul stays in range,
+	// so this needs a state machine built with a higher price.
 	config := types.SessionConfig{TokenPrice: 3, VoteThreshold: 1}
 	group := testutil.MakeGroup(hosts)
 	verifier := signing.NewSecp256k1Verifier()
@@ -1918,9 +1914,9 @@ func TestApplyDiff_HostStatsValidationCountersRemainZero(t *testing.T) {
 	}
 }
 
-// applyStartConfirmFinish_Setup applies start + confirm only (no finish).
+// applyStartConfirmFinishSetup applies start + confirm only (no finish).
 // Used when we need to test finish with specific proposer.
-func applyStartConfirmFinish_Setup(t *testing.T, sm *StateMachine, user *signing.Secp256k1Signer, hosts []*signing.Secp256k1Signer, inferenceID uint64) {
+func applyStartConfirmFinishSetup(t *testing.T, sm *StateMachine, user *signing.Secp256k1Signer, hosts []*signing.Secp256k1Signer, inferenceID uint64) {
 	t.Helper()
 	executorSlotIdx := inferenceID % uint64(len(hosts))
 	nonce := sm.LatestNonce() + 1
@@ -2499,7 +2495,7 @@ func TestDrainSettle_StartedAutoFinishes(t *testing.T) {
 		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
 	}
 	sm, user := newTestSM(t, hosts, 10000)
-	applyStartConfirmFinish_Setup(t, sm, user, hosts, 1)
+	applyStartConfirmFinishSetup(t, sm, user, hosts, 1)
 
 	before := sm.SnapshotState()
 	require.Equal(t, uint64(0), before.HostStats[1].Cost)
@@ -2584,7 +2580,7 @@ func TestDrainSettle_CensoredFinishCreditsHost(t *testing.T) {
 		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
 	}
 	sm, user := newTestSM(t, hosts, 10000)
-	applyStartConfirmFinish_Setup(t, sm, user, hosts, 1)
+	applyStartConfirmFinishSetup(t, sm, user, hosts, 1)
 
 	before := sm.SnapshotState()
 	require.Equal(t, types.StatusStarted, before.Inferences[1].Status)
@@ -3444,7 +3440,7 @@ func callSettleLiveRecordLocked(t *testing.T, sm *StateMachine, rec *types.Infer
 func TestSettleLiveRecordLocked_Started(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	sm, user := newTestSM(t, hosts, 10000)
-	applyStartConfirmFinish_Setup(t, sm, user, hosts, 1)
+	applyStartConfirmFinishSetup(t, sm, user, hosts, 1)
 
 	before := sm.SnapshotState()
 	rec := before.Inferences[1]

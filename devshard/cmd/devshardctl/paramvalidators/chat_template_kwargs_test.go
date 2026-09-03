@@ -86,7 +86,7 @@ func nestedObjectChain(depth int) string {
 func flatPropertiesObject(count int) string {
 	var b strings.Builder
 	b.WriteByte('{')
-	for i := 0; i < count; i++ {
+	for i := range count {
 		if i > 0 {
 			b.WriteByte(',')
 		}

@@ -175,6 +175,7 @@ func (t AttemptTiming) chunkWasSlow() bool   { return t.MaxChunkGap > SlowChunkG
 func (t AttemptTiming) decodeWasSlow() bool {
 	return t.TimePerOutputToken > SlowDecodeAfter
 }
+
 func (t AttemptTiming) clockHasDrifted() bool {
 	return t.ClockMeasured && (t.ClockOffset > ClockDriftBeyond || t.ClockOffset < -ClockDriftBeyond)
 }

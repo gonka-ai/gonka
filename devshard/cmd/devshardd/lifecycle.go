@@ -6,9 +6,9 @@ import (
 	"strings"
 	"sync"
 
-	"devshard/observability"
-
 	"github.com/labstack/echo/v4"
+
+	"devshard/observability"
 )
 
 type lifecyclePhase string

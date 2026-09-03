@@ -69,10 +69,7 @@ func TestSseRaceWriterAllChunkSizes(t *testing.T) {
 				rw := mkRaceWriter(t, inf)
 				body := []byte(fx.body)
 				for i := 0; i < len(body); i += sz {
-					end := i + sz
-					if end > len(body) {
-						end = len(body)
-					}
+					end := min(i+sz, len(body))
 					_, err := rw.Write(body[i:end])
 					require.NoError(t, err)
 				}
@@ -171,10 +168,7 @@ func TestSseRaceWriterRandomChunking(t *testing.T) {
 			body := []byte(fx.body)
 			for i := 0; i < len(body); {
 				sz := 1 + rng.IntN(64)
-				end := i + sz
-				if end > len(body) {
-					end = len(body)
-				}
+				end := min(i+sz, len(body))
 				_, err := rw.Write(body[i:end])
 				require.NoError(t, err)
 				i = end

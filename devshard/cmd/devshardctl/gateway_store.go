@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -627,7 +628,7 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 		&state.Settings.Disabled.Message,
 		&state.Settings.Disabled.NewURL,
 	)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		return GatewayState{}, false, nil
 	}
 	if err != nil {

@@ -17,7 +17,7 @@ var pickedPorts = struct {
 // Host publishing is randomized later by Docker Compose.
 func pickFreePort(t *testing.T) int {
 	t.Helper()
-	for attempts := 0; attempts < 100; attempts++ {
+	for range 100 {
 		ln, err := net.Listen("tcp", "127.0.0.1:0")
 		require.NoError(t, err)
 		port := ln.Addr().(*net.TCPAddr).Port

@@ -1,6 +1,7 @@
 package heightsync
 
 import (
+	"slices"
 	"testing"
 
 	"devshard/types"
@@ -72,7 +73,7 @@ func TestLogResidentHeight_IgnoresUserStamps(t *testing.T) {
 	if got := LogResidentHeight(user, 500); got != 500 {
 		t.Fatalf("user stamps must not move hNow: got %d want 500", got)
 	}
-	mixed := append(user, &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: &types.MsgHeightAck{
+	mixed := append(slices.Clone(user), &types.DevshardTx{Tx: &types.DevshardTx_HeightAck{HeightAck: &types.MsgHeightAck{
 		ObservedHeight: 510, ObservedBlockHash: hash,
 	}}})
 	if got := LogResidentHeight(mixed, 500); got != 510 {

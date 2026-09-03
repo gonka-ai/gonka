@@ -6,9 +6,8 @@ import (
 	"crypto/sha256"
 	"fmt"
 
-	"google.golang.org/protobuf/proto"
-
 	"common/completionapi"
+	"google.golang.org/protobuf/proto"
 
 	"devshard/types"
 )
@@ -127,7 +126,7 @@ func VerifyRefusedTimeout(
 
 	// Verifier validates payload against on-chain record (same checks executor does).
 	if err := VerifyPayload(payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt); err != nil {
-		return false, nil // bad payload -> reject timeout
+		return false, nil //nolint:nilerr // the verdict is the bool: a bad payload rejects the timeout.
 	}
 
 	// Challenge executor: one call that applies diffs + verifies payload + returns receipt.
@@ -135,7 +134,7 @@ func VerifyRefusedTimeout(
 		receipt, mempool, err := executorClient.ChallengeReceipt(ctx, inferenceID, payload, storedDiffs)
 		if err != nil {
 			// Executor unreachable or internal error -> accept timeout.
-			return true, nil
+			return true, nil //nolint:nilerr // the verdict is the bool: an unreachable executor accepts the timeout.
 		}
 		if len(receipt) > 0 {
 			// Copy executor recovery txs into the verifier pool. Same bytes as
@@ -267,7 +266,7 @@ func VerifyErrorMiss(
 		return false, nil, ErrorTimeoutRejectSig, nil
 	}
 	if err := finishVerifier.VerifyFinishProposerSig(msg); err != nil {
-		return false, nil, ErrorTimeoutRejectSig, nil
+		return false, nil, ErrorTimeoutRejectSig, nil //nolint:nilerr // the verdict is the bool plus a reject reason.
 	}
 
 	if len(responsePayload) == 0 {

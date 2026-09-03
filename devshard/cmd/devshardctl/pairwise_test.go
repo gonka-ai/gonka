@@ -39,7 +39,7 @@ func withPairwisePolicyForTest(t *testing.T) {
 
 func TestPairwiseTrackerRecordsRequestComparisons(t *testing.T) {
 	perf := NewPerfTracker(nil)
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		perf.RecordRequest(pairwiseTestRecord())
 	}
 
@@ -60,7 +60,7 @@ func TestPairwiseTrackerRecordsRequestComparisons(t *testing.T) {
 func TestDecision_UsesPairwiseBudgetedSpeedup(t *testing.T) {
 	withPairwisePolicyForTest(t)
 	perf := NewPerfTracker(nil)
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		perf.RecordRequest(pairwiseTestRecord())
 	}
 
@@ -76,7 +76,7 @@ func TestDecision_UsesPairwiseBudgetedSpeedup(t *testing.T) {
 func TestPairwiseDecisionSkipsUnavailableCandidate(t *testing.T) {
 	withPairwisePolicyForTest(t)
 	perf := NewPerfTracker(nil)
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		perf.RecordRequest(pairwiseTestRecord())
 	}
 	limiter := NewParticipantRequestLimiter(10, 10)
@@ -92,7 +92,7 @@ func TestPairwiseDecisionSkipsUnavailableCandidate(t *testing.T) {
 func TestPairwiseDecisionSkipsUnresponsiveCandidate(t *testing.T) {
 	withPairwisePolicyForTest(t)
 	perf := NewPerfTracker(nil)
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		perf.RecordRequest(pairwiseTestRecord())
 	}
 	perf.Record(RequestSample{ParticipantKey: "host:1", Responsive: false})
@@ -107,7 +107,7 @@ func TestPairwiseDecisionSkipsUnresponsiveCandidate(t *testing.T) {
 func TestPairwiseDecisionSkipsRecentlyQuarantinedCandidate(t *testing.T) {
 	withPairwisePolicyForTest(t)
 	perf := NewPerfTracker(nil)
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		perf.RecordRequest(pairwiseTestRecord())
 	}
 	limiter := NewParticipantRequestLimiter(10, 10)
@@ -167,7 +167,7 @@ func TestPairwiseDecisionSamplesNextEdgeAfterAcceptedAttempt(t *testing.T) {
 	withPairwisePolicyForTest(t)
 	PairwiseABSparseSampleRate = 1
 	perf := NewPerfTracker(nil)
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		perf.RecordRequest(pairwiseTestRecord())
 	}
 

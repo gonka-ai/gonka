@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"devshard/host"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/host"
 )
 
 // Releases every waiter only once all of them have arrived.

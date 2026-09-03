@@ -11,11 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"common/chainoracle/blocks"
+	"common/completionapi"
 	"google.golang.org/protobuf/proto"
 
-	"common/completionapi"
-
-	"common/chainoracle/blocks"
 	"devshard"
 	"devshard/gossip"
 	"devshard/heightsync"
@@ -789,7 +788,7 @@ func (h *Host) maybeSaveSnapshotLocked(nonce uint64, shouldSnapshot, settledNow 
 
 	store := h.store
 	escrowID := h.escrowID
-	state := h.sm.ExportState()
+	escrowState := h.sm.ExportState()
 	committedEntries := h.sm.ExportCommittedEntries()
 	sealedNonces := h.sm.ExportSealedNonces()
 	heightSyncFloor := h.sm.ExportHeightSyncFloor()
@@ -798,12 +797,12 @@ func (h *Host) maybeSaveSnapshotLocked(nonce uint64, shouldSnapshot, settledNow 
 		if !settledNow {
 			defer h.snapshotInFlight.Store(false)
 		}
-		writeSnapshot(store, escrowID, nonce, state, committedEntries, sealedNonces, heightSyncFloor)
+		writeSnapshot(store, escrowID, nonce, escrowState, committedEntries, sealedNonces, heightSyncFloor)
 	}()
 }
 
-func writeSnapshot(store storage.Storage, escrowID string, nonce uint64, state *types.EscrowState, committedEntries map[uint64][]byte, sealedNonces map[uint64]uint64, heightSyncFloor *types.FloorIndexProto) {
-	data, err := MarshalStateSnapshotWithCommitted(state, committedEntries, sealedNonces, heightSyncFloor)
+func writeSnapshot(store storage.Storage, escrowID string, nonce uint64, escrowState *types.EscrowState, committedEntries map[uint64][]byte, sealedNonces map[uint64]uint64, heightSyncFloor *types.FloorIndexProto) {
+	data, err := MarshalStateSnapshotWithCommitted(escrowState, committedEntries, sealedNonces, heightSyncFloor)
 	if err != nil {
 		logging.Warn("failed to marshal host snapshot", "escrow_id", escrowID, "nonce", nonce, "error", err)
 		return
@@ -868,10 +867,7 @@ func (h *Host) pruneFinishObsLocked(now time.Time) {
 
 func (h *Host) finishObsRetention() time.Duration {
 	cfg := h.sm.Config()
-	timeout := cfg.ExecutionTimeout
-	if timeout < 0 {
-		timeout = 0
-	}
+	timeout := max(cfg.ExecutionTimeout, 0)
 	sec := int64(cfg.InferenceSealGraceSeconds) + timeout
 	d := time.Duration(sec*2) * time.Second
 	if d < finishObsMinRetention {
@@ -906,7 +902,7 @@ func (h *Host) signIfAccepted(applied []*types.DevshardTx) (stateSig, root []byt
 
 	if h.checker != nil {
 		if err := h.checker.Check(h.sm.SnapshotState(), applied); err != nil {
-			return nil, root, nonce, nil // withhold
+			return nil, root, nonce, nil //nolint:nilerr // a failed check withholds the receipt; the request did not fail.
 		}
 	}
 
@@ -1274,7 +1270,7 @@ func (h *Host) collectValidationJobs() []validateJob {
 }
 
 func (h *Host) startValidationWorkers(q <-chan validateJob, count int) {
-	for i := 0; i < count; i++ {
+	for range count {
 		go func() {
 			for job := range q {
 				h.validateAsync(h.validationJobContext(), job)
@@ -1537,7 +1533,8 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	observability.SetMempoolSize(h.escrowID, h.mempool.Len())
 	h.mu.Unlock()
 	observability.IncValidation(observability.StageVotePublished, observability.MetricStatusOK)
-	fields := []any{
+	fields := make([]any, 0, 16+len(result.Details))
+	fields = append(fields,
 		"inference_id", job.inferenceID,
 		"executor_address", job.executorAddress,
 		"validator_slot", job.validatorSlot,
@@ -1546,7 +1543,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		"validation_result", validationResultLabel(result.Valid),
 		"validation_reason", result.Reason,
 		"result_valid", result.Valid,
-	}
+	)
 	fields = append(fields, result.Details...)
 	observability.Log(ctx, observability.LevelInfo, "validation tx published", observability.StageVotePublished, observability.WhereHostPublishValidation, h.escrowID, observability.ReasonOK, nil, fields...)
 
@@ -1877,7 +1874,7 @@ func (h *Host) signProposer(msg proto.Message) ([]byte, error) {
 func VerifyPayload(p *InferencePayload, promptHash []byte, model string, inputLength, maxTokens uint64, startedAt int64) error {
 	hash, err := devshard.CanonicalPromptHash(p.Prompt)
 	if err != nil {
-		return fmt.Errorf("%w: %v", types.ErrPromptHashMismatch, err)
+		return fmt.Errorf("%w: %w", types.ErrPromptHashMismatch, err)
 	}
 	if !bytes.Equal(hash, promptHash) {
 		return types.ErrPromptHashMismatch
@@ -1910,7 +1907,7 @@ func verifyPayloadWorkload(p *InferencePayload) error {
 	}
 	bodyMaxTokens, err := completionapi.EffectiveMaxTokens(p.Prompt)
 	if err != nil {
-		return fmt.Errorf("%w: prompt max_tokens: %v", types.ErrPayloadMismatch, err)
+		return fmt.Errorf("%w: prompt max_tokens: %w", types.ErrPayloadMismatch, err)
 	}
 	if bodyMaxTokens > p.MaxTokens {
 		return fmt.Errorf("%w: prompt max_tokens %d exceeds declared %d", types.ErrPayloadMismatch, bodyMaxTokens, p.MaxTokens)

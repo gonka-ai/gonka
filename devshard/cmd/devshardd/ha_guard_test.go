@@ -9,7 +9,6 @@ import (
 	"testing"
 
 	"common/storage/mode"
-
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 )

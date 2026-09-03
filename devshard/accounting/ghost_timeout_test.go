@@ -4,9 +4,9 @@ import (
 	"context"
 	"testing"
 
-	"devshard/types"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/types"
 )
 
 // A burned nonce is never sent, yet the gateway raises a timeout on it and the chain counts the miss

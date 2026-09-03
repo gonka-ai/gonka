@@ -4,6 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"maps"
+	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -24,13 +27,14 @@ type quietTestcontainersLogger struct{}
 
 func (quietTestcontainersLogger) Printf(string, ...any) {}
 
-func init() {
+func TestMain(m *testing.M) {
 	tclog.SetDefault(quietTestcontainersLogger{})
+	os.Exit(m.Run())
 }
 
 type e2eEnv struct {
 	networkName string
-	network     testcontainers.Network
+	network     testcontainers.Network //nolint:staticcheck // the pinned testcontainers still returns this type.
 	containers  []namedContainer
 	clientURL   string
 	statsURL    string
@@ -87,8 +91,8 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		time.Now().UnixNano(),
 	)
 	testutil.DebugLogf(t, "creating Docker network %s", networkName)
-	network, err := testcontainers.GenericNetwork(ctx, testcontainers.GenericNetworkRequest{
-		NetworkRequest: testcontainers.NetworkRequest{
+	network, err := testcontainers.GenericNetwork(ctx, testcontainers.GenericNetworkRequest{ //nolint:staticcheck // network.New is a separate migration for the whole e2e stand.
+		NetworkRequest: testcontainers.NetworkRequest{ //nolint:staticcheck // network.New is a separate migration for the whole e2e stand.
 			Name:           networkName,
 			CheckDuplicate: true,
 		},
@@ -168,9 +172,7 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		// POST /height-sync omits. Keep the production seed gate on in citest.
 		"DEVSHARD_REQUIRE_HEIGHT_SEED": "false",
 	}
-	for k, v := range opts.devshardctlEnvOverrides {
-		devshardctlEnv[k] = v
-	}
+	maps.Copy(devshardctlEnv, opts.devshardctlEnvOverrides)
 	devshardctl := env.startContainer(ctx, t, containerSpec{
 		name:  devshardCtlName,
 		image: images.devshardctl,
@@ -249,18 +251,10 @@ func (e *e2eEnv) startHostWithEnv(ctx context.Context, t *testing.T, index int, 
 		// Peer URLs are compose aliases on the test network (private IPs).
 		"DEVSHARD_ALLOW_PRIVATE_ADDRESSES": "true",
 	}
-	for k, v := range e2eHostSessionEnv() {
-		env[k] = v
-	}
-	for k, v := range e.hostEnv {
-		env[k] = v
-	}
-	for k, v := range e.hostEnvOverrides[index] {
-		env[k] = v
-	}
-	for k, v := range overrides {
-		env[k] = v
-	}
+	maps.Copy(env, e2eHostSessionEnv())
+	maps.Copy(env, e.hostEnv)
+	maps.Copy(env, e.hostEnvOverrides[index])
+	maps.Copy(env, overrides)
 	var mounts []mount.Mount
 	if index < len(e.hostVolumeNames) && e.hostVolumeNames[index] != "" {
 		env["DEVSHARD_DATA_DIR"] = "/data/devshard-host"
@@ -297,11 +291,11 @@ func (e *e2eEnv) restartHost(ctx context.Context, t *testing.T, index int) {
 	e.hostControlURLs[index] = containerURL(ctx, t, e.startHost(ctx, t, index), "8080/tcp")
 }
 
-func containerURL(ctx context.Context, t *testing.T, container testcontainers.Container, portName string) string {
+func containerURL(ctx context.Context, t *testing.T, testContainer testcontainers.Container, portName string) string {
 	t.Helper()
-	host, err := container.Host(ctx)
+	host, err := testContainer.Host(ctx)
 	require.NoError(t, err)
-	port, err := container.MappedPort(ctx, nat.Port(portName))
+	port, err := testContainer.MappedPort(ctx, nat.Port(portName))
 	require.NoError(t, err)
 	return "http://" + host + ":" + port.Port()
 }
@@ -349,7 +343,7 @@ func (e *e2eEnv) startContainer(ctx context.Context, t *testing.T, spec containe
 			WithStartupTimeout(testutil.DefaultRequestTimeout)
 	}
 
-	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
+	testContainer, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{
 		ContainerRequest: testcontainers.ContainerRequest{
 			Image:          spec.image,
 			Env:            spec.env,
@@ -366,15 +360,15 @@ func (e *e2eEnv) startContainer(ctx context.Context, t *testing.T, spec containe
 		Logger:  quietTestcontainersLogger{},
 	})
 	if err != nil {
-		if container != nil {
-			dumpContainerLogs(ctx, t, spec.name, container)
-			_ = container.Terminate(context.Background())
+		if testContainer != nil {
+			dumpContainerLogs(ctx, t, spec.name, testContainer)
+			_ = testContainer.Terminate(context.Background())
 		}
 		t.Fatalf("start %s container from image %s: %v", spec.name, spec.image, err)
 	}
-	e.containers = append(e.containers, namedContainer{name: spec.name, container: container})
+	e.containers = append(e.containers, namedContainer{name: spec.name, container: testContainer})
 	testutil.DebugLogf(t, "container %s is ready", spec.name)
-	return container
+	return testContainer
 }
 
 func sqliteHostVolumeNames(t *testing.T) []string {
@@ -410,8 +404,8 @@ func (e *e2eEnv) terminate(ctx context.Context, t *testing.T) {
 	if t.Failed() && testutil.DebugEnabled() {
 		e.dumpContainerLogs(ctx, t)
 	}
-	for i := len(e.containers) - 1; i >= 0; i-- {
-		c := e.containers[i]
+	for _, v := range slices.Backward(e.containers) {
+		c := v
 		if err := c.container.Terminate(ctx); err != nil {
 			t.Logf("terminate %s: %v", c.name, err)
 		}
@@ -420,8 +414,8 @@ func (e *e2eEnv) terminate(ctx context.Context, t *testing.T) {
 
 func (e *e2eEnv) dumpContainerLogs(ctx context.Context, t *testing.T) {
 	t.Helper()
-	for i := len(e.containers) - 1; i >= 0; i-- {
-		c := e.containers[i]
+	for _, v := range slices.Backward(e.containers) {
+		c := v
 		dumpContainerLogs(ctx, t, c.name, c.container)
 	}
 }

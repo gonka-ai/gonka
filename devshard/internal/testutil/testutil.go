@@ -5,10 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"common/completionapi"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
-
-	"common/completionapi"
 
 	"devshard"
 	"devshard/signing"
@@ -23,8 +22,10 @@ var deterministicMarshal = proto.MarshalOptions{Deterministic: true}
 // TestPrompt is exactly 100 bytes and embeds TestMaxTokens so host workload
 // checks (input_length == len(prompt), body max_tokens <= declared, declared
 // >= floor) pass with the StartTx defaults below.
-var TestPrompt = mustTestPrompt(TestMaxTokens)
-var TestPromptHash = mustCanonicalPromptHash(TestPrompt)
+var (
+	TestPrompt     = mustTestPrompt(TestMaxTokens)
+	TestPromptHash = mustCanonicalPromptHash(TestPrompt)
+)
 
 func mustTestPrompt(maxTokens uint64) []byte {
 	const total = 100
@@ -193,7 +194,7 @@ func MakeMultiSlotGroup(signers []*signing.Secp256k1Signer, slotsPerSigner []int
 		if i < len(slotsPerSigner) {
 			n = slotsPerSigner[i]
 		}
-		for j := 0; j < n; j++ {
+		for range n {
 			group = append(group, types.SlotAssignment{
 				SlotID:           slotID,
 				ValidatorAddress: s.Address(),

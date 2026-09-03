@@ -171,13 +171,6 @@ func (c HeartbeatConfig) withDefaults() HeartbeatConfig {
 	return c
 }
 
-func (c RepairConfig) withDefaults() RepairConfig {
-	if c.Stagger <= 0 {
-		c.Stagger = DefaultRepairStagger
-	}
-	return c
-}
-
 // Validate checks spec §20 constraints. A bad override must fail fast.
 //
 //	D_ack * BlockTime >= Interval + TurnTimeout

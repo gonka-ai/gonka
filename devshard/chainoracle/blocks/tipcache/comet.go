@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"common/chainoracle/blocks/observer"
-
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	cmttypes "github.com/cometbft/cometbft/types"
 )

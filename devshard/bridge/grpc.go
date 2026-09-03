@@ -9,9 +9,9 @@ import (
 	"time"
 
 	"common/chain"
-	devshardpkg "devshard"
-
 	inferencetypes "github.com/productscience/inference/x/inference/types"
+
+	devshardpkg "devshard"
 )
 
 const warmKeyMsgTypeGRPC = "/inference.inference.MsgStartInference"
@@ -112,7 +112,7 @@ func (b *GRPCBridge) GetHostInfo(address string) (*HostInfo, error) {
 	resp, err := b.client.InferenceQueryClient().Participant(context.Background(),
 		&inferencetypes.QueryGetParticipantRequest{Index: address})
 	if err != nil {
-		return nil, fmt.Errorf("Participant %s: %w", address, err)
+		return nil, fmt.Errorf("participant %s: %w", address, err)
 	}
 	if resp == nil || resp.Participant.Address == "" {
 		return nil, ErrParticipantNotFound

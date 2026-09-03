@@ -1,6 +1,7 @@
 package main
 
 import (
+	"maps"
 	"math"
 	"sort"
 	"strings"
@@ -172,9 +173,7 @@ func (m *CapacityState) SetHostWeights(weights map[string]float64, pocActive boo
 		// fullWeights with a copy so a future SetHostWeights(_, true)
 		// can mutate currentWeights independently.
 		full := make(map[string]float64, len(clean))
-		for k, w := range clean {
-			full[k] = w
-		}
+		maps.Copy(full, clean)
 		m.fullWeights = full
 	}
 }
@@ -219,9 +218,7 @@ func cloneModelWeights(weights map[string]map[string]float64) map[string]map[str
 	clone := make(map[string]map[string]float64, len(weights))
 	for model, hostWeights := range weights {
 		cloneHosts := make(map[string]float64, len(hostWeights))
-		for host, weight := range hostWeights {
-			cloneHosts[host] = weight
-		}
+		maps.Copy(cloneHosts, hostWeights)
 		clone[model] = cloneHosts
 	}
 	return clone

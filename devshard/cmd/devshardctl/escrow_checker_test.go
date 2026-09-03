@@ -29,12 +29,15 @@ func (s *stubMainnetBridge) OnSettlementFinalized(string) error { return bridge.
 func (s *stubMainnetBridge) GetHostInfo(string) (*bridge.HostInfo, error) {
 	return nil, bridge.ErrNotImplemented
 }
+
 func (s *stubMainnetBridge) GetValidationThreshold(uint64, string) (*bridge.Decimal, error) {
 	return nil, bridge.ErrNotImplemented
 }
+
 func (s *stubMainnetBridge) VerifyWarmKey(string, string) (bool, error) {
 	return false, bridge.ErrNotImplemented
 }
+
 func (s *stubMainnetBridge) SubmitDisputeState(string, []byte, uint64, map[uint32][]byte) error {
 	return bridge.ErrNotImplemented
 }
@@ -122,14 +125,12 @@ func TestEscrowCheckerDeduplicates(t *testing.T) {
 	var deactivated atomic.Int64
 
 	var wg sync.WaitGroup
-	for i := 0; i < 10; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 10 {
+		wg.Go(func() {
 			checker.TriggerCheck("42", func(string) {
 				deactivated.Add(1)
 			})
-		}()
+		})
 	}
 	wg.Wait()
 

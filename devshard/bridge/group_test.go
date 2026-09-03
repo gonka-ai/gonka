@@ -1,11 +1,12 @@
 package bridge
 
 import (
-	"devshard/types"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"devshard/types"
 )
 
 // mockBridge implements MainnetBridge for testing BuildGroup.
@@ -19,6 +20,7 @@ type mockBridge struct {
 func (m *mockBridge) GetEscrow(_ string) (*EscrowInfo, error) {
 	return m.escrow, m.escrowErr
 }
+
 func (m *mockBridge) GetHostInfo(addr string) (*HostInfo, error) {
 	if m.hostErr != nil {
 		return nil, m.hostErr
@@ -29,9 +31,11 @@ func (m *mockBridge) GetHostInfo(addr string) (*HostInfo, error) {
 	}
 	return info, nil
 }
+
 func (m *mockBridge) GetValidationThreshold(uint64, string) (*Decimal, error) {
 	return nil, ErrNotImplemented
 }
+
 func (m *mockBridge) VerifyWarmKey(_, _ string) (bool, error) {
 	return false, ErrNotImplemented
 }

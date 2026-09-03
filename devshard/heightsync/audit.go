@@ -140,7 +140,7 @@ func (r *AuditRing) List(peerID string) []AnchorAttestation {
 		return nil
 	}
 	out := make([]AnchorAttestation, 0, pr.size)
-	for i := 0; i < pr.size; i++ {
+	for i := range pr.size {
 		idx := (pr.start + i) % len(pr.buf)
 		v := pr.buf[idx]
 		v.MainnetBlockHash = append([]byte(nil), v.MainnetBlockHash...)

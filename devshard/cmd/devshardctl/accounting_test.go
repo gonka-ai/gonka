@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"devshard/accounting"
 	"devshard/host"
 	"devshard/internal/statetest"
@@ -15,8 +17,6 @@ import (
 	"devshard/signing"
 	"devshard/types"
 	"devshard/user"
-
-	"github.com/stretchr/testify/require"
 )
 
 func TestGatewayAccountingAdapterRecordsEvents(t *testing.T) {

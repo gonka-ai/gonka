@@ -2,6 +2,7 @@ package storage
 
 import (
 	"fmt"
+	"maps"
 	"sync"
 
 	"devshard/types"
@@ -29,9 +30,7 @@ func copyWarmKeyDelta(src map[uint32]string) map[uint32]string {
 		return nil
 	}
 	dst := make(map[uint32]string, len(src))
-	for k, v := range src {
-		dst[k] = v
-	}
+	maps.Copy(dst, src)
 	return dst
 }
 

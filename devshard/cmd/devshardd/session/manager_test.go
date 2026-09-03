@@ -1,12 +1,13 @@
 package session
 
 import (
+	"path/filepath"
 	"strconv"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"path/filepath"
+	"google.golang.org/protobuf/proto"
 
 	"devshard/bridge"
 	"devshard/internal/testutil"
@@ -15,7 +16,6 @@ import (
 	"devshard/storage"
 	"devshard/stub"
 	"devshard/types"
-	"google.golang.org/protobuf/proto"
 )
 
 // mockBridge implements bridge.MainnetBridge for testing recovery.
@@ -484,7 +484,7 @@ func TestRememberResolutionFailure_BoundsMapUnderLiveTombstoneBurst(t *testing.T
 	mgr := NewHostManager(store, mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
 
 	now := time.Now()
-	for i := 0; i < maxResolutionFailures*3; i++ {
+	for i := range maxResolutionFailures * 3 {
 		// Every entry is permanent and unexpired, so sweeping cannot help.
 		mgr.rememberResolutionFailure(strconv.Itoa(i), bridge.ErrEscrowSettled, now)
 	}

@@ -7,14 +7,14 @@ import (
 	"strings"
 	"testing"
 
-	"devshard/signing"
-	"devshard/testenv/config"
-
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	cryptocodec "github.com/cosmos/cosmos-sdk/crypto/codec"
 	cryptokring "github.com/cosmos/cosmos-sdk/crypto/keyring"
 	"github.com/stretchr/testify/require"
+
+	"devshard/signing"
+	"devshard/testenv/config"
 )
 
 func TestMaterializeHosts_SharedKeyring(t *testing.T) {

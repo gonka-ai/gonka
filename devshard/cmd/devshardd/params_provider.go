@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 
-	mlnodeclient "common/nodemanager"
 	"common/chain"
+	mlnodeclient "common/nodemanager"
+
 	devshardpkg "devshard"
 	"devshard/runtimeparams"
 	devshardstorage "devshard/storage"
@@ -64,11 +65,4 @@ func newParamsProvider(
 		})
 	}
 	return result, nil
-}
-
-func normalizeLogger(logger *slog.Logger) *slog.Logger {
-	if logger != nil {
-		return logger
-	}
-	return slog.Default()
 }

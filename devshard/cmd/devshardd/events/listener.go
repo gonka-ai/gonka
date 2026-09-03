@@ -4,15 +4,15 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"strconv"
 	"sync"
 	"time"
 
+	"common/chainoracle/blocks/observer"
 	abci "github.com/cometbft/cometbft/abci/types"
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	ctypes "github.com/cometbft/cometbft/rpc/core/types"
 	cmttypes "github.com/cometbft/cometbft/types"
-
-	"common/chainoracle/blocks/observer"
 )
 
 const (
@@ -196,9 +196,9 @@ func parseTxEvent[T txEventParser[T]](result ctypes.ResultEvent) (out T, ok bool
 		slog.Warn("chain events: unexpected data type", "event_type", out.eventType(), "got", fmt.Sprintf("%T", result.Data))
 		return
 	}
-	for _, ev := range data.TxResult.Result.Events {
+	for _, ev := range data.Result.Events {
 		if ev.Type == out.eventType() {
-			return out.fromEvent(data.TxResult.Height, ev), true
+			return out.fromEvent(data.Height, ev), true
 		}
 	}
 	return
@@ -233,7 +233,9 @@ func attr(ev abci.Event, key string) string {
 }
 
 func parseUint64(s string) uint64 {
-	var n uint64
-	fmt.Sscanf(s, "%d", &n)
+	n, err := strconv.ParseUint(s, 10, 64)
+	if err != nil {
+		return 0
+	}
 	return n
 }

@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"common/chainoracle/blocks"
+	"github.com/stretchr/testify/require"
+
 	"devshard/chainoracle/blocks/verifier"
 	"devshard/signing"
-
-	"github.com/stretchr/testify/require"
 )
 
 // signedHeader builds a header signed by the supplied signers. The first

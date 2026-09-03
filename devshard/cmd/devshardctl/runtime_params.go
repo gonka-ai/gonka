@@ -8,6 +8,7 @@ import (
 
 	"common/chain"
 	mlnodeclient "common/nodemanager"
+
 	"devshard/bridge"
 	"devshard/runtimeconfig"
 	"devshard/runtimeparams"

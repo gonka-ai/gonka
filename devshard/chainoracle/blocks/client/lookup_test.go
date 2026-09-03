@@ -11,9 +11,9 @@ import (
 
 	"common/chainoracle/blocks"
 	"common/httpguard"
-	blockclient "devshard/chainoracle/blocks/client"
-
 	"github.com/stretchr/testify/require"
+
+	blockclient "devshard/chainoracle/blocks/client"
 )
 
 func TestMain(m *testing.M) {

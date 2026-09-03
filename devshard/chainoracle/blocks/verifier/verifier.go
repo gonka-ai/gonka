@@ -13,7 +13,6 @@ import (
 	"fmt"
 
 	"common/chainoracle/blocks"
-
 	"github.com/ethereum/go-ethereum/crypto"
 )
 

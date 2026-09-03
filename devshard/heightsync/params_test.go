@@ -4,11 +4,10 @@ import (
 	"testing"
 	"time"
 
+	commrc "common/runtimeconfig"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 	"google.golang.org/protobuf/reflect/protoreflect"
-
-	commrc "common/runtimeconfig"
 
 	"devshard/heightsync"
 	"devshard/types"

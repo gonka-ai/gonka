@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"devshard/types"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/types"
 )
 
 func recordAttempt(t *testing.T, tr *Tracker, escrowID string, nonce uint64, requestID string) {

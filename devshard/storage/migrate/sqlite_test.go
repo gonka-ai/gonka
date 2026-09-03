@@ -8,10 +8,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	_ "modernc.org/sqlite"
 
 	"devshard/storage/migrate"
-
-	_ "modernc.org/sqlite"
 )
 
 func openSQLiteTestDB(t *testing.T) *sql.DB {

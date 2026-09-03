@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync/atomic"
 	"time"
 
@@ -17,6 +18,8 @@ import (
 	mlnodeclient "common/nodemanager"
 	commrc "common/runtimeconfig"
 	"common/storage/payloads"
+	"github.com/labstack/echo/v4"
+
 	devshardpkg "devshard"
 	devshardbridge "devshard/cmd/devshardd/bridge"
 	"devshard/cmd/devshardd/events"
@@ -27,8 +30,6 @@ import (
 	"devshard/runtimeparams"
 	"devshard/signing"
 	devshardstorage "devshard/storage"
-
-	"github.com/labstack/echo/v4"
 )
 
 const sessionEpochRetain = 3
@@ -62,21 +63,10 @@ func (s *closeStack) Add(fn func()) {
 	*s = append(*s, fn)
 }
 
-func (s closeStack) Close() {
-	for i := len(s) - 1; i >= 0; i-- {
-		s[i]()
+func (s *closeStack) Close() {
+	for _, v := range slices.Backward(*s) {
+		v()
 	}
-}
-
-type phaseEpochProvider struct {
-	phase *chain.Phase
-}
-
-func (p phaseEpochProvider) CurrentEpochID() uint64 {
-	if p.phase == nil {
-		return 0
-	}
-	return p.phase.EpochID()
 }
 
 func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error) {
@@ -155,8 +145,8 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 
 func buildChainRuntime(ctx context.Context, nodeConfig ChainNodeConfig) (*chainRuntime, error) {
 	slog.Info("chain node",
-		"grpc_url", nodeConfig.ChainGrpcUrl,
-		"rpc_url", nodeConfig.ChainRpcUrl,
+		"grpc_url", nodeConfig.ChainGRPCURL,
+		"rpc_url", nodeConfig.ChainRPCURL,
 		"keyring_backend", nodeConfig.KeyringBackend,
 		"keyring_dir", nodeConfig.KeyringDir)
 
@@ -165,12 +155,12 @@ func buildChainRuntime(ctx context.Context, nodeConfig ChainNodeConfig) (*chainR
 		return nil, fmt.Errorf("keyring: %w", err)
 	}
 
-	apiAccount, err := buildApiAccount(kr, nodeConfig)
+	apiAccount, err := buildAPIAccount(kr, nodeConfig)
 	if err != nil {
 		return nil, fmt.Errorf("api account: %w", err)
 	}
 
-	chainClient, err := chain.NewWithQueryFallback(nodeConfig.ChainGrpcUrl, nodeConfig.ChainRpcUrl)
+	chainClient, err := chain.NewWithQueryFallback(nodeConfig.ChainGRPCURL, nodeConfig.ChainRPCURL)
 	if err != nil {
 		return nil, fmt.Errorf("chain client: %w", err)
 	}
@@ -194,7 +184,7 @@ func buildChainRuntime(ctx context.Context, nodeConfig ChainNodeConfig) (*chainR
 		return nil, fmt.Errorf("tx manager: %w", err)
 	}
 
-	chainEvents := newChainEventBridge(ctx, nodeConfig.ChainRpcUrl, chainClient, chaintx.NewDisputeSubmitter(txMgr))
+	chainEvents := newChainEventBridge(ctx, nodeConfig.ChainRPCURL, chainClient, chaintx.NewDisputeSubmitter(txMgr))
 	return &chainRuntime{
 		client:      chainClient,
 		identity:    identity,
@@ -448,7 +438,7 @@ func (a *devshardApp) Run(ctx context.Context) error {
 	startServer := func(name string, server appHTTPServer, addr string) {
 		go func() {
 			slog.Info("listening", "server", name, "addr", addr)
-			if err := server.Start(addr); err != nil && err != http.ErrServerClosed {
+			if err := server.Start(addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				errCh <- serverError{name: name, err: err}
 			}
 		}()

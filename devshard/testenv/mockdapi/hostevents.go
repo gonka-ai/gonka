@@ -6,10 +6,10 @@ import (
 	"time"
 
 	"common/nodemanager/gen"
-	"devshard/chainoracle/params"
-
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"devshard/chainoracle/params"
 )
 
 // hostEventsMaxWaitCap bounds server-side long-poll duration in the mock.

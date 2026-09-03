@@ -9,11 +9,11 @@ import (
 	"time"
 
 	"common/nodemanager/gen"
-	"devshard/testenv/mockchain/adminface"
-
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+
+	"devshard/testenv/mockchain/adminface"
 )
 
 // MockDAPIEndpoints adds gRPC address for NodeManager clients.
@@ -63,10 +63,7 @@ func GetRuntimeConfigOnce(ctx context.Context, client gen.NodeManagerClient, cli
 
 // WaitRuntimeConfigLongPoll blocks until mock-dapi returns a newer params snapshot or ctx ends.
 func WaitRuntimeConfigLongPoll(ctx context.Context, client gen.NodeManagerClient, clientHeight int64, maxWait time.Duration) (*gen.GetRuntimeConfigResponse, error) {
-	sec := int32(maxWait / time.Second)
-	if sec < 1 {
-		sec = 1
-	}
+	sec := max(int32(maxWait/time.Second), 1)
 	return client.GetRuntimeConfig(ctx, &gen.GetRuntimeConfigRequest{
 		ClientParamsBlockHeight: clientHeight,
 		MaxWaitSeconds:          sec,

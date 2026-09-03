@@ -4,17 +4,17 @@ import (
 	"context"
 	"errors"
 	"io"
+	"net/http"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/require"
 
 	"devshard/host"
 	"devshard/internal/testutil"
 	"devshard/transport"
 	"devshard/types"
-	"net/http"
-
-	"github.com/stretchr/testify/require"
 )
 
 // holdingClient answers the receipt and then blocks, the way a host that keeps an empty stream open

@@ -113,7 +113,7 @@ func TestFlushSnapshot_RetiredEscrowRebuildsWithoutReplay(t *testing.T) {
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	for i := 0; i < numInferences; i++ {
+	for range numInferences {
 		_, err := session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}

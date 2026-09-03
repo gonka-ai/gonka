@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"devshard/bridge"
 	devshardstorage "devshard/storage"
 	"devshard/types"
-
-	"github.com/stretchr/testify/require"
 )
 
 type sinkFakeBridge struct {

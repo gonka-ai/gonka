@@ -13,7 +13,7 @@ import (
 // CanonicalizeJSON returns a deterministic JSON encoding with sorted keys and
 // no HTML escaping. Used to ensure hash consistency across components.
 func CanonicalizeJSON(data []byte) ([]byte, error) {
-	var obj interface{}
+	var obj any
 	if err := json.Unmarshal(data, &obj); err != nil {
 		return nil, fmt.Errorf("canonicalize json: %w", err)
 	}
@@ -101,16 +101,16 @@ func JSONNumericUint64(value any) (uint64, bool) {
 	}
 }
 
-func encodeCanonical(enc *json.Encoder, v interface{}) error {
+func encodeCanonical(enc *json.Encoder, v any) error {
 	switch val := v.(type) {
-	case map[string]interface{}:
+	case map[string]any:
 		keys := make([]string, 0, len(val))
 		for k := range val {
 			keys = append(keys, k)
 		}
 		sort.Strings(keys)
 
-		sorted := make(map[string]interface{}, len(val))
+		sorted := make(map[string]any, len(val))
 		for _, k := range keys {
 			sorted[k] = val[k]
 		}

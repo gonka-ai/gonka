@@ -279,21 +279,6 @@ func inEscrowForcedWindow(h DecideHints) bool {
 	return h.Nonce >= h.Escrow.ForcedStart && h.Nonce <= h.Escrow.ForcedEnd
 }
 
-func (s *AnchorScheduler) shouldEmit(h DecideHints) bool {
-	s.mu.Lock()
-	k, slots := s.k, s.slotsNum
-	s.mu.Unlock()
-	if h.Escrow != nil {
-		if h.Escrow.TurnK != 0 {
-			k = h.Escrow.TurnK
-		}
-		if h.Escrow.TurnSlots != 0 {
-			slots = h.Escrow.TurnSlots
-		}
-	}
-	return shouldEmitAnchor(k, slots, h)
-}
-
 func shouldEmitAnchor(k, slots uint64, h DecideHints) bool {
 	if inEscrowForcedWindow(h) || h.ForceAnchor || h.SessionStart {
 		return true

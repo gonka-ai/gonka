@@ -102,7 +102,7 @@ func TestUser_RoundRobinSelection(t *testing.T) {
 	}
 
 	// Nonce 1 -> host 1%3=1, nonce 2 -> host 2%3=2, nonce 3 -> host 3%3=0.
-	for i := 0; i < 6; i++ {
+	for range 6 {
 		_, err := session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
@@ -273,7 +273,7 @@ func TestUser_Finalize(t *testing.T) {
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
@@ -296,7 +296,7 @@ func TestUser_Finalize_CollectsSignatures(t *testing.T) {
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
@@ -312,7 +312,7 @@ func TestUser_Finalize_CollectsSignatures(t *testing.T) {
 			signedSlots[slotID] = true
 		}
 	}
-	for i := uint32(0); i < 3; i++ {
+	for i := range uint32(3) {
 		require.True(t, signedSlots[i], "slot %d should have signed at least once", i)
 	}
 }
@@ -326,7 +326,7 @@ func TestUser_Finalize_DiffCount(t *testing.T) {
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
@@ -965,7 +965,8 @@ func (c *mempoolInjectingClient) Send(ctx context.Context, req host.HostRequest,
 	}
 	cloned := make([]*types.DevshardTx, len(resp.Mempool), len(resp.Mempool)+len(c.extra))
 	copy(cloned, resp.Mempool)
-	resp.Mempool = append(cloned, c.extra...)
+	cloned = append(cloned, c.extra...)
+	resp.Mempool = cloned
 	return resp, nil
 }
 
@@ -1360,7 +1361,7 @@ func TestCollectTimeoutVotes_SerializesPerVerifier(t *testing.T) {
 	}
 	resultsCh := make(chan collectResult, 2)
 
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		go func() {
 			votes, _, _, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, buildVerifiers(), nil)
 			resultsCh <- collectResult{votes: votes, err: err}
@@ -1388,7 +1389,7 @@ func TestCollectTimeoutVotes_SerializesPerVerifier(t *testing.T) {
 
 	close(release)
 
-	for i := 0; i < 2; i++ {
+	for range 2 {
 		select {
 		case r := <-resultsCh:
 			require.NoError(t, r.err)
@@ -1652,13 +1653,11 @@ func TestCollectTimeoutVotes_DepthGreaterThanOne(t *testing.T) {
 	}
 
 	var wg sync.WaitGroup
-	for i := 0; i < 2; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 2 {
+		wg.Go(func() {
 			_, _, _, err := session.CollectTimeoutVotes(ctx, nonce, types.TimeoutReason_TIMEOUT_REASON_REFUSED, payload, buildVerifiers(), nil)
 			require.NoError(t, err)
-		}()
+		})
 	}
 
 	// Both calls together fire 4 VerifyTimeout invocations: 2 per verifier
@@ -1723,7 +1722,7 @@ func TestUser_Finalize_SeedRevealAndSettlement(t *testing.T) {
 	}
 
 	// Send 3 inferences (one per host via round-robin).
-	for i := 0; i < numHosts; i++ {
+	for range numHosts {
 		_, err := session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
@@ -1791,7 +1790,7 @@ func TestFinalize_DoubleCall_AfterSuccess(t *testing.T) {
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
@@ -1830,8 +1829,8 @@ func TestFinalize_DoubleCall_InsufficientQuorum(t *testing.T) {
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 
-	for i := 0; i < 5; i++ {
-		session.SendInference(ctx, params) //nolint:errcheck
+	for range 5 {
+		session.SendInference(ctx, params)
 	}
 
 	err := session.Finalize(ctx)
@@ -1861,7 +1860,7 @@ func TestFinalize_SettlementRerun_EmptyDiffsCollectsFromHosts(t *testing.T) {
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
@@ -1910,7 +1909,7 @@ func TestFinalize_SignatureStatus(t *testing.T) {
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
@@ -1945,8 +1944,8 @@ func TestFinalize_SignatureStatus_InsufficientQuorum(t *testing.T) {
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 
-	for i := 0; i < 5; i++ {
-		session.SendInference(ctx, params) //nolint:errcheck
+	for range 5 {
+		session.SendInference(ctx, params)
 	}
 
 	err := session.Finalize(ctx)

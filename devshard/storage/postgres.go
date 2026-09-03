@@ -12,12 +12,12 @@ import (
 	"sync"
 	"time"
 
-	"devshard/observability"
-	"devshard/types"
-
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"devshard/observability"
+	"devshard/types"
 )
 
 // Postgres implements Storage on top of PostgreSQL declarative partitioning.
@@ -182,27 +182,35 @@ var postgresPartitionedParents = []string{
 func pgSessionsPartition(epochID uint64) string {
 	return fmt.Sprintf("%s_epoch_%d", pgSessionsParent, epochID)
 }
+
 func pgDiffsPartition(epochID uint64) string {
 	return fmt.Sprintf("%s_epoch_%d", pgDiffsParent, epochID)
 }
+
 func pgSignaturesPartition(epochID uint64) string {
 	return fmt.Sprintf("%s_epoch_%d", pgSignaturesParent, epochID)
 }
+
 func pgSnapshotsPartition(epochID uint64) string {
 	return fmt.Sprintf("%s_epoch_%d", pgSnapshotsParent, epochID)
 }
+
 func pgInferencesPartition(epochID uint64) string {
 	return fmt.Sprintf("%s_epoch_%d", pgInferencesParent, epochID)
 }
+
 func pgValidationObsPartition(epochID uint64) string {
 	return fmt.Sprintf("%s_epoch_%d", pgValidationObsParent, epochID)
 }
+
 func pgInferenceValidationObsPartition(epochID uint64) string {
 	return fmt.Sprintf("%s_epoch_%d", pgInferenceValidationObsParent, epochID)
 }
+
 func pgSealedValidationObsPartition(epochID uint64) string {
 	return fmt.Sprintf("%s_epoch_%d", pgSealedValidationObsParent, epochID)
 }
+
 func pgValidationLeasesPartition(epochID uint64) string {
 	return fmt.Sprintf("%s_epoch_%d", pgValidationLeasesParent, epochID)
 }
@@ -672,10 +680,7 @@ func forEachEscrowEpochBatch(escrows []string, epochs []int64, fn func([]string,
 		return fmt.Errorf("escrow/epoch batch length mismatch: %d vs %d", len(escrows), len(epochs))
 	}
 	for start := 0; start < len(escrows); start += postgresIndexRepairBatchSize {
-		end := start + postgresIndexRepairBatchSize
-		if end > len(escrows) {
-			end = len(escrows)
-		}
+		end := min(start+postgresIndexRepairBatchSize, len(escrows))
 		if err := fn(escrows[start:end], epochs[start:end]); err != nil {
 			return err
 		}
@@ -937,12 +942,13 @@ func (s *Postgres) CreateSession(params CreateSessionParams) error {
 		`SELECT epoch_id FROM devshard_session_index WHERE escrow_id = $1`,
 		params.EscrowID,
 	).Scan(&indexedEpoch)
-	if indexErr == nil {
+	switch {
+	case indexErr == nil:
 		if indexedEpoch != params.EpochID {
 			return fmt.Errorf("%w: escrow %s exists in epoch %d, requested epoch %d",
 				ErrSessionEpochConflict, params.EscrowID, indexedEpoch, params.EpochID)
 		}
-	} else if errors.Is(indexErr, pgx.ErrNoRows) {
+	case errors.Is(indexErr, pgx.ErrNoRows):
 		if _, err := tx.Exec(ctx,
 			`INSERT INTO devshard_session_index (escrow_id, epoch_id)
 			 VALUES ($1, $2)
@@ -961,7 +967,7 @@ func (s *Postgres) CreateSession(params CreateSessionParams) error {
 			return fmt.Errorf("%w: escrow %s exists in epoch %d, requested epoch %d",
 				ErrSessionEpochConflict, params.EscrowID, indexedEpoch, params.EpochID)
 		}
-	} else {
+	default:
 		return fmt.Errorf("read session index: %w", indexErr)
 	}
 
@@ -1657,10 +1663,7 @@ func (s *Postgres) InsertSealedInferences(escrowID string, rows []InferenceRow) 
 		return err
 	}
 	for start := 0; start < len(rows); start += sealedInferenceInsertChunk {
-		end := start + sealedInferenceInsertChunk
-		if end > len(rows) {
-			end = len(rows)
-		}
+		end := min(start+sealedInferenceInsertChunk, len(rows))
 		if err := s.insertSealedInferenceChunk(epochID, escrowID, rows[start:end]); err != nil {
 			return err
 		}
@@ -1693,10 +1696,7 @@ func (s *Postgres) BulkInsertSealedInferences(escrowID string, rows []InferenceR
 		return err
 	}
 	for start := 0; start < len(rows); start += sealedInferenceCopyChunk {
-		end := start + sealedInferenceCopyChunk
-		if end > len(rows) {
-			end = len(rows)
-		}
+		end := min(start+sealedInferenceCopyChunk, len(rows))
 		chunk := rows[start:end]
 		if err := s.copySealedInferenceChunk(epochID, escrowID, chunk); err != nil {
 			var pgErr *pgconn.PgError
@@ -2020,10 +2020,7 @@ func (s *Postgres) DrainInferenceValidationObsBatch(escrowID string, inferenceID
 		return err
 	}
 	for start := 0; start < len(inferenceIDs); start += validationObsRebuildChunk {
-		end := start + validationObsRebuildChunk
-		if end > len(inferenceIDs) {
-			end = len(inferenceIDs)
-		}
+		end := min(start+validationObsRebuildChunk, len(inferenceIDs))
 		ids := make([]int64, 0, end-start)
 		for _, id := range inferenceIDs[start:end] {
 			ids = append(ids, int64(id))
@@ -2271,8 +2268,8 @@ func (s *Postgres) DeleteEscrowCache(escrowID string) error {
 func pgPartitionEpoch(name string) (uint64, bool) {
 	for _, parent := range []string{pgSessionsParent, pgDiffsParent, pgSignaturesParent, pgSnapshotsParent, pgInferencesParent, pgValidationLeasesParent, pgValidationObsParent, pgInferenceValidationObsParent, pgSealedValidationObsParent} {
 		prefix := parent + "_epoch_"
-		if strings.HasPrefix(name, prefix) {
-			epochID, err := strconv.ParseUint(strings.TrimPrefix(name, prefix), 10, 64)
+		if after, ok := strings.CutPrefix(name, prefix); ok {
+			epochID, err := strconv.ParseUint(after, 10, 64)
 			return epochID, err == nil
 		}
 	}

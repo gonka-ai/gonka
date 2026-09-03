@@ -86,11 +86,10 @@ func Init(ctx context.Context, cfg Config) (func(context.Context) error, error) 
 	)
 
 	return func(shutdownCtx context.Context) error {
-		err := errors.Join(tp.Shutdown(shutdownCtx))
-		if err != nil {
-			logError("shutdown.failed", "Failed to shutdown OTel tracer provider", err)
+		if err := errors.Join(tp.Shutdown(shutdownCtx)); err != nil {
+			return logError("shutdown.failed", "Failed to shutdown OTel tracer provider", err)
 		}
-		return err
+		return nil
 	}, nil
 }
 

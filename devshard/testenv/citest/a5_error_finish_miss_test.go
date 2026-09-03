@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	"devshard/testenv/citest/harness"
 	"devshard/testenv/config"
 	"devshard/testenv/mockopenai"
-
-	"github.com/stretchr/testify/require"
 )
 
 // TestA5_ErrorFinishMiss verifies a streamed OpenAI error envelope (HTTP 200 SSE)

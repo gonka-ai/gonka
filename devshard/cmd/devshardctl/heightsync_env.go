@@ -12,6 +12,7 @@ import (
 
 	"common/chain"
 	"common/chainoracle/blocks"
+
 	blockclient "devshard/chainoracle/blocks/client"
 	"devshard/chainoracle/blocks/direct"
 	"devshard/chainoracle/blocks/failover"
@@ -36,9 +37,9 @@ type heightSyncProcessState struct {
 }
 
 var (
-	hsOnce sync.Once
-	hsSt   *heightSyncProcessState
-	hsErr  error
+	heightSyncOnce    sync.Once
+	heightSyncState   *heightSyncProcessState
+	errHeightSyncInit error
 )
 
 // initGatewaySlog raises slog when DEVSHARD_LOG_LEVEL is set.
@@ -103,21 +104,21 @@ func initGatewayHeightSync(chainClient *chain.Client, cometRPC string) error {
 }
 
 func loadHeightSyncProcessState(chainClient *chain.Client, cometRPC string) (*heightSyncProcessState, error) {
-	hsOnce.Do(func() {
+	heightSyncOnce.Do(func() {
 		if !gatewayChainOracleFromEnv() {
 			return
 		}
 		url := strings.TrimSpace(os.Getenv(envChainOracleURL))
 		if _, err := parseUintEnv(envHeightSyncK); err != nil {
-			hsErr = err
+			errHeightSyncInit = err
 			return
 		}
 		if _, err := parseUintEnv(envHeightSyncSlots); err != nil {
-			hsErr = err
+			errHeightSyncInit = err
 			return
 		}
 		if _, err := parseDurationEnv(envHeightSyncProbe); err != nil {
-			hsErr = err
+			errHeightSyncInit = err
 			return
 		}
 
@@ -125,7 +126,7 @@ func loadHeightSyncProcessState(chainClient *chain.Client, cometRPC string) (*he
 		if url != "" {
 			cli, err := blockclient.NewLookup(blockclient.HTTPConfig{BaseURL: url})
 			if err != nil {
-				hsErr = fmt.Errorf("chainoracle lookup client: %w", err)
+				errHeightSyncInit = fmt.Errorf("chainoracle lookup client: %w", err)
 				return
 			}
 			lookup = cli
@@ -160,11 +161,11 @@ func loadHeightSyncProcessState(chainClient *chain.Client, cometRPC string) (*he
 			}
 		}
 		oracle := failover.New(cache, hist, chainOracle)
-		hsSt = &heightSyncProcessState{oracle: oracle, closer: closer}
+		heightSyncState = &heightSyncProcessState{oracle: oracle, closer: closer}
 		slog.Info("height sync chain follower enabled",
 			"oracle_url", url, "direct_chain", chainOracle != nil, "comet_rpc", rpc)
 	})
-	return hsSt, hsErr
+	return heightSyncState, errHeightSyncInit
 }
 
 func heightSyncCourierSourcesPresent() bool {

@@ -39,7 +39,7 @@ func TestTimeoutVoteContentResponseHashRemoved(t *testing.T) {
 		t.Fatal("TimeoutVoteContent must not have response_hash; error-miss uses ErrorMissVoteContent")
 	}
 	var reserved5 bool
-	for i := 0; i < md.ReservedRanges().Len(); i++ {
+	for i := range md.ReservedRanges().Len() {
 		r := md.ReservedRanges().Get(i)
 		if r[0] <= 5 && 5 < r[1] {
 			reserved5 = true

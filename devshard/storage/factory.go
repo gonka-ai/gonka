@@ -97,7 +97,7 @@ func newHAStorage(ctx context.Context, storeDir string) (Storage, error) {
 		if migErr != nil {
 			_ = pg.Close()
 			if closeErr != nil {
-				return nil, fmt.Errorf("postgres migrate failed: %w (also close sqlite: %v)", migErr, closeErr)
+				return nil, fmt.Errorf("postgres migrate failed: %w (also close sqlite: %w)", migErr, closeErr)
 			}
 			return nil, fmt.Errorf("postgres migrate failed: %w", migErr)
 		}

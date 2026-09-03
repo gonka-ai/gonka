@@ -573,7 +573,7 @@ func TestE2E_AccountingGhostStateDivergedNoSendReason(t *testing.T) {
 
 	// The first disagreement only rewinds the host, so the block -- and the ghost that follows it -- needs
 	// the participant to be dispatched to more than once.
-	for i := 0; i < 3*len(env.hostURLs); i++ {
+	for i := range 3 * len(env.hostURLs) {
 		label := fmt.Sprintf("accounting state divergence ghost %d", i+1)
 		resp := testutil.PostJSONRaw(t, client, env.clientURL+"/v1/chat/completions", testutil.ChatCompletionBody(label, false), testutil.AdminAPIKey)
 		testutil.LogRawResponse(t, label, resp)

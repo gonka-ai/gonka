@@ -9,10 +9,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/require"
+
 	"devshard/testenv/config"
 	"devshard/testenv/mockchain/adminface"
-
-	"github.com/stretchr/testify/require"
 )
 
 // EscrowCreatedHostEvent is the mock-dapi /testenv/host-events/escrow-created body.

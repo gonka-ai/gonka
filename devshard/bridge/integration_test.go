@@ -4,11 +4,12 @@ package bridge
 
 import (
 	"os"
-	"devshard/types"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"devshard/types"
 )
 
 func chainGRPCURL(t *testing.T) string {

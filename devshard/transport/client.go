@@ -18,18 +18,16 @@ import (
 	"syscall"
 	"time"
 
+	"common/chainoracle/blocks"
+	"common/httpguard"
 	json "github.com/goccy/go-json"
 
+	devshardpkg "devshard"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"
 	"devshard/signing"
 	"devshard/types"
-
-	"common/chainoracle/blocks"
-	"common/httpguard"
-
-	devshardpkg "devshard"
 )
 
 var sharedTransports sync.Map // baseURL -> *http.Transport
@@ -463,8 +461,8 @@ func (c *HTTPClient) postJSON(ctx context.Context, path string, timeout time.Dur
 func (c *HTTPClient) get(ctx context.Context, path string, timeout time.Duration, resp any) error {
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	url := fmt.Sprintf("%s%s%s", c.baseURL, c.routePrefix, path)
-	body, err := c.doGet(ctx, url)
+	requestURL := fmt.Sprintf("%s%s%s", c.baseURL, c.routePrefix, path)
+	body, err := c.doGet(ctx, requestURL)
 	if err != nil {
 		return err
 	}
@@ -572,7 +570,7 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 				logging.Warn("sse_event_too_large", "subsystem", "transport", "escrow", c.escrowID, "limit_bytes", maxLine)
 				return &result, readErr
 			}
-			if readErr == io.EOF {
+			if errors.Is(readErr, io.EOF) {
 				// A cancelled context (client disconnect, race resolved, drain)
 				// can surface as a clean EOF once the peer closes the body after
 				// we abort the request. The receipt event sets sawTerminator
@@ -651,11 +649,12 @@ func (c *HTTPClient) handleSSELine(
 	if !strings.HasPrefix(line, "data: ") {
 		if line != "" && !strings.HasPrefix(line, ":") && !*unexpectedLineLogged {
 			lineLen, lineHex := sseLineBytesForLog(line)
-			if strings.HasPrefix(line, "data:") {
+			switch {
+			case strings.HasPrefix(line, "data:"):
 				logging.Warn("sse_data_line_missing_space", "subsystem", "transport", "escrow", c.escrowID, "line_prefix", truncate(line, 120), "line_len", lineLen, "line_hex", lineHex)
-			} else if strings.HasPrefix(line, "event:") || strings.HasPrefix(line, "id:") || strings.HasPrefix(line, "retry:") {
+			case strings.HasPrefix(line, "event:"), strings.HasPrefix(line, "id:"), strings.HasPrefix(line, "retry:"):
 				// Standard SSE fields we intentionally skip.
-			} else {
+			default:
 				*unexpectedLineLogged = true
 				logging.Warn("sse_unexpected_line", "subsystem", "transport", "escrow", c.escrowID, "line_prefix", truncate(line, 120), "line_len", lineLen, "line_hex", lineHex)
 			}
@@ -1020,10 +1019,7 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte, co
 			c.observeNonInferenceFinal(path, err)
 			return nil, err
 		}
-		sleep := delay
-		if sleep > remaining {
-			sleep = remaining
-		}
+		sleep := min(delay, remaining)
 		logging.Debug("non_inference_retry", "path", path, "error", err.Error(), "sleep", sleep.String())
 		if sleepErr := sleepContext(ctx, sleep); sleepErr != nil {
 			c.observeNonInferenceFinal(path, lastRetryable)
@@ -1045,7 +1041,7 @@ func (c *HTTPClient) doPostRawOnce(ctx context.Context, path string, body []byte
 // postRawAttempt is one signed POST with no admission check. Callers that may
 // retry admit once and then loop on this.
 func (c *HTTPClient) postRawAttempt(ctx context.Context, path string, body []byte, contentType string, observe bool) (*http.Response, error) {
-	url := c.baseURL + c.routePrefix + path
+	requestURL := c.baseURL + c.routePrefix + path
 
 	ts := time.Now().Unix()
 	sig, err := SignRequest(c.signer, c.escrowID, body, ts)
@@ -1053,7 +1049,7 @@ func (c *HTTPClient) postRawAttempt(ctx context.Context, path string, body []byt
 		return nil, fmt.Errorf("sign request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, requestURL, bytes.NewReader(body))
 	if err != nil {
 		return nil, err
 	}
@@ -1066,7 +1062,7 @@ func (c *HTTPClient) postRawAttempt(ctx context.Context, path string, body []byt
 		if observe {
 			c.observeTransportFailure(path, err)
 		}
-		return nil, fmt.Errorf("POST %s: %w", url, err)
+		return nil, fmt.Errorf("POST %s: %w", requestURL, err)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -1123,45 +1119,42 @@ func (c *HTTPClient) doPostOnce(ctx context.Context, path string, body []byte) (
 
 // doGet sends a GET request and returns the response body.
 // No auth signing -- GET endpoints skip auth on the server side for now.
-func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
-	if isInferencePath(url) {
-		return c.doGetOnce(ctx, url, true)
+func (c *HTTPClient) doGet(ctx context.Context, requestURL string) ([]byte, error) {
+	if isInferencePath(requestURL) {
+		return c.doGetOnce(ctx, requestURL, true)
 	}
 	// See doPostRaw: admit once per logical request, and never attribute a local
 	// limiter rejection to the host.
-	if err := c.allowRequest(url); err != nil {
+	if err := c.allowRequest(requestURL); err != nil {
 		return nil, err
 	}
 	deadline := nonInferenceRetryDeadline(ctx)
 	delay := nonInferenceRetryInitial
 	var lastRetryable error
 	for {
-		body, err := c.getAttempt(ctx, url, false)
+		body, err := c.getAttempt(ctx, requestURL, false)
 		if err == nil {
-			c.observeResult(url, http.StatusOK)
+			c.observeResult(requestURL, http.StatusOK)
 			return body, nil
 		}
 		if !IsRetryableNonInference(err) {
 			if lastRetryable != nil && isContextFinished(err) {
-				c.observeNonInferenceFinal(url, lastRetryable)
+				c.observeNonInferenceFinal(requestURL, lastRetryable)
 				return nil, lastRetryable
 			}
-			c.observeNonInferenceFinal(url, err)
+			c.observeNonInferenceFinal(requestURL, err)
 			return nil, err
 		}
 		lastRetryable = err
 		remaining := time.Until(deadline)
 		if remaining <= 0 {
-			c.observeNonInferenceFinal(url, err)
+			c.observeNonInferenceFinal(requestURL, err)
 			return nil, err
 		}
-		sleep := delay
-		if sleep > remaining {
-			sleep = remaining
-		}
-		logging.Debug("non_inference_retry", "path", url, "error", err.Error(), "sleep", sleep.String())
+		sleep := min(delay, remaining)
+		logging.Debug("non_inference_retry", "path", requestURL, "error", err.Error(), "sleep", sleep.String())
 		if sleepErr := sleepContext(ctx, sleep); sleepErr != nil {
-			c.observeNonInferenceFinal(url, lastRetryable)
+			c.observeNonInferenceFinal(requestURL, lastRetryable)
 			return nil, lastRetryable
 		}
 		if delay < nonInferenceRetryBudget {
@@ -1170,16 +1163,16 @@ func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
 	}
 }
 
-func (c *HTTPClient) doGetOnce(ctx context.Context, url string, observe bool) ([]byte, error) {
-	if err := c.allowRequest(url); err != nil {
+func (c *HTTPClient) doGetOnce(ctx context.Context, requestURL string, observe bool) ([]byte, error) {
+	if err := c.allowRequest(requestURL); err != nil {
 		return nil, err
 	}
-	return c.getAttempt(ctx, url, observe)
+	return c.getAttempt(ctx, requestURL, observe)
 }
 
 // getAttempt is one GET with no admission check. See postRawAttempt.
-func (c *HTTPClient) getAttempt(ctx context.Context, url string, observe bool) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+func (c *HTTPClient) getAttempt(ctx context.Context, requestURL string, observe bool) ([]byte, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -1187,7 +1180,7 @@ func (c *HTTPClient) getAttempt(ctx context.Context, url string, observe bool) (
 	resp, err := c.http.Do(req)
 	if err != nil {
 		if observe {
-			c.observeTransportFailure(url, err)
+			c.observeTransportFailure(requestURL, err)
 		}
 		return nil, err
 	}
@@ -1197,11 +1190,11 @@ func (c *HTTPClient) getAttempt(ctx context.Context, url string, observe bool) (
 		respBody := readErrorBody(resp.Body)
 		devshardError := resp.Header.Get(HeaderDevshardError)
 		routerError := resp.Header.Get(HeaderDevshardRouterError)
-		if observe && shouldObserveUpstreamStatus(url, resp.StatusCode, respBody, devshardError, routerError) {
-			c.observeResultWithBody(url, resp.StatusCode, respBody, devshardError, routerError)
+		if observe && shouldObserveUpstreamStatus(requestURL, resp.StatusCode, respBody, devshardError, routerError) {
+			c.observeResultWithBody(requestURL, resp.StatusCode, respBody, devshardError, routerError)
 		}
 		return nil, &UpstreamStatusError{
-			Path:          url,
+			Path:          requestURL,
 			StatusCode:    resp.StatusCode,
 			Body:          respBody,
 			DevshardError: devshardError,
@@ -1209,7 +1202,7 @@ func (c *HTTPClient) getAttempt(ctx context.Context, url string, observe bool) (
 		}
 	}
 	if observe {
-		c.observeResult(url, resp.StatusCode)
+		c.observeResult(requestURL, resp.StatusCode)
 	}
 	return io.ReadAll(resp.Body)
 }

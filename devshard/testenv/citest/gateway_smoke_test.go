@@ -5,9 +5,9 @@ import (
 	"testing"
 	"time"
 
-	"devshard/testenv/citest/harness"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/testenv/citest/harness"
 )
 
 // TestGatewayPhase7_Smoke exercises devshardctl → versiond-router → devshardd → mock-openai.

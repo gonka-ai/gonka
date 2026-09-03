@@ -9,9 +9,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
-
 	"common/logging"
+	"github.com/labstack/echo/v4"
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
 
 	devshardpkg "devshard"
@@ -22,9 +21,9 @@ import (
 )
 
 const (
-	statsCacheTTL          = 60 * time.Second
-	statsNegativeCacheTTL  = 10 * time.Second
-	statsNegativeCacheMax  = 4096
+	statsCacheTTL         = 60 * time.Second
+	statsNegativeCacheTTL = 10 * time.Second
+	statsNegativeCacheMax = 4096
 )
 
 type statsShardDetailCache struct {

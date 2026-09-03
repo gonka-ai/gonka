@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -168,9 +169,7 @@ func copyMockenvParticipantSlotCounts(slotCounts map[string]int) map[string]int 
 		return nil
 	}
 	out := make(map[string]int, len(slotCounts))
-	for key, count := range slotCounts {
-		out[key] = count
-	}
+	maps.Copy(out, slotCounts)
 	return out
 }
 

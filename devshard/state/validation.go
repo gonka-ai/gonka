@@ -67,10 +67,13 @@ func penalizePerInferenceScaled32(rateBasisPoints, validatorSlotCount, totalSlot
 // Uses integer math only (no float64) to avoid architecture-dependent state root splits.
 //
 // Float reference (not used at runtime):
-//   rate = rateBasisPoints / 10000
-//   probability = rate * validatorSlotCount / (totalSlots - executorSlotCount)
+//
+//	rate = rateBasisPoints / 10000
+//	probability = rate * validatorSlotCount / (totalSlots - executorSlotCount)
+//
 // Combined (single division):
-//   probability = (rateBasisPoints * validatorSlotCount) / ((totalSlots - executorSlotCount) * 10000)
+//
+//	probability = (rateBasisPoints * validatorSlotCount) / ((totalSlots - executorSlotCount) * 10000)
 //
 // Conceptually: accept iff deterministicHash(seed, id) / 2^64 < probability (uniform draw in [0,1)).
 // Implemented with 32-bit precision: (hash >> 32) < floor(probability * 2^32), using uint64ProbabilityScale32.

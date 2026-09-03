@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"sort"
 	"strconv"
@@ -14,21 +15,18 @@ import (
 	"sync/atomic"
 	"time"
 
-	"golang.org/x/sync/singleflight"
-
-	"github.com/labstack/echo/v4"
-
+	"common/chainoracle/blocks"
 	"common/logging"
 	"common/storage/payloads"
 	"common/utils"
 	validationpkg "common/validation"
-
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/cmd/inferenced/cmd"
 	"github.com/productscience/inference/x/inference/calculations"
 	inferenceTypes "github.com/productscience/inference/x/inference/types"
+	"golang.org/x/sync/singleflight"
 
-	"common/chainoracle/blocks"
 	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/heightsync"
@@ -417,9 +415,7 @@ func (m *HostManager) SetBinaryVersion(v string) {
 func (m *HostManager) CloseHosts() {
 	m.sessionsMutex.Lock()
 	sessions := make(map[string]*transport.Server, len(m.sessions))
-	for escrowID, srv := range m.sessions {
-		sessions[escrowID] = srv
-	}
+	maps.Copy(sessions, m.sessions)
 	m.sessions = make(map[string]*transport.Server)
 	m.sessionsMutex.Unlock()
 
@@ -584,7 +580,7 @@ func (m *HostManager) getOrCreate(escrowID string, escrow *bridge.EscrowInfo) (*
 		return nil, err
 	}
 
-	v, err, _ := m.sf.Do(escrowID, func() (interface{}, error) {
+	v, err, _ := m.sf.Do(escrowID, func() (any, error) {
 		if srv, ok := m.existingServer(escrowID); ok {
 			return srv, nil
 		}
@@ -960,20 +956,15 @@ func (m *HostManager) RecoverSessionsContext(ctx context.Context) error {
 		return nil
 	}
 
-	workers := recoverSessionsConcurrency
-	if len(active) < workers {
-		workers = len(active)
-	}
+	workers := min(len(active), recoverSessionsConcurrency)
 	logging.Info("starting devshard session recovery", inferenceTypes.System,
 		"session_count", len(active), "worker_count", workers)
 
 	queue := newRecoveryQueue(active, m.recoveryGate.firstRemainingRequested)
 	var wg sync.WaitGroup
 	var prioritizedCount atomic.Int64
-	for i := 0; i < workers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range workers {
+		wg.Go(func() {
 			for {
 				sess, ok := queue.next()
 				if !ok {
@@ -1015,7 +1006,7 @@ func (m *HostManager) RecoverSessionsContext(ctx context.Context) error {
 					"escrow_id", sess.EscrowID, "epoch_id", sess.EpochID,
 					"duration", time.Since(sessionStartedAt))
 			}
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -1037,10 +1028,7 @@ func (m *HostManager) RecoverSessionsContext(ctx context.Context) error {
 // Each query is bounded by recoveryEscrowCheckTimeout and all of them together
 // by deadline, because recovery is synchronous in host startup.
 func (m *HostManager) chainReportsSettled(escrowID string, deadline time.Time) bool {
-	budget := time.Until(deadline)
-	if budget > recoveryEscrowCheckTimeout {
-		budget = recoveryEscrowCheckTimeout
-	}
+	budget := min(time.Until(deadline), recoveryEscrowCheckTimeout)
 	settled, err := bridge.SettledWithin(m.bridge, escrowID, budget)
 	if err != nil {
 		logging.Warn("chain settled-check failed during recovery; recovering local row",
@@ -1054,7 +1042,7 @@ func (m *HostManager) recoverAndStoreSession(escrowID string) (*transport.Server
 	if srv, ok := m.existingServer(escrowID); ok {
 		return srv, nil
 	}
-	v, err, _ := m.sf.Do(escrowID, func() (interface{}, error) {
+	v, err, _ := m.sf.Do(escrowID, func() (any, error) {
 		if srv, ok := m.existingServer(escrowID); ok {
 			return srv, nil
 		}
@@ -1248,7 +1236,8 @@ func (m *HostManager) HandlePayloads(c echo.Context, srv *transport.Server) erro
 	validatorAddress := c.Request().Header.Get(utils.XValidatorAddressHeader)
 
 	emit := func(level observability.Level, msg string, status observability.MetricStatus, reason observability.Reason, err error, fields ...any) {
-		base := []any{"inference_id", inferenceID, "validator_address", validatorAddress}
+		base := make([]any, 0, 4+len(fields))
+		base = append(base, "inference_id", inferenceID, "validator_address", validatorAddress)
 		observability.LogPayloadRequest(ctx, level, escrowID, status, reason, msg, err, append(base, fields...)...)
 	}
 
@@ -1437,7 +1426,7 @@ func (m *HostManager) getValidatorPubKeys(ctx context.Context, validatorAddress,
 }
 
 // retrievePayloadsWithAdjacentEpochs tries to retrieve payloads from storage,
-// checking adjacent epochs if not found under the primary epochId.
+// checking adjacent epochs if not found under the primary epochID.
 func (m *HostManager) retrievePayloadsWithAdjacentEpochs(ctx context.Context, escrowID string, inferenceID string, epochID uint64) ([]byte, []byte, uint64, error) {
 	parsedID, err := strconv.ParseUint(inferenceID, 10, 64)
 	if err != nil {

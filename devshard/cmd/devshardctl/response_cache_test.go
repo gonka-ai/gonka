@@ -153,7 +153,7 @@ func TestChatResponseCacheOverwriteDoesNotLeakBytes(t *testing.T) {
 	cache := newChatResponseCache(time.Minute, 1<<20)
 	now := time.Now()
 
-	for i := 0; i < 100; i++ {
+	for i := range 100 {
 		cache.Set("same-key", cacheEntryForTest(byte(i), 4096), now)
 	}
 

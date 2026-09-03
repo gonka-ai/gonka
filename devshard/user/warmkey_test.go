@@ -192,7 +192,7 @@ func TestProcessResponse_WarmKey_Finalize(t *testing.T) {
 	session, _, _ := setupWarmKeySession(t, 3)
 
 	ctx := context.Background()
-	for i := 0; i < 3; i++ {
+	for range 3 {
 		_, err := session.SendInference(ctx, defaultParams)
 		require.NoError(t, err)
 	}

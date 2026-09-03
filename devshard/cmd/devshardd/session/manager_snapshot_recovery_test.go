@@ -140,7 +140,7 @@ func populateFinishedAndSeal(t *testing.T, store storage.Storage) ([]types.SlotA
 	apply(1, []*types.DevshardTx{start})
 	execSig := testutil.SignExecutorReceipt(t, hosts[1], "1", 1, start.GetStartInference().GetPromptHash(),
 		"llama", 100, testutil.TestMaxTokens, 1000, 2000)
-	apply(2, []*types.DevshardTx{&types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+	apply(2, []*types.DevshardTx{{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
 	}}}})
 	finish := &types.MsgFinishInference{
@@ -148,7 +148,7 @@ func populateFinishedAndSeal(t *testing.T, store storage.Storage) ([]types.SlotA
 		ExecutorSlot: 1, EscrowId: "1",
 	}
 	finish.ProposerSig = testutil.SignProposerTx(t, hosts[1], finish)
-	apply(3, []*types.DevshardTx{&types.DevshardTx{Tx: &types.DevshardTx_FinishInference{FinishInference: finish}}})
+	apply(3, []*types.DevshardTx{{Tx: &types.DevshardTx_FinishInference{FinishInference: finish}}})
 	require.NoError(t, sm.SealInference(1))
 	return group, user, hosts[0]
 }
@@ -319,9 +319,9 @@ func TestRecoverSessions_SavesSnapshotAfterFullReplay(t *testing.T) {
 	nonce, data, err := store.LoadSnapshot("1")
 	require.NoError(t, err)
 	require.Equal(t, uint64(10), nonce)
-	state, committed, sealed, _, err := host.UnmarshalStateSnapshotWithCommitted(data)
+	escrowState, committed, sealed, _, err := host.UnmarshalStateSnapshotWithCommitted(data)
 	require.NoError(t, err)
-	require.Equal(t, uint64(10), state.LatestNonce)
+	require.Equal(t, uint64(10), escrowState.LatestNonce)
 	require.NotNil(t, committed)
 	_ = sealed
 }

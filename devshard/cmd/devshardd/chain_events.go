@@ -2,14 +2,15 @@ package main
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 
 	"common/chain"
-	chainbridge "devshard/cmd/devshardd/bridge"
-	"devshard/cmd/devshardd/events"
-
 	cmtservice "github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	chaintypes "github.com/productscience/inference/x/inference/types"
+
+	chainbridge "devshard/cmd/devshardd/bridge"
+	"devshard/cmd/devshardd/events"
 )
 
 type chainEventBridge struct {
@@ -85,7 +86,7 @@ func (b *chainEventBridge) OnReady(h func(bool)) {
 }
 
 func (b *chainEventBridge) Start(ctx context.Context) error {
-	if err := b.listener.Start(ctx); err != nil && err != context.Canceled {
+	if err := b.listener.Start(ctx); err != nil && !errors.Is(err, context.Canceled) {
 		return err
 	}
 	return nil

@@ -306,7 +306,7 @@ func emitHeightSyncView(ch chan<- prometheus.Metric, d heightSyncDescs, view hei
 	for _, row := range view.PeerSeen {
 		seenAny = true
 		ch <- prometheus.MustNewConstMetric(d.peerSeenCount, prometheus.GaugeValue, float64(row.Count), id, slotLabel(row.Observer))
-		for sub := uint32(0); sub < slotsNum; sub++ {
+		for sub := range slotsNum {
 			bit := heightsync.PeerSeenBit(row.Bits, sub)
 			if !bit {
 				if int(sub) < len(unseen) {
@@ -323,7 +323,7 @@ func emitHeightSyncView(ch chan<- prometheus.Metric, d heightSyncDescs, view hei
 		}
 	}
 	if seenAny {
-		for sub := uint32(0); sub < slotsNum; sub++ {
+		for sub := range slotsNum {
 			ch <- prometheus.MustNewConstMetric(d.peerSeenUnseen, prometheus.GaugeValue, float64(unseen[sub]), id, slotLabel(sub))
 		}
 	}

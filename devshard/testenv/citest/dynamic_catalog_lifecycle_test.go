@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	cosrv "devshard/chainoracle/server"
 	"devshard/testenv/citest/harness"
-
-	"github.com/stretchr/testify/require"
 )
 
 // TestDynamicCatalogRemovalAndReadmission verifies that the router and real

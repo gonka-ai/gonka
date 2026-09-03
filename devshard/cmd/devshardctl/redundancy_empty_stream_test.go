@@ -818,7 +818,7 @@ func TestInflightFinished_StallHostNotFinished(t *testing.T) {
 func TestErrEmptyStreamSentinel(t *testing.T) {
 	require.True(t, errors.Is(errEmptyStream, errEmptyStream))
 	// Make sure the sentinel is unique and not nil.
-	var x error = errEmptyStream
+	x := errEmptyStream
 	require.NotNil(t, x)
 	require.Contains(t, errEmptyStream.Error(), "empty content stream")
 }

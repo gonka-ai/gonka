@@ -11,6 +11,8 @@ import (
 	"common/chain"
 	"common/chainoracle/blocks"
 	"common/logging"
+	inferenceTypes "github.com/productscience/inference/x/inference/types"
+
 	blockclient "devshard/chainoracle/blocks/client"
 	"devshard/chainoracle/blocks/direct"
 	"devshard/chainoracle/blocks/failover"
@@ -18,8 +20,6 @@ import (
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/transport"
-
-	inferenceTypes "github.com/productscience/inference/x/inference/types"
 )
 
 const (

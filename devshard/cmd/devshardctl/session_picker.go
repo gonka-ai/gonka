@@ -409,10 +409,7 @@ func (p *sessionPicker) run() {
 		case errors.Is(err, errPickerHold):
 			// Held a nonce. Sleep until either a new submit (which may
 			// match) or the stale timer fires (which will burn).
-			wait := time.Until(holdUntil)
-			if wait < 0 {
-				wait = 0
-			}
+			wait := max(time.Until(holdUntil), 0)
 			timer := time.NewTimer(wait)
 			select {
 			case <-p.notify:

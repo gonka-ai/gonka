@@ -7,7 +7,7 @@ import (
 
 func benchObsEntries(n int) []ValidationObsEntry {
 	entries := make([]ValidationObsEntry, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		entries[i] = ValidationObsEntry{InferenceID: uint64(i + 1), SlotID: 1}
 	}
 	return entries
@@ -15,7 +15,7 @@ func benchObsEntries(n int) []ValidationObsEntry {
 
 func benchSealedIDs(n int) []uint64 {
 	ids := make([]uint64, n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		ids[i] = uint64(i + 1)
 	}
 	return ids
@@ -27,7 +27,7 @@ func BenchmarkValidationObsDrain_PerID(b *testing.B) {
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
 			db := benchSQLite(b)
 			ids := benchSealedIDs(n)
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				b.StopTimer()
 				if err := db.RecordValidationsAppliedOnce("escrow-1", benchObsEntries(n)); err != nil {
 					b.Fatal(err)
@@ -49,7 +49,7 @@ func BenchmarkValidationObsDrain_Batched(b *testing.B) {
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
 			db := benchSQLite(b)
 			ids := benchSealedIDs(n)
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				b.StopTimer()
 				if err := db.RecordValidationsAppliedOnce("escrow-1", benchObsEntries(n)); err != nil {
 					b.Fatal(err)
@@ -69,8 +69,8 @@ func BenchmarkValidationObsRecord_PerDiff(b *testing.B) {
 	for _, n := range []int{2_000, 20_000} {
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
 			db := benchSQLite(b)
-			for i := 0; i < b.N; i++ {
-				for j := 0; j < n; j++ {
+			for range b.N {
+				for j := range n {
 					if err := db.RecordValidationsAppliedOnce("escrow-1", []ValidationObsEntry{
 						{InferenceID: uint64(j + 1), SlotID: 1},
 					}); err != nil {
@@ -87,12 +87,9 @@ func BenchmarkValidationObsRecord_Chunked(b *testing.B) {
 		b.Run(fmt.Sprintf("n=%d", n), func(b *testing.B) {
 			db := benchSQLite(b)
 			entries := benchObsEntries(n)
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				for start := 0; start < n; start += validationObsRebuildChunk {
-					end := start + validationObsRebuildChunk
-					if end > n {
-						end = n
-					}
+					end := min(start+validationObsRebuildChunk, n)
 					if err := db.RecordValidationsAppliedOnce("escrow-1", entries[start:end]); err != nil {
 						b.Fatal(err)
 					}

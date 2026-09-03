@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"common/storage/mode"
-
 	"github.com/stretchr/testify/require"
 )
 
@@ -413,7 +412,7 @@ func TestNewStorage_sqliteToPostgresManySessionsMixedStatusConcurrent(t *testing
 	t.Setenv("PGHOST", "")
 	sqliteStore, err := NewStorage(ctx, storeDir)
 	require.NoError(t, err)
-	for i := 0; i < legacyCount; i++ {
+	for i := range legacyCount {
 		escrowID := fmt.Sprintf("legacy-%03d", i)
 		require.NoError(t, sqliteStore.CreateSession(paramsForEpoch(escrowID, 20+uint64(i%4))))
 		if i%3 == 0 {
@@ -438,11 +437,8 @@ func TestNewStorage_sqliteToPostgresManySessionsMixedStatusConcurrent(t *testing
 
 	var wg sync.WaitGroup
 	errs := make(chan error, legacyCount+newCount)
-	for i := 0; i < legacyCount; i++ {
-		i := i
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for i := range legacyCount {
+		wg.Go(func() {
 			escrowID := fmt.Sprintf("legacy-%03d", i)
 			meta, err := store.GetSessionMeta(escrowID)
 			if err != nil {
@@ -460,13 +456,10 @@ func TestNewStorage_sqliteToPostgresManySessionsMixedStatusConcurrent(t *testing
 				return
 			}
 			errs <- store.AppendDiff(escrowID, makeDiffRecord(3))
-		}()
+		})
 	}
-	for i := 0; i < newCount; i++ {
-		i := i
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for i := range newCount {
+		wg.Go(func() {
 			escrowID := fmt.Sprintf("pg-%03d", i)
 			if err := store.CreateSession(paramsForEpoch(escrowID, 30+uint64(i%4))); err != nil {
 				errs <- err
@@ -479,7 +472,7 @@ func TestNewStorage_sqliteToPostgresManySessionsMixedStatusConcurrent(t *testing
 			if i%4 == 0 {
 				errs <- store.MarkSettled(escrowID)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	close(errs)
@@ -487,12 +480,12 @@ func TestNewStorage_sqliteToPostgresManySessionsMixedStatusConcurrent(t *testing
 		require.NoError(t, err)
 	}
 
-	for i := 0; i < legacyCount; i++ {
+	for i := range legacyCount {
 		escrowID := fmt.Sprintf("legacy-%03d", i)
 		require.True(t, sqlite.HasEscrow(escrowID), "%s must remain SQLite-owned", escrowID)
 		require.False(t, pg.HasEscrow(escrowID), "%s must not be recreated in PG", escrowID)
 	}
-	for i := 0; i < newCount; i++ {
+	for i := range newCount {
 		escrowID := fmt.Sprintf("pg-%03d", i)
 		require.True(t, pg.HasEscrow(escrowID), "%s must be PG-owned", escrowID)
 		require.False(t, sqlite.HasEscrow(escrowID), "%s must not be created in SQLite", escrowID)
@@ -507,12 +500,12 @@ func TestNewStorage_sqliteToPostgresManySessionsMixedStatusConcurrent(t *testing
 	sort.Strings(gotActive)
 
 	var wantActive []string
-	for i := 0; i < legacyCount; i++ {
+	for i := range legacyCount {
 		if i%3 != 0 {
 			wantActive = append(wantActive, fmt.Sprintf("legacy-%03d", i))
 		}
 	}
-	for i := 0; i < newCount; i++ {
+	for i := range newCount {
 		if i%4 != 0 {
 			wantActive = append(wantActive, fmt.Sprintf("pg-%03d", i))
 		}

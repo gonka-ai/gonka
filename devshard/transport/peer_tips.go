@@ -379,12 +379,10 @@ func (s *HeightSyncPeerTips) PerOriginator(now time.Time) []OriginTipView {
 			continue
 		}
 		ts := originatorObservedAtMs(ent.sec)
-		observed := time.Time{}
+		observed := ent.storedAt
 		known := ts > 0
 		if known {
 			observed = time.UnixMilli(ts)
-		} else {
-			observed = ent.storedAt
 		}
 		age := time.Duration(0)
 		if !observed.IsZero() && now.After(observed) {

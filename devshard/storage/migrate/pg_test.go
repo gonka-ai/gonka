@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"sync"
 	"testing"
@@ -44,9 +45,7 @@ func testPGPoolWithRuntimeParams(t *testing.T, runtimeParams map[string]string) 
 
 	cfg, err := pgxpool.ParseConfig(dsn)
 	require.NoError(t, err)
-	for key, value := range runtimeParams {
-		cfg.ConnConfig.RuntimeParams[key] = value
-	}
+	maps.Copy(cfg.ConnConfig.RuntimeParams, runtimeParams)
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	require.NoError(t, err)
 	require.NoError(t, pool.Ping(ctx))
@@ -96,12 +95,10 @@ func TestApplyPG_ConcurrentCallersSerialize(t *testing.T) {
 	errs := make(chan error, 2)
 	var wg sync.WaitGroup
 	for range 2 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			<-start
 			errs <- migrate.ApplyPG(ctx, pool, steps)
-		}()
+		})
 	}
 	close(start)
 	wg.Wait()

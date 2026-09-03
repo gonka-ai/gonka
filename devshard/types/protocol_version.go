@@ -9,14 +9,13 @@ import "strings"
 
 var buildStateRootProtocolVersion string
 
-var EffectiveStateRootAndProtocolVersion string
+var EffectiveStateRootAndProtocolVersion = effectiveStateRootAndProtocolVersion()
 
-func init() {
+func effectiveStateRootAndProtocolVersion() string {
 	if v := strings.TrimSpace(buildStateRootProtocolVersion); v != "" {
-		EffectiveStateRootAndProtocolVersion = NormalizeVersion(v)
-		return
+		return NormalizeVersion(v)
 	}
-	EffectiveStateRootAndProtocolVersion = DevshardStateRootAndProtocolVersion
+	return DevshardStateRootAndProtocolVersion
 }
 
 // BuildStateRootProtocolVersion exposes the raw link-time stamp for tests and tooling.

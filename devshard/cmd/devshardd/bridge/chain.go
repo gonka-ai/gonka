@@ -10,11 +10,11 @@ import (
 	"time"
 
 	"common/chain"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
+
 	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/cmd/devshardd/events"
-
-	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
 const warmKeyMsgTypeGRPC = "/inference.inference.MsgStartInference"
@@ -47,9 +47,7 @@ type ChainBridge struct {
 	warmCache sync.Map // warmCacheKey -> bool
 }
 
-var (
-	_ bridge.MainnetBridge = (*ChainBridge)(nil)
-)
+var _ bridge.MainnetBridge = (*ChainBridge)(nil)
 
 // NewChainBridge creates a ChainBridge. submitter may be nil if SubmitDisputeState is not needed.
 func NewChainBridge(client *chain.Client, submitter Submitter) *ChainBridge {
@@ -141,7 +139,7 @@ func (b *ChainBridge) GetHostInfo(address string) (*bridge.HostInfo, error) {
 	resp, err := b.client.InferenceQueryClient().Participant(context.Background(),
 		&inferencetypes.QueryGetParticipantRequest{Index: address})
 	if err != nil {
-		return nil, fmt.Errorf("Participant %s: %w", address, err)
+		return nil, fmt.Errorf("participant %s: %w", address, err)
 	}
 
 	return &bridge.HostInfo{

@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"sync"
@@ -42,7 +43,8 @@ func EchoMiddleware() echo.MiddlewareFunc {
 
 			status := c.Response().Status
 			if err != nil {
-				if httpErr, ok := err.(*echo.HTTPError); ok {
+				httpErr := &echo.HTTPError{}
+				if errors.As(err, &httpErr) {
 					status = httpErr.Code
 				}
 			}

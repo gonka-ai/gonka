@@ -9,13 +9,13 @@ import (
 	"testing"
 
 	"common/chain"
-	"devshard/testenv/config"
-	"devshard/testenv/mockchain/adminface"
-
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+
+	"devshard/testenv/config"
+	"devshard/testenv/mockchain/adminface"
 )
 
 // MockChainSnapshot holds block height and epoch from mock-chain queries.

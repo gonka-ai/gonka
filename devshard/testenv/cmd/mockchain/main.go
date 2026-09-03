@@ -18,6 +18,12 @@ import (
 )
 
 func main() {
+	if err := run(); err != nil {
+		log.Fatalf("mock-chain: %v", err)
+	}
+}
+
+func run() error {
 	grpcAddr := envOr("MOCK_CHAIN_GRPC_ADDR", ":9090")
 	rpcAddr := envOr("MOCK_CHAIN_RPC_ADDR", ":26657")
 	configPath := os.Getenv("MOCK_CHAIN_CONFIG")
@@ -30,7 +36,7 @@ func main() {
 
 	st, err := seed.Load(configPath)
 	if err != nil {
-		log.Fatalf("mock-chain seed: %v", err)
+		return fmt.Errorf("seed: %w", err)
 	}
 
 	rpcSvc, err := rpcface.NewService(st, rpcface.Config{
@@ -39,7 +45,7 @@ func main() {
 		BlockSeed:          blockSeed,
 	})
 	if err != nil {
-		log.Fatalf("mock-chain rpc: %v", err)
+		return fmt.Errorf("rpc: %w", err)
 	}
 
 	ledger := txledger.New()
@@ -69,8 +75,9 @@ func main() {
 	}()
 
 	if err := waitServe(ctx, errCh); err != nil {
-		log.Fatalf("mock-chain: %v", err)
+		return err
 	}
+	return nil
 }
 
 func waitServe(ctx context.Context, errCh <-chan error) error {

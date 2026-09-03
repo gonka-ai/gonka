@@ -6,11 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
 	cosrv "devshard/chainoracle/server"
 	"devshard/testenv/citest/harness"
 	"devshard/testenv/config"
-
-	"github.com/stretchr/testify/require"
 )
 
 // TestVersiondWarmCutoverBoot pins the boot half of the warm-cutover

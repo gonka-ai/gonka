@@ -23,11 +23,11 @@ type inferenceDiagEntry struct {
 
 // StateRootMismatchOpts carries optional fields for a mismatch diagnostic log line.
 type StateRootMismatchOpts struct {
-	Side            string
-	Nonce           uint64
-	DiffPostState   []byte
-	ComputedState   []byte
-	SealClock       StateClockWindow
+	Side          string
+	Nonce         uint64
+	DiffPostState []byte
+	ComputedState []byte
+	SealClock     StateClockWindow
 }
 
 // IsPostStateRootMismatchError reports whether err is a post_state_root mismatch,

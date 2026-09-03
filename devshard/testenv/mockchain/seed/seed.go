@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"os"
 
+	inferencetypes "github.com/productscience/inference/x/inference/types"
+	"gopkg.in/yaml.v3"
+
 	"devshard/signing"
 	"devshard/testenv/config"
 	"devshard/testenv/mockchain/store"
-
-	inferencetypes "github.com/productscience/inference/x/inference/types"
-	"gopkg.in/yaml.v3"
 )
 
 const (
@@ -83,6 +83,7 @@ func Defaults() *store.Store {
 	s.InitAfterLoad()
 	return s
 }
+
 func Load(path string) (*store.Store, error) {
 	if path == "" {
 		return Defaults(), nil

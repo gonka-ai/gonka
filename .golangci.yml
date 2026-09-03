@@ -1,0 +1,100 @@
+# Shared by every Go module in the repository. golangci-lint picks the nearest config walking up from
+# the directory it runs in, so `golangci-lint run ./...` inside any module lands on this file.
+
+version: "2"
+run:
+  timeout: 5m
+
+linters:
+  enable:
+    # Resource leaks and silently swallowed failures.
+    - bodyclose
+    - sqlclosecheck
+    - rowserrcheck
+    - errorlint
+    - nilerr
+    - nilnesserr
+    - durationcheck
+    - fatcontext
+    - copyloopvar
+    - makezero
+    - reassign
+    - recvcheck
+    # Conventions the code already follows; enabled so they stay that way.
+    - errname
+    - gochecknoinits
+    - misspell
+    - dupword
+    - godot
+    - nolintlint
+    - usestdlibvars
+    - usetesting
+    # Correctness and dead weight the compiler does not see.
+    - gocritic
+    - unconvert
+    - prealloc
+    - intrange
+    - modernize
+    - revive
+  settings:
+    govet:
+      # Dead scaffolding a test writes and never reads, which reads as coverage it does not have.
+      enable:
+        - unusedwrite
+    modernize:
+      # fmtappendf reads Args[0] as a string constant, so []byte(fmt.Sprint(intConst)) panics it; upstream
+      # disabled the modernizer by default too (golang/go#77581).
+      disable:
+        - fmtappendf
+    revive:
+      rules:
+        - name: var-naming
+        - name: receiver-naming
+        - name: import-shadowing
+    errcheck:
+      # Cleanup calls whose error nothing can act on.
+      exclude-functions:
+        - (*database/sql.Rows).Close
+        - (*database/sql.Stmt).Close
+        - (*database/sql.Tx).Rollback
+        - (*database/sql.DB).Close
+        - (github.com/jackc/pgx/v5.Tx).Rollback
+        - (io.Closer).Close
+        - (*os.File).Close
+        - io.Copy
+        # Our own stores and runtimes, closed on the error path where the original error is the one
+        # worth returning. A close failure there can only mask it.
+        - (*devshard/storage.SQLite).Close
+        - (*devshard/accounting.Store).Close
+        - (*devshard/user.Session).Close
+        - (*common/nodemanager.Client).Close
+        - (*devshard/cmd/devshardctl.PerfStore).Close
+        - (*devshard/cmd/devshardctl.devshardRuntime).close
+  exclusions:
+    rules:
+      # A test that re-allocates a slice costs nothing; the linter only earns its keep on real paths.
+      - path: _test\.go
+        linters: [errcheck, prealloc]
+      # gofumpt reads a dotless first segment as stdlib, so it wants common/... beside "context",
+      # and goimports groups std against everything else. gci owns the grouping and runs after both,
+      # so their own verdicts are noise; they stay enabled for the rest of what they do.
+      - path: .
+        linters: [gofumpt, goimports]
+
+formatters:
+  enable:
+    - gci
+    # Drops imports a fix orphaned and adds the ones it needs; gci runs after it and owns the grouping.
+    - goimports
+    - gofumpt
+  settings:
+    gci:
+      # localmodule resolves to the go.mod of whichever module is being linted.
+      sections:
+        - standard
+        - default
+        - localmodule
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

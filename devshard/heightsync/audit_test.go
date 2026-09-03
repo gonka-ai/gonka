@@ -4,9 +4,9 @@ import (
 	"testing"
 
 	"common/chainoracle/blocks"
-	"devshard/heightsync"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/heightsync"
 )
 
 func TestAuditRing_AppendsAndListsByPeer(t *testing.T) {

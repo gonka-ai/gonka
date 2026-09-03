@@ -8,11 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"common/chainoracle/blocks"
+	commrc "common/runtimeconfig"
 	"github.com/stretchr/testify/require"
 
-	commrc "common/runtimeconfig"
-
-	"common/chainoracle/blocks"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/internal/statetest"
@@ -39,12 +38,15 @@ func (o *sessionOracle) Latest(context.Context) (*blocks.Header, error) {
 	h := o.height.Load()
 	return blocks.HashOnlyHeader(h, time.Unix(1, 0).UTC(), "fake-chain", append([]byte(nil), o.hash...)), nil
 }
+
 func (o *sessionOracle) At(ctx context.Context, _ int64) (*blocks.Header, error) {
 	return o.Latest(ctx)
 }
+
 func (o *sessionOracle) Prove(context.Context, string, int64) (*blocks.Proof, error) {
 	return nil, blocks.ErrProveNotImplemented
 }
+
 func (o *sessionOracle) Subscribe(context.Context, int64) (<-chan *blocks.Header, error) {
 	ch := make(chan *blocks.Header)
 	close(ch)
@@ -614,9 +616,9 @@ func TestHeartbeat_SustainedInferenceFlowNeverHeartbeats(t *testing.T) {
 	// before the due check. Over four rounds the clock advances well past several
 	// Intervals, so this is a genuinely time-driven flow and not one instant.
 	gap := heightsync.DefaultHeartbeatInterval - time.Second
-	for round := 0; round < 4; round++ {
+	for round := range 4 {
 		// Q = 2 of 3 slots, so a turnover needs two distinct executors.
-		for i := 0; i < 2; i++ {
+		for range 2 {
 			_, err := session.SendInference(ctx, params)
 			require.NoError(t, err)
 		}
@@ -806,7 +808,7 @@ func TestHeartbeat_SpanDispatchConcurrentAndContinuesOnError(t *testing.T) {
 	go func() { done <- session.MaybeHeartbeat(context.Background()) }()
 
 	deadline := time.After(2 * time.Second)
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		select {
 		case <-started:
 		case <-deadline:

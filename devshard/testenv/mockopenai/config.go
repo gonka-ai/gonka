@@ -150,8 +150,8 @@ func buildLogprobContent(text string, topN int) []map[string]any {
 	if topN > 20 {
 		topN = 20
 	}
-	var out []map[string]any
-	for _, r := range []rune(text) {
+	out := make([]map[string]any, 0, len(text))
+	for _, r := range text {
 		tok := string(r)
 		id := mockTokenID(tok)
 		entry := map[string]any{
@@ -160,7 +160,7 @@ func buildLogprobContent(text string, topN int) []map[string]any {
 			"bytes":   utf8CodeUnits(tok),
 		}
 		tops := make([]map[string]any, 0, topN)
-		for i := 0; i < topN; i++ {
+		for i := range topN {
 			alt := tok
 			if i > 0 {
 				alt = tok + string(rune('a'+i-1))

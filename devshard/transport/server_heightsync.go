@@ -9,9 +9,9 @@ import (
 	"strings"
 	"time"
 
+	"common/chainoracle/blocks"
 	"github.com/labstack/echo/v4"
 
-	"common/chainoracle/blocks"
 	"devshard/heightsync"
 	"devshard/host"
 	"devshard/logging"

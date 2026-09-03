@@ -8,10 +8,10 @@ import (
 	"time"
 
 	"common/nodemanager/gen"
+	"github.com/stretchr/testify/require"
+
 	"devshard/testenv/citest/harness"
 	"devshard/testenv/mockchain/adminface"
-
-	"github.com/stretchr/testify/require"
 )
 
 // TestParamsLongPoll verifies mock-chain /testenv/params → mock-dapi chain poll →

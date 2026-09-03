@@ -6,10 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"common/completionapi"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
-
-	"common/completionapi"
 
 	"devshard/internal/testutil"
 	"devshard/signing"

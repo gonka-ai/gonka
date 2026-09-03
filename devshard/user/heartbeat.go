@@ -268,7 +268,7 @@ func (s *Session) flushHeartbeatAckRounds(ctx context.Context) error {
 	// Every slot acks at most once per turn, so the guaranteed round plus one
 	// round per slot bounds the loop without a cadence parameter.
 	maxRounds := len(s.group) + 1
-	for i := 0; i < maxRounds; i++ {
+	for range maxRounds {
 		s.mu.Lock()
 		need := s.heartbeatFlushLeft > 0 || s.hasPendingHeightAckLocked()
 		open := false

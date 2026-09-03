@@ -16,9 +16,9 @@ import (
 	"sync"
 	"testing"
 
-	cosrv "devshard/chainoracle/server"
-
 	"github.com/stretchr/testify/require"
+
+	cosrv "devshard/chainoracle/server"
 )
 
 // VersiondHealthEntry mirrors versiond /healthz entries.

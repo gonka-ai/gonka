@@ -440,7 +440,7 @@ func TestCollectTimeoutVotes_WarmKeyFromCachedBindingWhenResolverFails(t *testin
 	require.NoError(t, err)
 
 	ctx := context.Background()
-	for i := 0; i < 4; i++ {
+	for range 4 {
 		_, err = session.SendInference(ctx, defaultParams)
 		require.NoError(t, err)
 	}

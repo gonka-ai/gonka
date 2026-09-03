@@ -12,6 +12,7 @@ import (
 
 	"common/chainoracle/blocks"
 	comobs "common/chainoracle/blocks/observer"
+
 	"devshard/signing"
 )
 
@@ -136,10 +137,7 @@ func NewMock(cfg MockConfig) (*Mock, error) {
 
 	// Strict > 3T/4 remaining <=> dropped < T/4 (integer: dropped ≤ (T-1)/4).
 	// For T=1..3 this is 0 — we always sign with every validator.
-	maxDropPower := (total - 1) / 4
-	if maxDropPower < 0 {
-		maxDropPower = 0
-	}
+	maxDropPower := max((total-1)/4, 0)
 
 	return &Mock{
 		cfg:          cfg,
@@ -470,10 +468,7 @@ func (m *Mock) snapshotFromLocked(fromHeight int64) []*blocks.Header {
 	if m.latest == nil {
 		return replay
 	}
-	lo := fromHeight
-	if lo < m.cfg.InitialHeight {
-		lo = m.cfg.InitialHeight
-	}
+	lo := max(fromHeight, m.cfg.InitialHeight)
 	for h := lo; h <= m.latest.Height; h++ {
 		if v, ok := m.history[h]; ok {
 			replay = append(replay, cloneHeader(v))
@@ -525,13 +520,7 @@ func (m *Mock) headersAfterLocked(after, from int64) []*blocks.Header {
 	if m.latest == nil {
 		return nil
 	}
-	lo := after + 1
-	if lo < from {
-		lo = from
-	}
-	if lo < m.cfg.InitialHeight {
-		lo = m.cfg.InitialHeight
-	}
+	lo := max(max(after+1, from), m.cfg.InitialHeight)
 	out := make([]*blocks.Header, 0)
 	for h := lo; h <= m.latest.Height; h++ {
 		if v, ok := m.history[h]; ok {

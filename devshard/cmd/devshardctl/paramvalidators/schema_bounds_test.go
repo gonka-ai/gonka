@@ -23,7 +23,7 @@ func TestJSONMarshaledSizeMatchesJSONMarshal(t *testing.T) {
 		}},
 		{"array of mixed values", map[string]any{"enum": []any{"a", json.Number("1"), nil, true, false}}},
 		{"strings with html-unsafe chars", map[string]any{"description": `<script>"&"</script>`}},
-		{"strings with control chars", map[string]any{"k": "tab\there\nnewlinectrl"}},
+		{"strings with control chars", map[string]any{"k": "tab\there\nnewline\x01ctrl"}},
 		{"string with U+2028 line separator", map[string]any{"k": "before after"}},
 		{"string with U+2029 paragraph separator", map[string]any{"k": "before after"}},
 		{"string with backslash and quote", map[string]any{"k": `quoted "value" and \backslash`}},

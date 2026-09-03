@@ -113,7 +113,7 @@ func (s *logprobStore) spill(b *foldBudget) error {
 		if errors.Is(err, spool.ErrNoCapacity) {
 			return fmt.Errorf("%w: logprobs spool capacity", ErrAggregateFoldTooLarge)
 		}
-		return fmt.Errorf("%w: logprobs spill: %v", ErrAggregateFoldTooLarge, err)
+		return fmt.Errorf("%w: logprobs spill: %w", ErrAggregateFoldTooLarge, err)
 	}
 	s.file = f
 	s.spilled = true
@@ -216,7 +216,7 @@ func emptyTopLogprobsRaw(entry json.RawMessage) (json.RawMessage, error) {
 	}
 	var shallow map[string]json.RawMessage
 	if err := json.Unmarshal(entry, &shallow); err != nil {
-		return entry, nil
+		return entry, nil //nolint:nilerr // unparseable entries pass through unchanged.
 	}
 	if _, ok := shallow["top_logprobs"]; !ok {
 		return deepEmptyTopLogprobsRaw(entry)
@@ -237,7 +237,7 @@ func emptyTopLogprobsRaw(entry json.RawMessage) (json.RawMessage, error) {
 func deepEmptyTopLogprobsRaw(entry json.RawMessage) (json.RawMessage, error) {
 	var v any
 	if err := json.Unmarshal(entry, &v); err != nil {
-		return entry, nil
+		return entry, nil //nolint:nilerr // unparseable entries pass through unchanged.
 	}
 	if !emptyTopLogprobs(v) {
 		return entry, nil

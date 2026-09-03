@@ -1,6 +1,7 @@
 package store
 
 import (
+	"maps"
 	"sync"
 
 	inferencetypes "github.com/productscience/inference/x/inference/types"
@@ -29,8 +30,8 @@ type Store struct {
 	ParamsBlockHeight int64
 	// NextPocStartBlockHeight is the upcoming epoch PoC anchor (EpochContext.NextPoCStart).
 	NextPocStartBlockHeight int64
-	Params                 inferencetypes.Params
-	Epoch             inferencetypes.Epoch
+	Params                  inferencetypes.Params
+	Epoch                   inferencetypes.Epoch
 
 	Participants   map[string]*inferencetypes.Participant
 	Escrows        map[uint64]*inferencetypes.DevshardEscrow
@@ -107,9 +108,7 @@ func (s *Store) Replace(other *Store) {
 
 func cloneStringMap(in map[string]string) map[string]string {
 	out := make(map[string]string, len(in))
-	for k, v := range in {
-		out[k] = v
-	}
+	maps.Copy(out, in)
 	return out
 }
 

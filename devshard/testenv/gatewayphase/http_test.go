@@ -6,10 +6,10 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"devshard/testenv/gatewayphase"
-
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
+
+	"devshard/testenv/gatewayphase"
 )
 
 func TestMount_EpochLatestInferencePhase(t *testing.T) {

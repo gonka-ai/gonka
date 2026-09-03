@@ -12,7 +12,6 @@ import (
 	"time"
 
 	commonvalidation "common/validation"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -264,12 +263,12 @@ func TestTTFBRoundTripper_PropagatesFailureWithoutResponse(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, "http://executor.invalid", nil)
 	require.NoError(t, err)
 
-	resp, err := ttfbRoundTripper{base: stubRoundTripper{err: want}}.RoundTrip(req)
+	resp, err := ttfbRoundTripper{base: stubRoundTripper{err: want}}.RoundTrip(req) //nolint:bodyclose // the call fails, so there is no body to close.
 	require.ErrorIs(t, err, want)
 	assert.Nil(t, resp)
 
 	ok := &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}
-	resp, err = ttfbRoundTripper{base: stubRoundTripper{resp: ok}}.RoundTrip(req)
+	resp, err = ttfbRoundTripper{base: stubRoundTripper{resp: ok}}.RoundTrip(req) //nolint:bodyclose // the stub returns http.NoBody.
 	require.NoError(t, err)
 	assert.Same(t, ok, resp)
 }

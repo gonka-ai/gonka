@@ -283,7 +283,7 @@ func TestGetOrCreate_RecoversBeforeCreate(t *testing.T) {
 	store := newManagerTestStore(t)
 	_, user, hostSigner := populateStore(t, store, 2)
 
-	addresses := []string{hostSigner.Address()}
+	var addresses []string
 	// populateStore uses 3 hosts; rebuild addresses from meta.
 	meta, err := store.GetSessionMeta("1")
 	require.NoError(t, err)

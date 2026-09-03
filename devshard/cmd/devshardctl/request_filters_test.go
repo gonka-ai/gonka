@@ -14,9 +14,9 @@ import (
 	"testing"
 
 	"common/completionapi"
-	"devshard/cmd/devshardctl/paramvalidators"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/cmd/devshardctl/paramvalidators"
 )
 
 func TestNormalizeChatRequestDefaultsAndCapsOutputTokens(t *testing.T) {
@@ -1166,7 +1166,7 @@ func TestNormalizeChatRequestResponseFormatPipeline(t *testing.T) {
 
 	t.Run("rejects pathological recursive schema with HTTP 400", func(t *testing.T) {
 		deepSchema := `{"type":"object"}`
-		for i := 0; i < 200; i++ {
+		for range 200 {
 			deepSchema = `{"type":"object","properties":{"x":` + deepSchema + `}}`
 		}
 		body := `{"response_format":{"type":"json_schema","json_schema":{"name":"r","schema":` + deepSchema + `}},"messages":[{"role":"user","content":"hello"}]}`
@@ -1283,7 +1283,7 @@ func TestNormalizeChatRequestEnforcesMessagesCountCap(t *testing.T) {
 	// Build a body with 2049 minimal valid user messages -- one over the cap.
 	var b strings.Builder
 	b.WriteString(`{"messages":[`)
-	for i := 0; i < 2049; i++ {
+	for i := range 2049 {
 		if i > 0 {
 			b.WriteByte(',')
 		}
@@ -1300,7 +1300,7 @@ func TestNormalizeChatRequestEnforcesMessagesCountCap(t *testing.T) {
 func TestNormalizeChatRequestAcceptsMessagesAtCap(t *testing.T) {
 	var b strings.Builder
 	b.WriteString(`{"messages":[`)
-	for i := 0; i < 2048; i++ {
+	for i := range 2048 {
 		if i > 0 {
 			b.WriteByte(',')
 		}
@@ -1342,7 +1342,7 @@ func TestNormalizeChatRequestValidatesSeed(t *testing.T) {
 func TestNormalizeChatRequestEnforcesLogitBiasMapCap(t *testing.T) {
 	var b strings.Builder
 	b.WriteString(`{"logit_bias":{`)
-	for i := 0; i < 1025; i++ {
+	for i := range 1025 {
 		if i > 0 {
 			b.WriteByte(',')
 		}
@@ -2086,7 +2086,7 @@ func TestEnsureRequestNestingDepth(t *testing.T) {
 func TestNormalizeChatRequestRejectsBodyAtNestingLimit(t *testing.T) {
 	// Pipeline-level proof that the pre-scan participates in normalizeChatRequest.
 	deep := `"x"`
-	for i := 0; i < MaxRequestNestingDepth+1; i++ {
+	for range MaxRequestNestingDepth + 1 {
 		deep = `{"a":` + deep + `}`
 	}
 	body := `{"messages":[{"role":"user","content":` + deep + `}]}`
@@ -2106,11 +2106,11 @@ func TestChatRequestDocumentConcurrentAccess(t *testing.T) {
 
 	var wg sync.WaitGroup
 	wg.Add(workers)
-	for w := 0; w < workers; w++ {
+	for w := range workers {
 		go func(id int) {
 			defer wg.Done()
 			key := "k" + strconv.Itoa(id)
-			for i := 0; i < iterations; i++ {
+			for i := range iterations {
 				doc.Set(key, i)
 				_, _ = doc.Get(key)
 				_ = doc.Has("a")
@@ -2279,7 +2279,7 @@ func TestNormalizeChatRequestKimiThinkingTokenBudgetClampsAboveAbsoluteMax(t *te
 // At max_tokens below kimiSmallMaxTokensForceNoThinking the defaulter's
 // half-split (max_tokens/2) is overridden to 0 because any thinking phase
 // starves visible content emission at that budget. Bypassing thinking is
-// the only way to guarantee non-empty content
+// the only way to guarantee non-empty content.
 func TestNormalizeChatRequestKimiThinkingTokenBudgetForcedToZeroAtSmallMaxTokens(t *testing.T) {
 	body, _, err := normalizeChatRequestForModel(
 		[]byte(`{"messages":[{"role":"user","content":"x"}],"max_tokens":200}`),

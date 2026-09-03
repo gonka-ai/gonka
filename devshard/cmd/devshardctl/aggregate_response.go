@@ -64,16 +64,16 @@ func newAggregateSlotSem(max int64) aggregateSlotSem {
 }
 
 func (s aggregateSlotSem) snapshot() (max, cur int64) {
-	return s.Slots.Snapshot()
+	return s.Snapshot()
 }
 
 func (s aggregateSlotSem) restore(max, cur int64) {
-	s.Slots.Restore(max, cur)
+	s.Restore(max, cur)
 }
 
-func (s aggregateSlotSem) tryAcquire() bool { return s.Slots.TryAcquire() }
-func (s aggregateSlotSem) release()         { s.Slots.Release() }
-func (s aggregateSlotSem) setMax(n int64)   { s.Slots.SetMax(n) }
+func (s aggregateSlotSem) tryAcquire() bool { return s.TryAcquire() }
+func (s aggregateSlotSem) release()         { s.Release() }
+func (s aggregateSlotSem) setMax(n int64)   { s.SetMax(n) }
 
 var (
 	aggregateConfigMu            sync.RWMutex
@@ -97,10 +97,7 @@ var (
 // unusable spool leaves mem-only mode (2 MiB ceiling).
 func configureAggregateResponseFromEnv(baseStorageDir string) {
 	maxResp := positiveInt64Env("GATEWAY_AGGREGATE_MAX_RESPONSE_BYTES", defaultAggregateMaxResponseBytes)
-	maxMem := positiveInt64Env("GATEWAY_AGGREGATE_MAX_MEMORY_BYTES", defaultAggregateMaxMemoryBytes)
-	if maxMem > maxResp {
-		maxMem = maxResp
-	}
+	maxMem := min(positiveInt64Env("GATEWAY_AGGREGATE_MAX_MEMORY_BYTES", defaultAggregateMaxMemoryBytes), maxResp)
 	maxConc := int(positiveInt64Env("GATEWAY_AGGREGATE_MAX_CONCURRENT_SPOOLS", int64(defaultAggregateMaxConcurrentSpools)))
 	if maxConc < 1 {
 		maxConc = defaultAggregateMaxConcurrentSpools
@@ -219,7 +216,7 @@ func currentAggregateSpoolDir() string {
 
 // currentAggregateBufferConfig returns the limits snapshotted for a new buffer
 // or fold (byte ceilings + spool dir) under one lock.
-func currentAggregateBufferConfig() (maxMem, maxResp int64, spool string) {
+func currentAggregateBufferConfig() (maxMem, maxResp int64, spoolDir string) {
 	aggregateConfigMu.RLock()
 	defer aggregateConfigMu.RUnlock()
 	return aggregateMaxMemoryBytes, aggregateMaxResponseBytes, aggregateSpoolDir
@@ -258,10 +255,7 @@ func resetAggregateDegradedSlots(budget, perRequest int64) {
 	if perRequest <= 0 {
 		perRequest = defaultAggregateMaxResponseBytes
 	}
-	n := int(budget / perRequest)
-	if n < 1 {
-		n = 1
-	}
+	n := max(int(budget/perRequest), 1)
 	aggregateConfigMu.Lock()
 	aggregateMaxDegradedRAMBytes = budget
 	aggregateConfigMu.Unlock()
@@ -274,11 +268,6 @@ func tryAcquireAggregateDegradedSlot() bool {
 
 func releaseAggregateDegradedSlot() {
 	aggregateDegradedSem.release()
-}
-
-func aggregateDegradedSlotCapacity() int {
-	max, _ := aggregateDegradedSem.snapshot()
-	return int(max)
 }
 
 // aggregateResponseBuffer accumulates the winner SSE body for handleAggregated.
@@ -302,10 +291,7 @@ func newAggregateResponseBuffer() *aggregateResponseBuffer {
 	maxBytes := memLimit
 	dir := currentAggregateDir()
 	if spoolPath != "" {
-		maxBytes = maxResp
-		if maxBytes < memLimit {
-			maxBytes = memLimit
-		}
+		maxBytes = max(maxResp, memLimit)
 		if dir == nil || !dir.Enabled() {
 			// Path set but OpenAt failed — still offer a Dir so spill attempts
 			// degrade rather than staying at the memory ceiling silently.

@@ -91,7 +91,7 @@ func VerifyOrigin(verifier signing.Verifier, sec *HeightSyncSection, sig []byte)
 	}
 	recovered, err := verifier.RecoverAddress(blob, sig)
 	if err != nil {
-		return fmt.Errorf("%w: %v", ErrOriginSignVerify, err)
+		return fmt.Errorf("%w: %w", ErrOriginSignVerify, err)
 	}
 	if recovered != origin {
 		return fmt.Errorf("%w: signer %q != originator %q", ErrOriginSignVerify, recovered, origin)

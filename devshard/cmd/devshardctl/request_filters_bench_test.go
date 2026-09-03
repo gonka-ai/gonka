@@ -53,7 +53,7 @@ var (
 
 func buildBenchDeepBodyRejection(schemaDepth int) []byte {
 	deep := `{"type":"object"}`
-	for i := 0; i < schemaDepth; i++ {
+	for range schemaDepth {
 		deep = `{"type":"object","properties":{"x":` + deep + `}}`
 	}
 	return []byte(`{"response_format":{"type":"json_schema","json_schema":{"name":"r","schema":` + deep + `}},"messages":[{"role":"user","content":"hello"}]}`)
@@ -76,7 +76,7 @@ func BenchmarkNormalizeChatRequest(b *testing.B) {
 		b.Run(tc.name, func(b *testing.B) {
 			b.ReportAllocs()
 			b.SetBytes(int64(len(tc.body)))
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				_, _, _ = normalizeChatRequest(tc.body)
 			}
 		})

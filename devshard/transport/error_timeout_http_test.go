@@ -6,10 +6,9 @@ import (
 	"encoding/json"
 	"testing"
 
+	"common/completionapi"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
-
-	"common/completionapi"
 
 	"devshard/host"
 	"devshard/internal/testutil"

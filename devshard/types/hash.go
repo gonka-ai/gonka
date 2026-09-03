@@ -15,7 +15,7 @@ func TxHash(tx *DevshardTx) uint64 {
 	}
 	h := sha256.Sum256(data)
 	var v uint64
-	for i := 0; i < 8; i++ {
+	for i := range 8 {
 		v = (v << 8) | uint64(h[i])
 	}
 	return v

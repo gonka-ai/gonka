@@ -35,7 +35,8 @@ func TestSessionHTTPErrorConflicts(t *testing.T) {
 		fmt.Errorf("wrapped: %w", storage.ErrSessionEpochConflict),
 	} {
 		c := testEchoContext(t)
-		httpErr, ok := sessionHTTPError(c, err).(*echo.HTTPError)
+		httpErr := &echo.HTTPError{}
+		ok := errors.As(sessionHTTPError(c, err), &httpErr)
 		require.True(t, ok)
 		require.Equal(t, http.StatusConflict, httpErr.Code)
 		require.Contains(t, fmt.Sprint(httpErr.Message), "wrapped")
@@ -74,7 +75,8 @@ func TestSessionHTTPErrorIndexRebuilding(t *testing.T) {
 
 func TestSessionHTTPErrorNotFound(t *testing.T) {
 	c := testEchoContext(t)
-	httpErr, ok := sessionHTTPError(c, storage.ErrSessionNotFound).(*echo.HTTPError)
+	httpErr := &echo.HTTPError{}
+	ok := errors.As(sessionHTTPError(c, storage.ErrSessionNotFound), &httpErr)
 	require.True(t, ok)
 	require.Equal(t, http.StatusNotFound, httpErr.Code)
 }
@@ -101,14 +103,16 @@ func TestSessionHTTPErrorChainUnavailable(t *testing.T) {
 
 func TestSessionHTTPErrorEscrowNotFoundStill500(t *testing.T) {
 	c := testEchoContext(t)
-	httpErr, ok := sessionHTTPError(c, fmt.Errorf("get escrow: %w", bridge.ErrEscrowNotFound)).(*echo.HTTPError)
+	httpErr := &echo.HTTPError{}
+	ok := errors.As(sessionHTTPError(c, fmt.Errorf("get escrow: %w", bridge.ErrEscrowNotFound)), &httpErr)
 	require.True(t, ok)
 	require.Equal(t, http.StatusInternalServerError, httpErr.Code)
 }
 
 func TestSessionHTTPErrorDefault(t *testing.T) {
 	c := testEchoContext(t)
-	httpErr, ok := sessionHTTPError(c, fmt.Errorf("boom")).(*echo.HTTPError)
+	httpErr := &echo.HTTPError{}
+	ok := errors.As(sessionHTTPError(c, fmt.Errorf("boom")), &httpErr)
 	require.True(t, ok)
 	require.Equal(t, http.StatusInternalServerError, httpErr.Code)
 }

@@ -10,11 +10,11 @@ import (
 	"testing"
 	"time"
 
+	"common/chain"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"common/chain"
 	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/host"
@@ -30,37 +30,37 @@ import (
 // --- stubs ---
 
 type stubStaleLeaseStore struct {
-	acquireFn      func(ctx context.Context, escrowId, instanceAddr string, ttl time.Duration) (uint64, uint64, error)
-	setResultFn    func(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, instanceAddr string) error
-	ownsFn         func(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) (bool, error)
-	releaseFn      func(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) error
+	acquireFn      func(ctx context.Context, escrowID, instanceAddr string, ttl time.Duration) (uint64, uint64, error)
+	setResultFn    func(ctx context.Context, escrowID string, inferenceID, epochID uint64, status storage.LeaseStatus, instanceAddr string) error
+	ownsFn         func(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) (bool, error)
+	releaseFn      func(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) error
 	setResultCalls []string
 	releaseCalls   []string
 }
 
-func (s *stubStaleLeaseStore) AcquireOneStale(ctx context.Context, escrowId, instanceAddr string, ttl time.Duration) (uint64, uint64, error) {
-	return s.acquireFn(ctx, escrowId, instanceAddr, ttl)
+func (s *stubStaleLeaseStore) AcquireOneStale(ctx context.Context, escrowID, instanceAddr string, ttl time.Duration) (uint64, uint64, error) {
+	return s.acquireFn(ctx, escrowID, instanceAddr, ttl)
 }
 
-func (s *stubStaleLeaseStore) SetResult(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, instanceAddr string) error {
-	s.setResultCalls = append(s.setResultCalls, fmt.Sprintf("%s/%d/%d/%s", escrowId, inferenceId, epochId, status))
+func (s *stubStaleLeaseStore) SetResult(ctx context.Context, escrowID string, inferenceID, epochID uint64, status storage.LeaseStatus, instanceAddr string) error {
+	s.setResultCalls = append(s.setResultCalls, fmt.Sprintf("%s/%d/%d/%s", escrowID, inferenceID, epochID, status))
 	if s.setResultFn != nil {
-		return s.setResultFn(ctx, escrowId, inferenceId, epochId, status, instanceAddr)
+		return s.setResultFn(ctx, escrowID, inferenceID, epochID, status, instanceAddr)
 	}
 	return nil
 }
 
-func (s *stubStaleLeaseStore) OwnsPendingLease(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) (bool, error) {
+func (s *stubStaleLeaseStore) OwnsPendingLease(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) (bool, error) {
 	if s.ownsFn != nil {
-		return s.ownsFn(ctx, escrowId, inferenceId, epochId, instanceAddr)
+		return s.ownsFn(ctx, escrowID, inferenceID, epochID, instanceAddr)
 	}
 	return true, nil
 }
 
-func (s *stubStaleLeaseStore) Release(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) error {
-	s.releaseCalls = append(s.releaseCalls, fmt.Sprintf("%s/%d/%d/%s", escrowId, inferenceId, epochId, instanceAddr))
+func (s *stubStaleLeaseStore) Release(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) error {
+	s.releaseCalls = append(s.releaseCalls, fmt.Sprintf("%s/%d/%d/%s", escrowID, inferenceID, epochID, instanceAddr))
 	if s.releaseFn != nil {
-		return s.releaseFn(ctx, escrowId, inferenceId, epochId, instanceAddr)
+		return s.releaseFn(ctx, escrowID, inferenceID, epochID, instanceAddr)
 	}
 	return nil
 }

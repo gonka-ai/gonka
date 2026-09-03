@@ -22,5 +22,5 @@ type PayloadAuthClient interface {
 
 // PayloadStore is the minimal interface for storing inference payloads.
 type PayloadStore interface {
-	Store(ctx context.Context, escrowId string, inferenceId, epochId uint64, promptPayload, responsePayload []byte) error
+	Store(ctx context.Context, escrowID string, inferenceID, epochID uint64, promptPayload, responsePayload []byte) error
 }

@@ -5,9 +5,9 @@ import (
 	"testing"
 
 	"common/chainoracle/blocks"
-	"devshard/heightsync"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/heightsync"
 )
 
 func TestDecide_LogStaleSyncTurn(t *testing.T) {

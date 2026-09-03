@@ -2,6 +2,7 @@ package host
 
 import (
 	"context"
+	"slices"
 	"time"
 
 	"devshard/heightsync"
@@ -137,13 +138,7 @@ func (h *Host) MaybeRepair(ctx context.Context) {
 				return
 			}
 			still := h.sm.HeightSyncMissingAcks(tgt.TurnStart)
-			landed := true
-			for _, s := range still {
-				if s == j {
-					landed = false
-					break
-				}
-			}
+			landed := !slices.Contains(still, j)
 			if skip := h.repairBudget.AfterWait(tgt.TurnStart, j, landed); skip != heightsync.RepairSkipNone {
 				continue
 			}

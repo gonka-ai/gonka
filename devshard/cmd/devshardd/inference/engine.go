@@ -11,11 +11,11 @@ import (
 	"common/chain"
 	mlnodeclient "common/nodemanager"
 	mlnodegen "common/nodemanager/gen"
-	"devshard"
-	"devshard/observability"
-
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"devshard"
+	"devshard/observability"
 )
 
 // acquireTimeout bounds each Acquire RPC so a dead dapi fails fast and we
@@ -118,7 +118,7 @@ func (e *Engine) doWithLockedNode(
 	var lastErr error
 	lastReason := observability.ReasonAcquireErr
 
-	for attempt := 0; attempt < maxAcquireAttempts; attempt++ {
+	for range maxAcquireAttempts {
 		acqCtx, cancel := context.WithTimeout(ctx, acquireTimeout)
 		acq, err := e.mlClient.Acquire(acqCtx, model, excluded, escrowID)
 		cancel()

@@ -6,9 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/require"
-
 	commrc "common/runtimeconfig"
+	"github.com/stretchr/testify/require"
 
 	"devshard/gossip"
 	"devshard/heightsync"

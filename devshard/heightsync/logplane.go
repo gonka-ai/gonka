@@ -6,8 +6,10 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"maps"
 
 	"common/chainoracle/blocks"
+
 	"devshard/logging"
 	"devshard/signing"
 	"devshard/types"
@@ -65,6 +67,8 @@ type LogPlaneState struct {
 }
 
 // LogPlaneResult is the replay-stable verdict plus edge/deferred marks.
+//
+//nolint:recvcheck // invalid is a with-er and must leave the receiver untouched; mark has to mutate it.
 type LogPlaneResult struct {
 	Err           error
 	Reason        string
@@ -78,6 +82,7 @@ type LogPlaneResult struct {
 // verdict — so counting here would multiply one event by the number of
 // evaluations. Rejections are counted where the verdict is acted on
 // (ObserveLogPlaneReject); marks are counted where they enter a MarkLog.
+// A with-er: it must leave the receiver untouched, unlike mark.
 func (r LogPlaneResult) invalid(err error, reason string) LogPlaneResult {
 	r.Err = err
 	r.Reason = reason
@@ -250,7 +255,7 @@ func checkL2(acks []ackRef, st LogPlaneState) error {
 			return fmt.Errorf("%w: no key for slot %d", ErrAckSigInvalid, ref.ack.SlotId)
 		}
 		if err := VerifyAck(st.Verifier, ref.ack, key); err != nil {
-			return fmt.Errorf("%w: %v", ErrAckSigInvalid, err)
+			return fmt.Errorf("%w: %w", ErrAckSigInvalid, err)
 		}
 	}
 	return nil
@@ -536,9 +541,7 @@ func checkL7(hbs []heartbeatRef, acks []ackRef, idx turnIndex, tracker *TurnTrac
 			logAcks = prev.Acks
 		}
 		if extra := acksByTurn[prevStart]; extra != nil {
-			for slot, a := range extra {
-				logAcks[slot] = a
-			}
+			maps.Copy(logAcks, extra)
 		}
 		for _, c := range CheckVectorAgainstLog(ref.hb.SyncVector, logAcks) {
 			out.mark(AttributableMark{

@@ -12,9 +12,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	"devshard/types"
-
 	"golang.org/x/sync/errgroup"
+
+	"devshard/types"
 )
 
 const (
@@ -55,16 +55,12 @@ func MigrateSQLiteSessions(src *SQLite, dest Storage) (int, error) {
 		return 0, nil
 	}
 
-	workers := migrateWorkerCount()
-	if workers > len(ids) {
-		workers = len(ids)
-	}
+	workers := min(migrateWorkerCount(), len(ids))
 
 	var migrated atomic.Int64
 	g := new(errgroup.Group)
 	g.SetLimit(workers)
 	for _, escrowID := range ids {
-		escrowID := escrowID
 		g.Go(func() error {
 			if err := migrateOneSQLiteSession(src, dest, escrowID); err != nil {
 				return fmt.Errorf("migrate escrow %s: %w", escrowID, err)
@@ -206,13 +202,7 @@ func migrateDiffsChunked(src *SQLite, dest Storage, escrowID string, latestNonce
 
 	// Verify already-copied prefix in chunks.
 	for from := uint64(1); from <= copiedThrough && from <= latestNonce; from += chunk {
-		to := from + chunk - 1
-		if to > copiedThrough {
-			to = copiedThrough
-		}
-		if to > latestNonce {
-			to = latestNonce
-		}
+		to := min(min(from+chunk-1, copiedThrough), latestNonce)
 		diffs, err := src.GetDiffs(escrowID, from, to)
 		if err != nil {
 			return fmt.Errorf("read sqlite diffs [%d,%d]: %w", from, to, err)
@@ -237,15 +227,9 @@ func migrateDiffsChunked(src *SQLite, dest Storage, escrowID string, latestNonce
 	}
 
 	// Append remaining diffs in chunks.
-	start := copiedThrough + 1
-	if start < 1 {
-		start = 1
-	}
+	start := max(copiedThrough+1, 1)
 	for from := start; from <= latestNonce; from += chunk {
-		to := from + chunk - 1
-		if to > latestNonce {
-			to = latestNonce
-		}
+		to := min(from+chunk-1, latestNonce)
 		diffs, err := src.GetDiffs(escrowID, from, to)
 		if err != nil {
 			return fmt.Errorf("read sqlite diffs [%d,%d]: %w", from, to, err)

@@ -8,10 +8,9 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	_ "modernc.org/sqlite"
 
 	"devshard/types"
-
-	_ "modernc.org/sqlite"
 )
 
 // writeLegacyDB builds a legacy single-file SQLite database with the pre-epoch

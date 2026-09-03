@@ -3,13 +3,14 @@ package harness
 import (
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	"devshard/testenv/config"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/testenv/config"
 )
 
 // StickyUpstreamHeader identifies the versiond selected by the router.
@@ -25,7 +26,7 @@ func FindDistinctStickySessions(t *testing.T, client *http.Client, routerHTTP, v
 	urlA := RouterSessionURL(routerHTTP, version, sessionA, "/healthz")
 	upstreamA = RequireResponseHeader(t, client, urlA, StickyUpstreamHeader)
 
-	for n := 0; n < 64; n++ {
+	for n := range 64 {
 		candidate := fmt.Sprintf("citest-failover-%d", n)
 		if candidate == sessionA {
 			continue
@@ -57,7 +58,7 @@ func WaitDistinctStickySessions(t *testing.T, client *http.Client, routerHTTP, v
 			return false
 		}
 		ua = gotA
-		for n := 0; n < 64; n++ {
+		for n := range 64 {
 			candidate := fmt.Sprintf("citest-failover-%d", n)
 			got, err := GetResponseHeader(client, RouterSessionURL(routerHTTP, version, candidate, "/healthz"), StickyUpstreamHeader)
 			if err != nil || got == "" || got == ua {
@@ -115,10 +116,8 @@ func RequireGETStatusIn(t *testing.T, client *http.Client, url string, allowed .
 	resp, err := client.Get(url)
 	require.NoError(t, err)
 	defer resp.Body.Close()
-	for _, code := range allowed {
-		if resp.StatusCode == code {
-			return resp.StatusCode
-		}
+	if slices.Contains(allowed, resp.StatusCode) {
+		return resp.StatusCode
 	}
 	t.Fatalf("GET %s: status %d not in %v", url, resp.StatusCode, allowed)
 	return resp.StatusCode
@@ -168,7 +167,7 @@ func WaitStickyFailoverToSurvivor(t *testing.T, client *http.Client, url, stoppe
 }
 
 func upstreamContains(header, addr string) bool {
-	for _, part := range strings.Split(header, ",") {
+	for part := range strings.SplitSeq(header, ",") {
 		if strings.TrimSpace(part) == addr {
 			return true
 		}

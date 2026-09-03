@@ -70,8 +70,8 @@ func TestDashboardsLint(t *testing.T) {
 			// Strip histogram suffix and recheck.
 			matched := false
 			for _, suf := range suffixes {
-				if strings.HasSuffix(metric, suf) {
-					if _, ok := registered[strings.TrimSuffix(metric, suf)]; ok {
+				if before, ok := strings.CutSuffix(metric, suf); ok {
+					if _, ok := registered[before]; ok {
 						matched = true
 						break
 					}
@@ -92,7 +92,7 @@ func findRepoRoot(t *testing.T) string {
 	if err != nil {
 		t.Fatalf("getwd: %v", err)
 	}
-	for i := 0; i < 8; i++ {
+	for range 8 {
 		if _, err := os.Stat(filepath.Join(dir, "deploy", "join", "observability")); err == nil {
 			return dir
 		}

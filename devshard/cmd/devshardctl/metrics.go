@@ -1186,7 +1186,7 @@ func normalizeMetricsPath(path string) string {
 // limiterRejectionLogFields says how full the gateway was, not only that it was full.
 func limiterRejectionLogFields(err error) []any {
 	fields := []any{"reason", limiterReasonLabel(err)}
-	var rejection *LimiterRejection
+	var rejection *LimiterRejectionError
 	if errors.As(err, &rejection) {
 		return append(fields, "in_flight", rejection.InFlight, "limit", rejection.Limit)
 	}
@@ -1197,7 +1197,7 @@ func limiterReasonLabel(err error) string {
 	if err == nil {
 		return "unknown"
 	}
-	var rejection *LimiterRejection
+	var rejection *LimiterRejectionError
 	if errors.As(err, &rejection) && rejection.Kind != "" {
 		return rejection.Kind
 	}

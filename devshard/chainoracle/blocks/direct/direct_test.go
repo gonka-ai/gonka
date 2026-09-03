@@ -10,12 +10,12 @@ import (
 	"time"
 
 	"common/chainoracle/blocks"
-	"devshard/chainoracle/blocks/direct"
-
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+
+	"devshard/chainoracle/blocks/direct"
 )
 
 type stubGRPC struct {

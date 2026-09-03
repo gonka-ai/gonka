@@ -12,10 +12,10 @@ import (
 	"net/http"
 	"strings"
 
-	"devshard/testenv/mockchain/store"
-
 	"github.com/labstack/echo/v4"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
+
+	"devshard/testenv/mockchain/store"
 )
 
 // ParamsRequest patches devshard escrow params on the mock-chain store.
@@ -93,9 +93,9 @@ func handleParams(st *store.Store) echo.HandlerFunc {
 
 // RevisionResponse reports mock-chain block and params revision heights.
 type RevisionResponse struct {
-	BlockHeight             int64 `json:"block_height"`
-	ParamsBlockHeight       int64 `json:"params_block_height"`
-	NextPocStartBlockHeight int64 `json:"next_poc_start_block_height"`
+	BlockHeight             int64  `json:"block_height"`
+	ParamsBlockHeight       int64  `json:"params_block_height"`
+	NextPocStartBlockHeight int64  `json:"next_poc_start_block_height"`
 	EpochIndex              uint64 `json:"epoch_index"`
 }
 

@@ -6,9 +6,9 @@ import (
 	"sync/atomic"
 	"testing"
 
+	"common/chainoracle/blocks"
 	"github.com/stretchr/testify/require"
 
-	"common/chainoracle/blocks"
 	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
@@ -88,12 +88,15 @@ func (o *blockingOracle) Latest(ctx context.Context) (*blocks.Header, error) {
 	h.BlockHash = append([]byte(nil), o.hdr.BlockHash...)
 	return &h, nil
 }
+
 func (o *blockingOracle) At(context.Context, int64) (*blocks.Header, error) {
 	return nil, errFakeOracleNotImpl
 }
+
 func (o *blockingOracle) Prove(context.Context, string, int64) (*blocks.Proof, error) {
 	return nil, errFakeOracleNotImpl
 }
+
 func (o *blockingOracle) Subscribe(context.Context, int64) (<-chan *blocks.Header, error) {
 	return nil, errFakeOracleNotImpl
 }

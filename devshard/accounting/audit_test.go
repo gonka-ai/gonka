@@ -7,10 +7,10 @@ import (
 	"testing"
 	"time"
 
-	"devshard/types"
-
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
+
+	"devshard/types"
 )
 
 // The ledger's one arithmetic promise: every nonce the chain assigned to a slot is accounted for
@@ -214,7 +214,7 @@ func stripKeyFromStore(path, key string) error {
 		var escrowID string
 		var raw []byte
 		if err := rows.Scan(&escrowID, &raw); err != nil {
-			rows.Close()
+			rows.Close() //nolint:sqlclosecheck // must close before the next statement on this SQLite connection.
 			return err
 		}
 		var generic any
@@ -230,6 +230,9 @@ func stripKeyFromStore(path, key string) error {
 		rewritten[escrowID] = stripped
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
 	for escrowID, payload := range rewritten {
 		if _, err := store.db.Exec(`UPDATE accounting_escrows SET payload = ? WHERE escrow_id = ?`, payload, escrowID); err != nil {
 			return err

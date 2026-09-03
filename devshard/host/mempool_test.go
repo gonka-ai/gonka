@@ -110,7 +110,7 @@ func TestMempool_StaleFinishes(t *testing.T) {
 	}{
 		{
 			name:         "empty mempool returns nil",
-			build:        func() *Mempool { return NewMempool() },
+			build:        NewMempool,
 			currentNonce: 10,
 			grace:        0,
 			wantNil:      true,
@@ -153,7 +153,6 @@ func TestMempool_StaleFinishes(t *testing.T) {
 	}
 
 	for _, tc := range tests {
-		tc := tc
 		t.Run(tc.name, func(t *testing.T) {
 			m := tc.build()
 			got := m.StaleFinishes(tc.currentNonce, tc.grace)

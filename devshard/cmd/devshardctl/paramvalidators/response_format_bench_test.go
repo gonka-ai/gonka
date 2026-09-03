@@ -25,7 +25,7 @@ func BenchmarkResponseFormatValidator_Absent(b *testing.B) {
 	doc := parseDocument(b, `{"messages":[{"role":"user","content":"hello"}]}`)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		if err := v.Validate(ValidatorContext{Document: doc}); err != nil {
 			b.Fatal(err)
 		}
@@ -37,7 +37,7 @@ func BenchmarkResponseFormatValidator_TypeText(b *testing.B) {
 	doc := parseDocument(b, `{"response_format":{"type":"text"},"messages":[{"role":"user","content":"hello"}]}`)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		if err := v.Validate(ValidatorContext{Document: doc}); err != nil {
 			b.Fatal(err)
 		}
@@ -49,7 +49,7 @@ func BenchmarkResponseFormatValidator_TypeJSONObject(b *testing.B) {
 	doc := parseDocument(b, `{"response_format":{"type":"json_object"},"messages":[{"role":"user","content":"hello"}]}`)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		if err := v.Validate(ValidatorContext{Document: doc}); err != nil {
 			b.Fatal(err)
 		}
@@ -61,7 +61,7 @@ func BenchmarkResponseFormatValidator_SimpleSchema(b *testing.B) {
 	doc := parseDocument(b, `{"response_format":{"type":"json_schema","json_schema":{"name":"weather_v1","schema":{"type":"object","properties":{"city":{"type":"string"},"temp":{"type":"number"}},"required":["city"]}}},"messages":[{"role":"user","content":"hello"}]}`)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		if err := v.Validate(ValidatorContext{Document: doc}); err != nil {
 			b.Fatal(err)
 		}
@@ -78,7 +78,7 @@ func BenchmarkResponseFormatValidator_AtLimits(b *testing.B) {
 	doc := parseDocument(b, body)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		if err := v.Validate(ValidatorContext{Document: doc}); err != nil {
 			b.Fatal(err)
 		}
@@ -90,14 +90,14 @@ func BenchmarkResponseFormatValidator_AtLimits(b *testing.B) {
 func BenchmarkResponseFormatValidator_RejectsRecursion(b *testing.B) {
 	v := benchValidator()
 	deep := `{"type":"object"}`
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		deep = `{"type":"object","properties":{"x":` + deep + `}}`
 	}
 	body := `{"response_format":{"type":"json_schema","json_schema":{"name":"r","schema":` + deep + `}},"messages":[{"role":"user","content":"hello"}]}`
 	doc := parseDocument(b, body)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		if err := v.Validate(ValidatorContext{Document: doc}); err == nil {
 			b.Fatal("expected reject")
 		}
@@ -112,7 +112,7 @@ func BenchmarkResponseFormatValidator_RejectsOversized(b *testing.B) {
 	doc := parseDocument(b, body)
 	b.ReportAllocs()
 	b.ResetTimer()
-	for i := 0; i < b.N; i++ {
+	for range b.N {
 		if err := v.Validate(ValidatorContext{Document: doc}); err == nil {
 			b.Fatal("expected reject")
 		}

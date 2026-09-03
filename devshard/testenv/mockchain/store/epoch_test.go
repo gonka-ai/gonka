@@ -3,9 +3,9 @@ package store_test
 import (
 	"testing"
 
-	"devshard/testenv/mockchain/seed"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/testenv/mockchain/seed"
 )
 
 func TestPlanEpochAdvance_TargetsNextPocStart(t *testing.T) {

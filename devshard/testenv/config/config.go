@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 
 	"gopkg.in/yaml.v3"
@@ -545,12 +546,7 @@ func RouterPoolHostIDs(c *File) []string {
 // IsRouterPooledHost reports whether h is reached through the sticky router
 // pool rather than a direct InferenceURL.
 func IsRouterPooledHost(c *File, h HostCfg) bool {
-	for _, id := range RouterPoolHostIDs(c) {
-		if id == h.ID {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(RouterPoolHostIDs(c), h.ID)
 }
 
 // onChainHostCount is the number of distinct validator identities: one per

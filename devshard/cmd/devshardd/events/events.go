@@ -20,6 +20,7 @@ func (DevshardEscrowCreatedEvent) eventType() string { return "devshard_escrow_c
 func (DevshardEscrowCreatedEvent) query() string {
 	return "tm.event='Tx' AND devshard_escrow_created.escrow_id EXISTS"
 }
+
 func (DevshardEscrowCreatedEvent) fromEvent(height int64, ev abci.Event) DevshardEscrowCreatedEvent {
 	return DevshardEscrowCreatedEvent{
 		BlockHeight: height,
@@ -44,6 +45,7 @@ func (DevshardEscrowSettledEvent) eventType() string { return "devshard_escrow_s
 func (DevshardEscrowSettledEvent) query() string {
 	return "tm.event='Tx' AND devshard_escrow_settled.escrow_id EXISTS"
 }
+
 func (DevshardEscrowSettledEvent) fromEvent(height int64, ev abci.Event) DevshardEscrowSettledEvent {
 	return DevshardEscrowSettledEvent{
 		BlockHeight: height,

@@ -89,11 +89,6 @@ func cloneCommittedInferenceEntries(src map[uint64][]byte) map[uint64][]byte {
 	return dst
 }
 
-func (sm *StateMachine) hasCommittedInferenceLocked(id uint64) bool {
-	_, ok := sm.committedEntries[id]
-	return ok
-}
-
 func (sm *StateMachine) updateCommittedEntryLocked(id uint64, rec *types.InferenceRecord) error {
 	entry, err := marshalInferenceEntry(id, rec)
 	if err != nil {
@@ -184,9 +179,7 @@ func (sm *StateMachine) ExportSealedNonces() map[uint64]uint64 {
 		return nil
 	}
 	out := make(map[uint64]uint64, len(sm.sealedNonces))
-	for id, n := range sm.sealedNonces {
-		out[id] = n
-	}
+	maps.Copy(out, sm.sealedNonces)
 	return out
 }
 
@@ -196,9 +189,7 @@ func (sm *StateMachine) RestoreSealedNonces(nonces map[uint64]uint64) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 	sm.sealedNonces = make(map[uint64]uint64, len(nonces))
-	for id, n := range nonces {
-		sm.sealedNonces[id] = n
-	}
+	maps.Copy(sm.sealedNonces, nonces)
 }
 
 // GetCommittedRecord returns a deep copy of the committed inference entry for
@@ -900,7 +891,7 @@ func (sm *StateMachine) foldInferenceRecordsFromDiffs(group []types.SlotAssignme
 // persistLiveInferenceObsLocked upserts the current live inference snapshot
 // (e.g. on StatusChallenged) before RAM prune. Caller must hold sm.mu.
 func (sm *StateMachine) persistLiveInferenceObsLocked(id uint64, rec *types.InferenceRecord) error {
-	sealNonce, _ := sm.sealedNonces[id]
+	sealNonce := sm.sealedNonces[id]
 	return sm.upsertInferenceObsLocked(id, sealNonce, rec)
 }
 

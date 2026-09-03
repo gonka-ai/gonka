@@ -11,12 +11,11 @@ import (
 	"sync"
 	"time"
 
+	"common/chainoracle/blocks"
 	json "github.com/goccy/go-json"
+	"github.com/labstack/echo/v4"
 	"google.golang.org/protobuf/proto"
 
-	"github.com/labstack/echo/v4"
-
-	"common/chainoracle/blocks"
 	"devshard"
 	"devshard/bridge"
 	"devshard/gossip"
@@ -63,9 +62,10 @@ type Server struct {
 	heightSyncResponseAfterSignHook func(sec *heightsync.HeightSyncSection, nonce uint64)
 	heightSyncOriginSigner          signing.Signer // test seam; nil uses host.Signer()
 
-	holdInferenceMu    sync.Mutex
-	holdInferenceGate  chan struct{} // closed to release; non-nil while armed
-	holdInferenceArmed bool
+	// Driven by inference_hold_debug.go, which only builds under the dev/debug/development tags.
+	holdInferenceMu    sync.Mutex    //nolint:unused
+	holdInferenceGate  chan struct{} //nolint:unused // closed to release; non-nil while armed
+	holdInferenceArmed bool          //nolint:unused
 }
 
 // ServerOption configures the Server.
@@ -142,7 +142,7 @@ func (s *Server) SetGossip(g *gossip.Gossip) { s.gossip = g }
 // writeJSON serializes v with goccy/go-json, bypassing Echo's default serializer.
 // TODO: set a custom echo.JSONSerializer using goccy/go-json on all Echo instances
 // in decentralized-api, then replace writeJSON calls with c.JSON.
-func writeJSON(c echo.Context, code int, v interface{}) error {
+func writeJSON(c echo.Context, code int, v any) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -445,7 +445,7 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 		case <-timer.C:
 		}
 	}
-	receiptWrapper := map[string]interface{}{"devshard_receipt": receiptEvent}
+	receiptWrapper := map[string]any{"devshard_receipt": receiptEvent}
 	if s.heightSync != nil {
 		schedK := s.heightSync.K()
 		schedSlots := s.heightSync.SlotsNum()
@@ -462,13 +462,14 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 		if oracleMiss {
 			heightsync.IncOracleFailure(s.host.Signer().Address())
 		}
-		if dErr != nil {
+		switch {
+		case dErr != nil:
 			logging.Debug("heightsync: outbound anchor error",
 				heightsync.LogFieldSubsystem, "heightsync",
 				heightsync.LogFieldNonce, req.Nonce,
 				"error", dErr.Error())
 			s.logOutboundHeightSync(nil, req.Nonce)
-		} else if sec != nil {
+		case sec != nil:
 			sec.Direction = "response"
 			if s.attachResponseOriginSignature(sec, req.Nonce) {
 				s.recordEnvelopeBindingResponse(req.Nonce, sec)
@@ -478,7 +479,7 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 			} else {
 				s.logOutboundHeightSync(nil, req.Nonce)
 			}
-		} else {
+		default:
 			s.logOutboundHeightSync(nil, req.Nonce)
 		}
 	}
@@ -526,7 +527,7 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 	// Final event: devshard_meta with updated mempool.
 	mempoolTxs := s.host.MempoolTxs()
 	mempoolBytes, _ := DevshardTxsToBytes(mempoolTxs)
-	metaWrapper := map[string]interface{}{"devshard_meta": DevshardMetaEvent{Mempool: mempoolBytes}}
+	metaWrapper := map[string]any{"devshard_meta": DevshardMetaEvent{Mempool: mempoolBytes}}
 	_ = writeSSEEvent(w, metaWrapper)
 
 	// Fire gossip in background.
@@ -568,7 +569,7 @@ func replaySSEBody(w http.ResponseWriter, body []byte) error {
 }
 
 // writeSSEEvent writes a single SSE data line with JSON payload.
-func writeSSEEvent(w http.ResponseWriter, data interface{}) error {
+func writeSSEEvent(w http.ResponseWriter, data any) error {
 	b, err := json.Marshal(data)
 	if err != nil {
 		return err
@@ -1057,5 +1058,5 @@ func (s *Server) HandleGetMempool(c echo.Context) (err error) {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 	observability.Request.SetResponseContentLength(op, len(data))
-	return writeJSON(c, http.StatusOK, map[string]interface{}{"txs": data})
+	return writeJSON(c, http.StatusOK, map[string]any{"txs": data})
 }

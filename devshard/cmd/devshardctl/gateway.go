@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"math"
 	"net/http"
 	"net/http/pprof"
@@ -24,6 +25,7 @@ import (
 
 	"common/chain"
 	chaintx "common/chain/tx"
+
 	devshardpkg "devshard"
 	"devshard/accounting"
 	"devshard/bridge"
@@ -150,7 +152,7 @@ type runtimeStatus struct {
 	ConfirmationPoCPhase string                `json:"confirmation_poc_phase,omitempty"`
 	RequestsBlocked      bool                  `json:"requests_blocked"`
 	BlockReason          string                `json:"block_reason,omitempty"`
-	HeightSeed           user.HeightSeedStatus `json:"height_seed,omitempty"`
+	HeightSeed           user.HeightSeedStatus `json:"height_seed"`
 }
 
 type gatewayCapacityStatus struct {
@@ -381,10 +383,6 @@ func heartbeatFromDeps(deps runtimeBuildDeps) *heightsync.HeartbeatConfig {
 	}
 	hb := deps.params.SessionParams().Heartbeat
 	return &hb
-}
-
-func (g *Gateway) runtimeBuildDeps(perf *PerfTracker) runtimeBuildDeps {
-	return g.runtimeBuildDepsFromSettings(perf, g.settings)
 }
 
 func (g *Gateway) runtimeBuildDepsFromSettings(perf *PerfTracker, settings GatewaySettings) runtimeBuildDeps {
@@ -773,7 +771,7 @@ func NewGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, defaultMod
 	return g
 }
 
-func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store *GatewayStore, chainClient *chain.Client, perf *PerfTracker, accounting *accounting.Recorder) *Gateway {
+func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store *GatewayStore, chainClient *chain.Client, perf *PerfTracker, accountingRecorder *accounting.Recorder) *Gateway {
 	settings = settings.WithTuningDefaults()
 	applyGatewayTuningSettings(settings)
 	g := NewGateway(runtimes, limiter, settings.DefaultModel)
@@ -784,8 +782,8 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 	if perf != nil {
 		g.perf = perf
 	}
-	if accounting != nil {
-		g.accounting = accounting
+	if accountingRecorder != nil {
+		g.accounting = accountingRecorder
 	}
 	g.phaseGate = NewChainPhaseGate(settings.PublicAPI, 0)
 	if g.phaseGate != nil && chainClient != nil {
@@ -1200,21 +1198,6 @@ func (g *Gateway) currentMaxConcurrentPer10000Weight() float64 {
 	return settings.MaxConcurrentPer10000Weight
 }
 
-func (g *Gateway) pocOrConfirmationPoCActive() bool {
-	if g != nil && g.phaseGate != nil {
-		switch g.phaseGate.Snapshot().BlockReason {
-		case "poc", "confirmation_poc":
-			return true
-		}
-	}
-	switch currentPoCPhaseReason() {
-	case "poc", "confirmation_poc":
-		return true
-	default:
-		return false
-	}
-}
-
 func (g *Gateway) capacityStatus(models []string, runtimeStatuses map[string]gatewayModelRuntimeStatus) gatewayCapacityStatus {
 	if g == nil || g.capacity == nil {
 		return gatewayCapacityStatus{}
@@ -1491,8 +1474,10 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 	model := req.Model
 	clientIntent := clientResponseIntentFromRequest(req)
 	r = r.WithContext(withClientResponseIntent(r.Context(), clientIntent))
-	fields := []any{"model", firstNonEmpty(model, g.settings.DefaultModel), "input_tokens", inputTokens}
-	fields = append(fields, g.apiKeyLogFields(r)...)
+	apiKeyFields := g.apiKeyLogFields(r)
+	fields := make([]any, 0, 4+len(apiKeyFields))
+	fields = append(fields, "model", firstNonEmpty(model, g.settings.DefaultModel), "input_tokens", inputTokens)
+	fields = append(fields, apiKeyFields...)
 	logRequestStage(ctx, "gateway_request_received", fields...)
 	requestModel := firstNonEmpty(model, g.settings.DefaultModel)
 	if err := g.validatePooledRequestedModel(requestModel); err != nil {
@@ -1580,8 +1565,10 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	fields := []any{"escrow", devshardID, "path", innerPath}
-	fields = append(fields, g.apiKeyLogFields(r)...)
+	apiKeyFields := g.apiKeyLogFields(r)
+	fields := make([]any, 0, 4+len(apiKeyFields))
+	fields = append(fields, "escrow", devshardID, "path", innerPath)
+	fields = append(fields, apiKeyFields...)
 	logRequestStage(ctx, "gateway_devshard_request_received", fields...)
 
 	g.mu.Lock()
@@ -1855,17 +1842,6 @@ func (g *Gateway) recordGatewayRequestOutcome(model, outcome, reason string) {
 	}
 }
 
-func gatewayRuntimeUnavailableReason(err error) string {
-	switch {
-	case err == nil:
-		return "runtime_unavailable"
-	case isParticipantRateLimitError(err):
-		return "participant_limited"
-	default:
-		return "runtime_unavailable"
-	}
-}
-
 func (g *Gateway) pocGenerationActive() bool {
 	if g != nil && g.phaseGate != nil {
 		snap := g.phaseGate.Snapshot()
@@ -1952,13 +1928,14 @@ func (g *Gateway) reserveRuntimeForModel(requestModel string, inputTokens int64)
 	}
 
 	bestScore := g.runtimeLoad(candidates[0], requestModel)
-	best := []*devshardRuntime{candidates[0]}
+	best := make([]*devshardRuntime, 0, len(candidates))
+	best = append(best, candidates[0])
 	for _, rt := range candidates[1:] {
 		score := g.runtimeLoad(rt, requestModel)
 		switch {
 		case score < bestScore:
 			bestScore = score
-			best = []*devshardRuntime{rt}
+			best = append(best[:0], rt)
 		case score == bestScore:
 			best = append(best, rt)
 		}
@@ -2262,7 +2239,7 @@ func gatewayStatusCodeForError(err error) int {
 		}
 		return http.StatusUnauthorized
 	}
-	var rejection *LimiterRejection
+	var rejection *LimiterRejectionError
 	if errors.As(err, &rejection) {
 		if rejection.Kind == LimitedByZeroLiveWeight {
 			return http.StatusServiceUnavailable
@@ -2386,10 +2363,7 @@ func estimatePromptTokens(body []byte) int64 {
 		return 1
 	}
 	// Approximate tokenizer: 1 token ~= 4 bytes. Good enough for admission control.
-	estimate := (len(body) + 3) / 4
-	if estimate < 1 {
-		estimate = 1
-	}
+	estimate := max((len(body)+3)/4, 1)
 	return int64(estimate)
 }
 
@@ -2445,10 +2419,8 @@ func resolveAdminStoragePath(storagePath, baseStorageDir string) (string, error)
 	if filepath.IsAbs(storagePath) {
 		return "", fmt.Errorf("storage_path must be relative to the gateway base dir")
 	}
-	for _, part := range strings.Split(filepath.ToSlash(storagePath), "/") {
-		if part == ".." {
-			return "", fmt.Errorf("storage_path must not contain ..")
-		}
+	if slices.Contains(strings.Split(filepath.ToSlash(storagePath), "/"), "..") {
+		return "", fmt.Errorf("storage_path must not contain a .. segment")
 	}
 	candidate := normalizeStorageDir(filepath.Join(baseStorageDir, storagePath))
 	if err := ensureStoragePathUnderBase(candidate, baseStorageDir); err != nil {
@@ -2832,10 +2804,7 @@ func (g *Gateway) handleDebugRotation(w http.ResponseWriter, r *http.Request) {
 	blocksUntilNextRotation := int64(0)
 	if snapshot.BlockHeight > 0 && snapshot.epochSwitchBlockHeight > 0 {
 		blocksToEpochSwitch = snapshot.epochSwitchBlockHeight - snapshot.BlockHeight
-		blocksUntilNextRotation = blocksToEpochSwitch - settings.EscrowRotation.PrePoCBlocks
-		if blocksUntilNextRotation < 0 {
-			blocksUntilNextRotation = 0
-		}
+		blocksUntilNextRotation = max(blocksToEpochSwitch-settings.EscrowRotation.PrePoCBlocks, 0)
 	}
 
 	statuses, err := g.store.LoadRotationStatuses(100)
@@ -3338,9 +3307,7 @@ func (g *Gateway) handleAdminDevshardParticipants(w http.ResponseWriter, r *http
 	activeUserRequests := rt.activeUserRequests.Load()
 	participantKeys := runtimeParticipantKeys(rt)
 	slotCounts := make(map[string]int, len(rt.participantSlotCounts))
-	for key, count := range rt.participantSlotCounts {
-		slotCounts[key] = count
-	}
+	maps.Copy(slotCounts, rt.participantSlotCounts)
 	g.mu.Unlock()
 
 	var throttleSnapshots map[string]ParticipantThrottleSnapshot
@@ -4140,12 +4107,6 @@ func (g *Gateway) escrowRotationEnabled() bool {
 	return g.settings.EscrowRotation.Enabled
 }
 
-// deactivateDevshardByID marks a devshard inactive in memory and persists the change.
-// Safe to call from any goroutine.
-func (g *Gateway) deactivateDevshardByID(id string) bool {
-	return g.deactivateDevshardByIDWithReason(id, "escrow confirmed missing on chain")
-}
-
 func (g *Gateway) deactivateDevshardByIDWithReason(id, reason string) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
@@ -4534,49 +4495,4 @@ func persistRuntimeModel(store *GatewayStore, state *GatewayState, escrowID, mod
 		}
 	}
 	log.Printf("runtime %s: persisted model from chain model_id=%q", escrowID, model)
-}
-
-func buildRuntimes(configs []RuntimeConfig, deps runtimeBuildDeps) ([]*devshardRuntime, error) {
-	type result struct {
-		idx int
-		rt  *devshardRuntime
-		err error
-	}
-	t0 := time.Now()
-	perf := deps.perf
-	if perf == nil {
-		perf = NewPerfTracker(nil)
-	}
-	deps.perf = perf
-	ch := make(chan result, len(configs))
-	for i, cfg := range configs {
-		go func(idx int, cfg RuntimeConfig) {
-			rt, err := buildRuntime(cfg, deps)
-			ch <- result{idx, rt, err}
-		}(i, cfg)
-	}
-
-	runtimes := make([]*devshardRuntime, len(configs))
-	var firstErr error
-	for range configs {
-		res := <-ch
-		if res.err != nil && firstErr == nil {
-			firstErr = res.err
-		}
-		if res.rt != nil {
-			runtimes[res.idx] = res.rt
-			log.Printf("loaded devshard runtime escrow=%s model=%s storage=%s",
-				configs[res.idx].ID, res.rt.model, configs[res.idx].StoragePath)
-		}
-	}
-	if firstErr != nil {
-		for _, rt := range runtimes {
-			if rt != nil {
-				rt.close()
-			}
-		}
-		return nil, firstErr
-	}
-	log.Printf("build_runtimes_parallel count=%d total_elapsed_ms=%d", len(configs), time.Since(t0).Milliseconds())
-	return runtimes, nil
 }

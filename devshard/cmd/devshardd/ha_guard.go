@@ -7,9 +7,9 @@ import (
 	"strings"
 
 	"common/storage/mode"
-	"devshard/internal/boolvalue"
-
 	"github.com/labstack/echo/v4"
+
+	"devshard/internal/boolvalue"
 )
 
 // requireHADeploymentStorage fails fast when an HA deployment is not backed by

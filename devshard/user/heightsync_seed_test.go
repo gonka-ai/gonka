@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"common/chainoracle/blocks"
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
@@ -21,8 +22,6 @@ import (
 	"devshard/stub"
 	"devshard/transport"
 	"devshard/types"
-
-	"common/chainoracle/blocks"
 )
 
 func TestHeightSeedQuorum(t *testing.T) {
@@ -410,8 +409,8 @@ func TestSeed_RetriesOnlyMissingThenSweepsAll(t *testing.T) {
 	var hits [3]atomic.Int32
 	clients := make([]HostClient, 3)
 	const catalog503 = "version v2 is not present in the governance routing catalog"
-	for i := 0; i < 3; i++ {
-		i := i
+	for i := range 3 {
+
 		inner := env.slots[i].server.Config.Handler
 		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			n := hits[i].Add(1)
@@ -552,8 +551,8 @@ func TestSeed_Gap1DeclinedMakesMissedThenReprobeSucceeds(t *testing.T) {
 	serve[0].Store(true)
 	var hits [3]atomic.Int32
 	clients := make([]HostClient, 3)
-	for i := 0; i < 3; i++ {
-		i := i
+	for i := range 3 {
+
 		inner := env.slots[i].server.Config.Handler
 		proxy := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			if r.URL.Path == "/v2/healthz" {

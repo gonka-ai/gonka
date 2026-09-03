@@ -25,11 +25,11 @@ func newTestSQLite(t *testing.T) *SQLite {
 // Conformance tests (shared with Memory).
 
 func TestSQLite_CreateSession_GetSessionMeta(t *testing.T) {
-	runCreateSession_GetSessionMeta(t, newTestSQLite(t))
+	runCreateSessionGetSessionMeta(t, newTestSQLite(t))
 }
 
 func TestSQLite_CreateSession_Idempotent(t *testing.T) {
-	runCreateSession_Idempotent(t, newTestSQLite(t))
+	runCreateSessionIdempotent(t, newTestSQLite(t))
 }
 
 func TestSQLite_CreateSession_ConcurrentIdempotent(t *testing.T) {
@@ -39,12 +39,10 @@ func TestSQLite_CreateSession_ConcurrentIdempotent(t *testing.T) {
 	const attempts = 20
 	var wg sync.WaitGroup
 	errs := make(chan error, attempts)
-	for i := 0; i < attempts; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range attempts {
+		wg.Go(func() {
 			errs <- db.CreateSession(params)
-		}()
+		})
 	}
 	wg.Wait()
 	close(errs)
@@ -97,19 +95,19 @@ func TestSQLite_CreateSession_ConcurrentEpochConflict(t *testing.T) {
 }
 
 func TestSQLite_CreateSession_ConflictingEpoch(t *testing.T) {
-	runCreateSession_ConflictingEpoch(t, newTestSQLite(t))
+	runCreateSessionConflictingEpoch(t, newTestSQLite(t))
 }
 
 func TestSQLite_CreateSession_ConflictingVersion(t *testing.T) {
-	runCreateSession_ConflictingVersion(t, newTestSQLite(t))
+	runCreateSessionConflictingVersion(t, newTestSQLite(t))
 }
 
 func TestSQLite_CreateSession_EmptyVersionRejected(t *testing.T) {
-	runCreateSession_EmptyVersionRejected(t, newTestSQLite(t))
+	runCreateSessionEmptyVersionRejected(t, newTestSQLite(t))
 }
 
 func TestSQLite_AppendDiff_GetDiffs(t *testing.T) {
-	runAppendDiff_GetDiffs(t, newTestSQLite(t))
+	runAppendDiffGetDiffs(t, newTestSQLite(t))
 }
 
 func TestSQLite_GetSignatures(t *testing.T) {
@@ -117,7 +115,7 @@ func TestSQLite_GetSignatures(t *testing.T) {
 }
 
 func TestSQLite_MarkFinalized_LastFinalized(t *testing.T) {
-	runMarkFinalized_LastFinalized(t, newTestSQLite(t))
+	runMarkFinalizedLastFinalized(t, newTestSQLite(t))
 }
 
 func TestSQLite_SaveLoadSnapshot(t *testing.T) {
@@ -157,15 +155,15 @@ func TestSQLite_ListActiveSessions(t *testing.T) {
 }
 
 func TestSQLite_PruneEpoch_RemovesOnlyTarget(t *testing.T) {
-	runPruneEpoch_RemovesOnlyTarget(t, newTestSQLite(t))
+	runPruneEpochRemovesOnlyTarget(t, newTestSQLite(t))
 }
 
 func TestSQLite_PruneEpoch_Idempotent(t *testing.T) {
-	runPruneEpoch_Idempotent(t, newTestSQLite(t))
+	runPruneEpochIdempotent(t, newTestSQLite(t))
 }
 
 func TestSQLite_PruneEpoch_WriteAfter(t *testing.T) {
-	runPruneEpoch_WriteAfter(t, newTestSQLite(t))
+	runPruneEpochWriteAfter(t, newTestSQLite(t))
 }
 
 // SQLite-specific durability tests.
@@ -243,7 +241,7 @@ func TestSQLite_ConcurrentSessions(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(numSessions)
 
-	for s := 0; s < numSessions; s++ {
+	for s := range numSessions {
 		go func(sessionIdx int) {
 			defer wg.Done()
 			escrowID := fmt.Sprintf("escrow-%d", sessionIdx)
@@ -281,7 +279,7 @@ func TestSQLite_ConcurrentSessions(t *testing.T) {
 	wg.Wait()
 
 	// Verify each session.
-	for s := 0; s < numSessions; s++ {
+	for s := range numSessions {
 		escrowID := fmt.Sprintf("escrow-%d", s)
 		diffs, err := db.GetDiffs(escrowID, 1, diffsPerSession)
 		require.NoError(t, err, "session %s", escrowID)
@@ -312,7 +310,7 @@ func TestSQLite_ConcurrentReadWrite(t *testing.T) {
 	// Reader goroutines.
 	var wg sync.WaitGroup
 	wg.Add(numReaders)
-	for r := 0; r < numReaders; r++ {
+	for range numReaders {
 		go func() {
 			defer wg.Done()
 			for {
@@ -325,10 +323,8 @@ func TestSQLite_ConcurrentReadWrite(t *testing.T) {
 						t.Errorf("read diffs: %v", err)
 						return
 					}
-					_, err = db.GetSignatures("escrow-1", 1)
-					if err != nil {
-						// Nonce 1 might not exist yet. That's fine.
-					}
+					// Nonce 1 might not exist yet, so the error is expected.
+					_, _ = db.GetSignatures("escrow-1", 1)
 				}
 			}
 		}()
@@ -344,7 +340,7 @@ func TestSQLite_ConcurrentReadWrite(t *testing.T) {
 
 func TestSQLite_DuplicateNonce_IdenticalReplayOK(t *testing.T) {
 	// Identical same-nonce replay is idempotent (HA); conflicting bytes still fail.
-	runAppendDiff_IdempotentReplay(t, newTestSQLite(t))
+	runAppendDiffIdempotentReplay(t, newTestSQLite(t))
 }
 
 func TestSQLite_LargeSession(t *testing.T) {
@@ -478,11 +474,11 @@ func TestSQLite_ReadsDuringWrite(t *testing.T) {
 	var wg sync.WaitGroup
 	wg.Add(numReaders)
 
-	for r := 0; r < numReaders; r++ {
+	for range numReaders {
 		go func() {
 			defer wg.Done()
 			// Each reader performs multiple queries while the writer holds its tx.
-			for i := 0; i < 20; i++ {
+			for range 20 {
 				_, err := db.GetDiffs("escrow-1", 1, 1)
 				if err != nil {
 					readErrors.Add(1)
@@ -521,7 +517,7 @@ func TestSQLite_StressMultiSessionRecovery(t *testing.T) {
 	db1, err := NewSQLite(dir)
 	require.NoError(t, err)
 
-	for s := 0; s < numSessions; s++ {
+	for s := range numSessions {
 		escrowID := fmt.Sprintf("escrow-%d", s)
 		params := CreateSessionParams{
 			EscrowID:       escrowID,
@@ -563,7 +559,7 @@ func TestSQLite_StressMultiSessionRecovery(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, active, numSessions)
 
-	for s := 0; s < numSessions; s++ {
+	for s := range numSessions {
 		escrowID := fmt.Sprintf("escrow-%d", s)
 
 		meta, err := db2.GetSessionMeta(escrowID)

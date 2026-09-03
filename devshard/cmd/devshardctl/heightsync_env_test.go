@@ -6,21 +6,21 @@ import (
 	"testing"
 	"time"
 
+	"common/chainoracle/blocks"
 	"github.com/stretchr/testify/require"
 
-	"common/chainoracle/blocks"
 	"devshard/heightsync"
 	"devshard/internal/testutil"
 	"devshard/transport"
 )
 
 func resetHeightSyncForTest() {
-	if hsSt != nil && hsSt.closer != nil {
-		hsSt.closer()
+	if heightSyncState != nil && heightSyncState.closer != nil {
+		heightSyncState.closer()
 	}
-	hsOnce = sync.Once{}
-	hsSt = nil
-	hsErr = nil
+	heightSyncOnce = sync.Once{}
+	heightSyncState = nil
+	errHeightSyncInit = nil
 }
 
 func unsetHeightSyncSources(t *testing.T) {
@@ -110,14 +110,14 @@ func TestGatewayChainOracle_DefaultOffDoesNotMint(t *testing.T) {
 	t.Setenv("DEVSHARD_CHAIN_RPC", "http://127.0.0.1:26657")
 
 	require.NoError(t, initGatewayHeightSync(nil, "http://127.0.0.1:26657"))
-	require.Nil(t, hsSt, "follower must not start when the flag is unset")
+	require.Nil(t, heightSyncState, "follower must not start when the flag is unset")
 
 	cfg, err := extraClientConfigFromEnv()
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	require.Equal(t, "peer_tip_cache", cfg.HeightSync.SourceKind())
 	require.Nil(t, cfg.HeightSyncLogOracle)
-	require.Nil(t, hsSt)
+	require.Nil(t, heightSyncState)
 
 	got, err, miss := cfg.HeightSync.Decide(context.Background(), heightsync.DecideHints{Nonce: 1})
 	require.NoError(t, err)
@@ -142,8 +142,8 @@ func TestGatewayChainOracle_OnStillSeeds(t *testing.T) {
 	require.NotNil(t, cfg)
 	require.Equal(t, "peer_tip_cache", cfg.HeightSync.SourceKind())
 	require.NotNil(t, cfg.HeightSyncLogOracle, "flag on wires the follower as log oracle")
-	require.NotNil(t, hsSt)
-	require.NotNil(t, hsSt.oracle)
+	require.NotNil(t, heightSyncState)
+	require.NotNil(t, heightSyncState.oracle)
 
 	local := &staticBlockOracle{hdr: &blocks.Header{
 		Height: 99, ChainID: "test-chain", BlockHash: []byte{0x11, 0x22},

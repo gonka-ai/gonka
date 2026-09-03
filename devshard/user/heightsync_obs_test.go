@@ -109,7 +109,7 @@ func TestPublishHeightSyncView_ThrottlesRapidUpdates(t *testing.T) {
 	before := session.TestingOnlyHeightSyncPublishCount()
 	require.GreaterOrEqual(t, before, uint64(1), "force publish on wire")
 
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		session.NoteExchangeOverlap(true, true, true)
 	}
 	after := session.TestingOnlyHeightSyncPublishCount()
@@ -127,7 +127,7 @@ func TestPublishHeightSyncView_TrailingEdgeFlushesLastUpdate(t *testing.T) {
 	// A burst coalesces, so the last mutation is not in the cache yet. Nothing
 	// else will mutate this session: without a trailing publish the cached view
 	// would stay behind until the next heartbeat.
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		session.NoteExchangeOverlap(true, true, true)
 	}
 
@@ -184,19 +184,19 @@ func TestPublishHeightSyncView_MonotonicUnderConcurrency(t *testing.T) {
 
 	const n = 50
 	done := make(chan struct{}, n)
-	for i := 0; i < n; i++ {
+	for range n {
 		go func() {
 			session.NoteExchangeOverlap(true, false, false)
 			done <- struct{}{}
 		}()
 	}
-	for i := 0; i < n; i++ {
+	for range n {
 		<-done
 	}
 	session.TestingOnlyFlushHeightSyncView()
 
 	var last uint64
-	for i := 0; i < 30; i++ {
+	for range 30 {
 		total := session.CachedHeightSyncView().Overlap.Total
 		require.GreaterOrEqual(t, total, last, "cached counter must not go backwards")
 		last = total

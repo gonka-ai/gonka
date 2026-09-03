@@ -14,9 +14,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/labstack/echo/v4"
-
 	"common/httpguard"
+	"github.com/labstack/echo/v4"
 
 	devshardpkg "devshard"
 	"devshard/gossip"
@@ -83,7 +82,7 @@ func main() {
 	addr := ":" + *port
 	log.Printf("devshard-host listening on %s slot=%d address=%s route_prefix=%s",
 		addr, cfg.hostIndex, cfg.signer.Address(), devshardpkg.DefaultRoutePrefix())
-	if err := e.Start(addr); err != nil && err != http.ErrServerClosed {
+	if err := e.Start(addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
 }
@@ -419,7 +418,7 @@ type sseErrorInferenceEngine struct {
 
 func (e sseErrorInferenceEngine) Execute(_ context.Context, req devshardpkg.ExecuteRequest) (*devshardpkg.ExecuteResult, error) {
 	if req.ResponseWriter != nil {
-		fmt.Fprintf(req.ResponseWriter, "data: {\"error\":{\"code\":400,\"message\":%s,\"type\":\"BadRequestError\"}}\n\n", strconv.Quote(e.message))
+		_, _ = fmt.Fprintf(req.ResponseWriter, "data: {\"error\":{\"code\":400,\"message\":%s,\"type\":\"BadRequestError\"}}\n\n", strconv.Quote(e.message))
 		if rw, ok := req.ResponseWriter.(http.Flusher); ok {
 			rw.Flush()
 		}

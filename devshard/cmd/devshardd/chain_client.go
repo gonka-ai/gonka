@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	"common/chain"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 
-	"common/chain"
 	"devshard/cmd/devshardd/inference"
 	"devshard/cmd/devshardd/session"
 )
@@ -25,7 +25,7 @@ type chainIdentity struct {
 
 func newChainIdentity(
 	client *chain.Client,
-	apiAccount ApiAccount,
+	apiAccount APIAccount,
 	kr keyring.Keyring,
 ) (*chainIdentity, error) {
 	accountAddr, err := apiAccount.AccountAddressBech32()
@@ -76,5 +76,7 @@ func resolveChainID(ctx context.Context, chainClient *chain.Client, configured s
 	return resp.DefaultNodeInfo.Network, nil
 }
 
-var _ session.PayloadAuthClient = (*chainIdentity)(nil)
-var _ inference.PayloadAuthClient = (*chainIdentity)(nil)
+var (
+	_ session.PayloadAuthClient   = (*chainIdentity)(nil)
+	_ inference.PayloadAuthClient = (*chainIdentity)(nil)
+)

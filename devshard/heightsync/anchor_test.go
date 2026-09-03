@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"common/chainoracle/blocks"
-	"devshard/heightsync"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/heightsync"
 )
 
 type fakeOracle struct {
@@ -33,6 +33,7 @@ func (f *fakeOracle) At(context.Context, int64) (*blocks.Header, error) { return
 func (f *fakeOracle) Prove(context.Context, string, int64) (*blocks.Proof, error) {
 	return nil, nil
 }
+
 func (f *fakeOracle) Subscribe(context.Context, int64) (<-chan *blocks.Header, error) {
 	return nil, nil
 }
@@ -438,6 +439,7 @@ func (o *blockingAnchorOracle) At(context.Context, int64) (*blocks.Header, error
 func (o *blockingAnchorOracle) Prove(context.Context, string, int64) (*blocks.Proof, error) {
 	return nil, nil
 }
+
 func (o *blockingAnchorOracle) Subscribe(context.Context, int64) (<-chan *blocks.Header, error) {
 	return nil, nil
 }

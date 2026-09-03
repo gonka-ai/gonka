@@ -92,7 +92,7 @@ func TestAggregateResponseBuffer_SpilledChunkedWritesRoundTrip(t *testing.T) {
 	defer func() { _ = buf.Close() }()
 
 	var want bytes.Buffer
-	for i := 0; i < 500; i++ {
+	for i := range 500 {
 		chunk := []byte(fmt.Sprintf("data: {\"i\":%d}\n\n", i))
 		want.Write(chunk)
 		_, err := buf.Write(chunk)
@@ -277,7 +277,7 @@ func TestAggregateResponseBuffer_ConcurrentWriteClose(t *testing.T) {
 
 	buf := newAggregateResponseBuffer()
 	var wg sync.WaitGroup
-	for i := 0; i < 32; i++ {
+	for i := range 32 {
 		wg.Add(1)
 		go func(i int) {
 			defer wg.Done()
@@ -285,11 +285,9 @@ func TestAggregateResponseBuffer_ConcurrentWriteClose(t *testing.T) {
 			_, _ = buf.Write(chunk)
 		}(i)
 	}
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_ = buf.Close()
-	}()
+	})
 	wg.Wait()
 
 	// After Close, further writes must fail closed (not panic / corrupt).
@@ -314,7 +312,7 @@ func TestHandleAggregatedPath_SpilledBodyFoldsViaOpenReader(t *testing.T) {
 	chunks := []string{
 		`{"id":"cmpl-spill","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"role":"assistant"},"finish_reason":null}]}`,
 	}
-	for i := 0; i < 40; i++ {
+	for i := range 40 {
 		chunks = append(chunks, fmt.Sprintf(
 			`{"id":"cmpl-spill","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"w%d"},"finish_reason":null}]}`, i))
 	}

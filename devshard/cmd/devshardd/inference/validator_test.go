@@ -9,50 +9,50 @@ import (
 	"testing"
 	"time"
 
+	"common/chain"
+	commonvalidation "common/validation"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
-	"common/chain"
-	commonvalidation "common/validation"
 	devshardpkg "devshard"
 	"devshard/storage"
 )
 
 // stubLeases implements leaseOps for testing.
 type stubLeases struct {
-	acquireFn      func(ctx context.Context, escrowId string, inferenceId uint64, epochId uint64, instanceAddr string) (bool, error)
-	setResultFn    func(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, instanceAddr string) error
-	ownsFn         func(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) (bool, error)
-	releaseFn      func(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) error
-	setResultCalls []string // records "escrowId/inferenceId/epochId/status"
-	releaseCalls   []string // records "escrowId/inferenceId/epochId/instanceAddr"
+	acquireFn      func(ctx context.Context, escrowID string, inferenceID uint64, epochID uint64, instanceAddr string) (bool, error)
+	setResultFn    func(ctx context.Context, escrowID string, inferenceID, epochID uint64, status storage.LeaseStatus, instanceAddr string) error
+	ownsFn         func(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) (bool, error)
+	releaseFn      func(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) error
+	setResultCalls []string // records "escrowID/inferenceID/epochID/status"
+	releaseCalls   []string // records "escrowID/inferenceID/epochID/instanceAddr"
 	acquireEpochs  []uint64
 }
 
-func (s *stubLeases) Acquire(ctx context.Context, escrowId string, inferenceId uint64, epochId uint64, instanceAddr string) (bool, error) {
-	s.acquireEpochs = append(s.acquireEpochs, epochId)
-	return s.acquireFn(ctx, escrowId, inferenceId, epochId, instanceAddr)
+func (s *stubLeases) Acquire(ctx context.Context, escrowID string, inferenceID uint64, epochID uint64, instanceAddr string) (bool, error) {
+	s.acquireEpochs = append(s.acquireEpochs, epochID)
+	return s.acquireFn(ctx, escrowID, inferenceID, epochID, instanceAddr)
 }
 
-func (s *stubLeases) SetResult(ctx context.Context, escrowId string, inferenceId, epochId uint64, status storage.LeaseStatus, instanceAddr string) error {
-	s.setResultCalls = append(s.setResultCalls, fmt.Sprintf("%s/%d/%d/%s", escrowId, inferenceId, epochId, status))
+func (s *stubLeases) SetResult(ctx context.Context, escrowID string, inferenceID, epochID uint64, status storage.LeaseStatus, instanceAddr string) error {
+	s.setResultCalls = append(s.setResultCalls, fmt.Sprintf("%s/%d/%d/%s", escrowID, inferenceID, epochID, status))
 	if s.setResultFn != nil {
-		return s.setResultFn(ctx, escrowId, inferenceId, epochId, status, instanceAddr)
+		return s.setResultFn(ctx, escrowID, inferenceID, epochID, status, instanceAddr)
 	}
 	return nil
 }
 
-func (s *stubLeases) OwnsPendingLease(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) (bool, error) {
+func (s *stubLeases) OwnsPendingLease(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) (bool, error) {
 	if s.ownsFn != nil {
-		return s.ownsFn(ctx, escrowId, inferenceId, epochId, instanceAddr)
+		return s.ownsFn(ctx, escrowID, inferenceID, epochID, instanceAddr)
 	}
 	return true, nil
 }
 
-func (s *stubLeases) Release(ctx context.Context, escrowId string, inferenceId, epochId uint64, instanceAddr string) error {
-	s.releaseCalls = append(s.releaseCalls, fmt.Sprintf("%s/%d/%d/%s", escrowId, inferenceId, epochId, instanceAddr))
+func (s *stubLeases) Release(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) error {
+	s.releaseCalls = append(s.releaseCalls, fmt.Sprintf("%s/%d/%d/%s", escrowID, inferenceID, epochID, instanceAddr))
 	if s.releaseFn != nil {
-		return s.releaseFn(ctx, escrowId, inferenceId, epochId, instanceAddr)
+		return s.releaseFn(ctx, escrowID, inferenceID, epochID, instanceAddr)
 	}
 	return nil
 }
@@ -95,7 +95,7 @@ func TestResolveValidationEpoch(t *testing.T) {
 
 func TestLeaseValidator_AcquireUsesRequestEpoch(t *testing.T) {
 	store := &stubLeases{
-		acquireFn: func(_ context.Context, _ string, _ uint64, epochId uint64, _ string) (bool, error) {
+		acquireFn: func(_ context.Context, _ string, _ uint64, epochID uint64, _ string) (bool, error) {
 			return true, nil
 		},
 	}
@@ -206,7 +206,9 @@ func (s stubThresholdResolver) Resolve(_ context.Context, _ uint64, _ string) (f
 
 type unknownValidationResult struct{}
 
-func (unknownValidationResult) IsSuccessful() bool                 { return true }
+func (unknownValidationResult) IsSuccessful() bool { return true }
+
+//nolint:revive // the name comes from validation.ValidationResult, generated from the proto.
 func (unknownValidationResult) GetInferenceId() string             { return "unknown" }
 func (unknownValidationResult) GetValidationResponseBytes() []byte { return nil }
 

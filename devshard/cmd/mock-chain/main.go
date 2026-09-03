@@ -272,14 +272,14 @@ func parseHosts(raw string) []hostConfig {
 
 func parseWarmGrants(raw string) map[string][]string {
 	result := make(map[string][]string)
-	for _, entry := range strings.Split(raw, ",") {
+	for entry := range strings.SplitSeq(raw, ",") {
 		entry = strings.TrimSpace(entry)
 		if entry == "" || !strings.Contains(entry, "=") {
 			continue
 		}
 		pair := strings.SplitN(entry, "=", 2)
 		validator := strings.TrimSpace(pair[0])
-		for _, warm := range strings.Split(pair[1], "|") {
+		for warm := range strings.SplitSeq(pair[1], "|") {
 			warm = strings.TrimSpace(warm)
 			if warm != "" {
 				result[validator] = append(result[validator], warm)

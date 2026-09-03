@@ -13,7 +13,6 @@ import (
 
 	"common/chain"
 	"common/chainoracle/blocks"
-
 	"github.com/cometbft/cometbft/proto/tendermint/types"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"google.golang.org/grpc"

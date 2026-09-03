@@ -8,6 +8,7 @@ import (
 	"sync"
 
 	"common/completionapi"
+
 	"devshard"
 	"devshard/cmd/devshardctl/filtercore"
 	"devshard/cmd/devshardctl/paramvalidators"
@@ -425,7 +426,6 @@ var (
 	}}
 	mustBeBool           = ParameterHandlerAdapter{Handler: paramvalidators.ValidateScalarParameter{Valid: paramvalidators.IsJSONBool, Message: "must be a boolean"}}
 	mustBeUint           = ParameterHandlerAdapter{Handler: paramvalidators.ValidateUintParameter{}}
-	elementsMustBeUint   = ParameterHandlerAdapter{Handler: paramvalidators.ValidateListElementsParameter{Valid: paramvalidators.IsJSONUint, Message: "must be an integer token id"}}
 	elementsMustBeString = ParameterHandlerAdapter{Handler: paramvalidators.ValidateListElementsParameter{Valid: paramvalidators.IsJSONString, Message: "must be a string"}}
 )
 

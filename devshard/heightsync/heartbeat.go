@@ -446,7 +446,7 @@ func (h *Heartbeat) SpanTxs(hNow uint64, hash []byte, slotsNum uint64, reason He
 		reason = ReasonQuietSession
 	}
 	out := make([]*types.DevshardTx, 0, slotsNum)
-	for i := uint64(0); i < slotsNum; i++ {
+	for range slotsNum {
 		hb := &types.MsgHeartbeat{
 			ObservedHeight:    hNow,
 			ObservedBlockHash: append([]byte(nil), hash...),
@@ -465,7 +465,7 @@ func SpanNonces(startNonce, slotsNum uint64) []uint64 {
 		slotsNum = 1
 	}
 	out := make([]uint64, slotsNum)
-	for i := uint64(0); i < slotsNum; i++ {
+	for i := range slotsNum {
 		out[i] = startNonce + i
 	}
 	return out

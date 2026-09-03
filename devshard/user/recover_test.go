@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"maps"
 	"path/filepath"
 	"sync/atomic"
 	"testing"
@@ -94,7 +95,7 @@ func setupRecoverableSession(
 		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 
-	for i := 0; i < numInferences; i++ {
+	for range numInferences {
 		_, err := session.SendInference(ctx, params)
 		require.NoError(t, err)
 	}
@@ -636,7 +637,7 @@ func TestRecoverSession_HeartbeatPartialAckDurableLossReportsSyncVector(t *testi
 	require.Len(t, hb.SyncVector, 3)
 	statuses := syncVectorStatuses(hb.SyncVector)
 	require.Equal(t, types.AckStatus_ACKED, statuses[span[0].hostIdx])
-	for slot := 0; slot < len(hosts); slot++ {
+	for slot := range hosts {
 		if slot == span[0].hostIdx {
 			continue
 		}
@@ -1716,7 +1717,7 @@ func TestRecoverSession_SnapshotOnly_RestoresSignatures(t *testing.T) {
 	stored, err := store.GetSignatures("escrow-1", finalNonce)
 	require.NoError(t, err)
 	if len(stored) == 0 {
-		for slot := uint32(0); slot < uint32(numHosts); slot++ {
+		for slot := range uint32(numHosts) {
 			require.NoError(t, store.AddSignature("escrow-1", finalNonce, slot, []byte{byte(slot + 1), 9, 9, 9}))
 		}
 		stored, err = store.GetSignatures("escrow-1", finalNonce)
@@ -1732,7 +1733,7 @@ func TestRecoverSession_SnapshotOnly_RestoresSignatures(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, finalNonce, live.Nonce())
 	live.mu.Lock()
-	for i := 0; i < numHosts; i++ {
+	for i := range numHosts {
 		live.hostSyncNonce[i] = finalNonce
 	}
 	live.mu.Unlock()
@@ -2054,9 +2055,7 @@ func TestRecoverSession_NewFormatSnapshot_RestoresHostCursor(t *testing.T) {
 
 	session.mu.Lock()
 	got := make(map[int]uint64, len(session.hostSyncNonce))
-	for k, v := range session.hostSyncNonce {
-		got[k] = v
-	}
+	maps.Copy(got, session.hostSyncNonce)
 	session.mu.Unlock()
 	require.Equal(t, cursor, got, "hostSyncNonce must round-trip through snapshot")
 }

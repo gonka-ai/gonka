@@ -46,13 +46,6 @@ func resetPoCPhaseStateForTest(t *testing.T) {
 	t.Cleanup(func() { setPoCPhaseState(false, "") })
 }
 
-func applyRedundancySettingsForTest(t *testing.T, settings RedundancySettings) {
-	t.Helper()
-	prev := captureRedundancyTimingSettings()
-	ApplyRedundancySettings(settings)
-	t.Cleanup(func() { restoreRedundancyTimingSettings(prev) })
-}
-
 func captureRedundancyTimingSettings() RedundancySettings {
 	return RedundancySettings{
 		ReceiptTimeoutMS:              int64(ReceiptTimeout / time.Millisecond),
@@ -75,8 +68,8 @@ func TestShouldUseProbeForParticipantUsesModelPreservedSet(t *testing.T) {
 	t.Cleanup(func() { setPoCPreservedParticipantsByModel(nil) })
 
 	setPoCPreservedParticipantsByModel(map[string][]string{
-		"Model/A": []string{"participant-a"},
-		"Model/B": []string{"participant-b"},
+		"Model/A": {"participant-a"},
+		"Model/B": {"participant-b"},
 	})
 
 	require.False(t, shouldUseProbeForParticipant("Model/A", "participant-a"))

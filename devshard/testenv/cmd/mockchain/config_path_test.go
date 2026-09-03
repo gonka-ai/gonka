@@ -4,9 +4,9 @@ import (
 	"os"
 	"testing"
 
-	"devshard/testenv/mockchain/seed"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/testenv/mockchain/seed"
 )
 
 func TestConfigPathAlias(t *testing.T) {

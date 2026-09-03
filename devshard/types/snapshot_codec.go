@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"maps"
 
 	"google.golang.org/protobuf/proto"
 )
@@ -38,9 +39,7 @@ func EscrowStateToProto(state *EscrowState) *EscrowStateProto {
 	}
 
 	warmKeys := make(map[uint32]string, len(state.WarmKeys))
-	for slotID, addr := range state.WarmKeys {
-		warmKeys[slotID] = addr
-	}
+	maps.Copy(warmKeys, state.WarmKeys)
 
 	cfg := state.Config
 	return &EscrowStateProto{
@@ -115,9 +114,7 @@ func EscrowStateFromProto(msg *EscrowStateProto) *EscrowState {
 	}
 
 	warmKeys := make(map[uint32]string, len(msg.WarmKeys))
-	for slotID, addr := range msg.WarmKeys {
-		warmKeys[slotID] = addr
-	}
+	maps.Copy(warmKeys, msg.WarmKeys)
 
 	var cfg SessionConfig
 	if msg.Config != nil {
@@ -255,8 +252,6 @@ func cloneUint64Map(src map[uint64]uint64) map[uint64]uint64 {
 		return nil
 	}
 	out := make(map[uint64]uint64, len(src))
-	for k, v := range src {
-		out[k] = v
-	}
+	maps.Copy(out, src)
 	return out
 }

@@ -12,9 +12,9 @@ import (
 	"testing"
 	"time"
 
-	"devshard/testenv/config"
-
 	"github.com/stretchr/testify/require"
+
+	"devshard/testenv/config"
 )
 
 const (
@@ -61,7 +61,8 @@ func NewStack(t *testing.T, prefix string) *Stack {
 	testenvDir, err := filepath.Abs("..")
 	require.NoError(t, err)
 
-	workDir, err := os.MkdirTemp(testenvDir, prefix)
+	// Not t.TempDir(): the generated compose file addresses the repo through paths relative to testenv/.
+	workDir, err := os.MkdirTemp(testenvDir, prefix) //nolint:usetesting
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(workDir) })
 
@@ -215,7 +216,7 @@ func (s *Stack) composeServiceNames(t *testing.T) []string {
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "docker compose config --services\n%s", out)
 	var names []string
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		line = strings.TrimSpace(line)
 		if line != "" {
 			names = append(names, line)
@@ -471,7 +472,7 @@ func (s *Stack) runningServices() (map[string]struct{}, error) {
 		return nil, fmt.Errorf("docker compose ps: %w: %s", err, out)
 	}
 	set := make(map[string]struct{})
-	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
 			continue

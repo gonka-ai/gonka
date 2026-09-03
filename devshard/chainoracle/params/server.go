@@ -13,9 +13,9 @@ import (
 
 // Config wires the params-side NodeManager gRPC server.
 type Config struct {
-	Source   *CachedSource
+	Source     *CachedSource
 	MaxWaitCap func() time.Duration
-	Log      *slog.Logger
+	Log        *slog.Logger
 	// MLEndpoint is returned from AcquireMLNode (mock-openai URL in testenv).
 	MLEndpoint string
 }

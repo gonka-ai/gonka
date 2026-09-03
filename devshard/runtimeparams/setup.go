@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"common/nodemanager/gen"
+
 	devshardpkg "devshard"
 	"devshard/runtimeconfig"
 )
@@ -48,11 +49,11 @@ func (m *Managed) Close() {
 
 // SetupConfig configures NewManaged.
 type SetupConfig struct {
-	Chain       runtimeconfig.ChainParamsFetcher
-	GRPCClient  gen.NodeManagerClient
+	Chain        runtimeconfig.ChainParamsFetcher
+	GRPCClient   gen.NodeManagerClient
 	Availability *devshardpkg.AvailabilityTracker
-	Logger      *slog.Logger
-	Env         EnvSettings
+	Logger       *slog.Logger
+	Env          EnvSettings
 }
 
 // NewManaged starts the adaptive (default) or chain-only runtime params provider.
@@ -78,8 +79,8 @@ func NewManaged(parent context.Context, cfg SetupConfig) (*Managed, error) {
 		Log:             logger,
 	}
 
-	switch {
-	case env.Source == SourceChain:
+	switch env.Source {
+	case SourceChain:
 		logger.Info("runtime params provider", "source", "chain_poll", "reason", "env_override")
 		rc, err := runtimeconfig.NewChain(ctx, chainCfg)
 		if err != nil {
@@ -92,7 +93,7 @@ func NewManaged(parent context.Context, cfg SetupConfig) (*Managed, error) {
 			cancel:   cancel,
 		}, nil
 
-	case env.Source == SourceGRPC:
+	case SourceGRPC:
 		logger.Warn("runtime params provider: grpc source is deprecated; using adaptive prefer-grpc with chain fallback")
 	}
 

@@ -7,13 +7,12 @@ import (
 	"time"
 
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 
 	"devshard/cmd/devshardd/events"
 	"devshard/testenv/mockchain/rpcface"
 	"devshard/testenv/mockchain/seed"
-
-	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
 func startTestRPC(t *testing.T, interval time.Duration) (string, func()) {
@@ -40,7 +39,7 @@ func TestMockChainRPC_StatusAndBlock(t *testing.T) {
 	block, err := client.Block(context.Background(), &status.SyncInfo.LatestBlockHeight)
 	require.NoError(t, err)
 	require.Equal(t, int64(150), block.Block.Height)
-	require.Equal(t, "gonka-test", block.Block.Header.ChainID)
+	require.Equal(t, "gonka-test", block.Block.ChainID)
 }
 
 func TestMockChainRPC_ListenerNewBlock(t *testing.T) {
