@@ -7,6 +7,9 @@ import (
 	"strings"
 )
 
+// Above this size, skipping a prompt-wide array's decode beats a second look at the bytes.
+const skipDecodeAboveBytes = 4 << 10
+
 var droppedLogprobFields = []string{"bytes", "logprob"}
 
 // fieldsNoValidatorReads are the serving engine's own bookkeeping. Nothing in validation reads them
@@ -16,6 +19,17 @@ var fieldsNoValidatorReads = []string{"token_ids", "prompt_token_ids", "prompt_l
 
 // fieldsOnlyAskingCallersSee is what a caller that did not ask for logprobs must not be sent.
 var fieldsOnlyAskingCallersSee = []string{"logprobs"}
+
+// The same names, quoted once, for a scan that runs before the decode.
+var quotedFieldsNoValidatorReads = quoteFieldNames(fieldsNoValidatorReads)
+
+func quoteFieldNames(fields []string) [][]byte {
+	quoted := make([][]byte, len(fields))
+	for index, field := range fields {
+		quoted[index] = []byte(`"` + field + `"`)
+	}
+	return quoted
+}
 
 // CompressResponsePayload slims a whole stored response, streamed envelope or plain completion. The
 // executor slims chunk by chunk as it parses them, so this is the entry point for a payload nobody
@@ -45,6 +59,38 @@ func SlimStoredDocument(document any) error {
 	}
 	dropFields(document, fieldsNoValidatorReads)
 	return compressLogprobsIn(document)
+}
+
+// decodeDocumentWithoutUnreadFields keeps a prompt-wide array as bytes, not as decoded values.
+func decodeDocumentWithoutUnreadFields(payload []byte) (any, error) {
+	if len(payload) < skipDecodeAboveBytes || !carriesUnreadField(payload) {
+		return decodeJSONDocument(payload)
+	}
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(payload, &fields); err != nil {
+		return decodeJSONDocument(payload)
+	}
+	for _, field := range fieldsNoValidatorReads {
+		delete(fields, field)
+	}
+	document := make(map[string]any, len(fields))
+	for key, value := range fields {
+		decoded, err := decodeJSONDocument(value)
+		if err != nil {
+			return decodeJSONDocument(payload)
+		}
+		document[key] = decoded
+	}
+	return document, nil
+}
+
+func carriesUnreadField(payload []byte) bool {
+	for _, field := range quotedFieldsNoValidatorReads {
+		if bytes.Contains(payload, field) {
+			return true
+		}
+	}
+	return false
 }
 
 func decodeJSONDocument(payload []byte) (any, error) {

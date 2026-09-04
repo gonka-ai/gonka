@@ -3,11 +3,15 @@ package completionapi
 import (
 	"encoding/json"
 	"errors"
+	"strconv"
 
 	"common/logging"
 
 	"github.com/productscience/inference/x/inference/types"
 )
+
+// ErrNoResponseCollected is returned when neither a JSON body nor a chunk arrived.
+var ErrNoResponseCollected = errors.New("ExecutorResponseProcessor: can't get response; both jsonResponseBytes and streamedResponse are empty")
 
 type ResponseProcessor interface {
 	ProcessJsonResponse(responseBytes []byte) ([]byte, error)
@@ -23,6 +27,8 @@ type ExecutorResponseProcessor struct {
 	forwardedJSON     []byte
 	streamedResponse  []string
 	forwardLogprobs   bool
+	observedUsage     *Usage
+	usageRefused      bool
 }
 
 func NewExecutorResponseProcessor(inferenceId string, forwardLogprobs bool) *ExecutorResponseProcessor {
@@ -68,7 +74,7 @@ func (rt *ExecutorResponseProcessor) ProcessStreamedResponse(line string) (strin
 // prepareBody parses one chunk once and answers both readers: only the forwarded copy can lose logprobs,
 // because the validator replays the stored one.
 func (rt *ExecutorResponseProcessor) prepareBody(body []byte) (stored, forwarded []byte, err error) {
-	document, err := decodeJSONDocument(body)
+	document, err := decodeDocumentWithoutUnreadFields(body)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -77,6 +83,7 @@ func (rt *ExecutorResponseProcessor) prepareBody(body []byte) (stored, forwarded
 		return nil, nil, errors.New("ExecutorResponseProcessor: response body is not a JSON object")
 	}
 	object["id"] = rt.inferenceId
+	rt.observeUsage(object)
 	dropFields(document, fieldsNoValidatorReads)
 
 	// Only a caller that asked is owed the host's own positions, so only it pays for a copy.
@@ -113,7 +120,7 @@ func (rt *ExecutorResponseProcessor) GetResponseBytes() ([]byte, error) {
 		}
 		return json.Marshal(response)
 	}
-	return rt.jsonResponseBytes, nil
+	return nil, ErrNoResponseCollected
 }
 
 func (rt *ExecutorResponseProcessor) GetResponse() (CompletionResponse, error) {
@@ -123,5 +130,56 @@ func (rt *ExecutorResponseProcessor) GetResponse() (CompletionResponse, error) {
 		return NewCompletionResponseFromLines(rt.streamedResponse)
 	}
 
-	return nil, errors.New("ExecutorResponseProcessor: can't get response; both jsonResponseBytes and streamedResponse are empty")
+	return nil, ErrNoResponseCollected
+}
+
+// observeUsage keeps the first non-empty usage, sparing a second parse.
+func (rt *ExecutorResponseProcessor) observeUsage(object map[string]any) {
+	if rt.observedUsage != nil {
+		return
+	}
+	reported, isObject := object["usage"].(map[string]any)
+	if !isObject {
+		return
+	}
+	promptTokens, promptRead := tokenCount(reported["prompt_tokens"])
+	completionTokens, completionRead := tokenCount(reported["completion_tokens"])
+	if !promptRead || !completionRead {
+		// The full re-parse fails on this chunk, so no later usage may stand in for it.
+		rt.usageRefused = true
+		return
+	}
+	usage := Usage{PromptTokens: promptTokens, CompletionTokens: completionTokens}
+	if usage.IsEmpty() {
+		return
+	}
+	rt.observedUsage = &usage
+}
+
+// GetUsage falls back to the full re-parse when no usage chunk could be read.
+func (rt *ExecutorResponseProcessor) GetUsage() (*Usage, error) {
+	if rt.observedUsage != nil && !rt.usageRefused {
+		return rt.observedUsage, nil
+	}
+	response, err := rt.GetResponse()
+	if err != nil {
+		return nil, err
+	}
+	return response.GetUsage()
+}
+
+// tokenCount reads a count exactly as the uint64 field of Usage would, and refuses what it cannot.
+func tokenCount(reported any) (uint64, bool) {
+	if reported == nil {
+		return 0, true
+	}
+	number, isNumber := reported.(json.Number)
+	if !isNumber {
+		return 0, false
+	}
+	count, err := strconv.ParseUint(number.String(), 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return count, true
 }

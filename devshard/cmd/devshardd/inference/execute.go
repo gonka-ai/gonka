@@ -84,19 +84,16 @@ func processExecutionHTTPResponse(
 	isSSE := completionapi.IsEventStream(resp)
 
 	if req.ResponseWriter != nil && isSSE {
-		proxyResponse(resp, req.ResponseWriter, true, processor, inferenceID)
+		if err := proxyResponse(resp, req.ResponseWriter, true, processor, inferenceID); err != nil {
+			return nil, fmt.Errorf("relay response: %w", err)
+		}
 	} else {
 		if err := completionapi.ProcessHTTPResponse(resp, processor); err != nil {
 			return nil, fmt.Errorf("process response: %w", err)
 		}
 	}
 
-	completionResp, err := processor.GetResponse()
-	if err != nil {
-		return nil, fmt.Errorf("get completion response: %w", err)
-	}
-
-	bodyBytes, err := completionResp.GetBodyBytes()
+	bodyBytes, err := processor.GetResponseBytes()
 	if err != nil {
 		return nil, fmt.Errorf("get body bytes: %w", err)
 	}
@@ -115,7 +112,7 @@ func processExecutionHTTPResponse(
 
 	// The processor slimmed each chunk as it parsed it, so what it hands back is already what is stored.
 	hash := sha256.Sum256(bodyBytes)
-	usage, err := completionResp.GetUsage()
+	usage, err := processor.GetUsage()
 	if err != nil {
 		return nil, fmt.Errorf("get usage: %w", err)
 	}
