@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"common/chain"
+	"common/chainoracle/blocks"
+	"common/httpguard"
 	mlnodeclient "common/nodemanager"
 	commrc "common/runtimeconfig"
 	"common/storage/payloads"
@@ -31,14 +33,19 @@ import (
 
 const sessionEpochRetain = 3
 
+type chainEventsRunner interface {
+	Start(context.Context) error
+}
+
 type devshardApp struct {
-	server        *echo.Echo
-	adminServer   *echo.Echo
+	server        appHTTPServer
+	adminServer   appHTTPServer
 	adminAddr     string
-	chainEvents   *chainEventBridge
+	chainEvents   chainEventsRunner
 	port          int
 	lifecycle     *lifecycleState
 	shutdownGrace time.Duration
+	storageErrors <-chan error
 	close         func()
 }
 
@@ -73,8 +80,21 @@ func (p phaseEpochProvider) CurrentEpochID() uint64 {
 }
 
 func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error) {
+	if err := requireHADeploymentStorage(); err != nil {
+		return nil, err
+	}
+
 	if err := os.MkdirAll(cfg.DataDir, 0o755); err != nil {
 		return nil, fmt.Errorf("create data dir %s: %w", cfg.DataDir, err)
+	}
+
+	// Wire the dial-time SSRF guard before anything can dial out. Guarded
+	// clients read the flag per dial, so this also covers the package-level
+	// validation.PayloadRetrievalClient constructed at init.
+	httpguard.SetAllowPrivate(cfg.AllowPrivateAddresses)
+	if cfg.AllowPrivateAddresses {
+		slog.Warn("SSRF guard disabled: dials to private/internal addresses are allowed",
+			"env", "DEVSHARD_ALLOW_PRIVATE_ADDRESSES")
 	}
 
 	var closers closeStack
@@ -96,7 +116,7 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 	closers.Add(func() { mlClient.Close() })
 
 	payloadDir := filepath.Join(cfg.DataDir, "payloads")
-	payloadStore, payloadClose, err := payloads.Open(ctx, payloads.OpenConfig{Dir: payloadDir})
+	payloadStore, payloadClose, err := payloads.Open(ctx, payloads.OpenConfig{Dir: payloadDir, CompressFiles: cfg.CompressPayloadFiles})
 	if err != nil {
 		return nil, fmt.Errorf("payload store: %w", err)
 	}
@@ -111,19 +131,24 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 	e := buildServer(lifecycle)
 	var admin *echo.Echo
 	if cfg.AdminAddr != "" {
-		admin = buildAdminServer(lifecycle, manager.StorageReady)
+		admin = buildAdminServer(lifecycle, manager.StorageReady, manager.StorageProof, manager.RecoveryProgressSnapshot)
 	}
 	manager.Register(e.Group(""))
 	chainRuntime.chainEvents.OnReady(lifecycle.SetReady)
+	var adminServer appHTTPServer
+	if admin != nil {
+		adminServer = admin
+	}
 
 	return &devshardApp{
 		server:        e,
-		adminServer:   admin,
+		adminServer:   adminServer,
 		adminAddr:     cfg.AdminAddr,
 		chainEvents:   chainRuntime.chainEvents,
 		port:          cfg.Port,
 		lifecycle:     lifecycle,
 		shutdownGrace: cfg.ShutdownGrace,
+		storageErrors: manager.StorageFatalErrors(),
 		close:         closers.Close,
 	}, nil
 }
@@ -231,7 +256,7 @@ func buildHostManager(
 	chainParams := paramsSetup.Provider
 	mlNodeMgr := buildMLNodeManager(ctx)
 	mlNodeCapacity := buildMLNodeCapacityCache(ctx, mlClient)
-	eng := inference.NewEngine(mlClient, mlNodeMgr, mlNodeCapacity, payloadStore, chainParams, phase)
+	eng := inference.NewEngine(mlClient, mlNodeMgr, mlNodeCapacity, payloadStore, chainParams, phase, cfg.MLNodeAffinityEnabled)
 
 	instanceAddr := chainRuntime.identity.GetSignerAddress()
 
@@ -244,6 +269,7 @@ func buildHostManager(
 		cfg.RuntimeVersion,
 		chainParams,
 		thresholds,
+		cfg.VoteFalseOnFetchFailure,
 	)
 
 	innerStore, err := devshardstorage.NewStorage(ctx, cfg.DataDir)
@@ -277,32 +303,47 @@ func buildHostManager(
 	)
 	manager.SetAvailabilityProvider(availabilityTracker)
 	manager.SetMaxNonceProvider(runtimeparams.MaxNonceFromSnapshot(chainParams))
+	manager.SetParamsProvider(runtimeparams.FromSnapshot(chainParams))
 	manager.SetBinaryVersion(cfg.BinaryLogVersion)
+	if err := manager.SetHeightSyncFromEnv(ctx, chainRuntime.client); err != nil {
+		return nil, fmt.Errorf("height sync oracle: %w", err)
+	}
+	closers.Add(manager.CloseHeightSync)
 	chainBridge.OnSettlementFinalizedHandler(manager.HandleSettlementFinalized)
 
-	startHostEventsWarm(ctx, cfg, chainBridge, mlClient, store, closers)
+	startHostEventsWarm(ctx, cfg, chainBridge, mlClient, store, manager.HandleSettlementFinalized, closers)
 
-	if err := manager.RecoverSessions(); err != nil {
-		slog.Warn("recover sessions failed", "error", err)
-	}
 	store.Start()
 
-	retryLoop := session.NewRetryLoop(store, validator, manager, phase, instanceAddr)
-	retryLoop.WithInterval(cfg.ValidationRetryInterval)
-	retryLoop.WithLeaseTTL(cfg.ValidationLeaseTTL)
-	retryLoopCtx, cancelRetryLoop := context.WithCancel(ctx)
-	retryLoopDone := make(chan struct{})
+	closers.Add(manager.CloseHosts)
+
+	// Recovery used to run inline here, so a host with a large backlog kept the
+	// listener closed and answered 502 until every session was rebuilt. Run it
+	// in the background instead: /ready stays false until the backlog drains,
+	// and any session requested before its turn is recovered on demand.
+	closers.Add(manager.StartRecovery(ctx))
+	// A validation-obs or sealed-index rebuild interrupted after its clear
+	// leaves those rows empty, and recovery will not retry once a snapshot exists.
+	closers.Add(manager.WaitRecoveryRepairs)
+
+	validationRetry := session.NewValidationRetryLoop(store, validator, manager, phase, instanceAddr)
+	validationRetry.WithInterval(cfg.ValidationRetryInterval)
+	validationRetry.WithLeaseTTL(cfg.ValidationLeaseTTL)
+	validationRetryCtx, cancelValidationRetry := context.WithCancel(ctx)
+	validationRetryDone := make(chan struct{})
 	closers.Add(func() {
-		cancelRetryLoop()
-		<-retryLoopDone
+		cancelValidationRetry()
+		<-validationRetryDone
 	})
 	go func() {
-		defer close(retryLoopDone)
-		retryLoop.Run(retryLoopCtx)
+		defer close(validationRetryDone)
+		validationRetry.Run(validationRetryCtx)
 	}()
 
 	var lastCleanEpoch atomic.Uint64
 	chainRuntime.chainEvents.OnNewBlock(func(bctx context.Context, e events.NewBlockEvent) {
+		manager.ObserveChainHeader(blocks.HashOnlyHeader(e.BlockHeight, e.Time, e.ChainID, e.BlockHash))
+
 		currentEpoch := phase.EpochID()
 		if currentEpoch <= lastCleanEpoch.Load() {
 			return
@@ -332,13 +373,14 @@ func startHostEventsWarm(
 	chainBridge *devshardbridge.ChainBridge,
 	mlClient *mlnodeclient.Client,
 	store devshardstorage.Storage,
+	onSettled func(escrowID string) error,
 	closers *closeStack,
 ) {
 	if !cfg.HostEventsEnabled {
 		slog.Info("hostevents: escrow long-poll warm disabled (DEVSHARD_HOST_EVENTS_ENABLED=false)")
 		return
 	}
-	sink := newEscrowWarmSink(chainBridge, store, slog.Default())
+	sink := newEscrowWarmSink(chainBridge, store, slog.Default(), onSettled)
 	hostCtx, cancel := context.WithCancel(ctx)
 	done := make(chan struct{})
 	closers.Add(func() {
@@ -380,6 +422,12 @@ func logCleanupError(msg string, err error) {
 	slog.Warn(msg, "error", err)
 }
 
+type appHTTPServer interface {
+	Start(string) error
+	Close() error
+	Shutdown(context.Context) error
+}
+
 func (a *devshardApp) Run(ctx context.Context) error {
 	defer a.close()
 
@@ -397,7 +445,7 @@ func (a *devshardApp) Run(ctx context.Context) error {
 		err  error
 	}
 	errCh := make(chan serverError, 2)
-	startServer := func(name string, server *echo.Echo, addr string) {
+	startServer := func(name string, server appHTTPServer, addr string) {
 		go func() {
 			slog.Info("listening", "server", name, "addr", addr)
 			if err := server.Start(addr); err != nil && err != http.ErrServerClosed {
@@ -412,6 +460,7 @@ func (a *devshardApp) Run(ctx context.Context) error {
 
 	var runErr error
 	chainEventsStopped := false
+	forceShutdown := false
 	select {
 	case <-ctx.Done():
 		slog.Info("shutdown requested")
@@ -424,10 +473,21 @@ func (a *devshardApp) Run(ctx context.Context) error {
 		} else {
 			runErr = fmt.Errorf("chain events listener stopped")
 		}
+	case err := <-a.storageErrors:
+		runErr = fmt.Errorf("terminal storage failure: %w", err)
+		forceShutdown = true
 	}
 
 	a.lifecycle.StartDrain()
 	cancel()
+	if forceShutdown {
+		_ = a.server.Close()
+		if a.adminServer != nil {
+			_ = a.adminServer.Close()
+		}
+		slog.Warn("devshardd stopped after terminal storage failure")
+		return runErr
+	}
 
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), a.shutdownGrace)
 	defer shutdownCancel()

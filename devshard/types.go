@@ -12,6 +12,7 @@ type ExecuteRequest struct {
 	MaxTokens   uint64
 	EscrowID    string // Session escrow ID for namespaced payload storage
 	EpochID     uint64 // Epoch when the escrow was pinned on mainnet
+	SessionID   string
 
 	// ResponseWriter, if set, receives the raw ML node response as it streams.
 	// The engine should write inference output here for real-time forwarding.

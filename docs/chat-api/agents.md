@@ -38,15 +38,15 @@ They shouldn't. MiniMax-M2.7 emits reasoning inline as `<think>...</think>` in `
 
 ### "My cache key disappeared"
 
-Cause: `cache_key` / `prompt_cache_key` silently stripped. vLLM uses a different field (`cache_salt`) for cache isolation, and the aliasing PR is unmerged — see [troubleshooting](troubleshooting.md#strip-cache_key) for the full chain of upstream gaps.
+Cause: `cache_key` is silently stripped — vLLM does not understand Moonshot's field, and there is no bridge for it — see [troubleshooting](troubleshooting.md#strip-cache_key). `prompt_cache_key` is also stripped from the body forwarded to vLLM (vLLM has no native support for it either), but on a devshard with session affinity enabled the gateway reads it first and bridges it into vLLM's `cache_salt` for cache reuse — see [troubleshooting](troubleshooting.md#strip-prompt_cache_key) and [proposals/kv-cache-affinity](../../proposals/kv-cache-affinity/README.md).
 
 ### "Where do unsupported sampling fields go?"
 
 `allowed_token_ids`, `ignore_eos`, `use_beam_search`, `truncate_prompt_tokens`, `prompt_logprobs` are all rejected with HTTP 400 — see [troubleshooting](troubleshooting.md#reject-vllm-internals). For output control, use `response_format` or `structured_outputs` (on supported routes).
 
-### "Why does my `temperature: 0` + `n: 5` request return only one completion?"
+### "Why does my `n: 5` request return only one completion?"
 
-The gateway coerces `n` to `1` when `temperature == 0` because vLLM rejects `n > 1` at that temperature (greedy sampling produces identical completions anyway). See [troubleshooting](troubleshooting.md#coerce-n-when-temperature-zero).
+The gateway rewrites any present `n` to `1`. Reservation and settlement budget a single `MaxTokens` output, so multi-choice would undercharge. See [troubleshooting](troubleshooting.md#coerce-n-when-temperature-zero).
 
 ### "Why is `tool_choice: \"required\"` being treated as `\"auto\"`?"
 

@@ -14,12 +14,13 @@ import (
 // /metrics endpoint stays self-contained — operators can scrape directly even
 // when an OTLP collector is unreachable.
 type promInstruments struct {
-	activeOperations  *prometheus.GaugeVec
-	operationDuration *prometheus.HistogramVec
-	operationErrors   *prometheus.CounterVec
-	promptTokens      *prometheus.HistogramVec
-	completionTokens  *prometheus.HistogramVec
-	totalTokens       *prometheus.HistogramVec
+	activeOperations       *prometheus.GaugeVec
+	operationDuration      *prometheus.HistogramVec
+	operationErrors        *prometheus.CounterVec
+	promptTokens           *prometheus.HistogramVec
+	completionTokens       *prometheus.HistogramVec
+	totalTokens            *prometheus.HistogramVec
+	mlnodeAffinityDecision *prometheus.CounterVec
 }
 
 var (
@@ -87,6 +88,10 @@ func initPrometheusMetrics() {
 				Help:    "Total tokens (prompt + completion) recorded by inference operations.",
 				Buckets: prometheus.ExponentialBuckets(16, 2, 14),
 			}, promLabelKeys),
+			mlnodeAffinityDecision: prometheus.NewCounterVec(prometheus.CounterOpts{
+				Name: "decentralized_api_mlnode_affinity_decision_total",
+				Help: "Total session-affinity outcomes for mlnode selection by decision (hit, yielded, congested, miss) and model.",
+			}, []string{"decision", "model"}),
 		}
 		prometheus.MustRegister(
 			promInstrument.activeOperations,
@@ -95,8 +100,15 @@ func initPrometheusMetrics() {
 			promInstrument.promptTokens,
 			promInstrument.completionTokens,
 			promInstrument.totalTokens,
+			promInstrument.mlnodeAffinityDecision,
 		)
 	})
+}
+
+// RecordMLNodeAffinityDecision records one mlnode affinity outcome: hit, yielded, congested or miss.
+func RecordMLNodeAffinityDecision(decision, model string) {
+	initPrometheusMetrics()
+	promInstrument.mlnodeAffinityDecision.WithLabelValues(decision, valueOrDefault(model, "unknown")).Inc()
 }
 
 func recordPrometheusOperationStarted(attrs []attribute.KeyValue) {

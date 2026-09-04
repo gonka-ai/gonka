@@ -29,7 +29,7 @@ Go packages under `devshard/testenv/` — what each one is for:
 | **`mockopenai/`** | Fake ML node library: minimal OpenAI HTTP API used by production `devshardd` after `AcquireMLNode`. |
 | **`gatewayphase/`** | Tiny HTTP stubs for devshardctl’s **chain epoch phase** poller (`ChainPhaseGate`): `/v1/epochs/latest` and `/v1/epochs/current/participants`. Mounted on mock-dapi; not a mock gateway. |
 | **`keymaterial/`** | Builds deterministic Cosmos **file keyrings** from config host keys so devshardd can sign txs in containers (`KEYRING_DIR`, `KEY_NAME`). |
-| **`citest/`** | Go integration tests: compose validation, gateway wiring, full-stack behavior tests (`make citest-stack`), Phase 9 adversarial A1–A4 (`make citest-adversarial`, `-tags=testenvci`), and optional gateway chat smoke (`TESTENV_GATEWAY_SMOKE=1`). |
+| **`citest/`** | Go integration tests: compose validation, gateway wiring, full-stack behavior tests (`make citest-stack`), Phase 9 adversarial A1–A5 (`make citest-adversarial`, `-tags=testenvci`), and optional gateway chat smoke (`TESTENV_GATEWAY_SMOKE=1`). |
 
 Production binaries (`devshardd`, `devshardctl`, `versiond`) are **not** reimplemented here — testenv only fakes their external dependencies (chain, dapi, ML) and wires them in Compose.
 
@@ -56,7 +56,7 @@ Skeleton: [`config/config.yaml`](config/config.yaml).
 |---------|---------|
 | `mock_chain`, `mock_dapi`, `mock_openai` | Mock services (ports, hosts) |
 | `versiond` | Protocol `version_name` (`v2`), `binary_version`, `mode` (`single` \| `multi`), devshardd override path, keyring |
-| `versiond_router` | Sticky nginx router (`:8080`) |
+| `versiond_router` | Sticky HAProxy router (`:8080`) |
 | `devshardctl` | Gateway listen port |
 | `postgres` | Shared Postgres — **required** for `versiond.mode: multi`; **off** for `single` (file payload fallback) |
 | `hosts` | One **versiond** + **devshardd** slot per entry (`id`, keys, IP) |
@@ -88,13 +88,15 @@ sessions are batch-migrated into Postgres once at startup.
 ### Three versiond instances (multi mode)
 
 The default skeleton defines **three** hosts (`versiond-0`, `versiond-1`, `versiond-2`).
-`gencompose` emits one compose service per host and sets:
+`gencompose` emits one compose service per host and puts `versiond-0` and
+`versiond-1` behind the `versiond-pool` network alias:
 
 ```text
-VERSIOND_HOSTS="versiond-0 versiond-1"
+VERSIOND_POOL_HOST="versiond-pool"     # on versiond-router
 ```
 
-on **versiond-router** (sticky HA pool). `versiond-2` is a **solo** participant reached via
+The router resolves that name to whichever pool members are running and
+health-checks each address. `versiond-2` is a **solo** participant reached via
 direct `inference_url` (`http://versiond-2:8080`), not the HA pool. Escrow slots round-robin
 across the HA identity (`hosts[0]`) and solo hosts (`hosts[2+]`). Solo uses **sqlite**
 storage so it does not multi-write the HA pair’s shared Postgres diffs; the HA pair keeps
@@ -209,7 +211,9 @@ go test ./testenv/... -count=1
 ### Stack citest (Docker)
 
 The stack suite covers smoke, routing, runtime updates, gateway behavior,
-versiond lifecycle, storage migration, validation leases, and rolling updates.
+versiond lifecycle, storage migration, validation leases, rolling updates, and
+router-observed host evacuation. The evacuation scenario verifies SSE
+continuity, graceful exit, survivor recovery and readiness-gated rejoin.
 Tests use behavior-oriented names and isolated stacks on dedicated subnets with
 Docker-assigned localhost ports, so they can run while a dev `make up` stack is
 active.
@@ -220,6 +224,7 @@ make build-devshardd
 make citest-stack                  # all core stack behavior tests
 make citest-validation-lease-race # validation lease race only
 make citest-versiond-rolling-update
+make citest-versiond-host-evacuation
 # or: ./scripts/run-stack-citest.sh
 ```
 
@@ -241,7 +246,12 @@ sessions to fail over on the first upstream connection failure.
 and a solo executor. `TestVersiondRollingUpdate*` separately checks same-version
 sha replacement with Postgres overlap and the hybrid stop-then-start fallback.
 
-**Phase 9 adversarial** (`make citest-adversarial`): A1 lost first SSE chunk, A2 ML 503, A3 stale escrow on chain gRPC, A4 bad warm-key grantees. Fault hooks: `mock-openai` `/testenv/fault`, mock-chain `/testenv/escrow` + `/testenv/grantees` (via mock-dapi).
+`TestVersiondHostEvacuation` stops one versiond while an SSE response is active,
+requires HAProxy to withdraw it before listener shutdown, verifies survivor
+recovery through shared Postgres, and admits the host again only after it
+converges.
+
+**Phase 9 adversarial** (`make citest-adversarial`): A1 lost first SSE chunk, A2 ML 503, A3 stale escrow on chain gRPC, A4 bad warm-key grantees, A5 streamed HTTP 200 SSE error envelope accounted as `MsgErrorMiss` (companion to A2; 3-host stack). Fault hooks: `mock-openai` `/testenv/fault`, mock-chain `/testenv/escrow` + `/testenv/grantees` (via mock-dapi).
 
 ### Phase 10 observability overlay (optional)
 
@@ -278,7 +288,13 @@ curl -sG 'http://127.0.0.1:13101/loki/api/v1/query_range' \
 curl -sf http://127.0.0.1:18080/v2/metrics | grep devshardd_request_duration_seconds | head
 ```
 
-**Automated O1 citest:**
+**Automated O1 citest** uses a **copy** of this overlay in the stack workdir:
+bind-mounted empty `./data/{jaeger,loki,…}` (not the named `testenv_*_data`
+volumes), random host ports (discovered with `docker compose port`), Promtail
+kept to this compose project, Loki queried with `{compose_project=…}`, and
+histogram samples scraped **inside each versiond host** (`wget /{version}/metrics`).
+Sticky `GET {router}/{version}/metrics` can land on the idle replica and omit
+`HistogramVec` names until the first Observe.
 
 ```bash
 make citest-observability

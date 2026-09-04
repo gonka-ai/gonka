@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"devshard/types"
 )
 
 func RequireOpenAIStream(t *testing.T, stream StreamResponse) {
@@ -79,6 +81,16 @@ func RequireOpenAINonStreamingCompletion(t *testing.T, resp RawResponse) {
 		require.True(t, ok, "non-streaming completion choice should include message")
 		require.NotEmpty(t, message["content"], "completion message should include content")
 	}
+}
+
+// CompletionContent returns the assistant content of a non-streaming completion.
+func CompletionContent(t *testing.T, resp RawResponse) string {
+	t.Helper()
+	RequireOpenAINonStreamingCompletion(t, resp)
+	message := resp.JSON["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)
+	content, ok := message["content"].(string)
+	require.True(t, ok, "completion content should be a string")
+	return content
 }
 
 func requireNoProtocolLeak(t *testing.T, event string) {
@@ -155,15 +167,94 @@ func RequireSettlementHostStats(t *testing.T, settlement map[string]any, hostCou
 	}
 }
 
+func RequireSignatureCollectionQuorum(t *testing.T, collection map[string]any, nonce uint64, totalSlots int) {
+	t.Helper()
+	require.Equal(t, nonce, NumericField(t, collection, "nonce"))
+	require.Equal(t, uint64(totalSlots), NumericField(t, collection, "total_slots"))
+	threshold := NumericField(t, collection, "quorum_threshold")
+	weight := NumericField(t, collection, "sig_weight")
+	require.NotZero(t, threshold, "signature quorum threshold should be non-zero")
+	require.LessOrEqual(t, threshold, uint64(totalSlots), "signature quorum threshold should not exceed total slots")
+	require.GreaterOrEqual(t, weight, threshold, "latest nonce should reach signature quorum")
+	hasQuorum, ok := collection["has_quorum"].(bool)
+	require.True(t, ok, "signature collection has_quorum should be a boolean")
+	require.True(t, hasQuorum, "latest nonce should report signature quorum")
+}
+
+func RequireSignatureStatusQuorum(t *testing.T, status map[string]any, nonce uint64, totalSlots int) {
+	t.Helper()
+	require.Equal(t, nonce, NumericField(t, status, "current_nonce"))
+	require.Equal(t, uint64(totalSlots), NumericField(t, status, "total_slots"))
+	require.GreaterOrEqual(t, NumericField(t, status, "highest_quorum_nonce"), nonce,
+		"latest nonce should be the highest nonce with quorum")
+	hasQuorum, ok := status["has_quorum"].(bool)
+	require.True(t, ok, "signature status has_quorum should be a boolean")
+	require.True(t, hasQuorum, "signature status should report quorum")
+
+	nonces, ok := status["nonces"].([]any)
+	require.True(t, ok, "signature status nonces should be an array")
+	for _, raw := range nonces {
+		entry, ok := raw.(map[string]any)
+		require.True(t, ok, "signature status entries should be objects")
+		if NumericField(t, entry, "nonce") != nonce {
+			continue
+		}
+		require.Equal(t, uint64(totalSlots), NumericField(t, entry, "total_slots"))
+		require.GreaterOrEqual(t, NumericField(t, entry, "sig_weight"), NumericField(t, status, "quorum_threshold"),
+			"latest nonce status entry should reach quorum")
+		hasQuorum, ok := entry["has_quorum"].(bool)
+		require.True(t, ok, "latest nonce has_quorum should be a boolean")
+		require.True(t, hasQuorum, "latest nonce status entry should report quorum")
+		return
+	}
+	t.Fatalf("signature status should include latest nonce %d", nonce)
+}
+
+func RequireGossipNonceConvergence(t *testing.T, statuses []GossipNonceStatus, nonce uint64) {
+	t.Helper()
+	require.NotEmpty(t, statuses, "gossip status should be collected from every host")
+	want := statuses[0]
+	require.True(t, want.Seen, "host 0 should observe the gossiped nonce")
+	require.Equal(t, nonce, want.Nonce)
+	require.NotEmpty(t, want.StateHash, "gossip status should include a state hash")
+	require.NotEmpty(t, want.StateSig, "gossip status should include a state signature")
+
+	for index, status := range statuses[1:] {
+		require.Truef(t, status.Seen, "host %d should observe the gossiped nonce", index+1)
+		require.Equalf(t, nonce, status.Nonce, "host %d should report the expected nonce", index+1)
+		require.Equalf(t, want.StateHash, status.StateHash, "host %d should observe the same state hash", index+1)
+		require.Equalf(t, want.StateSig, status.StateSig, "host %d should observe the same state signature", index+1)
+		require.Equalf(t, want.SenderSlot, status.SenderSlot, "host %d should observe the same signature sender", index+1)
+	}
+}
+
+func RequireTimeoutInferenceTransaction(t *testing.T, timeout TimeoutInferenceTransaction, inferenceID uint64, reason types.TimeoutReason, voteThreshold uint64, executorSlot uint32) {
+	t.Helper()
+	require.Equal(t, inferenceID, timeout.InferenceID)
+	require.Equal(t, reason, timeout.Reason)
+	require.Greater(t, uint64(len(timeout.VoterSlots)), voteThreshold, "timeout votes should exceed the threshold")
+	require.NotContains(t, timeout.VoterSlots, executorSlot, "executor must not vote for its own timeout")
+
+	seen := make(map[uint32]struct{}, len(timeout.VoterSlots))
+	for _, slot := range timeout.VoterSlots {
+		if _, exists := seen[slot]; exists {
+			t.Fatalf("duplicate timeout vote from slot %d", slot)
+		}
+		seen[slot] = struct{}{}
+	}
+}
+
 func HasInferenceValidationTarget(t *testing.T, state map[string]any, target uint64) (bool, string) {
 	t.Helper()
 	inferences, ok := state["inferences"].(map[string]any)
 	require.True(t, ok, "state inferences should be an object")
 
 	counts := map[uint64]uint64{}
+	statusCounts := map[string]int{}
 	for inferenceID, raw := range inferences {
 		inference, ok := raw.(map[string]any)
 		require.True(t, ok, "state inference %s should be an object", inferenceID)
+		statusCounts[fmt.Sprint(inference["status"])]++
 		validatedBy, ok := inference["validated_by"].([]any)
 		if !ok {
 			continue
@@ -186,7 +277,8 @@ func HasInferenceValidationTarget(t *testing.T, state map[string]any, target uin
 		}
 	}
 	if summary == "" {
-		summary = fmt.Sprintf("%d inferences, none validated yet", len(inferences))
+		summary = fmt.Sprintf("%d inferences (finished=%d started=%d timed_out=%d), none validated yet",
+			len(inferences), statusCounts["finished"], statusCounts["started"], statusCounts["timed_out"])
 	}
 	return reached, summary
 }

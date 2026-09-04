@@ -92,6 +92,22 @@ func newHostAtNonce(
 	return h
 }
 
+func TestHost_CatchUpFromStore_FastForwardsMemory(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	store := storage.NewMemory()
+
+	const memNonce, durableN uint64 = 2, 5
+	h := newHostAtNonce(t, store, user, hosts, memNonce, durableN)
+	require.Equal(t, memNonce, h.LatestNonce())
+
+	require.NoError(t, h.CatchUpFromStore(context.Background()))
+	require.Equal(t, durableN, h.LatestNonce())
+
+	require.NoError(t, h.CatchUpFromStore(context.Background()))
+	require.Equal(t, durableN, h.LatestNonce(), "already-caught-up host must be a no-op")
+}
+
 func TestHost_ReconcileFastForwardOnGap(t *testing.T) {
 	// Standby RAM at K=2, durable PG at N=5, catch-up starts at M+1=4 (K<M<N).
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}

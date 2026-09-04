@@ -27,6 +27,9 @@ var Version = "dev"
 var BinaryVersion = "dev-log"
 
 func main() {
+	if code, handled := maybeInitializePostgres(context.Background(), os.Args[1:], os.Stderr); handled {
+		os.Exit(code)
+	}
 	if code, handled := maybePrintVersion(os.Args[1:], os.Stdout, os.Stderr); handled {
 		os.Exit(code)
 	}
@@ -43,7 +46,7 @@ func run(parent context.Context, args []string, protocolVersion, binaryVersion s
 		return err
 	}
 
-	slog.SetDefault(slog.New(newPrefixedTextHandler(cfg.BinaryLogVersion, os.Stderr, slog.LevelInfo)))
+	slog.SetDefault(slog.New(newPrefixedTextHandler(cfg.BinaryLogVersion, os.Stderr, slogLevelFromEnv())))
 
 	observability.SetRuntime(cfg.BinaryLogVersion, cfg.ProtocolVersion, "standalone")
 	shutdownObs, err := observability.Init(parent, observability.Config{

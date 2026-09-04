@@ -5,7 +5,6 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"common/completionapi"
 	devshardpkg "devshard"
@@ -43,7 +42,7 @@ func executeInference(
 	}
 	defer resp.Body.Close()
 
-	processed, err := processExecutionHTTPResponse(req, resp, inferenceID)
+	processed, err := processExecutionHTTPResponse(req, resp, inferenceID, modified.AsksForLogprobs)
 	if err != nil {
 		return nil, observability.Classify(observability.ReasonProcessResponseErr, observability.WhereRuntimeExecute, err)
 	}
@@ -78,39 +77,42 @@ func processExecutionHTTPResponse(
 	req devshardpkg.ExecuteRequest,
 	resp *http.Response,
 	inferenceID string,
+	forwardLogprobs bool,
 ) (*processedExecutionResponse, error) {
-	processor := completionapi.NewExecutorResponseProcessor(inferenceID)
+	processor := completionapi.NewExecutorResponseProcessor(inferenceID, forwardLogprobs)
 
-	contentType := resp.Header.Get("Content-Type")
-	isSSE := strings.HasPrefix(contentType, "text/event-stream")
+	isSSE := completionapi.IsEventStream(resp)
 
 	if req.ResponseWriter != nil && isSSE {
-		proxyResponse(resp, req.ResponseWriter, true, processor, inferenceID)
+		if err := proxyResponse(resp, req.ResponseWriter, true, processor, inferenceID); err != nil {
+			return nil, fmt.Errorf("relay response: %w", err)
+		}
 	} else {
 		if err := completionapi.ProcessHTTPResponse(resp, processor); err != nil {
 			return nil, fmt.Errorf("process response: %w", err)
 		}
 	}
 
-	completionResp, err := processor.GetResponse()
-	if err != nil {
-		return nil, fmt.Errorf("get completion response: %w", err)
-	}
-
-	bodyBytes, err := completionResp.GetBodyBytes()
+	bodyBytes, err := processor.GetResponseBytes()
 	if err != nil {
 		return nil, fmt.Errorf("get body bytes: %w", err)
 	}
 
 	if req.ResponseWriter != nil && !isSSE {
-		fmt.Fprintf(req.ResponseWriter, "data: %s\n\ndata: [DONE]\n\n", bodyBytes)
+		// The stored copy is no substitute: it carries logprobs the caller may not have asked for.
+		relayed := processor.GetForwardedJSONBytes()
+		if relayed == nil {
+			return nil, fmt.Errorf("relay response: the processor produced no forwarded body")
+		}
+		fmt.Fprintf(req.ResponseWriter, "data: %s\n\ndata: [DONE]\n\n", relayed)
 		if f, ok := req.ResponseWriter.(http.Flusher); ok {
 			f.Flush()
 		}
 	}
 
+	// The processor slimmed each chunk as it parsed it, so what it hands back is already what is stored.
 	hash := sha256.Sum256(bodyBytes)
-	usage, err := completionResp.GetUsage()
+	usage, err := processor.GetUsage()
 	if err != nil {
 		return nil, fmt.Errorf("get usage: %w", err)
 	}

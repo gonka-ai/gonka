@@ -21,7 +21,7 @@ import (
 // brokerAcquirer is the subset of broker.Broker used by this server.
 // broker.Broker satisfies this interface directly.
 type brokerAcquirer interface {
-	AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string) (lockID, endpoint, nodeID string, err error)
+	AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string, escrowID, sessionID string) (lockID, endpoint, nodeID string, err error)
 	ReleaseMLNode(lockID string, outcome broker.InferenceResult) error
 	TriggerStatusQuery(bypassDebounce bool)
 	GetNodes() ([]broker.NodeResponse, error)
@@ -71,7 +71,7 @@ func NewServer(b brokerAcquirer, configManager *apiconfig.ConfigManager, phaseTr
 }
 
 func (s *Server) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
-	lockID, endpoint, nodeID, err := s.broker.AcquireMLNode(ctx, req.Model, req.ExcludedNodes)
+	lockID, endpoint, nodeID, err := s.broker.AcquireMLNode(ctx, req.Model, req.ExcludedNodes, req.GetEscrowId(), req.GetSessionId())
 	if err == nil {
 		if s.escrowLoad != nil {
 			s.escrowLoad.Record(req.GetEscrowId())

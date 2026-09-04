@@ -5,49 +5,42 @@ import (
 	"testing"
 )
 
-func TestParseProtocolVersion_DefaultsToV1(t *testing.T) {
-	got, err := ParseProtocolVersion("")
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
+func TestParseProtocolVersion(t *testing.T) {
+	tests := []struct {
+		name    string
+		in      string
+		want    ProtocolVersion
+		wantErr bool
+	}{
+		{name: "empty defaults to v1", in: "", want: ProtocolV1},
+		{name: "v1", in: "v1", want: ProtocolV1},
+		{name: "v2", in: "v2", want: ProtocolV2},
+		{name: "v3", in: "v3", want: ProtocolV3},
+		{name: "v4", in: "v4", want: ProtocolV4},
+		{name: "bare 4", in: "4", want: ProtocolV4},
+		{name: "v5", in: "v5", want: ProtocolV5},
+		{name: "bare 5", in: "5", want: ProtocolV5},
+		{name: "v4.1r5", in: "v4.1r5", want: "4.1r5"},
+		{name: "legacy semver", in: "0.2.11", want: "0.2.11"},
+		{name: "named runtime", in: "mainnet-canary", want: "mainnet-canary"},
+		{name: "v only", in: "v", wantErr: true},
 	}
-	if got != ProtocolV1 {
-		t.Fatalf("expected empty protocol to default to %s, got %s", ProtocolV1, got)
-	}
-}
-
-func TestParseProtocolVersion_AcceptsRouteStyleV1(t *testing.T) {
-	got, err := ParseProtocolVersion("v1")
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if got != ProtocolV1 {
-		t.Fatalf("expected v1 to normalize to %s, got %s", ProtocolV1, got)
-	}
-}
-
-func TestParseProtocolVersion_AcceptsRouteStyleV2(t *testing.T) {
-	got, err := ParseProtocolVersion("v2")
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if got != ProtocolV2 {
-		t.Fatalf("expected v2 to normalize to %s, got %s", ProtocolV2, got)
-	}
-}
-
-func TestParseProtocolVersion_AcceptsRouteStyleV3(t *testing.T) {
-	got, err := ParseProtocolVersion("v3")
-	if err != nil {
-		t.Fatalf("expected no error, got %v", err)
-	}
-	if got != ProtocolV3 {
-		t.Fatalf("expected v3 to normalize to %s, got %s", ProtocolV3, got)
-	}
-}
-
-func TestParseProtocolVersion_RejectsOldProtocol(t *testing.T) {
-	if _, err := ParseProtocolVersion("0.2.11"); err == nil {
-		t.Fatal("expected old protocol to be rejected")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ParseProtocolVersion(tt.in)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatal("expected error, got nil")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("expected no error, got %v", err)
+			}
+			if got != tt.want {
+				t.Fatalf("ParseProtocolVersion(%q)=%q, want %q", tt.in, got, tt.want)
+			}
+		})
 	}
 }
 

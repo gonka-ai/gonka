@@ -20,7 +20,7 @@ func TestAcquireMLNode_ReturnsLockAndEndpoint(t *testing.T) {
 	}
 	registerNodeAndSetInferenceStatus(t, b, node)
 
-	lockID, endpoint, nodeID, err := b.AcquireMLNode(context.Background(), "model1", nil)
+	lockID, endpoint, nodeID, err := b.AcquireMLNode(context.Background(), "model1", nil, "", "")
 
 	require.NoError(t, err)
 	require.NotEmpty(t, lockID)
@@ -31,7 +31,7 @@ func TestAcquireMLNode_ReturnsLockAndEndpoint(t *testing.T) {
 func TestAcquireMLNode_NoNodes(t *testing.T) {
 	b := NewTestBroker()
 
-	_, _, _, err := b.AcquireMLNode(context.Background(), "model1", nil)
+	_, _, _, err := b.AcquireMLNode(context.Background(), "model1", nil, "", "")
 
 	require.ErrorIs(t, err, ErrNoNodesAvailable)
 }
@@ -46,16 +46,16 @@ func TestAcquireMLNode_Concurrency(t *testing.T) {
 	}
 	registerNodeAndSetInferenceStatus(t, b, node)
 
-	lockID, _, _, err := b.AcquireMLNode(context.Background(), "model1", nil)
+	lockID, _, _, err := b.AcquireMLNode(context.Background(), "model1", nil, "", "")
 	require.NoError(t, err)
 
-	_, _, _, err = b.AcquireMLNode(context.Background(), "model1", nil)
+	_, _, _, err = b.AcquireMLNode(context.Background(), "model1", nil, "", "")
 	require.ErrorIs(t, err, ErrNoNodesAvailable)
 
 	err = b.ReleaseMLNode(lockID, InferenceSuccess{})
 	require.NoError(t, err)
 
-	_, _, _, err = b.AcquireMLNode(context.Background(), "model1", nil)
+	_, _, _, err = b.AcquireMLNode(context.Background(), "model1", nil, "", "")
 	require.NoError(t, err)
 }
 
@@ -69,7 +69,7 @@ func TestReleaseMLNode_NodeBecomesAvailableAgain(t *testing.T) {
 	}
 	registerNodeAndSetInferenceStatus(t, b, node)
 
-	lockID, _, _, err := b.AcquireMLNode(context.Background(), "model1", nil)
+	lockID, _, _, err := b.AcquireMLNode(context.Background(), "model1", nil, "", "")
 	require.NoError(t, err)
 
 	err = b.ReleaseMLNode(lockID, InferenceSuccess{})
@@ -79,7 +79,7 @@ func TestReleaseMLNode_NodeBecomesAvailableAgain(t *testing.T) {
 	time.Sleep(50 * time.Millisecond)
 
 	// Node should be available again
-	lockID2, _, _, err := b.AcquireMLNode(context.Background(), "model1", nil)
+	lockID2, _, _, err := b.AcquireMLNode(context.Background(), "model1", nil, "", "")
 	require.NoError(t, err)
 	require.NotEmpty(t, lockID2)
 }
@@ -102,7 +102,7 @@ func TestEvictExpiredLocks(t *testing.T) {
 	}
 	registerNodeAndSetInferenceStatus(t, b, node)
 
-	lockID, _, _, err := b.AcquireMLNode(context.Background(), "model1", nil)
+	lockID, _, _, err := b.AcquireMLNode(context.Background(), "model1", nil, "", "")
 	require.NoError(t, err)
 
 	// Backdate the lock to simulate TTL expiry
@@ -120,6 +120,6 @@ func TestEvictExpiredLocks(t *testing.T) {
 
 	// The eviction queues a ReleaseNode command; wait for the broker loop to process it.
 	time.Sleep(50 * time.Millisecond)
-	_, _, _, err = b.AcquireMLNode(context.Background(), "model1", nil)
+	_, _, _, err = b.AcquireMLNode(context.Background(), "model1", nil, "", "")
 	require.NoError(t, err)
 }

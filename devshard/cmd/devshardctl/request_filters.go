@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"sort"
 	"unicode/utf8"
+
+	"common/completionapi"
+	"devshard"
 )
 
 type chatRequest struct {
@@ -17,16 +20,14 @@ type chatRequest struct {
 	MaxTokens           uint64 `json:"max_tokens"`
 	MaxCompletionTokens uint64 `json:"max_completion_tokens"`
 	N                   uint64 `json:"n"`
-	// Logprobs and TopLogprobs capture the client's ORIGINAL logprobs intent,
-	// read by DecodeRequest before the PostLimits stage force-enables logprobs
-	// upstream for validation (see the logprobs/top_logprobs ForceLiteral rules
-	// in request_filters_parameters.go, which force logprobs=true and clamp
-	// top_logprobs to TopLogprobsForcedValue on the wire). These hold what the
-	// client asked for, not the forced values, and drive conditional response
-	// stripping so clients who explicitly asked for logprobs get them back. Cf.
-	// logprobClientIntent.
-	Logprobs    bool   `json:"logprobs"`
-	TopLogprobs uint64 `json:"top_logprobs"`
+	// Logprobs and TopLogprobs are what the client asked for. Nothing in the gateway fills them in;
+	// they drive conditional response stripping so a client that asked gets them back. Cf.
+	// clientResponseIntent.
+	Logprobs     bool   `json:"logprobs"`
+	TopLogprobs  uint64 `json:"top_logprobs"`
+	IncludeUsage bool   `json:"-"`
+	// AffinityKey is read before PreValidation strips prompt_cache_key off the wire.
+	AffinityKey string `json:"-"`
 }
 
 type outputTokenLimits struct {
@@ -78,8 +79,9 @@ func wrapBadChatRequest(err error) error {
 }
 
 type ChatRequestPipeline struct {
-	parameters VLLMParameterCatalog
-	messages   ChatMessageProcessor
+	parameters     VLLMParameterCatalog
+	messages       ChatMessageProcessor
+	forceStreaming bool
 }
 
 func defaultChatRequestPipeline() ChatRequestPipeline {
@@ -89,6 +91,12 @@ func defaultChatRequestPipeline() ChatRequestPipeline {
 	}
 }
 
+func upstreamChatRequestPipeline() ChatRequestPipeline {
+	pipeline := defaultChatRequestPipeline()
+	pipeline.forceStreaming = true
+	return pipeline
+}
+
 // Normalize runs the catalog (generic + per-model rules) and emits the rewritten body.
 // routedModel is the proxy's fallback used when body.model is missing.
 func (p ChatRequestPipeline) Normalize(body []byte, adminAuthenticated bool, limits outputTokenLimits, routedModel string) ([]byte, chatRequest, error) {
@@ -96,6 +104,7 @@ func (p ChatRequestPipeline) Normalize(body []byte, adminAuthenticated bool, lim
 	if err != nil {
 		return nil, chatRequest{}, err
 	}
+	affinityKey := affinityKeyFromDocument(&ctx.Document)
 	ctx.ResolveRoutedModel(routedModel)
 	if err := p.parameters.Apply(RequestFilterStagePreValidation, ctx); err != nil {
 		return nil, chatRequest{}, err
@@ -116,11 +125,23 @@ func (p ChatRequestPipeline) Normalize(body []byte, adminAuthenticated bool, lim
 	if err := ctx.SyncRequestView(); err != nil {
 		return nil, chatRequest{}, err
 	}
+	p.applyForcedStreaming(ctx)
 	updatedBody, err := ctx.Document.Marshal()
 	if err != nil {
 		return nil, chatRequest{}, err
 	}
+	ctx.Request.AffinityKey = affinityKey
 	return updatedBody, ctx.Request, nil
+}
+
+func (p ChatRequestPipeline) applyForcedStreaming(ctx *RequestFilterContext) {
+	if ctx == nil || !p.forceStreaming || !ctx.ForceUpstreamStreaming {
+		return
+	}
+	// After SyncRequestView on purpose: ctx.Request keeps the shape the client asked for.
+	// Both fields come from the request snapshot so a mid-flight flag flip cannot split them.
+	ctx.Document.Set("stream", true)
+	ctx.Document.Set("stream_options", forcedStreamOptions)
 }
 
 func (p ChatRequestPipeline) applyOutputTokenLimits(ctx *RequestFilterContext) {
@@ -158,6 +179,34 @@ func (p ChatRequestPipeline) applyOutputTokenLimits(ctx *RequestFilterContext) {
 		ctx.Request.MaxTokens = maxTokens
 		ctx.Request.MaxCompletionTokens = 0
 	}
+	p.applyTokenBudgetFloor(ctx)
+}
+
+func (p ChatRequestPipeline) applyTokenBudgetFloor(ctx *RequestFilterContext) {
+	maxTokens := ctx.Request.MaxTokens
+	if maxTokens < completionapi.MinTokensFloor {
+		maxTokens = completionapi.MinTokensFloor
+	}
+	if _, ok := ctx.Document.Get("max_tokens"); ok {
+		ctx.Document.Set("max_tokens", maxTokens)
+	}
+	if _, ok := ctx.Document.Get("max_completion_tokens"); ok {
+		ctx.Document.Set("max_completion_tokens", maxTokens)
+		ctx.Request.MaxCompletionTokens = maxTokens
+	}
+	ctx.Request.MaxTokens = maxTokens
+
+	var minTokens uint64
+	if raw, ok := ctx.Document.Get("min_tokens"); ok {
+		minTokens, _ = devshard.JSONNumericUint64(raw)
+	}
+	if minTokens < completionapi.MinTokensFloor {
+		minTokens = completionapi.MinTokensFloor
+	}
+	if minTokens > maxTokens {
+		minTokens = maxTokens
+	}
+	ctx.Document.Set("min_tokens", minTokens)
 }
 
 func readLimitedChatRequestBody(r *http.Request) ([]byte, error) {
@@ -188,7 +237,7 @@ func prepareChatRequestBodyWithTokenLimits(r *http.Request, limits outputTokenLi
 	}
 	originalBody := append([]byte(nil), body...)
 	logResponseFormatDiagnostics(r.Context(), body)
-	updatedBody, req, err := normalizeChatRequestForAuthAndLimits(body, requestHasAdminAuth(r), limits, routedModel)
+	updatedBody, req, err := upstreamChatRequestPipeline().Normalize(body, requestHasAdminAuth(r), limits, routedModel)
 	if err != nil {
 		captureFilterRejectedRequest(r, originalBody, err, chatRequestModel(body), "")
 		return nil, chatRequest{}, err

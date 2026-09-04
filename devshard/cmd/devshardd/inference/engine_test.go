@@ -2,10 +2,12 @@ package inference
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -66,6 +68,150 @@ func newTestEngine(ml *mlnodeclient.Client, mgr *mlnodeclient.Manager, capacity 
 	}
 }
 
+func captureBodyMLServer(t *testing.T, gotBody *[]byte) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(srv.Close)
+	return srv
+}
+
+func newTestEngineForNode(t *testing.T, endpoint string) *Engine {
+	t.Helper()
+	ml := startEngineMLClient(t, &engineMockNM{
+		acquireFunc: func(_ context.Context, _ *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
+			return &nmgen.AcquireMLNodeResponse{LockId: "lock-1", Endpoint: endpoint, NodeId: "node-1"}, nil
+		},
+		releaseFunc: func(_ context.Context, _ *nmgen.ReleaseMLNodeRequest) (*nmgen.ReleaseMLNodeResponse, error) {
+			return &nmgen.ReleaseMLNodeResponse{}, nil
+		},
+	})
+	return newTestEngine(ml, nil, nil)
+}
+
+func newTestEngineCapturingSessionID(t *testing.T, endpoint string, gotSessionID *string) *Engine {
+	t.Helper()
+	ml := startEngineMLClient(t, &engineMockNM{
+		acquireFunc: func(_ context.Context, req *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
+			*gotSessionID = req.GetSessionId()
+			return &nmgen.AcquireMLNodeResponse{LockId: "lock-1", Endpoint: endpoint, NodeId: "node-1"}, nil
+		},
+		releaseFunc: func(_ context.Context, _ *nmgen.ReleaseMLNodeRequest) (*nmgen.ReleaseMLNodeResponse, error) {
+			return &nmgen.ReleaseMLNodeResponse{}, nil
+		},
+	})
+	return newTestEngine(ml, nil, nil)
+}
+
+func TestExecuteMLRequest_AffinityDisabledNeverSendsSessionIDToAcquire(t *testing.T) {
+	var gotBody []byte
+	srv := captureBodyMLServer(t, &gotBody)
+	var gotSessionID string
+	eng := newTestEngineCapturingSessionID(t, srv.URL, &gotSessionID) // affinityEnabled defaults to false
+
+	resp, err := eng.executeMLRequest(context.Background(), "model-a", "escrow-1", "sess-A", []byte(`{"model":"m","messages":[]}`))
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	assert.Empty(t, gotSessionID, "the session id must never reach the Acquire RPC while the participant's affinity switch is off")
+}
+
+func TestExecuteMLRequest_AffinityEnabledSendsSessionIDToAcquire(t *testing.T) {
+	var gotBody []byte
+	srv := captureBodyMLServer(t, &gotBody)
+	var gotSessionID string
+	eng := newTestEngineCapturingSessionID(t, srv.URL, &gotSessionID)
+	eng.affinityEnabled = true
+
+	resp, err := eng.executeMLRequest(context.Background(), "model-a", "escrow-1", "sess-A", []byte(`{"model":"m","messages":[]}`))
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	assert.Equal(t, "sess-A", gotSessionID, "the session id must reach Acquire once the participant enables affinity")
+}
+
+func TestExecuteMLRequest_AffinityDisabledStillSaltsBody(t *testing.T) {
+	var gotBody []byte
+	srv := captureBodyMLServer(t, &gotBody)
+	eng := newTestEngineForNode(t, srv.URL) // affinityEnabled defaults to false
+
+	resp, err := eng.executeMLRequest(context.Background(), "model-a", "escrow-1", "sess-A", []byte(`{"model":"m","messages":[]}`))
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	var sent map[string]any
+	require.NoError(t, json.Unmarshal(gotBody, &sent))
+	_, hasSalt := sent["cache_salt"]
+	assert.True(t, hasSalt, "a session id must salt the cache namespace whatever the participant's stickiness switch says")
+}
+
+func TestExecuteMLRequest_SaltsBody(t *testing.T) {
+	var gotBody []byte
+	srv := captureBodyMLServer(t, &gotBody)
+	eng := newTestEngineForNode(t, srv.URL)
+	eng.affinityEnabled = true
+
+	resp, err := eng.executeMLRequest(context.Background(), "model-a", "escrow-1", "sess-A", []byte(`{"model":"m","messages":[]}`))
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	var sent map[string]any
+	require.NoError(t, json.Unmarshal(gotBody, &sent))
+	salt, hasSalt := sent["cache_salt"]
+	assert.True(t, hasSalt, "a session id must carry a cache_salt to the ml node")
+	assert.NotEmpty(t, salt)
+}
+
+func TestExecuteMLRequest_OversizedSessionIDIsDropped(t *testing.T) {
+	var gotBody []byte
+	srv := captureBodyMLServer(t, &gotBody)
+	var gotSessionID string
+	eng := newTestEngineCapturingSessionID(t, srv.URL, &gotSessionID)
+	eng.affinityEnabled = true
+	oversized := strings.Repeat("k", maxSessionIDLength+1)
+
+	resp, err := eng.executeMLRequest(context.Background(), "model-a", "escrow-1", oversized, []byte(`{"model":"m","messages":[]}`))
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	var sent map[string]any
+	require.NoError(t, json.Unmarshal(gotBody, &sent))
+	_, hasSalt := sent["cache_salt"]
+	assert.False(t, hasSalt, "a session id past the bound must not key a cache namespace")
+	assert.Empty(t, gotSessionID, "a session id past the bound must not key an mlnode binding either")
+}
+
+func TestExecuteMLRequest_SaltIsScopedToEscrow(t *testing.T) {
+	saltFor := func(escrowID string) string {
+		var gotBody []byte
+		srv := captureBodyMLServer(t, &gotBody)
+		eng := newTestEngineForNode(t, srv.URL)
+		eng.affinityEnabled = true
+
+		resp, err := eng.executeMLRequest(context.Background(), "model-a", escrowID, "sess-A", []byte(`{"model":"m","messages":[]}`))
+		require.NoError(t, err)
+		_, _ = io.Copy(io.Discard, resp.Body)
+		_ = resp.Body.Close()
+
+		var sent map[string]any
+		require.NoError(t, json.Unmarshal(gotBody, &sent))
+		salt, _ := sent["cache_salt"].(string)
+		require.NotEmpty(t, salt)
+		return salt
+	}
+
+	assert.NotEqual(t, saltFor("escrow-1"), saltFor("escrow-2"),
+		"the same session id served under two escrows must reach two cache namespaces")
+}
+
 func TestDoWithLockedNode_GRPCSuccessObserves(t *testing.T) {
 	var releases atomic.Int32
 	mlHits := atomic.Int32{}
@@ -99,7 +245,7 @@ func TestDoWithLockedNode_GRPCSuccessObserves(t *testing.T) {
 	mgr := mlnodeclient.NewManager(time.Hour)
 	eng := newTestEngine(ml, mgr, nil)
 
-	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "42",
+	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "42", "",
 		func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
@@ -145,7 +291,7 @@ func TestDoWithLockedNode_UnavailableFallsBack(t *testing.T) {
 	mgr.Observe("model-a", "node-1", mlSrv.URL)
 	eng := newTestEngine(ml, mgr, nil)
 
-	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
+	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", "",
 		func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
@@ -184,7 +330,7 @@ func TestDoWithLockedNode_ResourceExhaustedDoesNotFallback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	resp, err := eng.doWithLockedNode(ctx, observability.PathExecute, "model-a", "",
+	resp, err := eng.doWithLockedNode(ctx, observability.PathExecute, "model-a", "", "",
 		func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
@@ -221,7 +367,7 @@ func TestDoWithLockedNode_FallbackRotatesOn5xx(t *testing.T) {
 	mgr.Observe("model-a", "node-good", good.URL)
 	eng := newTestEngine(ml, mgr, nil)
 
-	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
+	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", "",
 		func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
@@ -244,7 +390,7 @@ func TestDoWithLockedNode_FallbackEmptyCacheFails(t *testing.T) {
 	mgr := mlnodeclient.NewManager(time.Hour)
 	eng := newTestEngine(ml, mgr, nil)
 
-	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
+	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", "",
 		func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
@@ -310,7 +456,7 @@ func TestFallback_RespectsLocalInFlight(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
+			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", "",
 				func(endpoint string) (*http.Response, error) {
 					return http.Get(endpoint)
 				})
@@ -374,7 +520,7 @@ func TestFallback_NoCapacityUnbounded(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
+			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", "",
 				func(endpoint string) (*http.Response, error) {
 					return http.Get(endpoint)
 				})
@@ -455,7 +601,7 @@ func TestFallback_UnknownNodeBounded(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
+			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", "",
 				func(endpoint string) (*http.Response, error) {
 					return http.Get(endpoint)
 				})
@@ -474,4 +620,3 @@ func TestFallback_UnknownNodeBounded(t *testing.T) {
 	}
 	assert.Equal(t, int32(1), maxInFlight.Load(), "capacity-unknown node must be bounded, not unbounded")
 }
-

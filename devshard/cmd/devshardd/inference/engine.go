@@ -40,18 +40,20 @@ const fallbackSlotWait = 100 * time.Millisecond
 // round-robins direct HTTP without lock/release. When capacity has been
 // observed via ListNodeCapacity, fallback is bounded by capacity.Cache.
 type Engine struct {
-	mlClient     *mlnodeclient.Client
-	mgr          *mlnodeclient.Manager
-	capacity     *mlnodeclient.Cache
-	payloadStore PayloadStore
-	httpClient   *http.Client
-	chainParams  ChainParamsProvider
-	phase        *chain.Phase
+	mlClient        *mlnodeclient.Client
+	mgr             *mlnodeclient.Manager
+	capacity        *mlnodeclient.Cache
+	payloadStore    PayloadStore
+	httpClient      *http.Client
+	chainParams     ChainParamsProvider
+	phase           *chain.Phase
+	affinityEnabled bool
 }
 
 // NewEngine creates an Engine backed by a NodeManager gRPC client and optional
 // passive ML-node cache for dapi-unreachable fallback. capacity may be nil,
 // in which case fallback is unbounded (matches old-dapi/never-observed behavior).
+// affinityEnabled is the participant's switch over mlnode stickiness only.
 func NewEngine(
 	mlClient *mlnodeclient.Client,
 	mgr *mlnodeclient.Manager,
@@ -59,15 +61,17 @@ func NewEngine(
 	payloadStore PayloadStore,
 	chainParams ChainParamsProvider,
 	phase *chain.Phase,
+	affinityEnabled bool,
 ) *Engine {
 	return &Engine{
-		mlClient:     mlClient,
-		mgr:          mgr,
-		capacity:     capacity,
-		payloadStore: payloadStore,
-		httpClient:   NewNoRedirectClient(mlNodeHTTPTimeout),
-		chainParams:  chainParams,
-		phase:        phase,
+		mlClient:        mlClient,
+		mgr:             mgr,
+		capacity:        capacity,
+		payloadStore:    payloadStore,
+		httpClient:      NewNoRedirectClient(mlNodeHTTPTimeout),
+		chainParams:     chainParams,
+		phase:           phase,
+		affinityEnabled: affinityEnabled,
 	}
 }
 
@@ -79,12 +83,22 @@ func NewEngine(
 // falls back to the passive ML-node cache.
 func (e *Engine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
 	return executeInference(ctx, req, e.payloadStore, e.phase.EpochID(), func(ctx context.Context, model string, body []byte) (*http.Response, error) {
-		return e.executeMLRequest(ctx, model, req.EscrowID, body)
+		return e.executeMLRequest(ctx, model, req.EscrowID, req.SessionID, body)
 	}, e.chainParams)
 }
 
-func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, body []byte) (*http.Response, error) {
-	resp, err := e.doWithLockedNode(ctx, observability.PathExecute, model, escrowID, func(endpoint string) (*http.Response, error) {
+func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID, sessionID string, body []byte) (*http.Response, error) {
+	if !sessionIDWithinBound(sessionID) {
+		sessionID = ""
+	}
+	if sessionID != "" {
+		body = withCacheSalt(body, escrowID, sessionID)
+	}
+	stickySessionID := sessionID
+	if !e.affinityEnabled {
+		stickySessionID = ""
+	}
+	resp, err := e.doWithLockedNode(ctx, observability.PathExecute, model, escrowID, stickySessionID, func(endpoint string) (*http.Response, error) {
 		url := endpoint + "/v1/chat/completions"
 		httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if reqErr != nil {
@@ -111,6 +125,7 @@ func (e *Engine) doWithLockedNode(
 	path observability.Path,
 	model string,
 	escrowID string,
+	sessionID string,
 	fn func(endpoint string) (*http.Response, error),
 ) (*http.Response, error) {
 	var excluded []string
@@ -120,7 +135,7 @@ func (e *Engine) doWithLockedNode(
 
 	for attempt := 0; attempt < maxAcquireAttempts; attempt++ {
 		acqCtx, cancel := context.WithTimeout(ctx, acquireTimeout)
-		acq, err := e.mlClient.Acquire(acqCtx, model, excluded, escrowID)
+		acq, err := e.mlClient.Acquire(acqCtx, model, excluded, escrowID, sessionID)
 		cancel()
 
 		if err != nil {

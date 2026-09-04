@@ -16,6 +16,8 @@ const defaultPGRetryInterval = 240 * time.Second
 // Dir is typically {data-dir}/payloads (created if missing).
 type OpenConfig struct {
 	Dir string
+	// CompressFiles gates writing zstd payload files. See NewCompressingFileStorage.
+	CompressFiles bool
 }
 
 // Open creates the payload Storage for devshardd.
@@ -44,6 +46,9 @@ func Open(ctx context.Context, cfg OpenConfig) (Storage, func(), error) {
 	}
 
 	fileStore := NewFileStorage(cfg.Dir)
+	if cfg.CompressFiles {
+		fileStore = NewCompressingFileStorage(cfg.Dir)
+	}
 
 	switch storageMode {
 	case mode.SQLite:

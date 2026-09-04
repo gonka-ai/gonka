@@ -4,9 +4,11 @@ import (
 	"common/logging"
 	"context"
 	"decentralized-api/apiconfig"
+	"decentralized-api/broker/sessionaffinity"
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/mlnodeclient"
+	"decentralized-api/observability"
 	"decentralized-api/participant"
 	"encoding/json"
 	"errors"
@@ -132,6 +134,7 @@ type Broker struct {
 	configManager        *apiconfig.ConfigManager
 	lockMap              map[string]lockEntry
 	lockMapMu            sync.Mutex
+	sessionAffinity      *sessionaffinity.Tracker
 }
 
 type lockEntry struct {
@@ -333,6 +336,7 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 		statusQueryTrigger:   make(chan statusQuerySignal, 1),
 		configManager:        configManager,
 		lockMap:              make(map[string]lockEntry),
+		sessionAffinity:      sessionaffinity.New(sessionaffinity.ConfigFromEnv(), observability.RecordMLNodeAffinityDecision),
 	}
 
 	// Initialize NodeWorkGroup
@@ -471,25 +475,26 @@ func (b *Broker) NewNodeClient(node *Node) mlnodeclient.MLNodeClient {
 }
 
 func (b *Broker) lockAvailableNode(command LockAvailableNode) {
-	leastBusyNode := b.getLeastBusyNode(command)
+	selectedNode := b.selectNodeForRequest(command)
 
-	if leastBusyNode != nil {
+	if selectedNode != nil {
 		b.mu.Lock()
-		leastBusyNode.State.LockCount++
+		selectedNode.State.LockCount++
 		b.mu.Unlock()
+		b.sessionAffinity.Record(command.EscrowID, command.SessionID, selectedNode.Node.Id)
 	}
-	logging.Debug("Locked node", types.Nodes, "node", leastBusyNode)
-	if leastBusyNode == nil {
+	logging.Debug("Locked node", types.Nodes, "node", selectedNode)
+	if selectedNode == nil {
 		command.Response <- nil
 	} else {
-		command.Response <- &leastBusyNode.Node
+		command.Response <- &selectedNode.Node
 	}
 }
 
-func (b *Broker) getLeastBusyNode(command LockAvailableNode) *NodeWithState {
+func (b *Broker) selectNodeForRequest(command LockAvailableNode) *NodeWithState {
 	epochState := b.phaseTracker.GetCurrentEpochState()
 	if epochState.IsNilOrNotSynced() {
-		logging.Error("getLeastBusyNode. Cannot get least busy node, epoch state is empty", types.Nodes)
+		logging.Error("selectNodeForRequest. Cannot select a node, epoch state is empty", types.Nodes)
 		return nil
 	}
 	b.mu.RLock()
@@ -503,23 +508,49 @@ func (b *Broker) getLeastBusyNode(command LockAvailableNode) *NodeWithState {
 		}
 	}
 
-	var leastBusyNode *NodeWithState = nil
+	stickyID := b.sessionAffinity.StickyNode(command.EscrowID, command.SessionID)
+
+	var leastBusyNode, stickyNode *NodeWithState
 	for _, node := range b.nodes {
 		if _, shouldSkip := skip[node.Node.Id]; shouldSkip {
 			logging.Info("Node skipped by LockAvailableNode skip list", types.Nodes, "node_id", node.Node.Id)
 			continue
 		}
-		// TODO: log some kind of a reason as to why the node is not available
-		if available, reason := b.nodeAvailable(node, command.Model, epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase); available {
-			if leastBusyNode == nil || node.State.LockCount < leastBusyNode.State.LockCount {
-				leastBusyNode = node
-			}
-		} else {
+		available, reason := b.nodeAvailable(node, command.Model, epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase)
+		if !available {
 			logging.Info("Node not available", types.Nodes, "node_id", node.Node.Id, "reason", reason)
+			continue
+		}
+		if node.Node.Id == stickyID {
+			stickyNode = node
+		}
+		if leastBusyNode == nil || node.State.LockCount < leastBusyNode.State.LockCount {
+			leastBusyNode = node
 		}
 	}
 
+	selection := sessionaffinity.Selection{
+		Model:        command.Model,
+		SessionID:    command.SessionID,
+		StickyNodeID: stickyID,
+	}
+	if stickyNode != nil {
+		selection.StickyUsable = true
+		selection.StickyLoad = nodeLoad(stickyNode)
+		selection.LeastBusyLoad = nodeLoad(leastBusyNode)
+	}
+	if b.sessionAffinity.ServeSticky(selection) {
+		return stickyNode
+	}
 	return leastBusyNode
+}
+
+// nodeLoad clamps: ReleaseNode decrements without a floor, and a negative count would skew the comparison.
+func nodeLoad(node *NodeWithState) int {
+	if node == nil || node.State.LockCount < 0 {
+		return 0
+	}
+	return node.State.LockCount
 }
 
 type NodeNotAvailableReason = string

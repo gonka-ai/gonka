@@ -24,6 +24,15 @@ func TestProtoMapping_RoundTrip(t *testing.T) {
 		ExecutionTimeout:    1200,
 		ValidationRate:      5000,
 		VoteThresholdFactor: 50,
+		HeightSync: HeightSyncParams{
+			IntervalMs:         4000,
+			TurnTimeoutMs:      2500,
+			AckDeadlineBlocks:  2,
+			IdleTimeoutMs:      16000,
+			BlockTimeMs:        5000,
+			ProbeStaggerMs:     1000,
+			MaxProbesPerWindow: 4,
+		},
 	}
 	round := SnapshotFromProto(ProtoFromSnapshot(orig))
 	require.Equal(t, orig, round)

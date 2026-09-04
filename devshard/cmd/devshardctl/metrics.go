@@ -39,18 +39,24 @@ type DevshardMetrics struct {
 	participantFirstContent    *prometheus.HistogramVec
 	participantPrefillPerToken *prometheus.HistogramVec
 	participantTotalSeconds    *prometheus.HistogramVec
+	participantMaxChunkGap     *prometheus.HistogramVec
+	participantMeanChunkGap    *prometheus.HistogramVec
 
-	gatewayRequests       *prometheus.CounterVec
-	criticalUserFailures  *prometheus.CounterVec
-	hiddenFailures        *prometheus.CounterVec
-	userVisibleWins       *prometheus.CounterVec
-	slotDecisions         *prometheus.CounterVec
-	attemptsStarted       *prometheus.CounterVec
-	attemptsTerminal      *prometheus.CounterVec
-	attemptFailures       *prometheus.CounterVec
-	quarantineTransitions *prometheus.CounterVec
-	noWinnerAttempts      *prometheus.CounterVec
-	timeoutActions        *prometheus.CounterVec
+	gatewayRequests        *prometheus.CounterVec
+	criticalUserFailures   *prometheus.CounterVec
+	hiddenFailures         *prometheus.CounterVec
+	userVisibleWins        *prometheus.CounterVec
+	slotDecisions          *prometheus.CounterVec
+	attemptsStarted        *prometheus.CounterVec
+	attemptsTerminal       *prometheus.CounterVec
+	attemptFailures        *prometheus.CounterVec
+	quarantineTransitions  *prometheus.CounterVec
+	noWinnerAttempts       *prometheus.CounterVec
+	timeoutActions         *prometheus.CounterVec
+	errorMissRejects       *prometheus.CounterVec
+	errorMissVerifyRejects *prometheus.CounterVec
+	affinityDecisions      *prometheus.CounterVec
+	affinityBindings       *prometheus.GaugeVec
 }
 
 type GatewaySlotDecisionMetric struct {
@@ -238,6 +244,22 @@ func NewDevshardMetrics() *DevshardMetrics {
 			},
 			[]string{"participant_key", "model"},
 		),
+		participantMaxChunkGap: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "devshard_gateway_participant_max_inter_chunk_seconds",
+				Help:    "Longest silence between two streamed chunks within one attempt, by participant and model.",
+				Buckets: prometheus.ExponentialBuckets(0.005, 2, 15),
+			},
+			[]string{"participant_key", "model"},
+		),
+		participantMeanChunkGap: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "devshard_gateway_participant_inter_chunk_seconds",
+				Help:    "Mean silence between streamed chunks within one attempt, by participant and model.",
+				Buckets: prometheus.ExponentialBuckets(0.005, 2, 15),
+			},
+			[]string{"participant_key", "model"},
+		),
 		gatewayRequests: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "devshard_gateway_requests_total",
@@ -315,6 +337,34 @@ func NewDevshardMetrics() *DevshardMetrics {
 			},
 			[]string{"participant_key", "model", "kind", "action", "reason"},
 		),
+		affinityDecisions: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_affinity_decision_total",
+				Help: "Total session-affinity outcomes for the primary attempt by devshard and decision (hit, yielded, miss).",
+			},
+			[]string{"devshard_id", "decision"},
+		),
+		affinityBindings: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "devshard_gateway_affinity_bindings",
+				Help: "Current number of live session-affinity bindings tracked by the devshard.",
+			},
+			[]string{"devshard_id"},
+		),
+		errorMissRejects: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_error_miss_rejects_total",
+				Help: "Rejected error-miss attempts by reconstruction cause (cancelled, drift, truncated).",
+			},
+			[]string{"cause"},
+		),
+		errorMissVerifyRejects: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_error_miss_verify_rejects_total",
+				Help: "Rejected error-miss verifier votes by cause (no_finish_tx, no_payload, sig, hash_mismatch, not_error_body) and stream completeness (cancelled, drift, truncated). Alert on cause=hash_mismatch,completeness=drift.",
+			},
+			[]string{"cause", "completeness"},
+		),
 	}
 
 	registry.MustRegister(
@@ -336,6 +386,8 @@ func NewDevshardMetrics() *DevshardMetrics {
 		m.participantFirstContent,
 		m.participantPrefillPerToken,
 		m.participantTotalSeconds,
+		m.participantMaxChunkGap,
+		m.participantMeanChunkGap,
 		m.gatewayRequests,
 		m.criticalUserFailures,
 		m.hiddenFailures,
@@ -347,16 +399,30 @@ func NewDevshardMetrics() *DevshardMetrics {
 		m.quarantineTransitions,
 		m.noWinnerAttempts,
 		m.timeoutActions,
+		m.affinityDecisions,
+		m.affinityBindings,
+		m.errorMissRejects,
+		m.errorMissVerifyRejects,
 	)
 
 	m.handler = promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 	return m
 }
 
+func (m *DevshardMetrics) RegisterCollector(collector prometheus.Collector) error {
+	if m == nil || m.registry == nil || collector == nil {
+		return nil
+	}
+	return m.registry.Register(collector)
+}
+
 func (m *DevshardMetrics) AttachGateway(g *Gateway) {
 	if m == nil || g == nil {
 		return
 	}
+	// Host-side log-plane gauges (turn_state, close_ready_armed, peer_seen_slots)
+	// stay on devshardd only — one escrow per process. The gateway already
+	// exposes labelled operator views via gatewayMetricsCollector.
 	m.registry.MustRegister(newGatewayMetricsCollector(g))
 }
 
@@ -576,6 +642,37 @@ func (m *DevshardMetrics) RecordGatewayTimeoutAction(action GatewayTimeoutAction
 	).Inc()
 }
 
+func (m *DevshardMetrics) RecordAffinityDecision(devshardID, decision string) {
+	if m == nil {
+		return
+	}
+	m.affinityDecisions.WithLabelValues(metricLabel(devshardID, "unknown"), metricLabel(decision, "unknown")).Inc()
+}
+
+func (m *DevshardMetrics) SetAffinityBindings(devshardID string, bindings int) {
+	if m == nil {
+		return
+	}
+	m.affinityBindings.WithLabelValues(metricLabel(devshardID, "unknown")).Set(float64(bindings))
+}
+
+func (m *DevshardMetrics) RecordErrorMissReject(cause string) {
+	if m == nil {
+		return
+	}
+	m.errorMissRejects.WithLabelValues(metricLabel(cause, "unknown")).Inc()
+}
+
+func (m *DevshardMetrics) RecordErrorMissVerifyReject(cause, completeness string) {
+	if m == nil {
+		return
+	}
+	m.errorMissVerifyRejects.WithLabelValues(
+		metricLabel(cause, "unknown"),
+		metricLabel(completeness, "unknown"),
+	).Inc()
+}
+
 func (m *DevshardMetrics) ObserveRequestSample(devshardID string, sample RequestSample) {
 	if m == nil {
 		return
@@ -591,9 +688,12 @@ func (m *DevshardMetrics) ObserveRequestSample(devshardID string, sample Request
 		m.participantReceiptSeconds.WithLabelValues(participantLabels...).Observe(receiptSeconds)
 	}
 	if !sample.SendTime.IsZero() && !sample.FirstToken.IsZero() {
-		firstContentSeconds := sample.FirstToken.Sub(sample.SendTime).Seconds()
-		m.hostFirstTokenSeconds.WithLabelValues(labels...).Observe(firstContentSeconds)
-		m.participantFirstContent.WithLabelValues(participantLabels...).Observe(firstContentSeconds)
+		m.hostFirstTokenSeconds.WithLabelValues(labels...).Observe(sample.FirstToken.Sub(sample.SendTime).Seconds())
+	}
+	// Fed from the first CONTENT chunk, which is what this metric is named for: FirstToken fires on
+	// a role-only chunk and made it report a prefill no client ever waited for.
+	if !sample.SendTime.IsZero() && !sample.FirstContent.IsZero() {
+		m.participantFirstContent.WithLabelValues(participantLabels...).Observe(sample.FirstContent.Sub(sample.SendTime).Seconds())
 	}
 	if cttfl := sample.CTTFL() / 1000; cttfl > 0 {
 		m.hostCTTFLSecondsPerToken.WithLabelValues(labels...).Observe(cttfl)
@@ -602,6 +702,21 @@ func (m *DevshardMetrics) ObserveRequestSample(devshardID string, sample Request
 	if sample.TotalTime > 0 {
 		m.hostTotalSeconds.WithLabelValues(labels...).Observe(sample.TotalTime.Seconds())
 		m.participantTotalSeconds.WithLabelValues(participantLabels...).Observe(sample.TotalTime.Seconds())
+	}
+}
+
+// ObserveStreamCadence separates a host that streams slowly from one that streams then stops: the
+// two are indistinguishable in a per-chunk distribution, where a single 60s gap sits below p99.9.
+func (m *DevshardMetrics) ObserveStreamCadence(participantKey, model string, maxGap, meanGap time.Duration) {
+	if m == nil {
+		return
+	}
+	labels := []string{metricLabel(participantKey, "unknown"), metricLabel(model, "unknown")}
+	if maxGap > 0 {
+		m.participantMaxChunkGap.WithLabelValues(labels...).Observe(maxGap.Seconds())
+	}
+	if meanGap > 0 {
+		m.participantMeanChunkGap.WithLabelValues(labels...).Observe(meanGap.Seconds())
 	}
 }
 
@@ -642,6 +757,9 @@ type gatewayMetricsCollector struct {
 	escrowBlockedParticipantsDesc  *prometheus.Desc
 	hostOpenDesc                   *prometheus.Desc
 	hostStateDesc                  *prometheus.Desc
+
+	heightSync heightSyncDescs
+	peerMatrix bool
 }
 
 func newGatewayMetricsCollector(gateway *Gateway) *gatewayMetricsCollector {
@@ -782,6 +900,8 @@ func newGatewayMetricsCollectorWithHostConnections(gateway *Gateway, hostConnect
 			[]string{"address", "state"},
 			nil,
 		),
+		heightSync: newHeightSyncDescs(),
+		peerMatrix: heightSyncPeerMatrixEnabled(),
 	}
 }
 
@@ -807,6 +927,7 @@ func (c *gatewayMetricsCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.escrowBlockedParticipantsDesc
 	ch <- c.hostOpenDesc
 	ch <- c.hostStateDesc
+	c.heightSync.describe(ch)
 }
 
 func (c *gatewayMetricsCollector) Collect(ch chan<- prometheus.Metric) {
@@ -894,6 +1015,8 @@ func (c *gatewayMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 		ch <- prometheus.MustNewConstMetric(c.escrowBlockedParticipantsDesc, prometheus.GaugeValue, float64(blocked), labels...)
 	}
 
+	c.collectHeightSync(ch, runtimes)
+
 	if c.hostConnections == nil {
 		return
 	}
@@ -965,7 +1088,7 @@ type nonceFinishedChecker interface {
 	IsNonceFinished(uint64) bool
 }
 
-func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker) string {
+func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker, model string) string {
 	if inf == nil {
 		return "unknown"
 	}
@@ -974,6 +1097,8 @@ func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker) st
 		return "phase_transition_aborted"
 	case isErrorStreamAttempt(inf):
 		return "error_stream"
+	case isModelBurnEmpty(inf, model):
+		return "model_burn_empty"
 	case isEmptyStreamAttempt(inf):
 		return "empty_stream"
 	}
@@ -982,8 +1107,16 @@ func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker) st
 		switch {
 		case errors.As(inf.err, &upstreamErr):
 			return gatewayHTTPFailureReason(upstreamErr.StatusCode)
+		case errors.Is(inf.err, ErrAggregateResponseTooLarge):
+			return "aggregate_response_too_large"
+		case errors.Is(inf.err, ErrAggregateFoldTooLarge):
+			return "aggregate_fold_too_large"
 		case errors.Is(inf.err, transport.ErrSSEStreamTruncated):
 			return "sse_truncated"
+		case errors.Is(inf.err, transport.ErrSSEEventTooLarge):
+			return "sse_event_too_large"
+		case errors.Is(inf.err, transport.ErrResponseBodyTooLarge):
+			return "response_body_too_large"
 		case errors.Is(inf.err, io.EOF), errors.Is(inf.err, io.ErrUnexpectedEOF), strings.Contains(strings.ToLower(inf.err.Error()), "eof"):
 			return "eof_transport"
 		case errors.Is(inf.err, context.Canceled), errors.Is(inf.err, context.DeadlineExceeded):
@@ -1082,17 +1215,23 @@ func normalizeMetricsPath(path string) string {
 	}
 }
 
+// limiterRejectionLogFields says how full the gateway was, not only that it was full.
+func limiterRejectionLogFields(err error) []any {
+	fields := []any{"reason", limiterReasonLabel(err)}
+	var rejection *LimiterRejection
+	if errors.As(err, &rejection) {
+		return append(fields, "in_flight", rejection.InFlight, "limit", rejection.Limit)
+	}
+	return fields
+}
+
 func limiterReasonLabel(err error) string {
 	if err == nil {
 		return "unknown"
 	}
-	msg := err.Error()
-	switch {
-	case strings.Contains(msg, "concurrent requests"):
-		return "max_concurrent_requests"
-	case strings.Contains(msg, "input tokens in flight"):
-		return "max_input_tokens_in_flight"
-	default:
-		return "unknown"
+	var rejection *LimiterRejection
+	if errors.As(err, &rejection) && rejection.Kind != "" {
+		return rejection.Kind
 	}
+	return "unknown"
 }

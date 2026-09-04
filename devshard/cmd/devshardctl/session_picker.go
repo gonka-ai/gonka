@@ -8,12 +8,9 @@
 // Branches per nonce
 // ------------------
 //
-// Every branch that does NOT dispatch a real user request marks the
-// nonce as a silent ghost probe: the MsgStart is composed inside
-// PrepareInferenceFn (and lives in s.diffs for catch-up), but the
-// dispatcher does not contact the host. The nonce stream advances,
-// no HTTP call is made, no vote is posted from this node, no response
-// is awaited. The kind is preserved for log labeling only.
+// Every branch that does NOT dispatch a real user request marks the nonce as a ghost probe: the
+// MsgStart is composed inside PrepareInferenceFn (and lives in s.diffs for catch-up), but the host
+// is not contacted. The nonce stream advances and no vote is posted from this node.
 //
 //	1a. PoC-required host (host needs a probe under relaxed bypass):
 //	    fire ghostPoC. The host cannot serve user traffic now.
@@ -98,20 +95,17 @@ var errPickerHold = errors.New("session picker: holding nonce; waiting for stale
 
 var errPickerStopped = errors.New("session picker: stopped")
 
-// ghostKind classifies why a nonce is being burned as a synthetic
-// probe. All kinds are dispatched identically -- the MsgStart is
-// composed inside PrepareInferenceFn and added to s.diffs, but no
-// HTTP call is made and no response is awaited. The kind exists for
-// log-label differentiation so operators can tell at a glance whether
-// a burn was driven by PoC, exclude-stale, or reactive throttle.
+// ghostKind classifies why a nonce is being burned as a synthetic probe, so operators can tell a
+// PoC burn from an exclude-stale one from a reactive throttle. Every kind is dispatched the same
+// silent way; the kind is a log label.
 type ghostKind int
 
 const (
-	ghostNone       ghostKind = iota
-	ghostPoC                  // host requires PoC under relaxed bypass
-	ghostExclude              // queue had no compatible request after pickerStaleThreshold
-	ghostThrottled            // host is reactively throttled (tokens<1)
-	ghostCapability           // host is known incompatible with queued request shape
+	ghostNone          ghostKind = iota
+	ghostPoC                     // host requires PoC under relaxed bypass
+	ghostExclude                 // queue had no compatible request after pickerStaleThreshold
+	ghostThrottled               // host is reactively throttled (tokens<1)
+	ghostStateDiverged           // host's escrow state root diverged from ours
 )
 
 func (g ghostKind) reason() string {
@@ -122,8 +116,8 @@ func (g ghostKind) reason() string {
 		return "no_compatible_request_after_stale"
 	case ghostThrottled:
 		return "participant_throttled_no_send"
-	case ghostCapability:
-		return "participant_capability_no_send"
+	case ghostStateDiverged:
+		return "participant_state_diverged_no_send"
 	default:
 		return ""
 	}
@@ -143,9 +137,20 @@ func (g ghostKind) reason() string {
 type pickerRequest struct {
 	params              user.InferenceParams
 	excludeParticipants map[string]bool // participant keys this request has already tried
+	stickyParticipant   string
 	ctx                 context.Context
 	submitTime          time.Time
 	reply               chan pickerResult // buffered; one write only
+}
+
+func (r *pickerRequest) activeSticky(available map[string]bool, now time.Time) string {
+	if r.stickyParticipant == "" || !available[r.stickyParticipant] {
+		return ""
+	}
+	if now.Sub(r.submitTime) >= pickerStaleThreshold {
+		return ""
+	}
+	return r.stickyParticipant
 }
 
 // pickerResult is the dispatch outcome delivered back to the submitter.
@@ -177,7 +182,8 @@ type ghostDispatcher func(prepared *user.PreparedInference, kind ghostKind, reas
 // info available" (everything passes through to branch 2).
 type throttleChecker func(participantKey string) bool
 
-type capabilityChecker func(participantKey string, params user.InferenceParams) (string, bool)
+// The block is a property of the participant, not of the request, so the checker cannot see one.
+type stateBlockChecker func(participantKey string) (string, bool)
 
 // sessionPicker serializes nonce dispatch for one Session. It owns the
 // run loop goroutine that drains the queue.
@@ -186,7 +192,7 @@ type sessionPicker struct {
 	model           string // escrow's registered model; used for ghost probe params
 	dispatchGhost   ghostDispatcher
 	throttleBlocked throttleChecker
-	capabilityBlock capabilityChecker
+	stateBlocked    stateBlockChecker
 	logCtx          context.Context
 
 	mu     sync.Mutex
@@ -198,13 +204,13 @@ type sessionPicker struct {
 	stopped  chan struct{}
 }
 
-func newSessionPicker(session *user.Session, model string, dispatchGhost ghostDispatcher, throttleBlocked throttleChecker, capabilityBlock capabilityChecker) *sessionPicker {
+func newSessionPicker(session *user.Session, model string, dispatchGhost ghostDispatcher, throttleBlocked throttleChecker, stateBlocked stateBlockChecker) *sessionPicker {
 	return &sessionPicker{
 		session:         session,
 		model:           model,
 		dispatchGhost:   dispatchGhost,
 		throttleBlocked: throttleBlocked,
-		capabilityBlock: capabilityBlock,
+		stateBlocked:    stateBlocked,
 		logCtx:          context.Background(),
 		notify:          make(chan struct{}, 1),
 		stopped:         make(chan struct{}),
@@ -314,9 +320,10 @@ func (p *sessionPicker) run() {
 		// No ghost outcome contacts the host; the kind is purely a
 		// log label (see ghostDispatcher doc).
 		var (
-			chosen    *pickerRequest
-			ghost     ghostKind
-			holdUntil time.Time
+			chosen              *pickerRequest
+			ghost               ghostKind
+			ghostReason         string
+			holdUntil           time.Time
 			ghostParticipantKey string
 		)
 		prepared, err := p.session.PrepareInferenceFn(func(b user.HostBinding) (user.InferenceParams, bool, error) {
@@ -343,15 +350,8 @@ func (p *sessionPicker) run() {
 				return ghostProbeParams(p.model), true, nil
 			}
 
-			// Branch 1b: host is reactively throttled (just 503'd or
-			// 429'd, bucket below 1 token). Burn the nonce as a
-			// silent ghost probe so the queue keeps flowing without
-			// poisoning a real request's per-host retry budget on a
-			// host the transport-layer admission gate would reject
-			// anyway. The MsgStart is already composed in the diff
-			// produced by PrepareInferenceFn; the dispatcher just
-			// logs and returns -- no HTTP call, so we don't pile
-			// more load on a host that just told us it's overwhelmed.
+			// Branch 1b: the host just refused, so burning the nonce keeps the queue flowing without
+			// spending a real request's retry budget on a host the admission gate would reject anyway.
 			if p.throttleBlocked != nil && p.throttleBlocked(b.ParticipantKey) {
 				ghost = ghostThrottled
 				ghostParticipantKey = b.ParticipantKey
@@ -367,22 +367,11 @@ func (p *sessionPicker) run() {
 			// excluding by ParticipantKey ensures a request that
 			// already failed on participant X is not re-dispatched to
 			// another slot owned by X.
-			blockReason := ""
-			for i, r := range p.queue {
-				if r.excludeParticipants[b.ParticipantKey] {
-					continue
-				}
-				if p.capabilityBlock != nil {
-					if reason, blocked := p.capabilityBlock(b.ParticipantKey, r.params); blocked {
-						if blockReason == "" {
-							blockReason = reason
-						}
-						continue
-					}
-				}
-				chosen = r
-				p.removeAtLocked(i)
-				return r.params, false, nil
+			matched, blockReason := p.matchQueuedLocked(b.ParticipantKey, available, time.Now())
+			if matched >= 0 {
+				chosen = p.queue[matched]
+				p.removeAtLocked(matched)
+				return chosen.params, false, nil
 			}
 
 			// Branch 3: no compatible request. Hold the nonce briefly
@@ -397,8 +386,8 @@ func (p *sessionPicker) run() {
 				return user.InferenceParams{}, false, errPickerHold
 			}
 			if blockReason != "" {
-				ghost = ghostCapability
-				logRequestStage(p.logCtx, "session_picker_capability_blocked",
+				ghost = ghostStateDiverged
+				logRequestStage(p.logCtx, "session_picker_state_blocked",
 					"reason", blockReason,
 					"participant_key", b.ParticipantKey,
 					"host_idx", b.HostIdx,
@@ -453,8 +442,11 @@ func (p *sessionPicker) run() {
 
 		// Phase 4: dispatch.
 		if ghost != ghostNone {
+			if ghostReason == "" {
+				ghostReason = ghost.reason()
+			}
 			logFields := []any{
-				"reason", ghost.reason(),
+				"reason", ghostReason,
 				"host_idx", prepared.HostIdx(),
 				"nonce", prepared.Nonce(),
 				"queue_depth", p.queueLen(),
@@ -468,7 +460,7 @@ func (p *sessionPicker) run() {
 			}
 			logRequestStage(p.logCtx, "session_picker_ghost_probe", logFields...)
 			if p.dispatchGhost != nil {
-				p.dispatchGhost(prepared, ghost, ghost.reason())
+				p.dispatchGhost(prepared, ghost, ghostReason)
 			}
 			// Loop straight into the next iteration. Ghost burns are
 			// the cost of advancing the nonce stream past hosts that
@@ -582,14 +574,68 @@ func (p *sessionPicker) hasCompatibleParticipantLocked(req *pickerRequest, avail
 		if req.excludeParticipants[key] {
 			continue
 		}
-		if p.capabilityBlock != nil {
-			if _, blocked := p.capabilityBlock(key, req.params); blocked {
+		if p.stateBlocked != nil {
+			if _, blocked := p.stateBlocked(key); blocked {
 				continue
 			}
 		}
 		return true
 	}
 	return false
+}
+
+// matchQueuedLocked returns the queue index taking this nonce, or -1 and the block reason.
+func (p *sessionPicker) matchQueuedLocked(participantKey string, available map[string]bool, now time.Time) (int, string) {
+	candidate := p.candidateIndexLocked(participantKey, available, now)
+	if candidate < 0 {
+		return -1, ""
+	}
+	if p.stateBlocked != nil {
+		if reason, blocked := p.stateBlocked(participantKey); blocked {
+			return -1, reason
+		}
+	}
+	return candidate, ""
+}
+
+// candidateIndexLocked prefers a stale unbound request, then this participant's own sticky
+// session, then the oldest request that does not exclude it.
+func (p *sessionPicker) candidateIndexLocked(participantKey string, available map[string]bool, now time.Time) int {
+	stickyHit, unbound, firstCompatible := -1, -1, -1
+	narrowerWaiting := false
+	for i, request := range p.queue {
+		if request.excludeParticipants[participantKey] {
+			continue
+		}
+		if firstCompatible < 0 {
+			firstCompatible = i
+		}
+		sticky := request.activeSticky(available, now)
+		switch {
+		case sticky == "":
+			if unbound < 0 {
+				unbound = i
+			}
+		case sticky == participantKey && stickyHit < 0 && !narrowerWaiting:
+			stickyHit = i
+		}
+		if len(request.excludeParticipants) > 0 {
+			narrowerWaiting = true
+		}
+		if stickyHit >= 0 && unbound >= 0 {
+			break
+		}
+	}
+	if unbound >= 0 && now.Sub(p.queue[unbound].submitTime) >= pickerStaleThreshold {
+		return unbound
+	}
+	if stickyHit >= 0 {
+		return stickyHit
+	}
+	if unbound >= 0 {
+		return unbound
+	}
+	return firstCompatible
 }
 
 // dropCanceledLocked removes requests whose context was canceled,
