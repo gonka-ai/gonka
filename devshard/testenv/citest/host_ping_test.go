@@ -185,9 +185,7 @@ func TestHostPingKillSwitch(t *testing.T) {
 	harness.RequireLinuxDevshardd(t, stack.TestenvDir)
 	harness.WriteStackConfig(t, stack.WorkDir)
 	stack.RunGencompose(t)
-	harness.PatchComposeInsertEnvAfter(t, stack.ComposePath, "GATEWAY_MAX_TOKENS_CAP",
-		`DEVSHARD_GATEWAY_HOST_PING_DISABLED: "true"`,
-	)
+	harness.PatchComposeEnvKey(t, stack.ComposePath, "DEVSHARD_GATEWAY_HOST_PING_DISABLED", `"true"`)
 	cfg := stack.LoadConfig(t)
 	require.Len(t, cfg.Hosts, 2)
 	stack.Up(t)

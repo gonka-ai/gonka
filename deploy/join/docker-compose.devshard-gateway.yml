@@ -4,6 +4,14 @@ services:
     image: ghcr.io/gonka-ai/devshard-gateway:mainnet-v0.2.15-v4-latest
     env_file:
       - ${DEVSHARD_ENV_FILE:-./config.devshard.env}
+    environment:
+      # Host ping (gateway → used hosts). On by default; observability only.
+      # Interpolated from the host / compose `.env` (defaults below).
+      # Service `environment` wins over env_file for these four keys.
+      DEVSHARD_GATEWAY_HOST_PING_DISABLED: ${DEVSHARD_GATEWAY_HOST_PING_DISABLED:-false}
+      DEVSHARD_GATEWAY_HOST_PING_INTERVAL: ${DEVSHARD_GATEWAY_HOST_PING_INTERVAL:-15s}
+      DEVSHARD_GATEWAY_HOST_PING_TIMEOUT: ${DEVSHARD_GATEWAY_HOST_PING_TIMEOUT:-2s}
+      DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY: ${DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY:-8}
     volumes:
       - ${DEVSHARD_STORAGE_HOST_DIR:-.devshardctl}:/root/.devshardctl
     expose:

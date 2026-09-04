@@ -26,10 +26,8 @@ func BootHostPingStack(t *testing.T, prefix string) (*Stack, *config.File, Endpo
 	RequireLinuxDevshardd(t, stack.TestenvDir)
 	WriteStackConfig(t, stack.WorkDir)
 	stack.RunGencompose(t)
-	PatchComposeInsertEnvAfter(t, stack.ComposePath, "GATEWAY_MAX_TOKENS_CAP",
-		`DEVSHARD_GATEWAY_HOST_PING_INTERVAL: "3s"`,
-		`DEVSHARD_GATEWAY_HOST_PING_TIMEOUT: "1s"`,
-	)
+	PatchComposeEnvKey(t, stack.ComposePath, "DEVSHARD_GATEWAY_HOST_PING_INTERVAL", `"3s"`)
+	PatchComposeEnvKey(t, stack.ComposePath, "DEVSHARD_GATEWAY_HOST_PING_TIMEOUT", `"1s"`)
 	cfg := stack.LoadConfig(t)
 	requireTwoVersiondHosts(t, cfg)
 	stack.Up(t)
@@ -44,24 +42,6 @@ func BootHostPingStack(t *testing.T, prefix string) (*Stack, *config.File, Endpo
 // GatewayMetricsURL is the gateway Prometheus exposition.
 func GatewayMetricsURL(eps Endpoints) string {
 	return eps.GatewayHTTP + "/metrics"
-}
-
-// PostAdminDeactivateDevshard deactivates and retires a runtime (releases host-ping refs).
-func PostAdminDeactivateDevshard(t *testing.T, client *http.Client, gatewayURL, adminAPIKey, escrowID string) {
-	t.Helper()
-	if client == nil {
-		client = HTTPClient()
-	}
-	url := fmt.Sprintf("%s/v1/admin/devshards/%s/deactivate", gatewayURL, escrowID)
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader([]byte(`{}`)))
-	require.NoError(t, err)
-	req.Header.Set("Authorization", "Bearer "+adminAPIKey)
-	req.Header.Set("Content-Type", "application/json")
-	resp, err := client.Do(req)
-	require.NoError(t, err)
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	require.Equal(t, http.StatusOK, resp.StatusCode, "POST deactivate: %s", string(body))
 }
 
 // FetchChildPingHeaders GETs /{version}/clock via the router and returns status + headers.
