@@ -63,15 +63,11 @@ func pickerEnv(t *testing.T) (*sessionPicker, *user.Session, *fakeGhost) {
 	return picker, session, ghost
 }
 
-// stagedPickerEnv is pickerEnv with the dispatcher still stopped, so a test can
-// stage a whole queue before the first nonce is matched. Caller must startPicker.
 func stagedPickerEnv(t *testing.T) (*sessionPicker, *user.Session, *fakeGhost) {
 	t.Helper()
 	return stagedPickerEnvWithThrottle(t, nil)
 }
 
-// stagedPickerEnvWithThrottle is stagedPickerEnv with a reactive-throttle checker,
-// so a test can make one participant unavailable without the real limiter.
 func stagedPickerEnvWithThrottle(t *testing.T, throttleBlocked throttleChecker) (*sessionPicker, *user.Session, *fakeGhost) {
 	t.Helper()
 	env := setupTestProxy(t, 3, nil, true)
@@ -81,7 +77,6 @@ func stagedPickerEnvWithThrottle(t *testing.T, throttleBlocked throttleChecker) 
 	return picker, env.session, ghost
 }
 
-// startPicker runs the dispatcher loop and stops it at the end of the test.
 func startPicker(t *testing.T, picker *sessionPicker) {
 	t.Helper()
 	picker.start()
@@ -208,8 +203,6 @@ func TestPicker_PrefersCompatibleOverGhost(t *testing.T) {
 	require.NotEqual(t, 1, r1.prepared.HostIdx(), "req1 excludes host 1")
 }
 
-// TestPicker_StickyRequestOutranksEarlierUnboundRequest: a request sticky to
-// the participant this nonce binds is matched ahead of an earlier unbound one.
 func TestPicker_StickyRequestOutranksEarlierUnboundRequest(t *testing.T) {
 	picker, session, ghost := stagedPickerEnv(t)
 
@@ -232,8 +225,6 @@ func TestPicker_StickyRequestOutranksEarlierUnboundRequest(t *testing.T) {
 	require.Equal(t, 0, ghost.total(), "preferring a sticky request must not burn a nonce")
 }
 
-// TestPicker_LoneStickyRequestTakesForeignNonce: with nothing else queued the
-// sticky request accepts another participant's nonce instead of waiting.
 func TestPicker_LoneStickyRequestTakesForeignNonce(t *testing.T) {
 	picker, session, ghost := pickerEnv(t)
 
@@ -248,8 +239,6 @@ func TestPicker_LoneStickyRequestTakesForeignNonce(t *testing.T) {
 	require.Equal(t, 0, ghost.total(), "yielding must not burn a nonce")
 }
 
-// TestPicker_StickinessNeverBurnsNonces: whichever participant a request is
-// sticky to, the burn counter is unchanged across its dispatch.
 func TestPicker_StickinessNeverBurnsNonces(t *testing.T) {
 	testCases := []struct {
 		name       string
@@ -276,8 +265,6 @@ func TestPicker_StickinessNeverBurnsNonces(t *testing.T) {
 	}
 }
 
-// TestPicker_StickyToUnavailableParticipantIsNotStarved: while the sticky
-// participant cannot serve, the request queues as an ordinary one.
 func TestPicker_StickyToUnavailableParticipantIsNotStarved(t *testing.T) {
 	throttled := map[string]bool{}
 	picker, session, ghost := stagedPickerEnvWithThrottle(t,
@@ -305,8 +292,6 @@ func TestPicker_StickyToUnavailableParticipantIsNotStarved(t *testing.T) {
 	}
 }
 
-// TestPicker_AgedStickyPreferenceExpires: past the stale threshold the
-// preference stops steering and the request competes in plain queue order.
 func TestPicker_AgedStickyPreferenceExpires(t *testing.T) {
 	picker, session, ghost := stagedPickerEnv(t)
 
@@ -326,16 +311,12 @@ func TestPicker_AgedStickyPreferenceExpires(t *testing.T) {
 	require.Equal(t, 0, ghost.total())
 }
 
-// TestPicker_AgedUnboundRequestIsNotOvertakenByFreshSticky: once the oldest
-// unsteered request has waited out the threshold, preferences stop passing it.
 func TestPicker_AgedUnboundRequestIsNotOvertakenByFreshSticky(t *testing.T) {
 	picker, session, ghost := stagedPickerEnv(t)
 
 	aged := defaultPickerRequest()
 	aged.submitTime = time.Now().Add(-2 * pickerStaleThreshold)
 	picker.submit(aged)
-	// One fresh sticky request per participant, so every slot the nonce stream
-	// offers has a preference competing for it.
 	fresh := make([]*pickerRequest, 3)
 	for slot := range fresh {
 		fresh[slot] = defaultPickerRequest()
@@ -354,8 +335,6 @@ func TestPicker_AgedUnboundRequestIsNotOvertakenByFreshSticky(t *testing.T) {
 	require.Equal(t, 0, ghost.total())
 }
 
-// TestPicker_StickyDoesNotOvertakeNarrowerRetry: a retry that has already
-// excluded someone keeps its place, so its own options are not spent.
 func TestPicker_StickyDoesNotOvertakeNarrowerRetry(t *testing.T) {
 	picker, session, ghost := stagedPickerEnv(t)
 
@@ -377,8 +356,6 @@ func TestPicker_StickyDoesNotOvertakeNarrowerRetry(t *testing.T) {
 	require.Equal(t, 0, ghost.total(), "overtaking the retry would strand it on host 2 and burn a nonce")
 }
 
-// TestPicker_OtherStickyYieldsNonceToUnboundRequest: on a nonce nobody is
-// sticky to, an unbound request is served before a request bound elsewhere.
 func TestPicker_OtherStickyYieldsNonceToUnboundRequest(t *testing.T) {
 	picker, session, ghost := stagedPickerEnv(t)
 
@@ -401,9 +378,6 @@ func TestPicker_OtherStickyYieldsNonceToUnboundRequest(t *testing.T) {
 	require.Equal(t, 0, ghost.total())
 }
 
-// candidateIndexLocked is the whole ordering the affinity feature adds to the picker.
-// End-to-end tests cannot separate its three passes -- a request the scan skips is still
-// served one hold later, on the same host -- so the ordering is pinned here directly.
 func TestPicker_CandidateIndexOrdersTheThreePasses(t *testing.T) {
 	const (
 		serving = "participant-serving"

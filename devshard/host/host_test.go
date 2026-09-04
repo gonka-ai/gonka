@@ -1163,8 +1163,6 @@ func TestHost_ExecutingCleanup(t *testing.T) {
 	require.False(t, inMap, "inference ID should be removed from executing after completion")
 }
 
-// A re-execution that loses the session id runs the same prompt into the shared,
-// unsalted cache namespace -- the isolation the main path buys, given back.
 func TestHost_ChallengeReceipt_CarriesSessionID(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	user := testutil.MustGenerateKey(t)

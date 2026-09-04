@@ -83,6 +83,16 @@ func RequireOpenAINonStreamingCompletion(t *testing.T, resp RawResponse) {
 	}
 }
 
+// CompletionContent returns the assistant content of a non-streaming completion.
+func CompletionContent(t *testing.T, resp RawResponse) string {
+	t.Helper()
+	RequireOpenAINonStreamingCompletion(t, resp)
+	message := resp.JSON["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)
+	content, ok := message["content"].(string)
+	require.True(t, ok, "completion content should be a string")
+	return content
+}
+
 func requireNoProtocolLeak(t *testing.T, event string) {
 	t.Helper()
 	lower := strings.ToLower(event)

@@ -2531,9 +2531,6 @@ func TestNormalizeChatRequestStripsSilentDropFields(t *testing.T) {
 	}
 }
 
-// TestNormalizeChatRequestLiftsAffinityKeyBeforePromptCacheKeyIsStripped guards the seam
-// task 4 fixed: prompt_cache_key must reach req.AffinityKey before PreValidation strips it
-// off the wire, or the sticky-session feature silently never fires.
 func TestNormalizeChatRequestLiftsAffinityKeyBeforePromptCacheKeyIsStripped(t *testing.T) {
 	body := `{"messages":[{"role":"user","content":"hi"}],"prompt_cache_key":"conv-1"}`
 	out, req, err := normalizeChatRequest([]byte(body))
@@ -2551,9 +2548,6 @@ func TestNormalizeChatRequestAffinityKeyPrefersPromptCacheKeyOverUser(t *testing
 	require.Equal(t, "conv-1", req.AffinityKey)
 }
 
-// TestNormalizeChatRequestAffinityKeyFallsBackToUser also guards that `user`, unlike
-// prompt_cache_key, is never stripped -- it is an OpenAI end-user identifier the caller
-// legitimately expects to see forwarded.
 func TestNormalizeChatRequestAffinityKeyFallsBackToUser(t *testing.T) {
 	body := `{"messages":[{"role":"user","content":"hi"}],"user":"u-9"}`
 	out, req, err := normalizeChatRequest([]byte(body))
@@ -2571,8 +2565,6 @@ func TestNormalizeChatRequestAffinityKeyEmptyWithoutEitherField(t *testing.T) {
 	require.Empty(t, req.AffinityKey)
 }
 
-// TestNormalizeChatRequestRejectsMalformedPromptCacheKey: like `user`, prompt_cache_key
-// now gets a 400 instead of a silent strip when it violates the shape contract.
 func TestNormalizeChatRequestRejectsMalformedPromptCacheKey(t *testing.T) {
 	tests := []struct {
 		name string

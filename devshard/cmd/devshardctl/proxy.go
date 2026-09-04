@@ -232,11 +232,10 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if model == "" {
 		model = p.model
 	}
-	// Extraction is the gate: disabled means the key never reaches the wire.
 	sessionToken := ""
 	if p.redundancy.affinityEnabled() {
 		callerCredential, _ := bearerToken(r)
-		sessionToken = deriveSessionToken(p.sessionSecret, p.escrowID, callerCredential, req.AffinityKey)
+		sessionToken = deriveSessionToken(p.sessionSecret, p.escrowID, callerCredential, resolveAffinityKey(r.Context(), req))
 	}
 	params := user.InferenceParams{
 		Model:       model,

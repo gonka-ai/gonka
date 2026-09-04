@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"crypto/hmac"
 	"crypto/rand"
 	"crypto/sha256"
@@ -10,18 +11,16 @@ import (
 	"time"
 )
 
-// Affinity decision outcomes for devshard_gateway_affinity_decision_total; see affinityDecision.
+// Affinity decision outcomes for devshard_gateway_affinity_decision_total.
 const (
 	affinityDecisionHit     = "hit"
 	affinityDecisionYielded = "yielded"
 	affinityDecisionMiss    = "miss"
 )
 
-// sessionTokenSecret keys every session token. It is drawn once per process and never
-// persisted, so no secret enters the repository or the image.
+// sessionTokenSecret keys every session token. Drawn once per process, never persisted.
 var sessionTokenSecret = sync.OnceValue(func() []byte { return []byte(rand.Text()) })
 
-// affinityDecision classifies a primary's outcome against the preference the picker was given.
 func affinityDecision(stickyParticipant, servedBy string) string {
 	switch stickyParticipant {
 	case "":
@@ -33,8 +32,6 @@ func affinityDecision(stickyParticipant, servedBy string) string {
 	}
 }
 
-// membershipTest answers "is this participant still in the group", so a binding to one
-// that left is dropped instead of steering the request at a host that cannot serve it.
 func membershipTest(members []string) func(participant string) bool {
 	memberSet := make(map[string]bool, len(members))
 	for _, key := range members {
@@ -43,8 +40,27 @@ func membershipTest(members []string) func(participant string) bool {
 	return func(participant string) bool { return memberSet[participant] }
 }
 
-// affinityKeyFromDocument reads prompt_cache_key (fallback: user) as the
-// OpenAI-compatible cache key; see proposals/kv-cache-affinity/README.md.
+type affinityKeyContextKey struct{}
+
+// withAffinityKey records the client's cache key before normalization strips it from the body.
+func withAffinityKey(ctx context.Context, key string) context.Context {
+	return context.WithValue(ctx, affinityKeyContextKey{}, key)
+}
+
+func affinityKeyFromContext(ctx context.Context) (string, bool) {
+	key, ok := ctx.Value(affinityKeyContextKey{}).(string)
+	return key, ok
+}
+
+// resolveAffinityKey prefers the pooled layer's record, which saw the body before the strip.
+func resolveAffinityKey(ctx context.Context, req chatRequest) string {
+	if key, recorded := affinityKeyFromContext(ctx); recorded {
+		return key
+	}
+	return req.AffinityKey
+}
+
+// affinityKeyFromDocument reads the client's cache key: prompt_cache_key, falling back to user.
 func affinityKeyFromDocument(document *ChatRequestDocument) string {
 	for _, name := range []string{"prompt_cache_key", "user"} {
 		if value, ok := document.String(name); ok {
@@ -56,19 +72,15 @@ func affinityKeyFromDocument(document *ChatRequestDocument) string {
 	return ""
 }
 
-// deriveSessionToken binds the client's own string to its escrow and to the credential the caller
-// presented, so guessing that string alone no longer reaches another client's cache namespace.
 func deriveSessionToken(secret []byte, escrowID, callerCredential, clientKey string) string {
 	if len(secret) == 0 || clientKey == "" {
 		return ""
 	}
 	mac := hmac.New(sha256.New, secret)
-	// NUL appears in neither an escrow id nor an HTTP header value, so this join is unambiguous.
 	_, _ = mac.Write([]byte(escrowID + "\x00" + callerCredential + "\x00" + clientKey))
 	return hex.EncodeToString(mac.Sum(nil))
 }
 
-// affinityConfig tunes the bounded stickiness; OFF unless explicitly enabled.
 type affinityConfig struct {
 	Enabled     bool
 	MaxRequests int
@@ -85,8 +97,6 @@ func defaultAffinityConfig() affinityConfig {
 	}
 }
 
-// affinityConfigFromEnv reads the tunables from the environment, keeping the
-// conservative defaults for anything unset.
 func affinityConfigFromEnv() affinityConfig {
 	cfg := defaultAffinityConfig()
 	cfg.Enabled = readBoolEnv("DEVSHARD_AFFINITY_ENABLED", cfg.Enabled)
@@ -102,14 +112,12 @@ func affinityConfigFromEnv() affinityConfig {
 	return cfg
 }
 
-// affinityEntry is one session's sticky binding.
 type affinityEntry struct {
 	participant string
 	count       int
 	firstSeen   time.Time
 }
 
-// affinityTracker maps a session key to a bounded sticky participant.
 type affinityTracker struct {
 	cfg   affinityConfig
 	mu    sync.Mutex
@@ -127,7 +135,6 @@ func newAffinityTracker(cfg affinityConfig) *affinityTracker {
 
 func (tracker *affinityTracker) enabled() bool { return tracker != nil && tracker.cfg.Enabled }
 
-// Size reports the number of live bindings, for the affinity_bindings gauge.
 func (tracker *affinityTracker) Size() int {
 	if tracker == nil {
 		return 0
@@ -137,8 +144,6 @@ func (tracker *affinityTracker) Size() int {
 	return len(tracker.byKey)
 }
 
-// Pick returns the session's sticky participant if it's still live and a
-// member; false means route naturally, then call Record.
 func (tracker *affinityTracker) Pick(key string, isMember func(participant string) bool) (string, bool) {
 	if !tracker.enabled() || key == "" {
 		return "", false
@@ -156,8 +161,6 @@ func (tracker *affinityTracker) Pick(key string, isMember func(participant strin
 	return entry.participant, true
 }
 
-// Record binds key to participant (or bumps the counter), evicting at the
-// request bound so the next Pick re-randomises.
 func (tracker *affinityTracker) Record(key, participant string) {
 	if !tracker.enabled() || key == "" || participant == "" {
 		return
@@ -178,8 +181,7 @@ func (tracker *affinityTracker) Record(key, participant string) {
 	}
 }
 
-// sweepLocked drops expired entries, then arbitrary live ones down to 90%
-// of the cap if still full. Caller holds tracker.mu; runs only at MaxEntries.
+// sweepLocked drops expired entries, then live ones down to 90% of the cap.
 func (tracker *affinityTracker) sweepLocked() {
 	for key, entry := range tracker.byKey {
 		if tracker.expiredLocked(entry) {
@@ -198,8 +200,6 @@ func (tracker *affinityTracker) sweepLocked() {
 	}
 }
 
-// expiredLocked reports whether an entry exhausted its request budget or
-// outlived its TTL. Caller holds tracker.mu.
 func (tracker *affinityTracker) expiredLocked(entry *affinityEntry) bool {
 	if entry.count >= tracker.cfg.MaxRequests {
 		return true

@@ -19,6 +19,7 @@ const (
 	StubInferenceHTTPStatusEnv   = "DEVSHARD_STUB_INFERENCE_HTTP_STATUS"
 	StubInferenceResponseBodyEnv = "DEVSHARD_STUB_INFERENCE_RESPONSE_BODY"
 	StubInferenceHTTPMessageEnv  = "DEVSHARD_STUB_INFERENCE_HTTP_MESSAGE"
+	StubInferenceEchoSessionEnv  = "DEVSHARD_STUB_INFERENCE_ECHO_SESSION"
 )
 
 type SessionTimeoutOverrides struct {

@@ -5,43 +5,59 @@ import (
 	"time"
 
 	"decentralized-api/apiconfig"
+	"decentralized-api/broker/sessionaffinity"
+	"decentralized-api/observability"
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
 )
 
-// affinityMetricsModel is the only model NewTestBroker's mocked governance query
-// allows through node registration (see broker_test.go's mockChainBridge setup),
-// so every test here must route through it.
 const affinityMetricsModel = "model1"
 
-// enableNodeAffinity swaps in an enabled tracker so a test can pre-record a
-// binding without depending on DAPI_MLNODE_AFFINITY_ENABLED in the process env.
+const affinityMetricsMaxConcurrent = 4
+
 func enableNodeAffinity(b *Broker) {
-	b.sessionAffinity = newNodeSessionAffinity(nodeAffinityConfig{
-		Enabled: true, MaxRequests: 100, TTL: time.Hour, MaxEntries: 100,
-	})
+	b.sessionAffinity = sessionaffinity.New(
+		sessionaffinity.Config{Enabled: true, MaxRequests: 100, TTL: time.Hour, MaxEntries: 100},
+		observability.RecordMLNodeAffinityDecision,
+	)
 }
 
-func registerAvailableNode(t *testing.T, b *Broker, nodeID string) {
+func registerAvailableNode(t *testing.T, b *Broker, nodeID string, portOffset int) {
 	t.Helper()
 	registerNodeAndSetInferenceStatus(t, b, apiconfig.InferenceNodeConfig{
-		Id: nodeID, Host: "localhost", InferencePort: 8080,
-		InferenceSegment: "/v1", PoCPort: 8081,
+		Id: nodeID, Host: "localhost", InferencePort: 8080 + 2*portOffset,
+		InferenceSegment: "/v1", PoCPort: 8081 + 2*portOffset,
 		Models:        map[string]apiconfig.ModelConfig{affinityMetricsModel: {}},
-		MaxConcurrent: 4,
+		MaxConcurrent: affinityMetricsMaxConcurrent,
 	})
 }
 
-// TestMLNodeAffinityDecisionHit: the session's remembered node is registered and
-// available, so lockAvailableNode must serve it and record "hit".
+func setLockCount(t *testing.T, b *Broker, nodeID string, lockCount int) {
+	t.Helper()
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	node, exists := b.nodes[nodeID]
+	if !exists {
+		t.Fatalf("node %s is not registered", nodeID)
+	}
+	node.State.LockCount = lockCount
+}
+
+func lockedNodeFor(t *testing.T, b *Broker, sessionID string) *Node {
+	t.Helper()
+	availableNode := make(chan *Node, 1)
+	queueMessage(t, b, LockAvailableNode{Model: affinityMetricsModel, EscrowID: "escrow-1", SessionID: sessionID, Response: availableNode})
+	return <-availableNode
+}
+
 func TestMLNodeAffinityDecisionHit(t *testing.T) {
 	b := NewTestBroker()
 	enableNodeAffinity(b)
-	registerAvailableNode(t, b, "node1")
-	b.sessionAffinity.record("escrow-1", "sess", "node1")
-	before := affinityDecisionCount(t, "hit")
+	registerAvailableNode(t, b, "node1", 0)
+	b.sessionAffinity.Record("escrow-1", "sess", "node1")
+	before := affinityDecisionCount(t, sessionaffinity.DecisionHit)
 
 	availableNode := make(chan *Node, 1)
 	queueMessage(t, b, LockAvailableNode{Model: affinityMetricsModel, EscrowID: "escrow-1", SessionID: "sess", Response: availableNode})
@@ -49,18 +65,15 @@ func TestMLNodeAffinityDecisionHit(t *testing.T) {
 
 	require.NotNil(t, node)
 	require.Equal(t, "node1", node.Id)
-	require.Equal(t, before+1, affinityDecisionCount(t, "hit"))
+	require.Equal(t, before+1, affinityDecisionCount(t, sessionaffinity.DecisionHit))
 }
 
-// TestMLNodeAffinityDecisionYielded: the session's remembered node was never
-// registered (gone from the fleet), so the broker must fall back to least-busy
-// and record "yielded".
 func TestMLNodeAffinityDecisionYielded(t *testing.T) {
 	b := NewTestBroker()
 	enableNodeAffinity(b)
-	registerAvailableNode(t, b, "node1")
-	b.sessionAffinity.record("escrow-1", "sess", "node-gone")
-	before := affinityDecisionCount(t, "yielded")
+	registerAvailableNode(t, b, "node1", 0)
+	b.sessionAffinity.Record("escrow-1", "sess", "node-gone")
+	before := affinityDecisionCount(t, sessionaffinity.DecisionYielded)
 
 	availableNode := make(chan *Node, 1)
 	queueMessage(t, b, LockAvailableNode{Model: affinityMetricsModel, EscrowID: "escrow-1", SessionID: "sess", Response: availableNode})
@@ -68,16 +81,14 @@ func TestMLNodeAffinityDecisionYielded(t *testing.T) {
 
 	require.NotNil(t, node)
 	require.Equal(t, "node1", node.Id, "must fall back to the only registered node")
-	require.Equal(t, before+1, affinityDecisionCount(t, "yielded"))
+	require.Equal(t, before+1, affinityDecisionCount(t, sessionaffinity.DecisionYielded))
 }
 
-// TestMLNodeAffinityDecisionMiss: the session has no prior binding, so the
-// broker must record "miss" even though it still serves the request normally.
 func TestMLNodeAffinityDecisionMiss(t *testing.T) {
 	b := NewTestBroker()
 	enableNodeAffinity(b)
-	registerAvailableNode(t, b, "node1")
-	before := affinityDecisionCount(t, "miss")
+	registerAvailableNode(t, b, "node1", 0)
+	before := affinityDecisionCount(t, sessionaffinity.DecisionMiss)
 
 	availableNode := make(chan *Node, 1)
 	queueMessage(t, b, LockAvailableNode{Model: affinityMetricsModel, EscrowID: "escrow-1", SessionID: "sess-never-seen", Response: availableNode})
@@ -85,33 +96,27 @@ func TestMLNodeAffinityDecisionMiss(t *testing.T) {
 
 	require.NotNil(t, node)
 	require.Equal(t, "node1", node.Id)
-	require.Equal(t, before+1, affinityDecisionCount(t, "miss"))
+	require.Equal(t, before+1, affinityDecisionCount(t, sessionaffinity.DecisionMiss))
 }
 
-// TestMLNodeAffinityDecisionDisabledEmitsNoMetric: with affinity off (NewTestBroker's
-// default), a request that would otherwise be a "miss" must not touch the counter.
 func TestMLNodeAffinityDecisionDisabledEmitsNoMetric(t *testing.T) {
 	t.Setenv("DAPI_MLNODE_AFFINITY_ENABLED", "false") // independent of whatever the process env happens to have
 	b := NewTestBroker()
-	registerAvailableNode(t, b, "node1")
-	beforeHit := affinityDecisionCount(t, "hit")
-	beforeYielded := affinityDecisionCount(t, "yielded")
-	beforeMiss := affinityDecisionCount(t, "miss")
+	registerAvailableNode(t, b, "node1", 0)
+	beforeHit := affinityDecisionCount(t, sessionaffinity.DecisionHit)
+	beforeYielded := affinityDecisionCount(t, sessionaffinity.DecisionYielded)
+	beforeMiss := affinityDecisionCount(t, sessionaffinity.DecisionMiss)
 
 	availableNode := make(chan *Node, 1)
 	queueMessage(t, b, LockAvailableNode{Model: affinityMetricsModel, EscrowID: "escrow-1", SessionID: "sess", Response: availableNode})
 	node := <-availableNode
 
 	require.NotNil(t, node)
-	require.Equal(t, beforeHit, affinityDecisionCount(t, "hit"), "disabled affinity must never write the decision counter")
-	require.Equal(t, beforeYielded, affinityDecisionCount(t, "yielded"), "disabled affinity must never write the decision counter")
-	require.Equal(t, beforeMiss, affinityDecisionCount(t, "miss"), "disabled affinity must never write the decision counter")
+	require.Equal(t, beforeHit, affinityDecisionCount(t, sessionaffinity.DecisionHit), "disabled affinity must never write the decision counter")
+	require.Equal(t, beforeYielded, affinityDecisionCount(t, sessionaffinity.DecisionYielded), "disabled affinity must never write the decision counter")
+	require.Equal(t, beforeMiss, affinityDecisionCount(t, sessionaffinity.DecisionMiss), "disabled affinity must never write the decision counter")
 }
 
-// affinityDecisionCount reads decentralized_api_mlnode_affinity_decision_total off the
-// default Prometheus gatherer that RecordMLNodeAffinityDecision writes to. The counter
-// is process-global (promOnce-registered against prometheus.DefaultRegisterer), so
-// every assertion here is a before/after diff rather than an absolute value.
 func affinityDecisionCount(t *testing.T, decision string) float64 {
 	t.Helper()
 	families, err := prometheus.DefaultGatherer.Gather()
@@ -136,4 +141,91 @@ func metricHasLabels(metric *dto.Metric, want map[string]string) bool {
 		}
 	}
 	return true
+}
+
+func TestMLNodeAffinityDecisionCongested(t *testing.T) {
+	b := NewTestBroker()
+	enableNodeAffinity(b)
+	registerAvailableNode(t, b, "node-sticky", 0)
+	registerAvailableNode(t, b, "node-idle", 1)
+	b.sessionAffinity.Record("escrow-1", "sess", "node-sticky")
+	setLockCount(t, b, "node-sticky", affinityMetricsMaxConcurrent-1)
+	before := affinityDecisionCount(t, sessionaffinity.DecisionCongested)
+
+	node := lockedNodeFor(t, b, "sess")
+
+	require.NotNil(t, node)
+	require.Equal(t, "node-idle", node.Id,
+		"past the margin a warm cache is not worth the queue in front of it")
+	require.Equal(t, before+1, affinityDecisionCount(t, sessionaffinity.DecisionCongested))
+}
+
+func TestMLNodeAffinityYieldsWhenStickyNodeIsSaturated(t *testing.T) {
+	b := NewTestBroker()
+	enableNodeAffinity(b)
+	registerAvailableNode(t, b, "node-sticky", 0)
+	registerAvailableNode(t, b, "node-idle", 1)
+	b.sessionAffinity.Record("escrow-1", "sess", "node-sticky")
+	setLockCount(t, b, "node-sticky", affinityMetricsMaxConcurrent)
+	before := affinityDecisionCount(t, sessionaffinity.DecisionYielded)
+
+	node := lockedNodeFor(t, b, "sess")
+
+	require.NotNil(t, node)
+	require.Equal(t, "node-idle", node.Id)
+	require.Equal(t, before+1, affinityDecisionCount(t, sessionaffinity.DecisionYielded),
+		"a node at its cap is unusable, which is a different signal from congestion")
+}
+
+func TestMLNodeAffinityBindsOnFirstAcquire(t *testing.T) {
+	b := NewTestBroker()
+	enableNodeAffinity(b)
+	registerAvailableNode(t, b, "node-a", 0)
+	registerAvailableNode(t, b, "node-b", 1)
+	before := affinityDecisionCount(t, sessionaffinity.DecisionHit)
+
+	firstNode := lockedNodeFor(t, b, "sess")
+	secondNode := lockedNodeFor(t, b, "sess")
+
+	require.NotNil(t, firstNode)
+	require.NotNil(t, secondNode)
+	require.Equal(t, firstNode.Id, secondNode.Id,
+		"the second request of a session must return to the node the first one bound")
+	require.Equal(t, before+1, affinityDecisionCount(t, sessionaffinity.DecisionHit))
+}
+
+func TestMLNodeAffinityHonoursTheSkipList(t *testing.T) {
+	b := NewTestBroker()
+	enableNodeAffinity(b)
+	registerAvailableNode(t, b, "node-sticky", 0)
+	registerAvailableNode(t, b, "node-idle", 1)
+	b.sessionAffinity.Record("escrow-1", "sess", "node-sticky")
+	before := affinityDecisionCount(t, sessionaffinity.DecisionYielded)
+
+	availableNode := make(chan *Node, 1)
+	queueMessage(t, b, LockAvailableNode{
+		Model: affinityMetricsModel, EscrowID: "escrow-1", SessionID: "sess",
+		SkipNodeIDs: []string{"node-sticky"}, Response: availableNode,
+	})
+	node := <-availableNode
+
+	require.NotNil(t, node)
+	require.Equal(t, "node-idle", node.Id, "an excluded node must not win on stickiness")
+	require.Equal(t, before+1, affinityDecisionCount(t, sessionaffinity.DecisionYielded))
+}
+
+func TestMLNodeAffinityToleratesAMiscountedPeer(t *testing.T) {
+	b := NewTestBroker()
+	enableNodeAffinity(b)
+	registerAvailableNode(t, b, "node-sticky", 0)
+	registerAvailableNode(t, b, "node-idle", 1)
+	b.sessionAffinity.Record("escrow-1", "sess", "node-sticky")
+	setLockCount(t, b, "node-idle", -5)
+	before := affinityDecisionCount(t, sessionaffinity.DecisionHit)
+
+	node := lockedNodeFor(t, b, "sess")
+
+	require.NotNil(t, node)
+	require.Equal(t, "node-sticky", node.Id, "a miscounted peer must not read as idle")
+	require.Equal(t, before+1, affinityDecisionCount(t, sessionaffinity.DecisionHit))
 }

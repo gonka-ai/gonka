@@ -68,8 +68,6 @@ func newTestEngine(ml *mlnodeclient.Client, mgr *mlnodeclient.Manager, capacity 
 	}
 }
 
-// captureBodyMLServer starts a fake ML node that records the last request
-// body it received, so tests can inspect what executeMLRequest actually sent.
 func captureBodyMLServer(t *testing.T, gotBody *[]byte) *httptest.Server {
 	t.Helper()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -94,9 +92,6 @@ func newTestEngineForNode(t *testing.T, endpoint string) *Engine {
 	return newTestEngine(ml, nil, nil)
 }
 
-// newTestEngineCapturingSessionID wires an Engine to a fake NodeManager that
-// records the session id carried by every Acquire RPC, so tests can prove
-// whether the id itself -- not just its two known effects -- left the engine.
 func newTestEngineCapturingSessionID(t *testing.T, endpoint string, gotSessionID *string) *Engine {
 	t.Helper()
 	ml := startEngineMLClient(t, &engineMockNM{
@@ -140,8 +135,6 @@ func TestExecuteMLRequest_AffinityEnabledSendsSessionIDToAcquire(t *testing.T) {
 	assert.Equal(t, "sess-A", gotSessionID, "the session id must reach Acquire once the participant enables affinity")
 }
 
-// The gateway enabling stickiness and the participant enabling it are separate operator
-// decisions, so a stock participant must still isolate the caches of the clients it serves.
 func TestExecuteMLRequest_AffinityDisabledStillSaltsBody(t *testing.T) {
 	var gotBody []byte
 	srv := captureBodyMLServer(t, &gotBody)
@@ -627,4 +620,3 @@ func TestFallback_UnknownNodeBounded(t *testing.T) {
 	}
 	assert.Equal(t, int32(1), maxInFlight.Load(), "capacity-unknown node must be bounded, not unbounded")
 }
-

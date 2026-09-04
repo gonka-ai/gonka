@@ -1563,9 +1563,6 @@ func TestProxyHandleChatCompletionsRejectsWhenRegularPoCActive(t *testing.T) {
 	require.EqualValues(t, 0, env.proxy.session.Nonce())
 }
 
-// sessionIDCapturingClient records the SessionID carried by every host
-// payload it receives, so tests can prove whether an affinity key actually
-// left the gateway.
 type sessionIDCapturingClient struct {
 	mu         sync.Mutex
 	sessionIDs []string
@@ -1603,7 +1600,6 @@ func TestHandleChatCompletionsAffinityKeyStaysAtGatewayWhenTrackerDisabled(t *te
 	zeroReceiptTimeout(t)
 	client := &sessionIDCapturingClient{}
 	env := setupTestProxyWithClients(t, []user.HostClient{client})
-	// redundancy.affinity is left nil (never set), matching the shipped default: disabled.
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
 		bytes.NewBufferString(`{"messages":[{"role":"user","content":"hi"}],"user":"user-123"}`))
@@ -1612,6 +1608,7 @@ func TestHandleChatCompletionsAffinityKeyStaysAtGatewayWhenTrackerDisabled(t *te
 	env.proxy.handleChatCompletions(rec, req)
 
 	require.Equal(t, http.StatusOK, rec.Code)
+	require.False(t, env.proxy.redundancy.affinityEnabled(), "this test asserts the shipped default: no tracker set")
 	sessionIDs := client.recorded()
 	require.NotEmpty(t, sessionIDs)
 	for _, id := range sessionIDs {
@@ -1642,8 +1639,30 @@ func TestHandleChatCompletionsAffinityKeyReachesHostWhenTrackerEnabled(t *testin
 	}
 }
 
-// sessionTokenFromChat drives one chat request through the proxy with the given
-// Authorization header and returns the session token that left the gateway.
+func TestHandleChatCompletionsDerivesFromTheRecordedAffinityKey(t *testing.T) {
+	zeroReceiptTimeout(t)
+	client := &sessionIDCapturingClient{}
+	env := setupTestProxyWithClients(t, []user.HostClient{client})
+	cfg := defaultAffinityConfig()
+	cfg.Enabled = true
+	env.proxy.redundancy.affinity = newAffinityTracker(cfg)
+	wanted := deriveSessionToken(env.proxy.sessionSecret, env.proxy.escrowID, "", "conversation-alpha")
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		bytes.NewBufferString(`{"messages":[{"role":"user","content":"hi"}]}`))
+	req = req.WithContext(withAffinityKey(req.Context(), "conversation-alpha"))
+	rec := httptest.NewRecorder()
+
+	env.proxy.handleChatCompletions(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	sessionIDs := client.recorded()
+	require.NotEmpty(t, sessionIDs)
+	for _, id := range sessionIDs {
+		require.Equal(t, wanted, id, "the body carries no key, so only the recorded one can produce a token")
+	}
+}
+
 func sessionTokenFromChat(t *testing.T, authorization string) string {
 	t.Helper()
 	zeroReceiptTimeout(t)

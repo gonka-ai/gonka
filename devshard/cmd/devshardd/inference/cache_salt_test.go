@@ -18,45 +18,55 @@ func saltOf(t *testing.T, body []byte, escrowID, sessionID string) string {
 	return salt
 }
 
-func TestWithCacheSalt(t *testing.T) {
-	body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
+func saltTestBody() []byte {
+	return []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
+}
 
-	out := withCacheSalt(body, "escrow-1", "sess-A")
+func TestWithCacheSaltStampsWithoutDisturbingTheRequest(t *testing.T) {
 	var fields map[string]any
-	if err := json.Unmarshal(out, &fields); err != nil {
+	if err := json.Unmarshal(withCacheSalt(saltTestBody(), "escrow-1", "sess-A"), &fields); err != nil {
 		t.Fatalf("output not valid json: %v", err)
 	}
+
 	if salt, ok := fields["cache_salt"].(string); !ok || salt == "" {
 		t.Fatalf("cache_salt not set, got %v", fields["cache_salt"])
 	}
 	if fields["model"] != "m" {
 		t.Fatalf("original fields must be preserved; model=%v", fields["model"])
 	}
+}
 
-	// Deterministic per session (so a client's own follow-ups reuse its cache).
-	if string(withCacheSalt(body, "escrow-1", "sess-A")) != string(out) {
-		t.Fatal("same escrow and session must yield the same salt")
+func TestWithCacheSaltIsDeterministicPerSession(t *testing.T) {
+	body := saltTestBody()
+
+	first := withCacheSalt(body, "escrow-1", "sess-A")
+	second := withCacheSalt(body, "escrow-1", "sess-A")
+
+	if string(first) != string(second) {
+		t.Fatal("a session's own follow-ups must reuse its cache, so the salt must not vary")
 	}
+}
 
-	// Different sessions get different salts (isolation — no shared KV blocks).
+func TestWithCacheSaltSeparatesSessionsSharingOneEscrow(t *testing.T) {
+	body := saltTestBody()
+
 	if saltOf(t, body, "escrow-1", "sess-B") == saltOf(t, body, "escrow-1", "sess-A") {
-		t.Fatal("different sessions must get different cache_salt")
-	}
-
-	// Unparseable body passes through unchanged (best-effort, never breaks a request).
-	bad := []byte(`{not json`)
-	if string(withCacheSalt(bad, "escrow-1", "s")) != string(bad) {
-		t.Fatal("unparseable body must pass through unchanged")
+		t.Fatal("two sessions must not share KV blocks")
 	}
 }
 
 func TestWithCacheSaltSeparatesEscrowsSharingOneSessionID(t *testing.T) {
-	body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
+	body := saltTestBody()
 
-	first := saltOf(t, body, "escrow-1", "sess-A")
-	second := saltOf(t, body, "escrow-2", "sess-A")
-
-	if first == second {
+	if saltOf(t, body, "escrow-1", "sess-A") == saltOf(t, body, "escrow-2", "sess-A") {
 		t.Fatal("one session id under two escrows must not share a prefix-cache namespace")
+	}
+}
+
+func TestWithCacheSaltPassesAnUnparseableBodyThrough(t *testing.T) {
+	unparseable := []byte(`{not json`)
+
+	if string(withCacheSalt(unparseable, "escrow-1", "s")) != string(unparseable) {
+		t.Fatal("salting is best-effort and must never break a request")
 	}
 }

@@ -550,9 +550,6 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 						DefaultMaxLen: UserMaxLen,
 					},
 				}),
-			// `prompt_cache_key`: lifted into chatRequest.AffinityKey before this stage runs
-			// (see ChatRequestPipeline.Normalize), then validated here like `user` before
-			// StripParameter removes it from the wire.
 			newParameter("prompt_cache_key").
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.StringFieldValidator{

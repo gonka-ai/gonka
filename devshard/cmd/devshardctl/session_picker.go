@@ -23,8 +23,7 @@
 //	   excluded this host's participant: dispatch it as a real
 //	   inference. The matched request is removed from the queue
 //	   and replied to. This is the only branch that actually hits
-//	   the host. A live sticky preference wins among compatible
-//	   requests, unless the oldest unsteered one has aged out.
+//	   the host.
 //
 //	3. Healthy host but every queued request has already excluded
 //	   this host's participant: hold the nonce up to
@@ -78,9 +77,6 @@ import (
 // nonce as a synthetic ghost probe. Tuned so a single request landing
 // in an empty queue does not immediately consume nonces that
 // co-arriving traffic could have used productively.
-//
-// It is also the window in which a sticky preference may steer or be steered
-// past, so raising it to burn fewer nonces lengthens the reordering too.
 const pickerStaleThreshold = 200 * time.Millisecond
 
 // errPickerEmpty is returned by the chooser when the queue is empty
@@ -138,8 +134,6 @@ func (g ghostKind) reason() string {
 // of the per-request retry memory. Excluding by participant key
 // guarantees one-attempt-per-host even when a participant has
 // multiple group slots.
-//
-// stickyParticipant only reorders matching, so it can never burn or delay a nonce.
 type pickerRequest struct {
 	params              user.InferenceParams
 	excludeParticipants map[string]bool // participant keys this request has already tried
@@ -149,8 +143,6 @@ type pickerRequest struct {
 	reply               chan pickerResult // buffered; one write only
 }
 
-// activeSticky returns the preference only while honouring it is free: the sticky
-// participant can serve now and the request has not aged past the stale threshold.
 func (r *pickerRequest) activeSticky(available map[string]bool, now time.Time) string {
 	if r.stickyParticipant == "" || !available[r.stickyParticipant] {
 		return ""
@@ -592,15 +584,12 @@ func (p *sessionPicker) hasCompatibleParticipantLocked(req *pickerRequest, avail
 	return false
 }
 
-// matchQueuedLocked (p.mu held) returns the queue index taking this nonce, or -1
-// and the participant's block reason when no queued request can use it.
+// matchQueuedLocked returns the queue index taking this nonce, or -1 and the block reason.
 func (p *sessionPicker) matchQueuedLocked(participantKey string, available map[string]bool, now time.Time) (int, string) {
 	candidate := p.candidateIndexLocked(participantKey, available, now)
 	if candidate < 0 {
 		return -1, ""
 	}
-	// The block is a property of the participant, so one blocked answer rules out
-	// the whole queue; asking after the scan keeps it to a single call.
 	if p.stateBlocked != nil {
 		if reason, blocked := p.stateBlocked(participantKey); blocked {
 			return -1, reason
@@ -609,9 +598,8 @@ func (p *sessionPicker) matchQueuedLocked(participantKey string, available map[s
 	return candidate, ""
 }
 
-// candidateIndexLocked (p.mu held) scans the queue once and returns the index this
-// participant should serve: a stale unbound request first so stickiness cannot starve
-// it, then its own sticky session, then the oldest request that does not exclude it.
+// candidateIndexLocked prefers a stale unbound request, then this participant's own sticky
+// session, then the oldest request that does not exclude it.
 func (p *sessionPicker) candidateIndexLocked(participantKey string, available map[string]bool, now time.Time) int {
 	stickyHit, unbound, firstCompatible := -1, -1, -1
 	narrowerWaiting := false
@@ -638,8 +626,6 @@ func (p *sessionPicker) candidateIndexLocked(participantKey string, available ma
 			break
 		}
 	}
-	// The queue is FIFO, so unbound is the oldest request nothing steers: once it
-	// has waited out the threshold it stops being overtaken.
 	if unbound >= 0 && now.Sub(p.queue[unbound].submitTime) >= pickerStaleThreshold {
 		return unbound
 	}

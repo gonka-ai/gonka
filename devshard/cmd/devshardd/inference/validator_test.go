@@ -211,8 +211,6 @@ func (unknownValidationResult) IsSuccessful() bool                 { return true
 func (unknownValidationResult) GetInferenceId() string             { return "unknown" }
 func (unknownValidationResult) GetValidationResponseBytes() []byte { return nil }
 
-// The executor salts, the validator must not: a replay carrying a cache_salt would
-// diverge from the prompt the executor signed and committed.
 func TestValidatorExecuteMLRequest_ReplaysWithoutCacheSalt(t *testing.T) {
 	var gotBody []byte
 	srv := captureBodyMLServer(t, &gotBody)

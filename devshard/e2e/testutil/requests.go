@@ -35,6 +35,15 @@ func SendCompletionRawE(client *http.Client, clientURL, content, bearerToken str
 	return PostJSONRawE(client, clientURL+"/v1/chat/completions", ChatCompletionBody(content, false), bearerToken)
 }
 
+// SendCompletionWithCacheKey sends one non-streaming completion tagged with prompt_cache_key.
+func SendCompletionWithCacheKey(t *testing.T, client *http.Client, clientURL, content, cacheKey, bearerToken string) RawResponse {
+	t.Helper()
+	body := ChatCompletionBody(content, false)
+	body["prompt_cache_key"] = cacheKey
+	DebugLogf(t, "sending completion content=%q cache_key=%q", content, cacheKey)
+	return PostJSONRaw(t, client, clientURL+"/v1/chat/completions", body, bearerToken)
+}
+
 type StreamResponse struct {
 	ContentType string
 	Events      []string

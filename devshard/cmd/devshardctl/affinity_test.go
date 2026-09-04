@@ -35,13 +35,11 @@ func TestAffinitySticksThenReRandomisesOnRequestBound(t *testing.T) {
 	cfg.MaxRequests = 3
 	tracker, _ := testAffinity(cfg)
 
-	// First request of the session: no binding yet -> route naturally, record.
 	if _, ok := tracker.Pick("sess", alwaysMember); ok {
 		t.Fatal("first Pick must miss")
 	}
 	tracker.Record("sess", "hostA") // count=1
 
-	// Requests 2 and 3 stick to hostA.
 	for i := 2; i <= 3; i++ {
 		got, ok := tracker.Pick("sess", alwaysMember)
 		if !ok || got != "hostA" {
@@ -50,7 +48,6 @@ func TestAffinitySticksThenReRandomisesOnRequestBound(t *testing.T) {
 		tracker.Record("sess", "hostA") // count=2, then 3 -> evict on the 3rd
 	}
 
-	// After MaxRequests (3) the binding is evicted -> re-randomise.
 	if _, ok := tracker.Pick("sess", alwaysMember); ok {
 		t.Fatal("after the request bound the session must re-randomise")
 	}
@@ -84,7 +81,6 @@ func TestAffinityDropsHostThatLeftGroup(t *testing.T) {
 	if _, ok := tracker.Pick("sess", onlyOthers); ok {
 		t.Fatal("a sticky host no longer in the group must be dropped")
 	}
-	// And the entry is gone, so a fresh natural landing rebinds cleanly.
 	tracker.Record("sess", "hostB")
 	if got, ok := tracker.Pick("sess", alwaysMember); !ok || got != "hostB" {
 		t.Fatalf("want rebind to hostB, got %q ok=%v", got, ok)
@@ -99,7 +95,6 @@ func TestAffinityRebindsOnFallbackToDifferentHost(t *testing.T) {
 
 	tracker.Record("sess", "hostA") // count=1
 	tracker.Record("sess", "hostA") // count=2
-	// Primary fell back to a different host (sticky was busy): rebind fresh.
 	tracker.Record("sess", "hostB")
 	got, ok := tracker.Pick("sess", alwaysMember)
 	if !ok || got != "hostB" {
@@ -107,9 +102,6 @@ func TestAffinityRebindsOnFallbackToDifferentHost(t *testing.T) {
 	}
 }
 
-// TestAffinityKeyFromDocument covers affinityKeyFromDocument in isolation, on an
-// already-decoded document (malformed/empty bodies never reach it -- decodeChatRequestRaw
-// rejects them earlier, exercised by the "parse request" pipeline tests instead).
 func TestAffinityKeyFromDocument(t *testing.T) {
 	cases := []struct {
 		name string
@@ -173,8 +165,6 @@ func TestDeriveSessionTokenEmptyWithoutKeyOrSecret(t *testing.T) {
 		"a missing secret must fail closed, not fall back to a guessable token")
 }
 
-// The participant drops a session id longer than its own maxSessionIDLength (512) and
-// salts nothing, so a token that outgrows that bound would disable the feature in silence.
 func TestDeriveSessionTokenFitsTheParticipantLengthBound(t *testing.T) {
 	const participantMaxSessionIDLength = 512
 
@@ -193,8 +183,6 @@ func TestAffinityMapIsBounded(t *testing.T) {
 	cfg.MaxEntries = 100
 	tracker, _ := testAffinity(cfg)
 
-	// A stream of distinct, never-repeated session keys (the leak scenario:
-	// short conversations that are never Picked again).
 	for i := 0; i < 10*cfg.MaxEntries; i++ {
 		tracker.Record(sessionKey(i), "hostA")
 	}
@@ -214,14 +202,11 @@ func TestAffinitySweepReclaimsExpiredFirst(t *testing.T) {
 	cfg.MaxEntries = 10
 	tracker, now := testAffinity(cfg)
 
-	// Fill to the cap, then let them all expire.
 	for i := 0; i < cfg.MaxEntries; i++ {
 		tracker.Record(sessionKey(i), "hostA")
 	}
 	*now = now.Add(cfg.TTL) // everything above is now expired
 
-	// One more insert triggers a sweep that should reclaim the expired ones,
-	// leaving just the fresh entry.
 	tracker.Record("fresh", "hostB")
 	tracker.mu.Lock()
 	bindings := len(tracker.byKey)
@@ -247,8 +232,6 @@ func itoa(i int) string {
 	return string(b[pos:])
 }
 
-// affinityRedundancyEnv wires a Redundancy whose ghost burns are observable and
-// whose affinity tracker is enabled.
 func affinityRedundancyEnv(t *testing.T) (*testProxyEnv, *fakeGhost) {
 	t.Helper()
 	env, ghost, picker := stagedAffinityRedundancyEnv(t)
@@ -256,8 +239,6 @@ func affinityRedundancyEnv(t *testing.T) (*testProxyEnv, *fakeGhost) {
 	return env, ghost
 }
 
-// stagedAffinityRedundancyEnv is affinityRedundancyEnv with the dispatcher still
-// stopped, so a test can stage competing requests. Caller must startPicker.
 func stagedAffinityRedundancyEnv(t *testing.T) (*testProxyEnv, *fakeGhost, *sessionPicker) {
 	t.Helper()
 	env := setupTestProxy(t, 3, nil, true)
@@ -271,8 +252,6 @@ func stagedAffinityRedundancyEnv(t *testing.T) (*testProxyEnv, *fakeGhost, *sess
 	return env, ghost, picker
 }
 
-// TestAffinitySessionReturnsToRememberedParticipant: a remembered session takes
-// its own participant's nonce ahead of an unbound request queued before it.
 func TestAffinitySessionReturnsToRememberedParticipant(t *testing.T) {
 	env, ghost, picker := stagedAffinityRedundancyEnv(t)
 	remembered := env.session.HostParticipantKey(1)
@@ -309,8 +288,6 @@ func TestAffinitySessionReturnsToRememberedParticipant(t *testing.T) {
 	require.Equal(t, 0, ghost.total())
 }
 
-// TestAffinityPrimaryYieldsForeignNonceWithoutBurning: a session bound to a
-// participant the next nonce does not bind still costs exactly one nonce.
 func TestAffinityPrimaryYieldsForeignNonceWithoutBurning(t *testing.T) {
 	env, ghost := affinityRedundancyEnv(t)
 	env.proxy.redundancy.affinity.Record("sess", env.session.HostParticipantKey(2))
@@ -325,8 +302,6 @@ func TestAffinityPrimaryYieldsForeignNonceWithoutBurning(t *testing.T) {
 	require.EqualValues(t, 1, env.session.Nonce(), "one served request must cost exactly one nonce")
 }
 
-// TestAffinityRecordsParticipantThatActuallyServed: the binding follows the
-// participant the nonce went to, not the preference that yielded.
 func TestAffinityRecordsParticipantThatActuallyServed(t *testing.T) {
 	env, _ := affinityRedundancyEnv(t)
 	tracker := env.proxy.redundancy.affinity
@@ -355,8 +330,6 @@ func TestAffinityEmptyKeyIsNoOp(t *testing.T) {
 	}
 }
 
-// TestAffinityDecisionHitRecordsMetric: the sticky preference actually serves the
-// primary, so the decision counter must record "hit" and the gauge one binding.
 func TestAffinityDecisionHitRecordsMetric(t *testing.T) {
 	env, _ := affinityRedundancyEnv(t)
 	env.proxy.redundancy.metrics = NewDevshardMetrics()
@@ -378,8 +351,6 @@ func TestAffinityDecisionHitRecordsMetric(t *testing.T) {
 		map[string]string{"devshard_id": "escrow-affinity-hit"}, 1)
 }
 
-// TestAffinityDecisionYieldedRecordsMetric: a sticky preference existed but the
-// picker took a different, foreign nonce -- the decision counter must record "yielded".
 func TestAffinityDecisionYieldedRecordsMetric(t *testing.T) {
 	env, ghost := affinityRedundancyEnv(t)
 	env.proxy.redundancy.metrics = NewDevshardMetrics()
@@ -401,8 +372,6 @@ func TestAffinityDecisionYieldedRecordsMetric(t *testing.T) {
 		map[string]string{"devshard_id": "escrow-affinity-yielded"}, 1)
 }
 
-// TestAffinityDecisionMissRecordsMetric: a session's first request has no prior
-// binding, so the decision counter must record "miss".
 func TestAffinityDecisionMissRecordsMetric(t *testing.T) {
 	env, _ := affinityRedundancyEnv(t)
 	env.proxy.redundancy.metrics = NewDevshardMetrics()
@@ -421,8 +390,6 @@ func TestAffinityDecisionMissRecordsMetric(t *testing.T) {
 		map[string]string{"devshard_id": "escrow-affinity-miss"}, 1)
 }
 
-// TestAffinityDisabledEmitsNoMetrics: the whole point of the counter is to answer
-// "is affinity working" -- it must stay silent when the feature is off.
 func TestAffinityDisabledEmitsNoMetrics(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.metrics = NewDevshardMetrics()
@@ -441,8 +408,6 @@ func TestAffinityDisabledEmitsNoMetrics(t *testing.T) {
 	}
 }
 
-// TestAffinityBindingsGaugeTracksTrackerSize: after N bindings the gauge must equal
-// the tracker's live map size, read through its own mutex-guarded Size method.
 func TestAffinityBindingsGaugeTracksTrackerSize(t *testing.T) {
 	cfg := defaultAffinityConfig()
 	cfg.Enabled = true
@@ -463,8 +428,6 @@ func TestAffinityBindingsGaugeTracksTrackerSize(t *testing.T) {
 		map[string]string{"devshard_id": "escrow-gauge"}, bindingCount)
 }
 
-// A timeout re-execution that loses the session id runs the same prompt into the shared,
-// unsalted cache namespace -- the isolation the first attempt bought, given back.
 func TestTimeoutPayloadCarriesSessionID(t *testing.T) {
 	params := user.InferenceParams{
 		Prompt:      []byte(`{"model":"m"}`),

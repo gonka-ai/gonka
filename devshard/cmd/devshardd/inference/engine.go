@@ -3,23 +3,17 @@ package inference
 import (
 	"bytes"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
-	"sync"
 	"time"
 
 	"common/chain"
-	"common/logging"
 	mlnodeclient "common/nodemanager"
 	mlnodegen "common/nodemanager/gen"
 	"devshard"
 	"devshard/observability"
 
-	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -37,17 +31,6 @@ const maxAcquireAttempts = 10
 // fallbackSlotWait is how long fallback waits when every known node is at its
 // local capacity bound before retrying PickNode.
 const fallbackSlotWait = 100 * time.Millisecond
-
-// maxSessionIDLength bounds the gateway-supplied session id before it keys a cache
-// namespace or an mlnode binding; a longer one is dropped rather than stored.
-const maxSessionIDLength = 512
-
-// cacheSaltField is vLLM's own knob: prefix-cache blocks are shared only between requests whose salt matches.
-const cacheSaltField = "cache_salt"
-
-// sessionIDTooLongOnce logs once per process: a healthy gateway token is a fixed 64-hex
-// digest, so a longer id here means a foreign gateway or a changed token format.
-var sessionIDTooLongOnce sync.Once
 
 // Engine implements devshard.InferenceEngine for the standalone devshardd binary.
 // It acquires a locked ML node via NodeManager gRPC, POSTs directly, and releases
@@ -70,8 +53,7 @@ type Engine struct {
 // NewEngine creates an Engine backed by a NodeManager gRPC client and optional
 // passive ML-node cache for dapi-unreachable fallback. capacity may be nil,
 // in which case fallback is unbounded (matches old-dapi/never-observed behavior).
-// affinityEnabled is the participant's own switch over mlnode stickiness only; the cache
-// salt rides with any non-empty session id, because isolation is not the participant's to waive.
+// affinityEnabled is the participant's switch over mlnode stickiness only.
 func NewEngine(
 	mlClient *mlnodeclient.Client,
 	mgr *mlnodeclient.Manager,
@@ -106,17 +88,12 @@ func (e *Engine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*dev
 }
 
 func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID, sessionID string, body []byte) (*http.Response, error) {
-	if len(sessionID) > maxSessionIDLength {
-		sessionIDTooLongOnce.Do(func() {
-			logging.Warn("Dropping session id longer than the bound", types.Inferences, "length", len(sessionID), "max", maxSessionIDLength)
-		})
+	if !sessionIDWithinBound(sessionID) {
 		sessionID = ""
 	}
-	// The salt only narrows which KV blocks may be reused, so it rides along with the id itself.
 	if sessionID != "" {
 		body = withCacheSalt(body, escrowID, sessionID)
 	}
-	// The switch governs mlnode stickiness, which is the part that changes this node's scheduling.
 	stickySessionID := sessionID
 	if !e.affinityEnabled {
 		stickySessionID = ""
@@ -136,23 +113,6 @@ func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID, sessionI
 		return nil, fmt.Errorf("execute inference: %w", err)
 	}
 	return resp, nil
-}
-
-// withCacheSalt salts one session's prefix cache, scoped to its escrow so the same session id
-// from two escrows never shares KV blocks. An unparseable body passes through unchanged.
-func withCacheSalt(body []byte, escrowID, sessionID string) []byte {
-	var fields map[string]json.RawMessage
-	if err := json.Unmarshal(body, &fields); err != nil {
-		return body
-	}
-	digest := sha256.Sum256([]byte(escrowID + "\x00" + sessionID))
-	// The digest is hex, so quoting it is the whole of JSON string encoding.
-	fields[cacheSaltField] = json.RawMessage(`"` + hex.EncodeToString(digest[:]) + `"`)
-	salted, err := json.Marshal(fields)
-	if err != nil {
-		return body
-	}
-	return salted
 }
 
 // doWithLockedNode tries NodeManager gRPC first. On success it records the

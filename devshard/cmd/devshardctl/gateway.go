@@ -1493,7 +1493,7 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 	}
 	model := req.Model
 	clientIntent := clientResponseIntentFromRequest(req)
-	r = r.WithContext(withClientResponseIntent(r.Context(), clientIntent))
+	r = r.WithContext(withAffinityKey(withClientResponseIntent(r.Context(), clientIntent), req.AffinityKey))
 	fields := []any{"model", firstNonEmpty(model, g.settings.DefaultModel), "input_tokens", inputTokens}
 	fields = append(fields, g.apiKeyLogFields(r)...)
 	logRequestStage(ctx, "gateway_request_received", fields...)
@@ -1634,7 +1634,7 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 		}
 		model := req.Model
 		clientIntent := clientResponseIntentFromRequest(req)
-		r = r.WithContext(withClientResponseIntent(r.Context(), clientIntent))
+		r = r.WithContext(withAffinityKey(withClientResponseIntent(r.Context(), clientIntent), req.AffinityKey))
 		if err := rt.validateRequestedModel(model); err != nil {
 			logRequestStage(ctx, "gateway_devshard_model_rejected", "escrow", devshardID, "model", model, "error", err)
 			g.recordGatewayRequestOutcome(firstNonEmpty(model, rt.model, g.settings.DefaultModel), "model_rejected", "model_rejected")

@@ -1954,13 +1954,10 @@ func (e *Redundancy) RunInference(ctx context.Context, params user.InferencePara
 	return e.awaitRace(ctx, settleCtx, attempts, race, params, decision, triedParticipants, clientFlag)
 }
 
-// affinityEnabled is nil-safe: a read-only debug runtime has no Redundancy.
 func (e *Redundancy) affinityEnabled() bool {
 	return e != nil && e.affinity.enabled()
 }
 
-// preparePrimaryWithAffinity hands the session's sticky participant to the
-// picker as a preference, then records where the nonce actually went.
 func (e *Redundancy) preparePrimaryWithAffinity(ctx context.Context, params user.InferenceParams, tried map[string]bool) (*inflight, error) {
 	stickyParticipant := e.stickyParticipantFor(params.AffinityKey)
 	inf, err := e.prepareInflight(ctx, params, tried, stickyParticipant)
@@ -1978,13 +1975,10 @@ func (e *Redundancy) preparePrimaryWithAffinity(ctx context.Context, params user
 	return inf, nil
 }
 
-// stickyParticipantFor returns the session's remembered participant, or "" when
-// affinity is off, unbound, or bound to a participant that left the group.
 func (e *Redundancy) stickyParticipantFor(affinityKey string) string {
 	if !e.affinity.enabled() || affinityKey == "" {
 		return ""
 	}
-	// Snapshot participants once (brief Session.mu) so the Pick closure is lock-free.
 	sticky, _ := e.affinity.Pick(affinityKey, membershipTest(e.session.ParticipantKeys()))
 	return sticky
 }
@@ -2009,8 +2003,6 @@ func (e *Redundancy) stickyParticipantFor(affinityKey string) string {
 // through pickerResult.isProbe and is recorded on the inflight so the
 // rest of the lifecycle (raceWriter, perf tracking, escalation) can
 // react accordingly.
-//
-// stickyParticipant is carried by the primary only; secondaries keep cross-checking hosts.
 func (e *Redundancy) prepareInflight(ctx context.Context, params user.InferenceParams, exclude map[string]bool, stickyParticipant string) (*inflight, error) {
 	if len(exclude) >= len(e.session.ParticipantKeys()) {
 		return nil, ErrAllHostsExcluded

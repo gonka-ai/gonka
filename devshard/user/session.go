@@ -223,9 +223,7 @@ type InferenceParams struct {
 	AffinityKey           string
 }
 
-// Payload is the single InferenceParams -> InferencePayload conversion. Every path that
-// sends or re-sends a prompt goes through it, so none can drop the session id and land the
-// re-execution in the shared, unsalted cache namespace.
+// Payload is the single InferenceParams to InferencePayload conversion; every send path uses it.
 func (p InferenceParams) Payload() *host.InferencePayload {
 	return &host.InferencePayload{
 		Prompt:      p.Prompt,
