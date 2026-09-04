@@ -119,6 +119,14 @@ func newManagerTestStore(t *testing.T) *storage.SQLite {
 	return db
 }
 
+// waitRecoveryRepairsOnCleanup keeps a full-replay recovery from racing t.TempDir:
+// startObsRepair still holds the SQLite WAL after RecoverSessions returns.
+func waitRecoveryRepairsOnCleanup(t *testing.T, mgr *HostManager) *HostManager {
+	t.Helper()
+	t.Cleanup(mgr.WaitRecoveryRepairs)
+	return mgr
+}
+
 // populateStore creates a session and appends diffs. Returns group, user signer,
 // and the first host signer (for use as HostManager signer -- must be in group).
 func populateStore(t *testing.T, store storage.Storage, numDiffs int) ([]types.SlotAssignment, *signing.Secp256k1Signer, *signing.Secp256k1Signer) {
@@ -194,8 +202,8 @@ func TestRecoverSessions_ReplaysADiffWrittenBeforeTheMaxTokensFloor(t *testing.T
 		EscrowID: "1", Amount: 100000, CreatorAddress: user.Address(), Slots: addresses,
 	}}
 
-	manager := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(),
-		nil, testutil.RuntimeTestVersion, bridgeStub, nil, nil)
+	manager := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(),
+		nil, testutil.RuntimeTestVersion, bridgeStub, nil, nil))
 	require.NoError(t, manager.RecoverSessions())
 
 	manager.sessionsMutex.RLock()
@@ -222,7 +230,7 @@ func TestRecoverSessions_HappyPath(t *testing.T) {
 		},
 	}
 
-	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 	err := mgr.RecoverSessions()
 	require.NoError(t, err)
 
@@ -267,7 +275,7 @@ func TestRecoverSessions_Nonce0(t *testing.T) {
 		},
 	}
 
-	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 	err := mgr.RecoverSessions()
 	require.NoError(t, err)
 
@@ -306,7 +314,7 @@ func TestCreateSession_BindsConfiguredVersion(t *testing.T) {
 	}
 
 	const standaloneVersion = "v0.2.11"
-	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, standaloneVersion, br, nil, nil)
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, standaloneVersion, br, nil, nil))
 	_, err := mgr.getOrCreate("1", nil)
 	require.NoError(t, err)
 
@@ -497,7 +505,7 @@ func TestRecoverSessions_EmptyStore(t *testing.T) {
 	signer := mustGenerateKey(t)
 	br := &mockBridge{}
 
-	mgr := NewHostManager(store, signer, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, signer, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 	err := mgr.RecoverSessions()
 	require.NoError(t, err)
 
@@ -524,7 +532,7 @@ func TestHandleSettlementFinalized_DoesNotResurrect(t *testing.T) {
 			Slots:          addresses,
 		},
 	}
-	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 	require.NoError(t, mgr.RecoverSessions())
 	_, ok := mgr.existingServer("1")
 	require.True(t, ok, "precondition: session live after recover")
@@ -551,8 +559,8 @@ func TestRecoverStoredSession_RejectsSettledStatus(t *testing.T) {
 	_, _, hostSigner := createStoredSession(t, store, "1", 7, 1)
 	require.NoError(t, store.MarkSettled("1"))
 
-	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
-	_, err := mgr.recoverStoredSession("1")
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil))
+	_, _, err := mgr.recoverStoredSession("1")
 	require.ErrorIs(t, err, storage.ErrSessionNotActive)
 }
 
@@ -564,7 +572,7 @@ func TestRecoverSessions_DoesNotReviveChainSettledEscrow(t *testing.T) {
 	_, _, hostSigner := createStoredSession(t, store, "1", 7, 1)
 
 	br := &mockBridge{escrow: &bridge.EscrowInfo{EscrowID: "1", Settled: true}}
-	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 
 	require.NoError(t, mgr.RecoverSessions())
 
@@ -588,7 +596,7 @@ func TestRecoverSessions_HungChainDoesNotBlockStartup(t *testing.T) {
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
 	br := &blockingBridge{mockBridge: mockBridge{escrow: &bridge.EscrowInfo{EscrowID: "1", Settled: true}}, release: release}
-	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 
 	done := make(chan error, 1)
 	go func() { done <- mgr.RecoverSessions() }()
@@ -610,7 +618,7 @@ func TestRecoverSessions_RecoversWhenChainUnreachable(t *testing.T) {
 	_, _, hostSigner := createStoredSession(t, store, "1", 7, 1)
 
 	br := &mockBridge{getEscrowErr: bridge.ErrChainUnavailable}
-	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 
 	require.NoError(t, mgr.RecoverSessions())
 
@@ -669,7 +677,7 @@ func TestRecoverSessions_StateRootMismatch(t *testing.T) {
 		},
 	}
 
-	mgr := NewHostManager(store, mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, mustGenerateKey(t), stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 	err = mgr.RecoverSessions()
 	require.NoError(t, err)
 

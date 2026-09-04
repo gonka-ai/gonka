@@ -1,7 +1,7 @@
 services:
   devshard-gateway:
     container_name: ${DEVSHARD_INSTANCE_NAME:-devshard-gateway}
-    image: ghcr.io/gonka-ai/devshard-gateway:mainnet-v0.2.13-v3-latest
+    image: ghcr.io/gonka-ai/devshard-gateway:mainnet-v0.2.15-v4-latest
     env_file:
       - ${DEVSHARD_ENV_FILE:-./config.devshard.env}
     volumes:

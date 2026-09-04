@@ -2743,6 +2743,66 @@ func TestWarmKey_ConfirmStartWithWarmKey(t *testing.T) {
 	require.True(t, sm.IsWarmKeyAddress(warmSigner.Address()))
 }
 
+// TestRejectFinishProposerSigLocal covers the admission-time check the user
+// session runs on every host mempool Finish. It must decide from local state
+// only: the escrow stalls if a host response can block on a bridge query.
+func TestRejectFinishProposerSigLocal(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	warmSigner := testutil.MustGenerateKey(t)
+	stranger := testutil.MustGenerateKey(t)
+	executorIdx := 1
+
+	finishFrom := func(t *testing.T, signer *signing.Secp256k1Signer, slot uint32) *types.MsgFinishInference {
+		t.Helper()
+		msg := &types.MsgFinishInference{
+			InferenceId: 1, ResponseHash: []byte("hash"),
+			InputTokens: 80, OutputTokens: 40, ExecutorSlot: slot, EscrowId: "escrow-1",
+		}
+		msg.ProposerSig = testutil.SignProposerTx(t, signer, msg)
+		return msg
+	}
+
+	t.Run("executor cold key accepted", func(t *testing.T) {
+		sm, _ := newTestSM(t, hosts, 10000)
+		require.NoError(t, sm.RejectFinishProposerSigLocal(finishFrom(t, hosts[executorIdx], uint32(executorIdx))))
+	})
+
+	t.Run("stranger rejected when no resolver is configured", func(t *testing.T) {
+		sm, _ := newTestSM(t, hosts, 10000)
+		require.ErrorIs(t, sm.RejectFinishProposerSigLocal(finishFrom(t, stranger, uint32(executorIdx))),
+			types.ErrInvalidProposerSig)
+	})
+
+	t.Run("unknown slot rejected", func(t *testing.T) {
+		sm, _ := newTestSM(t, hosts, 10000)
+		require.ErrorIs(t, sm.RejectFinishProposerSigLocal(finishFrom(t, hosts[executorIdx], 99)),
+			types.ErrSlotNotInGroup)
+	})
+
+	t.Run("stranger allowed through when a warm key could still resolve", func(t *testing.T) {
+		var calls int
+		sm, _ := newTestSMWithWarmKey(t, hosts, 10000, func(string, string) (bool, error) {
+			calls++
+			return false, nil
+		})
+		require.NoError(t, sm.RejectFinishProposerSigLocal(finishFrom(t, stranger, uint32(executorIdx))),
+			"undecidable without the bridge, so apply-time verification owns it")
+		require.Zero(t, calls, "admission check must never call the warm key resolver")
+	})
+
+	t.Run("cached warm key decides both ways", func(t *testing.T) {
+		sm, user := newTestSMWithWarmKey(t, hosts, 10000, func(warmAddr, coldAddr string) (bool, error) {
+			return warmAddr == warmSigner.Address() && coldAddr == hosts[executorIdx].Address(), nil
+		})
+		applyStartConfirmWithWarmKey(t, sm, user, hosts, warmSigner, 1, executorIdx)
+		require.Equal(t, warmSigner.Address(), sm.SnapshotState().WarmKeys[uint32(executorIdx)])
+
+		require.NoError(t, sm.RejectFinishProposerSigLocal(finishFrom(t, warmSigner, uint32(executorIdx))))
+		require.ErrorIs(t, sm.RejectFinishProposerSigLocal(finishFrom(t, stranger, uint32(executorIdx))),
+			types.ErrInvalidProposerSig)
+	})
+}
+
 func TestWarmKey_ConfirmStartRejectsUnauthorizedKey(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	randomKey := testutil.MustGenerateKey(t)

@@ -38,6 +38,7 @@ make citest-validation-lease-race # validation lease race only
 make citest-payload-withholding   # executor payload withholding (500 → invalidate)
 make citest-versiond-rolling-update
 make citest-versiond-host-evacuation
+make citest-versiond-warm-cutover  # v5 warm-cutover boot + overlap swap
 make citest-escrow-longpoll       # escrow long-poll warm (rebuilds devshardd)
 make citest-adversarial           # Phase 9 A1–A5 (A5 is 3-host)
 make citest-host-ping             # gateway host-ping e2e (rebuilds devshardd)
@@ -81,6 +82,7 @@ picked up automatically (no workflow edit). For a local sequential subset, use
 | **Validation lease race** | Same-key HA lease exclusivity, pending stretch, graceful-stop re-acquire | `TestValidationLeaseRaceCore`, `…PendingStretch`, `…StaleReclaim` |
 | **Payload withholding** | Executor `GET /payloads` 500 → Challenged/Invalidated; D7 off releases the lease | `TestPayloadWithholding_AllCallers500_Invalidates`, `…SelectiveValidator_Challenges`, `…D7Off_LeaseReleasedAndReacquired` |
 | **Versiond rolling update** | Postgres blue/green drain and hybrid fallback | `TestVersiondRollingUpdateSameVersionSHA`, `…HybridFallback` |
+| **Versiond warm cutover** | v5 boot serves while recovery drains; overlap swap waits for `recovery_complete` then publishes | `TestVersiondWarmCutoverBoot`, `TestVersiondWarmCutoverOverlapWaitsThenServes` |
 | **Versiond host evacuation** | Router withdrawal, SSE completion, survivor recovery and readiness-gated rejoin | `TestVersiondHostEvacuation` |
 | **Escrow long-poll warm** | DAPI escrow-created host event → devshardd `escrow_cache` prefetch → first inference binds from cache with the live escrow query faulted | `TestEscrowLongPollWarmWithoutInferenceNode` |
 | **Host ping** | Gateway host-ping target set + metrics (unused → chat → ping tier → deactivate); kill switch; probe outage does not quarantine | `TestHostPing`, `TestHostPingKillSwitch` |
@@ -276,6 +278,82 @@ converge to the new sha without ever reporting an old draining child.
 
 Tests: `TestVersiondRollingUpdateSameVersionSHA` and
 `TestVersiondRollingUpdateHybridFallback`.
+
+---
+
+## Versiond warm cutover
+
+**What we test:** The v5 ready-probe status-vs-body split and the
+`versiond` warm-cutover wait (companion *ready-on-boot-warm-cutover* flow). A
+devshardd child serves on its public listener (`/healthz` 200) while its
+recovery backlog is still draining — the status code answers "can serve",
+the body field `recovery_complete` answers "is warm". Only a version
+replacement with a healthy old generation waits on the body; a solo start
+publishes on status alone. These tests pin the externally visible halves of
+that contract end to end against the real stack.
+
+**Why this is split from the rolling-update suite:** the rolling-update test
+exercises the overlap path as a side effect of a streaming cutover. The
+warm-cutover suite isolates the new v5 contract — `VERSIOND_RECOVERY_TIMEOUT`
+is wired, the public listener serves during recovery, and the overlap swap
+completes (the wait returns) — so a regression in any one of them fails a
+focused test rather than a large streaming one.
+
+**How (boot):**
+
+1. Boot the standard 2-host Postgres stack with `VERSIOND_RECOVERY_TIMEOUT=30s`
+   inserted next to the other `VERSIOND_*` knobs (gencompose does not emit it
+   yet) and `VERSIOND_NON_HA_VERSIONS` cleared.
+2. Wait the devshardd public `/healthz` through the router (`/{version}/healthz`)
+   to return 200 — the status-code path that admits a solo restart.
+3. Require both versiond hosts to report the child `running` with the booted
+   sha.
+4. Send one gateway chat and require mock-openai echo — the admitted child
+   actually serves inference, not just health.
+
+**How (overlap):**
+
+1. Boot the same warm-cutover stack; stop the non-target host so new sessions
+   pin to the target.
+2. `POST /testenv/versions` with the same version name and a new archive sha.
+3. Poll the pinned versiond host `/healthz` until the new sha reaches
+   `running` (3m window, well past the 30s `VERSIOND_RECOVERY_TIMEOUT`). The
+   new sha only becomes `running` after `waitForChildRecoveryComplete` returns
+   and `downloadAndSwap` publishes the new child — a broken or deadlocked warm
+   wait would abort the swap (`ErrRecoveryTimeout`) and the old child would
+   keep serving, so the new sha would never appear and the 3m poll would fail.
+4. Send a new gateway chat and require success on the new child.
+5. Require the old sha to be fully retired (no lingering `draining` child).
+
+The test does **not** assert the timing-sensitive `running(new)` +
+`draining(old)` overlap pair: with no in-flight stream the old child drains and
+is removed in milliseconds, so a 100 ms poll can miss the simultaneous window.
+Asserting the new sha reaches `running` is the load-bearing check — it is
+exactly what a timed-out warm wait would prevent. (The rolling-update suite
+keeps the old child draining with a long stream and asserts the overlap pair
+there.)
+
+**Pass criteria:** Public `/healthz` is 200 with `VERSIOND_RECOVERY_TIMEOUT`
+configured; both hosts report the booted child `running`; a chat round-trip
+succeeds after boot; the sha flip drives the new sha to `running` (warm wait
+returned, swap published); new traffic serves after the swap; the old child
+retires.
+
+**Scope and limits:** the admin `/ready` listener is loopback inside the
+versiond container on a dynamic port and is not reachable from the test host, so
+the `recovery_complete` body field and the wait bail-outs are pinned at the unit
+level (`devshard/cmd/devshardd/lifecycle_test.go` for the body shape,
+`versioned/internal/process/manager_recovery_wait_test.go` for the wait and every
+bail-out). The testenv suite pins the end-to-end effect: the wait returns and the
+swap completes. With the testenv's empty journal the wait is sub-second, so the
+suite does not assert a measurable wait duration.
+
+Run: `make citest-versiond-warm-cutover` from `devshard/testenv/`. Also matched by
+the `citest-stack` pattern (`Versiond.*`); skips if the linux `devshardd` binary
+is absent (run `make build-devshardd` first).
+
+Tests: `TestVersiondWarmCutoverBoot`,
+`TestVersiondWarmCutoverOverlapWaitsThenServes`.
 
 ---
 

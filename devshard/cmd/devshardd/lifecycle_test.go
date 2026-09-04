@@ -10,6 +10,8 @@ import (
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
+
+	"devshard/cmd/devshardd/session"
 )
 
 func TestLifecycleTransitionTableInvariants(t *testing.T) {
@@ -166,10 +168,14 @@ func TestLifecycleDrainKeepsAdmittedRequestInflight(t *testing.T) {
 	require.Zero(t, lifecycle.Status().Inflight)
 }
 
+func recoveryDone() session.RecoveryProgress {
+	return session.RecoveryProgress{Complete: true}
+}
+
 func TestLifecycleReadyAndDrainStatus(t *testing.T) {
 	lifecycle := newLifecycleState()
 	e := buildServer(lifecycle)
-	admin := buildAdminServer(lifecycle, func() bool { return true })
+	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, recoveryDone)
 	e.GET("/work", func(c echo.Context) error {
 		time.Sleep(20 * time.Millisecond)
 		return c.String(http.StatusOK, "done")
@@ -217,7 +223,7 @@ func TestLifecycleDrainRejectsNewWork(t *testing.T) {
 	lifecycle := newLifecycleState()
 	lifecycle.SetReady(true)
 	e := buildServer(lifecycle)
-	admin := buildAdminServer(lifecycle, func() bool { return true })
+	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, recoveryDone)
 	e.GET("/work", func(c echo.Context) error {
 		return c.String(http.StatusOK, "done")
 	})
@@ -250,7 +256,7 @@ func TestReadyReflectsStorageReadiness(t *testing.T) {
 	lifecycle := newLifecycleState()
 	lifecycle.SetReady(true)
 	storageReady := false
-	admin := buildAdminServer(lifecycle, func() bool { return storageReady })
+	admin := buildAdminServer(lifecycle, func() bool { return storageReady }, nil, recoveryDone)
 
 	rec := httptest.NewRecorder()
 	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
@@ -262,4 +268,40 @@ func TestReadyReflectsStorageReadiness(t *testing.T) {
 	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), "\"storage_ready\":true")
+}
+
+// Status 200 means the process can serve. recovery_complete in the body is the
+// warm signal a version cutover waits on; draining and unready storage still 503.
+func TestReadyReflectsSessionRecoveryProgress(t *testing.T) {
+	lifecycle := newLifecycleState()
+	lifecycle.SetReady(true)
+	progress := session.RecoveryProgress{
+		Total: 10, Recovered: 3, Failed: 1, VersionSkipped: 2, Pending: 4,
+	}
+	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, func() session.RecoveryProgress {
+		return progress
+	})
+
+	rec := httptest.NewRecorder()
+	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
+	require.Equal(t, http.StatusOK, rec.Code,
+		"chain-ready process must serve while session recovery is still draining")
+	require.Contains(t, rec.Body.String(), `"recovery_complete":false`)
+	require.Contains(t, rec.Body.String(), `"sessions_total":10`)
+	require.Contains(t, rec.Body.String(), `"sessions_recovered":3`)
+	require.Contains(t, rec.Body.String(), `"sessions_failed":1`)
+	require.Contains(t, rec.Body.String(), `"sessions_version_skipped":2`)
+	require.Contains(t, rec.Body.String(), `"sessions_pending":4`)
+
+	progress = session.RecoveryProgress{Complete: true, Total: 10, Recovered: 7, Failed: 1, VersionSkipped: 2}
+	rec = httptest.NewRecorder()
+	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"recovery_complete":true`)
+	require.Contains(t, rec.Body.String(), `"sessions_pending":0`)
+
+	lifecycle.StartDrain()
+	rec = httptest.NewRecorder()
+	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code, "draining must still report 503")
 }

@@ -501,7 +501,8 @@ func TestModifyRequestBodyWithLogprobsMode_TestermintInferenceRequestPromptHash(
 
 // Cross-language vector: testermint reimplements ModifyRequestBody in Kotlin and both must emit
 // a byte-identical body, or the prompt hash a node computes and the one testermint expects drift
-// apart. Keep this input and hash in sync with testermint PromptHashingTests.kt.
+// apart. Keep this input and hash in sync with testermint PromptHashingTests.kt. A non-boolean logprobs is
+// outside the shared contract: Go pins it to true, Kotlin keeps what arrived.
 func TestModifyRequestBodyWithLogprobsMode_KotlinCrossLanguageVector(t *testing.T) {
 	body := []byte(`{"model":"Qwen/Qwen2.5-7B-Instruct","temperature":0.8,"messages":[{"role":"system","content":"Regardless of the language of the question, answer in english"},{"role":"user","content":"When did Hawaii become a state"}]}`)
 
@@ -558,4 +559,31 @@ func TestModifyRequestBodyLeavesAnUnaskedCompletionCountAlone(t *testing.T) {
 	require.NoError(t, json.Unmarshal(r.NewBody, &m))
 	_, present := m["n"]
 	require.False(t, present, "n was added to a request that never carried it")
+}
+
+// The executor always runs with logprobs; this is the bit that decides whether the caller sees them.
+func TestModifyRequestBodyReportsWhetherTheCallerAskedForLogprobs(t *testing.T) {
+	for _, testCase := range []struct {
+		name string
+		body string
+		want bool
+	}{
+		{name: "both fields ask", body: `{"messages":[],"logprobs":true,"top_logprobs":5}`, want: true},
+		{name: "a narrower width still asks", body: `{"messages":[],"logprobs":true,"top_logprobs":1}`, want: true},
+		{name: "no logprobs at all", body: `{"messages":[]}`},
+		{name: "logprobs off", body: `{"messages":[],"logprobs":false,"top_logprobs":5}`},
+		{name: "width switched off", body: `{"messages":[],"logprobs":true,"top_logprobs":0}`},
+		{name: "no width named", body: `{"messages":[],"logprobs":true}`},
+		{name: "width without the flag", body: `{"messages":[],"top_logprobs":5}`},
+		{name: "both fields null", body: `{"messages":[],"logprobs":null,"top_logprobs":null}`},
+		{name: "a flag that is not a boolean", body: `{"messages":[],"logprobs":"yes","top_logprobs":5}`},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			modified, err := ModifyRequestBody([]byte(testCase.body), 1)
+			require.NoError(t, err)
+			require.Equal(t, testCase.want, modified.AsksForLogprobs)
+			require.Contains(t, string(modified.NewBody), `"logprobs":true`,
+				"the executor runs with logprobs whatever the caller asked")
+		})
+	}
 }

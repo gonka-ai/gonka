@@ -3,6 +3,7 @@ package completionapi
 import (
 	"bytes"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -104,6 +105,40 @@ func TestCompressRefusesWhatIsNotRedundant(t *testing.T) {
 	drifted := payloadFor(position("758", -0.25, alternative("758", -0.5)))
 	if _, err := CompressResponsePayload(drifted); err == nil {
 		t.Fatal("compressed a position whose logprob disagrees with its own alternative")
+	}
+}
+
+// A refusal leaves the document untouched, so a caller can marshal it after the attempt.
+func TestCompressLeavesADocumentItRefusesExactlyAsItArrived(t *testing.T) {
+	t.Parallel()
+	honest := position("758", -0.5, alternative("758", -0.5))
+	unexplained := position("999", -0.5, alternative("758", -0.5))
+	body, err := json.Marshal(map[string]any{"choices": []any{map[string]any{"logprobs": map[string]any{"content": []Logprob{honest, unexplained}}}}})
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	document, err := decodeJSONDocument(body)
+	if err != nil {
+		t.Fatalf("decodeJSONDocument: %v", err)
+	}
+	if err := compressLogprobsIn(document); err == nil {
+		t.Fatal("compressed a document whose second position no alternative explains")
+	}
+
+	refused, err := json.Marshal(document)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	var same, arrived any
+	if err := json.Unmarshal(refused, &same); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if err := json.Unmarshal(body, &arrived); err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if !reflect.DeepEqual(same, arrived) {
+		t.Fatalf("the refused document was mutated:\n got %s\nwant %s", refused, body)
 	}
 }
 

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"strings"
 	"testing"
 
@@ -47,6 +48,13 @@ func TestMaybePrintStorageMode(t *testing.T) {
 				t.Fatalf("stderr = %q, want it to contain %q", stderr.String(), tt.wantErr)
 			}
 		})
+	}
+}
+
+func TestMaybeInitializePostgresRecognizesOnlyExplicitCommand(t *testing.T) {
+	var stderr bytes.Buffer
+	if code, handled := maybeInitializePostgres(context.Background(), []string{"--unknown"}, &stderr); handled || code != 0 {
+		t.Fatalf("unknown command handled=%v code=%d", handled, code)
 	}
 }
 

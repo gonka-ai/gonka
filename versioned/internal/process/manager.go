@@ -2,6 +2,7 @@ package process
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -37,6 +38,11 @@ var (
 	errChildPortPoolExhausted = errors.New("child port pool exhausted")
 	errLegacyDrainStatus      = errors.New("drain status endpoint unavailable")
 	ErrHostDraining           = errors.New("versiond host is draining")
+	// ErrRecoveryTimeout is returned by the warm-cutover wait when a
+	// replacement devshardd child's recovery backlog did not drain before
+	// VERSIOND_RECOVERY_TIMEOUT. The new child is stopped and the old one
+	// keeps serving; the next reconcile retries.
+	ErrRecoveryTimeout = errors.New("child recovery did not complete before timeout")
 )
 
 type child struct {
@@ -44,15 +50,19 @@ type child struct {
 	archiveSHA256 string
 	binaryVersion string
 	storageMode   string
-	binPath       string
-	port          int
-	adminPort     atomic.Int64
-	stop          context.CancelFunc
-	forceStopCh   chan struct{}
-	forceStopOnce sync.Once
-	done          chan struct{} // closed when runChild exits
-	ready         chan struct{} // closed after readiness succeeds
-	readyOnce     sync.Once
+	// haDeployment is populated by binary preflight. Nil means the generation
+	// has not yet established whether it belongs to the HA PostgreSQL set.
+	haDeployment    *bool
+	proofGeneration uint64
+	binPath         string
+	port            int
+	adminPort       atomic.Int64
+	stop            context.CancelFunc
+	forceStopCh     chan struct{}
+	forceStopOnce   sync.Once
+	done            chan struct{} // closed when runChild exits
+	ready           chan struct{} // closed after readiness succeeds
+	readyOnce       sync.Once
 	// serving is this generation's own live readiness, refreshed by a monitor
 	// started when it begins running. It is per generation on purpose: a probe
 	// answered by a child that has since been swapped out must not decide
@@ -105,40 +115,50 @@ func (c *child) Done() <-chan struct{} {
 }
 
 type Manager struct {
-	cfg             config.Config
-	processes       map[string]*child
-	draining        map[string][]*child
-	children        map[*child]struct{}
-	downloading     map[string]struct{}
-	allocatedPorts  map[int]struct{}
-	reservedPorts   map[int]struct{}
-	operations      map[uint64]controlOperation
-	nextOperationID uint64
-	conditions      Conditions
-	everConverged   bool
-	available       chan struct{}
-	childCtx        context.Context
-	cancelChildren  context.CancelFunc
-	hostDraining    bool
-	mu              sync.Mutex
-	routes          atomic.Value // proxy.RouteTable
+	cfg                 config.Config
+	processes           map[string]*child
+	draining            map[string][]*child
+	children            map[*child]struct{}
+	downloading         map[string]struct{}
+	allocatedPorts      map[int]struct{}
+	reservedPorts       map[int]struct{}
+	operations          map[uint64]controlOperation
+	nextOperationID     uint64
+	nextProofGeneration uint64
+	proofEpoch          string
+	storageInitDone     chan struct{}
+	storageInitOnce     sync.Once
+	storageInitExpected map[storageInitCandidate]struct{}
+	storageInitLegacy   map[storageInitCandidate]struct{}
+	conditions          Conditions
+	everConverged       bool
+	available           chan struct{}
+	childCtx            context.Context
+	cancelChildren      context.CancelFunc
+	hostDraining        bool
+	mu                  sync.Mutex
+	routes              atomic.Value // proxy.RouteTable
 }
 
 func NewManager(cfg config.Config) *Manager {
 	cfg = normalizeConfig(cfg)
 	childCtx, cancelChildren := context.WithCancel(context.Background())
 	m := &Manager{
-		cfg:            cfg,
-		processes:      make(map[string]*child),
-		draining:       make(map[string][]*child),
-		children:       make(map[*child]struct{}),
-		downloading:    make(map[string]struct{}),
-		allocatedPorts: make(map[int]struct{}),
-		reservedPorts:  reservedChildPorts(),
-		operations:     make(map[uint64]controlOperation),
-		childCtx:       childCtx,
-		cancelChildren: cancelChildren,
-		available:      make(chan struct{}, 1),
+		cfg:                 cfg,
+		processes:           make(map[string]*child),
+		draining:            make(map[string][]*child),
+		children:            make(map[*child]struct{}),
+		downloading:         make(map[string]struct{}),
+		allocatedPorts:      make(map[int]struct{}),
+		reservedPorts:       reservedChildPorts(),
+		operations:          make(map[uint64]controlOperation),
+		childCtx:            childCtx,
+		cancelChildren:      cancelChildren,
+		available:           make(chan struct{}, 1),
+		proofEpoch:          rand.Text(),
+		storageInitDone:     make(chan struct{}),
+		storageInitExpected: make(map[storageInitCandidate]struct{}),
+		storageInitLegacy:   make(map[storageInitCandidate]struct{}),
 	}
 	m.routes.Store(proxy.RouteTable{})
 	return m
@@ -153,6 +173,9 @@ func normalizeConfig(cfg config.Config) config.Config {
 	}
 	if cfg.ReadyTimeout <= 0 {
 		cfg.ReadyTimeout = 60 * time.Second
+	}
+	if cfg.RecoveryTimeout <= 0 {
+		cfg.RecoveryTimeout = 30 * time.Minute
 	}
 	if cfg.DrainPath == "" {
 		cfg.DrainPath = "/drain"
@@ -408,6 +431,7 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 		"force_versions", m.cfg.ForceVersions,
 		"desired_versions", versionNamesMap(desiredSet),
 	)
+	m.configureStorageInitCandidates(m.resolveStorageInitCandidates(desiredSet))
 
 	// Phase A (lock): snapshot state, identify overrides.
 	m.mu.Lock()
@@ -1010,6 +1034,27 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 		return err
 	}
 
+	// Warm-cutover gate: in the overlap branch only, wait for the new
+	// child's recovery backlog to drain before publishing it. Solo start
+	// and the stop/start branch never reach here — there is no healthy old
+	// generation to keep serving, so waiting would just be an outage. Only
+	// devshardd carries recovery_complete on its /ready body; non-devshard
+	// binaries skip. See ready-on-boot-warm-cutover-plan.md flow D.
+	if m.devshardAdminEligible() {
+		if err := m.waitForChildRecoveryComplete(ctx, newChild.child, old, m.cfg.RecoveryTimeout); err != nil {
+			newChild.child.Stop()
+			_ = waitForChildContext(ctx, newChild.child)
+			m.mu.Lock()
+			delete(m.downloading, v.Name)
+			m.mu.Unlock()
+			if errors.Is(err, ErrRecoveryTimeout) {
+				slog.Warn("warm-cutover wait timed out; old child keeps serving",
+					"version", v.Name, "timeout", m.cfg.RecoveryTimeout)
+			}
+			return err
+		}
+	}
+
 	m.mu.Lock()
 	delete(m.downloading, v.Name)
 	if m.hostDraining {
@@ -1545,9 +1590,22 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		m.mu.Unlock()
 		return
 	}
+	if err := m.ensurePostgresSchemaInitialized(ctx, c, preflight); err != nil {
+		slog.Error("postgres schema initialization barrier failed", "version", c.version.Name, "error", err)
+		m.mu.Lock()
+		transitionGenerationFailureLocked(c)
+		m.mu.Unlock()
+		return
+	}
 	m.mu.Lock()
 	c.binaryVersion = preflight.binaryLogVersion
 	c.storageMode = preflight.storageMode
+	if preflight.haDeployment != nil {
+		ha := *preflight.haDeployment
+		c.haDeployment = &ha
+	} else {
+		c.haDeployment = nil
+	}
 	if preflight.adminAPISupported && c.adminPort.Load() == 0 {
 		adminPort, portErr := m.assignPort()
 		if portErr != nil {
@@ -1653,6 +1711,8 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		c.servingAt.Store(time.Now().UnixNano())
 
 		m.mu.Lock()
+		m.nextProofGeneration++
+		c.proofGeneration = m.nextProofGeneration
 		transitionGenerationLocked(c, statusRunning)
 		c.proxyTarget = proxy.NewTarget(fmt.Sprintf("localhost:%d", c.port))
 		c.readyOnce.Do(func() { close(c.ready) })
@@ -1710,6 +1770,137 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			backoff = 60 * time.Second
 		}
 	}
+}
+
+func (m *Manager) ensurePostgresSchemaInitialized(ctx context.Context, c *child, preflight childPreflight) error {
+	if !m.devshardAdminEligible() || !postgresChildStorageConfigured() {
+		return nil
+	}
+	// Explicitly pinned versions retain their single-host SQLite ownership and
+	// must remain available while the shared PostgreSQL tier is unavailable.
+	if preflight.haDeployment != nil && !*preflight.haDeployment {
+		return nil
+	}
+	ha, err := parseHADeployment(os.Getenv(envHADeployment))
+	if err != nil {
+		return fmt.Errorf("read HA deployment mode: %w", err)
+	}
+	if !ha {
+		return nil
+	}
+	select {
+	case <-m.storageInitDone:
+		return nil
+	default:
+	}
+
+	supported, err := initializePostgresSchemaContext(
+		ctx,
+		c.binPath,
+		childEnv(preflight.binaryLogVersion, "", preflight.haDeployment),
+	)
+	if err != nil {
+		return err
+	}
+	if supported {
+		m.storageInitOnce.Do(func() { close(m.storageInitDone) })
+		return nil
+	}
+	candidate := storageInitCandidate{version: c.version.Name, artifact: c.archiveSHA256}
+	m.noteLegacyStorageInitializer(candidate)
+
+	slog.Info("legacy child waiting for lock-aware PostgreSQL schema initialization",
+		"version", c.version.Name, "artifact", c.archiveSHA256)
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-m.storageInitDone:
+		return nil
+	}
+}
+
+func postgresChildStorageConfigured() bool {
+	return strings.TrimSpace(os.Getenv("PGHOST")) != "" ||
+		strings.TrimSpace(os.Getenv("PGSERVICE")) != ""
+}
+
+type storageInitCandidate struct {
+	version  string
+	artifact string
+}
+
+func (m *Manager) resolveStorageInitCandidates(desired map[string]oracle.Version) map[storageInitCandidate]struct{} {
+	select {
+	case <-m.storageInitDone:
+		return nil
+	default:
+	}
+	expected := make(map[storageInitCandidate]struct{}, len(desired))
+	for name, version := range desired {
+		ha, err := childHADeployment(name)
+		if err == nil && !ha {
+			continue
+		}
+		artifact := ""
+		if overrideSrc, override := m.cfg.Overrides[name]; override {
+			if hash, err := download.HashFile(overrideSrc); err == nil {
+				artifact = "override:" + hash
+			} else {
+				// Keep an unresolved override distinct from every runnable artifact.
+				// Its normal reconcile path will report the underlying file error.
+				artifact = "unresolved-override:" + overrideSrc
+			}
+		} else if hash, err := version.ResolvedSHA256(); err == nil {
+			artifact = hash
+		} else {
+			// Invalid catalog entries cannot start, but must not let reports from
+			// an older artifact close the initialization barrier.
+			artifact = "unresolved-catalog:" + version.SHA256 + "\x00" + version.Binary
+		}
+		expected[storageInitCandidate{version: name, artifact: artifact}] = struct{}{}
+	}
+	return expected
+}
+
+func (m *Manager) configureStorageInitCandidates(expected map[storageInitCandidate]struct{}) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	select {
+	case <-m.storageInitDone:
+		return
+	default:
+	}
+	legacy := make(map[storageInitCandidate]struct{}, len(m.storageInitLegacy))
+	for candidate := range m.storageInitLegacy {
+		if _, ok := expected[candidate]; ok {
+			legacy[candidate] = struct{}{}
+		}
+	}
+	m.storageInitExpected = expected
+	m.storageInitLegacy = legacy
+	if len(expected) == 0 {
+		m.storageInitOnce.Do(func() { close(m.storageInitDone) })
+		return
+	}
+	m.closeLegacyOnlyStorageInitLocked()
+}
+
+func (m *Manager) noteLegacyStorageInitializer(candidate storageInitCandidate) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if _, expected := m.storageInitExpected[candidate]; !expected {
+		return
+	}
+	m.storageInitLegacy[candidate] = struct{}{}
+	m.closeLegacyOnlyStorageInitLocked()
+}
+
+func (m *Manager) closeLegacyOnlyStorageInitLocked() {
+	if len(m.storageInitExpected) == 0 || len(m.storageInitLegacy) != len(m.storageInitExpected) {
+		return
+	}
+	slog.Info("desired devshard catalog has no lock-aware PostgreSQL initializer; preserving legacy startup")
+	m.storageInitOnce.Do(func() { close(m.storageInitDone) })
 }
 
 func (m *Manager) waitForRestartBackoff(ctx context.Context, c *child, backoff time.Duration) bool {
@@ -1906,6 +2097,120 @@ func getHTTPStatus(ctx context.Context, client *http.Client, port int, path stri
 	}
 	defer resp.Body.Close()
 	return resp.StatusCode, nil
+}
+
+// getChildRecoveryStatus probes the admin readiness endpoint and returns the
+// HTTP status plus a pointer to the recovery_complete field from the body, or
+// nil if the body does not carry it (a pre-v5 devshardd, or a body that does not
+// parse). The pointer distinguishes "field absent" (nil) from "field present and
+// false" so the warm-cutover wait can skip an older child instead of hanging.
+//
+// getHTTPStatus above stays status-only on purpose: the readiness monitor
+// (watchChildReadiness) calls it and must never consult the body — if recovery
+// ever gated the monitor, the host would leave the HAProxy pool for the whole
+// backlog. Only the warm-cutover wait reads the body, and only from the overlap
+// branch of downloadAndSwap.
+func getChildRecoveryStatus(ctx context.Context, client *http.Client, port int, path string) (int, *bool, error) {
+	url := fmt.Sprintf("http://%s:%d%s", childLoopbackHost, port, normalizeHTTPPath(path))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, nil, err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(io.LimitReader(resp.Body, 64*1024))
+	if err != nil {
+		return resp.StatusCode, nil, err
+	}
+	var parsed struct {
+		RecoveryComplete *bool `json:"recovery_complete"`
+	}
+	if err := json.Unmarshal(body, &parsed); err != nil {
+		// Unparseable body → treat as field absent and let the caller skip
+		// the wait (cold cutover, flow B semantics). A devshardd that ships
+		// the field always returns valid JSON on /ready.
+		return resp.StatusCode, nil, nil
+	}
+	return resp.StatusCode, parsed.RecoveryComplete, nil
+}
+
+// waitForChildRecoveryComplete is the warm-cutover gate. It runs only in the
+// overlap branch of downloadAndSwap, after the replacement child is ready to
+// serve and before the route swap: the new child is published warm (recovery
+// backlog drained) rather than cold. Solo start and stop/start never reach
+// here — there is no healthy old generation to keep serving, so waiting would
+// just be an outage.
+//
+// Bail-outs (companion ready-on-boot-warm-cutover-plan.md flow D), all of which
+// cut over or abort rather than hang:
+//   - recovery_complete absent from the body → skip the wait, cut over cold
+//     (flow B semantics; an un-updated child cannot know about the field).
+//   - old child stops being Running → abandon the wait and publish
+//     immediately. A warming-but-unpublished child plus a dead old child is
+//     an outage, so the cold cutover is the safer direction.
+//   - hostDraining or ctx done → abort, stop the new child.
+//   - VERSIOND_RECOVERY_TIMEOUT elapsed → abort, old keeps serving, retry next
+//     reconcile.
+//
+// Returns nil to proceed with the swap (recovery complete, field absent, or old
+// child died). Returns an error to abort (host draining, ctx done, or timeout).
+func (m *Manager) waitForChildRecoveryComplete(ctx context.Context, newChild, old *child, timeout time.Duration) error {
+	adminPort := int(newChild.adminPort.Load())
+	if adminPort == 0 {
+		// Legacy child with no admin listener: no body to read, no field to
+		// wait on. Cut over cold.
+		return nil
+	}
+	pollCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	client := &http.Client{Timeout: childReadyTimeout}
+	path := m.cfg.ReadyPath
+	ticker := time.NewTicker(childReadyInterval)
+	defer ticker.Stop()
+	for {
+		status, recoveryComplete, err := getChildRecoveryStatus(pollCtx, client, adminPort, path)
+		switch {
+		case err == nil && status == http.StatusOK && recoveryComplete != nil && *recoveryComplete:
+			slog.Info("warm cutover: new child recovery complete",
+				"version", newChild.version.Name, "admin_port", adminPort)
+			return nil
+		case err == nil && recoveryComplete == nil:
+			// Field absent: a pre-v5 child or a non-devshard body. Skip the
+			// wait and cut over cold (flow B). Logging at info rather than
+			// warn because an un-updated child is the expected case for a
+			// mixed-version estate.
+			slog.Info("warm cutover: child /ready body has no recovery_complete; skipping wait",
+				"version", newChild.version.Name, "status", status)
+			return nil
+		}
+
+		// Old child died → publish immediately. An unpublished warming child
+		// plus a dead old child is an outage; the cold cutover is safer.
+		m.mu.Lock()
+		oldRunning := old.status == statusRunning && !childDone(old)
+		hostDraining := m.hostDraining
+		m.mu.Unlock()
+		if !oldRunning {
+			slog.Info("warm cutover: old child stopped during wait; publishing new child",
+				"version", newChild.version.Name)
+			return nil
+		}
+		if hostDraining {
+			return ErrHostDraining
+		}
+
+		select {
+		case <-pollCtx.Done():
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return ErrRecoveryTimeout
+		case <-ticker.C:
+		}
+	}
 }
 
 func legacyReadyFallbackAllowed(path string, status int) bool {

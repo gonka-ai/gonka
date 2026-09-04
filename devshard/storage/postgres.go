@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -37,7 +38,8 @@ import (
 // serving; escrow-keyed methods also WaitReady so requests block until rebuild
 // finishes or fails.
 type Postgres struct {
-	pool *pgxpool.Pool
+	pool            *pgxpool.Pool
+	connectionGuard *postgresConnectionGuard
 
 	mu          sync.RWMutex
 	knownEpochs map[uint64]struct{}
@@ -53,6 +55,7 @@ type Postgres struct {
 	healthSaturated bool
 	healthStop      context.CancelFunc
 	healthDone      chan struct{}
+	fatalErrors     chan error
 }
 
 const (
@@ -79,9 +82,20 @@ const (
 	postgresHealthInterval = 5 * time.Second
 	postgresHealthTimeout  = postgresConnectTimeout
 	postgresHealthQuorum   = 2
+	// pgx otherwise scales the default pool to runtime.NumCPU. Versiond runs
+	// several devshard processes per host, so a CPU-sized pool per generation
+	// can exhaust PostgreSQL before application load reaches its own limits.
+	defaultPostgresPoolMaxConns int32 = 4
+	// A timed-out pgx query closes the session and therefore releases its
+	// advisory fence. Give this terminal check a wider budget than ordinary
+	// readiness probes so transient database stalls do not replace every child.
+	postgresFenceCheckTimeout = 30 * time.Second
 	// postgresIndexRepairBatchSize caps rows per DELETE/INSERT when repairing
 	// devshard_session_index so a large divergence does not hold one giant lock.
 	postgresIndexRepairBatchSize = 1000
+	// pgUniqueViolation is SQLSTATE 23505, returned when COPY hits a row the
+	// caller expected not to exist.
+	pgUniqueViolation = "23505"
 )
 
 type postgresHealthProbeResult string
@@ -198,103 +212,219 @@ func pgValidationLeasesPartition(epochID uint64) string {
 // idempotently. The escrow index is rebuilt asynchronously; use WaitReady
 // (bounded by PG_INDEX_TIMEOUT) before promote/boot paths that need ownership.
 func NewPostgres(ctx context.Context) (*Postgres, error) {
+	return newPostgres(ctx, postgresConnectTimeout, defaultPGMigrationTimeout)
+}
+
+func newPostgres(ctx context.Context, connectTimeout, migrationTimeout time.Duration) (*Postgres, error) {
 	cfg, err := pgxpool.ParseConfig("") // reads libpq env vars
 	if err != nil {
 		return nil, fmt.Errorf("parse postgres config: %w", err)
 	}
-	cfg.ConnConfig.ConnectTimeout = postgresConnectTimeout
+	if err := configurePostgresPool(cfg); err != nil {
+		return nil, err
+	}
+	cfg.ConnConfig.ConnectTimeout = connectTimeout
 	if cfg.ConnConfig.RuntimeParams == nil {
 		cfg.ConnConfig.RuntimeParams = make(map[string]string)
 	}
 	// Server-side per-query bounds applied to every pooled connection.
 	cfg.ConnConfig.RuntimeParams["statement_timeout"] = strconv.FormatInt(postgresStatementTimeout.Milliseconds(), 10)
 	cfg.ConnConfig.RuntimeParams["lock_timeout"] = strconv.FormatInt(postgresLockTimeout.Milliseconds(), 10)
+	connectionGuard, err := newPostgresConnectionGuard()
+	if err != nil {
+		return nil, err
+	}
+	connectionGuard.installValidator(cfg)
 	// Health owns one dedicated connection, leaving every configured pool slot
 	// available to application work and keeping MaxConns an application concern.
 	healthConfig := cfg.ConnConfig.Copy()
-	pool, err := pgxpool.NewWithConfig(ctx, cfg)
+	connectCtx, cancelConnect := context.WithTimeout(ctx, connectTimeout)
+	defer cancelConnect()
+	pool, err := pgxpool.NewWithConfig(connectCtx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect to postgres: %w", err)
 	}
-	if err := pool.Ping(ctx); err != nil {
+	if err := pool.Ping(connectCtx); err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
 
-	if err := MigratePostgres(ctx, pool); err != nil {
+	migrationCtx, cancelMigration := context.WithTimeout(ctx, migrationTimeout)
+	defer cancelMigration()
+	if err := MigratePostgres(migrationCtx, pool); err != nil {
+		pool.Close()
+		return nil, err
+	}
+	if err := connectionGuard.arm(migrationCtx, pool, cfg.ConnConfig); err != nil {
 		pool.Close()
 		return nil, err
 	}
 
 	s := &Postgres{
-		pool:        pool,
-		knownEpochs: make(map[uint64]struct{}),
-		escrowIdx:   make(map[string]uint64),
-		readyCh:     make(chan struct{}),
-		healthReady: true,
-		healthDone:  make(chan struct{}),
+		pool:            pool,
+		connectionGuard: connectionGuard,
+		knownEpochs:     make(map[uint64]struct{}),
+		escrowIdx:       make(map[string]uint64),
+		readyCh:         make(chan struct{}),
+		healthReady:     true,
+		healthDone:      make(chan struct{}),
+		fatalErrors:     make(chan error, 1),
 	}
 	s.startHealthMonitor(healthConfig)
 	s.startIndexRebuild()
 	return s, nil
 }
 
+func configurePostgresPool(cfg *pgxpool.Config) error {
+	raw := strings.TrimSpace(os.Getenv("PG_POOL_MAX_CONNS"))
+	if raw == "" {
+		cfg.MaxConns = defaultPostgresPoolMaxConns
+		return nil
+	}
+	value, err := strconv.ParseInt(raw, 10, 32)
+	if err != nil || value <= 0 {
+		return fmt.Errorf("PG_POOL_MAX_CONNS must be a positive integer, got %q", raw)
+	}
+	cfg.MaxConns = int32(value)
+	return nil
+}
+
 func (s *Postgres) startHealthMonitor(connConfig *pgx.ConnConfig) {
+	probe := newPostgresHealthProbe(connConfig)
+	s.startPostgresMonitors(postgresMonitorConfig{
+		interval:      postgresHealthInterval,
+		healthTimeout: postgresHealthTimeout,
+		fenceTimeout:  postgresFenceCheckTimeout,
+		healthCheck:   probe.check,
+		healthClose:   probe.close,
+		fenceCheck:    s.connectionGuard.check,
+		poolSaturated: func() bool { return postgresPoolIsSaturated(s.pool) },
+	})
+}
+
+type postgresMonitorConfig struct {
+	interval      time.Duration
+	healthTimeout time.Duration
+	fenceTimeout  time.Duration
+	healthCheck   func(context.Context) error
+	healthClose   func(context.Context) error
+	fenceCheck    func(context.Context) error
+	poolSaturated func() bool
+}
+
+func (s *Postgres) startPostgresMonitors(config postgresMonitorConfig) {
 	ctx, cancel := context.WithCancel(context.Background())
 	s.mu.Lock()
 	s.healthStop = cancel
 	s.mu.Unlock()
+
+	var monitors sync.WaitGroup
+	monitors.Add(2)
 	go func() {
-		defer close(s.healthDone)
-		probe := newPostgresHealthProbe(connConfig)
-		defer func() {
-			closeCtx, closeCancel := context.WithTimeout(context.Background(), postgresHealthTimeout)
-			defer closeCancel()
-			if err := probe.close(closeCtx); err != nil {
-				slog.Warn("devshard storage: close postgres health connection", "error", err)
-			}
-		}()
-		timer := time.NewTimer(postgresHealthInterval)
-		defer timer.Stop()
-		for {
-			select {
-			case <-ctx.Done():
-				return
-			case <-timer.C:
-				probeCtx, probeCancel := context.WithTimeout(ctx, postgresHealthTimeout)
-				err := probe.check(probeCtx)
-				probeCancel()
-				if ctx.Err() != nil {
-					return
-				}
-				result := postgresHealthProbeSuccess
-				if err != nil {
-					result = postgresHealthProbeDatabaseError
-				}
-				saturated := postgresPoolIsSaturated(s.pool)
-				observability.ObservePostgresHealthProbe(err == nil, saturated)
-				previous, current := s.recordHealthProbe(result, saturated)
-				if previous.ready != current.ready {
-					if current.ready {
-						slog.Info("devshard storage: postgres readiness recovered")
-					} else {
-						slog.Warn("devshard storage: postgres readiness lost", "error", err)
-					}
-				}
-				if previous.saturated != current.saturated {
-					if current.saturated {
-						stat := s.pool.Stat()
-						slog.Warn("devshard storage: postgres application pool is saturated",
-							"acquired_connections", stat.AcquiredConns(),
-							"max_connections", stat.MaxConns())
-					} else {
-						slog.Info("devshard storage: postgres application pool saturation cleared")
-					}
-				}
-				timer.Reset(postgresHealthInterval)
-			}
+		defer monitors.Done()
+		s.runPostgresReadinessMonitor(ctx, config)
+	}()
+	go func() {
+		defer monitors.Done()
+		s.runPostgresFenceMonitor(ctx, cancel, config)
+	}()
+	go func() {
+		monitors.Wait()
+		close(s.healthDone)
+	}()
+}
+
+func (s *Postgres) runPostgresReadinessMonitor(ctx context.Context, config postgresMonitorConfig) {
+	defer func() {
+		closeCtx, closeCancel := context.WithTimeout(context.Background(), config.healthTimeout)
+		defer closeCancel()
+		if err := config.healthClose(closeCtx); err != nil {
+			slog.Warn("devshard storage: close postgres health connection", "error", err)
 		}
 	}()
+	timer := time.NewTimer(config.interval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+
+		probeCtx, probeCancel := context.WithTimeout(ctx, config.healthTimeout)
+		err := config.healthCheck(probeCtx)
+		probeCancel()
+		if ctx.Err() != nil {
+			return
+		}
+		result := postgresHealthProbeSuccess
+		if err != nil {
+			result = postgresHealthProbeDatabaseError
+		}
+		saturated := config.poolSaturated()
+		observability.ObservePostgresHealthProbe(err == nil, saturated)
+		previous, current := s.recordHealthProbe(result, saturated)
+		if previous.ready != current.ready {
+			if current.ready {
+				slog.Info("devshard storage: postgres readiness recovered")
+			} else {
+				slog.Warn("devshard storage: postgres readiness lost", "error", err)
+			}
+		}
+		if previous.saturated != current.saturated {
+			if current.saturated {
+				stat := s.pool.Stat()
+				slog.Warn("devshard storage: postgres application pool is saturated",
+					"acquired_connections", stat.AcquiredConns(),
+					"max_connections", stat.MaxConns())
+			} else {
+				slog.Info("devshard storage: postgres application pool saturation cleared")
+			}
+		}
+		timer.Reset(config.interval)
+	}
+}
+
+func (s *Postgres) runPostgresFenceMonitor(
+	ctx context.Context,
+	cancel context.CancelFunc,
+	config postgresMonitorConfig,
+) {
+	timer := time.NewTimer(config.interval)
+	defer timer.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
+
+		fenceCtx, fenceCancel := context.WithTimeout(ctx, config.fenceTimeout)
+		err := config.fenceCheck(fenceCtx)
+		fenceCancel()
+		if err == nil {
+			timer.Reset(config.interval)
+			continue
+		}
+		if ctx.Err() != nil {
+			return
+		}
+		s.mu.Lock()
+		s.healthReady = false
+		s.mu.Unlock()
+		fatalErr := fmt.Errorf("postgres fence session lost: %w", err)
+		slog.Error("devshard storage: postgres fence session lost; terminating process", "error", err)
+		s.fatalErrors <- fatalErr
+		cancel()
+		return
+	}
+}
+
+// FatalErrors reports storage failures that require replacing this process.
+// A lost session fence cannot be re-armed safely while old pool connections
+// may still exist, so versiond must start a fresh child generation.
+func (s *Postgres) FatalErrors() <-chan error {
+	return s.fatalErrors
 }
 
 func postgresPoolIsSaturated(pool *pgxpool.Pool) bool {
@@ -603,6 +733,9 @@ func (s *Postgres) Close() error {
 	if healthDone != nil {
 		<-healthDone
 	}
+	cleanupCtx, cleanupCancel := context.WithTimeout(context.Background(), postgresOpTimeout)
+	defer cleanupCancel()
+	s.connectionGuard.close(cleanupCtx)
 	s.pool.Close()
 	return nil
 }
@@ -1406,15 +1539,7 @@ func (s *Postgres) LoadSnapshot(escrowID string) (uint64, []byte, error) {
 	return nonce, data, nil
 }
 
-func (s *Postgres) InsertSealedInference(escrowID string, row InferenceRow) error {
-	epochID, err := s.lookupEpoch(escrowID)
-	if err != nil {
-		return err
-	}
-	ctx, cancel := s.opCtx()
-	defer cancel()
-	_, err = s.pool.Exec(ctx,
-		`INSERT INTO devshard_sealed_inferences (
+const postgresInsertSealedInferenceSQL = `INSERT INTO devshard_sealed_inferences (
 			epoch_id, escrow_id, inference_id, sealed_nonce,
 			obs_present, sealed_status, sealed_executor_slot,
 			sealed_votes_valid, sealed_votes_invalid, sealed_validated_by,
@@ -1442,7 +1567,14 @@ func (s *Postgres) InsertSealedInference(escrowID string, row InferenceRow) erro
 			sealed_reserved_cost = EXCLUDED.sealed_reserved_cost,
 			sealed_actual_cost = EXCLUDED.sealed_actual_cost,
 			sealed_started_at = EXCLUDED.sealed_started_at,
-			sealed_confirmed_at = EXCLUDED.sealed_confirmed_at`,
+			sealed_confirmed_at = EXCLUDED.sealed_confirmed_at`
+
+type postgresExecer interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+}
+
+func postgresExecInsertSealedInference(ctx context.Context, exec postgresExecer, epochID uint64, escrowID string, row InferenceRow) error {
+	_, err := exec.Exec(ctx, postgresInsertSealedInferenceSQL,
 		epochID, escrowID, row.InferenceID, row.SealedNonce, row.ObsPresent,
 		row.SealedStatus, row.SealedExecutorSlot,
 		row.SealedVotesValid, row.SealedVotesInvalid, row.SealedValidatedBy,
@@ -1454,6 +1586,227 @@ func (s *Postgres) InsertSealedInference(escrowID string, row InferenceRow) erro
 	)
 	if err != nil {
 		return fmt.Errorf("insert sealed inference: %w", err)
+	}
+	return nil
+}
+
+func (s *Postgres) InsertSealedInference(escrowID string, row InferenceRow) error {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	return postgresExecInsertSealedInference(ctx, s.pool, epochID, escrowID, row)
+}
+
+const postgresInsertSealedInferencesSQL = `INSERT INTO devshard_sealed_inferences (
+			epoch_id, escrow_id, inference_id, sealed_nonce,
+			obs_present, sealed_status, sealed_executor_slot,
+			sealed_votes_valid, sealed_votes_invalid, sealed_validated_by,
+			sealed_model, sealed_prompt_hash, sealed_response_hash,
+			sealed_input_length, sealed_max_tokens,
+			sealed_input_tokens, sealed_output_tokens,
+			sealed_reserved_cost, sealed_actual_cost,
+			sealed_started_at, sealed_confirmed_at
+		)
+		SELECT $1, $2, t.* FROM unnest(
+			$3::bigint[], $4::bigint[], $5::boolean[], $6::int[], $7::int[],
+			$8::int[], $9::int[], $10::bytea[], $11::text[], $12::bytea[],
+			$13::bytea[], $14::bigint[], $15::bigint[], $16::bigint[],
+			$17::bigint[], $18::bigint[], $19::bigint[], $20::bigint[],
+			$21::bigint[]
+		) AS t(
+			inference_id, sealed_nonce, obs_present, sealed_status,
+			sealed_executor_slot, sealed_votes_valid, sealed_votes_invalid,
+			sealed_validated_by, sealed_model, sealed_prompt_hash,
+			sealed_response_hash, sealed_input_length, sealed_max_tokens,
+			sealed_input_tokens, sealed_output_tokens, sealed_reserved_cost,
+			sealed_actual_cost, sealed_started_at, sealed_confirmed_at
+		)
+		ON CONFLICT (epoch_id, escrow_id, inference_id) DO UPDATE SET
+			sealed_nonce = EXCLUDED.sealed_nonce,
+			obs_present = EXCLUDED.obs_present,
+			sealed_status = EXCLUDED.sealed_status,
+			sealed_executor_slot = EXCLUDED.sealed_executor_slot,
+			sealed_votes_valid = EXCLUDED.sealed_votes_valid,
+			sealed_votes_invalid = EXCLUDED.sealed_votes_invalid,
+			sealed_validated_by = EXCLUDED.sealed_validated_by,
+			sealed_model = EXCLUDED.sealed_model,
+			sealed_prompt_hash = EXCLUDED.sealed_prompt_hash,
+			sealed_response_hash = EXCLUDED.sealed_response_hash,
+			sealed_input_length = EXCLUDED.sealed_input_length,
+			sealed_max_tokens = EXCLUDED.sealed_max_tokens,
+			sealed_input_tokens = EXCLUDED.sealed_input_tokens,
+			sealed_output_tokens = EXCLUDED.sealed_output_tokens,
+			sealed_reserved_cost = EXCLUDED.sealed_reserved_cost,
+			sealed_actual_cost = EXCLUDED.sealed_actual_cost,
+			sealed_started_at = EXCLUDED.sealed_started_at,
+			sealed_confirmed_at = EXCLUDED.sealed_confirmed_at`
+
+// InsertSealedInferences upserts a chunk per statement instead of a statement
+// per row. Chunking the transaction alone still cost a round trip per
+// inference, which is what made a 1.5M-row rebuild a network problem rather
+// than a write problem.
+func (s *Postgres) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return err
+	}
+	for start := 0; start < len(rows); start += sealedInferenceInsertChunk {
+		end := start + sealedInferenceInsertChunk
+		if end > len(rows) {
+			end = len(rows)
+		}
+		if err := s.insertSealedInferenceChunk(epochID, escrowID, rows[start:end]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+var postgresSealedInferenceColumns = []string{
+	"epoch_id", "escrow_id", "inference_id", "sealed_nonce",
+	"obs_present", "sealed_status", "sealed_executor_slot",
+	"sealed_votes_valid", "sealed_votes_invalid", "sealed_validated_by",
+	"sealed_model", "sealed_prompt_hash", "sealed_response_hash",
+	"sealed_input_length", "sealed_max_tokens",
+	"sealed_input_tokens", "sealed_output_tokens",
+	"sealed_reserved_cost", "sealed_actual_cost",
+	"sealed_started_at", "sealed_confirmed_at",
+}
+
+// BulkInsertSealedInferences loads rows with COPY. What is left of the upsert
+// path's cost is the per-row conflict probe, not the protocol, so dropping the
+// probe is worth about 3x — enough to make Postgres the faster backend here.
+// A collision means the caller's range was not empty after all; that chunk
+// falls back to the upsert rather than failing the rebuild.
+func (s *Postgres) BulkInsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return err
+	}
+	for start := 0; start < len(rows); start += sealedInferenceCopyChunk {
+		end := start + sealedInferenceCopyChunk
+		if end > len(rows) {
+			end = len(rows)
+		}
+		chunk := rows[start:end]
+		if err := s.copySealedInferenceChunk(epochID, escrowID, chunk); err != nil {
+			var pgErr *pgconn.PgError
+			if errors.As(err, &pgErr) && pgErr.Code == pgUniqueViolation {
+				if err := s.InsertSealedInferences(escrowID, chunk); err != nil {
+					return err
+				}
+				continue
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Postgres) copySealedInferenceChunk(epochID uint64, escrowID string, rows []InferenceRow) error {
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	if err := s.ensurePartition(ctx, epochID); err != nil {
+		return err
+	}
+	_, err := s.pool.CopyFrom(ctx,
+		pgx.Identifier{pgInferencesParent},
+		postgresSealedInferenceColumns,
+		pgx.CopyFromSlice(len(rows), func(i int) ([]any, error) {
+			r := rows[i]
+			return []any{
+				int64(epochID), escrowID, int64(r.InferenceID), int64(r.SealedNonce),
+				r.ObsPresent, int32(r.SealedStatus), int32(r.SealedExecutorSlot),
+				int32(r.SealedVotesValid), int32(r.SealedVotesInvalid), r.SealedValidatedBy,
+				r.SealedModel, r.SealedPromptHash, r.SealedResponseHash,
+				int64(r.SealedInputLength), int64(r.SealedMaxTokens),
+				int64(r.SealedInputTokens), int64(r.SealedOutputTokens),
+				int64(r.SealedReservedCost), int64(r.SealedActualCost),
+				r.SealedStartedAt, r.SealedConfirmedAt,
+			}, nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("copy sealed inferences: %w", err)
+	}
+	return nil
+}
+
+func (s *Postgres) insertSealedInferenceChunk(epochID uint64, escrowID string, rows []InferenceRow) error {
+	// ON CONFLICT DO UPDATE cannot touch the same row twice in one statement,
+	// so collapse ids repeated inside the chunk to the last value, which is
+	// what the row-at-a-time form produced.
+	deduped := make([]InferenceRow, 0, len(rows))
+	at := make(map[uint64]int, len(rows))
+	for _, row := range rows {
+		if i, seen := at[row.InferenceID]; seen {
+			deduped[i] = row
+			continue
+		}
+		at[row.InferenceID] = len(deduped)
+		deduped = append(deduped, row)
+	}
+
+	n := len(deduped)
+	inferenceIDs := make([]int64, n)
+	sealedNonces := make([]int64, n)
+	obsPresent := make([]bool, n)
+	statuses := make([]int32, n)
+	executorSlots := make([]int32, n)
+	votesValid := make([]int32, n)
+	votesInvalid := make([]int32, n)
+	validatedBy := make([][]byte, n)
+	models := make([]string, n)
+	promptHashes := make([][]byte, n)
+	responseHashes := make([][]byte, n)
+	inputLengths := make([]int64, n)
+	maxTokens := make([]int64, n)
+	inputTokens := make([]int64, n)
+	outputTokens := make([]int64, n)
+	reservedCosts := make([]int64, n)
+	actualCosts := make([]int64, n)
+	startedAt := make([]int64, n)
+	confirmedAt := make([]int64, n)
+	for i, row := range deduped {
+		inferenceIDs[i] = int64(row.InferenceID)
+		sealedNonces[i] = int64(row.SealedNonce)
+		obsPresent[i] = row.ObsPresent
+		statuses[i] = int32(row.SealedStatus)
+		executorSlots[i] = int32(row.SealedExecutorSlot)
+		votesValid[i] = int32(row.SealedVotesValid)
+		votesInvalid[i] = int32(row.SealedVotesInvalid)
+		validatedBy[i] = row.SealedValidatedBy
+		models[i] = row.SealedModel
+		promptHashes[i] = row.SealedPromptHash
+		responseHashes[i] = row.SealedResponseHash
+		inputLengths[i] = int64(row.SealedInputLength)
+		maxTokens[i] = int64(row.SealedMaxTokens)
+		inputTokens[i] = int64(row.SealedInputTokens)
+		outputTokens[i] = int64(row.SealedOutputTokens)
+		reservedCosts[i] = int64(row.SealedReservedCost)
+		actualCosts[i] = int64(row.SealedActualCost)
+		startedAt[i] = row.SealedStartedAt
+		confirmedAt[i] = row.SealedConfirmedAt
+	}
+
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	if _, err := s.pool.Exec(ctx, postgresInsertSealedInferencesSQL,
+		epochID, escrowID, inferenceIDs, sealedNonces, obsPresent, statuses,
+		executorSlots, votesValid, votesInvalid, validatedBy, models,
+		promptHashes, responseHashes, inputLengths, maxTokens, inputTokens,
+		outputTokens, reservedCosts, actualCosts, startedAt, confirmedAt,
+	); err != nil {
+		return fmt.Errorf("insert sealed inferences: %w", err)
 	}
 	return nil
 }
@@ -1509,6 +1862,36 @@ func (s *Postgres) DeleteSealedInferences(escrowID string) error {
 		return fmt.Errorf("delete sealed inferences: %w", err)
 	}
 	return nil
+}
+
+func (s *Postgres) SealedInferenceIDs(escrowID string) (map[uint64]uint64, error) {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	rows, err := s.pool.Query(ctx,
+		`SELECT inference_id, sealed_nonce FROM devshard_sealed_inferences
+		  WHERE epoch_id = $1 AND escrow_id = $2`,
+		epochID, escrowID,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list sealed inference ids: %w", err)
+	}
+	defer rows.Close()
+	out := make(map[uint64]uint64)
+	for rows.Next() {
+		var id, nonce uint64
+		if err := rows.Scan(&id, &nonce); err != nil {
+			return nil, fmt.Errorf("scan sealed inference id: %w", err)
+		}
+		out[id] = nonce
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
 func (s *Postgres) ClearValidationObs(escrowID string) error {
@@ -1626,6 +2009,67 @@ func (s *Postgres) DrainInferenceValidationObs(escrowID string, inferenceID uint
 		return fmt.Errorf("drain inference validation obs delete: %w", err)
 	}
 	return tx.Commit(ctx)
+}
+
+func (s *Postgres) DrainInferenceValidationObsBatch(escrowID string, inferenceIDs []uint64) error {
+	if len(inferenceIDs) == 0 {
+		return nil
+	}
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return err
+	}
+	for start := 0; start < len(inferenceIDs); start += validationObsRebuildChunk {
+		end := start + validationObsRebuildChunk
+		if end > len(inferenceIDs) {
+			end = len(inferenceIDs)
+		}
+		ids := make([]int64, 0, end-start)
+		for _, id := range inferenceIDs[start:end] {
+			ids = append(ids, int64(id))
+		}
+		if err := s.drainValidationObsChunk(epochID, escrowID, ids); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// drainValidationObsChunk moves and deletes one id chunk set-at-a-time. Live
+// rows are unique per (epoch, escrow, inference, slot), so no source row
+// conflicts with another row of the same statement and the accumulate applies
+// per target row, exactly as in the single-id form.
+//
+// The move is one data-modifying CTE rather than an explicit transaction around
+// an INSERT and a DELETE: same atomicity, but one round trip per chunk instead
+// of four, which is what the cost is made of once the rows are batched.
+func (s *Postgres) drainValidationObsChunk(epochID uint64, escrowID string, ids []int64) error {
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	if err := s.ensurePartition(ctx, epochID); err != nil {
+		return err
+	}
+	if _, err := s.pool.Exec(ctx,
+		`WITH moved AS (
+		   DELETE FROM devshard_inference_validation_obs
+		    WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = ANY($3::bigint[])
+		   RETURNING epoch_id, escrow_id, inference_id, slot_id,
+		             required_validations, completed_validations
+		 )
+		 INSERT INTO devshard_sealed_validation_obs (
+		   epoch_id, escrow_id, inference_id, slot_id,
+		   required_validations, completed_validations)
+		 SELECT epoch_id, escrow_id, inference_id, slot_id,
+		        required_validations, completed_validations
+		   FROM moved
+		 ON CONFLICT (epoch_id, escrow_id, inference_id, slot_id) DO UPDATE SET
+		   required_validations = devshard_sealed_validation_obs.required_validations + EXCLUDED.required_validations,
+		   completed_validations = devshard_sealed_validation_obs.completed_validations + EXCLUDED.completed_validations`,
+		epochID, escrowID, ids,
+	); err != nil {
+		return fmt.Errorf("drain inference validation obs: %w", err)
+	}
+	return nil
 }
 
 func (s *Postgres) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {

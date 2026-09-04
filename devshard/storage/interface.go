@@ -79,8 +79,23 @@ type Storage interface {
 	// InsertSealedInference upserts the per-inference observability snapshot
 	// (insert or update on conflict).
 	InsertSealedInference(escrowID string, row InferenceRow) error
+	// InsertSealedInferences upserts many sealed-inference rows in chunked
+	// transactions. An empty slice is a no-op.
+	InsertSealedInferences(escrowID string, rows []InferenceRow) error
+	// BulkInsertSealedInferences loads rows that are expected not to exist yet,
+	// as after DeleteSealedInferences. Backends may take a bulk path that has
+	// no per-row conflict probe (Postgres uses COPY), which is the difference
+	// between minutes and seconds on a full-replay rebuild. Rows that do
+	// collide still land as an upsert, so the result matches
+	// InsertSealedInferences either way; only the speed differs.
+	BulkInsertSealedInferences(escrowID string, rows []InferenceRow) error
 	GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error)
 	DeleteSealedInferences(escrowID string) error
+	// SealedInferenceIDs returns inferenceID → sealedNonce for every sealed-
+	// inference row, including ObsPresent=false (bare index) rows. Gap fill
+	// skips these so a restart after the wipe-rebuild bug does not rewrite
+	// existing rows.
+	SealedInferenceIDs(escrowID string) (map[uint64]uint64, error)
 	// ClearValidationObs removes all live and sealed validation observability
 	// rows for an escrow. Used when rebuilding obs from the diff journal.
 	ClearValidationObs(escrowID string) error
@@ -92,6 +107,11 @@ type Storage interface {
 	RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error
 	// DrainInferenceValidationObs moves live counters for an inference into sealed storage (called on seal).
 	DrainInferenceValidationObs(escrowID string, inferenceID uint64) error
+	// DrainInferenceValidationObsBatch is the many-ids form, used when recovery
+	// drains the whole seal set. The single-id form is one transaction per
+	// inference, which dominates a full-replay repair. Backends chunk
+	// internally; the result is the same as draining each id in turn.
+	DrainInferenceValidationObsBatch(escrowID string, inferenceIDs []uint64) error
 	// GetValidationObservability returns live + sealed validation counters aggregated by slot.
 	GetValidationObservability(escrowID string) ([]SlotValidationObs, error)
 	// PutEscrowCache stores chain-fetched escrow metadata for later lazy bind.
@@ -185,8 +205,8 @@ type ActiveSession struct {
 // state root) for GET /v1/state after RAM prune. Late MsgValidation on
 // sealed ids still returns ErrInferenceSealed and does not read this snapshot.
 type InferenceRow struct {
-	InferenceID uint64
-	SealedNonce uint64
+	InferenceID        uint64
+	SealedNonce        uint64
 	ObsPresent         bool
 	SealedStatus       uint32
 	SealedExecutorSlot uint32

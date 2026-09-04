@@ -220,6 +220,11 @@ type oneHostRestartStack struct {
 	Bridge        *scenarioBridge
 	StoragePath   string
 	httpSrv       *httptest.Server
+	// Heartbeat overlays the session's cadence, so a test that needs a
+	// heartbeat after an inference (which discharges the cadence, H2) can wait
+	// out the interval instead of the compiled default. Survives newHTTPSession
+	// so a recovered session keeps the same schedule.
+	Heartbeat *heightsync.HeartbeatConfig
 }
 
 type repairTimingStack struct {
@@ -604,6 +609,7 @@ func (st *oneHostRestartStack) newHTTPSession(t *testing.T) *user.Session {
 		RoutePrefix:       hsE2ERoutePrefix,
 		StoragePath:       st.StoragePath,
 		ExtraClientConfig: &cc,
+		Heartbeat:         st.Heartbeat,
 	})
 	require.NoError(t, err)
 	seedHTTPSession(t, sess)
@@ -734,13 +740,31 @@ func repairTimingHeartbeatDiff(t *testing.T, signer signing.Signer, nonce, turnS
 	t.Helper()
 	return testutil.SignDiff(t, signer, "9003", nonce, []*types.DevshardTx{{
 		Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
-			TurnSeq:           turnSeq,
 			ObservedHeight:    height,
 			ObservedBlockHash: []byte{0xaa},
 			SlotsNum:          4,
 			Reason:            string(heightsync.ReasonQuietSession),
 		}},
 	}})
+}
+
+// repairTimingWindowClosedDiff opens an unstamped turn 2 (HReq=0, not
+// repair-due) and lands a host-signed ack at ackHeight so hNow closes turn 1.
+func repairTimingWindowClosedDiff(t *testing.T, user, hostSigner signing.Signer, nonce, ackHeight uint64) types.Diff {
+	t.Helper()
+	ack := &types.MsgHeightAck{
+		RefNonce: nonce, SlotId: 0,
+		ObservedHeight: ackHeight, ObservedBlockHash: []byte{0xaa},
+		SyncState: types.SyncState_SYNCED, PeerSeen: []byte{0xff},
+	}
+	require.NoError(t, heightsync.SignAck(hostSigner, ack))
+	return testutil.SignDiff(t, user, "9003", nonce, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_Heartbeat{Heartbeat: &types.MsgHeartbeat{
+			SlotsNum: 4,
+			Reason:   string(heightsync.ReasonQuietSession),
+		}}},
+		{Tx: &types.DevshardTx_HeightAck{HeightAck: ack}},
+	})
 }
 
 // syncHostsFromSession applies the user's signed diff chain to every host so
@@ -1703,13 +1727,26 @@ func TestHeightSyncAnchor_E2E_HTTPRestartDurableHeightAckDedupBeforeNextHeartbea
 	ctx := context.Background()
 	st := setupOneHostHTTPHeightSyncRestartStack(t)
 
+	// One inference first: the heartbeat's observed_height is always F, and only
+	// a host stamp can seed F (§10.3.1), so a session that has never inferred
+	// has nothing to heartbeat with. That inference also discharges the cadence
+	// (H2), hence the short interval to wait out rather than a compiled default.
+	require.NoError(t, st.Session.Close())
+	st.Heartbeat = &heightsync.HeartbeatConfig{Interval: 20 * time.Millisecond}
+	st.Session = st.newHTTPSession(t)
+
+	_, err := st.Session.SendInference(ctx, defaultInferenceParams())
+	require.NoError(t, err)
+	require.NoError(t, st.Session.SendPendingDiff(ctx),
+		"the executor's stamp only sets F once its diff is applied")
+	time.Sleep(40 * time.Millisecond)
+
 	require.NoError(t, st.Session.MaybeHeartbeat(ctx))
 	ackDiffs := st.Session.Diffs()
 	acks := heightAcksInScenarioDiffs(ackDiffs)
 	require.Len(t, acks, 1)
-	require.Equal(t, uint64(1), acks[0].TurnSeq)
 	require.Equal(t, uint32(0), acks[0].SlotId)
-	require.Equal(t, uint64(2), st.Session.Nonce())
+	afterHeartbeat := st.Session.Nonce()
 
 	require.NoError(t, st.Session.FlushSnapshot())
 	require.NoError(t, st.Session.Close())
@@ -1717,7 +1754,7 @@ func TestHeightSyncAnchor_E2E_HTTPRestartDurableHeightAckDedupBeforeNextHeartbea
 
 	recovered := st.newHTTPSession(t)
 	st.Session = recovered
-	require.Equal(t, uint64(2), recovered.Nonce())
+	require.Equal(t, afterHeartbeat, recovered.Nonce())
 	require.Empty(t, recovered.Diffs(),
 		"all hosts are caught up, so recovery should restore dedup keys from durable records without replay diffs")
 
@@ -1733,13 +1770,14 @@ func TestHeightSyncAnchor_E2E_HTTPRestartDurableHeightAckDedupBeforeNextHeartbea
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
 	var oldTurnAcks []*types.MsgHeightAck
 	var newTurnAcks []*types.MsgHeightAck
+	// ref_nonce names the turn now. The pre-restart ack answers the heartbeat at
+	// acks[0].RefNonce; anything answering a later nonce belongs to the fresh turn.
 	for _, ack := range heightAcksInScenarioDiffs(recovered.Diffs()) {
-		switch ack.TurnSeq {
-		case 1:
+		if ack.RefNonce == acks[0].RefNonce {
 			oldTurnAcks = append(oldTurnAcks, ack)
-		case 2:
-			newTurnAcks = append(newTurnAcks, ack)
+			continue
 		}
+		newTurnAcks = append(newTurnAcks, ack)
 	}
 	require.Empty(t, oldTurnAcks, "next heartbeat must not re-flush the old durable ack")
 	require.Len(t, newTurnAcks, 1, "fresh heartbeat may carry its own new ack")
@@ -1813,7 +1851,8 @@ func TestHeightSyncAnchor_E2E_MultiHostRepairProbeTimingAndBudget(t *testing.T) 
 	}
 	st.applyDiffsToHosts(t, span...)
 	cfg := heightsync.DefaultHeartbeatConfig()
-	st.applyDiffsToHosts(t, repairTimingHeartbeatDiff(t, st.user, uint64(len(st.hosts))+1, 2, 500+cfg.AckDeadlineBlocks+1))
+	st.applyDiffsToHosts(t, repairTimingWindowClosedDiff(t, st.user, st.hosts[0],
+		uint64(len(st.hosts))+1, 500+cfg.AckDeadlineBlocks+1))
 
 	prober := st.hostObjs[0]
 	rec := prober.HeightSyncTurnRecord(1)

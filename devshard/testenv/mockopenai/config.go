@@ -136,7 +136,7 @@ func promptTokenEstimate(body []byte) int {
 }
 
 // buildLogprobContent returns OpenAI-shaped logprobs.content entries for text.
-// topN mirrors the request's top_logprobs (gateway forces 5 upstream).
+// topN mirrors the request's top_logprobs (the host pins 5 upstream).
 //
 // "token" is a numeric token ID (decimal string), matching vLLM after
 // gm/enforced-str. The decoded text lives in "bytes" (UTF-8 code units as

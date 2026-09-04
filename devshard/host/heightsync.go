@@ -163,7 +163,6 @@ func (h *Host) buildHeightAckLocked(item heartbeatTarget, hdr *blocks.Header, hd
 	}
 	refH, refHash := h.referenceStamp(item.nonce+1, height, hash)
 	return &types.MsgHeightAck{
-		TurnSeq:           item.hb.TurnSeq,
 		RefNonce:          item.nonce,
 		SlotId:            item.slot,
 		ObservedHeight:    refH,
@@ -182,20 +181,20 @@ func (h *Host) buildHeightAckLocked(item heartbeatTarget, hdr *blocks.Header, hd
 // bad height stays with its originator rather than with the carrier (L6). The
 // host's own view stays first-party in the response-leg Anchor and in sync_state.
 //
-// Carrying stops where plausibility does. A floor more than W_conf above this
-// host's own tip is either poisoned or on a branch this host will never see, and
-// omission is legal at any floor, so the honest answer is to say nothing: an
-// omitted stamp costs the roster one height claim, while a carried one puts a
-// pair no chain can reconcile under another signature.
+// Carrying has no plausibility escape, and used to. The rule was "omit if F is
+// more than W_conf above my own tip", which sounded like refusing to repeat a
+// poisoned height and was in practice the opposite: the first participant to
+// stamp a height nobody else could reach silenced every honest host's stamp for
+// the rest of the session, since none of them could carry a floor that far away
+// and none could lower it. A height is judged where it enters the log — envelope
+// admission, |Δ| > D, Strong (§8/§15) — not by the carriers downstream of it.
 func (h *Host) referenceStamp(producingNonce, height uint64, hash []byte) (uint64, []byte) {
+	if !h.sm.HeightSyncFloorReady() {
+		return 0, nil
+	}
 	floor, floorHash, known := h.sm.HeightSyncFloorAsOf(producingNonce)
 	if !known || floor <= height || !heightsync.StampPresent(floorHash) {
 		return height, hash
-	}
-	if h.heartbeatCfg.FloorOutOfReach(floor, height) {
-		logging.Warn("height stamp omitted: floor out of reach", "subsystem", "heightsync",
-			"escrow", h.escrowID, "nonce", producingNonce, "floor", floor, "own_tip", height)
-		return 0, nil
 	}
 	return floor, floorHash
 }

@@ -12,7 +12,7 @@ import (
 
 func testRepairRequest() *RepairRequest {
 	return &RepairRequest{
-		TurnSeq:           3,
+		TurnStart:         3,
 		RefNonce:          10,
 		RequesterSlot:     1,
 		ObservedHeight:    500,
@@ -34,7 +34,6 @@ func TestSignRepairResponse_RoundTrip(t *testing.T) {
 	signer := testutil.MustGenerateKey(t)
 	ackSigner := testutil.MustGenerateKey(t)
 	ack := &types.MsgHeightAck{
-		TurnSeq:           3,
 		RefNonce:          10,
 		SlotId:            2,
 		ObservedHeight:    510,
@@ -64,7 +63,7 @@ func TestRepair_RejectsCrossDomain(t *testing.T) {
 	require.NoError(t, SignRepairRequest(signer, req))
 
 	ackBlob, err := CanonicalAckBytes(&types.MsgHeightAck{
-		TurnSeq: req.TurnSeq, RefNonce: req.RefNonce, SlotId: req.RequesterSlot,
+		RefNonce: req.RefNonce, SlotId: req.RequesterSlot,
 		ObservedHeight: req.ObservedHeight, ObservedBlockHash: req.ObservedBlockHash,
 	})
 	require.NoError(t, err)

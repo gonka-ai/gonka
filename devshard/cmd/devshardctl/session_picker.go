@@ -9,9 +9,8 @@
 // ------------------
 //
 // Every branch that does NOT dispatch a real user request marks the nonce as a ghost probe: the
-// MsgStart is composed inside PrepareInferenceFn (and lives in s.diffs for catch-up). Whether the
-// dispatcher then contacts the host depends on the kind -- a throttled burn may be spent on a real
-// chat probe, the rest stay silent. The nonce stream advances and no vote is posted from this node.
+// MsgStart is composed inside PrepareInferenceFn (and lives in s.diffs for catch-up), but the host
+// is not contacted. The nonce stream advances and no vote is posted from this node.
 //
 //	1a. PoC-required host (host needs a probe under relaxed bypass):
 //	    fire ghostPoC. The host cannot serve user traffic now.
@@ -97,8 +96,8 @@ var errPickerHold = errors.New("session picker: holding nonce; waiting for stale
 var errPickerStopped = errors.New("session picker: stopped")
 
 // ghostKind classifies why a nonce is being burned as a synthetic probe, so operators can tell a
-// PoC burn from an exclude-stale one from a reactive throttle, and so runGhostProbe knows which
-// burns are worth spending on a real probe.
+// PoC burn from an exclude-stale one from a reactive throttle. Every kind is dispatched the same
+// silent way; the kind is a log label.
 type ghostKind int
 
 const (
@@ -342,7 +341,6 @@ func (p *sessionPicker) run() {
 
 			// Branch 1b: the host just refused, so burning the nonce keeps the queue flowing without
 			// spending a real request's retry budget on a host the admission gate would reject anyway.
-			// The dispatcher asks such a host once per window, not once per nonce.
 			if p.throttleBlocked != nil && p.throttleBlocked(b.ParticipantKey) {
 				ghost = ghostThrottled
 				ghostParticipantKey = b.ParticipantKey

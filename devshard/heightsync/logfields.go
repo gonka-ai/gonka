@@ -22,6 +22,7 @@ const (
 	LogFieldSource              = "source"
 	LogFieldTag                 = "tag"
 	LogFieldReason              = "reason"
+	LogFieldDetail              = "detail"
 	LogFieldCheck               = "check"
 	LogFieldVerdict             = "verdict"
 	LogFieldFloor               = "floor"
@@ -31,5 +32,5 @@ const (
 	LogFieldCacheReady          = "cache_ready"
 	LogFieldVerifiedOrigins     = "verified_origins"
 	LogFieldEvent               = "event"
-	LogFieldTurnSeq             = "turn_seq"
+	LogFieldTurnStart           = "turn_start"
 )

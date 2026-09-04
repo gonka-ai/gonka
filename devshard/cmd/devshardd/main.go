@@ -27,6 +27,9 @@ var Version = "dev"
 var BinaryVersion = "dev-log"
 
 func main() {
+	if code, handled := maybeInitializePostgres(context.Background(), os.Args[1:], os.Stderr); handled {
+		os.Exit(code)
+	}
 	if code, handled := maybePrintVersion(os.Args[1:], os.Stdout, os.Stderr); handled {
 		os.Exit(code)
 	}

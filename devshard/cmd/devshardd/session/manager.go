@@ -11,6 +11,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/sync/singleflight"
@@ -64,6 +65,15 @@ type HostManager struct {
 	params             runtimeparams.Provider
 	maxBodySize        int64
 
+	recoveryGate   recoveryGate
+	backlogDrained atomic.Bool
+	recoveryCounts recoveryCounters
+
+	// obsGate is the same value as store, kept typed so obs rebuilds can run
+	// against the wrapped store while the live writes queue.
+	obsGate     *storage.ObsRepairGate
+	obsRepairWG sync.WaitGroup
+
 	statsMu            sync.Mutex
 	statsShardsCache   *statsShardsResponse
 	statsShardsCached  time.Time
@@ -84,9 +94,10 @@ type HostManager struct {
 }
 
 const (
-	resolutionFailureTTL  = 30 * time.Second
-	permanentFailureTTL   = 10 * time.Minute
-	maxResolutionFailures = 1024
+	recoverSessionsConcurrency = 8
+	resolutionFailureTTL       = 30 * time.Second
+	permanentFailureTTL        = 10 * time.Minute
+	maxResolutionFailures      = 1024
 	// resolutionFailureLowWater is the size the tombstone map is trimmed to
 	// once it exceeds maxResolutionFailures. Trimming below the cap amortises
 	// the eviction sort over many inserts; trimming exactly to the cap would
@@ -110,6 +121,201 @@ type resolutionFailure struct {
 	expiresAt time.Time
 }
 
+// recoveryCounters is the recovery progress /ready reports. They were log-only
+// on the completion line, which made "drained with three corrupt sessions"
+// indistinguishable from a clean boot to anything watching a rolling update.
+//
+// repairs counts in-flight validation-obs / sealed-index rebuilds. A
+// full-replay escrow is published long before that work finishes, and a
+// cutover that treated that as warm would route traffic at a host mid-wipe.
+type recoveryCounters struct {
+	total          atomic.Int64
+	recovered      atomic.Int64
+	failed         atomic.Int64
+	versionSkipped atomic.Int64
+	cancelled      atomic.Int64
+	repairs        atomic.Int64
+}
+
+// RecoveryProgress is the /ready body's view of session recovery. Complete is
+// what a version cutover polls; the counters say why it is not true yet.
+type RecoveryProgress struct {
+	Complete       bool  `json:"recovery_complete"`
+	Total          int64 `json:"sessions_total"`
+	Recovered      int64 `json:"sessions_recovered"`
+	Failed         int64 `json:"sessions_failed"`
+	VersionSkipped int64 `json:"sessions_version_skipped"`
+	Pending        int64 `json:"sessions_pending"`
+}
+
+// recoveryGate lets sessions a live caller asked for jump ahead of the cold
+// recovery backlog. Every escrow that reaches getOrCreate is remembered for the
+// rest of the recovery window, which does two things: the queue hands those
+// escrows out first, and a worker already recovering one of them keeps running
+// instead of parking, since that work is exactly what the caller is waiting on.
+// Only workers about to pick up a cold session park while a request is
+// in flight, so a request waits at most for the cold sessions already running.
+type recoveryGate struct {
+	mu        sync.Mutex
+	cond      *sync.Cond
+	inFlight  int
+	requested map[string]struct{}
+	stopped   bool
+}
+
+// maxRequestedRecoveryEscrows bounds the demand set. Past the cap ordering
+// degrades to list order rather than growing memory without limit.
+const maxRequestedRecoveryEscrows = 4096
+
+// condLocked lazily builds the cond so a zero-value HostManager still works.
+func (g *recoveryGate) condLocked() *sync.Cond {
+	if g.cond == nil {
+		g.cond = sync.NewCond(&g.mu)
+	}
+	return g.cond
+}
+
+// begin marks an escrow as demanded and records an in-flight on-demand load.
+// The broadcast lets a worker parked on this escrow notice it is now
+// prioritized and resume instead of waiting for the request to finish.
+func (g *recoveryGate) begin(escrowID string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.requested == nil {
+		g.requested = make(map[string]struct{})
+	}
+	if len(g.requested) < maxRequestedRecoveryEscrows {
+		g.requested[escrowID] = struct{}{}
+	}
+	g.inFlight++
+	g.condLocked().Broadcast()
+}
+
+// end releases one on-demand load. The escrow stays in the demand set so a
+// later backlog pass still treats it as warm.
+func (g *recoveryGate) end() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.inFlight > 0 {
+		g.inFlight--
+	}
+	if g.inFlight == 0 {
+		g.condLocked().Broadcast()
+	}
+}
+
+// isRequested reports whether a live caller has asked for this escrow.
+func (g *recoveryGate) isRequested(escrowID string) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	_, ok := g.requested[escrowID]
+	return ok
+}
+
+// firstRemainingRequested is the demand lookup for recoveryQueue: O(demand),
+// not O(backlog). Which demanded escrow is chosen is unspecified; any remaining
+// demanded ID beats cold list order.
+func (g *recoveryGate) firstRemainingRequested(remaining map[string]storage.ActiveSession) (string, bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for id := range g.requested {
+		if _, ok := remaining[id]; ok {
+			return id, true
+		}
+	}
+	return "", false
+}
+
+// waitTurn parks a background worker that is about to recover a cold session
+// while on-demand loads are in flight. Workers assigned an already-demanded
+// escrow are never parked: pausing them would only delay the caller.
+func (g *recoveryGate) waitTurn(escrowID string) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	for !g.stopped {
+		if _, prioritized := g.requested[escrowID]; prioritized {
+			return
+		}
+		if g.inFlight == 0 {
+			return
+		}
+		g.condLocked().Wait()
+	}
+}
+
+// stop releases parked workers so shutdown cannot block behind the gate.
+func (g *recoveryGate) stop() {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.stopped = true
+	g.condLocked().Broadcast()
+}
+
+// recoveryQueue hands backlog sessions to the recovery workers, preferring
+// escrows a live caller has already asked for. Requests that arrive mid
+// recovery reorder whatever is left, so demand keeps overtaking cold sessions
+// instead of being fixed at startup.
+//
+// Remaining sessions are indexed by ID once at construction. next() walks the
+// (bounded) demand set and looks those IDs up, rather than scanning the
+// backlog to ask whether each row is demanded.
+type recoveryQueue struct {
+	mu       sync.Mutex
+	byID     map[string]storage.ActiveSession
+	order    []string
+	cold     int
+	demanded func(remaining map[string]storage.ActiveSession) (string, bool)
+}
+
+func newRecoveryQueue(sessions []storage.ActiveSession, demanded func(map[string]storage.ActiveSession) (string, bool)) *recoveryQueue {
+	byID := make(map[string]storage.ActiveSession, len(sessions))
+	order := make([]string, len(sessions))
+	for i, s := range sessions {
+		byID[s.EscrowID] = s
+		order[i] = s.EscrowID
+	}
+	return &recoveryQueue{byID: byID, order: order, demanded: demanded}
+}
+
+func (q *recoveryQueue) takeLocked(id string) (storage.ActiveSession, bool) {
+	sess, ok := q.byID[id]
+	if !ok {
+		return storage.ActiveSession{}, false
+	}
+	delete(q.byID, id)
+	return sess, true
+}
+
+// next returns the highest-priority remaining session, or false when drained.
+func (q *recoveryQueue) next() (storage.ActiveSession, bool) {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	if len(q.byID) == 0 {
+		return storage.ActiveSession{}, false
+	}
+	if q.demanded != nil {
+		if id, ok := q.demanded(q.byID); ok {
+			if sess, taken := q.takeLocked(id); taken {
+				return sess, true
+			}
+		}
+	}
+	for q.cold < len(q.order) {
+		id := q.order[q.cold]
+		q.cold++
+		if sess, ok := q.takeLocked(id); ok {
+			return sess, true
+		}
+	}
+	return storage.ActiveSession{}, false
+}
+
+func (q *recoveryQueue) remaining() int {
+	q.mu.Lock()
+	defer q.mu.Unlock()
+	return len(q.byID)
+}
+
 func NewHostManager(
 	store storage.Storage,
 	signer *signing.Secp256k1Signer,
@@ -126,10 +332,14 @@ func NewHostManager(
 		slog.Warn("devshardd: payload fault injection active; testenv build only",
 			"http_status", faultStatus, "only_validator", faultAddr)
 	}
+	// Everything downstream (hosts, state machines, transport) writes through
+	// the gate, which is a pass-through until a rebuild claims an escrow.
+	gate := storage.NewObsRepairGate(store)
 	return &HostManager{
 		sessions:           make(map[string]*transport.Server),
 		resolutionFailures: make(map[string]resolutionFailure),
-		store:              store,
+		store:              gate,
+		obsGate:            gate,
 		signer:             signer,
 		verifier:           signing.NewSecp256k1Verifier(),
 		engine:             engine,
@@ -159,6 +369,29 @@ func (m *HostManager) StorageReady() bool {
 		return r.Ready()
 	}
 	return true
+}
+
+// StorageFatalErrors reports storage failures that require replacing this
+// devshardd process rather than waiting for readiness recovery.
+func (m *HostManager) StorageFatalErrors() <-chan error {
+	if reporter, ok := m.store.(interface{ FatalErrors() <-chan error }); ok {
+		return reporter.FatalErrors()
+	}
+	return nil
+}
+
+// StorageProof uses the same storage object as inference and session traffic.
+// Deployment checks therefore cannot accidentally validate a separate pool.
+func (m *HostManager) StorageProof(
+	ctx context.Context,
+	operation storage.ProofOperation,
+	nonce string,
+) (storage.StorageProof, error) {
+	provider, ok := m.store.(storage.ProofProvider)
+	if !ok {
+		return storage.StorageProof{}, errors.New("postgres storage proof is unavailable")
+	}
+	return provider.StorageProof(ctx, operation, nonce)
 }
 
 // SetMaxNonceProvider enforces chain max_nonce on every host.
@@ -216,11 +449,54 @@ func (m *HostManager) SessionServerExisting(escrowID string) (*transport.Server,
 	if srv, ok := m.existingServer(escrowID); ok {
 		return srv, nil
 	}
+	m.recoveryGate.begin(escrowID)
+	defer m.recoveryGate.end()
 	srv, err := m.recoverAndStoreSession(escrowID)
 	if err != nil {
 		return nil, err
 	}
 	return srv, nil
+}
+
+// ReloadStaleSession drops a live session whose in-memory nonce fell behind
+// the shared store (the overlap-warm case) and recovers it again. A client
+// that keeps sending a nonce that is simply wrong hits RememberStaleNonce
+// after the retry still fails, so this cannot spin on every request.
+func (m *HostManager) ReloadStaleSession(escrowID string, stale *transport.Server) (*transport.Server, error) {
+	now := time.Now()
+	if err := m.cachedResolutionFailure(escrowID, now); err != nil {
+		return nil, err
+	}
+	m.evictSession(escrowID, stale)
+	m.recoveryGate.begin(escrowID)
+	defer m.recoveryGate.end()
+	srv, err := m.recoverAndStoreSession(escrowID)
+	if err != nil {
+		m.rememberResolutionFailure(escrowID, err, now)
+		return nil, err
+	}
+	logging.Info("recovered stale in-memory session", inferenceTypes.System, "escrow_id", escrowID)
+	return srv, nil
+}
+
+// RememberStaleNonce negative-caches a nonce mismatch that survived a reload,
+// so a bogus client cannot evict-and-recover on every request. Short TTL: a
+// genuine catch-up during overlap is not a permanent failure.
+func (m *HostManager) RememberStaleNonce(escrowID string) {
+	m.rememberResolutionFailure(escrowID, types.ErrInvalidNonce, time.Now())
+}
+
+func (m *HostManager) evictSession(escrowID string, stale *transport.Server) {
+	m.sessionsMutex.Lock()
+	current, ok := m.sessions[escrowID]
+	if !ok || (stale != nil && current != stale) {
+		m.sessionsMutex.Unlock()
+		return
+	}
+	delete(m.sessions, escrowID)
+	m.sessionsMutex.Unlock()
+	current.Host().Close()
+	observability.DeleteEscrowMetrics(escrowID)
 }
 
 // BindOwnerChat verifies the request as the escrow owner, then returns an
@@ -317,12 +593,17 @@ func (m *HostManager) getOrCreate(escrowID string, escrow *bridge.EscrowInfo) (*
 		}
 
 		// Prefer recovering an already-bound session over CreateSession.
-		srv, err := m.recoverStoredSession(escrowID)
+		srv, obsRepair, err := func() (*transport.Server, *obsRepairJob, error) {
+			m.recoveryGate.begin(escrowID)
+			defer m.recoveryGate.end()
+			return m.recoverStoredSession(escrowID)
+		}()
 		if err == nil {
 			installed, storeErr := m.storeSessionIfAbsent(escrowID, srv)
 			if storeErr != nil {
 				return nil, storeErr
 			}
+			m.startObsRepair(escrowID, obsRepair)
 			return installed, nil
 		}
 		if !errors.Is(err, storage.ErrSessionNotFound) {
@@ -547,23 +828,94 @@ func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*trans
 // For each locally-active session it asks the chain whether the escrow is
 // already settled and, if so, finalizes instead of replaying. Transient
 // GetEscrow failures fail-open so a chain blip at boot does not drop work
-// this host already bound. Call this on startup after constructing the
-// HostManager.
+// this host already bound. Remaining sessions restore a host snapshot when
+// one exists, then replay only the post-snapshot diffs through a fresh
+// StateMachine. Recovery runs up to recoverSessionsConcurrency workers in
+// parallel. Call this on startup after constructing the HostManager.
 func (m *HostManager) RecoverSessions() error {
-	escrowIDs, err := m.store.ListActiveSessions()
+	return m.RecoverSessionsContext(context.Background())
+}
+
+// StartRecovery runs recovery in the background so the HTTP listener can bind
+// immediately instead of waiting out the backlog; sessions that are requested
+// before their turn are recovered on demand by getOrCreate. The returned func
+// waits for the backlog to drain and is safe to call after ctx is cancelled.
+//
+// /ready reports 200 throughout: recovery gates the warm signal in the body,
+// not the status code.
+func (m *HostManager) StartRecovery(ctx context.Context) func() {
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		defer func() {
+			m.backlogDrained.Store(true)
+			m.publishRecoveryProgress()
+		}()
+		if err := m.RecoverSessionsContext(ctx); err != nil {
+			logging.Error("devshard session recovery failed", inferenceTypes.System, "error", err)
+		}
+	}()
+	return func() {
+		m.recoveryGate.stop()
+		<-done
+	}
+}
+
+// RecoveryComplete reports whether this process is warm: the backlog has
+// drained (including when recovery was cancelled or failed) and no background
+// obs / sealed-index rebuild is still running. A cutover that ignored the
+// second half would publish a host whose sealed-inference index is mid-rebuild.
+func (m *HostManager) RecoveryComplete() bool {
+	return m.backlogDrained.Load() && m.recoveryCounts.repairs.Load() == 0
+}
+
+// RecoveryProgressSnapshot is the /ready body's recovery view. Pending counts
+// the sessions still queued plus the repairs still running; the counters are
+// read without a lock, so a snapshot taken mid-increment can lag by one.
+func (m *HostManager) RecoveryProgressSnapshot() RecoveryProgress {
+	c := &m.recoveryCounts
+	total := c.total.Load()
+	recovered := c.recovered.Load()
+	failed := c.failed.Load()
+	versionSkipped := c.versionSkipped.Load()
+	queued := int64(0)
+	if !m.backlogDrained.Load() {
+		queued = max(total-recovered-failed-versionSkipped-c.cancelled.Load(), 0)
+	}
+	return RecoveryProgress{
+		Complete:       m.RecoveryComplete(),
+		Total:          total,
+		Recovered:      recovered,
+		Failed:         failed,
+		VersionSkipped: versionSkipped,
+		Pending:        queued + c.repairs.Load(),
+	}
+}
+
+// publishRecoveryProgress mirrors the snapshot onto Prometheus so a rolling
+// update can be watched without polling probe bodies.
+func (m *HostManager) publishRecoveryProgress() {
+	p := m.RecoveryProgressSnapshot()
+	observability.SetSessionRecovery(p.Total, p.Recovered, p.Failed, p.VersionSkipped, p.Pending, p.Complete)
+}
+
+// RecoverSessionsContext is RecoverSessions with cancellation: a cancelled ctx
+// stops the workers between sessions and leaves the rest to lazy recovery.
+func (m *HostManager) RecoverSessionsContext(ctx context.Context) error {
+	startedAt := time.Now()
+	active, err := m.store.ListActiveSessions()
 	if err != nil {
 		return fmt.Errorf("list active sessions: %w", err)
 	}
-
 	checkDeadline := time.Now().Add(recoveryEscrowCheckBudget)
-
-	for _, active := range escrowIDs {
-		if err := devshardpkg.ValidateEscrowID(active.EscrowID); err != nil {
+	filtered := active[:0]
+	for _, sess := range active {
+		if err := devshardpkg.ValidateEscrowID(sess.EscrowID); err != nil {
 			logging.Error("retiring devshard session with non-canonical escrow id", inferenceTypes.System,
-				"escrow_id", active.EscrowID, "error", err)
-			if markErr := m.store.MarkSettled(active.EscrowID); markErr != nil {
+				"escrow_id", sess.EscrowID, "error", err)
+			if markErr := m.store.MarkSettled(sess.EscrowID); markErr != nil {
 				logging.Error("failed to retire non-canonical devshard session", inferenceTypes.System,
-					"escrow_id", active.EscrowID, "error", markErr)
+					"escrow_id", sess.EscrowID, "error", markErr)
 			}
 			continue
 		}
@@ -580,27 +932,101 @@ func (m *HostManager) RecoverSessions() error {
 		// and serve unpayable work until the following restart. Durable state is
 		// the only way to make the decision stick, and a node that lies about
 		// Settled is already outside the trust model create() relies on.
-		if m.chainReportsSettled(active.EscrowID, checkDeadline) {
-			if err := m.HandleSettlementFinalized(active.EscrowID); err != nil {
+		if m.chainReportsSettled(sess.EscrowID, checkDeadline) {
+			if err := m.HandleSettlementFinalized(sess.EscrowID); err != nil {
 				logging.Error("failed to finalize chain-settled escrow during recovery", inferenceTypes.System,
-					"escrow_id", active.EscrowID, "error", err)
+					"escrow_id", sess.EscrowID, "error", err)
 			} else {
 				logging.Info("skipping recovery of chain-settled escrow", inferenceTypes.System,
-					"escrow_id", active.EscrowID)
+					"escrow_id", sess.EscrowID)
 			}
 			continue
 		}
-		if _, err := m.recoverAndStoreSession(active.EscrowID); err != nil {
-			if errors.Is(err, storage.ErrSessionVersionConflict) {
-				logging.Info("skipping devshard session with foreign version", inferenceTypes.System,
-					"escrow_id", active.EscrowID, "error", err)
-				continue
-			}
-			logging.Error("skipping corrupt session", inferenceTypes.System,
-				"escrow_id", active.EscrowID, "error", err)
-		}
+		filtered = append(filtered, sess)
+	}
+	active = filtered
+	counts := &m.recoveryCounts
+	counts.total.Store(int64(len(active)))
+	counts.recovered.Store(0)
+	counts.failed.Store(0)
+	counts.versionSkipped.Store(0)
+	counts.cancelled.Store(0)
+	m.publishRecoveryProgress()
+
+	if len(active) == 0 {
+		logging.Info("completed devshard session recovery", inferenceTypes.System,
+			"session_count", 0, "worker_count", 0, "recovered_count", 0, "failed_count", 0,
+			"version_skipped_count", 0, "cancelled_count", 0, "duration", time.Since(startedAt))
+		return nil
 	}
 
+	workers := recoverSessionsConcurrency
+	if len(active) < workers {
+		workers = len(active)
+	}
+	logging.Info("starting devshard session recovery", inferenceTypes.System,
+		"session_count", len(active), "worker_count", workers)
+
+	queue := newRecoveryQueue(active, m.recoveryGate.firstRemainingRequested)
+	var wg sync.WaitGroup
+	var prioritizedCount atomic.Int64
+	for i := 0; i < workers; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				sess, ok := queue.next()
+				if !ok {
+					return
+				}
+				if ctx.Err() != nil {
+					counts.cancelled.Add(1)
+					m.publishRecoveryProgress()
+					continue
+				}
+				// A session a caller already asked for runs immediately; a
+				// cold one yields until no request is in flight.
+				if m.recoveryGate.isRequested(sess.EscrowID) {
+					prioritizedCount.Add(1)
+				} else {
+					m.recoveryGate.waitTurn(sess.EscrowID)
+				}
+				sessionStartedAt := time.Now()
+				if _, err := m.recoverAndStoreSession(sess.EscrowID); err != nil {
+					if errors.Is(err, storage.ErrSessionVersionConflict) {
+						counts.versionSkipped.Add(1)
+						m.publishRecoveryProgress()
+						logging.Info("skipping devshard session with foreign version", inferenceTypes.System,
+							"escrow_id", sess.EscrowID, "epoch_id", sess.EpochID,
+							"host_version", m.boundVersion,
+							"duration", time.Since(sessionStartedAt), "error", err)
+						continue
+					}
+					counts.failed.Add(1)
+					m.publishRecoveryProgress()
+					logging.Error("skipping corrupt session", inferenceTypes.System,
+						"escrow_id", sess.EscrowID, "epoch_id", sess.EpochID,
+						"duration", time.Since(sessionStartedAt), "error", err)
+					continue
+				}
+				counts.recovered.Add(1)
+				m.publishRecoveryProgress()
+				logging.Info("recovered devshard session", inferenceTypes.System,
+					"escrow_id", sess.EscrowID, "epoch_id", sess.EpochID,
+					"duration", time.Since(sessionStartedAt))
+			}
+		}()
+	}
+	wg.Wait()
+
+	logging.Info("completed devshard session recovery", inferenceTypes.System,
+		"session_count", len(active), "worker_count", workers,
+		"recovered_count", counts.recovered.Load(),
+		"failed_count", counts.failed.Load(),
+		"version_skipped_count", counts.versionSkipped.Load(),
+		"cancelled_count", counts.cancelled.Load(),
+		"prioritized_count", prioritizedCount.Load(),
+		"duration", time.Since(startedAt))
 	return nil
 }
 
@@ -632,7 +1058,7 @@ func (m *HostManager) recoverAndStoreSession(escrowID string) (*transport.Server
 		if srv, ok := m.existingServer(escrowID); ok {
 			return srv, nil
 		}
-		srv, err := m.recoverStoredSession(escrowID)
+		srv, obsRepair, err := m.recoverStoredSession(escrowID)
 		if err != nil {
 			return nil, err
 		}
@@ -640,6 +1066,7 @@ func (m *HostManager) recoverAndStoreSession(escrowID string) (*transport.Server
 		if storeErr != nil {
 			return nil, storeErr
 		}
+		m.startObsRepair(escrowID, obsRepair)
 		return installed, nil
 	})
 	if err != nil {
@@ -648,75 +1075,158 @@ func (m *HostManager) recoverAndStoreSession(escrowID string) (*transport.Server
 	return v.(*transport.Server), nil
 }
 
-// recoverStoredSession replays a single session from storage.
-func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, error) {
+// recoverStoredSession rebuilds a single session from storage. A host snapshot
+// at nonce N skips replaying diffs 1..N; only N+1..latest are applied. Decode
+// or load failures fall back to a full journal replay (v3 HostManager behavior).
+// A non-nil obsRepairJob means the caller should hand it to startObsRepair once
+// the session is published.
+func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server, obsRepair *obsRepairJob, err error) {
 	if err := devshardpkg.ValidateEscrowID(escrowID); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	meta, err := m.store.GetSessionMeta(escrowID)
 	if err != nil {
-		return nil, fmt.Errorf("get session meta: %w", err)
+		return nil, nil, fmt.Errorf("get session meta: %w", err)
 	}
 	if meta.Status != "active" {
-		return nil, fmt.Errorf("%w: escrow %s status %q", storage.ErrSessionNotActive, escrowID, meta.Status)
+		return nil, nil, fmt.Errorf("%w: escrow %s status %q", storage.ErrSessionNotActive, escrowID, meta.Status)
 	}
 	if meta.Version != "" && meta.Version != m.boundVersion {
-		return nil, fmt.Errorf("%w: stored %s, host %s", storage.ErrSessionVersionConflict, meta.Version, m.boundVersion)
+		return nil, nil, fmt.Errorf("%w: stored %s, host %s", storage.ErrSessionVersionConflict, meta.Version, m.boundVersion)
 	}
 	recoveredVersion := meta.Version
 	if recoveredVersion == "" {
 		recoveredVersion = m.boundVersion
 	}
-	sm, err := state.NewStateMachine(
-		escrowID, meta.Config, meta.Group, meta.InitialBalance,
-		meta.CreatorAddr, m.verifier, m.store,
-		m.sessionSMOpts(state.WithWarmKeyResolver(m.bridge.VerifyWarmKey), state.WithVersion(recoveredVersion))...,
-	)
+	newStateMachine := func() (*state.StateMachine, error) {
+		return state.NewStateMachine(
+			escrowID, meta.Config, meta.Group, meta.InitialBalance,
+			meta.CreatorAddr, m.verifier, m.store,
+			m.sessionSMOpts(state.WithWarmKeyResolver(m.bridge.VerifyWarmKey), state.WithVersion(recoveredVersion))...,
+		)
+	}
+	sm, err := newStateMachine()
 	if err != nil {
-		return nil, fmt.Errorf("create state machine: %w", err)
+		return nil, nil, fmt.Errorf("create state machine: %w", err)
 	}
 
+	replayFrom := uint64(1)
 	if meta.LatestNonce > 0 {
-		records, err := m.store.GetDiffs(escrowID, 1, meta.LatestNonce)
-		if err != nil {
-			return nil, fmt.Errorf("get diffs: %w", err)
+		snapNonce, snapData, snapErr := m.store.LoadSnapshot(escrowID)
+		if snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce {
+			snapState, committedEntries, sealedNonces, floorProto, decodeErr := host.UnmarshalStateSnapshotWithCommitted(snapData)
+			if decodeErr != nil {
+				logging.Error("failed to decode devshard snapshot, replaying full history", inferenceTypes.System,
+					"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", decodeErr)
+			} else {
+				floor, floorErr := heightsync.FloorIndexFromProto(
+					heightsync.FloorConfig{}, floorProto)
+				if floorErr != nil {
+					logging.Error("devshard snapshot floor blob rejected, rebuilding from diffs", inferenceTypes.System,
+						"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", floorErr)
+					floor = nil
+				}
+				if restoreErr := sm.RestoreStateWithFloor(snapState, floor); restoreErr != nil {
+					logging.Error("failed to restore snapshot state, replaying full history", inferenceTypes.System,
+						"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", restoreErr)
+					if sm, err = newStateMachine(); err != nil {
+						return nil, nil, fmt.Errorf("recreate state machine after snapshot restore failure: %w", err)
+					}
+				} else {
+					sm.RestoreCommittedEntries(committedEntries)
+					sm.RestoreSealedNonces(sealedNonces)
+					if verifyErr := verifySnapshotRoot(m.store, sm, escrowID, snapNonce); verifyErr != nil {
+						// Restore already mutated sm, so the rejected state has to
+						// be thrown away rather than replayed on top of.
+						logging.Error("devshard snapshot failed root check, replaying full history", inferenceTypes.System,
+							"escrow_id", escrowID, "snapshot_nonce", snapNonce, "error", verifyErr)
+						if sm, err = newStateMachine(); err != nil {
+							return nil, nil, fmt.Errorf("recreate state machine after snapshot reject: %w", err)
+						}
+					} else {
+						replayFrom = snapNonce + 1
+						logging.Info("restored devshard snapshot", inferenceTypes.System,
+							"escrow_id", escrowID, "snapshot_nonce", snapNonce, "latest_nonce", meta.LatestNonce)
+					}
+				}
+			}
+		} else if snapErr != nil && !errors.Is(snapErr, storage.ErrSnapshotNotFound) {
+			logging.Error("failed to load devshard snapshot, replaying full history", inferenceTypes.System,
+				"escrow_id", escrowID, "error", snapErr)
 		}
 
-		for _, rec := range records {
-			sm.InjectWarmKeys(rec.WarmKeyDelta)
-			root, applyErr := sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
-			if applyErr != nil {
-				return nil, fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
+		var records []types.DiffRecord
+		if replayFrom <= meta.LatestNonce {
+			records, err = m.store.GetDiffs(escrowID, replayFrom, meta.LatestNonce)
+			if err != nil {
+				return nil, nil, fmt.Errorf("get diffs: %w", err)
 			}
-			if len(rec.StateHash) > 0 && len(root) > 0 {
-				if !bytes.Equal(root, rec.StateHash) {
-					return nil, fmt.Errorf("state root mismatch at nonce %d", rec.Nonce)
+			for _, rec := range records {
+				sm.InjectWarmKeys(rec.WarmKeyDelta)
+				root, applyErr := sm.ApplyLocalPersisted(rec.Nonce, rec.Txs)
+				if applyErr != nil {
+					return nil, nil, fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
+				}
+				if len(rec.StateHash) > 0 && len(root) > 0 {
+					if !bytes.Equal(root, rec.StateHash) {
+						return nil, nil, fmt.Errorf("state root mismatch at nonce %d", rec.Nonce)
+					}
 				}
 			}
 		}
 
-		if err := storage.RebuildValidationObsFromDiffs(
-			m.store,
-			escrowID,
-			records,
-			storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
-		); err != nil {
-			return nil, fmt.Errorf("rebuild validation obs: %w", err)
+		// Validation obs is written by the live apply path and is durable, so a
+		// restart already has the rows for every nonce a snapshot covers.
+		// Only a full journal replay needs a rebuild, because ApplyLocal
+		// records no obs and the clear-then-replay is the self-heal for
+		// batches the live path dropped under backpressure. Re-recording a
+		// partial range is not an option: the drain removes the live row that
+		// RecordValidationsAppliedOnce dedups against, so a tail replayed
+		// twice would double count.
+		//
+		// Hand it to the gate instead of running it here: it is the expensive
+		// half of recovery (a write transaction per historical seal) and it
+		// would otherwise keep the caller of a cold bind waiting. Reuse the
+		// journal already in hand, whose last nonce the seal set matches;
+		// seals landing later reach the rebuild through the gate queue.
+		if replayFrom == 1 {
+			obsRepair = &obsRepairJob{
+				records: records,
+				sealed:  storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
+				sm:      sm,
+			}
+		} else {
+			fillStarted := time.Now()
+			inserted, fillErr := sm.FillSealedInferenceIndexGaps()
+			if fillErr != nil {
+				return nil, nil, fmt.Errorf("fill sealed inference index: %w", fillErr)
+			}
+			logging.Info("filled sealed inference index gaps", inferenceTypes.System,
+				"escrow_id", escrowID, "inserted", inserted,
+				"sealed_ids", sm.SealedNonceCount(),
+				"duration", time.Since(fillStarted))
+		}
+
+		if replayFrom == 1 || uint64(len(records)) >= host.SnapshotInterval {
+			if saveErr := saveHostSnapshot(m.store, sm, escrowID, meta.LatestNonce); saveErr != nil {
+				logging.Error("failed to save devshard recovery snapshot", inferenceTypes.System,
+					"escrow_id", escrowID, "nonce", meta.LatestNonce, "error", saveErr)
+			}
 		}
 	}
 
 	h, err := host.NewHost(sm, m.signer, m.engine, escrowID, meta.Group, nil, m.hostOpts(meta.EpochID)...)
 	if err != nil {
-		return nil, fmt.Errorf("create host: %w", err)
+		return nil, nil, fmt.Errorf("create host: %w", err)
 	}
 
 	srv, err := transport.NewServer(h, m.store, m.verifier, meta.CreatorAddr, m.transportServerOpts()...)
 	if err != nil {
 		h.Close()
-		return nil, fmt.Errorf("create server: %w", err)
+		return nil, nil, fmt.Errorf("create server: %w", err)
 	}
 
-	return srv, nil
+	return srv, obsRepair, nil
 }
 
 // Register mounts devshard session routes on the given echo group.
@@ -1031,6 +1541,99 @@ func (m *HostManager) hostSnapshot(escrowID string) (hostSnap, bool) {
 		return nil, false
 	}
 	return srv.Host(), true
+}
+
+// verifySnapshotRoot checks a restored snapshot against the state root the
+// journal recorded at the snapshot nonce. Diff replay verifies every nonce this
+// way; without it the snapshot path would trust the blob outright, which
+// matters because the store can be shared between hosts and a snapshot is not
+// self-authenticating. Journals pruned past the snapshot, and records written
+// before state_hash existed, carry no root and cannot be checked.
+func verifySnapshotRoot(store storage.Storage, sm *state.StateMachine, escrowID string, snapNonce uint64) error {
+	records, err := store.GetDiffs(escrowID, snapNonce, snapNonce)
+	if err != nil {
+		return fmt.Errorf("load diff at snapshot nonce: %w", err)
+	}
+	if len(records) == 0 || len(records[0].StateHash) == 0 {
+		return nil
+	}
+	want := records[0].StateHash
+	got, err := sm.ComputeStateRoot()
+	if err != nil {
+		return fmt.Errorf("compute restored state root: %w", err)
+	}
+	if !bytes.Equal(got, want) {
+		return fmt.Errorf("restored root %x does not match journal root %x at nonce %d", got, want, snapNonce)
+	}
+	return nil
+}
+
+// obsRepairJob carries the inputs for a deferred validation-obs rebuild: the
+// journal the recovery already read, and the seal set as of that journal's last
+// nonce. Anything the live path writes while the rebuild runs is queued by the
+// gate and applied after it, so the two never overlap.
+type obsRepairJob struct {
+	records []types.DiffRecord
+	sealed  []uint64
+	sm      *state.StateMachine
+}
+
+// startObsRepair rebuilds validation obs and the sealed-inference index for a
+// freshly published full-replay session in the background. The gate queues the
+// session's obs writes for the duration, so the rebuild gets exclusive access
+// without holding up the apply path. Failures leave the counters stale, which
+// is why nothing outside the stats API may depend on them.
+func (m *HostManager) startObsRepair(escrowID string, job *obsRepairJob) {
+	if job == nil || m.obsGate == nil {
+		return
+	}
+	m.obsRepairWG.Add(1)
+	m.recoveryCounts.repairs.Add(1)
+	m.publishRecoveryProgress()
+	go func() {
+		defer m.obsRepairWG.Done()
+		defer func() {
+			m.recoveryCounts.repairs.Add(-1)
+			m.publishRecoveryProgress()
+		}()
+		startedAt := time.Now()
+		err := m.obsGate.RepairValidationObs(escrowID, func(inner storage.Storage) error {
+			if err := storage.RebuildValidationObsFromDiffs(inner, escrowID, job.records, job.sealed); err != nil {
+				return err
+			}
+			if job.sm == nil {
+				return nil
+			}
+			return job.sm.RebuildSealedInferenceIndexFromDiffs(inner, job.records)
+		})
+		if err != nil {
+			logging.Warn("background validation obs rebuild failed", inferenceTypes.System,
+				"escrow_id", escrowID, "duration", time.Since(startedAt), "error", err)
+			return
+		}
+		logging.Info("rebuilt validation obs", inferenceTypes.System,
+			"escrow_id", escrowID, "diffs", len(job.records),
+			"sealed_inferences", len(job.sealed), "duration", time.Since(startedAt))
+	}()
+}
+
+// WaitRecoveryRepairs blocks until background recovery rebuilds finish
+// (validation obs and the sealed-inference index). Shutdown must call it: a
+// rebuild interrupted after its clear leaves those rows empty, and recovery
+// will not retry once a snapshot exists.
+func (m *HostManager) WaitRecoveryRepairs() {
+	m.obsRepairWG.Wait()
+}
+
+func saveHostSnapshot(store storage.Storage, sm *state.StateMachine, escrowID string, nonce uint64) error {
+	data, err := host.MarshalStateSnapshotWithCommitted(sm.ExportState(), sm.ExportCommittedEntries(), sm.ExportSealedNonces(), sm.ExportHeightSyncFloor())
+	if err != nil {
+		return fmt.Errorf("marshal snapshot: %w", err)
+	}
+	if err := store.SaveSnapshot(escrowID, nonce, data); err != nil {
+		return fmt.Errorf("save snapshot: %w", err)
+	}
+	return nil
 }
 
 func (m *HostManager) hostOpts(epochID uint64) []host.HostOption {

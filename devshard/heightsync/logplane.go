@@ -114,23 +114,24 @@ func CheckDiffLogPlane(ctx context.Context, in LogPlaneInput, st LogPlaneState) 
 		logLogPlane(in.Nonce, 0, "L3", "INVALID", err.Error(), "escrow", st.EscrowID)
 		return out.invalid(err, "ack_causality")
 	}
-	if err := checkL0(in.Nonce, in.Txs, st); err != nil {
+	if err := checkL0(in.Nonce, in.Txs, st, &out); err != nil {
 		return out.invalid(err, "height_regression")
 	}
 	if err := checkL0b(in.Nonce, in.Txs, st); err != nil {
 		return out.invalid(err, "height_regression")
 	}
 
-	checkL7(hbs, acks, st.Tracker, in.Nonce, &out)
+	idx := newTurnIndex(hbs, st)
+	checkL7(hbs, acks, idx, st.Tracker, in.Nonce, &out)
 
 	if in.Floor == nil {
 		in.Floor = st.Floor
 	}
 	if in.Sec != nil {
-		checkL4(in, hbs, acks, &out)
-		checkL5a(in, hbs, acks, st.Cfg, &out)
+		checkL4(in, hbs, acks, idx, &out)
+		checkL5a(in, hbs, acks, idx, st.Cfg, &out)
 	}
-	checkL6(ctx, in, hbs, acks, &out)
+	checkL6(ctx, in, hbs, acks, idx, &out)
 
 	if out.Err == nil {
 		logLogPlane(in.Nonce, 0, "ok", "OK", "")
@@ -147,8 +148,11 @@ func CheckEnvelopeBinding(in LogPlaneInput, cfg HeartbeatConfig) []AttributableM
 	cfg = cfg.withDefaults()
 	var out LogPlaneResult
 	hbs, acks := collectLogPlaneTxs(in.Nonce, in.Txs)
-	checkL4(in, hbs, acks, &out)
-	checkL5a(in, hbs, acks, cfg, &out)
+	// Transport edge: no fold is available, so marks carry the turn start only
+	// when the heartbeat opening it is in this diff.
+	idx := newTurnIndex(hbs, LogPlaneState{Cfg: cfg})
+	checkL4(in, hbs, acks, idx, &out)
+	checkL5a(in, hbs, acks, idx, cfg, &out)
 	return out.Marks
 }
 
@@ -179,20 +183,14 @@ func collectLogPlaneTxs(diffNonce uint64, txs []*types.DevshardTx) ([]heartbeatR
 	return hbs, acks
 }
 
+// checkL1 frames heartbeats and acks. It has no turn-id rule: a turn is named by
+// its span-start nonce, which the log assigns, so there is no sequencer-supplied
+// counter left to bound. The stay-or-next rule this once needed existed only to
+// stop a heartbeat naming turn 2^60 and pruning the retain window.
 func checkL1(nonce uint64, hbs []heartbeatRef, acks []ackRef, st LogPlaneState) error {
 	_ = nonce
-	prevTurn := uint64(0)
-	if st.Tracker != nil {
-		prevTurn = st.Tracker.MaxTurnSeq()
-	}
 	for _, ref := range hbs {
 		hb := ref.hb
-		if hb.TurnSeq == 0 {
-			return fmt.Errorf("%w: turn_seq 0", ErrBadFraming)
-		}
-		if prevTurn > 0 && hb.TurnSeq < prevTurn {
-			return fmt.Errorf("%w: turn_seq %d < %d", ErrBadFraming, hb.TurnSeq, prevTurn)
-		}
 		if hb.SlotsNum != st.SlotsNum {
 			return fmt.Errorf("%w: slots_num %d != group %d", ErrBadFraming, hb.SlotsNum, st.SlotsNum)
 		}
@@ -205,8 +203,8 @@ func checkL1(nonce uint64, hbs []heartbeatRef, acks []ackRef, st LogPlaneState) 
 	}
 	for _, ref := range acks {
 		ack := ref.ack
-		if ack.TurnSeq == 0 {
-			return fmt.Errorf("%w: ack turn_seq 0", ErrBadFraming)
+		if ack.RefNonce == 0 {
+			return fmt.Errorf("%w: ack ref_nonce 0", ErrBadFraming)
 		}
 		if uint64(ack.SlotId) >= st.SlotsNum {
 			return fmt.Errorf("%w: slot %d >= %d", ErrBadFraming, ack.SlotId, st.SlotsNum)
@@ -258,46 +256,55 @@ func checkL2(acks []ackRef, st LogPlaneState) error {
 	return nil
 }
 
+// checkL3 is ack causality: ref_nonce must name a heartbeat, in this diff or
+// already folded. That is the whole rule now. It used to also require the ack's
+// turn_seq to equal the turn of its ref_nonce, which was a check on a field the
+// sender derived from ref_nonce and the verifier re-derived the same way; with
+// the field gone there is no second opinion to disagree with.
 func checkL3(hbs []heartbeatRef, acks []ackRef, st LogPlaneState) error {
-	inDiff := make(map[uint64]uint64, len(hbs))
+	inDiff := make(map[uint64]struct{}, len(hbs))
 	for _, ref := range hbs {
-		// A Diff may carry more than one heartbeat (batched span). Keep the
-		// first so an ack of that heartbeat's nonce still resolves.
-		if _, exists := inDiff[ref.nonce]; exists {
-			continue
-		}
-		inDiff[ref.nonce] = ref.hb.TurnSeq
+		inDiff[ref.nonce] = struct{}{}
 	}
 	for _, ref := range acks {
 		ack := ref.ack
-		turn, ok := inDiff[ack.RefNonce]
-		if !ok && st.Tracker != nil {
-			turn, ok = st.Tracker.HeartbeatTurn(ack.RefNonce)
+		if _, ok := inDiff[ack.RefNonce]; ok {
+			continue
 		}
-		if !ok {
-			return fmt.Errorf("%w: ref_nonce %d has no heartbeat", ErrAckCausality, ack.RefNonce)
+		if st.Tracker != nil {
+			if _, ok := st.Tracker.HeartbeatTurn(ack.RefNonce); ok {
+				continue
+			}
 		}
-		if turn != ack.TurnSeq {
-			return fmt.Errorf("%w: ref_nonce %d turn %d != ack turn %d", ErrAckCausality, ack.RefNonce, turn, ack.TurnSeq)
-		}
+		return fmt.Errorf("%w: ref_nonce %d has no heartbeat", ErrAckCausality, ack.RefNonce)
 	}
 	return nil
 }
 
 // checkL0 enforces reference-height monotonicity against the floor the stamp's
-// *producer* could have known.
+// *producer* could have known, and pins sequencer-composed stamps to F(m)
+// exactly.
 //
 // Scope is every Diff-resident height, heartbeats and acks included: the log has
 // one height semantics, not two (spec §14). Basis is F(producing nonce), not
 // F(landing nonce) — see RefProducingNonce for how each message type names it.
 //
-// An honest producer can always satisfy this — it stamps max(own_tip, F(m)) or
-// omits the stamp entirely — so a violation is real misbehaviour and INVALID
-// carries no false positives. Both branches stay available however the floor
-// moved, because the floor only ever rises to a height the log already holds:
-// how far it may rise on one signer's word is FloorIndex's business, not this
-// check's.
-func checkL0(nonce uint64, txs []*types.DevshardTx, st LogPlaneState) error {
+// An honest producer can always satisfy the lower bound — it stamps
+// max(own_tip, F(m)) or omits — so a violation is real misbehaviour and INVALID
+// carries no false positives.
+//
+// The upper bound applies to sequencer stamps only (heartbeat / start). The user
+// holds no protocol oracle, so its only truthful stamp is the floor a host
+// already seeded (§10.3.1): anything above F(m) is a number it made up.
+// Recording it is a MARK, not an INVALID — rejecting the diff would let one
+// stale replica's lower floor stall an escrow, and the claim is inert anyway
+// (rule 3 keeps it out of F, and the turn clock reads host stamps only). The
+// error-level log line is today's whole signal; §18 turns it into a dispute.
+//
+// Host stamps have no upper bound here. A host's first-party reading is what
+// establishes logical time, and a fabricated one is caught where it enters —
+// envelope admission demands Strong proof past |Δ| > D (§8/§15).
+func checkL0(nonce uint64, txs []*types.DevshardTx, st LogPlaneState, out *LogPlaneResult) error {
 	if st.Floor == nil {
 		return nil
 	}
@@ -329,6 +336,23 @@ func checkL0(nonce uint64, txs []*types.DevshardTx, st LogPlaneState) error {
 				LogFieldProducingNonce, m,
 			)
 			return err
+		}
+		if SequencerComposed(tx) && h > floor {
+			detail := fmt.Sprintf("%s height %d > floor %d as of nonce %d",
+				refLegName(tx), h, floor, m)
+			out.mark(AttributableMark{
+				Kind:   MarkHeightUnbacked,
+				Nonce:  nonce,
+				Detail: detail,
+			})
+			logLogPlaneMisbehaviour(nonce, 0, "L0", string(MarkHeightUnbacked),
+				"escrow", st.EscrowID,
+				LogFieldDetail, detail,
+				LogFieldLeg, refLegName(tx),
+				LogFieldHeight, h,
+				LogFieldFloor, floor,
+				LogFieldProducingNonce, m,
+			)
 		}
 	}
 	return nil
@@ -421,16 +445,78 @@ func inferenceStamp(msg any) (uint64, bool) {
 	return s.GetObservedHeight(), true
 }
 
-func checkL7(hbs []heartbeatRef, acks []ackRef, tracker *TurnTracker, nonce uint64, out *LogPlaneResult) {
+// turnIndex resolves the turn a heartbeat or ack in this diff belongs to, as a
+// span-start nonce. Nothing on the wire names a turn, so every check that wants
+// a turn id for a mark asks here.
+//
+// The walk continues the fold the tracker will perform rather than reading
+// committed state per message: a batched span puts two heartbeats in one diff,
+// and the second joins the turn the first opened, which is not yet visible in
+// the tracker.
+type turnIndex struct {
+	byHeartbeat map[uint64]uint64 // heartbeat nonce → turn start
+	tracker     *TurnTracker
+}
+
+func newTurnIndex(hbs []heartbeatRef, st LogPlaneState) turnIndex {
+	idx := turnIndex{
+		byHeartbeat: make(map[uint64]uint64, len(hbs)),
+		tracker:     st.Tracker,
+	}
+	var openStart, openEnd uint64
+	if st.Tracker != nil {
+		if rec := st.Tracker.Latest(); rec != nil {
+			openStart, openEnd = rec.RequestSpan[0], rec.RequestSpan[1]
+		}
+	}
+	for _, ref := range hbs {
+		if openStart != 0 && ref.nonce >= openStart && ref.nonce <= openEnd {
+			idx.byHeartbeat[ref.nonce] = openStart
+			continue
+		}
+		slots := ref.hb.SlotsNum
+		if slots == 0 {
+			slots = st.SlotsNum
+		}
+		if slots == 0 {
+			slots = 1
+		}
+		openStart, openEnd = ref.nonce, addSat(ref.nonce, slots-1)
+		idx.byHeartbeat[ref.nonce] = openStart
+	}
+	return idx
+}
+
+// forHeartbeat is the turn of a heartbeat landing at nonce in this diff.
+func (idx turnIndex) forHeartbeat(nonce uint64) uint64 {
+	return idx.byHeartbeat[nonce]
+}
+
+// forAck is the turn named by an ack's ref_nonce, from this diff or the fold.
+// L3 has already rejected an ack whose ref_nonce names no heartbeat.
+func (idx turnIndex) forAck(refNonce uint64) uint64 {
+	if start, ok := idx.byHeartbeat[refNonce]; ok {
+		return start
+	}
+	if idx.tracker != nil {
+		if start, ok := idx.tracker.HeartbeatTurn(refNonce); ok {
+			return start
+		}
+	}
+	return 0
+}
+
+func checkL7(hbs []heartbeatRef, acks []ackRef, idx turnIndex, tracker *TurnTracker, nonce uint64, out *LogPlaneResult) {
 	acksByTurn := make(map[uint64]map[uint32]AckRecord, len(acks))
 	for _, ref := range acks {
 		if ref.ack == nil {
 			continue
 		}
-		m := acksByTurn[ref.ack.TurnSeq]
+		turn := idx.forAck(ref.ack.RefNonce)
+		m := acksByTurn[turn]
 		if m == nil {
 			m = make(map[uint32]AckRecord)
-			acksByTurn[ref.ack.TurnSeq] = m
+			acksByTurn[turn] = m
 		}
 		m[ref.ack.SlotId] = AckRecord{
 			Nonce:     nonce,
@@ -443,22 +529,24 @@ func checkL7(hbs []heartbeatRef, acks []ackRef, tracker *TurnTracker, nonce uint
 		if len(ref.hb.SyncVector) == 0 {
 			continue
 		}
+		turn := idx.forHeartbeat(ref.nonce)
+		prevStart := tracker.TurnBefore(turn)
 		logAcks := map[uint32]AckRecord{}
-		if prev := tracker.Record(ref.hb.TurnSeq - 1); prev != nil {
+		if prev := tracker.Record(prevStart); prev != nil {
 			logAcks = prev.Acks
 		}
-		if extra := acksByTurn[ref.hb.TurnSeq-1]; extra != nil {
+		if extra := acksByTurn[prevStart]; extra != nil {
 			for slot, a := range extra {
 				logAcks[slot] = a
 			}
 		}
 		for _, c := range CheckVectorAgainstLog(ref.hb.SyncVector, logAcks) {
 			out.mark(AttributableMark{
-				Kind:    MarkVectorContradiction,
-				Slot:    c.Slot,
-				TurnSeq: ref.hb.TurnSeq,
-				Nonce:   nonce,
-				Detail:  fmt.Sprintf("ACKED nonce=%d h=%d missing from log", c.ClaimedNonce, c.ClaimedH),
+				Kind:      MarkVectorContradiction,
+				Slot:      c.Slot,
+				TurnStart: turn,
+				Nonce:     nonce,
+				Detail:    fmt.Sprintf("ACKED nonce=%d h=%d missing from log", c.ClaimedNonce, c.ClaimedH),
 			})
 			logLogPlane(nonce, c.Slot, "L7", "MARK", "vector_contradiction")
 		}
@@ -483,7 +571,7 @@ func checkL7(hbs []heartbeatRef, acks []ackRef, tracker *TurnTracker, nonce uint
 // understates its tip in the anchor *or* overstates its reference height in the
 // log. Without a floor view (transport-edge callers) it degrades to the
 // floor-free half, ack >= anchor, which is all that is checkable there.
-func checkL4(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, out *LogPlaneResult) {
+func checkL4(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, idx turnIndex, out *LogPlaneResult) {
 	sec := in.Sec
 	if !IsAnchorSection(sec) {
 		return
@@ -524,12 +612,12 @@ func checkL4(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, out *LogPlaneR
 			}
 			blob, _ := CanonicalOriginBytes(sec)
 			out.mark(AttributableMark{
-				Kind:    MarkDisputeOriginator,
-				Slot:    ref.ack.SlotId,
-				TurnSeq: ref.ack.TurnSeq,
-				Nonce:   in.Nonce,
-				Blob:    blob,
-				Sig:     append([]byte(nil), sec.SenderSignature...),
+				Kind:      MarkDisputeOriginator,
+				Slot:      ref.ack.SlotId,
+				TurnStart: idx.forAck(ref.ack.RefNonce),
+				Nonce:     in.Nonce,
+				Blob:      blob,
+				Sig:       append([]byte(nil), sec.SenderSignature...),
 				Detail: fmt.Sprintf("ack height %d != max(response section %d, floor) = %d",
 					ref.ack.ObservedHeight, envH, want),
 			})
@@ -569,7 +657,7 @@ func checkL4(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, out *LogPlaneR
 		}
 		out.mark(AttributableMark{
 			Kind:      MarkDisputeCarrier,
-			TurnSeq:   ref.hb.TurnSeq,
+			TurnStart: idx.forHeartbeat(ref.nonce),
 			Nonce:     in.Nonce,
 			Blob:      blob,
 			Sig:       sig,
@@ -582,7 +670,7 @@ func checkL4(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, out *LogPlaneR
 	}
 }
 
-func checkL5a(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, cfg HeartbeatConfig, out *LogPlaneResult) {
+func checkL5a(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, idx turnIndex, cfg HeartbeatConfig, out *LogPlaneResult) {
 	if in.LocalAligned == 0 {
 		return
 	}
@@ -595,19 +683,19 @@ func checkL5a(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, cfg Heartbeat
 			return
 		}
 		out.mark(AttributableMark{
-			Kind:    MarkAdmissionDelta,
-			Slot:    slot,
-			TurnSeq: turn,
-			Nonce:   in.Nonce,
-			Detail:  fmt.Sprintf("%s height %d |Δ| vs local %d > D=%d", who, h, in.LocalAligned, d),
+			Kind:      MarkAdmissionDelta,
+			Slot:      slot,
+			TurnStart: turn,
+			Nonce:     in.Nonce,
+			Detail:    fmt.Sprintf("%s height %d |Δ| vs local %d > D=%d", who, h, in.LocalAligned, d),
 		})
 		logLogPlane(in.Nonce, slot, "L5a", "MARK", "l5a_admission")
 	}
 	for _, ref := range hbs {
-		check(ref.hb.ObservedHeight, ref.hb.ObservedBlockHash, 0, ref.hb.TurnSeq, "heartbeat")
+		check(ref.hb.ObservedHeight, ref.hb.ObservedBlockHash, 0, idx.forHeartbeat(ref.nonce), "heartbeat")
 	}
 	for _, ref := range acks {
-		check(ref.ack.ObservedHeight, ref.ack.ObservedBlockHash, ref.ack.SlotId, ref.ack.TurnSeq, "ack")
+		check(ref.ack.ObservedHeight, ref.ack.ObservedBlockHash, ref.ack.SlotId, idx.forAck(ref.ack.RefNonce), "ack")
 	}
 }
 
@@ -620,7 +708,7 @@ func checkL5a(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, cfg Heartbeat
 // two exactly — a pair identical to F(m) is the floor being echoed — and the
 // mark then names the signer that established that floor. Blame staying with the
 // originator is what makes lifting to the floor safe for the party lifting.
-func checkL6(ctx context.Context, in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, out *LogPlaneResult) {
+func checkL6(ctx context.Context, in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, idx turnIndex, out *LogPlaneResult) {
 	if in.Oracle == nil {
 		return
 	}
@@ -642,12 +730,12 @@ func checkL6(ctx context.Context, in LogPlaneInput, hbs []heartbeatRef, acks []a
 			return
 		}
 		m := AttributableMark{
-			Kind:    MarkDeferredFail,
-			Slot:    slot,
-			TurnSeq: turn,
-			Nonce:   in.Nonce,
-			Blob:    append([]byte(nil), hash...),
-			Detail:  fmt.Sprintf("hash at height %d != oracle %s", h, hex.EncodeToString(hdr.BlockHash)),
+			Kind:      MarkDeferredFail,
+			Slot:      slot,
+			TurnStart: turn,
+			Nonce:     in.Nonce,
+			Blob:      append([]byte(nil), hash...),
+			Detail:    fmt.Sprintf("hash at height %d != oracle %s", h, hex.EncodeToString(hdr.BlockHash)),
 		}
 		if origin, ok := carriedFrom(in.Floor, producedAt, h, hash); ok {
 			m.Origin = FloorAuthorLabel(origin.Author)
@@ -660,11 +748,11 @@ func checkL6(ctx context.Context, in LogPlaneInput, hbs []heartbeatRef, acks []a
 		logLogPlane(in.Nonce, slot, "L6", "DEFERRED_FAIL", m.Detail)
 	}
 	for _, ref := range hbs {
-		check(ref.hb.ObservedHeight, ref.hb.ObservedBlockHash, 0, ref.hb.TurnSeq, in.Nonce)
+		check(ref.hb.ObservedHeight, ref.hb.ObservedBlockHash, 0, idx.forHeartbeat(ref.nonce), in.Nonce)
 	}
 	for _, ref := range acks {
-		check(ref.ack.ObservedHeight, ref.ack.ObservedBlockHash, ref.ack.SlotId, ref.ack.TurnSeq,
-			ref.ack.RefNonce+1)
+		check(ref.ack.ObservedHeight, ref.ack.ObservedBlockHash, ref.ack.SlotId,
+			idx.forAck(ref.ack.RefNonce), ref.ack.RefNonce+1)
 	}
 }
 
@@ -690,6 +778,29 @@ func absU64(a, b uint64) uint64 {
 }
 
 func logLogPlane(nonce uint64, slot uint32, check, verdict, reason string, extra ...any) {
+	kvs := logPlaneFields(nonce, slot, check, verdict, reason, extra...)
+	switch verdict {
+	case "INVALID":
+		// L0–L3 reject the whole diff and do not consume the nonce. A
+		// producer that keeps sending the same payload will loop on this
+		// line until it lifts to F(m) or omits.
+		logging.Error("heightsync: logplane", kvs...)
+	default:
+		logging.Debug("heightsync: logplane", kvs...)
+	}
+}
+
+// logLogPlaneMisbehaviour is a MARK that names authored misbehaviour rather than
+// a divergence to watch, so it goes out at error level. Ordinary marks are debug:
+// they are recorded for later aggregation and most of them (L5a, L6) fire on
+// honest lag. This one cannot — the producer had the log in front of it — and
+// until the dispute path lands (§18) the log line is the entire signal.
+func logLogPlaneMisbehaviour(nonce uint64, slot uint32, check, reason string, extra ...any) {
+	logging.Error("heightsync: logplane",
+		logPlaneFields(nonce, slot, check, "MARK", reason, extra...)...)
+}
+
+func logPlaneFields(nonce uint64, slot uint32, check, verdict, reason string, extra ...any) []any {
 	kvs := []any{
 		LogFieldSubsystem, "heightsync",
 		LogFieldNonce, nonce,
@@ -702,14 +813,5 @@ func logLogPlane(nonce uint64, slot uint32, check, verdict, reason string, extra
 	if reason != "" {
 		kvs = append(kvs, LogFieldReason, reason)
 	}
-	kvs = append(kvs, extra...)
-	switch verdict {
-	case "INVALID":
-		// L0–L3 reject the whole diff and do not consume the nonce. A
-		// producer that keeps sending the same payload will loop on this
-		// line until it lifts to F(m) or omits.
-		logging.Error("heightsync: logplane", kvs...)
-	default:
-		logging.Debug("heightsync: logplane", kvs...)
-	}
+	return append(kvs, extra...)
 }

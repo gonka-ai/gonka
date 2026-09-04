@@ -5,14 +5,10 @@ import (
 	"crypto/sha256"
 	"fmt"
 	"net/http"
-	"strings"
 
 	"common/completionapi"
-	"common/logging"
 	devshardpkg "devshard"
 	"devshard/observability"
-
-	"github.com/productscience/inference/x/inference/types"
 )
 
 type mlRequestExecutor func(ctx context.Context, model string, body []byte) (*http.Response, error)
@@ -46,7 +42,7 @@ func executeInference(
 	}
 	defer resp.Body.Close()
 
-	processed, err := processExecutionHTTPResponse(req, resp, inferenceID)
+	processed, err := processExecutionHTTPResponse(req, resp, inferenceID, modified.AsksForLogprobs)
 	if err != nil {
 		return nil, observability.Classify(observability.ReasonProcessResponseErr, observability.WhereRuntimeExecute, err)
 	}
@@ -81,38 +77,32 @@ func processExecutionHTTPResponse(
 	req devshardpkg.ExecuteRequest,
 	resp *http.Response,
 	inferenceID string,
+	forwardLogprobs bool,
 ) (*processedExecutionResponse, error) {
-	processor := completionapi.NewExecutorResponseProcessor(inferenceID)
+	processor := completionapi.NewExecutorResponseProcessor(inferenceID, forwardLogprobs)
 
-	contentType := resp.Header.Get("Content-Type")
-	isSSE := strings.HasPrefix(contentType, "text/event-stream")
+	isSSE := completionapi.IsEventStream(resp)
 
 	if req.ResponseWriter != nil && isSSE {
-		proxyResponse(resp, req.ResponseWriter, true, processor, inferenceID)
+		if err := proxyResponse(resp, req.ResponseWriter, true, processor, inferenceID); err != nil {
+			return nil, fmt.Errorf("relay response: %w", err)
+		}
 	} else {
 		if err := completionapi.ProcessHTTPResponse(resp, processor); err != nil {
 			return nil, fmt.Errorf("process response: %w", err)
 		}
 	}
 
-	completionResp, err := processor.GetResponse()
-	if err != nil {
-		return nil, fmt.Errorf("get completion response: %w", err)
-	}
-
-	bodyBytes, err := completionResp.GetBodyBytes()
+	bodyBytes, err := processor.GetResponseBytes()
 	if err != nil {
 		return nil, fmt.Errorf("get body bytes: %w", err)
 	}
 
 	if req.ResponseWriter != nil && !isSSE {
-		// Falling back to the stored copy would quietly hand the gateway a body with the logprobs
-		// already cut out, which is the regression this split exists to prevent.
+		// The stored copy is no substitute: it carries logprobs the caller may not have asked for.
 		relayed := processor.GetForwardedJSONBytes()
 		if relayed == nil {
-			logging.Warn("Relaying the stored copy: no forwarded body was produced", types.Inferences,
-				"inference_id", inferenceID)
-			relayed = bodyBytes
+			return nil, fmt.Errorf("relay response: the processor produced no forwarded body")
 		}
 		fmt.Fprintf(req.ResponseWriter, "data: %s\n\ndata: [DONE]\n\n", relayed)
 		if f, ok := req.ResponseWriter.(http.Flusher); ok {
@@ -122,7 +112,7 @@ func processExecutionHTTPResponse(
 
 	// The processor slimmed each chunk as it parsed it, so what it hands back is already what is stored.
 	hash := sha256.Sum256(bodyBytes)
-	usage, err := completionResp.GetUsage()
+	usage, err := processor.GetUsage()
 	if err != nil {
 		return nil, fmt.Errorf("get usage: %w", err)
 	}

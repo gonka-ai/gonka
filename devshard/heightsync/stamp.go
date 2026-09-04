@@ -130,13 +130,38 @@ func TxStamp(tx *types.DevshardTx) (uint64, bool) {
 	return h, ok
 }
 
+// SequencerComposed reports whether tx is user-signed (MsgHeartbeat /
+// MsgStartInference). Those stamps never raise F (spec §14 rule 3) and must
+// not raise the turn clock.
+func SequencerComposed(tx *types.DevshardTx) bool {
+	if tx == nil {
+		return false
+	}
+	return tx.GetStartInference() != nil || tx.GetHeartbeat() != nil
+}
+
+// HostSignedStamp is a Diff-resident height bound to a host key: ack, confirm,
+// or finish. Heartbeat and start are excluded — they are user claims.
+func HostSignedStamp(tx *types.DevshardTx) (uint64, bool) {
+	if tx == nil {
+		return 0, false
+	}
+	if tx.GetHeightAck() == nil && tx.GetConfirmStart() == nil && tx.GetFinishInference() == nil {
+		return 0, false
+	}
+	return TxStamp(tx)
+}
+
 // LogResidentHeight is the clock TurnTracker.Observe must use: the highest
-// Diff-resident stamp in txs, else lastCompleted (h_last). A live oracle read
-// is never a legal input — turn state is a pure function of the log.
+// *host-signed* Diff-resident stamp in txs, else lastCompleted (h_last). User
+// heartbeats and starts are claims, not turn time — feeding them to
+// windowClosed would let one sequencer stamp close every open ack window.
+// A live oracle read is never a legal input — turn state is a pure function
+// of the log.
 func LogResidentHeight(txs []*types.DevshardTx, lastCompleted uint64) uint64 {
 	var h uint64
 	for _, tx := range txs {
-		if s, ok := TxStamp(tx); ok && s > h {
+		if s, ok := HostSignedStamp(tx); ok && s > h {
 			h = s
 		}
 	}

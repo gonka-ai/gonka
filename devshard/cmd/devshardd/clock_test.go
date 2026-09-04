@@ -55,7 +55,7 @@ func TestPingAnswersDuringDrain(t *testing.T) {
 	lifecycle := newLifecycleState()
 	lifecycle.SetReady(true)
 	e := buildServer(lifecycle)
-	admin := buildAdminServer(lifecycle, func() bool { return true })
+	admin := buildAdminServer(lifecycle, func() bool { return true }, nil, recoveryDone)
 	e.GET("/work", func(c echo.Context) error {
 		return c.String(http.StatusOK, "done")
 	})

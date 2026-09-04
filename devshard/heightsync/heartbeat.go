@@ -426,7 +426,10 @@ func SlotForNonce(nonce, slotsNum uint64) uint32 {
 
 // SpanTxs returns slots_num MsgHeartbeat txs for one turn, with no ack wait.
 // hNow == 0 yields nil (spec §10.3: do not claim a height).
-func (h *Heartbeat) SpanTxs(turnSeq, hNow uint64, hash []byte, slotsNum uint64, reason HeartbeatReason, prevVector []*types.SyncVectorEntry) []*types.DevshardTx {
+//
+// The turn is not named here. Its identity is the nonce the first tx of this
+// span lands at, which the producer does not get to pick.
+func (h *Heartbeat) SpanTxs(hNow uint64, hash []byte, slotsNum uint64, reason HeartbeatReason, prevVector []*types.SyncVectorEntry) []*types.DevshardTx {
 	if h == nil {
 		h = NewHeartbeat(DefaultHeartbeatConfig())
 	}
@@ -445,7 +448,6 @@ func (h *Heartbeat) SpanTxs(turnSeq, hNow uint64, hash []byte, slotsNum uint64, 
 	out := make([]*types.DevshardTx, 0, slotsNum)
 	for i := uint64(0); i < slotsNum; i++ {
 		hb := &types.MsgHeartbeat{
-			TurnSeq:           turnSeq,
 			ObservedHeight:    hNow,
 			ObservedBlockHash: append([]byte(nil), hash...),
 			SlotsNum:          slotsNum,

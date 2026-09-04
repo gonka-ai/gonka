@@ -20,6 +20,7 @@ import (
 
 	devshardpkg "devshard"
 	"devshard/gossip"
+	"devshard/heightsync"
 	"devshard/host"
 	"devshard/internal/boolvalue"
 	"devshard/internal/e2econfig"
@@ -353,11 +354,22 @@ func recoverHostState(store storage.Storage, sm *state.StateMachine, escrowID st
 
 	replayFrom := uint64(1)
 	if snapNonce, snapData, snapErr := store.LoadSnapshot(escrowID); snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce {
-		snapState, err := host.UnmarshalStateSnapshot(snapData)
+		snapState, _, _, floorProto, err := host.UnmarshalStateSnapshotWithCommitted(snapData)
 		if err != nil {
 			return fmt.Errorf("unmarshal snapshot nonce %d: %w", snapNonce, err)
 		}
-		sm.RestoreState(snapState)
+		// A rejected blob degrades to a journal replay; if that cannot run
+		// either, RestoreStateWithFloor fails closed rather than serving L0
+		// from a floor we could not verify.
+		floor, floorErr := heightsync.FloorIndexFromProto(heightsync.FloorConfig{}, floorProto)
+		if floorErr != nil {
+			log.Printf("recover_host escrow=%s snapshot_nonce=%d floor_blob_rejected=%v (rebuilding from diffs)",
+				escrowID, snapNonce, floorErr)
+			floor = nil
+		}
+		if err := sm.RestoreStateWithFloor(snapState, floor); err != nil {
+			return fmt.Errorf("restore snapshot nonce %d: %w", snapNonce, err)
+		}
 		replayFrom = snapNonce + 1
 	} else if snapErr != nil && !errors.Is(snapErr, storage.ErrSnapshotNotFound) {
 		return fmt.Errorf("load snapshot: %w", snapErr)
