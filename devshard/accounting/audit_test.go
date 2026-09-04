@@ -214,7 +214,7 @@ func stripKeyFromStore(path, key string) error {
 		var escrowID string
 		var raw []byte
 		if err := rows.Scan(&escrowID, &raw); err != nil {
-			rows.Close() //nolint:sqlclosecheck // must close before the next statement on this SQLite connection.
+			rows.Close()
 			return err
 		}
 		var generic any
@@ -286,7 +286,7 @@ func TestReRegisteringAnEscrowCannotMoveItsCountersToAnotherEpoch(t *testing.T) 
 	})
 	require.Error(t, err, "a second epoch for the same escrow must be refused, not accepted")
 
-	require.Len(t, tr.Query(QueryFilter{EpochIndex: 8}), 0, "epoch 8 saw none of this work")
+	require.Empty(t, tr.Query(QueryFilter{EpochIndex: 8}), "epoch 8 saw none of this work")
 	requireCountedOnce(t, tr, "e1", 1)
 	epoch7 := tr.Query(QueryFilter{EpochIndex: 7, Participant: "p0"})[0]
 	require.Equal(t, uint64(1), epoch7.Dispositions[DispositionUnfinishedRefused])

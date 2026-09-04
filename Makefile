@@ -1,4 +1,4 @@
-.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release versiond-router-release edge-api edge-api-release edge-api-router-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build devshardd-release devshard-gateway-release print-devshard-version print-devshard-protocol-version versiond-build-docker versiond-router-build-docker edge-api-build-docker edge-api-router-build-docker testapp-server-build-docker lint lint-fix lint-all
+.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release versiond-router-release edge-api edge-api-release edge-api-router-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build devshardd-release devshard-gateway-release print-devshard-version print-devshard-protocol-version versiond-build-docker versiond-router-build-docker edge-api-build-docker edge-api-router-build-docker testapp-server-build-docker lint lint-fix lint-all lint-deprecated
 
 # For binary release: default linux/amd64 before local Docker defaults.
 DEVSHARDD_RELEASE_DOCKER_PLATFORM := $(if $(DOCKER_PLATFORM),$(DOCKER_PLATFORM),linux/amd64)
@@ -327,6 +327,13 @@ lint-fix:
 	@for module in $(LINT_MODULES); do \
 		echo "==> $$module"; \
 		(cd $$module && golangci-lint run --fix --issues-exit-code 0 ./... && golangci-lint fmt ./...) || exit 1; \
+	done
+
+# Deprecated APIs, reported and never enforced: see .golangci.deprecated.yml.
+lint-deprecated:
+	@for module in $(LINT_MODULES); do \
+		echo "==> $$module"; \
+		(cd $$module && golangci-lint run --config ../.golangci.deprecated.yml --issues-exit-code 0 ./...); \
 	done
 
 # Every module, including the ones not yet clean: the backlog behind LINT_MODULES.

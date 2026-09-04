@@ -23,10 +23,10 @@ func ValidationObsEntriesFromTxs(txs []*types.DevshardTx) []ValidationObsEntry {
 		switch {
 		case tx.GetValidation() != nil:
 			v := tx.GetValidation()
-			add(ValidationObsEntry{InferenceID: v.InferenceId, SlotID: v.ValidatorSlot})
+			add(ValidationObsEntry{InferenceID: v.GetInferenceId(), SlotID: v.GetValidatorSlot()})
 		case tx.GetValidationVote() != nil:
 			v := tx.GetValidationVote()
-			add(ValidationObsEntry{InferenceID: v.InferenceId, SlotID: v.VoterSlot})
+			add(ValidationObsEntry{InferenceID: v.GetInferenceId(), SlotID: v.GetVoterSlot()})
 		}
 	}
 	return entries

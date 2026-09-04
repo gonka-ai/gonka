@@ -163,7 +163,7 @@ func TestOracle_LatestFallsBackToChainWhenTipEmpty(t *testing.T) {
 	h, err := o.Latest(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, int64(99), h.Height)
-	require.Greater(t, chain.calls.Load(), int64(0))
+	require.Positive(t, chain.calls.Load())
 }
 
 func TestOracle_AtDapiDownFallsBackToChain(t *testing.T) {
@@ -179,7 +179,7 @@ func TestOracle_AtDapiDownFallsBackToChain(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(99), h.Height)
 	require.Equal(t, []byte{9, 9, 9, 9}, h.BlockHash)
-	require.Greater(t, chain.calls.Load(), int64(0))
+	require.Positive(t, chain.calls.Load())
 }
 
 func TestOracle_AtUsesCachedWindow(t *testing.T) {

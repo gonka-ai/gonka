@@ -125,9 +125,9 @@ func TestComposeSyncVector_ReportsPreviousTurn(t *testing.T) {
 	}, 501)
 	vec := heightsync.ComposeSyncVector(4, tr.Record(10))
 	require.Len(t, vec, 4)
-	require.Equal(t, types.AckStatus_ACKED, vec[0].Status)
-	require.Equal(t, types.AckStatus_MISSING, vec[1].Status)
-	require.Equal(t, types.AckStatus_ACKED, vec[2].Status)
+	require.Equal(t, types.AckStatus_ACKED, vec[0].GetStatus())
+	require.Equal(t, types.AckStatus_MISSING, vec[1].GetStatus())
+	require.Equal(t, types.AckStatus_ACKED, vec[2].GetStatus())
 
 	logAcks := tr.Record(10).Acks
 	require.Empty(t, heightsync.CheckVectorAgainstLog(vec, logAcks))

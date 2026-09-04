@@ -19,7 +19,7 @@ func TestDeriveSeed_Basic(t *testing.T) {
 	seed, err := DeriveSeed(sig)
 	require.NoError(t, err)
 	require.NotZero(t, seed)
-	require.True(t, seed > 0, "seed must be positive")
+	require.Positive(t, seed, "seed must be positive")
 }
 
 func TestDeriveSeed_NonZero(t *testing.T) {
@@ -48,9 +48,9 @@ func TestUint64ProbabilityScale32(t *testing.T) {
 	require.Equal(t, uint64(0), uint64ProbabilityScale32(0, 1))
 
 	// Percent-style numerators: same as floor(n * 2^32 / 100) for n <= 100.
-	require.Equal(t, uint64ProbabilityScale32(50, 100), (uint64(1<<32)*50)/100)   // 50% of 2^32
-	require.Equal(t, uint64ProbabilityScale32(98, 100), (uint64(1<<32)*98)/100)   // 98% of 2^32
-	require.Equal(t, uint64ProbabilityScale32(100, 100), (uint64(1<<32)*100)/100) // 100% of 2^32
+	require.Equal(t, (uint64(1<<32)*50)/100, uint64ProbabilityScale32(50, 100))   // 50% of 2^32
+	require.Equal(t, (uint64(1<<32)*98)/100, uint64ProbabilityScale32(98, 100))   // 98% of 2^32
+	require.Equal(t, (uint64(1<<32)*100)/100, uint64ProbabilityScale32(100, 100)) // 100% of 2^32
 	// Clamped to 2^32
 	require.Equal(t, uint64ProbabilityScale32(105, 100), uint64ProbabilityScale32(100, 100)) // 100%
 

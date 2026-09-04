@@ -236,19 +236,19 @@ func FindTimeoutInferenceTransaction(t *testing.T, client *http.Client, hostURL,
 
 		var content types.DiffContent
 		require.NoError(t, proto.Unmarshal(txs, &content), "decode host diff content")
-		for _, tx := range content.Txs {
+		for _, tx := range content.GetTxs() {
 			timeout := tx.GetTimeoutInference()
 			if timeout == nil {
 				continue
 			}
-			voterSlots := make([]uint32, len(timeout.Votes))
-			for i, vote := range timeout.Votes {
-				voterSlots[i] = vote.VoterSlot
+			voterSlots := make([]uint32, len(timeout.GetVotes()))
+			for i, vote := range timeout.GetVotes() {
+				voterSlots[i] = vote.GetVoterSlot()
 			}
 			return TimeoutInferenceTransaction{
-				Nonce:       content.Nonce,
-				InferenceID: timeout.InferenceId,
-				Reason:      timeout.Reason,
+				Nonce:       content.GetNonce(),
+				InferenceID: timeout.GetInferenceId(),
+				Reason:      timeout.GetReason(),
 				VoterSlots:  voterSlots,
 			}, true
 		}

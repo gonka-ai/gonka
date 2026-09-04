@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"context"
-	"errors"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -463,7 +462,7 @@ func TestRaceWriter_RecordsContentSourceAndSample(t *testing.T) {
 	role := []byte(`data: {"choices":[{"delta":{"role":"assistant"}}]}` + "\n\n")
 	_, err := rw.Write(role)
 	require.NoError(t, err)
-	require.Equal(t, "", inf.contentSource, "role-only chunk must not set contentSource")
+	require.Empty(t, inf.contentSource, "role-only chunk must not set contentSource")
 
 	content := []byte(`data: {"choices":[{"delta":{"content":"hi"}}]}` + "\n\n")
 	_, err = rw.Write(content)
@@ -816,10 +815,10 @@ func TestInflightFinished_StallHostNotFinished(t *testing.T) {
 }
 
 func TestErrEmptyStreamSentinel(t *testing.T) {
-	require.True(t, errors.Is(errEmptyStream, errEmptyStream))
+	require.ErrorIs(t, errEmptyStream, errEmptyStream)
 	// Make sure the sentinel is unique and not nil.
 	x := errEmptyStream
-	require.NotNil(t, x)
+	require.Error(t, x)
 	require.Contains(t, errEmptyStream.Error(), "empty content stream")
 }
 

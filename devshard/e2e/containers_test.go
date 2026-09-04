@@ -34,7 +34,7 @@ func TestMain(m *testing.M) {
 
 type e2eEnv struct {
 	networkName string
-	network     testcontainers.Network //nolint:staticcheck // the pinned testcontainers still returns this type.
+	network     testcontainers.Network
 	containers  []namedContainer
 	clientURL   string
 	statsURL    string
@@ -91,8 +91,8 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		time.Now().UnixNano(),
 	)
 	testutil.DebugLogf(t, "creating Docker network %s", networkName)
-	network, err := testcontainers.GenericNetwork(ctx, testcontainers.GenericNetworkRequest{ //nolint:staticcheck // network.New is a separate migration for the whole e2e stand.
-		NetworkRequest: testcontainers.NetworkRequest{ //nolint:staticcheck // network.New is a separate migration for the whole e2e stand.
+	network, err := testcontainers.GenericNetwork(ctx, testcontainers.GenericNetworkRequest{
+		NetworkRequest: testcontainers.NetworkRequest{
 			Name:           networkName,
 			CheckDuplicate: true,
 		},

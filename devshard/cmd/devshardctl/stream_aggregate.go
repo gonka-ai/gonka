@@ -673,7 +673,7 @@ func hasTerminalFinishReason(choices map[int]*aggChoice) bool {
 func (f *completionFolder) accumulateChoiceLogprobs(ac *aggChoice, lpRaw json.RawMessage) error {
 	content, extras, err := parseLogprobsContentRaw(lpRaw)
 	if err != nil {
-		return nil //nolint:nilerr // malformed logprobs are dropped, not an error for the caller.
+		return nil
 	}
 	// The store charges the shared budget itself: RAM while it fits, spool
 	// bytes once it does not.

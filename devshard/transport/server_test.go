@@ -632,7 +632,7 @@ func TestServer_ChallengeReceipt_ReturnsRecoveryMempool(t *testing.T) {
 
 func hasConfirmStartTx(txs []*types.DevshardTx, inferenceID uint64) bool {
 	for _, tx := range txs {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.GetInferenceId() == inferenceID {
 			return true
 		}
 	}
@@ -645,9 +645,9 @@ func requireRecoveryOnlyFor(t *testing.T, txs []*types.DevshardTx, id uint64) {
 	for _, tx := range txs {
 		switch {
 		case tx.GetConfirmStart() != nil:
-			require.Equal(t, id, tx.GetConfirmStart().InferenceId)
+			require.Equal(t, id, tx.GetConfirmStart().GetInferenceId())
 		case tx.GetFinishInference() != nil:
-			require.Equal(t, id, tx.GetFinishInference().InferenceId)
+			require.Equal(t, id, tx.GetFinishInference().GetInferenceId())
 		default:
 			t.Fatalf("unexpected recovery tx type: %T", tx.GetTx())
 		}

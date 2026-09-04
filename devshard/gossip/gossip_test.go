@@ -445,7 +445,7 @@ func TestPruneBelow(t *testing.T) {
 	// Prune with nonce <= margin should be a noop.
 	g.PruneBelow(50)
 	g.mu.Lock()
-	require.Greater(t, len(g.seen), 0)
+	require.NotEmpty(t, g.seen)
 	g.mu.Unlock()
 }
 

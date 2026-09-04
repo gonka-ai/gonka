@@ -138,7 +138,7 @@ func RequireSettlementContract(t *testing.T, settlement map[string]any) {
 func RequireCompletedValidationContract(t *testing.T, settlement map[string]any) {
 	t.Helper()
 	progress := validationProgressFromHostStats(t, settlement["host_stats"])
-	require.Greater(t, progress.required, uint64(0), "settlement should require at least one validation")
+	require.Positive(t, progress.required, "settlement should require at least one validation")
 	require.Equal(t, progress.required, progress.completed,
 		"settlement should include every required validation as completed")
 }
@@ -205,7 +205,7 @@ func RequireGossipNonceConvergence(t *testing.T, statuses []GossipNonceStatus, n
 	require.NotEmpty(t, statuses, "gossip status should be collected from every host")
 	want := statuses[0]
 	require.True(t, want.Seen, "host 0 should observe the gossiped nonce")
-	require.Equal(t, nonce, want.Nonce)
+	require.Equal(t, want.Nonce, nonce)
 	require.NotEmpty(t, want.StateHash, "gossip status should include a state hash")
 	require.NotEmpty(t, want.StateSig, "gossip status should include a state signature")
 

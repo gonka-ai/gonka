@@ -156,7 +156,7 @@ func TestHeightSync_RestoreGetDiffsErrorFailsClosed(t *testing.T) {
 
 	st := live.ExportState()
 	require.Equal(t, uint64(50), st.HeightSyncLastCompletedHeight)
-	require.Greater(t, st.LatestNonce, uint64(0))
+	require.Positive(t, st.LatestNonce)
 
 	failStore := &failGetDiffsStore{Memory: testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 1_000_000)}
 	restored, err := NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(),

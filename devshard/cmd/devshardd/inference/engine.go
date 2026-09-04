@@ -147,16 +147,16 @@ func (e *Engine) doWithLockedNode(
 		}
 
 		if e.mgr != nil {
-			e.mgr.Observe(model, acq.NodeId, acq.Endpoint)
+			e.mgr.Observe(model, acq.GetNodeId(), acq.GetEndpoint())
 		}
 
 		started := time.Now()
-		resp, httpErr := fn(acq.Endpoint)
+		resp, httpErr := fn(acq.GetEndpoint())
 		outcome := mlnodegen.ReleaseOutcome_SUCCESS
 
 		lastReason = observability.ClassifyMLNodeHTTP(resp, httpErr, ctx.Err())
-		observability.IncMLNodeAttempt(path, lastReason, acq.NodeId)
-		observability.ObserveMLNodeCall(path, acq.NodeId, observability.MetricPhaseTotal, started)
+		observability.IncMLNodeAttempt(path, lastReason, acq.GetNodeId())
+		observability.ObserveMLNodeCall(path, acq.GetNodeId(), observability.MetricPhaseTotal, started)
 
 		switch lastReason {
 		case observability.ReasonTransportErr, observability.ReasonTimeout:
@@ -175,8 +175,8 @@ func (e *Engine) doWithLockedNode(
 			// 4xx surfaced to caller without rotation.
 		}
 
-		if releaseErr := e.mlClient.Release(ctx, acq.LockId, outcome); releaseErr != nil {
-			observability.IncMLNodeAttempt(path, observability.ReasonReleaseErr, acq.NodeId)
+		if releaseErr := e.mlClient.Release(ctx, acq.GetLockId(), outcome); releaseErr != nil {
+			observability.IncMLNodeAttempt(path, observability.ReasonReleaseErr, acq.GetNodeId())
 			if lastErr == nil {
 				lastReason = observability.ReasonReleaseErr
 				lastErr = fmt.Errorf("release: %w", releaseErr)
@@ -187,9 +187,9 @@ func (e *Engine) doWithLockedNode(
 			return resp, nil
 		}
 
-		if acq.NodeId != "" {
-			excluded = append(excluded, acq.NodeId)
-			excludedSet[acq.NodeId] = struct{}{}
+		if acq.GetNodeId() != "" {
+			excluded = append(excluded, acq.GetNodeId())
+			excludedSet[acq.GetNodeId()] = struct{}{}
 		}
 	}
 

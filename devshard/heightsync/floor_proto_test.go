@@ -34,8 +34,8 @@ func TestFloorIndexProtoRoundTrip(t *testing.T) {
 
 	p := f.ToProto()
 	require.NotNil(t, p)
-	require.Len(t, p.Entries, 1, "the second claim carries the floor, so it adds no entry")
-	require.False(t, p.Truncated)
+	require.Len(t, p.GetEntries(), 1, "the second claim carries the floor, so it adds no entry")
+	require.False(t, p.GetTruncated())
 
 	got, err := FloorIndexFromProto(cfg, p)
 	require.NoError(t, err)
@@ -102,7 +102,7 @@ func TestFloorIndexProtoTruncatedRoundTrip(t *testing.T) {
 	require.Equal(t, uint64(50), h)
 	require.Equal(t, []byte{0x01}, hash)
 
-	require.True(t, got.ToProto().Truncated)
+	require.True(t, got.ToProto().GetTruncated())
 }
 
 // TestFloorIndexFromProtoRejectsUnfoldableBlobs covers the shapes that no diff

@@ -155,11 +155,11 @@ func RequireSQLiteQuarantined(t *testing.T, storeDir string) {
 		if strings.Contains(name, ".migrated.") {
 			migrated++
 		}
-		require.False(t, name == "_meta.db", "live _meta.db should be quarantined after postgres migrate")
+		require.NotEqual(t, "_meta.db", name, "live _meta.db should be quarantined after postgres migrate")
 		require.False(t, strings.HasPrefix(name, "epoch_") && strings.HasSuffix(name, ".db"),
 			"live epoch db %s should be quarantined", name)
 	}
-	require.Greater(t, migrated, 0, "expected *.migrated.* artifacts under %s", storeDir)
+	require.Positive(t, migrated, "expected *.migrated.* artifacts under %s", storeDir)
 }
 
 // RequirePGBoundMarker asserts .pg-bound exists after Postgres bind.

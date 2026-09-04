@@ -62,7 +62,7 @@ func NewStack(t *testing.T, prefix string) *Stack {
 	require.NoError(t, err)
 
 	// Not t.TempDir(): the generated compose file addresses the repo through paths relative to testenv/.
-	workDir, err := os.MkdirTemp(testenvDir, prefix) //nolint:usetesting
+	workDir, err := os.MkdirTemp(testenvDir, prefix)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = os.RemoveAll(workDir) })
 

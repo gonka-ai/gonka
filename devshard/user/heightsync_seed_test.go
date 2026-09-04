@@ -189,8 +189,8 @@ func TestSeed_PrimesTheEnvelopeNotTheLog(t *testing.T) {
 		}
 	}
 	require.NotNil(t, hb, "the first host stamp arms the cadence")
-	require.Equal(t, uint64(55), hb.ObservedHeight)
-	require.True(t, heightsync.StampPresent(hb.ObservedBlockHash),
+	require.Equal(t, uint64(55), hb.GetObservedHeight())
+	require.True(t, heightsync.StampPresent(hb.GetObservedBlockHash()),
 		"the floor's hash rides the heartbeat, so the stamp is checkable against the log")
 }
 
@@ -295,7 +295,7 @@ func TestSeed_DeclinedSlotsAreReprobed(t *testing.T) {
 	env.session.SeedHeightSync(context.Background())
 	require.True(t, env.session.HeightSeedMissed())
 	first := hits.Load()
-	require.Greater(t, first, int32(0))
+	require.Positive(t, first)
 	require.Eventually(t, func() bool {
 		return hits.Load() > first
 	}, 8*time.Second, 50*time.Millisecond, "declined slots must be re-probed")
@@ -641,9 +641,9 @@ func TestSeed_Gap2ClockStartsAfterCatalog(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return env.session.HeightSeedStatus().State == HeightSeedStateOK
 	}, 5*time.Second, 50*time.Millisecond)
-	require.Greater(t, env.session.heightSeedGateUntil.Load(), int64(0))
+	require.Positive(t, env.session.heightSeedGateUntil.Load())
 	require.False(t, env.session.HeightSeedMissed())
-	require.Greater(t, seedHits.Load(), int32(0))
+	require.Positive(t, seedHits.Load())
 }
 
 func TestSeed_Gap4AdmissionErrorIsRetryLater(t *testing.T) {
@@ -678,7 +678,7 @@ func TestSeed_Gap4AdmissionErrorIsRetryLater(t *testing.T) {
 	require.Greater(t, admission.hits.Load(), int32(1), "seed loop must keep attempting throttled slots")
 	st := env.session.HeightSeedStatus()
 	require.Equal(t, HeightSeedStatePending, st.State)
-	require.Equal(t, 1, len(st.SlotOutcomes))
+	require.Len(t, st.SlotOutcomes, 1)
 	require.Equal(t, seedRetryLater.String(), st.SlotOutcomes[0].Verdict)
 }
 

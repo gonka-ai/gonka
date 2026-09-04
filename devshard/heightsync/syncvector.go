@@ -36,15 +36,15 @@ func ComposeSyncVector(slotsNum uint32, prev *SyncTurnRecord) []*types.SyncVecto
 func CheckVectorAgainstLog(vec []*types.SyncVectorEntry, logAcks map[uint32]AckRecord) []VectorContradiction {
 	var out []VectorContradiction
 	for _, ent := range vec {
-		if ent == nil || ent.Status != types.AckStatus_ACKED {
+		if ent == nil || ent.GetStatus() != types.AckStatus_ACKED {
 			continue
 		}
-		ack, ok := logAcks[ent.SlotId]
-		if !ok || ack.Nonce != ent.AckNonce {
+		ack, ok := logAcks[ent.GetSlotId()]
+		if !ok || ack.Nonce != ent.GetAckNonce() {
 			out = append(out, VectorContradiction{
-				Slot:         ent.SlotId,
-				ClaimedNonce: ent.AckNonce,
-				ClaimedH:     ent.ObservedHeight,
+				Slot:         ent.GetSlotId(),
+				ClaimedNonce: ent.GetAckNonce(),
+				ClaimedH:     ent.GetObservedHeight(),
 			})
 		}
 	}

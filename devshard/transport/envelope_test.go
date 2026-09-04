@@ -30,9 +30,9 @@ func TestEnvelope_OriginatorFields_RoundTrip(t *testing.T) {
 
 	var env types.InferenceRequestEnvelope
 	require.NoError(t, proto.Unmarshal(raw, &env))
-	require.NotNil(t, env.HeightSync)
-	require.Equal(t, hs.OriginatorSenderID, env.HeightSync.GetOriginatorSenderId())
-	require.Equal(t, hs.OriginatorTimestampMs, env.HeightSync.GetOriginatorTimestampUnixMs())
+	require.NotNil(t, env.GetHeightSync())
+	require.Equal(t, hs.OriginatorSenderID, env.GetHeightSync().GetOriginatorSenderId())
+	require.Equal(t, hs.OriginatorTimestampMs, env.GetHeightSync().GetOriginatorTimestampUnixMs())
 
 	got, err := transport.UnwrapInferenceRequestBody(raw)
 	require.NoError(t, err)
@@ -88,7 +88,7 @@ func TestMarshalWrappedInferenceRequest_RoundTrip_Omit(t *testing.T) {
 
 	var env types.InferenceRequestEnvelope
 	require.NoError(t, proto.Unmarshal(raw, &env))
-	require.Nil(t, env.HeightSync)
+	require.Nil(t, env.GetHeightSync())
 
 	got, err := transport.UnwrapInferenceRequestBody(raw)
 	require.NoError(t, err)

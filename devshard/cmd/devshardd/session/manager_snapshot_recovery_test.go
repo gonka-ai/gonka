@@ -395,7 +395,7 @@ func TestRecoverSessions_SnapshotRootMismatchReplaysFromOne(t *testing.T) {
 	require.Equal(t, want.LatestNonce, got.LatestNonce)
 	require.Equal(t, want.Balance, got.Balance)
 	require.Equal(t, want.Phase, got.Phase)
-	require.Equal(t, len(want.Inferences), len(got.Inferences))
+	require.Len(t, got.Inferences, len(want.Inferences))
 }
 
 // The rejected snapshot's partial state must not leak into the replay: a state
@@ -547,7 +547,7 @@ func TestStartRecovery_CompleteAfterSealedIndexRepair(t *testing.T) {
 	require.False(t, progress.Complete, "recovery_complete waits for the sealed-index rebuild, not just the backlog")
 	require.Equal(t, int64(1), progress.Total)
 	require.Equal(t, int64(1), progress.Recovered)
-	require.Greater(t, progress.Pending, int64(0))
+	require.Positive(t, progress.Pending)
 
 	select {
 	case <-entered:
@@ -585,7 +585,7 @@ func TestRecoverSessions_SnapshotMatchesFullReplayWithLiveInferences(t *testing.
 	want := fullReplayState(t, inner)
 	require.Equal(t, want.LatestNonce, got.LatestNonce)
 	require.Equal(t, want.Balance, got.Balance)
-	require.Equal(t, len(want.Inferences), len(got.Inferences))
+	require.Len(t, got.Inferences, len(want.Inferences))
 	for id, rec := range want.Inferences {
 		gotRec, ok := got.Inferences[id]
 		require.True(t, ok, "inference %d missing after snapshot+tail recovery", id)

@@ -48,7 +48,7 @@ func (h *Host) maybeAckHeartbeatsLocked(diffs []types.Diff, hdr *blocks.Header, 
 			// peer_seen is claims *from* a slot (§11.2): host-signed acks and
 			// repair HEIGHT. Sequencer-composed heartbeats are not.
 			if ack := tx.GetHeightAck(); ack != nil {
-				h.peerSeen.MarkFresh(ack.SlotId, ack.ObservedHeight, now)
+				h.peerSeen.MarkFresh(ack.GetSlotId(), ack.GetObservedHeight(), now)
 			}
 		}
 	}
@@ -152,7 +152,7 @@ func (h *Host) receiptWantsOracleLocked(req HostRequest) bool {
 // that heartbeat, since AsOf is exclusive — leaves a lagging host stamping below
 // the floor the verifier will judge it against, which is L0-invalid.
 func (h *Host) buildHeightAckLocked(item heartbeatTarget, hdr *blocks.Header, hdrErr error, now time.Time) *types.MsgHeightAck {
-	st := heightsync.EvaluateSyncStateFromHeader(h.oracle, hdr, hdrErr, item.hb.ObservedHeight, h.heartbeatCfg)
+	st := heightsync.EvaluateSyncStateFromHeader(h.oracle, hdr, hdrErr, item.hb.GetObservedHeight(), h.heartbeatCfg)
 	var height uint64
 	var hash []byte
 	if st != types.SyncState_ORACLE_UNAVAILABLE && hdr != nil {

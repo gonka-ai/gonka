@@ -197,7 +197,7 @@ func (t *TurnTracker) observeHeartbeat(nonce uint64, hb *types.MsgHeartbeat) {
 	}
 	rec := t.turns[start]
 	if rec == nil {
-		slots := hb.SlotsNum
+		slots := hb.GetSlotsNum()
 		if slots == 0 {
 			slots = t.slotsNum
 		}
@@ -207,14 +207,14 @@ func (t *TurnTracker) observeHeartbeat(nonce uint64, hb *types.MsgHeartbeat) {
 			HReq:        heartbeatRequestHeight(hb),
 			Acks:        make(map[uint32]AckRecord),
 			State:       TurnOpen,
-			Reason:      hb.Reason,
+			Reason:      hb.GetReason(),
 		}
 		t.turns[start] = rec
 		SetTurnState("open")
 		return
 	}
-	if rec.Reason == "" && hb.Reason != "" {
-		rec.Reason = hb.Reason
+	if rec.Reason == "" && hb.GetReason() != "" {
+		rec.Reason = hb.GetReason()
 	}
 	if h := heartbeatRequestHeight(hb); h != 0 && (rec.HReq == 0 || h < rec.HReq) {
 		rec.HReq = h
@@ -229,10 +229,10 @@ func (t *TurnTracker) observeHeartbeat(nonce uint64, hb *types.MsgHeartbeat) {
 // height would let it pin the whole turn's deadline low and cost every honest
 // ack a `late` flag it cannot avoid.
 func heartbeatRequestHeight(hb *types.MsgHeartbeat) uint64 {
-	if hb == nil || hb.ObservedHeight == 0 || !StampPresent(hb.ObservedBlockHash) {
+	if hb == nil || hb.GetObservedHeight() == 0 || !StampPresent(hb.GetObservedBlockHash()) {
 		return 0
 	}
-	return hb.ObservedHeight
+	return hb.GetObservedHeight()
 }
 
 // observeAck folds a host ack into the turn its ref_nonce names.
@@ -243,7 +243,7 @@ func heartbeatRequestHeight(hb *types.MsgHeartbeat) uint64 {
 // pruned. That is dropped rather than resurrected — the old code minted a fresh
 // record at the ack's claimed seq, which prune then removed again.
 func (t *TurnTracker) observeAck(nonce uint64, ack *types.MsgHeightAck) {
-	start, ok := t.heartbeatAt[ack.RefNonce]
+	start, ok := t.heartbeatAt[ack.GetRefNonce()]
 	if !ok {
 		return
 	}
@@ -257,22 +257,22 @@ func (t *TurnTracker) observeAck(nonce uint64, ack *types.MsgHeightAck) {
 	// to h_req + D_ack asks whether the answer was composed while the request
 	// still stood.
 	late := rec.State == TurnDegraded
-	if rec.HReq > 0 && ack.ObservedHeight > addSat(rec.HReq, t.ackDeadline) {
+	if rec.HReq > 0 && ack.GetObservedHeight() > addSat(rec.HReq, t.ackDeadline) {
 		late = true
 	}
-	existing, had := rec.Acks[ack.SlotId]
+	existing, had := rec.Acks[ack.GetSlotId()]
 	if had {
 		late = late || existing.Late
 	}
-	rec.Acks[ack.SlotId] = AckRecord{
+	rec.Acks[ack.GetSlotId()] = AckRecord{
 		Nonce:     nonce,
-		Height:    ack.ObservedHeight,
-		Hash:      append([]byte(nil), ack.ObservedBlockHash...),
-		SyncState: ack.SyncState,
+		Height:    ack.GetObservedHeight(),
+		Hash:      append([]byte(nil), ack.GetObservedBlockHash()...),
+		SyncState: ack.GetSyncState(),
 		Late:      late,
 	}
 	if !had {
-		IncAck(ack.SyncState.String(), late)
+		IncAck(ack.GetSyncState().String(), late)
 	}
 }
 

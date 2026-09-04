@@ -1682,7 +1682,7 @@ func TestHeightSyncAnchor_E2E_HTTPRestartDurableHeightAckDedupBeforeNextHeartbea
 	ackDiffs := st.Session.Diffs()
 	acks := heightAcksInScenarioDiffs(ackDiffs)
 	require.Len(t, acks, 1)
-	require.Equal(t, uint32(0), acks[0].SlotId)
+	require.Equal(t, uint32(0), acks[0].GetSlotId())
 	afterHeartbeat := st.Session.Nonce()
 
 	require.NoError(t, st.Session.FlushSnapshot())
@@ -1710,7 +1710,7 @@ func TestHeightSyncAnchor_E2E_HTTPRestartDurableHeightAckDedupBeforeNextHeartbea
 	// ref_nonce names the turn now. The pre-restart ack answers the heartbeat at
 	// acks[0].RefNonce; anything answering a later nonce belongs to the fresh turn.
 	for _, ack := range heightAcksInScenarioDiffs(recovered.Diffs()) {
-		if ack.RefNonce == acks[0].RefNonce {
+		if ack.GetRefNonce() == acks[0].GetRefNonce() {
 			oldTurnAcks = append(oldTurnAcks, ack)
 			continue
 		}

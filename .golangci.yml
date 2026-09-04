@@ -8,11 +8,14 @@ run:
 linters:
   enable:
     # Resource leaks and silently swallowed failures.
-    - bodyclose
-    - sqlclosecheck
     - rowserrcheck
     - errorlint
-    - nilerr
+    - errchkjson
+    - gosec
+    - protogetter
+    - noctx
+    - contextcheck
+    - depguard
     - nilnesserr
     - durationcheck
     - fatcontext
@@ -20,22 +23,26 @@ linters:
     - makezero
     - reassign
     - recvcheck
+    - spancheck
     # Conventions the code already follows; enabled so they stay that way.
     - errname
     - gochecknoinits
     - misspell
     - dupword
-    - godot
     - nolintlint
     - usestdlibvars
-    - usetesting
+    - predeclared
     # Correctness and dead weight the compiler does not see.
     - gocritic
     - unconvert
-    - prealloc
     - intrange
     - modernize
     - revive
+    - exhaustive
+    - mirror
+    # Tests: the assertions themselves, not just the code around them.
+    - testifylint
+    - thelper
   settings:
     govet:
       # Dead scaffolding a test writes and never reads, which reads as coverage it does not have.
@@ -46,6 +53,44 @@ linters:
       # disabled the modernizer by default too (golang/go#77581).
       disable:
         - fmtappendf
+    gosec:
+      excludes:
+        # Deterministic paths need math/rand, and cosmos Int conversions are checked by the SDK.
+        - G404
+        - G115
+        # errcheck already owns unchecked errors, and it is the one that knows our exclude list.
+        - G104
+        # Taint analysis on log calls: everything we log is our own state.
+        - G706
+    depguard:
+      rules:
+        crypto-randomness:
+          files:
+            - "**/signing/**"
+            - "**/keymaterial/**"
+          deny:
+            - pkg: math/rand
+              desc: key material and signatures need crypto/rand; math/rand is for the deterministic paths
+            - pkg: math/rand/v2
+              desc: key material and signatures need crypto/rand; math/rand is for the deterministic paths
+    staticcheck:
+      # Deprecations are reported separately by .golangci.deprecated.yml, so a pinned dependency that
+      # deprecates something cannot turn the gate red on its own.
+      checks:
+        - all
+        - -SA1019
+        # golangci-lint's own default exclusions; listing `checks` at all replaces them.
+        - -ST1000
+        - -ST1003
+        - -ST1016
+        - -ST1020
+        - -ST1021
+        - -ST1022
+    testifylint:
+      # encoded-compare turns an exact-string assertion into a semantic one; these tests are about
+      # how fragments concatenate, and JSONEq would pass on a differently spaced assembly.
+      disable:
+        - encoded-compare
     revive:
       rules:
         - name: var-naming
@@ -72,9 +117,15 @@ linters:
         - (*devshard/cmd/devshardctl.devshardRuntime).close
   exclusions:
     rules:
-      # A test that re-allocates a slice costs nothing; the linter only earns its keep on real paths.
       - path: _test\.go
-        linters: [errcheck, prealloc]
+        linters: [errcheck]
+      # The stand opens files and shells out by construction, and a test that hangs fails rather than
+      # holding a socket open; both rules are about what the running service exposes.
+      - path: (_test\.go|/testenv/|/e2e/)
+        linters: [gosec, noctx]
+      # Cosmos modules register their codecs from init(); that is the framework's shape, not ours.
+      - path: (^|/)x/
+        linters: [gochecknoinits]
       # gofumpt reads a dotless first segment as stdlib, so it wants common/... beside "context",
       # and goimports groups std against everything else. gci owns the grouping and runs after both,
       # so their own verdicts are noise; they stay enabled for the rest of what they do.

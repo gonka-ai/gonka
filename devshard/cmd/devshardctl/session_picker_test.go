@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -203,7 +202,7 @@ func TestPicker_DropsCanceledRequest(t *testing.T) {
 
 	res := waitReply(t, req, 2*time.Second)
 	require.Error(t, res.err)
-	require.True(t, errors.Is(res.err, context.Canceled),
+	require.ErrorIs(t, res.err, context.Canceled,
 		"canceled request should report context.Canceled, got %v", res.err)
 	require.Nil(t, res.prepared)
 	require.Equal(t, nonceBefore, session.Nonce(),
@@ -227,7 +226,7 @@ func TestPicker_StopRejectsSubmissions(t *testing.T) {
 
 	res := waitReply(t, req, 2*time.Second)
 	require.Error(t, res.err)
-	require.True(t, errors.Is(res.err, errPickerStopped),
+	require.ErrorIs(t, res.err, errPickerStopped,
 		"submit after stop should return errPickerStopped, got %v", res.err)
 	require.Nil(t, res.prepared)
 }
@@ -293,7 +292,7 @@ func TestPicker_NoAvailableHost_DropsImmediately(t *testing.T) {
 	res := waitReply(t, req, 2*time.Second)
 	elapsed := time.Since(start)
 	require.Error(t, res.err)
-	require.True(t, errors.Is(res.err, ErrNoAvailableHost),
+	require.ErrorIs(t, res.err, ErrNoAvailableHost,
 		"expected ErrNoAvailableHost, got %v", res.err)
 	require.Less(t, elapsed, 200*time.Millisecond,
 		"exhaustion should be near-instant; took %s", elapsed)
@@ -358,7 +357,7 @@ func TestPicker_PoCFlipDropsQueuedRequest(t *testing.T) {
 
 	res := waitReply(t, req, 2*time.Second)
 	require.Error(t, res.err)
-	require.True(t, errors.Is(res.err, ErrNoAvailableHost),
+	require.ErrorIs(t, res.err, ErrNoAvailableHost,
 		"PoC flip stranding the only viable host should drop with ErrNoAvailableHost, got %v", res.err)
 }
 
@@ -437,7 +436,7 @@ func TestPicker_AllSlotsOneParticipantExhaustsImmediately(t *testing.T) {
 
 	res := waitReply(t, req, 2*time.Second)
 	require.Error(t, res.err)
-	require.True(t, errors.Is(res.err, ErrNoAvailableHost),
+	require.ErrorIs(t, res.err, ErrNoAvailableHost,
 		"single-participant escrow with that participant excluded must drop, got %v", res.err)
 	require.Equal(t, 0, ghost.total(),
 		"no ghost should fire when the queue is dropped on first sweep")

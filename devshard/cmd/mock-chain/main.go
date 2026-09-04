@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"devshard/bridge"
 	"devshard/types"
@@ -109,7 +110,8 @@ func main() {
 
 	addr := ":" + *port
 	log.Printf("mock-chain listening on %s", addr)
-	if err := http.ListenAndServe(addr, newHandler(cfg)); err != nil {
+	server := &http.Server{Addr: addr, Handler: newHandler(cfg), ReadHeaderTimeout: 5 * time.Second}
+	if err := server.ListenAndServe(); err != nil {
 		log.Fatal(err)
 	}
 }
@@ -200,7 +202,7 @@ func newHandler(cfg mockConfig) http.Handler {
 func loadConfig(path string) (mockConfig, error) {
 	cfg := defaultConfig()
 	if path != "" {
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) //nolint:gosec // the config path is a flag of the stand.
 		if err != nil {
 			return mockConfig{}, err
 		}

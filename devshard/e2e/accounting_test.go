@@ -36,7 +36,7 @@ func TestE2E_AccountingHappyPath(t *testing.T) {
 	testutil.RequireAccountingResponseCoherent(t, after, "stub-model")
 	testutil.RequireNonceAccountingBalanced(t, after)
 	require.Greater(t, testutil.AccountingAssignedTotal(after), beforeAssigned, "assigned nonce count should grow after gateway traffic")
-	require.Greater(t, testutil.AccountingDispositionTotal(after), uint64(0), "gateway traffic should produce at least one disposition")
+	require.Positive(t, testutil.AccountingDispositionTotal(after), "gateway traffic should produce at least one disposition")
 }
 
 // Test flow:
@@ -217,7 +217,7 @@ func TestE2E_AccountingLiveInFlightIsCountedOnce(t *testing.T) {
 	inFlight := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
 		return len(resp.Participants) > 0 && testutil.AccountingInFlightTotal(resp) > 0
 	})
-	require.Greater(t, testutil.AccountingInFlightTotal(inFlight), uint64(0), "accounting should expose the live sent nonce as in_flight")
+	require.Positive(t, testutil.AccountingInFlightTotal(inFlight), "accounting should expose the live sent nonce as in_flight")
 	testutil.RequireAccountingResponseCoherent(t, inFlight, "stub-model")
 	testutil.RequireNonceAccountingBalanced(t, inFlight)
 
@@ -290,7 +290,7 @@ func TestE2E_AccountingLiveSendTimeout(t *testing.T) {
 		return len(resp.Participants) > 0 && testutil.AccountingInFlightTotal(resp) > 0
 	})
 	inFlightCount := testutil.AccountingInFlightTotal(inFlight)
-	require.Greater(t, inFlightCount, uint64(0), "accounting should expose the live sent nonce as in_flight")
+	require.Positive(t, inFlightCount, "accounting should expose the live sent nonce as in_flight")
 	testutil.RequireAccountingResponseCoherent(t, inFlight, "stub-model")
 	testutil.RequireNonceAccountingBalanced(t, inFlight)
 
@@ -376,7 +376,7 @@ func TestE2E_AccountingNoReceiptTimeoutBecomesUnfinishedRefused(t *testing.T) {
 		return len(resp.Participants) > 0 && testutil.AccountingInFlightTotal(resp) > 0
 	})
 	inFlightCount := testutil.AccountingInFlightTotal(inFlight)
-	require.Greater(t, inFlightCount, uint64(0), "accounting should expose the no-receipt sent nonce as in_flight")
+	require.Positive(t, inFlightCount, "accounting should expose the no-receipt sent nonce as in_flight")
 	testutil.RequireAccountingResponseCoherent(t, inFlight, "stub-model")
 	testutil.RequireNonceAccountingBalanced(t, inFlight)
 
@@ -468,7 +468,7 @@ func TestE2E_AccountingAppliedTimeoutCrossCheck(t *testing.T) {
 	inFlight := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
 		return len(resp.Participants) > 0 && testutil.AccountingInFlightTotal(resp) > 0
 	})
-	require.Greater(t, testutil.AccountingInFlightTotal(inFlight), uint64(0), "accounting should expose the live sent nonce before timeout voting")
+	require.Positive(t, testutil.AccountingInFlightTotal(inFlight), "accounting should expose the live sent nonce before timeout voting")
 
 	ctx, cancel := context.WithTimeout(context.Background(), testutil.DefaultRequestTimeout)
 	t.Cleanup(cancel)

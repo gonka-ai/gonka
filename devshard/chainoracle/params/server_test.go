@@ -57,13 +57,13 @@ func TestParamsServer_GetRuntimeConfigLongPoll(t *testing.T) {
 
 	resp, err := client.GetRuntimeConfig(ctx, &gen.GetRuntimeConfigRequest{ClientParamsBlockHeight: 0})
 	require.NoError(t, err)
-	require.False(t, resp.Unchanged)
-	require.Equal(t, int64(100), resp.Config.ParamsBlockHeight)
-	require.Equal(t, uint64(3), resp.Config.CurrentEpochId)
+	require.False(t, resp.GetUnchanged())
+	require.Equal(t, int64(100), resp.GetConfig().GetParamsBlockHeight())
+	require.Equal(t, uint64(3), resp.GetConfig().GetCurrentEpochId())
 
 	resp, err = client.GetRuntimeConfig(ctx, &gen.GetRuntimeConfigRequest{ClientParamsBlockHeight: 100})
 	require.NoError(t, err)
-	require.True(t, resp.Unchanged)
+	require.True(t, resp.GetUnchanged())
 
 	done := make(chan struct{})
 	go func() {
@@ -73,8 +73,8 @@ func TestParamsServer_GetRuntimeConfigLongPoll(t *testing.T) {
 			MaxWaitSeconds:          5,
 		})
 		require.NoError(t, err)
-		require.False(t, resp.Unchanged)
-		require.Equal(t, int64(200), resp.Config.ParamsBlockHeight)
+		require.False(t, resp.GetUnchanged())
+		require.Equal(t, int64(200), resp.GetConfig().GetParamsBlockHeight())
 	}()
 
 	time.Sleep(20 * time.Millisecond)
@@ -107,6 +107,6 @@ func TestParamsServer_AcquireMLNode(t *testing.T) {
 
 	resp, err := client.AcquireMLNode(ctx, &gen.AcquireMLNodeRequest{Model: "gpt-test"})
 	require.NoError(t, err)
-	require.Equal(t, "http://mock-openai:8088", resp.Endpoint)
-	require.NotEmpty(t, resp.LockId)
+	require.Equal(t, "http://mock-openai:8088", resp.GetEndpoint())
+	require.NotEmpty(t, resp.GetLockId())
 }

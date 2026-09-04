@@ -103,7 +103,7 @@ func TestChatCompletions_MaxTokensPadsDeterministicContent(t *testing.T) {
 	require.NoError(t, json.Unmarshal(raw, &out))
 	content := out["choices"].([]any)[0].(map[string]any)["message"].(map[string]any)["content"].(string)
 	require.True(t, strings.HasPrefix(content, "mock-openai:"))
-	require.Equal(t, n, len([]rune(content)))
+	require.Len(t, []rune(content), n)
 }
 
 func TestChatCompletions_EmitsLogprobsWhenRequested(t *testing.T) {
@@ -271,7 +271,7 @@ func TestChatCompletions_StreamPauseCanBeRearmed(t *testing.T) {
 		_ = resp.Body.Close()
 	}
 
-	firstResp, firstDone := startPausedStream() //nolint:bodyclose // startPausedStream closes the body before it returns.
+	firstResp, firstDone := startPausedStream()
 	assertPaused(firstDone)
 	release()
 	waitReleased(firstResp, firstDone)
@@ -285,7 +285,7 @@ func TestChatCompletions_StreamPauseCanBeRearmed(t *testing.T) {
 	_ = patch.Body.Close()
 	require.Equal(t, http.StatusOK, patch.StatusCode)
 
-	secondResp, secondDone := startPausedStream() //nolint:bodyclose // startPausedStream closes the body before it returns.
+	secondResp, secondDone := startPausedStream()
 	assertPaused(secondDone)
 	release()
 	waitReleased(secondResp, secondDone)

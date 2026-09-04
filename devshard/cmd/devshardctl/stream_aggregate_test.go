@@ -791,7 +791,7 @@ func TestCompletionFolder_SmallLogprobsStayInMemory(t *testing.T) {
 	require.False(t, early)
 	require.False(t, f.choices[0].lp.spilled, "tiny logprobs payload must not spill")
 	require.Zero(t, f.diskBytes)
-	require.Greater(t, f.ramBytes, int64(0))
+	require.Positive(t, f.ramBytes)
 
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
@@ -872,7 +872,7 @@ func TestCompletionFolder_LogprobsSpillIsAnonymous(t *testing.T) {
 	require.NoError(t, err)
 	for _, e := range entries {
 		require.False(t, strings.HasPrefix(e.Name(), "agg-lp-"), "named logprobs spill %s", e.Name())
-		require.False(t, strings.Contains(e.Name(), ".ndjson"), "visible ndjson spill %s", e.Name())
+		require.NotContains(t, e.Name(), ".ndjson", "visible ndjson spill %s", e.Name())
 	}
 }
 

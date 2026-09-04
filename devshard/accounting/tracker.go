@@ -583,7 +583,7 @@ func (e *escrowState) recordCommittedDiff(diff types.Diff, verdicts []VerdictRec
 	}
 	hasStart := false
 	for _, tx := range diff.Txs {
-		if start := tx.GetStartInference(); start != nil && start.InferenceId == diff.Nonce {
+		if start := tx.GetStartInference(); start != nil && start.GetInferenceId() == diff.Nonce {
 			hasStart = true
 			break
 		}
@@ -591,17 +591,17 @@ func (e *escrowState) recordCommittedDiff(diff types.Diff, verdicts []VerdictRec
 	e.recordDiff(diff.Nonce, hasStart)
 	for _, tx := range diff.Txs {
 		if msg := tx.GetConfirmStart(); msg != nil {
-			if state := e.Live[msg.InferenceId]; state != nil {
+			if state := e.Live[msg.GetInferenceId()]; state != nil {
 				state.Receipt = true
-				state.ReceiptAt = msg.ConfirmedAt
-				e.reclassify(msg.InferenceId, state, now)
+				state.ReceiptAt = msg.GetConfirmedAt()
+				e.reclassify(msg.GetInferenceId(), state, now)
 			}
 			continue
 		}
 		if msg := tx.GetFinishInference(); msg != nil {
-			if state := e.Live[msg.InferenceId]; state != nil {
+			if state := e.Live[msg.GetInferenceId()]; state != nil {
 				state.markFinished()
-				e.reclassify(msg.InferenceId, state, now)
+				e.reclassify(msg.GetInferenceId(), state, now)
 			}
 			continue
 		}
@@ -609,10 +609,10 @@ func (e *escrowState) recordCommittedDiff(diff types.Diff, verdicts []VerdictRec
 			// The chain counts a miss on the executor slot for every one of these, so the ledger side
 			// of that cross-check is read from the same diff rather than from what the gateway
 			// reported: a timeout raised on a nonce nobody dispatched is reported nowhere.
-			e.TimedOutBySlot[AssignedNonceSlot(msg.InferenceId, uint64(len(e.Meta.Slots)))]++
-			if state := e.Live[msg.InferenceId]; state != nil {
+			e.TimedOutBySlot[AssignedNonceSlot(msg.GetInferenceId(), uint64(len(e.Meta.Slots)))]++
+			if state := e.Live[msg.GetInferenceId()]; state != nil {
 				state.markProtocolTimeout()
-				e.reclassify(msg.InferenceId, state, now)
+				e.reclassify(msg.GetInferenceId(), state, now)
 			}
 		}
 	}

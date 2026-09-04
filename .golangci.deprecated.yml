@@ -1,0 +1,23 @@
+# Deprecated APIs the code still uses. Reported on its own, never as part of the gate: some of these
+# have no replacement in the versions we pin, and the ones that do are their own migration.
+# Run with `make lint-deprecated`; nothing picks this file up implicitly, the name sees to that.
+
+version: "2"
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - staticcheck
+  settings:
+    staticcheck:
+      checks:
+        - SA1019
+
+severity:
+  default: warning
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

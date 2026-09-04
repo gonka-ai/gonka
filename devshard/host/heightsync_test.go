@@ -94,13 +94,13 @@ func TestHost_HeartbeatAck_OwnSlotIntoMempool(t *testing.T) {
 	acks := mempoolHeightAcks(resp.Mempool)
 	require.Len(t, acks, 1)
 	ack := acks[0]
-	require.Equal(t, uint64(3), ack.RefNonce)
-	require.Equal(t, uint32(0), ack.SlotId)
-	require.Equal(t, uint64(100), ack.ObservedHeight)
-	require.Equal(t, []byte{0xaa}, ack.ObservedBlockHash)
-	require.Equal(t, types.SyncState_SYNCED, ack.SyncState)
-	require.NotEmpty(t, ack.PeerSeen)
-	require.Equal(t, byte(1<<0), ack.PeerSeen[0], "peer_seen is this host's own slot, not sequencer heartbeats")
+	require.Equal(t, uint64(3), ack.GetRefNonce())
+	require.Equal(t, uint32(0), ack.GetSlotId())
+	require.Equal(t, uint64(100), ack.GetObservedHeight())
+	require.Equal(t, []byte{0xaa}, ack.GetObservedBlockHash())
+	require.Equal(t, types.SyncState_SYNCED, ack.GetSyncState())
+	require.NotEmpty(t, ack.GetPeerSeen())
+	require.Equal(t, byte(1<<0), ack.GetPeerSeen()[0], "peer_seen is this host's own slot, not sequencer heartbeats")
 	require.True(t, h.PeerSeenHas(0))
 	require.False(t, h.PeerSeenHas(1), "sequencer heartbeat is not a claim from slot 1")
 	require.False(t, h.PeerSeenHas(2))
@@ -194,9 +194,9 @@ func TestHost_HeartbeatAck_OracleUnavailableStillRequired(t *testing.T) {
 
 	acks := mempoolHeightAcks(resp.Mempool)
 	require.Len(t, acks, 1)
-	require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, acks[0].SyncState)
-	require.Equal(t, uint64(0), acks[0].ObservedHeight)
-	require.Empty(t, acks[0].ObservedBlockHash)
+	require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, acks[0].GetSyncState())
+	require.Equal(t, uint64(0), acks[0].GetObservedHeight())
+	require.Empty(t, acks[0].GetObservedBlockHash())
 	require.NoError(t, heightsync.VerifyAck(signing.NewSecp256k1Verifier(), acks[0], hosts[0].Address()))
 }
 
@@ -219,7 +219,7 @@ func TestHost_HeartbeatAck_OracleErrorStillRequired(t *testing.T) {
 	require.NoError(t, err)
 	acks := mempoolHeightAcks(resp.Mempool)
 	require.Len(t, acks, 1)
-	require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, acks[0].SyncState)
+	require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, acks[0].GetSyncState())
 	require.Equal(t, int64(1), or.latestCalls.Load())
 }
 
@@ -281,8 +281,8 @@ func TestHost_HeartbeatAck_CatchingUp(t *testing.T) {
 	require.NoError(t, err)
 	acks := mempoolHeightAcks(resp.Mempool)
 	require.Len(t, acks, 1)
-	require.Equal(t, types.SyncState_CATCHING_UP, acks[0].SyncState)
-	require.Equal(t, uint64(90), acks[0].ObservedHeight)
+	require.Equal(t, types.SyncState_CATCHING_UP, acks[0].GetSyncState())
+	require.Equal(t, uint64(90), acks[0].GetObservedHeight())
 }
 
 // TestHost_HeartbeatAck_LagsButClearsHostFloor is the producer-side lift: a host
@@ -315,10 +315,10 @@ func TestHost_HeartbeatAck_LagsButClearsHostFloor(t *testing.T) {
 
 	acks := mempoolHeightAcks(resp.Mempool)
 	require.Len(t, acks, 1)
-	require.Equal(t, uint64(3), acks[0].RefNonce)
-	require.Equal(t, uint64(100), acks[0].ObservedHeight, "lifted to the host-established floor, not own tip 90")
-	require.Equal(t, top, acks[0].ObservedBlockHash, "the carried pair must be the floor's, not the host's")
-	require.Equal(t, types.SyncState_CATCHING_UP, acks[0].SyncState,
+	require.Equal(t, uint64(3), acks[0].GetRefNonce())
+	require.Equal(t, uint64(100), acks[0].GetObservedHeight(), "lifted to the host-established floor, not own tip 90")
+	require.Equal(t, top, acks[0].GetObservedBlockHash(), "the carried pair must be the floor's, not the host's")
+	require.Equal(t, types.SyncState_CATCHING_UP, acks[0].GetSyncState(),
 		"the lag is not hidden: it moves to the label the gateway monitors")
 }
 
@@ -365,10 +365,10 @@ func TestHost_HeartbeatAck_CarriesAFloorFarAboveOwnTip(t *testing.T) {
 
 	acks := mempoolHeightAcks(resp.Mempool)
 	require.Len(t, acks, 1)
-	require.Equal(t, uint64(3), acks[0].RefNonce)
-	require.Equal(t, far, acks[0].ObservedHeight, "the floor is carried however far above own tip 1 it is")
-	require.Equal(t, top, acks[0].ObservedBlockHash, "the carried pair is the floor's, not the host's")
-	require.Equal(t, types.SyncState_CATCHING_UP, acks[0].SyncState,
+	require.Equal(t, uint64(3), acks[0].GetRefNonce())
+	require.Equal(t, far, acks[0].GetObservedHeight(), "the floor is carried however far above own tip 1 it is")
+	require.Equal(t, top, acks[0].GetObservedBlockHash(), "the carried pair is the floor's, not the host's")
+	require.Equal(t, types.SyncState_CATCHING_UP, acks[0].GetSyncState(),
 		"the host's real position still reaches the gateway through the label")
 }
 
@@ -392,8 +392,8 @@ func TestHost_HeartbeatAck_OracleStale(t *testing.T) {
 	require.NoError(t, err)
 	acks := mempoolHeightAcks(resp.Mempool)
 	require.Len(t, acks, 1)
-	require.Equal(t, types.SyncState_ORACLE_STALE, acks[0].SyncState)
-	require.Equal(t, uint64(100), acks[0].ObservedHeight)
+	require.Equal(t, types.SyncState_ORACLE_STALE, acks[0].GetSyncState())
+	require.Equal(t, uint64(100), acks[0].GetObservedHeight())
 }
 
 func TestHost_HeartbeatAck_AlreadyAppliedDoesNotRereadOracle(t *testing.T) {

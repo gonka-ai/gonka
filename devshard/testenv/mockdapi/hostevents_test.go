@@ -25,17 +25,17 @@ func TestHostEvents_ImmediateAndCursorUnchanged(t *testing.T) {
 		Cursor: 0, Subscribe: escrowSub(),
 	})
 	require.NoError(t, err)
-	require.Len(t, resp.Events, 1)
-	require.Equal(t, uint64(7), resp.Events[0].GetEscrow().GetEscrowId())
-	require.Equal(t, gen.HostEventKind_HOST_EVENT_KIND_ESCROW_CREATED, resp.Events[0].GetKind())
-	require.Equal(t, uint64(1), resp.NextCursor)
+	require.Len(t, resp.GetEvents(), 1)
+	require.Equal(t, uint64(7), resp.GetEvents()[0].GetEscrow().GetEscrowId())
+	require.Equal(t, gen.HostEventKind_HOST_EVENT_KIND_ESCROW_CREATED, resp.GetEvents()[0].GetKind())
+	require.Equal(t, uint64(1), resp.GetNextCursor())
 
 	caughtUp, err := srv.GetHostEvents(context.Background(), &gen.GetHostEventsRequest{
-		Cursor: resp.NextCursor, Subscribe: escrowSub(),
+		Cursor: resp.GetNextCursor(), Subscribe: escrowSub(),
 	})
 	require.NoError(t, err)
-	require.True(t, caughtUp.Unchanged)
-	require.Empty(t, caughtUp.Events)
+	require.True(t, caughtUp.GetUnchanged())
+	require.Empty(t, caughtUp.GetEvents())
 }
 
 func TestHostEvents_LongPollWakesOnAppend(t *testing.T) {
@@ -52,8 +52,8 @@ func TestHostEvents_LongPollWakesOnAppend(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Less(t, time.Since(start), 5*time.Second, "long-poll should wake promptly on append")
-	require.Len(t, resp.Events, 1)
-	require.Equal(t, uint64(42), resp.Events[0].GetEscrow().GetEscrowId())
+	require.Len(t, resp.GetEvents(), 1)
+	require.Equal(t, uint64(42), resp.GetEvents()[0].GetEscrow().GetEscrowId())
 }
 
 func TestHostEvents_GenerationMismatchResets(t *testing.T) {
@@ -64,7 +64,7 @@ func TestHostEvents_GenerationMismatchResets(t *testing.T) {
 		Cursor: 0, Generation: 999, Subscribe: escrowSub(),
 	})
 	require.NoError(t, err)
-	require.True(t, resp.NeedsReset)
+	require.True(t, resp.GetNeedsReset())
 }
 
 func TestHostEvents_SubscribeRequired(t *testing.T) {

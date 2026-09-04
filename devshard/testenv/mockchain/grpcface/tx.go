@@ -57,7 +57,7 @@ func (s *TxServer) BroadcastTx(_ context.Context, req *txtypes.BroadcastTxReques
 	}
 	msgs, err := txexec.DecodeTxMessages(txBytes)
 	if err != nil {
-		return &txtypes.BroadcastTxResponse{ //nolint:nilerr // the failure travels in the gRPC response envelope.
+		return &txtypes.BroadcastTxResponse{
 			TxResponse: &sdk.TxResponse{
 				Code:      1,
 				Codespace: "mockchain",
@@ -67,7 +67,7 @@ func (s *TxServer) BroadcastTx(_ context.Context, req *txtypes.BroadcastTxReques
 	}
 	result, err := txexec.ExecMessages(s.store, s.rpc, msgs)
 	if err != nil {
-		return &txtypes.BroadcastTxResponse{ //nolint:nilerr // the failure travels in the gRPC response envelope.
+		return &txtypes.BroadcastTxResponse{
 			TxResponse: &sdk.TxResponse{
 				Code:      1,
 				Codespace: "mockchain",

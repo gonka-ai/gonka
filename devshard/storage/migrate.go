@@ -94,7 +94,7 @@ func MigrateLegacySQLite(legacyPath string, dest Storage, resolveEpoch EpochReso
 			&ls.escrowID, &version, &ls.creatorAddr, &ls.configJSON, &ls.groupJSON,
 			&ls.initialBalance, &ls.latestNonce, &ls.lastFinalized, &ls.status,
 		); err != nil {
-			rows.Close() //nolint:sqlclosecheck // must close before the next statement on this SQLite connection.
+			rows.Close()
 			return 0, fmt.Errorf("scan legacy session: %w", err)
 		}
 		if version.Valid {
@@ -221,7 +221,7 @@ func migrateLegacyDiffs(src *sql.DB, dest Storage, escrowID string, copiedThroug
 	for rows.Next() {
 		var d legacyDiff
 		if err := rows.Scan(&d.nonce, &d.txsProto, &d.userSig, &d.postStateRoot, &d.stateHash, &d.warmJSON, &d.createdAt); err != nil {
-			rows.Close() //nolint:sqlclosecheck // must close before the next statement on this SQLite connection.
+			rows.Close()
 			return fmt.Errorf("scan diff: %w", err)
 		}
 		diffs = append(diffs, d)
@@ -268,7 +268,7 @@ func migrateLegacyDiffs(src *sql.DB, dest Storage, escrowID string, copiedThroug
 			var slotID uint32
 			var sig []byte
 			if err := sigRows.Scan(&slotID, &sig); err != nil {
-				sigRows.Close() //nolint:sqlclosecheck // must close before the next statement on this SQLite connection.
+				sigRows.Close()
 				return fmt.Errorf("scan sig nonce %d: %w", d.nonce, err)
 			}
 			sigs[slotID] = sig

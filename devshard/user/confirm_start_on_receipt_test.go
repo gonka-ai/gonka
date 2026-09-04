@@ -52,7 +52,7 @@ func pendingConfirmStarts(session *Session) []uint64 {
 	var confirmed []uint64
 	for _, tx := range session.PendingTxs() {
 		if inner := tx.GetConfirmStart(); inner != nil {
-			confirmed = append(confirmed, inner.InferenceId)
+			confirmed = append(confirmed, inner.GetInferenceId())
 		}
 	}
 	return confirmed

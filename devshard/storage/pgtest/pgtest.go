@@ -37,7 +37,7 @@ const (
 var ErrDockerUnavailable = errors.New("docker host unavailable")
 
 func waitStrategy() wait.Strategy {
-	return wait.ForAll( //nolint:staticcheck // MultiStrategy.WithDeadline is not in the pinned testcontainers.
+	return wait.ForAll(
 		wait.ForLog("database system is ready to accept connections").
 			WithOccurrence(2),
 		wait.ForListeningPort("5432/tcp"),
@@ -163,7 +163,7 @@ func sleepContext(ctx context.Context, d time.Duration) error {
 
 func lockStart(ctx context.Context) (unlock func(), err error) {
 	path := filepath.Join(os.TempDir(), "devshard-testcontainers-pg.lock")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o644)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600) //nolint:gosec // the path is the fixture the helper just wrote.
 	if err != nil {
 		return nil, fmt.Errorf("open postgres testcontainer lock: %w", err)
 	}

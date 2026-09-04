@@ -108,12 +108,12 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 		verdict := false
 		switch timeout, validation, vote := tx.GetTimeoutInference(), tx.GetValidation(), tx.GetValidationVote(); {
 		case timeout != nil:
-			inferenceID = timeout.InferenceId
+			inferenceID = timeout.GetInferenceId()
 		case validation != nil:
-			inferenceID, verdict = validation.InferenceId, true
-			validatorSlots = append(validatorSlots, validation.ValidatorSlot)
+			inferenceID, verdict = validation.GetInferenceId(), true
+			validatorSlots = append(validatorSlots, validation.GetValidatorSlot())
 		case vote != nil:
-			inferenceID, verdict = vote.InferenceId, true
+			inferenceID, verdict = vote.GetInferenceId(), true
 		default:
 			continue
 		}

@@ -1022,7 +1022,7 @@ func TestCheckEnvelopeBinding_RequestLegBlobBounded(t *testing.T) {
 	require.True(t, hasMark(marks, heightsync.MarkDisputeCarrier))
 	for _, m := range marks {
 		require.LessOrEqual(t, len(m.Blob), heightsync.MaxMarkBlobBytes)
-		require.Equal(t, sha256.Size, len(m.Blob), "request-leg L4 stores CanonicalRequestLegBytes")
+		require.Len(t, m.Blob, sha256.Size, "request-leg L4 stores CanonicalRequestLegBytes")
 		require.Equal(t, heightsync.CanonicalRequestLegBytes("escrow-1", body, 1_700_000_000), m.Blob)
 	}
 }

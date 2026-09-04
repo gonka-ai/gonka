@@ -277,13 +277,13 @@ func validationAlreadyAppliedByHost(h *host.Host, inferenceID uint64) bool {
 
 func validationAlreadyInMempool(h *host.Host, inferenceID uint64) bool {
 	for _, tx := range h.MempoolTxs() {
-		if v := tx.GetValidation(); v != nil && v.InferenceId == inferenceID {
-			if h.SlotIDs()[v.ValidatorSlot] {
+		if v := tx.GetValidation(); v != nil && v.GetInferenceId() == inferenceID {
+			if h.SlotIDs()[v.GetValidatorSlot()] {
 				return true
 			}
 		}
-		if v := tx.GetValidationVote(); v != nil && v.InferenceId == inferenceID {
-			if h.SlotIDs()[v.VoterSlot] {
+		if v := tx.GetValidationVote(); v != nil && v.GetInferenceId() == inferenceID {
+			if h.SlotIDs()[v.GetVoterSlot()] {
 				return true
 			}
 		}

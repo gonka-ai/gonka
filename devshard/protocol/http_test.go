@@ -249,7 +249,7 @@ func TestHTTP_HappyPath(t *testing.T) {
 
 	drainSessionPending(t, ctx, env.session)
 	preFinalize := env.session.StateMachine().SnapshotState()
-	require.Equal(t, 15, len(preFinalize.Inferences))
+	require.Len(t, preFinalize.Inferences, 15)
 	for id, rec := range preFinalize.Inferences {
 		require.Equal(t, types.StatusFinished, rec.Status, "inference %d should be finished", id)
 	}
@@ -260,7 +260,7 @@ func TestHTTP_HappyPath(t *testing.T) {
 	st := env.session.StateMachine().SnapshotState()
 	require.Equal(t, types.PhaseSettlement, st.Phase)
 	require.Empty(t, st.Inferences, "v2 drains live inferences at settlement")
-	require.Equal(t, 15, len(env.session.StateMachine().ExportSealedNonces()))
+	require.Len(t, env.session.StateMachine().ExportSealedNonces(), 15)
 
 	// After finalize, check signatures for the settlement nonce
 	// (last Phase A nonce -- all hosts have seen it via Phase B catch-up).
@@ -402,7 +402,7 @@ func TestHTTP_TimeoutRefused(t *testing.T) {
 		StartedAt:   1000,
 	}, verifiers, allDiffs)
 	require.NoError(t, err)
-	require.True(t, len(votes) > int(env.config.VoteThreshold), "need >%d votes, got %d", env.config.VoteThreshold, len(votes))
+	require.Greater(t, len(votes), int(env.config.VoteThreshold), "need >%d votes, got %d", env.config.VoteThreshold, len(votes))
 
 	// Compose and apply timeout.
 	timeoutTx := &types.DevshardTx{Tx: &types.DevshardTx_TimeoutInference{
@@ -471,7 +471,7 @@ func TestHTTP_TimeoutExecution(t *testing.T) {
 
 	votes, _, _, err := env.session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_EXECUTION, nil, verifiers, allDiffs) // nil payload for execution timeout
 	require.NoError(t, err)
-	require.True(t, len(votes) > int(env.config.VoteThreshold),
+	require.Greater(t, len(votes), int(env.config.VoteThreshold),
 		"need >%d votes, got %d", env.config.VoteThreshold, len(votes))
 }
 
@@ -542,7 +542,7 @@ func TestHTTP_ChallengeReceipt_RejectsTimeout(t *testing.T) {
 		StartedAt:   1000,
 	}, verifiers, allDiffs)
 	require.NoError(t, err)
-	require.Equal(t, 0, len(votes), "all hosts should reject timeout because executor is alive and produced receipt")
+	require.Empty(t, votes, "all hosts should reject timeout because executor is alive and produced receipt")
 }
 
 func TestHTTP_RefusedTimeoutChallengeRecoveryLandsInNextDiff(t *testing.T) {
@@ -633,7 +633,7 @@ func TestHTTP_ExecutionTimeoutDoesNotUseConfirmStartRecovery(t *testing.T) {
 	require.NotNil(t, confirmTx)
 	recoverySource.txs = []*types.DevshardTx{confirmTx}
 
-	resp := &host.HostResponse{Receipt: receipt, ConfirmedAt: confirmTx.GetConfirmStart().ConfirmedAt}
+	resp := &host.HostResponse{Receipt: receipt, ConfirmedAt: confirmTx.GetConfirmStart().GetConfirmedAt()}
 	require.NoError(t, session.ProcessResponse(executorIdx, resp, prepared.Nonce()))
 	require.NoError(t, session.SendPendingDiff(ctx))
 	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[prepared.Nonce()].Status)
@@ -697,7 +697,7 @@ func TestHTTP_RefusedTimeoutChallengeTimeoutThenRecoveryTxIsAvailable(t *testing
 
 	votes, recovery, _, err := env.session.CollectTimeoutVotes(ctx, prepared.Nonce(), types.TimeoutReason_TIMEOUT_REASON_REFUSED, refusedPayload(), env.session.TimeoutVerifiers(), env.session.Diffs())
 	require.NoError(t, err)
-	require.True(t, len(votes) > int(env.config.VoteThreshold), "challenge response timeouts should initially look like executor unreachable")
+	require.Greater(t, len(votes), int(env.config.VoteThreshold), "challenge response timeouts should initially look like executor unreachable")
 	require.Empty(t, recovery)
 
 	select {
@@ -740,7 +740,7 @@ func TestHTTP_ExecutionTimeoutRejectedWhenExecutorHasFinish(t *testing.T) {
 
 	require.NoError(t, env.session.ProcessResponse(executorIdx, &host.HostResponse{
 		Receipt:     receipt,
-		ConfirmedAt: confirmTx.GetConfirmStart().ConfirmedAt,
+		ConfirmedAt: confirmTx.GetConfirmStart().GetConfirmedAt(),
 	}, prepared.Nonce()))
 	require.NoError(t, env.session.SendPendingDiff(ctx))
 	require.Equal(t, types.StatusStarted, env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()].Status)
@@ -771,7 +771,7 @@ func TestHTTP_NextRequestSettlesFinishFromExecutorMempool(t *testing.T) {
 
 	require.NoError(t, env.session.ProcessResponse(executorIdx, &host.HostResponse{
 		Receipt:     receipt,
-		ConfirmedAt: confirmTx.GetConfirmStart().ConfirmedAt,
+		ConfirmedAt: confirmTx.GetConfirmStart().GetConfirmedAt(),
 	}, prepared.Nonce()))
 	require.NoError(t, env.session.SendPendingDiff(ctx))
 	require.Equal(t, types.StatusStarted, env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()].Status)
@@ -806,7 +806,7 @@ func TestHTTP_ExecutionTimeoutAfterFinishPulledPendingDoesNotTimeout(t *testing.
 
 	require.NoError(t, env.session.ProcessResponse(executorIdx, &host.HostResponse{
 		Receipt:     receipt,
-		ConfirmedAt: confirmTx.GetConfirmStart().ConfirmedAt,
+		ConfirmedAt: confirmTx.GetConfirmStart().GetConfirmedAt(),
 	}, prepared.Nonce()))
 	require.NoError(t, env.session.SendPendingDiff(ctx))
 	require.Equal(t, types.StatusStarted, env.session.StateMachine().SnapshotState().Inferences[prepared.Nonce()].Status)
@@ -867,7 +867,7 @@ func TestHTTP_StateRecovery(t *testing.T) {
 		}
 		storedDiffs += len(diffs)
 	}
-	require.True(t, storedDiffs > 0, "at least one host should have stored diffs")
+	require.Positive(t, storedDiffs, "at least one host should have stored diffs")
 }
 
 func TestHTTP_Finalize(t *testing.T) {
@@ -1341,8 +1341,8 @@ func TestHTTP_T1_HonestRecovery_ConfirmStartReachesSessionAndPeer(t *testing.T) 
 	execConfirm := findConfirmStart(env.hosts[executorIdx].MempoolTxs(), 1)
 	require.NotNil(t, execConfirm, "executor must still hold the challenge ConfirmStart")
 	require.Equal(t, types.TxHash(execConfirm), types.TxHash(got), "session must copy the executor tx, not mint a new ConfirmStart")
-	require.Equal(t, execConfirm.GetConfirmStart().ExecutorSig, got.GetConfirmStart().ExecutorSig)
-	require.Equal(t, execConfirm.GetConfirmStart().ConfirmedAt, got.GetConfirmStart().ConfirmedAt)
+	require.Equal(t, execConfirm.GetConfirmStart().GetExecutorSig(), got.GetConfirmStart().GetExecutorSig())
+	require.Equal(t, execConfirm.GetConfirmStart().GetConfirmedAt(), got.GetConfirmStart().GetConfirmedAt())
 
 	peer := newPeerSM(t, env, 1000000)
 	_, err = peer.ApplyDiff(diffs[0])
@@ -1442,7 +1442,7 @@ func refusedPayload() *host.InferencePayload {
 
 func findConfirmStart(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
 	for _, tx := range txs {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.GetInferenceId() == inferenceID {
 			return tx
 		}
 	}
@@ -1451,7 +1451,7 @@ func findConfirmStart(txs []*types.DevshardTx, inferenceID uint64) *types.Devsha
 
 func findFinish(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
 	for _, tx := range txs {
-		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+		if fi := tx.GetFinishInference(); fi != nil && fi.GetInferenceId() == inferenceID {
 			return tx
 		}
 	}
@@ -1461,7 +1461,7 @@ func findFinish(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
 func countConfirmStart(txs []*types.DevshardTx, inferenceID uint64) int {
 	n := 0
 	for _, tx := range txs {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.GetInferenceId() == inferenceID {
 			n++
 		}
 	}

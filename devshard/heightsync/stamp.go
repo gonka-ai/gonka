@@ -69,9 +69,9 @@ func ExecutorStamp(tx *types.DevshardTx) (inferenceID, height uint64, ok bool) {
 	var msg any
 	switch {
 	case tx.GetConfirmStart() != nil:
-		id, msg = tx.GetConfirmStart().InferenceId, tx.GetConfirmStart()
+		id, msg = tx.GetConfirmStart().GetInferenceId(), tx.GetConfirmStart()
 	case tx.GetFinishInference() != nil:
-		id, msg = tx.GetFinishInference().InferenceId, tx.GetFinishInference()
+		id, msg = tx.GetFinishInference().GetInferenceId(), tx.GetFinishInference()
 	default:
 		return 0, 0, false
 	}
@@ -111,13 +111,13 @@ func RefProducingNonce(diffNonce uint64, tx *types.DevshardTx) (uint64, bool) {
 		return diffNonce, true
 	}
 	if c := tx.GetConfirmStart(); c != nil {
-		return c.InferenceId, true
+		return c.GetInferenceId(), true
 	}
 	if f := tx.GetFinishInference(); f != nil {
-		return f.InferenceId, true
+		return f.GetInferenceId(), true
 	}
 	if a := tx.GetHeightAck(); a != nil {
-		return a.RefNonce + 1, true
+		return a.GetRefNonce() + 1, true
 	}
 	return 0, false
 }

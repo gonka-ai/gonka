@@ -962,7 +962,7 @@ func TestAdminDevshardParticipantsShowsQuarantineState(t *testing.T) {
 	require.Equal(t, 0.0, body.Participants[0].Tokens)
 	require.Equal(t, 10.0, body.Participants[0].Burst)
 	require.NotEmpty(t, body.Participants[0].QuarantineUntil)
-	require.Greater(t, body.Participants[0].QuarantineRemaining, int64(0))
+	require.Positive(t, body.Participants[0].QuarantineRemaining)
 
 	require.Equal(t, "healthy-host", body.Participants[1].ParticipantKey)
 	require.Equal(t, 1, body.Participants[1].SlotCount)
@@ -2031,7 +2031,7 @@ func TestGatewayChooseRuntimePrefersHealthyEscrowWithoutBenchingPartial(t *testi
 		counts[rt.id]++
 	}
 	require.Greater(t, counts["12"], counts["6"], "healthy escrow should win majority: %v", counts)
-	require.Greater(t, counts["6"], 0, "partially-throttled escrow should still receive traffic: %v", counts)
+	require.Positive(t, counts["6"], "partially-throttled escrow should still receive traffic: %v", counts)
 }
 
 func TestGatewayChooseRuntimeFailsWhenAllDevshardsParticipantLimited(t *testing.T) {
@@ -2102,7 +2102,7 @@ func TestGatewayChooseRuntimeReactsToRecoveryWithoutPhasePoll(t *testing.T) {
 		counts[rt.id]++
 		g.releaseRuntime(rt, 1)
 	}
-	require.Greater(t, counts["a"], 0, "recovered escrow should receive traffic: %v", counts)
+	require.Positive(t, counts["a"], "recovered escrow should receive traffic: %v", counts)
 }
 
 func TestGatewayExplicitRouteStillWorksForInactiveDevshard(t *testing.T) {
@@ -2485,7 +2485,7 @@ func TestParticipantRequestLimiterLoadStateDeletesFullyRecovered(t *testing.T) {
 
 	rows, err := store.LoadParticipantThrottles()
 	require.NoError(t, err)
-	require.Len(t, rows, 0)
+	require.Empty(t, rows)
 }
 
 func TestParticipantRequestLimiterPersistsProbationOnExpiry(t *testing.T) {
@@ -2514,7 +2514,7 @@ func TestParticipantRequestLimiterPersistsProbationOnExpiry(t *testing.T) {
 	limiter.ObserveSuccessfulInference("shared-host")
 	rows, err = store.LoadParticipantThrottles()
 	require.NoError(t, err)
-	require.Len(t, rows, 0)
+	require.Empty(t, rows)
 }
 
 func TestParticipantRequestLimiterSuccessfulInferenceDecrementsEOFTransportFailureStrike(t *testing.T) {
@@ -2952,8 +2952,8 @@ func TestAdminSettingsUpdatesLimiterAndDefaultTokens(t *testing.T) {
 	require.True(t, gatewayState.Settings.Disabled.Enabled)
 	require.Equal(t, "please use ... base url", gatewayState.Settings.Disabled.Message)
 	require.Equal(t, "https://.../v1/chat/completions", gatewayState.Settings.Disabled.NewURL)
-	require.EqualValues(t, 42, gatewayState.Settings.ParticipantThrottle.RequestBurst)
-	require.EqualValues(t, 2, gatewayState.Settings.ParticipantThrottle.EmptyStreamQuarantineThreshold)
+	require.Equal(t, 42, gatewayState.Settings.ParticipantThrottle.RequestBurst)
+	require.Equal(t, 2, gatewayState.Settings.ParticipantThrottle.EmptyStreamQuarantineThreshold)
 	require.EqualValues(t, 1500, gatewayState.Settings.Redundancy.ReceiptTimeoutMS)
 	require.EqualValues(t, 17, gatewayState.Settings.Redundancy.PerInputTokenFirstTokenLagMS)
 	require.EqualValues(t, 1810, gatewayState.Settings.Redundancy.StreamingAttemptHardTimeoutMS)
@@ -3106,8 +3106,8 @@ func TestDebugRotationReportsCountdownAndLatestStatus(t *testing.T) {
 	require.EqualValues(t, 100, body.Chain.BlocksUntilNextRotation)
 	require.Len(t, body.Latest, 1)
 	require.Equal(t, "prepare_temp", body.Latest[0].Stage)
-	require.EqualValues(t, 3, body.Latest[0].CreatedCount)
-	require.EqualValues(t, 8, body.Latest[0].SettledCount)
+	require.Equal(t, 3, body.Latest[0].CreatedCount)
+	require.Equal(t, 8, body.Latest[0].SettledCount)
 	require.True(t, body.Latest[0].Completed)
 }
 
@@ -3290,8 +3290,8 @@ func requireMetricGaugeValue(t *testing.T, families []*dto.MetricFamily, name st
 		}
 		for _, metric := range family.GetMetric() {
 			if metricLabelsMatch(metric, labels) {
-				require.NotNil(t, metric.Gauge)
-				require.Equal(t, want, metric.Gauge.GetValue())
+				require.NotNil(t, metric.GetGauge())
+				require.Equal(t, want, metric.GetGauge().GetValue())
 				return
 			}
 		}

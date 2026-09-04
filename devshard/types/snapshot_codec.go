@@ -83,70 +83,70 @@ func EscrowStateFromProto(msg *EscrowStateProto) *EscrowState {
 		return nil
 	}
 
-	group := make([]SlotAssignment, len(msg.Group))
-	for i, slot := range msg.Group {
+	group := make([]SlotAssignment, len(msg.GetGroup()))
+	for i, slot := range msg.GetGroup() {
 		if slot == nil {
 			continue
 		}
 		group[i] = SlotAssignment{
-			SlotID:           slot.SlotId,
-			ValidatorAddress: slot.ValidatorAddress,
+			SlotID:           slot.GetSlotId(),
+			ValidatorAddress: slot.GetValidatorAddress(),
 		}
 	}
 
-	inferences := make(map[uint64]*InferenceRecord, len(msg.Inferences))
-	for id, rec := range msg.Inferences {
+	inferences := make(map[uint64]*InferenceRecord, len(msg.GetInferences()))
+	for id, rec := range msg.GetInferences() {
 		inferences[id] = inferenceRecordFromProto(rec)
 	}
 
-	hostStats := make(map[uint32]*HostStats, len(msg.HostStats))
-	for slotID, stats := range msg.HostStats {
+	hostStats := make(map[uint32]*HostStats, len(msg.GetHostStats()))
+	for slotID, stats := range msg.GetHostStats() {
 		if stats == nil {
 			continue
 		}
 		hostStats[slotID] = &HostStats{
-			Missed:               stats.Missed,
-			Invalid:              stats.Invalid,
-			Cost:                 stats.Cost,
-			RequiredValidations:  stats.RequiredValidations,
-			CompletedValidations: stats.CompletedValidations,
+			Missed:               stats.GetMissed(),
+			Invalid:              stats.GetInvalid(),
+			Cost:                 stats.GetCost(),
+			RequiredValidations:  stats.GetRequiredValidations(),
+			CompletedValidations: stats.GetCompletedValidations(),
 		}
 	}
 
-	warmKeys := make(map[uint32]string, len(msg.WarmKeys))
-	maps.Copy(warmKeys, msg.WarmKeys)
+	warmKeys := make(map[uint32]string, len(msg.GetWarmKeys()))
+	maps.Copy(warmKeys, msg.GetWarmKeys())
 
 	var cfg SessionConfig
-	if msg.Config != nil {
-		p := msg.Config
+	if msg.GetConfig() != nil {
+		p := msg.GetConfig()
 		cfg = SessionConfig{
-			RefusalTimeout:            p.RefusalTimeout,
-			ExecutionTimeout:          p.ExecutionTimeout,
-			TokenPrice:                p.TokenPrice,
-			CreateDevshardFee:         p.CreateDevshardFee,
-			FeePerNonce:               p.FeePerNonce,
-			VoteThreshold:             p.VoteThreshold,
-			ValidationRate:            p.ValidationRate,
-			InferenceSealGraceNonces:  p.InferenceSealGraceNonces,
-			InferenceSealGraceSeconds: p.InferenceSealGraceSeconds,
-			AutoSealEveryNNonces:      p.AutoSealEveryNNonces,
+			RefusalTimeout:            p.GetRefusalTimeout(),
+			ExecutionTimeout:          p.GetExecutionTimeout(),
+			TokenPrice:                p.GetTokenPrice(),
+			CreateDevshardFee:         p.GetCreateDevshardFee(),
+			FeePerNonce:               p.GetFeePerNonce(),
+			VoteThreshold:             p.GetVoteThreshold(),
+			ValidationRate:            p.GetValidationRate(),
+			InferenceSealGraceNonces:  p.GetInferenceSealGraceNonces(),
+			InferenceSealGraceSeconds: p.GetInferenceSealGraceSeconds(),
+			AutoSealEveryNNonces:      p.GetAutoSealEveryNNonces(),
 		}
 	}
 
 	return &EscrowState{
-		EscrowID:                      msg.EscrowId,
-		StateRootAndProtocolVersion:   msg.StateRootAndProtocolVersion,
+		EscrowID:                      msg.GetEscrowId(),
+		StateRootAndProtocolVersion:   msg.GetStateRootAndProtocolVersion(),
 		Config:                        cfg,
 		Group:                         group,
-		Balance:                       msg.Balance,
-		Fees:                          msg.Fees,
-		Phase:                         SessionPhase(msg.Phase),
-		FinalizeNonce:                 msg.FinalizeNonce,
+		Balance:                       msg.GetBalance(),
+		Fees:                          msg.GetFees(),
+		Phase:                         SessionPhase(msg.GetPhase()),
+		FinalizeNonce:                 msg.GetFinalizeNonce(),
 		Inferences:                    inferences,
 		HostStats:                     hostStats,
 		WarmKeys:                      warmKeys,
-		LatestNonce:                   msg.LatestNonce,
-		SealedAcc:                     append([]byte(nil), msg.SealedAcc...),
+		LatestNonce:                   msg.GetLatestNonce(),
+		SealedAcc:                     append([]byte(nil), msg.GetSealedAcc()...),
 		HeightSyncForcedStart:         msg.GetHeightSyncForcedStart(),
 		HeightSyncForcedEnd:           msg.GetHeightSyncForcedEnd(),
 		HeightSyncCadenceSwallowUntil: msg.GetHeightSyncCadenceSwallowUntil(),
@@ -177,10 +177,10 @@ func UnmarshalStateSnapshotProto(data []byte) (*EscrowState, map[uint64][]byte, 
 	if err := proto.Unmarshal(data, msg); err != nil {
 		return nil, nil, nil, nil, fmt.Errorf("unmarshal state snapshot proto: %w", err)
 	}
-	if msg.State == nil {
+	if msg.GetState() == nil {
 		return nil, nil, nil, nil, fmt.Errorf("unmarshal state snapshot proto: missing state")
 	}
-	return EscrowStateFromProto(msg.State), cloneBytesMap(msg.CommittedEntries), cloneUint64Map(msg.SealedNonces), msg.HeightSyncFloor, nil
+	return EscrowStateFromProto(msg.GetState()), cloneBytesMap(msg.GetCommittedEntries()), cloneUint64Map(msg.GetSealedNonces()), msg.GetHeightSyncFloor(), nil
 }
 
 func inferenceRecordToProto(id uint64, rec *InferenceRecord) *InferenceRecordProto {
@@ -215,24 +215,24 @@ func inferenceRecordFromProto(msg *InferenceRecordProto) *InferenceRecord {
 		return &InferenceRecord{}
 	}
 	return &InferenceRecord{
-		Status:            InferenceStatus(msg.Status),
-		ExecutorSlot:      msg.ExecutorSlot,
-		Model:             msg.Model,
-		PromptHash:        append([]byte(nil), msg.PromptHash...),
-		ResponseHash:      append([]byte(nil), msg.ResponseHash...),
-		InputLength:       msg.InputLength,
-		MaxTokens:         msg.MaxTokens,
-		InputTokens:       msg.InputTokens,
-		OutputTokens:      msg.OutputTokens,
-		ReservedCost:      msg.ReservedCost,
-		ActualCost:        msg.ActualCost,
-		StartedAt:         msg.StartedAt,
-		ConfirmedAt:       msg.ConfirmedAt,
-		StartedAtHeight:   msg.StartedAtHeight,
-		ConfirmedAtHeight: msg.ConfirmedAtHeight,
-		VotesValid:        msg.VotesValid,
-		VotesInvalid:      msg.VotesInvalid,
-		ValidatedBy:       Bitmap128FromBytes(msg.ValidatedBy),
+		Status:            InferenceStatus(msg.GetStatus()),
+		ExecutorSlot:      msg.GetExecutorSlot(),
+		Model:             msg.GetModel(),
+		PromptHash:        append([]byte(nil), msg.GetPromptHash()...),
+		ResponseHash:      append([]byte(nil), msg.GetResponseHash()...),
+		InputLength:       msg.GetInputLength(),
+		MaxTokens:         msg.GetMaxTokens(),
+		InputTokens:       msg.GetInputTokens(),
+		OutputTokens:      msg.GetOutputTokens(),
+		ReservedCost:      msg.GetReservedCost(),
+		ActualCost:        msg.GetActualCost(),
+		StartedAt:         msg.GetStartedAt(),
+		ConfirmedAt:       msg.GetConfirmedAt(),
+		StartedAtHeight:   msg.GetStartedAtHeight(),
+		ConfirmedAtHeight: msg.GetConfirmedAtHeight(),
+		VotesValid:        msg.GetVotesValid(),
+		VotesInvalid:      msg.GetVotesInvalid(),
+		ValidatedBy:       Bitmap128FromBytes(msg.GetValidatedBy()),
 	}
 }
 

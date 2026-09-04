@@ -158,7 +158,7 @@ func TestDevshardTx_HeartbeatFieldNumbers(t *testing.T) {
 	require.NoError(t, err)
 	var decoded types.DevshardTx
 	require.NoError(t, proto.Unmarshal(raw, &decoded))
-	require.Equal(t, hb.ObservedHeight, decoded.GetHeartbeat().GetObservedHeight())
+	require.Equal(t, hb.GetObservedHeight(), decoded.GetHeartbeat().GetObservedHeight())
 
 	// A turn is named by its span-start nonce, so neither message carries a turn
 	// id. Field 1 stays reserved on both so a sequencer-chosen one cannot return.
@@ -173,7 +173,7 @@ func TestDevshardTx_HeartbeatFieldNumbers(t *testing.T) {
 	require.NoError(t, err)
 	decoded = types.DevshardTx{}
 	require.NoError(t, proto.Unmarshal(raw, &decoded))
-	require.Equal(t, ack.SlotId, decoded.GetHeightAck().GetSlotId())
+	require.Equal(t, ack.GetSlotId(), decoded.GetHeightAck().GetSlotId())
 }
 
 func assertFieldNum(t *testing.T, md protoreflect.MessageDescriptor, name string, want protoreflect.FieldNumber) {

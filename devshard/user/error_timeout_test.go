@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -170,7 +169,7 @@ func TestHandleErrorMiss_SameDiffFinishAndMiss(t *testing.T) {
 	require.Contains(t, err.Error(), "timed out")
 	require.Equal(t, "error", result.Reason)
 	require.True(t, result.Accepted)
-	require.Greater(t, result.Votes, 0)
+	require.Positive(t, result.Votes)
 	require.NotEmpty(t, result.ResponseHash)
 	require.Less(t, elapsed, time.Second, "error-miss must not wait on ExecutionTimeout")
 	require.Greater(t, session.StateMachine().SnapshotState().Config.ExecutionTimeout, int64(60))
@@ -182,7 +181,7 @@ func TestHandleErrorMiss_SameDiffFinishAndMiss(t *testing.T) {
 	require.False(t, session.IsNonceFinished(nonce), "local finished view must match chain after error-miss")
 
 	diffs := session.Diffs()
-	require.Equal(t, before+1, len(diffs))
+	require.Len(t, diffs, before+1)
 	txs := diffs[len(diffs)-1].Txs
 	require.GreaterOrEqual(t, len(txs), 2)
 	require.NotNil(t, txs[0].GetFinishInference(), "same-diff composition requires Finish first")
@@ -215,13 +214,13 @@ func TestHandleErrorMiss_PublishesConfirmStartBeforeVotes(t *testing.T) {
 	for _, diff := range session.Diffs() {
 		var hasConfirm, hasFinish, hasMiss bool
 		for _, tx := range diff.Txs {
-			if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == nonce {
+			if cs := tx.GetConfirmStart(); cs != nil && cs.GetInferenceId() == nonce {
 				hasConfirm = true
 			}
-			if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == nonce {
+			if fi := tx.GetFinishInference(); fi != nil && fi.GetInferenceId() == nonce {
 				hasFinish = true
 			}
-			if em := tx.GetErrorMiss(); em != nil && em.InferenceId == nonce {
+			if em := tx.GetErrorMiss(); em != nil && em.GetInferenceId() == nonce {
 				hasMiss = true
 			}
 		}
@@ -343,10 +342,10 @@ func TestHandleErrorMiss_PinnedFinishSurvivesConcurrentCompose(t *testing.T) {
 	for _, diff := range session.Diffs() {
 		var hasFinish, hasErrorMiss bool
 		for _, tx := range diff.Txs {
-			if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == nonce {
+			if fi := tx.GetFinishInference(); fi != nil && fi.GetInferenceId() == nonce {
 				hasFinish = true
 			}
-			if em := tx.GetErrorMiss(); em != nil && em.InferenceId == nonce {
+			if em := tx.GetErrorMiss(); em != nil && em.GetInferenceId() == nonce {
 				hasErrorMiss = true
 			}
 		}
@@ -385,7 +384,7 @@ func TestHandleErrorMiss_InsufficientVotesKeepsToday(t *testing.T) {
 	result, err := session.HandleErrorMiss(context.Background(), nonce, finishBytes, payload)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "insufficient votes")
-	require.False(t, errors.Is(err, ErrInferenceMissed))
+	require.NotErrorIs(t, err, ErrInferenceMissed)
 	require.Equal(t, "error", result.Reason)
 	require.False(t, result.Accepted)
 	require.Len(t, session.Diffs(), before, "insufficient votes must not emit an error-miss diff")
@@ -435,7 +434,7 @@ func TestHandleErrorMiss_NotAppliedIfFinishMissing(t *testing.T) {
 	result, err := session.HandleErrorMiss(context.Background(), nonce, finishBytes, payload)
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "not applied")
-	require.False(t, errors.Is(err, ErrInferenceMissed))
+	require.NotErrorIs(t, err, ErrInferenceMissed)
 	require.Equal(t, "error", result.Reason)
 	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[nonce].Status)
 	require.True(t, session.IsNonceFinished(nonce), "must not clear finished unless the miss landed")
@@ -475,7 +474,7 @@ func TestMarshalFinishTx(t *testing.T) {
 	require.NotEmpty(t, got)
 	decoded := &types.DevshardTx{}
 	require.NoError(t, proto.Unmarshal(got, decoded))
-	require.Equal(t, uint64(7), decoded.GetFinishInference().InferenceId)
+	require.Equal(t, uint64(7), decoded.GetFinishInference().GetInferenceId())
 	require.Nil(t, MarshalFinishTx([]*types.DevshardTx{tx}, 1))
 }
 

@@ -201,5 +201,5 @@ func TestProcessResponse_WarmKey_Finalize(t *testing.T) {
 	require.NoError(t, err, "finalize should succeed with warm keys")
 
 	st := session.StateMachine().SnapshotState()
-	require.True(t, st.Phase >= types.PhaseFinalizing)
+	require.GreaterOrEqual(t, st.Phase, types.PhaseFinalizing)
 }

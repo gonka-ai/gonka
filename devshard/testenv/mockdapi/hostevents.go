@@ -51,7 +51,7 @@ func (r *hostEventRing) AppendEscrowCreated(p *gen.EscrowPayload) uint64 {
 		close(ch)
 		delete(r.waiters, ch)
 	}
-	return ev.Seq
+	return ev.GetSeq()
 }
 
 func (r *hostEventRing) subscribe() (<-chan struct{}, func()) {
@@ -80,10 +80,10 @@ func (r *hostEventRing) since(cursor, clientGen uint64, want map[gen.HostEventKi
 		return nil, head, generation, true
 	}
 	for _, ev := range r.events {
-		if ev.Seq <= cursor {
+		if ev.GetSeq() <= cursor {
 			continue
 		}
-		if _, ok := want[ev.Kind]; !ok {
+		if _, ok := want[ev.GetKind()]; !ok {
 			continue
 		}
 		evs = append(evs, ev)

@@ -39,7 +39,7 @@ func omitHostRaise(floor, envelopeH uint64, ownSlots map[uint32]struct{}, tx *ty
 	}
 	switch {
 	case tx.GetHeightAck() != nil:
-		slot := tx.GetHeightAck().SlotId
+		slot := tx.GetHeightAck().GetSlotId()
 		if _, mine := ownSlots[slot]; !mine {
 			return false
 		}

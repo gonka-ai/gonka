@@ -169,7 +169,7 @@ func testValidateJob() validateJob {
 
 func mempoolHasValidation(h *Host, infID uint64) bool {
 	for _, tx := range h.MempoolTxs() {
-		if v := tx.GetValidation(); v != nil && v.InferenceId == infID {
+		if v := tx.GetValidation(); v != nil && v.GetInferenceId() == infID {
 			return true
 		}
 	}
@@ -178,7 +178,7 @@ func mempoolHasValidation(h *Host, infID uint64) bool {
 
 func mempoolHasVote(h *Host, infID uint64) bool {
 	for _, tx := range h.MempoolTxs() {
-		if v := tx.GetValidationVote(); v != nil && v.InferenceId == infID {
+		if v := tx.GetValidationVote(); v != nil && v.GetInferenceId() == infID {
 			return true
 		}
 	}
@@ -316,7 +316,7 @@ func TestHost_ValidateAsync_ReleasesOnNonSubmitPaths(t *testing.T) {
 			require.Equal(t, tt.wantCooldown, onCooldown)
 			if tt.wantCooldown {
 				require.True(t, until.After(time.Now()), "cooldown must be in the future")
-				require.True(t, time.Until(until) <= validationCooldown)
+				require.LessOrEqual(t, time.Until(until), validationCooldown)
 			}
 		})
 	}
@@ -423,7 +423,7 @@ func TestHost_ValidateAsync_SubmitAbandonedTTLExceededReleasesAndCooldowns(t *te
 	until, onCooldown := cooldownUntil(h, 1)
 	require.True(t, onCooldown, "TTL exceeded should throttle immediate recollection")
 	require.True(t, until.After(time.Now()), "cooldown must be in the future")
-	require.True(t, time.Until(until) <= validationCooldown)
+	require.LessOrEqual(t, time.Until(until), validationCooldown)
 }
 
 func TestHost_ValidateAsync_AllowSubmitGenericErrorReleasesWithoutCooldown(t *testing.T) {
@@ -491,8 +491,8 @@ func TestHost_FetchFailureVerdict_PublishesInvalidValidation(t *testing.T) {
 	require.True(t, mempoolHasValidation(h, 1), "fetch-failure verdict must publish MsgValidation")
 	var found bool
 	for _, tx := range h.MempoolTxs() {
-		if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
-			require.False(t, v.Valid, "executor payload unavailability must vote false")
+		if v := tx.GetValidation(); v != nil && v.GetInferenceId() == 1 {
+			require.False(t, v.GetValid(), "executor payload unavailability must vote false")
 			found = true
 		}
 	}

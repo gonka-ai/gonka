@@ -31,7 +31,7 @@ func TestFetchPayloadsHTTPWithRetry(t *testing.T) {
 
 		_, err := fetchPayloadsHTTPWithRetry(context.Background(), srv.Client(), srv.URL, "val", 1, 10, "sig", 0)
 		require.Error(t, err)
-		assert.False(t, errors.Is(err, commonvalidation.ErrPayloadGone))
+		assert.NotErrorIs(t, err, commonvalidation.ErrPayloadGone)
 		assert.Equal(t, int32(payloadFetchAttempts), n.Load())
 	})
 
@@ -140,7 +140,7 @@ func TestFetchPayloadsHTTPWithRetry_DoesNotFollowRedirect(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, int32(0), internalHits.Load())
 	// A redirecting executor is a non-200 non-404 response: executor fault.
-	assert.False(t, errors.Is(err, commonvalidation.ErrPayloadGone))
+	assert.NotErrorIs(t, err, commonvalidation.ErrPayloadGone)
 	assert.ErrorIs(t, tagExecutorPayloadFault(err), errExecutorPayloadFault)
 }
 
@@ -263,12 +263,12 @@ func TestTTFBRoundTripper_PropagatesFailureWithoutResponse(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, "http://executor.invalid", nil)
 	require.NoError(t, err)
 
-	resp, err := ttfbRoundTripper{base: stubRoundTripper{err: want}}.RoundTrip(req) //nolint:bodyclose // the call fails, so there is no body to close.
+	resp, err := ttfbRoundTripper{base: stubRoundTripper{err: want}}.RoundTrip(req)
 	require.ErrorIs(t, err, want)
 	assert.Nil(t, resp)
 
 	ok := &http.Response{StatusCode: http.StatusOK, Body: http.NoBody}
-	resp, err = ttfbRoundTripper{base: stubRoundTripper{resp: ok}}.RoundTrip(req) //nolint:bodyclose // the stub returns http.NoBody.
+	resp, err = ttfbRoundTripper{base: stubRoundTripper{resp: ok}}.RoundTrip(req)
 	require.NoError(t, err)
 	assert.Same(t, ok, resp)
 }

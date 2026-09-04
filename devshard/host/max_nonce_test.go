@@ -2,7 +2,6 @@ package host
 
 import (
 	"context"
-	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -50,7 +49,7 @@ func TestHost_MaxNonce_RejectsActiveWorkPastCap(t *testing.T) {
 	diff := testutil.SignDiff(t, user, "escrow-1", over, []*types.DevshardTx{testutil.StartTx(over)})
 	_, err := h.HandleRequest(ctx, HostRequest{Diffs: []types.Diff{diff}})
 	require.Error(t, err)
-	require.True(t, errors.Is(err, types.ErrNonceLimitExceeded))
+	require.ErrorIs(t, err, types.ErrNonceLimitExceeded)
 }
 
 func TestHost_MaxNonce_AllowsFinalizeAfterCap(t *testing.T) {

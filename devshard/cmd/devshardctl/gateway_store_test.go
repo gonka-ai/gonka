@@ -164,9 +164,9 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 	require.True(t, state.Settings.Disabled.Enabled)
 	require.Equal(t, "please use ... base url", state.Settings.Disabled.Message)
 	require.Equal(t, "https://.../v1/chat/completions", state.Settings.Disabled.NewURL)
-	require.EqualValues(t, 42, state.Settings.ParticipantThrottle.RequestBurst)
+	require.Equal(t, 42, state.Settings.ParticipantThrottle.RequestBurst)
 	require.EqualValues(t, 1200, state.Settings.ParticipantThrottle.TransportFailureQuarantineMS)
-	require.EqualValues(t, 2, state.Settings.ParticipantThrottle.EmptyStreamQuarantineThreshold)
+	require.Equal(t, 2, state.Settings.ParticipantThrottle.EmptyStreamQuarantineThreshold)
 	require.EqualValues(t, 1500, state.Settings.Redundancy.ReceiptTimeoutMS)
 	require.EqualValues(t, 17, state.Settings.Redundancy.PerInputTokenFirstTokenLagMS)
 	require.EqualValues(t, 1810, state.Settings.Redundancy.StreamingAttemptHardTimeoutMS)
@@ -681,8 +681,8 @@ func TestEscrowRotationFinishSettlesTempFromCurrentLatestEpoch(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, statuses, 1)
 	require.Equal(t, "finish_regular", statuses[0].Stage)
-	require.EqualValues(t, 2, statuses[0].CreatedCount)
-	require.EqualValues(t, 1, statuses[0].SettledCount)
+	require.Equal(t, 2, statuses[0].CreatedCount)
+	require.Equal(t, 1, statuses[0].SettledCount)
 	require.True(t, statuses[0].Completed)
 }
 
@@ -750,7 +750,7 @@ func TestEscrowRotationPrepareDeactivatesRegularWithoutSettlementWhenSettlementD
 	statuses, err := store.LoadRotationStatuses(1)
 	require.NoError(t, err)
 	require.Len(t, statuses, 1)
-	require.EqualValues(t, 0, statuses[0].SettledCount)
+	require.Equal(t, 0, statuses[0].SettledCount)
 	require.True(t, statuses[0].Completed)
 }
 
@@ -818,7 +818,7 @@ func TestEscrowRotationFinishDeactivatesTempWithoutSettlementWhenSettlementDisab
 	statuses, err := store.LoadRotationStatuses(1)
 	require.NoError(t, err)
 	require.Len(t, statuses, 1)
-	require.EqualValues(t, 0, statuses[0].SettledCount)
+	require.Equal(t, 0, statuses[0].SettledCount)
 	require.True(t, statuses[0].Completed)
 }
 

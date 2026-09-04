@@ -25,7 +25,7 @@ func TestSignAck_RoundTrip(t *testing.T) {
 	signer := testutil.MustGenerateKey(t)
 	ack := testAck()
 	require.NoError(t, SignAck(signer, ack))
-	require.NotEmpty(t, ack.HostSig)
+	require.NotEmpty(t, ack.GetHostSig())
 
 	verifier := signing.NewSecp256k1Verifier()
 	require.NoError(t, VerifyAck(verifier, ack, signer.Address()))
@@ -51,7 +51,7 @@ func TestCanonicalAckBytes_DomainSeparated(t *testing.T) {
 	ack := testAck()
 	b1, err := CanonicalAckBytes(ack)
 	require.NoError(t, err)
-	require.True(t, len(b1) > len(DomainHeightAck))
+	require.Greater(t, len(b1), len(DomainHeightAck))
 	require.Equal(t, DomainHeightAck, string(b1[:len(DomainHeightAck)]))
 
 	ack.HostSig = []byte{1, 2, 3}

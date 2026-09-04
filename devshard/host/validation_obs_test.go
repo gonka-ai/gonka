@@ -516,7 +516,7 @@ func TestHost_ValidateAsync_DoesNotRecordObsBeforeDiff(t *testing.T) {
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		for _, tx := range h.mempool.Txs() {
-			if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+			if v := tx.GetValidation(); v != nil && v.GetInferenceId() == 1 {
 				return true
 			}
 		}
@@ -577,7 +577,7 @@ func TestHost_ValidateAsync_RecordsObsAfterDiffApplied(t *testing.T) {
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		for _, tx := range h.mempool.Txs() {
-			if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+			if v := tx.GetValidation(); v != nil && v.GetInferenceId() == 1 {
 				valTx = tx
 				return true
 			}

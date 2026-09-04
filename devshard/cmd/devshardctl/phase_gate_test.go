@@ -6,7 +6,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"slices"
-	"strings"
 	"testing"
 
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
@@ -922,8 +921,8 @@ func TestChainPhaseGateLogsLoadedPreservedParticipantsSorted(t *testing.T) {
 	output := buf.String()
 	require.Contains(t, output, "chain phase gate: preserved participants loaded")
 	// Sorted ASCII order of the last-8-char short labels: aaaaaaaa < zzzzzzzz, bbbbbbbb < yyyyyyyy.
-	require.True(t, strings.Contains(output, "participants=aaaaaaaa,zzzzzzzz"), output)
-	require.True(t, strings.Contains(output, "excluded_participants=bbbbbbbb,yyyyyyyy"), output)
+	require.Contains(t, output, "participants=aaaaaaaa,zzzzzzzz", output)
+	require.Contains(t, output, "excluded_participants=bbbbbbbb,yyyyyyyy", output)
 }
 
 func TestRawPoCGenerationState(t *testing.T) {

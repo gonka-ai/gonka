@@ -95,7 +95,7 @@ func open(cfg Config, mkdir bool) (*Dir, error) {
 			return nil, fmt.Errorf("spool: mkdir %s: %w", path, err)
 		}
 		// Re-assert mode even if the directory already existed as 0o755.
-		if err := os.Chmod(path, 0o700); err != nil {
+		if err := os.Chmod(path, 0o700); err != nil { //nolint:gosec // 0700 on a directory, not on a file.
 			return nil, fmt.Errorf("spool: chmod %s: %w", path, err)
 		}
 		if err := probeWritable(path, cfg.Prefix); err != nil {
@@ -131,7 +131,7 @@ func probeWritable(dir, prefix string) error {
 		return err
 	}
 	name := f.Name()
-	_, werr := f.Write([]byte("ok"))
+	_, werr := f.WriteString("ok")
 	cerr := f.Close()
 	_ = os.Remove(name)
 	if werr != nil {

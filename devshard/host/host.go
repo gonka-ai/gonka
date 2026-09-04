@@ -602,7 +602,7 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 	// user sequencer skipped. gossip.BroadcastTxs dedups by tx hash so
 	// repeated triggers across diffs are harmless.
 	if len(staleFinishes) > 0 && h.gsp != nil {
-		go h.broadcastTxsBestEffort(staleFinishes)
+		go h.broadcastTxsBestEffort(context.WithoutCancel(ctx), staleFinishes)
 	}
 
 	if h.repairProbe != nil {
@@ -742,14 +742,14 @@ func (h *Host) applyAndPersist(ctx context.Context, diff types.Diff) error {
 	// Evict cached responses for finalized or timed-out inferences.
 	for _, tx := range diff.Txs {
 		if fi := tx.GetFinishInference(); fi != nil {
-			delete(h.completedResponses, fi.InferenceId)
-			h.recordFinishObsLocked(fi.InferenceId, diff.Nonce, time.Now())
+			delete(h.completedResponses, fi.GetInferenceId())
+			h.recordFinishObsLocked(fi.GetInferenceId(), diff.Nonce, time.Now())
 		}
 		if ti := tx.GetTimeoutInference(); ti != nil {
-			delete(h.completedResponses, ti.InferenceId)
+			delete(h.completedResponses, ti.GetInferenceId())
 		}
 		if em := tx.GetErrorMiss(); em != nil {
-			delete(h.completedResponses, em.InferenceId)
+			delete(h.completedResponses, em.GetInferenceId())
 		}
 	}
 
@@ -823,14 +823,14 @@ func (h *Host) ApplyCatchUpDiffs(diffs []types.Diff) {
 	h.mu.Unlock()
 
 	if len(staleFinishes) > 0 && h.gsp != nil {
-		go h.broadcastTxsBestEffort(staleFinishes)
+		go h.broadcastTxsBestEffort(context.Background(), staleFinishes)
 	}
 }
 
 // broadcastTxsBestEffort keeps gossip asynchronous/non-blocking for the host
 // hot path. BroadcastTxs is intentionally fire-and-forget.
-func (h *Host) broadcastTxsBestEffort(txs []*types.DevshardTx) {
-	h.gsp.BroadcastTxs(context.Background(), txs)
+func (h *Host) broadcastTxsBestEffort(ctx context.Context, txs []*types.DevshardTx) {
+	h.gsp.BroadcastTxs(ctx, txs)
 }
 
 // collectStaleFinishesLocked returns locally proposed MsgFinishInference txs
@@ -902,7 +902,7 @@ func (h *Host) signIfAccepted(applied []*types.DevshardTx) (stateSig, root []byt
 
 	if h.checker != nil {
 		if err := h.checker.Check(h.sm.SnapshotState(), applied); err != nil {
-			return nil, root, nonce, nil //nolint:nilerr // a failed check withholds the receipt; the request did not fail.
+			return nil, root, nonce, nil
 		}
 	}
 
@@ -1340,13 +1340,13 @@ func (h *Host) enqueueValidation(job validateJob) {
 // Caller must hold h.mu.
 func (h *Host) hasMempoolValidationOrVote(infID uint64) bool {
 	for _, tx := range h.mempool.Txs() {
-		if v := tx.GetValidation(); v != nil && v.InferenceId == infID {
-			if h.slotIDs[v.ValidatorSlot] {
+		if v := tx.GetValidation(); v != nil && v.GetInferenceId() == infID {
+			if h.slotIDs[v.GetValidatorSlot()] {
 				return true
 			}
 		}
-		if v := tx.GetValidationVote(); v != nil && v.InferenceId == infID {
-			if h.slotIDs[v.VoterSlot] {
+		if v := tx.GetValidationVote(); v != nil && v.GetInferenceId() == infID {
+			if h.slotIDs[v.GetVoterSlot()] {
 				return true
 			}
 		}
@@ -1749,10 +1749,10 @@ func (h *Host) challengeReceiptLocked(ctx context.Context, inferenceID uint64, p
 
 	var hasConfirmStart, hasFinish bool
 	for _, tx := range h.mempool.Txs() {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.GetInferenceId() == inferenceID {
 			hasConfirmStart = true
 		}
-		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+		if fi := tx.GetFinishInference(); fi != nil && fi.GetInferenceId() == inferenceID {
 			hasFinish = true
 		}
 	}

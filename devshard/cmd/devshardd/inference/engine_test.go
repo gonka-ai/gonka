@@ -80,8 +80,8 @@ func TestDoWithLockedNode_GRPCSuccessObserves(t *testing.T) {
 
 	ml := startEngineMLClient(t, &engineMockNM{
 		acquireFunc: func(_ context.Context, req *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
-			assert.Equal(t, "model-a", req.Model)
-			gotEscrowID = req.EscrowId
+			assert.Equal(t, "model-a", req.GetModel())
+			gotEscrowID = req.GetEscrowId()
 			return &nmgen.AcquireMLNodeResponse{
 				LockId:   "lock-1",
 				Endpoint: mlSrv.URL,
@@ -90,8 +90,8 @@ func TestDoWithLockedNode_GRPCSuccessObserves(t *testing.T) {
 		},
 		releaseFunc: func(_ context.Context, req *nmgen.ReleaseMLNodeRequest) (*nmgen.ReleaseMLNodeResponse, error) {
 			releases.Add(1)
-			assert.Equal(t, "lock-1", req.LockId)
-			assert.Equal(t, nmgen.ReleaseOutcome_SUCCESS, req.Outcome)
+			assert.Equal(t, "lock-1", req.GetLockId())
+			assert.Equal(t, nmgen.ReleaseOutcome_SUCCESS, req.GetOutcome())
 			return &nmgen.ReleaseMLNodeResponse{}, nil
 		},
 	})
@@ -180,7 +180,7 @@ func TestDoWithLockedNode_ResourceExhaustedDoesNotFallback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	resp, err := eng.doWithLockedNode(ctx, observability.PathExecute, "model-a", "", //nolint:bodyclose // the call fails, so there is no body to close.
+	resp, err := eng.doWithLockedNode(ctx, observability.PathExecute, "model-a", "",
 		http.Get)
 	require.Error(t, err)
 	assert.Nil(t, resp)
@@ -236,7 +236,7 @@ func TestDoWithLockedNode_FallbackEmptyCacheFails(t *testing.T) {
 	mgr := mlnodeclient.NewManager(time.Hour)
 	eng := newTestEngine(ml, mgr, nil)
 
-	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", //nolint:bodyclose // the call fails, so there is no body to close.
+	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
 		http.Get)
 	require.Error(t, err)
 	assert.Nil(t, resp)

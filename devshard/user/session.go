@@ -103,7 +103,7 @@ var ErrInferenceMissed = errors.New("inference missed")
 // HasMsgFinish returns true if mempool contains MsgFinishInference for the given nonce.
 func HasMsgFinish(txs []*types.DevshardTx, nonce uint64) bool {
 	for _, tx := range txs {
-		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == nonce {
+		if fi := tx.GetFinishInference(); fi != nil && fi.GetInferenceId() == nonce {
 			return true
 		}
 	}
@@ -112,7 +112,7 @@ func HasMsgFinish(txs []*types.DevshardTx, nonce uint64) bool {
 
 func HasMsgTimeout(txs []*types.DevshardTx, nonce uint64) bool {
 	for _, tx := range txs {
-		if timeout := tx.GetTimeoutInference(); timeout != nil && timeout.InferenceId == nonce {
+		if timeout := tx.GetTimeoutInference(); timeout != nil && timeout.GetInferenceId() == nonce {
 			return true
 		}
 	}
@@ -126,7 +126,7 @@ func MarshalFinishTx(txs []*types.DevshardTx, inferenceID uint64) []byte {
 		if tx == nil {
 			continue
 		}
-		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+		if fi := tx.GetFinishInference(); fi != nil && fi.GetInferenceId() == inferenceID {
 			b, err := proto.Marshal(tx)
 			if err != nil {
 				return nil
@@ -712,13 +712,13 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 		if finish == nil {
 			continue
 		}
-		outcome, tracked := s.nonceStates[finish.InferenceId]
+		outcome, tracked := s.nonceStates[finish.GetInferenceId()]
 		if !tracked {
 			continue
 		}
 		timedOut := false
 		if s.sm != nil {
-			if rec, ok := s.sm.Inference(finish.InferenceId); ok && rec.Status == types.StatusTimedOut {
+			if rec, ok := s.sm.Inference(finish.GetInferenceId()); ok && rec.Status == types.StatusTimedOut {
 				timedOut = true
 			}
 		}
@@ -862,7 +862,7 @@ func finishInferenceID(tx *types.DevshardTx) (uint64, bool) {
 	if fi == nil {
 		return 0, false
 	}
-	return fi.InferenceId, true
+	return fi.GetInferenceId(), true
 }
 
 func errorMissPendingID(tx *types.DevshardTx) (uint64, bool) {
@@ -873,7 +873,7 @@ func errorMissPendingID(tx *types.DevshardTx) (uint64, bool) {
 		return 0, false
 	}
 	if to := tx.GetErrorMiss(); to != nil {
-		return to.InferenceId, true
+		return to.GetInferenceId(), true
 	}
 	return 0, false
 }
@@ -971,11 +971,11 @@ func (s *Session) observeTurnLocked(diff types.Diff) {
 	now := s.nowLocked()
 	for _, tx := range diff.Txs {
 		if ack := tx.GetHeightAck(); ack != nil {
-			if !heightsync.StampPresent(ack.ObservedBlockHash) {
+			if !heightsync.StampPresent(ack.GetObservedBlockHash()) {
 				continue
 			}
-			if s.heartbeat.NoteClaim(ack.SlotId, now) && s.anchors != nil && ack.ObservedHeight > 0 {
-				s.anchors.RecordTurnover(ack.ObservedHeight)
+			if s.heartbeat.NoteClaim(ack.GetSlotId(), now) && s.anchors != nil && ack.GetObservedHeight() > 0 {
+				s.anchors.RecordTurnover(ack.GetObservedHeight())
 			}
 			s.noteAckObsLocked(ack)
 			continue
@@ -1720,32 +1720,32 @@ func devshardTxKey(tx *types.DevshardTx) string {
 		if inner.FinishInference == nil {
 			return ""
 		}
-		return fmt.Sprintf("finish:%d", inner.FinishInference.InferenceId)
+		return fmt.Sprintf("finish:%d", inner.FinishInference.GetInferenceId())
 	case *types.DevshardTx_ConfirmStart:
 		if inner.ConfirmStart == nil {
 			return ""
 		}
-		return fmt.Sprintf("confirm:%d", inner.ConfirmStart.InferenceId)
+		return fmt.Sprintf("confirm:%d", inner.ConfirmStart.GetInferenceId())
 	case *types.DevshardTx_Validation:
 		if inner.Validation == nil {
 			return ""
 		}
-		return fmt.Sprintf("validation:%d:%d", inner.Validation.InferenceId, inner.Validation.ValidatorSlot)
+		return fmt.Sprintf("validation:%d:%d", inner.Validation.GetInferenceId(), inner.Validation.GetValidatorSlot())
 	case *types.DevshardTx_ValidationVote:
 		if inner.ValidationVote == nil {
 			return ""
 		}
-		return fmt.Sprintf("vote:%d:%d", inner.ValidationVote.InferenceId, inner.ValidationVote.VoterSlot)
+		return fmt.Sprintf("vote:%d:%d", inner.ValidationVote.GetInferenceId(), inner.ValidationVote.GetVoterSlot())
 	case *types.DevshardTx_RevealSeed:
 		if inner.RevealSeed == nil {
 			return ""
 		}
-		return fmt.Sprintf("reveal_seed:%d", inner.RevealSeed.SlotId)
+		return fmt.Sprintf("reveal_seed:%d", inner.RevealSeed.GetSlotId())
 	case *types.DevshardTx_HeightAck:
 		if inner.HeightAck == nil {
 			return ""
 		}
-		return fmt.Sprintf("height_ack:%d:%d", inner.HeightAck.RefNonce, inner.HeightAck.SlotId)
+		return fmt.Sprintf("height_ack:%d:%d", inner.HeightAck.GetRefNonce(), inner.HeightAck.GetSlotId())
 	default:
 		return ""
 	}
@@ -1815,13 +1815,13 @@ func (s *Session) txKeyQueuedOrApplied(key string) bool {
 func hostTxInferenceID(tx *types.DevshardTx) (uint64, bool) {
 	switch {
 	case tx.GetConfirmStart() != nil:
-		return tx.GetConfirmStart().InferenceId, true
+		return tx.GetConfirmStart().GetInferenceId(), true
 	case tx.GetFinishInference() != nil:
-		return tx.GetFinishInference().InferenceId, true
+		return tx.GetFinishInference().GetInferenceId(), true
 	case tx.GetValidation() != nil:
-		return tx.GetValidation().InferenceId, true
+		return tx.GetValidation().GetInferenceId(), true
 	case tx.GetValidationVote() != nil:
-		return tx.GetValidationVote().InferenceId, true
+		return tx.GetValidationVote().GetInferenceId(), true
 	default:
 		return 0, false
 	}
@@ -1861,10 +1861,10 @@ func (s *Session) rejectUnverifiedHostTx(tx *types.DevshardTx) error {
 	if fi == nil {
 		return nil
 	}
-	if fi.ExecutorSlot != executorSlot {
+	if fi.GetExecutorSlot() != executorSlot {
 		return types.ErrWrongExecutorSlot
 	}
-	if fi.EscrowId != s.escrowID {
+	if fi.GetEscrowId() != s.escrowID {
 		return types.ErrEscrowIDMismatch
 	}
 	return s.sm.RejectFinishProposerSigLocal(fi)
@@ -2110,23 +2110,23 @@ func (s *Session) verifyTimeoutVote(inferenceID uint64, reason types.TimeoutReas
 		EscrowId:    s.escrowID,
 		InferenceId: inferenceID,
 		Reason:      reason,
-		Accept:      vote.Accept,
+		Accept:      vote.GetAccept(),
 	})
 	if err != nil {
 		return fmt.Errorf("marshal timeout vote content: %w", err)
 	}
-	recovered, err := s.verifier.RecoverAddress(voteData, vote.Signature)
+	recovered, err := s.verifier.RecoverAddress(voteData, vote.GetSignature())
 	if err != nil {
 		return fmt.Errorf("%w: %w", types.ErrInvalidVoteSig, err)
 	}
 	if recovered != expectedAddr &&
-		s.sm.WarmKeys()[vote.VoterSlot] != recovered &&
+		s.sm.WarmKeys()[vote.GetVoterSlot()] != recovered &&
 		!s.sm.CheckWarmKey(recovered, expectedAddr) {
 		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidVoteSig, expectedAddr, recovered)
 	}
-	if owner := s.sm.SlotAddress(vote.VoterSlot); owner != expectedAddr {
+	if owner := s.sm.SlotAddress(vote.GetVoterSlot()); owner != expectedAddr {
 		return fmt.Errorf("%w: slot %d is owned by %s, not by responder %s",
-			types.ErrInvalidVoteSig, vote.VoterSlot, owner, expectedAddr)
+			types.ErrInvalidVoteSig, vote.GetVoterSlot(), owner, expectedAddr)
 	}
 	return nil
 }
@@ -3205,7 +3205,7 @@ func (s *Session) collectTimeoutVotes(
 					logFields(
 						res.verifierAddr,
 						"outcome", "invalid",
-						"voter_slot", res.vote.VoterSlot,
+						"voter_slot", res.vote.GetVoterSlot(),
 						"running_weight", accWeight,
 						"threshold", voteThreshold,
 						"error", vErr,
@@ -3214,18 +3214,18 @@ func (s *Session) collectTimeoutVotes(
 				logging.Warn("rejected unverified timeout vote",
 					"subsystem", "session", "escrow_id", s.escrowID,
 					"inference_id", inferenceID, "responder", res.verifierAddr,
-					"voter_slot", res.vote.VoterSlot, "error", vErr)
+					"voter_slot", res.vote.GetVoterSlot(), "error", vErr)
 				continue
 			}
 			votes = append(votes, res.vote)
-			voterAddr := s.sm.SlotAddress(res.vote.VoterSlot)
+			voterAddr := s.sm.SlotAddress(res.vote.GetVoterSlot())
 			weight := s.sm.AddressSlotCount(voterAddr)
 			accWeight += weight
 			logging.Stage(ctx, "timeout_vote_result",
 				logFields(
 					res.verifierAddr,
 					"outcome", "accept",
-					"voter_slot", res.vote.VoterSlot,
+					"voter_slot", res.vote.GetVoterSlot(),
 					"voter", shortAddress(voterAddr),
 					"weight", weight,
 					"running_weight", accWeight,
@@ -3407,7 +3407,7 @@ func (s *Session) CollectErrorMissVotes(
 			continue
 		}
 		votes = append(votes, res.vote)
-		addr := s.sm.SlotAddress(res.vote.VoterSlot)
+		addr := s.sm.SlotAddress(res.vote.GetVoterSlot())
 		accWeight += s.sm.AddressSlotCount(addr)
 		logging.Stage(ctx, "timeout_vote_result", logFields(res.verifierAddr, "accept", true)...)
 		if accWeight > voteThreshold {
@@ -3484,10 +3484,10 @@ func (s *Session) HasSufficientTimeoutVotes(votes []*types.TimeoutVote) bool {
 	counted := make(map[string]bool, len(votes))
 	var accWeight uint32
 	for _, v := range votes {
-		if !v.Accept {
+		if !v.GetAccept() {
 			continue
 		}
-		addr := s.sm.SlotAddress(v.VoterSlot)
+		addr := s.sm.SlotAddress(v.GetVoterSlot())
 		if counted[addr] {
 			continue
 		}
@@ -3503,8 +3503,8 @@ func (s *Session) HasSufficientErrorMissVotes(votes []*types.ErrorMissVote) bool
 	threshold := s.sm.VoteThreshold()
 	var accWeight uint32
 	for _, v := range votes {
-		if v.Accept {
-			addr := s.sm.SlotAddress(v.VoterSlot)
+		if v.GetAccept() {
+			addr := s.sm.SlotAddress(v.GetVoterSlot())
 			accWeight += s.sm.AddressSlotCount(addr)
 		}
 	}

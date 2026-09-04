@@ -3,7 +3,6 @@ package migrate_test
 import (
 	"context"
 	"database/sql"
-	"errors"
 	"path/filepath"
 	"testing"
 
@@ -67,7 +66,7 @@ func TestApplySQLite_RejectsOutOfOrderIDs(t *testing.T) {
 	}
 	err := migrate.ApplySQLite(ctx, db, steps)
 	require.Error(t, err)
-	require.True(t, errors.Is(err, migrate.ErrOutOfOrder))
+	require.ErrorIs(t, err, migrate.ErrOutOfOrder)
 }
 
 func TestApplySQLite_StepWithoutIFNotExists(t *testing.T) {

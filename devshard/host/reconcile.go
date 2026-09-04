@@ -183,13 +183,13 @@ func (h *Host) applyDurableRecordLocked(rec types.DiffRecord) error {
 	h.mempool.RemoveIncluded(rec.Txs)
 	for _, tx := range rec.Txs {
 		if fi := tx.GetFinishInference(); fi != nil {
-			delete(h.completedResponses, fi.InferenceId)
+			delete(h.completedResponses, fi.GetInferenceId())
 		}
 		if ti := tx.GetTimeoutInference(); ti != nil {
-			delete(h.completedResponses, ti.InferenceId)
+			delete(h.completedResponses, ti.GetInferenceId())
 		}
 		if em := tx.GetErrorMiss(); em != nil {
-			delete(h.completedResponses, em.InferenceId)
+			delete(h.completedResponses, em.GetInferenceId())
 		}
 	}
 	h.recordValidationObsFromAppliedDiff(rec.Txs)

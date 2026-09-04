@@ -429,7 +429,7 @@ func TestForEachEscrowEpochBatch_ChunksBy1000(t *testing.T) {
 	}
 	var sizes []int
 	err := forEachEscrowEpochBatch(escrows, epochs, func(batchEscrows []string, batchEpochs []int64) error {
-		require.Equal(t, len(batchEscrows), len(batchEpochs))
+		require.Len(t, batchEpochs, len(batchEscrows))
 		sizes = append(sizes, len(batchEscrows))
 		return nil
 	})

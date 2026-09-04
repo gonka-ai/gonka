@@ -767,44 +767,44 @@ func (sm *StateMachine) foldInferenceRecordsFromDiffs(group []types.SlotAssignme
 				if msg == nil {
 					continue
 				}
-				if _, exists := out[msg.InferenceId]; exists {
+				if _, exists := out[msg.GetInferenceId()]; exists {
 					continue
 				}
-				reserved, err := tokenCost(msg.InputLength, msg.MaxTokens, price)
+				reserved, err := tokenCost(msg.GetInputLength(), msg.GetMaxTokens(), price)
 				if err != nil {
 					continue
 				}
-				out[msg.InferenceId] = &types.InferenceRecord{
+				out[msg.GetInferenceId()] = &types.InferenceRecord{
 					Status:       types.StatusPending,
-					ExecutorSlot: group[msg.InferenceId%groupLen].SlotID,
-					Model:        msg.Model,
-					PromptHash:   append([]byte(nil), msg.PromptHash...),
-					InputLength:  msg.InputLength,
-					MaxTokens:    msg.MaxTokens,
+					ExecutorSlot: group[msg.GetInferenceId()%groupLen].SlotID,
+					Model:        msg.GetModel(),
+					PromptHash:   append([]byte(nil), msg.GetPromptHash()...),
+					InputLength:  msg.GetInputLength(),
+					MaxTokens:    msg.GetMaxTokens(),
 					ReservedCost: reserved,
-					StartedAt:    msg.StartedAt,
+					StartedAt:    msg.GetStartedAt(),
 				}
 			case *types.DevshardTx_ConfirmStart:
 				msg := inner.ConfirmStart
 				if msg == nil {
 					continue
 				}
-				inf := out[msg.InferenceId]
+				inf := out[msg.GetInferenceId()]
 				if inf == nil {
 					continue
 				}
 				inf.Status = types.StatusStarted
-				inf.ConfirmedAt = msg.ConfirmedAt
+				inf.ConfirmedAt = msg.GetConfirmedAt()
 			case *types.DevshardTx_FinishInference:
 				msg := inner.FinishInference
 				if msg == nil {
 					continue
 				}
-				inf := out[msg.InferenceId]
+				inf := out[msg.GetInferenceId()]
 				if inf == nil {
 					continue
 				}
-				actual, err := tokenCost(msg.InputTokens, msg.OutputTokens, price)
+				actual, err := tokenCost(msg.GetInputTokens(), msg.GetOutputTokens(), price)
 				if err != nil {
 					continue
 				}
@@ -812,16 +812,16 @@ func (sm *StateMachine) foldInferenceRecordsFromDiffs(group []types.SlotAssignme
 					actual = inf.ReservedCost
 				}
 				inf.Status = types.StatusFinished
-				inf.ResponseHash = append([]byte(nil), msg.ResponseHash...)
-				inf.InputTokens = msg.InputTokens
-				inf.OutputTokens = msg.OutputTokens
+				inf.ResponseHash = append([]byte(nil), msg.GetResponseHash()...)
+				inf.InputTokens = msg.GetInputTokens()
+				inf.OutputTokens = msg.GetOutputTokens()
 				inf.ActualCost = actual
 			case *types.DevshardTx_TimeoutInference:
 				msg := inner.TimeoutInference
 				if msg == nil {
 					continue
 				}
-				inf := out[msg.InferenceId]
+				inf := out[msg.GetInferenceId()]
 				if inf == nil {
 					continue
 				}
@@ -831,19 +831,19 @@ func (sm *StateMachine) foldInferenceRecordsFromDiffs(group []types.SlotAssignme
 				if msg == nil {
 					continue
 				}
-				inf := out[msg.InferenceId]
+				inf := out[msg.GetInferenceId()]
 				if inf == nil {
 					continue
 				}
-				if found, _ := sm.addressHasValidated(inf, msg.ValidatorSlot); found {
+				if found, _ := sm.addressHasValidated(inf, msg.GetValidatorSlot()); found {
 					continue
 				}
-				inf.ValidatedBy.Set(msg.ValidatorSlot)
+				inf.ValidatedBy.Set(msg.GetValidatorSlot())
 				if inf.Status != types.StatusFinished {
 					continue
 				}
-				weight := sm.addressToSlotCount[sm.slotToAddress[msg.ValidatorSlot]]
-				if msg.Valid {
+				weight := sm.addressToSlotCount[sm.slotToAddress[msg.GetValidatorSlot()]]
+				if msg.GetValid() {
 					inf.VotesValid += weight
 				} else {
 					inf.VotesInvalid += weight
@@ -854,7 +854,7 @@ func (sm *StateMachine) foldInferenceRecordsFromDiffs(group []types.SlotAssignme
 				if msg == nil {
 					continue
 				}
-				inf := out[msg.InferenceId]
+				inf := out[msg.GetInferenceId()]
 				if inf == nil {
 					continue
 				}
@@ -864,15 +864,15 @@ func (sm *StateMachine) foldInferenceRecordsFromDiffs(group []types.SlotAssignme
 				if inf.Status != types.StatusChallenged {
 					continue
 				}
-				if found, _ := sm.addressHasValidated(inf, msg.VoterSlot); found {
+				if found, _ := sm.addressHasValidated(inf, msg.GetVoterSlot()); found {
 					continue
 				}
-				voterAddr := sm.slotToAddress[msg.VoterSlot]
+				voterAddr := sm.slotToAddress[msg.GetVoterSlot()]
 				weight := sm.addressToSlotCount[voterAddr]
 				for _, slot := range sm.addressToSlots[voterAddr] {
 					inf.ValidatedBy.Set(slot)
 				}
-				if msg.VoteValid {
+				if msg.GetVoteValid() {
 					inf.VotesValid += weight
 				} else {
 					inf.VotesInvalid += weight

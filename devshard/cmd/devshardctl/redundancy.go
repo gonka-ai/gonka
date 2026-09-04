@@ -2885,7 +2885,7 @@ type raceFinishOptions struct {
 // cleanup. Cancelled by Stop so settlement work cannot outlive the escrow.
 func (e *Redundancy) raceCleanupRoot() context.Context {
 	e.raceCleanupOnce.Do(func() {
-		e.raceCleanupCtx, e.raceCleanupCancel = context.WithCancel(context.Background())
+		e.raceCleanupCtx, e.raceCleanupCancel = context.WithCancel(context.Background()) //nolint:gosec // the cancel is held on the Redundancy and called by Stop.
 	})
 	return e.raceCleanupCtx
 }

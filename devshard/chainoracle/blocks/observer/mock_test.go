@@ -102,7 +102,7 @@ func TestMockObserver_DeterministicForSameSeed(t *testing.T) {
 			"canonical bytes diverged at height %d", ha.Height,
 		)
 		// The drop pattern (number of sigs) must also be identical.
-		require.Equal(t, len(ha.Commit.Signatures), len(hb.Commit.Signatures))
+		require.Len(t, hb.Commit.Signatures, len(ha.Commit.Signatures))
 	}
 }
 
@@ -429,7 +429,7 @@ func TestMockObserver_SignerRotation(t *testing.T) {
 	// Every validator must be absent from at least one block; otherwise
 	// the drop set is stuck on a fixed subset.
 	for j, count := range absences {
-		require.Greater(t, count, 0,
+		require.Positive(t, count,
 			"validator %d never dropped across %d blocks — rotation stuck", j, blockCount)
 	}
 }
@@ -455,7 +455,7 @@ func TestMockObserver_SingleValidator_FullSign(t *testing.T) {
 		for range 20 {
 			h, err := m.AdvanceOne()
 			require.NoError(t, err)
-			require.Equal(t, n, len(h.Commit.Signatures),
+			require.Len(t, h.Commit.Signatures, n,
 				"n=%d height=%d: expected full commit when drop budget is 0", n, h.Height)
 			require.NoError(t, v.Verify(h, h.Height-1))
 		}

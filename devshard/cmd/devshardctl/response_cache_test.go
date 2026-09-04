@@ -172,7 +172,7 @@ func TestChatResponseCacheGetDeletesExpiredAndAdjustsBytes(t *testing.T) {
 
 	cache.Set("k", cacheEntryForTest(1, 128), now)
 	_, totalBytes := cache.Stats()
-	require.Greater(t, totalBytes, int64(0))
+	require.Positive(t, totalBytes)
 
 	_, ok := cache.Get("k", now.Add(2*time.Minute))
 	require.False(t, ok)

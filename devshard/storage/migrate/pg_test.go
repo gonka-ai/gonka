@@ -2,7 +2,6 @@ package migrate_test
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -124,7 +123,7 @@ func TestApplyPG_RejectsOutOfOrderIDs(t *testing.T) {
 	}
 	err := migrate.ApplyPG(ctx, pool, steps)
 	require.Error(t, err)
-	require.True(t, errors.Is(err, migrate.ErrOutOfOrder))
+	require.ErrorIs(t, err, migrate.ErrOutOfOrder)
 }
 
 func TestApplyPG_AppliesMissingStepBelowHigherID(t *testing.T) {

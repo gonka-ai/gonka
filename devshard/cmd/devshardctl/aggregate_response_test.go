@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"net/http/httptest"
@@ -74,7 +73,7 @@ func TestAggregateResponseBuffer_SpillsToDisk(t *testing.T) {
 	got, err := buf.Bytes()
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(string(got), "hello "))
-	require.Equal(t, 6+40, len(got))
+	require.Len(t, got, 6+40)
 	require.Equal(t, int64(46), buf.Len())
 
 	require.NoError(t, buf.Close())
@@ -401,7 +400,7 @@ func TestConfigureAggregateResponseFromEnv_ExplicitSpool(t *testing.T) {
 	configureAggregateResponseFromEnv(t.TempDir())
 	require.Equal(t, spool, currentAggregateSpoolDir())
 	_, err := os.Stat(stale)
-	require.True(t, errors.Is(err, os.ErrNotExist))
+	require.ErrorIs(t, err, os.ErrNotExist)
 	_, err = os.Stat(keep)
 	require.NoError(t, err)
 }

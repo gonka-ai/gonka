@@ -728,7 +728,7 @@ func TestApplyDiff_FinalizeRound(t *testing.T) {
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txFinalize()})
 	_, err := sm.ApplyDiff(diff)
 	require.NoError(t, err)
-	require.True(t, sm.SnapshotState().Phase >= types.PhaseFinalizing)
+	require.GreaterOrEqual(t, sm.SnapshotState().Phase, types.PhaseFinalizing)
 
 	// MsgStartInference after finalize -> rejected.
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txStart(&types.MsgStartInference{
@@ -3260,7 +3260,7 @@ func TestApplyDiff_Validation_Invalid_CostUnderflowGuard(t *testing.T) {
 	// Start, confirm, finish inference 1 (executor = slot 1).
 	applyStartConfirmFinish(t, sm, user, hosts, 1)
 	st := sm.SnapshotState()
-	require.True(t, st.HostStats[1].Cost > 0)
+	require.Positive(t, st.HostStats[1].Cost)
 
 	// Start, confirm, finish inference 4 (executor = slot 4).
 	// This gives slot 4 some cost. We'll later invalidate inference 1 (slot 1)

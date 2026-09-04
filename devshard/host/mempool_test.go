@@ -94,7 +94,7 @@ func TestMempool_StaleFinishes(t *testing.T) {
 		for _, tx := range txs {
 			fi := tx.GetFinishInference()
 			if fi != nil {
-				ids = append(ids, fi.InferenceId)
+				ids = append(ids, fi.GetInferenceId())
 			}
 		}
 		return ids
@@ -168,7 +168,7 @@ func TestMempool_StaleFinishes(t *testing.T) {
 		m := buildMixedMempool()
 		for n := uint64(1); n < 100; n++ {
 			for _, tx := range m.StaleFinishes(n, 0) {
-				require.NotEqual(t, uint64(2), tx.GetFinishInference().InferenceId,
+				require.NotEqual(t, uint64(2), tx.GetFinishInference().GetInferenceId(),
 					"peer-imported Finish must be excluded")
 			}
 		}

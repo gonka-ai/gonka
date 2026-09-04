@@ -121,7 +121,7 @@ func TestGossip_V2_CatchUpAcrossSealBoundary(t *testing.T) {
 
 	meta, err := leaderStore.GetSessionMeta(escrowID)
 	require.NoError(t, err)
-	require.Greater(t, meta.LatestNonce, uint64(0))
+	require.Positive(t, meta.LatestNonce)
 
 	// Follower: fresh storage with only the diff journal (no sealed rows yet),
 	// mirroring a peer that will catch up purely from GetDiffs + ApplyLocal.

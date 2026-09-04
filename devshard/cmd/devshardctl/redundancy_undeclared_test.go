@@ -40,7 +40,7 @@ func TestClientVisibleAllAttemptsFailedErrorSurfacesCatalogMiss(t *testing.T) {
 		DevshardError: transport.DevshardErrorUndeclaredVersion,
 	}
 	require.Equal(t, catalog, clientVisibleAllAttemptsFailedError([]*inflight{{err: catalog}}, 0))
-	require.Nil(t, clientVisibleAllAttemptsFailedError([]*inflight{{
+	require.NoError(t, clientVisibleAllAttemptsFailedError([]*inflight{{
 		err: &transport.UpstreamStatusError{StatusCode: http.StatusServiceUnavailable, Body: "nginx limit"},
 	}}, 0))
 }

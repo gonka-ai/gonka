@@ -486,9 +486,9 @@ func TestRecoverSession_HeartbeatContinuesTurnStart(t *testing.T) {
 	require.NotNil(t, hb, "recovery must compose a fresh turn")
 	require.Greater(t, lastTurn(recovered.Diffs(), 3), thirdTurn,
 		"the new turn opens after the span the third turn owned")
-	require.Len(t, hb.SyncVector, 3)
-	for i, ent := range hb.SyncVector {
-		require.Equal(t, types.AckStatus_ACKED, ent.Status, "slot %d", i)
+	require.Len(t, hb.GetSyncVector(), 3)
+	for i, ent := range hb.GetSyncVector() {
+		require.Equal(t, types.AckStatus_ACKED, ent.GetStatus(), "slot %d", i)
 	}
 }
 
@@ -634,8 +634,8 @@ func TestRecoverSession_HeartbeatPartialAckDurableLossReportsSyncVector(t *testi
 	require.NoError(t, recovered.MaybeHeartbeat(ctx))
 	hb := heartbeatTxForTurn(recovered.Diffs(), nthTurn(recovered.Diffs(), 3, 2))
 	require.NotNil(t, hb)
-	require.Len(t, hb.SyncVector, 3)
-	statuses := syncVectorStatuses(hb.SyncVector)
+	require.Len(t, hb.GetSyncVector(), 3)
+	statuses := syncVectorStatuses(hb.GetSyncVector())
 	require.Equal(t, types.AckStatus_ACKED, statuses[span[0].hostIdx])
 	for slot := range hosts {
 		if slot == span[0].hostIdx {
@@ -805,7 +805,7 @@ func TestRecoverSession_BlindCourierStillHeartbeatsCarryingTheFloor(t *testing.T
 		"after TurnTimeout the next turn opens, blank courier view or not")
 	hb := heartbeatTxForTurn(recovered.Diffs(), secondTurn)
 	require.NotNil(t, hb)
-	require.Equal(t, uint64(100), hb.ObservedHeight, "the stamp is F, which no local view can move")
+	require.Equal(t, uint64(100), hb.GetObservedHeight(), "the stamp is F, which no local view can move")
 	require.Zero(t, recovered.HeartbeatSkippedNoHeight(),
 		"a missing courier tip is not a missing height: F is what the cadence needs")
 	require.Equal(t, lastTurn(recovered.Diffs(), 3), recovered.StateMachine().HeightSyncLatestTurnStart())
@@ -971,7 +971,7 @@ func TestRecoverSession_HostRestartLosesLocalHeartbeatAckMempool(t *testing.T) {
 	require.NoError(t, session.MaybeHeartbeat(ctx))
 	hb2 := heartbeatTxForTurn(session.Diffs(), nthTurn(session.Diffs(), 3, 2))
 	require.NotNil(t, hb2)
-	statuses := syncVectorStatuses(hb2.SyncVector)
+	statuses := syncVectorStatuses(hb2.GetSyncVector())
 	require.Equal(t, types.AckStatus_MISSING, statuses[targetHostIdx],
 		"the host-restart ack loss is reported as a missing/no-blame slot in the next vector")
 	for slot := range hosts {
@@ -1351,7 +1351,7 @@ func (c *dropHeightAckTurnClient) Send(ctx context.Context, req host.HostRequest
 	filtered := resp.Mempool[:0]
 	for _, tx := range resp.Mempool {
 		ack := tx.GetHeightAck()
-		if ack != nil && ack.RefNonce == c.refNonce && ack.SlotId == c.slotID {
+		if ack != nil && ack.GetRefNonce() == c.refNonce && ack.GetSlotId() == c.slotID {
 			c.dropped.Store(true)
 			continue
 		}
@@ -1496,7 +1496,7 @@ func heightAcksForTurn(diffs []types.Diff, turnStart, slots uint64) []*types.Msg
 	for _, d := range diffs {
 		for _, tx := range d.Txs {
 			if ack := tx.GetHeightAck(); ack != nil &&
-				ack.RefNonce >= turnStart && ack.RefNonce < turnStart+slots {
+				ack.GetRefNonce() >= turnStart && ack.GetRefNonce() < turnStart+slots {
 				out = append(out, ack)
 			}
 		}
@@ -1507,7 +1507,7 @@ func heightAcksForTurn(diffs []types.Diff, turnStart, slots uint64) []*types.Msg
 func syncVectorStatuses(vec []*types.SyncVectorEntry) map[int]types.AckStatus {
 	out := make(map[int]types.AckStatus, len(vec))
 	for _, ent := range vec {
-		out[int(ent.SlotId)] = ent.Status
+		out[int(ent.GetSlotId())] = ent.GetStatus()
 	}
 	return out
 }
@@ -1792,7 +1792,7 @@ func TestRecoverSession_SnapshotOnly_RestoresPendingTxDedupKeys(t *testing.T) {
 
 	rootBefore, err := recovered.StateMachine().ComputeStateRoot()
 	require.NoError(t, err)
-	require.NoError(t, recovered.ProcessResponse(int(acks[0].SlotId), &host.HostResponse{
+	require.NoError(t, recovered.ProcessResponse(int(acks[0].GetSlotId()), &host.HostResponse{
 		Nonce: recovered.Nonce(),
 		Mempool: []*types.DevshardTx{
 			{Tx: &types.DevshardTx_HeightAck{HeightAck: acks[0]}},
@@ -2095,7 +2095,7 @@ func TestRecoverSession_NewFormatSnapshot_BackfillsStrandedHost(t *testing.T) {
 	require.Equal(t, uint64(numInferences), session.Nonce())
 
 	diffs := session.Diffs()
-	require.Equal(t, int(uint64(numInferences)-stranded), len(diffs),
+	require.Len(t, diffs, int(uint64(numInferences)-stranded),
 		"sess.diffs must span (stranded=%d, latest=%d] for catch-up", stranded, numInferences)
 	require.Equal(t, stranded+1, diffs[0].Nonce, "first diff must be stranded+1")
 	require.Equal(t, uint64(numInferences), diffs[len(diffs)-1].Nonce, "last diff must be latest")
@@ -2437,9 +2437,9 @@ func TestDecodeSnapshot_HeightSyncFloor(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "escrow-1", st.EscrowID)
 	require.NotNil(t, floor)
-	require.True(t, floor.Truncated)
-	require.Equal(t, uint64(50), floor.Entries[0].Height)
-	require.Equal(t, []byte{0xaa}, floor.Entries[0].Hash)
+	require.True(t, floor.GetTruncated())
+	require.Equal(t, uint64(50), floor.GetEntries()[0].GetHeight())
+	require.Equal(t, []byte{0xaa}, floor.GetEntries()[0].GetHash())
 
 	legacy, err := json.Marshal(types.EscrowState{EscrowID: "escrow-2"})
 	require.NoError(t, err)

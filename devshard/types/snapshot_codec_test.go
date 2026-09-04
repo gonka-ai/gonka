@@ -128,8 +128,8 @@ func TestMarshalStateSnapshotProtoRoundTripFloor(t *testing.T) {
 	_, _, _, roundTripFloor, err := UnmarshalStateSnapshotProto(data)
 	require.NoError(t, err)
 	require.NotNil(t, roundTripFloor)
-	require.True(t, roundTripFloor.Truncated)
-	require.Equal(t, floor.Entries[0].Height, roundTripFloor.Entries[0].Height)
-	require.Equal(t, floor.Entries[0].Hash, roundTripFloor.Entries[0].Hash)
-	require.Equal(t, floor.Entries[0].Author, roundTripFloor.Entries[0].Author)
+	require.True(t, roundTripFloor.GetTruncated())
+	require.Equal(t, floor.GetEntries()[0].GetHeight(), roundTripFloor.GetEntries()[0].GetHeight())
+	require.Equal(t, floor.GetEntries()[0].GetHash(), roundTripFloor.GetEntries()[0].GetHash())
+	require.Equal(t, floor.GetEntries()[0].GetAuthor(), roundTripFloor.GetEntries()[0].GetAuthor())
 }

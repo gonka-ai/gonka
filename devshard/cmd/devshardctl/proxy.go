@@ -737,15 +737,15 @@ func (p *Proxy) handleDebugPending(w http.ResponseWriter, r *http.Request) {
 	for _, tx := range pending {
 		switch inner := tx.GetTx().(type) {
 		case *types.DevshardTx_ConfirmStart:
-			txs = append(txs, txInfo{Type: "confirm_start", ID: inner.ConfirmStart.InferenceId})
+			txs = append(txs, txInfo{Type: "confirm_start", ID: inner.ConfirmStart.GetInferenceId()})
 		case *types.DevshardTx_FinishInference:
-			txs = append(txs, txInfo{Type: "finish", ID: inner.FinishInference.InferenceId})
+			txs = append(txs, txInfo{Type: "finish", ID: inner.FinishInference.GetInferenceId()})
 		case *types.DevshardTx_Validation:
-			txs = append(txs, txInfo{Type: "validation", ID: inner.Validation.InferenceId})
+			txs = append(txs, txInfo{Type: "validation", ID: inner.Validation.GetInferenceId()})
 		case *types.DevshardTx_ValidationVote:
-			txs = append(txs, txInfo{Type: "vote", ID: inner.ValidationVote.InferenceId})
+			txs = append(txs, txInfo{Type: "vote", ID: inner.ValidationVote.GetInferenceId()})
 		case *types.DevshardTx_RevealSeed:
-			txs = append(txs, txInfo{Type: "reveal_seed", ID: uint64(inner.RevealSeed.SlotId)})
+			txs = append(txs, txInfo{Type: "reveal_seed", ID: uint64(inner.RevealSeed.GetSlotId())})
 		default:
 			txs = append(txs, txInfo{Type: fmt.Sprintf("%T", tx.GetTx())})
 		}

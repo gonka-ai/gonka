@@ -180,9 +180,9 @@ func TestRepairProbe_UnreachableOrHeight(t *testing.T) {
 
 	var courtesy bool
 	for _, tx := range h0.MempoolTxs() {
-		if ack := tx.GetHeightAck(); ack != nil && ack.SlotId == 1 {
+		if ack := tx.GetHeightAck(); ack != nil && ack.GetSlotId() == 1 {
 			courtesy = true
-			require.Equal(t, uint64(510), ack.ObservedHeight)
+			require.Equal(t, uint64(510), ack.GetObservedHeight())
 		}
 	}
 	require.True(t, courtesy, "HEIGHT may place the offered ack in the local mempool")

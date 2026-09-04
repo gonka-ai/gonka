@@ -1240,7 +1240,7 @@ func TestRunInference_AStateRootDivergenceThatSurvivesTheReplayBlocksTheHost(t *
 	lastNonce := divergent.LastRequest().Nonce
 	var after bytes.Buffer
 	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &after, nil))
-	require.EqualValues(t, lastNonce, divergent.LastRequest().Nonce)
+	require.Equal(t, lastNonce, divergent.LastRequest().Nonce)
 
 	reason, blocked := env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
 	require.True(t, blocked)

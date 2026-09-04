@@ -63,11 +63,11 @@ func RecoveryTxsFor(txs []*types.DevshardTx, inferenceID uint64) []*types.Devsha
 		if tx == nil {
 			continue
 		}
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.GetInferenceId() == inferenceID {
 			out = append(out, tx)
 			continue
 		}
-		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+		if fi := tx.GetFinishInference(); fi != nil && fi.GetInferenceId() == inferenceID {
 			out = append(out, tx)
 		}
 	}
@@ -111,10 +111,10 @@ func VerifyRefusedTimeout(
 
 	// Fast path: check local mempool for MsgConfirmStart or MsgFinishInference.
 	for _, tx := range localMempool {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.GetInferenceId() == inferenceID {
 			return false, nil // executor already confirmed
 		}
-		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+		if fi := tx.GetFinishInference(); fi != nil && fi.GetInferenceId() == inferenceID {
 			return false, nil // executor already finished
 		}
 	}
@@ -126,7 +126,7 @@ func VerifyRefusedTimeout(
 
 	// Verifier validates payload against on-chain record (same checks executor does).
 	if err := VerifyPayload(payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt); err != nil {
-		return false, nil //nolint:nilerr // the verdict is the bool: a bad payload rejects the timeout.
+		return false, nil
 	}
 
 	// Challenge executor: one call that applies diffs + verifies payload + returns receipt.
@@ -134,7 +134,7 @@ func VerifyRefusedTimeout(
 		receipt, mempool, err := executorClient.ChallengeReceipt(ctx, inferenceID, payload, storedDiffs)
 		if err != nil {
 			// Executor unreachable or internal error -> accept timeout.
-			return true, nil //nolint:nilerr // the verdict is the bool: an unreachable executor accepts the timeout.
+			return true, nil
 		}
 		if len(receipt) > 0 {
 			// Copy executor recovery txs into the verifier pool. Same bytes as
@@ -185,7 +185,7 @@ func VerifyExecutionTimeout(
 
 	// Fast path: check local mempool for MsgFinishInference.
 	for _, tx := range localMempool {
-		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+		if fi := tx.GetFinishInference(); fi != nil && fi.GetInferenceId() == inferenceID {
 			return false, nil // executor already finished
 		}
 	}
@@ -195,7 +195,7 @@ func VerifyExecutionTimeout(
 		executorMempool, err := executorClient.GetMempool(ctx)
 		if err == nil {
 			for _, tx := range executorMempool {
-				if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+				if fi := tx.GetFinishInference(); fi != nil && fi.GetInferenceId() == inferenceID {
 					return false, nil // executor has the finish, reject timeout
 				}
 			}
@@ -249,16 +249,16 @@ func VerifyErrorMiss(
 	if msg == nil {
 		return false, nil, ErrorTimeoutRejectNoFinishTx, nil
 	}
-	if msg.InferenceId != inferenceID {
+	if msg.GetInferenceId() != inferenceID {
 		return false, nil, ErrorTimeoutRejectNoFinishTx, nil
 	}
-	if msg.EscrowId != st.EscrowID {
+	if msg.GetEscrowId() != st.EscrowID {
 		return false, nil, ErrorTimeoutRejectNoFinishTx, nil
 	}
-	if msg.ExecutorSlot != rec.ExecutorSlot {
+	if msg.GetExecutorSlot() != rec.ExecutorSlot {
 		return false, nil, ErrorTimeoutRejectNoFinishTx, nil
 	}
-	if rec.Status == types.StatusFinished && !bytes.Equal(msg.ResponseHash, rec.ResponseHash) {
+	if rec.Status == types.StatusFinished && !bytes.Equal(msg.GetResponseHash(), rec.ResponseHash) {
 		return false, nil, ErrorTimeoutRejectHashMismatch, nil
 	}
 
@@ -266,21 +266,21 @@ func VerifyErrorMiss(
 		return false, nil, ErrorTimeoutRejectSig, nil
 	}
 	if err := finishVerifier.VerifyFinishProposerSig(msg); err != nil {
-		return false, nil, ErrorTimeoutRejectSig, nil //nolint:nilerr // the verdict is the bool plus a reject reason.
+		return false, nil, ErrorTimeoutRejectSig, nil
 	}
 
 	if len(responsePayload) == 0 {
 		return false, nil, ErrorTimeoutRejectNoPayload, nil
 	}
 	sum := sha256.Sum256(responsePayload)
-	if !bytes.Equal(sum[:], msg.ResponseHash) {
+	if !bytes.Equal(sum[:], msg.GetResponseHash()) {
 		return false, nil, ErrorTimeoutRejectHashMismatch, nil
 	}
 
 	if _, ok := completionapi.IsTerminalErrorResponse(responsePayload); !ok {
 		return false, nil, ErrorTimeoutRejectNotErrorBody, nil
 	}
-	return true, append([]byte(nil), msg.ResponseHash...), "", nil
+	return true, append([]byte(nil), msg.GetResponseHash()...), "", nil
 }
 
 func resolveFinishMessage(finishTx []byte, localMempool []*types.DevshardTx, inferenceID uint64) *types.MsgFinishInference {
@@ -306,7 +306,7 @@ func finishFromMempool(mempool []*types.DevshardTx, inferenceID uint64) *types.M
 		if tx == nil {
 			continue
 		}
-		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+		if fi := tx.GetFinishInference(); fi != nil && fi.GetInferenceId() == inferenceID {
 			return fi
 		}
 	}

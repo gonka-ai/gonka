@@ -64,17 +64,17 @@ func (sm *StateMachine) applyForceHeightSyncTurn(msg *types.MsgForceHeightSyncTu
 		return types.ErrSessionFinalizing
 	}
 	slots := uint64(len(sm.state.Group))
-	if msg.TriggerNonce != diffNonce {
+	if msg.GetTriggerNonce() != diffNonce {
 		return fmt.Errorf("%w: trigger_nonce must equal diff nonce", types.ErrInvalidNonce)
 	}
-	if msg.SlotsNum != slots {
-		return fmt.Errorf("MsgForceHeightSyncTurn slots_num %d must equal group size %d", msg.SlotsNum, slots)
+	if msg.GetSlotsNum() != slots {
+		return fmt.Errorf("MsgForceHeightSyncTurn slots_num %d must equal group size %d", msg.GetSlotsNum(), slots)
 	}
-	if msg.AnchorK < msg.SlotsNum {
+	if msg.GetAnchorK() < msg.GetSlotsNum() {
 		return heightsync.ErrInvalidConfig
 	}
-	expectedEnd := msg.TriggerNonce + msg.SlotsNum - 1
-	if msg.EndNonce != expectedEnd {
+	expectedEnd := msg.GetTriggerNonce() + msg.GetSlotsNum() - 1
+	if msg.GetEndNonce() != expectedEnd {
 		return fmt.Errorf("MsgForceHeightSyncTurn end_nonce must be trigger_nonce+slots_num-1")
 	}
 	// Ignore duplicate open while a forced turn still covers this diff nonce.
@@ -82,13 +82,13 @@ func (sm *StateMachine) applyForceHeightSyncTurn(msg *types.MsgForceHeightSyncTu
 		return nil
 	}
 
-	sm.state.HeightSyncForcedStart = msg.TriggerNonce
-	sm.state.HeightSyncForcedEnd = msg.EndNonce
-	sm.state.HeightSyncTurnK = msg.AnchorK
-	sm.state.HeightSyncTurnSlots = msg.SlotsNum
-	sm.state.HeightSyncTurnReason = msg.Reason
+	sm.state.HeightSyncForcedStart = msg.GetTriggerNonce()
+	sm.state.HeightSyncForcedEnd = msg.GetEndNonce()
+	sm.state.HeightSyncTurnK = msg.GetAnchorK()
+	sm.state.HeightSyncTurnSlots = msg.GetSlotsNum()
+	sm.state.HeightSyncTurnReason = msg.GetReason()
 
-	if swallowUntil, swallowFe, ok := heightsync.ComputeCadenceSwallow(msg.TriggerNonce, msg.EndNonce, msg.AnchorK, msg.SlotsNum); ok {
+	if swallowUntil, swallowFe, ok := heightsync.ComputeCadenceSwallow(msg.GetTriggerNonce(), msg.GetEndNonce(), msg.GetAnchorK(), msg.GetSlotsNum()); ok {
 		sm.state.HeightSyncCadenceSwallowUntil = swallowUntil
 		sm.state.HeightSyncSwallowFe = swallowFe
 	} else {
@@ -313,11 +313,11 @@ func (sm *StateMachine) floorClaimsLocked(txs []*types.DevshardTx) []heightsync.
 		signer := heightsync.SequencerSigner
 		switch {
 		case tx.GetHeightAck() != nil:
-			signer = tx.GetHeightAck().SlotId
+			signer = tx.GetHeightAck().GetSlotId()
 		case tx.GetFinishInference() != nil:
-			signer = tx.GetFinishInference().ExecutorSlot
+			signer = tx.GetFinishInference().GetExecutorSlot()
 		case tx.GetConfirmStart() != nil:
-			rec := sm.state.Inferences[tx.GetConfirmStart().InferenceId]
+			rec := sm.state.Inferences[tx.GetConfirmStart().GetInferenceId()]
 			if rec == nil {
 				continue
 			}

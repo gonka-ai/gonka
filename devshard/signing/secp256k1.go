@@ -8,7 +8,7 @@ import (
 
 	"github.com/cosmos/btcutil/bech32"
 	"github.com/ethereum/go-ethereum/crypto"
-	"golang.org/x/crypto/ripemd160" //nolint:staticcheck // RIPEMD-160 is fixed by the Cosmos address derivation.
+	"golang.org/x/crypto/ripemd160" //nolint:gosec // RIPEMD-160 is fixed by the Cosmos address derivation.
 )
 
 // Secp256k1Signer signs messages using a secp256k1 private key.

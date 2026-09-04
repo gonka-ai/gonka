@@ -97,12 +97,12 @@ func TestMockDAPI_GetRuntimeConfigLongPollViaTestenvParams(t *testing.T) {
 
 	resp, err := client.GetRuntimeConfig(ctx, &gen.GetRuntimeConfigRequest{ClientParamsBlockHeight: 0})
 	require.NoError(t, err)
-	require.False(t, resp.Unchanged)
-	startHeight := resp.Config.ParamsBlockHeight
+	require.False(t, resp.GetUnchanged())
+	startHeight := resp.GetConfig().GetParamsBlockHeight()
 
 	resp, err = client.GetRuntimeConfig(ctx, &gen.GetRuntimeConfigRequest{ClientParamsBlockHeight: startHeight})
 	require.NoError(t, err)
-	require.True(t, resp.Unchanged)
+	require.True(t, resp.GetUnchanged())
 
 	done := make(chan *gen.GetRuntimeConfigResponse, 1)
 	go func() {
@@ -127,9 +127,9 @@ func TestMockDAPI_GetRuntimeConfigLongPollViaTestenvParams(t *testing.T) {
 
 	select {
 	case r := <-done:
-		require.False(t, r.Unchanged)
-		require.Greater(t, r.Config.ParamsBlockHeight, startHeight)
-		require.Equal(t, uint32(999), r.Config.MaxNonce)
+		require.False(t, r.GetUnchanged())
+		require.Greater(t, r.GetConfig().GetParamsBlockHeight(), startHeight)
+		require.Equal(t, uint32(999), r.GetConfig().GetMaxNonce())
 	case <-time.After(3 * time.Second):
 		t.Fatal("long-poll did not wake after /testenv/params")
 	}
@@ -289,5 +289,5 @@ func TestMockDAPI_AcquireMLNode(t *testing.T) {
 
 	resp, err := gen.NewNodeManagerClient(conn).AcquireMLNode(context.Background(), &gen.AcquireMLNodeRequest{Model: "test-model"})
 	require.NoError(t, err)
-	require.Equal(t, "http://mock-openai:8088", resp.Endpoint)
+	require.Equal(t, "http://mock-openai:8088", resp.GetEndpoint())
 }

@@ -1256,8 +1256,8 @@ func TestQueryDoesNotMutateLedger(t *testing.T) {
 	counters := len(tr.escrows["e1"].Counters)
 	live := len(tr.escrows["e1"].Live)
 	require.Equal(t, before, tr.Query(QueryFilter{EpochIndex: 35}))
-	require.Equal(t, counters, len(tr.escrows["e1"].Counters))
-	require.Equal(t, live, len(tr.escrows["e1"].Live))
+	require.Len(t, tr.escrows["e1"].Counters, counters)
+	require.Len(t, tr.escrows["e1"].Live, live)
 
 	// Promotion happens on the snapshot tick; the counts must not change.
 	require.NoError(t, tr.Flush(context.Background()))
@@ -1345,11 +1345,11 @@ func metricGaugeValue(
 		if family.GetName() != name {
 			continue
 		}
-		for _, metric := range family.Metric {
+		for _, metric := range family.GetMetric() {
 			matched := true
 			for labelName, labelValue := range labels {
 				found := false
-				for _, pair := range metric.Label {
+				for _, pair := range metric.GetLabel() {
 					if pair.GetName() == labelName && pair.GetValue() == labelValue {
 						found = true
 						break
@@ -1360,8 +1360,8 @@ func metricGaugeValue(
 					break
 				}
 			}
-			if matched && metric.Gauge != nil {
-				return metric.Gauge.GetValue()
+			if matched && metric.GetGauge() != nil {
+				return metric.GetGauge().GetValue()
 			}
 		}
 	}
@@ -1373,7 +1373,7 @@ func metricSeriesCount(t *testing.T, families []*dto.MetricFamily, name string) 
 	t.Helper()
 	for _, family := range families {
 		if family.GetName() == name {
-			return len(family.Metric)
+			return len(family.GetMetric())
 		}
 	}
 	t.Fatalf("missing metric %s", name)

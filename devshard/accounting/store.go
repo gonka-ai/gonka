@@ -85,7 +85,7 @@ func (s *Store) Load(ctx context.Context, t *Tracker) error {
 	for metaRows.Next() {
 		var key, value string
 		if err := metaRows.Scan(&key, &value); err != nil {
-			metaRows.Close() //nolint:sqlclosecheck // must close before the next statement on this SQLite connection.
+			metaRows.Close()
 			return err
 		}
 		switch key {

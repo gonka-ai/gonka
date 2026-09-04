@@ -89,16 +89,16 @@ func ReadPGBound(storeDir string) (bool, error) {
 
 // WritePGBound creates the Postgres-mode marker atomically.
 func WritePGBound(storeDir string) error {
-	if err := os.MkdirAll(storeDir, 0o755); err != nil {
+	if err := os.MkdirAll(storeDir, 0o750); err != nil {
 		return fmt.Errorf("mkdir store dir: %w", err)
 	}
 	target := PGBoundPath(storeDir)
 	tmp := target + ".tmp"
-	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o600) //nolint:gosec // the service's own marker path under its store dir.
 	if err != nil {
 		return fmt.Errorf("open pg-bound tmp: %w", err)
 	}
-	if _, err := f.Write([]byte("1\n")); err != nil {
+	if _, err := f.WriteString("1\n"); err != nil {
 		_ = f.Close()
 		_ = os.Remove(tmp)
 		return fmt.Errorf("write pg-bound tmp: %w", err)
@@ -116,7 +116,7 @@ func WritePGBound(storeDir string) error {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("rename pg-bound: %w", err)
 	}
-	dir, err := os.Open(storeDir)
+	dir, err := os.Open(storeDir) //nolint:gosec // the service's own marker path under its store dir.
 	if err != nil {
 		return fmt.Errorf("open store dir for sync: %w", err)
 	}

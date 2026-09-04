@@ -137,7 +137,7 @@ func DiffFromJSON(dj DiffJSON) (types.Diff, error) {
 	}
 	return types.Diff{
 		Nonce:         dj.Nonce,
-		Txs:           content.Txs,
+		Txs:           content.GetTxs(),
 		UserSig:       dj.UserSig,
 		PostStateRoot: dj.PostStateRoot,
 	}, nil

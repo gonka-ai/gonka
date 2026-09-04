@@ -307,19 +307,19 @@ func (s *Session) noteAckObsLocked(ack *types.MsgHeightAck) {
 	}
 	// SlotId is host-chosen. Refuse anything outside the escrow roster so
 	// maps and Prometheus labels stay O(slots_num), not O(uint32).
-	if !s.knownSlotLocked(ack.SlotId) {
+	if !s.knownSlotLocked(ack.GetSlotId()) {
 		return
 	}
 	slotsNum := uint32(len(s.group))
 	// Same PeerSeen framing as log-plane L1 (proposal §14). Oversized /
 	// undersized bitmaps are dropped; sync_state and anchors still record for
 	// a valid slot.
-	if len(ack.PeerSeen) > 0 && heightsync.PeerSeenByteLenValid(ack.PeerSeen, slotsNum) {
-		s.lastPeerSeen[ack.SlotId] = append([]byte(nil), ack.PeerSeen...)
+	if len(ack.GetPeerSeen()) > 0 && heightsync.PeerSeenByteLenValid(ack.GetPeerSeen(), slotsNum) {
+		s.lastPeerSeen[ack.GetSlotId()] = append([]byte(nil), ack.GetPeerSeen()...)
 	}
-	s.lastSyncState[ack.SlotId] = ack.SyncState.String()
-	if s.anchors != nil && ack.ObservedHeight > 0 {
-		s.anchors.Record(ack.ObservedHeight, heightsync.AnchorKindResponse)
+	s.lastSyncState[ack.GetSlotId()] = ack.GetSyncState().String()
+	if s.anchors != nil && ack.GetObservedHeight() > 0 {
+		s.anchors.Record(ack.GetObservedHeight(), heightsync.AnchorKindResponse)
 	}
 }
 

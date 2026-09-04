@@ -459,7 +459,7 @@ func (sm *StateMachine) flushDeferredObsLocked(writes []deferredObsWrite) {
 func logDroppedTx(nonce uint64, tx *types.DevshardTx, err error) {
 	if confirm := tx.GetConfirmStart(); confirm != nil {
 		logging.Warn("dropped confirm start", "subsystem", "state",
-			"nonce", nonce, "inference_id", confirm.InferenceId, "error", err)
+			"nonce", nonce, "inference_id", confirm.GetInferenceId(), "error", err)
 		return
 	}
 	logging.Debug("dropped tx", "subsystem", "state", "nonce", nonce, "error", err)
@@ -487,7 +487,7 @@ func (sm *StateMachine) localBestEffortLocked(nonce uint64, txs []*types.Devshar
 	for _, tx := range txs {
 		if start := tx.GetStartInference(); start != nil {
 			startCount++
-			if start.InferenceId != nonce {
+			if start.GetInferenceId() != nonce {
 				return nil, nil, types.ErrInvalidInferenceID
 			}
 		}
@@ -670,7 +670,7 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 	for _, tx := range txs {
 		if start := tx.GetStartInference(); start != nil {
 			startCount++
-			if start.InferenceId != nonce {
+			if start.GetInferenceId() != nonce {
 				return nil, types.ErrInvalidInferenceID
 			}
 		}
@@ -1152,20 +1152,20 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 
 	// A sub-floor reservation is refused by the executor's payload check, so the inference would sit
 	// pending until seal. Rejecting here keeps it out of state and off the balance.
-	if !sm.replayingPersisted && msg.MaxTokens < completionapi.MinTokensFloor {
-		return fmt.Errorf("%w: max_tokens %d, floor %d", types.ErrMaxTokensBelowFloor, msg.MaxTokens, completionapi.MinTokensFloor)
+	if !sm.replayingPersisted && msg.GetMaxTokens() < completionapi.MinTokensFloor {
+		return fmt.Errorf("%w: max_tokens %d, floor %d", types.ErrMaxTokensBelowFloor, msg.GetMaxTokens(), completionapi.MinTokensFloor)
 	}
 
 	// Duplicate inference ID guard.
-	if sm.isDuplicateInferenceID(msg.InferenceId) {
+	if sm.isDuplicateInferenceID(msg.GetInferenceId()) {
 		return types.ErrDuplicateInferenceID
 	}
 
 	// Executor slot: group[inference_id % len(group)].SlotID
-	executorSlot := sm.state.Group[msg.InferenceId%uint64(len(sm.state.Group))].SlotID
+	executorSlot := sm.state.Group[msg.GetInferenceId()%uint64(len(sm.state.Group))].SlotID
 
 	// Reserve cost: (input_length + max_tokens) * token_price
-	reservedCost, err := tokenCost(msg.InputLength, msg.MaxTokens, sm.state.Config.TokenPrice)
+	reservedCost, err := tokenCost(msg.GetInputLength(), msg.GetMaxTokens(), sm.state.Config.TokenPrice)
 	if err != nil {
 		return err
 	}
@@ -1178,37 +1178,37 @@ func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error 
 	rec := &types.InferenceRecord{
 		Status:       types.StatusPending,
 		ExecutorSlot: executorSlot,
-		Model:        msg.Model,
-		PromptHash:   msg.PromptHash,
-		InputLength:  msg.InputLength,
-		MaxTokens:    msg.MaxTokens,
+		Model:        msg.GetModel(),
+		PromptHash:   msg.GetPromptHash(),
+		InputLength:  msg.GetInputLength(),
+		MaxTokens:    msg.GetMaxTokens(),
 		ReservedCost: reservedCost,
-		StartedAt:    msg.StartedAt,
+		StartedAt:    msg.GetStartedAt(),
 	}
-	if heightsync.StampPresent(msg.ObservedBlockHash) {
-		rec.StartedAtHeight = msg.ObservedHeight
+	if heightsync.StampPresent(msg.GetObservedBlockHash()) {
+		rec.StartedAtHeight = msg.GetObservedHeight()
 	}
 
-	sm.state.Inferences[msg.InferenceId] = rec
-	if err := sm.updateCommittedEntryLocked(msg.InferenceId, rec); err != nil {
+	sm.state.Inferences[msg.GetInferenceId()] = rec
+	if err := sm.updateCommittedEntryLocked(msg.GetInferenceId(), rec); err != nil {
 		return err
 	}
 	logging.Debug("inference -> pending", "subsystem", "state",
-		"inference_id", msg.InferenceId,
+		"inference_id", msg.GetInferenceId(),
 		"executor_slot", executorSlot,
-		"model", msg.Model,
+		"model", msg.GetModel(),
 		"reserved_cost", reservedCost,
 	)
 	return nil
 }
 
 func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
-	rec, ok := sm.state.Inferences[msg.InferenceId]
+	rec, ok := sm.state.Inferences[msg.GetInferenceId()]
 	if !ok {
-		if sm.isInferenceEvictedFromLive(msg.InferenceId) {
-			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.InferenceId)
+		if sm.isInferenceEvictedFromLive(msg.GetInferenceId()) {
+			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.GetInferenceId())
 		}
-		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
+		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.GetInferenceId())
 	}
 	if rec.Status != types.StatusPending {
 		return fmt.Errorf("%w: expected pending, got %d", types.ErrInvalidTransition, rec.Status)
@@ -1216,23 +1216,23 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 
 	// Verify executor receipt (includes confirmed_at from the executor's wall clock).
 	receiptContent := &types.ExecutorReceiptContent{
-		InferenceId:       msg.InferenceId,
+		InferenceId:       msg.GetInferenceId(),
 		PromptHash:        rec.PromptHash,
 		Model:             rec.Model,
 		InputLength:       rec.InputLength,
 		MaxTokens:         rec.MaxTokens,
 		StartedAt:         rec.StartedAt,
 		EscrowId:          sm.state.EscrowID,
-		ConfirmedAt:       msg.ConfirmedAt,
-		ObservedHeight:    msg.ObservedHeight,
-		ObservedBlockHash: msg.ObservedBlockHash,
+		ConfirmedAt:       msg.GetConfirmedAt(),
+		ObservedHeight:    msg.GetObservedHeight(),
+		ObservedBlockHash: msg.GetObservedBlockHash(),
 	}
 	receiptData, err := deterministicMarshal.Marshal(receiptContent)
 	if err != nil {
 		return fmt.Errorf("marshal executor receipt: %w", err)
 	}
 
-	recovered, err := sm.verifier.RecoverAddress(receiptData, msg.ExecutorSig)
+	recovered, err := sm.verifier.RecoverAddress(receiptData, msg.GetExecutorSig())
 	if err != nil {
 		return fmt.Errorf("%w: %w", types.ErrInvalidExecutorSig, err)
 	}
@@ -1246,33 +1246,33 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 	}
 
 	rec.Status = types.StatusStarted
-	rec.ConfirmedAt = msg.ConfirmedAt
-	if heightsync.StampPresent(msg.ObservedBlockHash) {
-		rec.ConfirmedAtHeight = msg.ObservedHeight
+	rec.ConfirmedAt = msg.GetConfirmedAt()
+	if heightsync.StampPresent(msg.GetObservedBlockHash()) {
+		rec.ConfirmedAtHeight = msg.GetObservedHeight()
 	}
 	logging.Debug("inference pending -> started", "subsystem", "state",
-		"inference_id", msg.InferenceId,
+		"inference_id", msg.GetInferenceId(),
 		"executor_slot", rec.ExecutorSlot,
-		"confirmed_at", msg.ConfirmedAt,
+		"confirmed_at", msg.GetConfirmedAt(),
 	)
-	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+	return sm.updateCommittedEntryLocked(msg.GetInferenceId(), rec)
 }
 
 func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) error {
-	rec, ok := sm.state.Inferences[msg.InferenceId]
+	rec, ok := sm.state.Inferences[msg.GetInferenceId()]
 	if !ok {
-		if sm.isInferenceEvictedFromLive(msg.InferenceId) {
-			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.InferenceId)
+		if sm.isInferenceEvictedFromLive(msg.GetInferenceId()) {
+			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.GetInferenceId())
 		}
-		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
+		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.GetInferenceId())
 	}
 	if rec.Status != types.StatusStarted {
 		return fmt.Errorf("%w: expected started, got %d", types.ErrInvalidTransition, rec.Status)
 	}
 
 	// Verify executor slot.
-	if msg.ExecutorSlot != rec.ExecutorSlot {
-		return fmt.Errorf("%w: expected %d, got %d", types.ErrWrongExecutorSlot, rec.ExecutorSlot, msg.ExecutorSlot)
+	if msg.GetExecutorSlot() != rec.ExecutorSlot {
+		return fmt.Errorf("%w: expected %d, got %d", types.ErrWrongExecutorSlot, rec.ExecutorSlot, msg.GetExecutorSlot())
 	}
 
 	if err := sm.verifyFinishProposerSigLocked(msg); err != nil {
@@ -1280,12 +1280,12 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 	}
 
 	// Cross-session replay protection.
-	if msg.EscrowId != sm.state.EscrowID {
-		return fmt.Errorf("%w: expected %s, got %s", types.ErrEscrowIDMismatch, sm.state.EscrowID, msg.EscrowId)
+	if msg.GetEscrowId() != sm.state.EscrowID {
+		return fmt.Errorf("%w: expected %s, got %s", types.ErrEscrowIDMismatch, sm.state.EscrowID, msg.GetEscrowId())
 	}
 
 	// Compute actual cost.
-	actualCost, err := tokenCost(msg.InputTokens, msg.OutputTokens, sm.state.Config.TokenPrice)
+	actualCost, err := tokenCost(msg.GetInputTokens(), msg.GetOutputTokens(), sm.state.Config.TokenPrice)
 	if err != nil {
 		return err
 	}
@@ -1298,43 +1298,43 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 	sm.state.Balance += surplus
 
 	rec.Status = types.StatusFinished
-	rec.ResponseHash = msg.ResponseHash
-	rec.InputTokens = msg.InputTokens
-	rec.OutputTokens = msg.OutputTokens
+	rec.ResponseHash = msg.GetResponseHash()
+	rec.InputTokens = msg.GetInputTokens()
+	rec.OutputTokens = msg.GetOutputTokens()
 	rec.ActualCost = actualCost
 
 	// Update host stats.
 	sm.state.HostStats[rec.ExecutorSlot].Cost += actualCost
 
 	logging.Debug("inference started -> finished", "subsystem", "state",
-		"inference_id", msg.InferenceId,
-		"executor_slot", msg.ExecutorSlot,
-		"input_tokens", msg.InputTokens,
-		"output_tokens", msg.OutputTokens,
+		"inference_id", msg.GetInferenceId(),
+		"executor_slot", msg.GetExecutorSlot(),
+		"input_tokens", msg.GetInputTokens(),
+		"output_tokens", msg.GetOutputTokens(),
 		"actual_cost", actualCost,
 	)
-	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+	return sm.updateCommittedEntryLocked(msg.GetInferenceId(), rec)
 }
 
 func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
-	rec, ok := sm.state.Inferences[msg.InferenceId]
+	rec, ok := sm.state.Inferences[msg.GetInferenceId()]
 	if !ok {
-		if sealNonce, sealed := sm.sealedNonces[msg.InferenceId]; sealed && sealNonce > 0 {
-			return fmt.Errorf("%w: inference %d", types.ErrInferenceSealed, msg.InferenceId)
+		if sealNonce, sealed := sm.sealedNonces[msg.GetInferenceId()]; sealed && sealNonce > 0 {
+			return fmt.Errorf("%w: inference %d", types.ErrInferenceSealed, msg.GetInferenceId())
 		}
-		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
+		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.GetInferenceId())
 	}
 
 	// Common pre-checks.
-	if _, ok := sm.slotToAddress[msg.ValidatorSlot]; !ok {
-		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.ValidatorSlot)
+	if _, ok := sm.slotToAddress[msg.GetValidatorSlot()]; !ok {
+		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.GetValidatorSlot())
 	}
-	if msg.ValidatorSlot == rec.ExecutorSlot {
+	if msg.GetValidatorSlot() == rec.ExecutorSlot {
 		return types.ErrSelfValidation
 	}
 
 	// Idempotent: duplicate validation from same address is always a no-op.
-	if found, _ := sm.addressHasValidated(rec, msg.ValidatorSlot); found {
+	if found, _ := sm.addressHasValidated(rec, msg.GetValidatorSlot()); found {
 		return nil
 	}
 
@@ -1349,11 +1349,11 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 	// Proposer sig + escrow_id (expensive, after dedup).
 	cloned := proto.Clone(msg).(*types.MsgValidation)
 	cloned.ProposerSig = nil
-	if err := sm.verifyProposerSig(cloned, msg.ProposerSig, sm.slotToAddress[msg.ValidatorSlot], msg.ValidatorSlot); err != nil {
+	if err := sm.verifyProposerSig(cloned, msg.GetProposerSig(), sm.slotToAddress[msg.GetValidatorSlot()], msg.GetValidatorSlot()); err != nil {
 		return err
 	}
-	if msg.EscrowId != sm.state.EscrowID {
-		return fmt.Errorf("%w: expected %s, got %s", types.ErrEscrowIDMismatch, sm.state.EscrowID, msg.EscrowId)
+	if msg.GetEscrowId() != sm.state.EscrowID {
+		return fmt.Errorf("%w: expected %s, got %s", types.ErrEscrowIDMismatch, sm.state.EscrowID, msg.GetEscrowId())
 	}
 
 	// Mutation: set bitmap, count vote weight.
@@ -1364,13 +1364,13 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 	// the asymmetry is benign, but the unified bitmap would be more
 	// consistent. Changing it shifts state-machine output, so it requires a
 	// coordinated upgrade.
-	rec.ValidatedBy.Set(msg.ValidatorSlot)
+	rec.ValidatedBy.Set(msg.GetValidatorSlot())
 
 	// Count vote weight for Finished state (tallies accumulate before any challenge).
 	if rec.Status == types.StatusFinished {
-		validatorAddr := sm.slotToAddress[msg.ValidatorSlot]
+		validatorAddr := sm.slotToAddress[msg.GetValidatorSlot()]
 		weight := sm.addressToSlotCount[validatorAddr]
-		if msg.Valid {
+		if msg.GetValid() {
 			rec.VotesValid += weight
 		} else {
 			rec.VotesInvalid += weight
@@ -1378,15 +1378,15 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 			// Obs row is not part of post_state_root; a storage blip must not fail
 			// the tx (ApplyLocalBestEffort would drop it but keep the mutation).
 			// Recovery rebuilds obs from the diff journal; see autoSealLocked.
-			sm.persistLiveInferenceObsBestEffortLocked(msg.InferenceId, rec)
+			sm.persistLiveInferenceObsBestEffortLocked(msg.GetInferenceId(), rec)
 			logging.Debug("inference finished -> challenged", "subsystem", "state",
-				"inference_id", msg.InferenceId,
-				"validator_slot", msg.ValidatorSlot,
+				"inference_id", msg.GetInferenceId(),
+				"validator_slot", msg.GetValidatorSlot(),
 			)
 		}
 	}
 
-	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+	return sm.updateCommittedEntryLocked(msg.GetInferenceId(), rec)
 }
 
 // addressHasValidated checks if the address owning slotID has any slot bit set in ValidatedBy.
@@ -1401,15 +1401,15 @@ func (sm *StateMachine) addressHasValidated(rec *types.InferenceRecord, slotID u
 }
 
 func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error {
-	rec, ok := sm.state.Inferences[msg.InferenceId]
+	rec, ok := sm.state.Inferences[msg.GetInferenceId()]
 	if !ok {
-		if sealNonce, sealed := sm.sealedNonces[msg.InferenceId]; sealed && sealNonce > 0 {
-			return fmt.Errorf("%w: inference %d", types.ErrInferenceSealed, msg.InferenceId)
+		if sealNonce, sealed := sm.sealedNonces[msg.GetInferenceId()]; sealed && sealNonce > 0 {
+			return fmt.Errorf("%w: inference %d", types.ErrInferenceSealed, msg.GetInferenceId())
 		}
-		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
+		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.GetInferenceId())
 	}
-	if _, ok := sm.slotToAddress[msg.VoterSlot]; !ok {
-		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.VoterSlot)
+	if _, ok := sm.slotToAddress[msg.GetVoterSlot()]; !ok {
+		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.GetVoterSlot())
 	}
 
 	// Skip already-resolved challenge votes (allows safe vote batching).
@@ -1422,22 +1422,22 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 	}
 
 	// Dedup: check ValidatedBy (unified bitmap for validators + voters).
-	voterAddr := sm.slotToAddress[msg.VoterSlot]
-	if found, existingSlot := sm.addressHasValidated(rec, msg.VoterSlot); found {
+	voterAddr := sm.slotToAddress[msg.GetVoterSlot()]
+	if found, existingSlot := sm.addressHasValidated(rec, msg.GetVoterSlot()); found {
 		return fmt.Errorf("%w: slot %d (address %s already participated via slot %d)",
-			types.ErrDuplicateVote, msg.VoterSlot, voterAddr, existingSlot)
+			types.ErrDuplicateVote, msg.GetVoterSlot(), voterAddr, existingSlot)
 	}
 
 	// Verify proposer signature from voter.
 	clonedVV := proto.Clone(msg).(*types.MsgValidationVote)
 	clonedVV.ProposerSig = nil
-	if err := sm.verifyProposerSig(clonedVV, msg.ProposerSig, sm.slotToAddress[msg.VoterSlot], msg.VoterSlot); err != nil {
+	if err := sm.verifyProposerSig(clonedVV, msg.GetProposerSig(), sm.slotToAddress[msg.GetVoterSlot()], msg.GetVoterSlot()); err != nil {
 		return err
 	}
 
 	// Cross-session replay protection.
-	if msg.EscrowId != sm.state.EscrowID {
-		return fmt.Errorf("%w: expected %s, got %s", types.ErrEscrowIDMismatch, sm.state.EscrowID, msg.EscrowId)
+	if msg.GetEscrowId() != sm.state.EscrowID {
+		return fmt.Errorf("%w: expected %s, got %s", types.ErrEscrowIDMismatch, sm.state.EscrowID, msg.GetEscrowId())
 	}
 
 	// Mark ALL slots owned by this address in ValidatedBy (unified bitmap).
@@ -1445,7 +1445,7 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 	for _, slot := range sm.addressToSlots[voterAddr] {
 		rec.ValidatedBy.Set(slot)
 	}
-	if msg.VoteValid {
+	if msg.GetVoteValid() {
 		rec.VotesValid += weight
 	} else {
 		rec.VotesInvalid += weight
@@ -1465,14 +1465,14 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 		}
 		sm.state.Balance += rec.ActualCost
 		logging.Debug("inference challenged -> invalidated", "subsystem", "state",
-			"inference_id", msg.InferenceId,
+			"inference_id", msg.GetInferenceId(),
 			"votes_valid", rec.VotesValid,
 			"votes_invalid", rec.VotesInvalid,
 		)
 	} else if rec.VotesValid > threshold {
 		rec.Status = types.StatusValidated
 		logging.Debug("inference challenged -> validated", "subsystem", "state",
-			"inference_id", msg.InferenceId,
+			"inference_id", msg.GetInferenceId(),
 			"votes_valid", rec.VotesValid,
 			"votes_invalid", rec.VotesInvalid,
 		)
@@ -1480,23 +1480,23 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 
 	if rec.Status == types.StatusValidated || rec.Status == types.StatusInvalidated {
 		// Same as challenge path: obs is observability-only, never consensus.
-		sm.persistLiveInferenceObsBestEffortLocked(msg.InferenceId, rec)
+		sm.persistLiveInferenceObsBestEffortLocked(msg.GetInferenceId(), rec)
 	}
 
-	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+	return sm.updateCommittedEntryLocked(msg.GetInferenceId(), rec)
 }
 
 func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
-	rec, ok := sm.state.Inferences[msg.InferenceId]
+	rec, ok := sm.state.Inferences[msg.GetInferenceId()]
 	if !ok {
-		if sm.isInferenceEvictedFromLive(msg.InferenceId) {
-			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.InferenceId)
+		if sm.isInferenceEvictedFromLive(msg.GetInferenceId()) {
+			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.GetInferenceId())
 		}
-		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
+		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.GetInferenceId())
 	}
 
 	// Validate reason matches status.
-	switch msg.Reason {
+	switch msg.GetReason() {
 	case types.TimeoutReason_TIMEOUT_REASON_REFUSED:
 		if rec.Status != types.StatusPending {
 			return fmt.Errorf("%w: reason=refused requires pending, got %d", types.ErrInvalidTimeoutReason, rec.Status)
@@ -1506,50 +1506,50 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 			return fmt.Errorf("%w: reason=execution requires started, got %d", types.ErrInvalidTimeoutReason, rec.Status)
 		}
 	default:
-		return fmt.Errorf("%w: unknown reason %v", types.ErrInvalidTimeoutReason, msg.Reason)
+		return fmt.Errorf("%w: unknown reason %v", types.ErrInvalidTimeoutReason, msg.GetReason())
 	}
 
 	// Count accept votes, weighted by slots per address.
 	// One signature from a multi-slot validator counts for all its slots.
 	acceptCount := uint32(0)
-	seenAddrs := make(map[string]bool, len(msg.Votes))
-	for _, vote := range msg.Votes {
+	seenAddrs := make(map[string]bool, len(msg.GetVotes()))
+	for _, vote := range msg.GetVotes() {
 		// Group membership check.
-		voterAddr, ok := sm.slotToAddress[vote.VoterSlot]
+		voterAddr, ok := sm.slotToAddress[vote.GetVoterSlot()]
 		if !ok {
-			return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, vote.VoterSlot)
+			return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, vote.GetVoterSlot())
 		}
 
 		// Duplicate voter address detection (one vote per address).
 		if seenAddrs[voterAddr] {
-			return fmt.Errorf("%w: slot %d", types.ErrDuplicateVote, vote.VoterSlot)
+			return fmt.Errorf("%w: slot %d", types.ErrDuplicateVote, vote.GetVoterSlot())
 		}
 		seenAddrs[voterAddr] = true
 
 		voteContent := &types.TimeoutVoteContent{
 			EscrowId:    sm.state.EscrowID,
-			InferenceId: msg.InferenceId,
-			Reason:      msg.Reason,
-			Accept:      vote.Accept,
+			InferenceId: msg.GetInferenceId(),
+			Reason:      msg.GetReason(),
+			Accept:      vote.GetAccept(),
 		}
 		voteData, err := deterministicMarshal.Marshal(voteContent)
 		if err != nil {
 			return fmt.Errorf("marshal timeout vote: %w", err)
 		}
 
-		recovered, err := sm.verifier.RecoverAddress(voteData, vote.Signature)
+		recovered, err := sm.verifier.RecoverAddress(voteData, vote.GetSignature())
 		if err != nil {
-			return fmt.Errorf("%w: vote from slot %d: %w", types.ErrInvalidVoteSig, vote.VoterSlot, err)
+			return fmt.Errorf("%w: vote from slot %d: %w", types.ErrInvalidVoteSig, vote.GetVoterSlot(), err)
 		}
 
 		if recovered != voterAddr {
-			if !sm.ResolveWarmKey(vote.VoterSlot, recovered, voterAddr) {
+			if !sm.ResolveWarmKey(vote.GetVoterSlot(), recovered, voterAddr) {
 				return fmt.Errorf("%w: vote from slot %d: expected %s, got %s",
-					types.ErrInvalidVoteSig, vote.VoterSlot, voterAddr, recovered)
+					types.ErrInvalidVoteSig, vote.GetVoterSlot(), voterAddr, recovered)
 			}
 		}
 
-		if vote.Accept {
+		if vote.GetAccept() {
 			acceptCount += sm.addressToSlotCount[voterAddr]
 		}
 	}
@@ -1565,58 +1565,58 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 	sm.state.Balance += rec.ReservedCost
 
 	logging.Debug("inference -> timed_out", "subsystem", "state",
-		"inference_id", msg.InferenceId,
+		"inference_id", msg.GetInferenceId(),
 		"executor_slot", rec.ExecutorSlot,
-		"reason", msg.Reason.String(),
+		"reason", msg.GetReason().String(),
 	)
-	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+	return sm.updateCommittedEntryLocked(msg.GetInferenceId(), rec)
 }
 
 func (sm *StateMachine) applyErrorMiss(msg *types.MsgErrorMiss) error {
-	rec, ok := sm.state.Inferences[msg.InferenceId]
+	rec, ok := sm.state.Inferences[msg.GetInferenceId()]
 	if !ok {
-		if sm.isInferenceEvictedFromLive(msg.InferenceId) {
-			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.InferenceId)
+		if sm.isInferenceEvictedFromLive(msg.GetInferenceId()) {
+			return fmt.Errorf("%w: inference %d is sealed", types.ErrInvalidTransition, msg.GetInferenceId())
 		}
-		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
+		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.GetInferenceId())
 	}
 	if rec.Status != types.StatusFinished {
 		return fmt.Errorf("%w: error-miss requires finished, got %d", types.ErrInvalidTransition, rec.Status)
 	}
 
 	acceptCount := uint32(0)
-	seenAddrs := make(map[string]bool, len(msg.Votes))
-	for _, vote := range msg.Votes {
-		voterAddr, ok := sm.slotToAddress[vote.VoterSlot]
+	seenAddrs := make(map[string]bool, len(msg.GetVotes()))
+	for _, vote := range msg.GetVotes() {
+		voterAddr, ok := sm.slotToAddress[vote.GetVoterSlot()]
 		if !ok {
-			return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, vote.VoterSlot)
+			return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, vote.GetVoterSlot())
 		}
 		if seenAddrs[voterAddr] {
-			return fmt.Errorf("%w: slot %d", types.ErrDuplicateVote, vote.VoterSlot)
+			return fmt.Errorf("%w: slot %d", types.ErrDuplicateVote, vote.GetVoterSlot())
 		}
 		seenAddrs[voterAddr] = true
 
 		voteContent := &types.ErrorMissVoteContent{
 			EscrowId:     sm.state.EscrowID,
-			InferenceId:  msg.InferenceId,
-			Accept:       vote.Accept,
+			InferenceId:  msg.GetInferenceId(),
+			Accept:       vote.GetAccept(),
 			ResponseHash: rec.ResponseHash,
 		}
 		voteData, err := deterministicMarshal.Marshal(voteContent)
 		if err != nil {
 			return fmt.Errorf("marshal error-miss vote: %w", err)
 		}
-		recovered, err := sm.verifier.RecoverAddress(voteData, vote.Signature)
+		recovered, err := sm.verifier.RecoverAddress(voteData, vote.GetSignature())
 		if err != nil {
-			return fmt.Errorf("%w: vote from slot %d: %w", types.ErrInvalidVoteSig, vote.VoterSlot, err)
+			return fmt.Errorf("%w: vote from slot %d: %w", types.ErrInvalidVoteSig, vote.GetVoterSlot(), err)
 		}
 		if recovered != voterAddr {
-			if !sm.ResolveWarmKey(vote.VoterSlot, recovered, voterAddr) {
+			if !sm.ResolveWarmKey(vote.GetVoterSlot(), recovered, voterAddr) {
 				return fmt.Errorf("%w: vote from slot %d: expected %s, got %s",
-					types.ErrInvalidVoteSig, vote.VoterSlot, voterAddr, recovered)
+					types.ErrInvalidVoteSig, vote.GetVoterSlot(), voterAddr, recovered)
 			}
 		}
-		if vote.Accept {
+		if vote.GetAccept() {
 			acceptCount += sm.addressToSlotCount[voterAddr]
 		}
 	}
@@ -1639,11 +1639,11 @@ func (sm *StateMachine) applyErrorMiss(msg *types.MsgErrorMiss) error {
 	}
 
 	logging.Debug("inference -> timed_out", "subsystem", "state",
-		"inference_id", msg.InferenceId,
+		"inference_id", msg.GetInferenceId(),
 		"executor_slot", rec.ExecutorSlot,
 		"reason", "error_miss",
 	)
-	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+	return sm.updateCommittedEntryLocked(msg.GetInferenceId(), rec)
 }
 
 func (sm *StateMachine) applyRevealSeed(msg *types.MsgRevealSeed) error {
@@ -1707,11 +1707,11 @@ func (sm *StateMachine) VerifyFinishProposerSig(msg *types.MsgFinishInference) e
 	}
 
 	sm.mu.RLock()
-	expected, ok := sm.slotToAddress[msg.ExecutorSlot]
-	cached, hasCached := sm.state.WarmKeys[msg.ExecutorSlot]
+	expected, ok := sm.slotToAddress[msg.GetExecutorSlot()]
+	cached, hasCached := sm.state.WarmKeys[msg.GetExecutorSlot()]
 	sm.mu.RUnlock()
 	if !ok {
-		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.ExecutorSlot)
+		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.GetExecutorSlot())
 	}
 	if recovered == expected || cached == recovered {
 		return nil
@@ -1722,7 +1722,7 @@ func (sm *StateMachine) VerifyFinishProposerSig(msg *types.MsgFinishInference) e
 
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	if sm.ResolveWarmKey(msg.ExecutorSlot, recovered, expected) {
+	if sm.ResolveWarmKey(msg.GetExecutorSlot(), recovered, expected) {
 		return nil
 	}
 	return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidProposerSig, expected, recovered)
@@ -1746,12 +1746,12 @@ func (sm *StateMachine) RejectFinishProposerSigLocal(msg *types.MsgFinishInferen
 	}
 
 	sm.mu.RLock()
-	expected, ok := sm.slotToAddress[msg.ExecutorSlot]
-	cached, hasCached := sm.state.WarmKeys[msg.ExecutorSlot]
+	expected, ok := sm.slotToAddress[msg.GetExecutorSlot()]
+	cached, hasCached := sm.state.WarmKeys[msg.GetExecutorSlot()]
 	canResolve := sm.warmResolver != nil
 	sm.mu.RUnlock()
 	if !ok {
-		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.ExecutorSlot)
+		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.GetExecutorSlot())
 	}
 	if recovered == expected || (hasCached && cached == recovered) {
 		return nil
@@ -1772,7 +1772,7 @@ func (sm *StateMachine) recoveredProposerAddress(msg *types.MsgFinishInference) 
 	if err != nil {
 		return "", fmt.Errorf("marshal for proposer sig: %w", err)
 	}
-	recovered, err := sm.verifier.RecoverAddress(data, msg.ProposerSig)
+	recovered, err := sm.verifier.RecoverAddress(data, msg.GetProposerSig())
 	if err != nil {
 		return "", fmt.Errorf("%w: %w", types.ErrInvalidProposerSig, err)
 	}
@@ -1783,13 +1783,13 @@ func (sm *StateMachine) verifyFinishProposerSigLocked(msg *types.MsgFinishInfere
 	if msg == nil {
 		return fmt.Errorf("%w: nil finish", types.ErrInvalidProposerSig)
 	}
-	addr, ok := sm.slotToAddress[msg.ExecutorSlot]
+	addr, ok := sm.slotToAddress[msg.GetExecutorSlot()]
 	if !ok {
-		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.ExecutorSlot)
+		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.GetExecutorSlot())
 	}
 	cloned := proto.Clone(msg).(*types.MsgFinishInference)
 	cloned.ProposerSig = nil
-	return sm.verifyProposerSig(cloned, msg.ProposerSig, addr, msg.ExecutorSlot)
+	return sm.verifyProposerSig(cloned, msg.GetProposerSig(), addr, msg.GetExecutorSlot())
 }
 
 // verifyProposerSig verifies that sig was produced by expectedAddress over

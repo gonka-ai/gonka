@@ -20,7 +20,7 @@ func TestGeneratedComposeConfigValid(t *testing.T) {
 	}
 
 	// Not t.TempDir(): the generated compose file addresses the repo through paths relative to testenv/.
-	workDir, err := os.MkdirTemp(testenvDir, "citest-compose-*") //nolint:usetesting
+	workDir, err := os.MkdirTemp(testenvDir, "citest-compose-*")
 	if err != nil {
 		t.Fatal(err)
 	}

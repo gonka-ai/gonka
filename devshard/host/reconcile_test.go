@@ -2,7 +2,6 @@ package host
 
 import (
 	"context"
-	"errors"
 	"sync/atomic"
 	"testing"
 
@@ -196,7 +195,7 @@ func TestHost_ReconcileGapIncomplete_NoPartialApply(t *testing.T) {
 	before := h.LatestNonce()
 	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff5}})
 	require.Error(t, err)
-	require.True(t, errors.Is(err, ErrReconcileGap), "got %v", err)
+	require.ErrorIs(t, err, ErrReconcileGap, "got %v", err)
 	require.Equal(t, before, h.LatestNonce(), "memory must not advance on incomplete gap")
 }
 

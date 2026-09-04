@@ -70,7 +70,7 @@ func TestMarshalStateSnapshotWithCommitted_RoundTripFloor(t *testing.T) {
 	_, _, _, roundTripFloor, err := UnmarshalStateSnapshotWithCommitted(data)
 	require.NoError(t, err)
 	require.NotNil(t, roundTripFloor)
-	require.True(t, roundTripFloor.Truncated)
-	require.Equal(t, uint64(50), roundTripFloor.Entries[0].Height)
-	require.Equal(t, []byte{0xaa}, roundTripFloor.Entries[0].Hash)
+	require.True(t, roundTripFloor.GetTruncated())
+	require.Equal(t, uint64(50), roundTripFloor.GetEntries()[0].GetHeight())
+	require.Equal(t, []byte{0xaa}, roundTripFloor.GetEntries()[0].GetHash())
 }

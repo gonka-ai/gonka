@@ -309,10 +309,10 @@ func TestVerifyRefused_CopiesChallengeMempool(t *testing.T) {
 	got := findMempoolConfirm(verifierPool.Txs())
 	require.NotNil(t, got, "verifier pool must copy MsgConfirmStart from challenge mempool")
 	require.Equal(t, types.TxHash(confirm), types.TxHash(got))
-	require.Equal(t, []byte("receipt-sig"), got.GetConfirmStart().ExecutorSig)
+	require.Equal(t, []byte("receipt-sig"), got.GetConfirmStart().GetExecutorSig())
 	for _, tx := range verifierPool.Txs() {
 		if cs := tx.GetConfirmStart(); cs != nil {
-			require.Equal(t, uint64(1), cs.InferenceId, "verifier must not copy ConfirmStart for other inferences")
+			require.Equal(t, uint64(1), cs.GetInferenceId(), "verifier must not copy ConfirmStart for other inferences")
 		}
 	}
 

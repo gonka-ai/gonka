@@ -89,7 +89,7 @@ func TestSseRaceWriterClassifyCapDrops(t *testing.T) {
 	rw := mkRaceWriter(t, inf)
 	_, err := rw.Write(bytes.Repeat([]byte("x"), maxClassifyPartial+1))
 	require.NoError(t, err)
-	require.Equal(t, 0, len(inf.classifyPartial))
+	require.Empty(t, inf.classifyPartial)
 	require.Equal(t, before, classifyPartialBytes.Load())
 }
 
@@ -101,7 +101,7 @@ func TestSseRaceWriterReplaceClassifyPerAttemptCapDrops(t *testing.T) {
 	chunk := append([]byte("\n"), bytes.Repeat([]byte("x"), maxClassifyPartial+1)...)
 	_, err := rw.Write(chunk)
 	require.NoError(t, err)
-	require.Equal(t, 0, len(inf.classifyPartial))
+	require.Empty(t, inf.classifyPartial)
 	require.Equal(t, before, classifyPartialBytes.Load())
 }
 
@@ -114,7 +114,7 @@ func TestSseRaceWriterGrowClassifyGlobalCapDrops(t *testing.T) {
 	rw := mkRaceWriter(t, inf)
 	_, err := rw.Write([]byte("data: partial-no-newline"))
 	require.NoError(t, err)
-	require.Equal(t, 0, len(inf.classifyPartial))
+	require.Empty(t, inf.classifyPartial)
 	require.Equal(t, maxClassifyPartialGlobal, classifyPartialBytes.Load())
 }
 
@@ -127,7 +127,7 @@ func TestSseRaceWriterReplaceClassifyGlobalCapDrops(t *testing.T) {
 	rw := mkRaceWriter(t, inf)
 	_, err := rw.Write([]byte("\ntail"))
 	require.NoError(t, err)
-	require.Equal(t, 0, len(inf.classifyPartial))
+	require.Empty(t, inf.classifyPartial)
 	require.Equal(t, maxClassifyPartialGlobal, classifyPartialBytes.Load())
 }
 
@@ -139,7 +139,7 @@ func TestSseRaceWriterDropReleasesBackingArray(t *testing.T) {
 	rw := mkRaceWriter(t, inf)
 	_, err := rw.Write(bytes.Repeat([]byte("x"), maxClassifyPartial-10))
 	require.NoError(t, err)
-	require.Greater(t, cap(inf.classifyPartial), 0)
+	require.Positive(t, cap(inf.classifyPartial))
 	_, err = rw.Write(bytes.Repeat([]byte("x"), 20))
 	require.NoError(t, err)
 	require.Equal(t, 0, cap(inf.classifyPartial), "drop must release the backing array")
@@ -199,7 +199,7 @@ func TestSseRaceWriterFlushRecoversNewlineLessContent(t *testing.T) {
 	require.False(t, isEmptyStreamAttempt(inf),
 		"flush must classify the newline-less final content event")
 	require.Equal(t, "delta.content", inf.contentSource)
-	require.Equal(t, 0, len(inf.classifyPartial), "flush must release the buffer")
+	require.Empty(t, inf.classifyPartial, "flush must release the buffer")
 }
 
 // Regression: flushClassifyAndCheckEmpty must flush the buffered final event before reading contentChunks (a prior deferred flush ran after the decision, misclassifying content as empty).
@@ -278,7 +278,7 @@ func TestSseRaceWriterFlushProbeNoop(t *testing.T) {
 	rw.flushClassify()
 
 	require.Equal(t, int64(0), inf.contentChunks.Load(), "probe flush must not count content")
-	require.Equal(t, "", inf.contentSource)
+	require.Empty(t, inf.contentSource)
 }
 
 // On a cap drop, the raw write chunk is still classified best-effort rather than
@@ -317,7 +317,7 @@ func TestSseRaceWriterParticipantCapIsolatesParticipants(t *testing.T) {
 	// The honest participant still has its full budget available.
 	_, err = mkRaceWriter(t, infHonest).Write(bytes.Repeat([]byte("y"), 100))
 	require.NoError(t, err)
-	require.Equal(t, 100, len(infHonest.classifyPartial), "honest attempt must not be starved")
+	require.Len(t, infHonest.classifyPartial, 100, "honest attempt must not be starved")
 	require.Equal(t, int64(100), honest.Load())
 }
 
@@ -340,7 +340,7 @@ func TestSseRaceWriterParticipantCapDropsOverBudget(t *testing.T) {
 	_, err = mkRaceWriter(t, second).Write(bytes.Repeat([]byte("y"), 100))
 	require.NoError(t, err)
 
-	require.Equal(t, 0, len(second.classifyPartial), "participant cap must drop the over-budget attempt")
+	require.Empty(t, second.classifyPartial, "participant cap must drop the over-budget attempt")
 	require.Equal(t, int64(100), shared.Load(), "over-budget bytes rolled back")
 }
 
@@ -360,7 +360,7 @@ func TestSseRaceWriterGlobalCapRollsBackParticipant(t *testing.T) {
 	_, err := mkRaceWriter(t, inf).Write(bytes.Repeat([]byte("x"), 100))
 	require.NoError(t, err)
 
-	require.Equal(t, 0, len(inf.classifyPartial), "global cap drops the attempt")
+	require.Empty(t, inf.classifyPartial, "global cap drops the attempt")
 	require.Equal(t, int64(0), participant.Load(), "participant counter rolled back")
 	require.Equal(t, before, classifyPartialBytes.Load())
 }

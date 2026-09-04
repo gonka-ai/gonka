@@ -284,8 +284,8 @@ func requireMetricCounterValue(t *testing.T, families []*dto.MetricFamily, name 
 		}
 		for _, metric := range family.GetMetric() {
 			if metricLabelsMatch(metric, labels) {
-				require.NotNil(t, metric.Counter)
-				require.Equal(t, want, metric.Counter.GetValue())
+				require.NotNil(t, metric.GetCounter())
+				require.Equal(t, want, metric.GetCounter().GetValue())
 				return
 			}
 		}
@@ -301,7 +301,7 @@ func requireMetricHistogramAbsent(t *testing.T, families []*dto.MetricFamily, na
 		}
 		for _, metric := range family.GetMetric() {
 			if metricLabelsMatch(metric, labels) {
-				t.Fatalf("histogram %s with labels %v was observed %d times", name, labels, metric.Histogram.GetSampleCount())
+				t.Fatalf("histogram %s with labels %v was observed %d times", name, labels, metric.GetHistogram().GetSampleCount())
 			}
 		}
 	}
@@ -315,8 +315,8 @@ func requireMetricHistogramCount(t *testing.T, families []*dto.MetricFamily, nam
 		}
 		for _, metric := range family.GetMetric() {
 			if metricLabelsMatch(metric, labels) {
-				require.NotNil(t, metric.Histogram)
-				require.Equal(t, want, metric.Histogram.GetSampleCount())
+				require.NotNil(t, metric.GetHistogram())
+				require.Equal(t, want, metric.GetHistogram().GetSampleCount())
 				return
 			}
 		}

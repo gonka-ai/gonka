@@ -154,7 +154,7 @@ func TestUser_PipelinesReceipt(t *testing.T) {
 	var hasConfirm bool
 	for _, tx := range diff2.Txs {
 		if confirm := tx.GetConfirmStart(); confirm != nil {
-			require.Equal(t, uint64(1), confirm.InferenceId)
+			require.Equal(t, uint64(1), confirm.GetInferenceId())
 			hasConfirm = true
 		}
 	}
@@ -282,7 +282,7 @@ func TestUser_Finalize(t *testing.T) {
 	require.NoError(t, err)
 
 	st := session.StateMachine().SnapshotState()
-	require.True(t, st.Phase >= types.PhaseFinalizing)
+	require.GreaterOrEqual(t, st.Phase, types.PhaseFinalizing)
 	for id, rec := range st.Inferences {
 		require.Equal(t, types.StatusFinished, rec.Status, "inference %d should be finished", id)
 	}
@@ -337,7 +337,7 @@ func TestUser_Finalize_DiffCount(t *testing.T) {
 
 	// Finalize adds N (Phase A) + 1 (drain) = N + 1. Phase B sends catch-up only.
 	expected := preFinalize + numHosts + 1
-	require.Equal(t, expected, len(session.Diffs()),
+	require.Len(t, session.Diffs(), expected,
 		"total diffs = pre-finalize(%d) + N+1(%d)", preFinalize, numHosts+1)
 }
 
@@ -364,7 +364,7 @@ func TestUser_PendingTxDedup(t *testing.T) {
 	require.NoError(t, err)
 
 	// Dedup should prevent growth.
-	require.Equal(t, countBefore, len(session.PendingTxs()),
+	require.Len(t, session.PendingTxs(), countBefore,
 		"duplicate mempool txs should be deduplicated")
 }
 
@@ -640,11 +640,11 @@ func TestSendInference_HostInjectedStartDoesNotBlockNextUserInference(t *testing
 	for _, d := range session.Diffs() {
 		for _, tx := range d.Txs {
 			start := tx.GetStartInference()
-			if start == nil || start.InferenceId != 2 {
+			if start == nil || start.GetInferenceId() != 2 {
 				continue
 			}
 			foundUserStart2 = true
-			require.Equal(t, uint64(testutil.TestMaxTokens), start.MaxTokens)
+			require.Equal(t, uint64(testutil.TestMaxTokens), start.GetMaxTokens())
 		}
 	}
 	require.True(t, foundUserStart2, "creator Start2 must be in a signed Diff")
@@ -704,7 +704,7 @@ func TestProcessResponse_ForgedConfirmDoesNotShadowHonestConfirm(t *testing.T) {
 
 	var honestConfirm *types.DevshardTx
 	for _, tx := range execHost.MempoolTxs() {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == nonce {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.GetInferenceId() == nonce {
 			honestConfirm = tx
 			break
 		}
@@ -774,7 +774,7 @@ func TestProcessResponse_AppliedConfirmIsNotRequeued(t *testing.T) {
 
 	var honestConfirm *types.DevshardTx
 	for _, tx := range execHost.MempoolTxs() {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == nonce {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.GetInferenceId() == nonce {
 			honestConfirm = tx
 			break
 		}
@@ -834,11 +834,11 @@ func TestProcessResponse_DropsHostTxForUnknownInference(t *testing.T) {
 		"ConfirmStart for an unknown inference must not queue")
 	for _, tx := range pending {
 		if v := tx.GetValidation(); v != nil {
-			require.NotEqual(t, uint64(unknownID), v.InferenceId,
+			require.NotEqual(t, uint64(unknownID), v.GetInferenceId(),
 				"Validation for an unknown inference must not queue")
 		}
 		if v := tx.GetValidationVote(); v != nil {
-			require.NotEqual(t, uint64(unknownID), v.InferenceId,
+			require.NotEqual(t, uint64(unknownID), v.GetInferenceId(),
 				"ValidationVote for an unknown inference must not queue")
 		}
 	}
@@ -907,7 +907,7 @@ func TestHandleTimeout_RecoveryDropsInjectedStartAndUnsignedFinish(t *testing.T)
 
 	var confirmTx *types.DevshardTx
 	for _, tx := range execHost.MempoolTxs() {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == nonce {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.GetInferenceId() == nonce {
 			confirmTx = tx
 			break
 		}
@@ -985,14 +985,14 @@ func requireNoInjectedStartInDiffs(t *testing.T, session *Session, creatorStartI
 			if start == nil {
 				continue
 			}
-			require.Equal(t, creatorStartID, start.InferenceId, "only the creator-composed Start may land in a Diff")
+			require.Equal(t, creatorStartID, start.GetInferenceId(), "only the creator-composed Start may land in a Diff")
 		}
 	}
 }
 
 func findPendingStart(txs []*types.DevshardTx, inferenceID uint64) *types.MsgStartInference {
 	for _, tx := range txs {
-		if start := tx.GetStartInference(); start != nil && start.InferenceId == inferenceID {
+		if start := tx.GetStartInference(); start != nil && start.GetInferenceId() == inferenceID {
 			return start
 		}
 	}
@@ -1011,7 +1011,7 @@ func findPendingFinalize(txs []*types.DevshardTx) *types.MsgFinalizeRound {
 func findPendingHeightAck(txs []*types.DevshardTx, refNonce uint64, slotID uint32) *types.MsgHeightAck {
 	for _, tx := range txs {
 		ack := tx.GetHeightAck()
-		if ack != nil && ack.RefNonce == refNonce && ack.SlotId == slotID {
+		if ack != nil && ack.GetRefNonce() == refNonce && ack.GetSlotId() == slotID {
 			return ack
 		}
 	}
@@ -1131,10 +1131,10 @@ func TestCollectTimeoutVotes_WeightEarlyExit(t *testing.T) {
 	// Compute total weight of returned votes.
 	var totalWeight uint32
 	for _, v := range votes {
-		addr := userSM.SlotAddress(v.VoterSlot)
+		addr := userSM.SlotAddress(v.GetVoterSlot())
 		totalWeight += userSM.AddressSlotCount(addr)
 	}
-	require.True(t, totalWeight > config.VoteThreshold,
+	require.Greater(t, totalWeight, config.VoteThreshold,
 		"accumulated weight %d should exceed threshold %d", totalWeight, config.VoteThreshold)
 }
 
@@ -1807,7 +1807,7 @@ func TestFinalize_DoubleCall_AfterSuccess(t *testing.T) {
 	require.NoError(t, err)
 
 	require.Equal(t, nonce1, session.Nonce(), "nonce must not advance on second call")
-	require.Equal(t, diffs1, len(session.Diffs()), "no new diffs on second call")
+	require.Len(t, session.Diffs(), diffs1, "no new diffs on second call")
 	require.Equal(t, types.PhaseSettlement, session.StateMachine().SnapshotState().Phase)
 
 	sigs := session.Signatures()
@@ -1847,7 +1847,7 @@ func TestFinalize_DoubleCall_InsufficientQuorum(t *testing.T) {
 	require.Contains(t, err.Error(), "insufficient signatures")
 
 	require.Equal(t, nonce1, session.Nonce(), "nonce must not advance on second call")
-	require.Equal(t, diffs1, len(session.Diffs()), "no new diffs on second call")
+	require.Len(t, session.Diffs(), diffs1, "no new diffs on second call")
 }
 
 // After snapshot-only recovery, diffs and in-memory signatures are empty while
@@ -2019,15 +2019,15 @@ func TestCollectTimeoutVotes_CollectsRejectMempool(t *testing.T) {
 
 	var got *types.MsgConfirmStart
 	for _, tx := range recovery {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == 1 {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.GetInferenceId() == 1 {
 			got = cs
 			break
 		}
 	}
 	require.NotNil(t, got, "reject votes must surface recovery ConfirmStart")
-	require.Equal(t, []byte("executor-receipt"), got.ExecutorSig)
+	require.Equal(t, []byte("executor-receipt"), got.GetExecutorSig())
 	require.Len(t, recovery, 1, "recovery must drop empty txs and ConfirmStart for other inferences")
-	require.Equal(t, uint64(1), recovery[0].GetConfirmStart().InferenceId)
+	require.Equal(t, uint64(1), recovery[0].GetConfirmStart().GetInferenceId())
 }
 
 func TestCollectTimeoutVotes_DeduplicatesRejectRecoveryTxs(t *testing.T) {
@@ -2121,7 +2121,7 @@ func TestHandleTimeout_RefusedReject_PublishesConfirmStart(t *testing.T) {
 
 	var confirmTx *types.DevshardTx
 	for _, tx := range execHost.MempoolTxs() {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == prepared.diff.Nonce {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.GetInferenceId() == prepared.diff.Nonce {
 			confirmTx = tx
 			break
 		}
@@ -2172,7 +2172,7 @@ func TestHandleTimeout_ExecutionTimeoutIgnoresConfirmStartRecovery(t *testing.T)
 
 	var confirmTx *types.DevshardTx
 	for _, tx := range execHost.MempoolTxs() {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == prepared.diff.Nonce {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.GetInferenceId() == prepared.diff.Nonce {
 			confirmTx = tx
 			break
 		}
@@ -2237,7 +2237,7 @@ func TestHandleTimeout_ExecutionTimeoutPrefersPendingFinishOverTimeoutVotes(t *t
 
 	require.NoError(t, session.ProcessResponse(execIdx, &host.HostResponse{
 		Receipt:     receipt,
-		ConfirmedAt: confirmTx.GetConfirmStart().ConfirmedAt,
+		ConfirmedAt: confirmTx.GetConfirmStart().GetConfirmedAt(),
 	}, prepared.diff.Nonce))
 	require.NoError(t, session.SendPendingDiff(ctx))
 	require.Equal(t, types.StatusStarted, session.StateMachine().SnapshotState().Inferences[prepared.diff.Nonce].Status)
@@ -2313,7 +2313,7 @@ func TestHandleTimeout_RefusedReject_UnrelatedMempool(t *testing.T) {
 func countRecoveryConfirmStart(txs []*types.DevshardTx, inferenceID uint64) int {
 	var count int
 	for _, tx := range txs {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.GetInferenceId() == inferenceID {
 			count++
 		}
 	}
@@ -2323,7 +2323,7 @@ func countRecoveryConfirmStart(txs []*types.DevshardTx, inferenceID uint64) int 
 func countRecoveryFinish(txs []*types.DevshardTx, inferenceID uint64) int {
 	var count int
 	for _, tx := range txs {
-		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+		if fi := tx.GetFinishInference(); fi != nil && fi.GetInferenceId() == inferenceID {
 			count++
 		}
 	}
@@ -2332,7 +2332,7 @@ func countRecoveryFinish(txs []*types.DevshardTx, inferenceID uint64) int {
 
 func findRecoveryConfirmStart(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
 	for _, tx := range txs {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.GetInferenceId() == inferenceID {
 			return tx
 		}
 	}
@@ -2341,7 +2341,7 @@ func findRecoveryConfirmStart(txs []*types.DevshardTx, inferenceID uint64) *type
 
 func findRecoveryFinish(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
 	for _, tx := range txs {
-		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
+		if fi := tx.GetFinishInference(); fi != nil && fi.GetInferenceId() == inferenceID {
 			return tx
 		}
 	}
@@ -2350,7 +2350,7 @@ func findRecoveryFinish(txs []*types.DevshardTx, inferenceID uint64) *types.Devs
 
 func findPendingConfirm(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
 	for _, tx := range txs {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.GetInferenceId() == inferenceID {
 			return tx
 		}
 	}
@@ -2359,7 +2359,7 @@ func findPendingConfirm(txs []*types.DevshardTx, inferenceID uint64) *types.Devs
 
 func findPendingTimeout(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
 	for _, tx := range txs {
-		if to := tx.GetTimeoutInference(); to != nil && to.InferenceId == inferenceID {
+		if to := tx.GetTimeoutInference(); to != nil && to.GetInferenceId() == inferenceID {
 			return tx
 		}
 	}
@@ -2368,7 +2368,7 @@ func findPendingTimeout(txs []*types.DevshardTx, inferenceID uint64) *types.Devs
 
 func findPendingErrorMiss(txs []*types.DevshardTx, inferenceID uint64) *types.DevshardTx {
 	for _, tx := range txs {
-		if em := tx.GetErrorMiss(); em != nil && em.InferenceId == inferenceID {
+		if em := tx.GetErrorMiss(); em != nil && em.GetInferenceId() == inferenceID {
 			return tx
 		}
 	}

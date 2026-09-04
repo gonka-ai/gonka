@@ -101,8 +101,8 @@ func assertSMParity(t *testing.T, userSM, hostSM *state.StateMachine, nonce uint
 	require.Equal(t, userSt.LatestNonce, hostSt.LatestNonce, "nonce %d latest_nonce", nonce)
 	require.Equal(t, userSt.SealedAcc, hostSt.SealedAcc, "nonce %d sealed_acc", nonce)
 	require.Equal(t, userSt.Balance, hostSt.Balance, "nonce %d balance", nonce)
-	require.Equal(t, len(userSt.Inferences), len(hostSt.Inferences), "nonce %d live_inferences_count", nonce)
-	require.Equal(t, len(userSM.ExportSealedNonces()), len(hostSM.ExportSealedNonces()),
+	require.Len(t, hostSt.Inferences, len(userSt.Inferences), "nonce %d live_inferences_count", nonce)
+	require.Len(t, hostSM.ExportSealedNonces(), len(userSM.ExportSealedNonces()),
 		"nonce %d sealed_inferences_count", nonce)
 
 	for id, userRec := range userSt.Inferences {

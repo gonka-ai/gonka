@@ -46,13 +46,13 @@ func TestObservePayloadFetchTTFB(t *testing.T) {
 	if err := payloadFetchTTFB.Write(&m); err != nil {
 		t.Fatal(err)
 	}
-	before := m.Histogram.GetSampleCount()
+	before := m.GetHistogram().GetSampleCount()
 	ObservePayloadFetchTTFB(25 * time.Millisecond)
 	m.Reset()
 	if err := payloadFetchTTFB.Write(&m); err != nil {
 		t.Fatal(err)
 	}
-	if got := m.Histogram.GetSampleCount() - before; got != 1 {
+	if got := m.GetHistogram().GetSampleCount() - before; got != 1 {
 		t.Fatalf("histogram sample delta = %d, want 1", got)
 	}
 }
@@ -144,8 +144,8 @@ func TestDeleteEscrowMetricsRemovesPerEscrowGauges(t *testing.T) {
 	for _, family := range mf {
 		switch family.GetName() {
 		case "devshard_validation_queue_depth", "devshard_mempool_size":
-			for _, m := range family.Metric {
-				for _, lp := range m.Label {
+			for _, m := range family.GetMetric() {
+				for _, lp := range m.GetLabel() {
 					if lp.GetName() == "escrow_id" && lp.GetValue() == escrowID {
 						t.Fatalf("%s still has escrow_id=%q after DeleteEscrowMetrics", family.GetName(), escrowID)
 					}

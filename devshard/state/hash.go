@@ -299,26 +299,26 @@ func unmarshalInferenceEntry(data []byte) (uint64, *types.InferenceRecord, error
 		return 0, nil, fmt.Errorf("unmarshal inference entry: %w", err)
 	}
 	rec := &types.InferenceRecord{
-		Status:            types.InferenceStatus(msg.Status),
-		ExecutorSlot:      msg.ExecutorSlot,
-		Model:             msg.Model,
-		PromptHash:        append([]byte(nil), msg.PromptHash...),
-		ResponseHash:      append([]byte(nil), msg.ResponseHash...),
-		InputLength:       msg.InputLength,
-		MaxTokens:         msg.MaxTokens,
-		InputTokens:       msg.InputTokens,
-		OutputTokens:      msg.OutputTokens,
-		ReservedCost:      msg.ReservedCost,
-		ActualCost:        msg.ActualCost,
-		StartedAt:         msg.StartedAt,
-		ConfirmedAt:       msg.ConfirmedAt,
-		StartedAtHeight:   msg.StartedAtHeight,
-		ConfirmedAtHeight: msg.ConfirmedAtHeight,
-		VotesValid:        msg.VotesValid,
-		VotesInvalid:      msg.VotesInvalid,
-		ValidatedBy:       types.Bitmap128FromBytes(msg.ValidatedBy),
+		Status:            types.InferenceStatus(msg.GetStatus()),
+		ExecutorSlot:      msg.GetExecutorSlot(),
+		Model:             msg.GetModel(),
+		PromptHash:        append([]byte(nil), msg.GetPromptHash()...),
+		ResponseHash:      append([]byte(nil), msg.GetResponseHash()...),
+		InputLength:       msg.GetInputLength(),
+		MaxTokens:         msg.GetMaxTokens(),
+		InputTokens:       msg.GetInputTokens(),
+		OutputTokens:      msg.GetOutputTokens(),
+		ReservedCost:      msg.GetReservedCost(),
+		ActualCost:        msg.GetActualCost(),
+		StartedAt:         msg.GetStartedAt(),
+		ConfirmedAt:       msg.GetConfirmedAt(),
+		StartedAtHeight:   msg.GetStartedAtHeight(),
+		ConfirmedAtHeight: msg.GetConfirmedAtHeight(),
+		VotesValid:        msg.GetVotesValid(),
+		VotesInvalid:      msg.GetVotesInvalid(),
+		ValidatedBy:       types.Bitmap128FromBytes(msg.GetValidatedBy()),
 	}
-	return msg.InferenceId, rec, nil
+	return msg.GetInferenceId(), rec, nil
 }
 
 func computeInferencesHashFromEntries(entries map[uint64][]byte) []byte {

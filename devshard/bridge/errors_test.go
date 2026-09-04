@@ -1,7 +1,6 @@
 package bridge
 
 import (
-	"errors"
 	"fmt"
 	"testing"
 
@@ -19,7 +18,7 @@ func TestClassifyQueryError_Unavailable(t *testing.T) {
 func TestClassifyQueryError_NotFound(t *testing.T) {
 	err := ClassifyQueryError(status.Error(codes.NotFound, "missing"))
 	require.ErrorIs(t, err, ErrEscrowNotFound)
-	require.False(t, errors.Is(err, ErrChainUnavailable))
+	require.NotErrorIs(t, err, ErrChainUnavailable)
 }
 
 func TestClassifyQueryError_Transport(t *testing.T) {

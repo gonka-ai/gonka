@@ -103,7 +103,7 @@ func dialFake(t *testing.T, srv *fakeHostEventsServer) gen.NodeManagerClient {
 func TestRun_RoutesCreatedAndSettled(t *testing.T) {
 	srv := &fakeHostEventsServer{}
 	srv.SetHandlers(func(_ context.Context, req *gen.GetHostEventsRequest) (*gen.GetHostEventsResponse, error) {
-		require.NotEmpty(t, req.Subscribe)
+		require.NotEmpty(t, req.GetSubscribe())
 		return &gen.GetHostEventsResponse{
 			Generation: 1,
 			NextCursor: 2,

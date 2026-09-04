@@ -1,7 +1,6 @@
 package bridge_test
 
 import (
-	"errors"
 	"testing"
 
 	"common/chain"
@@ -48,7 +47,7 @@ func TestBridge_SubmitDisputeState_DelegatesToSubmitter(t *testing.T) {
 func TestBridge_SubmitDisputeState_NilSubmitterReturnsError(t *testing.T) {
 	b := newTestBridge(t, nil)
 	err := b.SubmitDisputeState("1", nil, 0, nil)
-	assert.True(t, errors.Is(err, shardbridge.ErrNotImplemented))
+	assert.ErrorIs(t, err, shardbridge.ErrNotImplemented)
 }
 
 type stubSubmitter struct {

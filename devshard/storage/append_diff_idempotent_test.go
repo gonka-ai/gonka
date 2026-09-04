@@ -1,7 +1,6 @@
 package storage
 
 import (
-	"errors"
 	"testing"
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
@@ -41,7 +40,7 @@ func runAppendDiffForkConflict(t *testing.T, store Storage) {
 	conflict.StateHash = []byte("different-hash")
 	err := store.AppendDiff("escrow-1", conflict)
 	require.Error(t, err)
-	require.True(t, errors.Is(err, ErrDiffFork), "got %v", err)
+	require.ErrorIs(t, err, ErrDiffFork, "got %v", err)
 
 	after := testutil.ToFloat64(observability.DiffForkDetectedForTest("escrow-1"))
 	require.Equal(t, before+1, after, "diff_fork_detected must increment")

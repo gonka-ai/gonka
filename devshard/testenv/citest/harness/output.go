@@ -2,7 +2,6 @@ package harness
 
 import (
 	"os"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -54,7 +53,7 @@ func RequireNoDiffDuplicateKeyInLogs(t *testing.T, s *Stack, services ...string)
 		"duplicate key value violates unique constraint",
 	}
 	for _, needle := range needles {
-		require.False(t, strings.Contains(out, needle),
+		require.NotContains(t, out, needle,
 			"versiond logs must not contain %q after HA catch-up (got %d bytes of logs)", needle, len(out))
 	}
 }

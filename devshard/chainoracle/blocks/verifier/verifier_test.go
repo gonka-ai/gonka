@@ -1,7 +1,6 @@
 package verifier_test
 
 import (
-	"errors"
 	"testing"
 	"time"
 
@@ -59,7 +58,7 @@ func bytesOf(tag byte, height int64) []byte {
 
 func newValidatorSet(t *testing.T, chainID string, signers []*signing.Secp256k1Signer, powers []int64) *verifier.ValidatorSet {
 	t.Helper()
-	require.Equal(t, len(signers), len(powers))
+	require.Len(t, powers, len(signers))
 	vals := make([]verifier.Validator, 0, len(signers))
 	for i, s := range signers {
 		addr, err := blocks.AddressBytes(s.PublicKeyBytes())
@@ -294,6 +293,6 @@ func TestVerifier_RejectsDuplicateSignatures(t *testing.T) {
 	h := signedHeader(t, "gonka-test", 1, []*signing.Secp256k1Signer{s, s})
 	err = v.Verify(h, 0)
 	require.Error(t, err)
-	require.True(t, errors.Is(err, err)) // keep linter happy
+	require.ErrorIs(t, err, err) // keep linter happy
 	require.Contains(t, err.Error(), "duplicate")
 }

@@ -193,7 +193,7 @@ func mustLoadRuntimeOptions(flags cliFlags) runtimeOptions {
 		apiKeys:        parseAPIKeys(os.Getenv("DEVSHARD_API_KEYS")),
 		adminAPIKey:    strings.TrimSpace(os.Getenv("DEVSHARD_ADMIN_API_KEY")),
 	}
-	if err := os.MkdirAll(opts.baseStorageDir, 0o755); err != nil {
+	if err := os.MkdirAll(opts.baseStorageDir, 0o750); err != nil { //nolint:gosec // the base storage dir comes from the flag, not from a request.
 		log.Fatalf("create storage dir: %v", err)
 	}
 	configureRequestCaptureStore(opts.baseStorageDir)
@@ -679,7 +679,9 @@ func buildGatewayHandler(gateway *Gateway, opts runtimeOptions) http.Handler {
 func serveGateway(handler http.Handler, port string, runtimeCount int) {
 	addr := ":" + port
 	log.Printf("devshardctl gateway listening on %s (devshards=%d default_max_tokens=%d max_tokens_cap=%d)", addr, runtimeCount, DefaultRequestMaxTokens, RequestMaxTokensCap)
-	if err := http.ListenAndServe(addr, handler); err != nil {
+	// Matches accounting_server.go: bound the header read without capping a streaming response.
+	server := &http.Server{Addr: addr, Handler: handler, ReadHeaderTimeout: 5 * time.Second}
+	if err := server.ListenAndServe(); err != nil {
 		log.Fatalf("server: %v", err)
 	}
 }

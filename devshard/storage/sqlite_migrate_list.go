@@ -68,7 +68,7 @@ func (s *SQLite) listValidationObs(escrowID, table string) ([]ValidationObsRow, 
 		return nil, err
 	}
 	// table is a fixed identifier from callers, not user input.
-	query := fmt.Sprintf(
+	query := fmt.Sprintf( //nolint:gosec // table is a fixed identifier from callers, never user input.
 		`SELECT inference_id, slot_id, required_validations, completed_validations
 		   FROM %s WHERE escrow_id = ? ORDER BY inference_id, slot_id`, table)
 	rows, err := p.readDB.Query(query, escrowID)

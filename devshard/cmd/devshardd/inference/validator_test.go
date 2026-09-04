@@ -663,7 +663,7 @@ func TestValidator_Validate_ExecutorFaultClassification(t *testing.T) {
 			case tt.wantErr:
 				require.Error(t, err)
 				assert.Nil(t, result)
-				assert.False(t, errors.Is(err, devshardpkg.ErrValidationSkipped))
+				assert.NotErrorIs(t, err, devshardpkg.ErrValidationSkipped)
 			default:
 				t.Fatal("test case must set wantFalse, wantSkip, or wantErr")
 			}

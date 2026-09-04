@@ -47,34 +47,34 @@ func FloorIndexFromProto(cfg FloorConfig, p *types.FloorIndexProto) (*FloorIndex
 		return nil, nil
 	}
 	f := NewFloorIndexWith(cfg)
-	if len(p.Entries) > 0 {
-		f.entries = make([]floorEntry, 0, len(p.Entries))
-		for i, e := range p.Entries {
+	if len(p.GetEntries()) > 0 {
+		f.entries = make([]floorEntry, 0, len(p.GetEntries()))
+		for i, e := range p.GetEntries() {
 			if e == nil {
 				return nil, fmt.Errorf("%w: entry %d is missing", ErrFloorBlobInvalid, i)
 			}
-			if e.Height == 0 || !StampPresent(e.Hash) {
+			if e.GetHeight() == 0 || !StampPresent(e.GetHash()) {
 				return nil, fmt.Errorf("%w: entry %d has no reference height", ErrFloorBlobInvalid, i)
 			}
 			if n := len(f.entries); n > 0 {
 				prev := f.entries[n-1]
-				if e.Nonce <= prev.nonce {
+				if e.GetNonce() <= prev.nonce {
 					return nil, fmt.Errorf("%w: entry %d nonce %d follows %d",
-						ErrFloorBlobInvalid, i, e.Nonce, prev.nonce)
+						ErrFloorBlobInvalid, i, e.GetNonce(), prev.nonce)
 				}
-				if e.Height <= prev.height {
+				if e.GetHeight() <= prev.height {
 					return nil, fmt.Errorf("%w: entry %d height %d follows %d",
-						ErrFloorBlobInvalid, i, e.Height, prev.height)
+						ErrFloorBlobInvalid, i, e.GetHeight(), prev.height)
 				}
 			}
 			f.entries = append(f.entries, floorEntry{
-				nonce:  e.Nonce,
-				height: e.Height,
-				hash:   append([]byte(nil), e.Hash...),
-				author: e.Author,
+				nonce:  e.GetNonce(),
+				height: e.GetHeight(),
+				hash:   append([]byte(nil), e.GetHash()...),
+				author: e.GetAuthor(),
 			})
 		}
 	}
-	f.truncated = p.Truncated
+	f.truncated = p.GetTruncated()
 	return f, nil
 }

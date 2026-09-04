@@ -114,8 +114,8 @@ func TestHeartbeat_SpanDispatchAddressesEverySlot(t *testing.T) {
 	for i, tx := range txs {
 		inner := tx.GetHeartbeat()
 		require.NotNil(t, inner)
-		require.Equal(t, uint64(500), inner.ObservedHeight)
-		require.Equal(t, slots, inner.SlotsNum)
+		require.Equal(t, uint64(500), inner.GetObservedHeight())
+		require.Equal(t, slots, inner.GetSlotsNum())
 		seen[heightsync.SlotForNonce(nonces[i], slots)]++
 	}
 	require.Len(t, seen, int(slots), "every slot addressed once; no ack awaited")

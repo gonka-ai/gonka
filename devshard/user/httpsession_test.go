@@ -1,7 +1,6 @@
 package user
 
 import (
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,7 +16,7 @@ func TestNewHTTPSessionRequiresRoutePrefix(t *testing.T) {
 	_, _, err := NewHTTPSession(HTTPSessionConfig{})
 	require.ErrorContains(t, err, "RoutePrefix is required")
 	require.ErrorContains(t, err, "/devshard/{version}")
-	require.False(t, errors.Is(err, ErrLocalStateUnrecoverable))
+	require.NotErrorIs(t, err, ErrLocalStateUnrecoverable)
 }
 
 func TestNewHTTPSessionOpenStorageFailureStaysFatal(t *testing.T) {
@@ -37,7 +36,7 @@ func TestNewHTTPSessionOpenStorageFailureStaysFatal(t *testing.T) {
 	// corruption: they must not carry the deactivate-and-skip sentinel.
 	require.Error(t, err)
 	require.ErrorContains(t, err, "open storage")
-	require.False(t, errors.Is(err, ErrLocalStateUnrecoverable))
+	require.NotErrorIs(t, err, ErrLocalStateUnrecoverable)
 }
 
 func TestNewHTTPSessionClassifiesNonSequentialReplay(t *testing.T) {

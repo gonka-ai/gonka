@@ -161,7 +161,7 @@ func TestService_Healthz(t *testing.T) {
 	svc, base, _ := newService(t)
 	runInBackground(t, svc)
 
-	resp, body := httpGet(t, base+"/healthz") //nolint:bodyclose // the helper closes the body before it returns.
+	resp, body := httpGet(t, base+"/healthz")
 	require.Equal(t, http.StatusOK, resp.StatusCode)
 	require.Equal(t, "ok", strings.TrimSpace(string(body)))
 }
@@ -192,7 +192,7 @@ func waitForHeight(t *testing.T, base string, height int64) *blocks.Header {
 	t.Helper()
 	deadline := time.Now().Add(2 * time.Second)
 	for {
-		resp, body := httpGet(t, fmt.Sprintf("%s/block/%d", base, height)) //nolint:bodyclose // the helper closes the body before it returns.
+		resp, body := httpGet(t, fmt.Sprintf("%s/block/%d", base, height))
 		if resp.StatusCode == http.StatusOK {
 			var h blocks.Header
 			require.NoError(t, json.Unmarshal(body, &h))
@@ -226,7 +226,7 @@ func TestService_LookupAtVerifiedHeaders(t *testing.T) {
 	for i := int64(1); i <= 4; i++ {
 		h, err := cli.At(context.Background(), i)
 		require.NoError(t, err)
-		require.EqualValues(t, i, h.Height)
+		require.Equal(t, i, h.Height)
 		require.Equal(t, "gonka-testenv-1", h.ChainID)
 		require.GreaterOrEqual(t, len(h.Commit.Signatures), 8)
 	}
@@ -265,7 +265,7 @@ func TestService_RejectsUnknownHeight(t *testing.T) {
 	svc, base, _ := newService(t)
 	runInBackground(t, svc)
 
-	resp, _ := httpGet(t, base+"/block/999") //nolint:bodyclose // the helper closes the body before it returns.
+	resp, _ := httpGet(t, base+"/block/999")
 	require.Equal(t, http.StatusNotFound, resp.StatusCode)
 }
 

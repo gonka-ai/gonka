@@ -61,14 +61,14 @@ func VerifyAck(verifier signing.Verifier, ack *types.MsgHeightAck, slotKey strin
 	if ack == nil {
 		return ErrAckEmpty
 	}
-	if len(ack.HostSig) == 0 {
+	if len(ack.GetHostSig()) == 0 {
 		return ErrAckNoSig
 	}
 	blob, err := CanonicalAckBytes(ack)
 	if err != nil {
 		return err
 	}
-	recovered, err := verifier.RecoverAddress(blob, ack.HostSig)
+	recovered, err := verifier.RecoverAddress(blob, ack.GetHostSig())
 	if err != nil {
 		return fmt.Errorf("%w: %w", ErrAckVerify, err)
 	}

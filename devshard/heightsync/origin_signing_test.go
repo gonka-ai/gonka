@@ -68,7 +68,7 @@ func TestCanonicalOriginBytes_DomainSeparated(t *testing.T) {
 
 	b1, err := CanonicalOriginBytes(sec)
 	require.NoError(t, err)
-	require.True(t, len(b1) > len(OriginSignDomain))
+	require.Greater(t, len(b1), len(OriginSignDomain))
 	require.Equal(t, OriginSignDomain, string(b1[:len(OriginSignDomain)]))
 
 	sec2 := *sec

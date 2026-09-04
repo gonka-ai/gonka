@@ -80,7 +80,7 @@ func collectReasonAndWhereDecls(t *testing.T, root string) map[string]struct{} {
 		}
 		f, perr := parser.ParseFile(fset, path, nil, parser.SkipObjectResolution)
 		if perr != nil {
-			return nil //nolint:nilerr // files that will not parse are skipped.
+			return nil
 		}
 		for _, decl := range f.Decls {
 			gd, ok := decl.(*ast.GenDecl)

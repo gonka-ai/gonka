@@ -196,29 +196,29 @@ func checkL1(nonce uint64, hbs []heartbeatRef, acks []ackRef, st LogPlaneState) 
 	_ = nonce
 	for _, ref := range hbs {
 		hb := ref.hb
-		if hb.SlotsNum != st.SlotsNum {
-			return fmt.Errorf("%w: slots_num %d != group %d", ErrBadFraming, hb.SlotsNum, st.SlotsNum)
+		if hb.GetSlotsNum() != st.SlotsNum {
+			return fmt.Errorf("%w: slots_num %d != group %d", ErrBadFraming, hb.GetSlotsNum(), st.SlotsNum)
 		}
-		if len(hb.ObservedBlockHash) > MaxObservedBlockHashBytes {
-			return fmt.Errorf("%w: observed_block_hash len %d", ErrBadFraming, len(hb.ObservedBlockHash))
+		if len(hb.GetObservedBlockHash()) > MaxObservedBlockHashBytes {
+			return fmt.Errorf("%w: observed_block_hash len %d", ErrBadFraming, len(hb.GetObservedBlockHash()))
 		}
-		if len(hb.SyncVector) > int(st.SlotsNum) {
-			return fmt.Errorf("%w: sync_vector len %d for slots_num %d", ErrBadFraming, len(hb.SyncVector), st.SlotsNum)
+		if len(hb.GetSyncVector()) > int(st.SlotsNum) {
+			return fmt.Errorf("%w: sync_vector len %d for slots_num %d", ErrBadFraming, len(hb.GetSyncVector()), st.SlotsNum)
 		}
 	}
 	for _, ref := range acks {
 		ack := ref.ack
-		if ack.RefNonce == 0 {
+		if ack.GetRefNonce() == 0 {
 			return fmt.Errorf("%w: ack ref_nonce 0", ErrBadFraming)
 		}
-		if uint64(ack.SlotId) >= st.SlotsNum {
-			return fmt.Errorf("%w: slot %d >= %d", ErrBadFraming, ack.SlotId, st.SlotsNum)
+		if uint64(ack.GetSlotId()) >= st.SlotsNum {
+			return fmt.Errorf("%w: slot %d >= %d", ErrBadFraming, ack.GetSlotId(), st.SlotsNum)
 		}
-		if !PeerSeenByteLenValid(ack.PeerSeen, uint32(st.SlotsNum)) {
-			return fmt.Errorf("%w: peer_seen len %d for slots_num %d", ErrBadFraming, len(ack.PeerSeen), st.SlotsNum)
+		if !PeerSeenByteLenValid(ack.GetPeerSeen(), uint32(st.SlotsNum)) {
+			return fmt.Errorf("%w: peer_seen len %d for slots_num %d", ErrBadFraming, len(ack.GetPeerSeen()), st.SlotsNum)
 		}
-		if len(ack.ObservedBlockHash) > MaxObservedBlockHashBytes {
-			return fmt.Errorf("%w: observed_block_hash len %d", ErrBadFraming, len(ack.ObservedBlockHash))
+		if len(ack.GetObservedBlockHash()) > MaxObservedBlockHashBytes {
+			return fmt.Errorf("%w: observed_block_hash len %d", ErrBadFraming, len(ack.GetObservedBlockHash()))
 		}
 	}
 	return nil
@@ -250,9 +250,9 @@ func checkL2(acks []ackRef, st LogPlaneState) error {
 		return fmt.Errorf("%w: verifier required", ErrAckSigInvalid)
 	}
 	for _, ref := range acks {
-		key, ok := st.SlotKeys[ref.ack.SlotId]
+		key, ok := st.SlotKeys[ref.ack.GetSlotId()]
 		if !ok || key == "" {
-			return fmt.Errorf("%w: no key for slot %d", ErrAckSigInvalid, ref.ack.SlotId)
+			return fmt.Errorf("%w: no key for slot %d", ErrAckSigInvalid, ref.ack.GetSlotId())
 		}
 		if err := VerifyAck(st.Verifier, ref.ack, key); err != nil {
 			return fmt.Errorf("%w: %w", ErrAckSigInvalid, err)
@@ -273,15 +273,15 @@ func checkL3(hbs []heartbeatRef, acks []ackRef, st LogPlaneState) error {
 	}
 	for _, ref := range acks {
 		ack := ref.ack
-		if _, ok := inDiff[ack.RefNonce]; ok {
+		if _, ok := inDiff[ack.GetRefNonce()]; ok {
 			continue
 		}
 		if st.Tracker != nil {
-			if _, ok := st.Tracker.HeartbeatTurn(ack.RefNonce); ok {
+			if _, ok := st.Tracker.HeartbeatTurn(ack.GetRefNonce()); ok {
 				continue
 			}
 		}
-		return fmt.Errorf("%w: ref_nonce %d has no heartbeat", ErrAckCausality, ack.RefNonce)
+		return fmt.Errorf("%w: ref_nonce %d has no heartbeat", ErrAckCausality, ack.GetRefNonce())
 	}
 	return nil
 }
@@ -408,13 +408,13 @@ func checkL0b(nonce uint64, txs []*types.DevshardTx, st LogPlaneState) error {
 		}
 		if conf := tx.GetConfirmStart(); conf != nil {
 			if h, ok := inferenceStamp(conf); ok {
-				s := stamp(conf.InferenceId)
+				s := stamp(conf.GetInferenceId())
 				s.hasConfirm, s.confirm = true, h
 			}
 		}
 		if fin := tx.GetFinishInference(); fin != nil {
 			if h, ok := inferenceStamp(fin); ok {
-				s := stamp(fin.InferenceId)
+				s := stamp(fin.GetInferenceId())
 				s.hasFinish, s.finish = true, h
 			}
 		}
@@ -479,7 +479,7 @@ func newTurnIndex(hbs []heartbeatRef, st LogPlaneState) turnIndex {
 			idx.byHeartbeat[ref.nonce] = openStart
 			continue
 		}
-		slots := ref.hb.SlotsNum
+		slots := ref.hb.GetSlotsNum()
 		if slots == 0 {
 			slots = st.SlotsNum
 		}
@@ -517,21 +517,21 @@ func checkL7(hbs []heartbeatRef, acks []ackRef, idx turnIndex, tracker *TurnTrac
 		if ref.ack == nil {
 			continue
 		}
-		turn := idx.forAck(ref.ack.RefNonce)
+		turn := idx.forAck(ref.ack.GetRefNonce())
 		m := acksByTurn[turn]
 		if m == nil {
 			m = make(map[uint32]AckRecord)
 			acksByTurn[turn] = m
 		}
-		m[ref.ack.SlotId] = AckRecord{
+		m[ref.ack.GetSlotId()] = AckRecord{
 			Nonce:     nonce,
-			Height:    ref.ack.ObservedHeight,
-			Hash:      append([]byte(nil), ref.ack.ObservedBlockHash...),
-			SyncState: ref.ack.SyncState,
+			Height:    ref.ack.GetObservedHeight(),
+			Hash:      append([]byte(nil), ref.ack.GetObservedBlockHash()...),
+			SyncState: ref.ack.GetSyncState(),
 		}
 	}
 	for _, ref := range hbs {
-		if len(ref.hb.SyncVector) == 0 {
+		if len(ref.hb.GetSyncVector()) == 0 {
 			continue
 		}
 		turn := idx.forHeartbeat(ref.nonce)
@@ -543,7 +543,7 @@ func checkL7(hbs []heartbeatRef, acks []ackRef, idx turnIndex, tracker *TurnTrac
 		if extra := acksByTurn[prevStart]; extra != nil {
 			maps.Copy(logAcks, extra)
 		}
-		for _, c := range CheckVectorAgainstLog(ref.hb.SyncVector, logAcks) {
+		for _, c := range CheckVectorAgainstLog(ref.hb.GetSyncVector(), logAcks) {
 			out.mark(AttributableMark{
 				Kind:      MarkVectorContradiction,
 				Slot:      c.Slot,
@@ -603,28 +603,28 @@ func checkL4(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, idx turnIndex,
 	}
 	if sec.Direction == "response" {
 		for _, ref := range acks {
-			if !StampPresent(ref.ack.ObservedBlockHash) {
+			if !StampPresent(ref.ack.GetObservedBlockHash()) {
 				continue
 			}
 			m, _ := RefProducingNonce(in.Nonce, &types.DevshardTx{
 				Tx: &types.DevshardTx_HeightAck{HeightAck: ref.ack},
 			})
 			want, exact := expect(m)
-			if !bad(ref.ack.ObservedHeight, want, exact) {
+			if !bad(ref.ack.GetObservedHeight(), want, exact) {
 				continue
 			}
 			blob, _ := CanonicalOriginBytes(sec)
 			out.mark(AttributableMark{
 				Kind:      MarkDisputeOriginator,
-				Slot:      ref.ack.SlotId,
-				TurnStart: idx.forAck(ref.ack.RefNonce),
+				Slot:      ref.ack.GetSlotId(),
+				TurnStart: idx.forAck(ref.ack.GetRefNonce()),
 				Nonce:     in.Nonce,
 				Blob:      blob,
 				Sig:       append([]byte(nil), sec.SenderSignature...),
 				Detail: fmt.Sprintf("ack height %d != max(response section %d, floor) = %d",
-					ref.ack.ObservedHeight, envH, want),
+					ref.ack.GetObservedHeight(), envH, want),
 			})
-			logLogPlane(in.Nonce, ref.ack.SlotId, "L4", "MARK", "dispute_originator")
+			logLogPlane(in.Nonce, ref.ack.GetSlotId(), "L4", "MARK", "dispute_originator")
 		}
 		return
 	}
@@ -637,14 +637,14 @@ func checkL4(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, idx turnIndex,
 		return
 	}
 	for _, ref := range hbs {
-		if !StampPresent(ref.hb.ObservedBlockHash) {
+		if !StampPresent(ref.hb.GetObservedBlockHash()) {
 			continue
 		}
 		m, _ := RefProducingNonce(in.Nonce, &types.DevshardTx{
 			Tx: &types.DevshardTx_Heartbeat{Heartbeat: ref.hb},
 		})
 		want, exact := expect(m)
-		if !bad(ref.hb.ObservedHeight, want, exact) {
+		if !bad(ref.hb.GetObservedHeight(), want, exact) {
 			continue
 		}
 		var blob, sig []byte
@@ -667,7 +667,7 @@ func checkL4(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, idx turnIndex,
 			EscrowID:  escrow,
 			Timestamp: ts,
 			Detail: fmt.Sprintf("heartbeat height %d != max(request section %d, floor) = %d",
-				ref.hb.ObservedHeight, envH, want),
+				ref.hb.GetObservedHeight(), envH, want),
 		})
 		logLogPlane(in.Nonce, 0, "L4", "MARK", "dispute_carrier")
 	}
@@ -695,10 +695,10 @@ func checkL5a(in LogPlaneInput, hbs []heartbeatRef, acks []ackRef, idx turnIndex
 		logLogPlane(in.Nonce, slot, "L5a", "MARK", "l5a_admission")
 	}
 	for _, ref := range hbs {
-		check(ref.hb.ObservedHeight, ref.hb.ObservedBlockHash, 0, idx.forHeartbeat(ref.nonce), "heartbeat")
+		check(ref.hb.GetObservedHeight(), ref.hb.GetObservedBlockHash(), 0, idx.forHeartbeat(ref.nonce), "heartbeat")
 	}
 	for _, ref := range acks {
-		check(ref.ack.ObservedHeight, ref.ack.ObservedBlockHash, ref.ack.SlotId, idx.forAck(ref.ack.RefNonce), "ack")
+		check(ref.ack.GetObservedHeight(), ref.ack.GetObservedBlockHash(), ref.ack.GetSlotId(), idx.forAck(ref.ack.GetRefNonce()), "ack")
 	}
 }
 
@@ -751,11 +751,11 @@ func checkL6(ctx context.Context, in LogPlaneInput, hbs []heartbeatRef, acks []a
 		logLogPlane(in.Nonce, slot, "L6", "DEFERRED_FAIL", m.Detail)
 	}
 	for _, ref := range hbs {
-		check(ref.hb.ObservedHeight, ref.hb.ObservedBlockHash, 0, idx.forHeartbeat(ref.nonce), in.Nonce)
+		check(ref.hb.GetObservedHeight(), ref.hb.GetObservedBlockHash(), 0, idx.forHeartbeat(ref.nonce), in.Nonce)
 	}
 	for _, ref := range acks {
-		check(ref.ack.ObservedHeight, ref.ack.ObservedBlockHash, ref.ack.SlotId,
-			idx.forAck(ref.ack.RefNonce), ref.ack.RefNonce+1)
+		check(ref.ack.GetObservedHeight(), ref.ack.GetObservedBlockHash(), ref.ack.GetSlotId(),
+			idx.forAck(ref.ack.GetRefNonce()), ref.ack.GetRefNonce()+1)
 	}
 }
 

@@ -102,16 +102,16 @@ func UnwrapInferenceRequestBody(raw []byte) (UnwrappedInferenceRequest, error) {
 	if err := proto.Unmarshal(raw, &env); err != nil {
 		return UnwrappedInferenceRequest{}, fmt.Errorf("decode inference request envelope protobuf: %w", err)
 	}
-	if len(env.InferenceRequestJson) == 0 {
+	if len(env.GetInferenceRequestJson()) == 0 {
 		return UnwrappedInferenceRequest{}, fmt.Errorf("inference_request_json is empty")
 	}
 	var req InferenceRequest
-	if err := json.Unmarshal(env.InferenceRequestJson, &req); err != nil {
+	if err := json.Unmarshal(env.GetInferenceRequestJson(), &req); err != nil {
 		return UnwrappedInferenceRequest{}, fmt.Errorf("decode inference request json: %w", err)
 	}
 	return UnwrappedInferenceRequest{
-		SchemaVersion: int(env.SchemaVersion),
-		HeightSync:    heightSyncFromProto(env.HeightSync),
+		SchemaVersion: int(env.GetSchemaVersion()),
+		HeightSync:    heightSyncFromProto(env.GetHeightSync()),
 		Request:       req,
 		WholeBodyJSON: false,
 	}, nil
@@ -144,16 +144,16 @@ func UnwrapInferenceResponseBody(raw []byte) (UnwrappedInferenceResponse, error)
 	if err := proto.Unmarshal(raw, &env); err != nil {
 		return UnwrappedInferenceResponse{}, fmt.Errorf("decode inference response envelope protobuf: %w", err)
 	}
-	if len(env.InferenceResponseJson) == 0 {
+	if len(env.GetInferenceResponseJson()) == 0 {
 		return UnwrappedInferenceResponse{}, fmt.Errorf("inference_response_json is empty")
 	}
 	var resp InferenceResponse
-	if err := json.Unmarshal(env.InferenceResponseJson, &resp); err != nil {
+	if err := json.Unmarshal(env.GetInferenceResponseJson(), &resp); err != nil {
 		return UnwrappedInferenceResponse{}, fmt.Errorf("decode inference response json: %w", err)
 	}
 	return UnwrappedInferenceResponse{
-		SchemaVersion: int(env.SchemaVersion),
-		HeightSync:    heightSyncFromProto(env.HeightSync),
+		SchemaVersion: int(env.GetSchemaVersion()),
+		HeightSync:    heightSyncFromProto(env.GetHeightSync()),
 		Response:      resp,
 		WholeBodyJSON: false,
 	}, nil
@@ -176,7 +176,7 @@ func isLikelyJSONObject(raw []byte) bool {
 func rejectDeprecatedJSONEnvelopeKeys(raw []byte) error {
 	var top map[string]json.RawMessage
 	if err := json.Unmarshal(raw, &top); err != nil {
-		return nil //nolint:nilerr // a body that is not JSON cannot be a deprecated JSON envelope.
+		return nil
 	}
 	if _, ok := top["message"]; ok {
 		return fmt.Errorf("deprecated JSON inference envelope (top-level \"message\") is not supported; use protobuf InferenceRequestEnvelope / InferenceResponseEnvelope")

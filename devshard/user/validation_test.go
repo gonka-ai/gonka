@@ -191,15 +191,15 @@ func TestSession_Validation_InvalidationConverges(t *testing.T) {
 	)
 	t.Log(hist)
 
-	require.Greater(t, challenged+invalidated, 0, "validators never produced any MsgValidation; %s", hist)
+	require.Positive(t, challenged+invalidated, "validators never produced any MsgValidation; %s", hist)
 	require.GreaterOrEqual(t, invalidated, 10, hist)
-	require.Greater(t, totalHostStatsInvalid, uint32(0), hist)
+	require.Positive(t, totalHostStatsInvalid, hist)
 
 	require.NoError(t, session.Finalize(ctx))
 	st := session.StateMachine().SnapshotState()
 	require.Equal(t, types.PhaseSettlement, st.Phase)
 	require.Empty(t, st.Inferences, "live map must be empty after settlement drain")
-	require.Equal(t, numInferences, len(session.StateMachine().ExportSealedNonces()))
+	require.Len(t, session.StateMachine().ExportSealedNonces(), numInferences)
 }
 
 // TestSession_FetchFailureVerdict_ChallengeThenInvalidate is the in-process
@@ -290,7 +290,7 @@ func TestSession_FetchFailureVerdict_ChallengeThenInvalidate(t *testing.T) {
 	for _, v := range validators {
 		totalCalls += v.calls.Load()
 	}
-	require.Greater(t, totalCalls, uint64(0), "fetch-failure validators never ran")
+	require.Positive(t, totalCalls, "fetch-failure validators never ran")
 
 	allRecords := session.StateMachine().ExportAllInferenceRecords()
 	var challenged, invalidated int
@@ -302,17 +302,17 @@ func TestSession_FetchFailureVerdict_ChallengeThenInvalidate(t *testing.T) {
 			invalidated++
 		}
 	}
-	require.Greater(t, challenged+invalidated, 0,
+	require.Positive(t, challenged+invalidated,
 		"fetch-failure verdict never opened a challenge (challenged=%d invalidated=%d records=%d)",
 		challenged, invalidated, len(allRecords))
-	require.Greater(t, invalidated, 0,
+	require.Positive(t, invalidated,
 		"mandatory Phase B did not invalidate after fetch-failure challenge (challenged=%d invalidated=%d)",
 		challenged, invalidated)
 
 	require.NoError(t, session.Finalize(ctx))
 	st := session.StateMachine().SnapshotState()
 	require.Equal(t, types.PhaseSettlement, st.Phase)
-	require.Greater(t, sumHostStatsInvalid(st), uint32(0))
+	require.Positive(t, sumHostStatsInvalid(st))
 }
 
 // TestSession_Validation_MultiSlotValidatorCountedOnce verifies that a host
@@ -437,7 +437,7 @@ func TestSession_Validation_MultiSlotValidatorCountedOnce(t *testing.T) {
 		}
 	}
 
-	require.Greater(t, invalidated, 0, "expected at least one invalidated inference")
+	require.Positive(t, invalidated, "expected at least one invalidated inference")
 
 	// One physical Validate per inference mega participated in, regardless
 	// of slot count.
@@ -448,6 +448,6 @@ func TestSession_Validation_MultiSlotValidatorCountedOnce(t *testing.T) {
 	require.NoError(t, session.Finalize(ctx))
 	st := session.StateMachine().SnapshotState()
 	require.Empty(t, st.Inferences)
-	require.Greater(t, sumHostStatsInvalid(st), uint32(0))
-	require.Equal(t, numInferences, len(session.StateMachine().ExportSealedNonces()))
+	require.Positive(t, sumHostStatsInvalid(st))
+	require.Len(t, session.StateMachine().ExportSealedNonces(), numInferences)
 }

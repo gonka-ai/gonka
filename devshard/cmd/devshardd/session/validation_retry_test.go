@@ -451,9 +451,9 @@ func TestRetryStaleValidationsForEscrow_TransientErrorReleaseThenHotPathReacquir
 
 	var found bool
 	for _, tx := range h.HostMempool().Txs() {
-		if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+		if v := tx.GetValidation(); v != nil && v.GetInferenceId() == 1 {
 			found = true
-			assert.True(t, v.Valid)
+			assert.True(t, v.GetValid())
 		}
 	}
 	require.True(t, found, "second retry should publish MsgValidation")
@@ -573,9 +573,9 @@ func TestRetryStaleValidation_SetResultLeaseNotOwnedAfterSubmit_IsBenign(t *test
 
 	var found bool
 	for _, tx := range h.HostMempool().Txs() {
-		if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+		if v := tx.GetValidation(); v != nil && v.GetInferenceId() == 1 {
 			found = true
-			assert.True(t, v.Valid)
+			assert.True(t, v.GetValid())
 		}
 	}
 	require.True(t, found, "mempool submit should remain successful when SetResult loses ownership")
@@ -671,11 +671,11 @@ func TestRetryStaleValidation_Finished_SubmitsInline(t *testing.T) {
 
 	var found bool
 	for _, tx := range h.HostMempool().Txs() {
-		if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+		if v := tx.GetValidation(); v != nil && v.GetInferenceId() == 1 {
 			found = true
-			assert.True(t, v.Valid)
-			assert.Equal(t, uint32(0), v.ValidatorSlot)
-			assert.NotEmpty(t, v.ProposerSig)
+			assert.True(t, v.GetValid())
+			assert.Equal(t, uint32(0), v.GetValidatorSlot())
+			assert.NotEmpty(t, v.GetProposerSig())
 		}
 		assert.Nil(t, tx.GetValidationVote(), "retry loop must not publish MsgValidationVote")
 	}
@@ -703,10 +703,10 @@ func TestRetryStaleValidation_ReclaimedValidationAppearsInMempoolEndpoint(t *tes
 
 	var found bool
 	for _, tx := range txs {
-		if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+		if v := tx.GetValidation(); v != nil && v.GetInferenceId() == 1 {
 			found = true
-			require.True(t, v.Valid)
-			require.NotEmpty(t, v.ProposerSig)
+			require.True(t, v.GetValid())
+			require.NotEmpty(t, v.GetProposerSig())
 		}
 	}
 	require.True(t, found, "reclaimed retry validation must be visible through /mempool")
@@ -816,7 +816,7 @@ func TestRetryStaleValidation_MempoolValidationAppliesThroughPeerEndpoint(t *tes
 
 	var validationTx *types.DevshardTx
 	for _, tx := range mempoolEndpointTxs(t, producer) {
-		if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+		if v := tx.GetValidation(); v != nil && v.GetInferenceId() == 1 {
 			validationTx = tx
 			break
 		}
@@ -874,10 +874,10 @@ func TestRetryStaleValidation_LazyRecoveredManagerMempoolEndpoint(t *testing.T) 
 
 	var found bool
 	for _, tx := range txs {
-		if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+		if v := tx.GetValidation(); v != nil && v.GetInferenceId() == 1 {
 			found = true
-			require.True(t, v.Valid)
-			require.NotEmpty(t, v.ProposerSig)
+			require.True(t, v.GetValid())
+			require.NotEmpty(t, v.GetProposerSig())
 		}
 	}
 	require.True(t, found, "lazy manager /mempool must expose retry-produced MsgValidation")
@@ -915,10 +915,10 @@ func TestRetryStaleValidation_RestartedManagerReclaimsPendingLease(t *testing.T)
 
 	var found bool
 	for _, tx := range managerMempoolEndpointTxs(t, e2, escrowID) {
-		if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+		if v := tx.GetValidation(); v != nil && v.GetInferenceId() == 1 {
 			found = true
-			require.True(t, v.Valid)
-			require.NotEmpty(t, v.ProposerSig)
+			require.True(t, v.GetValid())
+			require.NotEmpty(t, v.GetProposerSig())
 		}
 	}
 	require.True(t, found, "restarted manager must reclaim stale pending lease and expose MsgValidation")
@@ -1056,7 +1056,7 @@ func decodeMempoolResponse(t *testing.T, rec *httptest.ResponseRecorder) []*type
 
 func hasValidationTx(txs []*types.DevshardTx, inferenceID uint64) bool {
 	for _, tx := range txs {
-		if v := tx.GetValidation(); v != nil && v.InferenceId == inferenceID {
+		if v := tx.GetValidation(); v != nil && v.GetInferenceId() == inferenceID {
 			return true
 		}
 	}

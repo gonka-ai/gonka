@@ -54,7 +54,7 @@ func (s RequestSample) ReceiptMs() float64 {
 	return float64(s.ReceiptTime.Sub(s.SendTime).Milliseconds())
 }
 
-// CTTFL = (firstTokenTime - receiptTime) / inputTokens.
+// CTTFL = (firstTokenTime - receiptTime) / inputTokens
 func (s RequestSample) CTTFL() float64 {
 	if s.FirstToken.IsZero() || s.ReceiptTime.IsZero() || s.InputTokens == 0 {
 		return 0

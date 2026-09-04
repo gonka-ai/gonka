@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -675,7 +674,7 @@ func TestNormalizedBodyMaxTokensMatchesDeclaredForAccounting(t *testing.T) {
 	require.NoError(t, err)
 
 	require.EqualValues(t, completionapi.MinTokensFloor, req.MaxTokens)
-	require.EqualValues(t, req.MaxTokens, effective)
+	require.Equal(t, req.MaxTokens, effective)
 }
 
 func TestNormalizeChatRequestStripsEmptyTools(t *testing.T) {
@@ -1196,7 +1195,7 @@ func TestNormalizeChatRequestChatTemplateKwargsDepthBoundary(t *testing.T) {
 		body := `{"chat_template_kwargs":` + nestedChain(17) + `,"messages":[{"role":"user","content":"hi"}]}`
 		_, _, err := normalizeChatRequest([]byte(body))
 		require.Error(t, err)
-		require.True(t, errors.Is(err, paramvalidators.ErrSchemaDepth),
+		require.ErrorIs(t, err, paramvalidators.ErrSchemaDepth,
 			"expected ErrSchemaDepth (validator-layer reject), got: %v", err)
 		require.Equal(t, http.StatusBadRequest, chatRequestErrorStatus(err, http.StatusInternalServerError))
 	})
@@ -2279,7 +2278,7 @@ func TestNormalizeChatRequestKimiThinkingTokenBudgetClampsAboveAbsoluteMax(t *te
 // At max_tokens below kimiSmallMaxTokensForceNoThinking the defaulter's
 // half-split (max_tokens/2) is overridden to 0 because any thinking phase
 // starves visible content emission at that budget. Bypassing thinking is
-// the only way to guarantee non-empty content.
+// the only way to guarantee non-empty content
 func TestNormalizeChatRequestKimiThinkingTokenBudgetForcedToZeroAtSmallMaxTokens(t *testing.T) {
 	body, _, err := normalizeChatRequestForModel(
 		[]byte(`{"messages":[{"role":"user","content":"x"}],"max_tokens":200}`),
@@ -2435,7 +2434,7 @@ func TestNormalizeChatRequestKimiMaxTokensClampedBelow(t *testing.T) {
 		require.NoError(t, err)
 		require.Contains(t, string(out), fmt.Sprintf(`"max_tokens":%d`, c.want))
 		require.Contains(t, string(out), `"thinking_token_budget":0`)
-		require.EqualValues(t, c.want, req.MaxTokens)
+		require.Equal(t, c.want, req.MaxTokens)
 	}
 }
 

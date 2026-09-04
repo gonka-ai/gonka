@@ -129,13 +129,13 @@ func TestHTTPClient_ChallengeReceipt_ReturnsRecoveryMempool(t *testing.T) {
 
 	var got *types.MsgConfirmStart
 	for _, tx := range mempool {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == 1 {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.GetInferenceId() == 1 {
 			got = cs
 			break
 		}
 	}
 	require.NotNil(t, got, "returned mempool must include MsgConfirmStart")
-	require.Equal(t, receipt, got.ExecutorSig)
+	require.Equal(t, receipt, got.GetExecutorSig())
 }
 
 func TestHTTPClient_VerifyTimeout_ReturnsRecoveryMempool(t *testing.T) {
@@ -164,7 +164,7 @@ func TestHTTPClient_VerifyTimeout_ReturnsRecoveryMempool(t *testing.T) {
 
 	var got *types.MsgConfirmStart
 	for _, tx := range mempool {
-		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == 1 {
+		if cs := tx.GetConfirmStart(); cs != nil && cs.GetInferenceId() == 1 {
 			got = cs
 			break
 		}
@@ -185,7 +185,7 @@ func TestHTTPClient_Send_ReturnsUpstreamStatusError(t *testing.T) {
 	require.Error(t, err)
 
 	var statusErr *UpstreamStatusError
-	require.True(t, errors.As(err, &statusErr))
+	require.ErrorAs(t, err, &statusErr)
 	require.Equal(t, http.StatusForbidden, statusErr.StatusCode)
 	require.Contains(t, statusErr.Path, "/sessions/escrow-1/chat/completions")
 	require.Contains(t, statusErr.Body, "bad signature")
@@ -204,7 +204,7 @@ func TestHTTPClient_Send_CapturesDevshardErrorHeader(t *testing.T) {
 	require.Error(t, err)
 
 	var statusErr *UpstreamStatusError
-	require.True(t, errors.As(err, &statusErr))
+	require.ErrorAs(t, err, &statusErr)
 	require.Equal(t, DevshardErrorEscrowSettled, statusErr.DevshardError)
 	require.True(t, IsUpstreamEscrowSettled(err))
 }
@@ -511,7 +511,7 @@ func userHasFinish(txs []*types.DevshardTx, nonce uint64) bool {
 		if tx == nil {
 			continue
 		}
-		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == nonce {
+		if fi := tx.GetFinishInference(); fi != nil && fi.GetInferenceId() == nonce {
 			return true
 		}
 	}

@@ -68,8 +68,8 @@ func contactHeight(tx *types.DevshardTx) uint64 {
 	if tx == nil {
 		return 0
 	}
-	if hb := tx.GetHeartbeat(); hb != nil && hb.ObservedHeight > 0 {
-		return hb.ObservedHeight
+	if hb := tx.GetHeartbeat(); hb != nil && hb.GetObservedHeight() > 0 {
+		return hb.GetObservedHeight()
 	}
 	if h, ok := heightsync.TxStamp(tx); ok {
 		return h

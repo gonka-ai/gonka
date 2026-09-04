@@ -182,7 +182,7 @@ func TestCollectTimeoutVotes_SpoofedVoteDoesNotDisplaceHonestQuorum(t *testing.T
 
 	require.NotEmpty(t, votes, "honest votes are still collected after the spoofed one is dropped")
 	for _, v := range votes {
-		require.NotEqual(t, f.signers[0].Address(), f.userSM.SlotAddress(v.VoterSlot),
+		require.NotEqual(t, f.signers[0].Address(), f.userSM.SlotAddress(v.GetVoterSlot()),
 			"no vote may be credited to the spoofing responder")
 	}
 	require.True(t, f.session.HasSufficientTimeoutVotes(votes), "honest weight exceeds threshold 3")
@@ -206,7 +206,7 @@ func TestCollectTimeoutVotes_AcceptsPrimarySlotOfMultiSlotHost(t *testing.T) {
 	})
 
 	require.Len(t, votes, 1, "a host signing for another of its own slots is valid")
-	require.Equal(t, uint32(2), votes[0].VoterSlot)
+	require.Equal(t, uint32(2), votes[0].GetVoterSlot())
 	require.True(t, f.session.HasSufficientTimeoutVotes(votes), "weight 4 exceeds threshold 3")
 }
 
@@ -374,7 +374,7 @@ func TestCollectTimeoutVotes_WarmKeySignedVotesAccepted(t *testing.T) {
 
 	require.NotEmpty(t, votes, "votes signed by an authorized warm key must be collected")
 	for _, v := range votes {
-		require.Equal(t, coldKeys[v.VoterSlot].Address(), session.StateMachine().SlotAddress(v.VoterSlot))
+		require.Equal(t, coldKeys[v.GetVoterSlot()].Address(), session.StateMachine().SlotAddress(v.GetVoterSlot()))
 	}
 	require.True(t, session.HasSufficientTimeoutVotes(votes))
 }

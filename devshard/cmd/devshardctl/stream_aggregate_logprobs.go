@@ -216,7 +216,7 @@ func emptyTopLogprobsRaw(entry json.RawMessage) (json.RawMessage, error) {
 	}
 	var shallow map[string]json.RawMessage
 	if err := json.Unmarshal(entry, &shallow); err != nil {
-		return entry, nil //nolint:nilerr // unparseable entries pass through unchanged.
+		return entry, nil
 	}
 	if _, ok := shallow["top_logprobs"]; !ok {
 		return deepEmptyTopLogprobsRaw(entry)
@@ -237,7 +237,7 @@ func emptyTopLogprobsRaw(entry json.RawMessage) (json.RawMessage, error) {
 func deepEmptyTopLogprobsRaw(entry json.RawMessage) (json.RawMessage, error) {
 	var v any
 	if err := json.Unmarshal(entry, &v); err != nil {
-		return entry, nil //nolint:nilerr // unparseable entries pass through unchanged.
+		return entry, nil
 	}
 	if !emptyTopLogprobs(v) {
 		return entry, nil

@@ -129,8 +129,8 @@ func TestProtocol_HappyPath_15Inferences(t *testing.T) {
 	}
 	// At minimum, inferences that had their finish included should be finished.
 	// The exact count depends on how many diffs were processed.
-	require.Equal(t, 15, len(st.Inferences), "should have 15 inference records")
-	require.True(t, finishedCount >= 13, "at least 13 should be finished, got %d", finishedCount)
+	require.Len(t, st.Inferences, 15, "should have 15 inference records")
+	require.GreaterOrEqual(t, finishedCount, 13, "at least 13 should be finished, got %d", finishedCount)
 
 	// Verify executor distribution: each host should execute 3 inferences
 	// (15 inferences / 5 hosts = 3 each).
@@ -178,10 +178,10 @@ func TestProtocol_ReceiptPipelining(t *testing.T) {
 	// AND MsgFinishInference for inference 1 (both pipelined from host 1's response).
 	var hasConfirmForInf1, hasFinishForInf1 bool
 	for _, tx := range diffs[1].Txs {
-		if confirm := tx.GetConfirmStart(); confirm != nil && confirm.InferenceId == 1 {
+		if confirm := tx.GetConfirmStart(); confirm != nil && confirm.GetInferenceId() == 1 {
 			hasConfirmForInf1 = true
 		}
-		if fin := tx.GetFinishInference(); fin != nil && fin.InferenceId == 1 {
+		if fin := tx.GetFinishInference(); fin != nil && fin.GetInferenceId() == 1 {
 			hasFinishForInf1 = true
 		}
 	}
@@ -192,10 +192,10 @@ func TestProtocol_ReceiptPipelining(t *testing.T) {
 	// AND MsgFinishInference for inference 2.
 	var hasConfirmForInf2, hasFinishForInf2 bool
 	for _, tx := range diffs[2].Txs {
-		if confirm := tx.GetConfirmStart(); confirm != nil && confirm.InferenceId == 2 {
+		if confirm := tx.GetConfirmStart(); confirm != nil && confirm.GetInferenceId() == 2 {
 			hasConfirmForInf2 = true
 		}
-		if fin := tx.GetFinishInference(); fin != nil && fin.InferenceId == 2 {
+		if fin := tx.GetFinishInference(); fin != nil && fin.GetInferenceId() == 2 {
 			hasFinishForInf2 = true
 		}
 	}
@@ -521,7 +521,7 @@ func TestProtocol_Finalize_AllInferencesFinished(t *testing.T) {
 	st := env.session.StateMachine().SnapshotState()
 	require.Equal(t, types.PhaseSettlement, st.Phase)
 	require.Empty(t, st.Inferences)
-	require.Equal(t, 15, len(env.session.StateMachine().ExportSealedNonces()))
+	require.Len(t, env.session.StateMachine().ExportSealedNonces(), 15)
 }
 
 func TestProtocol_VaryingInferenceCosts(t *testing.T) {
@@ -592,7 +592,7 @@ func TestProtocol_VaryingInferenceCosts(t *testing.T) {
 	st := env.session.StateMachine().SnapshotState()
 	require.Equal(t, types.PhaseSettlement, st.Phase)
 	require.Empty(t, st.Inferences)
-	require.Equal(t, 6, len(env.session.StateMachine().ExportSealedNonces()))
+	require.Len(t, env.session.StateMachine().ExportSealedNonces(), 6)
 
 	// Balance and host stats survive settlement drain.
 	require.Equal(t, uint64(1000000)-expectedTotal, st.Balance)
@@ -644,7 +644,7 @@ func TestProtocol_Finalize_ExactDiffCount(t *testing.T) {
 
 	// Total diffs = numInferences + N (Phase A) + 1 (drain). Phase B sends catch-up only.
 	expected := numInferences + numHosts + 1
-	require.Equal(t, expected, len(env.session.Diffs()),
+	require.Len(t, env.session.Diffs(), expected,
 		"total diffs = inferences(%d) + N+1(%d)", numInferences, numHosts+1)
 }
 

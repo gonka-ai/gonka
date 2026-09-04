@@ -101,10 +101,10 @@ func TestUser_ForceHeightSyncTurn_AppearsOnlyInTriggerDiff(t *testing.T) {
 		"trigger diff at nonce 1 must contain exactly one MsgForceHeightSyncTurn")
 	tx := findForceTx(diffs[0])
 	require.NotNil(t, tx, "trigger diff must carry the force-turn tx")
-	require.Equal(t, uint64(1), tx.TriggerNonce)
-	require.Equal(t, slots, tx.SlotsNum)
-	require.Equal(t, slots, tx.EndNonce)
-	require.Equal(t, k, tx.AnchorK)
+	require.Equal(t, uint64(1), tx.GetTriggerNonce())
+	require.Equal(t, slots, tx.GetSlotsNum())
+	require.Equal(t, slots, tx.GetEndNonce())
+	require.Equal(t, k, tx.GetAnchorK())
 
 	for i := 1; i < int(slots); i++ {
 		require.Equal(t, 0, countForceTxs(diffs[i]),
@@ -124,8 +124,8 @@ func TestUser_ForceHeightSyncTurn_AppearsOnlyInTriggerDiff(t *testing.T) {
 		"a fresh ForceHeightSyncAnchor after the previous window closes must re-open a new turn")
 	tx2 := findForceTx(diffs[int(slots)])
 	require.NotNil(t, tx2)
-	require.Equal(t, slots+1, tx2.TriggerNonce)
-	require.Equal(t, 2*slots, tx2.EndNonce)
+	require.Equal(t, slots+1, tx2.GetTriggerNonce())
+	require.Equal(t, 2*slots, tx2.GetEndNonce())
 }
 
 func TestUser_ForceHeightSyncTurn_SlotsNumFollowsGroupNotCadenceOverride(t *testing.T) {
@@ -146,9 +146,9 @@ func TestUser_ForceHeightSyncTurn_SlotsNumFollowsGroupNotCadenceOverride(t *test
 		}
 	}
 	require.NotNil(t, force)
-	require.Equal(t, uint64(numHosts), force.SlotsNum,
+	require.Equal(t, uint64(numHosts), force.GetSlotsNum(),
 		"scheduler default slots=1 must not be copied onto MsgForceHeightSyncTurn")
-	require.Equal(t, uint64(numHosts), force.EndNonce)
+	require.Equal(t, uint64(numHosts), force.GetEndNonce())
 }
 
 // setupHeartbeatSession is the blind-roster fixture: the followers seed F on the
@@ -299,11 +299,11 @@ func TestHeartbeat_QuietSessionOpensTurn(t *testing.T) {
 	require.GreaterOrEqual(t, len(span), 3, "slots_num heartbeat diffs")
 	force := span[0].Txs[0].GetForceHeightSyncTurn()
 	require.NotNil(t, force)
-	require.Equal(t, base+1, force.TriggerNonce)
-	require.Equal(t, "heartbeat", force.Reason)
+	require.Equal(t, base+1, force.GetTriggerNonce())
+	require.Equal(t, "heartbeat", force.GetReason())
 	hb := span[0].Txs[1].GetHeartbeat()
 	require.NotNil(t, hb)
-	require.Equal(t, uint64(100), hb.ObservedHeight,
+	require.Equal(t, uint64(100), hb.GetObservedHeight(),
 		"the stamp is F, which the bootstrap inference seeded at the host's tip")
 
 	rec := session.HeartbeatTurnTracker().Record(base + 1)
@@ -322,9 +322,9 @@ func TestHeartbeat_ForceSlotsNumFollowsGroupNotCadenceOverride(t *testing.T) {
 	require.NotEmpty(t, span)
 	force := span[0].Txs[0].GetForceHeightSyncTurn()
 	require.NotNil(t, force)
-	require.Equal(t, uint64(3), force.SlotsNum,
+	require.Equal(t, uint64(3), force.GetSlotsNum(),
 		"scheduler default slots=1 must not be copied onto MsgForceHeightSyncTurn")
-	require.Equal(t, base+3, force.EndNonce)
+	require.Equal(t, base+3, force.GetEndNonce())
 }
 
 // TestHeartbeat_NoFloorSkipsUntilFirstInference is §10.3.1 on the producer side.
@@ -349,7 +349,7 @@ func TestHeartbeat_NoFloorSkipsUntilFirstInference(t *testing.T) {
 	require.NoError(t, session.MaybeHeartbeat(context.Background()))
 	span := heartbeatDiffsAfter(session.Diffs(), base)
 	require.NotEmpty(t, span, "the first host stamp arms the cadence")
-	require.Equal(t, uint64(100), span[0].Txs[1].GetHeartbeat().ObservedHeight)
+	require.Equal(t, uint64(100), span[0].Txs[1].GetHeartbeat().GetObservedHeight())
 }
 
 // TestHeartbeat_NoHeightAnywhereSkips: a session whose hosts have no follower at
@@ -390,7 +390,7 @@ func TestHeartbeat_SpanDispatchAddressesEverySlot(t *testing.T) {
 			require.Nil(t, tx.GetHeightAck(), "span must not wait for acks")
 		}
 		require.NotNil(t, hb, "diff %d missing MsgHeartbeat", d.Nonce)
-		require.Equal(t, uint64(slots), hb.SlotsNum)
+		require.Equal(t, uint64(slots), hb.GetSlotsNum())
 		seen[uint32(d.Nonce%slots)]++
 	}
 	require.Len(t, seen, slots)
@@ -427,13 +427,13 @@ func TestHeartbeat_AckInclusionAndSyncVectorPrevTurn(t *testing.T) {
 	require.Len(t, acks, slots, "flush round must include one host ack per slot")
 	seen := map[uint32]types.SyncState{}
 	for _, ack := range acks {
-		require.Greater(t, ack.RefNonce, base)
-		require.LessOrEqual(t, ack.RefNonce, base+slots,
+		require.Greater(t, ack.GetRefNonce(), base)
+		require.LessOrEqual(t, ack.GetRefNonce(), base+slots,
 			"each ack answers the heartbeat of its own slot inside the span")
-		require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, ack.SyncState)
-		require.Equal(t, uint64(100), ack.ObservedHeight,
+		require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, ack.GetSyncState())
+		require.Equal(t, uint64(100), ack.GetObservedHeight(),
 			"the follower is gone, so the ack carries F rather than a fresh reading")
-		seen[ack.SlotId] = ack.SyncState
+		seen[ack.GetSlotId()] = ack.GetSyncState()
 	}
 	require.Len(t, seen, slots)
 
@@ -459,10 +459,10 @@ func TestHeartbeat_AckInclusionAndSyncVectorPrevTurn(t *testing.T) {
 	}
 	require.Greater(t, hbNonce, base+slots, "second turn's heartbeat lands after the first")
 	require.NotNil(t, hb)
-	require.Len(t, hb.SyncVector, 3)
-	require.Equal(t, types.AckStatus_ACKED, hb.SyncVector[0].Status)
-	require.Equal(t, types.AckStatus_ACKED, hb.SyncVector[1].Status)
-	require.Equal(t, types.AckStatus_ACKED, hb.SyncVector[2].Status)
+	require.Len(t, hb.GetSyncVector(), 3)
+	require.Equal(t, types.AckStatus_ACKED, hb.GetSyncVector()[0].GetStatus())
+	require.Equal(t, types.AckStatus_ACKED, hb.GetSyncVector()[1].GetStatus())
+	require.Equal(t, types.AckStatus_ACKED, hb.GetSyncVector()[2].GetStatus())
 }
 
 func TestHeartbeat_LiveHostsQuorumCompletes(t *testing.T) {
@@ -479,9 +479,9 @@ func TestHeartbeat_LiveHostsQuorumCompletes(t *testing.T) {
 	acks := heightAcksInDiffs(session.Diffs())
 	require.Len(t, acks, 3)
 	for _, ack := range acks {
-		require.Equal(t, types.SyncState_SYNCED, ack.SyncState)
-		require.Equal(t, uint64(100), ack.ObservedHeight)
-		require.NoError(t, heightsync.VerifyAck(signing.NewSecp256k1Verifier(), ack, ackSigner(session, ack.SlotId)))
+		require.Equal(t, types.SyncState_SYNCED, ack.GetSyncState())
+		require.Equal(t, uint64(100), ack.GetObservedHeight())
+		require.NoError(t, heightsync.VerifyAck(signing.NewSecp256k1Verifier(), ack, ackSigner(session, ack.GetSlotId())))
 	}
 
 	rec := session.HeartbeatTurnTracker().Record(base + 1)
@@ -529,7 +529,7 @@ func TestHeartbeat_CarriesTheFloorNotTheCourierTip(t *testing.T) {
 	}
 	require.NotNil(t, hb)
 	require.Greater(t, hbNonce, base+3, "the second turn's heartbeat lands after the first")
-	require.Equal(t, uint64(80), hb.ObservedHeight,
+	require.Equal(t, uint64(80), hb.GetObservedHeight(),
 		"the heartbeat stamps F; the courier tip is not a height the log will take")
 }
 
@@ -549,9 +549,9 @@ func TestHeartbeat_UnavailableAcksCompleteTurnCarryingTheFloor(t *testing.T) {
 	acks := heightAcksInDiffs(session.Diffs())
 	require.Len(t, acks, 3, "ack is required even when the oracle is down")
 	for _, ack := range acks {
-		require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, ack.SyncState,
+		require.Equal(t, types.SyncState_ORACLE_UNAVAILABLE, ack.GetSyncState(),
 			"the self-report stays honest: this slot is no height witness")
-		require.Equal(t, uint64(100), ack.ObservedHeight,
+		require.Equal(t, uint64(100), ack.GetObservedHeight(),
 			"with no reading of its own the ack carries F, which is a citation and not a claim")
 	}
 	floor, _, known := session.StateMachine().HeightSyncFloorAsOf(session.Nonce() + 1)
@@ -756,7 +756,7 @@ func ackSigner(s *Session, slot uint32) string {
 func countHeartbeatForce(d types.Diff) int {
 	n := 0
 	for _, tx := range d.Txs {
-		if f := tx.GetForceHeightSyncTurn(); f != nil && f.Reason == heartbeatForceReason {
+		if f := tx.GetForceHeightSyncTurn(); f != nil && f.GetReason() == heartbeatForceReason {
 			n++
 		}
 	}

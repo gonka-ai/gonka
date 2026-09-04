@@ -562,7 +562,7 @@ func (g *ChainPhaseGate) fetchEpochInfoFromChain() (*chainEpochInfoResponse, err
 	return payload, nil
 }
 
-// participantNode holds the per-node data for one ML node belonging to a participant.
+// participantNode holds the per-node data for one ML node belonging to a participant
 type participantNode struct {
 	model  string
 	nodeID string
@@ -702,7 +702,7 @@ func activeParticipantsPayload(active *inferencetypes.ActiveParticipants) *chain
 					}
 					convertedNode := chainMLNodeInfo{
 						NodeID:             node.NodeId,
-						TimeslotAllocation: append([]bool(nil), node.TimeslotAllocation...), //nolint:staticcheck // read for wire compatibility, exactly as the deprecation note describes.
+						TimeslotAllocation: append([]bool(nil), node.TimeslotAllocation...),
 					}
 					if node.PocWeight > 0 {
 						convertedNode.PoCWeight = jsonUint64(node.PocWeight)
@@ -1439,7 +1439,7 @@ func parseFlexibleUint64(data []byte) (uint64, error) {
 	return 0, fmt.Errorf("unsupported uint64 value %s", string(data))
 }
 
-// participantNodes extracts the flat list of (model, nodeID, weight).
+// participantNodes extracts the flat list of (model, nodeID, weight)
 func participantNodes(participant chainActiveParticipant) []participantNode {
 	var nodes []participantNode
 	for i, rawModel := range participant.Models {

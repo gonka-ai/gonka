@@ -412,11 +412,11 @@ func TestHost_ProducesMsgFinish(t *testing.T) {
 
 	fin := findMempoolFinish(resp.Mempool).GetFinishInference()
 	require.NotNil(t, fin)
-	require.Equal(t, uint64(1), fin.InferenceId)
-	require.Equal(t, uint32(1), fin.ExecutorSlot)
-	require.Equal(t, uint64(80), fin.InputTokens)
-	require.Equal(t, uint64(40), fin.OutputTokens)
-	require.NotNil(t, fin.ProposerSig)
+	require.Equal(t, uint64(1), fin.GetInferenceId())
+	require.Equal(t, uint32(1), fin.GetExecutorSlot())
+	require.Equal(t, uint64(80), fin.GetInputTokens())
+	require.Equal(t, uint64(40), fin.GetOutputTokens())
+	require.NotNil(t, fin.GetProposerSig())
 }
 
 func TestHost_WithholdsOnStaleTx(t *testing.T) {
@@ -562,7 +562,7 @@ func TestHost_MultiSlotExecutor(t *testing.T) {
 	require.Len(t, resp.Mempool, 2, "should have MsgConfirmStart + MsgFinishInference")
 	fin4 := findMempoolFinish(resp.Mempool).GetFinishInference()
 	require.NotNil(t, fin4)
-	require.Equal(t, uint32(0), fin4.ExecutorSlot)
+	require.Equal(t, uint32(0), fin4.GetExecutorSlot())
 
 	// nonce 6: executor = group[6%4]=group[2] -> slot 2 -> hosts[2], NOT hosts[0].
 	diff5 := testutil.SignDiff(t, user, "escrow-1", 5, nil)
@@ -583,13 +583,13 @@ func TestHost_MultiSlotExecutor(t *testing.T) {
 	require.Len(t, resp.Mempool, 4, "confirm+finish for inf 4 and inf 7")
 	var fin7 *types.MsgFinishInference
 	for _, tx := range resp.Mempool {
-		if f := tx.GetFinishInference(); f != nil && f.InferenceId == 7 {
+		if f := tx.GetFinishInference(); f != nil && f.GetInferenceId() == 7 {
 			fin7 = f
 			break
 		}
 	}
 	require.NotNil(t, fin7)
-	require.Equal(t, uint32(3), fin7.ExecutorSlot)
+	require.Equal(t, uint32(3), fin7.GetExecutorSlot())
 }
 
 // mockAcceptanceChecker blocks when blockFn returns true.
@@ -1060,10 +1060,10 @@ func TestHost_RunExecutionQueuesFinishForPartialResult(t *testing.T) {
 	finishTx := findMempoolFinish(h.MempoolTxs())
 	require.NotNil(t, finishTx, "mempool should contain MsgFinishInference")
 	finish := finishTx.GetFinishInference()
-	require.Equal(t, uint64(1), finish.InferenceId)
-	require.Equal(t, responseHash[:], finish.ResponseHash)
-	require.Equal(t, uint64(12), finish.InputTokens)
-	require.Equal(t, uint64(1), finish.OutputTokens)
+	require.Equal(t, uint64(1), finish.GetInferenceId())
+	require.Equal(t, responseHash[:], finish.GetResponseHash())
+	require.Equal(t, uint64(12), finish.GetInputTokens())
+	require.Equal(t, uint64(1), finish.GetOutputTokens())
 }
 
 // countingEngine wraps stub engine and counts Execute calls.
@@ -1228,9 +1228,9 @@ func TestHost_ChallengeReceipt_PublishesConfirmStartToMempool(t *testing.T) {
 	confirmTx := findMempoolConfirm(h.MempoolTxs())
 	require.NotNil(t, confirmTx, "challenge receipt must publish MsgConfirmStart for recovery")
 	confirm := confirmTx.GetConfirmStart()
-	require.Equal(t, uint64(1), confirm.InferenceId)
-	require.Equal(t, receipt, confirm.ExecutorSig)
-	require.Equal(t, confirmedAt, confirm.ConfirmedAt)
+	require.Equal(t, uint64(1), confirm.GetInferenceId())
+	require.Equal(t, receipt, confirm.GetExecutorSig())
+	require.Equal(t, confirmedAt, confirm.GetConfirmedAt())
 }
 
 func TestHost_ChallengeReceipt_ContextTimeoutStillKeepsConfirmStartInMempool(t *testing.T) {
@@ -1271,9 +1271,9 @@ func TestHost_ChallengeReceipt_ContextTimeoutStillKeepsConfirmStartInMempool(t *
 	confirmTx := findMempoolConfirm(h.MempoolTxs())
 	require.NotNil(t, confirmTx, "cancelled challenge context must not drop recovery MsgConfirmStart")
 	confirm := confirmTx.GetConfirmStart()
-	require.Equal(t, uint64(1), confirm.InferenceId)
-	require.Equal(t, res.receipt, confirm.ExecutorSig)
-	require.Equal(t, res.confirmedAt, confirm.ConfirmedAt)
+	require.Equal(t, uint64(1), confirm.GetInferenceId())
+	require.Equal(t, res.receipt, confirm.GetExecutorSig())
+	require.Equal(t, res.confirmedAt, confirm.GetConfirmedAt())
 
 	close(engine.release)
 	require.Eventually(t, func() bool {
@@ -1558,9 +1558,9 @@ func TestHost_ChallengeReceipt_PublishesConfirmStartSoFinishCanApply(t *testing.
 	confirmTx := findMempoolConfirm(h.MempoolTxs())
 	require.NotNil(t, confirmTx, "challenge path must queue MsgConfirmStart alongside the receipt")
 	cs := confirmTx.GetConfirmStart()
-	require.Equal(t, uint64(1), cs.InferenceId)
-	require.Equal(t, receipt, cs.ExecutorSig, "queued ConfirmStart must carry the receipt that was returned")
-	require.Equal(t, confirmedAt, cs.ConfirmedAt)
+	require.Equal(t, uint64(1), cs.GetInferenceId())
+	require.Equal(t, receipt, cs.GetExecutorSig(), "queued ConfirmStart must carry the receipt that was returned")
+	require.Equal(t, confirmedAt, cs.GetConfirmedAt())
 
 	// A repeat challenge must not stack a second ConfirmStart differing only by
 	// confirmed_at, which the state machine would reject anyway.
@@ -1811,7 +1811,7 @@ func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
 		h.mu.Lock()
 		defer h.mu.Unlock()
 		for _, tx := range h.mempool.Txs() {
-			if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+			if v := tx.GetValidation(); v != nil && v.GetInferenceId() == 1 {
 				return true
 			}
 		}
@@ -1825,11 +1825,11 @@ func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
 
 	var foundValidation bool
 	for _, tx := range resp.Mempool {
-		if v := tx.GetValidation(); v != nil && v.InferenceId == 1 {
+		if v := tx.GetValidation(); v != nil && v.GetInferenceId() == 1 {
 			foundValidation = true
-			require.Equal(t, uint32(0), v.ValidatorSlot)
-			require.True(t, v.Valid)
-			require.NotNil(t, v.ProposerSig)
+			require.Equal(t, uint32(0), v.GetValidatorSlot())
+			require.True(t, v.GetValid())
+			require.NotNil(t, v.GetProposerSig())
 			break
 		}
 	}
@@ -2180,7 +2180,7 @@ func TestHost_FinishGossipRecovery_TriggersOnMissedDiff(t *testing.T) {
 	var found bool
 	for _, batch := range calls {
 		for _, tx := range batch {
-			if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == 1 {
+			if fi := tx.GetFinishInference(); fi != nil && fi.GetInferenceId() == 1 {
 				found = true
 			}
 		}

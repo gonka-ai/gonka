@@ -129,8 +129,8 @@ func TestVerifyErrorMiss_NoWaitGuard(t *testing.T) {
 	e := newErrorTimeoutEnv(t)
 	now := time.Now().Unix()
 	e.st = stateWithStartedAt(1, 1, now)
-	require.Greater(t, e.st.Config.RefusalTimeout, int64(0))
-	require.Greater(t, e.st.Config.ExecutionTimeout, int64(0))
+	require.Positive(t, e.st.Config.RefusalTimeout)
+	require.Positive(t, e.st.Config.ExecutionTimeout)
 	require.Equal(t, now, e.st.Inferences[1].ConfirmedAt)
 
 	accept, err := e.verify(e.finishTx, e.payload, nil)
@@ -160,7 +160,7 @@ func TestVerifyErrorMiss_ValidStartedAccepts(t *testing.T) {
 	accept, err := e.verify(e.finishTx, e.payload, nil)
 	require.NoError(t, err)
 	require.True(t, accept)
-	require.Equal(t, e.hash, e.finish.ResponseHash, "vote in step 6 is signed over this hash")
+	require.Equal(t, e.hash, e.finish.GetResponseHash(), "vote in step 6 is signed over this hash")
 }
 
 func TestVerifyErrorMiss_LyingHostOutputTokensIgnored(t *testing.T) {

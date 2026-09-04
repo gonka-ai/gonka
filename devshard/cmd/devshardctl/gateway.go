@@ -282,7 +282,7 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	}
 
 	cfg.StoragePath = normalizeStorageDir(cfg.StoragePath)
-	if err := os.MkdirAll(cfg.StoragePath, 0o755); err != nil {
+	if err := os.MkdirAll(cfg.StoragePath, 0o750); err != nil {
 		return nil, fmt.Errorf("runtime %s: create storage dir: %w", cfg.ID, err)
 	}
 

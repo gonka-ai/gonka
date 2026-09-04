@@ -185,7 +185,7 @@ func TestChallengedInferencePersistedBeforeSeal(t *testing.T) {
 	row, ok, err = store.GetSealedInference(escrowID, 1)
 	require.NoError(t, err)
 	require.True(t, ok)
-	require.Greater(t, row.SealedNonce, uint64(0))
+	require.Positive(t, row.SealedNonce)
 }
 
 func TestSealInference_LookupReturnsStatisticsSnapshot(t *testing.T) {
@@ -222,7 +222,7 @@ func TestSealInference_LookupReturnsStatisticsSnapshot(t *testing.T) {
 	require.Equal(t, live.ActualCost, got.ActualCost)
 	require.Equal(t, live.StartedAt, got.StartedAt)
 	require.Equal(t, live.ConfirmedAt, got.ConfirmedAt)
-	require.Greater(t, got.ActualCost, uint64(0))
+	require.Positive(t, got.ActualCost)
 }
 
 func TestNextAutoSealNonce(t *testing.T) {

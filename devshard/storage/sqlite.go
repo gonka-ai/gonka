@@ -74,7 +74,7 @@ var epochFileRegex = regexp.MustCompile(`^epoch_(\d+)\.db$`)
 // repaired from on-disk epoch_*.db files. Going forward, writes update both
 // in the same code path.
 func NewSQLite(baseDir string) (*SQLite, error) {
-	if err := os.MkdirAll(baseDir, 0o755); err != nil {
+	if err := os.MkdirAll(baseDir, 0o750); err != nil {
 		return nil, fmt.Errorf("mkdir %s: %w", baseDir, err)
 	}
 
@@ -563,7 +563,7 @@ func (s *SQLite) ListActiveSessions() ([]ActiveSession, error) {
 	for rows.Next() {
 		var e uint64
 		if err := rows.Scan(&e); err != nil {
-			rows.Close() //nolint:sqlclosecheck // must close before the next statement on this SQLite connection.
+			rows.Close()
 			return nil, err
 		}
 		epochs = append(epochs, e)
@@ -586,7 +586,7 @@ func (s *SQLite) ListActiveSessions() ([]ActiveSession, error) {
 		for sessRows.Next() {
 			var id string
 			if err := sessRows.Scan(&id); err != nil {
-				sessRows.Close() //nolint:sqlclosecheck // must close before the next statement on this SQLite connection.
+				sessRows.Close()
 				return nil, err
 			}
 			result = append(result, ActiveSession{EscrowID: id, EpochID: epochID})
@@ -1017,7 +1017,7 @@ func sqliteInsertSealedInferenceChunk(db *sql.DB, escrowID string, rows []Infere
 	}
 	for _, row := range rows {
 		if _, err := stmt.Exec(sqliteSealedInferenceArgs(escrowID, row)...); err != nil {
-			_ = stmt.Close() //nolint:sqlclosecheck // must close before the next statement on this SQLite connection.
+			_ = stmt.Close()
 			_ = tx.Rollback()
 			return fmt.Errorf("insert sealed inference: %w", err)
 		}
@@ -1180,7 +1180,7 @@ func (s *SQLite) DrainInferenceValidationObs(escrowID string, inferenceID uint64
 	for rows.Next() {
 		var r row
 		if err := rows.Scan(&r.slotID, &r.required, &r.completed); err != nil {
-			rows.Close() //nolint:sqlclosecheck // must close before the next statement on this SQLite connection.
+			rows.Close()
 			return err
 		}
 		live = append(live, r)
@@ -1236,6 +1236,7 @@ func (s *SQLite) DrainInferenceValidationObsBatch(escrowID string, inferenceIDs 
 		// (escrow, inference, slot), so no source row conflicts with another
 		// row of the same statement and the accumulate is per target row,
 		// exactly as in the single-id form.
+		//nolint:gosec // placeholders is a generated ? list; every value is bound.
 		if _, err := tx.Exec(
 			`INSERT INTO sealed_validation_obs (escrow_id, inference_id, slot_id, required_validations, completed_validations)
 			 SELECT escrow_id, inference_id, slot_id, required_validations, completed_validations
@@ -1249,6 +1250,7 @@ func (s *SQLite) DrainInferenceValidationObsBatch(escrowID string, inferenceIDs 
 			_ = tx.Rollback()
 			return fmt.Errorf("drain inference validation obs insert: %w", err)
 		}
+		//nolint:gosec // placeholders is a generated ? list; every value is bound.
 		if _, err := tx.Exec(
 			`DELETE FROM inference_validation_obs
 			  WHERE escrow_id = ? AND inference_id IN (`+placeholders+`)`,
@@ -1486,5 +1488,5 @@ func unmarshalTxs(data []byte) ([]*types.DevshardTx, error) {
 	if err := proto.Unmarshal(data, wrapper); err != nil {
 		return nil, fmt.Errorf("unmarshal txs: %w", err)
 	}
-	return wrapper.Txs, nil
+	return wrapper.GetTxs(), nil
 }
