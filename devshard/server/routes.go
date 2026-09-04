@@ -1,16 +1,20 @@
 package server
 
 import (
+	"compress/gzip"
 	"errors"
 	"net/http"
 	"strings"
 
 	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
 
+	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/observability"
 	"devshard/storage"
 	"devshard/transport"
+	"devshard/types"
 )
 
 // ErrInitializing means devshard storage is not ready to serve session state yet.
@@ -32,17 +36,33 @@ type PayloadHandler interface {
 	HandlePayloads(c echo.Context, srv *transport.Server) error
 }
 
+// StaleSessionReloader evicts an in-memory session that fell behind the shared
+// store and recovers it again. HostManager implements this; tests may not.
+type StaleSessionReloader interface {
+	ReloadStaleSession(escrowID string, stale *transport.Server) (*transport.Server, error)
+	RememberStaleNonce(escrowID string)
+}
+
 // RegisterLazySessionRoutes mounts the standard devshard HTTP surface on g.
-// Observability and host protocol routes resolve existing sessions only.
-// Only owner chat may bind a new session (via OwnerChatBinder).
+// Observability and most host protocol routes resolve existing sessions only.
+// Owner chat and the height-sync seed RPC may bind a new session (via
+// OwnerChatBinder): seed runs at session-open, before any inference, so it
+// cannot wait for chat to create the host session.
 func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder OwnerChatBinder, payloadHandler PayloadHandler) {
 	g.Use(observability.EchoMiddleware())
 	g.Use(observability.RequestIDMiddleware)
+	g.Use(canonicalEscrowIDMiddleware)
 
 	g.POST("/sessions/:id/chat/completions", withOwnerChat(binder, true,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleInference }))
+	g.POST("/sessions/:id/height-sync", withOwnerChat(binder, false,
+		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleHeightSync }))
+	g.POST("/sessions/:id/heightsync/repair", withSessionAuth(resolver, false,
+		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleHeightSyncRepair }))
 	g.POST("/sessions/:id/verify-timeout", withSessionAuth(resolver, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleVerifyTimeout }))
+	g.POST("/sessions/:id/verify-error-miss", withSessionAuth(resolver, false,
+		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleVerifyErrorMiss }))
 	g.POST("/sessions/:id/challenge-receipt", withSessionAuth(resolver, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleChallengeReceipt }))
 	g.POST("/sessions/:id/gossip/nonce", withSessionAuth(resolver, false,
@@ -58,6 +78,7 @@ func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder O
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleGetSignatures }))
 
 	if payloadHandler != nil {
+		// Scoped to this route: gzip on the inference stream would buffer it.
 		g.GET("/sessions/:id/payloads", func(c echo.Context) error {
 			srv, err := resolver.SessionServerExisting(c.Param("id"))
 			if err != nil {
@@ -66,7 +87,23 @@ func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder O
 			}
 			observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
 			return payloadHandler.HandlePayloads(c, srv)
-		})
+		}, middleware.GzipWithConfig(middleware.GzipConfig{Level: gzip.BestSpeed}))
+	}
+}
+
+func canonicalEscrowIDMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		escrowID := c.Param("id")
+		if escrowID == "" {
+			return next(c)
+		}
+		if err := devshardpkg.ValidateEscrowID(escrowID); err != nil {
+			observability.IncSessionResolution(routeLabel(c), observability.MetricStatusError, observability.ReasonInvalidEscrowID)
+			observability.Log(c.Request().Context(), observability.LevelWarn, "devshard rejected non-canonical escrow id",
+				observability.StageSessionResolved, observability.WhereRoutesSessionResolve, escrowID, observability.ReasonInvalidEscrowID, err)
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		return next(c)
 	}
 }
 
@@ -81,7 +118,9 @@ func withSession(
 			return sessionHTTPError(c, err)
 		}
 		observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
-		return pick(srv)(c)
+		return retryIfStale(c, resolver, srv, pick(srv)(c), func(next *transport.Server) error {
+			return pick(next)(c)
+		})
 	}
 }
 
@@ -99,7 +138,10 @@ func withSessionAuth(
 		observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
 		handler := pick(srv)
 		wrapped := srv.RateLimitMiddleware(recordChatTerminal)(handler)
-		return srv.AuthMiddleware(wrapped)(c)
+		return retryIfStale(c, resolver, srv, srv.AuthMiddleware(wrapped)(c), func(next *transport.Server) error {
+			h := pick(next)
+			return next.AuthMiddleware(next.RateLimitMiddleware(recordChatTerminal)(h))(c)
+		})
 	}
 }
 
@@ -116,7 +158,9 @@ func withOwnerChat(
 		}
 		observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
 		handler := pick(srv)
-		return srv.RateLimitMiddleware(recordChatTerminal)(handler)(c)
+		return retryIfStale(c, binder, srv, srv.RateLimitMiddleware(recordChatTerminal)(handler)(c), func(next *transport.Server) error {
+			return next.RateLimitMiddleware(recordChatTerminal)(pick(next))(c)
+		})
 	}
 }
 
@@ -138,6 +182,9 @@ func sessionResolutionStatus(err error) (observability.MetricStatus, observabili
 	}
 	if errors.Is(err, storage.ErrSessionNotFound) {
 		return observability.MetricStatusError, observability.ReasonSessionResolveErr
+	}
+	if errors.Is(err, bridge.ErrEscrowSettled) || errors.Is(err, storage.ErrSessionNotActive) {
+		return observability.MetricStatusError, observability.ReasonEscrowSettled
 	}
 	if errors.Is(err, bridge.ErrChainUnavailable) {
 		return observability.MetricStatusError, observability.ReasonGetEscrowErr
@@ -178,12 +225,16 @@ func routeLabel(c echo.Context) string {
 		return "chat_completions"
 	case strings.HasSuffix(path, "/payloads"):
 		return "payloads"
+	case strings.Contains(path, "verify-error-miss"):
+		return "verify_error_miss"
 	case strings.Contains(path, "verify-timeout"):
 		return "verify_timeout"
 	case strings.Contains(path, "challenge-receipt"):
 		return "challenge_receipt"
 	case strings.Contains(path, "gossip"):
 		return "gossip"
+	case strings.Contains(path, "/height-sync"):
+		return "height_sync"
 	default:
 		return "other"
 	}
@@ -203,8 +254,37 @@ func sessionHTTPError(c echo.Context, err error) error {
 	if errors.Is(err, bridge.ErrChainUnavailable) {
 		return transport.HTTPError(c, http.StatusServiceUnavailable, transport.DevshardErrorChainUnavailable, err.Error())
 	}
+	if errors.Is(err, bridge.ErrEscrowSettled) || errors.Is(err, storage.ErrSessionNotActive) {
+		return transport.HTTPError(c, http.StatusConflict, transport.DevshardErrorEscrowSettled, err.Error())
+	}
 	if errors.Is(err, storage.ErrSessionVersionConflict) || errors.Is(err, storage.ErrSessionEpochConflict) {
 		return echo.NewHTTPError(http.StatusConflict, err.Error())
 	}
 	return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
+}
+
+func isInvalidNonce(err error) bool {
+	return err != nil && errors.Is(err, types.ErrInvalidNonce)
+}
+
+// retryIfStale reloads a session that failed apply with ErrInvalidNonce and
+// retries the handler once. A second mismatch is treated as a bad client nonce
+// and negative-cached rather than spinning reload.
+func retryIfStale(c echo.Context, source any, stale *transport.Server, err error, retry func(*transport.Server) error) error {
+	if !isInvalidNonce(err) {
+		return err
+	}
+	reloader, ok := source.(StaleSessionReloader)
+	if !ok {
+		return err
+	}
+	next, reloadErr := reloader.ReloadStaleSession(c.Param("id"), stale)
+	if reloadErr != nil {
+		return err
+	}
+	err = retry(next)
+	if isInvalidNonce(err) {
+		reloader.RememberStaleNonce(c.Param("id"))
+	}
+	return err
 }

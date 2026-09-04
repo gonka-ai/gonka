@@ -17,6 +17,11 @@ type RawResponse struct {
 	JSON        map[string]any
 }
 
+type RawResponseResult struct {
+	Response RawResponse
+	Err      error
+}
+
 func LogRawResponse(t *testing.T, label string, resp RawResponse) {
 	t.Helper()
 	t.Logf("%s response: status=%d content_type=%q body=%s", label, resp.StatusCode, resp.ContentType, resp.Body)
@@ -37,25 +42,45 @@ func PostJSONRaw(t *testing.T, client *http.Client, url string, body map[string]
 	return PostRaw(t, client, url, "application/json", data, bearerToken)
 }
 
+func PostJSONRawE(client *http.Client, url string, body map[string]any, bearerToken string) (RawResponse, error) {
+	data, err := json.Marshal(body)
+	if err != nil {
+		return RawResponse{}, err
+	}
+	return PostRawE(client, url, "application/json", data, bearerToken)
+}
+
 func PostRaw(t *testing.T, client *http.Client, url, contentType string, body []byte, bearerToken string) RawResponse {
 	t.Helper()
-	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	DebugLogf(t, "POST %s request=%s", url, string(body))
+	resp, err := PostRawE(client, url, contentType, body, bearerToken)
 	require.NoError(t, err)
+	DebugLogf(t, "POST %s status=%d response=%s", url, resp.StatusCode, resp.Body)
+	return resp
+}
+
+func PostRawE(client *http.Client, url, contentType string, body []byte, bearerToken string) (RawResponse, error) {
+	req, err := http.NewRequest(http.MethodPost, url, bytes.NewReader(body))
+	if err != nil {
+		return RawResponse{}, err
+	}
 	if contentType != "" {
 		req.Header.Set("Content-Type", contentType)
 	}
 	if bearerToken != "" {
 		req.Header.Set("Authorization", "Bearer "+bearerToken)
 	}
-	DebugLogf(t, "POST %s request=%s", url, string(body))
 
 	resp, err := client.Do(req)
-	require.NoError(t, err)
+	if err != nil {
+		return RawResponse{}, err
+	}
 	defer resp.Body.Close()
 
 	respBody, err := io.ReadAll(resp.Body)
-	require.NoError(t, err)
-	DebugLogf(t, "POST %s status=%d response=%s", url, resp.StatusCode, string(respBody))
+	if err != nil {
+		return RawResponse{}, err
+	}
 
 	var decoded map[string]any
 	if len(bytes.TrimSpace(respBody)) > 0 {
@@ -66,7 +91,7 @@ func PostRaw(t *testing.T, client *http.Client, url, contentType string, body []
 		ContentType: resp.Header.Get("Content-Type"),
 		Body:        string(respBody),
 		JSON:        decoded,
-	}
+	}, nil
 }
 
 func GetJSON(t *testing.T, client *http.Client, url string) map[string]any {
@@ -86,6 +111,27 @@ func GetJSON(t *testing.T, client *http.Client, url string) map[string]any {
 	require.Less(t, resp.StatusCode, 300, "GET %s returned %d: %s", url, resp.StatusCode, string(respBody))
 
 	var decoded map[string]any
+	require.NoError(t, json.Unmarshal(respBody, &decoded), "response body: %s", string(respBody))
+	return decoded
+}
+
+func GetJSONArray(t *testing.T, client *http.Client, url string) []any {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	require.NoError(t, err)
+	req.Header.Set("Authorization", "Bearer "+AdminAPIKey)
+	DebugLogf(t, "GET %s", url)
+
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	respBody, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	DebugLogf(t, "GET %s status=%d response=%s", url, resp.StatusCode, string(respBody))
+	require.Less(t, resp.StatusCode, 300, "GET %s returned %d: %s", url, resp.StatusCode, string(respBody))
+
+	var decoded []any
 	require.NoError(t, json.Unmarshal(respBody, &decoded), "response body: %s", string(respBody))
 	return decoded
 }

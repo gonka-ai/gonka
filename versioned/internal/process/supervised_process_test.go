@@ -30,6 +30,7 @@ func TestSupervisedProcessHelper(t *testing.T) {
 		signal.Notify(term, syscall.SIGTERM)
 	case "ignore-term":
 		signal.Ignore(syscall.SIGTERM)
+	case "exit":
 	default:
 		os.Exit(2)
 	}
@@ -39,11 +40,172 @@ func TestSupervisedProcessHelper(t *testing.T) {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(2)
 	}
+	if os.Getenv(supervisedProcessHelperEnv) == "exit" {
+		return
+	}
 	if term != nil {
 		<-term
 		return
 	}
 	select {}
+}
+
+func TestProcessTransitionTable(t *testing.T) {
+	states := []processState{
+		processStateRunning,
+		processStateTerminating,
+		processStateKilling,
+		processStateExited,
+	}
+	events := []processEvent{
+		processEventStopRequested,
+		processEventForceRequested,
+		processEventGraceExpired,
+		processEventExited,
+	}
+	expected := map[processTransitionKey]processTransitionSpec{
+		{state: processStateRunning, event: processEventStopRequested}: {
+			next:   processStateTerminating,
+			action: processActionSignalTerm,
+		},
+		{state: processStateRunning, event: processEventForceRequested}: {
+			next:   processStateKilling,
+			action: processActionSignalKill,
+		},
+		{state: processStateRunning, event: processEventExited}: {
+			next:   processStateExited,
+			action: processActionFinish,
+		},
+		{state: processStateTerminating, event: processEventForceRequested}: {
+			next:   processStateKilling,
+			action: processActionSignalKill,
+		},
+		{state: processStateTerminating, event: processEventGraceExpired}: {
+			next:   processStateKilling,
+			action: processActionSignalKill,
+		},
+		{state: processStateTerminating, event: processEventExited}: {
+			next:   processStateExited,
+			action: processActionFinish,
+		},
+		{state: processStateKilling, event: processEventExited}: {
+			next:   processStateExited,
+			action: processActionFinish,
+		},
+	}
+
+	for _, state := range states {
+		for _, event := range events {
+			key := processTransitionKey{state: state, event: event}
+			got, gotOK := processTransitionTable[key]
+			want, wantOK := expected[key]
+			if gotOK != wantOK || got != want {
+				t.Errorf(
+					"transition for %s + %s = %+v, %t; want %+v, %t",
+					state,
+					event,
+					got,
+					gotOK,
+					want,
+					wantOK,
+				)
+			}
+		}
+	}
+}
+
+func TestProcessTransitionTableActionsMatchTargets(t *testing.T) {
+	knownStates := map[processState]bool{
+		processStateRunning:     true,
+		processStateTerminating: true,
+		processStateKilling:     true,
+		processStateExited:      true,
+	}
+	knownEvents := map[processEvent]bool{
+		processEventStopRequested:  true,
+		processEventForceRequested: true,
+		processEventGraceExpired:   true,
+		processEventExited:         true,
+	}
+	exitEdges := make(map[processState]bool)
+	for key, transition := range processTransitionTable {
+		if !knownStates[key.state] {
+			t.Errorf("transition has unknown source state %s", key.state)
+		}
+		if !knownEvents[key.event] {
+			t.Errorf("transition has unknown event %s", key.event)
+		}
+		if !knownStates[transition.next] {
+			t.Errorf("%s + %s targets unknown state %s", key.state, key.event, transition.next)
+		}
+		switch transition.action {
+		case processActionSignalTerm:
+			if transition.next != processStateTerminating {
+				t.Errorf("SIGTERM action targets %s", transition.next)
+			}
+		case processActionSignalKill:
+			if transition.next != processStateKilling {
+				t.Errorf("SIGKILL action targets %s", transition.next)
+			}
+		case processActionFinish:
+			if key.event != processEventExited ||
+				transition.next != processStateExited {
+				t.Errorf(
+					"finish action maps %s + %s to %s",
+					key.state,
+					key.event,
+					transition.next,
+				)
+			}
+			exitEdges[key.state] = true
+		default:
+			t.Errorf("%s + %s has unknown action %d", key.state, key.event, transition.action)
+		}
+	}
+	for _, state := range []processState{
+		processStateRunning,
+		processStateTerminating,
+		processStateKilling,
+	} {
+		if !exitEdges[state] {
+			t.Errorf("%s has no process-exited edge", state)
+		}
+	}
+}
+
+func TestSupervisedProcessNaturalExitReaps(t *testing.T) {
+	stop := make(chan struct{})
+	force := make(chan struct{})
+	proc := startSupervisedTestProcess(t, "exit", time.Second, stop, force)
+
+	if err := waitForSupervisedProcess(proc, 5*time.Second); err != nil {
+		t.Fatalf("natural process exit: %v", err)
+	}
+	if proc.Escalated() {
+		t.Fatal("naturally exited process recorded escalation")
+	}
+	if got := proc.State(); got != processStateExited {
+		t.Fatalf("process state = %s, want exited", got)
+	}
+	assertProcessReaped(t, proc)
+}
+
+func TestSupervisedProcessForceStopsRunningProcessAndReaps(t *testing.T) {
+	stop := make(chan struct{})
+	force := make(chan struct{})
+	proc := startSupervisedTestProcess(t, "ignore-term", time.Hour, stop, force)
+
+	proc.ForceStop()
+	if err := waitForSupervisedProcess(proc, time.Second); err == nil {
+		t.Fatal("SIGKILLed process returned a nil wait error")
+	}
+	if !proc.Escalated() {
+		t.Fatal("forced process did not record SIGKILL escalation")
+	}
+	if got := proc.State(); got != processStateExited {
+		t.Fatalf("process state = %s, want exited", got)
+	}
+	assertProcessReaped(t, proc)
 }
 
 func TestSupervisedProcessStopsGracefullyAndReaps(t *testing.T) {

@@ -4,7 +4,6 @@ package main
 const (
 	MaxChatRequestBodySize       = 10 * 1024 * 1024
 	MaxLoggedResponseFormatBytes = 2048 * 1024
-	MaxChatRequestChoices        = 5
 	MinTemperature               = 0.0
 	MaxTemperature               = 2.0
 	MinPMin                      = 0.0
@@ -35,16 +34,12 @@ const (
 	StopMaxEntries  = 16
 	StopMaxEntryLen = 256
 
-	StopTokenIdsMaxEntries = 64
-
 	BadWordsMaxEntries  = 64
 	BadWordsMaxEntryLen = 128
 
 	PenaltyMin               = -2.0
 	PenaltyMax               = 2.0
 	KimiK2PenaltyForcedValue = 0.0
-
-	TopLogprobsForcedValue = 5
 
 	ChatTemplateKwargsMaxDepth = 16
 	ChatTemplateKwargsMaxSize  = 16 * 1024
@@ -99,8 +94,9 @@ const (
 // Routed model identifiers. The parameter catalog and the message processor
 // both dispatch on these strings.
 const (
-	kimiK26ModelID    = "moonshotai/Kimi-K2.6"
-	miniMaxM27ModelID = "MiniMaxAI/MiniMax-M2.7"
+	kimiK26ModelID             = "moonshotai/Kimi-K2.6"
+	miniMaxM27ModelID          = "MiniMaxAI/MiniMax-M2.7"
+	deepSeekV4Flash0731ModelID = "deepseek-ai/DeepSeek-V4-Flash-0731"
 )
 
 // Sentinel content used by message normalization when an upstream tool result is empty.

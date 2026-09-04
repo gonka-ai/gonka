@@ -4,9 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
-	"strings"
 	"time"
 
 	"common/completionapi"
@@ -16,8 +14,7 @@ import (
 )
 
 const (
-	defaultScannerBufferSize = 64 * 1024   // 64KB initial scanner buffer
-	maxScannerBufferSize     = 1024 * 1024 // 1MB max line size for SSE chunks
+	defaultScannerBufferSize = 64 * 1024 // 64KB initial scanner buffer
 
 	mlNodeHTTPTimeout = 5 * time.Minute
 )
@@ -32,13 +29,14 @@ func NewNoRedirectClient(timeout time.Duration) *http.Client {
 	}
 }
 
+// An error means the answer is partial and must not be stored.
 func proxyResponse(
 	resp *http.Response,
 	w http.ResponseWriter,
 	excludeContentLength bool,
 	responseProcessor completionapi.ResponseProcessor,
 	inferenceId string,
-) {
+) error {
 	for key, values := range resp.Header {
 		if excludeContentLength && key == "Content-Length" {
 			continue
@@ -49,20 +47,21 @@ func proxyResponse(
 	}
 
 	contentType := resp.Header.Get("Content-Type")
-	if strings.HasPrefix(contentType, "text/event-stream") {
+	if completionapi.IsEventStream(resp) {
 		logging.Debug("Proxying text/event-stream response", types.Inferences, "status_code", resp.StatusCode, "content_type", contentType, "inference_id", inferenceId)
-		proxyTextStreamResponse(resp, w, responseProcessor, inferenceId)
-	} else {
-		logging.Debug("Proxying JSON response", types.Inferences, "status_code", resp.StatusCode, "content_type", contentType, "inference_id", inferenceId)
-		proxyJSONResponse(resp, w, responseProcessor, inferenceId)
+		return proxyTextStreamResponse(resp, w, responseProcessor, inferenceId)
 	}
+	logging.Debug("Proxying JSON response", types.Inferences, "status_code", resp.StatusCode, "content_type", contentType, "inference_id", inferenceId)
+	proxyJSONResponse(resp, w, responseProcessor, inferenceId)
+	return nil
 }
 
-func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, responseProcessor completionapi.ResponseProcessor, inferenceId string) {
+func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, responseProcessor completionapi.ResponseProcessor, inferenceId string) error {
 	w.WriteHeader(resp.StatusCode)
 
 	scanner := bufio.NewScanner(resp.Body)
-	scanner.Buffer(make([]byte, 0, defaultScannerBufferSize), maxScannerBufferSize)
+	scanner.Buffer(make([]byte, 0, defaultScannerBufferSize), completionapi.MaxSSELineBytes)
+	clientGone := false
 	for scanner.Scan() {
 		line := scanner.Text()
 
@@ -77,22 +76,21 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 					"inferenceId", inferenceId, "error", err, "line", line,
 				)
 				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
+				return err
 			}
 		}
 
 		logging.Debug("Chunk to proxy", types.Inferences, "inference_id", inferenceId, "line", lineToProxy)
 
-		_, err := fmt.Fprintln(w, lineToProxy)
-		if err != nil {
-			if opErr, ok := err.(*net.OpError); ok {
-				logging.Warn("Stream cancelled during streaming", types.Inferences, "inferenceId", inferenceId, "error", opErr)
-				resp.Body.Close()
-				return
-			}
-			logging.Error("Error while streaming response", types.Inferences, "inferenceId", inferenceId, "error", err)
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
+		if clientGone {
+			continue
+		}
+		// The caller leaving does not undo the work: the rest of the stream is still read, stored and committed.
+		if _, err := fmt.Fprintln(w, lineToProxy); err != nil {
+			logging.Warn("The caller stopped reading, finishing the inference without it", types.Inferences,
+				"inferenceId", inferenceId, "error", err)
+			clientGone = true
+			continue
 		}
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
@@ -101,7 +99,9 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 
 	if err := scanner.Err(); err != nil {
 		logging.Error("Error after streaming response", types.Inferences, "inferenceId", inferenceId, "error", err)
+		return err
 	}
+	return nil
 }
 
 func proxyJSONResponse(resp *http.Response, w http.ResponseWriter, responseProcessor completionapi.ResponseProcessor, inferenceId string) {

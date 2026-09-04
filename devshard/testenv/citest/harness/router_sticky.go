@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// StickyUpstreamHeader is nginx $upstream_addr exposed by versiond-router.
+// StickyUpstreamHeader identifies the versiond selected by the router.
 const StickyUpstreamHeader = "X-Upstream-Addr"
 
 // FindDistinctStickySessions returns two session ids routed to different versiond upstreams.
@@ -41,6 +41,35 @@ func FindDistinctStickySessions(t *testing.T, client *http.Client, routerHTTP, v
 	}
 	t.Fatalf("could not find a second sticky upstream distinct from %q", upstreamA)
 	return "", "", "", ""
+}
+
+// WaitDistinctStickySessions polls until two session ids hash to different upstreams.
+func WaitDistinctStickySessions(t *testing.T, client *http.Client, routerHTTP, version string, timeout time.Duration) (sessionA, upstreamA, sessionB, upstreamB string) {
+	t.Helper()
+	if client == nil {
+		client = HTTPClient()
+	}
+	var a, ua, b, ub string
+	ok := AssertEventually(t, timeout, time.Second, func() bool {
+		a = "citest-failover-session-a"
+		gotA, err := GetResponseHeader(client, RouterSessionURL(routerHTTP, version, a, "/healthz"), StickyUpstreamHeader)
+		if err != nil || gotA == "" {
+			return false
+		}
+		ua = gotA
+		for n := 0; n < 64; n++ {
+			candidate := fmt.Sprintf("citest-failover-%d", n)
+			got, err := GetResponseHeader(client, RouterSessionURL(routerHTTP, version, candidate, "/healthz"), StickyUpstreamHeader)
+			if err != nil || got == "" || got == ua {
+				continue
+			}
+			b, ub = candidate, got
+			return true
+		}
+		return false
+	})
+	require.True(t, ok, "could not find two sticky upstreams for %s within %s (first=%q)", version, timeout, ua)
+	return a, ua, b, ub
 }
 
 // OtherStickyUpstream returns the candidate in {a,b} that is not primary.

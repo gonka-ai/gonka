@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"devshard/accounting"
 	"devshard/user"
 )
 
@@ -400,6 +401,79 @@ func TestPicker_OtherStickyYieldsNonceToUnboundRequest(t *testing.T) {
 	require.Equal(t, 0, ghost.total())
 }
 
+// candidateIndexLocked is the whole ordering the affinity feature adds to the picker.
+// End-to-end tests cannot separate its three passes -- a request the scan skips is still
+// served one hold later, on the same host -- so the ordering is pinned here directly.
+func TestPicker_CandidateIndexOrdersTheThreePasses(t *testing.T) {
+	const (
+		serving = "participant-serving"
+		other   = "participant-other"
+	)
+	now := time.Now()
+	fresh := now.Add(-pickerStaleThreshold / 2)
+	stale := now.Add(-2 * pickerStaleThreshold)
+	available := map[string]bool{serving: true, other: true}
+
+	queued := func(sticky string, submitted time.Time, excluded ...string) *pickerRequest {
+		request := defaultPickerRequest()
+		request.stickyParticipant = sticky
+		request.submitTime = submitted
+		if len(excluded) > 0 {
+			request.excludeParticipants = make(map[string]bool, len(excluded))
+			for _, participant := range excluded {
+				request.excludeParticipants[participant] = true
+			}
+		}
+		return request
+	}
+
+	tests := []struct {
+		name  string
+		queue []*pickerRequest
+		want  int
+	}{
+		{
+			name:  "sticky hit outranks an earlier unbound request",
+			queue: []*pickerRequest{queued("", fresh), queued(serving, fresh)},
+			want:  1,
+		},
+		{
+			name:  "an unbound request past the threshold is not overtaken",
+			queue: []*pickerRequest{queued("", stale), queued(serving, fresh)},
+			want:  0,
+		},
+		{
+			name:  "a sticky hit never overtakes a narrower retry ahead of it",
+			queue: []*pickerRequest{queued("", fresh, other), queued(serving, fresh)},
+			want:  0,
+		},
+		{
+			name:  "unbound takes the nonce when nobody is sticky to this participant",
+			queue: []*pickerRequest{queued(other, fresh), queued("", fresh)},
+			want:  1,
+		},
+		{
+			name:  "a lone request bound elsewhere still takes the nonce it is offered",
+			queue: []*pickerRequest{queued(other, fresh)},
+			want:  0,
+		},
+		{
+			name:  "a request that excludes this participant is never served by it",
+			queue: []*pickerRequest{queued("", fresh, serving)},
+			want:  -1,
+		},
+	}
+
+	for _, testCase := range tests {
+		t.Run(testCase.name, func(t *testing.T) {
+			t.Parallel()
+			picker := &sessionPicker{queue: testCase.queue}
+
+			require.Equal(t, testCase.want, picker.candidateIndexLocked(serving, available, now))
+		})
+	}
+}
+
 // TestPicker_DropsCanceledRequest verifies that a request whose
 // context is canceled before it is dispatched receives the cancel
 // error and does not consume a nonce.
@@ -707,7 +781,7 @@ func TestPicker_CapabilityBlockedHost_BurnsGhostNoSend(t *testing.T) {
 	env.proxy.redundancy.picker.stop()
 
 	blockedKey := env.session.HostParticipantKey(1)
-	checker := func(key string, _ user.InferenceParams) (string, bool) {
+	checker := func(key string) (string, bool) {
 		if key == blockedKey {
 			return "context_limit_exceeded", true
 		}
@@ -727,8 +801,39 @@ func TestPicker_CapabilityBlockedHost_BurnsGhostNoSend(t *testing.T) {
 	require.False(t, res.isProbe)
 	require.NotEqual(t, 1, res.prepared.HostIdx(),
 		"real request must skip a known capability-incompatible host while other hosts remain")
-	require.GreaterOrEqual(t, ghost.kindCount(ghostCapability), 1)
-	require.Contains(t, ghost.reasons, ghostCapability.reason())
+	require.GreaterOrEqual(t, ghost.kindCount(ghostStateDiverged), 1)
+	require.Contains(t, ghost.reasons, ghostStateDiverged.reason())
+}
+
+// The reason has to be a term the ledger's no-send vocabulary admits; the block reason is not one, and
+// carrying it through filed every one of these ghosts under "unknown".
+func TestPicker_StateRootDivergenceReportsAReasonTheLedgerAdmits(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	env.proxy.redundancy.picker.stop()
+
+	blockedKey := env.session.HostParticipantKey(1)
+	checker := func(key string) (string, bool) {
+		if key == blockedKey {
+			return "escrow_state_root_diverged", true
+		}
+		return "", false
+	}
+
+	ghost := &fakeGhost{}
+	p := newSessionPicker(env.session, "llama", ghost.dispatch, nil, checker)
+	p.start()
+	t.Cleanup(p.stop)
+
+	req := defaultPickerRequest()
+	p.submit(req)
+
+	res := waitReply(t, req, 2*time.Second)
+	require.NoError(t, res.err)
+	require.False(t, res.isProbe)
+	require.NotEqual(t, 1, res.prepared.HostIdx())
+	require.GreaterOrEqual(t, ghost.kindCount(ghostStateDiverged), 1)
+	require.Contains(t, ghost.reasons, ghostStateDiverged.reason())
+	require.NotEqual(t, accounting.NoSendUnknown, accounting.NoSendReasonFromString(ghostStateDiverged.reason()))
 }
 
 func TestPicker_AllRemainingHostsCapabilityBlocked_DropsExhausted(t *testing.T) {
@@ -739,7 +844,7 @@ func TestPicker_AllRemainingHostsCapabilityBlocked_DropsExhausted(t *testing.T) 
 	key1 := env.session.HostParticipantKey(1)
 	key2 := env.session.HostParticipantKey(2)
 	blocked := map[string]bool{key0: true, key2: true}
-	checker := func(key string, _ user.InferenceParams) (string, bool) {
+	checker := func(key string) (string, bool) {
 		if blocked[key] {
 			return "context_limit_exceeded", true
 		}
@@ -757,7 +862,7 @@ func TestPicker_AllRemainingHostsCapabilityBlocked_DropsExhausted(t *testing.T) 
 
 	res := waitReply(t, req, 2*time.Second)
 	require.ErrorIs(t, res.err, ErrNoAvailableHost)
-	require.Equal(t, 0, ghost.kindCount(ghostCapability),
+	require.Equal(t, 0, ghost.kindCount(ghostStateDiverged),
 		"exhaustion sweep should drop before burning known-incompatible hosts")
 }
 

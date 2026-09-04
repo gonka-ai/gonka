@@ -13,6 +13,8 @@ export NODE_SERVICE_NAME=${NODE_SERVICE_NAME:-node}
 export EXPLORER_SERVICE_NAME=${EXPLORER_SERVICE_NAME:-explorer}
 export PROXY_SSL_SERVICE_NAME=${PROXY_SSL_SERVICE_NAME:-proxy-ssl}
 export PROXY_SSL_PORT=${PROXY_SSL_PORT:-8080}
+# setup-ssl.sh accepts SSL_DIR for isolated tests; the image uses this mount.
+export SSL_DIR=/etc/nginx/ssl
 export JAEGER_ENABLED=${JAEGER_ENABLED:-false}
 export JAEGER_SERVICE_NAME=${JAEGER_SERVICE_NAME:-jaeger}
 export JAEGER_PORT=${JAEGER_PORT:-16686}
@@ -370,33 +372,14 @@ export STREAMING_CONFIG='
             proxy_request_buffering off;
             gzip off;'
 
-# If SSL is intended, ensure certificates are present (attempt issuance if missing)
+# Validate or repair the TLS bundle before nginx reads it.
 if [ "$SSL_ENABLED" = "true" ]; then
-    if [ ! -f "/etc/nginx/ssl/cert.pem" ] || [ ! -f "/etc/nginx/ssl/private.key" ]; then
-        echo "SSL enabled but certificates not found; requesting via proxy-ssl"
-        /setup-ssl.sh || echo "WARNING: SSL setup failed; will attempt to continue"
-    fi
-
-    # Start background renewal loop if order.id exists (indicates auto issuance)
-    if [ -f "/etc/nginx/ssl/order.id" ]; then
-        RENEW_INTERVAL_HOURS=${RENEW_INTERVAL_HOURS:-24}
-        echo "Starting background renewal loop (every ${RENEW_INTERVAL_HOURS}h)"
-        (
-            while true; do
-                if /setup-ssl.sh renew-if-needed; then
-                    echo "No renewal needed"
-                else
-                    if [ "$?" -eq 10 ]; then
-                        echo "Certificate renewed; reloading nginx"
-                        nginx -s reload || true
-                    else
-                        echo "WARNING: Renewal attempt failed"
-                    fi
-                fi
-                sleep $(( RENEW_INTERVAL_HOURS * 3600 ))
-            done
-        ) &
-    fi
+    ssl_setup_status=0
+    /setup-ssl.sh repair || ssl_setup_status=$?
+    case "$ssl_setup_status" in
+      0|10) ;;
+      *) echo "WARNING: SSL setup failed; will attempt to continue" ;;
+    esac
 fi
 
 # Prepare template vars for unified config
@@ -424,6 +407,8 @@ else
     export LISTEN_HTTPS="# HTTPS disabled"
     export SSL_CONFIG="# SSL disabled"
 fi
+DESIRED_LISTEN_HTTPS=$LISTEN_HTTPS
+DESIRED_SSL_CONFIG=$SSL_CONFIG
 
 # Route Disabling Logic
 # If DISABLE_* env vars are set to true, inject a "return 404" into the location block
@@ -1246,21 +1231,26 @@ ENVSUBST_VARS="${ENVSUBST_VARS},\$BLOCKED_ROUTES_CONFIG,\$EXEMPT_ROUTES_CONFIG,\
 ENVSUBST_VARS="${ENVSUBST_VARS},\$VERSIOND_UPSTREAM,\$DEVSHARD_VERSIOND_LOCATION,\$EDGE_API_UPSTREAM"
 
 echo "Rendering unified nginx configuration (mode: $NGINX_MODE, server_name: $SERVER_NAME)"
-envsubst "$ENVSUBST_VARS" < /etc/nginx/nginx.unified.conf.template | sed 's/\$\$/$/g' > /etc/nginx/nginx.conf
+render_nginx_config() {
+    envsubst "$ENVSUBST_VARS" < /etc/nginx/nginx.unified.conf.template \
+        | sed 's/\$\$/$/g' > "$1"
+}
+render_nginx_config /etc/nginx/nginx.conf
 
 # Validate nginx configuration (with fallback if SSL config fails)
+HTTPS_FALLBACK=false
 if nginx -t; then
     echo "Nginx configuration is valid"
 else
     echo "WARNING: Nginx configuration invalid"
     if [ "$ENABLE_HTTPS" = "true" ] && [ "$ENABLE_HTTP" = "true" ]; then
         echo "FALLBACK: Falling back to HTTP-only configuration"
-        ENABLE_HTTPS="false"
+        HTTPS_FALLBACK=true
         export LISTEN_HTTPS="# HTTPS disabled"
         export SSL_CONFIG="# SSL disabled"
 
         # Retry rendering with HTTP-only settings
-        envsubst "$ENVSUBST_VARS" < /etc/nginx/nginx.unified.conf.template | sed 's/\$\$/$/g' > /etc/nginx/nginx.conf
+        render_nginx_config /etc/nginx/nginx.conf
 
         if nginx -t; then
             echo "SUCCESS: Nginx configuration is valid (HTTP-only fallback)"
@@ -1275,6 +1265,102 @@ else
         echo "--- End Debug ---"
         exit 1
     fi
+fi
+
+if [ "$SSL_ENABLED" = "true" ] \
+    && { [ -f "/etc/nginx/ssl/order.id" ] \
+      || [ ! -f "/etc/nginx/ssl/cert.pem" ] \
+      || [ ! -f "/etc/nginx/ssl/private.key" ]; }; then
+    RENEW_INTERVAL_HOURS=${RENEW_INTERVAL_HOURS:-24}
+    RENEW_RETRY_SECONDS=${PROXY_SSL_RETRY_SECONDS:-60}
+    require_positive_integer() {
+        case "$2" in
+          ''|*[!0-9]*) ;;
+          *) [ "$2" -gt 0 ] 2>/dev/null && return 0 ;;
+        esac
+        echo "ERROR: $1 must be a positive integer"
+        return 1
+    }
+    require_positive_integer RENEW_INTERVAL_HOURS "$RENEW_INTERVAL_HOURS" \
+        || exit 1
+    require_positive_integer PROXY_SSL_RETRY_SECONDS "$RENEW_RETRY_SECONDS" \
+        || exit 1
+    RENEW_INTERVAL_SECONDS=$(( RENEW_INTERVAL_HOURS * 3600 ))
+    echo "Starting background renewal loop (every ${RENEW_INTERVAL_HOURS}h)"
+    (
+        retry_seconds=$RENEW_RETRY_SECONDS
+        reload_pending=false
+        retry_later() {
+            echo "WARNING: $1; retrying in ${retry_seconds}s"
+            sleep "$retry_seconds"
+            retry_seconds=$(( retry_seconds * 2 ))
+            if [ "$retry_seconds" -gt "$RENEW_INTERVAL_SECONDS" ]; then
+                retry_seconds=$RENEW_INTERVAL_SECONDS
+            fi
+        }
+
+        # Let the foreground entrypoint exec nginx before the first renewal.
+        while [ ! -f /var/run/nginx.pid ]; do sleep 0.1; done
+        while true; do
+            if [ "$HTTPS_FALLBACK" = "true" ] \
+                && [ -f "/etc/nginx/ssl/cert.pem" ] \
+                && [ -f "/etc/nginx/ssl/private.key" ]; then
+                export LISTEN_HTTPS="$DESIRED_LISTEN_HTTPS"
+                export SSL_CONFIG="$DESIRED_SSL_CONFIG"
+                next_config=/etc/nginx/nginx.conf.next
+                if render_nginx_config "$next_config" \
+                    && nginx -t -c "$next_config" \
+                    && mv -f "$next_config" /etc/nginx/nginx.conf; then
+                    reload_pending=true
+                else
+                    rm -f "$next_config"
+                    repair_status=0
+                    /setup-ssl.sh repair || repair_status=$?
+                    if [ "$repair_status" -eq 10 ]; then
+                        echo "TLS bundle repaired; retrying HTTPS configuration"
+                        retry_seconds=$RENEW_RETRY_SECONDS
+                    elif [ "$repair_status" -eq 0 ]; then
+                        retry_later "HTTPS configuration recovery failed with a valid TLS bundle"
+                    else
+                        retry_later "TLS bundle repair failed"
+                    fi
+                    continue
+                fi
+            fi
+
+            if [ "$reload_pending" = "true" ]; then
+                if nginx -s reload; then
+                    echo "Certificate configuration reloaded"
+                    reload_pending=false
+                    HTTPS_FALLBACK=false
+                    retry_seconds=$RENEW_RETRY_SECONDS
+                    sleep "$RENEW_INTERVAL_SECONDS"
+                    continue
+                else
+                    retry_later "nginx reload failed"
+                    continue
+                fi
+            fi
+
+            renewal_status=0
+            /setup-ssl.sh renew-if-needed || renewal_status=$?
+            case "$renewal_status" in
+              0)
+                echo "No renewal needed"
+                retry_seconds=$RENEW_RETRY_SECONDS
+                sleep "$RENEW_INTERVAL_SECONDS"
+                ;;
+              10)
+                echo "Certificate published; scheduling nginx reload"
+                retry_seconds=$RENEW_RETRY_SECONDS
+                reload_pending=true
+                ;;
+              *)
+                retry_later "Renewal attempt failed"
+                ;;
+            esac
+        done
+    ) &
 fi
 
 echo "Available endpoints:"

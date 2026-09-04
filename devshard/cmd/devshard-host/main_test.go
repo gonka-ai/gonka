@@ -1,10 +1,30 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
+	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 )
+
+func TestRegisterLiveness_ServesVersionedHealthz(t *testing.T) {
+	e := echo.New()
+	registerLiveness(e, "dev")
+
+	for _, path := range []string{"/health", "/dev/healthz"} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusOK, rec.Code, path)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/v5/healthz", nil)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+	require.Equal(t, http.StatusNotFound, rec.Code, "other versions must not look admitted")
+}
 
 func TestGroupFromKeys_DerivesCompactSlotGroup(t *testing.T) {
 	group, err := groupFromKeys(defaultHostPrivateKeys())
@@ -19,4 +39,37 @@ func TestGroupFromKeys_DerivesCompactSlotGroup(t *testing.T) {
 func TestSplitCSV_TrimsEmptyValues(t *testing.T) {
 	require.Equal(t, []string{"a", "b", "c"}, splitCSV(" a, b ,, c "))
 	require.Nil(t, splitCSV(""))
+}
+
+func TestSessionConfigFromEnv_MapsEscrowTimeouts(t *testing.T) {
+	t.Setenv("DEVSHARD_REFUSAL_TIMEOUT", "5")
+	t.Setenv("DEVSHARD_EXECUTION_TIMEOUT", "17")
+
+	cfg, err := sessionConfigFromEnv(3)
+	require.NoError(t, err)
+	require.Equal(t, int64(5), cfg.RefusalTimeout)
+	require.Equal(t, int64(17), cfg.ExecutionTimeout)
+}
+
+func TestBoolEnv(t *testing.T) {
+	const key = "DEVSHARD_STUB_EXECUTION_HANG"
+
+	t.Setenv(key, "on")
+	value, err := boolEnv(key, false)
+	require.NoError(t, err)
+	require.True(t, value)
+
+	t.Setenv(key, "f")
+	value, err = boolEnv(key, true)
+	require.NoError(t, err)
+	require.False(t, value)
+
+	t.Setenv(key, "")
+	value, err = boolEnv(key, true)
+	require.NoError(t, err)
+	require.True(t, value, "empty value must preserve the caller fallback")
+
+	t.Setenv(key, "invalid")
+	_, err = boolEnv(key, false)
+	require.Error(t, err)
 }

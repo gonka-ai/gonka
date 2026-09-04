@@ -156,6 +156,14 @@ func (m *ManagedStorage) Ready() bool {
 	return true
 }
 
+// FatalErrors forwards failures that require replacing the owning process.
+func (m *ManagedStorage) FatalErrors() <-chan error {
+	if reporter, ok := m.inner.(interface{ FatalErrors() <-chan error }); ok {
+		return reporter.FatalErrors()
+	}
+	return nil
+}
+
 // --- Storage delegation ---
 
 func (m *ManagedStorage) CreateSession(params CreateSessionParams) error {
@@ -219,12 +227,24 @@ func (m *ManagedStorage) InsertSealedInference(escrowID string, row InferenceRow
 	return m.inner.InsertSealedInference(escrowID, row)
 }
 
+func (m *ManagedStorage) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	return m.inner.InsertSealedInferences(escrowID, rows)
+}
+
+func (m *ManagedStorage) BulkInsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	return m.inner.BulkInsertSealedInferences(escrowID, rows)
+}
+
 func (m *ManagedStorage) GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error) {
 	return m.inner.GetSealedInference(escrowID, inferenceID)
 }
 
 func (m *ManagedStorage) DeleteSealedInferences(escrowID string) error {
 	return m.inner.DeleteSealedInferences(escrowID)
+}
+
+func (m *ManagedStorage) SealedInferenceIDs(escrowID string) (map[uint64]uint64, error) {
+	return m.inner.SealedInferenceIDs(escrowID)
 }
 
 func (m *ManagedStorage) ClearValidationObs(escrowID string) error {
@@ -237,6 +257,10 @@ func (m *ManagedStorage) RecordValidationsAppliedOnce(escrowID string, entries [
 
 func (m *ManagedStorage) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {
 	return m.inner.DrainInferenceValidationObs(escrowID, inferenceID)
+}
+
+func (m *ManagedStorage) DrainInferenceValidationObsBatch(escrowID string, inferenceIDs []uint64) error {
+	return m.inner.DrainInferenceValidationObsBatch(escrowID, inferenceIDs)
 }
 
 func (m *ManagedStorage) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {
@@ -300,20 +324,28 @@ func (m *ManagedStorage) AcquireOneStale(ctx context.Context, escrowID, instance
 	return ls.AcquireOneStale(ctx, escrowID, instanceAddr, ttl)
 }
 
-func (m *ManagedStorage) SetResult(ctx context.Context, escrowID string, inferenceID uint64, status LeaseStatus, instanceAddr string) error {
+func (m *ManagedStorage) SetResult(ctx context.Context, escrowID string, inferenceID, epochID uint64, status LeaseStatus, instanceAddr string) error {
 	ls, ok := m.inner.(LeaseStore)
 	if !ok {
 		return fmt.Errorf("storage backend does not support validation leases")
 	}
-	return ls.SetResult(ctx, escrowID, inferenceID, status, instanceAddr)
+	return ls.SetResult(ctx, escrowID, inferenceID, epochID, status, instanceAddr)
 }
 
-func (m *ManagedStorage) OwnsPendingLease(ctx context.Context, escrowID string, inferenceID uint64, instanceAddr string) (bool, error) {
+func (m *ManagedStorage) OwnsPendingLease(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) (bool, error) {
 	ls, ok := m.inner.(LeaseStore)
 	if !ok {
 		return false, fmt.Errorf("storage backend does not support validation leases")
 	}
-	return ls.OwnsPendingLease(ctx, escrowID, inferenceID, instanceAddr)
+	return ls.OwnsPendingLease(ctx, escrowID, inferenceID, epochID, instanceAddr)
+}
+
+func (m *ManagedStorage) Release(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) error {
+	ls, ok := m.inner.(LeaseStore)
+	if !ok {
+		return fmt.Errorf("storage backend does not support validation leases")
+	}
+	return ls.Release(ctx, escrowID, inferenceID, epochID, instanceAddr)
 }
 
 var _ Storage = (*ManagedStorage)(nil)

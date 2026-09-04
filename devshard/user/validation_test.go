@@ -37,6 +37,26 @@ func (v *rejectingValidator) Validate(_ context.Context, _ devshard.ValidateRequ
 	return &devshard.ValidateResult{Valid: false}, nil
 }
 
+// fetchFailureValidator is the in-process stand-in for Validator.Validate after
+// an executor-attributable payload fetch failure (Reason matches production).
+type fetchFailureValidator struct {
+	rejectingValidator
+}
+
+func (v *fetchFailureValidator) Validate(_ context.Context, _ devshard.ValidateRequest) (*devshard.ValidateResult, error) {
+	v.inflight.Add(1)
+	defer v.inflight.Add(-1)
+	v.calls.Add(1)
+	if v.delay > 0 {
+		time.Sleep(v.delay)
+	}
+	return &devshard.ValidateResult{
+		Valid:   false,
+		Reason:  "executor_payload_unavailable",
+		Details: []any{"cause", "executor /payloads returned 500"},
+	}, nil
+}
+
 // Fixed keys keep ownSeed deterministic so ShouldValidate is reproducible.
 var validationTestHostKeys = []string{
 	"1111111111111111111111111111111111111111111111111111111111111111",
@@ -111,7 +131,7 @@ func TestSession_Validation_InvalidationConverges(t *testing.T) {
 		Model:       "llama",
 		Prompt:      testutil.TestPrompt,
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 	}
 	for i := 1; i <= numInferences; i++ {
 		params.StartedAt = int64(i) * 1000
@@ -179,6 +199,119 @@ func TestSession_Validation_InvalidationConverges(t *testing.T) {
 	require.Equal(t, types.PhaseSettlement, st.Phase)
 	require.Empty(t, st.Inferences, "live map must be empty after settlement drain")
 	require.Equal(t, numInferences, len(session.StateMachine().ExportSealedNonces()))
+}
+
+// TestSession_FetchFailureVerdict_ChallengeThenInvalidate is the in-process
+// property this payload-withholding fix restores: a Valid:false verdict that
+// originated as executor payload unavailability opens Phase B and mandatory
+// votes resolve the inference to Invalidated.
+func TestSession_FetchFailureVerdict_ChallengeThenInvalidate(t *testing.T) {
+	const numHosts = 3
+	const numInferences = 8
+	const balance = 10_000_000
+	grace := uint64(numInferences + 100)
+
+	hosts := make([]*signing.Secp256k1Signer, numHosts)
+	for i := 0; i < numHosts; i++ {
+		hosts[i] = testutil.MustSignerFromHex(t, validationTestHostKeys[i])
+	}
+	user := testutil.MustSignerFromHex(t, validationTestUserKey)
+
+	group := testutil.MakeGroup(hosts)
+	config := types.SessionConfig{
+		RefusalTimeout:   60,
+		ExecutionTimeout: 1200,
+		TokenPrice:       1,
+		VoteThreshold:    1,
+		ValidationRate:   10000,
+	}
+	verifier := signing.NewSecp256k1Verifier()
+
+	validators := make([]*fetchFailureValidator, numHosts)
+	for i := range validators {
+		validators[i] = &fetchFailureValidator{rejectingValidator: rejectingValidator{
+			delay: time.Duration(50+i*80) * time.Millisecond,
+		}}
+	}
+
+	clients := make([]HostClient, numHosts)
+	for i := range hosts {
+		sm, err := state.NewStateMachine("escrow-fetch-fail", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-fetch-fail", user.Address(), config, group, balance))
+		require.NoError(t, err)
+		h, err := host.NewHost(
+			sm, hosts[i], stub.NewInferenceEngine(),
+			"escrow-fetch-fail", group, nil,
+			host.WithGrace(grace), host.WithValidator(validators[i]),
+		)
+		require.NoError(t, err)
+		h.Start()
+		t.Cleanup(h.Close)
+		clients[i] = &InProcessClient{Host: h}
+	}
+
+	userSM, err := state.NewStateMachine("escrow-fetch-fail", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-fetch-fail", user.Address(), config, group, balance))
+	require.NoError(t, err)
+	session, err := NewSession(userSM, user, "escrow-fetch-fail", group, clients, verifier)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	params := InferenceParams{
+		Model:       "llama",
+		Prompt:      testutil.TestPrompt,
+		InputLength: 100,
+		MaxTokens:   testutil.TestMaxTokens,
+	}
+	for i := 1; i <= numInferences; i++ {
+		params.StartedAt = int64(i) * 1000
+		_, err := session.SendInference(ctx, params)
+		require.NoError(t, err, "inference %d", i)
+	}
+
+	allDrained := func() bool {
+		for _, v := range validators {
+			if v.inflight.Load() != 0 {
+				return false
+			}
+		}
+		return true
+	}
+	deadline := time.Now().Add(20 * time.Second)
+	for !allDrained() {
+		require.NoError(t, session.SendPendingDiff(ctx))
+		require.False(t, time.Now().After(deadline), "validate goroutines did not drain")
+	}
+	time.Sleep(100 * time.Millisecond)
+	for i := 0; i < 2*numHosts; i++ {
+		require.NoError(t, session.SendPendingDiff(ctx))
+	}
+
+	var totalCalls uint64
+	for _, v := range validators {
+		totalCalls += v.calls.Load()
+	}
+	require.Greater(t, totalCalls, uint64(0), "fetch-failure validators never ran")
+
+	allRecords := session.StateMachine().ExportAllInferenceRecords()
+	var challenged, invalidated int
+	for _, rec := range allRecords {
+		switch rec.Status {
+		case types.StatusChallenged:
+			challenged++
+		case types.StatusInvalidated:
+			invalidated++
+		}
+	}
+	require.Greater(t, challenged+invalidated, 0,
+		"fetch-failure verdict never opened a challenge (challenged=%d invalidated=%d records=%d)",
+		challenged, invalidated, len(allRecords))
+	require.Greater(t, invalidated, 0,
+		"mandatory Phase B did not invalidate after fetch-failure challenge (challenged=%d invalidated=%d)",
+		challenged, invalidated)
+
+	require.NoError(t, session.Finalize(ctx))
+	st := session.StateMachine().SnapshotState()
+	require.Equal(t, types.PhaseSettlement, st.Phase)
+	require.Greater(t, sumHostStatsInvalid(st), uint32(0))
 }
 
 // TestSession_Validation_MultiSlotValidatorCountedOnce verifies that a host
@@ -252,7 +385,7 @@ func TestSession_Validation_MultiSlotValidatorCountedOnce(t *testing.T) {
 		Model:       "llama",
 		Prompt:      testutil.TestPrompt,
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 	}
 	for i := 1; i <= numInferences; i++ {
 		params.StartedAt = int64(i) * 1000

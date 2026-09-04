@@ -475,7 +475,7 @@ func TestTimeoutPayloadCarriesSessionID(t *testing.T) {
 		AffinityKey: "sess-A",
 	}
 
-	payload := timeoutPayload(params)
+	payload := params.Payload()
 
 	require.Equal(t, "sess-A", payload.SessionID, "a timeout re-execution must salt the same cache namespace as the first attempt")
 	require.Equal(t, params.Model, payload.Model)

@@ -1,23 +1,41 @@
 package testutil
 
 import (
+	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
+
+	"common/completionapi"
 
 	"devshard"
 	"devshard/signing"
 	"devshard/types"
 )
 
+// TestMaxTokens is the happy-path reservation used by fixtures: it sits at the executor's MinTokensFloor so payloads pass the floor guard (declared max_tokens >= floor).
+const TestMaxTokens = completionapi.MinTokensFloor
+
 var deterministicMarshal = proto.MarshalOptions{Deterministic: true}
 
-// TestPrompt is exactly 100 bytes and includes max_tokens:50 so host workload
-// checks (input_length == len(prompt), body max_tokens <= declared) pass with
-// the StartTx defaults below.
-var TestPrompt = []byte(`{"model":"llama","messages":[{"role":"user","content":"xxxxxxxxxxxxxxxxxxxxxxxxx"}],"max_tokens":50}`)
+// TestPrompt is exactly 100 bytes and embeds TestMaxTokens so host workload
+// checks (input_length == len(prompt), body max_tokens <= declared, declared
+// >= floor) pass with the StartTx defaults below.
+var TestPrompt = mustTestPrompt(TestMaxTokens)
 var TestPromptHash = mustCanonicalPromptHash(TestPrompt)
+
+func mustTestPrompt(maxTokens uint64) []byte {
+	const total = 100
+	prefix := `{"model":"llama","messages":[{"role":"user","content":"`
+	suffix := fmt.Sprintf(`"}],"max_tokens":%d}`, maxTokens)
+	n := total - len(prefix) - len(suffix)
+	if n < 1 {
+		panic("testutil: TestPrompt cannot stay 100 bytes at this MinTokensFloor")
+	}
+	return []byte(prefix + strings.Repeat("x", n) + suffix)
+}
 
 func mustCanonicalPromptHash(prompt []byte) [32]byte {
 	h, err := devshard.CanonicalPromptHash(prompt)
@@ -64,13 +82,13 @@ const TestInferenceSealGraceSeconds uint32 = 1
 // and the production default ValidationRate.
 func DefaultConfig(numHosts int) types.SessionConfig {
 	return types.NormalizeSessionConfig(types.SessionConfig{
-		RefusalTimeout:             60,
-		ExecutionTimeout:           1200,
-		TokenPrice:                 1,
-		VoteThreshold:              uint32(numHosts) / 2,
-		ValidationRate:             5000,
-		CreateDevshardFee:          0,
-		FeePerNonce:                0,
+		RefusalTimeout:            60,
+		ExecutionTimeout:          1200,
+		TokenPrice:                1,
+		VoteThreshold:             uint32(numHosts) / 2,
+		ValidationRate:            5000,
+		CreateDevshardFee:         0,
+		FeePerNonce:               0,
 		InferenceSealGraceSeconds: TestInferenceSealGraceSeconds,
 	}, numHosts)
 }
@@ -99,7 +117,13 @@ func SignProposerTx(t *testing.T, signer signing.Signer, msg proto.Message) []by
 	return sig
 }
 
-func SignExecutorReceipt(t *testing.T, signer signing.Signer, escrowID string, inferenceID uint64, promptHash []byte, model string, inputLength, maxTokens uint64, startedAt, confirmedAt int64) []byte {
+// ReceiptStamp is the optional observed_height pair on ExecutorReceiptContent.
+type ReceiptStamp struct {
+	Height uint64
+	Hash   []byte
+}
+
+func SignExecutorReceipt(t *testing.T, signer signing.Signer, escrowID string, inferenceID uint64, promptHash []byte, model string, inputLength, maxTokens uint64, startedAt, confirmedAt int64, stamp ...ReceiptStamp) []byte {
 	t.Helper()
 	content := &types.ExecutorReceiptContent{
 		InferenceId: inferenceID,
@@ -110,6 +134,10 @@ func SignExecutorReceipt(t *testing.T, signer signing.Signer, escrowID string, i
 		StartedAt:   startedAt,
 		EscrowId:    escrowID,
 		ConfirmedAt: confirmedAt,
+	}
+	if len(stamp) > 0 && len(stamp[0].Hash) > 0 {
+		content.ObservedHeight = stamp[0].Height
+		content.ObservedBlockHash = stamp[0].Hash
 	}
 	data, err := deterministicMarshal.Marshal(content)
 	require.NoError(t, err)
@@ -131,6 +159,24 @@ func SignTimeoutVote(t *testing.T, signer signing.Signer, escrowID string, infer
 	sig, err := signer.Sign(data)
 	require.NoError(t, err)
 	return &types.TimeoutVote{
+		Accept:    accept,
+		Signature: sig,
+	}
+}
+
+func SignErrorMissVote(t *testing.T, signer signing.Signer, escrowID string, inferenceID uint64, accept bool, responseHash []byte) *types.ErrorMissVote {
+	t.Helper()
+	content := &types.ErrorMissVoteContent{
+		EscrowId:     escrowID,
+		InferenceId:  inferenceID,
+		Accept:       accept,
+		ResponseHash: responseHash,
+	}
+	data, err := deterministicMarshal.Marshal(content)
+	require.NoError(t, err)
+	sig, err := signer.Sign(data)
+	require.NoError(t, err)
+	return &types.ErrorMissVote{
 		Accept:    accept,
 		Signature: sig,
 	}
@@ -183,7 +229,7 @@ func StartTx(inferenceID uint64) *types.DevshardTx {
 		PromptHash:  TestPromptHash[:],
 		Model:       "llama",
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   TestMaxTokens,
 		StartedAt:   1000,
 	}}}
 }

@@ -16,7 +16,10 @@ import (
 	"sync"
 	"time"
 
+	"devshard/accounting"
+	"devshard/logging"
 	"devshard/state"
+	"devshard/transport"
 	"devshard/types"
 	"devshard/user"
 )
@@ -25,7 +28,7 @@ var sseDoneMarker = []byte("data: [DONE]")
 
 // defaultMetaDrainTimeout is a last-resort backstop, not an active policy:
 // it must exceed every natural completion window (SecondaryWaitAfterWinner,
-// nonStreamingNoContentTimeout, nonStreamingMaxAttemptWait) so that hosts
+// StreamingAttemptHardTimeout) so that hosts
 // which are still legitimately generating after a client disconnect get to
 // finish and settle their nonce normally. Cutting a host early records it
 // as a timeout / empty stream through no fault of its own. The only thing
@@ -198,6 +201,12 @@ type Proxy struct {
 	sessionSecret           []byte
 }
 
+// detachedInferenceContext drops the client's cancellation but keeps its request id, so the
+// inference stages join to the id the client was handed instead of minting one of their own.
+func detachedInferenceContext(clientCtx context.Context) context.Context {
+	return logging.PropagateRequestID(context.Background(), clientCtx)
+}
+
 func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	ctx, _ := ensureRequestLogContext(r.Context())
 	r = r.WithContext(ctx)
@@ -235,13 +244,22 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		InputLength: uint64(len(body)),
 		MaxTokens:   req.MaxTokens,
 		StartedAt:   time.Now().Unix(),
-		Stream:      req.Stream,
 		AffinityKey: sessionToken,
 	}
 	logRequestStage(ctx, "proxy_request_started", "escrow", p.escrowID, "model", model, "stream", req.Stream, "input_tokens", params.InputLength)
 
-	// Carry the client's original logprobs intent to the response strip boundary.
-	r = r.WithContext(withLogprobClientIntent(r.Context(), logprobClientIntentFromRequest(req)))
+	if requestID, ok := requestLogFromContext(ctx); ok {
+		p.accountingRecorder().RequestStarted(p.escrowID, requestID)
+		defer p.accountingRecorder().RequestFinished(p.escrowID, requestID)
+	}
+
+	r = r.WithContext(withClientResponseIntent(r.Context(), resolveClientResponseIntent(r.Context(), req)))
+
+	if err := p.waitHeightSeed(r.Context()); err != nil {
+		logRequestStage(ctx, "proxy_height_seed_blocked", "escrow", p.escrowID, "error", err)
+		writeHeightSeedError(w, err)
+		return
+	}
 
 	if req.Stream {
 		p.handleStreaming(w, r, params)
@@ -275,7 +293,7 @@ type deferredWriter struct {
 	escrow         string
 	requestID      string
 	clientFlag     *cancelFlag
-	logprobIntent  logprobClientIntent
+	clientIntent   clientResponseIntent
 	started        bool
 	bytesWritten   int64
 	sawDone        bool
@@ -288,7 +306,8 @@ type deferredWriter struct {
 
 func newDeferredWriter(ctx context.Context, w http.ResponseWriter, escrow string, flag *cancelFlag) *deferredWriter {
 	rid, _ := requestLogFromContext(ctx)
-	return &deferredWriter{ctx: ctx, w: w, escrow: escrow, requestID: rid, clientFlag: flag, logprobIntent: logprobClientIntentFromContext(ctx)}
+	intent, _ := clientResponseIntentFromContext(ctx)
+	return &deferredWriter{ctx: ctx, w: w, escrow: escrow, requestID: rid, clientFlag: flag, clientIntent: intent}
 }
 
 func (d *deferredWriter) Write(p []byte) (int, error) {
@@ -315,7 +334,7 @@ func (d *deferredWriter) Write(p []byte) (int, error) {
 		d.w.WriteHeader(http.StatusOK)
 		d.started = true
 	}
-	rewritten := rewriteStreamingPayload(p, d.logprobIntent)
+	rewritten := rewriteStreamingPayload(p, d.clientIntent)
 	if bytes.Contains(rewritten, sseDoneMarker) {
 		d.sawDone = true
 	}
@@ -329,8 +348,10 @@ func (d *deferredWriter) Write(p []byte) (int, error) {
 				"error", err,
 			)
 		})
+		return n, err
 	}
-	return n, err
+	// The rewrite drops bytes, and a short count would read as io.ErrShortWrite upstream.
+	return len(p), nil
 }
 
 func (d *deferredWriter) Flush() {
@@ -393,7 +414,7 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 	// metaDrainTimeout (via withMetaDrain in redundancy) bounds how long
 	// upstream may run after the client is gone.
 	var doneWriteErr error
-	err := p.redundancy.RunInference(context.Background(), params, dw, flag)
+	err := p.redundancy.RunInference(detachedInferenceContext(r.Context()), params, dw, flag)
 	if flag.Gone() {
 		logRequestStage(r.Context(), "proxy_stream_client_gone",
 			"escrow", p.escrowID,
@@ -408,7 +429,6 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 			return
 		}
 		logRequestStage(r.Context(), "proxy_stream_failed", "escrow", p.escrowID, "error", err)
-		statusCode := gatewayStatusCodeForError(err)
 		var hostErr *hostApplicationError
 		if errors.As(err, &hostErr) {
 			if !dw.started {
@@ -435,7 +455,7 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 			return
 		}
 		if !dw.started {
-			writeGatewayJSONError(w, statusCode, err.Error())
+			writeGatewayError(w, err)
 			return
 		}
 		if dw.sawDone {
@@ -467,6 +487,26 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 
 // werrOrNil normalizes an error so the varargs passthrough below stays tidy.
 func werrOrNil(err error) error { return err }
+
+func (p *Proxy) waitHeightSeed(ctx context.Context) error {
+	if p == nil || p.session == nil {
+		return nil
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, user.WaitHeightSeedChatBudget)
+	defer cancel()
+	return p.session.WaitHeightSeed(waitCtx)
+}
+
+func writeHeightSeedError(w http.ResponseWriter, err error) {
+	var se *user.HeightSeedError
+	if errors.As(err, &se) {
+		w.Header().Set("Retry-After", "5")
+		w.Header().Set(transport.HeaderDevshardError, se.Code)
+		writeGatewayJSONError(w, http.StatusServiceUnavailable, se.Error())
+		return
+	}
+	writeGatewayJSONError(w, http.StatusServiceUnavailable, err.Error())
+}
 
 func writeGatewayJSONError(w http.ResponseWriter, statusCode int, message string) {
 	writeJSONPayload(w, statusCode, []byte(fmt.Sprintf(`{"error":{"message":%q}}`, message)))
@@ -549,30 +589,48 @@ func logProxyResponseFinished(ctx context.Context, escrowID, outcome string, dw 
 }
 
 func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, params user.InferenceParams) {
-	var buf bytes.Buffer
+	buf := newAggregateResponseBuffer()
+	defer func() { _ = buf.Close() }()
+
 	flag := newCancelFlag()
 	stopClientWatch := watchClientCancel(r, flag)
 	defer stopClientWatch()
 
-	err := p.redundancy.RunInference(context.Background(), params, &buf, flag)
+	err := p.redundancy.RunInference(detachedInferenceContext(r.Context()), params, buf, flag)
 	if flag.Gone() {
 		return
 	}
 	if err != nil {
-		logRequestStage(r.Context(), "proxy_request_failed", "escrow", p.escrowID, "error", err)
+		logRequestStage(r.Context(), "proxy_request_failed", "escrow", p.escrowID, "error", err,
+			"aggregate_bytes", buf.Len(), "aggregate_spilled", buf.Spilled())
 		var hostErr *hostApplicationError
 		if errors.As(err, &hostErr) {
 			writeJSONPayload(w, hostErr.statusCode(), hostErr.jsonPayload())
 			return
 		}
-		writeGatewayJSONError(w, gatewayStatusCodeForError(err), err.Error())
+		writeGatewayError(w, err)
 		return
 	}
 
-	assembled := assembleSSEChunks(buf.String())
-	assembled = filterClientInternalFields(assembled, logprobClientIntentFromContext(r.Context()))
+	src, err := buf.OpenReader()
+	if err != nil {
+		logRequestStage(r.Context(), "proxy_aggregate_read_failed", "escrow", p.escrowID, "error", err)
+		writeGatewayJSONError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	if closer, ok := src.(io.Closer); ok {
+		defer closer.Close()
+	}
+	intent, _ := clientResponseIntentFromContext(r.Context())
+	assembled := filterClientInternalFields(aggregateSSEStreamReader(src, intent), intent)
 	if rid, ok := requestLogFromContext(r.Context()); ok {
 		w.Header().Set("X-Request-Id", rid)
+	}
+	if isAggregateFoldTooLargePayload(assembled) {
+		logRequestStage(r.Context(), "proxy_aggregate_fold_too_large", "escrow", p.escrowID,
+			"aggregate_bytes", buf.Len(), "aggregate_spilled", buf.Spilled())
+		writeGatewayJSONError(w, gatewayStatusCodeForError(ErrAggregateFoldTooLarge), ErrAggregateFoldTooLarge.Error())
+		return
 	}
 	if details, ok := jsonErrorPayloadDetails(assembled); ok {
 		writeJSONPayload(w, (&hostApplicationError{details: details, payload: assembled}).statusCode(), assembled)
@@ -580,27 +638,8 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 		return
 	}
 	writeJSONPayload(w, http.StatusOK, assembled)
-	logRequestStage(r.Context(), "proxy_request_completed", "escrow", p.escrowID)
-}
-
-// assembleSSEChunks extracts the last data line from SSE output as the response.
-func assembleSSEChunks(raw string) []byte {
-	var lastData string
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := strings.TrimPrefix(line, "data: ")
-		if data == "[DONE]" {
-			continue
-		}
-		lastData = data
-	}
-	if lastData != "" {
-		return []byte(lastData)
-	}
-	return []byte(`{"error":{"message":"no response data"}}`)
+	logRequestStage(r.Context(), "proxy_request_completed", "escrow", p.escrowID,
+		"aggregate_bytes", buf.Len(), "aggregate_spilled", buf.Spilled())
 }
 
 func (p *Proxy) settlementJSON() (SettlementJSON, error) {
@@ -655,15 +694,16 @@ func (p *Proxy) handleGetFinalize(w http.ResponseWriter, r *http.Request) {
 }
 
 type statusResponse struct {
-	EscrowID             string              `json:"escrow_id"`
-	Nonce                uint64              `json:"nonce"`
-	Phase                string              `json:"phase"`
-	Balance              uint64              `json:"balance"`
-	ChainPhase           string              `json:"chain_phase,omitempty"`
-	ConfirmationPoCPhase string              `json:"confirmation_poc_phase,omitempty"`
-	RequestsBlocked      bool                `json:"requests_blocked"`
-	BlockReason          string              `json:"block_reason,omitempty"`
-	Config               statusSessionConfig `json:"config"`
+	EscrowID             string                `json:"escrow_id"`
+	Nonce                uint64                `json:"nonce"`
+	Phase                string                `json:"phase"`
+	Balance              uint64                `json:"balance"`
+	ChainPhase           string                `json:"chain_phase,omitempty"`
+	ConfirmationPoCPhase string                `json:"confirmation_poc_phase,omitempty"`
+	RequestsBlocked      bool                  `json:"requests_blocked"`
+	BlockReason          string                `json:"block_reason,omitempty"`
+	HeightSeed           user.HeightSeedStatus `json:"height_seed,omitempty"`
+	Config               statusSessionConfig   `json:"config"`
 }
 
 // statusSessionConfig is the JSON representation of session config values
@@ -843,6 +883,9 @@ func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
 		status.ConfirmationPoCPhase = snapshot.ConfirmationPoCPhase
 		status.RequestsBlocked = snapshot.RequestsBlocked
 		status.BlockReason = snapshot.BlockReason
+	}
+	if p.session != nil {
+		status.HeightSeed = p.session.HeightSeedStatus()
 	}
 	writeJSON(w, status)
 }
@@ -1029,6 +1072,13 @@ func (p *Proxy) handleCollectSignatures(w http.ResponseWriter, r *http.Request) 
 	}
 
 	writeJSON(w, resp)
+}
+
+func (p *Proxy) accountingRecorder() *accounting.Recorder {
+	if p == nil || p.redundancy == nil {
+		return nil
+	}
+	return p.redundancy.accounting
 }
 
 func (p *Proxy) handleSyncHosts(w http.ResponseWriter, r *http.Request) {

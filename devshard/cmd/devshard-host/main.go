@@ -12,12 +12,18 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
+	"common/httpguard"
+
 	devshardpkg "devshard"
 	"devshard/gossip"
+	"devshard/heightsync"
 	"devshard/host"
+	"devshard/internal/boolvalue"
+	"devshard/internal/e2econfig"
 	"devshard/observability"
 	"devshard/signing"
 	"devshard/state"
@@ -29,7 +35,7 @@ import (
 
 const (
 	defaultPort     = "8080"
-	defaultEscrowID = "escrow-1"
+	defaultEscrowID = "1"
 )
 
 func main() {
@@ -42,17 +48,37 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	srv, err := buildServer(ctx, cfg)
+	// Peer URLs are participant-controlled. Default secure; e2e/compose opt
+	// out via DEVSHARD_ALLOW_PRIVATE_ADDRESSES so Docker-internal gossip works.
+	allowPrivate, err := boolEnv("DEVSHARD_ALLOW_PRIVATE_ADDRESSES", false)
+	if err != nil {
+		log.Fatalf("DEVSHARD_ALLOW_PRIVATE_ADDRESSES: %v", err)
+	}
+	httpguard.SetAllowPrivate(allowPrivate)
+	if allowPrivate {
+		log.Printf("SSRF guard disabled: dials to private/internal addresses are allowed")
+	}
+
+	srv, gsp, err := buildServer(ctx, cfg)
 	if err != nil {
 		log.Fatalf("build server: %v", err)
+	}
+	stubInferenceHTTPStatus, hasStubInferenceHTTPStatus, err := e2econfig.IntFromEnv(e2econfig.StubInferenceHTTPStatusEnv)
+	if err != nil {
+		log.Fatalf("load %s: %v", e2econfig.StubInferenceHTTPStatusEnv, err)
+	}
+	if hasStubInferenceHTTPStatus && (stubInferenceHTTPStatus < http.StatusBadRequest || stubInferenceHTTPStatus > 599) {
+		log.Fatalf("invalid %s: must be an HTTP error status", e2econfig.StubInferenceHTTPStatusEnv)
+	}
+	stubInferenceHTTPMessage, err := e2econfig.StringFromEnv(e2econfig.StubInferenceHTTPMessageEnv)
+	if err != nil {
+		log.Fatalf("load %s: %v", e2econfig.StubInferenceHTTPMessageEnv, err)
 	}
 
 	e := echo.New()
 	e.HideBanner = true
-	e.GET("/health", func(c echo.Context) error {
-		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
-	})
-	registerServer(e.Group(devshardpkg.DefaultRoutePrefix()), srv)
+	registerLiveness(e, types.EffectiveStateRootAndProtocolVersion)
+	registerServer(e.Group(devshardpkg.DefaultRoutePrefix()), srv, gsp, stubInferenceHTTPStatus, stubInferenceHTTPMessage)
 
 	addr := ":" + *port
 	log.Printf("devshard-host listening on %s slot=%d address=%s route_prefix=%s",
@@ -62,9 +88,23 @@ func main() {
 	}
 }
 
+// registerLiveness mounts GET /{version}/healthz for the gateway catalog
+// wait (same public path as versiond / the versiond-router). GET /health
+// is the container start probe and is not catalog admission.
+func registerLiveness(e *echo.Echo, version string) {
+	ok := func(c echo.Context) error {
+		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
+	}
+	e.GET("/health", ok)
+	version = strings.Trim(strings.TrimSpace(version), "/")
+	if version != "" {
+		e.GET("/"+version+"/healthz", ok)
+	}
+}
+
 // registerServer mounts the transport handlers the same way production
 // RegisterLazySessionRoutes does, for a single pre-bound e2e host session.
-func registerServer(g *echo.Group, srv *transport.Server) {
+func registerServer(g *echo.Group, srv *transport.Server, gsp *gossip.Gossip, stubInferenceHTTPStatus int, stubInferenceHTTPMessage string) {
 	g.Use(observability.EchoMiddleware())
 	g.Use(observability.RequestIDMiddleware)
 
@@ -75,29 +115,65 @@ func registerServer(g *echo.Group, srv *transport.Server) {
 		}
 	}
 
-	g.POST("/sessions/:id/chat/completions", withAuth(true, srv.HandleInference))
+	inferenceHandler := srv.HandleInference
+	if stubInferenceHTTPStatus != 0 {
+		inferenceHandler = func(c echo.Context) error {
+			message := stubInferenceHTTPMessage
+			if message == "" {
+				message = http.StatusText(stubInferenceHTTPStatus)
+			}
+			if message == "" {
+				message = fmt.Sprintf("stub inference HTTP status %d", stubInferenceHTTPStatus)
+			}
+			return c.JSON(stubInferenceHTTPStatus, map[string]any{
+				"error": map[string]string{
+					"message": message,
+				},
+			})
+		}
+	}
+
+	g.POST("/sessions/:id/chat/completions", withAuth(true, inferenceHandler))
+	g.POST("/sessions/:id/height-sync", withAuth(false, srv.HandleHeightSync))
+	g.POST("/sessions/:id/heightsync/repair", withAuth(false, srv.HandleHeightSyncRepair))
 	g.POST("/sessions/:id/verify-timeout", withAuth(false, srv.HandleVerifyTimeout))
+	g.POST("/sessions/:id/verify-error-miss", withAuth(false, srv.HandleVerifyErrorMiss))
 	g.POST("/sessions/:id/challenge-receipt", withAuth(false, srv.HandleChallengeReceipt))
 	g.POST("/sessions/:id/gossip/nonce", withAuth(false, srv.HandleGossipNonce))
 	g.POST("/sessions/:id/gossip/txs", withAuth(false, srv.HandleGossipTxs))
 	g.GET("/sessions/:id/diffs", srv.HandleGetDiffs)
 	g.GET("/sessions/:id/mempool", srv.HandleGetMempool)
 	g.GET("/sessions/:id/signatures", srv.HandleGetSignatures)
+	g.GET("/debug/gossip", func(c echo.Context) error {
+		nonce, err := strconv.ParseUint(c.QueryParam("nonce"), 10, 64)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid 'nonce' parameter")
+		}
+		status, seen := gsp.NonceStatus(nonce)
+		return c.JSON(http.StatusOK, map[string]any{
+			"nonce":       nonce,
+			"seen":        seen,
+			"state_hash":  status.StateHash,
+			"state_sig":   status.StateSig,
+			"sender_slot": status.SlotID,
+		})
+	})
 }
 
 type hostConfig struct {
-	escrowID    string
-	hostIndex   int
-	signer      *signing.Secp256k1Signer
-	userSigner  *signing.Secp256k1Signer
-	userAddress string
-	group       []types.SlotAssignment
-	peerURLs    []string
-	dataDir     string
-	balance     uint64
-	epochID     uint64
-	tokenPrice  uint64
-	version     string
+	escrowID          string
+	hostIndex         int
+	signer            *signing.Secp256k1Signer
+	userSigner        *signing.Secp256k1Signer
+	userAddress       string
+	group             []types.SlotAssignment
+	peerURLs          []string
+	dataDir           string
+	balance           uint64
+	epochID           uint64
+	tokenPrice        uint64
+	version           string
+	stubExecutionHang bool
 }
 
 func loadConfig() (hostConfig, error) {
@@ -134,30 +210,38 @@ func loadConfig() (hostConfig, error) {
 	if len(peerURLs) != len(group) {
 		return hostConfig{}, fmt.Errorf("DEVSHARD_PEER_URLS count %d must match group size %d", len(peerURLs), len(group))
 	}
+	stubExecutionHang, err := boolEnv("DEVSHARD_STUB_EXECUTION_HANG", false)
+	if err != nil {
+		return hostConfig{}, err
+	}
 
 	return hostConfig{
-		escrowID:    envDefault("DEVSHARD_ESCROW_ID", defaultEscrowID),
-		hostIndex:   hostIndex,
-		signer:      hostSigner,
-		userSigner:  userSigner,
-		userAddress: userAddress,
-		group:       group,
-		peerURLs:    peerURLs,
-		dataDir:     envDefault("DEVSHARD_DATA_DIR", filepath.Join(os.TempDir(), "devshard-host")),
-		balance:     uintEnv("DEVSHARD_ESCROW_AMOUNT", 1_000_000),
-		epochID:     uintEnv("DEVSHARD_EPOCH_ID", 1),
-		tokenPrice:  uintEnv("DEVSHARD_TOKEN_PRICE", 1),
-		version:     envDefault("DEVSHARD_VERSION", types.EffectiveStateRootAndProtocolVersion),
+		escrowID:          envDefault("DEVSHARD_ESCROW_ID", defaultEscrowID),
+		hostIndex:         hostIndex,
+		signer:            hostSigner,
+		userSigner:        userSigner,
+		userAddress:       userAddress,
+		group:             group,
+		peerURLs:          peerURLs,
+		dataDir:           envDefault("DEVSHARD_DATA_DIR", filepath.Join(os.TempDir(), "devshard-host")),
+		balance:           uintEnv("DEVSHARD_ESCROW_AMOUNT", 1_000_000),
+		epochID:           uintEnv("DEVSHARD_EPOCH_ID", 1),
+		tokenPrice:        uintEnv("DEVSHARD_TOKEN_PRICE", 1),
+		version:           envDefault("DEVSHARD_VERSION", types.EffectiveStateRootAndProtocolVersion),
+		stubExecutionHang: stubExecutionHang,
 	}, nil
 }
 
-func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error) {
+func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, *gossip.Gossip, error) {
 	verifier := signing.NewSecp256k1Verifier()
-	sessionConfig := sessionConfigFromEnv(len(cfg.group))
+	sessionConfig, err := sessionConfigFromEnv(len(cfg.group))
+	if err != nil {
+		return nil, nil, err
+	}
 
 	store, err := storage.NewStorage(ctx, cfg.dataDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	sm, err := state.NewStateMachine(
@@ -172,7 +256,7 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error)
 	)
 	if err != nil {
 		_ = store.Close()
-		return nil, err
+		return nil, nil, err
 	}
 
 	if err := store.CreateSession(storage.CreateSessionParams{
@@ -184,16 +268,40 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error)
 		Group:          cfg.group,
 		InitialBalance: cfg.balance,
 	}); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := recoverHostState(store, sm, cfg.escrowID); err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+
+	inferenceEngine, err := stubInferenceEngineFromEnv()
+	if err != nil {
+		return nil, nil, err
+	}
+	if stubEngine, ok := inferenceEngine.(*stub.InferenceEngine); ok {
+		// This E2E-only switch simulates an executor that acknowledged the work
+		// with a receipt but never completes model execution.
+		stubEngine.BlockUntilContextDone = cfg.stubExecutionHang
+	}
+	sseErrorMessage, err := e2econfig.StringFromEnv(e2econfig.StubInferenceSSEErrorEnv)
+	if err != nil {
+		return nil, nil, err
+	}
+	if sseErrorMessage != "" {
+		inferenceEngine = sseErrorInferenceEngine{message: sseErrorMessage}
+	}
+	inferenceDelay, err := e2econfig.DurationMillisFromEnv(e2econfig.StubInferenceDelayMillisEnv)
+	if err != nil {
+		return nil, nil, err
+	}
+	if inferenceDelay > 0 {
+		inferenceEngine = delayedInferenceEngine{inner: inferenceEngine, delay: inferenceDelay}
 	}
 
 	h, err := host.NewHost(
 		sm,
 		cfg.signer,
-		stub.NewInferenceEngine(),
+		inferenceEngine,
 		cfg.escrowID,
 		cfg.group,
 		nil,
@@ -203,13 +311,21 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error)
 		host.WithValidator(stub.NewValidationEngine()),
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	h.Start()
 
-	srv, err := transport.NewServer(h, store, verifier, cfg.userAddress)
+	serverOptions := []transport.ServerOption{}
+	receiptDelay, err := e2econfig.DurationMillisFromEnv(e2econfig.ReceiptDelayMillisEnv)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
+	}
+	if receiptDelay > 0 {
+		serverOptions = append(serverOptions, transport.WithReceiptDelay(receiptDelay))
+	}
+	srv, err := transport.NewServer(h, store, verifier, cfg.userAddress, serverOptions...)
+	if err != nil {
+		return nil, nil, err
 	}
 
 	userPeers := make(map[int]*transport.HTTPClient, len(cfg.peerURLs))
@@ -221,9 +337,10 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error)
 		}
 	}
 	srv.SetPeerClients(userPeers)
-	srv.SetGossip(gossip.NewGossip(cfg.escrowID, uint32(cfg.hostIndex), gossipPeers, h.HostMempool(), gossip.WithSigAccumulator(h)))
+	gsp := gossip.NewGossip(cfg.escrowID, uint32(cfg.hostIndex), gossipPeers, h.HostMempool(), gossip.WithSigAccumulator(h))
+	srv.SetGossip(gsp)
 
-	return srv, nil
+	return srv, gsp, nil
 }
 
 func recoverHostState(store storage.Storage, sm *state.StateMachine, escrowID string) error {
@@ -237,11 +354,22 @@ func recoverHostState(store storage.Storage, sm *state.StateMachine, escrowID st
 
 	replayFrom := uint64(1)
 	if snapNonce, snapData, snapErr := store.LoadSnapshot(escrowID); snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce {
-		snapState, err := host.UnmarshalStateSnapshot(snapData)
+		snapState, _, _, floorProto, err := host.UnmarshalStateSnapshotWithCommitted(snapData)
 		if err != nil {
 			return fmt.Errorf("unmarshal snapshot nonce %d: %w", snapNonce, err)
 		}
-		sm.RestoreState(snapState)
+		// A rejected blob degrades to a journal replay; if that cannot run
+		// either, RestoreStateWithFloor fails closed rather than serving L0
+		// from a floor we could not verify.
+		floor, floorErr := heightsync.FloorIndexFromProto(heightsync.FloorConfig{}, floorProto)
+		if floorErr != nil {
+			log.Printf("recover_host escrow=%s snapshot_nonce=%d floor_blob_rejected=%v (rebuilding from diffs)",
+				escrowID, snapNonce, floorErr)
+			floor = nil
+		}
+		if err := sm.RestoreStateWithFloor(snapState, floor); err != nil {
+			return fmt.Errorf("restore snapshot nonce %d: %w", snapNonce, err)
+		}
 		replayFrom = snapNonce + 1
 	} else if snapErr != nil && !errors.Is(snapErr, storage.ErrSnapshotNotFound) {
 		return fmt.Errorf("load snapshot: %w", snapErr)
@@ -268,10 +396,41 @@ func recoverHostState(store storage.Storage, sm *state.StateMachine, escrowID st
 	return nil
 }
 
+type delayedInferenceEngine struct {
+	inner devshardpkg.InferenceEngine
+	delay time.Duration
+}
+
+func (e delayedInferenceEngine) Execute(ctx context.Context, req devshardpkg.ExecuteRequest) (*devshardpkg.ExecuteResult, error) {
+	timer := time.NewTimer(e.delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-timer.C:
+		return e.inner.Execute(ctx, req)
+	}
+}
+
+type sseErrorInferenceEngine struct {
+	message string
+}
+
+func (e sseErrorInferenceEngine) Execute(_ context.Context, req devshardpkg.ExecuteRequest) (*devshardpkg.ExecuteResult, error) {
+	if req.ResponseWriter != nil {
+		fmt.Fprintf(req.ResponseWriter, "data: {\"error\":{\"code\":400,\"message\":%s,\"type\":\"BadRequestError\"}}\n\n", strconv.Quote(e.message))
+		if rw, ok := req.ResponseWriter.(http.Flusher); ok {
+			rw.Flush()
+		}
+	}
+	return nil, errors.New(e.message)
+}
+
 // sessionConfigFromEnv mirrors bridge.SessionConfigAtBind so e2e hosts stay
 // aligned with devshardctl when escrow params come from mock-chain gRPC.
-func sessionConfigFromEnv(groupSize int) types.SessionConfig {
-	return types.SessionConfigFromEscrow(groupSize, types.EscrowSessionFields{
+func sessionConfigFromEnv(groupSize int) (types.SessionConfig, error) {
+	cfg := types.SessionConfigFromEscrow(groupSize, types.EscrowSessionFields{
 		TokenPrice:                uintEnv("DEVSHARD_TOKEN_PRICE", 1),
 		CreateDevshardFee:         uintEnv("DEVSHARD_CREATE_DEVSHARD_FEE", 0),
 		FeePerNonce:               uintEnv("DEVSHARD_FEE_PER_NONCE", 0),
@@ -280,7 +439,15 @@ func sessionConfigFromEnv(groupSize int) types.SessionConfig {
 		AutoSealEveryNNonces:      uint32(uintEnv("DEVSHARD_AUTO_SEAL_EVERY_N_NONCES", 0)),
 		ValidationRate:            uint32(uintEnv("DEVSHARD_VALIDATION_RATE", 0)),
 		VoteThresholdFactor:       uint32(uintEnv("DEVSHARD_VOTE_THRESHOLD_FACTOR", 0)),
+		RefusalTimeout:            int64(uintEnv("DEVSHARD_REFUSAL_TIMEOUT", 0)),
+		ExecutionTimeout:          int64(uintEnv("DEVSHARD_EXECUTION_TIMEOUT", 0)),
 	})
+	overrides, err := e2econfig.SessionTimeoutOverridesFromEnv()
+	if err != nil {
+		return types.SessionConfig{}, err
+	}
+	cfg = overrides.Apply(cfg)
+	return types.NormalizeSessionConfig(cfg, groupSize), nil
 }
 
 func groupFromKeys(keys []string) ([]types.SlotAssignment, error) {
@@ -327,6 +494,18 @@ func uintEnv(key string, fallback uint64) uint64 {
 		log.Fatalf("invalid %s: %v", key, err)
 	}
 	return value
+}
+
+func boolEnv(key string, fallback bool) (bool, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := boolvalue.Parse(raw)
+	if err != nil {
+		return false, fmt.Errorf("parse %s: %w", key, err)
+	}
+	return value, nil
 }
 
 func defaultHostPrivateKeys() []string {

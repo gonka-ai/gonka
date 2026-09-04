@@ -16,5 +16,7 @@ func SessionConfigAtBind(groupSize int, escrow *EscrowInfo) types.SessionConfig 
 		AutoSealEveryNNonces:      escrow.AutoSealEveryNNonces,
 		ValidationRate:            escrow.ValidationRate,
 		VoteThresholdFactor:       escrow.VoteThresholdFactor,
+		RefusalTimeout:            escrow.RefusalTimeout,
+		ExecutionTimeout:          escrow.ExecutionTimeout,
 	})
 }
