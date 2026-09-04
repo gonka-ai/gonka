@@ -146,6 +146,7 @@ GET /devshard/stats/shards/{escrow_id}
 GET /devshard/metrics
 GET /devshard/healthz                 # versiond supervisor (not a child)
 GET /devshard/{version}/healthz       # that child's healthz
+GET /devshard/{version}/clock          # that child's clock (host-ping RTT/clock); not rewritten
 ```
 
 | Client URL (legacy, still works) | Internal route to versiond |
@@ -156,6 +157,7 @@ GET /devshard/{version}/healthz       # that child's healthz
 | `GET /devshard/{version}/stats/shards…` | `/devshard/stats/shards…` |
 | `GET /devshard/{version}/metrics` | `/devshard/metrics` |
 | `GET /devshard/{version}/healthz` | **not rewritten** — proxied as `/{version}/healthz` to that child |
+| `GET /devshard/{version}/clock` | **not rewritten** — proxied as `/{version}/clock` to that child |
 
 Protocol traffic stays versioned: `POST …/chat/completions`, gossip, challenge-receipt, and `GET …/payloads` are **not** rewritten.
 

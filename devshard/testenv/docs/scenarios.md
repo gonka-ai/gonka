@@ -41,6 +41,7 @@ make citest-versiond-host-evacuation
 make citest-versiond-warm-cutover  # v5 warm-cutover boot + overlap swap
 make citest-escrow-longpoll       # escrow long-poll warm (rebuilds devshardd)
 make citest-adversarial           # Phase 9 A1–A5 (A5 is 3-host)
+make citest-host-ping             # gateway host-ping e2e (rebuilds devshardd)
 ```
 
 Or run a single scenario:
@@ -84,6 +85,7 @@ picked up automatically (no workflow edit). For a local sequential subset, use
 | **Versiond warm cutover** | v5 boot serves while recovery drains; overlap swap waits for `recovery_complete` then publishes | `TestVersiondWarmCutoverBoot`, `TestVersiondWarmCutoverOverlapWaitsThenServes` |
 | **Versiond host evacuation** | Router withdrawal, SSE completion, survivor recovery and readiness-gated rejoin | `TestVersiondHostEvacuation` |
 | **Escrow long-poll warm** | DAPI escrow-created host event → devshardd `escrow_cache` prefetch → first inference binds from cache with the live escrow query faulted | `TestEscrowLongPollWarmWithoutInferenceNode` |
+| **Host ping** | Gateway host-ping target set + metrics (unused → chat → ping tier → deactivate); kill switch; probe outage does not quarantine | `TestHostPing`, `TestHostPingKillSwitch` |
 
 Source files under `devshard/testenv/citest/` use the same behavior-oriented
 names. Versiond failover and restart persistence intentionally remain separate

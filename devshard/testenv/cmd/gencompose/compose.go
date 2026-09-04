@@ -270,6 +270,11 @@ services:
       # Hosts are compose service names resolving to private IPs; see versiond.
       DEVSHARD_ALLOW_PRIVATE_ADDRESSES: "true"
       GATEWAY_MAX_TOKENS_CAP: "4096"
+      # Host ping (gateway → used hosts). On by default; observability only.
+      DEVSHARD_GATEWAY_HOST_PING_DISABLED: "false"
+      DEVSHARD_GATEWAY_HOST_PING_INTERVAL: "15s"
+      DEVSHARD_GATEWAY_HOST_PING_TIMEOUT: "2s"
+      DEVSHARD_GATEWAY_HOST_PING_CONCURRENCY: "8"
     volumes:
       - ./data/devshardctl:/var/lib/devshardctl
     ports:

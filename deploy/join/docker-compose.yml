@@ -72,6 +72,9 @@ services:
       - DAPI_API__ADMIN_SERVER_PORT=9200
       - DAPI_API__NODE_MANAGER_GRPC_PORT=${NODE_MANAGER_GRPC_PORT:-9400}
       - DAPI_API__NODE_MANAGER_LOCK_TTL_SECONDS=${NODE_MANAGER_LOCK_TTL_SECONDS:-1200}
+      # ML-node ping job (dapi → broker inventory /readyz, later /api/v1/clock).
+      # Observability only. true stops the job; interval/timeout/concurrency are not env-wired (15s/2s/8).
+      - DAPI_API__MLNODE_PING_DISABLED=${DAPI_API__MLNODE_PING_DISABLED:-false}
       # Optional OpenTelemetry configuration
       - DAPI_OTEL_ENABLED=${DAPI_OTEL_ENABLED:-false}
       - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
