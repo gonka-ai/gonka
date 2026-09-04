@@ -76,6 +76,12 @@ func (m *ManagedStorage) observe(epochID uint64) {
 	}
 }
 
+// ObserveEpoch advances the prune horizon from an external epoch clock
+// (devshardd wires this to runtime-config OnEpochChange).
+func (m *ManagedStorage) ObserveEpoch(epochID uint64) {
+	m.observe(epochID)
+}
+
 // CurrentEpochID returns the epoch observed by the managed pruner. It is used
 // only for temporary payload fallback during epoch-0 migration.
 func (m *ManagedStorage) CurrentEpochID() uint64 {
@@ -83,6 +89,20 @@ func (m *ManagedStorage) CurrentEpochID() uint64 {
 		m.observe(m.epochs.CurrentEpochID())
 	}
 	return m.maxObservedEpoch.Load()
+}
+
+// PruneCutoff returns the exclusive epoch lower bound for retention: every
+// epoch < cutoff is pruneable. Returns 0 when not enough epochs have been
+// observed yet. HostManager uses the same value to EvictBefore in-memory sessions.
+func (m *ManagedStorage) PruneCutoff() uint64 {
+	if m.epochs != nil {
+		m.observe(m.epochs.CurrentEpochID())
+	}
+	maxE := m.maxObservedEpoch.Load()
+	if maxE+1 <= m.retain {
+		return 0
+	}
+	return maxE + 1 - m.retain
 }
 
 // Start runs a single catch-up prune after recovery. Epoch transitions must
@@ -107,14 +127,11 @@ func (m *ManagedStorage) PruneOnceAsync(ctx context.Context) {
 // PruneOnce runs a single retention pass. Exported so tests and epoch hooks can
 // drive pruning without a background loop.
 func (m *ManagedStorage) PruneOnce(_ context.Context) {
-	if m.epochs != nil {
-		m.observe(m.epochs.CurrentEpochID())
-	}
-	maxE := m.maxObservedEpoch.Load()
-	if maxE+1 <= m.retain {
+	cutoff := m.PruneCutoff()
+	if cutoff == 0 {
 		return // not enough epochs yet
 	}
-	cutoff := maxE + 1 - m.retain // every epoch < cutoff is pruneable
+	maxE := m.maxObservedEpoch.Load()
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -219,12 +236,24 @@ func (m *ManagedStorage) InsertSealedInference(escrowID string, row InferenceRow
 	return m.inner.InsertSealedInference(escrowID, row)
 }
 
+func (m *ManagedStorage) InsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	return m.inner.InsertSealedInferences(escrowID, rows)
+}
+
+func (m *ManagedStorage) BulkInsertSealedInferences(escrowID string, rows []InferenceRow) error {
+	return m.inner.BulkInsertSealedInferences(escrowID, rows)
+}
+
 func (m *ManagedStorage) GetSealedInference(escrowID string, inferenceID uint64) (InferenceRow, bool, error) {
 	return m.inner.GetSealedInference(escrowID, inferenceID)
 }
 
 func (m *ManagedStorage) DeleteSealedInferences(escrowID string) error {
 	return m.inner.DeleteSealedInferences(escrowID)
+}
+
+func (m *ManagedStorage) SealedInferenceIDs(escrowID string) (map[uint64]uint64, error) {
+	return m.inner.SealedInferenceIDs(escrowID)
 }
 
 func (m *ManagedStorage) ClearValidationObs(escrowID string) error {
@@ -237,6 +266,10 @@ func (m *ManagedStorage) RecordValidationsAppliedOnce(escrowID string, entries [
 
 func (m *ManagedStorage) DrainInferenceValidationObs(escrowID string, inferenceID uint64) error {
 	return m.inner.DrainInferenceValidationObs(escrowID, inferenceID)
+}
+
+func (m *ManagedStorage) DrainInferenceValidationObsBatch(escrowID string, inferenceIDs []uint64) error {
+	return m.inner.DrainInferenceValidationObsBatch(escrowID, inferenceIDs)
 }
 
 func (m *ManagedStorage) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {
