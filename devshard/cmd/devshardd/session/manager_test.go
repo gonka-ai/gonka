@@ -572,7 +572,7 @@ func TestRecoverSessions_DoesNotReviveChainSettledEscrow(t *testing.T) {
 	_, _, hostSigner := createStoredSession(t, store, "1", 7, 1)
 
 	br := &mockBridge{escrow: &bridge.EscrowInfo{EscrowID: "1", Settled: true}}
-	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 
 	require.NoError(t, mgr.RecoverSessions())
 
@@ -596,7 +596,7 @@ func TestRecoverSessions_HungChainDoesNotBlockStartup(t *testing.T) {
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
 	br := &blockingBridge{mockBridge: mockBridge{escrow: &bridge.EscrowInfo{EscrowID: "1", Settled: true}}, release: release}
-	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 
 	done := make(chan error, 1)
 	go func() { done <- mgr.RecoverSessions() }()
@@ -618,7 +618,7 @@ func TestRecoverSessions_RecoversWhenChainUnreachable(t *testing.T) {
 	_, _, hostSigner := createStoredSession(t, store, "1", 7, 1)
 
 	br := &mockBridge{getEscrowErr: bridge.ErrChainUnavailable}
-	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil))
 
 	require.NoError(t, mgr.RecoverSessions())
 
