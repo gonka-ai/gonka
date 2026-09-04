@@ -12,6 +12,7 @@ import (
 	"common/chainoracle/blocks"
 	cmtproto "github.com/cometbft/cometbft/proto/tendermint/types"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 
@@ -88,7 +89,7 @@ func TestDirectChainOracle_PrefersGRPC_FallsBackToRPC(t *testing.T) {
 
 func TestRPCFetcher_ParsesCometJSON(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/block", r.URL.Path)
+		assert.Equal(t, "/block", r.URL.Path)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"result": map[string]any{
 				"block_id": map[string]any{"hash": "aabbccdd"},

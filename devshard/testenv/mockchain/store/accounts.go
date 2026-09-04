@@ -42,17 +42,17 @@ func (s *Store) AllocateEscrowID() uint64 {
 }
 
 func (s *Store) reinitEscrowCounterLocked() {
-	var max uint64
+	var maximum uint64
 	for id := range s.Escrows {
-		if id > max {
-			max = id
+		if id > maximum {
+			maximum = id
 		}
 	}
-	if max == 0 {
+	if maximum == 0 {
 		s.nextEscrowID = 1
 		return
 	}
-	s.nextEscrowID = max + 1
+	s.nextEscrowID = maximum + 1
 }
 
 func cloneAccountMap(in map[string]*Account) map[string]*Account {

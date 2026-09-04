@@ -118,7 +118,7 @@ func New(cfg Config) (*Service, error) {
 		if addr == "" {
 			return nil, errors.New("standalone: either Listener or Addr must be set")
 		}
-		l, err := net.Listen("tcp", addr)
+		l, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", addr)
 		if err != nil {
 			return nil, fmt.Errorf("standalone: listen %s: %w", addr, err)
 		}

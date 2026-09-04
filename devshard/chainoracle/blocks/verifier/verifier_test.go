@@ -293,6 +293,5 @@ func TestVerifier_RejectsDuplicateSignatures(t *testing.T) {
 	h := signedHeader(t, "gonka-test", 1, []*signing.Secp256k1Signer{s, s})
 	err = v.Verify(h, 0)
 	require.Error(t, err)
-	require.ErrorIs(t, err, err) // keep linter happy
 	require.Contains(t, err.Error(), "duplicate")
 }

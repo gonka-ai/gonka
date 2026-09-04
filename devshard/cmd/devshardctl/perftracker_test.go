@@ -29,7 +29,6 @@ func TestParticipantPerfWindowUsesDeterministicJitter(t *testing.T) {
 	key := "gonka1participant"
 	now := time.Unix(3_600, 0)
 	windowStart := participantPerfWindowStart(key, now)
-	require.Equal(t, participantPerfWindowOffset(key), participantPerfWindowOffset(key))
 	require.Equal(t, windowStart, participantPerfWindowStart(key, now))
 
 	perf := NewPerfTracker(nil)

@@ -53,6 +53,9 @@ linters:
       # disabled the modernizer by default too (golang/go#77581).
       disable:
         - fmtappendf
+    exhaustive:
+      # A switch with a default has an answer for a member nobody has added yet; one without does not.
+      default-signifies-exhaustive: true
     gosec:
       excludes:
         # Deterministic paths need math/rand, and cosmos Int conversions are checked by the SDK.
@@ -87,10 +90,12 @@ linters:
         - -ST1021
         - -ST1022
     testifylint:
-      # encoded-compare turns an exact-string assertion into a semantic one; these tests are about
-      # how fragments concatenate, and JSONEq would pass on a differently spaced assembly.
+      # Both checks trade an exact assertion for an approximate one. encoded-compare rewrites the SSE
+      # assembly tests, which are about how fragments concatenate; float-compare rewrites gauges and
+      # parameter bounds that are exact by construction, and this code has to stay deterministic.
       disable:
         - encoded-compare
+        - float-compare
     revive:
       rules:
         - name: var-naming
@@ -122,7 +127,12 @@ linters:
       # The stand opens files and shells out by construction, and a test that hangs fails rather than
       # holding a socket open; both rules are about what the running service exposes.
       - path: (_test\.go|/testenv/|/e2e/)
-        linters: [gosec, noctx]
+        linters: [gosec, noctx, contextcheck]
+      # database/sql without a Context is 126 of noctx's findings and a separate change: the storage
+      # layer has no context to thread yet. The HTTP and listener cases, which is what the rule is
+      # about on a network service, are enforced.
+      - text: 'must not be called\. use \(\*database/sql'
+        linters: [noctx]
       # Cosmos modules register their codecs from init(); that is the framework's shape, not ours.
       - path: (^|/)x/
         linters: [gochecknoinits]

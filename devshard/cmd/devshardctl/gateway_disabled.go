@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 )
@@ -46,9 +47,11 @@ func writeDisabledRedirect(w http.ResponseWriter, disabled GatewayDisabledSettin
 	disabled = disabled.WithDefaults()
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusPermanentRedirect)
-	_ = json.NewEncoder(w).Encode(map[string]any{
+	if err := json.NewEncoder(w).Encode(map[string]any{
 		"status":  http.StatusPermanentRedirect,
 		"message": disabled.Message,
 		"new_url": disabled.NewURL,
-	})
+	}); err != nil {
+		log.Printf("gateway disabled redirect encode failed: %v", err)
+	}
 }

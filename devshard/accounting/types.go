@@ -386,8 +386,9 @@ func TimeoutReasonFromString(outcome TimeoutOutcome, reason string) TimeoutReaso
 	switch outcome {
 	case TimeoutSkipped, TimeoutVoteCollectionFailed, TimeoutInsufficientVotes, TimeoutDiffSendFailed:
 		return TimeoutReasonUnknown
+	default:
+		return ""
 	}
-	return ""
 }
 
 // FailureOriginFromDetail attributes a failure. A named reason is settled first so one that merely

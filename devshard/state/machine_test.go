@@ -459,6 +459,7 @@ func TestApplyDiff_PostTimeoutRecoveryDoesNotReviveInference(t *testing.T) {
 		{
 			name: "late confirm start",
 			tx: func(t *testing.T, hosts []*signing.Secp256k1Signer) *types.DevshardTx {
+				t.Helper()
 				execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 1000)
 				return txConfirm(&types.MsgConfirmStart{InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000})
 			},
@@ -466,6 +467,7 @@ func TestApplyDiff_PostTimeoutRecoveryDoesNotReviveInference(t *testing.T) {
 		{
 			name: "late finish inference",
 			tx: func(t *testing.T, hosts []*signing.Secp256k1Signer) *types.DevshardTx {
+				t.Helper()
 				finishMsg := &types.MsgFinishInference{
 					InferenceId: 1, ResponseHash: []byte("response"),
 					InputTokens: 80, OutputTokens: 40, ExecutorSlot: 1,
@@ -1031,6 +1033,8 @@ func TestApplyDiff_FullLifecycle(t *testing.T) {
 			validated++
 		case types.StatusInvalidated:
 			invalidated++
+		default:
+			// The remaining statuses are not counted by this assertion.
 		}
 	}
 	require.Equal(t, 6, finished)

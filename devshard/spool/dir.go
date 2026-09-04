@@ -267,13 +267,13 @@ func (d *Dir) Stats() DirStats {
 	}
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	max, cur := d.files.Stats()
+	maximum, cur := d.files.Stats()
 	return DirStats{
 		Enabled:      d.enabled,
 		Path:         d.path,
 		Prefix:       d.prefix,
 		FilesOpen:    cur,
-		FilesMax:     max,
+		FilesMax:     maximum,
 		BytesWritten: d.bytesWritten.Load(),
 		SweepCount:   d.sweepCount,
 	}
@@ -330,15 +330,15 @@ func (d *Dir) Snapshot() Config {
 	}
 	d.mu.RLock()
 	defer d.mu.RUnlock()
-	max, _ := d.files.Stats()
+	maximum, _ := d.files.Stats()
 	return Config{
 		Path:           d.path,
 		Prefix:         d.prefix,
 		KeepNamed:      d.keepNamed,
-		MaxFiles:       max,
+		MaxFiles:       maximum,
 		MaxFileBytes:   d.maxFileBytes,
 		WriteBuffer:    d.writeBuffer,
 		Files:          d.files,
-		AllowUnlimited: max == 0 || d.maxFileBytes == 0,
+		AllowUnlimited: maximum == 0 || d.maxFileBytes == 0,
 	}
 }

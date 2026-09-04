@@ -244,13 +244,13 @@ func MaxTopLogprobsWidth(payload map[string]any) int {
 		return 0
 	}
 	content, _ := lp["content"].([]any)
-	max := 0
+	maximum := 0
 	for _, e := range content {
 		entry, _ := e.(map[string]any)
 		tops, _ := entry["top_logprobs"].([]any)
-		if len(tops) > max {
-			max = len(tops)
+		if len(tops) > maximum {
+			maximum = len(tops)
 		}
 	}
-	return max
+	return maximum
 }

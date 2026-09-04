@@ -21,7 +21,8 @@ func TestAdminface_ParamsAndEpoch(t *testing.T) {
 	t.Cleanup(ts.Close)
 
 	maxNonce := uint32(555)
-	body, _ := json.Marshal(adminface.ParamsRequest{MaxNonce: &maxNonce})
+	body, err := json.Marshal(adminface.ParamsRequest{MaxNonce: &maxNonce})
+	require.NoError(t, err)
 	resp, err := http.Post(ts.URL+"/testenv/params", "application/json", bytes.NewReader(body))
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)

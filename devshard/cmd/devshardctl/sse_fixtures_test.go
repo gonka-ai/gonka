@@ -411,8 +411,8 @@ func saveClassifyCaps() func() {
 	}
 }
 
-func mkRaceWriterInflight(t testing.TB) *inflight {
-	t.Helper()
+func mkRaceWriterInflight(tb testing.TB) *inflight {
+	tb.Helper()
 	inf := &inflight{
 		hostID:       "fixture-host",
 		escrowID:     "fixture-escrow",
@@ -425,8 +425,8 @@ func mkRaceWriterInflight(t testing.TB) *inflight {
 	return inf
 }
 
-func mkRaceWriter(t testing.TB, inf *inflight) *raceWriter {
-	t.Helper()
+func mkRaceWriter(tb testing.TB, inf *inflight) *raceWriter {
+	tb.Helper()
 	ctx := context.Background()
 	var sink bytes.Buffer
 	rg := newRaceGroup(ctx, ctx, inf.escrowID, &sink)

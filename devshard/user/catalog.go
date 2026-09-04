@@ -101,7 +101,7 @@ func probeRouterCatalog(client *http.Client, urls []string) catalogProbe {
 }
 
 func httpStatus(client *http.Client, rawURL string) (int, error) {
-	resp, err := client.Get(rawURL)
+	resp, err := client.Get(rawURL) //nolint:noctx // the client bounds the call at 5s; a context here would only add cancellation.
 	if err != nil {
 		return 0, err
 	}

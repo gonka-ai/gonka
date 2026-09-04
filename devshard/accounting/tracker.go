@@ -630,6 +630,8 @@ func (e *escrowState) recordCommittedDiff(diff types.Diff, verdicts []VerdictRec
 			e.closeChallenge(verdict.Nonce, verdict.Slot)
 		case ProtocolInvalidated:
 			e.recordInvalid(verdict.Nonce, verdict.Slot)
+		default:
+			// The remaining kinds are recorded by appendProtocolEvent above and hold no challenge state.
 		}
 	}
 }
@@ -1000,6 +1002,8 @@ func normalizeFailureOrigin(origin FailureOrigin, detail string) FailureOrigin {
 	switch origin {
 	case FailureHostResponse, FailureGatewayPolicy, FailureClient:
 		return origin
+	default:
+		// Anything else is classified from the detail below.
 	}
 	switch {
 	case detail == "context_canceled" || strings.Contains(detail, "client"):

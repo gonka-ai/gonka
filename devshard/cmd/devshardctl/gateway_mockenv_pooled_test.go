@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -17,8 +18,8 @@ func TestGatewayMockEnvPooledChatRoutesByModel(t *testing.T) {
 		model:  "Qwen/Test",
 		active: true,
 		handler: func(w http.ResponseWriter, r *http.Request) {
-			require.Equal(t, "/v1/chat/completions", r.URL.Path)
-			require.Contains(t, readRequestBodyForTest(t, r), `"model":"Qwen/Test"`)
+			assert.Equal(t, "/v1/chat/completions", r.URL.Path)
+			assert.Contains(t, readRequestBodyForTest(t, r), `"model":"Qwen/Test"`)
 			writeMockenvChatJSON(w, "11", "Qwen/Test")
 		},
 	}
@@ -113,7 +114,7 @@ func TestGatewayMockEnvPooledChatCacheHitSkipsRuntime(t *testing.T) {
 		active: true,
 	}
 	rt.handler = func(w http.ResponseWriter, r *http.Request) {
-		require.EqualValues(t, 1, rt.calls.Load(), "cache hit should skip repeated pooled runtime call")
+		assert.EqualValues(t, 1, rt.calls.Load(), "cache hit should skip repeated pooled runtime call")
 		writeMockenvChatJSON(w, "12", "Qwen/Test")
 	}
 	env := newGatewayMockEnv(t, []*gatewayMockRuntime{rt})
@@ -252,7 +253,7 @@ func TestGatewayMockEnvPooledChatUsesDefaultModel(t *testing.T) {
 		active: true,
 		handler: func(w http.ResponseWriter, r *http.Request) {
 			body := readRequestBodyForTest(t, r)
-			require.NotContains(t, body, `"model"`)
+			assert.NotContains(t, body, `"model"`)
 			writeMockenvChatJSON(w, "12", "Qwen/Test")
 		},
 	}
@@ -275,7 +276,7 @@ func TestGatewayMockEnvPooledChatMissingModelEnforcesDefaultModelAccess(t *testi
 		model:  "Qwen/Test",
 		active: true,
 		handler: func(w http.ResponseWriter, r *http.Request) {
-			require.NotContains(t, readRequestBodyForTest(t, r), `"model"`)
+			assert.NotContains(t, readRequestBodyForTest(t, r), `"model"`)
 			writeMockenvChatJSON(w, "12", "Qwen/Test")
 		},
 	}
@@ -328,7 +329,7 @@ func TestGatewayMockEnvStreamingChatPassthrough(t *testing.T) {
 		model:  "Qwen/Test",
 		active: true,
 		handler: func(w http.ResponseWriter, r *http.Request) {
-			require.Contains(t, readRequestBodyForTest(t, r), `"stream":true`)
+			assert.Contains(t, readRequestBodyForTest(t, r), `"stream":true`)
 			writeMockenvChatSSE(w, "12", "Qwen/Test")
 		},
 	}

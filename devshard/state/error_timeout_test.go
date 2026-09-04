@@ -4,6 +4,7 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"devshard/internal/testutil"
@@ -456,7 +457,7 @@ func TestVerifyFinishProposerSig_ConcurrentWithApplyDiff(t *testing.T) {
 				InputLength: 1, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 			})})
 			_, err := sm.ApplyDiff(diff)
-			require.NoError(t, err)
+			assert.NoError(t, err)
 		}
 	}()
 	wg.Wait()

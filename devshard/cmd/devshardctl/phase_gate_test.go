@@ -11,12 +11,13 @@ import (
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"github.com/cosmos/gogoproto/proto"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestChainPhaseGateFetchEpochInfoParsesConfirmationPoC(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/v1/epochs/latest", r.URL.Path)
+		assert.Equal(t, "/v1/epochs/latest", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"block_height":"150",
@@ -126,7 +127,7 @@ func TestChainPhaseGateDerivesEpochSwitchFromNextSetNewValidatorsAfterCurrentSwi
 
 func TestChainPhaseGateFetchEpochInfoParsesNumericConfirmationPoCGracePeriod(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/v1/epochs/latest", r.URL.Path)
+		assert.Equal(t, "/v1/epochs/latest", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"block_height":"151",
@@ -158,7 +159,7 @@ func TestChainPhaseGateFetchEpochInfoParsesNumericConfirmationPoCGracePeriod(t *
 
 func TestChainPhaseGateFetchEpochInfoParsesNumericConfirmationPoCCompleted(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/v1/epochs/latest", r.URL.Path)
+		assert.Equal(t, "/v1/epochs/latest", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"block_height":"152",
@@ -189,7 +190,7 @@ func TestChainPhaseGateFetchEpochInfoParsesNumericConfirmationPoCCompleted(t *te
 
 func TestChainPhaseGateBlocksDuringRegularPoC(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/v1/epochs/latest", r.URL.Path)
+		assert.Equal(t, "/v1/epochs/latest", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"block_height":"105",
@@ -244,7 +245,7 @@ func TestChainPhaseGateRelaxedModeAllowsRequestsDuringPoC(t *testing.T) {
 	setPoCModeForTest(t, pocRequestModeRelaxed)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/v1/epochs/latest", r.URL.Path)
+		assert.Equal(t, "/v1/epochs/latest", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"block_height":"105",
@@ -293,7 +294,7 @@ func TestChainPhaseGateRelaxedModeKeepsSpeculativeAttemptsUnclamped(t *testing.T
 
 func TestChainPhaseGateFetchPreservedParticipantKeys(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/v1/epochs/current/participants", r.URL.Path)
+		assert.Equal(t, "/v1/epochs/current/participants", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		// Two preserved entries for the same gonka address dedupe to
 		// one in the response, mirroring how multi-slot validators
@@ -381,7 +382,7 @@ func TestChainPhaseGateFetchParticipantsFallsBackToChain(t *testing.T) {
 
 func TestChainPhaseGateUsesPreservedNodePoCWeightDuringPoC(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/v1/epochs/current/participants", r.URL.Path)
+		assert.Equal(t, "/v1/epochs/current/participants", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"active_participants": {
@@ -430,7 +431,7 @@ func TestChainPhaseGateUsesPreservedNodePoCWeightDuringPoC(t *testing.T) {
 
 func TestChainPhaseGateUsesRawPoCWeightOutsidePoC(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/v1/epochs/current/participants", r.URL.Path)
+		assert.Equal(t, "/v1/epochs/current/participants", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"active_participants": {
@@ -748,7 +749,7 @@ func TestChainPhaseGateKeepsAllParticipantsAvailableDuringConfirmationGraceBefor
 
 func TestChainPhaseGateExcludedParticipantContributesZeroDuringPoC(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/v1/epochs/current/participants", r.URL.Path)
+		assert.Equal(t, "/v1/epochs/current/participants", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"active_participants": {
@@ -789,7 +790,7 @@ func TestChainPhaseGateExcludedParticipantContributesZeroDuringPoC(t *testing.T)
 
 func TestChainPhaseGateMapsOuterMLNodesToModels(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/v1/epochs/current/participants", r.URL.Path)
+		assert.Equal(t, "/v1/epochs/current/participants", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{
 			"active_participants": {
@@ -976,6 +977,7 @@ func TestRawPoCValidationState(t *testing.T) {
 }
 
 func newTestGatewayWithSnapshot(t *testing.T, snap ChainPhaseSnapshot) *Gateway {
+	t.Helper()
 	g := &Gateway{
 		phaseGate: &ChainPhaseGate{},
 	}

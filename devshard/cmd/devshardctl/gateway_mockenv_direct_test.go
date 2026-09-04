@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,8 +19,8 @@ func TestGatewayMockEnvDirectDevshardRouteByID(t *testing.T) {
 		model:  "Qwen/Test",
 		active: true,
 		handler: func(w http.ResponseWriter, r *http.Request) {
-			require.Equal(t, "/v1/chat/completions", r.URL.Path)
-			require.Equal(t, "/v1/chat/completions", r.RequestURI)
+			assert.Equal(t, "/v1/chat/completions", r.URL.Path)
+			assert.Equal(t, "/v1/chat/completions", r.RequestURI)
 			writeMockenvChatJSON(w, "12", "Qwen/Test")
 		},
 	}
@@ -100,7 +101,7 @@ func TestGatewayMockEnvDirectDevshardCacheHitSkipsRuntime(t *testing.T) {
 		active: true,
 	}
 	rt.handler = func(w http.ResponseWriter, r *http.Request) {
-		require.EqualValues(t, 1, rt.calls.Load(), "cache hit should skip repeated direct runtime call")
+		assert.EqualValues(t, 1, rt.calls.Load(), "cache hit should skip repeated direct runtime call")
 		writeMockenvChatJSON(w, "12", "Qwen/Test")
 	}
 	env := newGatewayMockEnv(t, []*gatewayMockRuntime{rt})
@@ -130,7 +131,7 @@ func TestGatewayMockEnvDirectDevshardCacheDoesNotBypassInactiveRuntime(t *testin
 		active: true,
 	}
 	rt.handler = func(w http.ResponseWriter, r *http.Request) {
-		require.EqualValues(t, 1, rt.calls.Load(), "only the initial active request should reach runtime")
+		assert.EqualValues(t, 1, rt.calls.Load(), "only the initial active request should reach runtime")
 		writeMockenvChatJSON(w, "12", "Qwen/Test")
 	}
 	env := newGatewayMockEnv(t, []*gatewayMockRuntime{rt})
@@ -202,8 +203,8 @@ func TestGatewayMockEnvDirectDevshardCacheIsScopedByModel(t *testing.T) {
 		active: true,
 	}
 	alpha.handler = func(w http.ResponseWriter, r *http.Request) {
-		require.NotContains(t, readRequestBodyForTest(t, r), `"model"`)
-		require.EqualValues(t, 1, alpha.calls.Load(), "Qwen cache should only be populated once")
+		assert.NotContains(t, readRequestBodyForTest(t, r), `"model"`)
+		assert.EqualValues(t, 1, alpha.calls.Load(), "Qwen cache should only be populated once")
 		writeMockenvChatJSON(w, "12", "Qwen/Test")
 	}
 	beta := &gatewayMockRuntime{
@@ -212,8 +213,8 @@ func TestGatewayMockEnvDirectDevshardCacheIsScopedByModel(t *testing.T) {
 		active: true,
 	}
 	beta.handler = func(w http.ResponseWriter, r *http.Request) {
-		require.NotContains(t, readRequestBodyForTest(t, r), `"model"`)
-		require.EqualValues(t, 1, beta.calls.Load(), "Kimi request should miss Qwen-scoped cache")
+		assert.NotContains(t, readRequestBodyForTest(t, r), `"model"`)
+		assert.EqualValues(t, 1, beta.calls.Load(), "Kimi request should miss Qwen-scoped cache")
 		writeMockenvChatJSON(w, "22", "Kimi/Test")
 	}
 	env := newGatewayMockEnv(t, []*gatewayMockRuntime{alpha, beta}, withMockenvSettings(func(settings *GatewaySettings) {
@@ -329,7 +330,7 @@ func TestGatewayMockEnvDirectDevshardUsesDefaultRuntimeModelWhenModelMissing(t *
 		active: true,
 		handler: func(w http.ResponseWriter, r *http.Request) {
 			body := readRequestBodyForTest(t, r)
-			require.NotContains(t, body, `"model"`)
+			assert.NotContains(t, body, `"model"`)
 			writeMockenvChatJSON(w, "12", "Qwen/Test")
 		},
 	}
@@ -353,7 +354,7 @@ func TestGatewayMockEnvDirectDevshardMissingModelEnforcesRuntimeModelAccess(t *t
 		model:  "Qwen/Test",
 		active: true,
 		handler: func(w http.ResponseWriter, r *http.Request) {
-			require.NotContains(t, readRequestBodyForTest(t, r), `"model"`)
+			assert.NotContains(t, readRequestBodyForTest(t, r), `"model"`)
 			writeMockenvChatJSON(w, "12", "Qwen/Test")
 		},
 	}
@@ -422,7 +423,7 @@ func TestGatewayMockEnvDirectDevshardLimiterRunsBeforeCacheMissForward(t *testin
 		active: true,
 	}
 	rt.handler = func(w http.ResponseWriter, r *http.Request) {
-		require.EqualValues(t, 1, rt.calls.Load(), "only the first allowed request should reach runtime")
+		assert.EqualValues(t, 1, rt.calls.Load(), "only the first allowed request should reach runtime")
 		writeMockenvChatJSON(w, "12", "Qwen/Test")
 	}
 	env := newGatewayMockEnv(t, []*gatewayMockRuntime{rt}, withMockenvLimiter(limiter))

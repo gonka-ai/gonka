@@ -201,15 +201,15 @@ func (c *Cache) evictLocked() {
 		return
 	}
 	for len(c.byHeight) > HistoryWindow {
-		var min int64
+		var minimum int64
 		first := true
 		for height := range c.byHeight {
-			if first || height < min {
-				min = height
+			if first || height < minimum {
+				minimum = height
 				first = false
 			}
 		}
-		delete(c.byHeight, min)
+		delete(c.byHeight, minimum)
 	}
 }
 

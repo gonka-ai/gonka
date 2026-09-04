@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -18,7 +19,7 @@ func TestGatewayMockEnvSingleRuntimeStatusProxiesRuntime(t *testing.T) {
 		model:  "Qwen/Test",
 		active: true,
 		handler: func(w http.ResponseWriter, r *http.Request) {
-			require.Equal(t, "/v1/status", r.URL.Path)
+			assert.Equal(t, "/v1/status", r.URL.Path)
 			writeJSON(w, map[string]any{
 				"mode": "runtime",
 				"id":   "12",

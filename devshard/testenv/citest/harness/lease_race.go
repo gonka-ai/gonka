@@ -268,13 +268,13 @@ func maxDiffNonceJSON(raw string) (uint64, error) {
 	if err := json.Unmarshal([]byte(raw), &recs); err != nil {
 		return 0, fmt.Errorf("decode diffs %q: %w", truncateForLog(raw, 200), err)
 	}
-	var max uint64
+	var maximum uint64
 	for _, rec := range recs {
-		if rec.Diff.Nonce > max {
-			max = rec.Diff.Nonce
+		if rec.Diff.Nonce > maximum {
+			maximum = rec.Diff.Nonce
 		}
 	}
-	return max, nil
+	return maximum, nil
 }
 
 func truncateForLog(s string, n int) string {

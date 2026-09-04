@@ -308,7 +308,8 @@ func TestChatCompletions_FaultPatch(t *testing.T) {
 	srv := newTestServer(t)
 	defer srv.Close()
 
-	patch, _ := json.Marshal(map[string]int{"http_status": 500})
+	patch, err := json.Marshal(map[string]int{"http_status": 500})
+	require.NoError(t, err)
 	resp, err := http.Post(srv.URL+"/testenv/fault", "application/json", bytes.NewReader(patch))
 	require.NoError(t, err)
 	require.Equal(t, http.StatusOK, resp.StatusCode)

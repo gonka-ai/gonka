@@ -61,6 +61,7 @@ func registerServer(g *echo.Group, srv *Server) {
 }
 
 func setupServerEnv(t *testing.T, opts ...ServerOption) *serverTestEnv {
+	t.Helper()
 	return setupServerEnvHost(t, nil, opts...)
 }
 

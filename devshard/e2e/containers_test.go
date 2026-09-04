@@ -235,6 +235,7 @@ func e2eHostSessionEnv() map[string]string {
 }
 
 func (e *e2eEnv) startHost(ctx context.Context, t *testing.T, index int) testcontainers.Container {
+	t.Helper()
 	return e.startHostWithEnv(ctx, t, index, nil)
 }
 

@@ -1804,7 +1804,9 @@ func errorMissArtifacts(inf *inflight, session *user.Session) (finishTx, respons
 		finishTx = session.FinishTxFor(inf.nonce)
 	}
 	if len(inf.errorStreamLines) > 0 {
-		responsePayload, _ = json.Marshal(completionapi.SerializedStreamedResponse{Events: inf.errorStreamLines})
+		if encoded, err := json.Marshal(completionapi.SerializedStreamedResponse{Events: inf.errorStreamLines}); err == nil {
+			responsePayload = encoded
+		}
 	}
 	return finishTx, responsePayload
 }

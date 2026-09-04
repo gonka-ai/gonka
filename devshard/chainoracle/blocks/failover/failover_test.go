@@ -13,6 +13,7 @@ import (
 
 	"common/chainoracle/blocks"
 	"common/httpguard"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	blockclient "devshard/chainoracle/blocks/client"
@@ -111,7 +112,7 @@ func TestOracle_At404DoesNotUseChain(t *testing.T) {
 
 func TestOracle_AtHitsBlockHeight(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/block/7", r.URL.Path)
+		assert.Equal(t, "/block/7", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(dapiHdr())
 	}))
@@ -204,7 +205,7 @@ func TestOracle_AtRemembersHTTP(t *testing.T) {
 	var hits atomic.Int64
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		hits.Add(1)
-		require.Equal(t, "/block/7", r.URL.Path)
+		assert.Equal(t, "/block/7", r.URL.Path)
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(dapiHdr())
 	}))

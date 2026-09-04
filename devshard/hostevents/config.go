@@ -78,13 +78,13 @@ func (c *Config) clientCallDeadline() time.Duration {
 	return c.ServerMaxWait + c.ClientDeadlineSlack
 }
 
-func nextBackoff(cur, min, max time.Duration) time.Duration {
+func nextBackoff(cur, minimum, maximum time.Duration) time.Duration {
 	if cur <= 0 {
-		return min
+		return minimum
 	}
 	next := cur * 2
-	if next > max {
-		return max
+	if next > maximum {
+		return maximum
 	}
 	return next
 }

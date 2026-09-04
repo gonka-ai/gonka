@@ -27,6 +27,6 @@ func TestClassifyQueryError_Transport(t *testing.T) {
 }
 
 func TestClassifyQueryError_PassthroughSentinels(t *testing.T) {
-	assert.ErrorIs(t, ClassifyQueryError(ErrEscrowNotFound), ErrEscrowNotFound)
+	require.ErrorIs(t, ClassifyQueryError(ErrEscrowNotFound), ErrEscrowNotFound)
 	assert.ErrorIs(t, ClassifyQueryError(ErrChainUnavailable), ErrChainUnavailable)
 }

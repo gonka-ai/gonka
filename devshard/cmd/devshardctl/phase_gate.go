@@ -499,7 +499,7 @@ func (g *ChainPhaseGate) fetchEpochInfoFromAPI() (*chainEpochInfoResponse, error
 	if strings.TrimSpace(g.endpoint) == "" {
 		return nil, fmt.Errorf("public API is not configured")
 	}
-	resp, err := g.client.Get(g.endpoint)
+	resp, err := g.client.Get(g.endpoint) //nolint:noctx // the client bounds the call at 5s; a context here would only add cancellation.
 	if err != nil {
 		return nil, err
 	}
@@ -618,7 +618,7 @@ func (g *ChainPhaseGate) fetchParticipantsFromAPI() (*chainCurrentParticipantsRe
 	if strings.TrimSpace(g.participantsEndpoint) == "" {
 		return nil, fmt.Errorf("public API is not configured")
 	}
-	resp, err := g.client.Get(g.participantsEndpoint)
+	resp, err := g.client.Get(g.participantsEndpoint) //nolint:noctx // the client bounds the call at 5s; a context here would only add cancellation.
 	if err != nil {
 		return nil, err
 	}

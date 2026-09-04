@@ -149,9 +149,9 @@ func TestLeaseValidator_LeaseLost_ReturnsLeasedEachCall(t *testing.T) {
 	c := newTestLeaseValidator(store, successInner)
 
 	_, err := c.Validate(context.Background(), makeReq())
-	assert.ErrorIs(t, err, devshardpkg.ErrValidationAlreadyLeased)
+	require.ErrorIs(t, err, devshardpkg.ErrValidationAlreadyLeased)
 	_, err = c.Validate(context.Background(), makeReq())
-	assert.ErrorIs(t, err, devshardpkg.ErrValidationAlreadyLeased)
+	require.ErrorIs(t, err, devshardpkg.ErrValidationAlreadyLeased)
 	assert.Equal(t, 2, acquireCalls, "Acquire must be called for every Validate call")
 	require.Empty(t, store.releaseCalls, "never acquired, so must not release")
 }
@@ -378,7 +378,7 @@ func TestLeaseValidator_AlreadyLeased_DoesNotRelease(t *testing.T) {
 	})
 
 	_, err := c.Validate(context.Background(), makeReq())
-	assert.ErrorIs(t, err, devshardpkg.ErrValidationAlreadyLeased)
+	require.ErrorIs(t, err, devshardpkg.ErrValidationAlreadyLeased)
 	assert.Equal(t, 0, innerCalls)
 	require.Empty(t, store.releaseCalls)
 }
@@ -663,7 +663,7 @@ func TestValidator_Validate_ExecutorFaultClassification(t *testing.T) {
 			case tt.wantErr:
 				require.Error(t, err)
 				assert.Nil(t, result)
-				assert.NotErrorIs(t, err, devshardpkg.ErrValidationSkipped)
+				require.NotErrorIs(t, err, devshardpkg.ErrValidationSkipped)
 			default:
 				t.Fatal("test case must set wantFalse, wantSkip, or wantErr")
 			}

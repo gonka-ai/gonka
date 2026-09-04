@@ -300,6 +300,8 @@ func TestSession_FetchFailureVerdict_ChallengeThenInvalidate(t *testing.T) {
 			challenged++
 		case types.StatusInvalidated:
 			invalidated++
+		default:
+			// The remaining statuses are not counted by this assertion.
 		}
 	}
 	require.Positive(t, challenged+invalidated,

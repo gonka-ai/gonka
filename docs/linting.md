@@ -44,8 +44,16 @@ Security rules are scoped to what the running service exposes. `gosec` and `noct
 
 `gochecknoinits` is excluded under any `x/` directory: Cosmos modules register their codecs from `init()`, and that is the framework's shape rather than ours.
 
+`exhaustive` runs with `default-signifies-exhaustive`. A switch with a `default` has an answer for a member nobody has added yet; one without silently does nothing, and that is the case worth failing on. The setting takes the rule from 39 findings to the 9 switches that had no default at all.
+
+`noctx` is enforced on the network cases it is named for — HTTP calls and listeners. Its `database/sql` findings, 126 of them, are excluded by message: the storage layer has no context to thread yet, and giving it one is its own change rather than a lint fix.
+
+`contextcheck` is scoped to production code for the same reason `gosec` and `noctx` are.
+
 ## Known exceptions
 
 `modernize`'s `fmtappendf` check is disabled. It reads the first argument of a `fmt.Sprint` call as a string constant and panics on `[]byte(fmt.Sprint(intConst))`, which `devshard/storage` uses for its advisory-lock namespace. Upstream disabled the same modernizer by default (golang/go#77581).
 
-`testifylint`'s `encoded-compare` is disabled. It rewrites an exact-string assertion into a semantic one, and the SSE assembly tests are about how fragments concatenate — `JSONEq` would pass on a differently spaced assembly.
+Two `testifylint` checks are disabled, both because they trade an exact assertion for an approximate one. `encoded-compare` rewrites the SSE assembly tests, which are about how fragments concatenate — `JSONEq` would pass on a differently spaced assembly. `float-compare` rewrites gauge values and parameter bounds that are exact by construction, in code that has to stay deterministic.
+
+`go-require` stays on, and it earned its place: 57 assertions were running `require` inside goroutines and HTTP handlers, where `FailNow` from a non-test goroutine is undefined behaviour. They are `assert` now.

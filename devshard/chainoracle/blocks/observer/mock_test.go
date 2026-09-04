@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"common/chainoracle/blocks"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"devshard/chainoracle/blocks/observer"
@@ -240,7 +241,7 @@ func TestMockObserver_Subscribe_CatchUpThenLiveMonotonic(t *testing.T) {
 		defer close(advDone)
 		for range 10 {
 			_, err := m.AdvanceOne()
-			require.NoError(t, err)
+			assert.NoError(t, err)
 		}
 	}()
 

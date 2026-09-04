@@ -125,6 +125,8 @@ func TestProtocol_HappyPath_15Inferences(t *testing.T) {
 			finishedCount++
 		case types.StatusStarted:
 			startedCount++
+		default:
+			// Only these two statuses are counted here.
 		}
 	}
 	// At minimum, inferences that had their finish included should be finished.

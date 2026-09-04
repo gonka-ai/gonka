@@ -217,8 +217,9 @@ func wasDelivered(key CounterKey) bool {
 	switch key.Disposition {
 	case DispositionFinishedUsed, DispositionFinishedUnused, DispositionFinishedUsageUnknown:
 		return true
+	default:
+		return false
 	}
-	return false
 }
 
 // An origin the ledger could not name still counts against the host: treating "unknown" as excused

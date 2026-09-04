@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"common/completionapi"
+	"github.com/stretchr/testify/require"
 
 	devshardpkg "devshard"
 )
@@ -81,7 +82,8 @@ func TestTheStoredPayloadIsSlimAndItsHashCoversTheSlimBytes(t *testing.T) {
 		t.Fatalf("GetEnforcedTokens: %v", err)
 	}
 	if len(enforced.Tokens) != 1 || enforced.Tokens[0].Token != "258" {
-		encoded, _ := json.Marshal(enforced)
+		encoded, err := json.Marshal(enforced)
+		require.NoError(t, err)
 		t.Fatalf("enforced tokens came back as %s", encoded)
 	}
 }

@@ -31,7 +31,7 @@ func TestFetchPayloadsHTTPWithRetry(t *testing.T) {
 
 		_, err := fetchPayloadsHTTPWithRetry(context.Background(), srv.Client(), srv.URL, "val", 1, 10, "sig", 0)
 		require.Error(t, err)
-		assert.NotErrorIs(t, err, commonvalidation.ErrPayloadGone)
+		require.NotErrorIs(t, err, commonvalidation.ErrPayloadGone)
 		assert.Equal(t, int32(payloadFetchAttempts), n.Load())
 	})
 
@@ -140,7 +140,7 @@ func TestFetchPayloadsHTTPWithRetry_DoesNotFollowRedirect(t *testing.T) {
 	require.Error(t, err)
 	assert.Equal(t, int32(0), internalHits.Load())
 	// A redirecting executor is a non-200 non-404 response: executor fault.
-	assert.NotErrorIs(t, err, commonvalidation.ErrPayloadGone)
+	require.NotErrorIs(t, err, commonvalidation.ErrPayloadGone)
 	assert.ErrorIs(t, tagExecutorPayloadFault(err), errExecutorPayloadFault)
 }
 

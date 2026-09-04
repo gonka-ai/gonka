@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"common/nodemanager/gen"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -110,13 +111,14 @@ func TestMockDAPI_GetRuntimeConfigLongPollViaTestenvParams(t *testing.T) {
 			ClientParamsBlockHeight: startHeight,
 			MaxWaitSeconds:          5,
 		})
-		require.NoError(t, err)
+		assert.NoError(t, err)
 		done <- r
 	}()
 
 	time.Sleep(50 * time.Millisecond)
 	maxNonce := uint32(999)
-	body, _ := json.Marshal(adminface.ParamsRequest{MaxNonce: &maxNonce})
+	body, err := json.Marshal(adminface.ParamsRequest{MaxNonce: &maxNonce})
+	require.NoError(t, err)
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, bed.httpURL+"/testenv/params", strings.NewReader(string(body)))
 	require.NoError(t, err)
 	req.Header.Set("Content-Type", "application/json")

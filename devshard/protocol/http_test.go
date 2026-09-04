@@ -13,6 +13,7 @@ import (
 
 	"common/httpguard"
 	"github.com/labstack/echo/v4"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"devshard/gossip"
@@ -656,21 +657,21 @@ func TestHTTP_RefusedTimeoutChallengeTimeoutThenRecoveryTxIsAvailable(t *testing
 	challenged := make(chan struct{}, 1)
 	slowExecutor := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
-		require.NoError(t, err)
+		assert.NoError(t, err)
 
 		var req transport.ChallengeReceiptRequest
-		require.NoError(t, json.Unmarshal(body, &req))
+		assert.NoError(t, json.Unmarshal(body, &req))
 		diffs := make([]types.Diff, 0, len(req.Diffs))
 		for i, dj := range req.Diffs {
 			diff, err := transport.DiffFromJSON(dj)
-			require.NoError(t, err, "decode diff %d", i)
+			assert.NoError(t, err, "decode diff %d", i)
 			diffs = append(diffs, diff)
 		}
 
 		receipt, _, err := env.hosts[executorIdx].ChallengeReceipt(r.Context(), req.InferenceID, transport.PayloadFromJSON(req.Payload), diffs)
-		require.NoError(t, err)
+		assert.NoError(t, err)
 		mempool, err := transport.DevshardTxsToBytes(host.RecoveryTxsFor(env.hosts[executorIdx].MempoolTxs(), req.InferenceID))
-		require.NoError(t, err)
+		assert.NoError(t, err)
 		select {
 		case challenged <- struct{}{}:
 		default:

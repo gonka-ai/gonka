@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"devshard/internal/testutil"
@@ -121,7 +122,7 @@ func TestHost_ValidationObs_HandleRequestDoesNotBlockOnSlowStore(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		_, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{valDiff}})
-		require.NoError(t, err)
+		assert.NoError(t, err)
 		close(done)
 	}()
 
@@ -154,7 +155,7 @@ func TestHost_ValidationObs_DropsWhenSaturated(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		_, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{valDiff}})
-		require.NoError(t, err)
+		assert.NoError(t, err)
 		close(done)
 	}()
 	select {

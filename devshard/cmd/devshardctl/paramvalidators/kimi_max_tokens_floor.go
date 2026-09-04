@@ -16,12 +16,12 @@ func (v KimiMaxTokensFloorValidator) Validate(vctx ValidatorContext) error {
 	return nil
 }
 
-func floorUintField(doc map[string]any, key string, min uint64) {
+func floorUintField(doc map[string]any, key string, minimum uint64) {
 	value, ok := numericAsUint64(doc[key])
 	if !ok {
 		return
 	}
-	if value < min {
-		doc[key] = min
+	if value < minimum {
+		doc[key] = minimum
 	}
 }

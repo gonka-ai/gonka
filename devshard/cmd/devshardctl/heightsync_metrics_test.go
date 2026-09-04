@@ -9,6 +9,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"devshard/heightsync"
@@ -28,7 +29,7 @@ func gatherHeightSync(t *testing.T, g *Gateway, peerMatrix bool) []*dto.MetricFa
 	registry := prometheus.NewRegistry()
 	registry.MustRegister(collector)
 	families, err := registry.Gather()
-	require.NoError(t, err)
+	assert.NoError(t, err)
 	return families
 }
 

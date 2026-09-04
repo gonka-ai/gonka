@@ -3,6 +3,7 @@ package accounting
 import (
 	"encoding/json"
 	"errors"
+	"log/slog"
 	"net/http"
 	"strconv"
 	"strings"
@@ -169,7 +170,9 @@ func queryFilter(r *http.Request, epoch uint64, participant string) QueryFilter 
 func writeJSON(w http.ResponseWriter, status int, value any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	_ = json.NewEncoder(w).Encode(value)
+	if err := json.NewEncoder(w).Encode(value); err != nil {
+		slog.Warn("accounting: response encode failed", "error", err)
+	}
 }
 
 func writeError(w http.ResponseWriter, status int, message string) {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"devshard/types"
@@ -1274,8 +1275,8 @@ func TestQueriesRunAlongsideCommittedDiffs(t *testing.T) {
 	go func() {
 		defer close(done)
 		for nonce := uint64(1); nonce <= 200; nonce++ {
-			require.NoError(t, tr.RecordDiff("e1", nonce, true))
-			require.NoError(t, tr.RecordRealSend("e1", nonce, accountingTestNow, PhaseNormal, QuarantineNone))
+			assert.NoError(t, tr.RecordDiff("e1", nonce, true))
+			assert.NoError(t, tr.RecordRealSend("e1", nonce, accountingTestNow, PhaseNormal, QuarantineNone))
 		}
 	}()
 	readers := sync.WaitGroup{}

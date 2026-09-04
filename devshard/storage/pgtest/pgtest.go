@@ -45,14 +45,14 @@ func waitStrategy() wait.Strategy {
 }
 
 // MustStart is Run, skipping the test when Docker is not reachable.
-func MustStart(t testing.TB, ctx context.Context) *postgres.PostgresContainer {
-	t.Helper()
+func MustStart(tb testing.TB, ctx context.Context) *postgres.PostgresContainer {
+	tb.Helper()
 	container, err := Run(ctx)
 	if errors.Is(err, ErrDockerUnavailable) {
-		t.Skip(err.Error())
+		tb.Skip(err.Error())
 	}
 	if err != nil {
-		t.Fatalf("pgtest.Run: %v", err)
+		tb.Fatalf("pgtest.Run: %v", err)
 	}
 	return container
 }

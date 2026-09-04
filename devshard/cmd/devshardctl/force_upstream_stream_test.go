@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"devshard/testenv/mockopenai"
@@ -131,11 +132,11 @@ func TestMockOpenAI_ReceivesStreamingWhenClientAskedNonStream(t *testing.T) {
 	inner := mockopenai.NewServer(mockopenai.DefaultConfig()).Handler()
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
-		require.NoError(t, err)
+		assert.NoError(t, err)
 		var req struct {
 			Stream bool `json:"stream"`
 		}
-		require.NoError(t, json.Unmarshal(body, &req))
+		assert.NoError(t, json.Unmarshal(body, &req))
 		sawUpstreamStream = req.Stream
 		r.Body = io.NopCloser(strings.NewReader(string(body)))
 		inner.ServeHTTP(w, r)

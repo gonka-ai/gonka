@@ -162,16 +162,16 @@ var ErrResponseBodyTooLarge = errors.New("response body exceeds size limit")
 
 // readBoundedResponseBody reads at most max bytes, failing rather than
 // truncating when the peer keeps writing past the limit.
-func readBoundedResponseBody(body io.Reader, max int64) ([]byte, error) {
+func readBoundedResponseBody(body io.Reader, maximum int64) ([]byte, error) {
 	if body == nil {
 		return nil, nil
 	}
-	read, err := io.ReadAll(io.LimitReader(body, max+1))
+	read, err := io.ReadAll(io.LimitReader(body, maximum+1))
 	if err != nil {
 		return nil, err
 	}
-	if int64(len(read)) > max {
-		return nil, fmt.Errorf("%w: %d byte limit", ErrResponseBodyTooLarge, max)
+	if int64(len(read)) > maximum {
+		return nil, fmt.Errorf("%w: %d byte limit", ErrResponseBodyTooLarge, maximum)
 	}
 	return read, nil
 }
@@ -603,9 +603,9 @@ func (c *HTTPClient) maxSSEEventBytes() int {
 // readBoundedSSELine reads up to and including the next '\n', aborting as soon
 // as the accumulated line would exceed max bytes. On oversize it returns
 // ErrSSEEventTooLarge and drops the partial buffer rather than retaining it.
-func readBoundedSSELine(br *bufio.Reader, max int) ([]byte, error) {
-	if max <= 0 {
-		max = DefaultMaxSSEEventBytes
+func readBoundedSSELine(br *bufio.Reader, maximum int) ([]byte, error) {
+	if maximum <= 0 {
+		maximum = DefaultMaxSSEEventBytes
 	}
 	var buf []byte
 	for {
@@ -613,8 +613,8 @@ func readBoundedSSELine(br *bufio.Reader, max int) ([]byte, error) {
 		// the next read, so every fragment is copied out before looping.
 		fragment, err := br.ReadSlice('\n')
 		if len(fragment) > 0 {
-			if len(buf)+len(fragment) > max {
-				return nil, fmt.Errorf("%w: %d byte limit", ErrSSEEventTooLarge, max)
+			if len(buf)+len(fragment) > maximum {
+				return nil, fmt.Errorf("%w: %d byte limit", ErrSSEEventTooLarge, maximum)
 			}
 			buf = append(buf, fragment...)
 		}

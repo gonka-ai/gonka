@@ -173,6 +173,8 @@ func (e *Engine) doWithLockedNode(
 			resp = nil
 		case observability.ReasonHTTP4xx:
 			// 4xx surfaced to caller without rotation.
+		default:
+			// Every other reason leaves outcome and lastErr as the attempt set them.
 		}
 
 		if releaseErr := e.mlClient.Release(ctx, acq.GetLockId(), outcome); releaseErr != nil {

@@ -11,6 +11,7 @@ import (
 
 	"common/chainoracle/blocks"
 	"common/httpguard"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	blockclient "devshard/chainoracle/blocks/client"
@@ -35,7 +36,7 @@ func TestLookup_AtDummyOn404(t *testing.T) {
 func TestLookup_AtOK(t *testing.T) {
 	want := blocks.HashOnlyHeader(4, time.Unix(1, 0).UTC(), "gonka", []byte{9})
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/block/4", r.URL.Path)
+		assert.Equal(t, "/block/4", r.URL.Path)
 		_ = json.NewEncoder(w).Encode(want)
 	}))
 	t.Cleanup(ts.Close)

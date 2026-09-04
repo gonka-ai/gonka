@@ -31,12 +31,12 @@ func (v StringFieldValidator) Validate(vctx ValidatorContext) error {
 	if !ok {
 		return fmt.Errorf("%s: %w: must be a string", v.FieldName, ErrStringFieldShape)
 	}
-	cap := v.MaxLen
-	if cap == 0 {
-		cap = v.DefaultMaxLen
+	capacity := v.MaxLen
+	if capacity == 0 {
+		capacity = v.DefaultMaxLen
 	}
-	if cap > 0 && len(s) > cap {
-		return fmt.Errorf("%s: %w: %d > %d", v.FieldName, ErrStringFieldLength, len(s), cap)
+	if capacity > 0 && len(s) > capacity {
+		return fmt.Errorf("%s: %w: %d > %d", v.FieldName, ErrStringFieldLength, len(s), capacity)
 	}
 	return nil
 }

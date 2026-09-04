@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -44,7 +45,7 @@ func TestGatewayMockEnvDirectDevshardDisabledGatewayAllowsAdminOperationalPathOn
 		model:  "Qwen/Test",
 		active: true,
 		handler: func(w http.ResponseWriter, r *http.Request) {
-			require.Equal(t, "/v1/state", r.URL.Path)
+			assert.Equal(t, "/v1/state", r.URL.Path)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"state":"ok"}`))
@@ -133,7 +134,7 @@ func TestGatewayMockEnvAdminAuthRequiredForDirectOperationalPaths(t *testing.T) 
 				model:  "Qwen/Test",
 				active: true,
 				handler: func(w http.ResponseWriter, r *http.Request) {
-					require.Equal(t, tc.innerPath, r.URL.Path)
+					assert.Equal(t, tc.innerPath, r.URL.Path)
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusOK)
 					_, _ = w.Write([]byte(`{"ok":true}`))
@@ -169,9 +170,9 @@ func TestGatewayMockEnvDirectFinalizeMarksRuntimeInactive(t *testing.T) {
 		model:  "Qwen/Test",
 		active: true,
 		handler: func(w http.ResponseWriter, r *http.Request) {
-			require.Equal(t, http.MethodPost, r.Method)
-			require.Equal(t, "/v1/finalize", r.URL.Path)
-			require.Equal(t, "/v1/finalize", r.RequestURI)
+			assert.Equal(t, http.MethodPost, r.Method)
+			assert.Equal(t, "/v1/finalize", r.URL.Path)
+			assert.Equal(t, "/v1/finalize", r.RequestURI)
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusOK)
 			_, _ = w.Write([]byte(`{"finalized":true}`))

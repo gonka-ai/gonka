@@ -59,16 +59,16 @@ type aggregateSlotSem struct {
 	*spool.Slots
 }
 
-func newAggregateSlotSem(max int64) aggregateSlotSem {
-	return aggregateSlotSem{Slots: spool.NewSlots(max)}
+func newAggregateSlotSem(maximum int64) aggregateSlotSem {
+	return aggregateSlotSem{Slots: spool.NewSlots(maximum)}
 }
 
-func (s aggregateSlotSem) snapshot() (max, cur int64) {
+func (s aggregateSlotSem) snapshot() (maximum, cur int64) {
 	return s.Snapshot()
 }
 
-func (s aggregateSlotSem) restore(max, cur int64) {
-	s.Restore(max, cur)
+func (s aggregateSlotSem) restore(maximum, cur int64) {
+	s.Restore(maximum, cur)
 }
 
 func (s aggregateSlotSem) tryAcquire() bool { return s.TryAcquire() }
@@ -247,8 +247,8 @@ func releaseAggregateSpoolSlot() {
 }
 
 func aggregateSpoolSlotCapacity() int {
-	max, _ := aggregateSpoolSem.snapshot()
-	return int(max)
+	maximum, _ := aggregateSpoolSem.snapshot()
+	return int(maximum)
 }
 
 func resetAggregateDegradedSlots(budget, perRequest int64) {

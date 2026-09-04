@@ -48,7 +48,7 @@ func CountGatewayInferenceStatus(infs map[string]GatewayInference, status string
 
 // WaitGatewayInferenceStatus polls /v1/debug/inferences until at least min
 // records are in status, or timeout.
-func WaitGatewayInferenceStatus(t *testing.T, client *http.Client, gatewayURL, adminAPIKey, status string, min int, timeout time.Duration) map[string]GatewayInference {
+func WaitGatewayInferenceStatus(t *testing.T, client *http.Client, gatewayURL, adminAPIKey, status string, minimum int, timeout time.Duration) map[string]GatewayInference {
 	t.Helper()
 	if client == nil {
 		client = GatewayChatClient()
@@ -57,13 +57,13 @@ func WaitGatewayInferenceStatus(t *testing.T, client *http.Client, gatewayURL, a
 	var last map[string]GatewayInference
 	for time.Now().Before(deadline) {
 		last = GetGatewayInferences(t, client, gatewayURL, adminAPIKey)
-		if CountGatewayInferenceStatus(last, status) >= min {
+		if CountGatewayInferenceStatus(last, status) >= minimum {
 			return last
 		}
 		time.Sleep(time.Second)
 	}
 	t.Fatalf("citest: inferences with status %q: %d < %d after %s (total=%d challenged=%d invalidated=%d finished=%d)",
-		status, CountGatewayInferenceStatus(last, status), min, timeout, len(last),
+		status, CountGatewayInferenceStatus(last, status), minimum, timeout, len(last),
 		CountGatewayInferenceStatus(last, "challenged"),
 		CountGatewayInferenceStatus(last, "invalidated"),
 		CountGatewayInferenceStatus(last, "finished"))

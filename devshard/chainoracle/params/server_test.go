@@ -8,6 +8,7 @@ import (
 
 	"common/nodemanager/gen"
 	commonruntimeconfig "common/runtimeconfig"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
@@ -72,9 +73,9 @@ func TestParamsServer_GetRuntimeConfigLongPoll(t *testing.T) {
 			ClientParamsBlockHeight: 100,
 			MaxWaitSeconds:          5,
 		})
-		require.NoError(t, err)
-		require.False(t, resp.GetUnchanged())
-		require.Equal(t, int64(200), resp.GetConfig().GetParamsBlockHeight())
+		assert.NoError(t, err)
+		assert.False(t, resp.GetUnchanged())
+		assert.Equal(t, int64(200), resp.GetConfig().GetParamsBlockHeight())
 	}()
 
 	time.Sleep(20 * time.Millisecond)

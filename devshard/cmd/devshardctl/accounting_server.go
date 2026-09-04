@@ -107,7 +107,7 @@ func startAccountingServer(g *Gateway) (*http.Server, error) {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       time.Minute,
 	}
-	listener, err := net.Listen("tcp", addr)
+	listener, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", addr)
 	if err != nil {
 		return nil, fmt.Errorf("listen on accounting address %s: %w", addr, err)
 	}

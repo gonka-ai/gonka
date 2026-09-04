@@ -11,11 +11,11 @@ type Slots struct {
 	cur int64
 }
 
-func NewSlots(max int64) *Slots {
-	if max < 0 {
-		max = 0
+func NewSlots(maximum int64) *Slots {
+	if maximum < 0 {
+		maximum = 0
 	}
-	return &Slots{max: max}
+	return &Slots{max: maximum}
 }
 
 func (s *Slots) TryAcquire() bool {
@@ -56,7 +56,7 @@ func (s *Slots) SetMax(n int64) {
 	s.max = n
 }
 
-func (s *Slots) Stats() (max, cur int64) {
+func (s *Slots) Stats() (maximum, cur int64) {
 	if s == nil {
 		return 0, 0
 	}
@@ -67,23 +67,23 @@ func (s *Slots) Stats() (max, cur int64) {
 
 // Snapshot is an alias of Stats for callers that mirror the former aggregate
 // semaphore API.
-func (s *Slots) Snapshot() (max, cur int64) {
+func (s *Slots) Snapshot() (maximum, cur int64) {
 	return s.Stats()
 }
 
 // Restore sets max and cur. Intended for tests that save/restore process state.
-func (s *Slots) Restore(max, cur int64) {
+func (s *Slots) Restore(maximum, cur int64) {
 	if s == nil {
 		return
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if max < 0 {
-		max = 0
+	if maximum < 0 {
+		maximum = 0
 	}
 	if cur < 0 {
 		cur = 0
 	}
-	s.max = max
+	s.max = maximum
 	s.cur = cur
 }

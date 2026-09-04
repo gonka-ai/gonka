@@ -247,7 +247,10 @@ func (s *Server) streamCompletion(c echo.Context, req ChatRequest, text string, 
 			"prompt_tokens": promptTok, "completion_tokens": completionTok, "total_tokens": promptTok + completionTok,
 		},
 	}
-	ud, _ := json.Marshal(usageChunk)
+	ud, err := json.Marshal(usageChunk)
+	if err != nil {
+		return err
+	}
 	if _, err := fmt.Fprintf(w, "data: %s\n\n", ud); err != nil {
 		return err
 	}
@@ -290,8 +293,8 @@ func readBody(r *http.Request) ([]byte, error) {
 		return []byte("{}"), nil
 	}
 	defer r.Body.Close()
-	const max = 4 << 20
-	lr := http.MaxBytesReader(nil, r.Body, max)
+	const maximum = 4 << 20
+	lr := http.MaxBytesReader(nil, r.Body, maximum)
 	body, err := io.ReadAll(lr)
 	if err != nil {
 		return nil, err

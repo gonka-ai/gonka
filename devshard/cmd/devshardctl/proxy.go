@@ -722,7 +722,9 @@ func writeJSON(w http.ResponseWriter, v any) {
 	w.Header().Set("Content-Type", "application/json")
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")
-	_ = enc.Encode(v)
+	if err := enc.Encode(v); err != nil {
+		log.Printf("writeJSON encode failed: %v", err)
+	}
 }
 
 func (p *Proxy) handleDebugPending(w http.ResponseWriter, r *http.Request) {
@@ -817,6 +819,8 @@ func (p *Proxy) handleDebugState(w http.ResponseWriter, r *http.Request) {
 		phaseStr = "finalizing"
 	case types.PhaseSettlement:
 		phaseStr = "settlement"
+	default:
+		// PhaseActive keeps the initial value.
 	}
 
 	writeJSON(w, map[string]any{

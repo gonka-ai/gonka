@@ -230,11 +230,11 @@ func heightSyncFromProto(hs *types.InferenceHeightSyncSection) *heightsync.Heigh
 	}
 }
 
-func cappedBytes(b []byte, max int) []byte {
+func cappedBytes(b []byte, maximum int) []byte {
 	if len(b) == 0 {
 		return nil
 	}
-	if len(b) > max {
+	if len(b) > maximum {
 		return nil
 	}
 	return append([]byte(nil), b...)

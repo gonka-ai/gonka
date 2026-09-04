@@ -21,6 +21,7 @@ import (
 	"common/completionapi"
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
 
@@ -639,7 +640,7 @@ func TestGatewayAPIKeyLogFieldsUsesLastEightCharacters(t *testing.T) {
 
 	req = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
 	handler := adminAuthMiddleware("admin-key-abcdefgh", http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
-		require.Equal(t, []any{"api_key_suffix", "abcdefgh", "api_key_kind", "admin"}, g.apiKeyLogFields(r))
+		assert.Equal(t, []any{"api_key_suffix", "abcdefgh", "api_key_kind", "admin"}, g.apiKeyLogFields(r))
 	}))
 	req.Header.Set("Authorization", "Bearer admin-key-abcdefgh")
 	handler.ServeHTTP(httptest.NewRecorder(), req)
@@ -1368,8 +1369,8 @@ func TestGatewayHandlePooledChatSetsChosenDevshardHeader(t *testing.T) {
 		model: "Qwen/Test",
 		handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 			body, err := io.ReadAll(r.Body)
-			require.NoError(t, err)
-			require.Contains(t, string(body), `"model":"Qwen/Test"`)
+			assert.NoError(t, err)
+			assert.Contains(t, string(body), `"model":"Qwen/Test"`)
 			w.WriteHeader(http.StatusCreated)
 		}),
 	}

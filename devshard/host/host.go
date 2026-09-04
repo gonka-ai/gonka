@@ -671,8 +671,8 @@ func (h *Host) checkDiffNonceLimitLocked(diff types.Diff) error {
 	if maxNonce == 0 {
 		return nil
 	}
-	max := uint64(maxNonce)
-	if diff.Nonce > max {
+	maximum := uint64(maxNonce)
+	if diff.Nonce > maximum {
 		return fmt.Errorf("%w: nonce %d exceeds chain maximum %d", types.ErrNonceLimitExceeded, diff.Nonce, maxNonce)
 	}
 	if h.sm.Phase() != types.PhaseActive {

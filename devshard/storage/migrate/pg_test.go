@@ -16,6 +16,7 @@ import (
 )
 
 func testPGPool(t *testing.T) *pgxpool.Pool {
+	t.Helper()
 	return testPGPoolWithRuntimeParams(t, nil)
 }
 

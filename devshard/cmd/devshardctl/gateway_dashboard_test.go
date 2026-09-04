@@ -790,6 +790,7 @@ func panelTargetExprs(panel map[string]any) []string {
 	return exprs
 }
 
+//nolint:thelper // callers pass nil for t when they only need the parsing.
 func panelTargets(t *testing.T, panel map[string]any) []map[string]any {
 	if t != nil {
 		t.Helper()
