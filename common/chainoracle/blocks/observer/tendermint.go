@@ -7,10 +7,10 @@ import (
 	"sync"
 	"time"
 
-	"common/chainoracle/blocks"
-
 	rpchttp "github.com/cometbft/cometbft/rpc/client/http"
 	ctypes "github.com/cometbft/cometbft/rpc/core/types"
+
+	"common/chainoracle/blocks"
 )
 
 // TendermintConfig pins the hash-only observer's CometBFT RPC endpoint.
@@ -63,7 +63,7 @@ func NewTendermint(ctx context.Context, cfg TendermintConfig) (Observer, error) 
 }
 
 func startTendermint(ctx context.Context, rpc blockRPC, period time.Duration) (*Tendermint, error) {
-	runCtx, cancel := context.WithCancel(ctx)
+	runCtx, cancel := context.WithCancel(ctx) //nolint:gosec // the cancel is held by the observer and called on Stop.
 	o := &Tendermint{
 		rpc:     rpc,
 		period:  period,
@@ -81,9 +81,8 @@ func startTendermint(ctx context.Context, rpc blockRPC, period time.Duration) (*
 
 // Run polls until ctx is cancelled. NewTendermint already starts this.
 func (o *Tendermint) Run(ctx context.Context) error {
-	if err := o.pollOnce(ctx); err != nil && ctx.Err() == nil {
-		// first miss is not fatal; keep polling
-	}
+	// The first miss is not fatal; the ticker below keeps polling.
+	_ = o.pollOnce(ctx)
 	tick := time.NewTicker(o.period)
 	defer tick.Stop()
 	for {

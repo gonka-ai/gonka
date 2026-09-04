@@ -7,14 +7,14 @@ import (
 	"net"
 	"testing"
 
-	"common/nodemanager/gen"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+
+	"common/nodemanager/gen"
 )
 
 // mockServer is an in-process gRPC server for testing.
@@ -52,9 +52,9 @@ func startMockServer(t *testing.T, srv *mockServer) *Client {
 func TestClient_Acquire_Success(t *testing.T) {
 	srv := &mockServer{
 		acquireFunc: func(_ context.Context, req *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
-			assert.Equal(t, "model-a", req.Model)
-			assert.Equal(t, []string{"bad-node"}, req.ExcludedNodes)
-			assert.Equal(t, "99", req.EscrowId)
+			assert.Equal(t, "model-a", req.GetModel())
+			assert.Equal(t, []string{"bad-node"}, req.GetExcludedNodes())
+			assert.Equal(t, "99", req.GetEscrowId())
 			return &gen.AcquireMLNodeResponse{LockId: "lock-1", Endpoint: "http://node1:8080", NodeId: "node-1"}, nil
 		},
 	}
@@ -63,9 +63,9 @@ func TestClient_Acquire_Success(t *testing.T) {
 	resp, err := c.Acquire(context.Background(), "model-a", []string{"bad-node"}, "99")
 
 	require.NoError(t, err)
-	assert.Equal(t, "http://node1:8080", resp.Endpoint)
-	assert.Equal(t, "lock-1", resp.LockId)
-	assert.Equal(t, "node-1", resp.NodeId)
+	assert.Equal(t, "http://node1:8080", resp.GetEndpoint())
+	assert.Equal(t, "lock-1", resp.GetLockId())
+	assert.Equal(t, "node-1", resp.GetNodeId())
 }
 
 func TestClient_Acquire_NoNodesAvailable(t *testing.T) {
@@ -79,7 +79,7 @@ func TestClient_Acquire_NoNodesAvailable(t *testing.T) {
 	_, err := c.Acquire(context.Background(), "model-a", nil, "")
 
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrNoNodesAvailable))
+	require.ErrorIs(t, err, ErrNoNodesAvailable)
 	assert.True(t, IsNoNodesAvailable(err))
 	assert.False(t, IsUnavailable(err))
 	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
@@ -97,7 +97,7 @@ func TestClient_Acquire_Unavailable(t *testing.T) {
 	_, err := c.Acquire(context.Background(), "model-a", nil, "")
 
 	require.Error(t, err)
-	assert.True(t, errors.Is(err, ErrUnavailable))
+	require.ErrorIs(t, err, ErrUnavailable)
 	assert.True(t, IsUnavailable(err))
 	assert.False(t, IsNoNodesAvailable(err))
 	assert.Equal(t, codes.Unavailable, status.Code(err))
@@ -122,7 +122,7 @@ func TestClient_Acquire_OtherStatusPreserved(t *testing.T) {
 
 func TestClassifyAcquireError_NonStatusIsUnavailable(t *testing.T) {
 	err := classifyAcquireError("model-a", errors.New("connection refused"))
-	assert.True(t, errors.Is(err, ErrUnavailable))
+	require.ErrorIs(t, err, ErrUnavailable)
 	assert.True(t, IsUnavailable(err))
 	assert.False(t, IsNoNodesAvailable(err))
 }
@@ -156,8 +156,8 @@ func TestClient_Release_AllOutcomes(t *testing.T) {
 			var gotOutcome gen.ReleaseOutcome
 			srv := &mockServer{
 				releaseFunc: func(_ context.Context, req *gen.ReleaseMLNodeRequest) (*gen.ReleaseMLNodeResponse, error) {
-					assert.Equal(t, "lock-1", req.LockId)
-					gotOutcome = req.Outcome
+					assert.Equal(t, "lock-1", req.GetLockId())
+					gotOutcome = req.GetOutcome()
 					return &gen.ReleaseMLNodeResponse{}, nil
 				},
 			}

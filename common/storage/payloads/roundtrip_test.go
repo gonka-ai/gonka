@@ -4,7 +4,6 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -44,12 +43,15 @@ func TestReadingResolvesEverySuffixState(t *testing.T) {
 
 	for name, arrange := range map[string]func(*testing.T, string){
 		"plain only": func(t *testing.T, baseDir string) {
+			t.Helper()
 			require.NoError(t, NewFileStorage(baseDir).Store(context.Background(), testEscrowID, 7, testEpoch, prompt, response))
 		},
 		"compressed only": func(t *testing.T, baseDir string) {
+			t.Helper()
 			require.NoError(t, NewCompressingFileStorage(baseDir).Store(context.Background(), testEscrowID, 7, testEpoch, prompt, response))
 		},
 		"both suffixes, same payload": func(t *testing.T, baseDir string) {
+			t.Helper()
 			stored := marshalStored(t, prompt, response)
 			compressed, err := compressPayloadFile(stored)
 			require.NoError(t, err)
@@ -120,7 +122,7 @@ func executorStores(t *testing.T, lines []string) (stored []byte, committed [32]
 func executorStoresJSON(t *testing.T, body []byte) (stored []byte, committed [32]byte) {
 	t.Helper()
 	processor := completionapi.NewExecutorResponseProcessor("devshard-60453-7", true)
-	_, err := processor.ProcessJsonResponse(body)
+	_, err := processor.ProcessJSONResponse(body)
 	require.NoError(t, err)
 	stored, err = processor.GetResponseBytes()
 	require.NoError(t, err)
@@ -201,7 +203,5 @@ func TestTheHashCheckRejectsAPayloadThatChanged(t *testing.T) {
 
 	_, gotResponse, err := storage.Retrieve(context.Background(), testEscrowID, 7, testEpoch)
 	require.NoError(t, err)
-	require.True(t, errors.Is(
-		validation.VerifyPayloadHashes(prompt, gotResponse, "", tamperedHash, "7"),
-		validation.ErrHashMismatch), "a payload that is not the one hashed must be rejected")
+	require.ErrorIs(t, validation.VerifyPayloadHashes(prompt, gotResponse, "", tamperedHash, "7"), validation.ErrHashMismatch, "a payload that is not the one hashed must be rejected")
 }

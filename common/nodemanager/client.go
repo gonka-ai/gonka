@@ -5,12 +5,12 @@ import (
 	"errors"
 	"fmt"
 
-	"common/nodemanager/gen"
-
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+
+	"common/nodemanager/gen"
 )
 
 // Sentinel errors returned by Acquire. Callers should use errors.Is / the

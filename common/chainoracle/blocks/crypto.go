@@ -4,7 +4,7 @@ import (
 	"crypto/sha256"
 	"fmt"
 
-	"golang.org/x/crypto/ripemd160" //nolint:staticcheck // cosmos address scheme
+	"golang.org/x/crypto/ripemd160" //nolint:gosec // RIPEMD-160 is fixed by the Cosmos address derivation.
 )
 
 // AddressBytes returns the 20-byte address derived from a secp256k1 public

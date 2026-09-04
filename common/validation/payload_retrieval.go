@@ -1,10 +1,6 @@
 package validation
 
 import (
-	"common/completionapi"
-	"common/httpguard"
-	"common/logging"
-	"common/utils"
 	"context"
 	"encoding/json"
 	"errors"
@@ -17,6 +13,11 @@ import (
 
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
+
+	"common/completionapi"
+	"common/httpguard"
+	"common/logging"
+	"common/utils"
 )
 
 // ErrHashMismatch indicates executor served payload with valid signature but hash doesn't match on-chain commitment.
@@ -152,7 +153,7 @@ func (c *cappedReader) Read(p []byte) (int, error) {
 // PayloadResponse matches the executor endpoint response.
 // Used by both chain validation and devshard validation paths.
 type PayloadResponse struct {
-	InferenceId       string `json:"inference_id"`
+	InferenceId       string `json:"inference_id"` //nolint:revive // the name mirrors the generated proto field, which cannot be renamed.
 	PromptPayload     []byte `json:"prompt_payload"`
 	ResponsePayload   []byte `json:"response_payload"`
 	ExecutorSignature string `json:"executor_signature"`
@@ -164,28 +165,28 @@ type PayloadResponse struct {
 func FetchPayloadsHTTP(
 	ctx context.Context,
 	client *http.Client,
-	requestUrl string,
+	requestURL string,
 	validatorAddress string,
 	timestamp int64,
-	epochId uint64,
+	epochID uint64,
 	signature string,
 	maxBytes int64,
 ) (_ *PayloadResponse, retErr error) {
-	ctx, op := payloadFetchObserver.StartPayloadFetch(ctx, requestUrl, validatorAddress, int64(epochId))
+	ctx, op := payloadFetchObserver.StartPayloadFetch(ctx, requestURL, validatorAddress, int64(epochID))
 	defer op.FinishErr(&retErr)
 
 	if client == nil {
 		client = PayloadRetrievalClient
 	}
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestUrl, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestURL, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
 	req.Header.Set(utils.XValidatorAddressHeader, validatorAddress)
 	req.Header.Set(utils.XTimestampHeader, strconv.FormatInt(timestamp, 10))
-	req.Header.Set(utils.XEpochIdHeader, strconv.FormatUint(epochId, 10))
+	req.Header.Set(utils.XEpochIDHeader, strconv.FormatUint(epochID, 10))
 	req.Header.Set(utils.AuthorizationHeader, signature)
 	payloadFetchObserver.InjectRequestContext(ctx, req.Header)
 	payloadFetchObserver.AttachRequestID(req)
@@ -244,18 +245,18 @@ func VerifyPayloadHashes(
 	responsePayload []byte,
 	expectedPromptHash string,
 	expectedResponseHash string,
-	inferenceId string,
+	inferenceID string,
 ) error {
 	if expectedPromptHash != "" {
 		actualPromptHash, err := computePromptHash(promptPayload)
 		if err != nil {
 			logging.Error("Failed to compute prompt hash, executor served malformed payload", types.Validation,
-				"inferenceId", inferenceId, "error", err)
+				"inferenceID", inferenceID, "error", err)
 			return ErrHashMismatch
 		}
 		if actualPromptHash != expectedPromptHash {
 			logging.Error("Prompt hash mismatch, executor served wrong payload", types.Validation,
-				"inferenceId", inferenceId,
+				"inferenceID", inferenceID,
 				"expectedHash", expectedPromptHash,
 				"actualHash", actualPromptHash)
 			return ErrHashMismatch
@@ -266,12 +267,12 @@ func VerifyPayloadHashes(
 		actualResponseHash, err := computeResponseHash(responsePayload)
 		if err != nil {
 			logging.Error("Failed to compute response hash, executor served malformed payload", types.Validation,
-				"inferenceId", inferenceId, "error", err)
+				"inferenceID", inferenceID, "error", err)
 			return ErrHashMismatch
 		}
 		if actualResponseHash != expectedResponseHash {
 			logging.Error("Response hash mismatch, executor served wrong payload", types.Validation,
-				"inferenceId", inferenceId,
+				"inferenceID", inferenceID,
 				"expectedHash", expectedResponseHash,
 				"actualHash", actualResponseHash)
 			return ErrHashMismatch
@@ -282,26 +283,26 @@ func VerifyPayloadHashes(
 }
 
 // BuildPayloadRequestURL constructs the URL for payload retrieval.
-func BuildPayloadRequestURL(baseUrl string, path string, inferenceId string) (string, error) {
-	fullUrl, err := url.JoinPath(baseUrl, path)
+func BuildPayloadRequestURL(baseURL string, path string, inferenceID string) (string, error) {
+	fullURL, err := url.JoinPath(baseURL, path)
 	if err != nil {
 		return "", fmt.Errorf("failed to build base URL: %w", err)
 	}
-	parsedUrl, err := url.Parse(fullUrl)
+	parsedURL, err := url.Parse(fullURL)
 	if err != nil {
 		return "", fmt.Errorf("failed to parse base URL: %w", err)
 	}
-	query := parsedUrl.Query()
-	query.Set("inference_id", inferenceId)
-	parsedUrl.RawQuery = query.Encode()
-	return parsedUrl.String(), nil
+	query := parsedURL.Query()
+	query.Set("inference_id", inferenceID)
+	parsedURL.RawQuery = query.Encode()
+	return parsedURL.String(), nil
 }
 
 // VerifyExecutorPayloadSignature verifies the executor's signature on the payload response.
 // This provides non-repudiation: if executor serves wrong payload, validator has cryptographic proof.
-// Executor signs: inferenceId + promptHash + responseHash (with timestamp=0)
+// Executor signs: inferenceID + promptHash + responseHash (with timestamp=0)
 func VerifyExecutorPayloadSignature(
-	inferenceId string,
+	inferenceID string,
 	promptPayload []byte,
 	responsePayload []byte,
 	signature string,
@@ -314,7 +315,7 @@ func VerifyExecutorPayloadSignature(
 
 	promptHash := utils.GenerateSHA256HashBytes(promptPayload)
 	responseHash := utils.GenerateSHA256HashBytes(responsePayload)
-	payload := inferenceId + promptHash + responseHash
+	payload := inferenceID + promptHash + responseHash
 
 	components := calculations.SignatureComponents{
 		Payload:         payload,

@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"testing"
 
-	"common/utils"
-
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	cosmosed25519 "github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/stretchr/testify/require"
+
+	"common/utils"
 )
 
 func TestValidatorsToRawJSON_FlattensPubKeyToBase64String(t *testing.T) {

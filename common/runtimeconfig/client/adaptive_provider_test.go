@@ -8,14 +8,14 @@ import (
 	"testing"
 	"time"
 
-	"common/nodemanager/gen"
-	"common/runtimeconfig/client/testserver"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"common/nodemanager/gen"
+	"common/runtimeconfig/client/testserver"
 )
 
 // fakeClock drives supervisor timers deterministically in tests.
@@ -85,11 +85,12 @@ func (c *scriptNMClient) GetRuntimeConfig(ctx context.Context, in *gen.GetRuntim
 	c.mu.Lock()
 	idx := int(c.calls.Add(1) - 1)
 	var fn func() (*gen.GetRuntimeConfigResponse, error)
-	if idx < len(c.handlers) {
+	switch {
+	case idx < len(c.handlers):
 		fn = c.handlers[idx]
-	} else if len(c.handlers) > 0 {
+	case len(c.handlers) > 0:
 		fn = c.handlers[len(c.handlers)-1]
-	} else {
+	default:
 		fn = func() (*gen.GetRuntimeConfigResponse, error) {
 			return nil, status.Error(codes.Unavailable, "no handler")
 		}
@@ -145,9 +146,9 @@ func cleanupAdaptive(t *testing.T, cancel context.CancelFunc, p AdaptiveProvider
 	})
 }
 
-func waitActiveSource(t *testing.T, p AdaptiveProvider, want string, max time.Duration) {
+func waitActiveSource(t *testing.T, p AdaptiveProvider, want string, maximum time.Duration) {
 	t.Helper()
-	deadline := time.Now().Add(max)
+	deadline := time.Now().Add(maximum)
 	for time.Now().Before(deadline) {
 		if p.ActiveSource() == want {
 			return
@@ -437,8 +438,8 @@ func TestAdaptive_FailbackHysteresis_NeedsConsecutiveProbes(t *testing.T) {
 			func() (*gen.GetRuntimeConfigResponse, error) {
 				return nil, status.Error(codes.Unimplemented, "not implemented")
 			},
-			ok,  // reprobe 1 — streak 1, still chain
-			fail, // reprobe 2 — reset streak
+			ok,     // reprobe 1 — streak 1, still chain
+			fail,   // reprobe 2 — reset streak
 			ok, ok, // reprobes 3–4 — failback to gRPC
 		},
 	}

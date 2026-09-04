@@ -152,7 +152,7 @@ func (c *Client) InitGenerateV2(ctx context.Context, req PoCInitGenerateRequestV
 		return nil, err
 	}
 
-	httpResp, err := utils.SendPostJsonRequest(ctx, &c.client, requestUrl, req)
+	httpResp, err := utils.SendPostJSONRequest(ctx, &c.client, requestUrl, req)
 	if err != nil {
 		return nil, err
 	}
@@ -182,7 +182,7 @@ func (c *Client) GenerateV2(ctx context.Context, req PoCGenerateRequestV2) (*PoC
 		return nil, err
 	}
 
-	httpResp, err := utils.SendPostJsonRequest(ctx, &c.client, requestUrl, req)
+	httpResp, err := utils.SendPostJSONRequest(ctx, &c.client, requestUrl, req)
 	if err != nil {
 		return nil, err
 	}
@@ -243,7 +243,7 @@ func (c *Client) StopPowV2(ctx context.Context) (*PoCStopResponseV2, error) {
 	}
 
 	// POST with empty body
-	httpResp, err := utils.SendPostJsonRequest(ctx, &c.client, requestUrl, struct{}{})
+	httpResp, err := utils.SendPostJSONRequest(ctx, &c.client, requestUrl, struct{}{})
 	if err != nil {
 		return nil, err
 	}

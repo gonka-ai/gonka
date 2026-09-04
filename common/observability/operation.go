@@ -18,6 +18,8 @@ type Operation struct {
 }
 
 // StartOperation begins a span and returns a context that carries it.
+//
+//nolint:spancheck // the returned Operation owns the span; its Finish ends it.
 func StartOperation(
 	ctx context.Context,
 	tracer tracerID,

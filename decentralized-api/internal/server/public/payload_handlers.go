@@ -30,7 +30,7 @@ func (s *Server) getInferencePayloads(ctx echo.Context) error {
 	inferenceId := ctx.QueryParam("inference_id")
 	validatorAddress := ctx.Request().Header.Get(utils.XValidatorAddressHeader)
 	timestampStr := ctx.Request().Header.Get(utils.XTimestampHeader)
-	epochIdStr := ctx.Request().Header.Get(utils.XEpochIdHeader)
+	epochIdStr := ctx.Request().Header.Get(utils.XEpochIDHeader)
 	signature := ctx.Request().Header.Get(utils.AuthorizationHeader)
 
 	if inferenceId == "" {

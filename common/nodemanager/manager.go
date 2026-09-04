@@ -77,10 +77,7 @@ func NewManager(ttl time.Duration) *Manager {
 	if pruneInterval <= 0 {
 		pruneInterval = time.Minute
 	}
-	staleTTL := DefaultStaleTTL
-	if staleTTL < ttl {
-		staleTTL = ttl
-	}
+	staleTTL := max(DefaultStaleTTL, ttl)
 	return &Manager{
 		freshTTL:      ttl,
 		staleTTL:      staleTTL,
@@ -171,7 +168,7 @@ func (m *Manager) PickNode(model string, excluded map[string]struct{}) (endpoint
 	start := int(mc.cursor.Load() % uint64(n))
 
 	for _, preferFresh := range [2]bool{true, false} {
-		for i := 0; i < n; i++ {
+		for i := range n {
 			idx := (start + i) % n
 			id := mc.order[idx]
 			if excluded != nil {

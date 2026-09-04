@@ -5,8 +5,8 @@ import (
 	"net/http"
 	"testing"
 
-	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/cosmos/cosmos-sdk/types/query"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
@@ -54,12 +54,12 @@ func TestGetParticipants_PaginatesAllPages(t *testing.T) {
 	second := make([]inferencetypes.ParticipantWithBalance, 50)
 	for i := range first {
 		first[i] = inferencetypes.ParticipantWithBalance{
-			Participant: inferencetypes.Participant{Address: fmt_addr(i)},
+			Participant: inferencetypes.Participant{Address: fmtAddr(i)},
 		}
 	}
 	for i := range second {
 		second[i] = inferencetypes.ParticipantWithBalance{
-			Participant: inferencetypes.Participant{Address: fmt_addr(100 + i)},
+			Participant: inferencetypes.Participant{Address: fmtAddr(100 + i)},
 		}
 	}
 
@@ -67,15 +67,17 @@ func TestGetParticipants_PaginatesAllPages(t *testing.T) {
 	ctx, rec := echoContext(t, http.MethodGet, "/participants")
 	require.NoError(t, s.GetParticipants(ctx))
 	assert.Equal(t, http.StatusOK, rec.Code)
-	assert.Contains(t, rec.Body.String(), fmt_addr(0))
-	assert.Contains(t, rec.Body.String(), fmt_addr(149))
+	assert.Contains(t, rec.Body.String(), fmtAddr(0))
+	assert.Contains(t, rec.Body.String(), fmtAddr(149))
 }
 
-func fmt_addr(i int) string {
+func fmtAddr(i int) string {
 	return "gonka1" + string(rune('a'+i%26)) + string(rune('0'+i/26))
 }
 
-type errParticipantsServer struct{ inferencetypes.UnimplementedQueryServer }
+type errParticipantsServer struct {
+	inferencetypes.UnimplementedQueryServer
+}
 
 func (s *errParticipantsServer) ParticipantsWithBalances(_ context.Context, _ *inferencetypes.QueryParticipantsWithBalancesRequest) (*inferencetypes.QueryParticipantsWithBalancesResponse, error) {
 	return nil, status.Error(codes.Unavailable, "chain unavailable")
@@ -91,7 +93,9 @@ func TestGetParticipants_Returns503OnGRPCUnavailable(t *testing.T) {
 
 // -- GetParticipant --
 
-type stubAccountServer struct{ inferencetypes.UnimplementedQueryServer }
+type stubAccountServer struct {
+	inferencetypes.UnimplementedQueryServer
+}
 
 func (s *stubAccountServer) AccountByAddress(_ context.Context, _ *inferencetypes.QueryAccountByAddressRequest) (*inferencetypes.QueryAccountByAddressResponse, error) {
 	return &inferencetypes.QueryAccountByAddressResponse{
@@ -111,7 +115,9 @@ func TestGetParticipant_Returns200(t *testing.T) {
 	assert.Contains(t, body, "ngonka")
 }
 
-type notFoundAccountServer struct{ inferencetypes.UnimplementedQueryServer }
+type notFoundAccountServer struct {
+	inferencetypes.UnimplementedQueryServer
+}
 
 func (s *notFoundAccountServer) AccountByAddress(_ context.Context, _ *inferencetypes.QueryAccountByAddressRequest) (*inferencetypes.QueryAccountByAddressResponse, error) {
 	return nil, status.Error(codes.NotFound, "account not found")

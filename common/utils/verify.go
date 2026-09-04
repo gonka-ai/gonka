@@ -34,9 +34,9 @@ func VerifyBlockSignatures(address string, height int64) error {
 	valSet := valSetRes.Validators
 
 	// Step 4: Verify the signatures
-	err = VerifyCommit(block.Header.ChainID, commit, block.Header.Height, valSet)
+	err = VerifyCommit(block.ChainID, commit, block.Height, valSet)
 	if err != nil {
-		return fmt.Errorf("block signature verification failed: %v", err)
+		return fmt.Errorf("block signature verification failed: %w", err)
 	}
 
 	fmt.Println("Block signature verification successful!")

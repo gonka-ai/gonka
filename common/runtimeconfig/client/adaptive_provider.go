@@ -166,11 +166,9 @@ func (p *adaptiveProvider) startGRPC(parent context.Context, reason string) {
 	p.mu.Unlock()
 
 	p.logSwitch(from, SourceActiveGRPC, reason)
-	p.runnerWG.Add(1)
-	go func() {
-		defer p.runnerWG.Done()
+	p.runnerWG.Go(func() {
 		newGRPCRunner(p.baseProvider, p.cfg.GRPC).run(runnerCtx, p.events)
-	}()
+	})
 }
 
 func (p *adaptiveProvider) startChain(parent context.Context, reason string) {
@@ -190,11 +188,9 @@ func (p *adaptiveProvider) startChain(parent context.Context, reason string) {
 	initCtx, initCancel := context.WithTimeout(parent, p.cfg.Chain.InitialTimeout)
 	runner.refresh(initCtx)
 	initCancel()
-	p.runnerWG.Add(1)
-	go func() {
-		defer p.runnerWG.Done()
+	p.runnerWG.Go(func() {
 		runner.run(runnerCtx)
-	}()
+	})
 }
 
 func (p *adaptiveProvider) logSwitch(from, to, reason string) {

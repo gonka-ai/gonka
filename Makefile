@@ -8,7 +8,7 @@ DEVSHARDD_RELEASE_DOCKER_GOARCH := $(if $(DOCKER_GOARCH),$(DOCKER_GOARCH),$(if $
 include scripts/blst-portable.mk
 
 # Modules whose lint must stay green; widened as each one is cleaned up. See docs/linting.md.
-LINT_MODULES ?= devshard edge-api proxy-ssl versioned test-net-cloud/devshard-testing test-net-cloud/gonka-client-testing
+LINT_MODULES ?= devshard common edge-api proxy-ssl versioned test-net-cloud/devshard-testing test-net-cloud/gonka-client-testing
 # Every Go module: golangci-lint analyses one per run, so the lint targets walk them.
 GO_MODULES := common inference-chain decentralized-api devshard versioned edge-api proxy-ssl test-net-cloud/devshard-testing test-net-cloud/gonka-client-testing
 

@@ -1,7 +1,6 @@
 package nodemanager
 
 import (
-	"context"
 	"sync"
 	"testing"
 	"time"
@@ -83,16 +82,14 @@ func TestManager_Observe_KnownNodeIsLockFree(t *testing.T) {
 
 	var wg sync.WaitGroup
 	for range 32 {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			for range 100 {
 				nowMu.Lock()
 				now = now.Add(time.Nanosecond)
 				nowMu.Unlock()
 				m.Observe("model-a", "node-1", "http://n1")
 			}
-		}()
+		})
 	}
 	wg.Wait()
 
@@ -296,8 +293,7 @@ func TestManager_Start_RetainsWithoutFlow(t *testing.T) {
 
 	m.Observe("model-a", "node-1", "http://n1")
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	m.Start(ctx)
 
 	nowMu.Lock()
@@ -331,8 +327,7 @@ func TestManager_Start_PrunesStaleWithFlow(t *testing.T) {
 	nowMu.Unlock()
 	m.Observe("model-a", "node-fresh", "http://fresh") // live flow
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	m.Start(ctx)
 
 	// A live flow lets the ticker drop the stale node while keeping the fresh one.

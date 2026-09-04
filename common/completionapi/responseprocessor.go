@@ -4,13 +4,13 @@ import (
 	"encoding/json"
 	"errors"
 
-	"common/logging"
-
 	"github.com/productscience/inference/x/inference/types"
+
+	"common/logging"
 )
 
 type ResponseProcessor interface {
-	ProcessJsonResponse(responseBytes []byte) ([]byte, error)
+	ProcessJSONResponse(responseBytes []byte) ([]byte, error)
 
 	ProcessStreamedResponse(line string) (string, error)
 
@@ -18,23 +18,23 @@ type ResponseProcessor interface {
 }
 
 type ExecutorResponseProcessor struct {
-	inferenceId       string
+	inferenceID       string
 	jsonResponseBytes []byte
 	forwardedJSON     []byte
 	streamedResponse  []string
 	forwardLogprobs   bool
 }
 
-func NewExecutorResponseProcessor(inferenceId string, forwardLogprobs bool) *ExecutorResponseProcessor {
+func NewExecutorResponseProcessor(inferenceID string, forwardLogprobs bool) *ExecutorResponseProcessor {
 	return &ExecutorResponseProcessor{
-		inferenceId:       inferenceId,
+		inferenceID:       inferenceID,
 		jsonResponseBytes: nil,
 		streamedResponse:  nil,
 		forwardLogprobs:   forwardLogprobs,
 	}
 }
 
-func (rt *ExecutorResponseProcessor) ProcessJsonResponse(responseBytes []byte) ([]byte, error) {
+func (rt *ExecutorResponseProcessor) ProcessJSONResponse(responseBytes []byte) ([]byte, error) {
 	stored, forwarded, err := rt.prepareBody(responseBytes)
 	if err != nil {
 		return nil, err
@@ -76,7 +76,7 @@ func (rt *ExecutorResponseProcessor) prepareBody(body []byte) (stored, forwarded
 	if !isObject {
 		return nil, nil, errors.New("ExecutorResponseProcessor: response body is not a JSON object")
 	}
-	object["id"] = rt.inferenceId
+	object["id"] = rt.inferenceID
 	dropFields(document, fieldsNoValidatorReads)
 
 	// Only a caller that asked is owed the host's own positions, so only it pays for a copy.
@@ -89,7 +89,7 @@ func (rt *ExecutorResponseProcessor) prepareBody(body []byte) (stored, forwarded
 	// A chunk that will not slim is stored as it arrived rather than failing the inference.
 	if err := compressLogprobsIn(document); err != nil {
 		logging.Warn("Storing the response whole: it did not compress", types.Inferences,
-			"inference_id", rt.inferenceId, "error", err)
+			"inference_id", rt.inferenceID, "error", err)
 	}
 	if stored, err = json.Marshal(document); err != nil {
 		return nil, nil, err

@@ -16,7 +16,6 @@ import (
 	cosmosed25519 "github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	proto "github.com/cosmos/gogoproto/proto"
 	"github.com/labstack/echo/v4"
-	"github.com/productscience/inference/x/inference/types"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 
 	"common/logging"
@@ -29,7 +28,7 @@ import (
 func (h *Handlers) PostVerifyProof(ctx echo.Context) error {
 	var req gen.ProofVerificationRequest
 	if err := ctx.Bind(&req); err != nil {
-		logging.Error("Error decoding request", types.Participants, "error", err)
+		logging.Error("Error decoding request", inferencetypes.Participants, "error", err)
 		return echo.NewHTTPError(http.StatusBadRequest, err)
 	}
 
@@ -47,20 +46,20 @@ func (h *Handlers) PostVerifyProof(ctx echo.Context) error {
 
 	appHash, err := hex.DecodeString(req.AppHash)
 	if err != nil {
-		logging.Error("Error decoding app hash", types.Participants, "error", err)
+		logging.Error("Error decoding app hash", inferencetypes.Participants, "error", err)
 		return echo.NewHTTPError(http.StatusBadRequest, errors.Wrap(err, "Error decoding app hash"))
 	}
 
 	value, err := hex.DecodeString(req.Value)
 	if err != nil {
-		logging.Error("Error decoding value", types.Participants, "error", err)
+		logging.Error("Error decoding value", inferencetypes.Participants, "error", err)
 		return echo.NewHTTPError(http.StatusBadRequest, errors.Wrap(err, "Error decoding value"))
 	}
 
-	logging.Info("Attempting verification", types.Participants, "verKey", verKey, "appHash", appHash, "value", req.Value)
+	logging.Info("Attempting verification", inferencetypes.Participants, "verKey", verKey, "appHash", appHash, "value", req.Value)
 
 	if err := utils.VerifyUsingProofRt(&proofOps, appHash, verKey, value); err != nil {
-		logging.Info("VerifyUsingProofRt failed", types.Participants, "error", err)
+		logging.Info("VerifyUsingProofRt failed", inferencetypes.Participants, "error", err)
 		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("proof verification failed: %v", err))
 	}
 	return ctx.NoContent(http.StatusOK)
@@ -71,16 +70,16 @@ func (h *Handlers) PostVerifyProof(ctx echo.Context) error {
 func (h *Handlers) PostVerifyBlock(ctx echo.Context) error {
 	var req gen.VerifyBlockRequest
 	if err := ctx.Bind(&req); err != nil {
-		logging.Error("Error decoding request", types.Participants, "error", err)
+		logging.Error("Error decoding request", inferencetypes.Participants, "error", err)
 		return echo.NewHTTPError(http.StatusBadRequest, err)
 	}
 
-	blockJson, err := json.Marshal(req.Block)
+	blockJSON, err := json.Marshal(req.Block)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, errors.Wrap(err, "invalid Block"))
 	}
 	var block comettypes.Block
-	if err := json.Unmarshal(blockJson, &block); err != nil {
+	if err := json.Unmarshal(blockJSON, &block); err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, errors.Wrap(err, "invalid Block"))
 	}
 	// block := &blockVerificationRequest.Block
@@ -88,7 +87,7 @@ func (h *Handlers) PostVerifyBlock(ctx echo.Context) error {
 	for i, validator := range req.Validators {
 		pubKeyBytes, err := base64.StdEncoding.DecodeString(validator.PubKey)
 		if err != nil {
-			logging.Error("Error decoding public key", types.Participants, "error", err)
+			logging.Error("Error decoding public key", inferencetypes.Participants, "error", err)
 			return echo.NewHTTPError(http.StatusBadRequest, errors.Wrap(err, "Error decoding public key"))
 		}
 
@@ -98,20 +97,20 @@ func (h *Handlers) PostVerifyBlock(ctx echo.Context) error {
 
 	groundTruth, err := h.validatorsAtHeight(ctx, block.Height)
 	if err != nil {
-		logging.Error("Debug block verification failed!", types.Participants, "error", err)
+		logging.Error("Debug block verification failed!", inferencetypes.Participants, "error", err)
 		return grpcErrorToHTTP(err)
 	}
-	logging.Info("Ground truth validators", types.Participants, "height", block.Height, "valSet", groundTruth)
+	logging.Info("Ground truth validators", inferencetypes.Participants, "height", block.Height, "valSet", groundTruth)
 
-	if err := utils.VerifyCommit(block.Header.ChainID, block.LastCommit, block.Header.Height, groundTruth); err != nil {
-		logging.Error("Block signature verification failed (ground truth)", types.Participants, "error", err)
+	if err := utils.VerifyCommit(block.ChainID, block.LastCommit, block.Height, groundTruth); err != nil {
+		logging.Error("Block signature verification failed (ground truth)", inferencetypes.Participants, "error", err)
 		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("ground truth block verification failed: %v", err))
 	}
 
-	logging.Info("Received validators", types.Participants, "height", block.Height, "valSet", valSet)
+	logging.Info("Received validators", inferencetypes.Participants, "height", block.Height, "valSet", valSet)
 
-	if err := utils.VerifyCommit(block.Header.ChainID, block.LastCommit, block.Header.Height, valSet); err != nil {
-		logging.Error("Block signature verification failed", types.Participants, "error", err)
+	if err := utils.VerifyCommit(block.ChainID, block.LastCommit, block.Height, valSet); err != nil {
+		logging.Error("Block signature verification failed", inferencetypes.Participants, "error", err)
 		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("block signature verification failed: %v", err))
 	}
 	return ctx.NoContent(http.StatusOK)

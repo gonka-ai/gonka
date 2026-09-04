@@ -4,9 +4,9 @@ import (
 	"testing"
 	"time"
 
-	"common/chainoracle/blocks"
-
 	"github.com/stretchr/testify/require"
+
+	"common/chainoracle/blocks"
 )
 
 func TestDummyHeader_IsDummy(t *testing.T) {
@@ -16,6 +16,6 @@ func TestDummyHeader_IsDummy(t *testing.T) {
 	require.True(t, h.Time.IsZero())
 	require.Empty(t, h.BlockHash)
 
-	real := blocks.HashOnlyHeader(8, time.Unix(1, 0).UTC(), "gonka", []byte{1})
-	require.False(t, blocks.IsDummyHeader(real))
+	actual := blocks.HashOnlyHeader(8, time.Unix(1, 0).UTC(), "gonka", []byte{1})
+	require.False(t, blocks.IsDummyHeader(actual))
 }

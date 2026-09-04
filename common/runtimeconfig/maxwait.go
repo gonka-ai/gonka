@@ -11,16 +11,16 @@ const DefaultMaxWaitCap = 60 * time.Second
 // Wire contract (do NOT reinterpret 0):
 //   - <= 0: immediate reply (field absent decodes as 0)
 //   - > 0:  long-poll up to min(requested, cap)
-func ClampMaxWait(maxWaitSeconds int32, cap time.Duration) time.Duration {
+func ClampMaxWait(maxWaitSeconds int32, capacity time.Duration) time.Duration {
 	if maxWaitSeconds <= 0 {
 		return 0
 	}
-	if cap <= 0 {
-		cap = DefaultMaxWaitCap
+	if capacity <= 0 {
+		capacity = DefaultMaxWaitCap
 	}
 	requested := time.Duration(maxWaitSeconds) * time.Second
-	if requested > cap {
-		return cap
+	if requested > capacity {
+		return capacity
 	}
 	return requested
 }

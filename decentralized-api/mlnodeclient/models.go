@@ -27,7 +27,7 @@ func (api *Client) CheckModelStatus(ctx context.Context, model Model) (*ModelSta
 		return nil, err
 	}
 
-	resp, err := utils.SendPostJsonRequest(ctx, &api.client, requestURL, model)
+	resp, err := utils.SendPostJSONRequest(ctx, &api.client, requestURL, model)
 	if err != nil {
 		return nil, err
 	}
@@ -60,7 +60,7 @@ func (api *Client) DownloadModel(ctx context.Context, model Model) (*DownloadSta
 		return nil, err
 	}
 
-	resp, err := utils.SendPostJsonRequest(ctx, &api.client, requestURL, model)
+	resp, err := utils.SendPostJSONRequest(ctx, &api.client, requestURL, model)
 	if err != nil {
 		return nil, err
 	}
@@ -101,7 +101,7 @@ func (api *Client) DeleteModel(ctx context.Context, model Model) (*DeleteRespons
 		return nil, err
 	}
 
-	resp, err := utils.SendDeleteJsonRequest(ctx, &api.client, requestURL, model)
+	resp, err := utils.SendDeleteJSONRequest(ctx, &api.client, requestURL, model)
 	if err != nil {
 		return nil, err
 	}

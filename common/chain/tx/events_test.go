@@ -3,11 +3,11 @@ package tx_test
 import (
 	"testing"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	abcitypes "github.com/cometbft/cometbft/abci/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/stretchr/testify/require"
 
 	chaintx "common/chain/tx"
-	"github.com/stretchr/testify/require"
 )
 
 func TestCreatedEscrowIDFromTxResponse(t *testing.T) {

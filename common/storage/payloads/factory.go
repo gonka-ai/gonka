@@ -31,7 +31,7 @@ type OpenConfig struct {
 //
 // See devshard/docs/storage-design.md#storage-mode-selection.
 func Open(ctx context.Context, cfg OpenConfig) (Storage, func(), error) {
-	if err := os.MkdirAll(cfg.Dir, 0o755); err != nil {
+	if err := os.MkdirAll(cfg.Dir, 0o755); err != nil { //nolint:gosec // the payload directory is read by the host beside this process.
 		return nil, nil, fmt.Errorf("payloads: mkdir %s: %w", cfg.Dir, err)
 	}
 

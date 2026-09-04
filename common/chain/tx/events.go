@@ -3,8 +3,8 @@ package tx
 import (
 	"strconv"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	abcitypes "github.com/cometbft/cometbft/abci/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 )
 
 const devshardEscrowCreatedEvent = "devshard_escrow_created"

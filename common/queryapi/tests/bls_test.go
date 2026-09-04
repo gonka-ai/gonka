@@ -5,6 +5,7 @@ package queryapitest
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 
@@ -18,7 +19,9 @@ import (
 
 // --- stub BLS servers ---
 
-type stubBLSEpochServer struct{ blstypes.UnimplementedQueryServer }
+type stubBLSEpochServer struct {
+	blstypes.UnimplementedQueryServer
+}
 
 func (s *stubBLSEpochServer) EpochBLSData(_ context.Context, req *blstypes.QueryEpochBLSDataRequest) (*blstypes.QueryEpochBLSDataResponse, error) {
 	return &blstypes.QueryEpochBLSDataResponse{
@@ -26,7 +29,9 @@ func (s *stubBLSEpochServer) EpochBLSData(_ context.Context, req *blstypes.Query
 	}, nil
 }
 
-type errBLSEpochServer struct{ blstypes.UnimplementedQueryServer }
+type errBLSEpochServer struct {
+	blstypes.UnimplementedQueryServer
+}
 
 func (s *errBLSEpochServer) EpochBLSData(_ context.Context, _ *blstypes.QueryEpochBLSDataRequest) (*blstypes.QueryEpochBLSDataResponse, error) {
 	return nil, status.Error(codes.Internal, "chain unavailable")
@@ -60,7 +65,8 @@ func TestGetBLSEpoch_Returns500OnGRPCError(t *testing.T) {
 	ctx, _ := echoContext(t, http.MethodGet, "/v1/bls/epoch/1")
 	err := h.GetBLSEpoch(ctx, 1)
 	require.Error(t, err)
-	he, ok := err.(*echo.HTTPError)
+	he := &echo.HTTPError{}
+	ok := errors.As(err, &he)
 	if !ok {
 		t.Fatalf("expected *echo.HTTPError, got %T: %v", err, err)
 	}
@@ -84,7 +90,8 @@ func TestGetBLSSignature_Returns400OnInvalidHex(t *testing.T) {
 	ctx, _ := echoContext(t, http.MethodGet, "/v1/bls/signatures/not-hex")
 	err := h.GetBLSSignature(ctx, "not-hex")
 	require.Error(t, err)
-	he, ok := err.(*echo.HTTPError)
+	he := &echo.HTTPError{}
+	ok := errors.As(err, &he)
 	if !ok {
 		t.Fatalf("expected *echo.HTTPError, got %T: %v", err, err)
 	}
@@ -126,7 +133,8 @@ func TestGetBLSSignature_Returns500OnGRPCError(t *testing.T) {
 	ctx, _ := echoContext(t, http.MethodGet, "/v1/bls/signatures/deadbeef")
 	err := h.GetBLSSignature(ctx, "deadbeef")
 	require.Error(t, err)
-	he, ok := err.(*echo.HTTPError)
+	he := &echo.HTTPError{}
+	ok := errors.As(err, &he)
 	if !ok {
 		t.Fatalf("expected *echo.HTTPError, got %T: %v", err, err)
 	}

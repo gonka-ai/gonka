@@ -5,10 +5,10 @@ import (
 	"log/slog"
 	"time"
 
-	"common/nodemanager/gen"
-
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"common/nodemanager/gen"
 )
 
 // SnapshotSource yields the current runtime-config snapshot for an epoch.

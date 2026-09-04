@@ -6,9 +6,9 @@ import (
 	"sync"
 	"time"
 
-	"common/logging"
-
 	"github.com/productscience/inference/x/inference/types"
+
+	"common/logging"
 )
 
 const pgConnectTimeout = 2 * time.Second
@@ -75,31 +75,31 @@ func (h *HybridStorage) currentPg() *postgresStorage {
 	return h.pg
 }
 
-func (h *HybridStorage) Store(ctx context.Context, escrowId string, inferenceId, epochId uint64, promptPayload, responsePayload []byte) error {
+func (h *HybridStorage) Store(ctx context.Context, escrowID string, inferenceID, epochID uint64, promptPayload, responsePayload []byte) error {
 	if pg := h.getOrConnectPg(ctx); pg != nil {
-		err := pg.Store(ctx, escrowId, inferenceId, epochId, promptPayload, responsePayload)
+		err := pg.Store(ctx, escrowID, inferenceID, epochID, promptPayload, responsePayload)
 		if err == nil {
 			return nil
 		}
 		logging.Warn("PostgreSQL payload store failed, falling back to file", types.PayloadStorage,
-			"escrowId", escrowId, "inferenceId", inferenceId, "error", err)
+			"escrowID", escrowID, "inferenceID", inferenceID, "error", err)
 	}
-	return h.file.Store(ctx, escrowId, inferenceId, epochId, promptPayload, responsePayload)
+	return h.file.Store(ctx, escrowID, inferenceID, epochID, promptPayload, responsePayload)
 }
 
-func (h *HybridStorage) Retrieve(ctx context.Context, escrowId string, inferenceId, epochId uint64) ([]byte, []byte, error) {
+func (h *HybridStorage) Retrieve(ctx context.Context, escrowID string, inferenceID, epochID uint64) ([]byte, []byte, error) {
 	if pg := h.currentPg(); pg != nil {
-		prompt, response, err := pg.Retrieve(ctx, escrowId, inferenceId, epochId)
+		prompt, response, err := pg.Retrieve(ctx, escrowID, inferenceID, epochID)
 		if err == nil {
 			return prompt, response, nil
 		}
 
 		if !errors.Is(err, ErrNotFound) {
 			logging.Debug("PostgreSQL payload retrieve failed, checking file", types.PayloadStorage,
-				"escrowId", escrowId, "inferenceId", inferenceId, "error", err)
+				"escrowID", escrowID, "inferenceID", inferenceID, "error", err)
 		}
 
-		prompt, response, fileErr := h.file.Retrieve(ctx, escrowId, inferenceId, epochId)
+		prompt, response, fileErr := h.file.Retrieve(ctx, escrowID, inferenceID, epochID)
 		if fileErr == nil {
 			return prompt, response, nil
 		}
@@ -109,13 +109,13 @@ func (h *HybridStorage) Retrieve(ctx context.Context, escrowId string, inference
 		return nil, nil, err
 	}
 
-	prompt, response, fileErr := h.file.Retrieve(ctx, escrowId, inferenceId, epochId)
+	prompt, response, fileErr := h.file.Retrieve(ctx, escrowID, inferenceID, epochID)
 	if fileErr == nil {
 		return prompt, response, nil
 	}
 
 	if pg := h.getOrConnectPg(ctx); pg != nil {
-		prompt, response, pgErr := pg.Retrieve(ctx, escrowId, inferenceId, epochId)
+		prompt, response, pgErr := pg.Retrieve(ctx, escrowID, inferenceID, epochID)
 		if pgErr == nil {
 			return prompt, response, nil
 		}
@@ -128,16 +128,16 @@ func (h *HybridStorage) Retrieve(ctx context.Context, escrowId string, inference
 	return nil, nil, fileErr
 }
 
-func (h *HybridStorage) DropEpoch(ctx context.Context, epochId uint64) error {
+func (h *HybridStorage) DropEpoch(ctx context.Context, epochID uint64) error {
 	var pgErr error
 	if pg := h.currentPg(); pg != nil {
-		pgErr = pg.DropEpoch(ctx, epochId)
+		pgErr = pg.DropEpoch(ctx, epochID)
 		if pgErr != nil {
-			logging.Warn("PostgreSQL payload prune failed", types.PayloadStorage, "epochId", epochId, "error", pgErr)
+			logging.Warn("PostgreSQL payload prune failed", types.PayloadStorage, "epochID", epochID, "error", pgErr)
 		}
 	}
 
-	fileErr := h.file.DropEpoch(ctx, epochId)
+	fileErr := h.file.DropEpoch(ctx, epochID)
 	if pgErr != nil {
 		return pgErr
 	}

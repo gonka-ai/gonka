@@ -34,6 +34,7 @@ func TestResponseTopLevelKeysMatchDapiContract(t *testing.T) {
 			name: "GET /v1/status",
 			keys: dapiTopLevelKeys["GET /v1/status"],
 			run: func(t *testing.T) (int, []byte) {
+				t.Helper()
 				h := newHandlers(&fakeChain{})
 				ctx, rec := echoContext(t, http.MethodGet, "/v1/status")
 				require.NoError(t, h.GetStatus(ctx))
@@ -44,6 +45,7 @@ func TestResponseTopLevelKeysMatchDapiContract(t *testing.T) {
 			name: "GET /v1/models",
 			keys: dapiTopLevelKeys["GET /v1/models"],
 			run: func(t *testing.T) (int, []byte) {
+				t.Helper()
 				model := makeModel("contract-model", 3)
 				srv := &stubModelsServer{
 					epochGroupData: inferencetypes.EpochGroupData{
@@ -64,6 +66,7 @@ func TestResponseTopLevelKeysMatchDapiContract(t *testing.T) {
 			name: "GET /v1/governance/models",
 			keys: dapiTopLevelKeys["GET /v1/governance/models"],
 			run: func(t *testing.T) (int, []byte) {
+				t.Helper()
 				srv := &stubGovernanceModelsServer{models: []inferencetypes.Model{makeModel("gov", 1)}}
 				h := handlersWithInference(t, srv)
 				ctx, rec := echoContext(t, http.MethodGet, "/v1/governance/models")
@@ -75,6 +78,7 @@ func TestResponseTopLevelKeysMatchDapiContract(t *testing.T) {
 			name: "GET /v1/governance/models-legacy",
 			keys: dapiTopLevelKeys["GET /v1/governance/models-legacy"],
 			run: func(t *testing.T) (int, []byte) {
+				t.Helper()
 				srv := &stubGovernanceModelsServer{models: []inferencetypes.Model{makeModel("legacy", 1)}}
 				h := handlersWithInference(t, srv)
 				ctx, rec := echoContext(t, http.MethodGet, "/v1/governance/models/legacy")
@@ -86,6 +90,7 @@ func TestResponseTopLevelKeysMatchDapiContract(t *testing.T) {
 			name: "GET /v1/pricing",
 			keys: dapiTopLevelKeys["GET /v1/pricing"],
 			run: func(t *testing.T) (int, []byte) {
+				t.Helper()
 				model := makeModel("priced", 2)
 				srv := &stubPricingServer{
 					epochGroupData: inferencetypes.EpochGroupData{
@@ -107,6 +112,7 @@ func TestResponseTopLevelKeysMatchDapiContract(t *testing.T) {
 			name: "GET /v1/versions",
 			keys: dapiTopLevelKeys["GET /v1/versions"],
 			run: func(t *testing.T) (int, []byte) {
+				t.Helper()
 				h := handlersWithComet(t, &stubNodeInfoServer{})
 				ctx, rec := echoContext(t, http.MethodGet, "/v1/versions")
 				require.NoError(t, h.GetVersions(ctx))
@@ -117,6 +123,7 @@ func TestResponseTopLevelKeysMatchDapiContract(t *testing.T) {
 			name: "GET /v1/epochs/{epoch}/participants",
 			keys: dapiTopLevelKeys["GET /v1/epochs/{epoch}/participants"],
 			run: func(t *testing.T) (int, []byte) {
+				t.Helper()
 				h := handlersWithInferenceAndComet(t, &stubEpochParticipantsInference{}, &stubEpochParticipantsComet{})
 				ctx, rec := echoContext(t, http.MethodGet, "/v1/epochs/1/participants")
 				require.NoError(t, h.GetEpochParticipants(ctx, "1"))

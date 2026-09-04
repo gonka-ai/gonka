@@ -113,7 +113,7 @@ func proxyJSONResponse(resp *http.Response, w http.ResponseWriter, responseProce
 	}
 
 	if responseProcessor != nil {
-		bodyBytes, err = responseProcessor.ProcessJsonResponse(bodyBytes)
+		bodyBytes, err = responseProcessor.ProcessJSONResponse(bodyBytes)
 		if err != nil {
 			logging.Error("Failed to process inference node response", types.Inferences, "inferenceID", inferenceID, "error", err)
 			http.Error(w, fmt.Sprintf("Failed to process inference node response. inferenceID = %s", inferenceID), http.StatusInternalServerError)

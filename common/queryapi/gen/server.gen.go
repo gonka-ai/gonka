@@ -28,7 +28,7 @@ type ServerInterface interface {
 	GetBLSEpochs(ctx echo.Context, id Uint64) error
 	// Get BLS signing request status by request ID
 	// (GET /v1/bls/signatures/{request_id})
-	GetBLSSignature(ctx echo.Context, requestId string) error
+	GetBLSSignature(ctx echo.Context, requestID string) error
 	// Get bridge contract addresses for a chain
 	// (GET /v1/bridge/addresses)
 	GetBridgeAddresses(ctx echo.Context, params GetBridgeAddressesParams) error
@@ -129,15 +129,15 @@ func (w *ServerInterfaceWrapper) GetBLSEpochs(ctx echo.Context) error {
 func (w *ServerInterfaceWrapper) GetBLSSignature(ctx echo.Context) error {
 	var err error
 	// ------------- Path parameter "request_id" -------------
-	var requestId string
+	var requestID string
 
-	err = runtime.BindStyledParameterWithOptions("simple", "request_id", ctx.Param("request_id"), &requestId, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
+	err = runtime.BindStyledParameterWithOptions("simple", "request_id", ctx.Param("request_id"), &requestID, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationPath, Explode: false, Required: true, Type: "string", Format: ""})
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, fmt.Sprintf("Invalid format for parameter request_id: %s", err))
 	}
 
 	// Invoke the callback with all the unmarshaled arguments
-	err = w.Handler.GetBLSSignature(ctx, requestId)
+	err = w.Handler.GetBLSSignature(ctx, requestID)
 	return err
 }
 

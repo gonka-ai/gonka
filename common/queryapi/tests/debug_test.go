@@ -37,7 +37,9 @@ func TestDebugPubKeyToAddr_InvalidPubKey(t *testing.T) {
 
 // -- DebugVerifyBlockSignatures --
 
-type errBlockServer struct{ cmtservice.UnimplementedServiceServer }
+type errBlockServer struct {
+	cmtservice.UnimplementedServiceServer
+}
 
 func (s *errBlockServer) GetBlockByHeight(_ context.Context, _ *cmtservice.GetBlockByHeightRequest) (*cmtservice.GetBlockByHeightResponse, error) {
 	return nil, status.Error(codes.NotFound, "block not found")

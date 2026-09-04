@@ -98,7 +98,7 @@ type ClientInterface interface {
 	GetBLSEpochs(ctx context.Context, id Uint64, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetBLSSignature request
-	GetBLSSignature(ctx context.Context, requestId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	GetBLSSignature(ctx context.Context, requestID string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetBridgeAddresses request
 	GetBridgeAddresses(ctx context.Context, params *GetBridgeAddressesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -186,8 +186,8 @@ func (c *Client) GetBLSEpochs(ctx context.Context, id Uint64, reqEditors ...Requ
 	return c.Client.Do(req)
 }
 
-func (c *Client) GetBLSSignature(ctx context.Context, requestId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetBLSSignatureRequest(c.Server, requestId)
+func (c *Client) GetBLSSignature(ctx context.Context, requestID string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetBLSSignatureRequest(c.Server, requestID)
 	if err != nil {
 		return nil, err
 	}
@@ -519,12 +519,12 @@ func NewGetBLSEpochsRequest(server string, id Uint64) (*http.Request, error) {
 }
 
 // NewGetBLSSignatureRequest generates requests for GetBLSSignature
-func NewGetBLSSignatureRequest(server string, requestId string) (*http.Request, error) {
+func NewGetBLSSignatureRequest(server string, requestID string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
 
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "request_id", requestId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "request_id", requestID, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
 	if err != nil {
 		return nil, err
 	}
@@ -1215,7 +1215,7 @@ type ClientWithResponsesInterface interface {
 	GetBLSEpochsWithResponse(ctx context.Context, id Uint64, reqEditors ...RequestEditorFn) (*GetBLSEpochsResponse, error)
 
 	// GetBLSSignatureWithResponse request
-	GetBLSSignatureWithResponse(ctx context.Context, requestId string, reqEditors ...RequestEditorFn) (*GetBLSSignatureResponse, error)
+	GetBLSSignatureWithResponse(ctx context.Context, requestID string, reqEditors ...RequestEditorFn) (*GetBLSSignatureResponse, error)
 
 	// GetBridgeAddressesWithResponse request
 	GetBridgeAddressesWithResponse(ctx context.Context, params *GetBridgeAddressesParams, reqEditors ...RequestEditorFn) (*GetBridgeAddressesResponse, error)
@@ -1778,8 +1778,8 @@ func (c *ClientWithResponses) GetBLSEpochsWithResponse(ctx context.Context, id U
 }
 
 // GetBLSSignatureWithResponse request returning *GetBLSSignatureResponse
-func (c *ClientWithResponses) GetBLSSignatureWithResponse(ctx context.Context, requestId string, reqEditors ...RequestEditorFn) (*GetBLSSignatureResponse, error) {
-	rsp, err := c.GetBLSSignature(ctx, requestId, reqEditors...)
+func (c *ClientWithResponses) GetBLSSignatureWithResponse(ctx context.Context, requestID string, reqEditors ...RequestEditorFn) (*GetBLSSignatureResponse, error) {
+	rsp, err := c.GetBLSSignature(ctx, requestID, reqEditors...)
 	if err != nil {
 		return nil, err
 	}

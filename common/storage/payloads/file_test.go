@@ -42,9 +42,9 @@ func TestFileStorage_RejectsPathTraversalEscrowID(t *testing.T) {
 		".",
 	} {
 		err := fs.Store(ctx, escrowID, 1, 1, []byte("p"), []byte("r"))
-		require.Error(t, err, "escrowId=%q", escrowID)
+		require.Error(t, err, "escrowID=%q", escrowID)
 		_, _, err = fs.Retrieve(ctx, escrowID, 1, 1)
-		require.Error(t, err, "escrowId=%q", escrowID)
+		require.Error(t, err, "escrowID=%q", escrowID)
 	}
 
 	_, err := os.Stat(outside)

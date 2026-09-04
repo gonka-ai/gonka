@@ -9,11 +9,11 @@ import (
 	"testing"
 	"time"
 
-	"common/nodemanager/gen"
-
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+
+	"common/nodemanager/gen"
 )
 
 // Handler returns the response for a GetRuntimeConfig call.
@@ -27,8 +27,8 @@ type Server struct {
 	handlers []Handler
 	calls    []*gen.GetRuntimeConfigRequest
 
-	inFlight    int32
-	maxInFlight int32
+	inFlight    atomic.Int32
+	maxInFlight atomic.Int32
 	blockCh     chan struct{}
 }
 
@@ -55,7 +55,7 @@ func (s *Server) Calls() []*gen.GetRuntimeConfigRequest {
 
 // MaxInFlight returns the peak concurrent GetRuntimeConfig calls observed.
 func (s *Server) MaxInFlight() int32 {
-	return atomic.LoadInt32(&s.maxInFlight)
+	return s.maxInFlight.Load()
 }
 
 // ReleaseBlocked unblocks handlers waiting on BlockNext.
@@ -79,11 +79,11 @@ func (s *Server) BlockNext() Handler {
 }
 
 func (s *Server) GetRuntimeConfig(ctx context.Context, req *gen.GetRuntimeConfigRequest) (*gen.GetRuntimeConfigResponse, error) {
-	cur := atomic.AddInt32(&s.inFlight, 1)
-	defer atomic.AddInt32(&s.inFlight, -1)
+	cur := s.inFlight.Add(1)
+	defer s.inFlight.Add(-1)
 	for {
-		max := atomic.LoadInt32(&s.maxInFlight)
-		if cur <= max || atomic.CompareAndSwapInt32(&s.maxInFlight, max, cur) {
+		maximum := s.maxInFlight.Load()
+		if cur <= maximum || s.maxInFlight.CompareAndSwap(maximum, cur) {
 			break
 		}
 	}
@@ -110,11 +110,11 @@ func (s *Server) GetRuntimeConfig(ctx context.Context, req *gen.GetRuntimeConfig
 // Dial starts the fake server and returns a connected NodeManagerClient.
 func Dial(t *testing.T, srv *Server) gen.NodeManagerClient {
 	t.Helper()
-	lis, err := net.Listen("tcp", "127.0.0.1:0")
+	lis, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 	grpcSrv := grpc.NewServer()
 	gen.RegisterNodeManagerServer(grpcSrv, srv)
-	go grpcSrv.Serve(lis)
+	go func() { _ = grpcSrv.Serve(lis) }()
 	t.Cleanup(func() { grpcSrv.Stop() })
 
 	conn, err := grpc.NewClient(lis.Addr().String(), grpc.WithTransportCredentials(insecure.NewCredentials()))

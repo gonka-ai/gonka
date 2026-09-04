@@ -21,7 +21,7 @@ func TestDefaultClientFollowsRedirects(t *testing.T) {
 	defer redirector.Close()
 
 	req, _ := http.NewRequest(http.MethodPost, redirector.URL+"/v1/chat/completions", bytes.NewReader([]byte(`{}`)))
-	req.Header.Set(utils.XInferenceIdHeader, "test-id")
+	req.Header.Set(utils.XInferenceIDHeader, "test-id")
 	req.Header.Set(utils.AuthorizationHeader, "Bearer key")
 	req.Header.Set("Content-Type", "application/json")
 
@@ -46,7 +46,7 @@ func TestNoRedirectClient(t *testing.T) {
 	defer redirector.Close()
 
 	req, _ := http.NewRequest(http.MethodPost, redirector.URL+"/v1/chat/completions", bytes.NewReader([]byte(`{}`)))
-	req.Header.Set(utils.XInferenceIdHeader, "test-id")
+	req.Header.Set(utils.XInferenceIDHeader, "test-id")
 	req.Header.Set(utils.AuthorizationHeader, "Bearer key")
 	req.Header.Set("Content-Type", "application/json")
 

@@ -156,14 +156,14 @@ func loadProxyEdgeAPIRoutePaths(t *testing.T, startMarker string) []string {
 
 func extractQuotedSection(script, start string) string {
 	const end = "'"
-	i := strings.Index(script, start)
-	if i < 0 {
+	_, after, ok := strings.Cut(script, start)
+	if !ok {
 		return ""
 	}
-	rest := script[i+len(start):]
-	j := strings.Index(rest, end)
-	if j < 0 {
+	rest := after
+	before0, _, ok0 := strings.Cut(rest, end)
+	if !ok0 {
 		return ""
 	}
-	return rest[:j]
+	return before0
 }

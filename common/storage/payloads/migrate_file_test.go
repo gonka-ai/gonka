@@ -24,27 +24,27 @@ func payloadDestKey(escrow string, inference, epoch uint64) string {
 	return strconv.FormatUint(epoch, 10) + "/" + escrow + "/" + strconv.FormatUint(inference, 10)
 }
 
-func (m *memPayloadDest) Store(_ context.Context, escrowId string, inferenceId, epochId uint64, prompt, response []byte) error {
+func (m *memPayloadDest) Store(_ context.Context, escrowID string, inferenceID, epochID uint64, prompt, response []byte) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.data[payloadDestKey(escrowId, inferenceId, epochId)] = [2][]byte{prompt, response}
+	m.data[payloadDestKey(escrowID, inferenceID, epochID)] = [2][]byte{prompt, response}
 	return nil
 }
 
-func (m *memPayloadDest) Retrieve(_ context.Context, escrowId string, inferenceId, epochId uint64) ([]byte, []byte, error) {
+func (m *memPayloadDest) Retrieve(_ context.Context, escrowID string, inferenceID, epochID uint64) ([]byte, []byte, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	v, ok := m.data[payloadDestKey(escrowId, inferenceId, epochId)]
+	v, ok := m.data[payloadDestKey(escrowID, inferenceID, epochID)]
 	if !ok {
 		return nil, nil, ErrNotFound
 	}
 	return v[0], v[1], nil
 }
 
-func (m *memPayloadDest) DropEpoch(_ context.Context, epochId uint64) error {
+func (m *memPayloadDest) DropEpoch(_ context.Context, epochID uint64) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	prefix := strconv.FormatUint(epochId, 10) + "/"
+	prefix := strconv.FormatUint(epochID, 10) + "/"
 	for k := range m.data {
 		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
 			delete(m.data, k)

@@ -1,13 +1,14 @@
 package completionapi
 
 import (
-	"common/logging"
-	"common/utils"
 	"encoding/json"
 	"errors"
 	"strings"
 
 	"github.com/productscience/inference/x/inference/types"
+
+	"common/logging"
+	"common/utils"
 )
 
 type CompletionResponse interface {
@@ -23,38 +24,38 @@ type CompletionResponse interface {
 	ExtractLogits() []Logprob
 }
 
-type JsonCompletionResponse struct {
+type JSONCompletionResponse struct {
 	Bytes []byte
 	Resp  Response
 }
 
-func (r *JsonCompletionResponse) GetModel() (string, error) {
+func (r *JSONCompletionResponse) GetModel() (string, error) {
 	return r.Resp.Model, nil
 }
 
-func (r *JsonCompletionResponse) GetInferenceId() (string, error) {
+func (r *JSONCompletionResponse) GetInferenceId() (string, error) { //nolint:revive // the name mirrors the generated proto field, which cannot be renamed.
 	return r.Resp.ID, nil
 }
 
-func (r *JsonCompletionResponse) GetUsage() (*Usage, error) {
+func (r *JSONCompletionResponse) GetUsage() (*Usage, error) {
 	if r.Resp.Usage.IsEmpty() {
-		return nil, errors.New("JsonCompletionResponse: no usage found")
+		return nil, errors.New("JSONCompletionResponse: no usage found")
 	}
 	return &r.Resp.Usage, nil
 }
 
-func (r *JsonCompletionResponse) GetBodyBytes() ([]byte, error) {
+func (r *JSONCompletionResponse) GetBodyBytes() ([]byte, error) {
 	return r.Bytes, nil
 }
 
-func (r *JsonCompletionResponse) GetHash() (string, error) {
+func (r *JSONCompletionResponse) GetHash() (string, error) {
 	if len(r.Bytes) == 0 {
 		return "", errors.New("CompletionResponse: can't compute hash, empty bytes")
 	}
 	return utils.GenerateSHA256HashBytes(r.Bytes), nil
 }
 
-func (r *JsonCompletionResponse) GetEnforcedStr() (string, error) {
+func (r *JSONCompletionResponse) GetEnforcedStr() (string, error) {
 	if len(r.Resp.Choices) == 0 {
 		return "", errors.New("JsonResponse has no choices")
 	}
@@ -89,10 +90,10 @@ type EnforcedTokens struct {
 	Tokens []EnforcedToken `json:"tokens"`
 }
 
-func (r *JsonCompletionResponse) GetEnforcedTokens() (EnforcedTokens, error) {
+func (r *JSONCompletionResponse) GetEnforcedTokens() (EnforcedTokens, error) {
 	if len(r.Resp.Choices) == 0 {
-		logging.Error("JsonCompletionResponse has no choices for enforced tokens", types.Validation, "inference_id", r.Resp.ID)
-		return EnforcedTokens{}, errors.New("JsonCompletionResponse: no choices found")
+		logging.Error("JSONCompletionResponse has no choices for enforced tokens", types.Validation, "inference_id", r.Resp.ID)
+		return EnforcedTokens{}, errors.New("JSONCompletionResponse: no choices found")
 	}
 
 	if len(r.Resp.Choices) > 1 {
@@ -119,7 +120,7 @@ func (r *JsonCompletionResponse) GetEnforcedTokens() (EnforcedTokens, error) {
 				"inference_id",
 				r.Resp.ID,
 			)
-			return EnforcedTokens{}, errors.New("JsonCompletionResponse: choice has no logprobs content")
+			return EnforcedTokens{}, errors.New("JSONCompletionResponse: choice has no logprobs content")
 		}
 
 		var topTokens []string
@@ -137,7 +138,7 @@ func (r *JsonCompletionResponse) GetEnforcedTokens() (EnforcedTokens, error) {
 func (r *StreamedCompletionResponse) GetEnforcedTokens() (EnforcedTokens, error) {
 	if len(r.Resp.Data) == 0 {
 		logging.Error("StreamedCompletionResponse has no data for enforced tokens", types.Validation)
-		return EnforcedTokens{}, ErrorNoDataAvailableInStreamedResponse
+		return EnforcedTokens{}, ErrNoDataAvailableInStreamedResponse
 	}
 
 	var enforcedTokens EnforcedTokens
@@ -184,21 +185,21 @@ type StreamedCompletionResponse struct {
 	Resp  StreamedResponse
 }
 
-var ErrorNoDataAvailableInStreamedResponse = errors.New("no data available in streamed response")
+var ErrNoDataAvailableInStreamedResponse = errors.New("no data available in streamed response")
 
 func (r *StreamedCompletionResponse) GetModel() (string, error) {
 	if len(r.Resp.Data) > 0 {
 		return r.Resp.Data[0].Model, nil
 	} else {
-		return "", ErrorNoDataAvailableInStreamedResponse
+		return "", ErrNoDataAvailableInStreamedResponse
 	}
 }
 
-func (r *StreamedCompletionResponse) GetInferenceId() (string, error) {
+func (r *StreamedCompletionResponse) GetInferenceId() (string, error) { //nolint:revive // the name mirrors the generated proto field, which cannot be renamed.
 	if len(r.Resp.Data) > 0 {
 		return r.Resp.Data[0].ID, nil
 	} else {
-		return "", ErrorNoDataAvailableInStreamedResponse
+		return "", ErrNoDataAvailableInStreamedResponse
 	}
 }
 
@@ -220,7 +221,7 @@ func (r *StreamedCompletionResponse) GetUsage() (*Usage, error) {
 		}
 		return usage, nil
 	} else {
-		return nil, ErrorNoDataAvailableInStreamedResponse
+		return nil, ErrNoDataAvailableInStreamedResponse
 	}
 }
 
@@ -243,7 +244,7 @@ func (r *StreamedCompletionResponse) GetHash() (string, error) {
 }
 
 func (r *StreamedCompletionResponse) GetEnforcedStr() (string, error) {
-	var id = ""
+	id := ""
 	var stringBuilder strings.Builder
 	for _, event := range r.Resp.Data {
 		id = event.ID
@@ -253,7 +254,7 @@ func (r *StreamedCompletionResponse) GetEnforcedStr() (string, error) {
 
 		if len(event.Choices) > 1 {
 			// TODO: We should learn how to process/validate multiple options completions
-			logging.Warn("More than one choice in a streamed inference response, defaulting to first one", types.Validation, "inferenceId", event.ID, "choices", event.Choices)
+			logging.Warn("More than one choice in a streamed inference response, defaulting to first one", types.Validation, "inferenceID", event.ID, "choices", event.Choices)
 		}
 
 		choice := event.Choices[0]
@@ -279,7 +280,7 @@ func (r *StreamedCompletionResponse) GetEnforcedStr() (string, error) {
 	return responseString, nil
 }
 
-func (r *JsonCompletionResponse) ExtractLogits() []Logprob {
+func (r *JSONCompletionResponse) ExtractLogits() []Logprob {
 	var logits []Logprob
 	// Concatenate all logrpobs
 	for _, c := range r.Resp.Choices {
@@ -305,7 +306,7 @@ func NewCompletionResponseFromBytes(bytes []byte) (CompletionResponse, error) {
 		return nil, err
 	}
 
-	return &JsonCompletionResponse{
+	return &JSONCompletionResponse{
 		Bytes: bytes,
 		Resp:  response,
 	}, nil
@@ -337,8 +338,8 @@ func NewCompletionResponseFromLines(lines []string) (CompletionResponse, error) 
 }
 
 func NewCompletionResponseFromLinesFromResponsePayload(payload []byte) (CompletionResponse, error) {
-	var genericMap map[string]interface{}
-	bytes := []byte(payload)
+	var genericMap map[string]any
+	bytes := payload
 	if err := json.Unmarshal(bytes, &genericMap); err != nil {
 		logging.Error("Failed to unmarshal response payload into var genericMap map[string]interface{}", types.Inferences, "err", err)
 		return nil, err

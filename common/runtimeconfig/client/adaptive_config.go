@@ -8,8 +8,8 @@ import (
 )
 
 const (
-	defaultGRPCStaleSeconds     = 90 * time.Second
-	defaultGRPCReprobeSeconds   = 300 * time.Second
+	defaultGRPCStale            = 90 * time.Second
+	defaultGRPCReprobe          = 300 * time.Second
 	defaultFailbackProbes       = 2
 	defaultAdaptiveProbeTimeout = 3 * time.Second
 	defaultStaleCheckInterval   = 5 * time.Second
@@ -20,15 +20,15 @@ const (
 )
 
 // Default tuning for devshardd env fallbacks (see DEVSHARDD_PARAMS_*).
-func DefaultGRPCStaleSeconds() time.Duration     { return defaultGRPCStaleSeconds }
-func DefaultGRPCReprobeSeconds() time.Duration   { return defaultGRPCReprobeSeconds }
+func DefaultGRPCStaleSeconds() time.Duration     { return defaultGRPCStale }
+func DefaultGRPCReprobeSeconds() time.Duration   { return defaultGRPCReprobe }
 func DefaultFailbackProbes() int                 { return defaultFailbackProbes }
 func DefaultAdaptiveProbeTimeout() time.Duration { return defaultAdaptiveProbeTimeout }
 func DefaultStaleCheckInterval() time.Duration   { return defaultStaleCheckInterval }
 
 // AdaptiveConfig configures the adaptive runtime-params supervisor (auto mode).
 type AdaptiveConfig struct {
-	GRPC Config
+	GRPC  Config
 	Chain ChainConfig
 
 	// GRPCStale is how long the gRPC runner may go without a successful apply
@@ -63,10 +63,10 @@ func (c *AdaptiveConfig) applyDefaults() error {
 		return err
 	}
 	if c.GRPCStale <= 0 {
-		c.GRPCStale = defaultGRPCStaleSeconds
+		c.GRPCStale = defaultGRPCStale
 	}
 	if c.GRPCReprobe <= 0 {
-		c.GRPCReprobe = defaultGRPCReprobeSeconds
+		c.GRPCReprobe = defaultGRPCReprobe
 	}
 	if c.FailbackProbes <= 0 {
 		c.FailbackProbes = defaultFailbackProbes

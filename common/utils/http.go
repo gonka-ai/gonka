@@ -2,22 +2,23 @@ package utils
 
 import (
 	"bytes"
-	"common/logging"
 	"context"
 	"encoding/json"
 	"net/http"
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
+
+	"common/logging"
 )
 
-func NewHttpClient(timeout time.Duration) *http.Client {
+func NewHTTPClient(timeout time.Duration) *http.Client {
 	return &http.Client{
 		Timeout: timeout,
 	}
 }
 
-func SendPostJsonRequest(ctx context.Context, client *http.Client, url string, payload any) (*http.Response, error) {
+func SendPostJSONRequest(ctx context.Context, client *http.Client, url string, payload any) (*http.Response, error) {
 	var req *http.Request
 	var err error
 
@@ -26,9 +27,9 @@ func SendPostJsonRequest(ctx context.Context, client *http.Client, url string, p
 		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
 	} else {
 		// Marshal the payload to JSON.
-		jsonData, err := json.Marshal(payload)
-		if err != nil {
-			return nil, err
+		jsonData, marshalErr := json.Marshal(payload)
+		if marshalErr != nil {
+			return nil, marshalErr
 		}
 		req, err = http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewBuffer(jsonData))
 	}
@@ -37,7 +38,7 @@ func SendPostJsonRequest(ctx context.Context, client *http.Client, url string, p
 		return nil, err
 	}
 	if req == nil {
-		logging.Error("SendPostJsonRequest. Failed to create HTTP request", types.Server, "url", url, "payload", payload)
+		logging.Error("SendPostJSONRequest. Failed to create HTTP request", types.Server, "url", url, "payload", payload)
 		return nil, err
 	}
 
@@ -53,7 +54,7 @@ func SendGetRequest(ctx context.Context, client *http.Client, url string) (*http
 	return client.Do(req)
 }
 
-func SendDeleteJsonRequest(ctx context.Context, client *http.Client, url string, payload any) (*http.Response, error) {
+func SendDeleteJSONRequest(ctx context.Context, client *http.Client, url string, payload any) (*http.Response, error) {
 	var req *http.Request
 	var err error
 
@@ -77,7 +78,7 @@ func SendDeleteJsonRequest(ctx context.Context, client *http.Client, url string,
 		return nil, err
 	}
 	if req == nil {
-		logging.Error("SendDeleteJsonRequest. Failed to create HTTP request", types.Server, "url", url, "payload", payload)
+		logging.Error("SendDeleteJSONRequest. Failed to create HTTP request", types.Server, "url", url, "payload", payload)
 		return nil, err
 	}
 

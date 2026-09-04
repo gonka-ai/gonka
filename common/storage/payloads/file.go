@@ -11,10 +11,10 @@ import (
 	"strconv"
 	"strings"
 
-	"common/logging"
-
 	"github.com/klauspost/compress/zstd"
 	"github.com/productscience/inference/x/inference/types"
+
+	"common/logging"
 )
 
 type storedPayload struct {
@@ -22,7 +22,7 @@ type storedPayload struct {
 	ResponsePayload []byte `json:"response_payload"`
 }
 
-// FileStorage stores payloads under {baseDir}/{epochId}/{escrowId}/{inferenceId}.json[.zst].
+// FileStorage stores payloads under {baseDir}/{epochID}/{escrowID}/{inferenceID}.json[.zst].
 type FileStorage struct {
 	baseDir      string
 	compressFile bool
@@ -40,33 +40,33 @@ func NewCompressingFileStorage(baseDir string) *FileStorage {
 	return &FileStorage{baseDir: baseDir, compressFile: true}
 }
 
-// sanitizeEscrowPathSegment rejects empty IDs and any escrowId that is not a
+// sanitizeEscrowPathSegment rejects empty IDs and any escrowID that is not a
 // single path segment under baseDir (no separators, ".", "..", or cleaned
 // inequality). Keeps on-disk layout compatible with existing numeric IDs.
-func sanitizeEscrowPathSegment(escrowId string) (string, error) {
-	escrowId = strings.TrimSpace(escrowId)
-	if escrowId == "" {
-		return "", fmt.Errorf("payloads: empty escrowId")
+func sanitizeEscrowPathSegment(escrowID string) (string, error) {
+	escrowID = strings.TrimSpace(escrowID)
+	if escrowID == "" {
+		return "", fmt.Errorf("payloads: empty escrowID")
 	}
-	if strings.Contains(escrowId, "/") || strings.Contains(escrowId, `\`) || strings.Contains(escrowId, string(filepath.Separator)) {
-		return "", fmt.Errorf("payloads: invalid escrowId")
+	if strings.Contains(escrowID, "/") || strings.Contains(escrowID, `\`) || strings.Contains(escrowID, string(filepath.Separator)) {
+		return "", fmt.Errorf("payloads: invalid escrowID")
 	}
-	if escrowId == "." || escrowId == ".." || strings.Contains(escrowId, "..") {
-		return "", fmt.Errorf("payloads: invalid escrowId")
+	if escrowID == "." || escrowID == ".." || strings.Contains(escrowID, "..") {
+		return "", fmt.Errorf("payloads: invalid escrowID")
 	}
-	cleaned := filepath.Base(escrowId)
-	if cleaned != escrowId || cleaned == "." || cleaned == ".." {
-		return "", fmt.Errorf("payloads: invalid escrowId")
+	cleaned := filepath.Base(escrowID)
+	if cleaned != escrowID || cleaned == "." || cleaned == ".." {
+		return "", fmt.Errorf("payloads: invalid escrowID")
 	}
 	return cleaned, nil
 }
 
-func (f *FileStorage) escrowDir(escrowId string, epochId uint64) (string, error) {
-	segment, err := sanitizeEscrowPathSegment(escrowId)
+func (f *FileStorage) escrowDir(escrowID string, epochID uint64) (string, error) {
+	segment, err := sanitizeEscrowPathSegment(escrowID)
 	if err != nil {
 		return "", err
 	}
-	dir := filepath.Clean(filepath.Join(f.baseDir, strconv.FormatUint(epochId, 10), segment))
+	dir := filepath.Clean(filepath.Join(f.baseDir, strconv.FormatUint(epochID, 10), segment))
 	base := filepath.Clean(f.baseDir)
 	rel, err := filepath.Rel(base, dir)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
@@ -75,16 +75,16 @@ func (f *FileStorage) escrowDir(escrowId string, epochId uint64) (string, error)
 	return dir, nil
 }
 
-func (f *FileStorage) Store(ctx context.Context, escrowId string, inferenceId, epochId uint64, promptPayload, responsePayload []byte) error {
+func (f *FileStorage) Store(ctx context.Context, escrowID string, inferenceID, epochID uint64, promptPayload, responsePayload []byte) error {
 	_ = ctx
 	logging.Debug("Storing payload (file)", types.PayloadStorage,
-		"escrowId", escrowId, "inferenceId", inferenceId, "epochId", epochId, "baseDir", f.baseDir)
+		"escrowID", escrowID, "inferenceID", inferenceID, "epochID", epochID, "baseDir", f.baseDir)
 
-	dir, err := f.escrowDir(escrowId, epochId)
+	dir, err := f.escrowDir(escrowID, epochID)
 	if err != nil {
 		return err
 	}
-	if err := os.MkdirAll(dir, 0o755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil { //nolint:gosec // the payload directory is read by the host beside this process.
 		return fmt.Errorf("payloads: mkdir: %w", err)
 	}
 
@@ -99,13 +99,13 @@ func (f *FileStorage) Store(ctx context.Context, escrowId string, inferenceId, e
 	suffix := plainSuffix
 	if f.compressFile {
 		compressed, compressErr := compressPayloadFile(data)
-		data, suffix = namePayloadFile(data, compressed, compressErr, inferenceId)
+		data, suffix = namePayloadFile(data, compressed, compressErr, inferenceID)
 	}
 
-	name := strconv.FormatUint(inferenceId, 10)
+	name := strconv.FormatUint(inferenceID, 10)
 	targetPath := filepath.Join(dir, name+suffix)
 	tempPath := targetPath + ".tmp"
-	if err := os.WriteFile(tempPath, data, 0o644); err != nil {
+	if err := os.WriteFile(tempPath, data, 0o644); err != nil { //nolint:gosec // payload files are read by the host beside this process.
 		return fmt.Errorf("payloads: write temp: %w", err)
 	}
 	if err := os.Rename(tempPath, targetPath); err != nil {
@@ -120,10 +120,10 @@ func (f *FileStorage) Store(ctx context.Context, escrowId string, inferenceId, e
 
 // namePayloadFile picks the bytes to write and the suffix that describes them. An encoder that failed
 // is stored plain, because plain JSON under the compressed name is a file the reader cannot open.
-func namePayloadFile(plain, compressed []byte, compressErr error, inferenceId uint64) ([]byte, string) {
+func namePayloadFile(plain, compressed []byte, compressErr error, inferenceID uint64) ([]byte, string) {
 	if compressErr != nil {
 		logging.Warn("Storing the payload uncompressed: zstd failed", types.PayloadStorage,
-			"inferenceId", inferenceId, "error", compressErr)
+			"inferenceID", inferenceID, "error", compressErr)
 		return plain, plainSuffix
 	}
 	return compressed, compressedSuffix
@@ -136,13 +136,13 @@ func siblingSuffix(suffix string) string {
 	return compressedSuffix
 }
 
-func (f *FileStorage) Retrieve(ctx context.Context, escrowId string, inferenceId, epochId uint64) ([]byte, []byte, error) {
+func (f *FileStorage) Retrieve(ctx context.Context, escrowID string, inferenceID, epochID uint64) ([]byte, []byte, error) {
 	_ = ctx
-	dir, err := f.escrowDir(escrowId, epochId)
+	dir, err := f.escrowDir(escrowID, epochID)
 	if err != nil {
 		return nil, nil, err
 	}
-	data, err := readPayloadFile(dir, inferenceId)
+	data, err := readPayloadFile(dir, inferenceID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -154,9 +154,9 @@ func (f *FileStorage) Retrieve(ctx context.Context, escrowId string, inferenceId
 	return payload.PromptPayload, payload.ResponsePayload, nil
 }
 
-func (f *FileStorage) DropEpoch(ctx context.Context, epochId uint64) error {
+func (f *FileStorage) DropEpoch(ctx context.Context, epochID uint64) error {
 	_ = ctx
-	epochDir := filepath.Join(f.baseDir, strconv.FormatUint(epochId, 10))
+	epochDir := filepath.Join(f.baseDir, strconv.FormatUint(epochID, 10))
 	if err := os.RemoveAll(epochDir); err != nil {
 		return fmt.Errorf("payloads: remove epoch dir: %w", err)
 	}
@@ -188,9 +188,9 @@ func compressPayloadFile(data []byte) ([]byte, error) {
 	return compressed.Bytes(), nil
 }
 
-func readPayloadFile(dir string, inferenceId uint64) ([]byte, error) {
-	name := strconv.FormatUint(inferenceId, 10)
-	compressed, err := os.ReadFile(filepath.Join(dir, name+compressedSuffix))
+func readPayloadFile(dir string, inferenceID uint64) ([]byte, error) {
+	name := strconv.FormatUint(inferenceID, 10)
+	compressed, err := os.ReadFile(filepath.Join(dir, name+compressedSuffix)) //nolint:gosec // the path is built from the escrow and inference ids this store owns.
 	if err == nil {
 		reader, readerErr := zstd.NewReader(bytes.NewReader(compressed))
 		if readerErr != nil {
@@ -210,7 +210,7 @@ func readPayloadFile(dir string, inferenceId uint64) ([]byte, error) {
 		return nil, fmt.Errorf("payloads: read file: %w", err)
 	}
 
-	data, err := os.ReadFile(filepath.Join(dir, name+plainSuffix))
+	data, err := os.ReadFile(filepath.Join(dir, name+plainSuffix)) //nolint:gosec // the path is built from the escrow and inference ids this store owns.
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, ErrNotFound

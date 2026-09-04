@@ -30,7 +30,7 @@ func TestChainStartStoreQueryCreatesSpan(t *testing.T) {
 	require.Len(t, spans, 1)
 	require.Equal(t, "chain.store.query", spans[0].Name())
 	require.Equal(t, "inference", attrString(spans[0].Attributes(), "store.key"))
-	require.Equal(t, true, attrBool(spans[0].Attributes(), "query.with_proof"))
+	require.True(t, attrBool(spans[0].Attributes(), "query.with_proof"))
 	require.Equal(t, int64(42), attrInt64(spans[0].Attributes(), "query.height"))
 	_ = ctx
 }

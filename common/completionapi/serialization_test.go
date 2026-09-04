@@ -2,12 +2,13 @@ package completionapi
 
 import (
 	"encoding/json"
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/stretchr/testify/require"
 )
 
 const (
-	NO_LOGPROBS = `
+	noLogprobs = `
 {
   "id": "cmpl-2d320c7a47f24b02b48a376b979a9242",
   "object": "chat.completion",
@@ -32,7 +33,7 @@ const (
     "completion_tokens": 8
   }
 }`
-	LOGPROBS_NO_TOP_LOGPROBS = `
+	logprobsNoTopLogprobs = `
 {
   "id": "cmpl-c5298389c6d34738b1ecb8a557ddfba3",
   "object": "chat.completion",
@@ -131,7 +132,7 @@ const (
   }
 }
 `
-	TOP_LOGPROBS = `
+	topLogprobs = `
 {
   "id": "cmpl-7804309bf8404215aefc67fd9275d1ff",
   "object": "chat.completion",
@@ -433,7 +434,7 @@ const (
     "completion_tokens": 8
   }
 }`
-	START_COMPLETION_STREAMED_EVENT = `
+	startCompletionStreamedEvent = `
 {
   "id": "cmpl-3973dab1430143849df83d943ea0c7ac",
   "object": "chat.completion.chunk",
@@ -451,7 +452,7 @@ const (
   ]
 }
 `
-	MID_COMPLETION_STREAMED_EVENT = `
+	midCompletionStreamedEvent = `
 {
   "id": "cmpl-3973dab1430143849df83d943ea0c7ac",
   "object": "chat.completion.chunk",
@@ -506,7 +507,7 @@ const (
   ]
 }
 `
-	END_COMPLETION_STREAMED_EVENT = `
+	endCompletionStreamedEvent = `
 {
   "id": "cmpl-3973dab1430143849df83d943ea0c7ac",
   "object": "chat.completion.chunk",
@@ -558,7 +559,7 @@ const (
 
 func TestNoLogprobsAnswer(t *testing.T) {
 	var r Response
-	if err := json.Unmarshal([]byte(NO_LOGPROBS), &r); err != nil {
+	if err := json.Unmarshal([]byte(noLogprobs), &r); err != nil {
 		t.Fatalf("Failed to unmarshal r: %v", err)
 	}
 	t.Logf("Response: %v", r)
@@ -578,7 +579,7 @@ func TestNoLogprobsAnswer(t *testing.T) {
 
 func TestLogprobsNoTopLogprobsAnswer(t *testing.T) {
 	var r Response
-	if err := json.Unmarshal([]byte(LOGPROBS_NO_TOP_LOGPROBS), &r); err != nil {
+	if err := json.Unmarshal([]byte(logprobsNoTopLogprobs), &r); err != nil {
 		t.Fatalf("Failed to unmarshal r: %v", err)
 	}
 	t.Logf("Response: %v", r)
@@ -586,7 +587,7 @@ func TestLogprobsNoTopLogprobsAnswer(t *testing.T) {
 
 func TestTopLogprobsAnswer(t *testing.T) {
 	var r Response
-	if err := json.Unmarshal([]byte(TOP_LOGPROBS), &r); err != nil {
+	if err := json.Unmarshal([]byte(topLogprobs), &r); err != nil {
 		t.Fatalf("Failed to unmarshal r: %v", err)
 	}
 	t.Logf("Response: %v", r)
@@ -594,7 +595,7 @@ func TestTopLogprobsAnswer(t *testing.T) {
 
 func TestStartCompletionStreamedEvent(t *testing.T) {
 	var r Response
-	if err := json.Unmarshal([]byte(START_COMPLETION_STREAMED_EVENT), &r); err != nil {
+	if err := json.Unmarshal([]byte(startCompletionStreamedEvent), &r); err != nil {
 		t.Fatalf("Failed to unmarshal r: %v", err)
 	}
 	t.Logf("Response: %v", r)
@@ -608,7 +609,7 @@ func TestStartCompletionStreamedEvent(t *testing.T) {
 
 func TestMidCompletionStreamedEvent(t *testing.T) {
 	var r Response
-	if err := json.Unmarshal([]byte(MID_COMPLETION_STREAMED_EVENT), &r); err != nil {
+	if err := json.Unmarshal([]byte(midCompletionStreamedEvent), &r); err != nil {
 		t.Fatalf("Failed to unmarshal r: %v", err)
 	}
 	t.Logf("Response: %v", r)
@@ -622,7 +623,7 @@ func TestMidCompletionStreamedEvent(t *testing.T) {
 
 func TestEndCompletionStreamedEvent(t *testing.T) {
 	var r Response
-	if err := json.Unmarshal([]byte(END_COMPLETION_STREAMED_EVENT), &r); err != nil {
+	if err := json.Unmarshal([]byte(endCompletionStreamedEvent), &r); err != nil {
 		t.Fatalf("Failed to unmarshal r: %v", err)
 	}
 	t.Logf("Response: %v", r)
@@ -635,6 +636,7 @@ func TestEndCompletionStreamedEvent(t *testing.T) {
 }
 
 func assertStreamedEventChoices(t *testing.T, r Response) *Delta {
+	t.Helper()
 	if len(r.Choices) != 1 {
 		t.Fatalf("Expected 1 choices, got %d", len(r.Choices))
 	}
@@ -655,11 +657,12 @@ func TestStreamedResponseSerialization(t *testing.T) {
 	require.IsType(t, &StreamedCompletionResponse{}, resp)
 
 	bytes, err := resp.GetBodyBytes()
+	require.NoError(t, err)
 
 	resp2, err := NewCompletionResponseFromLinesFromResponsePayload(bytes)
 	require.NoError(t, err)
 	require.IsType(t, &StreamedCompletionResponse{}, resp2)
 
-	require.Equal(t, len(resp.(*StreamedCompletionResponse).Lines), len(resp2.(*StreamedCompletionResponse).Lines))
-	require.Equal(t, len(resp.(*StreamedCompletionResponse).Resp.Data), len(resp2.(*StreamedCompletionResponse).Resp.Data))
+	require.Len(t, resp2.(*StreamedCompletionResponse).Lines, len(resp.(*StreamedCompletionResponse).Lines))
+	require.Len(t, resp2.(*StreamedCompletionResponse).Resp.Data, len(resp.(*StreamedCompletionResponse).Resp.Data))
 }

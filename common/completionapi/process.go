@@ -42,6 +42,6 @@ func processJSON(body io.Reader, processor ResponseProcessor) error {
 	if err != nil {
 		return err
 	}
-	_, err = processor.ProcessJsonResponse(data)
+	_, err = processor.ProcessJSONResponse(data)
 	return err
 }

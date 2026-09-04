@@ -5,10 +5,10 @@ import (
 	"path/filepath"
 	"testing"
 
-	"common/storage/mode"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"common/storage/mode"
 )
 
 func clearStorageModeEnv(t *testing.T) {

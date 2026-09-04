@@ -6,11 +6,11 @@ import (
 	"sync"
 	"time"
 
-	"common/nodemanager/gen"
-
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"common/nodemanager/gen"
 )
 
 const (
@@ -166,14 +166,12 @@ func (c *Cache) Start(ctx context.Context) {
 }
 
 func (c *Cache) pollLoop(ctx context.Context) {
-	interval := c.pollInterval
 	for {
 		c.pollOnce(ctx)
 		c.mu.Lock()
+		interval := c.pollInterval
 		if c.unsupported {
 			interval = c.unsupportedRetryInterval
-		} else {
-			interval = c.pollInterval
 		}
 		c.mu.Unlock()
 
@@ -327,10 +325,7 @@ func (c *Cache) EffectiveMax(nodeID string) int {
 	if !ok {
 		return 0
 	}
-	div := c.Divisor()
-	if div < 1 {
-		div = 1
-	}
+	div := max(c.Divisor(), 1)
 	eff := n.maxConcurrent / div
 	if eff < 1 {
 		return 1
@@ -399,10 +394,7 @@ func (c *Cache) availableSlotsLocked(nodeID string, div int) int {
 	if div < 1 {
 		div = 1
 	}
-	eff := n.maxConcurrent / div
-	if eff < 1 {
-		eff = 1
-	}
+	eff := max(n.maxConcurrent/div, 1)
 	slots := eff - chargedLockCountLocked(n) - c.inFlightSumLocked(nodeID)
 	if slots < 0 {
 		return 0
@@ -446,14 +438,8 @@ func (c *Cache) Release(nodeID, model string) {
 // at MinFallbackDivisor (4), so with an idle/fresh load map this is
 // unknownMaxConcurrent / 4, shrinking further as active escrows grow.
 func (c *Cache) unknownEffectiveMax() int {
-	div := c.Divisor()
-	if div < 1 {
-		div = 1
-	}
-	eff := c.unknownMaxConcurrent / div
-	if eff < 1 {
-		eff = 1
-	}
+	div := max(c.Divisor(), 1)
+	eff := max(c.unknownMaxConcurrent/div, 1)
 	return eff
 }
 

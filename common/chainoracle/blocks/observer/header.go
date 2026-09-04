@@ -3,10 +3,10 @@ package observer
 import (
 	"fmt"
 
-	"common/chainoracle/blocks"
-
 	ctypes "github.com/cometbft/cometbft/rpc/core/types"
 	cmttypes "github.com/cometbft/cometbft/types"
+
+	"common/chainoracle/blocks"
 )
 
 // HeaderFromResultBlock maps a Tendermint ResultBlock to a hash-only Header.

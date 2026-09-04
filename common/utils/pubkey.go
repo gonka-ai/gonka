@@ -1,7 +1,6 @@
 package utils
 
 import (
-	"common/logging"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
@@ -12,7 +11,9 @@ import (
 	"github.com/cosmos/btcutil/bech32"
 	cryptotypes "github.com/cosmos/cosmos-sdk/crypto/types"
 	"github.com/productscience/inference/x/inference/types"
-	"golang.org/x/crypto/ripemd160"
+	"golang.org/x/crypto/ripemd160" //nolint:gosec // RIPEMD-160 is fixed by the Cosmos address derivation.
+
+	"common/logging"
 )
 
 // PubKeyBase64ToAddress converts a base64-encoded public key to a Cosmos bech32 address.
@@ -45,7 +46,7 @@ func pubKeyBytesToAddress(pubKeyBytes []byte) (string, error) {
 	shaHash := sha256.Sum256(pubKeyBytes)
 
 	// Step 2: RIPEMD-160 hash
-	ripemdHasher := ripemd160.New()
+	ripemdHasher := ripemd160.New() //nolint:gosec // RIPEMD-160 is fixed by the Cosmos address derivation.
 	ripemdHasher.Write(shaHash[:])
 	ripemdHash := ripemdHasher.Sum(nil)
 
@@ -66,9 +67,10 @@ func pubKeyBytesToAddress(pubKeyBytes []byte) (string, error) {
 	return address, nil
 }
 
-// PubKeyToAddress converts a public key string to a Cosmos bech32 address.
-// DEPRECATED: Accepts both base64-encoded (standard Cosmos format) and hex-encoded public keys.
-// Use PubKeyBase64ToAddress or PubKeyHexToAddress for explicit control over encoding.
+// PubKeyToAddress converts a public key string to a Cosmos bech32 address. It accepts both
+// base64-encoded (standard Cosmos format) and hex-encoded public keys.
+//
+// Deprecated: use PubKeyBase64ToAddress or PubKeyHexToAddress for explicit control over encoding.
 func PubKeyToAddress(pubKeyStr string) (string, error) {
 	var pubKeyBytes []byte
 	var err error

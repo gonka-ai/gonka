@@ -308,8 +308,8 @@ func TestFallback_BothTransportsDownReportsBothErrors(t *testing.T) {
 
 	// Reporting only the RPC failure hides why the fallback engaged at all, so
 	// both causes must stay reachable.
-	assert.ErrorIs(t, err, errUnavailable, "the original gRPC failure must survive")
-	assert.ErrorIs(t, err, rpcErr, "the RPC failure must survive")
+	require.ErrorIs(t, err, errUnavailable, "the original gRPC failure must survive")
+	require.ErrorIs(t, err, rpcErr, "the RPC failure must survive")
 	assert.Contains(t, err.Error(), "/test.Service/Query")
 
 	// status.FromError unwraps to the first cause, so a node that answers on
@@ -330,7 +330,7 @@ func TestFallback_FailedProbeWithDeadRPCReportsBothErrors(t *testing.T) {
 	err := invoke(fb)
 	require.Error(t, err)
 
-	assert.ErrorIs(t, err, errUnavailable)
+	require.ErrorIs(t, err, errUnavailable)
 	assert.ErrorIs(t, err, rpcErr)
 }
 

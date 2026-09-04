@@ -6,14 +6,13 @@ import (
 	"reflect"
 	"strconv"
 
-	"common/utils"
-
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"github.com/cosmos/cosmos-sdk/codec"
 	cosmosed25519 "github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	gogoproto "github.com/cosmos/gogoproto/proto"
 
 	"common/queryapi/gen"
+	"common/utils"
 )
 
 // protoToRawJSON converts a gogo protobuf message into a JSON-safe value suitable

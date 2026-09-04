@@ -66,8 +66,8 @@ func encodeCanonical(encoder *json.Encoder, jsonObj any) error {
 	return nil
 }
 
-func GenerateSHA256HashBytes(bytes []byte) string {
-	hash := sha256.Sum256(bytes)
+func GenerateSHA256HashBytes(payload []byte) string {
+	hash := sha256.Sum256(payload)
 	return hex.EncodeToString(hash[:])
 }
 

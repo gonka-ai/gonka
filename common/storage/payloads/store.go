@@ -6,12 +6,12 @@ import (
 	"fmt"
 	"sync"
 
-	"common/logging"
-
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/productscience/inference/x/inference/types"
+
+	"common/logging"
 )
 
 const schema = `
@@ -66,40 +66,40 @@ func (s *Store) Close() {
 	}
 }
 
-func (s *Store) ensurePartition(ctx context.Context, epochId uint64) error {
-	if _, ok := s.knownEpochs.Load(epochId); ok {
+func (s *Store) ensurePartition(ctx context.Context, epochID uint64) error {
+	if _, ok := s.knownEpochs.Load(epochID); ok {
 		return nil
 	}
-	name := fmt.Sprintf("payload_storage_epoch_%d", epochId)
+	name := fmt.Sprintf("payload_storage_epoch_%d", epochID)
 	_, err := s.pool.Exec(ctx, fmt.Sprintf(
 		`CREATE TABLE IF NOT EXISTS %s
 		 PARTITION OF payload_storage
 		 FOR VALUES FROM (%d) TO (%d)`,
-		name, epochId, epochId+1,
+		name, epochID, epochID+1,
 	))
 	if err != nil {
 		var pgErr *pgconn.PgError
 		if errors.As(err, &pgErr) && pgErr.Code == "42P07" {
-			s.knownEpochs.Store(epochId, true)
+			s.knownEpochs.Store(epochID, true)
 			return nil
 		}
-		return fmt.Errorf("payloads: ensure partition epoch %d: %w", epochId, err)
+		return fmt.Errorf("payloads: ensure partition epoch %d: %w", epochID, err)
 	}
-	s.knownEpochs.Store(epochId, true)
-	logging.Debug("Created partition", types.PayloadStorage, "epochId", epochId)
+	s.knownEpochs.Store(epochID, true)
+	logging.Debug("Created partition", types.PayloadStorage, "epochID", epochID)
 
 	return nil
 }
 
-func (s *Store) Store(ctx context.Context, escrowId string, inferenceId, epochId uint64, prompt, response []byte) error {
-	if err := s.ensurePartition(ctx, epochId); err != nil {
+func (s *Store) Store(ctx context.Context, escrowID string, inferenceID, epochID uint64, prompt, response []byte) error {
+	if err := s.ensurePartition(ctx, epochID); err != nil {
 		return err
 	}
 	_, err := s.pool.Exec(ctx,
 		`INSERT INTO payload_storage (escrow_id, inference_id, epoch_id, prompt_payload, response_payload)
 		 VALUES ($1, $2, $3, $4, $5)
 		 ON CONFLICT (escrow_id, inference_id, epoch_id) DO NOTHING`,
-		escrowId, inferenceId, epochId, prompt, response,
+		escrowID, inferenceID, epochID, prompt, response,
 	)
 	if err != nil {
 		return fmt.Errorf("payloads: store: %w", err)
@@ -107,29 +107,29 @@ func (s *Store) Store(ctx context.Context, escrowId string, inferenceId, epochId
 	return nil
 }
 
-func (s *Store) Retrieve(ctx context.Context, escrowId string, inferenceId, epochId uint64) (prompt, response []byte, err error) {
+func (s *Store) Retrieve(ctx context.Context, escrowID string, inferenceID, epochID uint64) (prompt, response []byte, err error) {
 	err = s.pool.QueryRow(ctx,
 		`SELECT prompt_payload, response_payload
 		 FROM payload_storage
 		 WHERE escrow_id = $1 AND inference_id = $2 AND epoch_id = $3`,
-		escrowId, inferenceId, epochId,
+		escrowID, inferenceID, epochID,
 	).Scan(&prompt, &response)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, nil, ErrNotFound
 		}
-		return nil, nil, fmt.Errorf("payloads: retrieve %s/%d: %w", escrowId, inferenceId, err)
+		return nil, nil, fmt.Errorf("payloads: retrieve %s/%d: %w", escrowID, inferenceID, err)
 	}
 	return prompt, response, nil
 }
 
-func (s *Store) DropEpoch(ctx context.Context, epochId uint64) error {
-	partition := pgx.Identifier{fmt.Sprintf("payload_storage_epoch_%d", epochId)}.Sanitize()
+func (s *Store) DropEpoch(ctx context.Context, epochID uint64) error {
+	partition := pgx.Identifier{fmt.Sprintf("payload_storage_epoch_%d", epochID)}.Sanitize()
 	if _, err := s.pool.Exec(ctx, "DROP TABLE IF EXISTS "+partition); err != nil {
-		return fmt.Errorf("payloads: drop epoch %d: %w", epochId, err)
+		return fmt.Errorf("payloads: drop epoch %d: %w", epochID, err)
 	}
-	s.knownEpochs.Delete(epochId)
-	logging.Info("Dropped epoch partition", types.PayloadStorage, "epochId", epochId)
+	s.knownEpochs.Delete(epochID)
+	logging.Info("Dropped epoch partition", types.PayloadStorage, "epochID", epochID)
 	return nil
 }
 

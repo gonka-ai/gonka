@@ -1,20 +1,21 @@
 package validation
 
 import (
-	"common/completionapi"
 	"encoding/json"
 	"os"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"common/completionapi"
 )
 
 const (
-	inferenceJsonPath  = "testdata/inference_response.json"
-	validationJsonPath = "testdata/validation_response.json"
+	inferenceJSONPath  = "testdata/inference_response.json"
+	validationJSONPath = "testdata/validation_response.json"
 
-	inferenceQuantJsonPath = "testdata/inference_response_int4.json"
-	validationFP8tJsonPath = "testdata/validation_response_fp8.json"
+	inferenceQuantJSONPath = "testdata/inference_response_int4.json"
+	validationFP8tJSONPath = "testdata/validation_response_fp8.json"
 )
 
 func loadResponse(path string) (*completionapi.Response, error) {
@@ -30,12 +31,12 @@ func loadResponse(path string) (*completionapi.Response, error) {
 }
 
 func TestValidation(t *testing.T) {
-	inferenceResponse, err := loadResponse(inferenceJsonPath)
+	inferenceResponse, err := loadResponse(inferenceJSONPath)
 	if err != nil {
 		t.Fatalf("Failed to read inference response: %v", err)
 	}
 
-	validationResponse, err := loadResponse(validationJsonPath)
+	validationResponse, err := loadResponse(validationJSONPath)
 	if err != nil {
 		t.Fatalf("Failed to read validation response: %v", err)
 	}
@@ -55,12 +56,12 @@ func TestValidation(t *testing.T) {
 }
 
 func TestValidationQuant(t *testing.T) {
-	inferenceResponse, err := loadResponse(inferenceQuantJsonPath)
+	inferenceResponse, err := loadResponse(inferenceQuantJSONPath)
 	if err != nil {
 		t.Fatalf("Failed to read inference response: %v", err)
 	}
 
-	validationResponse, err := loadResponse(validationFP8tJsonPath)
+	validationResponse, err := loadResponse(validationFP8tJSONPath)
 	if err != nil {
 		t.Fatalf("Failed to read validation response: %v", err)
 	}

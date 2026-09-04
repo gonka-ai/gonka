@@ -4,11 +4,11 @@ import (
 	"context"
 	"testing"
 
-	"common/chain"
-
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
+
+	"common/chain"
 )
 
 type fakeInferenceClient struct {
@@ -27,45 +27,59 @@ func (f *fakeInferenceClient) EpochInfo(context.Context, *inferencetypes.QueryEp
 func (f *fakeInferenceClient) GetCurrentEpoch(context.Context, *inferencetypes.QueryGetCurrentEpochRequest, ...grpc.CallOption) (*inferencetypes.QueryGetCurrentEpochResponse, error) {
 	panic("not implemented")
 }
+
 func (f *fakeInferenceClient) ParticipantsWithBalances(context.Context, *inferencetypes.QueryParticipantsWithBalancesRequest, ...grpc.CallOption) (*inferencetypes.QueryParticipantsWithBalancesResponse, error) {
 	panic("not implemented")
 }
+
 func (f *fakeInferenceClient) AccountByAddress(context.Context, *inferencetypes.QueryAccountByAddressRequest, ...grpc.CallOption) (*inferencetypes.QueryAccountByAddressResponse, error) {
 	panic("not implemented")
 }
+
 func (f *fakeInferenceClient) Participant(context.Context, *inferencetypes.QueryGetParticipantRequest, ...grpc.CallOption) (*inferencetypes.QueryGetParticipantResponse, error) {
 	panic("not implemented")
 }
+
 func (f *fakeInferenceClient) DevshardEscrow(context.Context, *inferencetypes.QueryGetDevshardEscrowRequest, ...grpc.CallOption) (*inferencetypes.QueryGetDevshardEscrowResponse, error) {
 	panic("not implemented")
 }
+
 func (f *fakeInferenceClient) GranteesByMessageType(context.Context, *inferencetypes.QueryGranteesByMessageTypeRequest, ...grpc.CallOption) (*inferencetypes.QueryGranteesByMessageTypeResponse, error) {
 	panic("not implemented")
 }
+
 func (f *fakeInferenceClient) ExcludedParticipants(context.Context, *inferencetypes.QueryExcludedParticipantsRequest, ...grpc.CallOption) (*inferencetypes.QueryExcludedParticipantsResponse, error) {
 	panic("not implemented")
 }
+
 func (f *fakeInferenceClient) PocBatchesForStage(context.Context, *inferencetypes.QueryPocBatchesForStageRequest, ...grpc.CallOption) (*inferencetypes.QueryPocBatchesForStageResponse, error) {
 	panic("not implemented")
 }
+
 func (f *fakeInferenceClient) BridgeAddressesByChain(context.Context, *inferencetypes.QueryBridgeAddressesByChainRequest, ...grpc.CallOption) (*inferencetypes.QueryBridgeAddressesByChainResponse, error) {
 	panic("not implemented")
 }
+
 func (f *fakeInferenceClient) CurrentEpochGroupData(context.Context, *inferencetypes.QueryCurrentEpochGroupDataRequest, ...grpc.CallOption) (*inferencetypes.QueryCurrentEpochGroupDataResponse, error) {
 	panic("not implemented")
 }
+
 func (f *fakeInferenceClient) EpochGroupData(context.Context, *inferencetypes.QueryGetEpochGroupDataRequest, ...grpc.CallOption) (*inferencetypes.QueryGetEpochGroupDataResponse, error) {
 	panic("not implemented")
 }
+
 func (f *fakeInferenceClient) ModelsAll(context.Context, *inferencetypes.QueryModelsAllRequest, ...grpc.CallOption) (*inferencetypes.QueryModelsAllResponse, error) {
 	panic("not implemented")
 }
+
 func (f *fakeInferenceClient) GetAllModelPerTokenPrices(context.Context, *inferencetypes.QueryGetAllModelPerTokenPricesRequest, ...grpc.CallOption) (*inferencetypes.QueryGetAllModelPerTokenPricesResponse, error) {
 	panic("not implemented")
 }
+
 func (f *fakeInferenceClient) GetAllModelCapacities(context.Context, *inferencetypes.QueryGetAllModelCapacitiesRequest, ...grpc.CallOption) (*inferencetypes.QueryGetAllModelCapacitiesResponse, error) {
 	panic("not implemented")
 }
+
 func (f *fakeInferenceClient) PreservedNodesSnapshot(context.Context, *inferencetypes.QueryPreservedNodesSnapshotRequest, ...grpc.CallOption) (*inferencetypes.QueryPreservedNodesSnapshotResponse, error) {
 	panic("not implemented")
 }

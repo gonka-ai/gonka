@@ -53,13 +53,13 @@ func DoWithNode(
 			return nil, fmt.Errorf("nodemanager: acquire node (attempt %d): %w", attempt+1, err)
 		}
 
-		resp, outcome, err := runAttempt(ctx, lease.Endpoint, do)
+		resp, outcome, err := runAttempt(ctx, lease.GetEndpoint(), do)
 
 		// Release with a detached context so a cancelled/expired request context
 		// does not prevent the server-side lock from being freed.
-		if releaseErr := lock.Release(context.WithoutCancel(ctx), lease.LockId, outcome); releaseErr != nil {
+		if releaseErr := lock.Release(context.WithoutCancel(ctx), lease.GetLockId(), outcome); releaseErr != nil {
 			// Non-fatal: the server will evict the lock via TTL, but log for observability.
-			logging.Error("nodemanager: release lock", "lock_id", lease.LockId, "err", releaseErr)
+			logging.Error("nodemanager: release lock", "lock_id", lease.GetLockId(), "err", releaseErr)
 		}
 
 		if err == nil {
@@ -78,9 +78,9 @@ func DoWithNode(
 		}
 
 		// Deduplicate excluded node IDs before passing to the next Acquire.
-		if _, dup := seen[lease.NodeId]; !dup && lease.NodeId != "" {
-			seen[lease.NodeId] = struct{}{}
-			excludedNodeIDs = append(excludedNodeIDs, lease.NodeId)
+		if _, dup := seen[lease.GetNodeId()]; !dup && lease.GetNodeId() != "" {
+			seen[lease.GetNodeId()] = struct{}{}
+			excludedNodeIDs = append(excludedNodeIDs, lease.GetNodeId())
 		}
 	}
 

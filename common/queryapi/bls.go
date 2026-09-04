@@ -98,8 +98,8 @@ func (h *Handlers) GetBLSEpochs(ctx echo.Context, id uint64) error {
 // Changes:
 //   - Not-found detection uses gRPC status code (codes.NotFound) instead of string matching on err.Error().
 //   - Not-found response serializes as {} instead of {"signing_request":null} due to omitempty on BLSSignatureResponse.
-func (h *Handlers) GetBLSSignature(ctx echo.Context, requestId string) error {
-	requestIDBytes, err := hex.DecodeString(requestId)
+func (h *Handlers) GetBLSSignature(ctx echo.Context, requestID string) error {
+	requestIDBytes, err := hex.DecodeString(requestID)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusBadRequest, "Invalid request ID format (must be hex-encoded)")
 	}

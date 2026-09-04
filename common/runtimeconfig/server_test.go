@@ -6,11 +6,12 @@ import (
 	"testing"
 	"time"
 
-	"common/nodemanager/gen"
-
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"common/nodemanager/gen"
 )
 
 // fakeSource is a concurrency-safe SnapshotSource backed by a single snapshot
@@ -67,11 +68,11 @@ func TestServer_FullResponseWhenClientZero(t *testing.T) {
 
 	resp, err := srv.Handle(context.Background(), &gen.GetRuntimeConfigRequest{ClientParamsBlockHeight: 0})
 	require.NoError(t, err)
-	require.False(t, resp.Unchanged)
-	require.NotNil(t, resp.Config)
-	require.Equal(t, int64(100), resp.Config.ParamsBlockHeight)
-	require.Equal(t, uint64(7), resp.Config.CurrentEpochId)
-	require.Equal(t, "full", resp.Config.LogprobsMode)
+	require.False(t, resp.GetUnchanged())
+	require.NotNil(t, resp.GetConfig())
+	require.Equal(t, int64(100), resp.GetConfig().GetParamsBlockHeight())
+	require.Equal(t, uint64(7), resp.GetConfig().GetCurrentEpochId())
+	require.Equal(t, "full", resp.GetConfig().GetLogprobsMode())
 }
 
 func TestServer_FullResponseWhenBehind(t *testing.T) {
@@ -85,8 +86,8 @@ func TestServer_FullResponseWhenBehind(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Less(t, time.Since(start), 100*time.Millisecond)
-	require.False(t, resp.Unchanged)
-	require.Equal(t, int64(100), resp.Config.ParamsBlockHeight)
+	require.False(t, resp.GetUnchanged())
+	require.Equal(t, int64(100), resp.GetConfig().GetParamsBlockHeight())
 }
 
 func TestServer_ImmediateUnchangedWhenCaughtUp(t *testing.T) {
@@ -97,8 +98,8 @@ func TestServer_ImmediateUnchangedWhenCaughtUp(t *testing.T) {
 	resp, err := srv.Handle(context.Background(), &gen.GetRuntimeConfigRequest{ClientParamsBlockHeight: 100})
 	require.NoError(t, err)
 	require.Less(t, time.Since(start), 50*time.Millisecond)
-	require.True(t, resp.Unchanged)
-	require.Nil(t, resp.Config)
+	require.True(t, resp.GetUnchanged())
+	require.Nil(t, resp.GetConfig())
 }
 
 func TestServer_NegativeMaxWaitTreatedAsZero(t *testing.T) {
@@ -112,7 +113,7 @@ func TestServer_NegativeMaxWaitTreatedAsZero(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Less(t, time.Since(start), 50*time.Millisecond)
-	require.True(t, resp.Unchanged)
+	require.True(t, resp.GetUnchanged())
 }
 
 func TestServer_LongPollReturnsOnNotify(t *testing.T) {
@@ -128,7 +129,7 @@ func TestServer_LongPollReturnsOnNotify(t *testing.T) {
 			ClientParamsBlockHeight: 100,
 			MaxWaitSeconds:          2,
 		})
-		require.NoError(t, err)
+		assert.NoError(t, err)
 		done <- resp
 	}()
 
@@ -137,8 +138,8 @@ func TestServer_LongPollReturnsOnNotify(t *testing.T) {
 
 	select {
 	case resp := <-done:
-		require.False(t, resp.Unchanged)
-		require.Equal(t, int64(101), resp.Config.ParamsBlockHeight)
+		require.False(t, resp.GetUnchanged())
+		require.Equal(t, int64(101), resp.GetConfig().GetParamsBlockHeight())
 	case <-time.After(1500 * time.Millisecond):
 		t.Fatal("expected return on notify before max_wait")
 	}
@@ -155,7 +156,7 @@ func TestServer_LongPollTimesOut(t *testing.T) {
 	})
 	elapsed := time.Since(start)
 	require.NoError(t, err)
-	require.True(t, resp.Unchanged)
+	require.True(t, resp.GetUnchanged())
 	require.GreaterOrEqual(t, elapsed, 900*time.Millisecond)
 	require.Less(t, elapsed, 3*time.Second)
 }
@@ -194,7 +195,7 @@ func TestServer_BroadcastWakesAllWaiters(t *testing.T) {
 	results := make([]*gen.GetRuntimeConfigResponse, n)
 	errs := make([]error, n)
 	wg.Add(n)
-	for i := 0; i < n; i++ {
+	for i := range n {
 		go func(idx int) {
 			defer wg.Done()
 			results[idx], errs[idx] = srv.Handle(context.Background(), &gen.GetRuntimeConfigRequest{
@@ -208,10 +209,10 @@ func TestServer_BroadcastWakesAllWaiters(t *testing.T) {
 	src.publish(101)
 
 	wg.Wait()
-	for i := 0; i < n; i++ {
+	for i := range n {
 		require.NoError(t, errs[i])
-		require.False(t, results[i].Unchanged)
-		require.Equal(t, int64(101), results[i].Config.ParamsBlockHeight)
+		require.False(t, results[i].GetUnchanged())
+		require.Equal(t, int64(101), results[i].GetConfig().GetParamsBlockHeight())
 	}
 }
 
@@ -231,7 +232,7 @@ func TestServer_MaxWaitClampedToCap(t *testing.T) {
 	})
 	elapsed := time.Since(start)
 	require.NoError(t, err)
-	require.True(t, resp.Unchanged)
+	require.True(t, resp.GetUnchanged())
 	require.GreaterOrEqual(t, elapsed, 900*time.Millisecond)
 	require.Less(t, elapsed, 5*time.Second)
 }

@@ -9,11 +9,11 @@ import (
 	"sync"
 	"testing"
 
-	"common/nodemanager"
-	"common/nodemanager/gen"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"common/nodemanager"
+	"common/nodemanager/gen"
 )
 
 // stubLock is a test double for nodemanager.NodeLock.

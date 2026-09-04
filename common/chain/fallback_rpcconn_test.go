@@ -14,6 +14,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -36,16 +37,16 @@ func fakeCometRPC(t *testing.T, resp abci.ResponseQuery, paths *[]string) *httpt
 	t.Helper()
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
-		require.NoError(t, err)
+		assert.NoError(t, err)
 
 		var req rpctypes.RPCRequest
-		require.NoError(t, json.Unmarshal(body, &req))
-		require.Equal(t, "abci_query", req.Method)
+		assert.NoError(t, json.Unmarshal(body, &req))
+		assert.Equal(t, "abci_query", req.Method)
 
 		var params struct {
 			Path string `json:"path"`
 		}
-		require.NoError(t, json.Unmarshal(req.Params, &params))
+		assert.NoError(t, json.Unmarshal(req.Params, &params))
 		if paths != nil {
 			*paths = append(*paths, params.Path)
 		}
@@ -53,7 +54,7 @@ func fakeCometRPC(t *testing.T, resp abci.ResponseQuery, paths *[]string) *httpt
 		out, err := json.Marshal(rpctypes.NewRPCSuccessResponse(
 			req.ID, &coretypes.ResultABCIQuery{Response: resp},
 		))
-		require.NoError(t, err)
+		assert.NoError(t, err)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(out)
 	}))
@@ -128,13 +129,13 @@ func TestRPCQueryConn_BroadcastTxUsesCometRPCSync(t *testing.T) {
 	var method string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, err := io.ReadAll(r.Body)
-		require.NoError(t, err)
+		assert.NoError(t, err)
 		var req rpctypes.RPCRequest
-		require.NoError(t, json.Unmarshal(body, &req))
+		assert.NoError(t, json.Unmarshal(body, &req))
 		method = req.Method
 		out, err := json.Marshal(rpctypes.NewRPCSuccessResponse(
 			req.ID, &coretypes.ResultBroadcastTx{}))
-		require.NoError(t, err)
+		assert.NoError(t, err)
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write(out)
 	}))

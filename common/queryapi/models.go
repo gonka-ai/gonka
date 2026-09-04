@@ -28,10 +28,10 @@ func (h *Handlers) GetModels(ctx echo.Context) error {
 	createdAt := time.Now().Unix()
 
 	// Iterate over the subgroup models to get the snapshot for each one.
-	for _, modelId := range parentEpochData.SubGroupModels {
+	for _, modelID := range parentEpochData.SubGroupModels {
 		req := &inferencetypes.QueryGetEpochGroupDataRequest{
 			EpochIndex: parentEpochData.EpochIndex,
-			ModelId:    modelId,
+			ModelId:    modelID,
 		}
 		modelEpochData, err := qc.EpochGroupData(reqCtx, req)
 		if err != nil {
@@ -115,10 +115,10 @@ func (h *Handlers) GetPricing(ctx echo.Context) error {
 	parentEpochData := response.GetEpochGroupData()
 	models := make([]gen.ModelPriceDto, 0, len(parentEpochData.SubGroupModels))
 
-	for _, modelId := range parentEpochData.SubGroupModels {
+	for _, modelID := range parentEpochData.SubGroupModels {
 		req := &inferencetypes.QueryGetEpochGroupDataRequest{
 			EpochIndex: parentEpochData.EpochIndex,
-			ModelId:    modelId,
+			ModelId:    modelID,
 		}
 		modelEpochData, err := qc.EpochGroupData(reqCtx, req)
 		if err != nil {

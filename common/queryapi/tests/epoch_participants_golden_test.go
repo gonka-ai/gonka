@@ -14,9 +14,9 @@ import (
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	cosmosed25519 "github.com/cosmos/cosmos-sdk/crypto/keys/ed25519"
 	"github.com/golang/protobuf/proto"
+	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
 func TestEpochParticipantsJSONMatchesDapiGolden(t *testing.T) {

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -86,7 +87,8 @@ func TestVerifyProofRejectsMalformedBundle(t *testing.T) {
 func requireHTTPErrorStatus(t *testing.T, err error, rec *httptest.ResponseRecorder, code int) {
 	t.Helper()
 	if err != nil {
-		he, ok := err.(*echo.HTTPError)
+		he := &echo.HTTPError{}
+		ok := errors.As(err, &he)
 		require.True(t, ok, "expected echo.HTTPError, got %T: %v", err, err)
 		assert.Equal(t, code, he.Code)
 		return
@@ -96,7 +98,8 @@ func requireHTTPErrorStatus(t *testing.T, err error, rec *httptest.ResponseRecor
 
 func responseBody(_ echo.Context, rec *httptest.ResponseRecorder, err error) string {
 	if err != nil {
-		if he, ok := err.(*echo.HTTPError); ok {
+		he := &echo.HTTPError{}
+		if errors.As(err, &he) {
 			if msg, ok := he.Message.(string); ok {
 				return msg
 			}

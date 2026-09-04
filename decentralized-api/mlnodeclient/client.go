@@ -61,7 +61,7 @@ func (api *Client) Stop(ctx context.Context) error {
 		return err
 	}
 
-	resp, err := utils.SendPostJsonRequest(ctx, &api.client, requestUrl, nil)
+	resp, err := utils.SendPostJSONRequest(ctx, &api.client, requestUrl, nil)
 	if err != nil {
 		return err
 	}
@@ -187,7 +187,7 @@ func (api *Client) InferenceUp(ctx context.Context, model string, args []string)
 
 	logging.Info("Sending inference/up request to node", types.PoC, "inferenceUpUrl", inferenceUpUrl, "body", dto)
 
-	resp, err := utils.SendPostJsonRequest(ctx, &api.client, inferenceUpUrl, dto)
+	resp, err := utils.SendPostJSONRequest(ctx, &api.client, inferenceUpUrl, dto)
 	if err != nil {
 		logging.Error("Failed to send inference/up request", types.PoC, "error", err, "inferenceUpUrl", inferenceUpUrl, "inferenceUpDto", dto)
 		return err

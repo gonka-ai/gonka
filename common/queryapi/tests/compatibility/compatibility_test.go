@@ -10,7 +10,6 @@ package compatibility_test
 //	    -endpoint2 http://node1.gonka.ai:8000/api
 
 import (
-	. "common/queryapi/gen"
 	"context"
 	"encoding/json"
 	"flag"
@@ -19,6 +18,8 @@ import (
 	"sort"
 	"strings"
 	"testing"
+
+	. "common/queryapi/gen"
 )
 
 var (
@@ -47,12 +48,12 @@ func resolveChainParams(ctx context.Context, c *ClientWithResponses) chainParams
 
 	if r, err := c.GetEpochWithResponse(ctx, "latest"); err == nil && r.JSON200 != nil {
 		ep := r.JSON200
-		idx := Uint64(ep.LatestEpoch.Index)
+		idx := ep.LatestEpoch.Index
 		if idx > 0 {
 			p.blsEpoch = idx
 		}
 		p.height = ep.BlockHeight - 25
-		p.pocEpoch = Int64(ep.LatestEpoch.PocStartBlockHeight)
+		p.pocEpoch = ep.LatestEpoch.PocStartBlockHeight
 	}
 
 	if r, err := c.GetParticipantsWithResponse(ctx); err == nil && r.JSON200 != nil {
@@ -305,11 +306,12 @@ func jsonDiff(a, b string) string {
 	}
 	for i := 1; i <= m; i++ {
 		for j := 1; j <= n; j++ {
-			if la[i-1] == lb[j-1] {
+			switch {
+			case la[i-1] == lb[j-1]:
 				dp[i][j] = dp[i-1][j-1] + 1
-			} else if dp[i-1][j] >= dp[i][j-1] {
+			case dp[i-1][j] >= dp[i][j-1]:
 				dp[i][j] = dp[i-1][j]
-			} else {
+			default:
 				dp[i][j] = dp[i][j-1]
 			}
 		}
@@ -322,13 +324,14 @@ func jsonDiff(a, b string) string {
 		if i == 0 && j == 0 {
 			return
 		}
-		if i > 0 && j > 0 && la[i-1] == lb[j-1] {
+		switch {
+		case i > 0 && j > 0 && la[i-1] == lb[j-1]:
 			walk(i-1, j-1)
 			// unchanged lines omitted
-		} else if j > 0 && (i == 0 || dp[i][j-1] >= dp[i-1][j]) {
+		case j > 0 && (i == 0 || dp[i][j-1] >= dp[i-1][j]):
 			walk(i, j-1)
 			buf.WriteString("+ " + lb[j-1] + "\n")
-		} else {
+		default:
 			walk(i-1, j)
 			buf.WriteString("- " + la[i-1] + "\n")
 		}
@@ -357,7 +360,7 @@ func bodyOf(r any) string {
 		return ""
 	}
 	v := reflect.ValueOf(r)
-	if v.Kind() == reflect.Ptr {
+	if v.Kind() == reflect.Pointer {
 		if v.IsNil() {
 			return ""
 		}

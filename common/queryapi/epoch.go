@@ -47,10 +47,10 @@ func (h *Handlers) GetEpoch(ctx echo.Context, epoch string) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, "failed to encode confirmation PoC event")
 	}
 	return ctx.JSON(http.StatusOK, gen.EpochResponse{
-		BlockHeight: gen.Int64(epochInfo.BlockHeight),
+		BlockHeight: epochInfo.BlockHeight,
 		LatestEpoch: gen.LatestEpoch{
-			Index:               gen.Uint64(epochInfo.LatestEpoch.Index),
-			PocStartBlockHeight: gen.Int64(epochInfo.LatestEpoch.PocStartBlockHeight),
+			Index:               epochInfo.LatestEpoch.Index,
+			PocStartBlockHeight: epochInfo.LatestEpoch.PocStartBlockHeight,
 		},
 		Phase:                      string(epochContext.GetCurrentPhase(epochInfo.BlockHeight)),
 		EpochStages:                epochContext.GetEpochStages(),

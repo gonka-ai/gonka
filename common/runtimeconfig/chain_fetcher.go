@@ -4,9 +4,9 @@ import (
 	"context"
 	"fmt"
 
-	"common/chain"
-
 	inferencetypes "github.com/productscience/inference/x/inference/types"
+
+	"common/chain"
 )
 
 // ChainFetcher reads Params + EpochInfo via common/chain and returns Snapshot.
@@ -50,12 +50,12 @@ func (f *ChainFetcher) FetchSnapshot(ctx context.Context) (Snapshot, error) {
 		out.LogprobsMode = vp.GetLogprobsMode()
 	}
 	if dep := paramsResp.Params.DevshardEscrowParams; dep != nil {
-			out.DevshardRequestsEnabled = dep.DevshardRequestsEnabled
-			out.MaxNonce = dep.MaxNonce
-			out.RefusalTimeout = dep.RefusalTimeout
-			out.ExecutionTimeout = dep.ExecutionTimeout
-			out.ValidationRate = dep.ValidationRate
-			out.VoteThresholdFactor = dep.VoteThresholdFactor
+		out.DevshardRequestsEnabled = dep.DevshardRequestsEnabled
+		out.MaxNonce = dep.MaxNonce
+		out.RefusalTimeout = dep.RefusalTimeout
+		out.ExecutionTimeout = dep.ExecutionTimeout
+		out.ValidationRate = dep.ValidationRate
+		out.VoteThresholdFactor = dep.VoteThresholdFactor
 	}
 	return out, nil
 }

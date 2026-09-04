@@ -13,7 +13,7 @@ import (
 
 func TestProcessingJsonResponse(t *testing.T) {
 	processor := NewExecutorResponseProcessor("dummy-id", true)
-	processor.ProcessJsonResponse([]byte("dummy-response"))
+	processor.ProcessJSONResponse([]byte("dummy-response"))
 }
 
 const EVENT = `
@@ -25,8 +25,8 @@ data: {"id":"cmpl-3973dab1430143849df83d943ea0c7ac","object":"chat.completion.ch
 const INCOMPRESSIBLE = `data: {"id":"x","object":"chat.completion.chunk","created":1,"model":"m","choices":[{"index":0,"delta":{"content":"7"},"logprobs":{"content":[{"token":"7","logprob":0.0,"bytes":[55],"top_logprobs":[{"token":"9","logprob":0.0,"bytes":[57]},{"token":"8","logprob":-23.125,"bytes":[56]}]}]},"finish_reason":null}]}`
 
 func TestProcessingStreamedEvents(t *testing.T) {
-	dummyId := "dummy-inference-id"
-	processor := NewExecutorResponseProcessor(dummyId, true)
+	dummyID := "dummy-inference-id"
+	processor := NewExecutorResponseProcessor(dummyID, true)
 	var updatedLine string
 	var err error
 	updatedLine, err = processor.ProcessStreamedResponse(strings.TrimSpace(EVENT))
@@ -36,8 +36,8 @@ func TestProcessingStreamedEvents(t *testing.T) {
 
 	println(updatedLine)
 
-	if !strings.Contains(updatedLine, dummyId) {
-		t.Fatalf("expected %s to contain %s", updatedLine, dummyId)
+	if !strings.Contains(updatedLine, dummyID) {
+		t.Fatalf("expected %s to contain %s", updatedLine, dummyID)
 	}
 
 	bytes, err := processor.GetResponseBytes()
@@ -49,8 +49,8 @@ func TestProcessingStreamedEvents(t *testing.T) {
 }
 
 func TestCompletionTokenCountForStreamedResponse(t *testing.T) {
-	dummyId := "dummy-inference-id"
-	processor := NewExecutorResponseProcessor(dummyId, true)
+	dummyID := "dummy-inference-id"
+	processor := NewExecutorResponseProcessor(dummyID, true)
 
 	events := readLines(t, "test_data/response_streamed.txt")
 	require.NotEmpty(t, events, "Read 0 events from responseprocessor_test_data.txt")
@@ -63,10 +63,13 @@ func TestCompletionTokenCountForStreamedResponse(t *testing.T) {
 	fmt.Printf("Response: %+v\n", response)
 	require.NoError(t, err, "GetResponse failed")
 	id, err := response.GetInferenceId()
-	require.Equal(t, dummyId, id, "expected inference id to be %s, got %s", dummyId, id)
+	require.NoError(t, err)
+	require.Equal(t, dummyID, id, "expected inference id to be %s, got %s", dummyID, id)
 	model, err := response.GetModel()
+	require.NoError(t, err)
 	require.Equal(t, "Qwen/Qwen2.5-7B-Instruct", model, "expected model to be %s, got %s", "Qwen/Qwen2.5-7B-Instruct", model)
 	usage, err := response.GetUsage()
+	require.NoError(t, err)
 	expectedUsage := &Usage{
 		PromptTokens:     31,
 		CompletionTokens: 10,
@@ -80,8 +83,8 @@ func TestCompletionTokenCountForStreamedResponse(t *testing.T) {
 }
 
 func TestCompletionTokenCountForStreamedResponseWithTokenIds(t *testing.T) {
-	dummyId := "dummy-inference-id"
-	processor := NewExecutorResponseProcessor(dummyId, true)
+	dummyID := "dummy-inference-id"
+	processor := NewExecutorResponseProcessor(dummyID, true)
 
 	events := readLines(t, "test_data/response_streamed_token_ids.txt")
 	require.NotEmpty(t, events, "Read 0 events from responseprocessor_test_data.txt")
@@ -91,14 +94,16 @@ func TestCompletionTokenCountForStreamedResponseWithTokenIds(t *testing.T) {
 	}
 
 	response, err := processor.GetResponse()
+	require.NoError(t, err)
 
 	enforcedTokens, err := response.GetEnforcedTokens()
 	require.NoError(t, err, "GetEnforcedTokens failed")
 	require.NotEmpty(t, enforcedTokens, "expected enforced tokens to be not empty")
-	require.Equal(t, 44, len(enforcedTokens.Tokens), "expected 1 enforced token")
+	require.Len(t, enforcedTokens.Tokens, 44, "expected 1 enforced token")
 
 	require.NoError(t, err, "GetResponse failed")
 	model, err := response.GetModel()
+	require.NoError(t, err)
 	require.Equal(t, "Qwen/Qwen2.5-7B-Instruct", model, "expected model to be %s, got %s", "Qwen/Qwen2.5-7B-Instruct", model)
 
 	hash, err := response.GetHash()
@@ -107,13 +112,13 @@ func TestCompletionTokenCountForStreamedResponseWithTokenIds(t *testing.T) {
 }
 
 func TestCompletionTokenCountForWholeResponseWithTokenIds(t *testing.T) {
-	dummyId := "dummy-inference-id"
-	processor := NewExecutorResponseProcessor(dummyId, true)
+	dummyID := "dummy-inference-id"
+	processor := NewExecutorResponseProcessor(dummyID, true)
 
-	responseBytes, err := loadJson("test_data/response_token_ids.json")
+	responseBytes, err := loadJSON("test_data/response_token_ids.json")
 	require.NoError(t, err, "failed to load json response")
 
-	_, err = processor.ProcessJsonResponse(responseBytes)
+	_, err = processor.ProcessJSONResponse(responseBytes)
 	require.NoError(t, err, "failed to process json response")
 
 	response, err := processor.GetResponse()
@@ -132,7 +137,7 @@ func TestCompletionTokenCountForWholeResponseWithTokenIds(t *testing.T) {
 	enforcedTokens, err := response.GetEnforcedTokens()
 	require.NoError(t, err, "GetEnforcedTokens failed")
 	require.NotEmpty(t, enforcedTokens, "expected enforced tokens to be not empty")
-	require.Equal(t, 28, len(enforcedTokens.Tokens), "expected 28 enforced tokens")
+	require.Len(t, enforcedTokens.Tokens, 28, "expected 28 enforced tokens")
 }
 
 func readLines(t *testing.T, name string) []string {
@@ -157,22 +162,25 @@ func readLines(t *testing.T, name string) []string {
 }
 
 func TestCompletionTokenCountForWholeResponse(t *testing.T) {
-	dummyId := "dummy-inference-id"
-	processor := NewExecutorResponseProcessor(dummyId, true)
+	dummyID := "dummy-inference-id"
+	processor := NewExecutorResponseProcessor(dummyID, true)
 
-	responseBytes, err := loadJson("test_data/response.json")
+	responseBytes, err := loadJSON("test_data/response.json")
 	require.NoError(t, err, "failed to load json response")
 
-	_, err = processor.ProcessJsonResponse(responseBytes)
+	_, err = processor.ProcessJSONResponse(responseBytes)
 	require.NoError(t, err, "failed to process json response")
 
 	response, err := processor.GetResponse()
 	require.NoError(t, err, "GetResponse failed")
 	id, err := response.GetInferenceId()
-	require.Equal(t, dummyId, id, "expected inference id to be %s, got %s", dummyId, id)
+	require.NoError(t, err)
+	require.Equal(t, dummyID, id, "expected inference id to be %s, got %s", dummyID, id)
 	model, err := response.GetModel()
+	require.NoError(t, err)
 	require.Equal(t, "Qwen/Qwen2.5-7B-Instruct", model, "expected model to be %s, got %s", "Qwen/Qwen2.5-7B-Instruct", model)
 	usage, err := response.GetUsage()
+	require.NoError(t, err)
 	expectedUsage := &Usage{
 		PromptTokens:     31,
 		CompletionTokens: 10,
@@ -185,7 +193,7 @@ func TestCompletionTokenCountForWholeResponse(t *testing.T) {
 	require.NotEmpty(t, hash, "expected hash to be not empty")
 }
 
-func loadJson(path string) ([]byte, error) {
+func loadJSON(path string) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("read %s: %w", path, err)
@@ -285,7 +293,7 @@ func BenchmarkPrepareBody(b *testing.B) {
 			processor := NewExecutorResponseProcessor("bench", testCase.ask)
 			b.ReportAllocs()
 			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
+			for range b.N {
 				if _, _, err := processor.prepareBody(chunk); err != nil {
 					b.Fatal(err)
 				}

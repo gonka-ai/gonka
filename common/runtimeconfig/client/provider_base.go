@@ -130,7 +130,6 @@ func (b *baseProvider) fireEpoch(oldE, newE uint64) {
 	b.listenersMu.Unlock()
 
 	for _, fn := range snap {
-		fn := fn
 		go func() {
 			defer func() {
 				if r := recover(); r != nil {

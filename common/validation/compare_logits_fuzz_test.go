@@ -1,9 +1,10 @@
 package validation
 
 import (
-	"common/completionapi"
 	"math"
 	"testing"
+
+	"common/completionapi"
 )
 
 func FuzzCompareLogits(f *testing.F) {
@@ -49,19 +50,19 @@ func FuzzCompareLogits(f *testing.F) {
 		valToken string, valLogprob float64,
 		topToken1 string, topProb1 float64,
 		topToken2 string, topProb2 float64,
-		origLen int, valLen int) {
-
+		origLen int, valLen int,
+	) {
 		if origLen < 0 {
 			origLen = -origLen
 		}
 		if valLen < 0 {
 			valLen = -valLen
 		}
-		origLen = origLen % 10
-		valLen = valLen % 10
+		origLen %= 10
+		valLen %= 10
 
 		orig := make([]completionapi.Logprob, origLen)
-		for i := 0; i < origLen; i++ {
+		for i := range origLen {
 			orig[i] = completionapi.Logprob{
 				Token: origToken,
 				TopLogprobs: []completionapi.TopLogprobs{
@@ -71,7 +72,7 @@ func FuzzCompareLogits(f *testing.F) {
 		}
 
 		val := make([]completionapi.Logprob, valLen)
-		for i := 0; i < valLen; i++ {
+		for i := range valLen {
 			val[i] = completionapi.Logprob{
 				Token: valToken,
 				TopLogprobs: []completionapi.TopLogprobs{

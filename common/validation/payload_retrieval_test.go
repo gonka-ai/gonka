@@ -16,18 +16,18 @@ import (
 
 func TestBuildPayloadRequestURL_DevshardPath(t *testing.T) {
 	// Test with devshard session-specific path
-	url, err := BuildPayloadRequestURL("https://executor.example.com", "escrow-123", "456")
+	requestURL, err := BuildPayloadRequestURL("https://executor.example.com", "escrow-123", "456")
 	require.NoError(t, err)
-	assert.Contains(t, url, "escrow-123")
-	assert.Contains(t, url, "inference_id=456")
+	assert.Contains(t, requestURL, "escrow-123")
+	assert.Contains(t, requestURL, "inference_id=456")
 }
 
 func TestBuildPayloadRequestURL_PublicPath(t *testing.T) {
 	// Test with public endpoint path
-	url, err := BuildPayloadRequestURL("https://executor.example.com", "v1/inference/payloads", "test-id")
+	requestURL, err := BuildPayloadRequestURL("https://executor.example.com", "v1/inference/payloads", "test-id")
 	require.NoError(t, err)
-	assert.Contains(t, url, "v1/inference/payloads")
-	assert.Contains(t, url, "inference_id=test-id")
+	assert.Contains(t, requestURL, "v1/inference/payloads")
+	assert.Contains(t, requestURL, "inference_id=test-id")
 }
 
 func TestVerifyPayloadHashes_Valid(t *testing.T) {
@@ -76,55 +76,55 @@ func TestVerifyPayloadHashes_ResponseMismatch(t *testing.T) {
 func TestBuildPayloadRequestURL(t *testing.T) {
 	tests := []struct {
 		name        string
-		executorUrl string
-		inferenceId string
+		executorURL string
+		inferenceID string
 		wantQuery   string
 	}{
 		{
 			name:        "simple base64 ID",
-			executorUrl: "https://executor.example.com",
-			inferenceId: "aW5mZXJlbmNlLTEyMzQ1",
+			executorURL: "https://executor.example.com",
+			inferenceID: "aW5mZXJlbmNlLTEyMzQ1",
 			wantQuery:   "inference_id=aW5mZXJlbmNlLTEyMzQ1",
 		},
 		{
 			name:        "base64 ID with slash",
-			executorUrl: "https://executor.example.com",
-			inferenceId: "abc/def/ghi",
+			executorURL: "https://executor.example.com",
+			inferenceID: "abc/def/ghi",
 			wantQuery:   "inference_id=abc%2Fdef%2Fghi",
 		},
 		{
 			name:        "base64 ID with plus",
-			executorUrl: "https://executor.example.com",
-			inferenceId: "abc+def+ghi",
+			executorURL: "https://executor.example.com",
+			inferenceID: "abc+def+ghi",
 			wantQuery:   "inference_id=abc%2Bdef%2Bghi",
 		},
 		{
 			name:        "base64 ID with slash and plus",
-			executorUrl: "https://executor.example.com",
-			inferenceId: "a/b+c/d+e",
+			executorURL: "https://executor.example.com",
+			inferenceID: "a/b+c/d+e",
 			wantQuery:   "inference_id=a%2Fb%2Bc%2Fd%2Be",
 		},
 		{
 			name:        "base64 ID with equals padding",
-			executorUrl: "https://executor.example.com",
-			inferenceId: "dGVzdA==",
+			executorURL: "https://executor.example.com",
+			inferenceID: "dGVzdA==",
 			wantQuery:   "inference_id=dGVzdA%3D%3D",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			baseUrl, err := url.JoinPath(tt.executorUrl, "v1/inference/payloads")
+			baseURL, err := url.JoinPath(tt.executorURL, "v1/inference/payloads")
 			require.NoError(t, err)
 
-			parsedUrl, err := url.Parse(baseUrl)
+			parsedURL, err := url.Parse(baseURL)
 			require.NoError(t, err)
 
-			query := parsedUrl.Query()
-			query.Set("inference_id", tt.inferenceId)
-			parsedUrl.RawQuery = query.Encode()
+			query := parsedURL.Query()
+			query.Set("inference_id", tt.inferenceID)
+			parsedURL.RawQuery = query.Encode()
 
-			result := parsedUrl.String()
+			result := parsedURL.String()
 
 			require.Contains(t, result, "v1/inference/payloads")
 			require.Contains(t, result, tt.wantQuery)
@@ -132,8 +132,8 @@ func TestBuildPayloadRequestURL(t *testing.T) {
 			// Verify URL can be parsed and query param decoded correctly
 			parsedResult, err := url.Parse(result)
 			require.NoError(t, err)
-			decodedId := parsedResult.Query().Get("inference_id")
-			require.Equal(t, tt.inferenceId, decodedId)
+			decodedID := parsedResult.Query().Get("inference_id")
+			require.Equal(t, tt.inferenceID, decodedID)
 		})
 	}
 }

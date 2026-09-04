@@ -13,12 +13,12 @@ import (
 // TestBlocksInterfaceGolden records the BlockOracle method set. Any
 // change requires updating testdata/blocks_interface_golden.txt.
 func TestBlocksInterfaceGolden(t *testing.T) {
-	iface := reflect.TypeOf((*BlockOracle)(nil)).Elem()
+	iface := reflect.TypeFor[BlockOracle]()
 	if iface.Kind() != reflect.Interface {
 		t.Fatalf("expected interface, got %s", iface.Kind())
 	}
 	names := make([]string, 0, iface.NumMethod())
-	for i := 0; i < iface.NumMethod(); i++ {
+	for i := range iface.NumMethod() {
 		names = append(names, iface.Method(i).Name)
 	}
 	sort.Strings(names)

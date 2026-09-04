@@ -25,7 +25,7 @@ func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest
 }
 
 func ModifyRequestBodyWithLogprobsMode(requestBytes []byte, defaultSeed int32, logprobsMode string) (*ModifiedRequest, error) {
-	var requestMap map[string]interface{}
+	var requestMap map[string]any
 	if err := json.Unmarshal(requestBytes, &requestMap); err != nil {
 		return nil, err
 	}
@@ -59,14 +59,14 @@ func ModifyRequestBodyWithLogprobsMode(requestBytes []byte, defaultSeed int32, l
 	if doStream, ok := requestMap["stream"]; ok {
 		if doStreamBool, isBool := doStream.(bool); isBool && doStreamBool {
 			if streamOpts, exists := requestMap["stream_options"]; !exists {
-				requestMap["stream_options"] = map[string]interface{}{"include_usage": true}
-			} else if streamOptsMap, isMap := streamOpts.(map[string]interface{}); isMap {
+				requestMap["stream_options"] = map[string]any{"include_usage": true}
+			} else if streamOptsMap, isMap := streamOpts.(map[string]any); isMap {
 				streamOptsMap["include_usage"] = true
 			} else {
 				// stream_options exists but is not a map - replace with valid map
 				logging.Warn("Malformed stream_options field received, replacing with defaults",
 					types.Inferences, "stream_options_value", fmt.Sprintf("%v", streamOpts))
-				requestMap["stream_options"] = map[string]interface{}{"include_usage": true}
+				requestMap["stream_options"] = map[string]any{"include_usage": true}
 			}
 		}
 	}
@@ -87,19 +87,19 @@ func ModifyRequestBodyWithLogprobsMode(requestBytes []byte, defaultSeed int32, l
 	}, nil
 }
 
-func validateMessageContents(requestMap map[string]interface{}) error {
+func validateMessageContents(requestMap map[string]any) error {
 	rawMessages, ok := requestMap["messages"]
 	if !ok || rawMessages == nil {
 		return nil
 	}
 
-	messages, ok := rawMessages.([]interface{})
+	messages, ok := rawMessages.([]any)
 	if !ok {
 		return fmt.Errorf("messages must be an array")
 	}
 
 	for i, rawMessage := range messages {
-		message, ok := rawMessage.(map[string]interface{})
+		message, ok := rawMessage.(map[string]any)
 		if !ok {
 			return fmt.Errorf("messages[%d] must be an object", i)
 		}
@@ -115,9 +115,9 @@ func validateMessageContents(requestMap map[string]interface{}) error {
 		switch typedContent := content.(type) {
 		case string:
 			continue
-		case []interface{}:
+		case []any:
 			for j, rawPart := range typedContent {
-				part, ok := rawPart.(map[string]interface{})
+				part, ok := rawPart.(map[string]any)
 				if !ok {
 					return fmt.Errorf("messages[%d].content[%d] must be an object", i, j)
 				}
@@ -157,7 +157,7 @@ func validateMessageContents(requestMap map[string]interface{}) error {
 	return nil
 }
 
-func EnforceTokenBudgetFloor(requestMap map[string]interface{}) {
+func EnforceTokenBudgetFloor(requestMap map[string]any) {
 	maxTokens := max(getMaxTokens(requestMap), MinTokensFloor)
 	minTokens := min(max(getMinTokens(requestMap), MinTokensFloor), maxTokens)
 
@@ -169,7 +169,7 @@ func EnforceTokenBudgetFloor(requestMap map[string]interface{}) {
 	delete(requestMap, "stop_token_ids")
 }
 
-func getMinTokens(requestMap map[string]interface{}) int {
+func getMinTokens(requestMap map[string]any) int {
 	minTokensValue, ok := requestMap["min_tokens"]
 	if !ok {
 		return 0
@@ -184,7 +184,7 @@ func getMinTokens(requestMap map[string]interface{}) int {
 	}
 }
 
-func getMaxTokens(requestMap map[string]interface{}) int {
+func getMaxTokens(requestMap map[string]any) int {
 	if maxTokensValue, ok := requestMap["max_tokens"]; ok {
 		if maxTokensFloat, ok := maxTokensValue.(float64); ok {
 			return int(maxTokensFloat)
@@ -208,7 +208,7 @@ func getMaxTokens(requestMap map[string]interface{}) int {
 // apply for this request body: explicit max_tokens / max_completion_tokens when
 // present, otherwise calculations.DefaultMaxTokens.
 func EffectiveMaxTokens(requestBytes []byte) (uint64, error) {
-	var requestMap map[string]interface{}
+	var requestMap map[string]any
 	if err := json.Unmarshal(requestBytes, &requestMap); err != nil {
 		return 0, err
 	}
@@ -216,7 +216,7 @@ func EffectiveMaxTokens(requestBytes []byte) (uint64, error) {
 }
 
 // MinTokensOf returns the min_tokens the request carries (0 if unset).
-func MinTokensOf(requestMap map[string]interface{}) int {
+func MinTokensOf(requestMap map[string]any) int {
 	return getMinTokens(requestMap)
 }
 
@@ -226,7 +226,7 @@ func LogprobsAsked(logprobs bool, topLogprobs float64) bool {
 }
 
 // Only an explicit boolean asks; the forcing above then overwrites whatever the caller wrote.
-func logprobsAsked(requestMap map[string]interface{}) bool {
+func logprobsAsked(requestMap map[string]any) bool {
 	asked, isBool := requestMap["logprobs"].(bool)
 	width, isNumber := requestMap["top_logprobs"].(float64)
 	return isBool && isNumber && LogprobsAsked(asked, width)

@@ -1302,7 +1302,7 @@ func (m *HostManager) HandlePayloads(c echo.Context, srv *transport.Server) erro
 func (m *HostManager) authenticatePayloadRequest(c echo.Context, group []types.SlotAssignment) (uint64, observability.Reason, error) {
 	validatorAddress := c.Request().Header.Get(utils.XValidatorAddressHeader)
 	timestampStr := c.Request().Header.Get(utils.XTimestampHeader)
-	epochIDStr := c.Request().Header.Get(utils.XEpochIdHeader)
+	epochIDStr := c.Request().Header.Get(utils.XEpochIDHeader)
 	signature := c.Request().Header.Get(utils.AuthorizationHeader)
 	inferenceID := c.QueryParam("inference_id")
 

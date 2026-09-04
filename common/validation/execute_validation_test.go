@@ -9,11 +9,11 @@ import (
 	"net/http"
 	"testing"
 
-	"common/completionapi"
-
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"common/completionapi"
 )
 
 // TestExecuteValidation_ReplayRequestCarriesMinTokensFloor proves the validator's replay request
@@ -23,7 +23,7 @@ func TestExecuteValidation_ReplayRequestCarriesMinTokensFloor(t *testing.T) {
 	promptPayload := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}],"max_tokens":1}`)
 	responsePayload := responsePayloadJSON("42", -0.1)
 
-	var captured map[string]interface{}
+	var captured map[string]any
 	execute := func(ctx context.Context, body []byte) (*http.Response, error) {
 		require.NoError(t, json.Unmarshal(body, &captured))
 		return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader(responsePayload))}, nil
@@ -48,20 +48,23 @@ func responsePayloadTokens(count int, finishReason, stopReason string) []byte {
 		TopLogprobs []topLP `json:"top_logprobs"`
 	}
 	content := make([]lp, 0, count)
-	for i := 0; i < count; i++ {
+	for range count {
 		content = append(content, lp{Token: "42", Logprob: -0.1, TopLogprobs: []topLP{{Token: "42", Logprob: -0.1}, {Token: "99", Logprob: -1.1}}})
 	}
-	r := map[string]interface{}{
+	r := map[string]any{
 		"id":     "test",
 		"object": "chat.completion",
-		"choices": []map[string]interface{}{{
+		"choices": []map[string]any{{
 			"index":         0,
 			"finish_reason": finishReason,
 			"stop_reason":   stopReason,
-			"logprobs":      map[string]interface{}{"content": content},
+			"logprobs":      map[string]any{"content": content},
 		}},
 	}
-	b, _ := json.Marshal(r)
+	b, err := json.Marshal(r)
+	if err != nil {
+		panic(err)
+	}
 	return b
 }
 
@@ -78,20 +81,23 @@ func responsePayloadTokensWithUsage(count int, promptTokens, completionTokens ui
 		TopLogprobs []topLP `json:"top_logprobs"`
 	}
 	content := make([]lp, 0, count)
-	for i := 0; i < count; i++ {
+	for range count {
 		content = append(content, lp{Token: "42", Logprob: -0.1, TopLogprobs: []topLP{{Token: "42", Logprob: -0.1}, {Token: "99", Logprob: -1.1}}})
 	}
-	r := map[string]interface{}{
+	r := map[string]any{
 		"id":      "test",
 		"object":  "chat.completion",
-		"choices": []map[string]interface{}{{"index": 0, "logprobs": map[string]interface{}{"content": content}}},
-		"usage": map[string]interface{}{
+		"choices": []map[string]any{{"index": 0, "logprobs": map[string]any{"content": content}}},
+		"usage": map[string]any{
 			"prompt_tokens":     promptTokens,
 			"completion_tokens": completionTokens,
 			"total_tokens":      promptTokens + completionTokens,
 		},
 	}
-	b, _ := json.Marshal(r)
+	b, err := json.Marshal(r)
+	if err != nil {
+		panic(err)
+	}
 	return b
 }
 
@@ -182,7 +188,10 @@ func responsePayloadJSON(token string, logprob float64) []byte {
 			}}},
 		}},
 	}
-	b, _ := json.Marshal(r)
+	b, err := json.Marshal(r)
+	if err != nil {
+		panic(err)
+	}
 	return b
 }
 
@@ -233,7 +242,10 @@ func responsePayloadJSONWithUsage(token string, logprob float64, promptTokens, c
 			CompletionTokens: completionTokens,
 		},
 	}
-	b, _ := json.Marshal(r)
+	b, err := json.Marshal(r)
+	if err != nil {
+		panic(err)
+	}
 	return b
 }
 
@@ -352,7 +364,7 @@ func TestExecuteValidation_EmptySentinel_DropsEnforcedTokens(t *testing.T) {
 	)
 	require.NoError(t, err)
 
-	var requestMap map[string]interface{}
+	var requestMap map[string]any
 	require.NoError(t, json.Unmarshal(capturedBody, &requestMap))
 	assert.NotContains(t, requestMap, "enforced_tokens")
 }
@@ -374,7 +386,7 @@ func TestExecuteValidation_NormalPath_SetsEnforcedTokensAndStream(t *testing.T) 
 	require.NoError(t, err)
 	assert.True(t, result.IsSuccessful())
 
-	var requestMap map[string]interface{}
+	var requestMap map[string]any
 	require.NoError(t, json.Unmarshal(capturedBody, &requestMap))
 	assert.Contains(t, requestMap, "enforced_tokens")
 	assert.Equal(t, false, requestMap["stream"])
@@ -402,14 +414,17 @@ func TestExecuteValidation_MatchingLogits_PassesSimilarityThreshold(t *testing.T
 }
 
 func emptyLogprobsResponsePayload() []byte {
-	b, _ := json.Marshal(map[string]interface{}{
+	b, err := json.Marshal(map[string]any{
 		"id":     "test",
 		"object": "chat.completion",
-		"choices": []map[string]interface{}{{
+		"choices": []map[string]any{{
 			"index":    0,
-			"logprobs": map[string]interface{}{"content": []interface{}{}},
+			"logprobs": map[string]any{"content": []any{}},
 		}},
 	})
+	if err != nil {
+		panic(err)
+	}
 	return b
 }
 

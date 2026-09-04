@@ -14,8 +14,8 @@ type UnorderedSigner interface {
 
 // KeyringSigner signs ordered txs via a Cosmos keyring record.
 type KeyringSigner struct {
-	Keyring   keyring.Keyring
-	TxConfig  client.TxConfig
-	KeyName   string
-	Address   string
+	Keyring  keyring.Keyring
+	TxConfig client.TxConfig
+	KeyName  string
+	Address  string
 }

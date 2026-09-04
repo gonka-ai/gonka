@@ -8,11 +8,11 @@ import (
 	"testing"
 	"time"
 
-	"common/chainoracle/blocks"
-	"common/chainoracle/blocks/server"
-
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
+
+	"common/chainoracle/blocks"
+	"common/chainoracle/blocks/server"
 )
 
 type hashOnlyOracle struct{}
@@ -20,12 +20,15 @@ type hashOnlyOracle struct{}
 func (hashOnlyOracle) Latest(context.Context) (*blocks.Header, error) {
 	return blocks.HashOnlyHeader(1, time.Unix(1, 0).UTC(), "gonka-test", []byte{1}), nil
 }
+
 func (hashOnlyOracle) At(ctx context.Context, _ int64) (*blocks.Header, error) {
 	return hashOnlyOracle{}.Latest(ctx)
 }
+
 func (hashOnlyOracle) Prove(context.Context, string, int64) (*blocks.Proof, error) {
 	return nil, blocks.ErrProveNotImplemented
 }
+
 func (hashOnlyOracle) Subscribe(context.Context, int64) (<-chan *blocks.Header, error) {
 	ch := make(chan *blocks.Header)
 	close(ch)

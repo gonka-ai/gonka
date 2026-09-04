@@ -117,7 +117,9 @@ func TestGetModels_ReturnsEmptyListWhenNoSubgroupModels(t *testing.T) {
 	assert.Empty(t, data)
 }
 
-type errCurrentEpochServer struct{ inferencetypes.UnimplementedQueryServer }
+type errCurrentEpochServer struct {
+	inferencetypes.UnimplementedQueryServer
+}
 
 func (s *errCurrentEpochServer) CurrentEpochGroupData(_ context.Context, _ *inferencetypes.QueryCurrentEpochGroupDataRequest) (*inferencetypes.QueryCurrentEpochGroupDataResponse, error) {
 	return nil, status.Error(codes.Unavailable, "chain unavailable")
@@ -164,7 +166,9 @@ func TestGetGovernanceModels_Returns200WithAllModels(t *testing.T) {
 	assert.Contains(t, body, `"models"`)
 }
 
-type errModelsAllServer struct{ inferencetypes.UnimplementedQueryServer }
+type errModelsAllServer struct {
+	inferencetypes.UnimplementedQueryServer
+}
 
 func (s *errModelsAllServer) ModelsAll(_ context.Context, _ *inferencetypes.QueryModelsAllRequest) (*inferencetypes.QueryModelsAllResponse, error) {
 	return nil, status.Error(codes.Unavailable, "chain unavailable")
@@ -281,9 +285,9 @@ func TestGetPricing_ReturnsErrorOnChainFailure(t *testing.T) {
 
 type stubGovernancePricingServer struct {
 	inferencetypes.UnimplementedQueryServer
-	epochGroupData  inferencetypes.EpochGroupData
-	models          []inferencetypes.Model
-	perTokenPrices  []inferencetypes.ModelPrice
+	epochGroupData inferencetypes.EpochGroupData
+	models         []inferencetypes.Model
+	perTokenPrices []inferencetypes.ModelPrice
 }
 
 func (s *stubGovernancePricingServer) CurrentEpochGroupData(_ context.Context, _ *inferencetypes.QueryCurrentEpochGroupDataRequest) (*inferencetypes.QueryCurrentEpochGroupDataResponse, error) {

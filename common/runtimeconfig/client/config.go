@@ -14,15 +14,15 @@ const defaultLogprobsMode = "processed"
 type Config struct {
 	Client gen.NodeManagerClient
 
-	ServerMaxWait        time.Duration
-	ClientDeadlineSlack  time.Duration
-	ErrorBackoffMin      time.Duration
-	ErrorBackoffMax      time.Duration
-	UnchangedRetryFloor  *time.Duration
-	Defaults             Snapshot
-	Availability         AvailabilitySink
-	Log                  *slog.Logger
-	Clock                Clock
+	ServerMaxWait       time.Duration
+	ClientDeadlineSlack time.Duration
+	ErrorBackoffMin     time.Duration
+	ErrorBackoffMax     time.Duration
+	UnchangedRetryFloor *time.Duration
+	Defaults            Snapshot
+	Availability        AvailabilitySink
+	Log                 *slog.Logger
+	Clock               Clock
 }
 
 func (c *Config) applyDefaults() error {

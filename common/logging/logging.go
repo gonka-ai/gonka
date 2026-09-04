@@ -51,6 +51,7 @@ func Error(msg string, subSystem any, keyvals ...any) {
 
 	slog.Error(msg, withSubsystem...)
 }
+
 func Debug(msg string, subSystem any, keyvals ...any) {
 	withSubsystem := append([]any{"subsystem", subSystem}, keyvals...)
 	slog.Debug(msg, withSubsystem...)

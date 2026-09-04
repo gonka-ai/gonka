@@ -224,6 +224,8 @@ func classifyProbe(ctx context.Context, err error) probeVerdict {
 	switch status.Code(err) {
 	case codes.Canceled, codes.DeadlineExceeded:
 		return noVerdict
+	default:
+		// Every other code is answered from the checks below.
 	}
 	// A wrapper may surface a bare context error instead of a gRPC status, and
 	// a context that is already done means the attempt was cut short whatever

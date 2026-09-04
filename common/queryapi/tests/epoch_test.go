@@ -2,6 +2,7 @@ package queryapitest
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"testing"
 
@@ -13,7 +14,9 @@ import (
 	"google.golang.org/grpc/status"
 )
 
-type stubEpochServer struct{ inferencetypes.UnimplementedQueryServer }
+type stubEpochServer struct {
+	inferencetypes.UnimplementedQueryServer
+}
 
 func (s *stubEpochServer) EpochInfo(_ context.Context, _ *inferencetypes.QueryEpochInfoRequest) (*inferencetypes.QueryEpochInfoResponse, error) {
 	return &inferencetypes.QueryEpochInfoResponse{
@@ -28,7 +31,8 @@ func TestGetEpoch_Returns400OnNonLatest(t *testing.T) {
 	ctx, _ := echoContext(t, http.MethodGet, "/epochs/5")
 	err := s.GetEpoch(ctx, "5")
 	require.Error(t, err)
-	he, ok := err.(*echo.HTTPError)
+	he := &echo.HTTPError{}
+	ok := errors.As(err, &he)
 	if !ok {
 		t.Fatalf("expected *echo.HTTPError, got %T: %v", err, err)
 	}
@@ -45,7 +49,9 @@ func TestGetEpoch_Returns200(t *testing.T) {
 	assert.Contains(t, body, `"index"`)
 }
 
-type errEpochServer struct{ inferencetypes.UnimplementedQueryServer }
+type errEpochServer struct {
+	inferencetypes.UnimplementedQueryServer
+}
 
 func (s *errEpochServer) EpochInfo(_ context.Context, _ *inferencetypes.QueryEpochInfoRequest) (*inferencetypes.QueryEpochInfoResponse, error) {
 	return nil, status.Error(codes.NotFound, "epoch not found")

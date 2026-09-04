@@ -4,10 +4,10 @@ import (
 	"context"
 	"time"
 
-	"common/nodemanager/gen"
-
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"common/nodemanager/gen"
 )
 
 // grpcRunner runs the NodeManager long-poll loop against a shared baseProvider.

@@ -18,27 +18,27 @@ const (
 // ValidateOpenAICompatRequestBody validates OpenAI-compatible chat message schema.
 // If "messages" is absent, validation is skipped so legacy/completions payloads stay compatible.
 func ValidateOpenAICompatRequestBody(requestBytes []byte) error {
-	var requestMap map[string]interface{}
+	var requestMap map[string]any
 	if err := json.Unmarshal(requestBytes, &requestMap); err != nil {
 		return err
 	}
 	return validateOpenAICompatRequestMap(requestMap)
 }
 
-func validateOpenAICompatRequestMap(requestMap map[string]interface{}) error {
+func validateOpenAICompatRequestMap(requestMap map[string]any) error {
 	rawMessages, hasMessages := requestMap["messages"]
 	if !hasMessages {
 		return nil
 	}
 
-	messages, ok := rawMessages.([]interface{})
+	messages, ok := rawMessages.([]any)
 	if !ok {
 		return fmt.Errorf("messages must be an array")
 	}
 
 	pendingToolCalls := map[string]struct{}{}
 	for i, rawMessage := range messages {
-		message, ok := rawMessage.(map[string]interface{})
+		message, ok := rawMessage.(map[string]any)
 		if !ok {
 			return fmt.Errorf("messages[%d] must be an object", i)
 		}
@@ -109,13 +109,13 @@ func validateOpenAICompatRequestMap(requestMap map[string]interface{}) error {
 	return nil
 }
 
-func validateToolCallsField(message map[string]interface{}, messageIndex int) ([]string, bool, error) {
+func validateToolCallsField(message map[string]any, messageIndex int) ([]string, bool, error) {
 	rawToolCalls, exists := message["tool_calls"]
 	if !exists {
 		return nil, false, nil
 	}
 
-	toolCalls, ok := rawToolCalls.([]interface{})
+	toolCalls, ok := rawToolCalls.([]any)
 	if !ok {
 		return nil, true, fmt.Errorf("messages[%d].tool_calls must be an array", messageIndex)
 	}
@@ -126,7 +126,7 @@ func validateToolCallsField(message map[string]interface{}, messageIndex int) ([
 	seenIDs := map[string]struct{}{}
 	ids := make([]string, 0, len(toolCalls))
 	for callIndex, rawCall := range toolCalls {
-		call, ok := rawCall.(map[string]interface{})
+		call, ok := rawCall.(map[string]any)
 		if !ok {
 			return nil, true, fmt.Errorf("messages[%d].tool_calls[%d] must be an object", messageIndex, callIndex)
 		}
@@ -152,7 +152,7 @@ func validateToolCallsField(message map[string]interface{}, messageIndex int) ([
 		if !exists || rawFunction == nil {
 			return nil, true, fmt.Errorf("messages[%d].tool_calls[%d].function is required", messageIndex, callIndex)
 		}
-		functionObj, ok := rawFunction.(map[string]interface{})
+		functionObj, ok := rawFunction.(map[string]any)
 		if !ok {
 			return nil, true, fmt.Errorf("messages[%d].tool_calls[%d].function must be an object", messageIndex, callIndex)
 		}
@@ -169,7 +169,7 @@ func validateToolCallsField(message map[string]interface{}, messageIndex int) ([
 	return ids, true, nil
 }
 
-func validateFunctionCallField(message map[string]interface{}, messageIndex int) (bool, error) {
+func validateFunctionCallField(message map[string]any, messageIndex int) (bool, error) {
 	rawFunctionCall, exists := message["function_call"]
 	if !exists {
 		return false, nil
@@ -178,7 +178,7 @@ func validateFunctionCallField(message map[string]interface{}, messageIndex int)
 		return true, fmt.Errorf("messages[%d].function_call must be an object", messageIndex)
 	}
 
-	functionCall, ok := rawFunctionCall.(map[string]interface{})
+	functionCall, ok := rawFunctionCall.(map[string]any)
 	if !ok {
 		return true, fmt.Errorf("messages[%d].function_call must be an object", messageIndex)
 	}
@@ -192,7 +192,7 @@ func validateFunctionCallField(message map[string]interface{}, messageIndex int)
 	return true, nil
 }
 
-func validateAssistantContent(message map[string]interface{}, canBeEmpty bool) error {
+func validateAssistantContent(message map[string]any, canBeEmpty bool) error {
 	content, exists := message["content"]
 	if !exists || content == nil {
 		if canBeEmpty {
@@ -203,7 +203,7 @@ func validateAssistantContent(message map[string]interface{}, canBeEmpty bool) e
 	return validateNonEmptyContent(content)
 }
 
-func validateRequiredContent(message map[string]interface{}) error {
+func validateRequiredContent(message map[string]any) error {
 	content, exists := message["content"]
 	if !exists || content == nil {
 		return fmt.Errorf("is required")
@@ -211,19 +211,19 @@ func validateRequiredContent(message map[string]interface{}) error {
 	return validateNonEmptyContent(content)
 }
 
-func validateNonEmptyContent(content interface{}) error {
+func validateNonEmptyContent(content any) error {
 	switch v := content.(type) {
 	case string:
 		if strings.TrimSpace(v) == "" {
 			return fmt.Errorf("must not be empty")
 		}
 		return nil
-	case []interface{}:
+	case []any:
 		if len(v) == 0 {
 			return fmt.Errorf("must not be empty")
 		}
 		for i, rawPart := range v {
-			part, ok := rawPart.(map[string]interface{})
+			part, ok := rawPart.(map[string]any)
 			if !ok {
 				return fmt.Errorf("[%d] must be an object", i)
 			}
@@ -247,7 +247,7 @@ func validateNonEmptyContent(content interface{}) error {
 	}
 }
 
-func ensureFieldsAbsent(values map[string]interface{}, fields ...string) error {
+func ensureFieldsAbsent(values map[string]any, fields ...string) error {
 	for _, field := range fields {
 		if _, exists := values[field]; exists {
 			return fmt.Errorf("%s is not allowed for this role", field)
@@ -256,7 +256,7 @@ func ensureFieldsAbsent(values map[string]interface{}, fields ...string) error {
 	return nil
 }
 
-func getRequiredNonEmptyString(values map[string]interface{}, field string) (string, error) {
+func getRequiredNonEmptyString(values map[string]any, field string) (string, error) {
 	rawValue, exists := values[field]
 	if !exists || rawValue == nil {
 		return "", fmt.Errorf("is required")
@@ -271,7 +271,7 @@ func getRequiredNonEmptyString(values map[string]interface{}, field string) (str
 	return stringValue, nil
 }
 
-func validateOptionalStringField(values map[string]interface{}, field string) error {
+func validateOptionalStringField(values map[string]any, field string) error {
 	rawValue, exists := values[field]
 	if !exists || rawValue == nil {
 		return nil

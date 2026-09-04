@@ -15,7 +15,7 @@ var ErrSharedPostgresRequired = errors.New(
 
 // Storage persists inference prompt/response bytes keyed by escrow, inference, and epoch.
 type Storage interface {
-	Store(ctx context.Context, escrowId string, inferenceId, epochId uint64, prompt, response []byte) error
-	Retrieve(ctx context.Context, escrowId string, inferenceId, epochId uint64) (prompt, response []byte, err error)
-	DropEpoch(ctx context.Context, epochId uint64) error
+	Store(ctx context.Context, escrowID string, inferenceID, epochID uint64, prompt, response []byte) error
+	Retrieve(ctx context.Context, escrowID string, inferenceID, epochID uint64) (prompt, response []byte, err error)
+	DropEpoch(ctx context.Context, epochID uint64) error
 }

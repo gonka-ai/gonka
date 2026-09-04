@@ -147,10 +147,10 @@ func TestStore_DropEpoch(t *testing.T) {
 	require.NoError(t, store.DropEpoch(ctx, 10))
 
 	_, _, err := store.Retrieve(ctx, "escrow-1", 1, 9)
-	assert.NoError(t, err, "epoch 9 should be retained")
+	require.NoError(t, err, "epoch 9 should be retained")
 
 	_, _, err = store.Retrieve(ctx, "escrow-1", 2, 10)
-	assert.ErrorIs(t, err, payloads.ErrNotFound, "epoch 10 should be dropped")
+	require.ErrorIs(t, err, payloads.ErrNotFound, "epoch 10 should be dropped")
 
 	_, _, err = store.Retrieve(ctx, "escrow-1", 3, 11)
 	assert.NoError(t, err, "epoch 11 should be retained")
@@ -187,7 +187,7 @@ func TestStore_DropEpoch_DropsOnlyTargetPartition(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, []byte(`{"epoch":9}`), gotPrompt)
 	_, _, err = store.Retrieve(ctx, "escrow-1", 2, 10)
-	assert.ErrorIs(t, err, payloads.ErrNotFound)
+	require.ErrorIs(t, err, payloads.ErrNotFound)
 	gotPrompt, _, err = store.Retrieve(ctx, "escrow-1", 3, 11)
 	require.NoError(t, err)
 	assert.Equal(t, []byte(`{"epoch":11}`), gotPrompt)

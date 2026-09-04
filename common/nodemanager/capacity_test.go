@@ -8,15 +8,15 @@ import (
 	"testing"
 	"time"
 
-	"common/nodemanager"
-	"common/nodemanager/gen"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
+
+	"common/nodemanager"
+	"common/nodemanager/gen"
 )
 
 type fakeCapacityServer struct {
@@ -73,8 +73,7 @@ func TestNodeCapacityCache_PollUpsertAndRetain(t *testing.T) {
 		PollInterval: 20 * time.Millisecond,
 		Now:          func() time.Time { return now },
 	})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	cache.Start(ctx)
 
 	require.Eventually(t, func() bool {
@@ -105,8 +104,7 @@ func TestNodeCapacityCache_UnimplementedZeroChange(t *testing.T) {
 		PollInterval:             20 * time.Millisecond,
 		UnsupportedRetryInterval: 50 * time.Millisecond,
 	})
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	cache.Start(ctx)
 
 	require.Eventually(t, func() bool { return srv.calls.Load() >= 1 }, time.Second, 5*time.Millisecond)

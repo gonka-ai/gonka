@@ -5,9 +5,9 @@ import (
 	"math"
 	"testing"
 
-	"common/completionapi"
-
 	"github.com/stretchr/testify/require"
+
+	"common/completionapi"
 )
 
 // lp / tl build a position: the generated token plus its top_logprobs.
@@ -248,7 +248,7 @@ func FuzzCustomDistanceExecutorPadding(f *testing.F) {
 	f.Add(-1e308, 1e308, -1e308, 1e308, 7)
 
 	f.Fuzz(func(t *testing.T, validatorFirst, validatorSecond, executorFirst, executorSecond float64, padding int) {
-		padding = padding % 16
+		padding %= 16
 		if padding < 0 {
 			padding = -padding
 		}

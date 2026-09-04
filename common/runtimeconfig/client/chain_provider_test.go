@@ -8,7 +8,6 @@ import (
 	"testing"
 	"time"
 
-	
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -19,7 +18,7 @@ import (
 type fakeFetcher struct {
 	mu        sync.Mutex
 	responses []fakeFetchResponse
-	calls     int32
+	calls     atomic.Int32
 }
 
 type fakeFetchResponse struct {
@@ -29,7 +28,7 @@ type fakeFetchResponse struct {
 }
 
 func (f *fakeFetcher) FetchSnapshot(ctx context.Context) (Snapshot, error) {
-	atomic.AddInt32(&f.calls, 1)
+	f.calls.Add(1)
 	f.mu.Lock()
 	if len(f.responses) == 0 {
 		f.mu.Unlock()
@@ -50,7 +49,7 @@ func (f *fakeFetcher) FetchSnapshot(ctx context.Context) (Snapshot, error) {
 	return r.snap, r.err
 }
 
-func (f *fakeFetcher) Calls() int32 { return atomic.LoadInt32(&f.calls) }
+func (f *fakeFetcher) Calls() int32 { return f.calls.Load() }
 
 func chainTestConfig(t *testing.T, f *fakeFetcher, opts ...func(*ChainConfig)) ChainConfig {
 	t.Helper()
@@ -208,9 +207,9 @@ func TestChainProvider_OnEpochChangeFiresOnTransition(t *testing.T) {
 		c.RefreshInterval = 10 * time.Millisecond
 	}))
 	require.NoError(t, err)
-	cancelListen := p.OnEpochChange(func(old, new uint64) {
+	cancelListen := p.OnEpochChange(func(old, created uint64) {
 		mu.Lock()
-		fires = append(fires, struct{ old, new uint64 }{old, new})
+		fires = append(fires, struct{ old, new uint64 }{old, created})
 		mu.Unlock()
 	})
 	defer cancelListen()

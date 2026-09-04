@@ -19,7 +19,7 @@ func ParseHeaders(raw string, onMalformed func(pair string)) map[string]string {
 		return nil
 	}
 	out := make(map[string]string)
-	for _, pair := range strings.Split(raw, ",") {
+	for pair := range strings.SplitSeq(raw, ",") {
 		pair = strings.TrimSpace(pair)
 		if pair == "" {
 			continue

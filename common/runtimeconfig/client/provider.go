@@ -4,14 +4,16 @@ import "common/runtimeconfig/types"
 
 // Snapshot and ApprovedVersion alias the transport-agnostic types (types/
 // only — no chain/cosmos imports in this package).
-type Snapshot = types.Snapshot
-type ApprovedVersion = types.ApprovedVersion
-type ModelValidationThreshold = types.ModelValidationThreshold
-type HeightSyncParams = types.HeightSyncParams
+type (
+	Snapshot                 = types.Snapshot
+	ApprovedVersion          = types.ApprovedVersion
+	ModelValidationThreshold = types.ModelValidationThreshold
+	HeightSyncParams         = types.HeightSyncParams
+)
 
 // EpochChangeListener fires once per CurrentEpochID transition observed by the
 // provider after the first successful apply.
-type EpochChangeListener func(old, new uint64)
+type EpochChangeListener func(old, created uint64)
 
 // Provider is the surface engine/validation/storage code consumes instead of
 // going to chain.

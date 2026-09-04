@@ -4,10 +4,10 @@ import (
 	"encoding/json"
 	"testing"
 
-	"common/utils"
-
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/stretchr/testify/require"
+
+	"common/utils"
 )
 
 const (
@@ -139,22 +139,22 @@ func TestStreamOptions_NoOptions(t *testing.T) {
 	r, err := ModifyRequestBody([]byte(jsonBodyStreamNoStreamOptions), 7)
 	require.NoError(t, err)
 	require.NotNil(t, r)
-	var requestMap map[string]interface{}
+	var requestMap map[string]any
 	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap), "failed to unmarshal request body")
 
 	require.NotNil(t, requestMap["stream_options"])
-	require.True(t, requestMap["stream_options"].(map[string]interface{})["include_usage"].(bool), "expected include_usage to be true")
+	require.True(t, requestMap["stream_options"].(map[string]any)["include_usage"].(bool), "expected include_usage to be true")
 }
 
 func TestStreamOptions_WithOptions(t *testing.T) {
 	r, err := ModifyRequestBody([]byte(jsonBodyStreamWithStreamOptions), 7)
 	require.NoError(t, err)
 	require.NotNil(t, r)
-	var requestMap map[string]interface{}
+	var requestMap map[string]any
 	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap), "failed to unmarshal request body")
 
 	require.NotNil(t, requestMap["stream_options"])
-	require.True(t, requestMap["stream_options"].(map[string]interface{})["include_usage"].(bool), "expected include_usage to be true")
+	require.True(t, requestMap["stream_options"].(map[string]any)["include_usage"].(bool), "expected include_usage to be true")
 }
 
 // TestStreamOptions_MalformedStreamValue tests that malformed "stream" field doesn't cause panic
@@ -168,7 +168,7 @@ func TestStreamOptions_MalformedStreamValue(t *testing.T) {
 	r, err := ModifyRequestBody([]byte(jsonBodyStreamString), 7)
 	require.NoError(t, err, "Should not panic or error on string stream value")
 	require.NotNil(t, r)
-	var requestMap map[string]interface{}
+	var requestMap map[string]any
 	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
 	_, exists := requestMap["stream_options"]
 	require.False(t, exists, "stream_options should not be added when stream is not a boolean true")
@@ -182,7 +182,7 @@ func TestStreamOptions_MalformedStreamValue(t *testing.T) {
 	r, err = ModifyRequestBody([]byte(jsonBodyStreamNumber), 7)
 	require.NoError(t, err, "Should not panic or error on number stream value")
 	require.NotNil(t, r)
-	requestMap = map[string]interface{}{}
+	requestMap = map[string]any{}
 	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
 	_, exists = requestMap["stream_options"]
 	require.False(t, exists, "stream_options should not be added when stream is not a boolean true")
@@ -196,7 +196,7 @@ func TestStreamOptions_MalformedStreamValue(t *testing.T) {
 	r, err = ModifyRequestBody([]byte(jsonBodyStreamNull), 7)
 	require.NoError(t, err, "Should not panic or error on null stream value")
 	require.NotNil(t, r)
-	requestMap = map[string]interface{}{}
+	requestMap = map[string]any{}
 	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
 	_, exists = requestMap["stream_options"]
 	require.False(t, exists, "stream_options should not be added when stream is not a boolean true")
@@ -216,10 +216,10 @@ func TestStreamOptions_MalformedStreamOptions(t *testing.T) {
 	require.NotNil(t, r)
 
 	// Verify that stream_options was replaced with a valid map
-	var requestMap map[string]interface{}
+	var requestMap map[string]any
 	err = json.Unmarshal(r.NewBody, &requestMap)
 	require.NoError(t, err)
-	streamOpts, ok := requestMap["stream_options"].(map[string]interface{})
+	streamOpts, ok := requestMap["stream_options"].(map[string]any)
 	require.True(t, ok, "stream_options should be a map after processing")
 	require.True(t, streamOpts["include_usage"].(bool), "include_usage should be true")
 
@@ -233,9 +233,9 @@ func TestStreamOptions_MalformedStreamOptions(t *testing.T) {
 	r, err = ModifyRequestBody([]byte(jsonBodyStreamOptionsArray), 7)
 	require.NoError(t, err, "Should not panic or error on array stream_options")
 	require.NotNil(t, r)
-	requestMap = map[string]interface{}{}
+	requestMap = map[string]any{}
 	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
-	streamOpts, ok = requestMap["stream_options"].(map[string]interface{})
+	streamOpts, ok = requestMap["stream_options"].(map[string]any)
 	require.True(t, ok, "stream_options should be a map after processing")
 	require.True(t, streamOpts["include_usage"].(bool), "include_usage should be true")
 
@@ -249,9 +249,9 @@ func TestStreamOptions_MalformedStreamOptions(t *testing.T) {
 	r, err = ModifyRequestBody([]byte(jsonBodyStreamOptionsNumber), 7)
 	require.NoError(t, err, "Should not panic or error on number stream_options")
 	require.NotNil(t, r)
-	requestMap = map[string]interface{}{}
+	requestMap = map[string]any{}
 	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
-	streamOpts, ok = requestMap["stream_options"].(map[string]interface{})
+	streamOpts, ok = requestMap["stream_options"].(map[string]any)
 	require.True(t, ok, "stream_options should be a map after processing")
 	require.True(t, streamOpts["include_usage"].(bool), "include_usage should be true")
 }
@@ -267,7 +267,7 @@ func TestStreamFalse(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, r)
 
-	var requestMap map[string]interface{}
+	var requestMap map[string]any
 	err = json.Unmarshal(r.NewBody, &requestMap)
 	require.NoError(t, err)
 
@@ -293,7 +293,7 @@ func TestMaxTokens(t *testing.T) {
 			require.NoError(t, err)
 			require.NotNil(t, r)
 
-			var requestMap map[string]interface{}
+			var requestMap map[string]any
 			err = json.Unmarshal(r.NewBody, &requestMap)
 			require.NoError(t, err, "failed to unmarshal request body")
 
@@ -324,24 +324,24 @@ func TestEnforceTokenBudgetFloor(t *testing.T) {
 	capMax := floor + 36
 	tests := []struct {
 		name        string
-		requestMap  map[string]interface{}
+		requestMap  map[string]any
 		expectedMin int
 		expectedMax int
 	}{
-		{"AbsentMinDefaultsToFloor", map[string]interface{}{"max_tokens": float64(capMax)}, floor, capMax},
-		{"BelowFloorRaisedToFloor", map[string]interface{}{"min_tokens": float64(1), "max_tokens": float64(capMax)}, floor, capMax},
-		{"AtFloorKept", map[string]interface{}{"min_tokens": float64(floor), "max_tokens": float64(capMax)}, floor, capMax},
-		{"AboveFloorKept", map[string]interface{}{"min_tokens": float64(above), "max_tokens": float64(capMax)}, above, capMax},
-		{"AboveMaxClampedToMax", map[string]interface{}{"min_tokens": float64(capMax + 28), "max_tokens": float64(capMax)}, capMax, capMax},
-		{"SmallMaxRaisesBothToFloor", map[string]interface{}{"min_tokens": float64(capMax), "max_tokens": float64(1)}, floor, floor},
-		{"AbsentMaxUsesDefault", map[string]interface{}{}, floor, calculations.DefaultMaxTokens},
-		{"MaxCompletionTokensOnlyBelowFloor", map[string]interface{}{"max_completion_tokens": float64(1)}, floor, floor},
-		{"NegativeMinRaisedToFloor", map[string]interface{}{"min_tokens": float64(-5), "max_tokens": float64(capMax)}, floor, capMax},
-		{"ZeroMaxRaisesBothToFloor", map[string]interface{}{"min_tokens": float64(10), "max_tokens": float64(0)}, floor, floor},
-		{"IntMinBelowFloor", map[string]interface{}{"min_tokens": 10, "max_tokens": float64(capMax)}, floor, capMax},
-		{"UnusableMinTypeDefaultsToFloor", map[string]interface{}{"min_tokens": "oops", "max_tokens": float64(capMax)}, floor, capMax},
-		{"IntMaxTokens", map[string]interface{}{"max_tokens": capMax + 100}, floor, capMax + 100},
-		{"IntMaxCompletionTokens", map[string]interface{}{"max_completion_tokens": capMax + 100}, floor, capMax + 100},
+		{"AbsentMinDefaultsToFloor", map[string]any{"max_tokens": float64(capMax)}, floor, capMax},
+		{"BelowFloorRaisedToFloor", map[string]any{"min_tokens": float64(1), "max_tokens": float64(capMax)}, floor, capMax},
+		{"AtFloorKept", map[string]any{"min_tokens": float64(floor), "max_tokens": float64(capMax)}, floor, capMax},
+		{"AboveFloorKept", map[string]any{"min_tokens": float64(above), "max_tokens": float64(capMax)}, above, capMax},
+		{"AboveMaxClampedToMax", map[string]any{"min_tokens": float64(capMax + 28), "max_tokens": float64(capMax)}, capMax, capMax},
+		{"SmallMaxRaisesBothToFloor", map[string]any{"min_tokens": float64(capMax), "max_tokens": float64(1)}, floor, floor},
+		{"AbsentMaxUsesDefault", map[string]any{}, floor, calculations.DefaultMaxTokens},
+		{"MaxCompletionTokensOnlyBelowFloor", map[string]any{"max_completion_tokens": float64(1)}, floor, floor},
+		{"NegativeMinRaisedToFloor", map[string]any{"min_tokens": float64(-5), "max_tokens": float64(capMax)}, floor, capMax},
+		{"ZeroMaxRaisesBothToFloor", map[string]any{"min_tokens": float64(10), "max_tokens": float64(0)}, floor, floor},
+		{"IntMinBelowFloor", map[string]any{"min_tokens": 10, "max_tokens": float64(capMax)}, floor, capMax},
+		{"UnusableMinTypeDefaultsToFloor", map[string]any{"min_tokens": "oops", "max_tokens": float64(capMax)}, floor, capMax},
+		{"IntMaxTokens", map[string]any{"max_tokens": capMax + 100}, floor, capMax + 100},
+		{"IntMaxCompletionTokens", map[string]any{"max_completion_tokens": capMax + 100}, floor, capMax + 100},
 	}
 
 	for _, tt := range tests {
@@ -360,7 +360,7 @@ func TestModifyRequestBody_FloorsMinTokensAndStripsStopTokenIds(t *testing.T) {
 	r, err := ModifyRequestBody([]byte(body), 7)
 	require.NoError(t, err)
 
-	var raw map[string]interface{}
+	var raw map[string]any
 	require.NoError(t, json.Unmarshal(r.NewBody, &raw))
 	require.EqualValues(t, MinTokensFloor, raw["min_tokens"])
 	require.EqualValues(t, MinTokensFloor, raw["max_tokens"])
@@ -369,9 +369,9 @@ func TestModifyRequestBody_FloorsMinTokensAndStripsStopTokenIds(t *testing.T) {
 }
 
 func TestEnforceTokenBudgetFloor_StripsStopTokenIds(t *testing.T) {
-	requestMap := map[string]interface{}{
+	requestMap := map[string]any{
 		"max_tokens":     float64(100),
-		"stop_token_ids": []interface{}{float64(7), float64(9999999)},
+		"stop_token_ids": []any{float64(7), float64(9999999)},
 	}
 	EnforceTokenBudgetFloor(requestMap)
 	require.NotContains(t, requestMap, "stop_token_ids")
@@ -382,7 +382,7 @@ func TestModifyRequestBody_KeepsClientMinTokensAboveFloor(t *testing.T) {
 	r, err := ModifyRequestBody([]byte(body), 7)
 	require.NoError(t, err)
 
-	var raw map[string]interface{}
+	var raw map[string]any
 	require.NoError(t, json.Unmarshal(r.NewBody, &raw))
 	require.EqualValues(t, 128, raw["min_tokens"])
 	require.EqualValues(t, 500, raw["max_tokens"])
@@ -392,12 +392,12 @@ func TestModifyRequestBody_PreservesMultipartContent(t *testing.T) {
 	r, err := ModifyRequestBody([]byte(jsonBodyMultipartContent), 7)
 	require.NoError(t, err)
 
-	var requestMap map[string]interface{}
+	var requestMap map[string]any
 	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
 
-	messages := requestMap["messages"].([]interface{})
-	message := messages[0].(map[string]interface{})
-	_, isArray := message["content"].([]interface{})
+	messages := requestMap["messages"].([]any)
+	message := messages[0].(map[string]any)
+	_, isArray := message["content"].([]any)
 	require.True(t, isArray)
 }
 
@@ -412,11 +412,11 @@ func TestModifyRequestBody_AcceptsToolCallingPayload(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, r)
 
-	var requestMap map[string]interface{}
+	var requestMap map[string]any
 	require.NoError(t, json.Unmarshal(r.NewBody, &requestMap))
-	messages := requestMap["messages"].([]interface{})
+	messages := requestMap["messages"].([]any)
 	require.Len(t, messages, 3)
-	assistantMsg := messages[1].(map[string]interface{})
+	assistantMsg := messages[1].(map[string]any)
 	require.Nil(t, assistantMsg["content"])
 	require.NotNil(t, assistantMsg["tool_calls"])
 }
@@ -430,7 +430,7 @@ func TestModifyRequestBodyWithLogprobsMode_Processed(t *testing.T) {
 	r, err := ModifyRequestBodyWithLogprobsMode([]byte(jsonBody), 7, "processed_logprobs")
 	require.NoError(t, err)
 
-	var m map[string]interface{}
+	var m map[string]any
 	require.NoError(t, json.Unmarshal(r.NewBody, &m))
 	require.Equal(t, "processed_logprobs", m["logprobs_mode"])
 }
@@ -439,7 +439,7 @@ func TestModifyRequestBodyWithLogprobsMode_Raw(t *testing.T) {
 	r, err := ModifyRequestBodyWithLogprobsMode([]byte(jsonBody), 7, "raw_logprobs")
 	require.NoError(t, err)
 
-	var m map[string]interface{}
+	var m map[string]any
 	require.NoError(t, json.Unmarshal(r.NewBody, &m))
 	require.Equal(t, "raw_logprobs", m["logprobs_mode"])
 }
@@ -448,7 +448,7 @@ func TestModifyRequestBodyWithLogprobsMode_EmptyNoKey(t *testing.T) {
 	r, err := ModifyRequestBodyWithLogprobsMode([]byte(jsonBody), 7, "")
 	require.NoError(t, err)
 
-	var m map[string]interface{}
+	var m map[string]any
 	require.NoError(t, json.Unmarshal(r.NewBody, &m))
 	_, exists := m["logprobs_mode"]
 	require.False(t, exists, "logprobs_mode should not be present when empty string is passed")
@@ -460,7 +460,7 @@ func TestModifyRequestBodyWithLogprobsMode_OverwritesClientValue(t *testing.T) {
 	r, err := ModifyRequestBodyWithLogprobsMode(body, 7, "processed_logprobs")
 	require.NoError(t, err)
 
-	var m map[string]interface{}
+	var m map[string]any
 	require.NoError(t, json.Unmarshal(r.NewBody, &m))
 	require.Equal(t, "processed_logprobs", m["logprobs_mode"])
 }
@@ -482,7 +482,7 @@ func TestModifyRequestBodyWithLogprobsMode_SetsReturnTokenIDs(t *testing.T) {
 	r, err := ModifyRequestBodyWithLogprobsMode([]byte(jsonBody), 7, "processed_logprobs")
 	require.NoError(t, err)
 
-	var m map[string]interface{}
+	var m map[string]any
 	require.NoError(t, json.Unmarshal(r.NewBody, &m))
 	require.Equal(t, true, m["return_token_ids"])
 }
@@ -544,7 +544,7 @@ func TestModifyRequestBodyForcesASingleCompletion(t *testing.T) {
 	r, err := ModifyRequestBodyWithLogprobsMode(body, 7, "")
 	require.NoError(t, err)
 
-	var m map[string]interface{}
+	var m map[string]any
 	require.NoError(t, json.Unmarshal(r.NewBody, &m))
 	require.Equal(t, float64(1), m["n"], "a broker asking for five completions must be served one")
 }
@@ -555,7 +555,7 @@ func TestModifyRequestBodyLeavesAnUnaskedCompletionCountAlone(t *testing.T) {
 	r, err := ModifyRequestBodyWithLogprobsMode([]byte(jsonBody), 7, "")
 	require.NoError(t, err)
 
-	var m map[string]interface{}
+	var m map[string]any
 	require.NoError(t, json.Unmarshal(r.NewBody, &m))
 	_, present := m["n"]
 	require.False(t, present, "n was added to a request that never carried it")

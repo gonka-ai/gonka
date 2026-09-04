@@ -11,12 +11,12 @@ import (
 	"sort"
 	"strconv"
 
-	"common/completionapi"
-	"common/logging"
-
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
+
+	"common/completionapi"
+	"common/logging"
 )
 
 // ErrPayloadUnavailable indicates payloads could not be retrieved after all retries
@@ -34,11 +34,11 @@ type ValidationResult interface {
 
 // BaseValidationResult holds common fields for validation results.
 type BaseValidationResult struct {
-	InferenceId   string
+	InferenceId   string //nolint:revive // the name mirrors the generated proto field, which cannot be renamed.
 	ResponseBytes []byte
 }
 
-func (r BaseValidationResult) GetInferenceId() string {
+func (r BaseValidationResult) GetInferenceId() string { //nolint:revive // the name mirrors the generated proto field, which cannot be renamed.
 	return r.InferenceId
 }
 
@@ -91,7 +91,7 @@ func (r SimilarityValidationResult) IsSuccessful() bool {
 
 // InvalidInferenceResult represents a validation failure with a reason.
 type InvalidInferenceResult struct {
-	InferenceId string
+	InferenceId string //nolint:revive // the name mirrors the generated proto field, which cannot be renamed.
 	Reason      string
 	Error       error
 }
@@ -100,7 +100,7 @@ func (r InvalidInferenceResult) IsSuccessful() bool {
 	return false
 }
 
-func (r InvalidInferenceResult) GetInferenceId() string {
+func (r InvalidInferenceResult) GetInferenceId() string { //nolint:revive // the name mirrors the generated proto field, which cannot be renamed.
 	return r.InferenceId
 }
 
@@ -162,10 +162,10 @@ func CompareLogits(
 	baseComparisonResult BaseValidationResult,
 ) ValidationResult {
 	if len(originalLogits) != len(validationLogits) {
-		logging.Warn("Different length of logits", types.Validation, "inferenceId", baseComparisonResult.InferenceId, "originalLogits", originalLogits, "validationLogits", validationLogits, "lengthOriginal", len(originalLogits), "lengthValidation", len(validationLogits))
+		logging.Warn("Different length of logits", types.Validation, "inferenceID", baseComparisonResult.InferenceId, "originalLogits", originalLogits, "validationLogits", validationLogits, "lengthOriginal", len(originalLogits), "lengthValidation", len(validationLogits))
 	}
 	if len(validationLogits) < len(originalLogits) {
-		logging.Warn("Validation logits are shorter than original logits", types.Validation, "inferenceId", baseComparisonResult.InferenceId, "originalLogits", originalLogits, "validationLogits", validationLogits, "lengthOriginal", len(originalLogits), "lengthValidation", len(validationLogits))
+		logging.Warn("Validation logits are shorter than original logits", types.Validation, "inferenceID", baseComparisonResult.InferenceId, "originalLogits", originalLogits, "validationLogits", validationLogits, "lengthOriginal", len(originalLogits), "lengthValidation", len(validationLogits))
 		return &DifferentLengthValidationResult{baseComparisonResult}
 	}
 
@@ -173,7 +173,7 @@ func CompareLogits(
 		o := originalLogits[i]
 		v := validationLogits[i]
 		if o.Token != v.Token {
-			logging.Error("Different tokens in logits", types.Validation, "inferenceId", baseComparisonResult.InferenceId, "originalLogits", originalLogits, "validationLogits", validationLogits)
+			logging.Error("Different tokens in logits", types.Validation, "inferenceID", baseComparisonResult.InferenceId, "originalLogits", originalLogits, "validationLogits", validationLogits)
 			return &DifferentTokensValidationResult{baseComparisonResult}
 		}
 	}
@@ -285,8 +285,6 @@ func positionDistance(
 	return distance / float64(len(validationLogprobs)), nil
 }
 
-var zero = inference.Decimal{Value: 0, Exponent: 0}
-
 // DecimalFromFloat converts a float64 to an inference.Decimal.
 func DecimalFromFloat(f float64) *inference.Decimal {
 	d := decimal.NewFromFloat(f)
@@ -308,7 +306,7 @@ func ExecuteValidation(
 	claimedInputTokens, claimedOutputTokens uint64,
 	logprobsMode string,
 ) (ValidationResult, error) {
-	var requestMap map[string]interface{}
+	var requestMap map[string]any
 	modifiedRequest, err := completionapi.ModifyRequestBodyWithLogprobsMode(
 		promptPayload,
 		validationReplaySeed(inferenceID),
@@ -335,13 +333,13 @@ func ExecuteValidation(
 
 	if !isEmptySentinel && HasNonNumericTokens(enforcedTokens) {
 		logging.Warn("Executor response contains non-numeric token strings in logprobs instead of token IDs", types.Validation,
-			"inferenceId", inferenceID)
+			"inferenceID", inferenceID)
 		return &InvalidInferenceResult{inferenceID, "Logprobs contain decoded text instead of numeric token IDs.", nil}, nil
 	}
 
 	if isEmptySentinel {
 		logging.Info("Detected empty sentinel response; replaying prompt without enforced tokens to verify executor failure", types.Validation,
-			"inferenceId", inferenceID)
+			"inferenceID", inferenceID)
 		delete(requestMap, "enforced_tokens")
 	} else {
 		requestMap["enforced_tokens"] = enforcedTokens
@@ -375,7 +373,7 @@ func ExecuteValidation(
 	// invalid later. Ref: decentralized-api/internal/validation/inference_validation.go (~944).
 	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity {
 		logging.Warn("validator re-execution rejected payload; treating validation as passed (mainnet 4xx autopass)",
-			types.Validation, "inferenceId", inferenceID, "status", resp.StatusCode)
+			types.Validation, "inferenceID", inferenceID, "status", resp.StatusCode)
 		return &SimilarityValidationResult{
 			BaseValidationResult: BaseValidationResult{InferenceId: inferenceID, ResponseBytes: []byte{}},
 			Value:                1.0,
@@ -384,7 +382,7 @@ func ExecuteValidation(
 
 	if isEmptySentinel && resp.StatusCode == http.StatusOK {
 		logging.Warn("Executor returned error but validator successfully served the prompt", types.Validation,
-			"inferenceId", inferenceID)
+			"inferenceID", inferenceID)
 		return &InvalidInferenceResult{inferenceID, "Executor returned error but prompt is servable.", nil}, nil
 	}
 
@@ -399,7 +397,7 @@ func ExecuteValidation(
 		if TokenCountInflated(claimedInputTokens, validationUsage.PromptTokens) ||
 			TokenCountInflated(claimedOutputTokens, validationUsage.CompletionTokens) {
 			logging.Warn("validation failed: inflated token counts", types.Validation,
-				"inferenceId", inferenceID,
+				"inferenceID", inferenceID,
 				"claimedInput", claimedInputTokens, "validationInput", validationUsage.PromptTokens,
 				"claimedOutput", claimedOutputTokens, "validationOutput", validationUsage.CompletionTokens)
 			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Inflated token counts."}, nil
@@ -422,7 +420,7 @@ func ExecuteValidation(
 	if (len(originalLogits) == 0) != (len(validationLogits) == 0) {
 		logging.Warn("validation failed: logit presence mismatch between original and validation response",
 			types.Validation,
-			"inferenceId", inferenceID,
+			"inferenceID", inferenceID,
 			"originalLogits", len(originalLogits),
 			"validationLogits", len(validationLogits),
 		)
@@ -434,7 +432,7 @@ func ExecuteValidation(
 	if len(originalLogits) == 0 {
 		logging.Warn("both original and validation logits empty; treating validation as passed (both-empty autopass)",
 			types.Validation,
-			"inferenceId", inferenceID,
+			"inferenceID", inferenceID,
 		)
 	}
 
@@ -449,7 +447,7 @@ func ExecuteValidation(
 		minTokens := completionapi.MinTokensOf(requestMap)
 		if minTokens > 0 && len(originalLogits) < minTokens {
 			logging.Warn("validation failed: output below min_tokens floor",
-				types.Validation, "inferenceId", inferenceID,
+				types.Validation, "inferenceID", inferenceID,
 				"outputTokens", len(originalLogits), "minTokens", minTokens)
 			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Output shorter than min_tokens floor."}, nil
 		}
@@ -466,7 +464,7 @@ func UnmarshalResponsePayload(responsePayload []byte) (completionapi.CompletionR
 	switch resp.(type) {
 	case *completionapi.StreamedCompletionResponse:
 		logging.Debug("Unmarshalled responsePayload into StreamedResponse", types.Validation)
-	case *completionapi.JsonCompletionResponse:
+	case *completionapi.JSONCompletionResponse:
 		logging.Debug("Unmarshalled responsePayload into JsonResponse", types.Validation)
 	default:
 		logging.Error("Failed to unmarshal responsePayload into StreamedResponse or JsonResponse", types.Validation)

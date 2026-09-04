@@ -12,9 +12,9 @@ import (
 	"net/http"
 	"strconv"
 
-	"common/chainoracle/blocks"
-
 	"github.com/labstack/echo/v4"
+
+	"common/chainoracle/blocks"
 )
 
 // Mount registers the blockoracle endpoints on g:

@@ -7,14 +7,14 @@ import (
 	"testing"
 	"time"
 
-	"common/nodemanager/gen"
-	"common/runtimeconfig/client/testserver"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"common/nodemanager/gen"
+	"common/runtimeconfig/client/testserver"
 )
 
 func zeroRetryFloor() *time.Duration {
@@ -157,7 +157,7 @@ func TestGRPCProvider_ServerNotSyncedPausesBetweenPolls(t *testing.T) {
 	for len(srv.Calls()) == 0 && time.Now().Before(deadline) {
 		time.Sleep(5 * time.Millisecond)
 	}
-	require.Equal(t, 1, len(srv.Calls()), "expected one initial_fetch while server height is 0, not a busy loop")
+	require.Len(t, srv.Calls(), 1, "expected one initial_fetch while server height is 0, not a busy loop")
 
 	time.Sleep(60 * time.Millisecond)
 	calls := len(srv.Calls())
@@ -260,7 +260,7 @@ func (r *recordingClient) ListNodeCapacity(ctx context.Context, in *gen.ListNode
 func TestGRPCProvider_LongPoll_ServerTimeoutDoesNotApply(t *testing.T) {
 	srv := testserver.New()
 	handlers := []testserver.Handler{testserver.FullConfig(TestRuntimeConfigProto(100, 1, "raw"))}
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		handlers = append(handlers, testserver.Unchanged())
 	}
 	srv.SetHandlers(handlers...)
@@ -298,7 +298,7 @@ func TestGRPCProvider_Unimplemented_ExitsLoop(t *testing.T) {
 
 	// Sleep beyond max backoff to confirm the loop did not retry.
 	time.Sleep(150 * time.Millisecond)
-	assert.Equal(t, 1, len(srv.Calls()),
+	assert.Len(t, srv.Calls(), 1,
 		"Unimplemented must be terminal — loop should exit after the first call, not retry")
 }
 
@@ -349,9 +349,9 @@ func TestGRPCProvider_BackCompat_OldServer_FastUnchangedThrottledByFloor(t *test
 
 func TestGRPCProvider_BackCompat_OldServer_StillAppliesOnChange(t *testing.T) {
 	srv := testserver.New()
-	handlers := make([]testserver.Handler, 5)
-	for i := range handlers {
-		handlers[i] = testserver.Unchanged()
+	handlers := make([]testserver.Handler, 0, 6)
+	for range 5 {
+		handlers = append(handlers, testserver.Unchanged())
 	}
 	handlers = append(handlers, testserver.FullConfig(TestRuntimeConfigProto(200, 3, "raw")))
 	srv.SetHandlers(handlers...)
@@ -440,7 +440,7 @@ func TestGRPCProvider_LongPoll_ContextCancelStopsLoop(t *testing.T) {
 	time.Sleep(100 * time.Millisecond)
 	callsAfter := len(srv.Calls())
 	time.Sleep(200 * time.Millisecond)
-	assert.Equal(t, callsAfter, len(srv.Calls()), "loop should stop after cancel")
+	assert.Len(t, srv.Calls(), callsAfter, "loop should stop after cancel")
 }
 
 func TestGRPCProvider_LongPoll_NoConcurrentCalls(t *testing.T) {
@@ -488,9 +488,9 @@ func TestGRPCProvider_OnEpochChange_FiresOncePerTransition(t *testing.T) {
 	ctx := testContext(t)
 	p, err := New(ctx, testConfig(t, client))
 	require.NoError(t, err)
-	cancelListen := p.OnEpochChange(func(old, new uint64) {
+	cancelListen := p.OnEpochChange(func(old, created uint64) {
 		mu.Lock()
-		fires = append(fires, struct{ old, new uint64 }{old, new})
+		fires = append(fires, struct{ old, new uint64 }{old, created})
 		mu.Unlock()
 	})
 	defer cancelListen()
@@ -636,12 +636,10 @@ func TestGRPCProvider_RaceSnapshot(t *testing.T) {
 	require.NoError(t, err)
 
 	var wg sync.WaitGroup
-	for i := 0; i < 50; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range 50 {
+		wg.Go(func() {
 			_ = p.Snapshot()
-		}()
+		})
 	}
 	wg.Wait()
 }

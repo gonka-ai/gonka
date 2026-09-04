@@ -50,7 +50,7 @@ func TestSnapshotFromProto_NegativeServedAtUnset(t *testing.T) {
 	// Legacy ToProto emitted time.Time{}.Unix() ≈ year-1 sentinel.
 	snap := SnapshotFromProto(&gen.RuntimeConfig{ServedAtUnix: time.Time{}.Unix()})
 	require.True(t, snap.ServedAt.IsZero())
-	require.True(t, time.Time{}.Unix() < 0)
+	require.Negative(t, time.Time{}.Unix())
 }
 
 func TestProtoFromSnapshot_ZeroServedAtEmitsZero(t *testing.T) {
