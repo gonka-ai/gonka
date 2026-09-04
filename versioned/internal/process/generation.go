@@ -1,6 +1,9 @@
 package process
 
-import "log/slog"
+import (
+	"log/slog"
+	"slices"
+)
 
 type generationState string
 
@@ -103,12 +106,7 @@ func validGenerationTransition(from, to generationState) bool {
 	if from == to {
 		return true
 	}
-	for _, target := range spec.targets {
-		if target == to {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(spec.targets, to)
 }
 
 // transitionGenerationLocked advances one child generation. Manager.mu must

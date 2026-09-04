@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -13,6 +14,7 @@ import (
 	"time"
 
 	"common/chain"
+
 	"edge-api/internal/server"
 	"edge-api/observability"
 )
@@ -26,10 +28,17 @@ const (
 )
 
 func main() {
+	if err := run(); err != nil {
+		slog.Error("edge-api", "error", err)
+		os.Exit(1)
+	}
+}
+
+// run keeps the deferred OTel shutdown reachable: os.Exit from main would skip it.
+func run() error {
 	cfg, err := loadConfig()
 	if err != nil {
-		slog.Error("config", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("config: %w", err)
 	}
 	if cfg.ChainRPCDerived {
 		slog.Warn("chain rpc endpoint derived from gRPC host; set it explicitly to override",
@@ -45,8 +54,7 @@ func main() {
 		ServiceName: observability.ServiceName,
 	})
 	if err != nil {
-		slog.Error("otel init", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("otel init: %w", err)
 	}
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
@@ -56,8 +64,7 @@ func main() {
 
 	chainClient, err := chain.NewWithQueryFallback(cfg.ChainGRPCURL, cfg.ChainRPCURL)
 	if err != nil {
-		slog.Error("chain client", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("chain client: %w", err)
 	}
 
 	e := server.New(chainClient)
@@ -65,7 +72,7 @@ func main() {
 
 	errCh := make(chan error, 1)
 	go func() {
-		if err := e.Start(addr); err != nil && err != http.ErrServerClosed {
+		if err := e.Start(addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errCh <- err
 		}
 	}()
@@ -75,8 +82,7 @@ func main() {
 
 	select {
 	case err := <-errCh:
-		slog.Error("server", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("server: %w", err)
 	case sig := <-stop:
 		slog.Info("shutdown", "signal", sig.String())
 	}
@@ -84,9 +90,9 @@ func main() {
 	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
 	defer cancel()
 	if err := e.Shutdown(ctx); err != nil {
-		slog.Error("shutdown", "error", err)
-		os.Exit(1)
+		return fmt.Errorf("shutdown: %w", err)
 	}
+	return nil
 }
 
 type config struct {

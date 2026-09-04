@@ -559,7 +559,7 @@ func TestShutdownHostForceDoesNotWaitForPollWorker(t *testing.T) {
 
 func TestShutdownHostForceRaceAlwaysReachesStopped(t *testing.T) {
 	const iterations = 64
-	for iteration := 0; iteration < iterations; iteration++ {
+	for iteration := range iterations {
 		hostLifecycle := host.NewController()
 		if err := hostLifecycle.Transition(host.StateDraining); err != nil {
 			t.Fatal(err)

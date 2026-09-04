@@ -3,12 +3,12 @@ package server
 import (
 	"net/http"
 
-	"github.com/labstack/echo/v4"
-	"github.com/labstack/echo/v4/middleware"
-
 	"common/chain"
 	"common/queryapi"
 	"common/queryapi/gen"
+	"github.com/labstack/echo/v4"
+	"github.com/labstack/echo/v4/middleware"
+
 	"edge-api/observability"
 )
 

@@ -4,14 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
 	"syscall"
 	"time"
-
-	"log/slog"
 
 	"github.com/gonka/proxy-ssl/internal/api"
 	"github.com/gonka/proxy-ssl/internal/config"

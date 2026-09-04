@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -409,7 +410,6 @@ func (m *Manager) Reconcile(parent context.Context, desired []oracle.Version) er
 }
 
 func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int, error) {
-
 	// Step 0: build desired set, injecting forced versions.
 	desiredSet := make(map[string]oracle.Version, len(desired))
 	for _, v := range desired {
@@ -608,7 +608,7 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 	// asynchronously so reconcile can continue handling other versions.
 	for _, c := range toStop {
 		slog.Info("draining removed version", "version", c.version.Name)
-		go m.drainAfterProxy(c, proxyDrained[c])
+		go m.drainAfterProxy(c, proxyDrained[c]) //nolint:gosec // the drain has to outlive the context that triggered it.
 	}
 
 	// Downloads outside the lock (can be slow).
@@ -714,7 +714,7 @@ func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overr
 
 	// Disk I/O outside the lock.
 	binDir := filepath.Join(m.cfg.BinDir, v.Name)
-	if err := os.MkdirAll(binDir, 0755); err != nil {
+	if err := os.MkdirAll(binDir, 0o755); err != nil { //nolint:gosec // holds binaries versiond executes, so it needs group traverse.
 		slog.Error("override mkdir failed", "version", v.Name, "error", err)
 		return err
 	}
@@ -763,7 +763,7 @@ func versionNamesMap(vs map[string]oracle.Version) []string {
 
 // atomicCopy copies src to dst via a temp file + rename.
 func atomicCopy(src, dst string) error {
-	in, err := os.Open(src)
+	in, err := os.Open(src) //nolint:gosec // a fixed filename under the install directory versiond owns.
 	if err != nil {
 		return err
 	}
@@ -869,7 +869,7 @@ func (m *Manager) promoteLegacyInstall(
 	metadata download.InstallMetadata,
 	desiredHash string,
 ) error {
-	if err := os.MkdirAll(canonical.dir, 0o755); err != nil {
+	if err := os.MkdirAll(canonical.dir, 0o755); err != nil { //nolint:gosec // holds binaries versiond executes, so it needs group traverse.
 		return fmt.Errorf("create per-sha install dir: %w", err)
 	}
 	if err := atomicCopy(legacy.binPath, canonical.binPath); err != nil {
@@ -1086,7 +1086,7 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 	m.mu.Unlock()
 
 	slog.Info("swapped child route; old child draining", "version", v.Name, "old_port", old.port, "new_port", newChild.child.port)
-	go m.drainAfterProxy(old, proxyDrained)
+	go m.drainAfterProxy(old, proxyDrained) //nolint:gosec // the drain has to outlive the context that triggered it.
 	return nil
 }
 
@@ -1432,10 +1432,8 @@ func (m *Manager) prepareChildrenForDrain() []*child {
 }
 
 func (m *Manager) appendDrainingLocked(target *child) {
-	for _, c := range m.draining[target.version.Name] {
-		if c == target {
-			return
-		}
+	if slices.Contains(m.draining[target.version.Name], target) {
+		return
 	}
 	m.draining[target.version.Name] = append(m.draining[target.version.Name], target)
 }
@@ -1572,7 +1570,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 	}()
 
 	dataDir := filepath.Join(m.cfg.DataDir, c.version.Name)
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
+	if err := os.MkdirAll(dataDir, 0o755); err != nil { //nolint:gosec // holds binaries versiond executes, so it needs group traverse.
 		slog.Error("create data dir failed", "version", c.version.Name, "error", err)
 		return
 	}
@@ -1621,7 +1619,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 	m.mu.Unlock()
 
 	backoff := time.Second
-	lastStart := time.Now()
+	var lastStart time.Time
 
 	for {
 		select {
@@ -1630,7 +1628,8 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		default:
 		}
 
-		cmd := exec.Command(c.binPath,
+		// Not CommandContext: the child outlives this supervise loop, and versiond stops it itself.
+		cmd := exec.Command(c.binPath, //nolint:gosec,noctx // running the managed binary is what versiond is for.
 			"--data-dir", dataDir,
 			"--port", fmt.Sprintf("%d", c.port),
 		)
@@ -2403,7 +2402,7 @@ func (m *Manager) stopRetiredChild(
 	case <-proxyDrained:
 		slog.Info("proxy requests drained before stop/start", "version", c.version.Name, "port", c.port)
 	case <-ctx.Done():
-		go m.drainAfterProxy(c, proxyDrained)
+		go m.drainAfterProxy(c, proxyDrained) //nolint:gosec // the drain has to outlive the context that triggered it.
 		return ctx.Err()
 	case <-timer.C:
 		slog.Warn("proxy drain timeout reached before stop/start", "version", c.version.Name, "port", c.port)

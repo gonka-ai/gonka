@@ -33,8 +33,8 @@ func (v Version) ResolvedSHA256() (string, error) {
 		return "", fmt.Errorf("parse binary URL: %w", err)
 	}
 	cs := u.Query().Get("checksum")
-	if strings.HasPrefix(cs, "sha256:") {
-		hash := strings.TrimPrefix(cs, "sha256:")
+	if after, ok := strings.CutPrefix(cs, "sha256:"); ok {
+		hash := after
 		if hash == "" {
 			return "", fmt.Errorf("empty sha256 checksum in URL for version %s", v.Name)
 		}

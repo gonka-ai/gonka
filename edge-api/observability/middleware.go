@@ -1,6 +1,8 @@
 package observability
 
 import (
+	"errors"
+
 	"github.com/labstack/echo/v4"
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/attribute"
@@ -44,7 +46,8 @@ func EchoMiddleware() echo.MiddlewareFunc {
 
 			status := c.Response().Status
 			if err != nil {
-				if httpErr, ok := err.(*echo.HTTPError); ok {
+				httpErr := &echo.HTTPError{}
+				if errors.As(err, &httpErr) {
 					status = httpErr.Code
 				}
 			}

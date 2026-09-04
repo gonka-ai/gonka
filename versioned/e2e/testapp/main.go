@@ -11,10 +11,10 @@ import (
 	"sync/atomic"
 	"time"
 
-	pb "versioned/e2e/testapp/gen"
-
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+
+	pb "versioned/e2e/testapp/gen"
 )
 
 // Version is the protocol slot name for e2e (maps to approved_versions.name).
@@ -66,10 +66,12 @@ func main() {
 
 	writeVersion := func(w http.ResponseWriter) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]string{
+		if err := json.NewEncoder(w).Encode(map[string]string{
 			"version": "testapp",
 			"prefix":  prefix,
-		})
+		}); err != nil {
+			log.Printf("write version response: %v", err)
+		}
 	}
 
 	http.HandleFunc("/", track(func(w http.ResponseWriter, r *http.Request) {
@@ -101,7 +103,7 @@ func main() {
 		if !ready.Load() || draining.Load() {
 			w.WriteHeader(http.StatusServiceUnavailable)
 		}
-		json.NewEncoder(w).Encode(status)
+		_ = json.NewEncoder(w).Encode(status)
 	})
 
 	http.HandleFunc("/drain", func(w http.ResponseWriter, r *http.Request) {
@@ -112,7 +114,7 @@ func main() {
 		draining.Store(true)
 		ready.Store(false)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ready":    ready.Load(),
 			"draining": draining.Load(),
 			"inflight": inflight.Load(),
@@ -121,7 +123,7 @@ func main() {
 
 	http.HandleFunc("/drain/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]any{
+		_ = json.NewEncoder(w).Encode(map[string]any{
 			"ready":    ready.Load(),
 			"draining": draining.Load(),
 			"inflight": inflight.Load(),
@@ -154,8 +156,8 @@ func main() {
 		w.Header().Set("Content-Type", "text/event-stream")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Header().Set("Connection", "keep-alive")
-		for i := 0; i < 5; i++ {
-			fmt.Fprintf(w, "data: event %d\n\n", i)
+		for i := range 5 {
+			_, _ = fmt.Fprintf(w, "data: event %d\n\n", i)
 			flusher.Flush()
 			time.Sleep(100 * time.Millisecond)
 		}
@@ -165,7 +167,7 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 
 		if nmAddr == "" {
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"error": "NODE_MANAGER_ADDR not set",
 			})
 			return
@@ -176,13 +178,13 @@ func main() {
 
 		conn, err := grpc.NewClient(nmAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"error":            fmt.Sprintf("grpc dial failed: %v", err),
 				"nodemanager_addr": nmAddr,
 			})
 			return
 		}
-		defer conn.Close()
+		defer func() { _ = conn.Close() }()
 
 		client := pb.NewNodeManagerClient(conn)
 
@@ -190,7 +192,7 @@ func main() {
 			Model: "test-model",
 		})
 		if err != nil {
-			json.NewEncoder(w).Encode(map[string]string{
+			_ = json.NewEncoder(w).Encode(map[string]string{
 				"error":            fmt.Sprintf("acquire failed: %v", err),
 				"grpc_connected":   "true",
 				"nodemanager_addr": nmAddr,
@@ -199,21 +201,21 @@ func main() {
 		}
 
 		_, releaseErr := client.ReleaseMLNode(ctx, &pb.ReleaseMLNodeRequest{
-			LockId:  acquireResp.LockId,
+			LockId:  acquireResp.GetLockId(),
 			Outcome: pb.ReleaseOutcome_SUCCESS,
 		})
 
 		result := map[string]string{
-			"endpoint":         acquireResp.Endpoint,
-			"node_id":          acquireResp.NodeId,
-			"lock_id":          acquireResp.LockId,
+			"endpoint":         acquireResp.GetEndpoint(),
+			"node_id":          acquireResp.GetNodeId(),
+			"lock_id":          acquireResp.GetLockId(),
 			"nodemanager_addr": nmAddr,
 			"grpc_connected":   "true",
 		}
 		if releaseErr != nil {
 			result["release_error"] = releaseErr.Error()
 		}
-		json.NewEncoder(w).Encode(result)
+		_ = json.NewEncoder(w).Encode(result)
 	}))
 
 	addr := fmt.Sprintf(":%d", *port)

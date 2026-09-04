@@ -58,7 +58,7 @@ func TestDownload(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stat binary: %v", err)
 	}
-	if info.Mode()&0111 == 0 {
+	if info.Mode()&0o111 == 0 {
 		t.Error("binary is not executable")
 	}
 

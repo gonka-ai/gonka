@@ -3,10 +3,9 @@ package config
 import (
 	"encoding/base64"
 	"fmt"
+	"log/slog"
 	"os"
 	"strings"
-
-	"log/slog"
 
 	"github.com/spf13/viper"
 )
@@ -87,11 +86,13 @@ func Load() (*Config, error) {
 				return nil, fmt.Errorf("failed to decode GCE_SERVICE_ACCOUNT_JSON_B64: %w", err)
 			}
 			tmpFile := "/tmp/gce_service_account.json"
-			if err := os.WriteFile(tmpFile, decoded, 0600); err != nil {
+			if err := os.WriteFile(tmpFile, decoded, 0o600); err != nil {
 				return nil, fmt.Errorf("failed to write GCE service account file: %w", err)
 			}
 			cfg.DNSProviderConfig["GCE_SERVICE_ACCOUNT_FILE"] = tmpFile
-			os.Setenv("GCE_SERVICE_ACCOUNT_FILE", tmpFile)
+			if err := os.Setenv("GCE_SERVICE_ACCOUNT_FILE", tmpFile); err != nil {
+				return nil, fmt.Errorf("set GCE service account env: %w", err)
+			}
 		}
 	}
 
@@ -142,7 +143,7 @@ func (c *Config) validateDNSProviderConfig() error {
 	case "cloudflare":
 		cfDNS := c.DNSProviderConfig["CF_DNS_API_TOKEN"]
 		if cfDNS == "" {
-			return fmt.Errorf("Cloudflare credentials required: set CF_DNS_API_TOKEN")
+			return fmt.Errorf("cloudflare credentials required: set CF_DNS_API_TOKEN")
 		}
 	case "gcloud":
 		if c.DNSProviderConfig["GCE_PROJECT"] == "" {

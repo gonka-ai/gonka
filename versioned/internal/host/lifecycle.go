@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"sync"
 )
 
@@ -164,12 +165,7 @@ func validTransition(from, to State) bool {
 	if from == to {
 		return true
 	}
-	for _, target := range spec.targets {
-		if target == to {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(spec.targets, to)
 }
 
 func acceptsWork(state State) bool {

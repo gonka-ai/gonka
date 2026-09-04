@@ -401,7 +401,7 @@ var (
 
 func maxCheckedServerDetectionInterval(t *testing.T, paths []string) time.Duration {
 	t.Helper()
-	var max time.Duration
+	var maximum time.Duration
 	found := 0
 	for _, path := range paths {
 		for _, line := range serverLine.FindAllString(readTemplate(t, path), -1) {
@@ -423,33 +423,33 @@ func maxCheckedServerDetectionInterval(t *testing.T, paths []string) time.Durati
 				t.Fatalf("%s: invalid fall count %q: %v", path, fall[1], err)
 			}
 			found++
-			if d := parseTemplateDuration(t, path, m[1]) * time.Duration(failures); d > max {
-				max = d
+			if d := parseTemplateDuration(t, path, m[1]) * time.Duration(failures); d > maximum {
+				maximum = d
 			}
 		}
 	}
 	if found == 0 {
 		t.Fatal("no checked servers found in the router templates; the MinDrainAnnounce derivation has lost its source")
 	}
-	return max
+	return maximum
 }
 
 func maxTemplateDuration(t *testing.T, paths []string, directive *regexp.Regexp) time.Duration {
 	t.Helper()
-	var max time.Duration
+	var maximum time.Duration
 	found := 0
 	for _, path := range paths {
 		for _, m := range directive.FindAllStringSubmatch(readTemplate(t, path), -1) {
 			found++
-			if d := parseTemplateDuration(t, path, m[1]); d > max {
-				max = d
+			if d := parseTemplateDuration(t, path, m[1]); d > maximum {
+				maximum = d
 			}
 		}
 	}
 	if found == 0 {
 		t.Fatalf("no template contains %v; the MinDrainAnnounce derivation has lost its source", directive)
 	}
-	return max
+	return maximum
 }
 
 func readTemplate(t *testing.T, path string) string {

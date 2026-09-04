@@ -61,7 +61,9 @@ func (db *fakeProofDatabase) handler(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 		return
 	}
-	_ = json.NewEncoder(w).Encode(proof)
+	if err := json.NewEncoder(w).Encode(proof); err != nil {
+		panic(err)
+	}
 }
 
 func TestStorageProofAddressesOneGeneration(t *testing.T) {

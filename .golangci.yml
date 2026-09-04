@@ -1,5 +1,4 @@
-# Shared by every Go module in the repository. golangci-lint picks the nearest config walking up from
-# the directory it runs in, so `golangci-lint run ./...` inside any module lands on this file.
+# Shared by every Go module in the repository. Rationale for each choice: docs/linting.md.
 
 version: "2"
 run:
@@ -14,7 +13,6 @@ linters:
     - gosec
     - protogetter
     - noctx
-    - contextcheck
     - depguard
     - nilnesserr
     - durationcheck
@@ -24,7 +22,7 @@ linters:
     - reassign
     - recvcheck
     - spancheck
-    # Conventions the code already follows; enabled so they stay that way.
+    # Conventions the code already follows.
     - errname
     - gochecknoinits
     - misspell
@@ -40,30 +38,23 @@ linters:
     - revive
     - exhaustive
     - mirror
-    # Tests: the assertions themselves, not just the code around them.
+    # The assertions themselves, not just the code around them.
     - testifylint
     - thelper
   settings:
     govet:
-      # Dead scaffolding a test writes and never reads, which reads as coverage it does not have.
       enable:
         - unusedwrite
     modernize:
-      # fmtappendf reads Args[0] as a string constant, so []byte(fmt.Sprint(intConst)) panics it; upstream
-      # disabled the modernizer by default too (golang/go#77581).
       disable:
         - fmtappendf
     exhaustive:
-      # A switch with a default has an answer for a member nobody has added yet; one without does not.
       default-signifies-exhaustive: true
     gosec:
       excludes:
-        # Deterministic paths need math/rand, and cosmos Int conversions are checked by the SDK.
         - G404
         - G115
-        # errcheck already owns unchecked errors, and it is the one that knows our exclude list.
         - G104
-        # Taint analysis on log calls: everything we log is our own state.
         - G706
     depguard:
       rules:
@@ -77,12 +68,9 @@ linters:
             - pkg: math/rand/v2
               desc: key material and signatures need crypto/rand; math/rand is for the deterministic paths
     staticcheck:
-      # Deprecations are reported separately by .golangci.deprecated.yml, so a pinned dependency that
-      # deprecates something cannot turn the gate red on its own.
       checks:
         - all
         - -SA1019
-        # golangci-lint's own default exclusions; listing `checks` at all replaces them.
         - -ST1000
         - -ST1003
         - -ST1016
@@ -90,9 +78,6 @@ linters:
         - -ST1021
         - -ST1022
     testifylint:
-      # Both checks trade an exact assertion for an approximate one. encoded-compare rewrites the SSE
-      # assembly tests, which are about how fragments concatenate; float-compare rewrites gauges and
-      # parameter bounds that are exact by construction, and this code has to stay deterministic.
       disable:
         - encoded-compare
         - float-compare
@@ -102,7 +87,6 @@ linters:
         - name: receiver-naming
         - name: import-shadowing
     errcheck:
-      # Cleanup calls whose error nothing can act on.
       exclude-functions:
         - (*database/sql.Rows).Close
         - (*database/sql.Stmt).Close
@@ -112,8 +96,6 @@ linters:
         - (io.Closer).Close
         - (*os.File).Close
         - io.Copy
-        # Our own stores and runtimes, closed on the error path where the original error is the one
-        # worth returning. A close failure there can only mask it.
         - (*devshard/storage.SQLite).Close
         - (*devshard/accounting.Store).Close
         - (*devshard/user.Session).Close
@@ -124,33 +106,24 @@ linters:
     rules:
       - path: _test\.go
         linters: [errcheck]
-      # The stand opens files and shells out by construction, and a test that hangs fails rather than
-      # holding a socket open; both rules are about what the running service exposes.
       - path: (_test\.go|/testenv/|/e2e/)
-        linters: [gosec, noctx, contextcheck]
-      # database/sql without a Context is 126 of noctx's findings and a separate change: the storage
-      # layer has no context to thread yet. The HTTP and listener cases, which is what the rule is
-      # about on a network service, are enforced.
+        linters: [gosec, noctx]
+      - path: test-net-cloud/
+        linters: [noctx]
       - text: 'must not be called\. use \(\*database/sql'
         linters: [noctx]
-      # Cosmos modules register their codecs from init(); that is the framework's shape, not ours.
       - path: (^|/)x/
         linters: [gochecknoinits]
-      # gofumpt reads a dotless first segment as stdlib, so it wants common/... beside "context",
-      # and goimports groups std against everything else. gci owns the grouping and runs after both,
-      # so their own verdicts are noise; they stay enabled for the rest of what they do.
       - path: .
         linters: [gofumpt, goimports]
 
 formatters:
   enable:
     - gci
-    # Drops imports a fix orphaned and adds the ones it needs; gci runs after it and owns the grouping.
     - goimports
     - gofumpt
   settings:
     gci:
-      # localmodule resolves to the go.mod of whichever module is being linted.
       sections:
         - standard
         - default

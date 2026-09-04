@@ -73,14 +73,15 @@ func run(ctx context.Context) error {
 
 	listenAddr := config.ListenAddr()
 	srv := &http.Server{
-		Addr:    listenAddr,
-		Handler: publicHandler(mgr, hostLifecycle, mgr, proxyOpts...),
+		Addr:              listenAddr,
+		Handler:           publicHandler(mgr, hostLifecycle, mgr, proxyOpts...),
+		ReadHeaderTimeout: 5 * time.Second,
 	}
-	ln, err := net.Listen("tcp", listenAddr)
+	ln, err := (&net.ListenConfig{}).Listen(context.Background(), "tcp", listenAddr)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", listenAddr, err)
 	}
-	defer srv.Close()
+	defer func() { _ = srv.Close() }()
 	go func() {
 		slog.Info("starting proxy server", "addr", listenAddr)
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
@@ -669,11 +670,11 @@ func transitionHostToForcing(hostLifecycle *host.Controller) error {
 	return hostLifecycle.Transition(host.StateForcing)
 }
 
-func cancelOnSignal(parent context.Context, cancel context.CancelFunc, signal <-chan struct{}) func() {
+func cancelOnSignal(parent context.Context, cancel context.CancelFunc, stopped <-chan struct{}) func() {
 	done := make(chan struct{})
 	go func() {
 		select {
-		case <-signal:
+		case <-stopped:
 			cancel()
 		case <-parent.Done():
 		case <-done:

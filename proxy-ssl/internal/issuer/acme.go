@@ -8,10 +8,9 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
-
-	"log/slog"
 
 	"github.com/go-acme/lego/v4/certcrypto"
 	"github.com/go-acme/lego/v4/certificate"
@@ -19,6 +18,7 @@ import (
 	"github.com/go-acme/lego/v4/lego"
 	"github.com/go-acme/lego/v4/providers/dns"
 	"github.com/go-acme/lego/v4/registration"
+
 	"github.com/gonka/proxy-ssl/internal/config"
 )
 
@@ -47,7 +47,7 @@ func (u *acmeUser) GetPrivateKey() crypto.PrivateKey        { return u.key }
 // loadOrCreateAccount loads the ACME account from disk or creates a new one and persists it.
 func (r *RealACMEProvider) loadOrCreateAccount() (*acmeUser, error) {
 	// Ensure data path exists
-	if err := os.MkdirAll(r.config.DataPath, 0o700); err != nil {
+	if err := os.MkdirAll(r.config.DataPath, 0o700); err != nil { //nolint:gosec // a fixed filename under the configured ACME data path.
 		return nil, fmt.Errorf("ensure data path: %w", err)
 	}
 
@@ -56,7 +56,7 @@ func (r *RealACMEProvider) loadOrCreateAccount() (*acmeUser, error) {
 
 	var privKey crypto.PrivateKey
 
-	if b, err := os.ReadFile(keyPath); err == nil {
+	if b, err := os.ReadFile(keyPath); err == nil { //nolint:gosec // a fixed filename under the configured ACME data path.
 		// Parse PEM (PKCS1 or PKCS8)
 		block, _ := pem.Decode(b)
 		if block == nil {
@@ -69,7 +69,7 @@ func (r *RealACMEProvider) loadOrCreateAccount() (*acmeUser, error) {
 			// Try PKCS8
 			anyKey, err2 := x509.ParsePKCS8PrivateKey(block.Bytes)
 			if err2 != nil {
-				return nil, fmt.Errorf("parse ACME account key: %w / %v", err, err2)
+				return nil, fmt.Errorf("parse ACME account key: %w / %w", err, err2)
 			}
 			privKey = anyKey
 		}
@@ -81,7 +81,7 @@ func (r *RealACMEProvider) loadOrCreateAccount() (*acmeUser, error) {
 		}
 		privKey = k
 		pemBytes := pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(k)})
-		if werr := os.WriteFile(keyPath, pemBytes, 0o600); werr != nil {
+		if werr := os.WriteFile(keyPath, pemBytes, 0o600); werr != nil { //nolint:gosec // a fixed filename under the configured ACME data path.
 			return nil, fmt.Errorf("write ACME account key: %w", werr)
 		}
 	} else {
@@ -93,7 +93,7 @@ func (r *RealACMEProvider) loadOrCreateAccount() (*acmeUser, error) {
 		key:   privKey,
 	}
 
-	if b, err := os.ReadFile(regPath); err == nil {
+	if b, err := os.ReadFile(regPath); err == nil { //nolint:gosec // a fixed filename under the configured ACME data path.
 		var reg registration.Resource
 		if jerr := json.Unmarshal(b, &reg); jerr == nil {
 			user.Registration = &reg
@@ -108,7 +108,7 @@ func (r *RealACMEProvider) persistRegistration(res *registration.Resource) error
 	if res == nil {
 		return nil
 	}
-	if err := os.MkdirAll(r.config.DataPath, 0o700); err != nil {
+	if err := os.MkdirAll(r.config.DataPath, 0o700); err != nil { //nolint:gosec // a fixed filename under the configured ACME data path.
 		return fmt.Errorf("ensure data path: %w", err)
 	}
 	regPath := filepath.Join(r.config.DataPath, acmeRegistrationFile)
@@ -116,7 +116,7 @@ func (r *RealACMEProvider) persistRegistration(res *registration.Resource) error
 	if err != nil {
 		return fmt.Errorf("marshal registration: %w", err)
 	}
-	if err := os.WriteFile(regPath, b, 0o600); err != nil {
+	if err := os.WriteFile(regPath, b, 0o600); err != nil { //nolint:gosec // a fixed filename under the configured ACME data path.
 		return fmt.Errorf("write registration: %w", err)
 	}
 	return nil
@@ -188,12 +188,12 @@ func (r *RealACMEProvider) createLegoClient() (*lego.Client, error) {
 	}
 
 	// Create lego config
-	config := lego.NewConfig(user)
-	config.CADirURL = r.config.ACMEDirectoryURL
-	config.Certificate.KeyType = certcrypto.RSA2048
+	legoConfig := lego.NewConfig(user)
+	legoConfig.CADirURL = r.config.ACMEDirectoryURL
+	legoConfig.Certificate.KeyType = certcrypto.RSA2048
 
 	// Create client
-	client, err := lego.NewClient(config)
+	client, err := lego.NewClient(legoConfig)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create lego client: %w", err)
 	}

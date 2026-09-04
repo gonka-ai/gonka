@@ -2,6 +2,7 @@ package process
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"sync/atomic"
 	"testing"
@@ -14,7 +15,8 @@ import (
 // readyBodyServer serves /ready with a configurable status code and
 // recovery_complete field. The field state is an atomic int32 so the test
 // goroutine and the handler goroutine never race on a plain *bool:
-//   0 = field absent (pre-v5 body), 1 = recovery_complete:false, 2 = true.
+//
+//	0 = field absent (pre-v5 body), 1 = recovery_complete:false, 2 = true.
 type readyBodyServer struct {
 	status atomic.Int32 // HTTP status code; 0 means 200
 	field  atomic.Int32 // recovery_complete state (0/1/2)
@@ -72,7 +74,9 @@ func TestWaitForChildRecoveryComplete_WaitsThenCutsOverWhenWarm(t *testing.T) {
 	old := &child{version: oracle.Version{Name: "v4"}, status: statusRunning, done: make(chan struct{})}
 
 	done := make(chan error, 1)
-	go func() { done <- m.waitForChildRecoveryComplete(context.Background(), newChild, old, m.cfg.RecoveryTimeout) }()
+	go func() {
+		done <- m.waitForChildRecoveryComplete(context.Background(), newChild, old, m.cfg.RecoveryTimeout)
+	}()
 
 	// Must still be waiting after a couple of tick intervals.
 	select {
@@ -130,7 +134,9 @@ func TestWaitForChildRecoveryComplete_OldChildDeathPublishesImmediately(t *testi
 	old := &child{version: oracle.Version{Name: "v4"}, status: statusRunning, done: oldDone}
 
 	done := make(chan error, 1)
-	go func() { done <- m.waitForChildRecoveryComplete(context.Background(), newChild, old, m.cfg.RecoveryTimeout) }()
+	go func() {
+		done <- m.waitForChildRecoveryComplete(context.Background(), newChild, old, m.cfg.RecoveryTimeout)
+	}()
 
 	// Let it poll once, then kill the old child.
 	time.Sleep(2 * childReadyInterval)
@@ -184,7 +190,7 @@ func TestWaitForChildRecoveryComplete_HostDrainingAborts(t *testing.T) {
 	old := &child{version: oracle.Version{Name: "v4"}, status: statusRunning, done: make(chan struct{})}
 
 	err := m.waitForChildRecoveryComplete(context.Background(), newChild, old, m.cfg.RecoveryTimeout)
-	if err != ErrHostDraining {
+	if !errors.Is(err, ErrHostDraining) {
 		t.Fatalf("expected ErrHostDraining, got %v", err)
 	}
 }

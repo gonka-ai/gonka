@@ -56,7 +56,7 @@ func Download(ctx context.Context, url, expectedSHA256, destDir, binaryName stri
 		return fmt.Errorf("create temp file: %w", err)
 	}
 	tmpPath := tmpFile.Name()
-	defer os.Remove(tmpPath)
+	defer func() { _ = os.Remove(tmpPath) }()
 
 	hasher := sha256.New()
 	written, err := io.Copy(tmpFile, io.TeeReader(resp.Body, hasher))
@@ -75,7 +75,7 @@ func Download(ctx context.Context, url, expectedSHA256, destDir, binaryName stri
 		return fmt.Errorf("hash mismatch: got %s, want %s", gotHash, expectedSHA256)
 	}
 
-	if err := os.MkdirAll(destDir, 0755); err != nil {
+	if err := os.MkdirAll(destDir, 0o755); err != nil { //nolint:gosec // holds binaries versiond executes, so it needs group traverse.
 		return fmt.Errorf("create dest dir: %w", err)
 	}
 
@@ -113,28 +113,28 @@ func AtomicWriteFile(destDir, filename string, r io.Reader) error {
 
 	if _, err := io.Copy(tmp, r); err != nil {
 		tmp.Close()
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("write: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("close temp file: %w", err)
 	}
 
-	if err := os.Chmod(tmpPath, 0755); err != nil {
-		os.Remove(tmpPath)
+	if err := os.Chmod(tmpPath, 0o755); err != nil { //nolint:gosec // the downloaded binary has to be executable.
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("chmod: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, filepath.Join(destDir, filename)); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("rename: %w", err)
 	}
 	return nil
 }
 
 func ReadInstallMetadata(destDir string) (InstallMetadata, error) {
-	data, err := os.ReadFile(filepath.Join(destDir, InstallMetadataFilename))
+	data, err := os.ReadFile(filepath.Join(destDir, InstallMetadataFilename)) //nolint:gosec // a fixed filename under the install directory versiond owns.
 	if err != nil {
 		return InstallMetadata{}, err
 	}
@@ -159,7 +159,7 @@ func WriteInstallMetadata(destDir string, metadata InstallMetadata) error {
 	if err != nil {
 		return fmt.Errorf("marshal install metadata: %w", err)
 	}
-	return atomicWriteBytesFile(destDir, InstallMetadataFilename, data, 0644)
+	return atomicWriteBytesFile(destDir, InstallMetadataFilename, data, 0o644)
 }
 
 func atomicWriteBytesFile(destDir, filename string, data []byte, mode os.FileMode) error {
@@ -171,28 +171,28 @@ func atomicWriteBytesFile(destDir, filename string, data []byte, mode os.FileMod
 
 	if _, err := tmp.Write(data); err != nil {
 		tmp.Close()
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("write: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("close temp file: %w", err)
 	}
 
 	if err := os.Chmod(tmpPath, mode); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("chmod: %w", err)
 	}
 
 	if err := os.Rename(tmpPath, filepath.Join(destDir, filename)); err != nil {
-		os.Remove(tmpPath)
+		_ = os.Remove(tmpPath)
 		return fmt.Errorf("rename: %w", err)
 	}
 	return nil
 }
 
 func HashFile(path string) (string, error) {
-	f, err := os.Open(path)
+	f, err := os.Open(path) //nolint:gosec // a fixed filename under the install directory versiond owns.
 	if err != nil {
 		return "", err
 	}
@@ -210,7 +210,7 @@ func extractBinary(zipPath, destDir, binaryName string) error {
 	if err != nil {
 		return fmt.Errorf("open zip: %w", err)
 	}
-	defer r.Close()
+	defer func() { _ = r.Close() }()
 
 	for _, f := range r.File {
 		name := filepath.Base(f.Name)

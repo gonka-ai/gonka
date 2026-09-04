@@ -20,14 +20,14 @@ const (
 )
 
 type Config struct {
-	OracleURL         string
-	PollInterval      time.Duration
-	BinDir            string
-	DataDir           string
-	BinaryName        string
-	BasePort          int
-	ReadyPath         string
-	ReadyTimeout      time.Duration
+	OracleURL    string
+	PollInterval time.Duration
+	BinDir       string
+	DataDir      string
+	BinaryName   string
+	BasePort     int
+	ReadyPath    string
+	ReadyTimeout time.Duration
 	// RecoveryTimeout bounds the warm-cutover wait: after a replacement
 	// devshardd child is ready to serve, versiond polls admin /ready until
 	// the body's recovery_complete is true before publishing it. Only the
@@ -187,7 +187,7 @@ func loadForceVersions() []string {
 		return nil
 	}
 	var result []string
-	for _, name := range strings.Split(v, ",") {
+	for name := range strings.SplitSeq(v, ",") {
 		name = strings.TrimSpace(name)
 		if name != "" {
 			result = append(result, name)

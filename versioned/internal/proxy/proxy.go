@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
+	"slices"
 	"strings"
 	"sync/atomic"
 )
@@ -100,8 +101,7 @@ func acquireTarget(routes routeTableLoader, version string) (*Target, bool) {
 // isVersionlessObsPath reports public observability paths that must not require
 // a protocol version segment. payloads stays versioned (validator protocol).
 func isVersionlessObsPath(path string) bool {
-	switch path {
-	case "metrics":
+	if path == "metrics" {
 		return true
 	}
 	if path == "stats" || strings.HasPrefix(path, "stats/") {
@@ -171,8 +171,8 @@ func serveAcquired(w http.ResponseWriter, r *http.Request, routes routeTableLoad
 func serveSessionObsFanout(w http.ResponseWriter, r *http.Request, routes routeTableLoader, versions []string, rest string) {
 	var fallback409 *httptest.ResponseRecorder
 	// Try newest first — more likely to own recently bound escrows.
-	for i := len(versions) - 1; i >= 0; i-- {
-		ver := versions[i]
+	for _, v := range slices.Backward(versions) {
+		ver := v
 		target, ok := acquireTarget(routes, ver)
 		if !ok {
 			continue
@@ -180,10 +180,10 @@ func serveSessionObsFanout(w http.ResponseWriter, r *http.Request, routes routeT
 		rec := httptest.NewRecorder()
 		reverseProxy(target.Address(), rest).ServeHTTP(rec, r.Clone(r.Context()))
 		target.release()
-		switch {
-		case rec.Code == http.StatusNotFound:
+		switch rec.Code {
+		case http.StatusNotFound:
 			continue
-		case rec.Code == http.StatusConflict:
+		case http.StatusConflict:
 			fallback409 = rec
 			continue
 		default:

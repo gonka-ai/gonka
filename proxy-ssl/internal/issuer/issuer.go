@@ -10,13 +10,13 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
+	"log/slog"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
-
-	"log/slog"
 
 	"github.com/gonka/proxy-ssl/internal/config"
 )
@@ -50,10 +50,7 @@ type Issuer struct {
 
 // New creates a new certificate issuer
 func New(cfg *config.Config, logger *slog.Logger) (*Issuer, error) {
-	var provider CertificateProvider
-
-	// Always use real ACME provider
-	provider = &RealACMEProvider{logger: logger, config: cfg}
+	var provider CertificateProvider = &RealACMEProvider{logger: logger, config: cfg}
 	logger.Info("Using real ACME certificate provider")
 
 	issuer := &Issuer{
@@ -164,7 +161,7 @@ func (i *Issuer) GetCertificateBundle(ctx context.Context, nodeID, orderID strin
 
 	// Read certificate bundle from file
 	bundlePath := filepath.Join(i.config.CertStoragePath, orderID+".pem")
-	bundle, err := os.ReadFile(bundlePath)
+	bundle, err := os.ReadFile(bundlePath) //nolint:gosec // the order id is validated against the in-memory order map before any path is built.
 	if err != nil {
 		return nil, fmt.Errorf("failed to read certificate bundle: %w", err)
 	}
@@ -228,7 +225,7 @@ func (i *Issuer) issueCertificate(orderID string, csrBytes []byte, fqdns []strin
 
 	// Save certificate bundle
 	bundlePath := filepath.Join(i.config.CertStoragePath, orderID+".pem")
-	err = os.WriteFile(bundlePath, certBundle, 0644)
+	err = os.WriteFile(bundlePath, certBundle, 0o644) //nolint:gosec // a public certificate; the private key beside it is written 0600.
 	if err != nil {
 		i.logger.Error("Failed to save certificate bundle", "order_id", orderID, "error", err)
 
@@ -307,7 +304,7 @@ func (i *Issuer) renewCertificate(orderID string) {
 
 	// Load stored private key
 	keyPath := filepath.Join(i.config.CertStoragePath, orderID+".key")
-	keyPEM, err := os.ReadFile(keyPath)
+	keyPEM, err := os.ReadFile(keyPath) //nolint:gosec // the order id is validated against the in-memory order map before any path is built.
 	if err != nil {
 		i.logger.Error("Failed to read stored private key for renewal", "order_id", orderID, "error", err)
 		return
@@ -329,7 +326,7 @@ func (i *Issuer) renewCertificate(orderID string) {
 
 	// Save renewed certificate
 	bundlePath := filepath.Join(i.config.CertStoragePath, orderID+".pem")
-	if err := os.WriteFile(bundlePath, certBundle, 0644); err != nil {
+	if err := os.WriteFile(bundlePath, certBundle, 0o644); err != nil { //nolint:gosec // a public certificate; the private key beside it is written 0600.
 		i.logger.Error("Failed to save renewed certificate", "order_id", orderID, "error", err)
 		return
 	}
@@ -376,7 +373,7 @@ func (i *Issuer) saveOrder(order *Order) error {
 	filename := fmt.Sprintf("order_%s.json", order.ID)
 	path := filepath.Join(i.config.CertStoragePath, filename)
 
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("failed to write order file: %w", err)
 	}
 	return nil
@@ -385,7 +382,7 @@ func (i *Issuer) saveOrder(order *Order) error {
 // loadOrders loads all orders from disk
 func (i *Issuer) loadOrders() error {
 	// Ensure storage directory exists
-	if err := os.MkdirAll(i.config.CertStoragePath, 0755); err != nil {
+	if err := os.MkdirAll(i.config.CertStoragePath, 0o755); err != nil { //nolint:gosec // the certificate directory is read by whatever serves the certificates.
 		return fmt.Errorf("failed to create storage directory: %w", err)
 	}
 
@@ -406,7 +403,7 @@ func (i *Issuer) loadOrders() error {
 		}
 
 		path := filepath.Join(i.config.CertStoragePath, file.Name())
-		data, err := os.ReadFile(path)
+		data, err := os.ReadFile(path) //nolint:gosec // the order id is validated against the in-memory order map before any path is built.
 		if err != nil {
 			i.logger.Error("Failed to read order file", "path", path, "error", err)
 			continue
@@ -429,13 +426,7 @@ func (i *Issuer) loadOrders() error {
 func (i *Issuer) validateCSR(csr *x509.CertificateRequest, fqdns []string) error {
 	// Check if CSR contains all requested FQDNs
 	for _, fqdn := range fqdns {
-		found := false
-		for _, dnsName := range csr.DNSNames {
-			if dnsName == fqdn {
-				found = true
-				break
-			}
-		}
+		found := slices.Contains(csr.DNSNames, fqdn)
 		if !found {
 			return fmt.Errorf("CSR does not contain FQDN: %s", fqdn)
 		}
@@ -462,7 +453,7 @@ func generateCSRFromKeyPEM(privateKeyPEM []byte, fqdns []string) ([]byte, error)
 		// Try PKCS8
 		keyAny, err2 := x509.ParsePKCS8PrivateKey(block.Bytes)
 		if err2 != nil {
-			return nil, fmt.Errorf("failed to parse private key: %w / %v", err, err2)
+			return nil, fmt.Errorf("failed to parse private key: %w / %w", err, err2)
 		}
 		var ok bool
 		rsaKey, ok = keyAny.(*rsa.PrivateKey)

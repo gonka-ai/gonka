@@ -11,15 +11,15 @@ import (
 )
 
 var (
-	ACCOUNT_NAME            = "test-account"
-	INTERNAL_TEST_NET_ADDR  = "http://34.9.136.116:30000/v1"
-	INTERNAL_TEST_NET_MODEL = "Qwen/Qwen2.5-7B-Instruct"
-	INFERENCED_BINARY       = "/Users/dima/cosmos/bin/inferenced"
+	accountName          = "test-account"
+	internalTestNetAddr  = "http://34.9.136.116:30000/v1"
+	internalTestNetModel = "Qwen/Qwen2.5-7B-Instruct"
+	inferencedBinary     = "/Users/dima/cosmos/bin/inferenced"
 )
 
 // getPrivateKey exports the private key using inferenced command
 func getPrivateKey() (string, error) {
-	cmd := exec.Command(INFERENCED_BINARY, "keys", "export", ACCOUNT_NAME, "--unarmored-hex", "--unsafe")
+	cmd := exec.Command(inferencedBinary, "keys", "export", accountName, "--unarmored-hex", "--unsafe")
 	cmd.Stdin = strings.NewReader("y\n") // Auto-confirm the export
 
 	output, err := cmd.Output()
@@ -39,12 +39,12 @@ func main() {
 		panic(fmt.Sprintf("Failed to get private key: %v", err))
 	}
 
-	fmt.Printf("Successfully exported private key for account: %s\n", ACCOUNT_NAME)
+	fmt.Printf("Successfully exported private key for account: %s\n", accountName)
 
 	// Create Gonka OpenAI client
 	client, err := gonkaopenai.NewGonkaOpenAI(gonkaopenai.Options{
 		GonkaPrivateKey: privateKey,
-		Endpoints:       []string{INTERNAL_TEST_NET_ADDR}, // Gonka endpoints
+		Endpoints:       []string{internalTestNetAddr}, // Gonka endpoints
 		// Optional parameters:
 		// GonkaAddress: "cosmos1...", // Override derived Cosmos address
 	})
@@ -53,7 +53,7 @@ func main() {
 	}
 
 	resp, err := client.Chat.Completions.New(context.Background(), openai.ChatCompletionNewParams{
-		Model: INTERNAL_TEST_NET_MODEL,
+		Model: internalTestNetModel,
 		Messages: []openai.ChatCompletionMessageParamUnion{
 			openai.UserMessage("Hello!"),
 		},

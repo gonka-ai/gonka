@@ -9,16 +9,17 @@ import (
 	"encoding/base64"
 	"encoding/pem"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
-	"log/slog"
-
 	"github.com/gin-gonic/gin"
 	"github.com/golang-jwt/jwt/v5"
+
 	"github.com/gonka/proxy-ssl/internal/config"
 	"github.com/gonka/proxy-ssl/internal/issuer"
 )
@@ -391,13 +392,7 @@ func (s *Server) isAllowedFQDN(fqdn string) bool {
 	}
 
 	subdomain := parts[0]
-	for _, allowed := range s.config.AllowedSubdomains {
-		if allowed == subdomain {
-			return true
-		}
-	}
-
-	return false
+	return slices.Contains(s.config.AllowedSubdomains, subdomain)
 }
 
 // generatePrivateKey generates a new RSA private key
@@ -497,7 +492,7 @@ func (s *Server) authMiddleware() gin.HandlerFunc {
 		tokenString := parts[1]
 
 		// Parse and validate JWT
-		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
+		token, err := jwt.Parse(tokenString, func(token *jwt.Token) (any, error) {
 			if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
 				return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
 			}

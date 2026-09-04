@@ -504,7 +504,7 @@ func TestProxy_SSEStreaming(t *testing.T) {
 		if !ok {
 			t.Fatal("ResponseWriter does not implement Flusher")
 		}
-		for i := 0; i < 3; i++ {
+		for i := range 3 {
 			fmt.Fprintf(w, "data: event %d\n\n", i)
 			flusher.Flush()
 			time.Sleep(10 * time.Millisecond)

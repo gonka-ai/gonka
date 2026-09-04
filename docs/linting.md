@@ -20,7 +20,7 @@ Two configs are deliberately named so that nothing picks them up implicitly, and
 | `make lint-deprecated` | Deprecated APIs across `LINT_MODULES`. Prints, never fails. |
 | `make lint-all` | Every module, including the ones not yet clean: the backlog behind `LINT_MODULES`. |
 
-`LINT_MODULES` starts at `devshard` and widens one module at a time, as each one's backlog is cleared. Any target takes an override: `make lint LINT_MODULES=common`.
+`LINT_MODULES` widens one module at a time, as each one's backlog is cleared. It currently holds `devshard`, `edge-api`, `proxy-ssl`, `versioned` and both `test-net-cloud` drivers; `common`, `decentralized-api` and `inference-chain` are still behind it, with roughly 400, 1300 and 1700 findings respectively — about half of them auto-fixable. Any target takes an override: `make lint LINT_MODULES=common`.
 
 ## Deprecated APIs
 
@@ -38,7 +38,9 @@ Three formatters run in a fixed order and each owns one job:
 
 The set is chosen by yield, not by reputation. Rules that fired only to be suppressed were dropped: `bodyclose` cannot follow a test helper that closes the body, `sqlclosecheck` wants `defer` where SQLite has to close before the next statement on the same connection, `nilerr` misreads the "verdict in a bool, error in the response envelope" contract, and `usetesting` would move the stand's work directory out from under the compose file. `godot` and `prealloc` went the same way: neither caught a bug, and both cost readability.
 
-Security rules are scoped to what the running service exposes. `gosec` and `noctx` are excluded from tests and from the stand, which open files and shell out by construction, and where a hanging request fails a test rather than holding a socket. Inside `gosec`, `G404` and `G115` stay off because deterministic paths need `math/rand` and cosmos `Int` conversions are the SDK's business; `G104` is off because `errcheck` owns unchecked errors and knows our exclusion list; `G706` is off because everything we log is our own state.
+Security rules are scoped to what the running service exposes. `gosec` and `noctx` are excluded from tests and from the stand, which open files and shell out by construction, and where a hanging request fails a test rather than holding a socket. The `test-net-cloud` drivers lose only `noctx`: they are a harness too, but they carry `gosec` decisions worth keeping. Inside `gosec`, `G404` and `G115` stay off because deterministic paths need `math/rand` and cosmos `Int` conversions are the SDK's business; `G104` is off because `errcheck` owns unchecked errors and knows our exclusion list; `G706` is off because everything we log is our own state.
+
+`errcheck` carries an exclusion list rather than `//nolint` at each site: cleanup calls whose error nothing can act on — `Rows`/`Stmt`/`DB` close, `Tx.Rollback` for both `database/sql` and pgx, `os.File.Close`, `io.Copy` — plus our own stores and runtimes, which are closed on the error path where the original error is the one worth returning and a close failure could only mask it. It is also off in `_test.go`.
 
 `depguard` carries one rule: `signing/` and `keymaterial/` may not import `math/rand`. Everywhere else `math/rand` is deliberate — on-chain determinism requires it, and `crypto/rand` there would break consensus.
 
@@ -48,7 +50,7 @@ Security rules are scoped to what the running service exposes. `gosec` and `noct
 
 `noctx` is enforced on the network cases it is named for — HTTP calls and listeners. Its `database/sql` findings, 126 of them, are excluded by message: the storage layer has no context to thread yet, and giving it one is its own change rather than a lint fix.
 
-`contextcheck` is scoped to production code for the same reason `gosec` and `noctx` are.
+`contextcheck` was tried and dropped. Of its 73 findings, the 22 it called "non-inherited" were all correct by design — a fresh `context.Background()` for shutdown and for rollback on the error path, where the parent is already cancelled and inheriting it would be the bug; `if ctx == nil` guards; a deliberately detached cleanup root whose comment says so; and handler code passing `r.Context()` through a helper that wraps `context.WithValue`, which the rule cannot see through. The remaining 47 want a context threaded through two to five call levels, and four of those chains end inside `ApplyDiff` — a deterministic state transition that must not carry a cancellation source. Threading contexts through the storage and gateway layers is worth doing; it is a change of its own, not something this rule can drive.
 
 ## Known exceptions
 

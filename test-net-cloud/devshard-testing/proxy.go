@@ -85,7 +85,7 @@ func (h *proxyHandle) waitReady(timeout time.Duration) error {
 		resp, err := proxyHTTPClient.Get(h.proxyURL + "/v1/status")
 		if err == nil {
 			resp.Body.Close()
-			if resp.StatusCode == 200 {
+			if resp.StatusCode == http.StatusOK {
 				return nil
 			}
 		}
@@ -139,7 +139,7 @@ func sendInference(proxyURL, model string) (string, error) {
 		return "", fmt.Errorf("POST /v1/chat/completions: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return "", fmt.Errorf("inference HTTP %d", resp.StatusCode)
 	}
 	var result struct {
@@ -164,7 +164,7 @@ func finalizeProxy(proxyURL string) (settlement, error) {
 		return settlement{}, fmt.Errorf("POST /v1/finalize: %w", err)
 	}
 	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
+	if resp.StatusCode != http.StatusOK {
 		return settlement{}, fmt.Errorf("finalize HTTP %d", resp.StatusCode)
 	}
 	var s settlement

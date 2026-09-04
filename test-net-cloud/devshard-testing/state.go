@@ -12,7 +12,7 @@ type testState struct {
 }
 
 func loadState(path string) (*testState, error) {
-	b, err := os.ReadFile(path)
+	b, err := os.ReadFile(path) //nolint:gosec // the state file path is a flag of this driver.
 	if err != nil {
 		return nil, err
 	}
@@ -32,5 +32,5 @@ func saveState(path string, ids []uint64) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, b, 0644)
+	return os.WriteFile(path, b, 0o600)
 }

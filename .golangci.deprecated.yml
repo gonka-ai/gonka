@@ -1,6 +1,4 @@
-# Deprecated APIs the code still uses. Reported on its own, never as part of the gate: some of these
-# have no replacement in the versions we pin, and the ones that do are their own migration.
-# Run with `make lint-deprecated`; nothing picks this file up implicitly, the name sees to that.
+# Deprecated APIs, reported and never enforced. Run with `make lint-deprecated`; see docs/linting.md.
 
 version: "2"
 run:

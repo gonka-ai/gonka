@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"os/exec"
+	"slices"
 	"strings"
 	"time"
 	"unicode"
@@ -150,12 +151,10 @@ func childHADeployment(slotName string) (bool, error) {
 	if !ha {
 		return false, nil
 	}
-	for _, version := range strings.FieldsFunc(os.Getenv(envNonHAVersions), func(r rune) bool {
+	if slices.Contains(strings.FieldsFunc(os.Getenv(envNonHAVersions), func(r rune) bool {
 		return r == ',' || r == ';' || unicode.IsSpace(r)
-	}) {
-		if version == slotName {
-			return false, nil
-		}
+	}), slotName) {
+		return false, nil
 	}
 	return true, nil
 }
@@ -179,7 +178,7 @@ func readEmbeddedVersionContext(parent context.Context, binPath, flag string) (s
 	ctx, cancel := context.WithTimeout(parent, embeddedVersionProbeTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, binPath, flag)
+	cmd := exec.CommandContext(ctx, binPath, flag) //nolint:gosec // running the managed binary is what versiond is for.
 	cmd.WaitDelay = time.Second
 	var stdout bytes.Buffer
 	var stderr bytes.Buffer
@@ -193,7 +192,7 @@ func readEmbeddedVersionContext(parent context.Context, binPath, flag string) (s
 		}
 		output := strings.TrimSpace(stderr.String() + stdout.String())
 		if isUnsupportedVersionFlagError(err, output) {
-			return "", fmt.Errorf("%w: %s %s: %v: %s", errVersionFlagUnsupported, binPath, flag, err, output)
+			return "", fmt.Errorf("%w: %s %s: %w: %s", errVersionFlagUnsupported, binPath, flag, err, output)
 		}
 		if output != "" {
 			return "", fmt.Errorf("%s %s: %w: %s", binPath, flag, err, output)
@@ -212,7 +211,7 @@ func isUnsupportedVersionFlagError(err error, output string) bool {
 	if !errors.As(err, &exitErr) {
 		return false
 	}
-	if exitErr.ProcessState != nil && exitErr.ProcessState.ExitCode() < 0 {
+	if exitErr.ProcessState != nil && exitErr.ExitCode() < 0 {
 		return false
 	}
 	msg := strings.ToLower(output)

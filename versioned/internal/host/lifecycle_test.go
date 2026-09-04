@@ -59,7 +59,7 @@ func TestBeginDrainChoosesTheCurrentLifecycleEdge(t *testing.T) {
 
 func TestPromoteAndBeginDrainAreAtomic(t *testing.T) {
 	const iterations = 128
-	for iteration := 0; iteration < iterations; iteration++ {
+	for iteration := range iterations {
 		c := NewController()
 		start := make(chan struct{})
 		promoted := make(chan bool, 1)
@@ -104,7 +104,7 @@ func TestControllerConcurrentAdmissionAndDrain(t *testing.T) {
 		iterations = 64
 		workers    = 32
 	)
-	for iteration := 0; iteration < iterations; iteration++ {
+	for iteration := range iterations {
 		c := NewController()
 		if err := c.Transition(StateServing); err != nil {
 			t.Fatal(err)
@@ -116,9 +116,7 @@ func TestControllerConcurrentAdmissionAndDrain(t *testing.T) {
 		statuses := make([]int, workers)
 		var wg sync.WaitGroup
 		for worker := range workers {
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
+			wg.Go(func() {
 				<-start
 				response := httptest.NewRecorder()
 				handler.ServeHTTP(
@@ -126,7 +124,7 @@ func TestControllerConcurrentAdmissionAndDrain(t *testing.T) {
 					httptest.NewRequest(http.MethodGet, "/v1", nil),
 				)
 				statuses[worker] = response.Code
-			}()
+			})
 		}
 		drainDone := make(chan error, 1)
 		go func() {

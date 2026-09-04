@@ -55,7 +55,7 @@ func main() {
 	need := *count - len(escrowIDs)
 	if need > 0 {
 		log.Printf("Creating %d escrows on %s...\n", need, *grpcAddr)
-		for i := 0; i < need; i++ {
+		for i := range need {
 			id, err := createEscrow(ctx, *grpcAddr, *chainID, *privateKey, *amount, *model, *grpcTLS)
 			if err != nil {
 				log.Fatalf("create escrow %d/%d: %v", i+1, need, err)
@@ -77,9 +77,9 @@ func main() {
 	log.Printf("PASS: all assertions passed")
 }
 
-func parseSkipHosts(flag string) map[string]bool {
+func parseSkipHosts(hostList string) map[string]bool {
 	m := make(map[string]bool)
-	for _, addr := range strings.Split(flag, ",") {
+	for addr := range strings.SplitSeq(hostList, ",") {
 		if addr = strings.TrimSpace(addr); addr != "" {
 			m[addr] = true
 		}
@@ -126,7 +126,7 @@ func runSession(escrowIDs []uint64, devshardctlBin, privateKey, rest, routePrefi
 			}
 			if skipHosts[executor] {
 				log.Printf("Skipping inference for escrow %d (nonce %d → skipped host %s), firing async to advance nonce...\n", escrowIDs[i], nonce+1, executor)
-				go sendInference(h.proxyURL, model)
+				go func() { _, _ = sendInference(h.proxyURL, model) }()
 				waitNonceAdvanced(h.proxyURL, nonce, 3*time.Second)
 				continue
 			}

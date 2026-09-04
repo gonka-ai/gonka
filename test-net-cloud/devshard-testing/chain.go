@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -22,23 +23,22 @@ import (
 	authtx "github.com/cosmos/cosmos-sdk/x/auth/tx"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
-	"crypto/tls"
-
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials"
 	"google.golang.org/grpc/credentials/insecure"
 )
 
 const (
-	bech32Prefix    = "gonka"
-	defaultChainID  = "gonka-mainnet"
-	gasLimit        = uint64(200_000)
-	gasPrice        = "0ngonka"
+	bech32Prefix   = "gonka"
+	defaultChainID = "gonka-mainnet"
+	gasLimit       = uint64(200_000)
+	gasPrice       = "0ngonka"
 )
 
 var sdkConfigOnce sync.Once
 
-func init() {
+// configureSDK seals the bech32 prefixes once, before any address is parsed.
+func configureSDK() {
 	sdkConfigOnce.Do(func() {
 		cfg := sdk.GetConfig()
 		cfg.SetBech32PrefixForAccount(bech32Prefix, bech32Prefix+"pub")
@@ -47,6 +47,7 @@ func init() {
 }
 
 func deriveAddress(privKeyHex string) (string, error) {
+	configureSDK()
 	b, err := hex.DecodeString(privKeyHex)
 	if err != nil {
 		return "", fmt.Errorf("decode private key hex: %w", err)
@@ -91,7 +92,7 @@ func createEscrow(ctx context.Context, grpcAddr, chainID, privKeyHex string, amo
 	if err != nil {
 		return 0, fmt.Errorf("grpc connect: %w", err)
 	}
-	defer conn.Close()
+	defer func() { _ = conn.Close() }()
 
 	txConfig := authtx.NewTxConfig(cdc, []signingtypes.SignMode{signingtypes.SignMode_SIGN_MODE_DIRECT})
 
@@ -187,45 +188,6 @@ func fetchEscrowSlots(restURL string, escrowID uint64) []string {
 	return info.Slots
 }
 
-func fetchEscrowEpoch(restURL string, escrowID uint64) uint64 {
-	info := fetchEscrowInfo(restURL, escrowID)
-	if info == nil {
-		return 0
-	}
-	return info.EpochIndex
-}
-
-// fetchHostEpochStats queries per-host validation stats for a given epoch.
-func fetchHostEpochStats(restURL string, epochIndex uint64, participant string) {
-	url := fmt.Sprintf("%s/productscience/inference/inference/devshard_host_epoch_stats/%d/%s", restURL, epochIndex, participant)
-	resp, err := http.Get(url) //nolint:gosec
-	if err != nil {
-		fmt.Printf("  stats query failed for %s: %v\n", participant, err)
-		return
-	}
-	defer resp.Body.Close()
-
-	var body struct {
-		Stats struct {
-			Participant          string `json:"participant"`
-			EpochIndex           uint64 `json:"epoch_index,string"`
-			RequiredValidations  uint32 `json:"required_validations"`
-			CompletedValidations uint32 `json:"completed_validations"`
-			Missed               uint32 `json:"missed"`
-			Invalid              uint32 `json:"invalid"`
-			Cost                 uint64 `json:"cost,string"`
-			EscrowCount          uint32 `json:"escrow_count"`
-		} `json:"stats"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
-		fmt.Printf("  stats decode failed for %s: %v\n", participant, err)
-		return
-	}
-	s := body.Stats
-	fmt.Printf("  %s epoch=%d escrows=%d required=%d completed=%d missed=%d invalid=%d cost=%d\n",
-		s.Participant, s.EpochIndex, s.EscrowCount, s.RequiredValidations, s.CompletedValidations, s.Missed, s.Invalid, s.Cost)
-}
-
 func filterOpenEscrows(restURL string, ids []uint64) []uint64 {
 	var open []uint64
 	for _, id := range ids {
@@ -253,7 +215,7 @@ func filterOpenEscrows(restURL string, ids []uint64) []uint64 {
 }
 
 func waitForEscrowID(ctx context.Context, svc txtypes.ServiceClient, txHash string) (uint64, error) {
-	for i := 0; i < 30; i++ {
+	for range 30 {
 		res, err := svc.GetTx(ctx, &txtypes.GetTxRequest{Hash: txHash})
 		if err == nil && res.TxResponse != nil && res.TxResponse.Code == 0 {
 			for _, event := range res.TxResponse.Events {

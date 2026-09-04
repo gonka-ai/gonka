@@ -39,7 +39,7 @@ func main() {
 	if binDir == "" {
 		binDir = "/data/binaries"
 	}
-	os.MkdirAll(binDir, 0755)
+	_ = os.MkdirAll(binDir, 0o755)
 
 	s := &store{binDir: binDir}
 	// Load initial config from file if exists
@@ -63,7 +63,7 @@ func main() {
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(VersionConfig{Versions: versions})
+			_ = json.NewEncoder(w).Encode(VersionConfig{Versions: versions})
 		case http.MethodDelete:
 			if s.failureEnabled() {
 				http.Error(w, "oracle failure enabled", http.StatusInternalServerError)
@@ -110,7 +110,7 @@ func main() {
 			}
 			s.mu.Unlock()
 			w.WriteHeader(http.StatusOK)
-			json.NewEncoder(w).Encode(v)
+			_ = json.NewEncoder(w).Encode(v)
 		case http.MethodDelete:
 			if s.failureEnabled() {
 				http.Error(w, "oracle failure enabled", http.StatusInternalServerError)
@@ -156,7 +156,7 @@ func main() {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}
-			if err := os.WriteFile(path, data, 0644); err != nil {
+			if err := os.WriteFile(path, data, 0o644); err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
 			}

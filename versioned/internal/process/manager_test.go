@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -46,13 +47,7 @@ func TestChildEnvIncludesVersionLogPrefix(t *testing.T) {
 func TestChildEnvSlotNameFallback(t *testing.T) {
 	env := childEnv("v2", "", nil)
 	want := "DEVSHARD_BINARY_LOG_VERSION=v2"
-	found := false
-	for _, entry := range env {
-		if entry == want {
-			found = true
-			break
-		}
-	}
+	found := slices.Contains(env, want)
 	if !found {
 		t.Fatalf("childEnv missing %q", want)
 	}
@@ -163,7 +158,7 @@ func TestPreflightChild_LegacyFallback(t *testing.T) {
 echo "unknown flag: $1" >&2
 exit 2
 `
-	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -468,7 +463,7 @@ case "$1" in
 *) echo "unknown flag: $1" >&2; exit 2 ;;
 esac
 `
-	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -495,7 +490,7 @@ case "$1" in
 *) echo "unknown flag: $1" >&2; exit 2 ;;
 esac
 `
-	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -523,7 +518,7 @@ case "$1" in
 *) exit 1 ;;
 esac
 `
-	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -548,7 +543,7 @@ case "$1" in
 *) exit 1 ;;
 esac
 `
-	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -576,7 +571,7 @@ case "$1" in
 *) echo "unknown flag: $1" >&2; exit 2 ;;
 esac
 `
-	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -609,7 +604,7 @@ case "$1" in
 *) echo "unknown flag: $1" >&2; exit 2 ;;
 esac
 `
-	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -642,7 +637,7 @@ case "$1" in
 *) echo "unknown flag: $1" >&2; exit 2 ;;
 esac
 `
-	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -723,7 +718,7 @@ case "$1" in
 *) echo "unknown flag: $1" >&2; exit 2 ;;
 esac
 `
-	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1019,7 +1014,7 @@ func TestHashFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "testfile")
 	content := []byte("hello world")
-	if err := os.WriteFile(path, content, 0644); err != nil {
+	if err := os.WriteFile(path, content, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1138,7 +1133,7 @@ case "$1" in
 *) exit 99 ;;
 esac
 `
-	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1192,7 +1187,7 @@ func TestAtomicCopy(t *testing.T) {
 	dst := filepath.Join(dir, "dst")
 
 	content := []byte("binary content")
-	if err := os.WriteFile(src, content, 0644); err != nil {
+	if err := os.WriteFile(src, content, 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1212,7 +1207,7 @@ func TestAtomicCopy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode()&0755 != 0755 {
+	if info.Mode()&0o755 != 0o755 {
 		t.Errorf("mode = %o, want 0755", info.Mode())
 	}
 }
@@ -1312,7 +1307,7 @@ func TestReconcile_OverrideStartsChild(t *testing.T) {
 
 	// Create a fake override binary.
 	overrideBin := filepath.Join(dir, "override-binary")
-	if err := os.WriteFile(overrideBin, []byte("#!/bin/sh\nexit 0"), 0755); err != nil {
+	if err := os.WriteFile(overrideBin, []byte("#!/bin/sh\nexit 0"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1362,7 +1357,7 @@ func TestReconcile_ForceVersionsInjectIntoDesired(t *testing.T) {
 	dataDir := filepath.Join(dir, "data")
 
 	overrideBin := filepath.Join(dir, "override-binary")
-	if err := os.WriteFile(overrideBin, []byte("#!/bin/sh\nexit 0"), 0755); err != nil {
+	if err := os.WriteFile(overrideBin, []byte("#!/bin/sh\nexit 0"), 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1408,8 +1403,7 @@ func TestReconcile_ForceWithoutOverrideSkipped(t *testing.T) {
 	}
 	m := NewManager(cfg)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	// Should not error, just skip the forced version.
 	if err := m.Reconcile(ctx, nil); err != nil {
@@ -1435,8 +1429,7 @@ func TestRunChild_RemovesFromProcessesOnStartFailure(t *testing.T) {
 	}
 	m := NewManager(cfg)
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 
 	v := oracle.Version{Name: "v1"}
 
@@ -2170,7 +2163,7 @@ func TestInstalledVersionMatches_DetectsBinaryHashMismatch(t *testing.T) {
 	originalBinary := []byte("#!/bin/sh\nsleep 30\n")
 	tamperedBinary := []byte("#!/bin/sh\necho tampered\n")
 
-	if err := os.WriteFile(binPath, originalBinary, 0755); err != nil {
+	if err := os.WriteFile(binPath, originalBinary, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeInstallMetadataFile(t, versionDir, download.InstallMetadata{
@@ -2178,7 +2171,7 @@ func TestInstalledVersionMatches_DetectsBinaryHashMismatch(t *testing.T) {
 		BinarySHA256:  sha256Hex(originalBinary),
 	})
 
-	if err := os.WriteFile(binPath, tamperedBinary, 0755); err != nil {
+	if err := os.WriteFile(binPath, tamperedBinary, 0o755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -2396,10 +2389,10 @@ func TestLifecycleRequestsUseAdminPortWhenAvailable(t *testing.T) {
 }
 
 func TestDrainAndStopBefore_WaitsForIdleBeforeCancel(t *testing.T) {
-	var statusRequests int32
+	var statusRequests atomic.Int32
 	var cancelled atomic.Bool
 	port, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		count := atomic.AddInt32(&statusRequests, 1)
+		count := statusRequests.Add(1)
 		if count == 1 {
 			if cancelled.Load() {
 				t.Error("child cancelled before idle drain status")
@@ -2432,7 +2425,7 @@ func TestDrainAndStopBefore_WaitsForIdleBeforeCancel(t *testing.T) {
 	if !cancelled.Load() {
 		t.Fatal("idle child should be cancelled after drain")
 	}
-	if got := atomic.LoadInt32(&statusRequests); got < 2 {
+	if got := statusRequests.Load(); got < 2 {
 		t.Fatalf("drain status requests = %d, want at least 2", got)
 	}
 }
@@ -2721,10 +2714,10 @@ func TestReconcile_DownloadedVersionDoesNotRedownloadWhenInstallStateMatches(t *
 	binPath := filepath.Join(versionDir, "devshard")
 	binaryContent := []byte("#!/bin/sh\nsleep 30\n")
 
-	if err := os.MkdirAll(versionDir, 0755); err != nil {
+	if err := os.MkdirAll(versionDir, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(binPath, binaryContent, 0755); err != nil {
+	if err := os.WriteFile(binPath, binaryContent, 0o755); err != nil {
 		t.Fatal(err)
 	}
 	writeInstallMetadataFile(t, versionDir, download.InstallMetadata{
@@ -2732,9 +2725,9 @@ func TestReconcile_DownloadedVersionDoesNotRedownloadWhenInstallStateMatches(t *
 		BinarySHA256:  sha256Hex(binaryContent),
 	})
 
-	var requests int32
+	var requests atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		atomic.AddInt32(&requests, 1)
+		requests.Add(1)
 		w.WriteHeader(http.StatusInternalServerError)
 	}))
 	defer srv.Close()
@@ -2771,7 +2764,7 @@ func TestReconcile_DownloadedVersionDoesNotRedownloadWhenInstallStateMatches(t *
 		t.Fatal(err)
 	}
 
-	if got := atomic.LoadInt32(&requests); got != 0 {
+	if got := requests.Load(); got != 0 {
 		t.Fatalf("unexpected download requests: got %d, want 0", got)
 	}
 	if cancelled {
@@ -3081,7 +3074,7 @@ func writeInstallMetadataFile(t *testing.T, versionDir string, metadata download
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(versionDir, download.InstallMetadataFilename), data, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(versionDir, download.InstallMetadataFilename), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -3137,8 +3130,7 @@ func TestServesVersion_FollowsTheChildLosingReadiness(t *testing.T) {
 	m.rebuildRoutes()
 	m.mu.Unlock()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
+	ctx := t.Context()
 	go m.watchChildReadiness(ctx, c)
 
 	if !m.ServesVersion("v4") {
@@ -3183,10 +3175,6 @@ func TestServesVersion_StaleReadinessIsNotReadiness(t *testing.T) {
 // replacement.
 func TestServesVersion_ReadinessIsPerGeneration(t *testing.T) {
 	m := NewManager(config.Config{BasePort: 5000, ReadyPath: "/ready"})
-	old := &child{status: statusRunning, port: 1, version: oracle.Version{Name: "v4"}}
-	old.serving.Store(false)
-	old.servingAt.Store(time.Now().UnixNano())
-
 	replacement := &child{status: statusRunning, port: 2, version: oracle.Version{Name: "v4"}}
 	replacement.serving.Store(true)
 	replacement.servingAt.Store(time.Now().UnixNano())
@@ -3205,7 +3193,6 @@ func TestServesVersion_ReadinessIsPerGeneration(t *testing.T) {
 	if m.ServesVersion("v4") {
 		t.Fatal("the current generation is unready but the version is still offered")
 	}
-	_ = old
 }
 
 func waitFor(timeout time.Duration, cond func() bool) bool {

@@ -2,8 +2,10 @@ package main
 
 import "testing"
 
-const testPrivKeyHex = "0101010101010101010101010101010101010101010101010101010101010101"
-const testExpectedAddr = "gonka10xcqpzrky6eff2g52qdye53xkk9jxkvr34az8p"
+const (
+	testPrivKeyHex   = "0101010101010101010101010101010101010101010101010101010101010101"
+	testExpectedAddr = "gonka10xcqpzrky6eff2g52qdye53xkk9jxkvr34az8p"
+)
 
 func TestDeriveAddress(t *testing.T) {
 	addr, err := deriveAddress(testPrivKeyHex)

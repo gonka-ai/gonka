@@ -7,9 +7,9 @@ DEVSHARDD_RELEASE_DOCKER_GOARCH := $(if $(DOCKER_GOARCH),$(DOCKER_GOARCH),$(if $
 
 include scripts/blst-portable.mk
 
-# Modules whose lint must stay green, widened as each one is cleaned up. See docs/linting.md.
-LINT_MODULES ?= devshard
-# Every Go module in the repository: golangci-lint analyses one module per run, so the lint targets walk them.
+# Modules whose lint must stay green; widened as each one is cleaned up. See docs/linting.md.
+LINT_MODULES ?= devshard edge-api proxy-ssl versioned test-net-cloud/devshard-testing test-net-cloud/gonka-client-testing
+# Every Go module: golangci-lint analyses one per run, so the lint targets walk them.
 GO_MODULES := common inference-chain decentralized-api devshard versioned edge-api proxy-ssl test-net-cloud/devshard-testing test-net-cloud/gonka-client-testing
 
 VERSION ?= $(shell git describe --always)
@@ -321,8 +321,7 @@ lint:
 		(cd $$module && golangci-lint run ./...) || exit 1; \
 	done
 
-# The fix pass can orphan an import or leave one it needs behind; `fmt` runs goimports after it to
-# settle that, which `run` cannot do because its own verdict on grouping is excluded in favour of gci.
+# `fmt` after the fix pass: it is what runs goimports, whose own verdict `run` excludes.
 lint-fix:
 	@for module in $(LINT_MODULES); do \
 		echo "==> $$module"; \
@@ -333,7 +332,7 @@ lint-fix:
 lint-deprecated:
 	@for module in $(LINT_MODULES); do \
 		echo "==> $$module"; \
-		(cd $$module && golangci-lint run --config ../.golangci.deprecated.yml --issues-exit-code 0 ./...); \
+		(cd $$module && golangci-lint run --config $(CURDIR)/.golangci.deprecated.yml --issues-exit-code 0 ./...); \
 	done
 
 # Every module, including the ones not yet clean: the backlog behind LINT_MODULES.
