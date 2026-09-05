@@ -61,11 +61,22 @@ func setupEpochGroupDataFromAP(k keeper.Keeper, ctx sdk.Context, ap types.Active
 // Set excludedMembers to simulate mid-epoch removals (member in ValidationWeights
 // but absent from SDK group).
 type stubGroupKeeper struct {
-	keeper          keeper.Keeper
-	excludedMembers map[string]bool
+	keeper                 keeper.Keeper
+	excludedMembers        map[string]bool
+	excludedMembersByGroup map[uint64]map[string]bool
+	memberReadsByGroup     map[uint64]int
+	memberUpdatesByGroup   map[uint64]int
+	membersErr             error
 }
 
 func (s *stubGroupKeeper) GroupMembers(ctx context.Context, req *group.QueryGroupMembersRequest) (*group.QueryGroupMembersResponse, error) {
+	if s.memberReadsByGroup == nil {
+		s.memberReadsByGroup = make(map[uint64]int)
+	}
+	s.memberReadsByGroup[req.GroupId]++
+	if s.membersErr != nil {
+		return nil, s.membersErr
+	}
 	// Find the EpochGroupData that has this group ID, return its ValidationWeights as members
 	sdkCtx := sdk.UnwrapSDKContext(ctx)
 	members := s.findMembersForGroup(sdkCtx, req.GroupId)
@@ -85,7 +96,9 @@ func (s *stubGroupKeeper) findMembersForGroup(ctx sdk.Context, groupId uint64) [
 		}
 		var members []*group.GroupMember
 		for _, vw := range data.ValidationWeights {
-			if vw == nil || s.excludedMembers[vw.MemberAddress] {
+			if vw == nil ||
+				s.excludedMembers[vw.MemberAddress] ||
+				s.excludedMembersByGroup[groupId][vw.MemberAddress] {
 				continue
 			}
 			members = append(members, &group.GroupMember{
@@ -115,7 +128,24 @@ func (*stubGroupKeeper) CreateGroup(context.Context, *group.MsgCreateGroup) (*gr
 func (*stubGroupKeeper) CreateGroupWithPolicy(context.Context, *group.MsgCreateGroupWithPolicy) (*group.MsgCreateGroupWithPolicyResponse, error) {
 	return &group.MsgCreateGroupWithPolicyResponse{}, nil
 }
-func (*stubGroupKeeper) UpdateGroupMembers(context.Context, *group.MsgUpdateGroupMembers) (*group.MsgUpdateGroupMembersResponse, error) {
+func (s *stubGroupKeeper) UpdateGroupMembers(_ context.Context, req *group.MsgUpdateGroupMembers) (*group.MsgUpdateGroupMembersResponse, error) {
+	if s.excludedMembersByGroup == nil {
+		s.excludedMembersByGroup = make(map[uint64]map[string]bool)
+	}
+	if s.memberUpdatesByGroup == nil {
+		s.memberUpdatesByGroup = make(map[uint64]int)
+	}
+	s.memberUpdatesByGroup[req.GroupId]++
+	if s.excludedMembersByGroup[req.GroupId] == nil {
+		s.excludedMembersByGroup[req.GroupId] = make(map[string]bool)
+	}
+	for _, update := range req.MemberUpdates {
+		if update.Weight == "0" {
+			s.excludedMembersByGroup[req.GroupId][update.Address] = true
+		} else {
+			delete(s.excludedMembersByGroup[req.GroupId], update.Address)
+		}
+	}
 	return &group.MsgUpdateGroupMembersResponse{}, nil
 }
 func (*stubGroupKeeper) UpdateGroupMetadata(context.Context, *group.MsgUpdateGroupMetadata) (*group.MsgUpdateGroupMetadataResponse, error) {
@@ -291,6 +321,62 @@ func TestBuildBootstrapDelegationSnapshot_OnlyVotingPowerModelsTreatedAsActive(t
 	snapshot, err := am.buildBootstrapDelegationSnapshot(ctx, 12)
 	require.NoError(t, err)
 
+	require.Len(t, snapshot.Preeligibility, 1)
+	require.Equal(t, "new-model", snapshot.Preeligibility[0].ModelId)
+}
+
+func TestBuildBootstrapDelegationSnapshot_EmptyVoterAccountingModelIsNotActive(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.PocParams = &types.PocParams{
+		Models: []*types.PoCModelConfig{
+			{ModelId: "active-model", WeightScaleFactor: types.DecimalFromFloat(1)},
+			{ModelId: "new-model", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
+	}
+	params.DelegationParams = &types.DelegationParams{
+		DeployWindow: 1,
+		WThreshold:   types.DecimalFromFloat(0.5),
+		VMin:         1,
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 1))
+	ap := types.ActiveParticipants{
+		EpochGroupId: 1,
+		EpochId:      1,
+		Participants: []*types.ActiveParticipant{
+			{
+				Index:  testutil.Validator,
+				Weight: 100,
+				VotingPowers: []*types.ModelVotingPower{
+					{ModelId: "active-model", VotingPower: 100},
+				},
+			},
+			{
+				Index:  testutil.Validator2,
+				Weight: 100,
+			},
+		},
+	}
+	require.NoError(t, k.SetActiveParticipants(ctx, ap))
+	setupEpochGroupDataFromAP(k, ctx, ap)
+
+	root, found := k.GetEpochGroupData(ctx, 1, "")
+	require.True(t, found)
+	root.ConfirmationWeightScales = []*types.ConfirmationWeightScale{
+		{ModelId: "active-model", WeightScaleFactor: types.DecimalFromFloat(1)},
+		{ModelId: "new-model", WeightScaleFactor: types.DecimalFromFloat(1)},
+	}
+	k.SetEpochGroupData(ctx, root)
+
+	require.NoError(t, k.SetPoCDirectIntent(ctx, "new-model", testutil.Validator))
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	snapshot, err := am.buildBootstrapDelegationSnapshot(ctx, 12)
+	require.NoError(t, err)
 	require.Len(t, snapshot.Preeligibility, 1)
 	require.Equal(t, "new-model", snapshot.Preeligibility[0].ModelId)
 }
@@ -658,6 +744,100 @@ func TestComputeStoreCommitVotingPowers_UsesExistingVotingPowersAndBootstrapDele
 	}, got["new-model"])
 }
 
+func TestComputeStoreCommitVotingPowers_EmptyPlaceholderIsNotAlreadyActive(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.PocParams = &types.PocParams{
+		Models: []*types.PoCModelConfig{
+			{ModelId: "existing-model", WeightScaleFactor: types.DecimalFromFloat(1)},
+			{ModelId: "new-model", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
+	}
+	params.DelegationParams = &types.DelegationParams{
+		WThreshold: types.DecimalFromFloat(0.5),
+		VMin:       1,
+	}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 1))
+	ap := types.ActiveParticipants{
+		EpochId:             1,
+		EpochGroupId:        1,
+		PocStartBlockHeight: 100,
+		Participants: []*types.ActiveParticipant{
+			{
+				Index:        testutil.Executor,
+				Weight:       100,
+				Models:       []string{"existing-model"},
+				VotingPowers: []*types.ModelVotingPower{{ModelId: "existing-model", VotingPower: 70}},
+			},
+			{
+				Index:        testutil.Executor2,
+				Weight:       60,
+				Models:       []string{"existing-model"},
+				VotingPowers: []*types.ModelVotingPower{{ModelId: "existing-model", VotingPower: 30}},
+			},
+			{
+				Index:  testutil.Validator,
+				Weight: 40,
+			},
+		},
+	}
+	require.NoError(t, k.SetActiveParticipants(ctx, ap))
+	setupEpochGroupDataFromAP(k, ctx, ap)
+
+	require.NoError(t, k.SetBootstrapDelegationSnapshot(ctx, types.BootstrapDelegationSnapshot{
+		SnapshotHeight: 111,
+		Delegations: []*types.PoCDelegation{
+			{
+				ModelId:    "new-model",
+				Delegator:  testutil.Validator,
+				DelegateTo: testutil.Executor,
+			},
+		},
+		Intents: []*types.PoCDirectIntent{
+			{
+				ModelId:     "new-model",
+				Participant: testutil.Executor,
+			},
+		},
+		TotalNetworkWeight: 200,
+		Preeligibility: []*types.BootstrapModelPreEligibility{
+			{
+				ModelId:           "new-model",
+				PreEligible:       true,
+				MeetsVMin:         true,
+				MeetsReachability: true,
+			},
+		},
+	}))
+	require.NoError(t, k.SetPoCV2StoreCommit(ctx, types.PoCV2StoreCommit{
+		ParticipantAddress:       testutil.Executor,
+		PocStageStartBlockHeight: 180,
+		ModelId:                  "new-model",
+		Count:                    1,
+	}))
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	base := am.getEffectiveValidationBaseState(ctx)
+	base.existingModelVotingPowers = append(base.existingModelVotingPowers, &types.ModelVotingPowers{
+		ModelId: "new-model",
+	})
+
+	modelWeights, totalWeight := am.computeStoreCommitVotingPowers(ctx, base, 180, "test")
+	require.Equal(t, int64(200), totalWeight)
+
+	got := map[string]map[string]int64{}
+	for _, modelWeight := range modelWeights {
+		got[modelWeight.ModelId] = types.VotingPowerSliceToMap(modelWeight.VotingPowers)
+	}
+	require.Equal(t, map[string]int64{
+		testutil.Executor: 140,
+	}, got["new-model"])
+}
+
 func TestComputeStoreCommitVotingPowers_EpochZeroBypassesBootstrapPreEligibility(t *testing.T) {
 	k, ctx := newMinimalInferenceKeeper(t)
 
@@ -922,6 +1102,98 @@ func TestComputeStoreCommitVotingPowers_BootstrapModelUsesDirectCommittersAndFro
 	}, got)
 }
 
+func TestBuildDelegationWeightCalculator_UsesPreviousConfirmedWeights(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.PocParams = &types.PocParams{
+		Models: []*types.PoCModelConfig{
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
+	}
+	params.DelegationParams = &types.DelegationParams{
+		InitialModelId: "model-a",
+	}
+
+	const epoch = uint64(5)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, epoch))
+	require.NoError(t, k.SetActiveParticipants(ctx, types.ActiveParticipants{
+		EpochId:          epoch,
+		EpochGroupId:     77,
+		CapWeightApplied: true,
+		Participants: []*types.ActiveParticipant{
+			{Index: testutil.Validator, Weight: 100, CapWeight: 10},
+			{Index: testutil.Validator2, Weight: 100, CapWeight: 10},
+		},
+	}))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:     epoch,
+		ModelId:        "",
+		EpochGroupId:   77,
+		SubGroupModels: []string{"model-a"},
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
+			{ModelId: "model-a", WeightScaleFactor: types.DecimalFromFloat(1)},
+		},
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 100, ConfirmationWeight: 100},
+			{MemberAddress: testutil.Validator2, Weight: 100, ConfirmationWeight: 20},
+		},
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:   epoch,
+		ModelId:      "model-a",
+		EpochGroupId: 78,
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, MlNodes: []*types.MLNodeInfo{{PocWeight: 100}}},
+			{MemberAddress: testutil.Validator2, MlNodes: []*types.MLNodeInfo{{PocWeight: 100}}},
+		},
+	})
+
+	upcoming := []*types.ActiveParticipant{
+		{
+			Index:  testutil.Validator,
+			Models: []string{"model-a"},
+			MlNodes: []*types.ModelMLNodes{{
+				MlNodes: []*types.MLNodeInfo{{NodeId: "node-1", PocWeight: 100}},
+			}},
+		},
+	}
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	previous, err := am.getPreviousConfirmedWeights(ctx)
+	require.NoError(t, err)
+	dwc := am.buildDelegationWeightCalculator(
+		ctx,
+		upcoming,
+		map[string]sdkmath.LegacyDec{"model-a": sdkmath.LegacyOneDec()},
+		params,
+		previous,
+	)
+
+	require.Equal(t, int64(100), dwc.ConsensusWeights[testutil.Validator])
+	require.Equal(t, int64(20), dwc.ConsensusWeights[testutil.Validator2])
+	require.Equal(t, int64(120), dwc.TotalNetworkWeight)
+}
+
+func TestGetPreviousConfirmedWeights_PropagatesGroupReadError(t *testing.T) {
+	k, ctx, groupStub := newMinimalInferenceKeeperWithStub(t)
+
+	const epoch = uint64(5)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, epoch))
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:   epoch,
+		EpochGroupId: 77,
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: testutil.Validator, Weight: 100},
+		},
+	})
+	groupStub.membersErr = strconv.ErrSyntax
+
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	_, err := am.getPreviousConfirmedWeights(ctx)
+	require.ErrorContains(t, err, "load live previous-epoch members")
+}
+
 func TestBuildDelegationWeightCalculator_UsesValidationSnapshotForNextEpochVotingPowers(t *testing.T) {
 	k, ctx := newMinimalInferenceKeeper(t)
 
@@ -976,7 +1248,15 @@ func TestBuildDelegationWeightCalculator_UsesValidationSnapshotForNextEpochVotin
 	}
 
 	am := NewAppModule(nil, k, nil, nil, nil, nil)
-	dwc := am.buildDelegationWeightCalculator(ctx, activeParticipants, map[string]sdkmath.LegacyDec{"model-a": sdkmath.LegacyOneDec()}, params)
+	previous, err := am.getPreviousConfirmedWeights(ctx)
+	require.NoError(t, err)
+	dwc := am.buildDelegationWeightCalculator(
+		ctx,
+		activeParticipants,
+		map[string]sdkmath.LegacyDec{"model-a": sdkmath.LegacyOneDec()},
+		params,
+		previous,
+	)
 	modes := dwc.ResolveGroupParticipation("model-a")
 	require.Equal(t, ModeDelegate, modes[testutil.Validator])
 	require.Equal(t, ModeNone, modes[testutil.Executor2])
@@ -1194,4 +1474,3 @@ func TestCapPerModelVotingPowers_SingleHostNoOp(t *testing.T) {
 	capPerModelVotingPowers(vp, capPct, "model-test", nopCapLogger{})
 	require.Equal(t, int64(1000), vp["solo"])
 }
-
