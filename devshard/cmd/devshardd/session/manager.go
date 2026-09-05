@@ -739,8 +739,19 @@ func (m *HostManager) installSession(escrowID string, srv *transport.Server, now
 	return srv, false
 }
 
+// pruneCutoff is the exclusive epoch lower bound from ManagedStorage, or 0
+// when the store does not expose a retention horizon (tests, raw SQLite).
+func (m *HostManager) pruneCutoff() uint64 {
+	if h, ok := m.store.(interface{ PruneCutoff() uint64 }); ok {
+		return h.PruneCutoff()
+	}
+	return 0
+}
+
 // EvictBefore drops in-memory sessions whose epoch is below cutoffEpoch and
-// closes their hosts. Returns the number of evicted sessions.
+// closes their hosts. Returns the number of evicted sessions. Boot prunes
+// the store first and then recovers, so this is for live epoch changes, not
+// for kicking sessions that recovery just rebuilt.
 func (m *HostManager) EvictBefore(cutoffEpoch uint64) int {
 	if cutoffEpoch == 0 {
 		return 0
@@ -919,6 +930,15 @@ func (m *HostManager) RecoverSessionsContext(ctx context.Context) error {
 			}
 			continue
 		}
+		// Retention already dropped these rows when prune ran first. Skip
+		// leftover rows if prune failed or the cutoff moved before PruneOnce
+		// finished, so recovery does not rebuild a host EvictBefore would
+		// immediately close.
+		if cutoff := m.pruneCutoff(); cutoff > 0 && sess.EpochID < cutoff {
+			logging.Info("skipping recovery of prune-bound session", inferenceTypes.System,
+				"escrow_id", sess.EscrowID, "epoch_id", sess.EpochID, "cutoff", cutoff)
+			continue
+		}
 		// Local status is "active" only. A missed ESCROW_SETTLED (or a
 		// settlement that aged out of the dapi ring) leaves that row in place,
 		// and recoverStoredSession never asks the chain. One GetEscrow here
@@ -1087,6 +1107,9 @@ func (m *HostManager) recoverStoredSession(escrowID string) (_ *transport.Server
 	meta, err := m.store.GetSessionMeta(escrowID)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get session meta: %w", err)
+	}
+	if cutoff := m.pruneCutoff(); cutoff > 0 && meta.EpochID < cutoff {
+		return nil, nil, fmt.Errorf("%w: epoch %d below prune cutoff %d", storage.ErrEpochPruned, meta.EpochID, cutoff)
 	}
 	if meta.Status != "active" {
 		return nil, nil, fmt.Errorf("%w: escrow %s status %q", storage.ErrSessionNotActive, escrowID, meta.Status)

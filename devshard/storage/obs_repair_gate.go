@@ -66,6 +66,15 @@ func (g *ObsRepairGate) Ready() bool {
 	return true
 }
 
+// PruneCutoff forwards the managed-storage retention horizon so recovery can
+// skip prune-bound sessions without unwrapping the gate.
+func (g *ObsRepairGate) PruneCutoff() uint64 {
+	if h, ok := g.Storage.(interface{ PruneCutoff() uint64 }); ok {
+		return h.PruneCutoff()
+	}
+	return 0
+}
+
 // RepairInProgress reports whether an escrow's obs writes are being queued.
 func (g *ObsRepairGate) RepairInProgress(escrowID string) bool {
 	g.mu.Lock()

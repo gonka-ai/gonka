@@ -30,7 +30,8 @@ type rangePruner interface {
 //
 // Pruning runs only when callers invoke PruneOnce — typically from an
 // epoch-change hook (dapi runtime-config publish or devshardd long-poll).
-// Start runs one catch-up PruneOnce after recovery; it does not start a timer.
+// Start runs one catch-up PruneOnce before session recovery so RecoverSessions
+// never lists rows retention has already dropped. It does not start a timer.
 type ManagedStorage struct {
 	inner  Storage
 	retain uint64
@@ -44,8 +45,8 @@ type ManagedStorage struct {
 
 // NewManagedStorage wraps inner with a pruner that retains the last `retain`
 // epochs (current epoch counts as one of them, so retain=3 keeps current + 2
-// previous). Call Start after migration/recovery for a one-shot catch-up prune,
-// and register epoch-change listeners that call PruneOnce.
+// previous). Call Start (or PruneOnce) before recovery for a one-shot
+// catch-up prune, and register epoch-change listeners that call PruneOnce.
 //
 // epochs is optional. If non-nil, PruneOnce consults it so the retention horizon
 // advances even on quiet hosts. Pass nil in tests where you drive pruning only
@@ -105,8 +106,10 @@ func (m *ManagedStorage) PruneCutoff() uint64 {
 	return maxE + 1 - m.retain
 }
 
-// Start runs a single catch-up prune after recovery. Epoch transitions must
-// trigger additional PruneOnce calls via the host's epoch-change hook.
+// Start runs a single catch-up prune. Call it before session recovery so
+// RecoverSessions never lists rows that retention has already dropped.
+// Epoch transitions must trigger additional PruneOnce calls via the host's
+// epoch-change hook.
 func (m *ManagedStorage) Start() {
 	m.PruneOnce(context.Background())
 }

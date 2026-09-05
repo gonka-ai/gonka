@@ -2,6 +2,7 @@ package session
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"path/filepath"
 	"runtime/pprof"
@@ -747,6 +748,105 @@ func TestRecoverSessions_SkipsForeignVersionSessions(t *testing.T) {
 	_, ok := mgr.sessions["escrow-v2"]
 	mgr.sessionsMutex.RUnlock()
 	require.False(t, ok, "foreign-version session must be skipped, not treated as failed recovery")
+}
+
+func TestRecoverSessions_DoesNotRevivePrunedEpochs(t *testing.T) {
+	inner := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	group := makeGroup(hosts)
+	config := defaultConfig(3)
+	for _, sess := range []struct {
+		escrowID string
+		epochID  uint64
+	}{
+		{escrowID: "11", epochID: 5},
+		{escrowID: "12", epochID: 7},
+	} {
+		require.NoError(t, inner.CreateSession(storage.CreateSessionParams{
+			EscrowID:       sess.escrowID,
+			EpochID:        sess.epochID,
+			Version:        testutil.RuntimeTestVersion,
+			CreatorAddr:    user.Address(),
+			Config:         config,
+			Group:          group,
+			InitialBalance: 100000000,
+		}))
+	}
+
+	store := storage.NewManagedStorage(inner, 3, nil)
+	store.ObserveEpoch(8) // retain=3 → cutoff=6, epoch 5 is pruneable
+	store.PruneOnce(context.Background())
+
+	active, err := store.ListActiveSessions()
+	require.NoError(t, err)
+	require.Len(t, active, 1)
+	require.Equal(t, "12", active[0].EscrowID)
+	require.Equal(t, uint64(7), active[0].EpochID)
+
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil))
+	require.NoError(t, mgr.RecoverSessions())
+	t.Cleanup(func() { _ = mgr.Close() })
+
+	mgr.sessionsMutex.RLock()
+	_, oldOK := mgr.sessions["11"]
+	_, currentOK := mgr.sessions["12"]
+	mgr.sessionsMutex.RUnlock()
+	require.False(t, oldOK, "pruned epoch must not be rebuilt into RAM")
+	require.True(t, currentOK)
+	require.Equal(t, 0, mgr.EvictBefore(store.PruneCutoff()), "prune-first recovery must leave nothing for EvictBefore")
+}
+
+func TestRecoverSessions_SkipsSessionsBelowPruneCutoff(t *testing.T) {
+	inner := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	group := makeGroup(hosts)
+	config := defaultConfig(3)
+	for _, sess := range []struct {
+		escrowID string
+		epochID  uint64
+	}{
+		{escrowID: "11", epochID: 5},
+		{escrowID: "12", epochID: 7},
+	} {
+		require.NoError(t, inner.CreateSession(storage.CreateSessionParams{
+			EscrowID:       sess.escrowID,
+			EpochID:        sess.epochID,
+			Version:        testutil.RuntimeTestVersion,
+			CreatorAddr:    user.Address(),
+			Config:         config,
+			Group:          group,
+			InitialBalance: 100000000,
+		}))
+	}
+
+	store := storage.NewManagedStorage(inner, 3, nil)
+	store.ObserveEpoch(8) // cutoff=6, rows still on disk
+
+	active, err := store.ListActiveSessions()
+	require.NoError(t, err)
+	require.Len(t, active, 2)
+
+	mgr := waitRecoveryRepairsOnCleanup(t, NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil))
+	require.NoError(t, mgr.RecoverSessions())
+	t.Cleanup(func() { _ = mgr.Close() })
+
+	mgr.sessionsMutex.RLock()
+	_, oldOK := mgr.sessions["11"]
+	_, currentOK := mgr.sessions["12"]
+	mgr.sessionsMutex.RUnlock()
+	require.False(t, oldOK)
+	require.True(t, currentOK)
+
+	_, err = mgr.getOrCreate("11", nil)
+	require.ErrorIs(t, err, storage.ErrEpochPruned)
 }
 
 func TestHostManager_EvictBeforeClosesOldSessions(t *testing.T) {

@@ -296,8 +296,6 @@ func buildHostManager(
 	closers.Add(manager.CloseHeightSync)
 	chainBridge.OnSettlementFinalizedHandler(manager.HandleSettlementFinalized)
 
-	startHostEventsWarm(ctx, cfg, chainBridge, mlClient, store, manager.HandleSettlementFinalized, closers)
-
 	// Close hosts before the epoch-change cancel so LIFO shutdown cancels
 	// epoch callbacks first. Do not use manager.Close(): store close and
 	// height-sync close are already on this stack.
@@ -305,8 +303,12 @@ func buildHostManager(
 
 	// Single epoch clock: runtime-config OnEpochChange (dapi long-poll or
 	// chain-poll fallback) advances phase + managed-storage horizon, then
-	// prunes DB, evicts in-memory hosts, and drops old payload epochs.
-	applyEpoch := func(newEpoch uint64, pruneAsync bool) {
+	// prunes DB and drops old payload epochs. evict closes in-memory hosts
+	// for those epochs. Boot uses evict=false: prune runs before StartRecovery,
+	// so recovery never lists rows PruneOnce already dropped and there is
+	// nothing to evict from a just-rebuilt map. Live OnEpochChange uses
+	// evict=true because sessions are already in RAM.
+	applyEpoch := func(newEpoch uint64, pruneAsync, evict bool) {
 		phase.SetEpoch(newEpoch)
 		store.ObserveEpoch(newEpoch)
 		if pruneAsync {
@@ -314,8 +316,10 @@ func buildHostManager(
 		} else {
 			store.PruneOnce(ctx)
 		}
-		if cutoff := store.PruneCutoff(); cutoff > 0 {
-			manager.EvictBefore(cutoff)
+		if evict {
+			if cutoff := store.PruneCutoff(); cutoff > 0 {
+				manager.EvictBefore(cutoff)
+			}
 		}
 		if newEpoch >= sessionEpochRetain+1 {
 			expiredPayloadEpoch := newEpoch - sessionEpochRetain
@@ -325,18 +329,21 @@ func buildHostManager(
 		}
 	}
 	if cancel := chainParams.OnEpochChange(func(_, newEpoch uint64) {
-		applyEpoch(newEpoch, true)
+		applyEpoch(newEpoch, true, true)
 	}); cancel != nil {
 		closers.Add(cancel)
 	}
-	// Initial snapshot apply does not fire OnEpochChange; seed clocks and catch up.
+	// Initial snapshot apply does not fire OnEpochChange; seed clocks and
+	// prune before recovery so the backlog is already retention-trimmed.
 	if epoch := chainParams.CurrentEpochID(); epoch > 0 {
-		applyEpoch(epoch, false)
+		applyEpoch(epoch, false, false)
 	} else if boot := phase.EpochID(); boot > 0 {
-		applyEpoch(boot, false)
+		applyEpoch(boot, false, false)
 	} else {
 		store.Start()
 	}
+
+	startHostEventsWarm(ctx, cfg, chainBridge, mlClient, store, manager.HandleSettlementFinalized, closers)
 
 	// Recovery used to run inline here, so a host with a large backlog kept the
 	// listener closed and answered 502 until every session was rebuilt. Run it
