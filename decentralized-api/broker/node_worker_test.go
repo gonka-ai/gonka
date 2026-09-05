@@ -3,6 +3,7 @@ package broker
 import (
 	"context"
 	"decentralized-api/apiconfig"
+	"decentralized-api/chainphase"
 	"decentralized-api/mlnodeclient"
 	"errors"
 	"net/http"
@@ -91,6 +92,7 @@ func TestNodeWorker_BasicOperation(t *testing.T) {
 func TestNodeWorker_StampsDeploymentGenerationOnResult(t *testing.T) {
 	broker := NewTestBroker2(1)
 	node := createTestNode("test-node-1")
+	node.State.RegistrationSeq = 9
 	mockClient := mlnodeclient.NewMockClient()
 	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient, broker)
 	defer worker.Shutdown()
@@ -107,6 +109,7 @@ func TestNodeWorker_StampsDeploymentGenerationOnResult(t *testing.T) {
 		updateCmd, ok := receivedCmd.(UpdateNodeResultCommand)
 		require.True(t, ok)
 		require.Equal(t, uint64(7), updateCmd.Result.DeploymentGeneration)
+		require.Equal(t, uint64(9), updateCmd.Result.RegistrationSeq)
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("timed out waiting for broker to receive command")
 	}
@@ -152,7 +155,7 @@ func TestNodeWorker_QueueFull(t *testing.T) {
 	// Fill the queue with slow commands
 	slowCmdSubmitted := 0
 	slowCmdFailed := 0
-	for i := 0; i < 25; i++ { // Queue size is 10, but we submit 10
+	for i := 0; i < 25; i++ {
 		cmd := &TestCommand{
 			ExecuteFn: func(ctx context.Context, worker *NodeWorker) NodeResult {
 				time.Sleep(100 * time.Millisecond)
@@ -167,40 +170,98 @@ func TestNodeWorker_QueueFull(t *testing.T) {
 		}
 	}
 
-	// Only 10 should succeed
-	assert.Equal(t, 10, slowCmdSubmitted, "Should submit exactly 10 commands (queue size)")
-	assert.Equal(t, 15, slowCmdFailed, "Should fail exactly 15 commands (beyond queue size)")
+	// Queue size is 10. The run loop may already be executing one command,
+	// so 10 queued plus 1 in flight can all succeed.
+	assert.GreaterOrEqual(t, slowCmdSubmitted, 10)
+	assert.LessOrEqual(t, slowCmdSubmitted, 11)
+	assert.Equal(t, 25, slowCmdSubmitted+slowCmdFailed)
 }
 
-func TestNodeWorker_GracefulShutdown(t *testing.T) {
+func TestNodeWorker_ShutdownDropsQueuedCommands(t *testing.T) {
 	broker := NewTestBroker2(10)
 	node := createTestNode("test-node-1")
 	mockClient := mlnodeclient.NewMockClient()
 	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient, broker)
 
-	// Submit commands that will execute during shutdown
-	var executedCount int32
-	for i := 0; i < 5; i++ {
+	started := make(chan struct{})
+	inFlight := &TestCommand{
+		ExecuteFn: func(ctx context.Context, worker *NodeWorker) NodeResult {
+			close(started)
+			time.Sleep(30 * time.Millisecond)
+			return NodeResult{Succeeded: true}
+		},
+	}
+	require.True(t, worker.Submit(context.Background(), inFlight))
+	<-started
+
+	var queuedExecuted int32
+	for i := 0; i < 4; i++ {
 		cmd := &TestCommand{
 			ExecuteFn: func(ctx context.Context, worker *NodeWorker) NodeResult {
-				atomic.AddInt32(&executedCount, 1)
-				time.Sleep(10 * time.Millisecond)
+				atomic.AddInt32(&queuedExecuted, 1)
 				return NodeResult{Succeeded: true}
 			},
 		}
-		worker.Submit(context.Background(), cmd)
+		require.True(t, worker.Submit(context.Background(), cmd))
+	}
+	require.NotZero(t, len(worker.commands))
+
+	worker.signalShutdown()
+	require.Equal(t, 0, len(worker.commands), "queued commands must be drained before in-flight HTTP returns")
+
+	done := make(chan struct{})
+	go func() {
+		worker.Shutdown()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Shutdown blocked on queued worker commands")
 	}
 
-	// Give first command time to start
-	time.Sleep(5 * time.Millisecond)
+	assert.Equal(t, int32(0), atomic.LoadInt32(&queuedExecuted),
+		"queued commands must be dropped, not executed, on shutdown")
+}
 
-	// Shutdown should wait for all commands
+func TestNodeWorker_SubmitRejectedAfterShutdown(t *testing.T) {
+	broker := NewTestBroker2(4)
+	node := createTestNode("test-node-1")
+	worker := NewNodeWorkerWithClient("test-node-1", node, mlnodeclient.NewMockClient(), broker)
+
 	worker.Shutdown()
 
-	assert.Equal(t, int32(5), atomic.LoadInt32(&executedCount),
-		"All queued commands should execute before shutdown completes")
+	accepted := worker.Submit(context.Background(), &TestCommand{
+		ExecuteFn: func(ctx context.Context, worker *NodeWorker) NodeResult {
+			t.Error("command must not execute after shutdown")
+			return NodeResult{Succeeded: true}
+		},
+	})
+	assert.False(t, accepted, "Submit after shutdown must be rejected")
+}
 
-	assert.Len(t, broker.highPriorityCommands, 5, "Should have 5 results in broker channel")
+func TestNodeWorker_ShutdownDropsCommandWhenSelectPicksWork(t *testing.T) {
+	broker := NewTestBroker2(16)
+	node := createTestNode("test-node-1")
+	worker := NewNodeWorkerWithClient("test-node-1", node, mlnodeclient.NewMockClient(), broker)
+
+	var executed int32
+	for i := 0; i < 10; i++ {
+		cmd := &TestCommand{
+			ExecuteFn: func(ctx context.Context, worker *NodeWorker) NodeResult {
+				atomic.AddInt32(&executed, 1)
+				time.Sleep(20 * time.Millisecond)
+				return NodeResult{Succeeded: true}
+			},
+		}
+		require.True(t, worker.Submit(context.Background(), cmd))
+	}
+
+	worker.Shutdown()
+
+	assert.LessOrEqual(t, atomic.LoadInt32(&executed), int32(1),
+		"at most the in-flight command may run; queued work must be dropped after shutdown")
 }
 
 func TestNodeWorker_Cancellation(t *testing.T) {
@@ -622,6 +683,160 @@ func TestNodeWorkGroup_AddRemoveWorkers(t *testing.T) {
 
 	_, exists1 = group.GetWorker("node-1")
 	assert.False(t, exists1, "Worker 1 should not exist after removal")
+}
+
+func TestNodeWorkGroup_AddWorkerDoesNotReplace(t *testing.T) {
+	group := NewNodeWorkGroup()
+	broker := NewTestBroker2(1)
+
+	node := createTestNode("node-1")
+	original := NewNodeWorkerWithClient("node-1", node, mlnodeclient.NewMockClient(), broker)
+	replacement := NewNodeWorkerWithClient("node-1", node, mlnodeclient.NewMockClient(), broker)
+	defer original.Shutdown()
+	defer replacement.Shutdown()
+
+	require.True(t, group.AddWorker("node-1", original))
+	require.False(t, group.AddWorker("node-1", replacement))
+
+	got, exists := group.GetWorker("node-1")
+	require.True(t, exists)
+	require.Same(t, original, got)
+	require.Len(t, group.workers, 1)
+}
+
+func TestNodeWorkGroup_RemoveWorkerDoesNotBlockOnInFlightHTTP(t *testing.T) {
+	group := NewNodeWorkGroup()
+	broker := NewTestBroker2(4)
+
+	hung := createTestNode("hung")
+	other := createTestNode("other")
+	hungWorker := NewNodeWorkerWithClient("hung", hung, mlnodeclient.NewMockClient(), broker)
+	otherWorker := NewNodeWorkerWithClient("other", other, mlnodeclient.NewMockClient(), broker)
+	group.AddWorker("hung", hungWorker)
+	group.AddWorker("other", otherWorker)
+
+	started := make(chan struct{})
+	require.True(t, hungWorker.Submit(context.Background(), &TestCommand{
+		ExecuteFn: func(ctx context.Context, w *NodeWorker) NodeResult {
+			close(started)
+			time.Sleep(300 * time.Millisecond)
+			return NodeResult{Succeeded: true}
+		},
+	}))
+	<-started
+
+	removed := make(chan struct{})
+	go func() {
+		group.RemoveWorker("hung")
+		close(removed)
+	}()
+
+	select {
+	case <-removed:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("RemoveWorker blocked while a worker command was in flight")
+	}
+
+	_, hungExists := group.GetWorker("hung")
+	assert.False(t, hungExists)
+	gotOther, otherExists := group.GetWorker("other")
+	assert.True(t, otherExists)
+	assert.Equal(t, otherWorker, gotOther)
+
+	accepted := hungWorker.Submit(context.Background(), &TestCommand{
+		ExecuteFn: func(ctx context.Context, w *NodeWorker) NodeResult {
+			t.Error("command must not start after RemoveWorker returns")
+			return NodeResult{Succeeded: true}
+		},
+	})
+	assert.False(t, accepted, "Submit must be rejected as soon as RemoveWorker returns")
+}
+
+func TestRemoveWorkerDoesNotBlockWhenResultQueueIsFull(t *testing.T) {
+	broker := NewTestBroker2(1)
+	broker.phaseTracker = &chainphase.ChainPhaseTracker{}
+	broker.nodes = make(map[string]*NodeWithState)
+
+	filler := NewUpdateNodeResultCommand("filler", NodeResult{})
+	broker.highPriorityCommands <- filler
+
+	group := NewNodeWorkGroup()
+	node := createTestNode("n1")
+	node.State.RegistrationSeq = 1
+	worker := NewNodeWorkerWithClient("n1", node, mlnodeclient.NewMockClient(), broker)
+	require.True(t, group.AddWorker("n1", worker))
+
+	executeDone := make(chan struct{})
+	require.True(t, worker.Submit(context.Background(), &TestCommand{
+		ExecuteFn: func(ctx context.Context, w *NodeWorker) NodeResult {
+			defer close(executeDone)
+			return NodeResult{Succeeded: true, FinalStatus: types.HardwareNodeStatus_INFERENCE}
+		},
+	}))
+	<-executeDone
+
+	var queuedRan atomic.Bool
+	require.True(t, worker.Submit(context.Background(), &TestCommand{
+		ExecuteFn: func(ctx context.Context, w *NodeWorker) NodeResult {
+			queuedRan.Store(true)
+			return NodeResult{Succeeded: true}
+		},
+	}))
+
+	removed := make(chan struct{})
+	go func() {
+		group.RemoveWorker("n1")
+		close(removed)
+	}()
+	select {
+	case <-removed:
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("RemoveWorker blocked while QueueMessage was parked on a full broker channel")
+	}
+
+	_, exists := group.GetWorker("n1")
+	require.False(t, exists)
+
+	select {
+	case <-worker.done:
+	case <-time.After(time.Second):
+		t.Fatal("worker did not terminate after RemoveWorker")
+	}
+
+	require.False(t, queuedRan.Load(), "queued worker commands must be dropped")
+
+	select {
+	case cmd := <-broker.highPriorityCommands:
+		update, ok := cmd.(UpdateNodeResultCommand)
+		require.True(t, ok)
+		require.Equal(t, "filler", update.NodeId)
+	default:
+		t.Fatal("broker queue should still hold the filler command")
+	}
+
+	select {
+	case cmd := <-broker.highPriorityCommands:
+		t.Fatalf("late node result was delivered after filler was drained: %T", cmd)
+	default:
+	}
+}
+
+func TestNodeWorker_ShutdownIdempotent(t *testing.T) {
+	broker := NewTestBroker2(1)
+	node := createTestNode("n1")
+	worker := NewNodeWorkerWithClient("n1", node, mlnodeclient.NewMockClient(), broker)
+
+	worker.signalShutdown()
+	worker.signalShutdown()
+	worker.Shutdown()
+	worker.Shutdown()
+
+	require.False(t, worker.Submit(context.Background(), &TestCommand{
+		ExecuteFn: func(ctx context.Context, w *NodeWorker) NodeResult {
+			t.Error("command must not execute after shutdown")
+			return NodeResult{Succeeded: true}
+		},
+	}))
 }
 
 func TestNodeWorker_CheckClientVersionAlive(t *testing.T) {
