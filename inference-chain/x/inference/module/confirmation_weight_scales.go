@@ -14,17 +14,9 @@ func buildConfirmationWeightScales(
 		}
 	}
 
-	confirmable := make(map[string]bool)
-	for _, p := range activeParticipants {
-		for _, vp := range p.VotingPowers {
-			if vp != nil && vp.VotingPower > 0 && eligible[vp.ModelId] {
-				confirmable[vp.ModelId] = true
-			}
-		}
-	}
-
-	scales := make([]*types.ConfirmationWeightScale, 0, len(confirmable))
-	for _, modelID := range sortedKeys(confirmable) {
+	realModels := modelsWithRealNodes(activeParticipants, eligible)
+	scales := make([]*types.ConfirmationWeightScale, 0, len(realModels))
+	for _, modelID := range sortedKeys(realModels) {
 		config, _ := pocParams.GetModelConfig(modelID)
 		scales = append(scales, &types.ConfirmationWeightScale{
 			ModelId:           modelID,
@@ -32,4 +24,25 @@ func buildConfirmationWeightScales(
 		})
 	}
 	return scales
+}
+
+func modelsWithRealNodes(activeParticipants []*types.ActiveParticipant, eligible map[string]bool) map[string]bool {
+	real := make(map[string]bool)
+	for _, p := range activeParticipants {
+		if p == nil {
+			continue
+		}
+		for i, modelID := range p.Models {
+			if modelID == "" || !eligible[modelID] || i >= len(p.MlNodes) || p.MlNodes[i] == nil {
+				continue
+			}
+			for _, node := range p.MlNodes[i].MlNodes {
+				if node != nil && node.PocWeight > 0 {
+					real[modelID] = true
+					break
+				}
+			}
+		}
+	}
+	return real
 }
