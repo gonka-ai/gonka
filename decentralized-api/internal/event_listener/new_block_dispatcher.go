@@ -88,6 +88,8 @@ type OnNewBlockDispatcher struct {
 	seedAttemptHeight  int64
 	seedConfirmedEpoch uint64
 	seedEnsureInFlight atomic.Bool
+
+	applyFeeTree func(*types.FeeParams)
 }
 
 const seedRetryCooldownBlocks int64 = 2
@@ -174,6 +176,9 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 		configManager,
 	)
 	dispatcher.epochGroupDataCache = epochGroupDataCache
+	if a, ok := cosmosClient.(interface{ ApplyFeeTree(*types.FeeParams) }); ok {
+		dispatcher.applyFeeTree = a.ApplyFeeTree
+	}
 	return dispatcher
 }
 
@@ -262,6 +267,14 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 				d.configManager.SetDevshardVersions(
 					apiconfig.DevshardVersionsCacheFromParams(params.Params.DevshardEscrowParams),
 				)
+			}
+
+			// Reuse this Params response for the fee-tree cache. Do not issue a
+			// second RPC (and never context.Background()): a failed query leaves
+			// the last known-good cache in place. A successful response with
+			// nil FeeParams must still apply so Load(nil) clears stale pricing.
+			if d.applyFeeTree != nil {
+				d.applyFeeTree(params.Params.FeeParams)
 			}
 		}
 	}
