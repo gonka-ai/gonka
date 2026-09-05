@@ -1,4 +1,4 @@
-.PHONY: all build-docker release
+.PHONY: all build-docker release test-render test-sidecar
 
 include ../scripts/blst-portable.mk
 
@@ -27,6 +27,174 @@ define DOCKER_BUILD
 endef
 
 all: build-docker
+
+test-sidecar:
+	@docker run --rm -v "$(CURDIR)/sidecar:/app:ro" -w /app \
+		-e GO111MODULE=off golang:1.24.2-alpine3.21 go test
+
+test-render: test-sidecar
+	@set -eu; \
+	tmpdir=$$(mktemp -d); \
+	image=gonka-proxy-render-test:$$$$; \
+	private=gonka-proxy-policy-private-$$$$; \
+	shared=gonka-proxy-policy-shared-$$$$; \
+	peer=gonka-proxy-policy-peer-$$$$; \
+	worker=gonka-proxy-policy-worker-$$$$; \
+	ready_worker=gonka-proxy-policy-ready-worker-$$$$; \
+	app_sentinel=gonka-proxy-policy-app-sentinel-$$$$; \
+	ssl_worker_a=gonka-proxy-policy-ssl-a-$$$$; \
+	ssl_worker_b=gonka-proxy-policy-ssl-b-$$$$; \
+	ssl_worker_fast=gonka-proxy-policy-ssl-fast-$$$$; \
+	ssl_lock_holder=gonka-proxy-policy-ssl-lock-$$$$; \
+	trap 'docker rm -f "$$peer" "$$worker" "$$ready_worker" "$$app_sentinel" "$$ssl_worker_a" "$$ssl_worker_b" "$$ssl_worker_fast" "$$ssl_lock_holder" >/dev/null 2>&1 || true; docker network rm "$$private" "$$shared" >/dev/null 2>&1 || true; docker image rm "$$image" >/dev/null 2>&1 || true; rm -rf "$$tmpdir"' EXIT; \
+	fail() { echo "test-render: $$1" >&2; exit 1; }; \
+	touch "$$tmpdir/nginx.conf"; \
+	docker build -q -t "$$image" . >/dev/null; \
+	[ "$$(docker image inspect -f '{{index .Config.Labels "ai.gonka.proxy-policy-contract"}}' "$$image")" = 1 ] \
+		|| fail "policy image has no stable ingress contract label"; \
+	docker run --rm \
+		-e NGINX_MODE=http \
+		-e PROXY_PROTOCOL=true \
+		-e PROXY_PROTOCOL_BIND_ADDRESS=127.0.0.1 \
+		-e PROXY_PROTOCOL_TRUSTED_FROM=127.0.0.1/32 \
+		-e KEY_NAME=node-a \
+		-e VERSIOND_SERVICE_NAME=proxy \
+		-e VERSIOND_SERVICE_IS_ABSOLUTE=true \
+		-e VERSIOND_PORT=18081 \
+		-e EDGE_API_SERVICE_NAME=edge-api-router \
+		-e EDGE_API_SERVICE_IS_ABSOLUTE=true \
+		-e EDGE_API_PORT=18080 \
+		-v "$$tmpdir/nginx.conf:/etc/nginx/nginx.conf" \
+		"$$image" true >/dev/null; \
+	grep -q 'listen 127.0.0.1:80 proxy_protocol;' "$$tmpdir/nginx.conf" \
+		|| fail "private policy listener does not require PROXY protocol"; \
+	grep -q 'listen 127.0.0.1:8081;' "$$tmpdir/nginx.conf" \
+		|| fail "loopback health listener is absent"; \
+	grep -q 'real_ip_header proxy_protocol;' "$$tmpdir/nginx.conf" \
+		|| fail "PROXY client address is not restored"; \
+	grep -q 'set_real_ip_from 127.0.0.1/32;' "$$tmpdir/nginx.conf" \
+		|| fail "PROXY client address trusts an unexpected source"; \
+	grep -q 'server proxy:18081 resolve;' "$$tmpdir/nginx.conf" \
+		|| fail "versiond policy route does not return to the HA distributor"; \
+	grep -q 'server edge-api-router:18080 resolve;' "$$tmpdir/nginx.conf" \
+		|| fail "edge-api policy route does not preserve the existing nginx router"; \
+	if grep -q 'node-a-proxy:1808' "$$tmpdir/nginx.conf"; then \
+		fail "internal distributor received the external KEY_NAME prefix"; \
+	fi; \
+	touch "$$tmpdir/private.conf"; \
+	docker network create "$$private" >/dev/null; \
+	docker network create "$$shared" >/dev/null; \
+	docker create --name "$$worker" --network "$$private" \
+		-e NGINX_MODE=http -e PROXY_PROTOCOL=true \
+		-e PROXY_PROTOCOL_PEER=proxy-policy-ingress \
+		-e KEY_NAME=node-a \
+		-v "$$tmpdir/private.conf:/etc/nginx/nginx.conf" \
+		"$$image" sleep 30 >/dev/null; \
+	docker network connect "$$shared" "$$worker"; \
+	docker start "$$worker" >/dev/null; \
+	sleep 1; \
+	[ ! -s "$$tmpdir/private.conf" ] \
+		|| fail "policy worker did not wait for the missing private ingress"; \
+	docker run -d --name "$$peer" --network "$$private" \
+		--network-alias proxy-policy-ingress alpine:3.21 sleep 60 >/dev/null; \
+	for _ in $$(seq 1 50); do \
+		[ -s "$$tmpdir/private.conf" ] && break; \
+		sleep 0.1; \
+	done; \
+	[ -s "$$tmpdir/private.conf" ] || fail "dynamic private-network render did not complete"; \
+	private_ip=$$(docker inspect -f "{{with index .NetworkSettings.Networks \"$$private\"}}{{.IPAddress}}{{end}}" "$$worker"); \
+	shared_ip=$$(docker inspect -f "{{with index .NetworkSettings.Networks \"$$shared\"}}{{.IPAddress}}{{end}}" "$$worker"); \
+	private_subnet=$$(docker network inspect -f '{{(index .IPAM.Config 0).Subnet}}' "$$private"); \
+	grep -q "listen $$private_ip:80 proxy_protocol;" "$$tmpdir/private.conf" \
+		|| fail "PROXY listener is not bound to the private policy interface"; \
+	grep -q "listen $$private_ip:8081;" "$$tmpdir/private.conf" \
+		|| fail "policy readiness is not bound to the private policy interface"; \
+	grep -q "set_real_ip_from $$private_subnet;" "$$tmpdir/private.conf" \
+		|| fail "PROXY trust is not restricted to the private policy network"; \
+	if grep -q "listen $$shared_ip:80 proxy_protocol;" "$$tmpdir/private.conf"; then \
+		fail "shared application network can reach the PROXY listener"; \
+	fi; \
+	docker run -d --name "$$app_sentinel" --network "$$shared" \
+		--network-alias proxy-policy-app-network alpine:3.21 sleep 60 >/dev/null; \
+	docker create --name "$$ready_worker" --network "$$private" \
+		-e NGINX_MODE=http -e PROXY_PROTOCOL=true \
+		-e PROXY_PROTOCOL_PEER=proxy-policy-ingress \
+		-e PROXY_POLICY_READINESS_HOST=proxy-policy-app-network \
+		"$$image" >/dev/null; \
+	docker network connect "$$shared" "$$ready_worker"; \
+	docker start "$$ready_worker" >/dev/null; \
+	ready_ip=$$(docker inspect -f "{{with index .NetworkSettings.Networks \"$$private\"}}{{.IPAddress}}{{end}}" "$$ready_worker"); \
+	for _ in $$(seq 1 50); do \
+		docker exec "$$peer" wget -q -O /dev/null "http://$$ready_ip:8081/health" 2>/dev/null && break; \
+		sleep 0.1; \
+	done; \
+	docker exec "$$peer" wget -q -O /dev/null "http://$$ready_ip:8081/health" \
+		|| fail "policy worker did not become ready with its application network"; \
+	docker network disconnect "$$shared" "$$ready_worker"; \
+	for _ in $$(seq 1 30); do \
+		if ! docker exec "$$peer" wget -q -O /dev/null "http://$$ready_ip:8081/health" 2>/dev/null; then break; fi; \
+		sleep 0.1; \
+	done; \
+	if docker exec "$$peer" wget -q -O /dev/null "http://$$ready_ip:8081/health" 2>/dev/null; then \
+		fail "policy worker stayed ready after losing its application network"; \
+	fi; \
+	mkdir "$$tmpdir/ssl"; \
+	touch "$$tmpdir/ssl-a.conf" "$$tmpdir/ssl-b.conf"; \
+	printf '%s\n' '#!/bin/sh' 'set -eu' \
+		'printf "%s\n" called >> /etc/nginx/ssl/setup.calls' \
+		'sleep 2' \
+		'openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj /CN=example.test -keyout /etc/nginx/ssl/private.key -out /etc/nginx/ssl/cert.pem >/dev/null 2>&1' > "$$tmpdir/setup-ssl.sh"; \
+	chmod +x "$$tmpdir/setup-ssl.sh"; \
+	docker create --name "$$ssl_worker_a" \
+		-e NGINX_MODE=https -e CERT_ISSUER_DOMAIN=example.test \
+		-e PROXY_CERT_RELOAD_POLL_SECONDS=60 \
+		-v "$$tmpdir/ssl:/etc/nginx/ssl" \
+		-v "$$tmpdir/setup-ssl.sh:/setup-ssl.sh:ro" \
+		-v "$$tmpdir/ssl-a.conf:/etc/nginx/nginx.conf" \
+		"$$image" sleep 30 >/dev/null; \
+	docker create --name "$$ssl_worker_b" \
+		-e NGINX_MODE=https -e CERT_ISSUER_DOMAIN=example.test \
+		-e PROXY_CERT_RELOAD_POLL_SECONDS=60 \
+		-v "$$tmpdir/ssl:/etc/nginx/ssl" \
+		-v "$$tmpdir/setup-ssl.sh:/setup-ssl.sh:ro" \
+		-v "$$tmpdir/ssl-b.conf:/etc/nginx/nginx.conf" \
+		"$$image" sleep 30 >/dev/null; \
+	docker start "$$ssl_worker_a" "$$ssl_worker_b" >/dev/null; \
+	for _ in $$(seq 1 100); do \
+		[ -s "$$tmpdir/ssl-a.conf" ] && [ -s "$$tmpdir/ssl-b.conf" ] && break; \
+		sleep 0.1; \
+	done; \
+	[ -s "$$tmpdir/ssl-a.conf" ] && [ -s "$$tmpdir/ssl-b.conf" ] \
+		|| fail "concurrent TLS policy workers did not finish startup"; \
+	[ "$$(wc -l < "$$tmpdir/ssl/setup.calls")" -eq 1 ] \
+		|| fail "concurrent TLS policy workers placed more than one initial certificate order"; \
+	touch "$$tmpdir/ssl-fast.conf"; \
+	docker run -d --name "$$ssl_lock_holder" --entrypoint sh \
+		-v "$$tmpdir/ssl:/etc/nginx/ssl" "$$image" -c \
+		'flock /etc/nginx/ssl/.gonka-ssl.lock sh -c "touch /etc/nginx/ssl/lock-held; sleep 15"' >/dev/null; \
+	for _ in $$(seq 1 50); do \
+		[ -f "$$tmpdir/ssl/lock-held" ] && break; \
+		sleep 0.1; \
+	done; \
+	[ -f "$$tmpdir/ssl/lock-held" ] \
+		|| fail "TLS renewal test did not acquire the shared lock"; \
+	docker create --name "$$ssl_worker_fast" \
+		-e NGINX_MODE=https -e CERT_ISSUER_DOMAIN=example.test \
+		-e PROXY_CERT_RELOAD_POLL_SECONDS=60 \
+		-v "$$tmpdir/ssl:/etc/nginx/ssl" \
+		-v "$$tmpdir/setup-ssl.sh:/setup-ssl.sh:ro" \
+		-v "$$tmpdir/ssl-fast.conf:/etc/nginx/nginx.conf" \
+		"$$image" sleep 30 >/dev/null; \
+	docker start "$$ssl_worker_fast" >/dev/null; \
+	for _ in $$(seq 1 50); do \
+		[ -s "$$tmpdir/ssl-fast.conf" ] && break; \
+		sleep 0.1; \
+	done; \
+	[ -s "$$tmpdir/ssl-fast.conf" ] \
+		|| fail "policy worker with existing certificates waited for a sibling renewal"; \
+	[ "$$(wc -l < "$$tmpdir/ssl/setup.calls")" -eq 1 ] \
+		|| fail "policy worker with existing certificates requested another order"; \
+	echo "test-render: ok"
 
 build-docker:
 	$(eval PLATFORM=$(DOCKER_PLATFORM))

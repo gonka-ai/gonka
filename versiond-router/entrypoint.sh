@@ -74,12 +74,26 @@ FRONT_BIND_HOST="${VERSIOND_ROUTER_FRONT_BIND_HOST:-}"
 METRICS_BIND_HOST="${VERSIOND_ROUTER_METRICS_BIND_HOST:-}"
 DNS_RESOLVER="${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}"
 
-resolve_ipv4() {
-    getent ahostsv4 "$1" | awk 'NR == 1 { print $1 }'
+resolve_local_ipv4() {
+    host=$1
+    for candidate in $(getent ahostsv4 "$host" | awk '!seen[$1]++ { print $1 }'); do
+        if ip -o -4 addr show | awk -v candidate="$candidate" '
+            {
+                address = $4
+                sub(/\/.*/, "", address)
+                if (address == candidate) found = 1
+            }
+            END { exit !found }
+        '; then
+            printf '%s\n' "$candidate"
+            return 0
+        fi
+    done
+    return 1
 }
 
 if [ -n "$FRONT_BIND_HOST" ]; then
-    FRONT_BIND_ADDRESS=$(resolve_ipv4 "$FRONT_BIND_HOST")
+    FRONT_BIND_ADDRESS=$(resolve_local_ipv4 "$FRONT_BIND_HOST")
     case "$FRONT_BIND_ADDRESS" in
         '' | *[!0-9.]*)
             echo "versiond-router: cannot resolve front bind host '$FRONT_BIND_HOST' to IPv4" >&2
@@ -93,7 +107,7 @@ else
 fi
 
 if [ -n "$METRICS_BIND_HOST" ]; then
-    METRICS_BIND_ADDRESS=$(resolve_ipv4 "$METRICS_BIND_HOST")
+    METRICS_BIND_ADDRESS=$(resolve_local_ipv4 "$METRICS_BIND_HOST")
     case "$METRICS_BIND_ADDRESS" in
         '' | *[!0-9.]*)
             echo "versiond-router: cannot resolve metrics bind host '$METRICS_BIND_HOST' to IPv4" >&2
@@ -129,6 +143,15 @@ HA_DEPLOYMENT=$(bool_env GONKA_HA)
 ALLOW_COARSE_READINESS=$(bool_env VERSIOND_ROUTER_ALLOW_COARSE_READINESS)
 CATALOG_ALLOW_REMOVALS=$(bool_env VERSIOND_ROUTING_CATALOG_ALLOW_REMOVALS)
 RENDER_ONLY=$(bool_env VERSIOND_ROUTER_RENDER_ONLY)
+TRUST_FORWARDED_HEADERS=$(bool_env VERSIOND_ROUTER_TRUST_FORWARDED_HEADERS)
+
+if [ -n "$TRUST_FORWARDED_HEADERS" ]; then
+    FORWARDED_PROTO_RULE='# Preserve X-Forwarded-Proto from the isolated trusted ingress.'
+    REAL_IP_RULE='# Preserve X-Real-IP from the isolated trusted ingress.'
+else
+    FORWARDED_PROTO_RULE='http-request set-header X-Forwarded-Proto %[ssl_fc,iif(https,http)]'
+    REAL_IP_RULE='http-request set-header X-Real-IP %[src]'
+fi
 
 # Hostnames are substituted into the config by sed, and sed is not inert to
 # them: '&' expands to the matched placeholder and '|' terminates the
@@ -338,9 +361,9 @@ while IFS= read -r version; do
 done < "$CACHED_VERSIONS_FILE"
 cached_dynamic_count=$(wc -l < "$CACHED_DYNAMIC_VERSIONS_FILE")
 if [ "$cached_dynamic_count" -gt "$VERSION_CAPACITY" ]; then
-    echo "versiond-router: accepted catalog cache needs $cached_dynamic_count dynamic slots," >&2
-    echo "  but VERSIOND_ROUTER_VERSION_CAPACITY is $VERSION_CAPACITY" >&2
-    exit 1
+    echo "versiond-router: preserving $cached_dynamic_count cached dynamic routes" >&2
+    echo "  above configured minimum capacity $VERSION_CAPACITY" >&2
+    VERSION_CAPACITY=$cached_dynamic_count
 fi
 
 # Reserve inert backends for governance names that appear after this container
@@ -531,6 +554,8 @@ sed \
     -e "s|\${STREAM_IDLE_SECONDS}|$STREAM_IDLE|g" \
     -e "s|\${TUNNEL_TIMEOUT_SECONDS}|$TUNNEL_TIMEOUT|g" \
     -e "s|\${DNS_RESOLVER}|$DNS_RESOLVER|g" \
+    -e "s|\${FORWARDED_PROTO_RULE}|$FORWARDED_PROTO_RULE|g" \
+    -e "s|\${REAL_IP_RULE}|$REAL_IP_RULE|g" \
     -e "/\${ROUTER_READY_RULES}/{
         r $READY_RULES
         d

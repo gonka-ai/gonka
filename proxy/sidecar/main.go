@@ -30,6 +30,7 @@ const (
 	DefaultBlockTime   = 8 * time.Second
 	SafetyBufferBlocks = 2 // number of blocks to buffer
 	ApiTimeout         = 10 * time.Second
+	ReadinessTimeout   = time.Second
 )
 
 // Environment variables
@@ -53,6 +54,40 @@ var (
 )
 
 var rpcMethodLoggingEnabled bool
+
+func policyReadinessHandler(host string, lookup func(context.Context, string) ([]string, error)) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/readyz" {
+			http.NotFound(w, r)
+			return
+		}
+		if host != "" {
+			ctx, cancel := context.WithTimeout(r.Context(), ReadinessTimeout)
+			defer cancel()
+			addresses, err := lookup(ctx, host)
+			if err != nil || len(addresses) == 0 {
+				http.Error(w, "application network unavailable", http.StatusServiceUnavailable)
+				return
+			}
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = io.WriteString(w, "ready\n")
+	})
+}
+
+func startPolicyReadinessServer() {
+	host := strings.TrimSpace(os.Getenv("PROXY_POLICY_READINESS_HOST"))
+	server := &http.Server{
+		Addr:              "127.0.0.1:8082",
+		Handler:           policyReadinessHandler(host, net.DefaultResolver.LookupHost),
+		ReadHeaderTimeout: time.Second,
+	}
+	go func() {
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			logSys("Policy readiness server failed: %v", err)
+		}
+	}()
+}
 
 // --------------------------------------------------------------------------------
 // BanManager (Fail2Ban Logic)
@@ -890,6 +925,7 @@ func main() {
 	// Disable standard flags, we handle timestamp manually
 	log.SetFlags(0)
 	logSys("Starting Dynamic Validator Whitelist Sync...")
+	startPolicyReadinessServer()
 
 	// 0. Initialize Reload Manager (Singleton)
 	// Handles requests from both Whitelist Syncer and Fail2Ban
