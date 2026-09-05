@@ -825,10 +825,10 @@ func TestNodeUpdateSwitchesPocAddresses(t *testing.T) {
 	newClient := setup.MockClientFactory.GetClientForNode(newPocURL)
 	require.NotNil(t, newClient, "expected ML client to be recreated for updated address")
 
-	newClient.WithTryLock(t, func() {
+	newClient.WithLock(func() {
 		assert.Greater(t, newClient.InitGenerateV2Called, 0, "PoC should use updated address")
 	})
-	oldClient.WithTryLock(t, func() {
+	oldClient.WithLock(func() {
 		assert.Equal(t, 0, oldClient.InitGenerateV2Called, "PoC should not use stale address")
 	})
 }
@@ -840,7 +840,7 @@ type NodeClientAssertion struct {
 }
 
 func assertNodeClient(t *testing.T, expected NodeClientAssertion, nodeClient *mlnodeclient.MockClient) {
-	nodeClient.WithTryLock(t, func() {
+	nodeClient.WithLock(func() {
 		require.Equal(t, expected.InitGenerateV2Called, nodeClient.InitGenerateV2Called, "InitGenerateV2 was called. n = %d", nodeClient.InitGenerateV2Called)
 		require.Equal(t, expected.InferenceUpCalled, nodeClient.InferenceUpCalled, "InferenceUp was called. n = %d", nodeClient.InferenceUpCalled)
 		require.Equal(t, expected.StopCalled, nodeClient.StopCalled, "Stop was called. n = %d", nodeClient.StopCalled)
@@ -914,10 +914,10 @@ func TestNodeDisableScenario_Integration(t *testing.T) {
 	waitForAsync(300 * time.Millisecond)
 
 	// Verify only node-2 received PoC start command, node-1 should be excluded
-	node1Client.WithTryLock(t, func() {
+	node1Client.WithLock(func() {
 		assert.Equal(t, 0, node1Client.InitGenerateV2Called, "Disabled node-1 should NOT receive InitGenerateV2 call")
 	})
-	node2Client.WithTryLock(t, func() {
+	node2Client.WithLock(func() {
 		assert.Equal(t, 1, node2Client.InitGenerateV2Called, "Enabled node-2 should receive InitGenerateV2 call")
 	})
 
@@ -970,10 +970,10 @@ func TestNodeEnableScenario_Integration(t *testing.T) {
 	waitForAsync(500 * time.Millisecond)
 
 	// Verify only node-2 received PoC start command
-	node1Client.WithTryLock(t, func() {
+	node1Client.WithLock(func() {
 		require.Equal(t, 0, node1Client.InitGenerateV2Called, "Disabled node-1 should NOT receive InitGenerateV2 call")
 	})
-	node2Client.WithTryLock(t, func() {
+	node2Client.WithLock(func() {
 		require.Equal(t, 1, node2Client.InitGenerateV2Called, "Enabled node-2 should receive InitGenerateV2 call")
 	})
 	setup.assertNode("node-1", func(n broker.NodeResponse) {
@@ -1022,10 +1022,10 @@ func TestNodeEnableScenario_Integration(t *testing.T) {
 	})
 
 	// Verify both nodes received PoC start command
-	node1Client.WithTryLock(t, func() {
+	node1Client.WithLock(func() {
 		require.Equal(t, 1, node1Client.InitGenerateV2Called, "Node-1 should receive InitGenerateV2 call after being enabled")
 	})
-	node2Client.WithTryLock(t, func() {
+	node2Client.WithLock(func() {
 		require.Equal(t, 2, node2Client.InitGenerateV2Called, "Node-2 should continue to receive InitGenerateV2 call")
 	})
 }
@@ -1051,10 +1051,10 @@ func TestFullEpochTransitionWithPocCommands_Integration(t *testing.T) {
 	waitForAsync(100 * time.Millisecond)
 
 	// Both nodes should start PoC
-	node1Client.WithTryLock(t, func() {
+	node1Client.WithLock(func() {
 		assert.Greater(t, node1Client.InitGenerateV2Called, 0, "Node-1 should start PoC v2")
 	})
-	node2Client.WithTryLock(t, func() {
+	node2Client.WithLock(func() {
 		assert.Greater(t, node2Client.InitGenerateV2Called, 0, "Node-2 should start PoC v2")
 	})
 
