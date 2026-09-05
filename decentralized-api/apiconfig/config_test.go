@@ -270,6 +270,33 @@ func TestConfigLoadEnvOverride(t *testing.T) {
 
 }
 
+func TestTxGasMultiplier(t *testing.T) {
+	require.Equal(t, 1.5, apiconfig.DefaultTxGasMultiplier)
+	require.Equal(t, 1.5, apiconfig.ResolveTxGasMultiplier(0))
+	require.Equal(t, 1.5, apiconfig.ResolveTxGasMultiplier(1.0))
+	require.Equal(t, 1.5, apiconfig.ResolveTxGasMultiplier(0.5))
+	require.Equal(t, 1.5, apiconfig.ResolveTxGasMultiplier(15))
+	require.Equal(t, 1.2, apiconfig.ResolveTxGasMultiplier(1.2))
+	require.Equal(t, 2.0, apiconfig.ResolveTxGasMultiplier(2.0))
+	require.Equal(t, 1.5, apiconfig.ChainNodeConfig{}.GetTxGasMultiplier())
+	require.Equal(t, 1.2, apiconfig.ChainNodeConfig{TxGasMultiplier: 1.2}.GetTxGasMultiplier())
+
+	t.Run("unset yaml and env keep default 1.5", func(t *testing.T) {
+		os.Unsetenv("DAPI_CHAIN_NODE__TX_GAS_MULTIPLIER")
+		m := &apiconfig.ConfigManager{KoanProvider: rawbytes.Provider([]byte(testYaml))}
+		require.NoError(t, m.Load())
+		require.Equal(t, 1.5, m.GetChainNodeConfig().GetTxGasMultiplier())
+	})
+
+	t.Run("env override 1.2", func(t *testing.T) {
+		os.Setenv("DAPI_CHAIN_NODE__TX_GAS_MULTIPLIER", "1.2")
+		defer os.Unsetenv("DAPI_CHAIN_NODE__TX_GAS_MULTIPLIER")
+		m := &apiconfig.ConfigManager{KoanProvider: rawbytes.Provider([]byte(testYaml))}
+		require.NoError(t, m.Load())
+		require.InDelta(t, 1.2, m.GetChainNodeConfig().GetTxGasMultiplier(), 1e-9)
+	})
+}
+
 type CaptureWriterProvider struct {
 	CapturedData string
 }

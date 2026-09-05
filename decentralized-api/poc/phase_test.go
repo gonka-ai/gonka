@@ -287,6 +287,20 @@ func TestShouldAcceptStoreCommit_RegularPoC(t *testing.T) {
 			expectAccept:   true,
 		},
 		{
+			name:           "accept last height before deadline",
+			phase:          types.PoCGenerateWindDownPhase,
+			blockHeight:    249,
+			pocStartHeight: 100,
+			expectAccept:   true,
+		},
+		{
+			name:           "reject at committed deadline (next block would be late)",
+			phase:          types.PoCGenerateWindDownPhase,
+			blockHeight:    250,
+			pocStartHeight: 100,
+			expectAccept:   false,
+		},
+		{
 			name:           "reject during inference phase",
 			phase:          types.InferencePhase,
 			blockHeight:    500,
@@ -327,6 +341,111 @@ func TestShouldAcceptStoreCommit_NilOrNotSynced(t *testing.T) {
 	notSynced := createTestEpochState(types.PoCGeneratePhase, 110, 100)
 	notSynced.IsSynced = false
 	assert.False(t, ShouldAcceptStoreCommit(notSynced, 100))
+}
+
+func TestShouldAcceptStoreCommit_ConfirmationPoC(t *testing.T) {
+	const (
+		trigger      int64 = 450
+		genStart     int64 = 450
+		exchangeEnd  int64 = 599 // genStart + PocStageDuration - 1 + PocExchangeDuration
+		regularStart int64 = 100
+	)
+	tests := []struct {
+		name         string
+		blockHeight  int64
+		pocHeight    int64
+		eventPhase   types.ConfirmationPoCPhase
+		expectAccept bool
+	}{
+		{
+			name:         "accept during generation window",
+			blockHeight:  500,
+			pocHeight:    trigger,
+			eventPhase:   types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION,
+			expectAccept: true,
+		},
+		{
+			name:         "accept last height before exchange deadline",
+			blockHeight:  exchangeEnd - 1,
+			pocHeight:    trigger,
+			eventPhase:   types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION,
+			expectAccept: true,
+		},
+		{
+			name:         "reject at committed exchange deadline",
+			blockHeight:  exchangeEnd,
+			pocHeight:    trigger,
+			eventPhase:   types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION,
+			expectAccept: false,
+		},
+		{
+			name:         "reject after exchange deadline",
+			blockHeight:  exchangeEnd + 1,
+			pocHeight:    trigger,
+			eventPhase:   types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION,
+			expectAccept: false,
+		},
+		{
+			name:         "reject before generation start",
+			blockHeight:  genStart - 1,
+			pocHeight:    trigger,
+			eventPhase:   types.ConfirmationPoCPhase_CONFIRMATION_POC_GRACE_PERIOD,
+			expectAccept: false,
+		},
+		{
+			name:         "reject confirmation validation",
+			blockHeight:  650,
+			pocHeight:    trigger,
+			eventPhase:   types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION,
+			expectAccept: false,
+		},
+		{
+			name:         "reject regular poc height while confirmation is active",
+			blockHeight:  500,
+			pocHeight:    regularStart,
+			eventPhase:   types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION,
+			expectAccept: false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			epochState := createTestEpochState(types.InferencePhase, tt.blockHeight, regularStart)
+			epochState.ActiveConfirmationPoCEvent = &types.ConfirmationPoCEvent{
+				TriggerHeight:         trigger,
+				GenerationStartHeight: genStart,
+				Phase:                 tt.eventPhase,
+			}
+			result := ShouldAcceptStoreCommit(epochState, tt.pocHeight)
+			assert.Equal(t, tt.expectAccept, result)
+		})
+	}
+}
+
+func TestStoreCommitTimeoutHeight_RegularPoC(t *testing.T) {
+	epochState := createTestEpochState(types.PoCGeneratePhase, 110, 100)
+	assert.Equal(t, uint64(250), StoreCommitTimeoutHeight(epochState, 100))
+	assert.Equal(t, uint64(0), StoreCommitTimeoutHeight(nil, 100))
+}
+
+func TestStoreCommitTimeoutHeight_ConfirmationPoC(t *testing.T) {
+	const (
+		trigger     int64 = 450
+		genStart    int64 = 450
+		exchangeEnd       = uint64(599)
+	)
+	epochState := createTestEpochState(types.InferencePhase, 500, 100)
+	epochState.ActiveConfirmationPoCEvent = &types.ConfirmationPoCEvent{
+		TriggerHeight:         trigger,
+		GenerationStartHeight: genStart,
+		Phase:                 types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION,
+	}
+
+	assert.Equal(t, exchangeEnd, StoreCommitTimeoutHeight(epochState, trigger),
+		"confirmation timeout_height is GetExchangeEnd, not the regular PoC deadline")
+	assert.Equal(t, uint64(250), StoreCommitTimeoutHeight(epochState, 100),
+		"regular stage height still uses epoch PoCExchangeDeadline")
+	assert.NotEqual(t, uint64(250), exchangeEnd)
 }
 
 func TestShouldHaveDistributedWeights_AllPhases(t *testing.T) {

@@ -30,6 +30,8 @@ import (
 
 	"github.com/nats-io/nats.go"
 
+	"cosmossdk.io/math"
+	"cosmossdk.io/x/feegrant"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	v1 "github.com/cosmos/cosmos-sdk/x/gov/types/v1"
@@ -59,10 +61,29 @@ const (
 	BatchGasLimit = 1_000_000_000
 )
 
+// TxSendOptions is per-broadcast configuration for the generic signer.
+// WithRetry, NoRetry, and SendBatch all take the same options; unused
+// fields are ignored. Do not special-case message types in getSignedBytes.
+type TxSendOptions struct {
+	// TimeoutHeight is copied onto the tx body when > 0 (SDK timeout_height).
+	TimeoutHeight uint64
+	// DeadlineBlock is the retry/observe queue cutoff. Used by WithRetry and
+	// SendBatch. If 0, WithRetry computes height + getMaxBlocksForType.
+	// NoRetry ignores this field.
+	DeadlineBlock int64
+}
+
+func firstTxSendOptions(opts []TxSendOptions) TxSendOptions {
+	if len(opts) > 0 {
+		return opts[0]
+	}
+	return TxSendOptions{}
+}
+
 type TxManager interface {
-	SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlock ...int64) (*sdk.TxResponse, error)
-	SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, error)
-	SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlock ...int64) error
+	SendTransactionAsyncWithRetry(rawTx sdk.Msg, opts ...TxSendOptions) (*sdk.TxResponse, error)
+	SendTransactionAsyncNoRetry(rawTx sdk.Msg, opts ...TxSendOptions) (*sdk.TxResponse, error)
+	SendBatchAsyncWithRetry(msgs []sdk.Msg, opts ...TxSendOptions) error
 	SendTransactionSyncNoRetry(msg proto.Message) (*ctypes.ResultTx, error)
 	BroadcastMessages(id string, msgs ...sdk.Msg) (*sdk.TxResponse, time.Time, error)
 	GetClientContext() client.Context
@@ -74,6 +95,10 @@ type TxManager interface {
 	RefreshFeeTree(fp *types.FeeParams)
 	SetStoreCommitPrev(prev map[string]uint32)
 	SetHardwarePrev(nodes []*types.HardwareNode)
+	SimulateMsgs(msgs []sdk.Msg) (uint64, error)
+	SetStoreCommitIntrinsic(gas uint64, calibratedEntries uint)
+	ClearStoreCommitIntrinsic()
+	StoreCommitRawLeaf() (rate, base uint64, loaded bool)
 }
 
 type blockTimeTracker struct {
@@ -97,6 +122,7 @@ type manager struct {
 	blockTimeTracker  *blockTimeTracker
 	getHeightFunc     func() int64
 	minGasPriceNgonka int64
+	txGasMultiplier   float64
 	feeTree           *FeeTreeCache
 }
 
@@ -108,6 +134,7 @@ func StartTxManager(
 	natsConnection *nats.Conn,
 	address string,
 	minGasPriceNgonka int64,
+	txGasMultiplier float64,
 	getHeight func() int64) (*manager, error) {
 	js, err := natsConnection.JetStream()
 	if err != nil {
@@ -124,6 +151,7 @@ func StartTxManager(
 	restrictionstypes.RegisterInterfaces(client.Context().InterfaceRegistry)
 	blstypes.RegisterInterfaces(client.Context().InterfaceRegistry)
 	streamvestingtypes.RegisterInterfaces(client.Context().InterfaceRegistry)
+	feegrant.RegisterInterfaces(client.Context().InterfaceRegistry)
 
 	m := &manager{
 		ctx:               ctx,
@@ -136,6 +164,7 @@ func StartTxManager(
 		natsJetStream:     js,
 		getHeightFunc:     getHeight,
 		minGasPriceNgonka: minGasPriceNgonka,
+		txGasMultiplier:   apiconfig.ResolveTxGasMultiplier(txGasMultiplier),
 		feeTree:           newFeeTreeCache(),
 		blockTimeTracker: &blockTimeTracker{
 			maxBlockTimeout: 10 * time.Second,
@@ -173,11 +202,19 @@ type txInfo struct {
 	TxHash        string
 	Timeout       time.Time
 	Attempts      int
-	DeadlineBlock int64 `json:",omitempty"` // Block after which tx is stale
+	DeadlineBlock int64  `json:",omitempty"` // Block after which retry/observe is stale
+	TimeoutHeight uint64 `json:",omitempty"` // SDK timeout_height, reapplied on retry
 }
 
 func (t *txInfo) IsBatch() bool {
 	return len(t.RawBatch) > 0
+}
+
+func (t txInfo) sendOpts() TxSendOptions {
+	return TxSendOptions{
+		TimeoutHeight: t.TimeoutHeight,
+		DeadlineBlock: t.DeadlineBlock,
+	}
 }
 
 func (m *manager) GetApiAccount() apiconfig.ApiAccount {
@@ -188,33 +225,31 @@ func (m *manager) Status(ctx context.Context) (*ctypes.ResultStatus, error) {
 	return m.client.Status(ctx)
 }
 
-func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlockOpt ...int64) (*sdk.TxResponse, error) {
+func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg, opts ...TxSendOptions) (*sdk.TxResponse, error) {
 	id := uuid.New().String()
 	logging.Debug("SendTransactionAsyncWithRetry: sending tx", types.Messages, "tx_id", id)
 
-	var deadlineBlock int64
-	if len(deadlineBlockOpt) > 0 && deadlineBlockOpt[0] > 0 {
-		deadlineBlock = deadlineBlockOpt[0]
-	} else {
+	sendOpts := firstTxSendOptions(opts)
+	if sendOpts.DeadlineBlock <= 0 {
 		msgType := sdk.MsgTypeURL(rawTx)
-		deadlineBlock = m.getLatestBlockHeight() + getMaxBlocksForType(msgType)
+		sendOpts.DeadlineBlock = m.getLatestBlockHeight() + getMaxBlocksForType(msgType)
 	}
 
 	if halt, err := m.updateChainHalt(); err != nil || halt {
 		logging.Error("chain is slowing down or couldn't fetch actual chain status", types.Messages, "latest_block_timestamp", m.blockTimeTracker.latestBlockTime)
 
-		if err := m.putOnRetry(id, "", time.Time{}, rawTx, 0, false, deadlineBlock); err != nil {
+		if err := m.putOnRetry(id, "", time.Time{}, rawTx, 0, false, sendOpts); err != nil {
 			logging.Error("failed to put in queue", types.Messages, "tx_id", id, "resend_err", err)
 			return nil, fmt.Errorf("%w: tx_id=%s: %w", ErrTxRetryEnqueueFailed, id, err)
 		}
 		return &sdk.TxResponse{}, nil
 	}
 
-	resp, timeout, broadcastErr := m.broadcastMessage(id, rawTx)
+	resp, timeout, broadcastErr := m.broadcastMessage(id, rawTx, sendOpts)
 	if broadcastErr != nil {
 		// Check if broadcast error is retryable
 		if isRetryableBroadcastError(broadcastErr) {
-			if err := m.putOnRetry(id, "", timeout, rawTx, 1, false, deadlineBlock); err != nil {
+			if err := m.putOnRetry(id, "", timeout, rawTx, 1, false, sendOpts); err != nil {
 				logging.Error("tx failed to broadcast, failed to put in queue", types.Messages, "tx_id", id, "broadcast_err", broadcastErr, "resend_err", err)
 				return nil, fmt.Errorf("%w: tx_id=%s: broadcast_err=%v: %w", ErrTxRetryEnqueueFailed, id, broadcastErr, err)
 			}
@@ -235,14 +270,14 @@ func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlockOpt 
 	case TxActionRetry:
 		logging.Warn("Retryable response error, queuing for retry", types.Messages,
 			"tx_id", id, "code", resp.Code, "rawLog", resp.RawLog)
-		if err := m.putOnRetry(id, "", timeout, rawTx, 1, false, deadlineBlock); err != nil {
+		if err := m.putOnRetry(id, "", timeout, rawTx, 1, false, sendOpts); err != nil {
 			logging.Error("tx failed, failed to put in queue for retry", types.Messages, "tx_id", id, "err", err)
 			return nil, fmt.Errorf("%w: tx_id=%s: code=%d: %w", ErrTxRetryEnqueueFailed, id, resp.Code, err)
 		}
 		return nil, ErrTxQueuedForRetry
 	case TxActionObserve:
 		// Success or tx-in-mempool - queue for observation
-		if err := m.putOnRetry(id, resp.TxHash, timeout, rawTx, 1, true, deadlineBlock); err != nil {
+		if err := m.putOnRetry(id, resp.TxHash, timeout, rawTx, 1, true, sendOpts); err != nil {
 			logging.Error("tx broadcast, but failed to put in queue", types.Messages, "tx_id", id, "err", err)
 		}
 		return resp, nil
@@ -253,26 +288,24 @@ func (m *manager) SendTransactionAsyncWithRetry(rawTx sdk.Msg, deadlineBlockOpt 
 	return nil, fmt.Errorf("unexpected broadcast classification result for tx_id %s", id)
 }
 
-func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlockOpt ...int64) error {
+func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg, opts ...TxSendOptions) error {
 	if len(msgs) == 0 {
 		return nil
 	}
 
-	var deadlineBlock int64
-	if len(deadlineBlockOpt) > 0 && deadlineBlockOpt[0] > 0 {
-		deadlineBlock = deadlineBlockOpt[0]
-	} else {
+	sendOpts := firstTxSendOptions(opts)
+	if sendOpts.DeadlineBlock <= 0 {
 		var minBlocks int64 = defaultMaxBlocks
 		for _, msg := range msgs {
 			if blocks := getMaxBlocksForType(sdk.MsgTypeURL(msg)); blocks < minBlocks {
 				minBlocks = blocks
 			}
 		}
-		deadlineBlock = m.getLatestBlockHeight() + minBlocks
+		sendOpts.DeadlineBlock = m.getLatestBlockHeight() + minBlocks
 	}
 
 	if len(msgs) == 1 {
-		_, err := m.SendTransactionAsyncWithRetry(msgs[0], deadlineBlock)
+		_, err := m.SendTransactionAsyncWithRetry(msgs[0], sendOpts)
 		return err
 	}
 
@@ -282,18 +315,18 @@ func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlockOpt ...in
 	if halt, err := m.updateChainHalt(); err != nil || halt {
 		logging.Error("chain is slowing down or couldn't fetch actual chain status", types.Messages, "latest_block_timestamp", m.blockTimeTracker.latestBlockTime)
 
-		if err := m.putBatchOnRetry(id, msgs, "", time.Time{}, 0, false, deadlineBlock); err != nil {
+		if err := m.putBatchOnRetry(id, msgs, "", time.Time{}, 0, false, sendOpts); err != nil {
 			logging.Error("failed to put batch in queue", types.Messages, "tx_id", id, "resend_err", err)
 			return fmt.Errorf("%w: tx_id=%s: %w", ErrTxRetryEnqueueFailed, id, err)
 		}
 		return nil
 	}
 
-	resp, timeout, broadcastErr := m.BroadcastMessages(id, msgs...)
+	resp, timeout, broadcastErr := m.broadcastMessagesAtAttemptWithOpts(id, 0, msgs, sendOpts)
 	if broadcastErr != nil {
 		// Check if broadcast error is retryable
 		if isRetryableBroadcastError(broadcastErr) {
-			if err := m.putBatchOnRetry(id, msgs, "", timeout, 1, false, deadlineBlock); err != nil {
+			if err := m.putBatchOnRetry(id, msgs, "", timeout, 1, false, sendOpts); err != nil {
 				logging.Error("batch failed to broadcast, failed to put in queue", types.Messages, "tx_id", id, "broadcast_err", broadcastErr, "resend_err", err)
 				return fmt.Errorf("%w: tx_id=%s: broadcast_err=%v: %w", ErrTxRetryEnqueueFailed, id, broadcastErr, err)
 			}
@@ -314,14 +347,14 @@ func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlockOpt ...in
 	case TxActionRetry:
 		logging.Warn("Retryable response error in batch, queuing for retry", types.Messages,
 			"tx_id", id, "code", resp.Code, "rawLog", resp.RawLog)
-		if err := m.putBatchOnRetry(id, msgs, "", timeout, 1, false, deadlineBlock); err != nil {
+		if err := m.putBatchOnRetry(id, msgs, "", timeout, 1, false, sendOpts); err != nil {
 			logging.Error("batch failed, failed to put in queue for retry", types.Messages, "tx_id", id, "err", err)
 			return fmt.Errorf("%w: tx_id=%s: code=%d: %w", ErrTxRetryEnqueueFailed, id, resp.Code, err)
 		}
 		return ErrTxQueuedForRetry
 	case TxActionObserve:
 		// Success or tx-in-mempool - queue for observation
-		if err := m.putBatchOnRetry(id, msgs, resp.TxHash, timeout, 1, true, deadlineBlock); err != nil {
+		if err := m.putBatchOnRetry(id, msgs, resp.TxHash, timeout, 1, true, sendOpts); err != nil {
 			logging.Error("batch broadcast, but failed to put in queue", types.Messages, "tx_id", id, "err", err)
 		}
 		return nil
@@ -332,14 +365,15 @@ func (m *manager) SendBatchAsyncWithRetry(msgs []sdk.Msg, deadlineBlockOpt ...in
 	return fmt.Errorf("unexpected broadcast classification result for batch tx_id %s", id)
 }
 
-func (m *manager) SendTransactionAsyncNoRetry(rawTx sdk.Msg) (*sdk.TxResponse, error) {
+func (m *manager) SendTransactionAsyncNoRetry(rawTx sdk.Msg, opts ...TxSendOptions) (*sdk.TxResponse, error) {
 	id := uuid.New().String()
 	logging.Debug("SendTransactionAsyncNoRetry: sending tx", types.Messages, "tx_id", id, "originalMsgType", sdk.MsgTypeURL(rawTx))
 	_, err := m.updateChainHalt()
 	if err != nil {
 		return nil, err
 	}
-	resp, _, broadcastErr := m.broadcastMessage(id, rawTx)
+	sendOpts := firstTxSendOptions(opts)
+	resp, _, broadcastErr := m.broadcastMessage(id, rawTx, sendOpts)
 	return resp, errorFromCheckTx(resp, broadcastErr)
 }
 
@@ -375,14 +409,15 @@ func (m *manager) putOnRetry(
 	rawTx sdk.Msg,
 	attempts int,
 	sent bool,
-	deadlineBlock int64,
+	opts TxSendOptions,
 ) error {
 	logging.Debug("putOnRetry: tx with params", types.Messages,
 		"tx_id", id,
 		"tx_hash", txHash,
 		"timeout", timeout.String(),
 		"sent", sent,
-		"deadlineBlock", deadlineBlock,
+		"deadlineBlock", opts.DeadlineBlock,
+		"timeoutHeight", opts.TimeoutHeight,
 	)
 
 	if attempts >= maxAttempts {
@@ -405,7 +440,8 @@ func (m *manager) putOnRetry(
 			RawTx:         bz,
 			TxHash:        txHash,
 			Timeout:       timeout,
-			DeadlineBlock: deadlineBlock,
+			DeadlineBlock: opts.DeadlineBlock,
+			TimeoutHeight: opts.TimeoutHeight,
 		},
 		Sent:     sent,
 		Attempts: attempts,
@@ -427,7 +463,7 @@ func (m *manager) putBatchOnRetry(
 	timeout time.Time,
 	attempts int,
 	sent bool,
-	deadlineBlock int64,
+	opts TxSendOptions,
 ) error {
 	logging.Debug("putBatchOnRetry: batch with params", types.Messages,
 		"tx_id", id,
@@ -435,7 +471,8 @@ func (m *manager) putBatchOnRetry(
 		"timeout", timeout.String(),
 		"sent", sent,
 		"count", len(msgs),
-		"deadlineBlock", deadlineBlock,
+		"deadlineBlock", opts.DeadlineBlock,
+		"timeoutHeight", opts.TimeoutHeight,
 	)
 
 	if attempts >= maxAttempts {
@@ -462,7 +499,8 @@ func (m *manager) putBatchOnRetry(
 			RawBatch:      rawBatch,
 			TxHash:        txHash,
 			Timeout:       timeout,
-			DeadlineBlock: deadlineBlock,
+			DeadlineBlock: opts.DeadlineBlock,
+			TimeoutHeight: opts.TimeoutHeight,
 		},
 		Sent:     sent,
 		Attempts: attempts,
@@ -577,7 +615,7 @@ func (m *manager) sendTxs() error {
 
 			if !tx.Sent {
 				logging.Debug("start broadcast batch async", types.Messages, "id", tx.TxInfo.Id, "attempt", tx.TxInfo.Attempts)
-				resp, timeout, broadcastErr = m.broadcastMessagesAtAttempt(tx.TxInfo.Id, tx.TxInfo.Attempts, msgs)
+				resp, timeout, broadcastErr = m.broadcastMessagesAtAttemptWithOpts(tx.TxInfo.Id, tx.TxInfo.Attempts, msgs, tx.TxInfo.sendOpts())
 			}
 		} else {
 			rawTx, err := m.unpackTx(tx.TxInfo.RawTx)
@@ -589,7 +627,7 @@ func (m *manager) sendTxs() error {
 
 			if !tx.Sent {
 				logging.Debug("start broadcast tx async", types.Messages, "id", tx.TxInfo.Id, "attempt", tx.TxInfo.Attempts)
-				resp, timeout, broadcastErr = m.broadcastMessageAtAttempt(tx.TxInfo.Id, tx.TxInfo.Attempts, rawTx)
+				resp, timeout, broadcastErr = m.broadcastMessagesAtAttemptWithOpts(tx.TxInfo.Id, tx.TxInfo.Attempts, []sdk.Msg{rawTx}, tx.TxInfo.sendOpts())
 			}
 		}
 
@@ -693,9 +731,9 @@ func (m *manager) observeTxs() error {
 			tx.Attempts++
 			var retryErr error
 			if tx.IsBatch() {
-				retryErr = m.putBatchOnRetry(tx.Id, msgs, "", time.Time{}, tx.Attempts, false, tx.DeadlineBlock)
+				retryErr = m.putBatchOnRetry(tx.Id, msgs, "", time.Time{}, tx.Attempts, false, tx.sendOpts())
 			} else {
-				retryErr = m.putOnRetry(tx.Id, "", time.Time{}, rawTx, tx.Attempts, false, tx.DeadlineBlock)
+				retryErr = m.putOnRetry(tx.Id, "", time.Time{}, rawTx, tx.Attempts, false, tx.sendOpts())
 			}
 
 			if retryErr != nil {
@@ -727,9 +765,9 @@ func (m *manager) observeTxs() error {
 
 				var retryErr error
 				if tx.IsBatch() {
-					retryErr = m.putBatchOnRetry(tx.Id, msgs, "", time.Time{}, tx.Attempts, false, tx.DeadlineBlock)
+					retryErr = m.putBatchOnRetry(tx.Id, msgs, "", time.Time{}, tx.Attempts, false, tx.sendOpts())
 				} else {
-					retryErr = m.putOnRetry(tx.Id, "", time.Time{}, rawTx, tx.Attempts, false, tx.DeadlineBlock)
+					retryErr = m.putOnRetry(tx.Id, "", time.Time{}, rawTx, tx.Attempts, false, tx.sendOpts())
 				}
 
 				if retryErr != nil {
@@ -817,6 +855,34 @@ func (m *manager) SetHardwarePrev(nodes []*types.HardwareNode) {
 	}
 }
 
+func (m *manager) SetStoreCommitIntrinsic(gas uint64, calibratedEntries uint) {
+	if m.feeTree != nil {
+		m.feeTree.SetStoreCommitIntrinsic(gas, calibratedEntries)
+	}
+}
+
+func (m *manager) ClearStoreCommitIntrinsic() {
+	if m.feeTree != nil {
+		m.feeTree.ClearStoreCommitIntrinsic()
+	}
+}
+
+func (m *manager) StoreCommitRawLeaf() (rate, base uint64, loaded bool) {
+	if m.feeTree == nil {
+		return 0, 0, false
+	}
+	return m.feeTree.RawStoreCommitLeaf()
+}
+
+func (m *manager) gasHints() GasHints {
+	var h GasHints
+	if m.feeTree != nil {
+		h = m.feeTree.hints()
+	}
+	h.TxGasMultiplier = m.txGasMultiplier
+	return h
+}
+
 func (m *manager) BroadcastMessages(id string, msgs ...sdk.Msg) (*sdk.TxResponse, time.Time, error) {
 	return m.broadcastMessagesAtAttempt(id, 0, msgs)
 }
@@ -826,6 +892,10 @@ func (m *manager) BroadcastMessages(id string, msgs ...sdk.Msg) (*sdk.TxResponse
 // gasWanted from the per-msg-type estimate; subsequent attempts bump
 // gasWanted to escape OOG loops. See estimateBatchGas in gas_estimate.go.
 func (m *manager) broadcastMessagesAtAttempt(id string, attempt int, msgs []sdk.Msg) (resp *sdk.TxResponse, timestamp time.Time, err error) {
+	return m.broadcastMessagesAtAttemptWithOpts(id, attempt, msgs, TxSendOptions{})
+}
+
+func (m *manager) broadcastMessagesAtAttemptWithOpts(id string, attempt int, msgs []sdk.Msg, opts TxSendOptions) (resp *sdk.TxResponse, timestamp time.Time, err error) {
 	if len(msgs) == 0 {
 		return nil, time.Time{}, nil
 	}
@@ -847,15 +917,9 @@ func (m *manager) broadcastMessagesAtAttempt(id string, attempt int, msgs []sdk.
 		return nil, time.Time{}, err
 	}
 
-	finalMsgs := msgs
-	if !m.apiAccount.IsSignerTheMainAccount() {
-		granteeAddress, err := m.apiAccount.SignerAddress()
-		if err != nil {
-			return nil, time.Time{}, fmt.Errorf("failed to get signer address: %w", err)
-		}
-		execMsg := authztypes.NewMsgExec(granteeAddress, msgs)
-		finalMsgs = []sdk.Msg{&execMsg}
-		logging.Debug("Using authz MsgExec", types.Messages, "grantee", granteeAddress.String(), "msgCount", len(msgs))
+	finalMsgs, err := m.wrapAuthzIfNeeded(msgs)
+	if err != nil {
+		return nil, time.Time{}, err
 	}
 
 	unsignedTx, err := factory.BuildUnsignedTx(finalMsgs...)
@@ -863,25 +927,26 @@ func (m *manager) broadcastMessagesAtAttempt(id string, attempt int, msgs []sdk.
 		return nil, time.Time{}, err
 	}
 	// gasWanted is sized from the inner messages, not the authz wrapper.
-	gasWanted := estimateBatchGas(msgs, attempt, m.feeTree.hints())
-	if attempt == 0 && isHardwareDiffOnly(msgs) {
-		price := m.minGasPriceNgonka
-		if m.feeTree != nil {
-			if p := m.feeTree.PriceForMsgs(msgs); p > price {
-				price = p
-			}
+	gasWanted := estimateBatchGas(msgs, attempt, m.gasHints())
+	price := m.minGasPriceNgonka
+	if m.feeTree != nil {
+		if p := m.feeTree.PriceForMsgs(msgs); p > price {
+			price = p
 		}
+	}
+	if attempt == 0 && isHardwareDiffOnly(msgs) {
 		used, err := m.simulateMsgsGas(factory, finalMsgs, price)
 		if err != nil {
 			logging.Warn("HardwareDiff simulate failed; using static gas estimate",
 				types.Messages, "tx_id", id, "error", err, "gasWanted", gasWanted)
 		} else {
-			gasWanted = gasWantedFromSimulate(gasWanted, used)
+			gasWanted = gasWantedFromSimulate(gasWanted, used, m.txGasMultiplier)
 			logging.Debug("HardwareDiff gas from simulate", types.Messages,
-				"tx_id", id, "simulated", used, "gasWanted", gasWanted)
+				"tx_id", id, "simulated", used, "gasWanted", gasWanted,
+				"tx_gas_multiplier", m.txGasMultiplier)
 		}
 	}
-	txBytes, timestamp, err := m.getSignedBytes(id, unsignedTx, factory, gasWanted, msgs)
+	txBytes, timestamp, err := m.getSignedBytes(id, unsignedTx, factory, gasWanted, msgs, opts.TimeoutHeight)
 	if err != nil {
 		return nil, time.Time{}, err
 	}
@@ -916,6 +981,8 @@ const (
 		"FeeParams.enabled_fee_groups, the matching groups[].min_gas_price, DAPI fee-tree refresh, " +
 		"and the cold-to-warm feegrant balance/expiration. Global min_gas_price_ngonka stays 0 and " +
 		"is not a DAPI config knob."
+	insufficientFundsHint = "Fee-payer spendable is below gasWanted × min_gas_price. Fund the paying " +
+		"account (cold key if authz/feegrant). CheckTx rejected this broadcast."
 )
 
 // logFeeRelatedHint inspects a tx broadcast error message and logs an
@@ -937,6 +1004,9 @@ func feeRelatedHints(rawLog string) []string {
 	if containsAny(rawLog, "insufficient fee", "insufficient fees") {
 		hints = append(hints, insufficientFeeHint)
 	}
+	if containsAny(rawLog, "insufficient funds") {
+		hints = append(hints, insufficientFundsHint)
+	}
 	return hints
 }
 
@@ -949,15 +1019,8 @@ func containsAny(s string, substrs ...string) bool {
 	return false
 }
 
-func (m *manager) broadcastMessage(id string, rawTx sdk.Msg) (*sdk.TxResponse, time.Time, error) {
-	return m.broadcastMessagesAtAttempt(id, 0, []sdk.Msg{rawTx})
-}
-
-// broadcastMessageAtAttempt is the retry-aware single-message entry point.
-// Thin wrapper around broadcastMessagesAtAttempt with a one-element slice;
-// kept for symmetry with how the retry loop dispatches.
-func (m *manager) broadcastMessageAtAttempt(id string, attempt int, rawTx sdk.Msg) (*sdk.TxResponse, time.Time, error) {
-	return m.broadcastMessagesAtAttempt(id, attempt, []sdk.Msg{rawTx})
+func (m *manager) broadcastMessage(id string, rawTx sdk.Msg, opts ...TxSendOptions) (*sdk.TxResponse, time.Time, error) {
+	return m.broadcastMessagesAtAttemptWithOpts(id, 0, []sdk.Msg{rawTx}, firstTxSendOptions(opts))
 }
 
 func (m *manager) unpackTx(bz []byte) (sdk.Msg, error) {
@@ -1015,28 +1078,38 @@ func (m *manager) getFactory(id string) (*tx.Factory, error) {
 	return m.txFactory, nil
 }
 
-const hardwareDiffSimulateGas = uint64(10_000_000)
-
 func (m *manager) timeoutTimestamp() (time.Time, error) {
-	blockTs := m.blockTimeTracker.latestBlockTime
-	if blockTs.IsZero() {
-		_, err := m.updateChainHalt()
-		if err != nil {
-			return time.Time{}, err
-		}
-		blockTs = m.blockTimeTracker.latestBlockTime
+	if err := m.refreshBlockTimeForTimeout(); err != nil {
+		return time.Time{}, err
 	}
+	blockTs := m.blockTimeTracker.latestBlockTime
 	return getTimestamp(blockTs.UnixNano(), m.defaultTimeout), nil
 }
 
-// hardwareDiffSimFactory copies the send factory and stamps the unordered
-// timeout the live tx already sets in getSignedBytes. Without it, CalculateGas
-// builds unordered=true / timeout=0 and ante rejects the sim.
-func hardwareDiffSimFactory(factory tx.Factory, name string, price int64, timeout time.Time, feeGranter sdk.AccAddress) tx.Factory {
+// refreshBlockTimeForTimeout pulls LatestBlockTime from node Status before
+// stamping an unordered timeout. Simulate does not go through the send
+// path, so a quiet stretch (typical before mid-epoch CPoC) left the cache
+// minutes old and ante rejected the dummy as already timed out.
+func (m *manager) refreshBlockTimeForTimeout() error {
+	if m.client == nil {
+		return nil
+	}
+	_, err := m.updateChainHalt()
+	if err != nil && m.blockTimeTracker.latestBlockTime.IsZero() {
+		return err
+	}
+	return nil
+}
+
+// simFactory copies the send factory and stamps the unordered timeout the
+// live tx already sets in getSignedBytes. Without it, CalculateGas builds
+// unordered=true / timeout=0 and ante rejects the sim. gas is the DeductFee
+// ceiling for this attempt (must be ≤ spendable/price).
+func simFactory(factory tx.Factory, name string, price int64, timeout time.Time, feeGranter sdk.AccAddress, gas uint64) tx.Factory {
 	sim := factory.
 		WithSimulateAndExecute(true).
 		WithFromName(name).
-		WithGas(hardwareDiffSimulateGas).
+		WithGas(gas).
 		WithGasPrices(fmt.Sprintf("%dngonka", price)).
 		WithGasAdjustment(1).
 		WithTimeoutTimestamp(timeout)
@@ -1044,6 +1117,40 @@ func hardwareDiffSimFactory(factory tx.Factory, name string, price int64, timeou
 		sim = sim.WithFeeGranter(feeGranter)
 	}
 	return sim
+}
+
+func (m *manager) wrapAuthzIfNeeded(msgs []sdk.Msg) ([]sdk.Msg, error) {
+	if m.apiAccount == nil || m.apiAccount.IsSignerTheMainAccount() {
+		return msgs, nil
+	}
+	granteeAddress, err := m.apiAccount.SignerAddress()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get signer address: %w", err)
+	}
+	execMsg := authztypes.NewMsgExec(granteeAddress, msgs)
+	logging.Debug("Using authz MsgExec", types.Messages, "grantee", granteeAddress.String(), "msgCount", len(msgs))
+	return []sdk.Msg{&execMsg}, nil
+}
+
+func (m *manager) SimulateMsgs(msgs []sdk.Msg) (uint64, error) {
+	if len(msgs) == 0 {
+		return 0, errors.New("no messages to simulate")
+	}
+	factory, err := m.getFactory("simulate")
+	if err != nil {
+		return 0, err
+	}
+	finalMsgs, err := m.wrapAuthzIfNeeded(msgs)
+	if err != nil {
+		return 0, err
+	}
+	price := m.minGasPriceNgonka
+	if m.feeTree != nil {
+		if p := m.feeTree.PriceForMsgs(msgs); p > price {
+			price = p
+		}
+	}
+	return m.simulateMsgsGas(factory, finalMsgs, price)
 }
 
 func (m *manager) simulateMsgsGas(factory *tx.Factory, msgs []sdk.Msg, price int64) (uint64, error) {
@@ -1062,14 +1169,33 @@ func (m *manager) simulateMsgsGas(factory *tx.Factory, msgs []sdk.Msg, price int
 		name = m.apiAccount.SignerAccount.Name
 	}
 	var feeGranter sdk.AccAddress
-	if m.apiAccount != nil && !m.apiAccount.IsSignerTheMainAccount() {
+	if m.apiAccount != nil && m.apiAccount.SignerAccount != nil && !m.apiAccount.IsSignerTheMainAccount() {
 		if cold, err := m.apiAccount.AccountAddress(); err == nil {
 			feeGranter = cold
 		}
 	}
-	sim := hardwareDiffSimFactory(*factory, name, price, timeout, feeGranter)
+
+	// Size the sim DeductFee ceiling to what the fee payer can actually
+	// pay. A failed sim does not skip the real send; callers fall back
+	// to static gasWanted and still broadcast.
+	var spendable math.Int
+	if price > 0 {
+		spendable, err = m.feePayerSpendable(m.ctx)
+		if err != nil {
+			return 0, err
+		}
+	}
+	limit := maxAffordableGas(spendable, price)
+	if price > 0 && limit == 0 {
+		return 0, ErrSimulateInsufficientSpendable
+	}
+
+	sim := simFactory(*factory, name, price, timeout, feeGranter, limit)
 	simRes, _, err := tx.CalculateGas(m.client.Context(), sim, msgs...)
 	if err != nil {
+		if isInsufficientFundsErr(err) {
+			return 0, fmt.Errorf("%w: %v", ErrSimulateInsufficientSpendable, err)
+		}
 		return 0, err
 	}
 	if simRes == nil {
@@ -1078,7 +1204,35 @@ func (m *manager) simulateMsgsGas(factory *tx.Factory, msgs []sdk.Msg, price int
 	return simRes.GasInfo.GasUsed, nil
 }
 
-func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory *tx.Factory, gasWanted uint64, msgs []sdk.Msg) ([]byte, time.Time, error) {
+func (m *manager) feePayerBech32() (string, error) {
+	if m.apiAccount == nil {
+		return m.address, nil
+	}
+	if m.apiAccount.SignerAccount != nil && !m.apiAccount.IsSignerTheMainAccount() {
+		return m.apiAccount.AccountAddressBech32()
+	}
+	if m.apiAccount.SignerAccount != nil {
+		return m.apiAccount.SignerAddressBech32()
+	}
+	return m.apiAccount.AccountAddressBech32()
+}
+
+func (m *manager) feePayerSpendable(ctx context.Context) (math.Int, error) {
+	addr, err := m.feePayerBech32()
+	if err != nil {
+		return math.ZeroInt(), err
+	}
+	signer := addr
+	if m.apiAccount != nil && m.apiAccount.SignerAccount != nil && !m.apiAccount.IsSignerTheMainAccount() {
+		signer, err = m.apiAccount.SignerAddressBech32()
+		if err != nil {
+			return math.ZeroInt(), err
+		}
+	}
+	return FeePayerSpendable(ctx, m.client.Context(), addr, signer, time.Now(), m.BankBalances)
+}
+
+func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory *tx.Factory, gasWanted uint64, msgs []sdk.Msg, timeoutHeight uint64) ([]byte, time.Time, error) {
 	timestamp, err := m.timeoutTimestamp()
 	if err != nil {
 		return nil, time.Time{}, err
@@ -1087,9 +1241,11 @@ func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory
 	// Fee amount = gasWanted × gas price. gasWanted is sized per-batch by
 	// estimateBatchGas (see gas_estimate.go) instead of a constant, so
 	// routine txs aren't billed at the worst-case PoC commit ceiling.
-	// HardwareDiff additionally simulates on attempt 0 so a full inventory
-	// rewrite is not stuck at the static 500k floor. StoreCommit stays on
-	// the static formula (no Simulate on the PoC path).
+	// HardwareDiff additionally simulates on attempt 0; a working sim is
+	// padded by txGasMultiplier (default 1.5×) and is not raised
+	// back to the static 550k floor.
+	// StoreCommit sizes from the once-per-stage dummy Simulate cached on
+	// the fee tree (fallback: static formula).
 	price := m.minGasPriceNgonka
 	if m.feeTree != nil {
 		if p := m.feeTree.PriceForMsgs(msgs); p > price {
@@ -1112,8 +1268,11 @@ func (m *manager) getSignedBytes(id string, unsignedTx client.TxBuilder, factory
 
 	unsignedTx.SetUnordered(true)
 	unsignedTx.SetTimeoutTimestamp(timestamp)
+	if timeoutHeight > 0 {
+		unsignedTx.SetTimeoutHeight(timeoutHeight)
+	}
 	name := m.apiAccount.SignerAccount.Name
-	logging.Debug("Signing transaction", types.Messages, "tx_id", id, "timeout", timestamp.String(), "name", name)
+	logging.Debug("Signing transaction", types.Messages, "tx_id", id, "timeout", timestamp.String(), "timeoutHeight", timeoutHeight, "name", name)
 
 	err = tx.Sign(m.ctx, *factory, name, unsignedTx, false)
 	if err != nil {

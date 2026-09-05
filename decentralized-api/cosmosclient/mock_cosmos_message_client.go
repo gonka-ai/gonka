@@ -3,6 +3,7 @@ package cosmosclient
 import (
 	"context"
 	"decentralized-api/apiconfig"
+	"decentralized-api/cosmosclient/tx_manager"
 
 	sdkclient "github.com/cosmos/cosmos-sdk/client"
 	"github.com/cosmos/cosmos-sdk/crypto/keyring"
@@ -118,6 +119,11 @@ func (m *MockCosmosMessageClient) SubmitPoCV2StoreCommit(transaction *inferencet
 	return args.Error(0)
 }
 
+func (m *MockCosmosMessageClient) SubmitPoCV2StoreCommitWithTimeout(transaction *inferencetypes.MsgPoCV2StoreCommit, timeoutHeight uint64) error {
+	args := m.Called(transaction, timeoutHeight)
+	return args.Error(0)
+}
+
 func (m *MockCosmosMessageClient) SubmitMLNodeWeightDistribution(transaction *inferencetypes.MsgMLNodeWeightDistribution) error {
 	args := m.Called(transaction)
 	return args.Error(0)
@@ -152,13 +158,25 @@ func (m *MockCosmosMessageClient) BridgeTransactionsByReceipt(ctx context.Contex
 	return txs, args.Error(1)
 }
 
-func (m *MockCosmosMessageClient) SendTransactionAsyncWithRetry(msg sdk.Msg, deadlineBlock ...int64) (*sdk.TxResponse, error) {
-	args := m.Called(msg)
+func txSendOptsCallArgs(msg sdk.Msg, opts []tx_manager.TxSendOptions) []interface{} {
+	args := make([]interface{}, 1+len(opts))
+	args[0] = msg
+	for i, o := range opts {
+		args[i+1] = o
+	}
+	return args
+}
+
+func (m *MockCosmosMessageClient) SendTransactionAsyncWithRetry(msg sdk.Msg, opts ...tx_manager.TxSendOptions) (*sdk.TxResponse, error) {
+	args := m.Called(txSendOptsCallArgs(msg, opts)...)
 	return args.Get(0).(*sdk.TxResponse), args.Error(1)
 }
 
-func (m *MockCosmosMessageClient) SendTransactionAsyncNoRetry(msg sdk.Msg) (*sdk.TxResponse, error) {
-	args := m.Called(msg)
+func (m *MockCosmosMessageClient) SendTransactionAsyncNoRetry(msg sdk.Msg, opts ...tx_manager.TxSendOptions) (*sdk.TxResponse, error) {
+	args := m.Called(txSendOptsCallArgs(msg, opts)...)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
 	return args.Get(0).(*sdk.TxResponse), args.Error(1)
 }
 

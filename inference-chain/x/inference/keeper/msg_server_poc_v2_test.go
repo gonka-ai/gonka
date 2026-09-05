@@ -396,6 +396,25 @@ func TestPoCV2StoreCommit_MultiModelFirstSubmissionChargesBaseGasOnce(t *testing
 	require.Equal(t, uint32(5), commits[commitKey(testutil.Executor, testPoCModelID2)].Count)
 }
 
+func TestPoCV2StoreCommit_DuplicateModelIdInOneMessage(t *testing.T) {
+	k, sdkCtx, msgServer := setupPoCV2StoreCommitTest(t, 110, nil, testPoCModelID)
+
+	msg := &types.MsgPoCV2StoreCommit{
+		Creator:                  testutil.Executor,
+		PocStageStartBlockHeight: 100,
+		Entries: []*types.PoCV2CommitEntry{
+			makePoCV2CommitEntry(testPoCModelID, 10, 1),
+			makePoCV2CommitEntry(testPoCModelID, 12, 2),
+		},
+	}
+	_, err := msgServer.PoCV2StoreCommit(sdkCtx, msg)
+	require.ErrorContains(t, err, "duplicate model_id")
+
+	commits, err := k.GetAllPoCV2StoreCommitsForStage(sdkCtx, 100)
+	require.NoError(t, err)
+	require.Empty(t, commits)
+}
+
 func TestPoCV2StoreCommit_SameBlockRepeatRejectedPerModel(t *testing.T) {
 	k, sdkCtx, msgServer := setupPoCV2StoreCommitTest(t, 110, nil, testPoCModelID, testPoCModelID2)
 

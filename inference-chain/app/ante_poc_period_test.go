@@ -266,3 +266,64 @@ func TestPocPeriodValidationDecorator_RejectsNestedMsgExec(t *testing.T) {
 	require.ErrorIs(t, err, errNestedMsgExec)
 	require.False(t, nextCalled)
 }
+
+func storeCommitMsg(creator, modelID string, count uint32) *inferencetypes.MsgPoCV2StoreCommit {
+	return &inferencetypes.MsgPoCV2StoreCommit{
+		Creator:                  creator,
+		PocStageStartBlockHeight: 100,
+		Entries: []*inferencetypes.PoCV2CommitEntry{
+			{ModelId: modelID, Count: count, RootHash: make([]byte, 32)},
+		},
+	}
+}
+
+func TestPocPeriodValidationDecorator_StoreCommitNextBlockClosed(t *testing.T) {
+	k, ctx, decorator := setupPocPeriodAnte(t)
+	signer := testutil.Creator
+	require.NoError(t, k.Participants.Set(ctx, sdk.MustAccAddressFromBech32(signer), inferencetypes.Participant{
+		Index:   signer,
+		Address: signer,
+	}))
+
+	k.SetModel(ctx, &inferencetypes.Model{Id: "test-model"})
+
+	msg := storeCommitMsg(signer, "test-model", 10)
+	nextCalled, err := runPocPeriodAnte(t, decorator, ctx, msg)
+	require.NoError(t, err)
+	require.True(t, nextCalled)
+
+	deadlineCtx := ctx.WithBlockHeight(170)
+	nextCalled, err = runPocPeriodAnte(t, decorator, deadlineCtx, msg)
+	require.Error(t, err)
+	require.ErrorIs(t, err, inferencetypes.ErrPocTooLate)
+	require.False(t, nextCalled)
+}
+
+func TestPocPeriodValidationDecorator_StoreCommitRecheckModelOverlap(t *testing.T) {
+	k, ctx, decorator := setupPocPeriodAnte(t)
+	signer := testutil.Creator
+	require.NoError(t, k.Participants.Set(ctx, sdk.MustAccAddressFromBech32(signer), inferencetypes.Participant{
+		Index:   signer,
+		Address: signer,
+	}))
+	k.SetModel(ctx, &inferencetypes.Model{Id: "test-model"})
+
+	require.NoError(t, k.SetPoCV2StoreCommit(ctx, inferencetypes.PoCV2StoreCommit{
+		ParticipantAddress:       signer,
+		PocStageStartBlockHeight: 100,
+		Count:                    10,
+		RootHash:                 make([]byte, 32),
+		CommitBlockHeight:        ctx.BlockHeight(),
+		ModelId:                  "test-model",
+	}))
+
+	recheckCtx := ctx.WithIsReCheckTx(true)
+	nextCalled, err := runPocPeriodAnte(t, decorator, recheckCtx, storeCommitMsg(signer, "test-model", 10))
+	require.Error(t, err)
+	require.ErrorIs(t, err, inferencetypes.ErrIllegalState)
+	require.False(t, nextCalled)
+
+	nextCalled, err = runPocPeriodAnte(t, decorator, recheckCtx, storeCommitMsg(signer, "test-model", 12))
+	require.NoError(t, err)
+	require.True(t, nextCalled)
+}
