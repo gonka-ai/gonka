@@ -15,8 +15,9 @@ gen-compose: ## Render config, keyrings, docker-compose.yml, and .env from confi
 clean-keyring: ## Delete generated ./keyring (then run make gen-compose).
 	rm -rf keyring
 
-# devshard_testenv compiles in payload fault injection (DEVSHARD_TESTENV_PAYLOAD_*),
-# which the production build omits. Never use these binaries for a release.
+# devshard_testenv compiles in payload fault injection (DEVSHARD_TESTENV_PAYLOAD_*)
+# and oracle overlays (DEVSHARD_TESTENV_ORACLE_*), which the production build
+# omits. Never use these binaries for a release.
 TESTENV_BUILD_TAGS := devshard_testenv
 
 build-devshardd: ## Build linux devshardd for containers (requires Docker).

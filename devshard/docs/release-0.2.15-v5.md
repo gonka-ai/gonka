@@ -8,6 +8,7 @@ that has already rebuilt its sealed-inference index and validation obs rather
 than one mid-wipe.
 
 Detailed deploy verification: [v5-deploy-test-plan.md](./v5-deploy-test-plan.md).
+Merged PRs grouped by feature, with test plans (height-sync lie/lag scenarios included): [v5-merged-features-test-plan.md](./v5-merged-features-test-plan.md).
 Rolling update mechanics: [rolling-update.md](./rolling-update.md).
 Restore / snapshot work: [restore-host-loadsnapshot.md](./restore-host-loadsnapshot.md).
 Sealed-inference index rebuild: [sealed-inference-index-rebuild-plan.md](./sealed-inference-index-rebuild-plan.md).

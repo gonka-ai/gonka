@@ -234,6 +234,9 @@ Shared cadence: four hosts, `K = 8`, `slots_num = 4`. Initial sync turn `1..4`, 
 | ✅ `TestHeightSyncAnchor_E2E_StaleOriginRejected` (E3) | Backdated originator timestamp rejected at receiver with `reason=stale_origin`; audit ring records `dispute_carrier`. (`-tags=dev`.) |
 | ✅ `TestHeightSyncAnchor_E2E_HeldOriginatorReplayRejected` (E8) | A 70 s wall-clock hold of a previously valid originator section ⇒ replay rejected; skipped under `-short`; requires `-tags=dev`. |
 | ✅ `TestHeightSync_E2E_WideDivergenceNeverBlocksInferences` | Roster at `1000/998/500/5` (`≫ D`) serves twelve nonces over the real HTTP stack: the shipping producers pick stamps the verifier accepts — the slot 995 blocks behind carries `F(m)` rather than its own tip, and nonce 1 confirms *below* its start because the floor is still empty. Every inference reaches `finish`, each host still attests its own tip for the dispute layer, and honest lag draws no attribution. |
+| ✅ `TestHeightSync_E2E_HostLowerHeightAutoAlignsAndLogs` | Scenario A: roster `1000/1000/1000/5`. Chat completes; both ends of the spread reach the audit ring; operators see a negative `delta`; F is the high host-signed tip; no dispute marks. |
+| ✅ `TestHeightSync_E2E_HostFutureHeightBeyondDDetected` | Scenario B: one host at `110` with a fabricated hash, honest at `100` (`\|Δ\| > D=2`). Envelope `untrusted_peer`; chat completes. |
+| ✅ `TestHeightSync_E2E_HostFabricatedHashInsideDReconciles` | Scenario C: liar at `101` with a fabricated hash; honest oracle advances from `100` to canonical `101`; warn `untrusted peer tip disagrees with oracle at reconciled height`. |
 
 ### Confirmation
 
@@ -273,7 +276,7 @@ generated compose file.
 | Phase E | ⏳ | Container ports of Strong-mode scenarios (S1..S12, §8) | Real `LightBlock` proofs + `D` band against multi-process oracles. |
 | — | ✅ | D7 (§6) | Simulated **old** dapi with no `/block/*` (`TestHeightSync_LegacyDapiChatCompletes`; unit D4/D7). D6 is ✅ `TestHeightSync_MockDapiBlockLatest`. |
 | — | ✅ | H26, H27 (§7.6) | Heartbeat cadence on a quiet compose escrow (`TestContainerE2E_HeightSync_QuietEscrowHeartbeat` — also scrapes metrics, `/v1/debug/heightsync`, H44/H45 gauges, and asserts peer matrix off by default), and degraded turns with bounded probe traffic when one host is stopped (`TestContainerE2E_HeightSync_OneHostStopped` — also asserts `turns_abandoned_total`, H43). |
-| — | ✅ | H41, H42 (§7.7) | Gateway-package tests plus compose: H26 quiet cadence, `TestContainerE2E_HeightSync_BusyEscrowDischarge` for `discharged_by_inference` under load. |
+| — | ✅ | Host claims A/B/C | Solo `Latest()` overlay (`DEVSHARD_TESTENV_ORACLE_*`, `devshard_testenv`): `TestContainerE2E_HeightSync_HostLowerHeightAutoAligns` (Δ=`-20`), `…HostFutureHeightBeyondD` (Δ=`+10`, fabricate), `…HostFabricatedHashInsideD` (Δ=`+1`, fabricate). Chat 200; spread / `untrusted_peer` / reconcile warn. Gherkin: `testenv/scenarios/heightsync_host_claims.feature`. |
 
 ---
 

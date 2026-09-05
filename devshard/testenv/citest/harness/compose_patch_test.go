@@ -174,3 +174,31 @@ volumes:
 	require.NoError(t, err)
 	require.Equal(t, 2, strings.Count(string(body), "VERSIOND_ORACLE_URL: http://mock-dapi:9100/versions"))
 }
+
+func TestPatchComposeServiceInsertEnv(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+services:
+  versiond-0:
+    environment:
+      VERSIOND_ORACLE_URL: http://mock-dapi:9100/versions
+      KEY_NAME: versiond-0
+  versiond-2:
+    environment:
+      VERSIOND_ORACLE_URL: http://mock-dapi:9100/versions
+      KEY_NAME: versiond-2
+`), 0o644))
+
+	PatchComposeServiceInsertEnv(t, path, "versiond-2", "VERSIOND_ORACLE_URL",
+		`DEVSHARD_TESTENV_ORACLE_HEIGHT_DELTA: "-20"`,
+		`DEVSHARD_TESTENV_ORACLE_FABRICATE_HASH: "true"`,
+	)
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	text := string(body)
+	require.Equal(t, 1, strings.Count(text, `DEVSHARD_TESTENV_ORACLE_HEIGHT_DELTA: "-20"`))
+	require.Contains(t, text, `DEVSHARD_TESTENV_ORACLE_FABRICATE_HASH: "true"`)
+	require.NotContains(t, text[strings.Index(text, "versiond-0:"):strings.Index(text, "versiond-2:")],
+		"DEVSHARD_TESTENV_ORACLE_HEIGHT_DELTA")
+}
