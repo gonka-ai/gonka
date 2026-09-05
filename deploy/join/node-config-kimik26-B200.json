@@ -16,6 +16,7 @@
           "--tool-call-parser", "kimi_k2",
           "--reasoning-parser", "kimi_k2",
           "--attention-backend", "FLASHINFER_MLA",
+          "--attention-config", "{\"mla_prefill_backend\":\"TRTLLM_RAGGED\"}",
           "--disable-custom-all-reduce",
           "--gpu-memory-utilization", "0.95",
           "--max-num-seqs", "128",
