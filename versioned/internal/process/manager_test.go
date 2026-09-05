@@ -2214,6 +2214,7 @@ func TestWaitForChildServingReadyFallsBackToHealthzWhenDefaultReadyMissing(
 		&child{port: port},
 		"/ready",
 		time.Second,
+		nil,
 	) {
 		t.Fatal("expected /ready 404 to fall back to /healthz")
 	}
@@ -2232,6 +2233,7 @@ func TestWaitForChildServingReadyDoesNotFallbackForCustomReadyPath(
 		&child{port: port},
 		"/custom-ready",
 		200*time.Millisecond,
+		nil,
 	) {
 		t.Fatal("custom ready path should not use legacy fallback")
 	}
@@ -2261,7 +2263,7 @@ func TestWaitForChildServingReadyRequiresPublicHealth(t *testing.T) {
 
 	c := &child{port: publicPort}
 	setTestAdminPort(c, adminPort)
-	if waitForChildServingReady(context.Background(), c, "/ready", 200*time.Millisecond) {
+	if waitForChildServingReady(context.Background(), c, "/ready", 200*time.Millisecond, nil) {
 		t.Fatal("admin readiness must not hide an unavailable public listener")
 	}
 	if publicHits.Load() == 0 {
@@ -2269,7 +2271,7 @@ func TestWaitForChildServingReadyRequiresPublicHealth(t *testing.T) {
 	}
 
 	publicReady.Store(true)
-	if !waitForChildServingReady(context.Background(), c, "/ready", time.Second) {
+	if !waitForChildServingReady(context.Background(), c, "/ready", time.Second, nil) {
 		t.Fatal("child should become ready when admin and public endpoints are healthy")
 	}
 }
@@ -2297,11 +2299,25 @@ func TestWaitForChildServingReadyRechecksAdminAndPublicTogether(t *testing.T) {
 
 	c := &child{port: publicPort}
 	setTestAdminPort(c, adminPort)
-	if waitForChildServingReady(context.Background(), c, "/ready", 250*time.Millisecond) {
+	if waitForChildServingReady(context.Background(), c, "/ready", 250*time.Millisecond, nil) {
 		t.Fatal("child became ready without admin and public health at the same time")
 	}
 	if adminHits.Load() < 2 {
 		t.Fatal("admin readiness was not rechecked after public health failed")
+	}
+}
+
+func TestWaitForChildServingReadyStopsWhenProcessExits(t *testing.T) {
+	processDone := make(chan struct{})
+	close(processDone)
+	started := time.Now()
+	if waitForChildServingReady(
+		context.Background(), &child{port: 1}, "/ready", time.Minute, processDone,
+	) {
+		t.Fatal("exited child became ready")
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("readiness waited %v after the child had already exited", elapsed)
 	}
 }
 
