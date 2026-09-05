@@ -340,13 +340,17 @@ func (icc *InferenceCosmosClient) SignBytes(seed []byte) ([]byte, error) {
 
 func (icc *InferenceCosmosClient) DecryptBytes(ciphertext []byte) ([]byte, error) {
 	name := icc.apiAccount.SignerAccount.Name
-	// Use the new keyring Decrypt method
 	kr := *icc.GetKeyring()
-	bytes, err := kr.Decrypt(name, ciphertext, nil, nil)
-	if err != nil {
-		return nil, err
-	}
-	return bytes, nil
+	return decryptKeyring(kr, name, ciphertext)
+}
+
+func decryptKeyring(kr keyring.Keyring, name string, ciphertext []byte) (plaintext []byte, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			err = fmt.Errorf("ecies decrypt panic: %v", r)
+		}
+	}()
+	return kr.Decrypt(name, ciphertext, nil, nil)
 }
 
 func (icc *InferenceCosmosClient) EncryptBytes(plaintext []byte) ([]byte, error) {
