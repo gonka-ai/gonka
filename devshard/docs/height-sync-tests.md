@@ -275,7 +275,7 @@ generated compose file.
 | Phase D | ✅ | D1–D11 (unit; D9 is the hash-only heartbeat turn). Container D6 = `TestHeightSync_MockDapiBlockLatest` (0.2.15-v5 / `/block/*`). Container D7 = `TestHeightSync_LegacyDapiChatCompletes` (0.2.15, no `/block/*`). Dapi HTTP mount lives on `ak/height-sync-protocol-dapi`. | Hash-only observer + direct chain + host failover against old dapi (404) and dapi-down (transport). |
 | Phase E | ⏳ | Container ports of Strong-mode scenarios (S1..S12, §8) | Real `LightBlock` proofs + `D` band against multi-process oracles. |
 | — | ✅ | D7 (§6) | Simulated **old** dapi with no `/block/*` (`TestHeightSync_LegacyDapiChatCompletes`; unit D4/D7). D6 is ✅ `TestHeightSync_MockDapiBlockLatest`. |
-| — | ✅ | H26, H27 (§7.6) | Heartbeat cadence on a quiet compose escrow (`TestContainerE2E_HeightSync_QuietEscrowHeartbeat` — also scrapes metrics, `/v1/debug/heightsync`, H44/H45 gauges, and asserts peer matrix off by default), and degraded turns with bounded probe traffic when one host is stopped (`TestContainerE2E_HeightSync_OneHostStopped` — also asserts `turns_abandoned_total`, H43). |
+| — | ✅ | H26, H27 (§7.6) | Two chats seed `F` (§10.3.1; confirm/finish ride the next nonce), then a quiet `Interval` shows heartbeat cadence (`TestContainerE2E_HeightSync_QuietEscrowHeartbeat` — also scrapes metrics, `/v1/debug/heightsync`, H44/H45 gauges, and asserts peer matrix off by default). Seed does not raise `F`; a session that never infers never heartbeats. After cadence is live, stopping one host yields degraded turns with bounded probe traffic (`TestContainerE2E_HeightSync_OneHostStopped` — also asserts `turns_abandoned_total`, H43). |
 | — | ✅ | Host claims A/B/C | Solo `Latest()` overlay (`DEVSHARD_TESTENV_ORACLE_*`, `devshard_testenv`): `TestContainerE2E_HeightSync_HostLowerHeightAutoAligns` (Δ=`-20`), `…HostFutureHeightBeyondD` (Δ=`+10`, fabricate), `…HostFabricatedHashInsideD` (Δ=`+1`, fabricate). Chat 200; spread / `untrusted_peer` / reconcile warn. Gherkin: `testenv/scenarios/heightsync_host_claims.feature`. |
 
 ---
@@ -453,12 +453,12 @@ automatic for `executor_sig`.
 
 | ID | Test (planned name) | What it will prove |
 | -- | ------------------- | ------------------ |
-| H26 | ✅ `TestContainerE2E_HeightSync_QuietEscrowHeartbeat` | Quiet compose escrow: heartbeat cadence visible in logs + `cadence_events_total`, turns complete, **zero** probe traffic; `/v1/debug/heightsync` lists the escrow; peer matrix series stay off by default; seal/empty-height gauges eventually appear (H44/H45 smoke). |
-| H27 | ✅ `TestContainerE2E_HeightSync_OneHostStopped` | One host stopped: degraded turns, bounded probe traffic, arming only after `T_idle` of user silence; `turns_abandoned_total` rises (H43). |
+| H26 | ✅ `TestContainerE2E_HeightSync_QuietEscrowHeartbeat` | Two chats seed `F` (start is hashless; confirm/finish ride chat 2). Then `Interval` of quiet — extra chat in that wait substitutes `discharged_by_inference`. Heartbeat cadence visible in logs + `cadence_events_total`, turns complete, **zero** probe traffic; `/v1/debug/heightsync` lists the escrow; peer matrix series stay off by default; seal/empty-height gauges eventually appear (H44/H45 smoke). Compose seed does not raise `F`; stretching the timeout does not help a floorless session. |
+| H27 | ✅ `TestContainerE2E_HeightSync_OneHostStopped` | Same two-chat floor seed, wait for `heartbeat_opened`, then one host stopped: degraded turns, bounded probe traffic, arming only after `T_idle` of user silence; `turns_abandoned_total` rises (H43). |
 | H40c | ✅ `TestContainerE2E_HeightSync_StaleClaimSpread` | Compose companion to H40: after a stopped host goes past `F`, claim age rises and spread does not silently shrink. |
 | H42c | ✅ `TestContainerE2E_HeightSync_BusyEscrowDischarge` | Compose companion to H42: stamped traffic surfaces as `discharged_by_inference` in metrics and the debug ring. |
 | H47c | ✅ `TestContainerE2E_HeightSync_SettleDropsSeries` | Compose companion to H47: after admin deactivate (same `retireRuntime` drop as settle), no series carries that `devshard_id`. |
-| H48c | ✅ `TestContainerE2E_HeightSync_PeerMatrixOptIn` | Compose companion to H48: with `DEVSHARD_GATEWAY_HEIGHTSYNC_PEER_MATRIX=1`, quadratic `peer_seen` series appear. |
+| H48c | ✅ `TestContainerE2E_HeightSync_PeerMatrixOptIn` | Compose companion to H48: two chats seed `F`, wait for `heartbeat_opened`, then with `DEVSHARD_GATEWAY_HEIGHTSYNC_PEER_MATRIX=1` quadratic `peer_seen` series appear (`observer_slot` / `subject_slot`). |
 
 ### 7.7 Gateway observability (plan §8.12.1–§8.12.6)
 

@@ -19,6 +19,8 @@ default, not HA-overlay-specific.
 Related: [versiond-router/README.md](../../versiond-router/README.md),
 [release-0.2.14-v4.md](./release-0.2.14-v4.md),
 [v5-merged-features-test-plan.md](./v5-merged-features-test-plan.md) (PR inventory + per-block test plans),
+[v5-manual-height-sync.md](./v5-manual-height-sync.md) (operator Gherkin for height-sync),
+[v5-manual-residual.md](./v5-manual-residual.md) (operator Gherkin for warm cutover, host ping, proxy stamp),
 [rolling-update.md](./rolling-update.md),
 [testenv/docs/scenarios.md](../testenv/docs/scenarios.md),
 [HEIGHT_SYNC_PROTOCOL_PROPOSAL.md](./proposals/HEIGHT_SYNC_PROTOCOL_PROPOSAL.md) §6,

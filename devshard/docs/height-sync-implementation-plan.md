@@ -664,8 +664,10 @@ Optional stamps (§10.5, RECOMMENDED): add `observed_height` / `observed_block_h
 The user has no chain oracle, so at session open there is no `F` and
 **no `MsgHeartbeat` is allowed** (spec §10.3.1). The first **inference**
 still needs an envelope tip on the request leg; that is all this seed
-does. The response leg of that inference is what raises `F`. Heartbeats
-start after that, with `observed_height = F`.
+does. The host-signed confirm/finish of that inference raise `F`; those
+receipts are queued (`confirmStartOnReceipt`) and land on the **next**
+nonce, so a compose session needs a second chat before `F` exists.
+Heartbeats start after that, with `observed_height = F`.
 
 **Rule: the user may seed an envelope cache before its first outbound
 inference. That seed is not `F` and MUST NOT start a heartbeat.**
@@ -1108,7 +1110,7 @@ Two interpretation rules, both from §11: a cleared bit means "no fresh claim wi
 | H48 | Peer matrix not enabled (default) | matrix series absent; `peer_seen_count` / `unseen_total` still present; matrix still readable on `/v1/debug/heightsync` |
 | H49 | Gateway goes quiet toward one slot past `T_idle` | `arming_predicted{slot}=1`; asserted **not** to feed any closing or routing decision (test double sees zero calls, the hard-invariant pattern from the host-ping plan) |
 
-H39–H49 are gateway-package tests over a fabricated session plus a registry gather, in the style of the host-ping cleanup tests ([`host-ping-observability-plan.md`](./host-ping-observability-plan.md) Test plan §2). H41/H42 also run in the H26/H42c container scenarios. Compose companions for H40/H43/H47/H48 and `/v1/debug/heightsync` live in `testenv/citest/height_sync_test.go` (no Phase F).
+H39–H49 are gateway-package tests over a fabricated session plus a registry gather, in the style of the host-ping cleanup tests ([`host-ping-observability-plan.md`](./host-ping-observability-plan.md) Test plan §2). H41/H42 also run in the H26/H42c container scenarios (H26 bootstraps `F` with two chats, then a quiet `Interval`; extra chat in that wait is H42c's `discharged_by_inference`). Compose companions for H40/H43/H47/H48 and `/v1/debug/heightsync` live in `testenv/citest/height_sync_test.go` (no Phase F). H48c waits for `heartbeat_opened` after the same floor seed before asserting quadratic `peer_seen`.
 
 ### 8.13 Tests for Phase E
 
@@ -1172,8 +1174,8 @@ H39–H49 are gateway-package tests over a fabricated session plus a registry ga
 | H23 | Partitioned minority armed | arming produces no vote and no tx; closing still needs finalization quorum | attack 21 |
 | H24 | `ORACLE_UNAVAILABLE` ack | ack present and required; **counts** toward turn `Q`; contributes no envelope Anchor | §11.2, §17 |
 | H25 | Params override violating `D_ack · block_time ≥ Interval + TurnTimeout`, `T_idle > Interval + TurnTimeout` or `2 · Interval ≤ F` | `HeartbeatConfig.Validate` fails at startup | §20 |
-| H26 | Container: quiet compose escrow | heartbeat cadence visible in logs; turns complete; no probe traffic in the healthy path | §10, §11.4 |
-| H27 | Container: one host stopped | degraded turns, bounded probe traffic, arming only after `T_idle` of user silence | §11.4, §12 |
+| H26 | Container: quiet Interval after two-chat floor seed | heartbeat cadence visible in logs; turns complete; no probe traffic in the healthy path. Seed does not raise `F`; a session that never infers never heartbeats | §10, §11.4 |
+| H27 | Container: one host stopped after floor seed | two chats seed `F`, wait for `heartbeat_opened`, then degraded turns, bounded probe traffic, arming only after `T_idle` of user silence | §11.4, §12 |
 
 These are catalogued in [`height-sync-tests.md`](./height-sync-tests.md) **§7** (grouped 7.1 cadence, 7.2 L0–L7 and tiers, 7.3 stamps and signature coverage, 7.4 repair, 7.5 arming, 7.6 container) with the `H*` identifiers preserved, and in its §9 / §10 matrices. Flip ⏳ to ✅ there as each lands; the catalog stays the historical record.
 
@@ -1301,8 +1303,8 @@ Metrics/logs from §8.12 (`heightsync: logplane`), plus the four gateway-collect
 
 **Tests:** H26, H27, H39–H49. **Landed.**
 
-- H26: quiet compose escrow, cadence in logs, turns complete, **zero** probes.
-- H27: one host stopped → degraded turns, bounded probes, arm only after `T_idle` of **user** silence.
+- H26: two chats seed `F` (confirm/finish ride the next nonce), then a quiet `Interval`; cadence in logs, turns complete, **zero** probes. Compose seed does not raise `F`; stretching the timeout does not help a floorless session.
+- H27: same floor seed, wait for `heartbeat_opened`, then one host stopped → degraded turns, bounded probes, arm only after `T_idle` of **user** silence.
 - H39–H49 (§8.12.6) for the gateway views, including the teardown-cleanup, opt-in matrix, and inert-prediction guards.
 - E8 also counts the stamp/section overlap that gates §10.1: per exchange, whether a section was present, whether a stamped tx was present, and whether the two agreed. That ratio is the measured saving of the single-source redesign; without it §10.1 is speculation. §8.12.3's `discharged_by_inference` event is the cadence half of the same measurement. Host-side counters live in `heightsync/prom_logplane.go` (registered from `devshardd` only — one escrow per process; gateway scrapes labelled operator views instead). Gateway operator views are pull-based on `GET /metrics` and `GET /v1/debug/heightsync`.
 
