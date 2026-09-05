@@ -157,6 +157,22 @@ func (b *Broker) refreshDeploymentUpdatePendingFromApplied(nodeID string) {
 	}
 	b.mu.RUnlock()
 
+	if b.hasStaleApplied(nodeID) {
+		// Delete timed out or failed. A leftover row can match this
+		// registration's fingerprint and skip redeploy on a new host.
+		b.markDeploymentUpdatePending(nodeID)
+		ctx, cancel := context.WithTimeout(context.Background(), appliedDeploymentDeleteTimeout)
+		err := b.configManager.DeleteAppliedDeploymentsForNode(ctx, nodeID)
+		cancel()
+		if err != nil {
+			logging.Warn("Failed to retry applied-deployment delete for stale node", types.Config,
+				"node_id", nodeID, "error", err)
+		} else {
+			b.clearStaleApplied(nodeID)
+		}
+		return
+	}
+
 	modelID, ok := b.resolveSupportedNodeModelID(epochNodes, nodeModels)
 	if !ok {
 		return
@@ -194,4 +210,26 @@ func (b *Broker) markDeploymentUpdatePending(nodeID string) {
 		current.State.DeploymentUpdatePending = true
 		current.State.DeploymentRetryAfter = time.Time{}
 	}
+}
+
+func (b *Broker) noteStaleApplied(nodeID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.staleApplied == nil {
+		b.staleApplied = make(map[string]struct{})
+	}
+	b.staleApplied[nodeID] = struct{}{}
+}
+
+func (b *Broker) hasStaleApplied(nodeID string) bool {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	_, ok := b.staleApplied[nodeID]
+	return ok
+}
+
+func (b *Broker) clearStaleApplied(nodeID string) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	delete(b.staleApplied, nodeID)
 }
