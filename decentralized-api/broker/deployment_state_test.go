@@ -107,12 +107,48 @@ func TestUpdateNodeResultCommand_RejectsStaleDeploymentGeneration(t *testing.T) 
 	require.False(t, found)
 }
 
+func TestUpdateNodeResultCommand_RejectsStaleRegistrationSeq(t *testing.T) {
+	manager := testDeploymentConfigManager(t)
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+	node.State.RegistrationSeq = 2
+	node.State.DeploymentGeneration = 1
+	node.State.ReconcileInfo = &ReconcileInfo{
+		Status:     types.HardwareNodeStatus_INFERENCE,
+		PocStatus:  PocStatusIdle,
+		Generation: 1,
+	}
+	b := NewTestBroker()
+	b.configManager = manager
+	b.nodes[node.Node.Id] = node
+
+	command := NewUpdateNodeResultCommand(node.Node.Id, NodeResult{
+		Succeeded:            false,
+		FinalStatus:          types.HardwareNodeStatus_FAILED,
+		OriginalTarget:       types.HardwareNodeStatus_INFERENCE,
+		FinalPocStatus:       PocStatusIdle,
+		OriginalPocTarget:    PocStatusIdle,
+		Error:                "old worker timeout",
+		DeploymentGeneration: 1,
+		RegistrationSeq:      1,
+	})
+	command.Execute(b)
+
+	require.Equal(t, types.HardwareNodeStatus_INFERENCE, node.State.CurrentStatus)
+	require.NotNil(t, node.State.ReconcileInfo)
+	require.Equal(t, uint64(1), node.State.ReconcileInfo.Generation)
+	_, found, err := manager.GetAppliedDeployment(context.Background(), node.Node.Id)
+	require.NoError(t, err)
+	require.False(t, found)
+}
+
 func TestUpdateNodeResultCommand_AcceptsMatchingDeploymentGeneration(t *testing.T) {
 	manager := testDeploymentConfigManager(t)
 	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
 	node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
 	node.State.DeploymentUpdatePending = true
 	node.State.DeploymentGeneration = 2
+	node.State.RegistrationSeq = 2
 	node.State.ReconcileInfo = &ReconcileInfo{
 		Status:     types.HardwareNodeStatus_INFERENCE,
 		PocStatus:  PocStatusIdle,
@@ -132,6 +168,7 @@ func TestUpdateNodeResultCommand_AcceptsMatchingDeploymentGeneration(t *testing.
 		DeploymentModelID:     "model-b",
 		DeploymentFingerprint: "fingerprint-b",
 		DeploymentGeneration:  2,
+		RegistrationSeq:       2,
 	})
 	command.Execute(b)
 
@@ -198,6 +235,38 @@ func TestRefreshDeploymentUpdatePendingFromApplied(t *testing.T) {
 	))
 	b.refreshDeploymentUpdatePendingFromApplied(node.Node.Id)
 	require.False(t, node.State.DeploymentUpdatePending)
+}
+
+func TestRefreshDoesNotTrustStaleAppliedRow(t *testing.T) {
+	manager := testDeploymentConfigManager(t)
+
+	const modelID = "MiniMaxAI/MiniMax-M2.7"
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	node.Node.Models = map[string]ModelArgs{modelID: {}}
+	node.State.EpochModels[modelID] = types.Model{Id: modelID}
+	node.State.EpochMLNodes[modelID] = types.MLNodeInfo{NodeId: node.Node.Id}
+	b := &Broker{
+		nodes:         map[string]*NodeWithState{node.Node.Id: node},
+		configManager: manager,
+	}
+
+	deployment := b.ResolveModelDeployment(node.State.EpochModels[modelID], node.Node.Models[modelID])
+	require.NoError(t, manager.SetAppliedDeployment(
+		context.Background(), node.Node.Id, apiconfig.AppliedDeploymentState{
+			ModelID:     modelID,
+			Fingerprint: deployment.Fingerprint(),
+		},
+	))
+	b.refreshDeploymentUpdatePendingFromApplied(node.Node.Id)
+	require.False(t, node.State.DeploymentUpdatePending)
+
+	b.noteStaleApplied(node.Node.Id)
+	b.refreshDeploymentUpdatePendingFromApplied(node.Node.Id)
+	require.True(t, node.State.DeploymentUpdatePending)
+	require.False(t, b.hasStaleApplied(node.Node.Id))
+	_, found, err := manager.GetAppliedDeployment(context.Background(), node.Node.Id)
+	require.NoError(t, err)
+	require.False(t, found)
 }
 
 func TestRefreshLeavesDefaultDeploymentAloneWhenUnrecorded(t *testing.T) {

@@ -1,0 +1,153 @@
+# Previous-Epoch Confirmed Weight Cap for Consensus Trust
+
+## Overview
+
+This proposal limits how quickly a participant's **trust weight** — the weight used for governance voting, BLS threshold signing, and cPoC (confirmation PoC) validation voting power — can grow between epochs. A participant's trust weight for an epoch is capped at the **confirmed weight they actually proved in the previous epoch**. A participant that jumps its declared compute significantly must first prove that new capacity for a full epoch before the increase counts toward consensus-critical decisions.
+
+Crucially, this cap does **not** affect rewards. A participant that legitimately increased its capacity still earns rewards on its real, fully-adjusted weight (after all cPoC settlement) during the very first epoch. Only its influence over consensus (governance, BLS, cPoC validation voting) is delayed by one epoch.
+
+As described in [gonka_poc.md](../../docs/gonka_poc.md), Gonka operates two power systems: the staking/CometBFT power that governs consensus and governance, and the epoch-group power that governs PoC validation, inference allocation, and rewards. This proposal tightens the first (trust) system while leaving the reward system untouched.
+
+## Problem Statement
+
+A participant's declared/proven weight can increase dramatically from one epoch to the next (e.g. by bringing large amounts of hardware online, or by manipulating PoC). Under the previous behavior, that new weight immediately translated into:
+
+- **Governance voting power** — the ability to push or block proposals.
+- **BLS threshold-signing share** — influence over the network's threshold signatures.
+- **cPoC validation voting power** — influence over which PoC results are accepted, i.e. over what everyone else's weight is validated to be.
+
+A sudden, unproven jump in these areas is a security risk: a participant could acquire outsized consensus influence in a single epoch, before the network has had a chance to confirm (via a full epoch of cPoC) that the claimed capacity is real. The most dangerous case is cPoC validation voting power itself — a participant with an unproven weight spike would immediately gain more say in validating everyone's weights.
+
+## Proposed Solution
+
+### Two weights: `Weight` (real) and `CapWeight` (trust)
+
+We keep the existing `Weight` field as the **real** weight and add a new `CapWeight` field as the **trust** weight.
+
+- **`Weight`** — the real, fully-adjusted weight (after penalties, collateral, and the universal 30% concentration cap). It remains the single source of truth for:
+  - **Rewards** (settlement uses `Weight * confirmed / rawConfirmationTotal`).
+  - **cPoC confirmation** (checking whether a participant confirmed its claimed weight).
+  - Root `ValidationWeight.Weight`, unit-of-compute pricing, and weighted random selection.
+
+- **`CapWeight`** — the trust weight, equal to `Weight` by default but capped at the participant's previous-epoch confirmed weight (and `0` for participants absent last epoch). It is the value used by:
+  - **Governance / validator power** (CometBFT `ValidatorUpdate` via `SetComputeValidators`).
+  - **BLS threshold signing** (percentage/slot assignment).
+  - **cPoC validation voting power** (per-model voting powers).
+  - **`getEffectiveValidationBaseState`** (snapshot participant weights and the total-weight denominator).
+
+Keeping `Weight` real (rather than capping it and adding an "uncapped" field for rewards) is deliberate: rewards and cPoC confirmation require the real value. Adding `CapWeight` as the new, explicitly-routed value keeps those readers correct and requires no upgrade fallback for the reward/settlement path.
+
+Group eligibility (`WThreshold`, `VMin`) and the non-initial group cap use the previous epoch's confirmed effective weight `P_N`, not the `CapWeight` active during that epoch. This is symmetric with the trust-weight definition itself: the same `P_N` measurement is used for next-epoch eligibility and bounds the upcoming trust weight as `CapWeight_(N+1) = min(Weight_(N+1), P_N)`. Confirmed growth therefore counts after one epoch, while unconfirmed weight cannot affect eligibility or expand a group cap. Bootstrap pre-eligibility at the deploy window (including reachability) stays on the active `CapWeight`, matching the validation voting powers it predicts.
+
+A participant that fails settlement's `MissedStatTest` uses `P_N = 0` on the fresh-PoC path. A skipped test or test error leaves `P_N` unchanged. `INVALID` and `INACTIVE` participants are already excluded as non-live members.
+
+### The cap value (cPoC / model-coefficient aware)
+
+The cap for each live participant is the confirmed **effective weight** they held in the previous epoch:
+
+```
+cap = previousWeight * previousConfirmationWeight / previousRawConfirmationTotal
+```
+
+`previousConfirmationWeight` and `previousRawConfirmationTotal` aggregate all eligible real-node models into one participant-wide fraction using the configured model coefficients. Reward settlement and the next-epoch cap apply this fraction to the participant's root `Weight` through `types.EffectiveConfirmedWeight`. [Per-model confirmation](../multi-model-poc/per-model-punishment.md) is a draft and is not implemented. When no confirmation scales are configured, the cap defaults to the previous consensus weight.
+
+Only live members of the previous epoch provide a cap baseline. A participant removed from the root group during the previous epoch is treated as absent and must prove compute again before regaining trust weight.
+
+### New / returning participants
+
+A participant that was **not present** in the previous epoch has no confirmed weight to cap against, so its `CapWeight` is set to `0`:
+
+- It earns rewards normally on its real `Weight`.
+- A non-guardian has **zero** governance power (dropped from the validator set), **zero** BLS share, and **zero** cPoC validation voting power for this first epoch. A configured guardian can receive temporary governance and BLS protection while guardian protection is enabled and the network is immature.
+- Next epoch, its confirmed weight becomes its cap baseline unless it failed `MissedStatTest`.
+
+### Genesis guardians
+
+Genesis guardians receive the same baseline `CapWeight` as every participant. While early-network protection is active, governance and BLS apply temporary guardian power derived from the capped trust vector. This does not modify persisted `Weight` or `CapWeight`.
+
+### Pipeline placement
+
+Before weight formation, the epoch fallback requires at least one fresh PoC node to survive model seating. Preserved nodes remain valid inputs to `ComputeNewWeights`, but a preserved-only result cannot advance a sampled subset of the current team; it triggers the existing carry-over of all still-valid current validators.
+
+`CapWeight` is computed at end-of-PoC-validation, in this order:
+
+1. Penalties applied.
+2. Collateral adjustment.
+3. Universal 30% power cap (`applyEpochPowerCapping`) — still applied to real `Weight`.
+4. **`applyPreviousConfirmedWeightCap`** — default `CapWeight = Weight` for everyone, then lower it to the previous-epoch confirmed cap (or `0` for new participants).
+5. **`applyZeroTrustFallback`** — if every computed `CapWeight` is zero while real `Weight` is positive, restore `CapWeight = Weight` for the whole participant set.
+6. Per-model voting powers computed from `CapWeight`.
+7. `ActiveParticipants` persisted (including `CapWeight`).
+8. Epoch members added (x/group weights remain real `Weight`).
+9. BLS key generation initiated using `CapWeight`.
+
+Governance validator power is applied a couple of blocks later at `SetComputeValidators`; it reads the persisted `CapWeight` and caps/drops validators accordingly, while the x/group member weights stay real so rewards, pricing, and weighted selection are unaffected.
+
+PoC validation snapshots use trust weight for both the per-model voting powers and the total network weight denominator. This keeps slot sampling and the non-slot 2/3 threshold in the same units, while root x/group weights remain real for rewards and pricing.
+
+## Consumers affected
+
+| Consumer | Weight used | Behavior |
+| --- | --- | --- |
+| Rewards / settlement | `Weight` (real) | Base reward uses real weight; confirmation and miss-rate checks can reduce it |
+| cPoC confirmation | `Weight` (real) | Unchanged |
+| Next-epoch cap baseline | `P_N` | Zero after a failed `MissedStatTest` |
+| Unit-of-compute pricing | `Weight` (real) | Unchanged |
+| Weighted random selection | `Weight` (real) | Unchanged |
+| Group eligibility / group caps | Previous confirmed effective weight (`P_N`) | Same baseline as the upcoming trust cap |
+| PoC/cPoC validation snapshot (`getEffectiveValidationBaseState`) | `CapWeight` | Same units as per-model voting power |
+| Governance / CometBFT power | `CapWeight`, then temporary guardian enhancement | **Capped**; zero-power non-guardians are dropped |
+| BLS threshold signing | `CapWeight`, then temporary guardian reservation | **Capped**; zero-power non-guardians get 0 slots |
+| cPoC validation voting power | `CapWeight` | **Capped**, new participants get 0 voting power |
+
+## Edge cases and upgrade safety
+
+- **Genesis / bootstrap**: If there is no effective epoch yet, capping is skipped and `CapWeight` defaults to `Weight`, so the initial validator set is never zeroed.
+- **Preserved-only result**: If no fresh PoC node survives model seating, preserved nodes do not suppress the existing epoch fallback. The next epoch carries all still-valid current validators rather than advancing only the preserved sample.
+- **Failed `MissedStatTest`**: Epoch-N fallback uses the original `P_N`. It still halts with zero final `Weight`, all-zero `CapWeight` recovery is unchanged.
+- **All-zero trust vector**: If previous-epoch capping leaves every `CapWeight` at zero while real `Weight` remains positive, epoch formation fails open by restoring every positive `CapWeight` from `Weight` before voting powers, persistence, BLS, or governance consume it. This deliberately bypasses the cooling rule only when retaining zero trust would make the epoch unable to validate or rotate.
+- **Missing previous epoch group data or live membership**: Epoch formation fails closed rather than treating historical `ValidationWeights` as live. A membership-read failure must not restore stale trust.
+- **Upgrade transition**: An epoch formed *before* this change has no `CapWeight` populated (all zero) and `cap_weight_applied` unset. Both the governance cap and the shared trust-weight resolver detect that state and fall back to real `Weight`. Post-upgrade epochs persist `cap_weight_applied`; any global zero-trust recovery is materialized directly in `CapWeight` by the explicit epoch fallback rather than inferred from zero-valued fields.
+- **Removed previous members**: Participants removed from the previous epoch's live root group do not provide a cap baseline and re-enter with `CapWeight = 0`.
+- **Genesis guardians**: Guardians are capped normally. Early-network protection may grant temporary governance power and a reserved BLS share, but does not restore cPoC validation voting power or mutate `CapWeight`.
+
+Because `Weight` stays real and always-populated, the reward and settlement paths need **no** migration or fallback.
+
+## Implementation
+
+New field:
+
+- `ActiveParticipant.cap_weight` (proto field 9) in `inference-chain/proto/inference/inference/activeparticipants.proto`, regenerated into `activeparticipants.pb.go` / `activeparticipants.pulsar.go`.
+
+Core logic — `inference-chain/x/inference/module/previous_epoch_cap.go`:
+
+- `applyPreviousConfirmedWeightCap` — computes `CapWeight` per participant.
+- `buildPreviousConfirmedWeightCaps` — builds the per-address cPoC-aware cap map from previous live epoch data.
+- `capComputeResultsToPreviousConfirmedWeight` — applies persisted caps at `SetComputeValidators` time and retains zero-power entries until guardian enhancement is evaluated.
+- `resolveTrustWeights` — shared resolver returning `CapWeight` when applied, else `Weight`.
+
+Shared helper — `inference-chain/x/inference/types/weight.go`:
+
+- `EffectiveConfirmedWeight(weight, confirmationWeight, rawConfirmationTotal)` — single source of truth for confirmed effective weight, used by both rewards and the cap.
+
+Wiring:
+
+- `inference-chain/x/inference/module/module.go` — pipeline order, governance cap at `SetComputeValidators`, BLS via `CapWeight`.
+- `inference-chain/x/inference/module/delegation_pipeline.go` — group eligibility and caps via previous confirmed effective weight; voting powers via `CapWeight`.
+- `inference-chain/x/inference/module/genesis_guardian_enhancement.go` — BLS guardian slot reservation via `CapWeight`.
+- `inference-chain/x/inference/module/model_assignment.go` — preserved-node allocation thresholds use trust-weight totals to match validation voting units.
+- `inference-chain/x/inference/keeper/bitcoin_rewards.go` — shared confirmation formula and exact `MissedStatTest` result.
+
+## Testing
+
+- `types.EffectiveConfirmedWeight` — unit tests covering full/partial/zero confirmation, truncation, clamping, and negative inputs.
+- `applyPreviousConfirmedWeightCap` — clamps over-weight participants, zeroes new participants, preserves real `Weight`, and skips on bootstrap / missing previous group.
+- `resolveTrustWeights` — uses `CapWeight` when applied; falls back to `Weight` when unset.
+- `capComputeResultsToPreviousConfirmedWeight` — clamps all validators, retains zero-power entries for post-cap guardian enhancement, and falls back when `CapWeight` is unset (upgrade transition).
+- `EndBlock` wiring — verifies governance applies the cap before temporary guardian enhancement.
+- Epoch fallback tests cover preserved-only results, fresh nodes removed during seating, and explicit all-zero trust recovery.
+- Delegation-weight calculator tests cover previous confirmed effective weight for group eligibility and caps.
+- Validation snapshot and preserved-node tests cover trust-weight totals.
+- BLS key generation and guardian slot reservation tests cover mixed `CapWeight`, including zero-cap non-guardians and protected zero-cap guardians.
+
+All `x/inference` and `x/bls` test suites pass.

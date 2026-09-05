@@ -1,9 +1,9 @@
 [package]
 name = "wrapped-token"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["Inference Team"]
 edition = "2021"
-description = "Custom CW20 bridge token contract for cross-chain token management"
+description = "Gonka bridge wrapped ERC-20 token (CosmWasm Uint256 amounts)"
 
 [lib]
 crate-type = ["cdylib", "rlib"]
@@ -27,8 +27,6 @@ cw2 = "2.0.0"
 schemars = "0.8.12"
 serde = { version = "1.0.184", default-features = false, features = ["derive"] }
 thiserror = { version = "1.0.44" }
-cw20 = "2.0.0"
-cw20-base = { version = "2.0.0", features = ["library"] }
 cw-utils = "2.0.0"
 prost = "0.12"
 prost-derive = "0.12"
